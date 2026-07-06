@@ -1,0 +1,12 @@
+astrbot_plugin_gscore_adapter: py=5, md=1, pyproject=False, req=True, sv=False, command=False, scheduler=True, login_cookie=True, db=True, ai=True
+BotShepherd: py=41, md=6, pyproject=False, req=True, sv=False, command=False, scheduler=True, login_cookie=True, db=True, ai=True
+EndUID: py=90, md=1, pyproject=True, req=False, sv=True, command=True, scheduler=True, login_cookie=True, db=True, ai=True
+GenshinUID: py=210, md=3, pyproject=True, req=True, sv=True, command=True, scheduler=True, login_cookie=True, db=True, ai=True
+gsuid_core: py=422, md=134, pyproject=True, req=True, sv=True, command=True, scheduler=True, login_cookie=True, db=True, ai=True
+nonebot-plugin-genshinuid: py=10, md=1, pyproject=True, req=True, sv=False, command=False, scheduler=False, login_cookie=False, db=True, ai=True
+ScoreEcho: py=21, md=1, pyproject=True, req=False, sv=True, command=True, scheduler=True, login_cookie=True, db=True, ai=True
+StarRailUID: py=74, md=1, pyproject=True, req=True, sv=True, command=True, scheduler=True, login_cookie=True, db=True, ai=True
+WutheringWavesUID: py=161, md=2, pyproject=True, req=True, sv=True, command=True, scheduler=True, login_cookie=True, db=True, ai=True
+XutheringWavesUID: py=238, md=3, pyproject=True, req=True, sv=True, command=True, scheduler=True, login_cookie=True, db=True, ai=True
+ZZZeroUID: py=69, md=1, pyproject=True, req=True, sv=True, command=True, scheduler=True, login_cookie=True, db=True, ai=True
+ZZZeroUID_ZZZure: py=76, md=1, pyproject=True, req=True, sv=True, command=True, scheduler=True, login_cookie=True, db=True, ai=True

@@ -1,0 +1,28 @@
+[
+  {
+    "repo": "ZZZure/ZZZeroUID",
+    "found": true,
+    "full_name": "ZZZure/ZZZeroUID",
+    "pushed_at": "2026-06-19T09:58:23Z",
+    "updated_at": "2026-06-30T14:59:27Z",
+    "archived": false,
+    "stars": 116,
+    "forks": 14,
+    "default_branch": "master",
+    "description": "绝区零Bot插件, 支持OneBot(QQ)、OneBotV12、QQ频道、微信、KOOK（开黑啦）、Telegram（电报）、FeiShu（飞书）、DoDo、Villa（米游社大别野）、Discord的全功能HoshinoBot/NoneBot2/Koishi/yunzai/ZeroBot/AstrBot的绝区零机器人插件",
+    "html_url": "https://github.com/ZZZure/ZZZeroUID"
+  },
+  {
+    "repo": "CM-Edelweiss/ZZZeroUID",
+    "found": true,
+    "full_name": "CM-Edelweiss/ZZZeroUID",
+    "pushed_at": "2025-01-07T02:59:38Z",
+    "updated_at": "2025-01-07T02:59:41Z",
+    "archived": false,
+    "stars": 0,
+    "forks": 0,
+    "default_branch": "master",
+    "description": "绝区零Bot插件, 支持OneBot(QQ)、OneBotV12、QQ频道、微信、KOOK（开黑啦）、Telegram（电报）、FeiShu（飞书）、DoDo、Villa（米游社大别野）、Discord的全功能HoshinoBot/NoneBot2/Koishi/yunzai/ZeroBot绝区零机器人插件",
+    "html_url": "https://github.com/CM-Edelweiss/ZZZeroUID"
+  }
+]
