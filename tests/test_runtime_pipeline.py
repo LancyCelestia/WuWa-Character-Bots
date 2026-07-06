@@ -97,6 +97,29 @@ def test_pipeline_catches_policy_exceptions_as_final_failure():
     assert "token=[redacted]" in record.private_debug
 
 
+def test_pipeline_still_returns_final_failure_when_audit_sink_fails():
+    class BrokenAudit:
+        def append(self, record):
+            raise RuntimeError("audit sink down")
+
+        def list_records(self, request_id=None):
+            return []
+
+    audit = BrokenAudit()
+    queue = InMemorySendQueue(audit_logger=audit)
+    pipeline = RuntimePipeline(send_queue=queue, audit_logger=audit)
+
+    def broken_policy(_message, _capability_id):
+        raise RuntimeError("policy failed")
+
+    pipeline.policy_evaluator = broken_policy
+
+    receipt = pipeline.handle(make_message(), lambda message, decision: None)
+
+    assert receipt.state is ReceiptState.FAILED_FINAL
+    assert receipt.transport == "runtime"
+
+
 def test_allowed_group_command_requires_group_id_before_send_request():
     audit = InMemoryAuditLogger()
     queue = InMemorySendQueue(audit_logger=audit)

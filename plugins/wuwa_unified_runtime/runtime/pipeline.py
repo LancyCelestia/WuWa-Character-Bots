@@ -32,6 +32,12 @@ class RuntimePipeline:
         self.audit_logger = audit_logger
         self.policy_evaluator = evaluate_policy
 
+    def _append_audit_safely(self, record: AuditRecord) -> None:
+        try:
+            self.audit_logger.append(record)
+        except Exception:
+            return
+
     def handle(
         self,
         message: IncomingMessage,
@@ -48,7 +54,7 @@ class RuntimePipeline:
                     public_message="该场景下未启用主动回复。",
                     debug_id=policy.debug_id,
                 )
-                self.audit_logger.append(
+                self._append_audit_safely(
                     AuditRecord(
                         request_id=message.request_id,
                         session_id=message.session_id,
@@ -88,7 +94,7 @@ class RuntimePipeline:
                     public_message="输出未通过安全或隐私检查。",
                     debug_id=review.debug_id,
                 )
-                self.audit_logger.append(
+                self._append_audit_safely(
                     AuditRecord(
                         request_id=message.request_id,
                         session_id=message.session_id,
@@ -111,7 +117,7 @@ class RuntimePipeline:
                     public_message="群消息缺少 group_id，已阻断发送。",
                     debug_id=message.debug_id,
                 )
-                self.audit_logger.append(
+                self._append_audit_safely(
                     AuditRecord(
                         request_id=message.request_id,
                         session_id=message.session_id,
@@ -148,7 +154,7 @@ class RuntimePipeline:
         except Exception as exc:  # pragma: no cover - exercised by integration tests later.
             debug_id = message.debug_id
             public_message = f"运行时内部错误，debug_id={debug_id}"
-            self.audit_logger.append(
+            self._append_audit_safely(
                 AuditRecord(
                     request_id=message.request_id,
                     session_id=message.session_id,
