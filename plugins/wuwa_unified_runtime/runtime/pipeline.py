@@ -30,6 +30,7 @@ class RuntimePipeline:
     ) -> None:
         self.send_queue = send_queue
         self.audit_logger = audit_logger
+        self.policy_evaluator = evaluate_policy
 
     def handle(
         self,
@@ -37,47 +38,46 @@ class RuntimePipeline:
         capability: CapabilityCallable,
         capability_id: str = "wuwa.status",
     ) -> DeliveryReceipt:
-        policy = evaluate_policy(message, capability_id)
-        if not policy.allowed:
-            receipt = DeliveryReceipt(
-                request_id=message.request_id,
-                state=ReceiptState.BLOCKED,
-                transport="policy",
-                public_message="该场景下未启用主动回复。",
-                debug_id=policy.debug_id,
-            )
-            self.audit_logger.append(
-                AuditRecord(
-                    request_id=message.request_id,
-                    session_id=message.session_id,
-                    capability_id=capability_id,
-                    stage="policy",
-                    event="policy_denied",
-                    severity=policy.risk_level,
-                    public_message=receipt.public_message,
-                    private_debug=policy.reason,
-                )
-            )
-            return receipt
-
-        decision = BotDecision(
-            request_id=message.request_id,
-            should_respond=True,
-            mode="command",
-            trigger=message.plain_text.strip() or "message",
-            capability_id=capability_id,
-            target_scope=message.session_type,
-            max_messages=1,
-            send_policy=SendPolicy.IMMEDIATE,
-            persona_profile_id="default",
-            context_budget=2048,
-            decision_reason=policy.reason,
-            risk_level=policy.risk_level,
-            privacy_level=policy.privacy_level,
-            audit_tags=policy.audit_tags,
-        )
-
         try:
+            policy = self.policy_evaluator(message, capability_id)
+            if not policy.allowed:
+                receipt = DeliveryReceipt(
+                    request_id=message.request_id,
+                    state=ReceiptState.BLOCKED,
+                    transport="policy",
+                    public_message="该场景下未启用主动回复。",
+                    debug_id=policy.debug_id,
+                )
+                self.audit_logger.append(
+                    AuditRecord(
+                        request_id=message.request_id,
+                        session_id=message.session_id,
+                        capability_id=capability_id,
+                        stage="policy",
+                        event="policy_denied",
+                        severity=policy.risk_level,
+                        public_message=receipt.public_message,
+                        private_debug=policy.reason,
+                    )
+                )
+                return receipt
+
+            decision = BotDecision(
+                request_id=message.request_id,
+                should_respond=True,
+                mode="command",
+                trigger=message.plain_text.strip() or "message",
+                capability_id=capability_id,
+                target_scope=message.session_type,
+                max_messages=1,
+                send_policy=SendPolicy.IMMEDIATE,
+                persona_profile_id="default",
+                context_budget=2048,
+                decision_reason=policy.reason,
+                risk_level=policy.risk_level,
+                privacy_level=policy.privacy_level,
+                audit_tags=policy.audit_tags,
+            )
             result = capability(message, decision)
             review = review_capability_result(result, decision)
             if not review.approved:
@@ -103,6 +103,27 @@ class RuntimePipeline:
                 return receipt
 
             rendered = render_reviewed_output(result, review)
+            if decision.target_scope.value == "group" and not message.group_id:
+                receipt = DeliveryReceipt(
+                    request_id=message.request_id,
+                    state=ReceiptState.BLOCKED,
+                    transport="runtime",
+                    public_message="群消息缺少 group_id，已阻断发送。",
+                    debug_id=message.debug_id,
+                )
+                self.audit_logger.append(
+                    AuditRecord(
+                        request_id=message.request_id,
+                        session_id=message.session_id,
+                        capability_id=decision.capability_id,
+                        stage="runtime",
+                        event="missing_group_id",
+                        severity=RiskLevel.MEDIUM,
+                        public_message=receipt.public_message,
+                        private_debug="target_scope=group but IncomingMessage.group_id is empty",
+                    )
+                )
+                return receipt
             send_request = SendRequest(
                 request_id=message.request_id,
                 session_id=message.session_id,

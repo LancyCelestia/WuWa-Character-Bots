@@ -17,6 +17,17 @@ def evaluate_policy(
 ) -> PolicyEvaluation:
     cooldown_key = f"{capability_id}:{message.session_id}:{message.sender_id}"
 
+    if message.risk_level is RiskLevel.CRITICAL:
+        return PolicyEvaluation(
+            request_id=message.request_id,
+            allowed=False,
+            reason="critical_input_risk",
+            risk_level=RiskLevel.CRITICAL,
+            cooldown_key=cooldown_key,
+            privacy_level=message.privacy_level or PrivacyLevel.PERSONAL,
+            audit_tags=["policy", "critical_input_blocked"],
+        )
+
     if message.session_type is SessionType.GROUP:
         text = message.plain_text.strip()
         command_triggered = text.startswith(COMMAND_PREFIX)

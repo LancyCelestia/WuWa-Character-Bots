@@ -29,7 +29,8 @@ def review_capability_result(
         and decision.target_scope is SessionType.GROUP
     ):
         approved = False
-        action = ReviewAction.MOVE_PRIVATE
+        if action is not ReviewAction.BLOCK:
+            action = ReviewAction.MOVE_PRIVATE
         reasons.append("personal output cannot be sent to group")
 
     return ReviewResult(
