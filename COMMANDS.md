@@ -27,7 +27,7 @@ powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 verify
 | `test` | 执行 `pytest`。 | 当前只收集项目自有 `tests/`，不会扫描 `research/` 下载源码。 |
 | `lint` | 执行 `ruff check .`。 | 在 ruff 未安装时明确失败。 |
 | `typecheck` | 执行 `mypy .`。 | 在 mypy 未安装时明确失败。 |
-| `verify` | 当前阶段默认验证入口。 | 执行 `docs-check`、`plugin-check`，如果测试/ruff/mypy 可用则一起执行。 |
+| `verify` | 当前阶段默认验证入口。 | 执行 `docs-check`、`plugin-check`、项目自有 `pytest`；ruff/mypy 可用时一起执行。 |
 
 ## 验证策略
 

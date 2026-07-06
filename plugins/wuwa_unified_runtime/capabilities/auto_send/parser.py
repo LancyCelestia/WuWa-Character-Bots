@@ -60,3 +60,29 @@ def parse_auto_send_command(
         risk_level="medium" if channel == "email" else "low",
         privacy_level="personal",
     )
+
+
+def build_auto_send_preview_text(
+    text: str,
+    actor_sender_id: str,
+    actor_session_id: str,
+    actor_session_type: SessionType = SessionType.PRIVATE,
+) -> str:
+    intent = parse_auto_send_command(
+        text,
+        actor_sender_id=actor_sender_id,
+        actor_session_id=actor_session_id,
+        actor_session_type=actor_session_type,
+    )
+    recipients = "、".join(descriptor.raw_text for descriptor in intent.recipient_descriptors)
+    channel_name = "邮件" if intent.channel == "email" else "消息"
+    subject = f"\n主题：{intent.subject_instruction}" if intent.subject_instruction else ""
+    content = intent.content_instruction or "未填写正文要求"
+    return (
+        "草稿预览（仅预览，M0 不会真实发送）\n"
+        f"通道：{channel_name}\n"
+        f"收件人：{recipients}"
+        f"{subject}\n"
+        f"内容要求：{content}\n"
+        "下一步：后续版本会生成 draft_id，再进行确认流程。"
+    )

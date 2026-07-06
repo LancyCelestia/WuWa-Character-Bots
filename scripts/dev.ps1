@@ -303,7 +303,7 @@ Tasks:
   docs-check    Verify command docs, runtime specs, and project config pointers exist.
   plugin-check  Verify plugins/ is configured and report whether local plugins exist yet.
   smoke         Verify docs, plugin discovery config, NoneBot import, and nb CLI availability.
-  verify        Current-stage verification: docs-check, plugin-check, then optional tests/lint/typecheck.
+  verify        Current-stage verification: docs-check, plugin-check, pytest, then optional lint/typecheck.
 "@
 }
 
