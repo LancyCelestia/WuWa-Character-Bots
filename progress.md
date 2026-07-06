@@ -43,3 +43,10 @@
 - 中文化 `docs/specs/auto-send-capability.md`、`docs/specs/character-intelligence-and-knowledge.md`、`docs/specs/media-source-pipeline.md`。
 - 在 specs 中补入人格优先、插件确定性输出、NapCat/OneBot V11 边界、parser 插件迁移点。
 - 中文化 `task_plan.md`、`findings.md`、`progress.md`。
+- 建立 Git 基线提交，并创建 `feature/unified-runtime-m0` 开发分支。
+- 新增 `docs/superpowers/plans/2026-07-07-unified-runtime-m0.md`，拆分统一运行时 Milestone 0 实现计划。
+- 实现 `plugins/wuwa_unified_runtime/contracts` 的核心运行时契约模型和测试。
+- 实现 policy gate、reviewer、renderer、in-memory sender queue、audit logger 和 `RuntimePipeline`，并补齐 critical risk、异常兜底、群 `group_id` 安全测试。
+- 实现 character null provider、media parser registry、auto-send draft intent parser 和对应测试。
+- 新增轻量 NoneBot 插件入口、配置和 `/wuwa status` 结构化状态能力。
+- 将 pytest 收集范围限制到项目自有 `tests/`，避免误扫 `research/` 下载源码。

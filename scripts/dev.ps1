@@ -124,14 +124,15 @@ function Invoke-PluginCheck {
 
     Assert-PathExists "plugins"
     Assert-FileContains "pyproject.toml" 'plugin_dirs = ["plugins"]'
+    Assert-PathExists "plugins\wuwa_unified_runtime\__init__.py"
+    Assert-PathExists "plugins\wuwa_unified_runtime\contracts\runtime.py"
 
     $pluginFiles = Get-ChildItem -LiteralPath (Join-Path $Root "plugins") -Recurse -File -Include "*.py" -ErrorAction SilentlyContinue
     if (-not $pluginFiles -or $pluginFiles.Count -eq 0) {
-        Write-Warning "No local plugin Python files exist yet. This is expected before Milestone 0 implementation."
-        return
+        throw "No local plugin Python files exist."
     }
 
-    Write-Step "found $($pluginFiles.Count) local plugin Python file(s)"
+    Write-Step "found wuwa_unified_runtime and $($pluginFiles.Count) local plugin Python file(s)"
 }
 
 function Invoke-Install {
@@ -172,15 +173,43 @@ function Invoke-Test {
         throw "No tests directory exists yet. Add tests before using the test task."
     }
 
+    $python = Get-ProjectPython
     $pytest = Get-ProjectCommand "pytest"
-    if (-not $pytest) {
-        throw "pytest was not found. Add/install test dependencies before using the test task."
-    }
 
     Push-Location $Root
     try {
         Write-Step "running pytest"
-        Invoke-External $pytest @()
+        $hasProjectPytest = $false
+        try {
+            & $python -c "import pytest" *> $null
+            $hasProjectPytest = ($LASTEXITCODE -eq 0)
+        }
+        catch {
+            $hasProjectPytest = $false
+        }
+
+        if ($hasProjectPytest) {
+            Invoke-External $python @("-m", "pytest")
+            return
+        }
+
+        if (-not $pytest) {
+            throw "pytest was not found. Add/install test dependencies before using the test task."
+        }
+
+        $oldPythonPath = $env:PYTHONPATH
+        if ($oldPythonPath) {
+            $env:PYTHONPATH = "$Root;$oldPythonPath"
+        }
+        else {
+            $env:PYTHONPATH = $Root
+        }
+        try {
+            Invoke-External $pytest @()
+        }
+        finally {
+            $env:PYTHONPATH = $oldPythonPath
+        }
     }
     finally { Pop-Location }
 }

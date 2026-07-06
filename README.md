@@ -2,7 +2,9 @@
 
 这是一个面向鸣潮角色机器人、ACG/游戏助手、媒体解析和自动发送能力的统一 NoneBot 项目。
 
-当前仓库处在“研究和规格设计已经完成，准备进入实现”的阶段。后续不要从单个插件文件直接开写，而是先遵守统一命令入口、运行时契约、人格/记忆/知识约束和发送审计链路。
+当前仓库已经进入 Milestone 0 实现阶段：研究和规格设计已经完成，`plugins/wuwa_unified_runtime` 提供了统一运行时插件骨架、契约模型、策略门、审查/渲染、内存发送回执、审计、人格/知识/provider 接口、parser registry 和 auto-send draft parser。
+
+后续不要从单个插件文件直接开写，而是继续遵守统一命令入口、运行时契约、人格/记忆/知识约束和发送审计链路。
 
 ## 开发命令入口
 
@@ -77,4 +79,4 @@ NapCat 按 OneBot V11 实现接入时，建议使用数组消息段格式。Inco
 
 研究证据、插件分析矩阵、架构报告和实现建议见 [research/README.md](research/README.md)。
 
-建议后续第一步实现一个很窄的统一运行时插件骨架：契约模型、策略门、审计日志、一个安全 LLM 适配器、一个低风险解析器、一个摘要命令、一个天气/公共游戏/wiki 命令和一个统一发送路径。
+当前 M0 已完成一个很窄的统一运行时插件骨架。下一步建议补 SQLite repository、真实 OneBot/NapCat transport adapter、一个低风险媒体 source adapter、公共游戏/wiki 能力，以及更完整的 NoneBot 加载 smoke 检查。
