@@ -29,14 +29,30 @@ def test_wuwa_command_rejects_unknown_subcommand():
 
 
 def test_auto_send_command_returns_preview_only_text():
-    from plugins.wuwa_unified_runtime.capabilities.auto_send import build_auto_send_preview_text
+    from plugins.wuwa_unified_runtime.capabilities.auto_send import (
+        build_auto_send_preview_text,
+        is_auto_send_command_text,
+    )
 
+    command = "报存 给 A、B 发邮件，主题：周末安排，内容根据你对他们的了解分别写"
     preview = build_auto_send_preview_text(
-        "报存 给 A、B 发邮件，主题：周末安排，内容根据你对他们的了解分别写",
+        command,
         actor_sender_id="42",
         actor_session_id="private:42",
     )
 
+    assert is_auto_send_command_text(command) is True
+    assert is_auto_send_command_text("/报存 给 A 发消息，内容测试") is False
     assert "草稿预览" in preview
     assert "A、B" in preview
     assert "确认发送" not in preview
+
+
+def test_plugin_entry_uses_strict_command_and_plain_autosend_rule():
+    import inspect
+    import plugins.wuwa_unified_runtime as plugin_entry
+
+    source = inspect.getsource(plugin_entry)
+
+    assert "force_whitespace=True" in source
+    assert "on_message" in source

@@ -23,18 +23,27 @@ __plugin_meta__ = PluginMetadata(
 
 def _register_nonebot_handlers() -> None:
     try:
-        from nonebot import on_command
+        from nonebot import on_command, on_message
         from nonebot.adapters import Event
         from nonebot.params import CommandArg
         from nonebot.typing import T_State
     except Exception:
         return
 
-    from .capabilities.auto_send import build_auto_send_preview_text
+    from .capabilities.auto_send import build_auto_send_preview_text, is_auto_send_command_text
     from .capabilities.echo import build_status_result
 
-    status = on_command("wuwa", aliases={"/wuwa"}, priority=20, block=True)
-    auto_send = on_command("报存", priority=21, block=True)
+    async def _is_auto_send_plain_text(event: Event) -> bool:
+        return is_auto_send_command_text(event.get_plaintext())
+
+    status = on_command(
+        "wuwa",
+        aliases={"/wuwa"},
+        force_whitespace=True,
+        priority=20,
+        block=True,
+    )
+    auto_send = on_message(rule=_is_auto_send_plain_text, priority=21, block=True)
 
     @status.handle()
     async def _handle_status(args=CommandArg()) -> None:
@@ -46,8 +55,8 @@ def _register_nonebot_handlers() -> None:
         await status.finish(result.body)
 
     @auto_send.handle()
-    async def _handle_auto_send(event: Event, state: T_State, args=CommandArg()) -> None:
-        command_text = f"报存 {args.extract_plain_text()}".strip()
+    async def _handle_auto_send(event: Event, state: T_State) -> None:
+        command_text = event.get_plaintext().strip()
         preview = build_auto_send_preview_text(
             command_text,
             actor_sender_id=event.get_user_id(),

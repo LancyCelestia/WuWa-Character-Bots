@@ -11,6 +11,11 @@ _COMMAND_RE = re.compile(
 )
 
 
+def is_auto_send_command_text(text: str) -> bool:
+    stripped = text.strip()
+    return stripped.startswith("报存 ") and _COMMAND_RE.match(stripped) is not None
+
+
 def _split_recipients(raw: str) -> list[RecipientDescriptor]:
     parts = [part.strip() for part in re.split(r"[、,，]", raw) if part.strip()]
     return [RecipientDescriptor(raw_text=part, kind="alias", display_name=part) for part in parts]
