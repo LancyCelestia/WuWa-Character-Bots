@@ -14,6 +14,27 @@ class EmotionSignal(StrictBaseModel):
     privacy_level: PrivacyLevel = PrivacyLevel.PERSONAL
 
 
+class MemoryQuery(StrictBaseModel):
+    request_id: str
+    query_text: str
+    requester_id: str
+    subject_user_id: str
+    session_id: str
+    group_id: str | None = None
+    purpose: str
+    memory_scope: str = "user"
+    scopes: list[str] = Field(default_factory=list)
+    entities: list[str] = Field(default_factory=list)
+    time_window: str | None = None
+    max_items: int = 5
+    max_chars: int = 1200
+    include_raw_messages: bool = False
+    include_summarized_facts: bool = True
+    include_preferences: bool = True
+    consent_basis: str = "implicit_current_chat"
+    privacy_level: PrivacyLevel = PrivacyLevel.PERSONAL
+
+
 class MemoryRetrievalResult(StrictBaseModel):
     request_id: str
     facts: list[dict[str, str]] = Field(default_factory=list)
