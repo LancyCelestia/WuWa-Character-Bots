@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+from pydantic import Field
+
+from .runtime import PrivacyLevel, RiskLevel, StrictBaseModel
+
+
+class EmotionSignal(StrictBaseModel):
+    request_id: str
+    session_id: str
+    speaker_id: str
+    emotion_label: str = "unknown"
+    confidence: float = 0.0
+    privacy_level: PrivacyLevel = PrivacyLevel.PERSONAL
+
+
+class MemoryRetrievalResult(StrictBaseModel):
+    request_id: str
+    facts: list[dict[str, str]] = Field(default_factory=list)
+    raw_message_refs: list[str] = Field(default_factory=list)
+    confidence: float = 0.0
+    privacy_level: PrivacyLevel = PrivacyLevel.PERSONAL
+
+
+class PersonaProfile(StrictBaseModel):
+    profile_id: str
+    version: str
+    display_name: str
+    identity: str
+    role_boundaries: list[str] = Field(default_factory=list)
+    style_rules: list[str] = Field(default_factory=list)
+    forbidden_behaviors: list[str] = Field(default_factory=list)
+
+
+class ToneProfile(StrictBaseModel):
+    profile_id: str
+    mode: str
+    voice: str = "default"
+    warmth: float = 0.5
+    directness: float = 0.5
+    message_count_limit: int = 1
+    markdown_allowed: bool = True
+
+
+class KnowledgeSource(StrictBaseModel):
+    source_id: str
+    source_type: str
+    title: str
+    trust_level: str = "unknown"
+    privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
+    risk_level: RiskLevel = RiskLevel.LOW
+
+
+class KnowledgeChunk(StrictBaseModel):
+    chunk_id: str
+    source_id: str
+    title: str
+    content: str
+    source_url: str | None = None
+    privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
+
+
+class RetrievalResult(StrictBaseModel):
+    request_id: str
+    chunks: list[KnowledgeChunk] = Field(default_factory=list)
+    citations: list[str] = Field(default_factory=list)
+    answerable: bool = False
+    confidence: float = 0.0
+    privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
+
+
+class ContextBundle(StrictBaseModel):
+    request_id: str
+    persona: PersonaProfile
+    tone: ToneProfile
+    memory_results: MemoryRetrievalResult
+    knowledge_results: RetrievalResult
+    current_message: str
+    sender_id: str
+    session_id: str
+    emotion_signals: list[EmotionSignal] = Field(default_factory=list)
+    context_budget: int = 2048
+    privacy_level: PrivacyLevel = PrivacyLevel.PERSONAL
+    risk_level: RiskLevel = RiskLevel.LOW

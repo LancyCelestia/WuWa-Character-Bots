@@ -23,6 +23,9 @@ dev = [
     "pytest>=9.1.0",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.nonebot]
 plugin_dirs = ["plugins"]
 builtin_plugins = ["echo"]
