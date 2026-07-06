@@ -18,6 +18,11 @@ dependencies = [
     "nonebot-plugin-htmlkit>=0.1.0rc5",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=9.1.0",
+]
+
 [tool.nonebot]
 plugin_dirs = ["plugins"]
 builtin_plugins = ["echo"]

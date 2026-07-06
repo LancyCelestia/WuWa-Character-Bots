@@ -149,7 +149,7 @@ class BotDecision(StrictBaseModel):
 
 
 class CapabilityResult(StrictBaseModel):
-    request_id: str = Field(default_factory=new_request_id)
+    request_id: str
     capability_id: str = "unknown"
     kind: str
     title: str = ""

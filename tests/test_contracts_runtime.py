@@ -4,6 +4,7 @@ import pytest
 
 from plugins.wuwa_unified_runtime.contracts import (
     AuditRecord,
+    CapabilityResult,
     DeliveryReceipt,
     IncomingMessage,
     PrivacyLevel,
@@ -41,6 +42,25 @@ def test_incoming_message_requires_normalized_session_fields():
     assert message.request_id.startswith("req_")
     assert message.group_id is None
     assert message.privacy_level is PrivacyLevel.GROUP
+
+
+def test_capability_result_requires_existing_request_id():
+    with pytest.raises(ValueError, match="Field required"):
+        CapabilityResult(kind="text", title="状态", body="统一运行时在线")
+
+
+def test_capability_result_keeps_intake_request_id():
+    request_id = new_request_id("chain")
+
+    result = CapabilityResult(
+        request_id=request_id,
+        capability_id="wuwa.status",
+        kind="text",
+        title="状态",
+        body="统一运行时在线",
+    )
+
+    assert result.request_id == request_id
 
 
 def test_send_request_requires_dedupe_and_cooldown_keys():
