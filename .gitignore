@@ -34,6 +34,7 @@ logs/
 # Local planning / agent scratch
 .planning/
 .superpowers/
+.worktrees/
 
 # Downloaded or extracted third-party research sources.
 # Keep the curated Markdown reports and lightweight index files tracked.
