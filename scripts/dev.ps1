@@ -2,18 +2,34 @@
 param(
     [ValidateSet(
         "help",
+        "doctor",
         "install",
         "dev",
         "run",
         "test",
         "lint",
         "typecheck",
+        "readiness-smoke",
+        "dialogue-smoke",
+        "chat-smoke",
+        "config-smoke",
+        "persona-smoke",
+        "context-smoke",
+        "why-smoke",
+        "llm-smoke",
+        "llm-setup",
+        "nonebot-smoke",
+        "startup-smoke",
+        "queue-smoke",
+        "transport-smoke",
+        "online-transport-smoke",
         "docs-check",
         "plugin-check",
         "smoke",
         "verify"
     )]
-    [string]$Task = "help"
+    [string]$Task = "help",
+    [string]$Message = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -89,6 +105,7 @@ function Invoke-DocsCheck {
         "README.md",
         "COMMANDS.md",
         "pyproject.toml",
+        ".env.example",
         ".env.prod",
         "plugins",
         "research\README.md",
@@ -236,8 +253,15 @@ function Invoke-Typecheck {
 
     Push-Location $Root
     try {
-        Write-Step "running mypy"
-        Invoke-External $mypy @(".")
+        Write-Step "running mypy for project-owned code"
+        Invoke-External $mypy @(
+            "--explicit-package-bases",
+            "--exclude",
+            "research",
+            "--ignore-missing-imports",
+            "plugins",
+            "tests"
+        )
     }
     finally { Pop-Location }
 }
@@ -257,6 +281,205 @@ function Invoke-Smoke {
 
     Write-Step "checking NoneBot CLI"
     Invoke-External $nb @("--version")
+}
+
+function Invoke-Doctor {
+    $python = Get-ProjectPython
+    $exitCode = 0
+
+    Push-Location $Root
+    try {
+        Write-Step "running local environment doctor"
+        & $python -m plugins.wuwa_unified_runtime.smoke doctor
+        $exitCode = $LASTEXITCODE
+    }
+    finally { Pop-Location }
+
+    if ($exitCode -ne 0) {
+        Write-Step "Environment doctor did not pass. See diagnostic output above."
+        exit $exitCode
+    }
+}
+
+function Invoke-ChatSmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running local LLM chat smoke"
+        $arguments = @("-m", "plugins.wuwa_unified_runtime.smoke", "chat")
+        if (-not [string]::IsNullOrWhiteSpace($Message)) {
+            $arguments += @("--message", $Message)
+        }
+        Invoke-External $python $arguments
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-ReadinessSmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running unified local LLM dialogue readiness smoke"
+        $arguments = @("-m", "plugins.wuwa_unified_runtime.smoke", "readiness")
+        if (-not [string]::IsNullOrWhiteSpace($Message)) {
+            $arguments += @("--message", $Message)
+        }
+        Invoke-External $python $arguments
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-DialogueSmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running local LLM dialogue acceptance smoke"
+        $arguments = @("-m", "plugins.wuwa_unified_runtime.smoke", "dialogue")
+        if (-not [string]::IsNullOrWhiteSpace($Message)) {
+            $arguments += @("--message", $Message)
+        }
+        Invoke-External $python $arguments
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-ConfigSmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running local configuration readiness smoke"
+        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "config")
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-PersonaSmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running local persona readiness smoke"
+        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "persona")
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-ContextSmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running local LLM context smoke"
+        $arguments = @("-m", "plugins.wuwa_unified_runtime.smoke", "context")
+        if (-not [string]::IsNullOrWhiteSpace($Message)) {
+            $arguments += @("--message", $Message)
+        }
+        Invoke-External $python $arguments
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-WhySmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running local LLM decision why smoke"
+        $arguments = @("-m", "plugins.wuwa_unified_runtime.smoke", "why")
+        if (-not [string]::IsNullOrWhiteSpace($Message)) {
+            $arguments += @("--message", $Message)
+        }
+        Invoke-External $python $arguments
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-LlmSmoke {
+    $python = Get-ProjectPython
+    $exitCode = 0
+
+    Push-Location $Root
+    try {
+        Write-Step "running OpenAI-compatible LLM connection smoke"
+        & $python -m plugins.wuwa_unified_runtime.smoke llm
+        $exitCode = $LASTEXITCODE
+    }
+    finally { Pop-Location }
+
+    if ($exitCode -ne 0) {
+        Write-Step "LLM smoke did not pass. See diagnostic output above."
+        exit $LASTEXITCODE
+    }
+}
+
+function Invoke-LlmSetup {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "printing safe LLM setup checklist"
+        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "llm-setup")
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-NoneBotSmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running NoneBot plugin load smoke"
+        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "nonebot")
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-StartupSmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running NoneBot startup dry-run smoke"
+        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "startup")
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-QueueSmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running local send queue worker smoke"
+        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "queue")
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-TransportSmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running local OneBot/NapCat transport smoke"
+        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "transport")
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-OnlineTransportSmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running read-only online transport smoke"
+        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "online-transport")
+    }
+    finally { Pop-Location }
 }
 
 function Invoke-Verify {
@@ -294,12 +517,27 @@ Usage:
 
 Tasks:
   help          Show this help.
+  doctor        Diagnose Python, NoneBot imports, OneBot adapter, APScheduler, nb CLI, and plugin import.
   install       Install project dependencies with uv sync when available, otherwise pip install -e .
   dev           Start NoneBot for local development.
   run           Start NoneBot using the same runtime command as dev.
   test          Run pytest. Fails until tests exist and pytest is installed.
   lint          Run ruff check. Fails until ruff is installed.
   typecheck     Run mypy. Fails until mypy is installed.
+  readiness-smoke Summarize local dialogue, config, context, and next LLM action without real LLM calls.
+  dialogue-smoke Validate one local dialogue turn across context, LLM, review, and sender diagnostics. Use -Message to test custom text.
+  chat-smoke    Run a local static LLM chat smoke with Shorekeeper persona files. Use -Message to test custom text.
+  config-smoke  Validate local persona, knowledge, and LLM readiness config without network calls.
+  persona-smoke Validate loaded persona, tone, and safe source refs without calling LLM.
+  context-smoke Build local persona/memory/knowledge prompt diagnostics without calling LLM. Use -Message to test custom text.
+  why-smoke     Explain policy, reply budget, LLM status, send request, receipt, and audit for one local chat input.
+  llm-setup     Print a safe .env checklist and next commands for real LLM onboarding; never writes secrets or calls the provider.
+  llm-smoke     Validate configured OpenAI-compatible LLM connection without sending chat messages.
+  nonebot-smoke Validate local NoneBot/OneBot plugin import and config without connecting NapCat.
+  startup-smoke Initialize NoneBot in a child process, load handlers, then exit without connecting NapCat.
+  queue-smoke   Drain a temporary SQLite send queue with fake transport; never connects NapCat or sends QQ messages.
+  transport-smoke Validate OneBot/NapCat message segments and fake transport; never connects NapCat or sends QQ messages.
+  online-transport-smoke Read current online bot state without calling send APIs; never sends QQ messages.
   docs-check    Verify command docs, runtime specs, and project config pointers exist.
   plugin-check  Verify plugins/ is configured and report whether local plugins exist yet.
   smoke         Verify docs, plugin discovery config, NoneBot import, and nb CLI availability.
@@ -309,12 +547,27 @@ Tasks:
 
 switch ($Task) {
     "help" { Show-Help }
+    "doctor" { Invoke-Doctor }
     "install" { Invoke-Install }
     "dev" { Invoke-Run "dev" }
     "run" { Invoke-Run "run" }
     "test" { Invoke-Test }
     "lint" { Invoke-Lint }
     "typecheck" { Invoke-Typecheck }
+    "readiness-smoke" { Invoke-ReadinessSmoke }
+    "dialogue-smoke" { Invoke-DialogueSmoke }
+    "chat-smoke" { Invoke-ChatSmoke }
+    "config-smoke" { Invoke-ConfigSmoke }
+    "persona-smoke" { Invoke-PersonaSmoke }
+    "context-smoke" { Invoke-ContextSmoke }
+    "why-smoke" { Invoke-WhySmoke }
+    "llm-smoke" { Invoke-LlmSmoke }
+    "llm-setup" { Invoke-LlmSetup }
+    "nonebot-smoke" { Invoke-NoneBotSmoke }
+    "startup-smoke" { Invoke-StartupSmoke }
+    "queue-smoke" { Invoke-QueueSmoke }
+    "transport-smoke" { Invoke-TransportSmoke }
+    "online-transport-smoke" { Invoke-OnlineTransportSmoke }
     "docs-check" { Invoke-DocsCheck }
     "plugin-check" { Invoke-PluginCheck }
     "smoke" { Invoke-Smoke }

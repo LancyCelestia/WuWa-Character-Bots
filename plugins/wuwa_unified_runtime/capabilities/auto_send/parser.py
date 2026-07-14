@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import re
 
-from plugins.wuwa_unified_runtime.contracts import SessionType
+from plugins.wuwa_unified_runtime.contracts import (
+    CapabilityResult,
+    PrivacyLevel,
+    RiskLevel,
+    SendPolicy,
+    SessionType,
+)
 from plugins.wuwa_unified_runtime.contracts.auto_send import AutoSendIntent, RecipientDescriptor
 
 _COMMAND_RE = re.compile(
@@ -62,8 +68,8 @@ def parse_auto_send_command(
         batch_mode="batch",
         requested_send_policy="confirm_required",
         priority="user_waiting",
-        risk_level="medium" if channel == "email" else "low",
-        privacy_level="personal",
+        risk_level=RiskLevel.MEDIUM if channel == "email" else RiskLevel.LOW,
+        privacy_level=PrivacyLevel.PERSONAL,
     )
 
 
@@ -90,4 +96,36 @@ def build_auto_send_preview_text(
         f"{subject}\n"
         f"内容要求：{content}\n"
         "下一步：后续版本会生成 draft_id，再进行确认流程。"
+    )
+
+
+def build_auto_send_preview_result(
+    text: str,
+    actor_sender_id: str,
+    actor_session_id: str,
+    actor_session_type: SessionType = SessionType.PRIVATE,
+    request_id: str | None = None,
+) -> CapabilityResult:
+    intent = parse_auto_send_command(
+        text,
+        actor_sender_id=actor_sender_id,
+        actor_session_id=actor_session_id,
+        actor_session_type=actor_session_type,
+    )
+    preview = build_auto_send_preview_text(
+        text,
+        actor_sender_id=actor_sender_id,
+        actor_session_id=actor_session_id,
+        actor_session_type=actor_session_type,
+    )
+    return CapabilityResult(
+        request_id=request_id or intent.request_id,
+        capability_id="wuwa.auto_send.preview",
+        kind="text",
+        title="自动发送草稿预览",
+        body=preview,
+        risk_level=intent.risk_level,
+        privacy_level=intent.privacy_level,
+        send_policy=SendPolicy.IMMEDIATE,
+        audit_tags=["auto_send_preview", "preview_only", f"channel:{intent.channel}"],
     )

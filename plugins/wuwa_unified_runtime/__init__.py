@@ -1,6 +1,39 @@
 from __future__ import annotations
 
+from typing import Any
+
+from .audit import AuditRepository, build_audit_repository
 from .config import Config
+from .contracts import (
+    AuditRecord,
+    CapabilityResult,
+    DeliveryReceipt,
+    IncomingMessage,
+    ReceiptState,
+    RiskLevel,
+    SendRequest,
+    SessionType,
+)
+from .diagnostics import (
+    DiagnosticsStore,
+    RuntimeDiagnostic,
+    build_diagnostics_store,
+    build_runtime_diagnostic,
+    build_why_result,
+)
+from .character import ConversationHistoryRecorder
+from .config_readiness import (
+    llm_generation_parameter_errors,
+    persona_context_preflight_errors,
+)
+from .llm import LLMProvider, OpenAICompatibleLLMProvider, StaticLLMProvider
+from .sender import (
+    OneBotV11Bot,
+    ReceiptRepository,
+    build_receipt_repository,
+    drain_send_queue_once,
+    send_onebot_v11,
+)
 
 try:
     from nonebot.plugin import PluginMetadata
@@ -20,21 +53,542 @@ __plugin_meta__ = PluginMetadata(
     extra={"milestone": "0"},
 )
 
+NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS = frozenset(
+    {
+        "wuwa.why",
+        "wuwa.receipt",
+        "wuwa.audit",
+        "wuwa.recent",
+        "wuwa.queue",
+        "wuwa.context",
+        "wuwa.llm",
+        "wuwa.setup.llm",
+        "wuwa.config",
+        "wuwa.readiness",
+        "wuwa.dialogue",
+        "wuwa.roles",
+        "wuwa.persona",
+        "wuwa.history",
+        "wuwa.control",
+    }
+)
+
+OFFLOADED_CAPABILITY_IDS = frozenset(
+    {
+        "wuwa.context",
+        "wuwa.llm",
+        "wuwa.dialogue",
+    }
+)
+
+
+def _build_chat_llm_provider(config: Config) -> LLMProvider:
+    if config.wuwa_chat_provider == "openai_compatible":
+        return OpenAICompatibleLLMProvider(
+            api_key=config.wuwa_chat_api_key,
+            model=config.wuwa_chat_model,
+            base_url=config.wuwa_chat_base_url,
+            timeout_seconds=config.wuwa_chat_timeout_seconds,
+        )
+    return StaticLLMProvider()
+
+
+def _is_plain_chat_text(text: str) -> bool:
+    from .capabilities.auto_send import is_auto_send_command_text
+    from .capabilities.chat import looks_like_chat_text
+
+    stripped = text.strip()
+    return looks_like_chat_text(stripped) and not is_auto_send_command_text(stripped)
+
+
+def _extract_onebot_raw_segments(event: Any) -> list[dict[str, Any]]:
+    get_message = getattr(event, "get_message", None)
+    message = get_message() if callable(get_message) else getattr(event, "message", ())
+    segments: list[dict[str, Any]] = []
+    for segment in message or ():
+        if isinstance(segment, dict):
+            segment_type = segment.get("type", "")
+            segment_data = segment.get("data", {})
+        else:
+            segment_type = getattr(segment, "type", "")
+            segment_data = getattr(segment, "data", {})
+        if not segment_type:
+            continue
+        segments.append(
+            {
+                "type": str(segment_type),
+                "data": dict(segment_data) if isinstance(segment_data, dict) else {},
+            }
+        )
+    return segments
+
+
+def _detect_onebot_direct_mention(
+    raw_segments: list[dict[str, Any]],
+    bot_id: str,
+) -> bool:
+    normalized_bot_id = str(bot_id)
+    return any(
+        segment.get("type") == "at"
+        and str(segment.get("data", {}).get("qq", "")) == normalized_bot_id
+        for segment in raw_segments
+    )
+
+
+def _incoming_from_nonebot_event(event: Any, bot_id: str = "unknown") -> IncomingMessage:
+    text = event.get_plaintext()
+    session_id = event.get_session_id()
+    session_type = SessionType.GROUP if "group" in session_id else SessionType.PRIVATE
+    group_id = getattr(event, "group_id", None)
+    message_id = getattr(event, "message_id", None)
+    raw_segments = _extract_onebot_raw_segments(event)
+    if not raw_segments:
+        raw_segments = [{"type": "text", "data": {"text": text}}]
+    return IncomingMessage(
+        platform="qq",
+        adapter="nonebot",
+        bot_id=bot_id,
+        session_id=session_id,
+        session_type=session_type,
+        sender_id=event.get_user_id(),
+        group_id=str(group_id) if group_id is not None else None,
+        plain_text=text,
+        raw_segments=raw_segments,
+        mentions_bot=(
+            session_type is SessionType.PRIVATE
+            or _detect_onebot_direct_mention(raw_segments, bot_id)
+        ),
+        message_id=str(message_id) if message_id is not None else None,
+    )
+
+
+def _transport_audit_event(receipt: DeliveryReceipt) -> str:
+    return f"transport_{receipt.state.value}"
+
+
+def _send_queue_is_drainable(send_queue: Any) -> bool:
+    return all(
+        hasattr(send_queue, method_name)
+        for method_name in (
+            "list_due",
+            "mark_sent",
+            "mark_retryable_failure",
+            "mark_final_failure",
+        )
+    )
+
+
+def _register_send_queue_scheduler(
+    *,
+    scheduler: Any,
+    config: Config,
+    send_queue: Any,
+    audit_logger: AuditRepository,
+    receipt_repository: ReceiptRepository | None,
+    bot_provider: Any,
+) -> dict[str, object]:
+    if not config.wuwa_send_queue_worker_enabled:
+        return {"registered": False, "reason": "disabled"}
+    if not _send_queue_is_drainable(send_queue):
+        return {"registered": False, "reason": "queue_not_drainable"}
+
+    interval_seconds = max(1, int(config.wuwa_send_queue_worker_interval_seconds))
+    batch_size = max(1, int(config.wuwa_send_queue_worker_batch_size))
+
+    async def _queue_worker_job() -> None:
+        async def transport(send_request: SendRequest) -> DeliveryReceipt:
+            bot = bot_provider()
+            if bot is None:
+                return DeliveryReceipt(
+                    request_id=send_request.request_id,
+                    state=ReceiptState.FAILED_RETRYABLE,
+                    transport="onebot.v11",
+                    public_message="当前没有可用机器人账号，发送队列稍后重试。",
+                )
+            return await send_onebot_v11(bot, send_request)
+
+        await drain_send_queue_once(
+            send_queue,
+            transport,
+            receipt_repository=receipt_repository,
+            audit_logger=audit_logger,
+            limit=batch_size,
+        )
+
+    scheduler.add_job(
+        _queue_worker_job,
+        "interval",
+        seconds=interval_seconds,
+        id="wuwa_send_queue_worker",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    return {
+        "registered": True,
+        "reason": "registered",
+        "interval_seconds": interval_seconds,
+        "batch_size": batch_size,
+    }
+
+
+def _find_sent_request(
+    send_queue: Any,
+    request_id: str,
+) -> SendRequest | None:
+    find_request = getattr(send_queue, "find_request", None)
+    if callable(find_request):
+        found = find_request(request_id)
+        if found is not None:
+            return found
+    return next(
+        (
+            request
+            for request in reversed(send_queue.sent_requests)
+            if request.request_id == request_id
+        ),
+        None,
+    )
+
+
+def _record_runtime_diagnostic(
+    *,
+    config: Config,
+    diagnostics_store: DiagnosticsStore,
+    message: IncomingMessage,
+    capability_id: str,
+    receipt: DeliveryReceipt,
+    send_queue: Any,
+    audit_logger: AuditRepository,
+) -> RuntimeDiagnostic | None:
+    if capability_id in NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS:
+        return None
+    diagnostic = build_runtime_diagnostic(
+        config,
+        message=message,
+        capability_id=capability_id,
+        receipt=receipt,
+        send_request=_find_sent_request(send_queue, message.request_id),
+        audit_records=audit_logger.list_records(message.request_id),
+    )
+    return diagnostics_store.record(diagnostic)
+
+
+def _record_chat_history_turn(
+    recorder: ConversationHistoryRecorder,
+    *,
+    message: IncomingMessage,
+    role: str,
+    text: str,
+    audit_logger: AuditRepository,
+) -> None:
+    try:
+        recorder.append_turn(
+            request_id=message.request_id,
+            platform=message.platform,
+            adapter=message.adapter,
+            bot_id=message.bot_id,
+            session_id=message.session_id,
+            sender_id=message.sender_id,
+            role=role,
+            text=text,
+        )
+    except Exception as exc:  # noqa: BLE001 - history failure must be observable but non-fatal.
+        audit_logger.append(
+            AuditRecord(
+                request_id=message.request_id,
+                session_id=message.session_id,
+                capability_id="wuwa.chat",
+                stage="history",
+                event="history_record_failed",
+                severity=RiskLevel.MEDIUM,
+                public_message="对话历史记录失败，但本次回复流程继续。",
+                private_debug=f"{type(exc).__name__}: {exc}",
+            )
+        )
+
+
+def _should_record_chat_history(send_request: SendRequest) -> bool:
+    return not any(
+        tag.startswith("prompt_injection") for tag in send_request.audit_tags
+    )
+
+
+def _audit_chat_history_skipped(
+    send_request: SendRequest,
+    *,
+    message: IncomingMessage,
+    audit_logger: AuditRepository,
+) -> None:
+    audit_logger.append(
+        AuditRecord(
+            request_id=message.request_id,
+            session_id=message.session_id,
+            capability_id=send_request.capability_id,
+            stage="history",
+            event="history_record_skipped",
+            severity=RiskLevel.MEDIUM,
+            public_message="对话历史未记录：输入含提示注入风险。",
+            private_debug="reason=prompt_injection",
+        )
+    )
+
+
+def _should_silently_skip_chat_receipt(
+    message: IncomingMessage,
+    receipt: DeliveryReceipt,
+    audit_logger: AuditRepository,
+) -> bool:
+    if message.session_type is not SessionType.GROUP:
+        return False
+    if receipt.state is not ReceiptState.BLOCKED or receipt.transport != "policy":
+        return False
+    try:
+        records = audit_logger.list_records(message.request_id)
+    except Exception:
+        return False
+    return any(
+        record.stage == "policy"
+        and record.event == "policy_denied"
+        and record.private_debug == "passive_group_message"
+        for record in records
+    )
+
+
+async def _deliver_onebot_send_request(
+    bot: OneBotV11Bot,
+    send_request: SendRequest,
+    audit_logger: AuditRepository,
+    receipt_repository: ReceiptRepository | None = None,
+    send_queue: Any | None = None,
+) -> DeliveryReceipt:
+    receipt = await send_onebot_v11(bot, send_request)
+    if send_queue is not None:
+        try:
+            if receipt.state.value == "sent" and hasattr(send_queue, "mark_sent"):
+                send_queue.mark_sent(send_request.request_id, receipt.public_message)
+            elif receipt.state.value == "failed_retryable" and hasattr(
+                send_queue,
+                "mark_retryable_failure",
+            ):
+                send_queue.mark_retryable_failure(
+                    send_request.request_id,
+                    receipt.public_message,
+                )
+        except Exception as exc:  # noqa: BLE001 - queue status failure must not undo a send.
+            audit_logger.append(
+                AuditRecord(
+                    request_id=send_request.request_id,
+                    session_id=send_request.session_id,
+                    capability_id=send_request.capability_id,
+                    stage="sender",
+                    event="send_queue_update_failed",
+                    severity=RiskLevel.MEDIUM,
+                    public_message="发送队列状态更新失败，但投递流程继续。",
+                    private_debug=f"{type(exc).__name__}: {exc}",
+                )
+            )
+    private_debug = f"transport={receipt.transport} state={receipt.state.value}"
+    if receipt.provider_message_id:
+        private_debug = f"{private_debug} provider_message_id=[internal]"
+    audit_logger.append(
+        AuditRecord(
+            request_id=send_request.request_id,
+            session_id=send_request.session_id,
+            capability_id=send_request.capability_id,
+            stage="transport",
+            event=_transport_audit_event(receipt),
+            severity=send_request.content.risk_level,
+            public_message=receipt.public_message,
+            private_debug=private_debug,
+        )
+    )
+    if receipt_repository is not None:
+        try:
+            receipt_repository.record(receipt)
+        except Exception as exc:  # noqa: BLE001 - sending already happened; keep failure observable.
+            audit_logger.append(
+                AuditRecord(
+                    request_id=send_request.request_id,
+                    session_id=send_request.session_id,
+                    capability_id=send_request.capability_id,
+                    stage="receipt",
+                    event="receipt_record_failed",
+                    severity=RiskLevel.MEDIUM,
+                    public_message="发送回执记录失败，但投递流程继续。",
+                    private_debug=f"{type(exc).__name__}: {exc}",
+                )
+            )
+    return receipt
+
+
+async def _run_capability_through_pipeline(
+    *,
+    bot: OneBotV11Bot,
+    event: Any,
+    config: Config,
+    pipeline: Any,
+    send_queue: Any,
+    audit_logger: AuditRepository,
+    diagnostics_store: DiagnosticsStore,
+    capability: Any,
+    capability_id: str,
+    receipt_repository: ReceiptRepository | None = None,
+    record_diagnostic: bool = True,
+    offload_sync_capability: bool = False,
+) -> DeliveryReceipt:
+    message = _incoming_from_nonebot_event(
+        event,
+        bot_id=str(getattr(bot, "self_id", "unknown")),
+    )
+    if offload_sync_capability:
+        from .runtime import offload_capability
+
+        receipt = await pipeline.handle_async(
+            message,
+            offload_capability(capability),
+            capability_id=capability_id,
+        )
+    else:
+        receipt = pipeline.handle(message, capability, capability_id=capability_id)
+    sent_request = _find_sent_request(send_queue, message.request_id)
+    if sent_request:
+        receipt = await _deliver_onebot_send_request(
+            bot,
+            sent_request,
+            audit_logger,
+            receipt_repository,
+            send_queue,
+        )
+    if record_diagnostic:
+        _record_runtime_diagnostic(
+            config=config,
+            diagnostics_store=diagnostics_store,
+            message=message,
+            capability_id=capability_id,
+            receipt=receipt,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+        )
+    return receipt
+
 
 def _register_nonebot_handlers() -> None:
     try:
-        from nonebot import on_command, on_message
-        from nonebot.adapters import Event
+        from nonebot import get_bots, get_driver, on_command, on_message
+        from nonebot.adapters import Bot, Event
         from nonebot.params import CommandArg
         from nonebot.typing import T_State
     except Exception:
         return
 
-    from .capabilities.auto_send import build_auto_send_preview_text, is_auto_send_command_text
+    from .capabilities.auto_send import build_auto_send_preview_result, is_auto_send_command_text
+    from .capabilities.chat import build_chat_capability
+    from .capabilities.debug import (
+        build_audit_query_result,
+        build_config_query_result,
+        build_context_query_result,
+        build_dialogue_query_result,
+        build_history_clear_result,
+        build_llm_query_result,
+        build_llm_setup_query_result,
+        build_persona_query_result,
+        build_queue_query_result,
+        build_readiness_query_result,
+        build_receipt_query_result,
+        build_recent_query_result,
+        build_roles_query_result,
+        build_runtime_control_result,
+    )
     from .capabilities.echo import build_status_result
+    from .capabilities.memory import is_memory_command_text, route_memory_command
+    from .character import build_character_context_provider
+    from .character import build_conversation_history_provider
+    from .policy import (
+        build_quiet_hours_checker,
+        build_rate_limiter,
+        build_reply_budget_settings,
+        build_role_settings,
+    )
+    from .runtime import RuntimeControlState, RuntimePipeline, offload_capability
+    from .sender import build_send_queue
+
+    try:
+        driver_config = get_driver().config.model_dump()
+    except ValueError as exc:
+        if "not been initialized" not in str(exc):
+            raise
+        return
+
+    config = Config.model_validate(driver_config)
+    audit_logger = build_audit_repository(config)
+    receipt_repository = build_receipt_repository(config)
+    send_queue = build_send_queue(config, audit_logger=audit_logger)
+    diagnostics_store = build_diagnostics_store(config)
+    runtime_control = RuntimeControlState()
+    pipeline = RuntimePipeline(
+        send_queue=send_queue,
+        audit_logger=audit_logger,
+        reply_budget_settings=build_reply_budget_settings(config),
+        role_settings=build_role_settings(config),
+        group_command_prefix=config.wuwa_runtime_group_command_prefix,
+        runtime_enabled=config.wuwa_runtime_enabled,
+        receipt_repository=receipt_repository,
+        rate_limiter=build_rate_limiter(config),
+        quiet_hours_checker=build_quiet_hours_checker(config),
+        runtime_control=runtime_control,
+    )
+
+    def _first_online_bot() -> OneBotV11Bot | None:
+        try:
+            return next(iter(get_bots().values()), None)
+        except Exception:
+            return None
+
+    try:
+        from nonebot_plugin_apscheduler import scheduler
+    except Exception as exc:  # noqa: BLE001 - optional worker must fail closed.
+        if config.wuwa_send_queue_worker_enabled:
+            audit_logger.append(
+                AuditRecord(
+                    request_id="wuwa_send_queue_worker",
+                    session_id="runtime",
+                    capability_id="wuwa.send_queue_worker",
+                    stage="scheduler",
+                    event="send_queue_scheduler_unavailable",
+                    severity=RiskLevel.MEDIUM,
+                    public_message="发送队列 worker 未注册：APScheduler 插件不可用。",
+                    private_debug=f"{type(exc).__name__}: {exc}",
+                )
+            )
+    else:
+        _register_send_queue_scheduler(
+            scheduler=scheduler,
+            config=config,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            bot_provider=_first_online_bot,
+        )
+
+    history_recorder = build_conversation_history_provider(config)
+    chat_capability = offload_capability(
+        build_chat_capability(
+            character_provider=build_character_context_provider(config),
+            llm_provider=_build_chat_llm_provider(config),
+            temperature=config.wuwa_chat_temperature,
+            max_tokens=config.wuwa_chat_max_tokens,
+            context_preflight_errors=persona_context_preflight_errors(config),
+            llm_preflight_errors=llm_generation_parameter_errors(config),
+            output_max_chars_per_message=config.wuwa_reply_max_chars_per_message,
+        )
+    )
 
     async def _is_auto_send_plain_text(event: Event) -> bool:
         return is_auto_send_command_text(event.get_plaintext())
+
+    async def _is_plain_chat_event(event: Event) -> bool:
+        return config.wuwa_chat_enabled and _is_plain_chat_text(event.get_plaintext())
 
     status = on_command(
         "wuwa",
@@ -44,26 +598,352 @@ def _register_nonebot_handlers() -> None:
         block=True,
     )
     auto_send = on_message(rule=_is_auto_send_plain_text, priority=21, block=True)
+    chat = on_message(rule=_is_plain_chat_event, priority=50, block=True)
 
     @status.handle()
-    async def _handle_status(args=CommandArg()) -> None:
-        if args.extract_plain_text().strip() != "status":
-            from .capabilities.echo import build_help_result
+    async def _handle_status(bot: Bot, event: Event, args=CommandArg()) -> None:
+        command_text = args.extract_plain_text().strip()
 
-            await status.finish(build_help_result().body)
-        result = build_status_result()
-        await status.finish(result.body)
+        if is_memory_command_text(command_text):
+            capability_id = "wuwa.memory"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                memory_db_path = config.wuwa_memory_db_path if config.wuwa_memory_enabled else ""
+                return route_memory_command(
+                    command_text,
+                    sender_id=message.sender_id,
+                    session_id=message.session_id,
+                    db_path=memory_db_path,
+                    request_id=message.request_id,
+                )
+
+        elif command_text == "why" or command_text.startswith("why "):
+            capability_id = "wuwa.why"
+            why_query = command_text.removeprefix("why").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_why_result(
+                    diagnostics_store,
+                    request_id=message.request_id,
+                    session_id=message.session_id,
+                    query=why_query,
+                )
+
+        elif command_text == "receipt" or command_text.startswith("receipt "):
+            capability_id = "wuwa.receipt"
+            receipt_query = command_text.removeprefix("receipt").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_receipt_query_result(
+                    receipt_repository,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    query=receipt_query,
+                )
+
+        elif command_text == "audit" or command_text.startswith("audit "):
+            capability_id = "wuwa.audit"
+            audit_query = command_text.removeprefix("audit").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_audit_query_result(
+                    audit_logger,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    query=audit_query,
+                )
+
+        elif command_text == "recent" or command_text.startswith("recent "):
+            capability_id = "wuwa.recent"
+            recent_query = command_text.removeprefix("recent").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_recent_query_result(
+                    diagnostics_store,
+                    receipt_repository,
+                    audit_logger,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    query=recent_query,
+                )
+
+        elif command_text == "queue":
+            capability_id = "wuwa.queue"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_queue_query_result(
+                    send_queue,
+                    config,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                )
+
+        elif command_text == "history clear":
+            capability_id = "wuwa.history"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_history_clear_result(
+                    history_recorder,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    platform=message.platform,
+                    adapter=message.adapter,
+                    bot_id=message.bot_id,
+                    session_id=message.session_id,
+                    sender_id=message.sender_id,
+                )
+
+        elif command_text == "context" or command_text.startswith("context "):
+            capability_id = "wuwa.context"
+            context_query = command_text.removeprefix("context").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_context_query_result(
+                    config,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    sender_id=message.sender_id,
+                    session_id=message.session_id,
+                    session_type=message.session_type,
+                    platform=message.platform,
+                    adapter=message.adapter,
+                    bot_id=message.bot_id,
+                    query=context_query,
+                )
+
+        elif command_text == "llm":
+            capability_id = "wuwa.llm"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_llm_query_result(
+                    config,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                )
+
+        elif command_text == "setup llm":
+            capability_id = "wuwa.setup.llm"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_llm_setup_query_result(
+                    config,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                )
+
+        elif command_text == "config":
+            capability_id = "wuwa.config"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_config_query_result(
+                    config,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                )
+
+        elif command_text == "readiness":
+            capability_id = "wuwa.readiness"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_readiness_query_result(
+                    config,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    runtime_control=runtime_control,
+                )
+
+        elif command_text == "dialogue" or command_text.startswith("dialogue "):
+            capability_id = "wuwa.dialogue"
+            dialogue_query = command_text.removeprefix("dialogue").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_dialogue_query_result(
+                    config,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    query=dialogue_query,
+                )
+
+        elif command_text == "roles":
+            capability_id = "wuwa.roles"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_roles_query_result(
+                    config,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                )
+
+        elif command_text == "persona":
+            capability_id = "wuwa.persona"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_persona_query_result(
+                    config,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                )
+
+        elif command_text in {"pause", "resume"}:
+            capability_id = "wuwa.control"
+            control_command = command_text
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_runtime_control_result(
+                    runtime_control,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    command=control_command,
+                    actor_id=message.sender_id,
+                )
+
+        elif command_text != "status":
+            capability_id = "wuwa.help"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                from .capabilities.echo import build_help_result
+
+                return build_help_result(request_id=message.request_id)
+
+        else:
+            capability_id = "wuwa.status"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_status_result(
+                    config,
+                    request_id=message.request_id,
+                    runtime_control=runtime_control,
+                )
+
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=capability,
+            capability_id=capability_id,
+            record_diagnostic=capability_id not in NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS,
+            offload_sync_capability=capability_id in OFFLOADED_CAPABILITY_IDS,
+        )
+        if receipt.state.value != "sent":
+            await status.finish(receipt.public_message)
 
     @auto_send.handle()
-    async def _handle_auto_send(event: Event, state: T_State) -> None:
+    async def _handle_auto_send(bot: Bot, event: Event, state: T_State) -> None:
         command_text = event.get_plaintext().strip()
-        preview = build_auto_send_preview_text(
-            command_text,
-            actor_sender_id=event.get_user_id(),
-            actor_session_id=event.get_session_id(),
+
+        def capability(message: IncomingMessage, decision: Any) -> CapabilityResult:
+            result = build_auto_send_preview_result(
+                command_text,
+                actor_sender_id=message.sender_id,
+                actor_session_id=message.session_id,
+                actor_session_type=message.session_type,
+                request_id=message.request_id,
+            )
+            return result.model_copy(
+                update={
+                    "capability_id": decision.capability_id,
+                    "audit_tags": [*decision.audit_tags, *result.audit_tags],
+                }
+            )
+
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=capability,
+            capability_id="wuwa.auto_send.preview",
         )
         state["wuwa_preview_only"] = True
-        await auto_send.finish(preview)
+        if receipt.state.value != "sent":
+            await auto_send.finish(receipt.public_message)
+
+    @chat.handle()
+    async def _handle_chat(bot: Bot, event: Event) -> None:
+        message = _incoming_from_nonebot_event(
+            event,
+            bot_id=str(getattr(bot, "self_id", "unknown")),
+        )
+        receipt = await pipeline.handle_async(
+            message,
+            chat_capability,
+            capability_id="wuwa.chat",
+        )
+        sent_request = _find_sent_request(send_queue, message.request_id)
+        history_should_record = False
+        if sent_request:
+            history_should_record = _should_record_chat_history(sent_request)
+            if history_should_record:
+                _record_chat_history_turn(
+                    history_recorder,
+                    message=message,
+                    role="user",
+                    text=message.plain_text,
+                    audit_logger=audit_logger,
+                )
+            else:
+                _audit_chat_history_skipped(
+                    sent_request,
+                    message=message,
+                    audit_logger=audit_logger,
+                )
+            transport_receipt = await _deliver_onebot_send_request(
+                bot,
+                sent_request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+            if transport_receipt.state.value == "sent":
+                if history_should_record:
+                    _record_chat_history_turn(
+                        history_recorder,
+                        message=message,
+                        role="assistant",
+                        text=sent_request.content.text_fallback,
+                        audit_logger=audit_logger,
+                    )
+                _record_runtime_diagnostic(
+                    config=config,
+                    diagnostics_store=diagnostics_store,
+                    message=message,
+                    capability_id="wuwa.chat",
+                    receipt=transport_receipt,
+                    send_queue=send_queue,
+                    audit_logger=audit_logger,
+                )
+                return
+            _record_runtime_diagnostic(
+                config=config,
+                diagnostics_store=diagnostics_store,
+                message=message,
+                capability_id="wuwa.chat",
+                receipt=transport_receipt,
+                send_queue=send_queue,
+                audit_logger=audit_logger,
+            )
+            await chat.finish(transport_receipt.public_message)
+        _record_runtime_diagnostic(
+            config=config,
+            diagnostics_store=diagnostics_store,
+            message=message,
+            capability_id="wuwa.chat",
+            receipt=receipt,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+        )
+        if _should_silently_skip_chat_receipt(message, receipt, audit_logger):
+            return
+        await chat.finish(receipt.public_message)
 
 
 _register_nonebot_handlers()

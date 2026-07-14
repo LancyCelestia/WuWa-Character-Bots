@@ -96,6 +96,7 @@ class IncomingMessage(StrictBaseModel):
     reply_to_message_id: str | None = None
     timestamp: datetime = Field(default_factory=_utc_now)
     message_id: str | None = None
+    sender_roles: list[str] = Field(default_factory=lambda: ["user"])
     risk_level: RiskLevel = RiskLevel.LOW
     privacy_level: PrivacyLevel | None = None
     debug_id: str = Field(default_factory=new_debug_id)
@@ -108,6 +109,10 @@ class IncomingMessage(StrictBaseModel):
                 if self.session_type is SessionType.GROUP
                 else PrivacyLevel.PERSONAL
             )
+        roles = [role.strip() for role in self.sender_roles if role.strip()]
+        if "user" not in roles:
+            roles.insert(0, "user")
+        self.sender_roles = list(dict.fromkeys(roles))
         return self
 
 
@@ -120,6 +125,7 @@ class PolicyEvaluation(StrictBaseModel):
     cooldown_key: str
     quota_key: str | None = None
     privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
+    actor_roles: list[str] = Field(default_factory=lambda: ["user"])
     audit_tags: list[str] = Field(default_factory=list)
     debug_id: str = Field(default_factory=new_debug_id)
 
@@ -138,6 +144,7 @@ class BotDecision(StrictBaseModel):
     decision_reason: str
     risk_level: RiskLevel = RiskLevel.LOW
     privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
+    actor_roles: list[str] = Field(default_factory=lambda: ["user"])
     audit_tags: list[str] = Field(default_factory=list)
 
     @field_validator("max_messages")

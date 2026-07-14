@@ -9,8 +9,12 @@ class EmotionSignal(StrictBaseModel):
     request_id: str
     session_id: str
     speaker_id: str
+    source: str = "unknown"
+    signal_kind: str = "emotion"
     emotion_label: str = "unknown"
     confidence: float = 0.0
+    evidence: str = ""
+    guidance: str = ""
     privacy_level: PrivacyLevel = PrivacyLevel.PERSONAL
 
 
@@ -40,6 +44,18 @@ class MemoryRetrievalResult(StrictBaseModel):
     facts: list[dict[str, str]] = Field(default_factory=list)
     raw_message_refs: list[str] = Field(default_factory=list)
     confidence: float = 0.0
+    privacy_level: PrivacyLevel = PrivacyLevel.PERSONAL
+
+
+class ConversationTurn(StrictBaseModel):
+    role: str
+    text: str
+    created_at: str
+
+
+class ConversationHistoryResult(StrictBaseModel):
+    request_id: str
+    turns: list[ConversationTurn] = Field(default_factory=list)
     privacy_level: PrivacyLevel = PrivacyLevel.PERSONAL
 
 
@@ -95,6 +111,9 @@ class ContextBundle(StrictBaseModel):
     persona: PersonaProfile
     tone: ToneProfile
     memory_results: MemoryRetrievalResult
+    conversation_history: ConversationHistoryResult = Field(
+        default_factory=lambda: ConversationHistoryResult(request_id="")
+    )
     knowledge_results: RetrievalResult
     current_message: str
     sender_id: str

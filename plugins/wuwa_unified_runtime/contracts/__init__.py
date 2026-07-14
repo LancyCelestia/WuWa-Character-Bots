@@ -7,6 +7,8 @@ from .auto_send import (
 )
 from .character import (
     ContextBundle,
+    ConversationHistoryResult,
+    ConversationTurn,
     EmotionSignal,
     KnowledgeChunk,
     KnowledgeSource,
@@ -51,6 +53,8 @@ __all__ = [
     "BotDecision",
     "CapabilityResult",
     "ContextBundle",
+    "ConversationHistoryResult",
+    "ConversationTurn",
     "DraftPreview",
     "EmotionSignal",
     "GeneratedDraft",

@@ -1,3 +1,3 @@
-from .pipeline import RuntimePipeline
+from .pipeline import RuntimeControlState, RuntimePipeline, offload_capability
 
-__all__ = ["RuntimePipeline"]
+__all__ = ["RuntimeControlState", "RuntimePipeline", "offload_capability"]
