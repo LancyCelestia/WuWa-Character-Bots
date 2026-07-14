@@ -1,21 +1,36 @@
 # WuWa 角色机器人全量落地设计规格
 
-> 日期：2026-07-14
+> 日期：2026-07-15
 >
-> 状态：候选规格，已按用户批准的技术方向固化，等待用户对本文书面复核后进入实施计划
+> 状态：用户已复核并批准；已纳入通用角色包、动态关系、永久群归档与多平台能力矩阵
 >
 > 适用范围：`plugins/wuwa_unified_runtime/`、配套测试、迁移、运行脚本与运维界面
 >
 > 权威来源：仓库根文档、`docs/specs/`、角色档案、研究结论及当前代码行为；本文定义后续实现的目标契约
 
+## 0. 一页摘要
+
+本项目不是只做一个守岸人聊天插件，而是建设一个可扩展的角色机器人运行时：鸣潮角色是第一批角色包，后续可以接入其他鸣潮角色和其他 IP，且不需要重写投递、记忆、知识、媒体或运维基础设施。
+
+用户已确认的产品方向：
+
+- 角色采用通用 `UniversePack + CharacterPack` 注册接口；守岸人、爱弥斯、菲比只是首批实现。
+- 机器人根据明确自述、称呼偏好、对话内容和长期互动形成可纠正的用户呈现提示与好感度，但不把说话风格刻板地断言为性别事实。
+- 关系可从陌生、熟悉发展为好友、亲密朋友、闺蜜或同伴；伴侣分支必须有明确且持续的用户信号，不能只靠分数自动认定。
+- 所有关系模式保持克制、中立，不说露骨内容，不主动撒狗粮，不表现占有、嫉妒或情感绑架；群聊不公开私人好感度或关系状态。
+- 群归档逐群启用后默认永久保留文字、链接和消息结构，并从原始记录中提炼可追溯的群级长期记忆；不自动下载大型媒体文件。
+- 自动发送必须预览和确认，高风险路径增加管理员确认。
+- 平台适配以能力矩阵覆盖国内常用社交、视频、直播、动态、商城、音乐和游戏百科；优先官方/公开接口，并通过缓存、限流、重试、浏览器降级和结构漂移检测提高稳定性，不绕过验证码、登录墙或访问控制。
+- 实施顺序仍为 M1 投递正确性、M2 通用角色/人格知识、M3 用户能力、M4 自动化、M5 真实投递与运维。
+
 ## 1. 目标与成功定义
 
-本项目要在保留现有统一运行时契约的前提下，把仓库中已经描述但尚未完整落地的角色机器人能力实现为可运行、可迁移、可审计、可验证的生产级系统。
+本项目要在保留现有统一运行时契约的前提下，把仓库中已经描述但尚未完整落地的角色机器人能力实现为可运行、可迁移、可审计、可验证的生产级系统，并把鸣潮特有内容封装为可替换角色/IP 包。
 
 成功不以“存在类或接口”为准，而以行为证据为准：
 
 - 用户消息从统一入口进入，所有真实投递都经过同一个 `DeliveryCoordinator`。
-- 守岸人、爱弥斯、菲比的人格、历史、记忆与关系状态不会串用。
+- 守岸人、爱弥斯、菲比及未来其他 IP 角色的人格、历史、记忆与关系状态不会串用。
 - 本地百科按文章检索并提供安全引用，不能因为“召回到文本”就假装答案可靠。
 - Wiki、媒体、群总结、天气、告警、订阅和自动发送均遵守权限、隐私、确认、安静时间和投递策略。
 - SQLite 并发、重启、租约过期、容量不足和外部超时都有明确且可观察的状态。
@@ -73,8 +88,8 @@ Adapter Event
 
 辅助服务通过显式协议接入：
 
-- `PersonaRegistry`、`PersonaResolver`、`CharacterContextProvider`
-- `KnowledgeProvider`、`SourceAdapter`、`GroupMessageArchive`
+- `UniverseRegistry`、`PersonaRegistry`、`PersonaResolver`、`CharacterContextProvider`
+- `KnowledgeProvider`、`PlatformSourceAdapter`、`GroupMessageArchive`、`GroupMemoryConsolidator`
 - `WeatherProvider`、`OfficialAlertProvider`
 - `AutoSendRepository`、`SubscriptionRepository`、`KillSwitchRepository`
 - `TransportRegistry`、`ReceiptRepository`、`AuditLogger`
@@ -94,7 +109,7 @@ Adapter Event
 | 里程碑 | 核心交付 | 进入条件 | 完成条件 |
 | --- | --- | --- | --- |
 | M1 | 运行时安全修复、`DeliveryCoordinator`、路由与队列 fencing | 当前 M0 门禁可复现 | 所有真实发送只有一个所有者，handler/并发/多 bot 测试通过 |
-| M2 | B1 守岸人人格注册与文章级知识；B2 三角色隔离与切换 | M1 投递语义稳定 | 三角色人格、历史、记忆、关系和引用不串用 |
+| M2 | B1 守岸人人格注册与文章级知识；B2 三角色隔离与切换；通用角色/IP 包接口 | M1 投递语义稳定 | 首批三角色及跨 IP fixture 的人格、历史、记忆、关系和引用不串用 |
 | M3 | Wiki、媒体卡片、群总结、天气查询与官方告警规范化 | M2 知识和审查可复用 | 每项能力有确定性 fallback、权限/隐私和来源证据 |
 | M4 | 自动发送、告警/内容订阅、cursor、digest、持久 kill switch | M1 协调器和 M3 source 可用 | durable 状态机及 standing authorization 经重启/竞争/失败测试 |
 | M5 | 真实 transport 验证和认证运维 UI | M1-M4 状态可观察 | 真实验证等级可区分，UI 安全边界和浏览器测试通过 |
@@ -381,6 +396,7 @@ B2 必须先完成：
 
 manifest 是运行时人格真源，至少包含：
 
+- `universe_id`、`franchise_id`、`character_id`
 - `profile_id`、`display_name`、`version`、`enabled`
 - `core_identity`
 - `speech_rules`
@@ -390,6 +406,21 @@ manifest 是运行时人格真源，至少包含：
 - `source_refs`
 - `knowledge_collections`
 - `fallback_templates`
+
+`UniversePack` 定义 IP/世界观级 namespace、知识集合、命令别名、来源许可和可用 capability；`CharacterPack` 只定义角色人格、语气、关系策略、角色知识引用和素材。通用 runtime 不得导入守岸人或鸣潮专用模块。`/wuwa character` 作为鸣潮兼容入口，内部调用通用角色选择 capability；未来 IP 可以注册独立前缀或统一角色入口。
+
+全局角色身份使用 canonical key：
+
+```text
+persona_key = universe_id + ":" + character_id + ":" + profile_id
+```
+
+- 三个 component 都是经过 schema 校验的稳定 slug，不能包含 `:`，大小写归一化后比较。
+- `pack_schema_version` 定义 manifest 结构版本；`pack_version` 定义内容版本，不进入稳定 persona key。
+- pack 只从配置声明的 registry roots 或显式 entry points 发现，不扫描任意工作目录。
+- 两个 pack 注册同一 canonical key、同一 namespace alias 或同一命令前缀时启动失败并报告冲突来源，不能按加载顺序覆盖。
+- alias 只用于输入解析，resolver 的输出永远是 canonical key。
+- pack 升级保留 canonical key；删除、拆分或重命名 key 必须提供显式 migration alias 和数据迁移，不能静默新建人格。
 
 原始 Markdown、TXT、DOCX 的职责是 provenance、lore 和可检索材料，不会因为出现“必须”“系统”“用户是漂泊者”等关键词自动升级为 system 指令。
 
@@ -406,7 +437,7 @@ manifest 是运行时人格真源，至少包含：
 
 ### 6.3 人格选择真源
 
-`BotDecision.persona_profile_id` 是本次请求的人格选择唯一真源。以下组件必须使用同一个 id：
+`BotDecision.persona_profile_id` 是本次请求的人格选择唯一真源；为保持现有字段兼容，其值升级为上述全局 canonical persona key。以下组件必须使用同一个 key：
 
 - context provider
 - prompt compiler
@@ -419,6 +450,8 @@ manifest 是运行时人格真源，至少包含：
 - audit metadata
 
 `audit_tags` 只能记录事实，不能反向改变人格。默认配置 `WUWA_RUNTIME_DEFAULT_PERSONA` 必须由 resolver 实际消费。
+
+legacy adapter 将旧值 `shorekeeper` 显式映射为配置声明的 canonical key，例如 `wuwa:shorekeeper:shorekeeper`。无法唯一映射的旧值进入 not-ready/迁移错误，不根据 display name 或列表顺序猜测。
 
 ### 6.4 绑定与作用域
 
@@ -434,19 +467,59 @@ manifest 是运行时人格真源，至少包含：
 历史与记忆键至少包含：
 
 ```text
-platform / adapter / bot_id / session scope / subject_id / persona_profile_id
+platform / adapter / bot_id / session scope / subject_id / canonical persona_key
 ```
 
 现有单人格数据在 B2 迁移时归属到迁移记录中的旧默认 profile；迁移前后数量与作用域必须可核对。
 
 ### 6.5 关系与表达边界
 
-默认用户身份是“访客/同行者”，不是自动认定的漂泊者、恋人、唯一伴侣或专属对象。
+默认用户身份未知，不自动认定为漂泊者、特定性别、恋人、唯一伴侣或专属对象。
 
-- 群聊禁止排他、占有、恋爱承诺和针对单一成员的长期亲密关系推断。
-- 私聊只有在用户明确 opt-in 且策略允许时，才能使用更亲近但仍非排他的表达。
+新增 persona-scoped `RelationshipState`：
+
+- `presentation_hint`：unknown、feminine、masculine、neutral 或 user-defined。
+- `presentation_confidence` 与可审计但不外显的 evidence provenance。
+- `affinity`、`familiarity`、`trust`、`rapport`。
+- `relationship_mode`：visitor、acquaintance、friend、close_friend、best_friend、companion、partner。
+- `version`、`last_transition_at` 与用户可撤销/纠正标记。
+
+持久化键与投影边界：
+
+```text
+platform / adapter / bot_id / subject_user_id / canonical persona_key / evidence_scope / scope_id
+```
+
+- `evidence_scope=private` 只由该用户与 bot 的私聊更新，私聊回复也只读取该 private state。
+- `evidence_scope=group_public` 必须包含 group/channel id，只由同一群的公开互动更新；群聊只读取同一群的 public state。
+- 私聊 affinity、partner/best_friend mode、私密称呼和 presentation 证据默认不投影到群聊。
+- 群聊 public state 的输出关系上限为 friend/companion，并强制使用群可见中性称呼；即使 private state 是 partner，也不能通过语气、昵称或暗示泄漏。
+- 群聊证据默认不提升 private relationship mode；未来若允许合并，必须由用户明确 opt-in，并记录来源群和撤销边界。
+- 用户设置的 account-global 称呼偏好只有在其明确标记为 public 时才可跨 scope 使用。
+
+呈现与性别判断规则：
+
+- 用户明确自述、主动选择的身份或称呼偏好权重最高。
+- 代词、持续自称和明确角色扮演语境可以形成中等证据。
+- 名字、语气、兴趣和行为只能形成低置信提示，不能单独断言性别。
+- 置信度不足时使用中性称呼；推断不能用于权限、风险、价格、推荐资格或其他实质决策。
+- 用户纠正后立即覆盖旧提示，并允许查看、重置或删除相关状态。
+
+好感度与关系转换规则：
+
+- 分数来自持续互动、共同经历、边界尊重和明确反馈，不因付费、频繁刷消息或情绪施压而奖励。
+- 使用阈值、滞回和时间证据避免一次对话突然跨级；不同角色分别计分，不能跨 persona 复制亲密度。
+- friend、close_friend、best_friend 或 companion 可以随长期互动自然形成。
+- partner 不能只因好感度高自动形成，必须同时存在明确、持续且可撤销的用户关系信号，并通过角色关系策略允许。
+- 用户明确扮演女漂时，可根据互动发展为同伴、闺蜜或克制的伴侣；不能把该偏好自动套到其他用户。
+
+表达边界：
+
+- 群聊不展示私人 affinity、presentation 推断或 relationship mode，不进行针对单一成员的暧昧表演。
+- 所有模式禁止露骨内容、公开撒狗粮、占有、嫉妒、排他承诺和情感绑架。
+- partner 仍以自然陪伴、信任和共同经历表达，不依赖直白情话或身体/性暗示。
 - 原始剧情中的关系不能直接映射为当前用户关系。
-- profile reviewer 检查称谓、排他性、身份误认和人格漂移。
+- profile reviewer 检查称谓、错误性别断言、关系跳级、排他性、身份误认和人格漂移。
 - fallback 文案来自当前 profile，不得硬编码守岸人。
 
 ### 6.6 文档摄取
@@ -540,14 +613,59 @@ quality 与 trust 只能校正相关结果，不能让高质量但无关的文�
 
 ### 7.2 媒体解析
 
-`/wuwa parse <url>` 使用 allowlist source adapter。群自动解析默认关闭，并要求逐群 opt-in；单条消息最多解析一个资源。
+`/wuwa parse <url>` 使用 allowlist `PlatformSourceAdapter`。群自动解析默认关闭，并要求逐群 opt-in；单条消息最多解析一个资源。
 
-首个适配器限定 Bilibili 公开视频 metadata：
+每个平台通过 capability manifest 声明实际支持范围：
 
-- 不下载或重托管视频。
-- 不读取浏览器 cookie。
-- 不访问私信、订阅、评论管理或直播控制。
-- 不把未公开数据写入缓存。
+- public profile / channel
+- dynamic / feed / article
+- long video / short video
+- live room / replay metadata
+- commerce product / storefront metadata
+- music track / album / artist / playlist
+- game wiki / official announcement / activity
+
+首版固定覆盖矩阵如下。状态：`P=supported_public`、`A=auth_required`、`B=source_blocked`、`N=not_applicable`。
+
+| 平台/adapter | 子里程碑 | 主页 | 动态/文章 | 视频 | 直播 | 商城 | 音乐 | 百科 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Bilibili | M3a | P | P | P | P | P | N | P |
+| KuroBBS/库街区 | M3a | P | P | P | N | N | N | P |
+| TapTap | M3a | P | P | P | N | P | N | P |
+| Bilibili Wiki | M3a | N | N | N | N | N | N | P |
+| official-game-site family | M3a | N | P | P | B | P | N | P |
+| 微博 | M3b | P | P | P | B | A | N | N |
+| 抖音 | M3b | P | P | P | P | P | N | N |
+| 快手 | M3b | P | P | P | P | P | N | N |
+| 小红书 | M3b | P | P | P | P | P | N | N |
+| 知乎 | M3b | P | P | P | N | N | N | N |
+| 百度贴吧 | M3b | P | P | P | N | N | N | N |
+| 斗鱼 | M3b | P | N | P | P | N | N | N |
+| 虎牙 | M3b | P | N | P | P | N | N | N |
+| 网易云音乐 | M3c | P | B | P | B | N | P | N |
+| QQ 音乐 | M3c | P | N | P | B | N | P | N |
+| 酷狗音乐 | M3c | P | N | P | P | N | P | N |
+| 酷我音乐 | M3c | P | N | P | B | N | P | N |
+| 咪咕音乐 | M3c | P | N | P | P | N | P | N |
+
+矩阵验收语义：
+
+- `P`：M3 必须有 URL/实体匹配、fixture parser、规范化模型、确定性卡片/fallback、失败矩阵和 fake integration；网络允许时每个平台至少执行一个 online-readonly smoke。
+- `A`：M3 只实现 auth-required 识别与阻断测试；SecretStore、撤销和审计完成后在 M5 单独启用，不计入 M3 公开功能。
+- `B`：实现确定性 `source_blocked`/challenge 结果、健康诊断和 kill switch，不把无法稳定访问伪装成支持。
+- `N`：adapter 必须明确报告 capability 不适用，不能误匹配到其他 parser。
+
+M3a、M3b、M3c 分别交付游戏/Bilibili、社交/直播和音乐矩阵；对应子里程碑只有在所有 `P` 单元通过最低证据后才完成。新增平台必须更新版本化矩阵和验收 fixture，不能用开放式范围措辞扩大已完成声明。
+
+首个完整证明仍以 Bilibili 为主，但不只覆盖视频：实现视频、动态、直播状态和会员购商品 metadata。商城适配只提供商品卡片、价格/库存时间戳和官方链接；下单、支付、抢购和账号资产操作属于独立高风险能力，在凭据存储与二次确认完成前不开放。
+
+媒体与直播规则：
+
+- 不下载或重托管完整视频、直播和音乐文件。
+- 不读取或复制用户浏览器 cookie；需要登录态的 adapter 只能使用用户显式提供、存入 SecretStore 且可撤销的专用凭据。
+- 不访问私信、评论管理、直播控制或非公开账号数据。
+- 音乐默认只提供合法公开 metadata、封面和官方播放链接，不重新分发完整音频或受版权保护的完整歌词。
+- 不把未公开数据写入公共缓存。
 
 Fetcher 必须拒绝：
 
@@ -558,7 +676,16 @@ Fetcher 必须拒绝：
 - 超过限制的响应体。
 - 未允许的 content-type。
 
-外部 source 结果先规范化为版本化结构，再生成 `media_link_compact:v1` 和同源文本 fallback。网络异常、解析漂移和授权页面必须明确失败，不交给 LLM 猜测。
+平台稳定性与“反反爬”边界：
+
+- 优先官方 API、公开结构化数据、RSS/公开 feed 和服务端允许的页面。
+- 使用 per-host 限流、条件请求、内容缓存、指数退避、抖动、熔断和请求合并，减少对站点压力。
+- 必要且条款允许时使用受限浏览器渲染作为公开页面降级路径，并限制脚本、下载、跳转和资源大小。
+- adapter 保存 fixture、schema fingerprint、解析器版本和 last-known-good；结构变化时自动降级并告警，而不是返回错误字段。
+- 遇到验证码、登录墙、签名校验失败、明确 robots/条款限制或访问控制时返回 `source_blocked_challenge` / `source_auth_required`，不实施验证码破解、指纹伪装或访问控制绕过。
+- 每个平台独立 kill switch；连续失败不能拖垮其他平台。
+
+外部 source 结果先规范化为版本化结构，再生成对应卡片和同源文本 fallback。网络异常、解析漂移和授权页面必须明确失败，不交给 LLM 猜测。
 
 ### 7.3 渲染与 artifact
 
@@ -583,15 +710,26 @@ Fetcher 必须拒绝：
 - 逐群 opt-in，默认关闭。
 - scope：platform/adapter/bot/group。
 - 每次从 disabled 变为 enabled 都递增 `archive_generation`；每条原文记录所属 generation。
-- 默认保留 7 天，每群最多 20,000 条。
+- 当前部署默认 `retention_mode=forever`，永久保留文字、链接、回复关系和结构化 segment metadata；不自动下载大型图片、语音、视频或文件正文。
+- 不设置通过删除旧记录实现的容量上限；按时间分区、压缩冷数据并建立必要索引。达到磁盘高水位时告警并明确报告写入失败风险，不能静默裁剪历史。
 - 原始消息不进入 audit 或通用诊断。
-- 关闭 opt-in、删除群配置或 bot 离群时立即停止新写入，并创建包含 scope、`cutoff_generation`、cutoff time 的 purge tombstone；主存储中 `generation <= cutoff_generation` 的原文必须在 24 小时内清除，期间 summary 命令不可用。
-- 24 小时内重新启用会创建新 generation，不能取消旧 tombstone；purger 只删除 cutoff 以前的代，不得误删新代消息。
-- 显式“删除群归档”命令在同一事务内记录旧 generation 的 durable cutoff tombstone、切换到新 generation 并清除旧代主存储；只有全部提交成功后才返回成功回执。
-- TTL/容量清理在定时任务和每次读取前执行，避免已过期内容继续参与总结。
+- 关闭 opt-in 或 bot 离群时立即停止新写入，但在 forever 模式下保留既有记录供授权查询；重新启用创建新 generation。
+- 只有显式“删除群归档”操作才创建包含 scope、`cutoff_generation`、cutoff time 的 durable purge tombstone。
+- 删除命令的本地事务只负责：锁定旧 generation、写入 tombstone、创建幂等 purge job、切换到新 generation，并使旧代立即对查询、summary、memory retrieval 不可见。
+- purge job 状态为 `purge_pending -> purge_running -> purge_completed`，失败进入带重试信息的 `purge_failed_retryable` 或需人工处理的 `purge_failed_final`。
+- worker 按 tombstone 幂等清理全部时间分区、全文索引、派生群记忆、artifact 引用和备份删除清单；进程重启后继续未完成 job。
+- 命令即时回执只能表示“删除请求已接受且旧数据已隐藏”；只有 job 完成后才报告“全部副本已清除”。
 - 删除审计只记录脱敏 scope hash、删除条数和完成时间，不保存被删正文。
-- 若部署启用备份，群归档备份不得超过同一 7 天保留窗口；恢复流程必须先重放 tombstone，再开放读取，保证旧代不会复活。
-- tombstone 只有在主存储 purge 完成、所有可能含旧代的备份均已过期且至少保留 8 天后才可 GC。
+- 恢复流程必须先重放 tombstone，再开放读取，保证已显式删除的旧代不会从备份复活。
+- tombstone 只有在主存储和所有备份中的对应代均确认清除后才可 GC。
+
+`GroupMemoryConsolidator` 定期或按管理员命令从原始归档提炼群级长期记忆：
+
+- 只提取长期话题、共同经历、明确决定、行动项和可验证偏好，不建立成员心理画像。
+- 每条记忆保留 source message ids、generation、confidence、created/updated time，可追溯回原始证据。
+- 原始归档和提炼记忆分表；构造 prompt 时只检索相关记忆与少量证据，不把全部聊天记录塞入模型。
+- 群级记忆不能写入个人私聊记忆，也不能跨群、跨 bot、跨 persona 或跨 IP 复用。
+- 删除原始 generation 时同步删除或重建受影响的派生记忆。
 
 `/wuwa summary [N|--since|--topic]`：
 
@@ -770,6 +908,8 @@ M5 UI 实施前必须先使用 `frontend-design-ui-ux` 产出锁定的设计规�
 
 - 群、私聊、用户、persona 和 bot/account 都是独立作用域。
 - 最小化保存；精确位置、凭据、群原文和个人记忆使用不同 repository 与保留策略。
+- forever 群归档是经管理员显式 opt-in 的例外：启用时必须在群内发送可见说明，只保存已声明的消息字段，并始终提供查询、导出、停用和显式删除入口。
+- presentation、affinity 和 relationship state 属于可纠正的敏感个性化数据；用户可查看、覆盖、重置或删除，且不得用于权限或其他实质决策。
 - audit 只保存必要 metadata 和脱敏错误。
 - “转私聊”不意味着可以把用户的任意私密资料注入当前回答。
 
@@ -793,7 +933,8 @@ M5 UI 实施前必须先使用 `frontend-design-ui-ux` 产出锁定的设计规�
 | history | persona/profile scope | B2 事务回填到记录中的旧默认人格 |
 | memory | persona/profile scope 与索引 | B2 同 history；删除/保留语义不变 |
 | persona bindings | 新表 | 无绑定时使用显式默认 resolver |
-| group archive | 独立新表/库 | 默认关闭，不迁移现有 history |
+| relationship state | presentation hint、affinity dimensions、mode、evidence/version | 默认 unknown/visitor；旧会话不推断性别或伴侣关系 |
+| group archive | 独立原始归档、generation、tombstone 与派生群记忆 | 默认关闭采集；启用后永久保留，不迁移现有 history |
 | auto-send | batch、recipient、transition event | 旧 preview 文案不视为可确认 batch |
 | subscription | cursor、candidate、suppression、digest | 首次只 prime |
 | kill switch | scope、actor、reason、expiry | 不依赖进程内变量 |
@@ -806,7 +947,7 @@ M5 UI 实施前必须先使用 `frontend-design-ui-ux` 产出锁定的设计规�
 - raw dossier 是 provenance/lore，不自动成为行为指令。
 - 外部 adapter 必须记录 source、fetch time、revision/etag、允许用途和缓存期限。
 - 没有明确授权或条款依据时，不批量镜像、不重托管媒体、不长期保存完整页面；只处理实现功能所需的公开 metadata 与短引用。
-- Bilibili 首阶段只处理公开视频公开 metadata，不下载内容、不使用登录 cookie。
+- 社交、直播、音乐、商城和游戏百科 adapter 只处理其 capability manifest 声明且有权访问的内容；不下载完整媒体、不窃取浏览器登录态、不自动交易，也不绕过验证码或访问控制。
 - 对来源许可、服务条款或接口稳定性不能作未经核验的法律/官方保证；实现记录事实和限制，并允许随时关闭 adapter。
 - 用户生成内容、群消息和个人数据不作为公共知识库训练或跨会话复用来源。
 
@@ -889,9 +1030,11 @@ M1：
 M2：
 
 - legacy/manifest 优先级、损坏 manifest、cache invalidation。
-- 三角色默认/绑定/禁用/不存在 profile。
-- 群/私聊/跨用户/跨 bot/跨 persona 历史和记忆隔离。
-- dossier 指令注入、关系排他表达和 profile-aware fallback。
+- 三角色与跨 IP fixture 的默认/绑定/禁用/不存在 profile。
+- 群/私聊/跨用户/跨 bot/跨 universe/跨 persona 历史、记忆和关系隔离。
+- 明确自述、低置信行为提示、误判纠正、中性回退与 presentation 删除。
+- affinity 阈值/滞回、不同关系分支、partner 明确信号门禁和跨 persona 隔离。
+- dossier 指令注入、露骨/撒狗粮/排他表达、关系跳级和 profile-aware fallback。
 - 3,521 目录解析基线、revision drift、重复/空/损坏文章。
 - 中文/英文/别名查询、无答案、歧义、引用无本机路径。
 - 首次构建失败与 last-known-good stale。
@@ -899,9 +1042,11 @@ M2：
 M3：
 
 - Wiki 低/高置信与文本 fallback。
-- URL SSRF、重定向、大小、content-type 和 parser drift。
+- 平台 capability matrix：动态、长短视频、直播、商城、音乐、百科与不支持能力的明确降级。
+- M3a/M3b/M3c 固定矩阵中每个 `P/A/B/N` 单元的对应 fixture、阻断或 online-readonly 证据。
+- URL SSRF、重定向、大小、content-type、限流/熔断、challenge/auth wall 和 parser drift。
 - renderer import 缺失、渲染失败、artifact 过期和 transport 不支持图片。
-- 群 archive opt-in、generation/cutoff tombstone、重启/恢复防复活、匿名化、冷却和 fallback summary。
+- 群 archive opt-in、永久保留、无静默裁剪、generation/cutoff tombstone、恢复防复活、派生记忆追溯/删除、匿名化、冷却和 fallback summary。
 - 天气位置歧义、同意、stale cache、预警未配置。
 - OfficialAlertProvider 规范化、来源时间、等级和管理员手动预览。
 
@@ -938,12 +1083,12 @@ M5：
 | --- | --- | --- |
 | R01-R03 统一入口、权限、隐私与运行时策略 | M1 | handler 集成、权限矩阵、零旁路发送 |
 | R04 LLM/prompt 安全与就绪 | M1-M2 | provider smoke、注入与错误矩阵 |
-| R05-R08 人格、记忆、文档与知识 | M2 | 三角色隔离、文章检索、引用与 stale 测试 |
+| R05-R08 人格、关系、记忆、文档与知识 | M2 | 通用角色包、三角色/跨 IP 隔离、动态关系、文章检索、引用与 stale 测试 |
 | R09 Wiki | M3 | 确定性回答/卡片/fallback |
-| R10-R12 source、媒体、渲染与审查 | M3-M4 | fixture、网络只读、审查矩阵 |
+| R10-R12 source、平台能力、媒体、渲染与审查 | M3-M4 | 多平台 capability fixture、网络只读、challenge 降级、审查矩阵 |
 | R13-R14 投递与队列 | M1 | 全策略、双 worker、多 bot、崩溃恢复 |
 | R15 自动发送 | M4 | durable confirmation 与逐收件人回执 |
-| R16 群总结 | M3 | 独立 archive、隐私和 fallback |
+| R16 群总结与群级记忆 | M3 | 永久独立 archive、可追溯 consolidation、隐私和 fallback |
 | R17 天气/告警 | M3-M4 | provider fixture、normalized preview、opt-in alert flow |
 | R18 扩展推荐能力 | M3+ | 每个 adapter 独立 source contract；无可靠来源时明确不可用 |
 | R19 adapter/真实 NapCat/Mail | M5 | 指定凭据环境的分级验证；Mail 在 SecretStore 前阻断 |
@@ -959,6 +1104,9 @@ R18 不是一个允许任意抓取的兜底入口。每个新能力必须有独�
 - 不让 pipeline、handler、scheduler 或 capability 各自发送。
 - 不对 OneBot 声称 exactly-once。
 - 不在 B1 直接开放三角色切换。
+- 不把 runtime、记忆或命令实现硬编码为鸣潮专用；IP 差异进入 UniversePack/CharacterPack。
+- 不根据姓名、兴趣或说话风格单独断言用户性别。
+- 不让 affinity 分数单独触发 partner，也不在任何关系模式输出露骨、撒狗粮或占有表达。
 - 不用关键词从原始档案自动生成 system 指令。
 - 不把整本百科或整篇长文章注入单轮 prompt。
 - 不用高质量分数掩盖低相关度。
@@ -968,6 +1116,7 @@ R18 不是一个允许任意抓取的兜底入口。每个新能力必须有独�
 - 不在无确认状态下真实自动发送。
 - 不用“第一个在线 bot”修复缺失路由。
 - 不因图片渲染失败阻断文本功能。
+- 不以“反反爬”为名破解验证码、伪造设备指纹、窃取 cookie 或绕过登录/访问控制。
 - 不在完成认证、CSRF、SecretStore 和二次确认前开放运维写操作。
 
 ## 18. 实施纪律
@@ -984,9 +1133,9 @@ R18 不是一个允许任意抓取的兜底入口。每个新能力必须有独�
 - 已覆盖 M1-M5 与 R01-R22。
 - 已定义 pipeline、coordinator、queue、transport 的唯一所有权。
 - 已定义 bot route、lease fencing、terminal-only prune 和 `delivery_unknown`。
-- 已定义 B1/B2 人格门禁、历史/记忆迁移和关系安全边界。
+- 已定义通用角色/IP 包、B1/B2 人格门禁、历史/记忆迁移、presentation/affinity 和关系安全边界。
 - 已定义 3,521 篇当前基线的目录解析、文章召回、证据选择、可答性、引用和 stale cache。
-- 已定义 Wiki、媒体、卡片 fallback、群总结、天气与官方告警。
+- 已定义 Wiki、多平台动态/视频/直播/商城/音乐适配、卡片 fallback、永久群归档与群级记忆、天气与官方告警。
 - 已定义自动发送、订阅 cursor/digest、kill switch 和 live probe。
 - 已定义外部来源、版权/许可的保守边界，未声称未核验授权。
 - 已区分 unit、fake integration、local smoke、online readonly 与 real E2E。
