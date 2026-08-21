@@ -70,6 +70,7 @@ from plugins.bot_unified_runtime.llm import (
     public_llm_error_message,
     safe_llm_finish_reason,
 )
+from plugins.bot_unified_runtime.llm.model_router import build_model_router
 from plugins.bot_unified_runtime.policy import (
     PolicySettings,
     build_quiet_hours_checker,
@@ -195,6 +196,12 @@ def load_smoke_config(env_file: str | Path | None = None) -> Config:
                 continue
             key, value = line.split("=", 1)
             values[key.strip().lower()] = value.strip().strip('"').strip("'")
+    # 注入进程环境（不覆盖已存在的变量），使模型注册表里的
+    # env:BOT_API_KEY_* 引用在 smoke/控制台路径与 NoneBot dotenv 行为一致。
+    import os
+
+    for key, value in values.items():
+        os.environ.setdefault(key.upper(), value)
     return Config.model_validate(translate_env_keys(values))
 
 
@@ -244,6 +251,13 @@ def run_chat_smoke(
     capability = build_chat_capability(
         character_provider=build_character_context_provider(config),
         llm_provider=provider,
+        # 仅当由 config 自行构建真实 provider 时启用模型路由；
+        # 测试注入的自定义 provider 与 static 离线配置保持原语义。
+        model_router=(
+            build_model_router(config)
+            if llm_provider is None and config.bot_chat_provider == "openai_compatible"
+            else None
+        ),
         temperature=config.bot_chat_temperature,
         max_tokens=config.bot_chat_max_tokens,
         context_preflight_errors=persona_context_preflight_errors(config),
@@ -279,6 +293,14 @@ def run_chat_smoke(
         llm_status = "error"
     llm_error_kind = infer_llm_error_kind(audit_tags)
     llm_finish_reason = infer_text_tag(audit_tags, "llm_finish_reason")
+    routed_model = next(
+        (
+            tag.removeprefix("model:").strip()
+            for tag in audit_tags
+            if tag.startswith("model:")
+        ),
+        "",
+    )
 
     return {
         "request_id": message.request_id,
@@ -297,7 +319,7 @@ def run_chat_smoke(
         "llm_error_kind": llm_error_kind,
         "llm_finish_reason": llm_finish_reason,
         "llm_provider": config.bot_chat_provider,
-        "llm_model": config.bot_chat_model,
+        "llm_model": routed_model or config.bot_chat_model,
         "ready_for_real_llm": readiness["ready_for_real_llm"],
         "llm_readiness_status": readiness["llm_readiness_status"],
         "llm_readiness_reasons": readiness["llm_readiness_reasons"],

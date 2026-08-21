@@ -11,6 +11,11 @@ param(
 # Usage examples are listed in Show-Help below; Chinese docs live in GIT.md.
 
 $ErrorActionPreference = "Stop"
+# pwsh 7.3+：git 的 stderr 提示（LF/CRLF 等）默认按错误记录处理，
+# 配合上面的 Stop 会中断脚本；显式关掉，让提示只走控制台显示。
+if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
 function Invoke-Git {

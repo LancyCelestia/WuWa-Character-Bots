@@ -259,3 +259,76 @@ def test_registry_wins_over_preset_name():
     # 自动选型时注册表模型优先于主配置兜底模型。
     ids = router.route_ids(message_text="你好", override="")
     assert ids[0] == "flash"
+
+
+def test_registry_parses_api_key_list(monkeypatch):
+    monkeypatch.setenv("BOT_API_KEY_DEEPSEEK", "key-a")
+    monkeypatch.setenv("BOT_API_KEY_DEEPSEEK_2", "key-b")
+    config = Config(
+        bot_model_registry={
+            "flash": {
+                "model": "deepseek-v4-flash",
+                "base_url": "https://api.deepseek.com/v1",
+                "api_key": ["env:BOT_API_KEY_DEEPSEEK", "env:BOT_API_KEY_DEEPSEEK_2"],
+                "tags": ["fast"],
+                "priority": 1,
+            }
+        }
+    )
+
+    spec = build_model_registry(config)["flash"]
+
+    assert spec.api_key == "key-a"
+    assert spec.all_api_keys() == ("key-a", "key-b")
+
+
+def test_generate_fails_over_across_keys_then_models():
+    used: list[tuple[str, str]] = []
+
+    class FakeProvider:
+        def __init__(self, spec: ModelSpec) -> None:
+            self.spec = spec
+
+        def generate(self, messages, **kwargs):
+            used.append((self.spec.model_id, self.spec.api_key))
+            if self.spec.api_key == "key-a" and self.spec.model_id == "flash":
+                raise LLMProviderError("bad key", error_kind="auth")
+            if self.spec.api_key == "key-b" and self.spec.model_id == "flash":
+                return LLMReply(
+                    text="replied-with-key-b",
+                    provider="fake",
+                    model=self.spec.model,
+                    confidence=1.0,
+                )
+            raise LLMProviderError("other model down", error_kind="server")
+
+    router = ModelRouter(
+        {
+            "flash": ModelSpec(
+                model_id="flash",
+                model="deepseek-v4-flash",
+                base_url="x",
+                api_key="key-a",
+                api_keys=("key-a", "key-b"),
+                tags=("fast",),
+                priority=1,
+            ),
+            "pro": ModelSpec(
+                model_id="pro",
+                model="deepseek-v4-pro",
+                base_url="x",
+                api_key="key-c",
+                tags=("strong",),
+                priority=2,
+            ),
+        },
+        provider_factory=FakeProvider,
+    )
+
+    reply = router.generate([{"role": "user", "content": "你好"}], message_text="你好")
+
+    assert reply.text == "replied-with-key-b"
+    assert ("flash", "key-a") in used
+    assert ("flash", "key-b") in used
+    # 密钥转移成功，不再触碰其他模型。
+    assert ("pro", "key-c") not in used

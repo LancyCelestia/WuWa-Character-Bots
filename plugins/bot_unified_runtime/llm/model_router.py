@@ -12,6 +12,9 @@ deepseek-v4-flash/pro、gpt-5.6-terra/sol、gemini-3.7-flash。每个条目：
       "priority": 1                            # 越小越先选
     }
 
+``api_key`` 也支持列表：``["env:BOT_API_KEY_DEEPSEEK","env:BOT_API_KEY_DEEPSEEK_2"]``，
+同模型按列表顺序做密钥故障转移（第一个密钥 401/失败自动换下一个）。
+
 自动选型（纯规则，不烧钱）：
 
 1. 管理员手动指定（``/bot runtime model set <id>``）→ 只用该模型，
@@ -25,7 +28,7 @@ deepseek-v4-flash/pro、gpt-5.6-terra/sol、gemini-3.7-flash。每个条目：
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from plugins.bot_unified_runtime.llm import (
@@ -60,14 +63,14 @@ DEFAULT_REGISTRY: dict[str, dict[str, Any]] = {
     "flash": {
         "model": "deepseek-v4-flash",
         "base_url": "https://api.deepseek.com/v1",
-        "api_key": "env:BOT_API_KEY_DEEPSEEK",
+        "api_key": ["env:BOT_API_KEY_DEEPSEEK", "env:BOT_API_KEY_DEEPSEEK_2"],
         "tags": ["fast"],
         "priority": 1,
     },
     "pro": {
         "model": "deepseek-v4-pro",
         "base_url": "https://api.deepseek.com/v1",
-        "api_key": "env:BOT_API_KEY_DEEPSEEK",
+        "api_key": ["env:BOT_API_KEY_DEEPSEEK", "env:BOT_API_KEY_DEEPSEEK_2"],
         "tags": ["strong"],
         "priority": 2,
     },
@@ -103,8 +106,15 @@ class ModelSpec:
     model: str
     base_url: str
     api_key: str
+    api_keys: tuple[str, ...] = ()
     tags: tuple[str, ...] = ("fast",)
     priority: int = 100
+
+    def all_api_keys(self) -> tuple[str, ...]:
+        """全部可用密钥（按顺序故障转移）；未配置 api_keys 时退回单密钥。"""
+        if self.api_keys:
+            return self.api_keys
+        return (self.api_key,) if self.api_key else ()
 
 
 def _resolve_api_key(value: str) -> str:
@@ -113,6 +123,17 @@ def _resolve_api_key(value: str) -> str:
     if value.startswith("env:"):
         return environ.get(value.removeprefix("env:"), "")
     return value
+
+
+def _resolve_api_keys(value: object) -> tuple[str, ...]:
+    """解析单密钥或密钥列表（均可写 env:变量名 或明文），去掉空值。"""
+    if isinstance(value, (list, tuple)):
+        items = [str(item) for item in value]
+    else:
+        items = [str(value)]
+    return tuple(
+        key for key in (_resolve_api_key(item).strip() for item in items) if key
+    )
 
 
 def build_model_registry(config: object) -> dict[str, ModelSpec]:
@@ -140,11 +161,13 @@ def build_model_registry(config: object) -> dict[str, ModelSpec]:
                 priority = int(priority)
             except (TypeError, ValueError):
                 priority = 100
+        resolved_keys = _resolve_api_keys(item.get("api_key", ""))
         specs[str(model_id)] = ModelSpec(
             model_id=str(model_id),
             model=model,
             base_url=str(item.get("base_url", "")).strip(),
-            api_key=_resolve_api_key(str(item.get("api_key", ""))),
+            api_key=resolved_keys[0] if resolved_keys else "",
+            api_keys=resolved_keys,
             tags=tag_tuple,
             priority=priority,
         )
@@ -233,13 +256,18 @@ class ModelRouter:
             priority=100,
         )
 
-    def provider_for(self, model_id: str) -> Any:
+    def provider_for(self, model_id: str, api_key: str | None = None) -> Any:
         spec = self._spec_for(model_id)
         if spec is None:
             raise KeyError(f"unknown model id: {model_id}")
-        if spec.model_id not in self._providers:
-            self._providers[spec.model_id] = self._factory(spec)
-        return self._providers[spec.model_id]
+        cache_key: object = model_id
+        provider_spec = spec
+        if api_key is not None and api_key != spec.api_key:
+            cache_key = (model_id, api_key)
+            provider_spec = replace(spec, api_key=api_key)
+        if cache_key not in self._providers:
+            self._providers[cache_key] = self._factory(provider_spec)
+        return self._providers[cache_key]
 
     def model_ids(self) -> list[str]:
         return list(self.specs.keys())
@@ -282,25 +310,32 @@ class ModelRouter:
         override: str = "",
         **kwargs: object,
     ) -> LLMReply:
-        """按路由顺序生成；每个候选失败后自动切换下一个。"""
+        """按路由顺序生成；每个候选的每个密钥失败后自动切换下一个。
+
+        尝试顺序：候选模型 × 该模型的密钥列表（api_keys 顺序），
+        全部失败抛出最后一个错误。"""
         candidate_ids = self.route_ids(
             message_text=message_text or messages[-1].get("content", ""),
             override=override,
         )
         last_error: LLMProviderError | None = None
         for model_id in candidate_ids:
-            provider = self.provider_for(model_id)
-            try:
-                return provider.generate(messages, **kwargs)
-            except LLMProviderError as exc:
-                last_error = exc
+            spec = self._spec_for(model_id)
+            if spec is None:
                 continue
-            except Exception as exc:
-                last_error = LLMProviderError(
-                    f"model {model_id} failed: {type(exc).__name__}",
-                    error_kind="provider_error",
-                )
-                continue
+            for api_key in spec.all_api_keys():
+                provider = self.provider_for(model_id, api_key)
+                try:
+                    return provider.generate(messages, **kwargs)
+                except LLMProviderError as exc:
+                    last_error = exc
+                    continue
+                except Exception as exc:
+                    last_error = LLMProviderError(
+                        f"model {model_id} failed: {type(exc).__name__}",
+                        error_kind="provider_error",
+                    )
+                    continue
         if last_error is not None:
             raise last_error
         raise LLMProviderError(
