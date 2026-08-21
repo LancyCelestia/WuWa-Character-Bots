@@ -237,13 +237,23 @@ class OpenAICompatibleLLMProvider:
                 "LLM response schema is invalid",
                 error_kind="schema",
             )
-        if "content" not in message or message["content"] is None:
+        content = message.get("content")
+        content_source = "content"
+        if content is None or content == "":
+            # 推理模型（如 deepseek-reasoner）可能把 token 全花在思维链上，
+            # 导致 content 为空。回退到 reasoning_content 的尾部，保证用户
+            # 至少能得到一句话；并保留标记便于审计。
+            reasoning = message.get("reasoning_content")
+            if isinstance(reasoning, str) and reasoning.strip():
+                content = reasoning.strip()[-600:]
+                content_source = "reasoning_fallback"
+        if content is None or content == "":
             raise LLMProviderError(
                 "LLM returned empty text",
                 error_kind="empty_response",
             )
         try:
-            text = _extract_message_content_text(message["content"])
+            text = _extract_message_content_text(content)
         except TypeError as exc:
             raise LLMProviderError(
                 "LLM response schema is invalid",
@@ -256,10 +266,13 @@ class OpenAICompatibleLLMProvider:
                 error_kind="empty_response",
             )
 
+        usage = _extract_usage(data.get("usage"), choice.get("finish_reason"))
+        if content_source == "reasoning_fallback":
+            usage["content_source"] = "reasoning_fallback"
         return LLMReply(
             text=text,
             provider="openai_compatible",
             model=str(payload["model"]),
             confidence=1.0,
-            raw_usage=_extract_usage(data.get("usage"), choice.get("finish_reason")),
+            raw_usage=usage,
         )
