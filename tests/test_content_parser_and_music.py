@@ -492,6 +492,69 @@ def test_douyin_deep_parse_from_router_data(monkeypatch):
     assert item.stats == {"点赞": 100, "评论": 5}
 
 
+def test_douyin_anti_bot_page_falls_back_to_blocked_card(monkeypatch):
+    from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
+        parse_douyin,
+    )
+
+    challenge = "<html><body><script>var glb;</script></body></html>"
+
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sources.parsers.platforms_generic.http_get_text",
+        lambda url, **kwargs: (url, challenge),
+    )
+
+    item = parse_douyin("https://www.douyin.com/video/123", cookie_header="ttwid=x")
+
+    assert item.parse_depth == "blocked"
+    assert "反爬" in item.summary
+    assert item.canonical_url.endswith("/video/123")
+
+
+def test_xhs_initial_state_tolerates_js_tokens(monkeypatch):
+    from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
+        _xhs_initial_state_payload,
+    )
+
+    raw = (
+        '{"note":{"noteDetailMap":{}},"search":{"hintWord":'
+        '{"searchWord":"小红书网页版","title":"x"},'
+        '"feeds":[],"redMoji":{"mojiData":{"version":"","tabs":undefined},"map":new Map([])}}}'
+    )
+    html = f"<script>window.__INITIAL_STATE__={raw}</script>"
+
+    payload = _xhs_initial_state_payload(html)
+
+    assert payload is not None
+    assert payload["search"]["hintWord"]["searchWord"] == "小红书网页版"
+
+
+def test_xhs_search_result_card_extracts_keyword(monkeypatch):
+    from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
+        parse_xiaohongshu,
+    )
+
+    raw = (
+        '{"search":{"searchContext":{"keyword":"鸣潮"},"hintWord":{"searchWord":"鸣潮"},'
+        '"feeds":[],"redMoji":{"mojiData":{}}}}'
+    )
+    html = f"<script>window.__INITIAL_STATE__={raw}</script>"
+
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sources.parsers.platforms_generic.http_get_text",
+        lambda url, **kwargs: (url, html),
+    )
+
+    item = parse_xiaohongshu(
+        "https://www.xiaohongshu.com/search_result/abc123",
+        cookie_header="web_session=x",
+    )
+
+    assert item.item_kind == "search"
+    assert item.title == "小红书搜索：鸣潮"
+    assert item.parse_depth == "shallow"
+
+
 def test_registry_binds_cookie_header_to_parsers(monkeypatch):
     from plugins.bot_unified_runtime.sources.parsers import (
         build_content_parser_registry,

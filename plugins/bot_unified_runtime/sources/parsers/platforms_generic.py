@@ -95,11 +95,13 @@ def _og_scrape(
 
 
 def parse_xiaohongshu(url: str, *, cookie_header: str = "") -> PlatformParse:
-    """小红书：cookie 有效时从 __INITIAL_STATE__ 深解析（标题/正文/图集/
-    作者/互动数据）；失败回退 og 浅解析。"""
+    """小红书：搜索页 → 关键词卡片；笔记页 → __INITIAL_STATE__ 深解析；
+    失败回退 og 浅解析。"""
     final_url = url
     if "xhslink.com" in url:
         final_url = resolve_short_link(url)
+    if "/search_result/" in final_url:
+        return _xhs_search_result_card(final_url, cookie_header=cookie_header)
     if cookie_header:
         try:
             _, text = http_get_text(
@@ -118,10 +120,12 @@ def parse_xiaohongshu(url: str, *, cookie_header: str = "") -> PlatformParse:
         platform="xiaohongshu",
         item_kind="note",
         note="（浅层解析；小红书正文/图集需要登录 cookie）",
+        cookie_header=cookie_header,
     )
 
 
-def _xhs_from_initial_state(html: str, url: str) -> PlatformParse | None:
+def _xhs_initial_state_payload(html: str) -> dict | None:
+    """提取并清洗 window.__INITIAL_STATE__（含 undefined / new Map 等 JS 语法）。"""
     marker = "window.__INITIAL_STATE__="
     start = html.find(marker)
     if start < 0:
@@ -131,9 +135,55 @@ def _xhs_from_initial_state(html: str, url: str) -> PlatformParse | None:
     if end < 0:
         return None
     raw = html[start:end].strip().rstrip(";")
-    try:
-        payload = json.loads(urllib.parse.unquote(raw))
-    except Exception:  # noqa: BLE001
+    raw = raw.replace("undefined", "null")
+    raw = re.sub(r"new Map\(\[[^\]]*\]\)", "null", raw)
+    for candidate in (raw, urllib.parse.unquote(raw)):
+        try:
+            payload = json.loads(candidate)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def _xhs_search_result_card(url: str, *, cookie_header: str = "") -> PlatformParse:
+    """小红书搜索结果页：结果列表走签名接口，这里提取关键词出卡片。"""
+    keyword = ""
+    if cookie_header:
+        try:
+            _, text = http_get_text(
+                url,
+                timeout=10,
+                referer="https://www.xiaohongshu.com/",
+                cookie=cookie_header,
+            )
+            payload = _xhs_initial_state_payload(text) or {}
+            search = payload.get("search") or {}
+            hint = search.get("hintWord") or {}
+            keyword = (
+                str(hint.get("searchWord") or "")
+                or str((search.get("searchContext") or {}).get("keyword") or "")
+                or str(hint.get("title") or "")
+            ).strip()
+        except Exception:  # noqa: BLE001
+            pass
+    title = f"小红书搜索：{keyword}" if keyword else "小红书搜索结果页"
+    return PlatformParse(
+        platform="xiaohongshu",
+        item_id="",
+        item_kind="search",
+        title=title,
+        summary="（搜索结果列表需要登录态接口签名，这里只给入口；"
+        "想看哪条笔记，请把具体笔记链接发我）",
+        canonical_url=url,
+        parse_depth="shallow",
+    )
+
+
+def _xhs_from_initial_state(html: str, url: str) -> PlatformParse | None:
+    payload = _xhs_initial_state_payload(html)
+    if payload is None:
         return None
     note_map = ((payload or {}).get("note") or {}).get("noteDetailMap") or {}
     if not note_map:
@@ -172,10 +222,14 @@ def _xhs_from_initial_state(html: str, url: str) -> PlatformParse | None:
 
 def parse_douyin(url: str, *, cookie_header: str = "") -> PlatformParse:
     """抖音：cookie 有效时从 _ROUTER_DATA 深解析（标题/作者/封面/互动）；
-    失败回退 og 浅解析。"""
+    页面被反爬验证拦截时给「已保留原链接」的降级卡片。"""
     final_url = url
     if "v.douyin.com" in url:
         final_url = resolve_short_link(url)
+    video_id = ""
+    match = re.search(r"/video/(\d+)", final_url)
+    if match:
+        video_id = match.group(1)
     if cookie_header:
         try:
             _, text = http_get_text(
@@ -187,13 +241,33 @@ def parse_douyin(url: str, *, cookie_header: str = "") -> PlatformParse:
             item = _douyin_from_router_data(text, final_url)
             if item is not None:
                 return item
+            if len(text) < 2000:
+                # 极小页面通常是反爬验证页，直接降级，不再走 og。
+                raise ParseHttpError("douyin: anti-bot challenge page")
         except Exception:  # noqa: BLE001 - 深解析失败回退浅解析。
             pass
-    return _og_scrape(
-        final_url,
+    og_item = None
+    try:
+        og_item = _og_scrape(
+            final_url,
+            platform="douyin",
+            item_kind="video",
+            note="（浅层解析：标题+封面；无水印视频下载需另接解析服务）",
+            cookie_header=cookie_header,
+        )
+    except Exception:  # noqa: BLE001
+        og_item = None
+    if og_item is not None:
+        return og_item
+    return PlatformParse(
         platform="douyin",
+        item_id=video_id,
         item_kind="video",
-        note="（浅层解析：标题+封面；无水印视频下载需另接解析服务）",
+        title="抖音视频链接",
+        summary="（抖音页面被反爬验证拦截，当前网络拿不到标题/封面；"
+        "已保留原链接，稍后再试或直接打开观看）",
+        canonical_url=final_url,
+        parse_depth="blocked",
     )
 
 

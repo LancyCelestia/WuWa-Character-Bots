@@ -33,6 +33,7 @@ def _render_parse_body(item: Any) -> str:
         "post": "帖子",
         "article": "文章",
         "tweet": "推文",
+        "search": "搜索",
     }
     kind_label = kind_labels.get(item.item_kind, item.item_kind or "内容")
     lines.append(f"【{kind_label}】{item.title}")

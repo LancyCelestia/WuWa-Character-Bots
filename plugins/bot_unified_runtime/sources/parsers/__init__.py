@@ -71,7 +71,7 @@ _PLATFORM_RULES: list[tuple[str, str, list[str], ParseFn, int]] = [
     (
         "xiaohongshu",
         "小红书",
-        [r"xhslink\.com/[0-9A-Za-z]+", r"xiaohongshu\.com/explore/[0-9a-f]+"],
+        [r"xhslink\.com/[0-9A-Za-z]+", r"xiaohongshu\.com/explore/[0-9a-f]+", r"xiaohongshu\.com/search_result/[0-9a-f]+"],
         parse_xiaohongshu,
         21,
     ),
