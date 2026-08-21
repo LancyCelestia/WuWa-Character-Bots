@@ -30,6 +30,7 @@ from .config_readiness import (
     persona_context_preflight_errors,
 )
 from .llm import LLMProvider, OpenAICompatibleLLMProvider, StaticLLMProvider
+from .llm.model_router import build_model_router
 from .sender import (
     OneBotV11Bot,
     ReceiptRepository,
@@ -747,6 +748,7 @@ def _register_nonebot_handlers() -> None:
             meme_search_provider=build_meme_search_provider(config),
             runtime_settings=runtime_settings,
             interaction_counter=runtime_settings.interaction_increment,
+            model_router=build_model_router(config),
             temperature=config.bot_chat_temperature,
             max_tokens=config.bot_chat_max_tokens,
             model=config.bot_chat_model,

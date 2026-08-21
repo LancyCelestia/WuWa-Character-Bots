@@ -54,6 +54,7 @@ from plugins.bot_unified_runtime.llm import (
     OpenAICompatibleLLMProvider,
     StaticLLMProvider,
 )
+from plugins.bot_unified_runtime.llm.model_router import build_model_router
 from plugins.bot_unified_runtime.policy import (
     build_quiet_hours_checker,
     build_rate_limiter,
@@ -189,6 +190,7 @@ def _build_runtime(
         meme_search_provider=build_meme_search_provider(config),
         runtime_settings=runtime_settings,
         interaction_counter=runtime_settings.interaction_increment,
+        model_router=build_model_router(config),
         temperature=config.bot_chat_temperature,
         max_tokens=config.bot_chat_max_tokens,
         model=config.bot_chat_model,

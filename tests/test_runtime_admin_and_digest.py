@@ -288,7 +288,8 @@ def test_admin_model_command_switches_preset(tmp_path):
         command_text="model set flash",
     )
     assert "deepseek-v4-flash" in result.body
-    assert manager.get("default").get_or("BOT_CHAT_MODEL", None) == "deepseek-v4-flash"
+    # 新语义：覆盖值存预设 id；真正解析成完整模型名由 ModelRouter 完成。
+    assert manager.get("default").get_or("BOT_CHAT_MODEL", None) == "flash"
 
     listing = build_runtime_admin_result(
         manager,

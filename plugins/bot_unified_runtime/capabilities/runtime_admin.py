@@ -156,29 +156,57 @@ def _handle_model_command(
     config: object,
     parts: list[str],
 ) -> str:
+    from plugins.bot_unified_runtime.llm.model_router import build_model_registry
+
+    registry = build_model_registry(config)
+    registry_ids = list(registry.keys())
     presets = dict(getattr(config, "bot_model_presets", {}) or {})
     default_model = str(getattr(config, "bot_chat_model", ""))
+    auto_route = bool(getattr(config, "bot_model_auto_route", True))
     if not parts or parts[0].lower() == "list":
-        current = store.get_or("BOT_CHAT_MODEL", default_model)
-        lines = [f"当前模型：{current}（默认 {default_model}）"]
-        if presets:
+        current = store.get_or("BOT_CHAT_MODEL", "")
+        lines = [
+            "当前模型："
+            + (current if current else f"自动路由（{default_model} 兜底）")
+        ]
+        if registry_ids:
+            lines.append(
+                "可用模型："
+                + "，".join(
+                    f"{model_id}={registry[model_id].model}" for model_id in registry_ids
+                )
+            )
+        elif presets:
             lines.append(
                 "预设：" + "，".join(f"{k}={v}" for k, v in presets.items())
             )
-        lines.append("用法：/bot runtime model set <flash|pro|模型名> | list | reset")
+        lines.append(
+            "用法：/bot runtime model set <id|auto> | list | reset"
+            + ("（auto=自动选型：复杂任务→strong 档，普通→fast 档）" if auto_route else "")
+        )
         return "\n".join(lines)
     action = parts[0].lower()
     if action in {"set", "切换"}:
         if len(parts) < 2:
-            return "用法：/bot runtime model set <flash|pro|模型名>"
+            return "用法：/bot runtime model set <id|auto>"
         name = parts[1].strip()
-        model = presets.get(name, name)
-        store.set_override("BOT_CHAT_MODEL", model)
-        return f"已切换模型：{model}" + (f"（预设 {name}）" if name in presets else "")
+        if name.lower() == "auto":
+            store.reset_override("BOT_CHAT_MODEL")
+            return "已切换为自动选型（复杂任务→strong 档，普通→fast 档，失败自动转移）。"
+        if registry_ids and name in registry_ids:
+            store.set_override("BOT_CHAT_MODEL", name)
+            return f"已手动指定模型：{name}（{registry[name].model}）。失败时自动转移其他模型。"
+        if name in presets:
+            model = presets[name]
+            store.set_override("BOT_CHAT_MODEL", name)
+            return f"已手动指定模型：{name}（{model}）。"
+        # 允许直接给完整模型名（兼容旧用法；无注册表时走主 provider）。
+        store.set_override("BOT_CHAT_MODEL", name)
+        return f"已手动指定模型：{name}。"
     if action == "reset":
         store.reset_override("BOT_CHAT_MODEL")
-        return f"已恢复默认模型：{default_model}"
-    return "用法：/bot runtime model set <flash|pro|模型名> | list | reset"
+        return f"已恢复自动选型（默认兜底 {default_model}）。"
+    return "用法：/bot runtime model set <id|auto> | list | reset"
 
 
 def _handle_persona_command(

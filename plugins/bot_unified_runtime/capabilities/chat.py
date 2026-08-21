@@ -531,6 +531,9 @@ def build_chat_result(
     llm_provider: LLMProvider,
     **llm_options: object,
 ) -> CapabilityResult:
+    model_router = llm_options.pop("model_router", None)
+    router_override = str(llm_options.pop("router_override", "") or "")
+    router_message_text = str(llm_options.pop("router_message_text", "") or "")
     context = _apply_decision_budget_to_context(context, decision)
     messages, prompt_diagnostics = build_chat_prompt_with_diagnostics(context)
     diagnostic_tags = _chat_diagnostic_tags(context, prompt_diagnostics)
@@ -549,7 +552,17 @@ def build_chat_result(
             error_kind="config_missing",
         )
     try:
-        reply = llm_provider.generate(messages, **llm_options)
+        if model_router is not None:
+            # 多模型路由：自动选型 + 失败自动切换；model 参数由路由决定。
+            llm_options.pop("model", None)
+            reply = model_router.generate(
+                messages,
+                message_text=router_message_text or message.plain_text,
+                override=router_override,
+                **llm_options,
+            )
+        else:
+            reply = llm_provider.generate(messages, **llm_options)
     except LLMProviderError as exc:
         return _llm_error_result(
             message=message,
@@ -774,6 +787,7 @@ def build_chat_capability(
     meme_search_provider: MemeSearchProvider | None = None,
     runtime_settings: object | None = None,
     interaction_counter: object | None = None,
+    model_router: object | None = None,
     **llm_options: object,
 ) -> ChatCapability:
     search_provider = meme_search_provider or NullMemeSearchProvider()
@@ -781,6 +795,7 @@ def build_chat_capability(
 
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         effective_options = dict(llm_options)
+        router_override = ""
         if runtime_settings is not None:
             get_or = getattr(runtime_settings, "get_or")
             temperature = get_or("BOT_CHAT_TEMPERATURE", None)
@@ -792,6 +807,7 @@ def build_chat_capability(
             model = get_or("BOT_CHAT_MODEL", None)
             if model is not None:
                 effective_options["model"] = str(model)
+                router_override = str(model)
             reply_chars = get_or("BOT_REPLY_MAX_CHARS_PER_MESSAGE", None)
             if reply_chars is not None:
                 effective_options["output_max_chars_per_message"] = int(reply_chars)
@@ -893,6 +909,9 @@ def build_chat_capability(
             decision=decision,
             context=context,
             llm_provider=llm_provider,
+            model_router=model_router,
+            router_override=router_override,
+            router_message_text=injection_check.sanitized_text,
             **effective_options,
         )
         if injection_check.action is not InjectionAction.ALLOW:

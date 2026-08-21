@@ -142,6 +142,10 @@ class Config(BaseModel):
     bot_chat_timeout_seconds: float = 30.0
     # 模型预设：{"flash": "deepseek-v4-flash", "pro": "deepseek-v4-pro", ...}
     bot_model_presets: dict[str, str] = {}
+    # 模型注册表（自动路由 + 失败转移）：id -> {model, base_url, api_key, tags, priority}
+    bot_model_registry: dict[str, dict[str, Any]] = {}
+    # 自动选型开关：默认开启（复杂任务→strong 档，普通→fast 档）。
+    bot_model_auto_route: bool = True
     bot_reply_private_default_max_messages: int = 1
     bot_reply_private_support_max_messages: int = 2
     bot_reply_private_deep_help_max_messages: int = 3
@@ -242,20 +246,20 @@ class Config(BaseModel):
                 }
         return {}
 
-    @field_validator("bot_model_presets", mode="before")
+    @field_validator("bot_model_presets", "bot_model_registry", mode="before")
     @classmethod
-    def _parse_model_presets(cls, value: Any) -> dict[str, str]:
+    def _parse_model_dicts(cls, value: Any) -> dict[str, Any]:
         if value is None or value == "":
             return {}
         if isinstance(value, dict):
-            return {str(k): str(v) for k, v in value.items()}
+            return {str(k): v for k, v in value.items()}
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)
             except ValueError:
                 return {}
             if isinstance(parsed, dict):
-                return {str(k): str(v) for k, v in parsed.items()}
+                return {str(k): v for k, v in parsed.items()}
         return {}
 
     @field_validator("bot_credential_probe_urls", mode="before")
