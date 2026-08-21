@@ -48,6 +48,9 @@ from .runtime.settings import (
 )
 from .sources.credential_health import check_credentials_and_report
 from .sources.meme_search import build_meme_search_provider
+from .sources.parsers import extract_http_urls
+from .capabilities.content_parser import build_content_capability
+from .capabilities.music import build_music_capability, is_music_command
 
 try:
     from nonebot.plugin import PluginMetadata
@@ -774,6 +777,17 @@ def _register_nonebot_handlers() -> None:
     auto_send = on_message(rule=_is_auto_send_plain_text, priority=21, block=True)
     chat = on_message(rule=_is_plain_chat_event, priority=50, block=True)
 
+    async def _is_content_parse_event(event: Event) -> bool:
+        return config.bot_content_parse_enabled and bool(
+            extract_http_urls(event.get_plaintext())
+        )
+
+    async def _is_music_event(event: Event) -> bool:
+        return config.bot_music_enabled and is_music_command(event.get_plaintext())
+
+    content = on_message(rule=_is_content_parse_event, priority=46, block=True)
+    music = on_message(rule=_is_music_event, priority=44, block=True)
+
     def _is_alias_command_text(text: str) -> bool:
         return alias_resolver.resolve(text) is not None
 
@@ -1226,6 +1240,74 @@ def _register_nonebot_handlers() -> None:
         if _should_silently_skip_chat_receipt(message, receipt, audit_logger):
             return
         await chat.finish(receipt.public_message)
+
+    @content.handle()
+    async def _handle_content(bot: Bot, event: Event) -> None:
+        message = _incoming_from_nonebot_event(
+            event,
+            bot_id=str(getattr(bot, "self_id", "unknown")),
+        )
+        receipt = await pipeline.handle_async(
+            message,
+            offload_capability(build_content_capability(config)),
+            capability_id="bot.content",
+        )
+        sent_request = _find_sent_request(send_queue, message.request_id)
+        if sent_request is not None:
+            transport_receipt = await _deliver_onebot_send_request(
+                bot,
+                sent_request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+            _record_runtime_diagnostic(
+                config=config,
+                diagnostics_store=diagnostics_store,
+                message=message,
+                capability_id="bot.content",
+                receipt=transport_receipt,
+                send_queue=send_queue,
+                audit_logger=audit_logger,
+            )
+            if transport_receipt.state.value == "sent":
+                return
+            await content.finish(transport_receipt.public_message)
+        await content.finish(receipt.public_message)
+
+    @music.handle()
+    async def _handle_music(bot: Bot, event: Event) -> None:
+        message = _incoming_from_nonebot_event(
+            event,
+            bot_id=str(getattr(bot, "self_id", "unknown")),
+        )
+        receipt = await pipeline.handle_async(
+            message,
+            offload_capability(build_music_capability(config)),
+            capability_id="bot.music",
+        )
+        sent_request = _find_sent_request(send_queue, message.request_id)
+        if sent_request is not None:
+            transport_receipt = await _deliver_onebot_send_request(
+                bot,
+                sent_request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+            _record_runtime_diagnostic(
+                config=config,
+                diagnostics_store=diagnostics_store,
+                message=message,
+                capability_id="bot.music",
+                receipt=transport_receipt,
+                send_queue=send_queue,
+                audit_logger=audit_logger,
+            )
+            if transport_receipt.state.value == "sent":
+                return
+            await music.finish(transport_receipt.public_message)
+        await music.finish(receipt.public_message)
 
 
 _register_nonebot_handlers()

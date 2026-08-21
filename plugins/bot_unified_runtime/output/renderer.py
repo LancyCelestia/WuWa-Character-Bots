@@ -14,6 +14,25 @@ def render_reviewed_output(
     review: ReviewResult,
 ) -> RenderedOutput:
     text = review.safe_text or result.body or result.summary or result.title
+    # 能力层声明的图片/语音直链在审核通过后原样透传（内容来自平台
+    # 官方接口，不是用户输入）；transport 不支持时按 text_fallback 降级。
+    media_parts: list[dict] = []
+    for image in result.images or []:
+        if isinstance(image, dict) and (image.get("file") or image.get("url")):
+            media_parts.append({"type": "image", **image})
+    for audio in result.audio or []:
+        if isinstance(audio, dict) and audio.get("file"):
+            media_parts.append({"type": "record", **audio})
+    if media_parts:
+        return RenderedOutput(
+            request_id=result.request_id,
+            content_type="mixed",
+            content_ref={"parts": [*media_parts, {"type": "text", "text": text}]},
+            text_fallback=text,
+            size_estimate=len(text),
+            risk_level=review.risk_level,
+            privacy_level=review.privacy_level,
+        )
     return RenderedOutput(
         request_id=result.request_id,
         content_type="text",

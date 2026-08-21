@@ -174,6 +174,18 @@ def _segment_from_mixed_part(part: dict[str, Any]) -> OneBotMessageSegment | Non
         return _image_segment(part)
     if part_type == "card":
         return _json_card_segment(part)
+    if part_type == "record":
+        file_ref = _string_value(part.get("file")) or _string_value(part.get("url"))
+        if not file_ref:
+            return None
+        return {"type": "record", "data": {"file": file_ref}}
+    if part_type == "music":
+        # CQ:music 卡片：{"type":"qq","id":"..."} 或 {"type":"163","id":"..."}
+        music_type = _string_value(part.get("music_type"))
+        music_id = _string_value(part.get("music_id"))
+        if music_type and music_id:
+            return {"type": "music", "data": {"type": music_type, "id": music_id}}
+        return None
     return None
 
 

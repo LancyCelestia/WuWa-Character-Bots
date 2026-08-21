@@ -127,6 +127,18 @@ class Config(BaseModel):
     bot_meme_search_enabled: bool = False
     bot_meme_search_timeout_seconds: float = 8.0
     bot_meme_search_cache_seconds: int = 600
+    # 链接解析能力（bot.content）：识别消息里的平台链接 → 解析 → 信息卡。
+    bot_content_parse_enabled: bool = True
+    # 平台白名单（空=全部）：bilibili, douyin, xiaohongshu, youtube,
+    # twitter, xiaoheihe, miyoushe, skland, kurobbs, netease_music,
+    # qqmusic, kuwo, kugou, apple_music, spotify
+    bot_content_parse_platforms: list[str] = []
+    # 点歌能力（bot.music）：『点歌 <关键词>』。
+    bot_music_enabled: bool = True
+    # 点歌搜索顺序白名单（空=默认顺序：网易云 → Apple → 酷狗 → QQ → 酷我 → Spotify）。
+    bot_music_platforms: list[str] = []
+    # 解析/点歌请求的统一超时（秒）。
+    bot_fetch_timeout_seconds: float = 10.0
     bot_render_forward_min_chars: int = 1500
     bot_render_forward_max_nodes: int = 6
     bot_render_forward_node_chars: int = 900
@@ -302,3 +314,27 @@ class Config(BaseModel):
             normalized = stripped.replace(",", ";")
             return [item.strip() for item in normalized.split(";") if item.strip()]
         raise TypeError("role list must be a list, JSON array string, or delimiter string")
+
+    @field_validator(
+        "bot_content_parse_platforms",
+        "bot_music_platforms",
+        mode="before",
+    )
+    @classmethod
+    def _parse_platform_list(cls, value: Any) -> list[str]:
+        if value is None or value == "":
+            return []
+        if isinstance(value, list):
+            return [str(item).strip().lower() for item in value if str(item).strip()]
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith("["):
+                parsed = json.loads(stripped)
+                if not isinstance(parsed, list):
+                    raise ValueError("platform list JSON must be an array")
+                return [str(item).strip().lower() for item in parsed if str(item).strip()]
+            normalized = stripped.replace(",", ";")
+            return [item.strip().lower() for item in normalized.split(";") if item.strip()]
+        raise TypeError("platform list must be a list, JSON array string, or delimiter string")

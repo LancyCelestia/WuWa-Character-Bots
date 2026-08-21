@@ -77,6 +77,14 @@ from plugins.bot_unified_runtime.sources.credential_health import (
     check_credentials_and_report,
 )
 from plugins.bot_unified_runtime.sources.meme_search import build_meme_search_provider
+from plugins.bot_unified_runtime.sources.parsers import extract_http_urls
+from plugins.bot_unified_runtime.capabilities.content_parser import (
+    build_content_capability,
+)
+from plugins.bot_unified_runtime.capabilities.music import (
+    build_music_capability,
+    is_music_command,
+)
 
 _BANNER = """\
 ============================================================
@@ -93,6 +101,10 @@ _HELP_TEMPLATE = """\
   /quit      退出（也可用 /exit）
   {alias_lines}
 直接输入文本即可对话。当前回复最多 {max_messages} 条/轮。
+特殊能力：
+  发链接     B站/抖音/小红书/油管/推特/小黑盒/米游社/森空岛/库街区
+             与网易云/QQ/酷我/酷狗/Apple Music/Spotify 链接会自动解析成信息卡
+  点歌 <歌名>  搜索并发送歌曲信息卡 + 语音试听（网易云 → Apple → 酷狗 → QQ → 酷我）
 """
 
 _LOCAL_COMMANDS = ("bot.help", "bot.status", "bot.why")
@@ -353,6 +365,15 @@ def _record_turn(history_store: Any, *, request_id: str, role: str, text: str) -
         return
 
 
+def _route_for_message(config: Config, text: str, chat_capability: Any) -> tuple[Any, str]:
+    """按消息内容选择能力：点歌 → bot.music；带链接 → bot.content；否则聊天。"""
+    if config.bot_music_enabled and is_music_command(text):
+        return build_music_capability(config), "bot.music"
+    if config.bot_content_parse_enabled and extract_http_urls(text):
+        return build_content_capability(config), "bot.content"
+    return chat_capability, "bot.chat"
+
+
 def run_once(
     config: Config,
     message_text: str,
@@ -362,7 +383,7 @@ def run_once(
 ) -> DeliveryReceipt:
     settings = runtime_settings or build_runtime_settings_store(config)
     store = history_store or _build_history_store(config)
-    pipeline, capability = _build_runtime(config, store, settings)
+    pipeline, chat_capability = _build_runtime(config, store, settings)
     message = IncomingMessage(
         platform="console",
         adapter="console-repl",
@@ -376,7 +397,10 @@ def run_once(
         mentions_bot=True,
     )
     _record_turn(store, request_id=message.request_id, role="user", text=message_text)
-    receipt = pipeline.handle(message, capability, capability_id="bot.chat")
+    capability, capability_id = _route_for_message(
+        config, message_text, chat_capability
+    )
+    receipt = pipeline.handle(message, capability, capability_id=capability_id)
     if receipt.state is ReceiptState.SENT:
         text = _reply_text(pipeline.send_queue, message.request_id)
         if text:
@@ -491,7 +515,10 @@ def run_interactive(config: Config) -> int:
         _record_turn(
             history_store, request_id=message.request_id, role="user", text=raw
         )
-        receipt = pipeline.handle(message, capability, capability_id="bot.chat")
+        handle_capability, handle_id = _route_for_message(config, raw, capability)
+        receipt = pipeline.handle(
+            message, handle_capability, capability_id=handle_id
+        )
         last_receipt = receipt
         if receipt.state is ReceiptState.SENT:
             text = _reply_text(pipeline.send_queue, message.request_id)
