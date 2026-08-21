@@ -1,4 +1,4 @@
-﻿"""共享群上下文：群消息短时记忆（元宝式摘要）。
+"""共享群上下文：群消息短时记忆（元宝式摘要）。
 
 设计分层：
 
@@ -29,6 +29,21 @@ _GROUP_SESSION_PREFIX = "group:"
 
 def _group_session_id(group_id: str) -> str:
     return f"{_GROUP_SESSION_PREFIX}{group_id}"
+
+
+def _clock_gap_minutes(previous: str, current: str) -> int | None:
+    """HH:MM 分钟差（跨小时简单展开）；解析失败返回 None。"""
+    try:
+        prev_hour, prev_minute = (int(part) for part in previous.split(":"))
+        curr_hour, curr_minute = (int(part) for part in current.split(":"))
+    except (ValueError, AttributeError):
+        return None
+    prev_total = prev_hour * 60 + prev_minute
+    curr_total = curr_hour * 60 + curr_minute
+    gap = curr_total - prev_total
+    if gap < -720:  # 跨天（如 23:59 -> 00:01）
+        gap += 1440
+    return gap
 
 
 class SharedGroupContextProvider(Protocol):
@@ -79,12 +94,22 @@ class SQLiteGroupDigestProvider:
         lines: list[str] = []
         chars_used = 0
         role_names = {"user": "成员", "assistant": "机器人"}
+        previous_clock: str | None = None
         for row in rows:
             remaining = self.max_chars - chars_used
             if remaining <= 0:
                 break
             created = str(row["created_at"])
             clock = created[11:16] if len(created) >= 16 and "T" in created else ""
+            # 话题漂移分段：相邻两条间隔超过 10 分钟时插入空行分隔。
+            if previous_clock is not None:
+                gap_minutes = _clock_gap_minutes(previous_clock, clock)
+                if gap_minutes is not None and gap_minutes > 10:
+                    separator = "……"
+                    if len(separator) <= remaining:
+                        lines.append(separator)
+                        chars_used += len(separator)
+            previous_clock = clock
             text = str(row["text"]).replace("\n", " ").strip()
             if len(text) > 80:
                 text = f"{text[:79]}…"

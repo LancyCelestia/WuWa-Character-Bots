@@ -1,4 +1,4 @@
-﻿import json
+import json
 
 from plugins.wuwa_unified_runtime.capabilities.runtime_admin import (
     build_alert_check_result,
@@ -262,6 +262,11 @@ def test_shared_export_redacts_and_filters(tmp_path):
     texts = " ".join(record.redacted_text for record in records)
     assert "私聊内容不应导出" not in texts
     assert "天气查询结果" not in texts
+
+    # 增量游标：用最新一条的 record_id 继续拉，应拿到更早的那条。
+    newest_id = records[0].record_id
+    older = exporter.export(limit=20, after_record_id=newest_id)
+    assert older and all(record.record_id != newest_id for record in older)
 
     null_provider = NullSharedConversationExportProvider()
     assert null_provider.export() == []

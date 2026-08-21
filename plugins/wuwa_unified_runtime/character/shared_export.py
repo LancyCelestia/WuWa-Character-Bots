@@ -36,8 +36,9 @@ class SharedConversationExportProvider(Protocol):
         *,
         limit: int = 100,
         since_iso: str = "",
+        after_record_id: str = "",
     ) -> list[SharedConversationRecord]:
-        """导出脱敏公共会话记录；没有数据返回空列表。"""
+        """导出脱敏公共会话记录；``after_record_id`` 用作增量游标。"""
 
 
 class NullSharedConversationExportProvider:
@@ -46,6 +47,7 @@ class NullSharedConversationExportProvider:
         *,
         limit: int = 100,
         since_iso: str = "",
+        after_record_id: str = "",
     ) -> list[SharedConversationRecord]:
         return []
 
@@ -67,6 +69,7 @@ class SQLiteSharedConversationExporter:
         *,
         limit: int = 100,
         since_iso: str = "",
+        after_record_id: str = "",
     ) -> list[SharedConversationRecord]:
         if not self.db_path.exists():
             return []
@@ -90,9 +93,20 @@ class SQLiteSharedConversationExporter:
                     else "AND session_id LIKE 'group:%'"
                 )
                 since_filter = "AND created_at >= ?" if since_iso else ""
+                cursor_filter = ""
+                if after_record_id:
+                    try:
+                        cursor_rowid = int(
+                            str(after_record_id).removeprefix("turn_")
+                        )
+                        cursor_filter = "AND rowid < ?"
+                    except ValueError:
+                        cursor_filter = ""
                 parameters: list[object] = []
                 if since_iso:
                     parameters.append(since_iso)
+                if cursor_filter:
+                    parameters.append(cursor_rowid)
                 parameters.append(max(1, min(500, int(limit))))
                 cursor = connection.execute(
                     f"""
@@ -102,6 +116,7 @@ class SQLiteSharedConversationExporter:
                       {private_filter}
                       {kind_filter}
                       {since_filter}
+                      {cursor_filter}
                     ORDER BY created_at DESC, rowid DESC
                     LIMIT ?
                     """,

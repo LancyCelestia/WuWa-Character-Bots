@@ -548,6 +548,8 @@ async def _run_capability_through_pipeline(
     receipt_repository: ReceiptRepository | None = None,
     record_diagnostic: bool = True,
     offload_sync_capability: bool = False,
+    history_recorder: Any | None = None,
+    history_kind: str = "command",
 ) -> DeliveryReceipt:
     message = _incoming_from_nonebot_event(
         event,
@@ -572,6 +574,25 @@ async def _run_capability_through_pipeline(
             receipt_repository,
             send_queue,
         )
+    if history_recorder is not None and receipt.state.value == "sent":
+        # 命令/被动回复也归档（kind=command），群共享摘要会自动剔除。
+        _record_chat_history_turn(
+            history_recorder,
+            message=message,
+            role="user",
+            text=message.plain_text,
+            audit_logger=audit_logger,
+            kind=history_kind,
+        )
+        if sent_request:
+            _record_chat_history_turn(
+                history_recorder,
+                message=message,
+                role="assistant",
+                text=sent_request.content.text_fallback,
+                audit_logger=audit_logger,
+                kind=history_kind,
+            )
     if record_diagnostic:
         _record_runtime_diagnostic(
             config=config,
@@ -824,6 +845,8 @@ def _register_nonebot_handlers() -> None:
             capability=capability,
             capability_id=capability_id,
             record_diagnostic=False,
+            history_recorder=history_recorder,
+            history_kind="command",
         )
         if receipt.state.value != "sent":
             await alias.finish(receipt.public_message)
@@ -1082,6 +1105,8 @@ def _register_nonebot_handlers() -> None:
             capability_id=capability_id,
             record_diagnostic=capability_id not in NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS,
             offload_sync_capability=capability_id in OFFLOADED_CAPABILITY_IDS,
+            history_recorder=history_recorder,
+            history_kind="command",
         )
         if receipt.state.value != "sent":
             await status.finish(receipt.public_message)
