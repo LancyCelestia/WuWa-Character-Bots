@@ -115,6 +115,15 @@ def _apply_cli_overrides(config: Config, args: argparse.Namespace) -> Config:
         updates["bot_chat_provider"] = args.provider
     if args.model:
         updates["bot_chat_model"] = args.model
+    if args.model_preset:
+        presets = dict(config.bot_model_presets or {}) or {
+            "flash": "deepseek-v4-flash",
+            "pro": "deepseek-v4-pro",
+        }
+        updates["bot_chat_model"] = presets.get(
+            args.model_preset,
+            args.model_preset,
+        )
     if args.base_url:
         updates["bot_chat_base_url"] = args.base_url
     if args.api_key:
@@ -182,6 +191,7 @@ def _build_runtime(
         interaction_counter=runtime_settings.interaction_increment,
         temperature=config.bot_chat_temperature,
         max_tokens=config.bot_chat_max_tokens,
+        model=config.bot_chat_model,
         context_preflight_errors=persona_context_preflight_errors(config),
         llm_preflight_errors=llm_generation_parameter_errors(config),
         output_max_chars_per_message=config.bot_reply_max_chars_per_message,
@@ -536,7 +546,7 @@ def _run_console_runtime_admin(
     )
 
     command_text = raw.strip().lstrip("/")
-    if command_text.startswith(("nickname", "persona")):
+    if command_text.startswith(("nickname", "persona", "model")):
         command_text = f"runtime {command_text}"
     result = build_runtime_admin_result(
         settings_manager,
@@ -564,10 +574,20 @@ def main(argv: list[str] | None = None) -> int:
         help="临时覆盖 LLM provider（不写 .env）。",
     )
     parser.add_argument("--model", default=None, help="临时覆盖模型名。")
+    parser.add_argument(
+        "--model-preset",
+        default=None,
+        help="模型预设：flash/pro（默认 deepseek-v4-flash / deepseek-v4-pro，可用 BOT_MODEL_PRESETS 覆盖）。",
+    )
     parser.add_argument("--base-url", default=None, help="临时覆盖 OpenAI 兼容 base_url。")
     parser.add_argument("--api-key", default=None, help="临时覆盖 API key（仅本进程）。")
     parser.add_argument("--temperature", type=float, default=None, help="临时覆盖温度 0.0-2.0。")
-    parser.add_argument("--max-tokens", type=int, default=None, help="临时覆盖最大 token 数。")
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="临时覆盖最大 token 数；0 = 不设上限（不传给 API）。",
+    )
     args = parser.parse_args(argv)
     _reconfigure_stdio()
     try:

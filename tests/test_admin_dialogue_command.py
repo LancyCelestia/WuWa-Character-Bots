@@ -165,7 +165,7 @@ def test_admin_dialogue_query_blocks_invalid_generation_parameters_without_probe
     config = _dialogue_config(tmp_path).model_copy(
         update={
             "bot_chat_temperature": 9,
-            "bot_chat_max_tokens": 0,
+            "bot_chat_max_tokens": -1,
             "bot_chat_timeout_seconds": 0,
         }
     )

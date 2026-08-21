@@ -115,6 +115,9 @@ def diagnostic_llm_temperature(config: Config) -> float:
 def diagnostic_llm_max_tokens(config: Config) -> int:
     if not _is_valid_max_tokens(config.bot_chat_max_tokens):
         return 0
+    if config.bot_chat_max_tokens <= 0:
+        # 聊天不设上限，但诊断短调用保持 128，避免浪费 token。
+        return 128
     return min(config.bot_chat_max_tokens, 128)
 
 
@@ -388,7 +391,7 @@ def llm_readiness_fix_hints(*, errors: list[str], warnings: list[str]) -> list[s
         "openai_base_url_invalid": "BOT_CHAT_BASE_URL=<openai_compatible_base_url>",
         "openai_base_url_unsafe": "remove_credentials_from_BOT_CHAT_BASE_URL",
         "openai_temperature_invalid": "BOT_CHAT_TEMPERATURE=0.0..2.0",
-        "openai_max_tokens_invalid": "BOT_CHAT_MAX_TOKENS>=1",
+        "openai_max_tokens_invalid": "BOT_CHAT_MAX_TOKENS>=0（0=不设上限）",
         "openai_timeout_seconds_invalid": "BOT_CHAT_TIMEOUT_SECONDS>0",
     }
     return _dedupe_reasons(
@@ -401,7 +404,8 @@ def _is_valid_temperature(value: float) -> bool:
 
 
 def _is_valid_max_tokens(value: int) -> bool:
-    return not isinstance(value, bool) and value >= 1
+    # 0 表示不设上限（不向 API 传 max_tokens）；负数非法。
+    return not isinstance(value, bool) and value >= 0
 
 
 def _is_valid_timeout_seconds(value: float) -> bool:

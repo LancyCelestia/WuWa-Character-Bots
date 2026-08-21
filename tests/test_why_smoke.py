@@ -238,7 +238,7 @@ def test_why_smoke_explains_llm_preflight_block_without_calling_provider(tmp_pat
             bot_chat_api_key="sk-live-secret",
             bot_chat_base_url="https://llm.example/v1",
             bot_chat_temperature=9,
-            bot_chat_max_tokens=0,
+            bot_chat_max_tokens=-1,
             bot_chat_timeout_seconds=0,
         ),
         message_text="你好，守岸人。请帮我检查配置。",

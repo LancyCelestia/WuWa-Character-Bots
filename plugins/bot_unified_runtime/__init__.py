@@ -749,6 +749,7 @@ def _register_nonebot_handlers() -> None:
             interaction_counter=runtime_settings.interaction_increment,
             temperature=config.bot_chat_temperature,
             max_tokens=config.bot_chat_max_tokens,
+            model=config.bot_chat_model,
             context_preflight_errors=persona_context_preflight_errors(config),
             llm_preflight_errors=llm_generation_parameter_errors(config),
             output_max_chars_per_message=config.bot_reply_max_chars_per_message,

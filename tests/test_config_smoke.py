@@ -47,7 +47,7 @@ def test_config_smoke_accepts_ready_openai_dialogue_config(tmp_path):
     assert result["knowledge_missing"] == 0
     assert result["chat_provider"] == "openai_compatible"
     assert result["chat_temperature"] == 0.7
-    assert result["chat_max_tokens"] == 512
+    assert result["chat_max_tokens"] == 0
     assert result["timeout_seconds"] == 30.0
     assert result["llm_readiness_status"] == "ready"
     assert result["llm_readiness_reasons"] == []
@@ -99,7 +99,7 @@ def test_config_smoke_rejects_invalid_llm_generation_parameters(tmp_path):
             bot_chat_api_key="sk-live-secret",
             bot_chat_base_url="https://llm.example/v1",
             bot_chat_temperature=-0.1,
-            bot_chat_max_tokens=0,
+            bot_chat_max_tokens=-1,
             bot_chat_timeout_seconds=0,
         )
     )
@@ -109,7 +109,7 @@ def test_config_smoke_rejects_invalid_llm_generation_parameters(tmp_path):
     assert result["llm_readiness_status"] == "blocked"
     assert result["llm_next_action"] == "fix_config"
     assert result["chat_temperature"] == -0.1
-    assert result["chat_max_tokens"] == 0
+    assert result["chat_max_tokens"] == -1
     assert result["timeout_seconds"] == 0
     assert "openai_temperature_invalid" in result["errors"]
     assert "openai_max_tokens_invalid" in result["errors"]
@@ -121,7 +121,7 @@ def test_config_smoke_rejects_invalid_llm_generation_parameters(tmp_path):
     ]
     assert result["llm_fix_hints"] == [
         "BOT_CHAT_TEMPERATURE=0.0..2.0",
-        "BOT_CHAT_MAX_TOKENS>=1",
+        "BOT_CHAT_MAX_TOKENS>=0（0=不设上限）",
         "BOT_CHAT_TIMEOUT_SECONDS>0",
     ]
     serialized = repr(result)
@@ -401,7 +401,7 @@ def test_smoke_cli_prints_config_diagnostics(monkeypatch, capsys, tmp_path):
     assert "llm_next_action=configure_real_llm" in output
     assert "chat_provider=static" in output
     assert "chat_temperature=0.7" in output
-    assert "chat_max_tokens=512" in output
+    assert "chat_max_tokens=0" in output
     assert "persona_readable=1" in output
     assert "persona_empty=0" in output
     assert "persona_unreadable=0" in output

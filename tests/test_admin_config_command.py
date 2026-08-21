@@ -202,7 +202,7 @@ def test_config_query_reports_invalid_llm_generation_parameters(tmp_path):
     ) in result.body
     assert (
         "llm_fix_hints=BOT_CHAT_TEMPERATURE=0.0..2.0,"
-        "BOT_CHAT_MAX_TOKENS>=1,BOT_CHAT_TIMEOUT_SECONDS>0"
+        "BOT_CHAT_MAX_TOKENS>=0（0=不设上限）,BOT_CHAT_TIMEOUT_SECONDS>0"
     ) in result.body
     assert "chat_temperature=3.1" in result.body
     assert "chat_max_tokens=0" in result.body

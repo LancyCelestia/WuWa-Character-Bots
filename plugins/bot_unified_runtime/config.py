@@ -138,8 +138,10 @@ class Config(BaseModel):
     bot_chat_api_key: str = ""
     bot_chat_base_url: str = "https://api.openai.com/v1"
     bot_chat_temperature: float = 0.7
-    bot_chat_max_tokens: int = 512
+    bot_chat_max_tokens: int = 0
     bot_chat_timeout_seconds: float = 30.0
+    # 模型预设：{"flash": "deepseek-v4-flash", "pro": "deepseek-v4-pro", ...}
+    bot_model_presets: dict[str, str] = {}
     bot_reply_private_default_max_messages: int = 1
     bot_reply_private_support_max_messages: int = 2
     bot_reply_private_deep_help_max_messages: int = 3
@@ -238,6 +240,22 @@ class Config(BaseModel):
                     str(key): item if isinstance(item, dict) else {}
                     for key, item in parsed.items()
                 }
+        return {}
+
+    @field_validator("bot_model_presets", mode="before")
+    @classmethod
+    def _parse_model_presets(cls, value: Any) -> dict[str, str]:
+        if value is None or value == "":
+            return {}
+        if isinstance(value, dict):
+            return {str(k): str(v) for k, v in value.items()}
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except ValueError:
+                return {}
+            if isinstance(parsed, dict):
+                return {str(k): str(v) for k, v in parsed.items()}
         return {}
 
     @field_validator("bot_credential_probe_urls", mode="before")

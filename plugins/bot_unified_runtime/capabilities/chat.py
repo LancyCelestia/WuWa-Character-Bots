@@ -789,6 +789,9 @@ def build_chat_capability(
             max_tokens = get_or("BOT_CHAT_MAX_TOKENS", None)
             if max_tokens is not None:
                 effective_options["max_tokens"] = int(max_tokens)
+            model = get_or("BOT_CHAT_MODEL", None)
+            if model is not None:
+                effective_options["model"] = str(model)
             reply_chars = get_or("BOT_REPLY_MAX_CHARS_PER_MESSAGE", None)
             if reply_chars is not None:
                 effective_options["output_max_chars_per_message"] = int(reply_chars)

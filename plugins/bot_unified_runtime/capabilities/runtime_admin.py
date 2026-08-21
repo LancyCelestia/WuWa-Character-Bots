@@ -142,11 +142,43 @@ def _handle_runtime_command(
         return f"{instance_label}{_handle_nickname_command(store, remaining)}"
     if action == "persona":
         return f"{instance_label}{_handle_persona_command(store, config, remaining)}"
+    if action == "model":
+        return f"{instance_label}{_handle_model_command(store, config, remaining)}"
     return (
         "用法：/bot runtime set <KEY> <VALUE> | get <KEY> | list | "
         "reset [KEY] | nickname add/remove/list <昵称> | persona list|switch|probability "
-        "| instance list（均可加 --instance <名称> 定位实例）"
+        "| model list|set|reset | instance list（均可加 --instance <名称> 定位实例）"
     )
+
+
+def _handle_model_command(
+    store: RuntimeSettingsStore,
+    config: object,
+    parts: list[str],
+) -> str:
+    presets = dict(getattr(config, "bot_model_presets", {}) or {})
+    default_model = str(getattr(config, "bot_chat_model", ""))
+    if not parts or parts[0].lower() == "list":
+        current = store.get_or("BOT_CHAT_MODEL", default_model)
+        lines = [f"当前模型：{current}（默认 {default_model}）"]
+        if presets:
+            lines.append(
+                "预设：" + "，".join(f"{k}={v}" for k, v in presets.items())
+            )
+        lines.append("用法：/bot runtime model set <flash|pro|模型名> | list | reset")
+        return "\n".join(lines)
+    action = parts[0].lower()
+    if action in {"set", "切换"}:
+        if len(parts) < 2:
+            return "用法：/bot runtime model set <flash|pro|模型名>"
+        name = parts[1].strip()
+        model = presets.get(name, name)
+        store.set_override("BOT_CHAT_MODEL", model)
+        return f"已切换模型：{model}" + (f"（预设 {name}）" if name in presets else "")
+    if action == "reset":
+        store.reset_override("BOT_CHAT_MODEL")
+        return f"已恢复默认模型：{default_model}"
+    return "用法：/bot runtime model set <flash|pro|模型名> | list | reset"
 
 
 def _handle_persona_command(

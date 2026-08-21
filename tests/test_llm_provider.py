@@ -101,6 +101,25 @@ def test_openai_compatible_provider_sends_expected_payload_headers_and_timeout()
     assert reply.raw_usage == {"total_tokens": 9}
 
 
+def test_openai_compatible_provider_omits_max_tokens_when_unlimited():
+    """max_tokens=0 表示不设上限：不向 API 传该字段。"""
+    urlopen = RecordingUrlopen()
+    provider = OpenAICompatibleLLMProvider(
+        api_key="sk-test",
+        model="default-model",
+        base_url="https://llm.example/v1/",
+        urlopen=urlopen,
+    )
+
+    provider.generate(
+        [{"role": "user", "content": "你好"}],
+        max_tokens=0,
+    )
+
+    payload = json.loads(urlopen.last_request.data.decode("utf-8"))
+    assert "max_tokens" not in payload
+
+
 def test_openai_compatible_provider_accepts_full_chat_completions_endpoint():
     urlopen = RecordingUrlopen()
     provider = OpenAICompatibleLLMProvider(

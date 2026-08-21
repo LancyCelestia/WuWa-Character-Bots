@@ -270,3 +270,44 @@ def test_shared_export_redacts_and_filters(tmp_path):
 
     null_provider = NullSharedConversationExportProvider()
     assert null_provider.export() == []
+
+
+def test_admin_model_command_switches_preset(tmp_path):
+    manager = InstanceSettingsManager(tmp_path)
+    config = Config(
+        bot_chat_model="default-model",
+        bot_model_presets={"flash": "deepseek-v4-flash", "pro": "deepseek-v4-pro"},
+    )
+
+    result = build_runtime_admin_result(
+        manager,
+        "default",
+        config,
+        request_id="req_model",
+        actor_roles=["admin", "user"],
+        command_text="model set flash",
+    )
+    assert "deepseek-v4-flash" in result.body
+    assert manager.get("default").get_or("BOT_CHAT_MODEL", None) == "deepseek-v4-flash"
+
+    listing = build_runtime_admin_result(
+        manager,
+        "default",
+        config,
+        request_id="req_model",
+        actor_roles=["admin", "user"],
+        command_text="model list",
+    )
+    assert "deepseek-v4-flash" in listing.body
+    assert "deepseek-v4-pro" in listing.body
+
+    reset = build_runtime_admin_result(
+        manager,
+        "default",
+        config,
+        request_id="req_model",
+        actor_roles=["admin", "user"],
+        command_text="model reset",
+    )
+    assert "default-model" in reset.body
+    assert manager.get("default").get_or("BOT_CHAT_MODEL", None) is None

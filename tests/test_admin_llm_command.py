@@ -228,7 +228,7 @@ def test_llm_query_reports_invalid_generation_parameters_without_network_call(tm
             bot_chat_api_key="sk-live-secret",
             bot_chat_base_url="https://llm.example/v1",
             bot_chat_temperature=4,
-            bot_chat_max_tokens=0,
+            bot_chat_max_tokens=-1,
             bot_chat_timeout_seconds=0,
         ),
         request_id="req_llm",
@@ -247,7 +247,7 @@ def test_llm_query_reports_invalid_generation_parameters_without_network_call(tm
     ) in result.body
     assert (
         "llm_fix_hints=BOT_CHAT_TEMPERATURE=0.0..2.0,"
-        "BOT_CHAT_MAX_TOKENS>=1,BOT_CHAT_TIMEOUT_SECONDS>0"
+        "BOT_CHAT_MAX_TOKENS>=0（0=不设上限）,BOT_CHAT_TIMEOUT_SECONDS>0"
     ) in result.body
     assert "error_kind=config_missing" in result.body
     assert "diagnostic_temperature=0" in result.body

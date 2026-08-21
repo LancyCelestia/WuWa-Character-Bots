@@ -448,7 +448,7 @@ def test_runtime_diagnostic_explains_llm_preflight_block_safely():
         bot_chat_api_key="sk-live-secret",
         bot_chat_base_url="https://llm.example/v1",
         bot_chat_temperature=9,
-        bot_chat_max_tokens=0,
+        bot_chat_max_tokens=-1,
         bot_chat_timeout_seconds=0,
     )
     message, receipt, sent_request, audit, provider = _run_llm_preflight_for_diagnostic(

@@ -32,9 +32,16 @@ def _temperature_converter(value: str) -> float:
 
 def _max_tokens_converter(value: str) -> int:
     parsed = int(value)
-    if parsed < 1:
-        raise ValueError("BOT_CHAT_MAX_TOKENS 必须 >= 1")
+    if parsed < 0:
+        raise ValueError("BOT_CHAT_MAX_TOKENS 必须 >= 0（0 = 不设上限）")
     return parsed
+
+
+def _model_converter(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned or len(cleaned) > 64:
+        raise ValueError("BOT_CHAT_MODEL 不能为空且长度不超过 64 个字符")
+    return cleaned
 
 
 def _reply_chars_converter(value: str) -> int:
@@ -57,6 +64,7 @@ def _bool_converter(value: str) -> bool:
 SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_CHAT_TEMPERATURE": _temperature_converter,
     "BOT_CHAT_MAX_TOKENS": _max_tokens_converter,
+    "BOT_CHAT_MODEL": _model_converter,
     "BOT_REPLY_MAX_CHARS_PER_MESSAGE": _reply_chars_converter,
     "BOT_MEME_SEARCH_ENABLED": _bool_converter,
     "BOT_PERSONA_ACTION_BRACKETS": _bool_converter,

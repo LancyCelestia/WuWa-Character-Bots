@@ -188,8 +188,11 @@ class OpenAICompatibleLLMProvider:
             "model": kwargs.get("model") or self.model,
             "messages": messages,
             "temperature": kwargs.get("temperature", 0.7),
-            "max_tokens": kwargs.get("max_tokens", 512),
         }
+        max_tokens = kwargs.get("max_tokens", 0)
+        if isinstance(max_tokens, (int, float)) and int(max_tokens) > 0:
+            # 0 或负数 = 不设上限：不向 API 传 max_tokens，由模型自行决定。
+            payload["max_tokens"] = int(max_tokens)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         http_request = request.Request(
             self.endpoint_url,
