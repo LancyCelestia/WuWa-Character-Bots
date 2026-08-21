@@ -65,7 +65,10 @@ from plugins.wuwa_unified_runtime.runtime.aliases import (
     build_command_alias_resolver,
 )
 from plugins.wuwa_unified_runtime.runtime.pipeline import RuntimePipeline
-from plugins.wuwa_unified_runtime.runtime.settings import build_runtime_settings_store
+from plugins.wuwa_unified_runtime.runtime.settings import (
+    build_instance_settings_manager,
+    build_runtime_settings_store,
+)
 from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
 from plugins.wuwa_unified_runtime.smoke import load_smoke_config
 from plugins.wuwa_unified_runtime.sources.credential_health import (
@@ -368,7 +371,8 @@ def run_once(
 
 
 def run_interactive(config: Config) -> int:
-    runtime_settings = build_runtime_settings_store(config)
+    settings_manager = build_instance_settings_manager(config)
+    runtime_settings = settings_manager.get(config.wuwa_runtime_instance)
     alias_resolver = build_command_alias_resolver(
         config,
         extra_nicknames=runtime_settings.list_nicknames(),
@@ -413,7 +417,14 @@ def run_interactive(config: Config) -> int:
             print(_run_console_alert(config, command))
             continue
         if command.startswith("/runtime") or command.startswith("/nickname"):
-            print(_run_console_runtime_admin(config, runtime_settings, raw))
+            print(
+                _run_console_runtime_admin(
+                    config,
+                    settings_manager,
+                    config.wuwa_runtime_instance,
+                    raw,
+                )
+            )
             continue
         alias = alias_resolver.resolve(raw)
         if alias is not None:
@@ -502,7 +513,8 @@ def _run_console_alert(config: Config, command: str) -> str:
 
 def _run_console_runtime_admin(
     config: Config,
-    runtime_settings: Any,
+    settings_manager: Any,
+    default_instance: str,
     raw: str,
 ) -> str:
     from plugins.wuwa_unified_runtime.capabilities.runtime_admin import (
@@ -513,7 +525,8 @@ def _run_console_runtime_admin(
     if command_text.startswith("nickname"):
         command_text = f"runtime {command_text}"
     result = build_runtime_admin_result(
-        runtime_settings,
+        settings_manager,
+        default_instance,
         config,
         request_id="console-admin",
         actor_roles=["admin", "user"],

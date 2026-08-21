@@ -76,7 +76,11 @@ class LLMProvider(Protocol):
 class StaticLLMProvider:
     def __init__(
         self,
-        text: str = "LLM 未配置：请设置真实模型 provider 后再启用自由对话。",
+        text: str = (
+            "（轻轻点头）我这边还没有接上外面的模型，"
+            "现在只能先陪着你说几句。等管理员把真实模型配置好，"
+            "我就能按你的问题好好回答了。"
+        ),
         model: str = "static",
     ) -> None:
         self.text = text

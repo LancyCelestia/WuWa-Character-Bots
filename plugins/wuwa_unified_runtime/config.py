@@ -9,11 +9,17 @@ from pydantic import BaseModel, field_validator
 class Config(BaseModel):
     wuwa_runtime_enabled: bool = True
     wuwa_runtime_default_persona: str = "default"
-    wuwa_runtime_group_command_prefix: str = "/wuwa"
+    wuwa_runtime_group_command_prefix: str = "/bot"
+    wuwa_runtime_admin_prefix: str = "/bot"
+    wuwa_runtime_instance: str = "default"
     wuwa_runtime_persona_nickname: str = ""
     wuwa_runtime_persona_nicknames: list[str] = []
     wuwa_runtime_alias_enabled: bool = True
     wuwa_runtime_settings_file: str = "data/runtime_settings.json"
+    wuwa_runtime_settings_dir: str = "data/settings"
+    wuwa_shared_export_enabled: bool = False
+    wuwa_shared_export_include_private: bool = False
+    wuwa_shared_export_max_chars: int = 200
     wuwa_admin_user_ids: list[str] = []
     wuwa_enterprise_user_ids: list[str] = []
     wuwa_trusted_user_ids: list[str] = []
@@ -85,7 +91,7 @@ class Config(BaseModel):
     wuwa_user_profiles_file: str = ""
     wuwa_shared_group_context_enabled: bool = False
     wuwa_group_digest_enabled: bool = False
-    wuwa_group_digest_max_turns: int = 20
+    wuwa_group_digest_max_turns: int = 150
     wuwa_group_digest_max_chars: int = 800
     wuwa_group_digest_llm_enabled: bool = False
     wuwa_group_digest_llm_ttl_seconds: int = 3600

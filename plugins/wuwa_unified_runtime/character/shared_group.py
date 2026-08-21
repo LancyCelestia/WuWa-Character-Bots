@@ -109,11 +109,25 @@ class SQLiteGroupDigestProvider:
         try:
             with sqlite3.connect(self.db_path) as connection:
                 connection.row_factory = sqlite3.Row
+                # 过滤命令/被动回复（查天气、查状态等），只保留
+                # 成员发言与机器人基于大模型的人格化回复。
+                columns = {
+                    str(row["name"])
+                    for row in connection.execute(
+                        "PRAGMA table_info(conversation_turns)"
+                    ).fetchall()
+                }
+                kind_filter = (
+                    "AND (kind IS NULL OR kind = 'chat')"
+                    if "kind" in columns
+                    else ""
+                )
                 cursor = connection.execute(
-                    """
+                    f"""
                     SELECT role, text, created_at
                     FROM conversation_turns
                     WHERE session_id = ?
+                      {kind_filter}
                     ORDER BY created_at DESC, rowid DESC
                     LIMIT ?
                     """,
@@ -225,7 +239,7 @@ def build_shared_group_context_provider(
         return NullSharedGroupContextProvider()
     provider: SharedGroupContextProvider = SQLiteGroupDigestProvider(
         db_path,
-        max_turns=int(getattr(config, "wuwa_group_digest_max_turns", 20)),
+        max_turns=int(getattr(config, "wuwa_group_digest_max_turns", 150)),
         max_chars=int(getattr(config, "wuwa_group_digest_max_chars", 800)),
     )
     if (

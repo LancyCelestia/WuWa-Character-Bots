@@ -1,17 +1,18 @@
-"""管理员运行时指令：/wuwa runtime ... 与 /wuwa alert check。
+"""管理员运行时指令：/bot runtime ... 与 /bot alert check。
 
 在 QQ 对话里直接说命令即可执行，走统一流水线，仅管理员可用：
 
-- ``/wuwa runtime set <KEY> <VALUE>``  调整运行时参数（白名单键）
-- ``/wuwa runtime get <KEY>``          查看覆盖值
-- ``/wuwa runtime list``               列出全部覆盖
-- ``/wuwa runtime reset [KEY]``        清除覆盖（不带 KEY 全部清除）
-- ``/wuwa runtime nickname add <昵称>``  添加角色昵称（多昵称）
-- ``/wuwa runtime nickname remove <昵称>`` 删除昵称
-- ``/wuwa runtime nickname list``      列出昵称
-- ``/wuwa alert check``                手动执行凭据健康检查（可加 --probe）
+- ``/bot runtime set <KEY> <VALUE> [--instance <名称>]``  调整运行时参数
+- ``/bot runtime get <KEY> [--instance <名称>]``
+- ``/bot runtime list [--instance <名称>]``
+- ``/bot runtime reset [KEY] [--instance <名称>]``
+- ``/bot runtime nickname add|remove|list <昵称> [--instance <名称>]``
+- ``/bot runtime instance list``  列出已创建的实例设置文件
+- ``/bot alert check [--probe]``  手动执行凭据健康检查
 
-非管理员查询/执行一律拒绝，且不透露任何内部状态。
+``--instance`` 定位目标机器人实例（守岸人 / 艾弥斯等），缺省为本
+进程实例；每个实例的设置、昵称、互动计数彼此隔离。非管理员查询/
+执行一律拒绝，且不透露任何内部状态。
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from plugins.wuwa_unified_runtime.contracts import (
 )
 from plugins.wuwa_unified_runtime.runtime.settings import (
     SETTABLE_KEYS,
+    InstanceSettingsManager,
     RuntimeSettingsStore,
 )
 from plugins.wuwa_unified_runtime.sources.credential_health import (
@@ -75,53 +77,83 @@ def _error_result(request_id: str, message: str) -> CapabilityResult:
     )
 
 
+def _extract_instance(parts: list[str]) -> tuple[list[str], str]:
+    """从命令片段中提取 --instance <名称>；返回 (剩余片段, 实例名)。"""
+    instance = ""
+    remaining: list[str] = []
+    index = 0
+    while index < len(parts):
+        if parts[index] == "--instance" and index + 1 < len(parts):
+            instance = parts[index + 1]
+            index += 2
+            continue
+        remaining.append(parts[index])
+        index += 1
+    return remaining, instance
+
+
 def _handle_runtime_command(
-    store: RuntimeSettingsStore,
+    manager: InstanceSettingsManager,
+    default_instance: str,
     config: object,
     command_text: str,
 ) -> str:
     parts = command_text.split()
     if not parts:
-        return "用法：/wuwa runtime set|get|list|reset|nickname ..."
+        return "用法：/bot runtime set|get|list|reset|nickname|instance ..."
     action = parts[0].lower()
+    if action == "instance" and len(parts) > 1 and parts[1].lower() == "list":
+        instances = manager.list_instances()
+        return (
+            f"已有实例设置：{','.join(instances)}"
+            if instances
+            else "还没有任何实例设置文件（首次运行时自动创建）。"
+        )
+    remaining, instance = _extract_instance(parts[1:])
+    store = manager.get(instance or default_instance)
+    instance_label = f"[实例 {store.instance}] "
     if action == "set":
-        if len(parts) < 3:
-            return "用法：/wuwa runtime set <KEY> <VALUE>"
-        key, value = parts[1], " ".join(parts[2:])
+        if len(remaining) < 2:
+            return "用法：/bot runtime set <KEY> <VALUE> [--instance <名称>]"
+        key, value = remaining[0], " ".join(remaining[1:])
         converted = store.set_override(key, value)
-        return f"已设置 {key.upper()} = {converted}（本进程生效并已持久化）。"
+        return f"{instance_label}已设置 {key.upper()} = {converted}（已持久化，目标实例会自动刷新）。"
     if action == "get":
-        if len(parts) < 2:
-            return "用法：/wuwa runtime get <KEY>"
-        key = parts[1].upper()
+        if len(remaining) < 1:
+            return "用法：/bot runtime get <KEY> [--instance <名称>]"
+        key = remaining[0].upper()
         if key not in SETTABLE_KEYS:
             return f"不支持查询的键：{key}。可用键：{','.join(sorted(SETTABLE_KEYS))}"
         value = store.get(key, config)
-        return f"{key} = {value}" + ("（覆盖值）" if key in store.list_overrides() else "（.env 默认值）")
+        suffix = "（覆盖值）" if key in store.list_overrides() else "（.env 默认值）"
+        return f"{instance_label}{key} = {value}{suffix}"
     if action == "list":
         overrides = store.list_overrides()
         if not overrides:
-            return "当前没有运行时覆盖，全部使用 .env 配置。"
-        return "\n".join(f"{key} = {value}" for key, value in sorted(overrides.items()))
+            return f"{instance_label}当前没有运行时覆盖，全部使用 .env 配置。"
+        return "\n".join(
+            f"{instance_label}{key} = {value}" for key, value in sorted(overrides.items())
+        )
     if action == "reset":
-        key = parts[1] if len(parts) > 1 else None
+        key = remaining[0] if remaining else None
         count = store.reset_override(key)
-        return f"已清除 {count} 项运行时覆盖。"
+        return f"{instance_label}已清除 {count} 项运行时覆盖。"
     if action == "nickname":
-        return _handle_nickname_command(store, parts[1:])
+        return f"{instance_label}{_handle_nickname_command(store, remaining)}"
     return (
-        "用法：/wuwa runtime set <KEY> <VALUE> | get <KEY> | list | "
-        "reset [KEY] | nickname add/remove/list <昵称>"
+        "用法：/bot runtime set <KEY> <VALUE> | get <KEY> | list | "
+        "reset [KEY] | nickname add/remove/list <昵称> | instance list"
+        "（均可加 --instance <名称> 定位实例）"
     )
 
 
 def _handle_nickname_command(store: RuntimeSettingsStore, parts: list[str]) -> str:
     if not parts:
-        return "用法：/wuwa runtime nickname add <昵称> | remove <昵称> | list"
+        return "用法：/bot runtime nickname add <昵称> | remove <昵称> | list"
     action = parts[0].lower()
     if action == "add":
         if len(parts) < 2:
-            return "用法：/wuwa runtime nickname add <昵称>"
+            return "用法：/bot runtime nickname add <昵称>"
         added = store.add_nickname(parts[1])
         return (
             f"已添加昵称：{parts[1]}。当前昵称：{','.join(store.list_nicknames())}"
@@ -130,7 +162,7 @@ def _handle_nickname_command(store: RuntimeSettingsStore, parts: list[str]) -> s
         )
     if action == "remove":
         if len(parts) < 2:
-            return "用法：/wuwa runtime nickname remove <昵称>"
+            return "用法：/bot runtime nickname remove <昵称>"
         removed = store.remove_nickname(parts[1])
         return (
             f"已删除昵称：{parts[1]}。当前昵称：{','.join(store.list_nicknames())}"
@@ -144,11 +176,12 @@ def _handle_nickname_command(store: RuntimeSettingsStore, parts: list[str]) -> s
             if nicknames
             else "当前没有动态昵称（使用 .env 的 WUWA_RUNTIME_PERSONA_NICKNAMES）。"
         )
-    return "用法：/wuwa runtime nickname add <昵称> | remove <昵称> | list"
+    return "用法：/bot runtime nickname add <昵称> | remove <昵称> | list"
 
 
 def build_runtime_admin_result(
-    store: RuntimeSettingsStore,
+    manager: InstanceSettingsManager,
+    default_instance: str,
     config: object,
     *,
     request_id: str,
@@ -158,7 +191,12 @@ def build_runtime_admin_result(
     if "admin" not in actor_roles:
         return _admin_only_result(request_id)
     try:
-        body = _handle_runtime_command(store, config, command_text)
+        body = _handle_runtime_command(
+            manager,
+            default_instance,
+            config,
+            command_text,
+        )
     except (ValueError, TypeError) as exc:
         return _error_result(request_id, str(exc))
     return _ok_result(request_id, body)

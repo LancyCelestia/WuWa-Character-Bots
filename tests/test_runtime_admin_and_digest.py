@@ -4,6 +4,10 @@ from plugins.wuwa_unified_runtime.capabilities.runtime_admin import (
     build_alert_check_result,
     build_runtime_admin_result,
 )
+from plugins.wuwa_unified_runtime.character.shared_export import (
+    NullSharedConversationExportProvider,
+    SQLiteSharedConversationExporter,
+)
 from plugins.wuwa_unified_runtime.character.shared_group import (
     SQLiteGroupDigestProvider,
     build_shared_group_context_provider,
@@ -18,6 +22,7 @@ from plugins.wuwa_unified_runtime.runtime.alerts import (
     send_admin_alert,
 )
 from plugins.wuwa_unified_runtime.runtime.settings import (
+    InstanceSettingsManager,
     RuntimeSettingsStore,
     SETTABLE_KEYS,
 )
@@ -74,11 +79,12 @@ def test_settings_store_nicknames_and_interactions(tmp_path):
 
 
 def test_runtime_admin_result_requires_admin(tmp_path):
-    store = RuntimeSettingsStore(tmp_path / "settings.json")
+    manager = InstanceSettingsManager(tmp_path)
     config = Config()
 
     denied = build_runtime_admin_result(
-        store,
+        manager,
+        "default",
         config,
         request_id="req_admin",
         actor_roles=["user"],
@@ -88,14 +94,33 @@ def test_runtime_admin_result_requires_admin(tmp_path):
     assert "管理员" in denied.body
 
     allowed = build_runtime_admin_result(
-        store,
+        manager,
+        "default",
         config,
         request_id="req_admin",
         actor_roles=["admin", "user"],
         command_text="set WUWA_CHAT_TEMPERATURE 0.3",
     )
     assert "0.3" in allowed.body
-    assert store.get_or("WUWA_CHAT_TEMPERATURE", None) == 0.3
+    assert manager.get("default").get_or("WUWA_CHAT_TEMPERATURE", None) == 0.3
+
+
+def test_runtime_admin_targets_other_instance(tmp_path):
+    manager = InstanceSettingsManager(tmp_path)
+    config = Config()
+
+    result = build_runtime_admin_result(
+        manager,
+        "shorekeeper",
+        config,
+        request_id="req_admin",
+        actor_roles=["admin", "user"],
+        command_text="nickname add 艾弥斯 --instance aimias",
+    )
+    assert "aimias" in result.body
+    assert manager.get("aimias").list_nicknames() == ["艾弥斯"]
+    assert manager.get("shorekeeper").list_nicknames() == []
+    assert manager.list_instances() == ["aimias"]
 
 
 def test_alert_content_has_five_elements():
@@ -168,3 +193,75 @@ def test_build_shared_group_provider_defaults_off():
 
     context = provider.load("req_shared", "1", "42")
     assert context.enabled is False
+
+
+def test_group_digest_excludes_command_replies(tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "history.sqlite3"
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        "CREATE TABLE conversation_turns ("
+        "request_id TEXT, platform TEXT, adapter TEXT, bot_id TEXT, "
+        "session_id TEXT, sender_id TEXT, role TEXT, text TEXT, "
+        "created_at TEXT, kind TEXT)"
+    )
+    rows = [
+        ("req1", "onebot", "v11", "bot", "group:10001", "a", "user", "群里的话题", "2026-07-20T10:00:00+00:00", "chat"),
+        ("req2", "onebot", "v11", "bot", "group:10001", "bot", "assistant", "人格化回复内容", "2026-07-20T10:01:00+00:00", "chat"),
+        ("req3", "onebot", "v11", "bot", "group:10001", "bot", "assistant", "今天天气 30°C 多云", "2026-07-20T10:02:00+00:00", "command"),
+        ("req4", "onebot", "v11", "bot", "group:10001", "bot", "assistant", "运行时状态：enabled", "2026-07-20T10:03:00+00:00", "command"),
+    ]
+    connection.executemany(
+        "INSERT INTO conversation_turns VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    connection.commit()
+    connection.close()
+
+    provider = SQLiteGroupDigestProvider(db_path, max_turns=20, max_chars=600)
+    context = provider.load("req_digest", "10001", "a")
+
+    assert context.enabled is True
+    assert "群里的话题" in context.summary
+    assert "人格化回复内容" in context.summary
+    assert "今天天气" not in context.summary
+    assert "运行时状态" not in context.summary
+
+
+def test_shared_export_redacts_and_filters(tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "history.sqlite3"
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        "CREATE TABLE conversation_turns ("
+        "request_id TEXT, platform TEXT, adapter TEXT, bot_id TEXT, "
+        "session_id TEXT, sender_id TEXT, role TEXT, text TEXT, "
+        "created_at TEXT, kind TEXT)"
+    )
+    rows = [
+        ("req1", "onebot", "v11", "bot", "group:10001", "a", "user", "群聊内容 api_key=secret", "2026-07-20T10:00:00+00:00", "chat"),
+        ("req2", "onebot", "v11", "bot", "group:10001", "bot", "assistant", "群聊回复", "2026-07-20T10:01:00+00:00", "chat"),
+        ("req3", "onebot", "v11", "bot", "private:42", "a", "user", "私聊内容不应导出", "2026-07-20T10:02:00+00:00", "chat"),
+        ("req4", "onebot", "v11", "bot", "group:10001", "bot", "assistant", "天气查询结果", "2026-07-20T10:03:00+00:00", "command"),
+    ]
+    connection.executemany(
+        "INSERT INTO conversation_turns VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    connection.commit()
+    connection.close()
+
+    exporter = SQLiteSharedConversationExporter(db_path)
+    records = exporter.export(limit=20)
+
+    assert len(records) == 2
+    assert all(record.session_kind == "group" for record in records)
+    assert "secret" not in records[0].redacted_text
+    texts = " ".join(record.redacted_text for record in records)
+    assert "私聊内容不应导出" not in texts
+    assert "天气查询结果" not in texts
+
+    null_provider = NullSharedConversationExportProvider()
+    assert null_provider.export() == []

@@ -39,7 +39,11 @@ from .sender import (
 )
 from .runtime.aliases import CommandAliasResolver, build_command_alias_resolver
 from .runtime.alerts import AlertContent, send_admin_alert
-from .runtime.settings import RuntimeSettingsStore, build_runtime_settings_store
+from .runtime.settings import (
+    RuntimeSettingsStore,
+    build_instance_settings_manager,
+    build_runtime_settings_store,
+)
 from .sources.credential_health import check_credentials_and_report
 from .sources.meme_search import build_meme_search_provider
 
@@ -54,7 +58,7 @@ except Exception:
 __plugin_meta__ = PluginMetadata(
     name="WuWa Unified Runtime",
     description="统一角色机器人运行时、人格上下文、媒体解析和发送审计入口",
-    usage="/wuwa status",
+    usage="/bot status",
     type="application",
     config=Config,
     supported_adapters={"~onebot.v11", "~console", "~mail"},
@@ -386,6 +390,7 @@ def _record_chat_history_turn(
     role: str,
     text: str,
     audit_logger: AuditRepository,
+    kind: str = "chat",
 ) -> None:
     try:
         recorder.append_turn(
@@ -397,6 +402,7 @@ def _record_chat_history_turn(
             sender_id=message.sender_id,
             role=role,
             text=text,
+            kind=kind,
         )
     except Exception as exc:  # noqa: BLE001 - history failure must be observable but non-fatal.
         audit_logger.append(
@@ -630,7 +636,8 @@ def _register_nonebot_handlers() -> None:
         return
 
     config = Config.model_validate(driver_config)
-    runtime_settings = build_runtime_settings_store(config)
+    settings_manager = build_instance_settings_manager(config)
+    runtime_settings = settings_manager.get(config.wuwa_runtime_instance)
     alias_resolver = build_command_alias_resolver(
         config,
         extra_nicknames=runtime_settings.list_nicknames(),
@@ -658,7 +665,10 @@ def _register_nonebot_handlers() -> None:
         forward_min_chars=config.wuwa_render_forward_min_chars,
         forward_max_nodes=config.wuwa_render_forward_max_nodes,
         forward_node_chars=config.wuwa_render_forward_node_chars,
-        alias_command_check=lambda text: alias_resolver.resolve(text) is not None,
+        alias_command_check=lambda text: (
+            alias_resolver.resolve(text) is not None
+            or text.startswith(config.wuwa_runtime_admin_prefix)
+        ),
     )
 
     def _first_online_bot() -> OneBotV11Bot | None:
@@ -730,8 +740,8 @@ def _register_nonebot_handlers() -> None:
         return config.wuwa_chat_enabled and _is_plain_chat_text(event.get_plaintext())
 
     status = on_command(
-        "wuwa",
-        aliases={"/wuwa"},
+        "bot",
+        aliases={"wuwa", "/wuwa", "/bot"},
         force_whitespace=True,
         priority=20,
         block=True,
@@ -1020,7 +1030,8 @@ def _register_nonebot_handlers() -> None:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 return build_runtime_admin_result(
-                    runtime_settings,
+                    settings_manager,
+                    config.wuwa_runtime_instance,
                     config,
                     request_id=message.request_id,
                     actor_roles=_decision.actor_roles,

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from pathlib import Path
 from typing import Any, Callable
@@ -63,12 +64,19 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
 
 
 class RuntimeSettingsStore:
-    def __init__(self, path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        *,
+        instance: str = "default",
+    ) -> None:
+        self.instance = instance
         self.path = Path(path).expanduser() if path else None
         self._lock = threading.Lock()
         self._overrides: dict[str, Any] = {}
         self._nicknames: list[str] = []
         self._interactions: dict[str, int] = {}
+        self._mtime: float = 0.0
         self._load()
 
     # ---- 持久化 ----
@@ -77,6 +85,7 @@ class RuntimeSettingsStore:
         if not self.path or not self.path.exists():
             return
         try:
+            self._mtime = self.path.stat().st_mtime
             payload = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
@@ -102,6 +111,17 @@ class RuntimeSettingsStore:
                 if isinstance(value, int) and value > 0
             }
 
+    def _reload_if_changed(self) -> None:
+        """文件被其他进程（例如管理员命令）修改后，本进程读时自动刷新。"""
+        if not self.path or not self.path.exists():
+            return
+        try:
+            mtime = self.path.stat().st_mtime
+        except OSError:
+            return
+        if mtime != self._mtime:
+            self._load()
+
     def _save(self) -> None:
         if not self.path:
             return
@@ -119,6 +139,7 @@ class RuntimeSettingsStore:
                 ),
                 encoding="utf-8",
             )
+            self._mtime = self.path.stat().st_mtime
         except OSError:
             return
 
@@ -126,6 +147,7 @@ class RuntimeSettingsStore:
 
     def list_overrides(self) -> dict[str, Any]:
         with self._lock:
+            self._reload_if_changed()
             return dict(self._overrides)
 
     def set_override(self, key: str, value: str) -> Any:
@@ -137,12 +159,14 @@ class RuntimeSettingsStore:
             )
         converted = SETTABLE_KEYS[normalized_key](value.strip())
         with self._lock:
+            self._reload_if_changed()
             self._overrides[normalized_key] = converted
             self._save()
         return converted
 
     def reset_override(self, key: str | None = None) -> int:
         with self._lock:
+            self._reload_if_changed()
             if key is None:
                 count = len(self._overrides)
                 self._overrides = {}
@@ -158,6 +182,7 @@ class RuntimeSettingsStore:
     def get(self, key: str, config: object) -> Any:
         normalized_key = key.strip().upper()
         with self._lock:
+            self._reload_if_changed()
             if normalized_key in self._overrides:
                 return self._overrides[normalized_key]
         return getattr(config, normalized_key.lower(), None)
@@ -165,6 +190,7 @@ class RuntimeSettingsStore:
     def get_or(self, key: str, default: Any) -> Any:
         normalized_key = key.strip().upper()
         with self._lock:
+            self._reload_if_changed()
             if normalized_key in self._overrides:
                 return self._overrides[normalized_key]
         return default
@@ -186,6 +212,7 @@ class RuntimeSettingsStore:
 
     def list_nicknames(self) -> list[str]:
         with self._lock:
+            self._reload_if_changed()
             return list(self._nicknames)
 
     def add_nickname(self, nickname: str) -> bool:
@@ -193,6 +220,7 @@ class RuntimeSettingsStore:
         if not cleaned or len(cleaned) > 12:
             raise ValueError("昵称不能为空且长度不超过 12 个字符")
         with self._lock:
+            self._reload_if_changed()
             if cleaned in self._nicknames:
                 return False
             self._nicknames.append(cleaned)
@@ -202,6 +230,7 @@ class RuntimeSettingsStore:
     def remove_nickname(self, nickname: str) -> bool:
         cleaned = nickname.strip()
         with self._lock:
+            self._reload_if_changed()
             if cleaned not in self._nicknames:
                 return False
             self._nicknames.remove(cleaned)
@@ -212,6 +241,7 @@ class RuntimeSettingsStore:
 
     def interaction_increment(self, sender_id: str) -> int:
         with self._lock:
+            self._reload_if_changed()
             count = self._interactions.get(sender_id, 0) + 1
             self._interactions[sender_id] = count
             self._save()
@@ -219,13 +249,60 @@ class RuntimeSettingsStore:
 
     def interaction_count(self, sender_id: str) -> int:
         with self._lock:
+            self._reload_if_changed()
             return self._interactions.get(sender_id, 0)
 
     def list_interaction_senders(self) -> list[str]:
         with self._lock:
+            self._reload_if_changed()
             return list(self._interactions.keys())
 
 
+class InstanceSettingsManager:
+    """多实例设置管理：每个机器人实例一个设置文件，彼此隔离。
+
+    管理员命令可以通过 ``--instance <名称>`` 定位到其他实例；
+    被修改实例的进程会在下次读取时自动刷新（mtime 检测）。
+    """
+
+    def __init__(self, settings_dir: str | Path) -> None:
+        self.settings_dir = Path(settings_dir).expanduser()
+        self._stores: dict[str, RuntimeSettingsStore] = {}
+        self._lock = threading.Lock()
+
+    def _path_for(self, instance: str) -> Path:
+        safe_instance = re.sub(r"[^A-Za-z0-9_\-\u4e00-\u9fff]+", "_", instance) or "default"
+        return self.settings_dir / f"runtime_settings_{safe_instance}.json"
+
+    def get(self, instance: str) -> RuntimeSettingsStore:
+        with self._lock:
+            if instance not in self._stores:
+                self._stores[instance] = RuntimeSettingsStore(
+                    self._path_for(instance),
+                    instance=instance,
+                )
+            return self._stores[instance]
+
+    def list_instances(self) -> list[str]:
+        if not self.settings_dir.exists():
+            return []
+        return sorted(
+            path.stem.removeprefix("runtime_settings_")
+            for path in self.settings_dir.glob("runtime_settings_*.json")
+        )
+
+
 def build_runtime_settings_store(config: object) -> RuntimeSettingsStore:
-    path = str(getattr(config, "wuwa_runtime_settings_file", "")).strip()
-    return RuntimeSettingsStore(path or None)
+    instance = str(getattr(config, "wuwa_runtime_instance", "default")).strip() or "default"
+    manager = InstanceSettingsManager(
+        str(getattr(config, "wuwa_runtime_settings_dir", "data/settings")).strip()
+        or "data/settings"
+    )
+    return manager.get(instance)
+
+
+def build_instance_settings_manager(config: object) -> InstanceSettingsManager:
+    return InstanceSettingsManager(
+        str(getattr(config, "wuwa_runtime_settings_dir", "data/settings")).strip()
+        or "data/settings"
+    )

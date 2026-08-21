@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 console
 ⑪ 回执 DeliveryReceipt（sent / queued / skipped / blocked / failed…）
       │
       ▼
-⑫ 审计 + 运行诊断（每阶段留痕、脱敏）──→ 管理员 /wuwa why 可解释
+⑫ 审计 + 运行诊断（每阶段留痕、脱敏）──→ 管理员 /bot why 可解释
 ```
 
 **上网查询子流程**：`链接/搜索词 → URL 去跟踪参数 → FetchRequest（超时/重试/限频/robots/凭据引用）→ FetchResult → 归一化 → 审查 → 渲染 → 发送`；搜索结果一律标记"不可信、可能过时"。
@@ -214,14 +214,15 @@ NapCat 按 OneBot V11 实现接入时，建议使用数组消息段格式。Inco
 ## 近期新增能力
 
 - **最小可执行程序**：`scripts/dev.ps1 console`（交互）与 `-Message`（单轮），走同一套运行时流水线，支持 CLI 参数临时接入任意 OpenAI 兼容模型；REPL 支持 `/group` 群聊模拟、`/runtime set`、`/nickname add`、`/alert`。
-- **多昵称命令**：`WUWA_RUNTIME_PERSONA_NICKNAMES=["岸宝","守岸人"]`，任一昵称可用 `/岸宝帮助`、`/守岸人状态`、`/岸宝为什么` 等（QQ 群聊中也视为命令触发）。
-- **管理员运行时指令**（QQ 对话里直接说，仅 `WUWA_ADMIN_USER_IDS` 可用，走统一流水线并持久化到 `data/runtime_settings.json`）：
-  - `/wuwa runtime set <KEY> <VALUE>` 调整温度/max_tokens/回复上限/梗搜索/动作括号（白名单键）
-  - `/wuwa runtime get <KEY>`、`/wuwa runtime list`、`/wuwa runtime reset [KEY]`
-  - `/wuwa runtime nickname add|remove|list <昵称>` 动态增删角色昵称
-  - `/wuwa alert check [--probe]` 手动执行凭据健康检查
+- **多昵称命令（多 IP 平台化）**：`WUWA_RUNTIME_PERSONA_NICKNAMES=["岸宝","守岸人","第二实例","漂泊的终点","独属于我的蒙娜丽莎"]`，任一昵称可用 `/岸宝帮助` 等；管理前缀已从 `/wuwa` 换成 **`/bot`**（不绑定任何单一 IP，`/wuwa` 作为旧别名保留），未来接入其他 IP 机器人复用同一套管理命令。
+- **机器人实例隔离**：`WUWA_RUNTIME_INSTANCE=shorekeeper`，每个实例（守岸人 / 艾弥斯等）拥有独立的设置、昵称与互动计数文件（`data/settings/runtime_settings_<实例>.json`）；管理员命令用 `--instance <名称>` 定位目标实例，被修改实例自动热刷新；对话历史仍按 bot/session/sender 隔离。
+- **管理员运行时指令**（QQ 对话里直接说，仅 `WUWA_ADMIN_USER_IDS` 可用，走统一流水线）：
+  - `/bot runtime set <KEY> <VALUE> [--instance <名称>]` 调整温度/max_tokens/回复上限/梗搜索/动作括号
+  - `/bot runtime get|list|reset [KEY]`、`/bot runtime nickname add|remove|list <昵称>`、`/bot runtime instance list`
+  - `/bot alert check [--probe]` 手动凭据健康检查
 - **预警推送闭环**：凭据定时检查发现问题时，按"时间/位置/发生了什么/影响/建议处理"五要素私聊管理员（`runtime/alerts.py`），全部走 SendRequest 审计链路。
-- **群消息短时共享记忆（元宝式摘要）**：`WUWA_SHARED_GROUP_CONTEXT_ENABLED=true` 时，从群会话历史生成**确定性摘要**（免费），只含群内公共投影，不含任何私聊内容；可选 LLM 压缩（`WUWA_GROUP_DIGEST_LLM_ENABLED`，TTL 缓存避免每轮烧钱）。与"用户×机器人"个人历史分层输送。
+- **群消息短时共享记忆（元宝式摘要）**：`WUWA_SHARED_GROUP_CONTEXT_ENABLED=true` 时从群会话历史生成**确定性摘要**（默认窗口 150 条），**自动剔除命令/被动回复**（查天气、查状态等），保留成员发言与机器人基于大模型的人格化回复；只含群内公共投影，不含任何私聊内容；可选 LLM 压缩（TTL 缓存避免每轮烧钱）。
+- **公共会话记录导出接口（平台预留）**：`character/shared_export.py` 定义 `SharedConversationExportProvider` 契约与 SQLite 实现——只导出群维度人格化对话、命令回复排除、文本审计级脱敏+截断、不暴露任何 ID；`WUWA_SHARED_EXPORT_ENABLED=true` 开启，供未来平台共享脱敏记录。
 - **环境信息注入**：对话上下文自动带本地时间/日期/节气/节日；配置 `WUWA_WEATHER_ENABLED=true` 与经纬度后，天气经 Open-Meteo（免费、无 key）按 TTL 缓存注入，离线时安全降级为"未启用"（`character/temporal.py`）。
 - **动作括号**：prompt 允许用中文括号表达动作/神态，例如（轻轻点头）；`WUWA_PERSONA_ACTION_BRACKETS=false` 可关闭（也可 `/wuwa runtime set` 动态切换）。
 - **世界观术语表**：`WUWA_GLOSSARY_FILES` 指向"词条：解释"格式文件，游戏世界观/专有名词/专有地名/科研词汇按预算注入，回答时不编造设定（`character/glossary.py`）。

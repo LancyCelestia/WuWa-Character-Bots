@@ -12,8 +12,10 @@ from plugins.wuwa_unified_runtime.contracts import (
     IncomingMessage,
     MemeSearchContext,
     MemeSearchHit,
+    PrivacyLevel,
     RiskLevel,
     SendPolicy,
+    SessionType,
 )
 from plugins.wuwa_unified_runtime.llm import (
     LLMProvider,
@@ -851,6 +853,11 @@ def build_chat_capability(
                 "context_budget": decision.context_budget,
                 "current_message": injection_check.sanitized_text,
                 "risk_level": injection_check.risk_level,
+                "privacy_level": (
+                    PrivacyLevel.GROUP
+                    if getattr(message, "session_type", None) is SessionType.GROUP
+                    else PrivacyLevel.PERSONAL
+                ),
             }
         )
         meme_query = extract_meme_query(injection_check.sanitized_text)

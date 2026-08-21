@@ -40,6 +40,7 @@ class ConversationHistoryRecorder(Protocol):
         sender_id: str,
         role: str,
         text: str,
+        kind: str = "chat",
     ) -> None:
         raise NotImplementedError
 
@@ -78,6 +79,7 @@ class NullConversationHistoryProvider:
         sender_id: str,
         role: str,
         text: str,
+        kind: str = "chat",
     ) -> None:
         return None
 
@@ -129,6 +131,7 @@ class InMemoryConversationHistoryStore:
         sender_id: str,
         role: str,
         text: str,
+        kind: str = "chat",
     ) -> None:
         clean_text = text.strip()
         if not clean_text:
@@ -209,11 +212,13 @@ class SQLiteConversationHistoryRepository:
         sender_id: str,
         role: str,
         text: str,
+        kind: str = "chat",
     ) -> None:
         clean_text = text.strip()
         if not clean_text:
             return
         self._ensure_schema()
+        safe_kind = kind if kind in {"chat", "command", "system"} else "chat"
         now = datetime.now(UTC).isoformat()
         with self._connect() as connection:
             connection.execute(
@@ -227,9 +232,10 @@ class SQLiteConversationHistoryRepository:
                     sender_id,
                     role,
                     text,
-                    created_at
+                    created_at,
+                    kind
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     request_id,
@@ -241,6 +247,7 @@ class SQLiteConversationHistoryRepository:
                     role,
                     clean_text,
                     now,
+                    safe_kind,
                 ),
             )
             self._prune_scope(
@@ -412,6 +419,19 @@ class SQLiteConversationHistoryRepository:
                 )
                 """
             )
+            # 兼容旧表：补充 kind 列，区分 LLM 人设回复（chat）与
+            # 命令/被动回复（command），供群共享摘要过滤使用。
+            columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(conversation_turns)"
+                ).fetchall()
+            }
+            if "kind" not in columns:
+                connection.execute(
+                    "ALTER TABLE conversation_turns "
+                    "ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat'"
+                )
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_conversation_turns_scope_time

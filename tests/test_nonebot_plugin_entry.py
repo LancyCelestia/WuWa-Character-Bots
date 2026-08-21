@@ -1232,5 +1232,5 @@ def test_chat_smoke_runs_full_local_pipeline(tmp_path):
     assert result["receipt_state"] == "sent"
     assert result["persona_profile_id"] == "shorekeeper"
     assert result["capability_id"] == "wuwa.chat"
-    assert "LLM 未配置" in result["reply_text"]
+    assert "还没有接上外面的模型" in result["reply_text"]
     assert result["audit_events"] == ["sent"]
