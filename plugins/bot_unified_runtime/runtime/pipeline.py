@@ -460,7 +460,7 @@ class RuntimePipeline:
             max_messages=decision.max_messages,
             dedupe_key=(
                 f"{decision.capability_id}:{message.session_id}:"
-                f"{rendered.text_fallback}"
+                f"{message.message_id or message.request_id}"
             ),
             cooldown_key=prepared.policy.cooldown_key,
             expires_at=None,
