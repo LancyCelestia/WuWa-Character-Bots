@@ -3,8 +3,8 @@ from __future__ import annotations
 import importlib
 from types import SimpleNamespace
 
-from plugins.wuwa_unified_runtime import smoke
-from plugins.wuwa_unified_runtime.config import Config
+from plugins.bot_unified_runtime import smoke
+from plugins.bot_unified_runtime.config import Config
 
 
 def test_environment_doctor_reports_ready_runtime_without_leaking_secret():
@@ -23,7 +23,7 @@ def test_environment_doctor_reports_ready_runtime_without_leaking_secret():
         return None
 
     result = smoke.run_environment_doctor(
-        Config(wuwa_chat_api_key="sk-live-secret"),
+        Config(bot_chat_api_key="sk-live-secret"),
         importer=importer,
         command_resolver=command_resolver,
         python_executable="C:/Tools/python.exe",
@@ -57,7 +57,7 @@ def test_environment_doctor_reports_actionable_missing_dependencies():
         return importlib.import_module(name)
 
     result = smoke.run_environment_doctor(
-        Config(wuwa_chat_api_key="sk-live-secret"),
+        Config(bot_chat_api_key="sk-live-secret"),
         importer=importer,
         command_resolver=lambda _name: None,
         python_executable="C:/Miniconda/python.exe",
@@ -136,7 +136,7 @@ def test_dev_script_exposes_doctor_task():
 
     assert '"doctor"' in text
     assert "Invoke-Doctor" in text
-    assert "plugins.wuwa_unified_runtime.smoke" in text
+    assert "plugins.bot_unified_runtime.smoke" in text
     assert '"doctor"' in text
     assert "Environment doctor did not pass. See diagnostic output above." in text
-    assert "& $python -m plugins.wuwa_unified_runtime.smoke doctor" in text
+    assert "& $python -m plugins.bot_unified_runtime.smoke doctor" in text

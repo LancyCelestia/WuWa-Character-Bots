@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from plugins.wuwa_unified_runtime.audit import InMemoryAuditLogger
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.contracts import (
     AuditRecord,
     DeliveryReceipt,
     PrivacyLevel,
@@ -13,9 +13,9 @@ from plugins.wuwa_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.wuwa_unified_runtime.diagnostics import RecentDiagnosticsStore, RuntimeDiagnostic
-from plugins.wuwa_unified_runtime.sender import InMemoryReceiptRepository, SQLiteSendRequestQueue
-from plugins.wuwa_unified_runtime.character.history import SQLiteConversationHistoryRepository
+from plugins.bot_unified_runtime.diagnostics import RecentDiagnosticsStore, RuntimeDiagnostic
+from plugins.bot_unified_runtime.sender import InMemoryReceiptRepository, SQLiteSendRequestQueue
+from plugins.bot_unified_runtime.character.history import SQLiteConversationHistoryRepository
 
 
 def _receipt_repository() -> InMemoryReceiptRepository:
@@ -40,7 +40,7 @@ def _audit_repository() -> InMemoryAuditLogger:
         AuditRecord(
             request_id="req_safe",
             session_id="private:42",
-            capability_id="wuwa.chat",
+            capability_id="bot.chat",
             stage="transport",
             event="transport_sent",
             severity=RiskLevel.LOW,
@@ -61,7 +61,7 @@ def _diagnostic_store() -> RecentDiagnosticsStore:
             request_id="req_old",
             debug_id="dbg_old",
             session_id="private:old",
-            capability_id="wuwa.chat",
+            capability_id="bot.chat",
             session_type="private",
             policy_allowed=True,
             policy_reason="private_message",
@@ -87,7 +87,7 @@ def _diagnostic_store() -> RecentDiagnosticsStore:
             request_id="req_new",
             debug_id="dbg_new",
             session_id="private:new",
-            capability_id="wuwa.chat",
+            capability_id="bot.chat",
             session_type="private",
             policy_allowed=True,
             policy_reason="private_message",
@@ -134,7 +134,7 @@ def _send_request_for_queue() -> SendRequest:
         target_scope=SessionType.PRIVATE,
         target_id="secret-target-id",
         origin_message_id="origin-secret",
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
         content=rendered,
         send_policy=SendPolicy.IMMEDIATE,
         priority="normal",
@@ -147,7 +147,7 @@ def _send_request_for_queue() -> SendRequest:
 
 
 def test_admin_receipt_query_returns_safe_summary_without_provider_message_id():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_receipt_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_receipt_query_result
 
     result = build_receipt_query_result(
         _receipt_repository(),
@@ -156,7 +156,7 @@ def test_admin_receipt_query_returns_safe_summary_without_provider_message_id():
         query="dbg_safe",
     )
 
-    assert result.capability_id == "wuwa.receipt"
+    assert result.capability_id == "bot.receipt"
     assert result.request_id == "req_query"
     assert result.privacy_level.value == "personal"
     assert "发送回执" in result.body
@@ -170,7 +170,7 @@ def test_admin_receipt_query_returns_safe_summary_without_provider_message_id():
 
 
 def test_non_admin_receipt_query_is_rejected():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_receipt_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_receipt_query_result
 
     result = build_receipt_query_result(
         _receipt_repository(),
@@ -184,7 +184,7 @@ def test_non_admin_receipt_query_is_rejected():
 
 
 def test_empty_and_missing_receipt_query_are_actionable():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_receipt_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_receipt_query_result
 
     empty = build_receipt_query_result(
         _receipt_repository(),
@@ -199,13 +199,13 @@ def test_empty_and_missing_receipt_query_are_actionable():
         query="missing",
     )
 
-    assert "/wuwa receipt <request_id|debug_id>" in empty.body
+    assert "/bot receipt <request_id|debug_id>" in empty.body
     assert "未找到发送回执" in missing.body
     assert "missing" in missing.body
 
 
 def test_admin_audit_query_returns_safe_rows_without_private_debug_or_session_id():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_audit_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_audit_query_result
 
     result = build_audit_query_result(
         _audit_repository(),
@@ -214,7 +214,7 @@ def test_admin_audit_query_returns_safe_rows_without_private_debug_or_session_id
         query="req_safe",
     )
 
-    assert result.capability_id == "wuwa.audit"
+    assert result.capability_id == "bot.audit"
     assert result.request_id == "req_query"
     assert result.privacy_level.value == "personal"
     assert "审计事件" in result.body
@@ -231,7 +231,7 @@ def test_admin_audit_query_returns_safe_rows_without_private_debug_or_session_id
 
 
 def test_non_admin_and_empty_audit_query_are_rejected_or_guided():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_audit_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_audit_query_result
 
     denied = build_audit_query_result(
         _audit_repository(),
@@ -248,11 +248,11 @@ def test_non_admin_and_empty_audit_query_are_rejected_or_guided():
 
     assert "只有管理员可以查看运行时排障记录" in denied.body
     assert "transport_sent" not in denied.body
-    assert "/wuwa audit <request_id>" in empty.body
+    assert "/bot audit <request_id>" in empty.body
 
 
 def test_admin_recent_query_returns_safe_recent_summary():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_recent_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_recent_query_result
 
     result = build_recent_query_result(
         _diagnostic_store(),
@@ -263,7 +263,7 @@ def test_admin_recent_query_returns_safe_recent_summary():
         query="2",
     )
 
-    assert result.capability_id == "wuwa.recent"
+    assert result.capability_id == "bot.recent"
     assert result.privacy_level.value == "personal"
     assert "最近排障摘要" in result.body
     assert "最近运行诊断" in result.body
@@ -289,7 +289,7 @@ def test_admin_recent_query_returns_safe_recent_summary():
 
 
 def test_admin_recent_query_surfaces_safe_runtime_audit_tags_without_user_text():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_recent_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_recent_query_result
 
     store = RecentDiagnosticsStore()
     store.record(
@@ -297,7 +297,7 @@ def test_admin_recent_query_surfaces_safe_runtime_audit_tags_without_user_text()
             request_id="req_injection",
             debug_id="dbg_injection",
             session_id="private:secret-session",
-            capability_id="wuwa.chat",
+            capability_id="bot.chat",
             session_type="private",
             policy_allowed=True,
             policy_reason="allowed",
@@ -346,7 +346,7 @@ def test_admin_recent_query_surfaces_safe_runtime_audit_tags_without_user_text()
 
 
 def test_non_admin_recent_query_is_rejected_without_leaking_record_existence():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_recent_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_recent_query_result
 
     result = build_recent_query_result(
         _diagnostic_store(),
@@ -364,7 +364,7 @@ def test_non_admin_recent_query_is_rejected_without_leaking_record_existence():
 
 
 def test_recent_query_clamps_invalid_limit_and_keeps_newest_first():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_recent_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_recent_query_result
 
     result = build_recent_query_result(
         _diagnostic_store(),
@@ -380,18 +380,18 @@ def test_recent_query_clamps_invalid_limit_and_keeps_newest_first():
 
 
 def test_admin_queue_query_returns_safe_summary_without_payload_or_targets(tmp_path):
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_queue_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_queue_query_result
 
     audit = InMemoryAuditLogger()
     queue = SQLiteSendRequestQueue(tmp_path / "send_queue.sqlite3", audit)
     queue.submit(_send_request_for_queue())
     config = Config(
-        wuwa_send_queue_enabled=True,
-        wuwa_send_queue_db_path=str(tmp_path / "send_queue.sqlite3"),
-        wuwa_send_queue_max_items=9,
-        wuwa_send_queue_max_attempts=4,
-        wuwa_send_queue_retry_base_seconds=7,
-        wuwa_send_queue_retry_max_seconds=70,
+        bot_send_queue_enabled=True,
+        bot_send_queue_db_path=str(tmp_path / "send_queue.sqlite3"),
+        bot_send_queue_max_items=9,
+        bot_send_queue_max_attempts=4,
+        bot_send_queue_retry_base_seconds=7,
+        bot_send_queue_retry_max_seconds=70,
     )
 
     result = build_queue_query_result(
@@ -401,7 +401,7 @@ def test_admin_queue_query_returns_safe_summary_without_payload_or_targets(tmp_p
         actor_roles=["admin"],
     )
 
-    assert result.capability_id == "wuwa.queue"
+    assert result.capability_id == "bot.queue"
     assert result.privacy_level.value == "personal"
     assert "发送队列" in result.body
     assert "enabled=true" in result.body
@@ -425,7 +425,7 @@ def test_admin_queue_query_returns_safe_summary_without_payload_or_targets(tmp_p
 
 
 def test_non_admin_queue_query_is_rejected_without_leaking_queue_details(tmp_path):
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_queue_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_queue_query_result
 
     audit = InMemoryAuditLogger()
     queue = SQLiteSendRequestQueue(tmp_path / "send_queue.sqlite3", audit)
@@ -433,7 +433,7 @@ def test_non_admin_queue_query_is_rejected_without_leaking_queue_details(tmp_pat
 
     result = build_queue_query_result(
         queue,
-        Config(wuwa_send_queue_enabled=True, wuwa_send_queue_db_path=str(tmp_path / "send_queue.sqlite3")),
+        Config(bot_send_queue_enabled=True, bot_send_queue_db_path=str(tmp_path / "send_queue.sqlite3")),
         request_id="req_query",
         actor_roles=["user"],
     )
@@ -446,7 +446,7 @@ def test_non_admin_queue_query_is_rejected_without_leaking_queue_details(tmp_pat
 
 
 def test_admin_history_clear_removes_only_current_scope_without_leaking_ids(tmp_path):
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_history_clear_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_history_clear_result
 
     repository = SQLiteConversationHistoryRepository(tmp_path / "history.sqlite3")
     repository.append_turn(
@@ -491,7 +491,7 @@ def test_admin_history_clear_removes_only_current_scope_without_leaking_ids(tmp_
         sender_id="42",
     )
 
-    assert result.capability_id == "wuwa.history"
+    assert result.capability_id == "bot.history"
     assert result.request_id == "req_clear"
     assert result.privacy_level is PrivacyLevel.PERSONAL
     assert "最近对话历史已清理" in result.body
@@ -527,7 +527,7 @@ def test_admin_history_clear_removes_only_current_scope_without_leaking_ids(tmp_
 
 
 def test_non_admin_history_clear_is_rejected_without_leaking_history_state(tmp_path):
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_history_clear_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_history_clear_result
 
     repository = SQLiteConversationHistoryRepository(tmp_path / "history.sqlite3")
     repository.append_turn(
@@ -572,8 +572,8 @@ def test_non_admin_history_clear_is_rejected_without_leaking_history_state(tmp_p
 
 
 def test_admin_pause_resume_updates_runtime_control_state_without_leaking_ids():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_runtime_control_result
-    from plugins.wuwa_unified_runtime.runtime import RuntimeControlState
+    from plugins.bot_unified_runtime.capabilities.debug import build_runtime_control_result
+    from plugins.bot_unified_runtime.runtime import RuntimeControlState
 
     state = RuntimeControlState()
 
@@ -592,7 +592,7 @@ def test_admin_pause_resume_updates_runtime_control_state_without_leaking_ids():
         actor_id="secret-admin-id",
     )
 
-    assert pause.capability_id == "wuwa.control"
+    assert pause.capability_id == "bot.control"
     assert pause.request_id == "req_pause"
     assert "运行时已暂停" in pause.body
     assert "runtime_paused=true" in pause.body
@@ -605,8 +605,8 @@ def test_admin_pause_resume_updates_runtime_control_state_without_leaking_ids():
 
 
 def test_non_admin_pause_is_rejected_without_changing_runtime_control_state():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_runtime_control_result
-    from plugins.wuwa_unified_runtime.runtime import RuntimeControlState
+    from plugins.bot_unified_runtime.capabilities.debug import build_runtime_control_result
+    from plugins.bot_unified_runtime.runtime import RuntimeControlState
 
     state = RuntimeControlState()
 
@@ -625,7 +625,7 @@ def test_non_admin_pause_is_rejected_without_changing_runtime_control_state():
 
 
 def test_diagnostics_stores_list_recent_items_newest_first(tmp_path):
-    from plugins.wuwa_unified_runtime.diagnostics import SQLiteDiagnosticsRepository
+    from plugins.bot_unified_runtime.diagnostics import SQLiteDiagnosticsRepository
 
     memory_store = _diagnostic_store()
     sqlite_store = SQLiteDiagnosticsRepository(tmp_path / "diagnostics.sqlite3")
@@ -644,7 +644,7 @@ def test_diagnostics_stores_list_recent_items_newest_first(tmp_path):
 
 def test_plugin_entry_exposes_admin_diagnostic_commands_without_self_overwrite():
     import inspect
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
 
@@ -653,18 +653,18 @@ def test_plugin_entry_exposes_admin_diagnostic_commands_without_self_overwrite()
     assert "build_audit_query_result" in source
     assert "build_recent_query_result" in source
     assert "build_queue_query_result" in source
-    assert 'capability_id = "wuwa.history"' in source
-    assert 'capability_id = "wuwa.receipt"' in source
-    assert 'capability_id = "wuwa.audit"' in source
-    assert 'capability_id = "wuwa.recent"' in source
-    assert 'capability_id = "wuwa.queue"' in source
+    assert 'capability_id = "bot.history"' in source
+    assert 'capability_id = "bot.receipt"' in source
+    assert 'capability_id = "bot.audit"' in source
+    assert 'capability_id = "bot.recent"' in source
+    assert 'capability_id = "bot.queue"' in source
     for capability_id in (
-        "wuwa.why",
-        "wuwa.receipt",
-        "wuwa.audit",
-        "wuwa.recent",
-        "wuwa.queue",
-        "wuwa.history",
-        "wuwa.control",
+        "bot.why",
+        "bot.receipt",
+        "bot.audit",
+        "bot.recent",
+        "bot.queue",
+        "bot.history",
+        "bot.control",
     ):
         assert capability_id in plugin_entry.NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS

@@ -1,8 +1,8 @@
-﻿from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.character.history import SQLiteConversationHistoryRepository
-from plugins.wuwa_unified_runtime.llm import LLMProviderError
-from plugins.wuwa_unified_runtime import smoke
-from plugins.wuwa_unified_runtime.smoke import chat_smoke_exit_code, run_chat_smoke, run_llm_smoke
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.character.history import SQLiteConversationHistoryRepository
+from plugins.bot_unified_runtime.llm import LLMProviderError
+from plugins.bot_unified_runtime import smoke
+from plugins.bot_unified_runtime.smoke import chat_smoke_exit_code, run_chat_smoke, run_llm_smoke
 
 
 class RaisingProvider:
@@ -39,7 +39,7 @@ class EchoProvider:
         self.last_kwargs: dict[str, object] = {}
 
     def generate(self, messages, **kwargs):
-        from plugins.wuwa_unified_runtime.llm import LLMReply
+        from plugins.bot_unified_runtime.llm import LLMReply
 
         self.calls += 1
         self.last_messages = messages
@@ -56,10 +56,10 @@ class EchoProvider:
 def test_llm_smoke_reports_missing_key_without_calling_provider():
     provider = EchoProvider()
     config = Config(
-        wuwa_chat_provider="openai_compatible",
-        wuwa_chat_model="diag-model",
-        wuwa_chat_api_key="",
-        wuwa_chat_base_url="https://llm.example/v1",
+        bot_chat_provider="openai_compatible",
+        bot_chat_model="diag-model",
+        bot_chat_api_key="",
+        bot_chat_base_url="https://llm.example/v1",
     )
 
     result = run_llm_smoke(config, llm_provider=provider)
@@ -78,8 +78,8 @@ def test_llm_smoke_reports_missing_key_without_calling_provider():
 def test_llm_smoke_reports_static_provider_as_not_real_connection():
     provider = EchoProvider()
     config = Config(
-        wuwa_chat_provider="static",
-        wuwa_chat_model="static",
+        bot_chat_provider="static",
+        bot_chat_model="static",
     )
 
     result = run_llm_smoke(config, llm_provider=provider)
@@ -95,10 +95,10 @@ def test_llm_smoke_reports_static_provider_as_not_real_connection():
 def test_llm_smoke_treats_placeholder_key_as_missing_without_calling_provider():
     provider = EchoProvider()
     config = Config(
-        wuwa_chat_provider="openai_compatible",
-        wuwa_chat_model="diag-model",
-        wuwa_chat_api_key="your-api-key",
-        wuwa_chat_base_url="https://llm.example/v1",
+        bot_chat_provider="openai_compatible",
+        bot_chat_model="diag-model",
+        bot_chat_api_key="your-api-key",
+        bot_chat_base_url="https://llm.example/v1",
     )
 
     result = run_llm_smoke(config, llm_provider=provider)
@@ -118,12 +118,12 @@ def test_llm_smoke_reports_missing_model_and_base_url_without_calling_provider(t
 
     result = run_llm_smoke(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_knowledge_files=[str(knowledge_file)],
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="your-model-name",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="",
+            bot_persona_files=[str(persona_file)],
+            bot_knowledge_files=[str(knowledge_file)],
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="your-model-name",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="",
         ),
         llm_provider=provider,
     )
@@ -153,15 +153,15 @@ def test_llm_smoke_reports_invalid_generation_parameters_without_calling_provide
 
     result = run_llm_smoke(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_knowledge_files=[str(knowledge_file)],
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="https://llm.example/v1",
-            wuwa_chat_temperature=9,
-            wuwa_chat_max_tokens=0,
-            wuwa_chat_timeout_seconds=0,
+            bot_persona_files=[str(persona_file)],
+            bot_knowledge_files=[str(knowledge_file)],
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="https://llm.example/v1",
+            bot_chat_temperature=9,
+            bot_chat_max_tokens=0,
+            bot_chat_timeout_seconds=0,
         ),
         llm_provider=provider,
     )
@@ -189,10 +189,10 @@ def test_llm_smoke_reports_invalid_generation_parameters_without_calling_provide
 def test_llm_smoke_redacts_provider_errors_and_configured_api_key():
     provider = RaisingProvider()
     config = Config(
-        wuwa_chat_provider="openai_compatible",
-        wuwa_chat_model="diag-model",
-        wuwa_chat_api_key="sk-live-secret",
-        wuwa_chat_base_url="https://llm.example/v1",
+        bot_chat_provider="openai_compatible",
+        bot_chat_model="diag-model",
+        bot_chat_api_key="sk-live-secret",
+        bot_chat_base_url="https://llm.example/v1",
     )
 
     result = run_llm_smoke(config, llm_provider=provider)
@@ -210,10 +210,10 @@ def test_llm_smoke_redacts_provider_errors_and_configured_api_key():
 def test_llm_smoke_uses_provider_error_kind_when_available():
     provider = TimeoutProvider()
     config = Config(
-        wuwa_chat_provider="openai_compatible",
-        wuwa_chat_model="diag-model",
-        wuwa_chat_api_key="sk-live-secret",
-        wuwa_chat_base_url="https://llm.example/v1",
+        bot_chat_provider="openai_compatible",
+        bot_chat_model="diag-model",
+        bot_chat_api_key="sk-live-secret",
+        bot_chat_base_url="https://llm.example/v1",
     )
 
     result = run_llm_smoke(config, llm_provider=provider)
@@ -227,10 +227,10 @@ def test_llm_smoke_uses_provider_error_kind_when_available():
 def test_llm_smoke_wraps_unexpected_provider_errors_safely():
     provider = UnexpectedProvider()
     config = Config(
-        wuwa_chat_provider="openai_compatible",
-        wuwa_chat_model="diag-model",
-        wuwa_chat_api_key="sk-live-secret",
-        wuwa_chat_base_url="https://llm.example/v1",
+        bot_chat_provider="openai_compatible",
+        bot_chat_model="diag-model",
+        bot_chat_api_key="sk-live-secret",
+        bot_chat_base_url="https://llm.example/v1",
     )
 
     result = run_llm_smoke(config, llm_provider=provider)
@@ -249,12 +249,12 @@ def test_llm_smoke_wraps_unexpected_provider_errors_safely():
 def test_llm_smoke_calls_provider_with_safe_diagnostic_prompt():
     provider = EchoProvider()
     config = Config(
-        wuwa_chat_provider="openai_compatible",
-        wuwa_chat_model="diag-model",
-        wuwa_chat_api_key="sk-live-secret",
-        wuwa_chat_base_url="https://llm.example/v1",
-        wuwa_chat_temperature=0.3,
-        wuwa_chat_max_tokens=128,
+        bot_chat_provider="openai_compatible",
+        bot_chat_model="diag-model",
+        bot_chat_api_key="sk-live-secret",
+        bot_chat_base_url="https://llm.example/v1",
+        bot_chat_temperature=0.3,
+        bot_chat_max_tokens=128,
     )
 
     result = run_llm_smoke(config, llm_provider=provider)
@@ -312,8 +312,8 @@ def test_llm_smoke_cli_prints_readiness_summary(monkeypatch, capsys, tmp_path):
 def test_chat_smoke_reports_static_provider_as_not_configured():
     result = run_chat_smoke(
         Config(
-            wuwa_chat_provider="static",
-            wuwa_chat_model="static",
+            bot_chat_provider="static",
+            bot_chat_model="static",
         )
     )
 
@@ -329,9 +329,9 @@ def test_chat_smoke_reports_llm_readiness_for_local_static_pipeline(tmp_path):
 
     result = run_chat_smoke(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_chat_provider="static",
-            wuwa_chat_model="static",
+            bot_persona_files=[str(persona_file)],
+            bot_chat_provider="static",
+            bot_chat_model="static",
         )
     )
 
@@ -354,12 +354,12 @@ def test_chat_smoke_reports_ready_llm_readiness_for_real_provider_config(tmp_pat
 
     result = run_chat_smoke(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_knowledge_files=[str(knowledge_file)],
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="https://llm.example/v1",
+            bot_persona_files=[str(persona_file)],
+            bot_knowledge_files=[str(knowledge_file)],
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="https://llm.example/v1",
         ),
         llm_provider=provider,
     )
@@ -379,10 +379,10 @@ def test_chat_smoke_reports_llm_provider_error_without_hiding_it(tmp_path):
     provider = RaisingProvider()
     result = run_chat_smoke(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
+            bot_persona_files=[str(persona_file)],
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
         ),
         llm_provider=provider,
     )
@@ -408,11 +408,11 @@ def test_chat_smoke_exit_code_fails_only_when_real_provider_has_llm_error():
         "llm_status": "error",
     }
 
-    assert chat_smoke_exit_code(Config(wuwa_chat_provider="static"), static_result) == 0
+    assert chat_smoke_exit_code(Config(bot_chat_provider="static"), static_result) == 0
     assert chat_smoke_exit_code(
         Config(
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_api_key="sk-live-secret",
+            bot_chat_provider="openai_compatible",
+            bot_chat_api_key="sk-live-secret",
         ),
         real_error_result,
     ) == 1
@@ -462,14 +462,14 @@ def test_context_smoke_reports_prompt_summary_without_calling_llm_or_leaking_key
         ),
         encoding="utf-8",
     )
-    knowledge_file = tmp_path / "wuwa.txt"
+    knowledge_file = tmp_path / "bot.txt"
     knowledge_file.write_text("守岸人会守望漂泊者的旅途。", encoding="utf-8")
     history_db = tmp_path / "history.sqlite3"
     SQLiteConversationHistoryRepository(history_db).append_turn(
         request_id="req_before",
         platform="console",
         adapter="dev-smoke",
-        bot_id="wuwa-smoke",
+        bot_id="bot-smoke",
         session_id="private:smoke",
         sender_id="smoke-user",
         role="user",
@@ -478,18 +478,18 @@ def test_context_smoke_reports_prompt_summary_without_calling_llm_or_leaking_key
 
     result = smoke.run_context_smoke(
         Config(
-            wuwa_persona_profile_id="shorekeeper",
-            wuwa_persona_display_name="守岸人",
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_knowledge_files=[str(knowledge_file)],
-            wuwa_knowledge_max_chunks=1,
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_history_enabled=True,
-            wuwa_history_db_path=str(history_db),
-            wuwa_history_max_turns=3,
-            wuwa_history_max_chars=200,
+            bot_persona_profile_id="shorekeeper",
+            bot_persona_display_name="守岸人",
+            bot_persona_files=[str(persona_file)],
+            bot_knowledge_files=[str(knowledge_file)],
+            bot_knowledge_max_chunks=1,
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
+            bot_history_enabled=True,
+            bot_history_db_path=str(history_db),
+            bot_history_max_turns=3,
+            bot_history_max_chars=200,
         ),
         message_text="今天有点累，陪我说说话。",
     )
@@ -539,8 +539,8 @@ def test_context_smoke_reports_current_message_clipping_without_leaking_tail(tmp
 
     result = smoke.run_context_smoke(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_reply_private_default_context_budget=900,
+            bot_persona_files=[str(persona_file)],
+            bot_reply_private_default_context_budget=900,
         ),
         message_text=long_message,
     )

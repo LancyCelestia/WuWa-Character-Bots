@@ -1,4 +1,4 @@
-from plugins.wuwa_unified_runtime.sources.url_cleaner import (
+from plugins.bot_unified_runtime.sources.url_cleaner import (
     clean_tracking_url,
     clean_urls_in_text,
 )

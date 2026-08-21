@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import threading
 import importlib
 import sys
@@ -7,8 +7,8 @@ import zipfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from plugins.wuwa_unified_runtime.audit import InMemoryAuditLogger
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
+from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     PrivacyLevel,
     ReceiptState,
@@ -33,13 +33,13 @@ def _entry_send_request(text: str = "你好，漂泊者。") -> SendRequest:
         target_scope=SessionType.PRIVATE,
         target_id="42",
         origin_message_id="origin_1",
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
         content=rendered,
         send_policy=SendPolicy.IMMEDIATE,
         priority="normal",
         max_messages=1,
-        dedupe_key=f"wuwa.chat:private:42:{text}",
-        cooldown_key="wuwa.chat:private:42",
+        dedupe_key=f"bot.chat:private:42:{text}",
+        cooldown_key="bot.chat:private:42",
         privacy_level=PrivacyLevel.PERSONAL,
         persona_profile_id="shorekeeper",
     )
@@ -61,7 +61,7 @@ class EntryFakeBot(EntryFakeOneBot):
 class EntryFakePrivateEvent:
     message_id = 88
 
-    def __init__(self, text: str = "/wuwa status", user_id: str = "42") -> None:
+    def __init__(self, text: str = "/bot status", user_id: str = "42") -> None:
         self.text = text
         self.user_id = user_id
 
@@ -118,15 +118,15 @@ def _write_entry_minimal_docx(path: Path, paragraphs: list[str]) -> None:
 
 
 def test_nonebot_plugin_imports_and_has_metadata():
-    module = importlib.import_module("plugins.wuwa_unified_runtime")
+    module = importlib.import_module("plugins.bot_unified_runtime")
     meta = module.__plugin_meta__
 
-    assert meta.name == "WuWa Unified Runtime"
+    assert meta.name == "Bot Unified Runtime"
     assert "~onebot.v11" in meta.supported_adapters
 
 
 def test_nonebot_handler_registration_skips_when_driver_is_not_initialized(monkeypatch):
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
     def raise_not_initialized():
         raise ValueError("NoneBot has not been initialized.")
@@ -205,7 +205,7 @@ def test_dev_script_exposes_chat_smoke_task():
     text = Path("scripts/dev.ps1").read_text(encoding="utf-8-sig")
 
     assert '"chat-smoke"' in text
-    assert "plugins.wuwa_unified_runtime.smoke" in text
+    assert "plugins.bot_unified_runtime.smoke" in text
     assert "run_chat_smoke(Config.model_validate" not in text
 
 
@@ -213,7 +213,7 @@ def test_dev_script_exposes_llm_smoke_task():
     text = Path("scripts/dev.ps1").read_text(encoding="utf-8-sig")
 
     assert '"llm-smoke"' in text
-    assert "plugins.wuwa_unified_runtime.smoke llm" in text
+    assert "plugins.bot_unified_runtime.smoke llm" in text
 
 
 def test_dev_script_exposes_context_smoke_task():
@@ -221,7 +221,7 @@ def test_dev_script_exposes_context_smoke_task():
 
     assert '"context-smoke"' in text
     assert "Invoke-ContextSmoke" in text
-    assert "plugins.wuwa_unified_runtime.smoke" in text
+    assert "plugins.bot_unified_runtime.smoke" in text
     assert '"context"' in text
 
 
@@ -230,7 +230,7 @@ def test_dev_script_exposes_why_smoke_task():
 
     assert '"why-smoke"' in text
     assert "Invoke-WhySmoke" in text
-    assert "plugins.wuwa_unified_runtime.smoke" in text
+    assert "plugins.bot_unified_runtime.smoke" in text
     assert '"why"' in text
 
 
@@ -247,7 +247,7 @@ def test_dev_script_exposes_nonebot_smoke_task():
 
     assert '"nonebot-smoke"' in text
     assert "Invoke-NoneBotSmoke" in text
-    assert "plugins.wuwa_unified_runtime.smoke" in text
+    assert "plugins.bot_unified_runtime.smoke" in text
     assert '"nonebot"' in text
 
 
@@ -256,7 +256,7 @@ def test_dev_script_exposes_startup_smoke_task():
 
     assert '"startup-smoke"' in text
     assert "Invoke-StartupSmoke" in text
-    assert "plugins.wuwa_unified_runtime.smoke" in text
+    assert "plugins.bot_unified_runtime.smoke" in text
     assert '"startup"' in text
 
 
@@ -265,7 +265,7 @@ def test_dev_script_exposes_transport_smoke_task():
 
     assert '"transport-smoke"' in text
     assert "Invoke-TransportSmoke" in text
-    assert "plugins.wuwa_unified_runtime.smoke" in text
+    assert "plugins.bot_unified_runtime.smoke" in text
     assert '"transport"' in text
 
 
@@ -274,7 +274,7 @@ def test_dev_script_exposes_online_transport_smoke_task():
 
     assert '"online-transport-smoke"' in text
     assert "Invoke-OnlineTransportSmoke" in text
-    assert "plugins.wuwa_unified_runtime.smoke" in text
+    assert "plugins.bot_unified_runtime.smoke" in text
     assert '"online-transport"' in text
 
 
@@ -286,7 +286,7 @@ def test_dev_script_llm_smoke_uses_clean_failure_exit():
 
 
 def test_chat_smoke_loads_env_file_with_unicode_paths(tmp_path):
-    from plugins.wuwa_unified_runtime.smoke import load_smoke_config, run_chat_smoke
+    from plugins.bot_unified_runtime.smoke import load_smoke_config, run_chat_smoke
 
     persona_file = tmp_path / "守岸人人格.md"
     persona_file.write_text("守岸人来自黑海岸。\n说话温柔克制。", encoding="utf-8")
@@ -311,13 +311,13 @@ def test_chat_smoke_loads_env_file_with_unicode_paths(tmp_path):
     config = load_smoke_config(env_file)
     result = run_chat_smoke(config)
 
-    assert config.wuwa_persona_files == [persona_file.as_posix()]
+    assert config.bot_persona_files == [persona_file.as_posix()]
     assert result["receipt_state"] == "sent"
     assert result["persona_profile_id"] == "shorekeeper"
 
 
 def test_chat_smoke_loads_docx_persona_and_knowledge_paths(tmp_path):
-    from plugins.wuwa_unified_runtime.smoke import load_smoke_config, run_chat_smoke
+    from plugins.bot_unified_runtime.smoke import load_smoke_config, run_chat_smoke
 
     persona_file = tmp_path / "守岸人人格.docx"
     _write_entry_minimal_docx(
@@ -343,14 +343,14 @@ def test_chat_smoke_loads_docx_persona_and_knowledge_paths(tmp_path):
     config = load_smoke_config(env_file)
     result = run_chat_smoke(config)
 
-    assert config.wuwa_persona_files == [persona_file.as_posix()]
-    assert config.wuwa_knowledge_files == [knowledge_file.as_posix()]
+    assert config.bot_persona_files == [persona_file.as_posix()]
+    assert config.bot_knowledge_files == [knowledge_file.as_posix()]
     assert result["receipt_state"] == "sent"
     assert result["persona_profile_id"] == "shorekeeper"
 
 
 def test_chat_smoke_prefers_real_dotenv_over_example(tmp_path, monkeypatch):
-    from plugins.wuwa_unified_runtime.smoke import load_smoke_config
+    from plugins.bot_unified_runtime.smoke import load_smoke_config
 
     (tmp_path / ".env.example").write_text(
         "BOT_PERSONA_PROFILE_ID=example\nBOT_PERSONA_DISPLAY_NAME=示例\n",
@@ -364,25 +364,25 @@ def test_chat_smoke_prefers_real_dotenv_over_example(tmp_path, monkeypatch):
 
     config = load_smoke_config()
 
-    assert config.wuwa_persona_profile_id == "real"
-    assert config.wuwa_persona_display_name == "真实"
+    assert config.bot_persona_profile_id == "real"
+    assert config.bot_persona_display_name == "真实"
 
 
 def test_status_capability_returns_structured_result():
-    from plugins.wuwa_unified_runtime.capabilities.echo import build_status_result, route_wuwa_command
+    from plugins.bot_unified_runtime.capabilities.echo import build_status_result, route_bot_command
 
     result = build_status_result(request_id="req_test")
 
-    assert result.capability_id == "wuwa.status"
+    assert result.capability_id == "bot.status"
     assert "统一运行时在线" in result.body
     assert "人格：" in result.body
     assert "LLM：" in result.body
-    assert "统一运行时在线" in route_wuwa_command("status").body
+    assert "统一运行时在线" in route_bot_command("status").body
 
 
 def test_status_capability_reports_config_without_leaking_secret(tmp_path):
-    from plugins.wuwa_unified_runtime.capabilities.echo import build_status_result
-    from plugins.wuwa_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.capabilities.echo import build_status_result
+    from plugins.bot_unified_runtime.config import Config
 
     persona_file = tmp_path / "persona.md"
     persona_file.write_text("守岸人", encoding="utf-8")
@@ -390,45 +390,45 @@ def test_status_capability_reports_config_without_leaking_secret(tmp_path):
 
     result = build_status_result(
         Config(
-            wuwa_runtime_enabled=False,
-            wuwa_persona_profile_id="shorekeeper",
-            wuwa_persona_display_name="守岸人",
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_knowledge_files=[str(missing_knowledge)],
-            wuwa_memory_enabled=True,
-            wuwa_memory_db_path=str(tmp_path / "memory.sqlite3"),
-            wuwa_history_enabled=True,
-            wuwa_history_db_path=str(tmp_path / "history.sqlite3"),
-            wuwa_history_max_items=77,
-            wuwa_diagnostics_enabled=True,
-            wuwa_diagnostics_db_path=str(tmp_path / "diagnostics.sqlite3"),
-            wuwa_diagnostics_max_items=20,
-            wuwa_audit_enabled=True,
-            wuwa_audit_db_path=str(tmp_path / "audit.sqlite3"),
-            wuwa_audit_max_items=30,
-            wuwa_receipts_enabled=True,
-            wuwa_receipts_db_path=str(tmp_path / "receipts.sqlite3"),
-            wuwa_receipts_max_items=40,
-            wuwa_send_queue_enabled=True,
-            wuwa_send_queue_db_path=str(tmp_path / "send_queue.sqlite3"),
-            wuwa_send_queue_max_items=50,
-            wuwa_send_queue_max_attempts=4,
-            wuwa_send_queue_retry_base_seconds=9,
-            wuwa_send_queue_retry_max_seconds=90,
-            wuwa_send_queue_worker_enabled=True,
-            wuwa_send_queue_worker_interval_seconds=15,
-            wuwa_send_queue_worker_batch_size=6,
-            wuwa_emotion_enabled=True,
-            wuwa_emotion_max_signals=3,
-            wuwa_rate_limit_enabled=True,
-            wuwa_rate_limit_window_seconds=45,
-            wuwa_rate_limit_chat_session_max_requests=8,
-            wuwa_rate_limit_chat_sender_max_requests=6,
-            wuwa_rate_limit_bypass_roles=["admin"],
-            wuwa_rate_limit_db_path=str(tmp_path / "rate_limit.sqlite3"),
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="secret-model",
-            wuwa_chat_api_key="sk-do-not-print",
+            bot_runtime_enabled=False,
+            bot_persona_profile_id="shorekeeper",
+            bot_persona_display_name="守岸人",
+            bot_persona_files=[str(persona_file)],
+            bot_knowledge_files=[str(missing_knowledge)],
+            bot_memory_enabled=True,
+            bot_memory_db_path=str(tmp_path / "memory.sqlite3"),
+            bot_history_enabled=True,
+            bot_history_db_path=str(tmp_path / "history.sqlite3"),
+            bot_history_max_items=77,
+            bot_diagnostics_enabled=True,
+            bot_diagnostics_db_path=str(tmp_path / "diagnostics.sqlite3"),
+            bot_diagnostics_max_items=20,
+            bot_audit_enabled=True,
+            bot_audit_db_path=str(tmp_path / "audit.sqlite3"),
+            bot_audit_max_items=30,
+            bot_receipts_enabled=True,
+            bot_receipts_db_path=str(tmp_path / "receipts.sqlite3"),
+            bot_receipts_max_items=40,
+            bot_send_queue_enabled=True,
+            bot_send_queue_db_path=str(tmp_path / "send_queue.sqlite3"),
+            bot_send_queue_max_items=50,
+            bot_send_queue_max_attempts=4,
+            bot_send_queue_retry_base_seconds=9,
+            bot_send_queue_retry_max_seconds=90,
+            bot_send_queue_worker_enabled=True,
+            bot_send_queue_worker_interval_seconds=15,
+            bot_send_queue_worker_batch_size=6,
+            bot_emotion_enabled=True,
+            bot_emotion_max_signals=3,
+            bot_rate_limit_enabled=True,
+            bot_rate_limit_window_seconds=45,
+            bot_rate_limit_chat_session_max_requests=8,
+            bot_rate_limit_chat_sender_max_requests=6,
+            bot_rate_limit_bypass_roles=["admin"],
+            bot_rate_limit_db_path=str(tmp_path / "rate_limit.sqlite3"),
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="secret-model",
+            bot_chat_api_key="sk-do-not-print",
         ),
         request_id="req_test",
     )
@@ -465,15 +465,15 @@ def test_status_capability_reports_config_without_leaking_secret(tmp_path):
 
 
 def test_status_capability_reports_runtime_soft_pause_state():
-    from plugins.wuwa_unified_runtime.capabilities.echo import build_status_result
-    from plugins.wuwa_unified_runtime.config import Config
-    from plugins.wuwa_unified_runtime.runtime import RuntimeControlState
+    from plugins.bot_unified_runtime.capabilities.echo import build_status_result
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.runtime import RuntimeControlState
 
     runtime_control = RuntimeControlState()
     runtime_control.pause(actor_id="secret-admin-id")
 
     result = build_status_result(
-        Config(wuwa_runtime_enabled=True),
+        Config(bot_runtime_enabled=True),
         runtime_control=runtime_control,
         request_id="req_status",
     )
@@ -483,12 +483,12 @@ def test_status_capability_reports_runtime_soft_pause_state():
     assert "secret-admin-id" not in result.body
 
 
-def test_wuwa_command_rejects_unknown_subcommand():
-    from plugins.wuwa_unified_runtime.capabilities.echo import route_wuwa_command
+def test_bot_command_rejects_unknown_subcommand():
+    from plugins.bot_unified_runtime.capabilities.echo import route_bot_command
 
-    result = route_wuwa_command("anything")
+    result = route_bot_command("anything")
 
-    assert result.capability_id == "wuwa.help"
+    assert result.capability_id == "bot.help"
     assert "用法" in result.body
     assert "memory add" in result.body
     assert "receipt <request_id|debug_id>" in result.body
@@ -498,7 +498,7 @@ def test_wuwa_command_rejects_unknown_subcommand():
 
 
 def test_auto_send_command_returns_preview_only_text():
-    from plugins.wuwa_unified_runtime.capabilities.auto_send import (
+    from plugins.bot_unified_runtime.capabilities.auto_send import (
         build_auto_send_preview_result,
         build_auto_send_preview_text,
         is_auto_send_command_text,
@@ -524,7 +524,7 @@ def test_auto_send_command_returns_preview_only_text():
         request_id="req_preview",
     )
     assert result.request_id == "req_preview"
-    assert result.capability_id == "wuwa.auto_send.preview"
+    assert result.capability_id == "bot.auto_send.preview"
     assert result.risk_level is not RiskLevel.LOW
     assert result.privacy_level is PrivacyLevel.PERSONAL
     assert "草稿预览" in result.body
@@ -535,20 +535,20 @@ def test_auto_send_command_returns_preview_only_text():
 
 def test_plugin_entry_uses_strict_command_and_plain_autosend_rule():
     import inspect
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
 
     assert "force_whitespace=True" in source
     assert "on_message" in source
     assert "route_memory_command" in source
-    assert "wuwa_memory_enabled" in source
-    assert "wuwa_memory_db_path" in source
+    assert "bot_memory_enabled" in source
+    assert "bot_memory_db_path" in source
 
 
 def test_plugin_entry_routes_chat_send_request_through_onebot_transport():
     import inspect
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
 
@@ -563,19 +563,19 @@ def test_plugin_entry_routes_chat_send_request_through_onebot_transport():
 
 def test_plugin_entry_registers_optional_send_queue_scheduler():
     import inspect
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
 
     assert "nonebot_plugin_apscheduler" in source
     assert "_register_send_queue_scheduler(" in source
     assert "get_bots" in source
-    assert "wuwa_send_queue_worker" in source
+    assert "bot_send_queue_worker" in source
 
 
 def test_plugin_entry_records_chat_history_after_send_request():
     import inspect
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
 
@@ -586,7 +586,7 @@ def test_plugin_entry_records_chat_history_after_send_request():
 
 
 def test_plugin_entry_skips_history_for_prompt_injection_requests():
-    from plugins.wuwa_unified_runtime import _should_record_chat_history
+    from plugins.bot_unified_runtime import _should_record_chat_history
 
     normal_request = _entry_send_request()
     blocked_request = _entry_send_request("这个请求包含越权或注入式内容。").model_copy(
@@ -608,7 +608,7 @@ def test_plugin_entry_skips_history_for_prompt_injection_requests():
 
 
 def test_plugin_entry_audits_history_skip_without_user_text():
-    from plugins.wuwa_unified_runtime import (
+    from plugins.bot_unified_runtime import (
         _audit_chat_history_skipped,
         _incoming_from_nonebot_event,
     )
@@ -639,7 +639,7 @@ def test_plugin_entry_audits_history_skip_without_user_text():
 
 def test_plugin_entry_uses_history_guard_before_recording_chat_turns():
     import inspect
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
 
@@ -650,65 +650,65 @@ def test_plugin_entry_uses_history_guard_before_recording_chat_turns():
 
 def test_plugin_entry_exposes_why_command_route_without_overwriting_latest():
     import inspect
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
 
     assert "build_diagnostics_store" in source
     assert "build_why_result" in source
-    assert 'capability_id = "wuwa.why"' in source
+    assert 'capability_id = "bot.why"' in source
     assert "record_diagnostic=capability_id" in source
     for capability_id in (
-        "wuwa.why",
-        "wuwa.receipt",
-        "wuwa.audit",
-        "wuwa.recent",
-        "wuwa.queue",
-        "wuwa.context",
-        "wuwa.llm",
-        "wuwa.config",
-        "wuwa.readiness",
-        "wuwa.dialogue",
-        "wuwa.roles",
-        "wuwa.history",
-        "wuwa.control",
+        "bot.why",
+        "bot.receipt",
+        "bot.audit",
+        "bot.recent",
+        "bot.queue",
+        "bot.context",
+        "bot.llm",
+        "bot.config",
+        "bot.readiness",
+        "bot.dialogue",
+        "bot.roles",
+        "bot.history",
+        "bot.control",
     ):
         assert f'"{capability_id}"' in source
 
 
 def test_plugin_entry_exposes_runtime_pause_resume_routes():
     import inspect
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
 
     assert "RuntimeControlState" in source
     assert "build_runtime_control_result" in source
-    assert 'capability_id = "wuwa.control"' in source
+    assert 'capability_id = "bot.control"' in source
     assert 'command_text == "pause" or command_text == "resume"' in source
-    assert '"wuwa.control"' in source
+    assert '"bot.control"' in source
 
 
 def test_plugin_entry_records_runtime_diagnostic_for_latest_why_lookup():
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
-    from plugins.wuwa_unified_runtime import _record_runtime_diagnostic
-    from plugins.wuwa_unified_runtime.config import Config
-    from plugins.wuwa_unified_runtime.diagnostics import RecentDiagnosticsStore
-    from plugins.wuwa_unified_runtime.policy import build_reply_budget_settings, build_role_settings
-    from plugins.wuwa_unified_runtime.runtime import RuntimePipeline
-    from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
+    from plugins.bot_unified_runtime import _record_runtime_diagnostic
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.diagnostics import RecentDiagnosticsStore
+    from plugins.bot_unified_runtime.policy import build_reply_budget_settings, build_role_settings
+    from plugins.bot_unified_runtime.runtime import RuntimePipeline
+    from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
     audit = InMemoryAuditLogger()
     send_queue = InMemorySendQueue(audit_logger=audit)
     store = RecentDiagnosticsStore()
-    config = Config(wuwa_chat_provider="static", wuwa_chat_model="static")
+    config = Config(bot_chat_provider="static", bot_chat_model="static")
     pipeline = RuntimePipeline(
         send_queue=send_queue,
         audit_logger=audit,
         reply_budget_settings=build_reply_budget_settings(config),
         role_settings=build_role_settings(config),
-        group_command_prefix=config.wuwa_runtime_group_command_prefix,
+        group_command_prefix=config.bot_runtime_group_command_prefix,
     )
     message = plugin_entry._incoming_from_nonebot_event(
         EntryFakePrivateEvent("今天真的很难受，可以陪我慢慢说说吗？"),
@@ -724,13 +724,13 @@ def test_plugin_entry_records_runtime_diagnostic_for_latest_why_lookup():
             audit_tags=decision.audit_tags,
         )
 
-    receipt = pipeline.handle(message, capability, capability_id="wuwa.chat")
+    receipt = pipeline.handle(message, capability, capability_id="bot.chat")
 
     diagnostic = _record_runtime_diagnostic(
         config=config,
         diagnostics_store=store,
         message=message,
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
         receipt=receipt,
         send_queue=send_queue,
         audit_logger=audit,
@@ -745,31 +745,31 @@ def test_plugin_entry_records_runtime_diagnostic_for_latest_why_lookup():
 
 
 def test_plugin_entry_records_runtime_diagnostic_from_persistent_queue_after_reopen(tmp_path):
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
-    from plugins.wuwa_unified_runtime import _record_runtime_diagnostic
-    from plugins.wuwa_unified_runtime.config import Config
-    from plugins.wuwa_unified_runtime.diagnostics import RecentDiagnosticsStore
-    from plugins.wuwa_unified_runtime.policy import build_reply_budget_settings, build_role_settings
-    from plugins.wuwa_unified_runtime.runtime import RuntimePipeline
-    from plugins.wuwa_unified_runtime.sender import SQLiteSendRequestQueue
+    from plugins.bot_unified_runtime import _record_runtime_diagnostic
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.diagnostics import RecentDiagnosticsStore
+    from plugins.bot_unified_runtime.policy import build_reply_budget_settings, build_role_settings
+    from plugins.bot_unified_runtime.runtime import RuntimePipeline
+    from plugins.bot_unified_runtime.sender import SQLiteSendRequestQueue
 
     audit = InMemoryAuditLogger()
     db_path = tmp_path / "send_queue.sqlite3"
     queue = SQLiteSendRequestQueue(db_path, audit_logger=audit)
     store = RecentDiagnosticsStore()
     config = Config(
-        wuwa_chat_provider="static",
-        wuwa_chat_model="static",
-        wuwa_send_queue_enabled=True,
-        wuwa_send_queue_db_path=str(db_path),
+        bot_chat_provider="static",
+        bot_chat_model="static",
+        bot_send_queue_enabled=True,
+        bot_send_queue_db_path=str(db_path),
     )
     pipeline = RuntimePipeline(
         send_queue=queue,
         audit_logger=audit,
         reply_budget_settings=build_reply_budget_settings(config),
         role_settings=build_role_settings(config),
-        group_command_prefix=config.wuwa_runtime_group_command_prefix,
+        group_command_prefix=config.bot_runtime_group_command_prefix,
     )
     message = plugin_entry._incoming_from_nonebot_event(
         EntryFakePrivateEvent("请你一步一步教我怎么配置 NoneBot 和 NapCat"),
@@ -785,14 +785,14 @@ def test_plugin_entry_records_runtime_diagnostic_from_persistent_queue_after_reo
             audit_tags=decision.audit_tags,
         )
 
-    receipt = pipeline.handle(message, capability, capability_id="wuwa.chat")
+    receipt = pipeline.handle(message, capability, capability_id="bot.chat")
     reopened_queue = SQLiteSendRequestQueue(db_path, audit_logger=audit)
 
     diagnostic = _record_runtime_diagnostic(
         config=config,
         diagnostics_store=store,
         message=message,
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
         receipt=receipt,
         send_queue=reopened_queue,
         audit_logger=audit,
@@ -800,25 +800,25 @@ def test_plugin_entry_records_runtime_diagnostic_from_persistent_queue_after_reo
 
     assert diagnostic is not None
     assert diagnostic.send_request_created is True
-    assert diagnostic.capability_id == "wuwa.chat"
+    assert diagnostic.capability_id == "bot.chat"
     assert diagnostic.llm_status == "not_configured"
     assert diagnostic.reply_budget_reason == "deep_help"
 
 
 def test_plugin_entry_does_not_record_runtime_control_as_latest_business_diagnostic():
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
-    from plugins.wuwa_unified_runtime import _record_runtime_diagnostic
-    from plugins.wuwa_unified_runtime.config import Config
-    from plugins.wuwa_unified_runtime.contracts import DeliveryReceipt, ReceiptState
-    from plugins.wuwa_unified_runtime.diagnostics import RecentDiagnosticsStore
-    from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
+    from plugins.bot_unified_runtime import _record_runtime_diagnostic
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.contracts import DeliveryReceipt, ReceiptState
+    from plugins.bot_unified_runtime.diagnostics import RecentDiagnosticsStore
+    from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
     audit = InMemoryAuditLogger()
     send_queue = InMemorySendQueue(audit_logger=audit)
     store = RecentDiagnosticsStore()
     message = plugin_entry._incoming_from_nonebot_event(
-        EntryFakePrivateEvent("/wuwa pause", user_id="42"),
+        EntryFakePrivateEvent("/bot pause", user_id="42"),
         bot_id="bot-1",
     )
     receipt = DeliveryReceipt(
@@ -832,7 +832,7 @@ def test_plugin_entry_does_not_record_runtime_control_as_latest_business_diagnos
         config=Config(),
         diagnostics_store=store,
         message=message,
-        capability_id="wuwa.control",
+        capability_id="bot.control",
         receipt=receipt,
         send_queue=send_queue,
         audit_logger=audit,
@@ -843,8 +843,8 @@ def test_plugin_entry_does_not_record_runtime_control_as_latest_business_diagnos
 
 
 def test_deliver_onebot_send_request_appends_transport_audit_record():
-    from plugins.wuwa_unified_runtime import _deliver_onebot_send_request
-    from plugins.wuwa_unified_runtime.sender import InMemoryReceiptRepository
+    from plugins.bot_unified_runtime import _deliver_onebot_send_request
+    from plugins.bot_unified_runtime.sender import InMemoryReceiptRepository
 
     audit = InMemoryAuditLogger()
     receipts = InMemoryReceiptRepository()
@@ -866,12 +866,12 @@ def test_deliver_onebot_send_request_appends_transport_audit_record():
 
 
 def test_pipeline_delivery_helper_sends_allowed_capability_through_transport():
-    from plugins.wuwa_unified_runtime import _run_capability_through_pipeline
-    from plugins.wuwa_unified_runtime.config import Config
-    from plugins.wuwa_unified_runtime.diagnostics import RecentDiagnosticsStore
-    from plugins.wuwa_unified_runtime.policy import build_reply_budget_settings, build_role_settings
-    from plugins.wuwa_unified_runtime.runtime import RuntimePipeline
-    from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
+    from plugins.bot_unified_runtime import _run_capability_through_pipeline
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.diagnostics import RecentDiagnosticsStore
+    from plugins.bot_unified_runtime.policy import build_reply_budget_settings, build_role_settings
+    from plugins.bot_unified_runtime.runtime import RuntimePipeline
+    from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
     audit = InMemoryAuditLogger()
     send_queue = InMemorySendQueue(audit_logger=audit)
@@ -882,7 +882,7 @@ def test_pipeline_delivery_helper_sends_allowed_capability_through_transport():
         audit_logger=audit,
         reply_budget_settings=build_reply_budget_settings(config),
         role_settings=build_role_settings(config),
-        group_command_prefix=config.wuwa_runtime_group_command_prefix,
+        group_command_prefix=config.bot_runtime_group_command_prefix,
     )
     bot = EntryFakeBot()
 
@@ -904,7 +904,7 @@ def test_pipeline_delivery_helper_sends_allowed_capability_through_transport():
             audit_logger=audit,
             diagnostics_store=diagnostics_store,
             capability=capability,
-            capability_id="wuwa.status",
+            capability_id="bot.status",
         )
     )
 
@@ -915,11 +915,11 @@ def test_pipeline_delivery_helper_sends_allowed_capability_through_transport():
 
 
 def test_pipeline_delivery_helper_offloads_blocking_capability_from_event_loop():
-    from plugins.wuwa_unified_runtime import _run_capability_through_pipeline
-    from plugins.wuwa_unified_runtime.config import Config
-    from plugins.wuwa_unified_runtime.diagnostics import RecentDiagnosticsStore
-    from plugins.wuwa_unified_runtime.runtime import RuntimePipeline
-    from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
+    from plugins.bot_unified_runtime import _run_capability_through_pipeline
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.diagnostics import RecentDiagnosticsStore
+    from plugins.bot_unified_runtime.runtime import RuntimePipeline
+    from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
     audit = InMemoryAuditLogger()
     send_queue = InMemorySendQueue(audit_logger=audit)
@@ -950,7 +950,7 @@ def test_pipeline_delivery_helper_offloads_blocking_capability_from_event_loop()
                 audit_logger=audit,
                 diagnostics_store=RecentDiagnosticsStore(),
                 capability=capability,
-                capability_id="wuwa.llm",
+                capability_id="bot.llm",
                 offload_sync_capability=True,
             )
         )
@@ -970,35 +970,35 @@ def test_pipeline_delivery_helper_offloads_blocking_capability_from_event_loop()
 def test_nonebot_entry_offloads_all_synchronous_context_and_llm_capabilities():
     import inspect
 
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
     assert plugin_entry.OFFLOADED_CAPABILITY_IDS == {
-        "wuwa.context",
-        "wuwa.llm",
-        "wuwa.dialogue",
+        "bot.context",
+        "bot.llm",
+        "bot.dialogue",
     }
     source = inspect.getsource(plugin_entry._register_nonebot_handlers)
     assert "capability_id in OFFLOADED_CAPABILITY_IDS" in source
 
 
 def test_pipeline_delivery_helper_blocks_sender_before_capability_runs():
-    from plugins.wuwa_unified_runtime import _run_capability_through_pipeline
-    from plugins.wuwa_unified_runtime.config import Config
-    from plugins.wuwa_unified_runtime.diagnostics import RecentDiagnosticsStore
-    from plugins.wuwa_unified_runtime.policy import build_reply_budget_settings, build_role_settings
-    from plugins.wuwa_unified_runtime.runtime import RuntimePipeline
-    from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
+    from plugins.bot_unified_runtime import _run_capability_through_pipeline
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.diagnostics import RecentDiagnosticsStore
+    from plugins.bot_unified_runtime.policy import build_reply_budget_settings, build_role_settings
+    from plugins.bot_unified_runtime.runtime import RuntimePipeline
+    from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
     audit = InMemoryAuditLogger()
     send_queue = InMemorySendQueue(audit_logger=audit)
-    config = Config(wuwa_blocked_user_ids=["42"])
+    config = Config(bot_blocked_user_ids=["42"])
     diagnostics_store = RecentDiagnosticsStore()
     pipeline = RuntimePipeline(
         send_queue=send_queue,
         audit_logger=audit,
         reply_budget_settings=build_reply_budget_settings(config),
         role_settings=build_role_settings(config),
-        group_command_prefix=config.wuwa_runtime_group_command_prefix,
+        group_command_prefix=config.bot_runtime_group_command_prefix,
     )
     bot = EntryFakeBot()
     called = False
@@ -1023,7 +1023,7 @@ def test_pipeline_delivery_helper_blocks_sender_before_capability_runs():
             audit_logger=audit,
             diagnostics_store=diagnostics_store,
             capability=capability,
-            capability_id="wuwa.status",
+            capability_id="bot.status",
         )
     )
 
@@ -1034,7 +1034,7 @@ def test_pipeline_delivery_helper_blocks_sender_before_capability_runs():
 
 
 def test_incoming_from_nonebot_event_preserves_group_and_message_ids():
-    from plugins.wuwa_unified_runtime import _incoming_from_nonebot_event
+    from plugins.bot_unified_runtime import _incoming_from_nonebot_event
 
     message = _incoming_from_nonebot_event(EntryFakeGroupEvent(), bot_id="bot-1")
 
@@ -1047,7 +1047,7 @@ def test_incoming_from_nonebot_event_preserves_group_and_message_ids():
 
 
 def test_incoming_group_event_detects_direct_onebot_mention_and_preserves_segments():
-    from plugins.wuwa_unified_runtime import _incoming_from_nonebot_event
+    from plugins.bot_unified_runtime import _incoming_from_nonebot_event
 
     event = EntryFakeGroupEvent(
         segments=[
@@ -1066,7 +1066,7 @@ def test_incoming_group_event_detects_direct_onebot_mention_and_preserves_segmen
 
 
 def test_incoming_group_event_does_not_treat_other_user_mention_as_bot_mention():
-    from plugins.wuwa_unified_runtime import _incoming_from_nonebot_event
+    from plugins.bot_unified_runtime import _incoming_from_nonebot_event
 
     event = EntryFakeGroupEvent(
         segments=[types.SimpleNamespace(type="at", data={"qq": "other-user"})]
@@ -1078,28 +1078,28 @@ def test_incoming_group_event_does_not_treat_other_user_mention_as_bot_mention()
 
 
 def test_incoming_private_event_still_counts_as_direct_chat_without_message_segments():
-    from plugins.wuwa_unified_runtime import _incoming_from_nonebot_event
+    from plugins.bot_unified_runtime import _incoming_from_nonebot_event
 
     message = _incoming_from_nonebot_event(EntryFakePrivateEvent(), bot_id="bot-1")
 
     assert message.mentions_bot is True
     assert message.raw_segments == [
-        {"type": "text", "data": {"text": "/wuwa status"}}
+        {"type": "text", "data": {"text": "/bot status"}}
     ]
 
 
 def test_chat_policy_passive_group_block_is_silent_for_nonebot_entry():
     import inspect
 
-    import plugins.wuwa_unified_runtime as plugin_entry
-    from plugins.wuwa_unified_runtime import (
+    import plugins.bot_unified_runtime as plugin_entry
+    from plugins.bot_unified_runtime import (
         _incoming_from_nonebot_event,
         _should_silently_skip_chat_receipt,
     )
-    from plugins.wuwa_unified_runtime.config import Config
-    from plugins.wuwa_unified_runtime.policy import build_reply_budget_settings
-    from plugins.wuwa_unified_runtime.runtime import RuntimePipeline
-    from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.policy import build_reply_budget_settings
+    from plugins.bot_unified_runtime.runtime import RuntimePipeline
+    from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
     audit = InMemoryAuditLogger()
     send_queue = InMemorySendQueue(audit_logger=audit)
@@ -1108,7 +1108,7 @@ def test_chat_policy_passive_group_block_is_silent_for_nonebot_entry():
         send_queue=send_queue,
         audit_logger=audit,
         reply_budget_settings=build_reply_budget_settings(config),
-        group_command_prefix=config.wuwa_runtime_group_command_prefix,
+        group_command_prefix=config.bot_runtime_group_command_prefix,
     )
     message = _incoming_from_nonebot_event(EntryFakeGroupEvent(), bot_id="bot-1")
     called = False
@@ -1118,12 +1118,12 @@ def test_chat_policy_passive_group_block_is_silent_for_nonebot_entry():
         called = True
         return CapabilityResult(
             request_id=message.request_id,
-            capability_id="wuwa.chat",
+            capability_id="bot.chat",
             kind="text",
             body="should not run",
         )
 
-    receipt = pipeline.handle(message, capability, capability_id="wuwa.chat")
+    receipt = pipeline.handle(message, capability, capability_id="bot.chat")
 
     assert receipt.state is ReceiptState.BLOCKED
     assert called is False
@@ -1135,17 +1135,17 @@ def test_chat_policy_passive_group_block_is_silent_for_nonebot_entry():
 
 
 def test_chat_provider_factory_keeps_static_default_and_openai_compatible_option():
-    from plugins.wuwa_unified_runtime import _build_chat_llm_provider
-    from plugins.wuwa_unified_runtime.config import Config
-    from plugins.wuwa_unified_runtime.llm import OpenAICompatibleLLMProvider, StaticLLMProvider
+    from plugins.bot_unified_runtime import _build_chat_llm_provider
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.llm import OpenAICompatibleLLMProvider, StaticLLMProvider
 
     assert isinstance(_build_chat_llm_provider(Config()), StaticLLMProvider)
     assert isinstance(
         _build_chat_llm_provider(
             Config(
-                wuwa_chat_provider="openai_compatible",
-                wuwa_chat_api_key="test-key",
-                wuwa_chat_model="test-model",
+                bot_chat_provider="openai_compatible",
+                bot_chat_api_key="test-key",
+                bot_chat_model="test-model",
             )
         ),
         OpenAICompatibleLLMProvider,
@@ -1153,18 +1153,18 @@ def test_chat_provider_factory_keeps_static_default_and_openai_compatible_option
 
 
 def test_character_provider_factory_loads_configured_files(tmp_path):
-    from plugins.wuwa_unified_runtime.character import build_character_context_provider
-    from plugins.wuwa_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.character import build_character_context_provider
+    from plugins.bot_unified_runtime.config import Config
 
     persona_file = tmp_path / "shorekeeper.md"
     persona_file.write_text("守岸人来自黑海岸。\n说话温柔克制。", encoding="utf-8")
 
     provider = build_character_context_provider(
         Config(
-            wuwa_persona_profile_id="shorekeeper",
-            wuwa_persona_display_name="守岸人",
-            wuwa_persona_version="1",
-            wuwa_persona_files=[str(persona_file)],
+            bot_persona_profile_id="shorekeeper",
+            bot_persona_display_name="守岸人",
+            bot_persona_version="1",
+            bot_persona_files=[str(persona_file)],
         )
     )
     bundle = provider.build_context(
@@ -1180,38 +1180,38 @@ def test_character_provider_factory_loads_configured_files(tmp_path):
 
 
 def test_config_accepts_json_and_semicolon_file_lists():
-    from plugins.wuwa_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.config import Config
 
     json_config = Config(
-        wuwa_persona_files='["C:/persona/a.md","C:/persona/b.txt"]',
-        wuwa_knowledge_files='["C:/knowledge/wiki.md"]',
+        bot_persona_files='["C:/persona/a.md","C:/persona/b.txt"]',
+        bot_knowledge_files='["C:/knowledge/wiki.md"]',
     )
     semicolon_config = Config(
-        wuwa_persona_files="C:/persona/a.md;C:/persona/b.txt",
-        wuwa_knowledge_files="C:/knowledge/wiki.md; C:/knowledge/lore.txt",
+        bot_persona_files="C:/persona/a.md;C:/persona/b.txt",
+        bot_knowledge_files="C:/knowledge/wiki.md; C:/knowledge/lore.txt",
     )
 
-    assert json_config.wuwa_persona_files == ["C:/persona/a.md", "C:/persona/b.txt"]
-    assert json_config.wuwa_knowledge_files == ["C:/knowledge/wiki.md"]
-    assert semicolon_config.wuwa_persona_files == ["C:/persona/a.md", "C:/persona/b.txt"]
-    assert semicolon_config.wuwa_knowledge_files == [
+    assert json_config.bot_persona_files == ["C:/persona/a.md", "C:/persona/b.txt"]
+    assert json_config.bot_knowledge_files == ["C:/knowledge/wiki.md"]
+    assert semicolon_config.bot_persona_files == ["C:/persona/a.md", "C:/persona/b.txt"]
+    assert semicolon_config.bot_knowledge_files == [
         "C:/knowledge/wiki.md",
         "C:/knowledge/lore.txt",
     ]
 
 
 def test_plain_chat_rule_ignores_commands_and_auto_send_drafts():
-    from plugins.wuwa_unified_runtime import _is_plain_chat_text
+    from plugins.bot_unified_runtime import _is_plain_chat_text
 
     assert _is_plain_chat_text("今天有点累") is True
-    assert _is_plain_chat_text("/wuwa status") is False
+    assert _is_plain_chat_text("/bot status") is False
     assert _is_plain_chat_text("报存 给 A 发消息，内容测试") is False
     assert _is_plain_chat_text("   ") is False
 
 
 def test_chat_smoke_runs_full_local_pipeline(tmp_path):
-    from plugins.wuwa_unified_runtime.config import Config
-    from plugins.wuwa_unified_runtime.smoke import run_chat_smoke
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.smoke import run_chat_smoke
 
     persona_file = tmp_path / "shorekeeper.md"
     persona_file.write_text("守岸人来自黑海岸。\n说话温柔克制。", encoding="utf-8")
@@ -1220,17 +1220,17 @@ def test_chat_smoke_runs_full_local_pipeline(tmp_path):
 
     result = run_chat_smoke(
         Config(
-            wuwa_persona_profile_id="shorekeeper",
-            wuwa_persona_display_name="守岸人",
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_knowledge_files=[str(knowledge_file)],
-            wuwa_chat_provider="static",
+            bot_persona_profile_id="shorekeeper",
+            bot_persona_display_name="守岸人",
+            bot_persona_files=[str(persona_file)],
+            bot_knowledge_files=[str(knowledge_file)],
+            bot_chat_provider="static",
         ),
         message_text="你好，守岸人。",
     )
 
     assert result["receipt_state"] == "sent"
     assert result["persona_profile_id"] == "shorekeeper"
-    assert result["capability_id"] == "wuwa.chat"
+    assert result["capability_id"] == "bot.chat"
     assert "还没有接上外面的模型" in result["reply_text"]
     assert result["audit_events"] == ["sent"]

@@ -3,17 +3,17 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from plugins.wuwa_unified_runtime.audit import InMemoryAuditLogger
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.contracts import (
     ReceiptState,
     RenderedOutput,
     SendPolicy,
     SendRequest,
     SessionType,
 )
-from plugins.wuwa_unified_runtime.sender import InMemoryReceiptRepository
-from plugins.wuwa_unified_runtime.sender.queue import (
+from plugins.bot_unified_runtime.sender import InMemoryReceiptRepository
+from plugins.bot_unified_runtime.sender.queue import (
     InMemorySendQueue,
     SQLiteSendRequestQueue,
 )
@@ -44,13 +44,13 @@ def _send_request(request_id: str = "req_scheduler") -> SendRequest:
         session_id="private:42",
         target_scope=SessionType.PRIVATE,
         target_id="42",
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
         content=rendered,
         send_policy=SendPolicy.IMMEDIATE,
         priority="normal",
         max_messages=1,
         dedupe_key=f"dedupe:{request_id}",
-        cooldown_key="wuwa.chat:private:42",
+        cooldown_key="bot.chat:private:42",
         privacy_level=rendered.privacy_level,
         persona_profile_id="shorekeeper",
     )
@@ -62,7 +62,7 @@ class FakeBot:
 
 
 def test_send_queue_scheduler_is_disabled_by_default(tmp_path):
-    from plugins.wuwa_unified_runtime import _register_send_queue_scheduler
+    from plugins.bot_unified_runtime import _register_send_queue_scheduler
 
     audit = InMemoryAuditLogger()
     scheduler = FakeScheduler()
@@ -83,7 +83,7 @@ def test_send_queue_scheduler_is_disabled_by_default(tmp_path):
 
 
 def test_send_queue_scheduler_requires_drainable_sqlite_queue():
-    from plugins.wuwa_unified_runtime import _register_send_queue_scheduler
+    from plugins.bot_unified_runtime import _register_send_queue_scheduler
 
     audit = InMemoryAuditLogger()
     scheduler = FakeScheduler()
@@ -91,7 +91,7 @@ def test_send_queue_scheduler_requires_drainable_sqlite_queue():
 
     result = _register_send_queue_scheduler(
         scheduler=scheduler,
-        config=Config(wuwa_send_queue_worker_enabled=True),
+        config=Config(bot_send_queue_worker_enabled=True),
         send_queue=queue,
         audit_logger=audit,
         receipt_repository=InMemoryReceiptRepository(),
@@ -104,7 +104,7 @@ def test_send_queue_scheduler_requires_drainable_sqlite_queue():
 
 
 def test_send_queue_scheduler_registers_interval_job_and_drains_queue(tmp_path):
-    from plugins.wuwa_unified_runtime import _register_send_queue_scheduler
+    from plugins.bot_unified_runtime import _register_send_queue_scheduler
 
     audit = InMemoryAuditLogger()
     receipts = InMemoryReceiptRepository()
@@ -115,9 +115,9 @@ def test_send_queue_scheduler_registers_interval_job_and_drains_queue(tmp_path):
     result = _register_send_queue_scheduler(
         scheduler=scheduler,
         config=Config(
-            wuwa_send_queue_worker_enabled=True,
-            wuwa_send_queue_worker_interval_seconds=7,
-            wuwa_send_queue_worker_batch_size=3,
+            bot_send_queue_worker_enabled=True,
+            bot_send_queue_worker_interval_seconds=7,
+            bot_send_queue_worker_batch_size=3,
         ),
         send_queue=queue,
         audit_logger=audit,
@@ -135,7 +135,7 @@ def test_send_queue_scheduler_registers_interval_job_and_drains_queue(tmp_path):
     [job] = scheduler.jobs
     assert job["trigger"] == "interval"
     assert job["seconds"] == 7
-    assert job["id"] == "wuwa_send_queue_worker"
+    assert job["id"] == "bot_send_queue_worker"
     assert job["max_instances"] == 1
     assert job["coalesce"] is True
 
@@ -150,7 +150,7 @@ def test_send_queue_scheduler_registers_interval_job_and_drains_queue(tmp_path):
 
 
 def test_send_queue_scheduler_job_is_safe_when_no_bot_is_online(tmp_path):
-    from plugins.wuwa_unified_runtime import _register_send_queue_scheduler
+    from plugins.bot_unified_runtime import _register_send_queue_scheduler
 
     audit = InMemoryAuditLogger()
     scheduler = FakeScheduler()
@@ -159,7 +159,7 @@ def test_send_queue_scheduler_job_is_safe_when_no_bot_is_online(tmp_path):
 
     _register_send_queue_scheduler(
         scheduler=scheduler,
-        config=Config(wuwa_send_queue_worker_enabled=True),
+        config=Config(bot_send_queue_worker_enabled=True),
         send_queue=queue,
         audit_logger=audit,
         receipt_repository=InMemoryReceiptRepository(),

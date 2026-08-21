@@ -1,7 +1,7 @@
 [project]
-name = "WuWa-Character-Bots"
+name = "Bot-Character-Bots"
 version = "0.1.0"
-description = "WuWa-Character-Bots"
+description = "Bot-Character-Bots"
 readme = "README.md"
 requires-python = ">=3.10, <4.0"
 dependencies = [

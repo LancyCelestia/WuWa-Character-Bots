@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from plugins.wuwa_unified_runtime.audit import InMemoryAuditLogger
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
+from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     IncomingMessage,
     ReceiptState,
     SessionType,
 )
-from plugins.wuwa_unified_runtime.runtime import RuntimePipeline
-from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.runtime import RuntimePipeline
+from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
 
 class MutableClock:
@@ -80,7 +80,7 @@ def make_pipeline(rate_limiter) -> tuple[RuntimePipeline, InMemoryAuditLogger, I
 
 
 def test_chat_rate_limiter_blocks_before_llm_capability_after_session_window_is_exceeded():
-    from plugins.wuwa_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
+    from plugins.bot_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
 
     clock = MutableClock()
     pipeline, audit, queue = make_pipeline(
@@ -96,9 +96,9 @@ def test_chat_rate_limiter_blocks_before_llm_capability_after_session_window_is_
     calls: list[str] = []
     capability = make_chat_capability(calls)
 
-    first = pipeline.handle(make_message("第一句"), capability, capability_id="wuwa.chat")
-    second = pipeline.handle(make_message("第二句"), capability, capability_id="wuwa.chat")
-    third = pipeline.handle(make_message("第三句"), capability, capability_id="wuwa.chat")
+    first = pipeline.handle(make_message("第一句"), capability, capability_id="bot.chat")
+    second = pipeline.handle(make_message("第二句"), capability, capability_id="bot.chat")
+    third = pipeline.handle(make_message("第三句"), capability, capability_id="bot.chat")
 
     assert first.state is ReceiptState.SENT
     assert second.state is ReceiptState.SENT
@@ -113,7 +113,7 @@ def test_chat_rate_limiter_blocks_before_llm_capability_after_session_window_is_
 
 
 def test_chat_rate_limiter_counts_deep_help_budget_before_model_call():
-    from plugins.wuwa_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
+    from plugins.bot_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
 
     pipeline, _audit, queue = make_pipeline(
         InMemoryRateLimiter(
@@ -130,12 +130,12 @@ def test_chat_rate_limiter_counts_deep_help_budget_before_model_call():
     first = pipeline.handle(
         make_message("请你一步一步教我怎么配置 NoneBot 和 NapCat"),
         capability,
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
     second = pipeline.handle(
         make_message("请你一步一步教我怎么排查 LLM 配置"),
         capability,
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
 
     assert first.state is ReceiptState.SENT
@@ -145,7 +145,7 @@ def test_chat_rate_limiter_counts_deep_help_budget_before_model_call():
 
 
 def test_chat_rate_limiter_prunes_old_window_entries():
-    from plugins.wuwa_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
+    from plugins.bot_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
 
     clock = MutableClock()
     pipeline, _audit, queue = make_pipeline(
@@ -161,13 +161,13 @@ def test_chat_rate_limiter_prunes_old_window_entries():
     calls: list[str] = []
     capability = make_chat_capability(calls)
 
-    first = pipeline.handle(make_message("第一句"), capability, capability_id="wuwa.chat")
-    blocked = pipeline.handle(make_message("第二句"), capability, capability_id="wuwa.chat")
+    first = pipeline.handle(make_message("第一句"), capability, capability_id="bot.chat")
+    blocked = pipeline.handle(make_message("第二句"), capability, capability_id="bot.chat")
     clock.advance(11)
     allowed_after_window = pipeline.handle(
         make_message("第三句"),
         capability,
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
 
     assert first.state is ReceiptState.SENT
@@ -178,7 +178,7 @@ def test_chat_rate_limiter_prunes_old_window_entries():
 
 
 def test_chat_rate_limiter_can_bypass_admin_role():
-    from plugins.wuwa_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
+    from plugins.bot_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
 
     pipeline, _audit, queue = make_pipeline(
         InMemoryRateLimiter(
@@ -196,12 +196,12 @@ def test_chat_rate_limiter_can_bypass_admin_role():
     first = pipeline.handle(
         make_message("管理员第一句", roles=["user", "admin"]),
         capability,
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
     second = pipeline.handle(
         make_message("管理员第二句", roles=["user", "admin"]),
         capability,
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
 
     assert first.state is ReceiptState.SENT
@@ -211,7 +211,7 @@ def test_chat_rate_limiter_can_bypass_admin_role():
 
 
 def test_chat_rate_limiter_blocks_global_quota_before_model_call():
-    from plugins.wuwa_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
+    from plugins.bot_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
 
     pipeline, audit, queue = make_pipeline(
         InMemoryRateLimiter(
@@ -229,17 +229,17 @@ def test_chat_rate_limiter_blocks_global_quota_before_model_call():
     first = pipeline.handle(
         make_message("第一句", sender_id="1"),
         capability,
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
     second = pipeline.handle(
         make_message("第二句", sender_id="2"),
         capability,
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
     third = pipeline.handle(
         make_message("第三句", sender_id="3"),
         capability,
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
 
     assert first.state is ReceiptState.SENT
@@ -254,7 +254,7 @@ def test_chat_rate_limiter_blocks_global_quota_before_model_call():
 
 
 def test_chat_rate_limiter_blocks_target_min_interval_across_group_senders():
-    from plugins.wuwa_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
+    from plugins.bot_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
 
     clock = MutableClock()
     pipeline, audit, queue = make_pipeline(
@@ -280,7 +280,7 @@ def test_chat_rate_limiter_blocks_target_min_interval_across_group_senders():
             group_id="10001",
         ),
         capability,
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
     blocked = pipeline.handle(
         make_message(
@@ -290,7 +290,7 @@ def test_chat_rate_limiter_blocks_target_min_interval_across_group_senders():
             group_id="10001",
         ),
         capability,
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
     clock.advance(11)
     allowed_after_interval = pipeline.handle(
@@ -301,7 +301,7 @@ def test_chat_rate_limiter_blocks_target_min_interval_across_group_senders():
             group_id="10001",
         ),
         capability,
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
 
     assert first.state is ReceiptState.SENT
@@ -316,18 +316,18 @@ def test_chat_rate_limiter_blocks_target_min_interval_across_group_senders():
 
 
 def test_rate_limit_settings_are_loaded_from_config_parameters():
-    from plugins.wuwa_unified_runtime.config import Config
-    from plugins.wuwa_unified_runtime.policy import build_rate_limit_settings
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.policy import build_rate_limit_settings
 
     settings = build_rate_limit_settings(
         Config(
-            wuwa_rate_limit_enabled=False,
-            wuwa_rate_limit_window_seconds=30,
-            wuwa_rate_limit_chat_global_max_requests=20,
-            wuwa_rate_limit_chat_session_max_requests=7,
-            wuwa_rate_limit_chat_sender_max_requests=5,
-            wuwa_rate_limit_target_min_interval_seconds=3,
-            wuwa_rate_limit_bypass_roles=["admin", "trusted"],
+            bot_rate_limit_enabled=False,
+            bot_rate_limit_window_seconds=30,
+            bot_rate_limit_chat_global_max_requests=20,
+            bot_rate_limit_chat_session_max_requests=7,
+            bot_rate_limit_chat_sender_max_requests=5,
+            bot_rate_limit_target_min_interval_seconds=3,
+            bot_rate_limit_bypass_roles=["admin", "trusted"],
         )
     )
 
@@ -341,7 +341,7 @@ def test_rate_limit_settings_are_loaded_from_config_parameters():
 
 
 def test_sqlite_rate_limiter_persists_window_across_instances(tmp_path):
-    from plugins.wuwa_unified_runtime.policy import RateLimitSettings, SQLiteRateLimiter
+    from plugins.bot_unified_runtime.policy import RateLimitSettings, SQLiteRateLimiter
 
     clock = MutableClock()
     db_path = tmp_path / "nested" / "rate_limit.sqlite3"
@@ -354,10 +354,10 @@ def test_sqlite_rate_limiter_persists_window_across_instances(tmp_path):
     second = SQLiteRateLimiter(db_path, settings=settings, clock=clock)
     message = make_message("第一句")
 
-    allowed = first.check_and_record(message, "wuwa.chat", amount=1)
-    blocked = second.check_and_record(message, "wuwa.chat", amount=1)
+    allowed = first.check_and_record(message, "bot.chat", amount=1)
+    blocked = second.check_and_record(message, "bot.chat", amount=1)
     clock.advance(61)
-    allowed_after_window = second.check_and_record(message, "wuwa.chat", amount=1)
+    allowed_after_window = second.check_and_record(message, "bot.chat", amount=1)
 
     assert db_path.exists()
     assert allowed.allowed is True
@@ -367,7 +367,7 @@ def test_sqlite_rate_limiter_persists_window_across_instances(tmp_path):
 
 
 def test_sqlite_rate_limiter_persists_target_min_interval_across_instances(tmp_path):
-    from plugins.wuwa_unified_runtime.policy import RateLimitSettings, SQLiteRateLimiter
+    from plugins.bot_unified_runtime.policy import RateLimitSettings, SQLiteRateLimiter
 
     clock = MutableClock()
     db_path = tmp_path / "nested" / "rate_limit.sqlite3"
@@ -393,10 +393,10 @@ def test_sqlite_rate_limiter_persists_target_min_interval_across_instances(tmp_p
         group_id="10001",
     )
 
-    allowed = first.check_and_record(message, "wuwa.chat", amount=1)
-    blocked = second.check_and_record(next_message, "wuwa.chat", amount=1)
+    allowed = first.check_and_record(message, "bot.chat", amount=1)
+    blocked = second.check_and_record(next_message, "bot.chat", amount=1)
     clock.advance(11)
-    allowed_after_interval = second.check_and_record(next_message, "wuwa.chat", amount=1)
+    allowed_after_interval = second.check_and_record(next_message, "bot.chat", amount=1)
 
     assert db_path.exists()
     assert allowed.allowed is True
@@ -407,17 +407,17 @@ def test_sqlite_rate_limiter_persists_target_min_interval_across_instances(tmp_p
 
 
 def test_build_rate_limiter_uses_sqlite_only_when_db_path_is_configured(tmp_path):
-    from plugins.wuwa_unified_runtime.config import Config
-    from plugins.wuwa_unified_runtime.policy import (
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.policy import (
         InMemoryRateLimiter,
         SQLiteRateLimiter,
         build_rate_limiter,
     )
 
     sqlite_limiter = build_rate_limiter(
-        Config(wuwa_rate_limit_db_path=str(tmp_path / "rate_limit.sqlite3"))
+        Config(bot_rate_limit_db_path=str(tmp_path / "rate_limit.sqlite3"))
     )
-    memory_limiter = build_rate_limiter(Config(wuwa_rate_limit_db_path=""))
+    memory_limiter = build_rate_limiter(Config(bot_rate_limit_db_path=""))
 
     assert isinstance(sqlite_limiter, SQLiteRateLimiter)
     assert isinstance(memory_limiter, InMemoryRateLimiter)

@@ -12,8 +12,8 @@
 ## 1. 第一次拿到仓库
 
 ```powershell
-git clone <仓库地址> WuWa-Character-Bots
-cd WuWa-Character-Bots
+git clone <仓库地址> Bot-Character-Bots
+cd Bot-Character-Bots
 Copy-Item .env.example .env      # 本地配置，不会被 git 跟踪
 powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 install
 powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 verify

@@ -3,8 +3,8 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.contracts import PrivacyLevel
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.contracts import PrivacyLevel
 
 
 def _persona_config(tmp_path: Path) -> Config:
@@ -20,22 +20,22 @@ def _persona_config(tmp_path: Path) -> Config:
         ),
         encoding="utf-8",
     )
-    knowledge_file = tmp_path / "wuwa.txt"
+    knowledge_file = tmp_path / "bot.txt"
     knowledge_file.write_text("守岸人会守望漂泊者的旅途。", encoding="utf-8")
     return Config(
-        wuwa_persona_profile_id="shorekeeper",
-        wuwa_persona_display_name="守岸人",
-        wuwa_persona_version="2026-test",
-        wuwa_persona_files=[str(persona_file)],
-        wuwa_knowledge_files=[str(knowledge_file)],
-        wuwa_knowledge_max_chunks=1,
-        wuwa_chat_api_key="sk-live-secret",
-        wuwa_emotion_enabled=True,
+        bot_persona_profile_id="shorekeeper",
+        bot_persona_display_name="守岸人",
+        bot_persona_version="2026-test",
+        bot_persona_files=[str(persona_file)],
+        bot_knowledge_files=[str(knowledge_file)],
+        bot_knowledge_max_chunks=1,
+        bot_chat_api_key="sk-live-secret",
+        bot_emotion_enabled=True,
     )
 
 
 def test_admin_persona_query_returns_safe_persona_summary(tmp_path):
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_persona_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_persona_query_result
 
     result = build_persona_query_result(
         _persona_config(tmp_path),
@@ -43,7 +43,7 @@ def test_admin_persona_query_returns_safe_persona_summary(tmp_path):
         actor_roles=["user", "admin"],
     )
 
-    assert result.capability_id == "wuwa.persona"
+    assert result.capability_id == "bot.persona"
     assert result.request_id == "req_persona"
     assert result.privacy_level is PrivacyLevel.PERSONAL
     assert "人格自检" in result.body
@@ -81,7 +81,7 @@ def test_admin_persona_query_returns_safe_persona_summary(tmp_path):
 
 
 def test_non_admin_persona_query_is_rejected_without_leaking_persona_summary(tmp_path):
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_persona_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_persona_query_result
 
     result = build_persona_query_result(
         _persona_config(tmp_path),
@@ -89,7 +89,7 @@ def test_non_admin_persona_query_is_rejected_without_leaking_persona_summary(tmp
         actor_roles=["user"],
     )
 
-    assert result.capability_id == "wuwa.persona"
+    assert result.capability_id == "bot.persona"
     assert "只有管理员可以查看运行时排障记录" in result.body
     assert "shorekeeper" not in result.body
     assert "persona_source_refs" not in result.body
@@ -98,18 +98,18 @@ def test_non_admin_persona_query_is_rejected_without_leaking_persona_summary(tmp
 
 
 def test_plugin_entry_exposes_admin_persona_command_without_self_overwrite():
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
 
     assert "build_persona_query_result" in source
-    assert 'capability_id = "wuwa.persona"' in source
-    assert "wuwa.persona" in plugin_entry.NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS
+    assert 'capability_id = "bot.persona"' in source
+    assert "bot.persona" in plugin_entry.NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS
 
 
 def test_help_text_mentions_persona_command():
-    from plugins.wuwa_unified_runtime.capabilities.echo import build_help_result
+    from plugins.bot_unified_runtime.capabilities.echo import build_help_result
 
     result = build_help_result(request_id="req_help")
 
-    assert "/wuwa persona" in result.body
+    assert "/bot persona" in result.body

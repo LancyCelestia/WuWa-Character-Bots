@@ -1,12 +1,12 @@
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.console_chat import run_once
-from plugins.wuwa_unified_runtime.contracts import ReceiptState
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.console_chat import run_once
+from plugins.bot_unified_runtime.contracts import ReceiptState
 
 
 def test_console_run_once_static_provider_sends_safely():
     config = Config(
-        wuwa_persona_profile_id="shorekeeper",
-        wuwa_persona_display_name="守岸人",
+        bot_persona_profile_id="shorekeeper",
+        bot_persona_display_name="守岸人",
     )
 
     receipt = run_once(config, "你好，守岸人。")
@@ -15,7 +15,7 @@ def test_console_run_once_static_provider_sends_safely():
 
 
 def test_console_run_once_missing_persona_files_uses_safe_fallback():
-    config = Config(wuwa_persona_profile_id="shorekeeper")
+    config = Config(bot_persona_profile_id="shorekeeper")
 
     receipt = run_once(config, "你好。")
 
@@ -23,12 +23,12 @@ def test_console_run_once_missing_persona_files_uses_safe_fallback():
 
 
 def test_console_run_once_records_memory_history(tmp_path):
-    from plugins.wuwa_unified_runtime.character.history import (
+    from plugins.bot_unified_runtime.character.history import (
         InMemoryConversationHistoryStore,
     )
 
     store = InMemoryConversationHistoryStore()
-    config = Config(wuwa_persona_profile_id="shorekeeper")
+    config = Config(bot_persona_profile_id="shorekeeper")
 
     receipt = run_once(config, "第一句话。", history_store=store)
 
@@ -48,7 +48,7 @@ def test_console_run_once_records_memory_history(tmp_path):
 
 
 def test_console_capsys_output_contains_reply(capsys):
-    config = Config(wuwa_persona_profile_id="shorekeeper")
+    config = Config(bot_persona_profile_id="shorekeeper")
 
     run_once(config, "你好。")
 
@@ -58,8 +58,8 @@ def test_console_capsys_output_contains_reply(capsys):
 
 def test_console_run_once_blocked_message_returns_non_sent_state():
     config = Config(
-        wuwa_persona_profile_id="shorekeeper",
-        wuwa_runtime_enabled=False,
+        bot_persona_profile_id="shorekeeper",
+        bot_runtime_enabled=False,
     )
 
     receipt = run_once(config, "你好。")

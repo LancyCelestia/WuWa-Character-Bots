@@ -25,6 +25,7 @@ param(
         "online-transport-smoke",
         "console",
         "credential-smoke",
+        "gscore-smoke",
         "docs-check",
         "plugin-check",
         "smoke",
@@ -143,15 +144,15 @@ function Invoke-PluginCheck {
 
     Assert-PathExists "plugins"
     Assert-FileContains "pyproject.toml" 'plugin_dirs = ["plugins"]'
-    Assert-PathExists "plugins\wuwa_unified_runtime\__init__.py"
-    Assert-PathExists "plugins\wuwa_unified_runtime\contracts\runtime.py"
+    Assert-PathExists "plugins\bot_unified_runtime\__init__.py"
+    Assert-PathExists "plugins\bot_unified_runtime\contracts\runtime.py"
 
     $pluginFiles = Get-ChildItem -LiteralPath (Join-Path $Root "plugins") -Recurse -File -Include "*.py" -ErrorAction SilentlyContinue
     if (-not $pluginFiles -or $pluginFiles.Count -eq 0) {
         throw "No local plugin Python files exist."
     }
 
-    Write-Step "found wuwa_unified_runtime and $($pluginFiles.Count) local plugin Python file(s)"
+    Write-Step "found bot_unified_runtime and $($pluginFiles.Count) local plugin Python file(s)"
 }
 
 function Invoke-Install {
@@ -292,7 +293,7 @@ function Invoke-Doctor {
     Push-Location $Root
     try {
         Write-Step "running local environment doctor"
-        & $python -m plugins.wuwa_unified_runtime.smoke doctor
+        & $python -m plugins.bot_unified_runtime.smoke doctor
         $exitCode = $LASTEXITCODE
     }
     finally { Pop-Location }
@@ -309,7 +310,7 @@ function Invoke-ChatSmoke {
     Push-Location $Root
     try {
         Write-Step "running local LLM chat smoke"
-        $arguments = @("-m", "plugins.wuwa_unified_runtime.smoke", "chat")
+        $arguments = @("-m", "plugins.bot_unified_runtime.smoke", "chat")
         if (-not [string]::IsNullOrWhiteSpace($Message)) {
             $arguments += @("--message", $Message)
         }
@@ -324,7 +325,7 @@ function Invoke-ReadinessSmoke {
     Push-Location $Root
     try {
         Write-Step "running unified local LLM dialogue readiness smoke"
-        $arguments = @("-m", "plugins.wuwa_unified_runtime.smoke", "readiness")
+        $arguments = @("-m", "plugins.bot_unified_runtime.smoke", "readiness")
         if (-not [string]::IsNullOrWhiteSpace($Message)) {
             $arguments += @("--message", $Message)
         }
@@ -339,7 +340,7 @@ function Invoke-DialogueSmoke {
     Push-Location $Root
     try {
         Write-Step "running local LLM dialogue acceptance smoke"
-        $arguments = @("-m", "plugins.wuwa_unified_runtime.smoke", "dialogue")
+        $arguments = @("-m", "plugins.bot_unified_runtime.smoke", "dialogue")
         if (-not [string]::IsNullOrWhiteSpace($Message)) {
             $arguments += @("--message", $Message)
         }
@@ -354,7 +355,7 @@ function Invoke-ConfigSmoke {
     Push-Location $Root
     try {
         Write-Step "running local configuration readiness smoke"
-        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "config")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "config")
     }
     finally { Pop-Location }
 }
@@ -365,7 +366,7 @@ function Invoke-PersonaSmoke {
     Push-Location $Root
     try {
         Write-Step "running local persona readiness smoke"
-        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "persona")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "persona")
     }
     finally { Pop-Location }
 }
@@ -376,7 +377,7 @@ function Invoke-ContextSmoke {
     Push-Location $Root
     try {
         Write-Step "running local LLM context smoke"
-        $arguments = @("-m", "plugins.wuwa_unified_runtime.smoke", "context")
+        $arguments = @("-m", "plugins.bot_unified_runtime.smoke", "context")
         if (-not [string]::IsNullOrWhiteSpace($Message)) {
             $arguments += @("--message", $Message)
         }
@@ -391,7 +392,7 @@ function Invoke-WhySmoke {
     Push-Location $Root
     try {
         Write-Step "running local LLM decision why smoke"
-        $arguments = @("-m", "plugins.wuwa_unified_runtime.smoke", "why")
+        $arguments = @("-m", "plugins.bot_unified_runtime.smoke", "why")
         if (-not [string]::IsNullOrWhiteSpace($Message)) {
             $arguments += @("--message", $Message)
         }
@@ -407,7 +408,7 @@ function Invoke-LlmSmoke {
     Push-Location $Root
     try {
         Write-Step "running OpenAI-compatible LLM connection smoke"
-        & $python -m plugins.wuwa_unified_runtime.smoke llm
+        & $python -m plugins.bot_unified_runtime.smoke llm
         $exitCode = $LASTEXITCODE
     }
     finally { Pop-Location }
@@ -424,7 +425,7 @@ function Invoke-LlmSetup {
     Push-Location $Root
     try {
         Write-Step "printing safe LLM setup checklist"
-        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "llm-setup")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "llm-setup")
     }
     finally { Pop-Location }
 }
@@ -435,7 +436,7 @@ function Invoke-NoneBotSmoke {
     Push-Location $Root
     try {
         Write-Step "running NoneBot plugin load smoke"
-        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "nonebot")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "nonebot")
     }
     finally { Pop-Location }
 }
@@ -446,7 +447,7 @@ function Invoke-StartupSmoke {
     Push-Location $Root
     try {
         Write-Step "running NoneBot startup dry-run smoke"
-        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "startup")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "startup")
     }
     finally { Pop-Location }
 }
@@ -457,7 +458,7 @@ function Invoke-QueueSmoke {
     Push-Location $Root
     try {
         Write-Step "running local send queue worker smoke"
-        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "queue")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "queue")
     }
     finally { Pop-Location }
 }
@@ -468,7 +469,7 @@ function Invoke-TransportSmoke {
     Push-Location $Root
     try {
         Write-Step "running local OneBot/NapCat transport smoke"
-        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "transport")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "transport")
     }
     finally { Pop-Location }
 }
@@ -479,7 +480,7 @@ function Invoke-OnlineTransportSmoke {
     Push-Location $Root
     try {
         Write-Step "running read-only online transport smoke"
-        Invoke-External $python @("-m", "plugins.wuwa_unified_runtime.smoke", "online-transport")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "online-transport")
     }
     finally { Pop-Location }
 }
@@ -490,7 +491,7 @@ function Invoke-Console {
     Push-Location $Root
     try {
         Write-Step "starting console chat REPL"
-        $arguments = @("-m", "plugins.wuwa_unified_runtime.console_chat")
+        $arguments = @("-m", "plugins.bot_unified_runtime.console_chat")
         if (-not [string]::IsNullOrWhiteSpace($Message)) {
             $arguments += @("--message", $Message)
         }
@@ -507,7 +508,21 @@ function Invoke-CredentialSmoke {
         Write-Step "running credential health smoke"
         Invoke-External $python @(
             "-m",
-            "plugins.wuwa_unified_runtime.sources.credential_health"
+            "plugins.bot_unified_runtime.sources.credential_health"
+        )
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-GscoreSmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running GsCore bridge readiness smoke"
+        Invoke-External $python @(
+            "-m",
+            "plugins.bot_unified_runtime.sources.gscore_bridge"
         )
     }
     finally { Pop-Location }
@@ -571,6 +586,7 @@ Tasks:
   online-transport-smoke Read current online bot state without calling send APIs; never sends QQ messages.
   console       Interactive console chat through the real runtime pipeline (offline static LLM by default). Use -Message for one-shot non-interactive mode.
   credential-smoke Check cookie/credential expiry and (with --probe) availability; warns when re-login is needed. Never prints secret values.
+  gscore-smoke   Read-only GsCore bridge readiness check (config + websockets availability); never connects or sends.
   docs-check    Verify command docs, runtime specs, and project config pointers exist.
   plugin-check  Verify plugins/ is configured and report whether local plugins exist yet.
   smoke         Verify docs, plugin discovery config, NoneBot import, and nb CLI availability.
@@ -603,6 +619,7 @@ switch ($Task) {
     "online-transport-smoke" { Invoke-OnlineTransportSmoke }
     "console" { Invoke-Console }
     "credential-smoke" { Invoke-CredentialSmoke }
+    "gscore-smoke" { Invoke-GscoreSmoke }
     "docs-check" { Invoke-DocsCheck }
     "plugin-check" { Invoke-PluginCheck }
     "smoke" { Invoke-Smoke }

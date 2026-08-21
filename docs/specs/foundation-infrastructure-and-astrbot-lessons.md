@@ -1,4 +1,4 @@
-﻿# 基础设施设计与 AstrBot 反例复盘
+# 基础设施设计与 AstrBot 反例复盘
 
 本文定义统一 NoneBot 插件的下一阶段基础设施设计，并把旧 AstrBot 插件中的可复用经验与负面案例沉淀成实现约束。
 
@@ -42,7 +42,7 @@ IncomingMessage
 
 仓库已经有 Milestone 0 骨架：
 
-- `plugins/wuwa_unified_runtime/contracts/` 定义运行时、人格、媒体、自动发送契约。
+- `plugins/bot_unified_runtime/contracts/` 定义运行时、人格、媒体、自动发送契约。
 - `runtime/pipeline.py` 有最小运行时链路。
 - `policy/gate.py` 有群聊被动消息默认观察和 critical 输入阻断。
 - `policy/rate_limit.py` 有调用 LLM 前的窗口限速，按全局、会话和发送者统计聊天回复预算消耗，并可配置同一目标最小回复间隔；命中后不调用 LLM、不创建 `SendRequest`。未配置 DB path 时使用内存，配置 `BOT_RATE_LIMIT_DB_PATH` 后使用 SQLite 持久窗口和目标间隔记录。
@@ -52,10 +52,10 @@ IncomingMessage
 - `audit/logger.py` 有内存与 SQLite `audit_records` 审计仓库，并在入库前脱敏 token、cookie、authkey、password、secret、api_key、Authorization/Bearer 和 `sk-...` 形态。
 - `sources/registry.py` 有 parser registry 雏形。
 - `capabilities/auto_send/parser.py` 有自动发送 intent draft parser。
-- `security/injection.py` 有首版 `PromptInjectionGuard`，已接入 `wuwa.chat`，用于降权普通提示注入并在调用 LLM 前拦截高危泄露、读文件和脚本执行请求。
+- `security/injection.py` 有首版 `PromptInjectionGuard`，已接入 `bot.chat`，用于降权普通提示注入并在调用 LLM 前拦截高危泄露、读文件和脚本执行请求。
 - `scripts/dev.ps1 why-smoke` 有本地决策解释入口，可解释一条输入的 policy、角色、回复预算、限速阻断、安静时间阻断、LLM 状态、发送请求、回执和审计标签。
-- 真实 NoneBot 入口已接入 `/wuwa why [request_id|debug_id]`，可查询当前会话最近一次或指定一次脱敏 `RuntimeDiagnostic`，解释能力、策略、角色、回复预算、限速阻断、安静时间阻断、LLM 状态、发送请求、回执和审计事件。默认使用进程内最近记录；配置 `BOT_DIAGNOSTICS_ENABLED=true` 后可写入 SQLite `runtime_diagnostics`。
-- 真实 NoneBot 入口已接入 `/wuwa pause` 和 `/wuwa resume` 进程内软暂停：普通聊天、自动发送预览和非排障能力会在 policy 前被阻断；管理员诊断、状态和恢复命令仍可用，避免事故排查时失去控制入口。
+- 真实 NoneBot 入口已接入 `/bot why [request_id|debug_id]`，可查询当前会话最近一次或指定一次脱敏 `RuntimeDiagnostic`，解释能力、策略、角色、回复预算、限速阻断、安静时间阻断、LLM 状态、发送请求、回执和审计事件。默认使用进程内最近记录；配置 `BOT_DIAGNOSTICS_ENABLED=true` 后可写入 SQLite `runtime_diagnostics`。
+- 真实 NoneBot 入口已接入 `/bot pause` 和 `/bot resume` 进程内软暂停：普通聊天、自动发送预览和非排障能力会在 policy 前被阻断；管理员诊断、状态和恢复命令仍可用，避免事故排查时失去控制入口。
 
 当前最大缺口：
 
@@ -63,7 +63,7 @@ IncomingMessage
 - `cooldown_key` 已生成，聊天路径已有内存/可选 SQLite 窗口限速、全局配额、目标最小间隔和首版安静时间阻断。
 - dedupe 已有可选 SQLite 发送队列基础、租约 claim、一次性 worker 和默认关闭的 APScheduler worker 注册，但媒体 canonical id、订阅 item id 和跨 adapter 去重策略仍需后续接入。
 - digest、private fallback、admin confirm、expires，以及安静时间命中后的排队/摘要化处理仍是规格，还没有完整执行器。
-- 运行诊断、审计、发送回执、发送队列和回复限速都已有可选 SQLite 持久化基础；`/wuwa queue` 已能展示发送队列安全计数，`queue-smoke` 已能在本地验证 worker 状态推进、回执记录和审计计数。后续仍需要可视化面板和真实 NapCat 在线投递 smoke，才能完整排查跨重启、跨 adapter 的问题。
+- 运行诊断、审计、发送回执、发送队列和回复限速都已有可选 SQLite 持久化基础；`/bot queue` 已能展示发送队列安全计数，`queue-smoke` 已能在本地验证 worker 状态推进、回执记录和审计计数。后续仍需要可视化面板和真实 NapCat 在线投递 smoke，才能完整排查跨重启、跨 adapter 的问题。
 
 ## 旧插件可吸收的好设计
 
@@ -182,7 +182,7 @@ C:\Users\LancyCelestia\.astrbot\data\plugins\astrbot_plugin_angel_memory
 - 后台任务必须有 `BackgroundTaskRecord`。
 - 任务开始、跳过、成功、失败、取消都要写审计。
 - 后台维护不能给普通群聊发消息。
-- 维护失败只进入管理员汇总或 `/wuwa health`。
+- 维护失败只进入管理员汇总或 `/bot health`。
 - 日志不能声称完成实际未执行的维护步骤。
 
 ## 必须建立的基础设施模块
@@ -666,20 +666,20 @@ OneBot/NapCat 约束：
 核心命令：
 
 ```text
-/wuwa status
-/wuwa health
-/wuwa why <request_id|debug_id>
-/wuwa audit recent
-/wuwa queue
-/wuwa pause
-/wuwa resume
-/wuwa config
-/wuwa persona show
-/wuwa memory inspect
-/wuwa subscription inspect
+/bot status
+/bot health
+/bot why <request_id|debug_id>
+/bot audit recent
+/bot queue
+/bot pause
+/bot resume
+/bot config
+/bot persona show
+/bot memory inspect
+/bot subscription inspect
 ```
 
-当前已有 `/wuwa why`、`/wuwa receipt`、`/wuwa audit`、`/wuwa recent`、`/wuwa queue`、`/wuwa context`、`/wuwa llm`、`/wuwa config`、`/wuwa pause` 和 `/wuwa resume` 等安全排障/止血入口；`/wuwa health`、persona/memory/subscription inspect 和可视化控制面板仍是后续面板化阶段。
+当前已有 `/bot why`、`/bot receipt`、`/bot audit`、`/bot recent`、`/bot queue`、`/bot context`、`/bot llm`、`/bot config`、`/bot pause` 和 `/bot resume` 等安全排障/止血入口；`/bot health`、persona/memory/subscription inspect 和可视化控制面板仍是后续面板化阶段。
 
 本地 `why-smoke` 用于离线解释一条模拟输入：
 
@@ -689,17 +689,17 @@ powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 why-smoke -Message "今
 
 它不启动 NapCat、不真实发送消息，只用于解释 policy、回复预算、LLM 配置、`SendRequest` 创建状态、回执和审计标签。
 
-真实 NoneBot 入口已有 `/wuwa why [request_id|debug_id]`：
+真实 NoneBot 入口已有 `/bot why [request_id|debug_id]`：
 
 ```text
-/wuwa why
-/wuwa why <request_id>
-/wuwa why <debug_id>
+/bot why
+/bot why <request_id>
+/bot why <debug_id>
 ```
 
 它读取最近真实运行产生的脱敏 `RuntimeDiagnostic`，默认查当前会话最近一次，也可以按 `request_id` 或 `debug_id` 精确查。该结果不展示原始用户消息、回复全文、`private_debug`、API key、token、cookie、目标 ID、`dedupe_key` 或 OneBot provider message id。默认 store 是进程内最近记录；配置 `BOT_DIAGNOSTICS_ENABLED=true`、`BOT_DIAGNOSTICS_DB_PATH` 和 `BOT_DIAGNOSTICS_MAX_ITEMS` 后，会写入 SQLite `runtime_diagnostics` 并按最近记录裁剪。诊断表仍只是用户侧解释投影；完整排障真源应结合独立持久化的 `audit_records` 和 `delivery_receipts` 内部表。
 
-`/wuwa why` 至少展示：
+`/bot why` 至少展示：
 
 ```text
 - request_id/debug_id
@@ -1003,15 +1003,15 @@ minor wording
 
 当前已实现的首层防线是 `InMemoryRateLimiter` / `SQLiteRateLimiter`：
 
-- 位置：`PolicyEvaluation` 允许、`ReplyBudgetSettings` 计算之后，调用 `wuwa.chat` 的 LLM provider 之前。
+- 位置：`PolicyEvaluation` 允许、`ReplyBudgetSettings` 计算之后，调用 `bot.chat` 的 LLM provider 之前。
 - 计数：按 `ReplyBudget.max_messages` 作为本次消耗量，分别进入 session bucket 和 sender bucket。
 - 默认：`BOT_RATE_LIMIT_WINDOW_SECONDS=60`、`BOT_RATE_LIMIT_CHAT_GLOBAL_MAX_REQUESTS=60`、`BOT_RATE_LIMIT_CHAT_SESSION_MAX_REQUESTS=6`、`BOT_RATE_LIMIT_CHAT_SENDER_MAX_REQUESTS=4`、`BOT_RATE_LIMIT_TARGET_MIN_INTERVAL_SECONDS=0`。
 - 持久化：`BOT_RATE_LIMIT_DB_PATH` 为空时使用进程内内存；配置后写入 SQLite `rate_limit_events`，重启后仍保留窗口内记录和目标间隔记录。
 - 绕过：`BOT_RATE_LIMIT_BYPASS_ROLES=["admin"]`。
-- 诊断：命中后写 policy 阶段 `rate_limited` 审计事件；`/wuwa why` 显示已在调用 LLM 前阻断以避免刷屏，目标间隔和全局配额会给安全中文归因，不展示 sender_id、session_id、target_id 或 bucket key。
-- 安静时间：`QuietHoursChecker` 命中后写 policy 阶段 `quiet_hours_blocked` 审计事件；`/wuwa why` 显示已在调用 LLM 前阻断以避免夜间刷屏，不展示目标 ID 或原始消息。
-- 边界：SQLite 限速模式解决窗口记录和目标间隔跨重启；SQLite 发送队列已能保存 `SendRequest`、持久去重、退避重试、租约认领到期请求、通过 `/wuwa queue` 输出安全计数，并由一次性 worker 推进到期请求；NoneBot 入口已能在 `BOT_SEND_QUEUE_WORKER_ENABLED=true` 且队列可 drain 时注册默认关闭的 APScheduler worker。`queue-smoke` 只证明临时队列和 fake transport 的 worker 链路可用，不证明真实 NapCat 在线投递。安静时间首版只做 policy 阻断，尚未把非紧急消息自动转成排队或摘要；摘要发送、私聊回退和真实 NapCat 在线 smoke 仍需后续补强。
-- 诊断恢复：SQLite 发送队列已能通过 `find_request(request_id)` 从 `send_requests.request_json` 恢复持久化 `SendRequest`，供 `/wuwa why` 在重启或队列对象重开后判断发送请求是否创建。该能力只产生安全诊断投影，不能输出目标、正文、`dedupe_key`、数据库路径或 provider message id。
+- 诊断：命中后写 policy 阶段 `rate_limited` 审计事件；`/bot why` 显示已在调用 LLM 前阻断以避免刷屏，目标间隔和全局配额会给安全中文归因，不展示 sender_id、session_id、target_id 或 bucket key。
+- 安静时间：`QuietHoursChecker` 命中后写 policy 阶段 `quiet_hours_blocked` 审计事件；`/bot why` 显示已在调用 LLM 前阻断以避免夜间刷屏，不展示目标 ID 或原始消息。
+- 边界：SQLite 限速模式解决窗口记录和目标间隔跨重启；SQLite 发送队列已能保存 `SendRequest`、持久去重、退避重试、租约认领到期请求、通过 `/bot queue` 输出安全计数，并由一次性 worker 推进到期请求；NoneBot 入口已能在 `BOT_SEND_QUEUE_WORKER_ENABLED=true` 且队列可 drain 时注册默认关闭的 APScheduler worker。`queue-smoke` 只证明临时队列和 fake transport 的 worker 链路可用，不证明真实 NapCat 在线投递。安静时间首版只做 policy 阻断，尚未把非紧急消息自动转成排队或摘要；摘要发送、私聊回退和真实 NapCat 在线 smoke 仍需后续补强。
+- 诊断恢复：SQLite 发送队列已能通过 `find_request(request_id)` 从 `send_requests.request_json` 恢复持久化 `SendRequest`，供 `/bot why` 在重启或队列对象重开后判断发送请求是否创建。该能力只产生安全诊断投影，不能输出目标、正文、`dedupe_key`、数据库路径或 provider message id。
 
 ### SQLite 连接关闭经验
 
@@ -1042,7 +1042,7 @@ Global quota
 
 ```text
 继续
-/wuwa continue <request_id>
+/bot continue <request_id>
 私聊继续
 生成卡片
 生成合并转发
@@ -1059,10 +1059,10 @@ Global quota
 必须支持：
 
 ```text
-/wuwa pause all
-/wuwa pause capability <capability_id>
-/wuwa pause session <session_id>
-/wuwa resume ...
+/bot pause all
+/bot pause capability <capability_id>
+/bot pause session <session_id>
+/bot resume ...
 ```
 
 暂停效果：
@@ -1101,7 +1101,7 @@ IncomingMessage
 -> PolicyEvaluation
 -> PersonaBinding(resolve 守岸人)
 -> MemoryQuery(scope=shorekeeper)
--> KnowledgeRetrievalQuery(scope=wuwa_public)
+-> KnowledgeRetrievalQuery(scope=bot_public)
 -> ContextBundle
 -> GenerationRequest
 -> CapabilityResult(kind=chat_reply)
@@ -1273,7 +1273,7 @@ AdminPageProvider
 - `OneBotNapCatTransportAdapter`: `SendRequest` -> OneBot V11 message segments -> `DeliveryReceipt`。
 - `PersonaStore`: 导入守岸人人格 profile。
 - `LLMProvider`: 支持用户配置的大模型，首版只做普通回复。
-- `/wuwa status`、`/wuwa why`、`/wuwa pause`、`/wuwa resume`。
+- `/bot status`、`/bot why`、`/bot pause`、`/bot resume`。
 
 验收：
 
@@ -1281,7 +1281,7 @@ AdminPageProvider
 - 群里非提及默认不回复。
 - 任何真实发送都有 `DeliveryReceipt` 和 `AuditRecord`。
 - quiet hours、dedupe、cooldown 至少在 SQLite 中生效。
-- `/wuwa why <debug_id>` 能解释一次发送或阻断。
+- `/bot why <debug_id>` 能解释一次发送或阻断。
 
 ### M2: 记忆和知识库
 

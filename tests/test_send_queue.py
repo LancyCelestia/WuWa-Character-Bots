@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from plugins.wuwa_unified_runtime.audit import InMemoryAuditLogger
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.contracts import (
     PrivacyLevel,
     ReceiptState,
     RenderedOutput,
@@ -12,7 +12,7 @@ from plugins.wuwa_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.wuwa_unified_runtime.sender import (
+from plugins.bot_unified_runtime.sender import (
     InMemorySendQueue,
     SQLiteSendRequestQueue,
     build_send_queue,
@@ -22,7 +22,7 @@ from plugins.wuwa_unified_runtime.sender import (
 def _send_request(
     *,
     request_id: str = "req_queue_1",
-    dedupe_key: str = "wuwa.chat:private:42:hello",
+    dedupe_key: str = "bot.chat:private:42:hello",
     target_id: str = "42",
     text: str = "你好，漂泊者。",
 ) -> SendRequest:
@@ -38,13 +38,13 @@ def _send_request(
         target_scope=SessionType.PRIVATE,
         target_id=target_id,
         origin_message_id="origin_1",
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
         content=rendered,
         send_policy=SendPolicy.IMMEDIATE,
         priority="normal",
         max_messages=1,
         dedupe_key=dedupe_key,
-        cooldown_key=f"wuwa.chat:private:{target_id}",
+        cooldown_key=f"bot.chat:private:{target_id}",
         privacy_level=PrivacyLevel.PERSONAL,
         persona_profile_id="shorekeeper",
         audit_tags=["policy", "persona:shorekeeper"],
@@ -246,16 +246,16 @@ def test_build_send_queue_uses_sqlite_only_when_enabled(tmp_path):
     audit = InMemoryAuditLogger()
     sqlite_queue = build_send_queue(
         Config(
-            wuwa_send_queue_enabled=True,
-            wuwa_send_queue_db_path=str(tmp_path / "send_queue.sqlite3"),
-            wuwa_send_queue_max_items=9,
-            wuwa_send_queue_max_attempts=4,
-            wuwa_send_queue_retry_base_seconds=7,
-            wuwa_send_queue_retry_max_seconds=70,
+            bot_send_queue_enabled=True,
+            bot_send_queue_db_path=str(tmp_path / "send_queue.sqlite3"),
+            bot_send_queue_max_items=9,
+            bot_send_queue_max_attempts=4,
+            bot_send_queue_retry_base_seconds=7,
+            bot_send_queue_retry_max_seconds=70,
         ),
         audit_logger=audit,
     )
-    memory_queue = build_send_queue(Config(wuwa_send_queue_enabled=False), audit)
+    memory_queue = build_send_queue(Config(bot_send_queue_enabled=False), audit)
 
     assert isinstance(sqlite_queue, SQLiteSendRequestQueue)
     assert sqlite_queue.max_items == 9

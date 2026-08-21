@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from plugins.wuwa_unified_runtime.audit import (
+from plugins.bot_unified_runtime.audit import (
     InMemoryAuditLogger,
     SQLiteAuditRepository,
     build_audit_repository,
 )
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.contracts import (
     AuditRecord,
     CapabilityResult,
     DeliveryReceipt,
@@ -17,8 +17,8 @@ from plugins.wuwa_unified_runtime.contracts import (
     RiskLevel,
     SessionType,
 )
-from plugins.wuwa_unified_runtime.runtime import RuntimePipeline
-from plugins.wuwa_unified_runtime.sender import (
+from plugins.bot_unified_runtime.runtime import RuntimePipeline
+from plugins.bot_unified_runtime.sender import (
     InMemorySendQueue,
     SQLiteReceiptRepository,
     build_receipt_repository,
@@ -34,7 +34,7 @@ def _audit_record(
     return AuditRecord(
         request_id=request_id,
         session_id="private:42",
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
         stage="sender",
         event=event,
         severity=RiskLevel.LOW,
@@ -95,12 +95,12 @@ def test_sqlite_audit_repository_redacts_colon_style_secrets(tmp_path):
 def test_build_audit_repository_uses_sqlite_only_when_enabled(tmp_path):
     sqlite_repository = build_audit_repository(
         Config(
-            wuwa_audit_enabled=True,
-            wuwa_audit_db_path=str(tmp_path / "audit.sqlite3"),
-            wuwa_audit_max_items=7,
+            bot_audit_enabled=True,
+            bot_audit_db_path=str(tmp_path / "audit.sqlite3"),
+            bot_audit_max_items=7,
         )
     )
-    memory_repository = build_audit_repository(Config(wuwa_audit_enabled=False))
+    memory_repository = build_audit_repository(Config(bot_audit_enabled=False))
 
     assert isinstance(sqlite_repository, SQLiteAuditRepository)
     assert sqlite_repository.max_items == 7
@@ -148,12 +148,12 @@ def test_sqlite_receipt_repository_persists_finds_and_prunes(tmp_path):
 def test_build_receipt_repository_uses_sqlite_only_when_enabled(tmp_path):
     sqlite_repository = build_receipt_repository(
         Config(
-            wuwa_receipts_enabled=True,
-            wuwa_receipts_db_path=str(tmp_path / "receipts.sqlite3"),
-            wuwa_receipts_max_items=9,
+            bot_receipts_enabled=True,
+            bot_receipts_db_path=str(tmp_path / "receipts.sqlite3"),
+            bot_receipts_max_items=9,
         )
     )
-    memory_repository = build_receipt_repository(Config(wuwa_receipts_enabled=False))
+    memory_repository = build_receipt_repository(Config(bot_receipts_enabled=False))
 
     assert isinstance(sqlite_repository, SQLiteReceiptRepository)
     assert sqlite_repository.max_items == 9
@@ -177,7 +177,7 @@ def test_runtime_pipeline_records_policy_and_sender_receipts(tmp_path):
         }
     )
 
-    blocked = pipeline.handle(passive_group, lambda message, decision: None, "wuwa.chat")
+    blocked = pipeline.handle(passive_group, lambda message, decision: None, "bot.chat")
     sent = pipeline.handle(
         _message("你好"),
         lambda message, decision: CapabilityResult(
@@ -186,7 +186,7 @@ def test_runtime_pipeline_records_policy_and_sender_receipts(tmp_path):
             kind="text",
             body="我在这里。",
         ),
-        "wuwa.chat",
+        "bot.chat",
     )
 
     assert receipt_repository.find(blocked.debug_id) == blocked

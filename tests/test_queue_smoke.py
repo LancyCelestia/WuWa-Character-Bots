@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from plugins.wuwa_unified_runtime import smoke
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.smoke import run_queue_smoke
+from plugins.bot_unified_runtime import smoke
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.smoke import run_queue_smoke
 
 
 def test_queue_smoke_drains_temp_sqlite_queue_without_real_transport(tmp_path):
@@ -70,5 +70,5 @@ def test_dev_script_exposes_queue_smoke_task():
 
     assert '"queue-smoke"' in text
     assert "Invoke-QueueSmoke" in text
-    assert "plugins.wuwa_unified_runtime.smoke" in text
+    assert "plugins.bot_unified_runtime.smoke" in text
     assert '"queue"' in text

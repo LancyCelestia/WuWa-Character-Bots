@@ -580,34 +580,34 @@ untrusted facts: chat history, memory snippets, retrieved facts
 建议未来代码结构：
 
 ```text
-plugins/wuwa_unified_runtime/contracts/
+plugins/bot_unified_runtime/contracts/
   runtime.py
   auto_send.py
 
-plugins/wuwa_unified_runtime/policy/
+plugins/bot_unified_runtime/policy/
   permissions.py
   quotas.py
   privacy.py
 
-plugins/wuwa_unified_runtime/capabilities/auto_send/
+plugins/bot_unified_runtime/capabilities/auto_send/
   parser.py
   recipients.py
   personalization.py
   drafts.py
   confirmation.py
 
-plugins/wuwa_unified_runtime/output/
+plugins/bot_unified_runtime/output/
   reviewer.py
   renderer.py
   censor.py
 
-plugins/wuwa_unified_runtime/sender/
+plugins/bot_unified_runtime/sender/
   queue.py
   chat_transport.py
   mail_transport.py
   receipts.py
 
-plugins/wuwa_unified_runtime/audit/
+plugins/bot_unified_runtime/audit/
   logger.py
 ```
 

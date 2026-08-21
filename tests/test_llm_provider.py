@@ -5,9 +5,9 @@ from urllib import error
 
 import pytest
 
-from plugins.wuwa_unified_runtime import _build_chat_llm_provider
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.llm import (
+from plugins.bot_unified_runtime import _build_chat_llm_provider
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.llm import (
     LLMProviderError,
     OpenAICompatibleLLMProvider,
 )
@@ -434,10 +434,10 @@ def test_openai_compatible_provider_wraps_unexpected_transport_errors_without_le
 def test_chat_provider_factory_uses_configured_timeout():
     provider = _build_chat_llm_provider(
         Config(
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-test",
-            wuwa_chat_timeout_seconds=7.5,
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-test",
+            bot_chat_timeout_seconds=7.5,
         )
     )
 

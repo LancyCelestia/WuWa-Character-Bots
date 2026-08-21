@@ -1,16 +1,16 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from plugins.wuwa_unified_runtime.capabilities.chat import build_chat_prompt
-from plugins.wuwa_unified_runtime.character.providers import FileCharacterContextProvider
-from plugins.wuwa_unified_runtime.character.temporal import (
+from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
+from plugins.bot_unified_runtime.character.providers import FileCharacterContextProvider
+from plugins.bot_unified_runtime.character.temporal import (
     OpenMeteoWeatherProvider,
     RuleBasedTemporalProvider,
     holiday_of,
     solar_term_of,
 )
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.contracts.character import TemporalContext
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.contracts.character import TemporalContext
 
 
 def test_solar_term_of_known_dates():
@@ -137,8 +137,8 @@ def test_action_brackets_can_be_disabled(tmp_path):
 
 def test_config_temporal_fields_defaults():
     config = Config()
-    assert config.wuwa_temporal_enabled is True
-    assert config.wuwa_timezone == "Asia/Hong_Kong"
-    assert config.wuwa_weather_enabled is False
-    assert config.wuwa_persona_action_brackets is True
-    assert config.wuwa_runtime_persona_nickname == ""
+    assert config.bot_temporal_enabled is True
+    assert config.bot_timezone == "Asia/Hong_Kong"
+    assert config.bot_weather_enabled is False
+    assert config.bot_persona_action_brackets is True
+    assert config.bot_runtime_persona_nickname == ""

@@ -1,15 +1,15 @@
 import random
 
-from plugins.wuwa_unified_runtime.capabilities.runtime_admin import (
+from plugins.bot_unified_runtime.capabilities.runtime_admin import (
     build_runtime_admin_result,
 )
-from plugins.wuwa_unified_runtime.character.persona_set import (
+from plugins.bot_unified_runtime.character.persona_set import (
     AltPersonaSpec,
     PersonaSelector,
     build_alt_personas,
 )
-from plugins.wuwa_unified_runtime.config import Config, translate_env_keys
-from plugins.wuwa_unified_runtime.runtime.settings import (
+from plugins.bot_unified_runtime.config import Config, translate_env_keys
+from plugins.bot_unified_runtime.runtime.settings import (
     InstanceSettingsManager,
     effective_instance,
 )
@@ -79,7 +79,7 @@ def test_persona_selector_no_alt_personas_returns_none():
 
 def test_build_alt_personas_from_config():
     config = Config(
-        wuwa_persona_alt_profiles={
+        bot_persona_alt_profiles={
             "gentle": {
                 "display_name": "守岸人·温柔",
                 "files": ["a.md"],
@@ -99,7 +99,7 @@ def test_build_alt_personas_from_config():
 def test_admin_persona_commands(tmp_path):
     manager = InstanceSettingsManager(tmp_path)
     config = Config(
-        wuwa_persona_alt_profiles={
+        bot_persona_alt_profiles={
             "gentle": {
                 "display_name": "守岸人·温柔",
                 "files": ["a.md"],
@@ -144,10 +144,10 @@ def test_admin_persona_commands(tmp_path):
 
 
 def test_effective_instance_falls_back_to_persona_id():
-    config = Config(wuwa_runtime_instance="", wuwa_persona_profile_id="shorekeeper")
+    config = Config(bot_runtime_instance="", bot_persona_profile_id="shorekeeper")
     assert effective_instance(config) == "shorekeeper"
 
-    explicit = Config(wuwa_runtime_instance="aimias", wuwa_persona_profile_id="x")
+    explicit = Config(bot_runtime_instance="aimias", bot_persona_profile_id="x")
     assert effective_instance(explicit) == "aimias"
 
 
@@ -155,10 +155,10 @@ def test_translate_env_keys_maps_bot_prefix():
     values = {
         "BOT_CHAT_PROVIDER": "openai_compatible",
         "BOT_PERSONA_PROFILE_ID": "shorekeeper",
-        "WUWA_LEGACY_KEY": "1",  # 旧前缀仍按原样通过（不再使用）
+        "BOT_LEGACY_KEY": "1",  # 旧前缀仍按原样通过（不再使用）
     }
 
     translated = translate_env_keys(values)
-    assert translated["wuwa_chat_provider"] == "openai_compatible"
-    assert translated["wuwa_persona_profile_id"] == "shorekeeper"
-    assert translated["wuwa_legacy_key"] == "1"
+    assert translated["bot_chat_provider"] == "openai_compatible"
+    assert translated["bot_persona_profile_id"] == "shorekeeper"
+    assert translated["bot_legacy_key"] == "1"

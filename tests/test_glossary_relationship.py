@@ -1,17 +1,17 @@
-from plugins.wuwa_unified_runtime.capabilities.chat import build_chat_prompt
-from plugins.wuwa_unified_runtime.character.glossary import (
+from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
+from plugins.bot_unified_runtime.character.glossary import (
     FileGlossaryProvider,
     _parse_entry_line,
 )
-from plugins.wuwa_unified_runtime.character.providers import FileCharacterContextProvider
-from plugins.wuwa_unified_runtime.character.relationship import (
+from plugins.bot_unified_runtime.character.providers import FileCharacterContextProvider
+from plugins.bot_unified_runtime.character.relationship import (
     FileRelationshipProvider,
     apply_relationship_to_tone,
 )
-from plugins.wuwa_unified_runtime.character.shared_group import (
+from plugins.bot_unified_runtime.character.shared_group import (
     NullSharedGroupContextProvider,
 )
-from plugins.wuwa_unified_runtime.contracts.character import (
+from plugins.bot_unified_runtime.contracts.character import (
     RelationshipContext,
     SharedGroupContext,
 )

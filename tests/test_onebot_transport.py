@@ -4,7 +4,7 @@ import asyncio
 import json
 from typing import Any
 
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.contracts import (
     PrivacyLevel,
     ReceiptState,
     RenderedOutput,
@@ -12,7 +12,7 @@ from plugins.wuwa_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.wuwa_unified_runtime.sender.onebot import (
+from plugins.bot_unified_runtime.sender.onebot import (
     build_onebot_message_segments,
     send_onebot_v11,
 )
@@ -39,13 +39,13 @@ def _send_request(
         target_scope=target_scope,
         target_id=target_id,
         origin_message_id="origin_1",
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
         content=rendered,
         send_policy=SendPolicy.IMMEDIATE,
         priority="normal",
         max_messages=1,
-        dedupe_key=f"wuwa.chat:{target_id}:{text}",
-        cooldown_key=f"wuwa.chat:{target_id}",
+        dedupe_key=f"bot.chat:{target_id}:{text}",
+        cooldown_key=f"bot.chat:{target_id}",
         privacy_level=PrivacyLevel.PERSONAL,
         allow_forward=allow_forward,
         persona_profile_id="shorekeeper",

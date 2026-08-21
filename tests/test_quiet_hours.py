@@ -2,24 +2,24 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from plugins.wuwa_unified_runtime.audit import InMemoryAuditLogger
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.config_readiness import run_config_smoke
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.config_readiness import run_config_smoke
+from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     IncomingMessage,
     ReceiptState,
     RiskLevel,
     SessionType,
 )
-from plugins.wuwa_unified_runtime.policy import (
+from plugins.bot_unified_runtime.policy import (
     QuietHoursChecker,
     QuietHoursSettings,
     build_quiet_hours_checker,
     build_quiet_hours_settings,
 )
-from plugins.wuwa_unified_runtime.runtime import RuntimePipeline
-from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.runtime import RuntimePipeline
+from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
 
 def make_message(
@@ -60,7 +60,7 @@ def test_quiet_hours_blocks_group_chat_during_overnight_window():
         clock=fixed_utc(23, 30),
     )
 
-    decision = checker.check(make_message(), "wuwa.chat")
+    decision = checker.check(make_message(), "bot.chat")
 
     assert decision.allowed is False
     assert decision.reason == "quiet_hours"
@@ -79,7 +79,7 @@ def test_quiet_hours_allows_group_chat_outside_window():
         clock=fixed_utc(12),
     )
 
-    decision = checker.check(make_message(), "wuwa.chat")
+    decision = checker.check(make_message(), "bot.chat")
 
     assert decision.allowed is True
     assert decision.reason == "outside_quiet_hours"
@@ -97,7 +97,7 @@ def test_quiet_hours_default_scope_does_not_block_private_direct_help():
         clock=fixed_utc(23, 30),
     )
 
-    decision = checker.check(make_message(session_type=SessionType.PRIVATE), "wuwa.chat")
+    decision = checker.check(make_message(session_type=SessionType.PRIVATE), "bot.chat")
 
     assert decision.allowed is True
     assert decision.reason == "session_type_excluded"
@@ -117,7 +117,7 @@ def test_quiet_hours_allows_bypass_role():
         clock=fixed_utc(23, 30),
     )
 
-    decision = checker.check(make_message(roles=["user", "admin"]), "wuwa.chat")
+    decision = checker.check(make_message(roles=["user", "admin"]), "bot.chat")
 
     assert decision.allowed is True
     assert decision.reason == "role_bypass"
@@ -155,7 +155,7 @@ def test_pipeline_blocks_quiet_hours_before_capability_runs():
             risk_level=RiskLevel.LOW,
         )
 
-    receipt = pipeline.handle(make_message(), capability, capability_id="wuwa.chat")
+    receipt = pipeline.handle(make_message(), capability, capability_id="bot.chat")
 
     assert receipt.state is ReceiptState.BLOCKED
     assert receipt.transport == "policy"
@@ -170,12 +170,12 @@ def test_pipeline_blocks_quiet_hours_before_capability_runs():
 
 def test_quiet_hours_config_builder_and_smoke_summary():
     config = Config(
-        wuwa_quiet_hours_enabled=True,
-        wuwa_quiet_hours_start="22:30",
-        wuwa_quiet_hours_end="08:15",
-        wuwa_quiet_hours_timezone="UTC",
-        wuwa_quiet_hours_session_types="group;private",
-        wuwa_quiet_hours_bypass_roles="admin,trusted",
+        bot_quiet_hours_enabled=True,
+        bot_quiet_hours_start="22:30",
+        bot_quiet_hours_end="08:15",
+        bot_quiet_hours_timezone="UTC",
+        bot_quiet_hours_session_types="group;private",
+        bot_quiet_hours_bypass_roles="admin,trusted",
     )
 
     settings = build_quiet_hours_settings(config)

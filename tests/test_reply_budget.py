@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 
-from plugins.wuwa_unified_runtime.audit import InMemoryAuditLogger
-from plugins.wuwa_unified_runtime.capabilities.chat import build_chat_capability
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
+from plugins.bot_unified_runtime.capabilities.chat import build_chat_capability
+from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
     IncomingMessage,
@@ -12,16 +12,16 @@ from plugins.wuwa_unified_runtime.contracts import (
     SendPolicy,
     SessionType,
 )
-from plugins.wuwa_unified_runtime.contracts.character import (
+from plugins.bot_unified_runtime.contracts.character import (
     ContextBundle,
     MemoryRetrievalResult,
     PersonaProfile,
     RetrievalResult,
     ToneProfile,
 )
-from plugins.wuwa_unified_runtime.llm import LLMReply
-from plugins.wuwa_unified_runtime.runtime import RuntimePipeline
-from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.llm import LLMReply
+from plugins.bot_unified_runtime.runtime import RuntimePipeline
+from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
 
 def make_message(
@@ -47,25 +47,25 @@ def make_message(
 
 
 def test_reply_budget_allows_more_private_support_without_group_spam():
-    from plugins.wuwa_unified_runtime.policy import decide_reply_budget
+    from plugins.bot_unified_runtime.policy import decide_reply_budget
 
     private_support = decide_reply_budget(
         make_message("今天真的很难受，可以陪我慢慢说说吗？"),
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
     group_support = decide_reply_budget(
         make_message(
             "今天真的很难受，可以陪我慢慢说说吗？",
             session_type=SessionType.GROUP,
         ),
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
     risky_support = decide_reply_budget(
         make_message(
             "今天真的很难受，可以陪我慢慢说说吗？",
             risk_level=RiskLevel.MEDIUM,
         ),
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
 
     assert private_support.max_messages == 2
@@ -78,11 +78,11 @@ def test_reply_budget_allows_more_private_support_without_group_spam():
 
 
 def test_reply_budget_allows_deeper_private_tutorial_answers():
-    from plugins.wuwa_unified_runtime.policy import decide_reply_budget
+    from plugins.bot_unified_runtime.policy import decide_reply_budget
 
     budget = decide_reply_budget(
         make_message("请你一步一步教我怎么配置 NoneBot 和 NapCat 的连接"),
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
 
     assert budget.max_messages == 3
@@ -143,7 +143,7 @@ def test_runtime_pipeline_uses_reply_budget_for_chat_send_request_and_prompt():
     )
     message = make_message("请你一步一步教我怎么配置 NoneBot 和 NapCat 的连接")
 
-    receipt = pipeline.handle(message, capability, capability_id="wuwa.chat")
+    receipt = pipeline.handle(message, capability, capability_id="bot.chat")
 
     assert receipt.state is ReceiptState.SENT
     [send_request] = queue.sent_requests
@@ -155,11 +155,11 @@ def test_runtime_pipeline_uses_reply_budget_for_chat_send_request_and_prompt():
 
 
 def test_non_chat_capability_keeps_one_message_budget():
-    from plugins.wuwa_unified_runtime.policy import decide_reply_budget
+    from plugins.bot_unified_runtime.policy import decide_reply_budget
 
     budget = decide_reply_budget(
-        make_message("/wuwa status"),
-        capability_id="wuwa.status",
+        make_message("/bot status"),
+        capability_id="bot.status",
     )
 
     assert budget.max_messages == 1
@@ -167,21 +167,21 @@ def test_non_chat_capability_keeps_one_message_budget():
 
 
 def test_reply_budget_can_be_overridden_from_config_parameters():
-    from plugins.wuwa_unified_runtime.config import Config
-    from plugins.wuwa_unified_runtime.policy import (
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.policy import (
         build_reply_budget_settings,
         decide_reply_budget,
     )
 
     settings = build_reply_budget_settings(
         Config(
-            wuwa_reply_private_deep_help_max_messages=2,
-            wuwa_reply_deep_help_context_budget=2800,
+            bot_reply_private_deep_help_max_messages=2,
+            bot_reply_deep_help_context_budget=2800,
         )
     )
     budget = decide_reply_budget(
         make_message("请你一步一步教我怎么配置 NoneBot 和 NapCat 的连接"),
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
         settings=settings,
     )
 
@@ -190,8 +190,8 @@ def test_reply_budget_can_be_overridden_from_config_parameters():
 
 
 def test_runtime_pipeline_accepts_configurable_reply_budget_settings():
-    from plugins.wuwa_unified_runtime.config import Config
-    from plugins.wuwa_unified_runtime.policy import build_reply_budget_settings
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.policy import build_reply_budget_settings
 
     audit = InMemoryAuditLogger()
     queue = InMemorySendQueue(audit_logger=audit)
@@ -199,7 +199,7 @@ def test_runtime_pipeline_accepts_configurable_reply_budget_settings():
         send_queue=queue,
         audit_logger=audit,
         reply_budget_settings=build_reply_budget_settings(
-            Config(wuwa_reply_private_deep_help_max_messages=2)
+            Config(bot_reply_private_deep_help_max_messages=2)
         ),
     )
     provider = RecordingLLMProvider()
@@ -211,7 +211,7 @@ def test_runtime_pipeline_accepts_configurable_reply_budget_settings():
     receipt = pipeline.handle(
         make_message("请你一步一步教我怎么配置 NoneBot 和 NapCat 的连接"),
         capability,
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
     )
 
     assert receipt.state is ReceiptState.SENT
@@ -221,15 +221,15 @@ def test_runtime_pipeline_accepts_configurable_reply_budget_settings():
 
 
 def test_chat_context_tone_limit_is_not_raised_above_decision_budget():
-    from plugins.wuwa_unified_runtime.capabilities.chat import build_chat_result
-    from plugins.wuwa_unified_runtime.llm import StaticLLMProvider
+    from plugins.bot_unified_runtime.capabilities.chat import build_chat_result
+    from plugins.bot_unified_runtime.llm import StaticLLMProvider
 
     decision = BotDecision(
         request_id="req_chat",
         should_respond=True,
         mode="chat",
         trigger="你好",
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
         target_scope=SessionType.PRIVATE,
         max_messages=1,
         send_policy=SendPolicy.IMMEDIATE,

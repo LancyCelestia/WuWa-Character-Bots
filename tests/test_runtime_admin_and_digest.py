@@ -1,27 +1,27 @@
 import json
 
-from plugins.wuwa_unified_runtime.capabilities.runtime_admin import (
+from plugins.bot_unified_runtime.capabilities.runtime_admin import (
     build_alert_check_result,
     build_runtime_admin_result,
 )
-from plugins.wuwa_unified_runtime.character.shared_export import (
+from plugins.bot_unified_runtime.character.shared_export import (
     NullSharedConversationExportProvider,
     SQLiteSharedConversationExporter,
 )
-from plugins.wuwa_unified_runtime.character.shared_group import (
+from plugins.bot_unified_runtime.character.shared_group import (
     SQLiteGroupDigestProvider,
     build_shared_group_context_provider,
 )
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.output.render_backends import (
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.output.render_backends import (
     NullRenderBackend,
     build_render_backend,
 )
-from plugins.wuwa_unified_runtime.runtime.alerts import (
+from plugins.bot_unified_runtime.runtime.alerts import (
     AlertContent,
     send_admin_alert,
 )
-from plugins.wuwa_unified_runtime.runtime.settings import (
+from plugins.bot_unified_runtime.runtime.settings import (
     InstanceSettingsManager,
     RuntimeSettingsStore,
     SETTABLE_KEYS,
@@ -129,13 +129,13 @@ def test_alert_content_has_five_elements():
         what_happened="cookie 过期",
         impact="来源抓取会失败",
         fix_suggestion="重新登录",
-        location="wuwa.credential_check",
+        location="bot.credential_check",
         occurred_at="2026-07-20 10:00:00 UTC",
     )
 
     message = alert.format_message()
     assert "时间：2026-07-20 10:00:00 UTC" in message
-    assert "位置：wuwa.credential_check" in message
+    assert "位置：bot.credential_check" in message
     assert "发生了什么：cookie 过期" in message
     assert "影响：来源抓取会失败" in message
     assert "建议处理：重新登录" in message

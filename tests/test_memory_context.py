@@ -1,8 +1,8 @@
-from plugins.wuwa_unified_runtime.capabilities.chat import build_chat_prompt
-from plugins.wuwa_unified_runtime.character import build_character_context_provider
-from plugins.wuwa_unified_runtime.character.memory import SQLiteMemoryRepository
-from plugins.wuwa_unified_runtime.character.providers import FileCharacterContextProvider
-from plugins.wuwa_unified_runtime.config import Config
+from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
+from plugins.bot_unified_runtime.character import build_character_context_provider
+from plugins.bot_unified_runtime.character.memory import SQLiteMemoryRepository
+from plugins.bot_unified_runtime.character.providers import FileCharacterContextProvider
+from plugins.bot_unified_runtime.config import Config
 
 
 def test_sqlite_memory_repository_retrieves_scoped_user_facts(tmp_path):
@@ -232,13 +232,13 @@ def test_character_provider_factory_enables_sqlite_memory_from_config(tmp_path):
 
     provider = build_character_context_provider(
         Config(
-            wuwa_persona_profile_id="shorekeeper",
-            wuwa_persona_display_name="守岸人",
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_memory_enabled=True,
-            wuwa_memory_db_path=str(db_path),
-            wuwa_memory_max_items=3,
-            wuwa_memory_max_chars=300,
+            bot_persona_profile_id="shorekeeper",
+            bot_persona_display_name="守岸人",
+            bot_persona_files=[str(persona_file)],
+            bot_memory_enabled=True,
+            bot_memory_db_path=str(db_path),
+            bot_memory_max_items=3,
+            bot_memory_max_chars=300,
         )
     )
     bundle = provider.build_context(

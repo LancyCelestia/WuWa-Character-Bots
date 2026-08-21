@@ -1,5 +1,5 @@
-from plugins.wuwa_unified_runtime.capabilities.memory import route_memory_command
-from plugins.wuwa_unified_runtime.character.memory import SQLiteMemoryRepository
+from plugins.bot_unified_runtime.capabilities.memory import route_memory_command
+from plugins.bot_unified_runtime.character.memory import SQLiteMemoryRepository
 
 
 def test_memory_add_command_writes_current_user_fact(tmp_path):
@@ -21,7 +21,7 @@ def test_memory_add_command_writes_current_user_fact(tmp_path):
         max_chars=500,
     )
 
-    assert result.capability_id == "wuwa.memory"
+    assert result.capability_id == "bot.memory"
     assert "已记住" in result.body
     assert memory.facts[0]["text"] == "用户喜欢鸣潮和守岸人安静的陪伴"
 
@@ -175,5 +175,5 @@ def test_memory_command_rejects_missing_db_path():
         db_path="",
     )
 
-    assert result.capability_id == "wuwa.memory"
+    assert result.capability_id == "bot.memory"
     assert "记忆数据库未配置" in result.body

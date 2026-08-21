@@ -1,6 +1,6 @@
 import json
 
-from plugins.wuwa_unified_runtime.sources.credentials import (
+from plugins.bot_unified_runtime.sources.credentials import (
     CredentialMissingError,
     FileCredentialStore,
     build_credential_headers,

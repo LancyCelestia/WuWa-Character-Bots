@@ -1,11 +1,11 @@
-﻿import os
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-from plugins.wuwa_unified_runtime import smoke
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.llm import LLMProviderError, LLMReply
+from plugins.bot_unified_runtime import smoke
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.llm import LLMProviderError, LLMReply
 
 
 class DialogueEchoProvider:
@@ -45,14 +45,14 @@ def test_dialogue_smoke_summarizes_context_and_chat_without_reply_body(tmp_path)
 
     result = smoke.run_dialogue_smoke(
         Config(
-            wuwa_persona_profile_id="shorekeeper",
-            wuwa_persona_display_name="守岸人",
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_knowledge_files=[str(knowledge_file)],
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="https://llm.example/v1",
+            bot_persona_profile_id="shorekeeper",
+            bot_persona_display_name="守岸人",
+            bot_persona_files=[str(persona_file)],
+            bot_knowledge_files=[str(knowledge_file)],
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="https://llm.example/v1",
         ),
         message_text="今天有点累，可以陪我慢慢说说吗？",
         llm_provider=provider,
@@ -91,11 +91,11 @@ def test_dialogue_smoke_reports_real_provider_error_safely(tmp_path):
 
     result = smoke.run_dialogue_smoke(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="https://llm.example/v1",
+            bot_persona_files=[str(persona_file)],
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="https://llm.example/v1",
         ),
         llm_provider=DialogueTimeoutProvider(),
     )
@@ -122,14 +122,14 @@ def test_dialogue_smoke_blocks_invalid_generation_parameters_without_calling_pro
 
     result = smoke.run_dialogue_smoke(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="https://llm.example/v1",
-            wuwa_chat_temperature=9,
-            wuwa_chat_max_tokens=0,
-            wuwa_chat_timeout_seconds=0,
+            bot_persona_files=[str(persona_file)],
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="https://llm.example/v1",
+            bot_chat_temperature=9,
+            bot_chat_max_tokens=0,
+            bot_chat_timeout_seconds=0,
         ),
         llm_provider=provider,
     )
@@ -204,7 +204,7 @@ def test_dev_script_exposes_dialogue_smoke_task():
 
     assert '"dialogue-smoke"' in text
     assert "Invoke-DialogueSmoke" in text
-    assert "plugins.wuwa_unified_runtime.smoke" in text
+    assert "plugins.bot_unified_runtime.smoke" in text
     assert '"dialogue"' in text
 
 
@@ -233,7 +233,7 @@ def test_dialogue_smoke_module_execution_has_no_runtime_warning(tmp_path):
     python_executable = str(project_python) if project_python.exists() else sys.executable
 
     completed = subprocess.run(
-        [python_executable, "-m", "plugins.wuwa_unified_runtime.smoke", "dialogue"],
+        [python_executable, "-m", "plugins.bot_unified_runtime.smoke", "dialogue"],
         cwd=tmp_path,
         capture_output=True,
         text=True,

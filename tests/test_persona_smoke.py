@@ -1,7 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from plugins.wuwa_unified_runtime import smoke
-from plugins.wuwa_unified_runtime.config import Config
+from plugins.bot_unified_runtime import smoke
+from plugins.bot_unified_runtime.config import Config
 
 
 def _persona_config(tmp_path) -> Config:
@@ -17,22 +17,22 @@ def _persona_config(tmp_path) -> Config:
         ),
         encoding="utf-8",
     )
-    knowledge_file = tmp_path / "wuwa.txt"
+    knowledge_file = tmp_path / "bot.txt"
     knowledge_file.write_text("守岸人会守望漂泊者的旅途。", encoding="utf-8")
     return Config(
-        wuwa_persona_profile_id="shorekeeper",
-        wuwa_persona_display_name="守岸人",
-        wuwa_persona_version="2026-test",
-        wuwa_persona_files=[str(persona_file)],
-        wuwa_knowledge_files=[str(knowledge_file)],
-        wuwa_knowledge_max_chunks=1,
-        wuwa_chat_api_key="sk-live-secret",
-        wuwa_tone_mode="private_chat",
-        wuwa_tone_voice="soft",
-        wuwa_tone_warmth=0.8,
-        wuwa_tone_directness=0.4,
-        wuwa_tone_message_count_limit=1,
-        wuwa_emotion_enabled=True,
+        bot_persona_profile_id="shorekeeper",
+        bot_persona_display_name="守岸人",
+        bot_persona_version="2026-test",
+        bot_persona_files=[str(persona_file)],
+        bot_knowledge_files=[str(knowledge_file)],
+        bot_knowledge_max_chunks=1,
+        bot_chat_api_key="sk-live-secret",
+        bot_tone_mode="private_chat",
+        bot_tone_voice="soft",
+        bot_tone_warmth=0.8,
+        bot_tone_directness=0.4,
+        bot_tone_message_count_limit=1,
+        bot_emotion_enabled=True,
     )
 
 
@@ -83,9 +83,9 @@ def test_persona_smoke_returns_safe_persona_summary_without_paths_or_prompt(tmp_
 def test_persona_smoke_reports_missing_persona_files_without_building_context():
     result = smoke.run_persona_smoke(
         Config(
-            wuwa_persona_files=[],
-            wuwa_chat_provider="static",
-            wuwa_chat_model="static",
+            bot_persona_files=[],
+            bot_chat_provider="static",
+            bot_chat_model="static",
         )
     )
 

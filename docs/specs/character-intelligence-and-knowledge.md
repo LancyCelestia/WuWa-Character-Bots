@@ -77,37 +77,37 @@ IncomingMessage
 -> ContextBundle
 -> build_chat_prompt
 -> LLMProvider
--> CapabilityResult(kind="text", capability_id="wuwa.chat")
+-> CapabilityResult(kind="text", capability_id="bot.chat")
 -> ReviewResult
 -> RenderedOutput
 -> SendRequest
 ```
 
-`LLMProvider` 是可替换接口。默认 `StaticLLMProvider` 不访问外部网络；真实模型使用 `OpenAICompatibleLLMProvider`，通过 `wuwa_chat_provider=openai_compatible`、`wuwa_chat_model`、`wuwa_chat_api_key`、`wuwa_chat_base_url`、`wuwa_chat_temperature`、`wuwa_chat_max_tokens` 和 `wuwa_chat_timeout_seconds` 配置。`wuwa_chat_base_url` 可以是根地址 `/v1`，也可以是完整 `/chat/completions` endpoint；provider 会归一化为 `endpoint_url`，并在 `llm-smoke` 中输出，方便排查真实模型接入。空 base_url、无法解析的 base_url、非 HTTP(S) base_url 或带用户名/密码的 base_url 会在联网前被拒绝，诊断原因分别是 `openai_base_url_missing`、`openai_base_url_invalid` 或 `openai_base_url_unsafe`；`wuwa_chat_temperature` 必须在 0.0 到 2.0 之间，`wuwa_chat_max_tokens` 必须大于等于 1，`wuwa_chat_timeout_seconds` 必须大于 0，否则分别输出 `openai_temperature_invalid`、`openai_max_tokens_invalid` 或 `openai_timeout_seconds_invalid`。这些生成参数错误不仅会阻断 `llm-smoke` 和 `/wuwa llm`，普通 `wuwa.chat` 也会在调用 provider 前返回守岸人风格兜底，并写入 `llm_preflight_blocked`、`llm_preflight_error:<reason>` 和 `llm_error:config_missing`，避免把本地配置错误误判成上游模型失败；摘要里的 `endpoint_url` 会把 URL 用户信息替换成 `[redacted]`。provider 失败时必须抛出带稳定 `error_kind` 的 `LLMProviderError`，让 `llm-smoke`、`/wuwa llm`、普通对话审计和 `/wuwa why` 能区分配置缺失、超时、鉴权、限流、HTTP、网络、schema、空回复和通用 provider 错误。普通对话能力还必须防御 provider 成功返回但 `text` 为空白的情况：这类结果按 `empty_response` 归类，返回守岸人风格的安全兜底提示并写入 `llm_error:empty_response`，不能继续生成空 `SendRequest` 文本，也不能把 `debug=<kind>` 这类机械排障字段发给普通用户。普通对话里的 `/wuwa why` 只能展示 `error_kind`，不能展示原始上游错误。后续接本地模型、云厂商或代理网关时，只需要新增 provider，不应改能力层和发送层。
+`LLMProvider` 是可替换接口。默认 `StaticLLMProvider` 不访问外部网络；真实模型使用 `OpenAICompatibleLLMProvider`，通过 `bot_chat_provider=openai_compatible`、`bot_chat_model`、`bot_chat_api_key`、`bot_chat_base_url`、`bot_chat_temperature`、`bot_chat_max_tokens` 和 `bot_chat_timeout_seconds` 配置。`bot_chat_base_url` 可以是根地址 `/v1`，也可以是完整 `/chat/completions` endpoint；provider 会归一化为 `endpoint_url`，并在 `llm-smoke` 中输出，方便排查真实模型接入。空 base_url、无法解析的 base_url、非 HTTP(S) base_url 或带用户名/密码的 base_url 会在联网前被拒绝，诊断原因分别是 `openai_base_url_missing`、`openai_base_url_invalid` 或 `openai_base_url_unsafe`；`bot_chat_temperature` 必须在 0.0 到 2.0 之间，`bot_chat_max_tokens` 必须大于等于 1，`bot_chat_timeout_seconds` 必须大于 0，否则分别输出 `openai_temperature_invalid`、`openai_max_tokens_invalid` 或 `openai_timeout_seconds_invalid`。这些生成参数错误不仅会阻断 `llm-smoke` 和 `/bot llm`，普通 `bot.chat` 也会在调用 provider 前返回守岸人风格兜底，并写入 `llm_preflight_blocked`、`llm_preflight_error:<reason>` 和 `llm_error:config_missing`，避免把本地配置错误误判成上游模型失败；摘要里的 `endpoint_url` 会把 URL 用户信息替换成 `[redacted]`。provider 失败时必须抛出带稳定 `error_kind` 的 `LLMProviderError`，让 `llm-smoke`、`/bot llm`、普通对话审计和 `/bot why` 能区分配置缺失、超时、鉴权、限流、HTTP、网络、schema、空回复和通用 provider 错误。普通对话能力还必须防御 provider 成功返回但 `text` 为空白的情况：这类结果按 `empty_response` 归类，返回守岸人风格的安全兜底提示并写入 `llm_error:empty_response`，不能继续生成空 `SendRequest` 文本，也不能把 `debug=<kind>` 这类机械排障字段发给普通用户。普通对话里的 `/bot why` 只能展示 `error_kind`，不能展示原始上游错误。后续接本地模型、云厂商或代理网关时，只需要新增 provider，不应改能力层和发送层。
 
-`FileCharacterContextProvider` 是首版可运行的人格/知识上下文实现。它通过 `wuwa_persona_profile_id`、`wuwa_persona_display_name`、`wuwa_persona_version`、`wuwa_persona_files`、`wuwa_knowledge_files`、`wuwa_knowledge_max_chunks`、`wuwa_knowledge_chunk_chars` 和 `wuwa_tone_*` 参数读取本地 Markdown/TXT/DOCX，输出 `PersonaProfile`、`ToneProfile`、`EmotionSignal`、`MemoryRetrievalResult`、`ConversationHistoryResult` 和 `RetrievalResult`。DOCX 由独立 document loader 从 `word/document.xml` 抽取正文后再进入上下文，不让 LLM 直接读取或猜测文件内容。它只构造上下文，不创建 `SendRequest`，也不决定 `send_policy`。如果普通 `wuwa.chat` 调用它时发生文件缺失、不可读或解析异常，对话能力必须跳过 LLM，返回角色化安全提示，并写入 `context_error`、`context_error:provider_failed` 审计标签；用户侧和 `/wuwa why` 都不能展示真实路径、文件名或异常正文。
+`FileCharacterContextProvider` 是首版可运行的人格/知识上下文实现。它通过 `bot_persona_profile_id`、`bot_persona_display_name`、`bot_persona_version`、`bot_persona_files`、`bot_knowledge_files`、`bot_knowledge_max_chunks`、`bot_knowledge_chunk_chars` 和 `bot_tone_*` 参数读取本地 Markdown/TXT/DOCX，输出 `PersonaProfile`、`ToneProfile`、`EmotionSignal`、`MemoryRetrievalResult`、`ConversationHistoryResult` 和 `RetrievalResult`。DOCX 由独立 document loader 从 `word/document.xml` 抽取正文后再进入上下文，不让 LLM 直接读取或猜测文件内容。它只构造上下文，不创建 `SendRequest`，也不决定 `send_policy`。如果普通 `bot.chat` 调用它时发生文件缺失、不可读或解析异常，对话能力必须跳过 LLM，返回角色化安全提示，并写入 `context_error`、`context_error:provider_failed` 审计标签；用户侧和 `/bot why` 都不能展示真实路径、文件名或异常正文。
 
-`config-smoke` 和 `/wuwa config` 会对人格材料做安全强度诊断。它们只输出 `persona_total_chars`、`persona_meaningful_lines` 和 `persona_strength_status=ok|weak|missing`，不会展示人格正文、文件名或真实路径。人格文件缺失、不可读或为空是阻断错误；人格材料过薄只是 `persona_profile_weak` warning，因为本地 pipeline 仍可运行，但真实 LLM 更容易出现助手味、人设漂移或回复过泛。上线真实模型前应优先让守岸人人格文件包含身份、关系边界、说话风格和禁止行为等多段有效内容。
+`config-smoke` 和 `/bot config` 会对人格材料做安全强度诊断。它们只输出 `persona_total_chars`、`persona_meaningful_lines` 和 `persona_strength_status=ok|weak|missing`，不会展示人格正文、文件名或真实路径。人格文件缺失、不可读或为空是阻断错误；人格材料过薄只是 `persona_profile_weak` warning，因为本地 pipeline 仍可运行，但真实 LLM 更容易出现助手味、人设漂移或回复过泛。上线真实模型前应优先让守岸人人格文件包含身份、关系边界、说话风格和禁止行为等多段有效内容。
 
-`persona-smoke` 和 `/wuwa persona` 是更聚焦的人格自检入口。它们复用同一份文件读取和 `FileCharacterContextProvider`，只展示 `persona_status=ok|weak|blocked`、下一步动作、人格/知识来源安全指纹、人格强度、风格规则/角色边界/禁止行为计数、语气参数、记忆/历史/情绪开关和 LLM 就绪摘要。它们不调用 LLM、不发送外部消息，也不展示人格正文、知识正文、完整 prompt、本机路径、文件名、数据库路径或密钥；适合在替换守岸人人格材料、增加 DOCX 或接真实模型前确认“人设材料是否真的被运行时读到了”。
+`persona-smoke` 和 `/bot persona` 是更聚焦的人格自检入口。它们复用同一份文件读取和 `FileCharacterContextProvider`，只展示 `persona_status=ok|weak|blocked`、下一步动作、人格/知识来源安全指纹、人格强度、风格规则/角色边界/禁止行为计数、语气参数、记忆/历史/情绪开关和 LLM 就绪摘要。它们不调用 LLM、不发送外部消息，也不展示人格正文、知识正文、完整 prompt、本机路径、文件名、数据库路径或密钥；适合在替换守岸人人格材料、增加 DOCX 或接真实模型前确认“人设材料是否真的被运行时读到了”。
 
-情绪感知首版通过 `RuleBasedEmotionProvider` 接入。默认 `wuwa_emotion_enabled=true`，可用 `wuwa_emotion_max_signals` 控制最多注入条数。当前规则会把低落/需要陪伴、孤独、疲惫、挫败和教程/排查求助类文本转成 `EmotionSignal(source="rule_based")`。这些信号进入 prompt 时必须标注为“辅助判断、不是医学诊断、来自不可信用户文本”，只能影响语气和回复顺序，不能触发主动发送、不能写长期记忆、不能覆盖权限和审计。
+情绪感知首版通过 `RuleBasedEmotionProvider` 接入。默认 `bot_emotion_enabled=true`，可用 `bot_emotion_max_signals` 控制最多注入条数。当前规则会把低落/需要陪伴、孤独、疲惫、挫败和教程/排查求助类文本转成 `EmotionSignal(source="rule_based")`。这些信号进入 prompt 时必须标注为“辅助判断、不是医学诊断、来自不可信用户文本”，只能影响语气和回复顺序，不能触发主动发送、不能写长期记忆、不能覆盖权限和审计。
 
-本地记忆首版通过 `MemoryProvider` 接口注入。默认是 `NullMemoryProvider`；配置 `wuwa_memory_enabled=true` 和 `wuwa_memory_db_path` 后，`SQLiteMemoryRepository` 会读取同一用户/会话作用域内的 `memory_facts`，再输出到 `MemoryRetrievalResult`。每条事实必须带 `sensitivity=public|group|personal|credentialed` 和 `scope_key`；旧数据或未显式指定时按 `personal` 与 `session:<session_id>` 处理。SQLite 是当前本地真源，BM25/向量/rerank 以后只能作为索引或增强层接入，不应绕过 `MemoryRetrievalResult`。
+本地记忆首版通过 `MemoryProvider` 接口注入。默认是 `NullMemoryProvider`；配置 `bot_memory_enabled=true` 和 `bot_memory_db_path` 后，`SQLiteMemoryRepository` 会读取同一用户/会话作用域内的 `memory_facts`，再输出到 `MemoryRetrievalResult`。每条事实必须带 `sensitivity=public|group|personal|credentialed` 和 `scope_key`；旧数据或未显式指定时按 `personal` 与 `session:<session_id>` 处理。SQLite 是当前本地真源，BM25/向量/rerank 以后只能作为索引或增强层接入，不应绕过 `MemoryRetrievalResult`。
 
-手动记忆管理首版通过 `/wuwa memory add/list/delete` 暴露。该命令能力只返回 `CapabilityResult(capability_id="wuwa.memory")`，由 NoneBot 命令入口发送文本结果；能力层本身不能调用发送 API。`add` 写入当前用户/当前会话作用域，默认 `sensitivity=personal`，并支持 `--sensitivity=public|group|personal|credentialed` 显式标注敏感度；`list` 只列出当前作用域，`delete` 只删除当前作用域内匹配的 `fact_id`。如果当前会话是群聊，`list` 只能公开 `public` / `group` 记忆；`personal` 和 `credentialed` 正文必须被过滤，没有可公开事实时只返回私聊查看提示，避免把偏好、关系或敏感上下文泄漏给群成员。
+手动记忆管理首版通过 `/bot memory add/list/delete` 暴露。该命令能力只返回 `CapabilityResult(capability_id="bot.memory")`，由 NoneBot 命令入口发送文本结果；能力层本身不能调用发送 API。`add` 写入当前用户/当前会话作用域，默认 `sensitivity=personal`，并支持 `--sensitivity=public|group|personal|credentialed` 显式标注敏感度；`list` 只列出当前作用域，`delete` 只删除当前作用域内匹配的 `fact_id`。如果当前会话是群聊，`list` 只能公开 `public` / `group` 记忆；`personal` 和 `credentialed` 正文必须被过滤，没有可公开事实时只返回私聊查看提示，避免把偏好、关系或敏感上下文泄漏给群成员。
 
-最近对话历史首版通过 `ConversationHistoryProvider` 接口注入。默认是 `NullConversationHistoryProvider`；配置 `wuwa_history_enabled=true` 和 `wuwa_history_db_path` 后，`SQLiteConversationHistoryRepository` 会按 platform/adapter/bot/session/sender 隔离读取 `conversation_turns`，再输出到 `ConversationHistoryResult`。`wuwa_history_max_turns` 与 `wuwa_history_max_chars` 控制本次注入 prompt 的最近轮次和字符预算；`wuwa_history_max_items` 控制同一作用域最多持久保留多少条 `conversation_turns`，默认 1000，追加新轮次后只清理当前作用域更旧记录。它和长期事实记忆分开：最近对话用于连续性，长期记忆用于稳定偏好和事实。两者都必须在 prompt 中标记为不可信上下文。
+最近对话历史首版通过 `ConversationHistoryProvider` 接口注入。默认是 `NullConversationHistoryProvider`；配置 `bot_history_enabled=true` 和 `bot_history_db_path` 后，`SQLiteConversationHistoryRepository` 会按 platform/adapter/bot/session/sender 隔离读取 `conversation_turns`，再输出到 `ConversationHistoryResult`。`bot_history_max_turns` 与 `bot_history_max_chars` 控制本次注入 prompt 的最近轮次和字符预算；`bot_history_max_items` 控制同一作用域最多持久保留多少条 `conversation_turns`，默认 1000，追加新轮次后只清理当前作用域更旧记录。它和长期事实记忆分开：最近对话用于连续性，长期记忆用于稳定偏好和事实。两者都必须在 prompt 中标记为不可信上下文。
 
-最近对话历史必须支持管理员按当前作用域清理。首版命令是 `/wuwa history clear`，只删除当前 platform/adapter/bot/session/sender 组合下的 `conversation_turns`；不能跨用户、跨会话、跨 bot 或跨 adapter 清理。该命令只返回安全计数和说明，不展示历史正文、会话 ID、发送者 ID、bot id 或数据库路径，也不影响 `memory_facts` 长期记忆。
+最近对话历史必须支持管理员按当前作用域清理。首版命令是 `/bot history clear`，只删除当前 platform/adapter/bot/session/sender 组合下的 `conversation_turns`；不能跨用户、跨会话、跨 bot 或跨 adapter 清理。该命令只返回安全计数和说明，不展示历史正文、会话 ID、发送者 ID、bot id 或数据库路径，也不影响 `memory_facts` 长期记忆。
 
 NoneBot 文本聊天入口只在统一运行时生成 `SendRequest` 后记录用户消息，并在 OneBot/NapCat 文本 transport 成功后记录助手回复。记录失败会写入 `stage=history` 的审计记录，但不应中断本次发送。
 
 `PromptInjectionGuard` 已作为基础对话入口的前置安全层。它不替代 prompt 中的反注入边界，而是在构造 `ContextBundle` 前先做结构化判断：可降权的提示注入会被包成不可信用户文本，高危泄露/读文件/执行脚本请求不会进入 LLM。
 
-`ReplyBudgetSettings` 不是只写进 prompt 的建议。`wuwa.chat` 在 provider 返回后还会按 `BotDecision.max_messages` 对空行分隔的多块回复做二次收口，防止真实模型一次性吐出多段拟似消息；收口会写入 `llm_output_trimmed` 审计标签。`RuntimeDiagnostic`、`why-smoke` 和 `/wuwa why` 会把它解释为“已按回复预算收口，只保留前 N 段”，方便排查为什么用户只看到前几段，同时不展示被裁掉的模型原文。
+`ReplyBudgetSettings` 不是只写进 prompt 的建议。`bot.chat` 在 provider 返回后还会按 `BotDecision.max_messages` 对空行分隔的多块回复做二次收口，防止真实模型一次性吐出多段拟似消息；收口会写入 `llm_output_trimmed` 审计标签。`RuntimeDiagnostic`、`why-smoke` 和 `/bot why` 会把它解释为“已按回复预算收口，只保留前 N 段”，方便排查为什么用户只看到前几段，同时不展示被裁掉的模型原文。
 
-输出侧也有首版最低限度安全审查。`review_capability_result` 会阻断 LLM 或插件输出中的内部上下文标记和明显密钥形态，例如 `[UNTRUSTED_USER_TEXT]`、`api_key=...`、`token=...`、`cookie=...`、`authkey=...`、`Authorization: Bearer ...` 或 `sk-...`。`wuwa.chat` 还会阻断“作为 ChatGPT/OpenAI/AI 语言模型”、拒绝守岸人身份或否认角色人格这类人格漂移输出，并写入 `persona drift:*` 审计原因。纯人格漂移阻断时，运行时可以返回守岸人风格的安全兜底提示，引导用户重新表达问题；这个兜底来自运行时模板，不复述被拦截的模型输出，也不会创建 `SendRequest`。用户侧排障只展示 `persona_drift`、`unsafe_output_leakage` 等安全标签和中文结论，不展示原始模型输出或 `private_debug`。它不替代后续更细的人格/OOC 改写审查，但可以先避免真实模型把通用助手口吻发给用户。
+输出侧也有首版最低限度安全审查。`review_capability_result` 会阻断 LLM 或插件输出中的内部上下文标记和明显密钥形态，例如 `[UNTRUSTED_USER_TEXT]`、`api_key=...`、`token=...`、`cookie=...`、`authkey=...`、`Authorization: Bearer ...` 或 `sk-...`。`bot.chat` 还会阻断“作为 ChatGPT/OpenAI/AI 语言模型”、拒绝守岸人身份或否认角色人格这类人格漂移输出，并写入 `persona drift:*` 审计原因。纯人格漂移阻断时，运行时可以返回守岸人风格的安全兜底提示，引导用户重新表达问题；这个兜底来自运行时模板，不复述被拦截的模型输出，也不会创建 `SendRequest`。用户侧排障只展示 `persona_drift`、`unsafe_output_leakage` 等安全标签和中文结论，不展示原始模型输出或 `private_debug`。它不替代后续更细的人格/OOC 改写审查，但可以先避免真实模型把通用助手口吻发给用户。
 
 `ReplyBudgetSettings` 已作为基础防刷屏和动态帮助层接入。运行时会根据消息内容和风险把普通私聊、情绪支持、深度教程/排查、群聊和风险输入分成不同预算：普通私聊默认 1 条，情绪支持最多 2 条，深度帮助最多 3 条，群聊和中高风险输入压回 1 条。这个结果会同步到 `ToneProfile.message_count_limit`，让 prompt 明确“这次最多说几条”，但最终发送仍由 `SendRequest.max_messages` 和 sender 审计约束。
 
@@ -699,7 +699,7 @@ IngestionReceipt
 ## 鸣潮知识包
 
 ```text
-WuWaKnowledgePackage
+BotKnowledgePackage
 - package_id
 - version
 - game_version
@@ -754,7 +754,7 @@ Generation contract:
 ## 模块边界
 
 ```text
-plugins/wuwa_unified_runtime/character/
+plugins/bot_unified_runtime/character/
   emotion.py
   memory_query.py
   persona.py
@@ -762,7 +762,7 @@ plugins/wuwa_unified_runtime/character/
   context_bundle.py
   review.py
 
-plugins/wuwa_unified_runtime/knowledge/
+plugins/bot_unified_runtime/knowledge/
   sources.py
   ingestion.py
   chunking.py
@@ -770,7 +770,7 @@ plugins/wuwa_unified_runtime/knowledge/
   citations.py
   aliases.py
 
-plugins/wuwa_unified_runtime/contracts/
+plugins/bot_unified_runtime/contracts/
   character.py
   knowledge.py
 ```
@@ -791,7 +791,7 @@ plugins/wuwa_unified_runtime/contracts/
 - 私密记忆在群中映射到 `privacy_blocked` 或 `move_private`。
 - `PersonaProfile` 按 id 和版本加载；首版通过 `FileCharacterContextProvider` 从 Markdown/TXT/DOCX 配置文件加载。
 - 基础聊天 prompt 包含 `PersonaProfile`、`ToneProfile`、`MemoryRetrievalResult`、`RetrievalResult` 和反注入边界。
-- `wuwa.chat` 能力只返回 `CapabilityResult`，不能直接发送。
+- `bot.chat` 能力只返回 `CapabilityResult`，不能直接发送。
 - LLM 输出要求泄漏内部标记、prompt、token、cookie 或 key 形态时会在 `ReviewResult` 阶段阻断。
 - 严重 OOC 输出被改写或阻断。
 - `ToneProfile` 限制群消息数量。

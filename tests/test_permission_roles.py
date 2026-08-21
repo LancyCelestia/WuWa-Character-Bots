@@ -1,16 +1,16 @@
-from plugins.wuwa_unified_runtime.audit import InMemoryAuditLogger
-from plugins.wuwa_unified_runtime.capabilities.echo import build_status_result
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
+from plugins.bot_unified_runtime.capabilities.echo import build_status_result
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     IncomingMessage,
     ReceiptState,
     RiskLevel,
     SessionType,
 )
-from plugins.wuwa_unified_runtime import policy
-from plugins.wuwa_unified_runtime.runtime import RuntimePipeline
-from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
+from plugins.bot_unified_runtime import policy
+from plugins.bot_unified_runtime.runtime import RuntimePipeline
+from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
 
 def make_role_message(sender_id: str = "42") -> IncomingMessage:
@@ -29,24 +29,24 @@ def make_role_message(sender_id: str = "42") -> IncomingMessage:
 
 def test_config_accepts_json_comma_and_semicolon_role_lists():
     config = Config(
-        wuwa_admin_user_ids='["10001","10002"]',
-        wuwa_enterprise_user_ids="20001,20002",
-        wuwa_trusted_user_ids="30001;30002",
-        wuwa_blocked_user_ids="40001",
+        bot_admin_user_ids='["10001","10002"]',
+        bot_enterprise_user_ids="20001,20002",
+        bot_trusted_user_ids="30001;30002",
+        bot_blocked_user_ids="40001",
     )
 
-    assert config.wuwa_admin_user_ids == ["10001", "10002"]
-    assert config.wuwa_enterprise_user_ids == ["20001", "20002"]
-    assert config.wuwa_trusted_user_ids == ["30001", "30002"]
-    assert config.wuwa_blocked_user_ids == ["40001"]
+    assert config.bot_admin_user_ids == ["10001", "10002"]
+    assert config.bot_enterprise_user_ids == ["20001", "20002"]
+    assert config.bot_trusted_user_ids == ["30001", "30002"]
+    assert config.bot_blocked_user_ids == ["40001"]
 
 
 def test_policy_blocks_configured_blocked_sender_before_capability():
     message = make_role_message("40001")
-    role_settings = policy.build_role_settings(Config(wuwa_blocked_user_ids=["40001"]))
+    role_settings = policy.build_role_settings(Config(bot_blocked_user_ids=["40001"]))
     message = message.model_copy(update={"sender_roles": role_settings.resolve_roles(message)})
 
-    evaluation = policy.evaluate_policy(message, "wuwa.chat")
+    evaluation = policy.evaluate_policy(message, "bot.chat")
 
     assert evaluation.allowed is False
     assert evaluation.reason == "sender_blocked"
@@ -82,8 +82,8 @@ def test_runtime_uses_configured_group_command_prefix_for_policy_gate():
         session_type=SessionType.GROUP,
         sender_id="42",
         group_id="100",
-        plain_text="/wuwa status",
-        raw_segments=[{"type": "text", "data": {"text": "/wuwa status"}}],
+        plain_text="/bot status",
+        raw_segments=[{"type": "text", "data": {"text": "/bot status"}}],
         mentions_bot=False,
     )
     allowed = blocked.model_copy(
@@ -94,8 +94,8 @@ def test_runtime_uses_configured_group_command_prefix_for_policy_gate():
         }
     )
 
-    blocked_receipt = pipeline.handle(blocked, capability, capability_id="wuwa.status")
-    allowed_receipt = pipeline.handle(allowed, capability, capability_id="wuwa.status")
+    blocked_receipt = pipeline.handle(blocked, capability, capability_id="bot.status")
+    allowed_receipt = pipeline.handle(allowed, capability, capability_id="bot.status")
 
     assert blocked_receipt.state is ReceiptState.BLOCKED
     assert allowed_receipt.state is ReceiptState.SENT
@@ -110,9 +110,9 @@ def test_runtime_passes_actor_roles_into_decision_and_audit_tags():
         audit_logger=audit,
         role_settings=policy.build_role_settings(
             Config(
-                wuwa_admin_user_ids=["42"],
-                wuwa_enterprise_user_ids=["42"],
-                wuwa_trusted_user_ids=["42"],
+                bot_admin_user_ids=["42"],
+                bot_enterprise_user_ids=["42"],
+                bot_trusted_user_ids=["42"],
             )
         ),
     )
@@ -127,7 +127,7 @@ def test_runtime_passes_actor_roles_into_decision_and_audit_tags():
             body="统一运行时在线",
         )
 
-    receipt = pipeline.handle(make_role_message("42"), capability, capability_id="wuwa.status")
+    receipt = pipeline.handle(make_role_message("42"), capability, capability_id="bot.status")
 
     assert receipt.state is ReceiptState.SENT
     assert seen_roles == ["user", "trusted", "enterprise", "admin"]
@@ -140,10 +140,10 @@ def test_runtime_passes_actor_roles_into_decision_and_audit_tags():
 def test_status_reports_permission_role_counts_without_listing_ids():
     result = build_status_result(
         Config(
-            wuwa_admin_user_ids=["10001"],
-            wuwa_enterprise_user_ids=["20001", "20002"],
-            wuwa_trusted_user_ids=["30001"],
-            wuwa_blocked_user_ids=["40001"],
+            bot_admin_user_ids=["10001"],
+            bot_enterprise_user_ids=["20001", "20002"],
+            bot_trusted_user_ids=["30001"],
+            bot_blocked_user_ids=["40001"],
         )
     )
 

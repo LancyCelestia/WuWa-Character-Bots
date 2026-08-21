@@ -1,8 +1,8 @@
-from plugins.wuwa_unified_runtime.capabilities.chat import build_chat_prompt
-from plugins.wuwa_unified_runtime.character.emotion import RuleBasedEmotionProvider
-from plugins.wuwa_unified_runtime.character.providers import FileCharacterContextProvider
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.smoke import run_context_smoke
+from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
+from plugins.bot_unified_runtime.character.emotion import RuleBasedEmotionProvider
+from plugins.bot_unified_runtime.character.providers import FileCharacterContextProvider
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.smoke import run_context_smoke
 
 
 def test_rule_based_emotion_provider_detects_support_need_and_help_seeking():
@@ -80,10 +80,10 @@ def test_context_smoke_reports_emotion_diagnostics(tmp_path):
 
     result = run_context_smoke(
         Config(
-            wuwa_persona_profile_id="shorekeeper",
-            wuwa_persona_display_name="守岸人",
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_emotion_enabled=True,
+            bot_persona_profile_id="shorekeeper",
+            bot_persona_display_name="守岸人",
+            bot_persona_files=[str(persona_file)],
+            bot_emotion_enabled=True,
         ),
         message_text="今天真的很难受，可以陪我慢慢说说吗？",
     )

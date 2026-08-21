@@ -1,14 +1,14 @@
 import json
 from datetime import UTC, datetime, timedelta
 
-from plugins.wuwa_unified_runtime.sources.credential_health import (
+from plugins.bot_unified_runtime.sources.credential_health import (
     CredentialHealthChecker,
     STATE_EXPIRED,
     STATE_EXPIRING_SOON,
     STATE_OK,
     STATE_UNKNOWN,
 )
-from plugins.wuwa_unified_runtime.sources.credentials import FileCredentialStore
+from plugins.bot_unified_runtime.sources.credentials import FileCredentialStore
 
 
 def _make_store(tmp_path, expires_at: str) -> FileCredentialStore:

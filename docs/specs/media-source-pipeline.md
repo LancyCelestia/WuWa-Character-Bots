@@ -1100,7 +1100,7 @@ ResourceDebounce
 ## 模块边界
 
 ```text
-plugins/wuwa_unified_runtime/sources/
+plugins/bot_unified_runtime/sources/
   registry.py
   contracts.py
   fetcher.py
@@ -1109,19 +1109,19 @@ plugins/wuwa_unified_runtime/sources/
   music.py
   wiki.py
 
-plugins/wuwa_unified_runtime/subscriptions/
+plugins/bot_unified_runtime/subscriptions/
   models.py
   scheduler.py
   cursors.py
   digest.py
 
-plugins/wuwa_unified_runtime/rendering/
+plugins/bot_unified_runtime/rendering/
   card_model.py
   templates.py
   html_renderer.py
   fallbacks.py
 
-plugins/wuwa_unified_runtime/sender/
+plugins/bot_unified_runtime/sender/
   queue.py
   receipts.py
 ```

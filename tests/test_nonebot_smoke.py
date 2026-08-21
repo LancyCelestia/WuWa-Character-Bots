@@ -1,10 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import importlib
 from types import SimpleNamespace
 
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime import smoke
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime import smoke
 
 
 def test_nonebot_smoke_reports_plugin_metadata_and_config_summary(tmp_path):
@@ -19,56 +19,56 @@ def test_nonebot_smoke_reports_plugin_metadata_and_config_summary(tmp_path):
 
     result = smoke.run_nonebot_smoke(
         Config(
-            wuwa_persona_profile_id="shorekeeper",
-            wuwa_persona_display_name="守岸人",
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_knowledge_files=[str(missing_knowledge)],
-            wuwa_runtime_enabled=False,
-            wuwa_memory_enabled=True,
-            wuwa_memory_db_path=str(tmp_path / "memory.sqlite3"),
-            wuwa_history_enabled=True,
-            wuwa_history_db_path=str(tmp_path / "history.sqlite3"),
-            wuwa_diagnostics_enabled=True,
-            wuwa_diagnostics_db_path=str(tmp_path / "diagnostics.sqlite3"),
-            wuwa_diagnostics_max_items=25,
-            wuwa_audit_enabled=True,
-            wuwa_audit_db_path=str(tmp_path / "audit.sqlite3"),
-            wuwa_audit_max_items=35,
-            wuwa_receipts_enabled=True,
-            wuwa_receipts_db_path=str(tmp_path / "receipts.sqlite3"),
-            wuwa_receipts_max_items=45,
-            wuwa_send_queue_enabled=True,
-            wuwa_send_queue_db_path=str(tmp_path / "send_queue.sqlite3"),
-            wuwa_send_queue_max_items=55,
-            wuwa_send_queue_max_attempts=4,
-            wuwa_send_queue_retry_base_seconds=8,
-            wuwa_send_queue_retry_max_seconds=80,
-            wuwa_send_queue_worker_enabled=True,
-            wuwa_send_queue_worker_interval_seconds=11,
-            wuwa_send_queue_worker_batch_size=5,
-            wuwa_emotion_enabled=True,
-            wuwa_emotion_max_signals=3,
-            wuwa_rate_limit_enabled=True,
-            wuwa_rate_limit_window_seconds=30,
-            wuwa_rate_limit_chat_global_max_requests=40,
-            wuwa_rate_limit_chat_session_max_requests=7,
-            wuwa_rate_limit_chat_sender_max_requests=5,
-            wuwa_rate_limit_target_min_interval_seconds=2,
-            wuwa_rate_limit_bypass_roles=["admin", "trusted"],
-            wuwa_rate_limit_db_path=str(tmp_path / "rate_limit.sqlite3"),
-            wuwa_quiet_hours_enabled=True,
-            wuwa_quiet_hours_start="22:30",
-            wuwa_quiet_hours_end="08:15",
-            wuwa_quiet_hours_timezone="UTC",
-            wuwa_quiet_hours_session_types=["group", "private"],
-            wuwa_quiet_hours_bypass_roles=["admin", "trusted"],
-            wuwa_admin_user_ids=["10001"],
-            wuwa_enterprise_user_ids=["20001", "20002"],
-            wuwa_trusted_user_ids=["30001"],
-            wuwa_blocked_user_ids=["40001"],
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="model-for-smoke",
-            wuwa_chat_api_key="sk-live-secret",
+            bot_persona_profile_id="shorekeeper",
+            bot_persona_display_name="守岸人",
+            bot_persona_files=[str(persona_file)],
+            bot_knowledge_files=[str(missing_knowledge)],
+            bot_runtime_enabled=False,
+            bot_memory_enabled=True,
+            bot_memory_db_path=str(tmp_path / "memory.sqlite3"),
+            bot_history_enabled=True,
+            bot_history_db_path=str(tmp_path / "history.sqlite3"),
+            bot_diagnostics_enabled=True,
+            bot_diagnostics_db_path=str(tmp_path / "diagnostics.sqlite3"),
+            bot_diagnostics_max_items=25,
+            bot_audit_enabled=True,
+            bot_audit_db_path=str(tmp_path / "audit.sqlite3"),
+            bot_audit_max_items=35,
+            bot_receipts_enabled=True,
+            bot_receipts_db_path=str(tmp_path / "receipts.sqlite3"),
+            bot_receipts_max_items=45,
+            bot_send_queue_enabled=True,
+            bot_send_queue_db_path=str(tmp_path / "send_queue.sqlite3"),
+            bot_send_queue_max_items=55,
+            bot_send_queue_max_attempts=4,
+            bot_send_queue_retry_base_seconds=8,
+            bot_send_queue_retry_max_seconds=80,
+            bot_send_queue_worker_enabled=True,
+            bot_send_queue_worker_interval_seconds=11,
+            bot_send_queue_worker_batch_size=5,
+            bot_emotion_enabled=True,
+            bot_emotion_max_signals=3,
+            bot_rate_limit_enabled=True,
+            bot_rate_limit_window_seconds=30,
+            bot_rate_limit_chat_global_max_requests=40,
+            bot_rate_limit_chat_session_max_requests=7,
+            bot_rate_limit_chat_sender_max_requests=5,
+            bot_rate_limit_target_min_interval_seconds=2,
+            bot_rate_limit_bypass_roles=["admin", "trusted"],
+            bot_rate_limit_db_path=str(tmp_path / "rate_limit.sqlite3"),
+            bot_quiet_hours_enabled=True,
+            bot_quiet_hours_start="22:30",
+            bot_quiet_hours_end="08:15",
+            bot_quiet_hours_timezone="UTC",
+            bot_quiet_hours_session_types=["group", "private"],
+            bot_quiet_hours_bypass_roles=["admin", "trusted"],
+            bot_admin_user_ids=["10001"],
+            bot_enterprise_user_ids=["20001", "20002"],
+            bot_trusted_user_ids=["30001"],
+            bot_blocked_user_ids=["40001"],
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="model-for-smoke",
+            bot_chat_api_key="sk-live-secret",
         ),
         importer=importer,
     )
@@ -77,7 +77,7 @@ def test_nonebot_smoke_reports_plugin_metadata_and_config_summary(tmp_path):
     assert result["nonebot_import"] == "ok"
     assert result["onebot_adapter_import"] == "ok"
     assert result["plugin_import"] == "ok"
-    assert result["plugin_name"] == "WuWa Unified Runtime"
+    assert result["plugin_name"] == "Bot Unified Runtime"
     assert result["onebot_supported"] is True
     assert result["persona_profile_id"] == "shorekeeper"
     assert result["persona_files"] == 1
@@ -158,7 +158,7 @@ def test_nonebot_smoke_fails_when_onebot_adapter_is_missing():
         return importlib.import_module(name)
 
     result = smoke.run_nonebot_smoke(
-        Config(wuwa_chat_api_key="sk-live-secret"),
+        Config(bot_chat_api_key="sk-live-secret"),
         importer=importer,
     )
 
@@ -222,12 +222,12 @@ def test_nonebot_startup_smoke_parses_child_result_and_redacts_secret(tmp_path):
                 '"nonebot_initialized":true,'
                 '"onebot_adapter_registered":true,'
                 '"plugin_loaded":true,'
-                '"plugin_name":"WuWa Unified Runtime",'
+                '"plugin_name":"Bot Unified Runtime",'
                 '"onebot_supported":true,'
                 '"matcher_count":3,'
                 '"matcher_priorities":{"20":1,"21":1,"50":1},'
                 '"scheduler_access":"ok",'
-                '"scheduler_jobs":["wuwa_send_queue_worker"],'
+                '"scheduler_jobs":["bot_send_queue_worker"],'
                 '"server_started":false,'
                 '"napcat_connected":false,'
                 '"real_transport_used":false}'
@@ -237,8 +237,8 @@ def test_nonebot_startup_smoke_parses_child_result_and_redacts_secret(tmp_path):
 
     result = smoke.run_nonebot_startup_smoke(
         Config(
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_send_queue_worker_enabled=True,
+            bot_chat_api_key="sk-live-secret",
+            bot_send_queue_worker_enabled=True,
         ),
         env_file=env_file,
         runner=runner,
@@ -249,7 +249,7 @@ def test_nonebot_startup_smoke_parses_child_result_and_redacts_secret(tmp_path):
     assert result["nonebot_initialized"] is True
     assert result["onebot_adapter_registered"] is True
     assert result["plugin_loaded"] is True
-    assert result["plugin_name"] == "WuWa Unified Runtime"
+    assert result["plugin_name"] == "Bot Unified Runtime"
     assert result["onebot_supported"] is True
     assert result["matcher_count"] == 3
     assert result["matcher_priorities"] == "20:1,21:1,50:1"
@@ -277,7 +277,7 @@ def test_nonebot_startup_smoke_reports_child_failure_without_leaking_secret(tmp_
         )
 
     result = smoke.run_nonebot_startup_smoke(
-        Config(wuwa_chat_api_key="sk-live-secret"),
+        Config(bot_chat_api_key="sk-live-secret"),
         env_file=env_file,
         runner=runner,
     )
@@ -303,7 +303,7 @@ def test_nonebot_startup_smoke_cli_prints_safe_summary(monkeypatch, capsys, tmp_
                 '"nonebot_initialized":true,'
                 '"onebot_adapter_registered":true,'
                 '"plugin_loaded":true,'
-                '"plugin_name":"WuWa Unified Runtime",'
+                '"plugin_name":"Bot Unified Runtime",'
                 '"onebot_supported":true,'
                 '"matcher_count":3,'
                 '"matcher_priorities":{"20":1,"21":1,"50":1},'
@@ -382,7 +382,7 @@ def test_online_transport_smoke_inspects_online_bots_without_sending():
     fake_bot = FakeOneBot()
 
     result = smoke.run_online_transport_smoke(
-        Config(wuwa_runtime_enabled=True),
+        Config(bot_runtime_enabled=True),
         bot_provider=lambda: {
             "123456789": fake_bot,
             "console-secret-bot": SimpleNamespace(self_id="console-secret-bot"),

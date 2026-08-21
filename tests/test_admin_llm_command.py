@@ -1,10 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import inspect
 
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.contracts import PrivacyLevel
-from plugins.wuwa_unified_runtime.llm import LLMProviderError, LLMReply
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.contracts import PrivacyLevel
+from plugins.bot_unified_runtime.llm import LLMProviderError, LLMReply
 
 
 class _EchoProvider:
@@ -56,17 +56,17 @@ class _UnexpectedProvider:
 
 
 def test_admin_llm_query_calls_provider_and_returns_safe_summary():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_llm_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_llm_query_result
 
     provider = _EchoProvider()
     result = build_llm_query_result(
         Config(
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="https://llm.example/v1",
-            wuwa_chat_temperature=0.7,
-            wuwa_chat_max_tokens=512,
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="https://llm.example/v1",
+            bot_chat_temperature=0.7,
+            bot_chat_max_tokens=512,
         ),
         request_id="req_llm",
         actor_roles=["user", "admin"],
@@ -77,7 +77,7 @@ def test_admin_llm_query_calls_provider_and_returns_safe_summary():
     assert provider.last_messages[0]["role"] == "system"
     assert provider.last_kwargs["temperature"] == 0.3
     assert provider.last_kwargs["max_tokens"] == 128
-    assert result.capability_id == "wuwa.llm"
+    assert result.capability_id == "bot.llm"
     assert result.request_id == "req_llm"
     assert result.privacy_level is PrivacyLevel.PERSONAL
     assert "LLM 诊断" in result.body
@@ -100,14 +100,14 @@ def test_admin_llm_query_calls_provider_and_returns_safe_summary():
 
 
 def test_non_admin_llm_query_is_rejected_without_calling_provider():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_llm_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_llm_query_result
 
     provider = _EchoProvider()
     result = build_llm_query_result(
         Config(
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
         ),
         request_id="req_llm",
         actor_roles=["user"],
@@ -115,22 +115,22 @@ def test_non_admin_llm_query_is_rejected_without_calling_provider():
     )
 
     assert provider.calls == 0
-    assert result.capability_id == "wuwa.llm"
+    assert result.capability_id == "bot.llm"
     assert "只有管理员可以查看运行时排障记录" in result.body
     assert "diag-model" not in result.body
     assert "sk-live-secret" not in result.body
 
 
 def test_llm_query_reports_missing_key_without_network_call():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_llm_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_llm_query_result
 
     provider = _EchoProvider()
     result = build_llm_query_result(
         Config(
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="your-api-key",
-            wuwa_chat_base_url="https://llm.example/v1",
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="your-api-key",
+            bot_chat_base_url="https://llm.example/v1",
         ),
         request_id="req_llm",
         actor_roles=["admin"],
@@ -145,7 +145,7 @@ def test_llm_query_reports_missing_key_without_network_call():
 
 
 def test_llm_query_reports_missing_model_and_base_url_without_network_call(tmp_path):
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_llm_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_llm_query_result
 
     persona_file = tmp_path / "shorekeeper.md"
     persona_file.write_text("守岸人来自黑海岸。\n说话温柔克制。", encoding="utf-8")
@@ -155,12 +155,12 @@ def test_llm_query_reports_missing_model_and_base_url_without_network_call(tmp_p
 
     result = build_llm_query_result(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_knowledge_files=[str(knowledge_file)],
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="your-model-name",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="",
+            bot_persona_files=[str(persona_file)],
+            bot_knowledge_files=[str(knowledge_file)],
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="your-model-name",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="",
         ),
         request_id="req_llm",
         actor_roles=["admin"],
@@ -185,7 +185,7 @@ def test_llm_query_reports_missing_model_and_base_url_without_network_call(tmp_p
 def test_llm_query_treats_safe_template_credentials_as_missing_without_network_call(
     tmp_path,
 ):
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_llm_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_llm_query_result
 
     persona_file = tmp_path / "shorekeeper.md"
     persona_file.write_text("守岸人来自黑海岸。\n说话温柔克制。", encoding="utf-8")
@@ -193,11 +193,11 @@ def test_llm_query_treats_safe_template_credentials_as_missing_without_network_c
 
     result = build_llm_query_result(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="<model_name>",
-            wuwa_chat_api_key="<real_api_key>",
-            wuwa_chat_base_url="https://llm.example/v1",
+            bot_persona_files=[str(persona_file)],
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="<model_name>",
+            bot_chat_api_key="<real_api_key>",
+            bot_chat_base_url="https://llm.example/v1",
         ),
         request_id="req_llm",
         actor_roles=["admin"],
@@ -211,7 +211,7 @@ def test_llm_query_treats_safe_template_credentials_as_missing_without_network_c
 
 
 def test_llm_query_reports_invalid_generation_parameters_without_network_call(tmp_path):
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_llm_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_llm_query_result
 
     persona_file = tmp_path / "shorekeeper.md"
     persona_file.write_text("守岸人来自黑海岸。\n说话温柔克制。", encoding="utf-8")
@@ -221,15 +221,15 @@ def test_llm_query_reports_invalid_generation_parameters_without_network_call(tm
 
     result = build_llm_query_result(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_knowledge_files=[str(knowledge_file)],
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="https://llm.example/v1",
-            wuwa_chat_temperature=4,
-            wuwa_chat_max_tokens=0,
-            wuwa_chat_timeout_seconds=0,
+            bot_persona_files=[str(persona_file)],
+            bot_knowledge_files=[str(knowledge_file)],
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="https://llm.example/v1",
+            bot_chat_temperature=4,
+            bot_chat_max_tokens=0,
+            bot_chat_timeout_seconds=0,
         ),
         request_id="req_llm",
         actor_roles=["admin"],
@@ -258,7 +258,7 @@ def test_llm_query_reports_invalid_generation_parameters_without_network_call(tm
 
 
 def test_llm_query_reports_unsafe_base_url_without_leaking_credentials(tmp_path):
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_llm_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_llm_query_result
 
     persona_file = tmp_path / "shorekeeper.md"
     persona_file.write_text("守岸人来自黑海岸。\n说话温柔克制。", encoding="utf-8")
@@ -268,12 +268,12 @@ def test_llm_query_reports_unsafe_base_url_without_leaking_credentials(tmp_path)
 
     result = build_llm_query_result(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_knowledge_files=[str(knowledge_file)],
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="https://user:raw-password@llm.example/v1",
+            bot_persona_files=[str(persona_file)],
+            bot_knowledge_files=[str(knowledge_file)],
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="https://user:raw-password@llm.example/v1",
         ),
         request_id="req_llm",
         actor_roles=["admin"],
@@ -295,15 +295,15 @@ def test_llm_query_reports_unsafe_base_url_without_leaking_credentials(tmp_path)
 
 
 def test_llm_query_redacts_provider_error_details():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_llm_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_llm_query_result
 
     provider = _RaisingProvider()
     result = build_llm_query_result(
         Config(
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="https://llm.example/v1",
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="https://llm.example/v1",
         ),
         request_id="req_llm",
         actor_roles=["admin"],
@@ -320,15 +320,15 @@ def test_llm_query_redacts_provider_error_details():
 
 
 def test_llm_query_uses_provider_error_kind_when_available():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_llm_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_llm_query_result
 
     provider = _TimeoutProvider()
     result = build_llm_query_result(
         Config(
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="https://llm.example/v1",
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="https://llm.example/v1",
         ),
         request_id="req_llm",
         actor_roles=["admin"],
@@ -342,15 +342,15 @@ def test_llm_query_uses_provider_error_kind_when_available():
 
 
 def test_llm_query_wraps_unexpected_provider_errors_safely():
-    from plugins.wuwa_unified_runtime.capabilities.debug import build_llm_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import build_llm_query_result
 
     provider = _UnexpectedProvider()
     result = build_llm_query_result(
         Config(
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="https://llm.example/v1",
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="https://llm.example/v1",
         ),
         request_id="req_llm",
         actor_roles=["admin"],
@@ -366,19 +366,19 @@ def test_llm_query_wraps_unexpected_provider_errors_safely():
 
 
 def test_plugin_entry_exposes_admin_llm_command_without_self_overwrite():
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
 
     assert "build_llm_query_result" in source
-    assert 'capability_id = "wuwa.llm"' in source
-    assert "wuwa.llm" in plugin_entry.NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS
-    assert "wuwa.control" in plugin_entry.NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS
+    assert 'capability_id = "bot.llm"' in source
+    assert "bot.llm" in plugin_entry.NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS
+    assert "bot.control" in plugin_entry.NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS
 
 
 def test_help_text_mentions_llm_command():
-    from plugins.wuwa_unified_runtime.capabilities.echo import build_help_result
+    from plugins.bot_unified_runtime.capabilities.echo import build_help_result
 
     result = build_help_result(request_id="req_help")
 
-    assert "/wuwa llm" in result.body
+    assert "/bot llm" in result.body

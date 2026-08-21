@@ -1,4 +1,4 @@
-from plugins.wuwa_unified_runtime.sources.meme_search import (
+from plugins.bot_unified_runtime.sources.meme_search import (
     DuckDuckGoMemeSearchProvider,
     NullMemeSearchProvider,
     extract_meme_query,

@@ -1,12 +1,12 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import importlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from plugins.wuwa_unified_runtime import smoke
-from plugins.wuwa_unified_runtime.config import Config
+from plugins.bot_unified_runtime import smoke
+from plugins.bot_unified_runtime.config import Config
 
 
 def _ok_importer(name: str):
@@ -34,12 +34,12 @@ def test_readiness_smoke_summarizes_local_dialogue_without_real_llm_call(tmp_pat
 
     result = smoke.run_readiness_smoke(
         Config(
-            wuwa_persona_profile_id="shorekeeper",
-            wuwa_persona_display_name="守岸人",
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_chat_provider="static",
-            wuwa_chat_model="static",
-            wuwa_chat_api_key="sk-live-secret",
+            bot_persona_profile_id="shorekeeper",
+            bot_persona_display_name="守岸人",
+            bot_persona_files=[str(persona_file)],
+            bot_chat_provider="static",
+            bot_chat_model="static",
+            bot_chat_api_key="sk-live-secret",
         ),
         importer=_ok_importer,
         command_resolver=_ok_command_resolver,
@@ -87,9 +87,9 @@ def test_readiness_smoke_fails_when_nonebot_check_fails(monkeypatch, tmp_path):
 
     result = smoke.run_readiness_smoke(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_chat_provider="static",
-            wuwa_chat_model="static",
+            bot_persona_files=[str(persona_file)],
+            bot_chat_provider="static",
+            bot_chat_model="static",
         ),
         importer=_ok_importer,
         command_resolver=_ok_command_resolver,
@@ -110,9 +110,9 @@ def test_readiness_smoke_fails_when_transport_check_fails(monkeypatch, tmp_path)
 
     result = smoke.run_readiness_smoke(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_chat_provider="static",
-            wuwa_chat_model="static",
+            bot_persona_files=[str(persona_file)],
+            bot_chat_provider="static",
+            bot_chat_model="static",
         ),
         importer=_ok_importer,
         command_resolver=_ok_command_resolver,
@@ -180,5 +180,5 @@ def test_dev_script_exposes_readiness_smoke_task():
 
     assert '"readiness-smoke"' in text
     assert "Invoke-ReadinessSmoke" in text
-    assert "plugins.wuwa_unified_runtime.smoke" in text
+    assert "plugins.bot_unified_runtime.smoke" in text
     assert '"readiness"' in text

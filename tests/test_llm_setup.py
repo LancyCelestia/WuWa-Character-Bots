@@ -1,7 +1,7 @@
-﻿from pathlib import Path
+from pathlib import Path
 
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime import smoke
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime import smoke
 
 
 def test_llm_setup_summarizes_safe_env_steps_without_writing_or_calling_network(tmp_path):
@@ -10,9 +10,9 @@ def test_llm_setup_summarizes_safe_env_steps_without_writing_or_calling_network(
 
     result = smoke.run_llm_setup(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_chat_provider="static",
-            wuwa_chat_model="static",
+            bot_persona_files=[str(persona_file)],
+            bot_chat_provider="static",
+            bot_chat_model="static",
         )
     )
 
@@ -60,11 +60,11 @@ def test_llm_setup_reports_blocked_config_and_missing_safe_keys(tmp_path):
 
     result = smoke.run_llm_setup(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="your-model-name",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="",
+            bot_persona_files=[str(persona_file)],
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="your-model-name",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="",
         )
     )
 
@@ -89,17 +89,17 @@ def test_llm_setup_reports_blocked_config_and_missing_safe_keys(tmp_path):
 def test_llm_setup_ready_config_points_to_llm_smoke_before_dialogue(tmp_path):
     persona_file = tmp_path / "shorekeeper.md"
     persona_file.write_text("守岸人来自黑海岸。\n说话温柔克制。", encoding="utf-8")
-    knowledge_file = tmp_path / "wuwa.md"
+    knowledge_file = tmp_path / "bot.md"
     knowledge_file.write_text("守岸人会守望漂泊者。", encoding="utf-8")
 
     result = smoke.run_llm_setup(
         Config(
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_knowledge_files=[str(knowledge_file)],
-            wuwa_chat_provider="openai_compatible",
-            wuwa_chat_model="diag-model",
-            wuwa_chat_api_key="sk-live-secret",
-            wuwa_chat_base_url="https://llm.example/v1",
+            bot_persona_files=[str(persona_file)],
+            bot_knowledge_files=[str(knowledge_file)],
+            bot_chat_provider="openai_compatible",
+            bot_chat_model="diag-model",
+            bot_chat_api_key="sk-live-secret",
+            bot_chat_base_url="https://llm.example/v1",
         )
     )
 
@@ -156,5 +156,5 @@ def test_dev_script_exposes_llm_setup_task():
 
     assert '"llm-setup"' in text
     assert "Invoke-LlmSetup" in text
-    assert "plugins.wuwa_unified_runtime.smoke" in text
+    assert "plugins.bot_unified_runtime.smoke" in text
     assert '"llm-setup"' in text

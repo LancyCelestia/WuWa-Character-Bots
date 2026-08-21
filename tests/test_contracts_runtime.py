@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.contracts import (
     AuditRecord,
     CapabilityResult,
     DeliveryReceipt,
@@ -54,7 +54,7 @@ def test_capability_result_keeps_intake_request_id():
 
     result = CapabilityResult(
         request_id=request_id,
-        capability_id="wuwa.status",
+        capability_id="bot.status",
         kind="text",
         title="状态",
         body="统一运行时在线",

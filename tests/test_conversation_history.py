@@ -1,8 +1,8 @@
-from plugins.wuwa_unified_runtime.character.history import (
+from plugins.bot_unified_runtime.character.history import (
     SQLiteConversationHistoryRepository,
 )
-from plugins.wuwa_unified_runtime.character.providers import FileCharacterContextProvider
-from plugins.wuwa_unified_runtime.config import Config
+from plugins.bot_unified_runtime.character.providers import FileCharacterContextProvider
+from plugins.bot_unified_runtime.config import Config
 
 
 def test_sqlite_conversation_history_returns_latest_turns_chronologically(tmp_path):
@@ -310,7 +310,7 @@ def test_file_character_provider_injects_recent_conversation_history(tmp_path):
 
 
 def test_character_provider_factory_enables_history_from_config(tmp_path):
-    from plugins.wuwa_unified_runtime.character import build_character_context_provider
+    from plugins.bot_unified_runtime.character import build_character_context_provider
 
     persona_file = tmp_path / "shorekeeper.md"
     persona_file.write_text("守岸人来自黑海岸。", encoding="utf-8")
@@ -328,13 +328,13 @@ def test_character_provider_factory_enables_history_from_config(tmp_path):
 
     provider = build_character_context_provider(
         Config(
-            wuwa_persona_profile_id="shorekeeper",
-            wuwa_persona_display_name="守岸人",
-            wuwa_persona_files=[str(persona_file)],
-            wuwa_history_enabled=True,
-            wuwa_history_db_path=str(db_path),
-            wuwa_history_max_turns=3,
-            wuwa_history_max_chars=200,
+            bot_persona_profile_id="shorekeeper",
+            bot_persona_display_name="守岸人",
+            bot_persona_files=[str(persona_file)],
+            bot_history_enabled=True,
+            bot_history_db_path=str(db_path),
+            bot_history_max_turns=3,
+            bot_history_max_chars=200,
         )
     )
     bundle = provider.build_context(
@@ -351,14 +351,14 @@ def test_character_provider_factory_enables_history_from_config(tmp_path):
 
 
 def test_conversation_history_factory_passes_storage_retention_limit(tmp_path):
-    from plugins.wuwa_unified_runtime.character import build_conversation_history_provider
+    from plugins.bot_unified_runtime.character import build_conversation_history_provider
 
     db_path = tmp_path / "history.sqlite3"
     repository = build_conversation_history_provider(
         Config(
-            wuwa_history_enabled=True,
-            wuwa_history_db_path=str(db_path),
-            wuwa_history_max_items=2,
+            bot_history_enabled=True,
+            bot_history_db_path=str(db_path),
+            bot_history_max_items=2,
         )
     )
     for index in range(4):

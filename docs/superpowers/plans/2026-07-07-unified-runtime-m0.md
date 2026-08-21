@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the first usable NoneBot local plugin skeleton for the unified WuWa character bot runtime.
+**Goal:** Build the first usable NoneBot local plugin skeleton for the unified Bot character bot runtime.
 
 **Architecture:** Implement the documented chain as a narrow, testable runtime shell: `IncomingMessage -> PolicyEvaluation -> BotDecision -> CapabilityResult -> ReviewResult -> RenderedOutput -> SendRequest -> DeliveryReceipt -> AuditRecord`. Capability, parser, character, knowledge, and auto-send modules expose structured interfaces only; sender/transport remains the only layer allowed to touch future concrete adapters.
 
-**Tech Stack:** Python 3.10+, Pydantic v2 via NoneBot dependencies, pytest, NoneBot2 local plugin under `plugins/wuwa_unified_runtime`, Windows dev entry `scripts/dev.ps1`.
+**Tech Stack:** Python 3.10+, Pydantic v2 via NoneBot dependencies, pytest, NoneBot2 local plugin under `plugins/bot_unified_runtime`, Windows dev entry `scripts/dev.ps1`.
 
 ## Global Constraints
 
@@ -26,23 +26,23 @@
 
 ## File Structure
 
-- `plugins/wuwa_unified_runtime/__init__.py`: NoneBot plugin metadata and minimal command/message registration.
-- `plugins/wuwa_unified_runtime/config.py`: plugin config model with conservative defaults.
-- `plugins/wuwa_unified_runtime/contracts/runtime.py`: core runtime contract models and enums.
-- `plugins/wuwa_unified_runtime/contracts/character.py`: persona, tone, emotion, memory, knowledge context models.
-- `plugins/wuwa_unified_runtime/contracts/media.py`: parser/source/media models.
-- `plugins/wuwa_unified_runtime/contracts/auto_send.py`: auto-send intent, recipient, draft, preview models.
-- `plugins/wuwa_unified_runtime/policy/gate.py`: conservative policy evaluation.
-- `plugins/wuwa_unified_runtime/runtime/pipeline.py`: orchestrates one structured runtime pass.
-- `plugins/wuwa_unified_runtime/output/reviewer.py`: privacy/risk/persona-aware output review.
-- `plugins/wuwa_unified_runtime/output/renderer.py`: text-first rendered output generation.
-- `plugins/wuwa_unified_runtime/sender/queue.py`: in-memory send queue and dedupe/cooldown gate.
-- `plugins/wuwa_unified_runtime/sender/receipts.py`: receipt helpers and blocked transport adapter.
-- `plugins/wuwa_unified_runtime/audit/logger.py`: in-memory audit logger with redaction.
-- `plugins/wuwa_unified_runtime/character/providers.py`: provider protocols and safe null implementations.
-- `plugins/wuwa_unified_runtime/sources/registry.py`: parser registry and URL/keyword matching shell.
-- `plugins/wuwa_unified_runtime/capabilities/echo.py`: low-risk structured echo/status capability for smoke testing.
-- `plugins/wuwa_unified_runtime/capabilities/auto_send/parser.py`: conservative auto-send command parser for draft-only M0.
+- `plugins/bot_unified_runtime/__init__.py`: NoneBot plugin metadata and minimal command/message registration.
+- `plugins/bot_unified_runtime/config.py`: plugin config model with conservative defaults.
+- `plugins/bot_unified_runtime/contracts/runtime.py`: core runtime contract models and enums.
+- `plugins/bot_unified_runtime/contracts/character.py`: persona, tone, emotion, memory, knowledge context models.
+- `plugins/bot_unified_runtime/contracts/media.py`: parser/source/media models.
+- `plugins/bot_unified_runtime/contracts/auto_send.py`: auto-send intent, recipient, draft, preview models.
+- `plugins/bot_unified_runtime/policy/gate.py`: conservative policy evaluation.
+- `plugins/bot_unified_runtime/runtime/pipeline.py`: orchestrates one structured runtime pass.
+- `plugins/bot_unified_runtime/output/reviewer.py`: privacy/risk/persona-aware output review.
+- `plugins/bot_unified_runtime/output/renderer.py`: text-first rendered output generation.
+- `plugins/bot_unified_runtime/sender/queue.py`: in-memory send queue and dedupe/cooldown gate.
+- `plugins/bot_unified_runtime/sender/receipts.py`: receipt helpers and blocked transport adapter.
+- `plugins/bot_unified_runtime/audit/logger.py`: in-memory audit logger with redaction.
+- `plugins/bot_unified_runtime/character/providers.py`: provider protocols and safe null implementations.
+- `plugins/bot_unified_runtime/sources/registry.py`: parser registry and URL/keyword matching shell.
+- `plugins/bot_unified_runtime/capabilities/echo.py`: low-risk structured echo/status capability for smoke testing.
+- `plugins/bot_unified_runtime/capabilities/auto_send/parser.py`: conservative auto-send command parser for draft-only M0.
 - `tests/test_contracts_runtime.py`: contract validation tests.
 - `tests/test_runtime_pipeline.py`: policy/pipeline/sender/audit tests.
 - `tests/test_character_sources_autosend.py`: provider/parser/auto-send tests.
@@ -55,8 +55,8 @@
 ## Task 1: Runtime Contracts And Test Harness
 
 **Files:**
-- Create: `plugins/wuwa_unified_runtime/contracts/runtime.py`
-- Create: `plugins/wuwa_unified_runtime/contracts/__init__.py`
+- Create: `plugins/bot_unified_runtime/contracts/runtime.py`
+- Create: `plugins/bot_unified_runtime/contracts/__init__.py`
 - Create: `tests/test_contracts_runtime.py`
 - Modify: `pyproject.toml`
 
@@ -64,7 +64,7 @@
 - Produces: enums `RiskLevel`, `PrivacyLevel`, `SendPolicy`, `ReceiptState`, `SessionType`.
 - Produces: models `IncomingMessage`, `PolicyEvaluation`, `BotDecision`, `CapabilityResult`, `ReviewResult`, `RenderedOutput`, `SendRequest`, `DeliveryReceipt`, `AuditRecord`.
 - Produces: helper `new_request_id(prefix: str = "req") -> str`.
-- Later tasks must import contract models only from `plugins.wuwa_unified_runtime.contracts`.
+- Later tasks must import contract models only from `plugins.bot_unified_runtime.contracts`.
 
 - [ ] **Step 1: Write failing contract tests**
 
@@ -73,7 +73,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.contracts import (
     AuditRecord,
     CapabilityResult,
     DeliveryReceipt,
@@ -196,7 +196,7 @@ Expected: all tests pass.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add pyproject.toml plugins/wuwa_unified_runtime/contracts tests/test_contracts_runtime.py
+git add pyproject.toml plugins/bot_unified_runtime/contracts tests/test_contracts_runtime.py
 git commit -m "feat: add runtime contract models"
 ```
 
@@ -205,18 +205,18 @@ git commit -m "feat: add runtime contract models"
 ## Task 2: Policy, Review, Sender Queue, Audit, And Pipeline
 
 **Files:**
-- Create: `plugins/wuwa_unified_runtime/policy/gate.py`
-- Create: `plugins/wuwa_unified_runtime/policy/__init__.py`
-- Create: `plugins/wuwa_unified_runtime/output/reviewer.py`
-- Create: `plugins/wuwa_unified_runtime/output/renderer.py`
-- Create: `plugins/wuwa_unified_runtime/output/__init__.py`
-- Create: `plugins/wuwa_unified_runtime/sender/queue.py`
-- Create: `plugins/wuwa_unified_runtime/sender/receipts.py`
-- Create: `plugins/wuwa_unified_runtime/sender/__init__.py`
-- Create: `plugins/wuwa_unified_runtime/audit/logger.py`
-- Create: `plugins/wuwa_unified_runtime/audit/__init__.py`
-- Create: `plugins/wuwa_unified_runtime/runtime/pipeline.py`
-- Create: `plugins/wuwa_unified_runtime/runtime/__init__.py`
+- Create: `plugins/bot_unified_runtime/policy/gate.py`
+- Create: `plugins/bot_unified_runtime/policy/__init__.py`
+- Create: `plugins/bot_unified_runtime/output/reviewer.py`
+- Create: `plugins/bot_unified_runtime/output/renderer.py`
+- Create: `plugins/bot_unified_runtime/output/__init__.py`
+- Create: `plugins/bot_unified_runtime/sender/queue.py`
+- Create: `plugins/bot_unified_runtime/sender/receipts.py`
+- Create: `plugins/bot_unified_runtime/sender/__init__.py`
+- Create: `plugins/bot_unified_runtime/audit/logger.py`
+- Create: `plugins/bot_unified_runtime/audit/__init__.py`
+- Create: `plugins/bot_unified_runtime/runtime/pipeline.py`
+- Create: `plugins/bot_unified_runtime/runtime/__init__.py`
 - Create: `tests/test_runtime_pipeline.py`
 
 **Interfaces:**
@@ -233,8 +233,8 @@ git commit -m "feat: add runtime contract models"
 ```python
 from datetime import datetime, timezone
 
-from plugins.wuwa_unified_runtime.audit import InMemoryAuditLogger
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
+from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     IncomingMessage,
     PrivacyLevel,
@@ -243,11 +243,11 @@ from plugins.wuwa_unified_runtime.contracts import (
     SendPolicy,
     SessionType,
 )
-from plugins.wuwa_unified_runtime.runtime import RuntimePipeline
-from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.runtime import RuntimePipeline
+from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
 
-def make_message(text="/wuwa status", session_type=SessionType.PRIVATE):
+def make_message(text="/bot status", session_type=SessionType.PRIVATE):
     return IncomingMessage(
         platform="qq",
         adapter="onebot.v11",
@@ -298,7 +298,7 @@ def test_pipeline_turns_capability_result_into_sent_receipt_and_audit():
 
     receipt = pipeline.handle(make_message(), capability)
     assert receipt.state is ReceiptState.SENT
-    assert queue.sent_requests[0].dedupe_key.startswith("wuwa.status:")
+    assert queue.sent_requests[0].dedupe_key.startswith("bot.status:")
     assert any(record.event == "sent" for record in audit.list_records(receipt.request_id))
 
 
@@ -336,7 +336,7 @@ Expected: FAIL because pipeline, audit, sender, or policy modules do not exist.
 
 Implement conservative defaults:
 
-- passive group text without command prefix `/wuwa` and without mention is denied before capability call;
+- passive group text without command prefix `/bot` and without mention is denied before capability call;
 - private messages are allowed;
 - `critical` risk blocks;
 - renderer returns text output first;
@@ -354,7 +354,7 @@ Expected: all tests pass.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add plugins/wuwa_unified_runtime/policy plugins/wuwa_unified_runtime/output plugins/wuwa_unified_runtime/sender plugins/wuwa_unified_runtime/audit plugins/wuwa_unified_runtime/runtime tests/test_runtime_pipeline.py
+git add plugins/bot_unified_runtime/policy plugins/bot_unified_runtime/output plugins/bot_unified_runtime/sender plugins/bot_unified_runtime/audit plugins/bot_unified_runtime/runtime tests/test_runtime_pipeline.py
 git commit -m "feat: add unified runtime pipeline shell"
 ```
 
@@ -363,16 +363,16 @@ git commit -m "feat: add unified runtime pipeline shell"
 ## Task 3: Character, Knowledge, Source Registry, And Auto-Send Draft Interfaces
 
 **Files:**
-- Create: `plugins/wuwa_unified_runtime/contracts/character.py`
-- Create: `plugins/wuwa_unified_runtime/contracts/media.py`
-- Create: `plugins/wuwa_unified_runtime/contracts/auto_send.py`
-- Create: `plugins/wuwa_unified_runtime/character/providers.py`
-- Create: `plugins/wuwa_unified_runtime/character/__init__.py`
-- Create: `plugins/wuwa_unified_runtime/sources/registry.py`
-- Create: `plugins/wuwa_unified_runtime/sources/__init__.py`
-- Create: `plugins/wuwa_unified_runtime/capabilities/auto_send/parser.py`
-- Create: `plugins/wuwa_unified_runtime/capabilities/auto_send/__init__.py`
-- Create: `plugins/wuwa_unified_runtime/capabilities/__init__.py`
+- Create: `plugins/bot_unified_runtime/contracts/character.py`
+- Create: `plugins/bot_unified_runtime/contracts/media.py`
+- Create: `plugins/bot_unified_runtime/contracts/auto_send.py`
+- Create: `plugins/bot_unified_runtime/character/providers.py`
+- Create: `plugins/bot_unified_runtime/character/__init__.py`
+- Create: `plugins/bot_unified_runtime/sources/registry.py`
+- Create: `plugins/bot_unified_runtime/sources/__init__.py`
+- Create: `plugins/bot_unified_runtime/capabilities/auto_send/parser.py`
+- Create: `plugins/bot_unified_runtime/capabilities/auto_send/__init__.py`
+- Create: `plugins/bot_unified_runtime/capabilities/__init__.py`
 - Create: `tests/test_character_sources_autosend.py`
 
 **Interfaces:**
@@ -387,10 +387,10 @@ git commit -m "feat: add unified runtime pipeline shell"
 - [ ] **Step 1: Write failing interface tests**
 
 ```python
-from plugins.wuwa_unified_runtime.capabilities.auto_send import parse_auto_send_command
-from plugins.wuwa_unified_runtime.character import NullCharacterContextProvider
-from plugins.wuwa_unified_runtime.contracts import PrivacyLevel, SessionType
-from plugins.wuwa_unified_runtime.sources import ParserRegistry, ParserRule, SourceInput
+from plugins.bot_unified_runtime.capabilities.auto_send import parse_auto_send_command
+from plugins.bot_unified_runtime.character import NullCharacterContextProvider
+from plugins.bot_unified_runtime.contracts import PrivacyLevel, SessionType
+from plugins.bot_unified_runtime.sources import ParserRegistry, ParserRule, SourceInput
 
 
 def test_null_character_provider_returns_persona_tone_and_empty_context():
@@ -453,7 +453,7 @@ Expected: all tests pass.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add plugins/wuwa_unified_runtime/contracts/character.py plugins/wuwa_unified_runtime/contracts/media.py plugins/wuwa_unified_runtime/contracts/auto_send.py plugins/wuwa_unified_runtime/character plugins/wuwa_unified_runtime/sources plugins/wuwa_unified_runtime/capabilities tests/test_character_sources_autosend.py
+git add plugins/bot_unified_runtime/contracts/character.py plugins/bot_unified_runtime/contracts/media.py plugins/bot_unified_runtime/contracts/auto_send.py plugins/bot_unified_runtime/character plugins/bot_unified_runtime/sources plugins/bot_unified_runtime/capabilities tests/test_character_sources_autosend.py
 git commit -m "feat: add character source and autosend interfaces"
 ```
 
@@ -462,9 +462,9 @@ git commit -m "feat: add character source and autosend interfaces"
 ## Task 4: NoneBot Plugin Entry, Commands, Dev Verification, And Docs
 
 **Files:**
-- Create: `plugins/wuwa_unified_runtime/__init__.py`
-- Create: `plugins/wuwa_unified_runtime/config.py`
-- Create: `plugins/wuwa_unified_runtime/capabilities/echo.py`
+- Create: `plugins/bot_unified_runtime/__init__.py`
+- Create: `plugins/bot_unified_runtime/config.py`
+- Create: `plugins/bot_unified_runtime/capabilities/echo.py`
 - Create: `tests/test_nonebot_plugin_entry.py`
 - Modify: `scripts/dev.ps1`
 - Modify: `README.md`
@@ -474,9 +474,9 @@ git commit -m "feat: add character source and autosend interfaces"
 **Interfaces:**
 - Consumes: Tasks 1-3.
 - Produces: NoneBot `__plugin_meta__`.
-- Produces: status capability command `/wuwa status`.
+- Produces: status capability command `/bot status`.
 - Produces: auto-send draft command path that returns preview-only text.
-- Produces: plugin-check that expects `plugins/wuwa_unified_runtime/__init__.py`.
+- Produces: plugin-check that expects `plugins/bot_unified_runtime/__init__.py`.
 - Produces: verify that runs tests when `tests/` exists.
 
 - [ ] **Step 1: Write failing plugin entry tests**
@@ -486,17 +486,17 @@ import importlib
 
 
 def test_nonebot_plugin_imports_and_has_metadata():
-    module = importlib.import_module("plugins.wuwa_unified_runtime")
+    module = importlib.import_module("plugins.bot_unified_runtime")
     meta = module.__plugin_meta__
-    assert meta.name == "WuWa Unified Runtime"
+    assert meta.name == "Bot Unified Runtime"
     assert "~onebot.v11" in meta.supported_adapters
 
 
 def test_status_capability_returns_structured_result():
-    from plugins.wuwa_unified_runtime.capabilities.echo import build_status_result
+    from plugins.bot_unified_runtime.capabilities.echo import build_status_result
 
     result = build_status_result(request_id="req_test")
-    assert result.capability_id == "wuwa.status"
+    assert result.capability_id == "bot.status"
     assert result.body == "统一运行时在线"
 ```
 
@@ -510,9 +510,9 @@ Expected: FAIL because plugin entry and status capability do not exist.
 
 Implement `__plugin_meta__` with:
 
-- name: `WuWa Unified Runtime`
+- name: `Bot Unified Runtime`
 - description: `统一角色机器人运行时、人格上下文、媒体解析和发送审计入口`
-- usage: `/wuwa status`
+- usage: `/bot status`
 - type: `application`
 - supported_adapters: `{"~onebot.v11", "~console", "~mail"}`
 
@@ -522,7 +522,7 @@ Guard optional NoneBot handler registration so plain pytest import works without
 
 Modify `scripts/dev.ps1`:
 
-- `plugin-check` must fail if `plugins/wuwa_unified_runtime/__init__.py` is missing.
+- `plugin-check` must fail if `plugins/bot_unified_runtime/__init__.py` is missing.
 - `verify` must run pytest because `tests/` now exists.
 - keep lint/typecheck optional until tools are installed.
 
@@ -545,7 +545,7 @@ Expected: tests pass; docs-check passes; verify runs pytest and completes with o
 - [ ] **Step 7: Commit**
 
 ```powershell
-git add plugins/wuwa_unified_runtime tests scripts/dev.ps1 README.md COMMANDS.md progress.md docs/superpowers/plans/2026-07-07-unified-runtime-m0.md
+git add plugins/bot_unified_runtime tests scripts/dev.ps1 README.md COMMANDS.md progress.md docs/superpowers/plans/2026-07-07-unified-runtime-m0.md
 git commit -m "feat: wire unified runtime nonebot plugin"
 ```
 
@@ -556,4 +556,4 @@ git commit -m "feat: wire unified runtime nonebot plugin"
 - Spec coverage: This plan covers M0/M1 runtime contracts, policy, output review, sender receipts, audit, character/knowledge provider interfaces, source parser registry, auto-send draft parsing, plugin metadata, and dev verification.
 - Deferred intentionally: real NapCat transport, real mail sending, LLM generation, persistent database schema, subscription scheduler, Bilibili fetch, HTML image rendering, vector search, and credential handling. Those require separate plans because they touch external systems and higher-risk privacy flows.
 - Placeholder scan: no `TBD`, `TODO`, or unspecified file paths.
-- Type consistency: tasks import contracts via `plugins.wuwa_unified_runtime.contracts`; later tasks consume the exact names produced by Task 1.
+- Type consistency: tasks import contracts via `plugins.bot_unified_runtime.contracts`; later tasks consume the exact names produced by Task 1.

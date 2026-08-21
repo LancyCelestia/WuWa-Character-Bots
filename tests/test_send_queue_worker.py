@@ -4,8 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from plugins.wuwa_unified_runtime.audit import InMemoryAuditLogger
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
+from plugins.bot_unified_runtime.contracts import (
     DeliveryReceipt,
     PrivacyLevel,
     ReceiptState,
@@ -14,7 +14,7 @@ from plugins.wuwa_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.wuwa_unified_runtime.sender import (
+from plugins.bot_unified_runtime.sender import (
     InMemoryReceiptRepository,
     SQLiteSendRequestQueue,
 )
@@ -39,13 +39,13 @@ def _send_request(
         target_scope=SessionType.PRIVATE,
         target_id=target_id,
         origin_message_id="origin-secret",
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
         content=rendered,
         send_policy=SendPolicy.IMMEDIATE,
         priority="normal",
         max_messages=1,
         dedupe_key=dedupe_key,
-        cooldown_key=f"wuwa.chat:private:{target_id}",
+        cooldown_key=f"bot.chat:private:{target_id}",
         privacy_level=PrivacyLevel.PERSONAL,
         persona_profile_id="shorekeeper",
         audit_tags=["policy", "persona:shorekeeper"],
@@ -54,7 +54,7 @@ def _send_request(
 
 @pytest.mark.asyncio
 async def test_send_queue_worker_marks_sent_and_records_transport_receipts(tmp_path):
-    from plugins.wuwa_unified_runtime.sender import drain_send_queue_once
+    from plugins.bot_unified_runtime.sender import drain_send_queue_once
 
     audit = InMemoryAuditLogger()
     receipts = InMemoryReceiptRepository()
@@ -103,7 +103,7 @@ async def test_send_queue_worker_marks_sent_and_records_transport_receipts(tmp_p
 
 @pytest.mark.asyncio
 async def test_send_queue_worker_marks_retryable_failure_with_backoff(tmp_path):
-    from plugins.wuwa_unified_runtime.sender import drain_send_queue_once
+    from plugins.bot_unified_runtime.sender import drain_send_queue_once
 
     audit = InMemoryAuditLogger()
     queue = SQLiteSendRequestQueue(
@@ -151,7 +151,7 @@ async def test_send_queue_worker_marks_retryable_failure_with_backoff(tmp_path):
 
 @pytest.mark.asyncio
 async def test_send_queue_worker_claims_due_items_before_transport(tmp_path):
-    from plugins.wuwa_unified_runtime.sender import drain_send_queue_once
+    from plugins.bot_unified_runtime.sender import drain_send_queue_once
 
     audit = InMemoryAuditLogger()
     queue = SQLiteSendRequestQueue(tmp_path / "send_queue.sqlite3", audit)
@@ -188,7 +188,7 @@ async def test_send_queue_worker_claims_due_items_before_transport(tmp_path):
 
 @pytest.mark.asyncio
 async def test_send_queue_worker_turns_blocked_transport_result_into_final_failure(tmp_path):
-    from plugins.wuwa_unified_runtime.sender import drain_send_queue_once
+    from plugins.bot_unified_runtime.sender import drain_send_queue_once
 
     audit = InMemoryAuditLogger()
     queue = SQLiteSendRequestQueue(tmp_path / "send_queue.sqlite3", audit)

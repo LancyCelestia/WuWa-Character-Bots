@@ -3,9 +3,9 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-from plugins.wuwa_unified_runtime.config import Config
-from plugins.wuwa_unified_runtime.contracts import PrivacyLevel
-from plugins.wuwa_unified_runtime.llm import LLMProviderError, LLMReply
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.contracts import PrivacyLevel
+from plugins.bot_unified_runtime.llm import LLMProviderError, LLMReply
 
 
 class DialogueDiagnosticProvider:
@@ -53,20 +53,20 @@ def _dialogue_config(tmp_path: Path) -> Config:
     knowledge_file = tmp_path / "knowledge.txt"
     knowledge_file.write_text("守岸人会守望漂泊者。", encoding="utf-8")
     return Config(
-        wuwa_persona_profile_id="shorekeeper",
-        wuwa_persona_display_name="守岸人",
-        wuwa_persona_files=[str(persona_file)],
-        wuwa_knowledge_files=[str(knowledge_file)],
-        wuwa_chat_provider="openai_compatible",
-        wuwa_chat_model="diag-model",
-        wuwa_chat_api_key="sk-live-secret",
-        wuwa_chat_base_url="https://llm.example/v1",
-        wuwa_emotion_enabled=True,
+        bot_persona_profile_id="shorekeeper",
+        bot_persona_display_name="守岸人",
+        bot_persona_files=[str(persona_file)],
+        bot_knowledge_files=[str(knowledge_file)],
+        bot_chat_provider="openai_compatible",
+        bot_chat_model="diag-model",
+        bot_chat_api_key="sk-live-secret",
+        bot_chat_base_url="https://llm.example/v1",
+        bot_emotion_enabled=True,
     )
 
 
 def test_admin_dialogue_query_returns_safe_one_turn_summary(tmp_path):
-    from plugins.wuwa_unified_runtime.capabilities.debug import (
+    from plugins.bot_unified_runtime.capabilities.debug import (
         build_dialogue_query_result,
     )
 
@@ -80,7 +80,7 @@ def test_admin_dialogue_query_returns_safe_one_turn_summary(tmp_path):
     )
 
     assert provider.calls == 1
-    assert result.capability_id == "wuwa.dialogue"
+    assert result.capability_id == "bot.dialogue"
     assert result.request_id == "req_dialogue"
     assert result.privacy_level is PrivacyLevel.PERSONAL
     assert "对话验收" in result.body
@@ -131,7 +131,7 @@ def test_admin_dialogue_query_returns_safe_one_turn_summary(tmp_path):
 
 
 def test_admin_dialogue_query_reports_provider_error_without_leaking_raw_error(tmp_path):
-    from plugins.wuwa_unified_runtime.capabilities.debug import (
+    from plugins.bot_unified_runtime.capabilities.debug import (
         build_dialogue_query_result,
     )
 
@@ -145,7 +145,7 @@ def test_admin_dialogue_query_reports_provider_error_without_leaking_raw_error(t
     )
 
     assert provider.calls == 1
-    assert result.capability_id == "wuwa.dialogue"
+    assert result.capability_id == "bot.dialogue"
     assert "dialogue_status=blocked" in result.body
     assert "next_action=fix_llm_provider" in result.body
     assert "llm_status=error" in result.body
@@ -157,16 +157,16 @@ def test_admin_dialogue_query_reports_provider_error_without_leaking_raw_error(t
 
 
 def test_admin_dialogue_query_blocks_invalid_generation_parameters_without_probe(tmp_path):
-    from plugins.wuwa_unified_runtime.capabilities.debug import (
+    from plugins.bot_unified_runtime.capabilities.debug import (
         build_dialogue_query_result,
     )
 
     provider = DialogueDiagnosticProvider()
     config = _dialogue_config(tmp_path).model_copy(
         update={
-            "wuwa_chat_temperature": 9,
-            "wuwa_chat_max_tokens": 0,
-            "wuwa_chat_timeout_seconds": 0,
+            "bot_chat_temperature": 9,
+            "bot_chat_max_tokens": 0,
+            "bot_chat_timeout_seconds": 0,
         }
     )
 
@@ -179,7 +179,7 @@ def test_admin_dialogue_query_blocks_invalid_generation_parameters_without_probe
     )
 
     assert provider.calls == 0
-    assert result.capability_id == "wuwa.dialogue"
+    assert result.capability_id == "bot.dialogue"
     assert "dialogue_status=blocked" in result.body
     assert "next_action=fix_config" in result.body
     assert "chat_pipeline_ok=false" in result.body
@@ -196,7 +196,7 @@ def test_admin_dialogue_query_blocks_invalid_generation_parameters_without_probe
 
 
 def test_non_admin_dialogue_query_is_rejected_without_running_probe(tmp_path):
-    from plugins.wuwa_unified_runtime.capabilities.debug import (
+    from plugins.bot_unified_runtime.capabilities.debug import (
         build_dialogue_query_result,
     )
 
@@ -210,7 +210,7 @@ def test_non_admin_dialogue_query_is_rejected_without_running_probe(tmp_path):
     )
 
     assert provider.calls == 0
-    assert result.capability_id == "wuwa.dialogue"
+    assert result.capability_id == "bot.dialogue"
     assert "只有管理员可以查看运行时排障记录" in result.body
     assert "shorekeeper" not in result.body
     assert "diag-model" not in result.body
@@ -218,19 +218,19 @@ def test_non_admin_dialogue_query_is_rejected_without_running_probe(tmp_path):
 
 
 def test_plugin_entry_exposes_admin_dialogue_command_without_self_overwrite():
-    import plugins.wuwa_unified_runtime as plugin_entry
+    import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
 
     assert "build_dialogue_query_result" in source
-    assert 'capability_id = "wuwa.dialogue"' in source
-    assert "wuwa.dialogue" in plugin_entry.NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS
-    assert "wuwa.control" in plugin_entry.NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS
+    assert 'capability_id = "bot.dialogue"' in source
+    assert "bot.dialogue" in plugin_entry.NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS
+    assert "bot.control" in plugin_entry.NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS
 
 
 def test_help_text_mentions_dialogue_command():
-    from plugins.wuwa_unified_runtime.capabilities.echo import build_help_result
+    from plugins.bot_unified_runtime.capabilities.echo import build_help_result
 
     result = build_help_result(request_id="req_help")
 
-    assert "/wuwa dialogue [测试文本]" in result.body
+    assert "/bot dialogue [测试文本]" in result.body

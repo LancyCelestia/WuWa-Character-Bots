@@ -1,13 +1,13 @@
-from plugins.wuwa_unified_runtime.audit import InMemoryAuditLogger
-from plugins.wuwa_unified_runtime.audit.file_logger import (
+from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
+from plugins.bot_unified_runtime.audit.file_logger import (
     FileAuditLog,
     build_audit_with_file_log,
 )
-from plugins.wuwa_unified_runtime.contracts import (
+from plugins.bot_unified_runtime.contracts import (
     AuditRecord,
     RiskLevel,
 )
-from plugins.wuwa_unified_runtime.output.renderer import (
+from plugins.bot_unified_runtime.output.renderer import (
     build_forward_output,
     should_forward_long_text,
     split_text_chunks,
@@ -57,7 +57,7 @@ def test_file_audit_log_writes_redacted_jsonl(tmp_path):
         AuditRecord(
             request_id="req_1",
             session_id="private:42",
-            capability_id="wuwa.chat",
+            capability_id="bot.chat",
             stage="policy",
             event="test",
             severity=RiskLevel.LOW,
@@ -81,7 +81,7 @@ def test_build_audit_with_file_log_tees(tmp_path):
     record = AuditRecord(
         request_id="req_2",
         session_id="private:42",
-        capability_id="wuwa.chat",
+        capability_id="bot.chat",
         stage="transport",
         event="test",
         severity=RiskLevel.LOW,
