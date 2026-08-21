@@ -1,4 +1,4 @@
-"""凭据存储接口（cookie / API key 引用）。
+﻿"""凭据存储接口（cookie / API key 引用）。
 
 目标：让外部抓取（FetchRequest）能用 "cookie" 或 "api_key" 而不把原始
 凭据写进代码、审计日志或消息上下文。调用方只拿 ``CredentialRef``
@@ -11,7 +11,7 @@
   用户可见消息或 prompt。
 - 默认文件路径放在被 git 忽略的 ``data/`` 下，例如
   ``data/credentials.json``。
-- 使用 ``WUWA_CREDENTIAL_`` 前缀的环境变量时，值同样只在本模块内
+- 使用 ``BOT_CREDENTIAL_`` 前缀的环境变量时，值同样只在本模块内
   被读取，不会出现在错误文本里。
 
 扩展方式：实现新的 ``CredentialStore``（例如密码管理器 / keyring），
@@ -85,11 +85,11 @@ def _normalize_ref_id(value: str) -> str:
 class EnvCredentialStore:
     """从环境变量读取凭据。
 
-    变量名规则：``{prefix}{REF_ID}``，例如 ``WUWA_CREDENTIAL_BILIBILI``。
-    可以再用 ``WUWA_CREDENTIAL_BILIBILI_KIND`` 声明类型（cookie/api_key）。
+    变量名规则：``{prefix}{REF_ID}``，例如 ``BOT_CREDENTIAL_BILIBILI``。
+    可以再用 ``BOT_CREDENTIAL_BILIBILI_KIND`` 声明类型（cookie/api_key）。
     """
 
-    def __init__(self, *, prefix: str = "WUWA_CREDENTIAL_") -> None:
+    def __init__(self, *, prefix: str = "BOT_CREDENTIAL_") -> None:
         self.prefix = prefix
 
     def resolve(self, ref_id: str) -> CredentialValue | None:
@@ -208,7 +208,7 @@ def _ref_from_value(value: CredentialValue, *, source: str) -> CredentialRef:
 def build_credential_store(
     config: object,
     *,
-    env_prefix: str = "WUWA_CREDENTIAL_",
+    env_prefix: str = "BOT_CREDENTIAL_",
 ) -> CredentialStore:
     """按配置构造凭据存储。
 

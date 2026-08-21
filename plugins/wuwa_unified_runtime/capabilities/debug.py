@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import math
 from collections.abc import Callable
@@ -1276,7 +1276,7 @@ def _format_roles_diagnostic(config: Config) -> str:
             f"quiet_hours_bypass_roles={_safe_csv(','.join(config.wuwa_quiet_hours_bypass_roles))}",
             f"group_command_prefix={_safe_token(config.wuwa_runtime_group_command_prefix)}",
             "id_input_formats=json_array,comma,semicolon",
-            "role_source=WUWA_ADMIN_USER_IDS,WUWA_ENTERPRISE_USER_IDS,WUWA_TRUSTED_USER_IDS,WUWA_BLOCKED_USER_IDS",
+            "role_source=BOT_ADMIN_USER_IDS,BOT_ENTERPRISE_USER_IDS,BOT_TRUSTED_USER_IDS,BOT_BLOCKED_USER_IDS",
             f"admin_commands={_safe_csv(admin_commands)}",
             "ids_hidden=true",
         ]

@@ -7,7 +7,7 @@
 - 线程安全（锁）；文件损坏时安全降级为空存储。
 
 管理员专属指令走统一流水线（`wuwa.runtime` 能力），只允许
-``WUWA_ADMIN_USER_IDS`` 中的管理员执行。
+``BOT_ADMIN_USER_IDS`` 中的管理员执行。
 """
 
 from __future__ import annotations
@@ -26,21 +26,21 @@ CLOSE_INTERACTION_THRESHOLD = 30
 def _temperature_converter(value: str) -> float:
     parsed = float(value)
     if not 0.0 <= parsed <= 2.0:
-        raise ValueError("WUWA_CHAT_TEMPERATURE 必须在 0.0-2.0 之间")
+        raise ValueError("BOT_CHAT_TEMPERATURE 必须在 0.0-2.0 之间")
     return parsed
 
 
 def _max_tokens_converter(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
-        raise ValueError("WUWA_CHAT_MAX_TOKENS 必须 >= 1")
+        raise ValueError("BOT_CHAT_MAX_TOKENS 必须 >= 1")
     return parsed
 
 
 def _reply_chars_converter(value: str) -> int:
     parsed = int(value)
     if parsed < 200:
-        raise ValueError("WUWA_REPLY_MAX_CHARS_PER_MESSAGE 必须 >= 200")
+        raise ValueError("BOT_REPLY_MAX_CHARS_PER_MESSAGE 必须 >= 200")
     return parsed
 
 
@@ -55,11 +55,11 @@ def _bool_converter(value: str) -> bool:
 
 # 白名单键 -> 转换函数；转换失败抛 ValueError，不会写入。
 SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
-    "WUWA_CHAT_TEMPERATURE": _temperature_converter,
-    "WUWA_CHAT_MAX_TOKENS": _max_tokens_converter,
-    "WUWA_REPLY_MAX_CHARS_PER_MESSAGE": _reply_chars_converter,
-    "WUWA_MEME_SEARCH_ENABLED": _bool_converter,
-    "WUWA_PERSONA_ACTION_BRACKETS": _bool_converter,
+    "BOT_CHAT_TEMPERATURE": _temperature_converter,
+    "BOT_CHAT_MAX_TOKENS": _max_tokens_converter,
+    "BOT_REPLY_MAX_CHARS_PER_MESSAGE": _reply_chars_converter,
+    "BOT_MEME_SEARCH_ENABLED": _bool_converter,
+    "BOT_PERSONA_ACTION_BRACKETS": _bool_converter,
 }
 
 
@@ -76,6 +76,8 @@ class RuntimeSettingsStore:
         self._overrides: dict[str, Any] = {}
         self._nicknames: list[str] = []
         self._interactions: dict[str, int] = {}
+        self._persona_override: str = ""
+        self._persona_weights: dict[str, float] = {}
         self._mtime: float = 0.0
         self._load()
 
@@ -110,6 +112,16 @@ class RuntimeSettingsStore:
                 for key, value in interactions.items()
                 if isinstance(value, int) and value > 0
             }
+        persona_override = payload.get("persona_override")
+        if isinstance(persona_override, str):
+            self._persona_override = persona_override.strip()
+        persona_weights = payload.get("persona_weights")
+        if isinstance(persona_weights, dict):
+            self._persona_weights = {
+                str(key): float(value)
+                for key, value in persona_weights.items()
+                if isinstance(value, (int, float))
+            }
 
     def _reload_if_changed(self) -> None:
         """文件被其他进程（例如管理员命令）修改后，本进程读时自动刷新。"""
@@ -133,6 +145,8 @@ class RuntimeSettingsStore:
                         "overrides": self._overrides,
                         "nicknames": self._nicknames,
                         "interactions": self._interactions,
+                        "persona_override": self._persona_override,
+                        "persona_weights": self._persona_weights,
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -257,6 +271,34 @@ class RuntimeSettingsStore:
             self._reload_if_changed()
             return list(self._interactions.keys())
 
+    # ---- 人格切换 ----
+
+    def get_persona_override(self) -> str:
+        with self._lock:
+            self._reload_if_changed()
+            return self._persona_override
+
+    def set_persona_override(self, profile_id: str) -> None:
+        with self._lock:
+            self._reload_if_changed()
+            self._persona_override = (profile_id or "").strip()
+            self._save()
+
+    def get_persona_weights(self) -> dict[str, float]:
+        with self._lock:
+            self._reload_if_changed()
+            return dict(self._persona_weights)
+
+    def set_persona_weight(self, profile_id: str, weight: float) -> None:
+        cleaned = (profile_id or "").strip()
+        if not cleaned:
+            raise ValueError("人格 id 不能为空")
+        normalized = max(0.0, min(1.0, float(weight)))
+        with self._lock:
+            self._reload_if_changed()
+            self._persona_weights[cleaned] = normalized
+            self._save()
+
 
 class InstanceSettingsManager:
     """多实例设置管理：每个机器人实例一个设置文件，彼此隔离。
@@ -292,13 +334,21 @@ class InstanceSettingsManager:
         )
 
 
+def effective_instance(config: object) -> str:
+    """实例自举：未显式配置实例时自动取人格 id（守岸人 → shorekeeper）。"""
+    instance = str(getattr(config, "wuwa_runtime_instance", "")).strip()
+    if instance:
+        return instance
+    persona = str(getattr(config, "wuwa_persona_profile_id", "default")).strip()
+    return persona or "default"
+
+
 def build_runtime_settings_store(config: object) -> RuntimeSettingsStore:
-    instance = str(getattr(config, "wuwa_runtime_instance", "default")).strip() or "default"
     manager = InstanceSettingsManager(
         str(getattr(config, "wuwa_runtime_settings_dir", "data/settings")).strip()
         or "data/settings"
     )
-    return manager.get(instance)
+    return manager.get(effective_instance(config))
 
 
 def build_instance_settings_manager(config: object) -> InstanceSettingsManager:

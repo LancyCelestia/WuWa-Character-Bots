@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import inspect
 from pathlib import Path
@@ -157,10 +157,10 @@ def test_config_query_reports_errors_without_calling_provider_or_leaking_key(tmp
     assert "openai_base_url_missing" in result.body
     assert "chat_api_key=missing" in result.body
     assert (
-        "llm_fix_hints=WUWA_CHAT_ENABLED=true,"
-        "WUWA_PERSONA_FILES=<existing_md_txt_docx_paths>,"
-        "WUWA_CHAT_API_KEY=<real_api_key>,WUWA_CHAT_MODEL=<model_name>,"
-        "WUWA_CHAT_BASE_URL=<openai_compatible_base_url>"
+        "llm_fix_hints=BOT_CHAT_ENABLED=true,"
+        "BOT_PERSONA_FILES=<existing_md_txt_docx_paths>,"
+        "BOT_CHAT_API_KEY=<real_api_key>,BOT_CHAT_MODEL=<model_name>,"
+        "BOT_CHAT_BASE_URL=<openai_compatible_base_url>"
     ) in result.body
     assert "your-api-key" not in result.body
 
@@ -201,8 +201,8 @@ def test_config_query_reports_invalid_llm_generation_parameters(tmp_path):
         "openai_max_tokens_invalid,openai_timeout_seconds_invalid"
     ) in result.body
     assert (
-        "llm_fix_hints=WUWA_CHAT_TEMPERATURE=0.0..2.0,"
-        "WUWA_CHAT_MAX_TOKENS>=1,WUWA_CHAT_TIMEOUT_SECONDS>0"
+        "llm_fix_hints=BOT_CHAT_TEMPERATURE=0.0..2.0,"
+        "BOT_CHAT_MAX_TOKENS>=1,BOT_CHAT_TIMEOUT_SECONDS>0"
     ) in result.body
     assert "chat_temperature=3.1" in result.body
     assert "chat_max_tokens=0" in result.body

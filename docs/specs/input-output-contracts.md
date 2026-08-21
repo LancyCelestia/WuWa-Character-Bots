@@ -1,4 +1,4 @@
-# 输入输出契约
+﻿# 输入输出契约
 
 本文定义外部输入、能力输入、LLM 上下文、外部抓取请求、能力输出、发送请求和用户反馈如何校验。
 
@@ -60,7 +60,7 @@
 - 可信系统/人格策略与不可信事实必须分区。
 - 抓取内容、记忆、聊天记录和桥接输出都放在明确的 untrusted 区。
 - 组装 prompt 前执行上下文预算。
-- 调用 LLM 前必须执行运行时回复预算、限速和安静时间检查；当前 `wuwa.chat` 在 policy 允许后先由 `QuietHoursChecker` 判断当前会话类型是否命中 `WUWA_QUIET_HOURS_*`，再计算回复预算并由窗口限速判断全局/当前会话/发送者是否已经超出 `WUWA_RATE_LIMIT_*` 上限，最后按 `WUWA_RATE_LIMIT_TARGET_MIN_INTERVAL_SECONDS` 判断同一目标是否过于频繁。安静时间或限速命中时都不能调用 provider。未配置 `WUWA_RATE_LIMIT_DB_PATH` 时使用内存窗口，配置后使用 SQLite 持久窗口和目标间隔记录。
+- 调用 LLM 前必须执行运行时回复预算、限速和安静时间检查；当前 `wuwa.chat` 在 policy 允许后先由 `QuietHoursChecker` 判断当前会话类型是否命中 `BOT_QUIET_HOURS_*`，再计算回复预算并由窗口限速判断全局/当前会话/发送者是否已经超出 `BOT_RATE_LIMIT_*` 上限，最后按 `BOT_RATE_LIMIT_TARGET_MIN_INTERVAL_SECONDS` 判断同一目标是否过于频繁。安静时间或限速命中时都不能调用 provider。未配置 `BOT_RATE_LIMIT_DB_PATH` 时使用内存窗口，配置后使用 SQLite 持久窗口和目标间隔记录。
 - 没有私聊同意时，脱敏密钥和个人账号标识。
 - LLM 工具默认关闭，只有被选中的能力明确允许时才能打开。
 - LLM 输出不能只相信 prompt 中的“最多回复条数”。自然语言对话能力必须在 provider 返回后按运行时 `max_messages` 做输出收口，并把收口事实写入 `llm_output_trimmed` 审计标签；`why-smoke` 和 `/wuwa why` 只能解释收口事实与保留段数，不能展示被裁掉的模型文本。
@@ -76,7 +76,7 @@
 - 管理员 `/wuwa dialogue [测试文本]` 只能展示同源一轮对话验收摘要。它可以报告 `dialogue_status`、`next_action`、`context_ok`、`chat_pipeline_ok`、`receipt_state`、人格/知识来源安全指纹、情绪/记忆/历史/prompt 数字摘要、回复预算、LLM 状态、安全 `llm_error_kind`、LLM 就绪字段、`reply_preview_chars` 和 `reply_text_hidden=true`；真实 provider 配置完整时可以短调用模型做验收，但不能输出完整模型回复、原始测试文本、完整 prompt、知识原文、最近对话原文、真实路径、数据库路径、目标 ID、API key、Authorization/Bearer、provider message id 或原始 provider 错误。该命令自身不能覆盖最近业务诊断。
 - 管理员 `/wuwa roles` 只能展示权限角色规则矩阵。它可以报告 `role_order`、`admin_users`、`enterprise_users`、`trusted_users`、`blocked_users`、`blocked_policy`、`rate_limit_bypass_roles`、`quiet_hours_bypass_roles`、`group_command_prefix`、`id_input_formats`、`role_source`、`admin_commands` 和 `ids_hidden=true`；不能调用 LLM provider，不能连接 NapCat，不能发送外部业务消息，也不能输出具体 user_id、`session_id`、目标 ID、数据库路径、`provider_message_id`、`private_debug` 或原始配置文本。
 - 管理员 `/wuwa persona` 只能展示人格自检白名单字段。它可以报告 `persona_status`、`persona_next_action`、人格 id/显示名/版本、`persona_source_refs`、`knowledge_source_refs`、人格文件计数、可读性、字符数、有效行数、强度状态、风格规则/角色边界/禁止行为计数、语气参数、记忆/历史/情绪开关、LLM 就绪字段、安全 `llm_fix_hints` 和安全 `public_message`；不能调用 LLM provider，不能连接 NapCat，不能发送外部业务消息，也不能输出人格正文、知识正文、完整 prompt、真实路径、文件名、数据库路径、API key、Authorization/Bearer、目标 ID、provider message id、`private_debug` 或原始配置文本。非管理员查询必须拒绝，且不能透露人格、知识、模型、文件或数据库是否存在。
-- `/wuwa status` 可以展示当前进程的配置摘要、`运行时硬开关：enabled|disabled` 和 `运行时软暂停：true|false`。硬开关只能来自 `WUWA_RUNTIME_ENABLED`，软暂停只能来自同进程 `RuntimeControlState`；软暂停摘要只能展示安全 reason 和 `updated_by=set|missing`，不能展示具体管理员 ID、`session_id`、目标 ID、数据库路径、`provider_message_id`、`private_debug` 或原始配置文本。
+- `/wuwa status` 可以展示当前进程的配置摘要、`运行时硬开关：enabled|disabled` 和 `运行时软暂停：true|false`。硬开关只能来自 `BOT_RUNTIME_ENABLED`，软暂停只能来自同进程 `RuntimeControlState`；软暂停摘要只能展示安全 reason 和 `updated_by=set|missing`，不能展示具体管理员 ID、`session_id`、目标 ID、数据库路径、`provider_message_id`、`private_debug` 或原始配置文本。
 - 管理员 `/wuwa pause` 和 `/wuwa resume` 只能控制当前进程的运行时软暂停。它们可以报告 `runtime_paused`、安全 reason 和 `updated_by=set|missing`，不能调用 LLM provider，不能连接 NapCat，不能展示具体 user_id、`session_id`、目标 ID、数据库路径、`provider_message_id`、`private_debug` 或原始配置文本。非管理员必须拒绝，且不能透露当前是否暂停。
 - 管理员 `/wuwa config` 只能展示同类只读配置体检摘要。它可以报告 `ready_for_real_llm`、`llm_readiness_status`、`llm_next_action`、`llm_readiness_reasons`、`llm_fix_hints`、`errors`、`warnings`、人格/知识文件计数、可解析性计数、人格字符数、有效行数、强度状态、provider/model、`endpoint_url`、`chat_api_key=set|missing`、最近对话读取和保留参数、回复限速参数、全局/会话/发送者上限、目标最小间隔、`rate_limit_store/db`、`quiet_hours_*` 和持久化开关；不能调用模型、不能连接 NapCat、不能输出 API key、数据库真实路径、真实文件路径、人格正文、原始解析错误、目标 ID 或 provider message id。
 
@@ -208,11 +208,11 @@
 - 群发送必须有 `max_messages`、去重和冷却。
 - 凭据或个人输出默认私聊。
 - 管理员确认必须包含来源、风险、目标、过期时间和确认/取消命令。
-- 默认进程内队列只做即时接收和去重；启用 `WUWA_SEND_QUEUE_ENABLED=true` 且配置 `WUWA_SEND_QUEUE_DB_PATH` 后，`SendRequest` 必须落入 SQLite `send_requests`，并支持 `dedupe_key` 持久去重、`next_retry_at` 到期查询、`claim_due()` 原子认领、`retry_count` 递增、退避重试和最大尝试次数后的最终失败。
+- 默认进程内队列只做即时接收和去重；启用 `BOT_SEND_QUEUE_ENABLED=true` 且配置 `BOT_SEND_QUEUE_DB_PATH` 后，`SendRequest` 必须落入 SQLite `send_requests`，并支持 `dedupe_key` 持久去重、`next_retry_at` 到期查询、`claim_due()` 原子认领、`retry_count` 递增、退避重试和最大尝试次数后的最终失败。
 - `claim_due()` 必须把到期 `queued` / `failed_retryable` 请求切到内部 `processing` 租约状态，并写入原始状态与 `lease_expires_at`；租约过期后可再次认领，成功、可重试失败或最终失败后必须释放租约字段。`processing` 只属于队列表内部和安全摘要，不属于公开 `DeliveryReceipt` 状态。
 - `find_request(request_id)` 是发送队列的内部只读查找接口。SQLite 实现必须从持久化的 `send_requests.request_json` 恢复 `SendRequest`，用于运行诊断判断发送请求是否创建；它不能被用作公开队列浏览接口，也不能让用户侧输出目标 ID、消息正文、`dedupe_key`、数据库真实路径、人格 id 或 provider message id。
 - `drain_send_queue_once()` 是当前发送队列的一次性 worker 契约。它优先认领到期 `SendRequest`、调用注入的 transport、记录 transport `DeliveryReceipt`、再更新队列状态；不能直接构造业务内容、不能读取人格/LLM 私有上下文、不能绕过 `ReviewResult`。`queue-smoke` 只允许用临时 SQLite 队列和 fake transport 做本地验证，不能连接 NapCat 或真实 QQ 账号。
-- 后台 APScheduler worker 默认关闭。只有 `WUWA_SEND_QUEUE_WORKER_ENABLED=true` 且当前发送队列支持到期认领和状态更新时，NoneBot 入口才注册 `wuwa_send_queue_worker`；它只复用 `drain_send_queue_once()`，按配置间隔和批量大小推进队列。没有在线 bot 时，本次投递必须进入可重试失败和退避，而不是直接丢弃、崩溃或连续刷屏。
+- 后台 APScheduler worker 默认关闭。只有 `BOT_SEND_QUEUE_WORKER_ENABLED=true` 且当前发送队列支持到期认领和状态更新时，NoneBot 入口才注册 `wuwa_send_queue_worker`；它只复用 `drain_send_queue_once()`，按配置间隔和批量大小推进队列。没有在线 bot 时，本次投递必须进入可重试失败和退避，而不是直接丢弃、崩溃或连续刷屏。
 - 发送队列可持久保存内部发送目标和正文用于真实投递，但任何用户可见摘要、smoke、状态输出或管理员列表都不能展示 `target_id`、正文、`dedupe_key`、人格 id、provider message id 或数据库真实路径。
 
 ### DeliveryReceipt
@@ -236,8 +236,8 @@
 - 最终失败必须包含用户安全文本和审计私有细节。
 - 去重、冷却或过期导致的跳过，在群里通常保持静默。
 - 限速或安静时间导致的阻断必须发生在调用 LLM 或 transport 前，回执状态为 `blocked`，用户侧只给短说明或通过 `/wuwa why` 查询；不能展示内部 bucket key、目标 ID 或原始消息。
-- 回执默认进程内保存；启用 `WUWA_RECEIPTS_ENABLED=true` 和 `WUWA_RECEIPTS_DB_PATH` 后可写入 SQLite `delivery_receipts`。
-- `delivery_receipts` 记录投递结果；`send_requests` 记录待投递请求和重试状态。真实 transport 返回 `sent` 时应把队列项标记为 `sent`，返回 `failed_retryable` 时应按配置退避并在超出 `WUWA_SEND_QUEUE_MAX_ATTEMPTS` 后标记为 `failed_final`；返回 `blocked`、`failed_final` 或其他不可重试状态时，worker 必须把队列项标记为最终失败，避免同一请求无限重试。
+- 回执默认进程内保存；启用 `BOT_RECEIPTS_ENABLED=true` 和 `BOT_RECEIPTS_DB_PATH` 后可写入 SQLite `delivery_receipts`。
+- `delivery_receipts` 记录投递结果；`send_requests` 记录待投递请求和重试状态。真实 transport 返回 `sent` 时应把队列项标记为 `sent`，返回 `failed_retryable` 时应按配置退避并在超出 `BOT_SEND_QUEUE_MAX_ATTEMPTS` 后标记为 `failed_final`；返回 `blocked`、`failed_final` 或其他不可重试状态时，worker 必须把队列项标记为最终失败，避免同一请求无限重试。
 - OneBot/NapCat provider message id 只作为内部排障字段保存，不能进入用户可见诊断、状态输出或公共消息。
 - 管理员查询 `/wuwa receipt <request_id|debug_id>` 时，只输出回执白名单字段：`request_id`、`debug_id`、`state`、`transport`、`retry_count`、`next_retry_at` 和安全 `public_message`。非管理员查询必须拒绝，且不能提示目标记录是否存在。
 
@@ -262,7 +262,7 @@
 - 私有审计需要足够排障信息。
 - 公共消息短而可执行。
 - 阻断、转私聊、可重试失败和最终失败都必须记录审计。
-- 审计默认进程内保存；启用 `WUWA_AUDIT_ENABLED=true` 和 `WUWA_AUDIT_DB_PATH` 后可写入 SQLite `audit_records`，并按 `WUWA_AUDIT_MAX_ITEMS` 裁剪。
+- 审计默认进程内保存；启用 `BOT_AUDIT_ENABLED=true` 和 `BOT_AUDIT_DB_PATH` 后可写入 SQLite `audit_records`，并按 `BOT_AUDIT_MAX_ITEMS` 裁剪。
 - 管理员查询 `/wuwa audit <request_id>` 时，只输出审计白名单字段：`request_id`、`stage`、`event`、`severity` 和安全 `public_message`。不能输出 `session_id`、`private_debug`、原始消息、回复全文、目标 ID、provider message id、token、cookie、API key 或数据库真实路径。
 - 管理员查询 `/wuwa recent [数量]` 时，可以合并展示最近运行诊断、发送回执和审计事件摘要；数量参数必须限制在 1 到 20 之间，非法值使用默认 5。运行诊断摘要可以展示 `request_id`、`debug_id`、`capability`、`policy`、`budget`、`llm`、`llm_readiness`、`ready_for_real_llm`、稳定原因码 `llm_reasons`、安全 `diagnostic_tags` 和 `receipt`。`llm_reasons` 只能包含简单稳定原因码，不能包含密钥、Authorization/Bearer、真实路径、`session_id`、原始 provider 错误或自然语言异常。`diagnostic_tags` 只能包含固定 ASCII 机器标签，不能包含用户原话、密钥、Authorization/Bearer、真实路径、`session_id`、目标 ID、原始 provider 错误或自然语言异常。该命令只能输出白名单字段，不能因为是管理员摘要就展示内部私有字段。
 - 管理员查询 `/wuwa queue` 时，只能输出发送队列白名单字段：`enabled`、`store=memory|sqlite`、`db=set|missing`、`queued`、`failed_retryable`、`failed_final`、`sent`、`skipped`、`processing`、`max_items`、`max_attempts`、`retry_base_seconds` 和 `retry_max_seconds`。非管理员查询必须拒绝，且不能透露队列是否启用、是否存在待发项、数据库路径、目标 ID、正文、`dedupe_key`、人格 id 或 provider message id。

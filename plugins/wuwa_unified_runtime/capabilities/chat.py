@@ -587,6 +587,7 @@ def build_chat_result(
         *_llm_usage_audit_tags(reply.raw_usage),
         "llm_chat",
         f"persona:{context.persona.profile_id}",
+        f"persona_active:{context.active_persona_id}",
         f"model:{reply.model}",
     ]
     if output_was_trimmed:
@@ -697,7 +698,7 @@ def _context_error_result(
         title=f"{persona_name}的回复",
         body=(
             "未读取到可用人格材料，已跳过本次生成。请让管理员检查 "
-            "/wuwa persona 或 /wuwa config，并补齐可读的 WUWA_PERSONA_FILES。"
+            "/wuwa persona 或 /wuwa config，并补齐可读的 BOT_PERSONA_FILES。"
             if persona_preflight_blocked
             else (
                 "我还在这里。只是这一次，我暂时没有稳定读到人格或知识材料，"
@@ -782,19 +783,19 @@ def build_chat_capability(
         effective_options = dict(llm_options)
         if runtime_settings is not None:
             get_or = getattr(runtime_settings, "get_or")
-            temperature = get_or("WUWA_CHAT_TEMPERATURE", None)
+            temperature = get_or("BOT_CHAT_TEMPERATURE", None)
             if temperature is not None:
                 effective_options["temperature"] = float(temperature)
-            max_tokens = get_or("WUWA_CHAT_MAX_TOKENS", None)
+            max_tokens = get_or("BOT_CHAT_MAX_TOKENS", None)
             if max_tokens is not None:
                 effective_options["max_tokens"] = int(max_tokens)
-            reply_chars = get_or("WUWA_REPLY_MAX_CHARS_PER_MESSAGE", None)
+            reply_chars = get_or("BOT_REPLY_MAX_CHARS_PER_MESSAGE", None)
             if reply_chars is not None:
                 effective_options["output_max_chars_per_message"] = int(reply_chars)
         active_search = search_provider
         if runtime_settings is not None:
             meme_enabled = getattr(runtime_settings, "get_or")(
-                "WUWA_MEME_SEARCH_ENABLED",
+                "BOT_MEME_SEARCH_ENABLED",
                 has_real_search,
             )
             if not meme_enabled:

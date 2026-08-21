@@ -4,7 +4,7 @@ from typing import Any
 
 from .audit import AuditRepository, build_audit_repository
 from .audit.file_logger import build_audit_with_file_log
-from .config import Config
+from .config import Config, translate_env_keys
 from .contracts import (
     AuditRecord,
     CapabilityResult,
@@ -43,6 +43,7 @@ from .runtime.settings import (
     RuntimeSettingsStore,
     build_instance_settings_manager,
     build_runtime_settings_store,
+    effective_instance,
 )
 from .sources.credential_health import check_credentials_and_report
 from .sources.meme_search import build_meme_search_provider
@@ -257,7 +258,7 @@ def _register_credential_check_scheduler(
     """开机 + 定时检查 cookie 是否过期/可用；异常时预警管理员。
 
     预警内容包含：出什么错、影响、怎么解决、时间、位置，通过统一
-    流水线私聊 ``WUWA_ADMIN_USER_IDS`` 中的管理员。
+    流水线私聊 ``BOT_ADMIN_USER_IDS`` 中的管理员。
     """
     interval_hours = max(1, int(getattr(config, "wuwa_credential_check_interval_hours", 6)))
 
@@ -635,9 +636,9 @@ def _register_nonebot_handlers() -> None:
             raise
         return
 
-    config = Config.model_validate(driver_config)
+    config = Config.model_validate(translate_env_keys(driver_config))
     settings_manager = build_instance_settings_manager(config)
-    runtime_settings = settings_manager.get(config.wuwa_runtime_instance)
+    runtime_settings = settings_manager.get(effective_instance(config))
     alias_resolver = build_command_alias_resolver(
         config,
         extra_nicknames=runtime_settings.list_nicknames(),
@@ -1031,7 +1032,7 @@ def _register_nonebot_handlers() -> None:
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 return build_runtime_admin_result(
                     settings_manager,
-                    config.wuwa_runtime_instance,
+                    effective_instance(config),
                     config,
                     request_id=message.request_id,
                     actor_roles=_decision.actor_roles,

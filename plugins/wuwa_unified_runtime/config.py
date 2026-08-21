@@ -6,6 +6,22 @@ from typing import Any
 from pydantic import BaseModel, field_validator
 
 
+def translate_env_keys(values: dict[str, Any]) -> dict[str, Any]:
+    """把通识化环境变量键（BOT_*）翻译回内部字段名（wuwa_*）。
+
+    兼容旧的 WUWA_* 写法（translate 后两者等价）；Config 字段名保持
+    内部命名，对外只暴露 BOT_*。
+    """
+    translated: dict[str, Any] = {}
+    for key, value in values.items():
+        lowered = str(key).lower()
+        if lowered.startswith("bot_"):
+            translated[f"wuwa_{lowered[4:]}"] = value
+        else:
+            translated[lowered] = value
+    return translated
+
+
 class Config(BaseModel):
     wuwa_runtime_enabled: bool = True
     wuwa_runtime_default_persona: str = "default"
@@ -28,6 +44,11 @@ class Config(BaseModel):
     wuwa_persona_display_name: str = "报存"
     wuwa_persona_version: str = "0"
     wuwa_persona_files: list[str] = []
+    # 人格级昵称（本机器人的角色昵称，随人格走，不随平台走）。
+    wuwa_persona_nicknames: list[str] = []
+    # 备用人格：{"gentle": {"display_name": "...", "files": [...],
+    #   "weight": 0.3, "emotions": ["support_needed", ...]}, ...}
+    wuwa_persona_alt_profiles: dict[str, dict[str, Any]] = {}
     wuwa_knowledge_files: list[str] = []
     wuwa_knowledge_max_chunks: int = 4
     wuwa_knowledge_chunk_chars: int = 900
@@ -142,6 +163,7 @@ class Config(BaseModel):
         "wuwa_trend_files",
         "wuwa_glossary_files",
         "wuwa_runtime_persona_nicknames",
+        "wuwa_persona_nicknames",
         mode="before",
     )
     @classmethod
@@ -187,6 +209,28 @@ class Config(BaseModel):
             normalized = stripped.replace(",", ";")
             return [item.strip() for item in normalized.split(";") if item.strip()]
         raise TypeError("id list must be a list, JSON array string, or delimiter string")
+
+    @field_validator("wuwa_persona_alt_profiles", mode="before")
+    @classmethod
+    def _parse_alt_profiles(cls, value: Any) -> dict[str, dict[str, Any]]:
+        if value is None or value == "":
+            return {}
+        if isinstance(value, dict):
+            return {
+                str(key): item if isinstance(item, dict) else {}
+                for key, item in value.items()
+            }
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except ValueError:
+                return {}
+            if isinstance(parsed, dict):
+                return {
+                    str(key): item if isinstance(item, dict) else {}
+                    for key, item in parsed.items()
+                }
+        return {}
 
     @field_validator("wuwa_credential_probe_urls", mode="before")
     @classmethod

@@ -1,4 +1,4 @@
-from plugins.wuwa_unified_runtime.config import Config
+﻿from plugins.wuwa_unified_runtime.config import Config
 from plugins.wuwa_unified_runtime.contracts import SessionType
 from plugins.wuwa_unified_runtime import smoke
 from plugins.wuwa_unified_runtime.llm import LLMProviderError, LLMReply
@@ -326,7 +326,7 @@ def test_smoke_cli_prints_why_diagnostics(monkeypatch, capsys, tmp_path):
     persona_file = _write_persona(tmp_path)
     env_file = tmp_path / ".env"
     env_file.write_text(
-        f"WUWA_PERSONA_FILES={persona_file.as_posix()}\nWUWA_CHAT_PROVIDER=static\n",
+        f"BOT_PERSONA_FILES={persona_file.as_posix()}\nBOT_CHAT_PROVIDER=static\n",
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)

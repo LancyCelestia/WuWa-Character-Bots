@@ -1,4 +1,4 @@
-import os
+﻿import os
 import subprocess
 import sys
 from pathlib import Path
@@ -166,12 +166,12 @@ def test_dialogue_smoke_cli_prints_safe_summary(monkeypatch, capsys, tmp_path):
     env_file.write_text(
         "\n".join(
             [
-                "WUWA_PERSONA_PROFILE_ID=shorekeeper",
-                "WUWA_PERSONA_DISPLAY_NAME=守岸人",
-                f"WUWA_PERSONA_FILES={persona_file.as_posix()}",
-                "WUWA_CHAT_PROVIDER=static",
-                "WUWA_CHAT_MODEL=static",
-                "WUWA_CHAT_API_KEY=sk-live-secret",
+                "BOT_PERSONA_PROFILE_ID=shorekeeper",
+                "BOT_PERSONA_DISPLAY_NAME=守岸人",
+                f"BOT_PERSONA_FILES={persona_file.as_posix()}",
+                "BOT_CHAT_PROVIDER=static",
+                "BOT_CHAT_MODEL=static",
+                "BOT_CHAT_API_KEY=sk-live-secret",
             ]
         ),
         encoding="utf-8",
@@ -214,9 +214,9 @@ def test_dialogue_smoke_module_execution_has_no_runtime_warning(tmp_path):
     (tmp_path / ".env").write_text(
         "\n".join(
             [
-                f"WUWA_PERSONA_FILES={persona_file.as_posix()}",
-                "WUWA_CHAT_PROVIDER=static",
-                "WUWA_CHAT_MODEL=static",
+                f"BOT_PERSONA_FILES={persona_file.as_posix()}",
+                "BOT_CHAT_PROVIDER=static",
+                "BOT_CHAT_MODEL=static",
             ]
         ),
         encoding="utf-8",

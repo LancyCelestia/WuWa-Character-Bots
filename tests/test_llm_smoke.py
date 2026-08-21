@@ -1,4 +1,4 @@
-from plugins.wuwa_unified_runtime.config import Config
+﻿from plugins.wuwa_unified_runtime.config import Config
 from plugins.wuwa_unified_runtime.character.history import SQLiteConversationHistoryRepository
 from plugins.wuwa_unified_runtime.llm import LLMProviderError
 from plugins.wuwa_unified_runtime import smoke
@@ -280,9 +280,9 @@ def test_llm_smoke_cli_prints_readiness_summary(monkeypatch, capsys, tmp_path):
     env_file.write_text(
         "\n".join(
             [
-                f"WUWA_PERSONA_FILES={persona_file.as_posix()}",
-                "WUWA_CHAT_PROVIDER=static",
-                "WUWA_CHAT_MODEL=static",
+                f"BOT_PERSONA_FILES={persona_file.as_posix()}",
+                "BOT_CHAT_PROVIDER=static",
+                "BOT_CHAT_MODEL=static",
             ]
         ),
         encoding="utf-8",
@@ -299,8 +299,8 @@ def test_llm_smoke_cli_prints_readiness_summary(monkeypatch, capsys, tmp_path):
     assert "llm_next_action=configure_real_llm" in output
     assert "llm_readiness_reasons=provider_not_real,knowledge_files_empty" in output
     assert (
-        "llm_fix_hints=WUWA_CHAT_PROVIDER=openai_compatible,"
-        "WUWA_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
+        "llm_fix_hints=BOT_CHAT_PROVIDER=openai_compatible,"
+        "BOT_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
     ) in output
     assert "diagnostic_temperature=0.3" in output
     assert "diagnostic_max_tokens=128" in output
@@ -425,9 +425,9 @@ def test_chat_smoke_cli_prints_llm_readiness_summary(monkeypatch, capsys, tmp_pa
     env_file.write_text(
         "\n".join(
             [
-                f"WUWA_PERSONA_FILES={persona_file.as_posix()}",
-                "WUWA_CHAT_PROVIDER=static",
-                "WUWA_CHAT_MODEL=static",
+                f"BOT_PERSONA_FILES={persona_file.as_posix()}",
+                "BOT_CHAT_PROVIDER=static",
+                "BOT_CHAT_MODEL=static",
             ]
         ),
         encoding="utf-8",
@@ -563,10 +563,10 @@ def test_smoke_cli_accepts_custom_context_message(monkeypatch, capsys, tmp_path)
     env_file.write_text(
         "\n".join(
             [
-                "WUWA_PERSONA_PROFILE_ID=shorekeeper",
-                "WUWA_PERSONA_DISPLAY_NAME=守岸人",
-                f"WUWA_PERSONA_FILES={persona_file.as_posix()}",
-                "WUWA_EMOTION_ENABLED=true",
+                "BOT_PERSONA_PROFILE_ID=shorekeeper",
+                "BOT_PERSONA_DISPLAY_NAME=守岸人",
+                f"BOT_PERSONA_FILES={persona_file.as_posix()}",
+                "BOT_EMOTION_ENABLED=true",
             ]
         ),
         encoding="utf-8",
@@ -605,9 +605,9 @@ def test_smoke_cli_prints_normalized_llm_endpoint(monkeypatch, capsys, tmp_path)
     env_file.write_text(
         "\n".join(
             [
-                "WUWA_CHAT_PROVIDER=static",
-                "WUWA_CHAT_MODEL=static",
-                "WUWA_CHAT_BASE_URL=https://llm.example/v1/chat/completions/",
+                "BOT_CHAT_PROVIDER=static",
+                "BOT_CHAT_MODEL=static",
+                "BOT_CHAT_BASE_URL=https://llm.example/v1/chat/completions/",
             ]
         ),
         encoding="utf-8",

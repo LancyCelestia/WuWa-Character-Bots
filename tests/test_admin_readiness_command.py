@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import importlib
 import inspect
@@ -77,8 +77,8 @@ def test_admin_readiness_query_returns_safe_local_summary(tmp_path):
     assert "llm_next_action=configure_real_llm" in result.body
     assert "llm_readiness_reasons=provider_not_real,knowledge_files_empty" in result.body
     assert (
-        "llm_fix_hints=WUWA_CHAT_PROVIDER=openai_compatible,"
-        "WUWA_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
+        "llm_fix_hints=BOT_CHAT_PROVIDER=openai_compatible,"
+        "BOT_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
     ) in result.body
     assert "chat_api_key=set" in result.body
     assert "不调用真实 LLM" in result.body

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from plugins.wuwa_unified_runtime import smoke
 from plugins.wuwa_unified_runtime.config import Config
@@ -97,7 +97,7 @@ def test_persona_smoke_reports_missing_persona_files_without_building_context():
     assert result["role_boundaries"] == 0
     assert result["forbidden_behaviors"] == 0
     assert "persona_files_empty" in result["errors"]
-    assert "WUWA_PERSONA_FILES=<existing_md_txt_docx_paths>" in result["llm_fix_hints"]
+    assert "BOT_PERSONA_FILES=<existing_md_txt_docx_paths>" in result["llm_fix_hints"]
 
 
 def test_persona_smoke_cli_prints_safe_summary(monkeypatch, capsys, tmp_path):
@@ -116,12 +116,12 @@ def test_persona_smoke_cli_prints_safe_summary(monkeypatch, capsys, tmp_path):
     env_file.write_text(
         "\n".join(
             [
-                "WUWA_PERSONA_PROFILE_ID=shorekeeper",
-                "WUWA_PERSONA_DISPLAY_NAME=守岸人",
-                "WUWA_PERSONA_VERSION=2026-test",
-                f"WUWA_PERSONA_FILES={persona_file.as_posix()}",
-                "WUWA_CHAT_PROVIDER=static",
-                "WUWA_CHAT_MODEL=static",
+                "BOT_PERSONA_PROFILE_ID=shorekeeper",
+                "BOT_PERSONA_DISPLAY_NAME=守岸人",
+                "BOT_PERSONA_VERSION=2026-test",
+                f"BOT_PERSONA_FILES={persona_file.as_posix()}",
+                "BOT_CHAT_PROVIDER=static",
+                "BOT_CHAT_MODEL=static",
             ]
         ),
         encoding="utf-8",
@@ -143,7 +143,7 @@ def test_persona_smoke_cli_prints_safe_summary(monkeypatch, capsys, tmp_path):
     assert "knowledge_source_refs=-" in output
     assert "tone_mode=private_chat" in output
     assert "llm_readiness_status=local_only" in output
-    assert "llm_fix_hints=WUWA_CHAT_PROVIDER=openai_compatible" in output
+    assert "llm_fix_hints=BOT_CHAT_PROVIDER=openai_compatible" in output
     assert str(tmp_path) not in output
     assert "来自黑海岸" not in output
     assert "system_prompt" not in output

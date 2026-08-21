@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import importlib
 from types import SimpleNamespace
@@ -140,7 +140,7 @@ def test_nonebot_smoke_reports_plugin_metadata_and_config_summary(tmp_path):
     assert result["llm_readiness_status"] == "blocked"
     assert "knowledge_file_missing" in result["llm_readiness_reasons"]
     assert result["llm_fix_hints"] == [
-        "WUWA_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>",
+        "BOT_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>",
     ]
     assert "sk-live-secret" not in result["public_message"]
     assert "sk-live-secret" not in result["private_debug"]
@@ -173,7 +173,7 @@ def test_nonebot_smoke_fails_when_onebot_adapter_is_missing():
 
 def test_nonebot_smoke_cli_prints_runtime_switch(monkeypatch, capsys, tmp_path):
     env_file = tmp_path / ".env"
-    env_file.write_text("WUWA_RUNTIME_ENABLED=false\n", encoding="utf-8")
+    env_file.write_text("BOT_RUNTIME_ENABLED=false\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["smoke.py", "nonebot"])
 
@@ -205,20 +205,20 @@ def test_nonebot_smoke_cli_prints_runtime_switch(monkeypatch, capsys, tmp_path):
     assert "llm_readiness_status=blocked" in output
     assert "llm_readiness_reasons=persona_files_empty,provider_not_real,knowledge_files_empty" in output
     assert (
-        "llm_fix_hints=WUWA_PERSONA_FILES=<existing_md_txt_docx_paths>"
+        "llm_fix_hints=BOT_PERSONA_FILES=<existing_md_txt_docx_paths>"
     ) in output
 
 
 def test_nonebot_startup_smoke_parses_child_result_and_redacts_secret(tmp_path):
     env_file = tmp_path / ".env"
-    env_file.write_text("WUWA_CHAT_API_KEY=sk-live-secret\n", encoding="utf-8")
+    env_file.write_text("BOT_CHAT_API_KEY=sk-live-secret\n", encoding="utf-8")
 
     def runner(_env_path, _timeout_seconds):
         return SimpleNamespace(
             returncode=0,
             stdout=(
                 "NoneBot is initializing...\n"
-                '__WUWA_STARTUP_SMOKE__{"ok":true,'
+                '__BOT_STARTUP_SMOKE__{"ok":true,'
                 '"nonebot_initialized":true,'
                 '"onebot_adapter_registered":true,'
                 '"plugin_loaded":true,'
@@ -267,12 +267,12 @@ def test_nonebot_startup_smoke_parses_child_result_and_redacts_secret(tmp_path):
 
 def test_nonebot_startup_smoke_reports_child_failure_without_leaking_secret(tmp_path):
     env_file = tmp_path / ".env"
-    env_file.write_text("WUWA_CHAT_API_KEY=sk-live-secret\n", encoding="utf-8")
+    env_file.write_text("BOT_CHAT_API_KEY=sk-live-secret\n", encoding="utf-8")
 
     def runner(_env_path, _timeout_seconds):
         return SimpleNamespace(
             returncode=1,
-            stdout='__WUWA_STARTUP_SMOKE__{"ok":false,"error_kind":"startup_failed"}',
+            stdout='__BOT_STARTUP_SMOKE__{"ok":false,"error_kind":"startup_failed"}',
             stderr="Authorization: Bearer sk-live-secret",
         )
 
@@ -291,7 +291,7 @@ def test_nonebot_startup_smoke_reports_child_failure_without_leaking_secret(tmp_
 
 def test_nonebot_startup_smoke_cli_prints_safe_summary(monkeypatch, capsys, tmp_path):
     env_file = tmp_path / ".env"
-    env_file.write_text("WUWA_CHAT_API_KEY=sk-live-secret\n", encoding="utf-8")
+    env_file.write_text("BOT_CHAT_API_KEY=sk-live-secret\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["smoke.py", "startup"])
 
@@ -299,7 +299,7 @@ def test_nonebot_startup_smoke_cli_prints_safe_summary(monkeypatch, capsys, tmp_
         return SimpleNamespace(
             returncode=0,
             stdout=(
-                '__WUWA_STARTUP_SMOKE__{"ok":true,'
+                '__BOT_STARTUP_SMOKE__{"ok":true,'
                 '"nonebot_initialized":true,'
                 '"onebot_adapter_registered":true,'
                 '"plugin_loaded":true,'

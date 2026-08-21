@@ -114,8 +114,13 @@ def build_command_alias_resolver(
     config: object,
     extra_nicknames: list[str] | tuple[str, ...] = (),
 ) -> CommandAliasResolver:
-    """按配置构造；昵称来自配置 + 运行时设置 store。"""
+    """按配置构造；昵称优先取人格级配置（随人格走），兼容旧的
+    runtime 级字段，再叠加实例设置 store 里的动态昵称。"""
     nicknames: list[str] = []
+    persona_nicknames = getattr(config, "wuwa_persona_nicknames", []) or []
+    for item in persona_nicknames:
+        if str(item).strip():
+            nicknames.append(str(item).strip())
     single = str(getattr(config, "wuwa_runtime_persona_nickname", "")).strip()
     if single:
         nicknames.append(single)

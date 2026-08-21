@@ -1,4 +1,4 @@
-# WuWa 角色机器人全量落地设计规格
+﻿# WuWa 角色机器人全量落地设计规格
 
 > 日期：2026-07-15
 >
@@ -427,7 +427,7 @@ persona_key = universe_id + ":" + character_id + ":" + profile_id
 配置优先级：
 
 1. 显式 manifest。
-2. 无 manifest 时，由旧 `WUWA_PERSONA_*` / `WUWA_TONE_*` 生成守岸人 legacy profile。
+2. 无 manifest 时，由旧 `BOT_PERSONA_*` / `BOT_TONE_*` 生成守岸人 legacy profile。
 
 一旦配置了 manifest：
 
@@ -449,7 +449,7 @@ persona_key = universe_id + ":" + character_id + ":" + profile_id
 - `DispatchPlan` / `SendRequest`
 - audit metadata
 
-`audit_tags` 只能记录事实，不能反向改变人格。默认配置 `WUWA_RUNTIME_DEFAULT_PERSONA` 必须由 resolver 实际消费。
+`audit_tags` 只能记录事实，不能反向改变人格。默认配置 `BOT_RUNTIME_DEFAULT_PERSONA` 必须由 resolver 实际消费。
 
 legacy adapter 将旧值 `shorekeeper` 显式映射为配置声明的 canonical key，例如 `wuwa:shorekeeper:shorekeeper`。无法唯一映射的旧值进入 not-ready/迁移错误，不根据 display name 或列表顺序猜测。
 
@@ -972,7 +972,7 @@ M5 UI 实施前必须先使用 `frontend-design-ui-ux` 产出锁定的设计规�
 ### 14.1 兼容原则
 
 - 保留现有核心 Pydantic 契约字段；新增字段有安全默认值，内部复杂状态优先留在内部模型。
-- 旧 `WUWA_PERSONA_*` / `WUWA_TONE_*` 在 B1 通过 legacy adapter 继续工作。
+- 旧 `BOT_PERSONA_*` / `BOT_TONE_*` 在 B1 通过 legacy adapter 继续工作。
 - 现有 `RuntimePipeline.handle()` 可作为兼容包装，但统一进入 coordinator。
 - 旧 queue JSON/SQLite 可读取；缺路由记录 hold。
 - 命令前缀、管理员角色和默认人格都从统一配置读取。

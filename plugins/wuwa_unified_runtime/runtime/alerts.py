@@ -1,4 +1,4 @@
-"""预警推送闭环。
+﻿"""预警推送闭环。
 
 预警内容固定包含五要素：
 1. 出了什么错（what_happened）
@@ -7,7 +7,7 @@
 4. 时间（occurred_at，精确到秒）
 5. 位置（location，模块/阶段/会话）
 
-预警通过统一流水线发给管理员（``WUWA_ADMIN_USER_IDS``），走
+预警通过统一流水线发给管理员（``BOT_ADMIN_USER_IDS``），走
 ``SendRequest -> DeliveryReceipt -> AuditRecord``，不绕过审计。
 控制台模式下直接打印。
 """

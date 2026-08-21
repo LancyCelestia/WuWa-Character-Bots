@@ -1,4 +1,4 @@
-import json
+﻿import json
 
 from plugins.wuwa_unified_runtime.capabilities.runtime_admin import (
     build_alert_check_result,
@@ -31,33 +31,33 @@ from plugins.wuwa_unified_runtime.runtime.settings import (
 def test_settings_store_set_get_reset_persists(tmp_path):
     store = RuntimeSettingsStore(tmp_path / "settings.json")
 
-    assert store.set_override("WUWA_CHAT_TEMPERATURE", "0.4") == 0.4
-    assert store.get_or("WUWA_CHAT_TEMPERATURE", None) == 0.4
-    assert store.list_overrides() == {"WUWA_CHAT_TEMPERATURE": 0.4}
+    assert store.set_override("BOT_CHAT_TEMPERATURE", "0.4") == 0.4
+    assert store.get_or("BOT_CHAT_TEMPERATURE", None) == 0.4
+    assert store.list_overrides() == {"BOT_CHAT_TEMPERATURE": 0.4}
 
     reloaded = RuntimeSettingsStore(tmp_path / "settings.json")
-    assert reloaded.get_or("WUWA_CHAT_TEMPERATURE", None) == 0.4
+    assert reloaded.get_or("BOT_CHAT_TEMPERATURE", None) == 0.4
     assert reloaded.reset_override() == 1
-    assert reloaded.get_or("WUWA_CHAT_TEMPERATURE", None) is None
+    assert reloaded.get_or("BOT_CHAT_TEMPERATURE", None) is None
 
 
 def test_settings_store_rejects_unknown_and_invalid_values(tmp_path):
     store = RuntimeSettingsStore(tmp_path / "settings.json")
 
     try:
-        store.set_override("WUWA_CHAT_API_KEY", "sk-xxx")
+        store.set_override("BOT_CHAT_API_KEY", "sk-xxx")
     except ValueError as exc:
         assert "不支持" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("expected ValueError for unknown key")
 
     try:
-        store.set_override("WUWA_CHAT_TEMPERATURE", "9.9")
+        store.set_override("BOT_CHAT_TEMPERATURE", "9.9")
     except ValueError as exc:
         assert "0.0-2.0" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("expected ValueError for invalid range")
-    assert "WUWA_CHAT_API_KEY" not in SETTABLE_KEYS
+    assert "BOT_CHAT_API_KEY" not in SETTABLE_KEYS
 
 
 def test_settings_store_nicknames_and_interactions(tmp_path):
@@ -99,10 +99,10 @@ def test_runtime_admin_result_requires_admin(tmp_path):
         config,
         request_id="req_admin",
         actor_roles=["admin", "user"],
-        command_text="set WUWA_CHAT_TEMPERATURE 0.3",
+        command_text="set BOT_CHAT_TEMPERATURE 0.3",
     )
     assert "0.3" in allowed.body
-    assert manager.get("default").get_or("WUWA_CHAT_TEMPERATURE", None) == 0.3
+    assert manager.get("default").get_or("BOT_CHAT_TEMPERATURE", None) == 0.3
 
 
 def test_runtime_admin_targets_other_instance(tmp_path):

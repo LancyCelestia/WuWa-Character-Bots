@@ -1,4 +1,4 @@
-from plugins.wuwa_unified_runtime.capabilities.chat import (
+﻿from plugins.wuwa_unified_runtime.capabilities.chat import (
     build_chat_capability,
     build_chat_prompt,
     build_chat_prompt_with_diagnostics,
@@ -1346,6 +1346,6 @@ def test_chat_capability_blocks_empty_persona_preflight_without_calling_llm():
 
         assert provider.calls == 0
         assert "未读取到可用人格材料" in result.body
-        assert "WUWA_PERSONA_FILES" in result.body
+        assert "BOT_PERSONA_FILES" in result.body
         assert "context_error" in result.audit_tags
         assert f"context_error:{error_kind}" in result.audit_tags

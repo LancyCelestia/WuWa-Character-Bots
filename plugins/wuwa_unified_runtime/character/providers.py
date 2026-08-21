@@ -23,6 +23,7 @@ from .history import (
     build_conversation_history_provider,
 )
 from .memory import MemoryProvider, NullMemoryProvider, build_memory_provider
+from .persona_set import AltPersonaSpec, PersonaSelector, build_alt_personas
 from .relationship import (
     RelationshipProvider,
     NullRelationshipProvider,
@@ -119,6 +120,10 @@ class FileCharacterContextProvider:
         shared_group_provider: SharedGroupContextProvider | None = None,
         action_brackets: bool = True,
         action_brackets_provider: object | None = None,
+        persona_selector: PersonaSelector | None = None,
+        persona_override_provider: object | None = None,
+        persona_weights_provider: object | None = None,
+        persona_rng: object | None = None,
     ) -> None:
         self.persona_profile_id = persona_profile_id
         self.persona_display_name = persona_display_name
@@ -150,6 +155,31 @@ class FileCharacterContextProvider:
         )
         self.action_brackets = bool(action_brackets)
         self.action_brackets_provider = action_brackets_provider
+        self.persona_selector = persona_selector or PersonaSelector({})
+        self.persona_override_provider = persona_override_provider
+        self.persona_weights_provider = persona_weights_provider
+        self.persona_rng = persona_rng
+
+    def _persona_override(self) -> str:
+        if callable(self.persona_override_provider):
+            try:
+                return str(self.persona_override_provider()).strip()
+            except Exception:
+                return ""
+        return ""
+
+    def _persona_weights(self) -> dict[str, float]:
+        if callable(self.persona_weights_provider):
+            try:
+                resolved = self.persona_weights_provider()
+                if isinstance(resolved, dict):
+                    return {
+                        str(key): float(value)
+                        for key, value in resolved.items()
+                    }
+            except Exception:
+                return {}
+        return {}
 
     def _action_brackets_enabled(self) -> bool:
         if callable(self.action_brackets_provider):
@@ -170,11 +200,33 @@ class FileCharacterContextProvider:
         bot_id: str = "unknown",
         group_id: str = "",
     ) -> ContextBundle:
-        persona_text = "\n".join(load_character_document(path) for path in self.persona_files)
+        emotion_signals = self.emotion_provider.analyze(
+            request_id=request_id,
+            sender_id=sender_id,
+            session_id=session_id,
+            query_text=query_text,
+        )
+        active_persona = self.persona_selector.select(
+            emotions=[signal.emotion_label for signal in emotion_signals],
+            override=self._persona_override(),
+            weights=self._persona_weights(),
+            rng=self.persona_rng,
+        )
+        if active_persona is not None:
+            persona_profile_id = active_persona.profile_id
+            persona_display_name = active_persona.display_name
+            persona_files = [Path(path).expanduser() for path in active_persona.files]
+        else:
+            persona_profile_id = self.persona_profile_id
+            persona_display_name = self.persona_display_name
+            persona_files = self.persona_files
+        persona_text = "\n".join(
+            load_character_document(path) for path in persona_files
+        )
         persona = _build_persona_profile(
-            profile_id=self.persona_profile_id,
+            profile_id=persona_profile_id,
             version=self.persona_version,
-            display_name=self.persona_display_name,
+            display_name=persona_display_name,
             persona_text=persona_text,
         )
         relationship = self.relationship_provider.load(
@@ -187,7 +239,7 @@ class FileCharacterContextProvider:
             relationship,
         )
         tone = ToneProfile(
-            profile_id=self.persona_profile_id,
+            profile_id=persona_profile_id,
             mode=self.tone_mode,
             voice=self.tone_voice,
             warmth=tone_warmth,
@@ -221,12 +273,6 @@ class FileCharacterContextProvider:
             max_turns=self.history_max_turns,
             max_chars=self.history_max_chars,
         )
-        emotion_signals = self.emotion_provider.analyze(
-            request_id=request_id,
-            sender_id=sender_id,
-            session_id=session_id,
-            query_text=query_text,
-        )
         trend_context = self.trend_provider.load(request_id=request_id)
         temporal_context = self.temporal_provider.snapshot(request_id=request_id)
         glossary_context = self.glossary_provider.load(request_id=request_id)
@@ -256,6 +302,7 @@ class FileCharacterContextProvider:
             glossary_context=glossary_context,
             relationship_context=relationship,
             shared_group_context=shared_group_context,
+            active_persona_id=persona_profile_id,
         )
 
 
@@ -268,11 +315,13 @@ def build_character_context_provider(
 ) -> CharacterContextProvider:
     action_brackets_provider: object | None = None
     interaction_counts_provider: object | None = None
+    persona_override_provider: object | None = None
+    persona_weights_provider: object | None = None
     if runtime_settings is not None:
         def _runtime_action_brackets() -> bool:
             return bool(
                 getattr(runtime_settings, "get_or")(
-                    "WUWA_PERSONA_ACTION_BRACKETS",
+                    "BOT_PERSONA_ACTION_BRACKETS",
                     bool(getattr(config, "wuwa_persona_action_brackets", True)),
                 )
             )
@@ -288,8 +337,22 @@ def build_character_context_provider(
             except Exception:
                 return {}
 
+        def _persona_override() -> str:
+            try:
+                return str(getattr(runtime_settings, "get_persona_override")())
+            except Exception:
+                return ""
+
+        def _persona_weights() -> dict[str, float]:
+            try:
+                return dict(getattr(runtime_settings, "get_persona_weights")())
+            except Exception:
+                return {}
+
         action_brackets_provider = _runtime_action_brackets
         interaction_counts_provider = _interaction_counts
+        persona_override_provider = _persona_override
+        persona_weights_provider = _persona_weights
     return FileCharacterContextProvider(
         persona_profile_id=str(getattr(config, "wuwa_persona_profile_id", "default")),
         persona_display_name=str(getattr(config, "wuwa_persona_display_name", "报存")),
@@ -326,6 +389,9 @@ def build_character_context_provider(
         ),
         action_brackets=bool(getattr(config, "wuwa_persona_action_brackets", True)),
         action_brackets_provider=action_brackets_provider,
+        persona_selector=PersonaSelector(build_alt_personas(config)),
+        persona_override_provider=persona_override_provider,
+        persona_weights_provider=persona_weights_provider,
     )
 
 

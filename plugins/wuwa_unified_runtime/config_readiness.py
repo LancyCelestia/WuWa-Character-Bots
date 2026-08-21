@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import math
 from pathlib import Path
@@ -359,37 +359,37 @@ def _llm_next_action(*, ready_for_real_llm: bool, errors: list[str]) -> str:
 def llm_readiness_fix_hints(*, errors: list[str], warnings: list[str]) -> list[str]:
     reasons = errors if errors else warnings
     hint_by_reason = {
-        "chat_disabled": "WUWA_CHAT_ENABLED=true",
-        "persona_files_empty": "WUWA_PERSONA_FILES=<existing_md_txt_docx_paths>",
-        "persona_file_missing": "WUWA_PERSONA_FILES=<existing_md_txt_docx_paths>",
-        "persona_file_unsupported": "WUWA_PERSONA_FILES=<existing_md_txt_docx_paths>",
-        "persona_file_unreadable": "WUWA_PERSONA_FILES=<existing_md_txt_docx_paths>",
-        "persona_file_empty": "WUWA_PERSONA_FILES=<existing_md_txt_docx_paths>",
+        "chat_disabled": "BOT_CHAT_ENABLED=true",
+        "persona_files_empty": "BOT_PERSONA_FILES=<existing_md_txt_docx_paths>",
+        "persona_file_missing": "BOT_PERSONA_FILES=<existing_md_txt_docx_paths>",
+        "persona_file_unsupported": "BOT_PERSONA_FILES=<existing_md_txt_docx_paths>",
+        "persona_file_unreadable": "BOT_PERSONA_FILES=<existing_md_txt_docx_paths>",
+        "persona_file_empty": "BOT_PERSONA_FILES=<existing_md_txt_docx_paths>",
         "knowledge_file_missing": (
-            "WUWA_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
+            "BOT_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
         ),
         "knowledge_file_unsupported": (
-            "WUWA_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
+            "BOT_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
         ),
         "knowledge_file_unreadable": (
-            "WUWA_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
+            "BOT_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
         ),
         "knowledge_files_empty": (
-            "WUWA_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
+            "BOT_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
         ),
         "knowledge_file_empty": (
-            "WUWA_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
+            "BOT_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
         ),
-        "provider_not_real": "WUWA_CHAT_PROVIDER=openai_compatible",
-        "chat_provider_unsupported": "WUWA_CHAT_PROVIDER=openai_compatible",
-        "openai_api_key_missing": "WUWA_CHAT_API_KEY=<real_api_key>",
-        "openai_model_missing": "WUWA_CHAT_MODEL=<model_name>",
-        "openai_base_url_missing": "WUWA_CHAT_BASE_URL=<openai_compatible_base_url>",
-        "openai_base_url_invalid": "WUWA_CHAT_BASE_URL=<openai_compatible_base_url>",
-        "openai_base_url_unsafe": "remove_credentials_from_WUWA_CHAT_BASE_URL",
-        "openai_temperature_invalid": "WUWA_CHAT_TEMPERATURE=0.0..2.0",
-        "openai_max_tokens_invalid": "WUWA_CHAT_MAX_TOKENS>=1",
-        "openai_timeout_seconds_invalid": "WUWA_CHAT_TIMEOUT_SECONDS>0",
+        "provider_not_real": "BOT_CHAT_PROVIDER=openai_compatible",
+        "chat_provider_unsupported": "BOT_CHAT_PROVIDER=openai_compatible",
+        "openai_api_key_missing": "BOT_CHAT_API_KEY=<real_api_key>",
+        "openai_model_missing": "BOT_CHAT_MODEL=<model_name>",
+        "openai_base_url_missing": "BOT_CHAT_BASE_URL=<openai_compatible_base_url>",
+        "openai_base_url_invalid": "BOT_CHAT_BASE_URL=<openai_compatible_base_url>",
+        "openai_base_url_unsafe": "remove_credentials_from_BOT_CHAT_BASE_URL",
+        "openai_temperature_invalid": "BOT_CHAT_TEMPERATURE=0.0..2.0",
+        "openai_max_tokens_invalid": "BOT_CHAT_MAX_TOKENS>=1",
+        "openai_timeout_seconds_invalid": "BOT_CHAT_TIMEOUT_SECONDS>0",
     }
     return _dedupe_reasons(
         [hint_by_reason[reason] for reason in reasons if reason in hint_by_reason]

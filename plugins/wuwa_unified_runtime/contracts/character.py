@@ -221,6 +221,7 @@ class ContextBundle(StrictBaseModel):
     relationship_context: RelationshipContext | None = None
     shared_group_context: SharedGroupContext | None = None
     meme_search_context: MemeSearchContext | None = None
+    active_persona_id: str = "default"
     context_budget: int = 2048
     privacy_level: PrivacyLevel = PrivacyLevel.PERSONAL
     risk_level: RiskLevel = RiskLevel.LOW

@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import subprocess
 import sys
 
@@ -120,9 +120,9 @@ def test_config_smoke_rejects_invalid_llm_generation_parameters(tmp_path):
         "openai_timeout_seconds_invalid",
     ]
     assert result["llm_fix_hints"] == [
-        "WUWA_CHAT_TEMPERATURE=0.0..2.0",
-        "WUWA_CHAT_MAX_TOKENS>=1",
-        "WUWA_CHAT_TIMEOUT_SECONDS>0",
+        "BOT_CHAT_TEMPERATURE=0.0..2.0",
+        "BOT_CHAT_MAX_TOKENS>=1",
+        "BOT_CHAT_TIMEOUT_SECONDS>0",
     ]
     serialized = repr(result)
     assert "sk-live-secret" not in serialized
@@ -208,12 +208,12 @@ def test_config_smoke_reports_actionable_errors_without_leaking_key(tmp_path):
     assert result["persona_unsupported"] == 1
     assert result["chat_api_key"] == "missing"
     assert result["llm_fix_hints"] == [
-        "WUWA_CHAT_ENABLED=true",
-        "WUWA_PERSONA_FILES=<existing_md_txt_docx_paths>",
-        "WUWA_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>",
-        "WUWA_CHAT_API_KEY=<real_api_key>",
-        "WUWA_CHAT_MODEL=<model_name>",
-        "WUWA_CHAT_BASE_URL=<openai_compatible_base_url>",
+        "BOT_CHAT_ENABLED=true",
+        "BOT_PERSONA_FILES=<existing_md_txt_docx_paths>",
+        "BOT_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>",
+        "BOT_CHAT_API_KEY=<real_api_key>",
+        "BOT_CHAT_MODEL=<model_name>",
+        "BOT_CHAT_BASE_URL=<openai_compatible_base_url>",
     ]
     assert "your-api-key" not in result["public_message"]
 
@@ -361,8 +361,8 @@ def test_config_smoke_warns_for_static_provider_but_keeps_local_pipeline_ok(tmp_
         "knowledge_files_empty",
     ]
     assert result["llm_fix_hints"] == [
-        "WUWA_CHAT_PROVIDER=openai_compatible",
-        "WUWA_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>",
+        "BOT_CHAT_PROVIDER=openai_compatible",
+        "BOT_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>",
     ]
     assert "provider_not_real" in result["warnings"]
     assert "knowledge_files_empty" in result["warnings"]
@@ -376,10 +376,10 @@ def test_smoke_cli_prints_config_diagnostics(monkeypatch, capsys, tmp_path):
     env_file.write_text(
         "\n".join(
             [
-                "WUWA_PERSONA_PROFILE_ID=shorekeeper",
-                "WUWA_PERSONA_DISPLAY_NAME=守岸人",
-                f"WUWA_PERSONA_FILES={persona_file.as_posix()}",
-                "WUWA_CHAT_PROVIDER=static",
+                "BOT_PERSONA_PROFILE_ID=shorekeeper",
+                "BOT_PERSONA_DISPLAY_NAME=守岸人",
+                f"BOT_PERSONA_FILES={persona_file.as_posix()}",
+                "BOT_CHAT_PROVIDER=static",
             ]
         ),
         encoding="utf-8",
@@ -395,8 +395,8 @@ def test_smoke_cli_prints_config_diagnostics(monkeypatch, capsys, tmp_path):
     assert "llm_readiness_status=local_only" in output
     assert "llm_readiness_reasons=provider_not_real,knowledge_files_empty" in output
     assert (
-        "llm_fix_hints=WUWA_CHAT_PROVIDER=openai_compatible,"
-        "WUWA_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
+        "llm_fix_hints=BOT_CHAT_PROVIDER=openai_compatible,"
+        "BOT_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
     ) in output
     assert "llm_next_action=configure_real_llm" in output
     assert "chat_provider=static" in output

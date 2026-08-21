@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import threading
 import importlib
 import sys
@@ -150,54 +150,54 @@ def test_nonebot_handler_registration_skips_when_driver_is_not_initialized(monke
 def test_env_example_documents_persona_knowledge_and_llm_settings():
     text = Path(".env.example").read_text(encoding="utf-8")
 
-    assert "WUWA_PERSONA_FILES=" in text
-    assert "WUWA_KNOWLEDGE_FILES=" in text
-    assert "WUWA_ADMIN_USER_IDS=" in text
-    assert "WUWA_ENTERPRISE_USER_IDS=" in text
-    assert "WUWA_TRUSTED_USER_IDS=" in text
-    assert "WUWA_BLOCKED_USER_IDS=" in text
-    assert "WUWA_MEMORY_ENABLED=" in text
-    assert "WUWA_MEMORY_DB_PATH=" in text
-    assert "WUWA_HISTORY_ENABLED=" in text
-    assert "WUWA_HISTORY_DB_PATH=" in text
-    assert "WUWA_HISTORY_MAX_ITEMS=" in text
-    assert "WUWA_DIAGNOSTICS_ENABLED=" in text
-    assert "WUWA_DIAGNOSTICS_DB_PATH=" in text
-    assert "WUWA_DIAGNOSTICS_MAX_ITEMS=" in text
-    assert "WUWA_AUDIT_ENABLED=" in text
-    assert "WUWA_AUDIT_DB_PATH=" in text
-    assert "WUWA_AUDIT_MAX_ITEMS=" in text
-    assert "WUWA_RECEIPTS_ENABLED=" in text
-    assert "WUWA_RECEIPTS_DB_PATH=" in text
-    assert "WUWA_RECEIPTS_MAX_ITEMS=" in text
-    assert "WUWA_SEND_QUEUE_ENABLED=" in text
-    assert "WUWA_SEND_QUEUE_DB_PATH=" in text
-    assert "WUWA_SEND_QUEUE_MAX_ITEMS=" in text
-    assert "WUWA_SEND_QUEUE_MAX_ATTEMPTS=" in text
-    assert "WUWA_SEND_QUEUE_RETRY_BASE_SECONDS=" in text
-    assert "WUWA_SEND_QUEUE_RETRY_MAX_SECONDS=" in text
-    assert "WUWA_SEND_QUEUE_WORKER_ENABLED=" in text
-    assert "WUWA_SEND_QUEUE_WORKER_INTERVAL_SECONDS=" in text
-    assert "WUWA_SEND_QUEUE_WORKER_BATCH_SIZE=" in text
-    assert "WUWA_EMOTION_ENABLED=" in text
-    assert "WUWA_EMOTION_MAX_SIGNALS=" in text
-    assert "WUWA_CHAT_PROVIDER=" in text
-    assert "WUWA_CHAT_TIMEOUT_SECONDS=" in text
-    assert "WUWA_REPLY_MAX_CHARS_PER_MESSAGE=" in text
-    assert "WUWA_RATE_LIMIT_ENABLED=" in text
-    assert "WUWA_RATE_LIMIT_WINDOW_SECONDS=" in text
-    assert "WUWA_RATE_LIMIT_CHAT_GLOBAL_MAX_REQUESTS=" in text
-    assert "WUWA_RATE_LIMIT_CHAT_SESSION_MAX_REQUESTS=" in text
-    assert "WUWA_RATE_LIMIT_CHAT_SENDER_MAX_REQUESTS=" in text
-    assert "WUWA_RATE_LIMIT_TARGET_MIN_INTERVAL_SECONDS=" in text
-    assert "WUWA_RATE_LIMIT_BYPASS_ROLES=" in text
-    assert "WUWA_RATE_LIMIT_DB_PATH=" in text
-    assert "WUWA_QUIET_HOURS_ENABLED=" in text
-    assert "WUWA_QUIET_HOURS_START=" in text
-    assert "WUWA_QUIET_HOURS_END=" in text
-    assert "WUWA_QUIET_HOURS_TIMEZONE=" in text
-    assert "WUWA_QUIET_HOURS_SESSION_TYPES=" in text
-    assert "WUWA_QUIET_HOURS_BYPASS_ROLES=" in text
+    assert "BOT_PERSONA_FILES=" in text
+    assert "BOT_KNOWLEDGE_FILES=" in text
+    assert "BOT_ADMIN_USER_IDS=" in text
+    assert "BOT_ENTERPRISE_USER_IDS=" in text
+    assert "BOT_TRUSTED_USER_IDS=" in text
+    assert "BOT_BLOCKED_USER_IDS=" in text
+    assert "BOT_MEMORY_ENABLED=" in text
+    assert "BOT_MEMORY_DB_PATH=" in text
+    assert "BOT_HISTORY_ENABLED=" in text
+    assert "BOT_HISTORY_DB_PATH=" in text
+    assert "BOT_HISTORY_MAX_ITEMS=" in text
+    assert "BOT_DIAGNOSTICS_ENABLED=" in text
+    assert "BOT_DIAGNOSTICS_DB_PATH=" in text
+    assert "BOT_DIAGNOSTICS_MAX_ITEMS=" in text
+    assert "BOT_AUDIT_ENABLED=" in text
+    assert "BOT_AUDIT_DB_PATH=" in text
+    assert "BOT_AUDIT_MAX_ITEMS=" in text
+    assert "BOT_RECEIPTS_ENABLED=" in text
+    assert "BOT_RECEIPTS_DB_PATH=" in text
+    assert "BOT_RECEIPTS_MAX_ITEMS=" in text
+    assert "BOT_SEND_QUEUE_ENABLED=" in text
+    assert "BOT_SEND_QUEUE_DB_PATH=" in text
+    assert "BOT_SEND_QUEUE_MAX_ITEMS=" in text
+    assert "BOT_SEND_QUEUE_MAX_ATTEMPTS=" in text
+    assert "BOT_SEND_QUEUE_RETRY_BASE_SECONDS=" in text
+    assert "BOT_SEND_QUEUE_RETRY_MAX_SECONDS=" in text
+    assert "BOT_SEND_QUEUE_WORKER_ENABLED=" in text
+    assert "BOT_SEND_QUEUE_WORKER_INTERVAL_SECONDS=" in text
+    assert "BOT_SEND_QUEUE_WORKER_BATCH_SIZE=" in text
+    assert "BOT_EMOTION_ENABLED=" in text
+    assert "BOT_EMOTION_MAX_SIGNALS=" in text
+    assert "BOT_CHAT_PROVIDER=" in text
+    assert "BOT_CHAT_TIMEOUT_SECONDS=" in text
+    assert "BOT_REPLY_MAX_CHARS_PER_MESSAGE=" in text
+    assert "BOT_RATE_LIMIT_ENABLED=" in text
+    assert "BOT_RATE_LIMIT_WINDOW_SECONDS=" in text
+    assert "BOT_RATE_LIMIT_CHAT_GLOBAL_MAX_REQUESTS=" in text
+    assert "BOT_RATE_LIMIT_CHAT_SESSION_MAX_REQUESTS=" in text
+    assert "BOT_RATE_LIMIT_CHAT_SENDER_MAX_REQUESTS=" in text
+    assert "BOT_RATE_LIMIT_TARGET_MIN_INTERVAL_SECONDS=" in text
+    assert "BOT_RATE_LIMIT_BYPASS_ROLES=" in text
+    assert "BOT_RATE_LIMIT_DB_PATH=" in text
+    assert "BOT_QUIET_HOURS_ENABLED=" in text
+    assert "BOT_QUIET_HOURS_START=" in text
+    assert "BOT_QUIET_HOURS_END=" in text
+    assert "BOT_QUIET_HOURS_TIMEZONE=" in text
+    assert "BOT_QUIET_HOURS_SESSION_TYPES=" in text
+    assert "BOT_QUIET_HOURS_BYPASS_ROLES=" in text
     assert "守岸人" in text
 
 
@@ -296,13 +296,13 @@ def test_chat_smoke_loads_env_file_with_unicode_paths(tmp_path):
     env_file.write_text(
         "\n".join(
             [
-                "WUWA_PERSONA_PROFILE_ID=shorekeeper",
-                "WUWA_PERSONA_DISPLAY_NAME=守岸人",
-                f"WUWA_PERSONA_FILES={persona_file.as_posix()}",
-                f"WUWA_KNOWLEDGE_FILES={knowledge_file.as_posix()}",
-                "WUWA_KNOWLEDGE_MAX_CHUNKS=1",
-                "WUWA_KNOWLEDGE_CHUNK_CHARS=200",
-                "WUWA_CHAT_PROVIDER=static",
+                "BOT_PERSONA_PROFILE_ID=shorekeeper",
+                "BOT_PERSONA_DISPLAY_NAME=守岸人",
+                f"BOT_PERSONA_FILES={persona_file.as_posix()}",
+                f"BOT_KNOWLEDGE_FILES={knowledge_file.as_posix()}",
+                "BOT_KNOWLEDGE_MAX_CHUNKS=1",
+                "BOT_KNOWLEDGE_CHUNK_CHARS=200",
+                "BOT_CHAT_PROVIDER=static",
             ]
         ),
         encoding="utf-8",
@@ -330,11 +330,11 @@ def test_chat_smoke_loads_docx_persona_and_knowledge_paths(tmp_path):
     env_file.write_text(
         "\n".join(
             [
-                "WUWA_PERSONA_PROFILE_ID=shorekeeper",
-                "WUWA_PERSONA_DISPLAY_NAME=守岸人",
-                f"WUWA_PERSONA_FILES={persona_file.as_posix()}",
-                f"WUWA_KNOWLEDGE_FILES={knowledge_file.as_posix()}",
-                "WUWA_CHAT_PROVIDER=static",
+                "BOT_PERSONA_PROFILE_ID=shorekeeper",
+                "BOT_PERSONA_DISPLAY_NAME=守岸人",
+                f"BOT_PERSONA_FILES={persona_file.as_posix()}",
+                f"BOT_KNOWLEDGE_FILES={knowledge_file.as_posix()}",
+                "BOT_CHAT_PROVIDER=static",
             ]
         ),
         encoding="utf-8",
@@ -353,11 +353,11 @@ def test_chat_smoke_prefers_real_dotenv_over_example(tmp_path, monkeypatch):
     from plugins.wuwa_unified_runtime.smoke import load_smoke_config
 
     (tmp_path / ".env.example").write_text(
-        "WUWA_PERSONA_PROFILE_ID=example\nWUWA_PERSONA_DISPLAY_NAME=示例\n",
+        "BOT_PERSONA_PROFILE_ID=example\nBOT_PERSONA_DISPLAY_NAME=示例\n",
         encoding="utf-8",
     )
     (tmp_path / ".env").write_text(
-        "WUWA_PERSONA_PROFILE_ID=real\nWUWA_PERSONA_DISPLAY_NAME=真实\n",
+        "BOT_PERSONA_PROFILE_ID=real\nBOT_PERSONA_DISPLAY_NAME=真实\n",
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)

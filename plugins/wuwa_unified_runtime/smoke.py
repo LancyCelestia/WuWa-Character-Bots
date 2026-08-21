@@ -34,7 +34,7 @@ from plugins.wuwa_unified_runtime.config_readiness import (
     run_config_smoke,
     safe_openai_endpoint_url,
 )
-from plugins.wuwa_unified_runtime.config import Config
+from plugins.wuwa_unified_runtime.config import Config, translate_env_keys
 from plugins.wuwa_unified_runtime.contracts import (
     AuditRecord,
     DeliveryReceipt,
@@ -92,14 +92,14 @@ from plugins.wuwa_unified_runtime.sender.onebot import (
     send_onebot_v11,
 )
 
-_STARTUP_SMOKE_PREFIX = "__WUWA_STARTUP_SMOKE__"
+_STARTUP_SMOKE_PREFIX = "__BOT_STARTUP_SMOKE__"
 _STARTUP_SMOKE_CHILD_CODE = r"""
 from __future__ import annotations
 
 import json
 import sys
 
-PREFIX = "__WUWA_STARTUP_SMOKE__"
+PREFIX = "__BOT_STARTUP_SMOKE__"
 
 result = {
     "ok": False,
@@ -195,7 +195,7 @@ def load_smoke_config(env_file: str | Path | None = None) -> Config:
                 continue
             key, value = line.split("=", 1)
             values[key.strip().lower()] = value.strip().strip('"').strip("'")
-    return Config.model_validate(values)
+    return Config.model_validate(translate_env_keys(values))
 
 
 def _resolve_smoke_env_file(env_file: str | Path | None) -> Path:
@@ -992,7 +992,7 @@ def _persona_public_message(persona_status: str) -> str:
         return "人格自检通过：人格材料、语气参数和安全来源摘要已就绪；未调用 LLM，也未发送消息。"
     if persona_status == "weak":
         return "人格自检通过但材料偏薄：建议补充身份、边界、语气和禁止行为后再接真实 LLM。"
-    return "人格自检未通过：请先修复 WUWA_PERSONA_FILES 指向的可读取人格材料。"
+    return "人格自检未通过：请先修复 BOT_PERSONA_FILES 指向的可读取人格材料。"
 
 
 def _build_llm_provider(config: Config) -> LLMProvider:
@@ -1545,7 +1545,7 @@ def run_llm_smoke(
         return {
             **base_result,
             "error_kind": "provider_not_configured",
-            "public_message": "LLM 诊断未执行：当前 provider 不是真实模型连接，请配置 WUWA_CHAT_PROVIDER=openai_compatible。",
+            "public_message": "LLM 诊断未执行：当前 provider 不是真实模型连接，请配置 BOT_CHAT_PROVIDER=openai_compatible。",
             "private_debug": f"wuwa_chat_provider={provider_name}",
         }
 
@@ -1621,22 +1621,22 @@ def run_llm_setup(config: Config) -> dict[str, Any]:
         setup_status = "needs_env_edit"
 
     required_env_keys = [
-        "WUWA_CHAT_PROVIDER",
-        "WUWA_CHAT_MODEL",
-        "WUWA_CHAT_API_KEY",
-        "WUWA_CHAT_BASE_URL",
-        "WUWA_CHAT_TEMPERATURE",
-        "WUWA_CHAT_MAX_TOKENS",
-        "WUWA_CHAT_TIMEOUT_SECONDS",
+        "BOT_CHAT_PROVIDER",
+        "BOT_CHAT_MODEL",
+        "BOT_CHAT_API_KEY",
+        "BOT_CHAT_BASE_URL",
+        "BOT_CHAT_TEMPERATURE",
+        "BOT_CHAT_MAX_TOKENS",
+        "BOT_CHAT_TIMEOUT_SECONDS",
     ]
     safe_env_template = [
-        "WUWA_CHAT_PROVIDER=openai_compatible",
-        "WUWA_CHAT_MODEL=<model_name>",
-        "WUWA_CHAT_API_KEY=<real_api_key>",
-        "WUWA_CHAT_BASE_URL=<openai_compatible_base_url>",
-        "WUWA_CHAT_TEMPERATURE=0.7",
-        "WUWA_CHAT_MAX_TOKENS=512",
-        "WUWA_CHAT_TIMEOUT_SECONDS=30",
+        "BOT_CHAT_PROVIDER=openai_compatible",
+        "BOT_CHAT_MODEL=<model_name>",
+        "BOT_CHAT_API_KEY=<real_api_key>",
+        "BOT_CHAT_BASE_URL=<openai_compatible_base_url>",
+        "BOT_CHAT_TEMPERATURE=0.7",
+        "BOT_CHAT_MAX_TOKENS=512",
+        "BOT_CHAT_TIMEOUT_SECONDS=30",
     ]
     return {
         "ok": setup_status != "blocked",
@@ -1665,16 +1665,16 @@ def run_llm_setup(config: Config) -> dict[str, Any]:
 
 def _llm_setup_missing_env_keys(reasons: list[str]) -> list[str]:
     key_by_reason = {
-        "provider_not_real": "WUWA_CHAT_PROVIDER",
-        "chat_provider_unsupported": "WUWA_CHAT_PROVIDER",
-        "openai_model_missing": "WUWA_CHAT_MODEL",
-        "openai_api_key_missing": "WUWA_CHAT_API_KEY",
-        "openai_base_url_missing": "WUWA_CHAT_BASE_URL",
-        "openai_base_url_invalid": "WUWA_CHAT_BASE_URL",
-        "openai_base_url_unsafe": "WUWA_CHAT_BASE_URL",
-        "openai_temperature_invalid": "WUWA_CHAT_TEMPERATURE",
-        "openai_max_tokens_invalid": "WUWA_CHAT_MAX_TOKENS",
-        "openai_timeout_seconds_invalid": "WUWA_CHAT_TIMEOUT_SECONDS",
+        "provider_not_real": "BOT_CHAT_PROVIDER",
+        "chat_provider_unsupported": "BOT_CHAT_PROVIDER",
+        "openai_model_missing": "BOT_CHAT_MODEL",
+        "openai_api_key_missing": "BOT_CHAT_API_KEY",
+        "openai_base_url_missing": "BOT_CHAT_BASE_URL",
+        "openai_base_url_invalid": "BOT_CHAT_BASE_URL",
+        "openai_base_url_unsafe": "BOT_CHAT_BASE_URL",
+        "openai_temperature_invalid": "BOT_CHAT_TEMPERATURE",
+        "openai_max_tokens_invalid": "BOT_CHAT_MAX_TOKENS",
+        "openai_timeout_seconds_invalid": "BOT_CHAT_TIMEOUT_SECONDS",
     }
     missing: list[str] = []
     seen: set[str] = set()
@@ -1717,7 +1717,7 @@ def _llm_setup_manual_steps(setup_status: str) -> list[str]:
         ]
     return [
         "复制安全占位模板到 .env 并替换模型服务配置。",
-        "API key 只放在 WUWA_CHAT_API_KEY，不要放进 base_url。",
+        "API key 只放在 BOT_CHAT_API_KEY，不要放进 base_url。",
         "配置后先跑 config-smoke，再跑 llm-smoke。",
     ]
 

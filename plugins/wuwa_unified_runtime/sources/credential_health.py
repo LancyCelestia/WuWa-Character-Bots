@@ -1,4 +1,4 @@
-"""凭据健康检查：cookie 过期预警 + 可选在线探测。
+﻿"""凭据健康检查：cookie 过期预警 + 可选在线探测。
 
 需求：开机时以及固定时间检查 cookie 是否过期、能否正常使用；
 不能用时发出"重新登录获取 cookie"预警。
@@ -9,7 +9,7 @@
 - 输出只含状态和脱敏说明，绝不包含 cookie 值。
 
 配合 APScheduler 的定时任务在 NoneBot 入口注册（配置
-``WUWA_CREDENTIAL_CHECK_ENABLED=true`` 与检查间隔）。
+``BOT_CREDENTIAL_CHECK_ENABLED=true`` 与检查间隔）。
 """
 
 from __future__ import annotations

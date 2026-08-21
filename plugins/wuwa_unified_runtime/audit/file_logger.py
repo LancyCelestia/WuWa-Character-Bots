@@ -1,12 +1,12 @@
-"""文件审计日志（JSONL，脱敏，自动轮转）。
+﻿"""文件审计日志（JSONL，脱敏，自动轮转）。
 
 配合内存/SQLite 审计仓库使用：``TeeAuditRepository`` 把每条脱敏
 审计记录追加到 JSONL 文件，超过 ``max_bytes`` 时重命名为 ``*.old``
 后重开，保留最近两代文件。文件放在 ``data/``（git 忽略），适合
 不开数据库时也能 ``tail`` 排查。
 
-配置：``WUWA_AUDIT_LOG_FILE``（例如 ``data/wuwa_audit.jsonl``）、
-``WUWA_AUDIT_LOG_MAX_BYTES``（默认 2MB）。
+配置：``BOT_AUDIT_LOG_FILE``（例如 ``data/wuwa_audit.jsonl``）、
+``BOT_AUDIT_LOG_MAX_BYTES``（默认 2MB）。
 """
 
 from __future__ import annotations

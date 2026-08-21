@@ -16,7 +16,7 @@
 交互命令：
 
 - ``/help`` ``/status`` ``/why`` ``/quit`` ``/exit``
-- 昵称别名（配置了 ``WUWA_RUNTIME_PERSONA_NICKNAME`` 后）：
+- 昵称别名（配置了 ``BOT_RUNTIME_PERSONA_NICKNAME`` 后）：
   ``/岸宝帮助``、``/岸宝状态``、``/岸宝为什么`` 等同义。
 
 说明：本入口不连接 NapCat、不发送 QQ；审计和回执留在进程内；
@@ -68,6 +68,7 @@ from plugins.wuwa_unified_runtime.runtime.pipeline import RuntimePipeline
 from plugins.wuwa_unified_runtime.runtime.settings import (
     build_instance_settings_manager,
     build_runtime_settings_store,
+    effective_instance,
 )
 from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
 from plugins.wuwa_unified_runtime.smoke import load_smoke_config
@@ -246,7 +247,7 @@ def _status_summary(config: Config, runtime_settings: Any | None = None) -> str:
         if config.wuwa_weather_enabled
         and config.wuwa_weather_latitude
         and config.wuwa_weather_longitude
-        else "关闭（配置 WUWA_WEATHER_ENABLED + 经纬度后开启）"
+        else "关闭（配置 BOT_WEATHER_ENABLED + 经纬度后开启）"
     )
     nicknames: list[str] = []
     if runtime_settings is not None:
@@ -298,7 +299,7 @@ def _status_summary(config: Config, runtime_settings: Any | None = None) -> str:
 
 def _alias_help_lines(alias_resolver: CommandAliasResolver) -> str:
     if not alias_resolver.nicknames:
-        return "  昵称别名未配置：设置 WUWA_RUNTIME_PERSONA_NICKNAMES 后可用 /<昵称>帮助 等。"
+        return "  昵称别名未配置：设置 BOT_RUNTIME_PERSONA_NICKNAMES 后可用 /<昵称>帮助 等。"
     joined = "、".join(alias_resolver.nicknames)
     return (
         f"  昵称别名（{joined}）："
@@ -372,7 +373,7 @@ def run_once(
 
 def run_interactive(config: Config) -> int:
     settings_manager = build_instance_settings_manager(config)
-    runtime_settings = settings_manager.get(config.wuwa_runtime_instance)
+    runtime_settings = settings_manager.get(effective_instance(config))
     alias_resolver = build_command_alias_resolver(
         config,
         extra_nicknames=runtime_settings.list_nicknames(),
@@ -416,12 +417,16 @@ def run_interactive(config: Config) -> int:
         if command == "/alert" or command.startswith("/alert "):
             print(_run_console_alert(config, command))
             continue
-        if command.startswith("/runtime") or command.startswith("/nickname"):
+        if (
+            command.startswith("/runtime")
+            or command.startswith("/nickname")
+            or command.startswith("/persona")
+        ):
             print(
                 _run_console_runtime_admin(
                     config,
                     settings_manager,
-                    config.wuwa_runtime_instance,
+                    effective_instance(config),
                     raw,
                 )
             )
@@ -522,7 +527,7 @@ def _run_console_runtime_admin(
     )
 
     command_text = raw.strip().lstrip("/")
-    if command_text.startswith("nickname"):
+    if command_text.startswith(("nickname", "persona")):
         command_text = f"runtime {command_text}"
     result = build_runtime_admin_result(
         settings_manager,

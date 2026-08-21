@@ -1,4 +1,4 @@
-# 基础设施设计与 AstrBot 反例复盘
+﻿# 基础设施设计与 AstrBot 反例复盘
 
 本文定义统一 NoneBot 插件的下一阶段基础设施设计，并把旧 AstrBot 插件中的可复用经验与负面案例沉淀成实现约束。
 
@@ -45,8 +45,8 @@ IncomingMessage
 - `plugins/wuwa_unified_runtime/contracts/` 定义运行时、人格、媒体、自动发送契约。
 - `runtime/pipeline.py` 有最小运行时链路。
 - `policy/gate.py` 有群聊被动消息默认观察和 critical 输入阻断。
-- `policy/rate_limit.py` 有调用 LLM 前的窗口限速，按全局、会话和发送者统计聊天回复预算消耗，并可配置同一目标最小回复间隔；命中后不调用 LLM、不创建 `SendRequest`。未配置 DB path 时使用内存，配置 `WUWA_RATE_LIMIT_DB_PATH` 后使用 SQLite 持久窗口和目标间隔记录。
-- `policy/quiet_hours.py` 有调用 LLM 前的安静时间策略，默认关闭；启用后按 `WUWA_QUIET_HOURS_START/END/TIMEZONE` 和 `WUWA_QUIET_HOURS_SESSION_TYPES` 判断是否阻断，默认只影响群聊，`admin` 可绕过。
+- `policy/rate_limit.py` 有调用 LLM 前的窗口限速，按全局、会话和发送者统计聊天回复预算消耗，并可配置同一目标最小回复间隔；命中后不调用 LLM、不创建 `SendRequest`。未配置 DB path 时使用内存，配置 `BOT_RATE_LIMIT_DB_PATH` 后使用 SQLite 持久窗口和目标间隔记录。
+- `policy/quiet_hours.py` 有调用 LLM 前的安静时间策略，默认关闭；启用后按 `BOT_QUIET_HOURS_START/END/TIMEZONE` 和 `BOT_QUIET_HOURS_SESSION_TYPES` 判断是否阻断，默认只影响群聊，`admin` 可绕过。
 - `output/reviewer.py`、`output/renderer.py` 有基础审查和文本渲染。
 - `sender/queue.py` 有进程内队列和可选 SQLite `send_requests` 发送队列，支持持久去重、到期查询、`claim_due()` 租约认领、`find_request(request_id)` 持久请求查找、退避重试、最大尝试次数后的最终失败和安全状态计数；`sender/worker.py` 提供一次性 drain worker，可优先认领到期项、调用注入 transport、记录回执并推进队列状态；`queue-smoke` 使用临时 SQLite 队列和 fake transport 验证 worker 链路，不连接 NapCat；`sender/receipts.py` 已提供内存与 SQLite `delivery_receipts` 回执仓库。
 - `audit/logger.py` 有内存与 SQLite `audit_records` 审计仓库，并在入库前脱敏 token、cookie、authkey、password、secret、api_key、Authorization/Bearer 和 `sk-...` 形态。
@@ -54,7 +54,7 @@ IncomingMessage
 - `capabilities/auto_send/parser.py` 有自动发送 intent draft parser。
 - `security/injection.py` 有首版 `PromptInjectionGuard`，已接入 `wuwa.chat`，用于降权普通提示注入并在调用 LLM 前拦截高危泄露、读文件和脚本执行请求。
 - `scripts/dev.ps1 why-smoke` 有本地决策解释入口，可解释一条输入的 policy、角色、回复预算、限速阻断、安静时间阻断、LLM 状态、发送请求、回执和审计标签。
-- 真实 NoneBot 入口已接入 `/wuwa why [request_id|debug_id]`，可查询当前会话最近一次或指定一次脱敏 `RuntimeDiagnostic`，解释能力、策略、角色、回复预算、限速阻断、安静时间阻断、LLM 状态、发送请求、回执和审计事件。默认使用进程内最近记录；配置 `WUWA_DIAGNOSTICS_ENABLED=true` 后可写入 SQLite `runtime_diagnostics`。
+- 真实 NoneBot 入口已接入 `/wuwa why [request_id|debug_id]`，可查询当前会话最近一次或指定一次脱敏 `RuntimeDiagnostic`，解释能力、策略、角色、回复预算、限速阻断、安静时间阻断、LLM 状态、发送请求、回执和审计事件。默认使用进程内最近记录；配置 `BOT_DIAGNOSTICS_ENABLED=true` 后可写入 SQLite `runtime_diagnostics`。
 - 真实 NoneBot 入口已接入 `/wuwa pause` 和 `/wuwa resume` 进程内软暂停：普通聊天、自动发送预览和非排障能力会在 policy 前被阻断；管理员诊断、状态和恢复命令仍可用，避免事故排查时失去控制入口。
 
 当前最大缺口：
@@ -697,7 +697,7 @@ powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 why-smoke -Message "今
 /wuwa why <debug_id>
 ```
 
-它读取最近真实运行产生的脱敏 `RuntimeDiagnostic`，默认查当前会话最近一次，也可以按 `request_id` 或 `debug_id` 精确查。该结果不展示原始用户消息、回复全文、`private_debug`、API key、token、cookie、目标 ID、`dedupe_key` 或 OneBot provider message id。默认 store 是进程内最近记录；配置 `WUWA_DIAGNOSTICS_ENABLED=true`、`WUWA_DIAGNOSTICS_DB_PATH` 和 `WUWA_DIAGNOSTICS_MAX_ITEMS` 后，会写入 SQLite `runtime_diagnostics` 并按最近记录裁剪。诊断表仍只是用户侧解释投影；完整排障真源应结合独立持久化的 `audit_records` 和 `delivery_receipts` 内部表。
+它读取最近真实运行产生的脱敏 `RuntimeDiagnostic`，默认查当前会话最近一次，也可以按 `request_id` 或 `debug_id` 精确查。该结果不展示原始用户消息、回复全文、`private_debug`、API key、token、cookie、目标 ID、`dedupe_key` 或 OneBot provider message id。默认 store 是进程内最近记录；配置 `BOT_DIAGNOSTICS_ENABLED=true`、`BOT_DIAGNOSTICS_DB_PATH` 和 `BOT_DIAGNOSTICS_MAX_ITEMS` 后，会写入 SQLite `runtime_diagnostics` 并按最近记录裁剪。诊断表仍只是用户侧解释投影；完整排障真源应结合独立持久化的 `audit_records` 和 `delivery_receipts` 内部表。
 
 `/wuwa why` 至少展示：
 
@@ -1005,12 +1005,12 @@ minor wording
 
 - 位置：`PolicyEvaluation` 允许、`ReplyBudgetSettings` 计算之后，调用 `wuwa.chat` 的 LLM provider 之前。
 - 计数：按 `ReplyBudget.max_messages` 作为本次消耗量，分别进入 session bucket 和 sender bucket。
-- 默认：`WUWA_RATE_LIMIT_WINDOW_SECONDS=60`、`WUWA_RATE_LIMIT_CHAT_GLOBAL_MAX_REQUESTS=60`、`WUWA_RATE_LIMIT_CHAT_SESSION_MAX_REQUESTS=6`、`WUWA_RATE_LIMIT_CHAT_SENDER_MAX_REQUESTS=4`、`WUWA_RATE_LIMIT_TARGET_MIN_INTERVAL_SECONDS=0`。
-- 持久化：`WUWA_RATE_LIMIT_DB_PATH` 为空时使用进程内内存；配置后写入 SQLite `rate_limit_events`，重启后仍保留窗口内记录和目标间隔记录。
-- 绕过：`WUWA_RATE_LIMIT_BYPASS_ROLES=["admin"]`。
+- 默认：`BOT_RATE_LIMIT_WINDOW_SECONDS=60`、`BOT_RATE_LIMIT_CHAT_GLOBAL_MAX_REQUESTS=60`、`BOT_RATE_LIMIT_CHAT_SESSION_MAX_REQUESTS=6`、`BOT_RATE_LIMIT_CHAT_SENDER_MAX_REQUESTS=4`、`BOT_RATE_LIMIT_TARGET_MIN_INTERVAL_SECONDS=0`。
+- 持久化：`BOT_RATE_LIMIT_DB_PATH` 为空时使用进程内内存；配置后写入 SQLite `rate_limit_events`，重启后仍保留窗口内记录和目标间隔记录。
+- 绕过：`BOT_RATE_LIMIT_BYPASS_ROLES=["admin"]`。
 - 诊断：命中后写 policy 阶段 `rate_limited` 审计事件；`/wuwa why` 显示已在调用 LLM 前阻断以避免刷屏，目标间隔和全局配额会给安全中文归因，不展示 sender_id、session_id、target_id 或 bucket key。
 - 安静时间：`QuietHoursChecker` 命中后写 policy 阶段 `quiet_hours_blocked` 审计事件；`/wuwa why` 显示已在调用 LLM 前阻断以避免夜间刷屏，不展示目标 ID 或原始消息。
-- 边界：SQLite 限速模式解决窗口记录和目标间隔跨重启；SQLite 发送队列已能保存 `SendRequest`、持久去重、退避重试、租约认领到期请求、通过 `/wuwa queue` 输出安全计数，并由一次性 worker 推进到期请求；NoneBot 入口已能在 `WUWA_SEND_QUEUE_WORKER_ENABLED=true` 且队列可 drain 时注册默认关闭的 APScheduler worker。`queue-smoke` 只证明临时队列和 fake transport 的 worker 链路可用，不证明真实 NapCat 在线投递。安静时间首版只做 policy 阻断，尚未把非紧急消息自动转成排队或摘要；摘要发送、私聊回退和真实 NapCat 在线 smoke 仍需后续补强。
+- 边界：SQLite 限速模式解决窗口记录和目标间隔跨重启；SQLite 发送队列已能保存 `SendRequest`、持久去重、退避重试、租约认领到期请求、通过 `/wuwa queue` 输出安全计数，并由一次性 worker 推进到期请求；NoneBot 入口已能在 `BOT_SEND_QUEUE_WORKER_ENABLED=true` 且队列可 drain 时注册默认关闭的 APScheduler worker。`queue-smoke` 只证明临时队列和 fake transport 的 worker 链路可用，不证明真实 NapCat 在线投递。安静时间首版只做 policy 阻断，尚未把非紧急消息自动转成排队或摘要；摘要发送、私聊回退和真实 NapCat 在线 smoke 仍需后续补强。
 - 诊断恢复：SQLite 发送队列已能通过 `find_request(request_id)` 从 `send_requests.request_json` 恢复持久化 `SendRequest`，供 `/wuwa why` 在重启或队列对象重开后判断发送请求是否创建。该能力只产生安全诊断投影，不能输出目标、正文、`dedupe_key`、数据库路径或 provider message id。
 
 ### SQLite 连接关闭经验

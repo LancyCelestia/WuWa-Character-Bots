@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -28,7 +28,7 @@ def route_memory_command(
     normalized = command_text.strip()
     if not db_path:
         return _memory_result(
-            body="记忆数据库未配置：请先设置 WUWA_MEMORY_ENABLED=true 和 WUWA_MEMORY_DB_PATH。",
+            body="记忆数据库未配置：请先设置 BOT_MEMORY_ENABLED=true 和 BOT_MEMORY_DB_PATH。",
             request_id=request_id,
         )
     if normalized == "memory list":

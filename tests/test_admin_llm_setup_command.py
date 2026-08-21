@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import inspect
 from pathlib import Path
@@ -38,11 +38,11 @@ def test_admin_llm_setup_query_returns_safe_setup_checklist(tmp_path):
     assert "llm_readiness_status=local_only" in result.body
     assert "llm_next_action=configure_real_llm" in result.body
     assert "llm_readiness_reasons=provider_not_real" in result.body
-    assert "llm_fix_hints=WUWA_CHAT_PROVIDER=openai_compatible" in result.body
-    assert "required_env_keys=WUWA_CHAT_PROVIDER,WUWA_CHAT_MODEL" in result.body
-    assert "missing_or_placeholder_env_keys=WUWA_CHAT_PROVIDER" in result.body
-    assert "safe_env_template=WUWA_CHAT_PROVIDER=openai_compatible;" in result.body
-    assert "WUWA_CHAT_API_KEY=<real_api_key>" in result.body
+    assert "llm_fix_hints=BOT_CHAT_PROVIDER=openai_compatible" in result.body
+    assert "required_env_keys=BOT_CHAT_PROVIDER,BOT_CHAT_MODEL" in result.body
+    assert "missing_or_placeholder_env_keys=BOT_CHAT_PROVIDER" in result.body
+    assert "safe_env_template=BOT_CHAT_PROVIDER=openai_compatible;" in result.body
+    assert "BOT_CHAT_API_KEY=<real_api_key>" in result.body
     assert "next_commands=powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 config-smoke;" in result.body
     assert "manual_steps=复制安全占位模板到 .env 并替换模型服务配置。;" in result.body
     assert "real_llm_probe_performed=false" in result.body
@@ -83,7 +83,7 @@ def test_non_admin_llm_setup_query_is_rejected_without_leaking_config(tmp_path):
     assert result.capability_id == "wuwa.setup.llm"
     assert "只有管理员可以查看运行时排障记录" in result.body
     assert "llm_setup_status" not in result.body
-    assert "WUWA_CHAT_PROVIDER" not in result.body
+    assert "BOT_CHAT_PROVIDER" not in result.body
     assert "sk-live-secret" not in result.body
     assert str(tmp_path) not in result.body
 

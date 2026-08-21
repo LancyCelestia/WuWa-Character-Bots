@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import importlib
 import sys
@@ -66,8 +66,8 @@ def test_readiness_smoke_summarizes_local_dialogue_without_real_llm_call(tmp_pat
         "knowledge_files_empty",
     ]
     assert result["llm_fix_hints"] == [
-        "WUWA_CHAT_PROVIDER=openai_compatible",
-        "WUWA_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>",
+        "BOT_CHAT_PROVIDER=openai_compatible",
+        "BOT_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>",
     ]
     assert "config-smoke" in result["recommended_commands"]
     assert "llm-smoke" in result["recommended_commands"]
@@ -133,12 +133,12 @@ def test_readiness_smoke_cli_prints_safe_summary(monkeypatch, capsys, tmp_path):
     env_file.write_text(
         "\n".join(
             [
-                "WUWA_PERSONA_PROFILE_ID=shorekeeper",
-                "WUWA_PERSONA_DISPLAY_NAME=守岸人",
-                f"WUWA_PERSONA_FILES={persona_file.as_posix()}",
-                "WUWA_CHAT_PROVIDER=static",
-                "WUWA_CHAT_MODEL=static",
-                "WUWA_CHAT_API_KEY=sk-live-secret",
+                "BOT_PERSONA_PROFILE_ID=shorekeeper",
+                "BOT_PERSONA_DISPLAY_NAME=守岸人",
+                f"BOT_PERSONA_FILES={persona_file.as_posix()}",
+                "BOT_CHAT_PROVIDER=static",
+                "BOT_CHAT_MODEL=static",
+                "BOT_CHAT_API_KEY=sk-live-secret",
             ]
         ),
         encoding="utf-8",
@@ -166,8 +166,8 @@ def test_readiness_smoke_cli_prints_safe_summary(monkeypatch, capsys, tmp_path):
     assert "real_llm_probe_performed=false" in output
     assert "llm_readiness_reasons=provider_not_real,knowledge_files_empty" in output
     assert (
-        "llm_fix_hints=WUWA_CHAT_PROVIDER=openai_compatible,"
-        "WUWA_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
+        "llm_fix_hints=BOT_CHAT_PROVIDER=openai_compatible,"
+        "BOT_KNOWLEDGE_FILES=<optional_existing_md_txt_docx_paths>"
     ) in output
     assert "recommended_commands=" in output
     assert "reply_text=" not in output

@@ -140,11 +140,74 @@ def _handle_runtime_command(
         return f"{instance_label}已清除 {count} 项运行时覆盖。"
     if action == "nickname":
         return f"{instance_label}{_handle_nickname_command(store, remaining)}"
+    if action == "persona":
+        return f"{instance_label}{_handle_persona_command(store, config, remaining)}"
     return (
         "用法：/bot runtime set <KEY> <VALUE> | get <KEY> | list | "
-        "reset [KEY] | nickname add/remove/list <昵称> | instance list"
-        "（均可加 --instance <名称> 定位实例）"
+        "reset [KEY] | nickname add/remove/list <昵称> | persona list|switch|probability "
+        "| instance list（均可加 --instance <名称> 定位实例）"
     )
+
+
+def _handle_persona_command(
+    store: RuntimeSettingsStore,
+    config: object,
+    parts: list[str],
+) -> str:
+    from plugins.wuwa_unified_runtime.character.persona_set import build_alt_personas
+
+    alt_personas = build_alt_personas(config)
+    if not parts:
+        return "用法：/bot runtime persona list | switch <id|default> | probability <id> <0-1>"
+    action = parts[0].lower()
+    if action == "list":
+        lines = [
+            f"主人格(A)：{getattr(config, 'wuwa_persona_profile_id', 'default')}"
+            f"（{getattr(config, 'wuwa_persona_display_name', '')}）"
+        ]
+        for spec_id, spec in alt_personas.items():
+            lines.append(
+                f"备用人格：{spec_id}（{spec.display_name}）"
+                f" weight={spec.weight} emotions={','.join(spec.emotions) or '-'}"
+            )
+        override = store.get_persona_override()
+        weights = store.get_persona_weights()
+        lines.append(
+            "当前覆盖："
+            + (override if override else "自动（情绪触发 → 概率 → 主人格）")
+        )
+        if weights:
+            lines.append(
+                "概率覆盖："
+                + ",".join(f"{k}={v}" for k, v in sorted(weights.items()))
+            )
+        return "\n".join(lines)
+    if action == "switch":
+        if len(parts) < 2:
+            return "用法：/bot runtime persona switch <id|default>"
+        target = parts[1].strip()
+        if target != "default" and target not in alt_personas:
+            return f"不存在的人格：{target}。可用：default,{','.join(alt_personas)}"
+        store.set_persona_override("" if target == "default" else target)
+        return (
+            f"已强制切换人格：{target}（持续到下一次 switch default）。"
+            if target != "default"
+            else "已回到自动模式（情绪触发 → 概率 → 主人格）。"
+        )
+    if action in {"auto", "概率", "probability"}:
+        if action == "auto" or len(parts) < 3:
+            store.set_persona_override("")
+            return "已回到自动模式。"
+        spec_id = parts[1].strip()
+        if spec_id not in alt_personas:
+            return f"不存在的人格：{spec_id}。可用：{','.join(alt_personas)}"
+        try:
+            weight = float(parts[2])
+        except ValueError:
+            return "概率必须是 0-1 之间的数字。"
+        store.set_persona_weight(spec_id, weight)
+        return f"已设置 {spec_id} 的切换概率为 {max(0.0, min(1.0, weight))}。"
+    return "用法：/bot runtime persona list | switch <id|default> | probability <id> <0-1>"
 
 
 def _handle_nickname_command(store: RuntimeSettingsStore, parts: list[str]) -> str:
@@ -174,7 +237,7 @@ def _handle_nickname_command(store: RuntimeSettingsStore, parts: list[str]) -> s
         return (
             f"当前昵称：{','.join(nicknames)}"
             if nicknames
-            else "当前没有动态昵称（使用 .env 的 WUWA_RUNTIME_PERSONA_NICKNAMES）。"
+            else "当前没有动态昵称（使用 .env 的 BOT_RUNTIME_PERSONA_NICKNAMES）。"
         )
     return "用法：/bot runtime nickname add <昵称> | remove <昵称> | list"
 

@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 from plugins.wuwa_unified_runtime.config import Config
 from plugins.wuwa_unified_runtime import smoke
@@ -26,22 +26,22 @@ def test_llm_setup_summarizes_safe_env_steps_without_writing_or_calling_network(
     assert result["writes_env"] is False
     assert result["secrets_hidden"] is True
     assert result["required_env_keys"] == [
-        "WUWA_CHAT_PROVIDER",
-        "WUWA_CHAT_MODEL",
-        "WUWA_CHAT_API_KEY",
-        "WUWA_CHAT_BASE_URL",
-        "WUWA_CHAT_TEMPERATURE",
-        "WUWA_CHAT_MAX_TOKENS",
-        "WUWA_CHAT_TIMEOUT_SECONDS",
+        "BOT_CHAT_PROVIDER",
+        "BOT_CHAT_MODEL",
+        "BOT_CHAT_API_KEY",
+        "BOT_CHAT_BASE_URL",
+        "BOT_CHAT_TEMPERATURE",
+        "BOT_CHAT_MAX_TOKENS",
+        "BOT_CHAT_TIMEOUT_SECONDS",
     ]
     assert result["safe_env_template"] == [
-        "WUWA_CHAT_PROVIDER=openai_compatible",
-        "WUWA_CHAT_MODEL=<model_name>",
-        "WUWA_CHAT_API_KEY=<real_api_key>",
-        "WUWA_CHAT_BASE_URL=<openai_compatible_base_url>",
-        "WUWA_CHAT_TEMPERATURE=0.7",
-        "WUWA_CHAT_MAX_TOKENS=512",
-        "WUWA_CHAT_TIMEOUT_SECONDS=30",
+        "BOT_CHAT_PROVIDER=openai_compatible",
+        "BOT_CHAT_MODEL=<model_name>",
+        "BOT_CHAT_API_KEY=<real_api_key>",
+        "BOT_CHAT_BASE_URL=<openai_compatible_base_url>",
+        "BOT_CHAT_TEMPERATURE=0.7",
+        "BOT_CHAT_MAX_TOKENS=512",
+        "BOT_CHAT_TIMEOUT_SECONDS=30",
     ]
     assert result["next_commands"] == [
         "powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 config-smoke",
@@ -72,16 +72,16 @@ def test_llm_setup_reports_blocked_config_and_missing_safe_keys(tmp_path):
     assert result["llm_setup_status"] == "blocked"
     assert result["llm_next_action"] == "fix_config"
     assert result["missing_or_placeholder_env_keys"] == [
-        "WUWA_CHAT_MODEL",
-        "WUWA_CHAT_BASE_URL",
+        "BOT_CHAT_MODEL",
+        "BOT_CHAT_BASE_URL",
     ]
     assert result["llm_readiness_reasons"] == [
         "openai_model_missing",
         "openai_base_url_missing",
         "knowledge_files_empty",
     ]
-    assert "WUWA_CHAT_MODEL=<model_name>" in result["llm_fix_hints"]
-    assert "WUWA_CHAT_BASE_URL=<openai_compatible_base_url>" in result["llm_fix_hints"]
+    assert "BOT_CHAT_MODEL=<model_name>" in result["llm_fix_hints"]
+    assert "BOT_CHAT_BASE_URL=<openai_compatible_base_url>" in result["llm_fix_hints"]
     assert "sk-live-secret" not in repr(result)
     assert str(tmp_path) not in repr(result)
 
@@ -121,9 +121,9 @@ def test_llm_setup_cli_prints_safe_summary(monkeypatch, capsys, tmp_path):
     env_file.write_text(
         "\n".join(
             [
-                f"WUWA_PERSONA_FILES={persona_file.as_posix()}",
-                "WUWA_CHAT_PROVIDER=static",
-                "WUWA_CHAT_MODEL=static",
+                f"BOT_PERSONA_FILES={persona_file.as_posix()}",
+                "BOT_CHAT_PROVIDER=static",
+                "BOT_CHAT_MODEL=static",
             ]
         ),
         encoding="utf-8",
@@ -144,9 +144,9 @@ def test_llm_setup_cli_prints_safe_summary(monkeypatch, capsys, tmp_path):
     assert "message_sent=false" in output
     assert "writes_env=false" in output
     assert "secrets_hidden=true" in output
-    assert "required_env_keys=WUWA_CHAT_PROVIDER,WUWA_CHAT_MODEL" in output
-    assert "safe_env_template=WUWA_CHAT_PROVIDER=openai_compatible;" in output
-    assert "WUWA_CHAT_API_KEY=<real_api_key>" in output
+    assert "required_env_keys=BOT_CHAT_PROVIDER,BOT_CHAT_MODEL" in output
+    assert "safe_env_template=BOT_CHAT_PROVIDER=openai_compatible;" in output
+    assert "BOT_CHAT_API_KEY=<real_api_key>" in output
     assert "next_commands=powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 config-smoke;" in output
     assert str(tmp_path) not in output
 
