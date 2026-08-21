@@ -16,7 +16,10 @@ from plugins.bot_unified_runtime.contracts import (
     PrivacyLevel,
     RiskLevel,
 )
-from plugins.bot_unified_runtime.sources.parsers import music_search_providers
+from plugins.bot_unified_runtime.sources.parsers import (
+    build_cookie_provider,
+    music_search_providers,
+)
 
 _COMMAND_RE = re.compile(r"^[/!！]?点歌\s*(?P<query>.+)$")
 
@@ -35,14 +38,34 @@ def extract_music_query(text: str) -> str:
     return query
 
 
+def _media_parts_from_item(item: Any) -> list[dict]:
+    """从解析结果组装媒体部分：优先语音直链，其次 QQ 音乐卡片。"""
+    if item.audio_url:
+        return [{"type": "record", "file": item.audio_url}]
+    music_card = (item.stats or {}).get("music_card")
+    if isinstance(music_card, dict) and music_card.get("type") and music_card.get("id"):
+        return [
+            {
+                "type": "music",
+                "music_type": str(music_card["type"]),
+                "music_id": str(music_card["id"]),
+            }
+        ]
+    return []
+
+
 def _render_music_body(item: Any) -> str:
     lines = [f"♪ {item.title}"]
     if item.author_name:
         lines.append(f"歌手：{item.author_name}")
     if item.summary:
         lines.append(item.summary)
-    if item.audio_url:
-        lines.append("（语音片段随后发出，没声音说明试听链接被平台拦了）")
+    parts = _media_parts_from_item(item)
+    if parts:
+        if parts[0]["type"] == "record":
+            lines.append("（语音片段随后发出，没声音说明试听链接被平台拦了）")
+        else:
+            lines.append("（已附带平台音乐卡片）")
     if item.canonical_url:
         lines.append(f"链接：{item.canonical_url}")
     return "\n".join(lines)
@@ -56,7 +79,10 @@ def build_music_capability(
     """构建 bot.music 能力；providers 为空时按 config 平台名单构建。"""
     if providers is None:
         platforms = getattr(config, "bot_music_platforms", []) or [] if config else []
-        providers = music_search_providers(platforms or None)
+        providers = music_search_providers(
+            platforms or None,
+            cookie_provider=build_cookie_provider(config) if config else None,
+        )
 
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         try:
@@ -85,9 +111,7 @@ def build_music_capability(
                 body=body,
                 url=item.canonical_url or None,
                 images=[{"file": item.cover_url}] if item.cover_url else [],
-                audio=[{"type": "record", "file": item.audio_url}]
-                if item.audio_url
-                else [],
+                audio=_media_parts_from_item(item),
                 risk_level=RiskLevel.LOW,
                 privacy_level=PrivacyLevel.PUBLIC,
                 audit_tags=[

@@ -18,6 +18,7 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
     ParseHttpError,
     http_get_json,
     http_get_text,
+    http_post_json,
     resolve_short_link,
 )
 from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import PlatformParse
@@ -28,10 +29,30 @@ _163CN_RE = re.compile(r"163cn\.tv|163cn\.com")
 
 # ---------- 网易云 ----------
 
-def _netease_song_detail(song_id: str) -> PlatformParse:
+def _netease_audio_url(song_id: str, *, cookie_header: str = "") -> str:
+    """网易云音频直链：优先 enhance/player/url（登录态可拿 VIP 试听），
+    兜底 outer/url 直链。拿不到返回空串。"""
+    if cookie_header:
+        try:
+            payload = http_get_json(
+                "https://music.163.com/api/song/enhance/player/url"
+                f"?ids=[{song_id}]&br=320000",
+                referer="https://music.163.com/",
+                cookie=cookie_header,
+            )
+            data = ((payload or {}).get("data") or []) or []
+            if data and data[0].get("url"):
+                return str(data[0]["url"])
+        except ParseHttpError:
+            pass
+    return f"https://music.163.com/song/media/outer/url?id={song_id}.mp3"
+
+
+def _netease_song_detail(song_id: str, *, cookie_header: str = "") -> PlatformParse:
     payload = http_get_json(
         f"https://music.163.com/api/song/detail?ids=[{song_id}]",
         referer="https://music.163.com/",
+        cookie=cookie_header,
     )
     songs = (payload or {}).get("songs") or []
     if not songs:
@@ -44,7 +65,6 @@ def _netease_song_detail(song_id: str) -> PlatformParse:
     album = (song.get("album") or {}).get("name", "")
     cover = (song.get("album") or {}).get("picUrl", "")
     title = song.get("name", "")
-    audio_url = f"https://music.163.com/song/media/outer/url?id={song_id}.mp3"
     return PlatformParse(
         platform="netease",
         item_id=str(song_id),
@@ -53,19 +73,19 @@ def _netease_song_detail(song_id: str) -> PlatformParse:
         author_name=artists,
         summary=f"专辑：{album}" if album else "",
         cover_url=str(cover),
-        audio_url=audio_url,
+        audio_url=_netease_audio_url(song_id, cookie_header=cookie_header),
         canonical_url=f"https://music.163.com/song?id={song_id}",
         parse_depth="deep",
     )
 
 
-def parse_netease_music(url: str) -> PlatformParse:
+def parse_netease_music(url: str, *, cookie_header: str = "") -> PlatformParse:
     final_url = url
     if _163CN_RE.search(url):
         final_url = resolve_short_link(url)
     match = _SONG_ID_RE.search(final_url)
     if match:
-        return _netease_song_detail(match.group(1))
+        return _netease_song_detail(match.group(1), cookie_header=cookie_header)
     raise ParseHttpError(f"netease: no song id in {final_url}")
 
 
@@ -92,7 +112,7 @@ def _looks_cover(song: dict) -> bool:
     return any(hint in album or hint in name for hint in _COVER_HINTS)
 
 
-def search_netease_music(query: str) -> PlatformParse | None:
+def search_netease_music(query: str, *, cookie_header: str = "") -> PlatformParse | None:
     """点歌搜索：官方旧搜索接口（匿名可用）。
 
     老接口排序与官网不同（翻唱会排前面），这里多拉几条：
@@ -102,6 +122,7 @@ def search_netease_music(query: str) -> PlatformParse | None:
     payload = http_get_json(
         f"https://music.163.com/api/search/get/web?s={encoded}&type=1&limit=15&offset=0",
         referer="https://music.163.com/",
+        cookie=cookie_header,
     )
     songs = ((payload or {}).get("result") or {}).get("songs") or []
     if not songs:
@@ -109,34 +130,76 @@ def search_netease_music(query: str) -> PlatformParse | None:
     exact = [song for song in songs if str(song.get("name", "")).strip() == query.strip()]
     pool = exact or songs
     picked = next((song for song in pool if not _looks_cover(song)), pool[0])
-    return _netease_song_detail(str(picked["id"]))
+    return _netease_song_detail(str(picked["id"]), cookie_header=cookie_header)
 
 
 # ---------- QQ 音乐 ----------
 
-def parse_qqmusic(url: str) -> PlatformParse:
+def _qqmusic_vkey_url(song_mid: str, *, cookie_header: str = "") -> str:
+    """QQ 音乐音频直链：CgiGetVkey。匿名已被收紧（purl 空），
+    带登录 cookie（psrf_musickey 等）才有机会出链；失败返回空串。"""
+    if not cookie_header:
+        return ""
+    body = {
+        "req_1": {
+            "module": "vkey.GetVkeyServer",
+            "method": "CgiGetVkey",
+            "param": {
+                "filename": [f"M500{song_mid}.mp3"],
+                "guid": "10000",
+                "songmid": [song_mid],
+                "songtype": [0],
+                "uin": "0",
+                "loginflag": 1,
+                "platform": "20",
+            },
+        },
+        "loginUin": "0",
+        "comm": {"uin": "0", "format": "json", "ct": 24, "cv": 0},
+    }
+    try:
+        payload = http_post_json(
+            "https://u.y.qq.com/cgi-bin/musicu.fcg",
+            body,
+            referer="https://y.qq.com/",
+            cookie=cookie_header,
+        )
+    except ParseHttpError:
+        return ""
+    data = ((payload or {}).get("req_1") or {}).get("data") or {}
+    sips = data.get("sip") or []
+    purl = ((data.get("midurlinfo") or []) or [{}])[0].get("purl") or ""
+    if not sips or not purl:
+        return ""
+    return f"{sips[0]}{purl}"
+
+
+def parse_qqmusic(url: str, *, cookie_header: str = "") -> PlatformParse:
     match = re.search(r"songDetail/([0-9A-Za-z]+)", url)
     if match:
         mid = match.group(1)
+        audio_url = _qqmusic_vkey_url(mid, cookie_header=cookie_header)
         return PlatformParse(
             platform="qqmusic",
             item_id=mid,
             item_kind="music",
             title=f"QQ 音乐歌曲 {mid}",
             summary="（QQ 音乐详情需要登录态，这里只给跳转卡片）",
+            audio_url=audio_url,
             canonical_url=f"https://y.qq.com/n/ryqq/songDetail/{mid}",
-            parse_depth="shallow",
+            parse_depth="deep" if audio_url else "shallow",
             stats={"music_card": {"type": "qq", "id": mid}},
         )
     raise ParseHttpError(f"qqmusic: no song mid in {url}")
 
 
-def search_qqmusic(query: str) -> PlatformParse | None:
+def search_qqmusic(query: str, *, cookie_header: str = "") -> PlatformParse | None:
     encoded = urllib.parse.quote(query)
     payload = http_get_json(
         "https://c.y.qq.com/soso/fcgi-bin/client_search_cp"
         f"?w={encoded}&format=json&p=1&n=1&aggr=1&cr=1&new_json=1",
         referer="https://y.qq.com/",
+        cookie=cookie_header,
     )
     songs = (
         ((payload or {}).get("data") or {}).get("song") or {}
@@ -145,22 +208,25 @@ def search_qqmusic(query: str) -> PlatformParse | None:
         return None
     song = songs[0]
     singers = "、".join(item.get("name", "") for item in (song.get("singer") or []))
+    mid = str(song.get("mid") or "")
+    audio_url = _qqmusic_vkey_url(mid, cookie_header=cookie_header)
     return PlatformParse(
         platform="qqmusic",
-        item_id=str(song.get("mid") or ""),
+        item_id=mid,
         item_kind="music",
         title=str(song.get("songname") or song.get("name") or ""),
         author_name=singers,
         summary=f"专辑：{song.get('albumname') or ''}",
-        canonical_url=f"https://y.qq.com/n/ryqq/songDetail/{song.get('mid')}",
-        parse_depth="shallow",
-        stats={"music_card": {"type": "qq", "id": str(song.get("mid") or "")}},
+        audio_url=audio_url,
+        canonical_url=f"https://y.qq.com/n/ryqq/songDetail/{mid}",
+        parse_depth="deep" if audio_url else "shallow",
+        stats={"music_card": {"type": "qq", "id": mid}},
     )
 
 
 # ---------- 酷我 / 酷狗 ----------
 
-def parse_kuwo(url: str) -> PlatformParse:
+def parse_kuwo(url: str, *, cookie_header: str = "") -> PlatformParse:
     match = re.search(r"playDetail/(\d+)", url)
     if not match:
         raise ParseHttpError(f"kuwo: no rid in {url}")
@@ -177,7 +243,7 @@ def parse_kuwo(url: str) -> PlatformParse:
     )
 
 
-def search_kuwo(query: str) -> PlatformParse | None:
+def search_kuwo(query: str, *, cookie_header: str = "") -> PlatformParse | None:
     # 官方搜索匿名 403；用公开聚合接口（第三方，仅信息+直链，失败返回 None）。
     encoded = urllib.parse.quote(query)
     try:
@@ -203,7 +269,19 @@ def search_kuwo(query: str) -> PlatformParse | None:
     )
 
 
-def parse_kugou(url: str) -> PlatformParse:
+def _kugou_play_url(file_hash: str, *, cookie_header: str = "") -> str:
+    try:
+        payload = http_get_json(
+            f"http://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash={file_hash}",
+            referer="https://www.kugou.com/",
+            cookie=cookie_header,
+        )
+    except ParseHttpError:
+        return ""
+    return str(payload.get("url") or "")
+
+
+def parse_kugou(url: str, *, cookie_header: str = "") -> PlatformParse:
     match = re.search(r"hash=([0-9A-Fa-f]{16,})", url)
     if not match:
         raise ParseHttpError(f"kugou: no file hash in {url}")
@@ -211,7 +289,9 @@ def parse_kugou(url: str) -> PlatformParse:
     payload = http_get_json(
         f"http://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash={file_hash}",
         referer="https://www.kugou.com/",
+        cookie=cookie_header,
     )
+    audio_url = str(payload.get("url") or "")
     return PlatformParse(
         platform="kugou",
         item_id=file_hash,
@@ -220,26 +300,28 @@ def parse_kugou(url: str) -> PlatformParse:
         author_name=str(payload.get("singerName") or ""),
         summary=f"专辑：{payload.get('album_name') or ''}",
         cover_url=str(payload.get("imgUrl") or ""),
-        audio_url=str(payload.get("url") or ""),
+        audio_url=audio_url,
         canonical_url=f"https://www.kugou.com/song/#hash={file_hash}",
         parse_depth="deep",
     )
 
 
-def search_kugou(query: str) -> PlatformParse | None:
+def search_kugou(query: str, *, cookie_header: str = "") -> PlatformParse | None:
     encoded = urllib.parse.quote(query)
     payload = http_get_json(
         f"http://msearchcdn.kugou.com/api/v3/search/song?plat=0&keyword={encoded}"
         "&tagtype=全部&pagesize=1&version=9108",
         referer="https://www.kugou.com/",
+        cookie=cookie_header,
     )
     items = ((payload or {}).get("data") or {}).get("info") or []
     if not items:
         return None
     item = items[0]
+    file_hash = str(item.get("hash") or "")
     return PlatformParse(
         platform="kugou",
-        item_id=str(item.get("hash") or ""),
+        item_id=file_hash,
         item_kind="music",
         title=str(item.get("songname") or ""),
         author_name=str(item.get("singername") or ""),
@@ -247,7 +329,8 @@ def search_kugou(query: str) -> PlatformParse | None:
         cover_url=f"https://imge.kugou.com/stdmusic/{item.get('album_id')}.jpg"
         if item.get("album_id")
         else "",
-        canonical_url=f"https://www.kugou.com/song/#hash={item.get('hash')}",
+        audio_url=_kugou_play_url(file_hash, cookie_header=cookie_header),
+        canonical_url=f"https://www.kugou.com/song/#hash={file_hash}",
         parse_depth="deep",
     )
 

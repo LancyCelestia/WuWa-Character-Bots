@@ -21,8 +21,11 @@ def render_reviewed_output(
         if isinstance(image, dict) and (image.get("file") or image.get("url")):
             media_parts.append({"type": "image", **image})
     for audio in result.audio or []:
-        if isinstance(audio, dict) and audio.get("file"):
-            media_parts.append({"type": "record", **audio})
+        if isinstance(audio, dict) and (
+            audio.get("file") or (audio.get("music_type") and audio.get("music_id"))
+        ):
+            part_type = str(audio.get("type") or "record")
+            media_parts.append({"type": part_type, **audio})
     if media_parts:
         return RenderedOutput(
             request_id=result.request_id,

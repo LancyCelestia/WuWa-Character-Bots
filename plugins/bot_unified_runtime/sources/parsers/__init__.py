@@ -9,10 +9,15 @@
 
 from __future__ import annotations
 
+import functools
 import re
 from typing import Any, Callable
 
 from plugins.bot_unified_runtime.contracts.media import ParserRule, SourceInput
+from plugins.bot_unified_runtime.sources.parsers.cookies import (
+    PlatformCookieProvider,
+    build_platform_cookie_provider,
+)
 from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import (
     PlatformParse,
     parse_bilibili,
@@ -166,6 +171,28 @@ _MUSIC_SEARCH_PROVIDERS: list[tuple[str, str, Callable[[str], PlatformParse | No
     ("spotify", "Spotify", search_spotify),
 ]
 
+# parser_id → Cookie 提供方的平台键（无 cookie 需求的平台不在此列）。
+_PARSER_COOKIE_PLATFORM: dict[str, str] = {
+    "bilibili": "bilibili",
+    "douyin": "douyin",
+    "xiaohongshu": "xiaohongshu",
+    "youtube": "youtube",
+    "twitter": "twitter",
+    "miyoushe": "miyoushe",
+    "skland": "skland",
+    "kurobbs": "kurobbs",
+    "netease_music": "netease",
+    "qqmusic": "qqmusic",
+    "kuwo": "kuwo",
+    "kugou": "kugou",
+}
+
+
+def _bind_cookie(fn: Any, cookie_header: str) -> Any:
+    if not cookie_header:
+        return fn
+    return functools.partial(fn, cookie_header=cookie_header)
+
 
 def extract_http_urls(text: str) -> list[str]:
     """从消息文本提取 http(s) 链接（含中文括号内链接）。"""
@@ -185,12 +212,15 @@ def platform_rules() -> list[tuple[str, str, list[str], ParseFn, int]]:
 
 def build_content_parser_registry(
     enabled_platforms: list[str] | None = None,
+    cookie_provider: PlatformCookieProvider | None = None,
 ) -> dict[str, Any]:
     """构建链接解析注册表。
 
     ``enabled_platforms`` 为空 = 全部启用；否则只启用名单内平台。
+    ``cookie_provider`` 提供平台 Cookie 头（无则匿名解析）。
     """
     allowed = {str(name).strip().lower() for name in (enabled_platforms or [])}
+    cookies = cookie_provider or PlatformCookieProvider()
     registry = ParserRegistry()
     parsers: dict[str, ParseFn] = {}
     for parser_id, display_name, patterns, parse_fn, priority in _PLATFORM_RULES:
@@ -204,22 +234,47 @@ def build_content_parser_registry(
                 priority=priority,
             )
         )
-        parsers[parser_id] = parse_fn
+        cookie_platform = _PARSER_COOKIE_PLATFORM.get(parser_id, "")
+        parsers[parser_id] = _bind_cookie(
+            parse_fn,
+            cookies.cookie_header(cookie_platform) if cookie_platform else "",
+        )
     return {"registry": registry, "parsers": parsers}
 
 
 def music_search_providers(
     enabled_platforms: list[str] | None = None,
+    cookie_provider: PlatformCookieProvider | None = None,
 ) -> list[tuple[str, str, Callable[[str], PlatformParse | None]]]:
-    """点歌搜索提供方（按配置过滤并保持顺序）。"""
+    """点歌搜索提供方（按配置过滤并保持顺序，按平台绑定 Cookie）。"""
     allowed = {str(name).strip().lower() for name in (enabled_platforms or [])}
-    if not allowed:
-        return [*_MUSIC_SEARCH_PROVIDERS]
+    cookies = cookie_provider or PlatformCookieProvider()
+    providers = _MUSIC_SEARCH_PROVIDERS
+    if allowed:
+        providers = [
+            (parser_id, display_name, search_fn)
+            for parser_id, display_name, search_fn in providers
+            if parser_id in allowed
+        ]
     return [
-        (parser_id, display_name, search_fn)
-        for parser_id, display_name, search_fn in _MUSIC_SEARCH_PROVIDERS
-        if parser_id in allowed
+        (
+            parser_id,
+            display_name,
+            _bind_cookie(
+                search_fn,
+                cookies.cookie_header(_PARSER_COOKIE_PLATFORM.get(parser_id, "")),
+            ),
+        )
+        for parser_id, display_name, search_fn in providers
     ]
+
+
+def build_cookie_provider(config: object | None) -> PlatformCookieProvider:
+    """从配置构建 Cookie 提供方（BOT_COOKIES_FILE → Netscape cookies.txt）。"""
+    if config is None:
+        return PlatformCookieProvider()
+    path = getattr(config, "bot_cookies_file", "") or ""
+    return build_platform_cookie_provider(path or None)
 
 
 def build_source_input(text: str, *, request_id: str = "parser") -> SourceInput:

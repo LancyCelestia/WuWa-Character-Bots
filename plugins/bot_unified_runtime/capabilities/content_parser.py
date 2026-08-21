@@ -17,9 +17,11 @@ from plugins.bot_unified_runtime.contracts import (
 )
 from plugins.bot_unified_runtime.sources.parsers import (
     build_content_parser_registry,
+    build_cookie_provider,
     build_source_input,
 )
 from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
+from plugins.bot_unified_runtime.capabilities.music import _media_parts_from_item
 
 
 def _render_parse_body(item: Any) -> str:
@@ -62,7 +64,8 @@ def build_content_capability(
         else:
             platforms = getattr(config, "bot_content_parse_platforms", []) or []
             built = build_content_parser_registry(
-                platforms or enabled_platforms or None
+                platforms or enabled_platforms or None,
+                cookie_provider=build_cookie_provider(config),
             )
     else:
         built = registry
@@ -130,7 +133,7 @@ def build_content_capability(
             body=body,
             url=item.canonical_url or candidate,
             images=[{"file": item.cover_url}] if item.cover_url else [],
-            audio=[{"type": "record", "file": item.audio_url}] if item.audio_url else [],
+            audio=_media_parts_from_item(item),
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PUBLIC,
             audit_tags=[

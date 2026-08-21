@@ -376,3 +376,175 @@ def test_config_parses_platform_lists():
     )
     assert config.bot_content_parse_platforms == ["bilibili", "netease_music"]
     assert config.bot_music_platforms == ["apple_music"]
+
+
+def test_cookie_provider_parses_netscape_file(tmp_path):
+    from plugins.bot_unified_runtime.sources.parsers.cookies import (
+        build_platform_cookie_provider,
+    )
+
+    cookie_file = tmp_path / "cookies.txt"
+    cookie_file.write_text(
+        "\n".join(
+            [
+                "# Netscape HTTP Cookie File",
+                ".bilibili.com\tTRUE\t/\tTRUE\t2000000000\tSESSDATA\tfake-sessdata",
+                ".bilibili.com\tTRUE\t/\tTRUE\t0\tbuvid3\tfake-buvid",
+                ".xiaohongshu.com\tTRUE\t/\tTRUE\t2000000000\tweb_session\tfake-session",
+                ".example.com\tTRUE\t/\tTRUE\t2000000000\tsecret\tnot-collected",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    provider = build_platform_cookie_provider(cookie_file)
+
+    assert "SESSDATA=fake-sessdata" in provider.cookie_header("bilibili")
+    assert "web_session=fake-session" in provider.cookie_header("xiaohongshu")
+    # 白名单外的域名一律不加载。
+    assert provider.cookie_header("bilibili").count("secret") == 0
+    assert "secret" not in str(provider.summary())
+
+
+def test_xhs_deep_parse_from_initial_state(monkeypatch):
+    from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
+        parse_xiaohongshu,
+    )
+    import urllib.parse
+
+    initial_state = {
+        "note": {
+            "noteDetailMap": {
+                "note1": {
+                    "note": {
+                        "noteId": "note1",
+                        "title": "测试笔记",
+                        "desc": "正文内容",
+                        "type": "normal",
+                        "user": {"nickname": "测试用户"},
+                        "imageList": [{"urlDefault": "https://sns-img/1.jpg"}],
+                        "interactInfo": {"likedCount": 10, "collectedCount": 2},
+                    }
+                }
+            }
+        }
+    }
+    html = (
+        "<html><script>window.__INITIAL_STATE__="
+        + urllib.parse.quote(str(initial_state).replace("'", '"'))
+        + "</script></html>"
+    )
+
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sources.parsers.platforms_generic.http_get_text",
+        lambda url, **kwargs: (url, html),
+    )
+
+    item = parse_xiaohongshu(
+        "https://www.xiaohongshu.com/explore/note1", cookie_header="web_session=x"
+    )
+
+    assert item.title == "测试笔记"
+    assert item.author_name == "测试用户"
+    assert item.parse_depth == "deep"
+    assert item.cover_url == "https://sns-img/1.jpg"
+    assert item.stats == {"点赞": 10, "收藏": 2}
+
+
+def test_douyin_deep_parse_from_router_data(monkeypatch):
+    from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
+        parse_douyin,
+    )
+
+    router_data = {
+        "loaderData": {
+            "video_(id)/page": {
+                "videoInfoRes": {
+                    "item_list": [
+                        {
+                            "aweme_id": "1",
+                            "desc": "测试视频",
+                            "author": {"nickname": "测试作者"},
+                            "video": {"cover": {"url_list": ["https://p3.douyinpic.com/c.jpg"]}},
+                            "statistics": {"digg_count": 100, "comment_count": 5},
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    html = (
+        "<script>window._ROUTER_DATA = "
+        + str(router_data).replace("'", '"')
+        + ";</script>"
+    )
+
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sources.parsers.platforms_generic.http_get_text",
+        lambda url, **kwargs: (url, html),
+    )
+
+    item = parse_douyin("https://www.douyin.com/video/1", cookie_header="ttwid=x")
+
+    assert item.title == "测试视频"
+    assert item.author_name == "测试作者"
+    assert item.parse_depth == "deep"
+    assert item.stats == {"点赞": 100, "评论": 5}
+
+
+def test_registry_binds_cookie_header_to_parsers(monkeypatch):
+    from plugins.bot_unified_runtime.sources.parsers import (
+        build_content_parser_registry,
+    )
+    from plugins.bot_unified_runtime.sources.parsers.cookies import (
+        PlatformCookieProvider,
+    )
+    import plugins.bot_unified_runtime.sources.parsers.platforms_bilibili as pb
+
+    captured: dict[str, str] = {}
+
+    def fake_http_get_json(url, **kwargs):
+        captured["cookie"] = kwargs.get("cookie", "")
+        return {
+            "code": 0,
+            "data": {
+                "bvid": "BV1GJ411x7h7",
+                "title": "t",
+                "owner": {"name": "u"},
+                "pic": "",
+                "desc": "",
+                "pages": [{"cid": 1}],
+                "stat": {},
+            },
+        }
+
+    monkeypatch.setattr(pb, "http_get_json", fake_http_get_json)
+
+    provider = PlatformCookieProvider(headers={"bilibili": "SESSDATA=abc"})
+    built = build_content_parser_registry(["bilibili"], cookie_provider=provider)
+
+    built["parsers"]["bilibili"]("https://www.bilibili.com/video/BV1GJ411x7h7")
+
+    assert captured["cookie"] == "SESSDATA=abc"
+
+
+def test_music_card_fallback_when_no_audio_url():
+    class FakeItem:
+        title = "QQ歌"
+        author_name = "歌手"
+        summary = ""
+        audio_url = ""
+        cover_url = ""
+        canonical_url = "https://y.qq.com/n/ryqq/songDetail/abc"
+        stats = {"music_card": {"type": "qq", "id": "abc"}}
+
+    capability = build_music_capability(
+        providers=[("qqmusic", "QQ音乐", lambda q: FakeItem())]
+    )
+
+    result = capability(_message("点歌 QQ歌"), None)
+
+    assert result.audio == [
+        {"type": "music", "music_type": "qq", "music_id": "abc"}
+    ]
+    assert "已附带平台音乐卡片" in result.body

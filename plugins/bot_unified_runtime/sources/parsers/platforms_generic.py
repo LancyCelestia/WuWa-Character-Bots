@@ -53,8 +53,11 @@ def _og_scrape(
     item_kind: str,
     note: str = "",
     referer: str = "",
+    cookie_header: str = "",
 ) -> PlatformParse:
-    final_url, text = http_get_text(url, timeout=10, referer=referer or url)
+    final_url, text = http_get_text(
+        url, timeout=10, referer=referer or url, cookie=cookie_header
+    )
     title = ""
     match = _OG_TITLE_RE.search(text)
     if match:
@@ -91,22 +94,25 @@ def _og_scrape(
     )
 
 
-def parse_douyin(url: str) -> PlatformParse:
-    final_url = url
-    if "v.douyin.com" in url:
-        final_url = resolve_short_link(url)
-    return _og_scrape(
-        final_url,
-        platform="douyin",
-        item_kind="video",
-        note="（浅层解析：标题+封面；无水印视频下载需另接解析服务）",
-    )
-
-
-def parse_xiaohongshu(url: str) -> PlatformParse:
+def parse_xiaohongshu(url: str, *, cookie_header: str = "") -> PlatformParse:
+    """小红书：cookie 有效时从 __INITIAL_STATE__ 深解析（标题/正文/图集/
+    作者/互动数据）；失败回退 og 浅解析。"""
     final_url = url
     if "xhslink.com" in url:
         final_url = resolve_short_link(url)
+    if cookie_header:
+        try:
+            _, text = http_get_text(
+                final_url,
+                timeout=10,
+                referer="https://www.xiaohongshu.com/",
+                cookie=cookie_header,
+            )
+            item = _xhs_from_initial_state(text, final_url)
+            if item is not None:
+                return item
+        except Exception:  # noqa: BLE001 - 深解析失败回退浅解析。
+            pass
     return _og_scrape(
         final_url,
         platform="xiaohongshu",
@@ -115,7 +121,134 @@ def parse_xiaohongshu(url: str) -> PlatformParse:
     )
 
 
-def parse_youtube(url: str) -> PlatformParse:
+def _xhs_from_initial_state(html: str, url: str) -> PlatformParse | None:
+    marker = "window.__INITIAL_STATE__="
+    start = html.find(marker)
+    if start < 0:
+        return None
+    start += len(marker)
+    end = html.find("</script>", start)
+    if end < 0:
+        return None
+    raw = html[start:end].strip().rstrip(";")
+    try:
+        payload = json.loads(urllib.parse.unquote(raw))
+    except Exception:  # noqa: BLE001
+        return None
+    note_map = ((payload or {}).get("note") or {}).get("noteDetailMap") or {}
+    if not note_map:
+        return None
+    note = next(iter(note_map.values())).get("note") or {}
+    if not note.get("title"):
+        return None
+    user = note.get("user") or {}
+    images = [
+        str(image.get("urlDefault") or image.get("url") or "")
+        for image in (note.get("imageList") or [])
+        if image.get("urlDefault") or image.get("url")
+    ]
+    interact = note.get("interactInfo") or {}
+    stats = {}
+    for key, label in (("likedCount", "点赞"), ("collectedCount", "收藏"), ("commentCount", "评论"), ("shareCount", "分享")):
+        value = interact.get(key)
+        if isinstance(value, (int, float)):
+            stats[label] = int(value)
+    desc = str(note.get("desc") or "").strip()
+    if len(desc) > 300:
+        desc = desc[:300] + "…"
+    return PlatformParse(
+        platform="xiaohongshu",
+        item_id=str(note.get("noteId") or ""),
+        item_kind="video" if note.get("type") == "video" else "note",
+        title=str(note.get("title") or ""),
+        author_name=str(user.get("nickname") or ""),
+        summary=desc,
+        cover_url=images[0] if images else "",
+        canonical_url=url,
+        stats=stats,
+        parse_depth="deep",
+    )
+
+
+def parse_douyin(url: str, *, cookie_header: str = "") -> PlatformParse:
+    """抖音：cookie 有效时从 _ROUTER_DATA 深解析（标题/作者/封面/互动）；
+    失败回退 og 浅解析。"""
+    final_url = url
+    if "v.douyin.com" in url:
+        final_url = resolve_short_link(url)
+    if cookie_header:
+        try:
+            _, text = http_get_text(
+                final_url,
+                timeout=10,
+                referer="https://www.douyin.com/",
+                cookie=cookie_header,
+            )
+            item = _douyin_from_router_data(text, final_url)
+            if item is not None:
+                return item
+        except Exception:  # noqa: BLE001 - 深解析失败回退浅解析。
+            pass
+    return _og_scrape(
+        final_url,
+        platform="douyin",
+        item_kind="video",
+        note="（浅层解析：标题+封面；无水印视频下载需另接解析服务）",
+    )
+
+
+def _douyin_from_router_data(html: str, url: str) -> PlatformParse | None:
+    marker = "window._ROUTER_DATA"
+    start = html.find(marker)
+    if start < 0:
+        return None
+    start = html.find("{", start)
+    if start < 0:
+        return None
+    end = html.find("</script>", start)
+    if end < 0:
+        return None
+    try:
+        payload = json.loads(html[start:end].rstrip(";"))
+    except Exception:  # noqa: BLE001
+        return None
+    loader = (payload or {}).get("loaderData") or {}
+    for key, value in loader.items():
+        if not isinstance(value, dict):
+            continue
+        items = (value.get("videoInfoRes") or {}).get("item_list") or []
+        if not items:
+            continue
+        item = items[0]
+        author = item.get("author") or {}
+        cover_list = (item.get("video") or {}).get("cover") or {}
+        covers = cover_list.get("url_list") or []
+        stats = (item.get("statistics") or {})
+        mapped_stats = {}
+        for stat_key, label in (("digg_count", "点赞"), ("comment_count", "评论"), ("share_count", "分享")):
+            stat_value = stats.get(stat_key)
+            if isinstance(stat_value, (int, float)):
+                mapped_stats[label] = int(stat_value)
+        desc = str(item.get("desc") or "").strip()
+        if len(desc) > 300:
+            desc = desc[:300] + "…"
+        if not desc and not covers:
+            continue
+        return PlatformParse(
+            platform="douyin",
+            item_id=str(item.get("aweme_id") or ""),
+            item_kind="video",
+            title=desc or "抖音视频",
+            author_name=str(author.get("nickname") or ""),
+            cover_url=str(covers[0]) if covers else "",
+            canonical_url=url,
+            stats=mapped_stats,
+            parse_depth="deep",
+        )
+    return None
+
+
+def parse_youtube(url: str, *, cookie_header: str = "") -> PlatformParse:
     try:
         payload = http_get_json(
             "https://www.youtube.com/oembed"
@@ -141,31 +274,33 @@ def parse_youtube(url: str) -> PlatformParse:
         )
 
 
-def parse_twitter_x(url: str) -> PlatformParse:
+def parse_twitter_x(url: str, *, cookie_header: str = "") -> PlatformParse:
     return _og_scrape(
         url,
         platform="twitter",
         item_kind="tweet",
         note="（浅层解析；X 反爬严格，拿不到内容时只有标题）",
+        cookie_header=cookie_header,
     )
 
 
-def parse_xiaoheihe(url: str) -> PlatformParse:
+def parse_xiaoheihe(url: str, *, cookie_header: str = "") -> PlatformParse:
     return _og_scrape(
         url,
         platform="xiaoheihe",
         item_kind="post",
         note="（浅层解析；小黑盒官方 API 需要逆向签名）",
+        cookie_header=cookie_header,
     )
 
 
-def parse_miyoushe(url: str) -> PlatformParse:
-    return _og_scrape(url, platform="miyoushe", item_kind="post")
+def parse_miyoushe(url: str, *, cookie_header: str = "") -> PlatformParse:
+    return _og_scrape(url, platform="miyoushe", item_kind="post", cookie_header=cookie_header)
 
 
-def parse_skland(url: str) -> PlatformParse:
-    return _og_scrape(url, platform="skland", item_kind="article")
+def parse_skland(url: str, *, cookie_header: str = "") -> PlatformParse:
+    return _og_scrape(url, platform="skland", item_kind="article", cookie_header=cookie_header)
 
 
-def parse_kurobbs(url: str) -> PlatformParse:
-    return _og_scrape(url, platform="kurobbs", item_kind="post")
+def parse_kurobbs(url: str, *, cookie_header: str = "") -> PlatformParse:
+    return _og_scrape(url, platform="kurobbs", item_kind="post", cookie_header=cookie_header)

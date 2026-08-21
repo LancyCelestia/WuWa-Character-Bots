@@ -139,6 +139,9 @@ class Config(BaseModel):
     bot_music_platforms: list[str] = []
     # 解析/点歌请求的统一超时（秒）。
     bot_fetch_timeout_seconds: float = 10.0
+    # 平台 Cookie 文件（Netscape 格式，浏览器导出）：给 B站/小红书/抖音/
+    # QQ音乐/网易云/推特等解析与点歌加登录态。留空 = 匿名解析。
+    bot_cookies_file: str = ""
     bot_render_forward_min_chars: int = 1500
     bot_render_forward_max_nodes: int = 6
     bot_render_forward_node_chars: int = 900

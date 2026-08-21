@@ -37,11 +37,13 @@ class PlatformParse:
     parse_depth: str = "deep"
 
 
-def _lookup_video_by_id(video_id: str, kind: str) -> PlatformParse:
+def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") -> PlatformParse:
     import urllib.parse
 
     url = f"{_VIEW_API}?{urllib.parse.quote(kind)}={urllib.parse.quote(video_id)}"
-    payload = http_get_json(url, referer="https://www.bilibili.com/")
+    payload = http_get_json(
+        url, referer="https://www.bilibili.com/", cookie=cookie_header
+    )
     if payload.get("code") != 0:
         raise ParseHttpError(f"bilibili view api code={payload.get('code')}")
     data = payload.get("data") or {}
@@ -70,15 +72,15 @@ def _lookup_video_by_id(video_id: str, kind: str) -> PlatformParse:
     )
 
 
-def parse_bilibili(url: str) -> PlatformParse:
+def parse_bilibili(url: str, *, cookie_header: str = "") -> PlatformParse:
     """B 站视频链接 → 结构化信息。"""
     final_url = url
     if "b23.tv" in url or "bili2233.cn" in url:
         final_url = resolve_short_link(url)
     match = _BVID_RE.search(final_url)
     if match:
-        return _lookup_video_by_id(match.group(1), "bvid")
+        return _lookup_video_by_id(match.group(1), "bvid", cookie_header=cookie_header)
     match = _AVID_RE.search(final_url)
     if match:
-        return _lookup_video_by_id(match.group(1), "aid")
+        return _lookup_video_by_id(match.group(1), "aid", cookie_header=cookie_header)
     raise ParseHttpError(f"bilibili: no video id in {final_url}")

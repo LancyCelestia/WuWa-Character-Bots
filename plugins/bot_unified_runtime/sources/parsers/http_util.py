@@ -28,6 +28,7 @@ def _build_request(
     referer: str = "",
     user_agent: str = DEFAULT_USER_AGENT,
     accept: str = "",
+    cookie: str = "",
 ) -> urlrequest.Request:
     headers = {
         "User-Agent": user_agent,
@@ -38,6 +39,8 @@ def _build_request(
         headers["Referer"] = referer
     if accept:
         headers["Accept"] = accept
+    if cookie:
+        headers["Cookie"] = cookie
     return urlrequest.Request(url, headers=headers)
 
 
@@ -48,11 +51,18 @@ def http_get(
     referer: str = "",
     user_agent: str = DEFAULT_USER_AGENT,
     accept: str = "",
+    cookie: str = "",
 ) -> tuple[str, bytes]:
     """GET 并返回 (最终 URL, 响应体)；短链重定向后 final_url 是落点。"""
     try:
         with urlrequest.urlopen(
-            _build_request(url, referer=referer, user_agent=user_agent, accept=accept),
+            _build_request(
+                url,
+                referer=referer,
+                user_agent=user_agent,
+                accept=accept,
+                cookie=cookie,
+            ),
             timeout=timeout,
         ) as response:
             payload = response.read()
@@ -71,6 +81,7 @@ def http_get_text(
     user_agent: str = DEFAULT_USER_AGENT,
     accept: str = "",
     encoding: str = "utf-8",
+    cookie: str = "",
 ) -> tuple[str, str]:
     final_url, payload = http_get(
         url,
@@ -78,6 +89,7 @@ def http_get_text(
         referer=referer,
         user_agent=user_agent,
         accept=accept,
+        cookie=cookie,
     )
     try:
         text = payload.decode(encoding, errors="replace")
@@ -92,6 +104,7 @@ def http_get_json(
     timeout: float = 10.0,
     referer: str = "",
     user_agent: str = DEFAULT_USER_AGENT,
+    cookie: str = "",
 ) -> Any:
     final_url, payload = http_get(
         url,
@@ -99,6 +112,7 @@ def http_get_json(
         referer=referer,
         user_agent=user_agent,
         accept="application/json, text/plain, */*",
+        cookie=cookie,
     )
     try:
         return json.loads(payload.decode("utf-8"))
@@ -106,6 +120,37 @@ def http_get_json(
         raise ParseHttpError(
             f"GET {url} returned non-JSON: {type(exc).__name__}"
         ) from exc
+
+
+def http_post_json(
+    url: str,
+    payload: Any,
+    *,
+    timeout: float = 10.0,
+    referer: str = "",
+    user_agent: str = DEFAULT_USER_AGENT,
+    cookie: str = "",
+) -> Any:
+    headers = {
+        "User-Agent": user_agent,
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json;charset=UTF-8",
+        "Accept-Encoding": "gzip",
+    }
+    if referer:
+        headers["Referer"] = referer
+    if cookie:
+        headers["Cookie"] = cookie
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urlrequest.Request(url, data=body, headers=headers, method="POST")
+    try:
+        with urlrequest.urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+            if response.headers.get("Content-Encoding", "").lower() == "gzip":
+                raw = gzip.decompress(raw)
+            return json.loads(raw.decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise ParseHttpError(f"POST {url} failed: {type(exc).__name__}") from exc
 
 
 def resolve_short_link(url: str, *, timeout: float = 10.0) -> str:
