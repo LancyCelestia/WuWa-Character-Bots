@@ -43,6 +43,9 @@ def build_help_result(request_id: str | None = None) -> CapabilityResult:
             "/bot dialogue [测试文本]；/bot roles；/bot persona；"
             "/bot history clear；/bot pause；/bot resume；"
             "自动发送草稿：报存 给 A 发消息/邮件，内容..."
+            "；点歌 <歌名>；"
+            "发 B站/抖音/小红书/油管/推特/小黑盒/米游社/森空岛/库街区或"
+            "音乐平台链接自动解析成信息卡。"
         ),
         risk_level=RiskLevel.LOW,
         privacy_level=PrivacyLevel.PUBLIC,
