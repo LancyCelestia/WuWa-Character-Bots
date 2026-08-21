@@ -23,8 +23,8 @@ $ROOT = "C:\Users\LancyCelestia\Documents\MyWorkspace\WuWa-Character-Bots"
 # 单轮验证（成功退出码 0）
 & $VENV -m plugins.bot_unified_runtime.console_chat --message "你好，守岸人。"
 
-# 全量测试
-& $VENV -m pytest
+# 全量测试（必须带 tests 绝对路径：否则 pytest 会扫描你启动它的那个目录）
+& $VENV -m pytest "C:\Users\LancyCelestia\Documents\MyWorkspace\WuWa-Character-Bots\tests"
 
 # 常用体检
 & $VENV -m plugins.bot_unified_runtime.smoke readiness

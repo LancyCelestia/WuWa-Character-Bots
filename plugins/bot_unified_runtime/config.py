@@ -7,10 +7,11 @@ from pydantic import BaseModel, field_validator
 
 
 def translate_env_keys(values: dict[str, Any]) -> dict[str, Any]:
-    """把通识化环境变量键（BOT_*）翻译回内部字段名（bot_*）。
+    """把环境变量键规范化成内部字段名。
 
-    兼容旧的 BOT_* 写法（translate 后两者等价）；Config 字段名保持
-    内部命名，对外只暴露 BOT_*。
+    BOT_* 与内部字段一一对应；历史上曾兼容 BOT_* -> bot_* 双写，
+    现在两者一致，本函数保持幂等并统一小写，便于直接
+    ``Config.model_validate``。
     """
     translated: dict[str, Any] = {}
     for key, value in values.items():

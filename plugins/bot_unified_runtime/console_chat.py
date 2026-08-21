@@ -252,9 +252,18 @@ def _status_summary(config: Config, runtime_settings: Any | None = None) -> str:
     nicknames: list[str] = []
     if runtime_settings is not None:
         nicknames = runtime_settings.list_nicknames()
-    configured = list(getattr(config, "bot_runtime_persona_nicknames", []) or [])
-    if config.bot_runtime_persona_nickname.strip():
-        configured.insert(0, config.bot_runtime_persona_nickname.strip())
+    configured = list(getattr(config, "bot_persona_nicknames", []) or [])
+    legacy_nickname = str(
+        getattr(config, "bot_runtime_persona_nickname", "")
+    ).strip()
+    if legacy_nickname:
+        configured.insert(0, legacy_nickname)
+    legacy_nicknames = list(
+        getattr(config, "bot_runtime_persona_nicknames", []) or []
+    )
+    configured.extend(
+        str(item).strip() for item in legacy_nicknames if str(item).strip()
+    )
     all_nicknames = list(dict.fromkeys([*configured, *nicknames]))
     nickname_line = ",".join(all_nicknames) if all_nicknames else "未配置"
     overrides: dict[str, Any] = {}

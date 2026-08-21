@@ -201,10 +201,16 @@ def load_smoke_config(env_file: str | Path | None = None) -> Config:
 def _resolve_smoke_env_file(env_file: str | Path | None) -> Path:
     if env_file is not None:
         return Path(env_file)
-    dotenv = Path(".env")
-    if dotenv.exists():
-        return dotenv
-    return Path(".env.example")
+    # 两级回退：先看当前工作目录（允许本地覆盖与测试注入），
+    # 再看项目根（保证从任意目录运行都能找到配置）。
+    cwd_dotenv = Path(".env")
+    if cwd_dotenv.exists():
+        return cwd_dotenv
+    project_root = Path(__file__).resolve().parents[2]
+    project_dotenv = project_root / ".env"
+    if project_dotenv.exists():
+        return project_dotenv
+    return project_root / ".env.example"
 
 
 def run_chat_smoke(
