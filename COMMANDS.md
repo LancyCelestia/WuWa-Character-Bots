@@ -47,6 +47,7 @@ powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 verify
 | `queue-smoke` | 本地验证发送队列 worker。 | 使用临时 SQLite 发送队列和 fake transport 跑一次 `drain_send_queue_once()`，输出 `checked/delivered/retryable_failed/final_failed`、队列状态计数、`processing` 租约计数、回执数和审计事件数；不会启动 NoneBot/NapCat，不连接 QQ，不展示目标 ID、正文、`dedupe_key`、数据库路径或 provider message id。 |
 | `transport-smoke` | 本地验证 OneBot/NapCat 出站 transport 边界。 | 验证项目内 `sender.onebot` 可导入，构造 text/image/json/mixed/fallback/forward 样例，并用 fake bot 跑私聊、群聊和合并转发扩展 API 的 `send_onebot_v11` 回执映射；同时验证 `status/retcode/data.message_id` 解析和可重试/最终失败分类；不会启动 NoneBot/NapCat，不连接 QQ，不发送真实消息，不展示目标 ID、消息正文或 provider message id。 |
 | `online-transport-smoke` | 只读检查当前运行态在线 bot 状态。 | 调用 NoneBot 的在线 bot 查询边界，统计 `online_bots_count`、`onebot_bots_count` 和 `send_capable`；不会构造 `SendRequest`，不会调用 `send_private_msg` / `send_group_msg`，不会发送 QQ 消息，也不会展示 bot id、目标 ID、正文或 provider message id。命令行环境未初始化 NoneBot 时会安全显示没有在线 bot 可检查。 |
+| `console` | 控制台交互聊天（最小可执行程序）。 | 优先读取 `.env`，没有则读取 `.env.example`；走完整统一运行时流水线，默认 static provider 离线回复；配置 `openai_compatible` 后走真实模型。支持 `/help`、`/status`、`/why`、`/quit`，配置 `WUWA_RUNTIME_PERSONA_NICKNAME` 后还支持 `/岸宝帮助` 等昵称别名；多轮历史默认保存在内存中（配置 SQLite 历史时自动持久化）。不连接 NapCat、不发送 QQ。带 `-Message "你好"` 时进入单轮非交互模式，回复成功退出码 0，否则非 0。 |
 | `verify` | 当前阶段默认验证入口。 | 执行 `docs-check`、`plugin-check`、项目自有 `pytest`；ruff/mypy 可用时一起执行。 |
 
 ## 验证策略

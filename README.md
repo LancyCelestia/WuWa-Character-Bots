@@ -19,9 +19,86 @@ powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 persona-smoke
 powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 llm-setup
 powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 install
 powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 verify
+powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 console
 ```
 
 完整命令矩阵见 [COMMANDS.md](COMMANDS.md)。
+
+## 最小可执行程序：控制台聊天
+
+不需要 NapCat、不需要 QQ，就能真实体验整条机器人流水线：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 console
+```
+
+默认使用离线 `static` provider（不联网、不花钱）。接入真实模型有两种方式：
+
+1. 复制 `.env.example` 为 `.env`，填 `WUWA_CHAT_PROVIDER=openai_compatible`、`WUWA_CHAT_MODEL`、`WUWA_CHAT_API_KEY`、`WUWA_CHAT_BASE_URL`；
+2. 或用命令行参数临时覆盖（不写 `.env`）：
+
+```powershell
+.venv\Scripts\python.exe -m plugins.wuwa_unified_runtime.console_chat `
+  --provider openai_compatible --model deepseek-chat `
+  --base-url https://api.deepseek.com/v1 --api-key sk-xxx
+```
+
+单轮模式适合脚本和验证：`scripts/dev.ps1 console -Message "你好"`（回复成功退出码 0，否则非 0）。
+
+控制台内命令：`/help`、`/status`、`/why`、`/quit`。配置 `WUWA_RUNTIME_PERSONA_NICKNAME=岸宝` 后，还能用角色昵称命令：`/岸宝帮助`、`/岸宝状态`、`/岸宝为什么`。REPL 会保留内存多轮对话历史（退出即清空），不连接 NapCat、不发送 QQ。
+
+## 处理流程图（直白版）
+
+```text
+收到消息（QQ / 控制台 / 邮件）
+      │
+      ▼
+① 归一化 IncomingMessage（会话类型 / 发送者角色 / 文本）
+      │
+      ▼
+② 策略门 PolicyEvaluation
+      ├─ 拉黑 / 风险过高 ──→ 阻断（不花钱）
+      ├─ 群聊没@也没命令前缀 ──→ 静默观察（不调 LLM）
+      └─ 通过 ──→ ③
+③ 安静时间检查 QuietHours（夜间群聊）──命中→ 阻断
+      │ 通过
+      ▼
+④ 回复预算 + 窗口限速（全局/会话/用户/目标间隔）──命中→ 阻断
+      │ 通过
+      ▼
+⑤ 决策 BotDecision（回什么能力 / 最多几条 / 怎么发）
+      │
+      ▼
+⑥ 能力执行 Capability（以 wuwa.chat 为例）
+      ├─ 提示注入防护：高危请求 ──→ 直接拒绝
+      ├─ 组装上下文：人格 + 语气 + 记忆 + 历史 + 知识
+      │              + 时梗 + 环境信息（时间/天气/节气/节日）
+      ├─ 参数预检（base_url/温度/token 非法 ──→ 不联网兜底）
+      ├─ LLM 生成（默认 static 离线；配了模型才联网）
+      └─ 输出收口（多段回复按预算裁剪）
+      │
+      ▼
+⑦ 输出审查 Review（密钥泄漏检测 + 人格漂移检测）
+      ├─ 泄漏 / 人格漂移 ──→ 白名单兜底提示，不发原文
+      └─ 通过 ↓
+⑧ 渲染 RenderedOutput（文本 / 卡片 / 图片 / 合并转发 + 文本兜底）
+      │
+      ▼
+⑨ 发送 SendRequest（唯一出口；dedupe 去重键 + cooldown 冷却键）
+      │
+      ▼
+⑩ 投递 Transport（NapCat 消息段 / SQLite 队列租约 + 重试 worker）
+      │
+      ▼
+⑪ 回执 DeliveryReceipt（sent / queued / skipped / blocked / failed…）
+      │
+      ▼
+⑫ 审计 + 运行诊断（每阶段留痕、脱敏）──→ 管理员 /wuwa why 可解释
+```
+
+**上网查询子流程**：`链接/搜索词 → URL 去跟踪参数 → FetchRequest（超时/重试/限频/robots/凭据引用）→ FetchResult → 归一化 → 审查 → 渲染 → 发送`；搜索结果一律标记"不可信、可能过时"。
+
+**免 LLM 决策**：回不回消息完全由确定性规则决定（角色名单 → 群前缀/提及 → 软暂停 → 安静时间 → 限速 → 回复预算），LLM 只在最后"生成文本"时才花钱。
 
 ## 当前架构基线
 
@@ -133,5 +210,30 @@ NapCat 按 OneBot V11 实现接入时，建议使用数组消息段格式。Inco
 ## 研究索引
 
 研究证据、插件分析矩阵、架构报告和实现建议见 [research/README.md](research/README.md)。
+
+## 近期新增能力
+
+- **最小可执行程序**：`scripts/dev.ps1 console`（交互）与 `-Message`（单轮），走同一套运行时流水线，支持 CLI 参数临时接入任意 OpenAI 兼容模型。
+- **角色昵称命令**：配置 `WUWA_RUNTIME_PERSONA_NICKNAME=岸宝` 后支持 `/岸宝帮助`、`/岸宝状态`、`/岸宝为什么` 等别名（`runtime/aliases.py`，动词映射可扩展）。
+- **环境信息注入**：对话上下文自动带本地时间/日期/节气/节日；配置 `WUWA_WEATHER_ENABLED=true` 与经纬度后，天气经 Open-Meteo（免费、无 key）按 TTL 缓存注入，离线时安全降级为"未启用"（`character/temporal.py`）。
+- **动作括号**：prompt 允许用中文括号表达动作/神态，例如（轻轻点头）；`WUWA_PERSONA_ACTION_BRACKETS=false` 可关闭。
+- **时梗层**：`WUWA_TREND_FILES` 指向的 Markdown 备注作为"近期梗/热词/时事"注入，按 `WUWA_TREND_MAX_AGE_DAYS` 自动过滤过期条目，人设文件不用为追热点而改。
+- **URL 去跟踪参数**：`sources/url_cleaner.py` 清洗 utm_*/spm/gclid/分享参数等，用于未来媒体流水线的去重键/缓存键/对外链接。
+- **凭据存储**：`sources/credentials.py` 提供 `CredentialStore` 接口（文件 `data/credentials.json` 或 `WUWA_CREDENTIAL_*` 环境变量），cookie/api_key 以引用进入抓取链路，原始值不入日志与 prompt。
+- **控制台多轮历史**：REPL 默认使用进程内多轮历史（`InMemoryConversationHistoryStore`），配置 SQLite 历史时自动切换持久存储。
+
+## Git 本地工作流（不用 harness 也能更新回滚）
+
+见 [GIT.md](GIT.md)。常用操作：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/git.ps1 save "feat: 说明"
+powershell -ExecutionPolicy Bypass -File scripts/git.ps1 history 20
+powershell -ExecutionPolicy Bypass -File scripts/git.ps1 tag v0.1-working
+powershell -ExecutionPolicy Bypass -File scripts/git.ps1 rollback 2
+powershell -ExecutionPolicy Bypass -File scripts/git.ps1 update
+```
+
+`.env`、`data/`、`.venv/` 与下载的研究源码都在 `.gitignore` 中，密钥和运行数据不会被提交。
 
 当前 M0 已完成一个很窄的统一运行时插件骨架、SQLite 记忆闭环、最近对话历史闭环、当前作用域历史清理入口、每作用域历史存储保留上限、调用 LLM 前的内存/可选 SQLite 窗口限速、全局配额、目标最小间隔、安静时间策略、人格/知识上下文读取失败安全兜底、可选 SQLite 运行诊断、可选 SQLite 审计/回执/发送队列持久化、发送请求去重、持久请求查找、退避重试、失败封顶、SQLite 队列租约 claim、一次性队列 worker、默认关闭的 APScheduler 队列 worker 注册、本地 `doctor` 环境诊断、本地 `llm-setup` 接入清单、本地 `readiness-smoke` 统一就绪摘要、本地 `dialogue-smoke` 对话验收摘要、本地 `persona-smoke` 人格自检、本地 `queue-smoke` worker 诊断、本地 `startup-smoke` 启动干跑、本地 `transport-smoke` 出站边界诊断、只读 `online-transport-smoke` 在线 bot 可见性诊断、OneBot/NapCat text/image/json/mixed/forward transport 边界、OneBot `status/retcode/data.message_id` 回执归一化、本地 NoneBot 插件加载 smoke、`/wuwa why` 最近诊断，以及管理员 `/wuwa receipt`、`/wuwa audit`、`/wuwa recent`、`/wuwa queue`、`/wuwa context`、`/wuwa llm`、`/wuwa setup llm`、`/wuwa config`、`/wuwa readiness`、`/wuwa dialogue`、`/wuwa roles`、`/wuwa persona`、`/wuwa history clear`、`/wuwa pause`、`/wuwa resume` 安全排障和运行时控制入口。下一步建议补一个低风险媒体 source adapter、公共游戏/wiki 能力、排障可视化面板、摘要/私聊回退、图片上传/缓存策略和真实 NapCat 授权投递验证。

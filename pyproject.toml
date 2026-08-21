@@ -18,6 +18,13 @@ dependencies = [
     "nonebot-plugin-htmlkit>=0.1.0rc5",
 ]
 
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["plugins*"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.0",

@@ -23,6 +23,7 @@ param(
         "queue-smoke",
         "transport-smoke",
         "online-transport-smoke",
+        "console",
         "docs-check",
         "plugin-check",
         "smoke",
@@ -482,6 +483,21 @@ function Invoke-OnlineTransportSmoke {
     finally { Pop-Location }
 }
 
+function Invoke-Console {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "starting console chat REPL"
+        $arguments = @("-m", "plugins.wuwa_unified_runtime.console_chat")
+        if (-not [string]::IsNullOrWhiteSpace($Message)) {
+            $arguments += @("--message", $Message)
+        }
+        Invoke-External $python $arguments
+    }
+    finally { Pop-Location }
+}
+
 function Invoke-Verify {
     Invoke-DocsCheck
     Invoke-PluginCheck
@@ -538,6 +554,7 @@ Tasks:
   queue-smoke   Drain a temporary SQLite send queue with fake transport; never connects NapCat or sends QQ messages.
   transport-smoke Validate OneBot/NapCat message segments and fake transport; never connects NapCat or sends QQ messages.
   online-transport-smoke Read current online bot state without calling send APIs; never sends QQ messages.
+  console       Interactive console chat through the real runtime pipeline (offline static LLM by default). Use -Message for one-shot non-interactive mode.
   docs-check    Verify command docs, runtime specs, and project config pointers exist.
   plugin-check  Verify plugins/ is configured and report whether local plugins exist yet.
   smoke         Verify docs, plugin discovery config, NoneBot import, and nb CLI availability.
@@ -568,6 +585,7 @@ switch ($Task) {
     "queue-smoke" { Invoke-QueueSmoke }
     "transport-smoke" { Invoke-TransportSmoke }
     "online-transport-smoke" { Invoke-OnlineTransportSmoke }
+    "console" { Invoke-Console }
     "docs-check" { Invoke-DocsCheck }
     "plugin-check" { Invoke-PluginCheck }
     "smoke" { Invoke-Smoke }

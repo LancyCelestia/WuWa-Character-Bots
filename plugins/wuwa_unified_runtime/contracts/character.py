@@ -77,6 +77,7 @@ class ToneProfile(StrictBaseModel):
     directness: float = 0.5
     message_count_limit: int = 1
     markdown_allowed: bool = True
+    action_brackets: bool = True
 
 
 class KnowledgeSource(StrictBaseModel):
@@ -106,6 +107,41 @@ class RetrievalResult(StrictBaseModel):
     privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
 
 
+class TrendNote(StrictBaseModel):
+    """一条时梗/时效备注；属于不可信事实，只作背景参考。"""
+
+    topic: str
+    note: str
+    observed_on: str = ""
+    confidence: float = 0.5
+    source: str = "local_notes"
+
+
+class TrendContext(StrictBaseModel):
+    request_id: str
+    notes: list[TrendNote] = Field(default_factory=list)
+    privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
+
+
+class TemporalContext(StrictBaseModel):
+    """当前环境信息：本地时间、日期、节气、节日、天气。
+
+    时间/日期由系统计算，可信；天气来自外部接口，可能不可用或过期。
+    """
+
+    request_id: str
+    now_local: str = ""
+    date_local: str = ""
+    weekday: str = ""
+    timezone: str = ""
+    solar_term: str = ""
+    holiday: str = ""
+    weather_summary: str = ""
+    weather_ok: bool = False
+    weather_source: str = ""
+    privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
+
+
 class ContextBundle(StrictBaseModel):
     request_id: str
     persona: PersonaProfile
@@ -119,6 +155,8 @@ class ContextBundle(StrictBaseModel):
     sender_id: str
     session_id: str
     emotion_signals: list[EmotionSignal] = Field(default_factory=list)
+    trend_context: TrendContext | None = None
+    temporal_context: TemporalContext | None = None
     context_budget: int = 2048
     privacy_level: PrivacyLevel = PrivacyLevel.PERSONAL
     risk_level: RiskLevel = RiskLevel.LOW

@@ -22,6 +22,8 @@ from .history import (
     build_conversation_history_provider,
 )
 from .memory import MemoryProvider, NullMemoryProvider, build_memory_provider
+from .temporal import RuleBasedTemporalProvider, build_temporal_provider
+from .trend import NullTrendProvider, TrendProvider, build_trend_provider
 
 
 LLM_SAFE_MEMORY_SENSITIVITIES = frozenset({"public", "group", "personal"})
@@ -96,6 +98,9 @@ class FileCharacterContextProvider:
         history_max_turns: int = 6,
         history_max_chars: int = 1600,
         emotion_provider: EmotionProvider | None = None,
+        trend_provider: TrendProvider | None = None,
+        temporal_provider: RuleBasedTemporalProvider | None = None,
+        action_brackets: bool = True,
     ) -> None:
         self.persona_profile_id = persona_profile_id
         self.persona_display_name = persona_display_name
@@ -118,6 +123,9 @@ class FileCharacterContextProvider:
         self.history_max_turns = max(0, history_max_turns)
         self.history_max_chars = max(0, history_max_chars)
         self.emotion_provider = emotion_provider or NullEmotionProvider()
+        self.trend_provider = trend_provider or NullTrendProvider()
+        self.temporal_provider = temporal_provider or RuleBasedTemporalProvider()
+        self.action_brackets = bool(action_brackets)
 
     def build_context(
         self,
@@ -143,6 +151,7 @@ class FileCharacterContextProvider:
             warmth=self.tone_warmth,
             directness=self.tone_directness,
             message_count_limit=self.tone_message_count_limit,
+            action_brackets=self.action_brackets,
         )
         knowledge_chunks = _build_knowledge_chunks(
             files=self.knowledge_files,
@@ -176,6 +185,8 @@ class FileCharacterContextProvider:
             session_id=session_id,
             query_text=query_text,
         )
+        trend_context = self.trend_provider.load(request_id=request_id)
+        temporal_context = self.temporal_provider.snapshot(request_id=request_id)
         return ContextBundle(
             request_id=request_id,
             persona=persona,
@@ -192,10 +203,16 @@ class FileCharacterContextProvider:
             sender_id=sender_id,
             session_id=session_id,
             emotion_signals=emotion_signals,
+            trend_context=trend_context,
+            temporal_context=temporal_context,
         )
 
 
-def build_character_context_provider(config: object) -> CharacterContextProvider:
+def build_character_context_provider(
+    config: object,
+    *,
+    conversation_history_provider: ConversationHistoryProvider | None = None,
+) -> CharacterContextProvider:
     return FileCharacterContextProvider(
         persona_profile_id=str(getattr(config, "wuwa_persona_profile_id", "default")),
         persona_display_name=str(getattr(config, "wuwa_persona_display_name", "报存")),
@@ -212,10 +229,16 @@ def build_character_context_provider(config: object) -> CharacterContextProvider
         memory_provider=build_memory_provider(config),
         memory_max_items=int(getattr(config, "wuwa_memory_max_items", 5)),
         memory_max_chars=int(getattr(config, "wuwa_memory_max_chars", 1200)),
-        conversation_history_provider=build_conversation_history_provider(config),
+        conversation_history_provider=(
+            conversation_history_provider
+            or build_conversation_history_provider(config)
+        ),
         history_max_turns=int(getattr(config, "wuwa_history_max_turns", 6)),
         history_max_chars=int(getattr(config, "wuwa_history_max_chars", 1600)),
         emotion_provider=build_emotion_provider(config),
+        trend_provider=build_trend_provider(config),
+        temporal_provider=build_temporal_provider(config),
+        action_brackets=bool(getattr(config, "wuwa_persona_action_brackets", True)),
     )
 
 

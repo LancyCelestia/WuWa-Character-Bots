@@ -10,6 +10,8 @@ class Config(BaseModel):
     wuwa_runtime_enabled: bool = True
     wuwa_runtime_default_persona: str = "default"
     wuwa_runtime_group_command_prefix: str = "/wuwa"
+    wuwa_runtime_persona_nickname: str = ""
+    wuwa_runtime_alias_enabled: bool = True
     wuwa_admin_user_ids: list[str] = []
     wuwa_enterprise_user_ids: list[str] = []
     wuwa_trusted_user_ids: list[str] = []
@@ -55,6 +57,21 @@ class Config(BaseModel):
     wuwa_send_queue_worker_batch_size: int = 20
     wuwa_emotion_enabled: bool = True
     wuwa_emotion_max_signals: int = 4
+    wuwa_trend_enabled: bool = False
+    wuwa_trend_files: list[str] = []
+    wuwa_trend_max_notes: int = 5
+    wuwa_trend_max_chars: int = 500
+    wuwa_trend_max_age_days: int = 14
+    wuwa_temporal_enabled: bool = True
+    wuwa_timezone: str = "Asia/Hong_Kong"
+    wuwa_weather_enabled: bool = False
+    wuwa_weather_latitude: float = 0.0
+    wuwa_weather_longitude: float = 0.0
+    wuwa_weather_cache_seconds: int = 1800
+    wuwa_weather_timeout_seconds: float = 8.0
+    wuwa_holidays_file: str = ""
+    wuwa_persona_action_brackets: bool = True
+    wuwa_credentials_file: str = ""
     wuwa_chat_enabled: bool = True
     wuwa_chat_provider: str = "static"
     wuwa_chat_model: str = "static"
@@ -88,7 +105,12 @@ class Config(BaseModel):
     wuwa_quiet_hours_session_types: list[str] = ["group"]
     wuwa_quiet_hours_bypass_roles: list[str] = ["admin"]
 
-    @field_validator("wuwa_persona_files", "wuwa_knowledge_files", mode="before")
+    @field_validator(
+        "wuwa_persona_files",
+        "wuwa_knowledge_files",
+        "wuwa_trend_files",
+        mode="before",
+    )
     @classmethod
     def _parse_file_list(cls, value: Any) -> list[str]:
         if value is None or value == "":
