@@ -611,3 +611,236 @@ def test_music_card_fallback_when_no_audio_url():
         {"type": "music", "music_type": "qq", "music_id": "abc"}
     ]
     assert "已附带平台音乐卡片" in result.body
+
+
+def test_parse_pixiv_deep(monkeypatch):
+    from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
+        parse_pixiv,
+    )
+
+    def fake_http_get_json(url, **kwargs):
+        if "/ajax/illust/" in url:
+            return {
+                "body": {
+                    "title": "海と空の境界線",
+                    "userName": "SakuraiChino",
+                    "userId": "7358990",
+                    "width": 1000,
+                    "height": 1415,
+                    "pageCount": 1,
+                    "viewCount": 3244,
+                    "likeCount": 546,
+                    "bookmarkCount": 775,
+                    "commentCount": 6,
+                    "illustType": 0,
+                    "description": "desc",
+                    "tags": {"tags": [{"tag": "女の子"}]},
+                }
+            }
+        return {"body": {"follower": 100, "following": 5}}
+
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sources.parsers.platforms_generic.http_get_json",
+        fake_http_get_json,
+    )
+
+    item = parse_pixiv("https://www.pixiv.net/artworks/134246952")
+
+    assert item.title == "海と空の境界線"
+    assert item.stats["浏览"] == 3244
+    assert item.stats["分辨率"] == "1000×1415"
+    assert item.stats["图片数量"] == 1
+    assert "作者粉丝" in item.summary
+
+
+def test_parse_twitter_via_fxtwitter(monkeypatch):
+    from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
+        parse_twitter_x,
+    )
+
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sources.parsers.platforms_generic.http_get_json",
+        lambda url, **kwargs: {
+            "tweet": {
+                "text": "测试推文 #鸣潮",
+                "author": {"name": "鸣潮官方", "screen_name": "WW_JP_Official"},
+                "retweets": 100,
+                "likes": 200,
+                "replies": 3,
+                "quotes": 4,
+                "media": {"photos": [{"url": "https://pbs.twimg.com/x.jpg"}]},
+                "created_at": "Fri Aug 21 03:00:01 +0000 2026",
+            }
+        },
+    )
+
+    item = parse_twitter_x("https://x.com/WW_JP_Official/status/2090635004707787044")
+
+    assert item.parse_depth == "deep"
+    assert item.stats == {"转推": 100, "喜欢": 200, "评论": 3, "引用": 4}
+    assert item.cover_url.endswith("x.jpg")
+    assert "#鸣潮" in item.summary
+
+
+def test_parse_bilibili_live(monkeypatch):
+    from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import (
+        parse_bilibili,
+    )
+
+    def fake_http_get_json(url, **kwargs):
+        if "getInfoByRoom" in url:
+            return {
+                "code": 0,
+                "data": {
+                    "room_info": {
+                        "title": "玩点小游戏",
+                        "cover": "https://i0.hdslb.com/c.jpg",
+                        "online": 192828,
+                        "live_status": 1,
+                        "parent_area_name": "手游",
+                        "area_name": "鸣潮",
+                        "tags": "二游,王者荣耀",
+                        "uid": 123,
+                        "live_start_time": 1760000000,
+                    },
+                    "anchor_info": {"base_info": {"uname": "棉花大哥哥"}},
+                },
+            }
+        return {"code": 0, "data": {}}
+
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sources.parsers.platforms_bilibili.http_get_json",
+        fake_http_get_json,
+    )
+
+    item = parse_bilibili("https://live.bilibili.com/34348")
+
+    assert item.item_kind == "live"
+    assert item.title == "玩点小游戏"
+    assert item.stats["在线人数"] == "19.3万"
+    assert "手游 / 鸣潮" in item.summary
+    assert "二游、王者荣耀" in item.summary
+
+
+def test_parse_bilibili_opus_draw(monkeypatch):
+    from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import (
+        parse_bilibili,
+    )
+
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sources.parsers.platforms_bilibili.http_get_json",
+        lambda url, **kwargs: {
+            "code": 0,
+            "data": {
+                "item": {
+                    "modules": {
+                        "module_author": {"name": "鸣潮"},
+                        "module_dynamic": {
+                            "desc": None,
+                            "major": {
+                                "type": "MAJOR_TYPE_DRAW",
+                                "draw": {
+                                    "id": 1,
+                                    "items": [
+                                        {
+                                            "src": "https://i0.hdslb.com/a.png",
+                                            "width": 1920,
+                                            "height": 1080,
+                                            "size": 4220.0,
+                                        }
+                                    ],
+                                },
+                            },
+                        },
+                        "module_stat": {
+                            "like": {"count": 10},
+                            "comment": {"count": 2},
+                            "forward": {"count": 3},
+                        },
+                    }
+                }
+            },
+        },
+    )
+
+    item = parse_bilibili("https://www.bilibili.com/opus/123")
+
+    assert item.item_kind == "dynamic"
+    assert item.stats == {"点赞": 10, "评论": 2, "转发": 3}
+    assert "图片数量：1" in item.summary
+    assert "1920×1080" in item.summary
+    assert item.cover_url.endswith("a.png")
+
+
+def test_parse_bilibili_watchlater_extracts_bvid(monkeypatch):
+    from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import (
+        parse_bilibili,
+    )
+
+    def fake_http_get_json(url, **kwargs):
+        if "x/web-interface/view" in url:
+            return {
+                "code": 0,
+                "data": {
+                    "bvid": "BV18uywBcEAb",
+                    "title": "测试",
+                    "owner": {"name": "UP", "mid": 1},
+                    "pic": "https://x/p.jpg",
+                    "desc": "",
+                    "pages": [{"cid": 1}],
+                    "stat": {"view": 1},
+                    "duration": 60,
+                    "tname": "动画",
+                },
+            }
+        return {"code": 0, "data": {}}
+
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sources.parsers.platforms_bilibili.http_get_json",
+        fake_http_get_json,
+    )
+
+    item = parse_bilibili(
+        "https://www.bilibili.com/list/watchlater/?bvid=BV18uywBcEAb&oid=1"
+    )
+
+    assert item.item_kind == "video"
+    assert item.item_id == "BV18uywBcEAb"
+
+
+def test_parse_spa_link_cards():
+    from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
+        parse_allcpp,
+        parse_mihuashi,
+    )
+
+    item = parse_allcpp("https://www.allcpp.cn/allcpp/event/event.do?event=6733")
+    assert item.item_kind == "event"
+    assert "动态渲染" in item.summary
+
+    item = parse_mihuashi("https://www.mihuashi.com/projects/11789469")
+    assert item.item_kind == "project"
+    assert item.title == "米画师企划 链接"
+
+
+def test_registry_matches_new_platforms():
+    registry = build_content_parser_registry()["registry"]
+
+    cases = {
+        "https://www.pixiv.net/artworks/134246952": "pixiv",
+        "https://www.lofter.com/trend?act=qbview_20130930_01": "lofter",
+        "https://www.allcpp.cn/allcpp/event/event.do?event=6733": "allcpp",
+        "https://www.mihuashi.com/projects/11789469": "mihuashi",
+        "https://huajia.163.com/main/projects/details/gr3MNYwB": "huajia",
+        "https://live.bilibili.com/34348": "bilibili",
+        "https://space.bilibili.com/3577566": "bilibili",
+        "https://www.bilibili.com/opus/1238218464227754004": "bilibili",
+        "https://www.bilibili.com/bangumi/play/ss21542": "bilibili",
+        "https://www.youtube.com/playlist?list=RDCLAK": "youtube",
+        "https://music.youtube.com/watch?v=abc123": "youtube",
+        "https://y.qq.com/n/ryqq_v2/songDetail/004KgdUw0AtPR0": "qqmusic",
+    }
+    for url, expected in cases.items():
+        matches = registry.match(build_source_input(url))
+        assert matches, url
+        assert matches[0].parser_id == expected, url

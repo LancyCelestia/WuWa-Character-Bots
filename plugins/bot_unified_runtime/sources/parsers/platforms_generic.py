@@ -18,7 +18,7 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
     http_get_text,
     resolve_short_link,
 )
-from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import PlatformParse
+from plugins.bot_unified_runtime.sources.parsers.types import PlatformParse
 
 _OG_TITLE_RE = re.compile(
     r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)',
@@ -323,6 +323,8 @@ def _douyin_from_router_data(html: str, url: str) -> PlatformParse | None:
 
 
 def parse_youtube(url: str, *, cookie_header: str = "") -> PlatformParse:
+    if "/playlist" in url or "list=" in url and "watch" not in url:
+        return _youtube_playlist(url, cookie_header=cookie_header)
     try:
         payload = http_get_json(
             "https://www.youtube.com/oembed"
@@ -345,10 +347,90 @@ def parse_youtube(url: str, *, cookie_header: str = "") -> PlatformParse:
             platform="youtube",
             item_kind="video",
             note="（元信息卡；下载需要 yt-dlp + 代理，未接入）",
+            cookie_header=cookie_header,
+        )
+
+
+def _youtube_playlist(url: str, *, cookie_header: str = "") -> PlatformParse:
+    """油管歌单/播放列表：页面 og 元信息（标题/数量/封面）。"""
+    try:
+        return _og_scrape(
+            url,
+            platform="youtube",
+            item_kind="playlist",
+            cookie_header=cookie_header,
+        )
+    except ParseHttpError:
+        return PlatformParse(
+            platform="youtube",
+            item_id="",
+            item_kind="playlist",
+            title="YouTube 播放列表",
+            summary="（播放列表页面被限制访问，先给入口链接）",
+            canonical_url=url,
+            parse_depth="shallow",
         )
 
 
 def parse_twitter_x(url: str, *, cookie_header: str = "") -> PlatformParse:
+    """推特：优先 fxtwitter 公开聚合接口（正文/媒体/转赞评），失败回退 og。"""
+    match = re.search(r"(?:twitter\.com|x\.com)/([^/]+)/status/(\d+)", url)
+    if match:
+        screen_name, status_id = match.group(1), match.group(2)
+        try:
+            payload = http_get_json(
+                f"https://api.fxtwitter.com/{screen_name}/status/{status_id}",
+                timeout=10,
+            )
+            tweet = payload.get("tweet") or {}
+            if tweet.get("text"):
+                author = tweet.get("author") or {}
+                stats = {}
+                for key, label in (
+                    ("retweets", "转推"),
+                    ("likes", "喜欢"),
+                    ("replies", "评论"),
+                    ("quotes", "引用"),
+                ):
+                    value = tweet.get(key)
+                    if isinstance(value, (int, float)):
+                        stats[label] = int(value)
+                media = tweet.get("media") or {}
+                photos = media.get("photos") or []
+                videos = media.get("videos") or []
+                gifs = media.get("gifs") or []
+                summary_lines = [str(tweet.get("text") or "").strip()[:500]]
+                media_note = []
+                if photos:
+                    media_note.append(f"图片 {len(photos)} 张")
+                if videos:
+                    media_note.append(f"视频 {len(videos)} 个")
+                if gifs:
+                    media_note.append(f"GIF {len(gifs)} 个")
+                if media_note:
+                    summary_lines.append("媒体：" + "、".join(media_note))
+                cover = ""
+                if photos:
+                    cover = str(photos[0].get("url") or "")
+                elif videos:
+                    cover = str(videos[0].get("thumbnail_url") or "")
+                created = tweet.get("created_at") or ""
+                if created:
+                    summary_lines.append(f"时间：{str(created)[:16]}")
+                return PlatformParse(
+                    platform="twitter",
+                    item_id=status_id,
+                    item_kind="tweet",
+                    title=str(tweet.get("text") or "")[:40] or "推文",
+                    author_name=f"{author.get('name') or ''}（@{author.get('screen_name') or screen_name}）",
+                    summary="\n".join(summary_lines),
+                    cover_url=cover,
+                    canonical_url=url,
+                    stats=stats,
+                    parse_depth="deep",
+                )
+        except Exception:  # noqa: BLE001 - 聚合接口失败回退 og。
+            pass
     return _og_scrape(
         url,
         platform="twitter",
@@ -356,6 +438,157 @@ def parse_twitter_x(url: str, *, cookie_header: str = "") -> PlatformParse:
         note="（浅层解析；X 反爬严格，拿不到内容时只有标题）",
         cookie_header=cookie_header,
     )
+
+
+def parse_pixiv(url: str, *, cookie_header: str = "") -> PlatformParse:
+    """Pixiv 插画：官方 ajax 公开接口（标题/作者/分辨率/浏览/点赞/收藏/
+    评论/标签/图片数量），失败回退页面 og。"""
+    match = re.search(r"/artworks/(\d+)", url)
+    if not match:
+        raise ParseHttpError(f"pixiv: no artwork id in {url}")
+    artwork_id = match.group(1)
+    try:
+        payload = http_get_json(
+            f"https://www.pixiv.net/ajax/illust/{artwork_id}",
+            referer="https://www.pixiv.net/",
+            cookie=cookie_header,
+        )
+        body = payload.get("body") or {}
+        if body.get("title"):
+            tags = [str(t.get("tag")) for t in ((body.get("tags") or {}).get("tags") or [])]
+            stats = {}
+            for key, label in (
+                ("viewCount", "浏览"),
+                ("likeCount", "喜欢"),
+                ("bookmarkCount", "收藏"),
+                ("commentCount", "评论"),
+            ):
+                value = body.get(key)
+                if isinstance(value, (int, float)):
+                    stats[label] = int(value)
+            width, height = body.get("width"), body.get("height")
+            if width and height:
+                stats["分辨率"] = f"{width}×{height}"
+            page_count = body.get("pageCount")
+            if page_count:
+                stats["图片数量"] = int(page_count)
+            type_labels = {0: "插画", 1: "漫画", 2: "动图"}
+            kind_label = type_labels.get(int(body.get("illustType") or 0), "插画")
+            summary_lines = [f"类型：{kind_label}"]
+            if tags:
+                summary_lines.append("标签：" + "、".join(tags[:12]))
+            desc = str(body.get("description") or "").strip()
+            if desc and len(desc) > 300:
+                desc = desc[:300] + "…"
+            if desc:
+                summary_lines.append(f"简介：{desc}")
+            # 作者粉丝/作品数（尽力而为）
+            user_id = body.get("userId")
+            if user_id:
+                try:
+                    user = http_get_json(
+                        f"https://www.pixiv.net/ajax/user/{user_id}?full=1",
+                        referer="https://www.pixiv.net/",
+                        cookie=cookie_header,
+                    )
+                    ubody = user.get("body") or {}
+                    follower = ubody.get("follower")
+                    following = ubody.get("following")
+                    if isinstance(follower, (int, float)):
+                        summary_lines.append(f"作者粉丝：{int(follower)} · 关注：{int(following or 0)}")
+                except Exception:  # noqa: BLE001
+                    pass
+            # 封面用 embed 代理图（QQ 可直接加载，避免 i.pximg.net 防盗链）
+            cover = f"https://embed.pixiv.net/artwork.php?illust_id={artwork_id}"
+            return PlatformParse(
+                platform="pixiv",
+                item_id=artwork_id,
+                item_kind="illust",
+                title=str(body.get("title") or ""),
+                author_name=str(body.get("userName") or ""),
+                summary="\n".join(summary_lines),
+                cover_url=cover,
+                canonical_url=url,
+                stats=stats,
+                parse_depth="deep",
+            )
+    except ParseHttpError:
+        pass
+    return _og_scrape(url, platform="pixiv", item_kind="illust", referer="https://www.pixiv.net/")
+
+
+def _spa_link_card(
+    url: str,
+    *,
+    platform: str,
+    item_kind: str,
+    label: str,
+) -> PlatformParse:
+    """动态渲染站点（无 og/无公开接口）：诚实降级为入口卡片。"""
+    return PlatformParse(
+        platform=platform,
+        item_id="",
+        item_kind=item_kind,
+        title=f"{label} 链接",
+        summary="（该站页面为动态渲染，机器人拿不到具体内容；先保留入口，"
+        "点开即可查看）",
+        canonical_url=url,
+        parse_depth="shallow",
+    )
+
+
+def parse_lofter(url: str, *, cookie_header: str = "") -> PlatformParse:
+    if "/post/" in url or "/lpost/" in url:
+        return _og_scrape(url, platform="lofter", item_kind="post", cookie_header=cookie_header)
+    if "/tag/" in url:
+        return _spa_link_card(url, platform="lofter", item_kind="tag", label="Lofter 标签页")
+    if "/selection" in url:
+        return _spa_link_card(url, platform="lofter", item_kind="collection", label="Lofter 精选")
+    if "/theme/" in url:
+        return _spa_link_card(url, platform="lofter", item_kind="theme", label="Lofter 主题")
+    return _spa_link_card(url, platform="lofter", item_kind="page", label="Lofter 页面")
+
+
+def parse_allcpp(url: str, *, cookie_header: str = "") -> PlatformParse:
+    match = re.search(r"event=(\d+)", url)
+    if match:
+        return _spa_link_card(
+            url,
+            platform="allcpp",
+            item_kind="event",
+            label=f"无差别同人站活动 {match.group(1)}",
+        )
+    return _spa_link_card(url, platform="allcpp", item_kind="page", label="无差别同人站")
+
+
+def parse_mihuashi(url: str, *, cookie_header: str = "") -> PlatformParse:
+    kind_map = (
+        ("/profiles/", "painter", "米画师画师主页"),
+        ("/projects/", "project", "米画师企划"),
+        ("/stalls/", "stall", "米画师摊宣"),
+        ("/artworks/", "artwork", "米画师作品"),
+    )
+    kind, label = "page", "米画师"
+    for path_kind, kind_name, display in kind_map:
+        if path_kind in url:
+            kind, label = kind_name, display
+            break
+    return _spa_link_card(url, platform="mihuashi", item_kind=kind, label=label)
+
+
+def parse_huajia(url: str, *, cookie_header: str = "") -> PlatformParse:
+    kind_map = (
+        ("/goods/details/", "goods", "网易画加约稿商品"),
+        ("/projects/details/", "project", "网易画加企划"),
+        ("/profile/", "painter", "网易画加画师主页"),
+        ("/works/", "work", "网易画加作品"),
+    )
+    kind, label = "page", "网易画加"
+    for path_kind, kind_name, display in kind_map:
+        if path_kind in url:
+            kind, label = kind_name, display
+            break
+    return _spa_link_card(url, platform="huajia", item_kind=kind, label=label)
 
 
 def parse_xiaoheihe(url: str, *, cookie_header: str = "") -> PlatformParse:

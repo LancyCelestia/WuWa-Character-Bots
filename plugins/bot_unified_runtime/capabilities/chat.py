@@ -38,7 +38,7 @@ ChatCapability = Callable[[IncomingMessage, BotDecision], CapabilityResult]
 MIN_CHAT_PROMPT_BUDGET = 600
 TRUNCATION_NOTICE = "- 内容已按上下文预算裁剪。"
 USER_MESSAGE_TRUNCATION_NOTICE = "当前用户消息已按上下文预算裁剪。"
-OUTPUT_BUDGET_NOTICE = "我先说到这里，避免刷屏；需要的话你再叫我继续。"
+OUTPUT_BUDGET_NOTICE = "（平台单条消息长度限制，以上为完整回复的可见部分）"
 _CONTEXT_ERROR_KINDS = frozenset(
     {
         "provider_failed",

@@ -34,12 +34,33 @@ def _render_parse_body(item: Any) -> str:
         "article": "文章",
         "tweet": "推文",
         "search": "搜索",
+        "live": "直播间",
+        "user": "UP主主页",
+        "collection": "收藏夹",
+        "dynamic": "动态",
+        "bangumi": "番剧",
+        "playlist": "播放列表",
+        "illust": "插画",
+        "event": "活动",
+        "tag": "标签",
+        "theme": "主题",
+        "page": "页面",
+        "painter": "画师主页",
+        "project": "企划",
+        "stall": "摊宣",
+        "artwork": "作品",
+        "goods": "约稿商品",
+        "work": "作品",
     }
     kind_label = kind_labels.get(item.item_kind, item.item_kind or "内容")
     lines.append(f"【{kind_label}】{item.title}")
     if item.author_name:
         lines.append(f"作者：{item.author_name}")
-    stats_bits = [f"{label} {value}" for label, value in (item.stats or {}).items()]
+    stats_bits = [
+        f"{label} {value}"
+        for label, value in (item.stats or {}).items()
+        if not isinstance(value, (dict, list))
+    ]
     if stats_bits:
         lines.append(" · ".join(stats_bits))
     if item.summary:

@@ -22,9 +22,17 @@ function Invoke-Git {
     param([string[]]$Arguments)
     Push-Location $Root
     try {
-        # 2>&1：git 的提示（如 LF/CRLF 警告）走 stderr，直接抛会触发
-        # ErrorActionPreference=Stop 中断脚本；合并后仅显示，不致命。
-        & git @Arguments 2>&1
+        # git 的提示（LF/CRLF 等）走 stderr。ErrorActionPreference=Stop 时
+        # stderr 记录会中断脚本（WinPS5.1 / pwsh 均可能触发），这里局部放宽，
+        # 真正的失败仍由 $LASTEXITCODE 捕获并抛出。
+        $previousEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & git @Arguments 2>&1
+        }
+        finally {
+            $ErrorActionPreference = $previousEap
+        }
         if ($LASTEXITCODE -ne 0) {
             throw "git $($Arguments -join ' ') exited with code $LASTEXITCODE."
         }

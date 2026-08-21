@@ -21,7 +21,7 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
     http_post_json,
     resolve_short_link,
 )
-from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import PlatformParse
+from plugins.bot_unified_runtime.sources.parsers.types import PlatformParse
 
 _SONG_ID_RE = re.compile(r"[?&/#]id=(\d+)")
 _163CN_RE = re.compile(r"163cn\.tv|163cn\.com")

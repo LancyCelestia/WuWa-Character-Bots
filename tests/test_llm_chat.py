@@ -912,7 +912,7 @@ def test_chat_result_trims_llm_multiblock_reply_to_decision_budget():
     assert "第一段" in result.body
     assert "第二段" not in result.body
     assert "第三段" not in result.body
-    assert "避免刷屏" in result.body
+    assert "平台单条消息长度限制" in result.body
     assert "llm_output_trimmed" in result.audit_tags
 
 
@@ -992,7 +992,7 @@ def test_chat_result_trims_single_long_reply_block_to_character_budget():
     )
 
     assert len(result.body) <= 300
-    assert "避免刷屏" in result.body
+    assert "平台单条消息长度限制" in result.body
     assert "llm_output_trimmed" in result.audit_tags
 
 
