@@ -31,6 +31,7 @@ import sys
 from typing import Any
 
 from plugins.wuwa_unified_runtime.audit import InMemoryAuditLogger
+from plugins.wuwa_unified_runtime.audit.file_logger import build_audit_with_file_log
 from plugins.wuwa_unified_runtime.capabilities.chat import build_chat_capability
 from plugins.wuwa_unified_runtime.character import build_character_context_provider
 from plugins.wuwa_unified_runtime.character.history import (
@@ -66,6 +67,10 @@ from plugins.wuwa_unified_runtime.runtime.aliases import (
 from plugins.wuwa_unified_runtime.runtime.pipeline import RuntimePipeline
 from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
 from plugins.wuwa_unified_runtime.smoke import load_smoke_config
+from plugins.wuwa_unified_runtime.sources.credential_health import (
+    check_credentials_and_report,
+)
+from plugins.wuwa_unified_runtime.sources.meme_search import build_meme_search_provider
 
 _BANNER = """\
 ============================================================
@@ -137,7 +142,11 @@ def _build_history_store(config: Config):
 
 
 def _build_runtime(config: Config, history_store: Any) -> tuple[RuntimePipeline, Any]:
-    audit_logger = InMemoryAuditLogger()
+    audit_logger = build_audit_with_file_log(
+        InMemoryAuditLogger(),
+        config.wuwa_audit_log_file,
+        max_bytes=config.wuwa_audit_log_max_bytes,
+    )
     send_queue = InMemorySendQueue(audit_logger=audit_logger)
     pipeline = RuntimePipeline(
         send_queue=send_queue,
@@ -148,6 +157,9 @@ def _build_runtime(config: Config, history_store: Any) -> tuple[RuntimePipeline,
         runtime_enabled=config.wuwa_runtime_enabled,
         rate_limiter=build_rate_limiter(config),
         quiet_hours_checker=build_quiet_hours_checker(config),
+        forward_min_chars=config.wuwa_render_forward_min_chars,
+        forward_max_nodes=config.wuwa_render_forward_max_nodes,
+        forward_node_chars=config.wuwa_render_forward_node_chars,
     )
     capability = build_chat_capability(
         character_provider=build_character_context_provider(
@@ -155,6 +167,7 @@ def _build_runtime(config: Config, history_store: Any) -> tuple[RuntimePipeline,
             conversation_history_provider=history_store,
         ),
         llm_provider=_build_llm_provider(config),
+        meme_search_provider=build_meme_search_provider(config),
         temperature=config.wuwa_chat_temperature,
         max_tokens=config.wuwa_chat_max_tokens,
         context_preflight_errors=persona_context_preflight_errors(config),
@@ -225,15 +238,33 @@ def _status_summary(config: Config) -> str:
         else "关闭（配置 WUWA_WEATHER_ENABLED + 经纬度后开启）"
     )
     nickname = config.wuwa_runtime_persona_nickname or "未配置"
+    audit_line = (
+        f"审计：内存，文件日志：{'开启(' + config.wuwa_audit_log_file + ')' if config.wuwa_audit_log_file else '关闭'}"
+    )
+    credential_line = "凭据健康：未配置凭据"
+    if config.wuwa_credentials_file:
+        try:
+            reports = check_credentials_and_report(config, probe=False)
+            problems = [report.ref_id for report in reports if report.needs_reauth]
+            credential_line = (
+                f"凭据健康：{len(reports)} 个引用"
+                + (f"，需要重新登录：{','.join(problems)}" if problems else "，正常")
+            )
+        except Exception:
+            credential_line = "凭据健康：检查失败"
     return "\n".join(
         [
             llm_line,
             f"人格：{config.wuwa_persona_display_name}（{config.wuwa_persona_profile_id}），昵称别名：{nickname}",
-            f"人格文件数：{len(config.wuwa_persona_files)}，知识文件数：{len(config.wuwa_knowledge_files)}",
+            f"人格文件数：{len(config.wuwa_persona_files)}，知识文件数：{len(config.wuwa_knowledge_files)}，术语表文件数：{len(config.wuwa_glossary_files)}",
             f"环境信息：时间/日期/节气/节日 {'开启' if config.wuwa_temporal_enabled else '关闭'}（{config.wuwa_timezone}），天气：{weather_line}",
-            f"动作括号：{'开启' if config.wuwa_persona_action_brackets else '关闭'}，时梗备注：{'开启' if config.wuwa_trend_enabled else '关闭'}",
+            f"动作括号：{'开启' if config.wuwa_persona_action_brackets else '关闭'}，时梗备注：{'开启' if config.wuwa_trend_enabled else '关闭'}（默认关闭，问梗时按需搜索）",
+            f"关系档案：{'已配置' if config.wuwa_user_profiles_file else '未配置（陌生人基线）'}，共享群上下文：{'开启' if config.wuwa_shared_group_context_enabled else '关闭'}",
+            f"梗搜索：{'开启（二次元平台白名单）' if config.wuwa_meme_search_enabled else '关闭'}，长回复合并转发：≥{config.wuwa_render_forward_min_chars} 字自动切块",
             f"记忆：{'开启' if config.wuwa_memory_enabled else '关闭'}，历史：{'开启' if config.wuwa_history_enabled else '关闭（REPL 内存多轮）'}",
             f"限速：{'开启' if config.wuwa_rate_limit_enabled else '关闭'}，安静时间：{'开启' if config.wuwa_quiet_hours_enabled else '关闭'}",
+            audit_line,
+            credential_line,
         ]
     )
 

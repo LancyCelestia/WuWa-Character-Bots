@@ -24,6 +24,7 @@ param(
         "transport-smoke",
         "online-transport-smoke",
         "console",
+        "credential-smoke",
         "docs-check",
         "plugin-check",
         "smoke",
@@ -498,6 +499,20 @@ function Invoke-Console {
     finally { Pop-Location }
 }
 
+function Invoke-CredentialSmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running credential health smoke"
+        Invoke-External $python @(
+            "-m",
+            "plugins.wuwa_unified_runtime.sources.credential_health"
+        )
+    }
+    finally { Pop-Location }
+}
+
 function Invoke-Verify {
     Invoke-DocsCheck
     Invoke-PluginCheck
@@ -555,6 +570,7 @@ Tasks:
   transport-smoke Validate OneBot/NapCat message segments and fake transport; never connects NapCat or sends QQ messages.
   online-transport-smoke Read current online bot state without calling send APIs; never sends QQ messages.
   console       Interactive console chat through the real runtime pipeline (offline static LLM by default). Use -Message for one-shot non-interactive mode.
+  credential-smoke Check cookie/credential expiry and (with --probe) availability; warns when re-login is needed. Never prints secret values.
   docs-check    Verify command docs, runtime specs, and project config pointers exist.
   plugin-check  Verify plugins/ is configured and report whether local plugins exist yet.
   smoke         Verify docs, plugin discovery config, NoneBot import, and nb CLI availability.
@@ -586,6 +602,7 @@ switch ($Task) {
     "transport-smoke" { Invoke-TransportSmoke }
     "online-transport-smoke" { Invoke-OnlineTransportSmoke }
     "console" { Invoke-Console }
+    "credential-smoke" { Invoke-CredentialSmoke }
     "docs-check" { Invoke-DocsCheck }
     "plugin-check" { Invoke-PluginCheck }
     "smoke" { Invoke-Smoke }

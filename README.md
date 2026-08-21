@@ -217,8 +217,14 @@ NapCat 按 OneBot V11 实现接入时，建议使用数组消息段格式。Inco
 - **角色昵称命令**：配置 `WUWA_RUNTIME_PERSONA_NICKNAME=岸宝` 后支持 `/岸宝帮助`、`/岸宝状态`、`/岸宝为什么` 等别名（`runtime/aliases.py`，动词映射可扩展）。
 - **环境信息注入**：对话上下文自动带本地时间/日期/节气/节日；配置 `WUWA_WEATHER_ENABLED=true` 与经纬度后，天气经 Open-Meteo（免费、无 key）按 TTL 缓存注入，离线时安全降级为"未启用"（`character/temporal.py`）。
 - **动作括号**：prompt 允许用中文括号表达动作/神态，例如（轻轻点头）；`WUWA_PERSONA_ACTION_BRACKETS=false` 可关闭。
-- **时梗层**：`WUWA_TREND_FILES` 指向的 Markdown 备注作为"近期梗/热词/时事"注入，按 `WUWA_TREND_MAX_AGE_DAYS` 自动过滤过期条目，人设文件不用为追热点而改。
-- **URL 去跟踪参数**：`sources/url_cleaner.py` 清洗 utm_*/spm/gclid/分享参数等，用于未来媒体流水线的去重键/缓存键/对外链接。
+- **世界观术语表**：`WUWA_GLOSSARY_FILES` 指向"词条：解释"格式文件，游戏世界观/专有名词/专有地名/科研词汇按预算注入，回答时不编造设定（`character/glossary.py`）。
+- **关系态度层**：`WUWA_USER_PROFILES_FILE` 按用户存称呼/好感度/偏好/态度，注入"对当前用户的态度"分区并轻微调整语气；无档案按陌生人基线（`character/relationship.py`）。
+- **会话隔离 + 共享群上下文接口**：历史严格按 platform/adapter/bot/session/sender 隔离（A、B 互不串）；`WUWA_SHARED_GROUP_CONTEXT_ENABLED` 预留群公共上下文接口，默认关闭（`character/shared_group.py`）。
+- **按需梗搜索**：时梗默认不注入；检测到"XX是什么梗"时在线搜索，只保留 B站/小红书/萌娘百科等二次元平台来源，过滤不适内容，默认关闭（`sources/meme_search.py`）。
+- **长回复合并转发**：回复超过 `WUWA_RENDER_FORWARD_MIN_CHARS` 自动切块渲染成合并转发（QQ 私聊/群聊），transport 不支持时降级纯文本（`output/renderer.py`）。
+- **文件审计日志**：`WUWA_AUDIT_LOG_FILE` 开启 JSONL 脱敏日志（自动轮转），内存/SQLite 审计照常（`audit/file_logger.py`）。
+- **凭据健康检查**：`credential-smoke` 检查 cookie 过期/临近过期；`WUWA_CREDENTIAL_CHECK_ENABLED=true` 时 NoneBot 入口按间隔定时检查并写审计预警，提示重新登录（`sources/credential_health.py`）。
+- **URL 去跟踪参数**：`sources/url_cleaner.py` 清洗 utm_*/spm/gclid/分享参数等，用于媒体流水线的去重键/缓存键/对外链接。
 - **凭据存储**：`sources/credentials.py` 提供 `CredentialStore` 接口（文件 `data/credentials.json` 或 `WUWA_CREDENTIAL_*` 环境变量），cookie/api_key 以引用进入抓取链路，原始值不入日志与 prompt。
 - **控制台多轮历史**：REPL 默认使用进程内多轮历史（`InMemoryConversationHistoryStore`），配置 SQLite 历史时自动切换持久存储。
 

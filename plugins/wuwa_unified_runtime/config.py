@@ -72,6 +72,24 @@ class Config(BaseModel):
     wuwa_holidays_file: str = ""
     wuwa_persona_action_brackets: bool = True
     wuwa_credentials_file: str = ""
+    wuwa_credential_warn_days: int = 7
+    wuwa_credential_probe_urls: dict[str, str] = {}
+    wuwa_credential_probe_timeout_seconds: float = 8.0
+    wuwa_credential_check_enabled: bool = False
+    wuwa_credential_check_interval_hours: int = 6
+    wuwa_glossary_files: list[str] = []
+    wuwa_glossary_max_entries: int = 30
+    wuwa_glossary_max_chars: int = 1500
+    wuwa_user_profiles_file: str = ""
+    wuwa_shared_group_context_enabled: bool = False
+    wuwa_meme_search_enabled: bool = False
+    wuwa_meme_search_timeout_seconds: float = 8.0
+    wuwa_meme_search_cache_seconds: int = 600
+    wuwa_render_forward_min_chars: int = 1500
+    wuwa_render_forward_max_nodes: int = 6
+    wuwa_render_forward_node_chars: int = 900
+    wuwa_audit_log_file: str = ""
+    wuwa_audit_log_max_bytes: int = 2097152
     wuwa_chat_enabled: bool = True
     wuwa_chat_provider: str = "static"
     wuwa_chat_model: str = "static"
@@ -109,6 +127,7 @@ class Config(BaseModel):
         "wuwa_persona_files",
         "wuwa_knowledge_files",
         "wuwa_trend_files",
+        "wuwa_glossary_files",
         mode="before",
     )
     @classmethod
@@ -154,6 +173,22 @@ class Config(BaseModel):
             normalized = stripped.replace(",", ";")
             return [item.strip() for item in normalized.split(";") if item.strip()]
         raise TypeError("id list must be a list, JSON array string, or delimiter string")
+
+    @field_validator("wuwa_credential_probe_urls", mode="before")
+    @classmethod
+    def _parse_probe_urls(cls, value: Any) -> dict[str, str]:
+        if value is None or value == "":
+            return {}
+        if isinstance(value, dict):
+            return {str(k): str(v) for k, v in value.items()}
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except ValueError:
+                return {}
+            if isinstance(parsed, dict):
+                return {str(k): str(v) for k, v in parsed.items()}
+        return {}
 
     @field_validator(
         "wuwa_rate_limit_bypass_roles",

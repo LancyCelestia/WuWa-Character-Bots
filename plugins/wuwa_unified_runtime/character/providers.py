@@ -16,12 +16,24 @@ from plugins.wuwa_unified_runtime.contracts.character import (
 
 from .documents import load_character_document
 from .emotion import EmotionProvider, NullEmotionProvider, build_emotion_provider
+from .glossary import GlossaryProvider, NullGlossaryProvider, build_glossary_provider
 from .history import (
     ConversationHistoryProvider,
     NullConversationHistoryProvider,
     build_conversation_history_provider,
 )
 from .memory import MemoryProvider, NullMemoryProvider, build_memory_provider
+from .relationship import (
+    RelationshipProvider,
+    NullRelationshipProvider,
+    apply_relationship_to_tone,
+    build_relationship_provider,
+)
+from .shared_group import (
+    NullSharedGroupContextProvider,
+    SharedGroupContextProvider,
+    build_shared_group_context_provider,
+)
 from .temporal import RuleBasedTemporalProvider, build_temporal_provider
 from .trend import NullTrendProvider, TrendProvider, build_trend_provider
 
@@ -39,6 +51,7 @@ class CharacterContextProvider(Protocol):
         platform: str = "unknown",
         adapter: str = "unknown",
         bot_id: str = "unknown",
+        group_id: str = "",
     ) -> ContextBundle:
         raise NotImplementedError
 
@@ -53,6 +66,7 @@ class NullCharacterContextProvider:
         platform: str = "unknown",
         adapter: str = "unknown",
         bot_id: str = "unknown",
+        group_id: str = "",
     ) -> ContextBundle:
         persona = PersonaProfile(
             profile_id="default",
@@ -100,6 +114,9 @@ class FileCharacterContextProvider:
         emotion_provider: EmotionProvider | None = None,
         trend_provider: TrendProvider | None = None,
         temporal_provider: RuleBasedTemporalProvider | None = None,
+        glossary_provider: GlossaryProvider | None = None,
+        relationship_provider: RelationshipProvider | None = None,
+        shared_group_provider: SharedGroupContextProvider | None = None,
         action_brackets: bool = True,
     ) -> None:
         self.persona_profile_id = persona_profile_id
@@ -125,6 +142,11 @@ class FileCharacterContextProvider:
         self.emotion_provider = emotion_provider or NullEmotionProvider()
         self.trend_provider = trend_provider or NullTrendProvider()
         self.temporal_provider = temporal_provider or RuleBasedTemporalProvider()
+        self.glossary_provider = glossary_provider or NullGlossaryProvider()
+        self.relationship_provider = relationship_provider or NullRelationshipProvider()
+        self.shared_group_provider = (
+            shared_group_provider or NullSharedGroupContextProvider()
+        )
         self.action_brackets = bool(action_brackets)
 
     def build_context(
@@ -136,6 +158,7 @@ class FileCharacterContextProvider:
         platform: str = "unknown",
         adapter: str = "unknown",
         bot_id: str = "unknown",
+        group_id: str = "",
     ) -> ContextBundle:
         persona_text = "\n".join(load_character_document(path) for path in self.persona_files)
         persona = _build_persona_profile(
@@ -144,12 +167,21 @@ class FileCharacterContextProvider:
             display_name=self.persona_display_name,
             persona_text=persona_text,
         )
+        relationship = self.relationship_provider.load(
+            request_id=request_id,
+            sender_id=sender_id,
+        )
+        tone_warmth, tone_directness = apply_relationship_to_tone(
+            self.tone_warmth,
+            self.tone_directness,
+            relationship,
+        )
         tone = ToneProfile(
             profile_id=self.persona_profile_id,
             mode=self.tone_mode,
             voice=self.tone_voice,
-            warmth=self.tone_warmth,
-            directness=self.tone_directness,
+            warmth=tone_warmth,
+            directness=tone_directness,
             message_count_limit=self.tone_message_count_limit,
             action_brackets=self.action_brackets,
         )
@@ -187,6 +219,12 @@ class FileCharacterContextProvider:
         )
         trend_context = self.trend_provider.load(request_id=request_id)
         temporal_context = self.temporal_provider.snapshot(request_id=request_id)
+        glossary_context = self.glossary_provider.load(request_id=request_id)
+        shared_group_context = self.shared_group_provider.load(
+            request_id=request_id,
+            group_id=group_id,
+            sender_id=sender_id,
+        )
         return ContextBundle(
             request_id=request_id,
             persona=persona,
@@ -205,6 +243,9 @@ class FileCharacterContextProvider:
             emotion_signals=emotion_signals,
             trend_context=trend_context,
             temporal_context=temporal_context,
+            glossary_context=glossary_context,
+            relationship_context=relationship,
+            shared_group_context=shared_group_context,
         )
 
 
@@ -238,6 +279,9 @@ def build_character_context_provider(
         emotion_provider=build_emotion_provider(config),
         trend_provider=build_trend_provider(config),
         temporal_provider=build_temporal_provider(config),
+        glossary_provider=build_glossary_provider(config),
+        relationship_provider=build_relationship_provider(config),
+        shared_group_provider=build_shared_group_context_provider(config),
         action_brackets=bool(getattr(config, "wuwa_persona_action_brackets", True)),
     )
 

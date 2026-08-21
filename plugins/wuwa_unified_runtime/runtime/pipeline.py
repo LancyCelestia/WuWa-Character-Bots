@@ -19,7 +19,12 @@ from plugins.wuwa_unified_runtime.contracts import (
     SendPolicy,
     SendRequest,
 )
-from plugins.wuwa_unified_runtime.output import render_reviewed_output, review_capability_result
+from plugins.wuwa_unified_runtime.output import (
+    build_forward_output,
+    render_reviewed_output,
+    review_capability_result,
+    should_forward_long_text,
+)
 from plugins.wuwa_unified_runtime.policy import (
     InMemoryRateLimiter,
     PolicySettings,
@@ -173,6 +178,9 @@ class RuntimePipeline:
         rate_limiter: RateLimiter | None = None,
         quiet_hours_checker: QuietHoursChecker | None = None,
         runtime_control: RuntimeControlState | None = None,
+        forward_min_chars: int = 1500,
+        forward_max_nodes: int = 6,
+        forward_node_chars: int = 900,
     ) -> None:
         self.send_queue = send_queue
         self.audit_logger = audit_logger
@@ -181,6 +189,9 @@ class RuntimePipeline:
         self.runtime_control = runtime_control or RuntimeControlState()
         self.rate_limiter = rate_limiter or InMemoryRateLimiter()
         self.quiet_hours_checker = quiet_hours_checker or QuietHoursChecker()
+        self.forward_min_chars = max(1, int(forward_min_chars))
+        self.forward_max_nodes = max(1, int(forward_max_nodes))
+        self.forward_node_chars = max(200, int(forward_node_chars))
         policy_settings = PolicySettings(group_command_prefix=group_command_prefix)
         self.policy_evaluator = (
             lambda message, capability_id: evaluate_policy(
@@ -393,6 +404,24 @@ class RuntimePipeline:
             return self._record_receipt_safely(receipt)
 
         rendered = render_reviewed_output(result, review)
+        use_forward = False
+        if (
+            rendered.content_type == "text"
+            and should_forward_long_text(
+                rendered.text_fallback,
+                min_chars=self.forward_min_chars,
+            )
+        ):
+            rendered = build_forward_output(
+                message.request_id,
+                rendered.text_fallback,
+                node_chars=self.forward_node_chars,
+                max_nodes=self.forward_max_nodes,
+                sender_name=message.sender_display_name or "",
+                risk_level=rendered.risk_level,
+                privacy_level=rendered.privacy_level,
+            )
+            use_forward = True
         if decision.target_scope.value == "group" and not message.group_id:
             receipt = DeliveryReceipt(
                 request_id=message.request_id,
@@ -432,8 +461,8 @@ class RuntimePipeline:
             cooldown_key=prepared.policy.cooldown_key,
             expires_at=None,
             privacy_level=review.privacy_level,
-            allow_split=False,
-            allow_forward=review.privacy_level is PrivacyLevel.PUBLIC,
+            allow_split=use_forward,
+            allow_forward=use_forward or review.privacy_level is PrivacyLevel.PUBLIC,
             persona_profile_id=_resolve_persona_profile_id(decision, result),
             audit_tags=_dedupe_tags([*decision.audit_tags, *result.audit_tags]),
         )

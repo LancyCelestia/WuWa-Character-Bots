@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .audit import AuditRepository, build_audit_repository
+from .audit.file_logger import build_audit_with_file_log
 from .config import Config
 from .contracts import (
     AuditRecord,
@@ -34,6 +35,8 @@ from .sender import (
     drain_send_queue_once,
     send_onebot_v11,
 )
+from .sources.credential_health import check_credentials_and_report
+from .sources.meme_search import build_meme_search_provider
 
 try:
     from nonebot.plugin import PluginMetadata
@@ -229,6 +232,77 @@ def _register_send_queue_scheduler(
         "reason": "registered",
         "interval_seconds": interval_seconds,
         "batch_size": batch_size,
+    }
+
+
+def _register_credential_check_scheduler(
+    *,
+    scheduler: Any,
+    config: Config,
+    audit_logger: AuditRepository,
+) -> dict[str, object]:
+    """开机 + 定时检查 cookie 是否过期/可用；异常时写审计预警。
+
+    预警目前落在审计与状态摘要（可被管理员查询），后续可扩展成
+    直接私聊管理员。探测不联网时只做 expires_at 检查。
+    """
+    interval_hours = max(1, int(getattr(config, "wuwa_credential_check_interval_hours", 6)))
+
+    def _check_job() -> None:
+        try:
+            reports = check_credentials_and_report(config, probe=True)
+        except Exception as exc:  # noqa: BLE001 - 检查失败不能中断机器人。
+            audit_logger.append(
+                AuditRecord(
+                    request_id="wuwa_credential_check",
+                    session_id="runtime",
+                    capability_id="wuwa.credential_check",
+                    stage="scheduler",
+                    event="credential_check_error",
+                    severity=RiskLevel.MEDIUM,
+                    public_message="凭据健康检查执行失败。",
+                    private_debug=repr(exc),
+                )
+            )
+            return
+        problems = [report for report in reports if report.needs_reauth]
+        audit_logger.append(
+            AuditRecord(
+                request_id="wuwa_credential_check",
+                session_id="runtime",
+                capability_id="wuwa.credential_check",
+                stage="scheduler",
+                event=(
+                    "credential_reauth_required"
+                    if problems
+                    else "credential_check_ok"
+                ),
+                severity=RiskLevel.HIGH if problems else RiskLevel.LOW,
+                public_message=(
+                    "以下凭据已过期或失效，请重新登录获取："
+                    + ",".join(report.ref_id for report in problems)
+                    if problems
+                    else "凭据健康检查通过。"
+                ),
+                private_debug=";".join(
+                    f"{report.ref_id}:{report.state}" for report in reports
+                ),
+            )
+        )
+
+    scheduler.add_job(
+        _check_job,
+        "interval",
+        hours=interval_hours,
+        id="wuwa_credential_check",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    return {
+        "registered": True,
+        "reason": "registered",
+        "interval_hours": interval_hours,
     }
 
 
@@ -521,7 +595,11 @@ def _register_nonebot_handlers() -> None:
         return
 
     config = Config.model_validate(driver_config)
-    audit_logger = build_audit_repository(config)
+    audit_logger = build_audit_with_file_log(
+        build_audit_repository(config),
+        config.wuwa_audit_log_file,
+        max_bytes=config.wuwa_audit_log_max_bytes,
+    )
     receipt_repository = build_receipt_repository(config)
     send_queue = build_send_queue(config, audit_logger=audit_logger)
     diagnostics_store = build_diagnostics_store(config)
@@ -537,6 +615,9 @@ def _register_nonebot_handlers() -> None:
         rate_limiter=build_rate_limiter(config),
         quiet_hours_checker=build_quiet_hours_checker(config),
         runtime_control=runtime_control,
+        forward_min_chars=config.wuwa_render_forward_min_chars,
+        forward_max_nodes=config.wuwa_render_forward_max_nodes,
+        forward_node_chars=config.wuwa_render_forward_node_chars,
     )
 
     def _first_online_bot() -> OneBotV11Bot | None:
@@ -570,12 +651,19 @@ def _register_nonebot_handlers() -> None:
             receipt_repository=receipt_repository,
             bot_provider=_first_online_bot,
         )
+        if getattr(config, "wuwa_credential_check_enabled", False):
+            _register_credential_check_scheduler(
+                scheduler=scheduler,
+                config=config,
+                audit_logger=audit_logger,
+            )
 
     history_recorder = build_conversation_history_provider(config)
     chat_capability = offload_capability(
         build_chat_capability(
             character_provider=build_character_context_provider(config),
             llm_provider=_build_chat_llm_provider(config),
+            meme_search_provider=build_meme_search_provider(config),
             temperature=config.wuwa_chat_temperature,
             max_tokens=config.wuwa_chat_max_tokens,
             context_preflight_errors=persona_context_preflight_errors(config),

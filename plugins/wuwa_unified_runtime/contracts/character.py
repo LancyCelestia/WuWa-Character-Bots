@@ -142,6 +142,66 @@ class TemporalContext(StrictBaseModel):
     privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
 
 
+class GlossaryEntry(StrictBaseModel):
+    """世界观/专有名词/地名/科研词汇条目。"""
+
+    term: str
+    explanation: str
+    category: str = "general"
+    source: str = "local_glossary"
+
+
+class GlossaryContext(StrictBaseModel):
+    request_id: str
+    entries: list[GlossaryEntry] = Field(default_factory=list)
+    privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
+
+
+class RelationshipContext(StrictBaseModel):
+    """对当前提问者的设定与态度：称呼、好感度层级、偏好、关系说明。
+
+    由本地用户档案 + 互动规则计算，属于可信的运营配置，不是 LLM 猜测。
+    """
+
+    request_id: str
+    user_label: str = "用户"
+    familiarity: str = "stranger"  # stranger | familiar | close
+    affinity: float = 0.5
+    preferences: list[str] = Field(default_factory=list)
+    relationship_notes: list[str] = Field(default_factory=list)
+    attitude: str = "自然、礼貌、保持角色分寸"
+    privacy_level: PrivacyLevel = PrivacyLevel.PERSONAL
+
+
+class SharedGroupContext(StrictBaseModel):
+    """可选的"最近共同会话"上下文投影（群维度，与个人历史分开）。
+
+    默认关闭；开启后由 SharedGroupContextProvider 提供，同样属于
+    不可信事实，且不能泄漏任何个人的私密内容。
+    """
+
+    request_id: str
+    summary: str = ""
+    enabled: bool = False
+    privacy_level: PrivacyLevel = PrivacyLevel.GROUP
+
+
+class MemeSearchHit(StrictBaseModel):
+    term: str
+    summary: str
+    source_domain: str = ""
+    url: str = ""
+
+
+class MemeSearchContext(StrictBaseModel):
+    """按需搜索到的梗/热词结果；网络事实，可能过时。"""
+
+    request_id: str
+    query: str = ""
+    hits: list[MemeSearchHit] = Field(default_factory=list)
+    privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
+
+
 class ContextBundle(StrictBaseModel):
     request_id: str
     persona: PersonaProfile
@@ -157,6 +217,10 @@ class ContextBundle(StrictBaseModel):
     emotion_signals: list[EmotionSignal] = Field(default_factory=list)
     trend_context: TrendContext | None = None
     temporal_context: TemporalContext | None = None
+    glossary_context: GlossaryContext | None = None
+    relationship_context: RelationshipContext | None = None
+    shared_group_context: SharedGroupContext | None = None
+    meme_search_context: MemeSearchContext | None = None
     context_budget: int = 2048
     privacy_level: PrivacyLevel = PrivacyLevel.PERSONAL
     risk_level: RiskLevel = RiskLevel.LOW
