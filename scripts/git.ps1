@@ -17,7 +17,9 @@ function Invoke-Git {
     param([string[]]$Arguments)
     Push-Location $Root
     try {
-        & git @Arguments
+        # 2>&1：git 的提示（如 LF/CRLF 警告）走 stderr，直接抛会触发
+        # ErrorActionPreference=Stop 中断脚本；合并后仅显示，不致命。
+        & git @Arguments 2>&1
         if ($LASTEXITCODE -ne 0) {
             throw "git $($Arguments -join ' ') exited with code $LASTEXITCODE."
         }
