@@ -51,8 +51,16 @@ def test_build_alias_resolver_from_config():
     config = Config(wuwa_runtime_persona_nickname="岸宝")
     resolver = build_command_alias_resolver(config)
 
-    assert resolver.nickname == "岸宝"
+    assert resolver.nicknames == ["岸宝"]
     assert resolver.resolve("/岸宝帮助").capability_id == "wuwa.help"
 
+    multi_config = Config(
+        wuwa_runtime_persona_nicknames=["岸宝", "守岸人"],
+    )
+    multi_resolver = build_command_alias_resolver(multi_config)
+    assert multi_resolver.nicknames == ["岸宝", "守岸人"]
+    assert multi_resolver.resolve("/守岸人状态").capability_id == "wuwa.status"
+    assert multi_resolver.resolve("/岸宝为什么").capability_id == "wuwa.why"
+
     empty_config = Config()
-    assert build_command_alias_resolver(empty_config).nickname == ""
+    assert build_command_alias_resolver(empty_config).nicknames == []

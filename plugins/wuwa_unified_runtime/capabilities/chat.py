@@ -769,11 +769,39 @@ def build_chat_capability(
     llm_provider: LLMProvider,
     context_preflight_errors: list[str] | None = None,
     meme_search_provider: MemeSearchProvider | None = None,
+    runtime_settings: object | None = None,
+    interaction_counter: object | None = None,
     **llm_options: object,
 ) -> ChatCapability:
     search_provider = meme_search_provider or NullMemeSearchProvider()
+    has_real_search = not isinstance(search_provider, NullMemeSearchProvider)
 
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
+        effective_options = dict(llm_options)
+        if runtime_settings is not None:
+            get_or = getattr(runtime_settings, "get_or")
+            temperature = get_or("WUWA_CHAT_TEMPERATURE", None)
+            if temperature is not None:
+                effective_options["temperature"] = float(temperature)
+            max_tokens = get_or("WUWA_CHAT_MAX_TOKENS", None)
+            if max_tokens is not None:
+                effective_options["max_tokens"] = int(max_tokens)
+            reply_chars = get_or("WUWA_REPLY_MAX_CHARS_PER_MESSAGE", None)
+            if reply_chars is not None:
+                effective_options["output_max_chars_per_message"] = int(reply_chars)
+        active_search = search_provider
+        if runtime_settings is not None:
+            meme_enabled = getattr(runtime_settings, "get_or")(
+                "WUWA_MEME_SEARCH_ENABLED",
+                has_real_search,
+            )
+            if not meme_enabled:
+                active_search = NullMemeSearchProvider()
+        if callable(interaction_counter):
+            try:
+                interaction_counter(message.sender_id)
+            except Exception:
+                pass
         injection_check = check_prompt_injection(
             InjectionCheckInput(
                 request_id=message.request_id,
@@ -835,7 +863,7 @@ def build_chat_capability(
                         source_domain=hit.source_domain,
                         url=hit.url,
                     )
-                    for hit in search_provider.search(meme_query, max_results=3)
+                    for hit in active_search.search(meme_query, max_results=3)
                 ]
             except Exception:
                 hits = []
@@ -854,7 +882,7 @@ def build_chat_capability(
             decision=decision,
             context=context,
             llm_provider=llm_provider,
-            **llm_options,
+            **effective_options,
         )
         if injection_check.action is not InjectionAction.ALLOW:
             return result.model_copy(

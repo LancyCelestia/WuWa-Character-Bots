@@ -10,8 +10,10 @@ from .contracts import (
     CapabilityResult,
     DeliveryReceipt,
     IncomingMessage,
+    PrivacyLevel,
     ReceiptState,
     RiskLevel,
+    SendPolicy,
     SendRequest,
     SessionType,
 )
@@ -35,6 +37,9 @@ from .sender import (
     drain_send_queue_once,
     send_onebot_v11,
 )
+from .runtime.aliases import CommandAliasResolver, build_command_alias_resolver
+from .runtime.alerts import AlertContent, send_admin_alert
+from .runtime.settings import RuntimeSettingsStore, build_runtime_settings_store
 from .sources.credential_health import check_credentials_and_report
 from .sources.meme_search import build_meme_search_provider
 
@@ -240,15 +245,19 @@ def _register_credential_check_scheduler(
     scheduler: Any,
     config: Config,
     audit_logger: AuditRepository,
+    pipeline: Any,
+    bot_provider: Any,
+    receipt_repository: ReceiptRepository | None,
+    send_queue: Any,
 ) -> dict[str, object]:
-    """开机 + 定时检查 cookie 是否过期/可用；异常时写审计预警。
+    """开机 + 定时检查 cookie 是否过期/可用；异常时预警管理员。
 
-    预警目前落在审计与状态摘要（可被管理员查询），后续可扩展成
-    直接私聊管理员。探测不联网时只做 expires_at 检查。
+    预警内容包含：出什么错、影响、怎么解决、时间、位置，通过统一
+    流水线私聊 ``WUWA_ADMIN_USER_IDS`` 中的管理员。
     """
     interval_hours = max(1, int(getattr(config, "wuwa_credential_check_interval_hours", 6)))
 
-    def _check_job() -> None:
+    async def _check_job() -> None:
         try:
             reports = check_credentials_and_report(config, probe=True)
         except Exception as exc:  # noqa: BLE001 - 检查失败不能中断机器人。
@@ -289,6 +298,28 @@ def _register_credential_check_scheduler(
                 ),
             )
         )
+        if not problems:
+            return
+        alert = AlertContent(
+            title="凭据已过期或失效",
+            what_happened="下列凭据已过期或在线探测返回 401/403："
+            + ",".join(report.ref_id for report in problems),
+            impact="依赖这些凭据的来源抓取、订阅检查将失败或被风控拦截。",
+            fix_suggestion="重新登录对应平台，把新 cookie 更新到凭据文件，"
+            "再运行 /wuwa alert check 验证。",
+            location="wuwa.credential_check 定时任务",
+            level="warning",
+        )
+        sent = send_admin_alert(pipeline, list(config.wuwa_admin_user_ids), alert)
+        if sent and bot_provider() is not None:
+            for request in list(getattr(send_queue, "sent_requests", []))[-len(sent) :]:
+                await _deliver_onebot_send_request(
+                    bot_provider(),
+                    request,
+                    audit_logger,
+                    receipt_repository,
+                    send_queue,
+                )
 
     scheduler.add_job(
         _check_job,
@@ -576,6 +607,10 @@ def _register_nonebot_handlers() -> None:
     )
     from .capabilities.echo import build_status_result
     from .capabilities.memory import is_memory_command_text, route_memory_command
+    from .capabilities.runtime_admin import (
+        build_alert_check_result,
+        build_runtime_admin_result,
+    )
     from .character import build_character_context_provider
     from .character import build_conversation_history_provider
     from .policy import (
@@ -595,6 +630,11 @@ def _register_nonebot_handlers() -> None:
         return
 
     config = Config.model_validate(driver_config)
+    runtime_settings = build_runtime_settings_store(config)
+    alias_resolver = build_command_alias_resolver(
+        config,
+        extra_nicknames=runtime_settings.list_nicknames(),
+    )
     audit_logger = build_audit_with_file_log(
         build_audit_repository(config),
         config.wuwa_audit_log_file,
@@ -618,6 +658,7 @@ def _register_nonebot_handlers() -> None:
         forward_min_chars=config.wuwa_render_forward_min_chars,
         forward_max_nodes=config.wuwa_render_forward_max_nodes,
         forward_node_chars=config.wuwa_render_forward_node_chars,
+        alias_command_check=lambda text: alias_resolver.resolve(text) is not None,
     )
 
     def _first_online_bot() -> OneBotV11Bot | None:
@@ -656,14 +697,24 @@ def _register_nonebot_handlers() -> None:
                 scheduler=scheduler,
                 config=config,
                 audit_logger=audit_logger,
+                pipeline=pipeline,
+                bot_provider=_first_online_bot,
+                receipt_repository=receipt_repository,
+                send_queue=send_queue,
             )
 
     history_recorder = build_conversation_history_provider(config)
     chat_capability = offload_capability(
         build_chat_capability(
-            character_provider=build_character_context_provider(config),
+            character_provider=build_character_context_provider(
+                config,
+                runtime_settings=runtime_settings,
+                shared_group_llm_provider=_build_chat_llm_provider(config),
+            ),
             llm_provider=_build_chat_llm_provider(config),
             meme_search_provider=build_meme_search_provider(config),
+            runtime_settings=runtime_settings,
+            interaction_counter=runtime_settings.interaction_increment,
             temperature=config.wuwa_chat_temperature,
             max_tokens=config.wuwa_chat_max_tokens,
             context_preflight_errors=persona_context_preflight_errors(config),
@@ -687,6 +738,84 @@ def _register_nonebot_handlers() -> None:
     )
     auto_send = on_message(rule=_is_auto_send_plain_text, priority=21, block=True)
     chat = on_message(rule=_is_plain_chat_event, priority=50, block=True)
+
+    def _is_alias_command_text(text: str) -> bool:
+        return alias_resolver.resolve(text) is not None
+
+    async def _is_alias_command(event: Event) -> bool:
+        return _is_alias_command_text(event.get_plaintext())
+
+    alias = on_message(rule=_is_alias_command, priority=19, block=True)
+
+    @alias.handle()
+    async def _handle_alias(bot: Bot, event: Event) -> None:
+        command_text = event.get_plaintext().strip()
+        resolution = alias_resolver.resolve(command_text)
+        if resolution is None:
+            await alias.finish("无法识别的昵称命令。")
+            return
+        capability_id = "wuwa.alias"
+
+        if resolution.capability_id == "wuwa.help":
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                from .capabilities.echo import build_help_result
+
+                return build_help_result(request_id=message.request_id)
+
+        elif resolution.capability_id == "wuwa.status":
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_status_result(
+                    config,
+                    request_id=message.request_id,
+                    runtime_control=runtime_control,
+                )
+
+        elif resolution.capability_id == "wuwa.why":
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_why_result(
+                    diagnostics_store,
+                    request_id=message.request_id,
+                    session_id=message.session_id,
+                    query=resolution.rest_text,
+                )
+
+        else:
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return CapabilityResult(
+                    request_id=message.request_id,
+                    capability_id="wuwa.alias",
+                    kind="text",
+                    title="昵称命令",
+                    body=(
+                        f"昵称命令 /{resolution.verb} 请在 /wuwa 形式下使用："
+                        f"/wuwa {resolution.verb} ..."
+                    ),
+                    confidence=1.0,
+                    risk_level=RiskLevel.LOW,
+                    privacy_level=PrivacyLevel.PERSONAL,
+                    send_policy=SendPolicy.IMMEDIATE,
+                    audit_tags=["alias_command", "alias_unsupported_verb"],
+                )
+
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=capability,
+            capability_id=capability_id,
+            record_diagnostic=False,
+        )
+        if receipt.state.value != "sent":
+            await alias.finish(receipt.public_message)
 
     @status.handle()
     async def _handle_status(bot: Bot, event: Event, args=CommandArg()) -> None:
@@ -872,7 +1001,7 @@ def _register_nonebot_handlers() -> None:
                     actor_roles=_decision.actor_roles,
                 )
 
-        elif command_text in {"pause", "resume"}:
+        elif command_text == "pause" or command_text == "resume":
             capability_id = "wuwa.control"
             control_command = command_text
 
@@ -883,6 +1012,31 @@ def _register_nonebot_handlers() -> None:
                     actor_roles=_decision.actor_roles,
                     command=control_command,
                     actor_id=message.sender_id,
+                )
+
+        elif command_text == "runtime" or command_text.startswith("runtime "):
+            capability_id = "wuwa.runtime"
+            runtime_command = command_text.removeprefix("runtime").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_runtime_admin_result(
+                    runtime_settings,
+                    config,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    command_text=runtime_command,
+                )
+
+        elif command_text == "alert" or command_text.startswith("alert "):
+            capability_id = "wuwa.alert"
+            alert_command = command_text.removeprefix("alert").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_alert_check_result(
+                    config,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    probe="--probe" in alert_command,
                 )
 
         elif command_text != "status":

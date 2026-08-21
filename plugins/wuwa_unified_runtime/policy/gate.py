@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from plugins.wuwa_unified_runtime.contracts import (
@@ -17,6 +18,8 @@ COMMAND_PREFIX = "/wuwa"
 @dataclass(frozen=True)
 class PolicySettings:
     group_command_prefix: str = COMMAND_PREFIX
+    # 额外命令判定：例如角色昵称命令（/岸宝帮助）在群聊中视为命令触发。
+    extra_command_check: Callable[[str], bool] | None = None
 
 
 def evaluate_policy(
@@ -56,6 +59,9 @@ def evaluate_policy(
     if message.session_type is SessionType.GROUP:
         text = message.plain_text.strip()
         command_triggered = text.startswith(active_settings.group_command_prefix)
+        extra_check = active_settings.extra_command_check
+        if extra_check is not None and extra_check(text):
+            command_triggered = True
         if not command_triggered and not message.mentions_bot:
             return PolicyEvaluation(
                 request_id=message.request_id,

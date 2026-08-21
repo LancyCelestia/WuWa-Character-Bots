@@ -11,7 +11,9 @@ class Config(BaseModel):
     wuwa_runtime_default_persona: str = "default"
     wuwa_runtime_group_command_prefix: str = "/wuwa"
     wuwa_runtime_persona_nickname: str = ""
+    wuwa_runtime_persona_nicknames: list[str] = []
     wuwa_runtime_alias_enabled: bool = True
+    wuwa_runtime_settings_file: str = "data/runtime_settings.json"
     wuwa_admin_user_ids: list[str] = []
     wuwa_enterprise_user_ids: list[str] = []
     wuwa_trusted_user_ids: list[str] = []
@@ -82,6 +84,11 @@ class Config(BaseModel):
     wuwa_glossary_max_chars: int = 1500
     wuwa_user_profiles_file: str = ""
     wuwa_shared_group_context_enabled: bool = False
+    wuwa_group_digest_enabled: bool = False
+    wuwa_group_digest_max_turns: int = 20
+    wuwa_group_digest_max_chars: int = 800
+    wuwa_group_digest_llm_enabled: bool = False
+    wuwa_group_digest_llm_ttl_seconds: int = 3600
     wuwa_meme_search_enabled: bool = False
     wuwa_meme_search_timeout_seconds: float = 8.0
     wuwa_meme_search_cache_seconds: int = 600
@@ -128,6 +135,7 @@ class Config(BaseModel):
         "wuwa_knowledge_files",
         "wuwa_trend_files",
         "wuwa_glossary_files",
+        "wuwa_runtime_persona_nicknames",
         mode="before",
     )
     @classmethod

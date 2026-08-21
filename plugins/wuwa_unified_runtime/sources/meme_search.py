@@ -43,6 +43,20 @@ PREFERRED_DOMAINS: tuple[str, ...] = (
     "douyin.com",
 )
 
+# 二次元指数权重：只用于确定性排序/过滤（阈值 0.5），
+# 不进 LLM、不产生额外 token 消耗。
+DOMAIN_WEIGHTS: dict[str, float] = {
+    "moegirl.org.cn": 1.0,
+    "zh.moegirl.org.cn": 1.0,
+    "bilibili.com": 0.9,
+    "huijiwiki.com": 0.85,
+    "xiaohongshu.com": 0.8,
+    "zhihu.com": 0.6,
+    "weibo.com": 0.5,
+    "douyin.com": 0.5,
+}
+MIN_SCORE_TO_KEEP = 0.5
+
 # 不适内容规则：命中即丢弃该条结果（三次元烂梗/冒犯/低俗）。
 BLOCKED_TERMS: tuple[str, ...] = (
     "去世",
@@ -71,6 +85,7 @@ class MemeSearchResult:
     source_domain: str
     url: str
     searched_at: float
+    score: float = 0.5
 
 
 class MemeSearchProvider(Protocol):
@@ -152,8 +167,13 @@ def filter_meme_results(
     preferred_domains: tuple[str, ...] = PREFERRED_DOMAINS,
     blocked_terms: tuple[str, ...] = BLOCKED_TERMS,
 ) -> list[MemeSearchResult]:
-    """域名白名单 + 不适内容过滤；供 _fetch 和测试复用。"""
+    """域名白名单 + 不适内容过滤 + 二次元指数评分排序。
+
+    评分是纯规则（域名权重 + 命中查询词），只用于排序和阈值过滤，
+    不会进入 LLM 判断，避免额外 token 开销。
+    """
     results: list[MemeSearchResult] = []
+    normalized_query = (query or "").strip().lower()
     for title, snippet, href in items:
         domain = _domain_of(href)
         if domain and not any(pref in domain for pref in preferred_domains):
@@ -163,6 +183,15 @@ def filter_meme_results(
         if any(blocked in lowered for blocked in blocked_terms):
             continue
         summary = snippet.strip() or title.strip()
+        score = 0.0
+        for weight_domain, weight in DOMAIN_WEIGHTS.items():
+            if weight_domain in domain:
+                score = weight
+                break
+        if normalized_query and normalized_query in lowered:
+            score = min(1.0, score + 0.1)
+        if score < MIN_SCORE_TO_KEEP:
+            continue
         results.append(
             MemeSearchResult(
                 term=query,
@@ -170,8 +199,10 @@ def filter_meme_results(
                 source_domain=domain or "unknown",
                 url=href,
                 searched_at=time.time(),
+                score=score,
             )
         )
+    results.sort(key=lambda result: (-result.score, result.source_domain))
     return results
 
 

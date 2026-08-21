@@ -62,19 +62,27 @@ class AliasResolution:
 
 
 class CommandAliasResolver:
-    """把昵称命令解析成能力 id；不负责执行，执行仍走统一流水线。"""
+    """把昵称命令解析成能力 id；不负责执行，执行仍走统一流水线。
+
+    支持多昵称：``nicknames`` 传多个，任一命中即可。
+    """
 
     def __init__(
         self,
         *,
         nickname: str = "",
+        nicknames: list[str] | tuple[str, ...] = (),
         verb_map: dict[str, str] | None = None,
     ) -> None:
-        self.nickname = (nickname or "").strip()
+        raw_nicknames: list[str] = []
+        if nickname.strip():
+            raw_nicknames.append(nickname.strip())
+        raw_nicknames.extend(str(item).strip() for item in nicknames if str(item).strip())
+        self.nicknames = list(dict.fromkeys(raw_nicknames))
         self.verb_map = dict(verb_map or DEFAULT_VERB_MAP)
         self._patterns: list[tuple[re.Pattern[str], str, str]] = []
-        if self.nickname:
-            escaped = re.escape(self.nickname)
+        for current_nickname in self.nicknames:
+            escaped = re.escape(current_nickname)
             # 长动词优先，避免 "清理历史" 被 "历史" 抢先匹配。
             for verb, capability_id in sorted(
                 self.verb_map.items(), key=lambda item: -len(item[0])
@@ -102,7 +110,20 @@ class CommandAliasResolver:
         return None
 
 
-def build_command_alias_resolver(config: object) -> CommandAliasResolver:
-    """按配置构造；``wuwa_runtime_persona_nickname`` 为空时别名关闭。"""
-    nickname = str(getattr(config, "wuwa_runtime_persona_nickname", "")).strip()
-    return CommandAliasResolver(nickname=nickname)
+def build_command_alias_resolver(
+    config: object,
+    extra_nicknames: list[str] | tuple[str, ...] = (),
+) -> CommandAliasResolver:
+    """按配置构造；昵称来自配置 + 运行时设置 store。"""
+    nicknames: list[str] = []
+    single = str(getattr(config, "wuwa_runtime_persona_nickname", "")).strip()
+    if single:
+        nicknames.append(single)
+    configured = getattr(config, "wuwa_runtime_persona_nicknames", []) or []
+    for item in configured:
+        if str(item).strip():
+            nicknames.append(str(item).strip())
+    for item in extra_nicknames:
+        if str(item).strip():
+            nicknames.append(str(item).strip())
+    return CommandAliasResolver(nicknames=nicknames)

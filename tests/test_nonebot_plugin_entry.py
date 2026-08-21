@@ -685,7 +685,7 @@ def test_plugin_entry_exposes_runtime_pause_resume_routes():
     assert "RuntimeControlState" in source
     assert "build_runtime_control_result" in source
     assert 'capability_id = "wuwa.control"' in source
-    assert 'command_text in {"pause", "resume"}' in source
+    assert 'command_text == "pause" or command_text == "resume"' in source
     assert '"wuwa.control"' in source
 
 

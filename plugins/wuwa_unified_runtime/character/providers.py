@@ -118,6 +118,7 @@ class FileCharacterContextProvider:
         relationship_provider: RelationshipProvider | None = None,
         shared_group_provider: SharedGroupContextProvider | None = None,
         action_brackets: bool = True,
+        action_brackets_provider: object | None = None,
     ) -> None:
         self.persona_profile_id = persona_profile_id
         self.persona_display_name = persona_display_name
@@ -148,6 +149,15 @@ class FileCharacterContextProvider:
             shared_group_provider or NullSharedGroupContextProvider()
         )
         self.action_brackets = bool(action_brackets)
+        self.action_brackets_provider = action_brackets_provider
+
+    def _action_brackets_enabled(self) -> bool:
+        if callable(self.action_brackets_provider):
+            try:
+                return bool(self.action_brackets_provider())
+            except Exception:
+                return self.action_brackets
+        return self.action_brackets
 
     def build_context(
         self,
@@ -183,7 +193,7 @@ class FileCharacterContextProvider:
             warmth=tone_warmth,
             directness=tone_directness,
             message_count_limit=self.tone_message_count_limit,
-            action_brackets=self.action_brackets,
+            action_brackets=self._action_brackets_enabled(),
         )
         knowledge_chunks = _build_knowledge_chunks(
             files=self.knowledge_files,
@@ -253,7 +263,33 @@ def build_character_context_provider(
     config: object,
     *,
     conversation_history_provider: ConversationHistoryProvider | None = None,
+    runtime_settings: object | None = None,
+    shared_group_llm_provider: object | None = None,
 ) -> CharacterContextProvider:
+    action_brackets_provider: object | None = None
+    interaction_counts_provider: object | None = None
+    if runtime_settings is not None:
+        def _runtime_action_brackets() -> bool:
+            return bool(
+                getattr(runtime_settings, "get_or")(
+                    "WUWA_PERSONA_ACTION_BRACKETS",
+                    bool(getattr(config, "wuwa_persona_action_brackets", True)),
+                )
+            )
+
+        def _interaction_counts() -> dict[str, int]:
+            try:
+                senders = getattr(runtime_settings, "list_interaction_senders")()
+                get_count = getattr(runtime_settings, "interaction_count")
+                return {
+                    str(sender_id): int(get_count(str(sender_id)))
+                    for sender_id in senders
+                }
+            except Exception:
+                return {}
+
+        action_brackets_provider = _runtime_action_brackets
+        interaction_counts_provider = _interaction_counts
     return FileCharacterContextProvider(
         persona_profile_id=str(getattr(config, "wuwa_persona_profile_id", "default")),
         persona_display_name=str(getattr(config, "wuwa_persona_display_name", "报存")),
@@ -280,9 +316,16 @@ def build_character_context_provider(
         trend_provider=build_trend_provider(config),
         temporal_provider=build_temporal_provider(config),
         glossary_provider=build_glossary_provider(config),
-        relationship_provider=build_relationship_provider(config),
-        shared_group_provider=build_shared_group_context_provider(config),
+        relationship_provider=build_relationship_provider(
+            config,
+            interaction_counts=interaction_counts_provider,
+        ),
+        shared_group_provider=build_shared_group_context_provider(
+            config,
+            llm_provider=shared_group_llm_provider,
+        ),
         action_brackets=bool(getattr(config, "wuwa_persona_action_brackets", True)),
+        action_brackets_provider=action_brackets_provider,
     )
 
 

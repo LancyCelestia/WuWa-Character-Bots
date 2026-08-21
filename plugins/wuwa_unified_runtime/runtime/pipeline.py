@@ -181,6 +181,7 @@ class RuntimePipeline:
         forward_min_chars: int = 1500,
         forward_max_nodes: int = 6,
         forward_node_chars: int = 900,
+        alias_command_check: Callable[[str], bool] | None = None,
     ) -> None:
         self.send_queue = send_queue
         self.audit_logger = audit_logger
@@ -192,7 +193,10 @@ class RuntimePipeline:
         self.forward_min_chars = max(1, int(forward_min_chars))
         self.forward_max_nodes = max(1, int(forward_max_nodes))
         self.forward_node_chars = max(200, int(forward_node_chars))
-        policy_settings = PolicySettings(group_command_prefix=group_command_prefix)
+        policy_settings = PolicySettings(
+            group_command_prefix=group_command_prefix,
+            extra_command_check=alias_command_check,
+        )
         self.policy_evaluator = (
             lambda message, capability_id: evaluate_policy(
                 message,

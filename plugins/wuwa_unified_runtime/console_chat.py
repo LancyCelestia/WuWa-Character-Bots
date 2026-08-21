@@ -65,6 +65,7 @@ from plugins.wuwa_unified_runtime.runtime.aliases import (
     build_command_alias_resolver,
 )
 from plugins.wuwa_unified_runtime.runtime.pipeline import RuntimePipeline
+from plugins.wuwa_unified_runtime.runtime.settings import build_runtime_settings_store
 from plugins.wuwa_unified_runtime.sender import InMemorySendQueue
 from plugins.wuwa_unified_runtime.smoke import load_smoke_config
 from plugins.wuwa_unified_runtime.sources.credential_health import (
@@ -141,7 +142,11 @@ def _build_history_store(config: Config):
     return InMemoryConversationHistoryStore()
 
 
-def _build_runtime(config: Config, history_store: Any) -> tuple[RuntimePipeline, Any]:
+def _build_runtime(
+    config: Config,
+    history_store: Any,
+    runtime_settings: Any,
+) -> tuple[RuntimePipeline, Any]:
     audit_logger = build_audit_with_file_log(
         InMemoryAuditLogger(),
         config.wuwa_audit_log_file,
@@ -165,9 +170,12 @@ def _build_runtime(config: Config, history_store: Any) -> tuple[RuntimePipeline,
         character_provider=build_character_context_provider(
             config,
             conversation_history_provider=history_store,
+            runtime_settings=runtime_settings,
         ),
         llm_provider=_build_llm_provider(config),
         meme_search_provider=build_meme_search_provider(config),
+        runtime_settings=runtime_settings,
+        interaction_counter=runtime_settings.interaction_increment,
         temperature=config.wuwa_chat_temperature,
         max_tokens=config.wuwa_chat_max_tokens,
         context_preflight_errors=persona_context_preflight_errors(config),
@@ -219,7 +227,7 @@ def _last_receipt_summary(
     return "\n".join(lines)
 
 
-def _status_summary(config: Config) -> str:
+def _status_summary(config: Config, runtime_settings: Any | None = None) -> str:
     provider = config.wuwa_chat_provider
     model = config.wuwa_chat_model
     if provider == "static":
@@ -237,7 +245,22 @@ def _status_summary(config: Config) -> str:
         and config.wuwa_weather_longitude
         else "关闭（配置 WUWA_WEATHER_ENABLED + 经纬度后开启）"
     )
-    nickname = config.wuwa_runtime_persona_nickname or "未配置"
+    nicknames: list[str] = []
+    if runtime_settings is not None:
+        nicknames = runtime_settings.list_nicknames()
+    configured = list(getattr(config, "wuwa_runtime_persona_nicknames", []) or [])
+    if config.wuwa_runtime_persona_nickname.strip():
+        configured.insert(0, config.wuwa_runtime_persona_nickname.strip())
+    all_nicknames = list(dict.fromkeys([*configured, *nicknames]))
+    nickname_line = ",".join(all_nicknames) if all_nicknames else "未配置"
+    overrides: dict[str, Any] = {}
+    if runtime_settings is not None:
+        overrides = runtime_settings.list_overrides()
+    override_line = (
+        "；".join(f"{key}={value}" for key, value in sorted(overrides.items()))
+        if overrides
+        else "无（使用 .env）"
+    )
     audit_line = (
         f"审计：内存，文件日志：{'开启(' + config.wuwa_audit_log_file + ')' if config.wuwa_audit_log_file else '关闭'}"
     )
@@ -255,11 +278,12 @@ def _status_summary(config: Config) -> str:
     return "\n".join(
         [
             llm_line,
-            f"人格：{config.wuwa_persona_display_name}（{config.wuwa_persona_profile_id}），昵称别名：{nickname}",
+            f"人格：{config.wuwa_persona_display_name}（{config.wuwa_persona_profile_id}），昵称别名：{nickname_line}",
+            f"运行时覆盖：{override_line}",
             f"人格文件数：{len(config.wuwa_persona_files)}，知识文件数：{len(config.wuwa_knowledge_files)}，术语表文件数：{len(config.wuwa_glossary_files)}",
             f"环境信息：时间/日期/节气/节日 {'开启' if config.wuwa_temporal_enabled else '关闭'}（{config.wuwa_timezone}），天气：{weather_line}",
             f"动作括号：{'开启' if config.wuwa_persona_action_brackets else '关闭'}，时梗备注：{'开启' if config.wuwa_trend_enabled else '关闭'}（默认关闭，问梗时按需搜索）",
-            f"关系档案：{'已配置' if config.wuwa_user_profiles_file else '未配置（陌生人基线）'}，共享群上下文：{'开启' if config.wuwa_shared_group_context_enabled else '关闭'}",
+            f"关系档案：{'已配置' if config.wuwa_user_profiles_file else '未配置（陌生人基线，互动自动升级）'}，共享群上下文：{'开启' if config.wuwa_shared_group_context_enabled else '关闭'}",
             f"梗搜索：{'开启（二次元平台白名单）' if config.wuwa_meme_search_enabled else '关闭'}，长回复合并转发：≥{config.wuwa_render_forward_min_chars} 字自动切块",
             f"记忆：{'开启' if config.wuwa_memory_enabled else '关闭'}，历史：{'开启' if config.wuwa_history_enabled else '关闭（REPL 内存多轮）'}",
             f"限速：{'开启' if config.wuwa_rate_limit_enabled else '关闭'}，安静时间：{'开启' if config.wuwa_quiet_hours_enabled else '关闭'}",
@@ -270,11 +294,14 @@ def _status_summary(config: Config) -> str:
 
 
 def _alias_help_lines(alias_resolver: CommandAliasResolver) -> str:
-    if not alias_resolver.nickname:
-        return "  昵称别名未配置：设置 WUWA_RUNTIME_PERSONA_NICKNAME 后可用 /<昵称>帮助 等。"
+    if not alias_resolver.nicknames:
+        return "  昵称别名未配置：设置 WUWA_RUNTIME_PERSONA_NICKNAMES 后可用 /<昵称>帮助 等。"
+    joined = "、".join(alias_resolver.nicknames)
     return (
-        f"  昵称别名：/{alias_resolver.nickname}帮助、"
-        f"/{alias_resolver.nickname}状态、/{alias_resolver.nickname}为什么"
+        f"  昵称别名（{joined}）："
+        f"/{alias_resolver.nicknames[0]}帮助、"
+        f"/{alias_resolver.nicknames[0]}状态、"
+        f"/{alias_resolver.nicknames[0]}为什么"
     )
 
 
@@ -306,9 +333,11 @@ def run_once(
     message_text: str,
     *,
     history_store: Any | None = None,
+    runtime_settings: Any | None = None,
 ) -> DeliveryReceipt:
+    settings = runtime_settings or build_runtime_settings_store(config)
     store = history_store or _build_history_store(config)
-    pipeline, capability = _build_runtime(config, store)
+    pipeline, capability = _build_runtime(config, store, settings)
     message = IncomingMessage(
         platform="console",
         adapter="console-repl",
@@ -339,13 +368,18 @@ def run_once(
 
 
 def run_interactive(config: Config) -> int:
-    alias_resolver = build_command_alias_resolver(config)
+    runtime_settings = build_runtime_settings_store(config)
+    alias_resolver = build_command_alias_resolver(
+        config,
+        extra_nicknames=runtime_settings.list_nicknames(),
+    )
     history_store = _build_history_store(config)
-    pipeline, capability = _build_runtime(config, history_store)
+    pipeline, capability = _build_runtime(config, history_store, runtime_settings)
+    group_mode = False
     last_receipt: DeliveryReceipt | None = None
     last_tags: list[str] = []
     print(_BANNER)
-    print(_status_summary(config))
+    print(_status_summary(config, runtime_settings))
     print(_help_text(config, alias_resolver))
     while True:
         try:
@@ -362,10 +396,24 @@ def run_interactive(config: Config) -> int:
             print(_help_text(config, alias_resolver))
             continue
         if command == "/status":
-            print(_status_summary(config))
+            print(_status_summary(config, runtime_settings))
             continue
         if command == "/why":
             print(_last_receipt_summary(last_receipt, last_tags))
+            continue
+        if command == "/group":
+            group_mode = True
+            print("[系统] 已切换到群聊模拟：消息按群聊策略处理（回复预算 1 条）。/private 返回私聊。")
+            continue
+        if command == "/private":
+            group_mode = False
+            print("[系统] 已返回私聊模式。")
+            continue
+        if command == "/alert" or command.startswith("/alert "):
+            print(_run_console_alert(config, command))
+            continue
+        if command.startswith("/runtime") or command.startswith("/nickname"):
+            print(_run_console_runtime_admin(config, runtime_settings, raw))
             continue
         alias = alias_resolver.resolve(raw)
         if alias is not None:
@@ -373,7 +421,7 @@ def run_interactive(config: Config) -> int:
                 if alias.capability_id == "wuwa.help":
                     print(_help_text(config, alias_resolver))
                 elif alias.capability_id == "wuwa.status":
-                    print(_status_summary(config))
+                    print(_status_summary(config, runtime_settings))
                 else:
                     print(_last_receipt_summary(last_receipt, last_tags))
             else:
@@ -382,14 +430,23 @@ def run_interactive(config: Config) -> int:
                     "真实 NoneBot 入口已支持该命令。"
                 )
             continue
+        if group_mode:
+            session_id = "group:10001"
+            session_type = SessionType.GROUP
+            group_id = "10001"
+        else:
+            session_id = "console:repl"
+            session_type = SessionType.PRIVATE
+            group_id = ""
         message = IncomingMessage(
             platform="console",
             adapter="console-repl",
             bot_id="console-bot",
-            session_id="console:repl",
-            session_type=SessionType.PRIVATE,
+            session_id=session_id,
+            session_type=session_type,
             sender_id="console-user",
             sender_display_name="控制台用户",
+            group_id=group_id,
             plain_text=raw,
             raw_segments=[{"type": "text", "data": {"text": raw}}],
             mentions_bot=True,
@@ -422,6 +479,47 @@ def run_interactive(config: Config) -> int:
             print(f"\n[系统] {receipt.public_message or receipt.state.value}")
             last_tags = []
     return 0
+
+
+def _run_console_alert(config: Config, command: str) -> str:
+    try:
+        reports = check_credentials_and_report(
+            config,
+            probe="--probe" in command,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return f"[凭据检查失败] {type(exc).__name__}"
+    if not reports:
+        return "未配置任何凭据引用，无需检查。"
+    lines = [
+        f"{report.ref_id}：{report.state}"
+        + ("（需要重新登录）" if report.needs_reauth else "")
+        + f" - {report.detail}"
+        for report in reports
+    ]
+    return "\n".join(lines)
+
+
+def _run_console_runtime_admin(
+    config: Config,
+    runtime_settings: Any,
+    raw: str,
+) -> str:
+    from plugins.wuwa_unified_runtime.capabilities.runtime_admin import (
+        build_runtime_admin_result,
+    )
+
+    command_text = raw.strip().lstrip("/")
+    if command_text.startswith("nickname"):
+        command_text = f"runtime {command_text}"
+    result = build_runtime_admin_result(
+        runtime_settings,
+        config,
+        request_id="console-admin",
+        actor_roles=["admin", "user"],
+        command_text=command_text.removeprefix("runtime").strip(),
+    )
+    return result.body
 
 
 def main(argv: list[str] | None = None) -> int:

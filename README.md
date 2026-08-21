@@ -213,17 +213,24 @@ NapCat 按 OneBot V11 实现接入时，建议使用数组消息段格式。Inco
 
 ## 近期新增能力
 
-- **最小可执行程序**：`scripts/dev.ps1 console`（交互）与 `-Message`（单轮），走同一套运行时流水线，支持 CLI 参数临时接入任意 OpenAI 兼容模型。
-- **角色昵称命令**：配置 `WUWA_RUNTIME_PERSONA_NICKNAME=岸宝` 后支持 `/岸宝帮助`、`/岸宝状态`、`/岸宝为什么` 等别名（`runtime/aliases.py`，动词映射可扩展）。
+- **最小可执行程序**：`scripts/dev.ps1 console`（交互）与 `-Message`（单轮），走同一套运行时流水线，支持 CLI 参数临时接入任意 OpenAI 兼容模型；REPL 支持 `/group` 群聊模拟、`/runtime set`、`/nickname add`、`/alert`。
+- **多昵称命令**：`WUWA_RUNTIME_PERSONA_NICKNAMES=["岸宝","守岸人"]`，任一昵称可用 `/岸宝帮助`、`/守岸人状态`、`/岸宝为什么` 等（QQ 群聊中也视为命令触发）。
+- **管理员运行时指令**（QQ 对话里直接说，仅 `WUWA_ADMIN_USER_IDS` 可用，走统一流水线并持久化到 `data/runtime_settings.json`）：
+  - `/wuwa runtime set <KEY> <VALUE>` 调整温度/max_tokens/回复上限/梗搜索/动作括号（白名单键）
+  - `/wuwa runtime get <KEY>`、`/wuwa runtime list`、`/wuwa runtime reset [KEY]`
+  - `/wuwa runtime nickname add|remove|list <昵称>` 动态增删角色昵称
+  - `/wuwa alert check [--probe]` 手动执行凭据健康检查
+- **预警推送闭环**：凭据定时检查发现问题时，按"时间/位置/发生了什么/影响/建议处理"五要素私聊管理员（`runtime/alerts.py`），全部走 SendRequest 审计链路。
+- **群消息短时共享记忆（元宝式摘要）**：`WUWA_SHARED_GROUP_CONTEXT_ENABLED=true` 时，从群会话历史生成**确定性摘要**（免费），只含群内公共投影，不含任何私聊内容；可选 LLM 压缩（`WUWA_GROUP_DIGEST_LLM_ENABLED`，TTL 缓存避免每轮烧钱）。与"用户×机器人"个人历史分层输送。
 - **环境信息注入**：对话上下文自动带本地时间/日期/节气/节日；配置 `WUWA_WEATHER_ENABLED=true` 与经纬度后，天气经 Open-Meteo（免费、无 key）按 TTL 缓存注入，离线时安全降级为"未启用"（`character/temporal.py`）。
-- **动作括号**：prompt 允许用中文括号表达动作/神态，例如（轻轻点头）；`WUWA_PERSONA_ACTION_BRACKETS=false` 可关闭。
+- **动作括号**：prompt 允许用中文括号表达动作/神态，例如（轻轻点头）；`WUWA_PERSONA_ACTION_BRACKETS=false` 可关闭（也可 `/wuwa runtime set` 动态切换）。
 - **世界观术语表**：`WUWA_GLOSSARY_FILES` 指向"词条：解释"格式文件，游戏世界观/专有名词/专有地名/科研词汇按预算注入，回答时不编造设定（`character/glossary.py`）。
-- **关系态度层**：`WUWA_USER_PROFILES_FILE` 按用户存称呼/好感度/偏好/态度，注入"对当前用户的态度"分区并轻微调整语气；无档案按陌生人基线（`character/relationship.py`）。
-- **会话隔离 + 共享群上下文接口**：历史严格按 platform/adapter/bot/session/sender 隔离（A、B 互不串）；`WUWA_SHARED_GROUP_CONTEXT_ENABLED` 预留群公共上下文接口，默认关闭（`character/shared_group.py`）。
-- **按需梗搜索**：时梗默认不注入；检测到"XX是什么梗"时在线搜索，只保留 B站/小红书/萌娘百科等二次元平台来源，过滤不适内容，默认关闭（`sources/meme_search.py`）。
+- **关系态度层**：`WUWA_USER_PROFILES_FILE` 按用户存称呼/好感度/偏好/态度，注入"对当前用户的态度"分区并轻微调整语气；无档案时按**互动次数自动升级**（≥8 次 familiar，≥30 次 close），陌生人基线兜底（`character/relationship.py`）。
+- **按需梗搜索 + 二次元指数**：时梗默认不注入；检测到"XX是什么梗"时在线搜索，只保留 B站/小红书/萌娘百科等二次元平台来源，过滤不适内容；按来源域名做**确定性评分排序**（萌娘百科 1.0 > B站 0.9 > 小红书 0.8），只用于排序过滤、不进 LLM 判断、零额外 token（`sources/meme_search.py`）。
 - **长回复合并转发**：回复超过 `WUWA_RENDER_FORWARD_MIN_CHARS` 自动切块渲染成合并转发（QQ 私聊/群聊），transport 不支持时降级纯文本（`output/renderer.py`）。
+- **HTML/卡片渲染后端接口**：`output/render_backends.py` 定义 `RenderBackend` 契约与 Null/HtmlKit 实现，后续接 HTML→图片、HTML 卡片、小程序卡不改流水线。
 - **文件审计日志**：`WUWA_AUDIT_LOG_FILE` 开启 JSONL 脱敏日志（自动轮转），内存/SQLite 审计照常（`audit/file_logger.py`）。
-- **凭据健康检查**：`credential-smoke` 检查 cookie 过期/临近过期；`WUWA_CREDENTIAL_CHECK_ENABLED=true` 时 NoneBot 入口按间隔定时检查并写审计预警，提示重新登录（`sources/credential_health.py`）。
+- **凭据健康检查**：`credential-smoke` 检查 cookie 过期/临近过期；`WUWA_CREDENTIAL_CHECK_ENABLED=true` 时 NoneBot 入口按间隔定时检查、审计预警并私聊管理员（`sources/credential_health.py`）。
 - **URL 去跟踪参数**：`sources/url_cleaner.py` 清洗 utm_*/spm/gclid/分享参数等，用于媒体流水线的去重键/缓存键/对外链接。
 - **凭据存储**：`sources/credentials.py` 提供 `CredentialStore` 接口（文件 `data/credentials.json` 或 `WUWA_CREDENTIAL_*` 环境变量），cookie/api_key 以引用进入抓取链路，原始值不入日志与 prompt。
 - **控制台多轮历史**：REPL 默认使用进程内多轮历史（`InMemoryConversationHistoryStore`），配置 SQLite 历史时自动切换持久存储。
