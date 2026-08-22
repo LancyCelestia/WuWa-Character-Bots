@@ -430,3 +430,18 @@
 - `/wuwa why` / `why-smoke` 的运行诊断已能识别 `context_error`，把 `llm_status` 标记为 `not_run`，中文结论说明“人格或知识上下文读取失败，已跳过 LLM，返回安全提示”，避免误判成真实 provider 已调用。
 - 按 TDD 新增 `tests/test_llm_chat.py::test_chat_capability_returns_safe_context_error_without_calling_llm` 和 `tests/test_runtime_diagnostics.py::test_runtime_diagnostic_explains_context_error_without_claiming_llm_called`，先观察红灯，再实现聊天兜底和诊断归因；`python -m pytest tests/test_llm_chat.py tests/test_runtime_diagnostics.py -q` 通过。
 - 修复 NoneBot 聊天入口的被动群消息噪音：`passive_group_message` 阻断现在只记录审计和运行诊断，不再把“该场景下未启用主动回复。”发回群里；按 TDD 新增 `tests/test_nonebot_plugin_entry.py::test_chat_policy_passive_group_block_is_silent_for_nonebot_entry`，先观察红灯，再实现静默跳过。
+
+## 2026-08-22：Lofter / allcpp / Pixiv 深度解析落地
+
+- 三个并行子代理按 TDD 交付新解析模块（先红灯后绿灯，各自回归旧测试）：
+  - `plugins/bot_unified_runtime/sources/parsers/platforms_lofter.py` + `http_util.http_post_form` + `tests/test_lofter_parser.py`（7 测）
+  - `plugins/bot_unified_runtime/sources/parsers/platforms_allcpp.py` + `tests/test_allcpp_parser.py`（5 测）
+  - `plugins/bot_unified_runtime/sources/parsers/platforms_pixiv.py`（多图分镜+作者作品/粉丝+proxy 透传）+ `tests/test_pixiv_parser.py`（4 测）
+- 集成：`platforms_generic.py` 移除旧占位实现，`parsers/__init__.py` 改导入并把 `pixiv` 加入 `_PARSER_PROXY_PLATFORM`；
+  旧测试 `test_parse_spa_link_cards` → `test_parse_spa_link_card_mihuashi`，`test_parse_pixiv_deep` 改为从新模块导入。
+- 文档：README 新增「支持的链接解析平台」清单；.env.example 代理注释改为「油管/推特/Spotify/Pixiv 走代理」。
+- 验证：`powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 verify` 通过（docs-check + plugin-check + 570 pytest）。
+  ruff/mypy 当前环境未安装，verify 按设计跳过（上一会话环境有，需在配好工具链的机器上再跑 lint/typecheck）。
+- 环境说明：系统 `%TEMP%\pytest-of-LancyCelestia` 是历史遗留且 ACL 损坏，沙箱内 `tmp_path` 夹具失败；
+  本轮用工作区 basetemp + 提权跑测试绕过，属环境问题、与代码无关。
+- 已知边界：Lofter 新版 permalink 帖子（`/post/{令牌}`）与米画师/画加仍为浅层降级；mihuashi/huajia 深解析留待下一轮。

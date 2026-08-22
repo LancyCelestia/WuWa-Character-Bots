@@ -446,82 +446,6 @@ def parse_twitter_x(url: str, *, cookie_header: str = "", proxy: str = "") -> Pl
     )
 
 
-def parse_pixiv(url: str, *, cookie_header: str = "") -> PlatformParse:
-    """Pixiv 插画：官方 ajax 公开接口（标题/作者/分辨率/浏览/点赞/收藏/
-    评论/标签/图片数量），失败回退页面 og。"""
-    match = re.search(r"/artworks/(\d+)", url)
-    if not match:
-        raise ParseHttpError(f"pixiv: no artwork id in {url}")
-    artwork_id = match.group(1)
-    try:
-        payload = http_get_json(
-            f"https://www.pixiv.net/ajax/illust/{artwork_id}",
-            referer="https://www.pixiv.net/",
-            cookie=cookie_header,
-        )
-        body = payload.get("body") or {}
-        if body.get("title"):
-            tags = [str(t.get("tag")) for t in ((body.get("tags") or {}).get("tags") or [])]
-            stats = {}
-            for key, label in (
-                ("viewCount", "浏览"),
-                ("likeCount", "喜欢"),
-                ("bookmarkCount", "收藏"),
-                ("commentCount", "评论"),
-            ):
-                value = body.get(key)
-                if isinstance(value, (int, float)):
-                    stats[label] = int(value)
-            width, height = body.get("width"), body.get("height")
-            if width and height:
-                stats["分辨率"] = f"{width}×{height}"
-            page_count = body.get("pageCount")
-            if page_count:
-                stats["图片数量"] = int(page_count)
-            type_labels = {0: "插画", 1: "漫画", 2: "动图"}
-            kind_label = type_labels.get(int(body.get("illustType") or 0), "插画")
-            summary_lines = [f"类型：{kind_label}"]
-            if tags:
-                summary_lines.append("标签：" + "、".join(tags[:12]))
-            desc = str(body.get("description") or "").strip()
-            if desc and len(desc) > 300:
-                desc = desc[:300] + "…"
-            if desc:
-                summary_lines.append(f"简介：{desc}")
-            # 作者粉丝/作品数（尽力而为）
-            user_id = body.get("userId")
-            if user_id:
-                try:
-                    user = http_get_json(
-                        f"https://www.pixiv.net/ajax/user/{user_id}?full=1",
-                        referer="https://www.pixiv.net/",
-                        cookie=cookie_header,
-                    )
-                    ubody = user.get("body") or {}
-                    follower = ubody.get("follower")
-                    following = ubody.get("following")
-                    if isinstance(follower, (int, float)):
-                        summary_lines.append(f"作者粉丝：{int(follower)} · 关注：{int(following or 0)}")
-                except Exception:  # noqa: BLE001
-                    pass
-            # 封面用 embed 代理图（QQ 可直接加载，避免 i.pximg.net 防盗链）
-            cover = f"https://embed.pixiv.net/artwork.php?illust_id={artwork_id}"
-            return PlatformParse(
-                platform="pixiv",
-                item_id=artwork_id,
-                item_kind="illust",
-                title=str(body.get("title") or ""),
-                author_name=str(body.get("userName") or ""),
-                summary="\n".join(summary_lines),
-                cover_url=cover,
-                canonical_url=url,
-                stats=stats,
-                parse_depth="deep",
-            )
-    except ParseHttpError:
-        pass
-    return _og_scrape(url, platform="pixiv", item_kind="illust", referer="https://www.pixiv.net/")
-
 
 def _spa_link_card(
     url: str,
@@ -543,28 +467,6 @@ def _spa_link_card(
     )
 
 
-def parse_lofter(url: str, *, cookie_header: str = "") -> PlatformParse:
-    if "/post/" in url or "/lpost/" in url:
-        return _og_scrape(url, platform="lofter", item_kind="post", cookie_header=cookie_header)
-    if "/tag/" in url:
-        return _spa_link_card(url, platform="lofter", item_kind="tag", label="Lofter 标签页")
-    if "/selection" in url:
-        return _spa_link_card(url, platform="lofter", item_kind="collection", label="Lofter 精选")
-    if "/theme/" in url:
-        return _spa_link_card(url, platform="lofter", item_kind="theme", label="Lofter 主题")
-    return _spa_link_card(url, platform="lofter", item_kind="page", label="Lofter 页面")
-
-
-def parse_allcpp(url: str, *, cookie_header: str = "") -> PlatformParse:
-    match = re.search(r"event=(\d+)", url)
-    if match:
-        return _spa_link_card(
-            url,
-            platform="allcpp",
-            item_kind="event",
-            label=f"无差别同人站活动 {match.group(1)}",
-        )
-    return _spa_link_card(url, platform="allcpp", item_kind="page", label="无差别同人站")
 
 
 def parse_mihuashi(url: str, *, cookie_header: str = "") -> PlatformParse:

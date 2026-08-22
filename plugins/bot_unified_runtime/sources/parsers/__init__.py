@@ -22,21 +22,21 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import (
     PlatformParse,
     parse_bilibili,
 )
+from plugins.bot_unified_runtime.sources.parsers.platforms_allcpp import parse_allcpp
 from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
-    parse_allcpp,
     parse_douyin,
     parse_huajia,
     parse_kurobbs,
-    parse_lofter,
     parse_mihuashi,
     parse_miyoushe,
-    parse_pixiv,
     parse_skland,
     parse_twitter_x,
     parse_xiaoheihe,
     parse_xiaohongshu,
     parse_youtube,
 )
+from plugins.bot_unified_runtime.sources.parsers.platforms_lofter import parse_lofter
+from plugins.bot_unified_runtime.sources.parsers.platforms_pixiv import parse_pixiv
 from plugins.bot_unified_runtime.sources.parsers.platforms_music import (
     parse_apple_music,
     parse_kugou,
@@ -257,7 +257,7 @@ def _bind_proxy(fn: Any, proxy: str) -> Any:
 
 
 # 需要走代理的海外平台（大陆直连被墙）。
-_PARSER_PROXY_PLATFORM = frozenset({"youtube", "twitter", "spotify"})
+_PARSER_PROXY_PLATFORM = frozenset({"youtube", "twitter", "spotify", "pixiv"})
 
 
 def extract_http_urls(text: str) -> list[str]:

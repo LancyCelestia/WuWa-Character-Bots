@@ -614,7 +614,7 @@ def test_music_card_fallback_when_no_audio_url():
 
 
 def test_parse_pixiv_deep(monkeypatch):
-    from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
+    from plugins.bot_unified_runtime.sources.parsers.platforms_pixiv import (
         parse_pixiv,
     )
 
@@ -640,7 +640,7 @@ def test_parse_pixiv_deep(monkeypatch):
         return {"body": {"follower": 100, "following": 5}}
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.parsers.platforms_generic.http_get_json",
+        "plugins.bot_unified_runtime.sources.parsers.platforms_pixiv.http_get_json",
         fake_http_get_json,
     )
 
@@ -852,15 +852,11 @@ def test_parse_bilibili_watchlater_extracts_bvid(monkeypatch):
     assert item.item_id == "BV18uywBcEAb"
 
 
-def test_parse_spa_link_cards():
+def test_parse_spa_link_card_mihuashi():
+    # allcpp 已迁移到 platforms_allcpp 深度解析，由 tests/test_allcpp_parser.py 覆盖。
     from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
-        parse_allcpp,
         parse_mihuashi,
     )
-
-    item = parse_allcpp("https://www.allcpp.cn/allcpp/event/event.do?event=6733")
-    assert item.item_kind == "event"
-    assert "动态渲染" in item.summary
 
     item = parse_mihuashi("https://www.mihuashi.com/projects/11789469")
     assert item.item_kind == "project"

@@ -111,3 +111,41 @@ C:\Users\LancyCelestia\.astrbot\data\plugins\astrbot_plugin_parser
 ## 当前结论
 
 研究和设计目标已经完成。现在应进入实现前的最后准备：以中文核心 specs 为准，先实现窄的统一运行时插件，不要直接把参考插件整体搬进来。
+
+## 2026-08-22：Lofter / allcpp / Pixiv 接口实测记录
+
+### Lofter（api.lofter.com，无 cookie，需移动端 UA）
+- 标签列表 POST `https://api.lofter.com/newapi/tagPosts.json`
+  表单：product=lofter-android-8.2.36、postTypes=（全部）、offset=0、postYm=、returnGiftCombination=、
+  recentDay=0、protectedFlag=0、range=0、firstpermalink=null、style=0、tag=<tag>、type=total
+  返回：{"msg":"成功","code":0,"data":{"list":[{"postData":{"postView":{id,blogId,title,type,digest,permalink,
+  firstImage:{orign,ow,oh,raw},photoCount,tagList,publishTime},"postCount":{responseCount,favoriteCount,
+  reblogCount,shareCount,viewCount,hotCount,subscribeCount}},"blogInfo":{blogNickName,blogName,blogId,
+  bigAvaImg,selfIntro}}]}}
+- 帖子详情 POST `https://api.lofter.com/oldapi/post/detail.api?product=lofter-android-7.9.10`
+  表单：targetblogid、postid、supportposttypes=1,2,3,4,5,6、needgetpoststat=1
+  返回：meta.status=200、response.posts[0].post{id,type,blogId,title,publishTime,digest/content(HTML),
+  firstImageUrl(JSON 数组),photoLinks(JSON 数组,每项 rw/rh/ow/oh/raw/orign/middle),photoCaptions,
+  firstImageWH[w,h],wordCount,blogPageUrl,tagList,ipLocation,postCount{responseCount,favoriteCount,
+  reblogCount,shareCount,viewCount,subscribeCount,postHot},blogInfo{blogName,blogNickName,bigAvaImg,homePageUrl}}
+- 主题页 `https://www.lofter.com/theme/preview/{id}` 服务端内嵌 `this.p={themeid:'120002',previewBlogName:'lofterphoto3'}`。
+- 新版 permalink /post/{token}（如 844ef704_2bd1d2f81）无法用数字 id 直接解析，newapi/postDetail.json、
+  v1.1/postDetail.api、v2.0/postDetail.api 均 404；web 端为 React SPA 无 SSR。保留 og 降级 + 待查前端接口。
+
+### allcpp（www.allcpp.cn，无 cookie）
+- 活动页 `https://www.allcpp.cn/allcpp/event/event.do?event=6733` 服务端内嵌：
+  var worksObjId=6733; var WORKSOBJNAME="..."; var EVENTUSERID=1136855;
+  eventParam.EID/picUrl/eventName/lastDays/sDate/eDate/enterAddress/eventTag/desContent/isOnly/eventType
+  （eventType: 1茶会 2综合同人展 3 ONLY展 4游戏展 5线上活动；isOnly:1 独家）
+- 列表接口 GET `https://www.allcpp.cn/allcpp/event/eventMainListV2.do`（time/sort/keyword/pageNo/pageSize/
+  positionStatus/type/day/isOnline/ticketStatus），图片前缀 https://imagecdn3.allcpp.cn/upload。
+- 注意事项：geteventdetail2.do 的 eventid 与页面 event 参数 ID 空间不一致（eventid=6733 返回另一场次），
+  因此解析以页面 SSR eventParam 为准，不用该接口。
+
+### Pixiv（www.pixiv.net 直连被墙，必须走 127.0.0.1:7890）
+- ajax/illust/{id}：body{illustId,title,userName,userId,width,height,pageCount,likeCount,bookmarkCount,
+  viewCount,commentCount,illustType,description,tags:{tags[]},urls{mini/thumb/small/regular/original},sl}
+- ajax/illust/{id}/pages：body[{urls{thumb_mini/small/regular/original},width,height}]
+- ajax/user/{id}/profile/all：body{illusts/manga/novels 各为 {作品id:null}，计数=键数；bookmarkCount 等}
+- ajax/user/{id}?full=1：follower/following（已有实现使用）
+- 封面用 embed.pixiv.net/artwork.php?illust_id={id} 代理图（QQ 可加载）。

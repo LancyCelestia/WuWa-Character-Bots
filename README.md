@@ -211,6 +211,15 @@ C:\Users\LancyCelestia\.astrbot\data\plugins\astrbot_plugin_parser
 
 该插件的可复用思想是：`BaseParser` 自动注册、`@handle` 关键词/正则匹配、`ParseResult` 归一化、订阅去重、卡片渲染、发送计划和 fallback。新项目会吸收这些分层，但最终发送会收口到统一 sender/receipt/audit。
 
+## 支持的链接解析平台
+
+消息里出现平台链接时自动解析（ot.content，无需命令前缀），文本卡片失败自动降级为原链接提示：
+
+- 视频/图片/社区：哔哩哔哩（视频/直播/空间/收藏夹/图文动态/番剧/稍后再看）、小红书、抖音、油管（含 YouTube Music/播放列表）、推特/X、小黑盒、米游社、森空岛、库街区、**Pixiv（插画深解析：浏览/喜欢/收藏/评论、多图分镜分辨率、作者作品数与粉丝）**、**Lofter（标签页/数字帖子深解析：正文、喜欢/评论/分享/转发/热度、图片数量与分辨率；主题/精选/趋势页浅层卡片）**、**allcpp 无差别同人站（活动深解析：时间/地址/类型/独家/标签/简介/封面）**、米画师、网易画加。
+- 音乐：网易云、QQ 音乐、酷狗、酷我、Apple Music、Spotify（点歌搜索与链接解析，见 /bot 帮助）。
+
+海外平台经 BOT_DOWNLOAD_PROXY 走代理（默认 http://127.0.0.1:7890）：油管、推特、Spotify 以及 **Pixiv**（大陆直连不可达）。Lofter/allcpp 无需 cookie 与代理；Lofter 新版 permalink 帖子（/post/{令牌}）的解析接口未公开，当前诚实降级为 og 浅层卡片，待补前端接口。
+
 ## NoneBot 与 NapCat 边界
 
 项目通过 `pyproject.toml` 配置 NoneBot：

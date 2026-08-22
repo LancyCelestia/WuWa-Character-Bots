@@ -70,3 +70,33 @@ powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 verify
 3. policy gate、audit logger、output choke point。
 4. 一个安全 LLM adapter。
 5. 一个低风险 parser、一个摘要命令、一个天气或公共游戏/wiki 命令。
+
+## 本轮（2026-08-22）：Lofter / allcpp / Pixiv 深度解析
+
+背景：上一会话最后要求「加入 lofter、allcpp、pixiv 的解析」。当前这三站仍是占位卡片（SPA 降级）或半成品，
+本轮把已验证的公开接口落地为深度解析，并纳入统一注册表。
+
+### 已验证事实（实测 2026-08-22）
+- Lofter 标签页：POST https://api.lofter.com/newapi/tagPosts.json（UA LOFTER-Android 8.2.36，表单
+  product/postTypes/offset/postYm/.../tag/type=total），返回 code=0 + data.list[]，含 postView.title/digest/
+  firstImage/photoCount/tagList/publishTime、postCount(喜欢/评论/转发/分享/热度)、blogInfo(昵称/博客名)。
+- Lofter 帖子详情（仅数字 {blogId}_{postId}）：POST https://api.lofter.com/oldapi/post/detail.api
+  ?product=lofter-android-7.9.10（表单 targetblogid/postid/supportposttypes/needgetpoststat），返回
+  response.posts[0].post：title/content(HTML)/photoLinks(JSON，含 ow/oh/orign)/firstImageWH/tagList/wordCount/
+  blogPageUrl/blogInfo/postCount(postHot 等)。新版 permalink 令牌 /post/{token} 的解析接口未公开，保留 og 降级。
+- Lofter 主题页：https://www.lofter.com/theme/preview/{id} 服务端内嵌 this.p={themeid:'...',previewBlogName:'...'}。
+- allcpp 活动详情：https://www.allcpp.cn/allcpp/event/event.do?event=N 服务端内嵌 eventParam.*（EID/picUrl/
+  eventName/sDate/eDate/enterAddress/eventTag/desContent/isOnly/eventType）与 WORKSOBJNAME/EVENTUSERID。
+- Pixiv：www.pixiv.net 直连不可达，经 127.0.0.1:7890 可用；ajax/illust 返回 userId/userName/width/height/
+  pageCount/likeCount/bookmarkCount/viewCount/commentCount/urls；ajax/illust/{id}/pages 返回每页 urls+width/height；
+  ajax/user/{id}/profile/all 返回 illusts/manga/novels（计数=字典键数）。
+- 结论：pixiv 需加入代理平台集合（BOT_DOWNLOAD_PROXY）；Lofter/allcpp 无需 cookie 与代理。
+
+### 任务拆分（并行子代理，互不重叠写集）
+1. platforms_lofter.py + http_util.http_post_form + tests/test_lofter_parser.py
+2. platforms_allcpp.py + tests/test_allcpp_parser.py
+3. platforms_pixiv.py（含 pages/profile-all 深解析与 proxy 参数）+ tests/test_pixiv_parser.py
+
+### 集成（主控）
+- platforms_generic.py 移除旧 parse_lofter/parse_allcpp/parse_pixiv；parsers/__init__.py 改导入并把 pixiv 加入
+  _PARSER_PROXY_PLATFORM；更新受影响测试与 README/COMMANDS；全量 verify；commit。

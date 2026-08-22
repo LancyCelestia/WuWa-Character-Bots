@@ -195,3 +195,35 @@ def strip_tracking_query(url: str) -> str:
     """只保留 scheme/netloc/path，丢弃查询串（解析用，避免签名参数干扰）。"""
     parts = urlparse.urlsplit(url)
     return urlparse.urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+def http_post_form(
+    url: str,
+    data: dict | None = None,
+    *,
+    timeout: float = 10.0,
+    referer: str = "",
+    user_agent: str = DEFAULT_USER_AGENT,
+    cookie: str = "",
+    proxy: str = "",
+) -> Any:
+    """POST 表单（application/x-www-form-urlencoded）并解析 JSON 响应。"""
+    body = urlparse.urlencode(data or {})
+    headers = {
+        "User-Agent": user_agent,
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+        "Accept-Encoding": "gzip",
+    }
+    if referer:
+        headers["Referer"] = referer
+    if cookie:
+        headers["Cookie"] = cookie
+    request = urlrequest.Request(url, data=body.encode("utf-8"), headers=headers, method="POST")
+    try:
+        with _build_opener(proxy).open(request, timeout=timeout) as response:
+            raw = response.read()
+            if response.headers.get("Content-Encoding", "").lower() == "gzip":
+                raw = gzip.decompress(raw)
+            return json.loads(raw.decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise ParseHttpError(f"POST {url} failed: {type(exc).__name__}") from exc
