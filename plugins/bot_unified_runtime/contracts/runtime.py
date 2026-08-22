@@ -167,6 +167,7 @@ class CapabilityResult(StrictBaseModel):
     source_timestamp: datetime | None = None
     images: list[dict[str, Any]] = Field(default_factory=list)
     audio: list[dict[str, Any]] = Field(default_factory=list)
+    video: list[dict[str, Any]] = Field(default_factory=list)
     actions: list[dict[str, Any]] = Field(default_factory=list)
     confidence: float = 1.0
     risk_level: RiskLevel = RiskLevel.LOW

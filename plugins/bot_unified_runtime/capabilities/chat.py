@@ -137,13 +137,19 @@ def _history_lines(context: ContextBundle, max_chars: int | None = None) -> str:
     if not context.conversation_history.turns:
         return "- 未读取到最近对话"
     role_names = {
-        "user": "用户",
-        "assistant": "机器人",
+        "user": "user",
+        "assistant": "assistant",
     }
+    # 最近对话 = 已经真实发生过的交谈，回答时必须当作既成事实，
+    # 不要再说"不记得/没存下"。
     lines = [
-        f"- {role_names.get(turn.role, turn.role)}：{_sanitize_untrusted_context_text(turn.text)}"
-        for turn in context.conversation_history.turns
+        "- 以下是你们最近已经发生过的对话，用户说过的事就是既定事实，"
+        "请直接基于它作答，不要声称自己没有记住："
     ]
+    lines.extend(
+        f"- {role_names.get(turn.role, turn.role)}: {_sanitize_untrusted_context_text(turn.text)}"
+        for turn in context.conversation_history.turns
+    )
     if max_chars is None:
         return "\n".join(lines)
     return _budgeted_lines(lines, max_chars)

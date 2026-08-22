@@ -179,6 +179,15 @@ def _segment_from_mixed_part(part: dict[str, Any]) -> OneBotMessageSegment | Non
         if not file_ref:
             return None
         return {"type": "record", "data": {"file": file_ref}}
+    if part_type == "video":
+        file_ref = _string_value(part.get("file")) or _string_value(part.get("url"))
+        if not file_ref:
+            return None
+        data: dict[str, Any] = {"file": file_ref}
+        for key in ("cover", "thumb"):
+            if part.get(key):
+                data[key] = _string_value(part.get(key))
+        return {"type": "video", "data": data}
     if part_type == "music":
         # CQ:music 卡片：{"type":"qq","id":"..."} 或 {"type":"163","id":"..."}
         music_type = _string_value(part.get("music_type"))

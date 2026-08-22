@@ -78,12 +78,21 @@ from plugins.bot_unified_runtime.sources.credential_health import (
 )
 from plugins.bot_unified_runtime.sources.meme_search import build_meme_search_provider
 from plugins.bot_unified_runtime.sources.parsers import extract_http_urls
+from plugins.bot_unified_runtime.sources.parse_history import (
+    build_parse_history_result,
+    build_parse_history_store,
+)
+from plugins.bot_unified_runtime.sources.downloader import MediaDownloader
 from plugins.bot_unified_runtime.capabilities.content_parser import (
     build_content_capability,
 )
 from plugins.bot_unified_runtime.capabilities.music import (
     build_music_capability,
     is_music_command,
+)
+from plugins.bot_unified_runtime.capabilities.download import (
+    build_download_capability,
+    is_download_command,
 )
 
 _BANNER = """\
@@ -102,9 +111,13 @@ _HELP_TEMPLATE = """\
   {alias_lines}
 直接输入文本即可对话。当前回复最多 {max_messages} 条/轮。
 特殊能力：
-  发链接     B站/抖音/小红书/油管/推特/小黑盒/米游社/森空岛/库街区
+  发链接     B站/抖音/小红书/油管/推特/小黑盒/米游社/森空岛/库街区/
+             Pixiv/Lofter/无差别同人站/米画师/网易画加
              与网易云/QQ/酷我/酷狗/Apple Music/Spotify 链接会自动解析成信息卡
+             视频链接还会自动附加分辨率/时长/HDR/音频码率分析
   点歌 <歌名>  搜索并发送歌曲信息卡 + 语音试听（网易云 → Apple → 酷狗 → QQ → 酷我）
+  /download <链接>  下载投稿视频（B站/油管/推特/小红书/抖音）并发送文件
+  /parse [数量]     查看解析历史
 """
 
 _LOCAL_COMMANDS = ("bot.help", "bot.status", "bot.why")
@@ -172,7 +185,7 @@ def _build_runtime(
     config: Config,
     history_store: Any,
     runtime_settings: Any,
-) -> tuple[RuntimePipeline, Any]:
+) -> tuple[RuntimePipeline, Any, dict[str, Any]]:
     audit_logger = build_audit_with_file_log(
         InMemoryAuditLogger(),
         config.bot_audit_log_file,
@@ -210,7 +223,18 @@ def _build_runtime(
         llm_preflight_errors=llm_generation_parameter_errors(config),
         output_max_chars_per_message=config.bot_reply_max_chars_per_message,
     )
-    return pipeline, capability
+    stores = {
+        "parse_history": build_parse_history_store(config),
+        "downloader": MediaDownloader(
+            cookies_file=config.bot_cookies_file,
+            proxy=config.bot_download_proxy,
+            download_dir=config.bot_download_dir,
+            max_bytes=config.bot_download_max_bytes,
+            max_height=config.bot_download_max_height,
+            timeout_seconds=config.bot_download_timeout_seconds,
+        ),
+    }
+    return pipeline, capability, stores
 
 
 def _reply_text(send_queue: InMemorySendQueue, request_id: str) -> str | None:
@@ -365,12 +389,24 @@ def _record_turn(history_store: Any, *, request_id: str, role: str, text: str) -
         return
 
 
-def _route_for_message(config: Config, text: str, chat_capability: Any) -> tuple[Any, str]:
+def _route_for_message(
+    config: Config,
+    text: str,
+    chat_capability: Any,
+    stores: dict[str, Any],
+) -> tuple[Any, str]:
     """按消息内容选择能力：点歌 → bot.music；带链接 → bot.content；否则聊天。"""
     if config.bot_music_enabled and is_music_command(text):
         return build_music_capability(config), "bot.music"
     if config.bot_content_parse_enabled and extract_http_urls(text):
-        return build_content_capability(config), "bot.content"
+        return (
+            build_content_capability(
+                config,
+                parse_history_store=stores.get("parse_history"),
+                downloader=stores.get("downloader"),
+            ),
+            "bot.content",
+        )
     return chat_capability, "bot.chat"
 
 
@@ -383,7 +419,7 @@ def run_once(
 ) -> DeliveryReceipt:
     settings = runtime_settings or build_runtime_settings_store(config)
     store = history_store or _build_history_store(config)
-    pipeline, chat_capability = _build_runtime(config, store, settings)
+    pipeline, chat_capability, stores = _build_runtime(config, store, settings)
     message = IncomingMessage(
         platform="console",
         adapter="console-repl",
@@ -398,7 +434,7 @@ def run_once(
     )
     _record_turn(store, request_id=message.request_id, role="user", text=message_text)
     capability, capability_id = _route_for_message(
-        config, message_text, chat_capability
+        config, message_text, chat_capability, stores
     )
     receipt = pipeline.handle(message, capability, capability_id=capability_id)
     if receipt.state is ReceiptState.SENT:
@@ -424,7 +460,9 @@ def run_interactive(config: Config) -> int:
         extra_nicknames=runtime_settings.list_nicknames(),
     )
     history_store = _build_history_store(config)
-    pipeline, capability = _build_runtime(config, history_store, runtime_settings)
+    pipeline, capability, stores = _build_runtime(
+        config, history_store, runtime_settings
+    )
     group_mode = False
     last_receipt: DeliveryReceipt | None = None
     last_tags: list[str] = []
@@ -450,6 +488,35 @@ def run_interactive(config: Config) -> int:
             continue
         if command == "/why":
             print(_last_receipt_summary(last_receipt, last_tags))
+            continue
+        if command == "/parse" or command.startswith("/parse "):
+            result = build_parse_history_result(
+                stores["parse_history"],
+                request_id="console-parse",
+                query=command.removeprefix("/parse").strip(),
+            )
+            print(result.body)
+            continue
+        if command.startswith("/download ") or command.startswith("下载 "):
+            message = IncomingMessage(
+                platform="console",
+                adapter="console-repl",
+                bot_id="console-bot",
+                session_id="console:repl",
+                session_type=SessionType.PRIVATE,
+                sender_id="console-user",
+                sender_display_name="控制台用户",
+                plain_text=raw,
+                raw_segments=[{"type": "text", "data": {"text": raw}}],
+                mentions_bot=True,
+            )
+            receipt = pipeline.handle(
+                message,
+                build_download_capability(config, downloader=stores["downloader"]),
+                capability_id="bot.download",
+            )
+            text = _reply_text(pipeline.send_queue, message.request_id)
+            print(text or receipt.public_message or f"[{receipt.state.value}]")
             continue
         if command == "/group":
             group_mode = True
@@ -515,7 +582,9 @@ def run_interactive(config: Config) -> int:
         _record_turn(
             history_store, request_id=message.request_id, role="user", text=raw
         )
-        handle_capability, handle_id = _route_for_message(config, raw, capability)
+        handle_capability, handle_id = _route_for_message(
+            config, raw, capability, stores
+        )
         receipt = pipeline.handle(
             message, handle_capability, capability_id=handle_id
         )

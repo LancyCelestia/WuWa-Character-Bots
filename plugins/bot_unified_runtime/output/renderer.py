@@ -26,6 +26,9 @@ def render_reviewed_output(
         ):
             part_type = str(audio.get("type") or "record")
             media_parts.append({"type": part_type, **audio})
+    for video in result.video or []:
+        if isinstance(video, dict) and (video.get("file") or video.get("url")):
+            media_parts.append({"type": "video", **video})
     if media_parts:
         return RenderedOutput(
             request_id=result.request_id,

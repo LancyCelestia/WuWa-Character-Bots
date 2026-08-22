@@ -142,6 +142,19 @@ class Config(BaseModel):
     # 平台 Cookie 文件（Netscape 格式，浏览器导出）：给 B站/小红书/抖音/
     # QQ音乐/网易云/推特等解析与点歌加登录态。留空 = 匿名解析。
     bot_cookies_file: str = ""
+    # 链接解析历史：默认开启并落盘（data/ 已被 git 忽略）。
+    bot_parse_history_enabled: bool = True
+    bot_parse_history_db_path: str = "data/parse_history.sqlite3"
+    bot_parse_history_max_items: int = 2000
+    # 视频下载与媒体分析（yt-dlp）：
+    # 解析视频链接时自动附加分辨率/时长/HDR/音频分析；下载走 /bot download。
+    bot_media_analyze_enabled: bool = True
+    bot_download_dir: str = "data/downloads"
+    bot_download_max_bytes: int = 209715200
+    bot_download_max_height: int = 1080
+    bot_download_timeout_seconds: int = 300
+    # 代理（大陆拉油管等需要）：http://127.0.0.1:7890 形式，留空 = 直连。
+    bot_download_proxy: str = ""
     bot_render_forward_min_chars: int = 1500
     bot_render_forward_max_nodes: int = 6
     bot_render_forward_node_chars: int = 900

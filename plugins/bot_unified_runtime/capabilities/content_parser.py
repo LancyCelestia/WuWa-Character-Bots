@@ -75,10 +75,14 @@ def build_content_capability(
     *,
     registry: Any | None = None,
     enabled_platforms: list[str] | None = None,
+    parse_history_store: Any | None = None,
+    downloader: Any | None = None,
 ) -> Any:
     """构建 bot.content 能力。
 
     ``registry`` 为空时用 config 的平台名单构建。
+    ``parse_history_store`` 存在时记录每次成功解析。
+    ``downloader`` 存在且媒体分析开启时，给视频类结果追加画质/音频分析。
     """
     if registry is None:
         if config is None:
@@ -93,6 +97,9 @@ def build_content_capability(
         built = registry
     parser_registry = built["registry"]
     parsers: dict[str, Any] = built["parsers"]
+    analyze_media = bool(
+        config is not None and getattr(config, "bot_media_analyze_enabled", True)
+    )
 
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         source_input = build_source_input(
@@ -146,7 +153,40 @@ def build_content_capability(
                 body="链接解析失败，先把原链接放在这里，晚点我再试试：\n" + candidate,
                 audit_tags=["content_parse", f"platform:{match.parser_id}", "parse_failed"],
             )
+        media_lines: list[str] = []
+        if (
+            analyze_media
+            and item.item_kind in {"video", "live"}
+            and downloader is not None
+        ):
+            try:
+                analysis = downloader.probe(candidate)
+                media_lines = [
+                    "媒体信息：",
+                    *[f"  {line}" for line in analysis.summary_lines()],
+                    f"下载：/bot download {candidate}",
+                ]
+            except Exception:  # noqa: BLE001 - 分析失败不影响卡片。
+                media_lines = []
         body = _render_parse_body(item)
+        if media_lines:
+            body = f"{body}\n" + "\n".join(media_lines)
+        if parse_history_store is not None:
+            try:
+                parse_history_store.record(
+                    request_id=message.request_id,
+                    session_id=message.session_id,
+                    sender_id=message.sender_id,
+                    platform=match.parser_id,
+                    item_id=item.item_id,
+                    item_kind=item.item_kind,
+                    title=item.title,
+                    url=item.canonical_url or candidate,
+                    parse_depth=item.parse_depth,
+                    body_preview=body,
+                )
+            except Exception:  # noqa: BLE001 - 历史失败不影响主链路。
+                pass
         result = CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.content",
@@ -163,6 +203,7 @@ def build_content_capability(
                 f"platform:{match.parser_id}",
                 f"parse_depth:{item.parse_depth}",
                 f"item_kind:{item.item_kind}",
+                *(["media_analyzed"] if media_lines else []),
             ],
         )
         return result

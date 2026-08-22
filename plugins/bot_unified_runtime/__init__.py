@@ -49,8 +49,14 @@ from .runtime.settings import (
 from .sources.credential_health import check_credentials_and_report
 from .sources.meme_search import build_meme_search_provider
 from .sources.parsers import extract_http_urls
+from .sources.parse_history import (
+    build_parse_history_result,
+    build_parse_history_store,
+)
+from .sources.downloader import MediaDownloader
 from .capabilities.content_parser import build_content_capability
 from .capabilities.music import build_music_capability, is_music_command
+from .capabilities.download import build_download_capability
 
 try:
     from nonebot.plugin import PluginMetadata
@@ -740,6 +746,15 @@ def _register_nonebot_handlers() -> None:
             )
 
     history_recorder = build_conversation_history_provider(config)
+    parse_history_store = build_parse_history_store(config)
+    downloader = MediaDownloader(
+        cookies_file=str(getattr(config, "bot_cookies_file", "") or ""),
+        proxy=str(getattr(config, "bot_download_proxy", "") or ""),
+        download_dir=str(getattr(config, "bot_download_dir", "data/downloads") or ""),
+        max_bytes=int(getattr(config, "bot_download_max_bytes", 209715200)),
+        max_height=int(getattr(config, "bot_download_max_height", 1080)),
+        timeout_seconds=int(getattr(config, "bot_download_timeout_seconds", 300)),
+    )
     chat_capability = offload_capability(
         build_chat_capability(
             character_provider=build_character_context_provider(
@@ -1079,6 +1094,26 @@ def _register_nonebot_handlers() -> None:
                     command_text=runtime_command,
                 )
 
+        elif command_text == "parse" or command_text.startswith("parse "):
+            capability_id = "bot.parse"
+            parse_query = command_text.removeprefix("parse").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_parse_history_result(
+                    parse_history_store,
+                    request_id=message.request_id,
+                    query=parse_query,
+                )
+
+        elif command_text == "download" or command_text.startswith("download "):
+            capability_id = "bot.download"
+            download_command = command_text.removeprefix("download").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_download_capability(
+                    config, downloader=downloader
+                )(message, _decision)
+
         elif command_text == "alert" or command_text.startswith("alert "):
             capability_id = "bot.alert"
             alert_command = command_text.removeprefix("alert").strip()
@@ -1249,7 +1284,13 @@ def _register_nonebot_handlers() -> None:
         )
         receipt = await pipeline.handle_async(
             message,
-            offload_capability(build_content_capability(config)),
+            offload_capability(
+                build_content_capability(
+                    config,
+                    parse_history_store=parse_history_store,
+                    downloader=downloader,
+                )
+            ),
             capability_id="bot.content",
         )
         sent_request = _find_sent_request(send_queue, message.request_id)

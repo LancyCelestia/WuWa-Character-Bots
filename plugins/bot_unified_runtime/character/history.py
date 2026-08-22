@@ -280,8 +280,12 @@ class SQLiteConversationHistoryRepository:
             bot_id=bot_id,
             session_id=session_id,
             sender_id=sender_id,
-            limit=max_turns,
+            limit=max_turns + 2,
         )
+        # 排除本轮消息自身（控制台/某些入口在生成前就落库了当前轮），
+        # 避免把"刚才说的话"当作历史喂回去。
+        rows = [row for row in rows if str(row["request_id"]) != request_id]
+        rows = rows[:max_turns]
         selected: list[ConversationTurn] = []
         chars_used = 0
         for row in rows:
@@ -342,7 +346,7 @@ class SQLiteConversationHistoryRepository:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
-                SELECT role, text, created_at
+                SELECT request_id, role, text, created_at
                 FROM conversation_turns
                 WHERE platform = ?
                   AND adapter = ?
