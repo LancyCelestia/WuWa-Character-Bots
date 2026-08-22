@@ -222,6 +222,9 @@ class Config(BaseModel):
     bot_subscribe_max_items_per_tick: int = 20
     bot_subscribe_playwright_poll_seconds: int = 1800
     bot_fetch_playwright_enabled: bool = True
+    bot_runtime_log_file: str = "data/runtime_events.log"
+    bot_runtime_log_max_bytes: int = 2097152
+    bot_runtime_log_level: str = "INFO"
 
     @field_validator(
         "bot_persona_files",

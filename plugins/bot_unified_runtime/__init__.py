@@ -836,6 +836,41 @@ def _register_nonebot_handlers() -> None:
 
     subscription_ctx: dict[str, Any] = {}
 
+    runtime_event_log = None
+    if getattr(config, "bot_runtime_log_file", ""):
+        try:
+            from .sources.runtime_event_log import RuntimeEventLog
+
+            runtime_event_log = RuntimeEventLog(
+                str(config.bot_runtime_log_file),
+                max_bytes=int(getattr(config, "bot_runtime_log_max_bytes", 2097152)),
+                min_level=str(getattr(config, "bot_runtime_log_level", "INFO") or "INFO"),
+            )
+            runtime_event_log.info(
+                "startup",
+                stage="nonebot_handlers",
+                runtime_instance=str(getattr(config, "bot_runtime_instance", "")),
+            )
+            driver = get_driver()
+
+            @driver.on_bot_connect
+            async def _log_bot_connect(bot):  # noqa: F811
+                runtime_event_log.info(
+                    "bot_connected",
+                    bot_id=str(getattr(bot, "self_id", "unknown")),
+                )
+
+            @driver.on_bot_disconnect
+            async def _log_bot_disconnect(bot):  # noqa: F811
+                runtime_event_log.warning(
+                    "bot_disconnected",
+                    bot_id=str(getattr(bot, "self_id", "unknown")),
+                )
+
+            runtime_event_log.attach_to_logging("nonebot")
+        except Exception:  # noqa: BLE001 - 日志失败不影响主链路。
+            runtime_event_log = None
+
     try:
         from nonebot_plugin_apscheduler import scheduler
     except Exception as exc:  # noqa: BLE001 - optional worker must fail closed.
@@ -892,6 +927,7 @@ def _register_nonebot_handlers() -> None:
             audit_logger=audit_logger,
             receipt_repository=receipt_repository,
             bot_provider=_first_online_bot,
+            event_log=runtime_event_log,
         )
 
     history_recorder = build_conversation_history_provider(config)
@@ -1329,6 +1365,27 @@ def _register_nonebot_handlers() -> None:
                     config=config,
                 )(message, _decision)
 
+        elif command_text == "logs" or command_text.startswith("logs "):
+            capability_id = "bot.logs"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                from .capabilities.runtime_logs import build_logs_query_result
+
+                arg_parts = command_text[len("logs"):].strip().split()
+                level = (
+                    arg_parts[0].lower()
+                    if arg_parts and arg_parts[0].lower() in {"debug", "info", "warning", "error"}
+                    else "info"
+                )
+                limit = int(arg_parts[1]) if len(arg_parts) > 1 and arg_parts[1].isdigit() else 50
+                return build_logs_query_result(
+                    runtime_event_log,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    level=level,
+                    limit=limit,
+                )
+
         elif command_text != "status":
             capability_id = "bot.help"
 
@@ -1653,7 +1710,6 @@ def _register_nonebot_handlers() -> None:
         )
 
 
-_register_nonebot_handlers()
 
 
 
@@ -1678,6 +1734,7 @@ def _register_subscription_scheduler(
     receipt_repository: ReceiptRepository | None,
     bot_provider: Any,
     registry: Any | None = None,
+    event_log: Any | None = None,
 ) -> dict[str, object]:
     """注册订阅系统三个 APScheduler job：常规轮询、直播轮询、日报汇总。
 
@@ -1793,7 +1850,21 @@ def _register_subscription_scheduler(
                             receipt_repository,
                             send_queue,
                         )
+                    if event_log is not None:
+                        event_log.info(
+                            "subscription_push_sent",
+                            spec_id=str(getattr(spec, "id", "")),
+                            platform=str(getattr(spec, "platform", "")),
+                            reason=str(getattr(candidate, "reason", "")),
+                            destination=str(getattr(destination, "scope", "")),
+                        )
                 except Exception as exc:  # noqa: BLE001 - 单条推送失败不拖垮轮询。
+                    if event_log is not None:
+                        event_log.error(
+                            "subscription_push_failed",
+                            spec_id=str(getattr(spec, "id", "")),
+                            error_type=type(exc).__name__,
+                        )
                     audit_logger.append(
                         AuditRecord(
                             request_id=message.request_id,
@@ -1896,3 +1967,5 @@ def _register_subscription_scheduler(
     )
 
     return {"store": store, "watcher": watcher, "registry": registry}
+
+_register_nonebot_handlers()

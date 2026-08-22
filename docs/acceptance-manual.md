@@ -97,6 +97,14 @@ eceipt_state=sent 即为对话链路正常。
 - [ ] （可选）gscore-smoke 只读通过
 - [ ] powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 verify 通过
 
+## 5.5 运行时日志（毫秒级分级，可查询）
+
+- 文件：data/runtime_events.log（一行一条：2026-08-22 20:54:44.639 [INFO] event=... 字段=值）。
+- 等级：INFO / WARNING / ERROR（BOT_RUNTIME_LOG_LEVEL 可设 DEBUG/INFO/WARNING/ERROR）。
+- 自动记录：启动、机器人连接/断开（含 NapCat 反向 WS）、NoneBot 适配器日志、订阅推送成功/失败、订阅轮询异常等。
+- QQ 内查询（仅管理员）：/bot logs（最近 50 条 INFO+）、/bot logs warning 20、/bot logs error。
+- 本地查询：Get-Content data\runtime_events.log -Tail 50。
+
 ## 6. 平台 Cookie（B站动态/私密收藏夹、小红书等需要登录态）
 
 你的 cookie 文件：C:\Users\LancyCelestia\Downloads\ec59136b-fe2a-4444-be7d-b7c6f5837a93.txt（Netscape 格式）。
