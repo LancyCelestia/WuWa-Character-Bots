@@ -107,6 +107,10 @@ from plugins.bot_unified_runtime.capabilities.epic import (
     build_epic_capability,
     is_epic_command,
 )
+from plugins.bot_unified_runtime.capabilities.weather import (
+    build_weather_capability,
+    is_weather_command,
+)
 
 _BANNER = """\
 ============================================================
@@ -421,6 +425,8 @@ def _route_for_message(
         return build_wiki_capability(config), "bot.wiki"
     if getattr(config, "bot_epic_enabled", True) and is_epic_command(text):
         return build_epic_capability(config), "bot.epic"
+    if getattr(config, "bot_weather_query_enabled", True) and is_weather_command(text):
+        return build_weather_capability(config), "bot.weather"
     if config.bot_content_parse_enabled and extract_http_urls(text):
         return (
             build_content_capability(

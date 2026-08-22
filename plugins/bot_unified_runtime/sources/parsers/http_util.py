@@ -31,13 +31,18 @@ def set_default_proxy(proxy_url: str) -> None:
     _DEFAULT_PROXY = str(proxy_url or "").strip()
 
 
-def _build_opener(proxy: str = "") -> urlrequest.OpenerDirector:
+def _build_opener(proxy: str = "", *, verify_ssl: bool = True) -> urlrequest.OpenerDirector:
     effective = (proxy or "").strip() or _DEFAULT_PROXY
+    handlers: list[Any] = []
     if effective:
-        return urlrequest.build_opener(
+        handlers.append(
             urlrequest.ProxyHandler({"http": effective, "https": effective})
         )
-    return urlrequest.build_opener()
+    if not verify_ssl:
+        import ssl
+
+        handlers.append(urlrequest.HTTPSHandler(context=ssl._create_unverified_context()))
+    return urlrequest.build_opener(*handlers)
 
 
 def _build_request(
@@ -71,10 +76,11 @@ def http_get(
     accept: str = "",
     cookie: str = "",
     proxy: str = "",
+    verify_ssl: bool = True,
 ) -> tuple[str, bytes]:
     """GET 并返回 (最终 URL, 响应体)；短链重定向后 final_url 是落点。"""
     try:
-        with _build_opener(proxy).open(
+        with _build_opener(proxy, verify_ssl=verify_ssl).open(
             _build_request(
                 url,
                 referer=referer,
@@ -127,6 +133,7 @@ def http_get_json(
     user_agent: str = DEFAULT_USER_AGENT,
     cookie: str = "",
     proxy: str = "",
+    verify_ssl: bool = True,
 ) -> Any:
     final_url, payload = http_get(
         url,
@@ -136,6 +143,7 @@ def http_get_json(
         accept="application/json, text/plain, */*",
         cookie=cookie,
         proxy=proxy,
+        verify_ssl=verify_ssl,
     )
     try:
         return json.loads(payload.decode("utf-8"))

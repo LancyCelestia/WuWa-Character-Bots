@@ -64,6 +64,7 @@ from .capabilities.today_history import (
 )
 from .capabilities.wiki import build_wiki_capability, is_wiki_command
 from .capabilities.epic import build_epic_capability, is_epic_command
+from .capabilities.weather import build_weather_capability, is_weather_command
 
 try:
     from nonebot.plugin import PluginMetadata
@@ -957,6 +958,12 @@ def _register_nonebot_handlers() -> None:
             event.get_plaintext()
         )
 
+    async def _is_weather_event(event: Event) -> bool:
+        return (
+            getattr(config, "bot_weather_query_enabled", True)
+            and is_weather_command(event.get_plaintext())
+        )
+
     content = on_message(rule=_is_content_parse_event, priority=46, block=True)
     music = on_message(rule=_is_music_event, priority=44, block=True)
     today_history = on_message(
@@ -964,6 +971,7 @@ def _register_nonebot_handlers() -> None:
     )
     wiki = on_message(rule=_is_wiki_event, priority=44, block=True)
     epic = on_message(rule=_is_epic_event, priority=44, block=True)
+    weather = on_message(rule=_is_weather_event, priority=44, block=True)
 
     def _is_alias_command_text(text: str) -> bool:
         return alias_resolver.resolve(text) is not None
@@ -1602,6 +1610,12 @@ def _register_nonebot_handlers() -> None:
     async def _handle_epic(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
             bot, event, build_epic_capability, "bot.epic", epic
+        )
+
+    @weather.handle()
+    async def _handle_weather(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, build_weather_capability, "bot.weather", weather
         )
 
 

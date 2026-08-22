@@ -167,6 +167,8 @@ class Config(BaseModel):
     bot_wiki_lang: str = "zh"
     # Epic 每周免费游戏（bot.epic）：`epic`，Epic 公开接口，免 key。
     bot_epic_enabled: bool = True
+    # 中文天气查询（bot.weather）：`天气 <城市>`，中国气象局 NMC 免 key。
+    bot_weather_query_enabled: bool = True
     bot_render_forward_min_chars: int = 1500
     bot_render_forward_max_nodes: int = 6
     bot_render_forward_node_chars: int = 900
