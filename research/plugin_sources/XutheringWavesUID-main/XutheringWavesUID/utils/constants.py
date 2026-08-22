@@ -1,2 +1,0 @@
-PGR_GAME_ID = 2
-WAVES_GAME_ID = 3

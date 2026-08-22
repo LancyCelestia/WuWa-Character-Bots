@@ -1,9 +1,0 @@
-*__pycache__/
-dist/
-.vscode/
-.coverage
-data/
-.env
-data.db
-node_modules/
-bot.py
