@@ -155,6 +155,10 @@ class Config(BaseModel):
     bot_download_timeout_seconds: int = 300
     # 代理（大陆拉油管等需要）：http://127.0.0.1:7890 形式，留空 = 直连。
     bot_download_proxy: str = ""
+    # HTML 信息卡渲染：解析结果渲染成 PNG 图片一起发送（playwright/null）。
+    bot_card_render_enabled: bool = True
+    bot_card_render_backend: str = "playwright"
+    bot_card_render_dir: str = "data/cards"
     bot_render_forward_min_chars: int = 1500
     bot_render_forward_max_nodes: int = 6
     bot_render_forward_node_chars: int = 900

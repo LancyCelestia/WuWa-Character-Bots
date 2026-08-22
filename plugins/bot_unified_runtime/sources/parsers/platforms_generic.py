@@ -54,9 +54,10 @@ def _og_scrape(
     note: str = "",
     referer: str = "",
     cookie_header: str = "",
+    proxy: str = "",
 ) -> PlatformParse:
     final_url, text = http_get_text(
-        url, timeout=10, referer=referer or url, cookie=cookie_header
+        url, timeout=10, referer=referer or url, cookie=cookie_header, proxy=proxy
     )
     title = ""
     match = _OG_TITLE_RE.search(text)
@@ -254,6 +255,7 @@ def parse_douyin(url: str, *, cookie_header: str = "") -> PlatformParse:
             item_kind="video",
             note="（浅层解析：标题+封面；无水印视频下载需另接解析服务）",
             cookie_header=cookie_header,
+            proxy=proxy,
         )
     except Exception:  # noqa: BLE001
         og_item = None
@@ -322,14 +324,15 @@ def _douyin_from_router_data(html: str, url: str) -> PlatformParse | None:
     return None
 
 
-def parse_youtube(url: str, *, cookie_header: str = "") -> PlatformParse:
+def parse_youtube(url: str, *, cookie_header: str = "", proxy: str = "") -> PlatformParse:
     if "/playlist" in url or "list=" in url and "watch" not in url:
-        return _youtube_playlist(url, cookie_header=cookie_header)
+        return _youtube_playlist(url, cookie_header=cookie_header, proxy=proxy)
     try:
         payload = http_get_json(
             "https://www.youtube.com/oembed"
             f"?url={urllib.parse.quote(url)}&format=json",
             timeout=8,
+            proxy=proxy,
         )
         return PlatformParse(
             platform="youtube",
@@ -348,10 +351,11 @@ def parse_youtube(url: str, *, cookie_header: str = "") -> PlatformParse:
             item_kind="video",
             note="（元信息卡；下载需要 yt-dlp + 代理，未接入）",
             cookie_header=cookie_header,
+            proxy=proxy,
         )
 
 
-def _youtube_playlist(url: str, *, cookie_header: str = "") -> PlatformParse:
+def _youtube_playlist(url: str, *, cookie_header: str = "", proxy: str = "") -> PlatformParse:
     """油管歌单/播放列表：页面 og 元信息（标题/数量/封面）。"""
     try:
         return _og_scrape(
@@ -359,6 +363,7 @@ def _youtube_playlist(url: str, *, cookie_header: str = "") -> PlatformParse:
             platform="youtube",
             item_kind="playlist",
             cookie_header=cookie_header,
+            proxy=proxy,
         )
     except ParseHttpError:
         return PlatformParse(
@@ -372,7 +377,7 @@ def _youtube_playlist(url: str, *, cookie_header: str = "") -> PlatformParse:
         )
 
 
-def parse_twitter_x(url: str, *, cookie_header: str = "") -> PlatformParse:
+def parse_twitter_x(url: str, *, cookie_header: str = "", proxy: str = "") -> PlatformParse:
     """推特：优先 fxtwitter 公开聚合接口（正文/媒体/转赞评），失败回退 og。"""
     match = re.search(r"(?:twitter\.com|x\.com)/([^/]+)/status/(\d+)", url)
     if match:
@@ -381,6 +386,7 @@ def parse_twitter_x(url: str, *, cookie_header: str = "") -> PlatformParse:
             payload = http_get_json(
                 f"https://api.fxtwitter.com/{screen_name}/status/{status_id}",
                 timeout=10,
+                proxy=proxy,
             )
             tweet = payload.get("tweet") or {}
             if tweet.get("text"):

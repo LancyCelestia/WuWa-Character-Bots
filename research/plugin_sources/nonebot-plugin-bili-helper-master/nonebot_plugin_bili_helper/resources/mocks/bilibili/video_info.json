@@ -1,0 +1,3202 @@
+{
+  "code": 0,
+  "message": "0",
+  "ttl": 1,
+  "data": {
+    "bvid": "BV1YaJDzAEGP",
+    "aid": 115256957471455,
+    "videos": 1,
+    "tid": 95,
+    "tid_v2": 2100,
+    "tname": "数码",
+    "tname_v2": "手机",
+    "copyright": 1,
+    "pic": "http://i2.hdslb.com/bfs/archive/73081a288fc155648f353624cca80e87f17a00e9.jpg",
+    "title": "【资讯】国内将上市！2025性能最强LCD手机？TCL 60 ultra nxtpaper",
+    "pubdate": 1758681857,
+    "ctime": 1758681857,
+    "desc": "",
+    "desc_v2": null,
+    "state": 0,
+    "duration": 63,
+    "mission_id": 4041491,
+    "rights": {
+      "bp": 0,
+      "elec": 0,
+      "download": 1,
+      "movie": 0,
+      "pay": 0,
+      "hd5": 0,
+      "no_reprint": 1,
+      "autoplay": 1,
+      "ugc_pay": 0,
+      "is_cooperation": 0,
+      "ugc_pay_preview": 0,
+      "no_background": 0,
+      "clean_mode": 0,
+      "is_stein_gate": 0,
+      "is_360": 0,
+      "no_share": 0,
+      "arc_pay": 0,
+      "free_watch": 0
+    },
+    "owner": {
+      "mid": 1594012108,
+      "name": "瓜哥eye分享",
+      "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+    },
+    "stat": {
+      "aid": 115256957471455,
+      "view": 16793,
+      "danmaku": 17,
+      "reply": 470,
+      "favorite": 115,
+      "coin": 36,
+      "share": 24,
+      "now_rank": 0,
+      "his_rank": 0,
+      "like": 360,
+      "dislike": 0,
+      "evaluation": "",
+      "vt": 0
+    },
+    "argue_info": {
+      "argue_msg": "",
+      "argue_type": 0,
+      "argue_link": ""
+    },
+    "dynamic": "预计十月底上架京东电商平台！",
+    "cid": 32590465841,
+    "dimension": {
+      "width": 1080,
+      "height": 1918,
+      "rotate": 0
+    },
+    "season_id": 2137954,
+    "premiere": null,
+    "teenage_mode": 1,
+    "is_chargeable_season": false,
+    "is_story": true,
+    "is_upower_exclusive": false,
+    "is_upower_play": false,
+    "is_upower_preview": false,
+    "enable_vt": 0,
+    "vt_display": "",
+    "is_upower_exclusive_with_qa": false,
+    "no_cache": false,
+    "pages": [
+      {
+        "cid": 32590465841,
+        "page": 1,
+        "from": "vupload",
+        "part": "【资讯】国内将上市！2025性能最强LCD手机？TCL 60 ultra nxtpaper",
+        "duration": 63,
+        "vid": "",
+        "weblink": "",
+        "dimension": {
+          "width": 1080,
+          "height": 1918,
+          "rotate": 0
+        },
+        "first_frame": "http://i1.hdslb.com/bfs/storyff/_00000499h35ta3a912d1zfpret12imb_firsti.jpg",
+        "ctime": 1758681857
+      }
+    ],
+    "subtitle": {
+      "allow_submit": false,
+      "list": []
+    },
+    "ugc_season": {
+      "id": 2137954,
+      "title": "发现快讯",
+      "cover": "https://archive.biliimg.com/bfs/archive/16eeba1508e41836fdf26066333e5e8e64d1504c.jpg",
+      "mid": 1594012108,
+      "intro": "不定期更新护眼数码的资讯以及有意思的发现",
+      "sign_state": 0,
+      "attribute": 140,
+      "sections": [
+        {
+          "season_id": 2137954,
+          "id": 2449584,
+          "title": "正片",
+          "type": 1,
+          "episodes": [
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 87368615,
+              "aid": 113249831946225,
+              "cid": 26140806242,
+              "title": "【发现】卷土重来！全彩！胆固醇液晶电子纸进展",
+              "attribute": 0,
+              "arc": {
+                "aid": 113249831946225,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i2.hdslb.com/bfs/archive/c8dbe06e8687c30a10782eedc9cccdd2f6bd2dc2.jpg",
+                "title": "【发现】卷土重来！全彩！胆固醇液晶电子纸进展",
+                "pubdate": 1728093600,
+                "ctime": 1728093600,
+                "desc": "",
+                "state": 0,
+                "duration": 797,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 113249831946225,
+                  "view": 22518,
+                  "danmaku": 118,
+                  "reply": 167,
+                  "fav": 153,
+                  "coin": 64,
+                  "share": 45,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 398,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 48374,
+                  "vv": 22518
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 26140806242,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】卷土重来！全彩！胆固醇液晶电子纸进展",
+                "duration": 797,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1sm1UYNE8S",
+              "pages": [
+                {
+                  "cid": 26140806242,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】卷土重来！全彩！胆固醇液晶电子纸进展",
+                  "duration": 797,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 87368670,
+              "aid": 113244077295125,
+              "cid": 26127501092,
+              "title": "【发现】新变局！海信墨水屏归来？？真的假的？",
+              "attribute": 0,
+              "arc": {
+                "aid": 113244077295125,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i0.hdslb.com/bfs/archive/c3bd43b1a16ab1027b090a9a6bf5f70638b4cbb0.jpg",
+                "title": "【发现】新变局！海信墨水屏归来？？真的假的？",
+                "pubdate": 1728007200,
+                "ctime": 1728007200,
+                "desc": "",
+                "state": 0,
+                "duration": 135,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 113244077295125,
+                  "view": 56011,
+                  "danmaku": 161,
+                  "reply": 438,
+                  "fav": 245,
+                  "coin": 111,
+                  "share": 99,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 862,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 60001,
+                  "vv": 56011
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 26127501092,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】新变局！海信墨水屏归来？？真的假的？",
+                "duration": 135,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1WkxXeLEp5",
+              "pages": [
+                {
+                  "cid": 26127501092,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】新变局！海信墨水屏归来？？真的假的？",
+                  "duration": 135,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 67045105,
+              "aid": 1805072532,
+              "cid": 1560316276,
+              "title": "新护眼反射式平板，墨水屏？还是RLCD？这款Daylight DC1究竟是？",
+              "attribute": 0,
+              "arc": {
+                "aid": 1805072532,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i1.hdslb.com/bfs/archive/2200a14ca6e5e34eee436c440950f66cc884448d.jpg",
+                "title": "新护眼反射式平板，墨水屏？还是RLCD？这款Daylight DC1究竟是？",
+                "pubdate": 1716725182,
+                "ctime": 1716725182,
+                "desc": "",
+                "state": 0,
+                "duration": 410,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 1805072532,
+                  "view": 32344,
+                  "danmaku": 171,
+                  "reply": 158,
+                  "fav": 179,
+                  "coin": 65,
+                  "share": 41,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 407,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 71810,
+                  "vv": 32344
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 1560316276,
+                "page": 1,
+                "from": "vupload",
+                "part": "LivePaper新护眼反射式平板，墨水屏？还是RLCD？这款Daylight DC1究竟是？",
+                "duration": 410,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1cb421B7V7",
+              "pages": [
+                {
+                  "cid": 1560316276,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "LivePaper新护眼反射式平板，墨水屏？还是RLCD？这款Daylight DC1究竟是？",
+                  "duration": 410,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 82582537,
+              "aid": 113069090931467,
+              "cid": 25711345946,
+              "title": "【发现】新墨水屏手机kompact|minimal phone",
+              "attribute": 0,
+              "arc": {
+                "aid": 113069090931467,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i1.hdslb.com/bfs/archive/e1aaa15386cd2fe970b0fc637697816ea4f196de.jpg",
+                "title": "【发现】新墨水屏手机kompact|minimal phone",
+                "pubdate": 1725336120,
+                "ctime": 1725336120,
+                "desc": "",
+                "state": 0,
+                "duration": 114,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 113069090931467,
+                  "view": 26456,
+                  "danmaku": 87,
+                  "reply": 110,
+                  "fav": 158,
+                  "coin": 44,
+                  "share": 9,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 302,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 24144,
+                  "vv": 26456
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 25711345946,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】新墨水屏手机kompact|minimal phone",
+                "duration": 114,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1XjHyexEP9",
+              "pages": [
+                {
+                  "cid": 25711345946,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】新墨水屏手机kompact|minimal phone",
+                  "duration": 114,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 54665541,
+              "aid": 1951317095,
+              "cid": 1457063851,
+              "title": "【发现】墨水屏新手机还有没有戏？？？",
+              "attribute": 0,
+              "arc": {
+                "aid": 1951317095,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i2.hdslb.com/bfs/archive/fabfd62ceccd1cc3e6bbaa9d9e62775ebad648b3.jpg",
+                "title": "【发现】墨水屏新手机还有没有戏？？？",
+                "pubdate": 1709524920,
+                "ctime": 1709524920,
+                "desc": "",
+                "state": 0,
+                "duration": 115,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 1951317095,
+                  "view": 47620,
+                  "danmaku": 122,
+                  "reply": 459,
+                  "fav": 213,
+                  "coin": 98,
+                  "share": 30,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 690,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 52203,
+                  "vv": 47620
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 1457063851,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】墨水屏新手机还有没有戏？？？",
+                "duration": 115,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1zC411p7c4",
+              "pages": [
+                {
+                  "cid": 1457063851,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】墨水屏新手机还有没有戏？？？",
+                  "duration": 115,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 50841388,
+              "aid": 454184987,
+              "cid": 1417274760,
+              "title": "【发现】在超市我被墨水屏包围了",
+              "attribute": 0,
+              "arc": {
+                "aid": 454184987,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i1.hdslb.com/bfs/archive/3a84a4a1bf317f098044be21d8ec47700c3d1143.jpg",
+                "title": "【发现】在超市我被墨水屏包围了",
+                "pubdate": 1706068920,
+                "ctime": 1706068920,
+                "desc": "",
+                "state": 0,
+                "duration": 43,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 454184987,
+                  "view": 5402,
+                  "danmaku": 40,
+                  "reply": 21,
+                  "fav": 17,
+                  "coin": 16,
+                  "share": 5,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 58,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 2963,
+                  "vv": 5402
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 1417274760,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】在超市我被墨水屏包围了！",
+                "duration": 43,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV185411y7S9",
+              "pages": [
+                {
+                  "cid": 1417274760,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】在超市我被墨水屏包围了！",
+                  "duration": 43,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 51398368,
+              "aid": 1700147103,
+              "cid": 1427303345,
+              "title": "【发现】元太又有新挑战？胆固醇液晶护眼电子纸新进展",
+              "attribute": 0,
+              "arc": {
+                "aid": 1700147103,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i2.hdslb.com/bfs/archive/b4c84b7fe2a3451b66f61a5a8a96a4823905b287.jpg",
+                "title": "【发现】元太又有新挑战？胆固醇液晶护眼电子纸新进展",
+                "pubdate": 1706848200,
+                "ctime": 1706848200,
+                "desc": "",
+                "state": 0,
+                "duration": 428,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 1700147103,
+                  "view": 7013,
+                  "danmaku": 57,
+                  "reply": 54,
+                  "fav": 62,
+                  "coin": 41,
+                  "share": 16,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 136,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 19239,
+                  "vv": 7013
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 1427303345,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】全彩护眼电子纸最新进展-胆固醇液晶",
+                "duration": 428,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1nK42117wY",
+              "pages": [
+                {
+                  "cid": 1427303345,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】全彩护眼电子纸最新进展-胆固醇液晶",
+                  "duration": 428,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 77450556,
+              "aid": 112897342637092,
+              "cid": 500001636966231,
+              "title": "【发现】IPhone se4将OOO了！IPhone将完成OLED化",
+              "attribute": 0,
+              "arc": {
+                "aid": 112897342637092,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i1.hdslb.com/bfs/archive/da6c0838b3e88f28226edcd4ee6249d8aba4ddfc.jpg",
+                "title": "【发现】IPhone se4将OOO了！IPhone将完成OLED化",
+                "pubdate": 1722676845,
+                "ctime": 1722676845,
+                "desc": "",
+                "state": 0,
+                "duration": 52,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 112897342637092,
+                  "view": 23236,
+                  "danmaku": 103,
+                  "reply": 189,
+                  "fav": 23,
+                  "coin": 14,
+                  "share": 9,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 163,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 12986,
+                  "vv": 23236
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 500001636966231,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】iPhone se4将OOO了！iPhone将全面完成OLED化",
+                "duration": 52,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1Dxije2EEU",
+              "pages": [
+                {
+                  "cid": 500001636966231,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】iPhone se4将OOO了！iPhone将全面完成OLED化",
+                  "duration": 52,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 120857395,
+              "aid": 114380884740706,
+              "cid": 29551952423,
+              "title": "【资讯】全球首款折叠彩屏电子书阅读器mooInk V",
+              "attribute": 0,
+              "arc": {
+                "aid": 114380884740706,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i2.hdslb.com/bfs/archive/08782b97d852a9196a3bbcc9be53665f06f45b2a.jpg",
+                "title": "【资讯】全球首款折叠彩屏电子书阅读器mooInk V",
+                "pubdate": 1745317825,
+                "ctime": 1745317825,
+                "desc": "",
+                "state": 0,
+                "duration": 59,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 114380884740706,
+                  "view": 21070,
+                  "danmaku": 114,
+                  "reply": 115,
+                  "fav": 136,
+                  "coin": 19,
+                  "share": 47,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 351,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 12464,
+                  "vv": 21070
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 29551952423,
+                "page": 1,
+                "from": "vupload",
+                "part": "【资讯】全球首款折叠彩屏电子书阅读器mooInk V",
+                "duration": 59,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1080,
+                  "height": 1920,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1co5QzTEgu",
+              "pages": [
+                {
+                  "cid": 29551952423,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【资讯】全球首款折叠彩屏电子书阅读器mooInk V",
+                  "duration": 59,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1080,
+                    "height": 1920,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 89056784,
+              "aid": 113314222834441,
+              "cid": 26307005713,
+              "title": "【发现】eVPD优缺点|RLCD|环境友善类纸显示|瀚彩访谈",
+              "attribute": 0,
+              "arc": {
+                "aid": 113314222834441,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i1.hdslb.com/bfs/archive/a2a3b5314871bf891a47955e02c371fc0fa6bfe4.jpg",
+                "title": "【发现】eVPD优缺点|RLCD|环境友善类纸显示|瀚彩访谈",
+                "pubdate": 1729037851,
+                "ctime": 1729037851,
+                "desc": "",
+                "state": 0,
+                "duration": 525,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 113314222834441,
+                  "view": 4011,
+                  "danmaku": 19,
+                  "reply": 36,
+                  "fav": 34,
+                  "coin": 25,
+                  "share": 4,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 105,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 10489,
+                  "vv": 4011
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 26307005713,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】eVPD优缺点|RLCD|环境友善类纸显示|瀚彩访谈",
+                "duration": 525,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1nhmAYKEMw",
+              "pages": [
+                {
+                  "cid": 26307005713,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】eVPD优缺点|RLCD|环境友善类纸显示|瀚彩访谈",
+                  "duration": 525,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 89060801,
+              "aid": 113314474493501,
+              "cid": 26309102861,
+              "title": "202410152349",
+              "attribute": 0,
+              "arc": {
+                "aid": 113314474493501,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i2.hdslb.com/bfs/archive/ff85e147920bb0a707b24b997b8cd24fde329016.jpg",
+                "title": "202410152349",
+                "pubdate": 1729126800,
+                "ctime": 1729126800,
+                "desc": "",
+                "state": 0,
+                "duration": 358,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 113314474493501,
+                  "view": 7233,
+                  "danmaku": 62,
+                  "reply": 51,
+                  "fav": 56,
+                  "coin": 26,
+                  "share": 7,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 153,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 12162,
+                  "vv": 7233
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 26309102861,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】带前光RLCD在路上？",
+                "duration": 358,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1ecmAYdEW1",
+              "pages": [
+                {
+                  "cid": 26309102861,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】带前光RLCD在路上？",
+                  "duration": 358,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 89491130,
+              "aid": 113331620809547,
+              "cid": 26356354680,
+              "title": "【发现】预测一下kaleido3 13.3彩墨可能的新品",
+              "attribute": 0,
+              "arc": {
+                "aid": 113331620809547,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i1.hdslb.com/bfs/archive/00f321e8465a57d27ef36926f72fb8a6370e1221.jpg",
+                "title": "【发现】预测一下kaleido3 13.3彩墨可能的新品",
+                "pubdate": 1729303389,
+                "ctime": 1729303389,
+                "desc": "",
+                "state": 0,
+                "duration": 94,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 113331620809547,
+                  "view": 9911,
+                  "danmaku": 54,
+                  "reply": 66,
+                  "fav": 24,
+                  "coin": 26,
+                  "share": 3,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 134,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 9191,
+                  "vv": 9911
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 26356354680,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】13.3彩墨新品大预测|kaleido3彩墨",
+                "duration": 94,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV15oCXYoEDp",
+              "pages": [
+                {
+                  "cid": 26356354680,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】13.3彩墨新品大预测|kaleido3彩墨",
+                  "duration": 94,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 89891479,
+              "aid": 113345562742389,
+              "cid": 26398099395,
+              "title": "【发现】文石小白马P6手机形态阅读器上市",
+              "attribute": 0,
+              "arc": {
+                "aid": 113345562742389,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i2.hdslb.com/bfs/archive/7532fbd89d7a45bd7727cc278535330a51f8a55c.jpg",
+                "title": "【发现】文石小白马P6手机形态阅读器上市",
+                "pubdate": 1729516167,
+                "ctime": 1729516167,
+                "desc": "",
+                "state": 0,
+                "duration": 90,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 113345562742389,
+                  "view": 12144,
+                  "danmaku": 46,
+                  "reply": 196,
+                  "fav": 19,
+                  "coin": 23,
+                  "share": 6,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 126,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 12295,
+                  "vv": 12144
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 26398099395,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】文石小白马P6手机形态阅读器上市",
+                "duration": 90,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1L5yLYREkF",
+              "pages": [
+                {
+                  "cid": 26398099395,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】文石小白马P6手机形态阅读器上市",
+                  "duration": 90,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 93430701,
+              "aid": 113482179610115,
+              "cid": 26761298609,
+              "title": "【发现】新电子纸动态！莱宝+海信+文石+Amazon|电浆墨水屏新动态",
+              "attribute": 0,
+              "arc": {
+                "aid": 113482179610115,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i0.hdslb.com/bfs/archive/38b7ce2f1823f2b56a05a4e3e2e2676383086ce8.jpg",
+                "title": "【发现】新电子纸动态！莱宝+海信+文石+Amazon|电浆墨水屏新动态",
+                "pubdate": 1731632400,
+                "ctime": 1731632400,
+                "desc": "",
+                "state": 0,
+                "duration": 164,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 113482179610115,
+                  "view": 41309,
+                  "danmaku": 113,
+                  "reply": 252,
+                  "fav": 189,
+                  "coin": 85,
+                  "share": 52,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 642,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 51861,
+                  "vv": 41309
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 26761298609,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】新电子纸动态！莱宝+海信+文石+Amazon|电浆墨水屏新动态",
+                "duration": 164,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1QhmSYQE85",
+              "pages": [
+                {
+                  "cid": 26761298609,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】新电子纸动态！莱宝+海信+文石+Amazon|电浆墨水屏新动态",
+                  "duration": 164,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 95147539,
+              "aid": 113550043383150,
+              "cid": 27045858324,
+              "title": "【发现】2024年黑马产品就是它|结合教育的新方向|小猿学练机",
+              "attribute": 0,
+              "arc": {
+                "aid": 113550043383150,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i1.hdslb.com/bfs/archive/700a0335c82c26c3a308a239d4698e5b0e97fe88.jpg",
+                "title": "【发现】2024年黑马产品就是它|结合教育的新方向|小猿学练机",
+                "pubdate": 1732667400,
+                "ctime": 1732667400,
+                "desc": "",
+                "state": 0,
+                "duration": 113,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 113550043383150,
+                  "view": 16283,
+                  "danmaku": 43,
+                  "reply": 45,
+                  "fav": 42,
+                  "coin": 27,
+                  "share": 14,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 187,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 16636,
+                  "vv": 16283
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 27045858324,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】2024年黑马产品就是它|结合教育的新方向|小猿学练机",
+                "duration": 113,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1uyzVYZEc6",
+              "pages": [
+                {
+                  "cid": 27045858324,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】2024年黑马产品就是它|结合教育的新方向|小猿学练机",
+                  "duration": 113,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 102418931,
+              "aid": 113787373880015,
+              "cid": 27749974318,
+              "title": "【发现】CES2025！TCL NXTPAPER 60XE手机来了",
+              "attribute": 0,
+              "arc": {
+                "aid": 113787373880015,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i2.hdslb.com/bfs/archive/d53bf445c3df69df1e5f48a57d7f8e2e47d3d70d.jpg",
+                "title": "【发现】CES2025！TCL NXTPAPER 60XE手机来了",
+                "pubdate": 1736257798,
+                "ctime": 1736257798,
+                "desc": "",
+                "state": 0,
+                "duration": 85,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 113787373880015,
+                  "view": 35629,
+                  "danmaku": 110,
+                  "reply": 217,
+                  "fav": 236,
+                  "coin": 49,
+                  "share": 33,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 439,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 31869,
+                  "vv": 35629
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 27749974318,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】CES2025！TCL NXTPAPER 60XE手机来了",
+                "duration": 85,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1CJrDY4Etm",
+              "pages": [
+                {
+                  "cid": 27749974318,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】CES2025！TCL NXTPAPER 60XE手机来了",
+                  "duration": 85,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 102838053,
+              "aid": 113799084378391,
+              "cid": 27784122280,
+              "title": "【发现】流畅播放彩色视频！天马电子纸μ-Fluidink微墨流华|ces2025",
+              "attribute": 0,
+              "arc": {
+                "aid": 113799084378391,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i1.hdslb.com/bfs/archive/72fee24166400822b83a637b94f633fe303a00b5.jpg",
+                "title": "【发现】流畅播放彩色视频！天马电子纸μ-Fluidink微墨流华|ces2025",
+                "pubdate": 1736436264,
+                "ctime": 1736436264,
+                "desc": "",
+                "state": 0,
+                "duration": 80,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 113799084378391,
+                  "view": 50625,
+                  "danmaku": 136,
+                  "reply": 279,
+                  "fav": 431,
+                  "coin": 170,
+                  "share": 123,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 1146,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 48128,
+                  "vv": 50625
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 27784122280,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】流畅播放彩色视频！天马电子纸μ-Fluidink微墨流华|ces2025",
+                "duration": 80,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1nUrkYvEfQ",
+              "pages": [
+                {
+                  "cid": 27784122280,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】流畅播放彩色视频！天马电子纸μ-Fluidink微墨流华|ces2025",
+                  "duration": 80,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 104415907,
+              "aid": 113847335652914,
+              "cid": 27933871784,
+              "title": "【发现】喔？全新海信手机突然有货了！",
+              "attribute": 0,
+              "arc": {
+                "aid": 113847335652914,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i1.hdslb.com/bfs/archive/f96b4c48f0996032718fdc746d8d2b74ae4a9230.jpg",
+                "title": "【发现】喔？全新海信手机突然有货了！",
+                "pubdate": 1737172547,
+                "ctime": 1737172547,
+                "desc": "",
+                "state": 0,
+                "duration": 41,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 113847335652914,
+                  "view": 19166,
+                  "danmaku": 8,
+                  "reply": 192,
+                  "fav": 32,
+                  "coin": 41,
+                  "share": 12,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 297,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 9659,
+                  "vv": 19166
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 27933871784,
+                "page": 1,
+                "from": "vupload",
+                "part": "【发现】喔？全新海信手机突然有货了！",
+                "duration": 41,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1080,
+                  "height": 2280,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1BKwweeESV",
+              "pages": [
+                {
+                  "cid": 27933871784,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【发现】喔？全新海信手机突然有货了！",
+                  "duration": 41,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1080,
+                    "height": 2280,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 104711004,
+              "aid": 113855455822775,
+              "cid": 27962379333,
+              "title": "携“军火库”的新春问候~蛇年快乐！",
+              "attribute": 0,
+              "arc": {
+                "aid": 113855455822775,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i2.hdslb.com/bfs/archive/1cb26de632d2d24447e5270cf77fb5bb2bac1071.jpg",
+                "title": "携“军火库”的新春问候~蛇年快乐！",
+                "pubdate": 1738080000,
+                "ctime": 1738080000,
+                "desc": "",
+                "state": 0,
+                "duration": 40,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 113855455822775,
+                  "view": 5120,
+                  "danmaku": 2,
+                  "reply": 45,
+                  "fav": 25,
+                  "coin": 68,
+                  "share": 1,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 203,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 2365,
+                  "vv": 5120
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 27962379333,
+                "page": 1,
+                "from": "vupload",
+                "part": "携“军火库”的新春问候~蛇年快乐！",
+                "duration": 40,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1K8wCeFEwj",
+              "pages": [
+                {
+                  "cid": 27962379333,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "携“军火库”的新春问候~蛇年快乐！",
+                  "duration": 40,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 105054046,
+              "aid": 113866142912357,
+              "cid": 27994229772,
+              "title": "2024总结&预测新品！最快最白最出彩最便宜最无奈还有最期待！电子纸七宗罪2024版",
+              "attribute": 0,
+              "arc": {
+                "aid": 113866142912357,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i1.hdslb.com/bfs/archive/e5eff8bb5641e2543a1afb0d2110a73a4f8e11c3.jpg",
+                "title": "2024总结&预测新品！最快最白最出彩最便宜最无奈还有最期待！电子纸七宗罪2024版",
+                "pubdate": 1737459890,
+                "ctime": 1737459890,
+                "desc": "",
+                "state": 0,
+                "duration": 257,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 113866142912357,
+                  "view": 9763,
+                  "danmaku": 62,
+                  "reply": 80,
+                  "fav": 79,
+                  "coin": 74,
+                  "share": 7,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 308,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 22132,
+                  "vv": 9763
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 27994229772,
+                "page": 1,
+                "from": "vupload",
+                "part": "2024总结&预测新品！最快最白最出彩最便宜最无奈还有最期待！电子纸七宗罪2024版",
+                "duration": 257,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1920,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1FnwYexELS",
+              "pages": [
+                {
+                  "cid": 27994229772,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "2024总结&预测新品！最快最白最出彩最便宜最无奈还有最期待！电子纸七宗罪2024版",
+                  "duration": 257,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1920,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 115613252,
+              "aid": 114207190158033,
+              "cid": 29016132187,
+              "title": "墨水屏新挑战！无残影全彩阅读器|【发现】胆固醇液晶阅读器Taktsu来了",
+              "attribute": 0,
+              "arc": {
+                "aid": 114207190158033,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i1.hdslb.com/bfs/archive/ae5d7afea46b912aa4721d959139db972aa77b17.jpg",
+                "title": "墨水屏新挑战！无残影全彩阅读器|【发现】胆固醇液晶阅读器Taktsu来了",
+                "pubdate": 1742691600,
+                "ctime": 1742691600,
+                "desc": "",
+                "state": 0,
+                "duration": 81,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 114207190158033,
+                  "view": 32102,
+                  "danmaku": 128,
+                  "reply": 210,
+                  "fav": 164,
+                  "coin": 71,
+                  "share": 35,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 446,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 30555,
+                  "vv": 32102
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 29016132187,
+                "page": 1,
+                "from": "vupload",
+                "part": "墨水屏新挑战！无残影全彩阅读器|【发现】胆固醇液晶阅读器Taktsu来了",
+                "duration": 81,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1964,
+                  "height": 1080,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1jJXxY6Eus",
+              "pages": [
+                {
+                  "cid": 29016132187,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "墨水屏新挑战！无残影全彩阅读器|【发现】胆固醇液晶阅读器Taktsu来了",
+                  "duration": 81,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1964,
+                    "height": 1080,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 121064540,
+              "aid": 114387008358083,
+              "cid": 29569779039,
+              "title": "【资讯】视频&阅读通吃！全彩！居然是LCD+胆固醇液晶",
+              "attribute": 0,
+              "arc": {
+                "aid": 114387008358083,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i2.hdslb.com/bfs/archive/760b5c995dabe770a37a77265af278c03c7e8c91.jpg",
+                "title": "【资讯】视频&阅读通吃！全彩！居然是LCD+胆固醇液晶",
+                "pubdate": 1745407460,
+                "ctime": 1745407460,
+                "desc": "",
+                "state": 0,
+                "duration": 104,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 114387008358083,
+                  "view": 11587,
+                  "danmaku": 36,
+                  "reply": 60,
+                  "fav": 108,
+                  "coin": 29,
+                  "share": 11,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 289,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 11787,
+                  "vv": 11587
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 29569779039,
+                "page": 1,
+                "from": "vupload",
+                "part": "【资讯】视频&阅读通吃！全彩！居然是LCD+胆固醇液晶",
+                "duration": 104,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1080,
+                  "height": 1920,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1USL8zsEvr",
+              "pages": [
+                {
+                  "cid": 29569779039,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【资讯】视频&阅读通吃！全彩！居然是LCD+胆固醇液晶",
+                  "duration": 104,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1080,
+                    "height": 1920,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 130486360,
+              "aid": 114704349398041,
+              "cid": 30566581997,
+              "title": "【资讯】Eink墨水屏要降价？大陆产电子纸又有新进展？好戏开始？|莱宝高科电子纸项目新进展",
+              "attribute": 0,
+              "arc": {
+                "aid": 114704349398041,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i2.hdslb.com/bfs/archive/e2f9446f8b4d933c73336cbfef14ba59b204dad1.jpg",
+                "title": "【资讯】Eink墨水屏要降价？大陆产电子纸又有新进展？好戏开始？|莱宝高科电子纸项目新进展",
+                "pubdate": 1750250067,
+                "ctime": 1750250067,
+                "desc": "",
+                "state": 0,
+                "duration": 59,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 114704349398041,
+                  "view": 40669,
+                  "danmaku": 117,
+                  "reply": 189,
+                  "fav": 247,
+                  "coin": 90,
+                  "share": 75,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 969,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 27219,
+                  "vv": 40669
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 30566581997,
+                "page": 1,
+                "from": "vupload",
+                "part": "【资讯】Eink墨水屏要降价？大陆产电子纸又有新进展!好戏开始",
+                "duration": 59,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1080,
+                  "height": 1920,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1aZN7zNE5E",
+              "pages": [
+                {
+                  "cid": 30566581997,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【资讯】Eink墨水屏要降价？大陆产电子纸又有新进展!好戏开始",
+                  "duration": 59,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1080,
+                    "height": 1920,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 130628349,
+              "aid": 114709516782758,
+              "cid": 30582310468,
+              "title": "【资讯】新彩墨手机不远了！Kaleido3彩墨手机形态阅读器，彩墨手机在路上|pubook mobile",
+              "attribute": 0,
+              "arc": {
+                "aid": 114709516782758,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i2.hdslb.com/bfs/archive/55616870198efc550fff9cef74d11fcff6f9354b.jpg",
+                "title": "【资讯】新彩墨手机不远了！Kaleido3彩墨手机形态阅读器，彩墨手机在路上|pubook mobile",
+                "pubdate": 1750328518,
+                "ctime": 1750328518,
+                "desc": "",
+                "state": 0,
+                "duration": 51,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 114709516782758,
+                  "view": 11154,
+                  "danmaku": 55,
+                  "reply": 79,
+                  "fav": 51,
+                  "coin": 25,
+                  "share": 14,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 219,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 6581,
+                  "vv": 11154
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 30582310468,
+                "page": 1,
+                "from": "vupload",
+                "part": "【资讯】新彩墨手机不远了！Kaleido3彩墨手机形态阅读器，彩墨手机在路上|pubook mobile",
+                "duration": 51,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1080,
+                  "height": 1920,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1s4N4z7Eg7",
+              "pages": [
+                {
+                  "cid": 30582310468,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【资讯】新彩墨手机不远了！Kaleido3彩墨手机形态阅读器，彩墨手机在路上|pubook mobile",
+                  "duration": 51,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1080,
+                    "height": 1920,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 135790897,
+              "aid": 114872205445183,
+              "cid": 31119639040,
+              "title": "圆偏振加持！2025华为Matepad柔光屏平板屏幕情信息",
+              "attribute": 0,
+              "arc": {
+                "aid": 114872205445183,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i0.hdslb.com/bfs/archive/2d252c1e887262c70fb5a5cfbf565ce57eafdee3.jpg",
+                "title": "圆偏振加持！2025华为Matepad柔光屏平板屏幕情信息",
+                "pubdate": 1752919200,
+                "ctime": 1752919200,
+                "desc": "",
+                "state": 0,
+                "duration": 28,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 114872205445183,
+                  "view": 4776,
+                  "danmaku": 39,
+                  "reply": 45,
+                  "fav": 44,
+                  "coin": 12,
+                  "share": 1,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 113,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 2018,
+                  "vv": 4776
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 31119639040,
+                "page": 1,
+                "from": "vupload",
+                "part": "圆偏振加持！2025华为Matepad柔光屏平板屏幕情信息",
+                "duration": 28,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1080,
+                  "height": 1920,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV19PgGzeE5F",
+              "pages": [
+                {
+                  "cid": 31119639040,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "圆偏振加持！2025华为Matepad柔光屏平板屏幕情信息",
+                  "duration": 28,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1080,
+                    "height": 1920,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 137521265,
+              "aid": 114923174629158,
+              "cid": 31307794070,
+              "title": "【资讯】TCL NXTPAPER4.0最新护眼手机在路上，会是今年的旗舰LCD手机吗？",
+              "attribute": 0,
+              "arc": {
+                "aid": 114923174629158,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i0.hdslb.com/bfs/archive/7d730bd07299ef452fba77b06655fad2860171e6.jpg",
+                "title": "【资讯】TCL NXTPAPER4.0最新护眼手机在路上，会是今年的旗舰LCD手机吗？",
+                "pubdate": 1753588594,
+                "ctime": 1753588594,
+                "desc": "",
+                "state": 0,
+                "duration": 84,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 114923174629158,
+                  "view": 56356,
+                  "danmaku": 47,
+                  "reply": 484,
+                  "fav": 534,
+                  "coin": 155,
+                  "share": 64,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 1407,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 52731,
+                  "vv": 56356
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 31307794070,
+                "page": 1,
+                "from": "vupload",
+                "part": "【资讯】TCL NXTPAPER4.0最新护眼手机在路上，会是今年的旗舰LCD手机吗？",
+                "duration": 84,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1080,
+                  "height": 1920,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV12j8ezeEnx",
+              "pages": [
+                {
+                  "cid": 31307794070,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【资讯】TCL NXTPAPER4.0最新护眼手机在路上，会是今年的旗舰LCD手机吗？",
+                  "duration": 84,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1080,
+                    "height": 1920,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 137712191,
+              "aid": 114928711174885,
+              "cid": 31326471294,
+              "title": "看看全新技术的全彩阅读器表现如何？Taktsu全彩阅读器|胆固醇液晶",
+              "attribute": 0,
+              "arc": {
+                "aid": 114928711174885,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i2.hdslb.com/bfs/archive/4720f1677c16f48e969c28e152355dad7ac173c4.jpg",
+                "title": "看看全新技术的全彩阅读器表现如何？Taktsu全彩阅读器|胆固醇液晶",
+                "pubdate": 1753693200,
+                "ctime": 1753693200,
+                "desc": "",
+                "state": 0,
+                "duration": 63,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 114928711174885,
+                  "view": 11995,
+                  "danmaku": 59,
+                  "reply": 67,
+                  "fav": 62,
+                  "coin": 35,
+                  "share": 9,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 222,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 10508,
+                  "vv": 11995
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 31326471294,
+                "page": 1,
+                "from": "vupload",
+                "part": "看看全新技术的全彩阅读器表现如何？Taktsu全彩阅读器|胆固醇液晶",
+                "duration": 63,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1080,
+                  "height": 1920,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1UJ8LzSEg5",
+              "pages": [
+                {
+                  "cid": 31326471294,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "看看全新技术的全彩阅读器表现如何？Taktsu全彩阅读器|胆固醇液晶",
+                  "duration": 63,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1080,
+                    "height": 1920,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 144298714,
+              "aid": 115116163006827,
+              "cid": 32045927457,
+              "title": "【资讯】它是2025性能最强LCD手机？抢先看TCL 60 ultra nxtpaper护眼手机",
+              "attribute": 0,
+              "arc": {
+                "aid": 115116163006827,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i1.hdslb.com/bfs/archive/6dd8828051d9b269f1600e9caf5cf4b5663c5283.jpg",
+                "title": "【资讯】它是2025性能最强LCD手机？抢先看TCL 60 ultra nxtpaper护眼手机",
+                "pubdate": 1756533497,
+                "ctime": 1756533497,
+                "desc": "",
+                "state": 0,
+                "duration": 67,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 115116163006827,
+                  "view": 31540,
+                  "danmaku": 25,
+                  "reply": 437,
+                  "fav": 210,
+                  "coin": 62,
+                  "share": 46,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 856,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 26162,
+                  "vv": 31540
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 32045927457,
+                "page": 1,
+                "from": "vupload",
+                "part": "【资讯】它是2025性能最强LCD手机？抢先看TCL 60 ultra nxtpaper护眼手机",
+                "duration": 67,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1080,
+                  "height": 1918,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1pihvzeEBh",
+              "pages": [
+                {
+                  "cid": 32045927457,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【资讯】它是2025性能最强LCD手机？抢先看TCL 60 ultra nxtpaper护眼手机",
+                  "duration": 67,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1080,
+                    "height": 1918,
+                    "rotate": 0
+                  }
+                }
+              ]
+            },
+            {
+              "season_id": 2137954,
+              "section_id": 2449584,
+              "id": 148639305,
+              "aid": 115256957471455,
+              "cid": 32590465841,
+              "title": "【资讯】国内将上市！2025性能最强LCD手机？TCL 60 ultra nxtpaper",
+              "attribute": 0,
+              "arc": {
+                "aid": 115256957471455,
+                "videos": 0,
+                "type_id": 0,
+                "type_name": "",
+                "copyright": 0,
+                "pic": "http://i2.hdslb.com/bfs/archive/73081a288fc155648f353624cca80e87f17a00e9.jpg",
+                "title": "【资讯】国内将上市！2025性能最强LCD手机？TCL 60 ultra nxtpaper",
+                "pubdate": 1758681857,
+                "ctime": 1758681857,
+                "desc": "",
+                "state": 0,
+                "duration": 63,
+                "rights": {
+                  "bp": 0,
+                  "elec": 0,
+                  "download": 0,
+                  "movie": 0,
+                  "pay": 0,
+                  "hd5": 0,
+                  "no_reprint": 0,
+                  "autoplay": 0,
+                  "ugc_pay": 0,
+                  "is_cooperation": 0,
+                  "ugc_pay_preview": 0,
+                  "arc_pay": 0,
+                  "free_watch": 0
+                },
+                "author": {
+                  "mid": 1594012108,
+                  "name": "瓜哥eye分享",
+                  "face": "https://i1.hdslb.com/bfs/face/4750994961ec2acb3a79da5756c83bad725b2743.jpg"
+                },
+                "stat": {
+                  "aid": 115256957471455,
+                  "view": 16793,
+                  "danmaku": 17,
+                  "reply": 470,
+                  "fav": 115,
+                  "coin": 36,
+                  "share": 24,
+                  "now_rank": 0,
+                  "his_rank": 0,
+                  "like": 360,
+                  "dislike": 0,
+                  "evaluation": "",
+                  "argue_msg": "",
+                  "vt": 14391,
+                  "vv": 16793
+                },
+                "dynamic": "",
+                "dimension": {
+                  "width": 0,
+                  "height": 0,
+                  "rotate": 0
+                },
+                "desc_v2": null,
+                "is_chargeable_season": false,
+                "is_blooper": false,
+                "enable_vt": 0,
+                "vt_display": "",
+                "type_id_v2": 0,
+                "type_name_v2": "",
+                "is_lesson_video": 0
+              },
+              "page": {
+                "cid": 32590465841,
+                "page": 1,
+                "from": "vupload",
+                "part": "【资讯】国内将上市！2025性能最强LCD手机？TCL 60 ultra nxtpaper",
+                "duration": 63,
+                "vid": "",
+                "weblink": "",
+                "dimension": {
+                  "width": 1080,
+                  "height": 1918,
+                  "rotate": 0
+                }
+              },
+              "bvid": "BV1YaJDzAEGP",
+              "pages": [
+                {
+                  "cid": 32590465841,
+                  "page": 1,
+                  "from": "vupload",
+                  "part": "【资讯】国内将上市！2025性能最强LCD手机？TCL 60 ultra nxtpaper",
+                  "duration": 63,
+                  "vid": "",
+                  "weblink": "",
+                  "dimension": {
+                    "width": 1080,
+                    "height": 1918,
+                    "rotate": 0
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "stat": {
+        "season_id": 2137954,
+        "view": 669829,
+        "danmaku": 2151,
+        "reply": 5211,
+        "fav": 3888,
+        "coin": 1601,
+        "share": 842,
+        "now_rank": 0,
+        "his_rank": 0,
+        "like": 11988,
+        "vt": 0,
+        "vv": 0
+      },
+      "ep_count": 29,
+      "season_type": 1,
+      "is_pay_season": false,
+      "enable_vt": 0
+    },
+    "is_season_display": true,
+    "user_garb": {
+      "url_image_ani_cut": ""
+    },
+    "honor_reply": {},
+    "like_icon": "",
+    "need_jump_bv": false,
+    "disable_show_up_info": false,
+    "is_story_play": 1,
+    "is_view_self": false
+  }
+}

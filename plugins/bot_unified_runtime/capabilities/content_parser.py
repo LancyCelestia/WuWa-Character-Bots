@@ -77,12 +77,15 @@ def build_content_capability(
     enabled_platforms: list[str] | None = None,
     parse_history_store: Any | None = None,
     downloader: Any | None = None,
+    render_backend: Any | None = None,
+    card_dir: str = "data/cards",
 ) -> Any:
     """构建 bot.content 能力。
 
     ``registry`` 为空时用 config 的平台名单构建。
     ``parse_history_store`` 存在时记录每次成功解析。
     ``downloader`` 存在且媒体分析开启时，给视频类结果追加画质/音频分析。
+    ``render_backend`` 可用时把信息卡渲染成 PNG 图片（首段发送）。
     """
     if registry is None:
         if config is None:
@@ -92,6 +95,7 @@ def build_content_capability(
             built = build_content_parser_registry(
                 platforms or enabled_platforms or None,
                 cookie_provider=build_cookie_provider(config),
+                proxy=str(getattr(config, "bot_download_proxy", "") or ""),
             )
     else:
         built = registry
@@ -100,6 +104,40 @@ def build_content_capability(
     analyze_media = bool(
         config is not None and getattr(config, "bot_media_analyze_enabled", True)
     )
+
+    def _render_card_image(item: Any) -> dict | None:
+        """把解析结果渲染成 PNG 信息卡；失败返回 None（文本兜底）。"""
+        if render_backend is None or not getattr(render_backend, "available", False):
+            return None
+        from plugins.bot_unified_runtime.output.templates import (
+            card_payload_from_parse,
+            render_media_card_html,
+        )
+
+        try:
+            payload = card_payload_from_parse(item)
+            payload["stats"] = {
+                label: value
+                for label, value in payload["stats"].items()
+                if not isinstance(value, (dict, list))
+            }
+            html_text = render_media_card_html(payload)
+            png = render_backend.render_card({"html": html_text})
+            if not png:
+                return None
+            from pathlib import Path
+            import hashlib
+
+            target_dir = Path(card_dir)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            digest = hashlib.sha1(
+                (item.canonical_url or item.title or item.item_id).encode("utf-8")
+            ).hexdigest()[:12]
+            path = target_dir / f"card_{digest}.png"
+            path.write_bytes(png)
+            return {"file": str(path)}
+        except Exception:  # noqa: BLE001 - 卡片渲染失败不影响主链路。
+            return None
 
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         source_input = build_source_input(
@@ -187,6 +225,12 @@ def build_content_capability(
                 )
             except Exception:  # noqa: BLE001 - 历史失败不影响主链路。
                 pass
+        card_image = _render_card_image(item)
+        images: list[dict] = []
+        if card_image is not None:
+            images.append(card_image)
+        elif item.cover_url:
+            images.append({"file": item.cover_url})
         result = CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.content",
@@ -194,7 +238,7 @@ def build_content_capability(
             title=item.title,
             body=body,
             url=item.canonical_url or candidate,
-            images=[{"file": item.cover_url}] if item.cover_url else [],
+            images=images,
             audio=_media_parts_from_item(item),
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PUBLIC,
@@ -204,6 +248,7 @@ def build_content_capability(
                 f"parse_depth:{item.parse_depth}",
                 f"item_kind:{item.item_kind}",
                 *(["media_analyzed"] if media_lines else []),
+                *(["card_rendered"] if card_image is not None else []),
             ],
         )
         return result

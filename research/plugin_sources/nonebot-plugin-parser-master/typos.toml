@@ -1,0 +1,4 @@
+[default.extend-words]
+detecter = "detecter"
+Detecter = "Detecter"
+mapp = "mapp"

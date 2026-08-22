@@ -22,6 +22,24 @@ class ParseHttpError(Exception):
     """解析平台的 HTTP 请求失败（含超时）。"""
 
 
+_DEFAULT_PROXY = ""
+
+
+def set_default_proxy(proxy_url: str) -> None:
+    """为后续请求设置全局 HTTP 代理（如 http://127.0.0.1:7890）。"""
+    global _DEFAULT_PROXY
+    _DEFAULT_PROXY = str(proxy_url or "").strip()
+
+
+def _build_opener(proxy: str = "") -> urlrequest.OpenerDirector:
+    effective = (proxy or "").strip() or _DEFAULT_PROXY
+    if effective:
+        return urlrequest.build_opener(
+            urlrequest.ProxyHandler({"http": effective, "https": effective})
+        )
+    return urlrequest.build_opener()
+
+
 def _build_request(
     url: str,
     *,
@@ -52,10 +70,11 @@ def http_get(
     user_agent: str = DEFAULT_USER_AGENT,
     accept: str = "",
     cookie: str = "",
+    proxy: str = "",
 ) -> tuple[str, bytes]:
     """GET 并返回 (最终 URL, 响应体)；短链重定向后 final_url 是落点。"""
     try:
-        with urlrequest.urlopen(
+        with _build_opener(proxy).open(
             _build_request(
                 url,
                 referer=referer,
@@ -82,6 +101,7 @@ def http_get_text(
     accept: str = "",
     encoding: str = "utf-8",
     cookie: str = "",
+    proxy: str = "",
 ) -> tuple[str, str]:
     final_url, payload = http_get(
         url,
@@ -90,6 +110,7 @@ def http_get_text(
         user_agent=user_agent,
         accept=accept,
         cookie=cookie,
+        proxy=proxy,
     )
     try:
         text = payload.decode(encoding, errors="replace")
@@ -105,6 +126,7 @@ def http_get_json(
     referer: str = "",
     user_agent: str = DEFAULT_USER_AGENT,
     cookie: str = "",
+    proxy: str = "",
 ) -> Any:
     final_url, payload = http_get(
         url,
@@ -113,6 +135,7 @@ def http_get_json(
         user_agent=user_agent,
         accept="application/json, text/plain, */*",
         cookie=cookie,
+        proxy=proxy,
     )
     try:
         return json.loads(payload.decode("utf-8"))
@@ -130,6 +153,7 @@ def http_post_json(
     referer: str = "",
     user_agent: str = DEFAULT_USER_AGENT,
     cookie: str = "",
+    proxy: str = "",
 ) -> Any:
     headers = {
         "User-Agent": user_agent,
@@ -144,7 +168,7 @@ def http_post_json(
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urlrequest.Request(url, data=body, headers=headers, method="POST")
     try:
-        with urlrequest.urlopen(request, timeout=timeout) as response:
+        with _build_opener(proxy).open(request, timeout=timeout) as response:
             raw = response.read()
             if response.headers.get("Content-Encoding", "").lower() == "gzip":
                 raw = gzip.decompress(raw)

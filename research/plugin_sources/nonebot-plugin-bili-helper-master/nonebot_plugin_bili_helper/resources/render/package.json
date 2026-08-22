@@ -1,0 +1,15 @@
+{
+  "name": "render",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "krimeshu@gmail.com",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "art-template": "^4.13.4"
+  }
+}

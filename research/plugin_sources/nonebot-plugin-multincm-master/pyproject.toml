@@ -1,0 +1,37 @@
+[project]
+name = "nonebot-plugin-multincm"
+dynamic = ["version"]
+description = "NCM Song Searcher"
+authors = [{ name = "LgCookie", email = "lgc2333@126.com" }]
+dependencies = [
+    "nonebot2>=2.4.4",
+    "nonebot-plugin-htmlrender>=0.6.8",
+    "nonebot-plugin-alconna>=0.60.3",
+    "nonebot-plugin-localstore>=0.7.4",
+    "pyncm>=1.8.1",
+    "typing-extensions>=4.15.0",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "cookit[jinja,loguru,nonebot-alconna,nonebot-localstore,pydantic]>=0.13.2",
+    "nonebot-plugin-waiter>=0.8.1",
+    "cachetools>=6.2.1",
+    "yarl>=1.22.0",
+    "silk-python>=0.2.7",
+    "qrcode>=8.2",
+]
+requires-python = ">=3.10,<4.0"
+readme = "README.md"
+license = { text = "MIT" }
+
+[project.urls]
+homepage = "https://github.com/lgc-NB2Dev/nonebot-plugin-multincm"
+
+[dependency-groups]
+dev = ["nonebot-adapter-onebot>=2.4.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "nonebot_plugin_multincm/__init__.py"

@@ -74,8 +74,70 @@ class HtmlKitRenderBackend:
         return None
 
 
+class PlaywrightRenderBackend:
+    """HTML → PNG 图片（直接依赖 playwright + chromium，不依赖 htmlkit）。
+
+    线程安全：playwright 的 sync API 必须与事件循环隔离开，调用方应
+    在 to_thread 里执行（能力层已 offload）。
+    """
+
+    name = "playwright"
+    available = False
+
+    def __init__(self) -> None:
+        import threading
+
+        self._lock = threading.Lock()
+        try:
+            from playwright.sync_api import sync_playwright  # type: ignore
+
+            self._sync_playwright = sync_playwright
+            self.available = True
+        except Exception:
+            self._sync_playwright = None
+            self.available = False
+
+    def render_card(self, payload: dict[str, Any]) -> bytes | None:
+        if not self.available or self._sync_playwright is None:
+            return None
+        html = payload.get("html")
+        if not isinstance(html, str) or not html.strip():
+            return None
+        viewport = payload.get("viewport") or {"width": 672, "height": 480}
+        width = int(viewport.get("width", 672))
+        height = int(viewport.get("height", 480))
+        wait_ms = int(payload.get("wait_ms", 1500))
+        try:
+            with self._lock:
+                with self._sync_playwright() as p:
+                    browser = p.chromium.launch()
+                    try:
+                        page = browser.new_page(
+                            viewport={"width": width, "height": height},
+                            device_scale_factor=2,
+                        )
+                        page.set_content(html, wait_until="networkidle")
+                        # 等封面图加载（失败则 onerror 隐藏）。
+                        page.wait_for_timeout(wait_ms)
+                        element = page.query_selector(".card")
+                        if element is not None:
+                            # 元素截图自带裁切范围，不需要 clip 参数。
+                            return bytes(
+                                element.screenshot(type="png", omit_background=False)
+                            )
+                        return bytes(page.screenshot(type="png", full_page=True))
+                    finally:
+                        browser.close()
+        except Exception:
+            return None
+
+
 def build_render_backend(name: str = "") -> RenderBackend:
     normalized = (name or "").strip().lower()
-    if normalized == "htmlkit":
-        return HtmlKitRenderBackend()
+    if normalized in {"playwright", "htmlkit", "auto"}:
+        backend = PlaywrightRenderBackend()
+        if backend.available:
+            return backend
+        if normalized == "htmlkit":
+            return HtmlKitRenderBackend()
     return NullRenderBackend()

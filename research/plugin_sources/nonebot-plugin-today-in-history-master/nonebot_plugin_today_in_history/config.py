@@ -1,0 +1,50 @@
+from pydantic import BaseModel
+
+from nonebot import get_plugin_config
+
+HOUR_ENV: int = 7
+MINUTE_ENV: int = 35
+PUSHDATA_ENV: dict = {}
+GROUP_ALL_ENV: bool = False
+
+
+class Config(BaseModel):
+    history_qq_groups_all: bool = False  # 为True时全开启，history_qq_groups失效
+    history_qq_groups: list[int] = []  # 格式 [123,456]
+    history_qq_friends: list[int] = []  # 格式 [123,456]
+    history_inform_time: str = None  # 默认早上7:35
+
+
+plugin_config = get_plugin_config(Config)
+
+if plugin_config.history_inform_time is None:
+    HOUR_ENV: int = 7
+    MINUTE_ENV: int = 35
+elif isinstance(plugin_config.history_inform_time, str):
+    HOUR_ENV, MINUTE_ENV = plugin_config.history_inform_time.split(" ")
+# 兼容 v0.0.8 及以下
+elif isinstance(plugin_config.history_inform_time, list):
+    HOUR_ENV = plugin_config.history_inform_time[0]["HOUR"]
+    MINUTE_ENV = plugin_config.history_inform_time[0]["MINUTE"]
+
+
+GROUP_ALL_ENV = plugin_config.history_qq_groups_all
+
+
+for group in plugin_config.history_qq_groups:
+    PUSHDATA_ENV.setdefault(
+        "g_{}".format(group),
+        {
+            "hour": HOUR_ENV,
+            "minute": MINUTE_ENV
+        }
+    )
+
+for friend in plugin_config.history_qq_friends:
+    PUSHDATA_ENV.setdefault(
+        "f_{}".format(friend),
+        {
+            "hour": HOUR_ENV,
+            "minute": MINUTE_ENV
+        }
+    )

@@ -1,0 +1,48 @@
+name: Code Coverage
+
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+      fail-fast: false
+    env:
+      OS: ${{ matrix.os }}
+      PYTHON_VERSION: ${{ matrix.python-version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup rye
+        uses: eifinger/setup-rye@d4c3ac7b15d8bf2e0b45e2d257c6b5cdbebc3643
+        with:
+          enable-cache: true
+          cache-prefix: ${{ env.PYTHON_VERSION }}
+      - name: Install prerequisites
+        run: |
+          rye pin ${{ env.PYTHON_VERSION }}
+          rye sync
+      - name: Run tests
+        run: rye run test
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          env_vars: OS,PYTHON_VERSION
+  check:
+    if: always()
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide whether the needed jobs succeeded or failed
+        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe
+        with:
+          jobs: ${{ toJSON(needs) }}

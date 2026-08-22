@@ -1,0 +1,86 @@
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/waves/fonts/JetBrainsMono-Medium.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/waves/fonts/JetBrainsMono-Bold.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Oswald';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/waves/fonts/Oswald-Medium.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Oswald';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/waves/fonts/Oswald-Bold.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Source Han Sans CN';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/waves/fonts/SourceHanSansCN-Regular.ttc') format('truetype');
+}
+
+@font-face {
+  font-family: 'Source Han Sans CN';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/waves/fonts/SourceHanSansCN-Bold.ttc') format('truetype');
+}
+
+@font-face {
+  font-family: 'Noto Sans CJK JP';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/waves/fonts/SourceHanSansCN-Regular.ttc') format('collection');
+}
+
+@font-face {
+  font-family: 'Noto Sans CJK JP';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/waves/fonts/SourceHanSansCN-Bold.ttc') format('collection');
+}
+
+@font-face {
+  font-family: 'Noto Sans CJK KR';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/waves/fonts/SourceHanSansCN-Regular.ttc') format('collection');
+}
+
+@font-face {
+  font-family: 'Noto Sans CJK KR';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/waves/fonts/SourceHanSansCN-Bold.ttc') format('collection');
+}
+
+@font-face {
+  font-family: 'Noto Color Emoji';
+  font-style: normal;
+  font-display: swap;
+  src: url('/waves/fonts/NotoColorEmoji.ttf') format('truetype');
+}

@@ -54,6 +54,7 @@ from .sources.parse_history import (
     build_parse_history_store,
 )
 from .sources.downloader import MediaDownloader
+from .output.render_backends import build_render_backend
 from .capabilities.content_parser import build_content_capability
 from .capabilities.music import build_music_capability, is_music_command
 from .capabilities.download import build_download_capability
@@ -747,6 +748,11 @@ def _register_nonebot_handlers() -> None:
 
     history_recorder = build_conversation_history_provider(config)
     parse_history_store = build_parse_history_store(config)
+    render_backend = (
+        build_render_backend(config.bot_card_render_backend)
+        if getattr(config, "bot_card_render_enabled", True)
+        else None
+    )
     downloader = MediaDownloader(
         cookies_file=str(getattr(config, "bot_cookies_file", "") or ""),
         proxy=str(getattr(config, "bot_download_proxy", "") or ""),
@@ -1289,6 +1295,8 @@ def _register_nonebot_handlers() -> None:
                     config,
                     parse_history_store=parse_history_store,
                     downloader=downloader,
+                    render_backend=render_backend,
+                    card_dir=str(getattr(config, "bot_card_render_dir", "data/cards") or ""),
                 )
             ),
             capability_id="bot.content",

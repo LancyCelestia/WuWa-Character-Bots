@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>鸣潮体力</title>
+<style>
+    @import url('{{ font_css_url }}');
+    
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        margin: 0;
+        padding: 0;
+        width: 1150px;
+        height: 850px;
+        background-color: #0f1115;
+        font-family: 'Source Han Sans CN', 'Noto Sans CJK JP', 'Noto Sans CJK KR', sans-serif;
+        overflow: hidden;
+        color: white;
+    }
+
+    .container {
+        position: relative;
+        width: 1150px;
+        height: 850px;
+        overflow: hidden;
+    }
+
+    /* --- Background --- */
+    .bg-layer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 0;
+    }
+
+    .bg-image {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .char-layer {
+        position: absolute;
+        top: -90px;
+        right: -30px; 
+        height: 100%; 
+        width: auto;
+        z-index: 1;
+        filter: drop-shadow(-10px 0 20px rgba(0,0,0,0.3));
+    }
+
+    /* --- Left Sidebar (Main Stats) --- */
+    .hud-sidebar {
+        position: absolute;
+        top: 160px; /* Moved slightly down */
+        left: 40px;
+        width: 460px;
+        display: flex;
+        flex-direction: column;
+        gap: 25px; 
+        z-index: 10;
+    }
+
+    .sidebar-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 5px;
+        padding-left: 15px;
+        gap: 16px;
+    }
+
+    .header-title {
+        font-size: 28px;
+        font-weight: bold;
+        color: #fff;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+        letter-spacing: 1px;
+        white-space: nowrap;
+    }
+
+    .time-badge {
+        background: rgba(0, 0, 0, 0.5);
+        color: white;
+        padding: 6px 14px;
+        border-radius: 16px;
+        font-size: 20px;
+        font-family: 'JetBrains Mono', 'Source Han Sans CN', 'Noto Sans CJK JP', 'Noto Sans CJK KR';
+        font-weight: bold;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        white-space: nowrap;
+    }
+
+    .time-badge.urgent {
+        background: rgba(186, 55, 42, 0.9);
+        box-shadow: 0 2px 8px rgba(186, 55, 42, 0.5);
+    }
+
+    /* Individual Stat Rows with subtle backing */
+    .stat-row {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        background: linear-gradient(90deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.1) 80%, transparent 100%);
+        padding: 12px 18px;
+        border-radius: 12px;
+        border-left: 2px solid rgba(255,255,255,0.2);
+    }
+
+    .stat-top {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+    }
+
+    .stat-icon {
+        width: 56px;
+        height: 56px;
+        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
+    }
+
+    .stat-text {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .stat-name {
+        font-size: 20px;
+        color: rgba(255, 255, 255, 0.9);
+        font-weight: bold;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+        white-space: nowrap;
+    }
+
+    .stat-val-group {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+    }
+
+    .stat-cur {
+        font-size: 46px;
+        font-family: 'Oswald', sans-serif;
+        font-weight: bold;
+        color: white;
+        line-height: 1;
+        text-shadow: 0 2px 5px rgba(0,0,0,0.8);
+    }
+
+    .stat-total {
+        font-size: 30px;
+        font-family: 'Oswald', sans-serif;
+        color: rgba(255, 255, 255, 0.8);
+        font-weight: 500;
+        text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    }
+
+    .progress-track {
+        width: 100%;
+        height: 10px;
+        background: rgba(0, 0, 0, 0.3); 
+        border-radius: 5px;
+        overflow: hidden;
+        margin-top: 5px;
+    }
+
+    .progress-fill {
+        height: 100%;
+        border-radius: 5px;
+        transition: width 0.5s ease-out;
+        box-shadow: 0 0 12px currentColor;
+    }
+
+    /* --- Footer (Secondary Stats & User) --- */
+    .hud-footer {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 160px; 
+        padding: 0 40px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        z-index: 10;
+        background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.4) 60%, transparent 100%);
+    }
+
+    /* User Info (Left side of footer) */
+    .user-section {
+        display: flex;
+        align-items: center;
+        gap: 25px;
+        margin-bottom: 10px; 
+    }
+
+    .avatar-circle {
+        width: 110px;
+        height: 110px;
+        border-radius: 50%;
+        background: rgba(0,0,0,0.3);
+        border: 3px solid rgba(212, 177, 99, 0.8); 
+        box-shadow: 0 4px 15px rgba(0,0,0,0.6);
+        overflow: hidden;
+        position: relative;
+    }
+
+    .avatar-img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .user-details {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .user-name {
+        font-size: 40px;
+        font-weight: bold;
+        color: white;
+        text-shadow: 0 2px 5px rgba(0,0,0,0.9);
+    }
+
+    .user-uid {
+        font-size: 24px;
+        color: #d4b163;
+        font-family: 'JetBrains Mono', monospace;
+        letter-spacing: 1px;
+        font-weight: bold;
+        text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+        white-space: nowrap;
+    }
+
+    /* Stats Grid (Right side of footer) */
+    .footer-stats {
+        display: flex;
+        gap: 35px;
+        margin-bottom: 10px;
+        max-width: 680px;
+    }
+
+    .mini-stat {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-width: {% if locale and locale != 'chs' %}80px{% else %}100px{% endif %};
+        max-width: 130px;
+        position: relative;
+    }
+
+    /* Separator line */
+    .mini-stat:not(:last-child)::after {
+        content: "";
+        position: absolute;
+        right: -17px;
+        top: 25%;
+        height: 50%;
+        width: 1px;
+        background: rgba(255,255,255,0.3);
+    }
+
+    .mini-val {
+        font-size: 42px;
+        font-family: 'Oswald', sans-serif;
+        font-weight: bold;
+        color: white;
+        line-height: 1.1;
+        text-shadow: 0 2px 5px rgba(0,0,0,0.8);
+    }
+
+    .mini-label {
+        font-size: 18px;
+        color: rgba(255, 255, 255, 0.8);
+        text-transform: uppercase;
+        margin-top: 4px;
+        font-weight: bold;
+        text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+        {% if locale and locale != 'chs' %}
+        white-space: normal;
+        text-align: center;
+        line-height: 1.3;
+        {% else %}
+        white-space: nowrap;
+        {% endif %}
+    }
+
+    .mini-sub {
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.6);
+        margin-top: 2px;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+    }
+
+    /* --- Status Indicators (Top Left) --- */
+    .top-status {
+        position: absolute;
+        top: 60px;
+        left: 40px; 
+        display: flex;
+        flex-direction: row; /* Horizontal layout */
+        gap: 15px;
+        z-index: 10;
+    }
+
+    .status-badge {
+        background: rgba(0, 0, 0, 0.5); 
+        backdrop-filter: blur(4px);
+        padding: 8px 20px;
+        border-radius: 24px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        border: 1px solid rgba(255,255,255,0.2);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        width: fit-content;
+    }
+
+    .status-badge img {
+        width: 24px;
+        height: 24px;
+    }
+
+    .status-badge span {
+        font-size: 22px;
+        font-weight: bold;
+        color: white;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+        white-space: nowrap;
+    }
+
+    .pile-hash {
+        position: absolute;
+        top: 6px;
+        right: 10px;
+        z-index: 11;
+        font-size: 19px;
+        color: rgba(255, 255, 255, 0.45);
+        -webkit-text-stroke: 0.5px rgba(255, 255, 255, 0.7);
+        text-shadow: 0 1px 1px rgba(0, 0, 0, 0.20);
+        letter-spacing: 0.5px;
+        font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+        pointer-events: none;
+    }
+
+</style>
+</head>
+<body>
+<div class="container">
+
+    {% if pile_hash %}
+    <div class="pile-hash">{{ pile_hash }}</div>
+    {% endif %}
+
+    <!-- Background Layer -->
+    <div class="bg-layer">
+        {% if has_bg %}
+            <img src="{{ pile_url }}" class="bg-image">
+        {% else %}
+            <img src="{{ bg_url }}" class="bg-image">
+        {% endif %}
+    </div>
+
+    <!-- Character Layer -->
+    {% if not has_bg %}
+    <img src="{{ pile_url }}" class="char-layer">
+    {% endif %}
+
+    <!-- Top Status -->
+    <div class="top-status">
+        {% if show_sign_in %}
+        <!-- Sign In -->
+        <div class="status-badge">
+            <img src="{% if sign_in.status %}{{ yes_icon_url }}{% else %}{{ no_icon_url }}{% endif %}">
+            <span>{{ sign_in.text }}</span>
+        </div>
+        {% endif %}
+        <!-- Liveness (Restored) -->
+        <div class="status-badge">
+            <img src="{% if active_reward.status %}{{ yes_icon_url }}{% else %}{{ no_icon_url }}{% endif %}">
+            <span>{{ active_reward.text }}</span>
+        </div>
+    </div>
+
+    <!-- Left Sidebar: Main Stats (Minimalist) -->
+    <div class="hud-sidebar">
+        <div class="sidebar-header">
+            <div class="header-title">{{ label_daily_status }}</div>
+            <div class="time-badge {% if stamina.urgent %}urgent{% endif %}">{{ label_recovery_time }}{{ stamina.recovery_text }}</div>
+        </div>
+
+        <!-- Stamina -->
+        <div class="stat-row">
+            <div class="stat-top">
+                <img src="{{ stamina_icon_url }}" class="stat-icon">
+                <div class="stat-text">
+                    <span class="stat-name">{{ label_stamina }}</span>
+                    <div class="stat-val-group">
+                        <span class="stat-cur">{{ stamina.cur }}</span>
+                        <span class="stat-total">/{{ stamina.total }}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="progress-track">
+                <div class="progress-fill" style="width: {{ stamina.percent }}%; background-color: {{ stamina.color }}; box-shadow: 0 0 12px {{ stamina.color }};"></div>
+            </div>
+        </div>
+
+        <!-- Store Energy -->
+        <div class="stat-row">
+            <div class="stat-top">
+                <img src="{{ store_icon_url }}" class="stat-icon">
+                <div class="stat-text">
+                    <span class="stat-name">{{ label_store }}</span>
+                    <div class="stat-val-group">
+                        <span class="stat-cur">{{ store_energy.cur }}</span>
+                        <span class="stat-total">/{{ store_energy.total }}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="progress-track">
+                <div class="progress-fill" style="width: {{ store_energy.percent }}%; background-color: {{ store_energy.color }}; box-shadow: 0 0 12px {{ store_energy.color }};"></div>
+            </div>
+        </div>
+
+        <!-- Liveness -->
+        <div class="stat-row">
+            <div class="stat-top">
+                <img src="{{ liveness_icon_url }}" class="stat-icon">
+                <div class="stat-text">
+                    <span class="stat-name">{{ label_liveness }}</span>
+                    <div class="stat-val-group">
+                        <span class="stat-cur">{{ liveness.cur }}</span>
+                        <span class="stat-total">/{{ liveness.total }}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="progress-track">
+                <div class="progress-fill" style="width: {{ liveness.percent }}%; background-color: {{ liveness.color }}; box-shadow: 0 0 12px {{ liveness.color }};"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer: Bottom Strip (Full-width) -->
+    <div class="hud-footer">
+        <div class="user-section">
+            <div class="avatar-circle">
+                <img src="{{ avatar_url }}" class="avatar-img">
+            </div>
+            <div class="user-details">
+                <div class="user-name">{{ user_name|truncate(8, True, '...') }}</div>
+                <div class="user-uid">UID: {{ uid }}</div>
+            </div>
+        </div>
+
+        <div class="footer-stats">
+            <!-- Weekly Boss -->
+            <div class="mini-stat">
+                <div class="mini-val" style="color: {% if weekly_boss.total and weekly_boss.left == weekly_boss.total %}#fff{% else %}{{ urgent_color }}{% endif %};">{{ weekly_boss.left }}<span style="font-size: 24px; color:rgba(255,255,255,0.7);">/{{ weekly_boss.total }}</span></div>
+                <div class="mini-label">{{ label_weekly_boss }}</div>
+            </div>
+
+            <!-- Battle Pass -->
+            <div class="mini-stat">
+                <div class="mini-val" style="color: #fff;">Lv.{{ battle_pass.level }}</div>
+                <div class="mini-label">{{ label_battle_pass }}</div>
+            </div>
+
+            {% if show_rogue %}
+            <!-- Rogue -->
+            <div class="mini-stat">
+                <div class="mini-val" style="color: {% if weekly_rogue.total and weekly_rogue.cur == weekly_rogue.total %}#fff{% else %}{{ urgent_color }}{% endif %};">{{ weekly_rogue.cur }}</div>
+                <div class="mini-label">{{ label_rogue }}</div>
+            </div>
+            {% endif %}
+
+            {% if show_tower %}
+            <!-- Tower -->
+            <div class="mini-stat">
+                <div class="mini-val" {% if tower.urgent %}style="color: {{ urgent_color }};"{% endif %}>{{ tower.cur }}<span style="font-size: 20px; color: {% if tower.urgent %}inherit{% else %}rgba(255,255,255,0.7){% endif %}">/{{ tower.total }}</span></div>
+                <div class="mini-label">{{ label_tower }}</div>
+                <div class="mini-sub">{{ tower.time_text }}</div>
+            </div>
+            {% endif %}
+
+            {% if show_slash_tower %}
+            <!-- Slash Tower -->
+            <div class="mini-stat">
+                <div class="mini-val" {% if slash_tower.urgent %}style="color: {{ urgent_color }};"{% endif %}>{{ slash_tower.cur }}<span style="font-size: 20px; color: {% if slash_tower.urgent %}inherit{% else %}rgba(255,255,255,0.7){% endif %}">/{{ slash_tower.total }}</span></div>
+                <div class="mini-label">{{ label_slash_tower }}</div>
+                <div class="mini-sub">{{ slash_tower.time_text }}</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+</div>
+</body>
+</html>

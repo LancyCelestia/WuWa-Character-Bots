@@ -250,6 +250,16 @@ def _bind_cookie(fn: Any, cookie_header: str) -> Any:
     return functools.partial(fn, cookie_header=cookie_header)
 
 
+def _bind_proxy(fn: Any, proxy: str) -> Any:
+    if not proxy:
+        return fn
+    return functools.partial(fn, proxy=proxy)
+
+
+# 需要走代理的海外平台（大陆直连被墙）。
+_PARSER_PROXY_PLATFORM = frozenset({"youtube", "twitter", "spotify"})
+
+
 def extract_http_urls(text: str) -> list[str]:
     """从消息文本提取 http(s) 链接（含中文括号内链接）。"""
     candidates: list[str] = []
@@ -269,11 +279,13 @@ def platform_rules() -> list[tuple[str, str, list[str], ParseFn, int]]:
 def build_content_parser_registry(
     enabled_platforms: list[str] | None = None,
     cookie_provider: PlatformCookieProvider | None = None,
+    proxy: str = "",
 ) -> dict[str, Any]:
     """构建链接解析注册表。
 
     ``enabled_platforms`` 为空 = 全部启用；否则只启用名单内平台。
     ``cookie_provider`` 提供平台 Cookie 头（无则匿名解析）。
+    ``proxy`` 给油管/推特/Spotify 等海外平台绑定 HTTP 代理。
     """
     allowed = {str(name).strip().lower() for name in (enabled_platforms or [])}
     cookies = cookie_provider or PlatformCookieProvider()
@@ -290,11 +302,15 @@ def build_content_parser_registry(
                 priority=priority,
             )
         )
+        bound = parse_fn
         cookie_platform = _PARSER_COOKIE_PLATFORM.get(parser_id, "")
-        parsers[parser_id] = _bind_cookie(
-            parse_fn,
-            cookies.cookie_header(cookie_platform) if cookie_platform else "",
-        )
+        if cookie_platform:
+            bound = _bind_cookie(
+                bound, cookies.cookie_header(cookie_platform)
+            )
+        if parser_id in _PARSER_PROXY_PLATFORM and proxy:
+            bound = _bind_proxy(bound, proxy)
+        parsers[parser_id] = bound
     return {"registry": registry, "parsers": parsers}
 
 

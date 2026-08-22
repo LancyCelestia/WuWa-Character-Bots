@@ -83,6 +83,7 @@ from plugins.bot_unified_runtime.sources.parse_history import (
     build_parse_history_store,
 )
 from plugins.bot_unified_runtime.sources.downloader import MediaDownloader
+from plugins.bot_unified_runtime.output.render_backends import build_render_backend
 from plugins.bot_unified_runtime.capabilities.content_parser import (
     build_content_capability,
 )
@@ -225,6 +226,7 @@ def _build_runtime(
     )
     stores = {
         "parse_history": build_parse_history_store(config),
+        "render_backend": build_render_backend(config.bot_card_render_backend),
         "downloader": MediaDownloader(
             cookies_file=config.bot_cookies_file,
             proxy=config.bot_download_proxy,
@@ -404,6 +406,8 @@ def _route_for_message(
                 config,
                 parse_history_store=stores.get("parse_history"),
                 downloader=stores.get("downloader"),
+                render_backend=stores.get("render_backend"),
+                card_dir=config.bot_card_render_dir,
             ),
             "bot.content",
         )

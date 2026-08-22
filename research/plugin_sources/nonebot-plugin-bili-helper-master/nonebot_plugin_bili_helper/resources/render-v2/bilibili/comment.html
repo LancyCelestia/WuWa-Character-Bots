@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+
+<meta charset="utf-8" />
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1"
+/>
+
+<body>
+  <placeholder id="res_path"></placeholder>
+  <placeholder id="scripts_list"></placeholder>
+  <placeholder id="template_list"></placeholder>
+  <placeholder id="page_data"></placeholder>
+
+  <script type="module">
+    const {
+      createScript,
+    } = window.ScriptsModule;
+    const {
+      Renderer,
+    } = window.RendererModule;
+    const {
+      numberReadable,
+      bilibiliReplies,
+    } = window.FormatterBilibili;
+
+    class PageComment {
+      url = new URL(window.location.href);
+
+      async fetchData() {
+        const data = document.getElementById('page_data').textContent;
+        const pageData = JSON.parse(data);
+        const { videoInfo, comments } = pageData;
+        comments.data.replies = comments.data.replies.slice(0, 3);
+        return { videoInfo, comments };
+      }
+
+      async render() {
+        const nowHour = new Date().getHours();
+        const defaultTheme = (nowHour >= 7 && nowHour <= 19) ? 'light' : 'dark';
+
+        try {
+          console.log('Rendering page...');
+          const { videoInfo, comments } = await this.fetchData();
+          const theme = this.url.searchParams.get('theme') || defaultTheme;
+          const shareUrl = `https://b23.tv/${videoInfo.data.bvid}`;
+          const renderer = new Renderer('bilibili/comment', {
+            renderScale: 100,
+          });
+          const data = {
+            // _res_path: `${window.location.origin}/resources/`,
+            // _res_path: '../../',
+            _res_path: document.getElementById('res_path').textContent,
+            Type: '视频',
+            CommentsData: bilibiliReplies(comments, { theme }),
+            CommentLength: numberReadable(videoInfo.data.stat.reply, '无法获取'),
+            share_url: shareUrl,
+            Clarity: '?',
+            VideoSize: '?',
+            ImageLength: 0,
+            shareurl: shareUrl,
+          };
+          console.log('Render data:', data);
+          const html = renderer.render(data, { theme });
+          const scriptQueue = [];
+          const replaceNode = (src, dest) => {
+            const scripts = Array.from(src.querySelectorAll('script'));
+            // console.log('scripts:', scripts);
+            scripts.forEach((script) => {
+              const { id, src, textContent: content, parentNode: parent } = script;
+              scriptQueue.push({ id, src, content, parent });
+              parent.removeChild(script);
+            });
+            dest.replaceWith(src);
+          };
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          replaceNode(doc.head, document.head);
+          replaceNode(doc.body, document.body);
+          // document.head.replaceWith(doc.head);
+          // document.body.replaceWith(doc.body);
+          window.setTimeout(async () => {
+            // 重新添加脚本以执行
+            for (const task of scriptQueue) {
+              console.log('Re-adding script:', task);
+              await createScript(task);
+            }
+            window.onload?.();
+          }, 0);
+          // cleanupAfterRender();
+        } catch (ex) {
+          console.error('Error rendering page:', ex);
+          this.createResult('rendered-result', 'json', {
+            code: 1,
+            message: ex.message,
+          });
+        }
+      }
+
+      createResult(id, type, data) {
+        const box = document.createElement('code');
+        box.id = id;
+        box.setAttribute('data-type', type);
+        box.style = 'white-space: pre-wrap;';
+        box.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+        document.body.appendChild(box);
+      }
+    }
+
+    async function main() {
+      const page = new PageComment();
+      await page.render();
+    }
+
+    main();
+  </script>
+</body>

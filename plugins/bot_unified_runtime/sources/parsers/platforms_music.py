@@ -398,7 +398,7 @@ def search_apple_music(query: str) -> PlatformParse | None:
     return None
 
 
-def parse_spotify(url: str) -> PlatformParse:
+def parse_spotify(url: str, *, cookie_header: str = "", proxy: str = "") -> PlatformParse:
     match = re.search(r"spotify\.com/(track|album)/([0-9A-Za-z]+)", url)
     if not match:
         raise ParseHttpError(f"spotify: no track id in {url}")
@@ -407,6 +407,7 @@ def parse_spotify(url: str) -> PlatformParse:
         final_url, payload = http_get_text(
             f"https://open.spotify.com/oembed?url={urllib.parse.quote(url)}",
             timeout=8,
+            proxy=proxy,
         )
         import json
 

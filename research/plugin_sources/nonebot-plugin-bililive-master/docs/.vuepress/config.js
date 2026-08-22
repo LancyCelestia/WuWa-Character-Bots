@@ -1,0 +1,86 @@
+import { docsearchPlugin } from '@vuepress/plugin-docsearch'
+import { pwaPlugin } from '@vuepress/plugin-pwa'
+import { shikiPlugin } from '@vuepress/plugin-shiki'
+import { defaultTheme } from 'vuepress-vite'
+
+
+export default {
+  lang: 'zh-CN',
+  title: 'BiliLive',
+  description: '哔哩哔哩消息推送 QQ 机器人',
+  head: [
+    ['link', { rel: 'icon', href: '/logo.png' }],
+    ['link', { rel: 'manifest', href: '/manifest.json' }],
+    ['meta', { name: 'theme-color', content: '#f5827e' }]
+  ],
+  theme: defaultTheme({
+    logo: '/logo.png',
+    repo: 'Akiyy-dev/nonebot-plugin-bililive',
+    docsDir: 'docs',
+    docsBranch: 'dev',
+    editLinkText: '在 GitHub 上编辑此页',
+    lastUpdatedText: '上次更新',
+    contributorsText: '贡献者',
+    tip: '提示',
+    warning: '注意',
+    danger: '警告',
+    notFound: '什么都没找到',
+    backToHome: '返回主页',
+    toggleDarkMode: '切换夜间模式',
+    navbar: [
+      // { text: '主页', link: '/' },
+      { text: '安装', link: '/install/' },
+      { text: '小小白白话文', link: '/level-0/' },
+      { text: '功能列表', link: '/usage/' },
+      { text: '常见问题', link: '/faq/' },
+      { text: '关于', link: '/about/' },
+    ],
+    sidebar: {
+      '/install/': [
+        {
+          text: '安装',
+          children: [
+            '/install/',
+            '/install/install-go-cqhttp',
+            '/install/install-bililive',
+            '/install/congrats'
+          ]
+        }
+      ],
+      '/usage/': [
+        {
+          text: '使用帮助',
+          children: [
+            '/usage/',
+            '/usage/settings',
+          ]
+        }
+      ],
+      '/level-0/': [
+        {
+          title: '小小白白话文',
+          children: [
+            '/level-0/',
+            '/level-0/ch01',
+            '/level-0/ch02',
+            '/level-0/ch03',
+            '/level-0/ch04'
+          ]
+        }
+      ],
+    },
+  }),
+  plugins: [
+    pwaPlugin({
+      skipWaiting: true,
+    }),
+    shikiPlugin({
+      theme: 'dark-plus',
+    }),
+    docsearchPlugin({
+      apiKey: 'b42f3ac623cf606bb9ea15b3e8c888d0',
+      indexName: 'nonebot-plugin-bililive',
+      placeholder: '搜索文档',
+    })
+  ]
+}
