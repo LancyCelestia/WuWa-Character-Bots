@@ -95,6 +95,18 @@ from plugins.bot_unified_runtime.capabilities.download import (
     build_download_capability,
     is_download_command,
 )
+from plugins.bot_unified_runtime.capabilities.today_history import (
+    build_today_history_capability,
+    is_today_history_command,
+)
+from plugins.bot_unified_runtime.capabilities.wiki import (
+    build_wiki_capability,
+    is_wiki_command,
+)
+from plugins.bot_unified_runtime.capabilities.epic import (
+    build_epic_capability,
+    is_epic_command,
+)
 
 _BANNER = """\
 ============================================================
@@ -400,6 +412,12 @@ def _route_for_message(
     """按消息内容选择能力：点歌 → bot.music；带链接 → bot.content；否则聊天。"""
     if config.bot_music_enabled and is_music_command(text):
         return build_music_capability(config), "bot.music"
+    if getattr(config, "bot_today_history_enabled", True) and is_today_history_command(text):
+        return build_today_history_capability(config), "bot.today_history"
+    if getattr(config, "bot_wiki_enabled", True) and is_wiki_command(text):
+        return build_wiki_capability(config), "bot.wiki"
+    if getattr(config, "bot_epic_enabled", True) and is_epic_command(text):
+        return build_epic_capability(config), "bot.epic"
     if config.bot_content_parse_enabled and extract_http_urls(text):
         return (
             build_content_capability(

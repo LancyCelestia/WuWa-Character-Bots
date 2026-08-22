@@ -58,6 +58,12 @@ from .output.render_backends import build_render_backend
 from .capabilities.content_parser import build_content_capability
 from .capabilities.music import build_music_capability, is_music_command
 from .capabilities.download import build_download_capability
+from .capabilities.today_history import (
+    build_today_history_capability,
+    is_today_history_command,
+)
+from .capabilities.wiki import build_wiki_capability, is_wiki_command
+from .capabilities.epic import build_epic_capability, is_epic_command
 
 try:
     from nonebot.plugin import PluginMetadata
@@ -350,6 +356,123 @@ def _register_credential_check_scheduler(
         "registered": True,
         "reason": "registered",
         "interval_hours": interval_hours,
+    }
+
+
+def _register_today_history_scheduler(
+    *,
+    scheduler: Any,
+    config: Config,
+    pipeline: Any,
+    send_queue: Any,
+    audit_logger: AuditRepository,
+    receipt_repository: ReceiptRepository | None,
+    bot_provider: Any,
+) -> dict[str, object]:
+    """「历史上的今天」每日推送：按订阅表注册 cron 任务，走统一流水线发送。"""
+    from .capabilities.today_history import (
+        _load_push_table,
+        build_today_history_capability,
+    )
+    from .sources.today_history import TodayHistoryProvider
+
+    push_file = str(
+        getattr(config, "bot_today_history_push_file", "data/today_history_push.json")
+        or "data/today_history_push.json"
+    )
+    provider = TodayHistoryProvider(
+        proxy=str(getattr(config, "bot_download_proxy", "") or "")
+    )
+
+    async def _push(target_key: str) -> None:
+        bot = bot_provider()
+        if bot is None:
+            return
+        if target_key.startswith("g_"):
+            target_id = target_key[2:]
+            session_id = f"group:{target_id}"
+            session_type = SessionType.GROUP
+            group_id = target_id
+            sender_id = "history-push"
+        else:
+            target_id = target_key[2:]
+            session_id = f"private:{target_id}"
+            session_type = SessionType.PRIVATE
+            group_id = ""
+            sender_id = target_id
+        message = IncomingMessage(
+            platform="onebot",
+            adapter="onebot.v11",
+            bot_id=str(getattr(bot, "self_id", "unknown")),
+            session_id=session_id,
+            session_type=session_type,
+            sender_id=sender_id,
+            group_id=group_id,
+            plain_text="历史上的今天",
+            raw_segments=[{"type": "text", "data": {"text": "历史上的今天"}}],
+            mentions_bot=False,
+        )
+        receipt = await pipeline.handle_async(
+            message,
+            offload_capability(capability),
+            capability_id="bot.today_history",
+        )
+        sent_request = _find_sent_request(send_queue, message.request_id)
+        if sent_request is not None:
+            await _deliver_onebot_send_request(
+                bot,
+                sent_request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+
+    def _resync_jobs() -> None:
+        try:
+            for job in list(scheduler.get_jobs()):
+                if str(job.id).startswith("history_push_"):
+                    scheduler.remove_job(job.id)
+            table = _load_push_table(push_file)
+            for key, entry in table.items():
+                scheduler.add_job(
+                    _push,
+                    "cron",
+                    args=[key],
+                    id=f"history_push_{key}",
+                    replace_existing=True,
+                    hour=int(entry.get("hour", 8)),
+                    minute=int(entry.get("minute", 0)),
+                    misfire_grace_time=120,
+                    max_instances=1,
+                    coalesce=True,
+                )
+        except Exception:  # noqa: BLE001 - 任务重载失败不影响主链路。
+            return
+
+    capability = build_today_history_capability(
+        config,
+        provider=provider,
+        push_file=push_file,
+        on_subscriptions_changed=_resync_jobs,
+    )
+
+    # 每日 00:30 强制刷新缓存。
+    scheduler.add_job(
+        lambda: provider.get_events(force=True),
+        "cron",
+        id="history_cache_refresh",
+        replace_existing=True,
+        hour=0,
+        minute=30,
+        misfire_grace_time=300,
+    )
+    _resync_jobs()
+    return {
+        "registered": True,
+        "push_file": push_file,
+        "capability": capability,
+        "resync": _resync_jobs,
+        "provider": provider,
     }
 
 
@@ -745,6 +868,18 @@ def _register_nonebot_handlers() -> None:
                 receipt_repository=receipt_repository,
                 send_queue=send_queue,
             )
+        if getattr(config, "bot_today_history_enabled", True):
+            today_ctx = _register_today_history_scheduler(
+                scheduler=scheduler,
+                config=config,
+                pipeline=pipeline,
+                send_queue=send_queue,
+                audit_logger=audit_logger,
+                receipt_repository=receipt_repository,
+                bot_provider=_first_online_bot,
+            )
+        else:
+            today_ctx = None
 
     history_recorder = build_conversation_history_provider(config)
     parse_history_store = build_parse_history_store(config)
@@ -806,8 +941,29 @@ def _register_nonebot_handlers() -> None:
     async def _is_music_event(event: Event) -> bool:
         return config.bot_music_enabled and is_music_command(event.get_plaintext())
 
+    async def _is_today_history_event(event: Event) -> bool:
+        return (
+            getattr(config, "bot_today_history_enabled", True)
+            and is_today_history_command(event.get_plaintext())
+        )
+
+    async def _is_wiki_event(event: Event) -> bool:
+        return getattr(config, "bot_wiki_enabled", True) and is_wiki_command(
+            event.get_plaintext()
+        )
+
+    async def _is_epic_event(event: Event) -> bool:
+        return getattr(config, "bot_epic_enabled", True) and is_epic_command(
+            event.get_plaintext()
+        )
+
     content = on_message(rule=_is_content_parse_event, priority=46, block=True)
     music = on_message(rule=_is_music_event, priority=44, block=True)
+    today_history = on_message(
+        rule=_is_today_history_event, priority=44, block=True
+    )
+    wiki = on_message(rule=_is_wiki_event, priority=44, block=True)
+    epic = on_message(rule=_is_epic_event, priority=44, block=True)
 
     def _is_alias_command_text(text: str) -> bool:
         return alias_resolver.resolve(text) is not None
@@ -1357,6 +1513,96 @@ def _register_nonebot_handlers() -> None:
                 return
             await music.finish(transport_receipt.public_message)
         await music.finish(receipt.public_message)
+
+    @today_history.handle()
+    async def _handle_today_history(bot: Bot, event: Event) -> None:
+        message = _incoming_from_nonebot_event(
+            event,
+            bot_id=str(getattr(bot, "self_id", "unknown")),
+        )
+        capability = (
+            today_ctx["capability"]
+            if today_ctx is not None
+            else build_today_history_capability(config)
+        )
+        receipt = await pipeline.handle_async(
+            message,
+            offload_capability(capability),
+            capability_id="bot.today_history",
+        )
+        sent_request = _find_sent_request(send_queue, message.request_id)
+        if sent_request is not None:
+            transport_receipt = await _deliver_onebot_send_request(
+                bot,
+                sent_request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+            _record_runtime_diagnostic(
+                config=config,
+                diagnostics_store=diagnostics_store,
+                message=message,
+                capability_id="bot.today_history",
+                receipt=transport_receipt,
+                send_queue=send_queue,
+                audit_logger=audit_logger,
+            )
+            if transport_receipt.state.value == "sent":
+                return
+            await today_history.finish(transport_receipt.public_message)
+        await today_history.finish(receipt.public_message)
+
+    async def _run_simple_capability(
+        bot: Bot,
+        event: Event,
+        capability_factory: Any,
+        capability_id: str,
+        matcher: Any,
+    ) -> None:
+        message = _incoming_from_nonebot_event(
+            event,
+            bot_id=str(getattr(bot, "self_id", "unknown")),
+        )
+        receipt = await pipeline.handle_async(
+            message,
+            offload_capability(capability_factory(config)),
+            capability_id=capability_id,
+        )
+        sent_request = _find_sent_request(send_queue, message.request_id)
+        if sent_request is not None:
+            transport_receipt = await _deliver_onebot_send_request(
+                bot,
+                sent_request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+            _record_runtime_diagnostic(
+                config=config,
+                diagnostics_store=diagnostics_store,
+                message=message,
+                capability_id=capability_id,
+                receipt=transport_receipt,
+                send_queue=send_queue,
+                audit_logger=audit_logger,
+            )
+            if transport_receipt.state.value == "sent":
+                return
+            await matcher.finish(transport_receipt.public_message)
+        await matcher.finish(receipt.public_message)
+
+    @wiki.handle()
+    async def _handle_wiki(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, build_wiki_capability, "bot.wiki", wiki
+        )
+
+    @epic.handle()
+    async def _handle_epic(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, build_epic_capability, "bot.epic", epic
+        )
 
 
 _register_nonebot_handlers()

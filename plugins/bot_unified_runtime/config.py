@@ -159,6 +159,14 @@ class Config(BaseModel):
     bot_card_render_enabled: bool = True
     bot_card_render_backend: str = "playwright"
     bot_card_render_dir: str = "data/cards"
+    # 「历史上的今天」：查询 + 每日定时推送（数据源：百度百科公开接口，每日缓存）。
+    bot_today_history_enabled: bool = True
+    bot_today_history_push_file: str = "data/today_history_push.json"
+    # 维基百科查询（bot.wiki）：`维基 <词条>`，MediaWiki 公开 API，免 key。
+    bot_wiki_enabled: bool = True
+    bot_wiki_lang: str = "zh"
+    # Epic 每周免费游戏（bot.epic）：`epic`，Epic 公开接口，免 key。
+    bot_epic_enabled: bool = True
     bot_render_forward_min_chars: int = 1500
     bot_render_forward_max_nodes: int = 6
     bot_render_forward_node_chars: int = 900
