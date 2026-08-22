@@ -54,3 +54,7 @@ Thumbs.db
 desktop.ini
 .idea/
 .vscode/
+
+# 离线参考：bilibili-api-python sdist（GPL-3.0，仅挖掘端点用，不入库）
+research/bilibili_api_sdists/
+

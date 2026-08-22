@@ -220,6 +220,23 @@ C:\Users\LancyCelestia\.astrbot\data\plugins\astrbot_plugin_parser
 
 海外平台经 BOT_DOWNLOAD_PROXY 走代理（默认 http://127.0.0.1:7890）：油管、推特、Spotify 以及 **Pixiv**（大陆直连不可达）。Lofter/allcpp 无需 cookie 与代理；Lofter 新版 permalink 帖子（/post/{令牌}）的解析接口未公开，当前诚实降级为 og 浅层卡片，待补前端接口。
 
+## 订阅推送与平台支持矩阵（B站/小红书优先）
+
+命令：/bot subscribe add <链接|platform:kind:id> [到本群|私聊我] [--digest]；
+list / remove <id> / pause <id> / resume <id> / check <id> / status。群订阅仅管理员可加，私聊订阅自助。
+轮询默认 300s（直播 60s），统一带 60s 抖动；每日摘要默认 20:00。
+
+| 平台 | 解析 | 订阅 | 机制 / 说明 |
+| --- | --- | --- | --- |
+| B站 | 全覆盖：视频(含分P)/动态/番剧·电影·电视剧·国创·综艺·纪录片/直播/个人主页/收藏夹/合集·全集列表/清单/稍后再看/短链 | UP主(新视频+动态+开播)、直播间、番剧更新、收藏夹/合集新增 | WBI 自签名直连；动态/直播详情需 cookies.txt 登录态 |
+| 小红书 | 笔记/搜索结果深解析 + 用户主页 | 博主新笔记/视频 | 签名直连不可用时默认走 Playwright 无头浏览器注入 cookie 兜底（1800s 低频轮询） |
+| 油管/推特/Lofter/Pixiv/allcpp/网易云/米画师/小黑盒/酷我/酷狗/QQ音乐/Apple Music/Spotify | 链接解析已覆盖（米画师/小黑盒/酷我/酷狗为浅层） | 后续按此框架接入 | 机制与稳定性另行记录；部分站点反爬严格，订阅可能易失效 |
+
+风险与限制（如实说明）：
+- Playwright 兜底默认开启（BOT_FETCH_PLAYWRIGHT_ENABLED=true）；使用 cookies.txt 登录态做自动化抓取存在账号风控风险，请用不重要的账号提供 cookie。
+- B站动态接口有 -412 风控，适配器内置指数退避；公开接口站点改版后解析/订阅可能失效，README/日志会如实标注。
+- bilibili-api-python（GPL-3.0）只用于离线参考挖掘端点，不并入项目代码；WBI 签名为自研实现。
+
 ## NoneBot 与 NapCat 边界
 
 项目通过 `pyproject.toml` 配置 NoneBot：

@@ -445,3 +445,40 @@
 - 环境说明：系统 `%TEMP%\pytest-of-LancyCelestia` 是历史遗留且 ACL 损坏，沙箱内 `tmp_path` 夹具失败；
   本轮用工作区 basetemp + 提权跑测试绕过，属环境问题、与代码无关。
 - 已知边界：Lofter 新版 permalink 帖子（`/post/{令牌}`）与米画师/画加仍为浅层降级；mihuashi/huajia 深解析留待下一轮。
+
+
+## 2026-08-22：B站/小红书解析与订阅系统落地（M0-M2）
+
+### M0（可测试程序 + 接入手册）
+- cookie 已复制到 data/platform_cookies.txt（Netscape，1996 行，git 忽略）。
+- persona-smoke / llm-smoke / chat-smoke 通过（deepseek-v4-flash，llm_status=ok，receipt_state=sent）。
+- 新增 docs/acceptance-manual.md（对话/人格测试、NapCat、GsCore、插件接入、验收清单）。
+
+### 基础订阅框架（子代理 Halley 交付）
+- contracts/subscription.py、subscription_store.py(SQLite)、subscription_watcher.py、
+  sources/subscriptions/__init__.py(pkgutil 自动发现 *_adapter.py)、capabilities/subscribe.py。
+- __init__.py 调度：sub_watch(300s)/sub_live(60s)/sub_digest(20:00)，全部 jitter=60。
+- 主控集成：/bot subscribe 命令分支接入 _handle_status；新增 BOT_FETCH_PLAYWRIGHT_ENABLED、
+  BOT_SUBSCRIBE_PLAYWRIGHT_POLL_SECONDS；content 能力注入 PlaywrightFetchBackend。
+
+### B站解析 100%（子代理 Euclid 交付 + 主控修复）
+- wbi.py（盐表/签名）；PGC 番剧深解析(season+stat，ss/ep)；合集 seasons_series_list/
+  seasons_archives_list + 旧版 x/series/archives；opus 改 opus/detail+WBI；直播/空间/分P增强。
+- 主控修复真实结构 bug：opus/detail 的 modules 是 MODULE_TYPE_* 列表、正文在
+  module_content.paragraphs 文本节点（node.word.words 嵌套键）——补回归测试后修复。
+- 真实烟测：live/space/favlist/opus/bangumi(ss+ep)/watchlater 全通过。
+
+### B站订阅（子代理 Dalton 交付）
+- bilibili_adapter.py：creator(WBI arc/search + 动态 best-effort)/live_room(LIVE_POLL 状态差分)/
+  bangumi(ep→ss→episodes)/favorite/collection；resolve_target 覆盖六类 URL。
+- 真实烟测：creator 拉 7 条新视频+cursor、bangumi 14 集、直播间 live_started 候选均通过。
+
+### 小红书（子代理 Arendt/Carver 交付 + 主控修复）
+- fetchers/playwright_backend.py + xhs_sign.py(诚实占位)；parse_xiaohongshu 增加 /user/profile 深解析；
+  xiaohongshu_adapter.py 用 capture_json(user_posted) + HTML 兜底。
+- 主控修复：sync_playwright() 是 context manager，必须 .start() 才有 .chromium（真实烟测暴露并修复）。
+- 真实烟测：无头 Chromium 注入 14 条 xhs cookie 抓取 explore 页成功（224KB HTML，含 __INITIAL_STATE__）。
+
+### 验收状态
+- 全量 pytest：640 passed（含各代理新增 ~62 项订阅/解析测试）。
+- 剩余：最终 verify、清理临时评估环境、提交。

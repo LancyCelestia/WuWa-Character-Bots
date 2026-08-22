@@ -149,3 +149,34 @@ C:\Users\LancyCelestia\.astrbot\data\plugins\astrbot_plugin_parser
 - ajax/user/{id}/profile/all：body{illusts/manga/novels 各为 {作品id:null}，计数=键数；bookmarkCount 等}
 - ajax/user/{id}?full=1：follower/following（已有实现使用）
 - 封面用 embed.pixiv.net/artwork.php?illust_id={id} 代理图（QQ 可加载）。
+
+
+## 2026-08-22：bilibili-api-python 可用性实测 + 端点挖掘（参考实现依据）
+
+### 结论：库本身可用（GPL-3.0，仅作离线参考，代码不入项目）
+- 版本：17.4.2（2026-06-19）与 16.2.0 的 sdist 已下载到 `research/bilibili_api_sdists/`（git 忽略）。
+- 在独立临时 venv（未污染项目依赖）安装 17.4.2 + curl_cffi/httpx 实测：
+  - 免登录可用：video.get_info()（stat 播放/点赞/投币/收藏/弹幕/评论 + pages）、
+    user.get_user_info()、user.get_videos(ps=5)（wbi 签名）、bangumi.get_overview()。
+  - 带 cookies.txt 登录态（SESSDATA/bili_jct/buvid3/DedeUserID 均存在）可用：
+    user.get_dynamics_new()（返回 12 条动态含 id_str）、live.get_room_info()（完整房间信息）、
+    bangumi.get_episodes()（集数列表）。live.get_general_info() 返回空，get_room_info 已够用。
+- 构造签名：Bangumi(media_id=-1, ssid=-1, epid=-1)；LiveRoom(room_display_id)；ChannelSeries(uid, type_, id_)。
+
+### 关键端点清单（摘自 17.4.2 data/api/*.json，只记录事实、不复制 GPL 代码）
+- 视频：GET x/web-interface/view（aid/bvid）；x/player/pagelist（分P）；x/web-interface/archive/stat；
+  x/player/wbi/playurl（WBI，fnval=4048 DASH）。
+- UP主视频：GET x/space/wbi/arc/search（mid/pn/ps，**WBI**）；置顶 x/space/top/arc（vmid）。
+- 动态：GET x/polymer/web-dynamic/v1/feed/space（host_mid/offset/timezone_offset=-480/features，**WBI**，
+  需 x-bili-device-req-json/x-bili-web-req-json 指纹头）；单条 x/polymer/web-dynamic/v1/detail（WBI）；
+  图文 opus x/polymer/web-dynamic/v1/opus/detail（timezone_offset/id）。
+- 直播：GET xlive/web-room/v1/index/getInfoByRoom（room_id）。
+- 番剧：GET pgc/view/web/season（season_id/ep_id）；pgc/web/season/section（剧集分段）；pgc/web/season/stat（追番/弹幕/播放/硬币）。
+- 合集：GET x/polymer/web-space/seasons_series_list（mid/page_num/page_size，合集列表）；
+  x/polymer/web-space/seasons_archives_list（mid/season_id/page_num/page_size，合集内视频）；
+  旧版系列 x/series/archives（mid/series_id/pn/ps）。
+- 收藏夹：GET x/v3/fav/folder/info（media_id）；x/v3/fav/resource/list（media_id/pn/ps/order/type/tid/platform/web_location）；
+  x/v3/fav/folder/created/list-all（up_mid）。
+- 用户计数：GET x/space/navnum（mid）。
+- 决策：沿用已批准计划——WBI 自研移植（MIT bili-helper 参考），运行时不自带 GPL 库；
+  端点/参数/返回字段以本文件与库源码 JSON 为准，实现时用项目 http_util + cookies.txt 实测验证。

@@ -79,6 +79,7 @@ def build_content_capability(
     downloader: Any | None = None,
     render_backend: Any | None = None,
     card_dir: str = "data/cards",
+    playwright_backend: Any | None = None,
 ) -> Any:
     """构建 bot.content 能力。
 
@@ -96,6 +97,7 @@ def build_content_capability(
                 platforms or enabled_platforms or None,
                 cookie_provider=build_cookie_provider(config),
                 proxy=str(getattr(config, "bot_download_proxy", "") or ""),
+                playwright_backend=playwright_backend,
             )
     else:
         built = registry

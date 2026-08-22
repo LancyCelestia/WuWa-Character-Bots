@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 
@@ -834,6 +834,8 @@ def _register_nonebot_handlers() -> None:
         except Exception:
             return None
 
+    subscription_ctx: dict[str, Any] = {}
+
     try:
         from nonebot_plugin_apscheduler import scheduler
     except Exception as exc:  # noqa: BLE001 - optional worker must fail closed.
@@ -882,6 +884,16 @@ def _register_nonebot_handlers() -> None:
         else:
             today_ctx = None
 
+        subscription_ctx = _register_subscription_scheduler(
+            scheduler=scheduler,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            bot_provider=_first_online_bot,
+        )
+
     history_recorder = build_conversation_history_provider(config)
     parse_history_store = build_parse_history_store(config)
     render_backend = (
@@ -889,6 +901,14 @@ def _register_nonebot_handlers() -> None:
         if getattr(config, "bot_card_render_enabled", True)
         else None
     )
+    playwright_fetch_backend = None
+    if getattr(config, "bot_fetch_playwright_enabled", True):
+        try:
+            from .sources.fetchers import PlaywrightFetchBackend
+
+            playwright_fetch_backend = PlaywrightFetchBackend()
+        except Exception:  # noqa: BLE001 - 抓取兜底失败不影响主链路。
+            playwright_fetch_backend = None
     downloader = MediaDownloader(
         cookies_file=str(getattr(config, "bot_cookies_file", "") or ""),
         proxy=str(getattr(config, "bot_download_proxy", "") or ""),
@@ -1296,6 +1316,19 @@ def _register_nonebot_handlers() -> None:
                     probe="--probe" in alert_command,
                 )
 
+        elif command_text == "subscribe" or command_text.startswith("subscribe "):
+            capability_id = "bot.subscribe"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                from .capabilities.subscribe import build_subscribe_capability
+
+                sub_ctx = subscription_ctx if isinstance(subscription_ctx, dict) else {}
+                return build_subscribe_capability(
+                    store=sub_ctx.get("store"),
+                    registry=sub_ctx.get("registry"),
+                    config=config,
+                )(message, _decision)
+
         elif command_text != "status":
             capability_id = "bot.help"
 
@@ -1461,6 +1494,7 @@ def _register_nonebot_handlers() -> None:
                     downloader=downloader,
                     render_backend=render_backend,
                     card_dir=str(getattr(config, "bot_card_render_dir", "data/cards") or ""),
+                    playwright_backend=playwright_fetch_backend,
                 )
             ),
             capability_id="bot.content",
@@ -1620,3 +1654,245 @@ def _register_nonebot_handlers() -> None:
 
 
 _register_nonebot_handlers()
+
+
+
+_SUBSCRIPTION_KIND_LABELS = {
+    "video": "视频",
+    "dynamic": "动态",
+    "song": "新歌",
+    "illust": "插画",
+    "post": "帖子",
+    "note": "笔记",
+    "live": "直播",
+}
+
+
+def _register_subscription_scheduler(
+    *,
+    scheduler: Any,
+    config: Config,
+    pipeline: Any,
+    send_queue: Any,
+    audit_logger: AuditRepository,
+    receipt_repository: ReceiptRepository | None,
+    bot_provider: Any,
+    registry: Any | None = None,
+) -> dict[str, object]:
+    """注册订阅系统三个 APScheduler job：常规轮询、直播轮询、日报汇总。
+
+    config.bot_subscribe_enabled=False 时直接返回空 dict，不触碰调度器。
+    """
+    if not getattr(config, "bot_subscribe_enabled", True):
+        return {}
+
+    from .runtime import offload_capability
+    from .sources.parsers import build_cookie_provider
+    from .sources.subscription_store import SubscriptionStore
+    from .sources.subscription_watcher import build_subscription_watcher
+    from .sources.subscriptions import build_subscription_registry
+
+    if registry is None:
+        registry = build_subscription_registry()
+    cookie_provider = build_cookie_provider(config)
+    proxy = str(getattr(config, "bot_download_proxy", "") or "")
+
+    def _ctx_factory(platform: str = "") -> dict[str, str]:
+        return {
+            "cookie_header": cookie_provider.cookie_header(platform or ""),
+            "proxy": proxy,
+        }
+
+    store = SubscriptionStore(
+        str(
+            getattr(config, "bot_subscribe_db_path", "data/subscriptions.sqlite3")
+            or "data/subscriptions.sqlite3"
+        )
+    )
+    watcher = build_subscription_watcher(
+        store,
+        registry.list_adapters(),
+        _ctx_factory,
+        max_items_per_tick=max(
+            1, int(getattr(config, "bot_subscribe_max_items_per_tick", 20))
+        ),
+    )
+
+    def _capability_for(text: str) -> Any:
+        def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.subscribe",
+                kind="text",
+                body=text,
+                risk_level=RiskLevel.LOW,
+                privacy_level=PrivacyLevel.PUBLIC,
+                audit_tags=["subscription_push"],
+            )
+
+        return capability
+
+    def _push_text(candidate: Any, spec: Any) -> str:
+        if candidate.reason == "digest_due":
+            return (
+                f"[订阅] {spec.platform} {spec.target_name} 订阅日报\n"
+                f"{candidate.item.summary}"
+            )
+        label = _SUBSCRIPTION_KIND_LABELS.get(candidate.item.kind, "内容")
+        return (
+            f"[订阅] {spec.platform} {spec.target_name} 发布新{label}"
+            f"《{candidate.item.title}》：{candidate.item.url}"
+        )
+
+    async def _deliver_candidates(candidates: list[Any]) -> None:
+        if not candidates:
+            return
+        bot = bot_provider()
+        if bot is None:
+            return
+        for candidate in candidates:
+            spec = store.get_spec(candidate.spec_id)
+            if spec is None or not spec.destinations:
+                continue
+            text = _push_text(candidate, spec)
+            for destination in spec.destinations:
+                if destination.scope == "group":
+                    session_id = f"group:{destination.target_id}"
+                    session_type = SessionType.GROUP
+                    sender_id = "sub-push"
+                    group_id = destination.target_id
+                else:
+                    session_id = f"private:{destination.target_id}"
+                    session_type = SessionType.PRIVATE
+                    sender_id = destination.target_id
+                    group_id = ""
+                message = IncomingMessage(
+                    platform="onebot",
+                    adapter="onebot.v11",
+                    bot_id=str(getattr(bot, "self_id", "unknown")),
+                    session_id=session_id,
+                    session_type=session_type,
+                    sender_id=sender_id,
+                    group_id=group_id,
+                    plain_text=text,
+                    raw_segments=[{"type": "text", "data": {"text": text}}],
+                    mentions_bot=False,
+                )
+                try:
+                    receipt = await pipeline.handle_async(
+                        message,
+                        offload_capability(_capability_for(text)),
+                        capability_id="bot.subscribe",
+                    )
+                    sent_request = _find_sent_request(send_queue, message.request_id)
+                    if sent_request is not None:
+                        await _deliver_onebot_send_request(
+                            bot,
+                            sent_request,
+                            audit_logger,
+                            receipt_repository,
+                            send_queue,
+                        )
+                except Exception as exc:  # noqa: BLE001 - 单条推送失败不拖垮轮询。
+                    audit_logger.append(
+                        AuditRecord(
+                            request_id=message.request_id,
+                            session_id=message.session_id,
+                            capability_id="bot.subscribe",
+                            stage="scheduler",
+                            event="subscription_push_failed",
+                            severity=RiskLevel.MEDIUM,
+                            public_message="订阅推送失败。",
+                            private_debug=repr(exc),
+                        )
+                    )
+
+    async def _watch_job() -> None:
+        try:
+            candidates = await watcher.tick()
+        except Exception as exc:  # noqa: BLE001
+            audit_logger.append(
+                AuditRecord(
+                    request_id="bot_subscribe_watch",
+                    session_id="runtime",
+                    capability_id="bot.subscribe",
+                    stage="scheduler",
+                    event="subscription_watch_failed",
+                    severity=RiskLevel.MEDIUM,
+                    public_message="订阅轮询执行失败。",
+                    private_debug=repr(exc),
+                )
+            )
+            return
+        await _deliver_candidates(candidates)
+
+    async def _live_job() -> None:
+        try:
+            candidates = await watcher.live_tick()
+        except Exception as exc:  # noqa: BLE001
+            audit_logger.append(
+                AuditRecord(
+                    request_id="bot_subscribe_live",
+                    session_id="runtime",
+                    capability_id="bot.subscribe",
+                    stage="scheduler",
+                    event="subscription_live_failed",
+                    severity=RiskLevel.MEDIUM,
+                    public_message="直播订阅轮询执行失败。",
+                    private_debug=repr(exc),
+                )
+            )
+            return
+        await _deliver_candidates(candidates)
+
+    async def _digest_job() -> None:
+        try:
+            candidates = await watcher.flush_digests()
+        except Exception as exc:  # noqa: BLE001
+            audit_logger.append(
+                AuditRecord(
+                    request_id="bot_subscribe_digest",
+                    session_id="runtime",
+                    capability_id="bot.subscribe",
+                    stage="scheduler",
+                    event="subscription_digest_failed",
+                    severity=RiskLevel.MEDIUM,
+                    public_message="订阅日报汇总执行失败。",
+                    private_debug=repr(exc),
+                )
+            )
+            return
+        await _deliver_candidates(candidates)
+
+    scheduler.add_job(
+        _watch_job,
+        "interval",
+        seconds=max(1, int(getattr(config, "bot_subscribe_poll_interval_seconds", 300))),
+        id="sub_watch",
+        jitter=60,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=120,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        _live_job,
+        "interval",
+        seconds=max(1, int(getattr(config, "bot_subscribe_live_poll_seconds", 60))),
+        id="sub_live",
+        jitter=60,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=120,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        _digest_job,
+        "cron",
+        hour=int(getattr(config, "bot_subscribe_digest_hour", 20)),
+        minute=int(getattr(config, "bot_subscribe_digest_minute", 0)),
+        id="sub_digest",
+        replace_existing=True,
+    )
+
+    return {"store": store, "watcher": watcher, "registry": registry}

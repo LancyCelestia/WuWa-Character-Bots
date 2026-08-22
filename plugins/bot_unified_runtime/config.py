@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from typing import Any
@@ -212,6 +212,16 @@ class Config(BaseModel):
     bot_quiet_hours_timezone: str = "Asia/Hong_Kong"
     bot_quiet_hours_session_types: list[str] = ["group"]
     bot_quiet_hours_bypass_roles: list[str] = ["admin"]
+    # 订阅系统基础框架（bot.subscribe）：定时拉取平台新内容并私聊/群聊推送。
+    bot_subscribe_enabled: bool = True
+    bot_subscribe_db_path: str = "data/subscriptions.sqlite3"
+    bot_subscribe_poll_interval_seconds: int = 300
+    bot_subscribe_live_poll_seconds: int = 60
+    bot_subscribe_digest_hour: int = 20
+    bot_subscribe_digest_minute: int = 0
+    bot_subscribe_max_items_per_tick: int = 20
+    bot_subscribe_playwright_poll_seconds: int = 1800
+    bot_fetch_playwright_enabled: bool = True
 
     @field_validator(
         "bot_persona_files",

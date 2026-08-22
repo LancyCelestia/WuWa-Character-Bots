@@ -95,12 +95,21 @@ def _og_scrape(
     )
 
 
-def parse_xiaohongshu(url: str, *, cookie_header: str = "") -> PlatformParse:
-    """小红书：搜索页 → 关键词卡片；笔记页 → __INITIAL_STATE__ 深解析；
-    失败回退 og 浅解析。"""
+def parse_xiaohongshu(
+    url: str,
+    *,
+    cookie_header: str = "",
+    playwright_backend=None,
+) -> PlatformParse:
+    """小红书：用户主页 → Playwright 深解析；搜索页 → 关键词卡片；
+    笔记页 → __INITIAL_STATE__ 深解析；失败回退 og 浅解析。"""
     final_url = url
     if "xhslink.com" in url:
         final_url = resolve_short_link(url)
+    if "/user/profile/" in final_url:
+        if playwright_backend is None:
+            return _xhs_user_profile_shallow(final_url, cookie_header=cookie_header)
+        return _xhs_user_profile_card(final_url, playwright_backend, cookie_header)
     if "/search_result/" in final_url:
         return _xhs_search_result_card(final_url, cookie_header=cookie_header)
     if cookie_header:
@@ -219,6 +228,241 @@ def _xhs_from_initial_state(html: str, url: str) -> PlatformParse | None:
         stats=stats,
         parse_depth="deep",
     )
+
+
+_XHS_USER_PROFILE_RE = re.compile(r"xiaohongshu\.com/user/profile/([0-9a-zA-Z]+)")
+
+
+def _xhs_cookie_pairs(cookie_header: str) -> list[dict]:
+    """把 Cookie 头拆成 Playwright add_cookies 需要的 name/value 列表。"""
+    cookies: list[dict] = []
+    for chunk in (cookie_header or "").split(";"):
+        pair = chunk.strip()
+        if "=" not in pair:
+            continue
+        name, value = pair.split("=", 1)
+        name = name.strip()
+        if not name:
+            continue
+        cookies.append(
+            {
+                "name": name,
+                "value": value,
+                "domain": ".xiaohongshu.com",
+                "path": "/",
+            }
+        )
+    return cookies
+
+
+def _xhs_user_note_digest(note: dict) -> dict:
+    """把 user_posted / INITIAL_STATE 两种命名字段的笔记规整成摘要字段。"""
+    user = note.get("user") or note.get("userInfo") or {}
+    if not isinstance(user, dict):
+        user = {}
+    interact = note.get("interact_info") or note.get("interactInfo") or {}
+    if not isinstance(interact, dict):
+        interact = {}
+    liked = interact.get("liked_count")
+    if liked is None:
+        liked = interact.get("likedCount")
+    collected = interact.get("collected_count")
+    if collected is None:
+        collected = interact.get("collectedCount")
+    title = str(note.get("display_title") or note.get("title") or "").strip()
+    cover = ""
+    cover_obj = note.get("cover") or {}
+    if isinstance(cover_obj, dict):
+        cover = str(
+            cover_obj.get("url_default")
+            or cover_obj.get("url")
+            or cover_obj.get("url_pre")
+            or ""
+        )
+        if not cover:
+            for info in cover_obj.get("info_list") or []:
+                if isinstance(info, dict) and info.get("url"):
+                    cover = str(info["url"])
+                    break
+    if not cover:
+        images = note.get("imageList") or note.get("images") or []
+        for image in images:
+            if isinstance(image, dict) and (
+                image.get("urlDefault") or image.get("url")
+            ):
+                cover = str(image.get("urlDefault") or image.get("url"))
+                break
+    nickname = str(
+        user.get("nickname")
+        or user.get("nick_name")
+        or user.get("nickName")
+        or ""
+    ).strip()
+    return {
+        "title": title,
+        "liked_count": liked if liked not in (None, "") else 0,
+        "collected_count": collected if collected not in (None, "") else 0,
+        "cover_url": cover,
+        "nickname": nickname,
+    }
+
+
+def _xhs_user_notes_from_capture(payloads: list[dict]) -> list[dict]:
+    """从 capture_json 命中的响应里收集 user_posted 的 notes。"""
+    notes: list[dict] = []
+    for payload in payloads or []:
+        if not isinstance(payload, dict):
+            continue
+        data = payload.get("data")
+        raw_notes = (
+            data.get("notes") if isinstance(data, dict) else payload.get("notes")
+        )
+        if not isinstance(raw_notes, list):
+            continue
+        for note in raw_notes:
+            if not isinstance(note, dict):
+                continue
+            digest = _xhs_user_note_digest(note)
+            if digest["title"]:
+                notes.append(digest)
+    return notes
+
+
+def _xhs_user_nickname_from_capture(payloads: list[dict]) -> str:
+    """从接口响应的首条笔记 user 字段取昵称（缺失时交给调用方降级）。"""
+    for payload in payloads or []:
+        if not isinstance(payload, dict):
+            continue
+        data = payload.get("data")
+        raw_notes = (
+            data.get("notes") if isinstance(data, dict) else payload.get("notes")
+        )
+        if not isinstance(raw_notes, list):
+            continue
+        for note in raw_notes:
+            if not isinstance(note, dict):
+                continue
+            nickname = _xhs_user_note_digest(note).get("nickname")
+            if nickname:
+                return str(nickname)
+    return ""
+
+
+def _xhs_user_profile_result(
+    user_id: str,
+    url: str,
+    nickname: str,
+    notes: list[dict],
+) -> PlatformParse:
+    """把用户主页数据组装成深度用户卡片。"""
+    summary_lines = []
+    for note in notes[:6]:
+        title = note.get("title") or "未命名笔记"
+        liked = note.get("liked_count") or 0
+        collected = note.get("collected_count") or 0
+        summary_lines.append(f"《{title}》 {liked}赞·{collected}藏")
+    cover_url = ""
+    for note in notes:
+        if note.get("cover_url"):
+            cover_url = str(note["cover_url"])
+            break
+    return PlatformParse(
+        platform="xiaohongshu",
+        item_id=user_id,
+        item_kind="user",
+        title=nickname or f"小红书用户 {user_id}",
+        author_name=nickname,
+        summary="\n".join(summary_lines),
+        cover_url=cover_url,
+        canonical_url=url,
+        stats={"笔记数": len(notes)},
+        parse_depth="deep",
+    )
+
+
+def _xhs_user_profile_from_initial_state(
+    html: str, url: str, user_id: str
+) -> PlatformParse | None:
+    """从用户主页 SSR 的 __INITIAL_STATE__ 提取昵称与笔记标题。"""
+    payload = _xhs_initial_state_payload(html)
+    if payload is None:
+        return None
+    user_state = payload.get("user") or {}
+    if not isinstance(user_state, dict):
+        user_state = {}
+    page_data = user_state.get("userPageData") or {}
+    if not isinstance(page_data, dict):
+        page_data = {}
+    basic = page_data.get("basicInfo") or {}
+    if not isinstance(basic, dict):
+        basic = {}
+    nickname = str(
+        basic.get("nickname")
+        or basic.get("nickName")
+        or user_state.get("nickname")
+        or ""
+    ).strip()
+    raw_notes = user_state.get("notes") or page_data.get("notes") or []
+    if not isinstance(raw_notes, list):
+        raw_notes = []
+    notes: list[dict] = []
+    for note in raw_notes:
+        if not isinstance(note, dict):
+            continue
+        digest = _xhs_user_note_digest(note)
+        if digest["title"]:
+            notes.append(digest)
+    if not nickname:
+        for note in notes:
+            if note.get("nickname"):
+                nickname = str(note["nickname"])
+                break
+    if not nickname and not notes:
+        return None
+    return _xhs_user_profile_result(user_id, url, nickname, notes)
+
+
+def _xhs_user_profile_shallow(url: str, cookie_header: str = "") -> PlatformParse:
+    """用户主页 og 浅层降级卡。"""
+    return _og_scrape(
+        url,
+        platform="xiaohongshu",
+        item_kind="user",
+        note="（浅层解析；小红书用户主页需要登录态）",
+        cookie_header=cookie_header,
+    )
+
+
+def _xhs_user_profile_card(
+    url: str, backend: object, cookie_header: str = ""
+) -> PlatformParse:
+    """用户主页：先抓 user_posted 接口，再解析 __INITIAL_STATE__，最后 og。"""
+    match = _XHS_USER_PROFILE_RE.search(url)
+    if match is None:
+        raise ParseHttpError("xiaohongshu: 用户主页 URL 缺少 user_id")
+    user_id = match.group(1)
+    cookies = _xhs_cookie_pairs(cookie_header)
+    payloads: list[dict] = []
+    try:
+        payloads = backend.capture_json(  # type: ignore[attr-defined]
+            url,
+            cookies=cookies,
+            json_filter="/api/sns/web/v1/user_posted",
+        )
+    except Exception:  # noqa: BLE001 - 接口失败再尝试页面状态解析。
+        payloads = []
+    notes = _xhs_user_notes_from_capture(payloads)
+    nickname = _xhs_user_nickname_from_capture(payloads)
+    if notes:
+        return _xhs_user_profile_result(user_id, url, nickname, notes)
+    try:
+        _, html = backend.fetch_html(url, cookies=cookies)  # type: ignore[attr-defined]
+        item = _xhs_user_profile_from_initial_state(html, url, user_id)
+        if item is not None:
+            return item
+    except Exception:  # noqa: BLE001 - 页面状态解析失败回退 og。
+        pass
+    return _xhs_user_profile_shallow(url, cookie_header)
 
 
 def parse_douyin(url: str, *, cookie_header: str = "") -> PlatformParse:

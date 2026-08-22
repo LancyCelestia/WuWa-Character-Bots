@@ -71,6 +71,9 @@ _PLATFORM_RULES: list[tuple[str, str, list[str], ParseFn, int]] = [
             r"space\.bilibili\.com/\d+",
             r"bilibili\.com/opus/\d+",
             r"bilibili\.com/bangumi/play/(ss|ep)\d+",
+            r"space\.bilibili\.com/\d+/channel/seriesdetail",
+            r"space\.bilibili\.com/\d+/lists",
+            r"bilibili\.com/list/ml\d+",
         ],
         parse_bilibili,
         10,
@@ -85,7 +88,7 @@ _PLATFORM_RULES: list[tuple[str, str, list[str], ParseFn, int]] = [
     (
         "xiaohongshu",
         "小红书",
-        [r"xhslink\.com/[0-9A-Za-z]+", r"xiaohongshu\.com/explore/[0-9a-f]+", r"xiaohongshu\.com/search_result/[0-9a-f]+"],
+        [r"xhslink\.com/[0-9A-Za-z]+", r"xiaohongshu\.com/explore/[0-9a-f]+", r"xiaohongshu\.com/search_result/[0-9a-f]+", r"xiaohongshu\.com/user/profile/[0-9a-zA-Z]+"],
         parse_xiaohongshu,
         21,
     ),
@@ -280,6 +283,7 @@ def build_content_parser_registry(
     enabled_platforms: list[str] | None = None,
     cookie_provider: PlatformCookieProvider | None = None,
     proxy: str = "",
+    playwright_backend: Any | None = None,
 ) -> dict[str, Any]:
     """构建链接解析注册表。
 
@@ -310,6 +314,8 @@ def build_content_parser_registry(
             )
         if parser_id in _PARSER_PROXY_PLATFORM and proxy:
             bound = _bind_proxy(bound, proxy)
+        if parser_id == "xiaohongshu" and playwright_backend is not None:
+            bound = functools.partial(bound, playwright_backend=playwright_backend)
         parsers[parser_id] = bound
     return {"registry": registry, "parsers": parsers}
 
