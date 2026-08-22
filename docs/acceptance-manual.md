@@ -58,7 +58,7 @@ eceipt_state=sent 即为对话链路正常。
 3. .env.prod 保持：DRIVER=~fastapi+~httpx、ONEBOT_WS_URLS=["ws://127.0.0.1:3001"]、LOCALSTORE_USE_CWD=true。
 4. 启动机器人：
 
-       .venv\Scripts\nb run --env-file .env.prod
+       .venv\Scripts\nb run
 
    或 .venv\Scripts\python.exe bot.py（先设好 DRIVER / ONEBOT_WS_URLS 环境变量）。
 5. 验收：QQ 小号给机器人发 /bot status、/岸宝帮助、岸宝 你好，收到守岸人人格回复即接入成功。

@@ -40,7 +40,7 @@ LOCALSTORE_USE_CWD=true
 # A. 用 nb-cli（首次先 pip install nb-cli）
 cd C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot
 .venv\Scripts\python -m pip install nb-cli
-.venv\Scripts\nb run --env-file .env.prod
+.venv\Scripts\nb run
 
 # B. 直接跑（bot.py 已注册 OneBot V11 适配器）
 $env:DRIVER = "~fastapi+~httpx"
@@ -52,7 +52,7 @@ $env:ONEBOT_WS_URLS = '["ws://127.0.0.1:3001"]'
 然后在 QQ 里给机器人小号发消息（或拉进群）测试：`/bot status`、`岸宝 你好`。
 
 > 注意：`.env`（机器人业务配置，含密钥）与 `.env.prod`（NoneBot 部署配置）
-> 是两份文件；nb run 会读 `.env.prod`，业务配置由插件内部从项目根 `.env`
+> 是两份文件；bot.py 现在会同时加载 .env + .env.prod（nb-cli 1.7 已移除 --env-file 选项）
 > 读取（smoke/控制台同款逻辑）。
 
 ## 4. 驱动与适配器选型（结论）
