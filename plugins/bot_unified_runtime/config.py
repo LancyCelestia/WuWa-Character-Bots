@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from typing import Any
@@ -29,6 +29,10 @@ class Config(BaseModel):
     bot_runtime_group_command_prefix: str = "/bot"
     bot_runtime_admin_prefix: str = "/bot"
     bot_runtime_instance: str = "default"
+    # 多实例共享：bot_share_groups 用 "A and B"、"A and B and C" 这类名字。
+    bot_share_enabled: bool = False
+    bot_share_groups: list[str] = []
+    bot_share_read_only: bool = False
     bot_runtime_persona_nickname: str = ""
     bot_runtime_persona_nicknames: list[str] = []
     bot_runtime_alias_enabled: bool = True
@@ -60,6 +64,14 @@ class Config(BaseModel):
     bot_knowledge_files: list[str] = []
     bot_knowledge_max_chunks: int = 4
     bot_knowledge_chunk_chars: int = 900
+    # 向量知识库：启用后按查询语义检索，嵌入失败自动回退顺序取块。
+    bot_embedding_enabled: bool = False
+    bot_embedding_model: str = ""
+    bot_embedding_base_url: str = ""
+    bot_embedding_api_key: str = ""
+    bot_embedding_timeout_seconds: float = 15.0
+    bot_knowledge_top_k: int = 4
+    bot_knowledge_db_path: str = "data/knowledge_embeddings.sqlite3"
     bot_tone_mode: str = "private_chat"
     bot_tone_voice: str = "soft"
     bot_tone_warmth: float = 0.7
@@ -258,6 +270,7 @@ class Config(BaseModel):
         "bot_enterprise_user_ids",
         "bot_trusted_user_ids",
         "bot_blocked_user_ids",
+        "bot_share_groups",
         mode="before",
     )
     @classmethod

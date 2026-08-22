@@ -51,6 +51,30 @@ DEFAULT_VERB_MAP: dict[str, str] = {
     "pause": "bot.control",
     "继续": "bot.control",
     "resume": "bot.control",
+    "天气": "bot.weather",
+    "查询天气": "bot.weather",
+    "查询": "bot.status",
+    "查询订阅": "bot.subscribe",
+    "查询日志": "bot.logs",
+
+    "查天气": "bot.weather",
+    "weather": "bot.weather",
+    "点歌": "bot.music",
+    "music": "bot.music",
+    "wiki": "bot.wiki",
+    "维基": "bot.wiki",
+    "维基百科": "bot.wiki",
+    "wikipedia": "bot.wiki",
+    "epic": "bot.epic",
+    "epicfree": "bot.epic",
+    "epic免费": "bot.epic",
+    "epic free": "bot.epic",
+    "历史上的今天": "bot.today_history",
+    "今日历史": "bot.today_history",
+    "订阅": "bot.subscribe",
+    "subscribe": "bot.subscribe",
+    "日志": "bot.logs",
+    "logs": "bot.logs",
 }
 
 
@@ -89,7 +113,7 @@ class CommandAliasResolver:
             ):
                 self._patterns.append(
                     (
-                        re.compile(rf"^/{escaped}{re.escape(verb)}(?:\s+(.*))?$"),
+                        re.compile(rf"^/?{escaped}{re.escape(verb)}(?:\s+(.*))?$", flags=re.IGNORECASE),
                         verb,
                         capability_id,
                     )
@@ -131,4 +155,7 @@ def build_command_alias_resolver(
     for item in extra_nicknames:
         if str(item).strip():
             nicknames.append(str(item).strip())
+    instance_name = str(getattr(config, "bot_runtime_instance", "")).strip()
+    if instance_name and instance_name.lower() != "default":
+        nicknames.append(instance_name)
     return CommandAliasResolver(nicknames=nicknames)

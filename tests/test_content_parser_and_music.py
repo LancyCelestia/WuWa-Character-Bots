@@ -884,3 +884,83 @@ def test_registry_matches_new_platforms():
         matches = registry.match(build_source_input(url))
         assert matches, url
         assert matches[0].parser_id == expected, url
+
+
+def test_music_accepts_slash_and_bang_prefix():
+    from plugins.bot_unified_runtime.capabilities.music import is_music_command, extract_music_query
+
+    assert is_music_command("/点歌 晴天") is True
+    assert is_music_command("!点歌 周杰伦 晴天") is True
+    assert extract_music_query("/点歌 晴天") == "晴天"
+
+
+def test_music_mode_rendering_supports_audio_voice_link_card():
+    from plugins.bot_unified_runtime.capabilities.music import build_music_capability
+
+    class FakeItem:
+        title = "晴天"
+        author_name = "周杰伦"
+        summary = "试听"
+        audio_url = "https://music.example/song.mp3"
+        cover_url = "https://music.example/cover.jpg"
+        canonical_url = "https://music.example/song"
+        stats = {}
+
+    fake_download_path = "data/music/song.mp3"
+
+    def fake_downloader(url):
+        return fake_download_path
+
+    def make(mode):
+        return build_music_capability(
+            providers=[("fake", "Fake", lambda q: FakeItem())],
+            default_mode=mode,
+            audio_downloader=fake_downloader,
+        )(_message("点歌 晴天"), None)
+
+    audio = make("audio")
+    assert audio.audio and audio.audio[0]["type"] == "file"
+    assert audio.audio[0]["file"] == fake_download_path
+
+    voice = make("voice")
+    assert voice.audio and voice.audio[0]["type"] == "record"
+
+    link = make("link")
+    assert link.audio == []
+    assert link.images == []
+    assert "https://music.example/song" in link.body
+
+    card = make("card")
+    assert card.images and card.images[0]["file"] == FakeItem.cover_url
+
+
+def test_music_mode_command_parsing():
+    from plugins.bot_unified_runtime.capabilities.music import (
+        extract_music_mode,
+        is_music_mode_command,
+    )
+
+    assert is_music_mode_command("/点歌模式 语音") is True
+    assert is_music_mode_command("点歌模式") is True
+    assert extract_music_mode("/点歌模式 音频") == "audio"
+    assert extract_music_mode("点歌模式") is None
+
+
+def test_music_mode_setting_is_admin_only_and_persists(tmp_path):
+    from plugins.bot_unified_runtime.capabilities.music import build_music_mode_result
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.runtime.settings import RuntimeSettingsStore
+
+    store = RuntimeSettingsStore(tmp_path / "settings.json")
+    config = Config()
+
+    denied = build_music_mode_result(
+        store, config, mode="voice", actor_roles=["user"], request_id="r1"
+    )
+    assert "管理员" in denied.body
+
+    allowed = build_music_mode_result(
+        store, config, mode="语音", actor_roles=["admin"], request_id="r2"
+    )
+    assert "语音" in allowed.body or "voice" in allowed.body
+    assert store.get("BOT_MUSIC_MODE", config) == "voice"

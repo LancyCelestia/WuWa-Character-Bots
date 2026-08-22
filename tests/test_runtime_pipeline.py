@@ -542,3 +542,71 @@ def test_pipeline_uses_chat_result_persona_tag_for_send_request():
     assert receipt.state is ReceiptState.SENT
     [send_request] = queue.sent_requests
     assert send_request.persona_profile_id == "shorekeeper"
+
+
+def test_reviewer_allows_safe_placeholder_values_but_blocks_real_secrets():
+    decision = BotDecision(
+        request_id="req_placeholder",
+        should_respond=True,
+        mode="command",
+        trigger="/bot status",
+        capability_id="bot.status",
+        target_scope=SessionType.PRIVATE,
+        max_messages=1,
+        send_policy=SendPolicy.IMMEDIATE,
+        persona_profile_id="shorekeeper",
+        context_budget=2048,
+        decision_reason="allowed",
+        risk_level=RiskLevel.LOW,
+        privacy_level=PrivacyLevel.PUBLIC,
+    )
+
+    safe = CapabilityResult(
+        request_id="req_placeholder",
+        capability_id="bot.status",
+        kind="text",
+        body="api_key=set token=missing cookie=set authkey=missing",
+        risk_level=RiskLevel.LOW,
+        privacy_level=PrivacyLevel.PUBLIC,
+    )
+    review = review_capability_result(safe, decision)
+    assert review.approved is True
+
+    leaked = CapabilityResult(
+        request_id="req_placeholder",
+        capability_id="bot.status",
+        kind="text",
+        body="api_key=sk-live-secret token=raw-token",
+        risk_level=RiskLevel.LOW,
+        privacy_level=PrivacyLevel.PUBLIC,
+    )
+    review = review_capability_result(leaked, decision)
+    assert review.approved is False
+    assert "unsafe output leakage" in review.reasons
+
+
+def test_status_result_passes_reviewer_with_placeholder_api_key():
+    from plugins.bot_unified_runtime.capabilities.echo import build_status_result
+    from plugins.bot_unified_runtime.config import Config
+
+    decision = BotDecision(
+        request_id="req_status",
+        should_respond=True,
+        mode="command",
+        trigger="/bot status",
+        capability_id="bot.status",
+        target_scope=SessionType.PRIVATE,
+        max_messages=1,
+        send_policy=SendPolicy.IMMEDIATE,
+        persona_profile_id="shorekeeper",
+        context_budget=2048,
+        decision_reason="allowed",
+        risk_level=RiskLevel.LOW,
+        privacy_level=PrivacyLevel.PUBLIC,
+    )
+    result = build_status_result(Config(bot_chat_api_key="sk-live-secret"))
+    review = review_capability_result(result, decision)
+
+    assert "api_key=set" in result.body
+    assert review.approved is True
+    assert "sk-live-secret" not in review.safe_text

@@ -43,8 +43,55 @@ _USAGE = (
 )
 
 
+_SUBSCRIBE_EN_RE = re.compile(r"^\s*(?:[/!！]?subscribe)\s*(?P<rest>.*)$", re.IGNORECASE)
+_SUBSCRIBE_ZH_RE = re.compile(r"^\s*(?:[/!！]?订阅)\s*(?P<rest>.*)$", re.IGNORECASE)
+_SUBSCRIBE_ACTION_ZH = {
+    "添加": "add",
+    "新增": "add",
+    "删除": "remove",
+    "移除": "remove",
+    "列表": "list",
+    "暂停": "pause",
+    "恢复": "resume",
+    "继续": "resume",
+    "检查": "check",
+    "状态": "status",
+}
+
+
+def normalize_subscribe_text(text: str) -> str:
+    """把 `/订阅 添加 ...`、`subscribe add ...` 统一成 `/bot subscribe add ...`。"""
+    stripped = (text or "").strip()
+    if not stripped:
+        return stripped
+    match = _SUBSCRIBE_ZH_RE.match(stripped) or _SUBSCRIBE_EN_RE.match(stripped) or _SUBSCRIBE_RE.match(stripped)
+    if match is None:
+        return stripped
+    rest = (match.group("rest") or "").strip()
+    parts = rest.split() if rest else []
+    action = parts[0] if parts else ""
+    normalized_action = _SUBSCRIBE_ACTION_ZH.get(action, action)
+    tail = " ".join(parts[1:]) if parts else ""
+    if normalized_action:
+        rest = f"{normalized_action} {tail}".strip()
+    return f"/bot subscribe {rest}".strip()
+
+
 def is_subscribe_command(text: str) -> bool:
-    return _SUBSCRIBE_RE.match(text.strip()) is not None
+    stripped = (text or "").strip()
+    return (
+        _SUBSCRIBE_RE.match(stripped) is not None
+        or _SUBSCRIBE_ZH_RE.match(stripped) is not None
+        or _SUBSCRIBE_EN_RE.match(stripped) is not None
+    )
+
+
+def is_standalone_subscribe_command(text: str) -> bool:
+    """只匹配 `/订阅 ...`、`!订阅 ...` 或裸 `subscribe ...`，不含 `/bot ...`。"""
+    stripped = (text or "").strip()
+    if stripped.lower().startswith("/bot"):
+        return False
+    return re.match(r"^(?:[/!！]?(?:订阅|subscribe))(?:\s+|$)", stripped, re.IGNORECASE) is not None
 
 
 def build_subscribe_capability(
@@ -115,7 +162,7 @@ def build_subscribe_capability(
         message: IncomingMessage,
         decision: Any,  # noqa: ARG001 - 能力统一签名。
     ) -> CapabilityResult:
-        text = getattr(message, "plain_text", "") or ""
+        text = normalize_subscribe_text(getattr(message, "plain_text", "") or "")
         match = _SUBSCRIBE_RE.match(text.strip())
         if match is None:
             return _result(message, _USAGE, ["subscribe_help"], "订阅")

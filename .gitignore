@@ -58,3 +58,5 @@ desktop.ini
 # 离线参考：bilibili-api-python sdist（GPL-3.0，仅挖掘端点用，不入库）
 research/bilibili_api_sdists/
 
+# pytest sandbox basetemp
+.pytest_tmp_ci/

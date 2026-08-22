@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from plugins.bot_unified_runtime.contracts.character import (
     ContextBundle,
@@ -15,6 +15,10 @@ from plugins.bot_unified_runtime.contracts.character import (
 )
 
 from .documents import load_character_document
+from .vector_knowledge import (
+    build_keyword_knowledge_provider,
+    build_vector_knowledge_provider,
+)
 from .emotion import EmotionProvider, NullEmotionProvider, build_emotion_provider
 from .glossary import GlossaryProvider, NullGlossaryProvider, build_glossary_provider
 from .history import (
@@ -101,6 +105,7 @@ class FileCharacterContextProvider:
         knowledge_files: list[str | Path],
         knowledge_max_chunks: int = 4,
         knowledge_chunk_chars: int = 900,
+        vector_retriever: Callable[[str], list[KnowledgeChunk]] | None = None,
         tone_mode: str = "private_chat",
         tone_voice: str = "soft",
         tone_warmth: float = 0.7,
@@ -132,6 +137,7 @@ class FileCharacterContextProvider:
         self.knowledge_files = [Path(path).expanduser() for path in knowledge_files]
         self.knowledge_max_chunks = max(0, knowledge_max_chunks)
         self.knowledge_chunk_chars = max(120, knowledge_chunk_chars)
+        self.vector_retriever = vector_retriever
         self.tone_mode = tone_mode
         self.tone_voice = tone_voice
         self.tone_warmth = tone_warmth
@@ -247,11 +253,18 @@ class FileCharacterContextProvider:
             message_count_limit=self.tone_message_count_limit,
             action_brackets=self._action_brackets_enabled(),
         )
-        knowledge_chunks = _build_knowledge_chunks(
-            files=self.knowledge_files,
-            max_chunks=self.knowledge_max_chunks,
-            chunk_chars=self.knowledge_chunk_chars,
-        )
+        knowledge_chunks: list[KnowledgeChunk] = []
+        if self.vector_retriever is not None:
+            try:
+                knowledge_chunks = list(self.vector_retriever(query_text) or [])
+            except Exception:
+                knowledge_chunks = []
+        if not knowledge_chunks:
+            knowledge_chunks = _build_knowledge_chunks(
+                files=self.knowledge_files,
+                max_chunks=self.knowledge_max_chunks,
+                chunk_chars=self.knowledge_chunk_chars,
+            )
         memory_results = _filter_llm_safe_memory_results(
             self.memory_provider.retrieve(
                 request_id=request_id,
@@ -353,6 +366,12 @@ def build_character_context_provider(
         interaction_counts_provider = _interaction_counts
         persona_override_provider = _persona_override
         persona_weights_provider = _persona_weights
+    vector_provider = build_vector_knowledge_provider(config)
+    knowledge_retriever = (
+        vector_provider
+        if vector_provider.available
+        else build_keyword_knowledge_provider(config)
+    )
     return FileCharacterContextProvider(
         persona_profile_id=str(getattr(config, "bot_persona_profile_id", "default")),
         persona_display_name=str(getattr(config, "bot_persona_display_name", "报存")),
@@ -361,6 +380,7 @@ def build_character_context_provider(
         knowledge_files=list(getattr(config, "bot_knowledge_files", [])),
         knowledge_max_chunks=int(getattr(config, "bot_knowledge_max_chunks", 4)),
         knowledge_chunk_chars=int(getattr(config, "bot_knowledge_chunk_chars", 900)),
+        vector_retriever=knowledge_retriever.retrieve if knowledge_retriever.available else None,
         tone_mode=str(getattr(config, "bot_tone_mode", "private_chat")),
         tone_voice=str(getattr(config, "bot_tone_voice", "soft")),
         tone_warmth=float(getattr(config, "bot_tone_warmth", 0.7)),

@@ -180,3 +180,33 @@ C:\Users\LancyCelestia\.astrbot\data\plugins\astrbot_plugin_parser
 - 用户计数：GET x/space/navnum（mid）。
 - 决策：沿用已批准计划——WBI 自研移植（MIT bili-helper 参考），运行时不自带 GPL 库；
   端点/参数/返回字段以本文件与库源码 JSON 为准，实现时用项目 http_util + cookies.txt 实测验证。
+
+
+## 2026-08-22：nonebot-plugin-orm SQLite 底座结论
+
+- `nonebot-plugin-orm 0.8.3` 的 `sqlite`/`default` extra 指向 `sqlalchemy[aiosqlite]`；只装主包不会带 aiosqlite，启动会因缺驱动报「没有数据库」。
+- 配置键为 `SQLALCHEMY_DATABASE_URL`；未配置且没有 binds 时会退到插件数据目录，本项目显式写 `sqlite+aiosqlite:///data/nonebot_orm.sqlite3`（相对项目根目录），避免迁移 CLI 与运行时落在不同文件。
+- nb-cli 1.7 已移除 `nb run --env-file`；`nonebot.init()` 默认加载 `.env` + `.env.prod`，因此 `nb orm upgrade`、`nb orm check`、`nb run` 在项目根目录直接执行即可，三者都会读到同一连接串。
+- NapCat 反向 WS 可用查询参数传 token：`ws://127.0.0.1:3001/?access_token=<token>`；token 与 NapCat WebUI 网络配置必须一致。
+
+### 补充结论（启动烟测暴露）
+- NoneBot 2.5 的反向 WS 客户端能力由 `~websockets` 驱动器提供；`~fastapi+~httpx` 只给 HTTP 客户端+ASGI 服务，`ONEBOT_WS_URLS` 会被 OneBot V11 忽略。
+- 含 `from __future__ import annotations` 的插件，若 handler/rule 注解使用 `Event`、`Bot`、`T_State`，这些名字必须在模块全局可见；只写在注册函数内部的局部 import 无法被 NoneBot 的 ForwardRef 求值使用。
+
+### 补充结论（QQ 实测定向）
+- 安全审查的正则不能只认 `key=非空白`：状态/诊断输出普遍使用 `api_key=set`、`token=missing` 这类占位值，会把正常命令误拦成“输出未通过安全或隐私检查”。
+- 放行策略限定为 `set/missing/[redacted]` 三个占位值；真实密钥（如 `sk-...`、任意长 token）仍会被拦截并脱敏。
+
+
+## 2026-08-23：本轮新增结论
+
+- 向量知识库默认关闭，避免误用不支持 `/embeddings` 的服务；启用前必须确认 model/base_url/API key 属于支持 embeddings 的 OpenAI-compatible 服务。
+- 大文件（约 3.8MB 百科）适合向量检索；顺序取块回退会偏向列表靠前的文件，因此增加了跨文件关键词检索作为中间回退。
+- NapCat 图片段对相对本地路径不稳定，统一转绝对路径后发送成功率提高。
+
+## 2026-08-23：PostgreSQL/asyncpg 关键结论
+- Windows 上 psycopg 3 异步明确拒绝 ProactorEventLoop；nb run 不执行项目 bot.py，无法靠 bot.py 设置 SelectorEventLoop 兜底，且 nb-cli 自身在 SelectorEventLoop 下不能 spawn 子进程。最终选 asyncpg（兼容 Proactor 循环），恢复标准 
+b orm 流程。
+- EDB PostgreSQL 17 安装器可静默安装：--mode unattended --unattendedmodeui none --prefix/--datadir/--superpassword/--serverport/--servicename；服务创建需 UAC 提权，退出码 0 且数据目录初始化即成功。
+- URL 中密码含 @ 必须编码为 %40；NoneBot 环境变量值不自动做 URL 解码，需在连接串里预编码。
+- nonebot-plugin-orm 的 _engines/_metadatas 由 driver on_startup 初始化，命令行迁移需 nb-cli 正常加载插件链；nb-cli 1.7 无 --env-file 参数，.env/.env.prod 由 nonebot.init 自动加载。

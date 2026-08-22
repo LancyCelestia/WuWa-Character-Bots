@@ -408,3 +408,19 @@ def test_subscription_scheduler_disabled_returns_empty(db_path):
 
     assert result == {}
     assert fake.jobs == []
+
+
+def test_subscribe_accepts_chinese_standalone_commands():
+    from plugins.bot_unified_runtime.capabilities.subscribe import (
+        is_subscribe_command,
+        normalize_subscribe_text,
+    )
+
+    assert is_subscribe_command("/订阅 添加 https://space.bilibili.com/123") is True
+    assert is_subscribe_command("订阅 列表") is True
+    assert is_subscribe_command("/subscribe add https://space.bilibili.com/123") is True
+    assert normalize_subscribe_text("/订阅 添加 https://space.bilibili.com/123") == (
+        "/bot subscribe add https://space.bilibili.com/123"
+    )
+    assert normalize_subscribe_text("订阅 列表") == "/bot subscribe list"
+    assert normalize_subscribe_text("/subscribe remove abc") == "/bot subscribe remove abc"

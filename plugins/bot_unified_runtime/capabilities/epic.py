@@ -17,7 +17,7 @@ from plugins.bot_unified_runtime.sources.epicfree import (
     format_epic_free_games,
 )
 
-_COMMAND_RE = re.compile(r"^(?:epic|epicfree|epic 免费|epic免费)\s*$", re.IGNORECASE)
+_COMMAND_RE = re.compile(r"^[/!！]?(?:epic|epicfree|epic free|epic 免费|epic免费)\s*$", re.IGNORECASE)
 
 
 def is_epic_command(text: str) -> bool:

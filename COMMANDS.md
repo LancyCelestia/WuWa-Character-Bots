@@ -487,3 +487,32 @@ NoneBot 只负责插件加载、事件分发和适配器抽象。NapCat 作为 O
 - `llm-smoke` 已验证真实模型配置诊断入口，但不会触碰真实聊天 transport。
 - `verify` 已要求运行时契约、策略决策、发送回执、审计记录、上下文接口、parser registry 和 auto-send draft parser 测试通过。
 - 数据库或迁移命令只在 ORM schema 存在后再加入。
+
+
+## 2026-08-23 命令与知识库更新
+
+### QQ 功能命令
+- 通用：`/bot status`、`/bot help`、直接聊天。
+- 点歌：`/点歌 <歌名>`；模式设置：`/点歌模式 音频|语音|链接|卡片`（管理员，持久化）。
+- 大小写均可：`/wiki`、`/WIKI`、`/Wikipedia`、`/维基`、`/维基百科`；`/epic`、`/EPICFREE`、`/Epic Free`、`/Epic 免费`。
+- 斜杠均可：`/天气 城市`、`/查天气 城市`、`/历史上的今天`、`/点歌 歌名`。
+- 中文订阅：`/订阅 添加 <链接> [到本群|私聊我] [--digest]`、`/订阅 列表|删除|暂停|恢复|检查|状态`；旧 `/bot subscribe ...` 继续可用。
+- 角色昵称：`/岸宝帮助`、`/岸宝状态`、`/岸宝天气 城市`、`/岸宝点歌 歌名`、`/岸宝wiki 词条`、`/岸宝epic`、`/岸宝订阅 ...`、`/岸宝日志`。
+- 管理员：`/bot logs [info|warning|error] [数量]`。
+
+### 知识库
+- 人格文件：`BOT_PERSONA_FILES`（守岸人 identity）。
+- 知识文件：`BOT_KNOWLEDGE_FILES` 已配置四份用户材料（三份人格档案 + 鸣潮库街区百科v2.md）。
+- 向量检索：`BOT_EMBEDDING_ENABLED=true` 且填好 `BOT_EMBEDDING_MODEL/BASE_URL/API_KEY` 后启用 `/embeddings` 语义检索；未启用自动跨文件关键词检索并回退顺序取块。
+
+
+### 多实例共享与实例名命令（追加）
+
+- 命令前缀：`/守岸人`、`守岸人`、`/岸宝`、`岸宝` 均可；斜杠可省略。
+- 示例：`守岸人帮助`、`守岸人查询`、`守岸人查询天气 杭州`、`/岸宝点歌 晴天`、`守岸人订阅 添加 <链接>`。
+- 多实例共享组配置：
+  - `BOT_SHARE_ENABLED=false`
+  - `BOT_SHARE_GROUPS=[]`（组名写成 `A and B`、`A and B and C` 形式）
+  - `BOT_SHARE_READ_ONLY=false`
+- 语义：实例可见性 = 自己 private 记录 + `记录.share_groups` 与 `实例.BOT_SHARE_GROUPS` 有交集的记录；凭据级敏感记忆永不共享。
+- 调试命令（待 PostgreSQL 落地后接入，统一 `/bot` 开头）：`/bot share status`、`/bot share groups`、`/bot share group create <组名>`、`/bot share group add <组名> <实例名>`、`/bot share group remove <组名> <实例名>`、`/bot share send history <id> --group <组名>`、`/bot share send memory <fact_id> --group <组名>`、`/bot share list`、`/bot share revoke ...`。

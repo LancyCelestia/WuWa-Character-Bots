@@ -197,6 +197,12 @@ function Invoke-Test {
     $pytest = Get-ProjectCommand "pytest"
 
     Push-Location $Root
+    $oldTmp = $env:TMP
+    $oldTemp = $env:TEMP
+    $ciTmp = Join-Path $Root ".pytest_tmp_ci"
+    New-Item -ItemType Directory -Force -Path $ciTmp | Out-Null
+    $env:TMP = $ciTmp
+    $env:TEMP = $ciTmp
     try {
         Write-Step "running pytest"
         $hasProjectPytest = $false
@@ -231,7 +237,11 @@ function Invoke-Test {
             $env:PYTHONPATH = $oldPythonPath
         }
     }
-    finally { Pop-Location }
+    finally {
+        $env:TMP = $oldTmp
+        $env:TEMP = $oldTemp
+        Pop-Location
+    }
 }
 
 function Invoke-Lint {

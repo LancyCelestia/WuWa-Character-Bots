@@ -20,10 +20,10 @@ _INTERNAL_OUTPUT_MARKERS = (
 )
 
 _SECRET_OUTPUT_PATTERNS = (
-    re.compile(r"(?i)\bapi[_-]?key\s*[:=]\s*\S+"),
-    re.compile(r"(?i)\btoken\s*[:=]\s*\S+"),
-    re.compile(r"(?i)\bcookie\s*[:=]\s*\S+"),
-    re.compile(r"(?i)\bauthkey\s*[:=]\s*\S+"),
+    re.compile(r"(?i)\bapi[_-]?key\s*[:=]\s*(?!(?:set|missing|\[redacted\])\b)\S+"),
+    re.compile(r"(?i)\btoken\s*[:=]\s*(?!(?:set|missing|\[redacted\])\b)\S+"),
+    re.compile(r"(?i)\bcookie\s*[:=]\s*(?!(?:set|missing|\[redacted\])\b)\S+"),
+    re.compile(r"(?i)\bauthkey\s*[:=]\s*(?!(?:set|missing|\[redacted\])\b)\S+"),
     re.compile(r"(?i)\bauthorization\s*[:=]\s*bearer\s+\S+"),
     re.compile(r"(?i)\bbearer\s+sk-[A-Za-z0-9._-]+"),
     re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9._-]{8,}"),

@@ -245,6 +245,9 @@ list / remove <id> / pause <id> / resume <id> / check <id> / status。群订阅�
 - 内置插件：`echo`
 - 适配器：OneBot V11、Console、Mail
 - 支撑插件：status、apscheduler、localstore、alconna、filehost、orm、htmlkit
+- 数据库底座：`nonebot-plugin-orm[postgresql]` + `asyncpg`（Windows 上 psycopg 异步与默认 ProactorEventLoop 不兼容），连接串 `SQLALCHEMY_DATABASE_URL=postgresql+asyncpg://postgres:<密码>@127.0.0.1:5432/chatbot`（密码含 @ 时把 @ 编码为 %40）；本机 PostgreSQL 17 装在 `C:\Software\PostgreSQL\17`，服务名 `postgresql-x64-17`；首次运行前执行 `nb orm upgrade` + `nb orm check`。多实例共享预留了 `bot_a`/`bot_b`/`shared` 三个 schema。
+
+接入前在 NapCat WebUI「网络配置」创建 `127.0.0.1:3001` 的 WebSocket 服务器并设置 token，`.env.prod` 中 `ONEBOT_WS_URLS=["ws://127.0.0.1:3001/?access_token=<你的token>"]`；真实 token 只存在本地 .env.prod，不写进文档或日志。
 
 NapCat 按 OneBot V11 实现接入时，建议使用数组消息段格式。Incoming 事件中的 `message`、`raw_message`、`user_id`、`group_id`、`message_type` 等字段先归一化到 `IncomingMessage`；Outgoing 的文字、图片、合并转发等由 `SendRequest.content` 转换为 OneBot/NapCat 消息段。当前 `send_onebot_v11` 已支持把 `RenderedOutput.content_type=text` 转成 `text` 段，把 `image` 转成 `image` 段，把 `card` 中的 `onebot_json/json/data` 转成 `json` 段，把 `mixed.parts` 按顺序转成 text/image/json 组合段。`content_type=forward` 只有在 `SendRequest.allow_forward=true` 时才会尝试 OneBot/NapCat 扩展 API：群聊走 `send_group_forward_msg(group_id, messages)`，私聊走 `send_private_forward_msg(user_id, messages)`；如果 bot 没有这些方法，会退到 `call_api("send_group_forward_msg"...)` 或 `call_api("send_private_forward_msg"...)`；如果 `allow_forward=false`、缺少 forward 节点或扩展 API 不可用，会降级为 `text_fallback`，避免能力层直连发送。私聊/群聊普通消息分别调用 `send_private_msg` / `send_group_msg`。发送 API 的 `message_id` 或 `data.message_id`、异常、`status=failed` 和非零 `retcode` 必须映射到 `DeliveryReceipt`；真实 transport 回执可写入 `delivery_receipts`。非零 retcode 会先归一化成可重试失败或最终失败，公开消息只展示安全的 retcode/status/debug_id，不展示上游原文、目标 ID、正文或密钥；transport 审计只记录状态和内部标记，不公开 provider message id。后续接图片上传、真实 NapCat 合并转发授权投递验证和更完整 NapCat retcode 表时也必须落到同一回执模型，不能只看能力执行是否成功。
 
@@ -308,3 +311,20 @@ powershell -ExecutionPolicy Bypass -File scripts/git.ps1 update
 `.env`、`data/`、`.venv/` 与下载的研究源码都在 `.gitignore` 中，密钥和运行数据不会被提交。
 
 当前 M0 已完成一个很窄的统一运行时插件骨架、SQLite 记忆闭环、最近对话历史闭环、当前作用域历史清理入口、每作用域历史存储保留上限、调用 LLM 前的内存/可选 SQLite 窗口限速、全局配额、目标最小间隔、安静时间策略、人格/知识上下文读取失败安全兜底、可选 SQLite 运行诊断、可选 SQLite 审计/回执/发送队列持久化、发送请求去重、持久请求查找、退避重试、失败封顶、SQLite 队列租约 claim、一次性队列 worker、默认关闭的 APScheduler 队列 worker 注册、本地 `doctor` 环境诊断、本地 `llm-setup` 接入清单、本地 `readiness-smoke` 统一就绪摘要、本地 `dialogue-smoke` 对话验收摘要、本地 `persona-smoke` 人格自检、本地 `queue-smoke` worker 诊断、本地 `startup-smoke` 启动干跑、本地 `transport-smoke` 出站边界诊断、只读 `online-transport-smoke` 在线 bot 可见性诊断、OneBot/NapCat text/image/json/mixed/forward transport 边界、OneBot `status/retcode/data.message_id` 回执归一化、本地 NoneBot 插件加载 smoke、`/bot why` 最近诊断，以及管理员 `/bot receipt`、`/bot audit`、`/bot recent`、`/bot queue`、`/bot context`、`/bot llm`、`/bot setup llm`、`/bot config`、`/bot readiness`、`/bot dialogue`、`/bot roles`、`/bot persona`、`/bot history clear`、`/bot pause`、`/bot resume` 安全排障和运行时控制入口。下一步建议补一个低风险媒体 source adapter、公共游戏/wiki 能力、排障可视化面板、摘要/私聊回退、图片上传/缓存策略和真实 NapCat 授权投递验证。
+
+
+## 命令别名、点歌模式与向量知识库（2026-08-23）
+
+- 角色回复中括号动作与说话内容自动拆到不同段落（`output/roleplay.py`）。
+- 所有功能命令支持斜杠与大小写变体：`/wiki`、`/WIKI`、`/Wikipedia`、`/epic`、`/EPICFREE`、`/Epic 免费`、`/天气`、`/查天气`、`/历史上的今天`、`/点歌`。
+- 订阅支持中文独立命令：`/订阅 添加|列表|删除|暂停|恢复|检查|状态`。
+- 昵称功能命令：`/岸宝帮助`、`/岸宝状态`、`/岸宝天气`、`/岸宝点歌`、`/岸宝wiki`、`/岸宝epic`、`/岸宝订阅`、`/岸宝日志`。
+- 点歌输出模式：`/点歌模式 音频|语音|链接|卡片`（管理员），音频模式下载试听文件后作为文件发送。
+- 知识库已接入用户提供的四份材料：`守岸人人格档案.md`、`守岸人人格设定.md`、`守岸人档案.md`、`鸣潮库街区百科v2.md`；向量嵌入服务可用时按语义检索，不可用时自动跨文件关键词检索，再回退顺序取块。
+- 向量知识库配置：`BOT_EMBEDDING_ENABLED`、`BOT_EMBEDDING_MODEL`、`BOT_EMBEDDING_BASE_URL`、`BOT_EMBEDDING_API_KEY`、`BOT_KNOWLEDGE_TOP_K`、`BOT_KNOWLEDGE_DB_PATH`（未配置时默认关闭并回退）。
+- 修复：NapCat 发送本地卡片/媒体路径自动转绝对路径；`api_key=set` 等安全占位值不再被误判为泄露。
+
+### 多实例共享与实例名命令（追加）
+
+- `/守岸人`、`守岸人`、`/岸宝`、`岸宝` 都是有效前缀；斜杠可省略，例如 `守岸人查询天气 杭州`。
+- `BOT_SHARE_GROUPS` 采用命名共享组，组名建议写 `A and B`、`A and B and C`；记录与实例按组名交集决定可见性。

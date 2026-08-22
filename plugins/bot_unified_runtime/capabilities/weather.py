@@ -21,8 +21,8 @@ from plugins.bot_unified_runtime.sources.nmc_weather import (
     nmc_weather_query,
 )
 
-_WEATHER_RE = re.compile(r"^(?:天气|查天气)\s*(?P<query>.+)$")
-_DISTRICT_RE = re.compile(r"^(?:支持区县|查询区县|可查区县)\s*(?P<province>.+)$")
+_WEATHER_RE = re.compile(r"^[/!！]?(?:天气|查天气)\s*(?P<query>.+)$")
+_DISTRICT_RE = re.compile(r"^[/!！]?(?:支持区县|查询区县|可查区县)\s*(?P<province>.+)$")
 
 
 def is_weather_command(text: str) -> bool:

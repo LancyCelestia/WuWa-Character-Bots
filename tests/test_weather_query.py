@@ -88,3 +88,10 @@ def test_weather_district_command(monkeypatch):
     result = capability(_message("支持区县 北京"), None)
 
     assert "昌平" in result.body
+
+
+def test_weather_commands_accept_slash_prefix():
+    from plugins.bot_unified_runtime.capabilities.weather import is_weather_command
+
+    assert is_weather_command("/天气 杭州") is True
+    assert is_weather_command("!查天气 香港") is True

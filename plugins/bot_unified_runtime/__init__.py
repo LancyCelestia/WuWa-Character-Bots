@@ -1,6 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any
+
+from nonebot.adapters import Bot, Event
+from nonebot.typing import T_State
 
 from .audit import AuditRepository, build_audit_repository
 from .audit.file_logger import build_audit_with_file_log
@@ -56,7 +59,12 @@ from .sources.parse_history import (
 from .sources.downloader import MediaDownloader
 from .output.render_backends import build_render_backend
 from .capabilities.content_parser import build_content_capability
-from .capabilities.music import build_music_capability, is_music_command
+from .capabilities.subscribe import is_standalone_subscribe_command
+from .capabilities.music import (
+    build_music_capability,
+    is_music_command,
+    is_music_mode_command,
+)
 from .capabilities.download import build_download_capability
 from .capabilities.today_history import (
     build_today_history_capability,
@@ -770,6 +778,7 @@ def _register_nonebot_handlers() -> None:
     )
     from .capabilities.echo import build_status_result
     from .capabilities.memory import is_memory_command_text, route_memory_command
+    from .capabilities.runtime_logs import build_logs_query_result
     from .capabilities.runtime_admin import (
         build_alert_check_result,
         build_runtime_admin_result,
@@ -998,6 +1007,16 @@ def _register_nonebot_handlers() -> None:
     async def _is_music_event(event: Event) -> bool:
         return config.bot_music_enabled and is_music_command(event.get_plaintext())
 
+    async def _is_music_mode_event(event: Event) -> bool:
+        return config.bot_music_enabled and is_music_mode_command(
+            event.get_plaintext()
+        )
+
+    async def _is_standalone_subscribe_event(event: Event) -> bool:
+        return getattr(config, "bot_subscribe_enabled", True) and is_standalone_subscribe_command(
+            event.get_plaintext()
+        )
+
     async def _is_today_history_event(event: Event) -> bool:
         return (
             getattr(config, "bot_today_history_enabled", True)
@@ -1021,6 +1040,7 @@ def _register_nonebot_handlers() -> None:
         )
 
     content = on_message(rule=_is_content_parse_event, priority=46, block=True)
+    music_mode = on_message(rule=_is_music_mode_event, priority=43, block=True)
     music = on_message(rule=_is_music_event, priority=44, block=True)
     today_history = on_message(
         rule=_is_today_history_event, priority=44, block=True
@@ -1028,6 +1048,7 @@ def _register_nonebot_handlers() -> None:
     wiki = on_message(rule=_is_wiki_event, priority=44, block=True)
     epic = on_message(rule=_is_epic_event, priority=44, block=True)
     weather = on_message(rule=_is_weather_event, priority=44, block=True)
+    subscribe_cmd = on_message(rule=_is_standalone_subscribe_event, priority=18, block=True)
 
     def _is_alias_command_text(text: str) -> bool:
         return alias_resolver.resolve(text) is not None
@@ -1072,6 +1093,84 @@ def _register_nonebot_handlers() -> None:
                     query=resolution.rest_text,
                 )
 
+        elif resolution.capability_id == "bot.weather":
+            query = resolution.rest_text
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                synthetic = message.model_copy(update={"plain_text": f"天气 {query}"})
+                return build_weather_capability(config)(synthetic, _decision)
+
+        elif resolution.capability_id == "bot.music":
+            query = resolution.rest_text
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                synthetic = message.model_copy(update={"plain_text": f"点歌 {query}"})
+                mode = runtime_settings.get("BOT_MUSIC_MODE", config) or "card"
+                return build_music_capability(config, default_mode=mode)(synthetic, _decision)
+
+        elif resolution.capability_id == "bot.wiki":
+            query = resolution.rest_text
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                synthetic = message.model_copy(update={"plain_text": f"wiki {query}"})
+                return build_wiki_capability(config)(synthetic, _decision)
+
+        elif resolution.capability_id == "bot.epic":
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_epic_capability(config)(message, _decision)
+
+        elif resolution.capability_id == "bot.today_history":
+            query = resolution.rest_text
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                synthetic = message.model_copy(
+                    update={"plain_text": f"历史上的今天 {query}".strip()}
+                )
+                return build_today_history_capability(config)(synthetic, _decision)
+
+        elif resolution.capability_id == "bot.subscribe":
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                from .capabilities.subscribe import (
+                    build_subscribe_capability,
+                    normalize_subscribe_text,
+                )
+
+                sub_ctx = subscription_ctx if isinstance(subscription_ctx, dict) else {}
+                normalized = normalize_subscribe_text(
+                    f"/bot subscribe {resolution.rest_text}".strip()
+                )
+                synthetic = message.model_copy(update={"plain_text": normalized})
+                return build_subscribe_capability(
+                    store=sub_ctx.get("store"),
+                    registry=sub_ctx.get("registry"),
+                    config=config,
+                )(synthetic, _decision)
+
+        elif resolution.capability_id == "bot.logs":
+            parts = resolution.rest_text.split()
+            level = "info"
+            limit = 50
+            allowed_levels = {"info", "warning", "error", "debug"}
+            if parts and parts[0].lower() in allowed_levels:
+                level = parts[0].lower()
+                parts = parts[1:]
+            if parts:
+                try:
+                    limit = max(1, min(200, int(parts[0])))
+                except ValueError:
+                    limit = 50
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_logs_query_result(
+                    runtime_event_log,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    level=level,
+                    limit=limit,
+                )
+
         else:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
@@ -1109,8 +1208,75 @@ def _register_nonebot_handlers() -> None:
         if receipt.state.value != "sent":
             await alias.finish(receipt.public_message)
 
+    @music_mode.handle()
+    async def _handle_music_mode(bot: Bot, event: Event) -> None:
+        from .capabilities.music import build_music_mode_result, extract_music_mode
+
+        mode = extract_music_mode(event.get_plaintext())
+
+        def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+            return build_music_mode_result(
+                runtime_settings,
+                config,
+                mode=mode,
+                actor_roles=_decision.actor_roles,
+                request_id=message.request_id,
+            )
+
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=capability,
+            capability_id="bot.music_mode",
+            record_diagnostic=False,
+            history_recorder=history_recorder,
+            history_kind="command",
+        )
+        if receipt.state.value != "sent":
+            await music_mode.finish(receipt.public_message)
+
+    @subscribe_cmd.handle()
+    async def _handle_standalone_subscribe(bot: Bot, event: Event) -> None:
+        from .capabilities.subscribe import build_subscribe_capability, normalize_subscribe_text
+
+        sub_ctx = subscription_ctx if isinstance(subscription_ctx, dict) else {}
+
+        def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+            normalized = normalize_subscribe_text(message.plain_text)
+            synthetic_message = message.model_copy(update={"plain_text": normalized})
+            return build_subscribe_capability(
+                store=sub_ctx.get("store"),
+                registry=sub_ctx.get("registry"),
+                config=config,
+            )(synthetic_message, _decision)
+
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=capability,
+            capability_id="bot.subscribe",
+            record_diagnostic=False,
+            history_recorder=history_recorder,
+            history_kind="command",
+        )
+        if receipt.state.value != "sent":
+            await subscribe_cmd.finish(receipt.public_message)
+
     @status.handle()
     async def _handle_status(bot: Bot, event: Event, args=CommandArg()) -> None:
+
         command_text = args.extract_plain_text().strip()
 
         if is_memory_command_text(command_text):
@@ -1587,7 +1753,7 @@ def _register_nonebot_handlers() -> None:
         )
         receipt = await pipeline.handle_async(
             message,
-            offload_capability(build_music_capability(config)),
+            offload_capability(build_music_capability(config, default_mode=runtime_settings.get("BOT_MUSIC_MODE", config) or "card")),
             capability_id="bot.music",
         )
         sent_request = _find_sent_request(send_queue, message.request_id)

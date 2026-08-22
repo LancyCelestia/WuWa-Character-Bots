@@ -144,3 +144,23 @@ def test_epic_capability_fetch_failure(monkeypatch):
     result = capability(_message("epic"), None)
 
     assert "fetch_failed" in result.audit_tags
+
+
+def test_wiki_commands_accept_slash_and_ascii_case_variants():
+    from plugins.bot_unified_runtime.capabilities.wiki import is_wiki_command
+
+    assert is_wiki_command("/wiki 鸣潮") is True
+    assert is_wiki_command("/WIKI 鸣潮") is True
+    assert is_wiki_command("WikiPedia 鸣潮") is True
+    assert is_wiki_command("wikiPedia 鸣潮") is True
+    assert is_wiki_command("/维基百科 鸣潮") is True
+
+
+def test_epic_commands_accept_slash_and_ascii_case_variants():
+    from plugins.bot_unified_runtime.capabilities.epic import is_epic_command
+
+    assert is_epic_command("/epic") is True
+    assert is_epic_command("/EpicFree") is True
+    assert is_epic_command("EPICFREE") is True
+    assert is_epic_command("Epic Free") is True
+    assert is_epic_command("/Epic 免费") is True

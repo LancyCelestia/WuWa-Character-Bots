@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import re
 
+from plugins.bot_unified_runtime.output.roleplay import format_roleplay_paragraphs
 from plugins.bot_unified_runtime.character import CharacterContextProvider
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
@@ -600,6 +601,7 @@ def build_chat_result(
         decision.max_messages,
         output_max_chars_per_message,
     )
+    reply_text = format_roleplay_paragraphs(reply_text)
     audit_tags = [
         *decision.audit_tags,
         *diagnostic_tags,

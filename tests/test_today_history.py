@@ -118,3 +118,10 @@ def test_provider_cache(tmp_path, monkeypatch):
     events2 = provider.get_events()
     assert events2[0].year == "1904"
     assert cache_file.exists()
+
+
+def test_today_history_accepts_slash_prefix():
+    from plugins.bot_unified_runtime.capabilities.today_history import is_today_history_command
+
+    assert is_today_history_command("/历史上的今天") is True
+    assert is_today_history_command("！历史上的今天 状态") is True

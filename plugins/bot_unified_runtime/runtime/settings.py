@@ -51,6 +51,29 @@ def _reply_chars_converter(value: str) -> int:
     return parsed
 
 
+_MUSIC_MODE_ALIASES = {
+    "audio": "audio",
+    "file": "audio",
+    "音频": "audio",
+    "音频文件": "audio",
+    "voice": "voice",
+    "语音": "voice",
+    "link": "link",
+    "链接": "link",
+    "card": "card",
+    "卡片": "card",
+    "default": "card",
+    "默认": "card",
+}
+
+
+def _music_mode_converter(value: str) -> str:
+    normalized = _MUSIC_MODE_ALIASES.get((value or "").strip().lower())
+    if normalized is None:
+        raise ValueError("BOT_MUSIC_MODE 必须是 音频/语音/链接/卡片")
+    return normalized
+
+
 def _bool_converter(value: str) -> bool:
     normalized = value.strip().lower()
     if normalized in {"true", "1", "yes", "on", "开", "是"}:
@@ -68,6 +91,7 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_REPLY_MAX_CHARS_PER_MESSAGE": _reply_chars_converter,
     "BOT_MEME_SEARCH_ENABLED": _bool_converter,
     "BOT_PERSONA_ACTION_BRACKETS": _bool_converter,
+    "BOT_MUSIC_MODE": _music_mode_converter,
 }
 
 

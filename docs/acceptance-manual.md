@@ -9,6 +9,8 @@
 
     .venv\Scripts\python.exe -m pip install -e . nb-cli
     powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 doctor
+    .venv\Scripts\nb orm upgrade      # 首次运行前初始化 SQLite 数据库
+    .venv\Scripts\nb orm check        # 应提示：没有检测到新的升级操作
 
 ## 1. 对话 / 人格测试（第一步，必须先通过）
 
@@ -45,8 +47,7 @@ REPL 快捷键：/group 切群聊模拟、/quit 退出。
     powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 chat-smoke -Message "岸宝，你好"   # 真实人格对话
     powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 why-smoke -Message "岸宝，你好"     # 决策/审查/发送全链路
 
-chat-smoke 输出 llm_status=ok 且 
-eceipt_state=sent 即为对话链路正常。
+chat-smoke 输出 llm_status=ok 且  receipt_state=sent 即为对话链路正常。
 （控制台中文偶发乱码是 PowerShell 编码显示问题，不影响 QQ 端输出。）
 
 ## 2. NapCat 接入 QQ（对话通过后再做）
@@ -54,15 +55,17 @@ eceipt_state=sent 即为对话链路正常。
 详细步骤见 docs/napcat-setup.md，要点：
 
 1. 下载 NapCat（https://napneko.github.io/ ，推荐 NapCat.Win 一键包），用 QQ 小号扫码登录。
-2. NapCat WebUI（http://127.0.0.1:6099）→ 网络配置 → 新建「WebSocket 服务器」，Host 127.0.0.1、端口 3001。
-3. .env.prod 保持：DRIVER=~fastapi+~httpx、ONEBOT_WS_URLS=["ws://127.0.0.1:3001"]、LOCALSTORE_USE_CWD=true。
-4. 启动机器人：
+2. NapCat WebUI（http://127.0.0.1:6099）→ 网络配置 → 新建「WebSocket 服务器」，Host 127.0.0.1、端口 3001，Access Token 填 <你的token>（需与 .env.prod 中的 access_token 完全一致）。
+3. .env.prod 配置：DRIVER=~fastapi+~httpx+~websockets、ONEBOT_WS_URLS=["ws://127.0.0.1:3001/?access_token=<你的token>"]、LOCALSTORE_USE_CWD=true；真实 token 只存在本地 .env.prod，不写进文档或日志。
+4. 初始化数据库并启动机器人：
 
+       .venv\Scripts\nb orm upgrade      # PostgreSQL 已迁移可跳过；首次部署才需要执行
+       .venv\Scripts\nb orm check        # 应提示：没有检测到新的升级操作
        .venv\Scripts\nb run
 
    或 .venv\Scripts\python.exe bot.py（先设好 DRIVER / ONEBOT_WS_URLS 环境变量）。
-5. 验收：QQ 小号给机器人发 /bot status、/岸宝帮助、岸宝 你好，收到守岸人人格回复即接入成功。
-6. 排障：powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 nonebot-smoke、startup-smoke、	ransport-smoke、online-transport-smoke 均只读，不发送 QQ 消息。
+5. 验收：QQ 小号给机器人发 /bot status、/bot logs info 10、/岸宝帮助、岸宝 你好；/bot status 返回健康状态且 /bot logs 可查询即接入成功。
+6. 排障：powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 nonebot-smoke、startup-smoke、transport-smoke、online-transport-smoke 均只读，不发送 QQ 消息。
 
 ## 3. GsCore 接入（游戏查询核心，可选）
 
@@ -93,7 +96,7 @@ eceipt_state=sent 即为对话链路正常。
 
 - [ ] 控制台真实模型对话：语气/动作括号/世界观符合需求（不达标则停下修人格，不进订阅/解析验收）
 - [ ] llm-smoke ok=true；chat-smoke llm_status=ok、receipt_state=sent
-- [ ] NapCat 反向 WS 连接成功，QQ 收到 /bot status 回复
+- [ ] nb orm check 无待升级迁移（PostgreSQL/asyncpg）；NapCat 反向 WS 连接成功，QQ 收到 /bot status、/bot logs 回复
 - [ ] （可选）gscore-smoke 只读通过
 - [ ] powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 verify 通过
 
@@ -102,6 +105,7 @@ eceipt_state=sent 即为对话链路正常。
 - 文件：data/runtime_events.log（一行一条：2026-08-22 20:54:44.639 [INFO] event=... 字段=值）。
 - 等级：INFO / WARNING / ERROR（BOT_RUNTIME_LOG_LEVEL 可设 DEBUG/INFO/WARNING/ERROR）。
 - 自动记录：启动、机器人连接/断开（含 NapCat 反向 WS）、NoneBot 适配器日志、订阅推送成功/失败、订阅轮询异常等。
+- 管理员需先在 .env 配置 `BOT_ADMIN_USER_IDS=["你的QQ号", ...]` 并重启机器人，才能使用下面的日志查询。
 - QQ 内查询（仅管理员）：/bot logs（最近 50 条 INFO+）、/bot logs warning 20、/bot logs error。
 - 本地查询：Get-Content data\runtime_events.log -Tail 50。
 

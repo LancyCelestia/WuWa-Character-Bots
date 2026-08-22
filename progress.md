@@ -1,4 +1,4 @@
-﻿# 进度记录
+# 进度记录
 
 ## 2026-07-05
 
@@ -482,3 +482,39 @@
 ### 验收状态
 - 全量 pytest：640 passed（含各代理新增 ~62 项订阅/解析测试）。
 - 剩余：最终 verify、清理临时评估环境、提交。
+
+
+## 2026-08-22：SQLite ORM 底座 + NapCat token 接入（验收前）
+
+- 补齐 `nonebot-plugin-orm[sqlite]`（安装 aiosqlite 0.22.1），pyproject 依赖同步改为 `nonebot-plugin-orm[sqlite]>=0.8.3`。
+- `.env` 与 `.env.example` 增加 `SQLALCHEMY_DATABASE_URL=sqlite+aiosqlite:///data/nonebot_orm.sqlite3`，修复启动时「没有数据库」。
+- `.env.prod` 的 OneBot 反向 WS 改为 `ws://127.0.0.1:3001/?access_token=<本地token>`，token 仅存本地、不写文档或日志。
+- 新增 `tests/test_project_config_contract.py`：校验 ORM sqlite 依赖、数据库连接串与 `nb orm`/`nb run` 文档契约。
+- 更新 `docs/napcat-setup.md`、`docs/acceptance-manual.md`、`GIT.md`、`README.md`：数据库初始化步骤、NapCat token 配置与中文提交信息规范。
+
+### 烟测发现并修复的两处真问题
+- 驱动组合必须为 `~fastapi+~httpx+~websockets`：仅有 `~fastapi+~httpx` 时 OneBot V11 会打印 `does not support websocket client connections` 并忽略 `ONEBOT_WS_URLS`，导致连不上 NapCat。
+- `plugins/bot_unified_runtime/__init__.py` 在 `from __future__ import annotations` 下把 `Bot/Event/T_State` 只做了函数内局部导入，NoneBot 注册 handler 时按模块 globals 解析 ForwardRef 失败；已改为模块级导入，startup-smoke 的 matcher_count 从异常中断恢复到 10。
+
+### QQ 实测后的第二轮修复
+- `/bot status` 曾被安全审查误拦：状态正文里的 `api_key=set` 命中“明显密钥形态”正则；已让 reviewer 只拦截真实密钥形态（`set/missing/[redacted]` 占位值放行），并新增两条回归测试。
+- 已把管理员 QQ 写入 `.env`：`BOT_ADMIN_USER_IDS=["3865067623","1722380002"]`（本地文件，不入库），重启后 `/bot logs` 等管理员命令可用。
+- 全量 pytest 更新为 655 passed，机器人重启后已重新连接 NapCat（Bot 3958874605）。
+
+
+## 2026-08-23：命令体验、点歌模式与向量知识库落地
+
+- 对话输出：新增 roleplay 分行格式化，成功 LLM 回复中括号动作与说话拆段。
+- 命令路由：wiki/epic/weather/today/music 支持 `/`、`!`、`！` 前缀与 ASCII 大小写；中文订阅命令与 `/岸宝<功能>` 昵称命令接入统一 pipeline。
+- 点歌：新增 `/点歌模式`（管理员、RuntimeSettingsStore 持久化），支持音频文件/语音/链接/卡片四种输出。
+- 媒体发送：本地 image/record/video/file 相对路径自动转绝对路径，修复卡片解析成功但 OneBot 发送失败问题。
+- 向量知识库：新增 OpenAI-compatible embedding provider、SQLite 向量库、关键词跨文件检索回退；`BOT_KNOWLEDGE_FILES` 接入四份用户材料。
+- 全量 pytest：705 passed。
+
+## 2026-08-23：PostgreSQL 落地与多实例共享底座
+- 按用户选择，PostgreSQL 17.11 已安装到 C:\Software\PostgreSQL\17（端口 5432，服务 postgresql-x64-17 自动启动），安装器在 C:\Software\_installers（哈希已校验）。
+- 创建 chatbot 数据库与 bot_a/bot_b/shared schema；连接串密码中的 @ 编码为 %40 后写入本地 .env（不入库）。
+- ORM 驱动改用 asyncpg：psycopg 异步与 Windows 默认 ProactorEventLoop 不兼容，实测 nb run 会启动失败；asyncpg 下 nb orm upgrade/check 与真实 nb run 全部通过，OneBot V11 已连接 NapCat。
+- 修复 bot_share_groups 缺少列表校验器导致 smoke 配置加载失败的问题（新增字符串/JSON 输入回归测试）。
+- scripts/dev.ps1 verify 内 pytest 统一把 TMP/TEMP 指向 .pytest_tmp_ci，规避 Windows 沙箱 WinError 5。
+- 验收：全量 pytest 711 passed，scripts/dev.ps1 verify 通过。

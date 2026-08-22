@@ -1234,3 +1234,11 @@ def test_chat_smoke_runs_full_local_pipeline(tmp_path):
     assert result["capability_id"] == "bot.chat"
     assert "还没有接上外面的模型" in result["reply_text"]
     assert result["audit_events"] == ["sent"]
+
+
+def test_plugin_keeps_adapter_annotations_in_module_globals():
+    module = importlib.import_module("plugins.bot_unified_runtime")
+
+    assert getattr(module, "Event", None) is not None
+    assert getattr(module, "Bot", None) is not None
+    assert getattr(module, "T_State", None) is not None

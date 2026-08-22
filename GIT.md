@@ -9,6 +9,20 @@
 - 密钥、cookie、数据库、日志都放在 `.env` 和 `data/` 里，提交时不会带上。
 - 换机器只需：克隆仓库 → 复制 `.env.example` 为 `.env` → 填配置 → `scripts/dev.ps1 install`。
 
+## 0.5 提交信息规范（必须遵守）
+
+每条 commit message 必须用中文写清两件事：
+
+1. **改了什么**：这次提交具体修改了哪些内容；
+2. **有什么效果**：修改后解决了什么问题或带来了什么收益。
+
+示例：
+
+```text
+feat(config): 接入 SQLite ORM 底座，解决启动时无数据库的问题，并为后续 ORM 插件提供持久化支持
+```
+
+禁止使用 `update`、`fix`、`tmp` 这类没有说明的提交信息。
 ## 1. 第一次拿到仓库
 
 ```powershell
@@ -22,7 +36,7 @@ powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 verify
 ## 2. 日常存档（推荐：每完成一个小改动就存一次）
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/git.ps1 save "feat: 新增时梗层"
+powershell -ExecutionPolicy Bypass -File scripts/git.ps1 save "feat: 新增时梗层，让机器人能对特定时间梗给出符合人格的回应"
 ```
 
 等价于 `git add -A && git commit -m "..."`。**存档粒度越小，回滚越精准。**
@@ -81,7 +95,7 @@ git stash                   # 未提交的改动先收起来（可 git stash pop
 ```powershell
 git checkout -b feat/my-feature     # 开分支
 # ... 改代码、跑 scripts/dev.ps1 verify ...
-powershell -ExecutionPolicy Bypass -File scripts/git.ps1 save "feat: xxx"
+powershell -ExecutionPolicy Bypass -File scripts/git.ps1 save "feat: 新增xxx能力，解决xxx问题"
 git checkout main                   # 完成后合并
 git merge --ff-only feat/my-feature
 ```

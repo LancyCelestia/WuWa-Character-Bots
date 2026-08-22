@@ -30,7 +30,7 @@ from plugins.bot_unified_runtime.sources.today_history import (
     format_history_text,
 )
 
-_QUERY_RE = re.compile(r"^历史上的今天\s*(?P<arg>.*)$")
+_QUERY_RE = re.compile(r"^[/!！]?历史上的今天\s*(?P<arg>.*)$")
 _TIME_RE = re.compile(r"(\d{1,2})[:：](\d{1,2})")
 
 

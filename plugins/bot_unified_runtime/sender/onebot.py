@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Protocol
 
 from plugins.bot_unified_runtime.audit import redact_private_debug
@@ -178,16 +179,24 @@ def _segment_from_mixed_part(part: dict[str, Any]) -> OneBotMessageSegment | Non
         file_ref = _string_value(part.get("file")) or _string_value(part.get("url"))
         if not file_ref:
             return None
+        file_ref = _resolve_local_file_ref(file_ref)
         return {"type": "record", "data": {"file": file_ref}}
     if part_type == "video":
         file_ref = _string_value(part.get("file")) or _string_value(part.get("url"))
         if not file_ref:
             return None
+        file_ref = _resolve_local_file_ref(file_ref)
         data: dict[str, Any] = {"file": file_ref}
         for key in ("cover", "thumb"):
             if part.get(key):
                 data[key] = _string_value(part.get(key))
         return {"type": "video", "data": data}
+    if part_type == "file":
+        file_ref = _string_value(part.get("file")) or _string_value(part.get("url"))
+        if not file_ref:
+            return None
+        file_ref = _resolve_local_file_ref(file_ref)
+        return {"type": "file", "data": {"file": file_ref}}
     if part_type == "music":
         # CQ:music 卡片：{"type":"qq","id":"..."} 或 {"type":"163","id":"..."}
         music_type = _string_value(part.get("music_type"))
@@ -202,6 +211,17 @@ def _text_segment(text: str) -> OneBotMessageSegment:
     return {"type": "text", "data": {"text": text}}
 
 
+def _resolve_local_file_ref(file_ref: str) -> str:
+    if not file_ref:
+        return file_ref
+    if file_ref.startswith(("http://", "https://", "file://", "base64://", "data:")):
+        return file_ref
+    path = Path(file_ref)
+    if path.exists():
+        return str(path.resolve())
+    return file_ref
+
+
 def _image_segment(content_ref: dict[str, Any]) -> OneBotMessageSegment | None:
     file_ref = (
         _string_value(content_ref.get("file"))
@@ -210,6 +230,7 @@ def _image_segment(content_ref: dict[str, Any]) -> OneBotMessageSegment | None:
     )
     if not file_ref:
         return None
+    file_ref = _resolve_local_file_ref(file_ref)
     data: dict[str, Any] = {"file": file_ref}
     for key in ("cache", "proxy", "timeout"):
         if key in content_ref and isinstance(content_ref[key], (bool, int, str)):
