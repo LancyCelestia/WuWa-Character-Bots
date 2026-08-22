@@ -518,3 +518,12 @@
 - 修复 bot_share_groups 缺少列表校验器导致 smoke 配置加载失败的问题（新增字符串/JSON 输入回归测试）。
 - scripts/dev.ps1 verify 内 pytest 统一把 TMP/TEMP 指向 .pytest_tmp_ci，规避 Windows 沙箱 WinError 5。
 - 验收：全量 pytest 711 passed，scripts/dev.ps1 verify 通过。
+
+## 2026-08-23：通用 HTML 卡片渲染 + B站 PGC/直播/动态字段 + 商品解析
+
+- 参考 MIT 万能解析器（astrbot_plugin_parser，Copyright (c) 2024 Les Freire）落地通用信息卡渲染：
+  新增 `output/card_render/`（RenderPayload 模型 + 桥接 + 1440×960 通用模板），B站/小红书等深解析自动渲染卡片 PNG，失败降级文本；已写入 THIRD_PARTY_NOTICES.md 保留 MIT 出处。
+- B站解析补强：PGC 按 season_type 细分番剧/电影/纪录片/国创/电视剧/综艺（page_type/badge/detail.episodes），直播补分区/标签/封面/截图，动态补图片/作者，视频补作者。
+- 新增 B站商品解析（`platforms_bilibili_goods.py`）：魔力赏市集列表接口按 itemsId 匹配（需 cookies.txt 登录态），会员购走 og 兜底，全部失败时浅层降级、不打断消息链路。
+- 验收：全量 pytest 737 passed；scripts/dev.ps1 verify、startup-smoke、nonebot-smoke 通过；nb orm check 无新升级、nb run 链路正常。
+- 真实只读烟测：B站市集列表接口当前返回空列表（需设备指纹），商品解析会按设计回退 og/浅层降级；其余 B站 PGC/直播/动态字段与通用卡片渲染由固定响应测试覆盖。

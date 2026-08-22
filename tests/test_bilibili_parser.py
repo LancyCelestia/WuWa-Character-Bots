@@ -531,3 +531,292 @@ def test_parse_opus_real_detail_modules_list(monkeypatch):
     assert "图片数量：1" in item.summary
     assert "1200×675" in item.summary
     assert item.cover_url.endswith("x.png")
+
+
+# ---------- PGC 细分 / 直播细节 / 动态图片与作者 ----------
+
+
+def test_parse_bangumi_season_type_guochuang_detail(monkeypatch):
+    calls: list[str] = []
+
+    def fake_http_get_json(url, **kwargs):
+        calls.append(url)
+        if "pgc/view/web/season" in url:
+            return {
+                "code": 0,
+                "result": {
+                    "season_id": 999,
+                    "season_type": 4,
+                    "title": "测试国创",
+                    "evaluate": "国创简介",
+                    "episodes": [
+                        {
+                            "index": 1,
+                            "long_title": "第1话 开端",
+                            "duration": 7200000,
+                            "cover": "https://i0.hdslb.com/ep1.jpg",
+                        },
+                        {
+                            "index": 2,
+                            "title": "第2话",
+                            "duration": 1500,
+                            "cover": "",
+                        },
+                    ],
+                    "seasons": [
+                        {"season_id": 998, "title": "第一季"},
+                        {"season_id": 999, "season_title": "第二季"},
+                    ],
+                    "cover": "https://i0.hdslb.com/cover.jpg",
+                },
+            }
+        if "pgc/web/season/stat" in url:
+            return {
+                "code": 0,
+                "result": {"follow": 5200, "views": 999, "favorites": 100},
+            }
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(pb, "http_get_json", fake_http_get_json)
+
+    item = pb.parse_bilibili("https://www.bilibili.com/bangumi/play/ss999")
+
+    assert item.item_kind == "bangumi"
+    assert item.page_type == "guochuang"
+    assert item.badge == "国创"
+    assert item.detail["episodes"] == [
+        {
+            "index": 1,
+            "title": "第1话 开端",
+            "duration_seconds": 7200,
+            "cover": "https://i0.hdslb.com/ep1.jpg",
+        },
+        {"index": 2, "title": "第2话", "duration_seconds": 1500},
+    ]
+    assert item.detail["related"] == [
+        {"title": "第一季", "url": "https://www.bilibili.com/bangumi/play/ss998"},
+        {"title": "第二季", "url": "https://www.bilibili.com/bangumi/play/ss999"},
+    ]
+    assert item.stats["追番"] == 5200
+
+
+def test_parse_bangumi_season_type_mapping(monkeypatch):
+    def fake_http_get_json(url, **kwargs):
+        if "pgc/view/web/season" in url:
+            season_type = int(url.rsplit("season_id=", 1)[1])
+            return {
+                "code": 0,
+                "result": {
+                    "season_id": season_type,
+                    "season_type": season_type,
+                    "title": f"类型{season_type}",
+                },
+            }
+        if "pgc/web/season/stat" in url:
+            return {"code": 0, "result": {}}
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(pb, "http_get_json", fake_http_get_json)
+
+    expected = {
+        1: ("bangumi", "番剧"),
+        2: ("movie", "电影"),
+        3: ("documentary", "纪录片"),
+        5: ("tv", "电视剧"),
+        7: ("variety", "综艺"),
+    }
+    for season_type, (page_type, badge) in expected.items():
+        item = pb.parse_bilibili(
+            f"https://www.bilibili.com/bangumi/play/ss{season_type}"
+        )
+        assert item.page_type == page_type
+        assert item.badge == badge
+
+
+def test_parse_bangumi_ep_has_page_type_and_episodes(monkeypatch):
+    calls: list[str] = []
+
+    def fake_http_get_json(url, **kwargs):
+        calls.append(url)
+        if "pgc/view/web/season" in url:
+            return {
+                "code": 0,
+                "result": {
+                    "season_id": 4242,
+                    "season_type": 2,
+                    "title": "测试电影",
+                    "episodes": [
+                        {
+                            "index": 1,
+                            "title": "正片",
+                            "duration": 1800,
+                            "cover": "https://i0.hdslb.com/movie.jpg",
+                        }
+                    ],
+                },
+            }
+        if "pgc/web/season/stat" in url:
+            return {"code": 0, "result": {"follow": 7}}
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(pb, "http_get_json", fake_http_get_json)
+
+    item = pb.parse_bilibili("https://www.bilibili.com/bangumi/play/ep4242")
+
+    assert item.item_id == "4242"
+    assert item.page_type == "movie"
+    assert item.badge == "电影"
+    assert item.detail["episodes"][0]["title"] == "正片"
+    assert item.detail["episodes"][0]["duration_seconds"] == 1800
+    assert any("pgc/view/web/season?ep_id=4242" in url for url in calls)
+
+
+def test_parse_live_detail_fields(monkeypatch):
+    def fake_http_get_json(url, **kwargs):
+        if "getInfoByRoom" in url:
+            return {
+                "code": 0,
+                "data": {
+                    "room_info": {
+                        "title": "直播详情测试",
+                        "cover": "https://i0.hdslb.com/live-cover.jpg",
+                        "keyframe": "https://i0.hdslb.com/keyframe.jpg",
+                        "online": 42,
+                        "live_status": 1,
+                        "live_start_time": 1750000000,
+                        "parent_area_name": "游戏",
+                        "area_name": "鸣潮",
+                        "tags": ["二游", "实况"],
+                        "description": "直播简介",
+                    },
+                    "anchor_info": {"base_info": {"uname": "主播"}},
+                },
+            }
+        if "Room/get_info" in url:
+            return {"code": -404, "message": "missing"}
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(pb, "http_get_json", fake_http_get_json)
+
+    item = pb.parse_bilibili("https://live.bilibili.com/2077")
+
+    live = item.detail["live"]
+    assert live["area"] == "鸣潮"
+    assert live["parent_area"] == "游戏"
+    assert live["tags"] == ["二游", "实况"]
+    assert live["cover"] == "https://i0.hdslb.com/live-cover.jpg"
+    assert live["keyframe"] == "https://i0.hdslb.com/keyframe.jpg"
+    assert live["title"] == "直播详情测试"
+    assert live["start_time"] == 1750000000
+    assert live["intro"] == "直播简介"
+
+
+def test_parse_live_detail_missing_fields(monkeypatch):
+    def fake_http_get_json(url, **kwargs):
+        if "getInfoByRoom" in url:
+            return {
+                "code": 0,
+                "data": {
+                    "room_info": {"online": 1, "live_status": 0},
+                    "anchor_info": {"base_info": {}},
+                },
+            }
+        if "Room/get_info" in url:
+            return {"code": -404}
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(pb, "http_get_json", fake_http_get_json)
+
+    item = pb.parse_bilibili("https://live.bilibili.com/1")
+
+    assert item.item_kind == "live"
+    assert item.detail == {}
+
+
+def test_parse_opus_detail_images_and_author(monkeypatch):
+    payload = {
+        "code": 0,
+        "data": {
+            "item": {
+                "modules": {
+                    "module_author": {
+                        "name": "图文UP",
+                        "avatar": "https://i0.hdslb.com/face.png",
+                        "signature": "签名内容",
+                        "fans": 1234,
+                    },
+                    "module_dynamic": {
+                        "desc": {"text": "多图动态"},
+                        "major": {
+                            "opus": {
+                                "pics": [
+                                    {"url": "https://i0.hdslb.com/p1.png"},
+                                    {"url": "https://i0.hdslb.com/p2.png"},
+                                ]
+                            }
+                        },
+                    },
+                    "module_stat": {"like": {"count": 1}},
+                }
+            }
+        },
+    }
+
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sources.parsers.platforms_bilibili.build_wbi_signed_url",
+        lambda url, params, **kw: url + "?signed=1",
+    )
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sources.parsers.platforms_bilibili.http_get_json",
+        lambda url, **kw: payload,
+    )
+
+    item = pb._parse_opus(
+        "1238218464227754004",
+        "https://www.bilibili.com/opus/1238218464227754004",
+    )
+
+    assert item.detail["images"] == [
+        "https://i0.hdslb.com/p1.png",
+        "https://i0.hdslb.com/p2.png",
+    ]
+    assert item.detail["author"] == {
+        "name": "图文UP",
+        "avatar": "https://i0.hdslb.com/face.png",
+        "signature": "签名内容",
+        "fans": 1234,
+    }
+
+
+def test_lookup_video_author_detail(monkeypatch):
+    def fake_http_get_json(url, **kwargs):
+        return {
+            "code": 0,
+            "data": {
+                "bvid": "BV1xx411c7mB",
+                "title": "作者详情测试",
+                "owner": {
+                    "name": "视频UP",
+                    "face": "https://i0.hdslb.com/face.png",
+                },
+                "card": {
+                    "name": "视频UP",
+                    "face": "https://i0.hdslb.com/face.png",
+                    "sign": "视频签名",
+                    "fans": 9999,
+                },
+                "pic": "",
+                "desc": "",
+                "pages": [{"cid": 1}],
+                "stat": {},
+            },
+        }
+
+    monkeypatch.setattr(pb, "http_get_json", fake_http_get_json)
+
+    item = pb._lookup_video_by_id("BV1xx411c7mB", "bvid")
+
+    assert item.detail["author"]["name"] == "视频UP"
+    assert item.detail["author"]["avatar"] == "https://i0.hdslb.com/face.png"
+    assert item.detail["author"]["signature"] == "视频签名"
+    assert item.detail["author"]["fans"] == 9999

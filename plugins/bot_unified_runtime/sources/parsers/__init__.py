@@ -22,6 +22,9 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import (
     PlatformParse,
     parse_bilibili,
 )
+from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili_goods import (
+    parse_bilibili_goods,
+)
 from plugins.bot_unified_runtime.sources.parsers.platforms_allcpp import parse_allcpp
 from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
     parse_douyin,
@@ -77,6 +80,17 @@ _PLATFORM_RULES: list[tuple[str, str, list[str], ParseFn, int]] = [
         ],
         parse_bilibili,
         10,
+    ),
+    (
+        "bilibili_goods",
+        "B站商品",
+        [
+            r"mall\.bilibili\.com/[^\s]+",
+            r"show\.bilibili\.com/platform/detail\.html\?[^\s]*id=\d+",
+            r"bilibili\.com/h5/mall[^\s]*",
+        ],
+        parse_bilibili_goods,
+        11,
     ),
     (
         "douyin",
@@ -233,6 +247,7 @@ _MUSIC_SEARCH_PROVIDERS: list[tuple[str, str, Callable[[str], PlatformParse | No
 # parser_id → Cookie 提供方的平台键（无 cookie 需求的平台不在此列）。
 _PARSER_COOKIE_PLATFORM: dict[str, str] = {
     "bilibili": "bilibili",
+    "bilibili_goods": "bilibili",
     "douyin": "douyin",
     "xiaohongshu": "xiaohongshu",
     "youtube": "youtube",

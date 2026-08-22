@@ -193,6 +193,27 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
     owner_mid = _safe_int(owner.get("mid"))
     if owner_mid:
         author_extra = _author_enrichment(owner_mid, cookie_header=cookie_header)
+    video_author: dict = {}
+    if owner.get("name"):
+        video_author["name"] = str(owner["name"])
+    if owner.get("face"):
+        video_author["avatar"] = str(owner["face"])
+    card = data.get("card") or {}
+    if isinstance(card, dict):
+        for dst_key, src_keys in (
+            ("name", ("name",)),
+            ("avatar", ("face", "avatar")),
+            ("signature", ("sign", "signature")),
+            ("fans", ("fans", "follower", "fans_count")),
+        ):
+            for src_key in src_keys:
+                value = card.get(src_key)
+                if value not in (None, ""):
+                    video_author[dst_key] = value
+                    break
+    video_detail: dict = {}
+    if video_author:
+        video_detail["author"] = video_author
     return PlatformParse(
         platform="bilibili",
         item_id=str(data.get("bvid") or video_id),
@@ -206,6 +227,7 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
         + (f"?p=1&cid={cid}" if False else ""),
         stats=stats,
         parse_depth="deep",
+        detail=video_detail,
     )
 
 
@@ -274,6 +296,74 @@ def _parse_live(room_id: str, url: str, *, cookie_header: str = "") -> PlatformP
             guards = ""
     if guards:
         summary_lines.append(guards)
+    live_detail: dict = {}
+    if room.get("area_name"):
+        live_detail["area"] = str(room["area_name"])
+    if room.get("parent_area_name"):
+        live_detail["parent_area"] = str(room["parent_area_name"])
+    raw_live_tags = room.get("tags")
+    if raw_live_tags:
+        if isinstance(raw_live_tags, str):
+            live_tags = [tag for tag in re.split(r"[,，\s]+", raw_live_tags) if tag]
+        elif isinstance(raw_live_tags, list):
+            live_tags = [str(tag) for tag in raw_live_tags if tag not in (None, "")]
+        else:
+            live_tags = [str(raw_live_tags)]
+        if live_tags:
+            live_detail["tags"] = live_tags
+    if room.get("cover"):
+        live_detail["cover"] = str(room["cover"])
+    if room.get("keyframe"):
+        live_detail["keyframe"] = str(room["keyframe"])
+    if room.get("title"):
+        live_detail["title"] = str(room["title"])
+    live_start = _safe_int(room.get("live_start_time"))
+    if live_start is not None:
+        live_detail["start_time"] = live_start
+    if room.get("description"):
+        live_detail["intro"] = str(room["description"]).strip()
+    # 关键帧等字段由 Room/get_info 尽力补充，失败不影响主解析。
+    try:
+        extra_payload = http_get_json(
+            f"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}",
+            referer="https://live.bilibili.com/",
+            cookie=cookie_header,
+        )
+        extra_data = (extra_payload or {}).get("data") or {}
+        extra_room = extra_data.get("room_info") or extra_data
+        for src_key, dst_key in (
+            ("area_name", "area"),
+            ("parent_area_name", "parent_area"),
+            ("cover", "cover"),
+            ("keyframe", "keyframe"),
+            ("title", "title"),
+            ("description", "intro"),
+        ):
+            if dst_key not in live_detail:
+                value = extra_room.get(src_key)
+                if value not in (None, ""):
+                    live_detail[dst_key] = (
+                        str(value).strip() if src_key == "description" else str(value)
+                    )
+        if "tags" not in live_detail:
+            extra_tags = extra_room.get("tags")
+            if extra_tags:
+                if isinstance(extra_tags, str):
+                    parsed_tags = [tag for tag in re.split(r"[,，\s]+", extra_tags) if tag]
+                elif isinstance(extra_tags, list):
+                    parsed_tags = [
+                        str(tag) for tag in extra_tags if tag not in (None, "")
+                    ]
+                else:
+                    parsed_tags = [str(extra_tags)]
+                if parsed_tags:
+                    live_detail["tags"] = parsed_tags
+        if "start_time" not in live_detail:
+            extra_start = _safe_int(extra_room.get("live_start_time"))
+            if extra_start is not None:
+                live_detail["start_time"] = extra_start
+    except Exception:  # noqa: BLE001
+        pass
     return PlatformParse(
         platform="bilibili",
         item_id=room_id,
@@ -285,6 +375,7 @@ def _parse_live(room_id: str, url: str, *, cookie_header: str = "") -> PlatformP
         canonical_url=f"https://live.bilibili.com/{room_id}",
         stats=stats,
         parse_depth="deep",
+        detail={"live": live_detail} if live_detail else {},
     )
 
 
@@ -488,6 +579,7 @@ def _parse_opus(opus_id: str, url: str, *, cookie_header: str = "") -> PlatformP
             stats[label] = value
     summary_lines: list[str] = []
     cover = ""
+    image_urls: list[str] = []
     # 新版图文：图片在 paragraphs 的 pic.pics 里（旧版 draw/opus 路径继续兼容）。
     if isinstance(dynamic_mod.get("paragraphs"), list):
         for paragraph in dynamic_mod.get("paragraphs") or []:
@@ -495,6 +587,10 @@ def _parse_opus(opus_id: str, url: str, *, cookie_header: str = "") -> PlatformP
                 continue
             pic_block = paragraph.get("pic") or {}
             pics = pic_block.get("pics") or []
+            for pic in pics:
+                pic_url = str((pic or {}).get("url") or "")
+                if pic_url:
+                    image_urls.append(pic_url)
             if pics and "图片数量" not in str(summary_lines):
                 summary_lines.append(f"图片数量：{len(pics)}")
                 for index, pic in enumerate(pics[:4], start=1):
@@ -514,6 +610,10 @@ def _parse_opus(opus_id: str, url: str, *, cookie_header: str = "") -> PlatformP
             summary_lines.append(f"BV：{archive_bvid}（可发 /bot download 该视频链接下载）")
     draw = major.get("draw") or {}
     pics = draw.get("items") or []
+    for pic in pics:
+        pic_src = str((pic or {}).get("src") or "")
+        if pic_src:
+            image_urls.append(pic_src)
     if pics:
         summary_lines.append(f"图片数量：{len(pics)}")
         for index, pic in enumerate(pics[:4], start=1):
@@ -530,6 +630,10 @@ def _parse_opus(opus_id: str, url: str, *, cookie_header: str = "") -> PlatformP
         summary_lines.append(f"标题：{opus.get('title')}")
     if opus.get("pics"):
         summary_lines.append(f"图片数量：{len(opus.get('pics'))}")
+        for pic in opus.get("pics") or []:
+            pic_url = str((pic or {}).get("url") or "")
+            if pic_url:
+                image_urls.append(pic_url)
     if pics:
         cover = str(pics[0].get("src") or "")
     elif (opus.get("pics") or []):
@@ -542,6 +646,16 @@ def _parse_opus(opus_id: str, url: str, *, cookie_header: str = "") -> PlatformP
         summary_lines.append("话题：" + "、".join(topic_names))
     if desc:
         summary_lines.append(f"正文：{str(desc).strip()[:300]}")
+    detail_author: dict = {}
+    for key in ("name", "avatar", "signature", "fans"):
+        value = author_mod.get(key)
+        if value not in (None, ""):
+            detail_author[key] = value
+    detail: dict = {}
+    if image_urls:
+        detail["images"] = image_urls
+    if detail_author:
+        detail["author"] = detail_author
     return PlatformParse(
         platform="bilibili",
         item_id=opus_id,
@@ -557,6 +671,7 @@ def _parse_opus(opus_id: str, url: str, *, cookie_header: str = "") -> PlatformP
         ),
         stats=stats,
         parse_depth="deep",
+        detail=detail,
     )
 
 
@@ -564,6 +679,14 @@ def _parse_opus(opus_id: str, url: str, *, cookie_header: str = "") -> PlatformP
 
 _BANGUMI_VIEW_API = "https://api.bilibili.com/pgc/view/web/season"
 _BANGUMI_STAT_API = "https://api.bilibili.com/pgc/web/season/stat"
+_SEASON_TYPE_MAP: dict[int, tuple[str, str]] = {
+    1: ("bangumi", "番剧"),
+    2: ("movie", "电影"),
+    3: ("documentary", "纪录片"),
+    4: ("guochuang", "国创"),
+    5: ("tv", "电视剧"),
+    7: ("variety", "综艺"),
+}
 
 
 def _bangumi_og_fallback(page_url: str, *, cookie_header: str = "") -> PlatformParse:
@@ -611,6 +734,10 @@ def _parse_bangumi(page_url: str, *, cookie_header: str = "") -> PlatformParse:
         if stat_payload.get("code") != 0:
             raise ParseHttpError(f"bilibili bangumi stat api code={stat_payload.get('code')}")
         stat = stat_payload.get("result") or {}
+        season_type = _safe_int(result.get("season_type"))
+        if season_type is None:
+            season_type = _safe_int(result.get("type"))
+        page_type, badge = _SEASON_TYPE_MAP.get(season_type or 0, ("", ""))
         title = str(
             result.get("title")
             or result.get("season_title")
@@ -635,6 +762,51 @@ def _parse_bangumi(page_url: str, *, cookie_header: str = "") -> PlatformParse:
         evaluate = str(result.get("evaluate") or "").strip()
         if len(evaluate) > 300:
             evaluate = evaluate[:300] + "…"
+        detail: dict = {}
+        detail_episodes: list[dict] = []
+        for episode in episodes:
+            if not isinstance(episode, dict):
+                continue
+            episode_item: dict = {}
+            index_value = episode.get("index")
+            if index_value is None:
+                index_value = episode.get("ep_index")
+            if index_value is not None:
+                episode_item["index"] = index_value
+            title_value = str(
+                episode.get("long_title") or episode.get("title") or ""
+            ).strip()
+            if title_value:
+                episode_item["title"] = title_value
+            duration_value = _safe_int(episode.get("duration"))
+            if duration_value is not None:
+                episode_item["duration_seconds"] = (
+                    duration_value // 1000 if duration_value > 3600 else duration_value
+                )
+            cover_value = str(episode.get("cover") or "")
+            if cover_value:
+                episode_item["cover"] = cover_value
+            if episode_item:
+                detail_episodes.append(episode_item)
+        if detail_episodes:
+            detail["episodes"] = detail_episodes
+        related: list[dict] = []
+        for season in result.get("seasons") or []:
+            if not isinstance(season, dict):
+                continue
+            season_item_id = _safe_int(season.get("season_id"))
+            if season_item_id is None:
+                continue
+            related.append(
+                {
+                    "title": str(
+                        season.get("title") or season.get("season_title") or ""
+                    ).strip(),
+                    "url": f"https://www.bilibili.com/bangumi/play/ss{season_item_id}",
+                }
+            )
+        if related:
+            detail["related"] = related
         summary_lines: list[str] = []
         if type_name:
             summary_lines.append(f"类型：{type_name}")
@@ -654,6 +826,9 @@ def _parse_bangumi(page_url: str, *, cookie_header: str = "") -> PlatformParse:
             value = _safe_int(stat.get(key))
             if value is not None:
                 stats[label] = value
+        follow = _safe_int(stat.get("follow"))
+        if follow is not None:
+            stats["追番"] = follow
         return PlatformParse(
             platform="bilibili",
             item_id=str(season_id),
@@ -665,6 +840,9 @@ def _parse_bangumi(page_url: str, *, cookie_header: str = "") -> PlatformParse:
             canonical_url=page_url,
             stats=stats,
             parse_depth="deep",
+            page_type=page_type,
+            badge=badge,
+            detail=detail,
         )
     except Exception:  # noqa: BLE001 - 深度接口失败回退 og 浅层解析。
         return _bangumi_og_fallback(page_url, cookie_header=cookie_header)

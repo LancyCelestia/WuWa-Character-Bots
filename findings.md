@@ -210,3 +210,12 @@ b orm 流程。
 - EDB PostgreSQL 17 安装器可静默安装：--mode unattended --unattendedmodeui none --prefix/--datadir/--superpassword/--serverport/--servicename；服务创建需 UAC 提权，退出码 0 且数据目录初始化即成功。
 - URL 中密码含 @ 必须编码为 %40；NoneBot 环境变量值不自动做 URL 解码，需在连接串里预编码。
 - nonebot-plugin-orm 的 _engines/_metadatas 由 driver on_startup 初始化，命令行迁移需 nb-cli 正常加载插件链；nb-cli 1.7 无 --env-file 参数，.env/.env.prod 由 nonebot.init 自动加载。
+
+## 2026-08-23：B站商品与卡片渲染结论
+
+- B站魔力赏市集列表接口：POST https://mall.bilibili.com/mall-magic-c/internet/c2c/v2/list，请求体 {sortType, priceFilters:["0-100000001"], discountFilters:["0-101"], categoryFilter, nextId}，需登录 Cookie，未登录返回 code=83001002，且会触发 -412 风控。
+- 返回 data.data[] 字段：c2cItemsId/c2cItemsName/showPrice/showMarketPrice/price(分)/uid/uname/uface/detailDtoList[].name|img|marketPrice|itemsId；c2cItemsId 即详情页 itemsId。
+- 市集商品详情页为 SPA，无稳定公开详情 JSON；当前方案是列表接口按 itemsId 翻页匹配（最多 5 页），未命中/风控则 og 或浅层降级。
+- 参考实现 BiliMagicMarketScraper / BilibiliMall-Crawler 均为 MIT/Apache 兼容的自研参照，仅用于确认请求体字段，代码未并入。
+- astrbot_plugin_parser 为 MIT（Copyright (c) 2024 Les Freire），仅移植模板结构与 RenderPayload 字段设计，GPL 的 bilibili-api-python 未使用。
+- 2026-08-23 真实只读烟测：市集列表接口带完整登录 Cookie（含 buvid3/4）+ Origin 仍返回 code=0/data.data=null，说明当前需要设备指纹等 Web 逆向信息；本项目按契约实现列表匹配，真实环境命中为空时自动走 og/浅层降级，不阻断消息链路。

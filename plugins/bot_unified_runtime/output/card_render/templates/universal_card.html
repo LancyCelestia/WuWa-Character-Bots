@@ -1,0 +1,1365 @@
+<!--
+  Universal card HTML template.
+
+  Ported and adapted from astrbot_plugin_parser
+  (https://github.com/Zhalslar/astrbot_plugin_parser).
+
+  MIT License
+
+  Copyright (c) 2024 Les Freire
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width={{ card_width }}, initial-scale=1.0">
+<style>
+/* ===== 通用平台设计系统 ===== */
+:root {
+    --pc: {{ platform_color }};
+    --pc-dark: {{ platform_color_dark }};
+    --pc-light: {{ platform_color_light }};
+    --pc-mid: {{ platform_color }}55;
+    --pc-rgb: {{ platform_color_rgb }};
+    --blue: #23ade5;
+    --text-main: #18191c;
+    --text-sub: #61666d;
+    --text-secondary: #9499a0;
+    --bg-body: #f1f2f3;
+    --bg-card: #ffffff;
+    --radius-lg: 24px;
+    --radius-md: 16px;
+    --radius-sm: 8px;
+    --shadow-card: 0 16px 40px rgba(var(--pc-rgb), 0.15), 0 4px 12px rgba(0,0,0,0.05);
+    --font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    --font-scale: {{ font_scale | default(1.0) }};
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: var(--font-family);
+    background: linear-gradient(135deg, var(--pc-light) 0%, #ffffff 40%, var(--pc-light) 100%);
+    padding: 15px;
+    display: flex;
+    justify-content: center;
+}
+
+/* ===== 卡片容器 ===== */
+.card {
+    width: {{ card_width }};
+    max-width: 100%;
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+    position: relative;
+    zoom: {{ scale_factor | default(font_scale | default(1.0)) }};
+}
+
+/* 顶部装饰条 */
+.card::before {
+    content: '';
+    display: block;
+    height: 5px;
+    background: linear-gradient(90deg, var(--pc), color-mix(in srgb, var(--pc) 60%, #ffb1cc), color-mix(in srgb, var(--pc) 40%, #c8e3ff));
+}
+
+/* ===== Banner ===== */
+.banner-img {
+    width: 100%;
+    max-height: 180px;
+    object-fit: cover;
+    display: block;
+}
+
+/* ===== Header ===== */
+.header {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--pc) 10%, #ffffff) 0%, color-mix(in srgb, var(--pc) 5%, #ffffff) 100%);
+    padding: 20px 24px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.header-left {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    flex: 1;
+    min-width: 0;
+}
+
+.avatar-container {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    flex-shrink: 0;
+}
+
+.avatar-img {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    box-shadow: 0 4px 8px var(--pc-mid);
+    object-fit: cover;
+}
+
+.pendant-img {
+    position: absolute;
+    top: -20%;
+    left: -20%;
+    width: 140%;
+    height: 140%;
+    z-index: 2;
+    pointer-events: none;
+}
+
+.platform-mark {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    color: var(--pc-dark);
+    border: 2px solid var(--pc);
+    box-sizing: border-box;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+    z-index: 3;
+    box-shadow: 0 2px 6px rgba(var(--pc-rgb), 0.28);
+}
+
+.platform-mark.bolt {
+    background: #fff7d6;
+    color: #b77900;
+    border-color: #f0b429;
+    font-size: 13px;
+}
+
+.platform-mark.verified-blue {
+    background: #1d9bf0;
+    color: #fff;
+    border-color: #fff;
+    font-size: 13px;
+}
+
+.platform-mark.verified-gold {
+    background: #f5b83b;
+    color: #fff;
+    border-color: #fff;
+    font-size: 13px;
+}
+
+.header-info {
+    flex: 1;
+    min-width: 0;
+}
+
+/* 第1行：博主名称 + 平台标签 */
+.header-top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 8px;
+}
+
+.author-name {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--pc);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.platform-badge {
+    font-size: 11px;
+    background: var(--pc-light);
+    color: var(--pc);
+    border-radius: 6px;
+    padding: 2px 10px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-left: auto;
+    margin-right: 12px;
+    align-self: flex-start;
+    margin-top: 0;
+}
+
+/* 第2行：UID + handle + stats_line */
+.meta-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    flex-wrap: wrap;
+}
+
+.uid-tag {
+    font-size: 11px;
+    color: var(--pc);
+    background: var(--pc-light);
+    border: 1px solid var(--pc-mid);
+    border-radius: 12px;
+    padding: 1px 8px;
+    white-space: nowrap;
+}
+
+.handle-tag {
+    font-size: 11px;
+    color: var(--pc);
+    background: var(--pc-light);
+    border: 1px solid var(--pc-mid);
+    border-radius: 12px;
+    padding: 1px 8px;
+    white-space: nowrap;
+}
+
+.id-tag {
+    font-size: 11px;
+    color: #008ac5;
+    background: rgba(0,138,197,0.1);
+    border: 1px solid rgba(0,138,197,0.3);
+    border-radius: 12px;
+    padding: 1px 8px;
+    white-space: nowrap;
+}
+
+.meta-stat {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+/* 第3行：博主签名 */
+.signature {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 第4行：认证信息 */
+.official-title {
+    font-size: 11px;
+    color: var(--pc);
+    font-weight: 600;
+    margin-top: 2px;
+}
+
+/* 第5行：发布时间 */
+.publish-time {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+/* 二维码 */
+.qrcode-container {
+    background: #fff;
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    flex-shrink: 0;
+}
+
+.qrcode-img {
+    width: 88px;
+    height: 88px;
+    object-fit: contain;
+    display: block;
+}
+
+/* ===== 标题 ===== */
+.title {
+    margin: 8px 24px;
+    padding: 6px 16px;
+    font-size: 14px;
+    color: var(--pc);
+    background: var(--pc-light);
+    border-left: 4px solid var(--pc);
+    border-radius: 6px;
+    width: fit-content;
+    max-width: calc(100% - 48px);
+}
+
+/* ===== 内容区 ===== */
+.content {
+    padding: 0 24px 16px;
+    background: #fff;
+}
+
+.text-body {
+    font-size: 16px;
+    color: var(--text-main);
+    line-height: 1.65;
+    margin: 4px 0;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.text-body img {
+    max-height: 22px;
+    vertical-align: text-bottom;
+}
+
+.text-body a {
+    color: var(--blue);
+    background: rgba(35, 173, 229, 0.08);
+    border-radius: 4px;
+    text-decoration: none;
+}
+
+.text-body .hashtag {
+    color: var(--blue) !important;
+    font-weight: 600;
+}
+
+/* ===== 统计信息栏 ===== */
+.stats-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 8px 24px;
+    background: #fafafa;
+    border-top: 1px solid #f0f0f0;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.stat-item {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.stat-item span {
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+/* ===== 图片区 ===== */
+.image-gallery {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 0;
+}
+
+.image-gallery .img-box {
+    width: 100%;
+    border-radius: 12px;
+    overflow: hidden;
+    border: none;
+    box-shadow: none;
+}
+
+.image-gallery .img-box img {
+    width: 100%;
+    height: auto;
+    display: block;
+    filter: drop-shadow(0 2px 8px rgba(0,0,0,0.07));
+}
+
+/* 竖图适配：宽高比 < 0.7 的图片不填满宽度，居中缩小展示 */
+.image-gallery .img-box.portrait {
+    width: 62%;
+    margin: 0 auto;
+    border: none;
+    background: transparent;
+}
+
+.image-gallery .img-box.portrait img {
+    width: 100%;
+    height: auto;
+    display: block;
+    filter: drop-shadow(0 4px 16px rgba(0,0,0,0.05));
+}
+
+/* ===== 置顶评论 / 热评 ===== */
+.pinned-comment {
+    background: #fffbf0;
+    border: none;
+    border-left: 3px solid #ff9800;
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    margin: 8px 0;
+}
+
+.pinned-comment .pc-header {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.pinned-comment .pc-avatar {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.pinned-comment .pc-author {
+    color: var(--pc);
+    font-weight: 600;
+}
+
+.pinned-comment .pc-content {
+    font-size: 14px;
+    color: var(--text-main);
+    line-height: 1.5;
+}
+
+.pinned-comment .pc-likes {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+.pinned-comment .pc-badge {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: #ff9800;
+    color: #fff;
+    font-weight: 600;
+    vertical-align: middle;
+    margin-right: 6px;
+    line-height: 1.4;
+}
+
+/* 热评使用平台主题色做左侧色条 */
+.hot-comment {
+    background: #fafafa;
+    border: none;
+    border-left: 3px solid var(--pc);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    margin: 8px 0;
+}
+
+.hot-comment .pc-header {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.hot-comment .pc-avatar {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.hot-comment .pc-badge {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--pc);
+    color: #fff;
+    font-weight: 600;
+    vertical-align: middle;
+    margin-right: 6px;
+    line-height: 1.4;
+}
+
+.hot-comment .pc-author { color: var(--pc); font-weight: 600; }
+.hot-comment .pc-content { font-size: 14px; color: var(--text-main); line-height: 1.5; }
+.hot-comment .pc-likes { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+
+/* ===== 评论区 ===== */
+.comments-section {
+    border-top: 1px solid #f0f0f0;
+    padding: 12px 0;
+}
+
+.comments-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-main);
+    margin-bottom: 8px;
+    padding: 0 24px;
+}
+
+.comment-item {
+    display: flex;
+    gap: 8px;
+    padding: 8px 24px;
+}
+
+.comment-item + .comment-item {
+    border-top: 1px solid #f5f5f5;
+}
+
+.comment-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #f0f0f0;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.comment-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.comment-avatar-fallback {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--pc-light);
+    color: var(--pc);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.comment-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.comment-author {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.comment-text {
+    font-size: 13px;
+    color: var(--text-main);
+    line-height: 1.5;
+    margin-top: 2px;
+}
+
+.comment-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+/* ===== 转发框（forward / repost 两种格式共用） ===== */
+.forward-box {
+    background: #f7f8fa;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin: 8px 0;
+    border-left: 5px solid var(--pc-mid);
+}
+
+.forward-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.forward-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 1px solid #fff;
+}
+
+.forward-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: #555;
+}
+
+.forward-text {
+    font-size: 15px;
+    color: #444;
+    line-height: 1.6;
+    word-break: break-word;
+}
+
+.forward-text img {
+    max-height: 22px;
+    vertical-align: text-bottom;
+}
+
+/* ===== 页脚 ===== */
+.video-meta {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding: 4px 24px;
+    align-items: center;
+}
+.video-meta .v-duration {
+    background: var(--pc-light);
+    color: var(--pc);
+    padding: 2px 10px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 11px;
+}
+.video-meta .v-desc {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ===== 扩展 CSS 类（提取自 inline style） ===== */
+.author-uid-small {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+.author-url {
+    font-size: 11px;
+    color: var(--pc);
+    text-decoration: none;
+}
+.forward-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-main);
+    margin-bottom: 4px;
+}
+.forward-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 6px;
+}
+.forward-time {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+.live-section {
+    padding: 0 24px 16px;
+}
+.live-cover-wrap {
+    margin-bottom: 12px;
+    border-radius: 12px;
+    overflow: hidden;
+}
+.live-cover-img {
+    width: 100%;
+    display: block;
+    border-radius: 12px;
+    object-fit: cover;
+    max-height: 360px;
+}
+.live-title-badge {
+    display: inline-block;
+    font-size: 11px;
+    color: #fff;
+    background: var(--pc);
+    border-radius: 4px;
+    padding: 1px 6px;
+    margin-right: 6px;
+    vertical-align: middle;
+    font-weight: 600;
+}
+.live-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 8px 24px 4px;
+    align-items: center;
+}
+.live-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 0 24px 8px;
+    align-items: center;
+}
+.live-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin: 8px 24px 0;
+    word-break: break-word;
+}
+
+.footer {
+    background: linear-gradient(180deg, #f3f6f8 0%, #ebedf0 100%);
+    padding: 16px 24px;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+}
+
+.source-badge {
+    font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    font-weight: 800;
+    font-size: 13px;
+    color: var(--text-secondary);
+    background: var(--pc-light);
+    border-radius: 50px;
+    padding: 5px 16px 5px 6px;
+    box-shadow: 0 1px 3px var(--pc-mid);
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+.footer-bot-dot {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    background: var(--pc);
+    font-size: 12px;
+    line-height: 1;
+    box-shadow: 0 2px 6px var(--pc-mid);
+}
+.footer-bot-avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: #fff;
+    box-shadow: 0 2px 6px var(--pc-mid);
+}
+.footer-bot-name {
+    color: var(--pc);
+    font-weight: 900;
+}
+.footer-parser-text {
+    color: var(--text-secondary);
+    font-weight: 700;
+}
+
+/* ===== Compact Mode: Music/Lyrics/Song List ===== */
+.compact-cover {
+    position: relative; width: 100%; max-height: 500px; aspect-ratio: auto;
+    overflow: hidden; background: linear-gradient(135deg, #2a2a3e 0%, #1a1a2e 100%);
+}
+.compact-cover img { width: 100%; height: 100%; max-height: 500px; object-fit: contain; display: block; }
+.compact-cover.compact-ratio-1-1 { aspect-ratio: 1 / 1; }
+.compact-cover.compact-ratio-1-1 img { object-fit: cover; }
+.compact-cover.compact-ratio-4-3 { aspect-ratio: 4 / 3; }
+.compact-cover.compact-ratio-4-3 img { object-fit: cover; }
+.compact-cover.compact-ratio-16-9 { aspect-ratio: 16 / 9; }
+.compact-cover.compact-ratio-16-9 img { object-fit: cover; }
+.compact-cover-overlay {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    padding: 24px 20px 16px; background: linear-gradient(transparent, rgba(0,0,0,0.6));
+}
+.compact-cover-title { font-size: 22px; font-weight: 800; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+.compact-cover-artist { font-size: 14px; color: rgba(255,255,255,0.85); margin-top: 4px; }
+.compact-song-info { padding: 16px 20px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.compact-song-info .tag { font-size: 12px; padding: 2px 10px; border-radius: 6px; white-space: nowrap; }
+.compact-song-info .tag-platform { color: #fff; background: var(--pc); }
+.compact-song-info .tag-duration { color: var(--text-sub); background: #f4f5f7; }
+.compact-song-info .tag-id { color: var(--text-secondary); background: rgba(0,0,0,0.04); }
+.compact-lyrics-preview {
+    padding: 12px 20px; font-size: 13px; color: var(--text-sub);
+    line-height: 1.8; max-height: 200px; overflow: hidden; position: relative;
+}
+.compact-lyrics-preview::after {
+    content: ''; position: absolute; bottom: 0; left: 0; right: 0;
+    height: 40px; background: linear-gradient(transparent, #fff);
+}
+.compact-lyrics-body { padding: 20px 24px; font-size: 15px; color: var(--text-main); line-height: 2; text-align: center; }
+.compact-translation { padding: 12px 24px; font-size: 14px; color: var(--text-sub); line-height: 1.8; text-align: center; border-top: 1px solid #f0f0f0; }
+.compact-song-list { padding: 0 16px 16px; }
+.compact-song-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; }
+.compact-song-item:nth-child(even) { background: rgba(var(--pc-rgb), 0.03); }
+.compact-song-index {
+    width: 28px; height: 28px; border-radius: 8px; display: flex;
+    align-items: center; justify-content: center; font-size: 13px;
+    font-weight: 700; color: var(--text-secondary); background: #f4f5f7; flex-shrink: 0;
+}
+.compact-song-item:nth-child(-n+3) .compact-song-index { color: #fff; background: var(--pc); }
+.compact-song-item:nth-child(1) .compact-song-index { background: #ff4757; }
+.compact-song-item:nth-child(2) .compact-song-index { background: #ff6b81; }
+.compact-song-item:nth-child(3) .compact-song-index { background: #ff8fa3; }
+.compact-song-info-detail { flex: 1; min-width: 0; }
+.compact-song-name { font-size: 15px; font-weight: 600; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.compact-song-artist { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.compact-song-duration { font-size: 12px; color: var(--text-secondary); flex-shrink: 0; }
+</style>
+</head>
+<body>
+<div class="card">
+    {% if banner %}
+    <img class="banner-img" src="{{ banner }}" alt="banner" onerror="this.style.display='none'">
+    {% endif %}
+
+    <!-- ===== Header 五行结构 ===== -->
+    <div class="header">
+        <div class="header-left">
+            <div class="avatar-container">
+                {% if avatar %}
+                <img class="avatar-img" src="{{ avatar }}" alt="avatar" onerror="this.style.display='none'">
+                {% endif %}
+                {% if pendant %}
+                <img class="pendant-img" src="{{ pendant }}" alt="pendant" onerror="this.style.display='none'">
+                {% endif %}
+                {% if platform_mark %}
+                <span class="platform-mark {{ platform_mark_style | default('text', true) }}">{{ platform_mark }}</span>
+                {% endif %}
+            </div>
+            <div class="header-info">
+                <!-- L1: 博主名称 -->
+                <div class="header-top-row">
+                    <div class="author-name">{{ name }}{% if extra_uid and extra_uid != uid and extra_uid != av_id and extra_uid != bvid %}<span class="author-uid-small">{{ extra_uid }}</span>{% endif %}{% if extra_url %}<a class="author-url" href="{{ extra_url }}">{{ extra_url_display | default(extra_url, true) }}</a>{% endif %}{% if header_l1_badges %}{% for badge in header_l1_badges %}<span class="uid-tag" title="{{ badge.title | default('', true) }}" style="background:var(--pc-light);color:var(--pc-dark);font-weight:600;">{{ badge.value }}</span>{% endfor %}{% else %}{% if official_badge %}<span class="uid-tag" style="background:var(--pc-light);color:var(--pc-dark);font-weight:600;">{{ official_badge }}</span>{% endif %}{% if official_title %}<span class="uid-tag" style="background:var(--pc-light);color:var(--pc);">{{ official_title }}</span>{% endif %}{% if stats and stats.official_title %}<span class="uid-tag" style="background:var(--pc-light);color:var(--pc);">{{ stats.official_title }}</span>{% endif %}{% endif %}</div>
+                </div>
+                <!-- L2: UID + handle + stats_line（粉丝/关注/获赞） -->
+                <div class="meta-row">
+                    {% if header_l2_items %}
+                    {% for item in header_l2_items %}
+                    <span class="{{ item['class'] | default('id-tag', true) }}">{{ item.label }}{% if item.label %} {% endif %}{{ item.value }}</span>
+                    {% endfor %}
+                    {% else %}
+                    {% if uid %}<span class="uid-tag">UID {{ uid }}</span>{% endif %}
+                    {% if handle %}<span class="handle-tag">Handle {{ handle }}</span>{% endif %}
+                    {% if bvid %}<span class="id-tag">BVID {{ bvid }}</span>{% endif %}
+                    {% if av_id %}<span class="id-tag">AV {{ av_id }}</span>{% endif %}
+                    {% if extra_dynamic_id %}<span class="id-tag">动态 {{ extra_dynamic_id }}</span>{% endif %}
+                    {% if extra_status_id %}<span class="id-tag">帖子 {{ extra_status_id }}</span>{% endif %}
+                    {% if extra_video_id %}<span class="id-tag">视频 {{ extra_video_id }}</span>{% endif %}
+                    {% if extra_live_id %}<span class="id-tag">直播 {{ extra_live_id }}</span>{% endif %}
+                    {% if extra_space_id %}<span class="id-tag">空间 {{ extra_space_id }}</span>{% endif %}
+                    {% if extra_favlist_id %}<span class="id-tag">收藏夹 {{ extra_favlist_id }}</span>{% endif %}
+                    {% if extra_bangumi_id %}<span class="id-tag">番剧 {{ extra_bangumi_id }}</span>{% endif %}
+                    {% endif %}
+                </div>
+                <!-- L3: 博主签名 -->
+                {% if header_desc_oneline %}
+                <div class="signature">{{ header_desc_oneline }}</div>
+                {% elif signature %}
+                <div class="signature">{{ signature }}</div>
+                {% endif %}
+                <!-- L4: 个人总数据 -->
+                <div class="meta-row" style="flex-wrap:wrap;">
+                {% if header_l4_items %}
+                {% for item in header_l4_items %}<span class="meta-stat">{{ item.value }} {{ item.label }}</span>{% endfor %}
+                {% else %}
+                {% if follower_count %}<span class="meta-stat">{{ follower_count }} 粉丝</span>{% endif %}
+                {% if stats and stats.followers %}<span class="meta-stat">{{ stats.followers }} 粉丝</span>{% endif %}
+                {% if stats and stats.following %}<span class="meta-stat">{{ stats.following }} 关注</span>{% endif %}
+                {% if extra_post_count %}<span class="meta-stat">{{ extra_post_count }} {{ extra_post_label | default("帖子", true) }}</span>{% endif %}
+                {% if stats and stats.total_views %}<span class="meta-stat">{{ stats.total_views }} 播放</span>{% endif %}
+                {% if stats and stats.user_likes %}<span class="meta-stat">{{ stats.user_likes }} 获赞</span>{% endif %}
+                {% if extra_members_count %}<span class="meta-stat">{{ extra_members_count }} {{ extra_members_label | default("会员", true) }}</span>{% endif %}
+                {% endif %}
+                </div>
+                <!-- L5: 发布时间 -->
+                {% if timestamp %}
+                <div class="publish-time">{{ timestamp }}{% if edit_timestamp %} · 编辑于 {{ edit_timestamp }}{% endif %}</div>
+                {% endif %}
+            </div>
+        </div>
+        {% if platform_official_name or platform_display or type %}
+        <span class="platform-badge">{{ platform_official_name | default(platform_display | default(type)) }}</span>
+        {% endif %}
+        {% if qrcode %}
+        <div class="qrcode-container">
+            <img class="qrcode-img" src="{{ qrcode }}" alt="QR" onerror="this.parentElement.style.display='none'">
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- 标题 -->
+    {% if title %}
+    <div class="title">{{ title }}</div>
+    {% endif %}
+
+    {% if video_duration or video_desc %}
+    <div class="video-meta">
+        {% if video_duration %}<span class="v-duration">{{ video_duration }}</span>{% endif %}
+        {% if video_desc %}<span class="v-desc">{{ video_desc }}</span>{% endif %}
+    </div>
+    {% endif %}
+
+    <!-- 统计栏 -->
+    {% if stats_bar_items %}
+    <div class="stats-bar">
+        {% for item in stats_bar_items %}
+        <span class="stat-item {{ item.get('class', '') }}"><span>{{ item.value }}</span> {{ item.label }}</span>
+        {% endfor %}
+    </div>
+    {% elif stats %}
+    <div class="stats-bar">
+        {% if stats.views %}<span class="stat-item"><span>{{ stats.views }}</span> 播放</span>{% endif %}
+        {% if stats.danmaku %}<span class="stat-item"><span>{{ stats.danmaku }}</span> 弹幕</span>{% endif %}
+        {% if stats.likes %}<span class="stat-item"><span>{{ stats.likes }}</span> 赞</span>{% endif %}
+        {% if stats.favorites %}<span class="stat-item"><span>{{ stats.favorites }}</span> 收藏</span>{% endif %}
+        {% if stats.coins %}<span class="stat-item"><span>{{ stats.coins }}</span> 硬币</span>{% endif %}
+        {% if stats.comments %}<span class="stat-item"><span>{{ stats.comments }}</span> 评论</span>{% endif %}
+        {% if stats.reposts %}<span class="stat-item"><span>{{ stats.reposts }}</span> 转发</span>{% endif %}
+        {% if stats.following %}<span class="stat-item"><span>{{ stats.following }}</span> 关注</span>{% endif %}
+        {% if stats.followers %}<span class="stat-item"><span>{{ stats.followers }}</span> 粉丝</span>{% endif %}
+        {% if stats.user_likes %}<span class="stat-item"><span>{{ stats.user_likes }}</span> 获赞</span>{% endif %}
+        {% if stats.total_views %}<span class="stat-item"><span>{{ stats.total_views }}</span> 总播放</span>{% endif %}
+        {% if stats.quotes %}<span class="stat-item"><span>{{ stats.quotes }}</span> 引用</span>{% endif %}
+        {% if stats.bookmarks %}<span class="stat-item"><span>{{ stats.bookmarks }}</span> 书签</span>{% endif %}
+        {% if stats.attention %}<span class="stat-item"><span>{{ stats.attention }}</span> 关注度</span>{% endif %}
+        {% if stats.fansclub %}<span class="stat-item"><span>{{ stats.fansclub }}</span> 粉丝团</span>{% endif %}
+        {% if stats.high_energy_users %}<span class="stat-item"><span>{{ stats.high_energy_users }}</span> 高能用户</span>{% endif %}
+        {% if stats.fleet_total %}<span class="stat-item"><span>{{ stats.fleet_total }}</span> 舰队</span>{% endif %}
+        {% if stats.captain %}<span class="stat-item"><span>{{ stats.captain }}</span> 舰长</span>{% endif %}
+        {% if stats.admiral %}<span class="stat-item"><span>{{ stats.admiral }}</span> 提督</span>{% endif %}
+        {% if stats.governor %}<span class="stat-item"><span>{{ stats.governor }}</span> 总督</span>{% endif %}
+        {% if stats.is_living %}<span class="stat-item is-live">直播中</span>{% endif %}
+        {% if stats.live_level %}<span class="stat-item">等级 <span>{{ stats.live_level }}</span></span>{% endif %}
+        {% if stats.top3_rank %}<span class="stat-item">高能榜: {{ stats.top3_rank }}</span>{% endif %}
+        {% if stats.live_viewers %}<span class="stat-item"><span>{{ stats.live_viewers }}</span> 观众</span>{% endif %}
+        {% if stats.live_rank %}<span class="stat-item"><span>{{ stats.live_rank }}</span> 排名</span>{% endif %}
+        {% if stats.live_watched %}<span class="stat-item"><span>{{ stats.live_watched }}</span> 看过</span>{% endif %}
+        {% if stats.live_popularity %}<span class="stat-item"><span>{{ stats.live_popularity }}</span> 人气</span>{% endif %}
+        {% for item in stats_extra_items %}<span class="stat-item"><span>{{ item.value }}</span> {{ item.label }}</span>{% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- 多P视频分P列表 -->
+    {% if video_pages %}
+    <div class="video-pages" style="border-top:1px solid #f0f0f0;padding:12px 24px;">
+        <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:8px;">分P列表 (共{{ video_pages|length }}P)</div>
+        {% for page in video_pages %}
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0;{% if not loop.last %}border-bottom:1px solid #f5f5f5;{% endif %}">
+            {% if page.cover %}<img src="{{ page.cover }}" style="width:80px;height:45px;border-radius:6px;object-fit:cover;flex-shrink:0;" onerror="this.style.display='none'">{% endif %}
+            <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;color:var(--text-main);line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ page.title }}</div>
+                {% if page.duration %}<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">{{ (page.duration / 60) | int }}:{{ '%02d' % (page.duration % 60) }}</div>{% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- ===== 内容区 ===== -->
+    <div class="content">
+        {% if text %}
+        <div class="text-body">{{ text | safe }}</div>
+        {% endif %}
+
+        {% if summary and not text %}
+        <div class="text-body">{{ summary | safe }}</div>
+        {% endif %}
+
+        <!-- 图片 -->
+        {% if image_urls %}
+        <div class="image-gallery">
+            {% for img in image_urls %}
+            <div class="img-box"><img src="{{ img }}" alt="image" loading="lazy" onerror="this.parentElement.style.display='none'"></div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- 置顶评论 -->
+        {% if pinned_comment %}
+        <div class="pinned-comment">
+            <div class="pc-header">
+                <span class="pc-badge">置顶</span>
+                {% if pinned_comment.avatar %}<img class="pc-avatar" src="{{ pinned_comment.avatar }}" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ pinned_comment.author }}</span>
+                {% if pinned_comment.time %}
+                <span> · {{ pinned_comment.time }}</span>
+                {% endif %}
+                {% if pinned_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ pinned_comment.level }}</span>{% endif %}
+                {% if pinned_comment.title_badge %}<span class="uid-tag" style="font-size:10px;padding:0 6px;background:#fff3e0;color:#e65100;">{{ pinned_comment.title_badge }}</span>{% endif %}
+                {% if pinned_comment.dress %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ pinned_comment.dress }}</span>{% endif %}
+                {% if pinned_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ pinned_comment.handle }}</span>{% endif %}
+            </div>
+            <div class="pc-content">{{ pinned_comment.content }}</div>
+            {% if pinned_comment.images %}
+            <div style="display:flex;gap:4px;margin-top:6px;">
+            {% for img_url in pinned_comment.images %}
+            <img src="{{ img_url }}" style="max-width:80px;max-height:80px;border-radius:6px;" onerror="this.remove()">
+            {% endfor %}
+            </div>
+            {% endif %}
+            {% if pinned_comment.likes %}
+            <div class="pc-likes">{{ pinned_comment.likes }} 赞{% if pinned_comment.replies_count %} · {{ pinned_comment.replies_count }} 回复{% endif %}</div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- 热评 -->
+        {% if hot_comment %}
+        <div class="hot-comment">
+            <div class="pc-header">
+                <span class="pc-badge">热评</span>
+                {% if hot_comment.avatar %}<img class="pc-avatar" src="{{ hot_comment.avatar }}" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ hot_comment.author }}</span>
+                {% if hot_comment.time %}
+                <span> · {{ hot_comment.time }}</span>
+                {% endif %}
+                {% if hot_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ hot_comment.level }}</span>{% endif %}
+                {% if hot_comment.title_badge %}<span class="uid-tag" style="font-size:10px;padding:0 6px;background:#fff3e0;color:#e65100;">{{ hot_comment.title_badge }}</span>{% endif %}
+                {% if hot_comment.dress %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ hot_comment.dress }}</span>{% endif %}
+                {% if hot_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ hot_comment.handle }}</span>{% endif %}
+            </div>
+            <div class="pc-content">{{ hot_comment.content }}</div>
+            {% if hot_comment.likes %}
+            <div class="pc-likes">{{ hot_comment.likes }} 赞{% if hot_comment.replies_count %} · {{ hot_comment.replies_count }} 回复{% endif %}</div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- 评论区 -->
+        {% if comments %}
+        <div class="comments-section">
+            <div class="comments-title">评论区</div>
+            {% for comment in comments %}
+            <div class="comment-item">
+                <div class="comment-avatar">{% if comment.avatar %}<img src="{{ comment.avatar }}" alt="" onerror="this.remove()">{% endif %}</div>
+                <div class="comment-body">
+                    <div class="comment-author">{{ comment.author }}{% if comment.level %} <span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ comment.level }}</span>{% endif %}{% if comment.title_badge %} <span class="uid-tag" style="font-size:10px;padding:0 6px;background:#fff3e0;color:#e65100;">{{ comment.title_badge }}</span>{% endif %}{% if comment.dress %} <span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ comment.dress }}</span>{% endif %}{% if comment.handle %} <span style="font-size:10px;color:var(--text-secondary);">{{ comment.handle }}</span>{% endif %}</div>
+                    <div class="comment-text">{{ comment.content }}</div>
+                    <div class="comment-meta">
+                        {% if comment.time %}{{ comment.time }} · {% endif %}
+                        {{ comment.likes }} 赞
+                        {% if comment.is_hot %}<span style="color:var(--pc)"> 热评</span>{% endif %}
+                        {% if comment.replies_count %} · {{ comment.replies_count }} 回复{% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- 转发（简单格式: forward 字典） -->
+        {% if forward %}
+        <div class="forward-box">
+            <div class="forward-header">
+                {% if forward.avatar %}
+                <img class="forward-avatar" src="{{ forward.avatar }}" alt="" onerror="this.style.display='none'">
+                {% endif %}
+                <span class="forward-name">@{{ forward.name }}</span>
+            </div>
+            {% if forward.title %}
+            <div class="forward-title">{{ forward.title }}</div>
+            {% endif %}
+            {% if forward.text %}
+            <div class="forward-text">{{ forward.text | safe }}</div>
+            {% endif %}
+            {% if forward.image_urls %}
+            <div class="image-gallery">
+                {% for img in forward.image_urls %}
+                <div class="img-box"><img src="{{ img }}" alt="image" loading="lazy" onerror="this.parentElement.style.display='none'"></div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% if forward.platform_display %}
+            <div class="forward-meta">{{ forward.platform_display }}{% if forward.uid %} · UID {{ forward.uid }}{% endif %}</div>
+            {% endif %}
+            {% if forward.stats %}
+            <div class="stats-bar" style="margin-top: 8px; padding: 6px 0; background: transparent; border: none;">
+                {% if forward.stats.views %}<span class="stat-item"><span>{{ forward.stats.views }}</span> 播放</span>{% endif %}
+                {% if forward.stats.danmaku %}<span class="stat-item"><span>{{ forward.stats.danmaku }}</span> 弹幕</span>{% endif %}
+                {% if forward.stats.likes %}<span class="stat-item"><span>{{ forward.stats.likes }}</span> 赞</span>{% endif %}
+                {% if forward.stats.favorites %}<span class="stat-item"><span>{{ forward.stats.favorites }}</span> 收藏</span>{% endif %}
+                {% if forward.stats.coins %}<span class="stat-item"><span>{{ forward.stats.coins }}</span> 硬币</span>{% endif %}
+                {% if forward.stats.comments %}<span class="stat-item"><span>{{ forward.stats.comments }}</span> 评论</span>{% endif %}
+                {% if forward.stats.reposts %}<span class="stat-item"><span>{{ forward.stats.reposts }}</span> 转发</span>{% endif %}
+                {% if forward.stats.quotes %}<span class="stat-item"><span>{{ forward.stats.quotes }}</span> 引用</span>{% endif %}
+                {% if forward.stats.bookmarks %}<span class="stat-item"><span>{{ forward.stats.bookmarks }}</span> 书签</span>{% endif %}
+            </div>
+            {% endif %}
+            {% if forward.timestamp %}
+            <div class="forward-time">{{ forward.timestamp }}</div>
+            {% endif %}
+            {% if forward.pinned_comment %}
+            <div class="pinned-comment" style="margin-top: 8px;">
+                <div class="pc-header"><span class="pc-badge">置顶</span>{% if forward.pinned_comment.avatar %}<img src="{{ forward.pinned_comment.avatar }}" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.pinned_comment.author }}</span>{% if forward.pinned_comment.time %}<span> · {{ forward.pinned_comment.time }}</span>{% endif %}{% if forward.pinned_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ forward.pinned_comment.level }}</span>{% endif %}{% if forward.pinned_comment.title_badge %}<span class="uid-tag" style="font-size:10px;padding:0 6px;background:#fff3e0;color:#e65100;">{{ forward.pinned_comment.title_badge }}</span>{% endif %}{% if forward.pinned_comment.dress %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ forward.pinned_comment.dress }}</span>{% endif %}{% if forward.pinned_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ forward.pinned_comment.handle }}</span>{% endif %}</div>
+                <div class="pc-content">{{ forward.pinned_comment.content }}</div>
+                {% if forward.pinned_comment.likes %}<div class="pc-likes">{{ forward.pinned_comment.likes }} 赞{% if forward.pinned_comment.replies_count %} · {{ forward.pinned_comment.replies_count }} 回复{% endif %}</div>{% endif %}
+            </div>
+            {% endif %}
+            {% if forward.hot_comment %}
+            <div class="pinned-comment" style="margin-top: 8px;">
+                <div class="pc-header"><span class="pc-badge">热评</span>{% if forward.hot_comment.avatar %}<img src="{{ forward.hot_comment.avatar }}" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.hot_comment.author }}</span>{% if forward.hot_comment.time %}<span> · {{ forward.hot_comment.time }}</span>{% endif %}{% if forward.hot_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ forward.hot_comment.level }}</span>{% endif %}{% if forward.hot_comment.title_badge %}<span class="uid-tag" style="font-size:10px;padding:0 6px;background:#fff3e0;color:#e65100;">{{ forward.hot_comment.title_badge }}</span>{% endif %}{% if forward.hot_comment.dress %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ forward.hot_comment.dress }}</span>{% endif %}{% if forward.hot_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ forward.hot_comment.handle }}</span>{% endif %}</div>
+                <div class="pc-content">{{ forward.hot_comment.content }}</div>
+                {% if forward.hot_comment.likes %}<div class="pc-likes">{{ forward.hot_comment.likes }} 赞{% if forward.hot_comment.replies_count %} · {{ forward.hot_comment.replies_count }} 回复{% endif %}</div>{% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- 转发（ParseResult 格式: repost 对象） -->
+        {% if repost %}
+        <div class="forward-box">
+            <div class="forward-header">
+                {% if repost.author and repost.author.avatar %}
+                <img class="forward-avatar" src="{{ repost.author.avatar }}" alt="" onerror="this.style.display='none'">
+                {% endif %}
+                <span class="forward-name">@{{ repost.author.name if repost.author else '' }}</span>
+                {% if repost.extra and repost.extra.uid %}
+                <span style="font-size:11px;color:#999;">UID {{ repost.extra.uid }}</span>
+                {% endif %}
+            </div>
+            {% if repost.title %}
+            <div style="font-size:15px;font-weight:600;color:var(--text-main);margin-bottom:4px">{{ repost.title }}</div>
+            {% endif %}
+            {% if repost.text %}
+            <div class="forward-text">{{ repost.text | safe }}</div>
+            {% endif %}
+            {% if repost.img_contents %}
+            <div class="image-gallery">
+                {% for img in repost.img_contents %}
+                <div class="img-box"><img src="{{ img.source_url }}" alt="image" loading="lazy" onerror="this.parentElement.style.display='none'"></div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% if repost.timestamp %}
+            <div style="font-size:11px;color:#999;margin-top:4px;">{{ repost.timestamp }}</div>
+            {% endif %}
+            {% if repost.stats %}
+            <div class="stats-bar" style="margin-top: 8px; padding: 6px 0; background: transparent; border: none;">
+                {% if repost.stats.views %}<span class="stat-item"><span>{{ repost.stats.views }}</span> 播放</span>{% endif %}
+                {% if repost.stats.danmaku %}<span class="stat-item"><span>{{ repost.stats.danmaku }}</span> 弹幕</span>{% endif %}
+                {% if repost.stats.likes %}<span class="stat-item"><span>{{ repost.stats.likes }}</span> 赞</span>{% endif %}
+                {% if repost.stats.favorites %}<span class="stat-item"><span>{{ repost.stats.favorites }}</span> 收藏</span>{% endif %}
+                {% if repost.stats.coins %}<span class="stat-item"><span>{{ repost.stats.coins }}</span> 硬币</span>{% endif %}
+                {% if repost.stats.comments %}<span class="stat-item"><span>{{ repost.stats.comments }}</span> 评论</span>{% endif %}
+                {% if repost.stats.reposts %}<span class="stat-item"><span>{{ repost.stats.reposts }}</span> 转发</span>{% endif %}
+            </div>
+            {% endif %}
+            {% if repost.pinned_comment %}
+            <div class="pinned-comment" style="margin-top: 8px;">
+                <div class="pc-header">
+                    <span class="pc-badge">置顶</span>
+                    <span class="pc-author">{{ repost.pinned_comment.author_name or repost.pinned_comment.author }}</span>
+                    {% if repost.pinned_comment.time %}
+                    <span> · {{ repost.pinned_comment.time }}</span>
+                    {% endif %}
+                    {% if repost.pinned_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ repost.pinned_comment.level }}</span>{% endif %}
+                    {% if repost.pinned_comment.title_badge %}<span class="uid-tag" style="font-size:10px;padding:0 6px;background:#fff3e0;color:#e65100;">{{ repost.pinned_comment.title_badge }}</span>{% endif %}
+                    {% if repost.pinned_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ repost.pinned_comment.handle }}</span>{% endif %}
+                </div>
+                <div class="pc-content">{{ repost.pinned_comment.content }}</div>
+                {% if repost.pinned_comment.likes %}
+                <div class="pc-likes">{{ repost.pinned_comment.likes }} 赞{% if repost.pinned_comment.replies_count %} · {{ repost.pinned_comment.replies_count }} 回复{% endif %}</div>
+                {% endif %}
+            </div>
+            {% endif %}
+            {% if repost.hot_comment %}
+            <div class="pinned-comment" style="margin-top: 8px;">
+                <div class="pc-header">
+                    <span class="pc-badge">热评</span>
+                    <span class="pc-author">{{ repost.hot_comment.author_name or repost.hot_comment.author }}</span>
+                    {% if repost.hot_comment.time %}
+                    <span> · {{ repost.hot_comment.time }}</span>
+                    {% endif %}
+                    {% if repost.hot_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ repost.hot_comment.level }}</span>{% endif %}
+                    {% if repost.hot_comment.title_badge %}<span class="uid-tag" style="font-size:10px;padding:0 6px;background:#fff3e0;color:#e65100;">{{ repost.hot_comment.title_badge }}</span>{% endif %}
+                    {% if repost.hot_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ repost.hot_comment.handle }}</span>{% endif %}
+                </div>
+                <div class="pc-content">{{ repost.hot_comment.content }}</div>
+                {% if repost.hot_comment.likes %}
+                <div class="pc-likes">{{ repost.hot_comment.likes }} 赞{% if repost.hot_comment.replies_count %} · {{ repost.hot_comment.replies_count }} 回复{% endif %}</div>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ===== 直播间信息（page_type == "live" 时显示） ===== -->
+    {% if page_type == "live" %}
+    <div class="live-section">
+        {% if live_cover %}
+        <div class="live-cover-wrap">
+            <img src="{{ live_cover }}" alt="直播封面" class="live-cover-img" onerror="this.style.display='none'">
+        </div>
+        {% endif %}
+        {% if live_screenshot %}
+        <div class="live-cover-wrap">
+            <img src="{{ live_screenshot }}" alt="直播截图" class="live-cover-img" onerror="this.style.display='none'">
+        </div>
+        {% endif %}
+        {% if live_title %}<div class="title"><span class="live-title-badge">直播</span> {{ live_title }}</div>{% endif %}
+        <div class="live-meta">
+            {% if live_duration %}<span class="uid-tag">已直播 {{ live_duration }}</span>{% endif %}
+            {% if live_area %}<span class="uid-tag">{{ live_area }}</span>{% endif %}
+            {% if live_tags %}<span class="uid-tag">{{ live_tags }}</span>{% endif %}
+        </div>
+        <div class="live-stats">
+            {% if live_viewers %}<span class="meta-stat">{{ live_viewers }} 观众</span>{% endif %}
+            {% if live_rank %}<span class="meta-stat">{{ live_rank }}</span>{% endif %}
+            {% if live_replay_views %}<span class="meta-stat">{{ live_replay_views }} 人看过</span>{% endif %}
+            {% if live_popularity %}<span class="meta-stat">人气 {{ live_popularity }}</span>{% endif %}
+        </div>
+        {% if live_desc %}<div class="live-desc">{{ live_desc }}</div>{% endif %}
+    </div>
+    {% endif %}
+
+    <!-- ===== 页面/主页元素 ===== -->
+    {% if page_type in ["space", "user", "profile", "channel", "generic", "article"] and (signature or uid or extra_uid or profile_live_room or official_title or profile_level or profile_birthday or profile_join_date or profile_tags or recent_posts) %}
+    <div style="padding:0 24px 16px;">
+        {% if signature %}<div style="font-size:14px;color:var(--text-sub);line-height:1.6;margin-bottom:12px;">{{ signature }}</div>{% endif %}
+        {% if uid or extra_uid or profile_live_room or official_title or profile_level or profile_birthday or profile_join_date %}
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+            {% if uid %}<span class="uid-tag">UID {{ uid }}</span>{% endif %}
+            {% if extra_uid %}<span class="uid-tag">{{ extra_uid }}</span>{% endif %}
+            {% if profile_live_room %}<span class="uid-tag">直播间 {{ profile_live_room }}</span>{% endif %}
+            {% if official_title %}<span class="uid-tag" style="background:var(--pc-light);color:var(--pc);">{{ official_title }}</span>{% endif %}
+            {% if profile_level %}<span class="uid-tag">Lv.{{ profile_level }}</span>{% endif %}
+            {% if profile_birthday %}<span class="meta-stat">生日: {{ profile_birthday }}</span>{% endif %}
+            {% if profile_join_date %}<span class="meta-stat">加入: {{ profile_join_date }}</span>{% endif %}
+        </div>
+        {% endif %}
+        {% if profile_tags %}
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
+            {% for tag in profile_tags %}<span style="font-size:12px;background:var(--pc-light);color:var(--pc);padding:2px 10px;border-radius:20px;">{{ tag }}</span>{% endfor %}
+        </div>
+        {% endif %}
+        {% if recent_posts %}
+        <div style="margin-top:12px;">
+            <div style="font-size:14px;font-weight:600;color:var(--text-main);margin-bottom:8px;">{% if page_type in ["generic", "article"] %}页面内容{% else %}最近动态{% endif %}</div>
+            {% for post in recent_posts[:5] %}
+            <div style="background:#f7f8fa;border-radius:8px;padding:12px;margin-bottom:8px;">
+                {% if post.sender %}<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">{% if post.sender_avatar %}<img src="{{ post.sender_avatar }}" style="width:20px;height:20px;border-radius:50%;" onerror="this.style.display='none'">{% endif %}<span style="font-size:12px;font-weight:600;color:var(--text-main);">{{ post.sender }}</span>{% if post.sender_time %}<span style="font-size:10px;color:var(--text-secondary);">{{ post.sender_time }}</span>{% endif %}</div>{% endif %}
+                {% if post.title %}<div style="font-size:14px;font-weight:600;color:var(--text-main);margin-bottom:4px;">{{ post.title }}</div>{% endif %}
+                {% if post.video_duration %}<span style="font-size:11px;background:var(--pc-light);color:var(--pc);padding:2px 8px;border-radius:6px;font-weight:600;">{{ post.video_duration }}</span>{% endif %}
+                {% if post.text %}<div style="font-size:13px;color:var(--text-sub);line-height:1.5;">{{ post.text }}</div>{% endif %}
+                {% if post.video_desc %}<div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">{{ post.video_desc }}</div>{% endif %}
+                {% if post.cover %}<img src="{{ post.cover }}" alt="" style="width:100%;border-radius:6px;margin-top:6px;" onerror="this.style.display='none'">{% endif %}
+                {% if post.timestamp %}<div style="font-size:11px;color:var(--text-secondary);margin-top:4px;">{{ post.timestamp }}</div>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+
+    <!-- ===== Compact Mode: Music Cover ===== -->
+    {% if compact_cover and image_urls %}
+    <div class="compact-cover{% if compact_cover_ratio == '1:1' %} compact-ratio-1-1{% elif compact_cover_ratio == '4:3' %} compact-ratio-4-3{% elif compact_cover_ratio == '16:9' %} compact-ratio-16-9{% endif %}">
+        <img src="{{ image_urls[0] }}" alt="cover" onerror="this.style.display='none'">
+        <div class="compact-cover-overlay">
+            <div class="compact-cover-title">{{ title }}{% if title_trans %}<span style="font-size:14px;font-weight:400;color:rgba(255,255,255,0.75);margin-left:6px;">{{ title_trans }}</span>{% endif %}</div>
+            <div class="compact-cover-artist">{{ name }}{% if album_name %}<span style="color:rgba(255,255,255,0.6);margin-left:8px;">{{ album_name }}</span>{% endif %}</div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- ===== Compact Mode: Song Info Tags ===== -->
+    {% if compact_song_info %}
+    <div class="compact-song-info">
+        {% if platform_display %}<span class="tag tag-platform">{{ platform_display }}</span>{% endif %}
+        {% if timestamp %}<span class="tag tag-duration">{{ timestamp }}</span>{% endif %}
+        {% if uid %}<span class="tag tag-id">ID: {{ uid }}</span>{% endif %}
+    </div>
+    {% endif %}
+
+    <!-- ===== Compact Mode: Lyrics Preview ===== -->
+    {% if compact_lyrics_preview and text %}
+    <div class="compact-lyrics-preview">{{ text | safe }}</div>
+    {% endif %}
+
+    <!-- ===== Compact Mode: Full Lyrics ===== -->
+    {% if compact_lyrics_full and text %}
+    <div class="compact-lyrics-body">{{ text | safe }}</div>
+    {% elif compact_lyrics_full %}
+    <div style="padding:40px 24px;text-align:center;color:var(--text-secondary);">暂无歌词</div>
+    {% endif %}
+
+    <!-- ===== Compact Mode: Translation ===== -->
+    {% if compact_translation %}
+    <div class="compact-translation">{{ compact_translation | safe }}</div>
+    {% endif %}
+
+    <!-- ===== Compact Mode: Romanization ===== -->
+    {% if compact_romanization %}
+    <div style="padding:8px 24px 16px;font-size:12px;color:var(--text-secondary);line-height:1.8;text-align:center;">{{ compact_romanization | safe }}</div>
+    {% endif %}
+
+    <!-- ===== Compact Mode: Song List ===== -->
+    {% if songs %}
+    <div class="compact-song-list">
+        {% for item in songs %}
+        <div class="compact-song-item">
+            <div class="compact-song-index">{{ loop.index }}</div>
+            {% if item.cover or item.image_urls %}
+            <img src="{{ item.cover if item.cover else item.image_urls[0] }}" alt="" style="width:48px;height:48px;border-radius:8px;object-fit:cover;flex-shrink:0;" onerror="this.style.display='none'">{% endif %}
+            <div class="compact-song-info-detail">
+                <div class="compact-song-name">{{ item.name }}{% if item.name_trans %}<span style="font-size:12px;color:var(--text-secondary);font-weight:400;margin-left:6px;">{{ item.name_trans }}</span>{% endif %}</div>
+                {% if item.artists %}<div class="compact-song-artist">{{ item.artists }}{% if item.album %}<span style="color:var(--text-main);margin-left:8px;">{{ item.album }}</span>{% endif %}</div>{% endif %}
+                {% if item.comment_count %}<div style="font-size:11px;color:var(--text-secondary);margin-top:1px;"><span style="color:var(--text-main);font-weight:600;">{{ item.comment_count }}</span> 条评论</div>{% endif %}
+                {% if item.lyrics_preview %}<div class="compact-song-lyrics" style="font-size:11px;color:var(--text-secondary);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px;">{{ item.lyrics_preview }}</div>{% endif %}
+            </div>
+            {% if item.duration %}<div class="compact-song-duration">{{ item.duration }}</div>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- ===== Playlist Info ===== -->
+    {% if playlist_creator %}
+    <div style="padding:12px 20px;border-bottom:1px solid #f0f0f0;background:#fafafa;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+            {% if playlist_creator_avatar %}<img src="{{ playlist_creator_avatar }}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;" onerror="this.style.display='none'">{% endif %}
+            <span style="font-size:13px;font-weight:600;color:var(--text-main);">{{ playlist_creator }}</span>
+            {% if playlist_creator_uid %}<span class="uid-tag">{{ playlist_creator_uid }}</span>{% endif %}
+        </div>
+        {% if playlist_create_time or playlist_update_time %}
+        <div style="font-size:11px;color:var(--text-secondary);">
+            {% if playlist_create_time %}创建: {{ playlist_create_time }}{% endif %}
+            {% if playlist_update_time %} · 更新: {{ playlist_update_time }}{% endif %}
+        </div>
+        {% endif %}
+        {% if playlist_play_count or playlist_fav_count or playlist_comment_count or playlist_song_count %}
+        <div style="display:flex;gap:12px;margin-top:6px;font-size:11px;color:var(--text-secondary);">
+            {% if playlist_play_count %}<span><span style="font-weight:600;color:var(--text-main);">{{ playlist_play_count }}</span> 播放</span>{% endif %}
+            {% if playlist_fav_count %}<span><span style="font-weight:600;color:var(--text-main);">{{ playlist_fav_count }}</span> 收藏</span>{% endif %}
+            {% if playlist_comment_count %}<span><span style="font-weight:600;color:var(--text-main);">{{ playlist_comment_count }}</span> 评论</span>{% endif %}
+            {% if playlist_song_count %}<span><span style="font-weight:600;color:var(--text-main);">{{ playlist_song_count }}</span> 首歌</span>{% endif %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- ===== 页脚 ===== -->
+    <div class="footer">
+        <span class="source-badge">{% if bot_avatar_url %}<img class="footer-bot-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="footer-bot-dot">{{ (bot_name | default('A', true))[:1] }}</span>{% endif %}<span class="footer-bot-name">{{ bot_name | default('AstrBot', true) }}</span><span class="footer-parser-text">· {{ platform_official_name or platform_display or type or 'Platform' }} Parser</span></span>
+    </div>
+</div>
+</body>
+</html>

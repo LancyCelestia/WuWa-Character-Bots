@@ -215,7 +215,7 @@ C:\Users\LancyCelestia\.astrbot\data\plugins\astrbot_plugin_parser
 
 消息里出现平台链接时自动解析（ot.content，无需命令前缀），文本卡片失败自动降级为原链接提示：
 
-- 视频/图片/社区：哔哩哔哩（视频/直播/空间/收藏夹/图文动态/番剧/稍后再看）、小红书、抖音、油管（含 YouTube Music/播放列表）、推特/X、小黑盒、米游社、森空岛、库街区、**Pixiv（插画深解析：浏览/喜欢/收藏/评论、多图分镜分辨率、作者作品数与粉丝）**、**Lofter（标签页/数字帖子深解析：正文、喜欢/评论/分享/转发/热度、图片数量与分辨率；主题/精选/趋势页浅层卡片）**、**allcpp 无差别同人站（活动深解析：时间/地址/类型/独家/标签/简介/封面）**、米画师、网易画加。
+- 视频/图片/社区：哔哩哔哩（视频/直播/空间/收藏夹/图文动态/番剧/稍后再看/**商品（会员购/魔力赏市集）**）、小红书、抖音、油管（含 YouTube Music/播放列表）、推特/X、小黑盒、米游社、森空岛、库街区、**Pixiv（插画深解析：浏览/喜欢/收藏/评论、多图分镜分辨率、作者作品数与粉丝）**、**Lofter（标签页/数字帖子深解析：正文、喜欢/评论/分享/转发/热度、图片数量与分辨率；主题/精选/趋势页浅层卡片）**、**allcpp 无差别同人站（活动深解析：时间/地址/类型/独家/标签/简介/封面）**、米画师、网易画加。
 - 音乐：网易云、QQ 音乐、酷狗、酷我、Apple Music、Spotify（点歌搜索与链接解析，见 /bot 帮助）。
 
 海外平台经 BOT_DOWNLOAD_PROXY 走代理（默认 http://127.0.0.1:7890）：油管、推特、Spotify 以及 **Pixiv**（大陆直连不可达）。Lofter/allcpp 无需 cookie 与代理；Lofter 新版 permalink 帖子（/post/{令牌}）的解析接口未公开，当前诚实降级为 og 浅层卡片，待补前端接口。
@@ -228,7 +228,7 @@ list / remove <id> / pause <id> / resume <id> / check <id> / status。群订阅�
 
 | 平台 | 解析 | 订阅 | 机制 / 说明 |
 | --- | --- | --- | --- |
-| B站 | 全覆盖：视频(含分P)/动态/番剧·电影·电视剧·国创·综艺·纪录片/直播/个人主页/收藏夹/合集·全集列表/清单/稍后再看/短链 | UP主(新视频+动态+开播)、直播间、番剧更新、收藏夹/合集新增 | WBI 自签名直连；动态/直播详情需 cookies.txt 登录态 |
+| B站 | 全覆盖：视频(含分P)/动态/番剧·电影·电视剧·国创·综艺·纪录片/直播/个人主页/收藏夹/合集·全集列表/清单/稍后再看/短链/商品(会员购·魔力赏市集) | UP主(新视频+动态+开播)、直播间、番剧更新、收藏夹/合集新增 | WBI 自签名直连；动态/直播详情需 cookies.txt 登录态 |
 | 小红书 | 笔记/搜索结果深解析 + 用户主页 | 博主新笔记/视频 | 签名直连不可用时默认走 Playwright 无头浏览器注入 cookie 兜底（1800s 低频轮询） |
 | 油管/推特/Lofter/Pixiv/allcpp/网易云/米画师/小黑盒/酷我/酷狗/QQ音乐/Apple Music/Spotify | 链接解析已覆盖（米画师/小黑盒/酷我/酷狗为浅层） | 后续按此框架接入 | 机制与稳定性另行记录；部分站点反爬严格，订阅可能易失效 |
 
@@ -289,7 +289,7 @@ BOT_PERSONA_ALT_PROFILES={"gentle":{"display_name":"守岸人·温柔","files":[
 - **关系态度层**：`BOT_USER_PROFILES_FILE` 按用户存称呼/好感度/偏好/态度，注入"对当前用户的态度"分区并轻微调整语气；无档案时按**互动次数自动升级**（≥8 次 familiar，≥30 次 close），陌生人基线兜底（`character/relationship.py`）。
 - **按需梗搜索 + 二次元指数**：时梗默认不注入；检测到"XX是什么梗"时在线搜索，只保留 B站/小红书/萌娘百科等二次元平台来源，过滤不适内容；按来源域名做**确定性评分排序**（萌娘百科 1.0 > B站 0.9 > 小红书 0.8），只用于排序过滤、不进 LLM 判断、零额外 token（`sources/meme_search.py`）。
 - **长回复合并转发**：回复超过 `BOT_RENDER_FORWARD_MIN_CHARS` 自动切块渲染成合并转发（QQ 私聊/群聊），transport 不支持时降级纯文本（`output/renderer.py`）。
-- **HTML/卡片渲染后端接口**：`output/render_backends.py` 定义 `RenderBackend` 契约与 Null/HtmlKit 实现，后续接 HTML→图片、HTML 卡片、小程序卡不改流水线。
+- **HTML/卡片渲染后端接口**：`output/render_backends.py` 定义 `RenderBackend` 契约与 Null/HtmlKit 实现；`output/card_render/` 提供通用信息卡 HTML 模板（1440×960）与 RenderPayload→模板桥接，B站/小红书等深解析结果自动渲染为卡片 PNG，失败降级文本卡片，不改流水线。
 - **文件审计日志**：`BOT_AUDIT_LOG_FILE` 开启 JSONL 脱敏日志（自动轮转），内存/SQLite 审计照常（`audit/file_logger.py`）。
 - **凭据健康检查**：`credential-smoke` 检查 cookie 过期/临近过期；`BOT_CREDENTIAL_CHECK_ENABLED=true` 时 NoneBot 入口按间隔定时检查、审计预警并私聊管理员（`sources/credential_health.py`）。
 - **URL 去跟踪参数**：`sources/url_cleaner.py` 清洗 utm_*/spm/gclid/分享参数等，用于媒体流水线的去重键/缓存键/对外链接。

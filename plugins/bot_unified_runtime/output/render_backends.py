@@ -108,13 +108,17 @@ class PlaywrightRenderBackend:
         height = int(viewport.get("height", 480))
         wait_ms = int(payload.get("wait_ms", 1500))
         try:
+            device_scale_factor = int(payload.get("device_scale_factor", 2))
+        except (TypeError, ValueError):
+            device_scale_factor = 2
+        try:
             with self._lock:
                 with self._sync_playwright() as p:
                     browser = p.chromium.launch()
                     try:
                         page = browser.new_page(
                             viewport={"width": width, "height": height},
-                            device_scale_factor=2,
+                            device_scale_factor=device_scale_factor,
                         )
                         page.set_content(html, wait_until="networkidle")
                         # 等封面图加载（失败则 onerror 隐藏）。

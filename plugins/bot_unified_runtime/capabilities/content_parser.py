@@ -28,6 +28,11 @@ def _render_parse_body(item: Any) -> str:
     lines: list[str] = []
     kind_labels = {
         "video": "视频",
+        "movie": "电影",
+        "tv": "电视剧",
+        "guochuang": "国创",
+        "documentary": "纪录片",
+        "variety": "综艺",
         "music": "音乐",
         "note": "笔记",
         "post": "帖子",
@@ -114,17 +119,40 @@ def build_content_capability(
         from plugins.bot_unified_runtime.output.templates import (
             card_payload_from_parse,
             render_media_card_html,
+            render_universal_card_html,
         )
 
         try:
-            payload = card_payload_from_parse(item)
-            payload["stats"] = {
-                label: value
-                for label, value in payload["stats"].items()
-                if not isinstance(value, (dict, list))
+            platform = str(getattr(item, "platform", "") or "").strip().lower()
+            universal_platforms = {
+                "bilibili", "xiaohongshu", "xhs", "youtube", "twitter", "x",
+                "pixiv", "lofter", "allcpp", "cpp",
+                "netease", "ncm", "qqmusic", "kugou", "kuwo", "apple_music",
+                "spotify",
             }
-            html_text = render_media_card_html(payload)
-            png = render_backend.render_card({"html": html_text})
+            use_universal = bool(
+                getattr(item, "page_type", "")
+                or getattr(item, "badge", "")
+                or getattr(item, "detail", None)
+            ) or platform in universal_platforms
+            if use_universal:
+                payload = card_payload_from_parse(item)
+                html_text = render_universal_card_html(payload)
+                render_payload = {
+                    "html": html_text,
+                    "viewport": {"width": 1440, "height": 960},
+                    "device_scale_factor": 2,
+                }
+            else:
+                payload = card_payload_from_parse(item)
+                payload["stats"] = {
+                    label: value
+                    for label, value in payload["stats"].items()
+                    if not isinstance(value, (dict, list))
+                }
+                html_text = render_media_card_html(payload)
+                render_payload = {"html": html_text}
+            png = render_backend.render_card(render_payload)
             if not png:
                 return None
             from pathlib import Path

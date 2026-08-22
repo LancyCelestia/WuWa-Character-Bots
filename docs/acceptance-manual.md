@@ -99,6 +99,8 @@ chat-smoke 输出 llm_status=ok 且  receipt_state=sent 即为对话链路正�
 - [ ] nb orm check 无待升级迁移（PostgreSQL/asyncpg）；NapCat 反向 WS 连接成功，QQ 收到 /bot status、/bot logs 回复
 - [ ] （可选）gscore-smoke 只读通过
 - [ ] powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 verify 通过
+- [ ] QQ 发一个 B站 链接（视频/动态/番剧/直播/商品）→ 收到卡片 PNG 或可读文本卡（不报“解析失败”）
+- [ ] QQ 发 B站 商品链接（mall.bilibili.com 或 show.bilibili.com）→ 能显示价格/原价/卖家或降级卡片
 
 ## 5.5 运行时日志（毫秒级分级，可查询）
 
@@ -118,3 +120,9 @@ chat-smoke 输出 llm_status=ok 且  receipt_state=sent 即为对话链路正�
 
 .env 里 BOT_COOKIES_FILE=data/platform_cookies.txt。任何日志/审计/消息都不会打印 cookie 值；
 换 cookie 直接覆盖该文件并重启机器人。
+
+## 6.1 链接解析与通用卡片渲染（本轮新增）
+
+- 深解析结果（B站 PGC/直播/动态/商品、小红书等）会走 `output/card_render/` 的通用信息卡模板渲染成 PNG 卡片；渲染后端失败时自动降级为文本卡。
+- B站商品：魔力赏市集（mall.bilibili.com，需要 BOT_COOKIES_FILE 的 bilibili 登录 Cookie）按 itemsId 匹配列表接口；会员购（show.bilibili.com）走 og 兜底；两者都失败时返回浅层降级卡片，不会中断对话。
+- 卡片模板参考 MIT 许可的 astrbot_plugin_parser，出处记录在 THIRD_PARTY_NOTICES.md。

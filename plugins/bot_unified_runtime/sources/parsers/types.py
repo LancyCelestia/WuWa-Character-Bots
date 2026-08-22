@@ -20,3 +20,6 @@ class PlatformParse:
     canonical_url: str = ""
     stats: dict = field(default_factory=dict)
     parse_depth: str = "deep"
+    page_type: str = ""
+    badge: str = ""
+    detail: dict = field(default_factory=dict)

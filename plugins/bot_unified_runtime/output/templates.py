@@ -8,6 +8,11 @@ from __future__ import annotations
 import html
 from typing import Any
 
+from plugins.bot_unified_runtime.output.card_render.bridge import (
+    parse_to_render_payload as _parse_to_render_payload,
+    render_universal_card_html as _render_universal_card_html,
+)
+
 _CARD_CSS = """
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -86,13 +91,32 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
 
 
 def card_payload_from_parse(item: Any) -> dict[str, Any]:
-    """PlatformParse → 卡片 payload（与内容能力共用）。"""
-    return {
-        "title": getattr(item, "title", ""),
-        "platform": getattr(item, "platform", ""),
-        "author": getattr(item, "author_name", ""),
-        "cover_url": getattr(item, "cover_url", ""),
-        "stats": dict(getattr(item, "stats", {}) or {}),
-        "summary": getattr(item, "summary", ""),
-        "footer": getattr(item, "canonical_url", ""),
-    }
+    """PlatformParse → 卡片 payload（与内容能力共用）。
+
+    保留旧媒体卡字段（title/platform/author/cover_url/stats/summary/footer），
+    同时补充通用卡片需要的 page_type/badge/detail 与作者映射；detail 缺失时
+    通用卡片各区块自动隐藏。
+    """
+    payload = _parse_to_render_payload(item).to_dict()
+    detail = dict(getattr(item, "detail", None) or {})
+    page_type = getattr(item, "page_type", "") or getattr(item, "item_kind", "")
+    badge = getattr(item, "badge", "")
+    payload.update(
+        {
+            "title": getattr(item, "title", "") or payload.get("title", ""),
+            "platform": getattr(item, "platform", ""),
+            "author": getattr(item, "author_name", ""),
+            "cover_url": getattr(item, "cover_url", ""),
+            "summary": getattr(item, "summary", ""),
+            "footer": getattr(item, "canonical_url", ""),
+            "page_type": page_type,
+            "badge": badge,
+            "detail": detail,
+        }
+    )
+    return payload
+
+
+def render_universal_card_html(payload: dict[str, Any]) -> str:
+    """渲染通用卡片 HTML（card_render.bridge 的转发入口）。"""
+    return _render_universal_card_html(payload)
