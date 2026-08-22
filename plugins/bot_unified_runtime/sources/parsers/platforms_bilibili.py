@@ -379,9 +379,13 @@ def _parse_opus(opus_id: str, url: str, *, cookie_header: str = "") -> PlatformP
             stats[label] = value
     summary_lines = []
     archive = major.get("archive") or {}
+    archive_bvid = ""
     if archive.get("title"):
         summary_lines.append(f"视频：{archive.get('title')}")
         summary_lines.append(f"简介：{str(archive.get('desc') or '').strip()[:200]}")
+        archive_bvid = str(archive.get("bvid") or "")
+        if archive_bvid:
+            summary_lines.append(f"BV：{archive_bvid}（可发 /bot download 该视频链接下载）")
     draw = major.get("draw") or {}
     pics = draw.get("items") or []
     if pics:
@@ -421,7 +425,11 @@ def _parse_opus(opus_id: str, url: str, *, cookie_header: str = "") -> PlatformP
         author_name=str((author_mod.get("name") or "")),
         summary="\n".join(summary_lines),
         cover_url=cover,
-        canonical_url=f"https://www.bilibili.com/opus/{opus_id}",
+        canonical_url=(
+            f"https://www.bilibili.com/video/{archive_bvid}"
+            if archive_bvid
+            else f"https://www.bilibili.com/opus/{opus_id}"
+        ),
         stats=stats,
         parse_depth="deep",
     )

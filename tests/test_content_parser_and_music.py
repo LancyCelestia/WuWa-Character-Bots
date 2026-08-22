@@ -772,6 +772,50 @@ def test_parse_bilibili_opus_draw(monkeypatch):
     assert item.cover_url.endswith("a.png")
 
 
+def test_parse_bilibili_opus_archive_video(monkeypatch):
+    from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import (
+        parse_bilibili,
+    )
+
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sources.parsers.platforms_bilibili.http_get_json",
+        lambda url, **kwargs: {
+            "code": 0,
+            "data": {
+                "item": {
+                    "modules": {
+                        "module_author": {"name": "鸣潮"},
+                        "module_dynamic": {
+                            "desc": {"text": "新视频来了"},
+                            "major": {
+                                "type": "MAJOR_TYPE_ARCHIVE",
+                                "archive": {
+                                    "bvid": "BV1xx411c7mB",
+                                    "title": "动态视频标题",
+                                    "desc": "视频简介",
+                                    "cover": "https://i0.hdslb.com/cover.jpg",
+                                },
+                            },
+                        },
+                        "module_stat": {
+                            "like": {"count": 10},
+                            "comment": {"count": 2},
+                            "forward": {"count": 3},
+                        },
+                    }
+                }
+            },
+        },
+    )
+
+    item = parse_bilibili("https://www.bilibili.com/opus/456")
+
+    assert item.item_kind == "dynamic"
+    assert item.canonical_url == "https://www.bilibili.com/video/BV1xx411c7mB"
+    assert "BV1xx411c7mB" in item.summary
+    assert "/bot download" in item.summary
+
+
 def test_parse_bilibili_watchlater_extracts_bvid(monkeypatch):
     from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import (
         parse_bilibili,

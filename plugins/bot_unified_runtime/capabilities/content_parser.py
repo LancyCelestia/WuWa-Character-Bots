@@ -192,17 +192,22 @@ def build_content_capability(
                 audit_tags=["content_parse", f"platform:{match.parser_id}", "parse_failed"],
             )
         media_lines: list[str] = []
-        if (
-            analyze_media
-            and item.item_kind in {"video", "live"}
-            and downloader is not None
-        ):
+        video_like = item.item_kind in {"video", "live"} or (
+            item.item_kind == "dynamic"
+            and "/video/" in (item.canonical_url or "")
+        )
+        if analyze_media and video_like and downloader is not None:
             try:
-                analysis = downloader.probe(candidate)
+                probe_url = (
+                    item.canonical_url
+                    if "/video/" in (item.canonical_url or "")
+                    else candidate
+                )
+                analysis = downloader.probe(probe_url)
                 media_lines = [
                     "媒体信息：",
                     *[f"  {line}" for line in analysis.summary_lines()],
-                    f"下载：/bot download {candidate}",
+                    f"下载：/bot download {probe_url}",
                 ]
             except Exception:  # noqa: BLE001 - 分析失败不影响卡片。
                 media_lines = []
