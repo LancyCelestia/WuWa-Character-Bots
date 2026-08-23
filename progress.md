@@ -590,3 +590,13 @@
 - route-smoke 六条真实链路全过：天气（NMC 杭州）、维基（鸣潮角色列表）、Epic（本周免费游戏）、历史上的今天（华莱士逝世）、点歌（晴天）、表情包（nokia 渲染 PNG）。
 - 表情包：安装 nonebot_plugin_memes_api 0.5.1（MIT）并写入 pyproject；后端 meme-generator-rs 0.2.3 部署到 C:\Software\MemeGenerator（2233），模板素材已下载到 ~/.meme_generator/resources（3039 文件）；自研 bot.meme 与插件双入口并存。
 - 全量 pytest 842 passed；verify / startup-smoke / route-demo / route-smoke 通过。
+
+
+## 2026-08-23：现实/世界观智能判定 + 回复切分 + 卡片与解析分区（四修）
+
+- 新增 runtime/question_intent.py：分层意图判定（现实行情>时效意图>世界观知识>寒暄>neutral），不再词表一刀切；“鸣潮今天更新了什么”联网、“鸣潮里的今州是什么”只走知识库、“你最近怎么样”不联网；判定带 reason 并写入 web_decision 审计。
+- 新增 runtime/smart_split.py：超长聊天回复最多切 3 条均衡消息，句末切分、emoji（ZWJ/变体选择符/代理对）安全，直接发送不再合并转发；forward_min_chars 不再被 max(1,...) 截断，0 才真正表示禁用合并转发。
+- 卡片：body 亚克力光斑 + 卡片 backdrop-filter；标题改为深色前景浅色底提升对比；封面改为 contain 居中 + 模糊底衬，不再裁断发糊；时长做成封面右下角悬浮胶囊；页脚改为机器人头像+名字+“名字 Parser”。
+- 点歌固定附带语音（本地下载优先）；群聊斜杠/自然语言命令通过 looks_like_command_text 放行；/历史 短别名支持。
+- 解析正文分区：【标题/作者/数据/简介/视频参数/音频参数/链接】；视频参数只保留分辨率/时长/动态范围+音频 Hi-Res，音乐给出码率/格式/声道/音质。
+- 全量 pytest 858 passed；verify 通过；线上 17:46 bot_connected。

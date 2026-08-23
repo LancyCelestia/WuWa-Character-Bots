@@ -202,6 +202,22 @@ class MemeSearchContext(StrictBaseModel):
     privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
 
 
+class WebSearchHit(StrictBaseModel):
+    title: str
+    snippet: str = ""
+    url: str = ""
+    source_domain: str = ""
+
+
+class WebSearchContext(StrictBaseModel):
+    """按需联网检索到的现实时效事实；网络事实，可能过时/有误。"""
+
+    request_id: str
+    query: str = ""
+    hits: list[WebSearchHit] = Field(default_factory=list)
+    privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC
+
+
 class ContextBundle(StrictBaseModel):
     request_id: str
     persona: PersonaProfile
@@ -221,6 +237,7 @@ class ContextBundle(StrictBaseModel):
     relationship_context: RelationshipContext | None = None
     shared_group_context: SharedGroupContext | None = None
     meme_search_context: MemeSearchContext | None = None
+    web_search_context: WebSearchContext | None = None
     active_persona_id: str = "default"
     context_budget: int = 2048
     privacy_level: PrivacyLevel = PrivacyLevel.PERSONAL

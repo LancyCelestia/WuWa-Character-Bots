@@ -265,26 +265,58 @@ def _string_value(value: Any) -> str:
 
 async def send_onebot_v11(bot: OneBotV11Bot, send_request: SendRequest) -> DeliveryReceipt:
     try:
-        forward_result = await _try_send_forward_message(bot, send_request)
-        if forward_result is not _FORWARD_API_UNAVAILABLE:
-            result = forward_result
-        elif send_request.target_scope is SessionType.PRIVATE:
-            result = await bot.send_private_msg(
-                user_id=_coerce_onebot_id(send_request.target_id),
-                message=build_onebot_message_segments(send_request),
+        if send_request.content.content_type.strip().lower() == "chunks":
+            raw_chunks = send_request.content.content_ref.get("chunks")
+            chunks = (
+                [str(item).strip() for item in raw_chunks if str(item).strip()]
+                if isinstance(raw_chunks, list)
+                else []
             )
-        elif send_request.target_scope is SessionType.GROUP:
-            result = await bot.send_group_msg(
-                group_id=_coerce_onebot_id(send_request.target_id),
-                message=build_onebot_message_segments(send_request),
-            )
+            if not chunks:
+                chunks = [send_request.content.text_fallback]
+            result = None
+            for chunk in chunks:
+                segment = _text_segment(chunk)
+                if send_request.target_scope is SessionType.PRIVATE:
+                    result = await bot.send_private_msg(
+                        user_id=_coerce_onebot_id(send_request.target_id),
+                        message=[segment],
+                    )
+                elif send_request.target_scope is SessionType.GROUP:
+                    result = await bot.send_group_msg(
+                        group_id=_coerce_onebot_id(send_request.target_id),
+                        message=[segment],
+                    )
+                else:
+                    return DeliveryReceipt(
+                        request_id=send_request.request_id,
+                        state=ReceiptState.BLOCKED,
+                        transport=ONEBOT_V11_TRANSPORT,
+                        public_message=f"OneBot V11 不支持目标类型：{send_request.target_scope.value}",
+                    )
+            if result is None:
+                raise RuntimeError("chunk transport returned no result")
         else:
-            return DeliveryReceipt(
-                request_id=send_request.request_id,
-                state=ReceiptState.BLOCKED,
-                transport=ONEBOT_V11_TRANSPORT,
-                public_message=f"OneBot V11 不支持目标类型：{send_request.target_scope.value}",
-            )
+            forward_result = await _try_send_forward_message(bot, send_request)
+            if forward_result is not _FORWARD_API_UNAVAILABLE:
+                result = forward_result
+            elif send_request.target_scope is SessionType.PRIVATE:
+                result = await bot.send_private_msg(
+                    user_id=_coerce_onebot_id(send_request.target_id),
+                    message=build_onebot_message_segments(send_request),
+                )
+            elif send_request.target_scope is SessionType.GROUP:
+                result = await bot.send_group_msg(
+                    group_id=_coerce_onebot_id(send_request.target_id),
+                    message=build_onebot_message_segments(send_request),
+                )
+            else:
+                return DeliveryReceipt(
+                    request_id=send_request.request_id,
+                    state=ReceiptState.BLOCKED,
+                    transport=ONEBOT_V11_TRANSPORT,
+                    public_message=f"OneBot V11 不支持目标类型：{send_request.target_scope.value}",
+                )
     except Exception:
         debug_id = new_debug_id()
         return DeliveryReceipt(

@@ -218,10 +218,28 @@ def build_route_rules() -> list[RouteRule]:
             return None
         return RouteDecision(RouteKind.WEATHER, "bot.weather", 41, "天气查询", ("base_route:weather",))
 
-    def natural_match(text, config, _alias):
+    def natural_match(text, config, alias_resolver):
         if not getattr(config, "bot_natural_command_enabled", True):
             return None
-        resolution = detect_natural_command(text, config)
+        candidate = text
+        if alias_resolver is not None:
+            nicknames = sorted(
+                {
+                    str(item).strip()
+                    for item in getattr(alias_resolver, "nicknames", [])
+                    if str(item).strip()
+                },
+                key=len,
+                reverse=True,
+            )
+            for nickname in nicknames:
+                if candidate.startswith(nickname) and (
+                    candidate == nickname
+                    or candidate[len(nickname)] in "，,。！？!?：: 的"
+                ):
+                    candidate = candidate[len(nickname):].lstrip("，,。！？!?：: ")
+                    break
+        resolution = detect_natural_command(candidate, config)
         if resolution is None:
             return None
         return RouteDecision(
@@ -295,6 +313,43 @@ def build_interface_manifest() -> list[InterfaceEntry]:
         InterfaceEntry("capability.emotion", "情绪状态注入", "active", "context", None, "作为上下文能力注入，不单独占用文本路由"),
         InterfaceEntry("capability.gscore", "GsCore 上行命令", "reserved", "gscore", None, "预留：GsCore 侧指令统一进入基层路由"),
     ]
+
+
+COMMAND_ROUTE_KINDS = frozenset(
+    {
+        RouteKind.ALIAS,
+        RouteKind.ADMIN,
+        RouteKind.SUBSCRIBE,
+        RouteKind.AUTO_SEND,
+        RouteKind.MEME,
+        RouteKind.MUSIC_MODE,
+        RouteKind.MUSIC,
+        RouteKind.TODAY_HISTORY,
+        RouteKind.WIKI,
+        RouteKind.EPIC,
+        RouteKind.WEATHER,
+        RouteKind.NATURAL_COMMAND,
+    }
+)
+
+
+def looks_like_command_text(
+    text: str,
+    *,
+    config: object,
+    alias_resolver=None,
+) -> bool:
+    """群聊门禁用：确定性命令（含自然语言命令）都算命令触发。
+
+    不含 CHAT/CONTENT/IGNORE，因此“今天天气不错”“看这个链接”这类
+    仍属于被动消息，不会因为这条检查而在群里主动开火。
+    """
+    if not text.strip():
+        return False
+    if alias_resolver is not None and alias_resolver.resolve(text) is not None:
+        return True
+    decision = classify_message_route(text, config=config, alias_resolver=alias_resolver)
+    return decision.kind in COMMAND_ROUTE_KINDS
 
 
 def classify_message_route(

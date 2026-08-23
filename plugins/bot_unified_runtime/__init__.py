@@ -47,6 +47,7 @@ from .runtime.base_router import (
     build_interface_manifest,
     classify_message_route,
     list_route_rules_for_audit,
+    looks_like_command_text,
 )
 from .runtime.alerts import AlertContent, send_admin_alert
 from .runtime.settings import (
@@ -57,6 +58,7 @@ from .runtime.settings import (
 )
 from .sources.credential_health import check_credentials_and_report
 from .sources.meme_search import build_meme_search_provider
+from .sources.web_search import DuckDuckGoWebSearchProvider, NullWebSearchProvider
 from .sources.parsers import extract_http_urls
 from .sources.parse_history import (
     build_parse_history_result,
@@ -852,9 +854,10 @@ def _register_nonebot_handlers() -> None:
         forward_node_chars=config.bot_render_forward_node_chars,
         group_auto_reply_enabled=config.bot_group_chat_auto_reply_enabled,
         group_auto_reply_probability=config.bot_group_chat_auto_reply_probability,
-        alias_command_check=lambda text: (
-            alias_resolver.resolve(text) is not None
-            or text.startswith(config.bot_runtime_admin_prefix)
+        alias_command_check=lambda text: looks_like_command_text(
+            text,
+            config=config,
+            alias_resolver=alias_resolver,
         ),
     )
 
@@ -992,6 +995,13 @@ def _register_nonebot_handlers() -> None:
             ),
             llm_provider=_build_chat_llm_provider(config),
             meme_search_provider=build_meme_search_provider(config),
+            web_search_provider=(
+                DuckDuckGoWebSearchProvider(
+                    timeout_seconds=config.bot_web_search_timeout_seconds
+                )
+                if config.bot_web_search_enabled
+                else NullWebSearchProvider()
+            ),
             runtime_settings=runtime_settings,
             interaction_counter=runtime_settings.interaction_increment,
             model_router=build_model_router(config),

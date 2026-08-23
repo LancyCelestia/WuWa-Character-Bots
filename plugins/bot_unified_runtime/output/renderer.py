@@ -29,6 +29,18 @@ def render_reviewed_output(
     for video in result.video or []:
         if isinstance(video, dict) and (video.get("file") or video.get("url")):
             media_parts.append({"type": "video", **video})
+    if not media_parts and result.text_parts and len(result.text_parts) > 1:
+        chunks = [str(part).strip() for part in result.text_parts if str(part).strip()]
+        if chunks:
+            return RenderedOutput(
+                request_id=result.request_id,
+                content_type="chunks",
+                content_ref={"chunks": chunks},
+                text_fallback="\n\n".join(chunks),
+                size_estimate=sum(len(chunk) for chunk in chunks),
+                risk_level=review.risk_level,
+                privacy_level=review.privacy_level,
+            )
     if media_parts:
         return RenderedOutput(
             request_id=result.request_id,

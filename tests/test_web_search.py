@@ -1,0 +1,96 @@
+"""问题意图分层判定 + 按需联网检索测试。"""
+
+from plugins.bot_unified_runtime.runtime.question_intent import (
+    QuestionIntent,
+    classify_question_intent,
+    should_web_search,
+)
+from plugins.bot_unified_runtime.sources.web_search import (
+    DuckDuckGoWebSearchProvider,
+    _extract_ddg_hits,
+)
+
+
+def test_lore_questions_never_search():
+    for text in [
+        "鸣潮里的今州是什么",
+        "守岸人是怎样的角色",
+        "黑海岸和黎那汐塔有什么区别",
+        "漂泊者是谁",
+        "七丘为什么叫鹫巢石城",
+    ]:
+        decision = classify_question_intent(text)
+        assert decision.intent is QuestionIntent.KNOWLEDGE_ONLY, (text, decision)
+        assert should_web_search(text) is False
+
+
+def test_temporal_questions_search_even_with_domain_terms():
+    # 关键回归：带世界观词但问的是时效事件，必须联网。
+    for text in [
+        "鸣潮今天更新了什么",
+        "鸣潮2.0什么时候上线",
+        "守岸人卡池什么时候复刻",
+        "鸣潮最新版本公告",
+        "鸣潮今天维护到几点",
+    ]:
+        decision = classify_question_intent(text)
+        assert decision.intent is QuestionIntent.WEB_SEARCH, (text, decision)
+
+
+def test_real_world_questions_search():
+    for text in [
+        "今天发生了什么新闻",
+        "最新的显卡价格是多少",
+        "现在美元汇率怎么样",
+        "最近股市行情如何",
+        "守岸人手办多少钱",
+    ]:
+        assert classify_question_intent(text).intent is QuestionIntent.WEB_SEARCH, text
+
+
+def test_self_chat_does_not_search():
+    for text in [
+        "你最近怎么样",
+        "守岸人今天心情怎么样",
+        "岸宝在吗",
+        "今天有点累，陪我说说话",
+    ]:
+        decision = classify_question_intent(text)
+        assert decision.intent in {
+            QuestionIntent.NEUTRAL,
+            QuestionIntent.KNOWLEDGE_ONLY,
+        }, (text, decision)
+        assert decision.intent is not QuestionIntent.WEB_SEARCH
+
+
+def test_general_knowledge_is_neutral_not_searched():
+    for text in [
+        "为什么天空是蓝的",
+        "Python 怎么安装",
+        "今天天气不错",
+        "播放量好高",
+    ]:
+        assert classify_question_intent(text).intent is QuestionIntent.NEUTRAL, text
+
+
+def test_ddg_extract_hits_from_html():
+    html = (
+        '<div class="result"><a class="result__a" href="https://example.com/a">'
+        "标题A</a><a class=\"result__snippet\">摘要A</a></div>"
+        '<div class="result"><a class="result__a" href="https://example.org/b">'
+        "标题B</a></div>"
+    )
+    hits = _extract_ddg_hits(html, max_results=2)
+    assert len(hits) == 2
+    assert hits[0].title == "标题A"
+    assert hits[0].snippet == "摘要A"
+    assert hits[0].source_domain == "example.com"
+
+
+def test_provider_search_returns_empty_on_network_error(monkeypatch):
+    def boom(*args, **kwargs):
+        raise OSError("offline")
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+    provider = DuckDuckGoWebSearchProvider(timeout_seconds=1.0)
+    assert provider.search("今天的新闻", max_results=3) == []

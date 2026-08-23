@@ -444,3 +444,34 @@ def test_onebot_transport_blocks_unsupported_target_scope() -> None:
     assert receipt.state is ReceiptState.BLOCKED
     assert receipt.transport == "onebot.v11"
     assert bot.calls == []
+
+
+def test_chunks_content_sends_each_chunk_as_separate_message():
+    bot = FakePrivateBot()
+    request = _send_request(
+        text="第一段。\n\n第二段。\n\n第三段。",
+        content_type="chunks",
+        content_ref={"chunks": ["第一段。", "第二段。", "第三段。"]},
+    )
+    receipt = asyncio.run(send_onebot_v11(bot, request))
+    assert receipt.state is ReceiptState.SENT
+    assert len(bot.calls) == 3
+    messages = [call[1]["message"] for call in bot.calls]
+    assert [message[0]["data"]["text"] for message in messages] == [
+        "第一段。",
+        "第二段。",
+        "第三段。",
+    ]
+
+
+def test_chunks_empty_falls_back_to_text():
+    bot = FakePrivateBot()
+    request = _send_request(
+        text="只有一段",
+        content_type="chunks",
+        content_ref={"chunks": []},
+    )
+    receipt = asyncio.run(send_onebot_v11(bot, request))
+    assert receipt.state is ReceiptState.SENT
+    assert len(bot.calls) == 1
+    assert bot.calls[0][1]["message"][0]["data"]["text"] == "只有一段"

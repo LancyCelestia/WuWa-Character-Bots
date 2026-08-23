@@ -31,11 +31,14 @@ from plugins.bot_unified_runtime.sources.today_history import (
 )
 
 _QUERY_RE = re.compile(r"^[/!！]?历史上的今天\s*(?P<arg>.*)$")
+# 短别名必须带斜杠，避免把普通聊天里的“历史”一词误触发。
+_SHORT_RE = re.compile(r"^[/!！](?:历史|今日历史)\s*(?P<arg>.*)$")
 _TIME_RE = re.compile(r"(\d{1,2})[:：](\d{1,2})")
 
 
 def is_today_history_command(text: str) -> bool:
-    return _QUERY_RE.match(text.strip()) is not None
+    stripped = text.strip()
+    return _QUERY_RE.match(stripped) is not None or _SHORT_RE.match(stripped) is not None
 
 
 def _load_push_table(push_file: str) -> dict[str, dict[str, int]]:

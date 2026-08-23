@@ -169,6 +169,8 @@ class CapabilityResult(StrictBaseModel):
     audio: list[dict[str, Any]] = Field(default_factory=list)
     video: list[dict[str, Any]] = Field(default_factory=list)
     actions: list[dict[str, Any]] = Field(default_factory=list)
+    # 可选：需要拆成多条消息直接发送的纯文本段（不合并转发）。
+    text_parts: list[str] | None = None
     confidence: float = 1.0
     risk_level: RiskLevel = RiskLevel.LOW
     privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC

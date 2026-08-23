@@ -272,3 +272,10 @@ b orm 流程。
 - meme-generator-rs Windows 版：`meme.exe run --host 127.0.0.1 --port 2233`；`meme.exe download` 用 jsdelivr 清单（resources.json：18 字体 + 3021 图片）下载到 `%USERPROFILE%\.meme_generator\resources`，进度条在无 TTY 时不输出、退出码 0 不代表失败；素材下载后需重启服务进程才能读新文件。
 - 纯文字表情（5000choyen）无需素材即可生成；需要底图的（nokia/petpet/pat）在素材缺失时返回 code 530/550 参数错误，优雅降级即可。
 - Windows 下 nb run 经 Start-Process 重定向日志时若不带 PYTHONUTF8/PYTHONIOENCODING，Loguru 写 emoji 到 GBK stderr 会报 UnicodeEncodeError（不影响业务，但日志脏）；启动前设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8` 可根治。
+
+
+## 2026-08-23：意图判定与回复切分的结论
+
+- 词表一刀切的失败模式：含“鸣潮/守岸人”即禁搜，会把“鸣潮今天更新了什么”“守岸人手办多少钱”错判成知识库问题；含“今天/最新”即搜，会把“你最近怎么样”“今天天气不错”误判成时效问题。正确做法是按意图分层：现实行情>时效意图（排除指向机器人本人的寒暄）>世界观知识意图>领域兜底>neutral。
+- forward_min_chars=0 曾被 `max(1,int(...))` 截成 1，导致任何非空文本都走合并转发（单条天气卡也变成[聊天记录]）；修复后 0 才真正禁用转发。
+- 长回复切分必须做 emoji 安全：Python 字符串按码点索引，切点不会落在代理对内部，但可能把 ZWJ/变体选择符切到下一段开头；切点判断要拒绝“下一字符是 ZWJ/变体选择符/组合附标”的位置。

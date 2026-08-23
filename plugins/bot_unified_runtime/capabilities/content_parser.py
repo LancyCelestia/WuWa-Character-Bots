@@ -24,7 +24,13 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 from plugins.bot_unified_runtime.capabilities.music import _media_parts_from_item
 
 
-def _render_parse_body(item: Any) -> str:
+def _render_parse_body(
+    item: Any,
+    *,
+    video_params: list[str] | None = None,
+    audio_params: list[str] | None = None,
+) -> str:
+    """标题/正文/简介/数据/视频参数/音频参数分区渲染，区块一目了然。"""
     lines: list[str] = []
     kind_labels = {
         "video": "视频",
@@ -58,20 +64,27 @@ def _render_parse_body(item: Any) -> str:
         "work": "作品",
     }
     kind_label = kind_labels.get(item.item_kind, item.item_kind or "内容")
-    lines.append(f"【{kind_label}】{item.title}")
+    lines.append(f"【标题】{item.title}（{kind_label}）")
     if item.author_name:
-        lines.append(f"作者：{item.author_name}")
+        lines.append(f"【作者】{item.author_name}")
     stats_bits = [
         f"{label} {value}"
         for label, value in (item.stats or {}).items()
         if not isinstance(value, (dict, list))
     ]
     if stats_bits:
-        lines.append(" · ".join(stats_bits))
+        lines.append("【数据】" + " · ".join(stats_bits))
     if item.summary:
+        lines.append("【简介】")
         lines.append(item.summary)
+    if video_params:
+        lines.append("【视频参数】")
+        lines.extend(f"  · {line}" for line in video_params)
+    if audio_params:
+        lines.append("【音频参数】")
+        lines.extend(f"  · {line}" for line in audio_params)
     if item.canonical_url:
-        lines.append(f"链接：{item.canonical_url}")
+        lines.append(f"【链接】{item.canonical_url}")
     return "\n".join(lines)
 
 
@@ -135,8 +148,17 @@ def build_content_capability(
                 or getattr(item, "badge", "")
                 or getattr(item, "detail", None)
             ) or platform in universal_platforms
+            bot_name = (
+                str(getattr(config, "bot_persona_display_name", "") or "").strip()
+                or "守岸人"
+            )
+            bot_avatar_url = str(
+                getattr(config, "bot_persona_avatar_url", "") or ""
+            ).strip()
             if use_universal:
                 payload = card_payload_from_parse(item)
+                payload["bot_name"] = bot_name
+                payload["bot_avatar_url"] = bot_avatar_url
                 html_text = render_universal_card_html(payload)
                 render_payload = {
                     "html": html_text,
@@ -222,25 +244,63 @@ def build_content_capability(
                 audit_tags=["content_parse", f"platform:{match.parser_id}", "parse_failed"],
             )
         media_lines: list[str] = []
+        video_params: list[str] = []
+        audio_params: list[str] = []
         video_like = item.item_kind in {"video", "live"} or (
             item.item_kind == "dynamic"
             and "/video/" in (item.canonical_url or "")
         )
-        if analyze_media and video_like and downloader is not None:
+        music_like = item.item_kind in {"song", "audio"} or bool(
+            getattr(item, "audio_url", "")
+        )
+        if analyze_media and (video_like or music_like) and downloader is not None:
             try:
-                probe_url = (
-                    item.canonical_url
-                    if "/video/" in (item.canonical_url or "")
-                    else candidate
-                )
-                analysis = downloader.probe(probe_url)
-                media_lines = [
-                    "媒体信息：",
-                    *[f"  {line}" for line in analysis.summary_lines()],
-                    f"下载：/bot download {probe_url}",
-                ]
+                if music_like:
+                    probe_url = getattr(item, "audio_url", "") or candidate
+                    analysis = downloader.probe(probe_url)
+                    channels_text = f"{analysis.channels}声道"
+                    if analysis.channels == 2:
+                        channels_text = "双声道"
+                    elif analysis.channels == 1:
+                        channels_text = "单声道"
+                    audio_params = [
+                        (
+                            f"码率：{analysis.audio_bitrate_kbps:.0f}kbps"
+                            if analysis.audio_bitrate_kbps
+                            else "码率：-"
+                        ),
+                        f"格式：{analysis.acodec or analysis.ext or '-'}",
+                        (
+                            f"声道：{channels_text}"
+                            if analysis.channels
+                            else "声道：-"
+                        ),
+                        f"音质：{analysis.audio_quality or '普通（非 Hi-Res）'}",
+                    ]
+                else:
+                    probe_url = (
+                        item.canonical_url
+                        if "/video/" in (item.canonical_url or "")
+                        else candidate
+                    )
+                    analysis = downloader.probe(probe_url)
+                    video_params = [
+                        f"分辨率：{analysis.resolution()}",
+                        f"时长：{analysis.duration_text()}",
+                    ]
+                    if analysis.hdr:
+                        video_params.append(f"画面动态范围：{analysis.hdr}")
+                    audio_params = [
+                        f"音质：{analysis.audio_quality or '普通（非 Hi-Res）'}"
+                    ]
+                    media_lines = [f"下载：/bot download {probe_url}"]
             except Exception:  # noqa: BLE001 - 分析失败不影响卡片。
                 media_lines = []
+        body = _render_parse_body(
+            item,
+            video_params=video_params,
+            audio_params=audio_params,
+        )
         body = _render_parse_body(item)
         if media_lines:
             body = f"{body}\n" + "\n".join(media_lines)

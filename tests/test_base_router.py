@@ -165,3 +165,22 @@ def test_route_registry_is_sorted_and_contains_reserved_manifest():
     assert "capability.game_live" in manifest_ids
     assert "capability.meme_absorb" in manifest_ids
     assert "capability.meme" in manifest_ids
+
+
+def test_group_command_check_accepts_slash_commands_and_natural():
+    from plugins.bot_unified_runtime.runtime.base_router import looks_like_command_text
+
+    cfg = Config()
+    for text in ["/epic", "/历史", "/表情 列表", "帮我查一下杭州天气", "/订阅 状态"]:
+        assert looks_like_command_text(text, config=cfg, alias_resolver=_resolver()) is True, text
+    for text in ["今天天气不错", "看这个 https://b23.tv/abc", "你好呀"]:
+        assert looks_like_command_text(text, config=cfg, alias_resolver=_resolver()) is False, text
+
+
+def test_nickname_prefix_natural_command_routes_to_weather():
+    decision = classify_message_route(
+        "岸宝 帮我查一下杭州天气", config=Config(), alias_resolver=_resolver()
+    )
+    assert decision.kind is RouteKind.NATURAL_COMMAND
+    assert decision.target_capability_id == "bot.weather"
+    assert decision.normalized_text == "天气 杭州"

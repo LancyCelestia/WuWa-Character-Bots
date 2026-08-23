@@ -86,7 +86,10 @@ def extract_music_mode(text: str) -> str | None:
 
 
 def _music_card_parts(item: Any) -> list[dict]:
-    music_card = (item.stats or {}).get("music_card")
+    stats = getattr(item, "stats", None) or {}
+    if not isinstance(stats, dict):
+        return []
+    music_card = stats.get("music_card")
     if isinstance(music_card, dict) and music_card.get("type") and music_card.get("id"):
         return [
             {
@@ -115,9 +118,18 @@ def _media_parts_for_mode(
         if item.audio_url:
             return [{"type": "record", "file": item.audio_url}]
         return _music_card_parts(item)
-    # voice / card / default：优先语音直链，其次平台音乐卡片。
+    # voice / card / default：语音 + 平台音乐卡片一起发。
+    # 语音优先本地下载（带 cookie/代理，成功率更高），下载失败退回语音直链。
     if item.audio_url:
-        return [{"type": "record", "file": item.audio_url}]
+        parts: list[dict] = []
+        if audio_downloader is not None:
+            local_path = audio_downloader(item.audio_url)
+            if local_path:
+                parts.append({"type": "record", "file": str(local_path)})
+        if not parts:
+            parts.append({"type": "record", "file": item.audio_url})
+        parts.extend(_music_card_parts(item))
+        return parts
     return _music_card_parts(item)
 
 

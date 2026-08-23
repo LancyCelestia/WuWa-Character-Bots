@@ -666,3 +666,10 @@ powershell -ExecutionPolicy Bypass -File scripts/git.ps1 update
 
 - 每条问法 -> 路由 -> 能力 -> 归一化命令 -> 群聊门禁 的完整矩阵见 `docs/route-matrix.md`；离线演示 `scripts/dev.ps1 route-demo`，真实接口烟测 `scripts/dev.ps1 route-smoke`。
 - 已安装 NoneBot 生态插件 `nonebot_plugin_memes_api`（MIT 0.5.1），后端 `meme-generator-rs` 部署于 `C:\Software\MemeGenerator`（端口 2233）；`/表情 …` 自研入口与插件关键词玩法并存。
+
+
+## 现实/世界观智能判定与解析分区（2026-08-23 三追）
+
+- 问题意图分层判定（`runtime/question_intent.py`）：现实行情/时效意图联网保鲜；世界观知识意图只走本地向量库；人格寒暄与一般知识不联网、不拖慢。
+- 解析链接正文按【标题/作者/数据/简介/视频参数/音频参数/链接】分区展示；视频参数只保留分辨率/时长/动态范围与音频 Hi-Res 标注，音乐给出码率/格式/声道/音质。
+- 超长聊天回复智能切成最多 3 条均衡消息直接发送（不再合并转发）；点歌固定附带语音。

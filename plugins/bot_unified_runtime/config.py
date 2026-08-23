@@ -58,6 +58,8 @@ class Config(BaseModel):
     bot_persona_files: list[str] = []
     # 人格级昵称（本机器人的角色昵称，随人格走，不随平台走）。
     bot_persona_nicknames: list[str] = []
+    # 卡片页脚机器人头像（可选 URL/本地路径；空则用名字首字圆点）。
+    bot_persona_avatar_url: str = ""
     # 备用人格：{"gentle": {"display_name": "...", "files": [...],
     #   "weight": 0.3, "emotions": ["support_needed", ...]}, ...}
     bot_persona_alt_profiles: dict[str, dict[str, Any]] = {}
@@ -146,6 +148,10 @@ class Config(BaseModel):
     bot_meme_search_enabled: bool = False
     bot_meme_search_timeout_seconds: float = 8.0
     bot_meme_search_cache_seconds: int = 600
+    # 现实时效问题按需联网检索：默认关闭；开启后仅在强信号（新闻/价格/汇率等）触发，
+    # 世界观问题永远只走本地知识库，不联网。
+    bot_web_search_enabled: bool = False
+    bot_web_search_timeout_seconds: float = 3.0
 
     # 表情包生成能力（bot.meme）：对接本地 meme-generator-rs HTTP API。
     # 命令开关：/表情 列表、/表情 <key> <文字>、/meme help（大小写均可）。

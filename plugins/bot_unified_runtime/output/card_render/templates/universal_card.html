@@ -57,17 +57,37 @@
 
 body {
     font-family: var(--font-family);
-    background: linear-gradient(135deg, var(--pc-light) 0%, #ffffff 40%, var(--pc-light) 100%);
-    padding: 15px;
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(135deg, var(--pc-light) 0%, #eef3fb 35%, #ffffff 55%, var(--pc-light) 100%);
+    padding: 18px;
     display: flex;
     justify-content: center;
+}
+/* Windows 风格亚克力光斑：给 backdrop-filter 提供可感知的模糊来源 */
+body::before, body::after {
+    content: "";
+    position: fixed;
+    width: 420px; height: 420px; border-radius: 50%;
+    filter: blur(70px); opacity: 0.55; pointer-events: none;
+}
+body::before {
+    left: -140px; top: -160px;
+    background: color-mix(in srgb, var(--pc) 55%, #ffffff);
+}
+body::after {
+    right: -180px; bottom: -200px;
+    background: color-mix(in srgb, var(--pc) 35%, #7dd3fc);
 }
 
 /* ===== 卡片容器 ===== */
 .card {
     width: {{ card_width }};
     max-width: 100%;
-    background: var(--bg-card);
+    background: rgba(255, 255, 255, 0.66);
+    -webkit-backdrop-filter: blur(28px) saturate(1.7);
+    backdrop-filter: blur(28px) saturate(1.7);
+    border: 1px solid rgba(255, 255, 255, 0.65);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-card);
     overflow: hidden;
@@ -84,11 +104,46 @@ body {
 }
 
 /* ===== Banner ===== */
+.banner-wrap {
+    position: relative;
+    margin: 0 24px 12px;
+    border-radius: 14px;
+    overflow: hidden;
+    background: rgba(15, 18, 24, 0.10);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 120px;
+}
+.banner-backdrop {
+    position: absolute;
+    inset: -20px;
+    background-size: cover;
+    background-position: center;
+    filter: blur(24px) brightness(0.85);
+    transform: scale(1.15);
+}
 .banner-img {
-    width: 100%;
-    max-height: 180px;
-    object-fit: cover;
+    position: relative;
+    width: auto;
+    max-width: 100%;
+    max-height: 280px;
+    object-fit: contain;
     display: block;
+    z-index: 1;
+}
+.duration-pill {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    z-index: 2;
+    background: rgba(10, 12, 16, 0.72);
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 7px;
+    letter-spacing: 0.02em;
 }
 
 /* ===== Header ===== */
@@ -305,10 +360,12 @@ body {
     margin: 8px 24px;
     padding: 6px 16px;
     font-size: 14px;
-    color: var(--pc);
-    background: var(--pc-light);
-    border-left: 4px solid var(--pc);
+    color: color-mix(in srgb, var(--pc) 82%, #000);
+    background: color-mix(in srgb, var(--pc) 14%, #ffffff);
+    border-left: 4px solid var(--pc-dark);
     border-radius: 6px;
+    font-weight: 600;
+    text-shadow: 0 1px 0 rgba(255,255,255,0.55);
     width: fit-content;
     max-width: calc(100% - 48px);
 }
@@ -827,7 +884,11 @@ body {
 <body>
 <div class="card">
     {% if banner %}
-    <img class="banner-img" src="{{ banner }}" alt="banner" onerror="this.style.display='none'">
+    <div class="banner-wrap">
+        <div class="banner-backdrop" style="background-image:url('{{ banner }}');"></div>
+        <img class="banner-img" src="{{ banner }}" alt="banner" onerror="this.style.display='none'">
+        {% if video_duration %}<span class="duration-pill">{{ video_duration }}</span>{% endif %}
+    </div>
     {% endif %}
 
     <!-- ===== Header 五行结构 ===== -->
@@ -912,7 +973,7 @@ body {
 
     {% if video_duration or video_desc %}
     <div class="video-meta">
-        {% if video_duration %}<span class="v-duration">{{ video_duration }}</span>{% endif %}
+        {% if not banner and video_duration %}<span class="v-duration">{{ video_duration }}</span>{% endif %}
         {% if video_desc %}<span class="v-desc">{{ video_desc }}</span>{% endif %}
     </div>
     {% endif %}
@@ -1358,7 +1419,7 @@ body {
 
     <!-- ===== 页脚 ===== -->
     <div class="footer">
-        <span class="source-badge">{% if bot_avatar_url %}<img class="footer-bot-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="footer-bot-dot">{{ (bot_name | default('A', true))[:1] }}</span>{% endif %}<span class="footer-bot-name">{{ bot_name | default('AstrBot', true) }}</span><span class="footer-parser-text">· {{ platform_official_name or platform_display or type or 'Platform' }} Parser</span></span>
+        <span class="source-badge">{% if bot_avatar_url %}<img class="footer-bot-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="footer-bot-dot">{{ (bot_name | default('A', true))[:1] }}</span>{% endif %}<span class="footer-bot-name">{{ bot_name | default('守岸人', true) }}</span><span class="footer-parser-text">· {{ bot_name | default('守岸人', true) }} Parser</span></span>
     </div>
 </div>
 </body>

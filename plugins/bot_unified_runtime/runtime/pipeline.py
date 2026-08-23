@@ -192,7 +192,8 @@ class RuntimePipeline:
         self.runtime_control = runtime_control or RuntimeControlState()
         self.rate_limiter = rate_limiter or InMemoryRateLimiter()
         self.quiet_hours_checker = quiet_hours_checker or QuietHoursChecker()
-        self.forward_min_chars = max(1, int(forward_min_chars))
+        # 0=禁用合并转发（短消息与已分段回复都直接发送）。
+        self.forward_min_chars = int(forward_min_chars)
         self.forward_max_nodes = max(1, int(forward_max_nodes))
         self.forward_node_chars = max(200, int(forward_node_chars))
         policy_settings = PolicySettings(

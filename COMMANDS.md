@@ -557,3 +557,12 @@ NoneBot 只负责插件加载、事件分发和适配器抽象。NapCat 作为 O
 - 新增 `scripts/dev.ps1 route-demo`（离线演示）与 `route-smoke`（真实接口烟测）；权威矩阵见 `docs/route-matrix.md` 与 `tests/test_route_matrix.py`。
 - 已安装 `nonebot_plugin_memes_api`（MIT 0.5.1，NoneBot 生态插件）并写入 pyproject.toml；后端 meme-generator-rs 已部署到 `C:\Software\MemeGenerator\meme.exe`，端口 2233，模板素材已下载。
 - 表情包两个入口并存：自研 `/表情 …` 走基层统一流水线；插件支持 `摸 @某人`、`表情列表`、`随机表情` 等 Alconna 关键词玩法。
+
+
+## 2026-08-23 现实/世界观智能判定与解析分区（追加）
+
+- 新增 `runtime/question_intent.py`：分层意图判定，不再词表一刀切；`鸣潮今天更新了什么` 联网、`鸣潮里的今州是什么` 走本地知识库、`你最近怎么样` 不联网。
+- 解析正文改为分区展示：【标题】【作者】【数据】【简介】【视频参数】【音频参数】【链接】。
+- 聊天超长回复改为最多 3 条直接消息（句末切分、emoji 安全、长度均衡），不再合并转发；短消息直接单条发送。
+- 点歌在卡片/链接之外固定附带语音（本地下载优先，失败退回试听直链）。
+- 群聊中 `/epic`、`/历史`、`/表情 列表` 等斜杠命令与自然语言命令不再被“未启用主动回复”拦截。
