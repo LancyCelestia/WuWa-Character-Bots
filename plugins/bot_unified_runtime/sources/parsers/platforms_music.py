@@ -33,18 +33,20 @@ def _netease_audio_url(song_id: str, *, cookie_header: str = "") -> str:
     """网易云音频直链：优先 enhance/player/url（登录态可拿 VIP 试听），
     兜底 outer/url 直链。拿不到返回空串。"""
     if cookie_header:
-        try:
-            payload = http_get_json(
-                "https://music.163.com/api/song/enhance/player/url"
-                f"?ids=[{song_id}]&br=320000",
-                referer="https://music.163.com/",
-                cookie=cookie_header,
-            )
-            data = ((payload or {}).get("data") or []) or []
-            if data and data[0].get("url"):
-                return str(data[0]["url"])
-        except ParseHttpError:
-            pass
+        # 优先最高码率（999000=Hi-Res），拿不到再退 320kbps。
+        for bitrate in ("999000", "320000"):
+            try:
+                payload = http_get_json(
+                    "https://music.163.com/api/song/enhance/player/url"
+                    f"?ids=[{song_id}]&br={bitrate}",
+                    referer="https://music.163.com/",
+                    cookie=cookie_header,
+                )
+                data = ((payload or {}).get("data") or []) or []
+                if data and data[0].get("url"):
+                    return str(data[0]["url"])
+            except ParseHttpError:
+                pass
     return f"https://music.163.com/song/media/outer/url?id={song_id}.mp3"
 
 

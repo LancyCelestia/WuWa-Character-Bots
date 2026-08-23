@@ -243,17 +243,28 @@ class MediaDownloader:
                     info = info["entries"][0] or info
                 return _analysis_from_info(info)
 
-    def _download_once(self, url: str, *, single_file: bool = False) -> DownloadOutcome:
+    def _download_once(
+        self,
+        url: str,
+        *,
+        single_file: bool = False,
+        height_cap: int | None = None,
+    ) -> DownloadOutcome:
         opts = self._base_opts(skip_download=False)
+        cap = int(height_cap or 0)
         if single_file:
-            # 无 ffmpeg 时的降级：只取单文件（音视频一体，通常 ≤720p）。
-            fmt = f"best[height<={self.max_height}]/best"
+            # 无 ffmpeg 时的降级：只取单文件（音视频一体）。
+            fmt = f"best[height<={cap}]/best" if cap else "best"
             merge = {}
         else:
-            fmt = (
-                f"bestvideo[height<={self.max_height}]+bestaudio/"
-                f"best[height<={self.max_height}]/best"
-            )
+            if cap:
+                fmt = (
+                    f"bestvideo[height<={cap}]+bestaudio/"
+                    f"best[height<={cap}]/best"
+                )
+            else:
+                # 优先最高画质（含 8K/Hi-Res），单文件受 max_filesize 约束。
+                fmt = "bestvideo+bestaudio/best"
             merge = {"merge_output_format": "mp4"}
         opts.update(
             {
@@ -287,31 +298,39 @@ class MediaDownloader:
         if not self.available():
             return DownloadOutcome(error="yt-dlp 未安装，无法下载")
         self.download_dir.mkdir(parents=True, exist_ok=True)
+        # 画质阶梯：最高画质(8K/Hi-Res) → 2160 → 1440 → 1080 → 720，超 1GB 自动降级。
+        caps: list[int | None]
+        if self.max_height and self.max_height > 0:
+            caps = [self.max_height]
+        else:
+            caps = [None, 2160, 1440, 1080, 720]
+        last_error = "未知错误"
         with self._lock:
-            try:
-                outcome = self._download_once(url)
-                if outcome.path and Path(outcome.path).exists():
-                    try:
-                        from plugins.bot_unified_runtime.runtime.cache_policy import enforce_quota
+            for height_cap in caps:
+                try:
+                    outcome = self._download_once(url, height_cap=height_cap)
+                    if outcome.path and Path(outcome.path).exists():
+                        try:
+                            from plugins.bot_unified_runtime.runtime.cache_policy import enforce_quota
 
-                        enforce_quota(
-                            self.download_dir,
-                            max_bytes=self.cache_max_bytes,
-                            max_age_days=self.cache_max_age_days,
-                        )
-                    except Exception:  # noqa: BLE001 - 清理失败不影响下载。
-                        pass
-                    return outcome
-                return DownloadOutcome(error="下载完成但文件缺失")
-            except Exception as exc:  # noqa: BLE001 - 合并失败降级单文件。
-                message = str(exc)
-                if "ffmpeg" in message.lower() or "merge" in message.lower():
-                    try:
-                        return self._download_once(url, single_file=True)
-                    except Exception as inner:  # noqa: BLE001
-                        return DownloadOutcome(
-                            error=f"{type(inner).__name__}: {str(inner)[:160]}"
-                        )
-                return DownloadOutcome(
-                    error=f"{type(exc).__name__}: {str(exc)[:160]}"
-                )
+                            enforce_quota(
+                                self.download_dir,
+                                max_bytes=self.cache_max_bytes,
+                                max_age_days=self.cache_max_age_days,
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+                        return outcome
+                    last_error = outcome.error or last_error
+                except Exception as exc:  # noqa: BLE001 - 画质失败降级。
+                    message = str(exc)
+                    if "ffmpeg" in message.lower() or "merge" in message.lower():
+                        try:
+                            return self._download_once(
+                                url, single_file=True, height_cap=height_cap
+                            )
+                        except Exception as inner:  # noqa: BLE001
+                            last_error = f"{type(inner).__name__}: {str(inner)[:160]}"
+                            continue
+                    last_error = f"{type(exc).__name__}: {str(exc)[:160]}"
+            return DownloadOutcome(error=last_error)

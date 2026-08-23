@@ -24,6 +24,30 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 from plugins.bot_unified_runtime.capabilities.music import _media_parts_from_item
 
 
+def _clean_summary(summary: str) -> str:
+    """简介只保留博主原始简介：剔除时长/发布时间等元数据行。"""
+    kept: list[str] = []
+    for raw_line in (summary or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        upper_head = line.split("：", 1)[0].split(":", 1)[0].strip()
+        if upper_head == "简介":
+            content = ""
+            if "：" in line:
+                content = line.split("：", 1)[1]
+            elif ":" in line:
+                content = line.split(":", 1)[1]
+            content = content.strip()
+            if content:
+                kept.append(content)
+            continue
+        if upper_head in {"时长", "视频时长", "发布时间", "时间", "上传时间"}:
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def _render_parse_body(
     item: Any,
     *,
@@ -63,25 +87,35 @@ def _render_parse_body(
         "work": "作品",
     }
     kind_label = kind_labels.get(item.item_kind, item.item_kind or "内容")
-    lines.append(f"【标题】{item.title}（{kind_label}）")
+    lines.append(f"【标题】{item.title}")
     if item.author_name:
         lines.append(f"【作者】{item.author_name}")
-    stats_bits = [
-        f"{label} {value}"
+    stats = {
+        str(label): value
         for label, value in (item.stats or {}).items()
         if not isinstance(value, (dict, list))
-    ]
+    }
+    publish_time = stats.pop("发布时间", None) or stats.pop("时间", None)
+    stats.pop("时长", None)
+    stats.pop("视频时长", None)
+    stats_bits = [f"{label} {value}" for label, value in stats.items()]
     if stats_bits:
         lines.append("")
         lines.append("【数据】" + " · ".join(stats_bits))
-    if item.summary:
+    if publish_time:
         lines.append("")
-        lines.append("【简介】")
-        lines.append(item.summary)
+        lines.append(f"【发布】{publish_time}")
+    if item.summary:
+        clean_summary = _clean_summary(item.summary)
+        if clean_summary:
+            lines.append("")
+            lines.append("【简介】")
+            lines.append(clean_summary)
     if media_params:
         lines.append("")
         lines.append("【媒体参数】")
-        lines.extend(f"  · {line}" for line in media_params)
+        for line in media_params:
+            lines.append(f"  · {line}" if line else "")
     if item.canonical_url:
         lines.append("")
         lines.append(f"【链接】{item.canonical_url}")

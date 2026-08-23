@@ -65,6 +65,68 @@ def _fetch(url: str, *, proxy: str, timeout_seconds: float) -> str | None:
         return None
 
 
+_JUNK_DOMAINS = frozenset(
+    {
+        "hgcha.com", "hanyuguoxue.com", "zidian.gushici.net",
+        "zdic.net", "dict.cn", "xh.5156edu.com",
+    }
+)
+_QUERY_STOP_TOKENS = frozenset({"百科", "最新", "更新", "版本", "内容", "公司", "官方", "游戏", "什么", "是", "查询", "介绍", "背景"})
+
+
+def _query_key_tokens(query: str) -> list[str]:
+    tokens = re.split(r"[\s，,、。]+", query or "")
+    return [
+        token
+        for token in tokens
+        if len(token) >= 2 and token not in _QUERY_STOP_TOKENS
+    ]
+
+
+def _is_junk(hit: WebSearchHit) -> bool:
+    domain = (hit.source_domain or "").lower()
+    if domain in _JUNK_DOMAINS:
+        return True
+    text = f"{hit.title} {hit.snippet}"
+    if any(marker in text for marker in ("汉语汉字", "拼音", "笔顺", "部首", "新华字典")):
+        return True
+    return False
+
+
+def _filter_relevant(hits: list[WebSearchHit], query: str) -> list[WebSearchHit]:
+    key_tokens = _query_key_tokens(query)
+    kept = [hit for hit in hits if not _is_junk(hit)]
+    if key_tokens:
+        matched = [
+            hit
+            for hit in kept
+            if any(token in f"{hit.title} {hit.snippet}" for token in key_tokens)
+        ]
+        if matched:
+            return matched
+    return kept
+
+
+def fetch_page_text(
+    url: str,
+    *,
+    proxy: str = "",
+    timeout_seconds: float = 6.0,
+    max_chars: int = 800,
+) -> str:
+    """打开最相关结果页面并抽取正文（去标签），失败返回空串。"""
+    if not url or not url.startswith("http"):
+        return ""
+    html_text = _fetch(url, proxy=proxy, timeout_seconds=timeout_seconds)
+    if not html_text:
+        return ""
+    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html_text, flags=re.DOTALL | re.IGNORECASE)
+    text = _HTML_TAG_RE.sub("\n", text)
+    text = html.unescape(text)
+    lines = [line.strip() for line in text.splitlines() if len(line.strip()) > 12]
+    return "\n".join(lines)[:max_chars]
+
+
 class DuckDuckGoWebSearchProvider:
     """免费 DuckDuckGo HTML 搜索（无 key）。"""
 
@@ -84,7 +146,9 @@ class DuckDuckGoWebSearchProvider:
         )
         if not html_text:
             return []
-        return _extract_ddg_hits(html_text, max_results=max_results)
+        return _filter_relevant(
+            _extract_ddg_hits(html_text, max_results=max_results), term
+        )
 
 
 class BingWebSearchProvider:
@@ -110,7 +174,9 @@ class BingWebSearchProvider:
         )
         if not html_text:
             return []
-        return _extract_bing_hits(html_text, max_results=max_results)
+        return _filter_relevant(
+            _extract_bing_hits(html_text, max_results=max_results), term
+        )
 
 
 class ChainedWebSearchProvider:

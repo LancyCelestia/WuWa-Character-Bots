@@ -123,6 +123,24 @@ _CITY_FORBIDDEN_FRAGMENTS = (
     "来",
     "天气",
 )
+EN_CITY_MAP = {
+    "beijing": "北京", "shanghai": "上海", "guangzhou": "广州", "shenzhen": "深圳",
+    "hangzhou": "杭州", "chengdu": "成都", "chongqing": "重庆", "wuhan": "武汉",
+    "nanjing": "南京", "xian": "西安", "suzhou": "苏州", "tianjin": "天津",
+    "changsha": "长沙", "zhengzhou": "郑州", "qingdao": "青岛", "dalian": "大连",
+    "xiamen": "厦门", "fuzhou": "福州", "kunming": "昆明", "haikou": "海口",
+    "sanya": "三亚", "harbin": "哈尔滨", "shenyang": "沈阳", "jinan": "济南",
+    "hefei": "合肥", "nanchang": "南昌", "nanning": "南宁", "guiyang": "贵阳",
+    "lanzhou": "兰州", "xining": "西宁", "yinchuan": "银川", "urumqi": "乌鲁木齐",
+    "lhasa": "拉萨", "hohhot": "呼和浩特", "shijiazhuang": "石家庄", "taiyuan": "太原",
+}
+
+
+def _map_english_city(raw: str) -> str:
+    key = (raw or "").strip().lower().replace(" ", "")
+    return EN_CITY_MAP.get(key, (raw or "").strip())
+
+
 _WEATHER_CITY_BLACKLIST = {
     "今天",
     "明天",
@@ -175,7 +193,9 @@ def detect_natural_command(text: str, config: Config | None = None) -> NaturalRe
         if english_weather:
             city = _clean_city(english_weather.groupdict().get("city"))
             if city:
-                return NaturalResolution("bot.weather", f"天气 {city}", "查询天气")
+                return NaturalResolution(
+                    "bot.weather", f"天气 {_map_english_city(city)}", "查询天气"
+                )
         # 礼貌式优先：能精确切出城市；问句式其次。
         match = _WEATHER_PLEASE_RE.match(stripped)
         if match is None:

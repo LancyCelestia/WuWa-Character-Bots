@@ -998,6 +998,11 @@ def _register_nonebot_handlers() -> None:
             llm_provider=_build_chat_llm_provider(config),
             meme_search_provider=build_meme_search_provider(config),
             web_search_provider=build_web_search_provider(config),
+            web_max_results=int(config.bot_web_search_max_results),
+            web_page_proxy=str(getattr(config, "bot_download_proxy", "") or ""),
+            web_page_timeout_seconds=float(
+                getattr(config, "bot_web_search_timeout_seconds", 3.0) + 3.0
+            ),
             runtime_settings=runtime_settings,
             interaction_counter=runtime_settings.interaction_increment,
             model_router=build_model_router(config),
@@ -1632,7 +1637,7 @@ def _register_nonebot_handlers() -> None:
                     )
                 provider = build_web_search_provider(config)
                 try:
-                    hits = provider.search(search_query, max_results=3)
+                    hits = provider.search(search_query, max_results=6)
                 except Exception:
                     hits = []
                 if not hits:

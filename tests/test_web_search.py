@@ -98,3 +98,36 @@ def test_provider_search_returns_empty_on_network_error(monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", boom)
     provider = DuckDuckGoWebSearchProvider(timeout_seconds=1.0)
     assert provider.search("今天的新闻", max_results=3) == []
+
+
+def test_filter_drops_dictionary_junk_and_keeps_relevant():
+    from plugins.bot_unified_runtime.sources.web_search import (
+        WebSearchHit,
+        _filter_relevant,
+    )
+
+    junk = WebSearchHit(
+        title="库（汉语汉字）_百度百科",
+        snippet="本义为收藏兵车及其他武器的处所。",
+        url="https://baike.baidu.com/item/库",
+        source_domain="baike.baidu.com",
+    )
+    relevant = WebSearchHit(
+        title="库街区 - 库洛游戏官方社区",
+        snippet="《库街区》是库洛游戏官方社区APP。",
+        url="https://www.kurobbs.com",
+        source_domain="www.kurobbs.com",
+    )
+    hits = _filter_relevant([junk, relevant], "库洛游戏 公司 百科")
+    assert len(hits) == 1
+    assert hits[0].url == relevant.url
+
+
+def test_fetch_page_text_returns_empty_for_bad_url(monkeypatch):
+    from plugins.bot_unified_runtime.sources.web_search import fetch_page_text
+
+    def boom(*args, **kwargs):
+        raise OSError("offline")
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+    assert fetch_page_text("https://example.com/x", timeout_seconds=1.0) == ""

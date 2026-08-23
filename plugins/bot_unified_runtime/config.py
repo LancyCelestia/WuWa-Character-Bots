@@ -152,6 +152,7 @@ class Config(BaseModel):
     # 世界观问题永远只走本地知识库，不联网。
     bot_web_search_enabled: bool = False
     bot_web_search_timeout_seconds: float = 3.0
+    bot_web_search_max_results: int = 6
 
     # 表情包生成能力（bot.meme）：对接本地 meme-generator-rs HTTP API。
     # 命令开关：/表情 列表、/表情 <key> <文字>、/meme help（大小写均可）。
@@ -189,9 +190,9 @@ class Config(BaseModel):
     # 解析视频链接时自动附加分辨率/时长/HDR/音频分析；下载走 /bot download。
     bot_media_analyze_enabled: bool = True
     bot_download_dir: str = "data/downloads"
-    bot_download_max_bytes: int = 209715200
-    bot_download_max_height: int = 1080
-    bot_download_timeout_seconds: int = 300
+    bot_download_max_bytes: int = 1073741824
+    bot_download_max_height: int = 0
+    bot_download_timeout_seconds: int = 600
     # 缓存配额：下载目录/点歌缓存/卡片缓存按最旧优先清理，防占满硬盘。
     bot_download_cache_max_bytes: int = 2147483648
     bot_download_cache_max_age_days: int = 7
