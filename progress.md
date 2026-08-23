@@ -680,3 +680,12 @@
 - 同步自动清理已从配置移除的旧文件切片（sync_chunks prune）。
 - knowledge-sync 增加每批进度打印；新增 scripts/knowledge_progress.py 进度查询；dev.ps1 增加 8080 占用保护，避免重复启动时报错刷屏。
 - 全量 pytest 897 passed；verify 通过；机器人 02:32 重启并连接 NapCat。
+
+
+## 2026-08-24：知识库检索 HNSW 近似索引 + 懒加载 + 缓存失效修复
+
+- 新增 faiss-cpu HNSW（IndexHNSWFlat，M=32/efConstruction=200/efSearch=64，内积+L2 归一化），knowledge-sync 完成后自动落盘 data/knowledge_faiss.index + order.json，并与 embedding_signature 绑定。
+- 运行期 mmap 只读加载、O(log N) 检索；索引缺失/过期自动回退 numpy 暴力路径；正文命中 top_k 后才从 SQLite 懒加载。
+- 修复每条消息都失效并重建 30,802 向量矩阵的缺陷：sync_chunks 仅在实际变化时失效；请求路径不再跑待嵌入全表扫描。
+- 实测：热路径检索从 2.67s 降到 ~0.97s（剩余时间主要是本地 Ollama bge-m3 查询编码）；HNSW top5 与暴力 top5 Jaccard 1.0/1.0/0.8；进程内存 ~231MB（向量以 mmap 由 OS 页缓存管理）。
+- 全量 pytest 901 passed；verify 通过；机器人 03:06 重启并连接 NapCat。

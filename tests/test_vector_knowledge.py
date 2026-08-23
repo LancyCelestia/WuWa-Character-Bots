@@ -112,8 +112,8 @@ def test_sync_chunks_updates_changed_content_and_clears_vector(tmp_path):
         top_k=2,
     )
 
-    store.sync_chunks([knowledge_file])
-    assert store.retrieve("苹果香蕉", files=[knowledge_file])
+    store.embed_pending([knowledge_file])
+    assert store.retrieve("苹果香蕉", files=[knowledge_file], embed_backlog=False)
     assert all(row["vector_json"] for row in _read_rows(store.db_path))
 
     paragraphs[0] = "苹果香蕉点心" * 11
@@ -144,7 +144,8 @@ def test_retrieve_returns_top_k_ordered_by_cosine_similarity(tmp_path):
         top_k=2,
     )
 
-    results = store.retrieve("苹果香蕉", files=[knowledge_file])
+    store.embed_pending([knowledge_file])
+    results = store.retrieve("苹果香蕉", files=[knowledge_file], embed_backlog=False)
 
     assert [chunk.content for chunk in results] == [paragraphs[0], paragraphs[1]]
     assert all(isinstance(chunk, KnowledgeChunk) for chunk in results)
@@ -876,7 +877,7 @@ def test_retrieve_skips_backlog_embedding_when_embed_backlog_disabled(tmp_path):
     )
 
     assert store.retrieve("查询", files=[knowledge_file], embed_backlog=False) == []
-    assert provider.calls == []
+    assert len(provider.calls) == 1  # 查询本身仍会编码，只是不补齐积压
     assert store.stats()["embedded"] == 0
 
 
@@ -897,8 +898,92 @@ def test_retrieve_still_answers_when_no_backlog_with_embed_backlog_disabled(tmp_
         chunk_chars=120,
         top_k=2,
     )
-    assert store.retrieve("苹果香蕉", files=[knowledge_file])
-
+    store.embed_pending([knowledge_file])
     results = store.retrieve("苹果香蕉", files=[knowledge_file], embed_backlog=False)
 
     assert [chunk.content for chunk in results] == [paragraphs[0], paragraphs[1]]
+
+
+def _fixed_provider(vectors):
+    class _P:
+        def embed_texts(self, texts):
+            return [list(vectors[index]) for index in range(min(len(texts), len(vectors)))]
+    return _P()
+
+
+def test_ann_index_build_and_retrieve(tmp_path):
+    faiss = __import__("pytest").importorskip("faiss")
+    db = tmp_path / "k.sqlite3"
+    knowledge_file = tmp_path / "kb.md"
+    knowledge_file.write_text("甲段" * 30 + "\n\n" + "乙段" * 30, encoding="utf-8")
+    # 两段内容分别给正交向量，便于确定检索顺序。
+    provider = _fixed_provider([[1.0, 0.0], [0.0, 1.0]])
+    store = SqliteVectorKnowledgeStore(
+        db, provider, chunk_chars=120, top_k=2, signature="sigA",
+        ann_index_path=str(tmp_path / "faiss.index"),
+        ann_order_path=str(tmp_path / "order.json"),
+    )
+    store.embed_pending([knowledge_file])
+    result = store.build_ann_index()
+    assert result.get("built") is True
+    assert (tmp_path / "faiss.index").exists()
+    assert (tmp_path / "order.json").exists()
+
+    # 查询向量接近第一段，应命中第一段 chunk。
+    class QueryProvider:
+        def embed_texts(self, texts):
+            return [[0.99, 0.01] for _ in texts]
+
+    store.embed_provider = QueryProvider()
+    hits = store.retrieve("甲段甲段")
+    assert hits and hits[0].content.startswith("甲段")
+
+
+def test_ann_missing_falls_back_to_bruteforce(tmp_path):
+    db = tmp_path / "k.sqlite3"
+    knowledge_file = tmp_path / "kb.md"
+    knowledge_file.write_text("甲段" * 30 + "\n\n" + "乙段" * 30, encoding="utf-8")
+    provider = _fixed_provider([[1.0, 0.0], [0.0, 1.0]])
+    store = SqliteVectorKnowledgeStore(db, provider, chunk_chars=120, top_k=2, signature="sigA")
+    store.embed_pending([knowledge_file])
+    hits = store.retrieve("甲段甲段", embed_backlog=False)
+    assert len(hits) == 2
+    assert hits[0].content.startswith("甲段")
+
+
+def test_ann_signature_mismatch_falls_back(tmp_path):
+    faiss = __import__("pytest").importorskip("faiss")
+    db = tmp_path / "k.sqlite3"
+    knowledge_file = tmp_path / "kb.md"
+    knowledge_file.write_text("甲段" * 30 + "\n\n" + "乙段" * 30, encoding="utf-8")
+    provider = _fixed_provider([[1.0, 0.0], [0.0, 1.0]])
+    store_a = SqliteVectorKnowledgeStore(
+        db, provider, chunk_chars=120, top_k=2, signature="sigA",
+        ann_index_path=str(tmp_path / "faiss.index"),
+        ann_order_path=str(tmp_path / "order.json"),
+    )
+    store_a.embed_pending([knowledge_file])
+    store_a.build_ann_index()
+
+    store_b = SqliteVectorKnowledgeStore(
+        db, provider, chunk_chars=120, top_k=2, signature="sigB",
+        ann_index_path=str(tmp_path / "faiss.index"),
+        ann_order_path=str(tmp_path / "order.json"),
+    )
+    assert store_b.load_ann_index() is False
+    hits = store_b.retrieve("甲段甲段", embed_backlog=False)
+    assert hits and hits[0].content.startswith("甲段")
+
+
+def test_sync_no_change_keeps_vector_cache(tmp_path):
+    db = tmp_path / "k.sqlite3"
+    knowledge_file = tmp_path / "kb.md"
+    knowledge_file.write_text("甲段" * 30 + "\n\n" + "乙段" * 30, encoding="utf-8")
+    provider = _fixed_provider([[1.0, 0.0], [0.0, 1.0]])
+    store = SqliteVectorKnowledgeStore(db, provider, chunk_chars=120, top_k=2, signature="sigA")
+    store.embed_pending([knowledge_file])
+    matrix, ids = store._load_vector_cache()
+    store.sync_chunks([])
+    matrix2, ids2 = store._load_vector_cache()
+    assert matrix2 is matrix and ids2 is ids
+    assert isinstance(ids, list) and all(isinstance(item, str) for item in ids)

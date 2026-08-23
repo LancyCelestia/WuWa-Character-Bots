@@ -9,6 +9,11 @@ try:
     import numpy as np
 except Exception:  # noqa: BLE001 - numpy 可选，缺失回退纯 Python 余弦。
     np = None
+
+try:
+    import faiss
+except Exception:  # noqa: BLE001 - faiss 可选，缺失回退 numpy 暴力检索。
+    faiss = None
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -211,12 +216,22 @@ class SqliteVectorKnowledgeStore:
         top_k: int = 4,
         signature: str = "",
         auto_reset: bool = True,
+        ann_index_path: str = "",
+        ann_order_path: str = "",
     ) -> None:
         self.db_path = str(db_path)
         self.embed_provider = embed_provider
         self.chunk_chars = max(_MIN_CHUNK_CHARS, int(chunk_chars))
         self.top_k = max(0, int(top_k))
         self.signature = str(signature or "").strip()
+        self.ann_index_path = str(ann_index_path or "").strip() or str(
+            Path(self.db_path).with_name("knowledge_faiss.index")
+        )
+        self.ann_order_path = str(ann_order_path or "").strip() or str(
+            Path(self.db_path).with_name("knowledge_faiss.order.json")
+        )
+        self._ann_index: Any | None = None
+        self._ann_order: list[str] | None = None
         # 运行时应为 False：只有显式 knowledge-sync 才允许因指纹变化清空向量，
         # 避免机器人进程与同步进程并发时互相清空、进度反复回退。
         self.auto_reset = bool(auto_reset)
@@ -332,17 +347,19 @@ class SqliteVectorKnowledgeStore:
 
     def sync_chunks(self, files: list[Path]) -> None:
         with self._lock:
-            self._invalidate_vector_cache()
             paths = [Path(path).expanduser() for path in files]
+            changed = False
             with self._connect() as connection:
                 # 已从 BOT_KNOWLEDGE_FILES 移除的旧文件不再保留在知识库里。
                 source_ids = [path.stem for path in paths]
                 if source_ids:
                     placeholders = ",".join("?" for _ in source_ids)
-                    connection.execute(
+                    cursor = connection.execute(
                         f"DELETE FROM knowledge_chunks WHERE source_id NOT IN ({placeholders})",
                         source_ids,
                     )
+                    if cursor.rowcount > 0:
+                        changed = True
                 for path in paths:
                     text = load_character_document(path)
                     source_id = path.stem
@@ -371,6 +388,7 @@ class SqliteVectorKnowledgeStore:
                                 """,
                                 (chunk_id, source_id, source_id, content, content_hash, None),
                             )
+                            changed = True
                         elif str(existing["content_hash"]) != content_hash:
                             connection.execute(
                                 """
@@ -381,6 +399,10 @@ class SqliteVectorKnowledgeStore:
                                 """,
                                 (source_id, source_id, content, content_hash, chunk_id),
                             )
+                            changed = True
+
+            if changed:
+                self._invalidate_vector_cache()
 
     def embed_pending(
         self,
@@ -416,80 +438,216 @@ class SqliteVectorKnowledgeStore:
         query_text: str,
         files: list[Path] | None = None,
         *,
-        embed_backlog: bool = True,
+        embed_backlog: bool = False,
     ) -> list[KnowledgeChunk]:
         with self._lock:
             self.sync_chunks(list(files) if files else [])
             if self.top_k <= 0:
                 return []
-            if not embed_backlog and self._pending_rows():
-                # 请求路径不得承担大批量离线补建：待嵌入行交给后台
-                # knowledge-sync 处理，否则每条消息都会同步补齐整个积压队列。
-                return []
-            done, pending = self._embed_all_pending()
-            if done < pending:
-                return []
+            if embed_backlog:
+                # 只有显式预建/同步路径才补齐积压；请求路径不做全表扫描。
+                done, pending = self._embed_all_pending()
+                if done < pending:
+                    return []
             query_vectors = self._embed([str(query_text)])
             if query_vectors is None or len(query_vectors) != 1:
                 return []
             query_vector = query_vectors[0]
-            if np is not None:
-                matrix, metas = self._load_vector_cache()
-                if matrix is None or not metas:
-                    return []
-                query_array = np.asarray(query_vector, dtype=np.float32)
-                norms = np.linalg.norm(matrix, axis=1)
-                matrix_norm = matrix / np.maximum(norms, 1e-9)[:, None]
-                scores = matrix_norm @ query_array
-                top_indices = np.argsort(-scores)[: self.top_k]
-                results: list[KnowledgeChunk] = []
-                for index in top_indices:
-                    meta = metas[int(index)]
-                    results.append(
-                        KnowledgeChunk(
-                            chunk_id=meta["chunk_id"],
-                            source_id=meta["source_id"],
-                            title=meta["title"],
-                            content=meta["content"],
-                        )
-                    )
-                return results
 
-            scored: list[tuple[float, KnowledgeChunk]] = []
-            for row in self._vector_rows():
-                try:
-                    vector = json.loads(str(row["vector_json"]))
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    continue
-                score = _cosine_similarity(query_vector, vector)
-                scored.append(
-                    (
-                        score,
-                        KnowledgeChunk(
-                            chunk_id=str(row["chunk_id"]),
-                            source_id=str(row["source_id"] or ""),
-                            title=str(row["title"] or ""),
-                            content=str(row["content"] or ""),
-                        ),
-                    )
+            ann_hits = self._try_ann_search(query_vector)
+            if ann_hits is not None:
+                return ann_hits
+
+            if np is None:
+                return self._brute_force_python(query_vector)
+            matrix, chunk_ids = self._load_vector_cache()
+            if matrix is None or not chunk_ids:
+                return []
+            query_array = np.asarray(query_vector, dtype=np.float32)
+            norms = np.linalg.norm(matrix, axis=1)
+            matrix_norm = matrix / np.maximum(norms, 1e-9)[:, None]
+            scores = matrix_norm @ query_array
+            top_indices = np.argsort(-scores)[: self.top_k]
+            picked_ids = [chunk_ids[int(index)] for index in top_indices]
+            return self._fetch_chunks(picked_ids)
+
+    def _brute_force_python(self, query_vector: list[float]) -> list[KnowledgeChunk]:
+        scored: list[tuple[float, str]] = []
+        for row in self._vector_rows():
+            try:
+                vector = json.loads(str(row["vector_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            scored.append(
+                (_cosine_similarity(query_vector, vector), str(row["chunk_id"]))
+            )
+        scored.sort(key=lambda pair: (-pair[0], pair[1]))
+        return self._fetch_chunks([chunk_id for _, chunk_id in scored[: self.top_k]])
+
+    def _fetch_chunks(self, chunk_ids: list[str]) -> list[KnowledgeChunk]:
+        if not chunk_ids:
+            return []
+        placeholders = ",".join("?" for _ in chunk_ids)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT chunk_id, source_id, title, content
+                FROM knowledge_chunks WHERE chunk_id IN ({placeholders})
+                """,
+                chunk_ids,
+            ).fetchall()
+        by_id = {str(row["chunk_id"]): row for row in rows}
+        chunks: list[KnowledgeChunk] = []
+        for chunk_id in chunk_ids:
+            row = by_id.get(chunk_id)
+            if row is None:
+                continue
+            chunks.append(
+                KnowledgeChunk(
+                    chunk_id=str(row["chunk_id"]),
+                    source_id=str(row["source_id"] or ""),
+                    title=str(row["title"] or ""),
+                    content=str(row["content"] or ""),
                 )
-            scored.sort(key=lambda pair: (-pair[0], pair[1].chunk_id))
-            return [chunk for _, chunk in scored[: self.top_k]]
+            )
+        return chunks
+
+    def _ann_files(self) -> tuple[str, str]:
+        return self.ann_index_path, self.ann_order_path
+
+    def load_ann_index(self) -> bool:
+        """签名匹配时 mmap 加载 HNSW 索引；缺失/过期返回 False 回退暴力。"""
+        if faiss is None:
+            return False
+        if self._ann_index is not None and self._ann_order is not None:
+            return True
+        index_path, order_path = self._ann_files()
+        try:
+            if not Path(index_path).exists() or not Path(order_path).exists():
+                return False
+            stored_ann = self._stored_ann_signature()
+            if not stored_ann or stored_ann != self.signature:
+                return False
+            index = faiss.read_index(str(index_path), faiss.IO_FLAG_MMAP)
+            index.hnsw.efSearch = 64
+            order = json.loads(Path(order_path).read_text(encoding="utf-8"))
+            if not isinstance(order, list):
+                return False
+            self._ann_index = index
+            self._ann_order = [str(item) for item in order]
+            return True
+        except Exception:  # noqa: BLE001 - 索引损坏/不可读时回退。
+            self._ann_index = None
+            self._ann_order = None
+            return False
+
+    def _try_ann_search(self, query_vector: list[float]) -> list[KnowledgeChunk] | None:
+        if not self.load_ann_index():
+            return None
+        try:
+            query = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
+            norm = float(np.linalg.norm(query))
+            if norm > 0:
+                query = query / norm
+            _scores, indices = self._ann_index.search(query, self.top_k)
+            picked_ids = [
+                str(self._ann_order[int(index)])
+                for index in indices[0]
+                if 0 <= int(index) < len(self._ann_order)
+            ]
+            return self._fetch_chunks(picked_ids)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def build_ann_index(self, on_progress=None) -> dict:
+        """由 knowledge-sync 调用：把全部向量归一化写入 faiss HNSW 并落盘。"""
+        if faiss is None:
+            return {"built": False, "reason": "faiss_missing"}
+        with self._lock:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT chunk_id, vector_blob, vector_json
+                    FROM knowledge_chunks
+                    WHERE vector_json IS NOT NULL AND vector_json != ''
+                    """
+                ).fetchall()
+            vectors: list = []
+            chunk_ids: list[str] = []
+            for row in rows:
+                raw_blob = row["vector_blob"]
+                vector = None
+                if isinstance(raw_blob, (bytes, bytearray, memoryview)):
+                    try:
+                        parsed = np.frombuffer(bytes(raw_blob), dtype=np.float32)
+                        if parsed.size > 0:
+                            vector = parsed.astype(np.float32)
+                    except Exception:  # noqa: BLE001
+                        vector = None
+                if vector is None:
+                    try:
+                        vector = np.asarray(
+                            json.loads(str(row["vector_json"])), dtype=np.float32
+                        )
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        continue
+                vectors.append(vector)
+                chunk_ids.append(str(row["chunk_id"]))
+            if not vectors:
+                return {"built": False, "reason": "empty"}
+            matrix = np.vstack(vectors).astype(np.float32)
+            norms = np.linalg.norm(matrix, axis=1)
+            matrix = matrix / np.maximum(norms, 1e-9)[:, None]
+            dimension = int(matrix.shape[1])
+            try:
+                faiss.omp_set_num_threads(1)
+            except Exception:  # noqa: BLE001
+                pass
+            index = faiss.IndexHNSWFlat(dimension, 32, faiss.METRIC_INNER_PRODUCT)
+            index.hnsw.efConstruction = 200
+            index.add(matrix)
+            index_path, order_path = self._ann_files()
+            Path(index_path).parent.mkdir(parents=True, exist_ok=True)
+            faiss.write_index(index, str(index_path))
+            Path(order_path).write_text(
+                json.dumps(chunk_ids, ensure_ascii=False), encoding="utf-8"
+            )
+            self._set_stored_ann_signature(self.signature)
+            self._ann_index = None
+            self._ann_order = None
+            return {"built": True, "vectors": len(chunk_ids), "dim": dimension}
+
+    def _stored_ann_signature(self) -> str:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT value FROM knowledge_meta WHERE key = 'ann_signature'"
+            ).fetchone()
+        return str(row[0]) if row else ""
+
+    def _set_stored_ann_signature(self, value: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO knowledge_meta (key, value) VALUES ('ann_signature', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (value,),
+            )
 
     def _load_vector_cache(self):
-        """把全部向量一次性载入 numpy 矩阵并缓存；blob 优先，否则解析 JSON。"""
+        """把全部向量一次性载入 numpy 矩阵并缓存；只保留 chunk_id，正文懒加载。"""
         if self._vector_cache is not None and self._vector_meta is not None:
             return self._vector_cache, self._vector_meta
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT chunk_id, source_id, title, content, vector_json, vector_blob
+                SELECT chunk_id, vector_json, vector_blob
                 FROM knowledge_chunks
                 WHERE vector_json IS NOT NULL AND vector_json != ''
                 """
             ).fetchall()
         vectors: list = []
-        metas: list[dict] = []
+        chunk_ids: list[str] = []
         for row in rows:
             raw_blob = row["vector_blob"]
             if isinstance(raw_blob, (bytes, bytearray, memoryview)):
@@ -497,14 +655,7 @@ class SqliteVectorKnowledgeStore:
                     vector = np.frombuffer(bytes(raw_blob), dtype=np.float32)
                     if vector.size > 0:
                         vectors.append(vector.astype(np.float32))
-                        metas.append(
-                            {
-                                "chunk_id": str(row["chunk_id"]),
-                                "source_id": str(row["source_id"] or ""),
-                                "title": str(row["title"] or ""),
-                                "content": str(row["content"] or ""),
-                            }
-                        )
+                        chunk_ids.append(str(row["chunk_id"]))
                         continue
                 except Exception:  # noqa: BLE001
                     pass
@@ -514,20 +665,13 @@ class SqliteVectorKnowledgeStore:
                 continue
             if vector:
                 vectors.append(np.asarray(vector, dtype=np.float32))
-                metas.append(
-                    {
-                        "chunk_id": str(row["chunk_id"]),
-                        "source_id": str(row["source_id"] or ""),
-                        "title": str(row["title"] or ""),
-                        "content": str(row["content"] or ""),
-                    }
-                )
+                chunk_ids.append(str(row["chunk_id"]))
         if not vectors:
             self._vector_cache = None
             self._vector_meta = None
             return None, None
         self._vector_cache = np.vstack(vectors).astype(np.float32)
-        self._vector_meta = metas
+        self._vector_meta = chunk_ids
         return self._vector_cache, self._vector_meta
 
     def _pending_rows(self) -> list[sqlite3.Row]:

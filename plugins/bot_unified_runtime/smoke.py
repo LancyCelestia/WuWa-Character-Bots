@@ -2581,6 +2581,15 @@ def run_knowledge_sync(config: Config) -> dict[str, Any]:
         result["done"] = int(done)
         result["total_after"] = int(after["total"])
         result["embedded_after"] = int(after["embedded"])
+        ann = {"built": False, "reason": "not_attempted"}
+        if after["embedded"] > 0:
+            try:
+                ann = store.build_ann_index()
+            except Exception as exc:  # noqa: BLE001
+                ann = {"built": False, "reason": f"{type(exc).__name__}"}
+        result["ann_index_built"] = bool(ann.get("built"))
+        result["ann_vectors"] = int(ann.get("vectors", 0) or 0)
+        result["ann_reason"] = str(ann.get("reason", ""))
     except Exception as exc:  # noqa: BLE001
         result["error_kind"] = "exception"
         result["public_message"] = f"预建库异常：{type(exc).__name__}"
@@ -2597,7 +2606,8 @@ def run_knowledge_sync(config: Config) -> dict[str, Any]:
     result["ok"] = True
     result["public_message"] = (
         f"预建库完成：共 {result['total_after']} 行，全部已向量化"
-        f"（{result['active_base_url']} / {result['active_model']}）。"
+        f"（{result['active_base_url']} / {result['active_model']}）；"
+        f"HNSW 索引：{result['ann_index_built']}。"
     )
     return result
 
