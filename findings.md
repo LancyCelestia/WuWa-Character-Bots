@@ -264,3 +264,11 @@ b orm 流程。
 - MemeCrafters 三件套均为 MIT；nonebot-plugin-memes 与 nonebot-plugin-memes-api 功能基本一致（后者=远程 API 客户端，README 亦自述“基本一致”），同时装会重复；两者都会注册自有 matcher 并绕过本项目的基层统一流水线。结论：只部署 meme-generator-rs 后端 + 自研 bot.meme 客户端。
 - meme-generator-rs v0.5.x 协议（自研客户端已按此实现）：GET /meme/keys；POST /memes/{key} json={"images":[],"texts":[],"options":{}} -> {image_id}；GET /image/{image_id} -> PNG；GET /meme/version。
 - 群聊“被动消息”门禁与抽签接话分离：默认只有命令/点名回复（不扰民），BOT_GROUP_CHAT_AUTO_REPLY_ENABLED=true 后用确定性哈希抽签，同一消息永远同一结果，便于审计与回归测试。
+
+
+## 2026-08-23：线上“不生效”根因与表情包后端要点
+
+- “帮我查天气”落进人格聊天、出现“平台单条消息长度限制”提示，不是代码 bug：磁盘代码已含 natural 路由且 .env 已设 0，但线上 python 进程是 12:44 启动的旧版本。NoneBot 修改 matcher/配置后必须重启 nb run，否则旧进程继续用旧代码。用端口 8080 所有者定位旧进程链后重启即恢复。
+- meme-generator-rs Windows 版：`meme.exe run --host 127.0.0.1 --port 2233`；`meme.exe download` 用 jsdelivr 清单（resources.json：18 字体 + 3021 图片）下载到 `%USERPROFILE%\.meme_generator\resources`，进度条在无 TTY 时不输出、退出码 0 不代表失败；素材下载后需重启服务进程才能读新文件。
+- 纯文字表情（5000choyen）无需素材即可生成；需要底图的（nokia/petpet/pat）在素材缺失时返回 code 530/550 参数错误，优雅降级即可。
+- Windows 下 nb run 经 Start-Process 重定向日志时若不带 PYTHONUTF8/PYTHONIOENCODING，Loguru 写 emoji 到 GBK stderr 会报 UnicodeEncodeError（不影响业务，但日志脏）；启动前设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8` 可根治。

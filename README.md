@@ -660,3 +660,9 @@ powershell -ExecutionPolicy Bypass -File scripts/git.ps1 update
 - 自然语言命令：帮我查一下杭州天气、来首晴天、帮我查维基 鸣潮、今天有什么免费游戏、今天历史上发生了什么 都会归一化后执行对应插件；闲聊不会被劫持。
 - 点名接话：群聊 @ 机器人、写“岸宝/守岸人”、呼叫守岸人 都视为点名；默认只有点名/命令才回复。BOT_GROUP_CHAT_AUTO_REPLY_ENABLED=true 后按 BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY 做确定性抽签自动接话（默认关闭）。
 - 表情包：/表情 列表、/表情 <key> <文字>（｜分隔多段）、/表情帮助。只部署 MIT 的 meme-generator-rs 后端 + 自研 bot.meme 客户端（BOT_MEME_API_ENABLED=true），不安装 nonebot-plugin-memes / nonebot-plugin-memes-api（两者功能重复且绕过基层流水线）。
+
+
+## 全问法矩阵与表情包插件（2026-08-23 再追加）
+
+- 每条问法 -> 路由 -> 能力 -> 归一化命令 -> 群聊门禁 的完整矩阵见 `docs/route-matrix.md`；离线演示 `scripts/dev.ps1 route-demo`，真实接口烟测 `scripts/dev.ps1 route-smoke`。
+- 已安装 NoneBot 生态插件 `nonebot_plugin_memes_api`（MIT 0.5.1），后端 `meme-generator-rs` 部署于 `C:\Software\MemeGenerator`（端口 2233）；`/表情 …` 自研入口与插件关键词玩法并存。

@@ -28,6 +28,8 @@ param(
         "embedding-smoke",
         "knowledge-sync",
         "gscore-smoke",
+        "route-demo",
+        "route-smoke",
         "docs-check",
         "plugin-check",
         "smoke",
@@ -637,12 +639,29 @@ Tasks:
   embedding-smoke Validate configured OpenAI-compatible embeddings service (e.g. Aliyun Bailian qwen3.7-text-embedding) without touching the knowledge DB.
   knowledge-sync Pre-warm vector knowledge base: chunk BOT_KNOWLEDGE_FILES and embed into data/knowledge_embeddings.sqlite3; skips rows already embedded.
   gscore-smoke   Read-only GsCore bridge readiness check (config + websockets availability); never connects or sends.
+  route-demo     Print the full phrasing matrix: every way to talk to the bot -> base route -> capability -> normalized command -> group gate. Offline, no network, no QQ.
+  route-smoke    Run the deterministic capabilities (weather/wiki/epic/today-history/music/meme) against real APIs/services and report receipt state. Never sends QQ.
   docs-check    Verify command docs, runtime specs, and project config pointers exist.
   plugin-check  Verify plugins/ is configured and report whether local plugins exist yet.
   smoke         Verify docs, plugin discovery config, NoneBot import, and nb CLI availability.
   verify        Current-stage verification: docs-check, plugin-check, pytest, then optional lint/typecheck.
 "@
 }
+
+function Invoke-RouteDemo {
+    $python = Get-ProjectPython
+    Write-Step "printing full phrasing routing matrix (offline)"
+    & $python -m plugins.bot_unified_runtime.route_demo
+    if ($LASTEXITCODE -ne 0) { throw "route-demo failed" }
+}
+
+function Invoke-RouteSmoke {
+    $python = Get-ProjectPython
+    Write-Step "running real API smoke for deterministic capabilities"
+    & $python -m plugins.bot_unified_runtime.route_demo --real
+    if ($LASTEXITCODE -ne 0) { throw "route-smoke failed" }
+}
+
 
 switch ($Task) {
     "help" { Show-Help }
@@ -672,9 +691,10 @@ switch ($Task) {
     "embedding-smoke" { Invoke-EmbeddingSmoke }
     "knowledge-sync" { Invoke-KnowledgeSync }
     "gscore-smoke" { Invoke-GscoreSmoke }
+    "route-demo" { Invoke-RouteDemo }
+    "route-smoke" { Invoke-RouteSmoke }
     "docs-check" { Invoke-DocsCheck }
     "plugin-check" { Invoke-PluginCheck }
     "smoke" { Invoke-Smoke }
     "verify" { Invoke-Verify }
 }
-

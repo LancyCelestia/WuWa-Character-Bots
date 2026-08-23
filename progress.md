@@ -581,3 +581,12 @@
 - 群聊自动接话：BOT_GROUP_CHAT_AUTO_REPLY_ENABLED（默认关）+ BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY，确定性 SHA-256 抽签，可复现可审计。
 - 新增 capabilities/meme.py：自研 MIT 协议客户端对接本地 meme-generator-rs（/表情 列表、/表情 <key> <文字>、/表情帮助），服务不可达优雅降级；三件套结论：两个 NoneBot 插件功能重复且会绕过基层流水线，故不安装、自研接入。
 - 全量 pytest 808 passed（+34）；dev.ps1 verify / startup-smoke / persona-smoke / chat-smoke（真实 deepseek-v4-flash，receipt_state=sent）全部通过。
+
+
+## 2026-08-23：线上修复 + 全问法矩阵 + 表情包插件落地
+
+- 根因定位：QQ 机器人是 12:44 启动的旧进程，15:06/15:44/16:14 的新代码没加载，所以自然语言全部落到人格聊天、并出现已废弃的“长度限制”提示；.env 配置本身正确。已停止旧进程并以 UTF-8 环境重启（16:44 bot_connected）。
+- 新增 `runtime/route_demo.py` + `scripts/dev.ps1 route-demo|route-smoke` + `docs/route-matrix.md` + `tests/test_route_matrix.py`：33 条问法参数化回归 + 群聊门禁矩阵。
+- route-smoke 六条真实链路全过：天气（NMC 杭州）、维基（鸣潮角色列表）、Epic（本周免费游戏）、历史上的今天（华莱士逝世）、点歌（晴天）、表情包（nokia 渲染 PNG）。
+- 表情包：安装 nonebot_plugin_memes_api 0.5.1（MIT）并写入 pyproject；后端 meme-generator-rs 0.2.3 部署到 C:\Software\MemeGenerator（2233），模板素材已下载到 ~/.meme_generator/resources（3039 文件）；自研 bot.meme 与插件双入口并存。
+- 全量 pytest 842 passed；verify / startup-smoke / route-demo / route-smoke 通过。

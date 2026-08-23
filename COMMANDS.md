@@ -49,6 +49,8 @@ powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 verify
 | `online-transport-smoke` | 只读检查当前运行态在线 bot 状态。 | 调用 NoneBot 的在线 bot 查询边界，统计 `online_bots_count`、`onebot_bots_count` 和 `send_capable`；不会构造 `SendRequest`，不会调用 `send_private_msg` / `send_group_msg`，不会发送 QQ 消息，也不会展示 bot id、目标 ID、正文或 provider message id。命令行环境未初始化 NoneBot 时会安全显示没有在线 bot 可检查。 |
 | `console` | 控制台交互聊天（最小可执行程序）。 | 优先读取 `.env`，没有则读取 `.env.example`；走完整统一运行时流水线，默认 static provider 离线回复；配置 `openai_compatible` 后走真实模型。支持 `/help`、`/status`、`/why`、`/quit`，配置 `BOT_RUNTIME_PERSONA_NICKNAME` 后还支持 `/岸宝帮助` 等昵称别名；多轮历史默认保存在内存中（配置 SQLite 历史时自动持久化）。不连接 NapCat、不发送 QQ。带 `-Message "你好"` 时进入单轮非交互模式，回复成功退出码 0，否则非 0。 |
 | `credential-smoke` | 本地检查 cookie/凭据健康。 | 优先读取 `.env`，没有则读取 `.env.example`；检查每个凭据引用的 `expires_at`（过期/临近过期/正常/未知），配置 `BOT_CREDENTIAL_PROBE_URLS` 后可用 `--probe` 在线探测（401/403 视为需要重新登录）；只输出 ref/kind/state/脱敏说明，绝不输出 cookie 值；存在需要重新登录的凭据时非零退出。 |
+| `route-demo` | 打印全问法路由矩阵。 | 每种说法 -> 路由 kind -> 优先级 -> 能力 -> 归一化命令 -> 理由，并模拟私聊/@点名/昵称点名/被动消息/自动接话的门禁结果；离线，不联网不发 QQ。 |
+| `route-smoke` | 真实接口烟测。 | 天气/维基/Epic/历史上的今天/点歌/表情包六条链路走真实网络与服务，输出回执状态和正文预览；不发送 QQ 消息。 |
 | `verify` | 当前阶段默认验证入口。 | 执行 `docs-check`、`plugin-check`、项目自有 `pytest`；ruff/mypy 可用时一起执行。 |
 
 ## 验证策略
@@ -548,3 +550,10 @@ NoneBot 只负责插件加载、事件分发和适配器抽象。NapCat 作为 O
   `nonebot-plugin-memes`、`nonebot-plugin-memes-api`（两个插件功能重复）。
   本项目未安装任何一个 NoneBot 插件，而是自研 `bot.meme` 客户端对接同一
   HTTP API，保证表情包输出也走基层统一流水线（安全审查/日志/发送队列）。
+
+
+## 2026-08-23 全问法矩阵与表情包插件落地（追加）
+
+- 新增 `scripts/dev.ps1 route-demo`（离线演示）与 `route-smoke`（真实接口烟测）；权威矩阵见 `docs/route-matrix.md` 与 `tests/test_route_matrix.py`。
+- 已安装 `nonebot_plugin_memes_api`（MIT 0.5.1，NoneBot 生态插件）并写入 pyproject.toml；后端 meme-generator-rs 已部署到 `C:\Software\MemeGenerator\meme.exe`，端口 2233，模板素材已下载。
+- 表情包两个入口并存：自研 `/表情 …` 走基层统一流水线；插件支持 `摸 @某人`、`表情列表`、`随机表情` 等 Alconna 关键词玩法。
