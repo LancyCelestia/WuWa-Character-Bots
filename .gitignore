@@ -61,3 +61,6 @@ research/bilibili_api_sdists/
 
 # pytest sandbox basetemp
 .pytest_tmp*/
+
+# nonebot-plugin-memes-api runtime config (LOCALSTORE_USE_CWD=true)
+config/
