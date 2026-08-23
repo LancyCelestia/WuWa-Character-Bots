@@ -708,3 +708,10 @@ powershell -ExecutionPolicy Bypass -File scripts/git.ps1 update
 ## Win11 Mica 卡片 / 更多联网 / reply 修复（2026-08-23 九追）
 
 - 卡片 Mica 化：平台淡染渐变、封面居标题下、时长胶囊、博主数据补齐、透明圆角；/bot reply 修复；联网默认 20 条并抓前 2 页正文。
+
+
+## 表情包仓库离线批量导入（2026-08-23 十追）
+
+- 新增 scripts/import_meme_packs.py：从本地表情包目录递归收集图片（gif/webp/png/jpg/jpeg），MD5 去重后写入 data/meme_library/ 与 data/meme_library.sqlite3；幂等可重复运行、支持 --dry-run，跳过视频与说明文本。
+- 本次入库 8 个子包共 281 张图片 → 260 张唯一（批次内 21 张重复）；30 个 .mov 与 1 个 .txt 跳过；库总量 308 张，验证 0 缺失 / 0 孤儿 / 0 md5 不一致。
+- 新行按来源打标：描述=原文件名、场景标签=表情包子包/内层文件夹（支持 偷表情 千咲/爱弥斯/达妮娅/小爱/岁共/礼盒/c107/烤肉 等关键词检索），权重保持 1.0；存量行不受影响。

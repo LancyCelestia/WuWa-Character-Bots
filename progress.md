@@ -663,3 +663,11 @@
 - 卡片：简介只留原文（去时长/发布/“简介：”）、数据区隐藏时长/粉丝/关注/视频/专栏、封面满宽、28px 圆角透明、右上浅红平台色块、右下天蓝“守岸人 · ShoreKeeper Parser”、头像页脚左侧。
 - 搜索来源排序：_sort_web_hits 按萌娘/维基/哔哩/百度排序；查询组优先“萌娘百科/维基百科”。
 - 全量 pytest 889 passed；verify 过；22:06 bot_connected。
+
+
+## 2026-08-23：表情包仓库离线批量导入（十二修）
+
+- 新工具 scripts/import_meme_packs.py：图片 MD5 去重入库 data/meme_library/ + sqlite3，幂等/原子/并发安全，--dry-run 预览；跳过 .mov/.txt。
+- 从 C:\Users\LancyCelestia\Picture\Wuthering Waves\表情包 8 个子包导入：281 张图 → 260 张唯一（批次内重复 21 张）；30 个 .mov、1 个 .txt 按设计跳过。
+- 标签：description=原文件名、scene_tags=子包/内层文件夹（千咲/爱弥斯/达妮娅/小爱/岁共/礼盒/c107/烤肉 可关键词检索）、persona_hint=common、权重 1.0；只标新行，导入前 48 行零改动。
+- 验证：库 308 行 = 308 文件，0 坏路径 / 0 缺失 / 0 md5 不一致 / 0 孤儿；重复运行 0 新增；tests/test_meme_library.py 7 passed。
