@@ -655,3 +655,11 @@
 - 卡片 Mica：body 实底平台淡染（中间白两侧品牌色）、卡片 92% 白+平台色描边、封面移标题下留白、时长胶囊、标题 20px 加粗、页脚右上平台名+右下机器人身份、圆角外透明（element omit_background）。
 - B站解析补结构化博主数据（粉丝/关注/视频数/专栏数）+ pubdate 秒级时间；注册表补 t.bilibili/dynamic/b23/bili2233/通用回退；bridge header_l2/l4 映射。
 - 全量 pytest 887 passed；verify 过；21:41 bot_connected。
+
+
+## 2026-08-23：卡片细节与百科搜索优先级（十一修）
+
+- 时长 0分0秒 根因：B站 parser 只存“3分21秒”格式化串，bridge 用 int() 解析成 0；改为 stats 同时存 duration 秒数与 pubdate unix 秒，卡片显示 mm:ss 与年月日时分秒。
+- 卡片：简介只留原文（去时长/发布/“简介：”）、数据区隐藏时长/粉丝/关注/视频/专栏、封面满宽、28px 圆角透明、右上浅红平台色块、右下天蓝“守岸人 · ShoreKeeper Parser”、头像页脚左侧。
+- 搜索来源排序：_sort_web_hits 按萌娘/维基/哔哩/百度排序；查询组优先“萌娘百科/维基百科”。
+- 全量 pytest 889 passed；verify 过；22:06 bot_connected。

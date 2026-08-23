@@ -318,6 +318,24 @@ def _meme_search_lines(context: ContextBundle, max_chars: int | None = None) -> 
     return _budgeted_lines(lines, max_chars)
 
 
+_WEB_SOURCE_PRIORITY = (
+    "zh.moegirl.org.cn", "moegirl.org.cn",
+    "zh.wikipedia.org", "wikipedia.org",
+    "bilibili.com", "baike.baidu.com",
+)
+
+
+def _sort_web_hits(hits: list[WebSearchHit]) -> list[WebSearchHit]:
+    def score(hit: WebSearchHit) -> tuple[int, str]:
+        domain = (hit.source_domain or "").lower()
+        for index, preferred in enumerate(_WEB_SOURCE_PRIORITY):
+            if preferred in domain:
+                return (index, domain)
+        return (len(_WEB_SOURCE_PRIORITY), domain)
+
+    return sorted(hits, key=score)
+
+
 def _web_search_lines(context: ContextBundle, max_chars: int | None = None) -> str:
     web = context.web_search_context
     if web is None or not web.hits:
@@ -537,6 +555,8 @@ def build_chat_prompt_with_diagnostics(
             meme_search_lines,
             "",
             "按需联网检索到的现实/百科信息（网络事实，可能过时或有误）：",
+            "来源优先级：萌娘百科 > 维基百科 > 哔哩哔哩百科 > 百度百科；",
+            "二次元、游戏、角色、梗相关内容优先采信萌娘百科与维基百科。",
             "回答方式：先回答用户问题的核心疑问；像可靠的科普作者那样，",
             "按百科条目式给出确凿事实（背景/地点/时间/作品/数据），",
             "再以系统观审视：把事实放进更大的结构与关系网——因果、时间性、",
@@ -1013,13 +1033,25 @@ def build_chat_capability(
             queries = [base_query]
             if question_intent.reason == "entity_not_in_domain":
                 queries = [
+                    f"{base_query} 萌娘百科",
+                    f"{base_query} 维基百科",
                     f"{base_query} 百科",
                     f"{base_query} 简介 成立 作品 发展历程",
-                    f"{base_query} 是什么 介绍",
                     base_query,
                 ]
-            if question_intent.intent is QuestionIntent.WEB_SEARCH and question_intent.reason == "temporal_intent":
-                queries = [f"{base_query} 最新", f"{base_query} 更新 内容", base_query]
+            elif question_intent.intent is QuestionIntent.WEB_SEARCH and question_intent.reason == "temporal_intent":
+                queries = [
+                    f"{base_query} 最新",
+                    f"{base_query} 萌娘百科",
+                    f"{base_query} 更新 内容",
+                    base_query,
+                ]
+            elif question_intent.intent is QuestionIntent.WEB_SEARCH:
+                queries = [
+                    f"{base_query} 萌娘百科",
+                    f"{base_query} 维基百科",
+                    base_query,
+                ]
             max_results = max(1, int(web_max_results))
             # 0=不限制条数：每个查询取 12 条，合计安全上限 24 条。
             per_query = max_results if max_results > 0 else 20
@@ -1045,7 +1077,7 @@ def build_chat_capability(
                     continue
                 if len(merged) >= hard_total_cap:
                     break
-            web_hits = merged[:hard_total_cap]
+            web_hits = _sort_web_hits(merged[:hard_total_cap])
             if web_hits:
                 # 打开最相关的前 2 个页面抽正文，让模型看到更多真实内容。
                 enriched: list[WebSearchHit] = []

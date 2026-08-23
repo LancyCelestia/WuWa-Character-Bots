@@ -165,6 +165,10 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
     duration = _safe_int(data.get("duration"))
     if duration is not None:
         stats["时长"] = f"{duration // 60}分{duration % 60}秒"
+        stats["duration"] = duration
+    pubdate = _safe_int(data.get("pubdate"))
+    if pubdate is not None:
+        stats["pubdate"] = pubdate
     pages_note = f"；分P {len(pages)}" if len(pages) > 1 else ""
     cid = (pages[0] or {}).get("cid") if pages else data.get("cid")
     summary_lines: list[str] = []

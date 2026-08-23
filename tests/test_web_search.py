@@ -147,3 +147,18 @@ def test_fetch_page_text_returns_empty_for_bad_url(monkeypatch):
 
     monkeypatch.setattr("urllib.request.urlopen", boom)
     assert fetch_page_text("https://example.com/x", timeout_seconds=1.0) == ""
+
+
+def test_web_hits_sorted_by_preferred_encyclopedia():
+    from plugins.bot_unified_runtime.capabilities.chat import _sort_web_hits
+    from plugins.bot_unified_runtime.sources.web_search import WebSearchHit
+
+    hits = [
+        WebSearchHit(title="百度", snippet="", url="https://baike.baidu.com/x", source_domain="baike.baidu.com"),
+        WebSearchHit(title="维基", snippet="", url="https://zh.wikipedia.org/y", source_domain="zh.wikipedia.org"),
+        WebSearchHit(title="萌娘", snippet="", url="https://zh.moegirl.org.cn/z", source_domain="zh.moegirl.org.cn"),
+    ]
+    ordered = _sort_web_hits(hits)
+    assert ordered[0].source_domain == "zh.moegirl.org.cn"
+    assert ordered[1].source_domain == "zh.wikipedia.org"
+    assert ordered[2].source_domain == "baike.baidu.com"

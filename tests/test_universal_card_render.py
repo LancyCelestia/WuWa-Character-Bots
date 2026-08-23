@@ -63,7 +63,7 @@ def test_page_type_badge_and_footer_render():
     )
     assert "独家" in html
     assert "Bilibili" in html
-    assert "shore keeper parser" in html
+    assert "ShoreKeeper Parser" in html
 
 
 def test_stats_generic_items_render():
@@ -367,3 +367,17 @@ def test_content_capability_falls_back_to_media_card(tmp_path):
     assert "cover-wrap" in call["html"]
     assert "banner-img" not in call["html"]
     assert result.images and result.images[0]["file"].endswith(".png")
+
+
+def test_card_summary_strips_duration_and_intro_prefix():
+    html = render_universal_card_html(
+        {
+            "platform": "bilibili",
+            "title": "标题",
+            "text": "时长：1分22秒\n发布时间：2026-08-22\n简介：为你，千千万万次",
+        }
+    )
+    assert "时长：1分22秒" not in html
+    assert "发布时间：2026-08-22" not in html
+    assert "简介：" not in html
+    assert "为你，千千万万次" in html

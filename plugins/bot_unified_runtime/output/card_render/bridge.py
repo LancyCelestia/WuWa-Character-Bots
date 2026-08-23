@@ -87,6 +87,8 @@ _KNOWN_STAT_KEYS = frozenset({
     "live_rank", "live_watched", "live_popularity", "official_title",
     # 中文键已由 bridge 提炼到直播间字段，避免重复展示。
     "观看", "在线", "人气",
+    "粉丝", "关注", "视频数", "专栏数",
+    "时长", "发布时间", "pubdate", "duration", "duration_seconds",
 })
 
 _DEFAULT_CONTEXT = RenderPayload().to_dict()
@@ -202,6 +204,29 @@ def _map_comment(raw: Any) -> dict[str, Any]:
         "replies_count": _as_str(raw.get("replies_count")),
         "is_hot": bool(raw.get("is_hot")),
     }
+
+
+def _clean_card_summary(summary: str) -> str:
+    """卡片简介只留博主原文：去时长/发布时间行与“简介：”前缀。"""
+    kept: list[str] = []
+    for raw_line in (summary or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        head = line.split("：", 1)[0].split(":", 1)[0].strip()
+        if head == "简介":
+            content = ""
+            if "：" in line:
+                content = line.split("：", 1)[1]
+            elif ":" in line:
+                content = line.split(":", 1)[1]
+            if content.strip():
+                kept.append(content.strip())
+            continue
+        if head in {"时长", "视频时长", "发布时间", "时间", "上传时间"}:
+            continue
+        kept.append(line)
+    return "\n".join(kept)
 
 
 def parse_to_render_payload(item: Any) -> RenderPayload:
@@ -511,9 +536,10 @@ def render_universal_card_html(payload_dict: dict[str, Any] | None = None) -> st
         if key not in _KNOWN_STAT_KEYS
     ]
 
-    # 模板对 text/summary/forward.text 使用 | safe，这里先统一转义防注入。
-    payload.text = html.escape(_as_str(payload.text))
-    payload.summary = html.escape(_as_str(payload.summary))
+    # 模板对 text/summary/forward.text 使用 | safe，这里先统一转义防注入；
+    # 同时去掉 时长/发布时间 行与“简介：”前缀，简介只留博主原文。
+    payload.text = html.escape(_clean_card_summary(_as_str(payload.text)))
+    payload.summary = html.escape(_clean_card_summary(_as_str(payload.summary)))
     if isinstance(payload.forward, ForwardPayload):
         payload.forward.text = html.escape(_as_str(payload.forward.text))
     elif isinstance(payload.forward, dict):
