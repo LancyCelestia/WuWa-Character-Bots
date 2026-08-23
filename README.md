@@ -703,3 +703,8 @@ powershell -ExecutionPolicy Bypass -File scripts/git.ps1 update
 ## 识图预设 / NSFW 删除 / 详略 / 全量联网（2026-08-23 八追）
 
 - 识图模型 deepseek-v4-flash-vision-exp + 注册表预制接口；NSFW 高危直接删除；回复详略可调；大部分问句默认联网、世界观以知识库为主。
+
+
+## Win11 Mica 卡片 / 更多联网 / reply 修复（2026-08-23 九追）
+
+- 卡片 Mica 化：平台淡染渐变、封面居标题下、时长胶囊、博主数据补齐、透明圆角；/bot reply 修复；联网默认 20 条并抓前 2 页正文。

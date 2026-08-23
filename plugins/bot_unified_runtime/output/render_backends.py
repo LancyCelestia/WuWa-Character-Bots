@@ -127,7 +127,7 @@ class PlaywrightRenderBackend:
                         if element is not None:
                             # 元素截图自带裁切范围，不需要 clip 参数。
                             return bytes(
-                                element.screenshot(type="png", omit_background=False)
+                                element.screenshot(type="png", omit_background=True)
                             )
                         return bytes(page.screenshot(type="png", full_page=True))
                     finally:

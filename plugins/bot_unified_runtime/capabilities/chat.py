@@ -1022,8 +1022,8 @@ def build_chat_capability(
                 queries = [f"{base_query} 最新", f"{base_query} 更新 内容", base_query]
             max_results = max(1, int(web_max_results))
             # 0=不限制条数：每个查询取 12 条，合计安全上限 24 条。
-            per_query = max_results if max_results > 0 else 12
-            hard_total_cap = max_results if max_results > 0 else 24
+            per_query = max_results if max_results > 0 else 20
+            hard_total_cap = max_results if max_results > 0 else 40
             seen: set[tuple[str, str]] = set()
             merged: list[WebSearchHit] = []
             for search_query in queries:
@@ -1047,27 +1047,29 @@ def build_chat_capability(
                     break
             web_hits = merged[:hard_total_cap]
             if web_hits:
-                # 打开最相关结果页面抓正文，给模型真实事实而非只有标题摘要。
-                try:
-                    top = web_hits[0]
-                    page_text = fetch_page_text(
-                        top.url,
-                        proxy=web_page_proxy,
-                        timeout_seconds=float(web_page_timeout_seconds),
-                        max_chars=900,
-                    )
-                    if page_text:
-                        web_hits = [
-                            WebSearchHit(
-                                title=f"[页面正文] {top.title}",
-                                snippet=page_text,
-                                url=top.url,
-                                source_domain=top.source_domain,
-                            ),
-                            *web_hits,
-                        ][:max_results + 1]
-                except Exception:
-                    pass
+                # 打开最相关的前 2 个页面抽正文，让模型看到更多真实内容。
+                enriched: list[WebSearchHit] = []
+                for top in web_hits[:2]:
+                    try:
+                        page_text = fetch_page_text(
+                            top.url,
+                            proxy=web_page_proxy,
+                            timeout_seconds=float(web_page_timeout_seconds),
+                            max_chars=700,
+                        )
+                        if page_text:
+                            enriched.append(
+                                WebSearchHit(
+                                    title=f"[页面正文] {top.title}",
+                                    snippet=page_text,
+                                    url=top.url,
+                                    source_domain=top.source_domain,
+                                )
+                            )
+                    except Exception:
+                        continue
+                if enriched:
+                    web_hits = [*enriched, *web_hits][:hard_total_cap + 2]
                 context = context.model_copy(
                     update={
                         "web_search_context": WebSearchContext(

@@ -67,6 +67,18 @@ _MUSIC_MODE_ALIASES = {
 }
 
 
+def _reply_detail_converter(value: str) -> str:
+    normalized = (value or "").strip().lower()
+    aliases = {
+        "详细": "detail", "科普": "detail", "详尽": "detail", "detail": "detail",
+        "精简": "concise", "简洁": "concise", "brief": "concise", "concise": "concise",
+        "默认": "auto", "自动": "auto", "auto": "auto",
+    }
+    if normalized not in aliases:
+        raise ValueError("BOT_REPLY_DETAIL 必须是 详细/精简/默认")
+    return aliases[normalized]
+
+
 def _music_mode_converter(value: str) -> str:
     normalized = _MUSIC_MODE_ALIASES.get((value or "").strip().lower())
     if normalized is None:
@@ -92,6 +104,7 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_MEME_SEARCH_ENABLED": _bool_converter,
     "BOT_PERSONA_ACTION_BRACKETS": _bool_converter,
     "BOT_MUSIC_MODE": _music_mode_converter,
+    "BOT_REPLY_DETAIL": _reply_detail_converter,
 }
 
 

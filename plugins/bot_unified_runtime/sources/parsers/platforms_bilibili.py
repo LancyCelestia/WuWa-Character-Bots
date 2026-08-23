@@ -32,6 +32,7 @@ _AVID_RE = re.compile(r"/av(\d+)", re.IGNORECASE)
 _LIVE_RE = re.compile(r"live\.bilibili\.com/(\d+)")
 _SPACE_RE = re.compile(r"space\.bilibili\.com/(\d+)")
 _OPUS_RE = re.compile(r"/opus/(\d+)")
+_TDYNAMIC_RE = re.compile(r"(?:t\.bilibili\.com|/dynamic)/(\d+)")
 _FAVLIST_FID_RE = re.compile(r"[?&]fid=(\d+)")
 
 _OPUS_DETAIL_API = "https://api.bilibili.com/x/polymer/web-dynamic/v1/opus/detail"
@@ -92,9 +93,10 @@ def _format_count(value: int | None) -> str:
 
 # ---------- 视频 ----------
 
-def _author_enrichment(mid: int, *, cookie_header: str = "") -> str:
-    """作者粉丝/关注/作品数，尽力而为。"""
+def _author_enrichment(mid: int, *, cookie_header: str = "") -> tuple[str, dict]:
+    """作者粉丝/关注/视频/专栏，尽力而为；返回 (文本, 结构化计数)。"""
     lines: list[str] = []
+    counts: dict = {}
     try:
         rel = http_get_json(
             f"https://api.bilibili.com/x/relation/stat?vmid={mid}",
@@ -107,8 +109,10 @@ def _author_enrichment(mid: int, *, cookie_header: str = "") -> str:
             following = _safe_int(data.get("following"))
             if follower is not None:
                 lines.append(f"粉丝 {_format_count(follower)}")
+                counts["粉丝"] = follower
             if following is not None:
                 lines.append(f"关注 {_format_count(following)}")
+                counts["关注"] = following
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -119,13 +123,14 @@ def _author_enrichment(mid: int, *, cookie_header: str = "") -> str:
         )
         if nav.get("code") == 0:
             data = nav.get("data") or {}
-            for key, label in (("video", "视频"), ("article", "专栏")):
+            for key, label, stats_label in (("video", "视频", "视频数"), ("article", "专栏", "专栏数")):
                 value = _safe_int(data.get(key))
                 if value is not None:
                     lines.append(f"{label} {value}")
+                    counts[stats_label] = value
     except Exception:  # noqa: BLE001
         pass
-    return " · ".join(lines)
+    return " · ".join(lines), counts
 
 
 def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") -> PlatformParse:
@@ -186,9 +191,12 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
             )
             summary_lines.append(f"P{index}《{part}》{duration_text}")
     author_extra = ""
+    author_counts: dict = {}
     owner_mid = _safe_int(owner.get("mid"))
     if owner_mid:
-        author_extra = _author_enrichment(owner_mid, cookie_header=cookie_header)
+        author_extra, author_counts = _author_enrichment(owner_mid, cookie_header=cookie_header)
+        for label, value in author_counts.items():
+            stats[label] = value
     video_author: dict = {}
     if owner.get("name"):
         video_author["name"] = str(owner["name"])
@@ -959,6 +967,9 @@ def parse_bilibili(url: str, *, cookie_header: str = "") -> PlatformParse:
     opus_match = _OPUS_RE.search(url)
     if opus_match:
         return _parse_opus(opus_match.group(1), url, cookie_header=cookie_header)
+    tdynamic_match = _TDYNAMIC_RE.search(url)
+    if tdynamic_match:
+        return _parse_opus(tdynamic_match.group(1), url, cookie_header=cookie_header)
     if "/bangumi/" in url:
         return _parse_bangumi(url, cookie_header=cookie_header)
     final_url = url

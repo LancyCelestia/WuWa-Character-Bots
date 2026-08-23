@@ -294,6 +294,29 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
         )
     payload.video_pages = pages
 
+    # 博主结构化数据（视频/空间解析带上的 粉丝/关注/视频数/专栏数）
+    for label, key in (("粉丝", "粉丝"), ("关注", "关注"), ("视频数", "视频数"), ("专栏数", "专栏数")):
+        value = _first_stat_value(stats_raw, (key,))
+        if value not in (None, ""):
+            payload.header_l4_items.append({"label": label, "value": value})
+
+    # 第二行：视频ID / 动态ID / 番剧ID / 商品ID
+    if kind == "dynamic":
+        payload.header_l2_items.append({"label": "动态ID", "value": item_id})
+    elif kind == "bangumi":
+        payload.header_l2_items.append({"label": "番剧ID", "value": item_id})
+    elif kind in {"goods", "ticket", "mall"}:
+        payload.header_l2_items.append({"label": "商品ID", "value": item_id})
+    elif platform == "bilibili" and item_id.upper().startswith("BV"):
+        payload.header_l2_items.append({"label": "视频ID", "value": item_id})
+    elif platform == "bilibili" and item_id.lower().startswith("av"):
+        payload.header_l2_items.append({"label": "视频ID", "value": item_id})
+
+    # 发布时间：精确到年月日时分秒
+    pub_raw = _first_stat_value(stats_raw, ("pubdate", "发布时间", "pub_time"))
+    if pub_raw is not None:
+        payload.timestamp = _format_timestamp(pub_raw)
+
     # 视频时长 / 简介（从 stats 的常见键提炼）
     duration_raw = _first_stat_value(stats_raw, ("duration", "duration_seconds", "时长"))
     if duration_raw is not None:

@@ -63,7 +63,7 @@ def test_page_type_badge_and_footer_render():
     )
     assert "独家" in html
     assert "Bilibili" in html
-    assert "Parser" in html
+    assert "shore keeper parser" in html
 
 
 def test_stats_generic_items_render():

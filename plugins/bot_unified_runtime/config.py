@@ -153,7 +153,7 @@ class Config(BaseModel):
     bot_web_search_enabled: bool = False
     bot_web_search_timeout_seconds: float = 3.0
     # 联网检索条数上限；0=不限制（内部有安全上限，避免无限等待）。
-    bot_web_search_max_results: int = 12
+    bot_web_search_max_results: int = 20
 
     # 表情包生成能力（bot.meme）：对接本地 meme-generator-rs HTTP API。
     # 命令开关：/表情 列表、/表情 <key> <文字>、/meme help（大小写均可）。

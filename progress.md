@@ -646,3 +646,12 @@
 - /bot reply 详细|精简|默认；科普/现实/知识问题 auto 自动升级详尽可能；提示词去掉“禁止式”措辞，改为科普作者式表述。
 - 意图 v4：疑似问句默认联网；现实政经文社科类关键词必联网；世界观领域词知识库优先+回退联网。
 - 偷表情支持 简繁英 × 斜杠 × 带名/不带名 全组合；全量 pytest 887 passed；verify/startup-smoke/route-smoke 全过；21:10 bot_connected。
+
+
+## 2026-08-23：Win11 Mica 卡片 + 更多联网 + reply 修复（十修）
+
+- /bot reply 报错根因：BOT_REPLY_DETAIL 未加入 RuntimeSettingsStore 可写白名单；已加转换器并测试。
+- 联网：默认 20 条、内部上限 40、抓前 2 页正文；现实 ID 类多组查询。
+- 卡片 Mica：body 实底平台淡染（中间白两侧品牌色）、卡片 92% 白+平台色描边、封面移标题下留白、时长胶囊、标题 20px 加粗、页脚右上平台名+右下机器人身份、圆角外透明（element omit_background）。
+- B站解析补结构化博主数据（粉丝/关注/视频数/专栏数）+ pubdate 秒级时间；注册表补 t.bilibili/dynamic/b23/bili2233/通用回退；bridge header_l2/l4 映射。
+- 全量 pytest 887 passed；verify 过；21:41 bot_connected。
