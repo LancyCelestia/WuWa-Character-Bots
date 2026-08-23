@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import re
 
 from nonebot.adapters import Bot, Event
 from nonebot.typing import T_State
@@ -58,6 +59,8 @@ from .runtime.settings import (
 )
 from .sources.credential_health import check_credentials_and_report
 from .sources.meme_search import build_meme_search_provider
+from .sources.meme_library import MemeLibraryStore
+from .sources.meme_library_listener import absorb_event_images
 from .sources.web_search import build_web_search_provider
 from .sources.parsers import extract_http_urls
 from .sources.parse_history import (
@@ -82,6 +85,10 @@ from .capabilities.wiki import build_wiki_capability, is_wiki_command
 from .capabilities.epic import build_epic_capability, is_epic_command
 from .capabilities.weather import build_weather_capability, is_weather_command
 from .capabilities.meme import build_meme_capability, is_meme_command
+from .capabilities.meme_library import (
+    build_meme_library_capability,
+    is_meme_library_command,
+)
 from .runtime.mentions import detect_name_mention
 from .runtime.natural_language import detect_natural_command
 
@@ -180,6 +187,74 @@ def set_runtime_mention_terms(terms: list[str] | tuple[str, ...]) -> None:
     """在插件初始化时登记人格昵称，用于“只写名字也算点名”。"""
     global _RUNTIME_MENTION_TERMS
     _RUNTIME_MENTION_TERMS = [str(item).strip() for item in terms if str(item).strip()]
+
+def _urls_from_message_segments(raw_segments: list[dict[str, Any]]) -> list[str]:
+    """从文本/卡片(json/xml/app)消息段里提取 URL（合并转发与 HTML 卡兜底）。"""
+    import json as _json
+
+    urls: list[str] = []
+    for segment in raw_segments or []:
+        segment_type = str(segment.get("type", ""))
+        data = segment.get("data") or {}
+        if not isinstance(data, dict):
+            continue
+        text = ""
+        if segment_type == "text":
+            text = str(data.get("text", ""))
+        elif segment_type in {"json", "xml", "share", "app", "card", "markdown"}:
+            for key in ("data", "content", "url", "meta", "text"):
+                raw_value = data.get(key)
+                if isinstance(raw_value, dict):
+                    raw_value = _json.dumps(raw_value, ensure_ascii=False)
+                if isinstance(raw_value, str):
+                    text += raw_value + " "
+        for url in extract_http_urls(text):
+            if url not in urls:
+                urls.append(url)
+    return urls
+
+
+def _effective_route_text(event: Any) -> str:
+    """路由判定文本：纯文本 + 卡片/HTML 段里的链接。"""
+    plain = event.get_plaintext().strip()
+    try:
+        segments = _extract_onebot_raw_segments(event)
+    except Exception:
+        segments = []
+    urls = _urls_from_message_segments(segments)
+    if not urls:
+        return plain
+    return f"{plain} {' '.join(urls)}".strip()
+
+
+async def _forward_message_text(bot: Any, event: Any) -> str:
+    """读取合并转发（forward）消息正文；失败返回空串。"""
+    try:
+        call_api = getattr(bot, "call_api", None)
+        if not callable(call_api):
+            return ""
+        result = await call_api("get_forward_msg", message_id=event.message_id)
+        if not isinstance(result, dict):
+            return ""
+        messages = result.get("messages")
+        if not isinstance(messages, list):
+            return ""
+        lines: list[str] = []
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            segments = item.get("message") or item.get("segments") or []
+            if not isinstance(segments, list):
+                continue
+            for segment in segments:
+                if isinstance(segment, dict) and segment.get("type") == "text":
+                    text = str((segment.get("data") or {}).get("text", "")).strip()
+                    if text:
+                        lines.append(text)
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
 
 def _detect_onebot_direct_mention(
     raw_segments: list[dict[str, Any]],
@@ -965,6 +1040,14 @@ def _register_nonebot_handlers() -> None:
 
     history_recorder = build_conversation_history_provider(config)
     parse_history_store = build_parse_history_store(config)
+    meme_library_store = (
+        MemeLibraryStore(
+            str(getattr(config, "bot_meme_library_db_path", "data/meme_library.sqlite3") or ""),
+            prefer=list(getattr(config, "bot_meme_library_prefer", []) or []),
+        )
+        if getattr(config, "bot_meme_library_enabled", False)
+        else None
+    )
     render_backend = (
         build_render_backend(config.bot_card_render_backend)
         if getattr(config, "bot_card_render_enabled", True)
@@ -1051,9 +1134,28 @@ def _register_nonebot_handlers() -> None:
     meme = on_message(rule=_is_meme_event, priority=20, block=True)
     natural = on_message(rule=_is_natural_event, priority=45, block=True)
 
-    async def _is_content_parse_event(event: Event) -> bool:
+    async def _is_meme_library_event(event: Event) -> bool:
         return (
             classify_message_route(event.get_plaintext(), config=config).kind
+            is RouteKind.MEME_LIBRARY
+        )
+
+    meme_library = on_message(rule=_is_meme_library_event, priority=22, block=True)
+
+    meme_absorb = on_message(priority=10, block=False)
+
+    @meme_absorb.handle()
+    async def _handle_meme_absorb(bot: Bot, event: Event) -> None:
+        if meme_library_store is None:
+            return
+        try:
+            await absorb_event_images(bot, event, config, meme_library_store)
+        except Exception:  # noqa: BLE001 - 收藏失败不影响消息流。
+            return
+
+    async def _is_content_parse_event(event: Event) -> bool:
+        return (
+            classify_message_route(_effective_route_text(event), config=config).kind
             is RouteKind.CONTENT
         )
 
@@ -1809,6 +1911,15 @@ def _register_nonebot_handlers() -> None:
             event,
             bot_id=str(getattr(bot, "self_id", "unknown")),
         )
+        forward_text = await _forward_message_text(bot, event)
+        if forward_text:
+            message = message.model_copy(
+                update={
+                    "plain_text": (
+                        f"{message.plain_text}\n【合并转发内容】\n{forward_text}"
+                    ).strip()
+                }
+            )
         receipt = await pipeline.handle_async(
             message,
             chat_capability,
@@ -1887,6 +1998,15 @@ def _register_nonebot_handlers() -> None:
             event,
             bot_id=str(getattr(bot, "self_id", "unknown")),
         )
+        segment_urls = _urls_from_message_segments(_extract_onebot_raw_segments(event))
+        if segment_urls:
+            message = message.model_copy(
+                update={
+                    "plain_text": (
+                        message.plain_text + " " + " ".join(segment_urls)
+                    ).strip()
+                }
+            )
         receipt = await pipeline.handle_async(
             message,
             offload_capability(
@@ -2042,6 +2162,48 @@ def _register_nonebot_handlers() -> None:
         await _run_simple_capability(
             bot, event, build_meme_capability, "bot.meme", meme
         )
+
+    @meme_library.handle()
+    async def _handle_meme_library(bot: Bot, event: Event) -> None:
+        if meme_library_store is None:
+            await meme_library.finish("表情库未启用。")
+            return
+        message = _incoming_from_nonebot_event(
+            event,
+            bot_id=str(getattr(bot, "self_id", "unknown")),
+        )
+        arg = ""
+        match = re.match(
+            r"^[/!！]?(?:偷表情|偷表情包|表情随机|随机表情|随机表情包|表情抽签|meme random|steal meme)\s*(.*)$",
+            message.plain_text,
+            re.IGNORECASE,
+        )
+        if match:
+            arg = (match.group(1) or "").strip()
+        if arg.lower() in {"私聊", "私聊我", "private", "私"}:
+            message = message.model_copy(
+                update={"session_type": SessionType.PRIVATE, "group_id": None}
+            )
+        receipt = await pipeline.handle_async(
+            message,
+            offload_capability(
+                build_meme_library_capability(meme_library_store, config)
+            ),
+            capability_id="bot.meme_library",
+        )
+        sent_request = _find_sent_request(send_queue, message.request_id)
+        if sent_request is not None:
+            transport_receipt = await _deliver_onebot_send_request(
+                bot,
+                sent_request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+            if transport_receipt.state.value == "sent":
+                return
+            await meme_library.finish(transport_receipt.public_message)
+        await meme_library.finish(receipt.public_message)
 
     @natural.handle()
     async def _handle_natural(bot: Bot, event: Event) -> None:

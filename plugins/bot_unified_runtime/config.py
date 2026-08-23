@@ -162,6 +162,27 @@ class Config(BaseModel):
     bot_meme_api_base_url: str = "http://127.0.0.1:2233"
     bot_meme_api_timeout_seconds: float = 15.0
     bot_meme_api_output_dir: str = "data/memes"
+    # 群聊表情包机器人（bot.meme_library）：监听群图片→异步下载→MD5 去重入库，
+    # /偷表情 按权重随机发送；优先守岸人/鸣潮/战双/库洛，NSFW 与普通图片降权。
+    bot_meme_library_enabled: bool = False
+    bot_meme_library_dir: str = "data/meme_library"
+    bot_meme_library_db_path: str = "data/meme_library.sqlite3"
+    bot_meme_library_max_file_bytes: int = 5242880
+    bot_meme_library_max_files: int = 20000
+    bot_meme_library_max_age_days: int = 30
+    bot_meme_library_cooldown_seconds: int = 20
+    bot_meme_library_group_allowlist: list[str] = []
+    bot_meme_library_group_denylist: list[str] = []
+    bot_meme_library_nsfw_max: float = 0.2
+    bot_meme_library_prefer: list[str] = ["守岸人", "岸宝", "鸣潮", "战双帕弥什", "库洛"]
+    # VLM 打标（可选，默认关）：OpenAI-compatible 视觉模型给图片打标签与 NSFW 评分。
+    bot_meme_library_vlm_enabled: bool = False
+    bot_meme_library_vlm_model: str = ""
+    bot_meme_library_vlm_base_url: str = ""
+    bot_meme_library_vlm_api_key: str = ""
+    bot_meme_library_vlm_timeout_seconds: float = 20.0
+    # 群图下载代理（默认直连 QQ 多媒体源；外网源可走 7890）。
+    bot_meme_library_proxy: str = ""
     # 自然语言命令层（基层路由优先级 45）：“帮我查天气”等归一化执行。
     bot_natural_command_enabled: bool = True
     # 群聊自动接话：enabled=true 时按 probability 对未点名的群消息
@@ -409,6 +430,9 @@ class Config(BaseModel):
     @field_validator(
         "bot_content_parse_platforms",
         "bot_music_platforms",
+        "bot_meme_library_group_allowlist",
+        "bot_meme_library_group_denylist",
+        "bot_meme_library_prefer",
         mode="before",
     )
     @classmethod

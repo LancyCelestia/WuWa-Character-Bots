@@ -32,6 +32,9 @@ from plugins.bot_unified_runtime.capabilities.auto_send import (
 from plugins.bot_unified_runtime.capabilities.chat import looks_like_chat_text
 from plugins.bot_unified_runtime.capabilities.epic import is_epic_command
 from plugins.bot_unified_runtime.capabilities.meme import is_meme_command
+from plugins.bot_unified_runtime.capabilities.meme_library import (
+    is_meme_library_command,
+)
 from plugins.bot_unified_runtime.capabilities.music import (
     is_music_command,
     is_music_mode_command,
@@ -55,6 +58,7 @@ class RouteKind(str, Enum):
     SUBSCRIBE = "subscribe"
     AUTO_SEND = "auto_send"
     MEME = "meme"
+    MEME_LIBRARY = "meme_library"
     MUSIC_MODE = "music_mode"
     MUSIC = "music"
     TODAY_HISTORY = "today_history"
@@ -172,6 +176,16 @@ def build_route_rules() -> list[RouteRule]:
             RouteKind.MEME, "bot.meme", 20, "表情包生成命令（对接 meme-generator-rs）", ("base_route:meme",)
         )
 
+    def meme_library_match(text, config, _alias):
+        if not getattr(config, "bot_meme_library_enabled", False):
+            return None
+        if not is_meme_library_command(text):
+            return None
+        return RouteDecision(
+            RouteKind.MEME_LIBRARY, "bot.meme_library", 22,
+            "偷表情/表情库命令（权重随机发送）", ("base_route:meme_library",)
+        )
+
     def music_mode_match(text, config, _alias):
         if not getattr(config, "bot_music_enabled", True):
             return None
@@ -278,6 +292,7 @@ def build_route_rules() -> list[RouteRule]:
         RouteRule(RouteKind.SUBSCRIBE, "bot.subscribe", 12, "订阅命令", "订阅命令（中文/英文）", ("base_route:subscribe",), subscribe_match),
         RouteRule(RouteKind.AUTO_SEND, "bot.auto_send", 13, "自动发送", "自动发送/定时任务命令", ("base_route:auto_send",), auto_send_match),
         RouteRule(RouteKind.MEME, "bot.meme", 20, "表情包生成", "表情包生成命令", ("base_route:meme",), meme_match),
+        RouteRule(RouteKind.MEME_LIBRARY, "bot.meme_library", 22, "偷表情", "偷表情/表情库命令", ("base_route:meme_library",), meme_library_match),
         RouteRule(RouteKind.MUSIC_MODE, "bot.music_mode", 40, "点歌模式", "点歌输出模式设置", ("base_route:music_mode",), music_mode_match),
         RouteRule(RouteKind.MUSIC, "bot.music", 41, "点歌", "点歌", ("base_route:music",), music_match),
         RouteRule(RouteKind.TODAY_HISTORY, "bot.today_history", 41, "历史上的今天", "历史上的今天", ("base_route:today_history",), today_history_match),
@@ -309,7 +324,7 @@ def build_interface_manifest() -> list[InterfaceEntry]:
         InterfaceEntry("capability.meme", "表情包生成", "active", "meme", 20, "调用本地 meme-generator-rs HTTP API 生成表情包"),
         InterfaceEntry("capability.auto_send", "自动发送/定时任务", "active", "auto_send", 13, "报存 给 A 发… 草稿/预览/发送"),
         InterfaceEntry("capability.game_live", "游戏直播状态", "reserved", "game_live", None, "预留：游戏内直播/活动事件接入"),
-        InterfaceEntry("capability.meme_absorb", "吸收表情包", "reserved", "meme_absorb", None, "预留：把群友发的图片/表情入库作为表情素材"),
+        InterfaceEntry("capability.meme_absorb", "吸收表情包", "active", "meme_absorb", None, "监听群图片异步下载、MD5 去重、权重筛选、VLM 打标与 NSFW 过滤"),
         InterfaceEntry("capability.emotion", "情绪状态注入", "active", "context", None, "作为上下文能力注入，不单独占用文本路由"),
         InterfaceEntry("capability.gscore", "GsCore 上行命令", "reserved", "gscore", None, "预留：GsCore 侧指令统一进入基层路由"),
     ]
@@ -322,6 +337,7 @@ COMMAND_ROUTE_KINDS = frozenset(
         RouteKind.SUBSCRIBE,
         RouteKind.AUTO_SEND,
         RouteKind.MEME,
+        RouteKind.MEME_LIBRARY,
         RouteKind.MUSIC_MODE,
         RouteKind.MUSIC,
         RouteKind.TODAY_HISTORY,

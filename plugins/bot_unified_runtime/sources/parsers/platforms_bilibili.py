@@ -166,10 +166,6 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
     if data.get("tname"):
         summary_lines.append(f"分区：{data.get('tname')}")
     summary_lines.append(f"时长：{stats.get('时长', '-')}{pages_note}")
-    if data.get("copyright") == 1:
-        summary_lines.append("类型：转载")
-    elif data.get("copyright") == 2:
-        summary_lines.append("类型：自制")
     if data.get("pubdate"):
         import datetime
 
