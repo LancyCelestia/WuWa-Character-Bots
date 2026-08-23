@@ -288,7 +288,9 @@ BOT_PERSONA_ALT_PROFILES={"gentle":{"display_name":"守岸人·温柔","files":[
 - **世界观术语表**：`BOT_GLOSSARY_FILES` 指向"词条：解释"格式文件，游戏世界观/专有名词/专有地名/科研词汇按预算注入，回答时不编造设定（`character/glossary.py`）。
 - **关系态度层**：`BOT_USER_PROFILES_FILE` 按用户存称呼/好感度/偏好/态度，注入"对当前用户的态度"分区并轻微调整语气；无档案时按**互动次数自动升级**（≥8 次 familiar，≥30 次 close），陌生人基线兜底（`character/relationship.py`）。
 - **按需梗搜索 + 二次元指数**：时梗默认不注入；检测到"XX是什么梗"时在线搜索，只保留 B站/小红书/萌娘百科等二次元平台来源，过滤不适内容；按来源域名做**确定性评分排序**（萌娘百科 1.0 > B站 0.9 > 小红书 0.8），只用于排序过滤、不进 LLM 判断、零额外 token（`sources/meme_search.py`）。
-- **长回复合并转发**：回复超过 `BOT_RENDER_FORWARD_MIN_CHARS` 自动切块渲染成合并转发（QQ 私聊/群聊），transport 不支持时降级纯文本（`output/renderer.py`）。
+- **长回复合并转发**：回复超过 `BOT_RENDER_FORWARD_MIN_CHARS` 自动切块渲染成合并转发（QQ 私聊/群聊），transport 不支持时降级纯文本；`=0` 表示永不拆分、单条直发，超长段落优先在句末标点断开、不会把颜文字从中间切开（`output/renderer.py`）。
+- **回复长度**：`BOT_REPLY_MAX_CHARS_PER_MESSAGE` 与 `BOT_REPLY_*_MAX_MESSAGES` 设为 `0` = 不限制，完整回复一次性发出且不再追加「（平台单条消息长度限制…）」提示；颜文字（括号内无汉字）不会被动作格式化拆到单独一行（`output/roleplay.py`）。
+- **世界观解释规则**：涉及世界观地名/人名/物品/组织/剧情名词时，提示词要求模型先给确切事实说明（是什么/在哪/是谁/作用），再用人格表达感受；先事实、后感受，禁止打哑谜（`capabilities/chat.py`）。
 - **HTML/卡片渲染后端接口**：`output/render_backends.py` 定义 `RenderBackend` 契约与 Null/HtmlKit 实现；`output/card_render/` 提供通用信息卡 HTML 模板（1440×960）与 RenderPayload→模板桥接，B站/小红书等深解析结果自动渲染为卡片 PNG，失败降级文本卡片，不改流水线。
 - **文件审计日志**：`BOT_AUDIT_LOG_FILE` 开启 JSONL 脱敏日志（自动轮转），内存/SQLite 审计照常（`audit/file_logger.py`）。
 - **凭据健康检查**：`credential-smoke` 检查 cookie 过期/临近过期；`BOT_CREDENTIAL_CHECK_ENABLED=true` 时 NoneBot 入口按间隔定时检查、审计预警并私聊管理员（`sources/credential_health.py`）。

@@ -251,3 +251,63 @@ def test_chat_context_tone_limit_is_not_raised_above_decision_budget():
     )
 
     assert isinstance(result, CapabilityResult)
+
+
+def test_zero_limits_mean_unlimited_reply():
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.policy import (
+        build_reply_budget_settings,
+        decide_reply_budget,
+    )
+
+    settings = build_reply_budget_settings(
+        Config(
+            bot_reply_private_default_max_messages=0,
+            bot_reply_private_support_max_messages=0,
+            bot_reply_private_deep_help_max_messages=0,
+            bot_reply_group_max_messages=0,
+            bot_reply_risk_max_messages=0,
+        )
+    )
+    budget = decide_reply_budget(
+        make_message("你好"),
+        capability_id="bot.chat",
+        settings=settings,
+    )
+
+    assert budget.max_messages == 0
+
+
+def test_runtime_pipeline_accepts_zero_max_messages_as_unlimited():
+    """0=不限制：SendRequest 允许 max_messages=0 且完整发送，不触发校验错误。"""
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.policy import build_reply_budget_settings
+
+    audit = InMemoryAuditLogger()
+    queue = InMemorySendQueue(audit_logger=audit)
+    pipeline = RuntimePipeline(
+        send_queue=queue,
+        audit_logger=audit,
+        reply_budget_settings=build_reply_budget_settings(
+            Config(
+                bot_reply_private_default_max_messages=0,
+                bot_reply_private_support_max_messages=0,
+                bot_reply_private_deep_help_max_messages=0,
+                bot_reply_group_max_messages=0,
+                bot_reply_risk_max_messages=0,
+            )
+        ),
+    )
+    provider = RecordingLLMProvider()
+    capability = build_chat_capability(
+        character_provider=make_context,
+        llm_provider=provider,
+    )
+    message = make_message("你好")
+
+    receipt = pipeline.handle(message, capability, capability_id="bot.chat")
+
+    assert receipt.state is ReceiptState.SENT
+    [send_request] = queue.sent_requests
+    assert send_request.max_messages == 0
+    assert "最多回复条数：不限制" in provider.last_messages[0]["content"]

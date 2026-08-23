@@ -50,13 +50,24 @@ def render_reviewed_output(
     )
 
 
+def _safe_break_index(paragraph: str, limit: int) -> int:
+    """优先在句末标点/空白处断行，避免把颜文字从中间切开。"""
+    if limit <= 0:
+        return 0
+    break_chars = "。！？…~!?；;，, 　	"
+    for index in range(limit - 1, max(0, limit - 40), -1):
+        if paragraph[index] in break_chars:
+            return index + 1
+    return limit
+
+
 def split_text_chunks(
     text: str,
     *,
     node_chars: int = 900,
     max_nodes: int = 6,
 ) -> list[str]:
-    """按段落把长文本切成合并转发节点，超长段落会被硬切。"""
+    """按段落把长文本切成合并转发节点，超长段落优先在标点处断开。"""
     normalized = (text or "").strip()
     if not normalized:
         return []
@@ -73,8 +84,9 @@ def split_text_chunks(
             if current:
                 chunks.append(current)
                 current = ""
-            chunks.append(paragraph[:node_chars])
-            paragraph = paragraph[node_chars:]
+            break_at = _safe_break_index(paragraph, node_chars)
+            chunks.append(paragraph[:break_at])
+            paragraph = paragraph[break_at:]
         if current and len(current) + len(paragraph) + 1 > node_chars:
             chunks.append(current)
             current = paragraph
@@ -130,4 +142,7 @@ def should_forward_long_text(
     *,
     min_chars: int = 1500,
 ) -> bool:
+    """min_chars<=0 表示不拆转发，长文本直接单条发送。"""
+    if min_chars <= 0:
+        return False
     return bool(text) and len(text.strip()) >= max(1, min_chars)

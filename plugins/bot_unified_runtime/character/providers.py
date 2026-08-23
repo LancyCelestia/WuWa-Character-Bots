@@ -142,7 +142,7 @@ class FileCharacterContextProvider:
         self.tone_voice = tone_voice
         self.tone_warmth = tone_warmth
         self.tone_directness = tone_directness
-        self.tone_message_count_limit = max(1, tone_message_count_limit)
+        self.tone_message_count_limit = max(0, tone_message_count_limit)  # 0 = 不限制
         self.memory_provider = memory_provider or NullMemoryProvider()
         self.memory_max_items = max(0, memory_max_items)
         self.memory_max_chars = max(0, memory_max_chars)

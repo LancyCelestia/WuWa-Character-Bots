@@ -359,6 +359,7 @@ def build_chat_prompt_with_diagnostics(
     requested_context_budget = context.context_budget
     context_budget = max(MIN_CHAT_PROMPT_BUDGET, requested_context_budget)
     expandable_budget = max(240, context_budget - 560)
+    # 知识库份额最高：世界观问答需要完整注入检索结果；情绪/记忆/历史保持原预算。
     section_budgets = {
         "style_rules": _section_budget(expandable_budget, 0.22),
         "role_boundaries": _section_budget(expandable_budget, 0.18),
@@ -366,13 +367,13 @@ def build_chat_prompt_with_diagnostics(
         "memory": _section_budget(expandable_budget, 0.14),
         "history": _section_budget(expandable_budget, 0.14),
         "emotion": _section_budget(expandable_budget, 0.10),
-        "knowledge": _section_budget(expandable_budget, 0.20),
-        "trend": _section_budget(expandable_budget, 0.10),
-        "temporal": _section_budget(expandable_budget, 0.12),
-        "glossary": _section_budget(expandable_budget, 0.18),
-        "relationship": _section_budget(expandable_budget, 0.12),
-        "shared_group": _section_budget(expandable_budget, 0.10),
-        "meme_search": _section_budget(expandable_budget, 0.12),
+        "knowledge": _section_budget(expandable_budget, 0.42),
+        "trend": _section_budget(expandable_budget, 0.06),
+        "temporal": _section_budget(expandable_budget, 0.08),
+        "glossary": _section_budget(expandable_budget, 0.20),
+        "relationship": _section_budget(expandable_budget, 0.10),
+        "shared_group": _section_budget(expandable_budget, 0.06),
+        "meme_search": _section_budget(expandable_budget, 0.06),
     }
     role_boundaries = _bullet_lines(
         persona.role_boundaries,
@@ -434,7 +435,7 @@ def build_chat_prompt_with_diagnostics(
             f"声音倾向：{tone.voice}",
             f"温柔度：{tone.warmth}",
             f"直接度：{tone.directness}",
-            f"最多回复条数：{tone.message_count_limit}",
+            f"最多回复条数：{('不限制' if tone.message_count_limit <= 0 else tone.message_count_limit)}",
             _action_brackets_rule(tone),
             "",
             "情绪信号：",
@@ -464,6 +465,10 @@ def build_chat_prompt_with_diagnostics(
             "世界观与专有名词（游戏术语/地名/科研词汇）：",
             "回答涉及鸣潮世界观、专有名词或专业词汇时，优先使用这里的解释；"
             "条目没有覆盖的内容不要凭空编造，可以说明自己不确定。",
+            "回答方式：当用户问及世界观里的地名、人名、物品、组织或剧情名词时，"
+            "先用一两句给出确切的事实性说明（是什么/在哪里/是谁/有什么作用），"
+            "再以当前人格表达自己对它的感受或相关记忆；先事实、后感受，"
+            "禁止只打哑谜、只抒情或用比喻代替说明。",
             glossary_lines,
             "",
             "对当前用户的态度：",
@@ -946,15 +951,19 @@ def _llm_preflight_errors(llm_options: dict[str, object]) -> list[str]:
 
 
 def _output_max_chars_per_message(llm_options: dict[str, object]) -> int:
+    """0/负数 = 不限制单条消息长度；否则至少 200 字符。"""
     value = llm_options.pop("output_max_chars_per_message", 1200)
     if isinstance(value, bool):
         return 1200
     if not isinstance(value, (str, int, float)):
         return 1200
     try:
-        return max(200, int(value))
+        parsed = int(value)
     except (TypeError, ValueError):
         return 1200
+    if parsed <= 0:
+        return 0
+    return max(200, parsed)
 
 
 def _apply_decision_budget_to_context(
@@ -977,16 +986,22 @@ def _apply_output_message_budget(
     max_messages: int,
     max_chars_per_message: int,
 ) -> tuple[str, bool]:
+    """0/负数 = 不限制：不做任何裁剪，也不追加截断提示。"""
     normalized = text.strip()
     if not normalized:
         return normalized, False
 
+    blocks = _split_reply_blocks(normalized)
+    unlimited_blocks = max_messages <= 0
+    unlimited_chars = max_chars_per_message <= 0
+    if unlimited_blocks and unlimited_chars:
+        return normalized, False
+
     allowed_blocks = max(1, max_messages)
     total_char_budget = max(200, max_chars_per_message) * allowed_blocks
-    blocks = _split_reply_blocks(normalized)
-    blocks_trimmed = len(blocks) > allowed_blocks
+    blocks_trimmed = not unlimited_blocks and len(blocks) > allowed_blocks
     kept = "\n\n".join(blocks[:allowed_blocks]).strip()
-    chars_trimmed = len(kept) > total_char_budget
+    chars_trimmed = not unlimited_chars and len(kept) > total_char_budget
     if not blocks_trimmed and not chars_trimmed:
         return normalized, False
 

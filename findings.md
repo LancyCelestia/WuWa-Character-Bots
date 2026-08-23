@@ -242,3 +242,10 @@ b orm 流程。
 - 回退路径已用真实死端口（127.0.0.1:11435）端到端验证：本地连接失败 → 自动切 `https://dashscope.aliyuncs.com/compatible-mode/v1` 的 `qwen3.7-text-embedding`，返回 1024 维，exit=0、无异常输出。
 - provider 对每条链逐个 try/except：ConnectError、HTTP 404（模型未拉取）、HTTP 4xx/5xx、返回体缺 `data` 等全部静默跳到下一链；所有链都失败时返回空列表，store.retrieve 返回空并回退关键词/顺序取块，不打断对话。
 - 配套回归测试：本地 404 / 结构异常 / 全链不可用 三条用例锁定该保证。
+
+## 2026-08-23：对话体验四项修复的结论
+- 颜文字断行根因1：动作格式器把“(≧▽≦)”这类括号当成动作描写拆到单独一行；修复规则=括号内无汉字且无嵌套括号时视为颜文字保持原位。
+- 颜文字断行根因2：合并转发的超长段落硬切在固定字符位，可能从表情中间切断；改为优先在句末标点/空白处断开。
+- “平台单条消息长度限制”提示来自 chat 输出预算；现支持 0=不限制（BOT_REPLY_MAX_CHARS_PER_MESSAGE / BOT_REPLY_*_MAX_MESSAGES / BOT_RENDER_FORWARD_MIN_CHARS 均为 0），完整回复单条直发、不追加提示。
+- angel_heart / angel_memory 均为 AGPL-3.0：只借鉴模块化提示词分区、两级决策、工具化检索的设计思路，未复制代码或原文；详见 research/angel_prompt_patterns.md。
+- 世界观“打哑谜”修复：系统提示新增“先事实后感受”规则——先给名词的确切定义，再表达人格感受；知识库检索 top_k 提到 6、上下文预算提高到 4096/6144。

@@ -51,9 +51,10 @@ class ReplyBudget(StrictBaseModel):
 
     @field_validator("max_messages")
     @classmethod
-    def require_positive_max_messages(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("max_messages must be at least 1")
+    def require_non_negative_max_messages(cls, value: int) -> int:
+        # 0 = 不限制条数（完整回复一次性发出）。
+        if value < 0:
+            raise ValueError("max_messages must be at least 0")
         return value
 
 
@@ -76,9 +77,10 @@ class ReplyBudgetSettings(StrictBaseModel):
         "risk_max_messages",
     )
     @classmethod
-    def require_positive_message_limits(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("reply message limits must be at least 1")
+    def require_non_negative_message_limits(cls, value: int) -> int:
+        # 0 = 不限制条数（完整回复一次性发出）。
+        if value < 0:
+            raise ValueError("reply message limits must be at least 0")
         return value
 
     @field_validator(

@@ -43,11 +43,21 @@ def test_consecutive_actions_each_get_their_own_paragraph():
     ) == "（轻轻点头）\n\n(轻声说)\n\n晚安。"
 
 
-def test_ascii_paren_action_is_split_into_its_own_paragraph():
+def test_ascii_paren_kaomoji_stays_inline_with_speech():
     text = "（轻轻笑了一下）那么……你想听我说说吗？(´｡• ᵕ •｡`)"
     assert format_roleplay_paragraphs(text) == (
-        "（轻轻笑了一下）\n\n那么……你想听我说说吗？\n\n(´｡• ᵕ •｡`)"
+        "（轻轻笑了一下）\n\n那么……你想听我说说吗？(´｡• ᵕ •｡`)"
     )
+
+
+def test_kaomoji_is_not_split_onto_its_own_line():
+    assert format_roleplay_paragraphs("好的呢(≧▽≦)") == "好的呢(≧▽≦)"
+    assert format_roleplay_paragraphs("（*´▽｀*）守岸人在此") == "（*´▽｀*）守岸人在此"
+    assert format_roleplay_paragraphs("欢迎回来！(๑•̀ㅂ•́)و✧") == "欢迎回来！(๑•̀ㅂ•́)و✧"
+
+
+def test_action_with_chinese_characters_is_still_split():
+    assert format_roleplay_paragraphs("(轻声说)晚安") == "(轻声说)\n\n晚安"
 
 
 def test_text_without_bracket_actions_is_returned_stripped_unchanged():

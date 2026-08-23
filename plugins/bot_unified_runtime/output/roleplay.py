@@ -6,9 +6,16 @@
 
 本模块把括号动作与动作之外的连续文字拆成独立段落，段落之间用两个
 换行符连接；没有任何括号动作时保持原文本（仅 strip）不变。
+
+颜文字（如 ``(≧▽≦)``、``（*´▽｀*）``）不是动作描写：括号内没有汉字的
+片段按普通文字保留在原地，避免把表情从一句话中间切到单独一行。
 """
 
 from __future__ import annotations
+
+import re
+
+_CJK_CHAR_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 
 _ACTION_CLOSING_BRACKETS = {
     "（": "）",
@@ -45,9 +52,13 @@ def _action_tokens(text: str) -> list[tuple[int, int]]:
         if text[index] in _ACTION_CLOSING_BRACKETS:
             end = _matching_action_end(text, index)
             if end is not None:
-                tokens.append((index, end + 1))
-                index = end + 1
-                continue
+                inner = text[index + 1 : end]
+                nested = ("（" in inner or "(" in inner)
+                if _CJK_CHAR_RE.search(inner) or nested:
+                    tokens.append((index, end + 1))
+                    index = end + 1
+                    continue
+                # 括号内没有汉字、也没有嵌套括号：视为颜文字/符号，不作为动作拆分。
         index += 1
     return tokens
 

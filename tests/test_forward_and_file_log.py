@@ -101,3 +101,19 @@ def test_build_audit_without_log_file_returns_primary():
     primary = InMemoryAuditLogger()
 
     assert build_audit_with_file_log(primary, "") is primary
+
+
+def test_should_forward_long_text_zero_means_never_forward():
+    long_text = "鸣潮设定" * 600
+
+    assert should_forward_long_text(long_text, min_chars=0) is False
+    assert should_forward_long_text(long_text, min_chars=1500) is True
+
+
+def test_split_text_chunks_breaks_at_punctuation_keeps_kaomoji_intact():
+    paragraph = "鸣" * 880 + "。" + "鸣" * 19 + "(≧▽≦)"
+    chunks = split_text_chunks(paragraph, node_chars=900, max_nodes=6)
+
+    assert len(chunks) >= 2
+    assert chunks[0].endswith("。")
+    assert "(≧▽≦)" in chunks[-1]

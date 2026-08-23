@@ -1349,3 +1349,88 @@ def test_chat_capability_blocks_empty_persona_preflight_without_calling_llm():
         assert "BOT_PERSONA_FILES" in result.body
         assert "context_error" in result.audit_tags
         assert f"context_error:{error_kind}" in result.audit_tags
+
+
+def test_chat_capability_unlimited_output_keeps_full_text_without_notice():
+    """max_messages=0 / max_chars=0：完整回复一次发出，不追加截断提示。"""
+    long_text = "\n\n".join(f"第{i}段：黑海岸的浪潮声很安静。" for i in range(40))
+
+    class _LongProvider:
+        def generate(self, messages, **kwargs):
+            return LLMReply(text=long_text, provider="fake", model="fake", confidence=0.9)
+
+    capability = build_chat_capability(
+        character_provider=lambda **_: make_context(),
+        llm_provider=_LongProvider(),
+        output_max_chars_per_message=0,
+    )
+    decision = BotDecision(
+        request_id="req_chat",
+        should_respond=True,
+        mode="chat",
+        trigger="长回复",
+        capability_id="bot.chat",
+        target_scope=SessionType.PRIVATE,
+        max_messages=0,
+        send_policy=SendPolicy.IMMEDIATE,
+        persona_profile_id="shorekeeper",
+        context_budget=2048,
+        decision_reason="private chat",
+        risk_level=RiskLevel.LOW,
+        privacy_level=PrivacyLevel.PERSONAL,
+    )
+    message = type(
+        "Message",
+        (),
+        {
+            "request_id": "req_chat",
+            "sender_id": "42",
+            "session_id": "private:42",
+            "plain_text": "给我一个长回复",
+        },
+    )()
+
+    result = capability(message=message, decision=decision)
+
+    assert result.body == long_text
+    assert "可见部分" not in result.body
+
+
+def test_prompt_marks_unlimited_messages_and_world_explain_rule():
+    provider = RecordingLLMProvider()
+    capability = build_chat_capability(
+        character_provider=lambda **_: make_context(),
+        llm_provider=provider,
+        output_max_chars_per_message=0,
+    )
+    decision = BotDecision(
+        request_id="req_chat",
+        should_respond=True,
+        mode="chat",
+        trigger="你好",
+        capability_id="bot.chat",
+        target_scope=SessionType.PRIVATE,
+        max_messages=0,
+        send_policy=SendPolicy.IMMEDIATE,
+        persona_profile_id="shorekeeper",
+        context_budget=2048,
+        decision_reason="private chat",
+        risk_level=RiskLevel.LOW,
+        privacy_level=PrivacyLevel.PERSONAL,
+    )
+    message = type(
+        "Message",
+        (),
+        {
+            "request_id": "req_chat",
+            "sender_id": "42",
+            "session_id": "private:42",
+            "plain_text": "你好",
+        },
+    )()
+
+    capability(message=message, decision=decision)
+
+    system = provider.last_messages[0]["content"]
+    assert "最多回复条数：不限制" in system
+    assert "先事实、后感受" in system
