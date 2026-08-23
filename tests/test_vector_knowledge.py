@@ -734,3 +734,86 @@ def test_store_resets_vectors_when_signature_changes(tmp_path):
     assert done == pending == 2
     assert store_b.stats() == {"total": 2, "embedded": 2}
     assert provider_b.batch_sizes == [2]
+
+
+def test_provider_falls_back_when_local_returns_404(monkeypatch):
+    """Ollama 未拉取模型（404）时静默切到远程，不抛异常。"""
+    calls: list = []
+
+    def fake_post(url, **kwargs):
+        calls.append(url)
+        if "11434" in url:
+            response = httpx.Response(
+                404, request=httpx.Request("POST", url),
+                json={'error': 'model "bge-m3" not found'},
+            )
+            raise httpx.HTTPStatusError(
+                "not found",
+                request=httpx.Request("POST", url),
+                response=response,
+            )
+        return _FakeResponse(
+            {"data": [{"embedding": [0.6, 0.4], "index": 0}]}
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen3.7-text-embedding",
+        api_key="sk-remote",
+        local_base_url="http://127.0.0.1:11434/v1",
+        local_models="bge-m3",
+    )
+
+    vectors = provider.embed_texts(["守岸人"])
+
+    assert vectors == [[0.6, 0.4]]
+    assert len(calls) == 2
+    assert provider.active_base_url.startswith("https://dashscope")
+
+
+def test_provider_falls_back_when_local_response_missing_data(monkeypatch):
+    """本地返回 200 但结构异常时同样静默切到远程。"""
+    calls: list = []
+
+    def fake_post(url, **kwargs):
+        calls.append(url)
+        if "11434" in url:
+            return _FakeResponse({"unexpected": True})
+        return _FakeResponse(
+            {"data": [{"embedding": [0.2, 0.8], "index": 0}]}
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen3.7-text-embedding",
+        api_key="sk-remote",
+        local_base_url="http://127.0.0.1:11434/v1",
+        local_models="bge-m3",
+    )
+
+    vectors = provider.embed_texts(["守岸人"])
+
+    assert vectors == [[0.2, 0.8]]
+    assert len(calls) == 2
+    assert provider.active_model == "qwen3.7-text-embedding"
+
+
+def test_store_retrieve_never_raises_when_every_chain_down(tmp_path):
+    """所有端点都不可用时检索返回空列表而不是抛错，保证对话链路不崩。"""
+    paragraphs = ["第一段" * 20, "第二段" * 20]
+    knowledge_file = tmp_path / "menu.md"
+    knowledge_file.write_text("\n".join(paragraphs), encoding="utf-8")
+    store = SqliteVectorKnowledgeStore(
+        tmp_path / "knowledge.sqlite3",
+        FakeEmbeddingProvider(fail=True),
+        chunk_chars=120,
+        top_k=2,
+        signature="local|bge-m3;remote|qwen3.7",
+    )
+
+    result = store.retrieve("查询", files=[knowledge_file])
+
+    assert result == []
+    assert store.stats()["embedded"] == 0

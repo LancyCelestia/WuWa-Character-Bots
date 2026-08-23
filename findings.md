@@ -236,3 +236,9 @@ b orm 流程。
 - 多链优先级：本地链（bge-m3）→ 远程链（qwen3.7-text-embedding,text-embedding-v4）；成功后 sticky 到当前链，失败再切。
 - 模型/端点切换安全：knowledge_meta.embedding_signature 记录端点+模型指纹，变化时自动清空全部旧向量重嵌，避免不同向量空间混用。
 - 真实烟测：embedding-smoke 命中 `127.0.0.1:11434 / bge-m3`；knowledge-sync 用 bge-m3 重建 2777/2777 行；语义检索命中守岸人人格档案/设定。
+
+## 2026-08-23：本地未运行时的静默回退保证
+
+- 回退路径已用真实死端口（127.0.0.1:11435）端到端验证：本地连接失败 → 自动切 `https://dashscope.aliyuncs.com/compatible-mode/v1` 的 `qwen3.7-text-embedding`，返回 1024 维，exit=0、无异常输出。
+- provider 对每条链逐个 try/except：ConnectError、HTTP 404（模型未拉取）、HTTP 4xx/5xx、返回体缺 `data` 等全部静默跳到下一链；所有链都失败时返回空列表，store.retrieve 返回空并回退关键词/顺序取块，不打断对话。
+- 配套回归测试：本地 404 / 结构异常 / 全链不可用 三条用例锁定该保证。
