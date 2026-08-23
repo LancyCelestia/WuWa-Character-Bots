@@ -24,9 +24,9 @@
 
 ```powershell
 
-$VENV = "C:\Users\LancyCelestia\Documents\MyWorkspace\WuWa-Character-Bots\.venv\Scripts\python.exe"
+$VENV = "C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\.venv\Scripts\python.exe"
 
-$ROOT = "C:\Users\LancyCelestia\Documents\MyWorkspace\WuWa-Character-Bots"
+$ROOT = "C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot"
 
 
 
@@ -50,7 +50,7 @@ $ROOT = "C:\Users\LancyCelestia\Documents\MyWorkspace\WuWa-Character-Bots"
 
 # 全量测试（必须带 tests 绝对路径：否则 pytest 会扫描你启动它的那个目录）
 
-& $VENV -m pytest "C:\Users\LancyCelestia\Documents\MyWorkspace\WuWa-Character-Bots\tests"
+& $VENV -m pytest "C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\tests"
 
 
 
