@@ -139,3 +139,13 @@ def test_config_accepts_share_group_names_from_env_strings():
     assert Config(bot_share_groups='["A and B", "A and B and C"]').bot_share_groups == ["A and B", "A and B and C"]
     assert Config(bot_share_groups="A and B, A and B and C").bot_share_groups == ["A and B", "A and B and C"]
     assert Config(bot_share_groups="[]").bot_share_groups == []
+
+
+def test_meme_library_alias_with_and_without_slash_and_name():
+    from plugins.bot_unified_runtime.runtime.aliases import CommandAliasResolver
+
+    resolver = CommandAliasResolver(nickname="岸宝", nicknames=["岸宝", "守岸人"])
+    for text in ["/岸宝偷表情", "岸宝偷表情", "守岸人偷表情包", "/岸宝表情库统计"]:
+        resolution = resolver.resolve(text)
+        assert resolution is not None, text
+        assert resolution.capability_id == "bot.meme_library", (text, resolution)

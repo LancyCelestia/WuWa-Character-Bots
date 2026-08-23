@@ -66,9 +66,25 @@ def test_self_chat_does_not_search():
         assert decision.intent is not QuestionIntent.WEB_SEARCH, text
 
 
-def test_general_knowledge_is_neutral():
-    for text in ["为什么天空是蓝的", "Python 怎么安装", "今天天气不错", "播放量好高"]:
+def test_general_knowledge_questions_now_search():
+    # 用户要求大部分消息联网：科普/科学/方法类问句默认联网。
+    for text in [
+        "为什么天空是蓝的",
+        "Python 怎么安装",
+        "什么是光合作用",
+        "量子力学是什么",
+    ]:
+        assert classify_question_intent(text).intent is QuestionIntent.WEB_SEARCH, text
+
+
+def test_plain_chat_still_neutral():
+    for text in ["今天天气不错", "播放量好高", "今天有点累，陪我说说话"]:
         assert classify_question_intent(text).intent is QuestionIntent.NEUTRAL, text
+
+
+def test_real_world_categories_always_search():
+    for text in ["当前国际局势怎么样", "中美贸易战是怎么回事", "芯片制造原理是什么"]:
+        assert classify_question_intent(text).intent is QuestionIntent.WEB_SEARCH, text
 
 
 def test_ddg_extract_hits_from_html():

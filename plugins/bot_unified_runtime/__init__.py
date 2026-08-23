@@ -1329,6 +1329,31 @@ def _register_nonebot_handlers() -> None:
                     config=config,
                 )(synthetic, _decision)
 
+        elif resolution.capability_id == "bot.meme_library":
+            from .capabilities.meme_library import build_meme_library_capability
+
+            arg = resolution.rest_text.strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                if meme_library_store is None:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.meme_library",
+                        kind="text",
+                        body="表情库未启用。",
+                        audit_tags=["meme_library", "disabled"],
+                    )
+                synthetic = message.model_copy(
+                    update={"plain_text": f"偷表情 {arg}".strip()}
+                )
+                if arg.lower() in {"私聊", "私聊我", "private", "私"}:
+                    synthetic = synthetic.model_copy(
+                        update={"session_type": SessionType.PRIVATE, "group_id": None}
+                    )
+                return build_meme_library_capability(meme_library_store, config)(
+                    synthetic, _decision
+                )
+
         elif resolution.capability_id == "bot.logs":
             parts = resolution.rest_text.split()
             level = "info"
@@ -1787,6 +1812,48 @@ def _register_nonebot_handlers() -> None:
                     config, downloader=downloader
                 )(message, _decision)
 
+        elif command_text == "reply" or command_text.startswith("reply "):
+            capability_id = "bot.reply"
+            reply_mode = command_text.removeprefix("reply").strip().lower()
+            mode_map = {
+                "详细": "detail", "科普": "detail", "详尽": "detail", "detail": "detail",
+                "精简": "concise", "简洁": "concise", "brief": "concise", "concise": "concise",
+                "默认": "auto", "自动": "auto", "auto": "auto",
+            }
+            normalized_mode = mode_map.get(reply_mode, "" if not reply_mode else None)
+            if normalized_mode is None:
+                normalized_mode = "auto"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                if "admin" not in {str(role).lower() for role in _decision.actor_roles}:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.reply",
+                        kind="text",
+                        body="只有管理员才能调整回复详略。",
+                        audit_tags=["reply_detail", "denied"],
+                    )
+                if not reply_mode:
+                    current = runtime_settings.get("BOT_REPLY_DETAIL", config) or "auto"
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.reply",
+                        kind="text",
+                        body=(
+                            f"当前回复详略：{current}。\n"
+                            "用法：/bot reply <详细|精简|默认>"
+                        ),
+                        audit_tags=["reply_detail", f"current:{current}"],
+                    )
+                runtime_settings.set_override("BOT_REPLY_DETAIL", normalized_mode)
+                return CapabilityResult(
+                    request_id=message.request_id,
+                    capability_id="bot.reply",
+                    kind="text",
+                    body=f"回复详略已设为：{normalized_mode}。",
+                    audit_tags=["reply_detail", f"set:{normalized_mode}"],
+                )
+
         elif command_text == "alert" or command_text.startswith("alert "):
             capability_id = "bot.alert"
             alert_command = command_text.removeprefix("alert").strip()
@@ -2238,6 +2305,23 @@ def _register_nonebot_handlers() -> None:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 return build_epic_capability(config)(message, _decision)
+
+        elif capability_id == "bot.meme_library":
+            from .capabilities.meme_library import build_meme_library_capability
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                synthetic = message.model_copy(update={"plain_text": normalized_text})
+                if meme_library_store is None:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.meme_library",
+                        kind="text",
+                        body="表情库未启用。",
+                        audit_tags=["meme_library", "disabled"],
+                    )
+                return build_meme_library_capability(meme_library_store, config)(
+                    synthetic, _decision
+                )
 
         elif capability_id == "bot.music_mode":
             from .capabilities.music import build_music_mode_result, extract_music_mode

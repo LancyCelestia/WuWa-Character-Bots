@@ -80,13 +80,29 @@ async def _download_once(url: str, *, max_bytes: int, proxy: str) -> bytes | Non
         return None
 
 
+def _resolve_vision_config(config: Any) -> dict[str, str]:
+    """识图模型预制接口：优先注册表预设，兼容旧字段；api_key 支持 env:VAR。"""
+    import os
+
+    preset_name = str(getattr(config, "bot_meme_library_vlm_preset", "deepseek-vision") or "")
+    registry = getattr(config, "bot_vision_model_registry", None) or {}
+    preset = registry.get(preset_name) if isinstance(registry, dict) else None
+    model = str((preset or {}).get("model") or getattr(config, "bot_meme_library_vlm_model", "") or "")
+    base_url = str((preset or {}).get("base_url") or getattr(config, "bot_meme_library_vlm_base_url", "") or "").rstrip("/")
+    api_key = str((preset or {}).get("api_key") or getattr(config, "bot_meme_library_vlm_api_key", "") or "")
+    if api_key.startswith("env:"):
+        api_key = os.environ.get(api_key[4:].strip(), "")
+    return {"model": model, "base_url": base_url, "api_key": api_key}
+
+
 async def _tag_with_vlm(store: Any, config: Any, md5: str, image_bytes: bytes) -> None:
-    """异步打标（失败静默）：更新描述/标签/NSFW 与权重。"""
+    """异步打标（失败静默）：更新描述/标签/NSFW 与权重；高危 NSFW 直接删除。"""
     import httpx
 
-    model = str(getattr(config, "bot_meme_library_vlm_model", "") or "")
-    base_url = str(getattr(config, "bot_meme_library_vlm_base_url", "") or "").rstrip("/")
-    api_key = str(getattr(config, "bot_meme_library_vlm_api_key", "") or "")
+    vision = _resolve_vision_config(config)
+    model = vision["model"]
+    base_url = vision["base_url"]
+    api_key = vision["api_key"]
     if not (model and base_url and api_key):
         return
     data_url = f"data:image/png;base64,{base64.b64encode(image_bytes).decode()}"
@@ -121,6 +137,14 @@ async def _tag_with_vlm(store: Any, config: Any, md5: str, image_bytes: bytes) -
         if not match:
             return
         tags = json.loads(match.group(0))
+        nsfw_score = max(0.0, min(1.0, float(tags.get("nsfw_score", 0.0) or 0.0)))
+        delete_threshold = float(
+            getattr(config, "bot_meme_library_nsfw_delete", 0.8) or 0.8
+        )
+        if nsfw_score >= delete_threshold:
+            # 淫秽色情直接删除，不存储也不可被发送。
+            store.remove(md5)
+            return
         store.apply_tags(
             md5,
             is_meme=bool(tags.get("is_meme", True)),
@@ -128,7 +152,7 @@ async def _tag_with_vlm(store: Any, config: Any, md5: str, image_bytes: bytes) -
             emotion_tags=[str(item) for item in (tags.get("emotion_tags") or [])][:6],
             scene_tags=[str(item) for item in (tags.get("scene_tags") or [])][:6],
             persona_hint=str(tags.get("persona_hint", "common"))[:24],
-            nsfw_score=max(0.0, min(1.0, float(tags.get("nsfw_score", 0.0) or 0.0))),
+            nsfw_score=nsfw_score,
         )
     except Exception:
         return

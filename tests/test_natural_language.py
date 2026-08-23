@@ -113,3 +113,11 @@ def test_english_natural_commands():
     assert epic is not None and epic.capability_id == "bot.epic"
     history = detect_natural_command("today in history", Config())
     assert history is not None and history.capability_id == "bot.today_history"
+
+
+def test_meme_library_natural_and_name_combos():
+    for text in ["偷个表情", "来张表情包", "steal meme", "give me a meme"]:
+        resolution = detect_natural_command(text, Config(bot_meme_library_enabled=True))
+        assert resolution is not None, text
+        assert resolution.capability_id == "bot.meme_library", text
+        assert resolution.normalized_text == "偷表情"

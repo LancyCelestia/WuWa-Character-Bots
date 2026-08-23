@@ -181,6 +181,17 @@ class Config(BaseModel):
     bot_meme_library_vlm_base_url: str = ""
     bot_meme_library_vlm_api_key: str = ""
     bot_meme_library_vlm_timeout_seconds: float = 20.0
+    # 识图模型预制接口：预设名 + 注册表，未来换新模型只需加一条 preset。
+    bot_meme_library_vlm_preset: str = "deepseek-vision"
+    bot_vision_model_registry: dict[str, dict[str, Any]] = {
+        "deepseek-vision": {
+            "model": "deepseek-v4-flash-vision-exp",
+            "base_url": "https://api.deepseek.com/v1",
+            "api_key": "env:BOT_API_KEY_DEEPSEEK",
+        }
+    }
+    # NSFW 直接删除阈值（淫秽色情不存储）：>= 该分数删除文件与记录。
+    bot_meme_library_nsfw_delete: float = 0.8
     # 群图下载代理（默认直连 QQ 多媒体源；外网源可走 7890）。
     bot_meme_library_proxy: str = ""
     # 自然语言命令层（基层路由优先级 45）：“帮我查天气”等归一化执行。
@@ -262,6 +273,8 @@ class Config(BaseModel):
     bot_reply_group_max_messages: int = 1
     bot_reply_risk_max_messages: int = 1
     bot_reply_max_chars_per_message: int = 1200
+    # 回复详略：auto=科普/知识类自动详尽，detail=全部详尽(2000~4000字)，concise=精炼。
+    bot_reply_detail: str = "auto"
     bot_reply_default_context_budget: int = 2048
     bot_reply_support_context_budget: int = 2560
     bot_reply_deep_help_context_budget: int = 3072
@@ -370,7 +383,12 @@ class Config(BaseModel):
                 }
         return {}
 
-    @field_validator("bot_model_presets", "bot_model_registry", mode="before")
+    @field_validator(
+        "bot_model_presets",
+        "bot_model_registry",
+        "bot_vision_model_registry",
+        mode="before",
+    )
     @classmethod
     def _parse_model_dicts(cls, value: Any) -> dict[str, Any]:
         if value is None or value == "":

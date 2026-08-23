@@ -698,3 +698,8 @@ powershell -ExecutionPolicy Bypass -File scripts/git.ps1 update
 
 - 表情库：偷表情 + 权重（守岸人最优先）+ NSFW 过滤 + 私聊/群聊发送 + LRU 清理；可选 VLM 打标。
 - 科普问题 2000~4000 字；现实议题给具体事实；读取卡片/HTML 链接与合并转发正文。
+
+
+## 识图预设 / NSFW 删除 / 详略 / 全量联网（2026-08-23 八追）
+
+- 识图模型 deepseek-v4-flash-vision-exp + 注册表预制接口；NSFW 高危直接删除；回复详略可调；大部分问句默认联网、世界观以知识库为主。

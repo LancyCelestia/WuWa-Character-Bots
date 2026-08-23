@@ -139,6 +139,18 @@ class MemeLibraryStore:
             weight *= 0.3
         return round(weight, 6)
 
+    def remove(self, md5: str) -> bool:
+        """删除记录与文件（NSFW 等场景）；返回是否真的删掉了文件。"""
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT path FROM memes WHERE md5=?", (md5,)).fetchone()
+            if row is not None:
+                try:
+                    Path(row["path"]).unlink(missing_ok=True)
+                except OSError:
+                    pass
+                connection.execute("DELETE FROM memes WHERE md5=?", (md5,))
+        return row is not None
+
     def mark_used(self, md5: str) -> None:
         with self._lock, self._connect() as connection:
             connection.execute(

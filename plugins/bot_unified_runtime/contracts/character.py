@@ -240,5 +240,6 @@ class ContextBundle(StrictBaseModel):
     web_search_context: WebSearchContext | None = None
     active_persona_id: str = "default"
     context_budget: int = 2048
+    reply_detail: str = "auto"  # auto / detail / concise
     privacy_level: PrivacyLevel = PrivacyLevel.PERSONAL
     risk_level: RiskLevel = RiskLevel.LOW

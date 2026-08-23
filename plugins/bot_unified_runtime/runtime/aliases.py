@@ -76,6 +76,11 @@ DEFAULT_VERB_MAP: dict[str, str] = {
     "订阅": "bot.subscribe",
     "subscribe": "bot.subscribe",
     "日志": "bot.logs",
+    "偷表情": "bot.meme_library",
+    "偷表情包": "bot.meme_library",
+    "随机表情": "bot.meme_library",
+    "表情库统计": "bot.meme_library",
+    "表情统计": "bot.meme_library",
     "logs": "bot.logs",
 }
 

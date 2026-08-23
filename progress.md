@@ -637,3 +637,12 @@
 - 提示词：科普/介绍 2000~4000 字结构化；现实国际关系必须给具体国家/组织/事件/时间，禁止世界观比喻。
 - 新增卡片/HTML 链接自动提取解析，合并转发正文在提问时注入大模型；视频简介去掉“原创/转载”。
 - 全量 pytest 881 passed；verify/startup-smoke/route-smoke 全过；20:40 bot_connected。
+
+
+## 2026-08-23：识图预设 / NSFW 删除 / 详略 / 全量联网（九修）
+
+- 识图模型 deepseek-v4-flash-vision-exp，`BOT_VISION_MODEL_REGISTRY` 预制接口 + preset 切换，api_key 支持 env: 引用；VLM 在本地 .env 已开启。
+- NSFW>=0.8 直接删除文件与记录（新增 store.remove 与测试）；0.2~0.8 降权保留。
+- /bot reply 详细|精简|默认；科普/现实/知识问题 auto 自动升级详尽可能；提示词去掉“禁止式”措辞，改为科普作者式表述。
+- 意图 v4：疑似问句默认联网；现实政经文社科类关键词必联网；世界观领域词知识库优先+回退联网。
+- 偷表情支持 简繁英 × 斜杠 × 带名/不带名 全组合；全量 pytest 887 passed；verify/startup-smoke/route-smoke 全过；21:10 bot_connected。

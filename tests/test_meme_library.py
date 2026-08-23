@@ -93,3 +93,35 @@ def test_segment_urls_extraction():
     assert _segment_urls([{"type": "image", "data": {"url": "https://c/d.png"}}]) == [
         "https://c/d.png"
     ]
+
+
+def test_remove_deletes_row_and_file(tmp_path):
+    store = MemeLibraryStore(tmp_path / "db.sqlite3")
+    image = tmp_path / "rm.png"
+    image.write_bytes(bytes([0x89]) + b"PNG" + b"r" * 20)
+    store.add(md5="r1", path=str(image), ext="png")
+    assert store.remove("r1") is True
+    assert not image.exists()
+    assert store.stats()["total"] == 0
+
+
+def test_vision_preset_resolves_env_ref(monkeypatch):
+    from plugins.bot_unified_runtime.sources.meme_library_listener import _resolve_vision_config
+
+    monkeypatch.setenv("BOT_API_KEY_VISION", "sk-secret")
+    config = Config(
+        bot_meme_library_vlm_preset="stone-next",
+        bot_vision_model_registry={
+            "stone-next": {
+                "model": "stone-vision-pro",
+                "base_url": "https://stone.example/v1",
+                "api_key": "env:BOT_API_KEY_VISION",
+            }
+        },
+    )
+    vision = _resolve_vision_config(config)
+    assert vision == {
+        "model": "stone-vision-pro",
+        "base_url": "https://stone.example/v1",
+        "api_key": "sk-secret",
+    }

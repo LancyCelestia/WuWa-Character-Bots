@@ -83,6 +83,13 @@ _EPIC_EN_RE = re.compile(
     r"^(?:what|which|any|are there).{0,20}?free games.{0,20}?(?:this week|today)?[?？]?$",
     re.IGNORECASE,
 )
+_MEME_LIBRARY_NL_RE = re.compile(
+    r"^(?:帮我|给我|来一|来一张|来张|偷一张|偷个|随机来|抽|偷|拿)"
+    r"(?:张|个)?(?:偷)?(?:表情|表情包)$|"
+    r"^(?:steal|give me|random|send|gimme)(?:\s+(?:a|an))?\s*memes?$",
+    re.IGNORECASE,
+)
+
 _HISTORY_EN_RE = re.compile(
     r"^(?:what happened )?today in history[?？]?$|"
     r"^history today[?？]?$|^on this day[?？]?$",
@@ -245,5 +252,10 @@ def detect_natural_command(text: str, config: Config | None = None) -> NaturalRe
         return NaturalResolution(
             "bot.today_history", "历史上的今天", "历史上的今天"
         )
+
+    if getattr(config, "bot_meme_library_enabled", False):
+        meme_lib_match = _MEME_LIBRARY_NL_RE.match(stripped)
+        if meme_lib_match:
+            return NaturalResolution("bot.meme_library", "偷表情", "偷表情")
 
     return None

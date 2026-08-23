@@ -86,7 +86,9 @@ _REAL_WORLD_RE = re.compile(
     r"所在地|位于|总部|地址|在哪|在哪个城市|员工|作品|代表作|演唱会|音乐会|"
     r"漫展|线下|举办|门票|时间地点|展览|访谈|采访|新闻|热搜|百科|"
     r"国际局势|国际关系|中美|中俄|中欧|欧盟|俄乌|巴以|台海|世界局势|"
-    r"贸易战|关税|政治|经济局势|时事|地缘)"
+    r"贸易战|关税|政治|经济局势|时事|地缘|"
+    r"科学|科技|技术|文化|历史|地理|经济|哲学|物理|化学|生物|数学|"
+    r"世界|国家|城市|大学|院校|公司|企业|发明|理论|原理|人物|地名|事件)"
 )
 
 # 时效信号：答案随时间变化，联网保鲜。
@@ -122,6 +124,11 @@ _YOU_STATE_RE = re.compile(
 )
 
 # 天气小聊（不是天气查询命令）：保持 neutral，交给对话层。
+_QUESTION_LIKE_RE = re.compile(
+    r"[?？]|(是什么|为什么|怎么|如何|怎么样|介绍|讲解|科普|谁是|哪些|"
+    r"哪个|多少|吗|嘛|呢|什么是|为什么会|为什么是)"
+)
+
 _WEATHER_SMALLTALK_RE = re.compile(
     r"(天气不错|天气真好|天气好|今天天气|明天天气|好热|好冷|下雨了|降温了)"
 )
@@ -213,7 +220,10 @@ def classify_question_intent(text: str) -> IntentDecision:
             QuestionIntent.KNOWLEDGE_FIRST, "domain_fallback", allow_web_fallback=True
         )
 
-    # G. 其余：neutral，不联网、不拖慢，交给大模型。
+    # G. 其余：疑似问句默认联网（用户要求尽量多搜，5~10 秒可接受）；
+    # 纯寒暄/闲聊仍 neutral 不联网。
+    if _QUESTION_LIKE_RE.search(stripped):
+        return IntentDecision(QuestionIntent.WEB_SEARCH, "general_question_search")
     return IntentDecision(QuestionIntent.NEUTRAL, "no_strong_signal")
 
 
