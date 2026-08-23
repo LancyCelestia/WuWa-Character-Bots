@@ -1434,3 +1434,42 @@ def test_prompt_marks_unlimited_messages_and_world_explain_rule():
     system = provider.last_messages[0]["content"]
     assert "最多回复条数：不限制" in system
     assert "先事实、后感受" in system
+
+
+def test_web_search_prompt_enforces_fact_first_and_systemic_view():
+    from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt_with_diagnostics
+    from plugins.bot_unified_runtime.character import NullCharacterContextProvider
+    from plugins.bot_unified_runtime.contracts import WebSearchContext, WebSearchHit
+
+    provider = NullCharacterContextProvider()
+    bundle = provider.build_context(
+        request_id="req_web",
+        sender_id="42",
+        session_id="private:42",
+        query_text="库洛游戏是个什么样的公司",
+    )
+    bundle = bundle.model_copy(
+        update={
+            "web_search_context": WebSearchContext(
+                request_id="req_web",
+                query="库洛游戏",
+                hits=[
+                    WebSearchHit(
+                        title="库街区 - 库洛游戏官方社区",
+                        snippet="库洛游戏官方社区。",
+                        url="https://www.kurobbs.com",
+                        source_domain="www.kurobbs.com",
+                    )
+                ],
+            )
+        }
+    )
+    _, diagnostics = build_chat_prompt_with_diagnostics(bundle)
+    system_prompt = diagnostics.system_prompt_chars and "" or ""
+    # 直接读取生成的 prompt 校验关键指令
+    from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
+
+    prompt = "\n".join(item["content"] for item in build_chat_prompt(bundle))
+    assert "核心疑问" in prompt
+    assert "系统观" in prompt
+    assert "检索结果未覆盖该问题" in prompt

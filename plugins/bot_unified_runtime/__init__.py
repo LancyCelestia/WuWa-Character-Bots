@@ -1636,8 +1636,9 @@ def _register_nonebot_handlers() -> None:
                         audit_tags=["search", "search_missing_query"],
                     )
                 provider = build_web_search_provider(config)
+                limit = int(getattr(config, "bot_web_search_max_results", 12) or 12)
                 try:
-                    hits = provider.search(search_query, max_results=6)
+                    hits = provider.search(search_query, max_results=limit)
                 except Exception:
                     hits = []
                 if not hits:

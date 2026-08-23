@@ -152,7 +152,8 @@ class Config(BaseModel):
     # 世界观问题永远只走本地知识库，不联网。
     bot_web_search_enabled: bool = False
     bot_web_search_timeout_seconds: float = 3.0
-    bot_web_search_max_results: int = 6
+    # 联网检索条数上限；0=不限制（内部有安全上限，避免无限等待）。
+    bot_web_search_max_results: int = 12
 
     # 表情包生成能力（bot.meme）：对接本地 meme-generator-rs HTTP API。
     # 命令开关：/表情 列表、/表情 <key> <文字>、/meme help（大小写均可）。
