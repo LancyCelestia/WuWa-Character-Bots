@@ -516,3 +516,35 @@ NoneBot 只负责插件加载、事件分发和适配器抽象。NapCat 作为 O
   - `BOT_SHARE_READ_ONLY=false`
 - 语义：实例可见性 = 自己 private 记录 + `记录.share_groups` 与 `实例.BOT_SHARE_GROUPS` 有交集的记录；凭据级敏感记忆永不共享。
 - 调试命令（待 PostgreSQL 落地后接入，统一 `/bot` 开头）：`/bot share status`、`/bot share groups`、`/bot share group create <组名>`、`/bot share group add <组名> <实例名>`、`/bot share group remove <组名> <实例名>`、`/bot share send history <id> --group <组名>`、`/bot share send memory <fact_id> --group <组名>`、`/bot share list`、`/bot share revoke ...`。
+
+
+## 2026-08-23 基层路由、点名接话与表情包更新
+
+### 优先级调整（昵称/管理员命令最前）
+- 昵称命令 `/岸宝…`、`守岸人…`（斜杠可省略）优先级 10；
+  管理员命令 `/bot …` 优先级 11，两者先于订阅/点歌/天气等判定。
+- 全部生效路由可用管理员命令 `/bot routes` 查看；`/bot route <文本>` 看单条判定。
+
+### 自然语言命令（不带斜杠也会执行对应插件）
+- 天气：`帮我查一下杭州天气`、`杭州天气怎么样`、`帮我查天气 杭州`
+- 点歌：`来首晴天`、`点一首晴天`、`放首歌 晴天`、`帮我放一首周杰伦的歌`
+- 维基：`帮我查维基 鸣潮`
+- Epic：`今天有什么免费游戏`
+- 历史：`今天历史上发生了什么`
+- 保守规则：`今天天气不错`、`播放量好高` 这类闲聊仍走人格大模型，不会被误判。
+
+### 点名与群聊接话
+- 群聊里 @ 机器人、写“岸宝/守岸人”点名（含“呼叫守岸人”“大家好，守岸人，在吗”）都会触发回复。
+- 群聊默认只有点名/命令才回复；开启自动接话：
+  - `BOT_GROUP_CHAT_AUTO_REPLY_ENABLED=true`
+  - `BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY=0.1`（0~1，确定性哈希抽签）
+- 私聊无门禁，直接进入人格对话。
+
+### 表情包生成（bot.meme）
+- 依赖：本地运行 [meme-generator-rs](https://github.com/MemeCrafters/meme-generator-rs)（MIT，默认 `http://127.0.0.1:2233`）。
+- 配置：`BOT_MEME_API_ENABLED=true`，可选 `BOT_MEME_API_BASE_URL`、`BOT_MEME_API_TIMEOUT_SECONDS`。
+- 命令（大小写均可、斜杠可省略）：`/表情 列表`、`/表情 <key> <文字>`（多段文字用 ｜ 分隔）、`/表情帮助`。
+- 三件套结论：`meme-generator-rs`（后端，必装）与
+  `nonebot-plugin-memes`、`nonebot-plugin-memes-api`（两个插件功能重复）。
+  本项目未安装任何一个 NoneBot 插件，而是自研 `bot.meme` 客户端对接同一
+  HTTP API，保证表情包输出也走基层统一流水线（安全审查/日志/发送队列）。

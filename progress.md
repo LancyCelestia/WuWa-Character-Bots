@@ -571,3 +571,13 @@
 - 12 个 NoneBot matcher rule 全部委托给基层路由器；新增 `/bot route <文本>` 调试命令，帮助文案已更新。
 - BOT_PERSONA_FILES 切换为用户三份权威人格档案（守岸人档案/人格档案/人格设定），persona-smoke 校验 3 文件可读、47,994 字符。
 - persona-smoke、startup-smoke 通过（matcher_count=12 不变）；全量 pytest 预计 774 passed。
+
+## 2026-08-23：基层路由全接口预配置 + 点名接话 + 自然语言命令 + 表情包
+
+- base_router 重写为声明式 RouteRule 注册表 + INTERFACE_MANIFEST（16 条接口，含 GsCore/早柚桥、NapCat 传输、解析、人格、天气、游戏直播（预留）、订阅、表情吸收（预留）等）；新增 /bot routes 审计命令。
+- 优先级调整：昵称命令 10、管理员命令 11 排最前；新增 meme=20、natural_command=45；NoneBot matcher 顺序与注册表一致（startup-smoke matcher_count=14，priority 10/11/12/13/20/40/41x5/45/46/50）。
+- 新增 runtime/natural_language.py：把“帮我查杭州天气/来首晴天/查维基/今天有什么免费游戏/今天历史上发生了什么”归一化成标准命令执行，保守规则不劫持闲聊。
+- 新增 runtime/mentions.py：只写昵称/名字也算点名（岸宝，…、守岸人 天气、呼叫守岸人），并入 mentions_bot。
+- 群聊自动接话：BOT_GROUP_CHAT_AUTO_REPLY_ENABLED（默认关）+ BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY，确定性 SHA-256 抽签，可复现可审计。
+- 新增 capabilities/meme.py：自研 MIT 协议客户端对接本地 meme-generator-rs（/表情 列表、/表情 <key> <文字>、/表情帮助），服务不可达优雅降级；三件套结论：两个 NoneBot 插件功能重复且会绕过基层流水线，故不安装、自研接入。
+- 全量 pytest 808 passed（+34）；dev.ps1 verify / startup-smoke / persona-smoke / chat-smoke（真实 deepseek-v4-flash，receipt_state=sent）全部通过。

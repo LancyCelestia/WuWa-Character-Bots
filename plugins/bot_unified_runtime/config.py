@@ -146,6 +146,20 @@ class Config(BaseModel):
     bot_meme_search_enabled: bool = False
     bot_meme_search_timeout_seconds: float = 8.0
     bot_meme_search_cache_seconds: int = 600
+
+    # 表情包生成能力（bot.meme）：对接本地 meme-generator-rs HTTP API。
+    # 命令开关：/表情 列表、/表情 <key> <文字>、/meme help（大小写均可）。
+    bot_meme_command_enabled: bool = True
+    bot_meme_api_enabled: bool = False
+    bot_meme_api_base_url: str = "http://127.0.0.1:2233"
+    bot_meme_api_timeout_seconds: float = 15.0
+    bot_meme_api_output_dir: str = "data/memes"
+    # 自然语言命令层（基层路由优先级 45）：“帮我查天气”等归一化执行。
+    bot_natural_command_enabled: bool = True
+    # 群聊自动接话：enabled=true 时按 probability 对未点名的群消息
+    # 抽签回复（确定性哈希，不是随机数）；默认关闭，点名/命令不受影响。
+    bot_group_chat_auto_reply_enabled: bool = False
+    bot_group_chat_auto_reply_probability: float = 0.0
     # 链接解析能力（bot.content）：识别消息里的平台链接 → 解析 → 信息卡。
     bot_content_parse_enabled: bool = True
     # 平台白名单（空=全部）：bilibili, douyin, xiaohongshu, youtube,

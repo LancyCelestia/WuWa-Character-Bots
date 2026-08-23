@@ -43,6 +43,7 @@ research/nonebot_plugin_sources/_downloads_second_batch/
 research/nonebot_plugin_sources/extracted/
 research/nonebot_plugin_sources/extracted_second_batch/
 research/gscore_sources/*/
+research/meme_plugins/
 research/store_searches/
 # 参考源码与调研材料（只提交分析报告，不提交第三方源码树）
 research/astrbot_plugin_parser/

@@ -42,7 +42,12 @@ from .sender import (
     send_onebot_v11,
 )
 from .runtime.aliases import CommandAliasResolver, build_command_alias_resolver
-from .runtime.base_router import RouteKind, classify_message_route
+from .runtime.base_router import (
+    RouteKind,
+    build_interface_manifest,
+    classify_message_route,
+    list_route_rules_for_audit,
+)
 from .runtime.alerts import AlertContent, send_admin_alert
 from .runtime.settings import (
     RuntimeSettingsStore,
@@ -74,6 +79,9 @@ from .capabilities.today_history import (
 from .capabilities.wiki import build_wiki_capability, is_wiki_command
 from .capabilities.epic import build_epic_capability, is_epic_command
 from .capabilities.weather import build_weather_capability, is_weather_command
+from .capabilities.meme import build_meme_capability, is_meme_command
+from .runtime.mentions import detect_name_mention
+from .runtime.natural_language import detect_natural_command
 
 try:
     from nonebot.plugin import PluginMetadata
@@ -163,6 +171,14 @@ def _extract_onebot_raw_segments(event: Any) -> list[dict[str, Any]]:
     return segments
 
 
+_RUNTIME_MENTION_TERMS: list[str] = []
+
+
+def set_runtime_mention_terms(terms: list[str] | tuple[str, ...]) -> None:
+    """在插件初始化时登记人格昵称，用于“只写名字也算点名”。"""
+    global _RUNTIME_MENTION_TERMS
+    _RUNTIME_MENTION_TERMS = [str(item).strip() for item in terms if str(item).strip()]
+
 def _detect_onebot_direct_mention(
     raw_segments: list[dict[str, Any]],
     bot_id: str,
@@ -197,6 +213,7 @@ def _incoming_from_nonebot_event(event: Any, bot_id: str = "unknown") -> Incomin
         mentions_bot=(
             session_type is SessionType.PRIVATE
             or _detect_onebot_direct_mention(raw_segments, bot_id)
+            or detect_name_mention(text, _RUNTIME_MENTION_TERMS)
         ),
         message_id=str(message_id) if message_id is not None else None,
     )
@@ -809,6 +826,7 @@ def _register_nonebot_handlers() -> None:
         config,
         extra_nicknames=runtime_settings.list_nicknames(),
     )
+    set_runtime_mention_terms(alias_resolver.nicknames)
     audit_logger = build_audit_with_file_log(
         build_audit_repository(config),
         config.bot_audit_log_file,
@@ -832,6 +850,8 @@ def _register_nonebot_handlers() -> None:
         forward_min_chars=config.bot_render_forward_min_chars,
         forward_max_nodes=config.bot_render_forward_max_nodes,
         forward_node_chars=config.bot_render_forward_node_chars,
+        group_auto_reply_enabled=config.bot_group_chat_auto_reply_enabled,
+        group_auto_reply_probability=config.bot_group_chat_auto_reply_probability,
         alias_command_check=lambda text: (
             alias_resolver.resolve(text) is not None
             or text.startswith(config.bot_runtime_admin_prefix)
@@ -1000,11 +1020,25 @@ def _register_nonebot_handlers() -> None:
         "bot",
         aliases={"/bot"},
         force_whitespace=True,
-        priority=20,
+        priority=11,
         block=True,
     )
-    auto_send = on_message(rule=_is_auto_send_plain_text, priority=21, block=True)
+    auto_send = on_message(rule=_is_auto_send_plain_text, priority=13, block=True)
     chat = on_message(rule=_is_plain_chat_event, priority=50, block=True)
+    async def _is_meme_event(event: Event) -> bool:
+        return (
+            classify_message_route(event.get_plaintext(), config=config).kind
+            is RouteKind.MEME
+        )
+
+    async def _is_natural_event(event: Event) -> bool:
+        return (
+            classify_message_route(event.get_plaintext(), config=config).kind
+            is RouteKind.NATURAL_COMMAND
+        )
+
+    meme = on_message(rule=_is_meme_event, priority=20, block=True)
+    natural = on_message(rule=_is_natural_event, priority=45, block=True)
 
     async def _is_content_parse_event(event: Event) -> bool:
         return (
@@ -1055,15 +1089,15 @@ def _register_nonebot_handlers() -> None:
         )
 
     content = on_message(rule=_is_content_parse_event, priority=46, block=True)
-    music_mode = on_message(rule=_is_music_mode_event, priority=43, block=True)
-    music = on_message(rule=_is_music_event, priority=44, block=True)
+    music_mode = on_message(rule=_is_music_mode_event, priority=40, block=True)
+    music = on_message(rule=_is_music_event, priority=41, block=True)
     today_history = on_message(
-        rule=_is_today_history_event, priority=44, block=True
+        rule=_is_today_history_event, priority=41, block=True
     )
-    wiki = on_message(rule=_is_wiki_event, priority=44, block=True)
-    epic = on_message(rule=_is_epic_event, priority=44, block=True)
-    weather = on_message(rule=_is_weather_event, priority=44, block=True)
-    subscribe_cmd = on_message(rule=_is_standalone_subscribe_event, priority=18, block=True)
+    wiki = on_message(rule=_is_wiki_event, priority=41, block=True)
+    epic = on_message(rule=_is_epic_event, priority=41, block=True)
+    weather = on_message(rule=_is_weather_event, priority=41, block=True)
+    subscribe_cmd = on_message(rule=_is_standalone_subscribe_event, priority=12, block=True)
 
     def _is_alias_command_text(text: str) -> bool:
         return (
@@ -1076,7 +1110,7 @@ def _register_nonebot_handlers() -> None:
     async def _is_alias_command(event: Event) -> bool:
         return _is_alias_command_text(event.get_plaintext())
 
-    alias = on_message(rule=_is_alias_command, priority=19, block=True)
+    alias = on_message(rule=_is_alias_command, priority=10, block=True)
 
     @alias.handle()
     async def _handle_alias(bot: Bot, event: Event) -> None:
@@ -1514,13 +1548,18 @@ def _register_nonebot_handlers() -> None:
                 decision = classify_message_route(
                     route_query, config=config, alias_resolver=alias_resolver
                 )
-                body = (
-                    "基层路由判定：\n"
-                    f"- 路由：{decision.kind.value}\n"
-                    f"- 能力：{decision.capability_id}\n"
-                    f"- 优先级：{decision.priority}\n"
-                    f"- 理由：{decision.reason}"
-                )
+                lines = [
+                    "基层路由判定：",
+                    f"- 路由：{decision.kind.value}",
+                    f"- 能力：{decision.capability_id}",
+                    f"- 优先级：{decision.priority}",
+                    f"- 理由：{decision.reason}",
+                ]
+                if decision.target_capability_id:
+                    lines.append(f"- 归一化到能力：{decision.target_capability_id}")
+                if decision.normalized_text:
+                    lines.append(f"- 归一化命令：{decision.normalized_text}")
+                body = "\n".join(lines)
                 return CapabilityResult(
                     request_id=message.request_id,
                     capability_id="bot.route",
@@ -1530,6 +1569,25 @@ def _register_nonebot_handlers() -> None:
                     audit_tags=list(decision.audit_tags),
                 )
 
+        elif command_text == "routes" or command_text.startswith("routes "):
+            capability_id = "bot.routes"
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                rows = list_route_rules_for_audit()
+                lines = ["基层路由注册表（优先级从小到大）："]
+                for row in rows:
+                    lines.append(
+                        f"{row['priority']:>3} {row['kind']:<15} "
+                        f"{row['capability_id']}  {row['label']}"
+                    )
+                return CapabilityResult(
+                    request_id=message.request_id,
+                    capability_id="bot.routes",
+                    kind="text",
+                    title="基层路由注册表",
+                    body="\n".join(lines),
+                    audit_tags=["routes", f"routes:{len(rows)}"],
+                )
         elif command_text == "parse" or command_text.startswith("parse "):
             capability_id = "bot.parse"
             parse_query = command_text.removeprefix("parse").strip()
@@ -1901,6 +1959,74 @@ def _register_nonebot_handlers() -> None:
             await matcher.finish(transport_receipt.public_message)
         await matcher.finish(receipt.public_message)
 
+
+    @meme.handle()
+    async def _handle_meme(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, build_meme_capability, "bot.meme", meme
+        )
+
+    @natural.handle()
+    async def _handle_natural(bot: Bot, event: Event) -> None:
+        command_text = event.get_plaintext().strip()
+        resolution = detect_natural_command(command_text, config)
+        if resolution is None:
+            await natural.finish("无法识别的自然语言命令。")
+            return
+        capability_id = resolution.capability_id
+        normalized_text = resolution.normalized_text
+
+        if capability_id == "bot.weather":
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                synthetic = message.model_copy(update={"plain_text": normalized_text})
+                return build_weather_capability(config)(synthetic, _decision)
+
+        elif capability_id == "bot.music":
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                synthetic = message.model_copy(update={"plain_text": normalized_text})
+                mode = runtime_settings.get("BOT_MUSIC_MODE", config) or "card"
+                return build_music_capability(config, default_mode=mode)(synthetic, _decision)
+
+        elif capability_id == "bot.wiki":
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                synthetic = message.model_copy(update={"plain_text": normalized_text})
+                return build_wiki_capability(config)(synthetic, _decision)
+
+        elif capability_id == "bot.epic":
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_epic_capability(config)(message, _decision)
+
+        elif capability_id == "bot.today_history":
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                synthetic = message.model_copy(update={"plain_text": normalized_text})
+                return build_today_history_capability(config)(synthetic, _decision)
+
+        else:
+            await natural.finish("无法识别的自然语言命令。")
+            return
+
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=capability,
+            capability_id=capability_id,
+            record_diagnostic=False,
+            history_recorder=history_recorder,
+            history_kind="command",
+        )
+        if receipt.state.value != "sent":
+            await natural.finish(receipt.public_message)
     @wiki.handle()
     async def _handle_wiki(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
@@ -2179,3 +2305,5 @@ def _register_subscription_scheduler(
     return {"store": store, "watcher": watcher, "registry": registry}
 
 _register_nonebot_handlers()
+
+

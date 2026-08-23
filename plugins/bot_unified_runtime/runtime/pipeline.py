@@ -182,6 +182,8 @@ class RuntimePipeline:
         forward_max_nodes: int = 6,
         forward_node_chars: int = 900,
         alias_command_check: Callable[[str], bool] | None = None,
+        group_auto_reply_enabled: bool = False,
+        group_auto_reply_probability: float = 0.0,
     ) -> None:
         self.send_queue = send_queue
         self.audit_logger = audit_logger
@@ -195,6 +197,8 @@ class RuntimePipeline:
         self.forward_node_chars = max(200, int(forward_node_chars))
         policy_settings = PolicySettings(
             group_command_prefix=group_command_prefix,
+            group_auto_reply_enabled=group_auto_reply_enabled,
+            group_auto_reply_probability=group_auto_reply_probability,
             extra_command_check=alias_command_check,
         )
         self.policy_evaluator = (

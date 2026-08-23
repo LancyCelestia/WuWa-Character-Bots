@@ -256,3 +256,11 @@ b orm 流程。
 - 新增 `/bot route <文本>`：管理员可在 QQ 里直接查看基层对任意文本的判定（路由/能力/优先级/理由）。
 - 人格权威来源切换为用户三份文件：守岸人档案.md、守岸人人格档案.md、守岸人人格设定.md（BOT_PERSONA_FILES）。
 - 执行闭环不变：子能力返回 CapabilityResult → 基层 review/render → SendRequest → NapCat；子能力不直接发消息。
+
+## 2026-08-23：基层路由与表情包三件套结论
+
+- 路由优先级症结：旧表 subscribe=18 在 alias=19/admin=20 之前，自然消息又都落到 chat=50；改为 alias=10、admin=11 最前，并给自然语言命令单开 45 层，链接解析保持 46、人格对话 50。
+- 自然语言层必须保守：天气规则若把“天气”前后都设为可选会吞掉“帮我放一首歌”；改为“必须出现天气二字 + 城市黑名单（帮我/查/放/点/来…）”，且礼貌式优先于问句式，才能同时覆盖“帮我查一下杭州天气”与“杭州天气怎么样”而不劫持闲聊。
+- MemeCrafters 三件套均为 MIT；nonebot-plugin-memes 与 nonebot-plugin-memes-api 功能基本一致（后者=远程 API 客户端，README 亦自述“基本一致”），同时装会重复；两者都会注册自有 matcher 并绕过本项目的基层统一流水线。结论：只部署 meme-generator-rs 后端 + 自研 bot.meme 客户端。
+- meme-generator-rs v0.5.x 协议（自研客户端已按此实现）：GET /meme/keys；POST /memes/{key} json={"images":[],"texts":[],"options":{}} -> {image_id}；GET /image/{image_id} -> PNG；GET /meme/version。
+- 群聊“被动消息”门禁与抽签接话分离：默认只有命令/点名回复（不扰民），BOT_GROUP_CHAT_AUTO_REPLY_ENABLED=true 后用确定性哈希抽签，同一消息永远同一结果，便于审计与回归测试。

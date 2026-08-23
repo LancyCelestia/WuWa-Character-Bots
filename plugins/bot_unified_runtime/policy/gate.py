@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -20,6 +21,23 @@ class PolicySettings:
     group_command_prefix: str = COMMAND_PREFIX
     # 额外命令判定：例如角色昵称命令（/岸宝帮助）在群聊中视为命令触发。
     extra_command_check: Callable[[str], bool] | None = None
+    # 群聊自动接话：关闭时只有命令/点名才回复；开启时按概率抽签回复。
+    group_auto_reply_enabled: bool = False
+    group_auto_reply_probability: float = 0.0
+
+
+def deterministic_group_reply_lottery(seed: str, probability: float) -> bool:
+    """确定性抽签：同一消息永远得到同一结果（可复现、可测试）。
+
+    用 SHA-256 前 8 位映射到 [0,10000)，避免用随机数导致测试与
+    审计不可复现。
+    """
+    if probability <= 0:
+        return False
+    if probability >= 1:
+        return True
+    bucket = int(hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8], 16) % 10000
+    return bucket < probability * 10000
 
 
 def evaluate_policy(
@@ -63,16 +81,24 @@ def evaluate_policy(
         if extra_check is not None and extra_check(text):
             command_triggered = True
         if not command_triggered and not message.mentions_bot:
-            return PolicyEvaluation(
-                request_id=message.request_id,
-                allowed=False,
-                reason="passive_group_message",
-                risk_level=RiskLevel.LOW,
-                cooldown_key=cooldown_key,
-                privacy_level=PrivacyLevel.GROUP,
-                actor_roles=actor_roles,
-                audit_tags=["policy", *role_tags, "group_observe_only"],
+            auto_reply = (
+                active_settings.group_auto_reply_enabled
+                and deterministic_group_reply_lottery(
+                    f"{message.session_id}:{message.message_id or message.request_id}",
+                    active_settings.group_auto_reply_probability,
+                )
             )
+            if not auto_reply:
+                return PolicyEvaluation(
+                    request_id=message.request_id,
+                    allowed=False,
+                    reason="passive_group_message",
+                    risk_level=RiskLevel.LOW,
+                    cooldown_key=cooldown_key,
+                    privacy_level=PrivacyLevel.GROUP,
+                    actor_roles=actor_roles,
+                    audit_tags=["policy", *role_tags, "group_observe_only"],
+                )
 
     return PolicyEvaluation(
         request_id=message.request_id,

@@ -4,8 +4,10 @@ from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.runtime.aliases import CommandAliasResolver
 from plugins.bot_unified_runtime.runtime.base_router import (
     RouteKind,
+    build_interface_manifest,
     classify_message_route,
     extract_http_urls,
+    list_route_rules_for_audit,
 )
 
 
@@ -59,6 +61,18 @@ def test_subscribe_and_admin_routes():
     assert classify_message_route("/bot status", config=config).kind is RouteKind.ADMIN
 
 
+def test_nickname_and_admin_commands_come_first():
+    config = Config()
+    alias = classify_message_route(
+        "/岸宝天气 杭州", config=config, alias_resolver=_resolver()
+    )
+    assert alias.kind is RouteKind.ALIAS
+    assert alias.priority == 10
+    admin = classify_message_route("/bot status", config=config)
+    assert admin.kind is RouteKind.ADMIN
+    assert admin.priority == 11
+
+
 def test_auto_send_route():
     text = "报存 给 A、B 发邮件，主题：周末安排，内容根据你对他们的了解分别写"
     assert classify_message_route(text, config=Config()).kind is RouteKind.AUTO_SEND
@@ -69,7 +83,41 @@ def test_alias_route_beats_later_routes():
         "/岸宝天气 杭州", config=Config(), alias_resolver=_resolver()
     )
     assert decision.kind is RouteKind.ALIAS
-    assert decision.priority == 19
+    assert decision.priority == 10
+
+
+def test_natural_language_routes_to_normalized_command():
+    decision = classify_message_route("帮我查一下杭州天气", config=Config())
+    assert decision.kind is RouteKind.NATURAL_COMMAND
+    assert decision.capability_id == "bot.natural_command"
+    assert decision.target_capability_id == "bot.weather"
+    assert decision.normalized_text == "天气 杭州"
+    assert decision.priority == 45
+
+
+def test_natural_music_routes_with_normalized_text():
+    decision = classify_message_route("来首晴天", config=Config())
+    assert decision.kind is RouteKind.NATURAL_COMMAND
+    assert decision.target_capability_id == "bot.music"
+    assert decision.normalized_text == "点歌 晴天"
+
+
+def test_natural_command_can_be_disabled():
+    decision = classify_message_route(
+        "帮我查一下杭州天气",
+        config=Config(bot_natural_command_enabled=False),
+    )
+    assert decision.kind is RouteKind.CHAT
+
+
+def test_meme_command_route():
+    decision = classify_message_route("/表情 列表", config=Config())
+    assert decision.kind is RouteKind.MEME
+    assert decision.priority == 20
+    assert (
+        classify_message_route("表情包真好笑", config=Config()).kind
+        is RouteKind.CHAT
+    )
 
 
 def test_disabled_command_routes_to_ignore_not_llm():
@@ -94,3 +142,26 @@ def test_decision_to_dict_is_auditable():
     assert data["kind"] == "wiki"
     assert data["capability_id"] == "bot.wiki"
     assert "base_route:wiki" in data["audit_tags"]
+
+
+def test_natural_decision_to_dict_exposes_target_and_normalized_text():
+    decision = classify_message_route("来首晴天", config=Config())
+    data = decision.to_dict()
+    assert data["target_capability_id"] == "bot.music"
+    assert data["normalized_text"] == "点歌 晴天"
+
+
+def test_route_registry_is_sorted_and_contains_reserved_manifest():
+    rows = list_route_rules_for_audit()
+    priorities = [row["priority"] for row in rows]
+    assert priorities == sorted(priorities)
+    assert any(row["kind"] == "natural_command" for row in rows)
+    assert any(row["kind"] == "meme" for row in rows)
+
+    manifest = build_interface_manifest()
+    manifest_ids = {entry.interface_id for entry in manifest}
+    assert "core.gscore" in manifest_ids
+    assert "transport.onebot" in manifest_ids
+    assert "capability.game_live" in manifest_ids
+    assert "capability.meme_absorb" in manifest_ids
+    assert "capability.meme" in manifest_ids
