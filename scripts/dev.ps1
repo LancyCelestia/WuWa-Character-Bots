@@ -25,6 +25,8 @@ param(
         "online-transport-smoke",
         "console",
         "credential-smoke",
+        "embedding-smoke",
+        "knowledge-sync",
         "gscore-smoke",
         "docs-check",
         "plugin-check",
@@ -199,7 +201,7 @@ function Invoke-Test {
     Push-Location $Root
     $oldTmp = $env:TMP
     $oldTemp = $env:TEMP
-    $ciTmp = Join-Path $Root ".pytest_tmp_ci"
+    $ciTmp = Join-Path $Root (".pytest_tmp_ci_" + $PID)
     New-Item -ItemType Directory -Force -Path $ciTmp | Out-Null
     $env:TMP = $ciTmp
     $env:TEMP = $ciTmp
@@ -524,6 +526,42 @@ function Invoke-CredentialSmoke {
     finally { Pop-Location }
 }
 
+function Invoke-EmbeddingSmoke {
+    $python = Get-ProjectPython
+    $exitCode = 0
+
+    Push-Location $Root
+    try {
+        Write-Step "running OpenAI-compatible embeddings connection smoke"
+        & $python -m plugins.bot_unified_runtime.smoke embedding
+        $exitCode = $LASTEXITCODE
+    }
+    finally { Pop-Location }
+
+    if ($exitCode -ne 0) {
+        Write-Step "Embedding smoke did not pass. See diagnostic output above."
+        exit $LASTEXITCODE
+    }
+}
+
+function Invoke-KnowledgeSync {
+    $python = Get-ProjectPython
+    $exitCode = 0
+
+    Push-Location $Root
+    try {
+        Write-Step "pre-warming vector knowledge base from BOT_KNOWLEDGE_FILES"
+        & $python -m plugins.bot_unified_runtime.smoke knowledge-sync
+        $exitCode = $LASTEXITCODE
+    }
+    finally { Pop-Location }
+
+    if ($exitCode -ne 0) {
+        Write-Step "Knowledge sync did not finish. See diagnostic output above."
+        exit $LASTEXITCODE
+    }
+}
+
 function Invoke-GscoreSmoke {
     $python = Get-ProjectPython
 
@@ -596,6 +634,8 @@ Tasks:
   online-transport-smoke Read current online bot state without calling send APIs; never sends QQ messages.
   console       Interactive console chat through the real runtime pipeline (offline static LLM by default). Use -Message for one-shot non-interactive mode.
   credential-smoke Check cookie/credential expiry and (with --probe) availability; warns when re-login is needed. Never prints secret values.
+  embedding-smoke Validate configured OpenAI-compatible embeddings service (e.g. Aliyun Bailian qwen3.7-text-embedding) without touching the knowledge DB.
+  knowledge-sync Pre-warm vector knowledge base: chunk BOT_KNOWLEDGE_FILES and embed into data/knowledge_embeddings.sqlite3; skips rows already embedded.
   gscore-smoke   Read-only GsCore bridge readiness check (config + websockets availability); never connects or sends.
   docs-check    Verify command docs, runtime specs, and project config pointers exist.
   plugin-check  Verify plugins/ is configured and report whether local plugins exist yet.
@@ -629,6 +669,8 @@ switch ($Task) {
     "online-transport-smoke" { Invoke-OnlineTransportSmoke }
     "console" { Invoke-Console }
     "credential-smoke" { Invoke-CredentialSmoke }
+    "embedding-smoke" { Invoke-EmbeddingSmoke }
+    "knowledge-sync" { Invoke-KnowledgeSync }
     "gscore-smoke" { Invoke-GscoreSmoke }
     "docs-check" { Invoke-DocsCheck }
     "plugin-check" { Invoke-PluginCheck }

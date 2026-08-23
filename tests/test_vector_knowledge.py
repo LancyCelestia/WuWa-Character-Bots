@@ -396,3 +396,184 @@ def test_keyword_retriever_returns_empty_for_unknown_query(tmp_path):
 
     retriever = KeywordKnowledgeRetriever([file], top_k=4, chunk_chars=120)
     assert retriever.retrieve("量子物理 对撞机") == []
+
+
+class _BatchRecordingProvider:
+    """记录每次 embed_texts 传入的条数，返回固定维度向量。"""
+
+    def __init__(self):
+        self.batch_sizes: list[int] = []
+        self.fail_first = 0
+
+    def embed_texts(self, texts):
+        if self.fail_first > 0:
+            self.fail_first -= 1
+            return []
+        self.batch_sizes.append(len(texts))
+        return [[float(index), 1.0] for index in range(len(texts))]
+
+
+def test_provider_sends_dimensions_when_configured(monkeypatch):
+    captured: dict = {}
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        return _FakeResponse(
+            {"data": [{"embedding": [0.1, 0.2], "index": 0}]}
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen3.7-text-embedding",
+        api_key="sk-test",
+        dimensions=1024,
+    )
+    vectors = provider.embed_texts(["守岸人是谁"])
+
+    assert vectors == [[0.1, 0.2]]
+    assert captured["url"].endswith("/embeddings")
+    assert captured["json"]["model"] == "qwen3.7-text-embedding"
+    assert captured["json"]["dimensions"] == 1024
+    assert captured["json"]["input"] == ["守岸人是谁"]
+
+
+def test_provider_omits_dimensions_when_unset(monkeypatch):
+    captured: dict = {}
+
+    def fake_post(url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return _FakeResponse(
+            {"data": [{"embedding": [0.1, 0.2], "index": 0}]}
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="https://api.siliconflow.cn/v1",
+        model="Pro/BAAI/bge-m3",
+        api_key="sk-test",
+    )
+    provider.embed_texts(["文本"])
+
+    assert "dimensions" not in captured["json"]
+
+
+def test_store_embed_pending_keeps_batch_at_or_below_ten(tmp_path):
+    paragraphs = [f"第 {i} 段" * 20 for i in range(25)]
+    knowledge_file = tmp_path / "big.md"
+    knowledge_file.write_text("\n".join(paragraphs), encoding="utf-8")
+    provider = _BatchRecordingProvider()
+    store = SqliteVectorKnowledgeStore(
+        tmp_path / "knowledge.sqlite3",
+        provider,
+        chunk_chars=120,
+        top_k=2,
+    )
+
+    done, pending = store.embed_pending([knowledge_file])
+
+    assert done == 25
+    assert pending == 25
+    assert provider.batch_sizes
+    assert max(provider.batch_sizes) <= 10
+    assert store.stats() == {"total": 25, "embedded": 25}
+
+
+def test_store_embed_pending_is_resumable_after_failure(tmp_path):
+    knowledge_file = tmp_path / "resume.md"
+    knowledge_file.write_text("第一段" * 20 + "\n" + "第二段" * 20, encoding="utf-8")
+    provider = _BatchRecordingProvider()
+    store = SqliteVectorKnowledgeStore(
+        tmp_path / "knowledge.sqlite3",
+        provider,
+        chunk_chars=120,
+        top_k=2,
+    )
+
+    provider.fail_first = 1
+    done, pending = store.embed_pending([knowledge_file])
+    assert done == 0
+    assert pending == 2
+    assert store.stats() == {"total": 2, "embedded": 0}
+
+    done, pending = store.embed_pending([knowledge_file])
+    assert done == 2
+    assert store.stats() == {"total": 2, "embedded": 2}
+
+
+def test_store_stats_counts_total_and_embedded(tmp_path):
+    store = SqliteVectorKnowledgeStore(
+        tmp_path / "knowledge.sqlite3",
+        _BatchRecordingProvider(),
+        chunk_chars=120,
+        top_k=2,
+    )
+    assert store.stats() == {"total": 0, "embedded": 0}
+
+
+def test_embedding_smoke_disabled_returns_guidance():
+    from plugins.bot_unified_runtime.smoke import run_embedding_smoke
+
+    result = run_embedding_smoke(Config(bot_embedding_enabled=False))
+
+    assert result["ok"] is False
+    assert result["error_kind"] == "disabled"
+    assert "BOT_EMBEDDING_ENABLED" in result["public_message"]
+
+
+def test_embedding_smoke_reports_missing_key():
+    from plugins.bot_unified_runtime.smoke import run_embedding_smoke
+
+    result = run_embedding_smoke(
+        Config(
+            bot_embedding_enabled=True,
+            bot_embedding_model="qwen3.7-text-embedding",
+            bot_embedding_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            bot_embedding_api_key="",
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["error_kind"] == "config_missing"
+    assert "BOT_EMBEDDING_API_KEY" in result["public_message"]
+
+
+def test_embedding_smoke_success_path(monkeypatch):
+    from plugins.bot_unified_runtime import smoke
+
+    class _FakeProvider:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def embed_texts(self, texts):
+            assert len(texts) == 2
+            return [[0.1, 0.2] for _ in texts]
+
+    monkeypatch.setattr(smoke, "OpenAICompatibleEmbeddingProvider", _FakeProvider)
+    result = smoke.run_embedding_smoke(
+        Config(
+            bot_embedding_enabled=True,
+            bot_embedding_model="qwen3.7-text-embedding",
+            bot_embedding_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            bot_embedding_api_key="sk-test",
+            bot_embedding_dimensions=1024,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["dimension_count"] == 2
+    assert result["error_kind"] == "none"
+
+
+def test_build_provider_passes_dimensions_config(tmp_path):
+    store_provider = build_vector_knowledge_provider(
+        Config(
+            bot_embedding_enabled=True,
+            bot_embedding_model="qwen3.7-text-embedding",
+            bot_embedding_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            bot_embedding_api_key="sk-test",
+            bot_embedding_dimensions=768,
+        )
+    )
+    assert getattr(store_provider, "available", False) is True

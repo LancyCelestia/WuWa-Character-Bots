@@ -70,6 +70,7 @@ class Config(BaseModel):
     bot_embedding_base_url: str = ""
     bot_embedding_api_key: str = ""
     bot_embedding_timeout_seconds: float = 15.0
+    bot_embedding_dimensions: int = 1024
     bot_knowledge_top_k: int = 4
     bot_knowledge_db_path: str = "data/knowledge_embeddings.sqlite3"
     bot_tone_mode: str = "private_chat"

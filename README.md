@@ -321,7 +321,8 @@ powershell -ExecutionPolicy Bypass -File scripts/git.ps1 update
 - 昵称功能命令：`/岸宝帮助`、`/岸宝状态`、`/岸宝天气`、`/岸宝点歌`、`/岸宝wiki`、`/岸宝epic`、`/岸宝订阅`、`/岸宝日志`。
 - 点歌输出模式：`/点歌模式 音频|语音|链接|卡片`（管理员），音频模式下载试听文件后作为文件发送。
 - 知识库已接入用户提供的四份材料：`守岸人人格档案.md`、`守岸人人格设定.md`、`守岸人档案.md`、`鸣潮库街区百科v2.md`；向量嵌入服务可用时按语义检索，不可用时自动跨文件关键词检索，再回退顺序取块。
-- 向量知识库配置：`BOT_EMBEDDING_ENABLED`、`BOT_EMBEDDING_MODEL`、`BOT_EMBEDDING_BASE_URL`、`BOT_EMBEDDING_API_KEY`、`BOT_KNOWLEDGE_TOP_K`、`BOT_KNOWLEDGE_DB_PATH`（未配置时默认关闭并回退）。
+- 向量知识库配置：`BOT_EMBEDDING_ENABLED`、`BOT_EMBEDDING_MODEL`、`BOT_EMBEDDING_BASE_URL`、`BOT_EMBEDDING_API_KEY`、`BOT_EMBEDDING_DIMENSIONS`、`BOT_EMBEDDING_TIMEOUT_SECONDS`、`BOT_KNOWLEDGE_TOP_K`、`BOT_KNOWLEDGE_DB_PATH`（未配置时默认关闭并回退）。
+- 阿里云百炼嵌入模型（OpenAI 兼容）：`BOT_EMBEDDING_MODEL=qwen3.7-text-embedding`、`BOT_EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`；接好后先 `scripts/dev.ps1 embedding-smoke` 连通性验证，再 `scripts/dev.ps1 knowledge-sync` 预建库（断点续跑）。
 - 修复：NapCat 发送本地卡片/媒体路径自动转绝对路径；`api_key=set` 等安全占位值不再被误判为泄露。
 
 ### 多实例共享与实例名命令（追加）

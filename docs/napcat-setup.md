@@ -12,6 +12,18 @@ NapCat 官方文档：https://napneko.github.io/
 2. 用你自己的 QQ 小号（不要用主号，有风控风险）扫码登录 NapCat。
 3. 打开 NapCat WebUI（默认 http://127.0.0.1:6099）。
 
+### 1.1 扫码登录（被踢下线后重新登录也走这里）
+
+1. 启动 NapCat（一键包 launcher 或 QQ9 修补启动），留意启动日志里的 WebUI 地址：
+   `[info] [NapCat] [WebUi] WebUi User Panel Url: http://127.0.0.1:6099/webui?token=xxxx`
+   （token 也可在 NapCat 配置目录的 `webui.json` 里找到）。
+2. 浏览器打开该地址 → 进入「QQ 登录」→ 点「QRCode」二维码登录。
+3. 用手机 QQ 扫二维码并确认；如手机提示「下次登录无需手机确认」建议勾选。
+4. 登录成功后按提示修改一次 WebUI 密码；再去「网络配置」确认 3001 的 WebSocket 服务器还在运行（配置按 QQ 号存在 `onebot11_<QQ号>.json`，重登一般不会丢）。
+
+- 小掉线（凭证仍有效）：重新打开 NapCat → 上面第 2-3 步重新扫码即可。
+- 凭证失效/风控：只能重新扫码；若提示「安全中心/涉嫌违规」先停用几小时，保持同一网络/IP 再登，必要时换一个 QQ 小号。
+
 ## 2. NapCat 侧：开一个带 token 的 WebSocket 服务器
 
 在 NapCat WebUI →「网络配置」→「新建」：

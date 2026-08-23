@@ -15,7 +15,7 @@ from plugins.bot_unified_runtime.contracts import KnowledgeChunk
 
 from .documents import load_character_document
 
-_EMBED_BATCH_SIZE = 32
+_EMBED_BATCH_SIZE = 10  # 百炼 qwen3.7 上限 20 条、v4 上限 10 条，取 10 两者都兼容。
 _MIN_CHUNK_CHARS = 120
 
 
@@ -32,20 +32,25 @@ class OpenAICompatibleEmbeddingProvider:
         model: str,
         api_key: str,
         timeout_seconds: float = 15.0,
+        dimensions: int | None = None,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
         self.model = model
         self.api_key = api_key
         self.timeout_seconds = float(timeout_seconds)
+        self.dimensions = int(dimensions) if dimensions else None
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         try:
+            body: dict = {"model": self.model, "input": texts}
+            if self.dimensions:
+                body["dimensions"] = self.dimensions
             response = httpx.post(
                 f"{self.base_url}/embeddings",
                 headers={"Authorization": f"Bearer {self.api_key}"},
-                json={"model": self.model, "input": texts},
+                json=body,
                 timeout=self.timeout_seconds,
             )
             response.raise_for_status()
@@ -178,6 +183,39 @@ class SqliteVectorKnowledgeStore:
                                 """,
                                 (source_id, source_id, content, content_hash, chunk_id),
                             )
+
+    def embed_pending(self, files: list[Path] | None = None) -> tuple[int, int]:
+        """预建库：同步文件切片后把未向量化的行全部嵌入。
+
+        返回 (本次成功嵌入行数, 处理前待嵌入行数)；中途失败即停止。
+        """
+        with self._lock:
+            if files:
+                self.sync_chunks(list(files))
+            pending = self._pending_rows()
+            done = 0
+            for batch in _batches(pending, _EMBED_BATCH_SIZE):
+                vectors = self._embed([str(row["content"]) for row in batch])
+                if vectors is None:
+                    break
+                if not self._save_vectors(batch, vectors):
+                    break
+                done += len(batch)
+            return done, len(pending)
+
+    def stats(self) -> dict[str, int]:
+        """返回 (总行数, 已向量化行数)，供烟测/后台统计使用。"""
+        with self._connect() as connection:
+            total = int(
+                connection.execute("SELECT COUNT(*) FROM knowledge_chunks").fetchone()[0]
+            )
+            embedded = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM knowledge_chunks "
+                    "WHERE vector_json IS NOT NULL AND vector_json != ''"
+                ).fetchone()[0]
+            )
+        return {"total": total, "embedded": embedded}
 
     def retrieve(
         self,
@@ -413,6 +451,7 @@ def build_vector_knowledge_provider(config: object) -> object:
             timeout_seconds=float(
                 _first_defined(config, "bot_embedding_timeout_seconds", 15.0)
             ),
+            dimensions=int(_first_defined(config, "bot_embedding_dimensions", 1024)),
         )
         store = SqliteVectorKnowledgeStore(
             db_path=str(

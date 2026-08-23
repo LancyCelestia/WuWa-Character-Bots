@@ -21,6 +21,10 @@ from plugins.bot_unified_runtime.capabilities.chat import (
     build_chat_prompt_with_diagnostics,
 )
 from plugins.bot_unified_runtime.character import build_character_context_provider
+from plugins.bot_unified_runtime.character.vector_knowledge import (
+    OpenAICompatibleEmbeddingProvider,
+    SqliteVectorKnowledgeStore,
+)
 from plugins.bot_unified_runtime.character.source_summary import (
     build_safe_context_source_summary,
 )
@@ -2371,6 +2375,166 @@ def _readiness_public_message(*, readiness_status: str, next_action: str) -> str
     return "统一 readiness 未通过：请按 recommended_commands 继续排障。"
 
 
+
+def run_embedding_smoke(config: Config) -> dict[str, Any]:
+    """用配置的 OpenAI-compatible embeddings 服务做一次 2 条文本的连通测试。"""
+    model = str(getattr(config, "bot_embedding_model", "") or "").strip()
+    base_url = str(getattr(config, "bot_embedding_base_url", "") or "").strip()
+    api_key = str(getattr(config, "bot_embedding_api_key", "") or "").strip()
+    enabled = bool(getattr(config, "bot_embedding_enabled", False))
+    dimensions = int(getattr(config, "bot_embedding_dimensions", 1024) or 1024)
+    timeout = float(getattr(config, "bot_embedding_timeout_seconds", 15.0) or 15.0)
+    result: dict[str, Any] = {
+        "ok": False,
+        "enabled": enabled,
+        "model": model,
+        "base_url": base_url,
+        "api_key_set": bool(api_key),
+        "dimensions": dimensions,
+        "dimension_count": 0,
+        "api_status": 0,
+        "api_error": "",
+        "error_kind": "disabled",
+        "public_message": "",
+    }
+    if not enabled:
+        result["public_message"] = (
+            "向量知识库未启用：把 .env 中 BOT_EMBEDDING_ENABLED 改为 true，"
+            "并填好 BOT_EMBEDDING_MODEL/BASE_URL/API_KEY 后重试。"
+        )
+        return result
+    missing = [name for name, value in (
+        ("BOT_EMBEDDING_MODEL", model),
+        ("BOT_EMBEDDING_BASE_URL", base_url),
+        ("BOT_EMBEDDING_API_KEY", api_key),
+    ) if not value]
+    if missing:
+        result["error_kind"] = "config_missing"
+        result["public_message"] = "缺少配置：" + ",".join(missing)
+        return result
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+        timeout_seconds=timeout,
+        dimensions=dimensions,
+    )
+    try:
+        vectors = provider.embed_texts(["守岸人是谁", "鸣潮 库街区"])
+    except Exception as exc:  # noqa: BLE001 - 烟测统一转安全文本。
+        result["error_kind"] = "exception"
+        result["public_message"] = f"调用异常：{type(exc).__name__}"
+        return result
+    if isinstance(vectors, list) and len(vectors) == 2 and vectors[0]:
+        result["ok"] = True
+        result["dimension_count"] = len(vectors[0])
+        result["error_kind"] = "none"
+        result["public_message"] = "嵌入接口调用成功，返回维度与配置一致。"
+        return result
+    try:
+        import httpx
+
+        response = httpx.post(
+            f"{base_url}/embeddings",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"model": model, "input": ["测试"], "dimensions": dimensions},
+            timeout=timeout,
+        )
+        result["api_status"] = response.status_code
+        payload = response.json() if response.content else {}
+        error = payload.get("error") if isinstance(payload, dict) else {}
+        message = str(error.get("message") or "").strip()[:160]
+        result["api_error"] = message
+        result["error_kind"] = "api_error"
+        result["public_message"] = (
+            f"接口返回 HTTP {response.status_code}：{message}" if message
+            else f"接口返回 HTTP {response.status_code}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        result["error_kind"] = "network_error"
+        result["public_message"] = f"请求失败：{type(exc).__name__}"
+    return result
+
+
+def run_knowledge_sync(config: Config) -> dict[str, Any]:
+    """把 BOT_KNOWLEDGE_FILES 切片并批量向量化写入本地 SQLite（预建库）。"""
+    model = str(getattr(config, "bot_embedding_model", "") or "").strip()
+    base_url = str(getattr(config, "bot_embedding_base_url", "") or "").strip()
+    api_key = str(getattr(config, "bot_embedding_api_key", "") or "").strip()
+    db_path = str(
+        getattr(config, "bot_knowledge_db_path", "data/knowledge_embeddings.sqlite3")
+        or "data/knowledge_embeddings.sqlite3"
+    )
+    files = [
+        Path(path).expanduser()
+        for path in (getattr(config, "bot_knowledge_files", []) or [])
+    ]
+    result: dict[str, Any] = {
+        "ok": False,
+        "model": model,
+        "base_url": base_url,
+        "api_key_set": bool(api_key),
+        "db_path": db_path,
+        "files": len(files),
+        "total_before": 0,
+        "embedded_before": 0,
+        "pending": 0,
+        "done": 0,
+        "total_after": 0,
+        "embedded_after": 0,
+        "error_kind": "none",
+        "public_message": "",
+    }
+    missing = [name for name, value in (
+        ("BOT_EMBEDDING_MODEL", model),
+        ("BOT_EMBEDDING_BASE_URL", base_url),
+        ("BOT_EMBEDDING_API_KEY", api_key),
+    ) if not value]
+    if missing:
+        result["error_kind"] = "config_missing"
+        result["public_message"] = "缺少配置：" + ",".join(missing)
+        return result
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+        timeout_seconds=float(
+            getattr(config, "bot_embedding_timeout_seconds", 15.0) or 15.0
+        ),
+        dimensions=int(getattr(config, "bot_embedding_dimensions", 1024) or 1024),
+    )
+    try:
+        store = SqliteVectorKnowledgeStore(
+            db_path=db_path,
+            embed_provider=provider,
+            chunk_chars=int(getattr(config, "bot_knowledge_chunk_chars", 900) or 900),
+            top_k=int(getattr(config, "bot_knowledge_top_k", 4) or 4),
+        )
+        before = store.stats()
+        result["total_before"] = int(before["total"])
+        result["embedded_before"] = int(before["embedded"])
+        done, pending = store.embed_pending(files)
+        after = store.stats()
+        result["pending"] = int(pending)
+        result["done"] = int(done)
+        result["total_after"] = int(after["total"])
+        result["embedded_after"] = int(after["embedded"])
+    except Exception as exc:  # noqa: BLE001
+        result["error_kind"] = "exception"
+        result["public_message"] = f"预建库异常：{type(exc).__name__}"
+        return result
+    if done < pending:
+        result["error_kind"] = "partial"
+        result["public_message"] = (
+            f"只完成 {done}/{pending} 行向量化，请检查 API Key/额度/限流后重跑"
+            "（已完成的会跳过，可断点续跑）。"
+        )
+        return result
+    result["ok"] = True
+    result["public_message"] = f"预建库完成：共 {result['total_after']} 行，全部已向量化。"
+    return result
+
+
 def main(
     *,
     importer: Callable[[str], Any] | None = None,
@@ -2397,6 +2561,8 @@ def main(
             "readiness",
             "dialogue",
             "persona",
+            "embedding",
+            "knowledge-sync",
         ),
         default="chat",
         help="Smoke task to run.",
@@ -2657,6 +2823,39 @@ def main(
         print(f"provider={result['provider']}")
         print(f"model={result['model']}")
         print(f"chat_api_key={result['chat_api_key']}")
+        print(f"error_kind={result['error_kind']}")
+        print(f"public_message={result['public_message']}")
+        return 0 if result["ok"] else 1
+
+    if args.task == "embedding":
+        result = run_embedding_smoke(config)
+        print(f"ok={str(result['ok']).lower()}")
+        print(f"enabled={str(result['enabled']).lower()}")
+        print(f"model={result['model']}")
+        print(f"base_url={result['base_url']}")
+        print(f"api_key_set={str(result['api_key_set']).lower()}")
+        print(f"dimensions={result['dimensions']}")
+        print(f"dimension_count={result['dimension_count']}")
+        print(f"api_status={result['api_status']}")
+        print(f"api_error={result['api_error']}")
+        print(f"error_kind={result['error_kind']}")
+        print(f"public_message={result['public_message']}")
+        return 0 if result["ok"] else 1
+
+    if args.task == "knowledge-sync":
+        result = run_knowledge_sync(config)
+        print(f"ok={str(result['ok']).lower()}")
+        print(f"model={result['model']}")
+        print(f"base_url={result['base_url']}")
+        print(f"api_key_set={str(result['api_key_set']).lower()}")
+        print(f"db_path={result['db_path']}")
+        print(f"files={result['files']}")
+        print(f"total_before={result['total_before']}")
+        print(f"embedded_before={result['embedded_before']}")
+        print(f"pending={result['pending']}")
+        print(f"done={result['done']}")
+        print(f"total_after={result['total_after']}")
+        print(f"embedded_after={result['embedded_after']}")
         print(f"error_kind={result['error_kind']}")
         print(f"public_message={result['public_message']}")
         return 0 if result["ok"] else 1

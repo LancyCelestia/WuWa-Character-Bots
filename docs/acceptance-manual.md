@@ -126,3 +126,14 @@ chat-smoke 输出 llm_status=ok 且  receipt_state=sent 即为对话链路正�
 - 深解析结果（B站 PGC/直播/动态/商品、小红书等）会走 `output/card_render/` 的通用信息卡模板渲染成 PNG 卡片；渲染后端失败时自动降级为文本卡。
 - B站商品：魔力赏市集（mall.bilibili.com，需要 BOT_COOKIES_FILE 的 bilibili 登录 Cookie）按 itemsId 匹配列表接口；会员购（show.bilibili.com）走 og 兜底；两者都失败时返回浅层降级卡片，不会中断对话。
 - 卡片模板参考 MIT 许可的 astrbot_plugin_parser，出处记录在 THIRD_PARTY_NOTICES.md。
+
+## 6.2 阿里云百炼向量知识库（qwen3.7-text-embedding）
+
+1. 在百炼控制台创建 API Key（形如 sk-xxxx）。
+2. 编辑 .env（本地文件，不入库）：
+   `BOT_EMBEDDING_ENABLED=true`、`BOT_EMBEDDING_MODEL=qwen3.7-text-embedding`、
+   `BOT_EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`、
+   `BOT_EMBEDDING_API_KEY=<你的Key>`、`BOT_EMBEDDING_DIMENSIONS=1024`。
+3. 连通性验证（不写知识库）：`powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 embedding-smoke`，看到 ok=true 即成功。
+4. 预建库（首次几分钟，断点续跑）：`powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 knowledge-sync`，完成后再启动机器人。
+5. 验证检索：`scripts/dev.ps1 context-smoke`（或 QQ 私聊问一个鸣潮设定问题），确认知识库命中而不是顺序取块。

@@ -219,3 +219,11 @@ b orm 流程。
 - 参考实现 BiliMagicMarketScraper / BilibiliMall-Crawler 均为 MIT/Apache 兼容的自研参照，仅用于确认请求体字段，代码未并入。
 - astrbot_plugin_parser 为 MIT（Copyright (c) 2024 Les Freire），仅移植模板结构与 RenderPayload 字段设计，GPL 的 bilibili-api-python 未使用。
 - 2026-08-23 真实只读烟测：市集列表接口带完整登录 Cookie（含 buvid3/4）+ Origin 仍返回 code=0/data.data=null，说明当前需要设备指纹等 Web 逆向信息；本项目按契约实现列表匹配，真实环境命中为空时自动走 og/浅层降级，不阻断消息链路。
+
+## 2026-08-23：阿里云百炼 qwen3.7-text-embedding 调用方式
+
+- 模型 ID：`qwen3.7-text-embedding`；OpenAI 兼容端点：POST `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/embeddings`，经典公共云地址 `https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings` 也可用。
+- 请求体：`{"model":"qwen3.7-text-embedding","input":[...],"dimensions":1024,"encoding_format":"float"}`；Header `Authorization: Bearer <API_KEY>`；`dimensions` 可选 2560/2048/1536/1024(默认)/768/512/256，OpenAI 兼容模式用复数 `dimensions`，DashScope 原生模式用单数 `dimension`。
+- 返回 `data[].embedding` + `index`，与 OpenAI 格式一致，直接按 index 排序即可。
+- 限制：字符串列表最多 20 条/请求、单行 128,000 Token；本项目把嵌入批大小从 32 下调为 10（同时兼容 v4 的 10 条上限）。
+- 项目已支持 `BOT_EMBEDDING_DIMENSIONS`，并新增 `embedding-smoke`（连通性）与 `knowledge-sync`（预建库、断点续跑）两条本地命令。

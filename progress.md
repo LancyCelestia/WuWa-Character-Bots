@@ -527,3 +527,12 @@
 - 新增 B站商品解析（`platforms_bilibili_goods.py`）：魔力赏市集列表接口按 itemsId 匹配（需 cookies.txt 登录态），会员购走 og 兜底，全部失败时浅层降级、不打断消息链路。
 - 验收：全量 pytest 737 passed；scripts/dev.ps1 verify、startup-smoke、nonebot-smoke 通过；nb orm check 无新升级、nb run 链路正常。
 - 真实只读烟测：B站市集列表接口当前返回空列表（需设备指纹），商品解析会按设计回退 og/浅层降级；其余 B站 PGC/直播/动态字段与通用卡片渲染由固定响应测试覆盖。
+
+## 2026-08-23：阿里云百炼 qwen3.7-text-embedding 接入与 NapCat 登录指引
+
+- 向量嵌入层：新增 `BOT_EMBEDDING_DIMENSIONS`，OpenAI 兼容 provider 支持 `dimensions` 请求参数；嵌入批大小 32→10，兼容百炼 qwen3.7（20 条上限）与 text-embedding-v4（10 条上限）。
+- 知识库：`SqliteVectorKnowledgeStore` 新增 `embed_pending()`（预建库、断点续跑）与 `stats()`。
+- 新命令：`scripts/dev.ps1 embedding-smoke`（连通性验证，不落库）与 `scripts/dev.ps1 knowledge-sync`（把四份材料切片向量化写入 data/knowledge_embeddings.sqlite3）。
+- 本地 .env 已预填 model/base_url/dimensions（qwen3.7 + dashscope 兼容端点），待用户填入 API Key 并把 ENABLED 改 true 即可一键烟测。
+- dev.ps1 pytest 临时目录改为 `.pytest_tmp_ci_<PID>` 避免 Windows ACL 锁死后无法复跑；.gitignore 同步覆盖 `.pytest_tmp*/`。
+- 验收：全量 pytest 746 passed，scripts/dev.ps1 verify 通过。
