@@ -536,3 +536,11 @@
 - 本地 .env 已预填 model/base_url/dimensions（qwen3.7 + dashscope 兼容端点），待用户填入 API Key 并把 ENABLED 改 true 即可一键烟测。
 - dev.ps1 pytest 临时目录改为 `.pytest_tmp_ci_<PID>` 避免 Windows ACL 锁死后无法复跑；.gitignore 同步覆盖 `.pytest_tmp*/`。
 - 验收：全量 pytest 746 passed，scripts/dev.ps1 verify 通过。
+
+## 2026-08-23：百炼 Key 落地与模型回退
+
+- 按用户提供 Key 写入本地 .env（不入库），BOT_EMBEDDING_ENABLED=true。
+- 支持多模型回退：`BOT_EMBEDDING_MODEL=qwen3.7-text-embedding,text-embedding-v4`，前者失败自动换后者；批大小 10 兼容两者上限。
+- 真实烟测：embedding-smoke ok=true（1024 维）；knowledge-sync 完成 2777/2777 行向量化（SQLite 61MB）；端到端语义检索命中鸣潮库街区百科v2 相关段落。
+- NapCat 重启方式已确认并写入 docs/napcat-setup.md：C:\Software\NapCat 下 launcher-win10-user.bat，先停 QQ/NapCatWinBootMain 再启动 launcher 重新扫码。
+- 全量 pytest 748 passed（新增 2 条回退测试）。

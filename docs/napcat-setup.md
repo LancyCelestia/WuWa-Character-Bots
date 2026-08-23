@@ -24,6 +24,19 @@ NapCat 官方文档：https://napneko.github.io/
 - 小掉线（凭证仍有效）：重新打开 NapCat → 上面第 2-3 步重新扫码即可。
 - 凭证失效/风控：只能重新扫码；若提示「安全中心/涉嫌违规」先停用几小时，保持同一网络/IP 再登，必要时换一个 QQ 小号。
 
+### 1.2 用 PowerShell 重启 NapCat（二维码卡住不刷新时）
+
+本机安装目录为 `C:\Software\NapCat`，先全部停掉再重新拉起 launcher：
+
+```powershell
+Stop-Process -Name QQ -Force -ErrorAction SilentlyContinue
+Stop-Process -Name NapCatWinBootMain -Force -ErrorAction SilentlyContinue
+Start-Process -FilePath "$env:ComSpec" -ArgumentList '/c','launcher-win10-user.bat' -WorkingDirectory 'C:\Software\NapCat'
+```
+
+重启后等几秒，打开 `http://127.0.0.1:6099/webui/login`，重新进入「QQ 登录 → QRCode」扫码即可。
+注意：`Stop-Process -Name QQ` 会关闭本机所有 QQ 窗口（含日常主号），确认没问题再执行。
+
 ## 2. NapCat 侧：开一个带 token 的 WebSocket 服务器
 
 在 NapCat WebUI →「网络配置」→「新建」：

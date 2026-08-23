@@ -29,38 +29,46 @@ class OpenAICompatibleEmbeddingProvider:
     def __init__(
         self,
         base_url: str,
-        model: str,
+        model: str | list[str],
         api_key: str,
         timeout_seconds: float = 15.0,
         dimensions: int | None = None,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
-        self.model = model
+        if isinstance(model, str):
+            models = [part.strip() for part in model.split(",") if part.strip()]
+        else:
+            models = [str(part).strip() for part in model if str(part).strip()]
+        self.models = models or [str(model).strip() or ""]
+        self.model = self.models[0]
         self.api_key = api_key
         self.timeout_seconds = float(timeout_seconds)
         self.dimensions = int(dimensions) if dimensions else None
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """批量编码；配置多个模型时按顺序回退（如 qwen3.7 配额耗尽后换 v4）。"""
         if not texts:
             return []
-        try:
-            body: dict = {"model": self.model, "input": texts}
-            if self.dimensions:
-                body["dimensions"] = self.dimensions
-            response = httpx.post(
-                f"{self.base_url}/embeddings",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json=body,
-                timeout=self.timeout_seconds,
-            )
-            response.raise_for_status()
-            payload = response.json()
-            data = payload["data"]
-            if all("index" in item for item in data):
-                data = sorted(data, key=lambda item: int(item["index"]))
-            return [list(item["embedding"]) for item in data]
-        except Exception:
-            return []
+        for model in self.models:
+            try:
+                body: dict = {"model": model, "input": texts}
+                if self.dimensions:
+                    body["dimensions"] = self.dimensions
+                response = httpx.post(
+                    f"{self.base_url}/embeddings",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    json=body,
+                    timeout=self.timeout_seconds,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                data = payload["data"]
+                if all("index" in item for item in data):
+                    data = sorted(data, key=lambda item: int(item["index"]))
+                return [list(item["embedding"]) for item in data]
+            except Exception:
+                continue
+        return []
 
 
 def _chunk_text(text: str, *, chunk_chars: int) -> list[str]:

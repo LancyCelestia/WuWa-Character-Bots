@@ -577,3 +577,45 @@ def test_build_provider_passes_dimensions_config(tmp_path):
         )
     )
     assert getattr(store_provider, "available", False) is True
+
+
+def test_provider_falls_back_to_next_model_on_first_failure(monkeypatch):
+    """qwen3.7 失败（配额/不可用）时自动尝试 text-embedding-v4。"""
+    calls: list = []
+
+    def fake_post(url, **kwargs):
+        body = kwargs.get("json") or {}
+        calls.append(body.get("model"))
+        if body.get("model") == "qwen3.7-text-embedding":
+            raise httpx.HTTPStatusError(
+                "quota",
+                request=httpx.Request("POST", url),
+                response=httpx.Response(429, request=httpx.Request("POST", url)),
+            )
+        return _FakeResponse(
+            {"data": [{"embedding": [0.3, 0.4], "index": 0}]}
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen3.7-text-embedding,text-embedding-v4",
+        api_key="sk-test",
+        dimensions=1024,
+    )
+
+    vectors = provider.embed_texts(["守岸人"])
+
+    assert vectors == [[0.3, 0.4]]
+    assert calls == ["qwen3.7-text-embedding", "text-embedding-v4"]
+    assert provider.model == "qwen3.7-text-embedding"
+
+
+def test_provider_normalizes_model_list_with_spaces():
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model=" qwen3.7-text-embedding , text-embedding-v4 ",
+        api_key="sk-test",
+    )
+    assert provider.models == ["qwen3.7-text-embedding", "text-embedding-v4"]
+    assert provider.model == "qwen3.7-text-embedding"
