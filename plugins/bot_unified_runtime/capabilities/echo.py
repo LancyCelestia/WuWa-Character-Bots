@@ -40,7 +40,7 @@ def build_help_result(request_id: str | None = None) -> CapabilityResult:
             "/bot receipt <request_id|debug_id>；/bot audit <request_id>；"
             "/bot recent [数量]；/bot queue；/bot context [测试文本]；"
             "/bot llm；/bot setup llm；/bot config；/bot readiness；"
-            "/bot dialogue [测试文本]；/bot roles；/bot persona；"
+            "/bot dialogue [测试文本]；/bot roles；/bot persona；/bot route <文本>；"
             "/bot history clear；/bot pause；/bot resume；"
             "/bot subscribe add <链接> [到本群|私聊我] [--digest]；"
             "/bot subscribe list|remove <id>|pause <id>|resume <id>|check <id>|status；"

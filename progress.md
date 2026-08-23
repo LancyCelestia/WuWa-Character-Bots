@@ -565,3 +565,9 @@
 - 参考 angel_heart/angel_memory（AGPL）的思路调研完成，只借鉴设计、不抄代码；新增世界观“先事实后感受”提示词规则。
 - 知识检索增强：BOT_KNOWLEDGE_TOP_K=6，上下文预算 4096/6144。
 - 全量 pytest 763 passed（新增 8 条回归）。
+
+## 2026-08-23：基层统一路由与人格档案收口
+- 新建 `runtime/base_router.py`（基层路由器）+ `tests/test_base_router.py`（11 条分类测试）+ `docs/specs/base-routing.md`。
+- 12 个 NoneBot matcher rule 全部委托给基层路由器；新增 `/bot route <文本>` 调试命令，帮助文案已更新。
+- BOT_PERSONA_FILES 切换为用户三份权威人格档案（守岸人档案/人格档案/人格设定），persona-smoke 校验 3 文件可读、47,994 字符。
+- persona-smoke、startup-smoke 通过（matcher_count=12 不变）；全量 pytest 预计 774 passed。

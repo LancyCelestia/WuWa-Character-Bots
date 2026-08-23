@@ -62,13 +62,22 @@ powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 console
 
 控制台内命令：`/help`、`/status`、`/why`、`/quit`。配置 `BOT_RUNTIME_PERSONA_NICKNAME=岸宝` 后，还能用角色昵称命令：`/岸宝帮助`、`/岸宝状态`、`/岸宝为什么`。REPL 会保留内存多轮对话历史（退出即清空），不连接 NapCat、不发送 QQ。
 
+基层统一路由与执行闭环见 [docs/specs/base-routing.md](docs/specs/base-routing.md)；
+管理员可用 `/bot route <文本>` 查看基层对任意文本的判定。
+
 ## 处理流程图（直白版）
 
 ```text
 收到消息（QQ / 控制台 / 邮件）
       │
       ▼
-① 归一化 IncomingMessage（会话类型 / 发送者角色 / 文本）
+① 归一化 IncomingMessage（会话类型 / 发送者角色 / 文本）
+
+      │
+      ▼
+①.5 基层统一路由 classify_message_route（天气/链接/点歌/wiki/epic/
+     历史上的今天/订阅/管理员/昵称命令/自动发送 → 插件；
+     其余自然语言 → 人格大模型）
       │
       ▼
 ② 策略门 PolicyEvaluation

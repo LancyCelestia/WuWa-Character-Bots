@@ -249,3 +249,10 @@ b orm 流程。
 - “平台单条消息长度限制”提示来自 chat 输出预算；现支持 0=不限制（BOT_REPLY_MAX_CHARS_PER_MESSAGE / BOT_REPLY_*_MAX_MESSAGES / BOT_RENDER_FORWARD_MIN_CHARS 均为 0），完整回复单条直发、不追加提示。
 - angel_heart / angel_memory 均为 AGPL-3.0：只借鉴模块化提示词分区、两级决策、工具化检索的设计思路，未复制代码或原文；详见 research/angel_prompt_patterns.md。
 - 世界观“打哑谜”修复：系统提示新增“先事实后感受”规则——先给名词的确切定义，再表达人格感受；知识库检索 top_k 提到 6、上下文预算提高到 4096/6144。
+
+## 2026-08-23：基层统一路由架构
+- 新增 `runtime/base_router.py`：所有入站文本先做确定性分类（订阅/别名/管理员/自动发送/点歌模式/点歌/历史/wiki/epic/天气/链接解析/人格对话/忽略），带 reason+audit_tags 可审计。
+- NoneBot 的 12 个 matcher rule 全部改为调用基层路由器，避免“matcher 一套判断、文档一套判断”漂移；matcher_count 保持 12。
+- 新增 `/bot route <文本>`：管理员可在 QQ 里直接查看基层对任意文本的判定（路由/能力/优先级/理由）。
+- 人格权威来源切换为用户三份文件：守岸人档案.md、守岸人人格档案.md、守岸人人格设定.md（BOT_PERSONA_FILES）。
+- 执行闭环不变：子能力返回 CapabilityResult → 基层 review/render → SendRequest → NapCat；子能力不直接发消息。

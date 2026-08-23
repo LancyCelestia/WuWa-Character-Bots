@@ -42,6 +42,7 @@ from .sender import (
     send_onebot_v11,
 )
 from .runtime.aliases import CommandAliasResolver, build_command_alias_resolver
+from .runtime.base_router import RouteKind, classify_message_route
 from .runtime.alerts import AlertContent, send_admin_alert
 from .runtime.settings import (
     RuntimeSettingsStore,
@@ -984,10 +985,16 @@ def _register_nonebot_handlers() -> None:
     )
 
     async def _is_auto_send_plain_text(event: Event) -> bool:
-        return is_auto_send_command_text(event.get_plaintext())
+        return (
+            classify_message_route(event.get_plaintext(), config=config).kind
+            is RouteKind.AUTO_SEND
+        )
 
     async def _is_plain_chat_event(event: Event) -> bool:
-        return config.bot_chat_enabled and _is_plain_chat_text(event.get_plaintext())
+        return (
+            classify_message_route(event.get_plaintext(), config=config).kind
+            is RouteKind.CHAT
+        )
 
     status = on_command(
         "bot",
@@ -1000,43 +1007,51 @@ def _register_nonebot_handlers() -> None:
     chat = on_message(rule=_is_plain_chat_event, priority=50, block=True)
 
     async def _is_content_parse_event(event: Event) -> bool:
-        return config.bot_content_parse_enabled and bool(
-            extract_http_urls(event.get_plaintext())
+        return (
+            classify_message_route(event.get_plaintext(), config=config).kind
+            is RouteKind.CONTENT
         )
 
     async def _is_music_event(event: Event) -> bool:
-        return config.bot_music_enabled and is_music_command(event.get_plaintext())
+        return (
+            classify_message_route(event.get_plaintext(), config=config).kind
+            is RouteKind.MUSIC
+        )
 
     async def _is_music_mode_event(event: Event) -> bool:
-        return config.bot_music_enabled and is_music_mode_command(
-            event.get_plaintext()
+        return (
+            classify_message_route(event.get_plaintext(), config=config).kind
+            is RouteKind.MUSIC_MODE
         )
 
     async def _is_standalone_subscribe_event(event: Event) -> bool:
-        return getattr(config, "bot_subscribe_enabled", True) and is_standalone_subscribe_command(
-            event.get_plaintext()
+        return (
+            classify_message_route(event.get_plaintext(), config=config).kind
+            is RouteKind.SUBSCRIBE
         )
 
     async def _is_today_history_event(event: Event) -> bool:
         return (
-            getattr(config, "bot_today_history_enabled", True)
-            and is_today_history_command(event.get_plaintext())
+            classify_message_route(event.get_plaintext(), config=config).kind
+            is RouteKind.TODAY_HISTORY
         )
 
     async def _is_wiki_event(event: Event) -> bool:
-        return getattr(config, "bot_wiki_enabled", True) and is_wiki_command(
-            event.get_plaintext()
+        return (
+            classify_message_route(event.get_plaintext(), config=config).kind
+            is RouteKind.WIKI
         )
 
     async def _is_epic_event(event: Event) -> bool:
-        return getattr(config, "bot_epic_enabled", True) and is_epic_command(
-            event.get_plaintext()
+        return (
+            classify_message_route(event.get_plaintext(), config=config).kind
+            is RouteKind.EPIC
         )
 
     async def _is_weather_event(event: Event) -> bool:
         return (
-            getattr(config, "bot_weather_query_enabled", True)
-            and is_weather_command(event.get_plaintext())
+            classify_message_route(event.get_plaintext(), config=config).kind
+            is RouteKind.WEATHER
         )
 
     content = on_message(rule=_is_content_parse_event, priority=46, block=True)
@@ -1051,7 +1066,12 @@ def _register_nonebot_handlers() -> None:
     subscribe_cmd = on_message(rule=_is_standalone_subscribe_event, priority=18, block=True)
 
     def _is_alias_command_text(text: str) -> bool:
-        return alias_resolver.resolve(text) is not None
+        return (
+            classify_message_route(
+                text, config=config, alias_resolver=alias_resolver
+            ).kind
+            is RouteKind.ALIAS
+        )
 
     async def _is_alias_command(event: Event) -> bool:
         return _is_alias_command_text(event.get_plaintext())
@@ -1484,6 +1504,30 @@ def _register_nonebot_handlers() -> None:
                     request_id=message.request_id,
                     actor_roles=_decision.actor_roles,
                     command_text=runtime_command,
+                )
+
+        elif command_text == "route" or command_text.startswith("route "):
+            capability_id = "bot.route"
+            route_query = command_text.removeprefix("route").strip() or ""
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                decision = classify_message_route(
+                    route_query, config=config, alias_resolver=alias_resolver
+                )
+                body = (
+                    "基层路由判定：\n"
+                    f"- 路由：{decision.kind.value}\n"
+                    f"- 能力：{decision.capability_id}\n"
+                    f"- 优先级：{decision.priority}\n"
+                    f"- 理由：{decision.reason}"
+                )
+                return CapabilityResult(
+                    request_id=message.request_id,
+                    capability_id="bot.route",
+                    kind="text",
+                    title="基层路由",
+                    body=body if route_query else "用法：/bot route <要判定的文本>",
+                    audit_tags=list(decision.audit_tags),
                 )
 
         elif command_text == "parse" or command_text.startswith("parse "):
