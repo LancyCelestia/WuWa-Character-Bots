@@ -5,6 +5,7 @@ import re
 import json
 import sqlite3
 import threading
+from dataclasses import dataclass
 from math import sqrt
 from pathlib import Path
 from typing import Protocol
@@ -25,7 +26,32 @@ class EmbeddingProvider(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class _EmbeddingChain:
+    """一个 OpenAI-compatible embeddings 服务端 + 其模型回退列表。"""
+
+    base_url: str
+    models: tuple[str, ...]
+    api_key: str = ""
+    dimensions: int | None = None
+    timeout_seconds: float = 15.0
+
+
+def _parse_model_list(model: str | list[str]) -> list[str]:
+    if isinstance(model, str):
+        parts = [part.strip() for part in model.split(",") if part.strip()]
+    else:
+        parts = [str(part).strip() for part in model if str(part).strip()]
+    return parts
+
+
 class OpenAICompatibleEmbeddingProvider:
+    """按链顺序请求：本地（如 Ollama bge-m3）优先，远程付费模型兜底。
+
+    每条链内部又可按逗号分隔的模型列表依次回退（如 qwen3.7 配额耗尽换 v4）。
+    一旦某条链成功，后续请求优先复用该链（sticky），只有它失败才再切。
+    """
+
     def __init__(
         self,
         base_url: str,
@@ -33,41 +59,99 @@ class OpenAICompatibleEmbeddingProvider:
         api_key: str,
         timeout_seconds: float = 15.0,
         dimensions: int | None = None,
+        local_base_url: str = "",
+        local_models: str | list[str] = "",
+        local_api_key: str = "",
+        local_enabled: bool = True,
+        local_timeout_seconds: float = 5.0,
+        local_dimensions: int | None = None,
     ) -> None:
-        self.base_url = str(base_url).rstrip("/")
-        if isinstance(model, str):
-            models = [part.strip() for part in model.split(",") if part.strip()]
-        else:
-            models = [str(part).strip() for part in model if str(part).strip()]
-        self.models = models or [str(model).strip() or ""]
-        self.model = self.models[0]
-        self.api_key = api_key
-        self.timeout_seconds = float(timeout_seconds)
-        self.dimensions = int(dimensions) if dimensions else None
+        chains: list[_EmbeddingChain] = []
+        if local_enabled and str(local_base_url).strip():
+            local_models_list = _parse_model_list(local_models)
+            if local_models_list:
+                chains.append(
+                    _EmbeddingChain(
+                        base_url=str(local_base_url).strip().rstrip("/"),
+                        models=tuple(local_models_list),
+                        api_key=str(local_api_key),
+                        dimensions=int(local_dimensions) if local_dimensions else None,
+                        timeout_seconds=float(local_timeout_seconds),
+                    )
+                )
+        remote_models = _parse_model_list(model)
+        if remote_models and str(base_url).strip():
+            chains.append(
+                _EmbeddingChain(
+                    base_url=str(base_url).strip().rstrip("/"),
+                    models=tuple(remote_models),
+                    api_key=str(api_key),
+                    dimensions=int(dimensions) if dimensions else None,
+                    timeout_seconds=float(timeout_seconds),
+                )
+            )
+        self.chains = chains
+        first = chains[0] if chains else None
+        self.base_url = first.base_url if first else ""
+        self.models = list(first.models) if first else []
+        self.model = self.models[0] if self.models else ""
+        self.api_key = first.api_key if first else api_key
+        self.timeout_seconds = first.timeout_seconds if first else float(timeout_seconds)
+        self.dimensions = first.dimensions if first else None
+        self._active_index: int | None = None
+        self.active_base_url = ""
+        self.active_model = ""
+
+    @property
+    def signature(self) -> str:
+        """配置指纹：base_url 或模型列表变化时触发知识库向量重建。"""
+        return ";".join(
+            f"{chain.base_url}|{','.join(chain.models)}" for chain in self.chains
+        )
+
+    def _chain_order(self) -> list[tuple[int, _EmbeddingChain]]:
+        if self._active_index is not None:
+            sticky = self.chains[self._active_index]
+            rest = [
+                (index, chain)
+                for index, chain in enumerate(self.chains)
+                if index != self._active_index
+            ]
+            return [(self._active_index, sticky), *rest]
+        return list(enumerate(self.chains))
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """批量编码；配置多个模型时按顺序回退（如 qwen3.7 配额耗尽后换 v4）。"""
+        """批量编码：本地优先、远程兜底；模型列表内部依次回退。"""
         if not texts:
             return []
-        for model in self.models:
-            try:
-                body: dict = {"model": model, "input": texts}
-                if self.dimensions:
-                    body["dimensions"] = self.dimensions
-                response = httpx.post(
-                    f"{self.base_url}/embeddings",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json=body,
-                    timeout=self.timeout_seconds,
-                )
-                response.raise_for_status()
-                payload = response.json()
-                data = payload["data"]
-                if all("index" in item for item in data):
-                    data = sorted(data, key=lambda item: int(item["index"]))
-                return [list(item["embedding"]) for item in data]
-            except Exception:
-                continue
+        for index, chain in self._chain_order():
+            for model in chain.models:
+                try:
+                    body: dict = {"model": model, "input": texts}
+                    if chain.dimensions:
+                        body["dimensions"] = chain.dimensions
+                    headers = (
+                        {"Authorization": f"Bearer {chain.api_key}"}
+                        if chain.api_key
+                        else {}
+                    )
+                    response = httpx.post(
+                        f"{chain.base_url}/embeddings",
+                        headers=headers,
+                        json=body,
+                        timeout=chain.timeout_seconds,
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    data = payload["data"]
+                    if all("index" in item for item in data):
+                        data = sorted(data, key=lambda item: int(item["index"]))
+                    self._active_index = index
+                    self.active_base_url = chain.base_url
+                    self.active_model = model
+                    return [list(item["embedding"]) for item in data]
+                except Exception:
+                    continue
         return []
 
 
@@ -119,11 +203,13 @@ class SqliteVectorKnowledgeStore:
         embed_provider: EmbeddingProvider,
         chunk_chars: int = 900,
         top_k: int = 4,
+        signature: str = "",
     ) -> None:
         self.db_path = str(db_path)
         self.embed_provider = embed_provider
         self.chunk_chars = max(_MIN_CHUNK_CHARS, int(chunk_chars))
         self.top_k = max(0, int(top_k))
+        self.signature = str(signature or "").strip()
         self._lock = threading.RLock()
         self._ensure_schema()
 
@@ -143,6 +229,59 @@ class SqliteVectorKnowledgeStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS knowledge_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+                """
+            )
+
+    def _stored_signature(self) -> str:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT value FROM knowledge_meta WHERE key = 'embedding_signature'"
+            ).fetchone()
+        return str(row[0]) if row else ""
+
+    def _set_stored_signature(self, value: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO knowledge_meta (key, value)
+                VALUES ('embedding_signature', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (value,),
+            )
+
+    def _reset_vectors_if_needed(self) -> bool:
+        """模型/端点指纹变化时清空旧向量（返回是否执行了重置）。"""
+        if not self.signature:
+            return False
+        if self._stored_signature() == self.signature:
+            return False
+        with self._connect() as connection:
+            connection.execute("UPDATE knowledge_chunks SET vector_json = NULL")
+        self._set_stored_signature("")
+        return True
+
+    def _embed_all_pending(self) -> tuple[int, int]:
+        """把全部待嵌入行编码入库；完成后记录模型指纹，失败可断点续跑。"""
+        self._reset_vectors_if_needed()
+        pending = self._pending_rows()
+        done = 0
+        for batch in _batches(pending, _EMBED_BATCH_SIZE):
+            vectors = self._embed([str(row["content"]) for row in batch])
+            if vectors is None:
+                break
+            if not self._save_vectors(batch, vectors):
+                break
+            done += len(batch)
+        if self.signature and done == len(pending):
+            self._set_stored_signature(self.signature)
+        return done, len(pending)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -195,21 +334,13 @@ class SqliteVectorKnowledgeStore:
     def embed_pending(self, files: list[Path] | None = None) -> tuple[int, int]:
         """预建库：同步文件切片后把未向量化的行全部嵌入。
 
-        返回 (本次成功嵌入行数, 处理前待嵌入行数)；中途失败即停止。
+        模型/端点指纹变化时自动清空旧向量重嵌；返回
+        (本次成功嵌入行数, 处理前待嵌入行数)；中途失败即停止、可断点续跑。
         """
         with self._lock:
             if files:
                 self.sync_chunks(list(files))
-            pending = self._pending_rows()
-            done = 0
-            for batch in _batches(pending, _EMBED_BATCH_SIZE):
-                vectors = self._embed([str(row["content"]) for row in batch])
-                if vectors is None:
-                    break
-                if not self._save_vectors(batch, vectors):
-                    break
-                done += len(batch)
-            return done, len(pending)
+            return self._embed_all_pending()
 
     def stats(self) -> dict[str, int]:
         """返回 (总行数, 已向量化行数)，供烟测/后台统计使用。"""
@@ -234,13 +365,9 @@ class SqliteVectorKnowledgeStore:
             self.sync_chunks(list(files) if files else [])
             if self.top_k <= 0:
                 return []
-            pending = self._pending_rows()
-            for batch in _batches(pending, _EMBED_BATCH_SIZE):
-                vectors = self._embed([str(row["content"]) for row in batch])
-                if vectors is None:
-                    return []
-                if not self._save_vectors(batch, vectors):
-                    return []
+            done, pending = self._embed_all_pending()
+            if done < pending:
+                return []
             query_vectors = self._embed([str(query_text)])
             if query_vectors is None or len(query_vectors) != 1:
                 return []
@@ -449,7 +576,16 @@ def build_vector_knowledge_provider(config: object) -> object:
     enabled = bool(getattr(config, "bot_embedding_enabled", False))
     model = str(getattr(config, "bot_embedding_model", "") or "").strip()
     base_url = str(getattr(config, "bot_embedding_base_url", "") or "").strip()
-    if not enabled or not model or not base_url:
+    local_models = str(
+        getattr(config, "bot_embedding_local_models", "") or ""
+    ).strip()
+    local_base_url = str(
+        getattr(config, "bot_embedding_local_base_url", "") or ""
+    ).strip()
+    local_enabled = bool(getattr(config, "bot_embedding_local_enabled", True))
+    remote_configured = bool(model and base_url)
+    local_configured = bool(local_enabled and local_models and local_base_url)
+    if not enabled or not (remote_configured or local_configured):
         return _UnavailableVectorKnowledgeProvider()
     try:
         embed_provider = OpenAICompatibleEmbeddingProvider(
@@ -460,6 +596,15 @@ def build_vector_knowledge_provider(config: object) -> object:
                 _first_defined(config, "bot_embedding_timeout_seconds", 15.0)
             ),
             dimensions=int(_first_defined(config, "bot_embedding_dimensions", 1024)),
+            local_base_url=local_base_url,
+            local_models=local_models,
+            local_api_key=str(
+                getattr(config, "bot_embedding_local_api_key", "") or ""
+            ),
+            local_enabled=local_enabled,
+            local_timeout_seconds=float(
+                _first_defined(config, "bot_embedding_local_timeout_seconds", 60.0)
+            ),
         )
         store = SqliteVectorKnowledgeStore(
             db_path=str(
@@ -472,6 +617,7 @@ def build_vector_knowledge_provider(config: object) -> object:
             embed_provider=embed_provider,
             chunk_chars=int(_first_defined(config, "bot_knowledge_chunk_chars", 900)),
             top_k=int(_first_defined(config, "bot_knowledge_top_k", 4)),
+            signature=getattr(embed_provider, "signature", ""),
         )
         files = [
             Path(path).expanduser()

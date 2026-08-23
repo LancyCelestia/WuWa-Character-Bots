@@ -544,3 +544,11 @@
 - 真实烟测：embedding-smoke ok=true（1024 维）；knowledge-sync 完成 2777/2777 行向量化（SQLite 61MB）；端到端语义检索命中鸣潮库街区百科v2 相关段落。
 - NapCat 重启方式已确认并写入 docs/napcat-setup.md：C:\Software\NapCat 下 launcher-win10-user.bat，先停 QQ/NapCatWinBootMain 再启动 launcher 重新扫码。
 - 全量 pytest 748 passed（新增 2 条回退测试）。
+
+## 2026-08-23：本地 Ollama bge-m3 优先 + 百炼兜底
+
+- 嵌入链改为：本地 Ollama `http://127.0.0.1:11434/v1` + `bge-m3` 优先；失败自动切百炼 `qwen3.7-text-embedding,text-embedding-v4`；成功后 sticky 当前链。
+- 修复两个真实问题：空 Authorization 头导致 httpx 报错；bge-m3 首次加载超 5s 被误判不可用（本地超时改为 60s）。
+- 新增模型指纹：换端点/模型自动清空旧向量重建，避免向量空间混用；`knowledge_meta.embedding_signature` 已记录当前指纹。
+- 真实烟测：embedding-smoke 命中本地 bge-m3（1024 维）；knowledge-sync 用 bge-m3 重建 2777/2777 行；语义检索命中人格档案。
+- 全量 pytest 752 passed。

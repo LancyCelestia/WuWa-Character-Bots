@@ -176,6 +176,7 @@ def test_build_vector_knowledge_provider_unavailable_by_default():
 def test_build_vector_knowledge_provider_requires_model_and_base_url(tmp_path):
     base = {
         "bot_embedding_enabled": True,
+        "bot_embedding_local_enabled": False,
         "bot_knowledge_db_path": str(tmp_path / "knowledge.sqlite3"),
     }
     missing_model = Config(**base, bot_embedding_base_url="https://api.example.com/v1")
@@ -204,6 +205,9 @@ def test_config_exposes_vector_knowledge_defaults():
 
     assert config.bot_embedding_enabled is False
     assert config.bot_embedding_model == ""
+    assert config.bot_embedding_local_enabled is True
+    assert config.bot_embedding_local_base_url == "http://127.0.0.1:11434/v1"
+    assert config.bot_embedding_local_models == "bge-m3"
     assert config.bot_embedding_base_url == ""
     assert config.bot_embedding_api_key == ""
     assert config.bot_embedding_timeout_seconds == 15.0
@@ -531,12 +535,13 @@ def test_embedding_smoke_reports_missing_key():
             bot_embedding_model="qwen3.7-text-embedding",
             bot_embedding_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
             bot_embedding_api_key="",
+            bot_embedding_local_enabled=False,
         )
     )
 
     assert result["ok"] is False
     assert result["error_kind"] == "config_missing"
-    assert "BOT_EMBEDDING_API_KEY" in result["public_message"]
+    assert "BOT_EMBEDDING" in result["public_message"]
 
 
 def test_embedding_smoke_success_path(monkeypatch):
@@ -574,6 +579,7 @@ def test_build_provider_passes_dimensions_config(tmp_path):
             bot_embedding_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
             bot_embedding_api_key="sk-test",
             bot_embedding_dimensions=768,
+            bot_embedding_local_enabled=False,
         )
     )
     assert getattr(store_provider, "available", False) is True
@@ -619,3 +625,112 @@ def test_provider_normalizes_model_list_with_spaces():
     )
     assert provider.models == ["qwen3.7-text-embedding", "text-embedding-v4"]
     assert provider.model == "qwen3.7-text-embedding"
+
+
+def test_provider_prefers_local_ollama_over_remote(monkeypatch):
+    calls: list = []
+
+    def fake_post(url, **kwargs):
+        body = kwargs.get("json") or {}
+        calls.append((url, body.get("model"), kwargs.get("headers") or {}))
+        return _FakeResponse(
+            {"data": [{"embedding": [1.0, 0.0], "index": 0}]}
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen3.7-text-embedding",
+        api_key="sk-remote",
+        local_base_url="http://127.0.0.1:11434/v1",
+        local_models="bge-m3",
+    )
+
+    vectors = provider.embed_texts(["守岸人"])
+
+    assert vectors == [[1.0, 0.0]]
+    assert len(calls) == 1
+    assert calls[0][0] == "http://127.0.0.1:11434/v1/embeddings"
+    assert calls[0][1] == "bge-m3"
+    # 本地无 Key 时不得发送空 Authorization 头（httpx 会报非法头）。
+    assert "Authorization" not in calls[0][2]
+    assert provider.active_base_url == "http://127.0.0.1:11434/v1"
+    assert provider.active_model == "bge-m3"
+
+
+def test_provider_falls_back_to_remote_when_local_down(monkeypatch):
+    calls: list = []
+
+    def fake_post(url, **kwargs):
+        body = kwargs.get("json") or {}
+        calls.append((url, body.get("model")))
+        if "11434" in url:
+            raise httpx.ConnectError("ollama down")
+        return _FakeResponse(
+            {"data": [{"embedding": [0.5, 0.5], "index": 0}]}
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen3.7-text-embedding",
+        api_key="sk-remote",
+        local_base_url="http://127.0.0.1:11434/v1",
+        local_models="bge-m3",
+    )
+
+    vectors = provider.embed_texts(["守岸人"])
+
+    assert vectors == [[0.5, 0.5]]
+    assert len(calls) == 2
+    assert calls[0][0].startswith("http://127.0.0.1:11434")
+    assert calls[1][0].startswith("https://dashscope")
+    assert provider.active_model == "qwen3.7-text-embedding"
+
+
+def test_provider_sticks_to_working_local_chain(monkeypatch):
+    calls: list = []
+
+    def fake_post(url, **kwargs):
+        calls.append(url)
+        return _FakeResponse(
+            {"data": [{"embedding": [1.0, 0.0], "index": 0}]}
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen3.7-text-embedding",
+        api_key="sk-remote",
+        local_base_url="http://127.0.0.1:11434/v1",
+        local_models="bge-m3",
+    )
+    provider.embed_texts(["第一段"])
+    provider.embed_texts(["第二段"])
+
+    assert len(calls) == 2
+    assert all("11434" in url for url in calls)
+
+
+def test_store_resets_vectors_when_signature_changes(tmp_path):
+    paragraphs = ["第一段" * 20, "第二段" * 20]
+    knowledge_file = tmp_path / "menu.md"
+    knowledge_file.write_text("\n".join(paragraphs), encoding="utf-8")
+    db_path = tmp_path / "knowledge.sqlite3"
+
+    provider_a = _BatchRecordingProvider()
+    store_a = SqliteVectorKnowledgeStore(
+        db_path, provider_a, chunk_chars=120, top_k=2, signature="local|bge-m3"
+    )
+    done, pending = store_a.embed_pending([knowledge_file])
+    assert done == pending == 2
+
+    # 模拟切换成远程模型：签名不同 → 旧向量应被清空并按新 provider 重嵌。
+    provider_b = _BatchRecordingProvider()
+    store_b = SqliteVectorKnowledgeStore(
+        db_path, provider_b, chunk_chars=120, top_k=2, signature="remote|qwen3.7"
+    )
+    done, pending = store_b.embed_pending([knowledge_file])
+    assert done == pending == 2
+    assert store_b.stats() == {"total": 2, "embedded": 2}
+    assert provider_b.batch_sizes == [2]

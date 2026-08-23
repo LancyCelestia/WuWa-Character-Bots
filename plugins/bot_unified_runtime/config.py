@@ -71,6 +71,12 @@ class Config(BaseModel):
     bot_embedding_api_key: str = ""
     bot_embedding_timeout_seconds: float = 15.0
     bot_embedding_dimensions: int = 1024
+    # 本地优先：Ollama（OpenAI 兼容端点），失败自动回退远程付费模型。
+    bot_embedding_local_enabled: bool = True
+    bot_embedding_local_base_url: str = "http://127.0.0.1:11434/v1"
+    bot_embedding_local_models: str = "bge-m3"
+    bot_embedding_local_api_key: str = ""
+    bot_embedding_local_timeout_seconds: float = 60.0
     bot_knowledge_top_k: int = 4
     bot_knowledge_db_path: str = "data/knowledge_embeddings.sqlite3"
     bot_tone_mode: str = "private_chat"

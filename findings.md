@@ -227,3 +227,12 @@ b orm 流程。
 - 返回 `data[].embedding` + `index`，与 OpenAI 格式一致，直接按 index 排序即可。
 - 限制：字符串列表最多 20 条/请求、单行 128,000 Token；本项目把嵌入批大小从 32 下调为 10（同时兼容 v4 的 10 条上限）。
 - 项目已支持 `BOT_EMBEDDING_DIMENSIONS`，并新增 `embedding-smoke`（连通性）与 `knowledge-sync`（预建库、断点续跑）两条本地命令。
+
+## 2026-08-23：本地 Ollama bge-m3 优先嵌入
+
+- Ollama OpenAI 兼容端点：`POST http://127.0.0.1:11434/v1/embeddings`，body `{"model":"bge-m3","input":[...]}`；bge-m3 返回 1024 维，单条上下文 8192。
+- 坑1：无 Key 时不能发送空 `Authorization: Bearer ` 头，httpx 会抛 LocalProtocolError（非法头值）；本地链必须整头省略。
+- 坑2：bge-m3 首次推理要加载模型，实测约 15 秒，本地超时设为 60s（原来 5s 会误判不可用而切到远程）。
+- 多链优先级：本地链（bge-m3）→ 远程链（qwen3.7-text-embedding,text-embedding-v4）；成功后 sticky 到当前链，失败再切。
+- 模型/端点切换安全：knowledge_meta.embedding_signature 记录端点+模型指纹，变化时自动清空全部旧向量重嵌，避免不同向量空间混用。
+- 真实烟测：embedding-smoke 命中 `127.0.0.1:11434 / bge-m3`；knowledge-sync 用 bge-m3 重建 2777/2777 行；语义检索命中守岸人人格档案/设定。

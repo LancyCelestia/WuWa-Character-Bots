@@ -2384,6 +2384,16 @@ def run_embedding_smoke(config: Config) -> dict[str, Any]:
     enabled = bool(getattr(config, "bot_embedding_enabled", False))
     dimensions = int(getattr(config, "bot_embedding_dimensions", 1024) or 1024)
     timeout = float(getattr(config, "bot_embedding_timeout_seconds", 15.0) or 15.0)
+    local_enabled = bool(getattr(config, "bot_embedding_local_enabled", True))
+    local_models = str(
+        getattr(config, "bot_embedding_local_models", "") or ""
+    ).strip()
+    local_base_url = str(
+        getattr(config, "bot_embedding_local_base_url", "") or ""
+    ).strip()
+    local_timeout = float(
+        getattr(config, "bot_embedding_local_timeout_seconds", 60.0) or 60.0
+    )
     result: dict[str, Any] = {
         "ok": False,
         "enabled": enabled,
@@ -2391,6 +2401,11 @@ def run_embedding_smoke(config: Config) -> dict[str, Any]:
         "base_url": base_url,
         "api_key_set": bool(api_key),
         "dimensions": dimensions,
+        "local_enabled": local_enabled,
+        "local_models": local_models,
+        "local_base_url": local_base_url,
+        "active_base_url": "",
+        "active_model": "",
         "dimension_count": 0,
         "api_status": 0,
         "api_error": "",
@@ -2399,18 +2414,17 @@ def run_embedding_smoke(config: Config) -> dict[str, Any]:
     }
     if not enabled:
         result["public_message"] = (
-            "向量知识库未启用：把 .env 中 BOT_EMBEDDING_ENABLED 改为 true，"
-            "并填好 BOT_EMBEDDING_MODEL/BASE_URL/API_KEY 后重试。"
+            "向量知识库未启用：把 .env 中 BOT_EMBEDDING_ENABLED 改为 true 后重试。"
         )
         return result
-    missing = [name for name, value in (
-        ("BOT_EMBEDDING_MODEL", model),
-        ("BOT_EMBEDDING_BASE_URL", base_url),
-        ("BOT_EMBEDDING_API_KEY", api_key),
-    ) if not value]
-    if missing:
+    local_configured = bool(local_enabled and local_models and local_base_url)
+    remote_configured = bool(model and base_url and api_key)
+    if not (local_configured or remote_configured):
         result["error_kind"] = "config_missing"
-        result["public_message"] = "缺少配置：" + ",".join(missing)
+        result["public_message"] = (
+            "缺少配置：至少需要本地链 BOT_EMBEDDING_LOCAL_MODELS/BASE_URL，"
+            "或远程链 BOT_EMBEDDING_MODEL/BASE_URL/API_KEY。"
+        )
         return result
     provider = OpenAICompatibleEmbeddingProvider(
         base_url=base_url,
@@ -2418,6 +2432,10 @@ def run_embedding_smoke(config: Config) -> dict[str, Any]:
         api_key=api_key,
         timeout_seconds=timeout,
         dimensions=dimensions,
+        local_base_url=local_base_url,
+        local_models=local_models,
+        local_enabled=local_enabled,
+        local_timeout_seconds=local_timeout,
     )
     try:
         vectors = provider.embed_texts(["守岸人是谁", "鸣潮 库街区"])
@@ -2428,31 +2446,49 @@ def run_embedding_smoke(config: Config) -> dict[str, Any]:
     if isinstance(vectors, list) and len(vectors) == 2 and vectors[0]:
         result["ok"] = True
         result["dimension_count"] = len(vectors[0])
+        result["active_base_url"] = str(getattr(provider, "active_base_url", "") or "")
+        result["active_model"] = str(getattr(provider, "active_model", "") or "")
         result["error_kind"] = "none"
-        result["public_message"] = "嵌入接口调用成功，返回维度与配置一致。"
+        result["public_message"] = (
+            f"嵌入成功：{result['active_base_url']} / {result['active_model']}，"
+            "返回维度与配置一致。"
+        )
         return result
+    messages: list[str] = []
+    status = 0
     try:
         import httpx
 
-        response = httpx.post(
-            f"{base_url}/embeddings",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={"model": model, "input": ["测试"], "dimensions": dimensions},
-            timeout=timeout,
-        )
-        result["api_status"] = response.status_code
-        payload = response.json() if response.content else {}
-        error = payload.get("error") if isinstance(payload, dict) else {}
-        message = str(error.get("message") or "").strip()[:160]
-        result["api_error"] = message
-        result["error_kind"] = "api_error"
-        result["public_message"] = (
-            f"接口返回 HTTP {response.status_code}：{message}" if message
-            else f"接口返回 HTTP {response.status_code}"
-        )
-    except Exception as exc:  # noqa: BLE001
-        result["error_kind"] = "network_error"
-        result["public_message"] = f"请求失败：{type(exc).__name__}"
+        for chain in provider.chains:
+            try:
+                response = httpx.post(
+                    f"{chain.base_url}/embeddings",
+                    headers=(
+                        {"Authorization": f"Bearer {chain.api_key}"}
+                        if chain.api_key
+                        else {}
+                    ),
+                    json={"model": chain.models[0], "input": ["测试"]},
+                    timeout=chain.timeout_seconds,
+                )
+                status = response.status_code
+                payload = response.json() if response.content else {}
+                error = payload.get("error") if isinstance(payload, dict) else {}
+                message = str(error.get("message") or "").strip()[:160]
+                messages.append(
+                    f"{chain.base_url}: HTTP {response.status_code}"
+                    + (f" {message}" if message else "")
+                )
+            except Exception as exc:  # noqa: BLE001
+                messages.append(f"{chain.base_url}: {type(exc).__name__}")
+    except Exception:  # noqa: BLE001
+        pass
+    result["api_status"] = status
+    result["api_error"] = " | ".join(messages)[:400]
+    result["error_kind"] = "api_error"
+    result["public_message"] = (
+        "所有嵌入端点都失败：" + (result["api_error"] or "未知错误")
+    )
     return result
 
 
@@ -2461,6 +2497,13 @@ def run_knowledge_sync(config: Config) -> dict[str, Any]:
     model = str(getattr(config, "bot_embedding_model", "") or "").strip()
     base_url = str(getattr(config, "bot_embedding_base_url", "") or "").strip()
     api_key = str(getattr(config, "bot_embedding_api_key", "") or "").strip()
+    local_enabled = bool(getattr(config, "bot_embedding_local_enabled", True))
+    local_models = str(
+        getattr(config, "bot_embedding_local_models", "") or ""
+    ).strip()
+    local_base_url = str(
+        getattr(config, "bot_embedding_local_base_url", "") or ""
+    ).strip()
     db_path = str(
         getattr(config, "bot_knowledge_db_path", "data/knowledge_embeddings.sqlite3")
         or "data/knowledge_embeddings.sqlite3"
@@ -2474,6 +2517,11 @@ def run_knowledge_sync(config: Config) -> dict[str, Any]:
         "model": model,
         "base_url": base_url,
         "api_key_set": bool(api_key),
+        "local_enabled": local_enabled,
+        "local_models": local_models,
+        "local_base_url": local_base_url,
+        "active_base_url": "",
+        "active_model": "",
         "db_path": db_path,
         "files": len(files),
         "total_before": 0,
@@ -2485,14 +2533,14 @@ def run_knowledge_sync(config: Config) -> dict[str, Any]:
         "error_kind": "none",
         "public_message": "",
     }
-    missing = [name for name, value in (
-        ("BOT_EMBEDDING_MODEL", model),
-        ("BOT_EMBEDDING_BASE_URL", base_url),
-        ("BOT_EMBEDDING_API_KEY", api_key),
-    ) if not value]
-    if missing:
+    local_configured = bool(local_enabled and local_models and local_base_url)
+    remote_configured = bool(model and base_url and api_key)
+    if not (local_configured or remote_configured):
         result["error_kind"] = "config_missing"
-        result["public_message"] = "缺少配置：" + ",".join(missing)
+        result["public_message"] = (
+            "缺少配置：至少需要本地链 BOT_EMBEDDING_LOCAL_MODELS/BASE_URL，"
+            "或远程链 BOT_EMBEDDING_MODEL/BASE_URL/API_KEY。"
+        )
         return result
     provider = OpenAICompatibleEmbeddingProvider(
         base_url=base_url,
@@ -2502,6 +2550,12 @@ def run_knowledge_sync(config: Config) -> dict[str, Any]:
             getattr(config, "bot_embedding_timeout_seconds", 15.0) or 15.0
         ),
         dimensions=int(getattr(config, "bot_embedding_dimensions", 1024) or 1024),
+        local_base_url=local_base_url,
+        local_models=local_models,
+        local_enabled=local_enabled,
+        local_timeout_seconds=float(
+            getattr(config, "bot_embedding_local_timeout_seconds", 60.0) or 60.0
+        ),
     )
     try:
         store = SqliteVectorKnowledgeStore(
@@ -2509,6 +2563,7 @@ def run_knowledge_sync(config: Config) -> dict[str, Any]:
             embed_provider=provider,
             chunk_chars=int(getattr(config, "bot_knowledge_chunk_chars", 900) or 900),
             top_k=int(getattr(config, "bot_knowledge_top_k", 4) or 4),
+            signature=getattr(provider, "signature", ""),
         )
         before = store.stats()
         result["total_before"] = int(before["total"])
@@ -2523,6 +2578,8 @@ def run_knowledge_sync(config: Config) -> dict[str, Any]:
         result["error_kind"] = "exception"
         result["public_message"] = f"预建库异常：{type(exc).__name__}"
         return result
+    result["active_base_url"] = getattr(provider, "active_base_url", "")
+    result["active_model"] = getattr(provider, "active_model", "")
     if done < pending:
         result["error_kind"] = "partial"
         result["public_message"] = (
@@ -2531,7 +2588,10 @@ def run_knowledge_sync(config: Config) -> dict[str, Any]:
         )
         return result
     result["ok"] = True
-    result["public_message"] = f"预建库完成：共 {result['total_after']} 行，全部已向量化。"
+    result["public_message"] = (
+        f"预建库完成：共 {result['total_after']} 行，全部已向量化"
+        f"（{result['active_base_url']} / {result['active_model']}）。"
+    )
     return result
 
 
@@ -2835,6 +2895,11 @@ def main(
         print(f"base_url={result['base_url']}")
         print(f"api_key_set={str(result['api_key_set']).lower()}")
         print(f"dimensions={result['dimensions']}")
+        print(f"local_enabled={str(result['local_enabled']).lower()}")
+        print(f"local_models={result['local_models']}")
+        print(f"local_base_url={result['local_base_url']}")
+        print(f"active_base_url={result['active_base_url']}")
+        print(f"active_model={result['active_model']}")
         print(f"dimension_count={result['dimension_count']}")
         print(f"api_status={result['api_status']}")
         print(f"api_error={result['api_error']}")
@@ -2848,6 +2913,11 @@ def main(
         print(f"model={result['model']}")
         print(f"base_url={result['base_url']}")
         print(f"api_key_set={str(result['api_key_set']).lower()}")
+        print(f"local_enabled={str(result['local_enabled']).lower()}")
+        print(f"local_models={result['local_models']}")
+        print(f"local_base_url={result['local_base_url']}")
+        print(f"active_base_url={result['active_base_url']}")
+        print(f"active_model={result['active_model']}")
         print(f"db_path={result['db_path']}")
         print(f"files={result['files']}")
         print(f"total_before={result['total_before']}")
