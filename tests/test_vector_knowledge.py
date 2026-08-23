@@ -736,6 +736,49 @@ def test_store_resets_vectors_when_signature_changes(tmp_path):
     assert provider_b.batch_sizes == [2]
 
 
+def test_sync_prunes_sources_removed_from_files(tmp_path):
+    """从 BOT_KNOWLEDGE_FILES 移除的文件，同步后不再保留其旧切片。"""
+    a = tmp_path / "a.md"
+    a.write_text("第一段" * 20, encoding="utf-8")
+    b = tmp_path / "b.md"
+    b.write_text("第二段" * 20, encoding="utf-8")
+    db_path = tmp_path / "knowledge.sqlite3"
+
+    provider = _BatchRecordingProvider()
+    store = SqliteVectorKnowledgeStore(
+        db_path, provider, chunk_chars=120, top_k=2, signature="local|bge-m3"
+    )
+    store.sync_chunks([a, b])
+    assert len(store._pending_rows()) == 2
+
+    store.sync_chunks([a])
+    pending = store._pending_rows()
+    assert len(pending) == 1
+    with store._connect() as connection:
+        sources = [row[0] for row in connection.execute("SELECT source_id FROM knowledge_chunks")]
+    assert sources == ["a"]
+
+
+def test_incomplete_build_does_not_reset_partial_vectors(tmp_path):
+    """上次同步未完成（指纹为空）时，重开同配置不得清空已有向量。"""
+    knowledge_file = tmp_path / "wiki.md"
+    knowledge_file.write_text("第一段" * 20 + "\n\n" + "第二段" * 20, encoding="utf-8")
+    db_path = tmp_path / "knowledge.sqlite3"
+
+    provider_a = _BatchRecordingProvider()
+    provider_a.fail_first = 1  # 第一轮嵌入失败 → 进度不完整、指纹不落库
+    store_a = SqliteVectorKnowledgeStore(
+        db_path, provider_a, chunk_chars=120, top_k=2, signature="local|bge-m3"
+    )
+    store_a.embed_pending([knowledge_file])
+
+    provider_b = _BatchRecordingProvider()
+    store_b = SqliteVectorKnowledgeStore(
+        db_path, provider_b, chunk_chars=120, top_k=2, signature="local|bge-m3"
+    )
+    assert store_b._reset_vectors_if_needed() is False
+
+
 def test_provider_falls_back_when_local_returns_404(monkeypatch):
     """Ollama 未拉取模型（404）时静默切到远程，不抛异常。"""
     calls: list = []
@@ -817,3 +860,45 @@ def test_store_retrieve_never_raises_when_every_chain_down(tmp_path):
 
     assert result == []
     assert store.stats()["embedded"] == 0
+
+
+def test_retrieve_skips_backlog_embedding_when_embed_backlog_disabled(tmp_path):
+    """请求路径不补齐大批量待嵌入行：直接回退，交由后台 knowledge-sync 补建。"""
+    paragraphs = ["第一段" * 20, "第二段" * 20]
+    knowledge_file = tmp_path / "menu.md"
+    knowledge_file.write_text("\n".join(paragraphs), encoding="utf-8")
+    provider = FakeEmbeddingProvider()
+    store = SqliteVectorKnowledgeStore(
+        tmp_path / "knowledge.sqlite3",
+        provider,
+        chunk_chars=120,
+        top_k=2,
+    )
+
+    assert store.retrieve("查询", files=[knowledge_file], embed_backlog=False) == []
+    assert provider.calls == []
+    assert store.stats()["embedded"] == 0
+
+
+def test_retrieve_still_answers_when_no_backlog_with_embed_backlog_disabled(tmp_path):
+    """待嵌入行为空时，禁用补建积压仍应正常编码查询并返回结果。"""
+    paragraphs = ["苹果香蕉甜点" * 11, "香蕉樱桃果酱" * 11]
+    knowledge_file = tmp_path / "menu.md"
+    knowledge_file.write_text("\n".join(paragraphs), encoding="utf-8")
+    vectors = {
+        paragraphs[0]: [1.0, 1.0, 0.0, 0.0],
+        paragraphs[1]: [0.0, 1.0, 1.0, 0.0],
+        "苹果香蕉": [1.0, 1.0, 0.0, 0.0],
+    }
+    provider = FakeEmbeddingProvider(vectors)
+    store = SqliteVectorKnowledgeStore(
+        tmp_path / "knowledge.sqlite3",
+        provider,
+        chunk_chars=120,
+        top_k=2,
+    )
+    assert store.retrieve("苹果香蕉", files=[knowledge_file])
+
+    results = store.retrieve("苹果香蕉", files=[knowledge_file], embed_backlog=False)
+
+    assert [chunk.content for chunk in results] == [paragraphs[0], paragraphs[1]]

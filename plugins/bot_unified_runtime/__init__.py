@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import asyncio
 import re
 
 from nonebot.adapters import Bot, Event
@@ -227,13 +228,38 @@ def _effective_route_text(event: Any) -> str:
     return f"{plain} {' '.join(urls)}".strip()
 
 
+_FORWARD_MESSAGE_API_TIMEOUT_SECONDS = 10.0
+
+
+def _forward_segment_id(event: Any) -> str:
+    """提取消息中的合并转发（forward）元素 id；非合并转发返回空串。"""
+    for segment in _extract_onebot_raw_segments(event):
+        if segment.get("type") != "forward":
+            continue
+        forward_id = str((segment.get("data") or {}).get("id") or "").strip()
+        if forward_id:
+            return forward_id
+    return ""
+
+
 async def _forward_message_text(bot: Any, event: Any) -> str:
-    """读取合并转发（forward）消息正文；失败返回空串。"""
+    """读取合并转发（forward）消息正文；失败返回空串。
+
+    只在消息确实包含 forward 段时才调用 NapCat 的 get_forward_msg。
+    普通消息 id 不是合并转发 id，NapCat 会拒绝为“消息已过期或者为
+    内层消息”；带上限超时是为了防止上游回执异常时卡住消息处理。
+    """
+    forward_id = _forward_segment_id(event)
+    if not forward_id:
+        return ""
     try:
         call_api = getattr(bot, "call_api", None)
         if not callable(call_api):
             return ""
-        result = await call_api("get_forward_msg", message_id=event.message_id)
+        result = await asyncio.wait_for(
+            call_api("get_forward_msg", message_id=forward_id),
+            timeout=_FORWARD_MESSAGE_API_TIMEOUT_SECONDS,
+        )
         if not isinstance(result, dict):
             return ""
         messages = result.get("messages")

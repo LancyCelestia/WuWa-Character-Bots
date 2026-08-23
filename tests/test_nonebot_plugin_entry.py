@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import time
 import importlib
 import sys
 import types
@@ -1242,3 +1243,92 @@ def test_plugin_keeps_adapter_annotations_in_module_globals():
     assert getattr(module, "Event", None) is not None
     assert getattr(module, "Bot", None) is not None
     assert getattr(module, "T_State", None) is not None
+
+
+class ForwardFakeBot:
+    """记录 call_api 调用，并可注入自定义行为的最小 fake bot。"""
+
+    def __init__(self, result: object = None) -> None:
+        self.result = result
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    async def call_api(self, action: str, **params: object) -> object:
+        self.calls.append((action, params))
+        return self.result
+
+
+class ForwardFakeEvent:
+    message_id = 12345
+
+    def __init__(self, message: list[dict[str, object]] | None = None) -> None:
+        self.message = message or []
+
+    def get_plaintext(self) -> str:
+        return ""
+
+
+def test_forward_message_text_skips_api_for_plain_messages():
+    import plugins.bot_unified_runtime as plugin_entry
+
+    bot = ForwardFakeBot(result={"messages": []})
+    event = ForwardFakeEvent(
+        message=[{"type": "text", "data": {"text": "拿下"}}],
+    )
+
+    result = asyncio.run(plugin_entry._forward_message_text(bot, event))
+
+    assert result == ""
+    assert bot.calls == []
+
+
+def test_forward_message_text_uses_forward_segment_id():
+    import plugins.bot_unified_runtime as plugin_entry
+
+    bot = ForwardFakeBot(
+        result={"messages": [{"message": [{"type": "text", "data": {"text": "转发正文"}}]}]},
+    )
+    event = ForwardFakeEvent(
+        message=[{"type": "forward", "data": {"id": "fwd-99"}}],
+    )
+
+    result = asyncio.run(plugin_entry._forward_message_text(bot, event))
+
+    assert result == "转发正文"
+    assert bot.calls == [("get_forward_msg", {"message_id": "fwd-99"})]
+
+
+def test_forward_message_text_returns_empty_when_api_fails():
+    import plugins.bot_unified_runtime as plugin_entry
+
+    async def boom(action: str, **params: object) -> dict[str, object]:
+        raise RuntimeError("napcat rejected forward id")
+
+    bot = ForwardFakeBot()
+    bot.call_api = boom  # type: ignore[method-assign]
+    event = ForwardFakeEvent(
+        message=[{"type": "forward", "data": {"id": "fwd-1"}}],
+    )
+
+    assert asyncio.run(plugin_entry._forward_message_text(bot, event)) == ""
+
+
+def test_forward_message_text_times_out_instead_of_hanging(monkeypatch):
+    import plugins.bot_unified_runtime as plugin_entry
+
+    monkeypatch.setattr(plugin_entry, "_FORWARD_MESSAGE_API_TIMEOUT_SECONDS", 0.2)
+
+    async def slow(action: str, **params: object) -> dict[str, object]:
+        await asyncio.sleep(30)
+        return {"messages": []}
+
+    bot = ForwardFakeBot()
+    bot.call_api = slow  # type: ignore[method-assign]
+    event = ForwardFakeEvent(
+        message=[{"type": "forward", "data": {"id": "fwd-1"}}],
+    )
+
+    started = time.monotonic()
+    result = asyncio.run(plugin_entry._forward_message_text(bot, event))
+
+    assert result == ""
+    assert time.monotonic() - started < 5

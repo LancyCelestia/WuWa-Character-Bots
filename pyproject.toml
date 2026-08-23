@@ -16,6 +16,7 @@ dependencies = [
     "nonebot-plugin-filehost>=1.1.1",
     "nonebot-plugin-orm[postgresql]>=0.8.3",
     "asyncpg>=0.30",
+"numpy>=1.26",
     "nonebot-plugin-htmlkit>=0.1.0rc5",
     "jinja2>=3.1",
     "nonebot_plugin_memes_api>=0.5.1",

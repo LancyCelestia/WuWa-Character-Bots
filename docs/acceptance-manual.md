@@ -47,7 +47,8 @@ REPL 快捷键：/group 切群聊模拟、/quit 退出。
     powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 chat-smoke -Message "岸宝，你好"   # 真实人格对话
     powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 why-smoke -Message "岸宝，你好"     # 决策/审查/发送全链路
 
-chat-smoke 输出 llm_status=ok 且  receipt_state=sent 即为对话链路正常。
+chat-smoke 输出 llm_status=ok 且 
+ receipt_state=sent 即为对话链路正常。
 （控制台中文偶发乱码是 PowerShell 编码显示问题，不影响 QQ 端输出。）
 
 ## 2. NapCat 接入 QQ（对话通过后再做）
@@ -137,4 +138,5 @@ chat-smoke 输出 llm_status=ok 且  receipt_state=sent 即为对话链路正�
    `BOT_EMBEDDING_API_KEY=<你的Key>`、`BOT_EMBEDDING_DIMENSIONS=1024`。
 4. 连通性验证（不写知识库，看 active_base_url 是否命中 127.0.0.1:11434）：`powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 embedding-smoke`，看到 ok=true 即成功。
 5. 预建库（首次几分钟，断点续跑）：`powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 knowledge-sync`，完成后再启动机器人。
+   - 容错：即使机器人先于预建库完成启动，请求路径也不会再同步补齐大量待嵌入行（`retrieve(embed_backlog=False)`），而是立即回退顺序取块，避免每条消息都被积压队列长时间阻塞；后台 knowledge-sync 完成后自动恢复语义检索。
 6. 验证检索：`scripts/dev.ps1 context-smoke`（或 QQ 私聊问一个鸣潮设定问题），确认知识库命中而不是顺序取块。

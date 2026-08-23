@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet(
         "help",
@@ -186,6 +186,11 @@ function Invoke-Run {
 
     Push-Location $Root
     try {
+        $portInUse = Get-NetTCPConnection -State Listen -LocalPort 8080 -ErrorAction SilentlyContinue
+        if ($portInUse) {
+            Write-Host "[dev] NoneBot 已经在运行（8080 端口被占用）。不要重复启动；如需重启请先关闭原进程。"
+            return
+        }
         Write-Step "starting NoneBot ($Mode)"
         Invoke-External $nb @("run")
     }

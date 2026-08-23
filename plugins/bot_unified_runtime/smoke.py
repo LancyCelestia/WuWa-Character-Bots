@@ -2564,11 +2564,18 @@ def run_knowledge_sync(config: Config) -> dict[str, Any]:
             chunk_chars=int(getattr(config, "bot_knowledge_chunk_chars", 900) or 900),
             top_k=int(getattr(config, "bot_knowledge_top_k", 4) or 4),
             signature=getattr(provider, "signature", ""),
+            auto_reset=True,
         )
         before = store.stats()
         result["total_before"] = int(before["total"])
         result["embedded_before"] = int(before["embedded"])
-        done, pending = store.embed_pending(files)
+        done, pending = store.embed_pending(
+            files,
+            on_progress=lambda done, total: print(
+                f"progress embedded={done}/{total} percent={done*100//total if total else 0}%",
+                flush=True,
+            ),
+        )
         after = store.stats()
         result["pending"] = int(pending)
         result["done"] = int(done)

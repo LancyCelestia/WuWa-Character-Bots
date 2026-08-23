@@ -671,3 +671,12 @@
 - 从 C:\Users\LancyCelestia\Picture\Wuthering Waves\表情包 8 个子包导入：281 张图 → 260 张唯一（批次内重复 21 张）；30 个 .mov、1 个 .txt 按设计跳过。
 - 标签：description=原文件名、scene_tags=子包/内层文件夹（千咲/爱弥斯/达妮娅/小爱/岁共/礼盒/c107/烤肉 可关键词检索）、persona_hint=common、权重 1.0；只标新行，导入前 48 行零改动。
 - 验证：库 308 行 = 308 文件，0 坏路径 / 0 缺失 / 0 md5 不一致 / 0 孤儿；重复运行 0 新增；tests/test_meme_library.py 7 passed。
+
+## 2026-08-24：知识库切换到两份新百科 + 向量检索性能与稳定性修复
+
+- 知识库 BOT_KNOWLEDGE_FILES 替换为《鸣潮库街区百科.md》《战双帕弥什库街区百科.md》，移除旧《鸣潮库街区百科v2.md》；30,802 条切片 100% 向量化（本地 bge-m3），来源只剩两份新百科。
+- 修复向量反复清空：运行时检索 auto_reset=False，只有显式 knowledge-sync 才能按指纹重建；同步中断不再清零（stored 指纹为空时保留部分进度）。
+- 性能：新增 vector_blob 二进制列 + numpy 矩阵缓存，检索从“逐条 JSON 解析(分钟级)”降到毫秒级；首载时 blob 优先。
+- 同步自动清理已从配置移除的旧文件切片（sync_chunks prune）。
+- knowledge-sync 增加每批进度打印；新增 scripts/knowledge_progress.py 进度查询；dev.ps1 增加 8080 占用保护，避免重复启动时报错刷屏。
+- 全量 pytest 897 passed；verify 通过；机器人 02:32 重启并连接 NapCat。

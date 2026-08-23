@@ -3,6 +3,12 @@ from __future__ import annotations
 import hashlib
 import re
 import json
+import struct
+
+try:
+    import numpy as np
+except Exception:  # noqa: BLE001 - numpy 可选，缺失回退纯 Python 余弦。
+    np = None
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -204,13 +210,19 @@ class SqliteVectorKnowledgeStore:
         chunk_chars: int = 900,
         top_k: int = 4,
         signature: str = "",
+        auto_reset: bool = True,
     ) -> None:
         self.db_path = str(db_path)
         self.embed_provider = embed_provider
         self.chunk_chars = max(_MIN_CHUNK_CHARS, int(chunk_chars))
         self.top_k = max(0, int(top_k))
         self.signature = str(signature or "").strip()
+        # 运行时应为 False：只有显式 knowledge-sync 才允许因指纹变化清空向量，
+        # 避免机器人进程与同步进程并发时互相清空、进度反复回退。
+        self.auto_reset = bool(auto_reset)
         self._lock = threading.RLock()
+        self._vector_cache: Any | None = None
+        self._vector_meta: list[dict] | None = None
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
@@ -225,10 +237,19 @@ class SqliteVectorKnowledgeStore:
                     title TEXT,
                     content TEXT,
                     content_hash TEXT,
-                    vector_json TEXT
+                    vector_json TEXT,
+                    vector_blob BLOB
                 )
                 """
             )
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(knowledge_chunks)")
+            }
+            if "vector_blob" not in columns:
+                connection.execute(
+                    "ALTER TABLE knowledge_chunks ADD COLUMN vector_blob BLOB"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS knowledge_meta (
@@ -257,18 +278,29 @@ class SqliteVectorKnowledgeStore:
             )
 
     def _reset_vectors_if_needed(self) -> bool:
-        """模型/端点指纹变化时清空旧向量（返回是否执行了重置）。"""
+        """模型/端点指纹变化时清空旧向量（返回是否执行了重置）。
+
+        首次构建或上一次构建未完成时，stored 为空：不清空，保留已有
+        向量并断点续跑剩余行，避免重启同步把已完成进度全部回退。
+        """
         if not self.signature:
             return False
-        if self._stored_signature() == self.signature:
+        if not self.auto_reset:
+            return False
+        stored = self._stored_signature()
+        if not stored or stored == self.signature:
             return False
         with self._connect() as connection:
             connection.execute("UPDATE knowledge_chunks SET vector_json = NULL")
         self._set_stored_signature("")
+        self._invalidate_vector_cache()
         return True
 
-    def _embed_all_pending(self) -> tuple[int, int]:
-        """把全部待嵌入行编码入库；完成后记录模型指纹，失败可断点续跑。"""
+    def _embed_all_pending(self, on_progress=None) -> tuple[int, int]:
+        """把全部待嵌入行编码入库；完成后记录模型指纹，失败可断点续跑。
+
+        on_progress(done, total) 每处理一批调用一次，用于打印进度。
+        """
         self._reset_vectors_if_needed()
         pending = self._pending_rows()
         done = 0
@@ -279,19 +311,38 @@ class SqliteVectorKnowledgeStore:
             if not self._save_vectors(batch, vectors):
                 break
             done += len(batch)
+            if on_progress is not None:
+                try:
+                    on_progress(done, len(pending))
+                except Exception:  # noqa: BLE001
+                    pass
         if self.signature and done == len(pending):
             self._set_stored_signature(self.signature)
         return done, len(pending)
 
+    def _invalidate_vector_cache(self) -> None:
+        self._vector_cache = None
+        self._vector_meta = None
+
     def _connect(self) -> sqlite3.Connection:
+
         connection = sqlite3.connect(self.db_path, check_same_thread=False)
         connection.row_factory = sqlite3.Row
         return connection
 
     def sync_chunks(self, files: list[Path]) -> None:
         with self._lock:
+            self._invalidate_vector_cache()
             paths = [Path(path).expanduser() for path in files]
             with self._connect() as connection:
+                # 已从 BOT_KNOWLEDGE_FILES 移除的旧文件不再保留在知识库里。
+                source_ids = [path.stem for path in paths]
+                if source_ids:
+                    placeholders = ",".join("?" for _ in source_ids)
+                    connection.execute(
+                        f"DELETE FROM knowledge_chunks WHERE source_id NOT IN ({placeholders})",
+                        source_ids,
+                    )
                 for path in paths:
                     text = load_character_document(path)
                     source_id = path.stem
@@ -331,7 +382,11 @@ class SqliteVectorKnowledgeStore:
                                 (source_id, source_id, content, content_hash, chunk_id),
                             )
 
-    def embed_pending(self, files: list[Path] | None = None) -> tuple[int, int]:
+    def embed_pending(
+        self,
+        files: list[Path] | None = None,
+        on_progress=None,
+    ) -> tuple[int, int]:
         """预建库：同步文件切片后把未向量化的行全部嵌入。
 
         模型/端点指纹变化时自动清空旧向量重嵌；返回
@@ -340,7 +395,7 @@ class SqliteVectorKnowledgeStore:
         with self._lock:
             if files:
                 self.sync_chunks(list(files))
-            return self._embed_all_pending()
+            return self._embed_all_pending(on_progress=on_progress)
 
     def stats(self) -> dict[str, int]:
         """返回 (总行数, 已向量化行数)，供烟测/后台统计使用。"""
@@ -360,10 +415,16 @@ class SqliteVectorKnowledgeStore:
         self,
         query_text: str,
         files: list[Path] | None = None,
+        *,
+        embed_backlog: bool = True,
     ) -> list[KnowledgeChunk]:
         with self._lock:
             self.sync_chunks(list(files) if files else [])
             if self.top_k <= 0:
+                return []
+            if not embed_backlog and self._pending_rows():
+                # 请求路径不得承担大批量离线补建：待嵌入行交给后台
+                # knowledge-sync 处理，否则每条消息都会同步补齐整个积压队列。
                 return []
             done, pending = self._embed_all_pending()
             if done < pending:
@@ -372,6 +433,28 @@ class SqliteVectorKnowledgeStore:
             if query_vectors is None or len(query_vectors) != 1:
                 return []
             query_vector = query_vectors[0]
+            if np is not None:
+                matrix, metas = self._load_vector_cache()
+                if matrix is None or not metas:
+                    return []
+                query_array = np.asarray(query_vector, dtype=np.float32)
+                norms = np.linalg.norm(matrix, axis=1)
+                matrix_norm = matrix / np.maximum(norms, 1e-9)[:, None]
+                scores = matrix_norm @ query_array
+                top_indices = np.argsort(-scores)[: self.top_k]
+                results: list[KnowledgeChunk] = []
+                for index in top_indices:
+                    meta = metas[int(index)]
+                    results.append(
+                        KnowledgeChunk(
+                            chunk_id=meta["chunk_id"],
+                            source_id=meta["source_id"],
+                            title=meta["title"],
+                            content=meta["content"],
+                        )
+                    )
+                return results
+
             scored: list[tuple[float, KnowledgeChunk]] = []
             for row in self._vector_rows():
                 try:
@@ -392,6 +475,60 @@ class SqliteVectorKnowledgeStore:
                 )
             scored.sort(key=lambda pair: (-pair[0], pair[1].chunk_id))
             return [chunk for _, chunk in scored[: self.top_k]]
+
+    def _load_vector_cache(self):
+        """把全部向量一次性载入 numpy 矩阵并缓存；blob 优先，否则解析 JSON。"""
+        if self._vector_cache is not None and self._vector_meta is not None:
+            return self._vector_cache, self._vector_meta
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT chunk_id, source_id, title, content, vector_json, vector_blob
+                FROM knowledge_chunks
+                WHERE vector_json IS NOT NULL AND vector_json != ''
+                """
+            ).fetchall()
+        vectors: list = []
+        metas: list[dict] = []
+        for row in rows:
+            raw_blob = row["vector_blob"]
+            if isinstance(raw_blob, (bytes, bytearray, memoryview)):
+                try:
+                    vector = np.frombuffer(bytes(raw_blob), dtype=np.float32)
+                    if vector.size > 0:
+                        vectors.append(vector.astype(np.float32))
+                        metas.append(
+                            {
+                                "chunk_id": str(row["chunk_id"]),
+                                "source_id": str(row["source_id"] or ""),
+                                "title": str(row["title"] or ""),
+                                "content": str(row["content"] or ""),
+                            }
+                        )
+                        continue
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                vector = json.loads(str(row["vector_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if vector:
+                vectors.append(np.asarray(vector, dtype=np.float32))
+                metas.append(
+                    {
+                        "chunk_id": str(row["chunk_id"]),
+                        "source_id": str(row["source_id"] or ""),
+                        "title": str(row["title"] or ""),
+                        "content": str(row["content"] or ""),
+                    }
+                )
+        if not vectors:
+            self._vector_cache = None
+            self._vector_meta = None
+            return None, None
+        self._vector_cache = np.vstack(vectors).astype(np.float32)
+        self._vector_meta = metas
+        return self._vector_cache, self._vector_meta
 
     def _pending_rows(self) -> list[sqlite3.Row]:
         with self._connect() as connection:
@@ -437,9 +574,14 @@ class SqliteVectorKnowledgeStore:
             with self._connect() as connection:
                 for row, vector in zip(rows, vectors):
                     connection.execute(
-                        "UPDATE knowledge_chunks SET vector_json = ? WHERE chunk_id = ?",
-                        (json.dumps(vector), str(row["chunk_id"])),
+                        "UPDATE knowledge_chunks SET vector_json = ?, vector_blob = ? WHERE chunk_id = ?",
+                        (
+                            json.dumps(vector),
+                            struct.pack("<%df" % len(vector), *vector),
+                            str(row["chunk_id"]),
+                        ),
                     )
+            self._invalidate_vector_cache()
             return True
         except (TypeError, ValueError, sqlite3.Error):
             return False
@@ -558,7 +700,11 @@ class _VectorKnowledgeRetriever:
 
     def retrieve(self, query_text: str) -> list[KnowledgeChunk]:
         try:
-            return self._store.retrieve(query_text, files=self._files)
+            return self._store.retrieve(
+                query_text,
+                files=self._files,
+                embed_backlog=False,
+            )
         except Exception:
             return []
 
@@ -618,6 +764,7 @@ def build_vector_knowledge_provider(config: object) -> object:
             chunk_chars=int(_first_defined(config, "bot_knowledge_chunk_chars", 900)),
             top_k=int(_first_defined(config, "bot_knowledge_top_k", 4)),
             signature=getattr(embed_provider, "signature", ""),
+            auto_reset=False,
         )
         files = [
             Path(path).expanduser()
