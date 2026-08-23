@@ -60,6 +60,8 @@ DEFAULT_VERB_MAP: dict[str, str] = {
     "查天气": "bot.weather",
     "weather": "bot.weather",
     "点歌": "bot.music",
+    "点歌模式": "bot.music_mode",
+    "music mode": "bot.music_mode",
     "music": "bot.music",
     "wiki": "bot.wiki",
     "维基": "bot.wiki",

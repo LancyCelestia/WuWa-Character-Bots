@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from plugins.bot_unified_runtime.capabilities.music import parse_music_mode_spec
 from plugins.bot_unified_runtime.config import Config
 
 
@@ -48,6 +49,44 @@ _MUSIC_TRIGGERS = (
 _MUSIC_RE = re.compile(
     rf"^{_POLITE_OPT}(?:{_MUSIC_TRIGGERS})(?:歌|音乐)?\s*"
     r"(?P<q>.{1,40}?)(?:吧|呗|嘛|谢谢|听|听听)?[?？！!。]?$"
+)
+
+_MUSIC_MODE_NL_RE = re.compile(
+    r"^(?:以后|之後|之后|从现在起|从今以后)?(?:点歌|點歌|音乐|音樂)"
+    r"(?:的)?(?:输出|輸出|发送|發送|回复|回覆)?(?:模式|方式)?"
+    r"(?:设置成|設置成|设为|設為|改成|改为|改為|切换成|切換成|切换为|切換為|变成|變成)?"
+    r"(?:只|仅|僅)?(?:发|發|输出|輸出|用|要)?(?P<spec>.{1,40}?)(?:模式|方式|输出|輸出)?$",
+    re.IGNORECASE,
+)
+
+_MUSIC_MODE_EN_RE = re.compile(
+    r"^(?:music mode|song mode)\s+(?P<spec>.+)$",
+    re.IGNORECASE,
+)
+
+_WEATHER_EN_RE = re.compile(
+    r"^(?:(?:what(?:'s| is)|whats) the weather(?: like)?(?: in| at)?|weather(?: in| at)?)"
+    r"\s*(?P<city>[a-zA-Z\u4e00-\u9fff\- ]{1,30}?)[?？]?$",
+    re.IGNORECASE,
+)
+_MUSIC_EN_RE = re.compile(
+    r"^play\s+(?:me\s+)?(?:a\s+)?song\s+(?P<q>.{1,50}?)[.!?]?$|"
+    r"^play\s+(?:me\s+)?(?P<q2>[a-zA-Z0-9\u4e00-\u9fff'’\- ]{1,50}?)\s+(?:please|for me|for you)?[.!?]?$",
+    re.IGNORECASE,
+)
+_WIKI_EN_RE = re.compile(
+    r"^(?:search\s+)?(?:wiki|wikipedia)\s+(?P<q>.+)$|"
+    r"^what is\s+(?P<q2>.+?)\s+on wikipedia[?？]?$",
+    re.IGNORECASE,
+)
+_EPIC_EN_RE = re.compile(
+    r"^(?:what|which|any|are there).{0,20}?free games.{0,20}?(?:this week|today)?[?？]?$",
+    re.IGNORECASE,
+)
+_HISTORY_EN_RE = re.compile(
+    r"^(?:what happened )?today in history[?？]?$|"
+    r"^history today[?？]?$|^on this day[?？]?$",
+    re.IGNORECASE,
 )
 
 _WIKI_RE = re.compile(
@@ -116,7 +155,27 @@ def detect_natural_command(text: str, config: Config | None = None) -> NaturalRe
     if "http://" in stripped or "https://" in stripped:
         return None
 
+    if getattr(config, "bot_music_enabled", True):
+        mode_match = _MUSIC_MODE_NL_RE.match(stripped) or _MUSIC_MODE_EN_RE.match(stripped)
+        if mode_match:
+            spec = parse_music_mode_spec(mode_match.groupdict().get("spec"))
+            if spec is not None:
+                from plugins.bot_unified_runtime.capabilities.music import normalize_music_mode
+
+                normalized_mode = normalize_music_mode("+".join(sorted(spec)))
+                if normalized_mode:
+                    return NaturalResolution(
+                        "bot.music_mode",
+                        f"点歌模式 {normalized_mode}",
+                        "设置点歌输出组合",
+                    )
+
     if getattr(config, "bot_weather_query_enabled", True):
+        english_weather = _WEATHER_EN_RE.match(stripped)
+        if english_weather:
+            city = _clean_city(english_weather.groupdict().get("city"))
+            if city:
+                return NaturalResolution("bot.weather", f"天气 {city}", "查询天气")
         # 礼貌式优先：能精确切出城市；问句式其次。
         match = _WEATHER_PLEASE_RE.match(stripped)
         if match is None:
@@ -130,6 +189,12 @@ def detect_natural_command(text: str, config: Config | None = None) -> NaturalRe
                 )
 
     if getattr(config, "bot_music_enabled", True):
+        english_music = _MUSIC_EN_RE.match(stripped)
+        if english_music:
+            groups = english_music.groupdict()
+            query = (groups.get("q") or groups.get("q2") or "").strip("，。？?！!.．")
+            if query and parse_music_mode_spec(query) is None:
+                return NaturalResolution("bot.music", f"点歌 {query}", "点歌")
         match = _MUSIC_RE.match(stripped)
         if match:
             query = (match.groupdict().get("q") or "").strip("，。？?！!.．")
@@ -137,16 +202,26 @@ def detect_natural_command(text: str, config: Config | None = None) -> NaturalRe
                 return NaturalResolution("bot.music", f"点歌 {query}", "点歌")
 
     if getattr(config, "bot_wiki_enabled", True):
+        english_wiki = _WIKI_EN_RE.match(stripped)
+        if english_wiki:
+            groups = english_wiki.groupdict()
+            query = (groups.get("q") or groups.get("q2") or "").strip()
+            if query:
+                return NaturalResolution("bot.wiki", f"wiki {query}", "查维基")
         match = _WIKI_RE.match(stripped)
         if match:
             query = (match.groupdict().get("q") or "").strip()
             if query:
                 return NaturalResolution("bot.wiki", f"wiki {query}", "查维基")
 
-    if getattr(config, "bot_epic_enabled", True) and _EPIC_RE.match(stripped):
+    if getattr(config, "bot_epic_enabled", True) and (
+        _EPIC_RE.match(stripped) or _EPIC_EN_RE.match(stripped)
+    ):
         return NaturalResolution("bot.epic", "epic", "查免费游戏")
 
-    if getattr(config, "bot_today_history_enabled", True) and _HISTORY_RE.match(stripped):
+    if getattr(config, "bot_today_history_enabled", True) and (
+        _HISTORY_RE.match(stripped) or _HISTORY_EN_RE.match(stripped)
+    ):
         return NaturalResolution(
             "bot.today_history", "历史上的今天", "历史上的今天"
         )

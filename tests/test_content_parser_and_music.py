@@ -610,7 +610,7 @@ def test_music_card_fallback_when_no_audio_url():
     assert result.audio == [
         {"type": "music", "music_type": "qq", "music_id": "abc"}
     ]
-    assert "已附带平台音乐卡片" in result.body
+    assert "QQ歌" in result.body
 
 
 def test_parse_pixiv_deep(monkeypatch):
@@ -942,7 +942,7 @@ def test_music_mode_command_parsing():
 
     assert is_music_mode_command("/点歌模式 语音") is True
     assert is_music_mode_command("点歌模式") is True
-    assert extract_music_mode("/点歌模式 音频") == "audio"
+    assert extract_music_mode("/点歌模式 音频") == "file"
     assert extract_music_mode("点歌模式") is None
 
 

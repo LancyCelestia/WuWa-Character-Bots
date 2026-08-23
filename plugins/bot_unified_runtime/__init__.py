@@ -58,7 +58,7 @@ from .runtime.settings import (
 )
 from .sources.credential_health import check_credentials_and_report
 from .sources.meme_search import build_meme_search_provider
-from .sources.web_search import DuckDuckGoWebSearchProvider, NullWebSearchProvider
+from .sources.web_search import build_web_search_provider
 from .sources.parsers import extract_http_urls
 from .sources.parse_history import (
     build_parse_history_result,
@@ -985,6 +985,8 @@ def _register_nonebot_handlers() -> None:
         max_bytes=int(getattr(config, "bot_download_max_bytes", 209715200)),
         max_height=int(getattr(config, "bot_download_max_height", 1080)),
         timeout_seconds=int(getattr(config, "bot_download_timeout_seconds", 300)),
+        cache_max_bytes=int(getattr(config, "bot_download_cache_max_bytes", 0)),
+        cache_max_age_days=int(getattr(config, "bot_download_cache_max_age_days", 0)),
     )
     chat_capability = offload_capability(
         build_chat_capability(
@@ -995,13 +997,7 @@ def _register_nonebot_handlers() -> None:
             ),
             llm_provider=_build_chat_llm_provider(config),
             meme_search_provider=build_meme_search_provider(config),
-            web_search_provider=(
-                DuckDuckGoWebSearchProvider(
-                    timeout_seconds=config.bot_web_search_timeout_seconds
-                )
-                if config.bot_web_search_enabled
-                else NullWebSearchProvider()
-            ),
+            web_search_provider=build_web_search_provider(config),
             runtime_settings=runtime_settings,
             interaction_counter=runtime_settings.interaction_increment,
             model_router=build_model_router(config),
@@ -1183,6 +1179,20 @@ def _register_nonebot_handlers() -> None:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 return build_epic_capability(config)(message, _decision)
+
+        elif resolution.capability_id == "bot.music_mode":
+            from .capabilities.music import build_music_mode_result, extract_music_mode
+
+            mode_value = extract_music_mode(f"点歌模式 {resolution.rest_text}".strip())
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_music_mode_result(
+                    runtime_settings,
+                    config,
+                    mode=mode_value,
+                    actor_roles=_decision.actor_roles,
+                    request_id=message.request_id,
+                )
 
         elif resolution.capability_id == "bot.today_history":
             query = resolution.rest_text
@@ -1598,6 +1608,57 @@ def _register_nonebot_handlers() -> None:
                     body="\n".join(lines),
                     audit_tags=["routes", f"routes:{len(rows)}"],
                 )
+        elif command_text == "search" or command_text.startswith("search "):
+            capability_id = "bot.search"
+            search_query = command_text.removeprefix("search").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                roles = {str(role).lower() for role in _decision.actor_roles}
+                if "admin" not in roles:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.search",
+                        kind="text",
+                        body="只有管理员才能使用联网检索调试命令。",
+                        audit_tags=["search", "search_denied"],
+                    )
+                if not search_query:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.search",
+                        kind="text",
+                        body="用法：/bot search <要检索的现实问题>",
+                        audit_tags=["search", "search_missing_query"],
+                    )
+                provider = build_web_search_provider(config)
+                try:
+                    hits = provider.search(search_query, max_results=3)
+                except Exception:
+                    hits = []
+                if not hits:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.search",
+                        kind="text",
+                        body=(
+                            "本次联网检索没有返回结果。\n"
+                            "可能原因：检索源不可达、被反爬或代理未生效。\n"
+                            f"查询词：{search_query}"
+                        ),
+                        audit_tags=["search", "search_empty"],
+                    )
+                lines = ["联网检索结果："]
+                for index, hit in enumerate(hits, 1):
+                    lines.append(f"{index}. {hit.title}\n   {hit.snippet[:160]}\n   {hit.url}")
+                return CapabilityResult(
+                    request_id=message.request_id,
+                    capability_id="bot.search",
+                    kind="text",
+                    title="联网检索",
+                    body="\n".join(lines),
+                    audit_tags=["search", f"search_hits:{len(hits)}"],
+                )
+
         elif command_text == "parse" or command_text.startswith("parse "):
             capability_id = "bot.parse"
             parse_query = command_text.removeprefix("parse").strip()
@@ -2009,6 +2070,20 @@ def _register_nonebot_handlers() -> None:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 return build_epic_capability(config)(message, _decision)
+
+        elif capability_id == "bot.music_mode":
+            from .capabilities.music import build_music_mode_result, extract_music_mode
+
+            mode_value = extract_music_mode(normalized_text)
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_music_mode_result(
+                    runtime_settings,
+                    config,
+                    mode=mode_value,
+                    actor_roles=_decision.actor_roles,
+                    request_id=message.request_id,
+                )
 
         elif capability_id == "bot.today_history":
 

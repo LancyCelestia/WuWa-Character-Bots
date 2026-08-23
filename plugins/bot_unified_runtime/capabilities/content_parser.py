@@ -27,10 +27,9 @@ from plugins.bot_unified_runtime.capabilities.music import _media_parts_from_ite
 def _render_parse_body(
     item: Any,
     *,
-    video_params: list[str] | None = None,
-    audio_params: list[str] | None = None,
+    media_params: list[str] | None = None,
 ) -> str:
-    """标题/正文/简介/数据/视频参数/音频参数分区渲染，区块一目了然。"""
+    """标题/作者/数据/简介/媒体参数分区渲染，区块之间保留空行。"""
     lines: list[str] = []
     kind_labels = {
         "video": "视频",
@@ -73,17 +72,18 @@ def _render_parse_body(
         if not isinstance(value, (dict, list))
     ]
     if stats_bits:
+        lines.append("")
         lines.append("【数据】" + " · ".join(stats_bits))
     if item.summary:
+        lines.append("")
         lines.append("【简介】")
         lines.append(item.summary)
-    if video_params:
-        lines.append("【视频参数】")
-        lines.extend(f"  · {line}" for line in video_params)
-    if audio_params:
-        lines.append("【音频参数】")
-        lines.extend(f"  · {line}" for line in audio_params)
+    if media_params:
+        lines.append("")
+        lines.append("【媒体参数】")
+        lines.extend(f"  · {line}" for line in media_params)
     if item.canonical_url:
+        lines.append("")
         lines.append(f"【链接】{item.canonical_url}")
     return "\n".join(lines)
 
@@ -187,6 +187,15 @@ def build_content_capability(
             ).hexdigest()[:12]
             path = target_dir / f"card_{digest}.png"
             path.write_bytes(png)
+            try:
+                from plugins.bot_unified_runtime.runtime.cache_policy import enforce_quota
+
+                enforce_quota(
+                    target_dir,
+                    max_bytes=int(getattr(config, "bot_card_cache_max_bytes", 0) or 0),
+                )
+            except Exception:  # noqa: BLE001
+                pass
             return {"file": str(path)}
         except Exception:  # noqa: BLE001 - 卡片渲染失败不影响主链路。
             return None
@@ -244,8 +253,7 @@ def build_content_capability(
                 audit_tags=["content_parse", f"platform:{match.parser_id}", "parse_failed"],
             )
         media_lines: list[str] = []
-        video_params: list[str] = []
-        audio_params: list[str] = []
+        media_params: list[str] = []
         video_like = item.item_kind in {"video", "live"} or (
             item.item_kind == "dynamic"
             and "/video/" in (item.canonical_url or "")
@@ -263,20 +271,18 @@ def build_content_capability(
                         channels_text = "双声道"
                     elif analysis.channels == 1:
                         channels_text = "单声道"
-                    audio_params = [
-                        (
+                    audio_lines = []
+                    if analysis.audio_bitrate_kbps:
+                        audio_lines.append(
                             f"码率：{analysis.audio_bitrate_kbps:.0f}kbps"
-                            if analysis.audio_bitrate_kbps
-                            else "码率：-"
-                        ),
-                        f"格式：{analysis.acodec or analysis.ext or '-'}",
-                        (
-                            f"声道：{channels_text}"
-                            if analysis.channels
-                            else "声道：-"
-                        ),
-                        f"音质：{analysis.audio_quality or '普通（非 Hi-Res）'}",
-                    ]
+                        )
+                    audio_lines.append(f"格式：{analysis.acodec or analysis.ext or '-'}")
+                    if analysis.channels:
+                        audio_lines.append(f"声道：{channels_text}")
+                    # Hi-Res / 杜比全景声：有才写，没有就隐藏。
+                    if analysis.audio_quality:
+                        audio_lines.append(f"音质：{analysis.audio_quality}")
+                    media_params = audio_lines
                 else:
                     probe_url = (
                         item.canonical_url
@@ -284,24 +290,52 @@ def build_content_capability(
                         else candidate
                     )
                     analysis = downloader.probe(probe_url)
-                    video_params = [
+                    video_lines = [
                         f"分辨率：{analysis.resolution()}",
-                        f"时长：{analysis.duration_text()}",
                     ]
+                    if analysis.fps:
+                        video_lines.append(f"帧率：{analysis.fps:.0f}fps")
+                    video_lines.append(f"时长：{analysis.duration_text()}")
+                    if analysis.video_bitrate_kbps:
+                        video_lines.append(
+                            f"视频码率：{analysis.video_bitrate_kbps / 1000:.1f}Mbps"
+                        )
+                    # HDR / 杜比视界：有才写，没有就隐藏。
                     if analysis.hdr:
-                        video_params.append(f"画面动态范围：{analysis.hdr}")
-                    audio_params = [
-                        f"音质：{analysis.audio_quality or '普通（非 Hi-Res）'}"
-                    ]
+                        video_lines.append(f"画面动态范围：{analysis.hdr}")
+                    size_text = (
+                        f"视频大小：{analysis.filesize_bytes / 1048576:.1f}MB"
+                        if analysis.filesize_bytes
+                        else "视频大小：流媒体（无固定大小）"
+                    )
+                    video_lines.append(size_text)
+                    audio_lines = []
+                    if analysis.audio_bitrate_kbps:
+                        audio_lines.append(
+                            f"音频码率：{analysis.audio_bitrate_kbps:.0f}kbps"
+                        )
+                    audio_lines.append(
+                        f"音频格式：{analysis.acodec or '-'}"
+                    )
+                    if analysis.channels:
+                        channels_text = f"{analysis.channels}声道"
+                        if analysis.channels == 2:
+                            channels_text = "双声道"
+                        elif analysis.channels == 1:
+                            channels_text = "单声道"
+                        audio_lines.append(f"声道：{channels_text}")
+                    if analysis.audio_quality:
+                        audio_lines.append(f"音质：{analysis.audio_quality}")
+                    media_params = video_lines
+                    if audio_lines:
+                        media_params = [*video_lines, "", *audio_lines]
                     media_lines = [f"下载：/bot download {probe_url}"]
             except Exception:  # noqa: BLE001 - 分析失败不影响卡片。
                 media_lines = []
         body = _render_parse_body(
             item,
-            video_params=video_params,
-            audio_params=audio_params,
+            media_params=media_params,
         )
-        body = _render_parse_body(item)
         if media_lines:
             body = f"{body}\n" + "\n".join(media_lines)
         if parse_history_store is not None:

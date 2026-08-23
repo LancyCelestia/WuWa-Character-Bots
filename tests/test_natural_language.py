@@ -81,3 +81,35 @@ def test_link_text_never_routes_to_natural_command():
         )
         is None
     )
+
+
+def test_music_mode_natural_combos():
+    cases = [
+        ("点歌只发卡片", "bot.music_mode"),
+        ("以后点歌只发卡片和语音", "bot.music_mode"),
+        ("点歌输出改成只发链接", "bot.music_mode"),
+        ("music mode card+link", "bot.music_mode"),
+    ]
+    for text, capability in cases:
+        resolution = detect_natural_command(text, Config())
+        assert resolution is not None, text
+        assert resolution.capability_id == capability, (text, resolution)
+
+
+def test_music_mode_natural_does_not_hijack_song_query():
+    resolution = detect_natural_command("点歌 晴天", Config())
+    assert resolution is not None
+    assert resolution.capability_id == "bot.music"
+
+
+def test_english_natural_commands():
+    weather = detect_natural_command("what's the weather in Hangzhou", Config())
+    assert weather is not None and weather.capability_id == "bot.weather"
+    music = detect_natural_command("play me a song Sunny Day", Config())
+    assert music is not None and music.capability_id == "bot.music"
+    wiki = detect_natural_command("wiki Wuthering Waves", Config())
+    assert wiki is not None and wiki.capability_id == "bot.wiki"
+    epic = detect_natural_command("what free games are there this week", Config())
+    assert epic is not None and epic.capability_id == "bot.epic"
+    history = detect_natural_command("today in history", Config())
+    assert history is not None and history.capability_id == "bot.today_history"

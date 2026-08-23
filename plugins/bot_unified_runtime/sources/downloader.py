@@ -41,6 +41,7 @@ class MediaAnalysis:
     vcodec: str = ""
     acodec: str = ""
     audio_bitrate_kbps: float = 0.0
+    video_bitrate_kbps: float = 0.0
     sample_rate: int = 0
     channels: int = 0
     filesize_bytes: int = 0
@@ -127,6 +128,19 @@ def _analysis_from_info(info: dict) -> MediaAnalysis:
             (fmt.get("filesize") or fmt.get("filesize_approx") or 0)
             for fmt in formats
         )
+    # 视频码率：优先 vbr；缺失时用总码率减音频码率估算。
+    abr = float(info.get("abr") or 0.0)
+    vbr = float(info.get("vbr") or 0.0)
+    if not vbr:
+        tbr = float(info.get("tbr") or 0.0)
+        if tbr and abr:
+            vbr = max(0.0, tbr - abr)
+    # 文件大小未知时用 总码率×时长 估算（流媒体常用）。
+    if not filesize and info.get("tbr") and info.get("duration"):
+        try:
+            filesize = int(float(info["tbr"]) * 1000 / 8 * float(info["duration"]))
+        except (TypeError, ValueError):
+            filesize = 0
     return MediaAnalysis(
         title=str(info.get("title") or ""),
         duration_seconds=int(info.get("duration") or 0),
@@ -135,7 +149,8 @@ def _analysis_from_info(info: dict) -> MediaAnalysis:
         fps=float(info.get("fps") or 0.0),
         vcodec=vcodec,
         acodec=acodec,
-        audio_bitrate_kbps=float(info.get("abr") or 0.0),
+        audio_bitrate_kbps=abr,
+        video_bitrate_kbps=vbr,
         sample_rate=int(info.get("asr") or 0),
         channels=int(info.get("audio_channels") or 0),
         filesize_bytes=int(filesize or 0),
@@ -180,6 +195,8 @@ class MediaDownloader:
         max_height: int = 1080,
         timeout_seconds: int = 120,
         ffmpeg_path: str = "",
+        cache_max_bytes: int = 0,
+        cache_max_age_days: int = 0,
     ) -> None:
         self.cookies_file = str(cookies_file or "")
         self.proxy = str(proxy or "")
@@ -188,6 +205,8 @@ class MediaDownloader:
         self.max_height = int(max_height)
         self.timeout_seconds = int(timeout_seconds)
         self.ffmpeg_path = _find_ffmpeg(str(ffmpeg_path or ""))
+        self.cache_max_bytes = int(cache_max_bytes)
+        self.cache_max_age_days = int(cache_max_age_days)
         self._lock = threading.Lock()
 
     def available(self) -> bool:
@@ -272,6 +291,16 @@ class MediaDownloader:
             try:
                 outcome = self._download_once(url)
                 if outcome.path and Path(outcome.path).exists():
+                    try:
+                        from plugins.bot_unified_runtime.runtime.cache_policy import enforce_quota
+
+                        enforce_quota(
+                            self.download_dir,
+                            max_bytes=self.cache_max_bytes,
+                            max_age_days=self.cache_max_age_days,
+                        )
+                    except Exception:  # noqa: BLE001 - 清理失败不影响下载。
+                        pass
                     return outcome
                 return DownloadOutcome(error="下载完成但文件缺失")
             except Exception as exc:  # noqa: BLE001 - 合并失败降级单文件。

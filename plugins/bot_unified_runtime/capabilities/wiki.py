@@ -18,7 +18,7 @@ from plugins.bot_unified_runtime.contracts import (
 )
 from plugins.bot_unified_runtime.sources.mediawiki import wiki_lookup
 
-_COMMAND_RE = re.compile(r"^[/!！]?(?:维基|wiki|维基百科|wikipedia)\s*(?P<query>.+)$", re.IGNORECASE)
+_COMMAND_RE = re.compile(r"^[/!！]?(?:维基|維基|wiki|维基百科|維基百科|wikipedia)\s*(?P<query>.+)$", re.IGNORECASE)
 
 
 def is_wiki_command(text: str) -> bool:

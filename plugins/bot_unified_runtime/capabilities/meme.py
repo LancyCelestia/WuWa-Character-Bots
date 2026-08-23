@@ -36,7 +36,9 @@ from plugins.bot_unified_runtime.contracts import (
 )
 
 _COMMAND_RE = re.compile(
-    r"^[/!！]?(?:表情|表情包|meme)(?:\s+(?P<rest>.+)|(?P<tail>帮助|help|用法|菜单|列表|list)?$)",
+    r"^[/!！]?(?:表情|表情包|表情生成|表情包生成|表情制作|表情包制作|"
+    r"表情製作|表情包製作|表情产生|表情包產生|meme|memes|meme generate)"
+    r"(?:\s+(?P<rest>.+)|(?P<tail>帮助|幫助|help|用法|菜单|菜單|列表|list)?$)",
     re.IGNORECASE,
 )
 _LIST_VERBS = {"列表", "菜单", "全部", "list", "all", "keys"}
@@ -192,6 +194,15 @@ def build_meme_capability(
             digest = hashlib.sha256(bytes(content)).hexdigest()[:12]
             path = out_dir / f"meme_{key}_{digest}.png"
             path.write_bytes(bytes(content))
+            try:
+                from plugins.bot_unified_runtime.runtime.cache_policy import enforce_quota
+
+                enforce_quota(
+                    out_dir,
+                    max_bytes=int(getattr(config, "bot_meme_cache_max_bytes", 0) or 0),
+                )
+            except Exception:  # noqa: BLE001
+                pass
         except OSError:
             return CapabilityResult(
                 request_id=message.request_id,

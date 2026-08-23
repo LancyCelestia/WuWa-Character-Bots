@@ -650,6 +650,8 @@ Tasks:
 
 function Invoke-RouteDemo {
     $python = Get-ProjectPython
+    $env:PYTHONIOENCODING = "utf-8"
+    $env:PYTHONUTF8 = "1"
     Write-Step "printing full phrasing routing matrix (offline)"
     & $python -m plugins.bot_unified_runtime.route_demo
     if ($LASTEXITCODE -ne 0) { throw "route-demo failed" }
@@ -657,6 +659,8 @@ function Invoke-RouteDemo {
 
 function Invoke-RouteSmoke {
     $python = Get-ProjectPython
+    $env:PYTHONIOENCODING = "utf-8"
+    $env:PYTHONUTF8 = "1"
     Write-Step "running real API smoke for deterministic capabilities"
     & $python -m plugins.bot_unified_runtime.route_demo --real
     if ($LASTEXITCODE -ne 0) { throw "route-smoke failed" }

@@ -600,3 +600,15 @@
 - 点歌固定附带语音（本地下载优先）；群聊斜杠/自然语言命令通过 looks_like_command_text 放行；/历史 短别名支持。
 - 解析正文分区：【标题/作者/数据/简介/视频参数/音频参数/链接】；视频参数只保留分辨率/时长/动态范围+音频 Hi-Res，音乐给出码率/格式/声道/音质。
 - 全量 pytest 858 passed；verify 通过；线上 17:46 bot_connected。
+
+
+## 2026-08-23：意图判定 v2（不斩断联网）+ 点歌组合 + 缓存策略（五修）
+
+- question_intent v2：实体问句“X是什么/是谁”自动分流（非领域词→联网百科并补“百科”，领域词→知识库优先+联网回退）；现实/时效信号永不切断联网；知识库 answerable=false 或置信度<0.35 自动回退联网。
+- 联网可见性：仅管理员看到回复末尾“🔎 已联网检索 N 条”，普通用户不可见；新增 /bot search 直接验证；检索源 DDG→Bing 链式 + 代理（BOT_DOWNLOAD_PROXY），snippet HTML 实体已 unescape。
+- 点歌组合：card/voice/file/link 任意组合（只发卡片/卡片和语音/card+link/全部等），命令+自然语言+中英简繁；默认 card+voice+link。
+- 命令中英简繁：點歌/天氣/維基/歷史/表情包生成/meme；英文自然语言 play/weather/wiki/free games/today in history。
+- 解析分区：标题/作者/数据/简介/媒体参数/链接，区块间空行；视频=分辨率/帧率/时长/码率/HDR/杜比视界/大小，音频=码率/格式/声道/Hi-Res/杜比全景声（缺省隐藏）。
+- 长回复每 3 段一条消息直接发送、段数不限；括号动作提示词升级为文学性描写。
+- 缓存策略：下载 2GB/7 天、点歌 512MB、卡片 256MB、表情 256MB，LRU 最旧先删；运行入口 nb run --reload 热重载。
+- 全量 pytest 864 passed；verify/startup-smoke/route-smoke/docs-check 全过；18:55 bot_connected（--reload）。

@@ -192,6 +192,12 @@ class Config(BaseModel):
     bot_download_max_bytes: int = 209715200
     bot_download_max_height: int = 1080
     bot_download_timeout_seconds: int = 300
+    # 缓存配额：下载目录/点歌缓存/卡片缓存按最旧优先清理，防占满硬盘。
+    bot_download_cache_max_bytes: int = 2147483648
+    bot_download_cache_max_age_days: int = 7
+    bot_music_cache_max_bytes: int = 536870912
+    bot_card_cache_max_bytes: int = 268435456
+    bot_meme_cache_max_bytes: int = 268435456
     # 代理（大陆拉油管等需要）：http://127.0.0.1:7890 形式，留空 = 直连。
     bot_download_proxy: str = ""
     # HTML 信息卡渲染：解析结果渲染成 PNG 图片一起发送（playwright/null）。
