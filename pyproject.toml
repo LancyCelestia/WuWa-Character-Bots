@@ -67,3 +67,6 @@ nonebot-plugin-orm = ["nonebot_plugin_orm"]
 nonebot-plugin-htmlkit = ["nonebot_plugin_htmlkit"]
 nonebot_plugin_memes_api = ["nonebot_plugin_memes_api"]
 nonebot-plugin-mcpclient = ["nonebot_plugin_mcpclient"]
+
+[tool.ruff]
+extend-exclude = ["_crawlwiki_patch2"]

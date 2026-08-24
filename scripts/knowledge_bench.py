@@ -6,7 +6,6 @@
 3) HNSW 在不同 N 下的搜索耗时（验证近对数增长）
 4) 进程 RSS 与 CPU 占用
 """
-import json
 import statistics
 import sys
 import time
@@ -24,8 +23,8 @@ except Exception as exc:  # noqa: BLE001
     sys.exit(2)
 
 from plugins.bot_unified_runtime.character.vector_knowledge import (
-    SqliteVectorKnowledgeStore,
     OpenAICompatibleEmbeddingProvider,
+    SqliteVectorKnowledgeStore,
 )
 
 DB = Path("data/knowledge_embeddings.sqlite3")
@@ -58,7 +57,7 @@ def main() -> int:
         t = time.perf_counter()
         store.retrieve(QUERY, embed_backlog=False)
         lat.append(time.perf_counter() - t)
-    print(f"p50={statistics.median(lat)*1000:.0f}ms p95={sorted(lat)[-1]*1000:.0f}ms")
+    print(f"p50={statistics.median(lat)*1000:.0f}ms p95={max(lat)*1000:.0f}ms")
     print(f"rss={proc.memory_info().rss // 1048576}MB cpu={proc.cpu_percent(interval=0.5):.1f}%")
 
     print("== 2) 暴力 O(N*D) 随 N 增长 ==")

@@ -17,7 +17,7 @@ def _install_crash_guards() -> None:
     data_dir = Path(__file__).resolve().parent / "data"
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
-        fault_log = open(data_dir / "faulthandler.log", "a", encoding="utf-8", buffering=1)
+        fault_log = open(data_dir / "faulthandler.log", "a", encoding="utf-8", buffering=1)  # noqa: SIM115 - faulthandler 需要长期持有追加日志句柄，不能随 with 关闭
         faulthandler.enable(fault_log, all_threads=True)
     except OSError:
         fault_log = None

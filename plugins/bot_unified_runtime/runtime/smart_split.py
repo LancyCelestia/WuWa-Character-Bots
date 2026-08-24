@@ -22,9 +22,7 @@ def _is_safe_cut(text: str, index: int) -> bool:
     nxt = text[index]
     if nxt in _UNSAFE_NEXT or ord(nxt) in _COMBINING_RANGE:
         return False
-    if nxt in "）)】》」』\"'”’":
-        return False
-    return True
+    return nxt not in "）)】》」』\"'”’"
 
 
 def _collect_boundaries(text: str) -> list[tuple[int, int]]:
@@ -158,3 +156,4 @@ def split_reply_messages(
         )
         or [normalized]
     )
+

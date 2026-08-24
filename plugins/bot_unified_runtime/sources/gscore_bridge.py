@@ -20,9 +20,8 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-import time
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 
@@ -161,7 +160,7 @@ class WsGsCoreBridge:
     def is_connected(self) -> bool:
         try:
             from websockets.protocol import State
-        except Exception:
+        except Exception:  # noqa: BLE001 - websockets 未安装按未连接处理。
             return False
         return self._ws is not None and getattr(self._ws, "state", None) is State.OPEN
 
@@ -186,7 +185,7 @@ class WsGsCoreBridge:
             return
         try:
             import websockets  # noqa: F401
-        except Exception:
+        except Exception:  # noqa: BLE001 - websockets 导入失败则静默停用桥接。
             return
         self._running = True
         self._thread = threading.Thread(
@@ -222,7 +221,7 @@ class WsGsCoreBridge:
             try:
                 await self._connect_and_serve()
                 retry = 0
-            except Exception:
+            except Exception:  # noqa: BLE001 - 连接异常按重试策略处理。
                 retry += 1
                 if self.config.max_retry > 0 and retry >= self.config.max_retry:
                     self._running = False
@@ -280,7 +279,7 @@ def build_gscore_bridge(
         return DisabledGsCoreBridge(reason="disabled")
     try:
         import websockets  # noqa: F401
-    except Exception:
+    except Exception:  # noqa: BLE001 - websockets 不可用时返回禁用桥。
         return DisabledGsCoreBridge(reason="websockets_not_installed")
     host = str(getattr(config, "bot_gscore_host", "127.0.0.1")).strip()
     port = int(getattr(config, "bot_gscore_port", 8765))
@@ -307,7 +306,7 @@ def gscore_readiness(config: object) -> dict[str, Any]:
     websockets_ok = True
     try:
         import websockets  # noqa: F401
-    except Exception:
+    except Exception:  # noqa: BLE001 - 导入失败仅标记不可用。
         websockets_ok = False
     host = str(getattr(config, "bot_gscore_host", "127.0.0.1")).strip()
     port = int(getattr(config, "bot_gscore_port", 8765))
@@ -332,19 +331,19 @@ if __name__ == "__main__":
 
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined, union-attr]
         except (AttributeError, OSError):
             pass
-    from plugins.bot_unified_runtime.smoke import load_smoke_config
-
     import argparse
+
+    from plugins.bot_unified_runtime.smoke import load_smoke_config
 
     parser = argparse.ArgumentParser(description="GsCore 适配桥就绪检查（只读，不联网连接）")
     parser.add_argument("--env", default=None)
     args = parser.parse_args()
     try:
         config = load_smoke_config(args.env)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 配置加载失败统一报错退出。
         print(f"config_error={exc}")
         raise SystemExit(2)
     readiness = gscore_readiness(config)

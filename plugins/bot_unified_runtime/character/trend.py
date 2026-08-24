@@ -106,7 +106,7 @@ class FileTrendProvider:
                     topic, observed_on = _parse_observed_on(heading.group(1))
                     continue
                 line = raw_line.strip().lstrip("-*").strip()
-                if not line or line.startswith("```") or line.startswith("#"):
+                if not line or line.startswith(("```", "#")):
                     continue
                 if not _date_is_fresh(observed_on, self.max_age_days):
                     continue
@@ -141,3 +141,4 @@ def build_trend_provider(config: object) -> TrendProvider:
         max_chars=int(getattr(config, "bot_trend_max_chars", 500)),
         max_age_days=int(getattr(config, "bot_trend_max_age_days", 14)),
     )
+

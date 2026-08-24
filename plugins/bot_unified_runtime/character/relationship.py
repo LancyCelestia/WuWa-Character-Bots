@@ -13,8 +13,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from plugins.bot_unified_runtime.contracts.character import (
     RelationshipContext,
@@ -82,7 +83,7 @@ class FileRelationshipProvider:
                 resolved = self._counts_provider()
                 if isinstance(resolved, dict):
                     return {str(k): int(v) for k, v in resolved.items()}
-            except Exception:
+            except Exception:  # noqa: S110, BLE001 - 计数提供者失败时回退静态计数。
                 pass
         return dict(self._static_counts)
 
@@ -94,7 +95,7 @@ class FileRelationshipProvider:
             return "familiar"
         return "stranger"
 
-    def _load_users(self) -> dict[str, dict[str, object]]:
+    def _load_users(self) -> dict[str, dict[str, Any]]:
         if not self.profile_file.exists():
             return {}
         try:
@@ -158,7 +159,7 @@ class FileRelationshipProvider:
 def build_relationship_provider(
     config: object,
     *,
-    interaction_counts: object | None = None,
+    interaction_counts: Callable[[], dict[str, int]] | dict[str, int] | None = None,
 ) -> RelationshipProvider:
     profile_file = str(getattr(config, "bot_user_profiles_file", "")).strip()
     if not profile_file:
@@ -193,3 +194,4 @@ def apply_relationship_to_tone(
     if relationship.familiarity == "familiar":
         return min(1.0, warmth + 0.04), directness
     return warmth, directness
+

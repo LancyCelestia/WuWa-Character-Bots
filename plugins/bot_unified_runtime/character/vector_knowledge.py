@@ -1,25 +1,25 @@
 from __future__ import annotations
 
 import hashlib
-import re
 import json
+import re
 import struct
 
 try:
     import numpy as np
 except Exception:  # noqa: BLE001 - numpy 可选，缺失回退纯 Python 余弦。
-    np = None
+    np = None  # type: ignore[assignment]
 
 try:
     import faiss
 except Exception:  # noqa: BLE001 - faiss 可选，缺失回退 numpy 暴力检索。
-    faiss = None
+    faiss = None  # type: ignore[assignment]
 import sqlite3
 import threading
 from dataclasses import dataclass
 from math import isnan, sqrt
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol, cast
 
 import httpx
 
@@ -183,7 +183,7 @@ class OpenAICompatibleEmbeddingProvider:
                     self.active_base_url = chain.base_url
                     self.active_model = model
                     return [list(item["embedding"]) for item in data]
-                except Exception:
+                except Exception:  # noqa: S112, BLE001 - 单个嵌入服务失败时尝试下一个备用服务。
                     continue
         return []
 
@@ -386,7 +386,7 @@ class SqliteVectorKnowledgeStore:
             if on_progress is not None:
                 try:
                     on_progress(done, len(pending))
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: S110, BLE001 - 进度回调失败不影响嵌入任务。
                     pass
         if self.signature and done == len(pending):
             self._set_stored_signature(self.signature)
@@ -425,7 +425,7 @@ class SqliteVectorKnowledgeStore:
                         start=1,
                     ):
                         chunk_id = hashlib.sha1(
-                            f"{path.as_posix()}:{index}:{content}".encode("utf-8")
+                            f"{path.as_posix()}:{index}:{content}".encode()
                         ).hexdigest()
                         content_hash = hashlib.sha1(
                             content.encode("utf-8")
@@ -636,7 +636,7 @@ class SqliteVectorKnowledgeStore:
             if not stored_ann or stored_ann != self.signature:
                 return False
             index = faiss.read_index(str(index_path), faiss.IO_FLAG_MMAP)
-            index.hnsw.efSearch = 64
+            cast(Any, index).hnsw.efSearch = 64
             order = json.loads(Path(order_path).read_text(encoding="utf-8"))
             if not isinstance(order, list):
                 return False
@@ -651,16 +651,20 @@ class SqliteVectorKnowledgeStore:
     def _try_ann_search(self, query_vector: list[float]) -> list[KnowledgeChunk] | None:
         if not self.load_ann_index():
             return None
+        index = self._ann_index
+        order = self._ann_order
+        if index is None or order is None:
+            return None
         try:
             query = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
             norm = float(np.linalg.norm(query))
             if norm > 0:
                 query = query / norm
-            _scores, indices = self._ann_index.search(query, self.top_k)
+            _scores, indices = index.search(query, self.top_k)
             picked_ids = [
-                str(self._ann_order[int(index)])
+                str(order[int(index)])
                 for index in indices[0]
-                if 0 <= int(index) < len(self._ann_order)
+                if 0 <= int(index) < len(order)
             ]
             return self._fetch_chunks(picked_ids)
         except Exception:  # noqa: BLE001
@@ -675,16 +679,20 @@ class SqliteVectorKnowledgeStore:
         """
         if not self.load_ann_index():
             return None
+        index = self._ann_index
+        order = self._ann_order
+        if index is None or order is None:
+            return None
         try:
             query = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
             norm = float(np.linalg.norm(query))
             if norm > 0:
                 query = query / norm
-            _scores, indices = self._ann_index.search(query, max(1, int(limit)))
+            _scores, indices = index.search(query, max(1, int(limit)))
             ranked: list[tuple[str, float]] = []
             for score, index in zip(_scores[0], indices[0]):
-                if 0 <= int(index) < len(self._ann_order):
-                    ranked.append((str(self._ann_order[int(index)]), float(score)))
+                if 0 <= int(index) < len(order):
+                    ranked.append((str(order[int(index)]), float(score)))
             return ranked
         except Exception:  # noqa: BLE001
             return None
@@ -729,12 +737,12 @@ class SqliteVectorKnowledgeStore:
                 self.ensure_fts_index()
                 return {"built": False, "reason": "empty"}
             matrix = np.vstack(vectors).astype(np.float32)
-            norms = np.linalg.norm(matrix, axis=1)
-            matrix = matrix / np.maximum(norms, 1e-9)[:, None]
+            norms = np.linalg.norm(matrix, axis=1).astype(np.float32)
+            matrix = (matrix / np.maximum(norms, np.float32(1e-9))[:, None]).astype(np.float32)
             dimension = int(matrix.shape[1])
             try:
                 faiss.omp_set_num_threads(1)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: S110, BLE001 - 线程数设置失败按默认继续构建索引。
                 pass
             index = faiss.IndexHNSWFlat(dimension, 32, faiss.METRIC_INNER_PRODUCT)
             index.hnsw.efConstruction = 200
@@ -792,7 +800,7 @@ class SqliteVectorKnowledgeStore:
                         vectors.append(vector.astype(np.float32))
                         chunk_ids.append(str(row["chunk_id"]))
                         continue
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: S110, BLE001 - 单行向量解码失败跳过该行。
                     pass
             try:
                 vector = json.loads(str(row["vector_json"]))
@@ -838,7 +846,7 @@ class SqliteVectorKnowledgeStore:
             return []
         try:
             result = self.embed_provider.embed_texts(list(texts))
-        except Exception:
+        except Exception:  # noqa: BLE001 - 嵌入服务失败时返回 None 表示重试/降级。
             return None
         if not isinstance(result, list) or len(result) != len(texts):
             return None
@@ -856,7 +864,7 @@ class SqliteVectorKnowledgeStore:
                         "UPDATE knowledge_chunks SET vector_json = ?, vector_blob = ? WHERE chunk_id = ?",
                         (
                             json.dumps(vector),
-                            struct.pack("<%df" % len(vector), *vector),
+                            struct.pack(f"<{len(vector)}f", *vector),
                             str(row["chunk_id"]),
                         ),
                     )
@@ -936,7 +944,7 @@ class SqliteVectorKnowledgeStore:
                 )
                 for row in cursor:
                     digest.update(
-                        f"{row['chunk_id']}:{row['content_hash'] or ''}|".encode("utf-8")
+                        f"{row['chunk_id']}:{row['content_hash'] or ''}|".encode()
                     )
                 cursor.close()
                 signature = digest.hexdigest()
@@ -1039,7 +1047,7 @@ class SqliteVectorKnowledgeStore:
             if len(segment) >= _FTS_MIN_MATCH_CHARS:
                 if len(segment) <= 6:
                     phrases.append(segment)
-                for index in range(0, len(segment) - 2):
+                for index in range(len(segment) - 2):
                     phrases.append(segment[index : index + 3])
         phrases.extend(match.group(0).lower() for match in _ALNUM_RE.finditer(query_text or ""))
         phrases = list(dict.fromkeys(phrases))[:_MAX_PHRASE_TERMS]
@@ -1198,7 +1206,7 @@ class KeywordKnowledgeRetriever:
         rows: list[tuple[str, str, str]] = []
         for index, content in enumerate(_chunk_text(text, chunk_chars=self._chunk_chars), start=1):
             chunk_id = hashlib.sha1(
-                f"{path.as_posix()}:{index}:{content}".encode("utf-8")
+                f"{path.as_posix()}:{index}:{content}".encode()
             ).hexdigest()
             rows.append((chunk_id, source_id, content))
         self._cache[path] = (signature, rows)
@@ -1267,7 +1275,7 @@ class _VectorKnowledgeRetriever:
                 files=self._files,
                 embed_backlog=False,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - 检索异常按无结果降级，不阻断对话。
             return []
 
 
@@ -1333,5 +1341,5 @@ def build_vector_knowledge_provider(config: object) -> object:
             for path in (getattr(config, "bot_knowledge_files", []) or [])
         ]
         return _VectorKnowledgeRetriever(store=store, files=files)
-    except Exception:
+    except Exception:  # noqa: BLE001 - 向量库构建失败时降级为不可用提供者。
         return _UnavailableVectorKnowledgeProvider()

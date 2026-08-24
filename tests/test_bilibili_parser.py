@@ -9,8 +9,8 @@ from __future__ import annotations
 import hashlib
 import urllib.parse
 
-from plugins.bot_unified_runtime.sources.parsers import wbi
 from plugins.bot_unified_runtime.sources.parsers import platforms_bilibili as pb
+from plugins.bot_unified_runtime.sources.parsers import wbi
 
 IMG_URL = "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png"
 SUB_URL = "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"

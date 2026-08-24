@@ -146,10 +146,12 @@ def test_parse_pixiv_illust_api_failure_falls_back_og(monkeypatch):
         text_calls.append((url, kwargs))
         return (
             url,
-            "<html><head>"
-            '<meta property="og:title" content="OG 标题" />'
-            '<meta property="og:image" content="https://i.pximg.net/og.jpg" />'
-            "</head></html>",
+            (
+                "<html><head>"
+                '<meta property="og:title" content="OG 标题" />'
+                '<meta property="og:image" content="https://i.pximg.net/og.jpg" />'
+                "</head></html>"
+            ),
         )
 
     monkeypatch.setattr(

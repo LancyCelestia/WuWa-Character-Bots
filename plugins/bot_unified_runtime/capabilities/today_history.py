@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
@@ -111,7 +112,7 @@ def build_today_history_capability(
                 if on_subscriptions_changed is not None:
                     try:
                         on_subscriptions_changed()
-                    except Exception:  # noqa: BLE001
+                    except Exception:  # noqa: S110, BLE001 - 订阅变更通知失败不影响本次推送设置。
                         pass
                 return CapabilityResult(
                     request_id=message.request_id,
@@ -144,7 +145,7 @@ def build_today_history_capability(
                 if on_subscriptions_changed is not None:
                     try:
                         on_subscriptions_changed()
-                    except Exception:  # noqa: BLE001
+                    except Exception:  # noqa: S110, BLE001 - 订阅变更通知失败不影响本次推送设置。
                         pass
                 return CapabilityResult(
                     request_id=message.request_id,
@@ -182,3 +183,4 @@ def build_today_history_capability(
         )
 
     return capability
+

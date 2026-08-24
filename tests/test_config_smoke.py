@@ -1,6 +1,6 @@
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 from plugins.bot_unified_runtime import smoke
 from plugins.bot_unified_runtime.config import Config

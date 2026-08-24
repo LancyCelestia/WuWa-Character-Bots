@@ -1,10 +1,10 @@
 from plugins.bot_unified_runtime.sources.meme_search import (
     DuckDuckGoMemeSearchProvider,
     NullMemeSearchProvider,
-    extract_meme_query,
-    filter_meme_results,
     _domain_of,
     _strip_html,
+    extract_meme_query,
+    filter_meme_results,
 )
 
 

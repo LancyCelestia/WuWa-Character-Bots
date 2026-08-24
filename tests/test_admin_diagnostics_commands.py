@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
+from plugins.bot_unified_runtime.character.history import (
+    SQLiteConversationHistoryRepository,
+)
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import (
     AuditRecord,
@@ -13,9 +16,14 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.diagnostics import RecentDiagnosticsStore, RuntimeDiagnostic
-from plugins.bot_unified_runtime.sender import InMemoryReceiptRepository, SQLiteSendRequestQueue
-from plugins.bot_unified_runtime.character.history import SQLiteConversationHistoryRepository
+from plugins.bot_unified_runtime.diagnostics import (
+    RecentDiagnosticsStore,
+    RuntimeDiagnostic,
+)
+from plugins.bot_unified_runtime.sender import (
+    InMemoryReceiptRepository,
+    SQLiteSendRequestQueue,
+)
 
 
 def _receipt_repository() -> InMemoryReceiptRepository:
@@ -147,7 +155,9 @@ def _send_request_for_queue() -> SendRequest:
 
 
 def test_admin_receipt_query_returns_safe_summary_without_provider_message_id():
-    from plugins.bot_unified_runtime.capabilities.debug import build_receipt_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import (
+        build_receipt_query_result,
+    )
 
     result = build_receipt_query_result(
         _receipt_repository(),
@@ -170,7 +180,9 @@ def test_admin_receipt_query_returns_safe_summary_without_provider_message_id():
 
 
 def test_non_admin_receipt_query_is_rejected():
-    from plugins.bot_unified_runtime.capabilities.debug import build_receipt_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import (
+        build_receipt_query_result,
+    )
 
     result = build_receipt_query_result(
         _receipt_repository(),
@@ -184,7 +196,9 @@ def test_non_admin_receipt_query_is_rejected():
 
 
 def test_empty_and_missing_receipt_query_are_actionable():
-    from plugins.bot_unified_runtime.capabilities.debug import build_receipt_query_result
+    from plugins.bot_unified_runtime.capabilities.debug import (
+        build_receipt_query_result,
+    )
 
     empty = build_receipt_query_result(
         _receipt_repository(),
@@ -446,7 +460,9 @@ def test_non_admin_queue_query_is_rejected_without_leaking_queue_details(tmp_pat
 
 
 def test_admin_history_clear_removes_only_current_scope_without_leaking_ids(tmp_path):
-    from plugins.bot_unified_runtime.capabilities.debug import build_history_clear_result
+    from plugins.bot_unified_runtime.capabilities.debug import (
+        build_history_clear_result,
+    )
 
     repository = SQLiteConversationHistoryRepository(tmp_path / "history.sqlite3")
     repository.append_turn(
@@ -527,7 +543,9 @@ def test_admin_history_clear_removes_only_current_scope_without_leaking_ids(tmp_
 
 
 def test_non_admin_history_clear_is_rejected_without_leaking_history_state(tmp_path):
-    from plugins.bot_unified_runtime.capabilities.debug import build_history_clear_result
+    from plugins.bot_unified_runtime.capabilities.debug import (
+        build_history_clear_result,
+    )
 
     repository = SQLiteConversationHistoryRepository(tmp_path / "history.sqlite3")
     repository.append_turn(
@@ -572,7 +590,9 @@ def test_non_admin_history_clear_is_rejected_without_leaking_history_state(tmp_p
 
 
 def test_admin_pause_resume_updates_runtime_control_state_without_leaking_ids():
-    from plugins.bot_unified_runtime.capabilities.debug import build_runtime_control_result
+    from plugins.bot_unified_runtime.capabilities.debug import (
+        build_runtime_control_result,
+    )
     from plugins.bot_unified_runtime.runtime import RuntimeControlState
 
     state = RuntimeControlState()
@@ -605,7 +625,9 @@ def test_admin_pause_resume_updates_runtime_control_state_without_leaking_ids():
 
 
 def test_non_admin_pause_is_rejected_without_changing_runtime_control_state():
-    from plugins.bot_unified_runtime.capabilities.debug import build_runtime_control_result
+    from plugins.bot_unified_runtime.capabilities.debug import (
+        build_runtime_control_result,
+    )
     from plugins.bot_unified_runtime.runtime import RuntimeControlState
 
     state = RuntimeControlState()
@@ -644,6 +666,7 @@ def test_diagnostics_stores_list_recent_items_newest_first(tmp_path):
 
 def test_plugin_entry_exposes_admin_diagnostic_commands_without_self_overwrite():
     import inspect
+
     import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)

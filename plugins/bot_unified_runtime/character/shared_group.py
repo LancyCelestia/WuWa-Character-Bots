@@ -20,7 +20,7 @@ import re
 import sqlite3
 import time
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from plugins.bot_unified_runtime.contracts.character import SharedGroupContext
 
@@ -178,7 +178,7 @@ class OpenAICompatibleGroupSummarizer:
 
     def __init__(
         self,
-        llm_provider: object,
+        llm_provider: Any,
         *,
         ttl_seconds: int = 3600,
         max_chars: int = 400,
@@ -209,7 +209,7 @@ class OpenAICompatibleGroupSummarizer:
                 max_tokens=200,
             )
             summary = reply.text.strip()
-        except Exception:
+        except Exception:  # noqa: BLE001 - LLM 摘要失败时回退原始键，不阻断群上下文构建。
             return key
         if not summary:
             return key
@@ -224,7 +224,7 @@ class LLMSummarizingGroupDigestProvider:
     def __init__(
         self,
         inner: SharedGroupContextProvider,
-        summarizer: object,
+        summarizer: Any,
     ) -> None:
         self.inner = inner
         self.summarizer = summarizer
@@ -279,3 +279,4 @@ def build_shared_group_context_provider(
             ),
         )
     return provider
+

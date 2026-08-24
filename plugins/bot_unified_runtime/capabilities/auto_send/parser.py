@@ -9,7 +9,10 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     SessionType,
 )
-from plugins.bot_unified_runtime.contracts.auto_send import AutoSendIntent, RecipientDescriptor
+from plugins.bot_unified_runtime.contracts.auto_send import (
+    AutoSendIntent,
+    RecipientDescriptor,
+)
 
 _COMMAND_RE = re.compile(
     r"^报存\s*给\s*(?P<recipients>.+?)\s*发(?P<channel>邮件|消息)"

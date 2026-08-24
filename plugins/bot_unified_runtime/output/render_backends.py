@@ -48,7 +48,7 @@ class HtmlKitRenderBackend:
 
             self._html_to_pic = html_to_pic
             self.available = True
-        except Exception:
+        except Exception:  # noqa: BLE001 - htmlkit 不可用时标记为不可用，不抛出。
             self.available = False
 
     def render_card(self, payload: dict[str, Any]) -> bytes | None:
@@ -62,7 +62,7 @@ class HtmlKitRenderBackend:
                 html,
                 viewport=payload.get("viewport") or {"width": 640, "height": 400},
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - htmlkit 渲染失败按无结果降级。
             return None
         if isinstance(result, bytes):
             return result
@@ -91,9 +91,9 @@ class PlaywrightRenderBackend:
         try:
             from playwright.sync_api import sync_playwright  # type: ignore
 
-            self._sync_playwright = sync_playwright
+            self._sync_playwright: Any = sync_playwright
             self.available = True
-        except Exception:
+        except Exception:  # noqa: BLE001 - Playwright 不可用时标记为不可用，不抛出。
             self._sync_playwright = None
             self.available = False
 
@@ -112,27 +112,26 @@ class PlaywrightRenderBackend:
         except (TypeError, ValueError):
             device_scale_factor = 2
         try:
-            with self._lock:
-                with self._sync_playwright() as p:
-                    browser = p.chromium.launch()
-                    try:
-                        page = browser.new_page(
-                            viewport={"width": width, "height": height},
-                            device_scale_factor=device_scale_factor,
+            with self._lock, self._sync_playwright() as p:
+                browser = p.chromium.launch()
+                try:
+                    page = browser.new_page(
+                        viewport={"width": width, "height": height},
+                        device_scale_factor=device_scale_factor,
+                    )
+                    page.set_content(html, wait_until="networkidle")
+                    # 等封面图加载（失败则 onerror 隐藏）。
+                    page.wait_for_timeout(wait_ms)
+                    element = page.query_selector(".card")
+                    if element is not None:
+                        # 元素截图自带裁切范围，不需要 clip 参数。
+                        return bytes(
+                            element.screenshot(type="png", omit_background=True)
                         )
-                        page.set_content(html, wait_until="networkidle")
-                        # 等封面图加载（失败则 onerror 隐藏）。
-                        page.wait_for_timeout(wait_ms)
-                        element = page.query_selector(".card")
-                        if element is not None:
-                            # 元素截图自带裁切范围，不需要 clip 参数。
-                            return bytes(
-                                element.screenshot(type="png", omit_background=True)
-                            )
-                        return bytes(page.screenshot(type="png", full_page=True))
-                    finally:
-                        browser.close()
-        except Exception:
+                    return bytes(page.screenshot(type="png", full_page=True))
+                finally:
+                    browser.close()
+        except Exception:  # noqa: BLE001 - 浏览器渲染失败按无结果降级。
             return None
 
 
@@ -145,3 +144,4 @@ def build_render_backend(name: str = "") -> RenderBackend:
         if normalized == "htmlkit":
             return HtmlKitRenderBackend()
     return NullRenderBackend()
+

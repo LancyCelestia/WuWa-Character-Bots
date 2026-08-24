@@ -1,13 +1,5 @@
-from plugins.bot_unified_runtime.config import Config
-from plugins.bot_unified_runtime.contracts import (
-    CapabilityResult,
-    IncomingMessage,
-    PrivacyLevel,
-    ReviewResult,
-    ReviewAction,
-    RiskLevel,
-    SessionType,
-)
+from typing import ClassVar
+
 from plugins.bot_unified_runtime.capabilities.content_parser import (
     build_content_capability,
 )
@@ -16,12 +8,23 @@ from plugins.bot_unified_runtime.capabilities.music import (
     extract_music_query,
     is_music_command,
 )
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.contracts import (
+    CapabilityResult,
+    IncomingMessage,
+    PrivacyLevel,
+    RenderedOutput,
+    ReviewAction,
+    ReviewResult,
+    RiskLevel,
+    SendRequest,
+    SessionType,
+)
 from plugins.bot_unified_runtime.output.renderer import render_reviewed_output
 from plugins.bot_unified_runtime.sender.onebot import (
     _segment_from_mixed_part,
     build_onebot_message_segments,
 )
-from plugins.bot_unified_runtime.contracts import SendRequest, RenderedOutput
 from plugins.bot_unified_runtime.sources.parsers import (
     build_content_parser_registry,
     build_source_input,
@@ -342,7 +345,6 @@ def test_music_capability_uses_provider_chain():
 
     def provider_a(query):
         calls.append(("a", query))
-        return None
 
     def provider_b(query):
         calls.append(("b", query))
@@ -385,15 +387,11 @@ def test_cookie_provider_parses_netscape_file(tmp_path):
 
     cookie_file = tmp_path / "cookies.txt"
     cookie_file.write_text(
-        "\n".join(
-            [
-                "# Netscape HTTP Cookie File",
-                ".bilibili.com\tTRUE\t/\tTRUE\t2000000000\tSESSDATA\tfake-sessdata",
-                ".bilibili.com\tTRUE\t/\tTRUE\t0\tbuvid3\tfake-buvid",
-                ".xiaohongshu.com\tTRUE\t/\tTRUE\t2000000000\tweb_session\tfake-session",
-                ".example.com\tTRUE\t/\tTRUE\t2000000000\tsecret\tnot-collected",
-            ]
-        ),
+        "# Netscape HTTP Cookie File\n"
+        ".bilibili.com\tTRUE\t/\tTRUE\t2000000000\tSESSDATA\tfake-sessdata\n"
+        ".bilibili.com\tTRUE\t/\tTRUE\t0\tbuvid3\tfake-buvid\n"
+        ".xiaohongshu.com\tTRUE\t/\tTRUE\t2000000000\tweb_session\tfake-session\n"
+        ".example.com\tTRUE\t/\tTRUE\t2000000000\tsecret\tnot-collected",
         encoding="utf-8",
     )
 
@@ -407,10 +405,11 @@ def test_cookie_provider_parses_netscape_file(tmp_path):
 
 
 def test_xhs_deep_parse_from_initial_state(monkeypatch):
+    import urllib.parse
+
     from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
         parse_xiaohongshu,
     )
-    import urllib.parse
 
     initial_state = {
         "note": {
@@ -556,13 +555,13 @@ def test_xhs_search_result_card_extracts_keyword(monkeypatch):
 
 
 def test_registry_binds_cookie_header_to_parsers(monkeypatch):
+    import plugins.bot_unified_runtime.sources.parsers.platforms_bilibili as pb
     from plugins.bot_unified_runtime.sources.parsers import (
         build_content_parser_registry,
     )
     from plugins.bot_unified_runtime.sources.parsers.cookies import (
         PlatformCookieProvider,
     )
-    import plugins.bot_unified_runtime.sources.parsers.platforms_bilibili as pb
 
     captured: dict[str, str] = {}
 
@@ -599,7 +598,7 @@ def test_music_card_fallback_when_no_audio_url():
         audio_url = ""
         cover_url = ""
         canonical_url = "https://y.qq.com/n/ryqq/songDetail/abc"
-        stats = {"music_card": {"type": "qq", "id": "abc"}}
+        stats: ClassVar[dict] = {"music_card": {"type": "qq", "id": "abc"}}
 
     capability = build_music_capability(
         providers=[("qqmusic", "QQ音乐", lambda q: FakeItem())]
@@ -887,7 +886,10 @@ def test_registry_matches_new_platforms():
 
 
 def test_music_accepts_slash_and_bang_prefix():
-    from plugins.bot_unified_runtime.capabilities.music import is_music_command, extract_music_query
+    from plugins.bot_unified_runtime.capabilities.music import (
+        extract_music_query,
+        is_music_command,
+    )
 
     assert is_music_command("/点歌 晴天") is True
     assert is_music_command("!点歌 周杰伦 晴天") is True
@@ -904,7 +906,7 @@ def test_music_mode_rendering_supports_audio_voice_link_card():
         audio_url = "https://music.example/song.mp3"
         cover_url = "https://music.example/cover.jpg"
         canonical_url = "https://music.example/song"
-        stats = {}
+        stats: ClassVar[dict] = {}
 
     fake_download_path = "data/music/song.mp3"
 

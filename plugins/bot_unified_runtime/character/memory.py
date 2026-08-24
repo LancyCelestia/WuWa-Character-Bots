@@ -249,7 +249,7 @@ def build_memory_provider(config: object) -> MemoryProvider:
 
 
 def build_fact_id(subject_user_id: str, session_id: str, text: str) -> str:
-    digest = sha1(f"{subject_user_id}:{session_id}:{text}".encode("utf-8")).hexdigest()[:12]
+    digest = sha1(f"{subject_user_id}:{session_id}:{text}".encode()).hexdigest()[:12]
     return f"fact_{digest}"
 
 

@@ -28,8 +28,9 @@ deepseek-v4-flash/pro、gpt-5.6-terra/sol、gemini-3.7-flash。每个条目：
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any, Callable
+from typing import Any
 
 from plugins.bot_unified_runtime.llm import (
     LLMProviderError,
@@ -260,7 +261,7 @@ class ModelRouter:
         spec = self._spec_for(model_id)
         if spec is None:
             raise KeyError(f"unknown model id: {model_id}")
-        cache_key: object = model_id
+        cache_key: Any = model_id
         provider_spec = spec
         if api_key is not None and api_key != spec.api_key:
             cache_key = (model_id, api_key)
@@ -330,7 +331,7 @@ class ModelRouter:
                 except LLMProviderError as exc:
                     last_error = exc
                     continue
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - 将非预期供应商异常统一为 provider_error 以继续故障转移。
                     last_error = LLMProviderError(
                         f"model {model_id} failed: {type(exc).__name__}",
                         error_kind="provider_error",

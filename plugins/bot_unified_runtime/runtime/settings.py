@@ -15,8 +15,9 @@ from __future__ import annotations
 import json
 import re
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 # 互动次数 -> 自动关系层级（档案未显式指定 familiarity 时生效）。
 FAMILIAR_INTERACTION_THRESHOLD = 8

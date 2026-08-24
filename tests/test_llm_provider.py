@@ -1,6 +1,6 @@
+import io
 import json
 from email.message import Message
-import io
 from urllib import error
 
 import pytest

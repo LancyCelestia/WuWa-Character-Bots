@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
+    PrivacyLevel,
     RiskLevel,
     SendPolicy,
 )
@@ -41,7 +42,7 @@ def _admin_only_result(request_id: str) -> CapabilityResult:
         body="该命令只允许管理员使用。",
         confidence=1.0,
         risk_level=RiskLevel.MEDIUM,
-        privacy_level="personal",
+        privacy_level=PrivacyLevel.PERSONAL,
         send_policy=SendPolicy.IMMEDIATE,
         audit_tags=["runtime_admin", "permission_denied"],
     )
@@ -56,7 +57,7 @@ def _ok_result(request_id: str, body: str, capability_id: str = "bot.runtime") -
         body=body,
         confidence=1.0,
         risk_level=RiskLevel.LOW,
-        privacy_level="personal",
+        privacy_level=PrivacyLevel.PERSONAL,
         send_policy=SendPolicy.IMMEDIATE,
         audit_tags=["runtime_admin", capability_id],
     )
@@ -71,7 +72,7 @@ def _error_result(request_id: str, message: str) -> CapabilityResult:
         body=message,
         confidence=1.0,
         risk_level=RiskLevel.MEDIUM,
-        privacy_level="personal",
+        privacy_level=PrivacyLevel.PERSONAL,
         send_policy=SendPolicy.IMMEDIATE,
         audit_tags=["runtime_admin", "runtime_admin_error"],
     )
@@ -135,8 +136,8 @@ def _handle_runtime_command(
             f"{instance_label}{key} = {value}" for key, value in sorted(overrides.items())
         )
     if action == "reset":
-        key = remaining[0] if remaining else None
-        count = store.reset_override(key)
+        reset_key = remaining[0] if remaining else None
+        count = store.reset_override(reset_key)
         return f"{instance_label}已清除 {count} 项运行时覆盖。"
     if action == "nickname":
         return f"{instance_label}{_handle_nickname_command(store, remaining)}"
@@ -222,8 +223,10 @@ def _handle_persona_command(
     action = parts[0].lower()
     if action == "list":
         lines = [
-            f"主人格(A)：{getattr(config, 'bot_persona_profile_id', 'default')}"
-            f"（{getattr(config, 'bot_persona_display_name', '')}）"
+            (
+                f"主人格(A)：{getattr(config, 'bot_persona_profile_id', 'default')}"
+                f"（{getattr(config, 'bot_persona_display_name', '')}）"
+            )
         ]
         for spec_id, spec in alt_personas.items():
             lines.append(
@@ -356,3 +359,4 @@ def build_alert_check_result(
         "\n".join(lines),
         capability_id="bot.alert",
     )
+

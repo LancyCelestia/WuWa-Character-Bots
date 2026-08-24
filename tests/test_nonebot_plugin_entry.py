@@ -1,8 +1,8 @@
 import asyncio
-import threading
-import time
 import importlib
 import sys
+import threading
+import time
 import types
 import zipfile
 from pathlib import Path
@@ -370,7 +370,10 @@ def test_chat_smoke_prefers_real_dotenv_over_example(tmp_path, monkeypatch):
 
 
 def test_status_capability_returns_structured_result():
-    from plugins.bot_unified_runtime.capabilities.echo import build_status_result, route_bot_command
+    from plugins.bot_unified_runtime.capabilities.echo import (
+        build_status_result,
+        route_bot_command,
+    )
 
     result = build_status_result(request_id="req_test")
 
@@ -536,6 +539,7 @@ def test_auto_send_command_returns_preview_only_text():
 
 def test_plugin_entry_uses_strict_command_and_plain_autosend_rule():
     import inspect
+
     import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
@@ -549,6 +553,7 @@ def test_plugin_entry_uses_strict_command_and_plain_autosend_rule():
 
 def test_plugin_entry_routes_chat_send_request_through_onebot_transport():
     import inspect
+
     import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
@@ -564,6 +569,7 @@ def test_plugin_entry_routes_chat_send_request_through_onebot_transport():
 
 def test_plugin_entry_registers_optional_send_queue_scheduler():
     import inspect
+
     import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
@@ -576,6 +582,7 @@ def test_plugin_entry_registers_optional_send_queue_scheduler():
 
 def test_plugin_entry_records_chat_history_after_send_request():
     import inspect
+
     import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
@@ -640,6 +647,7 @@ def test_plugin_entry_audits_history_skip_without_user_text():
 
 def test_plugin_entry_uses_history_guard_before_recording_chat_turns():
     import inspect
+
     import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
@@ -651,6 +659,7 @@ def test_plugin_entry_uses_history_guard_before_recording_chat_turns():
 
 def test_plugin_entry_exposes_why_command_route_without_overwriting_latest():
     import inspect
+
     import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
@@ -679,6 +688,7 @@ def test_plugin_entry_exposes_why_command_route_without_overwriting_latest():
 
 def test_plugin_entry_exposes_runtime_pause_resume_routes():
     import inspect
+
     import plugins.bot_unified_runtime as plugin_entry
 
     source = inspect.getsource(plugin_entry)
@@ -692,11 +702,13 @@ def test_plugin_entry_exposes_runtime_pause_resume_routes():
 
 def test_plugin_entry_records_runtime_diagnostic_for_latest_why_lookup():
     import plugins.bot_unified_runtime as plugin_entry
-
     from plugins.bot_unified_runtime import _record_runtime_diagnostic
     from plugins.bot_unified_runtime.config import Config
     from plugins.bot_unified_runtime.diagnostics import RecentDiagnosticsStore
-    from plugins.bot_unified_runtime.policy import build_reply_budget_settings, build_role_settings
+    from plugins.bot_unified_runtime.policy import (
+        build_reply_budget_settings,
+        build_role_settings,
+    )
     from plugins.bot_unified_runtime.runtime import RuntimePipeline
     from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
@@ -747,11 +759,13 @@ def test_plugin_entry_records_runtime_diagnostic_for_latest_why_lookup():
 
 def test_plugin_entry_records_runtime_diagnostic_from_persistent_queue_after_reopen(tmp_path):
     import plugins.bot_unified_runtime as plugin_entry
-
     from plugins.bot_unified_runtime import _record_runtime_diagnostic
     from plugins.bot_unified_runtime.config import Config
     from plugins.bot_unified_runtime.diagnostics import RecentDiagnosticsStore
-    from plugins.bot_unified_runtime.policy import build_reply_budget_settings, build_role_settings
+    from plugins.bot_unified_runtime.policy import (
+        build_reply_budget_settings,
+        build_role_settings,
+    )
     from plugins.bot_unified_runtime.runtime import RuntimePipeline
     from plugins.bot_unified_runtime.sender import SQLiteSendRequestQueue
 
@@ -808,7 +822,6 @@ def test_plugin_entry_records_runtime_diagnostic_from_persistent_queue_after_reo
 
 def test_plugin_entry_does_not_record_runtime_control_as_latest_business_diagnostic():
     import plugins.bot_unified_runtime as plugin_entry
-
     from plugins.bot_unified_runtime import _record_runtime_diagnostic
     from plugins.bot_unified_runtime.config import Config
     from plugins.bot_unified_runtime.contracts import DeliveryReceipt, ReceiptState
@@ -870,7 +883,10 @@ def test_pipeline_delivery_helper_sends_allowed_capability_through_transport():
     from plugins.bot_unified_runtime import _run_capability_through_pipeline
     from plugins.bot_unified_runtime.config import Config
     from plugins.bot_unified_runtime.diagnostics import RecentDiagnosticsStore
-    from plugins.bot_unified_runtime.policy import build_reply_budget_settings, build_role_settings
+    from plugins.bot_unified_runtime.policy import (
+        build_reply_budget_settings,
+        build_role_settings,
+    )
     from plugins.bot_unified_runtime.runtime import RuntimePipeline
     from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
@@ -986,7 +1002,10 @@ def test_pipeline_delivery_helper_blocks_sender_before_capability_runs():
     from plugins.bot_unified_runtime import _run_capability_through_pipeline
     from plugins.bot_unified_runtime.config import Config
     from plugins.bot_unified_runtime.diagnostics import RecentDiagnosticsStore
-    from plugins.bot_unified_runtime.policy import build_reply_budget_settings, build_role_settings
+    from plugins.bot_unified_runtime.policy import (
+        build_reply_budget_settings,
+        build_role_settings,
+    )
     from plugins.bot_unified_runtime.runtime import RuntimePipeline
     from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
@@ -1138,7 +1157,10 @@ def test_chat_policy_passive_group_block_is_silent_for_nonebot_entry():
 def test_chat_provider_factory_keeps_static_default_and_openai_compatible_option():
     from plugins.bot_unified_runtime import _build_chat_llm_provider
     from plugins.bot_unified_runtime.config import Config
-    from plugins.bot_unified_runtime.llm import OpenAICompatibleLLMProvider, StaticLLMProvider
+    from plugins.bot_unified_runtime.llm import (
+        OpenAICompatibleLLMProvider,
+        StaticLLMProvider,
+    )
 
     assert isinstance(_build_chat_llm_provider(Config()), StaticLLMProvider)
     assert isinstance(

@@ -18,7 +18,7 @@ import json
 import time
 import urllib.request
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -205,8 +205,7 @@ class OpenMeteoWeatherProvider:
         try:
             with urllib.request.urlopen(url, timeout=self.timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except Exception:
-            # 网络失败时返回过期缓存（如果有），天气是可选信息，不抛错。
+        except Exception:  # noqa: BLE001 - 网络失败时返回过期缓存（如果有），天气是可选信息，不抛错。
             return self._cache
         current = payload.get("current") if isinstance(payload, dict) else None
         if not isinstance(current, dict):
@@ -291,3 +290,4 @@ def build_temporal_provider(config: object) -> RuleBasedTemporalProvider:
         weather_provider=weather_provider,
         holiday_table=holiday_table,
     )
+

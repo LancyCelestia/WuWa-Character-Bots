@@ -1,4 +1,3 @@
-import json
 
 from plugins.bot_unified_runtime.capabilities.runtime_admin import (
     build_alert_check_result,
@@ -19,12 +18,11 @@ from plugins.bot_unified_runtime.output.render_backends import (
 )
 from plugins.bot_unified_runtime.runtime.alerts import (
     AlertContent,
-    send_admin_alert,
 )
 from plugins.bot_unified_runtime.runtime.settings import (
+    SETTABLE_KEYS,
     InstanceSettingsManager,
     RuntimeSettingsStore,
-    SETTABLE_KEYS,
 )
 
 

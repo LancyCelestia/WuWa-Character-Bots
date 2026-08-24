@@ -1,3 +1,4 @@
+from plugins.bot_unified_runtime import policy
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
 from plugins.bot_unified_runtime.capabilities.echo import build_status_result
 from plugins.bot_unified_runtime.config import Config
@@ -8,7 +9,6 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
     SessionType,
 )
-from plugins.bot_unified_runtime import policy
 from plugins.bot_unified_runtime.runtime import RuntimePipeline
 from plugins.bot_unified_runtime.sender import InMemorySendQueue
 

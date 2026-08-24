@@ -6,7 +6,6 @@ from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.sources.nmc_weather import (
     find_city_code,
     list_districts,
-    nmc_weather_query,
     search_city_code,
 )
 

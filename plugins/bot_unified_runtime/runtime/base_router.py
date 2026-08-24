@@ -22,9 +22,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from plugins.bot_unified_runtime.capabilities.auto_send import (
     is_auto_send_command_text,
@@ -125,7 +126,7 @@ class RouteRule:
 
 def _admin_command_match(text: str) -> bool:
     stripped = text.strip()
-    return stripped == "/bot" or stripped.startswith("/bot ") or stripped.startswith("bot ")
+    return stripped == "/bot" or stripped.startswith(("/bot ", "bot "))
 
 
 def _resolve_alias(text: str, alias_resolver: Any) -> Any | None:
@@ -419,3 +420,4 @@ def extract_http_urls(text: str) -> list[str]:
         if raw not in candidates:
             candidates.append(raw)
     return candidates
+

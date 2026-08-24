@@ -1,8 +1,6 @@
 """群聊表情包库测试：去重、权重、命令解析、监听段提取。"""
 
-import asyncio
 import types
-from pathlib import Path
 
 from plugins.bot_unified_runtime.capabilities.meme_library import (
     build_meme_library_capability,
@@ -106,7 +104,9 @@ def test_remove_deletes_row_and_file(tmp_path):
 
 
 def test_vision_preset_resolves_env_ref(monkeypatch):
-    from plugins.bot_unified_runtime.sources.meme_library_listener import _resolve_vision_config
+    from plugins.bot_unified_runtime.sources.meme_library_listener import (
+        _resolve_vision_config,
+    )
 
     monkeypatch.setenv("BOT_API_KEY_VISION", "sk-secret")
     config = Config(

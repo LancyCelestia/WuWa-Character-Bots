@@ -11,13 +11,15 @@ from __future__ import annotations
 
 import functools
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from plugins.bot_unified_runtime.contracts.media import ParserRule, SourceInput
 from plugins.bot_unified_runtime.sources.parsers.cookies import (
     PlatformCookieProvider,
     build_platform_cookie_provider,
 )
+from plugins.bot_unified_runtime.sources.parsers.platforms_allcpp import parse_allcpp
 from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import (
     PlatformParse,
     parse_bilibili,
@@ -25,7 +27,6 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import (
 from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili_goods import (
     parse_bilibili_goods,
 )
-from plugins.bot_unified_runtime.sources.parsers.platforms_allcpp import parse_allcpp
 from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
     parse_douyin,
     parse_huajia,
@@ -39,7 +40,6 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
     parse_youtube,
 )
 from plugins.bot_unified_runtime.sources.parsers.platforms_lofter import parse_lofter
-from plugins.bot_unified_runtime.sources.parsers.platforms_pixiv import parse_pixiv
 from plugins.bot_unified_runtime.sources.parsers.platforms_music import (
     parse_apple_music,
     parse_kugou,
@@ -54,6 +54,7 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_music import (
     search_qqmusic,
     search_spotify,
 )
+from plugins.bot_unified_runtime.sources.parsers.platforms_pixiv import parse_pixiv
 from plugins.bot_unified_runtime.sources.registry import ParserRegistry
 
 _HTTP_URL_RE = re.compile(r"https?://[^\s<>\"'（）()【】\[\]{}]+")
@@ -335,7 +336,7 @@ def build_content_parser_registry(
         if parser_id in _PARSER_PROXY_PLATFORM and proxy:
             bound = _bind_proxy(bound, proxy)
         if parser_id == "xiaohongshu" and playwright_backend is not None:
-            bound = functools.partial(bound, playwright_backend=playwright_backend)
+            bound = functools.partial(bound, playwright_backend=playwright_backend)  # type: ignore[call-arg]
         parsers[parser_id] = bound
     return {"registry": registry, "parsers": parsers}
 

@@ -49,7 +49,7 @@ def _strip_html(value: str) -> str:
 
 def fetch_today_history(*, proxy: str = "", timeout: float = 10.0) -> list[HistoryEvent]:
     """拉取今天的「历史上的今天」条目（失败抛 ParseHttpError）。"""
-    now = datetime.now()
+    now = datetime.now()  # noqa: DTZ005 - 本地时间有意 naive。
     month = now.strftime("%m")
     day = now.strftime("%d")
     url = f"https://baike.baidu.com/cms/home/eventsOnHistory/{month}.json"
@@ -98,7 +98,7 @@ class TodayHistoryProvider:
             return
 
     def get_events(self, *, force: bool = False) -> list[HistoryEvent]:
-        today = datetime.now().strftime("%Y%m%d")
+        today = datetime.now().strftime("%Y%m%d")  # noqa: DTZ005 - 本地时间有意 naive。
         with self._lock:
             if not force:
                 cached = self._read_cache()
@@ -132,7 +132,7 @@ class TodayHistoryProvider:
 
 
 def format_history_text(events: list[HistoryEvent]) -> str:
-    now = datetime.now()
+    now = datetime.now()  # noqa: DTZ005 - 本地时间有意 naive。
     lines = [f"历史上的今天 {now.strftime('%m%d')}"]
     for event in events:
         lines.append(f"{event.year} {event.title}")

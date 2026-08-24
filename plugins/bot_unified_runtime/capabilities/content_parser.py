@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from plugins.bot_unified_runtime.capabilities.music import _media_parts_from_item
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -21,7 +22,6 @@ from plugins.bot_unified_runtime.sources.parsers import (
     build_source_input,
 )
 from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
-from plugins.bot_unified_runtime.capabilities.music import _media_parts_from_item
 
 
 def _clean_summary(summary: str) -> str:
@@ -55,38 +55,6 @@ def _render_parse_body(
 ) -> str:
     """标题/作者/数据/简介/媒体参数分区渲染，区块之间保留空行。"""
     lines: list[str] = []
-    kind_labels = {
-        "video": "视频",
-        "movie": "电影",
-        "tv": "电视剧",
-        "guochuang": "国创",
-        "documentary": "纪录片",
-        "variety": "综艺",
-        "music": "音乐",
-        "note": "笔记",
-        "post": "帖子",
-        "article": "文章",
-        "tweet": "推文",
-        "search": "搜索",
-        "live": "直播间",
-        "user": "UP主主页",
-        "collection": "收藏夹",
-        "dynamic": "动态",
-        "bangumi": "番剧",
-        "playlist": "播放列表",
-        "illust": "插画",
-        "event": "活动",
-        "tag": "标签",
-        "theme": "主题",
-        "page": "页面",
-        "painter": "画师主页",
-        "project": "企划",
-        "stall": "摊宣",
-        "artwork": "作品",
-        "goods": "约稿商品",
-        "work": "作品",
-    }
-    kind_label = kind_labels.get(item.item_kind, item.item_kind or "内容")
     lines.append(f"【标题】{item.title}")
     if item.author_name:
         lines.append(f"【作者】{item.author_name}")
@@ -211,8 +179,8 @@ def build_content_capability(
             png = render_backend.render_card(render_payload)
             if not png:
                 return None
-            from pathlib import Path
             import hashlib
+            from pathlib import Path
 
             target_dir = Path(card_dir)
             target_dir.mkdir(parents=True, exist_ok=True)
@@ -222,13 +190,15 @@ def build_content_capability(
             path = target_dir / f"card_{digest}.png"
             path.write_bytes(png)
             try:
-                from plugins.bot_unified_runtime.runtime.cache_policy import enforce_quota
+                from plugins.bot_unified_runtime.runtime.cache_policy import (
+                    enforce_quota,
+                )
 
                 enforce_quota(
                     target_dir,
                     max_bytes=int(getattr(config, "bot_card_cache_max_bytes", 0) or 0),
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: S110, BLE001 - 缓存配额清理失败不影响主链路。
                 pass
             return {"file": str(path)}
         except Exception:  # noqa: BLE001 - 卡片渲染失败不影响主链路。
@@ -386,7 +356,7 @@ def build_content_capability(
                     parse_depth=item.parse_depth,
                     body_preview=body,
                 )
-            except Exception:  # noqa: BLE001 - 历史失败不影响主链路。
+            except Exception:  # noqa: S110, BLE001 - 历史失败不影响主链路。
                 pass
         card_image = _render_card_image(item)
         images: list[dict] = []
@@ -417,3 +387,4 @@ def build_content_capability(
         return result
 
     return capability
+

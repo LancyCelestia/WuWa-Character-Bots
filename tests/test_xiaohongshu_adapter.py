@@ -10,7 +10,6 @@ import asyncio
 import pytest
 
 from plugins.bot_unified_runtime.contracts.subscription import (
-    SubscriptionCursor,
     SubscriptionSpec,
 )
 from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
@@ -254,8 +253,10 @@ def test_fetch_latest_falls_back_to_html_when_capture_json_is_empty():
     backend.fetch_results = [
         (
             "https://www.xiaohongshu.com/user/profile/user123",
-            '<html><body><script>{"noteId":"html-note-1","title":"HTML标题一"},'
-            '{"noteId":"html-note-2","title":"HTML标题二"}</script></body></html>',
+            (
+                '<html><body><script>{"noteId":"html-note-1","title":"HTML标题一"},'
+                '{"noteId":"html-note-2","title":"HTML标题二"}</script></body></html>'
+            ),
         )
     ]
     adapter = XiaohongshuAdapter(backend=backend)

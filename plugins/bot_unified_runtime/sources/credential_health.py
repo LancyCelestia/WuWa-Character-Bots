@@ -18,7 +18,6 @@ import json
 import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
 
 from plugins.bot_unified_runtime.sources.credentials import (
     CredentialStore,
@@ -134,7 +133,7 @@ class CredentialHealthChecker:
                 status = int(getattr(response, "status", 200) or 200)
         except urllib.error.HTTPError as exc:
             status = int(exc.code)
-        except Exception:
+        except Exception:  # noqa: BLE001 - 网络探测兜底，任意异常按网络失败降级。
             return CredentialHealthReport(
                 ref_id=report.ref_id,
                 kind=report.kind,
@@ -207,7 +206,7 @@ if __name__ == "__main__":
 
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined, union-attr]
         except (AttributeError, OSError):
             pass
 
@@ -219,7 +218,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     try:
         config = load_smoke_config(args.env)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 配置加载失败统一报错退出。
         print(f"config_error={exc}")
         raise SystemExit(2)
     reports = check_credentials_and_report(config, probe=args.probe)

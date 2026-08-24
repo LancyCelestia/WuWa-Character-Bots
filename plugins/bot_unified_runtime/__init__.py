@@ -1,15 +1,29 @@
 from __future__ import annotations
 
-from typing import Any
 import asyncio
 import re
+from typing import Any, cast
 
 from nonebot.adapters import Bot, Event
 from nonebot.typing import T_State
 
 from .audit import AuditRepository, build_audit_repository
 from .audit.file_logger import build_audit_with_file_log
+from .capabilities.content_parser import build_content_capability
+from .capabilities.download import build_download_capability
+from .capabilities.epic import build_epic_capability
+from .capabilities.meme import build_meme_capability
+from .capabilities.meme_library import build_meme_library_capability
+from .capabilities.music import build_music_capability
+from .capabilities.today_history import build_today_history_capability
+from .capabilities.weather import build_weather_capability
+from .capabilities.wiki import build_wiki_capability
+from .character import ConversationHistoryRecorder
 from .config import Config, translate_env_keys
+from .config_readiness import (
+    llm_generation_parameter_errors,
+    persona_context_preflight_errors,
+)
 from .contracts import (
     AuditRecord,
     CapabilityResult,
@@ -29,13 +43,25 @@ from .diagnostics import (
     build_runtime_diagnostic,
     build_why_result,
 )
-from .character import ConversationHistoryRecorder
-from .config_readiness import (
-    llm_generation_parameter_errors,
-    persona_context_preflight_errors,
-)
 from .llm import LLMProvider, OpenAICompatibleLLMProvider, StaticLLMProvider
 from .llm.model_router import build_model_router
+from .output.render_backends import build_render_backend
+from .runtime.alerts import AlertContent, send_admin_alert
+from .runtime.aliases import build_command_alias_resolver
+from .runtime.base_router import (
+    RouteKind,
+    classify_message_route,
+    list_route_rules_for_audit,
+    looks_like_command_text,
+)
+from .runtime.mentions import detect_name_mention
+from .runtime.natural_language import detect_natural_command
+from .runtime.question_intent import looks_like_question_text
+from .runtime.settings import (
+    build_instance_settings_manager,
+    effective_instance,
+    normalize_group_policy_mode,
+)
 from .sender import (
     OneBotV11Bot,
     ReceiptRepository,
@@ -43,61 +69,21 @@ from .sender import (
     drain_send_queue_once,
     send_onebot_v11,
 )
-from .runtime.aliases import CommandAliasResolver, build_command_alias_resolver
-from .runtime.base_router import (
-    RouteKind,
-    build_interface_manifest,
-    classify_message_route,
-    list_route_rules_for_audit,
-    looks_like_command_text,
-)
-from .runtime.alerts import AlertContent, send_admin_alert
-from .runtime.settings import (
-    RuntimeSettingsStore,
-    build_instance_settings_manager,
-    build_runtime_settings_store,
-    effective_instance,
-    normalize_group_policy_mode,
-)
 from .sources.credential_health import check_credentials_and_report
-from .sources.meme_search import build_meme_search_provider
+from .sources.downloader import MediaDownloader
 from .sources.meme_library import MemeLibraryStore
 from .sources.meme_library_listener import absorb_event_images
-from .sources.web_search import build_web_search_provider
-from .sources.parsers import extract_http_urls
+from .sources.meme_search import build_meme_search_provider
 from .sources.parse_history import (
     build_parse_history_result,
     build_parse_history_store,
 )
-from .sources.downloader import MediaDownloader
-from .output.render_backends import build_render_backend
-from .capabilities.content_parser import build_content_capability
-from .capabilities.subscribe import is_standalone_subscribe_command
-from .capabilities.music import (
-    build_music_capability,
-    is_music_command,
-    is_music_mode_command,
-)
-from .capabilities.download import build_download_capability
-from .capabilities.today_history import (
-    build_today_history_capability,
-    is_today_history_command,
-)
-from .capabilities.wiki import build_wiki_capability, is_wiki_command
-from .capabilities.epic import build_epic_capability, is_epic_command
-from .capabilities.weather import build_weather_capability, is_weather_command
-from .capabilities.meme import build_meme_capability, is_meme_command
-from .capabilities.meme_library import (
-    build_meme_library_capability,
-    is_meme_library_command,
-)
-from .runtime.mentions import detect_name_mention
-from .runtime.natural_language import detect_natural_command
-from .runtime.question_intent import looks_like_question_text
+from .sources.parsers import extract_http_urls
+from .sources.web_search import build_web_search_provider
 
 try:
     from nonebot.plugin import PluginMetadata
-except Exception:
+except Exception:  # noqa: BLE001 - 可选的 NoneBot 插件元数据缺失时使用本地降级实现。
 
     class PluginMetadata:  # type: ignore[no-redef]
         def __init__(self, **kwargs: object) -> None:
@@ -222,7 +208,7 @@ def _effective_route_text(event: Any) -> str:
     plain = event.get_plaintext().strip()
     try:
         segments = _extract_onebot_raw_segments(event)
-    except Exception:
+    except Exception:  # noqa: BLE001 - 路由段提取失败时降级为纯文本路由。
         segments = []
     urls = _urls_from_message_segments(segments)
     if not urls:
@@ -280,7 +266,7 @@ async def _forward_message_text(bot: Any, event: Any) -> str:
                     if text:
                         lines.append(text)
         return "\n".join(lines)
-    except Exception:
+    except Exception:  # noqa: BLE001 - 合并转发消息读取失败时返回空串。
         return ""
 
 
@@ -544,7 +530,9 @@ def _register_today_history_scheduler(
             raw_segments=[{"type": "text", "data": {"text": "历史上的今天"}}],
             mentions_bot=False,
         )
-        receipt = await pipeline.handle_async(
+        from .runtime import offload_capability
+
+        await pipeline.handle_async(
             message,
             offload_capability(capability),
             capability_id="bot.today_history",
@@ -723,7 +711,7 @@ def _should_silently_skip_chat_receipt(
         return False
     try:
         records = audit_logger.list_records(message.request_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - 审计日志查询失败时放行回执而非延误发送。
         return False
     return any(
         record.stage == "policy"
@@ -875,13 +863,11 @@ async def _run_capability_through_pipeline(
 def _register_nonebot_handlers() -> None:
     try:
         from nonebot import get_bots, get_driver, on_command, on_message
-        from nonebot.adapters import Bot, Event
         from nonebot.params import CommandArg
-        from nonebot.typing import T_State
-    except Exception:
+    except Exception:  # noqa: BLE001 - 无 NoneBot 环境时自然跳过注册。
         return
 
-    from .capabilities.auto_send import build_auto_send_preview_result, is_auto_send_command_text
+    from .capabilities.auto_send import build_auto_send_preview_result
     from .capabilities.chat import build_chat_capability
     from .capabilities.debug import (
         build_audit_query_result,
@@ -901,13 +887,15 @@ def _register_nonebot_handlers() -> None:
     )
     from .capabilities.echo import build_status_result
     from .capabilities.memory import is_memory_command_text, route_memory_command
-    from .capabilities.runtime_logs import build_logs_query_result
     from .capabilities.runtime_admin import (
         build_alert_check_result,
         build_runtime_admin_result,
     )
-    from .character import build_character_context_provider
-    from .character import build_conversation_history_provider
+    from .capabilities.runtime_logs import build_logs_query_result
+    from .character import (
+        build_character_context_provider,
+        build_conversation_history_provider,
+    )
     from .policy import (
         build_quiet_hours_checker,
         build_rate_limiter,
@@ -990,7 +978,7 @@ def _register_nonebot_handlers() -> None:
     def _first_online_bot() -> OneBotV11Bot | None:
         try:
             return next(iter(get_bots().values()), None)
-        except Exception:
+        except Exception:  # noqa: BLE001 - 获取在线 Bot 失败时降级为无可用 Bot。
             return None
 
     subscription_ctx: dict[str, Any] = {}
@@ -1013,14 +1001,14 @@ def _register_nonebot_handlers() -> None:
             driver = get_driver()
 
             @driver.on_bot_connect
-            async def _log_bot_connect(bot):  # noqa: F811
+            async def _log_bot_connect(bot):
                 runtime_event_log.info(
                     "bot_connected",
                     bot_id=str(getattr(bot, "self_id", "unknown")),
                 )
 
             @driver.on_bot_disconnect
-            async def _log_bot_disconnect(bot):  # noqa: F811
+            async def _log_bot_disconnect(bot):
                 runtime_event_log.warning(
                     "bot_disconnected",
                     bot_id=str(getattr(bot, "self_id", "unknown")),
@@ -1500,7 +1488,10 @@ def _register_nonebot_handlers() -> None:
 
     @subscribe_cmd.handle()
     async def _handle_standalone_subscribe(bot: Bot, event: Event) -> None:
-        from .capabilities.subscribe import build_subscribe_capability, normalize_subscribe_text
+        from .capabilities.subscribe import (
+            build_subscribe_capability,
+            normalize_subscribe_text,
+        )
 
         sub_ctx = subscription_ctx if isinstance(subscription_ctx, dict) else {}
 
@@ -1532,7 +1523,7 @@ def _register_nonebot_handlers() -> None:
             await subscribe_cmd.finish(receipt.public_message)
 
     @status.handle()
-    async def _handle_status(bot: Bot, event: Event, args=CommandArg()) -> None:
+    async def _handle_status(bot: Bot, event: Event, args=CommandArg()) -> None:  # noqa: B008 - NoneBot 依赖注入要求以 CommandArg() 作为默认参数。
 
         command_text = args.extract_plain_text().strip()
 
@@ -1817,7 +1808,7 @@ def _register_nonebot_handlers() -> None:
                 limit = int(getattr(config, "bot_web_search_max_results", 12) or 12)
                 try:
                     hits = provider.search(search_query, max_results=limit)
-                except Exception:
+                except Exception:  # noqa: BLE001 - 检索供应商失败时降级为空结果。
                     hits = []
                 if not hits:
                     return CapabilityResult(
@@ -1856,12 +1847,14 @@ def _register_nonebot_handlers() -> None:
 
         elif command_text == "download" or command_text.startswith("download "):
             capability_id = "bot.download"
-            download_command = command_text.removeprefix("download").strip()
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                return build_download_capability(
-                    config, downloader=downloader
-                )(message, _decision)
+                return cast(
+                    CapabilityResult,
+                    build_download_capability(config, downloader=downloader)(
+                        message, _decision
+                    ),
+                )
 
         elif command_text == "reply" or command_text.startswith("reply "):
             capability_id = "bot.reply"
@@ -2329,7 +2322,7 @@ def _register_nonebot_handlers() -> None:
         )
         receipt = await pipeline.handle_async(
             message,
-            offload_capability(capability),
+            offload_capability(cast(Any, capability)),
             capability_id="bot.today_history",
         )
         sent_request = _find_sent_request(send_queue, message.request_id)
@@ -2680,7 +2673,7 @@ def _register_subscription_scheduler(
                     mentions_bot=False,
                 )
                 try:
-                    receipt = await pipeline.handle_async(
+                    await pipeline.handle_async(
                         message,
                         offload_capability(_capability_for(text)),
                         capability_id="bot.subscribe",

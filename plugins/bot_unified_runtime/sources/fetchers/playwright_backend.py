@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 
@@ -21,7 +21,7 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 try:
     from playwright.sync_api import sync_playwright
 except Exception:  # noqa: BLE001
-    sync_playwright = None
+    sync_playwright = None  # type: ignore[assignment]
 
 
 def _close_runtime(browser: Any, playwright: Any) -> None:
@@ -29,12 +29,12 @@ def _close_runtime(browser: Any, playwright: Any) -> None:
     if browser is not None:
         try:
             browser.close()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 - 关闭失败尽力忽略，不影响主流程。
             pass
     if playwright is not None:
         try:
             playwright.stop()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 - 停止失败尽力忽略，不影响主流程。
             pass
 
 
@@ -65,13 +65,13 @@ class PlaywrightFetchBackend:
                 raise ParseHttpError("playwright 后端不可用")
             pw = sync_playwright()
             # 真实 playwright：sync_playwright() 返回 context manager，需 .start() 才有 .chromium。
-            playwright = pw.start() if hasattr(pw, "start") else pw
+            playwright = cast(Any, pw.start()) if hasattr(pw, "start") else cast(Any, pw)
             browser = playwright.chromium.launch(headless=True)
             context = browser.new_context()
             if cookies:
-                context.add_cookies(list(cookies))
+                context.add_cookies(cast(Any, list(cookies)))
             page = context.new_page()
-            page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+            page.goto(url, wait_until=cast(Any, wait_until), timeout=timeout_ms)
             html = page.content()
             return page.url, html
         except ParseHttpError:
@@ -98,11 +98,11 @@ class PlaywrightFetchBackend:
                 raise ParseHttpError("playwright 后端不可用")
             pw = sync_playwright()
             # 真实 playwright：sync_playwright() 返回 context manager，需 .start() 才有 .chromium。
-            playwright = pw.start() if hasattr(pw, "start") else pw
+            playwright = cast(Any, pw.start()) if hasattr(pw, "start") else cast(Any, pw)
             browser = playwright.chromium.launch(headless=True)
             context = browser.new_context()
             if cookies:
-                context.add_cookies(list(cookies))
+                context.add_cookies(cast(Any, list(cookies)))
             page = context.new_page()
 
             def _on_response(response: Any) -> None:
@@ -121,7 +121,7 @@ class PlaywrightFetchBackend:
                     payload = json.loads(body)
                     if isinstance(payload, dict):
                         collected.append(payload)
-                except Exception:  # noqa: BLE001 - 单条响应失败忽略。
+                except Exception:  # noqa: BLE001, S110 - 单条响应失败忽略。
                     pass
 
             page.on("response", _on_response)

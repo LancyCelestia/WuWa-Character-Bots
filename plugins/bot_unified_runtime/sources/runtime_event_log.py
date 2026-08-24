@@ -28,7 +28,7 @@ def _normalize_level(level: str) -> str:
 class _LogBridge(logging.Handler):
     """把 Python logging 记录转发到 RuntimeEventLog。"""
 
-    def __init__(self, target: "RuntimeEventLog") -> None:
+    def __init__(self, target: RuntimeEventLog) -> None:
         super().__init__()
         self._target = target
 
@@ -40,7 +40,7 @@ class _LogBridge(logging.Handler):
                 logger=record.name,
                 message=self.format(record)[:500],
             )
-        except Exception:  # noqa: BLE001 - 日志桥失败不影响业务。
+        except Exception:  # noqa: BLE001, S110 - 日志桥失败不影响业务。
             pass
 
 

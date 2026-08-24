@@ -1,6 +1,7 @@
+from typing import ClassVar
+
 from plugins.bot_unified_runtime.output.render_backends import (
     NullRenderBackend,
-    PlaywrightRenderBackend,
     build_render_backend,
 )
 from plugins.bot_unified_runtime.output.templates import (
@@ -32,7 +33,7 @@ def test_card_payload_from_parse():
         platform = "pixiv"
         author_name = "a"
         cover_url = "https://x/c.jpg"
-        stats = {"播放": 1, "music_card": {"type": "qq"}}
+        stats: ClassVar[dict] = {"播放": 1, "music_card": {"type": "qq"}}
         summary = "s"
         canonical_url = "https://x/1"
 
@@ -58,11 +59,11 @@ def test_content_capability_renders_card_image(tmp_path):
     from plugins.bot_unified_runtime.capabilities.content_parser import (
         build_content_capability,
     )
+    from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
     from plugins.bot_unified_runtime.sources.parsers import (
         build_content_parser_registry,
     )
     from plugins.bot_unified_runtime.sources.parsers.types import PlatformParse
-    from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 
     backend = FakeBackend()
 
@@ -110,4 +111,4 @@ def test_build_render_backend_falls_back_to_null():
     backend = build_render_backend("playwright")
     assert backend.name in {"playwright", "null"}
     assert build_render_backend("").name == "null"
-    assert isinstance(NullRenderBackend().render_card({}), type(None))
+    assert NullRenderBackend().render_card({}) is None

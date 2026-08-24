@@ -113,7 +113,7 @@ def _author_enrichment(mid: int, *, cookie_header: str = "") -> tuple[str, dict]
             if following is not None:
                 lines.append(f"关注 {_format_count(following)}")
                 counts["关注"] = following
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110 - 关系数接口失败仅跳过该统计。
         pass
     try:
         nav = http_get_json(
@@ -128,7 +128,7 @@ def _author_enrichment(mid: int, *, cookie_header: str = "") -> tuple[str, dict]
                 if value is not None:
                     lines.append(f"{label} {value}")
                     counts[stats_label] = value
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110 - 视频/专栏统计失败仅跳过。
         pass
     return " · ".join(lines), counts
 
@@ -149,7 +149,7 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
     desc = str(data.get("desc") or "").strip()
     if len(desc) > 500:
         desc = desc[:500] + "…"
-    stats = {}
+    stats: dict[str, object] = {}
     for key, label in (
         ("view", "播放"),
         ("danmaku", "弹幕"),
@@ -179,7 +179,7 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
         import datetime
 
         summary_lines.append(
-            f"发布时间：{datetime.datetime.fromtimestamp(data['pubdate']).strftime('%Y-%m-%d')}"
+            f"发布时间：{datetime.datetime.fromtimestamp(data['pubdate']).strftime('%Y-%m-%d')}"  # noqa: DTZ006 - 本地时间有意 naive。
         )
     if desc:
         summary_lines.append(f"简介：{desc}")
@@ -261,7 +261,7 @@ def _parse_live(room_id: str, url: str, *, cookie_header: str = "") -> PlatformP
     if room.get("live_start_time"):
         import datetime
 
-        stats["开播时间"] = datetime.datetime.fromtimestamp(
+        stats["开播时间"] = datetime.datetime.fromtimestamp(  # noqa: DTZ006 - 本地时间有意 naive。
             int(room["live_start_time"])
         ).strftime("%Y-%m-%d %H:%M")
     status = "直播中" if room.get("live_status") == 1 else "未开播"
@@ -271,7 +271,7 @@ def _parse_live(room_id: str, url: str, *, cookie_header: str = "") -> PlatformP
             f"分区：{room.get('parent_area_name') or ''} / {room.get('area_name') or ''}"
         )
     if room.get("tags"):
-        raw_tags = room.get("tags")
+        raw_tags = room.get("tags") or []
         if isinstance(raw_tags, str):
             tag_list = [tag for tag in re.split(r"[,，\s]+", raw_tags) if tag]
         else:
@@ -370,7 +370,7 @@ def _parse_live(room_id: str, url: str, *, cookie_header: str = "") -> PlatformP
             extra_start = _safe_int(extra_room.get("live_start_time"))
             if extra_start is not None:
                 live_detail["start_time"] = extra_start
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110 - 补充详情失败保留基础信息。
         pass
     return PlatformParse(
         platform="bilibili",
@@ -428,7 +428,7 @@ def _parse_space(mid: str, url: str, *, cookie_header: str = "") -> PlatformPars
                 value = _safe_int(data.get(key))
                 if value is not None:
                     stats[label] = value
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110 - 作品统计失败仅跳过。
         pass
     if nav_lines:
         summary_lines.append("作品：" + " · ".join(nav_lines))
@@ -477,7 +477,7 @@ def _parse_favlist(mid: str, url: str, *, cookie_header: str = "") -> PlatformPa
                 items.append(
                     f"- {media.get('title')}（{media.get('bvid') or media.get('id')}）"
                 )
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 - 收藏夹预览失败仅跳过。
             pass
         if items:
             summary_lines.append("内容预览（前20条）：\n" + "\n".join(items))
@@ -637,7 +637,7 @@ def _parse_opus(opus_id: str, url: str, *, cookie_header: str = "") -> PlatformP
     if opus.get("title"):
         summary_lines.append(f"标题：{opus.get('title')}")
     if opus.get("pics"):
-        summary_lines.append(f"图片数量：{len(opus.get('pics'))}")
+        summary_lines.append(f"图片数量：{len(opus.get('pics') or [])}")
         for pic in opus.get("pics") or []:
             pic_url = str((pic or {}).get("url") or "")
             if pic_url:
@@ -669,7 +669,7 @@ def _parse_opus(opus_id: str, url: str, *, cookie_header: str = "") -> PlatformP
         item_id=opus_id,
         item_kind="dynamic",
         title=str(desc[:40] or "动态"),
-        author_name=str((author_mod.get("name") or "")),
+        author_name=str(author_mod.get("name") or ""),
         summary="\n".join(summary_lines),
         cover_url=cover,
         canonical_url=(
@@ -717,10 +717,12 @@ def _parse_bangumi(page_url: str, *, cookie_header: str = "") -> PlatformParse:
     if not ss_match and not ep_match:
         return _bangumi_og_fallback(page_url, cookie_header=cookie_header)
     try:
-        if ss_match:
+        if ss_match is not None:
             view_url = f"{_BANGUMI_VIEW_API}?season_id={ss_match.group(1)}"
-        else:
+        elif ep_match is not None:
             view_url = f"{_BANGUMI_VIEW_API}?ep_id={ep_match.group(1)}"
+        else:
+            return _bangumi_og_fallback(page_url, cookie_header=cookie_header)
         payload = http_get_json(
             view_url,
             referer="https://www.bilibili.com/",

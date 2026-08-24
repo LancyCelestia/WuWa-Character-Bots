@@ -2,6 +2,7 @@ import sqlite3
 
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
 from plugins.bot_unified_runtime.capabilities.chat import build_chat_capability
+from plugins.bot_unified_runtime.character import build_character_context_provider
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import (
     AuditRecord,
@@ -11,6 +12,7 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
     SessionType,
 )
+from plugins.bot_unified_runtime.contracts.character import ContextBundle
 from plugins.bot_unified_runtime.diagnostics import (
     RecentDiagnosticsStore,
     SQLiteDiagnosticsRepository,
@@ -18,10 +20,15 @@ from plugins.bot_unified_runtime.diagnostics import (
     build_runtime_diagnostic,
     build_why_result,
 )
-from plugins.bot_unified_runtime.llm import LLMProviderError, LLMReply, StaticLLMProvider
-from plugins.bot_unified_runtime.character import build_character_context_provider
-from plugins.bot_unified_runtime.contracts.character import ContextBundle
-from plugins.bot_unified_runtime.policy import build_reply_budget_settings, build_role_settings
+from plugins.bot_unified_runtime.llm import (
+    LLMProviderError,
+    LLMReply,
+    StaticLLMProvider,
+)
+from plugins.bot_unified_runtime.policy import (
+    build_reply_budget_settings,
+    build_role_settings,
+)
 from plugins.bot_unified_runtime.runtime import RuntimePipeline
 from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
@@ -323,7 +330,7 @@ def _run_context_error_for_diagnostic(config: Config):
         runtime_enabled=config.bot_runtime_enabled,
     )
     capability = build_chat_capability(
-        character_provider=BrokenCharacterProvider(),
+        character_provider=BrokenCharacterProvider(),  # type: ignore[arg-type]
         llm_provider=StaticLLMProvider(model=config.bot_chat_model),
     )
     message = IncomingMessage(

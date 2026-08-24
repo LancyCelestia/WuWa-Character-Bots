@@ -21,16 +21,16 @@ def test_solar_term_of_known_dates():
 
 
 def test_holiday_of_default_table():
-    assert holiday_of(datetime(2026, 2, 17)) == "春节"
-    assert holiday_of(datetime(2026, 10, 1)) == "国庆节"
-    assert holiday_of(datetime(2026, 6, 19)) == "端午节"
-    assert holiday_of(datetime(2026, 3, 12)) == ""
+    assert holiday_of(datetime(2026, 2, 17)) == "春节"  # noqa: DTZ001 - 测试有意 naive 日期
+    assert holiday_of(datetime(2026, 10, 1)) == "国庆节"  # noqa: DTZ001 - 测试有意 naive 日期
+    assert holiday_of(datetime(2026, 6, 19)) == "端午节"  # noqa: DTZ001 - 测试有意 naive 日期
+    assert holiday_of(datetime(2026, 3, 12)) == ""  # noqa: DTZ001 - 测试有意 naive 日期
 
 
 def test_holiday_table_override():
     table = (("03-12", "植树节"),)
-    assert holiday_of(datetime(2026, 3, 12), table) == "植树节"
-    assert holiday_of(datetime(2026, 10, 1), table) == ""
+    assert holiday_of(datetime(2026, 3, 12), table) == "植树节"  # noqa: DTZ001 - 测试有意 naive 日期
+    assert holiday_of(datetime(2026, 10, 1), table) == ""  # noqa: DTZ001 - 测试有意 naive 日期
 
 
 def test_rule_based_temporal_provider_snapshot(tmp_path):

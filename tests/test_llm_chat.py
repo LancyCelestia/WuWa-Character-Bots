@@ -1437,7 +1437,9 @@ def test_prompt_marks_unlimited_messages_and_world_explain_rule():
 
 
 def test_web_search_prompt_enforces_fact_first_and_systemic_view():
-    from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt_with_diagnostics
+    from plugins.bot_unified_runtime.capabilities.chat import (
+        build_chat_prompt_with_diagnostics,
+    )
     from plugins.bot_unified_runtime.character import NullCharacterContextProvider
     from plugins.bot_unified_runtime.contracts import WebSearchContext, WebSearchHit
 
@@ -1464,8 +1466,7 @@ def test_web_search_prompt_enforces_fact_first_and_systemic_view():
             )
         }
     )
-    _, diagnostics = build_chat_prompt_with_diagnostics(bundle)
-    system_prompt = diagnostics.system_prompt_chars and "" or ""
+    _, _diagnostics = build_chat_prompt_with_diagnostics(bundle)
     # 直接读取生成的 prompt 校验关键指令
     from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
 

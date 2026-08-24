@@ -21,11 +21,11 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
@@ -195,13 +195,15 @@ def build_meme_capability(
             path = out_dir / f"meme_{key}_{digest}.png"
             path.write_bytes(bytes(content))
             try:
-                from plugins.bot_unified_runtime.runtime.cache_policy import enforce_quota
+                from plugins.bot_unified_runtime.runtime.cache_policy import (
+                    enforce_quota,
+                )
 
                 enforce_quota(
                     out_dir,
                     max_bytes=int(getattr(config, "bot_meme_cache_max_bytes", 0) or 0),
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: S110, BLE001 - 缓存配额清理失败不影响主链路。
                 pass
         except OSError:
             return CapabilityResult(
@@ -248,3 +250,4 @@ def _service_down_result(
         body=hint,
         audit_tags=["meme", "meme_backend_unavailable"],
     )
+

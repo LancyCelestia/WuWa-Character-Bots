@@ -37,10 +37,10 @@ def _group(text, *, mention=False, gid="100"):
 
 
 def _settings(**kwargs):
-    defaults = dict(
-        extra_command_check=lambda text: text.startswith("/") or "帮我" in text,
-        natural_chat_check=lambda text: "？" in text or "?" in text or text.endswith("吗"),
-    )
+    defaults = {
+        "extra_command_check": lambda text: text.startswith("/") or "帮我" in text,
+        "natural_chat_check": lambda text: "？" in text or "?" in text or text.endswith("吗"),
+    }
     defaults.update(kwargs)
     return PolicySettings(**defaults)
 

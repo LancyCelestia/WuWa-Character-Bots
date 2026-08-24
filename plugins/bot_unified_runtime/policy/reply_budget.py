@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pydantic import Field, field_validator
 
-from plugins.bot_unified_runtime.contracts import IncomingMessage, RiskLevel, SessionType
+from plugins.bot_unified_runtime.contracts import (
+    IncomingMessage,
+    RiskLevel,
+    SessionType,
+)
 from plugins.bot_unified_runtime.contracts.runtime import StrictBaseModel
 
 BASE_CONTEXT_BUDGET = 2048

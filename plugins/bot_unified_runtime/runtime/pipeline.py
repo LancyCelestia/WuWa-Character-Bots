@@ -11,8 +11,8 @@ from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     DeliveryReceipt,
     IncomingMessage,
-    PrivacyLevel,
     PolicyEvaluation,
+    PrivacyLevel,
     ReceiptState,
     ReviewResult,
     RiskLevel,
@@ -227,13 +227,13 @@ class RuntimePipeline:
     def _append_audit_safely(self, record: AuditRecord) -> None:
         try:
             self.audit_logger.append(record)
-        except Exception:
+        except Exception:  # noqa: BLE001 - 审计写入失败时静默跳过，不阻断流水线。
             return
 
     def _record_receipt_safely(self, receipt: DeliveryReceipt) -> DeliveryReceipt:
         try:
             return self.receipt_repository.record(receipt)
-        except Exception:
+        except Exception:  # noqa: BLE001 - 回执持久化失败时返回原始回执降级。
             return receipt
 
     def _prepare(
@@ -532,7 +532,7 @@ class RuntimePipeline:
                 prepared,
                 capability(prepared.message, prepared.decision),
             )
-        except Exception as exc:  # pragma: no cover - integration fallback.
+        except Exception as exc:  # pragma: no cover - integration fallback.  # noqa: BLE001 - 能力调用异常统一转为内部错误回执。
             return self._internal_error(message, capability_id, exc)
 
     async def handle_async(
@@ -547,5 +547,6 @@ class RuntimePipeline:
                 return prepared
             result = await capability(prepared.message, prepared.decision)
             return self._complete(prepared, result)
-        except Exception as exc:  # pragma: no cover - integration fallback.
+        except Exception as exc:  # pragma: no cover - integration fallback.  # noqa: BLE001 - 能力调用异常统一转为内部错误回执。
             return self._internal_error(message, capability_id, exc)
+

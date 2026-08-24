@@ -75,7 +75,7 @@ def parse_netscape_cookie_file(path: str | Path) -> list[CookieEntry]:
             parts = line.split("\t")
             if len(parts) < 7:
                 continue
-            domain, flag, cookie_path, secure, expires_raw, name, value = parts[:7]
+            domain, _, cookie_path, _, expires_raw, name, value = parts[:7]
             try:
                 expires = int(expires_raw)
             except ValueError:

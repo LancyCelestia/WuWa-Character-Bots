@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from collections import deque
-from datetime import UTC, datetime
 import json
-from pathlib import Path
 import sqlite3
-from typing import Iterable
+from collections import deque
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Protocol
 
 from pydantic import Field
 
-from plugins.bot_unified_runtime.config_readiness import run_config_smoke
 from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.config_readiness import run_config_smoke
 from plugins.bot_unified_runtime.contracts import (
     AuditRecord,
     CapabilityResult,
@@ -458,7 +458,7 @@ class SQLiteDiagnosticsRepository:
             emotion_signals=_row_int(row, "emotion_signals"),
             llm_status=str(row["llm_status"]),
             llm_error_kind=str(row["llm_error_kind"])
-            if "llm_error_kind" in row.keys()
+            if "llm_error_kind" in row.keys()  # noqa: SIM118 - sqlite3.Row 的 in 按值匹配，必须用 keys()
             else "",
             llm_provider=str(row["llm_provider"]),
             llm_model=str(row["llm_model"]),
@@ -683,7 +683,7 @@ def _load_list(value: str) -> list[str]:
 
 
 def _row_int(row: sqlite3.Row, column: str) -> int:
-    if column not in row.keys():
+    if column not in row.keys():  # noqa: SIM118 - sqlite3.Row 的 in 按值匹配
         return 0
     value = row[column]
     if isinstance(value, bool):
@@ -696,7 +696,7 @@ def _row_int(row: sqlite3.Row, column: str) -> int:
 
 
 def _row_list(row: sqlite3.Row, column: str) -> list[str]:
-    if column not in row.keys():
+    if column not in row.keys():  # noqa: SIM118 - sqlite3.Row 的 in 按值匹配
         return []
     try:
         return _load_list(str(row[column]))
@@ -705,7 +705,7 @@ def _row_list(row: sqlite3.Row, column: str) -> list[str]:
 
 
 def _row_text(row: sqlite3.Row, column: str) -> str:
-    if column not in row.keys():
+    if column not in row.keys():  # noqa: SIM118 - sqlite3.Row 的 in 按值匹配
         return ""
     return str(row[column])
 

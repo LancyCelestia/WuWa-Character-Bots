@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
@@ -78,7 +79,7 @@ def build_alert_capability_result(
 
 
 def send_admin_alert(
-    pipeline: object,
+    pipeline: Any,
     admin_ids: list[str],
     alert: AlertContent,
 ) -> list[str]:
@@ -112,8 +113,9 @@ def send_admin_alert(
                 capability,
                 capability_id="bot.alert",
             )
-        except Exception:
+        except Exception:  # noqa: S112, BLE001 - 单个管理员告警投递失败跳过，继续处理其余管理员。
             continue
         if receipt.state.value in {"sent", "accepted", "queued", "rendered"}:
             sent.append(admin_id)
     return sent
+

@@ -70,7 +70,7 @@ def _segment_urls(message_segments: list[Any]) -> list[str]:
     return urls
 
 
-async def _download_once(url: str, *, max_bytes: int, proxy: str) -> bytes | None:
+async def _download_once(url: str, *, max_bytes: int, proxy: str) -> tuple[bytes, str] | None:
     import httpx
 
     client_kwargs: dict[str, Any] = {
@@ -81,8 +81,9 @@ async def _download_once(url: str, *, max_bytes: int, proxy: str) -> bytes | Non
     if proxy:
         client_kwargs["proxy"] = proxy
     try:
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            async with client.stream("GET", url) as response:
+        async with httpx.AsyncClient(**client_kwargs) as client, client.stream(
+            "GET", url
+        ) as response:
                 if response.status_code != 200:
                     return None
                 content_type = response.headers.get("content-type", "")
@@ -96,7 +97,7 @@ async def _download_once(url: str, *, max_bytes: int, proxy: str) -> bytes | Non
                 if not chunks:
                     return None
                 return b"".join(chunks), content_type
-    except Exception:
+    except Exception:  # noqa: BLE001 - 下载异常静默返回 None。
         return None
 
 
@@ -150,7 +151,7 @@ async def _tag_with_vlm(store: Any, config: Any, md5: str, image_bytes: bytes) -
                 return
             body = response.json()
             content = (body.get("choices") or [{}])[0].get("message", {}).get("content", "")
-    except Exception:
+    except Exception:  # noqa: BLE001 - 打标接口异常静默放弃本张图片。
         return
     try:
         match = re.search(r"\{.*\}", content, re.DOTALL)
@@ -174,7 +175,7 @@ async def _tag_with_vlm(store: Any, config: Any, md5: str, image_bytes: bytes) -
             persona_hint=str(tags.get("persona_hint", "common"))[:24],
             nsfw_score=nsfw_score,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - 入库异常静默忽略。
         return
 
 
@@ -196,7 +197,7 @@ async def absorb_event_images(bot: Any, event: Any, config: Any, store: Any) -> 
 
     try:
         segments = list(event.get_message())
-    except Exception:
+    except Exception:  # noqa: BLE001 - 消息提取失败按无图片处理。
         segments = []
     urls = _segment_urls(segments)
     if not urls:
@@ -234,6 +235,6 @@ async def absorb_event_images(bot: Any, event: Any, config: Any, store: Any) -> 
             max_files=int(getattr(config, "bot_meme_library_max_files", 20000) or 0),
             max_age_days=int(getattr(config, "bot_meme_library_max_age_days", 30) or 0),
         )
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - 清理失败不影响入库结果。
         pass
     return {"handled": True, "reason": "saved", "saved": saved}

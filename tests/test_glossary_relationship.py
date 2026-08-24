@@ -12,7 +12,6 @@ from plugins.bot_unified_runtime.character.shared_group import (
     NullSharedGroupContextProvider,
 )
 from plugins.bot_unified_runtime.contracts.character import (
-    RelationshipContext,
     SharedGroupContext,
 )
 

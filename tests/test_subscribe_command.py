@@ -88,7 +88,7 @@ class FakeAdapter:
 
     def __init__(self, items=(), *, fail_with: str | None = None):
         self.items = [*items]
-        self.resolved_urls = []
+        self.resolved_urls: list[str] = []
         self.fail_with = fail_with
 
     def resolve_target(self, url: str) -> dict:

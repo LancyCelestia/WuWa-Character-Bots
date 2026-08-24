@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import re
 
-from plugins.bot_unified_runtime.contracts.media import ParserMatch, ParserRule, SourceInput
+from plugins.bot_unified_runtime.contracts.media import (
+    ParserMatch,
+    ParserRule,
+    SourceInput,
+)
 
 
 class ParserRegistry:

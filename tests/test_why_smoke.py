@@ -1,6 +1,6 @@
+from plugins.bot_unified_runtime import smoke
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import SessionType
-from plugins.bot_unified_runtime import smoke
 from plugins.bot_unified_runtime.llm import LLMProviderError, LLMReply
 from plugins.bot_unified_runtime.smoke import run_why_smoke
 

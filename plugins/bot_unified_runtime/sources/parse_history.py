@@ -11,6 +11,9 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+from plugins.bot_unified_runtime.contracts import CapabilityResult
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS parse_history (
@@ -184,14 +187,13 @@ def build_parse_history_store(config: object) -> object:
 
 
 def build_parse_history_result(
-    store: object,
+    store: Any,
     *,
     request_id: str = "",
     query: str = "",
-) -> object:
+) -> CapabilityResult:
     """`/bot parse [数量]` 查询结果（CapabilityResult）。"""
     from plugins.bot_unified_runtime.contracts import (
-        CapabilityResult,
         PrivacyLevel,
         RiskLevel,
     )

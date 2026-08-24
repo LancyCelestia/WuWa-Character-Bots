@@ -406,7 +406,7 @@ def parse_spotify(url: str, *, cookie_header: str = "", proxy: str = "") -> Plat
         raise ParseHttpError(f"spotify: no track id in {url}")
     kind, item_id = match.group(1), match.group(2)
     try:
-        final_url, payload = http_get_text(
+        _, payload = http_get_text(
             f"https://open.spotify.com/oembed?url={urllib.parse.quote(url)}",
             timeout=8,
             proxy=proxy,

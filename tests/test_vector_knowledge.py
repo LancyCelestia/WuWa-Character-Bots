@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from pathlib import Path
 
 import httpx
 import pytest
@@ -89,7 +88,7 @@ def test_sync_chunks_is_idempotent_for_unchanged_content(tmp_path):
     assert second == first
     for index, (content, row) in enumerate(zip(paragraphs, first), start=1):
         assert row["chunk_id"] == hashlib.sha1(
-            f"{knowledge_file.as_posix()}:{index}:{content}".encode("utf-8")
+            f"{knowledge_file.as_posix()}:{index}:{content}".encode()
         ).hexdigest()
         assert row["content_hash"] == hashlib.sha1(content.encode("utf-8")).hexdigest()
         assert row["source_id"] == knowledge_file.stem
@@ -913,7 +912,7 @@ def _fixed_provider(vectors):
 
 
 def test_ann_index_build_and_retrieve(tmp_path):
-    faiss = __import__("pytest").importorskip("faiss")
+    __import__("pytest").importorskip("faiss")
     db = tmp_path / "k.sqlite3"
     knowledge_file = tmp_path / "kb.md"
     knowledge_file.write_text("甲段" * 30 + "\n\n" + "乙段" * 30, encoding="utf-8")
@@ -953,7 +952,7 @@ def test_ann_missing_falls_back_to_bruteforce(tmp_path):
 
 
 def test_ann_signature_mismatch_falls_back(tmp_path):
-    faiss = __import__("pytest").importorskip("faiss")
+    __import__("pytest").importorskip("faiss")
     db = tmp_path / "k.sqlite3"
     knowledge_file = tmp_path / "kb.md"
     knowledge_file.write_text("甲段" * 30 + "\n\n" + "乙段" * 30, encoding="utf-8")
@@ -1127,7 +1126,7 @@ def test_fts_missing_falls_back_to_vector_only(tmp_path, monkeypatch):
 
 def test_build_ann_index_also_builds_fts(tmp_path):
     """knowledge-sync 构建 ANN 后应一并幂等建好 FTS 关键词索引。"""
-    faiss = __import__("pytest").importorskip("faiss")
+    __import__("pytest").importorskip("faiss")
     knowledge_file = tmp_path / "kb.md"
     knowledge_file.write_text("甲段" * 30 + "\n\n" + "乙段" * 30, encoding="utf-8")
     provider = _fixed_provider([[1.0, 0.0], [0.0, 1.0]])

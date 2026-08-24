@@ -123,7 +123,7 @@ def parse_xiaohongshu(
             item = _xhs_from_initial_state(text, final_url)
             if item is not None:
                 return item
-        except Exception:  # noqa: BLE001 - 深解析失败回退浅解析。
+        except Exception:  # noqa: BLE001, S110 - 深解析失败回退浅解析。
             pass
     return _og_scrape(
         final_url,
@@ -152,7 +152,7 @@ def _xhs_initial_state_payload(html: str) -> dict | None:
             payload = json.loads(candidate)
             if isinstance(payload, dict):
                 return payload
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S112 - 候选载荷解析失败继续下一候选。
             continue
     return None
 
@@ -176,7 +176,7 @@ def _xhs_search_result_card(url: str, *, cookie_header: str = "") -> PlatformPar
                 or str((search.get("searchContext") or {}).get("keyword") or "")
                 or str(hint.get("title") or "")
             ).strip()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 - 关键词提取失败仅给入口卡。
             pass
     title = f"小红书搜索：{keyword}" if keyword else "小红书搜索结果页"
     return PlatformParse(
@@ -460,12 +460,12 @@ def _xhs_user_profile_card(
         item = _xhs_user_profile_from_initial_state(html, url, user_id)
         if item is not None:
             return item
-    except Exception:  # noqa: BLE001 - 页面状态解析失败回退 og。
+    except Exception:  # noqa: BLE001, S110 - 页面状态解析失败回退 og。
         pass
     return _xhs_user_profile_shallow(url, cookie_header)
 
 
-def parse_douyin(url: str, *, cookie_header: str = "") -> PlatformParse:
+def parse_douyin(url: str, *, cookie_header: str = "", proxy: str = "") -> PlatformParse:
     """抖音：cookie 有效时从 _ROUTER_DATA 深解析（标题/作者/封面/互动）；
     页面被反爬验证拦截时给「已保留原链接」的降级卡片。"""
     final_url = url
@@ -489,7 +489,7 @@ def parse_douyin(url: str, *, cookie_header: str = "") -> PlatformParse:
             if len(text) < 2000:
                 # 极小页面通常是反爬验证页，直接降级，不再走 og。
                 raise ParseHttpError("douyin: anti-bot challenge page")
-        except Exception:  # noqa: BLE001 - 深解析失败回退浅解析。
+        except Exception:  # noqa: BLE001, S110 - 深解析失败回退浅解析。
             pass
     og_item = None
     try:
@@ -533,7 +533,7 @@ def _douyin_from_router_data(html: str, url: str) -> PlatformParse | None:
     except Exception:  # noqa: BLE001
         return None
     loader = (payload or {}).get("loaderData") or {}
-    for key, value in loader.items():
+    for value in loader.values():
         if not isinstance(value, dict):
             continue
         items = (value.get("videoInfoRes") or {}).get("item_list") or []
@@ -679,7 +679,7 @@ def parse_twitter_x(url: str, *, cookie_header: str = "", proxy: str = "") -> Pl
                     stats=stats,
                     parse_depth="deep",
                 )
-        except Exception:  # noqa: BLE001 - 聚合接口失败回退 og。
+        except Exception:  # noqa: BLE001, S110 - 聚合接口失败回退 og。
             pass
     return _og_scrape(
         url,

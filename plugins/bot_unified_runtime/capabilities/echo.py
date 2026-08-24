@@ -4,7 +4,13 @@ from pathlib import Path
 
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.config_readiness import run_config_smoke
-from plugins.bot_unified_runtime.contracts import CapabilityResult, PrivacyLevel, RiskLevel, SendPolicy, new_request_id
+from plugins.bot_unified_runtime.contracts import (
+    CapabilityResult,
+    PrivacyLevel,
+    RiskLevel,
+    SendPolicy,
+    new_request_id,
+)
 from plugins.bot_unified_runtime.policy.roles import build_role_settings
 from plugins.bot_unified_runtime.runtime import RuntimeControlState
 

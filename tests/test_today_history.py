@@ -1,6 +1,5 @@
 from plugins.bot_unified_runtime.capabilities.today_history import (
     _load_push_table,
-    _save_push_table,
     build_today_history_capability,
     is_today_history_command,
 )
@@ -103,7 +102,6 @@ def test_command_detection():
 
 
 def test_provider_cache(tmp_path, monkeypatch):
-    from plugins.bot_unified_runtime.sources.today_history import fetch_today_history
 
     cache_file = tmp_path / "cache.json"
     monkeypatch.setattr(
@@ -121,7 +119,9 @@ def test_provider_cache(tmp_path, monkeypatch):
 
 
 def test_today_history_accepts_slash_prefix():
-    from plugins.bot_unified_runtime.capabilities.today_history import is_today_history_command
+    from plugins.bot_unified_runtime.capabilities.today_history import (
+        is_today_history_command,
+    )
 
     assert is_today_history_command("/历史上的今天") is True
     assert is_today_history_command("！历史上的今天 状态") is True

@@ -102,7 +102,7 @@ class IncomingMessage(StrictBaseModel):
     debug_id: str = Field(default_factory=new_debug_id)
 
     @model_validator(mode="after")
-    def default_privacy_by_session(self) -> "IncomingMessage":
+    def default_privacy_by_session(self) -> IncomingMessage:
         if self.privacy_level is None:
             self.privacy_level = (
                 PrivacyLevel.GROUP

@@ -134,13 +134,17 @@ def fetch_nmc_weather(stationid: str, *, proxy: str = "", timeout: float = 10.0)
         f"【{station.get('province', '')}{station.get('city', '')}天气】",
         f"🕒 发布时间：{real.get('publish_time') if known(real.get('publish_time')) else '❓'}",
         f"🌤 当前天气：{weather.get('info') if known(weather.get('info')) else '❓'}",
-        f"🌡 温度：{_format_value(weather.get('temperature'), '{}℃')}"
-        f"（体感 {_format_value(weather.get('feelst'), '{}℃')}）",
+        (
+            f"🌡 温度：{_format_value(weather.get('temperature'), '{}℃')}"
+            f"（体感 {_format_value(weather.get('feelst'), '{}℃')}）"
+        ),
         f"📈 温差：{_format_value(weather.get('temperatureDiff'), '{}℃')}",
         f"💧 湿度：{_format_value(weather.get('humidity'), '{}%')}",
-        f"🌬 风力：{wind.get('direct') if known(wind.get('direct')) else '❓'}"
-        f"{wind.get('power') if known(wind.get('power')) else '❓'}"
-        f"（{_format_value(wind.get('speed'), '{}m/s')}）",
+        (
+            f"🌬 风力：{wind.get('direct') if known(wind.get('direct')) else '❓'}"
+            f"{wind.get('power') if known(wind.get('power')) else '❓'}"
+            f"（{_format_value(wind.get('speed'), '{}m/s')}）"
+        ),
         f"☔ 降水量：{_format_value(weather.get('rain'), '{}mm')}",
         f"📊 舒适度：{_comfort_desc(weather.get('icomfort'))}",
         f"🌅 日出：{sunrise_sunset.get('sunrise') if known(sunrise_sunset.get('sunrise')) else '❓'}",

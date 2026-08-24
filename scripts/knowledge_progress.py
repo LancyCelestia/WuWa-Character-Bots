@@ -1,6 +1,5 @@
 """查看向量知识库嵌入进度：python scripts/knowledge_progress.py"""
 import sqlite3
-import sys
 from pathlib import Path
 
 DB = Path(__file__).resolve().parents[1] / "data" / "knowledge_embeddings.sqlite3"
@@ -13,7 +12,7 @@ embedded = con.execute(
 con.close()
 percent = embedded * 100 // total if total else 0
 print(f"embedded={embedded} total={total} percent={percent}%")
-if embedded >= total and total > 0:
+if embedded >= total > 0:
     print("完成：全部切片已向量化。")
 else:
     print(f"进行中：还剩 {total - embedded} 条。")

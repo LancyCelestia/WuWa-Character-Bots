@@ -1,6 +1,5 @@
 """卡片/HTML 链接与合并转发读取辅助函数测试。"""
 
-import types
 
 from plugins.bot_unified_runtime import (
     _effective_route_text,

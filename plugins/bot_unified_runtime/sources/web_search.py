@@ -96,13 +96,13 @@ def _fetch(
         response = client.get(url)
         response.raise_for_status()
         return response.text
-    except Exception:
+    except Exception:  # noqa: BLE001 - 请求失败静默返回 None。
         return None
     finally:
         if owns_client and client is not None:
             try:
                 client.close()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - 连接关闭失败忽略。
                 pass
 
 
@@ -123,13 +123,13 @@ async def _fetch_async(
         response = await client.get(url)
         response.raise_for_status()
         return response.text
-    except Exception:
+    except Exception:  # noqa: BLE001 - 请求失败静默返回 None。
         return None
     finally:
         if owns_client and client is not None:
             try:
                 await client.aclose()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - 连接关闭失败忽略。
                 pass
 
 
@@ -185,9 +185,10 @@ def _is_junk(hit: WebSearchHit) -> bool:
     if domain in _JUNK_DOMAINS:
         return True
     text = _hit_text(hit)
-    if any(marker in text for marker in ("汉语汉字", "拼音", "笔顺", "部首", "新华字典")):
-        return True
-    return False
+    return any(
+        marker in text
+        for marker in ("汉语汉字", "拼音", "笔顺", "部首", "新华字典")
+    )
 
 
 def _filter_relevant(hits: list[WebSearchHit], query: str) -> list[WebSearchHit]:
@@ -251,7 +252,7 @@ class DuckDuckGoWebSearchProvider:
         if client is not None and not client.is_closed:
             try:
                 client.close()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - 连接关闭失败忽略。
                 pass
 
     def search(self, query: str, *, max_results: int = 3) -> list[WebSearchHit]:
@@ -265,7 +266,7 @@ class DuckDuckGoWebSearchProvider:
                 timeout_seconds=self.timeout_seconds,
                 client=self._get_client(),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - 搜索失败静默返回空结果。
             return []
         if not html_text:
             return []
@@ -291,7 +292,7 @@ class DuckDuckGoWebSearchProvider:
                 timeout_seconds=self.timeout_seconds,
                 client=client,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - 搜索失败静默返回空结果。
             return []
         if not html_text:
             return []
@@ -327,7 +328,7 @@ class BingWebSearchProvider:
         if client is not None and not client.is_closed:
             try:
                 client.close()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - 连接关闭失败忽略。
                 pass
 
     def search(self, query: str, *, max_results: int = 3) -> list[WebSearchHit]:
@@ -341,7 +342,7 @@ class BingWebSearchProvider:
                 timeout_seconds=self.timeout_seconds,
                 client=self._get_client(),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - 搜索失败静默返回空结果。
             return []
         if not html_text:
             return []
@@ -367,7 +368,7 @@ class BingWebSearchProvider:
                 timeout_seconds=self.timeout_seconds,
                 client=client,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - 搜索失败静默返回空结果。
             return []
         if not html_text:
             return []
@@ -394,7 +395,7 @@ class ChainedWebSearchProvider:
         for provider in self.providers:
             try:
                 hits = provider.search(query, max_results=max_results)
-            except Exception:
+            except Exception:  # noqa: BLE001 - 单提供器失败回退下一提供器。
                 hits = []
             if hits:
                 return hits
@@ -415,7 +416,7 @@ class ChainedWebSearchProvider:
                     hits = await method(query, max_results=max_results, client=client)
                 else:
                     hits = provider.search(query, max_results=max_results)
-            except Exception:
+            except Exception:  # noqa: BLE001 - 单提供器失败回退下一提供器。
                 hits = []
             if hits:
                 return hits
@@ -428,7 +429,7 @@ class ChainedWebSearchProvider:
             if callable(close):
                 try:
                     close()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 - 关闭失败忽略。
                     pass
 
 
@@ -487,14 +488,14 @@ async def search_async(
         async with client:
             return await provider.search_async(
                 query, max_results=max_results, client=client
-            )
-    except Exception:
+                )
+    except Exception:  # noqa: BLE001 - 搜索失败静默返回空结果。
         return []
     finally:
         if client is not None and not client.is_closed:
             try:
                 await client.aclose()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - 连接关闭失败忽略。
                 pass
 
 
@@ -526,14 +527,14 @@ async def search_multi_async(
                     for query in query_list
                 ],
                 return_exceptions=True,
-            )
-    except Exception:
+                )
+    except Exception:  # noqa: BLE001 - 搜索失败静默返回空结果。
         return []
     finally:
         if client is not None and not client.is_closed:
             try:
                 await client.aclose()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - 连接关闭失败忽略。
                 pass
     merged: list[WebSearchHit] = []
     seen: set[str] = set()

@@ -94,7 +94,7 @@ def http_get(
             if response.headers.get("Content-Encoding", "").lower() == "gzip":
                 payload = gzip.decompress(payload)
             return response.geturl(), payload
-    except Exception as exc:  # noqa: BLE001 - 统一包装成解析层错误。
+    except Exception as exc:
         raise ParseHttpError(f"GET {url} failed: {type(exc).__name__}") from exc
 
 
@@ -135,7 +135,7 @@ def http_get_json(
     proxy: str = "",
     verify_ssl: bool = True,
 ) -> Any:
-    final_url, payload = http_get(
+    _, payload = http_get(
         url,
         timeout=timeout,
         referer=referer,
@@ -147,7 +147,7 @@ def http_get_json(
     )
     try:
         return json.loads(payload.decode("utf-8"))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise ParseHttpError(
             f"GET {url} returned non-JSON: {type(exc).__name__}"
         ) from exc
@@ -181,7 +181,7 @@ def http_post_json(
             if response.headers.get("Content-Encoding", "").lower() == "gzip":
                 raw = gzip.decompress(raw)
             return json.loads(raw.decode("utf-8"))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise ParseHttpError(f"POST {url} failed: {type(exc).__name__}") from exc
 
 
@@ -225,5 +225,5 @@ def http_post_form(
             if response.headers.get("Content-Encoding", "").lower() == "gzip":
                 raw = gzip.decompress(raw)
             return json.loads(raw.decode("utf-8"))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise ParseHttpError(f"POST {url} failed: {type(exc).__name__}") from exc

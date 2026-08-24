@@ -11,7 +11,6 @@ from datetime import datetime
 from typing import Any
 
 from plugins.bot_unified_runtime.sources.parsers.http_util import (
-    ParseHttpError,
     http_get_json,
 )
 
@@ -54,8 +53,8 @@ def fetch_epic_free_games(*, proxy: str = "", timeout: float = 12.0) -> list[dic
                     offers.append(offer)
         if not offers:
             continue
-        start = _parse_time((offers[0].get("startDate")))
-        end = _parse_time((offers[0].get("endDate")))
+        start = _parse_time(offers[0].get("startDate"))
+        end = _parse_time(offers[0].get("endDate"))
         now = datetime.now().astimezone()
         status = "免费中"
         if start and end and (now < start or now > end):

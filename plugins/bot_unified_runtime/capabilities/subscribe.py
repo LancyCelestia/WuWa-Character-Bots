@@ -13,7 +13,7 @@ import asyncio
 import re
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from plugins.bot_unified_runtime.contracts import CapabilityResult, IncomingMessage
 from plugins.bot_unified_runtime.contracts.subscription import (
@@ -22,7 +22,6 @@ from plugins.bot_unified_runtime.contracts.subscription import (
 )
 from plugins.bot_unified_runtime.sources.subscription_store import SubscriptionStore
 from plugins.bot_unified_runtime.sources.subscriptions import (
-    SubscriptionRegistry,
     build_subscription_registry,
 )
 
@@ -160,7 +159,7 @@ def build_subscribe_capability(
 
     def capability(
         message: IncomingMessage,
-        decision: Any,  # noqa: ARG001 - 能力统一签名。
+        decision: Any,
     ) -> CapabilityResult:
         text = normalize_subscribe_text(getattr(message, "plain_text", "") or "")
         match = _SUBSCRIBE_RE.match(text.strip())
@@ -181,7 +180,6 @@ def build_subscribe_capability(
             digest_flag = "--digest" in args
             tokens = [token for token in args if token != "--digest"]
             want_group = "到本群" in tokens
-            want_private = "私聊我" in tokens
             tokens = [
                 token
                 for token in tokens
@@ -327,7 +325,7 @@ def build_subscribe_capability(
             if len(args) != 1:
                 return _result(message, _USAGE, [tag, "subscribe_bad_format"], "订阅")
             spec_id = args[0]
-            spec = store.get_spec(spec_id)
+            spec = cast(SubscriptionSpec, store.get_spec(spec_id))
             if spec is None:
                 return _result(
                     message,
@@ -363,7 +361,7 @@ def build_subscribe_capability(
             if len(args) != 1:
                 return _result(message, _USAGE, [tag, "subscribe_bad_format"], "订阅")
             spec_id = args[0]
-            spec = store.get_spec(spec_id)
+            spec = cast(SubscriptionSpec, store.get_spec(spec_id))
             if spec is None:
                 return _result(
                     message,
@@ -433,3 +431,4 @@ def build_subscribe_capability(
         return _result(message, _USAGE, [tag], "订阅")
 
     return capability
+

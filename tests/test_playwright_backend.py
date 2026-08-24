@@ -195,7 +195,7 @@ def test_capture_json_filters_by_url_and_content_type(monkeypatch):
 
 
 def test_fetch_html_wraps_internal_error_as_parse_http_error(monkeypatch):
-    playwright, browser, context, page = _install_fake(
+    playwright, browser, _context, page = _install_fake(
         monkeypatch, final_url="https://example.com", html=""
     )
 
@@ -214,7 +214,7 @@ def test_fetch_html_wraps_internal_error_as_parse_http_error(monkeypatch):
 
 
 def test_capture_json_wraps_internal_error_as_parse_http_error(monkeypatch):
-    playwright, browser, context, page = _install_fake(
+    playwright, browser, _context, page = _install_fake(
         monkeypatch, final_url="https://example.com", html=""
     )
 

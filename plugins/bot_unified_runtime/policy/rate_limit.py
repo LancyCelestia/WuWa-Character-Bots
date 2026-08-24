@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import sqlite3
 from collections import defaultdict, deque
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-import sqlite3
 from typing import Protocol
 
 from pydantic import Field, field_validator

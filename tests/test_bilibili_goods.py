@@ -10,7 +10,9 @@ from plugins.bot_unified_runtime.sources.parsers import (
     build_content_parser_registry,
     build_source_input,
 )
-from plugins.bot_unified_runtime.sources.parsers import platforms_bilibili_goods as goods
+from plugins.bot_unified_runtime.sources.parsers import (
+    platforms_bilibili_goods as goods,
+)
 from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 from plugins.bot_unified_runtime.sources.parsers.types import PlatformParse
 

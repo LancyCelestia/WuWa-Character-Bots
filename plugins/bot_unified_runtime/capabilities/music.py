@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, cast
 
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
@@ -95,7 +96,7 @@ def normalize_music_mode(value: str) -> str | None:
             "link": {"link"}, "链接": {"link"}, "card": DEFAULT_PARTS, "卡片": DEFAULT_PARTS,
             "default": DEFAULT_PARTS, "默认": DEFAULT_PARTS,
         }
-        parts = legacy.get(raw.lower())
+        parts = cast(frozenset[str] | None, legacy.get(raw.lower()))
     if parts is None:
         return None
     return _canonical_mode(parts)
@@ -248,13 +249,15 @@ def _default_audio_downloader(config: Any | None = None) -> Callable[[str], str 
             path = target_dir / f"song_{digest}{suffix}"
             path.write_bytes(payload)
             try:
-                from plugins.bot_unified_runtime.runtime.cache_policy import enforce_quota
+                from plugins.bot_unified_runtime.runtime.cache_policy import (
+                    enforce_quota,
+                )
 
                 enforce_quota(
                     target_dir,
                     max_bytes=int(getattr(config, "bot_music_cache_max_bytes", 0) or 0),
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: S110, BLE001 - 缓存配额清理失败不影响主链路。
                 pass
             return str(path)
         except Exception:  # noqa: BLE001

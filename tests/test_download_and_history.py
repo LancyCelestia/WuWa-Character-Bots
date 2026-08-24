@@ -1,20 +1,19 @@
-from plugins.bot_unified_runtime.config import Config
-from plugins.bot_unified_runtime.contracts import (
-    BotDecision,
-    CapabilityResult,
-    IncomingMessage,
-    PrivacyLevel,
-    ReviewResult,
-    ReviewAction,
-    RiskLevel,
-    RenderedOutput,
-    SendRequest,
-    SessionType,
-)
 from plugins.bot_unified_runtime.capabilities.download import (
     build_download_capability,
     extract_download_url,
     is_download_command,
+)
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.contracts import (
+    CapabilityResult,
+    IncomingMessage,
+    PrivacyLevel,
+    RenderedOutput,
+    ReviewAction,
+    ReviewResult,
+    RiskLevel,
+    SendRequest,
+    SessionType,
 )
 from plugins.bot_unified_runtime.output.renderer import render_reviewed_output
 from plugins.bot_unified_runtime.sender.onebot import (
@@ -24,7 +23,6 @@ from plugins.bot_unified_runtime.sender.onebot import (
 from plugins.bot_unified_runtime.sources.downloader import (
     DownloadOutcome,
     MediaAnalysis,
-    MediaDownloader,
     _analysis_from_info,
 )
 from plugins.bot_unified_runtime.sources.parse_history import (

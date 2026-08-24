@@ -3,8 +3,8 @@ from __future__ import annotations
 import importlib
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime import smoke
+from plugins.bot_unified_runtime.config import Config
 
 
 def test_nonebot_smoke_reports_plugin_metadata_and_config_summary(tmp_path):

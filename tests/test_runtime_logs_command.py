@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from plugins.bot_unified_runtime.capabilities.runtime_logs import (
     build_logs_query_result,
 )

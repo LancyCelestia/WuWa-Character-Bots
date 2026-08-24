@@ -351,7 +351,9 @@ def test_character_provider_factory_enables_history_from_config(tmp_path):
 
 
 def test_conversation_history_factory_passes_storage_retention_limit(tmp_path):
-    from plugins.bot_unified_runtime.character import build_conversation_history_provider
+    from plugins.bot_unified_runtime.character import (
+        build_conversation_history_provider,
+    )
 
     db_path = tmp_path / "history.sqlite3"
     repository = build_conversation_history_provider(

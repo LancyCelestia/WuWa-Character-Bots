@@ -162,8 +162,7 @@ def run(
                 )
                 tmp_path = Path(tmp_name)
                 try:
-                    with os.fdopen(fd, "wb") as out:
-                        with path.open("rb") as handle:
+                    with os.fdopen(fd, "wb") as out, path.open("rb") as handle:
                             shutil.copyfileobj(handle, out, 1024 * 1024)
                     os.replace(tmp_path, destination)
                 except BaseException:

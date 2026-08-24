@@ -149,7 +149,7 @@ class DuckDuckGoMemeSearchProvider:
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 html = response.read().decode("utf-8", errors="replace")
-        except Exception:
+        except Exception:  # noqa: BLE001 - 搜索请求失败静默返回空结果。
             return []
         items = _extract_ddg_items(html)
         return filter_meme_results(

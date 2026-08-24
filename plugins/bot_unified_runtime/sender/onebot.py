@@ -82,9 +82,7 @@ def _onebot_result_is_success(result: Any) -> bool:
     retcode = _extract_onebot_retcode(result)
     if status in {"failed", "fail", "error"}:
         return False
-    if retcode is not None and retcode != 0:
-        return False
-    return True
+    return retcode is None or retcode == 0
 
 
 def _is_final_failure_retcode(retcode: int | None) -> bool:
@@ -317,7 +315,7 @@ async def send_onebot_v11(bot: OneBotV11Bot, send_request: SendRequest) -> Deliv
                     transport=ONEBOT_V11_TRANSPORT,
                     public_message=f"OneBot V11 不支持目标类型：{send_request.target_scope.value}",
                 )
-    except Exception:
+    except Exception:  # noqa: BLE001 - OneBot 发送异常统一转为可重试失败回执。
         debug_id = new_debug_id()
         return DeliveryReceipt(
             request_id=send_request.request_id,
@@ -399,3 +397,4 @@ async def _call_optional_onebot_api(
     if callable(call_api):
         return await call_api(api_name, **payload)
     return _FORWARD_API_UNAVAILABLE
+

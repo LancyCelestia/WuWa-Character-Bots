@@ -6,7 +6,10 @@ from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.policy.gate import PolicySettings, evaluate_policy
 from plugins.bot_unified_runtime.runtime.aliases import CommandAliasResolver
-from plugins.bot_unified_runtime.runtime.base_router import RouteKind, classify_message_route
+from plugins.bot_unified_runtime.runtime.base_router import (
+    RouteKind,
+    classify_message_route,
+)
 
 ALIAS = CommandAliasResolver(nickname="岸宝", nicknames=["岸宝", "守岸人"])
 

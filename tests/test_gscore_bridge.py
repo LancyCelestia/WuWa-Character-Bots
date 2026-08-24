@@ -99,7 +99,7 @@ def test_bridge_live_round_trip_against_mock_gscore_server():
 
     桥接发送 MessageReceive 上报 → 服务端回 MessageSend → on_message 回调收到。
     """
-    websockets = pytest.importorskip("websockets")
+    pytest.importorskip("websockets")
     from websockets.asyncio import server as ws_server
 
     received: list[dict] = []

@@ -21,8 +21,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import Protocol
+from dataclasses import dataclass
 
 DEFAULT_VERB_MAP: dict[str, str] = {
     "帮助": "bot.help",

@@ -4,7 +4,6 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
 
-
 SUPPORTED_CHARACTER_DOCUMENT_SUFFIXES = {".md", ".txt", ".docx"}
 _WORD_NAMESPACE = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 

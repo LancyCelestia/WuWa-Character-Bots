@@ -80,7 +80,10 @@ def make_pipeline(rate_limiter) -> tuple[RuntimePipeline, InMemoryAuditLogger, I
 
 
 def test_chat_rate_limiter_blocks_before_llm_capability_after_session_window_is_exceeded():
-    from plugins.bot_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
+    from plugins.bot_unified_runtime.policy import (
+        InMemoryRateLimiter,
+        RateLimitSettings,
+    )
 
     clock = MutableClock()
     pipeline, audit, queue = make_pipeline(
@@ -113,7 +116,10 @@ def test_chat_rate_limiter_blocks_before_llm_capability_after_session_window_is_
 
 
 def test_chat_rate_limiter_counts_deep_help_budget_before_model_call():
-    from plugins.bot_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
+    from plugins.bot_unified_runtime.policy import (
+        InMemoryRateLimiter,
+        RateLimitSettings,
+    )
 
     pipeline, _audit, queue = make_pipeline(
         InMemoryRateLimiter(
@@ -145,7 +151,10 @@ def test_chat_rate_limiter_counts_deep_help_budget_before_model_call():
 
 
 def test_chat_rate_limiter_prunes_old_window_entries():
-    from plugins.bot_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
+    from plugins.bot_unified_runtime.policy import (
+        InMemoryRateLimiter,
+        RateLimitSettings,
+    )
 
     clock = MutableClock()
     pipeline, _audit, queue = make_pipeline(
@@ -178,7 +187,10 @@ def test_chat_rate_limiter_prunes_old_window_entries():
 
 
 def test_chat_rate_limiter_can_bypass_admin_role():
-    from plugins.bot_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
+    from plugins.bot_unified_runtime.policy import (
+        InMemoryRateLimiter,
+        RateLimitSettings,
+    )
 
     pipeline, _audit, queue = make_pipeline(
         InMemoryRateLimiter(
@@ -211,7 +223,10 @@ def test_chat_rate_limiter_can_bypass_admin_role():
 
 
 def test_chat_rate_limiter_blocks_global_quota_before_model_call():
-    from plugins.bot_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
+    from plugins.bot_unified_runtime.policy import (
+        InMemoryRateLimiter,
+        RateLimitSettings,
+    )
 
     pipeline, audit, queue = make_pipeline(
         InMemoryRateLimiter(
@@ -254,7 +269,10 @@ def test_chat_rate_limiter_blocks_global_quota_before_model_call():
 
 
 def test_chat_rate_limiter_blocks_target_min_interval_across_group_senders():
-    from plugins.bot_unified_runtime.policy import InMemoryRateLimiter, RateLimitSettings
+    from plugins.bot_unified_runtime.policy import (
+        InMemoryRateLimiter,
+        RateLimitSettings,
+    )
 
     clock = MutableClock()
     pipeline, audit, queue = make_pipeline(

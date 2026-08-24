@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime
 from pathlib import Path
-import sqlite3
 from typing import Protocol
 
 from plugins.bot_unified_runtime.config import Config
-from plugins.bot_unified_runtime.contracts import DeliveryReceipt, ReceiptState, SendRequest
+from plugins.bot_unified_runtime.contracts import (
+    DeliveryReceipt,
+    ReceiptState,
+    SendRequest,
+)
 
 
 class ReceiptRepository(Protocol):

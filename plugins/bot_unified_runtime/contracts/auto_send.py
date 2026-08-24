@@ -4,7 +4,13 @@ from datetime import datetime
 
 from pydantic import Field
 
-from .runtime import PrivacyLevel, RiskLevel, SessionType, StrictBaseModel, new_request_id
+from .runtime import (
+    PrivacyLevel,
+    RiskLevel,
+    SessionType,
+    StrictBaseModel,
+    new_request_id,
+)
 
 
 class RecipientDescriptor(StrictBaseModel):

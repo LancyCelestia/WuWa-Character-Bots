@@ -164,7 +164,7 @@ async def _call_transport_safely(
 ) -> DeliveryReceipt:
     try:
         return await transport(send_request)
-    except Exception:
+    except Exception:  # noqa: BLE001 - 传输异常统一转为可重试失败回执。
         debug_id = new_debug_id()
         return DeliveryReceipt(
             request_id=send_request.request_id,
@@ -231,7 +231,7 @@ def _append_worker_audit_safely(
                 private_debug=debug,
             )
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - 审计写入失败时静默跳过，不阻断发送。
         return
 
 
@@ -243,3 +243,4 @@ def _safe_worker_debug(receipt: DeliveryReceipt) -> str:
         f"retry_count={receipt.retry_count}"
         f"{provider_state}"
     )
+

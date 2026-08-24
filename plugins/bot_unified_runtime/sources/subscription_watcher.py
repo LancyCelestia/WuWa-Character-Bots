@@ -9,9 +9,10 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 
 from plugins.bot_unified_runtime.contracts.subscription import (
     NormalizedSubscriptionItem,
@@ -82,7 +83,7 @@ def build_subscription_watcher(
             cursor = store.get_cursor(spec.id)
             try:
                 result = await adapter.fetch_latest(spec, cursor, ctx)
-            except Exception:
+            except Exception:  # noqa: BLE001 - 适配器抓取异常按失败退避处理。
                 store.record_failure(
                     spec.id, backoff_seconds=_failure_backoff(spec)
                 )

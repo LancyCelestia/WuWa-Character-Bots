@@ -183,9 +183,11 @@ def detect_natural_command(text: str, config: Config | None = None) -> NaturalRe
     if getattr(config, "bot_music_enabled", True):
         mode_match = _MUSIC_MODE_NL_RE.match(stripped) or _MUSIC_MODE_EN_RE.match(stripped)
         if mode_match:
-            spec = parse_music_mode_spec(mode_match.groupdict().get("spec"))
+            spec = parse_music_mode_spec(str(mode_match.groupdict().get("spec") or ""))
             if spec is not None:
-                from plugins.bot_unified_runtime.capabilities.music import normalize_music_mode
+                from plugins.bot_unified_runtime.capabilities.music import (
+                    normalize_music_mode,
+                )
 
                 normalized_mode = normalize_music_mode("+".join(sorted(spec)))
                 if normalized_mode:

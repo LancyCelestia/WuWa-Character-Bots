@@ -101,9 +101,8 @@ def _detect_video_quality(formats: list[dict], *, codec: str) -> tuple[str, str]
                 hdr = "杜比视界"
             elif vcodec.startswith(("vp9.2", "av01")) or "hdr" in note:
                 hdr = "HDR"
-        if not audio_quality:
-            if any(hint in joined for hint in _ATMOS_HINTS):
-                audio_quality = "疑似杜比全景声"
+        if not audio_quality and any(hint in joined for hint in _ATMOS_HINTS):
+            audio_quality = "疑似杜比全景声"
     # 主音频流判断 Hi-Res
     if codec.lower() in _LOSSLESS_CODECS:
         audio_quality = "Hi-Res（无损）"
@@ -311,14 +310,16 @@ class MediaDownloader:
                     outcome = self._download_once(url, height_cap=height_cap)
                     if outcome.path and Path(outcome.path).exists():
                         try:
-                            from plugins.bot_unified_runtime.runtime.cache_policy import enforce_quota
+                            from plugins.bot_unified_runtime.runtime.cache_policy import (
+                                enforce_quota,
+                            )
 
                             enforce_quota(
                                 self.download_dir,
                                 max_bytes=self.cache_max_bytes,
                                 max_age_days=self.cache_max_age_days,
                             )
-                        except Exception:  # noqa: BLE001
+                        except Exception:  # noqa: BLE001, S110 - 配额清理失败不影响下载结果。
                             pass
                         return outcome
                     last_error = outcome.error or last_error

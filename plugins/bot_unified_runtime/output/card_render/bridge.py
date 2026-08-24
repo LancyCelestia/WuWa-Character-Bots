@@ -147,7 +147,7 @@ def _format_timestamp(value: Any) -> str:
         return ""
     if text.isdigit() and len(text) >= 10:
         try:
-            return datetime.fromtimestamp(int(text)).strftime("%Y-%m-%d %H:%M:%S")
+            return datetime.fromtimestamp(int(text)).strftime("%Y-%m-%d %H:%M:%S")  # noqa: DTZ006 - 本地时间有意 naive
         except (OverflowError, OSError, ValueError):
             return text
     return text
@@ -332,9 +332,7 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
         payload.header_l2_items.append({"label": "番剧ID", "value": item_id})
     elif kind in {"goods", "ticket", "mall"}:
         payload.header_l2_items.append({"label": "商品ID", "value": item_id})
-    elif platform == "bilibili" and item_id.upper().startswith("BV"):
-        payload.header_l2_items.append({"label": "视频ID", "value": item_id})
-    elif platform == "bilibili" and item_id.lower().startswith("av"):
+    elif platform == "bilibili" and item_id.upper().startswith("BV") or platform == "bilibili" and item_id.lower().startswith("av"):
         payload.header_l2_items.append({"label": "视频ID", "value": item_id})
 
     # 发布时间：精确到年月日时分秒
@@ -455,7 +453,7 @@ def _build_qr_data_url(url: str) -> str:
         return ""
     try:
         import qrcode
-    except Exception:
+    except Exception:  # noqa: BLE001 - qrcode 不可用时隐藏 QR 区块，不阻断卡片渲染。
         return ""
     try:
         qr = qrcode.QRCode(
@@ -471,7 +469,7 @@ def _build_qr_data_url(url: str) -> str:
         image.save(buffer, format="PNG")
         encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
         return f"data:image/png;base64,{encoded}"
-    except Exception:
+    except Exception:  # noqa: BLE001 - QR 生成失败时隐藏 QR 区块，不阻断卡片渲染。
         return ""
 
 
@@ -558,8 +556,9 @@ def render_universal_card_html(payload_dict: dict[str, Any] | None = None) -> st
 __all__ = [
     "PLATFORM_COLORS",
     "PLATFORM_OFFICIAL_NAMES",
-    "RenderPayload",
     "ForwardPayload",
+    "RenderPayload",
     "parse_to_render_payload",
     "render_universal_card_html",
 ]
+

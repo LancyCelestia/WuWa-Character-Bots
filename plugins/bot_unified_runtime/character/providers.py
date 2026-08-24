@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import random
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Any, Protocol
 
 from plugins.bot_unified_runtime.contracts.character import (
     ContextBundle,
@@ -15,10 +17,6 @@ from plugins.bot_unified_runtime.contracts.character import (
 )
 
 from .documents import load_character_document
-from .vector_knowledge import (
-    build_keyword_knowledge_provider,
-    build_vector_knowledge_provider,
-)
 from .emotion import EmotionProvider, NullEmotionProvider, build_emotion_provider
 from .glossary import GlossaryProvider, NullGlossaryProvider, build_glossary_provider
 from .history import (
@@ -27,10 +25,10 @@ from .history import (
     build_conversation_history_provider,
 )
 from .memory import MemoryProvider, NullMemoryProvider, build_memory_provider
-from .persona_set import AltPersonaSpec, PersonaSelector, build_alt_personas
+from .persona_set import PersonaSelector, build_alt_personas
 from .relationship import (
-    RelationshipProvider,
     NullRelationshipProvider,
+    RelationshipProvider,
     apply_relationship_to_tone,
     build_relationship_provider,
 )
@@ -41,7 +39,10 @@ from .shared_group import (
 )
 from .temporal import RuleBasedTemporalProvider, build_temporal_provider
 from .trend import NullTrendProvider, TrendProvider, build_trend_provider
-
+from .vector_knowledge import (
+    build_keyword_knowledge_provider,
+    build_vector_knowledge_provider,
+)
 
 LLM_SAFE_MEMORY_SENSITIVITIES = frozenset({"public", "group", "personal"})
 
@@ -128,7 +129,7 @@ class FileCharacterContextProvider:
         persona_selector: PersonaSelector | None = None,
         persona_override_provider: object | None = None,
         persona_weights_provider: object | None = None,
-        persona_rng: object | None = None,
+        persona_rng: random.Random | None = None,
     ) -> None:
         self.persona_profile_id = persona_profile_id
         self.persona_display_name = persona_display_name
@@ -170,7 +171,7 @@ class FileCharacterContextProvider:
         if callable(self.persona_override_provider):
             try:
                 return str(self.persona_override_provider()).strip()
-            except Exception:
+            except Exception:  # noqa: BLE001 - 运行时提供者失败时回退为空字符串，不影响人格构建。
                 return ""
         return ""
 
@@ -183,7 +184,7 @@ class FileCharacterContextProvider:
                         str(key): float(value)
                         for key, value in resolved.items()
                     }
-            except Exception:
+            except Exception:  # noqa: BLE001 - 权重提供者失败时回退为空字典。
                 return {}
         return {}
 
@@ -191,7 +192,7 @@ class FileCharacterContextProvider:
         if callable(self.action_brackets_provider):
             try:
                 return bool(self.action_brackets_provider())
-            except Exception:
+            except Exception:  # noqa: BLE001 - 动作括号开关提供者失败时回退默认值。
                 return self.action_brackets
         return self.action_brackets
 
@@ -257,7 +258,7 @@ class FileCharacterContextProvider:
         if self.vector_retriever is not None:
             try:
                 knowledge_chunks = list(self.vector_retriever(query_text) or [])
-            except Exception:
+            except Exception:  # noqa: BLE001 - 向量检索失败时回退文件知识，不阻断上下文构建。
                 knowledge_chunks = []
         if not knowledge_chunks:
             knowledge_chunks = _build_knowledge_chunks(
@@ -323,17 +324,17 @@ def build_character_context_provider(
     config: object,
     *,
     conversation_history_provider: ConversationHistoryProvider | None = None,
-    runtime_settings: object | None = None,
+    runtime_settings: Any | None = None,
     shared_group_llm_provider: object | None = None,
 ) -> CharacterContextProvider:
     action_brackets_provider: object | None = None
-    interaction_counts_provider: object | None = None
+    interaction_counts_provider: Callable[[], dict[str, int]] | None = None
     persona_override_provider: object | None = None
     persona_weights_provider: object | None = None
     if runtime_settings is not None:
         def _runtime_action_brackets() -> bool:
             return bool(
-                getattr(runtime_settings, "get_or")(
+                runtime_settings.get_or(
                     "BOT_PERSONA_ACTION_BRACKETS",
                     bool(getattr(config, "bot_persona_action_brackets", True)),
                 )
@@ -341,33 +342,33 @@ def build_character_context_provider(
 
         def _interaction_counts() -> dict[str, int]:
             try:
-                senders = getattr(runtime_settings, "list_interaction_senders")()
-                get_count = getattr(runtime_settings, "interaction_count")
+                senders = runtime_settings.list_interaction_senders()
+                get_count = runtime_settings.interaction_count
                 return {
                     str(sender_id): int(get_count(str(sender_id)))
                     for sender_id in senders
                 }
-            except Exception:
+            except Exception:  # noqa: BLE001 - 交互计数读取失败时回退空字典。
                 return {}
 
         def _persona_override() -> str:
             try:
-                return str(getattr(runtime_settings, "get_persona_override")())
-            except Exception:
+                return str(runtime_settings.get_persona_override())
+            except Exception:  # noqa: BLE001 - 运行时人格覆盖读取失败时回退为空字符串。
                 return ""
 
         def _persona_weights() -> dict[str, float]:
             try:
-                return dict(getattr(runtime_settings, "get_persona_weights")())
-            except Exception:
+                return dict(runtime_settings.get_persona_weights())
+            except Exception:  # noqa: BLE001 - 运行时权重读取失败时回退为空字典。
                 return {}
 
         action_brackets_provider = _runtime_action_brackets
         interaction_counts_provider = _interaction_counts
         persona_override_provider = _persona_override
         persona_weights_provider = _persona_weights
-    vector_provider = build_vector_knowledge_provider(config)
-    knowledge_retriever = (
+    vector_provider: Any = build_vector_knowledge_provider(config)
+    knowledge_retriever: Any = (
         vector_provider
         if vector_provider.available
         else build_keyword_knowledge_provider(config)
@@ -488,7 +489,7 @@ def _build_knowledge_chunks(
                 break
             source_id = path.stem
             digest = hashlib.sha1(
-                f"{path.as_posix()}:{index}:{content}".encode("utf-8")
+                f"{path.as_posix()}:{index}:{content}".encode()
             ).hexdigest()[:12]
             chunks.append(
                 KnowledgeChunk(
@@ -543,3 +544,4 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
         seen.add(value)
         result.append(value)
     return result
+

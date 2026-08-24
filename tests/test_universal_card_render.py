@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sys
 from types import SimpleNamespace
+from typing import ClassVar
 
 from plugins.bot_unified_runtime.output.card_render.bridge import (
     _build_qr_data_url,
@@ -177,10 +178,10 @@ def test_card_payload_from_parse_contains_detail():
         summary = "s"
         cover_url = "https://x/c.jpg"
         canonical_url = "https://x/1"
-        stats = {"播放": 1}
+        stats: ClassVar[dict] = {"播放": 1}
         page_type = "video"
         badge = "独家"
-        detail = {
+        detail: ClassVar[dict] = {
             "author": {"name": "a", "fans": 2},
             "images": ["https://x/i.jpg"],
         }
@@ -255,7 +256,7 @@ class FakeBackend:
     available = True
 
     def __init__(self) -> None:
-        self.calls = []
+        self.calls: list[object] = []
 
     def render_card(self, payload):
         self.calls.append(payload)

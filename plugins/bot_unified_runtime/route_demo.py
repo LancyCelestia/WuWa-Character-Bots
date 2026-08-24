@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import Any
 
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
 from plugins.bot_unified_runtime.capabilities.epic import build_epic_capability
@@ -153,7 +154,7 @@ def _policy_scenario(config: Config, alias_resolver) -> None:
         )
         evaluation = evaluate_policy(message, "bot.chat", settings=settings)
         print(
-            f"- {label:<18} allowed={str(evaluation.allowed):<5} "
+            f"- {label:<18} allowed={evaluation.allowed!s:<5} "
             f"reason={evaluation.reason}"
         )
 
@@ -164,7 +165,7 @@ def _capability_smoke(config: Config) -> int:
     queue = InMemorySendQueue(audit_logger=audit)
     pipeline = RuntimePipeline(send_queue=queue, audit_logger=audit)
 
-    cases: list[tuple[str, str, object]] = [
+    cases: list[tuple[str, str, Any]] = [
         ("天气", "/天气 杭州", build_weather_capability(config)),
         ("维基", "/wiki 鸣潮", build_wiki_capability(config)),
         ("Epic", "/epic", build_epic_capability(config)),

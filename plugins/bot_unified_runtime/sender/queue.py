@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import sqlite3
 from typing import Protocol
 
 from plugins.bot_unified_runtime.audit import AuditRepository
@@ -15,8 +15,7 @@ from plugins.bot_unified_runtime.contracts import (
     ReceiptState,
     SendRequest,
 )
-from plugins.bot_unified_runtime.sender.receipts import skipped_receipt, sent_receipt
-
+from plugins.bot_unified_runtime.sender.receipts import sent_receipt, skipped_receipt
 
 SQLITE_QUEUE_TRANSPORT = "sqlite_queue"
 PROCESSING_STATE = "processing"

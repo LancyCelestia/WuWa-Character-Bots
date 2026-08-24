@@ -8,37 +8,38 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
-from collections.abc import Callable, Mapping
 
-from plugins.bot_unified_runtime.audit import redact_private_debug
-from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
+from plugins.bot_unified_runtime.audit import InMemoryAuditLogger, redact_private_debug
 from plugins.bot_unified_runtime.capabilities.chat import (
     build_chat_capability,
     build_chat_prompt_with_diagnostics,
 )
 from plugins.bot_unified_runtime.character import build_character_context_provider
+from plugins.bot_unified_runtime.character.source_summary import (
+    build_safe_context_source_summary,
+)
 from plugins.bot_unified_runtime.character.vector_knowledge import (
     OpenAICompatibleEmbeddingProvider,
     SqliteVectorKnowledgeStore,
 )
-from plugins.bot_unified_runtime.character.source_summary import (
-    build_safe_context_source_summary,
-)
+from plugins.bot_unified_runtime.config import Config, translate_env_keys
 from plugins.bot_unified_runtime.config_readiness import (
     diagnostic_llm_max_tokens,
     diagnostic_llm_temperature,
-    has_real_api_key as _has_real_api_key,
     llm_generation_parameter_errors,
     openai_compatible_preflight_errors,
     persona_context_preflight_errors,
     run_config_smoke,
     safe_openai_endpoint_url,
 )
-from plugins.bot_unified_runtime.config import Config, translate_env_keys
+from plugins.bot_unified_runtime.config_readiness import (
+    has_real_api_key as _has_real_api_key,
+)
 from plugins.bot_unified_runtime.contracts import (
     AuditRecord,
     DeliveryReceipt,
@@ -61,8 +62,8 @@ from plugins.bot_unified_runtime.diagnostics import (
     infer_llm_preflight_reasons,
     infer_prompt_truncated_sections,
     infer_quiet_hours_blocked,
-    infer_rate_limit_reason,
     infer_rate_limit_blocked,
+    infer_rate_limit_reason,
     infer_review_block_reason,
     infer_text_tag,
 )
@@ -85,7 +86,10 @@ from plugins.bot_unified_runtime.policy import (
     evaluate_policy,
 )
 from plugins.bot_unified_runtime.runtime import RuntimePipeline
-from plugins.bot_unified_runtime.security import InjectionCheckInput, check_prompt_injection
+from plugins.bot_unified_runtime.security import (
+    InjectionCheckInput,
+    check_prompt_injection,
+)
 from plugins.bot_unified_runtime.sender import (
     InMemoryReceiptRepository,
     InMemorySendQueue,
@@ -1055,7 +1059,7 @@ def _format_smoke_section_numbers(values: object) -> str:
     if not isinstance(values, dict):
         return ""
     items = [
-        f"{str(key)}:{int(value)}"
+        f"{key!s}:{int(value)}"
         for key, value in sorted(values.items())
         if isinstance(value, int)
     ]
@@ -1621,7 +1625,7 @@ def run_llm_smoke(
             "public_message": public_llm_error_message(error_kind),
             "private_debug": _redact_smoke_debug(str(exc), config.bot_chat_api_key),
         }
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 诊断接口的非预期异常统一转为 provider_error 返回。
         return {
             **base_result,
             "error_kind": "provider_error",
@@ -2473,15 +2477,16 @@ def run_embedding_smoke(config: Config) -> dict[str, Any]:
                 )
                 status = response.status_code
                 payload = response.json() if response.content else {}
-                error = payload.get("error") if isinstance(payload, dict) else {}
-                message = str(error.get("message") or "").strip()[:160]
+                error = payload.get("error") if isinstance(payload, dict) else None
+                error_text = error if isinstance(error, dict) else {}
+                message = str(error_text.get("message") or "").strip()[:160]
                 messages.append(
                     f"{chain.base_url}: HTTP {response.status_code}"
                     + (f" {message}" if message else "")
                 )
             except Exception as exc:  # noqa: BLE001
                 messages.append(f"{chain.base_url}: {type(exc).__name__}")
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110 - 所有嵌入端点失败后汇总调用方错误并降级返回，无须额外日志。
         pass
     result["api_status"] = status
     result["api_error"] = " | ".join(messages)[:400]
@@ -2581,7 +2586,7 @@ def run_knowledge_sync(config: Config) -> dict[str, Any]:
         result["done"] = int(done)
         result["total_after"] = int(after["total"])
         result["embedded_after"] = int(after["embedded"])
-        ann = {"built": False, "reason": "not_attempted"}
+        ann: dict[str, Any] = {"built": False, "reason": "not_attempted"}
         if after["embedded"] > 0:
             try:
                 ann = store.build_ann_index()

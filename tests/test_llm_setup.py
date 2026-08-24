@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime import smoke
+from plugins.bot_unified_runtime.config import Config
 
 
 def test_llm_setup_summarizes_safe_env_steps_without_writing_or_calling_network(tmp_path):

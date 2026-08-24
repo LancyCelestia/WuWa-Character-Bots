@@ -4,7 +4,10 @@ import hashlib
 from collections import OrderedDict
 from pathlib import Path
 
-from plugins.bot_unified_runtime.contracts.character import ContextBundle, KnowledgeChunk
+from plugins.bot_unified_runtime.contracts.character import (
+    ContextBundle,
+    KnowledgeChunk,
+)
 
 from .documents import load_character_document
 

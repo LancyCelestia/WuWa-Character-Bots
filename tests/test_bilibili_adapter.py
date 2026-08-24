@@ -19,7 +19,6 @@ from plugins.bot_unified_runtime.sources.parsers import wbi
 from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 from plugins.bot_unified_runtime.sources.subscriptions import bilibili_adapter as ba
 
-
 CTX = {"cookie_header": "SESSDATA=test", "proxy": "http://127.0.0.1:7890"}
 
 
@@ -32,7 +31,7 @@ def _make_spec(**overrides) -> SubscriptionSpec:
         "target_name": "测试UP",
     }
     values.update(overrides)
-    return SubscriptionSpec(**values)
+    return SubscriptionSpec(**values)  # type: ignore[arg-type]
 
 
 def _make_cursor(spec_id: str, **payload) -> SubscriptionCursor:

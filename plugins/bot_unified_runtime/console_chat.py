@@ -28,11 +28,37 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Any
+from typing import Any, cast
 
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
 from plugins.bot_unified_runtime.audit.file_logger import build_audit_with_file_log
 from plugins.bot_unified_runtime.capabilities.chat import build_chat_capability
+from plugins.bot_unified_runtime.capabilities.content_parser import (
+    build_content_capability,
+)
+from plugins.bot_unified_runtime.capabilities.download import (
+    build_download_capability,
+)
+from plugins.bot_unified_runtime.capabilities.epic import (
+    build_epic_capability,
+    is_epic_command,
+)
+from plugins.bot_unified_runtime.capabilities.music import (
+    build_music_capability,
+    is_music_command,
+)
+from plugins.bot_unified_runtime.capabilities.today_history import (
+    build_today_history_capability,
+    is_today_history_command,
+)
+from plugins.bot_unified_runtime.capabilities.weather import (
+    build_weather_capability,
+    is_weather_command,
+)
+from plugins.bot_unified_runtime.capabilities.wiki import (
+    build_wiki_capability,
+    is_wiki_command,
+)
 from plugins.bot_unified_runtime.character import build_character_context_provider
 from plugins.bot_unified_runtime.character.history import (
     InMemoryConversationHistoryStore,
@@ -55,6 +81,7 @@ from plugins.bot_unified_runtime.llm import (
     StaticLLMProvider,
 )
 from plugins.bot_unified_runtime.llm.model_router import build_model_router
+from plugins.bot_unified_runtime.output.render_backends import build_render_backend
 from plugins.bot_unified_runtime.policy import (
     build_quiet_hours_checker,
     build_rate_limiter,
@@ -71,46 +98,18 @@ from plugins.bot_unified_runtime.runtime.settings import (
     build_runtime_settings_store,
     effective_instance,
 )
-from plugins.bot_unified_runtime.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.sender import InMemorySendQueue, SendQueue
 from plugins.bot_unified_runtime.smoke import load_smoke_config
 from plugins.bot_unified_runtime.sources.credential_health import (
     check_credentials_and_report,
 )
+from plugins.bot_unified_runtime.sources.downloader import MediaDownloader
 from plugins.bot_unified_runtime.sources.meme_search import build_meme_search_provider
-from plugins.bot_unified_runtime.sources.parsers import extract_http_urls
 from plugins.bot_unified_runtime.sources.parse_history import (
     build_parse_history_result,
     build_parse_history_store,
 )
-from plugins.bot_unified_runtime.sources.downloader import MediaDownloader
-from plugins.bot_unified_runtime.output.render_backends import build_render_backend
-from plugins.bot_unified_runtime.capabilities.content_parser import (
-    build_content_capability,
-)
-from plugins.bot_unified_runtime.capabilities.music import (
-    build_music_capability,
-    is_music_command,
-)
-from plugins.bot_unified_runtime.capabilities.download import (
-    build_download_capability,
-    is_download_command,
-)
-from plugins.bot_unified_runtime.capabilities.today_history import (
-    build_today_history_capability,
-    is_today_history_command,
-)
-from plugins.bot_unified_runtime.capabilities.wiki import (
-    build_wiki_capability,
-    is_wiki_command,
-)
-from plugins.bot_unified_runtime.capabilities.epic import (
-    build_epic_capability,
-    is_epic_command,
-)
-from plugins.bot_unified_runtime.capabilities.weather import (
-    build_weather_capability,
-    is_weather_command,
-)
+from plugins.bot_unified_runtime.sources.parsers import extract_http_urls
 
 _BANNER = """\
 ============================================================
@@ -146,11 +145,11 @@ _LOCAL_COMMANDS = ("bot.help", "bot.status", "bot.why")
 def _reconfigure_stdio() -> None:
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined, union-attr]
         except (AttributeError, OSError):
             pass
     try:
-        sys.stdin.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        sys.stdin.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined, union-attr]
     except (AttributeError, OSError):
         pass
 
@@ -258,7 +257,7 @@ def _build_runtime(
     return pipeline, capability, stores
 
 
-def _reply_text(send_queue: InMemorySendQueue, request_id: str) -> str | None:
+def _reply_text(send_queue: SendQueue, request_id: str) -> str | None:
     for request in reversed(send_queue.sent_requests):
         if request.request_id != request_id:
             continue
@@ -355,7 +354,7 @@ def _status_summary(config: Config, runtime_settings: Any | None = None) -> str:
                 f"凭据健康：{len(reports)} 个引用"
                 + (f"，需要重新登录：{','.join(problems)}" if problems else "，正常")
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - 凭据健康检查失败时降级为“检查失败”提示。
             credential_line = "凭据健康：检查失败"
     return "\n".join(
         [
@@ -406,7 +405,7 @@ def _record_turn(history_store: Any, *, request_id: str, role: str, text: str) -
             role=role,
             text=text,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - 控制台对话历史写入失败时不阻塞交互。
         return
 
 
@@ -526,9 +525,9 @@ def run_interactive(config: Config) -> int:
                 request_id="console-parse",
                 query=command.removeprefix("/parse").strip(),
             )
-            print(result.body)
+            print(cast(Any, result).body)
             continue
-        if command.startswith("/download ") or command.startswith("下载 "):
+        if command.startswith(("/download ", "下载 ")):
             message = IncomingMessage(
                 platform="console",
                 adapter="console-repl",
@@ -560,11 +559,7 @@ def run_interactive(config: Config) -> int:
         if command == "/alert" or command.startswith("/alert "):
             print(_run_console_alert(config, command))
             continue
-        if (
-            command.startswith("/runtime")
-            or command.startswith("/nickname")
-            or command.startswith("/persona")
-        ):
+        if command.startswith(("/runtime", "/nickname", "/persona")):
             print(
                 _run_console_runtime_admin(
                     config,
@@ -722,7 +717,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = load_smoke_config(args.env)
         config = _apply_cli_overrides(config, args)
-    except Exception as exc:  # pragma: no cover - 配置解析失败属于运维问题。
+    except Exception as exc:  # noqa: BLE001 - 配置解析失败属于运维问题，直接退出。  # pragma: no cover - 配置解析失败属于运维问题。
         print(f"[配置错误] 无法读取环境配置：{exc}")
         return 2
     if args.message:

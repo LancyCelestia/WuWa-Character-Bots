@@ -144,7 +144,7 @@ async def _handle_tools_call(params: Any) -> dict[str, Any]:
         return _tool_error_result("query 不能为空")
     try:
         hits = await search_async(query, max_results=max_results)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 搜索执行异常转工具错误返回。
         _LOGGER.warning("web_search 执行失败: %s", exc)
         return _tool_error_result(f"搜索失败: {exc}")
     payload = _hits_payload(hits)
@@ -247,10 +247,10 @@ async def run_stdio(
         try:
             await handle_request(payload, stdout)
         except Exception as exc:
-            _LOGGER.exception("处理请求失败: %s", exc)
+            _LOGGER.exception("处理请求失败: %s", exc)  # noqa: TRY401 - 保留错误详情文本。
             try:
                 _write_line(stdout, _rpc_error(None, -32603, f"内部错误: {exc}"))
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - 回写错误响应失败时静默丢弃。
                 pass
 
 

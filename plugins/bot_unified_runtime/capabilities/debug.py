@@ -17,6 +17,14 @@ from plugins.bot_unified_runtime.character.source_summary import (
     build_safe_context_source_summary,
 )
 from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.config_readiness import (
+    diagnostic_llm_max_tokens,
+    diagnostic_llm_temperature,
+    has_real_api_key,
+    openai_compatible_preflight_errors,
+    run_config_smoke,
+    safe_openai_endpoint_url,
+)
 from plugins.bot_unified_runtime.contracts import (
     AuditRecord,
     CapabilityResult,
@@ -37,19 +45,17 @@ from plugins.bot_unified_runtime.llm import (
     public_llm_error_message,
     safe_llm_finish_reason,
 )
-from plugins.bot_unified_runtime.policy import build_reply_budget_settings, decide_reply_budget
+from plugins.bot_unified_runtime.policy import (
+    build_reply_budget_settings,
+    decide_reply_budget,
+)
 from plugins.bot_unified_runtime.policy.roles import ROLE_ORDER, build_role_settings
 from plugins.bot_unified_runtime.runtime import RuntimeControlState
-from plugins.bot_unified_runtime.security import InjectionCheckInput, check_prompt_injection
-from plugins.bot_unified_runtime.sender import ReceiptRepository, SendQueue
-from plugins.bot_unified_runtime.config_readiness import (
-    diagnostic_llm_max_tokens,
-    diagnostic_llm_temperature,
-    has_real_api_key,
-    openai_compatible_preflight_errors,
-    run_config_smoke,
-    safe_openai_endpoint_url,
+from plugins.bot_unified_runtime.security import (
+    InjectionCheckInput,
+    check_prompt_injection,
 )
+from plugins.bot_unified_runtime.sender import ReceiptRepository, SendQueue
 
 _DENIED_BODY = "只有管理员可以查看运行时排障记录。"
 
@@ -729,7 +735,7 @@ def _run_llm_diagnostic(
             "error_kind": error_kind,
             "public_message": public_llm_error_message(error_kind),
         }
-    except Exception:
+    except Exception:  # noqa: BLE001 - LLM 诊断未知异常统一映射为 provider_error。
         return {
             **base_result,
             "error_kind": "provider_error",
@@ -1238,25 +1244,23 @@ def _format_queue_diagnostic(summary: dict[str, int], config: Config) -> str:
 
 def _format_roles_diagnostic(config: Config) -> str:
     role_counts = build_role_settings(config).counts()
-    admin_commands = ",".join(
-        [
-            "/bot why",
-            "/bot receipt",
-            "/bot audit",
-            "/bot recent",
-            "/bot queue",
-            "/bot context",
-            "/bot llm",
-            "/bot setup llm",
-            "/bot config",
-            "/bot readiness",
-            "/bot dialogue",
-            "/bot roles",
-            "/bot persona",
-            "/bot history clear",
-            "/bot pause",
-            "/bot resume",
-        ]
+    admin_commands = (
+        "/bot why,"
+        "/bot receipt,"
+        "/bot audit,"
+        "/bot recent,"
+        "/bot queue,"
+        "/bot context,"
+        "/bot llm,"
+        "/bot setup llm,"
+        "/bot config,"
+        "/bot readiness,"
+        "/bot dialogue,"
+        "/bot roles,"
+        "/bot persona,"
+        "/bot history clear,"
+        "/bot pause,"
+        "/bot resume"
     )
     return "\n".join(
         [
@@ -1544,3 +1548,4 @@ def _parse_limit(query: str) -> int:
         return min(20, max(1, int(query.strip() or "5")))
     except ValueError:
         return 5
+

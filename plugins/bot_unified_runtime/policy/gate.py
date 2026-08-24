@@ -11,6 +11,7 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
     SessionType,
 )
+
 from .roles import ROLE_BLOCKED, role_audit_tags
 
 COMMAND_PREFIX = "/bot"
@@ -146,13 +147,11 @@ def evaluate_policy(
             return _denied("group_black1", ("group_black1",))
 
         # 黑名单2：只回“@它且带指令”的消息；不艾特的斜杠指令也不回。
-        if group_id in group_lists["black2"]:
-            if not (message.mentions_bot and command_triggered):
+        if group_id in group_lists["black2"] and not (message.mentions_bot and command_triggered):
                 return _denied("group_black2", ("group_black2",))
 
         # 白名单2：只回“@它”的消息（指令或自然语言均可）。
-        if group_id in group_lists["white2"]:
-            if not message.mentions_bot:
+        if group_id in group_lists["white2"] and not message.mentions_bot:
                 return _denied("group_white2_need_mention", ("group_white2",))
 
         # 白名单1：普通指令/@+指令/呼出点名之外，自然语言提问也放行；
