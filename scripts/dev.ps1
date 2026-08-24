@@ -249,6 +249,9 @@ function Invoke-Test {
     finally {
         $env:TMP = $oldTmp
         $env:TEMP = $oldTemp
+        if (Test-Path -LiteralPath $ciTmp) {
+            Remove-Item -LiteralPath $ciTmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
         Pop-Location
     }
 }
