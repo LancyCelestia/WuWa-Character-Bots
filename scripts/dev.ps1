@@ -6,6 +6,7 @@ param(
         "install",
         "dev",
         "run",
+        "run-watch",
         "test",
         "lint",
         "typecheck",
@@ -193,6 +194,29 @@ function Invoke-Run {
         }
         Write-Step "starting NoneBot ($Mode)"
         Invoke-External $nb @("run")
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-RunWatch {
+    $nb = Get-ProjectCommand "nb"
+    if (-not $nb) {
+        throw "NoneBot CLI 'nb' was not found. Run scripts/dev.ps1 install first."
+    }
+
+    Push-Location $Root
+    try {
+        while ($true) {
+            $portInUse = Get-NetTCPConnection -State Listen -LocalPort 8080 -ErrorAction SilentlyContinue
+            if ($portInUse) {
+                Write-Host "[dev] NoneBot 已经在运行（8080 端口被占用）。不要重复启动；如需重启请先关闭原进程。"
+                return
+            }
+            Write-Step "starting NoneBot (run-watch, auto-restart on exit)"
+            & $nb @("run")
+            Write-Host "[dev] NoneBot 退出（exit code = $LASTEXITCODE），5 秒后自动重启。按 Ctrl+C 退出本循环。"
+            Start-Sleep -Seconds 5
+        }
     }
     finally { Pop-Location }
 }
