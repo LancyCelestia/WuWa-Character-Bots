@@ -44,6 +44,7 @@ class LLMReply(StrictBaseModel):
     model: str
     confidence: float = 1.0
     raw_usage: dict[str, Any] = Field(default_factory=dict)
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
 
 
 _SAFE_LLM_FINISH_REASONS = {
@@ -193,6 +194,11 @@ class OpenAICompatibleLLMProvider:
         if isinstance(max_tokens, (int, float)) and int(max_tokens) > 0:
             # 0 或负数 = 不设上限：不向 API 传 max_tokens，由模型自行决定。
             payload["max_tokens"] = int(max_tokens)
+        # 工具调用（OpenAI function calling 兼容）：由调用方注入 tools 清单。
+        tools = kwargs.get("tools")
+        if isinstance(tools, list) and tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = kwargs.get("tool_choice", "auto")
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         http_request = request.Request(
             self.endpoint_url,
@@ -240,6 +246,26 @@ class OpenAICompatibleLLMProvider:
                 "LLM response schema is invalid",
                 error_kind="schema",
             )
+        raw_tool_calls = message.get("tool_calls")
+        tool_calls: list[dict[str, Any]] = []
+        if isinstance(raw_tool_calls, list):
+            for item in raw_tool_calls:
+                if not isinstance(item, dict):
+                    continue
+                function = item.get("function")
+                if not isinstance(function, dict) or not function.get("name"):
+                    continue
+                tool_calls.append(
+                    {
+                        "id": str(item.get("id") or ""),
+                        "type": str(item.get("type") or "function"),
+                        "function": {
+                            "name": str(function.get("name") or ""),
+                            "arguments": str(function.get("arguments") or "{}"),
+                        },
+                    }
+                )
+
         content = message.get("content")
         content_source = "content"
         if content is None or content == "":
@@ -250,20 +276,23 @@ class OpenAICompatibleLLMProvider:
             if isinstance(reasoning, str) and reasoning.strip():
                 content = reasoning.strip()[-600:]
                 content_source = "reasoning_fallback"
+        # 工具调用轮次允许 content 为空：调用方拿到 tool_calls 后回填工具结果。
         if content is None or content == "":
-            raise LLMProviderError(
-                "LLM returned empty text",
-                error_kind="empty_response",
-            )
+            if not tool_calls:
+                raise LLMProviderError(
+                    "LLM returned empty text",
+                    error_kind="empty_response",
+                )
+            content = ""
         try:
-            text = _extract_message_content_text(content)
+            text = _extract_message_content_text(content) if content != "" else ""
         except TypeError as exc:
             raise LLMProviderError(
                 "LLM response schema is invalid",
                 error_kind="schema",
             ) from exc
 
-        if not text:
+        if not text and not tool_calls:
             raise LLMProviderError(
                 "LLM returned empty text",
                 error_kind="empty_response",
@@ -278,4 +307,5 @@ class OpenAICompatibleLLMProvider:
             model=str(payload["model"]),
             confidence=1.0,
             raw_usage=usage,
+            tool_calls=tool_calls,
         )

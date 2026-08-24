@@ -14,6 +14,7 @@ from plugins.bot_unified_runtime.character.providers import (
 from plugins.bot_unified_runtime.character.vector_knowledge import (
     OpenAICompatibleEmbeddingProvider,
     SqliteVectorKnowledgeStore,
+    _rrf_fuse,
     build_vector_knowledge_provider,
 )
 from plugins.bot_unified_runtime.config import Config
@@ -987,3 +988,193 @@ def test_sync_no_change_keeps_vector_cache(tmp_path):
     matrix2, ids2 = store._load_vector_cache()
     assert matrix2 is matrix and ids2 is ids
     assert isinstance(ids, list) and all(isinstance(item, str) for item in ids)
+
+
+def test_fts_keyword_channel_recalls_when_vectors_are_all_zero(tmp_path):
+    """正文关键词命中但向量全零时，BM25/FTS 通道仍应召回对应 chunk。"""
+    content = "hello world rockets launch into space"
+    knowledge_file = tmp_path / "kb.md"
+    knowledge_file.write_text(content, encoding="utf-8")
+    store = SqliteVectorKnowledgeStore(
+        tmp_path / "knowledge.sqlite3",
+        FakeEmbeddingProvider(),  # 正文与查询的向量都是零向量
+        chunk_chars=120,
+        top_k=2,
+    )
+    store.embed_pending([knowledge_file])
+
+    results = store.retrieve(
+        "hello rockets", files=[knowledge_file], embed_backlog=False
+    )
+
+    assert results
+    assert any(
+        "hello" in chunk.content and "rockets" in chunk.content
+        for chunk in results
+    )
+
+
+def test_rrf_fusion_puts_documents_in_both_channels_first():
+    """RRF 应提升同时命中两通道的文档；向量单通道第一会被挤到其后。"""
+    fused = _rrf_fuse(["a", "b", "c"], ["b", "c", "d"], top_k=3)
+    assert fused == ["b", "c", "a"]
+
+
+def test_hybrid_fusion_boosts_keyword_match_over_vector_only(tmp_path):
+    """端到端融合：纯向量第一的 chunk 应让位于关键词+向量双命中的 chunk。
+
+    三个文件各成一段，避免 _chunk_text 把短段落合并成同一个 chunk。
+    """
+    alpha = "alpha only document"
+    beta = "beta only document"
+    gamma = "gamma only document"
+    alpha_file = tmp_path / "alpha.md"
+    beta_file = tmp_path / "beta.md"
+    gamma_file = tmp_path / "gamma.md"
+    alpha_file.write_text(alpha, encoding="utf-8")
+    beta_file.write_text(beta, encoding="utf-8")
+    gamma_file.write_text(gamma, encoding="utf-8")
+    knowledge_files = [alpha_file, beta_file, gamma_file]
+
+    provider = _fixed_provider([[1.0, 0.0], [0.9, 0.1], [0.5, 0.5]])
+    store = SqliteVectorKnowledgeStore(
+        tmp_path / "knowledge.sqlite3",
+        provider,
+        chunk_chars=120,
+        top_k=3,
+    )
+    store.embed_pending(knowledge_files)
+
+    results = store.retrieve(
+        "beta gamma", files=knowledge_files, embed_backlog=False
+    )
+
+    assert len(results) == 3
+    assert results[2].content == alpha
+    assert {chunk.content for chunk in results[:2]} == {beta, gamma}
+
+
+def test_fts_signature_invalidated_and_rebuilt_on_content_change(tmp_path):
+    """内容变化会清空 FTS 签名，ensure_fts_index 重建后能检索到新内容。"""
+    knowledge_file = tmp_path / "kb.md"
+    knowledge_file.write_text("hello world document", encoding="utf-8")
+    store = SqliteVectorKnowledgeStore(
+        tmp_path / "knowledge.sqlite3",
+        FakeEmbeddingProvider(),
+        chunk_chars=120,
+        top_k=2,
+    )
+    store.sync_chunks([knowledge_file])
+    assert store.ensure_fts_index() is True
+    old_signature = store._stored_fts_signature()
+    assert old_signature
+
+    knowledge_file.write_text("newterm document", encoding="utf-8")
+    store.sync_chunks([knowledge_file])
+    assert store._stored_fts_signature() == ""
+
+    assert store.ensure_fts_index() is True
+    new_signature = store._stored_fts_signature()
+    assert new_signature
+    assert new_signature != old_signature
+
+    results = store.retrieve(
+        "newterm", files=[knowledge_file], embed_backlog=False
+    )
+    assert results
+    assert any("newterm" in chunk.content for chunk in results)
+
+
+def test_unrelated_query_returns_empty_on_miss_threshold(tmp_path):
+    """无关键词命中且向量最高余弦低于 0.30 时，应判未命中返回空列表。"""
+    knowledge_file = tmp_path / "kb.md"
+    knowledge_file.write_text("hello world document", encoding="utf-8")
+    store = SqliteVectorKnowledgeStore(
+        tmp_path / "knowledge.sqlite3",
+        FakeEmbeddingProvider(),  # 查询与正文向量均为零 → 余弦 0.0
+        chunk_chars=120,
+        top_k=4,
+    )
+    store.embed_pending([knowledge_file])
+
+    results = store.retrieve(
+        "zzz qqq", files=[knowledge_file], embed_backlog=False
+    )
+
+    assert results == []
+
+
+def test_fts_missing_falls_back_to_vector_only(tmp_path, monkeypatch):
+    """FTS5 不可用时关键词通道安全降级，向量检索照常返回且不报错。"""
+    knowledge_file = tmp_path / "kb.md"
+    knowledge_file.write_text("甲段" * 30 + "\n\n" + "乙段" * 30, encoding="utf-8")
+    provider = _fixed_provider([[1.0, 0.0], [0.0, 1.0]])
+    store = SqliteVectorKnowledgeStore(
+        tmp_path / "knowledge.sqlite3", provider, chunk_chars=120, top_k=2
+    )
+    store.embed_pending([knowledge_file])
+
+    def raise_no_fts():
+        raise sqlite3.OperationalError("no such module: fts5")
+
+    monkeypatch.setattr(store, "_ensure_fts_table", raise_no_fts)
+
+    hits = store.retrieve("甲段甲段", embed_backlog=False)
+
+    assert len(hits) == 2
+    assert hits[0].content.startswith("甲段")
+
+
+def test_build_ann_index_also_builds_fts(tmp_path):
+    """knowledge-sync 构建 ANN 后应一并幂等建好 FTS 关键词索引。"""
+    faiss = __import__("pytest").importorskip("faiss")
+    knowledge_file = tmp_path / "kb.md"
+    knowledge_file.write_text("甲段" * 30 + "\n\n" + "乙段" * 30, encoding="utf-8")
+    provider = _fixed_provider([[1.0, 0.0], [0.0, 1.0]])
+    store = SqliteVectorKnowledgeStore(
+        tmp_path / "knowledge.sqlite3",
+        provider,
+        chunk_chars=120,
+        top_k=2,
+        signature="sigA",
+        ann_index_path=str(tmp_path / "faiss.index"),
+        ann_order_path=str(tmp_path / "order.json"),
+    )
+    store.embed_pending([knowledge_file])
+
+    result = store.build_ann_index()
+
+    assert result.get("built") is True
+    assert store.ensure_fts_index() is True
+    assert store._stored_fts_signature()
+
+def test_chinese_phrase_match_recalls_entity_names(tmp_path):
+    """整段中文专名（>=3 字）应能经 trigram MATCH 召回，即使向量全零。"""
+    knowledge_file = tmp_path / "kb.md"
+    knowledge_file.write_text("守岸人是黑海岸的守护者", encoding="utf-8")
+    store = SqliteVectorKnowledgeStore(
+        tmp_path / "knowledge.sqlite3",
+        FakeEmbeddingProvider(),  # 向量全零，只能靠关键词通道
+        chunk_chars=120,
+        top_k=2,
+    )
+    store.embed_pending([knowledge_file])
+    results = store.retrieve("守岸人是谁", files=[knowledge_file], embed_backlog=False)
+    assert results
+    assert any("守岸人" in chunk.content for chunk in results)
+
+
+def test_short_term_content_like_recalls_two_char_names(tmp_path):
+    """两字专名应经正文 LIKE 兜底召回，且停用字噪声二元组不干扰。"""
+    knowledge_file = tmp_path / "kb.md"
+    knowledge_file.write_text("今州是鸣潮中的一座城市", encoding="utf-8")
+    store = SqliteVectorKnowledgeStore(
+        tmp_path / "knowledge.sqlite3",
+        FakeEmbeddingProvider(),  # 向量全零，只能靠关键词通道
+        chunk_chars=120,
+        top_k=2,
+    )
+    store.embed_pending([knowledge_file])
+    results = store.retrieve("今州在哪", files=[knowledge_file], embed_backlog=False)
+    assert results
+    assert any("今州" in chunk.content for chunk in results)

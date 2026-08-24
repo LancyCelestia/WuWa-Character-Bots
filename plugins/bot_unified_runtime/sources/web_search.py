@@ -3,19 +3,33 @@
 - 默认关闭（BOT_WEB_SEARCH_ENABLED=false）；
 - 支持代理（BOT_DOWNLOAD_PROXY，例如 http://127.0.0.1:7890），外网检索走代理；
 - DuckDuckGo HTML 优先，失败/为空自动换 Bing HTML；
+- 传输层统一使用 httpx：同步路径用 ``httpx.Client``（keep-alive 连接池），
+  异步路径用 ``httpx.AsyncClient``，供 stdio MCP 服务器等异步调用方使用；
 - 单次超时短、失败静默降级为空，绝不拖慢对话。
 """
 
 from __future__ import annotations
 
+import asyncio
 import html
 import re
 import urllib.parse
-import urllib.request
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
+import httpx
+
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0 Safari/537.36"
+)
+_DEFAULT_HEADERS = {
+    "User-Agent": _USER_AGENT,
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
 
 
 @dataclass(frozen=True)
@@ -36,33 +50,87 @@ class NullWebSearchProvider:
         return []
 
 
-def _build_opener(proxy: str, timeout_seconds: float) -> urllib.request.OpenerDirector:
-    handlers: list = []
-    if proxy:
-        handlers.append(
-            urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-        )
-    return urllib.request.build_opener(*handlers)
+def _proxy_value(proxy: str) -> str | None:
+    """返回统一代理地址；httpx 0.28 起 proxy 参数用单值覆盖所有 scheme。"""
+    proxy = str(proxy or "").strip()
+    return proxy or None
 
 
-def _fetch(url: str, *, proxy: str, timeout_seconds: float) -> str | None:
+def _build_sync_client(proxy: str, timeout_seconds: float) -> httpx.Client:
+    """构建带 keep-alive 连接池的同步 httpx 客户端。
+
+    测试可通过 monkeypatch 本函数注入假 transport 或伪造网络错误。
+    """
+    return httpx.Client(
+        headers=dict(_DEFAULT_HEADERS),
+        timeout=httpx.Timeout(float(timeout_seconds)),
+        follow_redirects=True,
+        proxy=_proxy_value(proxy),
+    )
+
+
+def _build_async_client(proxy: str, timeout_seconds: float) -> httpx.AsyncClient:
+    """构建带 keep-alive 连接池的异步 httpx 客户端（测试可 monkeypatch 注入）。"""
+    return httpx.AsyncClient(
+        headers=dict(_DEFAULT_HEADERS),
+        timeout=httpx.Timeout(float(timeout_seconds)),
+        follow_redirects=True,
+        proxy=_proxy_value(proxy),
+    )
+
+
+def _fetch(
+    url: str,
+    *,
+    proxy: str,
+    timeout_seconds: float,
+    client: httpx.Client | None = None,
+) -> str | None:
+    """同步抓取页面文本；失败/超时静默返回 None，绝不向上抛网络异常。"""
+    if not url:
+        return None
+    owns_client = client is None
     try:
-        opener = _build_opener(proxy, timeout_seconds)
-        request = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0 Safari/537.36"
-                ),
-                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            },
-        )
-        with opener.open(request, timeout=timeout_seconds) as response:
-            return response.read().decode("utf-8", errors="replace")
+        if client is None:
+            client = _build_sync_client(proxy, timeout_seconds)
+        response = client.get(url)
+        response.raise_for_status()
+        return response.text
     except Exception:
         return None
+    finally:
+        if owns_client and client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+
+async def _fetch_async(
+    url: str,
+    *,
+    proxy: str,
+    timeout_seconds: float,
+    client: httpx.AsyncClient | None = None,
+) -> str | None:
+    """异步抓取页面文本；失败/超时静默返回 None。传入的 client 由调用方负责关闭。"""
+    if not url:
+        return None
+    owns_client = client is None
+    try:
+        if client is None:
+            client = _build_async_client(proxy, timeout_seconds)
+        response = await client.get(url)
+        response.raise_for_status()
+        return response.text
+    except Exception:
+        return None
+    finally:
+        if owns_client and client is not None:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
 
 
 _JUNK_DOMAINS = frozenset(
@@ -72,6 +140,17 @@ _JUNK_DOMAINS = frozenset(
     }
 )
 _QUERY_STOP_TOKENS = frozenset({"百科", "最新", "更新", "版本", "内容", "公司", "官方", "游戏", "什么", "是", "查询", "介绍", "背景"})
+
+# 来源域名的轻量加权顺序：百科类域名靠前；最后一级 "wiki" 是兜底模糊匹配。
+_ENCYCLOPEDIA_DOMAIN_FRAGMENTS = (
+    "moegirl.org.cn",
+    "moegirl.org",
+    "zh.wikipedia.org",
+    "wikipedia.org",
+    "baike.baidu.com",
+    "baike.com",
+    "wiki",
+)
 
 
 def _query_key_tokens(query: str) -> list[str]:
@@ -83,28 +162,48 @@ def _query_key_tokens(query: str) -> list[str]:
     ]
 
 
+def _clean_text(value: str) -> str:
+    """解码 HTML 实体并把所有连续空白归一为单个空格。"""
+    return " ".join(html.unescape(value or "").split())
+
+
+def _hit_text(hit: WebSearchHit) -> str:
+    return _clean_text(f"{hit.title} {hit.snippet}")
+
+
+def _domain_priority(hit: WebSearchHit) -> tuple[int, str]:
+    """按来源域名打分（数值越小越靠前）；未命中百科片段的域名排最后。"""
+    domain = (hit.source_domain or "").lower()
+    for index, fragment in enumerate(_ENCYCLOPEDIA_DOMAIN_FRAGMENTS):
+        if fragment in domain:
+            return (index, domain)
+    return (len(_ENCYCLOPEDIA_DOMAIN_FRAGMENTS), domain)
+
+
 def _is_junk(hit: WebSearchHit) -> bool:
     domain = (hit.source_domain or "").lower()
     if domain in _JUNK_DOMAINS:
         return True
-    text = f"{hit.title} {hit.snippet}"
+    text = _hit_text(hit)
     if any(marker in text for marker in ("汉语汉字", "拼音", "笔顺", "部首", "新华字典")):
         return True
     return False
 
 
 def _filter_relevant(hits: list[WebSearchHit], query: str) -> list[WebSearchHit]:
-    key_tokens = _query_key_tokens(query)
+    """过滤垃圾结果；有关键词匹配时优先保留匹配项；最后按来源域名轻量加权。"""
     kept = [hit for hit in hits if not _is_junk(hit)]
+    key_tokens = _query_key_tokens(query)
     if key_tokens:
         matched = [
             hit
             for hit in kept
-            if any(token in f"{hit.title} {hit.snippet}" for token in key_tokens)
+            if any(token in _hit_text(hit) for token in key_tokens)
         ]
         if matched:
-            return matched
-    return kept
+            kept = matched
+    # Python 排序稳定：同权重的结果保持抓取顺序，整体确定、可测试。
+    return sorted(kept, key=_domain_priority)
 
 
 def fetch_page_text(
@@ -135,15 +234,65 @@ class DuckDuckGoWebSearchProvider:
     def __init__(self, *, timeout_seconds: float = 3.0, proxy: str = "") -> None:
         self.timeout_seconds = max(1.0, float(timeout_seconds))
         self.proxy = str(proxy or "")
+        self._client: httpx.Client | None = None
+
+    def _url_for(self, term: str) -> str:
+        return "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(term)
+
+    def _get_client(self) -> httpx.Client:
+        """惰性创建并复用同步客户端，保持 keep-alive 连接池。"""
+        if self._client is None or self._client.is_closed:
+            self._client = _build_sync_client(self.proxy, self.timeout_seconds)
+        return self._client
+
+    def close(self) -> None:
+        """释放内部连接池；幂等，关闭后下次检索会重建。"""
+        client, self._client = self._client, None
+        if client is not None and not client.is_closed:
+            try:
+                client.close()
+            except Exception:
+                pass
 
     def search(self, query: str, *, max_results: int = 3) -> list[WebSearchHit]:
         term = (query or "").strip()
         if not term:
             return []
-        url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(term)
-        html_text = _fetch(
-            url, proxy=self.proxy, timeout_seconds=self.timeout_seconds
+        try:
+            html_text = _fetch(
+                self._url_for(term),
+                proxy=self.proxy,
+                timeout_seconds=self.timeout_seconds,
+                client=self._get_client(),
+            )
+        except Exception:
+            return []
+        if not html_text:
+            return []
+        return _filter_relevant(
+            _extract_ddg_hits(html_text, max_results=max_results), term
         )
+
+    async def search_async(
+        self,
+        query: str,
+        *,
+        max_results: int = 3,
+        client: httpx.AsyncClient | None = None,
+    ) -> list[WebSearchHit]:
+        """异步检索；复用调用方传入的 AsyncClient 以共享连接池。"""
+        term = (query or "").strip()
+        if not term:
+            return []
+        try:
+            html_text = await _fetch_async(
+                self._url_for(term),
+                proxy=self.proxy,
+                timeout_seconds=self.timeout_seconds,
+                client=client,
+            )
+        except Exception:
+            return []
         if not html_text:
             return []
         return _filter_relevant(
@@ -159,19 +308,67 @@ class BingWebSearchProvider:
     def __init__(self, *, timeout_seconds: float = 4.0, proxy: str = "") -> None:
         self.timeout_seconds = max(1.0, float(timeout_seconds))
         self.proxy = str(proxy or "")
+        self._client: httpx.Client | None = None
+
+    def _url_for(self, term: str) -> str:
+        return (
+            "https://www.bing.com/search?q="
+            + urllib.parse.quote(term)
+            + "&setlang=zh-cn&count=10"
+        )
+
+    def _get_client(self) -> httpx.Client:
+        if self._client is None or self._client.is_closed:
+            self._client = _build_sync_client(self.proxy, self.timeout_seconds)
+        return self._client
+
+    def close(self) -> None:
+        client, self._client = self._client, None
+        if client is not None and not client.is_closed:
+            try:
+                client.close()
+            except Exception:
+                pass
 
     def search(self, query: str, *, max_results: int = 3) -> list[WebSearchHit]:
         term = (query or "").strip()
         if not term:
             return []
-        url = (
-            "https://www.bing.com/search?q="
-            + urllib.parse.quote(term)
-            + "&setlang=zh-cn&count=10"
+        try:
+            html_text = _fetch(
+                self._url_for(term),
+                proxy=self.proxy,
+                timeout_seconds=self.timeout_seconds,
+                client=self._get_client(),
+            )
+        except Exception:
+            return []
+        if not html_text:
+            return []
+        return _filter_relevant(
+            _extract_bing_hits(html_text, max_results=max_results), term
         )
-        html_text = _fetch(
-            url, proxy=self.proxy, timeout_seconds=self.timeout_seconds
-        )
+
+    async def search_async(
+        self,
+        query: str,
+        *,
+        max_results: int = 3,
+        client: httpx.AsyncClient | None = None,
+    ) -> list[WebSearchHit]:
+        """异步检索（DDG 失败后的 Bing 兜底同样支持）。"""
+        term = (query or "").strip()
+        if not term:
+            return []
+        try:
+            html_text = await _fetch_async(
+                self._url_for(term),
+                proxy=self.proxy,
+                timeout_seconds=self.timeout_seconds,
+                client=client,
+            )
+        except Exception:
+            return []
         if not html_text:
             return []
         return _filter_relevant(
@@ -203,6 +400,53 @@ class ChainedWebSearchProvider:
                 return hits
         return []
 
+    async def search_async(
+        self,
+        query: str,
+        *,
+        max_results: int = 3,
+        client: httpx.AsyncClient | None = None,
+    ) -> list[WebSearchHit]:
+        """异步链式回退：任一提供器命中即返回，语义与同步 search 一致。"""
+        for provider in self.providers:
+            try:
+                method = getattr(provider, "search_async", None)
+                if callable(method):
+                    hits = await method(query, max_results=max_results, client=client)
+                else:
+                    hits = provider.search(query, max_results=max_results)
+            except Exception:
+                hits = []
+            if hits:
+                return hits
+        return []
+
+    def close(self) -> None:
+        """关闭内部各提供器的连接池（幂等）。"""
+        for provider in self.providers:
+            close = getattr(provider, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+
+
+def _build_chained_provider(
+    timeout_seconds: float, proxy: str
+) -> ChainedWebSearchProvider:
+    """按统一参数构建 DDG → Bing 链式提供器。"""
+    return ChainedWebSearchProvider(
+        [
+            DuckDuckGoWebSearchProvider(timeout_seconds=timeout_seconds, proxy=proxy),
+            BingWebSearchProvider(
+                timeout_seconds=min(timeout_seconds + 1.0, 6.0), proxy=proxy
+            ),
+        ],
+        timeout_seconds=timeout_seconds,
+        proxy=proxy,
+    )
+
 
 def build_web_search_provider(config: object | None = None) -> WebSearchProvider:
     """按配置构建：未启用返回 Null；启用时 DDG → Bing 链式，带代理。"""
@@ -219,14 +463,90 @@ def build_web_search_provider(config: object | None = None) -> WebSearchProvider
         if config
         else ""
     )
-    return ChainedWebSearchProvider(
-        [
-            DuckDuckGoWebSearchProvider(timeout_seconds=timeout, proxy=proxy),
-            BingWebSearchProvider(timeout_seconds=min(timeout + 1.0, 6.0), proxy=proxy),
-        ],
-        timeout_seconds=timeout,
-        proxy=proxy,
-    )
+    return _build_chained_provider(timeout, proxy)
+
+
+def _hit_dedupe_key(hit: WebSearchHit) -> str:
+    """跨查询去重的稳定键：URL 小写、去尾部斜杠；无 URL 回退为标题。"""
+    url = (hit.url or "").strip().rstrip("/").lower()
+    return url or _clean_text(hit.title).lower()
+
+
+async def search_async(
+    query: str,
+    *,
+    max_results: int = 3,
+    timeout_seconds: float = 3.0,
+    proxy: str = "",
+) -> list[WebSearchHit]:
+    """异步联网搜索：DDG 优先、Bing 兜底；失败/超时静默返回空列表。"""
+    provider = _build_chained_provider(timeout_seconds, proxy)
+    client: httpx.AsyncClient | None = None
+    try:
+        client = _build_async_client(proxy, timeout_seconds)
+        async with client:
+            return await provider.search_async(
+                query, max_results=max_results, client=client
+            )
+    except Exception:
+        return []
+    finally:
+        if client is not None and not client.is_closed:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+
+
+async def search_multi_async(
+    queries: Iterable[str],
+    max_results: int = 3,
+    *,
+    timeout_seconds: float = 3.0,
+    proxy: str = "",
+) -> list[WebSearchHit]:
+    """并发执行多个查询（每个查询仍 DDG 优先、Bing 兜底），按 URL 去重合并。
+
+    结果顺序由查询顺序与每个查询内部的命中顺序共同决定，保持确定性。
+    """
+    query_list = [str(query or "").strip() for query in queries]
+    query_list = [query for query in query_list if query]
+    if not query_list:
+        return []
+    provider = _build_chained_provider(timeout_seconds, proxy)
+    client: httpx.AsyncClient | None = None
+    try:
+        client = _build_async_client(proxy, timeout_seconds)
+        async with client:
+            results = await asyncio.gather(
+                *[
+                    provider.search_async(
+                        query, max_results=max_results, client=client
+                    )
+                    for query in query_list
+                ],
+                return_exceptions=True,
+            )
+    except Exception:
+        return []
+    finally:
+        if client is not None and not client.is_closed:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+    merged: list[WebSearchHit] = []
+    seen: set[str] = set()
+    for result in results:
+        if isinstance(result, BaseException):
+            continue
+        for hit in result:
+            key = _hit_dedupe_key(hit)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(hit)
+    return merged
 
 
 def _extract_ddg_hits(html_text: str, *, max_results: int = 3) -> list[WebSearchHit]:
@@ -242,9 +562,9 @@ def _extract_ddg_hits(html_text: str, *, max_results: int = 3) -> list[WebSearch
         link_match = re.search(r'href="(https?://[^"]+)"', block)
         if not title_match or not link_match:
             continue
-        title = html.unescape(_HTML_TAG_RE.sub("", title_match.group(1)).strip())
+        title = _clean_text(_HTML_TAG_RE.sub("", title_match.group(1)))
         snippet = (
-            html.unescape(_HTML_TAG_RE.sub("", snippet_match.group(1)).strip())
+            _clean_text(_HTML_TAG_RE.sub("", snippet_match.group(1)))
             if snippet_match
             else ""
         )
@@ -268,10 +588,10 @@ def _extract_bing_hits(html_text: str, *, max_results: int = 3) -> list[WebSearc
         if not title_match:
             continue
         url = title_match.group(1)
-        title = html.unescape(_HTML_TAG_RE.sub("", title_match.group(2)).strip())
+        title = _clean_text(_HTML_TAG_RE.sub("", title_match.group(2)))
         snippet_match = re.search(r'<p[^>]*>(.*?)</p>', block, re.DOTALL)
         snippet = (
-            html.unescape(_HTML_TAG_RE.sub("", snippet_match.group(1)).strip())
+            _clean_text(_HTML_TAG_RE.sub("", snippet_match.group(1)))
             if snippet_match
             else ""
         )

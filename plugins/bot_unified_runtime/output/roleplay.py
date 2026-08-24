@@ -89,3 +89,26 @@ def format_roleplay_paragraphs(text: str) -> str:
     if tail:
         paragraphs.append(tail)
     return "\n\n".join(paragraphs)
+
+def strip_action_brackets(text: str) -> str:
+    """删除回复中的括号动作描写（保留颜文字与普通括号文字）。
+
+    与 format_roleplay_paragraphs 共用 _action_tokens：括号内含汉字或嵌套
+    括号的片段按动作删除；括号内无汉字（如 (≧▽≦)、（*´▽｀*））视为颜文字
+    保留。删除后折叠多余空行，返回 strip 后的纯文本。
+    """
+    tokens = _action_tokens(text)
+    if not tokens:
+        return text.strip()
+    kept: list[str] = []
+    cursor = 0
+    for start, end in tokens:
+        if start > cursor:
+            kept.append(text[cursor:start])
+        cursor = end
+    if cursor < len(text):
+        kept.append(text[cursor:])
+    joined = "".join(kept)
+    joined = re.sub(r"\n[ \t]*\n+", "\n", joined)
+    joined = re.sub(r"[ \t]+\n", "\n", joined)
+    return joined.strip()

@@ -21,6 +21,7 @@ dependencies = [
     "nonebot-plugin-htmlkit>=0.1.0rc5",
     "jinja2>=3.1",
     "nonebot_plugin_memes_api>=0.5.1",
+    "nonebot-plugin-mcpclient>=0.1.2",
 ]
 
 [build-system]
@@ -64,3 +65,4 @@ nonebot-plugin-filehost = ["nonebot_plugin_filehost"]
 nonebot-plugin-orm = ["nonebot_plugin_orm"]
 nonebot-plugin-htmlkit = ["nonebot_plugin_htmlkit"]
 nonebot_plugin_memes_api = ["nonebot_plugin_memes_api"]
+nonebot-plugin-mcpclient = ["nonebot_plugin_mcpclient"]
