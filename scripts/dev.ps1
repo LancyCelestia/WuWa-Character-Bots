@@ -224,7 +224,7 @@ function Invoke-Test {
         }
 
         if ($hasProjectPytest) {
-            Invoke-External $python @("-m", "pytest")
+            Invoke-External $python @("-X", "faulthandler", "-m", "pytest")
             return
         }
 
@@ -625,6 +625,7 @@ Tasks:
   install       Install project dependencies with uv sync when available, otherwise pip install -e .
   dev           Start NoneBot for local development.
   run           Start NoneBot using the same runtime command as dev.
+  run-watch     Start NoneBot with auto-restart (restarts 5s after exit).
   test          Run pytest. Fails until tests exist and pytest is installed.
   lint          Run ruff check. Fails until ruff is installed.
   typecheck     Run mypy. Fails until mypy is installed.
@@ -660,18 +661,26 @@ function Invoke-RouteDemo {
     $python = Get-ProjectPython
     $env:PYTHONIOENCODING = "utf-8"
     $env:PYTHONUTF8 = "1"
+    Push-Location $Root
     Write-Step "printing full phrasing routing matrix (offline)"
-    & $python -m plugins.bot_unified_runtime.route_demo
-    if ($LASTEXITCODE -ne 0) { throw "route-demo failed" }
+    try {
+        & $python -m plugins.bot_unified_runtime.route_demo
+        if ($LASTEXITCODE -ne 0) { throw "route-demo failed" }
+    }
+    finally { Pop-Location }
 }
 
 function Invoke-RouteSmoke {
     $python = Get-ProjectPython
     $env:PYTHONIOENCODING = "utf-8"
     $env:PYTHONUTF8 = "1"
+    Push-Location $Root
     Write-Step "running real API smoke for deterministic capabilities"
-    & $python -m plugins.bot_unified_runtime.route_demo --real
-    if ($LASTEXITCODE -ne 0) { throw "route-smoke failed" }
+    try {
+        & $python -m plugins.bot_unified_runtime.route_demo --real
+        if ($LASTEXITCODE -ne 0) { throw "route-smoke failed" }
+    }
+    finally { Pop-Location }
 }
 
 
@@ -681,6 +690,7 @@ switch ($Task) {
     "install" { Invoke-Install }
     "dev" { Invoke-Run "dev" }
     "run" { Invoke-Run "run" }
+    "run-watch" { Invoke-RunWatch }
     "test" { Invoke-Test }
     "lint" { Invoke-Lint }
     "typecheck" { Invoke-Typecheck }

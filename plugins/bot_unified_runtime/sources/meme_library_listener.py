@@ -32,6 +32,26 @@ _EXT_BY_CONTENT_TYPE = {
 }
 _URL_EXT_RE = re.compile(r"\.(gif|webp|png|jpe?g)(?:$|[?#])", re.IGNORECASE)
 
+# 后台打标任务登记表：持有引用防止被 GC，done 回调负责收割异常。
+_VLM_TASKS: set[asyncio.Task[None]] = set()
+
+
+def _spawn_vlm_task(store: Any, config: Any, md5: str, image_bytes: bytes) -> None:
+    try:
+        task = asyncio.create_task(_tag_with_vlm(store, config, md5, image_bytes))
+    except RuntimeError:
+        return
+    _VLM_TASKS.add(task)
+
+    def _on_done(done: asyncio.Task[None]) -> None:
+        _VLM_TASKS.discard(done)
+        if done.cancelled():
+            return
+        # _tag_with_vlm 内部已捕获异常，这里只做兜底收割，避免未检索异常。
+        done.exception()
+
+    task.add_done_callback(_on_done)
+
 
 def _segment_urls(message_segments: list[Any]) -> list[str]:
     urls: list[str] = []
@@ -208,10 +228,7 @@ async def absorb_event_images(bot: Any, event: Any, config: Any, store: Any) -> 
         store.add(md5=md5, path=str(path), ext=ext, group_id=group_id)
         saved += 1
         if getattr(config, "bot_meme_library_vlm_enabled", False):
-            try:
-                asyncio.create_task(_tag_with_vlm(store, config, md5, image_bytes))
-            except RuntimeError:
-                pass
+            _spawn_vlm_task(store, config, md5, image_bytes)
     try:
         store.cleanup(
             max_files=int(getattr(config, "bot_meme_library_max_files", 20000) or 0),
