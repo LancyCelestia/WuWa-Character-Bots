@@ -1474,7 +1474,7 @@ def test_web_search_prompt_enforces_fact_first_and_systemic_view():
     prompt = "\n".join(item["content"] for item in build_chat_prompt(bundle))
     assert "先回答他真正在问什么" in prompt
     assert "源流、结构、关系与变迁" in prompt
-    assert "我还不太清楚" in prompt
+    assert "这里的记录并未提及" in prompt
 
 def test_chat_result_strips_action_brackets_when_disabled():
     decision = BotDecision(
