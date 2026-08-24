@@ -129,7 +129,7 @@ def test_relationship_injected_into_prompt(tmp_path):
         message["content"] for message in build_chat_prompt(bundle)
     )
 
-    assert "对当前用户的态度" in prompt_text
+    assert "对当前用户：" in prompt_text
     assert "小岸" in prompt_text
     assert "familiar" in prompt_text
 
@@ -166,4 +166,4 @@ def test_shared_group_section_skipped_when_disabled(tmp_path):
         message["content"] for message in build_chat_prompt(bundle)
     )
 
-    assert "未启用共享群上下文" in prompt_text
+    assert "最近共同会话" not in prompt_text

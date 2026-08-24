@@ -313,7 +313,7 @@ def test_chat_prompt_respects_context_budget_and_keeps_safety_boundary():
 
 def test_chat_prompt_diagnostics_report_budget_without_prompt_text():
     context = make_context().model_copy(deep=True)
-    context.context_budget = 650
+    context.context_budget = 500
     context.persona.style_rules = [f"说话风格{i}：" + "温柔" * 80 for i in range(20)]
     context.knowledge_results.chunks = [
         KnowledgeChunk(
@@ -327,8 +327,8 @@ def test_chat_prompt_diagnostics_report_budget_without_prompt_text():
 
     messages, diagnostics = build_chat_prompt_with_diagnostics(context)
 
-    assert diagnostics.requested_context_budget == 650
-    assert diagnostics.effective_context_budget == 650
+    assert diagnostics.requested_context_budget == 500
+    assert diagnostics.effective_context_budget == 600
     assert diagnostics.prompt_messages == 2
     assert diagnostics.system_prompt_chars == len(messages[0]["content"])
     assert diagnostics.user_prompt_chars == len(context.current_message)
@@ -1432,9 +1432,9 @@ def test_prompt_marks_unlimited_messages_and_world_explain_rule():
     capability(message=message, decision=decision)
 
     system = provider.last_messages[0]["content"]
-    assert "最多回复条数：不限制" in system
-    assert "回答方式（对所有问题统一适用）" in system
-    assert "有感而发则写" in system
+    assert "最多回复条数" not in system
+    assert "回答：" in system
+    assert "可以补一句你的感受，也可以不补" in system
 
 
 def test_web_search_prompt_enforces_fact_first_and_systemic_view():
@@ -1472,9 +1472,9 @@ def test_web_search_prompt_enforces_fact_first_and_systemic_view():
     from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
 
     prompt = "\n".join(item["content"] for item in build_chat_prompt(bundle))
-    assert "核心疑问" in prompt
-    assert "系统观" in prompt
-    assert "检索结果未覆盖该问题" in prompt
+    assert "先回答他真正在问什么" in prompt
+    assert "源流、结构、关系与变迁" in prompt
+    assert "我还不太清楚" in prompt
 
 def test_chat_result_strips_action_brackets_when_disabled():
     decision = BotDecision(

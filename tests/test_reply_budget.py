@@ -151,7 +151,7 @@ def test_runtime_pipeline_uses_reply_budget_for_chat_send_request_and_prompt():
     assert "reply_budget:deep_help" in send_request.audit_tags
     assert send_request.audit_tags.count("policy") == 1
     assert send_request.audit_tags.count("reply_budget:deep_help") == 1
-    assert "最多回复条数：3" in provider.last_messages[0]["content"]
+    assert "最多回复条数" not in provider.last_messages[0]["content"]
 
 
 def test_non_chat_capability_keeps_one_message_budget():
@@ -217,7 +217,7 @@ def test_runtime_pipeline_accepts_configurable_reply_budget_settings():
     assert receipt.state is ReceiptState.SENT
     [send_request] = queue.sent_requests
     assert send_request.max_messages == 2
-    assert "最多回复条数：2" in provider.last_messages[0]["content"]
+    assert "最多回复条数" not in provider.last_messages[0]["content"]
 
 
 def test_chat_context_tone_limit_is_not_raised_above_decision_budget():
@@ -310,4 +310,4 @@ def test_runtime_pipeline_accepts_zero_max_messages_as_unlimited():
     assert receipt.state is ReceiptState.SENT
     [send_request] = queue.sent_requests
     assert send_request.max_messages == 0
-    assert "最多回复条数：不限制" in provider.last_messages[0]["content"]
+    assert "最多回复条数" not in provider.last_messages[0]["content"]

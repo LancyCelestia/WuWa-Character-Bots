@@ -97,15 +97,13 @@ def test_temporal_context_injected_into_prompt(tmp_path):
         message["content"] for message in build_chat_prompt(bundle)
     )
 
-    assert "当前环境信息" in prompt_text
+    assert "当前时间：" in prompt_text
     assert "2026-06-19" in prompt_text
-    assert "芒种" in prompt_text
-    assert "端午节" in prompt_text
-    assert "气温 30°C" in prompt_text
-    assert "不要编造天气实况" in prompt_text
-    # 动作括号规则也应出现（默认开启）。
-    assert "动作表现" in prompt_text
-    assert "轻轻点头" in prompt_text
+    assert "星期五" in prompt_text
+    assert "08:30" in prompt_text
+    assert "芒种" not in prompt_text
+    assert "端午节" not in prompt_text
+    assert "气温" not in prompt_text
 
 
 def test_action_brackets_can_be_disabled(tmp_path):
@@ -132,7 +130,8 @@ def test_action_brackets_can_be_disabled(tmp_path):
         message["content"] for message in build_chat_prompt(bundle)
     )
 
-    assert "本会话不启用括号动作" in prompt_text
+    assert "你是守岸人。" in prompt_text
+    assert "动作表现" not in prompt_text
 
 
 def test_config_temporal_fields_defaults():

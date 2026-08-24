@@ -61,8 +61,8 @@ def test_file_character_provider_adds_emotion_signals_to_context_and_prompt(tmp_
         "low_energy",
     ]
     assert "情绪信号" in prompt_text
-    assert "不是医学诊断" in prompt_text
-    assert "不可信用户文本" in prompt_text
+    assert "情绪信号（仅影响语气分寸）" in prompt_text
+    assert "安全边界" in prompt_text
     assert "support_needed" in prompt_text
     assert "low_energy" in prompt_text
 
