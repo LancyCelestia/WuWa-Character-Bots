@@ -1597,4 +1597,3 @@ def test_chat_result_runs_model_tool_call_loop_and_appends_tool_result():
     assert router.calls == 2
     assert any(item.get("role") == "tool" for item in router.rounds[1])
     assert "检索之后" in result.body
-

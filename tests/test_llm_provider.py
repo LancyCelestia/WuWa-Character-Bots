@@ -512,4 +512,3 @@ def test_provider_returns_tool_calls_when_content_is_empty_and_passes_tools_payl
     assert reply.tool_calls[0]["function"]["name"] == "web_search"
     assert reply.tool_calls[0]["function"]["arguments"] == '{"query": "守岸人"}'
     assert reply.raw_usage["finish_reason"] == "tool_calls"
-
