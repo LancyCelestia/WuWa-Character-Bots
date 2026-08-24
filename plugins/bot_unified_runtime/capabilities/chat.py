@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 import re
 
-from plugins.bot_unified_runtime.output.roleplay import format_roleplay_paragraphs
+from plugins.bot_unified_runtime.output.roleplay import (
+    format_roleplay_paragraphs,
+    strip_action_brackets,
+)
 from plugins.bot_unified_runtime.character import CharacterContextProvider
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
@@ -362,7 +367,10 @@ def _action_brackets_rule(tone: object) -> str:
             "并与语气、情绪一致；动作单独成段、与对话分行，"
             "克制而不喧宾夺主，不要在动作里编造外部事件。"
         )
-    return "动作表现：本会话不启用括号动作，回复保持纯文本。"
+    return (
+        "动作表现：本会话不启用括号动作；神态、情绪与分寸都融入文句本身，"
+        "以语言本身的节奏与留白呈现。"
+    )
 
 
 def _section_budget(total_budget: int, weight: float, minimum: int = 80) -> int:
@@ -519,26 +527,26 @@ def build_chat_prompt_with_diagnostics(
             "回答涉及鸣潮世界观、专有名词或专业词汇时，优先使用这里的解释；"
             "条目没有覆盖的内容不要凭空编造，可以说明自己不确定。",
             "回答方式：当用户问及世界观里的地名、人名、物品、组织或剧情名词时，"
-            "先用一两句给出确切的事实性说明（是什么/在哪里/是谁/有什么作用），"
-            "再以当前人格表达自己对它的感受或相关记忆；先事实、后感受，"
-            "禁止只打哑谜、只抒情或用比喻代替说明。",
+            "先以一两句确切的事实说明它是什么、在何处、有何作用，"
+            "再以海的视角收束它的意义与自己的感受；先事实、后感受，"
+            "不只用抒情或比喻替代说明，也不罗列无关细节。",
             f"回复详略规则（当前模式：{context.reply_detail}）：",
             (
-                "本会话为详尽可能：所有知识性、科普性、现实类问题都应详尽展开"
-                "（约2000~4000字），分点结构化，讲清背景、原理、结构、关系与意义；"
-                "日常寒暄保持简短。"
+                "本会话为详尽可能：知识性与现实问题应充分展开——讲清其为何物、"
+                "来龙去脉、因果与它在更大结构中的位置和意义；行文连贯成章，"
+                "不列条目、不使用 Markdown；日常寒暄保持简短。"
                 if context.reply_detail == "detail"
                 else (
-                    "本会话为精炼模式：每条回答控制在200字以内，只给核心要点，"
-                    "不要长篇大论。"
+                    "本会话为精炼模式：先以一句话给出核心结论，"
+                    "再以最必要的几笔补足关键事实；不铺陈、不列条目。"
                     if context.reply_detail == "concise"
-                    else "当用户请求科普、解释、介绍、讲解某事物时，回复应详尽"
-                    "（约2000~4000字），分点结构化展开；日常聊天保持精炼。"
+                    else "当用户请求科普、解释、介绍某事物时，充分展开并讲清"
+                    "来龙去脉与意义，行文连贯成章，不列条目；日常聊天保持精炼。"
                 )
             ),
             "现实议题：涉及现实国际关系、政治、经济、历史、科学、文化或时事时，"
-            "请像可靠的科普作者那样，给出具体的国家、组织、事件、时间与关系现状，"
-            "把来龙去脉讲清楚，再以当前人格表达自己的感受或看法。",
+            "先给出具体、确凿的事实与来龙去脉（国家、组织、事件、时间与关系现状），"
+            "再以海的视角审视其在更大格局中的位置与意义；不编造、不夸大、不臆断。",
             glossary_lines,
             "",
             "对当前用户的态度：",

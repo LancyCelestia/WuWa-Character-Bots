@@ -22,6 +22,7 @@ dependencies = [
     "jinja2>=3.1",
     "nonebot_plugin_memes_api>=0.5.1",
     "nonebot-plugin-mcpclient>=0.1.2",
+    "mcp>=1.0.0,<2.0.0",
 ]
 
 [build-system]

@@ -462,3 +462,54 @@ def test_chat_provider_factory_uses_configured_timeout():
 
     assert isinstance(provider, OpenAICompatibleLLMProvider)
     assert provider.timeout_seconds == 7.5
+
+def test_provider_returns_tool_calls_when_content_is_empty_and_passes_tools_payload():
+    payload = {
+        "choices": [
+            {
+                "finish_reason": "tool_calls",
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "web_search",
+                                "arguments": '{"query": "守岸人"}',
+                            },
+                        }
+                    ],
+                },
+            }
+        ],
+        "usage": {"total_tokens": 12},
+    }
+    urlopen = RecordingUrlopen(payload)
+    provider = OpenAICompatibleLLMProvider(
+        api_key="sk-test",
+        model="default-model",
+        base_url="https://llm.example/v1/",
+        urlopen=urlopen,
+    )
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "联网搜索",
+                "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+            },
+        }
+    ]
+    reply = provider.generate(
+        [{"role": "user", "content": "守岸人是谁"}],
+        tools=tools,
+    )
+    sent = json.loads(urlopen.last_request.data.decode("utf-8"))
+    assert sent["tools"][0]["function"]["name"] == "web_search"
+    assert reply.text == ""
+    assert reply.tool_calls[0]["function"]["name"] == "web_search"
+    assert reply.tool_calls[0]["function"]["arguments"] == '{"query": "守岸人"}'
+    assert reply.raw_usage["finish_reason"] == "tool_calls"
+

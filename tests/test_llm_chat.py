@@ -1473,3 +1473,128 @@ def test_web_search_prompt_enforces_fact_first_and_systemic_view():
     assert "核心疑问" in prompt
     assert "系统观" in prompt
     assert "检索结果未覆盖该问题" in prompt
+
+def test_chat_result_strips_action_brackets_when_disabled():
+    decision = BotDecision(
+        request_id="req_chat",
+        should_respond=True,
+        mode="chat",
+        trigger="你好",
+        capability_id="bot.chat",
+        target_scope=SessionType.PRIVATE,
+        max_messages=1,
+        send_policy=SendPolicy.IMMEDIATE,
+        persona_profile_id="shorekeeper",
+        context_budget=2048,
+        decision_reason="private chat",
+        risk_level=RiskLevel.LOW,
+        privacy_level=PrivacyLevel.PERSONAL,
+    )
+    context = make_context().model_copy(
+        update={
+            "tone": ToneProfile(
+                profile_id="shorekeeper",
+                mode="private_chat",
+                action_brackets=False,
+            )
+        }
+    )
+    result = build_chat_result(
+        IncomingMessage(
+            request_id="req_chat",
+            platform="qq",
+            adapter="nonebot",
+            bot_id="bot-1",
+            session_id="private:42",
+            session_type=SessionType.PRIVATE,
+            sender_id="42",
+            plain_text="你好",
+            raw_segments=[],
+            mentions_bot=True,
+        ),
+        decision,
+        context,
+        RecordingLLMProviderWithBrackets(),
+    )
+    assert result.body == "海潮未歇，我在这里。(≧▽≦)"  # 颜文字保留，括号动作删除
+
+
+class RecordingLLMProviderWithBrackets:
+    def generate(self, messages, **kwargs) -> LLMReply:
+        return LLMReply(
+            text="（轻轻点头）海潮未歇，我在这里。(≧▽≦)",
+            provider="fake",
+            model="fake-chat",
+        )
+
+
+class TwoRoundToolRouter:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.rounds: list[list[dict[str, str]]] = []
+
+    def generate(self, messages, **kwargs) -> LLMReply:
+        self.calls += 1
+        self.rounds.append([dict(m) for m in messages])
+        if self.calls == 1:
+            return LLMReply(
+                text="",
+                provider="fake",
+                model="fake-chat",
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "web_search",
+                            "arguments": '{"query": "异环"}',
+                        },
+                    }
+                ],
+            )
+        return LLMReply(
+            text="检索之后，我把来龙去脉讲给你听。",
+            provider="fake",
+            model="fake-chat",
+        )
+
+
+def test_chat_result_runs_model_tool_call_loop_and_appends_tool_result():
+    decision = BotDecision(
+        request_id="req_chat",
+        should_respond=True,
+        mode="chat",
+        trigger="异环是什么",
+        capability_id="bot.chat",
+        target_scope=SessionType.PRIVATE,
+        max_messages=1,
+        send_policy=SendPolicy.IMMEDIATE,
+        persona_profile_id="shorekeeper",
+        context_budget=2048,
+        decision_reason="private chat",
+        risk_level=RiskLevel.LOW,
+        privacy_level=PrivacyLevel.PERSONAL,
+    )
+    router = TwoRoundToolRouter()
+    result = build_chat_result(
+        IncomingMessage(
+            request_id="req_chat",
+            platform="qq",
+            adapter="nonebot",
+            bot_id="bot-1",
+            session_id="private:42",
+            session_type=SessionType.PRIVATE,
+            sender_id="42",
+            plain_text="异环是什么",
+            raw_segments=[],
+            mentions_bot=True,
+        ),
+        decision,
+        make_context(),
+        None,
+        model_router=router,
+    )
+    assert router.calls == 2
+    assert any(item.get("role") == "tool" for item in router.rounds[1])
+    assert "检索之后" in result.body
+
