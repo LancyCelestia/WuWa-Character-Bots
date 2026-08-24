@@ -1434,7 +1434,7 @@ def test_prompt_marks_unlimited_messages_and_world_explain_rule():
     system = provider.last_messages[0]["content"]
     assert "最多回复条数" not in system
     assert "回答：" in system
-    assert "可以补一句你的感受，也可以不补" in system
+    assert "可补一句感受，也可不补" in system
 
 
 def test_web_search_prompt_enforces_fact_first_and_systemic_view():
@@ -1472,7 +1472,7 @@ def test_web_search_prompt_enforces_fact_first_and_systemic_view():
     from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
 
     prompt = "\n".join(item["content"] for item in build_chat_prompt(bundle))
-    assert "先回答他真正在问什么" in prompt
+    assert "先答其所问" in prompt
     assert "源流、结构、关系与变迁" in prompt
     assert "这里的记录并未提及" in prompt
 
