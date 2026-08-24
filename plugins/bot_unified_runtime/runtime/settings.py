@@ -95,6 +95,85 @@ def _bool_converter(value: str) -> bool:
     raise ValueError("布尔值必须是 true/false（或 开/关）")
 
 
+# 群聊回复策略四档键：运行时热改项（覆盖值存 list[str]）。
+GROUP_POLICY_KEYS = frozenset({
+    "BOT_GROUP_BLACK1",
+    "BOT_GROUP_BLACK2",
+    "BOT_GROUP_WHITE1",
+    "BOT_GROUP_WHITE2",
+})
+
+# 档位别名（英文大小写不敏感 + 简繁中文 + 编号变体） -> 规范键名。
+GROUP_POLICY_MODE_ALIASES = {
+    "black1": "BOT_GROUP_BLACK1",
+    "black_1": "BOT_GROUP_BLACK1",
+    "blacklist1": "BOT_GROUP_BLACK1",
+    "黑1": "BOT_GROUP_BLACK1",
+    "黑一": "BOT_GROUP_BLACK1",
+    "黑名单1": "BOT_GROUP_BLACK1",
+    "黑名单一": "BOT_GROUP_BLACK1",
+    "黑名單1": "BOT_GROUP_BLACK1",
+    "黑名單一": "BOT_GROUP_BLACK1",
+    "black2": "BOT_GROUP_BLACK2",
+    "black_2": "BOT_GROUP_BLACK2",
+    "blacklist2": "BOT_GROUP_BLACK2",
+    "黑2": "BOT_GROUP_BLACK2",
+    "黑二": "BOT_GROUP_BLACK2",
+    "黑名单2": "BOT_GROUP_BLACK2",
+    "黑名单二": "BOT_GROUP_BLACK2",
+    "黑名單2": "BOT_GROUP_BLACK2",
+    "黑名單二": "BOT_GROUP_BLACK2",
+    "white1": "BOT_GROUP_WHITE1",
+    "white_1": "BOT_GROUP_WHITE1",
+    "whitelist1": "BOT_GROUP_WHITE1",
+    "白1": "BOT_GROUP_WHITE1",
+    "白一": "BOT_GROUP_WHITE1",
+    "白名单1": "BOT_GROUP_WHITE1",
+    "白名单一": "BOT_GROUP_WHITE1",
+    "白名單1": "BOT_GROUP_WHITE1",
+    "白名單一": "BOT_GROUP_WHITE1",
+    "white2": "BOT_GROUP_WHITE2",
+    "white_2": "BOT_GROUP_WHITE2",
+    "whitelist2": "BOT_GROUP_WHITE2",
+    "白2": "BOT_GROUP_WHITE2",
+    "白二": "BOT_GROUP_WHITE2",
+    "白名单2": "BOT_GROUP_WHITE2",
+    "白名单二": "BOT_GROUP_WHITE2",
+    "白名單2": "BOT_GROUP_WHITE2",
+    "白名單二": "BOT_GROUP_WHITE2",
+}
+
+
+def normalize_group_policy_mode(raw: str) -> str | None:
+    """把用户输入的档位别名归一化成规范键名；无法识别返回 None。"""
+    normalized = (raw or "").strip().lower()
+    return GROUP_POLICY_MODE_ALIASES.get(normalized)
+
+
+def _group_list_converter(value: str) -> list[str]:
+    """群号列表转换：逗号/分号/顿号/空白分隔或 JSON 数组；仅接受数字群号。"""
+    raw = (value or "").strip()
+    if not raw:
+        return []
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+        except ValueError as exc:
+            raise ValueError("群号列表 JSON 解析失败") from exc
+        if not isinstance(parsed, list):
+            raise ValueError("群号列表 JSON 必须是数组")
+        items = [str(item).strip() for item in parsed]
+    else:
+        items = [part.strip() for part in re.split(r"[;,，、\s]+", raw) if part.strip()]
+    cleaned: list[str] = []
+    for item in items:
+        if not item.isdigit():
+            raise ValueError(f"群号必须是数字：{item!r}")
+        if item not in cleaned:
+            cleaned.append(item)
+    return cleaned
+
+
 # 白名单键 -> 转换函数；转换失败抛 ValueError，不会写入。
 SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_CHAT_TEMPERATURE": _temperature_converter,
@@ -105,6 +184,10 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_PERSONA_ACTION_BRACKETS": _bool_converter,
     "BOT_MUSIC_MODE": _music_mode_converter,
     "BOT_REPLY_DETAIL": _reply_detail_converter,
+    "BOT_GROUP_BLACK1": _group_list_converter,
+    "BOT_GROUP_BLACK2": _group_list_converter,
+    "BOT_GROUP_WHITE1": _group_list_converter,
+    "BOT_GROUP_WHITE2": _group_list_converter,
 }
 
 
@@ -141,7 +224,15 @@ class RuntimeSettingsStore:
         overrides = payload.get("overrides")
         if isinstance(overrides, dict):
             for key, value in overrides.items():
-                if key in SETTABLE_KEYS and isinstance(value, (str, int, float, bool)):
+                if key not in SETTABLE_KEYS:
+                    continue
+                if key in GROUP_POLICY_KEYS and isinstance(value, list):
+                    self._overrides[key] = [
+                        str(item).strip()
+                        for item in value
+                        if str(item).strip()
+                    ]
+                elif isinstance(value, (str, int, float, bool)):
                     self._overrides[key] = value
         nicknames = payload.get("nicknames")
         if isinstance(nicknames, list):

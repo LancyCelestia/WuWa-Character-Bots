@@ -184,6 +184,12 @@ class RuntimePipeline:
         alias_command_check: Callable[[str], bool] | None = None,
         group_auto_reply_enabled: bool = False,
         group_auto_reply_probability: float = 0.0,
+        group_black1: frozenset[str] = frozenset(),
+        group_black2: frozenset[str] = frozenset(),
+        group_white1: frozenset[str] = frozenset(),
+        group_white2: frozenset[str] = frozenset(),
+        natural_chat_check: Callable[[str], bool] | None = None,
+        group_lists_provider: Callable[[], dict[str, frozenset[str]]] | None = None,
     ) -> None:
         self.send_queue = send_queue
         self.audit_logger = audit_logger
@@ -200,6 +206,12 @@ class RuntimePipeline:
             group_command_prefix=group_command_prefix,
             group_auto_reply_enabled=group_auto_reply_enabled,
             group_auto_reply_probability=group_auto_reply_probability,
+            group_black1=frozenset(group_black1),
+            group_black2=frozenset(group_black2),
+            group_white1=frozenset(group_white1),
+            group_white2=frozenset(group_white2),
+            natural_chat_check=natural_chat_check,
+            group_lists_provider=group_lists_provider,
             extra_command_check=alias_command_check,
         )
         self.policy_evaluator = (

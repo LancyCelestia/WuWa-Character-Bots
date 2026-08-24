@@ -229,3 +229,12 @@ def classify_question_intent(text: str) -> IntentDecision:
 
 def should_web_search(text: str) -> bool:
     return classify_question_intent(text).intent is QuestionIntent.WEB_SEARCH
+
+
+def looks_like_question_text(text: str) -> bool:
+    """判断文本是否像提问（问号/疑问词/疑问语气）。
+
+    供群聊回复策略使用：白名单1 群里的自然语言提问（不带@、不带斜杠）
+    也要回复；纯寒暄/闲聊不算提问，仍保持观察。
+    """
+    return bool(_QUESTION_LIKE_RE.search(_strip(text)))

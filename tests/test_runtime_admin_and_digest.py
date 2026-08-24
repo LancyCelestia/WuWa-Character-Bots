@@ -78,6 +78,41 @@ def test_settings_store_nicknames_and_interactions(tmp_path):
     assert reloaded.interaction_count("42") == 1
 
 
+def test_settings_store_group_policy_lists_persist(tmp_path):
+    store = RuntimeSettingsStore(tmp_path / "settings.json")
+
+    # 逗号/分号/空格混合分隔，且 JSON 数组都能解析为群号列表。
+    assert store.set_override("BOT_GROUP_BLACK1", "100;200, 300") == ["100", "200", "300"]
+    assert store.set_override("BOT_GROUP_WHITE2", '["700","800"]') == ["700", "800"]
+
+    reloaded = RuntimeSettingsStore(tmp_path / "settings.json")
+    assert reloaded.get_or("BOT_GROUP_BLACK1", None) == ["100", "200", "300"]
+    assert reloaded.get_or("BOT_GROUP_WHITE2", None) == ["700", "800"]
+
+    # 非数字群号必须拒绝。
+    try:
+        store.set_override("BOT_GROUP_WHITE1", "abc")
+    except ValueError as exc:
+        assert "群号" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("expected ValueError for non-numeric group id")
+
+    # 空串 = 清空该档（仍持久化空列表，覆盖 .env 的静态配置）。
+    assert store.set_override("BOT_GROUP_WHITE1", "") == []
+    reloaded_again = RuntimeSettingsStore(tmp_path / "settings.json")
+    assert reloaded_again.get_or("BOT_GROUP_WHITE1", None) == []
+
+
+def test_normalize_group_policy_mode_aliases():
+    from plugins.bot_unified_runtime.runtime.settings import normalize_group_policy_mode
+
+    assert normalize_group_policy_mode("black1") == "BOT_GROUP_BLACK1"
+    assert normalize_group_policy_mode("黑名单2") == "BOT_GROUP_BLACK2"
+    assert normalize_group_policy_mode("黑名單一") == "BOT_GROUP_BLACK1"
+    assert normalize_group_policy_mode("WHITE_2") == "BOT_GROUP_WHITE2"
+    assert normalize_group_policy_mode("白1") == "BOT_GROUP_WHITE1"
+    assert normalize_group_policy_mode("") is None
+    assert normalize_group_policy_mode("unknown") is None
 def test_runtime_admin_result_requires_admin(tmp_path):
     manager = InstanceSettingsManager(tmp_path)
     config = Config()

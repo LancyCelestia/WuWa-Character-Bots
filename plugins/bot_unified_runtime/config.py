@@ -145,6 +145,13 @@ class Config(BaseModel):
     bot_group_digest_max_chars: int = 800
     bot_group_digest_llm_enabled: bool = False
     bot_group_digest_llm_ttl_seconds: int = 3600
+    # 群聊回复策略（群号列表）：
+    # black1=完全静默只接收不发送；black2=只回“@它且带指令”的消息；
+    # white1=正常回复（普通指令/艾特指令/自然语言）；white2=只回“@它”的消息。
+    bot_group_black1: list[str] = []
+    bot_group_black2: list[str] = []
+    bot_group_white1: list[str] = []
+    bot_group_white2: list[str] = []
     bot_meme_search_enabled: bool = False
     bot_meme_search_timeout_seconds: float = 8.0
     bot_meme_search_cache_seconds: int = 600
@@ -340,6 +347,10 @@ class Config(BaseModel):
         "bot_trusted_user_ids",
         "bot_blocked_user_ids",
         "bot_share_groups",
+        "bot_group_black1",
+        "bot_group_black2",
+        "bot_group_white1",
+        "bot_group_white2",
         mode="before",
     )
     @classmethod

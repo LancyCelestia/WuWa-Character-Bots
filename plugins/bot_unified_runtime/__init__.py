@@ -57,6 +57,7 @@ from .runtime.settings import (
     build_instance_settings_manager,
     build_runtime_settings_store,
     effective_instance,
+    normalize_group_policy_mode,
 )
 from .sources.credential_health import check_credentials_and_report
 from .sources.meme_search import build_meme_search_provider
@@ -92,6 +93,7 @@ from .capabilities.meme_library import (
 )
 from .runtime.mentions import detect_name_mention
 from .runtime.natural_language import detect_natural_command
+from .runtime.question_intent import looks_like_question_text
 
 try:
     from nonebot.plugin import PluginMetadata
@@ -955,6 +957,29 @@ def _register_nonebot_handlers() -> None:
         forward_node_chars=config.bot_render_forward_node_chars,
         group_auto_reply_enabled=config.bot_group_chat_auto_reply_enabled,
         group_auto_reply_probability=config.bot_group_chat_auto_reply_probability,
+        group_black1=frozenset(config.bot_group_black1),
+        group_black2=frozenset(config.bot_group_black2),
+        group_white1=frozenset(config.bot_group_white1),
+        group_white2=frozenset(config.bot_group_white2),
+        natural_chat_check=looks_like_question_text,
+        group_lists_provider=lambda: {
+            "black1": frozenset(
+                str(item).strip()
+                for item in (runtime_settings.get("BOT_GROUP_BLACK1", config) or [])
+            ),
+            "black2": frozenset(
+                str(item).strip()
+                for item in (runtime_settings.get("BOT_GROUP_BLACK2", config) or [])
+            ),
+            "white1": frozenset(
+                str(item).strip()
+                for item in (runtime_settings.get("BOT_GROUP_WHITE1", config) or [])
+            ),
+            "white2": frozenset(
+                str(item).strip()
+                for item in (runtime_settings.get("BOT_GROUP_WHITE2", config) or [])
+            ),
+        },
         alias_command_check=lambda text: looks_like_command_text(
             text,
             config=config,
@@ -1925,6 +1950,126 @@ def _register_nonebot_handlers() -> None:
                     level=level,
                     limit=limit,
                 )
+
+        elif command_text == "group" or command_text.startswith("group "):
+            capability_id = "bot.group_policy"
+            group_policy_args = command_text.removeprefix("group").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                actor_names = {str(role).lower() for role in _decision.actor_roles}
+                if "admin" not in actor_names:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.group_policy",
+                        kind="text",
+                        body="只有管理员才能调整群聊回复策略。",
+                        audit_tags=["group_policy", "denied"],
+                    )
+                labels = {
+                    "BOT_GROUP_BLACK1": "黑名单1（完全静默）",
+                    "BOT_GROUP_BLACK2": "黑名单2（仅@+指令）",
+                    "BOT_GROUP_WHITE1": "白名单1（指令/点名/自然提问）",
+                    "BOT_GROUP_WHITE2": "白名单2（仅@）",
+                }
+                snapshot = {
+                    key: [str(item) for item in (runtime_settings.get(key, config) or [])]
+                    for key in labels
+                }
+
+                def render(prefix: str) -> CapabilityResult:
+                    lines = ["群聊回复策略："]
+                    for key, label in labels.items():
+                        ids = snapshot[key]
+                        lines.append(f"· {label}：{', '.join(ids) if ids else '无'}")
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.group_policy",
+                        kind="text",
+                        body=prefix + "\n".join(lines),
+                        audit_tags=["group_policy"],
+                    )
+
+                parts = group_policy_args.split()
+                action_raw = parts[0].lower() if parts else ""
+                action_aliases = {
+                    "add": "add", "加": "add", "加入": "add",
+                    "del": "del", "delete": "del", "remove": "del",
+                    "删": "del", "移除": "del",
+                    "set": "set", "设": "set", "设置": "set",
+                    "clear": "clear", "清": "clear", "清空": "clear", "reset": "clear",
+                    "list": "list", "show": "list", "查": "list", "查看": "list",
+                }
+                action = action_aliases.get(action_raw)
+                if action in (None, "list"):
+                    return render("")
+                if len(parts) < 2:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.group_policy",
+                        kind="text",
+                        body=(
+                            "用法：\n"
+                            "/bot group [list]\n"
+                            "/bot group add <black1|black2|white1|white2> <群号...>\n"
+                            "/bot group del <档位> <群号...>\n"
+                            "/bot group set <档位> <群号...>\n"
+                            "/bot group clear <档位>"
+                        ),
+                        audit_tags=["group_policy", "usage"],
+                    )
+                mode_key = normalize_group_policy_mode(parts[1])
+                if mode_key is None:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.group_policy",
+                        kind="text",
+                        body="档位必须是 black1/black2/white1/white2（或 黑1/黑2/白1/白2）。",
+                        audit_tags=["group_policy", "bad_mode"],
+                    )
+                group_ids = [part for part in parts[2:] if part.strip()]
+                if any(not part.isdigit() for part in group_ids):
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.group_policy",
+                        kind="text",
+                        body="群号必须是数字。",
+                        audit_tags=["group_policy", "bad_id"],
+                    )
+                if action in {"add", "del", "set"} and not group_ids:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.group_policy",
+                        kind="text",
+                        body="请提供至少一个群号。",
+                        audit_tags=["group_policy", "missing_id"],
+                    )
+                current = list(snapshot[mode_key])
+                try:
+                    if action == "add":
+                        merged = list(dict.fromkeys([*current, *group_ids]))
+                        runtime_settings.set_override(mode_key, ";".join(merged))
+                    elif action == "del":
+                        removed = set(group_ids)
+                        runtime_settings.set_override(
+                            mode_key,
+                            ";".join(item for item in current if item not in removed),
+                        )
+                    elif action == "set":
+                        runtime_settings.set_override(mode_key, ";".join(group_ids))
+                    else:  # clear
+                        runtime_settings.set_override(mode_key, "")
+                except ValueError as exc:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.group_policy",
+                        kind="text",
+                        body=f"设置失败：{exc}",
+                        audit_tags=["group_policy", "error"],
+                    )
+                snapshot[mode_key] = [
+                    str(item) for item in (runtime_settings.get(mode_key, config) or [])
+                ]
+                return render(f"已更新 {labels[mode_key]}。\n")
 
         elif command_text != "status":
             capability_id = "bot.help"
