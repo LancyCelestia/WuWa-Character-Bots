@@ -1433,7 +1433,8 @@ def test_prompt_marks_unlimited_messages_and_world_explain_rule():
 
     system = provider.last_messages[0]["content"]
     assert "最多回复条数：不限制" in system
-    assert "先事实、后感受" in system
+    assert "回答方式（对所有问题统一适用）" in system
+    assert "有感而发则写" in system
 
 
 def test_web_search_prompt_enforces_fact_first_and_systemic_view():
