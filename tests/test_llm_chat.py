@@ -1433,7 +1433,7 @@ def test_prompt_marks_unlimited_messages_and_world_explain_rule():
 
     system = provider.last_messages[0]["content"]
     assert "最多回复条数" not in system
-    assert "回答：" in system
+    assert "回答（语言以守岸人官方语音为蓝本）" in system
     assert "可补一句感受，也可不补" in system
 
 

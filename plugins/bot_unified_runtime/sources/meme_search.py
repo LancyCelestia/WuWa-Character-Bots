@@ -124,9 +124,11 @@ class DuckDuckGoMemeSearchProvider:
         if not query:
             return []
         key = query.lower()
-        cached_at, cached = self._cache.get(key, (0.0, []))
-        if time.monotonic() - cached_at <= self.cache_seconds:
-            return cached[:max_results]
+        entry = self._cache.get(key)
+        if entry is not None:
+            cached_at, cached = entry
+            if time.monotonic() - cached_at <= self.cache_seconds:
+                return cached[:max_results]
         results = self._fetch(query)
         self._cache[key] = (time.monotonic(), results)
         return results[:max_results]
