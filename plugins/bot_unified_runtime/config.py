@@ -204,6 +204,12 @@ class Config(BaseModel):
     bot_web_search_tinyfish_api_key: str = ""
     bot_web_search_langsearch_api_key: str = ""
     bot_web_search_tavily_endpoint: str = "https://api.tavily.com/search"
+    # Tavily 一级参数：留空则不随请求发送；也可经 provider_options 覆盖同名键。
+    bot_web_search_tavily_search_depth: str = ""
+    bot_web_search_tavily_time_range: str = ""
+    # 正文抓取回退：TinyFish 优先，可再用 Tavily extract 兜底（默认关闭，避免额外额度消耗）。
+    bot_web_search_tavily_extract_enabled: bool = False
+    bot_web_search_tavily_extract_endpoint: str = "https://api.tavily.com/extract"
     bot_web_search_you_endpoint: str = "https://api.you.com/v1/search"
     bot_web_search_tinyfish_endpoint: str = "https://api.search.tinyfish.ai/search"
     bot_web_search_tinyfish_fetch_endpoint: str = ""

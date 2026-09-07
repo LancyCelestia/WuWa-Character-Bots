@@ -157,3 +157,11 @@
 - [complete] 全量 verify：361 passed、Ruff 通过、mypy 175 源码文件通过。
 - [pending] 真实 NapCat 重启验收（私聊/群聊/引用/图片/文件/poke）仍需用户实机执行。
 - [pending] 显式文件清单提交并推送 v0.0.1-alpha.2（用户已授权推送，禁用 `git add -A`）。
+
+## 2026-09-07 alpha.2 二轮（搜索适配深度对齐）
+
+- [complete] Tavily 一级参数 search_depth/time_range 自动注入；正文抓取回退链 TinyFish→Tavily extract→通用抓取（extract 默认关）。
+- [complete] extract_page_text 补识别 raw_content/results 键；新增 search-smoke 只读逐家自检任务。
+- [complete] search-smoke 实跑：.env 无 Tavily/You key，如实报告 no provider configured；用户填 key 后重跑即完成 P2.3 真实验收。
+- [complete] 全量 verify：365 passed、Ruff 过、mypy 176 源码文件过。
+- [pending] origin 推送仍被远端挂断（408/curl55），交接文档 19.5 已写明恢复命令。

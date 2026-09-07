@@ -6,6 +6,11 @@ from types import SimpleNamespace
 import httpx
 
 from plugins.bot_unified_runtime.config import Config, translate_env_keys
+from plugins.bot_unified_runtime.sources.search_api import (
+    CompositePageFetchProvider,
+    TavilyExtractFetchProvider,
+    build_api_search_provider,
+)
 from plugins.bot_unified_runtime.sources.web_search import (
     LangSearchWebSearchProvider,
     TavilyWebSearchProvider,
@@ -161,6 +166,98 @@ def test_provider_does_not_retry_http_status_errors():
 
     assert provider.search("q", max_results=2) == []
     assert calls["count"] == 1
+
+
+def test_tavily_first_class_params_injected_without_overriding_options():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.content)
+        return httpx.Response(200, json={"results": []})
+
+    config = SimpleNamespace(
+        bot_web_search_tavily_search_depth="advanced",
+        bot_web_search_tavily_time_range="week",
+    )
+    provider = TavilyWebSearchProvider(
+        api_key="k",
+        endpoint="https://tavily.test/search",
+        options={"search_depth": "basic"},
+        client=_client(handler),
+    )
+
+    # 与 build_api_search_provider 的注入逻辑一致：显式 options 同名键优先。
+    provider_options: dict[str, object] = dict(provider.options)
+    for body_key, field in (
+        ("search_depth", "bot_web_search_tavily_search_depth"),
+        ("time_range", "bot_web_search_tavily_time_range"),
+    ):
+        value = str(getattr(config, field, "") or "").strip()
+        if value and body_key not in provider_options:
+            provider_options[body_key] = value
+    provider.options = provider_options
+    provider.search("q", max_results=2)
+
+    assert seen["payload"]["search_depth"] == "basic"  # 显式 options 优先
+    assert seen["payload"]["time_range"] == "week"
+
+
+def test_tavily_extract_fetch_provider_returns_page_text():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer tavily-key"
+        assert json.loads(request.content)["urls"] == ["https://page.example/a"]
+        return httpx.Response(200, json={"results": [{"raw_content": "页面正文"}]})
+
+    provider = TavilyExtractFetchProvider(
+        api_key="tavily-key",
+        endpoint="https://tavily.test/extract",
+        client=_client(handler),
+    )
+
+    assert provider.fetch_page_text("https://page.example/a", max_chars=50) == "页面正文"
+
+
+def test_composite_fetcher_tries_next_on_failure_and_empty():
+    class _Broken:
+        name = "broken"
+
+        def fetch_page_text(self, url: str, *, max_chars: int = 3000) -> str:
+            raise RuntimeError("down")
+
+    fallback_hit = TinyFishFetchProvider(
+        api_key="k",
+        endpoint="https://tiny.test/fetch",
+        client=_client(lambda _r: httpx.Response(200, json={"content": "兜底正文"})),
+    )
+    composite = CompositePageFetchProvider([_Broken(), fallback_hit])
+
+    assert composite.fetch_page_text("https://x.example") == "兜底正文"
+
+    empty = TavilyExtractFetchProvider(api_key="", endpoint="https://tavily.test/extract")
+    assert CompositePageFetchProvider([empty]).fetch_page_text("https://x.example") == ""
+
+
+def test_builder_returns_composite_when_tinyfish_and_tavily_extract_enabled():
+    config = SimpleNamespace(
+        bot_web_search_provider="tavily",
+        bot_web_search_fallback_providers=["you"],
+        bot_web_search_timeout_seconds=3,
+        bot_download_proxy="",
+        bot_web_search_tavily_api_key="tavily",
+        bot_web_search_you_api_key="you",
+        bot_web_search_tinyfish_api_key="tiny",
+        bot_web_search_tinyfish_fetch_endpoint="https://tiny.test/fetch",
+        bot_web_search_provider_options={},
+        bot_web_search_tavily_extract_enabled=True,
+        bot_web_search_tavily_extract_endpoint="https://tavily.test/extract",
+        bot_web_search_fetch_timeout_seconds=5,
+    )
+
+    providers, fetcher = build_api_search_provider(config, timeout_seconds=3, proxy="")
+
+    assert [item.name for item in providers] == ["tavily", "you"]
+    assert isinstance(fetcher, CompositePageFetchProvider)
+    assert [item.name for item in fetcher.fetchers] == ["tinyfish-fetch", "tavily-extract"]
 
 
 def test_builder_uses_tavily_you_langsearch_and_excludes_bing():

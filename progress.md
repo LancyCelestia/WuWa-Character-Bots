@@ -103,3 +103,9 @@
 - 完成参考插件评审与三项采纳落地；新增 `tests/test_disconnect_notice.py` 等回归，测试 352→361。
 - 全量 verify：361 passed；Ruff 全通过；mypy 175 个源码文件无错误。
 - 按用户授权准备显式清单提交并推送 v0.0.1-alpha.2；未使用 `git add -A`，未触碰活动运行数据与人格源文件。
+
+## 2026-09-07 alpha.2 二轮进度
+
+- 搜索链深度对齐 tavily 插件：一级参数注入、TavilyExtract+TinyFish 复合抓取、search-smoke 任务与实跑。
+- 测试 361→365；Ruff/mypy 全过。
+- 推送仍被网络挂断，恢复命令已写入 handoff 19.5。

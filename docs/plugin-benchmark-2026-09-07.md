@@ -44,6 +44,17 @@
   不拖慢整体失败切换。
 - Tavily `search_depth`/`time_range` 参数面：`BOT_WEB_SEARCH_PROVIDER_OPTIONS` 的自定义键
   本就透传进请求体（`search_api.py` 既有行为），已在 `.env.example` 补充示例文档，无代码改动。
+- **二轮增强（对标 tavily 插件完整参数面）**：
+  - 新增一级配置 `BOT_WEB_SEARCH_TAVILY_SEARCH_DEPTH` / `BOT_WEB_SEARCH_TAVILY_TIME_RANGE`
+    （留空不发送；`provider_options` 同名键优先），构建时自动注入 Tavily 请求体；
+  - 新增 `TavilyExtractFetchProvider`：Tavily `/extract` 正文抓取，与 TinyFish fetch 组成
+    `CompositePageFetchProvider` 顺序回退链（TinyFish → Tavily extract → 通用抓取），
+    由 `BOT_WEB_SEARCH_TAVILY_EXTRACT_ENABLED`（默认关，避免重复额度消耗）控制；
+  - `extract_page_text` 补识别 Tavily 的 `raw_content`/`results` 键；
+  - 新增 `search-smoke` dev.ps1 任务：对每个已配置 key 的提供器做一次只读真实查询，
+    输出 ok/延迟/命中数，不发任何 QQ 消息（P2.3 逐家验收工具）。实测当前 `.env`
+    Tavily/You key 均未配置，工具如实报告 `no provider configured`——
+    填入 `BOT_SEARCH_TAVILY_API_KEY`/`BOT_SEARCH_YOU_API_KEY` 后重跑即可完成逐家真实验收。
 
 ### 2.3 Wiki 缓存与限流（交接文档 P2.9）
 

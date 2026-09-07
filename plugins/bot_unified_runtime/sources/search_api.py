@@ -129,7 +129,7 @@ def extract_page_text(payload: object) -> str:
     if isinstance(payload, str):
         return payload.strip()
     if isinstance(payload, Mapping):
-        for key in ("content", "markdown", "text", "body", "data", "result"):
+        for key in ("content", "markdown", "text", "body", "data", "result", "raw_content", "results"):
             value = payload.get(key)
             text = extract_page_text(value)
             if text:
@@ -309,12 +309,99 @@ class TinyFishFetchProvider:
             self._client.close()
 
 
+class TavilyExtractFetchProvider:
+    """Tavily extract 正文抓取：TinyFish 之后的抓取回退，复用同一 Tavily key。"""
+
+    name = "tavily-extract"
+    scheme = "bearer"
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        endpoint: str = "https://api.tavily.com/extract",
+        timeout_seconds: float = 15.0,
+        proxy: str = "",
+        options: Mapping[str, Any] | None = None,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.api_key = str(api_key or "").strip()
+        self.endpoint = str(endpoint or "").strip()
+        self.timeout_seconds = max(0.5, float(timeout_seconds))
+        self.proxy = str(proxy or "").strip()
+        self.options = _safe_options(options or {})
+        self._client = client
+
+    def fetch_page_text(self, url: str, *, max_chars: int = 3000) -> str:
+        if not self.api_key or not self.endpoint or not url.startswith(("http://", "https://")):
+            return ""
+        client = self._client or httpx.Client(
+            timeout=httpx.Timeout(self.timeout_seconds),
+            follow_redirects=True,
+            proxy=self.proxy or None,
+        )
+        owned = self._client is None
+        try:
+            params, body_overrides = _request_overrides(self.options)
+            body = {"urls": [url]}
+            body.update({key: value for key, value in self.options.items() if key not in {"headers", "params", "body"}})
+            body.update(body_overrides)
+            response = client.post(
+                self.endpoint,
+                headers=_headers(self.options, self.api_key, self.scheme),
+                params=params or None,
+                json=body,
+            )
+            response.raise_for_status()
+            return extract_page_text(response.json())[: max(1, int(max_chars))]
+        except Exception:  # noqa: BLE001 - 抓取失败由上层回退通用抓取。
+            return ""
+        finally:
+            if owned:
+                client.close()
+
+    def close(self) -> None:
+        if self._client is not None:
+            self._client.close()
+
+
+class CompositePageFetchProvider:
+    """按顺序尝试多个正文抓取器，任一命中即返回；全部失败再走通用抓取。"""
+
+    name = "composite-fetch"
+
+    def __init__(self, fetchers: list[Any]) -> None:
+        self.fetchers = [fetcher for fetcher in fetchers if fetcher is not None]
+
+    def fetch_page_text(self, url: str, *, max_chars: int = 3000) -> str:
+        for fetcher in self.fetchers:
+            try:
+                text = str(fetcher.fetch_page_text(url, max_chars=max_chars) or "")
+            except Exception:  # noqa: BLE001 - 单个抓取器失败回退下一个。
+                text = ""
+            if text:
+                return text
+        return ""
+
+    def close(self) -> None:
+        for fetcher in self.fetchers:
+            close = getattr(fetcher, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001, S110 - 关闭失败忽略。
+                    pass
+
+
 def build_api_search_provider(
     config: object,
     *,
     timeout_seconds: float,
     proxy: str,
-) -> tuple[list[_JsonSearchProvider], TinyFishFetchProvider | None]:
+) -> tuple[
+    list[_JsonSearchProvider],
+    TinyFishFetchProvider | TavilyExtractFetchProvider | CompositePageFetchProvider | None,
+]:
     primary = str(getattr(config, "bot_web_search_provider", "tavily") or "tavily").strip().lower()
     fallback = getattr(config, "bot_web_search_fallback_providers", ("you", "langsearch")) or ()
     names: list[str] = []
@@ -323,9 +410,18 @@ def build_api_search_provider(
         if normalized in {"tavily", "you", "tinyfish", "langsearch"} and normalized not in names:
             names.append(normalized)
     options_by_provider = getattr(config, "bot_web_search_provider_options", {}) or {}
+    tavily_first_class = (
+        ("search_depth", "bot_web_search_tavily_search_depth"),
+        ("time_range", "bot_web_search_tavily_time_range"),
+    )
     providers: list[_JsonSearchProvider] = []
     for name in names:
         provider_options = _safe_options(options_by_provider.get(name, {}) if isinstance(options_by_provider, Mapping) else {})
+        if name == "tavily":
+            for body_key, config_field in tavily_first_class:
+                value = str(getattr(config, config_field, "") or "").strip()
+                if value and body_key not in provider_options:
+                    provider_options[body_key] = value
         key_value = provider_options.pop(
             "api_key",
             getattr(config, f"bot_web_search_{name}_api_key", ""),
@@ -361,21 +457,48 @@ def build_api_search_provider(
     tinyfish_endpoint = str(
         getattr(config, "bot_web_search_tinyfish_fetch_endpoint", "") or ""
     ).strip()
-    fetcher = (
-        TinyFishFetchProvider(
-            api_key=tinyfish_key,
-            endpoint=tinyfish_endpoint,
-            timeout_seconds=float(
-                getattr(config, "bot_web_search_fetch_timeout_seconds", 15.0) or 15.0
-            ),
-            proxy=proxy,
-            options=_safe_options(
-                options_by_provider.get("tinyfish_fetch", {})
-                if isinstance(options_by_provider, Mapping)
-                else {}
-            ),
-        )
-        if tinyfish_key and tinyfish_endpoint
-        else None
+    fetch_timeout = float(
+        getattr(config, "bot_web_search_fetch_timeout_seconds", 15.0) or 15.0
     )
-    return providers, fetcher
+    fetchers: list[Any] = []
+    if tinyfish_key and tinyfish_endpoint:
+        fetchers.append(
+            TinyFishFetchProvider(
+                api_key=tinyfish_key,
+                endpoint=tinyfish_endpoint,
+                timeout_seconds=fetch_timeout,
+                proxy=proxy,
+                options=_safe_options(
+                    options_by_provider.get("tinyfish_fetch", {})
+                    if isinstance(options_by_provider, Mapping)
+                    else {}
+                ),
+            )
+        )
+    if bool(getattr(config, "bot_web_search_tavily_extract_enabled", False)):
+        tavily_key = resolve_search_secret(
+            getattr(config, "bot_web_search_tavily_api_key", ""), config
+        )
+        tavily_extract_endpoint = str(
+            getattr(config, "bot_web_search_tavily_extract_endpoint", "")
+            or "https://api.tavily.com/extract"
+        ).strip()
+        if tavily_key and tavily_extract_endpoint:
+            fetchers.append(
+                TavilyExtractFetchProvider(
+                    api_key=tavily_key,
+                    endpoint=tavily_extract_endpoint,
+                    timeout_seconds=fetch_timeout,
+                    proxy=proxy,
+                    options=_safe_options(
+                        options_by_provider.get("tavily_extract", {})
+                        if isinstance(options_by_provider, Mapping)
+                        else {}
+                    ),
+                )
+            )
+    if not fetchers:
+        return providers, None
+    if len(fetchers) == 1:
+        return providers, fetchers[0]
+    return providers, CompositePageFetchProvider(fetchers)

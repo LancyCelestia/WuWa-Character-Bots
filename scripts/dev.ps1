@@ -35,6 +35,7 @@ param(
         "gscore-smoke",
         "route-demo",
         "route-smoke",
+        "search-smoke",
         "docs-check",
         "plugin-check",
         "smoke",
@@ -752,6 +753,7 @@ function Show-Help {
         '  gscore-smoke   Read-only GsCore bridge readiness check; never connects or sends.'
         '  route-demo     Print the full phrasing routing matrix. Offline, no network, no QQ.'
         '  route-smoke    Run deterministic capabilities against real APIs/services; may use network, never sends QQ.'
+        '  search-smoke   One read-only query per configured search provider (Tavily/You/TinyFish/LangSearch); never sends QQ.'
         '  docs-check    Verify minimal runtime docs, archive policy, and project config pointers exist.'
         '  plugin-check  Verify plugins/ is configured and report whether local plugins exist yet.'
         '  smoke         Verify docs, plugin discovery, NoneBot import, and nb CLI availability.'
@@ -780,6 +782,18 @@ function Invoke-RouteSmoke {
     try {
         & $python -m plugins.bot_unified_runtime.route_demo --real
         if ($LASTEXITCODE -ne 0) { throw "route-smoke failed" }
+    }
+    finally { Pop-Location }
+}
+
+
+function Invoke-SearchSmoke {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "running read-only search API providers smoke"
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.sources.search_smoke")
     }
     finally { Pop-Location }
 }
@@ -820,6 +834,7 @@ switch ($Task) {
     "gscore-smoke" { Invoke-GscoreSmoke }
     "route-demo" { Invoke-RouteDemo }
     "route-smoke" { Invoke-RouteSmoke }
+    "search-smoke" { Invoke-SearchSmoke }
     "docs-check" { Invoke-DocsCheck }
     "plugin-check" { Invoke-PluginCheck }
     "smoke" { Invoke-Smoke }

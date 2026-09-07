@@ -843,6 +843,29 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Script
 - 新增回归：`tests/test_disconnect_notice.py`（6 项）、搜索重试 2 项、wiki 缓存 1 项。
 - 本轮仍遵守：无真实 QQ/Telegram 消息发送、无真实付费 LLM 调用、未修改人格/世界观源文件、未删除 Runtime 活动数据。
 
+### 19.5 alpha.2 二轮增补：搜索适配深度对齐（对标 nonebot-plugin-tavily）
+
+- **Tavily 一级参数**：`BOT_WEB_SEARCH_TAVILY_SEARCH_DEPTH`（basic|advanced）、
+  `BOT_WEB_SEARCH_TAVILY_TIME_RANGE`（day|week|month|year），构建链时自动注入请求体；
+  `BOT_WEB_SEARCH_PROVIDER_OPTIONS` 同名键优先，可按 provider 细调。
+- **正文抓取回退链**：TinyFish fetch → Tavily extract（`BOT_WEB_SEARCH_TAVILY_EXTRACT_ENABLED`，
+  默认关）→ 通用抓取；`CompositePageFetchProvider` 单抓取器失败自动下一个。
+- **search-smoke 任务**：`dev.ps1 -Task search-smoke` 对每家已配置 key 的提供器做一次只读真实
+  查询（默认查询"鸣潮 守岸人"），输出 ok/延迟/命中摘要；**不发送任何 QQ/Telegram 消息**。
+  实测当前 `.env` 的 `BOT_SEARCH_TAVILY_API_KEY`/`BOT_SEARCH_YOU_API_KEY` 均为空——
+  **用户填 key 后重跑该任务即完成 P2.3 的逐家真实验收**（这是本轮唯一无法代办的收尾）。
+- You.com 适配确认：现有 `YouSearchProvider`（POST、`X-API-Key`、body `{query,count}`、
+  可选 `freshness` 等 options 透传）与官方 API 形态一致，无需改码。
+- 验证：`365 passed`；Ruff 全过；mypy 176 源码文件无错。新增回归：Tavily extract、
+  复合抓取链、builder 组合、一级参数注入（4 项）。
+- **推送状态（重要）**：本地提交 `683ea06`（alpha.2 主体）已完成，分支 `v0.0.1-alpha.2` 与
+  附注标签已创建；但对 origin 的多次推送均被远端挂断（HTTP 408 / curl 55 send failure，
+  疑似本机到 GitHub 的网络对大 POST 不友好，`ls-remote` 可通）。已尝试 postBuffer 157286400
+  与强制 HTTP/1.1。**如推送仍失败，可换网络/代理后执行：**
+  `git push -u origin refs/heads/v0.0.1-alpha.2:refs/heads/v0.0.1-alpha.2` 与
+  `git push origin refs/tags/v0.0.1-alpha.2:refs/tags/v0.0.1-alpha.2`
+  （分支与标签同名，必须用完整 refspec）。
+
 ### 19.4 仍然未完成（承接第 6 节，优先级不变）
 
 P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序须在真实验收之后）、P0.4 幂等表与 result-unknown 恢复、P0.5 记忆抽取实机验证、P1 全部、P2/P3 其余项均未变。runtime-layout 仍失败（源码 data 活动数据 + 少量缓存残留），按第 7/8 节流程处理，未强行清理。
