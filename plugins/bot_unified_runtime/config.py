@@ -30,6 +30,11 @@ class Config(BaseModel):
     # 其余配置仍可继续使用 data/... 的相对写法，由下方校验器统一解析。
     bot_runtime_data_dir: str = "data"
     bot_runtime_enabled: bool = True
+    # 入站事件幂等表（P0.4）：重连重放的同事件对同一能力只处理一次；默认关闭，
+    # 建议真实 NapCat 验收期间保持关闭，验收通过后再启用。
+    bot_event_idempotency_enabled: bool = False
+    bot_event_idempotency_ttl_seconds: float = 3600.0
+    bot_event_idempotency_max_entries: int = 4096
     bot_runtime_default_persona: str = "default"
     bot_runtime_group_command_prefix: str = "/bot"
     bot_runtime_admin_prefix: str = "/bot"

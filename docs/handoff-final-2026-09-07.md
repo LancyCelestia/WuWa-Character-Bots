@@ -394,7 +394,7 @@ BOT_POKE_ADMIN_BYPASS
 | 真实聊天可用 | ✅/需继续观察 | 用户已实测文本有回应；真实 provider 稳定性仍需持续观察 |
 | NapCat -> OneBot -> QQ 闭环 | 🟨 | 用户已实测文本和图片；本轮最终未代做真实重启验收 |
 | 不推送 origin | ✅ | 没有 push |
-| Tavily 主、You 备、TinyFish 正文、LangSearch 备用 | ✅/🟨 | 适配层已完成，真实四家账户未逐家验收 |
+| Tavily 主、You 备、TinyFish 正文、LangSearch 备用 | ✅/🟨 | Tavily/You 已真实账号 smoke 通过（2026-09-08，见 19.6）；TinyFish/LangSearch 未验收 |
 | Bing 不接 | ✅ | 未加入 Bing |
 | 人格源文件不擅改 | ✅ | 本轮没有修改人格源文件 |
 | 64K 输出上限 | ✅ | 65538 上限已接入，非强制长度 |
@@ -442,9 +442,9 @@ BOT_POKE_ADMIN_BYPASS
 
 1. 视觉模型与文本模型的全部命令、help、effort、默认思考强度、优先级和实际调用链对齐。
 2. 为每次 LLM 调用写结构化 `LLMCallRecord`，稳定显示 provider、实际模型、路由尝试、tokens、延迟、费用和失败原因。
-3. 完成 Tavily/You/TinyFish/LangSearch 的真实账号逐家 smoke、额度和故障转移验证。
+3. 完成 Tavily/You/TinyFish/LangSearch 的真实账号逐家 smoke、额度和故障转移验证。——2026-09-08 Tavily/You 已通过且两家间真实故障转移演练完成（19.6）；剩 TinyFish/LangSearch 逐家 smoke、TinyFish fetch 半段与额度控制台核查。
 4. 建立正式 `ToolCatalog`：工具能力、参数 schema、权限、风险、超时、回滚和降级。
-5. 网页正文抓取增加反注入隔离、去广告、正文评分、来源合并和引用定位。
+5. 网页正文抓取增加反注入隔离、去广告、正文评分、来源合并和引用定位。——2026-09-08 第一步已落地：通用 `fetch_page_text` 结构性去噪（HTML 注释、`script/style/noscript/template/iframe/object/embed/svg` 隐藏块、`<head>` 整块剥离后再入 Prompt，新增 2 项回归测试，367 passed/Ruff 过）；剩正文评分、来源合并、引用定位与 P1.8 级 TrustLevel 架构。
 6. 生成文件增加病毒扫描、敏感内容扫描、大小限制、TTL 清理和安全文件名。
 7. Telegram 评论区/讨论串 API 补拉、权限、分页、速率限制、Telegram 文件发送。
 8. 邮件适配器做真实连接、认证、超时和 worker 验收；当前只完成异常韧性代码测试。
@@ -869,3 +869,26 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Script
 ### 19.4 仍然未完成（承接第 6 节，优先级不变）
 
 P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序须在真实验收之后）、P0.4 幂等表与 result-unknown 恢复、P0.5 记忆抽取实机验证、P1 全部、P2/P3 其余项均未变。runtime-layout 仍失败（源码 data 活动数据 + 少量缓存残留），按第 7/8 节流程处理，未强行清理。
+
+### 19.6 2026-09-08 搜索 API 真实验收（Agent B，只读 smoke）
+
+**结论：Tavily（主）与 You.com（备）真实账号 smoke 双双通过，全程只读、未发送任何 QQ/Telegram 消息，未改动任何代码。**
+
+- **key 落位**：本机此前不存在任何搜索 API key（`.env`/环境变量/Runtime 均无）。用户提供后按 `.env.example:256-261` 约定写入 `.env`：真实 key 存 `BOT_SEARCH_TAVILY_API_KEY` / `BOT_SEARCH_YOU_API_KEY`，链路字段以 `env:` 间接引用（`BOT_WEB_SEARCH_TAVILY_API_KEY=env:BOT_SEARCH_TAVILY_API_KEY`、`BOT_WEB_SEARCH_YOU_API_KEY=env:BOT_SEARCH_YOU_API_KEY`）。`.env` 在 `.gitignore:23` 内，不会入库。
+- **无 key 基线**（填 key 前跑了一次）：`[FAIL] chain 0ms no provider configured`，退出码 1——证明 smoke 工具链本身（模块导入、`.env` 加载、Runtime venv 调用、无 key 时快速失败不发音）行为正确。
+- **真实验收**（`dev.ps1 -Task search-smoke`，查询词「鸣潮 守岸人」，各一次只读请求）：
+
+  ```
+  [OK ] tavily        3500ms  3 hits: 守岸人
+  [OK ] you           4530ms  3 hits: 守岸人_百度百科
+  search-smoke: at least one provider answered   （退出码 0）
+  ```
+
+- **观察**：两家延迟 3.5–4.5s，均略超 `BOT_WEB_SEARCH_TIMEOUT_SECONDS=3`——httpx 超时按 connect/read 分相计时，单相不超时则请求整体可超 3s；线上有 45s 故障转移总时限兜底，暂无需调参，但若后续观察到超时率上升可优先上调该值。
+- **仍未覆盖（同日二轮演练后剩余）**：TinyFish / LangSearch 无 key 未验收；抓取回退链的 TinyFish fetch 半段同因未验；额度消耗需登 Tavily 控制台核查（key 为 dev 档 tvly-dev-，本轮全部实弹合计约消耗 5–6 个检索 credit，生产放量前需核查用量）。
+- **同日二轮：真实故障转移与一级参数/extract 实弹演练**（全部在内存 Config 上改配置、不动 `.env`、不改代码；各场景一次只读请求；临时脚本放源码树外 `%TEMP%\search_drill_b\`）：
+  - 端点不可达（`api.tavily.invalid` → TransportError，含 0.25s 原地重试）：链自动回退 You，3 hits，6.7s，`last_provider_name=you`；
+  - 无效 key（401 HTTPStatusError，按设计不重试直接回退）：You 应答，3 hits，4.9s；
+  - 一级参数实弹（`search_depth=advanced` + `time_range=month`）：Tavily 正常应答，3 hits 且首条为月内 TapTap 攻略贴（时效过滤生效迹象），8.4s；
+  - Tavily extract 实弹：`example.com` 经生产类 `TavilyExtractFetchProvider` 取回 167 字符 markdown 正文（3.4s），解析键 `results[].raw_content` 与官方响应匹配；维基百科「守岸人」URL 在 Tavily 侧真实 404（响应 `failed_results`），适配器按设计返回空串、由上层通用抓取兜底——首轮演练该 URL 0 字符即此因，非缺陷。
+  - **结论：Tavily→You 真实故障转移在传输错误与 401 两类失败下均验证通过；一级参数与 extract 半段回退链实弹可用。**

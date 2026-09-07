@@ -37,6 +37,10 @@ from plugins.bot_unified_runtime.policy import (
     decide_reply_budget,
     evaluate_policy,
 )
+from plugins.bot_unified_runtime.runtime.event_idempotency import (
+    EventIdempotencyTable,
+    build_event_dedupe_key,
+)
 from plugins.bot_unified_runtime.sender import (
     InMemoryReceiptRepository,
     ReceiptRepository,
@@ -193,6 +197,7 @@ class RuntimePipeline:
         group_white2: frozenset[str] = frozenset(),
         natural_chat_check: Callable[[str], bool] | None = None,
         group_lists_provider: Callable[[], dict[str, frozenset[str]]] | None = None,
+        idempotency_table: EventIdempotencyTable | None = None,
     ) -> None:
         self.send_queue = send_queue
         self.audit_logger = audit_logger
@@ -227,6 +232,8 @@ class RuntimePipeline:
         )
         self.reply_budget_settings = reply_budget_settings
         self.role_settings = role_settings
+        # 事件幂等表：None=关闭（默认）；启用后同一事件对同一能力只处理一次。
+        self.idempotency_table = idempotency_table
 
     def _append_audit_safely(self, record: AuditRecord) -> None:
         try:
@@ -594,6 +601,44 @@ class RuntimePipeline:
         )
         return self._record_receipt_safely(receipt, message)
 
+    def _duplicate_receipt(
+        self,
+        message: IncomingMessage,
+        capability_id: str,
+    ) -> DeliveryReceipt:
+        receipt = DeliveryReceipt(
+            request_id=message.request_id,
+            state=ReceiptState.BLOCKED,
+            transport="policy",
+            public_message="该事件已处理过，忽略重复投递。",
+            debug_id=message.debug_id,
+        )
+        self._append_audit_safely(
+            AuditRecord(
+                request_id=message.request_id,
+                session_id=message.session_id,
+                capability_id=capability_id,
+                stage="policy",
+                event="duplicate_event",
+                severity=RiskLevel.LOW,
+                public_message=receipt.public_message,
+                private_debug="idempotency=duplicate_drop",
+            )
+        )
+        return self._record_receipt_safely(receipt, message)
+
+    def _claim_event(self, message: IncomingMessage, capability_id: str) -> bool:
+        table = self.idempotency_table
+        if table is None:
+            return True
+        key = build_event_dedupe_key(message)
+        if not key:
+            return True
+        try:
+            return table.claim(key, capability_id=capability_id)
+        except Exception:  # noqa: BLE001 - 幂等表异常时放行，不阻断主链路。
+            return True
+
     def handle(
         self,
         message: IncomingMessage,
@@ -601,6 +646,8 @@ class RuntimePipeline:
         capability_id: str = "bot.status",
     ) -> DeliveryReceipt:
         try:
+            if not self._claim_event(message, capability_id):
+                return self._duplicate_receipt(message, capability_id)
             prepared = self._prepare(message, capability_id)
             if isinstance(prepared, DeliveryReceipt):
                 return prepared
@@ -618,6 +665,8 @@ class RuntimePipeline:
         capability_id: str = "bot.status",
     ) -> DeliveryReceipt:
         try:
+            if not self._claim_event(message, capability_id):
+                return self._duplicate_receipt(message, capability_id)
             prepared = self._prepare(message, capability_id)
             if isinstance(prepared, DeliveryReceipt):
                 return prepared
