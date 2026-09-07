@@ -75,7 +75,7 @@ from .runtime.disconnect_notice import (
     DisconnectNotifier,
     disconnect_notice_options_from,
 )
-from .runtime.event_idempotency import EventIdempotencyTable
+from .runtime.event_idempotency import build_event_idempotency_table
 from .runtime.intent_telemetry import build_intent_telemetry
 from .runtime.mentions import detect_name_mention
 from .runtime.natural_language import detect_natural_command
@@ -1699,13 +1699,11 @@ def _register_nonebot_handlers() -> None:
             config=config,
             alias_resolver=alias_resolver,
         ),
-        idempotency_table=(
-            EventIdempotencyTable(
-                ttl_seconds=float(config.bot_event_idempotency_ttl_seconds),
-                max_entries=int(config.bot_event_idempotency_max_entries),
-            )
-            if getattr(config, "bot_event_idempotency_enabled", False)
-            else None
+        idempotency_table=build_event_idempotency_table(
+            enabled=bool(getattr(config, "bot_event_idempotency_enabled", False)),
+            db_path=getattr(config, "bot_event_idempotency_db_path", "") or None,
+            ttl_seconds=float(config.bot_event_idempotency_ttl_seconds),
+            max_entries=int(config.bot_event_idempotency_max_entries),
         ),
     )
 

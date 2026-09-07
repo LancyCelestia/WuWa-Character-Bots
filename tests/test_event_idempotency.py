@@ -11,7 +11,9 @@ from plugins.bot_unified_runtime.contracts import (
 from plugins.bot_unified_runtime.contracts.runtime import IncomingMessage
 from plugins.bot_unified_runtime.runtime.event_idempotency import (
     EventIdempotencyTable,
+    SqliteEventIdempotencyTable,
     build_event_dedupe_key,
+    build_event_idempotency_table,
 )
 from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
 from plugins.bot_unified_runtime.sender import InMemorySendQueue
@@ -75,6 +77,51 @@ def test_table_capacity_evicts_oldest() -> None:
     assert len(table) == 2
     # k1 被挤出后可重新 claim。
     assert table.claim("k1", capability_id="c") is True
+
+
+def test_sqlite_table_blocks_replay_across_instances(tmp_path) -> None:
+    db_path = tmp_path / "event_idem.sqlite3"
+    clock = _FakeClock()
+    first = SqliteEventIdempotencyTable(db_path, ttl_seconds=3600.0, clock=clock)
+    key = "onebot|10000|m-77"
+
+    assert first.claim(key, capability_id="bot.chat") is True
+    assert first.claim(key, capability_id="bot.chat") is False
+
+    # 模拟重启：新实例读同一库，重放事件仍被拦截。
+    second = SqliteEventIdempotencyTable(db_path, ttl_seconds=3600.0, clock=clock)
+    assert second.claim(key, capability_id="bot.chat") is False
+    assert second.claim(key, capability_id="bot.wiki") is True
+
+    # TTL 过期后可重新放行。
+    clock.advance(3700.0)
+    assert second.claim(key, capability_id="bot.chat") is True
+
+
+def test_sqlite_table_capacity_prunes_oldest(tmp_path) -> None:
+    db_path = tmp_path / "event_idem.sqlite3"
+    table = SqliteEventIdempotencyTable(db_path, max_entries=2, clock=_FakeClock())
+    assert table.claim("k1", capability_id="c") is True
+    assert table.claim("k2", capability_id="c") is True
+    assert table.claim("k3", capability_id="c") is True
+    assert len(table) == 2
+
+
+def test_build_factory_selects_backend(tmp_path) -> None:
+    assert build_event_idempotency_table(
+        enabled=False, db_path=None, ttl_seconds=60, max_entries=10
+    ) is None
+    in_memory = build_event_idempotency_table(
+        enabled=True, db_path=None, ttl_seconds=60, max_entries=10
+    )
+    assert isinstance(in_memory, EventIdempotencyTable)
+    sqlite_table = build_event_idempotency_table(
+        enabled=True,
+        db_path=tmp_path / "idem.sqlite3",
+        ttl_seconds=60,
+        max_entries=10,
+    )
+    assert isinstance(sqlite_table, SqliteEventIdempotencyTable)
 
 
 def _pipeline_with_table(table: EventIdempotencyTable | None) -> RuntimePipeline:

@@ -35,6 +35,8 @@ class Config(BaseModel):
     bot_event_idempotency_enabled: bool = False
     bot_event_idempotency_ttl_seconds: float = 3600.0
     bot_event_idempotency_max_entries: int = 4096
+    # 非空时用 SQLite 持久化幂等表（跨重启拦截重放）；留空用进程内表。
+    bot_event_idempotency_db_path: str = ""
     bot_runtime_default_persona: str = "default"
     bot_runtime_group_command_prefix: str = "/bot"
     bot_runtime_admin_prefix: str = "/bot"
@@ -546,6 +548,7 @@ class Config(BaseModel):
             "bot_runtime_settings_file",
             "bot_runtime_settings_dir",
             "bot_mail_bridge_state_file",
+            "bot_event_idempotency_db_path",
             "bot_knowledge_db_path",
             "bot_memory_db_path",
             "bot_history_db_path",
