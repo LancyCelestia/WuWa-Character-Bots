@@ -892,3 +892,21 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
   - 一级参数实弹（`search_depth=advanced` + `time_range=month`）：Tavily 正常应答，3 hits 且首条为月内 TapTap 攻略贴（时效过滤生效迹象），8.4s；
   - Tavily extract 实弹：`example.com` 经生产类 `TavilyExtractFetchProvider` 取回 167 字符 markdown 正文（3.4s），解析键 `results[].raw_content` 与官方响应匹配；维基百科「守岸人」URL 在 Tavily 侧真实 404（响应 `failed_results`），适配器按设计返回空串、由上层通用抓取兜底——首轮演练该 URL 0 字符即此因，非缺陷。
   - **结论：Tavily→You 真实故障转移在传输错误与 401 两类失败下均验证通过；一级参数与 extract 半段回退链实弹可用。**
+
+### 19.7 alpha.2 四轮增补：入站事件幂等表（P0.4 前半，2026-09-08 提交 62e6911）
+
+- 新增 `runtime/event_idempotency.py`：进程内 TTL 幂等表（键 `adapter|bot_id|message_id`；
+  缺稳定 message_id 的事件不去重避免误伤；同一键对同一 capability 只放行一次，
+  **不同能力互不影响**——保护合法多 matcher 流程；TTL 与容量上限自动回收）。
+- `RuntimePipeline` 新增可选 `idempotency_table`：在 `handle/handle_async` 最前判定，
+  重复事件返回 `BLOCKED` 回执并写审计 `duplicate_event`（stage=policy）；
+  幂等表异常时放行，不阻断主链路。
+- 配置 `BOT_EVENT_IDEMPOTENCY_ENABLED`（**默认 false**——真实 NapCat 验收期间保持关闭，
+  验收通过后再开启；TTL/容量可调，见 `.env.example`）。
+- 验证：373 passed、Ruff 全过、mypy 177 源码文件无错；新增回归
+  `tests/test_event_idempotency.py`（8 项：键构造、同能力拦截/异能力放行、TTL 过期、
+  容量淘汰、pipeline 开关两侧行为）。
+- **P0.4 后半仍未完成**：幂等表跨重启持久化（SQLite/文件快照）与出站 result-unknown
+  全局恢复机制。
+- 同轮收尾：并行会话（搜索验收）的 `fetch_page_text` 反注入/去广告加固已验证并代为提交
+  （374 passed，提交 0f88976）；其 handoff §19.6 记录保持原样。
