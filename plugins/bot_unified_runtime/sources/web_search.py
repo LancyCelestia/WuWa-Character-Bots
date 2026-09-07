@@ -21,6 +21,18 @@ from typing import Protocol
 import httpx
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+# 注释与隐藏块（含 head 元信息）是间接 Prompt 注入的常见载体，正文入 Prompt 前先剥离。
+_HTML_HIDDEN_BLOCK_RE = re.compile(
+    r"<(script|style|noscript|template|iframe|object|embed|svg)[^>]*>.*?</\1>",
+    re.DOTALL | re.IGNORECASE,
+)
+_HTML_HEAD_BLOCK_RE = re.compile(r"<head[^>]*>.*?</head>", re.DOTALL | re.IGNORECASE)
+# nav/footer/aside/form/dialog 是导航/页脚/侧栏/表单类样板块（去广告向），与注入隐藏块分开剥。
+_HTML_BOILERPLATE_BLOCK_RE = re.compile(
+    r"<(nav|footer|aside|form|dialog)[^>]*>.*?</\1>",
+    re.DOTALL | re.IGNORECASE,
+)
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -220,7 +232,10 @@ def fetch_page_text(
     html_text = _fetch(url, proxy=proxy, timeout_seconds=timeout_seconds)
     if not html_text:
         return ""
-    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html_text, flags=re.DOTALL | re.IGNORECASE)
+    text = _HTML_COMMENT_RE.sub(" ", html_text)
+    text = _HTML_HIDDEN_BLOCK_RE.sub(" ", text)
+    text = _HTML_BOILERPLATE_BLOCK_RE.sub(" ", text)
+    text = _HTML_HEAD_BLOCK_RE.sub(" ", text)
     text = _HTML_TAG_RE.sub("\n", text)
     text = html.unescape(text)
     lines = [line.strip() for line in text.splitlines() if len(line.strip()) > 12]
