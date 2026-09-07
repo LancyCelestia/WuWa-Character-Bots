@@ -77,6 +77,9 @@ class HtmlKitRenderBackend:
 class PlaywrightRenderBackend:
     """HTML → PNG 图片（直接依赖 playwright + chromium，不依赖 htmlkit）。
 
+    浏览器生命周期借鉴 nonebot-plugin-htmlrender 的常驻模式：懒启动、
+    跨渲染复用、信号量限并发、崩溃自动重启——避免每张卡片都付出
+    Chromium 冷启动开销（订阅批量推送时尤其明显）。
     线程安全：playwright 的 sync API 必须与事件循环隔离开，调用方应
     在 to_thread 里执行（能力层已 offload）。
     """
@@ -84,10 +87,14 @@ class PlaywrightRenderBackend:
     name = "playwright"
     available = False
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_concurrency: int = 2) -> None:
         import threading
 
+        # sync playwright 非线程安全：渲染全程持大锁串行（max_concurrency 仅为
+        # 兼容未来 async 化预留，当前无并发效果）。
         self._lock = threading.Lock()
+        self._browser: Any = None
+        self._playwright_ctx: Any = None
         try:
             from playwright.sync_api import sync_playwright  # type: ignore
 
@@ -96,6 +103,28 @@ class PlaywrightRenderBackend:
         except Exception:  # noqa: BLE001 - Playwright 不可用时标记为不可用，不抛出。
             self._sync_playwright = None
             self.available = False
+
+    def _get_browser(self) -> Any:
+        """懒启动并复用常驻 Chromium；浏览器已死则重启一次。"""
+        if self._browser is not None and self._browser.is_connected():
+            return self._browser
+        self._close_browser_locked()
+        self._playwright_ctx = self._sync_playwright()
+        playwright = self._playwright_ctx.start()
+        self._browser = playwright.chromium.launch()
+        return self._browser
+
+    def _close_browser_locked(self) -> None:
+        browser, ctx = self._browser, self._playwright_ctx
+        self._browser = None
+        self._playwright_ctx = None
+        for resource in (browser, ctx):
+            if resource is None:
+                continue
+            try:
+                resource.close()
+            except Exception:  # noqa: BLE001 - 关闭失败忽略，下次懒启动重建。
+                pass
 
     def render_card(self, payload: dict[str, Any]) -> bytes | None:
         if not self.available or self._sync_playwright is None:
@@ -111,14 +140,21 @@ class PlaywrightRenderBackend:
             device_scale_factor = int(payload.get("device_scale_factor", 2))
         except (TypeError, ValueError):
             device_scale_factor = 2
-        try:
-            with self._lock, self._sync_playwright() as p:
-                browser = p.chromium.launch()
+        with self._lock:
+            try:
+                browser = self._get_browser()
                 try:
                     page = browser.new_page(
                         viewport={"width": width, "height": height},
                         device_scale_factor=device_scale_factor,
                     )
+                except Exception:  # noqa: BLE001 - 浏览器崩溃时重启一次再试。
+                    browser = self._get_browser()
+                    page = browser.new_page(
+                        viewport={"width": width, "height": height},
+                        device_scale_factor=device_scale_factor,
+                    )
+                try:
                     page.set_content(html, wait_until="networkidle")
                     # 等封面图加载（失败则 onerror 隐藏）。
                     page.wait_for_timeout(wait_ms)
@@ -130,9 +166,14 @@ class PlaywrightRenderBackend:
                         )
                     return bytes(page.screenshot(type="png", full_page=True))
                 finally:
-                    browser.close()
-        except Exception:  # noqa: BLE001 - 浏览器渲染失败按无结果降级。
-            return None
+                    page.close()
+            except Exception:  # noqa: BLE001 - 浏览器渲染失败按无结果降级，并重置常驻浏览器。
+                self._close_browser_locked()
+                return None
+
+    def close(self) -> None:
+        with self._lock:
+            self._close_browser_locked()
 
 
 def build_render_backend(name: str = "") -> RenderBackend:

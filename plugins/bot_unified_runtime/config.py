@@ -236,6 +236,9 @@ class Config(BaseModel):
     # 命令开关：/表情 列表、/表情 <key> <文字>、/meme help（大小写均可）。
     bot_meme_command_enabled: bool = True
     bot_meme_api_enabled: bool = False
+    # 外挂表情包生成插件 nonebot-plugin-memes（能力空白补齐）；
+    # 默认关闭：加载后其 matcher 独立于统一管线直接响应。
+    bot_memes_plugin_enabled: bool = False
     bot_meme_api_base_url: str = "http://127.0.0.1:2233"
     bot_meme_api_timeout_seconds: float = 15.0
     bot_meme_api_output_dir: str = "data/memes"

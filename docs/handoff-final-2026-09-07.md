@@ -922,3 +922,44 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
 - **P0.4 剩余**：出站 result-unknown 全局恢复机制（发送结果未知时的记录与重连对账）。
 - **Git 状态**：分支 `v0.0.1-alpha.2`（c3aa200）与附注标签（指向 713e2bc）均已推送
   origin 并 ls-remote 验证；alpha.2 推送至此全部完成。
+
+### 19.9 alpha.2 六轮增补：12 插件逐项硬对比与实装（2026-09-08）
+
+用户要求"对比原生代码，原生不好就用插件替换，保持最佳性能"。逐项实测定论：
+
+**已实装（2 项）：**
+
+1. **htmlrender 的常驻浏览器模式 → 吸收进原生 `PlaywrightRenderBackend`**：
+   原生实现每张卡片冷启动一个 Chromium（订阅批量推送每张多付数百毫秒启动税），
+   借鉴 htmlrender 的常驻模式重写：懒启动、跨渲染复用、`new_page` 失败自动重启
+   浏览器、渲染异常重置常驻实例、渲染完只关 page 不关 browser。
+   未直接装 htmlrender 插件的原因：其产出与我们的 Mica 卡截图等价，装整插件会引入
+   第二套浏览器管理与 alconna 依赖；性能收益全部来自生命周期模式，已原生吸收
+   （`tests/test_render_backends.py` 断言两次渲染仅启动一次 Chromium）。
+
+2. **nonebot-plugin-memes（表情包生成）→ 真实接入 venv + 守门加载**：
+   我们只有表情包图库/搜索，没有**生成**能力——这是 12 个里唯一的能力空白实装项。
+   `pip install nonebot-plugin-memes`（依赖链 uninfo/localstore/orm/waiter 已验证），
+   `nonebot.init()` 后实弹加载成功；`bot.py` 守门加载（`BOT_MEMES_PLUGIN_ENABLED`，
+   **默认 false**），加载失败仅打印降级告警不阻断主 bot。
+
+**维持原生（10 项，代码级对比后原生胜出）：**
+
+| 插件 | 对比结论 |
+|---|---|
+| tavily | 原生 4 家链式回退+瞬时重试+一级参数+extract 复合抓取、真实 key 验收；对方单提供器无回退 |
+| with-ai-agents | 对方是独立 agent 运行时，与统一管线冲突；原生路由/故障转移/模型管理远超 |
+| parser-lite | 原生 23 平台 vs 对方约 10；其评论区渲染记为后续增强 |
+| personification | 群参与决策/用户画像清单记入 P1 参考；整体替换等于推翻统一运行时 |
+| songpicker2 | 作者自述不稳定、仅网易云；原生 5 供应商+选流质量优先 |
+| analysis_bilibili | 其 ExpiringCache 每项一线程（有缺陷）；原生 WBI+订阅管线完整 |
+| multincm | 其"多候选编号点歌"交互记为 UX 增强；数据源单网易云 |
+| help | 仓库已 Archived；原生 Mica 帮助卡逐参数写全 |
+| disconnect_notice | 思路已原生落地（Telegram+邮件+冷却）；其 Server酱/PushPlus 渠道暂无对应账号 |
+| WWwiki | 原生已有库街区 3 万条向量化知识库+MediaWiki；biligame 数据重叠，PIL 卡与 Mica 规范冲突 |
+
+**TinyFish 端点核查（P2.3 尾巴）**：key 已入 `.env`（BOT_SEARCH_*）；默认
+`api.search.tinyfish.ai/search` 与 `/extract`、`/v1/extract` 均 404（返回官网 HTML），
+官方 API 路径已变更，需登录其控制台/docs 确认新端点后填
+`BOT_WEB_SEARCH_TINYFISH_FETCH_ENDPOINT` 方可启用抓取半段；未确认前链路自动降级，
+不影响 Tavily/You/LangSearch 已验收的三家搜索。

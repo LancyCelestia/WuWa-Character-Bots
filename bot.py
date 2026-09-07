@@ -147,5 +147,16 @@ from plugins.bot_unified_runtime.mail_adapter import ResilientMailAdapter
 
 driver.register_adapter(ResilientMailAdapter)
 
+# 可选外挂：表情包生成插件（含 meme-generator 模型资源）。
+# 必须在 nonebot.init 之后加载（其 config 依赖 driver）；默认关闭，
+# 开启后其命令 matcher 独立于统一管线直接响应，属能力空白的功能件。
+if getattr(_driver_config, "bot_memes_plugin_enabled", False):
+    try:
+        nonebot.load_plugin("nonebot_plugin_memes")
+    except Exception as _memes_exc:  # noqa: BLE001 - 外挂加载失败不阻断主 bot 启动。
+        import sys as _sys
+
+        print(f"[bot] nonebot_plugin_memes 加载失败（功能降级不影响其他能力）: {_memes_exc}", file=_sys.stderr)
+
 if __name__ == "__main__":
     nonebot.run()
