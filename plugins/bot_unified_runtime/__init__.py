@@ -103,7 +103,11 @@ from .sources.parse_history import (
     build_parse_history_result,
     build_parse_history_store,
 )
-from .sources.parsers import extract_http_urls
+from .sources.parsers import (
+    build_cookie_provider,
+    extract_http_urls,
+    music_candidate_providers,
+)
 from .sources.web_search import build_web_search_provider
 
 try:
@@ -2721,6 +2725,11 @@ def _register_nonebot_handlers() -> None:
                     config,
                     default_mode=mode,
                     request_store=music_request_store,
+                    candidate_providers=(
+                        music_candidate_providers(build_cookie_provider(config))
+                        if getattr(config, "bot_music_candidates_enabled", False)
+                        else None
+                    ),
                 )(synthetic, _decision)
 
         elif resolution.capability_id == "bot.wiki":
@@ -3874,6 +3883,11 @@ def _register_nonebot_handlers() -> None:
                     config,
                     default_mode=runtime_settings.get("BOT_MUSIC_MODE", config) or "card",
                     request_store=music_request_store,
+                    candidate_providers=(
+                        music_candidate_providers(build_cookie_provider(config))
+                        if getattr(config, "bot_music_candidates_enabled", False)
+                        else None
+                    ),
                 )
             ),
             capability_id="bot.music",

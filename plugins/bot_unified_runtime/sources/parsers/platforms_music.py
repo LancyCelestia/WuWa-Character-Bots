@@ -293,6 +293,54 @@ def search_netease_music(query: str, *, cookie_header: str = "") -> ParsedConten
     return _netease_song_detail(str(picked["id"]), cookie_header=cookie_header)
 
 
+def search_netease_music_candidates(
+    query: str,
+    *,
+    cookie_header: str = "",
+    limit: int = 5,
+) -> list[dict[str, str]]:
+    """多候选点歌（借鉴 multincm 交互）：一次搜索返回轻量候选列表。
+
+    返回项为 {provider_track_id, name, artist, album}，不触发每条的详情请求；
+    是否展示编号列表由能力层按"无同名精确命中且候选 >= 2"决定。
+    """
+    encoded = urllib.parse.quote(query)
+    payload = http_get_json(
+        f"https://music.163.com/api/search/get/web?s={encoded}&type=1&limit=15&offset=0",
+        referer="https://music.163.com/",
+        cookie=cookie_header,
+    )
+    songs = ((payload or {}).get("result") or {}).get("songs") or []
+    if not songs:
+        return []
+    candidates: list[dict[str, str]] = []
+    for song in songs:
+        name = str(song.get("name", "")).strip()
+        if not name:
+            continue
+        artists = "、".join(
+            str(artist.get("name", "")).strip()
+            for artist in (song.get("artists") or [])
+            if str(artist.get("name", "")).strip()
+        )
+        candidates.append(
+            {
+                "provider_track_id": str(song.get("id", "")).strip(),
+                "name": name,
+                "artist": artists,
+                "album": str((song.get("album") or {}).get("name", "")).strip(),
+            }
+        )
+        if len(candidates) >= max(2, int(limit)):
+            break
+    return candidates
+
+
+def netease_song_detail_by_id(song_id: str, *, cookie_header: str = "") -> ParsedContent:
+    """按平台曲目 ID 取完整详情（多候选点歌的二次选择路径）。"""
+    return _netease_song_detail(str(song_id), cookie_header=cookie_header)
+
+
 # ---------- QQ 音乐 ----------
 
 def _qqmusic_vkey_url(song_mid: str, *, cookie_header: str = "") -> str:

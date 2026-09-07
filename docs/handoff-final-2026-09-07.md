@@ -963,3 +963,21 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
 官方 API 路径已变更，需登录其控制台/docs 确认新端点后填
 `BOT_WEB_SEARCH_TINYFISH_FETCH_ENDPOINT` 方可启用抓取半段；未确认前链路自动降级，
 不影响 Tavily/You/LangSearch 已验收的三家搜索。
+
+### 19.10 alpha.2 七轮增补：multincm 多候选点歌移植（2026-09-08）
+
+把评审矩阵中标记"可移植"的 multincm 编号选择交互真正落进原生点歌能力：
+
+- `platforms_music.py` 新增 `search_netease_music_candidates`（一次搜索返回轻量候选
+  {id/name/artist/album}，0 次额外请求）与 `netease_song_detail_by_id`（编号选定后取详情）。
+- `capabilities/music.py`：歧义判定=无同名精确命中且候选≥2 → 返回编号列表
+  （含有效期提示），按会话存 TTL 候选（默认 300s、上限 256 会话）；用户回复
+  『点歌 <编号>』完成二次选择并写 `music_candidate_pick` 审计；编号选择意图
+  （无会话/过期）不再触发新候选列表，直接走普通搜索防误触；精确命中沿用
+  "直接播放"既有行为。渲染路径收敛为单一 `_render_hit`，消除两份重复代码。
+- 配置 `BOT_MUSIC_CANDIDATES_ENABLED`（**默认 false**，保持既有"第一命中直接播放"）+
+  TTL/条数可调（`.env.example`）；`/bot help 点歌` 已同步交互说明与常见错误。
+- 验证：387 passed、Ruff 全过、mypy 177 无错；新增回归
+  `tests/test_music_candidates_v2.py`（5 项：歧义列表、精确命中直播、编号选择、
+  无会话回退、开关关闭保持旧行为）。
+- 顺手修正：`RuntimePipeline.idempotency_table` 注解放宽为双后端联合类型（mypy）。

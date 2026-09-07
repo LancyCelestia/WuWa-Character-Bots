@@ -39,6 +39,7 @@ from plugins.bot_unified_runtime.policy import (
 )
 from plugins.bot_unified_runtime.runtime.event_idempotency import (
     EventIdempotencyTable,
+    SqliteEventIdempotencyTable,
     build_event_dedupe_key,
 )
 from plugins.bot_unified_runtime.sender import (
@@ -197,7 +198,7 @@ class RuntimePipeline:
         group_white2: frozenset[str] = frozenset(),
         natural_chat_check: Callable[[str], bool] | None = None,
         group_lists_provider: Callable[[], dict[str, frozenset[str]]] | None = None,
-        idempotency_table: EventIdempotencyTable | None = None,
+        idempotency_table: EventIdempotencyTable | SqliteEventIdempotencyTable | None = None,
     ) -> None:
         self.send_queue = send_queue
         self.audit_logger = audit_logger
@@ -233,7 +234,9 @@ class RuntimePipeline:
         self.reply_budget_settings = reply_budget_settings
         self.role_settings = role_settings
         # 事件幂等表：None=关闭（默认）；启用后同一事件对同一能力只处理一次。
-        self.idempotency_table = idempotency_table
+        self.idempotency_table: EventIdempotencyTable | SqliteEventIdempotencyTable | None = (
+            idempotency_table
+        )
 
     def _append_audit_safely(self, record: AuditRecord) -> None:
         try:

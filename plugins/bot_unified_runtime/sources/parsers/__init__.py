@@ -60,6 +60,7 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_miyoushe import (
 )
 from plugins.bot_unified_runtime.sources.parsers.platforms_moegirl import parse_moegirl
 from plugins.bot_unified_runtime.sources.parsers.platforms_music import (
+    netease_song_detail_by_id,
     parse_apple_music,
     parse_kugou,
     parse_kugou_mixsong,
@@ -71,6 +72,7 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_music import (
     search_kugou,
     search_kuwo,
     search_netease_music,
+    search_netease_music_candidates,
     search_qqmusic,
     search_spotify,
 )
@@ -539,6 +541,23 @@ def build_content_parser_registry(
             bound = functools.partial(bound, playwright_backend=playwright_backend)  # type: ignore[call-arg]
         parsers[parser_id] = bound
     return {"registry": registry, "parsers": parsers}
+
+
+def music_candidate_providers(
+    cookie_provider: PlatformCookieProvider | None = None,
+) -> dict[str, tuple[Callable[[str], list[dict[str, str]]], Callable[[str], ParsedContent | None]]]:
+    """多候选点歌提供方：平台 id -> (候选列表函数, 按 ID 详情函数)，同样按平台绑 Cookie。
+
+    当前仅网易云支持（其搜索一次返回多首，天然适合编号选择交互）。
+    """
+    cookies = cookie_provider or PlatformCookieProvider()
+    cookie_header = cookies.cookie_header(_PARSER_COOKIE_PLATFORM.get("netease_music", ""))
+    return {
+        "netease_music": (
+            _bind_cookie(search_netease_music_candidates, cookie_header),
+            _bind_cookie(netease_song_detail_by_id, cookie_header),
+        )
+    }
 
 
 def music_search_providers(

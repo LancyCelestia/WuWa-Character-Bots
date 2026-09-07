@@ -236,6 +236,11 @@ class Config(BaseModel):
     # 命令开关：/表情 列表、/表情 <key> <文字>、/meme help（大小写均可）。
     bot_meme_command_enabled: bool = True
     bot_meme_api_enabled: bool = False
+    # 多候选点歌（借鉴 multincm 编号选择交互）：同名歧义返回编号列表让用户回复编号选择；
+    # 默认关闭保持"第一命中直接播放"的既有行为。
+    bot_music_candidates_enabled: bool = False
+    bot_music_candidates_ttl_seconds: float = 300.0
+    bot_music_candidates_limit: int = 5
     # 外挂表情包生成插件 nonebot-plugin-memes（能力空白补齐）；
     # 默认关闭：加载后其 matcher 独立于统一管线直接响应。
     bot_memes_plugin_enabled: bool = False

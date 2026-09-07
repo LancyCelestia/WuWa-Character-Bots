@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -417,6 +418,25 @@ def build_music_mode_result(
     )
 
 
+# 多候选点歌（借鉴 multincm 编号选择交互）：会话 -> (过期时刻, provider_id, 候选列表)。
+_CANDIDATE_SESSIONS: dict[str, tuple[float, str, list[dict[str, str]]]] = {}
+_CANDIDATE_MAX_SESSIONS = 256
+
+
+def clear_music_candidate_sessions() -> None:
+    """清空多候选点歌会话状态（测试与运维用）。"""
+    _CANDIDATE_SESSIONS.clear()
+
+
+def _prune_candidate_sessions(now: float) -> None:
+    expired = [key for key, (expires, _pid, _c) in _CANDIDATE_SESSIONS.items() if expires <= now]
+    for key in expired:
+        _CANDIDATE_SESSIONS.pop(key, None)
+    while len(_CANDIDATE_SESSIONS) > _CANDIDATE_MAX_SESSIONS:
+        oldest = next(iter(_CANDIDATE_SESSIONS))
+        _CANDIDATE_SESSIONS.pop(oldest, None)
+
+
 def build_music_capability(
     config: Any | None = None,
     *,
@@ -424,8 +444,16 @@ def build_music_capability(
     default_mode: str = "card+voice+link",
     audio_downloader: Callable[[str], str | None] | None = None,
     request_store: Any | None = None,
+    candidate_providers: dict[str, tuple[Callable[[str], list[dict[str, str]]], Callable[[str], Any]]]
+    | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> Any:
-    """构建 bot.music 能力；providers 为空时按 config 平台名单构建。"""
+    """构建 bot.music 能力；providers 为空时按 config 平台名单构建。
+
+    candidate_providers：平台 id -> (候选列表函数, 按 ID 详情函数)。
+    启用后（BOT_MUSIC_CANDIDATES_ENABLED）同名歧义返回编号列表，
+    用户回复『点歌 <编号>』在有效期内完成二次选择。
+    """
     if providers is None:
         platforms = getattr(config, "bot_music_platforms", []) or [] if config else []
         providers = music_search_providers(
@@ -435,6 +463,55 @@ def build_music_capability(
     if audio_downloader is None:
         audio_downloader = _default_audio_downloader(config)
     mode = normalize_music_mode(str(default_mode)) or _canonical_mode(DEFAULT_PARTS)
+    candidates_enabled = bool(getattr(config, "bot_music_candidates_enabled", False)) and bool(
+        candidate_providers
+    )
+    candidates_ttl = max(
+        30.0, float(getattr(config, "bot_music_candidates_ttl_seconds", 300) or 300)
+    )
+    candidates_limit = max(2, int(getattr(config, "bot_music_candidates_limit", 5) or 5))
+    now = clock or time.monotonic
+
+    def _render_hit(
+        item: Any,
+        parser_id: str,
+        message: IncomingMessage,
+        extra_tags: list[str],
+    ) -> CapabilityResult:
+        try:
+            _record_music_request(request_store, message, item, parser_id)
+        except Exception:
+            _LOGGER.debug("music analytics write failed", exc_info=True)
+        body = _render_music_body(item, mode)
+        audio = _media_parts_for_mode(item, mode, audio_downloader=audio_downloader)
+        parts = parse_music_mode_spec(mode) or DEFAULT_PARTS
+        has_music_card = bool(_music_card_parts(item))
+        cover_url = music_cover_url(item)
+        images = (
+            [{"file": cover_url}]
+            if "card" in parts and not has_music_card and cover_url
+            else []
+        )
+        identity = item.identity
+        content = item.content
+        return CapabilityResult(
+            request_id=message.request_id,
+            capability_id="bot.music",
+            kind="mixed" if (audio or images) else "text",
+            title=content.title if content else "",
+            body=body,
+            url=(identity.canonical_url if identity else "") or None,
+            images=images,
+            audio=audio,
+            risk_level=RiskLevel.LOW,
+            privacy_level=PrivacyLevel.PUBLIC,
+            audit_tags=[
+                "music_request",
+                f"music_source:{parser_id}",
+                f"music_mode:{mode}",
+                *extra_tags,
+            ],
+        )
 
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         try:
@@ -447,47 +524,79 @@ def build_music_capability(
                 body="用法：点歌 <歌名或关键词>，例如『点歌 晴天』。",
                 audit_tags=["music_request", "missing_query"],
             )
+        session_key = f"{message.session_type.value}:{message.session_id}"
+        # 二次选择路径：『点歌 <编号>』命中未过期的候选列表。
+        if candidates_enabled and query.isdigit():
+            _prune_candidate_sessions(now())
+            stored = _CANDIDATE_SESSIONS.get(session_key)
+            if stored is not None:
+                _expires, parser_id, cands = stored
+                index = int(query) - 1
+                if 0 <= index < len(cands):
+                    picked = cands[index]
+                    detail_fn = candidate_providers[parser_id][1]  # type: ignore[index]
+                    try:
+                        item = detail_fn(picked["provider_track_id"])
+                    except Exception:  # noqa: BLE001 - 详情失败按未找到降级。
+                        item = None
+                    if item is not None:
+                        _CANDIDATE_SESSIONS.pop(session_key, None)
+                        return _render_hit(
+                            item,
+                            parser_id,
+                            message,
+                            [f"query:{query[:20]}", "music_candidate_pick"],
+                        )
         for parser_id, display_name, search_fn in providers:
+            candidate_pair = (candidate_providers or {}).get(parser_id)
+            # 编号选择意图（无会话/已过期）不再触发新候选列表，直接走普通搜索。
+            if candidates_enabled and not query.isdigit() and candidate_pair is not None:
+                list_fn, _detail_fn = candidate_pair
+                try:
+                    cands = list_fn(query)[:candidates_limit]
+                except Exception:  # noqa: BLE001 - 候选失败回退普通单结果路径。
+                    cands = []
+                exact_hits = [
+                    cand
+                    for cand in cands
+                    if cand.get("name", "").strip() == query.strip()
+                ]
+                if len(cands) >= 2 and not exact_hits:
+                    lines = [
+                        f"{index}. {cand['name']}"
+                        + (f" - {cand['artist']}" if cand.get("artist") else "")
+                        for index, cand in enumerate(cands, start=1)
+                    ]
+                    _CANDIDATE_SESSIONS[session_key] = (
+                        now() + candidates_ttl,
+                        parser_id,
+                        cands,
+                    )
+                    _prune_candidate_sessions(now())
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.music",
+                        kind="text",
+                        body=(
+                            f"为你找到多首「{query}」相关歌曲，回复编号直接点：\n"
+                            + "\n".join(lines)
+                            + f"\n（{int(candidates_ttl)} 秒内有效）"
+                        ),
+                        audit_tags=[
+                            "music_request",
+                            f"music_source:{parser_id}",
+                            f"music_mode:{mode}",
+                            f"query:{query[:20]}",
+                            "music_candidates",
+                        ],
+                    )
             try:
                 item = search_fn(query)
             except Exception:  # noqa: BLE001 - 单平台失败换下一个。
                 item = None
             if item is None:
                 continue
-            try:
-                _record_music_request(request_store, message, item, parser_id)
-            except Exception:
-                _LOGGER.debug("music analytics write failed", exc_info=True)
-            body = _render_music_body(item, mode)
-            audio = _media_parts_for_mode(item, mode, audio_downloader=audio_downloader)
-            parts = parse_music_mode_spec(mode) or DEFAULT_PARTS
-            has_music_card = bool(_music_card_parts(item))
-            cover_url = music_cover_url(item)
-            images = (
-                [{"file": cover_url}]
-                if "card" in parts and not has_music_card and cover_url
-                else []
-            )
-            identity = item.identity
-            content = item.content
-            return CapabilityResult(
-                request_id=message.request_id,
-                capability_id="bot.music",
-                kind="mixed" if (audio or images) else "text",
-                title=content.title if content else "",
-                body=body,
-                url=(identity.canonical_url if identity else "") or None,
-                images=images,
-                audio=audio,
-                risk_level=RiskLevel.LOW,
-                privacy_level=PrivacyLevel.PUBLIC,
-                audit_tags=[
-                    "music_request",
-                    f"music_source:{parser_id}",
-                    f"music_mode:{mode}",
-                    f"query:{query[:20]}",
-                ],
-            )
+            return _render_hit(item, parser_id, message, [f"query:{query[:20]}"])
         return CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.music",
