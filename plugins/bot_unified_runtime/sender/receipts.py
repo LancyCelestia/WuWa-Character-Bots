@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Protocol
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import (
     DeliveryReceipt,
+    OperationalIssue,
     ReceiptState,
     SendRequest,
 )
@@ -60,6 +62,8 @@ class SQLiteReceiptRepository:
 
     def record(self, receipt: DeliveryReceipt) -> DeliveryReceipt:
         self._ensure_schema()
+        if receipt.operational_issue is not None:
+            receipt = receipt.model_copy(update={"public_message": ""})
         with self._connect() as connection:
             connection.execute(
                 """
@@ -72,9 +76,10 @@ class SQLiteReceiptRepository:
                     retry_count,
                     next_retry_at,
                     public_message,
+                    operational_issue_json,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(debug_id) DO UPDATE SET
                     request_id=excluded.request_id,
                     state=excluded.state,
@@ -83,6 +88,7 @@ class SQLiteReceiptRepository:
                     retry_count=excluded.retry_count,
                     next_retry_at=excluded.next_retry_at,
                     public_message=excluded.public_message,
+                    operational_issue_json=excluded.operational_issue_json,
                     created_at=excluded.created_at
                 """,
                 (
@@ -96,6 +102,14 @@ class SQLiteReceiptRepository:
                     if receipt.next_retry_at is not None
                     else None,
                     receipt.public_message,
+                    json.dumps(
+                        receipt.operational_issue.model_dump(mode="json")
+                        if receipt.operational_issue is not None
+                        else None,
+                        ensure_ascii=False,
+                    )
+                    if receipt.operational_issue is not None
+                    else None,
                     receipt.created_at.isoformat(),
                 ),
             )
@@ -183,10 +197,19 @@ class SQLiteReceiptRepository:
                     retry_count INTEGER NOT NULL,
                     next_retry_at TEXT,
                     public_message TEXT NOT NULL,
+                    operational_issue_json TEXT,
                     created_at TEXT NOT NULL
                 )
                 """
             )
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(delivery_receipts)")
+            }
+            if "operational_issue_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE delivery_receipts ADD COLUMN operational_issue_json TEXT"
+                )
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_delivery_receipts_request_time
@@ -220,6 +243,11 @@ class SQLiteReceiptRepository:
         )
 
     def _from_row(self, row: sqlite3.Row) -> DeliveryReceipt:
+        operational_issue = (
+            OperationalIssue.model_validate(json.loads(row["operational_issue_json"]))
+            if row["operational_issue_json"]
+            else None
+        )
         return DeliveryReceipt(
             request_id=str(row["request_id"]),
             state=ReceiptState(str(row["state"])),
@@ -235,9 +263,10 @@ class SQLiteReceiptRepository:
                 if row["next_retry_at"] is not None
                 else None
             ),
-            public_message=str(row["public_message"]),
+            public_message="" if operational_issue is not None else str(row["public_message"]),
             debug_id=str(row["debug_id"]),
             created_at=datetime.fromisoformat(str(row["created_at"])),
+            operational_issue=operational_issue,
         )
 
 
@@ -247,6 +276,7 @@ def sent_receipt(send_request: SendRequest) -> DeliveryReceipt:
         state=ReceiptState.SENT,
         transport="memory",
         public_message="sent",
+        operational_issue=send_request.operational_issue,
     )
 
 
@@ -255,7 +285,8 @@ def skipped_receipt(send_request: SendRequest, reason: str) -> DeliveryReceipt:
         request_id=send_request.request_id,
         state=ReceiptState.SKIPPED,
         transport="memory",
-        public_message=reason,
+        public_message="" if send_request.operational_issue is not None else reason,
+        operational_issue=send_request.operational_issue,
     )
 
 

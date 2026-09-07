@@ -102,6 +102,12 @@ class QuietHoursChecker:
                 reason="outside_quiet_hours",
                 audit_tags=["quiet_hours:ok"],
             )
+        if message.mentions_bot or capability_id not in {"bot.chat", "bot.content"}:
+            return QuietHoursDecision(
+                allowed=True,
+                reason="direct_request_bypass",
+                audit_tags=["quiet_hours:direct_request_bypass"],
+            )
         return QuietHoursDecision(
             allowed=False,
             reason="quiet_hours",

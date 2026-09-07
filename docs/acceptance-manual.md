@@ -3,27 +3,27 @@
 目标：先让你把「对话/人格」跑起来并确认符合需求，再接 NapCat、GsCore 与其他插件。
 全程在本机完成，不碰第三方框架账号。任何命令都从项目根目录执行：
 
-    cd C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot
+    cd C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot
 
 ## 0. 一次装好依赖
 
-    .venv\Scripts\python.exe -m pip install -e . nb-cli
+    C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\python.exe -m pip install -e . nb-cli
     powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 doctor
-    .venv\Scripts\nb orm upgrade      # 首次运行前初始化 SQLite 数据库
-    .venv\Scripts\nb orm check        # 应提示：没有检测到新的升级操作
+    C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\nb orm upgrade      # 首次运行前初始化 SQLite 数据库
+    C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\nb orm check        # 应提示：没有检测到新的升级操作
 
 ## 1. 对话 / 人格测试（第一步，必须先通过）
 
 ### 1.1 离线控制台（不需要联网，验证人格链路）
 
     powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 console          # 交互 REPL
-    .venv\Scripts\python.exe -m plugins.bot_unified_runtime.console_chat --message "岸宝，你好"
+    C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\python.exe -m plugins.bot_unified_runtime.console_chat --message "岸宝，你好"
 
 离线模式用的是 static 占位回复，只能验证链路，不能验证人格文案。
 
 ### 1.2 真实模型控制台（验证人格是否符合你的需求）
 
-    .venv\Scripts\python.exe -m plugins.bot_unified_runtime.console_chat --provider openai_compatible --model deepseek-v4-flash --base-url https://api.deepseek.com/v1 --api-key <你的key>
+    C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\python.exe -m plugins.bot_unified_runtime.console_chat --provider openai_compatible --model deepseek-v4-flash --base-url https://api.deepseek.com/v1 --api-key <你的key>
 
 或在 .env 里配好 BOT_CHAT_PROVIDER/BOT_CHAT_MODEL/BOT_CHAT_BASE_URL/BOT_CHAT_API_KEY 后直接：
 
@@ -57,14 +57,14 @@ chat-smoke 输出 llm_status=ok 且
 
 1. 下载 NapCat（https://napneko.github.io/ ，推荐 NapCat.Win 一键包），用 QQ 小号扫码登录。
 2. NapCat WebUI（http://127.0.0.1:6099）→ 网络配置 → 新建「WebSocket 服务器」，Host 127.0.0.1、端口 3001，Access Token 填 <你的token>（需与 .env.prod 中的 access_token 完全一致）。
-3. .env.prod 配置：DRIVER=~fastapi+~httpx+~websockets、ONEBOT_WS_URLS=["ws://127.0.0.1:3001/?access_token=<你的token>"]、LOCALSTORE_USE_CWD=true；真实 token 只存在本地 .env.prod，不写进文档或日志。
+3. .env.prod 配置：DRIVER=~fastapi+~httpx+~websockets、ONEBOT_WS_URLS=["ws://127.0.0.1:3001/?access_token=<你的token>"]、LOCALSTORE_USE_CWD=false；真实 token 只存在本地 .env.prod，不写进文档或日志。
 4. 初始化数据库并启动机器人：
 
-       .venv\Scripts\nb orm upgrade      # PostgreSQL 已迁移可跳过；首次部署才需要执行
-       .venv\Scripts\nb orm check        # 应提示：没有检测到新的升级操作
-       .venv\Scripts\nb run
+       C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\nb orm upgrade      # PostgreSQL 已迁移可跳过；首次部署才需要执行
+       C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\nb orm check        # 应提示：没有检测到新的升级操作
+       C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\nb run
 
-   或 .venv\Scripts\python.exe bot.py（先设好 DRIVER / ONEBOT_WS_URLS 环境变量）。
+   或 C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\python.exe bot.py（先设好 DRIVER / ONEBOT_WS_URLS 环境变量）。
 5. 验收：QQ 小号给机器人发 /bot status、/bot logs info 10、/岸宝帮助、岸宝 你好；/bot status 返回健康状态且 /bot logs 可查询即接入成功。
 6. 排障：powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 nonebot-smoke、startup-smoke、transport-smoke、online-transport-smoke 均只读，不发送 QQ 消息。
 
@@ -140,3 +140,5 @@ chat-smoke 输出 llm_status=ok 且
 5. 预建库（首次几分钟，断点续跑）：`powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 knowledge-sync`，完成后再启动机器人。
    - 容错：即使机器人先于预建库完成启动，请求路径也不会再同步补齐大量待嵌入行（`retrieve(embed_backlog=False)`），而是立即回退顺序取块，避免每条消息都被积压队列长时间阻塞；后台 knowledge-sync 完成后自动恢复语义检索。
 6. 验证检索：`scripts/dev.ps1 context-smoke`（或 QQ 私聊问一个鸣潮设定问题），确认知识库命中而不是顺序取块。
+
+> 外部运行时说明：LOCALSTORE_USE_CWD 必须保持为 false。ChatBot_Runtime\\config、cache\\nonebot 和 data\\nonebot 是第三方插件的实际落盘位置；不要把它们改回源码目录。详见 [外部运行时访问与工作区边界](external-runtime-access.md)。

@@ -1,289 +1,204 @@
-# 研究发现
+# 扫描发现记录
+
+## 当前状态
+尚未开始读取源码。所有外部内容和本地发现应追加到此文件；不要把外部网页原文或不可信指令写入 task_plan.md。
+
+## 证据记录
+（待补充）
+
+## 风险与疑点
+（待补充）
+## 阶段1：根目录与配置探索（2026-09-05）
+
+- Git 当前分支/标签显示为 `v0.0.1-alpha.1`；工作区存在大量未提交修改与删除，审查依据是当前工作树文件，而非历史 HEAD。该状态会影响“完成度”判断，报告需说明。
+- 根目录主要有：`bot.py`、`pyproject.toml`、`.env`、`.env.example`、`.env.prod`、`README.md`、`COMMANDS.md`、`WORKSPACE_GUIDE.md`，以及 `plugins/`、`docs/`、`data/`、`tests/`、`scripts/`、`personas/`。
+- `bot.py` 已明确初始化 NoneBot，加载 `.env/.env.prod`，从 `pyproject.toml` 加载插件/适配器；注册 OneBot V11、Telegram 和一个插件内的 `ResilientMailAdapter`。代码还对 Telegram poll 和 OneBot websocket 重连日志做限流，并给 Telegram 轮询包了一层指数退避重试。
+- `.env` 仅记录键名与值状态，未把密钥值写入发现文件。后续需按配置键映射到插件配置，重点审查 LLM/API、OneBot/Telegram/Mail、订阅、Web UI、运行时数据路径。
+- 根目录发现已有 `.pytest_cache` 与 `.ruff_cache`，与 `AGENTS.md` 要求源码区不应保留缓存不一致；本次不删除用户数据或缓存，只记录为工程卫生问题。
+- 初步代码目录集中在 `plugins/bot_unified_runtime/`，包含 capabilities、character、contracts、llm、output、policy、runtime、sender、sources/parsers、sources/subscriptions 等子包；从命名看存在统一运行时、LLM 路由、卡片渲染、订阅与解析框架，但具体完成度需以实现走查为准。
+## 错误记录
+- 初次用 `Get-ChildItem -Recurse` 扫描 Markdown 时进入 `.pytest_cache`，因权限被拒绝中断；已改用 `git ls-files` 加显式排除缓存目录的遍历策略，不重复该命令。
+## 错误记录（续）
+- 目录树命令因 PowerShell `Sort-Object` 多属性参数写法错误而未执行；改为 `Sort-Object @{Expression=...},Name`，不重复原写法。
+## 错误记录（续2）
+- 目录汇总命令对根目录文件的 `DirectoryName.Substring` 计算出现起始索引越界；改用安全相对路径函数区分根目录，不重复该表达式。
+## 错误记录（续3）
+- AST 索引首次输出 JSON 时，PowerShell 管道下 Python 使用系统 GBK stdout，遇到 Emoji 字符触发 `UnicodeEncodeError`，导致索引文件为空。改为显式设置 `PYTHONIOENCODING=utf-8` 后再运行。
+## 阶段1/2补充发现
+
+- `pyproject.toml`：依赖包含 `nonebot2[fastapi]`、OneBot、Console、Mail、Telegram、APS cheduler、localstore、filehost、ORM（但注释说明不自动加载且无项目模型）、FAISS、HTMLKit、Jinja2、MCP 等；NoneBot 本地插件目录为 `plugins`，自动加载 status/apscheduler/localstore/alconna/filehost/htmlkit，适配器配置包含 OneBot V11、Console、Telegram。未看到 FastAPI 自定义应用、Web 路由或前端构建依赖。
+- `.env` 有 287 个配置键，`.env.example` 有 304 个，`.env.prod` 有 8 个；配置面覆盖 LLM、多供应商/模型、审计/诊断、订阅、音乐、天气、历史、邮件、Telegram、下载/媒体、向量知识、人格、运行策略等。当前 `.env.example` 比 `.env` 多出至少 `BOT_CARD_UI`、`BOT_CHAT_REASONING`、`BOT_CONTENT_VIDEO` 等示例键，存在示例与实际配置漂移风险。
+- 未发现 YAML 配置文件；源码内唯一大型 JSON 是天气城市映射 `plugins/bot_unified_runtime/sources/data/qx.json`。NoneBot 主配置集中在 `pyproject.toml` + `.env`，第三方运行时配置按文档在外部 Runtime，不应扫描。
+- 当前源码统计：222 个 Python 文件（含 50 个测试），约 163 个生产插件 Python 文件；非 Python Web 候选只有 `output/card_render/templates/universal_card.html`，另有无前端框架/静态资源/自定义 HTTP 服务迹象。
+- 文档实际存在 26 个 Markdown 文件；Git 中仍跟踪但当前工作树已删除的历史/研究 Markdown 不属于本次“当前代码实现”证据，不能按现存功能计入。
+## NoneBot 官方背景核对
+
+- 官方快速上手以 FastAPI driver + Console adapter 为示例，并通过 `nb run` 启动；NoneBot2 本身是异步、跨平台、可扩展框架，平台能力来自具体 adapter/插件，而不是框架自动提供。当前项目 `pyproject.toml`/`bot.py` 符合“driver/adapter/plugin 装配”模式，但用户要求的社交/音乐站点接入仍必须由项目自己的 parser/adapter/业务逻辑证明，不能把 NoneBot 的跨平台能力当作这些平台已经接入。
+## 错误记录（续4）
+- 订阅引用检索中再次直接对工作区递归调用 `Get-ChildItem`，命中 `.pytest_cache` 权限错误；后续所有全树匹配均使用已定义的缓存排除函数或 `git ls-files`，不再直接递归。
+## 错误记录（续5）
+- 功能源文件检索假定存在 `sources/weather.py`，但当前工作树不存在该路径；天气实现实际需从 `capabilities/weather.py` 的 import 目标和真实 `sources/` 清单追溯，不重复该假定路径。
+## 阶段3/4：目录与核心代码发现
+
+- 目录映射：`plugins/bot_unified_runtime/` 是单一生产插件，分为 `capabilities/`（19 个能力）、`runtime/`（16 个运行时模块）、`sources/parsers/`（27 个解析模块）、`sources/subscriptions/`（5 个订阅模块）、`llm/`、`character/`、`contracts/`、`sender/`、`audit/`、`output/card_render/`。未发现 `frontend/`、`web/`、`server/`、`api/`、Node/Vue/React/Svelte 工程。
+- NoneBot 装配：`bot.py:126-148` 注册 OneBot V11、Telegram、插件内 Mail adapter；`plugins/bot_unified_runtime/__init__.py:109-117` 声明支持 `~onebot.v11/~console/~mail/~telegram`；消息 matcher 在 `__init__.py:2040-2436` 通过统一路由覆盖 chat、content、music、subscribe、today_history、wiki、epic、weather、file、mail、meme 等。
+- 内容解析注册表 `sources/parsers/__init__.py:151-423` 实际覆盖 Bilibili/B站会员购、Biligame、微博、小红书、YouTube、Twitter/X、小黑盒、米游社、森空岛/深空岛、库街区、Pixiv、Lofter、无差别同人站、米画师、Telegram 及网易云/QQ/酷我/酷狗/Apple Music/Spotify；并有 Cookie、代理、Playwright 绑定逻辑 `:435-541`。这证明“链接解析”比“平台完整生态接入”更广，但不等同于各平台有发布订阅/搜索/推送 API。
+- 点歌搜索提供方实际只有 6 个：网易云、Apple Music、酷狗、QQ音乐、酷我、Spotify（`sources/parsers/__init__.py:425-433`）；未出现汽水音乐，亦无独立的 iPad 免费游戏能力。
+- 免费游戏：只有 Epic `sources/epicfree.py` + `capabilities/epic.py`，调用 Epic 免费促销接口并由 `base_router.py` 路由；代码/帮助中没有 iPad/App Store/Steam 本周免费游戏查询。
+- 天气：`capabilities/weather.py` 调用 `sources/nmc_weather.py`，内置区县表与中国气象局 NMC 查询；支持 `天气`、`支持区县`，但实现为同步网络调用。
+- 历史上的今天：`capabilities/today_history.py` + `sources/today_history.py`，配置缓存/推送文件，`__init__.py:855-975` 用 APScheduler 按目标注册每日 cron，并走统一发送流水线；具备核心查询和定时推送骨架。
+- 搜索/聊天：`sources/web_search.py` 有可选的 DDG→Bing 链式同步/异步搜索、正文抽取和并发多查询；`capabilities/chat.py` 按意图决定知识库/联网回退，并把命中数写入审计，但 `BOT_WEB_SEARCH_ENABLED` 默认关闭（`config.py:177-190`）。
+- LLM：`llm/model_router.py` 支持注册表、模型预设、优先级、时段优先级组、手动模型、候选 failover、API key 槽位和 reasoning effort；`llm/providers.py:298-470` 是同步 `urllib` OpenAI-compatible provider，支持 token usage、tool_calls、响应 schema/HTTP 错误分类。没有余额查询协议或供应商账户 API 封装。
+- 用量/费用：`runtime/pricing.py` 按百万 token 价格计算；`sources/runtime_event_log.py:123-235` 从成功 transport 日志按日期/时间范围、模型聚合 token/cost；`runtime/usage_monitor.py:41-431` 实现阈值（输入/输出 token、当日费用）和 13/18/23 点定时管理员告警卡/文本。它是日志聚合与 QQ 预警，不是 Web 监测中心；未发现按会话/All 的完整多维查询 API或柱/线/雷达/饼/散点图生成。
+- 音乐榜单：`sources/music_charts.py` 只有可注入 registry/protocol，`MusicRequestStore` 有表结构；当前代码没有实际注册的外部榜单 source，`BOT_MUSIC_CHART_ENABLED` 默认 false。
+- 订阅 V2：`sources/subscriptions/social_v2.py` 注册 Bilibili、小红书、YouTube、Twitter/X、Telegram 公共频道、Pixiv、微博 7 个 adapter（`ADAPTERS` 在 1170-1178）；`music_v2.py` 只识别/提供网易云/QQ/酷我/酷狗/Apple/Spotify 的部分目标与网易云等分支，文档明确 QQ/酷我/酷狗/Spotify 动态与真实榜单未完成。
+- 订阅调度：`subscription_runtime_v2.py` 注册 poll/outbox 两个 interval job；`subscription_scheduler.py` 有租约、并发节流、抖动/退避、baseline、outbox 投递；`subscription_store_v2.py` 有 SQLite schema。但 `capabilities/subscribe_v2.py:60-62` 在同步 capability 中调用 `asyncio.run(adapter.resolve_target(...))`，而它由 NoneBot async handler 直接传入普通 `pipeline.handle`（`__init__.py:2690-2720`），在事件循环中添加订阅可能触发 `asyncio.run() cannot be called from a running event loop`。
+- 文件能力：`capabilities/file_exchange.py` 有管理员文件接收/代码调试入口与 docx/xlsx/pptx/pdf 导出函数；`__init__.py:2082-2160` 处理 QQ group upload/private offline_file。但输入解析/调试依赖当前实现和管理员白名单，未发现对 `.doc` 老格式或“自主生成任意 Python/源码文件”的完整通用工作流。
+- 异步风险：`RuntimePipeline.handle_async` 只 await capability；同步 capability 会在事件循环线程执行。OFFLOADED_CAPABILITY_IDS 仅含 context/help/llm/dialogue（`__init__.py:140-147`），而 content/music/weather/epic/today_history/subscribe 的网络/文件/数据库操作没有统一 offload；`OpenAICompatibleLLMProvider.generate` 由 chat 包装成 `offload_capability`（`__init__.py:1949-2006`），所以聊天主链单独处理了这个风险。
+## 验证错误记录
+- 2026-09-05 运行规定入口 `scripts/dev.ps1 -Task test` 失败：脚本第 230 行尝试在源码工作区创建 `pytest_ci_43640` 临时目录，权限拒绝；尚未执行测试。下一步先读取脚本的临时目录配置，改用脚本支持的外部临时目录或在失败后采用 `PYTHONDONTWRITEBYTECODE=1` 的只读 AST/pytest 备选，不重复同一调用。
+## 验证错误记录（续）
+- 规避 `dev.ps1` 外部 Runtime 临时目录后，用工作区 Python 直接执行 `python -m pytest -p no:cacheprovider` 仍无法运行：当前 Python 3.12 环境未安装 `pytest`（`No module named pytest`）。未安装依赖，避免改动外部环境。
+## 验证错误记录（续2）
+- `scripts/dev.ps1 -Task lint` 找到外部 Runtime 的 Ruff，但 Ruff 试图写 `ChatBot_Runtime\cache\ruff\...` 时被沙箱拒绝，退出码 2；这不是 Ruff 代码诊断结果。后续用同一 Ruff 可执行文件把缓存目录重定向到系统临时目录，避免重复外部 Runtime 缓存写入。
+## 验证错误记录（续3）
+- 将 Ruff 缓存重定向至系统临时目录后，lint 真正执行并发现 6 个问题：`runtime/pricing.py:12` 未使用 `Any`；`runtime/pricing.py:63`、`runtime/usage_monitor.py:291` 多余 `int` 转换；`runtime/usage_monitor.py:302/370/405` 未使用 `BLE001` noqa。未修改业务源码，报告将列为当前工作树质量问题。
+## 验证错误记录（续4）
+- 外部 Runtime venv 的 pytest 成功收集 279 项，首轮输出 `240 passed, 39 errors`；39 个错误集中于 pytest 临时目录/`tmp_path` 在系统 Temp 的权限拒绝（未显示业务断言失败），因此该轮不能作为完整通过依据。下一步用允许写入的可视化工作区设置 `--basetemp` 与 TMP/TEMP 重跑，不重复原临时目录。
+## 验证错误记录（续5）
+- 第二轮 pytest 改用可写可视化目录后仍在 `tests/test_file_exchange.py` 的错误之后长时间无新输出，持续约 2 分钟未结束，已人工中断；没有获得完整通过/失败结论。最终报告只引用首轮明确的 `240 passed, 39 errors` 及错误均集中在临时目录权限的输出，并明确测试基线未能完整验证。
+## 配置一致性补充
+
+- AST 对 `config.py` 的 305 个 Pydantic 配置字段与环境键核对：`.env` 的 287 个 BOT_* 键均可映射到 Config；`.env.example` 304 个键也没有出现无法映射的 BOT_* 键，但示例相比实际 `.env` 多出 19 个键（包括传输预算、usage 监控、订阅卡、vision mode、外部 localstore 路径），实际 `.env` 另有 `BOT_API_KEY_QIANQIANYE_NIGHT`、`BOT_VISION_REPLY_PROBABILITY` 两个示例未列键。配置字段数量大、可维护性和示例同步仍有风险，但不是“未知键被丢弃”的直接问题。
+## 错误记录（续6）
+- 自定义 Web UI 静态检查使用 `git ls-files` 路径清单时，Git 的非 ASCII 路径转义与 PowerShell 参数传递不兼容，某个中文人格文档路径被错误拼接，导致 `Select-String` 报不存在。结论改用已成功的显式排除遍历/文件扩展名清单，不重复该路径传递方式。
+## 错误记录（续7）
+- 查询订阅旧/新注册函数引用时，PowerShell 对带括号的 `Select-String -Pattern` 参数解析失败；不影响已有 AST/文本证据，后续若需精确引用改用单独变量 `$pattern = [regex]::Escape(...)` 并明确命名参数。
+## 最终交叉比对结论（2026-09-05）
+
+### 平台层
+- 通信：QQ=OneBot V11/NapCat 已接入；Telegram=官方 NoneBot adapter + public channel parser/subscription；Mail=插件内 ResilientMailAdapter + MailBridge 收信/发信/Telegram 管理员提醒。
+- 社交：Bilibili、XHS、微博、X/Twitter、YouTube、Pixiv 均有链接解析与 V2 订阅；萌娘百科、米画师、无差别同人站、Lofter、库街区、森空岛/深空岛、米游社只有解析，没有订阅 adapter。`social_v2.py` 的 ADAPTERS 明确只有 7 个社交源。
+- 音乐：网易云/QQ/酷我/酷狗/Apple Music/Spotify 有解析/搜索（Spotify 搜索函数当前返回 None），汽水音乐无代码；音乐订阅 adapter 可解析多个 provider 目标，但默认 fetch 只有网易云实现，其余返回 unsupported。
+- 游戏/其他：Epic 每周免费游戏已实现；Steam 只有链接解析；B站会员购只有商品链接解析；小黑盒只有社区链接解析；NGA 未发现独立 parser/adapter/service；iPad/App Store 免费游戏无实现。
+
+### 核心功能状态
+1. 历史上的今天【部分实现】：外部百度接口+JSON 日缓存+标题/年份输出+定时推送；没有以数据库为主的事件查询，也没有稳定的事件梗概字段。
+2. 免费游戏【部分实现】：Epic 已有；iPad/Steam 本周免费查询完全缺失。
+3. 点歌【部分实现】：6 个音乐搜索提供方和卡片/链接/语音/音频文件路径；汽水缺失、Spotify 搜索为空、播放更像下载/发送而非播放器。
+4. 订阅推送【部分实现】：V2 store/scheduler/outbox/增量游标/退避/7 社交 adapter + 网易云分支；长尾社交和 5 个音乐 provider 的真实抓取缺失；add 路径存在 `asyncio.run` 事件循环风险。
+5. 天气查询【已完成】：NMC 区县索引+当前天气查询+错误降级；天气命令由 `BOT_WEATHER_QUERY_ENABLED` 控制，实际 `.env` 中通用 `BOT_WEATHER_ENABLED=false` 与命令开关语义分离，需文档化避免误解。
+6. 基础聊天【已完成】：真实 OpenAI-compatible provider、人格/知识/记忆、路由、可选 DDG→Bing 搜索、视觉转文字、失败转移；联网默认配置值和运行态需注意，依赖外部凭据/代理。
+7. 文件处理【部分实现】：QQ 管理员收文件，`.py` 受限调试，`.md/.txt/.json/.yaml/.yml/.toml/.csv` 仅读取确认，LLM 生成 Markdown 并导出 `md/docx/pptx/xlsx/pdf`；无 `.doc`/旧 `.ppt`/旧 `.xls` 输入解析、无通用 PDF/PPT/Excel 内容读取和自主代码文件生成。
+
+### Web UI 状态
+- 9 项没有独立前端/后端 Web API。唯一 HTML 是 `output/card_render/templates/universal_card.html`，它是聊天信息卡模板，不是控制台 UI。
+- 后端已有可复用能力：runtime model registry/priority/schedule/effort、`/bot llm` 诊断、console_chat、usage aggregation/threshold alerts；这些都通过 NoneBot 命令/定时任务/QQ 推送，不是 Web UI。
+- 因而供应商管理【完全缺失 Web UI】；LLM 登记管理/排序【部分实现（命令后端，无 Web）】；余额【完全缺失】；游乐场【部分实现（本地 Console，无 Web）】；多 LLM 对比【完全缺失】；控制台【部分实现（本地 PowerShell/Console，无 Web terminal）】；监测中心【部分实现（日志聚合，无 UI/图表/完整时间维度）】；费用预警【部分实现（后端 QQ 预警，无 Web 配置/面板）】。
+
+### 质量与验证状态
+- 当前工作树包含大量未提交修改/删除；报告基于工作树，不能等同于 tag `v0.0.1-alpha.1` 的历史状态。
+- Python AST 解析 222 文件无语法错误；docs-check/plugin-check/runtime-layout 通过。
+- 规定 test 入口受 Runtime 临时目录权限阻断；直接外部 venv pytest 收集 279 项，首轮为 240 passed/39 errors，错误为 tmp_path/Temp 权限；第二轮改 basetemp 后长时间无进展而中断，不能称全绿。
+- Ruff 缓存改到 Temp 后可运行，但当前工作树有 6 个 lint 问题，集中在 `runtime/pricing.py` 与 `runtime/usage_monitor.py`。
+## 最终验证补充（2026-09-05）
 
-## 工作区基线
+- AST：222 个 Python 文件全部解析成功，`ast_errors=0`。
+- `scripts/dev.ps1`：`docs-check=0`、`plugin-check=0`、`runtime-layout=0`；运行时边界检查通过，源码生成目录为空，Python bytecode absent。
+- Ruff：使用外部 Runtime venv 且缓存重定向后退出码 1，稳定复现 6 个 lint 问题；不修改代码。
+- pytest：由于前述 `tmp_path` 权限错误与第二轮无进展中断，没有全套新结论；报告明确标记为“未完成验证”，不宣称通过。
 
-- 项目根目录：`C:\Users\LancyCelestia\WuWa-Character-Bots`。
-- 当前是一个新的 NoneBot 项目，`plugins/` 下还没有本地运行时插件。
-- 已有依赖：NoneBot2、OneBot、APScheduler、localstore、Alconna、filehost、ORM、htmlkit。
-- AstrBot 参考插件位于 `C:\Users\LancyCelestia\.astrbot`。
+## 2026-09-05 后端核心切片发现
 
-## 初始需求
+- `backend-smoke` 已通过现有 `RuntimePipeline` 执行一轮聊天，实际返回 `receipt_state=sent`、`capability_id=bot.chat`、`knowledge_chunks=8`，默认不启用联网搜索。
+- `startup-smoke` 初始因订阅 V2 数据库 lock 文件 PermissionError 导致插件导入失败；加入可选订阅 fail-open 后，插件加载成功，当前 dry-run 注册 20 个 matcher。
+- `console --message` 已存在单轮逻辑，但作为统一后端合同缺少结构化 JSON、稳定退出码和安全字段过滤；新增 `backend_unit.py` 补足该边界。
+- 当前 Git 工作树含大量既有未提交变更；本轮必须只暂存新增执行单元、相关测试、脚本和文档，不能使用 `git add -A`。
 
-- 先下载和分析合适插件，再写自定义代码。
-- 对比 NoneBot 插件与现有 AstrBot 插件。
-- 明确正确的组织结构、算法、解析/输入/输出流、反馈和发送方式。
-- 设计实用能力：网页编码辅助、ACG 推荐、群总结、同人推荐、游戏查询、媒体解析、自动发送等。
+## 2026-09-06 PowerShell 与搜索 API
 
-## 下载和覆盖情况
+- 用户粘贴的所有 smoke 错误共因是 Windows PowerShell 5.1 无法解析 `scripts/dev.ps1` 的帮助 here-string；改为字符串数组并用 UTF-8 BOM 保存后，`powershell.exe -File` 与 `powershell.exe -Command` 均可执行。
+- 本轮 API 链为 Tavily -> You.com -> LangSearch；TinyFish 为可选正文抓取，Bing 未进入新 API 链。未配置 key 时 provider 链为空并安全返回空结果。
+- 官方文档浏览器 CDP 核验因本机调试代理超时未完成，因此 TinyFish endpoint 不写死；所有 endpoint 以 `.env` 可覆盖配置为准。
 
-- 已验证 70 个 NoneBot wheel、70 个解压源码目录，以及 12 个 GsCore/GScore git 仓库。
-- 具体路径记录在 `research/downloaded_sources.md`。
-- 结构索引记录在 `research/nonebot_plugin_sources/structure_index.json`、`second_batch_structure_index.json` 和 `research/gscore_sources/structure_index.json`。
+## 2026-09-06 搜索 API 与 PowerShell 兼容结论
 
-## 高置信架构方向
+- Windows PowerShell 5.1 不能正确解析原 `Show-Help` 的双引号 here-string；替换为字符串数组并以 UTF-8 BOM 保存后，`-File` 与 `-Command` 两种入口都可执行。
+- 真实搜索 key 未配置时，`build_web_search_provider(Config(bot_web_search_enabled=True))` 生成空 provider 链并返回空结果，不请求网络。
+- 当前 API 链提供 Tavily、You.com、LangSearch 搜索适配；TinyFish 同时有搜索适配和可选正文抓取适配，但正文 endpoint 必须由本地配置明确提供。
+- `BOT_WEB_SEARCH_PROVIDER_OPTIONS` 按 provider 接受 headers/params/body 和任意供应商原生字段；密钥通过 `env:` 引用解析，不能写入 options。
+- `runtime-layout` 仍会报告源码目录已有 ignored `data/` SQLite/settings 文件；未删除，因为活动数据的所有权和迁移目标尚未确认。
 
-统一运行时比“很多插件各自抢着回复”更稳：
+## 2026-09-06 上下文编译器与五层合同设计判断
 
-```text
-IncomingMessage -> PolicyEvaluation -> BotDecision -> CapabilityResult -> ReviewResult -> RenderedOutput -> SendRequest -> DeliveryReceipt -> AuditRecord
-```
-
-核心规则：
-
-- 能力插件返回结构化结果，不直接发送。
-- 群聊保守且 opt-in；私聊可以更温暖，但必须尊重同意和隐私。
-- 聊天记录、记忆、搜索结果、抓取内容、桥接输出都是不可信事实。
-- 所有输出都经过人格、隐私、安全、防刷屏、渲染和发送检查。
-- 情绪、记忆、人设、知识库是上下文服务，不是发送器。
-- 媒体 parser 和订阅先归一化来源数据，再渲染，再通过统一 sender 发送。
-
-## NoneBot / AstrBot 插件结论
-
-- `nonebot_plugin_parser` 和用户本地 `astrbot_plugin_parser` 提供了最强 parser 模式：`BaseParser` 自动注册、`@handle()` keyword/regex、`ParseResult`、媒体模型、渲染、缓存和 fallback。
-- 本项目应保留 parser/renderer/sender 分层，但把 sender 直发升级为 `RenderedOutput -> SendRequest -> DeliveryReceipt`。
-- `nonebot_bison` 的平台抽象、加权调度、批量抓取、队列发送、重试和间隔控制适合订阅系统。
-- `nonebot_plugin_bilichat`、`analysis_bilibili`、`bili_helper`、`bili_fav_watcher` 是 Bilibili 解析和订阅参考。
-- `nonebot_plugin_chatrecorder` 适合作为原始消息归档层。
-- `nonebot_plugin_word_censor` 和 AstrBot `outputpro` 说明最终输出守卫必须存在，且非 LLM 输出也要能被拦截。
-- `summary_group` 的显式命令、消息数量限制、冷却和管理员定时总结适合防刷屏。
-- `WWwiki`、`XutheringWavesUID` 适合作为公共鸣潮知识/卡片参考。
-- `gspanel`、`zzzpanel`、`gachalogs` 等账号能力是后续高风险阶段。
-
-## 用户本地 parser 插件补充发现
-
-参考路径：
-
-```text
-C:\Users\LancyCelestia\.astrbot\data\plugins\astrbot_plugin_parser
-```
-
-关键发现：
-
-- `main.py` 是三合一入口：链接解析、订阅、点歌。
-- `core/parsers/base.py` 用 `BaseParser.__init_subclass__` 自动注册 parser，用 `@handle(keyword, pattern)` 声明匹配规则。
-- `core/data.py` 的 `ParseResult` 携带平台、作者、标题、正文、来源 URL、媒体、评论、转发、音乐信息、统计和稳定资源指纹。
-- `core/subscriber/*` 提供多平台订阅、cursor、recent ids、push mode、图片限制、jitter、task gap、跨平台 hash 去重。
-- `core/render.py` 和 `core/render_html/*` 有 HTML/Playwright、PIL、文本 fallback 的渲染回退。
-- `core/sender.py` 会构建发送计划、合并转发和 fallback，但在新项目中应变成 transport adapter，而不是 capability 可直接调用的发送器。
-
-已写入 `docs/specs/media-source-pipeline.md` 的迁移点：
-
-- `ParserRegistry.keyword_patterns`、最长 keyword 优先、通用 URL fallback。
-- OneBot/NapCat 富卡字段：`qqdocurl`、`jumpUrl`、`musicUrl`、`playUrl`、`videoUrl`。
-- `ParseResult` 字段到 `ParsedMediaItem` / `NormalizedMediaItem` 的映射。
-- HTML/Playwright -> PIL/local renderer -> text fallback。
-- link-level 与 resource-level 双防抖。
-- 订阅的 `recent_ids`、`filter_types`、`filter_regex`、`push_mode`、`image_limit`、`live_atall`、jitter 和跨平台去重。
-
-## AI / 人格 / 安全 / 输出
-
-- 最强的架构模式是中央输出收口：LLM 和插件输出都必须过统一输出流水线。
-- `antipromptinjector` 提供输入风险检测和人格兼容评分思路。
-- 主动行为必须 opt-in、空闲触发、安静时间、配额限制、随机抖动，并限制每个窗口消息数。
-- 人格保持应分层：结构化 `PersonaProfile`、prompt guardrails、不可信上下文标签、OOC 审查、rewrite/block、最终清理。
-- 普通自然语言回复必须依靠人设、性格、记忆和知识库。
-- 插件效果例外：链接解析、媒体卡片、游戏/wiki 卡片、订阅推送不能让 LLM 直接编，必须走确定性解析和渲染。
-
-## GsCore / GScore 结论
-
-- `Genshin-bots/gsuid_core` 是主要 core runtime 参考，应桥接，不应直接合并。
-- `nonebot-plugin-genshinuid` 是 NoneBot 到 gsuid-core 的桥接参考。
-- `astrbot_plugin_gscore_adapter` 的队列、重连、下游分发、回执关联值得复用。
-- ZZZ 以 `ZZZure/ZZZeroUID` 为主要参考。
-- 鸣潮以 `Loping151/XutheringWavesUID` 为主要参考，`ScoreEcho` 可在许可和数据正确性确认后参考。
-- 首个桥接里程碑只开放公共帮助、兑换码、wiki、日历、攻略等低风险命令；阻断 QR、cookie、token、authkey、账号面板、抽卡历史、资源下载和管理动作。
-
-## 能力优先级
-
-- P0：统一命令/权限、策略门、人格契约、输出审查、发送队列、审计、基础聊天。
-- P1：Bilibili/常见媒体链接解析、手动搜索、公共游戏/wiki、群总结、天气、订阅摘要、卡片渲染。
-- P2：偏好记忆、ACG/同人/音乐推荐、私聊提醒、群知识库、网页编码辅助。
-- P3：账号绑定、QQ 空间自动化、大规模同人抓取、群内常驻自动发帖、完整群内 coding agent。
-
-## 遇到的问题
-
-| 问题 | 尝试 | 处理 |
-| --- | --- | --- |
-| `gh` CLI 未安装 | 尝试 `gh search repos` 查 GScore/GenshinUID/StarRailUID/ZZZUID | 改用 GitHub API 和直接仓库 URL。 |
-| `apply_patch` 曾被 Windows sandbox helper 取消 | 早期尝试更新研究 Markdown | 当时用 PowerShell 写研究文档；本轮按用户授权和当前权限继续使用 `apply_patch`。 |
-| PowerShell 字符串替换/插值错误 | 带反引号替换 Markdown | 改用正则和格式化字符串并验证输出。 |
-
-## 当前结论
-
-研究和设计目标已经完成。现在应进入实现前的最后准备：以中文核心 specs 为准，先实现窄的统一运行时插件，不要直接把参考插件整体搬进来。
-
-## 2026-08-22：Lofter / allcpp / Pixiv 接口实测记录
-
-### Lofter（api.lofter.com，无 cookie，需移动端 UA）
-- 标签列表 POST `https://api.lofter.com/newapi/tagPosts.json`
-  表单：product=lofter-android-8.2.36、postTypes=（全部）、offset=0、postYm=、returnGiftCombination=、
-  recentDay=0、protectedFlag=0、range=0、firstpermalink=null、style=0、tag=<tag>、type=total
-  返回：{"msg":"成功","code":0,"data":{"list":[{"postData":{"postView":{id,blogId,title,type,digest,permalink,
-  firstImage:{orign,ow,oh,raw},photoCount,tagList,publishTime},"postCount":{responseCount,favoriteCount,
-  reblogCount,shareCount,viewCount,hotCount,subscribeCount}},"blogInfo":{blogNickName,blogName,blogId,
-  bigAvaImg,selfIntro}}]}}
-- 帖子详情 POST `https://api.lofter.com/oldapi/post/detail.api?product=lofter-android-7.9.10`
-  表单：targetblogid、postid、supportposttypes=1,2,3,4,5,6、needgetpoststat=1
-  返回：meta.status=200、response.posts[0].post{id,type,blogId,title,publishTime,digest/content(HTML),
-  firstImageUrl(JSON 数组),photoLinks(JSON 数组,每项 rw/rh/ow/oh/raw/orign/middle),photoCaptions,
-  firstImageWH[w,h],wordCount,blogPageUrl,tagList,ipLocation,postCount{responseCount,favoriteCount,
-  reblogCount,shareCount,viewCount,subscribeCount,postHot},blogInfo{blogName,blogNickName,bigAvaImg,homePageUrl}}
-- 主题页 `https://www.lofter.com/theme/preview/{id}` 服务端内嵌 `this.p={themeid:'120002',previewBlogName:'lofterphoto3'}`。
-- 新版 permalink /post/{token}（如 844ef704_2bd1d2f81）无法用数字 id 直接解析，newapi/postDetail.json、
-  v1.1/postDetail.api、v2.0/postDetail.api 均 404；web 端为 React SPA 无 SSR。保留 og 降级 + 待查前端接口。
-
-### allcpp（www.allcpp.cn，无 cookie）
-- 活动页 `https://www.allcpp.cn/allcpp/event/event.do?event=6733` 服务端内嵌：
-  var worksObjId=6733; var WORKSOBJNAME="..."; var EVENTUSERID=1136855;
-  eventParam.EID/picUrl/eventName/lastDays/sDate/eDate/enterAddress/eventTag/desContent/isOnly/eventType
-  （eventType: 1茶会 2综合同人展 3 ONLY展 4游戏展 5线上活动；isOnly:1 独家）
-- 列表接口 GET `https://www.allcpp.cn/allcpp/event/eventMainListV2.do`（time/sort/keyword/pageNo/pageSize/
-  positionStatus/type/day/isOnline/ticketStatus），图片前缀 https://imagecdn3.allcpp.cn/upload。
-- 注意事项：geteventdetail2.do 的 eventid 与页面 event 参数 ID 空间不一致（eventid=6733 返回另一场次），
-  因此解析以页面 SSR eventParam 为准，不用该接口。
-
-### Pixiv（www.pixiv.net 直连被墙，必须走 127.0.0.1:7890）
-- ajax/illust/{id}：body{illustId,title,userName,userId,width,height,pageCount,likeCount,bookmarkCount,
-  viewCount,commentCount,illustType,description,tags:{tags[]},urls{mini/thumb/small/regular/original},sl}
-- ajax/illust/{id}/pages：body[{urls{thumb_mini/small/regular/original},width,height}]
-- ajax/user/{id}/profile/all：body{illusts/manga/novels 各为 {作品id:null}，计数=键数；bookmarkCount 等}
-- ajax/user/{id}?full=1：follower/following（已有实现使用）
-- 封面用 embed.pixiv.net/artwork.php?illust_id={id} 代理图（QQ 可加载）。
-
-
-## 2026-08-22：bilibili-api-python 可用性实测 + 端点挖掘（参考实现依据）
-
-### 结论：库本身可用（GPL-3.0，仅作离线参考，代码不入项目）
-- 版本：17.4.2（2026-06-19）与 16.2.0 的 sdist 已下载到 `research/bilibili_api_sdists/`（git 忽略）。
-- 在独立临时 venv（未污染项目依赖）安装 17.4.2 + curl_cffi/httpx 实测：
-  - 免登录可用：video.get_info()（stat 播放/点赞/投币/收藏/弹幕/评论 + pages）、
-    user.get_user_info()、user.get_videos(ps=5)（wbi 签名）、bangumi.get_overview()。
-  - 带 cookies.txt 登录态（SESSDATA/bili_jct/buvid3/DedeUserID 均存在）可用：
-    user.get_dynamics_new()（返回 12 条动态含 id_str）、live.get_room_info()（完整房间信息）、
-    bangumi.get_episodes()（集数列表）。live.get_general_info() 返回空，get_room_info 已够用。
-- 构造签名：Bangumi(media_id=-1, ssid=-1, epid=-1)；LiveRoom(room_display_id)；ChannelSeries(uid, type_, id_)。
-
-### 关键端点清单（摘自 17.4.2 data/api/*.json，只记录事实、不复制 GPL 代码）
-- 视频：GET x/web-interface/view（aid/bvid）；x/player/pagelist（分P）；x/web-interface/archive/stat；
-  x/player/wbi/playurl（WBI，fnval=4048 DASH）。
-- UP主视频：GET x/space/wbi/arc/search（mid/pn/ps，**WBI**）；置顶 x/space/top/arc（vmid）。
-- 动态：GET x/polymer/web-dynamic/v1/feed/space（host_mid/offset/timezone_offset=-480/features，**WBI**，
-  需 x-bili-device-req-json/x-bili-web-req-json 指纹头）；单条 x/polymer/web-dynamic/v1/detail（WBI）；
-  图文 opus x/polymer/web-dynamic/v1/opus/detail（timezone_offset/id）。
-- 直播：GET xlive/web-room/v1/index/getInfoByRoom（room_id）。
-- 番剧：GET pgc/view/web/season（season_id/ep_id）；pgc/web/season/section（剧集分段）；pgc/web/season/stat（追番/弹幕/播放/硬币）。
-- 合集：GET x/polymer/web-space/seasons_series_list（mid/page_num/page_size，合集列表）；
-  x/polymer/web-space/seasons_archives_list（mid/season_id/page_num/page_size，合集内视频）；
-  旧版系列 x/series/archives（mid/series_id/pn/ps）。
-- 收藏夹：GET x/v3/fav/folder/info（media_id）；x/v3/fav/resource/list（media_id/pn/ps/order/type/tid/platform/web_location）；
-  x/v3/fav/folder/created/list-all（up_mid）。
-- 用户计数：GET x/space/navnum（mid）。
-- 决策：沿用已批准计划——WBI 自研移植（MIT bili-helper 参考），运行时不自带 GPL 库；
-  端点/参数/返回字段以本文件与库源码 JSON 为准，实现时用项目 http_util + cookies.txt 实测验证。
-
-
-## 2026-08-22：nonebot-plugin-orm SQLite 底座结论
-
-- `nonebot-plugin-orm 0.8.3` 的 `sqlite`/`default` extra 指向 `sqlalchemy[aiosqlite]`；只装主包不会带 aiosqlite，启动会因缺驱动报「没有数据库」。
-- 配置键为 `SQLALCHEMY_DATABASE_URL`；未配置且没有 binds 时会退到插件数据目录，本项目显式写 `sqlite+aiosqlite:///data/nonebot_orm.sqlite3`（相对项目根目录），避免迁移 CLI 与运行时落在不同文件。
-- nb-cli 1.7 已移除 `nb run --env-file`；`nonebot.init()` 默认加载 `.env` + `.env.prod`，因此 `nb orm upgrade`、`nb orm check`、`nb run` 在项目根目录直接执行即可，三者都会读到同一连接串。
-- NapCat 反向 WS 可用查询参数传 token：`ws://127.0.0.1:3001/?access_token=<token>`；token 与 NapCat WebUI 网络配置必须一致。
-
-### 补充结论（启动烟测暴露）
-- NoneBot 2.5 的反向 WS 客户端能力由 `~websockets` 驱动器提供；`~fastapi+~httpx` 只给 HTTP 客户端+ASGI 服务，`ONEBOT_WS_URLS` 会被 OneBot V11 忽略。
-- 含 `from __future__ import annotations` 的插件，若 handler/rule 注解使用 `Event`、`Bot`、`T_State`，这些名字必须在模块全局可见；只写在注册函数内部的局部 import 无法被 NoneBot 的 ForwardRef 求值使用。
-
-### 补充结论（QQ 实测定向）
-- 安全审查的正则不能只认 `key=非空白`：状态/诊断输出普遍使用 `api_key=set`、`token=missing` 这类占位值，会把正常命令误拦成“输出未通过安全或隐私检查”。
-- 放行策略限定为 `set/missing/[redacted]` 三个占位值；真实密钥（如 `sk-...`、任意长 token）仍会被拦截并脱敏。
-
-
-## 2026-08-23：本轮新增结论
-
-- 向量知识库默认关闭，避免误用不支持 `/embeddings` 的服务；启用前必须确认 model/base_url/API key 属于支持 embeddings 的 OpenAI-compatible 服务。
-- 大文件（约 3.8MB 百科）适合向量检索；顺序取块回退会偏向列表靠前的文件，因此增加了跨文件关键词检索作为中间回退。
-- NapCat 图片段对相对本地路径不稳定，统一转绝对路径后发送成功率提高。
-
-## 2026-08-23：PostgreSQL/asyncpg 关键结论
-- Windows 上 psycopg 3 异步明确拒绝 ProactorEventLoop；nb run 不执行项目 bot.py，无法靠 bot.py 设置 SelectorEventLoop 兜底，且 nb-cli 自身在 SelectorEventLoop 下不能 spawn 子进程。最终选 asyncpg（兼容 Proactor 循环），恢复标准 
-b orm 流程。
-- EDB PostgreSQL 17 安装器可静默安装：--mode unattended --unattendedmodeui none --prefix/--datadir/--superpassword/--serverport/--servicename；服务创建需 UAC 提权，退出码 0 且数据目录初始化即成功。
-- URL 中密码含 @ 必须编码为 %40；NoneBot 环境变量值不自动做 URL 解码，需在连接串里预编码。
-- nonebot-plugin-orm 的 _engines/_metadatas 由 driver on_startup 初始化，命令行迁移需 nb-cli 正常加载插件链；nb-cli 1.7 无 --env-file 参数，.env/.env.prod 由 nonebot.init 自动加载。
-
-## 2026-08-23：B站商品与卡片渲染结论
-
-- B站魔力赏市集列表接口：POST https://mall.bilibili.com/mall-magic-c/internet/c2c/v2/list，请求体 {sortType, priceFilters:["0-100000001"], discountFilters:["0-101"], categoryFilter, nextId}，需登录 Cookie，未登录返回 code=83001002，且会触发 -412 风控。
-- 返回 data.data[] 字段：c2cItemsId/c2cItemsName/showPrice/showMarketPrice/price(分)/uid/uname/uface/detailDtoList[].name|img|marketPrice|itemsId；c2cItemsId 即详情页 itemsId。
-- 市集商品详情页为 SPA，无稳定公开详情 JSON；当前方案是列表接口按 itemsId 翻页匹配（最多 5 页），未命中/风控则 og 或浅层降级。
-- 参考实现 BiliMagicMarketScraper / BilibiliMall-Crawler 均为 MIT/Apache 兼容的自研参照，仅用于确认请求体字段，代码未并入。
-- astrbot_plugin_parser 为 MIT（Copyright (c) 2024 Les Freire），仅移植模板结构与 RenderPayload 字段设计，GPL 的 bilibili-api-python 未使用。
-- 2026-08-23 真实只读烟测：市集列表接口带完整登录 Cookie（含 buvid3/4）+ Origin 仍返回 code=0/data.data=null，说明当前需要设备指纹等 Web 逆向信息；本项目按契约实现列表匹配，真实环境命中为空时自动走 og/浅层降级，不阻断消息链路。
-
-## 2026-08-23：阿里云百炼 qwen3.7-text-embedding 调用方式
-
-- 模型 ID：`qwen3.7-text-embedding`；OpenAI 兼容端点：POST `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/embeddings`，经典公共云地址 `https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings` 也可用。
-- 请求体：`{"model":"qwen3.7-text-embedding","input":[...],"dimensions":1024,"encoding_format":"float"}`；Header `Authorization: Bearer <API_KEY>`；`dimensions` 可选 2560/2048/1536/1024(默认)/768/512/256，OpenAI 兼容模式用复数 `dimensions`，DashScope 原生模式用单数 `dimension`。
-- 返回 `data[].embedding` + `index`，与 OpenAI 格式一致，直接按 index 排序即可。
-- 限制：字符串列表最多 20 条/请求、单行 128,000 Token；本项目把嵌入批大小从 32 下调为 10（同时兼容 v4 的 10 条上限）。
-- 项目已支持 `BOT_EMBEDDING_DIMENSIONS`，并新增 `embedding-smoke`（连通性）与 `knowledge-sync`（预建库、断点续跑）两条本地命令。
-
-## 2026-08-23：本地 Ollama bge-m3 优先嵌入
-
-- Ollama OpenAI 兼容端点：`POST http://127.0.0.1:11434/v1/embeddings`，body `{"model":"bge-m3","input":[...]}`；bge-m3 返回 1024 维，单条上下文 8192。
-- 坑1：无 Key 时不能发送空 `Authorization: Bearer ` 头，httpx 会抛 LocalProtocolError（非法头值）；本地链必须整头省略。
-- 坑2：bge-m3 首次推理要加载模型，实测约 15 秒，本地超时设为 60s（原来 5s 会误判不可用而切到远程）。
-- 多链优先级：本地链（bge-m3）→ 远程链（qwen3.7-text-embedding,text-embedding-v4）；成功后 sticky 到当前链，失败再切。
-- 模型/端点切换安全：knowledge_meta.embedding_signature 记录端点+模型指纹，变化时自动清空全部旧向量重嵌，避免不同向量空间混用。
-- 真实烟测：embedding-smoke 命中 `127.0.0.1:11434 / bge-m3`；knowledge-sync 用 bge-m3 重建 2777/2777 行；语义检索命中守岸人人格档案/设定。
-
-## 2026-08-23：本地未运行时的静默回退保证
-
-- 回退路径已用真实死端口（127.0.0.1:11435）端到端验证：本地连接失败 → 自动切 `https://dashscope.aliyuncs.com/compatible-mode/v1` 的 `qwen3.7-text-embedding`，返回 1024 维，exit=0、无异常输出。
-- provider 对每条链逐个 try/except：ConnectError、HTTP 404（模型未拉取）、HTTP 4xx/5xx、返回体缺 `data` 等全部静默跳到下一链；所有链都失败时返回空列表，store.retrieve 返回空并回退关键词/顺序取块，不打断对话。
-- 配套回归测试：本地 404 / 结构异常 / 全链不可用 三条用例锁定该保证。
-
-## 2026-08-23：对话体验四项修复的结论
-- 颜文字断行根因1：动作格式器把“(≧▽≦)”这类括号当成动作描写拆到单独一行；修复规则=括号内无汉字且无嵌套括号时视为颜文字保持原位。
-- 颜文字断行根因2：合并转发的超长段落硬切在固定字符位，可能从表情中间切断；改为优先在句末标点/空白处断开。
-- “平台单条消息长度限制”提示来自 chat 输出预算；现支持 0=不限制（BOT_REPLY_MAX_CHARS_PER_MESSAGE / BOT_REPLY_*_MAX_MESSAGES / BOT_RENDER_FORWARD_MIN_CHARS 均为 0），完整回复单条直发、不追加提示。
-- angel_heart / angel_memory 均为 AGPL-3.0：只借鉴模块化提示词分区、两级决策、工具化检索的设计思路，未复制代码或原文；详见 research/angel_prompt_patterns.md。
-- 世界观“打哑谜”修复：系统提示新增“先事实后感受”规则——先给名词的确切定义，再表达人格感受；知识库检索 top_k 提到 6、上下文预算提高到 4096/6144。
-
-## 2026-08-23：基层统一路由架构
-- 新增 `runtime/base_router.py`：所有入站文本先做确定性分类（订阅/别名/管理员/自动发送/点歌模式/点歌/历史/wiki/epic/天气/链接解析/人格对话/忽略），带 reason+audit_tags 可审计。
-- NoneBot 的 12 个 matcher rule 全部改为调用基层路由器，避免“matcher 一套判断、文档一套判断”漂移；matcher_count 保持 12。
-- 新增 `/bot route <文本>`：管理员可在 QQ 里直接查看基层对任意文本的判定（路由/能力/优先级/理由）。
-- 人格权威来源切换为用户三份文件：守岸人档案.md、守岸人人格档案.md、守岸人人格设定.md（BOT_PERSONA_FILES）。
-- 执行闭环不变：子能力返回 CapabilityResult → 基层 review/render → SendRequest → NapCat；子能力不直接发消息。
-
-## 2026-08-23：基层路由与表情包三件套结论
-
-- 路由优先级症结：旧表 subscribe=18 在 alias=19/admin=20 之前，自然消息又都落到 chat=50；改为 alias=10、admin=11 最前，并给自然语言命令单开 45 层，链接解析保持 46、人格对话 50。
-- 自然语言层必须保守：天气规则若把“天气”前后都设为可选会吞掉“帮我放一首歌”；改为“必须出现天气二字 + 城市黑名单（帮我/查/放/点/来…）”，且礼貌式优先于问句式，才能同时覆盖“帮我查一下杭州天气”与“杭州天气怎么样”而不劫持闲聊。
-- MemeCrafters 三件套均为 MIT；nonebot-plugin-memes 与 nonebot-plugin-memes-api 功能基本一致（后者=远程 API 客户端，README 亦自述“基本一致”），同时装会重复；两者都会注册自有 matcher 并绕过本项目的基层统一流水线。结论：只部署 meme-generator-rs 后端 + 自研 bot.meme 客户端。
-- meme-generator-rs v0.5.x 协议（自研客户端已按此实现）：GET /meme/keys；POST /memes/{key} json={"images":[],"texts":[],"options":{}} -> {image_id}；GET /image/{image_id} -> PNG；GET /meme/version。
-- 群聊“被动消息”门禁与抽签接话分离：默认只有命令/点名回复（不扰民），BOT_GROUP_CHAT_AUTO_REPLY_ENABLED=true 后用确定性哈希抽签，同一消息永远同一结果，便于审计与回归测试。
-
-
-## 2026-08-23：线上“不生效”根因与表情包后端要点
-
-- “帮我查天气”落进人格聊天、出现“平台单条消息长度限制”提示，不是代码 bug：磁盘代码已含 natural 路由且 .env 已设 0，但线上 python 进程是 12:44 启动的旧版本。NoneBot 修改 matcher/配置后必须重启 nb run，否则旧进程继续用旧代码。用端口 8080 所有者定位旧进程链后重启即恢复。
-- meme-generator-rs Windows 版：`meme.exe run --host 127.0.0.1 --port 2233`；`meme.exe download` 用 jsdelivr 清单（resources.json：18 字体 + 3021 图片）下载到 `%USERPROFILE%\.meme_generator\resources`，进度条在无 TTY 时不输出、退出码 0 不代表失败；素材下载后需重启服务进程才能读新文件。
-- 纯文字表情（5000choyen）无需素材即可生成；需要底图的（nokia/petpet/pat）在素材缺失时返回 code 530/550 参数错误，优雅降级即可。
-- Windows 下 nb run 经 Start-Process 重定向日志时若不带 PYTHONUTF8/PYTHONIOENCODING，Loguru 写 emoji 到 GBK stderr 会报 UnicodeEncodeError（不影响业务，但日志脏）；启动前设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8` 可根治。
-
-
-## 2026-08-23：意图判定与回复切分的结论
-
-- 词表一刀切的失败模式：含“鸣潮/守岸人”即禁搜，会把“鸣潮今天更新了什么”“守岸人手办多少钱”错判成知识库问题；含“今天/最新”即搜，会把“你最近怎么样”“今天天气不错”误判成时效问题。正确做法是按意图分层：现实行情>时效意图（排除指向机器人本人的寒暄）>世界观知识意图>领域兜底>neutral。
-- forward_min_chars=0 曾被 `max(1,int(...))` 截成 1，导致任何非空文本都走合并转发（单条天气卡也变成[聊天记录]）；修复后 0 才真正禁用转发。
-- 长回复切分必须做 emoji 安全：Python 字符串按码点索引，切点不会落在代理对内部，但可能把 ZWJ/变体选择符切到下一段开头；切点判断要拒绝“下一字符是 ZWJ/变体选择符/组合附标”的位置。
-
-
-## 2026-08-23：意图判定 v2 与缓存策略结论
-
-- v1 一刀切的失败模式：领域词禁搜会把“鸣潮今天更新了什么/库洛所在地”错判成知识库问题；改成意图分层 + 联网回退，并用 RetrievalResult.answerable/confidence 作为知识库兜底失败的客观依据。
-- 联网可见性应分级：调试标记只对管理员可见，普通用户无感知，避免把“搜没搜”暴露给普通用户。
-- route-smoke 在 dev.ps1 下失败但直接运行通过的根因：Windows 重定向管道默认 GBK，输出 emoji 触发 UnicodeEncodeError；dev.ps1 包装需显式设 PYTHONUTF8=1。
-- 缓存防爆盘：配额 + 保鲜期 + LRU 最旧先删，逐目录分别控制，删除仅限配置目录内文件，失败静默降级。
+### Runtime 迁移分类
+
+- `data/knowledge_embeddings.sqlite3`、`data/meme_library.sqlite3`、`data/settings/runtime_settings_default.json` 属于疑似运行态残留；不能直接移动，需停机、快照、SQLite integrity_check、复制到 Runtime 临时目录、切换绝对路径、跑 runtime-layout/config/context/startup/backend smoke 后再保留回滚窗口。
+- `.env`、`.env.prod`、Cookie、浏览器会话、Mail 状态、订阅状态和任何密钥不自动迁移；它们需要独立的权限控制和凭据轮换策略。
+- `personas/` 与可版本化的世界观/知识 Markdown 继续留在源码或受控内容目录；迁移到 Runtime 的应是向量索引、倒排索引、实体图、缓存和审计数据，而不是失去版本来源的原始知识副本。
+
+### 新模型
+
+采用“上下文编译器（Context Compiler）”而不是全文 RAG 注入：问题先由意图/任务规划器拆成子问题，再做混合召回；召回结果被压缩成带来源、时间、权威等级、置信度和冲突状态的原子事实；只把与回答计划相关的事实账本、短时记忆摘要和工具结果交给 LLM；输出后做事实覆盖、冲突和引用校验。
+
+五层合同是：PersonaPolicy、WorldModel、EvidenceLedger、Memory、ToolAction。五层不是五段固定 prompt，而是五种可版本化数据/策略合同，运行时通过 DecisionContext 编译成最小上下文。
+
+群聊采用 Public Scene State：滚动窗口、话题聚类、重复短语检测、参与者/目标识别和社会行为特征；机器人读取的是公共场景摘要，不把全群原文塞给模型。个人长记忆与群公共状态严格分离。
+
+## 2026-09-06 防御型上下文编译器设计
+
+- 用户确认采用复制验证迁移，并将旧数据整合为一次可恢复归档；当前判断为“可迁移但不可直接移动”。迁移对象只包括可证明的派生索引/非敏感运行设置；`.env`、Cookie、Mail 状态、浏览器会话、订阅状态和未知来源记忆不自动迁移。
+- 新算法采用信任分层、污点追踪、结构化事实卡片、证据账本、回答计划、工具授权票据和输出后校验；任何用户/网页/工具返回内容都不能升级为系统规则、人格规则、世界观真相或工具权限。
+- 世界观采用版本化 claim graph；网络证据只进入 EvidenceLedger，不自动写入 WorldModel；长时记忆采用候选→策略审核→事务写入，不允许模型直接覆盖或删除记忆。
+- 群聊采用 PublicSceneState，不把群聊全文注入；用时间窗、话题线程、重复短语、参与者数量和当前消息相关度决定是否生成轻度社交反应。
+- 工具采用 ToolCatalog + schema 校验 + 权限/副作用/超时/预算/幂等键/审计；搜索和网页正文是只读工具，发送、写记忆、改配置和文件操作是受控副作用工具。
+- 2026-09-06：用户确认图片已经能够回复，图片实机接收与回复闭环验证通过。
+
+## 2026-09-06 详细回答与模型路由问题
+
+- 当前 `.env` 显示 `BOT_CHAT_FAST_MODE=true`、`BOT_CHAT_FAST_MAX_TOKENS` 与 `BOT_CHAT_MAX_TOKENS` 受限，且运行时回答规则仍写着“知识问答一两句定性、只挑最关键的一两点”，这是游戏人物/关系回答偏短的直接原因之一。
+- 当前 `ModelSpec.priority` 仅用于 `(priority, model_id)` 排序；注册表和运行时命令都允许重复 priority，没有移动槽位或唯一约束。
+- `_build_memory_writer()` 单独构造 `_build_chat_llm_provider(config)`，没有复用主聊天 `ModelRouter`；主聊天成功而 memory extraction 401 的根因是配置/凭据路径分叉。
+
+## 2026-09-06 修复后确认
+旧的 fast mode/独立 memory provider 描述属于修复前诊断，不代表当前状态。现已复用 ModelRouter，保留 alternate keys，并修复 Config 凭据引用；独立调用状态不等同于固定复用上一条回复的实际模型。详细配置已传入生产构造器，搜索上下文不再依赖正文抓取开关。启动关闭抽取时仍需要本地启用并重启。完整限制和 TODO 见 docs/chat-memory-routing-fixes-2026-09-06.md。
+
+## 2026-09-06 群聊与来源质量确认
+群聊出站代码本身只发送 OneBot text segment，未发现主动添加 reply 段；问题按“模型整包外引号”处理：只剥离整条匹配外引号，内部引用不动。维基 opensearch 不是身份查询，现改为精确标题优先并拒绝低相似候选。无效 Netscape Cookie 现在不会进入 yt-dlp，避免重复堆栈和敏感行泄露。
+
+## 2026-09-06 22:40 续修交接
+- 按句引号、Wiki 列表条目、小红书 discovery 路由、Cookie 内存规范化与降噪、doctor 解释器路径、mypy 类型问题已处理。
+- 四个用户 Wiki 查询已通过公开 API 真实入口复验；QQ 和用户 Cookie 平台实机验收未代做。
+- 以 docs/live-chat-followup-2026-09-06.md 为本轮准确说明；此前整份 Cookie 跳过和仅整条引号清理描述已过时。
+
+## 聊天最终自然语言输出收尾
+- [complete] bot.chat 正文和最终渲染文本/分段/图片说明接入确定性纯文本整理；不改人格 Prompt、不增加模型调用。
+- [complete] 用户宝宝样例、Markdown/LaTeX、模拟 OneBot 最终 payload 定向回归通过。
+- [pending] 用户重启实际运行进程后 QQ 实测；审计标识 chat_plain_text:v1。详见 docs/chat-plain-text-output.md。
+
+## 2026-09-07 Phase 0-3 完成记录
+- [complete] 64K 输出预算/科普详细策略、统一 quote/forward/mixed message、文件读取/生成文件、安全边界基线已接入。
+- [complete] 完整 verify：343 passed、Ruff 通过、mypy 173 源码文件通过。
+- [pending] Telegram 评论树 API 补拉、老格式文件依赖、生成文件扫描/清理和更强语义安全分类器。
+- 详见 docs/phase0-3-implementation-2026-09-07.md。
+
+## 2026-09-07 Phase 4-5 续修
+- 文件生成改为原始回复抽取并调用真实 OneBot 上传 API；安全拒绝改为人格化模型回应/兜底。
+- Phase 4 文本戳一戳冷却已注册；Phase 5 Wiki 游戏摘要已接入。Telegram 评论树、真实 NapCat poke、复杂 Wiki 仍待实机验收。
+
+## 2026-09-07 最终收尾发现
+
+- 之前 Phase 0-3 文档中的 343 passed 已过时；最后一次完整 verify 为 352 passed、Ruff 通过、mypy 174 源码文件通过。
+- `backend-smoke` 明确使用 static provider；`backend-base-smoke` 明确使用 fake OneBot；两者都不能替代真实 NapCat/真实 LLM 验收。
+- `doctor` 当前通过，`nb_cli=ok`、`ready_for_nonebot_run=true`。
+- `runtime-layout` 当前仍失败，检测到源码 data 运行产物和 156 个 Python 缓存路径；清理前必须完成 Runtime 归档和数据库完整性校验。
+- `.env.example` 原有重复 `BOT_CHAT_MAX_TOKENS/BOT_CHAT_FAST_MAX_TOKENS` 已统一为单一 65538 配置。
+- 最终状态、用户要求和未完成清单见 `docs/handoff-final-2026-09-07.md`。
+
+## 2026-09-07 alpha.2 发现
+
+- `%TEMP%\pytest-of-LancyCelestia\pytest-current` 是指向父目录的循环符号链接且 DACL 拒绝访问（未提权无法删除），曾导致 pytest 会话收尾崩溃；已通过 dev.ps1 固定 basetemp 根治，测试从崩溃变为 7 秒级稳定。
+- mail bridge 测试此前把状态文件写进源码树工作目录，与运行中的机器人实例和 Windows 文件扫描器竞争造成 `os.replace` WinError 5 偶发失败；已迁到 pytest 临时目录并加重试。
+- 12 个社区插件对比结论：无整插件可安全替换（架构边界/许可/维护状态三重原因），采纳点均为局部思路；详见 `docs/plugin-benchmark-2026-09-07.md`。
+- `provider_options` 自定义键透传请求体是既有能力，Tavily `search_depth`/`time_range` 无需改码即可用。
+- 源码树 `.ruff_cache` 残留已删除；`data/` 等活动运行数据仍未触碰，runtime-layout 依旧失败属预期。

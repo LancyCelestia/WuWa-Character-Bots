@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import math
+from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 def translate_env_keys(values: dict[str, Any]) -> dict[str, Any]:
@@ -24,6 +26,9 @@ def translate_env_keys(values: dict[str, Any]) -> dict[str, Any]:
 
 
 class Config(BaseModel):
+    # 运行数据与源码工作区分离：生产环境可把 data/ 放到工作区外，
+    # 其余配置仍可继续使用 data/... 的相对写法，由下方校验器统一解析。
+    bot_runtime_data_dir: str = "data"
     bot_runtime_enabled: bool = True
     bot_runtime_default_persona: str = "default"
     bot_runtime_group_command_prefix: str = "/bot"
@@ -49,6 +54,21 @@ class Config(BaseModel):
     bot_gscore_bot_id: str = "NoneBot2"
     bot_gscore_bot_self_id: str = ""
     bot_admin_user_ids: list[str] = []
+    bot_telegram_admin_user_ids: list[str] = []
+    bot_telegram_admin_chat_ids: list[str] = []
+    bot_mail_bridge_enabled: bool = False
+    bot_mail_auto_reply_enabled: bool = False
+    bot_mail_notify_telegram_enabled: bool = True
+    bot_mail_bridge_state_file: str = "data/mail_bridge_state.json"
+    bot_mail_sender_aliases: dict[str, str] = {}
+    bot_mail_notify_preview_chars: int = 280
+    # 掉线管理员通知：掉线时 QQ 通道不可用，改走仍在线的 Telegram/邮件适配器；
+    # 默认关闭，收件人必须显式配置，避免误发外部消息。
+    bot_disconnect_notice_enabled: bool = False
+    bot_disconnect_notice_cooldown_seconds: float = 600.0
+    bot_disconnect_notice_mail_account: str = ""
+    bot_disconnect_notice_mail_recipients: list[str] = []
+    bot_disconnect_notice_telegram_chat_ids: list[str] = []
     bot_enterprise_user_ids: list[str] = []
     bot_trusted_user_ids: list[str] = []
     bot_blocked_user_ids: list[str] = []
@@ -85,11 +105,16 @@ class Config(BaseModel):
     bot_tone_voice: str = "soft"
     bot_tone_warmth: float = 0.7
     bot_tone_directness: float = 0.5
-    bot_tone_message_count_limit: int = 1
+    bot_tone_message_count_limit: int = 0
     bot_memory_enabled: bool = False
     bot_memory_db_path: str = ""
     bot_memory_max_items: int = 5
     bot_memory_max_chars: int = 1200
+    # 回复后自动从对话抽取记忆写入记忆库；依赖 bot_memory_enabled。
+    bot_memory_extract_enabled: bool = True
+    bot_memory_extract_timeout_seconds: float = 15.0
+    bot_memory_extract_max_tokens: int = 200
+    bot_memory_extract_error_cooldown_seconds: float = 300.0
     bot_history_enabled: bool = False
     bot_history_db_path: str = ""
     bot_history_max_turns: int = 6
@@ -113,6 +138,10 @@ class Config(BaseModel):
     bot_send_queue_worker_enabled: bool = False
     bot_send_queue_worker_interval_seconds: int = 30
     bot_send_queue_worker_batch_size: int = 20
+    # 发送层单次请求硬超时（秒）：OneBot/Telegram/Mail 发送共用；0 或非法值在运行时回退 15。
+    bot_transport_timeout_seconds: float = 15.0
+    # 请求级总预算（秒）：单次聊天从 LLM/工具循环到发送共用一个单调 deadline；范围 (0,600]。
+    bot_request_budget_seconds: float = 90.0
     bot_emotion_enabled: bool = True
     bot_emotion_max_signals: int = 4
     bot_trend_enabled: bool = False
@@ -147,7 +176,7 @@ class Config(BaseModel):
     bot_group_digest_llm_ttl_seconds: int = 3600
     # 群聊回复策略（群号列表）：
     # black1=完全静默只接收不发送；black2=只回“@它且带指令”的消息；
-    # white1=正常回复（普通指令/艾特指令/自然语言）；white2=只回“@它”的消息。
+    # white1=正常回复并可按主动接话开关抽签；white2=只回“@它”或显式命令。
     bot_group_black1: list[str] = []
     bot_group_black2: list[str] = []
     bot_group_white1: list[str] = []
@@ -161,6 +190,34 @@ class Config(BaseModel):
     bot_web_search_timeout_seconds: float = 3.0
     # 联网检索条数上限；0=不限制（内部有安全上限，避免无限等待）。
     bot_web_search_max_results: int = 20
+    # Search API chain: Tavily primary, You/LangSearch fallback; TinyFish can fetch正文.
+    bot_web_search_provider: str = "tavily"
+    bot_web_search_fallback_providers: list[str] = ["you", "langsearch"]
+    bot_web_search_provider_options: dict[str, dict[str, Any]] = {}
+    # Separate aliases keep env:BOT_SEARCH_* references resolvable after NoneBot dotenv loading.
+    bot_search_tavily_api_key: str = ""
+    bot_search_you_api_key: str = ""
+    bot_search_tinyfish_api_key: str = ""
+    bot_search_langsearch_api_key: str = ""
+    bot_web_search_tavily_api_key: str = ""
+    bot_web_search_you_api_key: str = ""
+    bot_web_search_tinyfish_api_key: str = ""
+    bot_web_search_langsearch_api_key: str = ""
+    bot_web_search_tavily_endpoint: str = "https://api.tavily.com/search"
+    bot_web_search_you_endpoint: str = "https://api.you.com/v1/search"
+    bot_web_search_tinyfish_endpoint: str = "https://api.search.tinyfish.ai/search"
+    bot_web_search_tinyfish_fetch_endpoint: str = ""
+    bot_web_search_langsearch_endpoint: str = "https://api.langsearch.com/v1/web-search"
+    bot_web_search_fetch_timeout_seconds: float = 15.0
+    bot_web_search_fetch_max_chars: int = 3000
+    # 管理员私聊可选显示联网检索提示；仅有真实结果链接时才追加。
+    bot_web_search_admin_notice: bool = False
+    # 联网分类遥测：只记录查询哈希、决策、置信度和命中统计，不记录原文。
+    bot_web_intent_telemetry_enabled: bool = False
+    bot_web_intent_telemetry_db_path: str = "data/web_intent_telemetry.sqlite3"
+    bot_web_intent_telemetry_max_items: int = 10000
+    # 开启后同时记录旧版分类标签，用于影子对比；不改变新算法线上决策。
+    bot_web_classifier_shadow_enabled: bool = False
 
     # 表情包生成能力（bot.meme）：对接本地 meme-generator-rs HTTP API。
     # 命令开关：/表情 列表、/表情 <key> <文字>、/meme help（大小写均可）。
@@ -190,13 +247,15 @@ class Config(BaseModel):
     bot_meme_library_vlm_timeout_seconds: float = 20.0
     # 识图模型预制接口：预设名 + 注册表，未来换新模型只需加一条 preset。
     bot_meme_library_vlm_preset: str = "deepseek-vision"
-    bot_vision_model_registry: dict[str, dict[str, Any]] = {
-        "deepseek-vision": {
-            "model": "deepseek-v4-flash-vision-exp",
-            "base_url": "https://api.deepseek.com/v1",
-            "api_key": "env:BOT_API_KEY_DEEPSEEK",
-        }
-    }
+    bot_vision_model_registry: dict[str, Any] = {}
+    # 聊天图片/表情包识别开关：启用且注册表里有可用模型时才会调用 VLM。
+    bot_vision_enabled: bool = False
+    bot_vision_mode: str = "relay"
+    bot_vision_timeout_seconds: float = 20.0
+    bot_vision_max_images: int = 2
+    bot_vision_max_chars: int = 500
+    # 白名单1 群里图片/表情包的回复概率：1.0=发图即识别回应；0=仅 @ 时看图。
+    bot_vision_reply_probability: float = 1.0
     # NSFW 直接删除阈值（淫秽色情不存储）：>= 该分数删除文件与记录。
     bot_meme_library_nsfw_delete: float = 0.8
     # 群图下载代理（默认直连 QQ 多媒体源；外网源可走 7890）。
@@ -206,7 +265,14 @@ class Config(BaseModel):
     # 群聊自动接话：enabled=true 时按 probability 对未点名的群消息
     # 抽签回复（确定性哈希，不是随机数）；默认关闭，点名/命令不受影响。
     bot_group_chat_auto_reply_enabled: bool = False
-    bot_group_chat_auto_reply_probability: float = 0.0
+    bot_group_chat_auto_reply_probability: float = 0.05
+    bot_group_proactive_max_replies_per_hour: int = 6
+    bot_group_proactive_cooldown_seconds: int = 90
+    bot_poke_enabled: bool = True
+    bot_poke_private_cooldown_seconds: float = 30.0
+    bot_poke_group_cooldown_seconds: float = 10.0
+    bot_poke_probability: float = 1.0
+    bot_poke_admin_bypass: bool = False
     # 链接解析能力（bot.content）：识别消息里的平台链接 → 解析 → 信息卡。
     bot_content_parse_enabled: bool = True
     # 平台白名单（空=全部）：bilibili, douyin, xiaohongshu, youtube,
@@ -217,6 +283,13 @@ class Config(BaseModel):
     bot_music_enabled: bool = True
     # 点歌搜索顺序白名单（空=默认顺序：网易云 → Apple → 酷狗 → QQ → 酷我 → Spotify）。
     bot_music_platforms: list[str] = []
+    # 点歌行为分析（只记录成功的 bot.music 结果，不记录原始查询词）。
+    bot_music_analytics_enabled: bool = True
+    bot_music_analytics_db_path: str = "data/music_analytics.sqlite3"
+    bot_music_analytics_retention_days: int = 365
+    bot_music_chart_enabled: bool = False
+    bot_music_chart_sources: dict[str, Any] = {}
+    bot_music_chart_poll_interval_seconds: int = 3600
     # 解析/点歌请求的统一超时（秒）。
     bot_fetch_timeout_seconds: float = 10.0
     # 平台 Cookie 文件（Netscape 格式，浏览器导出）：给 B站/小红书/抖音/
@@ -229,6 +302,9 @@ class Config(BaseModel):
     # 视频下载与媒体分析（yt-dlp）：
     # 解析视频链接时自动附加分辨率/时长/HDR/音频分析；下载走 /bot download。
     bot_media_analyze_enabled: bool = True
+    # 解析结果视频直发：解析器给出视频直链（小红书 sns-video/Telegram 等）时
+    # 自动下载并以视频段随卡片发送；失败/超限静默降级为「下载：」提示。
+    bot_content_video_auto_send: bool = True
     bot_download_dir: str = "data/downloads"
     bot_download_max_bytes: int = 1073741824
     bot_download_max_height: int = 0
@@ -245,43 +321,101 @@ class Config(BaseModel):
     bot_card_render_enabled: bool = True
     bot_card_render_backend: str = "playwright"
     bot_card_render_dir: str = "data/cards"
+    # 外置卡片 SVG 资源目录；留空时由 bridge 自动发现同级 ChatBot_Runtime。
+    bot_card_asset_dir: str = ""
+    # 信息卡整体 UI 缩放（1.0=100%，1.25=125%）；viewport 随之等比放大。
+    bot_card_ui_scale: float = 1.25
+    # 帮助页卡片主色（十六进制）；留空 = 中性灰，tint 一律由主色派生，不写死品牌色。
+    bot_help_card_color: str = ""
     # 「历史上的今天」：查询 + 每日定时推送（数据源：百度百科公开接口，每日缓存）。
     bot_today_history_enabled: bool = True
     bot_today_history_push_file: str = "data/today_history_push.json"
+    bot_today_history_cache_file: str = "data/today_history_cache.json"
     # 维基百科查询（bot.wiki）：`维基 <词条>`，MediaWiki 公开 API，免 key。
     bot_wiki_enabled: bool = True
     bot_wiki_lang: str = "zh"
+    # Candidate index pages only; extraction still requires an exact entry match.
+    bot_wiki_entry_pages: list[str] = ["鳴潮角色列表"]
     # Epic 每周免费游戏（bot.epic）：`epic`，Epic 公开接口，免 key。
     bot_epic_enabled: bool = True
     # 中文天气查询（bot.weather）：`天气 <城市>`，中国气象局 NMC 免 key。
     bot_weather_query_enabled: bool = True
     bot_render_forward_min_chars: int = 1500
-    bot_render_forward_max_nodes: int = 6
+    bot_render_forward_max_nodes: int = 0
     bot_render_forward_node_chars: int = 900
     bot_audit_log_file: str = ""
     bot_audit_log_max_bytes: int = 2097152
+    bot_prompt_audit_enabled: bool = True
+    bot_prompt_audit_dir: str = "data/prompt_audit"
+    bot_prompt_audit_include_messages: bool = True
+    bot_prompt_audit_include_untrusted_context: bool = True
+    bot_prompt_audit_max_chars: int = 12000
+    bot_prompt_execution_mode: str = "execute"
+    bot_prompt_approval_digest: str = ""
+    bot_prompt_audit_retention_days: int = 14
     bot_chat_enabled: bool = True
     bot_chat_provider: str = "static"
     bot_chat_model: str = "static"
     bot_chat_api_key: str = ""
+    # 注册表中 ``env:BOT_API_KEY_*`` 引用的凭据字段。
+    # NoneBot dotenv 会把它们放进 driver.config，必须在这里保留，
+    # 否则 Config.model_validate 会丢弃字段，真实运行态路由会拿到空 key。
+    bot_api_key_qianqianye: str = ""
+    bot_api_key_aiprc: str = ""
+    bot_api_key_umi_group1: str = ""
+    bot_api_key_umi_group2: str = ""
+    bot_api_key_hcn: str = ""
     bot_chat_base_url: str = "https://api.openai.com/v1"
     bot_chat_temperature: float = 0.7
-    bot_chat_max_tokens: int = 0
-    bot_chat_timeout_seconds: float = 30.0
+    bot_chat_reasoning_effort: str = ""
+    bot_chat_max_tokens: int = 65538
+    bot_chat_timeout_seconds: float = 90.0
+    # QQ/群聊快速响应模式：限制上下文、输出和联网前置工作，优先首字响应速度。
+    bot_chat_fast_mode: bool = True
+    bot_chat_fast_max_tokens: int = 65538
+    bot_chat_fast_max_candidates: int = 0
+    bot_chat_fast_timeout_seconds: float = 90.0
+    bot_chat_fast_context_budget: int = 9600
+    bot_chat_fast_web_max_queries: int = 3
+    # 故障转移总时限（秒）：候选模型连续失败时的整体预算，防止响应被拖到分钟级；0=不限。
+    bot_chat_failover_max_seconds: float = 120.0
+    bot_chat_fast_embedding_timeout_seconds: float = 3.0
+    bot_chat_fast_skip_web_pages: bool = True
+    bot_chat_fast_disable_vector_knowledge: bool = False
     # 模型预设：{"flash": "deepseek-v4-flash", "pro": "deepseek-v4-pro", ...}
     bot_model_presets: dict[str, str] = {}
     # 模型注册表（自动路由 + 失败转移）：id -> {model, base_url, api_key, tags, priority}
     bot_model_registry: dict[str, dict[str, Any]] = {}
+    # 分时段自动切换模型：{"HH:MM-HH:MM": "预设或注册表id"}；跨零点窗口如 "23:00-07:00"。
+    bot_model_schedule: dict[str, str] = {}
+    # 时段优先级分组（峰谷顺序）：[{"name":"工作日高峰","days":[1,2,3,4,5],
+    # "windows":[["09:00","12:00"],["14:00","18:00"]],"order":[模型id...]}]；
+    # days 用 ISO 周编号(1=周一…7=周日)，缺省=每天；windows 缺省=全天；
+    # days/windows 都缺省 = 兜底组；按列表顺序取第一个命中的组。
+    bot_model_priority_groups: list[dict[str, Any]] = []
+    # 每模型价格（元/每百万 token）：{"deepseek-v4-pro": {"input": 4.0, "output": 16.0}}；
+    # 按调用时刻的价格记账成本，未配置价格的模型不计费。
+    bot_model_prices: dict[str, dict[str, Any]] = {}
+    # 用量监控：阈值提醒 + 定时报告（推送管理员，走 runtime/alerts 管线）。
+    bot_usage_monitor_enabled: bool = True
+    bot_usage_alert_output_tokens: int = 5_000_000
+    bot_usage_alert_input_tokens: int = 50_000_000
+    bot_usage_alert_daily_cost_yuan: float = 10.0
+    # 定时报告时间点（北京时间，整点，逗号分隔）；报告窗口 = 自上个报告点至今。
+    bot_usage_report_hours: str = "13,18,23"
+    bot_usage_report_state_file: str = "data/usage_report_state.json"
     # 自动选型开关：默认开启（复杂任务→strong 档，普通→fast 档）。
     bot_model_auto_route: bool = True
-    bot_reply_private_default_max_messages: int = 1
-    bot_reply_private_support_max_messages: int = 2
-    bot_reply_private_deep_help_max_messages: int = 3
-    bot_reply_group_max_messages: int = 1
-    bot_reply_risk_max_messages: int = 1
-    bot_reply_max_chars_per_message: int = 1200
+    bot_reply_private_default_max_messages: int = 0
+    bot_reply_private_support_max_messages: int = 0
+    bot_reply_private_deep_help_max_messages: int = 0
+    bot_reply_group_max_messages: int = 0
+    bot_reply_risk_max_messages: int = 0
+    bot_reply_max_chars_per_message: int = 0
     # 回复详略：auto=科普/知识类自动详尽，detail=全部详尽(2000~4000字)，concise=精炼。
     bot_reply_detail: str = "auto"
+    bot_generated_files_dir: str = "data/generated_files"
+    bot_file_read_max_chars: int = 120000
     bot_reply_default_context_budget: int = 2048
     bot_reply_support_context_budget: int = 2560
     bot_reply_deep_help_context_budget: int = 3072
@@ -294,9 +428,9 @@ class Config(BaseModel):
     bot_rate_limit_target_min_interval_seconds: int = 0
     bot_rate_limit_bypass_roles: list[str] = ["admin"]
     bot_rate_limit_db_path: str = ""
-    bot_quiet_hours_enabled: bool = False
-    bot_quiet_hours_start: str = "23:00"
-    bot_quiet_hours_end: str = "07:00"
+    bot_quiet_hours_enabled: bool = True
+    bot_quiet_hours_start: str = "00:00"
+    bot_quiet_hours_end: str = "06:00"
     bot_quiet_hours_timezone: str = "Asia/Hong_Kong"
     bot_quiet_hours_session_types: list[str] = ["group"]
     bot_quiet_hours_bypass_roles: list[str] = ["admin"]
@@ -308,11 +442,135 @@ class Config(BaseModel):
     bot_subscribe_digest_hour: int = 20
     bot_subscribe_digest_minute: int = 0
     bot_subscribe_max_items_per_tick: int = 20
+    bot_subscribe_jitter_ratio: float = 0.20
+    bot_subscribe_global_concurrency: int = 3
+    bot_subscribe_platform_concurrency: int = 1
+    bot_subscribe_min_interval_seconds: float = 1.0
+    bot_subscribe_lease_seconds: int = 120
+    bot_subscribe_retry_base_seconds: int = 60
+    bot_subscribe_retry_cap_seconds: int = 1800
+    bot_subscribe_outbox_interval_seconds: int = 15
+    # 订阅即时推送附带解析卡片图（kind="mixed"），渲染失败自动回退纯文本。
+    bot_subscribe_card_enabled: bool = True
     bot_subscribe_playwright_poll_seconds: int = 1800
     bot_fetch_playwright_enabled: bool = True
     bot_runtime_log_file: str = "data/runtime_events.log"
     bot_runtime_log_max_bytes: int = 2097152
     bot_runtime_log_level: str = "INFO"
+
+    @field_validator("bot_memory_extract_timeout_seconds", "bot_memory_extract_error_cooldown_seconds")
+    @classmethod
+    def _positive_memory_duration(cls, value: float) -> float:
+        if not math.isfinite(value) or not 0 < value <= 3600:
+            raise ValueError("memory duration must be finite and in (0,3600]")
+        return value
+
+    @field_validator("bot_chat_max_tokens", "bot_chat_fast_max_tokens")
+    @classmethod
+    def _validate_chat_output_tokens(cls, value: int) -> int:
+        if value < 0 or value > 65538:
+            raise ValueError("chat output token limit must be between 0 and 65538")
+        return value
+
+    @field_validator("bot_memory_extract_max_tokens")
+    @classmethod
+    def _memory_token_limit(cls, value: int) -> int:
+        if not 1 <= value <= 4096:
+            raise ValueError("memory extraction max tokens must be in [1,4096]")
+        return value
+
+    @field_validator("bot_web_search_fallback_providers", mode="before")
+    @classmethod
+    def _parse_web_search_provider_list(cls, value: Any) -> list[str]:
+        if value is None or value == "":
+            return ["you", "langsearch"]
+        if isinstance(value, str):
+            raw = value.strip()
+            if raw.startswith("["):
+                parsed = json.loads(raw)
+                if not isinstance(parsed, list):
+                    raise ValueError("BOT_WEB_SEARCH_FALLBACK_PROVIDERS must be a JSON array")
+                value = parsed
+            else:
+                value = [item for item in raw.replace(";", ",").split(",") if item.strip()]
+        if not isinstance(value, list):
+            raise TypeError("BOT_WEB_SEARCH_FALLBACK_PROVIDERS must be a list")
+        return [str(item).strip().lower() for item in value if str(item).strip()]
+
+    @field_validator("bot_web_search_provider_options", mode="before")
+    @classmethod
+    def _parse_web_search_provider_options(cls, value: Any) -> dict[str, dict[str, Any]]:
+        if value is None or value == "":
+            return {}
+        if isinstance(value, str):
+            value = json.loads(value)
+        if not isinstance(value, dict):
+            raise TypeError("BOT_WEB_SEARCH_PROVIDER_OPTIONS must be a JSON object")
+        return {
+            str(name).strip().lower(): dict(options)
+            for name, options in value.items()
+            if isinstance(options, dict)
+        }
+    @model_validator(mode="after")
+    def _resolve_runtime_data_paths(self) -> Config:
+        """将 data/... 路径统一解析到 BOT_RUNTIME_DATA_DIR。"""
+        raw_root = str(self.bot_runtime_data_dir or "").strip() or "data"
+        data_root = Path(raw_root).expanduser()
+        if not data_root.is_absolute():
+            project_root = Path(__file__).resolve().parents[2]
+            data_root = project_root / data_root
+
+        def resolve(value: Any) -> Any:
+            if not isinstance(value, str):
+                return value
+            text = value.strip()
+            normalized = text.replace("\\", "/")
+            if normalized == "data":
+                return str(data_root)
+            if normalized.startswith("data/"):
+                return str(data_root / normalized[5:])
+            return value
+
+        path_fields = (
+            "bot_runtime_settings_file",
+            "bot_runtime_settings_dir",
+            "bot_mail_bridge_state_file",
+            "bot_knowledge_db_path",
+            "bot_memory_db_path",
+            "bot_history_db_path",
+            "bot_diagnostics_db_path",
+            "bot_audit_db_path",
+            "bot_receipts_db_path",
+            "bot_send_queue_db_path",
+            "bot_web_intent_telemetry_db_path",
+            "bot_meme_api_output_dir",
+            "bot_meme_library_dir",
+            "bot_meme_library_db_path",
+            "bot_parse_history_db_path",
+            "bot_music_analytics_db_path",
+            "bot_download_dir",
+            "bot_card_render_dir",
+            "bot_generated_files_dir",
+            "bot_today_history_push_file",
+            "bot_today_history_cache_file",
+            "bot_audit_log_file",
+            "bot_prompt_audit_dir",
+            "bot_rate_limit_db_path",
+            "bot_subscribe_db_path",
+            "bot_runtime_log_file",
+            "bot_cookies_file",
+        )
+        for name in path_fields:
+            setattr(self, name, resolve(getattr(self, name)))
+
+        for name in (
+            "bot_persona_files",
+            "bot_knowledge_files",
+            "bot_trend_files",
+            "bot_glossary_files",
+        ):
+            setattr(self, name, [resolve(item) for item in getattr(self, name)])
+        return self
 
     @field_validator(
         "bot_persona_files",
@@ -343,6 +601,8 @@ class Config(BaseModel):
 
     @field_validator(
         "bot_admin_user_ids",
+        "bot_telegram_admin_user_ids",
+        "bot_telegram_admin_chat_ids",
         "bot_enterprise_user_ids",
         "bot_trusted_user_ids",
         "bot_blocked_user_ids",
@@ -397,6 +657,9 @@ class Config(BaseModel):
     @field_validator(
         "bot_model_presets",
         "bot_model_registry",
+        "bot_model_schedule",
+        "bot_model_prices",
+        "bot_mail_sender_aliases",
         "bot_vision_model_registry",
         mode="before",
     )
@@ -414,6 +677,47 @@ class Config(BaseModel):
             if isinstance(parsed, dict):
                 return {str(k): v for k, v in parsed.items()}
         return {}
+
+    @field_validator("bot_model_priority_groups", mode="before")
+    @classmethod
+    def _parse_model_priority_groups(cls, value: Any) -> list[dict[str, Any]]:
+        """BOT_MODEL_PRIORITY_GROUPS：接受 JSON 数组字符串或 list[dict]。"""
+        if value is None or value == "":
+            return []
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except ValueError:
+                return []
+            if isinstance(parsed, list):
+                return [item for item in parsed if isinstance(item, dict)]
+        return []
+
+    @field_validator("bot_transport_timeout_seconds", mode="before")
+    @classmethod
+    def _validate_transport_timeout_seconds(cls, value: Any) -> float:
+        """拒绝负数/NaN/Infinity/超大值；合法范围 (0, 600] 秒。"""
+        try:
+            number = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise ValueError("BOT_TRANSPORT_TIMEOUT_SECONDS 必须是数字（秒）") from exc
+        if math.isnan(number) or number <= 0 or number > 600:
+            raise ValueError("BOT_TRANSPORT_TIMEOUT_SECONDS 必须在 0-600 秒之间")
+        return number
+
+    @field_validator("bot_request_budget_seconds", mode="before")
+    @classmethod
+    def _validate_request_budget_seconds(cls, value: Any) -> float:
+        """拒绝负数/NaN/Infinity/超大值；合法范围 (0, 600] 秒。"""
+        try:
+            number = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise ValueError("BOT_REQUEST_BUDGET_SECONDS 必须是数字（秒）") from exc
+        if math.isnan(number) or number <= 0 or number > 600:
+            raise ValueError("BOT_REQUEST_BUDGET_SECONDS 必须在 0-600 秒之间")
+        return number
 
     @field_validator("bot_credential_probe_urls", mode="before")
     @classmethod

@@ -35,9 +35,23 @@ class PolicySettings:
     group_white2: frozenset[str] = frozenset()
     # 白名单1 的自然语言提问判定：命中即视为有效触发（不带@/斜杠也回）。
     natural_chat_check: Callable[[str], bool] | None = None
+    # 白名单1 的已支持链接判定：未提供时使用已注册内容解析器的规则。
+    supported_url_check: Callable[[str], bool] | None = None
+    # 白名单1 图片消息的回复概率：独立于闲聊抽签（发图希望被看到时设 1.0）。
+    vision_reply_probability: float = 1.0
     # 动态名单 provider：返回 {black1/black2/white1/white2: 群号集合}。
     # 返回的键会覆盖对应静态集合（管理员热改优先于 .env），未返回的键保持静态。
     group_lists_provider: Callable[[], dict[str, frozenset[str]]] | None = None
+
+
+def _message_has_image(message: IncomingMessage) -> bool:
+    """消息是否携带图片/表情包段（供白名单1图片回复概率判定）。"""
+    from plugins.bot_unified_runtime.sources.vision_describe import extract_image_urls
+
+    try:
+        return bool(extract_image_urls(getattr(message, "raw_segments", None)))
+    except Exception:  # noqa: BLE001 - 图片判定失败按无图处理。
+        return False
 
 
 def deterministic_group_reply_lottery(seed: str, probability: float) -> bool:
@@ -83,6 +97,31 @@ def _effective_group_lists(settings: PolicySettings) -> dict[str, frozenset[str]
                 str(item).strip() for item in value if str(item).strip()
             )
     return effective
+
+
+def _has_supported_url(text: str, settings: PolicySettings) -> bool:
+    """Return whether text contains a URL handled by the content parser registry.
+
+    A checker may be injected for a deployment-specific parser set. The default
+    uses the registered parser rules only; it never performs a network request.
+    """
+    checker = settings.supported_url_check
+    if checker is not None:
+        try:
+            return bool(checker(text))
+        except Exception:  # noqa: BLE001 - URL trigger failures stay silent.
+            return False
+    try:
+        from plugins.bot_unified_runtime.sources.parsers import (
+            build_content_parser_registry,
+            build_source_input,
+        )
+
+        source_input = build_source_input(text)
+        registry = build_content_parser_registry()["registry"]
+        return bool(registry.match(source_input))
+    except Exception:  # noqa: BLE001 - Parser setup must not open the group gate.
+        return False
 
 
 def evaluate_policy(
@@ -150,37 +189,71 @@ def evaluate_policy(
         if group_id in group_lists["black2"] and not (message.mentions_bot and command_triggered):
                 return _denied("group_black2", ("group_black2",))
 
-        # 白名单2：只回“@它”的消息（指令或自然语言均可）。
-        if group_id in group_lists["white2"] and not message.mentions_bot:
-                return _denied("group_white2_need_mention", ("group_white2",))
-
-        # 白名单1：普通指令/@+指令/呼出点名之外，自然语言提问也放行；
-        # 其余无信号闲聊仍走默认观察 + 抽签逻辑。
-        natural_triggered = False
-        if (
-            group_id in group_lists["white1"]
-            and not command_triggered
-            and not message.mentions_bot
+        # 白名单2：只回“@它”或显式命令，普通消息不主动接话。
+        if group_id in group_lists["white2"] and not (
+            message.mentions_bot or command_triggered
         ):
+            return _denied("group_white2_need_trigger", ("group_white2",))
+
+        # 白名单1：有效触发包括指令、点名、自然语言提问/能力和已支持链接。
+        # 无论历史自动接话配置为何，未触发的群消息都只观察不回复。
+        white1_group = group_id in group_lists["white1"]
+        natural_triggered = False
+        supported_url_triggered = False
+        if white1_group and not command_triggered and not message.mentions_bot:
             natural_check = active_settings.natural_chat_check
             if natural_check is not None:
                 try:
                     natural_triggered = bool(natural_check(text))
                 except Exception:  # noqa: BLE001 - 判定失败按未触发处理。
                     natural_triggered = False
+            supported_url_triggered = _has_supported_url(text, active_settings)
 
-        # 未命中任何显式触发：白名单1 的“提问”已在上方放行，这里处理
-        # 默认群与白名单1 的剩余被动消息（命令/点名之外）。
-        if not command_triggered and not message.mentions_bot and not natural_triggered:
-            auto_reply = (
-                active_settings.group_auto_reply_enabled
+        if (
+            not command_triggered
+            and not message.mentions_bot
+            and not natural_triggered
+            and not supported_url_triggered
+        ):
+            # 白名单1 的图片/表情包：独立回复概率（默认 1.0，发图即被识别回应）；
+            # 与闲聊抽签分开，避免表情包多的群被 0.05 的闲聊概率淹没。
+            if (
+                white1_group
+                and _message_has_image(message)
+                and deterministic_group_reply_lottery(
+                    f"vision:{message.session_id}:{message.message_id or message.request_id}",
+                    active_settings.vision_reply_probability,
+                )
+            ):
+                return PolicyEvaluation(
+                    request_id=message.request_id,
+                    allowed=True,
+                    reason="vision_reply_selected",
+                    risk_level=RiskLevel.LOW,
+                    cooldown_key=cooldown_key,
+                    privacy_level=PrivacyLevel.GROUP,
+                    actor_roles=actor_roles,
+                    audit_tags=["policy", *role_tags, "vision_reply:selected"],
+                )
+            if (
+                white1_group
+                and active_settings.group_auto_reply_enabled
                 and deterministic_group_reply_lottery(
                     f"{message.session_id}:{message.message_id or message.request_id}",
                     active_settings.group_auto_reply_probability,
                 )
-            )
-            if not auto_reply:
-                return _denied("passive_group_message", ("group_observe_only",))
+            ):
+                return PolicyEvaluation(
+                    request_id=message.request_id,
+                    allowed=True,
+                    reason="proactive_reply_selected",
+                    risk_level=RiskLevel.LOW,
+                    cooldown_key=cooldown_key,
+                    privacy_level=PrivacyLevel.GROUP,
+                    actor_roles=actor_roles,
+                    audit_tags=["policy", *role_tags, "proactive_reply:selected"],
+                )
+            return _denied("passive_group_message", ("group_observe_only",))
 
     return PolicyEvaluation(
         request_id=message.request_id,

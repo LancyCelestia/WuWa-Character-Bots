@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import re
 
+from plugins.bot_unified_runtime.contracts.media import (
+    ParsedContent,
+    build_parsed_content,
+)
 from plugins.bot_unified_runtime.sources.parsers.http_util import (
     ParseHttpError,
     http_get_text,
 )
-from plugins.bot_unified_runtime.sources.parsers.types import PlatformParse
 
 _EVENT_ID_RE = re.compile(r"event=(\d+)")
 _EID_RE = re.compile(r"eventParam\.EID\s*=\s*(\d+);")
@@ -47,7 +50,7 @@ def _extract(pattern: re.Pattern[str], html: str) -> str:
     return match.group(1) if match else ""
 
 
-def parse_allcpp(url: str, *, cookie_header: str = "") -> PlatformParse:
+def parse_allcpp(url: str, *, cookie_header: str = "") -> ParsedContent:
     """解析 allcpp 活动页内嵌 SSR 变量，产出深度信息卡。
 
     抓取失败（``http_get_text`` 抛 ``ParseHttpError``）时原样上抛，
@@ -112,7 +115,7 @@ def parse_allcpp(url: str, *, cookie_header: str = "") -> PlatformParse:
         if days > 0:
             stats["距离开始"] = f"{days} 天"
 
-    return PlatformParse(
+    return build_parsed_content(
         platform="allcpp",
         item_id=eid,
         item_kind="event",

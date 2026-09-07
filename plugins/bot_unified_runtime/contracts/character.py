@@ -67,6 +67,8 @@ class PersonaProfile(StrictBaseModel):
     role_boundaries: list[str] = Field(default_factory=list)
     style_rules: list[str] = Field(default_factory=list)
     forbidden_behaviors: list[str] = Field(default_factory=list)
+    # 人设文件原文；非空时系统提示词以其为主体，而不是字段重组版。
+    raw_text: str = ""
 
 
 class ToneProfile(StrictBaseModel):
@@ -75,7 +77,7 @@ class ToneProfile(StrictBaseModel):
     voice: str = "default"
     warmth: float = 0.5
     directness: float = 0.5
-    message_count_limit: int = 1
+    message_count_limit: int = 0
     markdown_allowed: bool = True
     action_brackets: bool = True
 

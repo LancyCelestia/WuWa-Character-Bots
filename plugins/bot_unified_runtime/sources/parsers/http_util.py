@@ -11,6 +11,7 @@ import json
 from typing import Any
 from urllib import parse as urlparse
 from urllib import request as urlrequest
+from urllib.error import HTTPError
 
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -21,8 +22,36 @@ DEFAULT_USER_AGENT = (
 class ParseHttpError(Exception):
     """解析平台的 HTTP 请求失败（含超时）。"""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
+
 
 _DEFAULT_PROXY = ""
+
+
+def build_request_headers(context: Any) -> dict[str, str]:
+    """从 FetchContext 构造真实请求头；诊断脱敏由上下文对象负责。"""
+    headers = {
+        "User-Agent": str(getattr(context, "user_agent", DEFAULT_USER_AGENT)),
+        "Accept-Encoding": "gzip",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+    }
+    cookie = str(getattr(context, "cookie_header", "") or "")
+    if cookie:
+        headers["Cookie"] = cookie
+    extra_headers = getattr(context, "extra_headers", {}) or {}
+    if isinstance(extra_headers, dict):
+        headers.update({str(key): str(value) for key, value in extra_headers.items()})
+    return headers
+
 
 
 def set_default_proxy(proxy_url: str) -> None:
@@ -52,6 +81,7 @@ def _build_request(
     user_agent: str = DEFAULT_USER_AGENT,
     accept: str = "",
     cookie: str = "",
+    extra_headers: dict[str, str] | None = None,
 ) -> urlrequest.Request:
     headers = {
         "User-Agent": user_agent,
@@ -64,6 +94,8 @@ def _build_request(
         headers["Accept"] = accept
     if cookie:
         headers["Cookie"] = cookie
+    if extra_headers:
+        headers.update(extra_headers)
     return urlrequest.Request(url, headers=headers)
 
 
@@ -77,6 +109,7 @@ def http_get(
     cookie: str = "",
     proxy: str = "",
     verify_ssl: bool = True,
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[str, bytes]:
     """GET 并返回 (最终 URL, 响应体)；短链重定向后 final_url 是落点。"""
     try:
@@ -87,6 +120,7 @@ def http_get(
                 user_agent=user_agent,
                 accept=accept,
                 cookie=cookie,
+                extra_headers=extra_headers,
             ),
             timeout=timeout,
         ) as response:
@@ -94,6 +128,17 @@ def http_get(
             if response.headers.get("Content-Encoding", "").lower() == "gzip":
                 payload = gzip.decompress(payload)
             return response.geturl(), payload
+    except HTTPError as exc:
+        retry_after = exc.headers.get("Retry-After") if exc.headers else None
+        try:
+            retry_after_value = int(str(retry_after).strip()) if retry_after else None
+        except ValueError:
+            retry_after_value = None
+        raise ParseHttpError(
+            f"GET {url} failed: HTTP {exc.code}",
+            status_code=int(exc.code),
+            retry_after_seconds=retry_after_value,
+        ) from exc
     except Exception as exc:
         raise ParseHttpError(f"GET {url} failed: {type(exc).__name__}") from exc
 
@@ -108,6 +153,7 @@ def http_get_text(
     encoding: str = "utf-8",
     cookie: str = "",
     proxy: str = "",
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     final_url, payload = http_get(
         url,
@@ -117,6 +163,7 @@ def http_get_text(
         accept=accept,
         cookie=cookie,
         proxy=proxy,
+        extra_headers=extra_headers,
     )
     try:
         text = payload.decode(encoding, errors="replace")
@@ -134,6 +181,7 @@ def http_get_json(
     cookie: str = "",
     proxy: str = "",
     verify_ssl: bool = True,
+    extra_headers: dict[str, str] | None = None,
 ) -> Any:
     _, payload = http_get(
         url,
@@ -144,6 +192,7 @@ def http_get_json(
         cookie=cookie,
         proxy=proxy,
         verify_ssl=verify_ssl,
+        extra_headers=extra_headers,
     )
     try:
         return json.loads(payload.decode("utf-8"))

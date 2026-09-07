@@ -1,11 +1,6 @@
-"""智能回复切分 v3：均衡优先，最多 3 条消息，优先 1 条、其次 2 条。
+"""智能回复切分：保留模型决定的段落结构，仅在传输硬限制下安全切分。
 
-- 短回复整段一条；
-- 长回复先按“每 3 段/句一个候选块”生成单元，再把单元均衡合并成
-  2 或 3 条（总长度均分，避免单条过长/过短）；
-- 只在句末标点/段落边界切，兼容省略号……、破折号——、留白；
-- emoji 安全（ZWJ/变体选择符/组合附标不切）；
-- 意图自适应：段落本身就是天然语义单元；段落少但很长时按句均分。
+不设置固定消息段数上限；max_parts<=0 表示不限制。
 """
 
 from __future__ import annotations
@@ -111,12 +106,12 @@ def _balanced_merge(units: list[str], max_parts: int, min_parts: int = 1) -> lis
 def split_reply_messages(
     text: str,
     *,
-    max_parts: int = 3,
+    max_parts: int = 0,
     target_chars: int = 520,
     min_chars: int = 220,
     hard_max: int = 900,
 ) -> list[str]:
-    """把长回复均衡切成 1~3 条消息（优先 1 条，其次 2 条）。"""
+    """按安全边界切分；max_parts<=0 表示不限制分段数量。"""
     normalized = (text or "").strip()
     if not normalized:
         return [""]
@@ -146,12 +141,13 @@ def split_reply_messages(
 
     if len(merged) <= 1:
         return [normalized]
-    # 优先 1 条：总长 <= 2 倍目标长度时可整段发送；再长才拆 2~3 条。
+    if max_parts <= 0:
+        return merged or [normalized]
     min_parts = 1 if len(normalized) <= int(target_chars) * 2 else 2
     return (
         _balanced_merge(
             merged,
-            max_parts=max(1, min(int(max_parts), 3)),
+            max_parts=max(1, int(max_parts)),
             min_parts=min_parts,
         )
         or [normalized]

@@ -8,12 +8,17 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
 )
 
+from .plain_text import naturalize_chat_text
+
 
 def render_reviewed_output(
     result: CapabilityResult,
     review: ReviewResult,
 ) -> RenderedOutput:
     text = review.safe_text or result.body or result.summary or result.title
+    is_chat = result.capability_id == "bot.chat"
+    if is_chat:
+        text = naturalize_chat_text(text)
     # 能力层声明的图片/语音直链在审核通过后原样透传（内容来自平台
     # 官方接口，不是用户输入）；transport 不支持时按 text_fallback 降级。
     media_parts: list[dict] = []
@@ -29,8 +34,13 @@ def render_reviewed_output(
     for video in result.video or []:
         if isinstance(video, dict) and (video.get("file") or video.get("url")):
             media_parts.append({"type": "video", **video})
+    for file_item in result.files or []:
+        if isinstance(file_item, dict) and (file_item.get("file") or file_item.get("url")):
+            media_parts.append({"type": "file", **file_item})
     if not media_parts and result.text_parts and len(result.text_parts) > 1:
         chunks = [str(part).strip() for part in result.text_parts if str(part).strip()]
+        if is_chat:
+            chunks = [clean for part in chunks if (clean := naturalize_chat_text(part))]
         if chunks:
             return RenderedOutput(
                 request_id=result.request_id,
@@ -42,10 +52,13 @@ def render_reviewed_output(
                 privacy_level=review.privacy_level,
             )
     if media_parts:
+        parts = [*media_parts]
+        if text.strip():
+            parts.append({"type": "text", "text": text})
         return RenderedOutput(
             request_id=result.request_id,
             content_type="mixed",
-            content_ref={"parts": [*media_parts, {"type": "text", "text": text}]},
+            content_ref={"parts": parts},
             text_fallback=text,
             size_estimate=len(text),
             risk_level=review.risk_level,
@@ -77,7 +90,7 @@ def split_text_chunks(
     text: str,
     *,
     node_chars: int = 900,
-    max_nodes: int = 6,
+    max_nodes: int = 0,
 ) -> list[str]:
     """按段落把长文本切成合并转发节点，超长段落优先在标点处断开。"""
     normalized = (text or "").strip()
@@ -106,9 +119,11 @@ def split_text_chunks(
         current = paragraph if not current else f"{current}\n{paragraph}"
     if current:
         chunks.append(current)
-    while len(chunks) > max_nodes:
-        overflow = chunks.pop()
-        chunks[-1] = f"{chunks[-1]}\n{overflow}"
+    # 0/负数表示不人为限制转发节点数；只有 node_chars 作为传输硬长度边界。
+    if max_nodes > 0:
+        while len(chunks) > max_nodes:
+            overflow = chunks.pop()
+            chunks[-1] = f"{chunks[-1]}\n{overflow}"
     return chunks
 
 
@@ -117,7 +132,7 @@ def build_forward_output(
     text: str,
     *,
     node_chars: int = 900,
-    max_nodes: int = 6,
+    max_nodes: int = 0,
     sender_name: str = "",
     risk_level: RiskLevel = RiskLevel.LOW,
     privacy_level: PrivacyLevel = PrivacyLevel.PUBLIC,

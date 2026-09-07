@@ -175,22 +175,35 @@ def filter_meme_results(
     不会进入 LLM 判断，避免额外 token 开销。
     """
     results: list[MemeSearchResult] = []
-    normalized_query = (query or "").strip().lower()
+    normalized_query = _normalize_search_text(query)
+    seen_urls: set[str] = set()
     for title, snippet, href in items:
         domain = _domain_of(href)
+        if href in seen_urls:
+            continue
+        seen_urls.add(href)
         if domain and not any(pref in domain for pref in preferred_domains):
             continue
         combined = f"{title} {snippet}"
         lowered = combined.lower()
-        if any(blocked in lowered for blocked in blocked_terms):
+        normalized_combined = _normalize_search_text(combined)
+        if any(blocked.lower() in lowered for blocked in blocked_terms):
             continue
-        summary = snippet.strip() or title.strip()
+        # Domain preference alone is not evidence that a result explains the
+        # requested term; reject unrelated popular pages before context use.
+        if normalized_query and normalized_query not in normalized_combined:
+            continue
+        title_text = title.strip()
+        snippet_text = snippet.strip()
+        summary = (f"{title_text}：{snippet_text}" if snippet_text else title_text)[:240]
         score = 0.0
         for weight_domain, weight in DOMAIN_WEIGHTS.items():
             if weight_domain in domain:
                 score = weight
                 break
-        if normalized_query and normalized_query in lowered:
+        if normalized_query and normalized_query in _normalize_search_text(title_text):
+            score = min(1.0, score + 0.2)
+        elif normalized_query:
             score = min(1.0, score + 0.1)
         if score < MIN_SCORE_TO_KEEP:
             continue
@@ -229,6 +242,11 @@ def _extract_ddg_items(html: str) -> list[tuple[str, str, str]]:
         if title:
             items.append((title, snippet, href))
     return items
+
+
+def _normalize_search_text(value: str) -> str:
+    """Normalize search text for relevance checks without fuzzy hallucination."""
+    return re.sub(r"[\s\W_]+", "", (value or "").casefold())
 
 
 def _strip_html(value: str) -> str:

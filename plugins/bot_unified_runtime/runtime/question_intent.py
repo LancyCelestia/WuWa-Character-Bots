@@ -1,30 +1,21 @@
-"""问题意图分层判定 v2：不斩断联网权限。
+"""可解释的联网决策。
 
-核心变化（相比 v1）：
-- 不再因为出现“鸣潮/守岸人”就永远禁止联网；
-- 对“X是什么/是谁”这类实体问句，先看 X 是否是领域词：
-  - 是领域词 → 先走本地知识库，但携带 allow_web_fallback；
-  - 不是领域词（如“习近平是谁/库洛是什么公司”）→ 直接联网做百科检索；
-- 现实信号（公司/所在地/演唱会/音乐会/活动/价格/时间地点…）永远放行联网；
-- 本地知识库检索“不可答/置信度过低”时，即便领域词问题也允许回退联网
-  （由 chat 能力根据 RetrievalResult.answerable/confidence 决定）。
+该模块只负责判断“是否值得联网”，不执行搜索。决策分成三层：
 
-规则优先级（每条带 reason，可审计）：
-A. 天气小聊 / “你最近怎么样” / 问机器人身份 → 不联网；
-B. 现实信号（公司/官方/所在地/演唱会/音乐会/漫展/价格/汇率/新闻/现实…）→ 联网；
-C. 时效信号（今天/最新/更新/版本/什么时候/开服/复刻/活动…）→ 联网；
-D. 实体问句（是什么/是谁/是什么样的/介绍/背景）：
-   - 实体非领域词 → 联网（百科）；
-   - 实体是领域词 → 本地知识库优先 + 允许回退联网；
-E. 领域词 + 知识意图 → 本地知识库优先 + 允许回退联网；
-F. 领域词（无强信号）→ 本地知识库优先 + 允许回退联网；
-G. 其余 → neutral（一般知识交给大模型，不联网、不拖慢）。
+* ``NEVER``：闲聊、情绪、用户已提供的文本和稳定常识不预搜索；
+* ``PRIMARY``：用户明确要求搜索，或问题明显依赖实时/外部事实；
+* ``FALLBACK``：本地知识库优先，命中不足时再搜索；
+* ``TOOL_ALLOWED``：信息需求不够确定，把是否搜索交给模型一次性判断。
+
+所有返回值都包含置信度、原因码和分数分解，便于审计、统计和调整权重。
+正则只负责提取信号，最终决策由“优先级 + 加权信号”共同决定，避免单个词
+（例如“科学”“今天”）直接把普通对话送上网。
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -34,15 +25,29 @@ class QuestionIntent(str, Enum):
     NEUTRAL = "neutral"
 
 
+class WebDecision(str, Enum):
+    NEVER = "never"
+    PRIMARY = "primary"
+    FALLBACK = "fallback"
+    TOOL_ALLOWED = "tool_allowed"
+
+
 @dataclass(frozen=True)
 class IntentDecision:
     intent: QuestionIntent
     reason: str
-    # True 表示：本地知识库不可答/置信度过低时，允许回退联网（不斩断搜索权限）。
     allow_web_fallback: bool = False
+    category: str = "AMBIGUOUS"
+    decision: WebDecision = WebDecision.NEVER
+    confidence: float = 0.0
+    reason_codes: tuple[str, ...] = ()
+    score_breakdown: dict[str, float] = field(default_factory=dict)
+    allow_model_tool: bool = False
+    knowledge_threshold: float = 0.35
+    algorithm_version: str = "intent-v3"
 
 
-# 世界观/领域词（只表示“话题在领域内”，不再作为禁网依据）。
+# 世界观/本地知识词：它们只表示“可以先查本地知识库”，不是永久禁网。
 DOMAIN_TERMS = (
     "鸣潮",
     "守岸人",
@@ -79,74 +84,85 @@ DOMAIN_TERMS = (
     "鹫巢",
 )
 
-# 现实信号：出现这些词几乎必然是现实世界问题，必须放行联网。
-_REAL_WORLD_RE = re.compile(
-    r"(价格|多少钱|汇率|股票|股价|行情|房价|放假|倒闭|收购|曝光|"
-    r"现实中|真实世界|现实里|实际上|官方|官宣|官网|公司|工作室|开发商|制作人|创始人|"
-    r"所在地|位于|总部|地址|在哪|在哪个城市|员工|作品|代表作|演唱会|音乐会|"
-    r"漫展|线下|举办|门票|时间地点|展览|访谈|采访|新闻|热搜|百科|"
-    r"国际局势|国际关系|中美|中俄|中欧|欧盟|俄乌|巴以|台海|世界局势|"
-    r"贸易战|关税|政治|经济局势|时事|地缘|"
-    r"科学|科技|技术|文化|历史|地理|经济|哲学|物理|化学|生物|数学|"
-    r"世界|国家|城市|大学|院校|公司|企业|发明|理论|原理|人物|地名|事件)"
+_EXPLICIT_SEARCH_RE = re.compile(
+    r"(搜(索|一下|一查)?|查(一下|一查|资料|证)?|联网|上网|检索|"
+    r"看官网|找新闻|查来源|给我来源|给我链接|引用来源|网页搜索|搜索一下)"
 )
-
-# 时效信号：答案随时间变化，联网保鲜。
-_CURRENT_INTENT_RE = re.compile(
+_NO_WEB_RE = re.compile(
+    r"(不要(联网|搜索|上网)|别(联网|搜索|上网)|不用查|无需联网|只用本地|"
+    r"仅根据我提供|根据上面的内容|不要引用外部资料)"
+)
+_URL_RE = re.compile(r"https?://[^\s]+", re.IGNORECASE)
+_CURRENT_RE = re.compile(
     r"(今天|今日|现在|目前|最新|最近|新闻|消息|更新|版本|公告|维护|"
-    r"开服|上线|发布|首发|前瞻|直播|什么时候|何时|几点|几号|多少抽|"
-    r"卡池|活动|限定|复刻|加强|削弱|改动|实装|官宣|公告|预告|解禁|发售)"
+    r"开服|上线|发布|首发|前瞻|直播|什么时候|何时|几点|几号|"
+    r"卡池|活动|限定|复刻|加强|削弱|改动|实装|预告|解禁|发售|"
+    r"价格|多少钱|汇率|股票|股价|行情|房价|门票|时间地点|天气|气温|降雨|台风|空气质量)"
 )
+# Strong current-information nouns can imply a lookup even without a question mark.
+_CURRENT_REQUEST_RE = re.compile(r"(新闻|消息|更新|版本|公告|维护|发布|前瞻|直播|卡池|活动|限定|复刻|加强|削弱|改动|实装|预告|解禁|发售|价格|多少钱|汇率|股票|股价|行情|房价|门票|时间地点|台风|空气质量)")
 
-# 实体问句：问某个名词“是什么/是谁”。
+_REAL_WORLD_RE = re.compile(
+    r"(官方|官宣|官网|公司|企业|工作室|开发商|制作人|创始人|总部|"
+    r"所在地|地址|员工|作品|代表作|演唱会|音乐会|漫展|线下|举办|"
+    r"展览|访谈|采访|热搜|百科|国际局势|国际关系|中美|中俄|"
+    r"中欧|欧盟|俄乌|巴以|台海|世界局势|贸易战|关税|时事|地缘)"
+)
 _ENTITY_QUESTION_RE = re.compile(
-    r"(是什么|是谁|是什么样|是什么样的|介绍一下|介绍|百科|背景|来历)"
+    r"(是什么|是谁|是什么样|介绍一下|介绍|百科|背景|来历|在哪里|在哪儿|哪家公司)"
 )
-
-# 知识意图（领域内静态知识）。
-_LORE_INTENT_RE = re.compile(
-    r"(是什么|是什么东西|是什么意思|什么意思|介绍|背景|设定|剧情|世界观|"
-    r"人物|角色|武器|能力|技能|在哪里|在哪儿|干什么|为什么叫|由来|典故|"
-    r"人设|档案|属性|阵营|关系|是谁|怎么样的人物)"
+_STATIC_KNOWLEDGE_RE = re.compile(
+    r"(为什么|什么是|原理|定义|区别|含义|意思|如何理解|能否解释|"
+    r"光合作用|量子力学|天空是蓝的|数学|物理|化学|生物|历史|哲学)"
 )
-
-# 人格寒暄：问机器人本人状态/情绪，不联网。
+_TECHNICAL_HOWTO_RE = re.compile(
+    r"(怎么安装|如何安装|怎么配置|如何配置|怎么部署|如何部署|"
+    r"教程|排查|报错|代码|接口|框架|命令|环境|依赖|编程|"
+    r"怎么用|如何使用|使用方法|一步一步|逐步)"
+)
+_USER_CONTENT_RE = re.compile(
+    r"(请(帮我)?(总结|概括|改写|润色|校对|翻译|提取|整理)|"
+    r"把下面|这段文字|以下内容|根据我提供|按这段内容)"
+)
+_CREATIVE_RE = re.compile(
+    r"(角色扮演|扮演|写诗|写歌词|写故事|续写|同人|以.{0,12}(口吻|身份|风格)|"
+    r"创作一段|编一个故事)"
+)
 _SELF_CHAT_RE = re.compile(
     r"(心情|感受|感觉|累|困|饿|难过|开心|快乐|害怕|孤单|寂寞|"
     r"陪我|陪我说|聊天|喜欢|爱|想你|在吗|你好|早上好|中午好|晚上好|"
     r"晚安|早安|谢谢|抱歉|辛苦|抱抱|摸摸)"
 )
-
-# “你最近怎么样/你还好吗”这类指向对话对象本人状态的寒暄。
 _YOU_STATE_RE = re.compile(
     r"(你最近怎么样|你怎么样|你还好吗|你好吗|最近好吗|"
-    r"你好不好|你心情|你感觉|你累不累|你困不困|你饿不饿)"
+    r"你现在感觉|你今天心情|你是谁|你是什么机器人|你是机器人吗|"
+    r"你是ai吗|你是人工智能吗)"
 )
-
-# 天气小聊（不是天气查询命令）：保持 neutral，交给对话层。
+_SHORT_SMALLTALK_RE = re.compile(
+    r"^(?:你好|您好|嗨|哈喽|在吗|在不在|有人吗)[呀啊哇嘛吗呢哦喔~～!！?？。,.，]*$",
+    re.IGNORECASE,
+)
+_ASKS_USER_IDENTITY_RE = re.compile(
+    r"^(?:我是谁|你知道我是谁吗|你还记得我是谁吗|还记得我是谁吗)[~～!！?？。,.，]*$"
+)
 _QUESTION_LIKE_RE = re.compile(
-    r"[?？]|(是什么|为什么|怎么|如何|怎么样|介绍|讲解|科普|谁是|哪些|"
-    r"哪个|多少|吗|嘛|呢|什么是|为什么会|为什么是)"
+    r"(\?|？|吗[？?。!！]*$|呢[？?。!！]*$|嘛[？?。!！]*$|"
+    r"^(为什么|为何|怎么|如何|什么|谁|哪|是否|能不能|可以不可以|请问))"
 )
+# In-sentence question words cover forms such as “updated what” and “when rerun”.
+_QUESTION_WORD_RE = re.compile(r"(什么时候|何时|几点|多少|哪里|哪儿|什么|谁|是否|怎么回事|怎么样)")
 
-_WEATHER_SMALLTALK_RE = re.compile(
-    r"(天气不错|天气真好|天气好|今天天气|明天天气|好热|好冷|下雨了|降温了)"
-)
-
-# 直接问“你是谁/你叫什么”这类机器人身份问题。
-_ASKS_BOT_RE = re.compile(
-    r"(你是谁|你叫什么|你是什么|你多大了|介绍你自己|介绍一下你自己|"
-    r"你是机器人吗|你是ai吗|你是人工智能吗)"
-)
-
-# 提取“X是什么/是谁”里的 X（用于判断是否领域词）。
 _ENTITY_SUBJECT_RE = re.compile(
-    r"^(.{1,24}?)(?:是什么|是谁|是什么样|是什么样的|介绍一下|百科|来历)"
+    r"^(.{1,24}?)(?:是什么|是谁|是什么样|介绍一下|百科|来历)"
 )
 
 
 def _strip(text: str) -> str:
     return (text or "").strip()
+
+
+def _is_question_like(text: str) -> bool:
+    return bool(_QUESTION_LIKE_RE.search(text) or _QUESTION_WORD_RE.search(text))
 
 
 def _domain_subject_present(text: str) -> bool:
@@ -159,72 +175,266 @@ def _domain_subject_present(text: str) -> bool:
     )
 
 
+def _finish(
+    *,
+    intent: QuestionIntent,
+    reason: str,
+    category: str,
+    decision: WebDecision,
+    confidence: float,
+    reason_codes: list[str],
+    scores: dict[str, float],
+    allow_web_fallback: bool = False,
+    allow_model_tool: bool = False,
+) -> IntentDecision:
+    return IntentDecision(
+        intent=intent,
+        reason=reason,
+        allow_web_fallback=allow_web_fallback,
+        category=category,
+        decision=decision,
+        confidence=max(0.0, min(1.0, confidence)),
+        reason_codes=tuple(dict.fromkeys(reason_codes)),
+        score_breakdown={key: round(value, 3) for key, value in scores.items() if value},
+        allow_model_tool=allow_model_tool,
+    )
+
+
 def classify_question_intent(text: str) -> IntentDecision:
-    """分层判定问题意图；返回带理由的决策，便于审计与回归测试。"""
+    """提取信号、计算分数并按安全优先级生成可解释决策。"""
     stripped = _strip(text)
     if not stripped:
-        return IntentDecision(QuestionIntent.NEUTRAL, "empty")
+        return _finish(
+            intent=QuestionIntent.NEUTRAL,
+            reason="empty",
+            category="SMALL_TALK",
+            decision=WebDecision.NEVER,
+            confidence=1.0,
+            reason_codes=["empty"],
+            scores={},
+        )
 
-    asks_bot = bool(_ASKS_BOT_RE.search(stripped))
-    weather_smalltalk = bool(_WEATHER_SMALLTALK_RE.search(stripped))
-    you_state = bool(_YOU_STATE_RE.search(stripped))
-    self_chat = bool(_SELF_CHAT_RE.search(stripped))
-    real_world = bool(_REAL_WORLD_RE.search(stripped))
-    current_intent = bool(_CURRENT_INTENT_RE.search(stripped))
-    entity_question = bool(_ENTITY_QUESTION_RE.search(stripped))
-    lore_intent = bool(_LORE_INTENT_RE.search(stripped))
-    domain_subject = _domain_subject_present(stripped)
+    question_like = _is_question_like(stripped)
     has_domain = any(term in stripped for term in DOMAIN_TERMS)
+    domain_subject = _domain_subject_present(stripped)
+    explicit_search = bool(_EXPLICIT_SEARCH_RE.search(stripped))
+    no_web = bool(_NO_WEB_RE.search(stripped))
+    has_url = bool(_URL_RE.search(stripped))
+    current = bool(_CURRENT_RE.search(stripped))
+    current_request = bool(_CURRENT_REQUEST_RE.search(stripped))
+    real_world = bool(_REAL_WORLD_RE.search(stripped))
+    entity_question = bool(_ENTITY_QUESTION_RE.search(stripped))
+    static_knowledge = bool(_STATIC_KNOWLEDGE_RE.search(stripped))
+    technical_howto = bool(_TECHNICAL_HOWTO_RE.search(stripped))
+    user_content = bool(_USER_CONTENT_RE.search(stripped))
+    creative = bool(_CREATIVE_RE.search(stripped))
+    self_chat = bool(_SELF_CHAT_RE.search(stripped))
+    you_state = bool(_YOU_STATE_RE.search(stripped))
+    short_smalltalk = bool(_SHORT_SMALLTALK_RE.fullmatch(stripped))
+    asks_user_identity = bool(_ASKS_USER_IDENTITY_RE.fullmatch(stripped))
 
-    # 直接问机器人身份 → 人格知识，不联网。
-    if asks_bot:
-        return IntentDecision(
-            QuestionIntent.KNOWLEDGE_FIRST, "asks_bot_identity", allow_web_fallback=False
-        )
-
-    # 天气小聊/寒暄不是时效查询，不联网。
-    if weather_smalltalk:
-        return IntentDecision(QuestionIntent.NEUTRAL, "weather_smalltalk")
-    if you_state:
-        return IntentDecision(QuestionIntent.NEUTRAL, "you_state_chat")
-
-    # B. 现实信号：永远放行联网（不因领域词被切断）。
+    scores: dict[str, float] = {}
+    if explicit_search:
+        scores["explicit_search"] = 1.0
+    if has_url:
+        scores["external_url"] = 0.95
+    if current:
+        scores["current_or_time_sensitive"] = 0.85
+    if current_request:
+        scores["current_request_noun"] = 0.9
     if real_world:
-        return IntentDecision(QuestionIntent.WEB_SEARCH, "real_world_signal")
-
-    # C. 时效信号：联网；问机器人本人状态/情绪时降级，不联网。
-    if current_intent:
-        if self_chat:
-            return IntentDecision(
-                QuestionIntent.KNOWLEDGE_FIRST if has_domain else QuestionIntent.NEUTRAL,
-                "temporal_but_self_chat",
-                allow_web_fallback=False,
-            )
-        return IntentDecision(QuestionIntent.WEB_SEARCH, "temporal_intent")
-
-    # D. 实体问句：非领域词 → 百科联网；领域词 → 知识库优先 + 允许回退联网。
-    if entity_question:
-        if not domain_subject:
-            return IntentDecision(QuestionIntent.WEB_SEARCH, "entity_not_in_domain")
-        return IntentDecision(
-            QuestionIntent.KNOWLEDGE_FIRST, "entity_in_domain", allow_web_fallback=True
-        )
-
-    # E/F. 领域词 → 知识库优先，但允许回退联网（不斩断权限）。
-    if has_domain and lore_intent:
-        return IntentDecision(
-            QuestionIntent.KNOWLEDGE_FIRST, "domain_lore", allow_web_fallback=True
-        )
+        scores["external_reality"] = 0.8
+    if entity_question and not domain_subject and not static_knowledge:
+        scores["external_entity"] = 0.8
     if has_domain:
-        return IntentDecision(
-            QuestionIntent.KNOWLEDGE_FIRST, "domain_fallback", allow_web_fallback=True
+        scores["local_domain"] = 0.7
+    if static_knowledge:
+        scores["static_knowledge"] = 0.65
+    if technical_howto:
+        scores["technical_how_to"] = 0.6
+    if question_like:
+        scores["question_form"] = 0.35
+
+    # 明确的“不要联网”优先于一般搜索信号；只保留本地回答。
+    if no_web:
+        return _finish(
+            intent=QuestionIntent.KNOWLEDGE_FIRST if has_domain else QuestionIntent.NEUTRAL,
+            reason="explicit_no_web",
+            category="LOCAL_KNOWLEDGE" if has_domain else "GENERAL_STATIC_KNOWLEDGE",
+            decision=WebDecision.NEVER,
+            confidence=0.98,
+            reason_codes=["explicit_no_web"],
+            scores=scores,
+            allow_web_fallback=False,
         )
 
-    # G. 其余：疑似问句默认联网（用户要求尽量多搜，5~10 秒可接受）；
-    # 纯寒暄/闲聊仍 neutral 不联网。
-    if _QUESTION_LIKE_RE.search(stripped):
-        return IntentDecision(QuestionIntent.WEB_SEARCH, "general_question_search")
-    return IntentDecision(QuestionIntent.NEUTRAL, "no_strong_signal")
+    # 个人对话永远不能因为“今天/最近”等词触发网页搜索。
+    if short_smalltalk or asks_user_identity or self_chat or you_state:
+        reason = (
+            "short_smalltalk"
+            if short_smalltalk
+            else "asks_user_identity"
+            if asks_user_identity
+            else "you_state_chat"
+            if you_state
+            else "personal_emotional"
+        )
+        return _finish(
+            intent=QuestionIntent.NEUTRAL,
+            reason=reason,
+            category="SMALL_TALK" if reason != "personal_emotional" else "PERSONAL_EMOTIONAL",
+            decision=WebDecision.NEVER,
+            confidence=0.99,
+            reason_codes=[reason],
+            scores=scores,
+        )
+
+    if creative:
+        return _finish(
+            intent=QuestionIntent.NEUTRAL,
+            reason="creative_roleplay",
+            category="CREATIVE_ROLEPLAY",
+            decision=WebDecision.NEVER,
+            confidence=0.95,
+            reason_codes=["creative_roleplay"],
+            scores=scores,
+        )
+
+    if user_content:
+        return _finish(
+            intent=QuestionIntent.NEUTRAL,
+            reason="user_provided_content",
+            category="USER_PROVIDED_CONTENT",
+            decision=WebDecision.NEVER,
+            confidence=0.94,
+            reason_codes=["user_provided_content"],
+            scores=scores,
+        )
+
+    # 显式搜索、URL、实时信息和外部实体是确定性主搜索。
+    if explicit_search or has_url or (current and (question_like or real_world or current_request)) or real_world:
+        reason = (
+            "explicit_search"
+            if explicit_search
+            else "external_url"
+            if has_url
+            else "temporal_intent"
+            if current
+            else "real_world_signal"
+        )
+        return _finish(
+            intent=QuestionIntent.WEB_SEARCH,
+            reason=reason,
+            category="CURRENT_REAL_WORLD",
+            decision=WebDecision.PRIMARY,
+            confidence=0.98 if explicit_search else 0.94,
+            reason_codes=[reason],
+            scores=scores,
+        )
+
+    if entity_question and not domain_subject and not static_knowledge:
+        return _finish(
+            intent=QuestionIntent.WEB_SEARCH,
+            reason="entity_not_in_domain",
+            category="EXTERNAL_ENTITY",
+            decision=WebDecision.PRIMARY,
+            confidence=0.9,
+            reason_codes=["external_entity"],
+            scores=scores,
+        )
+
+    # 本地世界观/角色资料先查知识库；低置信度时由 chat 层回退网页。
+    if has_domain:
+        return _finish(
+            intent=QuestionIntent.KNOWLEDGE_FIRST,
+            reason="domain_lore" if static_knowledge or entity_question else "domain_fallback",
+            category="LOCAL_KNOWLEDGE",
+            decision=WebDecision.FALLBACK,
+            confidence=0.88,
+            reason_codes=["local_domain", "knowledge_first"],
+            scores=scores,
+            allow_web_fallback=True,
+        )
+
+    # 技术操作具有版本差异，但不一定值得预搜索；允许模型在缺信息时调用一次工具。
+    if technical_howto:
+        return _finish(
+            intent=QuestionIntent.NEUTRAL,
+            reason="technical_how_to",
+            category="HOW_TO_TECHNICAL",
+            decision=WebDecision.TOOL_ALLOWED,
+            confidence=0.68,
+            reason_codes=["technical_how_to", "model_tool_allowed"],
+            scores=scores,
+            allow_model_tool=True,
+        )
+
+    if static_knowledge or question_like:
+        return _finish(
+            intent=QuestionIntent.NEUTRAL,
+            reason="general_static_knowledge",
+            category="GENERAL_STATIC_KNOWLEDGE",
+            decision=WebDecision.NEVER,
+            confidence=0.84 if static_knowledge else 0.72,
+            reason_codes=["static_knowledge" if static_knowledge else "question_form"],
+            scores=scores,
+        )
+
+    return _finish(
+        intent=QuestionIntent.NEUTRAL,
+        reason="no_strong_signal",
+        category="AMBIGUOUS",
+        decision=WebDecision.TOOL_ALLOWED if question_like else WebDecision.NEVER,
+        confidence=0.45 if question_like else 0.7,
+        reason_codes=["ambiguous" if question_like else "no_strong_signal"],
+        scores=scores,
+        allow_model_tool=question_like,
+    )
+
+
+def classify_question_intent_legacy(text: str) -> IntentDecision:
+    """影子统计用的旧版近似决策，不参与线上路由。"""
+    stripped = _strip(text)
+    if not stripped or _SHORT_SMALLTALK_RE.fullmatch(stripped) or _ASKS_USER_IDENTITY_RE.fullmatch(stripped):
+        return _finish(
+            intent=QuestionIntent.NEUTRAL,
+            reason="legacy_neutral",
+            category="LEGACY_NEUTRAL",
+            decision=WebDecision.NEVER,
+            confidence=0.8,
+            reason_codes=["legacy"],
+            scores={},
+        )
+    if any(term in stripped for term in DOMAIN_TERMS):
+        return _finish(
+            intent=QuestionIntent.KNOWLEDGE_FIRST,
+            reason="legacy_domain",
+            category="LEGACY_KNOWLEDGE_FIRST",
+            decision=WebDecision.FALLBACK,
+            confidence=0.7,
+            reason_codes=["legacy"],
+            scores={},
+            allow_web_fallback=True,
+        )
+    if _QUESTION_LIKE_RE.search(stripped) or _CURRENT_RE.search(stripped):
+        return _finish(
+            intent=QuestionIntent.WEB_SEARCH,
+            reason="legacy_web",
+            category="LEGACY_WEB_SEARCH",
+            decision=WebDecision.PRIMARY,
+            confidence=0.7,
+            reason_codes=["legacy"],
+            scores={},
+        )
+    return _finish(
+        intent=QuestionIntent.NEUTRAL,
+        reason="legacy_neutral",
+        category="LEGACY_NEUTRAL",
+        decision=WebDecision.NEVER,
+        confidence=0.7,
+        reason_codes=["legacy"],
+        scores={},
+    )
 
 
 def should_web_search(text: str) -> bool:
@@ -232,9 +442,5 @@ def should_web_search(text: str) -> bool:
 
 
 def looks_like_question_text(text: str) -> bool:
-    """判断文本是否像提问（问号/疑问词/疑问语气）。
-
-    供群聊回复策略使用：白名单1 群里的自然语言提问（不带@、不带斜杠）
-    也要回复；纯寒暄/闲聊不算提问，仍保持观察。
-    """
-    return bool(_QUESTION_LIKE_RE.search(_strip(text)))
+    """判断文本是否像提问，供群聊自然语言回复策略使用。"""
+    return _is_question_like(_strip(text))

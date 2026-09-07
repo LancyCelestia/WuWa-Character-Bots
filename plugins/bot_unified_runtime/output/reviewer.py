@@ -29,6 +29,13 @@ _SECRET_OUTPUT_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9._-]{8,}"),
 )
 
+
+_PUBLIC_OUTPUT_UNSAFE = (
+    ("sexual output", re.compile(r"(露骨性行为|性交|色情描写|裸体细节|r[- ]?18)", re.IGNORECASE)),
+    ("graphic violence output", re.compile(r"(肢解|虐杀细节|血腥描写|酷刑细节)", re.IGNORECASE)),
+    ("harassment output", re.compile(r"(你这个废物|你是个傻逼|公开羞辱|去死吧)", re.IGNORECASE)),
+)
+
 _PERSONA_DRIFT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "self_identified_as_generic_ai",
@@ -123,6 +130,13 @@ def review_capability_result(
         approved = False
         action = ReviewAction.BLOCK
         reasons.extend(unsafe_reasons)
+
+    if result.capability_id == "bot.chat" and decision.target_scope is SessionType.GROUP:
+        for label, pattern in _PUBLIC_OUTPUT_UNSAFE:
+            if pattern.search(output_text):
+                approved = False
+                action = ReviewAction.BLOCK
+                reasons.append(label)
 
     persona_drift_reasons = _persona_drift_reasons(result, output_text)
     if persona_drift_reasons:

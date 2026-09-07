@@ -14,14 +14,17 @@ uid / uname / uface / detailDtoList[].name|img|marketPrice|itemsId。
 from __future__ import annotations
 
 import re
-from dataclasses import replace
 
+from plugins.bot_unified_runtime.contracts.media import (
+    ParsedContent,
+    build_parsed_content,
+    parsed_cover_url,
+)
 from plugins.bot_unified_runtime.sources.parsers.http_util import (
     ParseHttpError,
     http_post_json,
 )
 from plugins.bot_unified_runtime.sources.parsers.platforms_generic import _og_scrape
-from plugins.bot_unified_runtime.sources.parsers.types import PlatformParse
 
 _C2C_LIST_API = "https://mall.bilibili.com/mall-magic-c/internet/c2c/v2/list"
 _C2C_DETAIL_TEMPLATE = (
@@ -56,8 +59,8 @@ def _first_detail_dto(item: dict) -> dict:
     return {}
 
 
-def _goods_parse_from_item(item: dict, url: str) -> PlatformParse:
-    """把市集列表返回的单条商品映射成 PlatformParse。"""
+def _goods_parse_from_item(item: dict, url: str) -> ParsedContent:
+    """把市集列表返回的单条商品映射成 ParsedContent。"""
     detail_dto = _first_detail_dto(item)
     items_id = str(item.get("c2cItemsId") or item.get("itemsId") or "")
     title = (
@@ -92,7 +95,7 @@ def _goods_parse_from_item(item: dict, url: str) -> PlatformParse:
     if seller:
         stats["卖家"] = seller
 
-    return PlatformParse(
+    return build_parsed_content(
         platform="bilibili",
         item_id=items_id,
         item_kind="goods",
@@ -122,7 +125,7 @@ def _goods_parse_from_item(item: dict, url: str) -> PlatformParse:
     )
 
 
-def _c2c_goods_by_id(items_id: str, url: str, cookie_header: str) -> PlatformParse | None:
+def _c2c_goods_by_id(items_id: str, url: str, cookie_header: str) -> ParsedContent | None:
     """在魔力赏市集列表中按 itemsId 翻页查找商品（最多若干页）。"""
     next_id: str | None = None
     for _page in range(_MAX_LIST_PAGES):
@@ -152,7 +155,7 @@ def _c2c_goods_by_id(items_id: str, url: str, cookie_header: str) -> PlatformPar
     return None
 
 
-def _og_goods(url: str, items_id: str, cookie_header: str) -> PlatformParse:
+def _og_goods(url: str, items_id: str, cookie_header: str) -> ParsedContent:
     shallow = _og_scrape(
         url,
         platform="bilibili",
@@ -161,26 +164,35 @@ def _og_goods(url: str, items_id: str, cookie_header: str) -> PlatformParse:
         referer="https://www.bilibili.com/",
         cookie_header=cookie_header,
     )
-    detail = replace(shallow, item_id=items_id, page_type="goods", badge="商品")
-    goods = dict(detail.detail or {})
-    goods.setdefault(
-        "goods",
-        {
-            "price": None,
-            "origin_price": None,
-            "category": "",
-            "brand": "",
-            "cover": shallow.cover_url,
-            "title": shallow.title,
-            "intro": shallow.summary,
-        },
+    identity = shallow.identity
+    content = shallow.content
+    goods = {
+        "price": None,
+        "origin_price": None,
+        "category": "",
+        "brand": "",
+        "cover": parsed_cover_url(shallow),
+        "title": content.title if content else "",
+        "intro": content.summary if content else "",
+    }
+    return build_parsed_content(
+        platform=identity.platform if identity else "bilibili",
+        item_id=items_id,
+        item_kind="goods",
+        title=content.title if content else "",
+        summary=content.summary if content else "",
+        cover_url=parsed_cover_url(shallow),
+        canonical_url=identity.canonical_url if identity else url,
+        parse_depth=shallow.provenance.parse_depth if shallow.provenance else "shallow",
+        page_type="goods",
+        badge="商品",
+        detail={"goods": goods},
     )
-    return replace(detail, detail=goods)
 
 
-def _degraded_goods(url: str, items_id: str) -> PlatformParse:
+def _degraded_goods(url: str, items_id: str) -> ParsedContent:
     title = f"B站商品 {items_id}".strip() if items_id else "B站商品"
-    return PlatformParse(
+    return build_parsed_content(
         platform="bilibili",
         item_id=items_id,
         item_kind="goods",
@@ -193,7 +205,7 @@ def _degraded_goods(url: str, items_id: str) -> PlatformParse:
     )
 
 
-def parse_bilibili_goods(url: str, *, cookie_header: str = "") -> PlatformParse:
+def parse_bilibili_goods(url: str, *, cookie_header: str = "") -> ParsedContent:
     """B 站商品链接解析：市集列表匹配 → og 兜底 → 浅层降级，不抛异常。"""
     items_id = _extract_items_id(url)
     try:

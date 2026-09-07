@@ -63,6 +63,49 @@ def _action_tokens(text: str) -> list[tuple[int, int]]:
     return tokens
 
 
+
+_OUTER_SPEECH_QUOTES = {'"': '"', "'": "'", '“': '”', '‘': '’', '「': '」', '『': '』'}
+
+
+def strip_outer_speech_quotes(text: str) -> str:
+    """Unwrap a sequence of quoted speech blocks, not quotes inside prose.
+
+    Parse matching delimiters before changing anything: mixed prose, malformed
+    quotes and book titles are preserved. Whitespace and inner quotes survive.
+    """
+    value = (text or "").strip()
+    parts: list[str] = []
+    cursor = 0
+    while cursor < len(value):
+        if value[cursor].isspace():
+            end = cursor + 1
+            while end < len(value) and value[end].isspace():
+                end += 1
+            parts.append(value[cursor:end])
+            cursor = end
+            continue
+        opening = value[cursor]
+        closing = _OUTER_SPEECH_QUOTES.get(opening)
+        if closing is None:
+            return value
+        depth = 1
+        end = cursor + 1
+        while end < len(value):
+            char = value[end]
+            if char == closing and (end == 0 or value[end - 1] != "\\"):
+                depth -= 1
+                if depth == 0:
+                    break
+            elif opening != closing and char == opening:
+                depth += 1
+            end += 1
+        if end == len(value) or end == cursor + 1:
+            return value
+        parts.append(value[cursor + 1:end])
+        cursor = end + 1
+    return "".join(parts) if parts else value
+
+
 def format_roleplay_paragraphs(text: str) -> str:
     """将括号动作与动作之外的连续文字拆成独立段落。
 

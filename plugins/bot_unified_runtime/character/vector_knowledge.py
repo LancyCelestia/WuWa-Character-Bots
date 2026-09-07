@@ -1288,7 +1288,11 @@ def _first_defined(config: object, name: str, default):
     return value
 
 
-def build_vector_knowledge_provider(config: object) -> object:
+def build_vector_knowledge_provider(
+    config: object,
+    *,
+    timeout_override: float | None = None,
+) -> object:
     enabled = bool(getattr(config, "bot_embedding_enabled", False))
     model = str(getattr(config, "bot_embedding_model", "") or "").strip()
     base_url = str(getattr(config, "bot_embedding_base_url", "") or "").strip()
@@ -1304,13 +1308,27 @@ def build_vector_knowledge_provider(config: object) -> object:
     if not enabled or not (remote_configured or local_configured):
         return _UnavailableVectorKnowledgeProvider()
     try:
+        configured_timeout = float(
+            _first_defined(config, "bot_embedding_timeout_seconds", 15.0)
+        )
+        configured_local_timeout = float(
+            _first_defined(config, "bot_embedding_local_timeout_seconds", 60.0)
+        )
+        effective_timeout = (
+            max(0.5, float(timeout_override))
+            if timeout_override is not None
+            else configured_timeout
+        )
+        effective_local_timeout = (
+            max(0.5, float(timeout_override))
+            if timeout_override is not None
+            else configured_local_timeout
+        )
         embed_provider = OpenAICompatibleEmbeddingProvider(
             base_url=base_url,
             model=model,
             api_key=str(getattr(config, "bot_embedding_api_key", "") or ""),
-            timeout_seconds=float(
-                _first_defined(config, "bot_embedding_timeout_seconds", 15.0)
-            ),
+            timeout_seconds=effective_timeout,
             dimensions=int(_first_defined(config, "bot_embedding_dimensions", 1024)),
             local_base_url=local_base_url,
             local_models=local_models,
@@ -1318,9 +1336,7 @@ def build_vector_knowledge_provider(config: object) -> object:
                 getattr(config, "bot_embedding_local_api_key", "") or ""
             ),
             local_enabled=local_enabled,
-            local_timeout_seconds=float(
-                _first_defined(config, "bot_embedding_local_timeout_seconds", 60.0)
-            ),
+            local_timeout_seconds=effective_local_timeout,
         )
         store = SqliteVectorKnowledgeStore(
             db_path=str(

@@ -8,11 +8,15 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+from collections import Counter
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from urllib import error as url_error
+from urllib import request as url_request
 
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger, redact_private_debug
 from plugins.bot_unified_runtime.capabilities.chat import (
@@ -72,10 +76,14 @@ from plugins.bot_unified_runtime.llm import (
     LLMProviderError,
     OpenAICompatibleLLMProvider,
     StaticLLMProvider,
+    build_urlopen,
     public_llm_error_message,
     safe_llm_finish_reason,
 )
-from plugins.bot_unified_runtime.llm.model_router import build_model_router
+from plugins.bot_unified_runtime.llm.model_router import (
+    build_model_registry,
+    build_model_router,
+)
 from plugins.bot_unified_runtime.policy import (
     PolicySettings,
     build_quiet_hours_checker,
@@ -246,16 +254,7 @@ def run_chat_smoke(
         rate_limiter=build_rate_limiter(config),
         quiet_hours_checker=build_quiet_hours_checker(config),
     )
-    provider = llm_provider or (
-        OpenAICompatibleLLMProvider(
-            api_key=config.bot_chat_api_key,
-            model=config.bot_chat_model,
-            base_url=config.bot_chat_base_url,
-            timeout_seconds=config.bot_chat_timeout_seconds,
-        )
-        if config.bot_chat_provider == "openai_compatible"
-        else StaticLLMProvider()
-    )
+    provider = llm_provider or _build_llm_provider(config)
     capability = build_chat_capability(
         character_provider=build_character_context_provider(config),
         llm_provider=provider,
@@ -266,6 +265,13 @@ def run_chat_smoke(
             if llm_provider is None and config.bot_chat_provider == "openai_compatible"
             else None
         ),
+        fast_mode=config.bot_chat_fast_mode,
+        reply_detail=config.bot_reply_detail,
+        fast_max_tokens=config.bot_chat_fast_max_tokens,
+        fast_max_candidates=config.bot_chat_fast_max_candidates,
+        fast_context_budget=config.bot_chat_fast_context_budget,
+        fast_web_max_queries=config.bot_chat_fast_web_max_queries,
+        fast_skip_web_pages=config.bot_chat_fast_skip_web_pages,
         temperature=config.bot_chat_temperature,
         max_tokens=config.bot_chat_max_tokens,
         context_preflight_errors=persona_context_preflight_errors(config),
@@ -553,6 +559,13 @@ def run_why_smoke(
     capability = build_chat_capability(
         character_provider=build_character_context_provider(config),
         llm_provider=provider,
+        fast_mode=config.bot_chat_fast_mode,
+        reply_detail=config.bot_reply_detail,
+        fast_max_tokens=config.bot_chat_fast_max_tokens,
+        fast_max_candidates=config.bot_chat_fast_max_candidates,
+        fast_context_budget=config.bot_chat_fast_context_budget,
+        fast_web_max_queries=config.bot_chat_fast_web_max_queries,
+        fast_skip_web_pages=config.bot_chat_fast_skip_web_pages,
         temperature=config.bot_chat_temperature,
         max_tokens=config.bot_chat_max_tokens,
         context_preflight_errors=persona_context_preflight_errors(config),
@@ -1038,6 +1051,7 @@ def _build_llm_provider(config: Config) -> LLMProvider:
             model=config.bot_chat_model,
             base_url=config.bot_chat_base_url,
             timeout_seconds=config.bot_chat_timeout_seconds,
+            proxy=config.bot_download_proxy,
         )
     return StaticLLMProvider(model=config.bot_chat_model)
 
@@ -1542,25 +1556,238 @@ def run_online_transport_smoke(
     }
 
 
+def _llm_diagnostic_messages() -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": "你是本地 LLM 连接诊断请求。只需要用一句中文回复连接正常，不要请求工具，不要输出密钥。",
+        },
+        {"role": "user", "content": "请回复：诊断连接正常。"},
+    ]
+
+
+def _attempt_count(value: int) -> int:
+    return max(1, int(value))
+
+
+def _probe_api_endpoint(
+    config: Config,
+    *,
+    base_url: str,
+    api_key: str,
+    attempts: int = 1,
+) -> dict[str, Any]:
+    attempt_count = _attempt_count(attempts)
+    normalized_base_url = safe_openai_endpoint_url(base_url).removesuffix(
+        "/chat/completions"
+    )
+    endpoint_url = normalized_base_url + "/models"
+    result: dict[str, Any] = {
+        "ok": False,
+        "base_url": normalized_base_url,
+        "endpoint_url": endpoint_url,
+        "api_key": "set" if _has_real_api_key(api_key) else "missing",
+        "attempts": attempt_count,
+        "success_count": 0,
+        "availability_rate": 0.0,
+        "stable": False,
+        "error_kind": "",
+        "latency_ms_avg": 0.0,
+    }
+    if not _has_real_api_key(api_key):
+        result["error_kind"] = "config_missing"
+        return result
+
+    failures: list[str] = []
+    latencies: list[float] = []
+    for _ in range(attempt_count):
+        started = time.perf_counter()
+        http_request = url_request.Request(
+            endpoint_url,
+            method="GET",
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent": "Mozilla/5.0",
+            },
+        )
+        try:
+            with build_urlopen(
+                str(getattr(config, "bot_download_proxy", "") or "")
+            )(http_request, timeout=config.bot_chat_timeout_seconds) as response:
+                response.read()
+                status = getattr(response, "status", 200)
+                if not 200 <= int(status) < 300:
+                    failures.append("http")
+                    continue
+            latencies.append((time.perf_counter() - started) * 1000)
+        except url_error.HTTPError as exc:
+            if exc.code in {401, 403}:
+                failures.append("auth")
+            elif exc.code == 429:
+                failures.append("rate_limited")
+            elif 500 <= exc.code <= 599:
+                failures.append("server")
+            else:
+                failures.append("http")
+        except TimeoutError:
+            failures.append("timeout")
+        except url_error.URLError as exc:
+            reason = str(exc.reason).lower()
+            failures.append("timeout" if "timeout" in reason or "timed out" in reason else "network")
+        except Exception:  # noqa: BLE001 - endpoint smoke must remain diagnostic-only.
+            failures.append("provider_error")
+
+    success_count = len(latencies)
+    result["success_count"] = success_count
+    result["availability_rate"] = round(success_count / attempt_count * 100, 1)
+    result["stable"] = success_count == attempt_count
+    result["ok"] = success_count > 0
+    result["latency_ms_avg"] = round(sum(latencies) / success_count, 1) if latencies else 0.0
+    if failures:
+        result["error_kind"] = Counter(failures).most_common(1)[0][0]
+    else:
+        result["error_kind"] = "none"
+    return result
+
+
+def _probe_llm_target(
+    config: Config,
+    *,
+    model: str,
+    base_url: str,
+    api_key: str,
+    attempts: int = 1,
+    llm_provider: LLMProvider | None = None,
+) -> dict[str, Any]:
+    attempt_count = _attempt_count(attempts)
+    probe_config = config.model_copy(
+        update={
+            "bot_chat_model": model,
+            "bot_chat_base_url": base_url,
+            "bot_chat_api_key": api_key,
+        }
+    )
+    result: dict[str, Any] = {
+        "ok": False,
+        "model": model,
+        "base_url": safe_openai_endpoint_url(base_url).removesuffix("/chat/completions"),
+        "endpoint_url": safe_openai_endpoint_url(base_url),
+        "api_key": "set" if _has_real_api_key(api_key) else "missing",
+        "attempts": attempt_count,
+        "success_count": 0,
+        "availability_rate": 0.0,
+        "stable": False,
+        "latency_ms_avg": 0.0,
+        "error_kind": "",
+        "response_model": "",
+        "public_message": "",
+        "private_debug": "",
+        "reply_preview": "",
+        "usage": {},
+        "llm_finish_reason": "",
+    }
+    errors = openai_compatible_preflight_errors(probe_config)
+    if errors:
+        return {
+            **result,
+            "error_kind": "config_missing",
+            "public_message": _format_llm_preflight_missing_message(
+                errors, provider_name="openai_compatible"
+            ),
+            "private_debug": "provider_config_errors=" + ",".join(errors),
+        }
+
+    provider = llm_provider or OpenAICompatibleLLMProvider(
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        timeout_seconds=config.bot_chat_timeout_seconds,
+        proxy=config.bot_download_proxy,
+    )
+    failures: list[str] = []
+    latencies: list[float] = []
+    successful_reply = None
+    last_private_debug = ""
+    for _ in range(attempt_count):
+        started = time.perf_counter()
+        try:
+            reply = provider.generate(
+                _llm_diagnostic_messages(),
+                model=model,
+                temperature=diagnostic_llm_temperature(config),
+                max_tokens=diagnostic_llm_max_tokens(config),
+            )
+        except LLMProviderError as exc:
+            failures.append(exc.error_kind)
+            last_private_debug = _redact_smoke_debug(str(exc), api_key)
+        except Exception as exc:  # noqa: BLE001 - 统一映射为安全诊断结果。
+            failures.append("provider_error")
+            last_private_debug = _redact_smoke_debug(repr(exc), api_key)
+        else:
+            successful_reply = reply
+            latencies.append((time.perf_counter() - started) * 1000)
+
+    success_count = len(latencies)
+    result.update(
+        {
+            "success_count": success_count,
+            "availability_rate": round(success_count / attempt_count * 100, 1),
+            "stable": success_count == attempt_count,
+            "ok": success_count > 0,
+            "latency_ms_avg": round(sum(latencies) / success_count, 1) if latencies else 0.0,
+        }
+    )
+    if successful_reply is not None:
+        result.update(
+            {
+                "error_kind": "none",
+                "response_model": successful_reply.model,
+                "public_message": "LLM 诊断通过。",
+                "reply_preview": successful_reply.text[:120],
+                "usage": successful_reply.raw_usage,
+                "llm_finish_reason": safe_llm_finish_reason(
+                    successful_reply.raw_usage.get("finish_reason")
+                ),
+            }
+        )
+    else:
+        result.update(
+            {
+                "error_kind": Counter(failures).most_common(1)[0][0]
+                if failures
+                else "provider_error",
+                "public_message": public_llm_error_message(
+                    Counter(failures).most_common(1)[0][0]
+                    if failures
+                    else "provider_error"
+                ),
+                "private_debug": last_private_debug,
+            }
+        )
+    return result
+
+
 def run_llm_smoke(
     config: Config,
     *,
+    attempts: int = 1,
+    endpoint_attempts: int = 0,
     llm_provider: LLMProvider | None = None,
 ) -> dict[str, Any]:
     readiness = run_config_smoke(config)
     provider_name = config.bot_chat_provider
     model = config.bot_chat_model
-    has_real_api_key = _has_real_api_key(config.bot_chat_api_key)
-    api_key_state = "set" if has_real_api_key else "missing"
     endpoint_url = safe_openai_endpoint_url(config.bot_chat_base_url)
-
+    model_attempt_count = _attempt_count(attempts)
+    endpoint_attempt_count = _attempt_count(endpoint_attempts) if endpoint_attempts else 0
     base_result: dict[str, Any] = {
         "ok": False,
         "provider": provider_name,
         "model": model,
         "base_url": endpoint_url.removesuffix("/chat/completions"),
         "endpoint_url": endpoint_url,
-        "api_key": api_key_state,
+        "api_key": "set" if _has_real_api_key(config.bot_chat_api_key) else "missing",
         "diagnostic_temperature": diagnostic_llm_temperature(config),
         "diagnostic_max_tokens": diagnostic_llm_max_tokens(config),
         "timeout_seconds": config.bot_chat_timeout_seconds,
@@ -1575,6 +1802,23 @@ def run_llm_smoke(
         "reply_preview": "",
         "usage": {},
         "llm_finish_reason": "",
+        "response_model": "",
+        "model_attempts": model_attempt_count,
+        "registry_ok": True,
+        "registry_stable": True,
+        "registry_count": 0,
+        "available_model_count": 0,
+        "model_unstable": [],
+        "registry_failures": [],
+        "model_checks": [],
+        "endpoint_attempts": endpoint_attempt_count,
+        "endpoint_ok": True,
+        "endpoint_stable": True,
+        "endpoint_count": 0,
+        "available_endpoint_count": 0,
+        "endpoint_unstable": [],
+        "endpoint_failures": [],
+        "endpoint_checks": [],
     }
 
     if provider_name != "openai_compatible":
@@ -1585,65 +1829,122 @@ def run_llm_smoke(
             "private_debug": f"bot_chat_provider={provider_name}",
         }
 
-    provider_config_errors = openai_compatible_preflight_errors(config)
-    if provider_config_errors:
-        return {
-            **base_result,
-            "error_kind": "config_missing",
-            "public_message": _format_llm_preflight_missing_message(
-                provider_config_errors
-            ),
-            "private_debug": (
-                "provider_config_errors=" + ",".join(provider_config_errors)
-            ),
-        }
+    primary = _probe_llm_target(
+        config,
+        model=model,
+        base_url=config.bot_chat_base_url,
+        api_key=config.bot_chat_api_key,
+        attempts=model_attempt_count,
+        llm_provider=llm_provider,
+    )
+    result = {**base_result, **primary}
 
-    provider = llm_provider or _build_llm_provider(config)
-    messages = [
-        {
-            "role": "system",
-            "content": "你是本地 LLM 连接诊断请求。只需要用一句中文回复连接正常，不要请求工具，不要输出密钥。",
-        },
-        {
-            "role": "user",
-            "content": "请回复：诊断连接正常。",
-        },
-    ]
-
-    try:
-        reply = provider.generate(
-            messages,
-            model=model,
-            temperature=diagnostic_llm_temperature(config),
-            max_tokens=diagnostic_llm_max_tokens(config),
+    registry = build_model_registry(config)
+    checks: list[dict[str, Any]] = []
+    for model_id, spec in sorted(
+        registry.items(), key=lambda item: (item[1].priority, item[0])
+    ):
+        same_target = (
+            spec.model == model
+            and spec.base_url.rstrip("/") == config.bot_chat_base_url.rstrip("/")
+            and spec.api_key == config.bot_chat_api_key
         )
-    except LLMProviderError as exc:
-        error_kind = exc.error_kind
-        return {
-            **base_result,
-            "error_kind": error_kind,
-            "public_message": public_llm_error_message(error_kind),
-            "private_debug": _redact_smoke_debug(str(exc), config.bot_chat_api_key),
-        }
-    except Exception as exc:  # noqa: BLE001 - 诊断接口的非预期异常统一转为 provider_error 返回。
-        return {
-            **base_result,
-            "error_kind": "provider_error",
-            "public_message": public_llm_error_message("provider_error"),
-            "private_debug": _redact_smoke_debug(repr(exc), config.bot_chat_api_key),
-        }
+        check = primary if same_target else _probe_llm_target(
+            config,
+            model=spec.model,
+            base_url=spec.base_url,
+            api_key=spec.api_key,
+            attempts=model_attempt_count,
+            llm_provider=llm_provider,
+        )
+        checks.append(
+            {
+                "id": model_id,
+                "model": spec.model,
+                "base_url": check["base_url"],
+                "api_key": check["api_key"],
+                "ok": check["ok"],
+                "attempts": check["attempts"],
+                "success_count": check["success_count"],
+                "availability_rate": check["availability_rate"],
+                "stable": check["stable"],
+                "latency_ms_avg": check["latency_ms_avg"],
+                "error_kind": check["error_kind"],
+                "response_model": check["response_model"],
+            }
+        )
 
-    return {
-        **base_result,
-        "ok": True,
-        "error_kind": "none",
-        "public_message": "LLM 诊断通过。",
-        "reply_preview": reply.text[:120],
-        "usage": reply.raw_usage,
-        "llm_finish_reason": safe_llm_finish_reason(
-            reply.raw_usage.get("finish_reason")
-        ),
-    }
+    failures = [item["id"] for item in checks if not item["ok"]]
+    unstable = [item["id"] for item in checks if item["ok"] and not item["stable"]]
+    available_count = sum(1 for item in checks if item["ok"])
+    model_available = bool(primary["ok"]) or available_count > 0
+    result["model_checks"] = checks
+    result["registry_count"] = len(checks)
+    result["available_model_count"] = available_count
+    result["model_unstable"] = unstable
+    result["registry_failures"] = failures
+    result["registry_ok"] = not failures
+    result["registry_stable"] = not failures and not unstable
+    result["ok"] = model_available
+
+    if endpoint_attempt_count:
+        endpoint_targets: dict[str, str] = {}
+        endpoint_targets[config.bot_chat_base_url.rstrip("/")] = config.bot_chat_api_key
+        for spec in registry.values():
+            endpoint_targets.setdefault(spec.base_url.rstrip("/"), spec.api_key)
+        endpoint_checks: list[dict[str, Any]] = []
+        for base_url, api_key in endpoint_targets.items():
+            endpoint_checks.append(
+                _probe_api_endpoint(
+                    config,
+                    base_url=base_url,
+                    api_key=api_key,
+                    attempts=endpoint_attempt_count,
+                )
+            )
+        endpoint_failures = [
+            item["base_url"] for item in endpoint_checks if not item["ok"]
+        ]
+        endpoint_unstable = [
+            item["base_url"] for item in endpoint_checks if item["ok"] and not item["stable"]
+        ]
+        available_endpoint_count = sum(1 for item in endpoint_checks if item["ok"])
+        result["endpoint_checks"] = endpoint_checks
+        result["endpoint_count"] = len(endpoint_checks)
+        result["available_endpoint_count"] = available_endpoint_count
+        result["endpoint_failures"] = endpoint_failures
+        result["endpoint_unstable"] = endpoint_unstable
+        result["endpoint_ok"] = not endpoint_failures
+        result["endpoint_stable"] = not endpoint_failures and not endpoint_unstable
+        result["ok"] = model_available and available_endpoint_count > 0
+        if not available_endpoint_count:
+            result["error_kind"] = "endpoint_probe_failed"
+            result["public_message"] = "模型请求与端点可用性检查均未通过，请检查供应商端点。"
+
+    if result["ok"] and (failures or unstable or not primary["ok"]):
+        result["error_kind"] = "none"
+        if not primary["ok"] and available_count:
+            result["public_message"] = (
+                f"主模型暂不可用，但已有 {available_count} 个故障转移模型诊断通过；"
+                f"另有 {len(failures)} 个注册模型失败。"
+            )
+        elif primary["ok"] and failures:
+            result["public_message"] = (
+                f"主模型和 {available_count} 个注册模型诊断通过，但 "
+                f"{len(failures)} 个备用模型失败。"
+            )
+        else:
+            result["public_message"] = (
+                f"模型诊断通过，但 {len(unstable)} 个模型未达到 5/5 稳定通过。"
+            )
+    elif not result["ok"] and not result["public_message"]:
+        if primary["ok"] and failures:
+            result["error_kind"] = "registry_probe_failed"
+            result["public_message"] = (
+                f"主模型诊断通过，但 {len(failures)} 个注册模型均不可用。"
+            )
+
+    return result
 
 
 def run_llm_setup(config: Config) -> dict[str, Any]:
@@ -1671,7 +1972,7 @@ def run_llm_setup(config: Config) -> dict[str, Any]:
         "BOT_CHAT_API_KEY=<real_api_key>",
         "BOT_CHAT_BASE_URL=<openai_compatible_base_url>",
         "BOT_CHAT_TEMPERATURE=0.7",
-        "BOT_CHAT_MAX_TOKENS=512",
+        "BOT_CHAT_MAX_TOKENS=0",
         "BOT_CHAT_TIMEOUT_SECONDS=30",
     ]
     return {
@@ -1741,7 +2042,7 @@ def _llm_setup_next_commands(setup_status: str) -> list[str]:
 def _llm_setup_manual_steps(setup_status: str) -> list[str]:
     if setup_status == "ready_for_probe":
         return [
-            "确认当前 .env 已使用真实 OpenAI-compatible provider 配置。",
+            "确认当前 .env 已使用 openai_compatible，并且 BOT_MODEL_REGISTRY 已填写直连供应商及 priority。",
             "先运行 llm-smoke 做一次短连接诊断。",
             "再运行 dialogue-smoke 验证人格对话链路。",
         ]
@@ -1753,7 +2054,7 @@ def _llm_setup_manual_steps(setup_status: str) -> list[str]:
         ]
     return [
         "复制安全占位模板到 .env 并替换模型服务配置。",
-        "API key 只放在 BOT_CHAT_API_KEY，不要放进 base_url。",
+        "API key 只放在 BOT_CHAT_API_KEY 或 BOT_MODEL_REGISTRY 的 env:变量引用中，不要写进 base_url。",
         "配置后先跑 config-smoke，再跑 llm-smoke。",
     ]
 
@@ -1766,7 +2067,11 @@ def _llm_setup_public_message(setup_status: str) -> str:
     return "真实 LLM 尚未接入；请按 safe_env_template 填写 .env 后再验证。"
 
 
-def _format_llm_preflight_missing_message(errors: list[str]) -> str:
+def _format_llm_preflight_missing_message(
+    errors: list[str],
+    *,
+    provider_name: str = "openai_compatible",
+) -> str:
     label_map = {
         "openai_api_key_missing": "API key",
         "openai_model_missing": "model",
@@ -1779,7 +2084,8 @@ def _format_llm_preflight_missing_message(errors: list[str]) -> str:
     }
     labels = [label_map[error] for error in errors if error in label_map]
     joined = "、".join(labels) if labels else "必要参数"
-    return f"LLM 诊断未执行：openai_compatible provider 配置不完整，缺少 {joined}。"
+    provider_label = provider_name
+    return f"LLM 诊断未执行：{provider_label} provider 配置不完整，缺少 {joined}。"
 
 
 def _import_state(
@@ -2175,7 +2481,12 @@ def run_environment_doctor(
     if plugin_debug:
         debug_parts.append(f"plugin={plugin_debug}")
 
-    nb_cli_path = active_command_resolver("nb")
+    # dev.ps1 selects Runtime's Python without activating its Scripts on PATH.
+    # Mirror that interpreter-first resolution rather than declaring it missing.
+    scripts_dir = Path(python_path).parent
+    nb_cli_path = next((str(scripts_dir / name) for name in ("nb.exe", "nb")
+                        if (scripts_dir / name).is_file()), None)
+    nb_cli_path = nb_cli_path or active_command_resolver("nb")
     nb_cli_state = "ok" if nb_cli_path else "missing"
     ready_for_local_llm_smoke = plugin_state == "ok"
     ready_for_nonebot_run = (
@@ -2635,6 +2946,7 @@ def main(
             "llm",
             "llm-setup",
             "nonebot",
+            "nonebot-smoke",
             "startup",
             "queue",
             "transport",
@@ -3274,7 +3586,7 @@ def main(
         print(f"public_message={result['public_message']}")
         return 0 if result["ok"] else 1
 
-    if args.task == "nonebot":
+    if args.task in {"nonebot", "nonebot-smoke"}:
         result = run_nonebot_smoke(config, importer=importer)
         print(f"ok={str(result['ok']).lower()}")
         print(f"nonebot_import={result['nonebot_import']}")
@@ -3380,7 +3692,7 @@ def main(
         return 0 if result["ok"] else 1
 
     if args.task == "llm":
-        result = run_llm_smoke(config)
+        result = run_llm_smoke(config, attempts=5, endpoint_attempts=5)
         print(f"ok={str(result['ok']).lower()}")
         print(f"provider={result['provider']}")
         print(f"model={result['model']}")
@@ -3400,6 +3712,39 @@ def main(
         print(f"llm_fix_hints={','.join(result['llm_fix_hints'])}")
         print(f"error_kind={result['error_kind']}")
         print(f"llm_finish_reason={result['llm_finish_reason']}")
+        print(f"model_attempts={result['model_attempts']}")
+        print(f"registry_count={result['registry_count']}")
+        print(f"available_model_count={result['available_model_count']}")
+        print(f"registry_ok={str(result['registry_ok']).lower()}")
+        print(f"registry_stable={str(result['registry_stable']).lower()}")
+        print(f"model_unstable={','.join(result['model_unstable'])}")
+        print(f"registry_failures={','.join(result['registry_failures'])}")
+        for check in result["model_checks"]:
+            print(
+                "model_check="
+                f"{check['id']}|model={check['model']}|base_url={check['base_url']}|"
+                f"api_key={check['api_key']}|attempts={check['attempts']}|"
+                f"successes={check['success_count']}|availability={check['availability_rate']}%|"
+                f"stable={str(check['stable']).lower()}|avg_ms={check['latency_ms_avg']}|"
+                f"ok={str(check['ok']).lower()}|error_kind={check['error_kind']}|"
+                f"response_model={check['response_model']}"
+            )
+        print(f"endpoint_attempts={result['endpoint_attempts']}")
+        print(f"endpoint_count={result['endpoint_count']}")
+        print(f"available_endpoint_count={result['available_endpoint_count']}")
+        print(f"endpoint_ok={str(result['endpoint_ok']).lower()}")
+        print(f"endpoint_stable={str(result['endpoint_stable']).lower()}")
+        print(f"endpoint_unstable={','.join(result['endpoint_unstable'])}")
+        print(f"endpoint_failures={','.join(result['endpoint_failures'])}")
+        for check in result["endpoint_checks"]:
+            print(
+                "endpoint_check="
+                f"{check['base_url']}|endpoint={check['endpoint_url']}|"
+                f"api_key={check['api_key']}|attempts={check['attempts']}|"
+                f"successes={check['success_count']}|availability={check['availability_rate']}%|"
+                f"stable={str(check['stable']).lower()}|avg_ms={check['latency_ms_avg']}|"
+                f"ok={str(check['ok']).lower()}|error_kind={check['error_kind']}"
+            )
         print(f"public_message={result['public_message']}")
         if result["reply_preview"]:
             print(f"reply_preview={result['reply_preview']}")

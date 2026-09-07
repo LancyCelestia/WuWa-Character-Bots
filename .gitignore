@@ -1,3 +1,5 @@
+# Git ignore rules reduce tracked/generated files; they do not control Codex AI scan scope. Keep the AI workspace opened at ChatBot only.
+
 # Python caches and build output
 __pycache__/
 *.py[cod]
@@ -36,6 +38,11 @@ logs/
 .superpowers/
 .worktrees/
 
+# Local generated artifacts, backups, and abandoned experiments
+tmp/
+backups/
+_crawlwiki_patch2/
+
 # Downloaded or extracted third-party research sources.
 # Keep the curated Markdown reports and lightweight index files tracked.
 research/nonebot_plugin_sources/_downloads/
@@ -62,5 +69,5 @@ research/bilibili_api_sdists/
 # pytest sandbox basetemp
 .pytest_tmp*/
 
-# nonebot-plugin-memes-api runtime config (LOCALSTORE_USE_CWD=true)
+# third-party NoneBot localstore config (actual runtime location is ChatBot_Runtime\\config)
 config/

@@ -31,6 +31,9 @@ class RateLimitSettings(StrictBaseModel):
     chat_session_max_requests: int = 6
     chat_sender_max_requests: int = 4
     target_min_interval_seconds: int = 0
+    proactive_window_seconds: int = 3600
+    proactive_group_max_replies: int = 6
+    proactive_group_cooldown_seconds: int = 90
     bypass_roles: list[str] = Field(default_factory=lambda: list(DEFAULT_BYPASS_ROLES))
 
     @field_validator("window_seconds")
@@ -51,11 +54,18 @@ class RateLimitSettings(StrictBaseModel):
             raise ValueError("rate limit request caps must be at least 1")
         return value
 
-    @field_validator("target_min_interval_seconds")
+    @field_validator("target_min_interval_seconds", "proactive_window_seconds", "proactive_group_cooldown_seconds")
     @classmethod
     def require_non_negative_interval(cls, value: int) -> int:
         if value < 0:
             raise ValueError("target min interval must not be negative")
+        return value
+
+    @field_validator("proactive_group_max_replies")
+    @classmethod
+    def require_positive_proactive_limit(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("proactive group reply cap must be at least 1")
         return value
 
     @field_validator("bypass_roles")
@@ -72,6 +82,8 @@ class RateLimiter(Protocol):
         capability_id: str,
         *,
         amount: int = 1,
+        interactive: bool = False,
+        proactive: bool = False,
     ) -> RateLimitDecision:
         raise NotImplementedError
 
@@ -93,7 +105,17 @@ class InMemoryRateLimiter:
         capability_id: str,
         *,
         amount: int = 1,
+        interactive: bool = False,
+        proactive: bool = False,
     ) -> RateLimitDecision:
+        if proactive:
+            return self._check_proactive(message, capability_id)
+        if interactive:
+            return RateLimitDecision(
+                allowed=True,
+                reason="interactive_bypass",
+                audit_tags=["rate_limit:interactive_bypass"],
+            )
         safe_amount = max(1, int(amount))
         if not self.settings.enabled:
             return RateLimitDecision(
@@ -179,6 +201,55 @@ class InMemoryRateLimiter:
             audit_tags=["rate_limit:ok"],
         )
 
+    def _check_proactive(self, message: IncomingMessage, capability_id: str) -> RateLimitDecision:
+        if not self.settings.enabled:
+            return RateLimitDecision(
+                allowed=True,
+                reason="disabled",
+                audit_tags=["rate_limit:disabled"],
+            )
+        now = self.clock()
+        key = self._bucket_key(
+            capability_id,
+            "proactive_group",
+            message.group_id or message.session_id,
+        )
+        bucket = self._buckets[key]
+        window = max(1, self.settings.proactive_window_seconds)
+        while bucket and (now - bucket[0]).total_seconds() >= window:
+            bucket.popleft()
+        if bucket and self.settings.proactive_group_cooldown_seconds > 0:
+            elapsed = (now - bucket[-1]).total_seconds()
+            if elapsed < self.settings.proactive_group_cooldown_seconds:
+                return RateLimitDecision(
+                    allowed=False,
+                    reason="proactive_cooldown",
+                    retry_after_seconds=max(
+                        1,
+                        int(self.settings.proactive_group_cooldown_seconds - elapsed),
+                    ),
+                    audit_tags=[
+                        "rate_limit:proactive_blocked",
+                        "rate_limit:proactive_cooldown",
+                    ],
+                )
+        if len(bucket) >= self.settings.proactive_group_max_replies:
+            return RateLimitDecision(
+                allowed=False,
+                reason="proactive_window_exceeded",
+                retry_after_seconds=window,
+                audit_tags=[
+                    "rate_limit:proactive_blocked",
+                    "rate_limit:proactive_window_exceeded",
+                ],
+            )
+        bucket.append(now)
+        return RateLimitDecision(
+            allowed=True,
+            reason="proactive_allowed",
+            audit_tags=["rate_limit:proactive_allowed"],
+        )
+
     def _has_bypass_role(self, message: IncomingMessage) -> bool:
         bypass_roles = set(self.settings.bypass_roles)
         return any(role.strip().lower() in bypass_roles for role in message.sender_roles)
@@ -233,7 +304,17 @@ class SQLiteRateLimiter:
         capability_id: str,
         *,
         amount: int = 1,
+        interactive: bool = False,
+        proactive: bool = False,
     ) -> RateLimitDecision:
+        if proactive:
+            return self._check_proactive(message, capability_id)
+        if interactive:
+            return RateLimitDecision(
+                allowed=True,
+                reason="interactive_bypass",
+                audit_tags=["rate_limit:interactive_bypass"],
+            )
         safe_amount = max(1, int(amount))
         if not self.settings.enabled:
             return RateLimitDecision(
@@ -335,6 +416,60 @@ class SQLiteRateLimiter:
             allowed=True,
             reason="allowed",
             audit_tags=["rate_limit:ok"],
+        )
+
+    def _check_proactive(self, message: IncomingMessage, capability_id: str) -> RateLimitDecision:
+        if not self.settings.enabled:
+            return RateLimitDecision(
+                allowed=True,
+                reason="disabled",
+                audit_tags=["rate_limit:disabled"],
+            )
+        self._ensure_schema()
+        now_epoch = self.clock().timestamp()
+        key = self._bucket_key(
+            capability_id,
+            "proactive_group",
+            message.group_id or message.session_id,
+        )
+        cutoff = now_epoch - max(1, self.settings.proactive_window_seconds)
+        with self._connect() as connection:
+            self._prune(connection, key, cutoff)
+            count = self._count(connection, key)
+            latest = self._latest_created_at(connection, key)
+            if latest is not None and self.settings.proactive_group_cooldown_seconds > 0:
+                elapsed = now_epoch - latest
+                if elapsed < self.settings.proactive_group_cooldown_seconds:
+                    return RateLimitDecision(
+                        allowed=False,
+                        reason="proactive_cooldown",
+                        retry_after_seconds=max(
+                            1,
+                            int(self.settings.proactive_group_cooldown_seconds - elapsed),
+                        ),
+                        audit_tags=[
+                            "rate_limit:proactive_blocked",
+                            "rate_limit:proactive_cooldown",
+                        ],
+                    )
+            if count >= self.settings.proactive_group_max_replies:
+                return RateLimitDecision(
+                    allowed=False,
+                    reason="proactive_window_exceeded",
+                    retry_after_seconds=max(1, self.settings.proactive_window_seconds),
+                    audit_tags=[
+                        "rate_limit:proactive_blocked",
+                        "rate_limit:proactive_window_exceeded",
+                    ],
+                )
+            connection.execute(
+                "INSERT INTO rate_limit_events (bucket_key, created_at) VALUES (?, ?)",
+                (key, now_epoch),
+            )
+        return RateLimitDecision(
+            allowed=True,
+            reason="proactive_allowed",
+            audit_tags=["rate_limit:proactive_allowed"],
         )
 
     def _has_bypass_role(self, message: IncomingMessage) -> bool:
@@ -458,6 +593,13 @@ def build_rate_limit_settings(config: object) -> RateLimitSettings:
         ),
         target_min_interval_seconds=int(
             getattr(config, "bot_rate_limit_target_min_interval_seconds", 0)
+        ),
+        proactive_window_seconds=3600,
+        proactive_group_max_replies=int(
+            getattr(config, "bot_group_proactive_max_replies_per_hour", 6)
+        ),
+        proactive_group_cooldown_seconds=int(
+            getattr(config, "bot_group_proactive_cooldown_seconds", 90)
         ),
         bypass_roles=list(
             getattr(config, "bot_rate_limit_bypass_roles", DEFAULT_BYPASS_ROLES)

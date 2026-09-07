@@ -9,7 +9,7 @@ Copyright (c) 2024 Les Freire）。
   detail）转换为字段完整的 RenderPayload；
 - render_universal_card_html(payload_dict)：合并默认值并用 Jinja2 渲染模板，
   所有顶层变量都有默认值，字段缺失时对应区块整体隐藏；
-- QR 码仅在 import qrcode 成功时生成，不新增依赖。
+- QR 码由项目依赖 qrcode[pil] 生成；异常时隐藏二维码区块，不阻断卡片渲染。
 """
 
 from __future__ import annotations
@@ -17,6 +17,8 @@ from __future__ import annotations
 import base64
 import html
 import io
+import os
+import re
 from dataclasses import fields
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +41,8 @@ PLATFORM_COLORS: dict[str, str] = {
     "bilibili": "#fb7299",
     "xiaohongshu": "#ff2442",
     "xhs": "#ff2442",
+    "douyin": "#111111",
+    "weibo": "#e6162d",
     "youtube": "#ff0000",
     "twitter": "#1d9bf0",
     "x": "#1d9bf0",
@@ -54,6 +58,8 @@ PLATFORM_COLORS: dict[str, str] = {
     "kuwo": "#ff6f00",
     "apple_music": "#fa243c",
     "spotify": "#1db954",
+    "facebook": "#1877f2",
+    "instagram": "#d62976",
 }
 UNKNOWN_PLATFORM_COLOR = "#607080"
 
@@ -61,6 +67,8 @@ PLATFORM_OFFICIAL_NAMES: dict[str, str] = {
     "bilibili": "Bilibili",
     "xiaohongshu": "Xiaohongshu",
     "xhs": "Xiaohongshu",
+    "douyin": "Douyin",
+    "weibo": "Weibo",
     "youtube": "YouTube",
     "twitter": "Twitter/X",
     "x": "Twitter/X",
@@ -75,12 +83,14 @@ PLATFORM_OFFICIAL_NAMES: dict[str, str] = {
     "kuwo": "Kuwo Music",
     "apple_music": "Apple Music",
     "spotify": "Spotify",
+    "facebook": "Facebook",
+    "instagram": "Instagram",
     "generic": "Web",
 }
 
 # 模板“已知键”特殊标签已覆盖的统计键（其余走通用遍历）。
 _KNOWN_STAT_KEYS = frozenset({
-    "views", "danmaku", "likes", "favorites", "coins", "comments", "reposts",
+    "views", "danmaku", "likes", "favorites", "coins", "comments", "reposts", "shares",
     "following", "followers", "user_likes", "total_views", "quotes", "bookmarks",
     "attention", "fansclub", "high_energy_users", "fleet_total", "captain",
     "admiral", "governor", "is_living", "live_level", "top3_rank", "live_viewers",
@@ -89,9 +99,68 @@ _KNOWN_STAT_KEYS = frozenset({
     "观看", "在线", "人气",
     "粉丝", "关注", "视频数", "专栏数",
     "时长", "发布时间", "pubdate", "duration", "duration_seconds",
+    "AV", "av", "avid", "AV号",
 })
 
 _DEFAULT_CONTEXT = RenderPayload().to_dict()
+
+def _resolve_icon_asset_root() -> Path:
+    """Resolve card SVG assets outside the AI workspace when available."""
+    configured = os.getenv("BOT_CARD_ASSET_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser() / "iconfont"
+
+    # Search ancestors instead of depending on a fixed directory depth.
+    # This supports both MyWorkspace\ChatBot and Archive\ChatBot\ChatBot layouts.
+    for ancestor in Path(__file__).resolve().parents:
+        external = ancestor / "ChatBot_Runtime" / "card_render_assets" / "iconfont"
+        if external.is_dir():
+            return external
+
+    # Development fallback: preserve the old checked-in layout for restoration.
+    return Path(__file__).resolve().parent / "assets" / "iconfont"
+
+
+_ICON_ASSET_ROOT = _resolve_icon_asset_root()
+_METRIC_ICON_FILES = {
+    "views": "5375/播放数_32.svg",
+    "danmaku": "5375/弹幕数_32.svg",
+    "comments": "5375/16_ico_reply.svg",
+    "likes": "5375/32_ic_赞.svg",
+    "coins": "5375/B币_32.svg",
+    "favorites": "5375/收藏_32.svg",
+    "shares": "5375/分享_32.svg",
+}
+_PLATFORM_LOGO_FILES = {
+    "bilibili": "../platforms/bilibili.svg",
+    "douyin": "../platforms/douyin_user.svg",
+    "xiaohongshu": "../platforms/xiaohongshu_user.svg",
+    "xhs": "../platforms/xiaohongshu_user.svg",
+    "weibo": "../platforms/weibo.svg",
+    "youtube": "../platforms/youtube_user.svg",
+    "twitter": "../platforms/twitter_x_user.svg",
+    "x": "../platforms/twitter_x_user.svg",
+    "spotify": "../platforms/spotify_user.svg",
+    "apple_music": "../platforms/apple_music_user.svg",
+    "facebook": "../platforms/facebook_user.svg",
+    "instagram": "../platforms/instagram_user.svg",
+}
+_PLATFORM_FOOTER_LABELS = {
+    "bilibili": "哔哩哔哩",
+    "xiaohongshu": "小红书",
+    "xhs": "小红书",
+    "douyin": "抖音",
+    "weibo": "微博",
+    "youtube": "YouTube",
+    "twitter": "Twitter/X",
+    "x": "Twitter/X",
+    "pixiv": "Pixiv",
+    "lofter": "LOFTER",
+    "spotify": "Spotify",
+    "apple_music": "Apple Music",
+    "facebook": "Facebook",
+    "instagram": "Instagram",
+}
 
 
 # ==================== 基础工具 ====================
@@ -139,6 +208,15 @@ def _first_stat_value(stats: dict[str, Any], keys: tuple[str, ...]) -> Any:
 
 def _first_stat_int(stats: dict[str, Any], keys: tuple[str, ...]) -> int:
     return _as_int(_first_stat_value(stats, keys))
+
+
+def _normalize_av_id(value: Any) -> str:
+    """Normalize Bilibili AV variants to digits for the header only."""
+    text = _as_str(value).strip()
+    if not text:
+        return ""
+    match = re.search(r"(?i)\bav\s*(\d+)\b", text) or re.search(r"\b(\d{5,})\b", text)
+    return match.group(1) if match else text.removeprefix("av").removeprefix("AV")
 
 
 def _format_timestamp(value: Any) -> str:
@@ -229,12 +307,329 @@ def _clean_card_summary(summary: str) -> str:
     return "\n".join(kept)
 
 
+
+
+def _load_icon_asset(relative_path: str) -> str:
+    """Load an Iconfont SVG for inline rendering."""
+    if not relative_path:
+        return ""
+    try:
+        return (_ICON_ASSET_ROOT / relative_path).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return ""
+
+
+def _first_nonempty_stat(stats: dict[str, Any], aliases: tuple[str, ...]) -> Any:
+    for key in aliases:
+        value = stats.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+_METRIC_DEFINITIONS: dict[str, tuple[tuple[str, str, tuple[str, ...]], ...]] = {
+    "video": (
+        ("views", "播放", ("views", "播放", "播放量", "观看", "浏览量")),
+        ("danmaku", "弹幕", ("danmaku", "弹幕", "弹幕数")),
+        ("comments", "评论", ("comments", "评论", "评论数")),
+        ("likes", "点赞", ("likes", "点赞", "赞", "爱心")),
+        ("coins", "投币", ("coins", "投币", "硬币")),
+        ("favorites", "收藏", ("favorites", "收藏", "收藏数")),
+        ("shares", "转发", ("shares", "转发", "转发数", "分享", "reposts")),
+    ),
+    "dynamic": (
+        ("likes", "点赞", ("likes", "点赞", "赞", "爱心")),
+        ("shares", "转发", ("shares", "转发", "转发数", "分享", "reposts")),
+        ("comments", "评论", ("comments", "评论", "评论数")),
+    ),
+    "article": (
+        ("views", "浏览量", ("views", "浏览量", "浏览", "阅读", "阅读量")),
+        ("likes", "点赞", ("likes", "点赞", "赞", "爱心")),
+        ("coins", "投币", ("coins", "投币", "硬币")),
+        ("favorites", "收藏", ("favorites", "收藏", "收藏数")),
+        ("shares", "转发", ("shares", "转发", "转发数", "分享", "reposts")),
+        ("comments", "评论", ("comments", "评论", "评论数")),
+    ),
+    "note": (
+        ("likes", "爱心", ("likes", "爱心", "点赞", "赞")),
+        ("favorites", "收藏", ("favorites", "收藏", "收藏数")),
+        ("comments", "评论", ("comments", "评论", "评论数")),
+        ("shares", "转发", ("shares", "转发", "转发数", "分享", "reposts")),
+    ),
+    "tweet": (
+        ("views", "浏览量", ("views", "浏览量", "浏览", "观看")),
+        ("likes", "点赞", ("likes", "点赞", "赞", "喜欢")),
+        ("comments", "评论", ("comments", "评论", "回复", "评论数")),
+        ("shares", "转发", ("shares", "转发", "转发数", "转推", "分享", "reposts", "retweets")),
+    ),
+}
+
+
+# 新平台页面类型 → 走 raw 指标策略（stats 原键直接进指标栏，无图标）。
+_RAW_METRIC_PAGE_TYPES = frozenset(
+    {
+        "game", "store_page", "market_listing", "community_hub", "ticket",
+        "cheese", "charity", "search", "project", "goods", "share_post",
+        "share_video", "public_page", "works",
+    }
+)
+_RAW_METRIC_PLATFORMS = frozenset({"steam", "epic", "mihuashi", "huajia", "facebook"})
+
+
+def _metric_kind(platform: str, kind: str, page_type: str) -> str:
+    if platform in {"xiaohongshu", "xhs"}:
+        return "note"
+    if kind in {"article", "column", "opus"} or page_type in {"article", "column"}:
+        return "article"
+    if kind == "tweet" or page_type == "tweet":
+        # X 专属指标桶：浏览量/点赞/评论/转发（不含弹幕/投币等视频指标）。
+        return "tweet"
+    if kind in {"dynamic", "post"} or page_type in {"dynamic", "post"}:
+        return "dynamic"
+    if kind == "video" or page_type == "video":
+        return "video"
+    if page_type in _RAW_METRIC_PAGE_TYPES or platform in _RAW_METRIC_PLATFORMS:
+        # 新平台（Steam/Epic/米画师/画加/Facebook/会员购等）：stats 原键直接上卡。
+        return "raw"
+    return "generic"
+
+
+def _build_metric_items(
+    platform: str,
+    kind: str,
+    page_type: str,
+    stats: dict[str, Any],
+) -> list[dict[str, Any]]:
+    metric_kind = _metric_kind(platform, kind, page_type)
+    if metric_kind == "raw":
+        # raw：无图标指标卡，stats 原键原标签直接展示（最多 7 项）。
+        raw_items: list[dict[str, Any]] = []
+        for key, value in stats.items():
+            if isinstance(value, (dict, list)) or value in (None, ""):
+                continue
+            raw_items.append(
+                {
+                    "key": "raw",
+                    "label": str(key),
+                    "value": value,
+                    "icon_svg": "",
+                    "source": "none",
+                }
+            )
+            if len(raw_items) >= 7:
+                break
+        return raw_items
+    definitions = _METRIC_DEFINITIONS.get(metric_kind)
+    if definitions is None:
+        definitions = (
+            ("views", "浏览", ("views", "播放", "播放量", "观看", "浏览", "浏览量")),
+            ("likes", "点赞", ("likes", "点赞", "赞", "爱心")),
+            ("comments", "评论", ("comments", "评论", "评论数")),
+            ("shares", "转发", ("shares", "转发", "转发数", "分享", "reposts")),
+        )
+    items: list[dict[str, Any]] = []
+    for key, label, aliases in definitions:
+        value = _first_nonempty_stat(stats, aliases)
+        if value is None:
+            continue
+        items.append(
+            {
+                "key": key,
+                "label": label,
+                "value": value,
+                "icon_svg": _load_icon_asset(_METRIC_ICON_FILES.get(key, "")),
+                "source": "iconfont" if key in _METRIC_ICON_FILES else "none",
+            }
+        )
+    return items
+
+
+def _format_join_date(value: Any) -> str:
+    """博主注册日期归一成 YYYY-MM-DD；支持推特/ISO/中文格式，失败返回空。"""
+    raw = _as_str(value).strip()
+    if not raw:
+        return ""
+    import datetime
+
+    for fmt in (
+        "%a %b %d %H:%M:%S %z %Y",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%Y年%m月%d日",
+        "%Y/%m/%d",
+    ):
+        try:
+            return datetime.datetime.strptime(raw, fmt).strftime("%Y-%m-%d")  # noqa: DTZ007 - 仅取日期。
+        except ValueError:
+            continue
+    match = re.match(r"(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})", raw)
+    if match:
+        return f"{match.group(1)}-{int(match.group(2)):02d}-{int(match.group(3)):02d}"
+    return ""
+
+
+# ==================== 嵌套模型 → 渲染投影 ====================
+def flat_projection(item: Any) -> Any:
+    """把纯嵌套 ParsedContent 还原成渲染投影字典（渲染边界专用）。
+
+    模型层不再有扁平字段；渲染层统一经本函数把嵌套数据 + 各平台
+    ``platform_extra`` 还原为卡片需要的扁平形状（stats/detail 等），
+    卡片区块与迁移前保持等价（个别标量会经统一格式化，如发布时间补秒）。
+    非 ParsedContent 输入原样返回。
+    """
+    from plugins.bot_unified_runtime.contracts.media import ParsedContent
+
+    if not isinstance(item, ParsedContent):
+        return item
+    identity = item.identity
+    content = item.content
+    creator = item.creator
+    engagement = item.engagement
+    media = list(item.media or [])
+    provenance = item.provenance
+    content_extras = dict(content.platform_extra or {}) if content else {}
+    engagement_extras = dict(engagement.platform_extra or {}) if engagement else {}
+    creator_extras = dict(creator.platform_extra or {}) if creator else {}
+
+    platform = identity.platform if identity else ""
+    item_id = identity.item_id if identity else ""
+    kind = identity.item_kind if identity else ""
+    canonical = identity.canonical_url if identity else ""
+    title = content.title if content else ""
+    summary = content.summary if content else ""
+    page_type = str(content_extras.get("page_type") or "")
+    badge = str(content_extras.get("badge") or "")
+    published_at = content.published_at if content else None
+
+    video_asset = next(
+        (asset for asset in media if asset.asset_type == "video"), None
+    )
+
+    # 统计栏：统一互动字段 → 卡片已知键（全部在 _KNOWN_STAT_KEYS 内），
+    # 平台特有键经 platform_extra 原样透传。
+    stats: dict[str, Any] = {}
+    if engagement is not None:
+        for key, value in (
+            ("views", engagement.view_count),
+            ("播放次数", engagement.play_count),
+            ("likes", engagement.like_count),
+            ("comments", engagement.comment_count),
+            ("favorites", engagement.favorite_count),
+            ("bookmarks", engagement.bookmark_count),
+            ("shares", engagement.share_count),
+            ("reposts", engagement.repost_count),
+            ("quotes", engagement.quote_count),
+            ("danmaku", engagement.danmaku_count),
+            ("coins", engagement.coin_count),
+        ):
+            if value is not None:
+                stats[key] = value
+        if engagement.like_count is None and engagement.heart_count is not None:
+            stats["likes"] = engagement.heart_count
+    if creator is not None:
+        for key, value in (
+            ("followers", creator.follower_count),
+            ("following", creator.following_count),
+            ("posts", creator.post_count),
+            ("videos", creator.video_count),
+            ("user_likes", creator.received_like_count),
+        ):
+            if value is not None:
+                stats[key] = value
+    for key, extra_value in engagement_extras.items():
+        if not isinstance(extra_value, (dict, list)):
+            stats[key] = extra_value
+    if published_at is not None:
+        stats["发布时间"] = published_at.strftime("%Y-%m-%d %H:%M:%S")
+    if video_asset is not None and video_asset.duration_ms is not None:
+        stats["时长"] = video_asset.duration_ms // 1000
+    if platform == "bilibili" and item_id.lower().startswith("av"):
+        stats["AV号"] = item_id
+
+    # detail：作者/视频/图集/分P/直播/评论/商品/相关等平台扩展原样透传。
+    detail: dict[str, Any] = {}
+    if creator is not None:
+        author: dict[str, Any] = {}
+        if creator.name:
+            author["name"] = creator.name
+        if creator.avatar_url:
+            author["avatar"] = creator.avatar_url
+        if creator.signature or creator.bio:
+            author["signature"] = creator.signature or creator.bio
+        if creator.handle:
+            author["handle"] = creator.handle
+        if creator.platform_creator_id:
+            author["uuid"] = creator.platform_creator_id
+        verification = creator.verification
+        if verification is not None:
+            if verification.label:
+                author["official_title"] = verification.label
+            if verification.type:
+                author["official_badge"] = verification.type
+            if verification.verified is not None:
+                author["verified"] = verification.verified
+        if creator.follower_count is not None:
+            author["fans"] = creator.follower_count
+        if creator.joined_at is not None:
+            author["created_at"] = creator.joined_at.isoformat()
+        author.update(creator_extras)
+        detail["author"] = author
+    video: dict[str, Any] = {}
+    if video_asset is not None:
+        if video_asset.url:
+            video["url"] = video_asset.url
+        if video_asset.preview_url:
+            video["thumbnail_url"] = video_asset.preview_url
+        if video_asset.width is not None:
+            video["width"] = video_asset.width
+        if video_asset.height is not None:
+            video["height"] = video_asset.height
+        if video_asset.duration_ms is not None:
+            video["duration"] = video_asset.duration_ms // 1000
+    video_extras = content_extras.get("video")
+    if isinstance(video_extras, dict):
+        for key, value in video_extras.items():
+            video.setdefault(key, value)
+    if published_at is not None and "pubdate" not in video:
+        video["pubdate"] = int(published_at.timestamp())
+    if video:
+        detail["video"] = video
+    images = content_extras.get("images")
+    if isinstance(images, list):
+        detail["images"] = [url for url in images if str(url)]
+    for key in (
+        "episodes", "live", "comments", "goods", "related",
+        "pinned_comment", "hot_comment",
+    ):
+        if key in content_extras:
+            detail[key] = content_extras[key]
+
+    cover = str(content_extras.get("cover_url") or "")
+    return {
+        "platform": platform,
+        "item_id": item_id,
+        "item_kind": kind,
+        "page_type": page_type,
+        "badge": badge,
+        "title": title,
+        "summary": summary,
+        "cover_url": cover,
+        "canonical_url": canonical,
+        "author_name": creator.name if creator else "",
+        "stats": stats,
+        "detail": detail,
+        "parse_depth": provenance.parse_depth if provenance else "deep",
+    }
+
+
 def parse_to_render_payload(item: Any) -> RenderPayload:
     """把 PlatformParse（或等价字典）映射为字段完整的 RenderPayload。
 
     契约中的 page_type/badge/detail 全部可选；缺省时返回一张空但可渲染的
-    卡片（各区块隐藏）。
+    卡片（各区块隐藏）。纯嵌套 ParsedContent 先经 ``flat_projection``
+    还原成渲染投影字典，再走既有映射逻辑。
     """
+    item = flat_projection(item)
     platform = _as_str(_get(item, "platform")).strip().lower()
     kind = _as_str(_get(item, "item_kind")).strip().lower()
     page_type = _as_str(_get(item, "page_type")).strip().lower() or kind
@@ -248,6 +643,7 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
     stats_raw = _as_dict(_get(item, "stats"))
     detail = _as_dict(_get(item, "detail"))
     author = _as_dict(detail.get("author"))
+    video = _as_dict(detail.get("video"))
     episodes = _as_list(detail.get("episodes"))
     images = _as_list(detail.get("images"))
     live = _as_dict(detail.get("live"))
@@ -263,14 +659,35 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
     payload.summary = summary
     payload.text = summary
     payload.url = canonical
+    payload.cover_url = cover
+    payload.timestamp = (
+        _as_str(_get(item, "timestamp"))
+        or _as_str(_get(item, "published_at"))
+        or _as_str(video.get("pubdate"))
+        or _as_str(_first_stat_value(stats_raw, ("发布时间", "时间", "上传时间", "pubdate")))
+    )
 
     # 作者
     payload.name = _as_str(author.get("name")) or _as_str(_get(item, "author_name"))
     payload.avatar = _as_str(author.get("avatar"))
     payload.signature = _as_str(author.get("signature"))
+    payload.handle = _as_str(author.get("handle"))
+    payload.author_uuid = _as_str(
+        author.get("uuid") or author.get("author_uuid") or author.get("unique_id") or author.get("mid")
+    )
+    join_date = _format_join_date(
+        author.get("created_at") or author.get("joined") or author.get("created_date")
+    )
+    if join_date:
+        payload.profile_join_date = join_date
     payload.follower_count = _as_str(author.get("fans"))
     payload.official_title = _as_str(author.get("official_title"))
-    payload.official_badge = badge or _as_str(detail.get("badge"))
+    payload.official_badge = (
+        badge
+        or _as_str(author.get("official_badge"))
+        or _as_str(author.get("verified"))
+        or _as_str(detail.get("badge"))
+    )
 
     # 各类 ID 标签（UID/Handle/BVID/AV/动态/直播/空间/收藏夹/番剧/帖子）
     payload.uid = item_id
@@ -290,6 +707,12 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
         payload.bvid, payload.uid = item_id, ""
     elif platform == "bilibili" and item_id.lower().startswith("av"):
         payload.av_id, payload.uid = item_id, ""
+    if platform == "bilibili" and not payload.av_id:
+        raw_av = video.get("aid") or _first_nonempty_stat(
+            stats_raw, ("AV", "av", "avid", "AV号")
+        )
+        if raw_av not in (None, ""):
+            payload.av_id = _normalize_av_id(raw_av)
 
     # 正文 / 图片 / 横幅
     payload.banner = (
@@ -319,11 +742,56 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
         )
     payload.video_pages = pages
 
-    # 博主结构化数据（视频/空间解析带上的 粉丝/关注/视频数/专栏数）
-    for label, key in (("粉丝", "粉丝"), ("关注", "关注"), ("视频数", "视频数"), ("专栏数", "专栏数")):
-        value = _first_stat_value(stats_raw, (key,))
-        if value not in (None, ""):
-            payload.header_l4_items.append({"label": label, "value": value})
+    # 作者指标与内容互动分开：渲染投影产出的 stats 里，只把已知作者键
+    # 分进 author_stats，其余按视频/通用键分进 video_stats（未知键保留）。
+    explicit_author_stats = _as_dict(_get(item, "author_stats"))
+    explicit_video_stats = _as_dict(_get(item, "video_stats"))
+    author_keys = (
+        "followers", "following", "user_likes", "total_views", "videos", "columns",
+        "video_count", "column_count", "粉丝", "关注", "获赞", "总播放", "视频数", "专栏数",
+        "帖子数", "media_count",
+    )
+    video_keys = ("views", "danmaku", "comments", "likes", "coins", "favorites", "shares", "reposts", "播放", "播放量", "观看", "浏览", "浏览量", "弹幕", "弹幕数", "评论", "评论数", "点赞", "赞", "投币", "硬币", "收藏", "收藏数", "转发", "转发数")
+    payload.author_stats = explicit_author_stats or {
+        key: value for key, value in stats_raw.items() if key in author_keys
+    }
+    payload.video_stats = explicit_video_stats or {
+        key: value for key, value in stats_raw.items() if key in video_keys
+    }
+    if "reposts" in payload.video_stats and "shares" not in payload.video_stats:
+        payload.video_stats["shares"] = payload.video_stats["reposts"]
+    if _metric_kind(platform, kind, page_type) != "generic":
+        metric_source = {
+            key: value
+            for key, value in (explicit_video_stats or stats_raw).items()
+            if key not in author_keys
+        }
+        payload.stats_bar_items = _build_metric_items(
+            platform,
+            kind,
+            page_type,
+            metric_source,
+        )
+
+    # 博主结构化数据（视频/空间解析带上的 粉丝/关注/视频数/专栏数）。
+    author_metric_specs = (
+        ("followers", "粉丝", ("followers", "粉丝", "fans")),
+        ("following", "关注", ("following", "关注")),
+        ("videos", "视频", ("videos", "video_count", "视频数")),
+        ("columns", "专栏", ("columns", "column_count", "专栏数")),
+        ("posts", "帖子", ("posts", "media_count", "帖子数")),
+        ("user_likes", "获赞", ("user_likes", "获赞", "获赞与收藏")),
+    )
+    merged_author_stats = {**author, **payload.author_stats}
+    for key, label, aliases in author_metric_specs:
+        value = _first_nonempty_stat(merged_author_stats, aliases)
+        if value is None:
+            value = _first_nonempty_stat(stats_raw, aliases)
+        if value in (None, ""):
+            continue
+        payload.author_stats.setdefault(key, value)
+        payload.author_stat_items.append({"key": key, "label": label, "value": value})
+        payload.header_l4_items.append({"label": label, "value": value})
 
     # 第二行：视频ID / 动态ID / 番剧ID / 商品ID
     if kind == "dynamic":
@@ -336,12 +804,16 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
         payload.header_l2_items.append({"label": "视频ID", "value": item_id})
 
     # 发布时间：精确到年月日时分秒
-    pub_raw = _first_stat_value(stats_raw, ("pubdate", "发布时间", "pub_time"))
+    pub_raw = video.get("pubdate") or _first_stat_value(
+        stats_raw, ("pubdate", "发布时间", "pub_time")
+    )
     if pub_raw is not None:
         payload.timestamp = _format_timestamp(pub_raw)
 
     # 视频时长 / 简介（从 stats 的常见键提炼）
-    duration_raw = _first_stat_value(stats_raw, ("duration", "duration_seconds", "时长"))
+    duration_raw = video.get("duration") or _first_stat_value(
+        stats_raw, ("duration", "duration_seconds", "时长")
+    )
     if duration_raw is not None:
         payload.video_duration = _format_duration(_as_int(duration_raw))
     desc_raw = _first_stat_value(stats_raw, ("简介", "desc", "description"))
@@ -362,7 +834,9 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
         _as_str(tag) for tag in _as_list(live.get("tags")) if _as_str(tag)
     )
     payload.live_desc = _as_str(live.get("intro"))
-    payload.timestamp = _format_timestamp(live.get("start_time"))
+    live_start = live.get("start_time")
+    if live_start not in (None, ""):
+        payload.timestamp = _format_timestamp(live_start)
     payload.live_viewers = _first_stat_int(
         stats_raw, ("live_viewers", "观看", "在线")
     )
@@ -443,12 +917,17 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
     payload.platform_official_name = PLATFORM_OFFICIAL_NAMES.get(platform) or (
         platform.capitalize() if platform else ""
     )
+    payload.platform_footer_label = _PLATFORM_FOOTER_LABELS.get(
+        platform,
+        payload.platform_official_name,
+    )
+    payload.platform_logo_svg = _load_icon_asset(_PLATFORM_LOGO_FILES.get(platform, ""))
     return payload
 
 
 # ==================== 渲染 ====================
 def _build_qr_data_url(url: str) -> str:
-    """可选 QR 码：qrcode 未安装或生成失败时返回空串（区块整体隐藏）。"""
+    """生成链接 QR 码；生成失败时返回空串（区块整体隐藏）。"""
     if not url:
         return ""
     try:
@@ -558,7 +1037,7 @@ __all__ = [
     "PLATFORM_OFFICIAL_NAMES",
     "ForwardPayload",
     "RenderPayload",
+    "flat_projection",
     "parse_to_render_payload",
     "render_universal_card_html",
 ]
-

@@ -58,6 +58,24 @@ class MemeLibraryStore:
         connection.row_factory = sqlite3.Row
         return connection
 
+    def _resolve_media_path(self, value: str | Path) -> Path:
+        """Resolve current and legacy meme paths from the external Runtime.
+
+        Older records stored paths such as ``data/meme_library/<file>`` relative
+        to the source CWD. The database now lives in Runtime/data, so resolve
+        those records relative to the database's data directory instead of the
+        caller's working directory.
+        """
+        path = Path(value).expanduser()
+        if path.is_absolute():
+            return path
+        normalized = str(path).replace("\\", "/")
+        if normalized == "data":
+            return self.db_path.parent
+        if normalized.startswith("data/"):
+            return self.db_path.parent / normalized[5:]
+        return self.db_path.parent / path
+
     def exists(self, md5: str) -> bool:
         with self._lock, self._connect() as connection:
             row = connection.execute("SELECT 1 FROM memes WHERE md5=?", (md5,)).fetchone()
@@ -145,7 +163,7 @@ class MemeLibraryStore:
             row = connection.execute("SELECT path FROM memes WHERE md5=?", (md5,)).fetchone()
             if row is not None:
                 try:
-                    Path(row["path"]).unlink(missing_ok=True)
+                    self._resolve_media_path(row["path"]).unlink(missing_ok=True)
                 except OSError:
                     pass
                 connection.execute("DELETE FROM memes WHERE md5=?", (md5,))
@@ -181,8 +199,10 @@ class MemeLibraryStore:
                 continue
             if float(row_dict.get("nsfw_score", 0.0) or 0.0) > nsfw_max:
                 continue
-            if not Path(row_dict["path"]).exists():
+            media_path = self._resolve_media_path(row_dict["path"])
+            if not media_path.exists():
                 continue
+            row_dict["path"] = str(media_path)
             candidates.append(row_dict)
         if not candidates:
             return None
@@ -208,7 +228,7 @@ class MemeLibraryStore:
                 ).fetchall()
                 for row in rows:
                     try:
-                        Path(row["path"]).unlink(missing_ok=True)
+                        self._resolve_media_path(row["path"]).unlink(missing_ok=True)
                     except OSError:
                         pass
                     connection.execute("DELETE FROM memes WHERE md5=?", (row["md5"],))
@@ -222,7 +242,7 @@ class MemeLibraryStore:
                     ).fetchall()
                     for row in rows:
                         try:
-                            Path(row["path"]).unlink(missing_ok=True)
+                            self._resolve_media_path(row["path"]).unlink(missing_ok=True)
                         except OSError:
                             pass
                         connection.execute("DELETE FROM memes WHERE md5=?", (row["md5"],))

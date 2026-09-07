@@ -32,6 +32,7 @@ class ForwardPayload:
     uid: str = ""
     banner: str = ""
     signature: str = ""
+    author_uuid: str = ""
     header_desc_oneline: str = ""
     follower_count: str = ""
     timestamp: str = ""
@@ -63,9 +64,11 @@ class RenderPayload:
     banner: str = ""
     image_urls: list[str] = field(default_factory=list)
     qrcode: str = ""
+    cover_url: str = ""
 
     # Header 五行
     signature: str = ""
+    author_uuid: str = ""
     header_desc_oneline: str = ""
     follower_count: str = ""
     timestamp: str = ""
@@ -92,9 +95,13 @@ class RenderPayload:
     header_l1_badges: list[dict[str, Any]] = field(default_factory=list)
     header_l2_items: list[dict[str, Any]] = field(default_factory=list)
     header_l4_items: list[dict[str, Any]] = field(default_factory=list)
+    author_stat_items: list[dict[str, Any]] = field(default_factory=list)
 
     # 统计栏（已知键由模板渲染，未知键走 stats_extra_items 通用遍历）
     stats: dict[str, Any] = field(default_factory=dict)
+    # Keep creator metrics separate from media/video engagement metrics.
+    author_stats: dict[str, Any] = field(default_factory=dict)
+    video_stats: dict[str, Any] = field(default_factory=dict)
     stats_bar_items: list[dict[str, Any]] = field(default_factory=list)
     stats_extra_items: list[dict[str, Any]] = field(default_factory=list)
 
@@ -125,12 +132,14 @@ class RenderPayload:
     live_replay_views: int = 0
     live_popularity: int = 0
 
-    # 平台主题色 / 页脚
-    platform_color: str = "#fb7299"
-    platform_color_rgb: str = "251,114,153"
-    platform_color_dark: str = "#d4506f"
-    platform_color_light: str = "#fef0f3"
+    # 平台主题色 / 页脚（默认中性灰，与 UNKNOWN_PLATFORM_COLOR 一致）
+    platform_color: str = "#607080"
+    platform_color_rgb: str = "96,112,128"
+    platform_color_dark: str = "#4a5866"
+    platform_color_light: str = "#eef1f4"
     platform_official_name: str = ""
+    platform_footer_label: str = ""
+    platform_logo_svg: str = ""
     platform_mark: str = ""
     platform_mark_style: str = ""
     bot_name: str = "AstrBot"

@@ -31,14 +31,13 @@ _SUBSCRIBE_RE = re.compile(
 )
 
 _USAGE = (
-    "订阅用法：\n"
-    "/bot subscribe add <链接|platform:kind:id> [到本群|私聊我] [--digest]\n"
-    "/bot subscribe list\n"
-    "/bot subscribe remove <id>\n"
-    "/bot subscribe pause <id>\n"
-    "/bot subscribe resume <id>\n"
-    "/bot subscribe check <id>\n"
-    "/bot subscribe status"
+    "订阅用法（/订阅 与 /bot subscribe 等价）：\n"
+    "/订阅 add <链接|platform:kind:id> [到本群|私聊我] [--digest]\n"
+    "/订阅 list\n"
+    "/订阅 remove|pause|resume|check <id>\n"
+    "/订阅 status\n"
+    "支持平台：bilibili（UP主/直播间/番剧/收藏夹/合集）、小红书（创作者）\n"
+    "--digest：不即时推送，只进每日订阅日报（默认 20:00，时间可配）"
 )
 
 

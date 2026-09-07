@@ -73,6 +73,7 @@ class RuntimeDiagnostic(StrictBaseModel):
     audit_events: list[str] = Field(default_factory=list)
     audit_tags: list[str] = Field(default_factory=list)
     why_summary: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class DiagnosticsStore(Protocol):
@@ -474,6 +475,7 @@ class SQLiteDiagnosticsRepository:
             audit_events=_load_list(str(row["audit_events"])),
             audit_tags=_load_list(str(row["audit_tags"])),
             why_summary=str(row["why_summary"]),
+            created_at=datetime.fromisoformat(str(row["created_at"])),
         )
 
     def _ensure_column(
@@ -623,7 +625,7 @@ def build_runtime_diagnostic(
         llm_status=llm_status,
         llm_error_kind=llm_error_kind,
         llm_provider=config.bot_chat_provider,
-        llm_model=config.bot_chat_model,
+        llm_model=infer_text_tag(audit_tags, "model") or config.bot_chat_model,
         ready_for_real_llm=bool(llm_readiness["ready_for_real_llm"]),
         llm_readiness_status=str(llm_readiness["llm_readiness_status"]),
         llm_readiness_reasons=[
@@ -711,7 +713,7 @@ def _row_text(row: sqlite3.Row, column: str) -> str:
 
 
 def _safe_recent_limit(limit: int) -> int:
-    return min(20, max(1, int(limit)))
+    return min(1000, max(1, int(limit)))
 
 
 def _format_why_body(diagnostic: RuntimeDiagnostic) -> str:
@@ -728,7 +730,7 @@ def _format_why_body(diagnostic: RuntimeDiagnostic) -> str:
         f"会话：{diagnostic.session_type}",
         f"角色：{actor_roles}",
         f"策略：{diagnostic.policy_reason}",
-        f"回复预算：{diagnostic.reply_budget_reason or '-'}，最多 {diagnostic.max_messages} 条",
+        f"回复预算：{diagnostic.reply_budget_reason or '-'}，{_reply_budget_note(diagnostic.max_messages)}",
         f"上下文预算：{diagnostic.context_budget}",
         (
             "Prompt："
@@ -779,6 +781,22 @@ def _format_why_body(diagnostic: RuntimeDiagnostic) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _reply_budget_note(max_messages: int) -> str:
+    return (
+        "回复段数不设上限"
+        if max_messages <= 0
+        else f"最多回复 {max_messages} 条"
+    )
+
+
+def _reply_trim_note(max_messages: int) -> str:
+    return (
+        "已按传输长度限制收口"
+        if max_messages <= 0
+        else f"已按回复预算收口，只保留前 {max_messages} 段"
+    )
 
 
 def build_diagnostic_why_summary(
@@ -850,7 +868,7 @@ def build_diagnostic_why_summary(
         if reply_budget_reason:
             return (
                 f"策略允许回复；回复预算原因是 {reply_budget_reason}，"
-                f"最多回复 {max_messages} 条；{prompt_clipping_note}"
+                f"{_reply_budget_note(max_messages)}；{prompt_clipping_note}"
                 "人格或知识上下文读取失败，已跳过 LLM，返回安全提示；"
                 f"{history_skip_note}已创建 SendRequest。"
             )
@@ -864,7 +882,7 @@ def build_diagnostic_why_summary(
         if reply_budget_reason:
             return (
                 f"策略允许回复；回复预算原因是 {reply_budget_reason}，"
-                f"最多回复 {max_messages} 条；{prompt_clipping_note}"
+                f"{_reply_budget_note(max_messages)}；{prompt_clipping_note}"
                 "LLM 生成参数或配置非法，已在调用 provider 前阻断；"
                 f"原因码：{reason_text}；{history_skip_note}"
                 "已创建 SendRequest 返回安全失败提示。"
@@ -879,7 +897,7 @@ def build_diagnostic_why_summary(
         if reply_budget_reason:
             return (
                 f"策略允许回复；回复预算原因是 {reply_budget_reason}，"
-                f"最多回复 {max_messages} 条；{prompt_clipping_note}LLM 调用失败，"
+                f"{_reply_budget_note(max_messages)}；{prompt_clipping_note}LLM 调用失败，"
                 f"错误类型是 {llm_error_kind}；{history_skip_note}"
                 "已创建 SendRequest 返回安全失败提示。"
             )
@@ -893,7 +911,7 @@ def build_diagnostic_why_summary(
         if reply_budget_reason:
             return (
                 f"策略允许回复；回复预算原因是 {reply_budget_reason}，"
-                f"最多回复 {max_messages} 条；{prompt_clipping_note}模型输出超过预算，"
+                f"{_reply_budget_note(max_messages)}；{prompt_clipping_note}模型输出超过预算，"
                 f"已按回复预算收口，只保留前 {kept_blocks} 段；"
                 f"{history_skip_note}已创建 SendRequest。"
             )
@@ -905,7 +923,7 @@ def build_diagnostic_why_summary(
     if reply_budget_reason:
         return (
             f"策略允许回复；回复预算原因是 {reply_budget_reason}，"
-            f"最多回复 {max_messages} 条；{prompt_clipping_note}"
+            f"{_reply_budget_note(max_messages)}；{prompt_clipping_note}"
             f"{history_skip_note}已创建 SendRequest。"
         )
     mention_text = "已提及机器人" if mentions_bot else "未提及机器人"

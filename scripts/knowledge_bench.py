@@ -22,12 +22,14 @@ except Exception as exc:  # noqa: BLE001
     print(f"缺少依赖：{exc}")
     sys.exit(2)
 
+from runtime_paths import runtime_path
+
 from plugins.bot_unified_runtime.character.vector_knowledge import (
     OpenAICompatibleEmbeddingProvider,
     SqliteVectorKnowledgeStore,
 )
 
-DB = Path("data/knowledge_embeddings.sqlite3")
+DB = runtime_path('data/knowledge_embeddings.sqlite3')
 SIG = "http://127.0.0.1:11434/v1|bge-m3;https://dashscope.aliyuncs.com/compatible-mode/v1|qwen3.7-text-embedding,text-embedding-v4"
 QUERY = "鸣潮 今州是什么地方"
 

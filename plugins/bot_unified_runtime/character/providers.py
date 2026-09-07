@@ -111,7 +111,7 @@ class FileCharacterContextProvider:
         tone_voice: str = "soft",
         tone_warmth: float = 0.7,
         tone_directness: float = 0.5,
-        tone_message_count_limit: int = 1,
+        tone_message_count_limit: int = 0,
         memory_provider: MemoryProvider | None = None,
         memory_max_items: int = 5,
         memory_max_chars: int = 1200,
@@ -136,6 +136,7 @@ class FileCharacterContextProvider:
         self.persona_version = persona_version
         self.persona_files = [Path(path).expanduser() for path in persona_files]
         self.knowledge_files = [Path(path).expanduser() for path in knowledge_files]
+        self._persona_text_cache: dict[Path, tuple[int, int, str]] = {}
         self.knowledge_max_chunks = max(0, knowledge_max_chunks)
         self.knowledge_chunk_chars = max(120, knowledge_chunk_chars)
         self.vector_retriever = vector_retriever
@@ -188,6 +189,23 @@ class FileCharacterContextProvider:
                 return {}
         return {}
 
+    def _load_persona_text(self, paths: list[Path]) -> str:
+        chunks: list[str] = []
+        for path in paths:
+            try:
+                stat = path.stat()
+                signature = (int(stat.st_mtime_ns), int(stat.st_size))
+            except OSError:
+                signature = (0, 0)
+            cached = self._persona_text_cache.get(path)
+            if cached is not None and cached[:2] == signature:
+                chunks.append(cached[2])
+                continue
+            text = load_character_document(path)
+            self._persona_text_cache[path] = (*signature, text)
+            chunks.append(text)
+        return "\n".join(chunks)
+
     def _action_brackets_enabled(self) -> bool:
         if callable(self.action_brackets_provider):
             try:
@@ -227,9 +245,7 @@ class FileCharacterContextProvider:
             persona_profile_id = self.persona_profile_id
             persona_display_name = self.persona_display_name
             persona_files = self.persona_files
-        persona_text = "\n".join(
-            load_character_document(path) for path in persona_files
-        )
+        persona_text = self._load_persona_text(persona_files)
         persona = _build_persona_profile(
             profile_id=persona_profile_id,
             version=self.persona_version,
@@ -367,11 +383,24 @@ def build_character_context_provider(
         interaction_counts_provider = _interaction_counts
         persona_override_provider = _persona_override
         persona_weights_provider = _persona_weights
-    vector_provider: Any = build_vector_knowledge_provider(config)
+    fast_mode = bool(getattr(config, "bot_chat_fast_mode", True))
+    skip_vector = bool(getattr(config, "bot_chat_fast_disable_vector_knowledge", True))
+    vector_provider: Any = (
+        build_vector_knowledge_provider(
+            config,
+            timeout_override=(
+                float(getattr(config, "bot_chat_fast_embedding_timeout_seconds", 3.0) or 3.0)
+                if fast_mode
+                else None
+            ),
+        )
+        if not (fast_mode and skip_vector)
+        else type("UnavailableVectorProvider", (), {"available": False})()
+    )
     knowledge_retriever: Any = (
-        vector_provider
-        if vector_provider.available
-        else build_keyword_knowledge_provider(config)
+        build_keyword_knowledge_provider(config)
+        if fast_mode and skip_vector
+        else (vector_provider if vector_provider.available else build_keyword_knowledge_provider(config))
     )
     return FileCharacterContextProvider(
         persona_profile_id=str(getattr(config, "bot_persona_profile_id", "default")),
@@ -386,7 +415,7 @@ def build_character_context_provider(
         tone_voice=str(getattr(config, "bot_tone_voice", "soft")),
         tone_warmth=float(getattr(config, "bot_tone_warmth", 0.7)),
         tone_directness=float(getattr(config, "bot_tone_directness", 0.5)),
-        tone_message_count_limit=int(getattr(config, "bot_tone_message_count_limit", 1)),
+        tone_message_count_limit=int(getattr(config, "bot_tone_message_count_limit", 0)),
         memory_provider=build_memory_provider(config),
         memory_max_items=int(getattr(config, "bot_memory_max_items", 5)),
         memory_max_chars=int(getattr(config, "bot_memory_max_chars", 1200)),
@@ -470,6 +499,7 @@ def _build_persona_profile(
         role_boundaries=_dedupe_preserve_order(role_boundaries),
         style_rules=_dedupe_preserve_order(style_rules),
         forbidden_behaviors=_dedupe_preserve_order(forbidden_behaviors),
+        raw_text=persona_text,
     )
 
 

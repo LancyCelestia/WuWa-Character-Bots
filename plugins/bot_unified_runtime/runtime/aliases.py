@@ -23,6 +23,51 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+MODULE_ALIASES: dict[str, str] = {
+    "model": "model",
+    "模型": "model",
+    "help": "help",
+    "帮助": "help",
+    "runtime": "runtime",
+    "设置": "runtime",
+    "参数": "runtime",
+    "wiki": "wiki",
+    "维基": "wiki",
+    "百科": "wiki",
+}
+
+_COMMAND_ACTION_ALIASES: dict[str, str] = {
+    "添加": "add",
+    "新增": "add",
+    "切换": "set",
+    "切换模型": "set",
+    "查看": "list",
+    "列表": "list",
+    "用量": "usage",
+    "用量统计": "usage",
+    "搜索": "search",
+    "联网": "search",
+    "思考": "think",
+    "推理": "think",
+    "模型": "model",
+}
+
+
+def normalize_command_text(command_text: str) -> str:
+    """Normalize module/action tokens while preserving parameter spelling/content."""
+    parts = (command_text or "").strip().split(maxsplit=2)
+    if not parts:
+        return ""
+    module = MODULE_ALIASES.get(parts[0].lower(), parts[0].lower())
+    if len(parts) == 1:
+        return module
+    if module not in {"model", "runtime"}:
+        return f"{module} {parts[1]}" + (f" {parts[2]}" if len(parts) == 3 else "")
+    raw_action = parts[1]
+    action = _COMMAND_ACTION_ALIASES.get(raw_action, raw_action.lower())
+    return f"{module} {action}" + (f" {parts[2]}" if len(parts) == 3 else "")
+
+
 DEFAULT_VERB_MAP: dict[str, str] = {
     "帮助": "bot.help",
     "help": "bot.help",

@@ -16,9 +16,9 @@ from plugins.bot_unified_runtime.contracts import (
     PrivacyLevel,
     RiskLevel,
 )
-from plugins.bot_unified_runtime.sources.mediawiki import wiki_lookup
+from plugins.bot_unified_runtime.sources.mediawiki import build_wiki_brief, wiki_lookup
 
-_COMMAND_RE = re.compile(r"^[/!！]?(?:维基|維基|wiki|维基百科|維基百科|wikipedia)\s*(?P<query>.+)$", re.IGNORECASE)
+_COMMAND_RE = re.compile(r"^[/!！]?(?:维基百科|維基百科|wikipedia|维基|維基|wiki)\s*(?P<query>.+)$", re.IGNORECASE)
 
 
 def is_wiki_command(text: str) -> bool:
@@ -50,13 +50,16 @@ def build_wiki_capability(config: Any | None = None) -> Any:
                 body="用法：维基 <词条>，例如『维基 鸣潮』",
                 audit_tags=["wiki", "missing_query"],
             )
-        result = wiki_lookup(query, lang=lang, proxy=proxy)
+        pages = getattr(config, "bot_wiki_entry_pages", ["鳴潮角色列表"])
+        result = wiki_lookup(query, lang=lang, proxy=proxy, entry_pages=tuple(pages))
+        if result and any(token in query.lower() for token in ("游戏", "鸣潮", "原神", "崩坏", "星穹", "瓦罗兰特")):
+            result = build_wiki_brief(result)
         if result is None:
             return CapabilityResult(
                 request_id=message.request_id,
                 capability_id="bot.wiki",
                 kind="text",
-                body=f"没有在{lang}维基上找到『{query}』，换个写法试试？",
+                body=f"没有在{lang}维基上找到『{query}』，未找到可确认的独立页或列表条目，也可能是网络读取失败；可提供具体百科链接。",
                 audit_tags=["wiki", "not_found"],
             )
         return CapabilityResult(

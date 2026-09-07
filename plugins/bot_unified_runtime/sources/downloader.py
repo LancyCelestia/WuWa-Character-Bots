@@ -14,8 +14,12 @@ yt-dlp 按域名自动匹配；代理走 BOT_DOWNLOAD_PROXY（大陆拉油管用
 
 from __future__ import annotations
 
+import copy
+import logging
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from http.cookiejar import Cookie
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +31,21 @@ except Exception:  # noqa: BLE001 - 可选依赖，缺失时功能降级。
 _LOSSLESS_CODECS = {"flac", "alac", "wavpack", "ape", "wav", "aiff", "dsf", "dff"}
 _ATMOS_HINTS = ("atmos", "ec-3", "eac3", "ac-4", "joc")
 _DV_HINTS = ("dolby vision", "dvhe", "dvh1")
+logger = logging.getLogger(__name__)
+
+
+class _SafeMediaLogger:
+    """yt-dlp may include signed URLs and credentials even with quiet=True."""
+
+    def debug(self, message: str) -> None:
+        pass
+
+    def warning(self, message: str) -> None:
+        pass
+
+    def error(self, message: str) -> None:
+        # The caller reports a sanitized operational error; do not print raw logs.
+        pass
 
 
 @dataclass
@@ -85,6 +104,108 @@ class DownloadOutcome:
     path: str = ""
     analysis: MediaAnalysis | None = None
     error: str = ""
+
+
+def _dynamic_range_tier(fmt: dict) -> int:
+    """画面动态范围档位：3=杜比视界 > 2=HDR > 1=SDR。"""
+    dynamic = str(fmt.get("dynamic_range") or "").upper()
+    vcodec = str(fmt.get("vcodec") or "").lower()
+    note = str(fmt.get("format_note") or "").lower()
+    if "DOLBY" in dynamic or "dolby vision" in note or any(h in vcodec for h in _DV_HINTS):
+        return 3
+    if (dynamic and dynamic != "SDR") or "hdr" in note:
+        return 2
+    return 1
+
+
+def _audio_rank(fmt: dict) -> tuple[int, int, float, int]:
+    """音频档位：Hi-Res（无损）> 杜比全景声 > 普通；同级码率/采样率高者优先。"""
+    acodec = str(fmt.get("acodec") or "").lower()
+    lossless = 1 if acodec in _LOSSLESS_CODECS else 0
+    dolby = 1 if any(h in acodec for h in _ATMOS_HINTS) else 0
+    return lossless, dolby, float(fmt.get("abr") or 0.0), int(fmt.get("asr") or 0)
+
+
+def _fmt_size(fmt: dict, duration_seconds: float) -> int:
+    """格式大小：filesize 优先，缺失时用 总码率×时长 估算（未知返回 0）。"""
+    size = fmt.get("filesize") or fmt.get("filesize_approx") or 0
+    if size:
+        return int(size)
+    tbr = float(fmt.get("tbr") or 0.0)
+    if tbr > 0 and duration_seconds > 0:
+        return int(tbr * 1000 / 8 * duration_seconds)
+    return 0
+
+
+def select_media_streams(
+    formats: list[dict],
+    *,
+    duration_seconds: float = 0.0,
+    height_cap: int = 0,
+    max_bytes: int = 0,
+) -> tuple[dict | None, dict | None, str]:
+    """按用户画质要求选流（纯函数，可离线测试）。
+
+    视频顺序：最高分辨率 → 动态范围（杜比视界 > HDR > SDR）→ 帧率 → 码率；
+    音频顺序：Hi-Res（无损）→ 杜比全景声 → 码率/采样率。
+    音视频组合超过 max_bytes 时回退到小于上限的最高画质组合；
+    全部超限返回 (None, None, "over_limit")，不悄悄下载低画质。
+    """
+    videos = [
+        f
+        for f in formats or []
+        if f.get("vcodec") not in (None, "none") and f.get("height")
+    ]
+    audios = [
+        f for f in formats or [] if f.get("acodec") not in (None, "none")
+    ]
+    if height_cap > 0 and videos:
+        capped = [v for v in videos if int(v.get("height") or 0) <= height_cap]
+        videos = capped or videos
+    videos.sort(
+        key=lambda f: (
+            int(f.get("height") or 0),
+            _dynamic_range_tier(f),
+            float(f.get("fps") or 0.0),
+            float(f.get("tbr") or 0.0),
+        ),
+        reverse=True,
+    )
+    audios.sort(key=_audio_rank, reverse=True)
+
+    def _within_limit(candidate: dict, other_size: int) -> bool:
+        if max_bytes <= 0:
+            return True
+        size = _fmt_size(candidate, duration_seconds)
+        if size <= 0:
+            # 大小完全未知时放行（不因元数据缺失拒下载）。
+            return True
+        return size + other_size <= max_bytes
+
+    best_audio = audios[0] if audios else None
+    if not videos:
+        if best_audio is None:
+            return None, None, "no_streams"
+        if _within_limit(best_audio, 0):
+            return None, best_audio, ""
+        for audio in audios[1:]:
+            if _within_limit(audio, 0):
+                return None, audio, "audio_downgraded"
+        return None, None, "over_limit"
+    if best_audio is None:
+        for video in videos:
+            if _within_limit(video, 0):
+                return video, None, ""
+        return None, None, "over_limit"
+    audio_size = _fmt_size(best_audio, duration_seconds)
+    for video in videos:
+        if _within_limit(video, audio_size):
+            return video, best_audio, ""
+    for video in videos:
+        for audio in audios[1:]:
+            if _within_limit(video, _fmt_size(audio, duration_seconds)):
+                return video, audio, "audio_downgraded"
+    return None, None, "over_limit"
 
 
 def _detect_video_quality(formats: list[dict], *, codec: str) -> tuple[str, str]:
@@ -190,8 +311,8 @@ class MediaDownloader:
         cookies_file: str = "",
         proxy: str = "",
         download_dir: str = "data/downloads",
-        max_bytes: int = 200 * 1048576,
-        max_height: int = 1080,
+        max_bytes: int = 1073741824,
+        max_height: int = 0,
         timeout_seconds: int = 120,
         ffmpeg_path: str = "",
         cache_max_bytes: int = 0,
@@ -211,6 +332,85 @@ class MediaDownloader:
     def available(self) -> bool:
         return yt_dlp is not None
 
+    def _cookie_snapshot(self) -> tuple[Cookie, ...]:
+        """Normalize an export in memory; never hand the original file to yt-dlp.
+
+        The exporter flag controls domain scope; repair only its dot spelling.
+        Bad rows are dropped individually, including malformed HttpOnly rows.
+        Log counts once per file revision, never paths, cookie names or values.
+        """
+        if not self.cookies_file:
+            return ()
+        path = Path(self.cookies_file)
+        try:
+            stat = path.stat()
+            fingerprint = (str(path), stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            fingerprint = (str(path), -1, -1)
+        if getattr(self, "_cookies_fingerprint", None) == fingerprint:
+            return self._cached_cookies
+        self._cookies_fingerprint = fingerprint
+        self._cached_cookies: tuple[Cookie, ...] = ()
+        repaired = skipped = 0
+        cookies: list[Cookie] = []
+        try:
+            if fingerprint[2] < 0 or fingerprint[2] > 8 * 1024 * 1024:
+                raise OSError("cookie file unavailable or too large")
+            content = path.read_text(encoding="utf-8-sig")
+            for line in content.splitlines():
+                http_only = line.startswith("#HttpOnly_")
+                if http_only:
+                    line = line[len("#HttpOnly_"):]
+                elif not line.strip() or line.startswith("#"):
+                    continue
+                fields = line.split("\t")
+                if len(fields) != 7:
+                    skipped += 1
+                    continue
+                domain, scope, cookie_path, secure, expiry, name, value = fields
+                if (scope not in {"TRUE", "FALSE"} or secure not in {"TRUE", "FALSE"}
+                        or not name or not cookie_path.startswith("/")
+                        or not domain.strip(".") or any(c.isspace() for c in domain)
+                        or any(c in domain for c in "/:@\\")):
+                    skipped += 1
+                    continue
+                try:
+                    expires = int(expiry) if expiry else 0
+                    if expires < 0:
+                        raise ValueError("negative expiry")
+                except ValueError:
+                    skipped += 1
+                    continue
+                scoped = scope == "TRUE"
+                normalized_domain = ("." if scoped else "") + domain.lstrip(".")
+                repaired += int(normalized_domain != domain)
+                cookies.append(Cookie(
+                    version=0, name=name, value=value, port=None, port_specified=False,
+                    domain=normalized_domain, domain_specified=scoped, domain_initial_dot=scoped,
+                    path=cookie_path, path_specified=True, secure=secure == "TRUE",
+                    expires=expires or None, discard=not expires, comment=None, comment_url=None,
+                    rest={"HttpOnly": ""} if http_only else {}, rfc2109=False,
+                ))
+            self._cached_cookies = tuple(cookies)
+        except (OSError, UnicodeError):
+            skipped += 1
+        self.cookie_status = {"accepted": len(cookies), "normalized": repaired, "skipped": skipped}
+        if repaired or skipped:
+            logger.info("cookie import: accepted=%d normalized=%d skipped=%d; source unchanged",
+                        len(cookies), repaired, skipped)
+        return self._cached_cookies
+
+    @contextmanager
+    def _youtube_dl(self, opts: dict):
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            # Build the jar using yt-dlp's own class, with no on-disk filename.
+            from yt_dlp.cookies import YoutubeDLCookieJar
+            jar = YoutubeDLCookieJar()
+            for cookie in self._cookie_snapshot():
+                jar.set_cookie(copy.copy(cookie))
+            ydl.cookiejar = jar
+            yield ydl
+
     def _base_opts(self, *, skip_download: bool) -> dict:
         opts: dict[str, Any] = {
             "skip_download": skip_download,
@@ -221,8 +421,7 @@ class MediaDownloader:
             "socket_timeout": 30,
             "retries": 1,
         }
-        if self.cookies_file and Path(self.cookies_file).exists():
-            opts["cookiefile"] = self.cookies_file
+        opts["logger"] = _SafeMediaLogger()
         if self.proxy:
             opts["proxy"] = self.proxy
         if self.ffmpeg_path:
@@ -234,13 +433,17 @@ class MediaDownloader:
             raise RuntimeError("yt-dlp 未安装，无法做媒体分析")
         with self._lock:
             opts = self._base_opts(skip_download=True)
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if info is None:
-                    raise RuntimeError("yt-dlp 返回空元数据")
-                if info.get("_type") == "playlist" and info.get("entries"):
-                    info = info["entries"][0] or info
-                return _analysis_from_info(info)
+            try:
+                with self._youtube_dl(opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    if info is None:
+                        raise RuntimeError("yt-dlp 返回空元数据")
+                    if info.get("_type") == "playlist" and info.get("entries"):
+                        info = info["entries"][0] or info
+                    return _analysis_from_info(info)
+            except Exception as exc:  # noqa: BLE001 - never leak URL tokens or cookies.
+                raise RuntimeError(f"媒体分析失败（{type(exc).__name__}），请检查网络或登录态。") from None
+
 
     def _download_once(
         self,
@@ -265,6 +468,39 @@ class MediaDownloader:
                 # 优先最高画质（含 8K/Hi-Res），单文件受 max_filesize 约束。
                 fmt = "bestvideo+bestaudio/best"
             merge = {"merge_output_format": "mp4"}
+            # 按画质/音质优先级显式选流；组合超上限时回退到 <上限 的最高画质，
+            # 全部超限则诚实报错，不悄悄下载低画质。
+            probe_opts = self._base_opts(skip_download=True)
+            with self._youtube_dl(probe_opts) as probe_ydl:
+                probe_info = probe_ydl.extract_info(url, download=False)
+            if isinstance(probe_info, dict):
+                if probe_info.get("_type") == "playlist" and probe_info.get("entries"):
+                    probe_info = probe_info["entries"][0] or probe_info
+                video_fmt, audio_fmt, selection_note = select_media_streams(
+                    probe_info.get("formats") or [],
+                    duration_seconds=float(probe_info.get("duration") or 0.0),
+                    height_cap=cap,
+                    max_bytes=self.max_bytes,
+                )
+                if video_fmt is None and audio_fmt is None:
+                    return DownloadOutcome(
+                        error=(
+                            "所有画质组合均超过下载大小上限"
+                            if selection_note == "over_limit"
+                            else "上游未返回可下载媒体流"
+                        )
+                    )
+                parts = []
+                if video_fmt is not None and video_fmt.get("format_id"):
+                    parts.append(str(video_fmt["format_id"]))
+                if (
+                    audio_fmt is not None
+                    and audio_fmt.get("format_id")
+                    and audio_fmt.get("format_id") != (video_fmt or {}).get("format_id")
+                ):
+                    parts.append(str(audio_fmt["format_id"]))
+                if parts:
+                    fmt = "+".join(parts) + f"/{fmt}"
         opts.update(
             {
                 "outtmpl": str(self.download_dir / "%(id)s.%(ext)s"),
@@ -273,7 +509,7 @@ class MediaDownloader:
                 **merge,
             }
         )
-        with yt_dlp.YoutubeDL(opts) as ydl:
+        with self._youtube_dl(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             if info is None:
                 return DownloadOutcome(error="yt-dlp 返回空结果")
@@ -331,7 +567,7 @@ class MediaDownloader:
                                 url, single_file=True, height_cap=height_cap
                             )
                         except Exception as inner:  # noqa: BLE001
-                            last_error = f"{type(inner).__name__}: {str(inner)[:160]}"
+                            last_error = f"媒体下载失败（{type(inner).__name__}），请检查网络或登录态。"
                             continue
-                    last_error = f"{type(exc).__name__}: {str(exc)[:160]}"
+                    last_error = f"媒体下载失败（{type(exc).__name__}），请检查网络或登录态。"
             return DownloadOutcome(error=last_error)

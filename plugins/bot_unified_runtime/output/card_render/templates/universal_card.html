@@ -41,14 +41,17 @@
     --pc-rgb: {{ platform_color_rgb }};
     --blue: #23ade5;
     --text-main: #18191c;
-    --text-sub: #61666d;
-    --text-secondary: #9499a0;
+    --text-sub: #5b6069;
+    --text-secondary: #7a828c;
     --bg-body: #f1f2f3;
     --bg-card: #ffffff;
     --radius-lg: 24px;
     --radius-md: 16px;
     --radius-sm: 8px;
-    --shadow-card: 0 16px 40px rgba(var(--pc-rgb), 0.15), 0 4px 12px rgba(0,0,0,0.05);
+    --r-shell: 30px;
+    --r-panel: 18px;
+    --r-tile: 14px;
+    --shadow-card: 0 12px 32px rgba(var(--pc-rgb), 0.12), 0 3px 10px rgba(0,0,0,0.05);
     --font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
     --font-scale: {{ font_scale | default(1.0) }};
 }
@@ -57,29 +60,26 @@
 
 body {
     font-family: var(--font-family);
-    /* Windows 11 Mica：不透明静态底色，中间纯白、两侧按平台色淡染。 */
-    background: linear-gradient(
-        90deg,
-        color-mix(in srgb, var(--pc) 15%, #ffffff) 0%,
-        #ffffff 46%,
-        #ffffff 54%,
-        color-mix(in srgb, var(--pc) 15%, #ffffff) 100%
-    );
-    padding: 18px;
+    /* The renderer captures only the rounded card: outside stays transparent. */
+    background: transparent;
+    padding: 0;
     display: flex;
     justify-content: center;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
 }
 
 /* ===== 卡片容器 ===== */
 .card {
     width: {{ card_width }};
     max-width: 100%;
-    background: rgba(255, 255, 255, 0.92);
+    background: color-mix(in srgb, var(--pc) 4%, #ffffff);
     border: 1px solid color-mix(in srgb, var(--pc) 14%, #e4e6eb);
     border-radius: 28px;
     box-shadow: var(--shadow-card);
     overflow: hidden;
     position: relative;
+    margin: 18px;
     zoom: {{ scale_factor | default(font_scale | default(1.0)) }};
 }
 
@@ -161,6 +161,17 @@ body {
     object-fit: cover;
 }
 
+.avatar-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: color-mix(in srgb, var(--pc) 18%, #ffffff);
+    color: var(--pc-dark);
+    font-size: 28px;
+    font-weight: 650;
+    box-sizing: border-box;
+}
+
 .pendant-img {
     position: absolute;
     top: -20%;
@@ -186,7 +197,7 @@ body {
     border: 2px solid var(--pc);
     box-sizing: border-box;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 600;
     line-height: 1;
     z-index: 3;
     box-shadow: 0 2px 6px rgba(var(--pc-rgb), 0.28);
@@ -228,7 +239,7 @@ body {
 
 .author-name {
     font-size: 18px;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--pc);
     white-space: nowrap;
     overflow: hidden;
@@ -239,9 +250,10 @@ body {
 }
 
 .platform-badge {
-    font-size: 11px;
-    background: var(--pc-light);
-    color: var(--pc);
+    font-size: 12px;
+    background: color-mix(in srgb, var(--pc) 14%, #ffffff);
+    color: var(--pc-dark);
+    border: 1px solid color-mix(in srgb, var(--pc) 30%, #ffffff);
     border-radius: 6px;
     padding: 2px 10px;
     white-space: nowrap;
@@ -263,7 +275,7 @@ body {
 
 .uid-tag {
     font-size: 11px;
-    color: var(--pc);
+    color: var(--pc-dark);
     background: var(--pc-light);
     border: 1px solid var(--pc-mid);
     border-radius: 12px;
@@ -273,7 +285,7 @@ body {
 
 .handle-tag {
     font-size: 11px;
-    color: var(--pc);
+    color: var(--pc-dark);
     background: var(--pc-light);
     border: 1px solid var(--pc-mid);
     border-radius: 12px;
@@ -283,9 +295,9 @@ body {
 
 .id-tag {
     font-size: 11px;
-    color: #008ac5;
-    background: rgba(0,138,197,0.1);
-    border: 1px solid rgba(0,138,197,0.3);
+    color: var(--pc-dark);
+    background: var(--pc-light);
+    border: 1px solid var(--pc-mid);
     border-radius: 12px;
     padding: 1px 8px;
     white-space: nowrap;
@@ -344,10 +356,10 @@ body {
     font-size: 20px;
     color: #18191c;
     background: transparent;
-    border-left: 5px solid var(--pc);
+    border-left: 4px solid var(--pc);
     border-radius: 0;
     padding-left: 12px;
-    font-weight: 750;
+    font-weight: 700;
     width: calc(100% - 56px);
     max-width: calc(100% - 56px);
     line-height: 1.35;
@@ -763,7 +775,7 @@ body {
 }
 
 .footer {
-    background: rgba(255, 255, 255, 0.72);
+    background: color-mix(in srgb, var(--pc) 6%, #ffffff);
     border-top: 1px solid color-mix(in srgb, var(--pc) 12%, #e4e6eb);
     padding: 14px 20px 12px;
     position: relative;
@@ -773,7 +785,7 @@ body {
     top: -15px;
     right: 18px;
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 600;
     letter-spacing: 0.06em;
     color: color-mix(in srgb, var(--pc) 78%, #000);
     background: color-mix(in srgb, var(--pc) 26%, #ffffff);
@@ -801,24 +813,24 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-weight: 800;
+    font-weight: 600;
     color: #ffffff;
     background: var(--pc);
 }
 .footer-bot-name {
-    font-size: 14px;
-    font-weight: 800;
-    color: #35a7ff;
+    font-size: 17px;
+    font-weight: 650;
+    color: var(--pc);
 }
 .footer-parser-text {
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--text-secondary);
 }
 
 .source-badge {
     font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
-    font-weight: 800;
+    font-weight: 650;
     font-size: 13px;
     color: var(--text-secondary);
     background: var(--pc-light);
@@ -852,11 +864,11 @@ body {
 }
 .footer-bot-name {
     color: var(--pc);
-    font-weight: 900;
+    font-weight: 650;
 }
 .footer-parser-text {
     color: var(--text-secondary);
-    font-weight: 700;
+    font-weight: 600;
 }
 
 /* ===== Compact Mode: Music/Lyrics/Song List ===== */
@@ -875,7 +887,7 @@ body {
     position: absolute; bottom: 0; left: 0; right: 0;
     padding: 24px 20px 16px; background: linear-gradient(transparent, rgba(0,0,0,0.6));
 }
-.compact-cover-title { font-size: 22px; font-weight: 800; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+.compact-cover-title { font-size: 22px; font-weight: 700; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,0.3); }
 .compact-cover-artist { font-size: 14px; color: rgba(255,255,255,0.85); margin-top: 4px; }
 .compact-song-info { padding: 16px 20px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .compact-song-info .tag { font-size: 12px; padding: 2px 10px; border-radius: 6px; white-space: nowrap; }
@@ -908,9 +920,142 @@ body {
 .compact-song-name { font-size: 15px; font-weight: 600; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .compact-song-artist { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
 .compact-song-duration { font-size: 12px; color: var(--text-secondary); flex-shrink: 0; }
+
+
+/* ===== Mica video/content card ===== */
+:root {
+    --mica-shadow: 0 12px 32px rgba(31, 35, 41, .10), 0 2px 8px rgba(31, 35, 41, .05);
+    --mica-shadow-soft: 0 3px 10px rgba(31, 35, 41, .06);
+    --mica-border: rgba(255, 255, 255, .85);
+    --video-inset: 18px;
+}
+/* 截图容器：透明留白让外壳柔光真正出现在 PNG 里（.card 即渲染选择器）。 */
+.card.mica-stage {
+    width: calc({{ card_width }} + 56px);
+    max-width: none;
+    margin: 0;
+    padding: 28px;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    zoom: 1;
+}
+.video-card-shell {
+    /* UI 缩放：card_width/scale 布局再 zoom 放大回全宽——输出像素不变，元素等比变大。 */
+    width: calc({{ card_width }} / {{ scale_factor | default(font_scale | default(1.0)) }});
+    overflow: hidden;
+    border-radius: var(--r-shell);
+    background: color-mix(in srgb, var(--pc) 11%, #fff);
+    background: linear-gradient(140deg, color-mix(in srgb, var(--pc) 5%, #fff) 0%, color-mix(in srgb, var(--pc) 11%, #fff) 100%);
+    border: 1px solid var(--mica-border);
+    box-shadow: var(--mica-shadow);
+    position: relative;
+    isolation: isolate;
+    zoom: {{ scale_factor | default(font_scale | default(1.0)) }};
+}
+.video-card-shell::before {
+    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    background: radial-gradient(circle at 94% 3%, color-mix(in srgb, var(--pc) 14%, transparent), transparent 36%);
+}
+.video-card-shell::after {
+    content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+    border: 1px solid rgba(255,255,255,.75); border-radius: inherit;
+}
+.video-card-shell > .card { width:100%; max-width:none; margin:0; overflow:visible; border:0; border-radius:0; background:transparent; box-shadow:none; zoom:1; }
+.mica-surface {
+    background: linear-gradient(135deg, color-mix(in srgb, var(--pc) 4%, #fff) 0%, color-mix(in srgb, var(--pc) 8%, #fff) 100%);
+    border: 1px solid rgba(255,255,255,.9);
+    box-shadow: var(--mica-shadow-soft);
+}
+.video-topbar { margin:var(--video-inset); padding:15px 15px 8px; border-radius:var(--r-panel); }
+.video-author-layout { display: grid; grid-template-columns: 116px minmax(0, 1fr) 174px; column-gap: 12px; min-height: 110px; }
+.author-avatar-rail { grid-row: 1 / span 5; width: 116px; min-height: 110px; display: flex; align-items:center; justify-content:center; }
+.author-avatar-rail img, .author-avatar-fallback {
+    width: 104px; height: 104px; margin:0; border-radius:50%; object-fit:cover; display:flex; align-items:center; justify-content:center;
+    background:color-mix(in srgb,var(--pc) 20%,#fff); color:var(--pc-dark); font-size:20px; font-weight:650;
+    border:2px solid rgba(255,255,255,.95); box-shadow:0 4px 10px rgba(31,35,41,.09);
+}
+.author-five-row { min-width:0; display:flex; flex-direction:column; justify-content:center; gap:4px; padding-top:0; }
+.author-row { min-width:0; display:flex; align-items:center; flex-wrap:wrap; gap:4px; color:var(--text-secondary); font-size:12px; line-height:1.35; }
+.author-row-primary { align-items:baseline; color:var(--text-main); font-size:21px; font-weight:700; line-height:1.15; gap:5px; }
+.author-row-primary .author-name-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.author-badge { align-self:flex-end; margin:0 0 1px 0; padding:2px 7px; border-radius:999px; color:var(--pc-dark); background:color-mix(in srgb,var(--pc) 18%,#fff); border:1px solid rgba(255,255,255,.90); box-shadow:inset 0 1px 0 rgba(255,255,255,.95); font-size:10px; font-weight:600; }
+.author-badge-vip,.author-name-vip { color:#fb7299; } .author-badge-vip { background:#ffe3ee; } .author-badge-verified { margin-left:-3px; }
+.author-row-identifiers { flex-wrap:wrap; gap:4px; }
+.author-id { padding:2px 8px; border-radius:999px; color:var(--pc-dark); background:color-mix(in srgb,var(--pc) 12%,#fff); border:1px solid rgba(255,255,255,.90); box-shadow:inset 0 1px 0 rgba(255,255,255,.96); font-variant-numeric:tabular-nums; font-size:12px; }
+.author-row-signature { overflow:hidden; color:var(--text-sub); text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.author-row-stat { flex-wrap:wrap; gap:3px 12px; }
+.author-stat { color:var(--text-secondary); font-size:12px; font-variant-numeric:tabular-nums; }
+.author-row-timestamp { color:var(--text-secondary); font-size:12px; font-variant-numeric:tabular-nums; }
+.platform-top-right { display:flex; min-width:174px; flex-direction:column; align-items:flex-end; justify-content:flex-start; color:var(--pc-dark); text-align:right; }
+.platform-brand-tools { display:flex; align-items:flex-start; justify-content:flex-end; gap:15px; min-height:110px; }
+.platform-accent-block { display:flex; align-items:center; justify-content:center; background:none; border:0; box-shadow:none; color:var(--pc); }
+.platform-accent-block svg { width:96px; height:30px; fill:currentColor; }
+.footer-platform-logo svg { width:96px; height:30px; display:block; fill:currentColor; }
+.platform-top-right .qrcode-container { margin:0; padding:5px; border-radius:16px; background:color-mix(in srgb,var(--pc) 4%,#fff); border:1px solid rgba(255,255,255,.96); box-shadow:var(--mica-shadow-soft); }
+.platform-top-right .qrcode-img { width: 160px; height: 160px; display: block; border-radius: 12px; }
+.video-title { margin:0 var(--video-inset) 12px; padding:0; }
+.video-title-quote { position:relative; display:inline-flex; align-items:center; width:fit-content; max-width:100%; min-height:54px; padding:12px 17px 13px 24px; border-radius:var(--r-panel); overflow:hidden; color:var(--text-main); background:color-mix(in srgb, var(--pc) 7%, #fff); box-shadow:var(--mica-shadow-soft); font-size:23px; line-height:1.38; font-weight:700; }
+.video-title-marker { position:absolute; left:0; top:0; bottom:0; width:9px; border-radius:16px 0 0 16px; background:var(--pc); box-shadow:0 0 11px color-mix(in srgb,var(--pc) 42%,transparent); }
+.video-title-text { min-width:0; }
+.video-badge { display:inline-block; margin-left:7px; padding:2px 7px; border-radius:999px; background:color-mix(in srgb,var(--pc) 15%,#fff); color:var(--pc-dark); font-size:11px; font-weight:600; vertical-align:middle; }
+.video-cover-inset { position:relative; margin: 0 var(--video-inset) var(--video-inset); border-radius:var(--r-panel); overflow:hidden; background:color-mix(in srgb, var(--pc) 10%, #fff); aspect-ratio:16 / 9; border:1px solid rgba(255,255,255,.90); box-shadow:var(--mica-shadow-soft); }
+.video-cover-inset img { width:100%; height:100%; object-fit:cover; display:block; }
+.video-cover-inset .duration-pill { right:12px; bottom:12px; border-radius:11px; box-shadow:0 3px 8px rgba(31,35,41,.14); }
+.video-metric-columns { display:grid; grid-template-columns:repeat(auto-fit, minmax(96px, 1fr)); gap:8px; margin: 0 var(--video-inset) var(--video-inset); }
+.video-metric-card { min-width:0; min-height:86px; padding:12px 8px 11px; border-radius:var(--r-tile); display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--text-main); box-shadow:var(--mica-shadow-soft); }
+.metric-icon { width:24px; height:24px; display:flex; align-items:center; justify-content:center; margin-bottom:6px; color:var(--pc); }
+.metric-icon svg { width:22px; height:22px; display:block; fill:currentColor; color:currentColor; }
+.metric-value { display:block; overflow:hidden; color:var(--text-main); font-size:17px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.metric-label { display:block; margin-top:3px; color:var(--text-secondary); font-size:12px; }
+.video-card-summary { margin: 0 var(--video-inset) var(--video-inset); padding:15px 18px; border-radius:var(--r-panel); color:var(--text-sub); font-size:15.5px; line-height:1.75; white-space:pre-line; box-shadow:var(--mica-shadow-soft); }
+.footer.footer-colored { margin: 0 var(--video-inset) var(--video-inset); border:1px solid rgba(255,255,255,.92); padding:12px 15px 15px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-radius:var(--r-panel); background:color-mix(in srgb, var(--pc) 8%, #fff); color:var(--pc-dark); box-shadow:var(--mica-shadow-soft); }
+.footer-platform-name { display:flex; align-items:center; min-width:112px; font-size:12px; font-weight:600; }
+.footer.footer-colored .footer-bottom { margin:0; display:flex; align-items:center; justify-content:flex-end; gap:6px; }
+.footer-bot-pill { display:flex; align-items:center; gap:4px; padding:6px 9px 6px 6px; border-radius:999px; background:color-mix(in srgb, var(--pc) 6%, #fff); border:1px solid rgba(255,255,255,.98); box-shadow:inset 0 1px 0 rgba(255,255,255,.98); }
+.footer.footer-colored .footer-bot-left { display:flex; align-items:center; }
+.footer.footer-colored .footer-bot-right { display:inline-flex; align-items:center; gap:5px; padding:9px 12px; border-radius:999px; background:color-mix(in srgb,var(--pc) 10%,#fff); box-shadow:inset 0 1px 0 rgba(255,255,255,.92); }
+.footer.footer-colored .footer-bot-name { color:var(--pc-dark); font-size:24px; font-weight:700; line-height:1; }
+.footer.footer-colored .footer-parser-text { color:var(--pc-dark); font-size:17px; font-weight:600; line-height:1; }
+.footer.footer-colored .footer-bot-avatar { width:52px; height:52px; border-radius:50%; border:1px solid rgba(255,255,255,.96); box-shadow:0 2px 7px rgba(31,35,41,.10); }
+@media (max-width:720px) {
+    .video-author-layout { grid-template-columns:100px minmax(0,1fr); }
+    .author-avatar-rail { width:84px; } .author-avatar-rail img,.author-avatar-fallback { width:76px;height:76px; }
+    .platform-top-right { grid-column:2; grid-row:1; min-width:0; } .platform-brand-tools { min-height:0; }
+    .platform-top-right .qrcode-img { width:86px; height:86px; }
+}
+
 </style>
 </head>
 <body>
+{% if page_type in ["video", "dynamic", "article", "column", "note", "post", "tweet", "opus", "game", "store_page", "market_listing", "community_hub", "ticket", "cheese", "charity", "search", "project", "goods", "share_post", "share_video", "public_page", "works"] %}
+<div class="card mica-stage">
+<div class="video-card-shell">
+<div class="card">
+    <div class="video-topbar mica-surface">
+        <div class="video-author-layout">
+            <div class="author-avatar-rail">{% if avatar %}<img src="{{ avatar }}" alt="" onerror="this.style.display='none'">{% else %}<span class="author-avatar-fallback">{{ (name | default('U', true))[:1] }}</span>{% endif %}</div>
+            <div class="author-five-row">
+                <div class="author-row author-row-primary"><span class="author-name-text{% if official_title == '大会员' %} author-name-vip{% endif %}">{{ name }}</span>{% if official_title %}<span class="author-badge author-badge-vip">{{ official_title }}</span>{% endif %}{% if official_badge %}<span class="author-badge author-badge-verified">{{ official_badge }}</span>{% endif %}</div>
+                <div class="author-row author-row-identifiers">{% if handle %}<span class="author-id">{{ handle }}</span>{% endif %}{% if uid %}<span class="author-id">UID {{ uid }}</span>{% endif %}{% if author_uuid and author_uuid != uid %}<span class="author-id">UID {{ author_uuid }}</span>{% endif %}{% if bvid %}<span class="author-id">BV {{ bvid | replace('BV', '', 1) }}</span>{% endif %}{% if av_id %}<span class="author-id">AV {{ av_id | replace('av', '') | replace('AV', '') }}</span>{% endif %}{% if extra_dynamic_id %}<span class="author-id">动态 {{ extra_dynamic_id }}</span>{% endif %}{% if extra_status_id %}<span class="author-id">帖子 {{ extra_status_id }}</span>{% endif %}{% if extra_video_id %}<span class="author-id">视频 {{ extra_video_id }}</span>{% endif %}{% if extra_bangumi_id %}<span class="author-id">番剧 {{ extra_bangumi_id }}</span>{% endif %}</div>
+                {% if signature %}<div class="author-row author-row-signature">{{ signature }}</div>{% endif %}
+                <div class="author-row author-row-stat">{% for item in author_stat_items %}<span class="author-stat">{{ item.label }} {{ item.value }}</span>{% endfor %}</div>
+                <div class="author-row author-row-timestamp">{{ timestamp }}</div>
+            </div>
+            <div class="platform-top-right" data-platform-technical="{{ platform_official_name }}"><div class="platform-brand-tools"><div class="platform-accent-block mica-surface">{% if platform_logo_svg %}<span data-icon-source="iconfont">{{ platform_logo_svg | safe }}</span>{% endif %}</div>{% if qrcode %}<div class="qrcode-container"><img class="qrcode-img" src="{{ qrcode }}" alt="QR" onerror="this.parentElement.style.display='none'"></div>{% endif %}</div></div>
+        </div>
+    </div>
+    {% if title %}<div class="video-title"><div class="video-title-quote mica-surface"><span class="video-title-marker"></span><span class="video-title-text">{{ title }}</span>{% if official_badge %}<span class="video-badge">{{ official_badge }}</span>{% endif %}</div></div>{% endif %}
+    {% if banner or cover_url %}<div class="video-cover-inset"><img src="{{ banner or cover_url }}" alt="cover" onerror="this.style.display='none'">{% if video_duration %}<span class="duration-pill">{{ video_duration }}</span>{% endif %}</div>{% endif %}
+    {% if stats_bar_items %}<div class="video-metric-columns">{% for item in stats_bar_items %}<div class="video-metric-card mica-surface" aria-label="{{ item.label }}">{% if item.icon_svg %}<span class="metric-icon metric-{{ item.key }}" data-icon-source="{{ item.source | default('iconfont', true) }}">{{ item.icon_svg | safe }}</span>{% endif %}<span class="metric-value">{{ item.value }}</span><span class="metric-label">{{ item.label }}</span></div>{% endfor %}</div>{% endif %}
+    {% if video_desc or summary or text %}<div class="video-card-summary mica-surface">{{ video_desc or summary or text }}</div>{% endif %}
+    <div class="footer footer-colored"><span class="footer-platform-name">{% if platform_logo_svg %}<span class="footer-platform-logo" data-icon-source="iconfont">{{ platform_logo_svg | safe }}</span>{% else %}{{ platform_footer_label or platform_official_name or platform }}{% endif %}</span><div class="footer-bot-pill"><div class="footer-bot-left">{% if bot_avatar_url %}<img class="footer-bot-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="footer-bot-dot">{{ (bot_name | default('A', true))[:1] }}</span>{% endif %}</div><div class="footer-bot-right"><span class="footer-bot-name">{{ bot_name | default('守岸人', true) }}</span><span class="footer-parser-text">· Shorekeeper Parser</span></div></div></div>
+</div>
+</div>
+</div>
+{% else %}
 <div class="card">
     <!-- ===== Header 五行结构 ===== -->
     <div class="header">
@@ -918,6 +1063,8 @@ body {
             <div class="avatar-container">
                 {% if avatar %}
                 <img class="avatar-img" src="{{ avatar }}" alt="avatar" onerror="this.style.display='none'">
+                {% else %}
+                <span class="avatar-img avatar-fallback">{{ (name | default('U', true))[:1] }}</span>
                 {% endif %}
                 {% if pendant %}
                 <img class="pendant-img" src="{{ pendant }}" alt="pendant" onerror="this.style.display='none'">
@@ -940,7 +1087,7 @@ body {
                     {% else %}
                     {% if uid %}<span class="uid-tag">UID {{ uid }}</span>{% endif %}
                     {% if handle %}<span class="handle-tag">Handle {{ handle }}</span>{% endif %}
-                    {% if bvid %}<span class="id-tag">BVID {{ bvid }}</span>{% endif %}
+                    {% if bvid %}<span class="id-tag">BV {{ bvid }}</span>{% endif %}
                     {% if av_id %}<span class="id-tag">AV {{ av_id }}</span>{% endif %}
                     {% if extra_dynamic_id %}<span class="id-tag">动态 {{ extra_dynamic_id }}</span>{% endif %}
                     {% if extra_status_id %}<span class="id-tag">帖子 {{ extra_status_id }}</span>{% endif %}
@@ -1063,7 +1210,8 @@ body {
     </div>
     {% endif %}
 
-    <!-- ===== 内容区 ===== -->
+    <!-- ===== 内容区（无任何内容时整体隐藏，避免空白带） ===== -->
+    {% if text or summary or image_urls or pinned_comment or hot_comment or comments or forward or repost %}
     <div class="content">
         {% if text %}
         <div class="text-body">{{ text | safe }}</div>
@@ -1289,9 +1437,10 @@ body {
         </div>
         {% endif %}
     </div>
+    {% endif %}
 
-    <!-- ===== 直播间信息（page_type == "live" 时显示） ===== -->
-    {% if page_type == "live" %}
+    <!-- ===== 直播间信息（page_type == "live" 且有直播数据时显示） ===== -->
+    {% if page_type == "live" and (live_cover or live_screenshot or live_title or live_duration or live_area or live_tags or live_desc or live_viewers or live_rank or live_replay_views or live_popularity) %}
     <div class="live-section">
         {% if live_cover %}
         <div class="live-cover-wrap">
@@ -1451,9 +1600,10 @@ body {
         <div class="footer-platform">{{ platform_official_name or platform_display or type or 'Platform' }}</div>
         <div class="footer-bottom">
             <div class="footer-bot-left">{% if bot_avatar_url %}<img class="footer-bot-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="footer-bot-dot">{{ (bot_name | default('A', true))[:1] }}</span>{% endif %}</div>
-            <div class="footer-bot-right"><span class="footer-bot-name">{{ bot_name | default('守岸人', true) }}</span><span class="footer-parser-text">· ShoreKeeper Parser</span></div>
+            <div class="footer-bot-right"><span class="footer-bot-name">{{ bot_name | default('守岸人', true) }}</span><span class="footer-parser-text">· Shorekeeper Parser</span></div>
         </div>
     </div>
 </div>
+{% endif %}
 </body>
 </html>

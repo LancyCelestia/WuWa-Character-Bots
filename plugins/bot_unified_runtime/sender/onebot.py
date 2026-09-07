@@ -1,19 +1,29 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Any, Protocol
 
-from plugins.bot_unified_runtime.audit import redact_private_debug
 from plugins.bot_unified_runtime.contracts import (
     DeliveryReceipt,
+    OperationalIssue,
     ReceiptState,
     SendRequest,
     SessionType,
     new_debug_id,
 )
+from plugins.bot_unified_runtime.runtime.deadline import (
+    DeadlineExceeded,
+    apply_request_deadline,
+)
+from plugins.bot_unified_runtime.sender.timeout import resolve_transport_timeout
 
 ONEBOT_V11_TRANSPORT = "onebot.v11"
+logger = logging.getLogger(__name__)
+# 网络抖动 / NapCat 重连窗口内的瞬时异常：短退避内联重试，3 次尝试后才报发送失败。
+_ONEBOT_SEND_RETRY_DELAYS = (0.8, 1.6)
 OneBotMessageSegment = dict[str, Any]
 _FORWARD_API_UNAVAILABLE = object()
 
@@ -92,15 +102,26 @@ def _is_final_failure_retcode(retcode: int | None) -> bool:
 
 
 def _safe_onebot_failure_message(result: Any, debug_id: str) -> str:
-    retcode = _extract_onebot_retcode(result)
-    status = _extract_onebot_status(result)
-    parts = ["OneBot V11 发送失败"]
-    if retcode is not None:
-        parts.append(f"retcode={retcode}")
-    if status:
-        parts.append(f"status={status}")
-    parts.append(f"debug_id={debug_id}")
-    return "，".join(parts)
+    # Compatibility helper retained for internal callers; operational details
+    # must never be exposed in a public receipt.
+    return ""
+
+
+def _onebot_issue(
+    kind: str,
+    *,
+    retryable: bool,
+    debug_id: str,
+    attempts: int = 1,
+) -> OperationalIssue:
+    return OperationalIssue(
+        stage="onebot",
+        kind=kind,
+        retryable=retryable,
+        debug_id=debug_id,
+        safe_summary=kind,
+        attempts=max(1, attempts),
+    )
 
 
 def build_onebot_message_segments(send_request: SendRequest) -> list[OneBotMessageSegment]:
@@ -261,69 +282,229 @@ def _string_value(value: Any) -> str:
     return str(value)
 
 
-async def send_onebot_v11(bot: OneBotV11Bot, send_request: SendRequest) -> DeliveryReceipt:
-    try:
-        if send_request.content.content_type.strip().lower() == "chunks":
-            raw_chunks = send_request.content.content_ref.get("chunks")
-            chunks = (
-                [str(item).strip() for item in raw_chunks if str(item).strip()]
-                if isinstance(raw_chunks, list)
-                else []
-            )
-            if not chunks:
-                chunks = [send_request.content.text_fallback]
-            result = None
-            for chunk in chunks:
-                segment = _text_segment(chunk)
-                if send_request.target_scope is SessionType.PRIVATE:
-                    result = await bot.send_private_msg(
-                        user_id=_coerce_onebot_id(send_request.target_id),
-                        message=[segment],
-                    )
-                elif send_request.target_scope is SessionType.GROUP:
-                    result = await bot.send_group_msg(
-                        group_id=_coerce_onebot_id(send_request.target_id),
-                        message=[segment],
-                    )
-                else:
-                    return DeliveryReceipt(
-                        request_id=send_request.request_id,
-                        state=ReceiptState.BLOCKED,
-                        transport=ONEBOT_V11_TRANSPORT,
-                        public_message=f"OneBot V11 不支持目标类型：{send_request.target_scope.value}",
-                    )
-            if result is None:
-                raise RuntimeError("chunk transport returned no result")
+class _NonRetryableActionError(Exception):
+    pass
+
+
+async def _send_file_parts(bot: OneBotV11Bot, request: SendRequest, parts: list[dict[str, Any]]) -> Any:
+    """Files require upload APIs, not unsupported CQ:file. Never retry a bundle
+    after any side effect: a later failure must not resend a delivered file.
+    """
+    result: Any = None
+    for part in parts:
+        if part.get("type") != "file":
+            continue
+        path = Path(str(part.get("file") or ""))
+        if not path.is_file():
+            raise _NonRetryableActionError("missing_file")
+        params: dict[str, Any] = {"file": str(path.resolve()), "name": str(part.get("name") or path.name)}
+        if request.target_scope is SessionType.GROUP:
+            api = "upload_group_file"
+            params["group_id"] = _coerce_onebot_id(request.target_id)
+        elif request.target_scope is SessionType.PRIVATE:
+            api = "upload_private_file"
+            params["user_id"] = _coerce_onebot_id(request.target_id)
         else:
-            forward_result = await _try_send_forward_message(bot, send_request)
-            if forward_result is not _FORWARD_API_UNAVAILABLE:
-                result = forward_result
-            elif send_request.target_scope is SessionType.PRIVATE:
+            raise _NonRetryableActionError("unsupported_file_target")
+        method = getattr(bot, api, None)
+        try:
+            if callable(method):
+                result = await method(**params)
+            else:
+                call_api = getattr(bot, "call_api", None)
+                if not callable(call_api):
+                    raise _NonRetryableActionError("upload_api_unavailable")
+                result = await call_api(api, **params)
+            if not _onebot_result_is_success(result):
+                raise _NonRetryableActionError("upload_rejected")
+        except _NonRetryableActionError:
+            raise
+        except Exception as exc:
+            logger.warning("onebot upload call failed type=%s detail=%s", type(exc).__name__, str(exc)[:120])
+            raise _NonRetryableActionError("upload_failed_or_unknown") from exc
+    # The short caption is sent only after every upload succeeded.
+    text = request.content.text_fallback
+    if text:
+        try:
+            if request.target_scope is SessionType.GROUP:
+                result = await bot.send_group_msg(group_id=_coerce_onebot_id(request.target_id), message=[_text_segment(text)])
+            else:
+                result = await bot.send_private_msg(user_id=_coerce_onebot_id(request.target_id), message=[_text_segment(text)])
+        except Exception as exc:
+            raise _NonRetryableActionError("caption_failed_after_upload") from exc
+    return result
+
+
+async def _dispatch_onebot_send(
+    bot: OneBotV11Bot,
+    send_request: SendRequest,
+) -> Any | DeliveryReceipt:
+    """执行一次发送：返回 OneBot API 结果，或不可重试的 BLOCKED 回执。"""
+    parts = send_request.content.content_ref.get("parts", [])
+    if isinstance(parts, list) and any(isinstance(p, dict) and p.get("type") == "file" for p in parts):
+        return await _send_file_parts(bot, send_request, parts)
+    if send_request.content.content_type.strip().lower() == "chunks":
+        raw_chunks = send_request.content.content_ref.get("chunks")
+        chunks = (
+            [str(item).strip() for item in raw_chunks if str(item).strip()]
+            if isinstance(raw_chunks, list)
+            else []
+        )
+        if not chunks:
+            chunks = [send_request.content.text_fallback]
+        result = None
+        for chunk in chunks:
+            segment = _text_segment(chunk)
+            if send_request.target_scope is SessionType.PRIVATE:
                 result = await bot.send_private_msg(
                     user_id=_coerce_onebot_id(send_request.target_id),
-                    message=build_onebot_message_segments(send_request),
+                    message=[segment],
                 )
             elif send_request.target_scope is SessionType.GROUP:
                 result = await bot.send_group_msg(
                     group_id=_coerce_onebot_id(send_request.target_id),
-                    message=build_onebot_message_segments(send_request),
+                    message=[segment],
                 )
             else:
+                debug_id = new_debug_id()
                 return DeliveryReceipt(
                     request_id=send_request.request_id,
                     state=ReceiptState.BLOCKED,
                     transport=ONEBOT_V11_TRANSPORT,
-                    public_message=f"OneBot V11 不支持目标类型：{send_request.target_scope.value}",
+                    public_message="",
+                    debug_id=debug_id,
+                    operational_issue=_onebot_issue(
+                        "unsupported_target",
+                        retryable=False,
+                        debug_id=debug_id,
+                    ),
                 )
-    except Exception:  # noqa: BLE001 - OneBot 发送异常统一转为可重试失败回执。
+        if result is None:
+            raise RuntimeError("chunk transport returned no result")
+    else:
+        forward_result = await _try_send_forward_message(bot, send_request)
+        if forward_result is not _FORWARD_API_UNAVAILABLE:
+            result = forward_result
+        elif send_request.target_scope is SessionType.PRIVATE:
+            result = await bot.send_private_msg(
+                user_id=_coerce_onebot_id(send_request.target_id),
+                message=build_onebot_message_segments(send_request),
+            )
+        elif send_request.target_scope is SessionType.GROUP:
+            result = await bot.send_group_msg(
+                group_id=_coerce_onebot_id(send_request.target_id),
+                message=build_onebot_message_segments(send_request),
+            )
+        else:
+            debug_id = new_debug_id()
+            return DeliveryReceipt(
+                request_id=send_request.request_id,
+                state=ReceiptState.BLOCKED,
+                transport=ONEBOT_V11_TRANSPORT,
+                public_message="",
+                debug_id=debug_id,
+                operational_issue=_onebot_issue(
+                    "unsupported_target",
+                    retryable=False,
+                    debug_id=debug_id,
+                ),
+            )
+    return result
+
+
+async def send_onebot_v11(
+    bot: OneBotV11Bot,
+    send_request: SendRequest,
+    *,
+    timeout_seconds: float | None = None,
+) -> DeliveryReceipt:
+    result: Any = None
+    last_error: Exception | None = None
+    timeout = resolve_transport_timeout(timeout_seconds)
+    try:
+        timeout = apply_request_deadline(
+            timeout, getattr(send_request, "deadline_monotonic", None)
+        )
+    except DeadlineExceeded:
         debug_id = new_debug_id()
+        logger.warning(
+            "onebot send skipped after request deadline request_id=%s debug_id=%s",
+            send_request.request_id,
+            debug_id,
+        )
+        return DeliveryReceipt(
+            request_id=send_request.request_id,
+            state=ReceiptState.FAILED_FINAL,
+            transport=ONEBOT_V11_TRANSPORT,
+            public_message="",
+            debug_id=debug_id,
+            operational_issue=_onebot_issue(
+                "deadline_exceeded",
+                retryable=False,
+                debug_id=debug_id,
+            ),
+        )
+    for attempt in range(len(_ONEBOT_SEND_RETRY_DELAYS) + 1):
+        try:
+            dispatch = _dispatch_onebot_send(bot, send_request)
+            dispatched = await asyncio.wait_for(dispatch, timeout=timeout)
+            if isinstance(dispatched, DeliveryReceipt):
+                return dispatched
+            result = dispatched
+            last_error = None
+            break
+        except asyncio.CancelledError:
+            raise
+        except _NonRetryableActionError as exc:
+            debug_id = new_debug_id()
+            logger.warning("onebot file delivery stopped kind=%s request_id=%s", str(exc), send_request.request_id)
+            return DeliveryReceipt(request_id=send_request.request_id, state=ReceiptState.FAILED_FINAL,
+                transport=ONEBOT_V11_TRANSPORT, public_message="", debug_id=debug_id,
+                operational_issue=_onebot_issue(str(exc)[:48] or "file_delivery_failed_or_unknown", retryable=False, debug_id=debug_id))
+        except asyncio.TimeoutError:
+            debug_id = new_debug_id()
+            logger.warning(
+                "onebot send timed out request_id=%s debug_id=%s",
+                send_request.request_id,
+                debug_id,
+            )
+            return DeliveryReceipt(
+                request_id=send_request.request_id,
+                state=ReceiptState.FAILED_FINAL,
+                transport=ONEBOT_V11_TRANSPORT,
+                public_message="",
+                debug_id=debug_id,
+                operational_issue=_onebot_issue(
+                    "result_unknown",
+                    retryable=False,
+                    debug_id=debug_id,
+                    attempts=attempt + 1,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - 重试耗尽后统一转为可重试失败回执。
+            last_error = exc
+            if attempt < len(_ONEBOT_SEND_RETRY_DELAYS):
+                await asyncio.sleep(_ONEBOT_SEND_RETRY_DELAYS[attempt])
+    if last_error is not None:
+        debug_id = new_debug_id()
+        logger.warning(
+            "onebot send failed after retries type=%s debug_id=%s",
+            type(last_error).__name__,
+            debug_id,
+        )
         return DeliveryReceipt(
             request_id=send_request.request_id,
             state=ReceiptState.FAILED_RETRYABLE,
             transport=ONEBOT_V11_TRANSPORT,
-            public_message=f"OneBot V11 发送失败，debug_id={debug_id}",
+            public_message="",
             debug_id=debug_id,
             provider_message_id=None,
+            operational_issue=_onebot_issue(
+                "send_exception",
+                retryable=True,
+                debug_id=debug_id,
+                attempts=len(_ONEBOT_SEND_RETRY_DELAYS) + 1,
+            ),
         )
 
     if not _onebot_result_is_success(result):
@@ -339,10 +520,13 @@ async def send_onebot_v11(bot: OneBotV11Bot, send_request: SendRequest) -> Deliv
             state=state,
             transport=ONEBOT_V11_TRANSPORT,
             provider_message_id=None,
-            public_message=redact_private_debug(
-                _safe_onebot_failure_message(result, debug_id)
-            ),
+            public_message="",
             debug_id=debug_id,
+            operational_issue=_onebot_issue(
+                "retcode_failure",
+                retryable=state is ReceiptState.FAILED_RETRYABLE,
+                debug_id=debug_id,
+            ),
         )
 
     return DeliveryReceipt(

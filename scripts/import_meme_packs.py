@@ -31,9 +31,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from runtime_paths import runtime_path
+
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DB = ROOT / "data" / "meme_library.sqlite3"
-DEFAULT_TARGET = ROOT / "data" / "meme_library"
+DEFAULT_DB = runtime_path("data/meme_library.sqlite3")
+DEFAULT_TARGET = runtime_path("data/meme_library")
 IMAGE_EXTS = {".gif", ".webp", ".png", ".jpg", ".jpeg"}
 VIDEO_EXTS = {".mov", ".mp4", ".webm", ".avi", ".mkv"}
 PREFER = ["守岸人", "岸宝", "鸣潮", "战双帕弥什", "库洛"]
@@ -141,7 +143,6 @@ def run(
         known_md5.add(md5)
 
         ext = path.suffix.lower().lstrip(".") or "gif"
-        relative = Path("data") / "meme_library" / f"{md5}.{ext}"
         destination = target / f"{md5}.{ext}"
         if dry_run:
             report["imported"].append(
@@ -175,7 +176,7 @@ def run(
             continue
 
         try:
-            result = store.add(md5=md5, path=str(relative), ext=ext, group_id="")
+            result = store.add(md5=md5, path=str(destination), ext=ext, group_id="")
             inserted = bool(result["inserted"])
         except Exception as exc:  # noqa: BLE001
             report["failed"].append({"file": str(path), "error": f"db add: {exc}"})

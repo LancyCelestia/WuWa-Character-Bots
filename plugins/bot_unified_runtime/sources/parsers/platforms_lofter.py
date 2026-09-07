@@ -13,13 +13,19 @@ import re
 import urllib.parse
 from typing import Any
 
+from plugins.bot_unified_runtime.contracts.media import (
+    ParsedContent,
+    build_parsed_content,
+)
 from plugins.bot_unified_runtime.sources.parsers.http_util import (
     ParseHttpError,
     http_get_text,
     http_post_form,
 )
-from plugins.bot_unified_runtime.sources.parsers.platforms_generic import _og_scrape
-from plugins.bot_unified_runtime.sources.parsers.types import PlatformParse
+from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
+    _format_epoch,
+    _og_scrape,
+)
 
 _LOFTER_ANDROID_UA = "LOFTER-Android 8.2.36 (V2309A; Android 9; null) WIFI"
 _TAG_POSTS_URL = "https://api.lofter.com/newapi/tagPosts.json"
@@ -91,7 +97,7 @@ def _page_title(text: str) -> str:
     return _clean_title(match.group(1)) if match else ""
 
 
-def _parse_tag(url: str, raw_tag: str) -> PlatformParse:
+def _parse_tag(url: str, raw_tag: str) -> ParsedContent:
     tag = urllib.parse.unquote(raw_tag).strip()
     if not tag:
         raise ParseHttpError("lofter: missing tag")
@@ -135,7 +141,7 @@ def _parse_tag(url: str, raw_tag: str) -> PlatformParse:
             first_image = post_view.get("firstImage") or {}
             cover_url = str(first_image.get("orign") or "")
 
-    return PlatformParse(
+    return build_parsed_content(
         platform="lofter",
         item_id=tag,
         item_kind="tag",
@@ -148,7 +154,7 @@ def _parse_tag(url: str, raw_tag: str) -> PlatformParse:
     )
 
 
-def _parse_post(url: str, cookie_header: str, token: str) -> PlatformParse:
+def _parse_post(url: str, cookie_header: str, token: str) -> ParsedContent:
     match = _NUMERIC_TOKEN_RE.fullmatch(token)
     if not match:
         return _og_scrape(
@@ -218,7 +224,17 @@ def _parse_post(url: str, cookie_header: str, token: str) -> PlatformParse:
         body_text = f"{body_text}\n{tag_text}" if body_text else tag_text
 
     blog_info = post.get("blogInfo") or {}
-    return PlatformParse(
+    author_detail: dict = {}
+    blog_name = str(blog_info.get("blogName") or "").strip()
+    if blog_name:
+        author_detail["uuid"] = blog_name
+    blog_pic = str(blog_info.get("blogPicUrl") or "").strip()
+    if blog_pic:
+        author_detail["avatar"] = blog_pic
+    publish_time = _format_epoch(post.get("publishTime") or post.get("firstCreateTime"))
+    if publish_time:
+        stats["发布时间"] = publish_time
+    return build_parsed_content(
         platform="lofter",
         item_id=str(post.get("id") or ""),
         item_kind="post",
@@ -229,16 +245,17 @@ def _parse_post(url: str, cookie_header: str, token: str) -> PlatformParse:
         canonical_url=str(post.get("blogPageUrl") or url),
         stats=stats,
         parse_depth="deep",
+        detail={"author": author_detail} if author_detail else {},
     )
 
 
-def _parse_theme(url: str, path_id: str, text: str) -> PlatformParse:
+def _parse_theme(url: str, path_id: str, text: str) -> ParsedContent:
     match = _THIS_P_RE.search(text)
     if match:
         theme_id = match.group(1)
         preview_blog = match.group(2)
         title = _page_title(text) or f"Lofter 主题 {path_id or theme_id}"
-        return PlatformParse(
+        return build_parsed_content(
             platform="lofter",
             item_id=theme_id,
             item_kind="theme",
@@ -248,7 +265,7 @@ def _parse_theme(url: str, path_id: str, text: str) -> PlatformParse:
             parse_depth="deep",
         )
     title = _page_title(text) or "Lofter 主题页"
-    return PlatformParse(
+    return build_parsed_content(
         platform="lofter",
         item_id=path_id,
         item_kind="theme",
@@ -259,11 +276,11 @@ def _parse_theme(url: str, path_id: str, text: str) -> PlatformParse:
     )
 
 
-def _parse_selection(url: str, text: str) -> PlatformParse:
+def _parse_selection(url: str, text: str) -> ParsedContent:
     query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
     match_id = str((query.get("id") or [""])[0])
     title = _page_title(text) or (f"Lofter 精选 {match_id}" if match_id else "Lofter 精选")
-    return PlatformParse(
+    return build_parsed_content(
         platform="lofter",
         item_id=match_id,
         item_kind="collection",
@@ -274,8 +291,8 @@ def _parse_selection(url: str, text: str) -> PlatformParse:
     )
 
 
-def _parse_trend(url: str) -> PlatformParse:
-    return PlatformParse(
+def _parse_trend(url: str) -> ParsedContent:
+    return build_parsed_content(
         platform="lofter",
         item_id="",
         item_kind="page",
@@ -286,7 +303,7 @@ def _parse_trend(url: str) -> PlatformParse:
     )
 
 
-def parse_lofter(url: str, *, cookie_header: str = "") -> PlatformParse:
+def parse_lofter(url: str, *, cookie_header: str = "") -> ParsedContent:
     """Lofter 链接解析入口：按页面类型走深度接口或浅层降级。"""
     if "/tag/" in url:
         return _parse_tag(url, _segment_after(url, "tag"))

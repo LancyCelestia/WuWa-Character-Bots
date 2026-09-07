@@ -85,3 +85,15 @@ def build_subscription_registry() -> SubscriptionRegistry:
         for adapter in getattr(module, "ADAPTERS", []) or []:
             registry.register(adapter)
     return registry
+
+
+def build_subscription_registry_v2() -> list[Any]:
+    """返回 V2 adapter；与旧 registry 并存，便于运行时逐步切换。"""
+    from plugins.bot_unified_runtime.sources.subscriptions.music_v2 import (
+        ADAPTERS as MUSIC_ADAPTERS,
+    )
+    from plugins.bot_unified_runtime.sources.subscriptions.social_v2 import (
+        ADAPTERS as SOCIAL_ADAPTERS,
+    )
+
+    return [*SOCIAL_ADAPTERS, *MUSIC_ADAPTERS]

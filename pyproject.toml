@@ -9,6 +9,7 @@ dependencies = [
     "nonebot-adapter-onebot>=2.4.6",
     "nonebot-adapter-console>=0.10.0",
     "nonebot-adapter-mail>=1.0.0a7",
+    "nonebot-adapter-telegram==0.1.0b20",
     "nonebot-plugin-status>=0.9.0",
     "nonebot-plugin-apscheduler>=0.5.0",
     "nonebot-plugin-localstore>=0.7.4",
@@ -20,6 +21,7 @@ dependencies = [
 "faiss-cpu>=1.8",
     "nonebot-plugin-htmlkit>=0.1.0rc5",
     "jinja2>=3.1",
+    "qrcode[pil]>=8.0",
     "nonebot_plugin_memes_api>=0.5.1",
     "nonebot-plugin-mcpclient>=0.1.2",
     "mcp>=1.0.0,<2.0.0",
@@ -51,8 +53,8 @@ nonebot-adapter-onebot = [
 nonebot-adapter-console = [
     { name = "Console", module_name = "nonebot.adapters.console" }
 ]
-nonebot-adapter-mail = [
-    { name = "Mail", module_name = "nonebot.adapters.mail" }
+nonebot-adapter-telegram = [
+    { name = "Telegram", module_name = "nonebot.adapters.telegram" }
 ]
 "@local" = []
 
@@ -63,10 +65,10 @@ nonebot-plugin-apscheduler = ["nonebot_plugin_apscheduler"]
 nonebot-plugin-localstore = ["nonebot_plugin_localstore"]
 nonebot-plugin-alconna = ["nonebot_plugin_alconna"]
 nonebot-plugin-filehost = ["nonebot_plugin_filehost"]
-nonebot-plugin-orm = ["nonebot_plugin_orm"]
+# ORM is kept as an optional dependency but is not auto-loaded; no project plugin uses its models.
 nonebot-plugin-htmlkit = ["nonebot_plugin_htmlkit"]
-nonebot_plugin_memes_api = ["nonebot_plugin_memes_api"]
-nonebot-plugin-mcpclient = ["nonebot_plugin_mcpclient"]
+# meme generation is owned by bot_unified_runtime; do not auto-load the external API plugin.
+# MCP remains an optional dependency; do not auto-start stdio servers during NoneBot boot.
 
 [tool.ruff]
 extend-exclude = ["_crawlwiki_patch2"]

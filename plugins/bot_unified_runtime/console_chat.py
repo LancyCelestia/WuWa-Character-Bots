@@ -9,8 +9,7 @@
     python -m plugins.bot_unified_runtime.console_chat
     python -m plugins.bot_unified_runtime.console_chat --env .env
     python -m plugins.bot_unified_runtime.console_chat \\
-        --provider openai_compatible --model deepseek-chat \\
-        --base-url https://api.deepseek.com/v1 --api-key sk-xxx
+        --provider openai_compatible --model deepseek-v4-flash`n        --base-url https://newapi.qianqianye.com
     python -m plugins.bot_unified_runtime.console_chat --message "你好"   # 单轮
 
 交互命令：
@@ -110,6 +109,7 @@ from plugins.bot_unified_runtime.sources.parse_history import (
     build_parse_history_store,
 )
 from plugins.bot_unified_runtime.sources.parsers import extract_http_urls
+from plugins.bot_unified_runtime.sources.web_search import build_web_search_provider
 
 _BANNER = """\
 ============================================================
@@ -232,9 +232,24 @@ def _build_runtime(
         ),
         llm_provider=_build_llm_provider(config),
         meme_search_provider=build_meme_search_provider(config),
+        web_search_provider=build_web_search_provider(config),
+        web_max_results=config.bot_web_search_max_results,
+        web_page_proxy=config.bot_download_proxy,
+        web_page_timeout_seconds=config.bot_web_search_timeout_seconds,
+        web_page_max_chars=config.bot_web_search_fetch_max_chars,
+        request_budget_seconds=config.bot_request_budget_seconds,
+        web_search_enabled=config.bot_web_search_enabled,
+        web_search_admin_notice=config.bot_web_search_admin_notice,
         runtime_settings=runtime_settings,
         interaction_counter=runtime_settings.interaction_increment,
         model_router=build_model_router(config),
+        fast_mode=config.bot_chat_fast_mode,
+        reply_detail=config.bot_reply_detail,
+        fast_max_tokens=config.bot_chat_fast_max_tokens,
+        fast_max_candidates=config.bot_chat_fast_max_candidates,
+        fast_context_budget=config.bot_chat_fast_context_budget,
+        fast_web_max_queries=config.bot_chat_fast_web_max_queries,
+        fast_skip_web_pages=config.bot_chat_fast_skip_web_pages,
         temperature=config.bot_chat_temperature,
         max_tokens=config.bot_chat_max_tokens,
         model=config.bot_chat_model,

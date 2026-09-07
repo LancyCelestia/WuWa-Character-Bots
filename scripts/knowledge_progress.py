@@ -1,8 +1,10 @@
 """查看向量知识库嵌入进度：python scripts/knowledge_progress.py"""
-import sqlite3
-from pathlib import Path
 
-DB = Path(__file__).resolve().parents[1] / "data" / "knowledge_embeddings.sqlite3"
+import sqlite3
+
+from runtime_paths import runtime_path
+
+DB = runtime_path("data/knowledge_embeddings.sqlite3")
 
 con = sqlite3.connect(DB, timeout=10)
 total = con.execute("SELECT COUNT(*) FROM knowledge_chunks").fetchone()[0]

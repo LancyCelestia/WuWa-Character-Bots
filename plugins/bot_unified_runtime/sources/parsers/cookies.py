@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +30,11 @@ PLATFORM_COOKIE_DOMAINS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "twitter": ((".x.com", "x.com", ".twitter.com", "twitter.com"), ("auth_token", "ct0")),
     "youtube": ((".youtube.com", "youtube.com"), ("LOGIN_INFO", "SID", "HSID", "SSID")),
     "kurobbs": ((".kurobbs.com", "kurobbs.com"), ("user_token", "token")),
+    "weibo": ((".weibo.com", "weibo.com", ".weibo.cn", "weibo.cn"), ("SUB", "SUBP", "ALF")),
+    "kuaishou": ((".kuaishou.com", "kuaishou.com"), ("kuaishou.server.webday7_st", "passToken", "userId")),
+    "acfun": ((".acfun.cn", "acfun.cn"), ("acPassToken", "acUsername")),
+    "moegirl": ((".moegirl.org.cn", "moegirl.org.cn"), ("moegirlSSOToken",)),
+    "xiaoheihe": ((".xiaoheihe.cn", "xiaoheihe.cn"), ("pkey", "hkey", "token")),
     "skland": ((".skland.com", "skland.com"), ()),
     "miyoushe": ((".miyoushe.com", "miyoushe.com", ".bbs.miyoushe.com", "bbs.miyoushe.com"), ()),
 }
@@ -92,19 +98,30 @@ def parse_netscape_cookie_file(path: str | Path) -> list[CookieEntry]:
     return entries
 
 
+def _resolve_relative_cookie_path(cookie_path: Path) -> Path:
+    """Resolve relative cookies from external Runtime first, never from CWD."""
+    if cookie_path.is_absolute():
+        return cookie_path
+    project_root = Path(__file__).resolve().parents[4]
+    raw_runtime = os.getenv("BOT_RUNTIME_DATA_DIR", "").strip()
+    if raw_runtime:
+        runtime_root = Path(raw_runtime).expanduser()
+        if not runtime_root.is_absolute():
+            runtime_root = project_root / runtime_root
+        normalized = str(cookie_path).replace("\\", "/")
+        if normalized == "data":
+            return runtime_root
+        if normalized.startswith("data/"):
+            return runtime_root / normalized[5:]
+        return runtime_root / cookie_path
+    return project_root / cookie_path
+
+
 def build_platform_cookie_provider(path: str | Path | None) -> PlatformCookieProvider:
     provider = PlatformCookieProvider()
     if not path:
         return provider
-    cookie_path = Path(path)
-    if not cookie_path.is_absolute():
-        # 相对路径两级回退：当前目录 → 项目根（保证从任意目录运行可用）。
-        cwd_candidate = Path.cwd() / cookie_path
-        if cwd_candidate.exists():
-            cookie_path = cwd_candidate
-        else:
-            project_root = Path(__file__).resolve().parents[4]
-            cookie_path = project_root / cookie_path
+    cookie_path = _resolve_relative_cookie_path(Path(path))
     if not cookie_path.exists():
         return provider
     try:

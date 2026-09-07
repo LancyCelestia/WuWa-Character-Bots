@@ -11,6 +11,7 @@ from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     DeliveryReceipt,
     IncomingMessage,
+    OperationalIssue,
     PolicyEvaluation,
     PrivacyLevel,
     ReceiptState,
@@ -18,6 +19,7 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
     SendPolicy,
     SendRequest,
+    SessionType,
 )
 from plugins.bot_unified_runtime.output import (
     build_forward_output,
@@ -179,11 +181,12 @@ class RuntimePipeline:
         quiet_hours_checker: QuietHoursChecker | None = None,
         runtime_control: RuntimeControlState | None = None,
         forward_min_chars: int = 1500,
-        forward_max_nodes: int = 6,
+        forward_max_nodes: int = 0,
         forward_node_chars: int = 900,
         alias_command_check: Callable[[str], bool] | None = None,
         group_auto_reply_enabled: bool = False,
         group_auto_reply_probability: float = 0.0,
+        vision_reply_probability: float = 1.0,
         group_black1: frozenset[str] = frozenset(),
         group_black2: frozenset[str] = frozenset(),
         group_white1: frozenset[str] = frozenset(),
@@ -200,12 +203,13 @@ class RuntimePipeline:
         self.quiet_hours_checker = quiet_hours_checker or QuietHoursChecker()
         # 0=禁用合并转发（短消息与已分段回复都直接发送）。
         self.forward_min_chars = int(forward_min_chars)
-        self.forward_max_nodes = max(1, int(forward_max_nodes))
+        self.forward_max_nodes = max(0, int(forward_max_nodes))
         self.forward_node_chars = max(200, int(forward_node_chars))
         policy_settings = PolicySettings(
             group_command_prefix=group_command_prefix,
             group_auto_reply_enabled=group_auto_reply_enabled,
             group_auto_reply_probability=group_auto_reply_probability,
+            vision_reply_probability=vision_reply_probability,
             group_black1=frozenset(group_black1),
             group_black2=frozenset(group_black2),
             group_white1=frozenset(group_white1),
@@ -230,7 +234,27 @@ class RuntimePipeline:
         except Exception:  # noqa: BLE001 - 审计写入失败时静默跳过，不阻断流水线。
             return
 
-    def _record_receipt_safely(self, receipt: DeliveryReceipt) -> DeliveryReceipt:
+    def _record_receipt_safely(
+        self,
+        receipt: DeliveryReceipt,
+        message: IncomingMessage | None = None,
+    ) -> DeliveryReceipt:
+        is_group_silent_failure = (
+            message is not None
+            and message.session_type.value == "group"
+            and receipt.state
+            in {
+                ReceiptState.BLOCKED,
+                ReceiptState.FAILED_RETRYABLE,
+                ReceiptState.FAILED_FINAL,
+            }
+            and (
+                receipt.transport == "runtime"
+                or receipt.public_message == "该场景下未启用主动回复。"
+            )
+        )
+        if is_group_silent_failure:
+            receipt = receipt.model_copy(update={"public_message": ""})
         try:
             return self.receipt_repository.record(receipt)
         except Exception:  # noqa: BLE001 - 回执持久化失败时返回原始回执降级。
@@ -261,7 +285,7 @@ class RuntimePipeline:
                     private_debug="bot_runtime_enabled=false",
                 )
             )
-            return self._record_receipt_safely(receipt)
+            return self._record_receipt_safely(receipt, message)
         if self.role_settings is not None:
             message = message.model_copy(
                 update={"sender_roles": self.role_settings.resolve_roles(message)}
@@ -286,7 +310,7 @@ class RuntimePipeline:
                     private_debug=f"reason={self.runtime_control.reason}",
                 )
             )
-            return self._record_receipt_safely(receipt)
+            return self._record_receipt_safely(receipt, message)
         policy = self.policy_evaluator(message, capability_id)
         if not policy.allowed:
             receipt = DeliveryReceipt(
@@ -308,7 +332,7 @@ class RuntimePipeline:
                     private_debug=policy.reason,
                 )
             )
-            return self._record_receipt_safely(receipt)
+            return self._record_receipt_safely(receipt, message)
 
         quiet_hours = self.quiet_hours_checker.check(message, capability_id)
         if not quiet_hours.allowed:
@@ -334,17 +358,27 @@ class RuntimePipeline:
                     ),
                 )
             )
-            return self._record_receipt_safely(receipt)
+            return self._record_receipt_safely(receipt, message)
 
         reply_budget = decide_reply_budget(
             message,
             capability_id,
             settings=self.reply_budget_settings,
         )
+        proactive_request = "proactive_reply:selected" in policy.audit_tags
+        interactive_request = (
+            not proactive_request
+            and (
+                (message.session_type.value == "group" and message.mentions_bot)
+                or capability_id != "bot.chat"
+            )
+        )
         rate_limit = self.rate_limiter.check_and_record(
             message,
             capability_id,
             amount=reply_budget.max_messages,
+            interactive=interactive_request,
+            proactive=proactive_request,
         )
         if not rate_limit.allowed:
             receipt = DeliveryReceipt(
@@ -369,7 +403,7 @@ class RuntimePipeline:
                     ),
                 )
             )
-            return self._record_receipt_safely(receipt)
+            return self._record_receipt_safely(receipt, message)
         decision = BotDecision(
             request_id=message.request_id,
             should_respond=True,
@@ -400,6 +434,35 @@ class RuntimePipeline:
     ) -> DeliveryReceipt:
         message = prepared.message
         decision = prepared.decision
+        if (
+            result.operational_issue is not None
+            and message.session_type in {SessionType.GROUP, SessionType.CHANNEL}
+        ):
+            result = result.model_copy(
+                update={"body": "", "send_policy": SendPolicy.SILENT_AUDIT}
+            )
+        if result.send_policy is SendPolicy.SILENT_AUDIT:
+            receipt = DeliveryReceipt(
+                request_id=message.request_id,
+                state=ReceiptState.SKIPPED,
+                transport="runtime",
+                public_message="",
+                debug_id=(result.operational_issue.debug_id if result.operational_issue else result.debug_id),
+                operational_issue=result.operational_issue,
+            )
+            self._append_audit_safely(
+                AuditRecord(
+                    request_id=message.request_id,
+                    session_id=message.session_id,
+                    capability_id=decision.capability_id,
+                    stage="runtime",
+                    event="silent_audit",
+                    severity=result.risk_level,
+                    public_message="",
+                    private_debug="; ".join(result.audit_tags) or "silent_audit",
+                )
+            )
+            return self._record_receipt_safely(receipt, message)
         review = review_capability_result(result, decision)
         if not review.approved:
             public_message = _review_block_public_message(result, review)
@@ -422,7 +485,7 @@ class RuntimePipeline:
                     private_debug="; ".join(review.reasons),
                 )
             )
-            return self._record_receipt_safely(receipt)
+            return self._record_receipt_safely(receipt, message)
 
         rendered = render_reviewed_output(result, review)
         use_forward = False
@@ -463,7 +526,7 @@ class RuntimePipeline:
                     private_debug="target_scope=group but IncomingMessage.group_id is empty",
                 )
             )
-            return self._record_receipt_safely(receipt)
+            return self._record_receipt_safely(receipt, message)
         send_request = SendRequest(
             request_id=message.request_id,
             session_id=message.session_id,
@@ -484,10 +547,15 @@ class RuntimePipeline:
             privacy_level=review.privacy_level,
             allow_split=use_forward,
             allow_forward=use_forward or review.privacy_level is PrivacyLevel.PUBLIC,
+            deadline_monotonic=getattr(result, "deadline_monotonic", None),
             persona_profile_id=_resolve_persona_profile_id(decision, result),
-            audit_tags=_dedupe_tags([*decision.audit_tags, *result.audit_tags]),
+            adapter=message.adapter,
+            bot_id=message.bot_id,
+            audit_tags=_dedupe_tags([*decision.audit_tags, *result.audit_tags,
+                *(["chat_plain_text:v1"] if result.capability_id == "bot.chat" else [])]),
+            operational_issue=result.operational_issue,
         )
-        return self._record_receipt_safely(self.send_queue.submit(send_request))
+        return self._record_receipt_safely(self.send_queue.submit(send_request), message)
 
     def _internal_error(
         self,
@@ -496,7 +564,14 @@ class RuntimePipeline:
         exc: Exception,
     ) -> DeliveryReceipt:
         debug_id = message.debug_id
-        public_message = f"运行时内部错误，debug_id={debug_id}"
+        issue = OperationalIssue(
+            stage="runtime",
+            kind="internal_error",
+            retryable=False,
+            debug_id=debug_id,
+            safe_summary="internal_error",
+        )
+        public_message = ""
         self._append_audit_safely(
             AuditRecord(
                 request_id=message.request_id,
@@ -506,7 +581,7 @@ class RuntimePipeline:
                 event="internal_error",
                 severity=RiskLevel.HIGH,
                 public_message=public_message,
-                private_debug=redact_private_debug(repr(exc)),
+                private_debug=redact_private_debug(type(exc).__name__),
             )
         )
         receipt = DeliveryReceipt(
@@ -515,8 +590,9 @@ class RuntimePipeline:
             transport="runtime",
             public_message=public_message,
             debug_id=debug_id,
+            operational_issue=issue,
         )
-        return self._record_receipt_safely(receipt)
+        return self._record_receipt_safely(receipt, message)
 
     def handle(
         self,
@@ -549,4 +625,3 @@ class RuntimePipeline:
             return self._complete(prepared, result)
         except Exception as exc:  # pragma: no cover - integration fallback.  # noqa: BLE001 - 能力调用异常统一转为内部错误回执。
             return self._internal_error(message, capability_id, exc)
-

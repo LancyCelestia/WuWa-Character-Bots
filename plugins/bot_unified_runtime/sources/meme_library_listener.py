@@ -124,7 +124,9 @@ async def _tag_with_vlm(store: Any, config: Any, md5: str, image_bytes: bytes) -
     model = vision["model"]
     base_url = vision["base_url"]
     api_key = vision["api_key"]
-    if not (model and base_url and api_key):
+    # 视觉打标使用与聊天相同的 OpenAI-compatible 直连接口。
+    # 表情库识图仅在显式配置有效端点时运行；空配置保持静默。
+    if not (model and base_url):
         return
     data_url = f"data:image/png;base64,{base64.b64encode(image_bytes).decode()}"
     payload = {
@@ -142,9 +144,12 @@ async def _tag_with_vlm(store: Any, config: Any, md5: str, image_bytes: bytes) -
     }
     try:
         async with httpx.AsyncClient(timeout=float(getattr(config, "bot_meme_library_vlm_timeout_seconds", 20) or 20)) as client:
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
             response = await client.post(
                 f"{base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
+                headers=headers,
                 json=payload,
             )
             if response.status_code != 200:

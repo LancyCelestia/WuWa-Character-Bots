@@ -8,7 +8,7 @@ param(
 )
 
 # Local git workflow helper. Never pushes, never force-pushes.
-# Usage examples are listed in Show-Help below; Chinese docs live in GIT.md.
+# Usage examples are listed in Show-Help below; historical Chinese Git notes are archived outside the AI workspace.
 
 $ErrorActionPreference = "Stop"
 # pwsh 7.3+：git 的 stderr 提示（LF/CRLF 等）默认按错误记录处理，

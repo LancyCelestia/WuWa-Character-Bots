@@ -58,7 +58,7 @@ Start-Process -FilePath "$env:ComSpec" -ArgumentList '/c','launcher-win10-user.b
 ```env
 DRIVER=~fastapi+~httpx+~websockets
 ONEBOT_WS_URLS=["ws://127.0.0.1:3001/?access_token=<与NapCat一致的token>"]
-LOCALSTORE_USE_CWD=true
+LOCALSTORE_USE_CWD=false
 ```
 
 > 把 `<与NapCat一致的token>` 换成第 2 步填写的真实 token。
@@ -67,21 +67,21 @@ LOCALSTORE_USE_CWD=true
 首次运行前先初始化 ORM 数据库（PostgreSQL + asyncpg，本机安装在 C:\Software\PostgreSQL\17，服务名 postgresql-x64-17）：
 
 ```powershell
-cd C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot
-.venv\Scripts\nb orm upgrade
-.venv\Scripts\nb orm check   # 应提示：没有检测到新的升级操作
+cd C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot
+C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\nb orm upgrade
+C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\nb orm check   # 应提示：没有检测到新的升级操作
 ```
 
 启动方式二选一：
 
 ```powershell
 # A. 用 nb-cli（首次先 pip install nb-cli）
-cd C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot
-.venv\Scripts\python -m pip install nb-cli
-.venv\Scripts\nb run
+cd C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot
+C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\python -m pip install nb-cli
+C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\nb run
 
 # B. 直接跑（bot.py 已注册 OneBot V11 适配器）
-.venv\Scripts\python bot.py
+C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\python bot.py
 ```
 
 > nb-cli 1.7 已移除 `--env-file` 选项；直接运行 `nb run` 即可，
@@ -103,3 +103,5 @@ cd C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot
 
 NapCat 的「驱动器」是它自己面板里的插件类型（如 LLOneBot 插件），
 与 NoneBot 的驱动器是两回事：**NapCat 面板里默认插件即可，不用额外装**。
+
+> 外部运行时说明：LOCALSTORE_USE_CWD 必须保持为 false。ChatBot_Runtime\\config、cache\\nonebot 和 data\\nonebot 是第三方插件的实际落盘位置；不要把它们改回源码目录。详见 [外部运行时访问与工作区边界](external-runtime-access.md)。

@@ -90,12 +90,16 @@ def _build_runtime(config: Config) -> tuple[RuntimePipeline, Any]:
         "web_page_timeout_seconds": float(
             getattr(config, "bot_web_search_timeout_seconds", 6.0) or 6.0
         ),
+        "web_page_max_chars": int(
+            getattr(config, "bot_web_search_fetch_max_chars", 3000) or 3000
+        ),
         "runtime_settings": runtime_settings,
         "model_router": (
             build_model_router(config)
             if config.bot_chat_provider == "openai_compatible"
             else None
         ),
+        "reply_detail": config.bot_reply_detail,
         "temperature": config.bot_chat_temperature,
         "max_tokens": config.bot_chat_max_tokens,
         "model": config.bot_chat_model,

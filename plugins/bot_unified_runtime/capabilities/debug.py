@@ -609,16 +609,216 @@ def build_llm_query_result(
     )
 
 
+_LLM_SETUP_STATUS_LABELS = {
+    "ready_for_probe": ("配置就绪，可以实测", "ok"),
+    "blocked": ("配置受阻", "blocked"),
+    "needs_env_edit": ("需要修改 .env", "warn"),
+}
+_LLM_SETUP_NEXT_ACTIONS = {
+    "fix_config": "先修复上方标红的配置项；编辑 .env 保存后重启 Bot 生效。",
+    "llm_smoke": "配置已具备。运行 /bot llm 可做一次真实连接诊断（会调用一次模型）。",
+    "configure_real_llm": "本地链路可用；接入真实模型只需补齐上方标红项。",
+}
+
+
+def _llm_setup_rows(config: Config) -> list[dict[str, str]]:
+    """七个必配键的中文说明、取值范围与当前值（密钥永不展示）。"""
+    from plugins.bot_unified_runtime.config_readiness import base_url_error
+
+    provider = str(config.bot_chat_provider or "").strip()
+    model = str(config.bot_chat_model or "").strip()
+    temperature = float(config.bot_chat_temperature)
+    max_tokens = int(config.bot_chat_max_tokens)
+    timeout = float(config.bot_chat_timeout_seconds)
+    endpoint = safe_openai_endpoint_url(config.bot_chat_base_url)
+    key_ok = has_real_api_key(config.bot_chat_api_key)
+    return [
+        {
+            "key": "BOT_CHAT_PROVIDER",
+            "desc": "供应商类型",
+            "range": "openai_compatible（真实模型）或 static（本地占位）",
+            "value": provider or "（空）",
+            "ok": "1" if provider == "openai_compatible" else "0",
+        },
+        {
+            "key": "BOT_CHAT_MODEL",
+            "desc": "对话使用的模型名",
+            "range": "供应商提供的模型字符串，不能用占位符",
+            "value": model or "（空）",
+            "ok": "1" if model and model.lower() not in {"<model_name>", "your-model-name", "replace-me"} else "0",
+        },
+        {
+            "key": "BOT_CHAT_API_KEY",
+            "desc": "API 密钥（永不展示）",
+            "range": "真实密钥，或 env:变量名 引用",
+            "value": "已设置" if key_ok else "缺失或占位符",
+            "ok": "1" if key_ok else "0",
+        },
+        {
+            "key": "BOT_CHAT_BASE_URL",
+            "desc": "OpenAI 兼容接口地址",
+            "range": "http(s):// 开头，一般以 /v1 结尾，不含账号密码",
+            "value": (endpoint.removesuffix("/chat/completions") or "（空）"),
+            "ok": "1" if not base_url_error(config.bot_chat_base_url) else "0",
+        },
+        {
+            "key": "BOT_CHAT_TEMPERATURE",
+            "desc": "采样温度（越高越随机）",
+            "range": "0.0 – 2.0",
+            "value": str(temperature),
+            "ok": "1" if math.isfinite(temperature) and 0.0 <= temperature <= 2.0 else "0",
+        },
+        {
+            "key": "BOT_CHAT_MAX_TOKENS",
+            "desc": "单次回复的输出上限",
+            "range": "≥0 的整数（0 = 不设上限）",
+            "value": str(max_tokens),
+            "ok": "1" if max_tokens >= 0 else "0",
+        },
+        {
+            "key": "BOT_CHAT_TIMEOUT_SECONDS",
+            "desc": "单次请求超时时间",
+            "range": "> 0 的数字（秒）",
+            "value": str(timeout),
+            "ok": "1" if math.isfinite(timeout) and timeout > 0 else "0",
+        },
+    ]
+
+
+def _llm_setup_accent(config: Config) -> tuple[str, str]:
+    """主色来自 bot_help_card_color（无平台语境）；留空回退中性灰。"""
+    from plugins.bot_unified_runtime.output.card_render.bridge import (
+        _darken,
+        _hex_to_rgb,
+        _rgb_to_hex,
+    )
+
+    rgb = _hex_to_rgb(str(getattr(config, "bot_help_card_color", "") or ""))
+    return _rgb_to_hex(rgb), _rgb_to_hex(_darken(rgb))
+
+
+def _llm_setup_mica_html(payload: dict[str, Any]) -> str:
+    """LLM 接入检查卡：中文说明 + 参数取值范围 + 当前值，Mica 规范。"""
+    import html as _html
+
+    accent, accent_ink = _llm_setup_accent(payload["config"])
+    status_label = str(payload["status_label"])
+    status_kind = str(payload["status_kind"])
+    rows_html = "".join(
+        "<div class=\"row\">"
+        f"<span class=\"dot {'ok' if row['ok'] == '1' else 'bad'}\"></span>"
+        "<div class=\"row-main\">"
+        f"<div class=\"row-key\">{_html.escape(row['key'])}"
+        f"<span class=\"row-desc\">{_html.escape(row['desc'])}</span></div>"
+        f"<div class=\"row-range\">取值范围：{_html.escape(row['range'])}</div>"
+        "</div>"
+        f"<span class=\"row-value\">{_html.escape(row['value'])}</span>"
+        "</div>"
+        for row in payload["rows"]
+    )
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><style>
+:root {{ --accent:{accent}; --accent-ink:{accent_ink}; --ink:#27232a; --muted:#6f646c; --good:#1a9e6c; --bad:#d64545; }}
+* {{ box-sizing:border-box; }}
+body {{ margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; background:transparent; color:var(--ink); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }}
+.setup-stage {{ padding:26px; background:transparent; }}
+.setup-shell {{ width:880px; overflow:hidden; border-radius:24px; border:1px solid rgba(255,255,255,.9); background:linear-gradient(165deg, color-mix(in srgb, var(--accent) 3%, #fff) 0%, color-mix(in srgb, var(--accent) 8%, #fff) 100%); box-shadow:0 12px 32px rgba(31,35,41,.10), 0 0 24px color-mix(in srgb, var(--accent) 12%, transparent); }}
+.setup-head {{ padding:20px 26px 16px; background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 2%, #fff), color-mix(in srgb, var(--accent) 6%, #fff)); border-bottom:1px solid color-mix(in srgb, var(--accent) 16%, #fff); }}
+.setup-kicker {{ color:var(--accent-ink); font-size:11px; font-weight:700; letter-spacing:.14em; }}
+.setup-title {{ margin-top:8px; font-size:28px; font-weight:700; }}
+.setup-status {{ display:inline-flex; align-items:center; gap:8px; margin-top:12px; padding:6px 14px; border-radius:999px; font-size:14px; font-weight:700; border:1px solid #fff; }}
+.setup-status.ok {{ color:var(--good); background:color-mix(in srgb, var(--good) 8%, #fff); }}
+.setup-status.blocked {{ color:var(--bad); background:color-mix(in srgb, var(--bad) 8%, #fff); }}
+.setup-status.warn {{ color:#b07d1a; background:color-mix(in srgb, #b07d1a 10%, #fff); }}
+.setup-message {{ margin-top:10px; color:var(--muted); font-size:13px; line-height:1.55; }}
+.setup-body {{ padding:12px; display:grid; gap:6px; background:color-mix(in srgb, var(--accent) 3%, #fff); }}
+.row {{ display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:12px; background:color-mix(in srgb, var(--accent) 4%, #ffffff); border:1px solid rgba(255,255,255,.95); }}
+.dot {{ width:9px; height:9px; border-radius:50%; flex:none; }}
+.dot.ok {{ background:var(--good); box-shadow:0 0 0 3px color-mix(in srgb, var(--good) 14%, transparent); }}
+.dot.bad {{ background:var(--bad); box-shadow:0 0 0 3px color-mix(in srgb, var(--bad) 14%, transparent); }}
+.row-main {{ flex:1; min-width:0; }}
+.row-key {{ font-size:14px; font-weight:700; font-family:Consolas,monospace; }}
+.row-desc {{ margin-left:10px; font-size:12px; color:var(--muted); font-weight:400; font-family:"Segoe UI","Microsoft YaHei",sans-serif; }}
+.row-range {{ margin-top:3px; font-size:12px; color:var(--muted); }}
+.row-value {{ font-size:13px; font-weight:650; color:var(--accent-ink); max-width:300px; overflow-wrap:anywhere; text-align:right; }}
+.setup-foot {{ padding:12px 26px 16px; border-top:1px solid color-mix(in srgb, var(--accent) 16%, #fff); background:color-mix(in srgb, var(--accent) 10%, #fff); }}
+.setup-next {{ font-size:13px; color:var(--ink); line-height:1.6; }}
+.setup-next b {{ color:var(--accent-ink); }}
+</style></head><body><div class="setup-stage card"><section class="setup-shell"><header class="setup-head"><div class="setup-kicker">管理员诊断 · 只读，不改动 .env</div><div class="setup-title">LLM 接入检查</div><div class="setup-status {status_kind}">{_html.escape(status_label)}</div><div class="setup-message">{_html.escape(str(payload["message"]))}</div></header><main class="setup-body">{rows_html}</main><footer class="setup-foot"><div class="setup-next"><b>下一步：</b>{_html.escape(str(payload["next_step"]))}</div></footer></section></div></body></html>"""
+
+
+def _try_render_llm_setup_image(
+    config: Config,
+    result: dict[str, object],
+    *,
+    render_backend: Any | None,
+    card_dir: str,
+    request_id: str,
+) -> str:
+    """渲染 LLM 接入检查卡片；任何失败返回空串（回退精简文本）。"""
+    if render_backend is None or not getattr(render_backend, "available", False):
+        return ""
+    try:
+        status_key = str(result.get("llm_setup_status", ""))
+        status_label, status_kind = _LLM_SETUP_STATUS_LABELS.get(
+            status_key, (status_key or "未知状态", "warn")
+        )
+        next_action = str(result.get("llm_next_action", ""))
+        payload = {
+            "config": config,
+            "status_label": status_label,
+            "status_kind": status_kind,
+            "message": str(result.get("public_message", "")),
+            "rows": _llm_setup_rows(config),
+            "next_step": _LLM_SETUP_NEXT_ACTIONS.get(next_action, next_action),
+        }
+        png = render_backend.render_card(
+            {
+                "html": _llm_setup_mica_html(payload),
+                "viewport": {"width": 940, "height": 1000},
+                "device_scale_factor": 2,
+                "wait_ms": 0,
+            }
+        )
+        if not isinstance(png, bytes) or not png:
+            return ""
+        import hashlib
+        from pathlib import Path
+
+        target = Path(card_dir or "data/cards")
+        target.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha1(
+            f"{request_id}:{payload['status_label']}:{payload['rows']}".encode()
+        ).hexdigest()[:12]
+        path = target / f"llm_setup_{digest}.png"
+        path.write_bytes(png)
+        return str(path)
+    except Exception:  # noqa: BLE001 - 卡片失败回退精简文本。
+        return ""
+
+
+def _llm_setup_fallback_body(config: Config, result: dict[str, object]) -> str:
+    """渲染失败时的精简文本回退：一句话结论 + 标红项，不再输出键值墙。"""
+    lines = [str(result.get("public_message", ""))]
+    problems = [row["key"] for row in _llm_setup_rows(config) if row["ok"] != "1"]
+    if problems:
+        lines.append("需要修复的配置项：" + "、".join(problems))
+    lines.append("各项参数的中文说明与取值范围：编辑 .env 后重启即可生效。")
+    return "\n".join(lines)
+
+
 def build_llm_setup_query_result(
     config: Config,
     *,
     request_id: str | None = None,
     actor_roles: list[str],
+    render_backend: Any | None = None,
+    card_dir: str = "data/cards",
 ) -> CapabilityResult:
     if not _is_admin(actor_roles):
         return _debug_result(
             capability_id="bot.setup.llm",
-            title="LLM 接入清单",
+            title="LLM 接入检查",
             body=_DENIED_BODY,
             request_id=request_id,
             audit_tags=["debug_query", "llm_setup_query", "debug_denied"],
@@ -627,16 +827,38 @@ def build_llm_setup_query_result(
     from plugins.bot_unified_runtime.smoke import run_llm_setup
 
     result = run_llm_setup(config)
+    actual_request_id = request_id or new_request_id("debug")
+    image_path = _try_render_llm_setup_image(
+        config,
+        result,
+        render_backend=render_backend,
+        card_dir=card_dir,
+        request_id=actual_request_id,
+    )
+    audit_tags = [
+        "debug_query",
+        "llm_setup_query",
+        "llm_setup_ok" if result["ok"] else "llm_setup_error",
+    ]
+    if image_path:
+        return CapabilityResult(
+            request_id=actual_request_id,
+            capability_id="bot.setup.llm",
+            kind="image",
+            title="",
+            body="",
+            images=[{"type": "image", "file": image_path}],
+            risk_level=RiskLevel.LOW,
+            privacy_level=PrivacyLevel.PERSONAL,
+            send_policy=SendPolicy.IMMEDIATE,
+            audit_tags=audit_tags,
+        )
     return _debug_result(
         capability_id="bot.setup.llm",
-        title="LLM 接入清单",
-        body=_format_llm_setup_diagnostic(result),
-        request_id=request_id,
-        audit_tags=[
-            "debug_query",
-            "llm_setup_query",
-            "llm_setup_ok" if result["ok"] else "llm_setup_error",
-        ],
+        title="LLM 接入检查",
+        body=_llm_setup_fallback_body(config, result),
+        request_id=actual_request_id,
+        audit_tags=audit_tags,
     )
 
 
@@ -713,6 +935,7 @@ def _run_llm_diagnostic(
         model=config.bot_chat_model,
         base_url=config.bot_chat_base_url,
         timeout_seconds=config.bot_chat_timeout_seconds,
+        proxy=config.bot_download_proxy,
     )
     messages = [
         {

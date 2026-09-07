@@ -2,7 +2,7 @@
 
 - 默认关闭（BOT_WEB_SEARCH_ENABLED=false）；
 - 支持代理（BOT_DOWNLOAD_PROXY，例如 http://127.0.0.1:7890），外网检索走代理；
-- DuckDuckGo HTML 优先，失败/为空自动换 Bing HTML；
+- Tavily → You.com → LangSearch API 链式回退；TinyFish 可选用于正文抓取；不接 Bing；
 - 传输层统一使用 httpx：同步路径用 ``httpx.Client``（keep-alive 连接池），
   异步路径用 ``httpx.AsyncClient``，供 stdio MCP 服务器等异步调用方使用；
 - 单次超时短、失败静默降级为空，绝不拖慢对话。
@@ -386,11 +386,28 @@ class ChainedWebSearchProvider:
         *,
         timeout_seconds: float = 5.0,
         proxy: str = "",
+        page_fetcher: object | None = None,
     ) -> None:
         self.providers = providers
         self.timeout_seconds = timeout_seconds
         self.proxy = proxy
+        self.page_fetcher = page_fetcher
+        self.last_provider_name = ""
 
+    def fetch_page_text(self, url: str, *, max_chars: int = 800) -> str:
+        fetcher = self.page_fetcher
+        method = getattr(fetcher, "fetch_page_text", None)
+        if callable(method):
+            text = str(method(url, max_chars=max_chars) or "")
+            if text:
+                return text
+
+        return fetch_page_text(
+            url,
+            proxy=self.proxy,
+            timeout_seconds=self.timeout_seconds,
+            max_chars=max_chars,
+        )
     def search(self, query: str, *, max_results: int = 3) -> list[WebSearchHit]:
         for provider in self.providers:
             try:
@@ -398,6 +415,7 @@ class ChainedWebSearchProvider:
             except Exception:  # noqa: BLE001 - 单提供器失败回退下一提供器。
                 hits = []
             if hits:
+                self.last_provider_name = str(getattr(provider, "name", "unknown"))
                 return hits
         return []
 
@@ -433,39 +451,53 @@ class ChainedWebSearchProvider:
                     pass
 
 
+__all__ = [
+    "LangSearchWebSearchProvider",
+    "TavilyWebSearchProvider",
+    "TinyFishFetchProvider",
+    "TinyFishWebSearchProvider",
+    "YouSearchProvider",
+]
+
+from .search_api import (
+    LangSearchWebSearchProvider,
+    TavilyWebSearchProvider,
+    TinyFishFetchProvider,
+    TinyFishWebSearchProvider,
+    YouSearchProvider,
+    build_api_search_provider,
+)
+
+
 def _build_chained_provider(
-    timeout_seconds: float, proxy: str
+    timeout_seconds: float,
+    proxy: str,
+    config: object | None = None,
 ) -> ChainedWebSearchProvider:
-    """按统一参数构建 DDG → Bing 链式提供器。"""
-    return ChainedWebSearchProvider(
-        [
-            DuckDuckGoWebSearchProvider(timeout_seconds=timeout_seconds, proxy=proxy),
-            BingWebSearchProvider(
-                timeout_seconds=min(timeout_seconds + 1.0, 6.0), proxy=proxy
-            ),
-        ],
+    """Build the configured API chain: Tavily, You.com, LangSearch, optional TinyFish."""
+    if config is None:
+        return ChainedWebSearchProvider([], timeout_seconds=timeout_seconds, proxy=proxy)
+    providers, fetcher = build_api_search_provider(
+        config,
         timeout_seconds=timeout_seconds,
         proxy=proxy,
+    )
+    return ChainedWebSearchProvider(
+        list(providers),
+        timeout_seconds=timeout_seconds,
+        proxy=proxy,
+        page_fetcher=fetcher,
     )
 
 
 def build_web_search_provider(config: object | None = None) -> WebSearchProvider:
-    """按配置构建：未启用返回 Null；启用时 DDG → Bing 链式，带代理。"""
+    """Build the configured API provider chain; disabled or unconfigured means no search."""
     enabled = bool(getattr(config, "bot_web_search_enabled", False)) if config else False
-    if not enabled:
+    if not enabled or config is None:
         return NullWebSearchProvider()
-    timeout = (
-        float(getattr(config, "bot_web_search_timeout_seconds", 3.0) or 3.0)
-        if config
-        else 3.0
-    )
-    proxy = (
-        str(getattr(config, "bot_download_proxy", "") or "").strip()
-        if config
-        else ""
-    )
-    return _build_chained_provider(timeout, proxy)
-
+    timeout = float(getattr(config, "bot_web_search_timeout_seconds", 6.0) or 6.0)
+    proxy = str(getattr(config, "bot_download_proxy", "") or "").strip()
+    return _build_chained_provider(timeout, proxy, config)
 
 def _hit_dedupe_key(hit: WebSearchHit) -> str:
     """跨查询去重的稳定键：URL 小写、去尾部斜杠；无 URL 回退为标题。"""

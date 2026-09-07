@@ -8,8 +8,10 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -17,6 +19,9 @@ from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
     IncomingMessage,
+    MusicContributor,
+    MusicRequestEvent,
+    MusicTrack,
     PrivacyLevel,
     RiskLevel,
     SendPolicy,
@@ -26,6 +31,8 @@ from plugins.bot_unified_runtime.sources.parsers import (
     build_cookie_provider,
     music_search_providers,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 _COMMAND_RE = re.compile(
     r"^[/!！]?(?:点歌|點歌|music|song)\s*(?P<query>.+)$", re.IGNORECASE
@@ -137,11 +144,55 @@ def extract_music_mode(text: str) -> str | None:
     return normalize_music_mode(raw)
 
 
+def _music_track_from_item(item: Any, provider: str) -> MusicTrack:
+    existing = getattr(item, "music", None)
+    if isinstance(existing, MusicTrack):
+        return existing
+    artist_names = [
+        value.strip()
+        for value in str(getattr(item, "author_name", "") or "").split("、")
+        if value.strip()
+    ]
+    return MusicTrack(
+        provider=provider,
+        provider_track_id=str(getattr(item, "item_id", "") or getattr(item, "title", "")),
+        title=str(getattr(item, "title", "") or "未知歌曲"),
+        contributors=[
+            MusicContributor(name=name, roles=["performer"])
+            for name in artist_names
+        ],
+        artwork_url=str(getattr(item, "cover_url", "") or "") or None,
+        audio_url=str(getattr(item, "audio_url", "") or "") or None,
+    )
+
+
+def _record_music_request(
+    store: Any,
+    message: IncomingMessage,
+    item: Any,
+    provider: str,
+) -> None:
+    if store is None:
+        return
+    track = _music_track_from_item(item, provider)
+    canonical_id = store.upsert_track(track)
+    scope = getattr(getattr(message, "session_type", None), "value", "unknown")
+    store.record_successful_request(
+        MusicRequestEvent(
+            request_id=message.request_id,
+            canonical_track_id=canonical_id,
+            provider=track.provider,
+            provider_track_id=track.provider_track_id,
+            session_scope=str(scope),
+            requested_at=datetime.now(timezone.utc),
+        )
+    )
+
+
 def _music_card_parts(item: Any) -> list[dict]:
-    stats = getattr(item, "stats", None) or {}
-    if not isinstance(stats, dict):
-        return []
-    music_card = stats.get("music_card")
+    engagement = getattr(item, "engagement", None)
+    extras = getattr(engagement, "platform_extra", None) or {}
+    music_card = extras.get("music_card")
     if isinstance(music_card, dict) and music_card.get("type") and music_card.get("id"):
         return [
             {
@@ -153,6 +204,24 @@ def _music_card_parts(item: Any) -> list[dict]:
     return []
 
 
+def music_audio_url(item: Any) -> str:
+    """音频直链：music.audio_url 优先，其次媒体 audio 资产。"""
+    if item.music is not None and item.music.audio_url:
+        return str(item.music.audio_url)
+    audio_asset = next(
+        (asset for asset in (item.media or []) if asset.asset_type == "audio"),
+        None,
+    )
+    return str(audio_asset.url or "") if audio_asset is not None else ""
+
+
+def music_cover_url(item: Any) -> str:
+    """封面直链：解析器指定封面优先，其次首张图片资产。"""
+    from plugins.bot_unified_runtime.contracts.media import parsed_cover_url
+
+    return parsed_cover_url(item)
+
+
 def _media_parts_for_mode(
     item: Any,
     mode: str,
@@ -161,16 +230,17 @@ def _media_parts_for_mode(
     """按部件组合组装 OneBot 媒体部分：voice/file/card。"""
     parts = parse_music_mode_spec(mode) or DEFAULT_PARTS
     out: list[dict] = []
-    if item.audio_url and (("voice" in parts) or ("file" in parts)):
+    audio_url = music_audio_url(item)
+    if audio_url and (("voice" in parts) or ("file" in parts)):
         local_path = (
-            audio_downloader(item.audio_url)
+            audio_downloader(audio_url)
             if audio_downloader is not None
             else None
         )
         if "voice" in parts:
-            out.append({"type": "record", "file": str(local_path) if local_path else item.audio_url})
+            out.append({"type": "record", "file": str(local_path) if local_path else audio_url})
         if "file" in parts:
-            out.append({"type": "file", "file": str(local_path) if local_path else item.audio_url})
+            out.append({"type": "file", "file": str(local_path) if local_path else audio_url})
     if "card" in parts:
         out.extend(_music_card_parts(item))
     return out
@@ -183,13 +253,16 @@ def _media_parts_from_item(item: Any) -> list[dict]:
 
 def _render_music_body(item: Any, mode: str) -> str:
     parts = parse_music_mode_spec(mode) or DEFAULT_PARTS
-    lines = [f"♪ {item.title}"]
-    if item.author_name:
-        lines.append(f"歌手：{item.author_name}")
-    if item.summary:
-        lines.append(item.summary)
-    if "link" in parts and item.canonical_url:
-        lines.append(f"链接：{item.canonical_url}")
+    identity = item.identity
+    content = item.content
+    creator = item.creator
+    lines = [f"♪ {content.title if content else ''}"]
+    if creator is not None and creator.name:
+        lines.append(f"歌手：{creator.name}")
+    if content is not None and content.summary:
+        lines.append(content.summary)
+    if "link" in parts and identity is not None and identity.canonical_url:
+        lines.append(f"链接：{identity.canonical_url}")
     if "file" in parts:
         lines.append("（音频文件随后发送；下载失败则只有文字）")
     elif "voice" in parts:
@@ -350,6 +423,7 @@ def build_music_capability(
     providers: list[Any] | None = None,
     default_mode: str = "card+voice+link",
     audio_downloader: Callable[[str], str | None] | None = None,
+    request_store: Any | None = None,
 ) -> Any:
     """构建 bot.music 能力；providers 为空时按 config 平台名单构建。"""
     if providers is None:
@@ -380,22 +454,29 @@ def build_music_capability(
                 item = None
             if item is None:
                 continue
+            try:
+                _record_music_request(request_store, message, item, parser_id)
+            except Exception:
+                _LOGGER.debug("music analytics write failed", exc_info=True)
             body = _render_music_body(item, mode)
             audio = _media_parts_for_mode(item, mode, audio_downloader=audio_downloader)
             parts = parse_music_mode_spec(mode) or DEFAULT_PARTS
             has_music_card = bool(_music_card_parts(item))
+            cover_url = music_cover_url(item)
             images = (
-                [{"file": item.cover_url}]
-                if "card" in parts and not has_music_card and item.cover_url
+                [{"file": cover_url}]
+                if "card" in parts and not has_music_card and cover_url
                 else []
             )
+            identity = item.identity
+            content = item.content
             return CapabilityResult(
                 request_id=message.request_id,
                 capability_id="bot.music",
                 kind="mixed" if (audio or images) else "text",
-                title=item.title,
+                title=content.title if content else "",
                 body=body,
-                url=item.canonical_url or None,
+                url=(identity.canonical_url if identity else "") or None,
                 images=images,
                 audio=audio,
                 risk_level=RiskLevel.LOW,

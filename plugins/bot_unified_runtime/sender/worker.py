@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Protocol
@@ -10,6 +12,7 @@ from plugins.bot_unified_runtime.audit import AuditRepository
 from plugins.bot_unified_runtime.contracts import (
     AuditRecord,
     DeliveryReceipt,
+    OperationalIssue,
     ReceiptState,
     RiskLevel,
     SendRequest,
@@ -81,6 +84,7 @@ class SendQueueWorkerResult(BaseModel):
     final_failed: int = 0
     skipped: int = 0
     receipt_record_failed: int = 0
+    operational_issues: tuple[OperationalIssue, ...] = ()
 
 
 async def drain_send_queue_once(
@@ -91,6 +95,7 @@ async def drain_send_queue_once(
     audit_logger: AuditRepository | None = None,
     now: datetime | None = None,
     limit: int = 20,
+    operational_notifier: Callable[[DeliveryReceipt], object] | None = None,
 ) -> SendQueueWorkerResult:
     current_time = now or _utc_now()
     entries = _claim_or_list_due(send_queue, now=current_time, limit=limit)
@@ -102,9 +107,19 @@ async def drain_send_queue_once(
         "skipped": 0,
         "receipt_record_failed": 0,
     }
+    operational_issues: list[OperationalIssue] = []
 
     for entry in entries:
         receipt = await _call_transport_safely(entry.send_request, transport)
+        if receipt.operational_issue is None and entry.send_request.operational_issue is not None:
+            receipt = receipt.model_copy(
+                update={
+                    "operational_issue": entry.send_request.operational_issue,
+                    "public_message": "",
+                }
+            )
+        if receipt.operational_issue is not None:
+            operational_issues.append(receipt.operational_issue)
         if receipt_repository is not None:
             try:
                 receipt_repository.record(receipt)
@@ -115,7 +130,7 @@ async def drain_send_queue_once(
                     entry.send_request,
                     event="queue_worker_receipt_record_failed",
                     receipt=receipt,
-                    private_debug=f"{type(exc).__name__}: {exc}",
+                    private_debug=type(exc).__name__,
                 )
 
         queue_receipt = _update_queue_state(
@@ -124,6 +139,13 @@ async def drain_send_queue_once(
             receipt,
             now=current_time,
         )
+        if receipt.operational_issue is not None and queue_receipt.operational_issue is None:
+            queue_receipt = queue_receipt.model_copy(
+                update={
+                    "operational_issue": receipt.operational_issue,
+                    "public_message": "",
+                }
+            )
         if queue_receipt.state is ReceiptState.SENT:
             counters["delivered"] += 1
             event = "queue_worker_sent"
@@ -140,10 +162,87 @@ async def drain_send_queue_once(
             audit_logger,
             entry.send_request,
             event=event,
-            receipt=receipt,
+            receipt=queue_receipt,
+        )
+        await _notify_operational_issue_safely(
+            operational_notifier,
+            entry.send_request,
+            queue_receipt,
         )
 
-    return SendQueueWorkerResult(**counters)
+    return SendQueueWorkerResult(
+        **counters,
+        operational_issues=tuple(operational_issues),
+    )
+
+
+async def _notify_operational_issue_safely(
+    notifier: Callable[..., object] | None,
+    send_request: SendRequest,
+    receipt: DeliveryReceipt,
+) -> None:
+    if notifier is None or receipt.operational_issue is None:
+        return
+    try:
+        try:
+            parameters = inspect.signature(notifier).parameters
+            positional = [
+                parameter
+                for parameter in parameters.values()
+                if parameter.kind
+                in {
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                }
+            ]
+            accepts_varargs = any(
+                parameter.kind is inspect.Parameter.VAR_POSITIONAL
+                for parameter in parameters.values()
+            )
+        except (TypeError, ValueError):
+            positional = []
+            accepts_varargs = True
+        value = (
+            notifier(send_request, receipt)
+            if accepts_varargs or len(positional) >= 2
+            else notifier(receipt)
+        )
+        if inspect.isawaitable(value):
+            async def _await_notification() -> None:
+                try:
+                    await value
+                except Exception:  # noqa: BLE001 - alerting is a side channel.
+                    return
+
+            asyncio.create_task(_await_notification())
+            # Start the task without waiting for the notifier's I/O to finish.
+            await asyncio.sleep(0)
+    except Exception:  # noqa: BLE001 - alerting must not affect queue state.
+        return
+
+
+def _call_queue_state_method(
+    send_queue: DrainableSendQueue,
+    method_name: str,
+    request_id: str,
+    public_message: str,
+    *,
+    now: datetime,
+    operational_issue: OperationalIssue | None,
+) -> DeliveryReceipt:
+    method = getattr(send_queue, method_name)
+    try:
+        parameters = inspect.signature(method).parameters
+        supports_issue = "operational_issue" in parameters or any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+    except (TypeError, ValueError):
+        supports_issue = False
+    kwargs: dict[str, object] = {"now": now}
+    if supports_issue:
+        kwargs["operational_issue"] = operational_issue
+    return method(request_id, public_message, **kwargs)
 
 
 def _claim_or_list_due(
@@ -170,8 +269,15 @@ async def _call_transport_safely(
             request_id=send_request.request_id,
             state=ReceiptState.FAILED_RETRYABLE,
             transport=SEND_QUEUE_WORKER_TRANSPORT,
-            public_message=f"发送队列 worker 投递失败，debug_id={debug_id}",
+            public_message="",
             debug_id=debug_id,
+            operational_issue=OperationalIssue(
+                stage="queue",
+                kind="transport_exception",
+                retryable=True,
+                safe_summary="transport_exception",
+                debug_id=debug_id,
+            ),
         )
 
 
@@ -182,28 +288,42 @@ def _update_queue_state(
     *,
     now: datetime,
 ) -> DeliveryReceipt:
+    issue = receipt.operational_issue or send_request.operational_issue
+    public_message = "" if issue is not None else receipt.public_message
     if receipt.state is ReceiptState.SENT:
-        return send_queue.mark_sent(
+        return _call_queue_state_method(
+            send_queue,
+            "mark_sent",
             send_request.request_id,
-            receipt.public_message or "sent",
+            public_message or "sent",
             now=now,
+            operational_issue=issue,
         )
     if receipt.state is ReceiptState.FAILED_RETRYABLE:
-        return send_queue.mark_retryable_failure(
+        return _call_queue_state_method(
+            send_queue,
+            "mark_retryable_failure",
             send_request.request_id,
-            receipt.public_message or "failed_retryable",
+            public_message if issue is not None else public_message or "failed_retryable",
             now=now,
+            operational_issue=issue,
         )
     if receipt.state is ReceiptState.SKIPPED:
-        return send_queue.mark_final_failure(
+        return _call_queue_state_method(
+            send_queue,
+            "mark_final_failure",
             send_request.request_id,
-            receipt.public_message or "skipped",
+            public_message or "skipped",
             now=now,
-        ).model_copy(update={"state": ReceiptState.SKIPPED})
-    return send_queue.mark_final_failure(
+            operational_issue=issue,
+        ).model_copy(update={"state": ReceiptState.SKIPPED, "operational_issue": issue})
+    return _call_queue_state_method(
+        send_queue,
+        "mark_final_failure",
         send_request.request_id,
-        receipt.public_message or receipt.state.value,
+        public_message if issue is not None else public_message or receipt.state.value,
         now=now,
+        operational_issue=issue,
     )
 
 

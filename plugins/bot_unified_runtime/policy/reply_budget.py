@@ -48,9 +48,9 @@ CHAT_CAPABILITY_IDS = {"bot.chat"}
 
 
 class ReplyBudget(StrictBaseModel):
-    max_messages: int = 1
+    max_messages: int = 0
     context_budget: int = BASE_CONTEXT_BUDGET
-    reason: str = "default_one_message"
+    reason: str = "default_unlimited"
     audit_tags: list[str] = Field(default_factory=lambda: ["reply_budget:default"])
 
     @field_validator("max_messages")
@@ -63,11 +63,11 @@ class ReplyBudget(StrictBaseModel):
 
 
 class ReplyBudgetSettings(StrictBaseModel):
-    private_default_max_messages: int = 1
-    private_support_max_messages: int = 2
-    private_deep_help_max_messages: int = 3
-    group_max_messages: int = 1
-    risk_max_messages: int = 1
+    private_default_max_messages: int = 0
+    private_support_max_messages: int = 0
+    private_deep_help_max_messages: int = 0
+    group_max_messages: int = 0
+    risk_max_messages: int = 0
     default_context_budget: int = BASE_CONTEXT_BUDGET
     support_context_budget: int = SUPPORT_CONTEXT_BUDGET
     deep_help_context_budget: int = DEEP_HELP_CONTEXT_BUDGET
@@ -103,16 +103,16 @@ class ReplyBudgetSettings(StrictBaseModel):
 def build_reply_budget_settings(config: object) -> ReplyBudgetSettings:
     return ReplyBudgetSettings(
         private_default_max_messages=int(
-            getattr(config, "bot_reply_private_default_max_messages", 1)
+            getattr(config, "bot_reply_private_default_max_messages", 0)
         ),
         private_support_max_messages=int(
-            getattr(config, "bot_reply_private_support_max_messages", 2)
+            getattr(config, "bot_reply_private_support_max_messages", 0)
         ),
         private_deep_help_max_messages=int(
-            getattr(config, "bot_reply_private_deep_help_max_messages", 3)
+            getattr(config, "bot_reply_private_deep_help_max_messages", 0)
         ),
-        group_max_messages=int(getattr(config, "bot_reply_group_max_messages", 1)),
-        risk_max_messages=int(getattr(config, "bot_reply_risk_max_messages", 1)),
+        group_max_messages=int(getattr(config, "bot_reply_group_max_messages", 0)),
+        risk_max_messages=int(getattr(config, "bot_reply_risk_max_messages", 0)),
         default_context_budget=int(getattr(config, "bot_reply_default_context_budget", 2048)),
         support_context_budget=int(getattr(config, "bot_reply_support_context_budget", 2560)),
         deep_help_context_budget=int(

@@ -12,6 +12,7 @@ from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import (
     AuditRecord,
     DeliveryReceipt,
+    OperationalIssue,
     ReceiptState,
     SendRequest,
 )
@@ -30,7 +31,8 @@ def _queued_receipt(send_request: SendRequest) -> DeliveryReceipt:
         request_id=send_request.request_id,
         state=ReceiptState.QUEUED,
         transport=SQLITE_QUEUE_TRANSPORT,
-        public_message="queued",
+        public_message="" if send_request.operational_issue is not None else "queued",
+        operational_issue=send_request.operational_issue,
     )
 
 
@@ -175,7 +177,7 @@ class SQLiteSendRequestQueue:
                         send_request.model_dump_json(),
                         0,
                         current_time.isoformat(),
-                        "queued",
+                        "" if send_request.operational_issue is not None else "queued",
                         current_time.isoformat(),
                         current_time.isoformat(),
                     ),
@@ -299,6 +301,7 @@ class SQLiteSendRequestQueue:
         public_message: str,
         *,
         now: datetime | None = None,
+        operational_issue: OperationalIssue | None = None,
     ) -> DeliveryReceipt:
         current_time = now or _utc_now()
         entry = self._find_entry_by_request_id(request_id)
@@ -308,8 +311,11 @@ class SQLiteSendRequestQueue:
                 state=ReceiptState.FAILED_FINAL,
                 transport=SQLITE_QUEUE_TRANSPORT,
                 public_message="send request not found",
+                operational_issue=operational_issue,
             )
 
+        issue = operational_issue or entry.send_request.operational_issue
+        public_message = "" if issue is not None else public_message
         retry_count = entry.retry_count + 1
         if retry_count >= self.max_attempts:
             receipt = self._update_state(
@@ -319,6 +325,7 @@ class SQLiteSendRequestQueue:
                 next_retry_at=None,
                 public_message=public_message,
                 now=current_time,
+                operational_issue=issue,
             )
             event = "send_failed_final"
         else:
@@ -332,6 +339,7 @@ class SQLiteSendRequestQueue:
                 next_retry_at=next_retry_at,
                 public_message=public_message,
                 now=current_time,
+                operational_issue=issue,
             )
             event = "send_failed_retryable"
 
@@ -344,6 +352,7 @@ class SQLiteSendRequestQueue:
         public_message: str = "sent",
         *,
         now: datetime | None = None,
+        operational_issue: OperationalIssue | None = None,
     ) -> DeliveryReceipt:
         current_time = now or _utc_now()
         entry = self._find_entry_by_request_id(request_id)
@@ -353,7 +362,10 @@ class SQLiteSendRequestQueue:
                 state=ReceiptState.FAILED_FINAL,
                 transport=SQLITE_QUEUE_TRANSPORT,
                 public_message="send request not found",
+                operational_issue=operational_issue,
             )
+        issue = operational_issue or entry.send_request.operational_issue
+        public_message = "" if issue is not None else public_message
         receipt = self._update_state(
             entry.send_request,
             state=ReceiptState.SENT,
@@ -361,6 +373,7 @@ class SQLiteSendRequestQueue:
             next_retry_at=None,
             public_message=public_message,
             now=current_time,
+            operational_issue=issue,
         )
         self._append_sender_audit(entry.send_request, receipt, "send_marked_sent")
         return receipt
@@ -371,6 +384,7 @@ class SQLiteSendRequestQueue:
         public_message: str,
         *,
         now: datetime | None = None,
+        operational_issue: OperationalIssue | None = None,
     ) -> DeliveryReceipt:
         current_time = now or _utc_now()
         entry = self._find_entry_by_request_id(request_id)
@@ -380,7 +394,10 @@ class SQLiteSendRequestQueue:
                 state=ReceiptState.FAILED_FINAL,
                 transport=SQLITE_QUEUE_TRANSPORT,
                 public_message="send request not found",
+                operational_issue=operational_issue,
             )
+        issue = operational_issue or entry.send_request.operational_issue
+        public_message = "" if issue is not None else public_message
         receipt = self._update_state(
             entry.send_request,
             state=ReceiptState.FAILED_FINAL,
@@ -388,6 +405,7 @@ class SQLiteSendRequestQueue:
             next_retry_at=None,
             public_message=public_message,
             now=current_time,
+            operational_issue=issue,
         )
         self._append_sender_audit(entry.send_request, receipt, "send_failed_final")
         return receipt
@@ -551,13 +569,22 @@ class SQLiteSendRequestQueue:
         next_retry_at: datetime | None,
         public_message: str,
         now: datetime,
+        operational_issue: OperationalIssue | None = None,
     ) -> DeliveryReceipt:
+        issue = operational_issue or send_request.operational_issue
+        public_message = "" if issue is not None else public_message
+        persisted_request = (
+            send_request.model_copy(update={"operational_issue": issue})
+            if issue is not send_request.operational_issue
+            else send_request
+        )
         self._ensure_schema()
         with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 UPDATE send_requests
                 SET state = ?,
+                    request_json = ?,
                     retry_count = ?,
                     next_retry_at = ?,
                     claimed_from_state = NULL,
@@ -568,6 +595,7 @@ class SQLiteSendRequestQueue:
                 """,
                 (
                     state.value,
+                    persisted_request.model_dump_json(),
                     retry_count,
                     next_retry_at.isoformat() if next_retry_at is not None else None,
                     public_message,
@@ -582,6 +610,7 @@ class SQLiteSendRequestQueue:
             retry_count=retry_count,
             next_retry_at=next_retry_at,
             public_message=public_message,
+            operational_issue=issue,
         )
 
     def _backoff_seconds(self, retry_count: int) -> int:

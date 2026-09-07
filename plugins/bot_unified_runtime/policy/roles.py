@@ -44,7 +44,9 @@ class RoleSettings:
 
 def build_role_settings(config: Config) -> RoleSettings:
     return RoleSettings(
-        admin_user_ids=frozenset(config.bot_admin_user_ids),
+        admin_user_ids=frozenset(
+            [*config.bot_admin_user_ids, *config.bot_telegram_admin_user_ids]
+        ),
         enterprise_user_ids=frozenset(config.bot_enterprise_user_ids),
         trusted_user_ids=frozenset(config.bot_trusted_user_ids),
         blocked_user_ids=frozenset(config.bot_blocked_user_ids),

@@ -9,6 +9,9 @@ import html
 from typing import Any
 
 from plugins.bot_unified_runtime.output.card_render.bridge import (
+    flat_projection as _flat_projection,
+)
+from plugins.bot_unified_runtime.output.card_render.bridge import (
     parse_to_render_payload as _parse_to_render_payload,
 )
 from plugins.bot_unified_runtime.output.card_render.bridge import (
@@ -19,32 +22,42 @@ _CARD_CSS = """
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
   font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
-  background: #f3f6fb;
+  background: transparent;
   display: flex; align-items: flex-start; justify-content: center;
-  padding: 16px;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+/* 截图容器：透明留白承载柔光阴影（.card 即渲染选择器）。 */
 .card {
-  width: 640px; background: #ffffff; border-radius: 14px; overflow: hidden;
-  box-shadow: 0 6px 24px rgba(38, 56, 86, 0.12);
-  border: 1px solid #e3e9f2;
+  width: auto; background: transparent; border: 0; border-radius: 0;
+  box-shadow: none; padding: 24px;
+}
+:root { --pc: __PC__; --pc-dark: __PC_DARK__; --pc-rgb: __PC_RGB__; }
+.panel {
+  width: 640px;
+  background: color-mix(in srgb, var(--pc) 5%, #ffffff);
+  border-radius: 18px; overflow: hidden;
+  box-shadow: 0 12px 32px rgba(31, 35, 41, 0.10), 0 2px 8px rgba(31, 35, 41, 0.05);
+  border: 1px solid color-mix(in srgb, var(--pc) 14%, #e4e6eb);
 }
 .cover-wrap { position: relative; width: 100%; height: 240px;
-  background: linear-gradient(135deg, #dbe7ff 0%, #e9d8ff 100%); }
+  background: linear-gradient(135deg, color-mix(in srgb, var(--pc) 10%, #ffffff) 0%, color-mix(in srgb, var(--pc) 18%, #ffffff) 100%); }
 .cover-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cover-fallback { position: absolute; inset: 0; display: flex;
-  align-items: center; justify-content: center; font-size: 44px; color: #8ea4cc; }
-.badge { position: absolute; left: 12px; top: 12px; background: rgba(24,33,64,.78);
+  align-items: center; justify-content: center; font-size: 44px; color: var(--pc); }
+.badge { position: absolute; left: 12px; top: 12px; background: rgba(38,46,56,.75);
   color: #fff; font-size: 12px; padding: 3px 10px; border-radius: 999px; }
 .body { padding: 14px 18px 16px; }
-.title { font-size: 19px; font-weight: 700; color: #17233d; line-height: 1.4; }
-.author { margin-top: 6px; font-size: 13px; color: #5a6b8c; }
+.title { font-size: 19px; font-weight: 700; color: #2b3440; line-height: 1.4; }
+.author { margin-top: 6px; font-size: 13px; color: #66727f; }
 .stats { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
-.stat { background: #eef3fb; color: #3b537e; font-size: 12px;
-  padding: 3px 9px; border-radius: 999px; }
-.summary { margin-top: 10px; font-size: 13px; color: #41506e;
+.stat { background: color-mix(in srgb, var(--pc) 10%, #ffffff); color: var(--pc-dark);
+  font-size: 12px; padding: 3px 9px; border-radius: 999px; }
+.summary { margin-top: 10px; font-size: 13px; color: #4a5560;
   line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
-.footer { margin-top: 10px; font-size: 11px; color: #93a2bf;
-  border-top: 1px dashed #e3e9f2; padding-top: 8px; }
+.footer { margin-top: 10px; font-size: 11px; color: #7a8699;
+  border-top: 1px dashed color-mix(in srgb, var(--pc) 12%, #e4e6eb); padding-top: 8px; }
 """
 
 
@@ -65,6 +78,15 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
     stats = payload.get("stats") or {}
     summary = _esc(payload.get("summary")) or ""
     footer = _esc(payload.get("footer")) or ""
+    pc = _esc(payload.get("platform_color")) or "#607080"
+    pc_dark = _esc(payload.get("platform_color_dark")) or "#4a5866"
+    pc_rgb = _esc(payload.get("platform_color_rgb")) or "96,112,128"
+    css = (
+        _CARD_CSS
+        .replace("__PC__", pc)
+        .replace("__PC_DARK__", pc_dark)
+        .replace("__PC_RGB__", pc_rgb)
+    )
 
     cover_block = ""
     if cover:
@@ -79,7 +101,7 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
     )
     return (
         "<html><head><meta charset=\"utf-8\"><style>"
-        f"{_CARD_CSS}</style></head><body><div class=\"card\">"
+        f"{css}</style></head><body><div class=\"card\"><div class=\"panel\">"
         f'<div class="cover-wrap">{cover_block}'
         f'<div class="badge">{platform}</div>'
         '<div class="cover-fallback">🖼</div></div>'
@@ -88,32 +110,31 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
         + (f'<div class="stats">{stats_html}</div>' if stats_html else "")
         + (f'<div class="summary">{summary}</div>' if summary else "")
         + (f'<div class="footer">{footer}</div>' if footer else "")
-        + "</div></div></body></html>"
+        + "</div></div></div></body></html>"
     )
 
 
 def card_payload_from_parse(item: Any) -> dict[str, Any]:
-    """PlatformParse → 卡片 payload（与内容能力共用）。
+    """ParsedContent → 卡片 payload（与内容能力共用）。
 
     保留旧媒体卡字段（title/platform/author/cover_url/stats/summary/footer），
     同时补充通用卡片需要的 page_type/badge/detail 与作者映射；detail 缺失时
-    通用卡片各区块自动隐藏。
+    通用卡片各区块自动隐藏。嵌套模型先经 bridge 渲染投影还原。
     """
     payload = _parse_to_render_payload(item).to_dict()
-    detail = dict(getattr(item, "detail", None) or {})
-    page_type = getattr(item, "page_type", "") or getattr(item, "item_kind", "")
-    badge = getattr(item, "badge", "")
+    flat = _flat_projection(item)
+    flat = flat if isinstance(flat, dict) else {}
     payload.update(
         {
-            "title": getattr(item, "title", "") or payload.get("title", ""),
-            "platform": getattr(item, "platform", ""),
-            "author": getattr(item, "author_name", ""),
-            "cover_url": getattr(item, "cover_url", ""),
-            "summary": getattr(item, "summary", ""),
-            "footer": getattr(item, "canonical_url", ""),
-            "page_type": page_type,
-            "badge": badge,
-            "detail": detail,
+            "title": flat.get("title") or payload.get("title", ""),
+            "platform": flat.get("platform", ""),
+            "author": flat.get("author_name", ""),
+            "cover_url": flat.get("cover_url", ""),
+            "summary": flat.get("summary", ""),
+            "footer": flat.get("canonical_url", ""),
+            "page_type": flat.get("page_type") or flat.get("item_kind", ""),
+            "badge": flat.get("badge", ""),
+            "detail": flat.get("detail", {}),
         }
     )
     return payload

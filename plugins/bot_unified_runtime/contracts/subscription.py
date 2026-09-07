@@ -5,6 +5,7 @@ watcher 与各平台 adapter 只依赖这些契约，彼此不耦合实现细节
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Protocol
 
 from pydantic import Field
@@ -12,11 +13,43 @@ from pydantic import Field
 from plugins.bot_unified_runtime.contracts.runtime import StrictBaseModel
 
 
+class SubscriptionTarget(StrictBaseModel):
+    id: str
+    platform: str
+    target_kind: str
+    target_key: str
+    display_name: str = ""
+    target_payload: dict[str, Any] = Field(default_factory=dict)
+    source_mode: str = "pull"
+    enabled: bool = True
+    health_state: str = "healthy"
+    base_interval_seconds: int = 300
+    jitter_ratio: float = 0.20
+    baseline_initialized: bool = False
+    next_poll_at: datetime | None = None
+    lease_until: datetime | None = None
+    failure_count: int = 0
+    backoff_until: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class SubscriptionDestination(StrictBaseModel):
     """一个订阅的推送目的地：私聊或群聊。"""
 
     scope: str
     target_id: str
+
+
+class SubscriptionDestinationV2(StrictBaseModel):
+    id: str = ""
+    target_id: str
+    transport: str
+    scope: str
+    destination_id: str
+    bot_id: str = ""
+    enabled: bool = True
+    digest_enabled: bool = False
 
 
 class SubscriptionSpec(StrictBaseModel):
@@ -65,6 +98,44 @@ class NormalizedSubscriptionItem(StrictBaseModel):
     published_at: str = ""
 
 
+class SubscriptionCursorV2(StrictBaseModel):
+    target_id: str
+    stream: str = "default"
+    last_item_id: str = ""
+    last_timestamp: datetime | None = None
+    cursor_payload: dict[str, Any] = Field(default_factory=dict)
+    updated_at: datetime
+
+
+class ContentReference(StrictBaseModel):
+    item_id: str
+    item_kind: str
+    url: str
+    published_at: datetime | None = None
+    source_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class SubscriptionFetchResult(StrictBaseModel):
+    items: list[ContentReference] = Field(default_factory=list)
+    cursors: list[SubscriptionCursorV2] = Field(default_factory=list)
+    health_state: str = "healthy"
+    error_code: str = ""
+    retryable: bool = False
+    retry_after_seconds: int | None = None
+    suggested_interval_seconds: int | None = None
+
+
+class SubscriptionOutboxEvent(StrictBaseModel):
+    event_id: str
+    target_id: str
+    item: ContentReference
+    reason: str
+    state: str = "pending"
+    attempts: int = 0
+    next_attempt_at: datetime
+    created_at: datetime
+
+
 class SourceFetchResult(StrictBaseModel):
     """一次 fetch_latest 的结果。"""
 
@@ -80,6 +151,22 @@ class PushCandidate(StrictBaseModel):
     spec_id: str
     item: NormalizedSubscriptionItem
     reason: str
+
+
+class SubscriptionAdapter(Protocol):
+    platform: str
+    target_kinds: frozenset[str]
+
+    async def resolve_target(self, raw_target: str, ctx: dict[str, Any]) -> SubscriptionTarget:
+        ...
+
+    async def fetch_incremental(
+        self,
+        target: SubscriptionTarget,
+        cursors: dict[str, SubscriptionCursorV2],
+        ctx: dict[str, Any],
+    ) -> SubscriptionFetchResult:
+        ...
 
 
 class SourceAdapter(Protocol):

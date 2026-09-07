@@ -50,8 +50,8 @@ def build_download_capability(
             download_dir=str(
                 getattr(config, "bot_download_dir", "data/downloads") or "data/downloads"
             ),
-            max_bytes=int(getattr(config, "bot_download_max_bytes", 200 * 1048576)),
-            max_height=int(getattr(config, "bot_download_max_height", 1080)),
+            max_bytes=int(getattr(config, "bot_download_max_bytes", 1073741824)),
+            max_height=int(getattr(config, "bot_download_max_height", 0)),
             timeout_seconds=int(getattr(config, "bot_download_timeout_seconds", 120)),
         )
     if downloader is None:

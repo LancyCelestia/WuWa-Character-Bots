@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -33,6 +34,39 @@ class RiskLevel(str, Enum):
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
+
+
+class OperationalIssue(StrictBaseModel):
+    stage: str
+    kind: str
+    retryable: bool = False
+    severity: RiskLevel = RiskLevel.MEDIUM
+    debug_id: str = Field(default_factory=new_debug_id)
+    safe_summary: str = ""
+    attempts: int = 1
+    elapsed_ms: float | None = None
+
+    @field_validator("stage", "kind")
+    @classmethod
+    def require_non_blank(cls, value: str) -> str:
+        normalized = str(value).strip()
+        if not normalized:
+            raise ValueError("operational issue stage/kind must be non-blank")
+        return normalized
+
+    @field_validator("attempts")
+    @classmethod
+    def require_positive_attempts(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("attempts must be at least 1")
+        return value
+
+    @field_validator("elapsed_ms")
+    @classmethod
+    def require_non_negative_elapsed(cls, value: float | None) -> float | None:
+        if value is not None and (value < 0 or not math.isfinite(value)):
+            raise ValueError("elapsed_ms must be finite and non-negative")
+        return value
 
 
 class PrivacyLevel(str, Enum):
@@ -94,6 +128,8 @@ class IncomingMessage(StrictBaseModel):
     plain_text: str = ""
     mentions_bot: bool = False
     reply_to_message_id: str | None = None
+    reply_to_text: str = ""
+    thread_id: str | None = None
     timestamp: datetime = Field(default_factory=_utc_now)
     message_id: str | None = None
     sender_roles: list[str] = Field(default_factory=lambda: ["user"])
@@ -168,6 +204,7 @@ class CapabilityResult(StrictBaseModel):
     images: list[dict[str, Any]] = Field(default_factory=list)
     audio: list[dict[str, Any]] = Field(default_factory=list)
     video: list[dict[str, Any]] = Field(default_factory=list)
+    files: list[dict[str, Any]] = Field(default_factory=list)
     actions: list[dict[str, Any]] = Field(default_factory=list)
     # 可选：需要拆成多条消息直接发送的纯文本段（不合并转发）。
     text_parts: list[str] | None = None
@@ -178,6 +215,16 @@ class CapabilityResult(StrictBaseModel):
     send_policy: SendPolicy = SendPolicy.IMMEDIATE
     debug_id: str = Field(default_factory=new_debug_id)
     audit_tags: list[str] = Field(default_factory=list)
+    operational_issue: OperationalIssue | None = None
+    # 请求级单调时钟 deadline（time.monotonic() 绝对值）；None=未启用请求预算。
+    deadline_monotonic: float | None = None
+
+    @field_validator("deadline_monotonic")
+    @classmethod
+    def validate_deadline_monotonic(cls, value: float | None) -> float | None:
+        if value is not None and (value < 0 or not math.isfinite(value)):
+            raise ValueError("deadline_monotonic must be finite and non-negative")
+        return value
 
     @field_validator("confidence")
     @classmethod
@@ -227,7 +274,20 @@ class SendRequest(StrictBaseModel):
     allow_split: bool = False
     allow_forward: bool = False
     persona_profile_id: str
+    # 用于发送队列在没有原始 Event 时选择正确的适配器和 Bot。
+    adapter: str = ""
+    bot_id: str = ""
     audit_tags: list[str] = Field(default_factory=list)
+    operational_issue: OperationalIssue | None = None
+    # 从 CapabilityResult 透传的请求级单调时钟 deadline；None=未启用。
+    deadline_monotonic: float | None = None
+
+    @field_validator("deadline_monotonic")
+    @classmethod
+    def require_valid_deadline_monotonic(cls, value: float | None) -> float | None:
+        if value is not None and (value < 0 or not math.isfinite(value)):
+            raise ValueError("deadline_monotonic must be finite and non-negative")
+        return value
 
     @field_validator("dedupe_key", "cooldown_key")
     @classmethod
@@ -255,6 +315,7 @@ class DeliveryReceipt(StrictBaseModel):
     public_message: str = ""
     debug_id: str = Field(default_factory=new_debug_id)
     created_at: datetime = Field(default_factory=_utc_now)
+    operational_issue: OperationalIssue | None = None
 
 
 class AuditRecord(StrictBaseModel):

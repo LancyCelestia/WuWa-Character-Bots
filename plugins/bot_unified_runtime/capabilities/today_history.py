@@ -75,7 +75,12 @@ def build_today_history_capability(
 ) -> Any:
     if provider is None:
         proxy = str(getattr(config, "bot_download_proxy", "") or "") if config else ""
-        provider = TodayHistoryProvider(proxy=proxy)
+        cache_file = (
+            str(getattr(config, "bot_today_history_cache_file", "") or "")
+            if config
+            else ""
+        ) or "data/today_history_cache.json"
+        provider = TodayHistoryProvider(proxy=proxy, cache_file=cache_file)
 
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         text = message.plain_text.strip()

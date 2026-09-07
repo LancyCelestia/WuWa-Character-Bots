@@ -9,12 +9,15 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from plugins.bot_unified_runtime.contracts.media import (
+    ParsedContent,
+    build_parsed_content,
+)
 from plugins.bot_unified_runtime.sources.parsers.http_util import (
     ParseHttpError,
     http_get_json,
 )
 from plugins.bot_unified_runtime.sources.parsers.platforms_generic import _og_scrape
-from plugins.bot_unified_runtime.sources.parsers.types import PlatformParse
 
 _PIXIV_REFERER = "https://www.pixiv.net/"
 _TYPE_LABELS = {0: "插画", 1: "漫画", 2: "动图"}
@@ -44,7 +47,7 @@ def _user_id_from_body(body: dict[str, Any]) -> str:
     return ""
 
 
-def _og_fallback(url: str, *, cookie_header: str, proxy: str) -> PlatformParse:
+def _og_fallback(url: str, *, cookie_header: str, proxy: str) -> ParsedContent:
     """浅层降级：复用通用 og 抓取，透传 cookie 与代理。"""
     return _og_scrape(
         url,
@@ -62,8 +65,13 @@ def _append_author_stats(
     *,
     cookie_header: str,
     proxy: str,
-) -> None:
-    """尽力补充作者作品数与粉丝/关注数；任一请求失败都静默跳过。"""
+) -> dict:
+    """尽力补充作者作品数与粉丝/关注数；任一请求失败都静默跳过。
+
+    返回结构化作者统计（fans/following/illusts/manga/novels），
+    同时保留摘要文本行给文本输出。
+    """
+    author_stats: dict = {}
     try:
         profile = _extract_body(
             http_get_json(
@@ -84,6 +92,7 @@ def _append_author_stats(
                     f"作者作品：插画{counts['illusts']} · "
                     f"漫画{counts['manga']} · 小说{counts['novels']}"
                 )
+                author_stats.update(counts)
     except ParseHttpError:
         pass
 
@@ -104,11 +113,15 @@ def _append_author_stats(
                     f"作者粉丝：{follower} · 关注："
                     f"{following if isinstance(following, int) else 0}"
                 )
+                author_stats["fans"] = follower
+                if isinstance(following, int) and not isinstance(following, bool):
+                    author_stats["following"] = following
     except ParseHttpError:
         pass
+    return author_stats
 
 
-def parse_pixiv(url: str, *, cookie_header: str = "", proxy: str = "") -> PlatformParse:
+def parse_pixiv(url: str, *, cookie_header: str = "", proxy: str = "") -> ParsedContent:
     """Pixiv 插画：官方 ajax 深解析，主接口失败回退页面 og 浅解析。"""
     match = re.search(r"/artworks/(\d+)", url)
     if not match:
@@ -161,7 +174,8 @@ def parse_pixiv(url: str, *, cookie_header: str = "", proxy: str = "") -> Platfo
     )
     summary_lines = [f"类型：{kind_label}"]
 
-    # 多图分镜：pages 接口是数组，取前 6 页分辨率；失败只丢弃该增强行。
+    # 多图分镜：pages 接口是数组，URL/宽高全部进 media（前 6 页宽高进摘要行）。
+    media_meta: list[dict] = []
     try:
         pages = _extract_body(
             http_get_json(
@@ -174,11 +188,26 @@ def parse_pixiv(url: str, *, cookie_header: str = "", proxy: str = "") -> Platfo
         if isinstance(pages, list) and pages:
             stats["图片数量"] = len(pages)
             frame_parts = []
-            for index, page in enumerate(pages[:6], start=1):
+            for index, page in enumerate(pages, start=1):
                 if not isinstance(page, dict):
                     continue
                 page_width, page_height = page.get("width"), page.get("height")
-                if isinstance(page_width, int) and isinstance(page_height, int):
+                page_urls = page.get("urls") or {}
+                page_url = (
+                    str(page_urls.get("original") or page_urls.get("regular") or "")
+                    if isinstance(page_urls, dict)
+                    else ""
+                )
+                if page_url or (isinstance(page_width, int) and isinstance(page_height, int)):
+                    media_meta.append(
+                        {
+                            "type": "image",
+                            "url": page_url or None,
+                            "width": page_width if isinstance(page_width, int) else None,
+                            "height": page_height if isinstance(page_height, int) else None,
+                        }
+                    )
+                if index <= 6 and isinstance(page_width, int) and isinstance(page_height, int):
                     frame_parts.append(f"P{index} {page_width}×{page_height}")
             if frame_parts:
                 suffix = " 等" if len(pages) > 6 else ""
@@ -194,15 +223,38 @@ def parse_pixiv(url: str, *, cookie_header: str = "", proxy: str = "") -> Platfo
     if tags:
         summary_lines.append("标签：" + "、".join(tags))
 
+    # R-18 / 动图诚实分类（不绕过限制，直链不提供）。
+    if body.get("x_restrict") in (1, "1"):
+        stats["分级"] = "R-18"
+    if raw_kind == 2:
+        summary_lines.append("动图：分帧 ZIP，需登录后经官方页面下载")
+        stats["动图"] = "分帧 ZIP（需登录）"
+
     user_id = _user_id_from_body(body)
+    detail: dict = {}
     if user_id:
-        _append_author_stats(
+        author_detail: dict = {"uuid": user_id}
+        user_name = str(body.get("userName") or "").strip()
+        if user_name:
+            author_detail["name"] = user_name
+        # Pixiv 头像 URL 遵循固定模式（i.pximg.net/user-profile/img/{uid}/{uid}.jpg）。
+        author_detail["avatar"] = (
+            f"https://i.pximg.net/user-profile/img/{user_id}/{user_id}.jpg"
+        )
+        structured = _append_author_stats(
             summary_lines, user_id, cookie_header=cookie_header, proxy=proxy
         )
+        author_detail.update(structured)
+        detail["author"] = author_detail
+    if media_meta:
+        detail["media"] = media_meta
+    create_date = str(body.get("createDate") or "").strip()
+    if create_date:
+        detail["published_at"] = create_date
 
     # QQ 可直接加载的 embed 代理图，避免 i.pximg.net 防盗链。
     cover_url = f"https://embed.pixiv.net/artwork.php?illust_id={artwork_id}"
-    return PlatformParse(
+    return build_parsed_content(
         platform="pixiv",
         item_id=artwork_id,
         item_kind="illust",
@@ -213,4 +265,5 @@ def parse_pixiv(url: str, *, cookie_header: str = "", proxy: str = "") -> Platfo
         canonical_url=url,
         stats=stats,
         parse_depth="deep",
+        detail=detail or None,
     )
