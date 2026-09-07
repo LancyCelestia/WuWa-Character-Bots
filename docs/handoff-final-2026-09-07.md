@@ -910,3 +910,15 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
   全局恢复机制。
 - 同轮收尾：并行会话（搜索验收）的 `fetch_page_text` 反注入/去广告加固已验证并代为提交
   （374 passed，提交 0f88976）；其 handoff §19.6 记录保持原样。
+
+### 19.8 alpha.2 五轮增补：幂等表 SQLite 持久化（P0.4 后半之一，提交 c3aa200）
+
+- 新增 `SqliteEventIdempotencyTable`：与进程内表同一 claim 接口，数据落
+  `BOT_EVENT_IDEMPOTENCY_DB_PATH`（data/ 前缀自动重映射 Runtime 数据根）；
+  wall clock 时间戳，**重启后重放事件仍被拦截**。
+- 工厂 `build_event_idempotency_table`：开关关闭→None；db_path 非空→SQLite；留空→进程内表。
+- 测试 377 passed（新增：跨实例拦截重放、TTL 过期重放放行、容量淘汰、工厂选型）；
+  Ruff/mypy 全过。
+- **P0.4 剩余**：出站 result-unknown 全局恢复机制（发送结果未知时的记录与重连对账）。
+- **Git 状态**：分支 `v0.0.1-alpha.2`（c3aa200）与附注标签（指向 713e2bc）均已推送
+  origin 并 ls-remote 验证；alpha.2 推送至此全部完成。
