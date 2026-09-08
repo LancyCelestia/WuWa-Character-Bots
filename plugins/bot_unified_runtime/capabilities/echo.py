@@ -129,17 +129,35 @@ _HELP_CATEGORIES = (
 
 
 def _help_index_body(*, page: int, is_admin: bool) -> str:
-    """One-page categorized overview; ``help 1/2`` stays a compatibility alias."""
+    """One-page categorized overview; ``help 1/2`` stays a compatibility alias.
+
+    每行末尾附二级展开引导：回复 /bot help <模块> 查看该模块逐参数说明。
+    """
     entries = _visible_help_entries(is_admin)
     by_topic = {str(entry["topic"]): entry for entry in entries}
     title = "管理员帮助总览" if is_admin else "功能帮助总览"
-    lines = [title]
+    lines = [title, "（回复 /bot help 模块名 看该模块子功能与参数）"]
+
+    def _index_line(entry: HelpEntry) -> str:
+        index = str(entry["index"])
+        topic = str(entry["topic"])
+        if "help " in index or "bot " in index and "/" in index:
+            # 指令型条目已带完整用法，不重复堆叠引导。
+            return index
+        return f"{index}｜详情：/bot help {topic}"
+
+    categorized: set[str] = set()
     for category, topics in _HELP_CATEGORIES:
         category_entries = [by_topic[topic] for topic in topics if topic in by_topic]
         if not category_entries:
             continue
+        categorized.update(entry["topic"] for entry in category_entries)
         lines.extend(("", f"【{category}】"))
-        lines.extend(str(entry["index"]) for entry in category_entries)
+        lines.extend(_index_line(entry) for entry in category_entries)
+    orphans = [entry for topic, entry in by_topic.items() if topic not in categorized]
+    if orphans:
+        lines.extend(("", "【更多】"))
+        lines.extend(_index_line(entry) for entry in orphans)
     return "\n".join(lines)
 
 

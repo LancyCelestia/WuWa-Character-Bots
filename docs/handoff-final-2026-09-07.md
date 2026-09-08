@@ -1360,3 +1360,32 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
 5. 附带：caption >1024 时不再硬截断——图先发，正文单独成条；图片发送失败降级纯文本，避免队列重试造成重复图。
 
 **验证**：`tests/test_nonebot_sender.py` 新增 5 回归（本地卡无文本直发 photo、封面+语音降级 audio、ffmpeg 转换走 sendVoice、图片失败回退文本、媒体不可发非静默）；dev.ps1 lint/typecheck/test 全绿（433 passed，mypy 192 文件 Success）。NapCat 侧为运维处置，无代码改动。
+
+### 19.22 alpha.2 十九轮增补：NapCat 登录冲突实机处置+二维码刷新 bug 定性（2026-09-09 凌晨）
+
+**处置全程（已恢复在线）**：真凶是电脑自启的桌面 QQ 老实例（PID 10704，23:59:46 启动）一直占着守岸人账号登录，用户两次重启 NapCat 无效因为它没死（提权进程树，普通 taskkill 拒绝访问；QQ 还有看门狗会重生子进程）。提权脚本（先杀看门狗父进程→循环清 QQ/QQEX→`launcher.bat 3958874605` 快速登录）一次恢复：3001/6099 LISTENING，bot ↔ NapCat 在 3001 ESTABLISHED。
+
+**二维码无法刷新 bug 定性**：QQ 客户端自动更新 9.9.32-51246 → **9.9.33-52230**，超出 NapCat **4.18.19**（已是 GitHub 最新正式版，2026-08-14，无更新 beta）支持表（该版新增支持的是 9.9.32-55230）。NapCat 日志自证：`当前版本Appid未内置`、`NativePacketClient: 未找到对应版本的偏移数据: 9.9.33-52230-x64`。刷新二维码请求走失效的 packet 通道 → 发了请求但二维码不变。**属于 NapCat 上游待修项，本地无代码可修**；等 NapCat 出支持 9.9.33 的新版后升级即可。
+
+**已落地的缓解**：`C:\Software\NapCat\login-bot.bat` 一键快速登录（双击→UAC 确定→快速登录，完全绕开二维码）。扫码场景规则：启动后 2 分钟内扫首次出现的码（过期前扫完就不依赖刷新）。可选彻底方案：降级 QQ 到 NapCat 推荐版（腾讯官方 CDN 直链 `https://dldir1.qq.com/qqfile/qq/QQNT/40d6045a/QQ9.9.26.44343_x64.exe`），但 QQNT 无独立更新服务可禁、会再次自动升回去，不推荐。
+
+**排障经验**：①「已登录无法重复登录」先查是否有多个 QQ 代际并存（`Get-Process QQ | Select StartTime`），老实例不死新实例永远登不上；② QQ 版本漂移是 NapCat 类工具的头号故障源，看到 `未找到对应版本的偏移数据` 即版本超前；③ QQ 看门狗：杀树要先杀主进程父辈，否则子进程原地重生。
+
+### 19.23 alpha.2 二十轮增补：解析呈现层断点修复+点歌卡图化+help 二级引导（2026-09-09 凌晨二）
+
+**用户反馈**：解析系统「没有任何改善」——发布时间没到秒、作者栏缺字段、无热评、AI 总结没空行；点歌只有语音没有 ♪文本+封面；/bot help 无分组与二级引导。
+
+**取证方法升级（教训）**：此前 §19.19/§19.20 只验证了解析器**数据层**（ParsedContent 字段），未验证**呈现层**最终输出——数据全在，四处呈现层断点把成果全吞了。本轮以端到端复现脚本（真 cookie → 真解析 → 真渲染 → HTML 探针）逐层定位。bot 进程启动时间（00:58:12）晚于全部提交，排除旧进程因素。
+
+**修复清单（全部实弹验证）**：
+1. **发布时间到秒**：`content_parser._format_publish_time` 之前 `%Y-%m-%d %H:%M` 截掉秒 → `%Y-%m-%d %H:%M:%S`（带时区转本地）。附带修复 bridge `stats["发布时间"]` 未转本地时区（UTC 08:30 vs 本地 16:30）与半角冒号切分潜在 IndexError。
+2. **AI 总结/热评空行**：`_clean_summary` 与 bridge `_clean_card_summary` 之前把空行全吃掉 → 保留单空行分段（连续空行折叠、首尾裁剪）；「分区」行加入元数据剔除名单。
+3. **热评上卡**：B 站解析器存 `hot_comments`（复数）不在 bridge 透传白名单，且模板热评块在 `{% else %}` 完整卡分支——`page_type=video` 走 1033 行**紧凑分支**根本不可达。修复：透传白名单加 `hot_comments`；RenderPayload 新增 `hot_comments` 列表字段；紧凑 video 分支插入热评块（≤3 条，`.hot-comment` 样式）；完整卡分支保留单条+新增多条循环。
+4. **作者栏专栏标签**：作者栏字段（粉丝/关注/视频/专栏/获赞）数据与渲染本就齐全，但 B 站 post_count 被标成「帖子」→ `author_stat_items`/`header_l4_items` 在 bilibili 平台重标「专栏」；RenderPayload 新增 `stats_post_label`。
+5. **点歌只剩语音（根因）**：QQ parts 顺序 [record, CQ:music, text] 单条消息批量发送，NapCat `musicSignUrl:""` 拒签 CQ:music → 整条中断，♪文本陪葬。修复：`build_music_capability` 新增 `render_backend` 参数（三个调用点已接），`_render_hit` 卡片优先级改为 **Mica 信息卡图（复用 render_card_png）> 封面直链 > CQ:music 兜底**，audio 只留 record/file——卡图含封面+歌名+歌手+专辑，TG 端自动受益（本地 PNG photo 已修）。content_parser 音乐兼容路径同样剔除 CQ:music part。
+6. **选歌页面**：`BOT_MUSIC_CANDIDATES_ENABLED` 此前从未配置（默认 False，编号选择交互从未激活）→ .env 加 `true` + `LIMIT=6`；提示文案已有（「回复编号直接点」）。
+7. **help 二级引导**：`_help_index_body` 每个模块行追加「｜详情：/bot help 模块名」，新增未归类话题兜底「【更多】」分组；分组结构（管理员/大模型/子功能）本就存在。
+
+**验证**：`tests/test_parse_presentation_v2.py` 8 个回归（秒数/空行/卡片热评列表/单条回退/点歌卡图+无 CQ:music/渲染失败封面回退/help 引导）；端到端复现输出：`【发布】2026-09-07 16:30:00`、AI 总结空行分隔、热评 3 条上卡、专栏标签正确。dev.ps1 三门禁全绿（450 passed / lint / mypy 193）。
+
+**遗留**：YouTube 频道 shorts/长视频分列数（数据源不提供）；小红书深层解析（风控）；AI 总结依赖 B 站官方端点，个别视频无 AI 结论时该行自然缺席。

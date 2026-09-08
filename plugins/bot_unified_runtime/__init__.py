@@ -1144,6 +1144,69 @@ def _register_today_history_scheduler(
     }
 
 
+def _register_kb_wiki_sync_scheduler(scheduler: Any, config: Any) -> dict:
+    """Crawl Wiki 知识库每日增量同步（23:00 导出之后）+ 启动补同步。
+
+    同步 → 嵌入 → ANN/FTS 重建都在 job 线程串行执行，与共享 store 实例
+    协作（同步完成后进程内检索器即时可见）；日常无变更时零开销。
+    """
+    registered = {"registered": False}
+
+    def _sync_job() -> None:
+        try:
+            from nonebot.log import logger
+
+            from .character.kb_wiki import _get_shared_store, run_kb_sync_task
+
+            summary = run_kb_sync_task(
+                config,
+                full=False,
+                store=_get_shared_store(config),
+            )
+            level = logger.info if summary.get("ok") else logger.warning
+            level(
+                "kb_wiki_sync done: {}",
+                summary.get("public_message")
+                or f"error_kind={summary.get('error_kind')}",
+            )
+        except Exception as exc:  # noqa: BLE001 - 同步失败不影响 Bot 主链路。
+            try:
+                from nonebot.log import logger
+
+                logger.warning("kb_wiki_sync failed: {}", type(exc).__name__)
+            except Exception:  # noqa: S110, BLE001
+                pass
+
+    hour = max(0, min(23, int(getattr(config, "bot_kb_wiki_sync_hour", 23) or 23)))
+    minute = max(0, min(59, int(getattr(config, "bot_kb_wiki_sync_minute", 40) or 40)))
+    scheduler.add_job(
+        _sync_job,
+        "cron",
+        id="kb_wiki_sync_daily",
+        replace_existing=True,
+        hour=hour,
+        minute=minute,
+        misfire_grace_time=3600,
+        max_instances=1,
+        coalesce=True,
+    )
+    if bool(getattr(config, "bot_kb_wiki_sync_on_startup", True)):
+        # 开机补偿：错过的夜间同步在启动后 45 秒补跑一次（增量路径，
+        # 无变更时毫秒级；首轮未灌库时也只是空 updates，不触发全量）。
+        from datetime import datetime, timedelta
+
+        scheduler.add_job(
+            _sync_job,
+            "date",
+            id="kb_wiki_sync_startup",
+            replace_existing=True,
+            misfire_grace_time=300,
+            run_date=datetime.now().astimezone() + timedelta(seconds=45),
+        )
+    registered["registered"] = True
+    return registered
+
+
 def _find_sent_request(
     send_queue: Any,
     request_id: str,
@@ -2061,6 +2124,12 @@ def _register_nonebot_handlers() -> None:
         else:
             today_ctx = None
 
+        if (
+            getattr(config, "bot_kb_wiki_enabled", False)
+            and str(getattr(config, "bot_kb_wiki_root", "") or "").strip()
+        ):
+            _register_kb_wiki_sync_scheduler(scheduler, config)
+
         from .sources.subscription_runtime_v2 import register_subscription_runtime_v2
 
         async def _deliver_v2_event(event: Any) -> bool:
@@ -2967,6 +3036,7 @@ def _register_nonebot_handlers() -> None:
                         if getattr(config, "bot_music_candidates_enabled", False)
                         else None
                     ),
+                    render_backend=render_backend,
                 )(synthetic, _decision)
 
         elif resolution.capability_id == "bot.wiki":
@@ -4195,6 +4265,7 @@ def _register_nonebot_handlers() -> None:
                         if getattr(config, "bot_music_candidates_enabled", False)
                         else None
                     ),
+                    render_backend=render_backend,
                 )
             ),
             capability_id="bot.music",
@@ -4394,6 +4465,7 @@ def _register_nonebot_handlers() -> None:
                     config,
                     default_mode=mode,
                     request_store=music_request_store,
+                    render_backend=render_backend,
                 )(synthetic, _decision)
 
         elif capability_id == "bot.wiki":

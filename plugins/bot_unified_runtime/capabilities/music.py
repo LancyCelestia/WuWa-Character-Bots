@@ -268,8 +268,8 @@ def _render_music_body(item: Any, mode: str) -> str:
         lines.append("（音频文件随后发送；下载失败则只有文字）")
     elif "voice" in parts:
         lines.append("（语音片段随后发出，没声音说明试听链接被平台拦了）")
-    if "card" in parts and not _music_card_parts(item):
-        lines.append("（该平台未提供音乐卡片，已用封面替代）")
+    if "card" in parts and not _music_card_parts(item) and not music_cover_url(item):
+        lines.append("（该平台暂无可用卡片/封面）")
     return "\n".join(lines)
 
 
@@ -446,12 +446,15 @@ def build_music_capability(
     request_store: Any | None = None,
     candidate_providers: dict[str, tuple[Callable[..., Any], Callable[..., Any]]] | None = None,
     clock: Callable[[], float] | None = None,
+    render_backend: Any | None = None,
 ) -> Any:
     """构建 bot.music 能力；providers 为空时按 config 平台名单构建。
 
     candidate_providers：平台 id -> (候选列表函数, 按 ID 详情函数)。
     启用后（BOT_MUSIC_CANDIDATES_ENABLED）同名歧义返回编号列表，
     用户回复『点歌 <编号>』在有效期内完成二次选择。
+    render_backend：可用时把歌曲渲染成 Mica 信息卡图（替代 QQ 音乐签名卡，
+    NapCat 无 musicSignUrl 时 CQ:music 会被拒签并中断后续 segment）。
     """
     if providers is None:
         platforms = getattr(config, "bot_music_platforms", []) or [] if config else []
@@ -471,6 +474,25 @@ def build_music_capability(
     candidates_limit = max(2, int(getattr(config, "bot_music_candidates_limit", 5) or 5))
     now = clock or time.monotonic
 
+    def _render_music_card_png(item: Any) -> str | None:
+        """把歌曲渲染成 Mica 信息卡 PNG；后端不可用或失败返回 None。"""
+        if render_backend is None or not getattr(render_backend, "available", False):
+            return None
+        try:
+            from plugins.bot_unified_runtime.capabilities.content_parser import (
+                render_card_png,
+            )
+
+            payload = render_card_png(
+                render_backend,
+                item,
+                config=config,
+                card_dir=str(getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"),
+            )
+        except Exception:  # noqa: BLE001 - 渲染失败回退封面直链，不影响点歌主链路。
+            return None
+        return str(payload.get("file") or "") if isinstance(payload, dict) else None
+
     def _render_hit(
         item: Any,
         parser_id: str,
@@ -482,15 +504,27 @@ def build_music_capability(
         except Exception:
             _LOGGER.debug("music analytics write failed", exc_info=True)
         body = _render_music_body(item, mode)
-        audio = _media_parts_for_mode(item, mode, audio_downloader=audio_downloader)
+        media_parts = _media_parts_for_mode(item, mode, audio_downloader=audio_downloader)
         parts = parse_music_mode_spec(mode) or DEFAULT_PARTS
-        has_music_card = bool(_music_card_parts(item))
-        cover_url = music_cover_url(item)
-        images = (
-            [{"file": cover_url}]
-            if "card" in parts and not has_music_card and cover_url
-            else []
-        )
+        # 卡片优先级：Mica 信息卡图 > 封面直链 > CQ:music 签名卡。签名卡必须
+        # 排最后：NapCat 缺 musicSignUrl 时拒签会中断整条消息，吞掉后续文本。
+        images: list[dict] = []
+        cq_music_parts: list[dict] = []
+        if "card" in parts:
+            card_png = _render_music_card_png(item)
+            if card_png:
+                images = [{"file": card_png}]
+            else:
+                cover_url = music_cover_url(item)
+                if cover_url:
+                    images = [{"file": cover_url}]
+                else:
+                    cq_music_parts = _music_card_parts(item)
+        audio = [
+            part
+            for part in media_parts
+            if isinstance(part, dict) and part.get("type") in {"record", "file"}
+        ] + cq_music_parts
         identity = item.identity
         content = item.content
         return CapabilityResult(

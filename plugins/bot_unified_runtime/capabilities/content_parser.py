@@ -47,11 +47,14 @@ def parse_matched_url(
 
 
 def _clean_summary(summary: str) -> str:
-    """简介只保留博主原始简介：剔除时长/发布时间等元数据行。"""
+    """简介区清洗：剔除时长/发布时间等元数据行；保留解析器的空行分段
+    （AI 总结、热门评论与原始简介之间的视觉分隔），连续空行折叠为一行。"""
     kept: list[str] = []
     for raw_line in (summary or "").splitlines():
         line = raw_line.strip()
         if not line:
+            if kept and kept[-1] != "":
+                kept.append("")
             continue
         upper_head = line.split("：", 1)[0].split(":", 1)[0].strip()
         if upper_head == "简介":
@@ -64,9 +67,13 @@ def _clean_summary(summary: str) -> str:
             if content:
                 kept.append(content)
             continue
-        if upper_head in {"时长", "视频时长", "发布时间", "时间", "上传时间"}:
+        if upper_head in {"时长", "视频时长", "发布时间", "时间", "上传时间", "分区"}:
             continue
         kept.append(line)
+    while kept and kept[0] == "":
+        kept.pop(0)
+    while kept and kept[-1] == "":
+        kept.pop()
     return "\n".join(kept)
 
 
@@ -117,13 +124,13 @@ def _engagement_text_bits(engagement: Any) -> list[str]:
 
 
 def _format_publish_time(value: Any) -> str:
-    """发布时间 → 'YYYY-MM-DD HH:MM'（本地时区）；失败返回空串。"""
+    """发布时间 → 'YYYY-MM-DD HH:MM:SS'（本地时区，精确到秒）；失败返回空串。"""
     if value is None:
         return ""
     try:
         if getattr(value, "tzinfo", None) is None:
-            return value.strftime("%Y-%m-%d %H:%M")  # type: ignore[union-attr]
-        return value.astimezone().strftime("%Y-%m-%d %H:%M")  # type: ignore[union-attr]
+            return value.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore[union-attr]
+        return value.astimezone().strftime("%Y-%m-%d %H:%M:%S")  # type: ignore[union-attr]
     except (AttributeError, ValueError, OSError):
         return str(value)
 
@@ -662,7 +669,13 @@ def build_content_capability(
             body=body,
             url=canonical_url or candidate,
             images=images,
-            audio=_media_parts_from_item(item),
+            # CQ:music 签名卡在 NapCat 缺 musicSignUrl 时会拒签并中断整条
+            # 消息（吞掉后续文本段）；解析卡图已含歌曲信息，这里只留语音/文件。
+            audio=[
+                part
+                for part in _media_parts_from_item(item)
+                if isinstance(part, dict) and part.get("type") != "music"
+            ],
             video=video_parts,
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PUBLIC,

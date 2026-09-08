@@ -285,11 +285,14 @@ def _map_comment(raw: Any) -> dict[str, Any]:
 
 
 def _clean_card_summary(summary: str) -> str:
-    """卡片简介只留博主原文：去时长/发布时间行与“简介：”前缀。"""
+    """卡片简介只留博主原文：去时长/发布时间行与“简介：”前缀；
+    保留解析器插入的空行分段（AI 总结/热评分隔），连续空行折叠。"""
     kept: list[str] = []
     for raw_line in (summary or "").splitlines():
         line = raw_line.strip()
         if not line:
+            if kept and kept[-1] != "":
+                kept.append("")
             continue
         head = line.split("：", 1)[0].split(":", 1)[0].strip()
         if head == "简介":
@@ -301,9 +304,13 @@ def _clean_card_summary(summary: str) -> str:
             if content.strip():
                 kept.append(content.strip())
             continue
-        if head in {"时长", "视频时长", "发布时间", "时间", "上传时间"}:
+        if head in {"时长", "视频时长", "发布时间", "时间", "上传时间", "分区"}:
             continue
         kept.append(line)
+    while kept and kept[0] == "":
+        kept.pop(0)
+    while kept and kept[-1] == "":
+        kept.pop()
     return "\n".join(kept)
 
 
@@ -540,7 +547,10 @@ def flat_projection(item: Any) -> Any:
         if not isinstance(extra_value, (dict, list)):
             stats[key] = extra_value
     if published_at is not None:
-        stats["发布时间"] = published_at.strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            stats["发布时间"] = published_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        except (ValueError, OSError):
+            stats["发布时间"] = published_at.strftime("%Y-%m-%d %H:%M:%S")
     if video_asset is not None and video_asset.duration_ms is not None:
         stats["时长"] = video_asset.duration_ms // 1000
     if platform == "bilibili" and item_id.lower().startswith("av"):
@@ -599,7 +609,7 @@ def flat_projection(item: Any) -> Any:
         detail["images"] = [url for url in images if str(url)]
     for key in (
         "episodes", "live", "comments", "goods", "related",
-        "pinned_comment", "hot_comment",
+        "pinned_comment", "hot_comment", "hot_comments",
     ):
         if key in content_extras:
             detail[key] = content_extras[key]
@@ -789,6 +799,9 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
             value = _first_nonempty_stat(stats_raw, aliases)
         if value in (None, ""):
             continue
+        # B 站 post_count 语义是专栏数，作者栏标签跟随平台语义。
+        if platform == "bilibili" and key == "posts":
+            label = "专栏"
         payload.author_stats.setdefault(key, value)
         payload.author_stat_items.append({"key": key, "label": label, "value": value})
         payload.header_l4_items.append({"label": label, "value": value})
@@ -854,6 +867,17 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
     hot = _as_dict(detail.get("hot_comment"))
     payload.pinned_comment = _map_comment(pinned) if pinned else None
     payload.hot_comment = _map_comment(hot) if hot else None
+    # 热评列表（B 站等解析器存 hot_comments 数组）：映射后取前 3 条进模板。
+    hot_list = [
+        _map_comment(comment)
+        for comment in _as_list(detail.get("hot_comments"))
+        if isinstance(comment, dict)
+    ]
+    if not hot_list and payload.hot_comment is not None:
+        hot_list = [payload.hot_comment]
+    payload.hot_comments = hot_list[:3]
+    # 作者栏"帖子/专栏"计数标签：B 站 post_count 语义是专栏数。
+    payload.stats_post_label = "专栏" if platform == "bilibili" else "帖子"
 
     # 商品信息并入正文（模板无独立 goods 块，先以文本行消费契约字段）
     goods_lines: list[str] = []

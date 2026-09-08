@@ -113,7 +113,10 @@ class RenderPayload:
     # 评论
     pinned_comment: dict[str, Any] | None = None
     hot_comment: dict[str, Any] | None = None
+    hot_comments: list[dict[str, Any]] = field(default_factory=list)
     comments: list[dict[str, Any]] = field(default_factory=list)
+    # 作者栏帖子/专栏计数的标签（B 站 post_count 语义是专栏数）
+    stats_post_label: str = "帖子"
 
     # 转发
     forward: ForwardPayload | dict[str, Any] | None = None
