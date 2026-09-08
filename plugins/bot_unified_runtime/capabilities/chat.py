@@ -12,7 +12,6 @@ from typing import Any, cast
 from urllib.parse import urlparse
 
 from plugins.bot_unified_runtime.character import CharacterContextProvider
-from plugins.bot_unified_runtime.character.affinity import classify_behavior
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -1019,29 +1018,6 @@ def build_chat_result(
         admin="admin" in (message.sender_roles or []),
     )
     artifact = artifact_request(message.plain_text) if safety.action == "allow" else None
-    # 动态好感度观察（批次 C）：按本条消息行为更新好感度与印象标签；
-    # 只影响下一轮的语气分寸，本轮 prompt 已在上方用快照构建。
-    if affinity_store is not None and message.sender_id:
-        try:
-            behavior = classify_behavior(
-                message.plain_text,
-                safety_category=safety.category,
-                safety_action=safety.action,
-            )
-            affinity_store.observe(message.sender_id, behavior)
-            # 小名自学：用户主动告知称呼（"叫我XX/你可以叫我XX/以后叫我XX"），
-            # 提取并写入昵称；下次对话 prompt 即用该称呼。
-            nickname_match = re.search(
-                r"(?:你可以叫我|以后叫我|就叫我|叫我|喊我)\s*([一-龥A-Za-z0-9]{1,12})(?:吧|就好|就可以了|就行|哦|呀|~|！|!|。|\s|$)",
-                message.plain_text,
-            )
-            if nickname_match:
-                learned = nickname_match.group(1).strip()
-                current = affinity_store.snapshot(message.sender_id).get("nickname") or ""
-                if learned and learned != current:
-                    affinity_store.set_nickname(message.sender_id, learned)
-        except Exception:  # noqa: BLE001, S110 - 好感度写入失败不影响回复。
-            pass
     if safety.action != "allow":
         # The unsafe request must not become executable instructions. Keep persona,
         # but remove requested tool/image/file side effects and contaminated evidence.

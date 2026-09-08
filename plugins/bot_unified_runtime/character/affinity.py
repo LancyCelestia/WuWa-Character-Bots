@@ -66,6 +66,30 @@ def attitude_for_affinity(affinity: float) -> str:
     return _ATTITUDE_TIERS[-1][1]
 
 
+
+
+_PROFILE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"我(?:来自|是|住在)(?:[^，。！!\s]{2,12})"),
+    re.compile(r"我今年\s*\d{1,3}\s*岁"),
+    re.compile(r"我(?:最近|这几天)(?:在|正在)(?:[^，。！!\s]{2,20})"),
+    re.compile(r"我(?:喜欢|爱|擅长|在玩|在追)(?:[^，。！!\s]{2,20})"),
+)
+
+
+def extract_profile_facts(text: str) -> list[str]:
+    """从用户自述中提取画像事实（身份/来自/年龄/近况/爱好），去重封顶。"""
+    value = (text or "").strip()
+    if not value:
+        return []
+    facts: list[str] = []
+    for pattern in _PROFILE_PATTERNS:
+        for match in pattern.finditer(value):
+            fact = match.group(0).strip()
+            if fact and fact not in facts:
+                facts.append(fact)
+    return facts[:4]
+
+
 class DynamicAffinityStore:
     """SQLite 动态好感度与印象标签；线程安全。"""
 
@@ -90,10 +114,19 @@ class DynamicAffinityStore:
                     insult_count INTEGER NOT NULL DEFAULT 0,
                     nickname TEXT NOT NULL DEFAULT '',
                     impression_tags TEXT NOT NULL DEFAULT '[]',
+                    profile_notes TEXT NOT NULL DEFAULT '[]',
                     updated_at TEXT NOT NULL
                 )
                 """
             )
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(user_affinity)").fetchall()
+            }
+            if "profile_notes" not in columns:
+                connection.execute(
+                    "ALTER TABLE user_affinity ADD COLUMN profile_notes TEXT NOT NULL DEFAULT '[]'"
+                )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=5.0)
@@ -174,6 +207,34 @@ class DynamicAffinityStore:
             "tags": json.loads(str(row["impression_tags"] or "[]")),
             "attitude": attitude_for_affinity(float(row["affinity"])),
         }
+
+    def learn_profile(self, sender_id: str, text: str) -> list[str]:
+        """从自述提取画像事实并合并入 profile_notes（去重，上限 12 条）。"""
+        facts = extract_profile_facts(text)
+        if not facts or not sender_id:
+            return []
+        now_text = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        merged: list[str] = []
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT profile_notes FROM user_affinity WHERE sender_id = ?",
+                (sender_id,),
+            ).fetchone()
+            existing = json.loads(str(row["profile_notes"] or "[]")) if row else []
+            merged = [str(f) for f in existing]
+            for fact in facts:
+                if fact not in merged:
+                    merged.append(fact)
+            merged = merged[-12:]
+            connection.execute(
+                "INSERT OR IGNORE INTO user_affinity (sender_id, affinity, updated_at) VALUES (?, 0.5, ?)",
+                (sender_id, now_text),
+            )
+            connection.execute(
+                "UPDATE user_affinity SET profile_notes = ?, updated_at = ? WHERE sender_id = ?",
+                (json.dumps(merged, ensure_ascii=False), now_text, sender_id),
+            )
+        return facts
 
     def set_nickname(self, sender_id: str, nickname: str) -> None:
         """管理员/本人设置用户小名；写入后 prompt 可用小名称呼。"""

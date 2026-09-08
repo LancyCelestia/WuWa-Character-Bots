@@ -3863,6 +3863,36 @@ def _register_nonebot_handlers() -> None:
             event_type=type(event).__name__,
         )
         message = _incoming_from_nonebot_event(bot_id=bot_id, event=event)
+        # 被动感知（批次 C）：所有群/私聊消息都观察行为、自述画像与小名自学，
+        # 不依赖 @/白名单触发；只影响后续态度与称呼，不改变本轮是否回复。
+        if message.sender_id and message.plain_text.strip():
+            try:
+                _store = build_character_affinity_store(config)
+                if _store is not None:
+                    from .character.affinity import classify_behavior
+                    from .character.affinity import extract_profile_facts as _epf
+
+                    _store.observe(
+                        message.sender_id,
+                        classify_behavior(message.plain_text),
+                    )
+                    facts = _epf(message.plain_text)
+                    if facts:
+                        _store.learn_profile(message.sender_id, message.plain_text)
+                    import re as _re
+
+                    nickname_match = _re.search(
+                        r"(?:你可以叫我|以后叫我|就叫我|叫我|喊我)\s*([\u4e00-\u9fa5A-Za-z0-9]{1,12})"
+                        r"(?:吧|就好|就可以了|就行|哦|呀|~|！|!|。|\s|$)",
+                        message.plain_text,
+                    )
+                    if nickname_match:
+                        learned = nickname_match.group(1).strip()
+                        current = _store.snapshot(message.sender_id).get("nickname") or ""
+                        if learned and learned != current:
+                            _store.set_nickname(message.sender_id, learned)
+            except Exception:  # noqa: BLE001, S110 - 被动感知失败不影响主链路。
+                pass
         # 小名缓存刷新（60s），供动态昵称 mention 判定。
         if time.time() - _AFFINITY_NICKNAMES_LOADED_AT > 60.0:
             _refresh_affinity_nicknames(_affinity_store_runtime(config))

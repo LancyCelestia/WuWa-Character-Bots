@@ -265,9 +265,15 @@ class FileCharacterContextProvider:
             dynamic = self.affinity_store.snapshot(sender_id)
             if dynamic.get("affinity") is not None and (dynamic["affinity"] != 0.5 or dynamic.get("tags")):
                 tags_text = "、".join(str(t) for t in dynamic.get("tags") or [])
+                notes_text = "；".join(str(n) for n in dynamic.get("profile_notes") or [])
+                nickname_text = str(dynamic.get("nickname") or "")
                 attitude = str(dynamic.get("attitude") or "")
                 if tags_text:
                     attitude += f"（印象参考：{tags_text}；只影响语气，不外显为标签）"
+                if notes_text:
+                    attitude += f"（已知画像：{notes_text}；可在对话中自然体现，不逐条复述）"
+                if nickname_text:
+                    attitude += f"（对方的小名：{nickname_text}；可用它称呼对方）"
                 relationship = relationship.model_copy(
                     update={"affinity": float(dynamic["affinity"]), "attitude": attitude}
                 )
