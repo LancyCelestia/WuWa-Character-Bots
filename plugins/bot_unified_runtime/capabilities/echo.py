@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import re
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -91,7 +92,7 @@ _HELP_INDEX_COMMAND_TOPICS = frozenset(
 # Ordinary users see only interactive public capabilities. Diagnostics, state,
 # history, memory and administration remain available to administrators.
 _PUBLIC_HELP_TOPICS = frozenset(
-    {"订阅", "点歌", "表情", "天气", "维基", "历史上的今天", "下载", "昵称", "链接", "Epic"}
+    {"订阅", "点歌", "表情", "天气", "维基", "萌娘百科", "历史上的今天", "下载", "昵称", "链接", "Epic"}
 )
 
 
@@ -122,7 +123,7 @@ _HELP_CATEGORIES = (
         "子功能",
         {
             "链接", "下载", "订阅", "点歌", "表情", "偷表情", "Epic",
-            "历史上的今天", "天气", "维基", "昵称",
+            "历史上的今天", "天气", "维基", "萌娘百科", "昵称",
         },
     ),
 )
@@ -518,6 +519,14 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "detail": '【维基】查询百科词条\n维基: 查询百科词条，<word>：词条名',
         },
         {
+            "topic": '萌娘百科',
+            "aliases": ('萌娘百科', '萌百', 'moegirl'),
+            "index": '【萌娘百科】查询萌娘百科：萌娘百科 <词条>｜直接问 XX是谁',
+            "title_line": '【萌娘百科】查询萌娘百科词条',
+            "lines": ['萌娘百科: 查询萌娘百科词条，<word>：词条名', '直接问: 「初音未来是谁？」这类问句会自动查萌娘百科并回复；查不到时转人工聊天回答'],
+            "detail": '【萌娘百科】查询萌娘百科词条\n萌娘百科: 查询萌娘百科词条，<word>：词条名\n直接问: 「初音未来是谁？」这类问句会自动查萌娘百科并回复；查不到时转人工聊天回答',
+        },
+        {
             "topic": '历史上的今天',
             "aliases": ('历史上的今天', 'today', '今日'),
             "index": '【历史上的今天】每日历史推送：设置|状态|取消',
@@ -732,6 +741,35 @@ def _resolve_help_accent(accent_color: str) -> tuple[str, str]:
     return _rgb_to_hex(rgb), _rgb_to_hex(_darken(rgb))
 
 
+def _help_index_sections(is_admin: bool) -> list[tuple[str, list[tuple[str, str]]]]:
+    """结构化索引：分类 → (药丸标签, 说明)。供帮助卡网格布局消费。"""
+    visible = {str(entry["topic"]): entry for entry in _visible_help_entries(is_admin)}
+    hint_re = re.compile(r"｜详情：/bot help .*?$")
+    sections: list[tuple[str, list[tuple[str, str]]]] = []
+    for category, topics in _HELP_CATEGORIES:
+        rows: list[tuple[str, str]] = []
+        for topic in topics:
+            entry = visible.get(topic)
+            if entry is None:
+                continue
+            desc = hint_re.sub("", re.sub(r"^【[^】]+】", "", str(entry["index"])).strip())
+            desc = desc.strip("；;｜| ").strip()
+            rows.append((str(entry["aliases"][0]) if entry["aliases"] else topic, desc or topic))
+        if rows:
+            sections.append((category, rows))
+    categorized = {topic for _, topics in _HELP_CATEGORIES for topic in topics}
+    orphans = [entry for topic, entry in visible.items() if topic not in categorized]
+    if orphans:
+        sections.append(("更多", [
+            (
+                str(entry["aliases"][0]) if entry["aliases"] else str(entry["topic"]),
+                hint_re.sub("", re.sub(r"^【[^】]+】", "", str(entry["index"])).strip()).strip("；;｜| ").strip(),
+            )
+            for entry in orphans
+        ]))
+    return sections
+
+
 def _help_mica_html(
     body: str,
     *,
@@ -739,64 +777,135 @@ def _help_mica_html(
     bot_name: str = "守岸人",
     bot_avatar_url: str = "",
     accent_color: str = "",
+    sections: list[tuple[str, list[tuple[str, str]]]] | None = None,
 ) -> str:
-    """Render a one-page categorized Mica help card with transparent outer space."""
-    accent, accent_ink = _resolve_help_accent(accent_color)
-    sections: list[tuple[str, list[str]]] = []
-    current_title = "功能"
-    current_rows: list[str] = []
-    for raw_line in body.splitlines():
-        line = raw_line.strip()
-        if not line or line.endswith("总览"):
-            continue
-        if line.startswith("【") and line.endswith("】"):
-            if current_rows:
-                sections.append((current_title, current_rows))
-            current_title, current_rows = line[1:-1], []
-            continue
-        current_rows.append(line)
-    if current_rows:
-        sections.append((current_title, current_rows))
+    """Render a one-page categorized Mica help card with transparent outer space.
 
-    cards = "".join(
-        "<section class=\"help-section\">"
-        f"<h2>{html.escape(title)}</h2>"
-        "<div class=\"command-list\">"
-        + "".join(
+    ``sections`` 提供结构化索引（总览页 → 两列网格 + 命令药丸）；缺省时
+    按正文解析（模块详情页：首行作卡题，其余行拆「命令段 + 说明段」）。
+    """
+    accent, accent_ink = _resolve_help_accent(accent_color)
+    detail_title = ""
+    if sections is None:
+        sections = []
+        current_title = "功能"
+        current_rows: list[str] = []
+        for raw_line in body.splitlines():
+            line = raw_line.strip()
+            if not line or line.endswith("总览"):
+                continue
+            if line.startswith("【") and line.endswith("】"):
+                if current_rows:
+                    sections.append((current_title, [_split_command_row(r) for r in current_rows]))
+                current_title, current_rows = line[1:-1], []
+                continue
+            if detail_title:
+                current_rows.append(line)
+            else:
+                detail_title = line.rstrip("：:")
+                current_title = detail_title
+        if current_rows:
+            sections.append((current_title or "用法", [_split_command_row(r) for r in current_rows]))
+        if sections and not detail_title:
+            detail_title = sections[0][0]
+
+    def _esc(value: str) -> str:
+        return html.escape(value)
+
+    def _rows_html(rows: list[tuple[str, str]]) -> str:
+        return "".join(
             "<div class=\"command-row\">"
-            f"<span class=\"cmd\">{html.escape(cmd)}</span>"
-            + (f"<span class=\"desc\">{html.escape(desc)}</span>" if desc else "")
+            + (f"<span class=\"pill\">{_esc(cmd.rstrip('：:'))}</span>" if cmd else "")
+            + (f"<span class=\"desc\">{_esc(desc)}</span>" if desc else "")
             + "</div>"
-            for row in rows
-            for cmd, desc in (_split_command_row(row),)
+            for cmd, desc in rows
         )
-        + "</div></section>"
-        for title, rows in sections
-    )
+
+    if detail_title:
+        # 模块详情/分类说明书：单列卡，首段为主卡。
+        cards = "".join(
+            "<section class=\"help-section" + (" main" if index == 0 else "") + "\">"
+            f"<h2><span class=\"dot\"></span>{_esc(title)}</h2>"
+            f"<div class=\"command-list\">{_rows_html(rows)}</div></section>"
+            for index, (title, rows) in enumerate(sections)
+        )
+        grid_cls = "single"
+        header_title = f"{bot_name} · {detail_title}"
+        header_sub = "参数标注：<> 必填、[] 可选；把命令复制到聊天即可使用，具体取值见各行说明。"
+    else:
+        cards = "".join(
+            "<section class=\"help-section\">"
+            f"<h2><span class=\"dot\"></span>{_esc(title)}</h2>"
+            f"<div class=\"command-list\">{_rows_html(rows)}</div></section>"
+            for title, rows in sections
+        )
+        grid_cls = "masonry"
+        header_title = f"{bot_name} · 命令手册"
+        header_sub = "按模块分类汇总；回复「/bot help 模块名」展开该模块的子命令、参数与示例（如 /bot help 点歌、/bot help 订阅）。"
     role = "管理员帮助" if is_admin else "公开帮助"
     avatar = (
         f'<img class="help-bot-avatar" src="{html.escape(bot_avatar_url)}" alt="" />'
         if bot_avatar_url else ""
     )
+    avatar_block = avatar or f"<span class=\"avatar-fallback\">{_esc((bot_name or '守')[:1])}</span>"
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
 :root {{ --accent:{accent}; --accent-ink:{accent_ink}; --ink:#27232a; --muted:#6f646c; }}
 * {{ box-sizing:border-box; }}
 body {{ margin:0; padding:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; background:transparent; color:var(--ink); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }}
 .help-stage {{ width:auto; padding:26px; background:transparent; }}
-.help-shell {{ width:900px; overflow:hidden; border-radius:24px; border:1px solid rgba(255,255,255,.9); background:linear-gradient(165deg, color-mix(in srgb, var(--accent) 3%, #fff) 0%, color-mix(in srgb, var(--accent) 8%, #fff) 100%); box-shadow:0 12px 32px rgba(31,35,41,.10), 0 0 24px color-mix(in srgb, var(--accent) 12%, transparent); }}
-.help-head {{ padding:22px 26px 18px; background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 2%, #fff), color-mix(in srgb, var(--accent) 6%, #fff)); border-bottom:1px solid color-mix(in srgb, var(--accent) 16%, #fff); }}
+.help-shell {{ width:960px; overflow:hidden; border-radius:24px; border:1px solid rgba(255,255,255,.92); background:linear-gradient(168deg, color-mix(in srgb, var(--accent) 3%, #fff) 0%, color-mix(in srgb, var(--accent) 7%, #fff) 100%); box-shadow:0 14px 34px rgba(31,35,41,.10); }}
+.help-head {{ display:flex; align-items:center; gap:14px; padding:22px 26px 18px; border-bottom:1px solid color-mix(in srgb, var(--accent) 14%, #fff); }}
+.avatar-wrap {{ flex:0 0 auto; width:52px; height:52px; border-radius:16px; overflow:hidden; background:color-mix(in srgb, var(--accent) 14%, #fff); display:flex; align-items:center; justify-content:center; box-shadow:inset 0 0 0 1px rgba(255,255,255,.9); }}
+.avatar-wrap img {{ width:100%; height:100%; object-fit:cover; }}
+.avatar-fallback {{ font-size:24px; font-weight:700; color:var(--accent-ink); }}
+.head-main {{ flex:1 1 auto; min-width:0; }}
 .help-kicker {{ color:var(--accent-ink); font-size:11px; font-weight:700; letter-spacing:.14em; }}
-.help-title {{ margin-top:8px; font-size:30px; font-weight:700; }} .help-subtitle {{ margin-top:6px; color:var(--muted); font-size:13px; line-height:1.5; }}
-.help-body {{ padding:14px; background:color-mix(in srgb, var(--accent) 3%, #fff); }} .help-grid {{ display:grid; grid-template-columns:1fr; gap:10px; }}
-.help-section {{ width:100%; border-radius:16px; overflow:hidden; border:1px solid rgba(255,255,255,.95); background:linear-gradient(150deg, color-mix(in srgb, var(--accent) 2%, #fff), color-mix(in srgb, var(--accent) 6%, #fff)); box-shadow:0 3px 10px rgba(31,35,41,.05); }}
-.help-section h2 {{ margin:0; padding:10px 13px; color:var(--accent-ink); background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, #fff), color-mix(in srgb, var(--accent) 13%, #fff)); border-left:4px solid var(--accent); font-size:15px; font-weight:700; letter-spacing:.02em; }}
-.command-list {{ padding:8px; display:grid; gap:5px; }} .command-row {{ padding:7px 10px; border-radius:10px; background:color-mix(in srgb, var(--accent) 4%, #ffffff); font-size:12px; line-height:1.5; white-space:pre-wrap; }}
-.command-row .cmd {{ color:var(--ink); font-weight:650; }} .command-row .desc {{ color:var(--muted); }}
-.help-foot {{ display:flex; justify-content:flex-end; padding:10px 14px; background:color-mix(in srgb, var(--accent) 10%, #fff); border-top:1px solid color-mix(in srgb, var(--accent) 16%, #fff); }}
+.help-title {{ margin-top:6px; font-size:27px; font-weight:700; letter-spacing:.01em; }}
+.help-subtitle {{ margin-top:6px; color:var(--muted); font-size:12.5px; line-height:1.55; }}
+.help-chip {{ flex:0 0 auto; padding:7px 14px; border-radius:999px; color:var(--accent-ink); background:color-mix(in srgb, var(--accent) 6%, #fff); border:1px solid color-mix(in srgb, var(--accent) 20%, #fff); font-size:12px; font-weight:650; }}
+.help-body {{ padding:14px; background:color-mix(in srgb, var(--accent) 3%, #fff); }}
+.help-grid.masonry {{ column-count:2; column-gap:12px; }}
+.help-grid.masonry .help-section {{ break-inside:avoid; margin-bottom:12px; }}
+.help-grid.single {{ display:grid; grid-template-columns:1fr; gap:12px; }}
+.help-section {{ border-radius:16px; overflow:hidden; border:1px solid rgba(255,255,255,.95); background:linear-gradient(150deg, color-mix(in srgb, var(--accent) 2%, #fff), color-mix(in srgb, var(--accent) 5%, #fff)); box-shadow:0 3px 10px rgba(31,35,41,.05); }}
+.help-section h2 {{ display:flex; align-items:center; gap:8px; margin:0; padding:10px 14px; color:var(--accent-ink); background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, #fff), color-mix(in srgb, var(--accent) 12%, #fff)); border-left:4px solid var(--accent); font-size:14.5px; font-weight:700; letter-spacing:.02em; }}
+.help-section h2 .dot {{ flex:0 0 auto; width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 18%, #fff); }}
+.command-list {{ padding:9px; display:grid; gap:6px; }}
+.command-row {{ display:flex; align-items:flex-start; gap:9px; padding:7px 10px; border-radius:11px; background:rgba(255,255,255,.72); font-size:12px; line-height:1.55; }}
+.command-row .pill {{ flex:0 0 auto; max-width:62%; padding:2px 10px; border-radius:999px; color:var(--accent-ink); background:color-mix(in srgb, var(--accent) 13%, #fff); font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.command-row .desc {{ color:var(--muted); min-width:0; overflow-wrap:anywhere; }}
+.help-foot {{ display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 16px; background:color-mix(in srgb, var(--accent) 9%, #fff); border-top:1px solid color-mix(in srgb, var(--accent) 15%, #fff); }}
+.help-foot .tip {{ color:var(--muted); font-size:11.5px; }}
 .help-bot-pill {{ display:flex; align-items:center; gap:8px; padding:5px 13px 5px 6px; border-radius:999px; color:var(--accent-ink); background:color-mix(in srgb, var(--accent) 4%, #fff); border:1px solid #fff; box-shadow:0 4px 10px rgba(31,35,41,.07); font-size:13px; font-weight:600; }}
 .help-bot-avatar {{ width:27px; height:27px; object-fit:cover; border-radius:50%; }}
-</style></head><body><div class="help-stage card"><section class="help-shell"><header class="help-head"><div class="help-kicker">{html.escape(role)}</div><div class="help-title">{html.escape(bot_name)} · 命令帮助</div><div class="help-subtitle">按模块分类汇总；输入「/bot 帮助 &lt;模块名&gt;」展开该模块的命令与参数详情（如 /bot 帮助 点歌、/bot 帮助 订阅）；/岸宝帮助 同样可用</div></header><main class="help-body"><div class="help-grid">{cards}</div></main><footer class="help-foot"><div class="help-bot-pill">{avatar}<span>{html.escape(bot_name)} · 命令手册</span></div></footer></section></div></body></html>"""
+</style></head><body><div class="help-stage card"><section class="help-shell"><header class="help-head"><div class="avatar-wrap">{avatar_block}</div><div class="head-main"><div class="help-kicker">{_esc(role)}</div><div class="help-title">{_esc(header_title)}</div><div class="help-subtitle">{_esc(header_sub)}</div></div><div class="help-chip">发 /bot help 获取本图</div></header><main class="help-body"><div class="help-grid {grid_cls}">{cards}</div></main><footer class="help-foot"><span class="tip">参数标注：&lt;&gt; 必填，[] 可选；群里直接发命令即可触发。</span><div class="help-bot-pill">{avatar}<span>{_esc(bot_name)} · 命令手册</span></div></footer></section></div></body></html>"""
+
+
+def _help_category_body(query: str, *, is_admin: bool) -> str | None:
+    """分类名（如「大模型」「子功能」「管理员」）→ 该分类的说明书页。
+
+    命中分类时返回首行为标题、每个模块一节的完整命令正文；未命中返回 None。
+    """
+    q = query.strip().lower()
+    if not q:
+        return None
+    for name, topics in _HELP_CATEGORIES:
+        n = name.lower()
+        if q == n or n.startswith(q) or q in n:
+            entries = [
+                entry
+                for entry in _visible_help_entries(is_admin)
+                if entry["topic"] in topics
+            ]
+            if not entries:
+                return None
+            lines = [f"{name} · 命令手册"]
+            for entry in entries:
+                lines.append(f"【{entry['topic']}】")
+                lines.extend(str(line) for line in entry["lines"])
+            return "\n".join(lines)
+    return None
 
 
 def _try_render_help_image(
@@ -809,6 +918,7 @@ def _try_render_help_image(
     bot_name: str,
     bot_avatar_url: str = "",
     accent_color: str = "",
+    sections: list[tuple[str, list[tuple[str, str]]]] | None = None,
 ) -> str:
     if render_backend is None or not getattr(render_backend, "available", False):
         return ""
@@ -821,6 +931,7 @@ def _try_render_help_image(
                     bot_name=bot_name,
                     bot_avatar_url=bot_avatar_url,
                     accent_color=accent_color,
+                    sections=sections,
                 ),
                 "viewport": {"width": 960, "height": 1100},
                 "device_scale_factor": 2,
@@ -853,10 +964,11 @@ def build_help_result(
     cleaned = parse_help_command_text(query)
     topic = normalize_help_topic(cleaned)
     page = 1 if cleaned in {"1", "2"} else None
-    if not cleaned or page is not None:
+    is_index = not cleaned or page is not None
+    if is_index:
         body = _help_index_body(page=page or 1, is_admin=is_admin)
     elif topic is None:
-        body = _help_unknown_body(cleaned)
+        body = _help_category_body(cleaned, is_admin=is_admin) or _help_unknown_body(cleaned)
     else:
         entry = next(item for item in _HELP_ENTRIES if item["topic"] == topic)
         if not is_admin and entry["topic"] not in _PUBLIC_HELP_TOPICS:
@@ -873,6 +985,7 @@ def build_help_result(
         bot_name=bot_name,
         bot_avatar_url=bot_avatar_url,
         accent_color=accent_color,
+        sections=_help_index_sections(is_admin) if is_index else None,
     )
     if image_path:
         return CapabilityResult(
