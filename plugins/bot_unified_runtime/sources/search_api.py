@@ -287,7 +287,9 @@ class TinyFishFetchProvider:
         owned = self._client is None
         try:
             params, body_overrides = _request_overrides(self.options)
-            body = {"url": url}
+            # TinyFish Fetch API：POST https://api.fetch.tinyfish.ai，body {"urls": [...]}，
+            # results[].text 为提取正文（errors[] 逐 URL 报错不影响其余）。
+            body = {"urls": [url], "format": "markdown"}
             body.update({key: value for key, value in self.options.items() if key not in {"headers", "params", "body"}})
             body.update(body_overrides)
             response = client.post(

@@ -1054,3 +1054,33 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
 5. **parser-lite 15 平台移植**：批次计划见 §19.11（zhihu/douban/taptap/coolapk/hupu 为
    批次 A 首选）；本批未新增平台，下一批按"读样本 JSON → 写解析 → 路由正则 → 回归测试"
    流程逐个落地。
+
+### 19.13 alpha.2 十轮增补：TinyFish Fetch 闭环/记忆清洗/侮辱外号防御/后续路线图（2026-09-08）
+
+1. **TinyFish Fetch 接入 + 四家搜索全线闭环（P2.3 完成）**：用户提供官方文档——
+   Fetch 端点为 `POST https://api.fetch.tinyfish.ai`（body `{"urls":[...],"format":"markdown"}`）。
+   已改 `TinyFishFetchProvider` 请求体与默认端点（`BOT_WEB_SEARCH_TINYFISH_FETCH_ENDPOINT`
+   默认值已填），**真实 key 实弹抓取 example.com 正文成功**；测试断言同步新响应结构。
+   至此 Search（Tavily 主/You 备/LangSearch 备/TinyFish）+ Fetch 正文抓取全部真实 key 验收。
+2. **记忆库清洗（防御强化，用户授权）**：新增 `security/memory_sanitize.py`——扫描
+   `memory_facts` 全部文本，按 5 类模式（nsfw/graphic_violence/insult/petplay/forced_persona）
+   命中后先复制进 `memory_quarantine` 隔离表（含类别+时间，可审计可恢复）再删除；
+   支持 `--dry-run/--apply`；dev.ps1 任务 `memory-sanitize`（`-Apply` 才真删）。
+   **首轮实跑：17 条记忆全部干净，0 命中**。4 项回归测试。
+3. **侮辱人格/恶意外号防御**：content_safety 新增 `insult_nickname` 类别（侮辱词根绰号、
+   人格贬损句式 → 温和重构）；普通善意小名（"叫我小岸""阿月""团子"）不误伤；
+   **侮辱他人对管理员也不放宽**（侮辱不是管理特权）。1 项回归（含小名放行对照）。
+4. **后续路线图登记（用户 2026-09-08 指令，按批次推进）：**
+   - **批次 C（社交记忆体系，P1 核心）**：好感度系统（增减规则+差异化态度）、用户
+     身份/印象/标签（行为→印象→态度，不人身攻击）、角色小名/外号标签体系（被喊小名
+     即出现并回应、可用小名称呼用户）、群聊公共记忆与多人复读/戏弄应对（"怎么一个个
+     都当复读机"）、私聊=漂泊者/群聊=群昵称（非管理员禁用漂泊者称呼）。参考
+     lanxinmob/memory、anywhere-llm、nyaturingtest 设计，代码自研。
+   - **批次 D（群治理）**：群文件自动整理（学习 zhongwen-4/group-file-admin 思路自研
+     并改进）；逆天发言检测撤回（学习 PamiNET/nodirtymsg 算法思路，**不复制代码**，
+     该仓库只读无人维护）。
+   - **批次 E（管理员绑定）**：两个管理员账号（澜汐/霞月）绑定同一人，称呼可用
+     Lancy/LancyCelestia——**待用户提供两个 QQ 号**后写入 `BOT_ADMIN_USER_IDS`
+     （或用户自行 `/bot runtime set BOT_ADMIN_USER_IDS [号1,号2]`）。
+   - **批次 F**：说人话（去 AI 味）应用于回复整理层（strip_outer_speech_quotes 之后）。
+5. 验证：398 passed；Ruff/mypy 全过。

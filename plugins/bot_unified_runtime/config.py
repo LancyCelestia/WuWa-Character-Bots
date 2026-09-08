@@ -219,7 +219,7 @@ class Config(BaseModel):
     bot_web_search_tavily_extract_endpoint: str = "https://api.tavily.com/extract"
     bot_web_search_you_endpoint: str = "https://api.you.com/v1/search"
     bot_web_search_tinyfish_endpoint: str = "https://api.search.tinyfish.ai/search"
-    bot_web_search_tinyfish_fetch_endpoint: str = ""
+    bot_web_search_tinyfish_fetch_endpoint: str = "https://api.fetch.tinyfish.ai"
     bot_web_search_langsearch_endpoint: str = "https://api.langsearch.com/v1/web-search"
     bot_web_search_fetch_timeout_seconds: float = 15.0
     bot_web_search_fetch_max_chars: int = 3000

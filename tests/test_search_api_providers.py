@@ -111,8 +111,16 @@ def test_langsearch_provider_normalizes_nested_web_pages_response():
 def test_tinyfish_fetch_provider_returns正文_without_network_dependency():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["X-API-Key"] == "tiny-key"
-        assert json.loads(request.content)["url"] == "https://source.example/article"
-        return httpx.Response(200, json={"content": "正文内容"})
+        assert json.loads(request.content)["urls"] == ["https://source.example/article"]
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"url": "https://source.example/article", "text": "正文内容"}
+                ],
+                "errors": [],
+            },
+        )
 
     provider = TinyFishFetchProvider(
         api_key="tiny-key",

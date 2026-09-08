@@ -36,13 +36,15 @@ param(
         "route-demo",
         "route-smoke",
         "search-smoke",
+        "memory-sanitize",
         "docs-check",
         "plugin-check",
         "smoke",
         "verify"
     )]
     [string]$Task = "help",
-    [string]$Message = ""
+    [string]$Message = "",
+    [switch]$Apply
 )
 
 $ErrorActionPreference = "Stop"
@@ -754,6 +756,7 @@ function Show-Help {
         '  route-demo     Print the full phrasing routing matrix. Offline, no network, no QQ.'
         '  route-smoke    Run deterministic capabilities against real APIs/services; may use network, never sends QQ.'
         '  search-smoke   One read-only query per configured search provider (Tavily/You/TinyFish/LangSearch); never sends QQ.'
+        '  memory-sanitize Scan long-term memory for NSFW/violence/insult content; -Apply quarantines and deletes.'
         '  docs-check    Verify minimal runtime docs, archive policy, and project config pointers exist.'
         '  plugin-check  Verify plugins/ is configured and report whether local plugins exist yet.'
         '  smoke         Verify docs, plugin discovery, NoneBot import, and nb CLI availability.'
@@ -798,6 +801,19 @@ function Invoke-SearchSmoke {
     finally { Pop-Location }
 }
 
+function Invoke-MemorySanitize {
+    $python = Get-ProjectPython
+
+    Push-Location $Root
+    try {
+        Write-Step "memory sanitize (dry-run preview; add -Apply to delete)"
+        $arguments = @("-m", "plugins.bot_unified_runtime.security.memory_sanitize", "--dry-run")
+        if ($Apply) { $arguments = @("-m", "plugins.bot_unified_runtime.security.memory_sanitize", "--apply") }
+        Invoke-External $python $arguments
+    }
+    finally { Pop-Location }
+}
+
 
 switch ($Task) {
     "help" { Show-Help }
@@ -835,6 +851,7 @@ switch ($Task) {
     "route-demo" { Invoke-RouteDemo }
     "route-smoke" { Invoke-RouteSmoke }
     "search-smoke" { Invoke-SearchSmoke }
+    "memory-sanitize" { Invoke-MemorySanitize }
     "docs-check" { Invoke-DocsCheck }
     "plugin-check" { Invoke-PluginCheck }
     "smoke" { Invoke-Smoke }
