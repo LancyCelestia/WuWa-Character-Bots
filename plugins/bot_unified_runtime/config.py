@@ -275,6 +275,7 @@ class Config(BaseModel):
     # 默认关闭保持"第一命中直接播放"的既有行为。
     # 点歌默认输出模式：card+voice+link（卡片/封面 + 语音试听 + 链接）。
     # 运行时 BOT_MUSIC_MODE 覆盖此处。
+    bot_parse_subtitle_summary: bool = False
     bot_music_default_mode: str = "card+voice+link"
     bot_music_candidates_enabled: bool = False
     bot_music_candidates_ttl_seconds: float = 300.0
@@ -313,8 +314,16 @@ class Config(BaseModel):
     bot_vision_timeout_seconds: float = 20.0
     bot_vision_max_images: int = 2
     bot_vision_max_chars: int = 500
+    # 视频识别抽帧数：ffmpeg 均匀抽帧后单次 VLM 摘要；0 视同 1。
+    bot_vision_video_frames: int = 4
     # 白名单1 群里图片/表情包的回复概率：1.0=发图即识别回应；0=仅 @ 时看图。
     bot_vision_reply_probability: float = 1.0
+    # 语音转写（record 段）：OpenAI 兼容 /audio/transcriptions 接口，
+    # registry 格式与 vision 相同（id -> 条目或条目列表，支持 env: 引用 key）。
+    bot_asr_model_registry: dict[str, Any] = {}
+    bot_asr_enabled: bool = False
+    bot_asr_timeout_seconds: float = 20.0
+    bot_asr_max_chars: int = 300
     # NSFW 直接删除阈值（淫秽色情不存储）：>= 该分数删除文件与记录。
     bot_meme_library_nsfw_delete: float = 0.8
     # 群图下载代理（默认直连 QQ 多媒体源；外网源可走 7890）。
@@ -346,11 +355,10 @@ class Config(BaseModel):
     bot_music_analytics_enabled: bool = True
     bot_music_analytics_db_path: str = "data/music_analytics.sqlite3"
     bot_music_analytics_retention_days: int = 365
-    bot_music_chart_enabled: bool = False
-    bot_music_chart_sources: dict[str, Any] = {}
-    bot_music_chart_poll_interval_seconds: int = 3600
     # 解析/点歌请求的统一超时（秒）。
     bot_fetch_timeout_seconds: float = 10.0
+    # 含合并转发的消息抓取转发正文超时（秒）；仅影响带 forward 段的消息。
+    bot_forward_fetch_timeout_seconds: float = 5.0
     # 平台 Cookie 文件（Netscape 格式，浏览器导出）：给 B站/小红书/抖音/
     # QQ音乐/网易云/推特等解析与点歌加登录态。留空 = 匿名解析。
     bot_cookies_file: str = ""
@@ -509,9 +517,6 @@ class Config(BaseModel):
     bot_subscribe_enabled: bool = True
     bot_subscribe_db_path: str = "data/subscriptions.sqlite3"
     bot_subscribe_poll_interval_seconds: int = 300
-    bot_subscribe_live_poll_seconds: int = 60
-    bot_subscribe_digest_hour: int = 20
-    bot_subscribe_digest_minute: int = 0
     bot_subscribe_max_items_per_tick: int = 20
     bot_subscribe_jitter_ratio: float = 0.20
     bot_subscribe_global_concurrency: int = 3
@@ -523,7 +528,6 @@ class Config(BaseModel):
     bot_subscribe_outbox_interval_seconds: int = 15
     # 订阅即时推送附带解析卡片图（kind="mixed"），渲染失败自动回退纯文本。
     bot_subscribe_card_enabled: bool = True
-    bot_subscribe_playwright_poll_seconds: int = 1800
     bot_fetch_playwright_enabled: bool = True
     bot_runtime_log_file: str = "data/runtime_events.log"
     bot_runtime_log_max_bytes: int = 2097152
@@ -734,6 +738,7 @@ class Config(BaseModel):
         "bot_model_prices",
         "bot_mail_sender_aliases",
         "bot_vision_model_registry",
+        "bot_asr_model_registry",
         mode="before",
     )
     @classmethod

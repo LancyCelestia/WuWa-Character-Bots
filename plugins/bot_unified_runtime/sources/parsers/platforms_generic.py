@@ -853,13 +853,28 @@ def _youtube_innertube(video_id: str, *, proxy: str) -> dict[str, Any]:
                 proxy=proxy,
                 referer="https://www.youtube.com/",
             )
-            text = "".join(
-                str(seg.get("utf8") or "")
-                for ev in (cap.get("events") or [])
-                for seg in (ev.get("segs") or [])
-            )
+            # ASR 滚动字幕：新事件常以旧文本结尾为前缀，逐事件去重叠拼接。
+            text = ""
+            for ev in cap.get("events") or []:
+                seg_text = "".join(
+                    str(seg.get("utf8") or "") for seg in (ev.get("segs") or [])
+                ).replace("\n", " ").strip()
+                if not seg_text:
+                    continue
+                if not text:
+                    text = seg_text
+                    continue
+                overlap = min(len(text), len(seg_text), 120)
+                appended = False
+                for k in range(overlap, 4, -1):
+                    if text.endswith(seg_text[:k]):
+                        text += seg_text[k:]
+                        appended = True
+                        break
+                if not appended and seg_text not in text[-200:]:
+                    text += " " + seg_text
             if text.strip():
-                info["_subtitle"] = re.sub(r"\s+", " ", text).strip()[:1600]
+                info["_subtitle"] = re.sub(r"\s+", " ", text).strip()[:3000]
                 break
     except Exception:  # noqa: BLE001, S110 - 无字幕轨时静默跳过。
         pass
@@ -1178,10 +1193,6 @@ def parse_youtube(url: str, *, cookie_header: str = "", proxy: str = "") -> Pars
         stats["发布时间"] = watch_info["_publish_date"]
     if watch_info.get("_author_name"):
         author_detail["_watch_author_name"] = watch_info["_author_name"]
-    subtitle_text = str(watch_info.get("_subtitle") or "").strip()
-    if subtitle_text:
-        detail["subtitle"] = subtitle_text
-        video_desc = (video_desc + "\n\n字幕摘录：" + subtitle_text[:600]).strip()
     if watch_info.get("_avatar"):
         author_detail["avatar"] = watch_info["_avatar"]
     if watch_info.get("订阅"):
@@ -1210,6 +1221,12 @@ def parse_youtube(url: str, *, cookie_header: str = "", proxy: str = "") -> Pars
         author_detail["official_badge"] = "YouTube 认证频道"
     author_name = str(payload.get("author_name") or "")
     detail: dict = {"author": author_detail} if author_detail else {}
+    # 字幕摘录：必须在 detail/video_desc 都已定义之后（此前插在定义前会
+    # UnboundLocalError，YouTube 带字幕解析即崩）。
+    subtitle_text = str(watch_info.get("_subtitle") or "").strip()
+    if subtitle_text:
+        detail["subtitle"] = subtitle_text
+        video_desc = (video_desc + "\n\n字幕摘录：" + subtitle_text[:600]).strip()
     if watch_info.get("时长"):
         # 时长/预览进 video 元数据 → builder 生成 video 媒体资产。
         detail["video"] = {

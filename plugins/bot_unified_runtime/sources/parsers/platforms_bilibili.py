@@ -210,7 +210,7 @@ def _bilibili_subtitle(
     bvid: str,
     cid: int | None,
     cookie_header: str,
-    max_chars: int = 1600,
+    max_chars: int = 3000,
 ) -> str | None:
     """B 站字幕（含 AI 字幕）正文：player/wbi/v2 → subtitle_url → json。
 
@@ -249,7 +249,13 @@ def _bilibili_subtitle(
                 sub_url, referer="https://www.bilibili.com/", cookie=cookie_header
             )
             items = sub_payload.get("body") or []
-            text = "".join(str(item.get("content") or "") for item in items)
+            # 连续重复字幕行去重（AI 字幕常见逐行复读）。
+            pieces: list[str] = []
+            for item in items:
+                piece = str(item.get("content") or "").strip()
+                if piece and (not pieces or pieces[-1] != piece):
+                    pieces.append(piece)
+            text = "".join(pieces)
             if text.strip():
                 body = text.strip()
                 break

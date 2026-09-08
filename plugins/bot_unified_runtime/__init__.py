@@ -178,6 +178,7 @@ NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS = frozenset(
         "bot.recent",
         "bot.queue",
         "bot.context",
+        "bot.content",
         "bot.help",
         "bot.llm",
         "bot.setup.llm",

@@ -500,6 +500,30 @@ def build_subscription_push_capability(
     return capability
 
 
+def _summarize_subtitle(config: Any, subtitle: str, *, max_chars: int = 3000) -> str:
+    """主聊天模型路由给字幕出 3-5 句要点；失败返回空串。
+
+    同步调用：bot.content 已在 OFFLOADED_CAPABILITY_IDS 中，跑在 worker
+    线程不会阻塞事件循环。走主路由的故障转移链，不新增 key 配置。
+    """
+    try:
+        from plugins.bot_unified_runtime.llm.model_router import build_model_router
+
+        router = build_model_router(config)
+        prompt = (
+            "以下是视频字幕全文。用中文总结成 3-5 句要点，"
+            "保留关键信息（人物/产品/结论/数据），不要客套和开场白：\n\n"
+            + subtitle[:max_chars]
+        )
+        reply = router.generate(
+            [{"role": "user", "content": prompt}],
+            message_text=prompt,
+        )
+        return str(getattr(reply, "text", "") or "").strip()
+    except Exception:  # noqa: BLE001 - 总结失败回退字幕摘录本身。
+        return ""
+
+
 def build_content_capability(
     config: Any | None = None,
     *,
@@ -751,6 +775,11 @@ def build_content_capability(
             images.append(card_image)
         elif cover_url:
             images.append({"file": cover_url})
+        subtitle_text = str((content.platform_extra or {}).get("subtitle") or "").strip()
+        if subtitle_text and bool(getattr(config, "bot_parse_subtitle_summary", False)):
+            summary_text = _summarize_subtitle(config, subtitle_text)
+            if summary_text:
+                body = body + "\n\n【AI字幕总结】\n" + summary_text
         result = CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.content",
