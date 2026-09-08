@@ -14,7 +14,7 @@ from .web_search import WebSearchHit
 _DEFAULT_ENDPOINTS = {
     "tavily": "https://api.tavily.com/search",
     "you": "https://api.you.com/v1/search",
-    "tinyfish": "https://api.search.tinyfish.ai/search",
+    "tinyfish": "https://api.search.tinyfish.ai",
     "langsearch": "https://api.langsearch.com/v1/web-search",
 }
 

@@ -1011,7 +1011,11 @@ def build_chat_result(
     direct_image_urls = llm_options.pop("direct_image_urls", [])
     direct_query_text = str(llm_options.pop("direct_query_text", "") or context.current_message)
     context = _apply_decision_budget_to_context(context, decision)
-    safety = assess_public_content(message.plain_text, session_type=message.session_type.value)
+    safety = assess_public_content(
+        message.plain_text,
+        session_type=message.session_type.value,
+        admin="admin" in (message.sender_roles or []),
+    )
     artifact = artifact_request(message.plain_text) if safety.action == "allow" else None
     if safety.action != "allow":
         # The unsafe request must not become executable instructions. Keep persona,

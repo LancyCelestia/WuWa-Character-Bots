@@ -22,16 +22,16 @@ def _config(tmp_path: Path) -> SimpleNamespace:
 
 
 def test_command_detection_and_parsing() -> None:
-    assert is_cookie_command("cookie")
     assert is_cookie_command("/bot cookie")
-    assert is_cookie_command("凭证")
+    assert is_cookie_command("/bot 凭证")
+    assert not is_cookie_command("cookie")  # 统一格式：必须以 /bot 开头
     assert not is_cookie_command("点歌 晴天")
 
-    assert parse_cookie_command("cookie") == ("status", "", "")
-    assert parse_cookie_command("/bot 凭证") == ("status", "", "")
-    parsed = parse_cookie_command("cookie import bilibili SESSDATA=abc; bili_jct=xyz")
+    assert parse_cookie_command("/bot cookie") == ("status", "", "")
+    assert parse_cookie_command("/bot 凭证 status") == ("status", "", "")
+    parsed = parse_cookie_command("/bot cookie import bilibili SESSDATA=abc; bili_jct=xyz")
     assert parsed == ("import", "bilibili", "SESSDATA=abc; bili_jct=xyz")
-    assert parse_cookie_command("cookie import bilibili") == ("import", "bilibili", "")
+    assert parse_cookie_command("/bot cookie import bilibili") == ("import", "bilibili", "")
 
 
 def test_import_writes_netscape_entries_and_skips_duplicates(

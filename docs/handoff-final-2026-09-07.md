@@ -1019,3 +1019,38 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
   QQ 选曲受 vkey 登录门槛约束）；评论区渲染、Live Photo 渲染、图文/视频/音频渲染增强
   （依赖批次 A 的元数据字段齐全）；AI 总结推广到其他平台（逐平台找官方/模型侧端点）。
 - 帮助与文档：新平台上线时同步 `/bot help` 主题与 COMMANDS.md。
+
+### 19.12 alpha.2 九轮增补：TinyFish 修复/命令统一/防御强化/5 插件评估（2026-09-08）
+
+1. **TinyFish Search 端点修复并真实验收（P2.3 搜索半段关闭）**：用户提供官方文档——
+   新端点为 `GET https://api.search.tinyfish.ai`（旧 `/search` 后缀已 404）。已更新
+   `_DEFAULT_ENDPOINTS["tinyfish"]` 并用真实 key 实测：ASCII/中文查询均返回结构化
+   results[].{position,site_name,title,snippet,url}，原生 `TinyFishWebSearchProvider`
+   代码路径实测 3 hits。search-smoke 全链四家就绪（tavily/you/langsearch 3 家当轮全绿）。
+   **Fetch 端点仍未确认**（docs.tinyfish.ai 的 Fetch 页需登录态，直抓只得到 659 字节）；
+   用户从 docs 复制 Fetch 的 cURL 示例后填 `BOT_WEB_SEARCH_TINYFISH_FETCH_ENDPOINT` 即启用。
+2. **命令格式统一**：新增的管理指令一律 `/bot <模块词> <功能词> [参数]`。
+   `/bot cookie` 模块已改造：`/bot cookie`（状态）、`/bot cookie status`、
+   `/bot cookie import <平台> <Cookie头>`；不再接受裸 `cookie` 形式。测试同步更新（5 项）。
+3. **防御强化（反注入/越界内容）**：`content_safety.py` 新增 `excessive_intimacy` 类别
+   （温和重构不硬拒）——覆盖 强加称谓（叫我/喊我/当我/做我/当你 + 老婆/老公/爸爸/爸比/
+   妈妈/妈咪/奶奶/姥姥/女儿/儿子/姐姐/哥哥/主人）、宠物化扮演（汪汪叫/当狗/做狗/
+   像狗一样/趴好/拴住）。**管理员放宽**：`assess_public_content(..., admin=True)` 跳过
+   `excessive_intimacy` 与 `persona_breaking` 两个软类别；色情/血腥/骚扰/政治四类硬
+   类别对管理员依旧拦截。chat 能力按 `message.sender_roles` 传入 admin。新增回归
+   2 项（越界样例 6 连测 + 管理员放宽/硬类别保持）。
+4. **新一批 5 插件评估**（应用户要求）：
+   - nonebot-plugin-memory（lanxinmob）：通用每用户 LTM；原生记忆抽取+向量知识+预算
+     体系更深且已集成 → 维持原生，设计参考。
+   - nonebot-plugin-datastore（he0119）：SQLAlchemy 统一存储层；原生为直连 sqlite3
+     各存储（回执/队列/审计/记忆/遥测）。引入=全存储层重写，成本>>收益 → 不引入，
+     记为"未来统一存储层"参考。
+   - YetAnotherPicSearch（lgc-NB2Dev）：ASCII2D/Saucenao 反搜图——**原生确无此能力**，
+     记为能力空白候选；需要 Saucenao/Ascii2d API key 与独立 matcher 装配，待用户提供
+     key 后按 memes 模式（venv+守门加载）接入。
+   - nonebot-plugin-mediawiki（KoishiMoe）：通用 MediaWiki 封装；原生 mediawiki.py 有
+     精确命中逻辑+TTL 缓存+限流且已适配 → 维持原生。
+   - nb2-wiki（ZombieFly）：功能子集 → 不引入。
+5. **parser-lite 15 平台移植**：批次计划见 §19.11（zhihu/douban/taptap/coolapk/hupu 为
+   批次 A 首选）；本批未新增平台，下一批按"读样本 JSON → 写解析 → 路由正则 → 回归测试"
+   流程逐个落地。

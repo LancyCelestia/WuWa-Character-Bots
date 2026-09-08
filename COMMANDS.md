@@ -114,7 +114,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 /bot help 回复
 /bot help 设置
 /bot help 模型
+/bot cookie
+/bot cookie import <平台> <Cookie头>
 ```
+
+/bot cookie（管理员）：按平台查看 17 个平台凭证状态（只显示 cookie 名与到期日，不回显值）；/bot cookie import <平台> <Cookie头>：把浏览器复制的 `名=值; ...` 整行追加写入 cookies.txt（同名不覆盖），下一次解析即热生效。统一命令格式：/bot <模块词> <功能词> [参数]。
 
 65538（约 64K）是最大输出预算，不是强制长度；运行时覆盖优先于 .env。聊天上限允许 0..65538；抽取 timeout/cooldown 取有限值 (0,3600] 秒，抽取 tokens 取 1..4096。false 暂停自动抽取，不删除记忆；启动时本就关闭的实例需本地启用后重启，不能仅靠 true 热创建 writer。模型 priority 为 1..N 唯一槽位，移动其他项顺移；手动指定和生效时段组优先于基础 priority。model list 是候选配置，/bot llm 会新发可能收费的诊断请求。真实密钥只在本地安全配置，不在聊天发送。
 

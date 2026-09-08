@@ -20,44 +20,55 @@ from plugins.bot_unified_runtime.sources.parsers.cookies import (
     build_platform_cookie_provider,
 )
 
-_COMMAND_ALIASES = ("cookie", "凭证", "登录凭证", "登录状态")
-_IMPORT_VERBS = ("import", "导入", "导入凭证")
+_COMMAND_ALIASES = ("cookie", "凭证", "登录凭证")
+# 统一命令格式：/bot <模块词:cookie> <功能词:status|import> [参数]
+_COMMAND_PREFIX = "/bot "
+_IMPORT_VERBS = ("import", "导入")
 
 _DEFAULT_TTL_SECONDS = 180 * 86400
 
 
 def is_cookie_command(text: str) -> bool:
     normalized = (text or "").strip().lower()
-    prefixes = ("/bot ", "")
     for alias in _COMMAND_ALIASES:
-        for prefix in prefixes:
-            if normalized == f"{prefix}{alias}" or normalized.startswith(f"{prefix}{alias} "):
-                return True
+        if normalized.startswith(f"{_COMMAND_PREFIX}{alias}") and (
+            len(normalized) == len(f"{_COMMAND_PREFIX}{alias}")
+            or normalized[len(f"{_COMMAND_PREFIX}{alias}"):].startswith(" ")
+        ):
+            return True
     return False
 
 
 def parse_cookie_command(text: str) -> tuple[str, str, str] | None:
-    """解析指令 → (action, platform, header)；action ∈ {status, import}。"""
+    """解析 `/bot cookie [status|import <平台> <Cookie头>]`。
+
+    返回 (action, platform, header)；action ∈ {status, import}。
+    省略功能词视为 status；import 省略参数时由调用方提示用法。
+    """
     raw = (text or "").strip()
-    lowered = raw.lower()
-    for prefix in ("/bot ", ""):
-        for alias in _COMMAND_ALIASES:
-            if lowered.startswith(f"{prefix}{alias}") or raw.startswith(f"{prefix}{alias}"):
-                rest = raw[len(prefix) + len(alias):].strip()
-                for verb in _IMPORT_VERBS:
-                    verb_prefix = f"{verb} "
-                    if rest.lower().startswith(verb_prefix) or rest.startswith(verb):
-                        body = rest[len(verb_prefix) if rest.lower().startswith(verb_prefix) else len(verb):].strip()
-                        parts = body.split(None, 1)
-                        if parts:
-                            return (
-                                "import",
-                                parts[0].strip().lower(),
-                                parts[1].strip() if len(parts) > 1 else "",
-                            )
-                        return ("import", "", "")
-                return ("status", "", "")
-    return None
+    if not raw.lower().startswith(_COMMAND_PREFIX):
+        return None
+    body = raw[len(_COMMAND_PREFIX):].strip()
+    head = body.split(None, 1)
+    if not head or head[0].lower() not in _COMMAND_ALIASES:
+        return None
+    rest = head[1].strip() if len(head) > 1 else ""
+    lowered = rest.lower()
+    for verb in _IMPORT_VERBS:
+        if lowered == verb or lowered.startswith(f"{verb} "):
+            after = rest[len(verb):].strip()
+            parts = after.split(None, 1)
+            if parts:
+                return (
+                    "import",
+                    parts[0].strip().lower(),
+                    parts[1].strip() if len(parts) > 1 else "",
+                )
+            return ("import", "", "")
+    if not rest or lowered == "status" or lowered.startswith("status "):
+        return ("status", "", "")
+    # /bot cookie <未知功能词>：交给 import 分支按"缺平台"报错，或按 status 提示。
+    return ("import", rest.split(None, 1)[0].strip().lower(), "")
 
 
 def _parse_header_pairs(header: str) -> list[tuple[str, str]]:
@@ -96,7 +107,7 @@ def cookie_status_text(config: object) -> str:
         else:
             lines.append(f"⬜ {platform}：未配置")
     lines.append(f"共 {with_credentials}/{len(PLATFORM_COOKIE_DOMAINS)} 个平台已有凭证。")
-    lines.append("导入：cookie import <平台> <Cookie头>（管理员；如 cookie import bilibili SESSDATA=...; bili_jct=...）")
+    lines.append("导入：/bot cookie import <平台> <Cookie头>（管理员；如 /bot cookie import bilibili SESSDATA=...; bili_jct=...）")
     return "\n".join(lines)
 
 
