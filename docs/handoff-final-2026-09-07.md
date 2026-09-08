@@ -1259,3 +1259,33 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
 5. 顺手修复：EscapeWarning 清零（正则 raw string 化）、I001/F401 清理。
 6. 验证：428 passed（0 SyntaxWarning）；Ruff 全过；mypy 192 源码文件无错；
    bot.py 启动实测 NapCat connected + 群消息处理正常。
+
+### 19.18 alpha.2 十五轮增补：全量 Cookie 生效/点歌信息修复/B站字段归位/Help图修复/TG图文/模板压缩（2026-09-08 深夜）
+
+用户提供了浏览器全量 cookies.txt（2936 行）与五组问题。本批处理：
+
+1. **Cookie 全量导入（重大解锁）**：用户文件直接落位
+   `ChatBot_Runtime/data/platform_cookies.txt`（Netscape 2899 条全解析）。
+   **17/18 平台登录态生效**：B站(SESSDATA/bili_jct)、网易云(MUSIC_U)、知乎(d_c0)、
+   微博(SUB/SUBP)、抖音(sessionid)、QQ音乐、酷狗、酷我、小黑盒、Twitter、YouTube、
+   库街区、萌娘、AcFun、快手、斯克兰、米游社。生效即解锁：B站 AI 总结+高清视频解析、
+   网易云 Hi-Res/320k 音质、知乎登录态解析等。重启后自动生效（解析链热读）。
+   `credential-smoke` 可随时复查到期状态。
+2. **点歌只发语音（已修）**：`BOT_MUSIC_MODE` 三处持久设置均无覆盖——用户看到的
+   是旧默认 card 时代行为；当前默认 `card+voice+link`（♪歌名/歌手/专辑/链接一条文本
+   +封面+语音独立发送），重启即生效。
+3. **B站字段归位**：粉丝/关注/视频数/专栏数/获赞从视频数据栏移除，
+   仅保留在作者栏（Creator 字段：follower_count/following_count/video_count/
+   received_like_count 等），视频栏回归播放/点赞/投币/收藏/分享/弹幕/评论。
+4. **Help 图片版消失（根因修复）**：常驻浏览器重构引入**线程绑定回归**——sync
+   playwright 对象只能在创建线程使用，help 渲染工作线程调用即静默失败降级纯文字。
+   已改线程局部存储（每线程各自常驻实例），跨线程双实测 OK，帮助图恢复；
+   一级分组（解析/点歌/天气/凭据等【】区块）与二级详情（`/bot help <主题>`）
+   结构本就存在，图片恢复后即完整可用。
+5. **Telegram 图文同发（修复）**：TG sender 此前只发 text 丢弃图片；现支持
+   `send_photo(chat_id, photo=<图片URL>, caption=文字)` 图文一条（caption 上限 1024）。
+6. **解析模板压缩**：UP主头像栏 80→56px、二维码 88→60px、作者字号 18→15px
+   （约 1/3 压缩，减少空隙）。
+7. 断网降噪补全（Mail 稀疏日志/loop handler/TG 恢复提示）见 §19.16；本轮验证全绿。
+
+验证：428 passed；Ruff 全过；mypy 192 源码文件无错。

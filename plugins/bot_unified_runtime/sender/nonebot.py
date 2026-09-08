@@ -125,6 +125,25 @@ async def send_nonebot_message(
                 if not _provider_message_id(result):
                     raise RuntimeError("telegram attachment receipt missing")
             return result
+        # Telegram 支持图文同发：有图片时用 send_photo + caption（文字作说明）。
+        if adapter_name == "telegram":
+            images = [
+                p
+                for p in (parts if isinstance(parts, list) else [])
+                if isinstance(p, dict) and p.get("type") == "image"
+            ]
+            photo_url = ""
+            for image in images:
+                candidate = str(image.get("file") or image.get("url") or "")
+                if candidate.startswith(("http://", "https://")):
+                    photo_url = candidate
+                    break
+            send_photo = getattr(bot, "send_photo", None)
+            if photo_url and callable(send_photo):
+                chat_id = send_request.target_id
+                return await send_photo(
+                    chat_id=chat_id, photo=photo_url, caption=text[:1024]
+                )
         if event is None:
             send_to = getattr(bot, "send_to", None)
             if not callable(send_to):

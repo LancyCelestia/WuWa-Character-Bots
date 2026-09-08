@@ -331,13 +331,11 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
                 else ""
             )
             summary_lines.append(f"P{index}《{part}》{duration_text}")
-    author_counts: dict = {}
     author_detail: dict = {}
     owner_mid = _safe_int(owner.get("mid"))
     if owner_mid:
-        _, author_counts, author_detail = _author_enrichment(owner_mid, cookie_header=cookie_header)
-        for label, value in author_counts.items():
-            stats[label] = value
+        # 粉丝/关注/视频/专栏/获赞归作者栏（Creator 字段），不再混入视频数据栏。
+        _, _, author_detail = _author_enrichment(owner_mid, cookie_header=cookie_header)
     video_author: dict = {}
     if owner.get("name"):
         video_author["name"] = str(owner["name"])
@@ -388,6 +386,34 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
         video_detail["ai_conclusion"] = ai_conclusion
     if video_author:
         video_detail["author"] = video_author
+    # 评论区渲染（批次 B）：热门评论前 3 条进 detail；失败静默跳过。
+    if aid is not None:
+        try:
+            reply_payload = http_get_json(
+                "https://api.bilibili.com/x/v2/reply?"
+                + urllib.parse.urlencode({"type": 1, "oid": aid, "ps": 3, "sort": 1}),
+                referer="https://www.bilibili.com/",
+                cookie=cookie_header,
+                timeout=6,
+            )
+            replies = ((reply_payload.get("data") or {}).get("replies")) or []
+            hot_comments = []
+            for reply in replies[:3]:
+                member = reply.get("member") or {}
+                content = (reply.get("content") or {}).get("message") or ""
+                like = (reply.get("like") or 0)
+                if content:
+                    hot_comments.append(
+                        {
+                            "author": str(member.get("uname") or "").strip(),
+                            "text": str(content).strip()[:120],
+                            "likes": like,
+                        }
+                    )
+            if hot_comments:
+                video_detail["hot_comments"] = hot_comments
+        except Exception:  # noqa: BLE001, S110 - 评论拉取失败不影响解析。
+            pass
     if len(pages) > 1:
         # 分 P 列表进 detail：卡片「分P列表」区块与摘要行共用同一份数据。
         video_detail["episodes"] = [

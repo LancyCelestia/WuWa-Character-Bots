@@ -90,11 +90,12 @@ class PlaywrightRenderBackend:
     def __init__(self, *, max_concurrency: int = 2) -> None:
         import threading
 
-        # sync playwright 非线程安全：渲染全程持大锁串行（max_concurrency 仅为
-        # 兼容未来 async 化预留，当前无并发效果）。
+        # sync playwright 非线程安全且对象线程绑定：渲染全程持大锁串行，
+        # 常驻浏览器按线程存放（help/卡片渲染可能来自不同工作线程，
+        # 各线程复用各自的常驻实例，仍消除冷启动）。
         self._lock = threading.Lock()
-        self._browser: Any = None
-        self._playwright_ctx: Any = None
+        self._local = threading.local()
+        self._max_concurrency = max(1, int(max_concurrency))
         try:
             from playwright.sync_api import sync_playwright  # type: ignore
 
@@ -104,26 +105,34 @@ class PlaywrightRenderBackend:
             self._sync_playwright = None
             self.available = False
 
-    def _get_browser(self) -> Any:
-        """懒启动并复用常驻 Chromium；浏览器已死则重启一次。"""
-        if self._browser is not None and self._browser.is_connected():
-            return self._browser
-        self._close_browser_locked()
-        self._playwright_ctx = self._sync_playwright()
-        playwright = self._playwright_ctx.start()
-        self._browser = playwright.chromium.launch()
-        return self._browser
+    def _thread_browser(self) -> tuple[Any, Any]:
+        browser = getattr(self._local, "browser", None)
+        ctx = getattr(self._local, "playwright_ctx", None)
+        return browser, ctx
 
-    def _close_browser_locked(self) -> None:
-        browser, ctx = self._browser, self._playwright_ctx
-        self._browser = None
-        self._playwright_ctx = None
+    def _get_browser(self) -> Any:
+        """懒启动并复用本线程的常驻 Chromium；浏览器已死则重启一次。"""
+        browser, _ctx = self._thread_browser()
+        if browser is not None and browser.is_connected():
+            return browser
+        self._close_thread_browser()
+        playwright_ctx = self._sync_playwright()
+        playwright = playwright_ctx.start()
+        browser = playwright.chromium.launch()
+        self._local.browser = browser
+        self._local.playwright_ctx = playwright_ctx
+        return browser
+
+    def _close_thread_browser(self) -> None:
+        browser, ctx = self._thread_browser()
+        self._local.browser = None
+        self._local.playwright_ctx = None
         for resource in (browser, ctx):
             if resource is None:
                 continue
             try:
                 resource.close()
-            except Exception:  # noqa: BLE001 - 关闭失败忽略，下次懒启动重建。
+            except Exception:  # noqa: BLE001, S110 - 关闭失败忽略，下次懒启动重建。
                 pass
 
     def render_card(self, payload: dict[str, Any]) -> bytes | None:
@@ -168,12 +177,11 @@ class PlaywrightRenderBackend:
                 finally:
                     page.close()
             except Exception:  # noqa: BLE001 - 浏览器渲染失败按无结果降级，并重置常驻浏览器。
-                self._close_browser_locked()
+                self._close_thread_browser()
                 return None
 
     def close(self) -> None:
-        with self._lock:
-            self._close_browser_locked()
+        self._close_thread_browser()
 
 
 def build_render_backend(name: str = "") -> RenderBackend:

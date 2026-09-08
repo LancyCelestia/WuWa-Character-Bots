@@ -74,8 +74,8 @@ def test_persistent_browser_reused_across_renders() -> None:
     backend.name = "playwright"
     backend.available = True
     backend._lock = threading.Lock()
-    backend._browser = None
-    backend._playwright_ctx = None
+    backend._local = threading.local()
+    backend._max_concurrency = 1
 
     browser = _FakeBrowser()
     handle = _FakePlaywrightHandle(browser)
@@ -99,8 +99,8 @@ def test_browser_crash_restarts_and_recovers() -> None:
     backend.name = "playwright"
     backend.available = True
     backend._lock = threading.Lock()
-    backend._browser = None
-    backend._playwright_ctx = None
+    backend._local = threading.local()
+    backend._max_concurrency = 1
 
     browser = _FakeBrowser()
     handle = _FakePlaywrightHandle(browser)
@@ -122,8 +122,8 @@ def test_render_failure_resets_persistent_browser() -> None:
     backend.name = "playwright"
     backend.available = True
     backend._lock = threading.Lock()
-    backend._browser = None
-    backend._playwright_ctx = None
+    backend._local = threading.local()
+    backend._max_concurrency = 1
 
     browser = _FakeBrowser()
     handle = _FakePlaywrightHandle(browser)
@@ -140,4 +140,4 @@ def test_render_failure_resets_persistent_browser() -> None:
 
     browser.new_page = _breaking_new_page  # type: ignore[method-assign]
     assert backend.render_card(dict(bad)) is None
-    assert backend._browser is None
+    assert getattr(backend._local, "browser", None) is None
