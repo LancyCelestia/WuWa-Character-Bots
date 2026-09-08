@@ -116,6 +116,25 @@ class Config(BaseModel):
     bot_embedding_local_timeout_seconds: float = 60.0
     bot_knowledge_top_k: int = 4
     bot_knowledge_db_path: str = "data/knowledge_embeddings.sqlite3"
+    # Crawl Wiki 外部知识库（只读语料 → 独立向量库，hash 幂等增量同步；
+    # 协议见 D:\Coding\Crawl Wiki\docs\KB_HANDOFF.md）。
+    # 独立 db_path 是刻意的：人格知识库 sync_chunks 以文件清单为全集删除，
+    # 与 7.5 万文档级 wiki 库不能共用一张表。
+    bot_kb_wiki_enabled: bool = False
+    bot_kb_wiki_root: str = ""
+    bot_kb_wiki_db_path: str = "data/kb_wiki_embeddings.sqlite3"
+    # topic 白名单（逗号分隔，如 "梗知识,鸣潮"）；空 = 全部 topic。
+    bot_kb_wiki_topics: str = ""
+    bot_kb_wiki_top_k: int = 4
+    bot_kb_wiki_chunk_chars: int = 800
+    # 每批嵌入行数：本地 Ollama 实测 128 最快（约为批 10 的 6 倍吞吐）；
+    # 本地不可用回落远程链时，远程单批限额(≤10)会拒绝大批并中止同步
+    # （断点续跑、无损坏），恢复本地后重跑即可。
+    bot_kb_wiki_embed_batch: int = 128
+    # 每日增量同步时刻（Crawl Wiki 每日 23:00 导出之后）。
+    bot_kb_wiki_sync_hour: int = 23
+    bot_kb_wiki_sync_minute: int = 40
+    bot_kb_wiki_sync_on_startup: bool = True
     bot_tone_mode: str = "private_chat"
     bot_tone_voice: str = "soft"
     bot_tone_warmth: float = 0.7
@@ -577,6 +596,7 @@ class Config(BaseModel):
             "bot_mail_bridge_state_file",
             "bot_event_idempotency_db_path",
             "bot_knowledge_db_path",
+            "bot_kb_wiki_db_path",
             "bot_memory_db_path",
             "bot_history_db_path",
             "bot_diagnostics_db_path",

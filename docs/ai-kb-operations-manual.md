@@ -68,6 +68,8 @@
 
 向知识库添加新文档的流程：第一步，把文件放到任意位置（推荐 personas/shorekeeper/knowledge/ 目录），支持绝对路径；第二步，把文件路径追加进 `.env` 的 BOT_KNOWLEDGE_FILES（JSON 数组）；第三步，在电脑上运行 `scripts\dev.ps1 -Task knowledge-sync` 分块并向量化入库；第四步，重启机器人，然后对话验证。删除块的语义必须牢记：每次同步以当次传入的全量文件清单为准，清单之外的旧知识块会被全部删除，所以同步永远要传全量清单；机器人运行中进程内存里的清单在重启前是旧的，入库后必须尽快重启，否则旧进程的下一次知识检索会按旧清单把新入库的块删掉。嵌入链路：本地 Ollama（默认 http://127.0.0.1:11434/v1，模型 bge-m3）优先，远程嵌入接口兜底；本地模型名或地址变化会触发全库重新嵌入，不要随意修改 BOT_EMBEDDING_LOCAL_MODELS。
 
+wiki 百科知识库（第二通道）：由外部 Crawl Wiki 项目（BOT_KB_WIKI_ROOT，默认 D:\Coding\Crawl Wiki，每日 23:00 自动增量爬取导出）提供 7.5 万级游戏/梗百科文档，机器人用独立的 kb_wiki_embeddings.sqlite3 向量库承载，与上面的文件知识库互不干扰、检索结果合并注入。日常同步全自动：每日 BOT_KB_WIKI_SYNC_HOUR:MINUTE（默认 23:40）增量同步加启动后 45 秒补偿，无变更时零开销。手动操作：`dev.ps1 -Task kb-sync` 做增量同步加补嵌入；首轮灌库或需全量对账时加 `-KbFull`（流式读 documents.jsonl，7.5 万文档首次嵌入需数小时，断点续跑可随时中断重跑）；`-KbNoEmbed` 只同步元数据不嵌入。BOT_KB_WIKI_TOPICS 可逗号分隔限定 topic 白名单（如"梗知识,鸣潮"，空为全部 15 个 topic）。改嵌入模型后必须用 kb-sync（CLI 路径带自动重置）重跑，机器人进程内不会自动清空旧向量。
+
 ## 十一、凭据、Cookie 与密码安全
 
 平台 Cookie 以 Netscape 格式存放在运行时数据目录的 platform_cookies.txt（配置键 BOT_COOKIES_FILE），更换 Cookie 直接覆盖该文件并重启机器人；任何日志、审计和消息输出都不会打印 Cookie 内容。Cookie 健康用 `/bot alert check` 检查过期时间，加 `--probe` 在线探测，401 或 403 表示需要重新登录。NapCat 协议端首次扫码登录后应在 WebUI（默认 http://127.0.0.1:6099）修改一次 WebUI 密码；NapCat 与机器人之间的 WebSocket 访问令牌必须与 `.env.prod` 中 ONEBOT_WS_URLS 里的 token 完全一致；QQ 登录建议使用小号。所有密钥类配置（模型 API 密钥、邮箱授权码等）只存放在本地 `.env`，一律用 `env:变量名` 方式引用，不会回显，不进入文档和日志。邮箱功能（/mail 指令族）仅允许从 Telegram 管理端操作，QQ 端会收到"邮件控制命令仅允许从 Telegram 管理端执行。"。

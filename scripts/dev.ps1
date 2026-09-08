@@ -32,6 +32,7 @@ param(
         "credential-smoke",
         "embedding-smoke",
         "knowledge-sync",
+        "kb-sync",
         "gscore-smoke",
         "route-demo",
         "route-smoke",
@@ -44,7 +45,9 @@ param(
     )]
     [string]$Task = "help",
     [string]$Message = "",
-    [switch]$Apply
+    [switch]$Apply,
+    [switch]$KbFull,
+    [switch]$KbNoEmbed
 )
 
 $ErrorActionPreference = "Stop"
@@ -673,6 +676,27 @@ function Invoke-KnowledgeSync {
     }
 }
 
+function Invoke-KbWikiSync {
+    $python = Get-ProjectPython
+    $exitCode = 0
+    $kbArgs = @()
+    if ($KbFull) { $kbArgs += "--kb-full" }
+    if ($KbNoEmbed) { $kbArgs += "--kb-no-embed" }
+
+    Push-Location $Root
+    try {
+        Write-Step "syncing Crawl Wiki knowledge base into dedicated vector store"
+        & $python -m plugins.bot_unified_runtime.smoke kb-sync @kbArgs
+        $exitCode = $LASTEXITCODE
+    }
+    finally { Pop-Location }
+
+    if ($exitCode -ne 0) {
+        Write-Step "kb-sync did not finish. See diagnostic output above."
+        exit $LASTEXITCODE
+    }
+}
+
 function Invoke-GscoreSmoke {
     $python = Get-ProjectPython
 
@@ -752,6 +776,7 @@ function Show-Help {
         '  credential-smoke Check cookie/credential expiry and (with --probe) availability; warns when re-login is needed. Never prints secret values.'
         '  embedding-smoke Validate configured OpenAI-compatible embeddings service without touching the knowledge DB.'
         '  knowledge-sync Pre-warm vector knowledge base and write to external Runtime data.'
+        '  kb-sync        Sync Crawl Wiki knowledge base (hash-idempotent) into its own vector store; pass -KbFull for first ingest.'
         '  gscore-smoke   Read-only GsCore bridge readiness check; never connects or sends.'
         '  route-demo     Print the full phrasing routing matrix. Offline, no network, no QQ.'
         '  route-smoke    Run deterministic capabilities against real APIs/services; may use network, never sends QQ.'
@@ -847,6 +872,7 @@ switch ($Task) {
     "credential-smoke" { Invoke-CredentialSmoke }
     "embedding-smoke" { Invoke-EmbeddingSmoke }
     "knowledge-sync" { Invoke-KnowledgeSync }
+    "kb-sync" { Invoke-KbWikiSync }
     "gscore-smoke" { Invoke-GscoreSmoke }
     "route-demo" { Invoke-RouteDemo }
     "route-smoke" { Invoke-RouteSmoke }

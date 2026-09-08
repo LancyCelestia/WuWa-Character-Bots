@@ -16,6 +16,7 @@ except Exception:  # noqa: BLE001 - faiss 可选，缺失回退 numpy 暴力检�
     faiss = None  # type: ignore[assignment]
 import sqlite3
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import isnan, sqrt
 from pathlib import Path
@@ -270,6 +271,7 @@ class SqliteVectorKnowledgeStore:
         ann_index_path: str = "",
         ann_order_path: str = "",
         min_cosine_threshold: float = _MISS_COSINE_THRESHOLD,
+        fts_auto_rebuild: bool = True,
     ) -> None:
         self.db_path = str(db_path)
         self.embed_provider = embed_provider
@@ -295,6 +297,9 @@ class SqliteVectorKnowledgeStore:
         self._fts_valid: bool | None = None
         # 低置信未命中阈值：无关键词命中且向量最高余弦低于该值时返回空结果。
         self.min_cosine_threshold = float(min_cosine_threshold)
+        # False 时检索路径发现 FTS 签名缺失不做内联重建（大库重建分钟级，
+        # 会卡住消息处理），降级为纯向量通道，重建交给显式同步任务 force=True。
+        self.fts_auto_rebuild = bool(fts_auto_rebuild)
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
@@ -322,11 +327,29 @@ class SqliteVectorKnowledgeStore:
                 connection.execute(
                     "ALTER TABLE knowledge_chunks ADD COLUMN vector_blob BLOB"
                 )
+            # sync_documents / sync_chunks 的按源删除与源级统计走这个索引，
+            # 大库（十万行级）没有它每次删源都退化为全表扫描。
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_source "
+                "ON knowledge_chunks(source_id)"
+            )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS knowledge_meta (
                     key TEXT PRIMARY KEY,
                     value TEXT
+                )
+                """
+            )
+            # 外部知识库文档台账：doc_id → hash，sync_documents 幂等判断的依据。
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS knowledge_docs (
+                    doc_id TEXT PRIMARY KEY,
+                    topic TEXT,
+                    source TEXT,
+                    title TEXT,
+                    hash TEXT
                 )
                 """
             )
@@ -368,15 +391,18 @@ class SqliteVectorKnowledgeStore:
         self._invalidate_vector_cache()
         return True
 
-    def _embed_all_pending(self, on_progress=None) -> tuple[int, int]:
+    def _embed_all_pending(self, on_progress=None, batch_size: int | None = None) -> tuple[int, int]:
         """把全部待嵌入行编码入库；完成后记录模型指纹，失败可断点续跑。
 
         on_progress(done, total) 每处理一批调用一次，用于打印进度。
+        batch_size 覆盖默认批大小（默认值迁就远程链限额；本地 Ollama
+        大批吞吐显著更高，由调用方按需传入）。
         """
         self._reset_vectors_if_needed()
         pending = self._pending_rows()
+        size = max(1, int(batch_size)) if batch_size else _EMBED_BATCH_SIZE
         done = 0
-        for batch in _batches(pending, _EMBED_BATCH_SIZE):
+        for batch in _batches(pending, size):
             vectors = self._embed([str(row["content"]) for row in batch])
             if vectors is None:
                 break
@@ -468,20 +494,161 @@ class SqliteVectorKnowledgeStore:
                 self._invalidate_vector_cache()
                 self._invalidate_fts()
 
+    def sync_documents(
+        self,
+        docs: Iterable[dict],
+        *,
+        removed_ids: Iterable[str] = (),
+        full: bool = False,
+        batch_size: int = 500,
+        on_progress=None,
+    ) -> dict[str, int]:
+        """按 (doc_id, hash) 幂等同步外部文档集（如 Crawl Wiki 知识库）。
+
+        docs 迭代产出 ``{"id", "hash", "chunks", "topic", "source", "title"}``；
+        分块由调用方完成（如按 Markdown 标题分节），本方法只负责台账比对与落库：
+        hash 未变的文档跳过，新增/变化的先删旧块再插入（向量置空等待 embed），
+        ``removed_ids`` 与 full 模式下清单中消失的文档连同 chunk 一并删除。
+        每 batch_size 个文档提交一次，中断后重跑自动续传。
+        返回 ``{"added", "changed", "removed", "skipped", "chunks"}``。
+        """
+        stats = {"added": 0, "changed": 0, "removed": 0, "skipped": 0, "chunks": 0}
+        changed_any = False
+        connection = self._connect()
+        try:
+            ledger = {
+                str(row["doc_id"]): str(row["hash"] or "")
+                for row in connection.execute("SELECT doc_id, hash FROM knowledge_docs")
+            }
+            seen: set[str] = set()
+
+            def apply_doc(doc_id: str, doc: dict, doc_hash: str) -> None:
+                nonlocal changed_any
+                connection.execute(
+                    "DELETE FROM knowledge_chunks WHERE source_id = ?", (doc_id,)
+                )
+                chunks = [str(chunk) for chunk in (doc.get("chunks") or []) if str(chunk).strip()]
+                connection.executemany(
+                    """
+                    INSERT INTO knowledge_chunks (
+                        chunk_id, source_id, title, content, content_hash, vector_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, NULL)
+                    """,
+                    [
+                        (
+                            hashlib.sha1(
+                                f"doc:{doc_id}:{index}:{content}".encode()
+                            ).hexdigest(),
+                            doc_id,
+                            str(doc.get("title") or doc_id),
+                            content,
+                            hashlib.sha1(content.encode("utf-8")).hexdigest(),
+                        )
+                        for index, content in enumerate(chunks, start=1)
+                    ],
+                )
+                connection.execute(
+                    """
+                    INSERT INTO knowledge_docs (doc_id, topic, source, title, hash)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(doc_id) DO UPDATE SET
+                        topic = excluded.topic,
+                        source = excluded.source,
+                        title = excluded.title,
+                        hash = excluded.hash
+                    """,
+                    (
+                        doc_id,
+                        str(doc.get("topic") or ""),
+                        str(doc.get("source") or ""),
+                        str(doc.get("title") or ""),
+                        doc_hash,
+                    ),
+                )
+                stats["chunks"] += len(chunks)
+                if doc_id in ledger:
+                    stats["changed"] += 1
+                else:
+                    stats["added"] += 1
+                changed_any = True
+
+            buffered = 0
+            for doc in docs:
+                doc_id = str(doc.get("id") or "").strip()
+                doc_hash = str(doc.get("hash") or "").strip()
+                if not doc_id or not doc_hash:
+                    continue
+                if full:
+                    seen.add(doc_id)
+                if ledger.get(doc_id) == doc_hash:
+                    stats["skipped"] += 1
+                    continue
+                apply_doc(doc_id, doc, doc_hash)
+                buffered += 1
+                if buffered >= max(1, int(batch_size)):
+                    connection.commit()
+                    buffered = 0
+                    if on_progress is not None:
+                        try:
+                            on_progress(dict(stats))
+                        except Exception:  # noqa: S110, BLE001 - 进度回调失败不影响同步。
+                            pass
+            connection.commit()
+
+            removed = {str(doc_id) for doc_id in removed_ids if str(doc_id)}
+            removed &= set(ledger)
+            if full:
+                removed |= set(ledger) - seen
+            for doc_id in sorted(removed):
+                connection.execute(
+                    "DELETE FROM knowledge_chunks WHERE source_id = ?", (doc_id,)
+                )
+                connection.execute(
+                    "DELETE FROM knowledge_docs WHERE doc_id = ?", (doc_id,)
+                )
+                stats["removed"] += 1
+                changed_any = True
+            if changed_any or removed:
+                # 行集合/内容变化后 FTS 索引过期：清签名让显式同步任务
+                # （或 fts_auto_rebuild 的检索进程）在下次访问时重建。
+                # ANN 索引不清签名：同步窗口内继续用旧索引（拿不到新块但
+                # 崩溃安全），重建由 embed 完成后的 build_ann_index 负责。
+                connection.execute(
+                    "DELETE FROM knowledge_meta WHERE key = 'fts_signature'"
+                )
+            connection.commit()
+        finally:
+            connection.close()
+        if changed_any or removed:
+            self._invalidate_vector_cache()
+            self._invalidate_fts()
+        return stats
+
+    def document_count(self) -> int:
+        """台账中的文档数（sync_documents 同步范围），供烟测/调度日志使用。"""
+        with self._connect() as connection:
+            return int(
+                connection.execute("SELECT COUNT(*) FROM knowledge_docs").fetchone()[0]
+            )
+
     def embed_pending(
         self,
         files: list[Path] | None = None,
         on_progress=None,
+        *,
+        batch_size: int | None = None,
     ) -> tuple[int, int]:
         """预建库：同步文件切片后把未向量化的行全部嵌入。
 
         模型/端点指纹变化时自动清空旧向量重嵌；返回
         (本次成功嵌入行数, 处理前待嵌入行数)；中途失败即停止、可断点续跑。
+        batch_size 覆盖每批行数（本地大批更快，见 _embed_all_pending）。
         """
         with self._lock:
             if files:
                 self.sync_chunks(list(files))
-            return self._embed_all_pending(on_progress=on_progress)
+            return self._embed_all_pending(on_progress=on_progress, batch_size=batch_size)
 
     def stats(self) -> dict[str, int]:
         """返回 (总行数, 已向量化行数)，供烟测/后台统计使用。"""
@@ -701,7 +868,7 @@ class SqliteVectorKnowledgeStore:
         """由 knowledge-sync 调用：把全部向量归一化写入 faiss HNSW 并落盘。"""
         if faiss is None:
             # faiss 缺失不影响关键词索引：仍幂等构建 FTS，供关键词/降级检索使用。
-            self.ensure_fts_index()
+            self.ensure_fts_index(force=True)
             return {"built": False, "reason": "faiss_missing"}
         with self._lock:
             with self._connect() as connection:
@@ -757,7 +924,7 @@ class SqliteVectorKnowledgeStore:
             self._ann_index = None
             self._ann_order = None
             # knowledge-sync 一次性构建：ANN 落盘后顺带幂等构建 FTS 关键词索引。
-            self.ensure_fts_index()
+            self.ensure_fts_index(force=True)
             return {"built": True, "vectors": len(chunk_ids), "dim": dimension}
 
     def _stored_ann_signature(self) -> str:
@@ -875,12 +1042,13 @@ class SqliteVectorKnowledgeStore:
 
     # ---------- FTS5 BM25 关键词通道 -----------------------------------------
 
-    def ensure_fts_index(self) -> bool:
+    def ensure_fts_index(self, *, force: bool = False) -> bool:
         """幂等地确保 FTS5 trigram 关键词索引可用（返回 True/False）。
 
         knowledge_meta 中已有非空 fts_signature 时直接复用，避免每条消息
-        全量重建或全表扫描；内容刚变化（sync_chunks 会清掉该签名）或首次
-        构建时才全量重建一次。签名由 chunk_id + content_hash 聚合派生。
+        全量重建或全表扫描；内容刚变化（sync_chunks/sync_documents 会清掉
+        该签名）或首次构建时才全量重建一次。签名由 chunk_id + content_hash
+        聚合派生。``force=True`` 供显式同步任务绕过 fts_auto_rebuild=False。
         """
         with self._lock:
             if self._fts_valid is False:
@@ -893,6 +1061,11 @@ class SqliteVectorKnowledgeStore:
                     # 同时兼容 knowledge-sync 进程刚建好、运行期直接复用的情况。
                     self._fts_valid = True
                     return True
+                if not force and not self.fts_auto_rebuild:
+                    # 大库内联重建分钟级，会卡死消息处理：降级为纯向量通道，
+                    # 等显式同步任务 force 重建。不置 _fts_valid=False，
+                    # 重建完成后本进程可立即恢复关键词通道。
+                    return False
                 rebuilt = self._rebuild_fts()
                 if rebuilt:
                     self._fts_valid = True

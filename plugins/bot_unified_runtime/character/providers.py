@@ -423,6 +423,32 @@ def build_character_context_provider(
         if fast_mode and skip_vector
         else (vector_provider if vector_provider.available else build_keyword_knowledge_provider(config))
     )
+    # Crawl Wiki 知识库（RAG）：与人格知识库独立向量库，检索结果轮询交错
+    # 合并（人格知识块排前）。fast 模式禁用向量知识时同样跳过（wiki 库
+    # 依赖嵌入查询）；同样施加 fast 嵌入超时上限，防 Ollama 卡死拖垮请求。
+    if not (fast_mode and skip_vector):
+        try:
+            from .kb_wiki import MergedKnowledgeRetriever, build_kb_wiki_retriever
+
+            kb_retriever = build_kb_wiki_retriever(
+                config,
+                timeout_override=(
+                    float(
+                        getattr(config, "bot_chat_fast_embedding_timeout_seconds", 3.0)
+                        or 3.0
+                    )
+                    if fast_mode
+                    else None
+                ),
+            )
+        except Exception:  # noqa: BLE001 - wiki 库构建失败不阻断人格知识检索。
+            kb_retriever = None
+        if kb_retriever is not None and getattr(kb_retriever, "available", False):
+            knowledge_retriever = (
+                MergedKnowledgeRetriever([knowledge_retriever, kb_retriever])
+                if getattr(knowledge_retriever, "available", False)
+                else kb_retriever
+            )
     return FileCharacterContextProvider(
         persona_profile_id=str(getattr(config, "bot_persona_profile_id", "default")),
         persona_display_name=str(getattr(config, "bot_persona_display_name", "报存")),

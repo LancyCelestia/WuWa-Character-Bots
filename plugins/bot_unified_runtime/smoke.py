@@ -2957,9 +2957,23 @@ def main(
             "persona",
             "embedding",
             "knowledge-sync",
+            "kb-sync",
         ),
         default="chat",
         help="Smoke task to run.",
+    )
+    parser.add_argument(
+        "--kb-full",
+        action="store_true",
+        help=(
+            "kb-sync: stream the full documents.jsonl snapshot instead of the "
+            "incremental manifest/updates path (first ingest / reconciliation)."
+        ),
+    )
+    parser.add_argument(
+        "--kb-no-embed",
+        action="store_true",
+        help="kb-sync: apply metadata/chunk changes only, skip embedding and ANN build.",
     )
     parser.add_argument(
         "--message",
@@ -3262,6 +3276,57 @@ def main(
         print(f"embedded_after={result['embedded_after']}")
         print(f"error_kind={result['error_kind']}")
         print(f"public_message={result['public_message']}")
+        return 0 if result["ok"] else 1
+
+    if args.task == "kb-sync":
+        from plugins.bot_unified_runtime.character.kb_wiki import run_kb_sync_task
+
+        result = run_kb_sync_task(
+            config,
+            full=bool(args.kb_full),
+            embed=not bool(args.kb_no_embed),
+            on_progress=lambda stats: print(
+                "progress synced "
+                f"added={stats.get('added', 0)} changed={stats.get('changed', 0)} "
+                f"removed={stats.get('removed', 0)} skipped={stats.get('skipped', 0)} "
+                f"chunks={stats.get('chunks', 0)}",
+                flush=True,
+            ),
+            embed_progress=lambda done, total: print(
+                f"progress embedded={done}/{total} "
+                f"percent={done * 100 // total if total else 0}%",
+                flush=True,
+            ),
+        )
+        for key in (
+            "ok",
+            "mode",
+            "embed",
+            "kb_dir",
+            "generated_at",
+            "documents_total",
+            "documents_after",
+            "added",
+            "changed",
+            "removed",
+            "skipped",
+            "chunks",
+            "embed_done",
+            "embed_pending",
+            "total_after",
+            "embedded_after",
+            "ann_built",
+            "ann_vectors",
+            "ann_reason",
+            "active_base_url",
+            "active_model",
+            "error_kind",
+            "public_message",
+        ):
+            value = result.get(key, "")
+            if isinstance(value, bool):
+                value = str(value).lower()
+            print(f"{key}={value}")
         return 0 if result["ok"] else 1
 
     if args.task == "config":
