@@ -12,6 +12,7 @@ WBI 签名流程：
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 from urllib.parse import urlencode, urlsplit
 
@@ -22,6 +23,35 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
 
 _NAV_API = "https://api.bilibili.com/x/web-interface/nav"
 _WBI_FILTER_CHARS = "!'()*"
+
+# nav keys 每天轮换：缓存 30 分钟，避免同一批解析重复请求 nav。
+_WBI_CACHE_TTL_SECONDS = 1800.0
+_WBI_CACHE_LOCK = threading.Lock()
+_WBI_CACHE: dict[str, tuple[float, str]] = {}
+
+
+def _cached_mixin_key(cookie_header: str, proxy: str) -> str:
+    cache_key = f"{cookie_header}|{proxy}"
+    now = time.monotonic()
+    with _WBI_CACHE_LOCK:
+        hit = _WBI_CACHE.get(cache_key)
+        if hit is not None and now - hit[0] < _WBI_CACHE_TTL_SECONDS:
+            return hit[1]
+    nav = http_get_json(
+        _NAV_API,
+        referer="https://www.bilibili.com/",
+        cookie=cookie_header,
+        proxy=proxy,
+    )
+    wbi_img = ((nav or {}).get("data") or {}).get("wbi_img") or {}
+    img_url = str(wbi_img.get("img_url") or "")
+    sub_url = str(wbi_img.get("sub_url") or "")
+    if not img_url or not sub_url:
+        raise ParseHttpError("bilibili nav missing wbi_img keys")
+    mixin_key = extract_mixin_key(img_url, sub_url)
+    with _WBI_CACHE_LOCK:
+        _WBI_CACHE[cache_key] = (time.monotonic(), mixin_key)
+    return mixin_key
 
 WBI_KEY_TABLE = [
     46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
@@ -68,20 +98,9 @@ def build_wbi_signed_url(
     cookie_header: str = "",
     proxy: str = "",
 ) -> str:
-    """获取 nav 中的 WBI key 后签名，并返回拼接好的 URL。"""
+    """获取 nav 中的 WBI key 后签名，并返回拼接好的 URL（key 带缓存）。"""
     if params.get("w_rid"):
         return f"{url}?{urlencode(params)}"
-    nav = http_get_json(
-        _NAV_API,
-        referer="https://www.bilibili.com/",
-        cookie=cookie_header,
-        proxy=proxy,
-    )
-    wbi_img = ((nav or {}).get("data") or {}).get("wbi_img") or {}
-    img_url = str(wbi_img.get("img_url") or "")
-    sub_url = str(wbi_img.get("sub_url") or "")
-    if not img_url or not sub_url:
-        raise ParseHttpError("bilibili nav missing wbi_img keys")
-    mixin_key = extract_mixin_key(img_url, sub_url)
+    mixin_key = _cached_mixin_key(cookie_header, proxy)
     signed = sign_wbi(dict(params), mixin_key)
     return f"{url}?{urlencode(signed)}"

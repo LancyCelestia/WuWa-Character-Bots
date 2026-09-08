@@ -981,3 +981,41 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
   `tests/test_music_candidates_v2.py`（5 项：歧义列表、精确命中直播、编号选择、
   无会话回退、开关关闭保持旧行为）。
 - 顺手修正：`RuntimePipeline.idempotency_table` 注解放宽为双后端联合类型（mypy）。
+
+### 19.11 alpha.2 八轮增补：parser-lite API 移植第一批（2026-09-08）
+
+用户提供 parser-lite 1.3.5 本地包（`Downloads\Archives\...`）。核查结论：`api_txt/` 是
+**25 个平台的 API 响应样本集**（JSON fixtures + 2 个解码脚本），移植=按样本理解响应
+结构实现原生解析。原生路由表已有 37 个平台条目，与样本集去重后**真空白 15 个**：
+5eplay、buff、coolapk、douban、doubao、ds（抖音站内系列）、heybox、hupu、illu（米画师，
+与原生 mihuashi 重叠待确认）、linux.do、qsmusic（全民K歌）、taptap、wmpvp、zhihu、zlb。
+
+**本批已落地（3 项）：**
+
+1. **B 站官方 AI 视频总结**（`bilibili/ai_conclusion.json` 样本 → 原生）：
+   `platforms_bilibili.py` 新增 `_bilibili_ai_conclusion`（view/conclusion/get，WBI 签名，
+   `BOT_BILIBILI_AI_SUMMARY=0` 可关）；解析 B 站视频自动追加「AI总结/AI大纲」行并存
+   `detail.ai_conclusion`。实测该端点现已要求登录（code -101）——**导入 B 站 Cookie 后
+   自动生效**，无 Cookie 静默跳过不影响主链路。
+2. **UP 主获赞数**：`_author_enrichment` 增加 upstat（WBI 签名）调用，写入
+   Creator.received_like_count 与统计行「获赞」；风控拦截时静默跳过。
+   此前用户要的字段中播放/点赞/投币/收藏/转发/弹幕/评论数、发布时间（published_at
+   精确到秒）、标题/封面/简介、UP 昵称/头像/签名（card sign）、粉丝/关注/视频数/专栏数、
+   aid/bvid/UID 原生已有。
+3. **平台凭证管理指令**（对标 parser-lite 的凭证指令）：新增
+   `capabilities/platform_credentials.py` + 管理员 matcher（priority=8，复用
+   `_is_admin_origin` 门控）：`cookie`/`凭证` 查看全部 17 平台凭证状态（只显示
+   cookie 名与到期日，永不回显值）；`cookie import <平台> <Cookie头>` 把浏览器复制的
+   Cookie 头追加写入 Netscape cookies.txt（同名不覆盖），解析链每解析重建 provider
+   故即时热生效。测试 `tests/test_platform_credentials.py`（5 项）。
+
+**配套改进**：`wbi.py` nav 签名键加 30 分钟线程安全缓存（此前每次签名都请求 nav）。
+
+**后续批次（按优先级，见未完成清单）：**
+- 批次 A（新平台）：zhihu、douban、taptap、coolapk、hupu → heybox、linux.do、doubao、
+  qsmusic、ds → 小众对战平台（5eplay/buff/wmpvp/zlb，需玩家生态才有价值）；
+  每平台流程=读样本 JSON → 写 platforms_<name>.py + 路由正则 → 解析回归测试。
+- 批次 B（体验增强）：多候选点歌推广到 QQ/酷狗/酷我（酷狗需把 pagesize=1 改多候选，
+  QQ 选曲受 vkey 登录门槛约束）；评论区渲染、Live Photo 渲染、图文/视频/音频渲染增强
+  （依赖批次 A 的元数据字段齐全）；AI 总结推广到其他平台（逐平台找官方/模型侧端点）。
+- 帮助与文档：新平台上线时同步 `/bot help` 主题与 COMMANDS.md。

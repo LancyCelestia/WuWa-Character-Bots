@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import html as _html
+import os
 import re
 import urllib.parse
 
@@ -176,7 +177,78 @@ def _author_enrichment(mid: int, *, cookie_header: str = "") -> tuple[str, dict,
                     counts[stats_label] = value
     except Exception:  # noqa: BLE001, S110 - 视频/专栏统计失败仅跳过。
         pass
+    try:
+        # 空间获赞数：upstat 需要 WBI 签名；风控/未登录下可能 code!=0，静默跳过。
+        upstat_url = build_wbi_signed_url(
+            "https://api.bilibili.com/x/space/upstat",
+            {"mid": str(mid)},
+            cookie_header=cookie_header,
+        )
+        upstat = http_get_json(
+            upstat_url, referer="https://space.bilibili.com/", cookie=cookie_header
+        )
+        if upstat.get("code") == 0:
+            updata = upstat.get("data") or {}
+            likes = _safe_int(updata.get("likes") or (updata.get("archive") or {}).get("likes"))
+            if likes is not None:
+                lines.append(f"获赞 {_format_count(likes)}")
+                counts["获赞"] = likes
+                author["received_likes"] = likes
+    except Exception:  # noqa: BLE001, S110 - 获赞统计失败仅跳过。
+        pass
     return " · ".join(lines), counts, author
+
+
+def _bilibili_ai_conclusion(
+    *,
+    bvid: str,
+    aid: int | None,
+    cid: int | None,
+    up_mid: int | None,
+    cookie_header: str,
+) -> dict | None:
+    """B 站官方 AI 视频总结（view/conclusion/get，WBI 签名）；失败返回 None。
+
+    响应形态来自 parser-lite 的 ai_conclusion.json 样本：
+    data.model_result.{summary, outline:[{title, part_outline?}]}。
+    BOT_BILIBILI_AI_SUMMARY=0 可关闭。
+    """
+    if os.environ.get("BOT_BILIBILI_AI_SUMMARY", "1").strip().lower() in {"0", "false", "off"}:
+        return None
+    if not bvid or cid is None:
+        return None
+    params: dict[str, str] = {
+        "bvid": bvid,
+        "cid": str(cid),
+        "web_location": "333.788",
+    }
+    if aid is not None:
+        params["aid"] = str(aid)
+    if up_mid is not None:
+        params["up_mid"] = str(up_mid)
+    url = build_wbi_signed_url(
+        "https://api.bilibili.com/x/web-interface/view/conclusion/get",
+        params,
+        cookie_header=cookie_header,
+    )
+    payload = http_get_json(
+        url, referer="https://www.bilibili.com/", cookie=cookie_header
+    )
+    if payload.get("code") != 0:
+        return None
+    model = ((payload.get("data") or {}).get("model_result")) or {}
+    if not isinstance(model, dict):
+        return None
+    summary = str(model.get("summary") or "").strip()
+    outline_titles: list[str] = []
+    for node in model.get("outline") or []:
+        if isinstance(node, dict):
+            title = str(node.get("title") or "").strip()
+            if title:
+                outline_titles.append(title)
+    if not summary and not outline_titles:
+        return None
+    return {"summary": summary, "outline": outline_titles[:6]}
 
 
 def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") -> ParsedContent:
@@ -229,6 +301,25 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
         )
     if desc:
         summary_lines.append(f"简介：{desc}")
+    ai_conclusion: dict | None = None
+    if cid is not None:
+        try:
+            ai_conclusion = _bilibili_ai_conclusion(
+                bvid=str(data.get("bvid") or video_id),
+                aid=aid,
+                cid=_safe_int(cid),
+                up_mid=_safe_int(owner.get("mid")),
+                cookie_header=cookie_header,
+            )
+        except Exception:  # noqa: BLE001 - AI 总结失败静默跳过，不影响解析主链路。
+            ai_conclusion = None
+    if ai_conclusion:
+        ai_summary = str(ai_conclusion.get("summary") or "").strip()
+        if ai_summary:
+            summary_lines.append(f"AI总结：{ai_summary}")
+        outline_titles = [str(t) for t in ai_conclusion.get("outline") or []]
+        if outline_titles:
+            summary_lines.append("AI大纲：" + " / ".join(outline_titles[:4]))
     if len(pages) > 1:
         summary_lines.append("分P列表：")
         for index, page in enumerate(pages[:8], start=1):
@@ -293,6 +384,8 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
     if pubdate is not None:
         video_meta["pubdate"] = pubdate
     video_detail: dict = {"video": video_meta}
+    if ai_conclusion:
+        video_detail["ai_conclusion"] = ai_conclusion
     if video_author:
         video_detail["author"] = video_author
     if len(pages) > 1:

@@ -22,6 +22,12 @@ from .capabilities.epic import build_epic_capability
 from .capabilities.meme import build_meme_capability
 from .capabilities.meme_library import build_meme_library_capability
 from .capabilities.music import build_music_capability
+from .capabilities.platform_credentials import (
+    cookie_status_text,
+    import_cookie_header,
+    is_cookie_command,
+    parse_cookie_command,
+)
 from .capabilities.today_history import build_today_history_capability
 from .capabilities.weather import build_weather_capability
 from .capabilities.wiki import build_wiki_capability
@@ -2422,6 +2428,30 @@ def _register_nonebot_handlers() -> None:
             event,
             f"已生成并上传 {fmt.upper()}：{path.name}（{max(1, path.stat().st_size // 1024)}KB）",
         )
+
+    async def _is_admin_cookie_command(event: Event) -> bool:
+        return is_cookie_command(event.get_plaintext()) and await _is_admin_origin(event)
+
+    cookie_admin = on_message(rule=_is_admin_cookie_command, priority=8, block=True)
+
+    @cookie_admin.handle()
+    async def _handle_admin_cookie(bot: Bot, event: Event) -> None:
+        parsed = parse_cookie_command(event.get_plaintext())
+        if parsed is None:
+            return
+        action, platform, header = parsed
+        if action == "import":
+            if not platform or not header:
+                await _send_text_through_unified_pipeline(
+                    bot,
+                    event,
+                    "用法：cookie import <平台> <Cookie头>，例如：cookie import bilibili SESSDATA=...; bili_jct=...",
+                )
+                return
+            result = import_cookie_header(config, platform, header)
+        else:
+            result = cookie_status_text(config)
+        await _send_text_through_unified_pipeline(bot, event, result)
 
     @mail_notice.handle()
     async def _handle_mail_notice(bot: Bot, event: Event) -> None:
