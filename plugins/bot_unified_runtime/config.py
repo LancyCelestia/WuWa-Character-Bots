@@ -77,6 +77,11 @@ class Config(BaseModel):
     bot_disconnect_notice_mail_recipients: list[str] = []
     bot_disconnect_notice_telegram_chat_ids: list[str] = []
     # Server酱/PushPlus HTTP 推送（掉线时 QQ 不可用，走外部推送兜底）。
+    # SauceNAO 反搜图（对标 YetAnotherPicSearch）：key 也可用 env:SAUCENAO_API_KEY。
+    bot_saucenao_api_key: str = "env:SAUCENAO_API_KEY"
+    # 逆天发言自动撤回（防御强化，默认关；仅机器人有群管理员权限时才可能生效）。
+    bot_dirty_guard_enabled: bool = False
+    bot_dirty_guard_delete: bool = False
     bot_disconnect_notice_serverchan_sendkey: str = ""
     bot_disconnect_notice_pushplus_token: str = ""
     bot_enterprise_user_ids: list[str] = []

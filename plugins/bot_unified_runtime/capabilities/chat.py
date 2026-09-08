@@ -1186,6 +1186,12 @@ def build_chat_result(
     else:
         reply_text = strip_action_brackets(reply_text)
     reply_text = naturalize_chat_text(reply_text)
+    # 说人话输出层（批次 F）：剥离 AI 客套开场与总结腔。
+    from plugins.bot_unified_runtime.output.plain_text import (
+        humanize_reply,
+    )
+
+    reply_text = humanize_reply(reply_text)
     generated_files: list[dict[str, str]] = []
     # Leave paragraph structure to the model. Transport-level splitting is only
     # allowed when an adapter imposes a hard payload limit; no fixed part count.

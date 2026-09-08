@@ -167,3 +167,24 @@ def naturalize_chat_text(text: str) -> str:
     for index, url in enumerate(urls):
         value = value.replace(f"\ue000{index}\ue001", url)
     return value
+
+# 去 AI 味（说人话）：聊天回复里高频的开场白/收尾客套/总结腔，确定性剥离。
+_HUMANIZE_OPENING_RE = re.compile(
+    r"^(?:好的[！，,。~ ]*|当然[！，,。~ ]*(?:可以|没问题)[！，,。~ ]*|以下是|这是一份|没错[！，,。~ ]*|嗯[！，,。~ ]*|明白了[！，,。~ ]*)+"
+)
+_HUMANIZE_CLOSING_RE = re.compile(
+    r"(?:希望(?:这|以上)(?:些)?(?:内容)?(?:能)?(?:帮|对你有所)(?:到)?(?:助)?(?:你)?[！。~\s]*)+$|"
+    r"(?:以上(?:就是|是).{0,12}全部内容[。！~\s]*)+$|"
+    r"(?:总之|综上所述|总结一下|总的来说)[，,：:]?[\s\S]{0,60}$|"
+    r"(?:如果还有(?:其他)?(?:问题|疑问)[，,]?.{0,20}(?:问我|告诉我|联系我|随时)[。！~\s]*)+$"
+)
+
+
+def humanize_reply(text: str) -> str:
+    """剥离聊天回复的 AI 客套开场与总结腔；不改变事实与语义。"""
+    value = (text or "").strip()
+    if not value:
+        return value
+    value = _HUMANIZE_OPENING_RE.sub("", value).strip()
+    value = _HUMANIZE_CLOSING_RE.sub("", value).strip()
+    return value or (text or "").strip()

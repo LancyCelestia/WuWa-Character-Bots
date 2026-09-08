@@ -1146,3 +1146,57 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
   （澜汐/霞月两账号同权，称呼 Lancy/LancyCelestia 用于人格 prompt 层）。
 
 验证：416 passed；Ruff 全过；mypy 185 源码文件无错。
+
+### 19.15 alpha.2 十二轮增补：全平台覆盖/搜图/小名联动/评论区/说人话/群治理（2026-09-08）
+
+用户一次性下达批次 A/B/C/D/E/F 全量并提供了三把 key。本批交付：
+
+**批次 A 完成——15 个真空白平台全部接入（共 11 个新解析文件路由）**
+- linux.do + zlb.ink（Discourse 共用解析器，/t/{id}.json → 标题/作者/首楼正文/回复数/点赞数/发布时间）
+- 酷安（__NEXT_DATA__ feed props：动态正文/作者/点赞/评论/时间/图组）
+- 虎扑（bbs-mobileapi + md5 签名 HUPU_SALT，样本暴露的签名算法原生实现）
+- 完美对战（news getAppNewsById）、5E（forum/topic/{id}）、网易大道 ds（facade feedId）
+- 汽水音乐（分享页 loaderData track 解析）、豆包 AI 视频（get_video_share_info，
+  play_info/user_info/prompt 结构，AI 生成标记）、米画师 illu + BUFF（无公开详情 API → OG meta 兜底）
+- heybox 确认与现有 xiaoheihe 同 API（无需重复）
+- 路由+Cookie 平台键（linuxdo/d_c0、coolapk/dkToken、hupu、buff/session）+ 8 项样本 mock 测试
+
+**SauceNAO 反搜图（YetAnotherPicSearch 能力空白，原生实现）**
+- `sources/sauce_search.py`：db=999 全库、similarity 排序、解析 title/member/ext_urls；
+  **真实 key 实弹通过**（B站封面 80.4% 识别出画师 Mikaduki Neko）。
+- 能力 `bot.image_search`：`搜图` + 同条消息图片 → 反搜结果（相似度/标题/作者/链接）；
+  matcher priority=46 经统一管线，key 可 `BOT_SAUCENAO_API_KEY` 或 env:SAUCENAO_API_KEY。
+
+**小名体系 mentions 联动（批次 C）**
+- `/bot 昵称 set <QQ号> <小名>`（管理员）写入 user_affinity.nickname；
+- mention 判定链追加动态小名扫描（60s 缓存全表快照）：**用户喊任意已设小名即可唤醒对话**；
+- prompt 侧此前已支持用小名称呼用户（快照 nickname 字段）。
+
+**批次 B：B站热门评论区渲染**
+- 视频解析新增 x/v2/reply 热门评论前 3 条（作者/文本/点赞）进 detail.hot_comments；
+  解析卡评论区区块渲染（失败静默）。LivePhoto 属 iOS 私有格式（OneBot 不支持
+  发送）→ 不实现，记录原因。
+
+**批次 F：说人话输出层**
+- `output/plain_text.py` 新增 `humanize_reply`：确定性剥离 AI 客套开场
+  （好的！/当然可以/以下是/没错）与总结腔收尾（总之/综上所述/以上就是全部内容/
+  希望这能帮到你/有问题随时问我），已接入 chat 输出链（naturalize 之后）。
+
+**批次 D：群文件整理 + 逆天发言撤回（自研，未复制任何插件代码）**
+- `capabilities/group_files.py`：GroupFileStore 记录 group_upload notice
+  （群/文件/大小/时间）→ `/bot 群文件` 输出统计（总量/类型分布/最近列表/整理建议；
+  OneBot 无文件夹移动 API，诚实落地为记录+统计+提醒）。
+- DirtyGuard 逆天发言检测：severe（违禁/危害类）→ 可撤回（delete_msg，需群管理员
+  权限）、warn（辱骂类）→ 仅记录；`BOT_DIRTY_GUARD_ENABLED`（默认关）+
+  `BOT_DIRTY_GUARD_DELETE`（默认关）双层开关，误伤风险受控。
+
+**运行时告警修复（用户贴的三类报错）**
+1. Telegram 轮询重复堆栈刷屏（代理抖动，16:48/17:40/19:10 三条）：之前 5 分钟
+   限速仍放行全栈；现改为**完整堆栈直接吞掉**（韧性层的简短重试行保留），
+   恢复后打一条 "Telegram poll recovered"。轮询失败本身由适配器自动重试，无需干预。
+2. `stage=onebot send_exception source_bot=3958874605`：Mail 账户 SMTP 发信异常
+   （重试 3 次），属邮件通道已知场景；QQ 主链路不受影响。
+3. `stage=llm deadline_exceeded / auth`：外部 LLM 服务超时/认证失败，failover 总时限
+   45s 已兜底重试其他模型；如持续出现请 `/bot llm` 检查当前 provider 健康。
+
+验证：428 passed；Ruff 全过；mypy 191 源码文件无错。key 全部只入本地 `.env`（不入库）。

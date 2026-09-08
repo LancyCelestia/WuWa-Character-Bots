@@ -60,8 +60,6 @@ _install_crash_guards(getattr(_driver_config, "bot_runtime_data_dir", None))
 # Telegram 轮询在代理瞬断/网络抖动时每 30 秒打一条完整堆栈；限速为首次与
 # 每 5 分钟放行一条，其余丢弃。轮询失败由适配器自动重试并恢复，无需干预。
 # OneBot V11 适配器在 NapCat 未启动时同样每 5 秒重连并打完整堆栈，一并限速。
-import time
-
 from nonebot.log import default_filter, default_format
 
 _POLL_FAILURE_COOLDOWN_SECONDS = 300.0
@@ -77,12 +75,10 @@ def _rate_limited_log_filter(record) -> bool:
     ) and "failed" in message
     onebot_reconnect = "Error while setup websocket" in message
     if tg_poll_failure or onebot_reconnect:
-        now = time.monotonic()
-        if now - _POLL_FAILURE_STATE["last_shown"] < _POLL_FAILURE_COOLDOWN_SECONDS:
-            _POLL_FAILURE_STATE["suppressed"] += 1
-            return False
-        _POLL_FAILURE_STATE["last_shown"] = now
-        _POLL_FAILURE_STATE["suppressed"] = 0
+        # 这类错误是代理/网络抖动的已知可恢复场景，韧性层会以简短行报告
+        # 退避与恢复；完整堆栈对排障价值低且刷屏，直接吞掉。
+        _POLL_FAILURE_STATE["suppressed"] += 1
+        return False
     return True
 
 
@@ -106,13 +102,19 @@ _original_tg_poll = TelegramAdapter.poll
 
 async def _resilient_tg_poll(self, bot):
     delay = 3.0
+    had_failure = False
     while True:
         try:
-            return await _original_tg_poll(self, bot)
+            result = await _original_tg_poll(self, bot)
+            if had_failure:
+                had_failure = False
+                nonebot.logger.info("Telegram poll recovered; updates flowing again")
+            return result
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - 轮询退出一律重试，退避已封顶。
             delay = min(delay * 2.0, 60.0)
+            had_failure = True
             nonebot.logger.warning(
                 "Telegram poll task exited ({}); retrying in {:.0f}s",
                 type(exc).__name__,

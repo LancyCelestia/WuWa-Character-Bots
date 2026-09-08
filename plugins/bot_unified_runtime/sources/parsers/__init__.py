@@ -33,6 +33,17 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import (
 from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili_goods import (
     parse_bilibili_goods,
 )
+from plugins.bot_unified_runtime.sources.parsers.platforms_community import (
+    parse_5eplay,
+    parse_coolapk,
+    parse_ds163,
+    parse_hupu,
+    parse_wmpvp,
+)
+from plugins.bot_unified_runtime.sources.parsers.platforms_discourse import (
+    parse_linuxdo,
+    parse_zlb,
+)
 from plugins.bot_unified_runtime.sources.parsers.platforms_douban import parse_douban
 from plugins.bot_unified_runtime.sources.parsers.platforms_epic import parse_epic
 from plugins.bot_unified_runtime.sources.parsers.platforms_facebook import (
@@ -57,6 +68,12 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_kurobbs import (
     parse_kurobbs as parse_kurobbs_v2,
 )
 from plugins.bot_unified_runtime.sources.parsers.platforms_lofter import parse_lofter
+from plugins.bot_unified_runtime.sources.parsers.platforms_media_share import (
+    parse_buff,
+    parse_doubao,
+    parse_illu,
+    parse_qsmusic,
+)
 from plugins.bot_unified_runtime.sources.parsers.platforms_mihuashi import (
     parse_mihuashi as parse_mihuashi_v2,
 )
@@ -214,6 +231,87 @@ _PLATFORM_RULES: list[tuple[str, str, list[str], ParseFn, int]] = [
             r"taptap\.(?:cn|io)/video/\d+",
         ],
         parse_taptap,
+        12,
+    ),
+    (
+        "linuxdo",
+        "linux.do",
+        [r"linux\.do/t/(?:topic/)?\d+"],
+        parse_linuxdo,
+        12,
+    ),
+    (
+        "zlb",
+        "ZLB",
+        [r"zlb\.ink/t/(?:topic/)?\d+"],
+        parse_zlb,
+        12,
+    ),
+    (
+        "coolapk",
+        "酷安",
+        [r"coolapk(?:1s)?\.com/feed/\d+"],
+        parse_coolapk,
+        12,
+    ),
+    (
+        "hupu",
+        "虎扑",
+        [
+            r"bbs\.hupu\.com/\d+\.html",
+            r"m\.hupu\.com/bbs(?:-share)?/\d+",
+            r"hupu\.com/\d+\.html",
+        ],
+        parse_hupu,
+        12,
+    ),
+    (
+        "wmpvp",
+        "完美对战",
+        [r"wmpvp\.com/community-(?:pc)?[Dd]etail\.html\?[^\s]*id=\d+"],
+        parse_wmpvp,
+        12,
+    ),
+    (
+        "5eplay",
+        "5E对战",
+        [r"5eplay\.com/forum/(?:share/)?\d+"],
+        parse_5eplay,
+        12,
+    ),
+    (
+        "ds163",
+        "网易大道",
+        [r"ds\.163\.com/(?:article|feed)/[A-Za-z0-9]+"],
+        parse_ds163,
+        12,
+    ),
+    (
+        "qsmusic",
+        "汽水音乐",
+        [r"qishui\.douyin\.com/s/[A-Za-z0-9]+"],
+        parse_qsmusic,
+        12,
+    ),
+    (
+        "doubao",
+        "豆包",
+        [r"doubao\.com/video-sharing\?[^\s]*share_id=\d+"],
+        parse_doubao,
+        12,
+    ),
+    (
+        "illu",
+        "米画师",
+        [r"illund\.com/share\.html[^\s]*"],
+        parse_illu,
+        12,
+    ),
+    (
+        "buff",
+        "BUFF饰品",
+        [r"buff\.163\.com/[^\s]+"],
+        parse_buff,
         12,
     ),
     (
