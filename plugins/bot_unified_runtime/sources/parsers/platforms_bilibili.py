@@ -175,6 +175,10 @@ def _author_enrichment(mid: int, *, cookie_header: str = "") -> tuple[str, dict,
                 if value is not None:
                     lines.append(f"{label} {value}")
                     counts[stats_label] = value
+        if "视频" in counts and author.get("video_count") is None:
+            author["video_count"] = counts["视频"]
+        if "专栏" in counts:
+            author["post_count"] = counts["专栏"]
     except Exception:  # noqa: BLE001, S110 - 视频/专栏统计失败仅跳过。
         pass
     try:
@@ -297,7 +301,7 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
         import datetime
 
         summary_lines.append(
-            f"发布时间：{datetime.datetime.fromtimestamp(data['pubdate']).strftime('%Y-%m-%d')}"  # noqa: DTZ006 - 本地时间有意 naive。
+            f"发布时间：{datetime.datetime.fromtimestamp(data['pubdate']).strftime('%Y-%m-%d %H:%M:%S')}"  # noqa: DTZ006 - 本地时间有意 naive。
         )
     if desc:
         summary_lines.append(f"简介：{desc}")
@@ -314,6 +318,7 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
         except Exception:  # noqa: BLE001 - AI 总结失败静默跳过，不影响解析主链路。
             ai_conclusion = None
     if ai_conclusion:
+        summary_lines.append("")  # AI 内容与视频简介之间空一行，视觉分隔。
         ai_summary = str(ai_conclusion.get("summary") or "").strip()
         if ai_summary:
             summary_lines.append(f"AI总结：{ai_summary}")
@@ -412,6 +417,13 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
                     )
             if hot_comments:
                 video_detail["hot_comments"] = hot_comments
+                summary_lines.append("")
+                summary_lines.append("热门评论：")
+                for comment in hot_comments:
+                    author = comment.get("author") or "匿名"
+                    text = str(comment.get("text") or "")[:80]
+                    likes = comment.get("likes") or 0
+                    summary_lines.append(f"· {author}：{text}（赞 {likes}）")
         except Exception:  # noqa: BLE001, S110 - 评论拉取失败不影响解析。
             pass
     if len(pages) > 1:

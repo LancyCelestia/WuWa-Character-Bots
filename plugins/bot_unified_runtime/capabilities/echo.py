@@ -778,7 +778,7 @@ body {{ margin:0; padding:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif
 .help-foot {{ display:flex; justify-content:flex-end; padding:10px 14px; background:color-mix(in srgb, var(--accent) 10%, #fff); border-top:1px solid color-mix(in srgb, var(--accent) 16%, #fff); }}
 .help-bot-pill {{ display:flex; align-items:center; gap:8px; padding:5px 13px 5px 6px; border-radius:999px; color:var(--accent-ink); background:color-mix(in srgb, var(--accent) 4%, #fff); border:1px solid #fff; box-shadow:0 4px 10px rgba(31,35,41,.07); font-size:13px; font-weight:600; }}
 .help-bot-avatar {{ width:27px; height:27px; object-fit:cover; border-radius:50%; }}
-</style></head><body><div class="help-stage card"><section class="help-shell"><header class="help-head"><div class="help-kicker">{html.escape(role)}</div><div class="help-title">{html.escape(bot_name)} · 命令帮助</div><div class="help-subtitle">按分类汇总常用命令；详情可查「/bot 帮助 &lt;主题&gt;」，/岸宝帮助 同样可用</div></header><main class="help-body"><div class="help-grid">{cards}</div></main><footer class="help-foot"><div class="help-bot-pill">{avatar}<span>{html.escape(bot_name)} · 命令手册</span></div></footer></section></div></body></html>"""
+</style></head><body><div class="help-stage card"><section class="help-shell"><header class="help-head"><div class="help-kicker">{html.escape(role)}</div><div class="help-title">{html.escape(bot_name)} · 命令帮助</div><div class="help-subtitle">按模块分类汇总；输入「/bot 帮助 &lt;模块名&gt;」展开该模块的命令与参数详情（如 /bot 帮助 点歌、/bot 帮助 订阅）；/岸宝帮助 同样可用</div></header><main class="help-body"><div class="help-grid">{cards}</div></main><footer class="help-foot"><div class="help-bot-pill">{avatar}<span>{html.escape(bot_name)} · 命令手册</span></div></footer></section></div></body></html>"""
 
 
 def _try_render_help_image(

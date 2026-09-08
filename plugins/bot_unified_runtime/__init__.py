@@ -2957,7 +2957,7 @@ def _register_nonebot_handlers() -> None:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 synthetic = message.model_copy(update={"plain_text": f"点歌 {query}"})
-                mode = runtime_settings.get("BOT_MUSIC_MODE", config) or "card"
+                mode = runtime_settings.get("BOT_MUSIC_MODE", config) or getattr(config, "bot_music_default_mode", "card+voice+link")
                 return build_music_capability(
                     config,
                     default_mode=mode,
@@ -4389,7 +4389,7 @@ def _register_nonebot_handlers() -> None:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 synthetic = message.model_copy(update={"plain_text": normalized_text})
-                mode = runtime_settings.get("BOT_MUSIC_MODE", config) or "card"
+                mode = runtime_settings.get("BOT_MUSIC_MODE", config) or getattr(config, "bot_music_default_mode", "card+voice+link")
                 return build_music_capability(
                     config,
                     default_mode=mode,
