@@ -58,8 +58,8 @@ def _build(*, enabled: bool, detail_calls: list[str] | None = None):
     def list_fn(query: str) -> list[dict[str, str]]:
         return _candidates()
 
-    def detail_fn(song_id: str):
-        detail_calls.append(song_id)
+    def detail_fn(candidate: dict, *, query: str = ""):
+        detail_calls.append(str(candidate.get("provider_track_id")))
         return _item("选中候选")
 
     capability = build_music_capability(

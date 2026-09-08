@@ -12,6 +12,7 @@ from typing import Any, cast
 from urllib.parse import urlparse
 
 from plugins.bot_unified_runtime.character import CharacterContextProvider
+from plugins.bot_unified_runtime.character.affinity import classify_behavior
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -994,6 +995,7 @@ def build_chat_result(
     decision: BotDecision,
     context: ContextBundle,
     llm_provider: LLMProvider,
+    affinity_store: Any | None = None,
     **llm_options: object,
 ) -> CapabilityResult:
     model_router = llm_options.pop("model_router", None)
@@ -1017,6 +1019,18 @@ def build_chat_result(
         admin="admin" in (message.sender_roles or []),
     )
     artifact = artifact_request(message.plain_text) if safety.action == "allow" else None
+    # 动态好感度观察（批次 C）：按本条消息行为更新好感度与印象标签；
+    # 只影响下一轮的语气分寸，本轮 prompt 已在上方用快照构建。
+    if affinity_store is not None and message.sender_id:
+        try:
+            behavior = classify_behavior(
+                message.plain_text,
+                safety_category=safety.category,
+                safety_action=safety.action,
+            )
+            affinity_store.observe(message.sender_id, behavior)
+        except Exception:  # noqa: BLE001, S110 - 好感度写入失败不影响回复。
+            pass
     if safety.action != "allow":
         # The unsafe request must not become executable instructions. Keep persona,
         # but remove requested tool/image/file side effects and contaminated evidence.
@@ -1456,6 +1470,7 @@ def build_chat_capability(
     request_budget_seconds: float = 0.0,
     runtime_settings: Any | None = None,
     interaction_counter: Any | None = None,
+    affinity_store: Any | None = None,
     model_router: Any | None = None,
     intent_telemetry: IntentTelemetry | None = None,
     shadow_classifier_enabled: bool = False,
@@ -1884,6 +1899,7 @@ def build_chat_capability(
             decision=decision,
             context=context,
             llm_provider=llm_provider,
+            affinity_store=affinity_store,
             model_router=model_router,
             router_override=router_override,
             router_message_text=injection_check.sanitized_text,
@@ -1917,6 +1933,7 @@ def build_chat_capability(
                     decision=decision,
                     context=fallback_context,
                     llm_provider=llm_provider,
+                    affinity_store=affinity_store,
                     model_router=model_router,
                     router_override=router_override,
                     router_message_text=injection_check.sanitized_text,

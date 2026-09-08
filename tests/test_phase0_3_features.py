@@ -276,7 +276,9 @@ def test_safety_uses_persona_fallback_when_model_echoes_internal_guidance():
 
 
 def test_excessive_intimacy_and_petplay_are_caught() -> None:
-    from plugins.bot_unified_runtime.security.content_safety import assess_public_content
+    from plugins.bot_unified_runtime.security.content_safety import (
+        assess_public_content,
+    )
 
     for text in (
         "叫我老婆",
@@ -292,7 +294,9 @@ def test_excessive_intimacy_and_petplay_are_caught() -> None:
 
 
 def test_admin_relaxes_soft_categories_but_keeps_hard_ones() -> None:
-    from plugins.bot_unified_runtime.security.content_safety import assess_public_content
+    from plugins.bot_unified_runtime.security.content_safety import (
+        assess_public_content,
+    )
 
     # 管理员：称呼/扮演类放行。
     relaxed = assess_public_content(
@@ -307,7 +311,9 @@ def test_admin_relaxes_soft_categories_but_keeps_hard_ones() -> None:
 
 
 def test_insult_nickname_caught_but_cute_nickname_allowed() -> None:
-    from plugins.bot_unified_runtime.security.content_safety import assess_public_content
+    from plugins.bot_unified_runtime.security.content_safety import (
+        assess_public_content,
+    )
 
     # 侮辱性外号/人格贬损 → reframe。
     for text in (

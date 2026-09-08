@@ -1084,3 +1084,65 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
      （或用户自行 `/bot runtime set BOT_ADMIN_USER_IDS [号1,号2]`）。
    - **批次 F**：说人话（去 AI 味）应用于回复整理层（strip_outer_speech_quotes 之后）。
 5. 验证：398 passed；Ruff/mypy 全过。
+
+### 19.14 alpha.2 十一轮增补：并行大交付（2026-09-08）
+
+用户要求"一次性并行完成 handoff 未竟项（P0.4 尾/批次 A/B/C/D/E/F）"。本批交付：
+
+**P0.4 完成：出站 result-unknown 账本与重连对账**
+- 新增 `runtime/result_unknown.py`：OneBot 发送超时（结果未知）持久化到
+  `data/result_unknown.sqlite3`（按 request_id 去重）；`on_bot_connect` 自动对账——
+  超 24h 的标记 expired，仍 pending 的写 `result_unknown_reconciled` 事件。
+  设计上不做自动重发（OneBot 无法查询历史消息是否送达，盲发会重复）。测试 3 项。
+- 排查了用户报告的 `[运行时告警] stage=onebot kind=send_exception source_bot=3958874605`：
+  该 bot 是 Mail 适配器账户（3958874605@qq.com），根因=SMTP 发信异常重试 3 次失败
+  （日志已轮转无法取详情）；属邮件通道已知韧性场景，不影响 QQ 主链路，告警抑制器
+  已有 5 分钟窗口防刷屏。
+
+**防御强化补全（用户点名）**
+- `insult_nickname` 类别：侮辱性外号/人格贬损（"以后就叫你死胖子/给你起外号叫蠢驴/
+  你就是个废物"）→ 温和重构；普通善意小名（小岸/阿月/团子）不误伤；
+  侮辱类对管理员也不放宽（侮辱不是管理特权）。测试含正反对照。
+
+**批次 C 第一批：动态好感度 + 群聊复读**
+- 新增 `character/affinity.py`：SQLite 行为驱动好感度（positive +0.02 / tease -0.01 /
+  negative -0.05 / insult -0.10，clamp [0,1]）+ 印象标签（友善/老朋友/爱抱怨/口无遮拦/
+  爱戏弄，按累计行为打标）+ 四档态度（亲近/友善/客气/严厉——最低档也绝不辱骂）。
+- 融合规则：行为层有记录时覆盖 RelationshipContext 的 affinity/attitude；
+  静态档案的称呼/偏好/备注保留。chat 层每条消息自动观察（safety 联动分类）。
+- 新增 `runtime/parrot.py` 群聊复读检测：窗口（60s）内 ≥3 个不同用户发同一文本 →
+  吐槽一次（"怎么一个个都当复读机…"），冷却 300s；bot 自身/指令/长文本不参与。
+- 配置：`BOT_AFFINITY_ENABLED`（默认开）、`BOT_PARROT_*`。
+- 小名体系：`DynamicAffinityStore.set_nickname`（用户昵称存储已就绪），
+  `/bot` 管理指令与"被喊小名即出现"的 mentions 联动列入下一批（需 mentions 层配合）。
+
+**批次 A 首批三平台：知乎/豆瓣/TapTap**
+- 新增 `platforms_zhihu.py`（answer/article v4 API）、`platforms_douban.py`（rexxar
+  topic API）、`platforms_taptap.py`（webapiv2 moment/video）；路由正则注册 +
+  Cookie 平台键（d_c0/dbcl2 等）+ 契约对齐（`-> ParsedContent`，未匹配 URL raise）。
+  测试用 parser-lite 样本 JSON mock 验证（含字段/路由/未知 URL 三类，共 5 项）。
+  知乎/豆瓣未登录可能 403——导入 Cookie（`/bot cookie import zhihu ...`）即增强。
+
+**批次 B 首批：多候选点歌推广到 QQ/酷狗/酷我**
+- `platforms_music.py` 新增 `search_qqmusic_candidates/kugou_candidates/kuwo_candidates`
+  （QQ n=5、酷狗 pagesize 1→5、酷我 rn=5）；候选详情函数签名升级为
+  `detail_fn(candidate, *, query)`：网易云按 song_id、酷我走真实 wapi 详情、
+  QQ/酷狗从候选直接构建（QQ 音频本就受 vkey 登录门槛约束）。四平台全部支持编号选择。
+
+**批次 F 首批：搜索结果质量过滤（污染源处理，用户提问的落地）**
+- `web_search.py` 新增 `filter_search_hits`：低质域名（pinterest/csdn 登录墙/quora/
+  百度跳转链/docin 等文库农场）直接剔除；短摘要命中降权排后不丢弃。链式回退返回
+  前统一过滤——**搜索结果是污染源时的处理路径：先域名黑名单→正文去噪（已有的
+  HTML 注释/隐藏块剥离）→ Prompt 前信任边界（safety context 隔离），三层递进。**
+
+**其余核查结论**
+- mediawiki（KoishiMoe）/nb2-wiki 复核：未发现值得吸收的独有能力（前者核心是
+  基于 infobox 的模板化摘要，与我们定向提取+LLM 摘要路线重叠；后者功能子集）。
+- analysis_bilibili：独有可吸收点已确认仅 ExpiringCache（实现有缺陷不采用）；
+  其 UP 空间/排行 API 我们已用更好实现。
+- YetAnotherPicSearch 接入步骤已给用户（Saucenao/Ascii2d key 获取教程），
+  配置就绪后按 memes 守门模式接入。
+- 双管理员：`BOT_ADMIN_USER_IDS=["3865067623","1722380002"]` 已确认在 `.env`
+  （澜汐/霞月两账号同权，称呼 Lancy/LancyCelestia 用于人格 prompt 层）。
+
+验证：416 passed；Ruff 全过；mypy 185 源码文件无错。

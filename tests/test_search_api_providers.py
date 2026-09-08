@@ -369,3 +369,18 @@ def test_fetch_page_text_strips_boilerplate_structural_blocks(monkeypatch):
     assert "订阅表单" not in text
     assert "页脚版权信息" not in text
     assert "弹窗广告文案" not in text
+
+
+def test_filter_search_hits_drops_low_quality_and_defers_short_snippets():
+    from plugins.bot_unified_runtime.sources.web_search import (
+        WebSearchHit,
+        filter_search_hits,
+    )
+
+    hits = [
+        WebSearchHit(title="好结果", snippet="这是一段足够长的摘要内容，包含具体信息。", url="https://good.example/a"),
+        WebSearchHit(title="垃圾", snippet="短", url="https://www.pinterest.com/pin/1"),
+        WebSearchHit(title="只有标题", snippet="", url="https://mid.example/c"),
+    ]
+    kept = filter_search_hits(hits)
+    assert [h.url for h in kept] == ["https://good.example/a", "https://mid.example/c"]

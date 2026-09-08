@@ -14,7 +14,11 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from plugins.bot_unified_runtime.contracts.media import ParserRule, SourceInput
+from plugins.bot_unified_runtime.contracts.media import (
+    ParserRule,
+    SourceInput,
+    build_parsed_content,
+)
 from plugins.bot_unified_runtime.sources.parsers.cookies import (
     PlatformCookieProvider,
     build_platform_cookie_provider,
@@ -29,6 +33,7 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili import (
 from plugins.bot_unified_runtime.sources.parsers.platforms_bilibili_goods import (
     parse_bilibili_goods,
 )
+from plugins.bot_unified_runtime.sources.parsers.platforms_douban import parse_douban
 from plugins.bot_unified_runtime.sources.parsers.platforms_epic import parse_epic
 from plugins.bot_unified_runtime.sources.parsers.platforms_facebook import (
     parse_facebook,
@@ -70,10 +75,13 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_music import (
     parse_spotify,
     search_apple_music,
     search_kugou,
+    search_kugou_candidates,
     search_kuwo,
+    search_kuwo_candidates,
     search_netease_music,
     search_netease_music_candidates,
     search_qqmusic,
+    search_qqmusic_candidates,
     search_spotify,
 )
 from plugins.bot_unified_runtime.sources.parsers.platforms_pixiv import parse_pixiv
@@ -81,6 +89,7 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_skland import (
     parse_skland as parse_skland_deep,
 )
 from plugins.bot_unified_runtime.sources.parsers.platforms_steam import parse_steam
+from plugins.bot_unified_runtime.sources.parsers.platforms_taptap import parse_taptap
 from plugins.bot_unified_runtime.sources.parsers.platforms_telegram import (
     parse_telegram,
 )
@@ -88,6 +97,7 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_weibo import parse_we
 from plugins.bot_unified_runtime.sources.parsers.platforms_xiaoheihe import (
     parse_xiaoheihe as parse_xiaoheihe_v2,
 )
+from plugins.bot_unified_runtime.sources.parsers.platforms_zhihu import parse_zhihu
 from plugins.bot_unified_runtime.sources.registry import ParserRegistry
 
 _HTTP_URL_RE = re.compile(r"https?://[^\s<>\"'（）()【】\[\]{}]+")
@@ -177,6 +187,33 @@ _PLATFORM_RULES: list[tuple[str, str, list[str], ParseFn, int]] = [
             r"weibo\.cn/[^\s]+",
         ],
         parse_weibo,
+        12,
+    ),
+    (
+        "zhihu",
+        "知乎",
+        [
+            r"zhihu\.com/question/\d+/answer/\d+",
+            r"zhuanlan\.zhihu\.com/p/\d+",
+        ],
+        parse_zhihu,
+        12,
+    ),
+    (
+        "douban",
+        "豆瓣",
+        [r"douban\.com/group/topic/\d+"],
+        parse_douban,
+        12,
+    ),
+    (
+        "taptap",
+        "TapTap",
+        [
+            r"taptap\.(?:cn|io)/moment/\d+",
+            r"taptap\.(?:cn|io)/video/\d+",
+        ],
+        parse_taptap,
         12,
     ),
     (
@@ -545,18 +582,80 @@ def build_content_parser_registry(
 
 def music_candidate_providers(
     cookie_provider: PlatformCookieProvider | None = None,
-) -> dict[str, tuple[Callable[[str], list[dict[str, str]]], Callable[[str], ParsedContent | None]]]:
-    """多候选点歌提供方：平台 id -> (候选列表函数, 按 ID 详情函数)，同样按平台绑 Cookie。
+) -> dict[
+    str,
+    tuple[
+        Callable[[str], list[dict[str, str]]],
+        Callable[..., ParsedContent | None],
+    ],
+]:
+    """多候选点歌提供方：平台 id -> (候选列表函数, 候选详情函数)。
 
-    当前仅网易云支持（其搜索一次返回多首，天然适合编号选择交互）。
+    详情函数签名：detail_fn(candidate: dict, *, query: str) -> ParsedContent | None。
+    网易云按 song_id 取详情；QQ/酷狗/酷我直接从候选 dict 构建（列表阶段已带
+    hash/mid 等关键 ID）。
     """
     cookies = cookie_provider or PlatformCookieProvider()
-    cookie_header = cookies.cookie_header(_PARSER_COOKIE_PLATFORM.get("netease_music", ""))
+
+    def _netease_detail(candidate: dict, *, query: str = "") -> ParsedContent | None:
+        return _bind_cookie(netease_song_detail_by_id, cookies.cookie_header(_PARSER_COOKIE_PLATFORM.get("netease_music", "")))(
+            str(candidate.get("provider_track_id") or "")
+        )
+
+    def _qq_detail(candidate: dict, *, query: str = "") -> ParsedContent | None:
+        # QQ 音频直链依赖登录 vkey，此处按候选信息构建卡片与链接；
+        # 音频/语音模式在 QQ 平台本来就受登录门槛约束。
+        from plugins.bot_unified_runtime.contracts.media import build_parsed_content
+
+        return build_parsed_content(
+            platform="qqmusic",
+            item_id=str(candidate.get("provider_track_id") or ""),
+            item_kind="music",
+            title=str(candidate.get("name") or ""),
+            author_name=str(candidate.get("artist") or ""),
+        )
+
+    def _kugou_detail(candidate: dict, *, query: str = "") -> ParsedContent | None:
+        return build_parsed_content(
+            platform="kugou",
+            item_id=str(candidate.get("provider_track_id") or ""),
+            item_kind="music",
+            title=str(candidate.get("name") or ""),
+            author_name=str(candidate.get("artist") or ""),
+        )
+
+    def _kuwo_detail(candidate: dict, *, query: str = "") -> ParsedContent | None:
+        # 酷我按 rid 走真实详情接口（wapi musicInfo），信息比候选更全。
+        from plugins.bot_unified_runtime.sources.parsers.platforms_music import (
+            parse_kuwo,
+        )
+
+        rid = str(candidate.get("provider_track_id") or "")
+        try:
+            return parse_kuwo(f"https://kuwo.cn/play_detail/{rid}", cookie_header=cookies.cookie_header(_PARSER_COOKIE_PLATFORM.get("kuwo", "")))
+        except Exception:  # noqa: BLE001 - 详情失败回退候选构建。
+            return build_parsed_content(
+                platform="kuwo",
+                item_id=rid,
+                item_kind="music",
+                title=str(candidate.get("name") or ""),
+                author_name=str(candidate.get("artist") or ""),
+            )
+
+    def _bound(platform: str, fn: Callable) -> Callable:
+        return _bind_cookie(fn, cookies.cookie_header(_PARSER_COOKIE_PLATFORM.get(platform, "")))
+
     return {
         "netease_music": (
-            _bind_cookie(search_netease_music_candidates, cookie_header),
-            _bind_cookie(netease_song_detail_by_id, cookie_header),
-        )
+            _bound("netease_music", search_netease_music_candidates),
+            _netease_detail,
+        ),
+        "qqmusic": (
+            _bound("qqmusic", search_qqmusic_candidates),
+            _qq_detail,
+        ),
+        "kugou": (_bound("kugou", search_kugou_candidates), _kugou_detail),
+        "kuwo": (_bound("kuwo", search_kuwo_candidates), _kuwo_detail),
     }
 
 

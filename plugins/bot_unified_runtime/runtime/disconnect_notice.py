@@ -12,6 +12,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
+
 from plugins.bot_unified_runtime.mail_bridge import (
     notify_telegram_admins,
     send_mail_from_account,
@@ -25,6 +27,9 @@ class DisconnectNoticeOptions:
     mail_account: str = ""
     mail_recipients: tuple[str, ...] = ()
     telegram_chat_ids: tuple[str, ...] = ()
+    # Server酱 / PushPlus：QQ 掉线时 QQ 本身不可用，用这两类 HTTP 推送兜底。
+    serverchan_sendkey: str = ""
+    pushplus_token: str = ""
 
 
 def disconnect_notice_options_from(config: Any) -> DisconnectNoticeOptions:
@@ -45,6 +50,12 @@ def disconnect_notice_options_from(config: Any) -> DisconnectNoticeOptions:
             for item in getattr(config, "bot_disconnect_notice_telegram_chat_ids", ()) or ()
             if str(item).strip()
         ),
+        serverchan_sendkey=str(
+            getattr(config, "bot_disconnect_notice_serverchan_sendkey", "") or ""
+        ).strip(),
+        pushplus_token=str(
+            getattr(config, "bot_disconnect_notice_pushplus_token", "") or ""
+        ).strip(),
     )
 
 
@@ -69,6 +80,37 @@ def build_disconnect_notice_text(bot_id: str, adapter_name: str, reason: str = "
         f"账号：{bot_id}{suffix}\n"
         "请尽快检查 NapCat 与网络状态。"
     )
+
+
+def push_serverchan(sendkey: str, title: str, body: str, *, timeout: float = 8.0) -> bool:
+    """Server酱 turbo 推送（https://sct.ftqq.com/）；失败返回 False。"""
+    if not sendkey:
+        return False
+    try:
+        response = httpx.post(
+            f"https://sctapi.ftqq.com/{sendkey}.send",
+            data={"title": title[:32], "desp": body},
+            timeout=timeout,
+        )
+        return response.status_code == 200
+    except Exception:  # noqa: BLE001 - 推送失败由调用方跳过。
+        return False
+
+
+def push_pushplus(token: str, title: str, body: str, *, timeout: float = 8.0) -> bool:
+    """PushPlus 推送（https://www.pushplus.plus/）；失败返回 False。"""
+    if not token:
+        return False
+    try:
+        response = httpx.post(
+            "https://www.pushplus.plus/send",
+            json={"token": token, "title": title[:100], "content": body, "template": "txt"},
+            timeout=timeout,
+        )
+        payload = response.json() if response.status_code == 200 else {}
+        return bool(payload.get("code") == 200)
+    except Exception:  # noqa: BLE001 - 推送失败由调用方跳过。
+        return False
 
 
 class DisconnectNotifier:
@@ -108,6 +150,15 @@ class DisconnectNotifier:
             return []
         text = build_disconnect_notice_text(bot_id, adapter_name, reason)
         delivered: list[str] = []
+        title = f"机器人掉线：{adapter_name or 'bot'} {bot_id}"
+        if self._options.serverchan_sendkey and push_serverchan(
+            self._options.serverchan_sendkey, title, text
+        ):
+            delivered.append("serverchan")
+        if self._options.pushplus_token and push_pushplus(
+            self._options.pushplus_token, title, text
+        ):
+            delivered.append("pushplus")
         if self._options.telegram_chat_ids:
             try:
                 sent = await notify_telegram_admins(

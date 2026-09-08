@@ -444,8 +444,7 @@ def build_music_capability(
     default_mode: str = "card+voice+link",
     audio_downloader: Callable[[str], str | None] | None = None,
     request_store: Any | None = None,
-    candidate_providers: dict[str, tuple[Callable[[str], list[dict[str, str]]], Callable[[str], Any]]]
-    | None = None,
+    candidate_providers: dict[str, tuple[Callable[..., Any], Callable[..., Any]]] | None = None,
     clock: Callable[[], float] | None = None,
 ) -> Any:
     """构建 bot.music 能力；providers 为空时按 config 平台名单构建。
@@ -536,7 +535,9 @@ def build_music_capability(
                     picked = cands[index]
                     detail_fn = candidate_providers[parser_id][1]  # type: ignore[index]
                     try:
-                        item = detail_fn(picked["provider_track_id"])
+                        # detail_fn 接收完整候选 dict（部分平台可直接从候选构建），
+                        # 并附带原查询词以便需要重搜的平台使用。
+                        item = detail_fn(picked, query=query)
                     except Exception:  # noqa: BLE001 - 详情失败按未找到降级。
                         item = None
                     if item is not None:

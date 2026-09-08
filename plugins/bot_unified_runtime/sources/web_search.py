@@ -392,6 +392,35 @@ class BingWebSearchProvider:
         )
 
 
+
+# 搜索结果质量过滤（对标 tavily 插件社区的"污染源"处理思路）：
+# 低质域名直接剔除；snippet 过短的结果降权排后而非丢弃（保序稳定过滤）。
+_LOW_QUALITY_URL_RE = re.compile(
+    r"(?:pinterest\.|csdn\.net/.*/(login|vip)|quora\.com/(?!Profile)|answers\.microsoft\.com|"
+    r"baidu\.com/(?:link|s\?)|so\.com/link|verydemo|fx361|docin|doc88|renrendoc|book118)",
+    re.IGNORECASE,
+)
+_MIN_SNIPPET_CHARS = 24
+
+
+def filter_search_hits(hits: list[WebSearchHit]) -> list[WebSearchHit]:
+    """剔除低质域名与无摘要命中；保持原相对顺序。"""
+    kept: list[WebSearchHit] = []
+    deferred: list[WebSearchHit] = []
+    for hit in hits:
+        url = hit.url or ""
+        if _LOW_QUALITY_URL_RE.search(url):
+            continue
+        snippet = (hit.snippet or "").strip()
+        if len(snippet) < _MIN_SNIPPET_CHARS and not hit.title:
+            continue
+        if len(snippet) < _MIN_SNIPPET_CHARS:
+            deferred.append(hit)
+        else:
+            kept.append(hit)
+    return kept + deferred
+
+
 class ChainedWebSearchProvider:
     """按顺序尝试多个提供器，任一命中即返回；记录命中的提供器名。"""
 
@@ -431,7 +460,7 @@ class ChainedWebSearchProvider:
                 hits = []
             if hits:
                 self.last_provider_name = str(getattr(provider, "name", "unknown"))
-                return hits
+                return filter_search_hits(hits)
         return []
 
     async def search_async(

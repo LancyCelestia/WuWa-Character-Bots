@@ -527,6 +527,119 @@ def parse_kuwo(url: str, *, cookie_header: str = "") -> ParsedContent:
     )
 
 
+
+def _generic_candidates_from_search(
+    provider: str,
+    songs: list[dict],
+    *,
+    name_key: tuple[str, ...],
+    artist_key: str | None,
+    id_key: str,
+) -> list[dict[str, str]]:
+    """从平台搜索响应提取轻量候选列表（多候选点歌共用）。"""
+    out: list[dict[str, str]] = []
+    for song in songs:
+        name = ""
+        for key in name_key:
+            name = str(song.get(key) or "").strip()
+            if name:
+                break
+        if not name:
+            continue
+        artist = ""
+        if artist_key:
+            artists = song.get(artist_key) or []
+            if isinstance(artists, list):
+                parts = []
+                for item in artists:
+                    value = item.get("name") if isinstance(item, dict) else item
+                    value = str(value or "").strip()
+                    if value:
+                        parts.append(value)
+                artist = "、".join(parts)
+            elif isinstance(artists, str):
+                artist = artists
+        out.append(
+            {
+                "provider_track_id": str(song.get(id_key) or "").strip(),
+                "name": name,
+                "artist": artist,
+                "album": "",
+            }
+        )
+        if len(out) >= 5:
+            break
+    return out
+
+
+def search_qqmusic_candidates(query: str, *, cookie_header: str = "") -> list[dict[str, str]]:
+    encoded = urllib.parse.quote(query)
+    payload = http_get_json(
+        "https://c.y.qq.com/soso/fcgi-bin/client_search_cp"
+        f"?w={encoded}&format=json&p=1&n=5&aggr=1&cr=1&new_json=1",
+        referer="https://y.qq.com/",
+        cookie=cookie_header,
+    )
+    songs = (((payload or {}).get("data") or {}).get("song") or {}).get("list") or []
+    return _generic_candidates_from_search(
+        "qqmusic", songs, name_key=("songname", "name"), artist_key="singer", id_key="mid"
+    )
+
+
+def search_kugou_candidates(query: str, *, cookie_header: str = "") -> list[dict[str, str]]:
+    encoded = urllib.parse.quote(query)
+    payload = http_get_json(
+        f"http://msearchcdn.kugou.com/api/v3/search/song?plat=0&keyword={encoded}"
+        "&tagtype=全部&pagesize=5&version=9108",
+        referer="https://www.kugou.com/",
+        cookie=cookie_header,
+    )
+    items = ((payload or {}).get("data") or {}).get("info") or []
+    out: list[dict[str, str]] = []
+    for item in items:
+        name = str(item.get("songname") or item.get("filename") or "").strip()
+        if not name:
+            continue
+        singer = str(item.get("singername") or "").strip()
+        out.append(
+            {
+                "provider_track_id": str(item.get("hash") or "").strip(),
+                "name": name,
+                "artist": singer,
+                "album": str(item.get("album_name") or "").strip(),
+            }
+        )
+        if len(out) >= 5:
+            break
+    return out
+
+
+def search_kuwo_candidates(query: str, *, cookie_header: str = "") -> list[dict[str, str]]:
+    encoded = urllib.parse.quote(query)
+    payload = http_get_json(
+        f"https://search.kuwo.cn/r.s?all={encoded}&ft=music&rformat=json&encoding=utf8&rn=5&pn=0",
+        referer="https://www.kuwo.cn/",
+        cookie=cookie_header,
+    )
+    songs = ((payload or {}).get("abslist") or []) if isinstance(payload, dict) else []
+    out: list[dict[str, str]] = []
+    for item in songs:
+        name = str(item.get("SONGNAME") or item.get("songname") or "").strip()
+        if not name:
+            continue
+        out.append(
+            {
+                "provider_track_id": str(item.get("DC_TARGETID") or item.get("MUSICRID") or "").strip().replace("MUSIC_", ""),
+                "name": name,
+                "artist": str(item.get("ARTIST") or item.get("artist") or "").strip(),
+                "album": str(item.get("ALBUM") or item.get("album") or "").strip(),
+            }
+        )
+        if len(out) >= 5:
+            break
+    return out
+
+
 def search_kuwo(query: str, *, cookie_header: str = "") -> ParsedContent | None:
     # 官方搜索匿名 403；用公开聚合接口（第三方，仅信息+直链，失败返回 None）。
     encoded = urllib.parse.quote(query)

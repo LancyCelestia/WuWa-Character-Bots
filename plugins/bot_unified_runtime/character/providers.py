@@ -16,6 +16,7 @@ from plugins.bot_unified_runtime.contracts.character import (
     ToneProfile,
 )
 
+from .affinity import DynamicAffinityStore
 from .documents import load_character_document
 from .emotion import EmotionProvider, NullEmotionProvider, build_emotion_provider
 from .glossary import GlossaryProvider, NullGlossaryProvider, build_glossary_provider
@@ -123,6 +124,7 @@ class FileCharacterContextProvider:
         temporal_provider: RuleBasedTemporalProvider | None = None,
         glossary_provider: GlossaryProvider | None = None,
         relationship_provider: RelationshipProvider | None = None,
+        affinity_store: DynamicAffinityStore | None = None,
         shared_group_provider: SharedGroupContextProvider | None = None,
         action_brackets: bool = True,
         action_brackets_provider: object | None = None,
@@ -158,6 +160,7 @@ class FileCharacterContextProvider:
         self.temporal_provider = temporal_provider or RuleBasedTemporalProvider()
         self.glossary_provider = glossary_provider or NullGlossaryProvider()
         self.relationship_provider = relationship_provider or NullRelationshipProvider()
+        self.affinity_store: DynamicAffinityStore | None = affinity_store
         self.shared_group_provider = (
             shared_group_provider or NullSharedGroupContextProvider()
         )
@@ -256,6 +259,18 @@ class FileCharacterContextProvider:
             request_id=request_id,
             sender_id=sender_id,
         )
+        # 动态好感度融合（批次 C）：行为驱动层有记录时覆盖 affinity/attitude；
+        # 档案的其他字段（称呼/偏好/备注）保留。
+        if self.affinity_store is not None and sender_id:
+            dynamic = self.affinity_store.snapshot(sender_id)
+            if dynamic.get("affinity") is not None and (dynamic["affinity"] != 0.5 or dynamic.get("tags")):
+                tags_text = "、".join(str(t) for t in dynamic.get("tags") or [])
+                attitude = str(dynamic.get("attitude") or "")
+                if tags_text:
+                    attitude += f"（印象参考：{tags_text}；只影响语气，不外显为标签）"
+                relationship = relationship.model_copy(
+                    update={"affinity": float(dynamic["affinity"]), "attitude": attitude}
+                )
         tone_warmth, tone_directness = apply_relationship_to_tone(
             self.tone_warmth,
             self.tone_directness,
@@ -433,6 +448,13 @@ def build_character_context_provider(
             config,
             interaction_counts=interaction_counts_provider,
         ),
+        affinity_store=(
+            DynamicAffinityStore(
+                build_runtime_data_path(config, str(getattr(config, "bot_affinity_db_path", "data/user_affinity.sqlite3")))
+            )
+            if getattr(config, "bot_affinity_enabled", True)
+            else None
+        ),
         shared_group_provider=build_shared_group_context_provider(
             config,
             llm_provider=shared_group_llm_provider,
@@ -575,3 +597,13 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
         result.append(value)
     return result
 
+def build_runtime_data_path(config: object, value: str) -> Path:
+    """data/... → 配置的 Runtime 数据根（复用 runtime_paths 规则）。"""
+    import sys
+
+    project_root = Path(__file__).resolve().parents[3]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    from scripts.runtime_paths import runtime_path
+
+    return runtime_path(value)

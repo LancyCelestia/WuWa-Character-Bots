@@ -76,6 +76,9 @@ class Config(BaseModel):
     bot_disconnect_notice_mail_account: str = ""
     bot_disconnect_notice_mail_recipients: list[str] = []
     bot_disconnect_notice_telegram_chat_ids: list[str] = []
+    # Server酱/PushPlus HTTP 推送（掉线时 QQ 不可用，走外部推送兜底）。
+    bot_disconnect_notice_serverchan_sendkey: str = ""
+    bot_disconnect_notice_pushplus_token: str = ""
     bot_enterprise_user_ids: list[str] = []
     bot_trusted_user_ids: list[str] = []
     bot_blocked_user_ids: list[str] = []
@@ -235,6 +238,14 @@ class Config(BaseModel):
     # 表情包生成能力（bot.meme）：对接本地 meme-generator-rs HTTP API。
     # 命令开关：/表情 列表、/表情 <key> <文字>、/meme help（大小写均可）。
     bot_meme_command_enabled: bool = True
+    # 动态好感度与印象标签（批次 C）：按用户行为自动增减，差异化态度；
+    # 管理员可直接改 data/user_affinity.sqlite3 调整个别用户。
+    bot_affinity_enabled: bool = True
+    # 群聊复读检测：窗口内 ≥N 个不同用户发同一文本则吐槽一次（"怎么一个个都当复读机"）。
+    bot_parrot_threshold: int = 3
+    bot_parrot_window_seconds: float = 60.0
+    bot_parrot_cooldown_seconds: float = 300.0
+    bot_affinity_db_path: str = "data/user_affinity.sqlite3"
     bot_meme_api_enabled: bool = False
     # 多候选点歌（借鉴 multincm 编号选择交互）：同名歧义返回编号列表让用户回复编号选择；
     # 默认关闭保持"第一命中直接播放"的既有行为。
