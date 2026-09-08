@@ -36,6 +36,10 @@ from plugins.bot_unified_runtime.capabilities.meme import is_meme_command
 from plugins.bot_unified_runtime.capabilities.meme_library import (
     is_meme_library_command,
 )
+from plugins.bot_unified_runtime.capabilities.moegirl import (
+    is_entity_question,
+    is_moegirl_command,
+)
 from plugins.bot_unified_runtime.capabilities.music import (
     is_music_command,
     is_music_mode_command,
@@ -64,6 +68,8 @@ class RouteKind(str, Enum):
     MUSIC = "music"
     TODAY_HISTORY = "today_history"
     WIKI = "wiki"
+    MOEGIRL = "moegirl"
+    MOEGIRL_QUESTION = "moegirl_question"
     EPIC = "epic"
     WEATHER = "weather"
     NATURAL_COMMAND = "natural_command"
@@ -219,6 +225,13 @@ def build_route_rules() -> list[RouteRule]:
             return None
         return RouteDecision(RouteKind.WIKI, "bot.wiki", 41, "维基百科查询", ("base_route:wiki",))
 
+    def moegirl_match(text, config, _alias):
+        if not getattr(config, "bot_moegirl_enabled", True):
+            return None
+        if not is_moegirl_command(text):
+            return None
+        return RouteDecision(RouteKind.MOEGIRL, "bot.moegirl", 41, "萌娘百科查询", ("base_route:moegirl",))
+
     def epic_match(text, config, _alias):
         if not getattr(config, "bot_epic_enabled", True):
             return None
@@ -232,6 +245,23 @@ def build_route_rules() -> list[RouteRule]:
         if not is_weather_command(text):
             return None
         return RouteDecision(RouteKind.WEATHER, "bot.weather", 41, "天气查询", ("base_route:weather",))
+
+    def moegirl_question_match(text, config, _alias):
+        # 二次元实体问句（「初音未来是谁？」）：不进 COMMAND_ROUTE_KINDS，
+        # 群聊不 @ 不抢答（与 CHAT 同门控）；未命中时 handler 无感降级聊天链路。
+        if not getattr(config, "bot_moegirl_enabled", True):
+            return None
+        if not getattr(config, "bot_moegirl_question_enabled", True):
+            return None
+        if not is_entity_question(text):
+            return None
+        return RouteDecision(
+            RouteKind.MOEGIRL_QUESTION,
+            "bot.moegirl",
+            44,
+            "二次元问句（萌娘百科自动查询）",
+            ("base_route:moegirl_question",),
+        )
 
     def natural_match(text, config, alias_resolver):
         if not getattr(config, "bot_natural_command_enabled", True):
@@ -298,8 +328,10 @@ def build_route_rules() -> list[RouteRule]:
         RouteRule(RouteKind.MUSIC, "bot.music", 41, "点歌", "点歌", ("base_route:music",), music_match),
         RouteRule(RouteKind.TODAY_HISTORY, "bot.today_history", 41, "历史上的今天", "历史上的今天", ("base_route:today_history",), today_history_match),
         RouteRule(RouteKind.WIKI, "bot.wiki", 41, "维基百科", "维基百科查询", ("base_route:wiki",), wiki_match),
+        RouteRule(RouteKind.MOEGIRL, "bot.moegirl", 41, "萌娘百科", "萌娘百科查询", ("base_route:moegirl",), moegirl_match),
         RouteRule(RouteKind.EPIC, "bot.epic", 41, "Epic 免费游戏", "Epic 免费游戏查询", ("base_route:epic",), epic_match),
         RouteRule(RouteKind.WEATHER, "bot.weather", 41, "天气查询", "天气查询", ("base_route:weather",), weather_match),
+        RouteRule(RouteKind.MOEGIRL_QUESTION, "bot.moegirl", 44, "二次元问句", "二次元问句（萌娘百科自动查询，未命中降级聊天）", ("base_route:moegirl_question",), moegirl_question_match),
         RouteRule(RouteKind.NATURAL_COMMAND, "bot.natural_command", 45, "自然语言命令", "自然语言命令归一化", ("base_route:natural_command",), natural_match),
         RouteRule(RouteKind.CONTENT, "bot.content", 46, "链接解析", "链接解析（视频/图片/社交媒体/商品等）", ("base_route:content",), content_match),
         RouteRule(RouteKind.CHAT, "bot.chat", 50, "人格对话", "自然语言对话（人格+世界观+价值观+方法论）", ("base_route:chat",), chat_match),
@@ -319,6 +351,7 @@ def build_interface_manifest() -> list[InterfaceEntry]:
         InterfaceEntry("capability.weather", "天气", "active", "weather", 41, "中国气象局 NMC 免 key 查询"),
         InterfaceEntry("capability.music", "点歌", "active", "music", 41, "网易云/酷我/酷狗/QQ音乐/Apple Music/Spotify 搜索"),
         InterfaceEntry("capability.wiki", "维基百科", "active", "wiki", 41, "MediaWiki 公开 API"),
+        InterfaceEntry("capability.moegirl", "萌娘百科", "active", "moegirl", 44, "萌百 MediaWiki 公开 API：显式指令 + 二次元问句自动查询（未命中降级人格聊天）"),
         InterfaceEntry("capability.epic", "Epic 免费游戏", "active", "epic", 41, "Epic 公开接口"),
         InterfaceEntry("capability.today_history", "历史上的今天", "active", "today_history", 41, "百度百科公开接口 + 每日推送"),
         InterfaceEntry("capability.subscribe", "订阅博主/直播推送", "active", "subscribe", 12, "UP主/番剧/小红书博主等新内容与开播推送"),
@@ -343,6 +376,7 @@ COMMAND_ROUTE_KINDS = frozenset(
         RouteKind.MUSIC,
         RouteKind.TODAY_HISTORY,
         RouteKind.WIKI,
+        RouteKind.MOEGIRL,
         RouteKind.EPIC,
         RouteKind.WEATHER,
         RouteKind.NATURAL_COMMAND,

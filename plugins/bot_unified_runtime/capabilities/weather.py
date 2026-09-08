@@ -37,8 +37,41 @@ def is_district_command(text: str) -> bool:
     return _DISTRICT_RE.match(text.strip()) is not None
 
 
-def build_weather_capability(config: Any | None = None) -> Any:
+def build_weather_capability(
+    config: Any | None = None, *, render_backend: Any | None = None
+) -> Any:
     proxy = str(getattr(config, "bot_download_proxy", "") or "") if config else ""
+
+    def _render_weather_card(query: str, report: str, source: str) -> str:
+        """天气报告合成 Mica 卡图；后端不可用或失败返回空串。"""
+        if render_backend is None or not getattr(render_backend, "available", False):
+            return ""
+        try:
+            from plugins.bot_unified_runtime.capabilities.content_parser import (
+                render_card_png,
+            )
+            from plugins.bot_unified_runtime.contracts import build_parsed_content
+
+            item = build_parsed_content(
+                platform="weather",
+                item_id=query,
+                item_kind="weather",
+                title=f"{query} · 天气",
+                author_name={"nmc": "中国气象局 NMC", "open-meteo": "Open-Meteo"}.get(
+                    source, "气象预报"
+                ),
+                summary=report[:1200],
+                parse_depth="deep",
+            )
+            payload = render_card_png(
+                render_backend,
+                item,
+                config=config,
+                card_dir=str(getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"),
+            )
+        except Exception:  # noqa: BLE001 - 渲染失败回退纯文本报告。
+            return ""
+        return str(payload.get("file") or "") if isinstance(payload, dict) else ""
 
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         text = message.plain_text.strip()
@@ -95,15 +128,22 @@ def build_weather_capability(config: Any | None = None) -> Any:
                 )
             report = format_open_meteo(global_result)
             source = "open-meteo"
+        card = _render_weather_card(query, report, source)
         return CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.weather",
-            kind="text",
+            kind="mixed" if card else "text",
             title="天气",
             body=report,
+            images=[{"file": card}] if card else [],
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PUBLIC,
-            audit_tags=["weather", f"weather_source:{source}", f"weather_query:{query[:20]}"],
+            audit_tags=[
+                "weather",
+                f"weather_source:{source}",
+                f"weather_query:{query[:20]}",
+                "card_rendered" if card else "text_only",
+            ],
         )
 
     return capability

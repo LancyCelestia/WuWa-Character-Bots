@@ -2047,6 +2047,12 @@ def _register_nonebot_handlers() -> None:
         else None
     )
 
+    def _build_epic_with_backend(config_: Any, **_kwargs: Any) -> Any:
+        return build_epic_capability(config_, render_backend=render_backend)
+
+    def _build_weather_with_backend(config_: Any, **_kwargs: Any) -> Any:
+        return build_weather_capability(config_, render_backend=render_backend)
+
     try:
         from nonebot_plugin_apscheduler import scheduler
     except Exception as exc:  # noqa: BLE001 - optional worker must fail closed.
@@ -3043,7 +3049,7 @@ def _register_nonebot_handlers() -> None:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 synthetic = message.model_copy(update={"plain_text": f"天气 {query}"})
-                return build_weather_capability(config)(synthetic, _decision)
+                return build_weather_capability(config, render_backend=render_backend)(synthetic, _decision)
 
         elif resolution.capability_id == "bot.music":
             query = resolution.rest_text
@@ -3073,7 +3079,7 @@ def _register_nonebot_handlers() -> None:
         elif resolution.capability_id == "bot.epic":
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                return build_epic_capability(config)(message, _decision)
+                return build_epic_capability(config, render_backend=render_backend)(message, _decision)
 
         elif resolution.capability_id == "bot.music_mode":
             from .capabilities.music import build_music_mode_result, extract_music_mode
@@ -4478,7 +4484,7 @@ def _register_nonebot_handlers() -> None:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 synthetic = message.model_copy(update={"plain_text": normalized_text})
-                return build_weather_capability(config)(synthetic, _decision)
+                return build_weather_capability(config, render_backend=render_backend)(synthetic, _decision)
 
         elif capability_id == "bot.music":
 
@@ -4501,7 +4507,7 @@ def _register_nonebot_handlers() -> None:
         elif capability_id == "bot.epic":
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                return build_epic_capability(config)(message, _decision)
+                return build_epic_capability(config, render_backend=render_backend)(message, _decision)
 
         elif capability_id == "bot.meme_library":
             from .capabilities.meme_library import build_meme_library_capability
@@ -4571,13 +4577,13 @@ def _register_nonebot_handlers() -> None:
     @epic.handle()
     async def _handle_epic(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
-            bot, event, build_epic_capability, "bot.epic", epic
+            bot, event, _build_epic_with_backend, "bot.epic", epic
         )
 
     @weather.handle()
     async def _handle_weather(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
-            bot, event, build_weather_capability, "bot.weather", weather
+            bot, event, _build_weather_with_backend, "bot.weather", weather
         )
 
     @moegirl.handle()

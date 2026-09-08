@@ -1389,3 +1389,26 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
 **验证**：`tests/test_parse_presentation_v2.py` 8 个回归（秒数/空行/卡片热评列表/单条回退/点歌卡图+无 CQ:music/渲染失败封面回退/help 引导）；端到端复现输出：`【发布】2026-09-07 16:30:00`、AI 总结空行分隔、热评 3 条上卡、专栏标签正确。dev.ps1 三门禁全绿（450 passed / lint / mypy 193）。
 
 **遗留**：YouTube 频道 shorts/长视频分列数（数据源不提供）；小红书深层解析（风控）；AI 总结依赖 B 站官方端点，个别视频无 AI 结论时该行自然缺席。
+
+### 19.24 alpha.2 二十/廿一轮增补：三平台解析修复+Help 手册重设计+免费游戏/天气卡渲染（2026-09-09 凌晨三）
+
+**解析修复（全部实弹验证）**：
+1. **推特**：fxtwitter 接口正常但纯媒体推文 `text` 为空被门槛挡掉 → og 兜底被 X 登录墙拒。改门槛为 `code==200 && tweet` 非空，`raw_text.text` 兜底正文，纯链文标题作「媒体推文」。
+2. **油管**：`_youtube_innertube`（结构化端点：点赞/评论/头像/频道ID）一直是孤儿函数从未接线；watch 页 2026 新标记（`likeCount":"938"` 字符串态、`canonicalBaseUrl:"/@..."`、`subscriberCountText` 页头直出、`yt3.ggpht` 头像）旧正则全空、频道 URL 断导致 about 层整体跳过。修复：innertube 接入 parse_youtube（非空覆盖）、watch 页四组新正则、about 页字符串形态 + `viewCountText` 总播放 + `channelId`。实测全字段出（头像/签名/订阅 12.8万/视频 700/点赞/总播放）。**边界**：总获赞 YouTube 不提供；长/短视频数、post 数需逐 Tab 抓取未做。
+3. **小红书**：cookie 注入本身是通的（页面正常返回），挂在 INITIAL_STATE `note.title` 为空串即判失败——2026 版标题移出状态载荷。改 `title/desc` 任一非空即继续，空标题用正文首行兜底。实测深层复活（作者/头像/图集/发布时间）。
+4. 附带：删「模型没有提供完整代码块」聊天反馈（静默跳附件走文本）；`llm deadline_exceeded` 不再私聊管理员（常态降级）。
+
+**Help 手册重设计（对标用户提供的小维参考图）**：
+- 总览页：双列 masonry 分类卡网格 + 每命令一枚药丸徽标 + 说明；页头头像块/标题/「发 /bot help 获取本图」芯片；页脚参数标注。
+- 模块页：单列卡、子命令=药丸、参数说明全展开（`_split_command_row` 拆分，修复长文被药丸截断）。
+- **分类名可直查**：`/bot help 大模型` → 该分类完整说明书页（`_help_category_body`，管理员分类对非管理员不可见）。
+- 全部经 playwright 实渲 + 截图人工核对（总览/订阅模块页）。
+
+**免费游戏 + 天气卡渲染**：
+- Epic 能力升级为 **Epic + Steam 双源**：新增 `sources/steamfree.py`（featured categories specials 100% 折扣）；epicfree 补 `source`/`image`（keyImages OfferImageWide）字段。
+- `bot.epic` 合并双源输出；`bot.weather` 报告文本合成卡片；两者经 `render_card_png`（合成 ParsedContent）出 Mica 卡图，文本作 caption/兜底。`__init__.py` 六个调用点接 `render_backend`（含 `_build_epic_with_backend`/`_build_weather_with_backend` 工厂）。
+- 实测：天气卡（北京 NMC 报告）、免费游戏卡（Epic Alone With You 横幅封面+列表）渲染成功。
+
+**验证**：510 passed / lint / mypy 196 文件三门禁全绿；三平台解析与三张新卡全部实弹+截图核对。
+
+**遗留/后续**：help 各模块参数取值范围持续充实（内容工程）；视频解析/点歌卡可在现有 Mica 体系上按反馈微调；YouTube 频道长/短视频与 post 计数需 Tab 级抓取；小红书视频笔记深层流（已有 sns-video 直链逻辑）可扩展清晰度选择。

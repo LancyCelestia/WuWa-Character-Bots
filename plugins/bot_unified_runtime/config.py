@@ -395,6 +395,18 @@ class Config(BaseModel):
     bot_wiki_lang: str = "zh"
     # Candidate index pages only; extraction still requires an exact entry match.
     bot_wiki_entry_pages: list[str] = ["鳴潮角色列表"]
+    # 萌娘百科查询（bot.moegirl）：`萌娘百科 <词条>` 显式指令 + 二次元问句
+    # （「初音未来是谁？」）自动查询；问句未命中/网络失败时无感降级 AI 聊天。
+    # 公开 MediaWiki API 免 key；镜像仅作回退；总耗时受 timeout 预算硬约束。
+    bot_moegirl_enabled: bool = True
+    # 问句自动触发独立开关（关闭后仅保留显式指令；群聊不 @ 本就不触发）。
+    bot_moegirl_question_enabled: bool = True
+    bot_moegirl_api_base: str = "https://zh.moegirl.org.cn/api.php"
+    bot_moegirl_mirror_api_base: str = "https://mzh.moegirl.org.cn/api.php"
+    # 单请求超时；问句路径整体预算 ≈ 2×该值（主站+镜像各一份份额）。
+    bot_moegirl_timeout_seconds: float = 5.0
+    bot_moegirl_max_candidates: int = 5
+    bot_moegirl_summary_max_chars: int = 300
     # Epic 每周免费游戏（bot.epic）：`epic`，Epic 公开接口，免 key。
     bot_epic_enabled: bool = True
     # 中文天气查询（bot.weather）：`天气 <城市>`，中国气象局 NMC 免 key。

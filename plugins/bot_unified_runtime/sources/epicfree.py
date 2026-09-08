@@ -73,9 +73,20 @@ def fetch_epic_free_games(*, proxy: str = "", timeout: float = 12.0) -> list[dic
                 "start": start.strftime("%m-%d %H:%M") if start else "",
                 "end": end.strftime("%m-%d %H:%M") if end else "",
                 "url": url,
+                "source": "Epic",
+                "image": _wide_image(element),
             }
         )
     return games
+
+
+def _wide_image(element: dict[str, Any]) -> str:
+    """取横版商店大图（OfferImageWide 优先，退 Thumbnail）。"""
+    for kind in ("OfferImageWide", "Thumbnail"):
+        for image in element.get("keyImages") or []:
+            if str(image.get("type") or "") == kind and image.get("url"):
+                return str(image["url"])
+    return ""
 
 
 def format_epic_free_games(games: list[dict[str, Any]]) -> str:
