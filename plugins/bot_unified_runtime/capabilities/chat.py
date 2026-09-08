@@ -1153,10 +1153,14 @@ def build_chat_result(
     if artifact:
         try:
             generated = build_generated_file(message.plain_text, reply.text, generated_files_dir)
-        except (OSError, ValueError) as exc:
+        except OSError:
             return CapabilityResult(request_id=message.request_id, capability_id="bot.chat", kind="text",
-                body=str(exc) if isinstance(exc, ValueError) else "文件保存失败，本次没有发送附件。",
+                body="文件保存失败，本次没有发送附件。",
                 privacy_level=context.privacy_level, audit_tags=["artifact_generation_failed"])
+        except ValueError:
+            # 模型没给完整代码块等情况：不再把报错发进聊天，静默跳过附件、
+            # 正常输出模型的文本回复。
+            generated = None
         if generated:
             return CapabilityResult(request_id=message.request_id, capability_id="bot.chat", kind="text",
                 body=f"我已经把内容整理成附件：{generated.path.name}", files=[{"file":str(generated.path),"name":generated.path.name}],

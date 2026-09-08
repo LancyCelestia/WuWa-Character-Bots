@@ -22,6 +22,7 @@ from .capabilities.epic import build_epic_capability
 from .capabilities.group_files import DirtyGuard, GroupFileStore
 from .capabilities.meme import build_meme_capability
 from .capabilities.meme_library import build_meme_library_capability
+from .capabilities.moegirl import build_moegirl_capability, question_lookup
 from .capabilities.music import build_music_capability
 from .capabilities.platform_credentials import (
     cookie_status_text,
@@ -1916,6 +1917,10 @@ def _register_nonebot_handlers() -> None:
                 session_type=str(getattr(message, "session_type", "")),
                 session_id=str(getattr(message, "session_id", "")),
             )
+        # LLM 截止超时是常态降级（模型慢/网络抖动，用户侧已有兜底回复），
+        # 不值得私聊管理员，直接跳过避免刷屏。
+        if getattr(issue, "stage", "") == "llm" and getattr(issue, "kind", "") == "deadline_exceeded":
+            return
         targets = _operational_alert_targets()
         if not targets:
             return
@@ -2933,6 +2938,21 @@ def _register_nonebot_handlers() -> None:
             is RouteKind.WIKI
         )
 
+    async def _is_moegirl_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.MOEGIRL
+        )
+
+    async def _is_moegirl_question_event(state: T_State, event: Event) -> bool:
+        # 邮件不接管：问句自动回复沿用 chat 链路的邮件策略（bot_mail_auto_reply_enabled）。
+        if _event_adapter_kind(event) == "mail":
+            return False
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.MOEGIRL_QUESTION
+        )
+
     async def _is_epic_event(state: T_State, event: Event) -> bool:
         return (
             _cached_route_decision(state, event, config=config).kind
@@ -2952,6 +2972,10 @@ def _register_nonebot_handlers() -> None:
         rule=_is_today_history_event, priority=41, block=True
     )
     wiki = on_message(rule=_is_wiki_event, priority=41, block=True)
+    moegirl = on_message(rule=_is_moegirl_event, priority=41, block=True)
+    moegirl_question = on_message(
+        rule=_is_moegirl_question_event, priority=44, block=True
+    )
     epic = on_message(rule=_is_epic_event, priority=41, block=True)
     weather = on_message(rule=_is_weather_event, priority=41, block=True)
     subscribe_cmd = on_message(rule=_is_standalone_subscribe_event, priority=12, block=True)
@@ -4555,6 +4579,131 @@ def _register_nonebot_handlers() -> None:
         await _run_simple_capability(
             bot, event, build_weather_capability, "bot.weather", weather
         )
+
+    @moegirl.handle()
+    async def _handle_moegirl(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, build_moegirl_capability, "bot.moegirl", moegirl
+        )
+
+    @moegirl_question.handle()
+    async def _handle_moegirl_question(bot: Bot, event: Event) -> None:
+        message = _incoming_from_nonebot_event(
+            event,
+            bot_id=str(getattr(bot, "self_id", "unknown")),
+        )
+        started_at = time.perf_counter()
+        try:
+            # 网络查询放线程池，紧超时由 sources 层预算约束（默认 ≤2×5s）。
+            outcome = await asyncio.to_thread(
+                question_lookup, message.plain_text, config=config
+            )
+        except Exception:  # noqa: BLE001 - 查询层异常一律按降级处理。
+            outcome = None
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000)
+        if outcome is None or outcome.status != "hit" or not outcome.body:
+            # 未命中/网络失败 → 无感降级：同一条消息转交人格聊天链路，
+            # 管线、门控、历史归档与 /bot.chat 完全一致。
+            receipt = await pipeline.handle_async(
+                message, chat_capability, capability_id="bot.chat"
+            )
+            await _notify_operational_receipt(message, receipt)
+            sent_request = _find_sent_request(send_queue, message.request_id)
+            if sent_request:
+                history_should_record = _should_record_chat_history(sent_request)
+                if history_should_record:
+                    _record_chat_history_turn(
+                        history_recorder,
+                        message=message,
+                        role="user",
+                        text=message.plain_text,
+                        audit_logger=audit_logger,
+                    )
+                transport_receipt = await _deliver_transport_send_request(
+                    bot,
+                    event,
+                    sent_request,
+                    audit_logger,
+                    receipt_repository,
+                    send_queue,
+                )
+                await _notify_operational_receipt(message, transport_receipt)
+                if (
+                    history_should_record
+                    and transport_receipt.state.value == "sent"
+                ):
+                    _record_chat_history_turn(
+                        history_recorder,
+                        message=message,
+                        role="assistant",
+                        text=sent_request.content.text_fallback,
+                        audit_logger=audit_logger,
+                    )
+                _record_runtime_diagnostic(
+                    config=config,
+                    diagnostics_store=diagnostics_store,
+                    message=message,
+                    capability_id="bot.chat",
+                    receipt=transport_receipt,
+                    send_queue=send_queue,
+                    audit_logger=audit_logger,
+                )
+                if should_finish_nonebot_matcher(transport_receipt):
+                    await moegirl_question.finish(transport_receipt.public_message)
+                return
+            _record_runtime_diagnostic(
+                config=config,
+                diagnostics_store=diagnostics_store,
+                message=message,
+                capability_id="bot.chat",
+                receipt=receipt,
+                send_queue=send_queue,
+                audit_logger=audit_logger,
+            )
+            if _should_silently_skip_chat_receipt(message, receipt, audit_logger):
+                return
+            if should_finish_nonebot_matcher(receipt):
+                await moegirl_question.finish(receipt.public_message)
+            return
+        outcome_entity = outcome.entity
+        outcome_body = outcome.body
+
+        def capability(
+            incoming: IncomingMessage, _decision: Any
+        ) -> CapabilityResult:
+            return CapabilityResult(
+                request_id=incoming.request_id,
+                capability_id="bot.moegirl",
+                kind="text",
+                title="萌娘百科",
+                body=outcome_body,
+                risk_level=RiskLevel.LOW,
+                privacy_level=PrivacyLevel.PUBLIC,
+                audit_tags=[
+                    "moegirl",
+                    "moegirl_question",
+                    f"moegirl_entity:{outcome_entity[:20]}",
+                    f"moegirl_ms:{elapsed_ms}",
+                ],
+            )
+
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            diagnostics_store=diagnostics_store,
+            capability=capability,
+            capability_id="bot.moegirl",
+            record_diagnostic=False,
+            history_recorder=history_recorder,
+            history_kind="command",
+            operational_notifier=_notify_operational_receipt,
+        )
+        if should_finish_nonebot_matcher(receipt):
+            await moegirl_question.finish(receipt.public_message)
 
 
 

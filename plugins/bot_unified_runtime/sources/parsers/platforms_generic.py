@@ -255,7 +255,11 @@ def _xhs_from_initial_state(html: str, url: str) -> ParsedContent | None:
     if not note_map:
         return None
     note = next(iter(note_map.values())).get("note") or {}
-    if not note.get("title"):
+    # 小红书 2026 版 INITIAL_STATE 常返回空 title，正文 desc 仍在：
+    # 两者任一存在即视为拿到笔记（否则登录墙下全是空 title 被误判失败）。
+    desc_raw = str(note.get("desc") or "").strip()
+    title = str(note.get("title") or "").strip()
+    if not title and not desc_raw:
         return None
     user = note.get("user") or {}
     images = [
@@ -311,14 +315,18 @@ def _xhs_from_initial_state(html: str, url: str) -> ParsedContent | None:
                 if isinstance(value, (int, float)) and value > 0:
                     video_meta[key] = int(value)
         detail["video"] = video_meta
-    desc = str(note.get("desc") or "").strip()
+    desc = desc_raw
     if len(desc) > 300:
         desc = desc[:300] + "…"
+    if not title:
+        # 空标题用正文首行截断（与端内展示一致），避免卡上标题区空白。
+        first_line = next((line for line in desc.splitlines() if line.strip()), "")
+        title = first_line[:40] or "小红书笔记"
     return build_parsed_content(
         platform="xiaohongshu",
         item_id=str(note.get("noteId") or ""),
         item_kind="video" if note.get("type") == "video" else "note",
-        title=str(note.get("title") or ""),
+        title=title,
         author_name=str(user.get("nickname") or ""),
         summary=desc,
         cover_url=images[0] if images else "",
@@ -887,6 +895,24 @@ def _youtube_watch_enrich(url: str, *, proxy: str) -> dict[str, Any]:
         if like_text.isdigit():
             info["点赞"] = int(like_text)
             break
+    like_plain = _rx(r'"likeCount":"([\d,.]+)"')
+    if "点赞" not in info and like_plain.replace(",", "").isdigit():
+        info["点赞"] = int(like_plain.replace(",", ""))
+    # 订阅数：watch 页页头就有（"12.8万位订阅者"），不必等 about 页。
+    subscriber_label = _rx(
+        r'"subscriberCountText":\{"accessibility":\{"accessibilityData":\{"label":"([^"]{1,40})'
+    ) or _rx(r'"subscriberCountText":"([^"]{1,40})"')
+    subscriber_count = _yt_count(subscriber_label)
+    if subscriber_count is not None:
+        info["订阅"] = subscriber_count
+    # 频道链接：channelUrl 缺失时用 canonicalBaseUrl（/@handle）拼。
+    channel_path = _rx(r'"canonicalBaseUrl":"(/@[^"]+)"')
+    if channel_path:
+        info["_channel_url"] = "https://www.youtube.com" + channel_path.replace("\\u0026", "&")
+    if "_avatar" not in info:
+        avatar_any = _rx(r'"url":"(https://yt3\.ggpht\.com[^"]+)"')
+        if avatar_any:
+            info["_avatar"] = avatar_any.replace("\\u0026", "&")
     for pattern in (
         r'"commentCount":\{"simpleText":"([\d,.]+[万亿]?)"\}',
         r'"commentCount":\{"content":"([\d,.]+[万亿]?)"\}',
@@ -956,13 +982,27 @@ def _youtube_about_enrich(channel_url: str, *, proxy: str) -> dict[str, Any]:
         description = _rx(r'"description":"((?:[^"\\]|\\.)*?)"')
     if description:
         info["_description"] = _truncate_keep_links(_yt_unescape(description), 300)
-    subscriber = _rx(r'"subscriberCountText":\{"content":"([^"]{1,30})')
+    # 订阅/视频/总播放：2026 版 about 页为字符串形态（"12.8万位订阅者"），
+    # 旧 {"content":...} 形态保留兜底。
+    subscriber = _rx(r'"subscriberCountText":"([^"]{1,30})') or _rx(
+        r'"subscriberCountText":\{"content":"([^"]{1,30})'
+    )
     subscriber_count = _yt_count(subscriber)
     if subscriber_count is not None:
         info["订阅"] = subscriber_count
-    video_count = _rx(r'"videoCountText":\{"content":"([\d,.]+[万亿]?)"\}')
-    if video_count.replace(",", "").isdigit():
-        info["视频数"] = int(video_count.replace(",", ""))
+    video_count = _rx(r'"videoCountText":"([\d,.]+[万亿]?[个]?)') or _rx(
+        r'"videoCountText":\{"content":"([\d,.]+[万亿]?)"\}'
+    )
+    video_digits = re.sub(r"[^\d]", "", video_count)
+    if video_digits.isdigit():
+        info["视频数"] = int(video_digits)
+    total_views = _rx(r'"viewCountText":"([\d,.]+)')
+    total_digits = total_views.replace(",", "")
+    if total_digits.isdigit():
+        info["总播放"] = int(total_digits)
+    channel_id = _rx(r'"channelId":"(UC[\w-]{10,})"')
+    if channel_id:
+        info["_channel_id"] = channel_id
     if '"verified":true' in html:
         info["_verified"] = True
     return info
@@ -1070,6 +1110,16 @@ def parse_youtube(url: str, *, cookie_header: str = "", proxy: str = "") -> Pars
     # 两跳深抓：watch 页互动数据 → 频道 about 页博主资料。全部尽力而为。
     stats: dict[str, int] = {}
     watch_info = _youtube_watch_enrich(url, proxy=proxy)
+    if video_id:
+        # Innertube 结构化端点补齐点赞/评论/头像/频道 ID（watch 页匿名
+        # 精简后常缺这些）；非空值覆盖 watch 页正则结果。
+        try:
+            innertube_info = _youtube_innertube(video_id, proxy=proxy)
+        except Exception:  # noqa: BLE001 - innertube 失败交给 watch 页结果。
+            innertube_info = {}
+        for key, value in innertube_info.items():
+            if value not in (None, ""):
+                watch_info[key] = value
     for key in ("浏览量", "点赞", "评论", "时长"):
         if key in watch_info:
             stats[key] = watch_info[key]
@@ -1079,6 +1129,8 @@ def parse_youtube(url: str, *, cookie_header: str = "", proxy: str = "") -> Pars
         author_detail["_watch_author_name"] = watch_info["_author_name"]
     if watch_info.get("_avatar"):
         author_detail["avatar"] = watch_info["_avatar"]
+    if watch_info.get("订阅"):
+        stats["订阅"] = watch_info["订阅"]
     channel_url = str(watch_info.get("_channel_url") or "")
     if "/channel/" in channel_url:
         # 频道 ID（UC 开头）稳定唯一，进 creator.platform_creator_id。
@@ -1091,10 +1143,14 @@ def parse_youtube(url: str, *, cookie_header: str = "", proxy: str = "") -> Pars
         author_detail["signature"] = about_info["_description"]
     if about_info.get("_joined"):
         author_detail["created_at"] = about_info["_joined"]
+    if about_info.get("_channel_id") and not author_detail.get("uuid"):
+        author_detail["uuid"] = about_info["_channel_id"]
     if about_info.get("订阅"):
         stats["订阅"] = about_info["订阅"]
     if about_info.get("视频数"):
         stats["视频数"] = about_info["视频数"]
+    if about_info.get("总播放"):
+        stats["总播放"] = about_info["总播放"]
     if about_info.get("_verified") or watch_info.get("_verified"):
         author_detail["official_badge"] = "YouTube 认证频道"
     author_name = str(payload.get("author_name") or "")
@@ -1154,7 +1210,11 @@ def parse_twitter_x(url: str, *, cookie_header: str = "", proxy: str = "") -> Pa
                 proxy=proxy,
             )
             tweet = payload.get("tweet") or {}
-            if tweet.get("text"):
+            # 门槛 = 接口成功且有 tweet 对象：纯媒体推文 text 为空也走深分支，
+            # 否则会掉进 og 兜底被 X 登录墙拒绝（"no title in page"）。
+            if payload.get("code") == 200 and tweet:
+                raw_text = str((tweet.get("raw_text") or {}).get("text") or "").strip()
+                tweet_text = str(tweet.get("text") or "").strip() or raw_text
                 author = tweet.get("author") or {}
                 stats: dict[str, object] = {}
                 for key, label in (
@@ -1212,7 +1272,7 @@ def parse_twitter_x(url: str, *, cookie_header: str = "", proxy: str = "") -> Pa
                 photos = media.get("photos") or []
                 videos = media.get("videos") or []
                 gifs = media.get("gifs") or []
-                summary_lines = [str(tweet.get("text") or "").strip()[:500]]
+                summary_lines = [tweet_text[:500]] if tweet_text else []
                 media_note = []
                 if photos:
                     media_note.append(f"图片 {len(photos)} 张")
@@ -1231,7 +1291,7 @@ def parse_twitter_x(url: str, *, cookie_header: str = "", proxy: str = "") -> Pa
                     platform="twitter",
                     item_id=status_id,
                     item_kind="tweet",
-                    title=str(tweet.get("text") or "")[:40] or "推文",
+                    title="媒体推文" if tweet_text.startswith("https://t.co") else tweet_text[:40],
                     author_name=str(author.get("name") or "") or f"@{screen}",
                     summary="\n".join(summary_lines),
                     cover_url=cover,
