@@ -269,10 +269,29 @@ def _xhs_from_initial_state(html: str, url: str) -> ParsedContent | None:
     ]
     interact = note.get("interactInfo") or {}
     stats: dict[str, object] = {}
-    for key, label in (("likedCount", "点赞"), ("collectedCount", "收藏"), ("commentCount", "评论"), ("shareCount", "分享")):
-        value = interact.get(key)
-        if isinstance(value, (int, float)):
-            stats[label] = int(value)
+
+    def _xhs_count(value: Any) -> int | None:
+        """小红书计数是字符串（"1167"/"1.2万"）→ int。"""
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if text.isdigit():
+            return int(text)
+        match = re.match(r"([\d.]+)\s*(万|w|W)", text)
+        if match:
+            return int(float(match.group(1)) * 10000)
+        digits = re.sub(r"[^\d]", "", text)
+        return int(digits) if digits else None
+
+    for key, label in (
+        ("likedCount", "点赞"),
+        ("collectedCount", "收藏"),
+        ("commentCount", "评论"),
+        ("shareCount", "分享"),
+    ):
+        count = _xhs_count(interact.get(key))
+        if count is not None:
+            stats[label] = count
     publish_time = _format_epoch(note.get("time") or note.get("lastUpdateTime"))
     if publish_time:
         stats["发布时间"] = publish_time
@@ -281,6 +300,8 @@ def _xhs_from_initial_state(html: str, url: str) -> ParsedContent | None:
         author_detail["uuid"] = str(user.get("userId"))
     if user.get("avatar"):
         author_detail["avatar"] = str(user.get("avatar"))
+    if user.get("desc"):
+        author_detail["signature"] = str(user.get("desc")).strip()
 
     def _xhs_video_stream(note: dict) -> str:
         """笔记视频直链（sns-video 原视频，无水印）：video.media.stream 优先。"""

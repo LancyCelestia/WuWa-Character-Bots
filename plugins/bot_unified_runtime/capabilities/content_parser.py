@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import io as _io
 from typing import Any
 
 from plugins.bot_unified_runtime.capabilities.music import (
@@ -101,6 +102,65 @@ _INTERNAL_STAT_KEYS = frozenset(
     }
 )
 
+# 博主级统计键：归入【作者】附属行，不与视频互动数据混在【数据】行。
+_AUTHOR_STAT_KEYS = {
+    "粉丝": "粉丝",
+    "关注": "关注",
+    "视频数": "视频",
+    "总播放": "总播放",
+    "帖子数": "帖子",
+    "获赞": "获赞",
+    "点赞": "获赞",
+    "订阅": "订阅",
+}
+
+
+def _author_stat_line(creator: Any, engagement: Any, platform: str = "") -> str:
+    """【作者】附属行：粉丝/关注/视频/专栏/获赞/订阅/总播放等博主级数据。"""
+    bits: list[str] = []
+    if creator is not None:
+        for attr, label in (
+            ("follower_count", "粉丝"),
+            ("following_count", "关注"),
+            ("video_count", "视频"),
+            ("received_like_count", "获赞"),
+        ):
+            value = getattr(creator, attr, None)
+            if isinstance(value, (int, float)) and value > 0:
+                bits.append(f"{label} {int(value)}")
+        post_count = getattr(creator, "post_count", None)
+        if isinstance(post_count, (int, float)) and post_count > 0:
+            post_label = "专栏" if platform == "bilibili" else "帖子"
+            bits.append(f"{post_label} {int(post_count)}")
+        extras = getattr(creator, "platform_extra", None) or {}
+        joined = (
+            extras.get("joined")
+            or extras.get("created_at")
+            or getattr(creator, "joined_at", "")
+            or ""
+        )
+        if hasattr(joined, "strftime"):
+            joined = joined.strftime("%Y-%m-%d")
+        joined = str(joined).strip()
+        if joined and joined not in {"None", ""}:
+            bits.append(f"注册 {joined[:16]}")
+    extras = (getattr(engagement, "platform_extra", None) or {}) if engagement is not None else {}
+    follower_bits = [bit for bit in bits if bit.startswith("粉丝 ")]
+    for key, label in (("订阅", "订阅"), ("总播放", "总播放"), ("视频数", "视频")):
+        value = extras.get(key)
+        if isinstance(value, (int, float)) and value > 0:
+            if label == "视频" and any(bit.startswith("视频 ") for bit in bits):
+                continue
+            if label == "订阅" and follower_bits:
+                # "粉丝 128000 · 订阅 128000" 同值重复（YT 订阅数即粉丝数）。
+                try:
+                    if int(follower_bits[0].split()[1]) == int(value):
+                        continue
+                except (IndexError, ValueError):
+                    pass
+            bits.append(f"{label} {int(value)}")
+    return " · ".join(bits)
+
 
 def _engagement_text_bits(engagement: Any) -> list[str]:
     """互动数据 → 文本行位（统一字段 + platform_extra 标量透传）。"""
@@ -119,6 +179,8 @@ def _engagement_text_bits(engagement: Any) -> list[str]:
             continue
         if key in _INTERNAL_STAT_KEYS:
             continue
+        if key in _AUTHOR_STAT_KEYS:
+            continue  # 博主级数据归【作者】附属行，不混进视频互动数据。
         bits.append(f"{key} {value}")
     return bits
 
@@ -150,6 +212,12 @@ def _render_parse_body(
     lines.append(f"【标题】{content.title if content else ''}")
     if creator is not None and creator.name:
         lines.append(f"【作者】{creator.name}")
+        platform = str(getattr(item, "platform", "") or "") or (
+            identity.platform if identity is not None else ""
+        )
+        author_bits = _author_stat_line(creator, engagement, platform)
+        if author_bits:
+            lines.append(author_bits)
     stats_bits = _engagement_text_bits(engagement)
     if stats_bits:
         lines.append("")
@@ -334,6 +402,28 @@ def render_card_png(
         )
         digest = hashlib.sha1(digest_source.encode("utf-8")).hexdigest()[:12]
         path = target_dir / f"card_{digest}.png"
+        try:
+            # 全页截图画布大于卡片（Mica 视口留白），QQ 端会把大片透明区
+            # 显示成小卡；按 alpha 边界裁剪，保留 8px 余量给柔光阴影。
+            from PIL import Image
+
+            image = Image.open(_io.BytesIO(png))
+            bbox = image.getbbox()
+            if bbox:
+                pad = 8
+                box = (
+                    max(0, bbox[0] - pad),
+                    max(0, bbox[1] - pad),
+                    min(image.width, bbox[2] + pad),
+                    min(image.height, bbox[3] + pad),
+                )
+                if box[2] - box[0] > 0 and box[3] - box[1] > 0:
+                    cropped = image.crop(box)
+                    buf = _io.BytesIO()
+                    cropped.save(buf, "PNG")
+                    png = buf.getvalue()
+        except Exception:  # noqa: S110, BLE001 - 裁剪失败用原始截图。
+            pass
         path.write_bytes(png)
         try:
             from plugins.bot_unified_runtime.runtime.cache_policy import (

@@ -834,7 +834,7 @@ def _help_mica_html(
         header_sub = "参数标注：<> 必填、[] 可选；把命令复制到聊天即可使用，具体取值见各行说明。"
     else:
         cards = "".join(
-            "<section class=\"help-section\">"
+            "<section class=\"help-section" + (" wide" if len(rows) >= 40 else "") + "\">"
             f"<h2><span class=\"dot\"></span>{_esc(title)}</h2>"
             f"<div class=\"command-list\">{_rows_html(rows)}</div></section>"
             for title, rows in sections
@@ -854,7 +854,7 @@ def _help_mica_html(
 * {{ box-sizing:border-box; }}
 body {{ margin:0; padding:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; background:transparent; color:var(--ink); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }}
 .help-stage {{ width:auto; padding:26px; background:transparent; }}
-.help-shell {{ width:960px; overflow:hidden; border-radius:24px; border:1px solid rgba(255,255,255,.92); background:linear-gradient(168deg, color-mix(in srgb, var(--accent) 3%, #fff) 0%, color-mix(in srgb, var(--accent) 7%, #fff) 100%); box-shadow:0 14px 34px rgba(31,35,41,.10); }}
+.help-shell {{ width:940px; overflow:hidden; border-radius:24px; border:1px solid rgba(255,255,255,.92); background:linear-gradient(168deg, color-mix(in srgb, var(--accent) 3%, #fff) 0%, color-mix(in srgb, var(--accent) 7%, #fff) 100%); box-shadow:0 14px 34px rgba(31,35,41,.10); }}
 .help-head {{ display:flex; align-items:center; gap:14px; padding:22px 26px 18px; border-bottom:1px solid color-mix(in srgb, var(--accent) 14%, #fff); }}
 .avatar-wrap {{ flex:0 0 auto; width:52px; height:52px; border-radius:16px; overflow:hidden; background:color-mix(in srgb, var(--accent) 14%, #fff); display:flex; align-items:center; justify-content:center; box-shadow:inset 0 0 0 1px rgba(255,255,255,.9); }}
 .avatar-wrap img {{ width:100%; height:100%; object-fit:cover; }}
@@ -867,6 +867,7 @@ body {{ margin:0; padding:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif
 .help-body {{ padding:14px; background:color-mix(in srgb, var(--accent) 3%, #fff); }}
 .help-grid.masonry {{ column-count:2; column-gap:12px; }}
 .help-grid.masonry .help-section {{ break-inside:avoid; margin-bottom:12px; }}
+.help-grid.masonry .help-section.wide {{ column-span:all; }}
 .help-grid.single {{ display:grid; grid-template-columns:1fr; gap:12px; }}
 .help-section {{ border-radius:16px; overflow:hidden; border:1px solid rgba(255,255,255,.95); background:linear-gradient(150deg, color-mix(in srgb, var(--accent) 2%, #fff), color-mix(in srgb, var(--accent) 5%, #fff)); box-shadow:0 3px 10px rgba(31,35,41,.05); }}
 .help-section h2 {{ display:flex; align-items:center; gap:8px; margin:0; padding:10px 14px; color:var(--accent-ink); background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, #fff), color-mix(in srgb, var(--accent) 12%, #fff)); border-left:4px solid var(--accent); font-size:14.5px; font-weight:700; letter-spacing:.02em; }}
@@ -933,7 +934,7 @@ def _try_render_help_image(
                     accent_color=accent_color,
                     sections=sections,
                 ),
-                "viewport": {"width": 960, "height": 1100},
+                "viewport": {"width": 1040, "height": 1200},
                 "device_scale_factor": 2,
                 "wait_ms": 0,
             }
