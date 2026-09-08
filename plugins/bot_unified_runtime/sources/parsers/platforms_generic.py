@@ -834,6 +834,36 @@ def _youtube_innertube(video_id: str, *, proxy: str) -> dict[str, Any]:
     if details.get("authorId"):
         info["_channel_url"] = f"https://www.youtube.com/channel/{details['authorId']}"
 
+    try:
+        tracks = (((player.get("captions") or {}).get("playerCaptionsTracklistRenderer") or {}).get("captionTracks")) or []
+        tracks = sorted(
+            tracks,
+            key=lambda tr: (
+                str(tr.get("kind") or "") != "asr",
+                not str(tr.get("languageCode") or "").startswith("zh"),
+            ),
+        )
+        for track in tracks[:2]:
+            base = str(track.get("baseUrl") or "")
+            if not base:
+                continue
+            cap = http_get_json(
+                base + "&fmt=json3",
+                timeout=15,
+                proxy=proxy,
+                referer="https://www.youtube.com/",
+            )
+            text = "".join(
+                str(seg.get("utf8") or "")
+                for ev in (cap.get("events") or [])
+                for seg in (ev.get("segs") or [])
+            )
+            if text.strip():
+                info["_subtitle"] = re.sub(r"\s+", " ", text).strip()[:1600]
+                break
+    except Exception:  # noqa: BLE001, S110 - 无字幕轨时静默跳过。
+        pass
+
     next_text = ""
     try:
         next_payload = http_post_json(
@@ -1148,6 +1178,10 @@ def parse_youtube(url: str, *, cookie_header: str = "", proxy: str = "") -> Pars
         stats["发布时间"] = watch_info["_publish_date"]
     if watch_info.get("_author_name"):
         author_detail["_watch_author_name"] = watch_info["_author_name"]
+    subtitle_text = str(watch_info.get("_subtitle") or "").strip()
+    if subtitle_text:
+        detail["subtitle"] = subtitle_text
+        video_desc = (video_desc + "\n\n字幕摘录：" + subtitle_text[:600]).strip()
     if watch_info.get("_avatar"):
         author_detail["avatar"] = watch_info["_avatar"]
     if watch_info.get("订阅"):

@@ -205,6 +205,61 @@ def _author_enrichment(mid: int, *, cookie_header: str = "") -> tuple[str, dict,
     return " · ".join(lines), counts, author
 
 
+def _bilibili_subtitle(
+    *,
+    bvid: str,
+    cid: int | None,
+    cookie_header: str,
+    max_chars: int = 1600,
+) -> str | None:
+    """B 站字幕（含 AI 字幕）正文：player/wbi/v2 → subtitle_url → json。
+
+    AI 字幕（lan=ai-zh）需要登录 Cookie；无字幕/接口失败返回 None。
+    """
+    if not bvid or cid is None or not cookie_header:
+        return None
+    try:
+        url = build_wbi_signed_url(
+            "https://api.bilibili.com/x/player/wbi/v2",
+            {"bvid": bvid, "cid": str(cid)},
+            cookie_header=cookie_header,
+        )
+        payload = http_get_json(
+            url, referer="https://www.bilibili.com/", cookie=cookie_header
+        )
+        subtitles = ((payload.get("data") or {}).get("subtitle") or {}).get(
+            "subtitles"
+        ) or []
+        if not subtitles:
+            return None
+
+        def _rank(sub: dict) -> tuple[bool, bool]:
+            lan = str(sub.get("lan") or "")
+            return (lan != "ai-zh", not lan.startswith("zh"))
+
+        subtitles = sorted(subtitles, key=_rank)
+        body = ""
+        for subtitle in subtitles:
+            sub_url = str(subtitle.get("subtitle_url") or "")
+            if not sub_url:
+                continue
+            if sub_url.startswith("//"):
+                sub_url = "https:" + sub_url
+            sub_payload = http_get_json(
+                sub_url, referer="https://www.bilibili.com/", cookie=cookie_header
+            )
+            items = sub_payload.get("body") or []
+            text = "".join(str(item.get("content") or "") for item in items)
+            if text.strip():
+                body = text.strip()
+                break
+        if not body:
+            return None
+        return body[:max_chars]
+    except Exception:  # noqa: BLE001 - 字幕缺失不影响解析主链路。
+        return None
+
+
 def _bilibili_ai_conclusion(
     *,
     bvid: str,
@@ -391,6 +446,13 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
     video_detail: dict = {"video": video_meta}
     if ai_conclusion:
         video_detail["ai_conclusion"] = ai_conclusion
+    subtitle_text = _bilibili_subtitle(
+        bvid=str(data.get("bvid") or video_id), cid=cid, cookie_header=cookie_header
+    )
+    if subtitle_text:
+        video_detail["subtitle"] = subtitle_text
+        summary_lines.append("")
+        summary_lines.append("字幕摘录：" + subtitle_text[:600])
     if video_author:
         video_detail["author"] = video_author
     # 评论区渲染（批次 B）：热门评论前 3 条进 detail；失败静默跳过。
