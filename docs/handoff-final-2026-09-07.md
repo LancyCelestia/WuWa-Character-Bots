@@ -1322,3 +1322,27 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
    杜比全景声>Hi-Res）此前已实现（见记忆 chatbot-media-download-quality）。
 
 验证：428 passed；Ruff 全过；mypy 192 源码文件无错。
+
+### 19.20 alpha.2 十七轮增补：重启生效实证/字段类型修复/YT-Twitter 深度数据确认（2026-09-08 深夜二）
+
+用户反馈"没改过来，没有任何生效"。排查结论：
+
+1. **"没生效"= 旧进程**。实测证据：当前 8080 无监听、无存活 python 进程（旧实例已退），
+   代码侧两处 mode 分支均已是 `bot_music_default_mode`（grep 验证无 `or "card"` 残留），
+   模拟解析路径输出 `card+voice+link`。**下次启动即全量新代码**；若再遇"闪退/不生效"，
+   先任务管理器确认旧 python 进程已全部结束再启动。
+2. **B站作者栏字段类型修复**：`fans`/`received_likes` 原是字符串（int() 转换被覆盖），
+   已强制 int；`video_count`/`post_count` 键名对齐（counts["视频数"]→video_count、
+   counts["专栏数"]→post_count）；补 `following_count`。带 Cookie 实测：
+   `{'fans': 945086, 'video_count': 258634, 'post_count': 1, 'received_likes': 7054035}`
+   全 int 到位，Creator 字段（follower/following/video/获赞）重启后完整填充。
+3. **YouTube/Twitter 深度博主数据（更正 §19.19 的"下批"判断）**：复查发现
+   `_youtube_about_enrich` **早已提取**订阅数/视频数/加入时间/简介/认证，消费链
+   `stats["订阅"]→Creator.follower_count`、`created_at→joined_at` 完整在位；
+   **Twitter 实弹实测**：签名/粉丝529/关注536/帖子6/加入时间 2023-06-12 全部返回。
+   §19.19 将其记为"下批"是过时判断，以本节为准。
+   短视频/长视频分列 YouTube 页面不提供（频道的 shorts 计数需额外分类抓取），
+   仍记为数据源边界。
+4. UI 调整（二维码等高/Logo 统一/守岸人淡粉/页脚压缩）与 Help 引导见 §19.19，
+   重启后生效。
+5. 验证：428 passed；Ruff 全过；mypy 192 源码文件无错。

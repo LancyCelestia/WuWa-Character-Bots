@@ -156,7 +156,7 @@ def _author_enrichment(mid: int, *, cookie_header: str = "") -> tuple[str, dict,
             if follower is not None:
                 lines.append(f"粉丝 {_format_count(follower)}")
                 counts["粉丝"] = follower
-                author["fans"] = follower
+                author["fans"] = int(follower)
             if following is not None:
                 lines.append(f"关注 {_format_count(following)}")
                 counts["关注"] = following
@@ -175,10 +175,12 @@ def _author_enrichment(mid: int, *, cookie_header: str = "") -> tuple[str, dict,
                 if value is not None:
                     lines.append(f"{label} {value}")
                     counts[stats_label] = value
-        if "视频" in counts and author.get("video_count") is None:
-            author["video_count"] = counts["视频"]
-        if "专栏" in counts:
-            author["post_count"] = counts["专栏"]
+        if "关注" in counts:
+            author["following_count"] = counts["关注"]
+        if "视频数" in counts and author.get("video_count") is None:
+            author["video_count"] = counts["视频数"]
+        if "专栏数" in counts and author.get("post_count") is None:
+            author["post_count"] = counts["专栏数"]
     except Exception:  # noqa: BLE001, S110 - 视频/专栏统计失败仅跳过。
         pass
     try:
@@ -197,7 +199,7 @@ def _author_enrichment(mid: int, *, cookie_header: str = "") -> tuple[str, dict,
             if likes is not None:
                 lines.append(f"获赞 {_format_count(likes)}")
                 counts["获赞"] = likes
-                author["received_likes"] = likes
+                author["received_likes"] = int(likes)
     except Exception:  # noqa: BLE001, S110 - 获赞统计失败仅跳过。
         pass
     return " · ".join(lines), counts, author

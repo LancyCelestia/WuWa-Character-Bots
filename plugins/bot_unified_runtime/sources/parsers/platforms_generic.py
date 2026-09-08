@@ -968,6 +968,47 @@ def _youtube_about_enrich(channel_url: str, *, proxy: str) -> dict[str, Any]:
     return info
 
 
+
+
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+
+_YT_SUBSCRIBER_RE = re.compile(
+    r"([\d.,]+)\s*(万|千|K|M|百万|订阅者|subscribers?)", re.IGNORECASE
+)
+
+
+def _parse_count_text(text: str) -> int | None:
+    match = re.search(r"([\d.,]+)\s*(万|千|[KMB])", text, re.IGNORECASE)
+    if not match:
+        digits = re.sub(r"[^\d]", "", text)
+        return int(digits) if digits else None
+    number = float(match.group(1).replace(",", ""))
+    unit = match.group(2).upper()
+    multiplier = {"万": 10000, "千": 1000, "K": 1000, "M": 1000000, "B": 1000000000}.get(unit, 1)
+    return int(number * multiplier)
+
+
+def _youtube_channel_about(channel_url: str, *, proxy: str = "") -> dict:
+    """抓频道页 from-about 区块（订阅数/视频数/简介/加入时间/国家）。"""
+    try:
+        _, html_text = http_get_text(
+            channel_url + "/about", user_agent=_UA, timeout=12, proxy=proxy
+        )
+    except Exception:  # noqa: BLE001 - about 抓取失败返回空。
+        return {}
+    info: dict[str, str] = {}
+    for key in ("subscriberCountText", "videoCountText", "joinedDateText", "viewCountText", "description"):
+        match = re.search(rf'"{key}":{{"content":"([^"]{{0,200}})"', html_text)
+        if match:
+            info[key] = (
+                match.group(1)
+                .replace("\n", " ")
+                .replace("\u0026", "&")
+                .encode().decode("unicode_escape", errors="ignore")
+            )
+    return info
+
+
 def parse_youtube(url: str, *, cookie_header: str = "", proxy: str = "") -> ParsedContent:
     # 社区帖（/post/...）：oEmbed 不支持，直接 og 抓页面元信息。
     if "/post/" in url:
