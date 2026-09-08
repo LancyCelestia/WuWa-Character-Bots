@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import shutil
+import subprocess
+import tempfile
 from email.message import EmailMessage
 from email.utils import formataddr
 from pathlib import Path
@@ -21,6 +25,128 @@ from plugins.bot_unified_runtime.runtime.deadline import (
 from plugins.bot_unified_runtime.sender.timeout import resolve_transport_timeout
 
 logger = logging.getLogger(__name__)
+
+# Telegram sendPhoto 上限 10MB；sendVoice/sendAudio 走分片上传留出安全余量。
+_TG_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+_TG_MAX_AUDIO_BYTES = 45 * 1024 * 1024
+_TG_VOICE_CACHE_DIR = Path(tempfile.gettempdir()) / "bot_tg_voice"
+
+
+def _telegram_media_parts(content_ref: Any) -> list[dict[str, Any]]:
+    parts = content_ref.get("parts", []) if isinstance(content_ref, dict) else []
+    if not isinstance(parts, list):
+        return []
+    return [part for part in parts if isinstance(part, dict)]
+
+
+def _telegram_photo_reference(parts: list[dict[str, Any]]) -> str:
+    """选可发图源：远程直链优先，其次存在的本地渲染卡（适配器原生读本地转 multipart）。"""
+    for part in parts:
+        if part.get("type") != "image":
+            continue
+        candidate = str(part.get("file") or part.get("url") or "").strip()
+        if not candidate:
+            continue
+        if candidate.startswith(("http://", "https://")):
+            return candidate
+        try:
+            local = Path(candidate)
+            if local.is_file() and 0 < local.stat().st_size <= _TG_MAX_UPLOAD_BYTES:
+                return candidate
+        except OSError:
+            continue
+    return ""
+
+
+def _voice_cache_path(key: str) -> Path:
+    digest = hashlib.md5(key.encode("utf-8")).hexdigest()
+    return _TG_VOICE_CACHE_DIR / f"{digest}.ogg"
+
+
+def _convert_audio_to_ogg(source: Path, target: Path) -> bool:
+    """sendVoice 仅接受 OGG/OPUS，mp3/flac 直发会被 Telegram 拒收，须 ffmpeg 转码。"""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+    try:
+        completed = subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                str(source),
+                "-vn",
+                "-c:a",
+                "libopus",
+                "-b:a",
+                "64k",
+                str(target),
+            ],
+            capture_output=True,
+            check=False,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0 and target.is_file() and target.stat().st_size > 0
+
+
+async def _download_voice_source(url: str, target: Path) -> Path | None:
+    try:
+        import httpx
+    except ImportError:  # pragma: no cover - httpx 随 nonebot 必装
+        return None
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(20.0), follow_redirects=True
+        ) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            payload = response.content
+        if not payload or len(payload) > _TG_MAX_AUDIO_BYTES:
+            return None
+        _TG_VOICE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+        return target
+    except Exception:  # noqa: BLE001 - 下载失败时降级为直链 audio，不阻断发送
+        return None
+
+
+async def _prepare_telegram_voice(raw_ref: str) -> tuple[str, str]:
+    """归一化语音源，返回 (引用, 模式)；模式 ∈ {"voice", "audio", "none"}。
+
+    不合规源先经 ffmpeg 落地转 OGG/OPUS；转换不可用时降级 sendAudio
+    （mp3 附件仍可直接播放），保证点歌语音在 Telegram 上必有出口。
+    """
+    ref = (raw_ref or "").strip()
+    if not ref:
+        return "", "none"
+    if ref.startswith(("http://", "https://")):
+        if ref.lower().split("?", 1)[0].endswith((".ogg", ".oga")):
+            return ref, "voice"
+        source = await _download_voice_source(ref, _voice_cache_path(f"{ref}.src"))
+        if source is None:
+            return ref, "audio"
+        target = _voice_cache_path(ref)
+        if target.is_file() and target.stat().st_size > 0:
+            return str(target), "voice"
+        converted = await asyncio.to_thread(_convert_audio_to_ogg, source, target)
+        return (str(target), "voice") if converted else (ref, "audio")
+    try:
+        local = Path(ref)
+        if not local.is_file() or not 0 < local.stat().st_size <= _TG_MAX_AUDIO_BYTES:
+            return "", "none"
+    except OSError:
+        return "", "none"
+    if local.suffix.lower() in {".ogg", ".oga"}:
+        return ref, "voice"
+    target = _voice_cache_path(ref)
+    if target.is_file() and target.stat().st_size > 0:
+        return str(target), "voice"
+    converted = await asyncio.to_thread(_convert_audio_to_ogg, local, target)
+    return (str(target), "voice") if converted else (ref, "audio")
 
 
 def _adapter_name(bot: Any) -> str:
@@ -102,7 +228,12 @@ async def send_nonebot_message(
         )
 
     text = str(send_request.content.text_fallback or "").strip()
-    if not text:
+    media_parts = _telegram_media_parts(send_request.content.content_ref)
+    has_tg_media = adapter_name == "telegram" and any(
+        part.get("type") in {"image", "record", "voice", "file", "video"}
+        for part in media_parts
+    )
+    if not text and not has_tg_media:
         return DeliveryReceipt(
             request_id=send_request.request_id,
             state=ReceiptState.SKIPPED,
@@ -111,50 +242,81 @@ async def send_nonebot_message(
         )
 
     async def _send() -> Any:
-        parts = send_request.content.content_ref.get("parts", [])
-        files = [p for p in parts if isinstance(p, dict) and p.get("type") == "file"] if isinstance(parts, list) else []
+        parts = media_parts
+        # remaining 取代闭包 text：caption 随图发出后置空，避免同一段正文重复发送。
+        remaining = text
+        files = [part for part in parts if part.get("type") == "file"]
         if files:
             if adapter_name != "telegram":
                 raise RuntimeError("file attachments unsupported by this adapter")
+            result: Any = None
             for part in files:
                 path = Path(str(part.get("file") or ""))
                 if not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
                     raise ValueError("invalid generated attachment")
                 result = await bot.send_document(chat_id=send_request.target_id,
-                    document=(path.name, path.read_bytes()), caption=text[:1000])
+                    document=(path.name, path.read_bytes()), caption=remaining[:1000])
                 if not _provider_message_id(result):
                     raise RuntimeError("telegram attachment receipt missing")
             return result
-        # Telegram 支持图文同发：有图片时用 send_photo + caption（文字作说明）。
+        result = None
         if adapter_name == "telegram":
-            images = [
-                p
-                for p in (parts if isinstance(parts, list) else [])
-                if isinstance(p, dict) and p.get("type") == "image"
-            ]
-            photo_url = ""
-            for image in images:
-                candidate = str(image.get("file") or image.get("url") or "")
-                if candidate.startswith(("http://", "https://")):
-                    photo_url = candidate
-                    break
+            # 图文同发：远程直链或本地渲染卡均可作 photo（适配器原生 multipart）。
+            photo_ref = _telegram_photo_reference(parts)
             send_photo = getattr(bot, "send_photo", None)
-            if photo_url and callable(send_photo):
-                chat_id = send_request.target_id
-                return await send_photo(
-                    chat_id=chat_id, photo=photo_url, caption=text[:1024]
+            if photo_ref and callable(send_photo):
+                try:
+                    if len(remaining) <= 1024:
+                        result = await send_photo(
+                            chat_id=send_request.target_id,
+                            photo=photo_ref,
+                            caption=remaining or None,
+                        )
+                        remaining = ""
+                    else:
+                        # 超长正文塞 caption 会被 Telegram 截断：图先发，文字单独成条。
+                        await send_photo(
+                            chat_id=send_request.target_id, photo=photo_ref
+                        )
+                except Exception:  # noqa: BLE001 - 图片失败降级为纯文本，避免重试重发已成功内容
+                    logger.warning(
+                        "telegram photo send failed request_id=%s",
+                        send_request.request_id,
+                    )
+            # 语音/音频：sendVoice 仅认 OGG/OPUS，其余经 ffmpeg 转换或降级 audio。
+            for part in parts:
+                if part.get("type") not in {"record", "voice"}:
+                    continue
+                voice_ref, voice_mode = await _prepare_telegram_voice(
+                    str(part.get("file") or part.get("url") or "")
                 )
+                if voice_mode == "voice":
+                    send_voice = getattr(bot, "send_voice", None)
+                    if callable(send_voice):
+                        result = await send_voice(
+                            chat_id=send_request.target_id, voice=voice_ref
+                        )
+                elif voice_mode == "audio":
+                    send_audio = getattr(bot, "send_audio", None)
+                    if callable(send_audio):
+                        result = await send_audio(
+                            chat_id=send_request.target_id, audio=voice_ref
+                        )
+            if result is not None and not remaining:
+                return result
+            if result is None and not remaining and parts:
+                raise ValueError("telegram media part is not sendable")
         if event is None:
             send_to = getattr(bot, "send_to", None)
             if not callable(send_to):
                 raise RuntimeError("adapter does not expose send_to")
-            return await send_to(send_request.target_id, text)
+            return await send_to(send_request.target_id, remaining)
         if adapter_name == "mail":
             send_mail = getattr(bot, "send_mail", None)
             if not callable(send_mail):
                 raise RuntimeError("mail adapter does not expose send_mail")
-            return await send_mail(_build_mail_reply_message(bot, event, text))
-        return await bot.send(event, text, **kwargs)
+            return await send_mail(_build_mail_reply_message(bot, event, remaining))
+        return await bot.send(event, remaining, **kwargs)
 
     timeout = resolve_transport_timeout(timeout_seconds)
     try:

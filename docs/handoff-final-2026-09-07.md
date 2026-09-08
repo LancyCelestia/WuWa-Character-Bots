@@ -1346,3 +1346,17 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
 4. UI 调整（二维码等高/Logo 统一/守岸人淡粉/页脚压缩）与 Help 引导见 §19.19，
    重启后生效。
 5. 验证：428 passed；Ruff 全过；mypy 192 源码文件无错。
+
+### 19.21 alpha.2 十八轮增补：NapCat 登录冲突处置/TG 图文本地卡修复/TG 点歌语音补全/TG help 无声修复（2026-09-09 凌晨）
+
+**现场**：用户重启电脑后反馈 NapCat 连不上（二维码已保存+「当前账号(3958874605)已登录，无法重复登录」×2）；TG 端点歌有封面无语音、带图链接解析只有文字没有图、`/bot help` 完全无回应（重启电脑依旧）。
+
+**取证结论（全部实机验证）**：
+1. **NapCat**：NapCat 以框架模式跑在 QQNT 内（QQ.exe PID 持有 6099 WebUI），OneBot 为 WS 服务端模式（127.0.0.1:3001，token ShoreKeeper，配置 C:\Software\NapCat\config\onebot11_3958874605.json）。实测 3001 无监听；bot（python bot.py，forward-WS 客户端，.env.prod `ONEBOT_WS_URLS`）会自动重连，无需重启。二维码+「已登录无法重复登录」组合 = 快速登录残留会话与当前 NT 会话状态冲突，账号登录没走完 → OneBot 服务没起。
+   **处置序列**：`C:\Software\NapCat\KillQQ.bat` 杀净 QQ → `launcher.bat` 重拉 → 等快速登录成功（WebUI http://127.0.0.1:6099 看状态）→ `netstat -ano | findstr 3001` 见 LISTENING 即恢复；仍报错则在登录窗手动扫码一次刷新本机会话。
+2. **TG 图文没图（root cause）**：`sender/nonebot.py` 旧逻辑只把 `http(s)://` 开头的图片部件交给 send_photo——解析卡/帮助卡是**本地渲染 PNG**，直接被跳过落到纯文本；点歌封面是远程 URL 所以能显示。修复：`_telegram_photo_reference` 支持本地存在的文件（适配器 `process_input_file` 原生读本地转 multipart，≤10MB 校验）。
+3. **TG 点歌无语音（root cause）**：renderer 把 music 的 record part 透传到 parts，但 TG 分支只处理 image/file，record 被整体忽略。修复：新增 `_prepare_telegram_voice`——sendVoice 仅认 OGG/OPUS，非 .ogg 源先 httpx 落地 + ffmpeg 转 OGG/OPUS（`%TEMP%/bot_tg_voice` 按 md5 缓存），ffmpeg 不可用或转换失败降级 sendAudio（mp3 附件可播），下载失败再降级直链 audio；语音发送异常只告警不炸图文。
+4. **TG help 无回应（root cause）**：help 图片变体 `body=""`，旧代码 `text` 为空直接 SKIPPED，图片部件根本没机会发送。修复：空文本仅在「无 TG 媒体部件」时才 SKIPPED；媒体全部不可发且无文本时显式 raise（FAILED_RETRYABLE + 运维通知），不再无声吞掉。
+5. 附带：caption >1024 时不再硬截断——图先发，正文单独成条；图片发送失败降级纯文本，避免队列重试造成重复图。
+
+**验证**：`tests/test_nonebot_sender.py` 新增 5 回归（本地卡无文本直发 photo、封面+语音降级 audio、ffmpeg 转换走 sendVoice、图片失败回退文本、媒体不可发非静默）；dev.ps1 lint/typecheck/test 全绿（433 passed，mypy 192 文件 Success）。NapCat 侧为运维处置，无代码改动。

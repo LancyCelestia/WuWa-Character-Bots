@@ -341,3 +341,166 @@ async def test_queue_worker_routes_mail_request_to_matching_bot_and_send_to() ->
     assert mail_bot.send_to_calls == [("user-1", "你好")]
     assert mail_bot.send_calls == []
     assert telegram_bot.send_to_calls == []
+
+
+class FakeTelegramMediaBot(FakeBot):
+    """记录 TG 媒体调用的假 bot；send_photo/voice/audio 在真实适配器上动态转发。"""
+
+    def __init__(self, adapter_name: str = "Telegram", self_id: str = "telegram-bot") -> None:
+        super().__init__(adapter_name, self_id)
+        self.media_calls: list[tuple[str, dict[str, object]]] = []
+
+    async def send_photo(self, chat_id=None, photo=None, caption=None, **kwargs: object):
+        self.media_calls.append(
+            ("send_photo", {"chat_id": chat_id, "photo": photo, "caption": caption})
+        )
+        return {"message_id": "photo-1"}
+
+    async def send_voice(self, chat_id=None, voice=None, **kwargs: object):
+        self.media_calls.append(("send_voice", {"chat_id": chat_id, "voice": voice}))
+        return {"message_id": "voice-1"}
+
+    async def send_audio(self, chat_id=None, audio=None, **kwargs: object):
+        self.media_calls.append(("send_audio", {"chat_id": chat_id, "audio": audio}))
+        return {"message_id": "audio-1"}
+
+
+def _media_send_request(parts: list[dict[str, object]], text: str) -> SendRequest:
+    base = _send_request()
+    return base.model_copy(
+        update={
+            "content": RenderedOutput(
+                request_id="req-1",
+                content_type="mixed",
+                content_ref={"parts": parts},
+                text_fallback=text,
+                privacy_level=PrivacyLevel.PERSONAL,
+            )
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_telegram_local_card_image_sends_photo_without_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    card = tmp_path / "help.png"
+    card.write_bytes(b"png-bytes")
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sender.nonebot._TG_VOICE_CACHE_DIR",
+        tmp_path / "vcache",
+    )
+    bot = FakeTelegramMediaBot()
+
+    receipt = await send_nonebot_message(
+        bot, None, _media_send_request([{"type": "image", "file": str(card)}], "")
+    )
+
+    assert receipt.state is ReceiptState.SENT
+    assert bot.media_calls == [
+        ("send_photo", {"chat_id": "user-1", "photo": str(card), "caption": None})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_telegram_music_sends_cover_then_voice_degrades_to_audio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clip = tmp_path / "clip.mp3"
+    clip.write_bytes(b"mp3-bytes")
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sender.nonebot._TG_VOICE_CACHE_DIR",
+        tmp_path / "vcache",
+    )
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sender.nonebot.shutil.which", lambda name: None
+    )
+    bot = FakeTelegramMediaBot()
+
+    receipt = await send_nonebot_message(
+        bot,
+        None,
+        _media_send_request(
+            [
+                {"type": "record", "file": str(clip)},
+                {"type": "image", "url": "https://example.com/cover.jpg"},
+            ],
+            "♪ 我与你\n歌手：auburn",
+        ),
+    )
+
+    assert receipt.state is ReceiptState.SENT
+    assert [name for name, _ in bot.media_calls] == ["send_photo", "send_audio"]
+    assert bot.media_calls[0][1]["caption"] == "♪ 我与你\n歌手：auburn"
+    assert bot.media_calls[1][1]["audio"] == str(clip)
+
+
+@pytest.mark.asyncio
+async def test_telegram_voice_converts_to_ogg_for_sendvoice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clip = tmp_path / "clip.mp3"
+    clip.write_bytes(b"mp3-bytes")
+    cache = tmp_path / "vcache"
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sender.nonebot._TG_VOICE_CACHE_DIR", cache
+    )
+
+    def fake_convert(source: Path, target: Path) -> bool:
+        cache.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"ogg-bytes")
+        return True
+
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sender.nonebot._convert_audio_to_ogg", fake_convert
+    )
+    bot = FakeTelegramMediaBot()
+
+    receipt = await send_nonebot_message(
+        bot, None, _media_send_request([{"type": "record", "file": str(clip)}], "")
+    )
+
+    assert receipt.state is ReceiptState.SENT
+    assert bot.media_calls[0][0] == "send_voice"
+    voice_ref = str(bot.media_calls[0][1]["voice"])
+    assert voice_ref.endswith(".ogg")
+    assert Path(voice_ref).is_file()
+
+
+@pytest.mark.asyncio
+async def test_telegram_photo_failure_falls_back_to_text_send() -> None:
+    class NoPhotoBot(FakeBot):
+        async def send_photo(self, **kwargs: object):
+            raise RuntimeError("telegram rejected photo")
+
+    bot = NoPhotoBot("Telegram", "telegram-bot")
+
+    receipt = await send_nonebot_message(
+        bot,
+        None,
+        _media_send_request(
+            [{"type": "image", "url": "https://example.com/cover.jpg"}], "纯文本兜底"
+        ),
+    )
+
+    assert receipt.state is ReceiptState.SENT
+    assert bot.send_to_calls == [("user-1", "纯文本兜底")]
+
+
+@pytest.mark.asyncio
+async def test_telegram_unsendable_media_without_text_is_failure_not_silence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.sender.nonebot._TG_VOICE_CACHE_DIR",
+        tmp_path / "vcache",
+    )
+    missing = tmp_path / "missing.mp3"
+    bot = FakeTelegramMediaBot()
+
+    receipt = await send_nonebot_message(
+        bot, None, _media_send_request([{"type": "record", "file": str(missing)}], "")
+    )
+
+    assert receipt.state is ReceiptState.FAILED_RETRYABLE
+    assert receipt.operational_issue is not None
