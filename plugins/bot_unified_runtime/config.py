@@ -254,6 +254,9 @@ class Config(BaseModel):
     bot_meme_api_enabled: bool = False
     # 多候选点歌（借鉴 multincm 编号选择交互）：同名歧义返回编号列表让用户回复编号选择；
     # 默认关闭保持"第一命中直接播放"的既有行为。
+    # 点歌默认输出模式：card+voice+link（卡片/封面 + 语音试听 + 链接）。
+    # 运行时 BOT_MUSIC_MODE 覆盖此处。
+    bot_music_default_mode: str = "card+voice+link"
     bot_music_candidates_enabled: bool = False
     bot_music_candidates_ttl_seconds: float = 300.0
     bot_music_candidates_limit: int = 5

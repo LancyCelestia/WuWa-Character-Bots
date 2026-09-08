@@ -125,7 +125,31 @@ async def _resilient_tg_poll(self, bot):
 
 TelegramAdapter.poll = _resilient_tg_poll
 
+
+def _quiet_loop_exception_handler(loop, context):
+    """网络断开时 asyncio 内部 create_connection 的裸 future 会抛
+    "Task exception was never retrieved"（gaierror/TimeoutError 等 40 行堆栈）。
+    这些异常的上游（mail worker / telegram poll）已经在各自重试并打简短日志，
+    这里把裸异常降为一行摘要，不掩盖（仍可见类型与错误），只去噪。"""
+    exception = context.get("exception")
+    message = str(context.get("message", ""))
+    if isinstance(exception, (ConnectionError, TimeoutError, OSError)) or "getaddrinfo" in message:
+        handling = f"; handling={type(exception).__name__}" if exception else ""
+        nonebot.logger.warning(
+            "background network task failed (suppressed full traceback){}: {}",
+            handling,
+            message[:120],
+        )
+        return
+    loop.default_exception_handler(context)
+
+
+
+
 driver = nonebot.get_driver()
+import asyncio as _asyncio
+
+_asyncio.get_event_loop().set_exception_handler(_quiet_loop_exception_handler)
 driver.register_adapter(OneBotV11Adapter)
 driver.register_adapter(TelegramAdapter)
 

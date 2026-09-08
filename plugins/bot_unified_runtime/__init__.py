@@ -19,6 +19,7 @@ from .audit.file_logger import build_audit_with_file_log
 from .capabilities.content_parser import build_content_capability
 from .capabilities.download import build_download_capability
 from .capabilities.epic import build_epic_capability
+from .capabilities.group_files import DirtyGuard, GroupFileStore
 from .capabilities.meme import build_meme_capability
 from .capabilities.meme_library import build_meme_library_capability
 from .capabilities.music import build_music_capability
@@ -83,6 +84,14 @@ from .runtime.disconnect_notice import (
 )
 from .runtime.event_idempotency import build_event_idempotency_table
 from .runtime.intent_telemetry import build_intent_telemetry
+from .runtime.parrot import ParrotDetector
+from .runtime.result_unknown import ResultUnknownLedger
+
+
+def _runtime_scripts_path(value: str):
+    from scripts.runtime_paths import runtime_path
+
+    return runtime_path(value)
 from .runtime.mentions import detect_name_mention
 from .runtime.natural_language import detect_natural_command
 from .runtime.question_intent import looks_like_question_text
@@ -305,6 +314,42 @@ def _extract_onebot_raw_segments(event: Any) -> list[dict[str, Any]]:
 
 
 _RUNTIME_MENTION_TERMS: list[str] = []
+
+
+def _mentioned_by_affinity_nickname(text: str) -> bool:
+    """动态好感度小名联动：文本命中任一用户小名即视为被点名。
+
+    小名来自 user_affinity.nickname（管理员/本人设置），数量有限，
+    直接全表扫描即可（阻塞读仅群聊判定路径，量级可控）。
+    """
+    if not text or _AFFINITY_NICKNAMES_CACHE is None:
+        return False
+    stripped = text.strip()
+    lowered = stripped.lower()
+    return any(
+        nickname and (nickname.lower() in lowered)
+        for nickname in _AFFINITY_NICKNAMES_CACHE
+    )
+
+
+_AFFINITY_NICKNAMES_CACHE: list[str] | None = None
+_AFFINITY_NICKNAMES_LOADED_AT = 0.0
+
+
+def _refresh_affinity_nicknames(affinity_store) -> None:
+    global _AFFINITY_NICKNAMES_CACHE, _AFFINITY_NICKNAMES_LOADED_AT
+    try:
+        import sqlite3 as _sq
+
+        connection = _sq.connect(affinity_store.db_path)
+        rows = connection.execute(
+            "SELECT nickname FROM user_affinity WHERE nickname != ''"
+        ).fetchall()
+        connection.close()
+        _AFFINITY_NICKNAMES_CACHE = [str(r[0]) for r in rows]
+        _AFFINITY_NICKNAMES_LOADED_AT = time.time()
+    except Exception:  # noqa: BLE001 - 小名加载失败不影响主链路。
+        _AFFINITY_NICKNAMES_CACHE = []
 
 
 def set_runtime_mention_terms(terms: list[str] | tuple[str, ...]) -> None:
@@ -692,6 +737,7 @@ def _incoming_from_nonebot_event(
                 and _detect_onebot_direct_mention(raw_segments, bot_id)
             )
             or detect_name_mention(text, _RUNTIME_MENTION_TERMS)
+            or _mentioned_by_affinity_nickname(text)
         ),
         message_id=str(message_id) if message_id is not None else None,
     )
@@ -1555,6 +1601,27 @@ async def _run_capability_through_pipeline(
     return receipt
 
 
+def _affinity_store_runtime(store_config: object):
+    return (
+        build_character_affinity_store(store_config)
+        if getattr(store_config, "bot_affinity_enabled", True)
+        else None
+    )
+
+
+def build_character_affinity_store(config: object):
+    from .character.affinity import DynamicAffinityStore
+    from .character.providers import build_runtime_data_path
+
+    if not getattr(config, "bot_affinity_enabled", True):
+        return None
+    return DynamicAffinityStore(
+        build_runtime_data_path(
+            config, str(getattr(config, "bot_affinity_db_path", "data/user_affinity.sqlite3"))
+        )
+    )
+
+
 def _register_nonebot_handlers() -> None:
     try:
         from nonebot import (
@@ -1728,6 +1795,20 @@ def _register_nonebot_handlers() -> None:
 
     operational_alert_suppression = AdminAlertSuppression()
 
+    result_unknown_ledger = ResultUnknownLedger(
+        _runtime_scripts_path("data/result_unknown.sqlite3")
+    )
+
+    group_file_store = GroupFileStore(_runtime_scripts_path("data/group_files.sqlite3"))
+    dirty_guard = DirtyGuard(
+        delete_enabled=bool(getattr(config, "bot_dirty_guard_delete", False))
+    )
+    parrot_detector = ParrotDetector(
+        threshold=max(2, int(getattr(config, "bot_parrot_threshold", 3))),
+        window_seconds=float(getattr(config, "bot_parrot_window_seconds", 60.0)),
+        cooldown_seconds=float(getattr(config, "bot_parrot_cooldown_seconds", 300.0)),
+    )
+
     def _admin_bot_id(adapter: str) -> str:
         for key, candidate in _all_online_bots().items():
             if _bot_adapter_name(candidate) != adapter:
@@ -1764,6 +1845,14 @@ def _register_nonebot_handlers() -> None:
         issue = receipt.operational_issue
         if issue is None:
             return
+        if getattr(issue, "kind", "") == "result_unknown":
+            result_unknown_ledger.record(
+                request_id=receipt.request_id,
+                adapter=str(getattr(message, "adapter", "")),
+                bot_id=str(getattr(message, "bot_id", "")),
+                session_type=str(getattr(message, "session_type", "")),
+                session_id=str(getattr(message, "session_id", "")),
+            )
         targets = _operational_alert_targets()
         if not targets:
             return
@@ -1834,6 +1923,19 @@ def _register_nonebot_handlers() -> None:
                     "bot_connected",
                     bot_id=str(getattr(bot, "self_id", "unknown")),
                 )
+                try:
+                    summary = result_unknown_ledger.reconcile(
+                        bot_id=str(getattr(bot, "self_id", "unknown"))
+                    )
+                except Exception:  # noqa: BLE001 - 对账失败不影响重连。
+                    summary = None
+                if summary is not None and (summary.pending or summary.expired):
+                    runtime_event_log.warning(
+                        "result_unknown_reconciled",
+                        pending=summary.pending,
+                        expired=summary.expired,
+                        detail=summary.render(),
+                    )
                 unresolved = unresolved_mail_aliases(
                     _all_online_bots(),
                     config.bot_mail_sender_aliases,
@@ -2116,6 +2218,9 @@ def _register_nonebot_handlers() -> None:
                 shared_group_llm_provider=_build_chat_llm_provider(config),
             ),
             llm_provider=_build_chat_llm_provider(config),
+            affinity_store=(
+                build_character_affinity_store(config)
+            ),
             meme_search_provider=build_meme_search_provider(config),
             web_search_provider=build_web_search_provider(config),
             web_search_provider_factory=lambda: build_web_search_provider(
@@ -2303,6 +2408,45 @@ def _register_nonebot_handlers() -> None:
             event, (GroupUploadNoticeEvent, PrivateFileNoticeEvent)
         ) and await _is_admin_origin(event)
 
+    async def _is_group_upload_notice(event: Event) -> bool:
+        return str(getattr(event, "notice_type", "")) == "group_upload"
+
+    group_upload_notice = on_notice(rule=_is_group_upload_notice, priority=6, block=False)
+
+    @group_upload_notice.handle()
+    async def _handle_group_upload(bot: Bot, event: Event) -> None:
+        try:
+            file_info = getattr(event, "file", None) or {}
+            group_file_store.record(
+                group_id=str(getattr(event, "group_id", "")),
+                file_id=str(file_info.get("id") if isinstance(file_info, dict) else getattr(file_info, "id", "")),
+                name=str(file_info.get("name") if isinstance(file_info, dict) else getattr(file_info, "name", "")),
+                size=int(file_info.get("size") or 0) if isinstance(file_info, dict) else int(getattr(file_info, "size", 0) or 0),
+                uploader_id=str(getattr(event, "user_id", "")),
+            )
+        except Exception:  # noqa: BLE001, S110 - 群文件记录失败不影响主链路。
+            pass
+
+    async def _is_dirty_guard_message(event: Event) -> bool:
+        if not getattr(config, "bot_dirty_guard_enabled", False):
+            return False
+        return bool(event.get_plaintext().strip()) and bool(getattr(event, "group_id", None))
+
+    dirty_guard_matcher = on_message(rule=_is_dirty_guard_message, priority=3, block=False)
+
+    @dirty_guard_matcher.handle()
+    async def _handle_dirty_guard(bot: Bot, event: Event) -> None:
+        text = event.get_plaintext().strip()
+        verdict = dirty_guard.assess(text)
+        if verdict != "severe" or not dirty_guard.delete_enabled:
+            return
+        try:
+            message_id = getattr(event, "message_id", None)
+            if message_id:
+                await bot.call_api("delete_msg", message_id=message_id)
+        except Exception:  # noqa: BLE001, S110 - 撤回失败静默（多半无管理员权限）。
+            pass
+
     file_notice = on_notice(rule=_is_admin_file_notice, priority=8, block=False)
 
     from .capabilities.poke import PokeLimiter, build_poke_text
@@ -2432,7 +2576,70 @@ def _register_nonebot_handlers() -> None:
     async def _is_admin_cookie_command(event: Event) -> bool:
         return is_cookie_command(event.get_plaintext()) and await _is_admin_origin(event)
 
+    async def _is_image_search_event(event: Event) -> bool:
+        return bool(re.match(r"^[/!！]?搜图(\s|$)", event.get_plaintext().strip()))
+
+    image_search = on_message(rule=_is_image_search_event, priority=46, block=True)
+
+    @image_search.handle()
+    async def _handle_image_search(bot: Bot, event: Event) -> None:
+        message = _incoming_from_nonebot_event(
+            bot_id=str(getattr(bot, "self_id", "unknown")), event=event
+        )
+        if message is None:
+            return
+        from .capabilities.image_search import (
+            build_image_search_capability,
+        )
+
+        capability = build_image_search_capability(config)
+        receipt = await pipeline.handle_async(
+            message,
+            offload_capability(capability),
+            capability_id="bot.image_search",
+        )
+        await _notify_operational_receipt(message, receipt)
+
     cookie_admin = on_message(rule=_is_admin_cookie_command, priority=8, block=True)
+
+    _NICKNAME_RE = re.compile(r"^/bot\s+(?:昵称|nickname)\s+set\s+(\d{5,11})\s+(\S{1,32})$")
+
+    async def _is_nickname_set_command(event: Event) -> bool:
+        return bool(_NICKNAME_RE.match(event.get_plaintext().strip())) and await _is_admin_origin(event)
+
+    nickname_set = on_message(rule=_is_nickname_set_command, priority=8, block=True)
+
+    @nickname_set.handle()
+    async def _handle_nickname_set(bot: Bot, event: Event) -> None:
+        match = _NICKNAME_RE.match(event.get_plaintext().strip())
+        if match is None:
+            return
+        target_user, nickname = match.group(1), match.group(2)
+        store = build_character_affinity_store(config)
+        if store is None:
+            await _send_text_through_unified_pipeline(bot, event, "好感度系统未启用，无法设置小名。")
+            return
+        store.set_nickname(target_user, nickname)
+        snapshot = store.snapshot(target_user)
+        await _send_text_through_unified_pipeline(
+            bot,
+            event,
+            f"✅ 已把 {target_user} 的小名记为「{snapshot['nickname']}」，之后的对话会用在称呼里。",
+        )
+
+    async def _is_group_file_stats_command(event: Event) -> bool:
+        text = event.get_plaintext().strip()
+        return bool(re.match(r"^/bot\s+群文件", text))
+
+    group_file_stats = on_message(rule=_is_group_file_stats_command, priority=45, block=True)
+
+    @group_file_stats.handle()
+    async def _handle_group_file_stats(bot: Bot, event: Event) -> None:
+        group_id = str(getattr(event, "group_id", "") or "")
+        if not group_id:
+            await _send_text_through_unified_pipeline(bot, event, "群文件统计仅在群聊可用。")
+            return
+        await _send_text_through_unified_pipeline(bot, event, group_file_store.summary(group_id))
 
     @cookie_admin.handle()
     async def _handle_admin_cookie(bot: Bot, event: Event) -> None:
@@ -2445,7 +2652,7 @@ def _register_nonebot_handlers() -> None:
                 await _send_text_through_unified_pipeline(
                     bot,
                     event,
-                    "用法：cookie import <平台> <Cookie头>，例如：cookie import bilibili SESSDATA=...; bili_jct=...",
+                    "用法：/bot cookie import <平台> <Cookie头>，例如：/bot cookie import bilibili SESSDATA=...; bili_jct=...",
                 )
                 return
             result = import_cookie_header(config, platform, header)
@@ -3656,6 +3863,45 @@ def _register_nonebot_handlers() -> None:
             event_type=type(event).__name__,
         )
         message = _incoming_from_nonebot_event(bot_id=bot_id, event=event)
+        # 小名缓存刷新（60s），供动态昵称 mention 判定。
+        if time.time() - _AFFINITY_NICKNAMES_LOADED_AT > 60.0:
+            _refresh_affinity_nicknames(_affinity_store_runtime(config))
+        # 群聊复读检测（批次 C）：≥N 个不同用户在窗口内发同一文本 → 吐槽一次。
+        if (
+            message.session_type.value == "group"
+            and message.plain_text.strip()
+            and not message.plain_text.strip().startswith("/")
+        ):
+            try:
+                parrot_reply = parrot_detector.detect(
+                    session_id=message.session_id,
+                    sender_id=message.sender_id,
+                    text=message.plain_text,
+                    is_bot_self=str(message.sender_id) == bot_id,
+                )
+            except Exception:  # noqa: BLE001 - 复读检测失败不影响主链路。
+                parrot_reply = None
+            if parrot_reply:
+                from .contracts import CapabilityResult as _CR
+                from .contracts import PrivacyLevel as _PL
+                from .contracts import RiskLevel as _RL
+                from .contracts import SendPolicy as _SP
+
+                await pipeline.handle_async(
+                    message,
+                    offload_capability(lambda m, d: _CR(
+                        request_id=m.request_id,
+                        capability_id="bot.chat",
+                        kind="text",
+                        body=parrot_reply,
+                        send_policy=_SP.IMMEDIATE,
+                        privacy_level=_PL.GROUP,
+                        risk_level=_RL.LOW,
+                        audit_tags=["group_parrot", "social_response"],
+                    )),
+                    capability_id="bot.chat",
+                )
+                return
         is_mail_event = ".mail" in event_module
         mail_reply_id, mail_reply_id_is_fallback = mail_event_dedupe_id(event)
         if not mail_reply_id:
@@ -3911,7 +4157,8 @@ def _register_nonebot_handlers() -> None:
             offload_capability(
                 build_music_capability(
                     config,
-                    default_mode=runtime_settings.get("BOT_MUSIC_MODE", config) or "card",
+                    default_mode=runtime_settings.get("BOT_MUSIC_MODE", config)
+                        or getattr(config, "bot_music_default_mode", "card+voice+link"),
                     request_store=music_request_store,
                     candidate_providers=(
                         music_candidate_providers(build_cookie_provider(config))

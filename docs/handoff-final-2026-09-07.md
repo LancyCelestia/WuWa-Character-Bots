@@ -1200,3 +1200,39 @@ P0.1 真实 NapCat 重启验收、P0.2 FileTransferGateway（按第 17 节顺序
    45s 已兜底重试其他模型；如持续出现请 `/bot llm` 检查当前 provider 健康。
 
 验证：428 passed；Ruff 全过；mypy 191 源码文件无错。key 全部只入本地 `.env`（不入库）。
+
+### 19.16 alpha.2 十三轮增补：启动闪退修复/点歌默认语音/小名自学/全球天气/告警降噪（2026-09-08 晚）
+
+用户报告启动闪退并提供运行日志。根因与修复：
+
+1. **启动闪退（P0 修复）**：`NameError: build_character_affinity_store is not defined`——
+   该函数上一轮被 append 到 `__init__.py` 文件末尾，而模块加载时
+   `_register_nonebot_handlers()`（4708 行）在定义之前调用它。已把
+   `build_character_affinity_store`/`_affinity_store_runtime` 移到定义调用点之前，
+   插件导入验证通过。**教训：模块加载期执行的顶层调用，其依赖函数必须放在调用点之前。**
+2. **点歌默认发送语音**：默认输出模式从 `card` 改为 **`card+voice+link`**（卡片/封面 +
+   语音试听 + 链接）。音质链本就是最优优先：登录态下 Hi-Res（999000kbps）→ 320kbps →
+   outer 直链兜底；`BOT_MUSIC_MODE` 运行时设置仍可覆盖（当前无持久覆盖，重启即生效）。
+   "未提供音乐卡片"提示是网易云卡片数据缺失的正常降级（封面替代）。
+3. **小名自学（不再只靠管理员指令）**：用户说"叫我XX/你可以叫我XX/以后叫我XX"时
+   自动提取并写入昵称（正则抽取，1-12 字，与现昵称不同才覆盖）；群友互相称呼的
+   采纳需对话上下文消歧，列入后续。
+4. **全球天气兜底（海外/街道级）**：NMC 城市库查不到时自动降级 **Open-Meteo**
+   （geocoding+forecast，免 key、点位级精度覆盖乡镇/村庄/海外）；
+   同名地名按人口排序取主要城市（修复"高雄"命中四川同名村）；
+   网络抖动静默降级不影响 NMC 主路径；代理透传（`bot_download_proxy`）。
+   本机验证窗口期实弹返回过真实数据（高雄 25.1°C 阴）；乡镇级中文 geocoding
+   覆盖有限属数据源能力边界。
+5. **控制台报错修复（断网场景）**：用户贴的 gaierror/Mail TimeoutError/TG NetworkError
+   全部源于**本机断网**（DNS getaddrinfo failed），各通道重试行为正常。三项降噪：
+   - TG 轮询完整堆栈直接吞掉（韧性层简短行保留），恢复打 "poll recovered"；
+   - **asyncio 裸 future 堆栈**（"Task exception was never retrieved" 40 行）：
+     `bot.py` 注册 loop exception handler，网络类异常降为一行 WARNING 摘要
+     （不掩盖：类型与错误仍可见），非网络异常走默认处理器；
+   - Mail worker 断网期重试日志稀疏化（第 1/2/4/8... 次打 ERROR，其余 DEBUG）。
+   llm timeout/schema/auth 与 result_unknown/send_exception 的 [运行时告警] 推送
+   属正确的管理员通知机制（按要求"不掩盖 bug"保留），不是 bug；
+   auth 频繁出现请 `/bot llm` 检查 provider 健康。
+6. heybox 复核：与现有 xiaoheihe 同 API，无需重复接入。
+
+验证：428 passed；Ruff 全过；mypy 192 源码文件无错。

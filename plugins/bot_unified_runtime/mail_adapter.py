@@ -135,10 +135,18 @@ class ResilientMailAdapter(MailAdapter):
                 raise
             except Exception as exc:  # noqa: BLE001 - keep worker alive and logs concise.
                 delay = mail_retry_delay(attempt)
-                mail_log(
-                    "ERROR",
-                    f"Mail {bot.self_id} worker error: {type(exc).__name__}; retry_in={delay:g}s",
-                )
+                # 断网期重试可能持续数十次：日志按 1,2,4,8... 稀疏化，其余 DEBUG，
+                # 避免每次退避都刷一条 ERROR（状态并未变化）。
+                if attempt <= 1 or (attempt & (attempt - 1)) == 0:
+                    mail_log(
+                        "ERROR",
+                        f"Mail {bot.self_id} worker error: {type(exc).__name__}; retry_in={delay:g}s",
+                    )
+                else:
+                    mail_log(
+                        "DEBUG",
+                        f"Mail {bot.self_id} retry x{attempt + 1}: {type(exc).__name__}; retry_in={delay:g}s",
+                    )
                 attempt += 1
             finally:
                 if connected:
