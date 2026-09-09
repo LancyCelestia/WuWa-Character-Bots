@@ -157,7 +157,7 @@ def test_card_backend_success_renders_mixed_result_and_session(tmp_path: Path) -
     assert "music_candidates_card" in result.audit_tags
     assert "music_candidates" in result.audit_tags
     # 渲染 payload 约定：候选卡画布 1000x900、无远程图 wait_ms=300。
-    assert backend.calls and backend.calls[0]["viewport"] == {"width": 1000, "height": 900}
+    assert backend.calls and backend.calls[0]["viewport"] == {"width": 1040, "height": 900}
     assert backend.calls[0]["wait_ms"] == 300
     assert "晴天remix" in backend.calls[0]["html"]
     # 候选会话仍写入：随后编号可选中。

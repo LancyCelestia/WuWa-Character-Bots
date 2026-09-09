@@ -580,7 +580,7 @@ def build_music_capability(
             png = render_backend.render_card(
                 {
                     "html": html_text,
-                    "viewport": {"width": 1000, "height": 900},
+                    "viewport": {"width": 1040, "height": 900},
                     "device_scale_factor": 2,
                     # 无远程图：等 300ms 即可元素截图。
                     "wait_ms": 300,
