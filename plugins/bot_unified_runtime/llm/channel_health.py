@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -22,12 +23,19 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 _UNAVAILABLE = "temporarily_unavailable"
 _OK = "ok"
 # 连续失败达到该次数才判暂不可用（单次抖动不踢出队列）。
 _UNAVAILABLE_AFTER_FAILS = 2
 # 暂不可用后每隔多久重探（秒）；重探成功即自动恢复。
 _RETRY_INTERVAL_SECONDS = 1800.0
+# EWMA 平滑系数（v2 动态测量）：ema = round(0.3*最近一次 + 0.7*上次平滑)。
+_EWMA_ALPHA = 0.3
+# 慢渠道识别阈值（毫秒，v2 动态检测）：平滑延迟超过它，巡检报告评级标「偏慢」。
+# config bot_channel_slow_ema_ms / env BOT_CHANNEL_SLOW_EMA_MS 可覆盖。
+_SLOW_EMA_MS = 15000
 
 # 巡检并发/错峰参数（B-2）：config 字段 → os.environ 兜底 → 最终默认。
 # 默认值即历史硬编码值（background 3 线程 + 0.4s 抖动；manual 8 线程），
@@ -63,6 +71,8 @@ class ChannelHealthStore:
                         state TEXT NOT NULL,
                         consecutive_fails INTEGER NOT NULL DEFAULT 0,
                         latency_ms INTEGER,
+                        ema_ms INTEGER,
+                        samples INTEGER NOT NULL DEFAULT 0,
                         last_error TEXT DEFAULT '',
                         last_probe_at TEXT DEFAULT '',
                         last_ok_at TEXT DEFAULT '',
@@ -70,13 +80,24 @@ class ChannelHealthStore:
                     )
                     """
                 )
+                # 老库无损升级（v2）：PRAGMA table_info 判断后补列，旧数据不动。
+                existing = {
+                    str(row[1]) for row in con.execute("PRAGMA table_info(channel_health)")
+                }
+                if "ema_ms" not in existing:
+                    con.execute("ALTER TABLE channel_health ADD COLUMN ema_ms INTEGER")
+                if "samples" not in existing:
+                    con.execute(
+                        "ALTER TABLE channel_health ADD COLUMN samples INTEGER NOT NULL DEFAULT 0"
+                    )
                 con.commit()
             finally:
                 con.close()
 
     def _row(self, cur: sqlite3.Cursor, model_id: str) -> dict[str, Any] | None:
         row = cur.execute(
-            "SELECT state, consecutive_fails, latency_ms, last_error, last_ok_at"
+            "SELECT state, consecutive_fails, latency_ms, last_error, last_ok_at,"
+            " ema_ms, samples"
             " FROM channel_health WHERE model_id = ?",
             (model_id,),
         ).fetchone()
@@ -88,6 +109,8 @@ class ChannelHealthStore:
             "latency_ms": row[2],
             "last_error": row[3] or "",
             "last_ok_at": row[4] or "",
+            "ema_ms": row[5],
+            "samples": int(row[6] or 0),
         }
 
     def snapshot(self, model_id: str) -> dict[str, Any] | None:
@@ -131,18 +154,30 @@ class ChannelHealthStore:
         with self._lock:
             con = self._connect()
             try:
+                cur = con.cursor()
+                # EWMA 平滑（v2 动态测量）：无历史平滑值时首测直取，之后
+                # ema = 0.3*最近一次 + 0.7*上次平滑；samples 只增不减。
+                row = self._row(cur, model_id)
+                prev_ema = (row or {}).get("ema_ms")
+                samples = int((row or {}).get("samples") or 0)
+                if prev_ema is None:
+                    ema = latency_ms  # 首测直取
+                else:
+                    ema = round(_EWMA_ALPHA * latency_ms + (1 - _EWMA_ALPHA) * int(prev_ema))
                 con.execute(
                     """
                     INSERT INTO channel_health
                         (model_id, state, consecutive_fails, latency_ms,
+                         ema_ms, samples,
                          last_error, last_probe_at, last_ok_at, updated_at)
-                    VALUES (?, ?, 0, ?, '', ?, ?, ?)
+                    VALUES (?, ?, 0, ?, ?, ?, '', ?, ?, ?)
                     ON CONFLICT(model_id) DO UPDATE SET
                         state='ok', consecutive_fails=0, latency_ms=excluded.latency_ms,
+                        ema_ms=excluded.ema_ms, samples=excluded.samples,
                         last_error='', last_probe_at=excluded.last_probe_at,
                         last_ok_at=excluded.last_ok_at, updated_at=excluded.updated_at
                     """,
-                    (model_id, _OK, latency_ms, now, now, now),
+                    (model_id, _OK, latency_ms, ema, samples + 1, now, now, now),
                 )
                 con.commit()
             finally:
@@ -218,13 +253,31 @@ class ChannelHealthStore:
                 con.close()
         return {r[0]: int(r[1]) for r in rows}
 
+    def ema_latencies(self) -> dict[str, int]:
+        """平滑延迟表（v2 动态切换）：state='ok' 且 ema_ms 非空的 {model_id: ema_ms}。
+
+        供同名模型渠道聚合的延迟择优（ModelRouter.channels_for_model）；
+        比最近一次实测更抗抖动，探针与真实调用都在持续更新它。
+        """
+        with self._lock:
+            con = self._connect()
+            try:
+                rows = con.execute(
+                    "SELECT model_id, ema_ms FROM channel_health"
+                    " WHERE state = ? AND ema_ms IS NOT NULL",
+                    (_OK,),
+                ).fetchall()
+            finally:
+                con.close()
+        return {r[0]: int(r[1]) for r in rows}
+
     def report(self) -> list[dict[str, Any]]:
         with self._lock:
             con = self._connect()
             try:
                 rows = con.execute(
                     "SELECT model_id, state, consecutive_fails, latency_ms,"
-                    " last_error, last_ok_at FROM channel_health"
+                    " ema_ms, samples, last_error, last_ok_at FROM channel_health"
                     " ORDER BY state DESC, model_id"
                 ).fetchall()
             finally:
@@ -235,8 +288,10 @@ class ChannelHealthStore:
                 "state": r[1],
                 "consecutive_fails": r[2],
                 "latency_ms": r[3],
-                "last_error": r[4],
-                "last_ok_at": r[5],
+                "ema_ms": r[4],
+                "samples": int(r[5] or 0),
+                "last_error": r[6],
+                "last_ok_at": r[7],
             }
             for r in rows
         ]
@@ -253,6 +308,49 @@ class ChannelHealthStore:
 
 _GLOBAL_STORE: ChannelHealthStore | None = None
 _GLOBAL_LOCK = threading.Lock()
+
+
+def _flag_value(raw: object) -> bool | None:
+    """布尔开关文本解析：命中真/假词表返回对应布尔，未识别返回 None。"""
+    if raw is None:
+        return None
+    text = str(raw).strip().lower()
+    if text in {"1", "true", "on", "yes"}:
+        return True
+    if text in {"0", "false", "off", "no"}:
+        return False
+    return None
+
+
+def channel_health_enabled(config: Any | None = None) -> bool:
+    """健康层总开关（唯一解析源，路由侧与巡检侧共用）。
+
+    解析链：Config 字段（bot_channel_health_enabled）→ os.environ
+    （BOT_CHANNEL_HEALTH_ENABLED）→ 默认关。生产 .env 的值只进 NoneBot
+    Config 不进 os.environ，因此 Config 字段必须是主路径；os.environ
+    兜底服务于裸脚本与测试（monkeypatch.setenv）。config 缺字段且未设
+    环境变量时视为关（保守默认，不写库不过滤）。
+    """
+    for raw in (
+        getattr(config, "bot_channel_health_enabled", None),
+        os.environ.get("BOT_CHANNEL_HEALTH_ENABLED"),
+    ):
+        value = _flag_value(raw)
+        if value is not None:
+            return value
+    return False
+
+
+def channel_health_latency_first(config: Any | None = None) -> bool:
+    """延迟择优开关（与巡检侧同源）：Config 字段 → os.environ → 默认开。"""
+    for raw in (
+        getattr(config, "bot_channel_health_latency_first", None),
+        os.environ.get("BOT_CHANNEL_HEALTH_LATENCY_FIRST"),
+    ):
+        value = _flag_value(raw)
+        if value is not None:
+            return value
+    return True
 
 
 def resolve_default_db_path() -> str:
@@ -272,10 +370,25 @@ def resolve_default_db_path() -> str:
 
 
 def get_channel_health_store(db_path: str = "") -> ChannelHealthStore:
+    """进程级单例（修 D4：库位置只按一种规则解析）。
+
+    路径一律先经 ``resolve_default_db_path()``（runtime_paths 重映射），
+    不再允许 model_router 系自带 os.environ 相对路径默认——旧实现里库
+    位置取决于进程内谁先调用，跨重启巡检历史「凭空丢失」。首次调用固定
+    库位置；此后若传入不同 db_path 只打 warning 并继续用现有库。
+    """
     global _GLOBAL_STORE
     with _GLOBAL_LOCK:
+        resolved = str(db_path) if db_path else resolve_default_db_path()
         if _GLOBAL_STORE is None:
-            _GLOBAL_STORE = ChannelHealthStore(db_path or resolve_default_db_path())
+            _GLOBAL_STORE = ChannelHealthStore(resolved)
+        elif _GLOBAL_STORE.db_path != resolved:
+            logger.warning(
+                "channel health store already opened at %s; "
+                "ignoring different db path %s",
+                _GLOBAL_STORE.db_path,
+                resolved,
+            )
         return _GLOBAL_STORE
 
 
@@ -309,25 +422,32 @@ def prefer_fastest_channels(
     return ordered + [mid for mid in model_ids if mid not in latencies]
 
 
-def probe_entry(spec: Any, *, proxy: str = "", timeout_seconds: float = 25.0) -> tuple[bool, int, str]:
+def probe_entry(
+    spec: Any,
+    *,
+    proxy: str = "",
+    timeout_seconds: float = 25.0,
+    api_key_override: str = "",
+) -> tuple[bool, int, str]:
     """对单个渠道做最小真实调用；返回 (ok, latency_ms, error_summary)。
 
     用 OpenAI 兼容 /chat/completions，max_tokens=1，最小化费用。
+
+    密钥解析链（修 D8：删除恒空死表达式与 ``object.__setattr__`` 注入）：
+    ``api_key_override``（probe_all 经 os.environ→Config 预解析的结果）
+    → spec.api_key 为 ``env:`` 引用时直接查 os.environ → 都为空报
+    no_api_key。明文密钥直接可用。
     """
     import httpx
 
-    api_key = str(spec.api_key)
-    if api_key.startswith("env:"):
-        import os
-
-        env_name = api_key[4:].strip()
-        api_key = os.environ.get(env_name) or str(
-            getattr(spec, "_config_ref", None) and "" or ""
-        )
-        # 生产 os.environ 通常没有 .env 变量（NoneBot dotenv 不写入），
-        # 由 probe_all 预解析后经 spec._resolved_key 传入。
-        if not api_key:
-            api_key = str(getattr(spec, "_resolved_key", "") or "")
+    api_key = str(api_key_override or "").strip()
+    if not api_key:
+        raw_key = str(getattr(spec, "api_key", "") or "")
+        if raw_key.startswith("env:"):
+            env_name = raw_key[4:].strip()
+            api_key = os.environ.get(env_name, "").strip()
+        else:
+            api_key = raw_key.strip()
     if not api_key:
         return False, 0, "no_api_key(需在系统环境变量或Config字段提供)"
     url = spec.base_url.rstrip("/") + "/chat/completions"
@@ -394,6 +514,17 @@ def _probe_jitter(config: Any) -> float:
     return max(0.0, min(_PROBE_JITTER_MAX, value))
 
 
+# 巡检在飞互斥（修 D5）：手动 /bot model probe 与后台定时巡检共享一把
+# 非阻塞锁，任一在飞时其他全量巡检直接被拒，防止叠加多路全量真实调用
+# 打爆共享 key 的限流窗口。
+_PROBE_ALL_LOCK = threading.Lock()
+
+
+def probe_in_flight() -> bool:
+    """是否有渠道巡检（手动或后台）正在进行。"""
+    return _PROBE_ALL_LOCK.locked()
+
+
 def probe_all(
     config: Any,
     specs: dict[str, Any],
@@ -408,7 +539,31 @@ def probe_all(
     mode="background"：定时巡检——默认 3 线程（bot_channel_probe_threads）
     + 默认 0.4s 错峰抖动（bot_channel_probe_jitter_seconds），避免突发
     打爆共享 key 的限流窗口、殃及紧随其后的真实聊天。
+
+    在飞互斥：入口以非阻塞方式获取共享锁，拿不到（手动/后台任一巡检
+    正在跑）立即返回 ``busy=True`` 摘要，不做任何真实调用。
     """
+    if not _PROBE_ALL_LOCK.acquire(blocking=False):
+        return {
+            "probed": 0,
+            "ok": 0,
+            "unavailable": [],
+            "detail": {},
+            "busy": True,
+        }
+    try:
+        return _probe_all_locked(config, specs, store, mode=mode)
+    finally:
+        _PROBE_ALL_LOCK.release()
+
+
+def _probe_all_locked(
+    config: Any,
+    specs: dict[str, Any],
+    store: ChannelHealthStore,
+    *,
+    mode: str,
+) -> dict[str, Any]:
     from concurrent.futures import ThreadPoolExecutor
 
     proxy = str(getattr(config, "bot_download_proxy", "") or "")
@@ -417,22 +572,30 @@ def probe_all(
     jitter = _probe_jitter(config)
     results: dict[str, Any] = {}
 
-    def _one(item: tuple[str, Any]) -> tuple[str, bool, int, str]:
-        model_id, spec = item
-        ok, latency, err = probe_entry(spec, proxy=proxy, timeout_seconds=timeout)
-        return model_id, ok, latency, err
-
-    # env: 引用预解析（与 model_router._resolve_api_key 同语义：os.environ
-    # 优先，Config 字段回退），探针才能拿到真实 key。
+    # env: 引用预解析（修 D8：结果经显式参数传入 probe_entry，不再用
+    # object.__setattr__ 污染 spec）。解析链与 model_router._resolve_api_key
+    # 同语义：os.environ 优先，Config 字段回退。
+    resolved_keys: dict[int, str] = {}
     try:
         from plugins.bot_unified_runtime.llm.model_router import _resolve_api_key
 
-        for spec in specs.values():
-            resolved = _resolve_api_key(str(spec.api_key), config)
+        for spec_index, spec in enumerate(specs.values()):
+            resolved = _resolve_api_key(str(getattr(spec, "api_key", "") or ""), config)
             if resolved:
-                object.__setattr__(spec, "_resolved_key", resolved)
-    except Exception:  # noqa: S110, BLE001 - 预解析失败退回 probe 内部解析。
-        pass
+                resolved_keys[id(spec)] = resolved
+    except Exception:  # 预解析失败退回 probe 内部解析，不影响巡检主流程。
+        logger.debug("channel probe pre-resolve api keys failed", exc_info=True)
+
+    def _one(item: tuple[str, Any]) -> tuple[str, bool, int, str]:
+        model_id, spec = item
+        ok, latency, err = probe_entry(
+            spec,
+            proxy=proxy,
+            timeout_seconds=timeout,
+            api_key_override=resolved_keys.get(id(spec), ""),
+        )
+        return model_id, ok, latency, err
+
     pending = list(specs.items())
     if mode == "manual":
         with ThreadPoolExecutor(max_workers=threads) as pool:
@@ -469,6 +632,23 @@ def probe_all(
         "unavailable": sorted(unavailable),
         "detail": results,
     }
+
+
+def resolve_slow_ema_ms(config: Any) -> int:
+    """慢渠道阈值解析：config 属性 → os.environ 兜底 → 默认（毫秒，>=1）。"""
+    for raw in (
+        getattr(config, "bot_channel_slow_ema_ms", None),
+        os.environ.get("BOT_CHANNEL_SLOW_EMA_MS"),
+    ):
+        if raw is None:
+            continue
+        try:
+            value = int(float(raw))
+        except (TypeError, ValueError):
+            continue
+        if value >= 1:
+            return value
+    return _SLOW_EMA_MS
 
 
 def build_health_summary_text(report: list[dict[str, Any]]) -> str:

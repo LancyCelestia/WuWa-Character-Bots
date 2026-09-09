@@ -220,6 +220,30 @@ def _channel_health_suffix(model_id: str) -> str:
     return ""
 
 
+def _probe_specs(store: RuntimeSettingsStore, config: object) -> dict[str, Any]:
+    """巡检目标集合 = .env 注册表 ∪ 运行时注册表（合并视图，修 D7）。
+
+    此前手动 /bot model probe 只探 build_model_registry（仅 .env），
+    管理员用 add 新增的运行时渠道永远没有健康数据。取数路径与
+    /bot model list 一致：_merge_registry_entries 合并后逐条解析成
+    specs（env 派生条目内容以 .env 实时值为准并带上运行时覆盖字段）。
+    """
+    from plugins.bot_unified_runtime.llm.model_router import _spec_from_entry
+
+    raw_env_registry = {
+        str(key): dict(item)
+        for key, item in (getattr(config, "bot_model_registry", {}) or {}).items()
+        if isinstance(item, dict)
+    }
+    merged = _merge_registry_entries(raw_env_registry, store.list_model_registry())
+    specs: dict[str, Any] = {}
+    for model_id, entry in merged.items():
+        spec = _spec_from_entry(str(model_id), entry, config)
+        if spec is not None:
+            specs[str(model_id)] = spec
+    return specs
+
+
 def _channel_price_text(entry: dict[str, Any]) -> str:
     pin = entry.get("price_in")
     pout = entry.get("price_out")
@@ -235,8 +259,17 @@ def _channel_price_text(entry: dict[str, Any]) -> str:
     return f" ¥{pin_f if pin_f is not None else '?'}/{pout_f if pout_f is not None else '?'}"
 
 
-def _format_channel_health_report(report: list[dict[str, Any]]) -> str:
-    """渠道健康巡检报告：运维可读排版（状态分组+延迟+排查指引）。"""
+def _format_channel_health_report(
+    report: list[dict[str, Any]],
+    *,
+    slow_ema_ms: int = 15000,
+) -> str:
+    """渠道健康巡检报告：运维可读排版（状态分组+延迟+排查指引）。
+
+    v2 动态检测：评级改用平滑延迟（EWMA，抗单次抖动），同时展示
+    「最近一次」与「平滑」两个值；ema 超过 slow_ema_ms 阈值（config
+    bot_channel_slow_ema_ms，默认 15000）的渠道把「快/正常」改标「偏慢」。
+    """
     if not report:
         return (
             "渠道健康巡检还没有数据。" + '\n'
@@ -245,8 +278,8 @@ def _format_channel_health_report(report: list[dict[str, Any]]) -> str:
         )
     ok_rows = [r for r in report if r["state"] == "ok"]
     bad_rows = [r for r in report if r["state"] != "ok"]
-    never = [r for r in ok_rows if not r.get("latency_ms")]
-    probed = [r for r in ok_rows if r.get("latency_ms")]
+    never = [r for r in ok_rows if not r.get("latency_ms") and not r.get("ema_ms")]
+    probed = [r for r in ok_rows if r.get("latency_ms") or r.get("ema_ms")]
     lines = [
         (
             f"【渠道健康巡检报告】 共 {len(report)} 个渠道："
@@ -255,11 +288,23 @@ def _format_channel_health_report(report: list[dict[str, Any]]) -> str:
         "",
     ]
     if probed:
-        lines.append("■ 实测可用（按响应速度排序）")
-        for row in sorted(probed, key=lambda r: int(r["latency_ms"] or 0)):
+        lines.append("■ 实测可用（按平滑响应速度排序）")
+
+        def _basis_ms(row: dict[str, Any]) -> int:
+            ema = row.get("ema_ms")
+            return int(ema) if ema else int(row["latency_ms"] or 0)
+
+        for row in sorted(probed, key=_basis_ms):
             latency = int(row["latency_ms"] or 0)
-            grade = "快" if latency < 5000 else ("正常" if latency < 10000 else "偏慢")
-            lines.append(f"  ✅ {row['model_id']}  响应 {latency}ms（{grade}）")
+            ema = row.get("ema_ms")
+            basis = int(ema) if ema else latency
+            grade = "快" if basis < 5000 else ("正常" if basis < 10000 else "偏慢")
+            if ema and int(ema) >= slow_ema_ms:
+                grade = "偏慢"  # 慢渠道阈值（v2）：平滑值超阈即标偏慢
+            detail = f"响应 {latency}ms" if latency else "响应 -"
+            if ema:
+                detail += f" · 平滑 {int(ema)}ms"
+            lines.append(f"  ✅ {row['model_id']}  {detail}（{grade}）")
     if never:
         lines.append("■ 尚未实测（下一轮巡检覆盖，不影响使用）")
         for row in never:
@@ -326,17 +371,30 @@ def _handle_model_command(
     if action0 == "health":
         from plugins.bot_unified_runtime.llm.channel_health import (
             get_channel_health_store,
+            resolve_slow_ema_ms,
         )
 
-        return _format_channel_health_report(get_channel_health_store().report())
+        return _format_channel_health_report(
+            get_channel_health_store().report(),
+            slow_ema_ms=resolve_slow_ema_ms(config),
+        )
     if action0 == "probe":
         from plugins.bot_unified_runtime.config import Config as _Cfg
+        from plugins.bot_unified_runtime.llm.channel_health import probe_in_flight
 
-        # 审计 P2#20：连发 N 条只允许起 N=1 个探针，其余回执提示。
+        # 审计 P2#20 + D5：连发 N 条只允许起 N=1 个探针，且与后台定时
+        # 巡检共享互斥（probe_in_flight）；任一在飞都直接回执，不叠加
+        # 多路全量真实调用打爆共享 key。
         if not _MODEL_PROBE_LOCK.acquire(blocking=False):
             return (
                 "渠道巡检正在进行中（全部渠道一次最小调用），无需重复发起；"
                 "稍后用 /bot model health 查看。"
+            )
+        if probe_in_flight():
+            _MODEL_PROBE_LOCK.release()
+            return (
+                "渠道巡检正在进行中（后台自动巡检或上一轮巡检尚未结束），"
+                "无需重复发起；稍后用 /bot model health 查看。"
             )
 
         def _run_probe() -> None:
@@ -345,12 +403,9 @@ def _handle_model_command(
                     get_channel_health_store,
                     probe_all,
                 )
-                from plugins.bot_unified_runtime.llm.model_router import (
-                    build_model_registry,
-                )
 
                 probe_all(_Cfg() if not isinstance(config, _Cfg) else config,
-                          build_model_registry(config),
+                          _probe_specs(store, config),
                           get_channel_health_store(),
                           mode="manual")
             except Exception:  # noqa: S110, BLE001 - 后台巡检失败静默。
@@ -1028,8 +1083,8 @@ def _handle_model_registry_command(
         base_entry = entries.get(model_id)
         if base_entry is None:
             return (
-                f"不存在的模型 id：{model_id}。可用："
-                + f"{','.join(sorted(set(runtime_registry) | set(raw_env_registry)))}"
+                "不存在的模型 id："
+                f"{model_id}。可用：{','.join(sorted(set(runtime_registry) | set(raw_env_registry)))}"
             )
         try:
             kv = _parse_kv_pairs(parts[1:])

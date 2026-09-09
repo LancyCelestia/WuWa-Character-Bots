@@ -38,9 +38,10 @@ low,high,max；gpt/grok = low,medium,high,xhigh；gemini = low,medium,high。
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from datetime import time as dt_time
 from typing import Any
@@ -91,6 +92,16 @@ FAMILY_EFFORT_TIERS: dict[str, tuple[str, ...]] = {
 _FAMILY_MATCH_ORDER = ("deepseek", "gemini", "minimax", "grok", "glm", "kimi", "gpt")
 # 条目/全局 effort 字段的全部合法值（off = 不发送 reasoning_effort）。
 ALL_EFFORT_VALUES: tuple[str, ...] = ("off", "low", "medium", "high", "xhigh", "max")
+
+# 运行时注册表里 .env 来源条目的镜像标记（与 capabilities.runtime_admin
+# 的 _ENV_DERIVED_SOURCE 同值；llm 层不反向依赖 capabilities 层，故本地
+# 重复常量字面量，改值时两处需同步）。
+_ENV_DERIVED_SOURCE = "env"
+
+# 自适应超时（v2 无损切换）：已知渠道 EWMA 时单次尝试超时收紧为
+# min(原值, max(下限秒, ema_ms*倍率/1000))，挂死渠道快速失败转移。
+_ADAPTIVE_TIMEOUT_FLOOR_S = 8.0
+_ADAPTIVE_TIMEOUT_EMA_MULTIPLE = 3.0
 
 
 def model_family(model_name: str) -> str:
@@ -353,81 +364,100 @@ def _spec_from_entry(
     )
 
 
-def _health_filter_candidates(model_ids: list[str]) -> list[str]:
-    """从候选队列剔除「暂时不可用」渠道；全部不可用时放行原列表。"""
-    try:
-        import os
+def _health_filter_candidates(model_ids: list[str], config: object | None = None) -> list[str]:
+    """从候选队列剔除「暂时不可用」渠道；全部不可用时放行原列表。
 
-        flag = os.environ.get("BOT_CHANNEL_HEALTH_ENABLED", "0").strip().lower()
-        if flag not in {"1", "true", "on"}:
-            return model_ids
+    开关与巡检侧同源：channel_health.channel_health_enabled(config)
+    （Config 字段 → os.environ → 默认），不再只读 os.environ——生产
+    .env-only 部署下 NoneBot 只把配置写进 Config，旧实现会让健康门整体
+    空转而巡检照常运行。
+    """
+    try:
         from plugins.bot_unified_runtime.llm.channel_health import (
+            channel_health_enabled,
             filter_healthy_candidates,
             get_channel_health_store,
         )
 
-        db = os.environ.get(
-            "BOT_CHANNEL_HEALTH_DB", "data/channel_health.sqlite3"
-        )
-        return filter_healthy_candidates(model_ids, get_channel_health_store(db))
+        if not channel_health_enabled(config):
+            return model_ids
+        return filter_healthy_candidates(model_ids, get_channel_health_store())
     except Exception:  # noqa: BLE001 - 健康层故障不阻塞路由。
         return model_ids
 
 
-def _health_record_success(model_id: str, latency_ms: int) -> None:
+def _health_record_success(model_id: str, latency_ms: int, config: object | None = None) -> None:
     try:
-        import os
-
-        if os.environ.get("BOT_CHANNEL_HEALTH_ENABLED", "0").strip().lower() not in {"1", "true", "on"}:
-            return
         from plugins.bot_unified_runtime.llm.channel_health import (
+            channel_health_enabled,
             get_channel_health_store,
         )
 
-        db = os.environ.get("BOT_CHANNEL_HEALTH_DB", "data/channel_health.sqlite3")
-        get_channel_health_store(db).record_success(model_id, latency_ms)
-    except Exception:  # noqa: S110, BLE001 - 健康记录失败静默。
-        pass
+        if not channel_health_enabled(config):
+            return
+        get_channel_health_store().record_success(model_id, latency_ms)
+    except Exception:  # noqa: BLE001 - 健康记录失败静默，不影响主链路。
+        return
 
 
-def _health_record_failure(model_id: str, error_kind: str) -> None:
+def _health_record_failure(model_id: str, error_kind: str, config: object | None = None) -> None:
     try:
-        import os
+        from plugins.bot_unified_runtime.llm.channel_health import (
+            channel_health_enabled,
+            get_channel_health_store,
+        )
 
-        if os.environ.get("BOT_CHANNEL_HEALTH_ENABLED", "0").strip().lower() not in {"1", "true", "on"}:
+        if not channel_health_enabled(config):
             return
         # auth/config 类失败不计渠道健康（是配置问题，不是渠道不可用）。
         if error_kind in {"auth", "config_missing"}:
             return
-        from plugins.bot_unified_runtime.llm.channel_health import (
-            get_channel_health_store,
-        )
-
-        db = os.environ.get("BOT_CHANNEL_HEALTH_DB", "data/channel_health.sqlite3")
-        get_channel_health_store(db).record_failure(model_id, f"kind={error_kind}")
-    except Exception:  # noqa: S110, BLE001 - 健康记录失败静默。
-        pass
+        get_channel_health_store().record_failure(model_id, f"kind={error_kind}")
+    except Exception:  # noqa: BLE001 - 健康记录失败静默，不影响主链路。
+        return
 
 
-def _health_latencies() -> dict[str, int] | None:
-    """实测延迟表（B-1 延迟择优）；健康层关闭/故障时返回 None（回落价格序）。
+def _health_ema_latencies(config: object | None = None) -> dict[str, int] | None:
+    """EWMA 平滑延迟表（v2 动态切换）；健康层关闭/故障时返回 None（回落价格序）。
 
-    双开关：BOT_CHANNEL_HEALTH_ENABLED（健康层总开关，默认关）与
-    BOT_CHANNEL_HEALTH_LATENCY_FIRST（延迟择优，默认开）须同时开启。
+    双开关与巡检侧同源解析（channel_health_latency_first /
+    channel_health_enabled）：Config 字段 → os.environ → 默认（延迟择优
+    默认开，健康层默认关）。
     """
     try:
-        import os
-
-        if os.environ.get("BOT_CHANNEL_HEALTH_LATENCY_FIRST", "1").strip().lower() not in {"1", "true", "on"}:
-            return None
-        if os.environ.get("BOT_CHANNEL_HEALTH_ENABLED", "0").strip().lower() not in {"1", "true", "on"}:
-            return None
         from plugins.bot_unified_runtime.llm.channel_health import (
+            channel_health_enabled,
+            channel_health_latency_first,
             get_channel_health_store,
         )
 
-        db = os.environ.get("BOT_CHANNEL_HEALTH_DB", "data/channel_health.sqlite3")
-        return get_channel_health_store(db).latencies()
+        if not channel_health_latency_first(config):
+            return None
+        if not channel_health_enabled(config):
+            return None
+        return get_channel_health_store().ema_latencies()
+    except Exception:  # noqa: BLE001 - 健康层故障不阻塞路由。
+        return None
+
+
+def _health_latencies(config: object | None = None) -> dict[str, int] | None:
+    """实测延迟表（B-1 延迟择优）；健康层关闭/故障时返回 None（回落价格序）。
+
+    与 _health_ema_latencies 同一套开关来源；保留原始实测表给
+    channels_for_model 的既有排序语义。
+    """
+    try:
+        from plugins.bot_unified_runtime.llm.channel_health import (
+            channel_health_enabled,
+            channel_health_latency_first,
+            get_channel_health_store,
+        )
+
+        if not channel_health_latency_first(config):
+            return None
+        if not channel_health_enabled(config):
+            return None
+        return get_channel_health_store().latencies()
     except Exception:  # noqa: BLE001 - 健康层故障不阻塞路由。
         return None
 
@@ -438,6 +468,36 @@ def _optional_price(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if number >= 0 else None
+
+
+@dataclass
+class _HedgeOutcome:
+    """影子并发阶段的结果：赢家的回复、待抛错误与 last_attempts 记号。"""
+
+    reply: Any = None
+    error: LLMProviderError | None = None
+    attempt_marks: list[str] = field(default_factory=list)
+
+
+class _HedgeRace:
+    """影子并发（hedged request）竞速共享状态。
+
+    Condition 保护 winner/完成计数/失败表；worker 线程只写状态并 notify。
+    ``last_attempts`` 记号由主线程在竞速结束后统一追加——worker 绝不触碰
+    它，避免主请求已返回后仍与调用方产生数据竞争。
+    """
+
+    def __init__(self) -> None:
+        self.cond = threading.Condition()
+        self.winner_id = ""
+        self.winner_reply: Any = None
+        # 成功但落选（另一路先回）的候选：其健康记账已在 worker 内完成。
+        self.losers: list[str] = []
+        self.failures: dict[str, LLMProviderError] = {}
+        # 非故障转移类错误（invalid_request/unsupported_parameter 等）：
+        # 影子全败时优先抛出，贴近串行路径的立即中断语义。
+        self.terminal_error: LLMProviderError | None = None
+        self.finished = 0
 
 
 def _price_rank(spec: ModelSpec) -> float:
@@ -630,7 +690,7 @@ class ModelRouter:
         for model_id, item in dynamic.items():
             if not isinstance(item, dict):
                 continue
-            spec = _spec_from_entry(str(model_id), item, self._credential_config)
+            spec = self._spec_from_dynamic_entry(str(model_id), item)
             if spec is not None:
                 new_specs[str(model_id)] = spec
         for cached_id in list(self._providers):
@@ -649,6 +709,44 @@ class ModelRouter:
         self._dynamic_snapshot = {
             str(key): dict(value) for key, value in dynamic.items() if isinstance(value, dict)
         }
+
+    def _spec_from_dynamic_entry(self, model_id: str, item: dict[str, Any]) -> ModelSpec | None:
+        """运行时条目 → ModelSpec；env 镜像条目的内容字段以 .env 为新鲜值。
+
+        Task4 之后 runtime store 里 .env 来源条目带 ``source: "env"`` 镜像
+        标记。若按镜像快照整体重建，.env 后续编辑（换模型/换地址/换 key）
+        会被运行时旧副本遮蔽。因此对镜像条目：内容字段取 ``_base_specs``
+        （.env 注册表的最新解析视图）重建，仅 runtime 侧拥有的 priority 与
+        ``override_fields`` 里管理员明确改过的字段生效；.env 已删除的条目
+        不再被旧镜像复活。纯运行时条目（管理员 add 的自定义模型）整体
+        生效，行为不变。
+        """
+        if item.get("source") != _ENV_DERIVED_SOURCE:
+            return _spec_from_entry(model_id, item, self._credential_config)
+        base = self._base_specs.get(model_id)
+        if base is None:
+            return None
+        effective = dict(item)
+        effective.update(
+            {
+                "model": base.model,
+                "base_url": base.base_url,
+                # 密钥用 .env 解析结果重建（含多密钥列表）；运行时 store 里
+                # 本就不落明文 key，这里仅内存视图，绝不写回。
+                "api_key": list(base.api_keys) or base.api_key,
+                "tags": list(base.tags),
+                "aliases": list(base.aliases),
+                "group": base.routing_group,
+                "effort": base.effort,
+                "price_in": base.price_in,
+                "price_out": base.price_out,
+            }
+        )
+        for override_field in item.get("override_fields") or []:
+            if override_field == "priority" or override_field not in item:
+                continue
+            effective[override_field] = item[override_field]
+        return _spec_from_entry(model_id, effective, self._credential_config)
 
     def _default_provider(self, spec: ModelSpec) -> Any:
         return OpenAICompatibleLLMProvider(
@@ -708,13 +806,14 @@ class ModelRouter:
         return "text-only" not in {tag.lower() for tag in spec.tags}
 
     def channels_for_model(self, model_name: str) -> list[str]:
-        """按实际模型名聚合全部渠道（B-1 延迟择优）。
+        """按实际模型名聚合全部渠道（v2 动态切换：EWMA 延迟择优）。
 
-        延迟择优开启且健康库有数据：已实测渠道按 latency 升序在前
-        （同延迟按价格/优先级），未实测渠道保价格/优先级序垫底；
+        延迟择优开启且健康库有数据：已实测渠道按平滑延迟（EWMA）升序在前
+        （同 ema 按价格/优先级），未实测渠道保价格/优先级序垫底；
         关闭或健康层不可用：价格均值升序 → priority 升序（原行为）。
         作用域仅限同名模型聚合；``_auto_route_ids`` 全局候选队列保持
-        人工策展的 priority 顺序，不做延迟重排。
+        人工策展的 priority 顺序，不做延迟重排（默认模型永远是 Gemini，
+        用户裁定，不得被延迟排序推翻）。
         """
         name = (model_name or "").strip().lower()
         if not name:
@@ -725,14 +824,14 @@ class ModelRouter:
             if spec.model.lower() == name
             or any(alias.lower() == name for alias in spec.aliases)
         ]
-        latency_map = _health_latencies()
-        if latency_map is None:
+        ema_map = _health_ema_latencies(getattr(self, "_credential_config", None))
+        if ema_map is None:
             matched.sort(key=lambda spec: (_price_rank(spec), spec.priority))
             return [spec.model_id for spec in matched]
         measured = {
-            spec.model_id: latency_map[spec.model_id]
+            spec.model_id: ema_map[spec.model_id]
             for spec in matched
-            if spec.model_id in latency_map
+            if spec.model_id in ema_map
         }
         if not measured:
             matched.sort(key=lambda spec: (_price_rank(spec), spec.priority))
@@ -746,23 +845,341 @@ class ModelRouter:
         )
         return [spec.model_id for spec in matched]
 
+    # ==================== v2：自适应超时与影子并发 ====================
+
+    @staticmethod
+    def _resolve_effort(spec: ModelSpec, global_effort: str, complex_task: bool) -> str:
+        """思考强度：条目显式设置（含 off）> 全局 > 家族默认最高档。
+
+        复杂任务把来自全局/家族默认的档位升到家族最高档（串行/影子两路共用）。
+        """
+        if spec.effort:
+            return spec.effort
+        if global_effort:
+            family_default = default_effort(spec.model)
+            return family_default if complex_task and family_default else global_effort
+        return default_effort(spec.model)
+
+    @staticmethod
+    def _tighten_timeout(
+        model_id: str, base_timeout: float, ema_map: dict[str, int] | None
+    ) -> float:
+        """自适应超时：已知渠道 EWMA 时收紧为 min(原值, max(8s, ema*3))。
+
+        ema 未知（未实测/健康层关闭）→ 原值不动；挂死渠道快速失败转移。
+        """
+        if ema_map is None:
+            return base_timeout
+        ema_ms = ema_map.get(model_id)
+        if not ema_ms or ema_ms <= 0:
+            return base_timeout
+        return min(
+            base_timeout,
+            max(
+                _ADAPTIVE_TIMEOUT_FLOOR_S,
+                ema_ms * _ADAPTIVE_TIMEOUT_EMA_MULTIPLE / 1000.0,
+            ),
+        )
+
+    def _adaptive_timeout_enabled(self) -> bool:
+        """开关：config bot_channel_adaptive_timeout（缺省 True；无 ema 时天然空转）。"""
+        return bool(
+            getattr(
+                getattr(self, "_credential_config", None),
+                "bot_channel_adaptive_timeout",
+                True,
+            )
+        )
+
+    def _hedge_settings(self) -> tuple[int, float]:
+        """影子并发参数：(最多并发候选数(>=2), 首选未回时发起次候选的延迟秒)。
+
+        路由器未接 config（测试桩）时返回 (2, 6.0)——调用方仍须以
+        ``bot_chat_hedged_requests_enabled`` 显式开启才会走影子路径。
+        """
+        cfg = getattr(self, "_credential_config", None)
+        try:
+            max_candidates = int(getattr(cfg, "bot_chat_hedge_max_candidates", 2))
+        except (TypeError, ValueError):
+            max_candidates = 2
+        try:
+            delay = float(getattr(cfg, "bot_chat_hedge_delay_seconds", 6.0))
+        except (TypeError, ValueError):
+            delay = 6.0
+        return max(2, max_candidates), max(0.0, delay)
+
+    def _generate_hedged(
+        self,
+        messages: list[dict[str, str]],
+        candidate_ids: list[str],
+        *,
+        global_effort: str,
+        complex_task: bool,
+        base_options: dict[str, object],
+        failover_deadline: float | None,
+        hedge_delay: float,
+        adaptive_ema_map: dict[str, int] | None,
+    ) -> _HedgeOutcome:
+        """影子并发竞速：先到先得，失败者照常记账，全败落回正常转移。
+
+        候选① 立即在 worker 线程发起；``hedge_delay`` 秒仍未完成则发起
+        候选②；① 提前失败则不等 delay 立即转移次候选（快速失败语义与
+        串行路径一致）。任一成功即认领 winner 返回；落选 worker daemon 化
+        不阻塞返回，其健康记账在 worker 内完成（成功→ema 更新，失败→计
+        fail），数据不浪费。返回的 reply/error 尚未携带 attempts，由调用方
+        统一发布（D6：attempts 归调用私有）。
+        """
+        race = _HedgeRace()
+        launched = 0
+        launched_ids: list[str] = []
+
+        def _launch(model_id: str) -> None:
+            nonlocal launched
+            launched += 1
+            launched_ids.append(model_id)
+            threading.Thread(
+                target=self._hedge_attempt,
+                kwargs={
+                    "race": race,
+                    "model_id": model_id,
+                    "messages": messages,
+                    "global_effort": global_effort,
+                    "complex_task": complex_task,
+                    "base_options": base_options,
+                    "ema_map": adaptive_ema_map,
+                    "failover_deadline": failover_deadline,
+                },
+                name=f"hedged-request:{model_id}",
+                daemon=True,
+            ).start()
+
+        _launch(candidate_ids[0])
+        next_index = 1
+        # 次候选最迟发起时刻；① 提前失败时下一轮循环立即发起。
+        next_fire = time.monotonic() + hedge_delay
+        while True:
+            with race.cond:
+                if race.winner_reply is not None:
+                    break
+                if race.finished >= launched:
+                    if next_index < len(candidate_ids):
+                        _launch(candidate_ids[next_index])
+                        next_index += 1
+                        next_fire = time.monotonic() + hedge_delay
+                        continue
+                    break  # 影子候选全部失败 → 落回正常故障转移循环
+                now = time.monotonic()
+                budget_left = (
+                    failover_deadline - now if failover_deadline is not None else None
+                )
+                if budget_left is not None and budget_left <= 0:
+                    break  # 预算耗尽：正常循环接管（追加 failover:deadline 记号）
+                waits = []
+                if next_index < len(candidate_ids):
+                    waits.append(next_fire - now)
+                if budget_left is not None:
+                    waits.append(budget_left)
+                wait_for = min(waits) if waits else None
+                if wait_for is not None and wait_for <= 0:
+                    _launch(candidate_ids[next_index])
+                    next_index += 1
+                    next_fire = time.monotonic() + hedge_delay
+                    continue
+                race.cond.wait(wait_for)  # None = 等 worker 通知
+
+        marks: list[str] = []
+        with race.cond:
+            if race.winner_reply is not None:
+                marks.append(f"hedged:{race.winner_id}:winner")
+                # 全部已发起的非赢家（含仍在飞的落选线程，其健康记账由
+                # daemon 线程事后落地）都记 loser，主线程此刻统一发布。
+                marks.extend(
+                    f"hedged:{model_id}:loser"
+                    for model_id in launched_ids
+                    if model_id != race.winner_id
+                )
+                return _HedgeOutcome(reply=race.winner_reply, attempt_marks=marks)
+            # 影子全败/预算耗尽：终结性错误优先抛，否则按候选顺序取首个失败。
+            error = race.terminal_error
+            if error is None:
+                for model_id in candidate_ids:
+                    if model_id in race.failures:
+                        error = race.failures[model_id]
+                        break
+            marks.extend(f"hedged:{model_id}:loser" for model_id in launched_ids)
+        return _HedgeOutcome(error=error, attempt_marks=marks)
+
+    def _hedge_attempt(
+        self,
+        race: _HedgeRace,
+        model_id: str,
+        messages: list[dict[str, str]],
+        *,
+        global_effort: str,
+        complex_task: bool,
+        base_options: dict[str, object],
+        ema_map: dict[str, int] | None,
+        failover_deadline: float | None,
+    ) -> None:
+        """影子候选 worker：与串行路径同语义的单候选尝试（密钥序列+记账）。
+
+        线程安全说明：OpenAICompatibleLLMProvider 仅持有不可变配置与
+        urlopen，每次 generate 发起独立 HTTP 请求、无共享可变状态，并行
+        请求线程安全；ChannelHealthStore 自带锁。影子线程数天然
+        ≤ hedge_max_candidates（每次调用临时 daemon 线程，无需新池）。
+        本函数绝不触碰 self.last_attempts / attempts（主线程独占——D6：
+        主请求可能已带着诊断快照返回，worker 事后追加会与调用方串号）。
+        """
+        credential_config = getattr(self, "_credential_config", None)
+        spec = self._spec_for(model_id)
+        if spec is None:
+            self._hedge_record_failure(
+                race,
+                model_id,
+                LLMProviderError(
+                    f"unknown model id: {model_id}",
+                    error_kind="provider_not_configured",
+                ),
+            )
+            return
+        if not spec.all_api_keys():
+            self._hedge_record_failure(
+                race,
+                model_id,
+                LLMProviderError(
+                    f"model {model_id} api key is empty",
+                    error_kind="config_missing",
+                ),
+            )
+            return
+        effort = self._resolve_effort(spec, global_effort, complex_task)
+        api_keys = spec.all_api_keys()
+        for key_index, api_key in enumerate(api_keys):
+            options = dict(base_options)
+            if effort and effort != "off":
+                options["reasoning_effort"] = effort
+            else:
+                options.pop("reasoning_effort", None)
+            configured = base_options.get("timeout_seconds")
+            base_timeout = (
+                float(configured)
+                if isinstance(configured, (int, float)) and float(configured) > 0
+                else self.timeout_seconds
+            )
+            timeout_seconds = self._tighten_timeout(model_id, base_timeout, ema_map)
+            if failover_deadline is not None:
+                remaining = failover_deadline - time.monotonic()
+                if self.max_failover_seconds > 0:
+                    remaining = min(remaining, self.max_failover_seconds)
+                if remaining <= 0:
+                    error = LLMProviderError(
+                        f"model {model_id} failover deadline exceeded",
+                        error_kind="timeout",
+                    )
+                    break
+                timeout_seconds = min(timeout_seconds, remaining)
+            options["timeout_seconds"] = timeout_seconds
+            attempt_started = time.monotonic()
+            try:
+                provider = self.provider_for(model_id, api_key)
+                reply = provider.generate(messages, **options)
+            except LLMProviderError as exc:
+                if (
+                    exc.error_kind == "unsupported_parameter"
+                    and "reasoning_effort" in options
+                ):
+                    retry_options = dict(options)
+                    retry_options.pop("reasoning_effort", None)
+                    try:
+                        reply = provider.generate(messages, **retry_options)
+                    except LLMProviderError as retry_exc:
+                        exc = retry_exc
+                    else:
+                        _health_record_success(
+                            model_id,
+                            int((time.monotonic() - attempt_started) * 1000),
+                            credential_config,
+                        )
+                        self._hedge_settle(race, model_id, reply)
+                        return
+                error = exc
+                _health_record_failure(model_id, exc.error_kind, credential_config)
+                # 被拒密钥可用同模型下一把显式密钥顶替；绝不重试同一坏 key。
+                if exc.error_kind == "auth" and key_index + 1 < len(api_keys):
+                    continue
+                break
+            except Exception as exc:  # noqa: BLE001 - 工厂/供应商异常统一为可转移错误。
+                error = LLMProviderError(
+                    f"model {model_id} failed: {type(exc).__name__}",
+                    error_kind="provider_error",
+                )
+                _health_record_failure(model_id, "provider_error", credential_config)
+                break
+            _health_record_success(
+                model_id,
+                int((time.monotonic() - attempt_started) * 1000),
+                credential_config,
+            )
+            self._hedge_settle(race, model_id, reply)
+            return
+        if error is None:
+            error = LLMProviderError(
+                f"model {model_id} failed", error_kind="provider_error"
+            )
+        self._hedge_record_failure(race, model_id, error)
+
+    @staticmethod
+    def _hedge_record_failure(
+        race: _HedgeRace, model_id: str, error: LLMProviderError
+    ) -> None:
+        with race.cond:
+            race.failures[model_id] = error
+            if not should_failover(error.error_kind):
+                race.terminal_error = error
+            race.finished += 1
+            race.cond.notify_all()
+
+    @staticmethod
+    def _hedge_settle(race: _HedgeRace, model_id: str, reply: object) -> None:
+        """worker 完成（成功）：先到者认领 winner，后到者记为落选者。"""
+        with race.cond:
+            if race.winner_reply is None:
+                race.winner_id = model_id
+                race.winner_reply = reply
+            else:
+                race.losers.append(model_id)
+            race.finished += 1
+            race.cond.notify_all()
+
     def route_ids(self, *, message_text: str, override: str) -> list[str]:
         """返回按优先级排列的候选模型 id 列表。
 
         override 既可以是注册条目 id，也可以是实际模型名（如
         ``gemini-3.8-flash-high``）：后者自动聚合该模型的全部渠道，
         按价格/优先级排序走故障转移。
+
+        解析顺序（修 D2：旧实现以 ``_spec_for(override) is None`` 为聚合
+        前置，但 _spec_for 对未知 id 恒合成 fallback spec，聚合分支生产
+        不可达）：注册条目 id 精确命中 → 单渠道路由；未命中但能按模型名/
+        别名聚合出 ≥1 渠道 → channels_for_model 聚合；再未命中才按完整
+        模型名合成 fallback spec（旧版「直接给模型名」兼容）。
         """
         override = (override or "").strip()
         if override and override != _AUTO:
-            if self._spec_for(override) is None:
-                channels = self.channels_for_model(override)
-                if channels:
-                    return [*channels, *self._auto_route_ids(message_text, exclude=channels[0])]
-            # 管理员给了无法解析的 id：退回自动路由。
-            if self._spec_for(override) is None:
-                return self._auto_route_ids(message_text)
-            return [override, *self._auto_route_ids(message_text, exclude=override)]
+            if override in self.specs or (
+                self._fallback_spec is not None
+                and override == self._fallback_spec.model_id
+            ):
+                # 管理员给的注册条目 id：单渠道优先，失败按序转移。
+                return [override, *self._auto_route_ids(message_text, exclude=override)]
+            channels = self.channels_for_model(override)
+            if channels:
+                return [*channels, *self._auto_route_ids(message_text, exclude=channels[0])]
+            if self._fallback_spec is not None:
+                # 完全未知的 id：当作完整模型名走主配置的接口/密钥（旧版兼容）。
+                return [override, *self._auto_route_ids(message_text, exclude=override)]
+            # 无兜底配置：退回自动路由。
+            return self._auto_route_ids(message_text)
         return self._auto_route_ids(message_text)
 
     def _active_group_order(self, *, now: datetime | None = None) -> tuple[str, list[str]]:
@@ -834,7 +1251,7 @@ class ModelRouter:
             message_text=effective_text,
             override=override,
         )
-        candidate_ids = _health_filter_candidates(candidate_ids)
+        candidate_ids = _health_filter_candidates(candidate_ids, self._credential_config)
         if require_vision:
             candidate_ids = [
                 model_id
@@ -850,7 +1267,10 @@ class ModelRouter:
             candidate_limit = max(0, int(fast_max_candidates))
             if candidate_limit > 0:
                 candidate_ids = candidate_ids[:candidate_limit]
-        self.last_attempts = []
+        # 修 D6：attempts 归本次调用私有，只在出口整体发布到
+        # self.last_attempts（诊断快照）；审计消费点改读
+        # reply.attempts / exc.attempts，并发调用不再互相清空/串号。
+        attempts: list[str] = []
         last_error: LLMProviderError | None = None
         # 故障转移窗口 = 自身配置预算与外部请求 deadline（请求级总预算）中更早者。
         failover_deadline: float | None = None
@@ -864,6 +1284,54 @@ class ModelRouter:
                     if failover_deadline is not None
                     else external_deadline
                 )
+        # v2 无损无感切换：影子并发（hedged request）。作用域约束（用户裁定）：
+        # auto-route 全局队列仍按策展 priority（默认模型永远 Gemini），
+        # 影子并发只影响健康过滤后候选队列内的转移时序。
+        hedge_max_candidates, hedge_delay = self._hedge_settings()
+        hedged = (
+            bool(
+                getattr(
+                    getattr(self, "_credential_config", None),
+                    "bot_chat_hedged_requests_enabled",
+                    False,
+                )
+            )
+            and not fast_mode
+            and len(candidate_ids) >= 2
+            and hedge_max_candidates >= 2
+        )
+        # 自适应超时的 ema 表每次调用只读一次（健康层关闭时为 None=空转）。
+        adaptive_ema_map = (
+            _health_ema_latencies(getattr(self, "_credential_config", None))
+            if self._adaptive_timeout_enabled()
+            else None
+        )
+        if hedged:
+            hedge_count = min(hedge_max_candidates, len(candidate_ids))
+            outcome = self._generate_hedged(
+                messages,
+                candidate_ids[:hedge_count],
+                global_effort=global_effort,
+                complex_task=complex_task,
+                base_options=dict(kwargs),
+                failover_deadline=failover_deadline,
+                hedge_delay=hedge_delay,
+                adaptive_ema_map=adaptive_ema_map,
+            )
+            attempts.extend(outcome.attempt_marks)
+            if outcome.reply is not None:
+                outcome.reply.attempts = list(attempts)
+                self.last_attempts = attempts
+                return outcome.reply
+            remaining_candidates = candidate_ids[hedge_count:]
+            if outcome.error is not None:
+                last_error = outcome.error
+            elif not remaining_candidates:
+                # 预算耗尽且影子尚无结果可抛，又没有剩余候选转移：
+                # 补 failover:deadline 记号（有剩余候选时由正常循环补，避免重复）。
+                attempts.append("failover:deadline")
+            # 影子候选全部失败 → 剩余候选继续走下方正常故障转移循环。
+            candidate_ids = remaining_candidates
         for model_id in candidate_ids:
             remaining = (
                 failover_deadline - time.monotonic()
@@ -871,7 +1339,8 @@ class ModelRouter:
                 else 0.0
             )
             if failover_deadline is not None and remaining <= 0:
-                self.last_attempts.append("failover:deadline")
+                attempts.append("failover:deadline")
+                self.last_attempts = attempts
                 break
             spec = self._spec_for(model_id)
             if spec is None:
@@ -883,43 +1352,42 @@ class ModelRouter:
                     f"model {model_id} api key is empty",
                     error_kind="config_missing",
                 )
-                self.last_attempts.append(f"{model_id}:config_missing")
+                attempts.append(f"{model_id}:config_missing")
                 continue
             for key_index, api_key in enumerate(api_keys):
                 attempt_options = dict(kwargs)
                 # 思考强度：条目显式设置（含 off）> 全局 > 家族默认最高档；
-                # 复杂任务把来自全局/家族默认的档位升到家族最高档。
-                if spec.effort:
-                    effort = spec.effort
-                elif global_effort:
-                    family_default = default_effort(spec.model)
-                    effort = (
-                        family_default
-                        if complex_task and family_default
-                        else global_effort
-                    )
-                else:
-                    effort = default_effort(spec.model)
+                # 复杂任务把来自全局/家族默认的档位升到家族最高档
+                # （与影子并发 worker 共用同一解析）。
+                effort = self._resolve_effort(spec, global_effort, complex_task)
                 if effort and effort != "off":
                     attempt_options["reasoning_effort"] = effort
                 else:
                     attempt_options.pop("reasoning_effort", None)
+                # 自适应超时（v2）：已知渠道 EWMA 时收紧单次尝试预算
+                # （min(原值, max(8s, ema*3))），再与剩余 failover 预算取小。
+                configured_timeout = attempt_options.get("timeout_seconds")
+                base_timeout = (
+                    float(configured_timeout)
+                    if isinstance(configured_timeout, (int, float))
+                    and float(configured_timeout) > 0
+                    else self.timeout_seconds
+                )
+                timeout_seconds = self._tighten_timeout(
+                    model_id, base_timeout, adaptive_ema_map
+                )
                 if failover_deadline is not None:
                     remaining = failover_deadline - time.monotonic()
                     # 绝对时钟相减存在 ulp 级舍入，钳回配置窗口上限，保证不超预算。
                     if self.max_failover_seconds > 0:
                         remaining = min(remaining, self.max_failover_seconds)
                     if remaining <= 0:
-                        self.last_attempts.append("failover:deadline")
+                        attempts.append("failover:deadline")
+                        self.last_attempts = attempts
                         break
-                    configured_timeout = attempt_options.get("timeout_seconds")
-                    attempt_options["timeout_seconds"] = min(
-                        float(configured_timeout)
-                        if isinstance(configured_timeout, (int, float))
-                        and float(configured_timeout) > 0
-                        else self.timeout_seconds,
-                        remaining,
-                    )
+                    timeout_seconds = min(timeout_seconds, remaining)
+                if failover_deadline is not None or timeout_seconds != base_timeout:
+                    attempt_options["timeout_seconds"] = timeout_seconds
                 attempt_started = time.monotonic()
                 try:
                     provider = self.provider_for(model_id, api_key)
@@ -936,18 +1404,22 @@ class ModelRouter:
                         except LLMProviderError as retry_exc:
                             exc = retry_exc
                         else:
-                            self.last_attempts.append(
+                            attempts.append(
                                 f"{model_id}:success_without_reasoning"
                             )
+                            reply.attempts = list(attempts)
+                            self.last_attempts = attempts
                             return reply
                     last_error = exc
-                    self.last_attempts.append(f"{model_id}:{exc.error_kind}")
-                    _health_record_failure(model_id, exc.error_kind)
+                    attempts.append(f"{model_id}:{exc.error_kind}")
+                    _health_record_failure(model_id, exc.error_kind, self._credential_config)
                     # A rejected key may be replaced by another explicitly configured
                     # credential for the same model. Never retry the same bad key.
                     if exc.error_kind == "auth" and key_index + 1 < len(api_keys):
                         continue
                     if not should_failover(exc.error_kind):
+                        exc.attempts = list(attempts)
+                        self.last_attempts = attempts
                         raise
                     continue
                 except Exception as exc:  # noqa: BLE001 - factory/供应商异常统一为可转移错误。
@@ -955,17 +1427,27 @@ class ModelRouter:
                         f"model {model_id} failed: {type(exc).__name__}",
                         error_kind="provider_error",
                     )
-                    self.last_attempts.append(f"{model_id}:provider_error")
+                    attempts.append(f"{model_id}:provider_error")
                     continue
-                self.last_attempts.append(f"{model_id}:success")
-                _health_record_success(model_id, int((time.monotonic() - attempt_started) * 1000))
+                attempts.append(f"{model_id}:success")
+                _health_record_success(
+                    model_id,
+                    int((time.monotonic() - attempt_started) * 1000),
+                    self._credential_config,
+                )
+                reply.attempts = list(attempts)
+                self.last_attempts = attempts
                 return reply
+        self.last_attempts = attempts
         if last_error is not None:
+            last_error.attempts = list(attempts)
             raise last_error
-        raise LLMProviderError(
+        no_model_error = LLMProviderError(
             "no model available",
             error_kind="provider_not_configured",
         )
+        no_model_error.attempts = list(attempts)
+        raise no_model_error
 
 
 def build_model_router(

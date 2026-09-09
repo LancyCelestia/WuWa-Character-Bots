@@ -284,6 +284,18 @@ class Config(BaseModel):
     bot_channel_probe_threads: int = 3            # background 巡检并发
     bot_channel_probe_manual_threads: int = 8     # 手动 /bot model probe 并发
     bot_channel_probe_jitter_seconds: float = 0.4 # background 提交错峰间隔
+    # 慢渠道识别（v2 动态检测）：平滑延迟（EWMA）超过该阈值（毫秒）时，
+    # 巡检报告对该渠道的「快/正常」评级改标「偏慢」。
+    bot_channel_slow_ema_ms: int = 15000
+    # 自适应超时（v2 无损切换）：已知渠道 EWMA 时，单次尝试超时收紧为
+    # min(原值, max(8s, ema*3))，挂死渠道快速失败转移，不再烧满超时窗口。
+    bot_channel_adaptive_timeout: bool = True
+    # 影子并发（hedged request，v2 无损无感切换）：健康过滤后候选 ≥2 且非
+    # fast_mode 时，首候选发出 hedge_delay 秒仍未回则并发发起次候选，
+    # 先到先得；落选请求仍会飞完并正常计费 token（成本换尾延迟）。
+    bot_chat_hedged_requests_enabled: bool = True
+    bot_chat_hedge_delay_seconds: float = 6.0
+    bot_chat_hedge_max_candidates: int = 2
     bot_music_default_mode: str = "card+voice+link"
     bot_music_candidates_enabled: bool = False
     bot_music_candidates_ttl_seconds: float = 300.0
