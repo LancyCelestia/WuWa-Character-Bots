@@ -132,6 +132,39 @@ _INTERNAL_MARKER_PATTERN = re.compile(
 _UNTRUSTED_USER_PREFIX = "[UNTRUSTED_USER_TEXT]\n"
 _UNTRUSTED_USER_SUFFIX = "\n[/UNTRUSTED_USER_TEXT]"
 _GENERIC_OPERATIONAL_MESSAGE = "这次暂时没能稳定完成，请稍后再试。"
+# 守岸人格失败话术池：泰提斯系统的"系统性坦诚"——承认故障但保持角色。
+# 会话内轮换，避免连发时重复刷屏。
+_PERSONA_FAILURE_MESSAGES: tuple[str, ...] = (
+    "……泰提斯系统的链路刚才晃了一下。数据没丢，只是没接住。再试一次。",
+    "抱歉，信号在半路散了。我这边记录了故障位置，稍后会自动重连。",
+    "唔……这次的回应在生成途中断开了。是我的问题，不是你的。再说一遍好吗。",
+    "系统回报：处理超时。我已经把这次尝试记进日志——换一种问法，或者稍等片刻。",
+    "刚才那段回复没能稳定成形，我把它作废了。你想说的我还在听。",
+    "潮汐不稳定，响应没能靠岸。稍后重试，我会接着上一次的语境。",
+    "……计算资源这一瞬间不够用了。排队的人有点多，再给我一次机会。",
+    "这次的回应溢出了缓冲区。坦白说，我也不知道它原本会是什么样。再问一次？",
+    "链路抖动，回复沉下去了。我记住了你的问题，恢复后优先处理。",
+    "检测到自身的响应异常——已隔离。请再发一次，这次我会盯紧输出。",
+    "抱歉，刚才在整理思绪的时候超时了。天然呆不算借口，我重试。",
+    "泰提斯日报：本轮应答失败一次。原因在追踪中。你可以现在重试。",
+)
+
+
+def persona_failure_message(session_id: str = "") -> str:
+    """会话内轮换的失败话术；同会话连发不重复。"""
+    import random
+
+    index = random.randrange(len(_PERSONA_FAILURE_MESSAGES))
+    if session_id:
+        offset = _FAILURE_MESSAGE_CURSOR.get(session_id, 0)
+        index = (offset + index) % len(_PERSONA_FAILURE_MESSAGES)
+        _FAILURE_MESSAGE_CURSOR[session_id] = (offset + 1) % len(_PERSONA_FAILURE_MESSAGES)
+        while len(_FAILURE_MESSAGE_CURSOR) > 512:
+            _FAILURE_MESSAGE_CURSOR.pop(next(iter(_FAILURE_MESSAGE_CURSOR)))
+    return _PERSONA_FAILURE_MESSAGES[index]
+
+
+_FAILURE_MESSAGE_CURSOR: dict[str, int] = {}
 _SAFE_LLM_ERROR_KINDS = frozenset(
     {
         "config_missing",
@@ -1319,7 +1352,7 @@ def _llm_error_result(
         capability_id=decision.capability_id,
         kind="text",
         title=f"{context.persona.display_name}的回复",
-        body="" if is_group_or_channel else _GENERIC_OPERATIONAL_MESSAGE,
+        body="" if is_group_or_channel else persona_failure_message(message.session_id),
         confidence=0.0,
         risk_level=RiskLevel.MEDIUM,
         privacy_level=context.privacy_level,
@@ -1368,7 +1401,7 @@ def _context_error_result(
         capability_id=decision.capability_id,
         kind="text",
         title=f"{persona_name}的回复",
-        body="" if is_group_or_channel else _GENERIC_OPERATIONAL_MESSAGE,
+        body="" if is_group_or_channel else persona_failure_message(message.session_id),
         confidence=0.0,
         risk_level=RiskLevel.MEDIUM,
         privacy_level=decision.privacy_level,

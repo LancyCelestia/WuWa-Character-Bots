@@ -314,8 +314,17 @@ def probe_all(config: Any, specs: dict[str, Any], store: ChannelHealthStore) -> 
         ok, latency, err = probe_entry(spec, proxy=proxy, timeout_seconds=timeout)
         return model_id, ok, latency, err
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        for model_id, ok, latency, err in pool.map(_one, list(specs.items())):
+    # 限流保护：共享 key 的渠道多家共用，高并发探针会触发上游限流，
+    # 殃及紧随其后的真实聊天（21:30 巡检后聊天全失败的教训）。
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        pending = list(specs.items())
+        results_stream = []
+        for index, item in enumerate(pending):
+            if index:
+                time.sleep(0.4)
+            results_stream.append(pool.submit(_one, item))
+        for future in results_stream:
+            model_id, ok, latency, err = future.result()
             if ok:
                 store.record_success(model_id, latency)
             else:

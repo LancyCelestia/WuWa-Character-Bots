@@ -388,7 +388,33 @@ def _handle_model_command(
             ordered = sorted(
                 merged.items(), key=lambda kv: (int(kv[1]["priority"]), kv[0])
             )
+            # 按模型族分区展示：同族连续，换族时插分隔行，避免 34 条平铺刷屏。
+            def _family(entry: dict[str, Any]) -> str:
+                model = str(entry.get("model", "")).lower()
+                if "deepseek" in model:
+                    return "DeepSeek 系"
+                if "glm" in model:
+                    return "GLM 系"
+                if "gemini" in model:
+                    return "Gemini 系"
+                if "grok" in model:
+                    return "Grok 系"
+                if "gpt" in model or "astra" in model or "luna" in model or "sol" in model or "terra" in model:
+                    return "GPT 系"
+                if "kimi" in model:
+                    return "Kimi"
+                if "minimax" in model:
+                    return "MiniMax"
+                return "其他"
+
+            prev_family = ""
             for order, (model_id, entry) in enumerate(ordered, start=1):
+                family = _family(entry)
+                if family != prev_family:
+                    if prev_family:
+                        lines.append("")
+                    lines.append(f"──── {family} ────")
+                    prev_family = family
                 tags = entry["tags"]
                 tag_text = (
                     ",".join(tags) if isinstance(tags, (list, tuple)) else str(tags)

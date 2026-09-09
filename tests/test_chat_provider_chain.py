@@ -77,7 +77,8 @@ def test_chat_failure_keeps_fallback_but_exposes_sanitized_route_attempt_tags() 
         model_router=FailingRouter(),
     )
 
-    assert result.body == "这次暂时没能稳定完成，请稍后再试。"
+    from plugins.bot_unified_runtime.capabilities.chat import _PERSONA_FAILURE_MESSAGES
+    assert result.body in _PERSONA_FAILURE_MESSAGES
     assert result.operational_issue is not None
     assert result.operational_issue.stage == "llm"
     assert result.operational_issue.kind == "server"
