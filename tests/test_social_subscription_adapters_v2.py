@@ -72,6 +72,57 @@ def test_telegram_rejects_private_invite_link() -> None:
         )
 
 
+def test_youtube_handle_resolves_to_real_channel_id(monkeypatch) -> None:
+    from plugins.bot_unified_runtime.sources.subscriptions import social_v2
+
+    def fake_get_text(url: str, **kwargs):
+        assert url == "https://www.youtube.com/@3blue1brown"
+        assert kwargs.get("proxy") == "" and kwargs.get("timeout") == 10.0
+        return url, '<script>"externalId":"UCabc123_-"</script>'
+
+    monkeypatch.setattr(social_v2, "http_get_text", fake_get_text)
+    target = asyncio.run(
+        YouTubeSubscriptionAdapterV2().resolve_target(
+            "https://www.youtube.com/@3blue1brown", {}
+        )
+    )
+    assert target.target_kind == "channel"
+    assert target.target_key == "UCabc123_-"
+
+
+def test_youtube_handle_channel_path_pattern_fallback_in_body(monkeypatch) -> None:
+    from plugins.bot_unified_runtime.sources.subscriptions import social_v2
+
+    monkeypatch.setattr(
+        social_v2,
+        "http_get_text",
+        lambda url, **kwargs: (url, '<a href="/channel/UCxyz456">c</a>'),
+    )
+    target = asyncio.run(
+        YouTubeSubscriptionAdapterV2().resolve_target(
+            "https://www.youtube.com/@foo", {}
+        )
+    )
+    assert target.target_kind == "channel"
+    assert target.target_key == "UCxyz456"
+
+
+def test_youtube_handle_resolution_failure_falls_back_to_handle(monkeypatch) -> None:
+    from plugins.bot_unified_runtime.sources.subscriptions import social_v2
+
+    def boom(url: str, **kwargs):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(social_v2, "http_get_text", boom)
+    target = asyncio.run(
+        YouTubeSubscriptionAdapterV2().resolve_target(
+            "https://www.youtube.com/@3blue1brown", {}
+        )
+    )
+    assert target.target_kind == "channel"
+    assert target.target_key == "3blue1brown"
+
+
 def test_adapter_client_failure_returns_structured_result() -> None:
     target = SubscriptionTarget(
         id="twitter:creator:alice",

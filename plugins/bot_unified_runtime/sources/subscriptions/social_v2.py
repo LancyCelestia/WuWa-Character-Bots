@@ -670,8 +670,34 @@ class YouTubeSubscriptionAdapterV2(_BaseAdapter):
             return _target(self.platform, "playlist", match.group(1), raw)
         match = re.search(r"youtube\.com/@([0-9A-Za-z_.-]+)", raw)
         if match:
-            return _target(self.platform, "channel", match.group(1), raw)
+            handle = match.group(1)
+            # @handle 不是频道 id：先解析成真实 UC id 再走 channel target；
+            # 解析失败回退现行为（key=handle），不抛异常、不阻塞订阅添加。
+            channel_id = self._resolve_handle_channel_id(handle, ctx)
+            return _target(self.platform, "channel", channel_id or handle, raw)
         raise ValueError("无法识别的 YouTube 频道或播放列表")
+
+    @staticmethod
+    def _resolve_handle_channel_id(handle: str, ctx: dict[str, Any]) -> str:
+        """抓取 @handle 页面正文，解析真实 UC 频道 id；失败返回空串。"""
+        try:
+            _final_url, body = http_get_text(
+                f"https://www.youtube.com/@{handle}",
+                timeout=float((ctx or {}).get("timeout_seconds", 10.0) or 10.0),
+                cookie=str((ctx or {}).get("cookie_header", "") or ""),
+                proxy=str((ctx or {}).get("proxy", "") or ""),
+            )
+        except Exception:  # noqa: BLE001 - 网络异常按解析失败处理，走 handle 回退。
+            return ""
+        if not body:
+            return ""
+        match = re.search(r'"externalId":"(UC[0-9A-Za-z_-]+)"', body)
+        if match:
+            return match.group(1)
+        match = re.search(r"channel/(UC[0-9A-Za-z_-]+)", body)
+        if match:
+            return match.group(1)
+        return ""
 
     def _target_url(self, target: SubscriptionTarget) -> str:
         if target.target_kind == "channel":

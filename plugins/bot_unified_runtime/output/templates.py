@@ -15,6 +15,9 @@ from plugins.bot_unified_runtime.output.card_render.bridge import (
     parse_to_render_payload as _parse_to_render_payload,
 )
 from plugins.bot_unified_runtime.output.card_render.bridge import (
+    render_song_candidates_html as _render_song_candidates_html,
+)
+from plugins.bot_unified_runtime.output.card_render.bridge import (
     render_universal_card_html as _render_universal_card_html,
 )
 
@@ -143,3 +146,8 @@ def card_payload_from_parse(item: Any) -> dict[str, Any]:
 def render_universal_card_html(payload: dict[str, Any]) -> str:
     """渲染通用卡片 HTML（card_render.bridge 的转发入口）。"""
     return _render_universal_card_html(payload)
+
+
+def render_song_candidates_html(payload: dict[str, Any]) -> str:
+    """渲染点歌候选选择卡 HTML（card_render.bridge 的转发入口）。"""
+    return _render_song_candidates_html(payload)

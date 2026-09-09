@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1028, initial-scale=1.0">
+<style>
+/* ===== 点歌候选选择卡（Mica 规范）=====
+   颜色唯一来源：--pc（平台标志色，由 bridge 派生注入），
+   全部底色/边框/高光经 color-mix 掺白派生，禁止写死品牌色。
+   阴影只允许一枚柔和外阴影（--shadow-card）。 */
+:root {
+    --pc: {{ platform_color }};
+    --pc-dark: {{ platform_color_dark }};
+    --pc-light: {{ platform_color_light }};
+    --pc-rgb: {{ platform_color_rgb }};
+    --r-shell: 30px;
+    --r-panel: 18px;
+    --r-tile: 14px;
+    --shadow-card: 0 12px 32px rgba(var(--pc-rgb), 0.12), 0 3px 10px rgba(0, 0, 0, 0.05);
+    --font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: var(--font-family);
+    /* 渲染后端只截 .card 根元素，外部保持透明。 */
+    background: transparent;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+/* 透明留白承载柔光阴影（元素截图范围=24px padding 内）。 */
+.card {
+    width: auto;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 24px;
+}
+
+.panel {
+    width: 980px;
+    background: color-mix(in srgb, var(--pc) 5%, #ffffff);
+    border: 1px solid color-mix(in srgb, var(--pc) 14%, #e4e6eb);
+    border-radius: var(--r-shell);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+}
+
+/* ===== 头部 ===== */
+.head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 22px 26px 16px;
+    background: linear-gradient(180deg,
+        color-mix(in srgb, var(--pc) 8%, #ffffff) 0%,
+        color-mix(in srgb, var(--pc) 4%, #ffffff) 100%);
+    border-bottom: 1px solid color-mix(in srgb, var(--pc) 10%, #e4e6eb);
+}
+.head-left { flex: 1; min-width: 0; }
+.title {
+    font-size: 20px;
+    font-weight: 700;
+    color: #232a33;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sub {
+    margin-top: 5px;
+    font-size: 12px;
+    color: #66727f;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ttl {
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--pc-dark);
+    background: color-mix(in srgb, var(--pc) 14%, #ffffff);
+    border: 1px solid color-mix(in srgb, var(--pc) 20%, #ffffff);
+    padding: 4px 12px;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+/* ===== 候选行 ===== */
+.list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 16px 18px 6px;
+}
+.row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 16px;
+    border-radius: var(--r-tile);
+    background: color-mix(in srgb, var(--pc) 6%, #ffffff);
+    border: 1px solid color-mix(in srgb, var(--pc) 10%, #e4e6eb);
+}
+.num {
+    flex-shrink: 0;
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--pc-dark);
+    background: color-mix(in srgb, var(--pc) 12%, #ffffff);
+    border: 1px solid color-mix(in srgb, var(--pc) 16%, #ffffff);
+}
+/* 前 3 名：同色系加重的 Top 视觉。 */
+.row.top .num {
+    color: #ffffff;
+    background: var(--pc);
+    border: 1px solid var(--pc-dark);
+}
+.top-chip {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--pc-dark);
+    background: color-mix(in srgb, var(--pc) 14%, #ffffff);
+    border: 1px solid color-mix(in srgb, var(--pc) 22%, #ffffff);
+    padding: 2px 9px;
+    border-radius: 999px;
+}
+.info { flex: 1; min-width: 0; }
+.name {
+    font-size: 15px;
+    font-weight: 700;
+    color: #232a33;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.meta {
+    margin-top: 3px;
+    font-size: 12px;
+    color: #66727f;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ===== 页脚 ===== */
+.foot {
+    margin: 12px 18px 18px;
+    padding-top: 10px;
+    border-top: 1px dashed color-mix(in srgb, var(--pc) 12%, #e4e6eb);
+    font-size: 12px;
+    color: #7a8699;
+    text-align: center;
+}
+</style>
+</head>
+<body>
+<div class="card"><div class="panel">
+    <div class="head">
+        <div class="head-left">
+            <div class="title">找到 {{ candidates | length }} 首「{{ query }}」相关歌曲</div>
+            {% if platform_name %}<div class="sub">{{ platform_name }}</div>{% endif %}
+        </div>
+        <div class="ttl">{{ ttl_seconds }}s 内有效</div>
+    </div>
+    <div class="list">
+        {% for cand in candidates %}
+        <div class="row{{ ' top' if cand.is_top else '' }}">
+            <div class="num">{{ cand.index_label }}</div>
+            {% if cand.is_top %}<span class="top-chip">Top</span>{% endif %}
+            <div class="info">
+                <div class="name">{{ cand.name }}</div>
+                {% set meta_parts = [] %}
+                {% if cand.artist %}{% set _ = meta_parts.append(cand.artist) %}{% endif %}
+                {% if cand.album %}{% set _ = meta_parts.append(cand.album) %}{% endif %}
+                <div class="meta">{{ meta_parts | join(' · ') if meta_parts else '未知歌手' }}</div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    <div class="foot">回复编号直接点，如「点歌 2」</div>
+</div></div>
+</body>
+</html>

@@ -546,6 +546,85 @@ def build_music_capability(
             ],
         )
 
+    def _render_candidates_card(
+        message: IncomingMessage,
+        query: str,
+        parser_id: str,
+        platform_name: str,
+        cands: list[dict[str, str]],
+    ) -> CapabilityResult | None:
+        """多候选渲染成 Mica 候选选择卡 PNG；任一步失败返回 None 回退纯文本。"""
+        if render_backend is None or not getattr(render_backend, "available", False):
+            return None
+        try:
+            from plugins.bot_unified_runtime.output.templates import (
+                render_song_candidates_html,
+            )
+
+            payload = {
+                "query": query,
+                "platform": parser_id,
+                "platform_name": platform_name,
+                "ttl_seconds": int(candidates_ttl),
+                "candidates": [
+                    {
+                        "index": index,
+                        "name": str(cand.get("name", "") or ""),
+                        "artist": str(cand.get("artist", "") or ""),
+                        "album": str(cand.get("album", "") or ""),
+                    }
+                    for index, cand in enumerate(cands, start=1)
+                ],
+            }
+            html_text = render_song_candidates_html(payload)
+            png = render_backend.render_card(
+                {
+                    "html": html_text,
+                    "viewport": {"width": 1000, "height": 900},
+                    "device_scale_factor": 2,
+                    # 无远程图：等 300ms 即可元素截图。
+                    "wait_ms": 300,
+                }
+            )
+            if not png:
+                return None
+            card_dir = Path(
+                str(
+                    getattr(config, "bot_card_render_dir", "data/cards")
+                    or "data/cards"
+                )
+            )
+            card_dir.mkdir(parents=True, exist_ok=True)
+            ids = "".join(
+                str(cand.get("provider_track_id") or cand.get("name") or "")
+                for cand in cands
+            )
+            digest = hashlib.sha1(f"{query}{ids}".encode()).hexdigest()[:12]
+            path = card_dir / f"music_candidates_{digest}.png"
+            path.write_bytes(png)
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.music",
+                kind="mixed",
+                body=(
+                    f"为「{query}」找到 {len(cands)} 个候选（见图），"
+                    f"回复编号直接点，{int(candidates_ttl)} 秒内有效。"
+                ),
+                images=[{"file": str(path)}],
+                risk_level=RiskLevel.LOW,
+                privacy_level=PrivacyLevel.PUBLIC,
+                audit_tags=[
+                    "music_request",
+                    f"music_source:{parser_id}",
+                    f"music_mode:{mode}",
+                    f"query:{query[:20]}",
+                    "music_candidates",
+                    "music_candidates_card",
+                ],
+            )
+        except Exception:  # noqa: BLE001 - 渲染失败回退纯文本编号列表，零回归。
+            return None
+
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         try:
             query = extract_music_query(message.plain_text)
@@ -597,17 +676,24 @@ def build_music_capability(
                     if cand.get("name", "").strip() == query.strip()
                 ]
                 if len(cands) >= 2 and not exact_hits:
-                    lines = [
-                        f"{index}. {cand['name']}"
-                        + (f" - {cand['artist']}" if cand.get("artist") else "")
-                        for index, cand in enumerate(cands, start=1)
-                    ]
                     _CANDIDATE_SESSIONS[session_key] = (
                         now() + candidates_ttl,
                         parser_id,
                         cands,
                     )
                     _prune_candidate_sessions(now())
+                    # 渲染可用时改发 Mica 候选选择卡；任一步失败逐字回退
+                    # 现有纯文本编号列表（audit_tags 不加 card 标签）。
+                    card = _render_candidates_card(
+                        message, query, parser_id, display_name, cands
+                    )
+                    if card is not None:
+                        return card
+                    lines = [
+                        f"{index}. {cand['name']}"
+                        + (f" - {cand['artist']}" if cand.get("artist") else "")
+                        for index, cand in enumerate(cands, start=1)
+                    ]
                     return CapabilityResult(
                         request_id=message.request_id,
                         capability_id="bot.music",
