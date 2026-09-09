@@ -279,6 +279,11 @@ class Config(BaseModel):
     bot_eat_enabled: bool = True
     bot_channel_health_enabled: bool = True
     bot_channel_health_interval_seconds: float = 3600.0
+    # 巡检并发/错峰参数（B-2）：background 巡检并发、手动 probe 并发、
+    # background 提交错峰间隔；钳位线程 1..16、jitter 0..5.0。
+    bot_channel_probe_threads: int = 3            # background 巡检并发
+    bot_channel_probe_manual_threads: int = 8     # 手动 /bot model probe 并发
+    bot_channel_probe_jitter_seconds: float = 0.4 # background 提交错峰间隔
     bot_music_default_mode: str = "card+voice+link"
     bot_music_candidates_enabled: bool = False
     bot_music_candidates_ttl_seconds: float = 300.0
