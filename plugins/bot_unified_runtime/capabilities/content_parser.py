@@ -376,6 +376,9 @@ def render_card_png(
                 "viewport": {"width": 1504, "height": 1000},
                 "device_scale_factor": 2,
                 "scale_factor": ui_scale,
+                # 封面清晰度：给远程大图解码留足时间（此前 1500ms 经常截在
+                # 低分辨率占位帧上，出图发糊）。
+                "wait_ms": 3000,
             }
         else:
             payload = card_payload_from_parse(item)
@@ -408,7 +411,10 @@ def render_card_png(
             from PIL import Image
 
             image = Image.open(_io.BytesIO(png))
-            bbox = image.getbbox()
+            # alpha 阈值裁剪：柔光阴影的半透明像素（alpha<12）不算内容，
+            # 避免导出图带大片几乎不可见的空白边。
+            alpha = image.getchannel("A")
+            bbox = alpha.point(lambda v: 255 if v >= 12 else 0).getbbox()
             if bbox:
                 pad = 8
                 box = (

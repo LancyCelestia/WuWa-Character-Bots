@@ -102,14 +102,14 @@ def test_timeout_for_takes_minimum() -> None:
     assert budget.timeout_for(None) == pytest.approx(budget.remaining_seconds())
 
 
-def test_apply_request_deadline_caps_and_raises() -> None:
+def test_apply_request_deadline_caps_and_falls_back() -> None:
     future = time.monotonic() + 2.0
     assert apply_request_deadline(60.0, future) <= 2.0
     assert apply_request_deadline(1.0, future) == 1.0
     assert apply_request_deadline(5.0, None) == 5.0
     assert apply_request_deadline(5.0, 0) == 5.0
-    with pytest.raises(DeadlineExceeded):
-        apply_request_deadline(1.0, time.monotonic() - 1.0)
+    # 预算耗尽不再抛异常：回复已生成，发送是最后一段里程，给足传输超时。
+    assert apply_request_deadline(1.0, time.monotonic() - 1.0) == 1.0
 
 
 def test_send_request_validates_deadline() -> None:
@@ -121,7 +121,7 @@ def test_send_request_validates_deadline() -> None:
 
 
 def test_config_validates_request_budget() -> None:
-    assert Config().bot_request_budget_seconds == 90.0
+    assert Config().bot_request_budget_seconds == 150.0
     assert Config(bot_request_budget_seconds=120).bot_request_budget_seconds == 120
     for bad in (-1, 0, float("nan"), float("inf"), 601, "abc"):
         with pytest.raises(ValidationError):
@@ -242,21 +242,24 @@ def test_router_unifies_external_deadline_with_own_window() -> None:
     assert isinstance(timeout_used, float) and 0 < timeout_used <= 30.0
 
 
-def test_onebot_sender_skips_when_request_deadline_passed() -> None:
+def test_onebot_sender_still_sends_after_request_deadline() -> None:
+    """预算耗尽后发送照常执行（不再静默丢弃已生成的回复）。"""
     from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
 
-    class _BoomBot:
-        async def send_group_msg(self, **kwargs: object) -> None:
-            raise AssertionError("must not dispatch after request deadline")
+    class _OkBot:
+        def __init__(self) -> None:
+            self.sent = 0
+
+        async def send_group_msg(self, **kwargs: object) -> dict[str, str]:
+            self.sent += 1
+            return {"message_id": "late-but-sent"}
 
     request = _make_request(time.monotonic() - 1.0)
+    bot = _OkBot()
 
     async def _run() -> object:
-        return await send_onebot_v11(_BoomBot(), request)  # type: ignore[arg-type]
+        return await send_onebot_v11(bot, request)  # type: ignore[arg-type]
 
     receipt = asyncio.run(_run())
-    assert receipt.state is ReceiptState.FAILED_FINAL
-    assert receipt.public_message == ""
-    assert receipt.operational_issue is not None
-    assert receipt.operational_issue.kind == "deadline_exceeded"
-    assert receipt.operational_issue.retryable is False
+    assert bot.sent == 1
+    assert receipt.state is ReceiptState.SENT

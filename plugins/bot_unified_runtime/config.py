@@ -175,7 +175,7 @@ class Config(BaseModel):
     # 发送层单次请求硬超时（秒）：OneBot/Telegram/Mail 发送共用；0 或非法值在运行时回退 15。
     bot_transport_timeout_seconds: float = 15.0
     # 请求级总预算（秒）：单次聊天从 LLM/工具循环到发送共用一个单调 deadline；范围 (0,600]。
-    bot_request_budget_seconds: float = 90.0
+    bot_request_budget_seconds: float = 150.0
     bot_emotion_enabled: bool = True
     bot_emotion_max_signals: int = 4
     bot_trend_enabled: bool = False

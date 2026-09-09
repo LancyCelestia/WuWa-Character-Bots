@@ -74,7 +74,13 @@ class DeadlineBudget:
 def apply_request_deadline(
     timeout_seconds: float, deadline_monotonic: float | None
 ) -> float:
-    """发送层超时与请求 deadline 取最小值；deadline 已过视为预算耗尽。"""
+    """发送层超时与请求 deadline 取最小值。
+
+    预算耗尽时不抛异常：回复已生成、LLM 成本已花掉，因总预算到点而丢弃
+    消息只会表现为"机器人不回话"（用户侧无任何反馈）。发送是最后一段
+    里程，给足传输层自身超时（transport_grace_seconds），超时仍走
+    result-unknown 账本兜底。
+    """
     if deadline_monotonic is None:
         return timeout_seconds
     deadline = float(deadline_monotonic)
@@ -82,5 +88,5 @@ def apply_request_deadline(
         return timeout_seconds
     remaining = deadline - time.monotonic()
     if remaining <= 0.0:
-        raise DeadlineExceeded("transport")
+        return float(timeout_seconds)
     return min(float(timeout_seconds), remaining)

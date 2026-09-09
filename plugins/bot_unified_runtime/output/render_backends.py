@@ -165,7 +165,15 @@ class PlaywrightRenderBackend:
                     )
                 try:
                     page.set_content(html, wait_until="networkidle")
-                    # 等封面图加载（失败则 onerror 隐藏）。
+                    # 封面清晰度关键：等所有 <img> 真正解码完成（networkidle
+                    # 只保证请求静默，大图可能仍在解码）；再兜底固定等待。
+                    try:
+                        page.wait_for_function(
+                            "Array.from(document.images).every(img => img.complete)",
+                            timeout=8000,
+                        )
+                    except Exception:  # noqa: BLE001 - 超时按已加载现状截图。
+                        pass
                     page.wait_for_timeout(wait_ms)
                     element = page.query_selector(".card")
                     if element is not None:
