@@ -42,19 +42,28 @@ def is_today_history_command(text: str) -> bool:
     return _QUERY_RE.match(stripped) is not None or _SHORT_RE.match(stripped) is not None
 
 
-def _load_push_table(push_file: str) -> dict[str, dict[str, int]]:
+def _load_push_table_checked(push_file: str) -> tuple[dict[str, dict[str, int]], bool]:
+    """读取推送表；第二个返回值=False 表示文件损坏/不可读——调用方必须拒绝改写，
+    否则只含当前条目的新表会整体覆写掉其他会话的订阅（数据丢失）。"""
     try:
         path = Path(push_file)
         if path.exists():
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                return data
+                return data, True
+            return {}, False
     except (OSError, ValueError):
-        return {}
-    return {}
+        return {}, False
+    return {}, True
 
 
-def _save_push_table(push_file: str, table: dict[str, dict[str, int]]) -> None:
+def _load_push_table(push_file: str) -> dict[str, dict[str, int]]:
+    """兼容旧签名（__init__.py 调度注册用，只读不写）。"""
+    return _load_push_table_checked(push_file)[0]
+
+
+def _save_push_table(push_file: str, table: dict[str, dict[str, int]]) -> bool:
+    """写盘成功返回 True；失败由调用方回错，不得静默吞掉。"""
     try:
         path = Path(push_file)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -62,8 +71,9 @@ def _save_push_table(push_file: str, table: dict[str, dict[str, int]]) -> None:
             json.dumps(table, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        return True
     except OSError:
-        return
+        return False
 
 
 def build_today_history_capability(
@@ -91,7 +101,7 @@ def build_today_history_capability(
             if message.group_id
             else f"f_{message.sender_id}"
         )
-        table = _load_push_table(push_file)
+        table, load_ok = _load_push_table_checked(push_file)
 
         if arg:
             if "状态" in arg:
@@ -104,6 +114,14 @@ def build_today_history_capability(
                         body=f"历史上的今天推送时间：{entry['hour']:02d}:{entry['minute']:02d}",
                         audit_tags=["today_history", "push_status"],
                     )
+                if not load_ok:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.today_history",
+                        kind="text",
+                        body="推送表读取失败，请查日志（data/today_history_push.json 可能已损坏）。",
+                        audit_tags=["today_history", "push_status", "load_failed"],
+                    )
                 return CapabilityResult(
                     request_id=message.request_id,
                     capability_id="bot.today_history",
@@ -112,8 +130,23 @@ def build_today_history_capability(
                     audit_tags=["today_history", "push_status"],
                 )
             if "取消" in arg or "关闭" in arg:
+                if not load_ok:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.today_history",
+                        kind="text",
+                        body="推送表读取失败，已拒绝改写以免丢失其他订阅。",
+                        audit_tags=["today_history", "push_cancelled", "load_failed"],
+                    )
                 table.pop(sender_key, None)
-                _save_push_table(push_file, table)
+                if not _save_push_table(push_file, table):
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.today_history",
+                        kind="text",
+                        body="取消失败：推送表写盘出错，请查日志。",
+                        audit_tags=["today_history", "push_cancelled", "save_failed"],
+                    )
                 if on_subscriptions_changed is not None:
                     try:
                         on_subscriptions_changed()
@@ -145,8 +178,23 @@ def build_today_history_capability(
                         body="时间格式不对，小时 0-23、分钟 0-59。",
                         audit_tags=["today_history", "push_bad_format"],
                     )
+                if not load_ok:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.today_history",
+                        kind="text",
+                        body="推送表读取失败，已拒绝改写以免丢失其他订阅。",
+                        audit_tags=["today_history", "push_subscribed", "load_failed"],
+                    )
                 table[sender_key] = {"hour": hour, "minute": minute}
-                _save_push_table(push_file, table)
+                if not _save_push_table(push_file, table):
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.today_history",
+                        kind="text",
+                        body="设置失败：推送表写盘出错，请查日志。",
+                        audit_tags=["today_history", "push_subscribed", "save_failed"],
+                    )
                 if on_subscriptions_changed is not None:
                     try:
                         on_subscriptions_changed()

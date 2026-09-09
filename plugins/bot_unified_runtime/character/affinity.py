@@ -25,8 +25,19 @@ import time
 from pathlib import Path
 from typing import Any
 
-_POSITIVE_RE = re.compile(r"(谢谢|感谢|辛苦了|太棒了|厉害|好棒|喜欢你|陪你|抱抱|晚安|早安)", re.IGNORECASE)
-_NEGATIVE_RE = re.compile(r"(烦死了|别烦我|无聊|真差劲|没用|傻|蠢|闭嘴|滚)", re.IGNORECASE)
+# 正向：否定前缀（不/没/别）紧邻时不算——「我不喜欢你这样说」不得加分。
+_POSITIVE_RE = re.compile(
+    r"(谢谢|感谢|辛苦了|太棒了|厉害|好棒|(?<![不没别])喜欢你|陪你|陪我|抱抱|晚安|早安)",
+    re.IGNORECASE,
+)
+# 负向（抱怨）：不收裸「傻/蠢/没用/无聊」单字（成语/叠词/求陪伴误捕，见 docs §2 注）。
+_NEGATIVE_RE = re.compile(r"(烦死了|别烦我|真差劲|太差劲|真没用)", re.IGNORECASE)
+# 辱骂级（与安全硬类别同档，扣分更重）：先于抱怨判定。
+_INSULT_RE = re.compile(
+    r"(傻瓜|傻逼|蠢货|蠢蛋|闭嘴|(?:^|[^\瓜烂])滚(?![烂瓜烫])"
+    r"|(?:真|好|太|那么|超)[蠢傻](?!萌))",
+    re.IGNORECASE,
+)
 
 # 印象标签：行为累计达标即打标，注入 prompt 供人格参考（不外显为标签词）。
 _IMPRESSION_RULES: tuple[tuple[str, int, str], ...] = (
@@ -51,6 +62,10 @@ _DAMPING_EXPONENT = 1.0
 # 惰性回归：写路径检查闲置天数，≥7 天起每天向基数回归 0.01，不超过剩余距离；读路径无副作用。
 _IDLE_REGRESSION_START_DAYS = 7
 _IDLE_REGRESSION_PER_DAY = 0.01
+# sentiment（表达倾向）半衰期（天）：辱骂淡出更快——宽恕快、忘善意慢。
+_SENTIMENT_HALF_LIFE_DAYS = {"positive": 30.0, "negative": 30.0, "insult": 15.0}
+# 榜卡展示折算：闲置分数向基数衰减的半衰期（天），只影响展示，不落库。
+_LEADERBOARD_DECAY_HALF_LIFE_DAYS = 30.0
 
 
 def per_user_factor(sender_id: str) -> float:
@@ -99,6 +114,8 @@ def classify_behavior(text: str, *, safety_category: str = "", safety_action: st
         return "positive"
     if _TEASE_RE.search(value):
         return "tease"
+    if _INSULT_RE.search(value):
+        return "insult"
     if _NEGATIVE_RE.search(value):
         return "negative"
     return "neutral"
@@ -201,9 +218,14 @@ class DynamicAffinityStore:
                 ("profile_notes", "TEXT NOT NULL DEFAULT '[]'"),
                 ("counter_day_index", "INTEGER NOT NULL DEFAULT -1"),
                 ("day_counters", "TEXT NOT NULL DEFAULT '{}'"),
+                ("last_positive_at", "TEXT"),
+                ("last_negative_at", "TEXT"),
+                ("last_insult_at", "TEXT"),
             ):
                 if column not in columns:
                     connection.execute(f"ALTER TABLE user_affinity ADD COLUMN {column} {ddl}")
+            # WAL：被动感知与查询卡渲染多线程并发读写，降低事件循环阻塞窗口。
+            connection.execute("PRAGMA journal_mode=WAL")
             # 群镜像表（好感榜）：主表仍每用户一行；镜像行由 observe 同事务写，
             # 数值与主行恒等（docs/affinity-design.md §9.3）。
             connection.execute(
@@ -247,11 +269,13 @@ class DynamicAffinityStore:
             return _AFFINITY_BASE
         now = float(self._clock())
         now_text = _format_utc(now)
-        day_index = int(now // _DAY_SECONDS)
+        # 每日上限按进程本地时区自然日（bot_timezone），对用户体感即「北京时间每日重置」。
+        day_index = int(time.strftime("%Y%m%d", time.localtime(now)))
         with self._lock, self._connect() as connection:
             row = connection.execute(
                 "SELECT affinity, interaction_count, positive_count, negative_count, tease_count, insult_count,"
-                " nickname, impression_tags, profile_notes, counter_day_index, day_counters, updated_at"
+                " nickname, impression_tags, profile_notes, counter_day_index, day_counters, updated_at,"
+                " last_positive_at, last_negative_at, last_insult_at"
                 " FROM user_affinity WHERE sender_id = ?",
                 (sender_id,),
             ).fetchone()
@@ -263,6 +287,7 @@ class DynamicAffinityStore:
                 notes: list[str] = []
                 day_counters: dict[str, int] = {}
                 interactions = 0
+                last_seen: dict[str, str | None] = {"positive": None, "negative": None, "insult": None}
             else:
                 affinity = float(row["affinity"])
                 counters = {
@@ -275,6 +300,11 @@ class DynamicAffinityStore:
                 nickname = str(row["nickname"] or "")
                 notes = json.loads(str(row["profile_notes"] or "[]"))
                 interactions = int(row["interaction_count"])
+                last_seen = {
+                    "positive": row["last_positive_at"],
+                    "negative": row["last_negative_at"],
+                    "insult": row["last_insult_at"],
+                }
                 # 每日计数仅当日有效；跨日自动清零（row_day != day_index 视为新的一天）。
                 row_day = int(row["counter_day_index"] if row["counter_day_index"] is not None else -1)
                 day_counters = (
@@ -304,6 +334,8 @@ class DynamicAffinityStore:
             affinity = max(0.0, min(1.0, affinity + delta))
             if behavior in counters:
                 counters[behavior] += 1
+            if behavior in last_seen:
+                last_seen[behavior] = now_text
             for watch, threshold, tag in _IMPRESSION_RULES:
                 if watch in counters and counters[watch] >= threshold and tag not in tags:
                     tags.append(tag)
@@ -312,8 +344,9 @@ class DynamicAffinityStore:
                 INSERT OR REPLACE INTO user_affinity
                     (sender_id, affinity, interaction_count, positive_count, negative_count,
                      tease_count, insult_count, nickname, impression_tags, profile_notes,
-                     counter_day_index, day_counters, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     counter_day_index, day_counters, updated_at,
+                     last_positive_at, last_negative_at, last_insult_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sender_id,
@@ -329,6 +362,9 @@ class DynamicAffinityStore:
                     day_index,
                     json.dumps(day_counters, ensure_ascii=False),
                     now_text,
+                    last_seen["positive"],
+                    last_seen["negative"],
+                    last_seen["insult"],
                 ),
             )
             # 群镜像：带 group_id 时写该群；不带时同步该用户已镜像的全部群，
@@ -367,50 +403,84 @@ class DynamicAffinityStore:
             return affinity
 
     def leaderboard(self, group_id: str, *, limit: int = 60) -> list[dict[str, Any]]:
-        """群好感榜：按印象好感度降序（互动次数、sender_id 兜底），score=0-100。"""
+        """群好感榜：按印象好感度降序（互动次数、sender_id 兜底），score=0-100。
+
+        闲置行做展示层折算（按半衰期向基数衰减，不落库）——半年不说话的
+        人不再顶着历史高分挂在榜上；真实值以 snapshot 为准。
+        """
         if not group_id:
             return []
+        now = float(self._clock())
         with self._lock, self._connect() as connection:
             rows = connection.execute(
-                "SELECT sender_id, display_name, affinity, interaction_count FROM group_affinity"
+                "SELECT sender_id, display_name, affinity, interaction_count, updated_at FROM group_affinity"
                 " WHERE group_id = ? ORDER BY affinity DESC, interaction_count DESC, sender_id ASC"
                 " LIMIT ?",
                 (group_id, max(1, int(limit))),
             ).fetchall()
-        return [
-            {
-                "sender_id": str(row["sender_id"]),
-                "display_name": str(row["display_name"] or ""),
-                "affinity": float(row["affinity"]),
-                "score": round(float(row["affinity"]) * 100.0, 1),
-                "tier": tier_for_affinity(float(row["affinity"])),
-            }
-            for row in rows
-        ]
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            affinity = float(row["affinity"])
+            prev = _parse_utc(str(row["updated_at"]))
+            idle_days = max(0.0, now - prev) / _DAY_SECONDS if prev is not None else 0.0
+            # 展示层折算：闲置按半衰期向基数收敛（30 天减半），真实值不变、不落库。
+            shown = _AFFINITY_BASE + (affinity - _AFFINITY_BASE) * 0.5 ** (
+                idle_days / _LEADERBOARD_DECAY_HALF_LIFE_DAYS
+            )
+            result.append(
+                {
+                    "sender_id": str(row["sender_id"]),
+                    "display_name": str(row["display_name"] or ""),
+                    "affinity": affinity,
+                    "score": round(shown * 100.0, 1),
+                    "tier": tier_for_affinity(affinity),
+                }
+            )
+        return result
 
     def sentiment_for(self, sender_id: str) -> float:
         """用户对机器人的表达倾向（加权正向占比 0-1；零信号默认 0.1，与初始好感一致）。
 
-        positive / (positive + negative + 2×insult)——从说出口的话估算的
-        表达比例，不是对内心的测量（docs/affinity-design.md §9.1）。
+        positive / (positive + negative + 2×insult)，各计数按差异化半衰期指数
+        衰减（辱骂 15 天、其余 30 天——宽恕快、忘善意慢）；全部淡出回到默认。
+        从说出口的话估算的表达比例，不是对内心的测量（docs §9.1）。
         """
         if not sender_id:
             return 0.1
+        now = float(self._clock())
         with self._lock, self._connect() as connection:
             row = connection.execute(
-                "SELECT positive_count, negative_count, insult_count FROM user_affinity"
+                "SELECT positive_count, negative_count, insult_count,"
+                " last_positive_at, last_negative_at, last_insult_at FROM user_affinity"
                 " WHERE sender_id = ?",
                 (sender_id,),
             ).fetchone()
         if row is None:
             return 0.1
-        positive = max(0, int(row["positive_count"]))
-        negative = max(0, int(row["negative_count"]))
-        insult = max(0, int(row["insult_count"]))
-        denom = positive + negative + 2 * insult
-        if denom <= 0:
-            return 0.1
-        return positive / denom
+
+        def _decayed(count: int, ts: str | None, half_life_days: float) -> float:
+            age_days = 0.0
+            parsed = _parse_utc(ts)
+            if parsed is not None:
+                age_days = max(0.0, now - parsed) / _DAY_SECONDS
+            return max(0, count) * 0.5 ** (age_days / half_life_days)
+
+        eff_positive = _decayed(
+            int(row["positive_count"]), row["last_positive_at"],
+            _SENTIMENT_HALF_LIFE_DAYS["positive"],
+        )
+        eff_negative = _decayed(
+            int(row["negative_count"]), row["last_negative_at"],
+            _SENTIMENT_HALF_LIFE_DAYS["negative"],
+        )
+        eff_insult = _decayed(
+            int(row["insult_count"]), row["last_insult_at"],
+            _SENTIMENT_HALF_LIFE_DAYS["insult"],
+        )
+        denom = eff_positive + eff_negative + 2 * eff_insult
+        if denom < 0.1:
+            return 0.1  # 历史信号全部淡出：回到默认
+        return eff_positive / denom
 
     def snapshot(self, sender_id: str) -> dict[str, Any]:
         """读取好感度与印象；无记录返回中性默认。只读，不触发惰性回归。"""

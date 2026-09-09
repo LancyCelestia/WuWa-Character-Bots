@@ -237,6 +237,12 @@ def _render_card(payload: dict[str, Any], render_backend: Any | None, card_dir: 
         target.mkdir(parents=True, exist_ok=True)
         path = target / f"affinity_{digest}.png"
         path.write_bytes(png)
+        try:
+            from plugins.bot_unified_runtime.runtime.cache_policy import prune_prefixed
+
+            prune_prefixed(target, "affinity", keep=200)
+        except Exception:  # noqa: S110, BLE001 - 配额清理失败不影响本次出图。
+            pass
         return str(path)
     except Exception:  # noqa: BLE001 - 渲染失败回退纯文本。
         return ""

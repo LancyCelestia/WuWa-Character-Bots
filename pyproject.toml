@@ -25,6 +25,8 @@ dependencies = [
     "nonebot_plugin_memes_api>=0.5.1",
     "nonebot-plugin-mcpclient>=0.1.2",
     "mcp>=1.0.0,<2.0.0",
+    # 视频下载/媒体分析（sources.downloader）实际依赖 yt-dlp；显式声明避免漏装。
+    "yt-dlp>=2024.03.10",
 ]
 
 [build-system]
@@ -41,6 +43,9 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: 长耗时浸泡/性能观察测试（可用 -m 'not slow' 提速日常门禁）",
+]
 
 [tool.nonebot]
 plugin_dirs = ["plugins"]

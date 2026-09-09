@@ -68,3 +68,35 @@ def enforce_quota(
         "files_removed": removed,
         "bytes_removed": bytes_removed,
     }
+
+
+def prune_prefixed(
+    directory: str | Path,
+    prefix: str,
+    *,
+    keep: int = 200,
+) -> dict[str, Any]:
+    """只按文件名前缀保留最新 ``keep`` 个文件，淘汰更旧的。
+
+    多个能力共享同一卡片目录时，全目录配额会误删他人生成的文件；
+    前缀配额让各能力只清理自己名下的产物。
+    """
+    root = Path(directory)
+    removed = 0
+    if not root.exists() or not root.is_dir() or not prefix:
+        return {"directory": str(root), "files_removed": removed}
+    files: list[tuple[int, Path]] = []
+    for path in root.glob(f"{prefix}_*.png"):
+        try:
+            if path.is_file():
+                files.append((int(path.stat().st_mtime), path))
+        except OSError:
+            continue
+    files.sort(reverse=True)
+    for _, path in files[max(0, int(keep)):]:
+        try:
+            path.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return {"directory": str(root), "files_removed": removed}

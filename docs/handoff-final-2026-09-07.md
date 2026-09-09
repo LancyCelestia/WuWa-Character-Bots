@@ -151,6 +151,7 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 | 09-10 | 好感度查询卡 | bot.affinity 能力（好感度/好感查看/查询好感）：私聊双向好感卡+群好感榜（group_affinity 镜像表）；affinity_card.html 独立 Mica 模板+bridge 渲染；帮助页公开条目；test_affinity_query 10 项回归（含 base_router 路由）；双卡样例截图核对；__init__ 接线随并行会话落地（见 §9.9 C组⚠️）。⚠️ base_router 路由接线因 amend 落点失误混入并行会话的「候选卡渲染稳健化」提交（df27c56，原 a1bf17d），内容正确、标签错位，特此存证 |
 | 09-10 | A组解析专项 | 封面原图（推特 name=large 全量图组/小红书剥 ！后缀+WB_DFT/油管 onerror 回退）；发布时区根治（`_format_epoch` 带时区 ISO+微博 %z 保 +0800，治 naive 误标 UTC 漂 8 小时，推特/小红书连带）；微博 avatar_hd+视频帖封面+标题净化+genvisitor 访客兑子；B站专栏作者五项补齐（upstat archive.view）+直播头像/粉丝+会员购全字段重写（场次/票档/票种/7天退票/嘉宾/主办/场馆/图文详情列表适配）；竖切横图拼接 `image_stitch.py`；render_backends ORB 兑子（sinaimg 灰图根因）+bridge 本地图 data URL 内联；「阅读」入 view_count |
 | 09-10 | 好感度 v3 数值改版 | 用户裁定：初始好感 10（内部 0.1，旧库不迁移由惰性回归自然收敛）；步长幂律非线性（距极值 <10 分按 (d/0.1)^γ 缩小，10~90 全额）；因人而异（sha1 派生 ±15% 个人系数，`per_user_factor` 导出）；`好感度 算法` 升级为图文说明卡（mode=algorithm：个人精确步长+档位→回应方式对照表）；providers 动态融合补 familiarity 档位映射（warmth/directness 数值语气跟随动态档位）；修复 吃什么/偷表情 admin_only=False 却不在 _PUBLIC_HELP_TOPICS 的可见性缺陷；design 文档 v3+分档态度对照表 §9.1b |
+| 09-10 | C组优化批（行为信号+健壮性） | **行为识别正则实测修复**（「我不喜欢你」曾判 positive/「滚瓜烂熟」「傻傻分不清」误捕/「好无聊求陪伴」被扣分——否定守卫+成语排除+辱骂级 `_INSULT_RE` 独立判定+无聊移出负向）；sentiment 差异化半衰期（辱骂 15d/其余 30d，全淡出回默认 10）；榜卡闲置展示折算（30d 半衰向基数，不落库）；`cache_policy.prune_prefixed` 前缀配额（帮助卡/好感卡各留 200，帮助卡摘要去 request_id 防 data/cards 无界）；affinity 库开 WAL；每日上限改本地自然日；meme httpx Client 单例化（修每命令泄漏连接池）；today_history 推送表读失败拒绝改写+写失败回错（修复空表覆写丢订阅，robustness 回归 5 项）；pyproject 注册 `slow` marker（soak 标记，可 -m "not slow" 提速门禁）。**延后**：chat.py 三项（MCP 缓存中毒/输出预算/记忆抽取线程池）——视频会话在该文件有未提交编辑，冲突窗口大，待其落地后修复；**__init__.py 好感度 dispatch 仍未入库**（同因），登记为独立待办 |
 | 09-10 | 嘉宾卡区+点歌实测修复批 | 会员购嘉宾独立卡区（show_guests 投影+网格区块，真实漫展 96799/88451 实卡核对）；**点歌候选卡不可达根治**（旧 exact_hits 一票否决——模糊搜索几乎总能搜出字面同名翻唱，实测「后来 钢琴版」直接放同名翻唱→改裸歌名精确命中才跳过）；编号无会话明确提示（原先拿数字当歌名搜）；候选会话按 session+sender 隔离；**QQ音乐搜索迁移 musicu.fcg**（旧 client_search_cp 服务端下线恒 500，实测）+封面 album.mid 拼 gtimg；网易云 pic_str 裂图/酷狗 {size} 占位符；渲染失败加 warning 日志；模板修 VIP 徽章写死 #fb7299→派生、Mica 简介双重转义、微博头像 http 升 https、og:image // 协议相对补全；微博登录 cookie 已灌入 Runtime（provider 链路验证）；独立审计报告 P0×1/P1×9/P2×15，实数据矩阵（B站热门视频/油管/推特时区/活跃漫展/点歌 e2e）全核对 |
 
 ## 9. 遗留事项与边界
@@ -216,6 +217,7 @@ B组提交：5d34884（延迟择优+参数化+展示）、Config 补 probe 字�
 C 组验证快照：C 组文件域 ruff/mypy/pytest 全绿（新增 13 测试全过，mypy 202 文件全过）；树内同时刻 4 失败+9 lint 均位于并行会话进行中文件（test_video_reply_flow.py 等），不属本组域。
 
 **跨组约定**：`universal_card.html` 归 A组；`__init__.py` 谁动谁先 `git pull`；C组测试文件独立命名不碰他组测试。
+**共享文件编辑登记（09-10 起）**：动 `__init__.py`/`bridge.py`/`echo.py` 等共享文件前在本行下追加「会话/组 → 文件」登记，提交后销记——09-10 教训：多会话并发改同一文件导致 lint 互破、amend 落点撞车、半成品互相裹挟。当前登记：无（本会话已全部提交）。
 
 ## 10. 文档索引
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -88,10 +89,21 @@ def _usage_body() -> str:
     )
 
 
+_HTTP_CLIENTS: dict[tuple[str, float], Any] = {}
+_HTTP_CLIENTS_LOCK = threading.Lock()
+
+
 def _default_request_fn(base_url: str, timeout_seconds: float) -> RequestFn:
     import httpx
 
-    client = httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout_seconds)
+    key = (base_url.rstrip("/"), float(timeout_seconds))
+    with _HTTP_CLIENTS_LOCK:
+        client = _HTTP_CLIENTS.get(key)
+        if client is None:
+            # 进程内按 (base_url, timeout) 复用连接池——此前每次调用新建
+            # Client 且从不 close，表情命令洪峰下泄漏连接。
+            client = httpx.Client(base_url=key[0], timeout=timeout_seconds)
+            _HTTP_CLIENTS[key] = client
 
     def request(method: str, path: str, json: dict | None = None) -> tuple[int, Any]:
         try:

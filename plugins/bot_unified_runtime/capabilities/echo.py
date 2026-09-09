@@ -985,9 +985,17 @@ def _try_render_help_image(
             return ""
         target = Path(card_dir or "data/cards")
         target.mkdir(parents=True, exist_ok=True)
-        digest = hashlib.sha1(f"{request_id}:{is_admin}:{body}".encode()).hexdigest()[:12]
+        # 摘要只按内容（admin/正文），同内容复用同一文件——request_id 参与摘要
+        # 会让每次请求都生成新文件，data/cards 无界增长（audit #13）。
+        digest = hashlib.sha1(f"{is_admin}:{body}".encode()).hexdigest()[:12]
         path = target / f"help_{digest}.png"
         path.write_bytes(png)
+        try:
+            from plugins.bot_unified_runtime.runtime.cache_policy import prune_prefixed
+
+            prune_prefixed(target, "help", keep=200)
+        except Exception:  # noqa: S110, BLE001 - 配额清理失败不影响本次出图。
+            pass
         return str(path)
     except Exception:  # noqa: BLE001 - 图片帮助失败时保留纯文本帮助。
         return ""

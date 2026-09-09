@@ -22,6 +22,23 @@ def test_classify_behavior_maps_safety_and_text() -> None:
     assert classify_behavior("正常聊两句") == "neutral"
 
 
+def test_classify_resists_negation_and_idiom_misfires() -> None:
+    # 否定前缀不得判成 positive（此前「我不喜欢你」会加分）
+    assert classify_behavior("我不喜欢你这样说") == "neutral"
+    # 成语/叠词误捕
+    assert classify_behavior("滚瓜烂熟") == "neutral"
+    assert classify_behavior("傻傻分不清") == "neutral"
+    assert classify_behavior("别那么蠢萌嘛") == "neutral"
+    # 「无聊」从负面移除：求陪伴是正向，纯抱怨降级为中性
+    assert classify_behavior("好无聊啊，陪我聊聊") == "positive"
+    assert classify_behavior("这游戏真无聊") == "neutral"
+    # 真实辱骂仍要抓住
+    assert classify_behavior("傻瓜") == "insult"
+    assert classify_behavior("真的好蠢") == "insult"
+    assert classify_behavior("都给我滚") == "insult"
+    assert classify_behavior("闭嘴吧你") == "insult"
+
+
 def test_attitude_tiers_are_ordered_and_never_insulting() -> None:
     assert "绝不辱骂" in attitude_for_affinity(0.1)
     assert "严厉" in attitude_for_affinity(0.1)

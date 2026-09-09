@@ -17,6 +17,9 @@ class _Clock:
     def __call__(self) -> float:
         return self.now
 
+    def advance_days(self, days: float) -> None:
+        self.now += days * 86400.0
+
 
 def _store(tmp_path):
     return DynamicAffinityStore(tmp_path / "affinity.sqlite3", clock=_Clock())
@@ -60,6 +63,33 @@ def test_leaderboard_orders_desc_and_respects_limit(tmp_path) -> None:
 def test_sentiment_ratio_defaults_and_weights(tmp_path) -> None:
     store = _store(tmp_path)
     assert abs(store.sentiment_for("nobody") - 0.1) < 1e-9  # 零信号默认与初始好感一致（10 分）
+
+
+def test_sentiment_fades_old_insults_faster(tmp_path) -> None:
+    clock = _Clock()
+    store = DynamicAffinityStore(tmp_path / "fade.sqlite3", clock=clock)
+    store.observe("u1", "positive")
+    store.observe("u1", "insult")
+    # 新鲜信号：加权占比 1/(1+2) = 1/3
+    assert abs(store.sentiment_for("u1") - (1.0 / 3.0)) < 1e-6
+    clock.advance_days(30)
+    # 辱骂半衰期 15 天、正向 30 天：旧账淡出后占比回升（宽恕）
+    assert abs(store.sentiment_for("u1") - 0.5) < 1e-6
+    clock.advance_days(150)
+    # 信号全部淡出：回到默认
+    assert abs(store.sentiment_for("u1") - 0.1) < 1e-9
+
+
+def test_leaderboard_decays_stale_scores_for_display_only(tmp_path) -> None:
+    clock = _Clock()
+    store = DynamicAffinityStore(tmp_path / "stale.sqlite3", clock=clock)
+    store.observe("u1", "neutral", delta_override=0.65, group_id="g1", display_name="A")
+    assert store.leaderboard("g1")[0]["score"] == 75.0
+    clock.advance_days(90)
+    rows = store.leaderboard("g1")
+    # 展示层折算：闲置 90 天向基数 10 衰减一半以上，但不落库、不改真实值
+    assert 10.0 < rows[0]["score"] < 30.0
+    assert abs(store.snapshot("u1")["affinity"] - 0.75) < 1e-9
     for _ in range(3):
         store.observe("u1", "positive")
     assert abs(store.sentiment_for("u1") - 1.0) < 1e-9

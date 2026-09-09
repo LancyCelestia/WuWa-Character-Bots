@@ -11,6 +11,11 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 
+import pytest
+
+# 队列压测含数百次 SQLite 写入（约 20s）：日常门禁可用 -m "not slow" 跳过
+pytestmark = pytest.mark.slow
+
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
 from plugins.bot_unified_runtime.character.affinity import DynamicAffinityStore
 from plugins.bot_unified_runtime.contracts import PrivacyLevel, SendPolicy, SessionType
