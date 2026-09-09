@@ -1110,8 +1110,7 @@ def render_universal_card_html(payload_dict: dict[str, Any] | None = None) -> st
     elif isinstance(payload.forward, dict):
         payload.forward = dict(payload.forward)
         payload.forward["text"] = html.escape(_as_str(payload.forward.get("text")))
-    # repost.text / compact_translation / compact_romanization 同样走 |safe，
-    # 逐字段预转义（对纯文本内容渲染产物零变化）。
+    # repost.text 走模板 |safe，逐字段预转义（对纯文本内容渲染产物零变化）。
     repost = payload.repost
     if isinstance(repost, dict):
         escaped_repost = dict(repost)
@@ -1120,10 +1119,8 @@ def render_universal_card_html(payload_dict: dict[str, Any] | None = None) -> st
     elif repost is not None and isinstance(getattr(repost, "text", None), str):
         try:
             repost.text = html.escape(repost.text)
-        except AttributeError:  # noqa: S110 - 只读对象保持原样。
+        except AttributeError:
             pass
-    payload.compact_translation = html.escape(_as_str(payload.compact_translation))
-    payload.compact_romanization = html.escape(_as_str(payload.compact_romanization))
 
     # 平台色与横幅图进入 CSS 语境前做格式校验/编码，阻断样式注入。
     payload.platform_color = _safe_css_color(

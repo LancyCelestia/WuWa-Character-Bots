@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import html as _html
+import logging
 import os
 import re
 import urllib.parse
@@ -31,6 +32,7 @@ from plugins.bot_unified_runtime.contracts.media import (
 from plugins.bot_unified_runtime.sources.parsers.http_util import (
     ParseHttpError,
     http_get_json,
+    http_post_json,
     resolve_short_link,
 )
 from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
@@ -41,6 +43,8 @@ from plugins.bot_unified_runtime.sources.parsers.wbi import (
     extract_mixin_key,
     sign_wbi,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 _VIEW_API = "https://api.bilibili.com/x/web-interface/view"
 _BVID_RE = re.compile(r"(BV[0-9A-Za-z]{10})")
@@ -532,15 +536,52 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
 # ---------- 直播间 ----------
 
 def _parse_live(room_id: str, url: str, *, cookie_header: str = "") -> ParsedContent:
-    payload = http_get_json(
-        f"https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom?room_id={room_id}",
-        referer="https://live.bilibili.com/",
-        cookie=cookie_header,
-    )
-    if payload.get("code") != 0:
-        raise ParseHttpError(f"bilibili live api code={payload.get('code')}")
-    data = payload.get("data") or {}
-    room = data.get("room_info") or {}
+    """直播间：Room/get_info 为主通道（匿名稳），getInfoByRoom 尽力富集。
+
+    getInfoByRoom 对无登录态会话已常态 -352 风控（实测 2026-09-10，buvid3/4
+    + 浏览器 UA 均无效），而 Room/get_info 与 get_status_info_by_uids 匿名
+    可用——标题/分区/开播状态等主字段由前者提供，主播昵称/头像由后者补充；
+    getInfoByRoom 只提供人气/在线/大航海增量，失败不影响主卡。
+    """
+    import time
+
+    room: dict = {}
+    last_code = 0
+    for attempt in range(2):
+        extra_payload = http_get_json(
+            f"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}",
+            referer="https://live.bilibili.com/",
+            cookie=cookie_header,
+        )
+        last_code = _safe_int(extra_payload.get("code")) or 0
+        if last_code == 0:
+            extra_data = extra_payload.get("data") or {}
+            room = extra_data.get("room_info") or extra_data
+            break
+        if attempt == 0:
+            time.sleep(1.0)
+    if not room:
+        raise ParseHttpError(f"bilibili live get_info code={last_code}")
+
+    # 尽力富集：getInfoByRoom（人气/在线/主播关系；风控时静默跳过）。
+    data: dict = {}
+    try:
+        payload = http_get_json(
+            f"https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom?room_id={room_id}",
+            referer="https://live.bilibili.com/",
+            cookie=cookie_header,
+        )
+        if payload.get("code") == 0:
+            data = payload.get("data") or {}
+            rich_room = data.get("room_info") or {}
+            for key in (
+                "online", "uid", "parent_area_name", "area_name", "tags",
+                "description", "cover", "keyframe", "title", "live_start_time",
+            ):
+                if not room.get(key) and rich_room.get(key) not in (None, ""):
+                    room[key] = rich_room[key]
+    except Exception:  # noqa: BLE001 - 富集通道风控时静默降级。
+        data = {}
     anchor = data.get("anchor_info") or {}
     base = anchor.get("base_info") or {}
     stats: dict[str, object] = {}
@@ -620,64 +661,43 @@ def _parse_live(room_id: str, url: str, *, cookie_header: str = "") -> ParsedCon
         live_detail["start_time"] = live_start
     if room.get("description"):
         live_detail["intro"] = str(room["description"]).strip()
-    # 主播结构化信息：头像（base_info.face）+ 粉丝数（relation_info.follow）。
+    # 主播结构化信息：头像（base_info.face）+ 粉丝数（relation_info.follow）；
+    # getInfoByRoom 被风控时改走 get_status_info_by_uids（匿名可用）补
+    # 昵称/头像，粉丝数字段尽力而为。
     author_detail: dict = {}
     face = str(base.get("face") or "").strip()
+    uname = str(base.get("uname") or "").strip()
+    follow_count = _safe_int((anchor.get("relation_info") or {}).get("follow"))
+    if (not face or not uname) and uid:
+        try:
+            status_payload = http_post_json(
+                "https://api.live.bilibili.com/room/v1/Room/get_status_info_by_uids",
+                {"uids": [uid]},
+                referer="https://live.bilibili.com/",
+                cookie=cookie_header,
+                timeout=10,
+            )
+            status_data = (status_payload.get("data") or {}).get(str(uid)) or {}
+            if not uname:
+                uname = str(status_data.get("uname") or "").strip()
+            if not face:
+                face = str(status_data.get("face") or "").strip()
+            if follow_count is None:
+                follow_count = _safe_int(status_data.get("follower_num"))
+        except Exception as exc:  # noqa: BLE001 - 主播补充通道失败仅降级显示。
+            _LOGGER.debug("bilibili live anchor status_info failed: %s", exc)
     if face:
         author_detail["avatar"] = face
-    follow_count = _safe_int((anchor.get("relation_info") or {}).get("follow"))
     if follow_count is not None:
         author_detail["fans"] = follow_count
     if uid:
         author_detail["uuid"] = str(uid)
-    # 关键帧等字段由 Room/get_info 尽力补充，失败不影响主解析。
-    try:
-        extra_payload = http_get_json(
-            f"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}",
-            referer="https://live.bilibili.com/",
-            cookie=cookie_header,
-        )
-        extra_data = (extra_payload or {}).get("data") or {}
-        extra_room = extra_data.get("room_info") or extra_data
-        for src_key, dst_key in (
-            ("area_name", "area"),
-            ("parent_area_name", "parent_area"),
-            ("cover", "cover"),
-            ("keyframe", "keyframe"),
-            ("title", "title"),
-            ("description", "intro"),
-        ):
-            if dst_key not in live_detail:
-                value = extra_room.get(src_key)
-                if value not in (None, ""):
-                    live_detail[dst_key] = (
-                        str(value).strip() if src_key == "description" else str(value)
-                    )
-        if "tags" not in live_detail:
-            extra_tags = extra_room.get("tags")
-            if extra_tags:
-                if isinstance(extra_tags, str):
-                    parsed_tags = [tag for tag in re.split(r"[,，\s]+", extra_tags) if tag]
-                elif isinstance(extra_tags, list):
-                    parsed_tags = [
-                        str(tag) for tag in extra_tags if tag not in (None, "")
-                    ]
-                else:
-                    parsed_tags = [str(extra_tags)]
-                if parsed_tags:
-                    live_detail["tags"] = parsed_tags
-        if "start_time" not in live_detail:
-            extra_start = _safe_int(extra_room.get("live_start_time"))
-            if extra_start is not None:
-                live_detail["start_time"] = extra_start
-    except Exception:  # noqa: BLE001, S110 - 补充详情失败保留基础信息。
-        pass
     return build_parsed_content(
         platform="bilibili",
         item_id=room_id,
         item_kind="live",
         title=str(room.get("title") or "直播间"),
-        author_name=str(base.get("uname") or ""),
+        author_name=uname or str(base.get("uname") or ""),
         summary="\n".join(summary_lines),
         cover_url=str(room.get("cover") or ""),
         canonical_url=f"https://live.bilibili.com/{room_id}",
@@ -1303,12 +1323,24 @@ def _fmt_ts(value: object, fmt: str = "%Y-%m-%d %H:%M") -> str:
 
 
 def _parse_article(article_id: str, url: str, *, cookie_header: str = "") -> ParsedContent:
-    """专栏文章：x/article/view（标题/作者/摘要/首图/点赞收藏等）。"""
-    payload = http_get_json(
-        f"{_ARTICLE_API}?id={article_id}",
-        referer="https://www.bilibili.com/read/",
-        cookie=cookie_header,
-    )
+    """专栏文章：x/article/view（标题/作者/摘要/首图/点赞收藏等）。
+
+    -509/-352 是波动性 IP 风控（同一请求隔几秒常自愈，实测），短停重试一次。
+    """
+    import time
+
+    payload: dict = {}
+    for attempt in range(2):
+        payload = http_get_json(
+            f"{_ARTICLE_API}?id={article_id}",
+            referer="https://www.bilibili.com/read/",
+            cookie=cookie_header,
+        )
+        code = _safe_int(payload.get("code")) or 0
+        if code == 0 or code not in (-509, -352, -412, 429):
+            break
+        if attempt == 0:
+            time.sleep(1.5)
     if payload.get("code") != 0:
         raise ParseHttpError(f"bilibili article api code={payload.get('code')}")
     data = payload.get("data") or {}
@@ -1661,18 +1693,8 @@ def parse_bilibili_show(url: str, *, cookie_header: str = "") -> ParsedContent:
     if up_name:
         author_detail["uuid"] = str(follow_info.get("up") or "")
 
-    # --- 参展嘉宾 ---
+    # --- 参展嘉宾：独立卡区渲染（模板 show_guests），摘要不再重复文本行 ---
     guests = [item for item in (data.get("guests") or []) if isinstance(item, dict) and item.get("name")]
-    if guests:
-        bits = []
-        for guest in guests[:5]:
-            guest_desc = _strip_html_text(guest.get("description"), 40)
-            bits.append(
-                str(guest["name"]) + (f"（{guest_desc}）" if guest_desc else "")
-            )
-        summary_lines.append(
-            "嘉宾：" + "、".join(bits) + ("…" if len(guests) > 5 else f"（共 {len(guests)} 位）" if len(guests) > 1 else "")
-        )
 
     # --- 图文详情（正文模块文本 + 详情图） ---
     performance_desc = data.get("performance_desc") or {}

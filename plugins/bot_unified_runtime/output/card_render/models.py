@@ -164,27 +164,6 @@ class RenderPayload:
     profile_tags: list[str] = field(default_factory=list)
     recent_posts: list[dict[str, Any]] = field(default_factory=list)
 
-    # 音乐 / 歌单 / 紧凑模式（本次移植不主动填充，保留模板兼容）
-    title_trans: str = ""
-    album_name: str = ""
-    songs: list[dict[str, Any]] = field(default_factory=list)
-    compact_cover: bool = False
-    compact_cover_ratio: str = ""
-    compact_song_info: bool = False
-    compact_lyrics_preview: bool = False
-    compact_lyrics_full: bool = False
-    compact_translation: str = ""
-    compact_romanization: str = ""
-    playlist_creator: str = ""
-    playlist_creator_avatar: str = ""
-    playlist_creator_uid: str = ""
-    playlist_create_time: str = ""
-    playlist_update_time: str = ""
-    playlist_play_count: str = ""
-    playlist_fav_count: str = ""
-    playlist_comment_count: str = ""
-    playlist_song_count: str = ""
-
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
