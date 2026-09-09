@@ -148,7 +148,7 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 | 09-09 | 实卡反馈二轮 | 文本作者数据行归位（YT/B站/推特博主级数据+注册日期，订阅同值去重）、小红书字符串计数、卡图 alpha 裁剪（修小卡+透明边）、Help 视口 1040 防切断、「免费游戏」触发词 |
 | 09-10 | B组交付 | 渠道延迟择优(channels_for_model 实测快者优先,双开关)+巡检参数化(probe_threads/manual/jitter,Config+.env)+qian-night 重排(.env 原生 gemini 提前,p1/p2)+候选 Mica 卡(song_candidates.html+回退零回归)+话术 v4+油管@handle 解析修复+routes/health 展示；umi 重探=需充值；YT 订阅链路实测通过 |
 | 09-10 | C组交付 | 好感度数值化（affinity-design.md 成文+每日上限/惰性回归/档位 id/画像清空 bug 修复）；capabilities 全面审查报告 36 项（docs/capability-audit-2026-09-10.md）；浸泡快速回归+长跑（RSS/线程/队列全有界）；帮助文本 13 模块补全取值与示例 |
-| 09-10 | 好感度查询卡 | bot.affinity 能力（好感度/好感查看/查询好感）：私聊双向好感卡+群好感榜（group_affinity 镜像表）；affinity_card.html 独立 Mica 模板+bridge 渲染；帮助页公开条目；test_affinity_query 10 项回归（含 base_router 路由）；双卡样例截图核对；__init__ 接线随并行会话落地（见 §9.9 C组⚠️） |
+| 09-10 | 好感度查询卡 | bot.affinity 能力（好感度/好感查看/查询好感）：私聊双向好感卡+群好感榜（group_affinity 镜像表）；affinity_card.html 独立 Mica 模板+bridge 渲染；帮助页公开条目；test_affinity_query 10 项回归（含 base_router 路由）；双卡样例截图核对；__init__ 接线随并行会话落地（见 §9.9 C组⚠️）。⚠️ base_router 路由接线因 amend 落点失误混入并行会话的「候选卡渲染稳健化」提交（df27c56，原 a1bf17d），内容正确、标签错位，特此存证 |
 
 ## 9. 遗留事项与边界
 
