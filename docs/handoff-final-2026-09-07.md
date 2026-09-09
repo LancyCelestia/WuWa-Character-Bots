@@ -147,6 +147,7 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 | 09-09 | 模型路由渠道化 | registry 45 条目（StarAPI/umi 扩容/Claude 四渠道/key 轮换）；渠道健康巡检+价格选渠道；探针 key 解析 bug 修复（no_api_key 误判）；health 行动清单 |
 | 09-09 | 实卡反馈二轮 | 文本作者数据行归位（YT/B站/推特博主级数据+注册日期，订阅同值去重）、小红书字符串计数、卡图 alpha 裁剪（修小卡+透明边）、Help 视口 1040 防切断、「免费游戏」触发词 |
 | 09-10 | C组交付 | 好感度数值化（affinity-design.md 成文+每日上限/惰性回归/档位 id/画像清空 bug 修复）；capabilities 全面审查报告 36 项（docs/capability-audit-2026-09-10.md）；浸泡快速回归+长跑（RSS/线程/队列全有界）；帮助文本 13 模块补全取值与示例 |
+| 09-10 | 好感度查询卡 | bot.affinity 能力（好感度/好感查看/查询好感）：私聊双向好感卡+群好感榜（group_affinity 镜像表）；affinity_card.html 独立 Mica 模板+bridge 渲染；帮助页公开条目；test_affinity_query 9 项回归；__init__ 接线随并行会话落地（见 §9.9 C组⚠️） |
 
 ## 9. 遗留事项与边界
 
@@ -200,6 +201,8 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 2. **全面审查**：`docs/capability-audit-2026-09-10.md`——36 项发现（P1×5 / P2×16 / P3×15），逐项标归属：B组（runtime_admin 注册表烘焙遮蔽 .env、subscribe_v2 无权限校验、music 数字编号崩等）、A组（wbi 缓存无界、卡片非原子写）、无主待修（MCP 工具缓存永久中毒、httpx Client 泄漏、today_history 读失败覆写丢数据等）。
 3. **浸泡**：套件内快速回归 `tests/test_soak_growth.py`（多线程异常浸泡行数/线程/队列/幂等全有界）+ 分钟级长跑（3 线程轰击，RSS 105.6→108.5MB 增速收敛非泄漏、线程完全回收、队列封顶 max_items、幂等封顶 4096、零异常）。
 4. **帮助文本**：`_HELP_ENTRIES` 13 个模块补参数取值范围与示例（天气/维基/历史上的今天/点歌/表情/偷表情/订阅/草稿/搜索/下载/群策略/日志/路由）。
+5. **好感度查询能力（bot.affinity，2026-09-10 二段交付）**：`好感度`/`好感查看`/`查询好感`——私聊出双向好感卡（守岸人对你=印象好感度 0-100；你对守岸人=表达倾向加权占比，诚实标注为估算），群聊出本群好感榜卡（`group_affinity` 镜像表，有印象成员网格、正分绿/低分红/自己高亮，参考样本 UI）；`好感度 我`、`好感度 算法`（三档规则文本）。独立模板 `templates/affinity_card.html` + `bridge.render_affinity_card_html`（主色取 `bot_help_card_color`，Mica 规范，卡片文件名按内容摘要防无界增长）；帮助页新增公开条目「好感度」。设计口径见 `docs/affinity-design.md` §9；回归 `tests/test_affinity_query.py`（9 项）+ 样例双卡截图核对通过。
+   ⚠️ 接线注意：`__init__.py` 的 dispatch/OFFLOADED/observe 传 group 已在工作树完成，但因同文件混有并行会话未提交的视频理解接线（引用未跟踪的 transcribe.py/media_registry.py），该文件**随并行会话提交落地**；已提交树上 `好感度` 会走 alias 兜底提示（不崩）。
 
 C 组验证快照：C 组文件域 ruff/mypy/pytest 全绿（新增 13 测试全过，mypy 202 文件全过）；树内同时刻 4 失败+9 lint 均位于并行会话进行中文件（test_video_reply_flow.py 等），不属本组域。
 
