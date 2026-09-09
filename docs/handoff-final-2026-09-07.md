@@ -149,6 +149,7 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 | 09-10 | B组交付 | 渠道延迟择优(channels_for_model 实测快者优先,双开关)+巡检参数化(probe_threads/manual/jitter,Config+.env)+qian-night 重排(.env 原生 gemini 提前,p1/p2)+候选 Mica 卡(song_candidates.html+回退零回归)+话术 v4+油管@handle 解析修复+routes/health 展示；umi 重探=需充值；YT 订阅链路实测通过 |
 | 09-10 | C组交付 | 好感度数值化（affinity-design.md 成文+每日上限/惰性回归/档位 id/画像清空 bug 修复）；capabilities 全面审查报告 36 项（docs/capability-audit-2026-09-10.md）；浸泡快速回归+长跑（RSS/线程/队列全有界）；帮助文本 13 模块补全取值与示例 |
 | 09-10 | 好感度查询卡 | bot.affinity 能力（好感度/好感查看/查询好感）：私聊双向好感卡+群好感榜（group_affinity 镜像表）；affinity_card.html 独立 Mica 模板+bridge 渲染；帮助页公开条目；test_affinity_query 10 项回归（含 base_router 路由）；双卡样例截图核对；__init__ 接线随并行会话落地（见 §9.9 C组⚠️）。⚠️ base_router 路由接线因 amend 落点失误混入并行会话的「候选卡渲染稳健化」提交（df27c56，原 a1bf17d），内容正确、标签错位，特此存证 |
+| 09-10 | A组解析专项 | 封面原图（推特 name=large 全量图组/小红书剥 ！后缀+WB_DFT/油管 onerror 回退）；发布时区根治（`_format_epoch` 带时区 ISO+微博 %z 保 +0800，治 naive 误标 UTC 漂 8 小时，推特/小红书连带）；微博 avatar_hd+视频帖封面+标题净化+genvisitor 访客兑子；B站专栏作者五项补齐（upstat archive.view）+直播头像/粉丝+会员购全字段重写（场次/票档/票种/7天退票/嘉宾/主办/场馆/图文详情列表适配）；竖切横图拼接 `image_stitch.py`；render_backends ORB 兑子（sinaimg 灰图根因）+bridge 本地图 data URL 内联；「阅读」入 view_count |
 
 ## 9. 遗留事项与边界
 
@@ -170,18 +171,20 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 > **A组已由本会话认领。** 认领约定：开工前先 `git pull`；只改本组列出的文件域；
 > 完成后跑 `dev.ps1` 三门禁（test/lint/typecheck）再提交推送。
 
-### A组（解析数据层 + 封面原图 + B站/微博专项）——已认领，执行中
+### A组（解析数据层 + 封面原图 + B站/微博专项）——已由本会话完成（2026-09-10，提交 8dc7de4）
 
 文件域：`sources/parsers/**`、`sources/moegirl.py`、`sources/food_data.py`
 
-1. 封面原图高清化（全平台）：油管 maxresdefault 原图+404 回退 hqdefault（已落地）；推特图片 name=large（已落地）；小红书脱 webp 压缩后缀取原图；统一审查全平台不再出低清压缩封面
-2. 油管/推特爬取修复：油管封面原图链路收尾；推特原图抓取正常化
-3. B站直播解析：直播间数据+解析模板更新到最新 Mica 规范
-4. B站专栏数据补齐：UP主头像/签名/粉丝数/关注数/总播放/总点赞/投稿时间
-5. B站会员购演出全字段：场次、价格、票种（电子/实体/兑换）、是否支持 7 天无理由退票、参展嘉宾、主办单位、场馆名称/地址、举办时间；头像与博主信息替换为真实内容撑开布局
-6. 微博解析全面修复：头像/图片/简介/发布时间；微博模板重制到新规范
-7. 竖切横图拼接还原：识别"横图切多竖块"发布形式（推特/小红书常见），自动拼接还原完整横图（可保留缝隙）
-8. 小红书新 cookie 已灌入并验证（2026-09-09，deep 解析+图集正常）；xsec_token 失效帖自动剥 token 重试+明确汇报文案（已落地）
+1. ✅ 封面原图高清化（全平台）：推特 name=large 全量图组进 media；小红书剥 `!` 压缩后缀+info_list WB_DFT 档取原图；油管 maxres 404 回退 hqdefault（universal_card 模板 onerror）
+2. ✅ 油管/推特爬取修复：推特原图抓取正常化（name=large）；油管封面原图链路收尾（onerror 回退补齐）
+3. ✅ B站直播：主播头像（base_info.face）+粉丝数（relation_info.follow）注入 author；沿用 Mica 卡管线
+4. ✅ B站专栏：复用 `_author_enrichment` 补 UP主签名/粉丝/关注/视频数/专栏数/获赞/总播放；upstat 增 archive.view（总播放）
+5. ✅ B站会员购全字段重写：场次（名称/时间/售票状态）+票档明细+票种（电子/实体/兑换）+7天无理由退票+参展嘉宾（名/简介/头像/预约数）+主办单位+场馆（名称/展厅/城市/地址）+档期起止+图文详情（details 列表形态适配）；作者区用 follow_info.up_name/up_face 或主办方撑布局；实卡样例核对全字段上卡
+6. ✅ 微博全面修复：**发布时区根治**（naive 被误标 UTC→展示 astimezone 漂 8 小时，`_format_epoch` 改带时区 ISO+微博 %z 保留 +0800，推特/小红书连带治愈）；avatar_hd 优先（/50/→/180/ 升级）；视频帖 page_pic 封面；标题剥「的微博视频」尾缀；genvisitor 访客 cookie 兑子（无登录态降风控，进程内缓存 6h）；**图片灰块根因=Chromium ORB 拦 sinaimg**，render_backends route 兑子（直连+curl 形极简头取回 fulfill；实测矩阵：浏览器 UA/代理出口均 403）
+7. ✅ 竖切横图拼接还原：`sources/parsers/image_stitch.py`——同尺寸竖图组判定（±2px/单张竖图/总宽高比 1~4）→PIL 横向拼回落盘 Runtime `data/media_stitch`；推特/小红书/微博接入；不匹配/下载失败原样返回不丢图
+8. ✅ 小红书 cookie（2026-09-09 灌入）+ xsec_token 剥除重试（已落地）
+
+附带：`contracts/media.py`「阅读」→view_count 映射（专栏阅读量原先不上卡）；bridge 本地图 data URL 内联（about:blank 拒载 file://，顺修吃什么卡菜品图不显示）；`parsers/__init__.py` 全默认参数注册表进程级缓存。验证：692 passed / lint 全过 / 本组文件 mypy 零错；微博卡+会员购卡实渲样例核对。
 
 ### B组（模型渠道运维 + UI 排版 + 点歌候选窗口）——已由本会话完成（2026-09-10）
 
