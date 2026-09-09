@@ -781,7 +781,13 @@ def build_content_capability(
             images.append(card_image)
         elif cover_url:
             images.append({"file": cover_url})
-        subtitle_text = str((content.platform_extra or {}).get("subtitle") or "").strip()
+        # 审计 P3#27：contracts 允许 content/platform_extra 为 None，
+        # 这里与同函数上方样式一致补齐 content 的 None 守卫。
+        subtitle_text = (
+            str((content.platform_extra or {}).get("subtitle") or "").strip()
+            if content is not None
+            else ""
+        )
         if subtitle_text and bool(getattr(config, "bot_parse_subtitle_summary", False)):
             summary_text = _summarize_subtitle(config, subtitle_text)
             if summary_text:

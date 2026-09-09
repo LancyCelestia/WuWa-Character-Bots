@@ -32,12 +32,13 @@ _SUBSCRIBE_RE = re.compile(
 
 _USAGE = (
     "订阅用法（/订阅 与 /bot subscribe 等价）：\n"
-    "/订阅 add <链接|platform:kind:id> [到本群|私聊我] [--digest]\n"
+    "/订阅 add <链接|platform:kind:id> [到本群|私聊我] [--digest|--no-digest]\n"
     "/订阅 list\n"
     "/订阅 remove|pause|resume|check <id>\n"
     "/订阅 status\n"
     "支持平台：bilibili（UP主/直播间/番剧/收藏夹/合集）、小红书（创作者）\n"
-    "--digest：不即时推送，只进每日订阅日报（默认 20:00，时间可配）"
+    "--digest：不即时推送，只进每日订阅日报（默认 20:00，时间可配）；"
+    "--no-digest：退出日报回到即时推送"
 )
 
 
@@ -55,6 +56,26 @@ _SUBSCRIBE_ACTION_ZH = {
     "检查": "check",
     "状态": "status",
 }
+
+# 审计 P3#25：standalone「订阅 …」只有首词是订阅动作词才算命令；
+# 以「订阅」开头的普通句子（订阅人数…）走原路由，不再被吞回 usage。
+_SUBSCRIBE_ACTION_WORDS = frozenset(
+    {
+        *_SUBSCRIBE_ACTION_ZH,
+        "add",
+        "remove",
+        "pause",
+        "resume",
+        "check",
+        "list",
+        "status",
+        "help",
+        "usage",
+        "帮助",
+        "用法",
+        "说明",
+    }
+)
 
 
 def normalize_subscribe_text(text: str) -> str:
@@ -85,11 +106,25 @@ def is_subscribe_command(text: str) -> bool:
 
 
 def is_standalone_subscribe_command(text: str) -> bool:
-    """只匹配 `/订阅 ...`、`!订阅 ...` 或裸 `subscribe ...`，不含 `/bot ...`。"""
+    """只匹配 `/订阅 ...`、`!订阅 ...` 或裸 `subscribe ...`，不含 `/bot ...`。
+
+    审计 P3#25：首词必须是订阅动作词（或裸「订阅」本身请求用法说明）；
+    其余以「订阅」开头的普通句子不再接管。
+    """
     stripped = (text or "").strip()
     if stripped.lower().startswith("/bot"):
         return False
-    return re.match(r"^(?:[/!！]?(?:订阅|subscribe))(?:\s+|$)", stripped, re.IGNORECASE) is not None
+    match = re.match(
+        r"^(?:[/!！]?(?:订阅|subscribe))(?P<rest>\s+.*)?$",
+        stripped,
+        re.IGNORECASE,
+    )
+    if match is None:
+        return False
+    rest = (match.group("rest") or "").strip()
+    if not rest:
+        return True
+    return rest.split()[0].lower() in _SUBSCRIBE_ACTION_WORDS
 
 
 def build_subscribe_capability(
@@ -177,7 +212,12 @@ def build_subscribe_capability(
 
         if action == "add":
             digest_flag = "--digest" in args
-            tokens = [token for token in args if token != "--digest"]
+            no_digest_flag = "--no-digest" in args
+            tokens = [
+                token
+                for token in args
+                if token not in ("--digest", "--no-digest")
+            ]
             want_group = "到本群" in tokens
             tokens = [
                 token
@@ -233,6 +273,14 @@ def build_subscribe_capability(
             )
             if destination not in destinations:
                 destinations.append(destination)
+            # 审计 P3#25：--digest/--no-digest 显式给定才改变日报开关；
+            # 两者都不带时保持现状（新订阅默认即时推送），不再只能开不能关。
+            if digest_flag or no_digest_flag:
+                digest_enabled = digest_flag and not no_digest_flag
+            else:
+                digest_enabled = (
+                    existing.digest_enabled if existing is not None else False
+                )
             spec = SubscriptionSpec(
                 id=spec_id,
                 platform=resolved["platform"],
@@ -241,10 +289,7 @@ def build_subscribe_capability(
                 target_name=resolved["target_name"],
                 destinations=destinations,
                 send_policy="instant",
-                digest_enabled=(
-                    (existing.digest_enabled if existing is not None else False)
-                    or digest_flag
-                ),
+                digest_enabled=digest_enabled,
                 enabled=(existing.enabled if existing is not None else True),
                 health_state=(
                     existing.health_state if existing is not None else "healthy"
@@ -339,19 +384,56 @@ def build_subscribe_capability(
                     [tag, "subscribe_denied"],
                     "订阅",
                 )
-            if action == "remove":
-                store.delete_spec(spec_id)
+            # 审计 P1#3：按目的地粒度操作——群管理员只动本群这一目的地，
+            # 私聊创建者只动自己的私聊目的地，不再连带其他群/私聊。
+            group_id = getattr(message, "group_id", None)
+            if group_id:
+                own_destination = SubscriptionDestination(
+                    scope="group", target_id=str(group_id)
+                )
+            else:
+                own_destination = SubscriptionDestination(
+                    scope="private", target_id=str(message.sender_id)
+                )
+            if action == "resume":
+                if own_destination in spec.destinations:
+                    return _result(
+                        message,
+                        f"订阅 {spec_id} 本就在向本目的地推送。",
+                        [tag],
+                        "订阅",
+                    )
+                store.upsert_spec(
+                    spec.model_copy(
+                        update={"destinations": [*spec.destinations, own_destination]}
+                    )
+                )
                 return _result(
                     message,
-                    f"已删除订阅：{spec_id}",
+                    f"已恢复订阅（本目的地）：{spec_id}",
                     [tag],
                     "订阅",
                 )
-            store.set_spec_enabled(spec_id, action == "resume")
-            verb = "恢复" if action == "resume" else "暂停"
+            remaining = [
+                destination
+                for destination in spec.destinations
+                if not (
+                    destination.scope == own_destination.scope
+                    and destination.target_id == own_destination.target_id
+                )
+            ]
+            if remaining:
+                store.upsert_spec(
+                    spec.model_copy(update={"destinations": remaining})
+                )
+            elif action == "remove":
+                # 最后一个目的地移除时才删 spec（连带 cursors/push_log）。
+                store.delete_spec(spec_id)
+            # pause 且无剩余目的地：保留 spec（游标/日报状态），resume 时重挂。
+            verb = "删除" if action == "remove" else "暂停"
             return _result(
                 message,
-                f"已{verb}订阅：{spec_id}",
+                f"已{verb}订阅（仅本目的地）：{spec_id}",
                 [tag],
                 "订阅",
             )
@@ -366,6 +448,15 @@ def build_subscribe_capability(
                     message,
                     f"订阅不存在：{spec_id}",
                     [tag, "subscribe_not_found"],
+                    "订阅",
+                )
+            # 审计 P1#4：check 与 remove 同权——无归属的用户不得借 check
+            # 枚举他人订阅的标题/URL/新增条数。
+            if not _can_operate(message, spec):
+                return _result(
+                    message,
+                    "没有权限操作该订阅。",
+                    [tag, "subscribe_denied"],
                     "订阅",
                 )
             adapter = registry.find(spec.platform)

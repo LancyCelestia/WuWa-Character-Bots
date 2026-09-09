@@ -5,7 +5,9 @@ import json
 import os
 import sqlite3
 import threading
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from plugins.bot_unified_runtime.contracts.subscription import (
     ContentReference,
@@ -18,6 +20,20 @@ from plugins.bot_unified_runtime.contracts.subscription import (
 from plugins.bot_unified_runtime.sources.subscription_migration import (
     prepare_subscription_database,
 )
+
+# ---- 有界化常量（审计 P2#10：outbox/seen 表随推送量线性增长） ----
+# subscription_outbox 中 state='sent' 的行只保留近期：已推送事件仅剩排障
+# 价值，默认 14 天（覆盖常见排障窗口），到期由 prune_stale_rows 裁剪。
+_OUTBOX_SENT_RETENTION_DAYS = 14
+# 推送重试上限：attempts 达到后转入死信（state='dead'，claim 不再捞起），
+# 默认 5 次——按指数退避计约半小时内放弃，避免坏事件无限重试。
+_OUTBOX_MAX_ATTEMPTS = 5
+# subscription_seen 去重行 TTL：默认 90 天。TTL 清掉的条目若仍出现在某
+# 频道的最新列表里会被再次推送，因此取远大于 outbox 保留期的值（只有
+# 超过 90 天无任何新内容的极静默频道才可能触发）。
+_SEEN_RETENTION_DAYS = 90
+# 清理节流：默认每小时至多执行一次，避免高频写路径反复跑 DELETE。
+_PRUNE_INTERVAL_SECONDS = 3600.0
 
 
 def _iso(value: datetime) -> str:
@@ -34,10 +50,36 @@ def _dt(value: str | None) -> datetime | None:
 
 
 class SubscriptionStoreV2:
-    def __init__(self, db_path: str = "data/subscriptions.sqlite3") -> None:
+    def __init__(
+        self,
+        db_path: str = "data/subscriptions.sqlite3",
+        *,
+        config: Any | None = None,
+        outbox_sent_retention_days: int | None = None,
+        seen_retention_days: int | None = None,
+        outbox_max_attempts: int | None = None,
+    ) -> None:
         self._db_path = prepare_subscription_database(db_path)
         self._connection: sqlite3.Connection | None = None
         self._lock = threading.RLock()
+        # 审计 P2#10：保留期/重试上限可用 config 属性覆盖，其次构造参数，
+        # 最后回退模块常量（数值依据见常量处注释）。
+        self._outbox_sent_retention_days = int(
+            outbox_sent_retention_days
+            or getattr(config, "bot_subscription_outbox_sent_retention_days", 0)
+            or _OUTBOX_SENT_RETENTION_DAYS
+        )
+        self._seen_retention_days = int(
+            seen_retention_days
+            or getattr(config, "bot_subscription_seen_retention_days", 0)
+            or _SEEN_RETENTION_DAYS
+        )
+        self._outbox_max_attempts = int(
+            outbox_max_attempts
+            or getattr(config, "bot_subscription_outbox_max_attempts", 0)
+            or _OUTBOX_MAX_ATTEMPTS
+        )
+        self._last_prune_monotonic = 0.0
 
     @property
     def db_path(self) -> str:
@@ -404,7 +446,39 @@ class SubscriptionStoreV2:
                     "UPDATE subscription_targets SET baseline_initialized = 1 WHERE id = ?",
                     (target.id,),
                 )
+        self.prune_stale_rows()
         return events
+
+    def prune_stale_rows(
+        self, *, now: datetime | None = None, force: bool = False
+    ) -> int:
+        """按保留期裁剪 sent outbox 行与 seen 去重行（审计 P2#10）。
+
+        默认按 ``_PRUNE_INTERVAL_SECONDS`` 节流（每小时至多一次）；
+        测试/运维可 ``force=True`` 立即执行。返回删除的行数。
+        """
+        moment = now or datetime.now(timezone.utc)
+        monotonic_now = time.monotonic()
+        if not force and (
+            monotonic_now - self._last_prune_monotonic < _PRUNE_INTERVAL_SECONDS
+        ):
+            return 0
+        self._last_prune_monotonic = monotonic_now
+        sent_cutoff = _iso(
+            moment - timedelta(days=self._outbox_sent_retention_days)
+        )
+        seen_cutoff = _iso(moment - timedelta(days=self._seen_retention_days))
+        with self._lock, self._get_connection() as connection:
+            removed_outbox = connection.execute(
+                "DELETE FROM subscription_outbox "
+                "WHERE state='sent' AND COALESCE(sent_at, created_at) <= ?",
+                (sent_cutoff,),
+            ).rowcount
+            removed_seen = connection.execute(
+                "DELETE FROM subscription_seen_items WHERE discovered_at <= ?",
+                (seen_cutoff,),
+            ).rowcount
+        return int(removed_outbox) + int(removed_seen)
 
     def record_failure(self, target_id: str, error_code: str, *, retry_at: datetime) -> None:
         with self._lock:
@@ -465,9 +539,23 @@ class SubscriptionStoreV2:
                 "UPDATE subscription_outbox SET state='sent', sent_at=? WHERE event_id=?",
                 (_iso(sent_at), event_id),
             )
+        # 审计 P2#10：sent 行按保留期裁剪，不再永久堆积。
+        self.prune_stale_rows(now=sent_at)
 
     def mark_outbox_retry(self, event_id: str, next_attempt_at: datetime) -> None:
         with self._lock, self._get_connection() as connection:
+            row = connection.execute(
+                "SELECT attempts FROM subscription_outbox WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            if row is not None and int(row["attempts"]) >= self._outbox_max_attempts:
+                # 审计 P2#10：重试无上限会永久占住队列；超限转死信，
+                # state='dead' 不会被 claim_outbox 再捞起。
+                connection.execute(
+                    "UPDATE subscription_outbox SET state='dead' WHERE event_id=?",
+                    (event_id,),
+                )
+                return
             connection.execute(
                 "UPDATE subscription_outbox SET state='retry', next_attempt_at=? WHERE event_id=?",
                 (_iso(next_attempt_at), event_id),

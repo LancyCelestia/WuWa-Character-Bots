@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -36,6 +37,10 @@ from plugins.bot_unified_runtime.runtime.settings import (
 from plugins.bot_unified_runtime.sources.credential_health import (
     check_credentials_and_report,
 )
+
+# 审计 P2#20：/bot model probe 的重入防护——非阻塞锁充当「进行中」标志位，
+# 探针线程结束时释放；进行中收到的新 probe 命令只回执提示，不再叠加探针。
+_MODEL_PROBE_LOCK = threading.Lock()
 
 
 def _admin_only_result(request_id: str) -> CapabilityResult:
@@ -325,9 +330,14 @@ def _handle_model_command(
 
         return _format_channel_health_report(get_channel_health_store().report())
     if action0 == "probe":
-        import threading
-
         from plugins.bot_unified_runtime.config import Config as _Cfg
+
+        # 审计 P2#20：连发 N 条只允许起 N=1 个探针，其余回执提示。
+        if not _MODEL_PROBE_LOCK.acquire(blocking=False):
+            return (
+                "渠道巡检正在进行中（全部渠道一次最小调用），无需重复发起；"
+                "稍后用 /bot model health 查看。"
+            )
 
         def _run_probe() -> None:
             try:
@@ -345,6 +355,8 @@ def _handle_model_command(
                           mode="manual")
             except Exception:  # noqa: S110, BLE001 - 后台巡检失败静默。
                 pass
+            finally:
+                _MODEL_PROBE_LOCK.release()
 
         threading.Thread(target=_run_probe, name="model-health-probe", daemon=True).start()
         return "渠道巡检已启动（全部渠道一次最小调用，费用极低）：稍后用 /bot model health 查看。"
@@ -404,14 +416,18 @@ def _handle_model_command(
                 "effort": spec.effort,
                 "source": "env",
             }
+        # 审计 P1#1：env 派生条目展示时以 .env 实时内容为准（仅 priority/
+        # 覆盖字段取运行时副本），与路由合并语义一致。
+        effective_runtime = _merge_registry_entries(raw_env_registry, runtime_registry)
         for model_id, entry in runtime_registry.items():
+            shown = dict(effective_runtime.get(model_id, entry))
             merged[model_id] = {
-                "model": str(entry.get("model", "")),
-                "base_url": str(entry.get("base_url", "")),
-                "tags": entry.get("tags") or [],
-                "priority": entry.get("priority", 100),
-                "effort": str(entry.get("effort", "") or ""),
-                "source": "runtime",
+                "model": str(shown.get("model", "")),
+                "base_url": str(shown.get("base_url", "")),
+                "tags": shown.get("tags") or [],
+                "priority": shown.get("priority", 100),
+                "effort": str(shown.get("effort", "") or ""),
+                "source": "env" if shown.get("source") == _ENV_DERIVED_SOURCE else "runtime",
             }
         if merged:
             from plugins.bot_unified_runtime.llm.model_router import (
@@ -547,13 +563,17 @@ def _handle_model_command(
             )
         model_id = parts[1].strip()
         value = parts[2].strip().lower()
-        base_entry = runtime_registry.get(model_id) or raw_env_registry.get(model_id)
+        merged_view = _merge_registry_entries(raw_env_registry, runtime_registry)
+        base_entry = merged_view.get(model_id)
         if base_entry is None:
             return f"不存在的模型 id：{model_id}。"
         entry = dict(base_entry)
         if value in {"default", "默认", "reset"}:
             entry.pop("effort", None)
-            store.set_model_entry(model_id, entry)
+            store.set_model_entry(
+                model_id,
+                _marked_for_store(model_id, entry, raw_env_registry, runtime_registry, {"effort"}),
+            )
             return (
                 f"已清除 {model_id} 的思考强度覆盖，回到家族默认"
                 f"（{_family_default_effort(str(entry.get('model', ''))) or '不发送'}）。"
@@ -564,7 +584,10 @@ def _handle_model_command(
         if not normalized:
             return "effort 必须是 off/low/medium/high/xhigh/max/default。"
         entry["effort"] = normalized
-        store.set_model_entry(model_id, entry)
+        store.set_model_entry(
+            model_id,
+            _marked_for_store(model_id, entry, raw_env_registry, runtime_registry, {"effort"}),
+        )
         if normalized == "off":
             return f"模型 {model_id} 的思考强度已设为 off（不发送 reasoning_effort）。"
         return f"模型 {model_id} 的思考强度已设为 {normalized}（存为运行时覆盖）。"
@@ -677,10 +700,25 @@ def _handle_model_command(
                     getattr(config, "bot_model_prices", {}) or {},
                 )
             )
-            for record in diagnostics_store.list_recent(1000):
+            # 审计 P2#21：list_recent(1000) 截断会少算账单；翻倍分页取到
+            # 尽头（存储自身有上限时 len(batch) < page 自然终止）。
+            records: list[Any] = []
+            page = 1000
+            while True:
+                batch = list(diagnostics_store.list_recent(page))
+                records = batch
+                if len(batch) < page or page >= 1_000_000:
+                    break
+                page *= 2
+            for record in records:
                 created_at = getattr(record, "created_at", None)
-                if created_at is not None and created_at.astimezone(timezone).date() != target_date:
-                    continue
+                if created_at is not None:
+                    # 审计 P2#21：naive created_at 不能按进程本地时区解释；
+                    # 挂上 bot 时区再比较，跨时区部署不再错档。
+                    if created_at.tzinfo is None:
+                        created_at = created_at.replace(tzinfo=timezone)
+                    if created_at.astimezone(timezone).date() != target_date:
+                        continue
                 values = (
                     int(getattr(record, "llm_usage_prompt_tokens", 0) or 0),
                     int(getattr(record, "llm_usage_completion_tokens", 0) or 0),
@@ -768,13 +806,90 @@ def _parse_kv_pairs(parts: list[str]) -> dict[str, str]:
     return entries
 
 
+_ENV_DERIVED_SOURCE = "env"
+
+
 def _merge_registry_entries(
     raw_env_registry: dict[str, dict[str, Any]],
     runtime_registry: dict[str, dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
+    """合并 .env 注册表与运行时条目（审计 P1#1 的合并语义）。
+
+    - 纯运行时条目（无 ``source`` 标记，管理员 add 的自定义模型或历史副本）：
+      整体覆盖 .env 同名条目。
+    - env 派生条目（``source == "env"``，管理端重排序/局部修改时写入）：
+      内容以当前 .env 实时值为准，仅 ``priority``（管理员重排序的结果）与
+      ``override_fields`` 列出的字段（管理员明确改过的字段）采用运行时副本；
+      .env 已删除的条目不再被旧运行时副本遮蔽（直接失效）。
+    """
     merged = {key: dict(value) for key, value in raw_env_registry.items()}
-    merged.update({key: dict(value) for key, value in runtime_registry.items()})
+    for key, entry in runtime_registry.items():
+        entry = dict(entry)
+        if entry.get("source") == _ENV_DERIVED_SOURCE:
+            env_entry = raw_env_registry.get(key)
+            if env_entry is None:
+                continue
+            effective = dict(env_entry)
+            for field in entry.get("override_fields") or []:
+                if field == "priority" or field not in entry:
+                    continue
+                effective[field] = entry[field]
+            effective["priority"] = entry.get(
+                "priority", effective.get("priority", 100)
+            )
+            merged[key] = effective
+        else:
+            merged[key] = entry
     return merged
+
+
+def _env_derived_persist_entry(
+    entry: dict[str, Any], override_fields: set[str] | None
+) -> dict[str, Any]:
+    """把 env 来源条目包装成持久化副本（审计 P1#1 硬约束）。
+
+    - ``source: "env"`` 标记：读取侧据此用 .env 实时内容重建条目；
+    - ``override_fields`` 只记录管理员明确改过的内容字段（priority 天然
+      归管理员所有，不列入）；
+    - api_key 保留 .env 原文（``env:变量名`` 引用原样落盘），解析出的
+      明文密钥永不进运行时 store。
+    """
+    marked = dict(entry)
+    content_overrides = sorted(
+        {field for field in (override_fields or set()) if field != "priority"}
+    )
+    if content_overrides:
+        marked["override_fields"] = content_overrides
+    else:
+        marked.pop("override_fields", None)
+    marked["source"] = _ENV_DERIVED_SOURCE
+    return marked
+
+
+def _marked_for_store(
+    model_id: str,
+    entry: dict[str, Any],
+    raw_env_registry: dict[str, dict[str, Any]],
+    runtime_registry: dict[str, dict[str, Any]],
+    extra_overrides: set[str] | None = None,
+) -> dict[str, Any]:
+    """按条目来源决定持久化形态：env 来源打标记，纯运行时条目原样。"""
+    if model_id not in raw_env_registry:
+        return dict(entry)
+    previous = set(
+        runtime_registry.get(model_id, {}).get("override_fields") or []
+    )
+    return _env_derived_persist_entry(entry, previous | set(extra_overrides or ()))
+
+
+def _supplied_canonical_fields(
+    kv: dict[str, str], key_map: dict[str, str] | None = None
+) -> set[str]:
+    """管理员在命令里明确给出的字段（映射成条目字段名；priority 单独处理）。"""
+    mapping = key_map or {}
+    fields = {mapping.get(key, key) for key in kv}
+    fields.discard("priority")
+    return fields
 
 
 def _persist_priority_move(
@@ -784,11 +899,30 @@ def _persist_priority_move(
     priority: int,
     *,
     vision: bool = False,
+    env_registry: dict[str, dict[str, Any]] | None = None,
+    authored_fields: dict[str, set[str]] | None = None,
 ) -> list[str]:
+    """重排序并持久化（审计 P1#1）。
+
+    此前这里把合并后的注册表整体写入运行时持久层，.env 来源条目（含
+    解析后的密钥与内容快照）被永久烘焙，.env 后续改动全部被旧副本遮蔽。
+    现在 env 来源条目一律打 ``source: "env"`` 标记：内容字段读取时以
+    .env 实时值为准，持久副本只承载管理员拥有的 priority（及
+    ``authored_fields`` 中明确改过的字段）；纯运行时条目原样保留。
+    """
     from plugins.bot_unified_runtime.llm.model_router import reorder_priority_entries
 
+    env_registry = env_registry or {}
     reordered = reorder_priority_entries(entries, model_id, priority)
-    store.replace_registry_entries(reordered, vision=vision)
+    persistable: dict[str, dict[str, Any]] = {}
+    for entry_id, entry in reordered.items():
+        if entry_id in env_registry:
+            persistable[entry_id] = _env_derived_persist_entry(
+                entry, (authored_fields or {}).get(entry_id)
+            )
+        else:
+            persistable[entry_id] = dict(entry)
+    store.replace_registry_entries(persistable, vision=vision)
     return [
         entry_id
         for entry_id, _entry in sorted(
@@ -850,11 +984,38 @@ def _handle_model_registry_command(
             entry["model"] = kv["actual_model_id"]
         entries = _merge_registry_entries(raw_env_registry, runtime_registry)
         old_position = entries.get(model_id, {}).get("priority", len(entries) + 1)
+        if model_id in raw_env_registry:
+            # 审计 P1#1：对 .env 已有条目 add，未明确给出的字段以 .env 为准。
+            entry = {**dict(raw_env_registry[model_id]), **entry}
         entries[model_id] = entry
-        _persist_priority_move(store, entries, model_id, int(entry.get("priority", old_position)))
+        _persist_priority_move(
+            store,
+            entries,
+            model_id,
+            int(entry.get("priority", old_position)),
+            env_registry=raw_env_registry,
+            authored_fields=(
+                {
+                    model_id: _supplied_canonical_fields(
+                        kv,
+                        {
+                            "key": "api_key",
+                            "api_key": "api_key",
+                            "actual_model_id": "model",
+                            "alias": "aliases",
+                            "aliases": "aliases",
+                        },
+                    )
+                }
+                if model_id in raw_env_registry
+                else None
+            ),
+        )
+        # 审计 P3#24：actual_model_id 静默覆盖 model 时，回执回显实际生效值。
+        actual_model = str(entry.get("model", "") or model)
         key_state = "密钥已存储（不会回显）" if entry["api_key"] else "未配置密钥（路由会跳过该模型，直到补充 key=）"
         return (
-            f"已新增自定义模型 {model_id}（{model} @ {base_url}，{key_state}）。"
+            f"已新增自定义模型 {model_id}（{actual_model} @ {base_url}，{key_state}）。"
             "立即生效，参与故障转移排序。启用它："
             f"/bot model set {model_id}；不启用则只在故障转移时使用。"
         )
@@ -862,7 +1023,9 @@ def _handle_model_registry_command(
         if len(parts) < 2:
             return "用法：/bot model update <id> model=... base_url=... key=... group=... tags=... effort=... priority=..."
         model_id = parts[0].strip()
-        base_entry = runtime_registry.get(model_id) or raw_env_registry.get(model_id)
+        # 审计 P1#1：基准取合并视图——env 派生副本不再让 .env 改动被旧快照遮蔽。
+        entries = _merge_registry_entries(raw_env_registry, runtime_registry)
+        base_entry = entries.get(model_id)
         if base_entry is None:
             return (
                 f"不存在的模型 id：{model_id}。可用："
@@ -914,10 +1077,30 @@ def _handle_model_registry_command(
                     entry[target_key] = value
             else:
                 return f"不支持的字段：{key}。可用：model actual_model_id base_url key group tags effort alias aliases priority"
-        entries = _merge_registry_entries(raw_env_registry, runtime_registry)
         old_position = entries.get(model_id, {}).get("priority", len(entries) + 1)
         entries[model_id] = entry
-        _persist_priority_move(store, entries, model_id, int(entry.get("priority", old_position)))
+        _persist_priority_move(
+            store,
+            entries,
+            model_id,
+            int(entry.get("priority", old_position)),
+            env_registry=raw_env_registry,
+            authored_fields=(
+                {
+                    model_id: (
+                        set(
+                            runtime_registry.get(model_id, {}).get(
+                                "override_fields"
+                            )
+                            or []
+                        )
+                        | _supplied_canonical_fields(kv, key_map)
+                    )
+                }
+                if model_id in raw_env_registry
+                else None
+            ),
+        )
         return (
             f"已更新模型 {model_id}（改动存为运行时覆盖，优先于 .env 同名条目）。"
             "密钥不会回显。"
@@ -929,7 +1112,9 @@ def _handle_model_registry_command(
         entries = _merge_registry_entries(raw_env_registry, runtime_registry)
         try:
             priority = int(parts[1].strip())
-            order = _persist_priority_move(store, entries, model_id, priority)
+            order = _persist_priority_move(
+                store, entries, model_id, priority, env_registry=raw_env_registry
+            )
         except ValueError as exc:
             return str(exc) if "不存在的模型" in str(exc) else "priority 必须是正整数。"
         position = order.index(model_id) + 1
@@ -939,6 +1124,8 @@ def _handle_model_registry_command(
             return "用法：/bot model remove <id>"
         model_id = parts[0].strip()
         if store.remove_model_entry(model_id):
+            if runtime_registry.get(model_id, {}).get("source") == _ENV_DERIVED_SOURCE:
+                return f"已清除 {model_id} 的运行时覆盖，该模型回到 .env 注册表配置。"
             return f"已删除自定义模型 {model_id}。"
         if model_id in raw_env_registry:
             return (
@@ -989,7 +1176,9 @@ def _handle_vision_command(
                 normalize_priority_entries,
             )
 
-            merged = normalize_priority_entries({key: dict(value) for key, value in {**env_entries, **runtime_registry}.items()})
+            merged = normalize_priority_entries(
+                _merge_registry_entries(env_entries, runtime_registry)
+            )
             lines.append("识别候选（唯一 priority 槽位，1 为首选；每次最多尝试 3 个）：")
             ordered = sorted(merged.items(), key=lambda kv: (int(kv[1]["priority"]), kv[0]))
             for display_position, (entry_id, display_entry) in enumerate(ordered, start=1):
@@ -1020,12 +1209,6 @@ def _handle_vision_command(
         store.set_override("BOT_VISION_MODE", mode)
         return f"视觉模式已设为 {mode}。"
 
-    def _env_or_runtime_entry(target: str) -> dict[str, Any] | None:
-        env_entries = _flatten_vision_entries(
-            getattr(config, "bot_vision_model_registry", {})
-        )
-        return runtime_registry.get(target) or env_entries.get(target)
-
     if sub == "add":
         if not rest:
             return usage
@@ -1049,7 +1232,13 @@ def _handle_vision_command(
             except ValueError:
                 return "priority 必须是正整数（1 为首选）。"
         if "effort" in kv:
-            entry["effort"] = kv["effort"].strip().lower()
+            # 审计 P3#24：vision add 的 effort 也要过 normalize_effort 校验。
+            from plugins.bot_unified_runtime.llm.model_router import normalize_effort
+
+            normalized = normalize_effort(kv["effort"])
+            if not normalized:
+                return "effort 必须是 off/low/medium/high/xhigh/max（default=省略）。"
+            entry["effort"] = normalized
         if "alias" in kv or "aliases" in kv:
             entry["aliases"] = [item.strip() for item in kv.get("aliases", kv.get("alias", "")).split(",") if item.strip()]
         if "actual_model_id" in kv:
@@ -1057,17 +1246,48 @@ def _handle_vision_command(
         env_entries = _flatten_vision_entries(getattr(config, "bot_vision_model_registry", {}))
         entries = _merge_registry_entries(env_entries, runtime_registry)
         old_position = entries.get(entry_id, {}).get("priority", len(entries) + 1)
+        if entry_id in env_entries:
+            # 审计 P1#1：对 .env 已有条目 add，未明确给出的字段以 .env 为准。
+            entry = {**dict(env_entries[entry_id]), **entry}
         entries[entry_id] = entry
-        _persist_priority_move(store, entries, entry_id, int(entry.get("priority", old_position)), vision=True)
+        _persist_priority_move(
+            store,
+            entries,
+            entry_id,
+            int(entry.get("priority", old_position)),
+            vision=True,
+            env_registry=env_entries,
+            authored_fields=(
+                {
+                    entry_id: _supplied_canonical_fields(
+                        kv,
+                        {
+                            "key": "api_key",
+                            "api_key": "api_key",
+                            "actual_model_id": "model",
+                            "alias": "aliases",
+                            "aliases": "aliases",
+                        },
+                    )
+                }
+                if entry_id in env_entries
+                else None
+            ),
+        )
+        # 审计 P3#24：actual_model_id 静默覆盖 model 时，回执回显实际生效值。
+        actual_model = str(entry.get("model", "") or model)
         return (
-            f"已新增视觉模型 {entry_id}（{model}）。立即生效，缺密钥的条目会被跳过；"
+            f"已新增视觉模型 {entry_id}（{actual_model}）。立即生效，缺密钥的条目会被跳过；"
             "注册即参与识别轮询，无需 set 启用。"
         )
     if sub == "update":
         if len(rest) < 2:
             return "用法：/bot model vision update <id> model=... base_url=... key=... priority=..."
         entry_id = rest[0].strip()
-        base_entry = _env_or_runtime_entry(entry_id)
+        # 审计 P1#1：基准取合并视图——env 派生副本不再让 .env 改动被旧快照遮蔽。
+        env_entries = _flatten_vision_entries(getattr(config, "bot_vision_model_registry", {}))
+        entries = _merge_registry_entries(env_entries, runtime_registry)
+        base_entry = entries.get(entry_id)
         if base_entry is None:
             return f"不存在的视觉模型 id：{entry_id}。"
         try:
@@ -1095,21 +1315,43 @@ def _handle_vision_command(
                     return "priority 必须是整数。"
             else:
                 return f"不支持的字段：{key}。可用：model actual_model_id base_url key alias aliases effort priority"
-        env_entries = _flatten_vision_entries(getattr(config, "bot_vision_model_registry", {}))
-        entries = _merge_registry_entries(env_entries, runtime_registry)
         old_position = entries.get(entry_id, {}).get("priority", len(entries) + 1)
         entries[entry_id] = entry
-        _persist_priority_move(store, entries, entry_id, int(entry.get("priority", old_position)), vision=True)
+        _persist_priority_move(
+            store,
+            entries,
+            entry_id,
+            int(entry.get("priority", old_position)),
+            vision=True,
+            env_registry=env_entries,
+            authored_fields=(
+                {
+                    entry_id: (
+                        set(
+                            runtime_registry.get(entry_id, {}).get(
+                                "override_fields"
+                            )
+                            or []
+                        )
+                        | _supplied_canonical_fields(kv, key_map)
+                    )
+                }
+                if entry_id in env_entries
+                else None
+            ),
+        )
         return f"已更新视觉模型 {entry_id}（立即生效；密钥不回显）。"
     if sub == "priority":
         if len(rest) < 2:
             return "用法：/bot model vision priority <id> <数字>"
         entry_id = rest[0].strip()
         env_entries = _flatten_vision_entries(getattr(config, "bot_vision_model_registry", {}))
-        entries = {key: dict(value) for key, value in {**env_entries, **runtime_registry}.items()}
+        entries = _merge_registry_entries(env_entries, runtime_registry)
         try:
             priority = int(rest[1].strip())
-            order = _persist_priority_move(store, entries, entry_id, priority, vision=True)
+            order = _persist_priority_move(
+                store, entries, entry_id, priority, vision=True, env_registry=env_entries
+            )
         except ValueError as exc:
             return str(exc) if "不存在的模型" in str(exc) else "priority 必须是正整数。"
         position = order.index(entry_id) + 1
@@ -1119,6 +1361,8 @@ def _handle_vision_command(
             return "用法：/bot model vision remove <id>"
         entry_id = rest[0].strip()
         if store.remove_vision_entry(entry_id):
+            if runtime_registry.get(entry_id, {}).get("source") == _ENV_DERIVED_SOURCE:
+                return f"已清除 {entry_id} 的运行时覆盖，该模型回到 .env 注册表配置。"
             return f"已删除视觉模型 {entry_id}。"
         env_entries = _flatten_vision_entries(
             getattr(config, "bot_vision_model_registry", {})
