@@ -78,7 +78,7 @@ dev.ps1 -Task doctor / backend-base-smoke / backend-smoke / search-smoke / runti
 Tavily 主、You.com 备、LangSearch 备、TinyFish 搜索+正文抓取；不接 Bing。链式回退+瞬时重试；Tavily 一级参数 `search_depth/time_range`；抓取回退链 TinyFish fetch → Tavily extract → 通用 `fetch_page_text`（含反注入去噪）。验收工具 `dev.ps1 -Task search-smoke`。Tavily/You/TinyFish 已真实 key 验收；LangSearch 未验。
 
 ### 6.6 模型路由（渠道化）
-**45 个注册条目**（`.env BOT_MODEL_REGISTRY`），8 家供应商：浅夜/恒星纪元/ToolCode/umi（含 Claude 四渠道、GLM/Kimi/MiniMax 新组）/DeepSeek 官方/智谱/StarAPI/hcn 兜底。**Gemini 置顶已换血（09-10）：aiprc-gemini p1 / starapi-gemini p2，浅夜套壳 gemini 降至 p19/p20**（套壳实锤：浅夜渠道 gemini-3.8 自报 DeepSeek 身份）。
+**45 个注册条目**（`.env BOT_MODEL_REGISTRY`），8 家供应商：浅夜/恒星纪元/ToolCode/umi（含 Claude 四渠道、GLM/Kimi/MiniMax 新组）/DeepSeek 官方/智谱/StarAPI/hcn 兜底。**默认模型永远为 Gemini（用户裁定，人格扮演效果最好）**：qian-night-gemini p1 / qian-night-c-gemini p2 置顶，两组时段 order 同样 Gemini 簇置顶；aiprc-gemini 因渠道暂时缺该模型打 `manual` 标签移出自动轮换（恢复后去标签即回队）。
 - 选择：手动指定 > 时段组 order > 基础 priority（1..N 唯一槽位）> 故障转移同序；**`/bot model set <实际模型名>`（如 gemini-3.8-flash-high）自动聚合该模型全部渠道**（条目带 `price_in/price_out`）：健康库有实测数据时按「已实测延迟升序 → 未实测垫底（保价格/优先级序）」，否则价格升序；开关 `BOT_CHANNEL_HEALTH_LATENCY_FIRST` 默认开。auto-route 全局队列始终按策展 priority，不被延迟重排。
 - **渠道健康巡检**（`llm/channel_health.py`）：每小时全渠道最小调用探测（后台默认 3 线程+0.4s 错峰；手动 `/bot model probe` 默认 8 并发；`bot_channel_probe_threads/manual_threads/jitter_seconds` 可调，钳位 1..16 / 0..5s）；连续 2 次失败标「⛔暂时不可用」移出故障转移队列，30 分钟重探恢复即回队，**永不自动删除**；全部不可用时放行原队列防全瘫。`/bot model health` 出运维报告（含【需要你处理的】行动清单）、`/bot model routes <模型名>` 列单模型全渠道（未实测渠道 ⏳ 标注）。
 - 失败话术：私聊 LLM 失败回 12 条守岸人人格话术（`_PERSONA_FAILURE_MESSAGES` v4：无虚假承诺、句式打散，会话内轮换）；群聊静默。
@@ -190,9 +190,9 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 
 文件域：`llm/channel_health.py`、`llm/model_router.py`（route/health 展示）、`capabilities/runtime_admin.py`、`capabilities/music.py`（候选窗口）、新模板 `song_candidates.html`、`capabilities/subscribe_v2.py`
 
-1. ✅ 渠道延迟择优：`channels_for_model` 同名模型聚合改为「已实测延迟升序 → 未实测垫底（保价格/优先级序）」；双开关 `BOT_CHANNEL_HEALTH_ENABLED` + `BOT_CHANNEL_HEALTH_LATENCY_FIRST`（默认开）；auto-route 全局队列保持人工策展 priority 不被延迟重排（裁决：否则原生 gemini 提前会被套壳渠道的速度反复推翻）。真实健康库验证：gemini-3.8-flash-high → aiprc(5.2s) → qian-night(6.5s)。
+1. ✅ 渠道延迟择优：`channels_for_model` 同名模型聚合改为「已实测延迟升序 → 未实测垫底（保价格/优先级序）」；双开关 `BOT_CHANNEL_HEALTH_ENABLED` + `BOT_CHANNEL_HEALTH_LATENCY_FIRST`（默认开）；auto-route 全局队列保持人工策展 priority 不被延迟重排（裁决：否则原生 gemini 提前会被套壳渠道的速度反复推翻）。（09-10 二轮：用户裁定撤销浅夜降级——「套壳」说法不成立，已恢复 qian-night p1/p2 原排列；延迟择优算法 v2 另行重做，见 §9.9 二轮。）
 2. ✅ 巡检错峰参数化：`bot_channel_probe_threads/manual_threads/jitter_seconds`（Config 字段 + .env `BOT_CHANNEL_PROBE_*`；默认 3/8/0.4 行为不变；钳位线程 1..16、jitter 0..5s，jitter≤0 不 sleep）。
-3. ✅ qian-night 重排（.env，备份在 `%TEMP%/bot_bgroup_backup/`）：registry aiprc-gemini→p1、starapi-gemini→p2，浅夜两条 gemini 降 p19/p20；两组时段 order 同步前插原生 gemini。**需重启 bot 生效**。
+3. ↩️ qian-night 重排已按用户裁定**撤销**（浅夜 gemini 恢复 p1/p2 原排列；「套壳」说法不成立）；改为落实「默认永远 Gemini」：两组时段 order Gemini 簇置顶 + aiprc-gemini 暂时 manual 移出。
 4. ⚠️ umi 重探（实网全 45 渠道）：额度三条（UMI_GROUP3：umi-desk-deepseek-flash/umi-glm-flash/umi-kimi）换 key 后仍 403「余额 ✦0」——**key 认证通过、账户没钱，需充值或换有余额账户的 key**；umi claude×4/terra ReadTimeout、desk 组 503 上游无货。连带发现：浅夜主 key 401×3（BOT_API_KEY_QIANQIANYE 失效）、ds-official no_api_key×3、toolcode-gemini 404 已下架、starapi-gemini 503（健康系统自动跳过+30min 重探）。
 5. ✅ 失败话术 v4：12 条零重复，删虚假承诺（「我会优先处理你的」），句式打散（开头同构≤2），天然呆保留 2 条；轮换回归 `tests/test_persona_failure_messages.py`。
 6. ✅ routes/health 展示：routes 标题改「按实测响应速度（快→慢）」、未实测渠道 ⏳ 标注（不再伪装 ✅）；health 报告补延迟择优说明行。
