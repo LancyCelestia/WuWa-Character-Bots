@@ -590,7 +590,7 @@ def search_kugou_candidates(query: str, *, cookie_header: str = "") -> list[dict
     encoded = urllib.parse.quote(query)
     payload = http_get_json(
         f"http://msearchcdn.kugou.com/api/v3/search/song?plat=0&keyword={encoded}"
-        "&tagtype=全部&pagesize=5&version=9108",
+        "&tagtype=%E5%85%A8%E9%83%A8&pagesize=5&version=9108",  # 全部 必须百分号编码：裸中文会让 httpx 抛 UnicodeEncodeError
         referer="https://www.kugou.com/",
         cookie=cookie_header,
     )
@@ -667,9 +667,13 @@ def search_kuwo(query: str, *, cookie_header: str = "") -> ParsedContent | None:
 
 
 def _kugou_get_song_info(file_hash: str, *, cookie_header: str = "") -> dict:
-    """酷狗现有链路：m.kugou.com getSongInfo（按文件 hash 拿信息+直链）。"""
+    """酷狗现有链路：m.kugou.com getSongInfo（按文件 hash 拿信息+直链）。
+
+    m.kugou.com 实测支持 HTTPS；msearchcdn.kugou.com 证书主机名不匹配只能走
+    HTTP（2026-09 实测），保持明文并依赖响应为公开歌曲元数据。
+    """
     payload = http_get_json(
-        f"http://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash={file_hash}",
+        f"https://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash={file_hash}",
         referer="https://www.kugou.com/",
         cookie=cookie_header,
     )
@@ -747,7 +751,7 @@ def search_kugou(query: str, *, cookie_header: str = "") -> ParsedContent | None
     encoded = urllib.parse.quote(query)
     payload = http_get_json(
         f"http://msearchcdn.kugou.com/api/v3/search/song?plat=0&keyword={encoded}"
-        "&tagtype=全部&pagesize=1&version=9108",
+        "&tagtype=%E5%85%A8%E9%83%A8&pagesize=1&version=9108",  # 同上：裸中文 URL 编码缺陷修复
         referer="https://www.kugou.com/",
         cookie=cookie_header,
     )
