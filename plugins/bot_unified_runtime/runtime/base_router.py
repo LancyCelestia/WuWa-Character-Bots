@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
 
+from plugins.bot_unified_runtime.capabilities.affinity import is_affinity_command
 from plugins.bot_unified_runtime.capabilities.auto_send import (
     is_auto_send_command_text,
 )
@@ -79,6 +80,7 @@ class RouteKind(str, Enum):
     EPIC = "epic"
     WEATHER = "weather"
     EAT = "eat"
+    AFFINITY = "affinity"
     NATURAL_COMMAND = "natural_command"
     CONTENT = "content"
     CHAT = "chat"
@@ -260,6 +262,14 @@ def build_route_rules() -> list[RouteRule]:
             return RouteDecision(RouteKind.EAT, "bot.eat", 41, "吃什么推荐", ("base_route:eat",))
         return None
 
+    def affinity_match(text, config, _alias):
+        # 好感度查询与动态好感度层共用 bot_affinity_enabled 开关。
+        if not getattr(config, "bot_affinity_enabled", True):
+            return None
+        if is_affinity_command(text):
+            return RouteDecision(RouteKind.AFFINITY, "bot.affinity", 41, "好感度查询", ("base_route:affinity",))
+        return None
+
     def moegirl_question_match(text, config, _alias):
         # 二次元实体问句（「初音未来是谁？」）：不进 COMMAND_ROUTE_KINDS，
         # 群聊不 @ 不抢答（与 CHAT 同门控）；未命中时 handler 无感降级聊天链路。
@@ -346,6 +356,7 @@ def build_route_rules() -> list[RouteRule]:
         RouteRule(RouteKind.EPIC, "bot.epic", 41, "Epic 免费游戏", "Epic 免费游戏查询", ("base_route:epic",), epic_match),
         RouteRule(RouteKind.WEATHER, "bot.weather", 41, "天气查询", "天气查询", ("base_route:weather",), weather_match),
         RouteRule(RouteKind.EAT, "bot.eat", 41, "吃什么推荐", "吃什么/菜谱推荐", ("base_route:eat",), eat_match),
+        RouteRule(RouteKind.AFFINITY, "bot.affinity", 41, "好感度查询", "好感度/好感查看/查询好感", ("base_route:affinity",), affinity_match),
         RouteRule(RouteKind.MOEGIRL_QUESTION, "bot.moegirl", 44, "二次元问句", "二次元问句（萌娘百科自动查询，未命中降级聊天）", ("base_route:moegirl_question",), moegirl_question_match),
         RouteRule(RouteKind.NATURAL_COMMAND, "bot.natural_command", 45, "自然语言命令", "自然语言命令归一化", ("base_route:natural_command",), natural_match),
         RouteRule(RouteKind.CONTENT, "bot.content", 46, "链接解析", "链接解析（视频/图片/社交媒体/商品等）", ("base_route:content",), content_match),
