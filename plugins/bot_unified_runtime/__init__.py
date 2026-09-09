@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import re
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -81,6 +83,7 @@ from .runtime.base_router import (
     RouteDecision,
     RouteKind,
     classify_message_route,
+    clear_route_decision_cache,
     list_route_rules_for_audit,
     looks_like_command_text,
 )
@@ -337,23 +340,28 @@ _RUNTIME_MENTION_TERMS: list[str] = []
 
 
 def _mentioned_by_affinity_nickname(text: str) -> bool:
-    """动态好感度小名联动：文本命中任一用户小名即视为被点名。
+    """动态好感度小名联动：文本以称呼形点到任一用户小名即视为被点名。
 
     小名来自 user_affinity.nickname（管理员/本人设置），数量有限，
     直接全表扫描即可（阻塞读仅群聊判定路径，量级可控）。
+    必须用 detect_name_mention 的称呼形匹配而非子串包含：
+    小名可能撞上常用词（如误学的“什么”），子串匹配会让
+    “这是什么”“为什么”全部误判为点名。
     """
     if not text or _AFFINITY_NICKNAMES_CACHE is None:
         return False
-    stripped = text.strip()
-    lowered = stripped.lower()
-    return any(
-        nickname and (nickname.lower() in lowered)
-        for nickname in _AFFINITY_NICKNAMES_CACHE
-    )
+    return detect_name_mention(text, _AFFINITY_NICKNAMES_CACHE)
 
 
 _AFFINITY_NICKNAMES_CACHE: list[str] | None = None
 _AFFINITY_NICKNAMES_LOADED_AT = 0.0
+
+# 被动感知小名自学的停用词：“叫我什么/喊我名字”这类问句
+# 会被正则误学成小名，命中即丢弃，不允许进入小名表。
+_NICKNAME_STOPWORDS = {
+    "什么", "啥", "谁", "哪个", "这些", "那些",
+    "名字", "昵称", "外号", "这个", "那个", "啥子",
+}
 
 
 def _refresh_affinity_nicknames(affinity_store) -> None:
@@ -378,8 +386,8 @@ def set_runtime_mention_terms(terms: list[str] | tuple[str, ...]) -> None:
     _RUNTIME_MENTION_TERMS = [str(item).strip() for item in terms if str(item).strip()]
 
 def contains_visual_message_segments(raw_segments: list[dict[str, Any]] | None) -> bool:
-    """Return whether an event contains an image or sticker-like segment."""
-    visual_types = {"image", "face", "mface", "marketface", "sticker"}
+    """Return whether an event contains an image, sticker-like or video segment."""
+    visual_types = {"image", "face", "mface", "marketface", "sticker", "video"}
     return any(
         str(segment.get("type", "")).strip().lower() in visual_types
         for segment in raw_segments or []
@@ -491,6 +499,7 @@ class PrivateFileNoticeEvent(OneBotNoticeEvent):
 OneBotV11Adapter.add_custom_model(PrivateFileNoticeEvent)
 
 
+# 默认回退值；实际由配置 bot_forward_fetch_timeout_seconds 注入。
 _FORWARD_MESSAGE_API_TIMEOUT_SECONDS = 10.0
 
 
@@ -505,7 +514,9 @@ def _forward_segment_id(event: Any) -> str:
     return ""
 
 
-async def _forward_message_text(bot: Any, event: Any) -> str:
+async def _forward_message_text(
+    bot: Any, event: Any, timeout_seconds: float | None = None
+) -> str:
     """读取合并转发（forward）消息正文；失败返回空串。
 
     只在消息确实包含 forward 段时才调用 NapCat 的 get_forward_msg。
@@ -519,9 +530,10 @@ async def _forward_message_text(bot: Any, event: Any) -> str:
         call_api = getattr(bot, "call_api", None)
         if not callable(call_api):
             return ""
+        timeout = float(timeout_seconds or _FORWARD_MESSAGE_API_TIMEOUT_SECONDS)
         result = await asyncio.wait_for(
             call_api("get_forward_msg", message_id=forward_id),
-            timeout=_FORWARD_MESSAGE_API_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
         if not isinstance(result, dict):
             return ""
@@ -555,6 +567,44 @@ def _detect_onebot_direct_mention(
         and str(segment.get("data", {}).get("qq", "")) == normalized_bot_id
         for segment in raw_segments
     )
+
+
+# ffmpeg 能直接解码的音频后缀；SILK 裸流（QQ 语音常态）不在其中。
+_RECORD_CONVERTIBLE_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".amr"}
+
+
+async def _transcode_record_segments(bot: Any, raw_segments: list[dict[str, Any]]) -> None:
+    """把 ffmpeg 解不了的语音段经 OneBot get_record 预转码成 mp3。
+
+    NapCat 收到的 QQ 语音落盘是 SILK 裸流（.slk），ffmpeg 无法解码，
+    转写链路会静默降级；get_record(out_format=mp3) 让适配器自行转码
+    后把新路径写入段 data.transcoded_path。任何失败静默跳过，段保持原样。
+    """
+    from pathlib import Path as _Path
+
+    for segment in raw_segments:
+        if str(segment.get("type", "")).lower() != "record":
+            continue
+        data = segment.get("data") or {}
+        if not isinstance(data, dict) or data.get("transcoded_path"):
+            continue
+        local = str(data.get("file") or data.get("path") or "").strip()
+        suffix = _Path(local).suffix.lower() if local else ""
+        if suffix in _RECORD_CONVERTIBLE_SUFFIXES:
+            continue
+        file_id = str(data.get("file_id") or data.get("file") or "").strip()
+        if not file_id:
+            continue
+        try:
+            result = await bot.call_api("get_record", file_id=file_id, out_format="mp3")
+        except Exception as exc:  # noqa: BLE001 - 适配器不支持/转码失败时保持原段。
+            logging.getLogger(__name__).debug(
+                "get_record skipped type=%s", type(exc).__name__
+            )
+            continue
+        transcoded = str((result or {}).get("file") or "").strip()
+        if transcoded and _Path(transcoded).suffix.lower() in _RECORD_CONVERTIBLE_SUFFIXES:
+            data["transcoded_path"] = transcoded
 
 
 def _log_runtime_event(
@@ -632,6 +682,7 @@ def _incoming_from_nonebot_event(
     event: Any,
     bot_id: str = "unknown",
     adapter_name: str = "",
+    segments: list[dict[str, Any]] | None = None,
 ) -> IncomingMessage:
     text = event.get_plaintext()
     session_id = event.get_session_id()
@@ -694,7 +745,10 @@ def _incoming_from_nonebot_event(
             SessionType.GROUP if "group" in session_id else SessionType.PRIVATE
         )
 
-    raw_segments = _extract_onebot_raw_segments(event)
+    # 调用方可传入已富化（如 get_record 预转码）的段；缺省从事件提取。
+    raw_segments = (
+        segments if segments is not None else _extract_onebot_raw_segments(event)
+    )
     if not raw_segments:
         raw_segments = [{"type": "text", "data": {"text": text}}]
     normalized_message = normalize_message_segments(raw_segments)
@@ -717,7 +771,7 @@ def _incoming_from_nonebot_event(
     if file_context:
         text = (text + "\n" + "\n".join(file_context)).strip()
     if not text.strip() and contains_visual_message_segments(raw_segments):
-        text = "（用户发送了一张图片或表情包。）"
+        text = "（用户发送了图片/表情包/视频，未附文字。）"
     reply_to = getattr(event, "reply_to", None) or getattr(event, "reply_to_message", None)
     if reply_to is not None:
         if isinstance(reply_to, dict):
@@ -736,6 +790,20 @@ def _incoming_from_nonebot_event(
         text = f"{text}\n[引用回复]\n{reply_text}\n[/引用回复]".strip()
     is_tome = getattr(event, "is_tome", None)
     adapter_mentions_bot = bool(is_tome()) if callable(is_tome) else False
+    soft_name_mention = (
+        detect_name_mention(text, _RUNTIME_MENTION_TERMS)
+        or _mentioned_by_affinity_nickname(text)
+    )
+    hard_mention = adapter_mentions_bot or (
+        normalized_adapter not in {"telegram", "mail"}
+        and _detect_onebot_direct_mention(raw_segments, bot_id)
+    )
+    # 私聊/邮件永远回复，软硬之分无意义；软触发且无硬触发时标记仅供 white2 门收紧。
+    name_mention_only = (
+        soft_name_mention
+        and not hard_mention
+        and session_type not in {SessionType.PRIVATE, SessionType.EMAIL}
+    )
     return IncomingMessage(
         platform=platform,
         adapter=adapter,
@@ -751,14 +819,10 @@ def _incoming_from_nonebot_event(
         thread_id=str(getattr(event, "message_thread_id", "") or "") or None,
         mentions_bot=(
             session_type in {SessionType.PRIVATE, SessionType.EMAIL}
-            or adapter_mentions_bot
-            or (
-                normalized_adapter not in {"telegram", "mail"}
-                and _detect_onebot_direct_mention(raw_segments, bot_id)
-            )
-            or detect_name_mention(text, _RUNTIME_MENTION_TERMS)
-            or _mentioned_by_affinity_nickname(text)
+            or hard_mention
+            or soft_name_mention
         ),
+        name_mention_only=name_mention_only,
         message_id=str(message_id) if message_id is not None else None,
     )
 
@@ -1692,17 +1756,35 @@ def _affinity_store_runtime(store_config: object):
     )
 
 
+# 进程级共享好感度 store（与 kb_wiki._SHARED_STORES 同模式）：每条聊天消息
+# 都会走这里，DynamicAffinityStore 构造即建连接+建表，每次操作再各开新连接；
+# 复用单例消除热路径上的重复 schema ensure 与连接风暴（store 自身带锁线程安全）。
+_AFFINITY_STORES: dict[str, Any] = {}
+_AFFINITY_STORES_LOCK = threading.Lock()
+
+
+def _reset_affinity_store_cache() -> None:
+    """清空共享 store 缓存（测试用）。"""
+    with _AFFINITY_STORES_LOCK:
+        _AFFINITY_STORES.clear()
+
+
 def build_character_affinity_store(config: object):
     from .character.affinity import DynamicAffinityStore
     from .character.providers import build_runtime_data_path
 
     if not getattr(config, "bot_affinity_enabled", True):
         return None
-    return DynamicAffinityStore(
-        build_runtime_data_path(
-            config, str(getattr(config, "bot_affinity_db_path", "data/user_affinity.sqlite3"))
-        )
+    db_path = build_runtime_data_path(
+        config, str(getattr(config, "bot_affinity_db_path", "data/user_affinity.sqlite3"))
     )
+    cache_key = str(db_path)
+    with _AFFINITY_STORES_LOCK:
+        store = _AFFINITY_STORES.get(cache_key)
+        if store is None:
+            store = DynamicAffinityStore(db_path)
+            _AFFINITY_STORES[cache_key] = store
+        return store
 
 
 def _register_nonebot_handlers() -> None:
@@ -1793,6 +1875,8 @@ def _register_nonebot_handlers() -> None:
     )
     settings_manager = build_instance_settings_manager(config)
     runtime_settings = settings_manager.get(effective_instance(config))
+    # 管理员热改设置（群名单/开关/昵称等）时立即失效路由分类缓存，不必等 10s TTL。
+    runtime_settings.register_change_listener(clear_route_decision_cache)
     # 发送层硬超时：每次发送时读 runtime 覆盖（mtime 热重载），未覆盖时回落 .env 配置。
     set_transport_timeout_provider(
         lambda: float(runtime_settings.get("BOT_TRANSPORT_TIMEOUT_SECONDS", config) or 15.0)
@@ -2343,6 +2427,14 @@ def _register_nonebot_handlers() -> None:
         dynamic_registry=runtime_settings.list_vision_registry,
         settings_store=runtime_settings,
     )
+    from plugins.bot_unified_runtime.sources.transcribe import (
+        build_asr_provider,
+    )
+
+    asr_provider = build_asr_provider(
+        config,
+        settings_store=runtime_settings,
+    )
     model_router = build_model_router(
         config,
         dynamic_registry=runtime_settings.list_model_registry,
@@ -2396,6 +2488,10 @@ def _register_nonebot_handlers() -> None:
             vision_mode=str(getattr(config, "bot_vision_mode", "relay") or "relay"),
             vision_max_images=int(getattr(config, "bot_vision_max_images", 2)),
             vision_max_chars=int(getattr(config, "bot_vision_max_chars", 500)),
+            vision_video_frames=int(getattr(config, "bot_vision_video_frames", 4)),
+            asr_provider=asr_provider,
+            asr_enabled=bool(getattr(config, "bot_asr_enabled", False)),
+            asr_max_chars=int(getattr(config, "bot_asr_max_chars", 300)),
             memory_writer=memory_writer,
             request_budget_seconds=float(
                 getattr(config, "bot_request_budget_seconds", 0.0)
@@ -2669,7 +2765,10 @@ def _register_nonebot_handlers() -> None:
         from .capabilities.file_exchange import _DOCUMENT_PROMPT
 
         try:
-            reply = _build_chat_llm_provider(config).generate(
+            # LLM 生成（秒级~几十秒）与文档转换必须下放线程池，
+            # 否则整个事件循环冻结、全部会话无响应。
+            reply = await asyncio.to_thread(
+                _build_chat_llm_provider(config).generate,
                 [
                     {"role": "system", "content": _DOCUMENT_PROMPT},
                     {"role": "user", "content": topic},
@@ -2687,7 +2786,9 @@ def _register_nonebot_handlers() -> None:
         out_dir = _Path(
             str(getattr(config, "bot_download_dir", "data/downloads") or "data/downloads")
         ) / "export"
-        path, error = export_document(markdown, fmt, out_dir, title=topic[:40])
+        path, error = await asyncio.to_thread(
+            export_document, markdown, fmt, out_dir, title=topic[:40]
+        )
         if error:
             await _send_text_through_unified_pipeline(bot, event, f"导出失败：{error}")
             return
@@ -3346,6 +3447,7 @@ def _register_nonebot_handlers() -> None:
             capability=capability,
             capability_id="bot.subscribe",
             record_diagnostic=False,
+            offload_sync_capability=True,
             history_recorder=history_recorder,
             history_kind="command",
             operational_notifier=_notify_operational_receipt,
@@ -4036,7 +4138,13 @@ def _register_nonebot_handlers() -> None:
             bot_id=bot_id,
             event_type=type(event).__name__,
         )
-        message = _incoming_from_nonebot_event(bot_id=bot_id, event=event)
+        # 语音段预转码：SILK 裸流 ffmpeg 解不了，先请适配器 get_record 转 mp3。
+        event_segments = _extract_onebot_raw_segments(event)
+        if any(str(s.get("type", "")).lower() == "record" for s in event_segments):
+            await _transcode_record_segments(bot, event_segments)
+        message = _incoming_from_nonebot_event(
+            bot_id=bot_id, event=event, segments=event_segments or None
+        )
         # 被动感知（批次 C）：所有群/私聊消息都观察行为、自述画像与小名自学，
         # 不依赖 @/白名单触发；只影响后续态度与称呼，不改变本轮是否回复。
         if message.sender_id and message.plain_text.strip():
@@ -4063,7 +4171,12 @@ def _register_nonebot_handlers() -> None:
                     if nickname_match:
                         learned = nickname_match.group(1).strip()
                         current = _store.snapshot(message.sender_id).get("nickname") or ""
-                        if learned and learned != current:
+                        if (
+                            learned
+                            and learned not in _NICKNAME_STOPWORDS
+                            and len(learned) >= 2
+                            and learned != current
+                        ):
                             _store.set_nickname(message.sender_id, learned)
             except Exception:  # noqa: BLE001, S110 - 被动感知失败不影响主链路。
                 pass
@@ -4148,7 +4261,13 @@ def _register_nonebot_handlers() -> None:
             capability_id="bot.chat",
         )
         try:
-            forward_text = await _forward_message_text(bot, event)
+            forward_text = await _forward_message_text(
+                bot,
+                event,
+                timeout_seconds=float(
+                    getattr(config, "bot_forward_fetch_timeout_seconds", 5.0) or 5.0
+                ),
+            )
         except Exception:
             release_mail_reply_claim()
             raise
@@ -4486,10 +4605,15 @@ def _register_nonebot_handlers() -> None:
             if transport_receipt.state.value == "sent":
                 return
             if should_finish_nonebot_matcher(transport_receipt):
-                await matcher.finish(transport_receipt.public_message)
+                # 空文本 finish 会被 NapCat 报「该消息类型暂不支持查看」。
+                await matcher.finish(
+                    transport_receipt.public_message or "（处理完成，没有需要展示的内容。）"
+                )
         await _notify_operational_receipt(message, receipt)
         if should_finish_nonebot_matcher(receipt):
-            await matcher.finish(receipt.public_message)
+            await matcher.finish(
+                receipt.public_message or "（处理完成，没有需要展示的内容。）"
+            )
 
 
     @meme.handle()
@@ -4641,6 +4765,7 @@ def _register_nonebot_handlers() -> None:
             capability=capability,
             capability_id=capability_id,
             record_diagnostic=False,
+            offload_sync_capability=capability_id in OFFLOADED_CAPABILITY_IDS,
             history_recorder=history_recorder,
             history_kind="command",
             operational_notifier=_notify_operational_receipt,
@@ -4847,274 +4972,5 @@ def _register_nonebot_handlers() -> None:
 
 
 
-
-_SUBSCRIPTION_KIND_LABELS = {
-    "video": "视频",
-    "dynamic": "动态",
-    "song": "新歌",
-    "illust": "插画",
-    "post": "帖子",
-    "note": "笔记",
-    "live": "直播",
-}
-
-
-def _register_subscription_scheduler(
-    *,
-    scheduler: Any,
-    config: Config,
-    pipeline: Any,
-    send_queue: Any,
-    audit_logger: AuditRepository,
-    receipt_repository: ReceiptRepository | None,
-    bot_provider: Any,
-    registry: Any | None = None,
-    event_log: Any | None = None,
-    render_backend: Any | None = None,
-    card_dir: str = "data/cards",
-) -> dict[str, object]:
-    """注册订阅系统三个 APScheduler job：常规轮询、直播轮询、日报汇总。
-
-    config.bot_subscribe_enabled=False 时直接返回空 dict，不触碰调度器。
-    即时推送在渲染后端可用时附带解析卡片图（kind="mixed"），任何渲染
-    失败自动回退纯文本；日报恒为纯文本。
-    """
-    if not getattr(config, "bot_subscribe_enabled", True):
-        return {}
-
-    from .capabilities.content_parser import (
-        build_subscription_push_capability,
-        render_subscription_push_card,
-    )
-    from .runtime import offload_capability
-    from .sources.parsers import build_cookie_provider
-    from .sources.subscription_store import SubscriptionStore
-    from .sources.subscription_watcher import build_subscription_watcher
-    from .sources.subscriptions import build_subscription_registry
-
-    if registry is None:
-        registry = build_subscription_registry()
-    cookie_provider = build_cookie_provider(config)
-    proxy = str(getattr(config, "bot_download_proxy", "") or "")
-
-    def _ctx_factory(platform: str = "") -> dict[str, str]:
-        return {
-            "cookie_header": cookie_provider.cookie_header(platform or ""),
-            "proxy": proxy,
-        }
-
-    store = SubscriptionStore(
-        str(
-            getattr(config, "bot_subscribe_db_path", "data/subscriptions.sqlite3")
-            or "data/subscriptions.sqlite3"
-        )
-    )
-    watcher = build_subscription_watcher(
-        store,
-        registry.list_adapters(),
-        _ctx_factory,
-        max_items_per_tick=max(
-            1, int(getattr(config, "bot_subscribe_max_items_per_tick", 20))
-        ),
-    )
-
-    def _capability_for(text: str, images: list[dict[str, str]] | None = None) -> Any:
-        return build_subscription_push_capability(text, images)
-
-    def _push_text(candidate: Any, spec: Any) -> str:
-        if candidate.reason == "digest_due":
-            return (
-                f"[订阅] {spec.platform} {spec.target_name} 订阅日报\n"
-                f"{candidate.item.summary}"
-            )
-        label = _SUBSCRIPTION_KIND_LABELS.get(candidate.item.kind, "内容")
-        return (
-            f"[订阅] {spec.platform} {spec.target_name} 发布新{label}"
-            f"《{candidate.item.title}》：{candidate.item.url}"
-        )
-
-    async def _deliver_candidates(candidates: list[Any]) -> None:
-        if not candidates:
-            return
-        bot = bot_provider()
-        if bot is None:
-            return
-        card_enabled = bool(getattr(config, "bot_subscribe_card_enabled", True))
-        for candidate in candidates:
-            spec = store.get_spec(candidate.spec_id)
-            if spec is None or not spec.destinations:
-                continue
-            text = _push_text(candidate, spec)
-            # 每候选只渲染一次、多目的地复用；渲染失败自动回退纯文本。
-            images: list[dict[str, str]] | None = None
-            if (
-                card_enabled
-                and render_backend is not None
-                and candidate.reason != "digest_due"
-            ):
-                card_image = render_subscription_push_card(
-                    render_backend,
-                    candidate,
-                    spec,
-                    config=config,
-                    card_dir=card_dir,
-                )
-                if card_image:
-                    images = [card_image]
-            for destination in spec.destinations:
-                if destination.scope == "group":
-                    session_id = f"group:{destination.target_id}"
-                    session_type = SessionType.GROUP
-                    sender_id = "sub-push"
-                    group_id = destination.target_id
-                else:
-                    session_id = f"private:{destination.target_id}"
-                    session_type = SessionType.PRIVATE
-                    sender_id = destination.target_id
-                    group_id = ""
-                message = IncomingMessage(
-                    platform="onebot",
-                    adapter="onebot.v11",
-                    bot_id=str(getattr(bot, "self_id", "unknown")),
-                    session_id=session_id,
-                    session_type=session_type,
-                    sender_id=sender_id,
-                    group_id=group_id,
-                    plain_text=text,
-                    raw_segments=[{"type": "text", "data": {"text": text}}],
-                    mentions_bot=False,
-                )
-                try:
-                    await pipeline.handle_async(
-                        message,
-                        offload_capability(_capability_for(text, images)),
-                        capability_id="bot.subscribe",
-                    )
-                    sent_request = _find_sent_request(send_queue, message.request_id)
-                    if sent_request is not None:
-                        await _deliver_onebot_send_request(
-                            bot,
-                            sent_request,
-                            audit_logger,
-                            receipt_repository,
-                            send_queue,
-                        )
-                    if event_log is not None:
-                        event_log.info(
-                            "subscription_push_sent",
-                            spec_id=str(getattr(spec, "id", "")),
-                            platform=str(getattr(spec, "platform", "")),
-                            reason=str(getattr(candidate, "reason", "")),
-                            destination=str(getattr(destination, "scope", "")),
-                        )
-                except Exception as exc:  # noqa: BLE001 - 单条推送失败不拖垮轮询。
-                    if event_log is not None:
-                        event_log.error(
-                            "subscription_push_failed",
-                            spec_id=str(getattr(spec, "id", "")),
-                            error_type=type(exc).__name__,
-                        )
-                    audit_logger.append(
-                        AuditRecord(
-                            request_id=message.request_id,
-                            session_id=message.session_id,
-                            capability_id="bot.subscribe",
-                            stage="scheduler",
-                            event="subscription_push_failed",
-                            severity=RiskLevel.MEDIUM,
-                            public_message="订阅推送失败。",
-                            private_debug=repr(exc),
-                        )
-                    )
-
-    async def _watch_job() -> None:
-        try:
-            candidates = await watcher.tick()
-        except Exception as exc:  # noqa: BLE001
-            audit_logger.append(
-                AuditRecord(
-                    request_id="bot_subscribe_watch",
-                    session_id="runtime",
-                    capability_id="bot.subscribe",
-                    stage="scheduler",
-                    event="subscription_watch_failed",
-                    severity=RiskLevel.MEDIUM,
-                    public_message="订阅轮询执行失败。",
-                    private_debug=repr(exc),
-                )
-            )
-            return
-        await _deliver_candidates(candidates)
-
-    async def _live_job() -> None:
-        try:
-            candidates = await watcher.live_tick()
-        except Exception as exc:  # noqa: BLE001
-            audit_logger.append(
-                AuditRecord(
-                    request_id="bot_subscribe_live",
-                    session_id="runtime",
-                    capability_id="bot.subscribe",
-                    stage="scheduler",
-                    event="subscription_live_failed",
-                    severity=RiskLevel.MEDIUM,
-                    public_message="直播订阅轮询执行失败。",
-                    private_debug=repr(exc),
-                )
-            )
-            return
-        await _deliver_candidates(candidates)
-
-    async def _digest_job() -> None:
-        try:
-            candidates = await watcher.flush_digests()
-        except Exception as exc:  # noqa: BLE001
-            audit_logger.append(
-                AuditRecord(
-                    request_id="bot_subscribe_digest",
-                    session_id="runtime",
-                    capability_id="bot.subscribe",
-                    stage="scheduler",
-                    event="subscription_digest_failed",
-                    severity=RiskLevel.MEDIUM,
-                    public_message="订阅日报汇总执行失败。",
-                    private_debug=repr(exc),
-                )
-            )
-            return
-        await _deliver_candidates(candidates)
-
-    scheduler.add_job(
-        _watch_job,
-        "interval",
-        seconds=max(1, int(getattr(config, "bot_subscribe_poll_interval_seconds", 300))),
-        id="sub_watch",
-        jitter=60,
-        coalesce=True,
-        max_instances=1,
-        misfire_grace_time=120,
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        _live_job,
-        "interval",
-        seconds=max(1, int(getattr(config, "bot_subscribe_live_poll_seconds", 60))),
-        id="sub_live",
-        jitter=60,
-        coalesce=True,
-        max_instances=1,
-        misfire_grace_time=120,
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        _digest_job,
-        "cron",
-        hour=int(getattr(config, "bot_subscribe_digest_hour", 20)),
-        minute=int(getattr(config, "bot_subscribe_digest_minute", 0)),
-        id="sub_digest",
-        replace_existing=True,
-    )
-
-    return {"store": store, "watcher": watcher, "registry": registry}
 
 _register_nonebot_handlers()

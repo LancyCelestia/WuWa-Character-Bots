@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -582,6 +586,15 @@ class RuntimePipeline:
             safe_summary="internal_error",
         )
         public_message = ""
+        # 可观测性：能力层未预期异常必须留痕（类型+消息摘要+关键栈帧），
+        # 否则线上只能看到"internal_error"四个词，无法定位。
+        logger.exception(
+            "capability internal error capability_id=%s debug_id=%s type=%s detail=%s",
+            capability_id,
+            debug_id,
+            type(exc).__name__,
+            redact_private_debug(str(exc)[:300]),
+        )
         self._append_audit_safely(
             AuditRecord(
                 request_id=message.request_id,
@@ -591,7 +604,9 @@ class RuntimePipeline:
                 event="internal_error",
                 severity=RiskLevel.HIGH,
                 public_message=public_message,
-                private_debug=redact_private_debug(type(exc).__name__),
+                private_debug=redact_private_debug(
+                    f"{type(exc).__name__}: {str(exc)[:200]}"
+                ),
             )
         )
         receipt = DeliveryReceipt(

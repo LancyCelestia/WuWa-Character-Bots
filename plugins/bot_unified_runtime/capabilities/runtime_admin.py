@@ -230,6 +230,46 @@ def _channel_price_text(entry: dict[str, Any]) -> str:
     return f" ¥{pin_f if pin_f is not None else '?'}/{pout_f if pout_f is not None else '?'}"
 
 
+def _format_channel_health_report(report: list[dict[str, Any]]) -> str:
+    """渠道健康巡检报告：运维可读排版（状态分组+延迟+排查指引）。"""
+    if not report:
+        return (
+            "渠道健康巡检还没有数据。" + '\n'
+            + "· 现在就测一次：/bot model probe（约 1-2 分钟，全部渠道各发一条最小请求，费用极低）" + '\n'
+            + "· 之后每小时自动巡检一次，再回来看本命令即可。"
+        )
+    ok_rows = [r for r in report if r["state"] == "ok"]
+    bad_rows = [r for r in report if r["state"] != "ok"]
+    never = [r for r in ok_rows if not r.get("latency_ms")]
+    probed = [r for r in ok_rows if r.get("latency_ms")]
+    lines = [
+        f"【渠道健康巡检报告】 共 {len(report)} 个渠道："
+        f"{len(probed)} 已实测可用，{len(never)} 待下一轮探测，{len(bad_rows)} 暂不可用",
+        "",
+    ]
+    if probed:
+        lines.append("■ 实测可用（按响应速度排序）")
+        for row in sorted(probed, key=lambda r: int(r["latency_ms"] or 0)):
+            latency = int(row["latency_ms"] or 0)
+            grade = "快" if latency < 5000 else ("正常" if latency < 10000 else "偏慢")
+            lines.append(f"  ✅ {row['model_id']}  响应 {latency}ms（{grade}）")
+    if never:
+        lines.append("■ 尚未实测（下一轮巡检覆盖，不影响使用）")
+        for row in never:
+            lines.append(f"  ⏳ {row['model_id']}")
+    if bad_rows:
+        lines.append("■ 暂不可用（已移出故障转移队列，每 30 分钟重探，恢复自动回队；不自动删除）")
+        for row in bad_rows:
+            err = (row["last_error"] or "原因未知")[:90]
+            lines.append(f"  ⛔ {row['model_id']}  连续失败 {row['consecutive_fails']} 次：{err}")
+    lines.append("")
+    lines.append(
+        "说明：聊天按上述顺序自动故障转移，暂不可用渠道会被跳过；"
+        "手动重测 /bot model probe，单渠道验证 /bot model routes <模型名>。"
+    )
+    return '\n'.join(lines)
+
+
 def _handle_model_command(
     store: RuntimeSettingsStore,
     config: object,
@@ -253,11 +293,10 @@ def _handle_model_command(
     action0 = parts[0].lower() if parts else ""
     if action0 == "health":
         from plugins.bot_unified_runtime.llm.channel_health import (
-            build_health_summary_text,
             get_channel_health_store,
         )
 
-        return build_health_summary_text(get_channel_health_store().report())
+        return _format_channel_health_report(get_channel_health_store().report())
     if action0 == "probe":
         import threading
 

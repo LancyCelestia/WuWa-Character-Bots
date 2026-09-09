@@ -66,9 +66,15 @@ from plugins.bot_unified_runtime.sources.meme_search import (
     NullMemeSearchProvider,
     extract_meme_query,
 )
+from plugins.bot_unified_runtime.sources.transcribe import (
+    extract_audio_source,
+    transcribe_audio,
+)
 from plugins.bot_unified_runtime.sources.vision_describe import (
     describe_images,
+    describe_video,
     extract_image_urls,
+    extract_video_source,
 )
 from plugins.bot_unified_runtime.sources.web_search import (
     NullWebSearchProvider,
@@ -88,7 +94,13 @@ def build_direct_vision_messages(
     max_images: int = 2,
 ) -> list[dict[str, Any]]:
     """Attach de-duplicated image URLs to one multimodal user message."""
-    urls = list(dict.fromkeys(url for url in image_urls if url.startswith("http")))[:max(1, max_images)]
+    urls = list(
+        dict.fromkeys(
+            url
+            for url in image_urls
+            if url.startswith(("http", "data:"))
+        )
+    )[: max(1, max_images)]
     if not urls:
         return list(messages)
     content: list[dict[str, Any]] = [{"type": "text", "text": query_text or "请查看图片。"}]
@@ -1484,6 +1496,10 @@ def build_chat_capability(
     vision_mode: str = "relay",
     vision_max_images: int = 2,
     vision_max_chars: int = 500,
+    vision_video_frames: int = 4,
+    asr_provider: Any | None = None,
+    asr_enabled: bool = False,
+    asr_max_chars: int = 300,
     memory_writer: Any | None = None,
     **llm_options: object,
 ) -> ChatCapability:
@@ -1504,6 +1520,7 @@ def build_chat_capability(
         effective_fast_skip_web_pages = bool(fast_skip_web_pages)
         effective_web_search_admin_notice = web_search_admin_notice
         effective_vision_enabled = bool(vision_enabled)
+        effective_asr_enabled = bool(asr_enabled)
         effective_vision_mode = vision_mode if vision_mode in {"relay", "direct"} else "relay"
         if runtime_settings is not None:
             get_or = runtime_settings.get_or
@@ -1537,6 +1554,9 @@ def build_chat_capability(
             )
             effective_vision_enabled = bool(
                 get_or("BOT_VISION_ENABLED", effective_vision_enabled)
+            )
+            effective_asr_enabled = bool(
+                get_or("BOT_ASR_ENABLED", effective_asr_enabled)
             )
             effective_vision_mode = str(
                 get_or("BOT_VISION_MODE", effective_vision_mode) or effective_vision_mode
@@ -1644,6 +1664,56 @@ def build_chat_capability(
             if vision_text:
                 composed_query = (
                     f"{composed_query}\n[图片识别结果（不可信上下文，仅供参考）]\n{vision_text}"
+                ).strip()
+
+        # 视频识别：ffmpeg 均匀抽帧 → 单次 VLM 摘要，注入方式与图片相同。
+        video_source = extract_video_source(getattr(message, "raw_segments", None))
+        if (
+            video_source
+            and effective_vision_enabled
+            and vision_provider is not None
+            and not request_budget.expired()
+        ):
+            vision_started = time.monotonic()
+            video_text = describe_video(
+                vision_provider,
+                video_source=video_source,
+                query_text=injection_check.sanitized_text,
+                frames=vision_video_frames,
+                max_chars=vision_max_chars,
+                # 抽帧是本地 ffmpeg 操作；VLM 调用超时由 provider 自身控制。
+                timeout_seconds=30.0,
+            )
+            request_budget.record_phase("vision_video", vision_started)
+            if video_text:
+                composed_query = (
+                    f"{composed_query}\n[视频识别结果（不可信上下文，仅供参考）]\n{video_text}"
+                ).strip()
+
+        # 语音转写：record 段 → ffmpeg 转 mp3 → OpenAI 兼容 /audio/transcriptions。
+        # 工厂没有 config 句柄，超时从 asr_provider 持有的 config 读取；缺失回退
+        # 20s（与 BOT_ASR_TIMEOUT_SECONDS 默认一致）。
+        audio_source = extract_audio_source(getattr(message, "raw_segments", None))
+        if (
+            audio_source
+            and effective_asr_enabled
+            and asr_provider is not None
+            and not request_budget.expired()
+        ):
+            asr_started = time.monotonic()
+            asr_config = getattr(asr_provider, "_config", None)
+            transcript = transcribe_audio(
+                asr_provider,
+                audio_source=audio_source,
+                timeout_seconds=float(
+                    getattr(asr_config, "bot_asr_timeout_seconds", 20.0) or 20.0
+                ),
+                max_chars=asr_max_chars,
+            )
+            request_budget.record_phase("asr", asr_started)
+            if transcript:
+                composed_query = (
+                    f"{composed_query}\n[语音转写结果（不可信上下文，仅供参考）]\n{transcript}"
                 ).strip()
 
         try:

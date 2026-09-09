@@ -313,7 +313,9 @@ class Config(BaseModel):
     bot_vision_model_registry: dict[str, Any] = {}
     # 聊天图片/表情包识别开关：启用且注册表里有可用模型时才会调用 VLM。
     bot_vision_enabled: bool = False
-    bot_vision_mode: str = "relay"
+    # direct=主模型直接收图（多模态）；relay=VLM 转译中间层。
+    # 主模型均 multimodal，direct 效果更好且省一层调用。
+    bot_vision_mode: str = "direct"
     bot_vision_timeout_seconds: float = 20.0
     bot_vision_max_images: int = 2
     bot_vision_max_chars: int = 500

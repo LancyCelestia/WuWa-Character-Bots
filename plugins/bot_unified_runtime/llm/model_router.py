@@ -670,18 +670,19 @@ class ModelRouter:
         return list(self.specs.keys())
 
     def supports_vision(self, *, message_text: str = "", override: str = "") -> bool:
-        """Return whether the first routed candidate explicitly declares visual input."""
+        """Whether the first routed candidate can take images directly.
+
+        当前接入的渠道均为多模态模型（用户确认），默认全部支持直传图片；
+        将来接入纯文本渠道时在 tags 里标 ``text-only`` 显式排除。
+        """
         self._refresh_dynamic_registry()
         candidate_ids = self.route_ids(message_text=message_text, override=override)
         if not candidate_ids:
             return False
         spec = self._spec_for(candidate_ids[0])
-        return bool(
-            spec is not None
-            and {"vision", "multimodal", "vlm"}.intersection(
-                tag.lower() for tag in spec.tags
-            )
-        )
+        if spec is None:
+            return False
+        return "text-only" not in {tag.lower() for tag in spec.tags}
 
     def channels_for_model(self, model_name: str) -> list[str]:
         """按实际模型名聚合全部渠道：价格均值升序 → priority 升序。"""
