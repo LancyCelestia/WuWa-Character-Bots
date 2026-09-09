@@ -243,8 +243,10 @@ def _format_channel_health_report(report: list[dict[str, Any]]) -> str:
     never = [r for r in ok_rows if not r.get("latency_ms")]
     probed = [r for r in ok_rows if r.get("latency_ms")]
     lines = [
-        f"【渠道健康巡检报告】 共 {len(report)} 个渠道："
-        f"{len(probed)} 已实测可用，{len(never)} 待下一轮探测，{len(bad_rows)} 暂不可用",
+        (
+            f"【渠道健康巡检报告】 共 {len(report)} 个渠道："
+            f"{len(probed)} 已实测可用，{len(never)} 待下一轮探测，{len(bad_rows)} 暂不可用"
+        ),
         "",
     ]
     if probed:
@@ -266,6 +268,10 @@ def _format_channel_health_report(report: list[dict[str, Any]]) -> str:
     lines.append(
         "说明：聊天按上述顺序自动故障转移，暂不可用渠道会被跳过；"
         "手动重测 /bot model probe，单渠道验证 /bot model routes <模型名>。"
+    )
+    lines.append(
+        "说明：同名模型多渠道聚合时，实测响应快的渠道优先（延迟择优，"
+        "开关 BOT_CHANNEL_HEALTH_LATENCY_FIRST，默认开）。"
     )
     if bad_rows:
         lines.append("")
@@ -356,7 +362,7 @@ def _handle_model_command(
         if not channels:
             return f"没有渠道提供「{model_name}」。"
         store_h = get_channel_health_store()
-        lines = [f"「{model_name}」可用渠道（按性价比/优先级）："]
+        lines = [f"「{model_name}」可用渠道（按实测响应速度 快→慢，未实测按价格/优先级排后）："]
         for index, channel_id in enumerate(channels, start=1):
             spec = router._spec_for(channel_id)
             price = ""
@@ -365,8 +371,15 @@ def _handle_model_command(
                 pout = spec.price_out if spec.price_out is not None else "?"
                 price = f" ¥{pin}/{pout}"
             snap = store_h.snapshot(channel_id)
-            state = "⛔暂不可用" if (snap and snap.get("state") == "temporarily_unavailable") else "✅"
-            latency = f" {snap['latency_ms']}ms" if snap and snap.get("latency_ms") else ""
+            latency = ""
+            if snap and snap.get("state") == "temporarily_unavailable":
+                state = "⛔暂不可用"
+            elif snap and snap.get("latency_ms"):
+                state = "✅"
+                latency = f" {snap['latency_ms']}ms"
+            else:
+                # 未实测渠道不再伪装成 ✅ 健康；实际排序时垫底。
+                state = "⏳未实测"
             lines.append(f"{index}. {channel_id} @ {spec.base_url if spec else '?'}{price} {state}{latency}")
         lines.append("指定方式：/bot model set " + channels[0] + "；或 /bot model set " + model_name + "（自动选渠道）")
         return "\n".join(lines)

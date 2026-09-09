@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -27,6 +28,16 @@ _OK = "ok"
 _UNAVAILABLE_AFTER_FAILS = 2
 # 暂不可用后每隔多久重探（秒）；重探成功即自动恢复。
 _RETRY_INTERVAL_SECONDS = 1800.0
+
+# 巡检并发/错峰参数（B-2）：config 字段 → os.environ 兜底 → 最终默认。
+# 默认值即历史硬编码值（background 3 线程 + 0.4s 抖动；manual 8 线程），
+# 行为回归约束：默认参数下现网行为不变。
+_PROBE_THREADS_DEFAULT = 3
+_PROBE_MANUAL_THREADS_DEFAULT = 8
+_PROBE_JITTER_DEFAULT = 0.4
+_PROBE_THREADS_MIN = 1
+_PROBE_THREADS_MAX = 16
+_PROBE_JITTER_MAX = 5.0
 
 
 class ChannelHealthStore:
@@ -190,6 +201,23 @@ class ChannelHealthStore:
                 con.close()
         return {r[0] for r in rows}
 
+    def latencies(self) -> dict[str, int]:
+        """实测延迟表：state='ok' 且 latency_ms 非空的 {model_id: latency_ms}。
+
+        供同名模型渠道聚合时的延迟择优（prefer_fastest_channels / ModelRouter）。
+        """
+        with self._lock:
+            con = self._connect()
+            try:
+                rows = con.execute(
+                    "SELECT model_id, latency_ms FROM channel_health"
+                    " WHERE state = ? AND latency_ms IS NOT NULL",
+                    (_OK,),
+                ).fetchall()
+            finally:
+                con.close()
+        return {r[0]: int(r[1]) for r in rows}
+
     def report(self) -> list[dict[str, Any]]:
         with self._lock:
             con = self._connect()
@@ -259,6 +287,28 @@ def filter_healthy_candidates(model_ids: list[str], store: ChannelHealthStore | 
     return healthy or model_ids
 
 
+def prefer_fastest_channels(
+    model_ids: list[str],
+    store: ChannelHealthStore | None,
+    *,
+    enabled: bool = True,
+) -> list[str]:
+    """延迟择优（B-1）：已实测渠道按 latency 升序排前，未实测保序垫底。
+
+    稳定重排：同延迟/未实测渠道保持原有相对顺序；纯排序，不做额外健康
+    判定（不可用渠道由 filter_healthy_candidates 在上游过滤）。
+    store 为 None / enabled=False / 列表短于 2 → 原样返回。
+    """
+    if store is None or not enabled or len(model_ids) < 2:
+        return model_ids
+    latencies = store.latencies()
+    measured = [(mid, latencies[mid]) for mid in model_ids if mid in latencies]
+    if not measured:
+        return model_ids
+    ordered = [mid for mid, _ in sorted(measured, key=lambda item: item[1])]
+    return ordered + [mid for mid in model_ids if mid not in latencies]
+
+
 def probe_entry(spec: Any, *, proxy: str = "", timeout_seconds: float = 25.0) -> tuple[bool, int, str]:
     """对单个渠道做最小真实调用；返回 (ok, latency_ms, error_summary)。
 
@@ -308,6 +358,42 @@ def probe_entry(spec: Any, *, proxy: str = "", timeout_seconds: float = 25.0) ->
         return False, latency, f"{type(exc).__name__}: {str(exc)[:180]}"
 
 
+def _probe_setting(config: Any, attr: str, env_name: str, default: float) -> float:
+    """巡检参数解析：config 属性 → os.environ 兜底 → 默认值。
+
+    NoneBot 会把 .env 的 ``BOT_*`` 小写映射进 Config，getattr 主路径即覆盖
+    生产；os.environ 兜底服务于裸脚本调用（config 是 stub 时）。仅当值
+    缺失/无法解析为数字才回退；越界交给调用方钳位，不在此回退。
+    """
+    for raw in (getattr(config, attr, None), os.environ.get(env_name)):
+        if raw is None:
+            continue
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _probe_threads(config: Any, *, mode: str) -> int:
+    attr = "bot_channel_probe_manual_threads" if mode == "manual" else "bot_channel_probe_threads"
+    env = "BOT_CHANNEL_PROBE_MANUAL_THREADS" if mode == "manual" else "BOT_CHANNEL_PROBE_THREADS"
+    default = _PROBE_MANUAL_THREADS_DEFAULT if mode == "manual" else _PROBE_THREADS_DEFAULT
+    value = int(_probe_setting(config, attr, env, float(default)))
+    return max(_PROBE_THREADS_MIN, min(_PROBE_THREADS_MAX, value))
+
+
+def _probe_jitter(config: Any) -> float:
+    value = _probe_setting(
+        config,
+        "bot_channel_probe_jitter_seconds",
+        "BOT_CHANNEL_PROBE_JITTER_SECONDS",
+        _PROBE_JITTER_DEFAULT,
+    )
+    # jitter<=0 → 不 sleep（提交零错峰）；上限 5s 防止误配拖垮巡检。
+    return max(0.0, min(_PROBE_JITTER_MAX, value))
+
+
 def probe_all(
     config: Any,
     specs: dict[str, Any],
@@ -317,14 +403,18 @@ def probe_all(
 ) -> dict[str, Any]:
     """全量巡检；返回摘要。
 
-    mode="manual"：手动 /bot model probe——高并发（8 线程）尽快出结果；
-    mode="background"：定时巡检——3 线程 + 0.4s 错峰抖动，避免突发
+    mode="manual"：手动 /bot model probe——高并发（默认 8 线程，
+    bot_channel_probe_manual_threads）尽快出结果；
+    mode="background"：定时巡检——默认 3 线程（bot_channel_probe_threads）
+    + 默认 0.4s 错峰抖动（bot_channel_probe_jitter_seconds），避免突发
     打爆共享 key 的限流窗口、殃及紧随其后的真实聊天。
     """
     from concurrent.futures import ThreadPoolExecutor
 
     proxy = str(getattr(config, "bot_download_proxy", "") or "")
     timeout = min(30.0, float(getattr(config, "bot_chat_timeout_seconds", 30.0) or 30.0))
+    threads = _probe_threads(config, mode=mode)
+    jitter = _probe_jitter(config)
     results: dict[str, Any] = {}
 
     def _one(item: tuple[str, Any]) -> tuple[str, bool, int, str]:
@@ -341,11 +431,11 @@ def probe_all(
             resolved = _resolve_api_key(str(spec.api_key), config)
             if resolved:
                 object.__setattr__(spec, "_resolved_key", resolved)
-    except Exception:  # noqa: BLE001 - 预解析失败退回 probe 内部解析。
+    except Exception:  # noqa: S110, BLE001 - 预解析失败退回 probe 内部解析。
         pass
     pending = list(specs.items())
     if mode == "manual":
-        with ThreadPoolExecutor(max_workers=8) as pool:
+        with ThreadPoolExecutor(max_workers=threads) as pool:
             for model_id, ok, latency, err in pool.map(_one, pending):
                 if ok:
                     store.record_success(model_id, latency)
@@ -359,11 +449,11 @@ def probe_all(
             "unavailable": sorted(unavailable),
             "detail": results,
         }
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=threads) as pool:
         futures = []
         for index, item in enumerate(pending):
-            if index:
-                time.sleep(0.4)
+            if index and jitter > 0:
+                time.sleep(jitter)
             futures.append(pool.submit(_one, item))
         for future in futures:
             model_id, ok, latency, err = future.result()

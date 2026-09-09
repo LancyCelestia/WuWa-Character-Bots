@@ -409,6 +409,29 @@ def _health_record_failure(model_id: str, error_kind: str) -> None:
         pass
 
 
+def _health_latencies() -> dict[str, int] | None:
+    """实测延迟表（B-1 延迟择优）；健康层关闭/故障时返回 None（回落价格序）。
+
+    双开关：BOT_CHANNEL_HEALTH_ENABLED（健康层总开关，默认关）与
+    BOT_CHANNEL_HEALTH_LATENCY_FIRST（延迟择优，默认开）须同时开启。
+    """
+    try:
+        import os
+
+        if os.environ.get("BOT_CHANNEL_HEALTH_LATENCY_FIRST", "1").strip().lower() not in {"1", "true", "on"}:
+            return None
+        if os.environ.get("BOT_CHANNEL_HEALTH_ENABLED", "0").strip().lower() not in {"1", "true", "on"}:
+            return None
+        from plugins.bot_unified_runtime.llm.channel_health import (
+            get_channel_health_store,
+        )
+
+        db = os.environ.get("BOT_CHANNEL_HEALTH_DB", "data/channel_health.sqlite3")
+        return get_channel_health_store(db).latencies()
+    except Exception:  # noqa: BLE001 - 健康层故障不阻塞路由。
+        return None
+
+
 def _optional_price(value: Any) -> float | None:
     try:
         number = float(value)
@@ -685,7 +708,14 @@ class ModelRouter:
         return "text-only" not in {tag.lower() for tag in spec.tags}
 
     def channels_for_model(self, model_name: str) -> list[str]:
-        """按实际模型名聚合全部渠道：价格均值升序 → priority 升序。"""
+        """按实际模型名聚合全部渠道（B-1 延迟择优）。
+
+        延迟择优开启且健康库有数据：已实测渠道按 latency 升序在前
+        （同延迟按价格/优先级），未实测渠道保价格/优先级序垫底；
+        关闭或健康层不可用：价格均值升序 → priority 升序（原行为）。
+        作用域仅限同名模型聚合；``_auto_route_ids`` 全局候选队列保持
+        人工策展的 priority 顺序，不做延迟重排。
+        """
         name = (model_name or "").strip().lower()
         if not name:
             return []
@@ -695,7 +725,25 @@ class ModelRouter:
             if spec.model.lower() == name
             or any(alias.lower() == name for alias in spec.aliases)
         ]
-        matched.sort(key=lambda spec: (_price_rank(spec), spec.priority))
+        latency_map = _health_latencies()
+        if latency_map is None:
+            matched.sort(key=lambda spec: (_price_rank(spec), spec.priority))
+            return [spec.model_id for spec in matched]
+        measured = {
+            spec.model_id: latency_map[spec.model_id]
+            for spec in matched
+            if spec.model_id in latency_map
+        }
+        if not measured:
+            matched.sort(key=lambda spec: (_price_rank(spec), spec.priority))
+            return [spec.model_id for spec in matched]
+        matched.sort(
+            key=lambda spec: (
+                (0, measured[spec.model_id], _price_rank(spec), spec.priority)
+                if spec.model_id in measured
+                else (1, 0, _price_rank(spec), spec.priority)
+            )
+        )
         return [spec.model_id for spec in matched]
 
     def route_ids(self, *, message_text: str, override: str) -> list[str]:
