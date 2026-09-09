@@ -115,7 +115,7 @@ def test_browser_crash_restarts_and_recovers() -> None:
     assert handle.started == 2
 
 
-def test_render_failure_resets_persistent_browser() -> None:
+def test_render_failure_page_level_keeps_browser_crash_resets() -> None:
     backend = PlaywrightRenderBackend.__new__(PlaywrightRenderBackend)
     import threading
 
@@ -131,7 +131,7 @@ def test_render_failure_resets_persistent_browser() -> None:
 
     bad = {"html": "<div class='card'>x</div>", "viewport": {"width": 10, "height": 10}, "wait_ms": 0}
     assert backend.render_card(dict(bad)) == b"png-bytes"
-    # 截图抛异常 → 返回 None 且常驻浏览器被重置。
+    # 页面级失败（截图抛普通异常）：返回 None，浏览器保留复用。
     def _breaking_new_page(**kwargs):
         page = _FakePage()
         page.query_selector = lambda _sel: (_ for _ in ()).throw(RuntimeError("boom"))
@@ -139,5 +139,18 @@ def test_render_failure_resets_persistent_browser() -> None:
         return page
 
     browser.new_page = _breaking_new_page  # type: ignore[method-assign]
+    assert backend.render_card(dict(bad)) is None
+    assert getattr(backend._local, "browser", None) is browser
+
+    # 浏览器级错误（Target closed / 断连）：常驻浏览器被重置，下次重启。
+    def _target_closed_new_page(**kwargs):
+        page = _FakePage()
+        page.query_selector = lambda _sel: (_ for _ in ()).throw(
+            RuntimeError("Target page, context or browser has been closed")
+        )
+        browser.pages.append(page)
+        return page
+
+    browser.new_page = _target_closed_new_page  # type: ignore[method-assign]
     assert backend.render_card(dict(bad)) is None
     assert getattr(backend._local, "browser", None) is None

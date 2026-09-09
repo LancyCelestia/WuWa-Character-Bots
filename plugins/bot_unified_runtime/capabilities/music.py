@@ -115,9 +115,13 @@ def is_music_command(text: str) -> bool:
     if match is None:
         return False
     query = (match.group("query") or "").strip()
-    # “点歌 只发卡片”这类是模式设置，不是点歌。
+    # 审计 P3#23：「点歌 #link」形态，# 前缀强制按歌名搜索（模式别名转义）。
+    if query.startswith("#"):
+        return bool(query[1:].strip())
+    # 审计 P3#23：与模式别名同名的查询（如「点歌 link」「点歌 只发链接」）
+    # 也路由进点歌能力，由 capability 给出冲突提示与转义用法，不再静默丢弃。
     if parse_music_mode_spec(query) is not None:
-        return False
+        return True
     return bool(query)
 
 
@@ -126,9 +130,23 @@ def extract_music_query(text: str) -> str:
     if not match:
         raise ValueError("not a music command")
     query = match.group("query").strip()
+    if query.startswith("#"):
+        # 「点歌 #歌名」：剥掉转义前缀，按真实歌名搜索。
+        query = query[1:].strip()
     if not query:
         raise ValueError("empty music query")
     return query
+
+
+def is_music_mode_alias_query(text: str) -> bool:
+    """查询词与输出模式别名冲突（如「点歌 link」）；「#」转义形态除外。"""
+    match = _COMMAND_RE.match(text.strip())
+    if match is None:
+        return False
+    query = (match.group("query") or "").strip()
+    if query.startswith("#"):
+        return False
+    return parse_music_mode_spec(query) is not None
 
 
 def is_music_mode_command(text: str) -> bool:
@@ -433,7 +451,9 @@ def _prune_candidate_sessions(now: float) -> None:
     for key in expired:
         _CANDIDATE_SESSIONS.pop(key, None)
     while len(_CANDIDATE_SESSIONS) > _CANDIDATE_MAX_SESSIONS:
-        oldest = next(iter(_CANDIDATE_SESSIONS))
+        # 审计 P3#22：按过期时刻淘汰（最早到期的先逐出），
+        # 不再按 dict 插入序——长驻会话不会先于更早过期者被逐出。
+        oldest = min(_CANDIDATE_SESSIONS, key=lambda key: _CANDIDATE_SESSIONS[key][0])
         _CANDIDATE_SESSIONS.pop(oldest, None)
 
 
@@ -489,7 +509,8 @@ def build_music_capability(
                 config=config,
                 card_dir=str(getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"),
             )
-        except Exception:  # noqa: BLE001 - 渲染失败回退封面直链，不影响点歌主链路。
+        except Exception:
+            _LOGGER.warning("music song card render failed", exc_info=True)
             return None
         return str(payload.get("file") or "") if isinstance(payload, dict) else None
 
@@ -622,7 +643,8 @@ def build_music_capability(
                     "music_candidates_card",
                 ],
             )
-        except Exception:  # noqa: BLE001 - 渲染失败回退纯文本编号列表，零回归。
+        except Exception:
+            _LOGGER.warning("music candidates card render failed", exc_info=True)
             return None
 
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
@@ -636,23 +658,46 @@ def build_music_capability(
                 body="用法：点歌 <歌名或关键词>，例如『点歌 晴天』。",
                 audit_tags=["music_request", "missing_query"],
             )
-        session_key = f"{message.session_type.value}:{message.session_id}"
-        # 二次选择路径：『点歌 <编号>』命中未过期的候选列表。
-        if candidates_enabled and query.isdigit():
+        # 审计 P3#23：查询词与输出模式别名同名（如真实歌曲《link》）时，
+        # 给出明确冲突提示与「点歌 #歌名」转义用法，而不是被当模式设置吞掉。
+        if is_music_mode_alias_query(message.plain_text):
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.music",
+                kind="text",
+                body=(
+                    f"「{query}」是点歌输出模式的保留词，不能直接当歌名搜索。\n"
+                    f"要搜同名歌曲请用转义写法：点歌 #{query}\n"
+                    "设置输出模式请用：点歌模式 <卡片|语音|音频文件|链接 的任意组合>"
+                ),
+                audit_tags=["music_request", "music_mode_alias_conflict"],
+            )
+        session_key = f"{message.session_type.value}:{message.session_id}:{message.sender_id}"
+        # 二次选择路径：『点歌 <编号>』命中未过期的候选列表（按人隔离，防群内互抢）。
+        # 审计 P2#6：isdigit() 对 "²"/"①" 为 True 而 int() 崩溃，改 isdecimal + try/except。
+        if candidates_enabled and query.isdecimal():
             _prune_candidate_sessions(now())
             stored = _CANDIDATE_SESSIONS.get(session_key)
             if stored is not None:
                 _expires, parser_id, cands = stored
-                index = int(query) - 1
+                try:
+                    index = int(query) - 1
+                except ValueError:  # pragma: no cover - isdecimal 已过滤，保险丝
+                    index = -1
                 if 0 <= index < len(cands):
                     picked = cands[index]
-                    detail_fn = candidate_providers[parser_id][1]  # type: ignore[index]
-                    try:
-                        # detail_fn 接收完整候选 dict（部分平台可直接从候选构建），
-                        # 并附带原查询词以便需要重搜的平台使用。
-                        item = detail_fn(picked, query=query)
-                    except Exception:  # noqa: BLE001 - 详情失败按未找到降级。
-                        item = None
+                    # 审计 P2#8：能力重建后 candidate_providers 可能缺该平台，
+                    # .get() 判空降级为“编号失效”提示，不再 KeyError。
+                    detail_pair = (candidate_providers or {}).get(parser_id)
+                    detail_fn = detail_pair[1] if detail_pair is not None else None
+                    item = None
+                    if detail_fn is not None:
+                        try:
+                            # detail_fn 接收完整候选 dict（部分平台可直接从候选构建），
+                            # 并附带原查询词以便需要重搜的平台使用。
+                            item = detail_fn(picked, query=query)
+                        except Exception:  # noqa: BLE001 - 详情失败按未找到降级。
+                            item = None
                     if item is not None:
                         _CANDIDATE_SESSIONS.pop(session_key, None)
                         return _render_hit(
@@ -661,10 +706,19 @@ def build_music_capability(
                             message,
                             [f"query:{query[:20]}", "music_candidate_pick"],
                         )
+            # 审计 P2#7：无会话/已过期/编号越界/详情失败：明确提示，
+            # 不把编号当歌名去搜（避免 search_fn("3") 搜出含 3 的无关歌）。
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.music",
+                kind="text",
+                body="这个编号不在当前候选里了（列表只在点歌后几分钟内有效），重新点一次再选吧。",
+                audit_tags=["music_request", "music_candidates", "music_candidates_miss"],
+            )
         for parser_id, display_name, search_fn in providers:
             candidate_pair = (candidate_providers or {}).get(parser_id)
             # 编号选择意图（无会话/已过期）不再触发新候选列表，直接走普通搜索。
-            if candidates_enabled and not query.isdigit() and candidate_pair is not None:
+            if candidates_enabled and not query.isdecimal() and candidate_pair is not None:
                 list_fn, _detail_fn = candidate_pair
                 try:
                     cands = list_fn(query)[:candidates_limit]
@@ -673,9 +727,17 @@ def build_music_capability(
                 exact_hits = [
                     cand
                     for cand in cands
-                    if cand.get("name", "").strip() == query.strip()
+                    if cand.get("name", "").strip().lower() == query.strip().lower()
                 ]
-                if len(cands) >= 2 and not exact_hits:
+                # 裸歌名（无空格）且首条候选同名 → 无歧义直接播放；
+                # 带限定词（歌手/钢琴版/live 等）的查询即使存在同名精确命中也给
+                # 候选窗口——模糊搜索几乎总能搜出与查询字面同名的翻唱/变体，
+                # 旧的 exact_hits 一票否决让候选卡几乎不可达（实测「后来 钢琴版」
+                # 直接放了一首同名翻唱）。
+                bare_exact = bool(exact_hits) and not any(
+                    ch.isspace() for ch in query
+                )
+                if len(cands) >= 2 and not bare_exact:
                     _CANDIDATE_SESSIONS[session_key] = (
                         now() + candidates_ttl,
                         parser_id,

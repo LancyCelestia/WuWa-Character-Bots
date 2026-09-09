@@ -728,7 +728,9 @@ def music_candidate_providers(
     def _qq_detail(candidate: dict, *, query: str = "") -> ParsedContent | None:
         # QQ 音频直链依赖登录 vkey，此处按候选信息构建卡片与链接；
         # 音频/语音模式在 QQ 平台本来就受登录门槛约束。
-        from plugins.bot_unified_runtime.contracts.media import build_parsed_content
+        from plugins.bot_unified_runtime.sources.parsers.platforms_music import (
+            _qqmusic_cover,
+        )
 
         return build_parsed_content(
             platform="qqmusic",
@@ -736,6 +738,7 @@ def music_candidate_providers(
             item_kind="music",
             title=str(candidate.get("name") or ""),
             author_name=str(candidate.get("artist") or ""),
+            cover_url=_qqmusic_cover(candidate.get("album_mid")),
         )
 
     def _kugou_detail(candidate: dict, *, query: str = "") -> ParsedContent | None:

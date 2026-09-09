@@ -80,7 +80,9 @@ def _og_scrape(
     cover = ""
     match = _OG_IMAGE_RE.search(text)
     if match:
-        cover = _unescape_html(match.group(1))
+        # og:image 常见 //host/x.jpg 协议相对形态，about:blank 渲染基底加载不了，
+        # 按最终 URL 补全成绝对地址。
+        cover = urllib.parse.urljoin(final_url or url, _unescape_html(match.group(1)))
     summary = ""
     match = _OG_DESC_RE.search(text)
     if match:

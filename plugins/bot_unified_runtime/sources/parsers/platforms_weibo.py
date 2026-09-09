@@ -167,15 +167,22 @@ def _weibo_created_at(value: object) -> str:
     return parsed.isoformat(timespec="seconds")
 
 
+def _https_upgraded(url: str) -> str:
+    """sinaimg/weibo CDN 支持 https，http 直链部分上下文会被拦。"""
+    if url.startswith("http://"):
+        return f"https://{url[7:]}"
+    return url
+
+
 def _weibo_avatar(value: object, hd: object = None) -> str:
     """头像取最高清可用：avatar_hd 优先，否则把 /50/ 小图升到 /180/。"""
     hd_url = str(hd or "").strip()
     if hd_url:
-        return hd_url
+        return _https_upgraded(hd_url)
     url = str(value or "").strip()
     if not url:
         return ""
-    return re.sub(r"/50/", "/180/", url, count=1)
+    return _https_upgraded(re.sub(r"/50/", "/180/", url, count=1))
 
 
 def _weibo_get_text_with_retry(

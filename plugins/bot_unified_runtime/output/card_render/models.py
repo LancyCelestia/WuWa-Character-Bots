@@ -115,6 +115,8 @@ class RenderPayload:
     hot_comment: dict[str, Any] | None = None
     hot_comments: list[dict[str, Any]] = field(default_factory=list)
     comments: list[dict[str, Any]] = field(default_factory=list)
+    # 会员购参展嘉宾（detail.show.guests 投影）
+    show_guests: list[dict[str, Any]] = field(default_factory=list)
     # 作者栏帖子/专栏计数的标签（B 站 post_count 语义是专栏数）
     stats_post_label: str = "帖子"
 

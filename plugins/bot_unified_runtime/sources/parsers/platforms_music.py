@@ -193,7 +193,8 @@ def _netease_song_detail(song_id: str, *, cookie_header: str = "") -> ParsedCont
     ]
     album_data = song.get("album") or song.get("al") or {}
     album_name = str(album_data.get("name") or "")
-    cover = str(album_data.get("picUrl") or album_data.get("pic_str") or "")
+    # pic_str 是图片资源 ID 不是 URL（当 URL 下发必裂图），只认 picUrl。
+    cover = str(album_data.get("picUrl") or "")
     aliases = [str(value) for value in (song.get("alias") or []) if str(value).strip()]
     duration = song.get("dt") or song.get("duration")
     duration_ms = int(duration) if isinstance(duration, (int, float)) and duration >= 0 else None
@@ -408,31 +409,72 @@ def parse_qqmusic(url: str, *, cookie_header: str = "") -> ParsedContent:
     raise ParseHttpError(f"qqmusic: no song mid in {url}")
 
 
-def search_qqmusic(query: str, *, cookie_header: str = "") -> ParsedContent | None:
-    encoded = urllib.parse.quote(query)
-    payload = http_get_json(
-        "https://c.y.qq.com/soso/fcgi-bin/client_search_cp"
-        f"?w={encoded}&format=json&p=1&n=1&aggr=1&cr=1&new_json=1",
+_QQMUSIC_SEARCH_API = "https://u.y.qq.com/cgi-bin/musicu.fcg"
+_QQMUSIC_COVER_TPL = "https://y.gtimg.cn/music/photo_new/T002R500x500M000{mid}.jpg"
+
+
+def _qqmusic_cover(album_mid: object) -> str:
+    """QQ 音乐专辑封面直链（album.mid 拼 y.gtimg.cn 图床）。"""
+    album_mid = str(album_mid or "").strip()
+    return _QQMUSIC_COVER_TPL.format(mid=album_mid) if album_mid else ""
+
+
+def _qqmusic_search_rows(
+    query: str,
+    *,
+    limit: int,
+    cookie_header: str = "",
+) -> list[dict]:
+    """QQ 音乐搜索（musicu.fcg DoSearchForQQMusicDesktop）。
+
+    旧 client_search_cp 接口服务端已下线：任何参数组合恒 HTTP 500
+    （实测 2026-09-10），musicu.fcg 是网页端当前搜索通道，匿名可用。
+    """
+    payload = {
+        "req_1": {
+            "method": "DoSearchForQQMusicDesktop",
+            "module": "music.search.SearchCgiService",
+            "param": {
+                "search_type": 0,
+                "query": query,
+                "page_num": 1,
+                "num_per_page": max(1, limit),
+            },
+        }
+    }
+    data = http_post_json(
+        _QQMUSIC_SEARCH_API,
+        payload,
         referer="https://y.qq.com/",
         cookie=cookie_header,
+        timeout=10,
     )
     songs = (
-        ((payload or {}).get("data") or {}).get("song") or {}
-    ).get("list") or []
+        ((((data or {}).get("req_1") or {}).get("data") or {}).get("body") or {})
+        .get("song")
+        or {}
+    )
+    rows = songs.get("list") or []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def search_qqmusic(query: str, *, cookie_header: str = "") -> ParsedContent | None:
+    songs = _qqmusic_search_rows(query, limit=1, cookie_header=cookie_header)
     if not songs:
         return None
     song = songs[0]
     singers = "、".join(item.get("name", "") for item in (song.get("singer") or []))
     mid = str(song.get("mid") or "")
+    album = song.get("album") or {}
     audio_url = _qqmusic_vkey_url(mid, cookie_header=cookie_header)
     track = _music_track(
         provider="qqmusic",
         track_id=mid,
-        title=str(song.get("songname") or song.get("name") or ""),
+        title=str(song.get("name") or ""),
         artists=song.get("singer") or [],
-        album_id=song.get("albumid"),
-        album_name=str(song.get("albumname") or ""),
-        artwork_url=str(song.get("album_pic") or song.get("album_pic300") or ""),
+        album_id=album.get("id"),
+        album_name=str(album.get("name") or ""),
+        artwork_url=_qqmusic_cover(album.get("mid")),
         duration_ms=(
             int(song["interval"]) * 1000
             if isinstance(song.get("interval"), (int, float))
@@ -573,17 +615,28 @@ def _generic_candidates_from_search(
 
 
 def search_qqmusic_candidates(query: str, *, cookie_header: str = "") -> list[dict[str, str]]:
-    encoded = urllib.parse.quote(query)
-    payload = http_get_json(
-        "https://c.y.qq.com/soso/fcgi-bin/client_search_cp"
-        f"?w={encoded}&format=json&p=1&n=5&aggr=1&cr=1&new_json=1",
-        referer="https://y.qq.com/",
-        cookie=cookie_header,
-    )
-    songs = (((payload or {}).get("data") or {}).get("song") or {}).get("list") or []
-    return _generic_candidates_from_search(
-        "qqmusic", songs, name_key=("songname", "name"), artist_key="singer", id_key="mid"
-    )
+    songs = _qqmusic_search_rows(query, limit=5, cookie_header=cookie_header)
+    out: list[dict[str, str]] = []
+    for song in songs:
+        name = str(song.get("name") or "").strip()
+        if not name:
+            continue
+        out.append(
+            {
+                "provider_track_id": str(song.get("mid") or "").strip(),
+                "name": name,
+                "artist": "、".join(
+                    str(item.get("name") or "")
+                    for item in (song.get("singer") or [])
+                    if isinstance(item, dict) and item.get("name")
+                ),
+                "album": str(((song.get("album") or {}).get("name")) or "").strip(),
+                "album_mid": str(((song.get("album") or {}).get("mid")) or "").strip(),
+            }
+        )
+        if len(out) >= 5:
+            break
+    return out
 
 
 def search_kugou_candidates(query: str, *, cookie_header: str = "") -> list[dict[str, str]]:
@@ -702,7 +755,7 @@ def parse_kugou(url: str, *, cookie_header: str = "") -> ParsedContent:
         title=str(payload.get("songName") or ""),
         author_name=str(payload.get("singerName") or ""),
         summary=f"专辑：{payload.get('album_name') or ''}",
-        cover_url=str(payload.get("imgUrl") or ""),
+        cover_url=str(payload.get("imgUrl") or "").replace("{size}", "480"),
         audio_url=audio_url,
         canonical_url=f"https://www.kugou.com/song/#hash={file_hash}",
         parse_depth="deep",

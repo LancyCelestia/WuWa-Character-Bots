@@ -555,6 +555,18 @@ body {
 .hot-comment .pc-content { font-size: 14px; color: var(--text-main); line-height: 1.5; }
 .hot-comment .pc-likes { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
 
+/* ===== 会员购参展嘉宾 ===== */
+.show-guests { display:flex; flex-direction:column; gap:10px; margin:0 var(--video-inset) var(--video-inset); }
+.sg-title { font-size:15px; font-weight:700; color:var(--text-main); display:flex; align-items:baseline; gap:8px; }
+.sg-count { font-size:12px; font-weight:600; color:var(--pc); background:color-mix(in srgb, var(--pc) 12%, #fff); border-radius:999px; padding:1px 9px; }
+.sg-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(104px, 1fr)); gap:10px; }
+.sg-tile { min-width:0; padding:12px 10px 11px; border-radius:var(--r-tile); display:flex; flex-direction:column; align-items:center; text-align:center; gap:6px; }
+.sg-avatar { width:60px; height:60px; border-radius:50%; object-fit:cover; border:1px solid rgba(255,255,255,.9); box-shadow:var(--mica-shadow-soft); }
+.sg-avatar-ph { display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:700; color:var(--pc); background:color-mix(in srgb, var(--pc) 12%, #fff); }
+.sg-name { font-size:13px; font-weight:600; color:var(--text-main); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sg-desc { font-size:11px; color:var(--text-secondary); line-height:1.45; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:break-all; }
+.sg-book { font-size:11px; font-weight:600; color:var(--pc); }
+
 /* ===== 评论区 ===== */
 .comments-section {
     border-top: 1px solid #f0f0f0;
@@ -982,7 +994,7 @@ body {
 .author-row-primary { align-items:baseline; color:var(--text-main); font-size:26px; font-weight:700; line-height:1.15; gap:5px; }
 .author-row-primary .author-name-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .author-badge { align-self:flex-end; margin:0 0 1px 0; padding:2px 7px; border-radius:999px; color:var(--pc-dark); background:color-mix(in srgb,var(--pc) 18%,#fff); border:1px solid rgba(255,255,255,.90); box-shadow:inset 0 1px 0 rgba(255,255,255,.95); font-size:10px; font-weight:600; }
-.author-badge-vip,.author-name-vip { color:#fb7299; } .author-badge-vip { background:#ffe3ee; } .author-badge-verified { margin-left:-3px; }
+.author-badge-vip,.author-name-vip { color:var(--pc-dark); } .author-badge-vip { background:color-mix(in srgb,var(--pc) 14%,#fff); } .author-badge-verified { margin-left:-3px; }
 .author-row-identifiers { flex-wrap:wrap; gap:4px; }
 .author-id { padding:2px 8px; border-radius:999px; color:var(--pc-dark); background:color-mix(in srgb,var(--pc) 12%,#fff); border:1px solid rgba(255,255,255,.90); box-shadow:inset 0 1px 0 rgba(255,255,255,.96); font-variant-numeric:tabular-nums; font-size:12px; }
 .author-row-signature { overflow:hidden; color:var(--text-sub); text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
@@ -1050,10 +1062,11 @@ body {
         </div>
     </div>
     {% if title %}<div class="video-title"><div class="video-title-quote mica-surface"><span class="video-title-marker"></span><span class="video-title-text">{{ title }}</span>{% if official_badge %}<span class="video-badge">{{ official_badge }}</span>{% endif %}</div></div>{% endif %}
-    {% if banner or cover_url %}<div class="video-cover-inset"><div class="cover-fill" style="background-image:url('{{ banner or cover_url }}')"></div><img class="cover-contain" src="{{ banner or cover_url }}" alt="cover" onerror="if(this.src.indexOf('maxresdefault')>-1){this.onerror=null;this.src=this.src.replace('maxresdefault','hqdefault');}else{this.style.display='none';this.parentElement.querySelector('.cover-fill').style.opacity='1';}">{% if video_duration %}<span class="duration-pill">{{ video_duration }}</span>{% endif %}</div>{% endif %}
+    {% if banner or cover_url %}<div class="video-cover-inset"><div class="cover-fill" style="background-image:url('{{ banner or cover_url }}')"></div><img class="cover-contain" src="{{ banner or cover_url }}" alt="cover" onerror="if(this.src.indexOf('maxresdefault')>-1){this.onerror=null;this.src=this.src.replace('maxresdefault','hqdefault');}else{this.style.display='none';var fill=this.parentElement.querySelector('.cover-fill');if(fill){fill.style.display='none';};}">{% if video_duration %}<span class="duration-pill">{{ video_duration }}</span>{% endif %}</div>{% endif %}
     {% if stats_bar_items %}<div class="video-metric-columns">{% for item in stats_bar_items %}<div class="video-metric-card mica-surface" aria-label="{{ item.label }}">{% if item.icon_svg %}<span class="metric-icon metric-{{ item.key }}" data-icon-source="{{ item.source | default('iconfont', true) }}">{{ item.icon_svg | safe }}</span>{% endif %}<span class="metric-value">{{ item.value }}</span><span class="metric-label">{{ item.label }}</span></div>{% endfor %}</div>{% endif %}
-    {% if video_desc or summary or text %}<div class="video-card-summary mica-surface">{{ video_desc or summary or text }}</div>{% endif %}
+    {% if video_desc or summary or text %}<div class="video-card-summary mica-surface">{{ video_desc or summary | safe or text | safe }}</div>{% endif %}
     {% if hot_comment or hot_comments %}<div style="display:flex;flex-direction:column;gap:8px;margin:0 var(--video-inset) var(--video-inset);">{% for comment in ((hot_comments or [])[:3] if hot_comments else ([hot_comment])) %}<div class="hot-comment mica-surface"><div class="pc-header"><span class="pc-badge">热评</span>{% if comment.avatar %}<img class="pc-avatar" src="{{ comment.avatar }}" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ comment.author }}</span>{% if comment.time %}<span> · {{ comment.time }}</span>{% endif %}</div><div class="pc-content">{{ comment.content }}</div>{% if comment.likes %}<div class="pc-likes">{{ comment.likes }} 赞</div>{% endif %}</div>{% endfor %}</div>{% endif %}
+    {% if show_guests %}<div class="show-guests"><div class="sg-title">参展嘉宾<span class="sg-count">{{ show_guests | length }}</span></div><div class="sg-grid">{% for guest in show_guests %}<div class="sg-tile mica-surface">{% if guest.avatar %}<img class="sg-avatar" src="{{ guest.avatar }}" onerror="this.style.display='none'">{% else %}<div class="sg-avatar sg-avatar-ph">{{ guest.name[:1] }}</div>{% endif %}<span class="sg-name">{{ guest.name }}</span>{% if guest.description %}<span class="sg-desc">{{ guest.description }}</span>{% endif %}{% if guest.book_num %}<span class="sg-book">♥ {{ guest.book_num }} 预约</span>{% endif %}</div>{% endfor %}</div></div>{% endif %}
     <div class="footer footer-colored"><span class="footer-platform-name">{% if platform_logo_svg %}<span class="footer-platform-logo" data-icon-source="iconfont">{{ platform_logo_svg | safe }}</span>{% else %}{{ platform_footer_label or platform_official_name or platform }}{% endif %}</span><div class="footer-bot-pill"><div class="footer-bot-left">{% if bot_avatar_url %}<img class="footer-bot-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="footer-bot-dot">{{ (bot_name | default('A', true))[:1] }}</span>{% endif %}</div><div class="footer-bot-right"><span class="footer-bot-name">{{ bot_name | default('守岸人', true) }}</span><span class="footer-parser-text">· Shorekeeper Parser</span></div></div></div>
 </div>
 </div>

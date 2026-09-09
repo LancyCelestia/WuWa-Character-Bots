@@ -4,25 +4,29 @@ from plugins.bot_unified_runtime.sources.parsers import platforms_music
 
 
 def test_qq_search_maps_duration_album_and_multiple_artists(monkeypatch) -> None:
+    # QQ 搜索已迁移到 musicu.fcg（旧 client_search_cp 服务端下线，恒 500）。
     monkeypatch.setattr(
         platforms_music,
-        "http_get_json",
-        lambda url, **kwargs: {
-            "data": {
-                "song": {
-                    "list": [
-                        {
-                            "mid": "qq-1",
-                            "songname": "QQ 歌曲",
-                            "albumname": "QQ 专辑",
-                            "albumid": 11,
-                            "interval": 215,
-                            "singer": [
-                                {"id": 1, "name": "歌手甲"},
-                                {"id": 2, "name": "歌手乙"},
-                            ],
+        "http_post_json",
+        lambda url, payload, **kwargs: {
+            "req_1": {
+                "data": {
+                    "body": {
+                        "song": {
+                            "list": [
+                                {
+                                    "mid": "qq-1",
+                                    "name": "QQ 歌曲",
+                                    "interval": 215,
+                                    "album": {"id": 11, "mid": "ABCDef12", "name": "QQ 专辑"},
+                                    "singer": [
+                                        {"id": 1, "name": "歌手甲"},
+                                        {"id": 2, "name": "歌手乙"},
+                                    ],
+                                }
+                            ]
                         }
-                    ]
+                    }
                 }
             }
         },
@@ -35,6 +39,8 @@ def test_qq_search_maps_duration_album_and_multiple_artists(monkeypatch) -> None
     assert result.music.duration_ms == 215000
     assert result.music.album is not None
     assert result.music.album.provider_album_id == "11"
+    # 封面由专辑 mid 拼 y.gtimg.cn 图床直链。
+    assert (result.music.album.artwork_url or "").endswith("T002R500x500M000ABCDef12.jpg")
     assert [item.name for item in result.music.contributors] == ["歌手甲", "歌手乙"]
 
 
