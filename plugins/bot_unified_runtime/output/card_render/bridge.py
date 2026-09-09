@@ -1056,6 +1056,67 @@ def render_universal_card_html(payload_dict: dict[str, Any] | None = None) -> st
     return _TEMPLATE.render(**context)
 
 
+def _song_candidates_platform_color(platform: str) -> str:
+    """候选卡平台色：先精确匹配，再包含关系回退（netease_music→netease）。"""
+    color = PLATFORM_COLORS.get(platform)
+    if color is not None:
+        return color
+    matches = [
+        (key, value)
+        for key, value in PLATFORM_COLORS.items()
+        if key and key in platform
+    ]
+    if matches:
+        return max(matches, key=lambda item: len(item[0]))[1]
+    return UNKNOWN_PLATFORM_COLOR
+
+
+def render_song_candidates_html(payload_dict: dict[str, Any] | None = None) -> str:
+    """渲染点歌多候选选择卡 HTML（Mica 规范）。
+
+    payload_dict 字段：query、platform、platform_name、ttl_seconds、
+    candidates=[{index, name, artist, album}, ...]。
+    颜色派生复用 PLATFORM_COLORS（精确匹配→包含回退→中性灰），
+    artist/album 缺省段静默省略，任何字段缺失都不抛异常。
+    """
+    data = dict(payload_dict or {})
+    platform = _as_str(data.get("platform")).lower()
+    color = _song_candidates_platform_color(platform)
+    rgb = _hex_to_rgb(color)
+
+    candidates_raw = _as_list(data.get("candidates"))
+    candidates: list[dict[str, Any]] = []
+    for offset, cand in enumerate(candidates_raw, start=1):
+        if not isinstance(cand, dict):
+            continue
+        index = _as_int(cand.get("index"), offset) or offset
+        candidates.append(
+            {
+                "index": index,
+                "index_label": f"{index:02d}",
+                "name": _as_str(cand.get("name")) or "未知歌曲",
+                "artist": _as_str(cand.get("artist")),
+                "album": _as_str(cand.get("album")),
+                "is_top": index <= 3,
+            }
+        )
+
+    template = _ENV.get_template("song_candidates.html")
+    return template.render(
+        query=_as_str(data.get("query")) or "未知关键词",
+        platform=platform,
+        platform_name=_as_str(data.get("platform_name"))
+        or PLATFORM_OFFICIAL_NAMES.get(platform)
+        or (platform.capitalize() if platform else ""),
+        platform_color=color,
+        platform_color_rgb=f"{rgb[0]},{rgb[1]},{rgb[2]}",
+        platform_color_dark=_rgb_to_hex(_darken(rgb)),
+        platform_color_light=_rgb_to_hex(_lighten(rgb)),
+        ttl_seconds=_as_int(data.get("ttl_seconds"), 300),
+        candidates=candidates,
+    )
+
+
 __all__ = [
     "PLATFORM_COLORS",
     "PLATFORM_OFFICIAL_NAMES",
@@ -1063,5 +1124,6 @@ __all__ = [
     "RenderPayload",
     "flat_projection",
     "parse_to_render_payload",
+    "render_song_candidates_html",
     "render_universal_card_html",
 ]
