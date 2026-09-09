@@ -198,6 +198,32 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
+# ==================== 本地图片内联 ====================
+# playwright 以 about:blank 起页，file:// 子资源被 Chromium 拒载
+# （实测白块）；本地图片（如竖切横图拼接结果）必须内联成 data URL 才能进卡。
+
+_INLINE_MAX_BYTES = 12 * 1024 * 1024
+
+
+def _inline_local_image(url: Any) -> str:
+    """本地图片文件 → data URL；远程/ data:/缺失文件原样返回。"""
+    raw = str(url or "").strip()
+    if not raw or raw.startswith(("http://", "https://", "data:")):
+        return raw
+    candidate = Path(raw)
+    if not candidate.is_file():
+        return raw
+    try:
+        if candidate.stat().st_size > _INLINE_MAX_BYTES:
+            return raw
+        suffix = candidate.suffix.lower().lstrip(".") or "jpeg"
+        mime = "jpeg" if suffix in ("jpg", "jpeg") else suffix
+        encoded = base64.b64encode(candidate.read_bytes()).decode("ascii")
+        return f"data:image/{mime};base64,{encoded}"
+    except OSError:
+        return raw
+
+
 def _first_stat_value(stats: dict[str, Any], keys: tuple[str, ...]) -> Any:
     for key in keys:
         value = stats.get(key)
@@ -606,7 +632,7 @@ def flat_projection(item: Any) -> Any:
         detail["video"] = video
     images = content_extras.get("images")
     if isinstance(images, list):
-        detail["images"] = [url for url in images if str(url)]
+        detail["images"] = [_inline_local_image(url) for url in images if str(url)]
     for key in (
         "episodes", "live", "comments", "goods", "related",
         "pinned_comment", "hot_comment", "hot_comments",
@@ -614,7 +640,7 @@ def flat_projection(item: Any) -> Any:
         if key in content_extras:
             detail[key] = content_extras[key]
 
-    cover = str(content_extras.get("cover_url") or "")
+    cover = _inline_local_image(content_extras.get("cover_url"))
     return {
         "platform": platform,
         "item_id": item_id,
@@ -647,7 +673,7 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
     item_id = _as_str(_get(item, "item_id")).strip()
     title = _as_str(_get(item, "title")).strip()
     summary = _as_str(_get(item, "summary"))
-    cover = _as_str(_get(item, "cover_url"))
+    cover = _inline_local_image(_get(item, "cover_url"))
     canonical = _as_str(_get(item, "canonical_url"))
 
     stats_raw = _as_dict(_get(item, "stats"))
