@@ -26,6 +26,7 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
     http_post_json,
     resolve_short_link,
 )
+from plugins.bot_unified_runtime.sources.parsers.image_stitch import try_stitch_strip
 
 _OG_TITLE_RE = re.compile(
     r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)',
@@ -223,7 +224,11 @@ def _xhs_search_result_card(url: str, *, cookie_header: str = "") -> ParsedConte
 
 
 def _format_epoch(value: object) -> str:
-    """秒/毫秒时间戳 → 'YYYY-MM-DD HH:MM'；非法输入返回空串。"""
+    """秒/毫秒时间戳 → 带时区 ISO（'2026-08-09T17:20:00+08:00'）；非法输入返回空串。
+
+    必须携带时区：``build_parsed_content`` 会把 naive 字符串误标成 UTC，
+    展示层再 astimezone 后整体漂移 8 小时（微博/推特发布时间偏移的根因）。
+    """
     try:
         num = int(str(value).strip())
     except (TypeError, ValueError):
@@ -236,7 +241,9 @@ def _format_epoch(value: object) -> str:
         return ""
     import datetime
 
-    return datetime.datetime.fromtimestamp(num).strftime("%Y-%m-%d %H:%M")  # noqa: DTZ006 - 与站内其他解析保持本地时间口径。
+    return datetime.datetime.fromtimestamp(num).astimezone().isoformat(
+        timespec="seconds"
+    )
 
 
 def _parse_cn_count(value: object) -> int:
@@ -259,6 +266,18 @@ def _parse_cn_count(value: object) -> int:
         return 0
 
 
+def _xhs_original_url(url: str) -> str:
+    """小红书 CDN 压缩图 → 原图。
+
+    ``!`` 后缀（``!nd_dft_hgtewebp...``）与 ``x-biz-process`` 查询串都是
+    服务端缩放/转 webp 指令，剥掉即返回原始位图；对无压缩直链保持原样。
+    """
+    base = str(url or "").split("!", 1)[0]
+    if "x-biz-process=" in base:
+        base = base.split("?", 1)[0]
+    return base
+
+
 def _xhs_from_initial_state(html: str, url: str) -> ParsedContent | None:
     payload = _xhs_initial_state_payload(html)
     if payload is None:
@@ -274,11 +293,22 @@ def _xhs_from_initial_state(html: str, url: str) -> ParsedContent | None:
     if not title and not desc_raw:
         return None
     user = note.get("user") or {}
-    images = [
-        str(image.get("urlDefault") or image.get("url") or "")
-        for image in (note.get("imageList") or [])
-        if image.get("urlDefault") or image.get("url")
-    ]
+    images: list[str] = []
+    for image in note.get("imageList") or []:
+        if not isinstance(image, dict):
+            continue
+        # info_list 的 WB_DFT 档是端内原始质量；缺省退 urlDefault/url，
+        # 最后统一剥一次压缩后缀兜底。
+        raw_url = ""
+        for scene in image.get("info_list") or []:
+            if isinstance(scene, dict) and scene.get("image_scene") == "WB_DFT":
+                raw_url = str(scene.get("url") or "")
+                break
+        raw_url = raw_url or str(image.get("urlDefault") or image.get("url") or "")
+        if raw_url:
+            original = _xhs_original_url(raw_url)
+            if original not in images:
+                images.append(original)
     interact = note.get("interactInfo") or {}
     stats: dict[str, object] = {}
 
@@ -335,8 +365,11 @@ def _xhs_from_initial_state(html: str, url: str) -> ParsedContent | None:
 
     detail: dict = {"author": author_detail} if author_detail else {}
     if images:
-        # 全图集进 media；封面取首图（builder 会按 cover_url 保持首图位）。
-        detail["images"] = images
+        # 竖切横图拼接还原：横图切多竖块发布时拼回完整横图。
+        stitched_images, stitched = try_stitch_strip(images)
+        detail["images"] = stitched_images if stitched else images
+        if stitched:
+            images = stitched_images
     video_url = _xhs_video_stream(note)
     if video_url:
         # 视频直链（sns-video 无水印）：URL + 封面/宽高/时长尽力补齐。
@@ -1245,6 +1278,14 @@ def parse_youtube(url: str, *, cookie_header: str = "", proxy: str = "") -> Pars
             "duration": watch_info["时长"],
             "preview_url": str(payload.get("thumbnail_url") or ""),
         }
+    # 封面原图化：oEmbed 默认给 hqdefault(480px)，1400px 宽的卡片上发糊。
+    # maxresdefault 不一定存在（1280x720 上限，无则 404），由渲染端
+    # onerror 兜底回退缩略图。
+    yt_cover = str(payload.get("thumbnail_url") or "")
+    if video_id:
+        yt_cover = (
+            f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
+        )
     return build_parsed_content(
         platform="youtube",
         item_id=video_id,
@@ -1252,7 +1293,7 @@ def parse_youtube(url: str, *, cookie_header: str = "", proxy: str = "") -> Pars
         title=str(payload.get("title") or ""),
         author_name=author_name,
         summary=video_desc,
-        cover_url=str(payload.get("thumbnail_url") or ""),
+        cover_url=yt_cover,
         canonical_url=url,
         stats=stats,
         parse_depth="deep" if stats else "shallow",
@@ -1280,6 +1321,16 @@ def _youtube_playlist(url: str, *, cookie_header: str = "", proxy: str = "") -> 
             canonical_url=url,
             parse_depth="shallow",
         )
+
+
+def _twitter_large_url(url: str) -> str:
+    """pbs.twimg.com 直链补 ``name=large``（原图级质量；已有参数则归一化）。"""
+    clean = str(url or "").strip()
+    if not clean:
+        return ""
+    if "name=" in clean:
+        return re.sub(r"name=[^&]+", "name=large", clean)
+    return clean + ("&name=large" if "?" in clean else "?name=large")
 
 
 def parse_twitter_x(url: str, *, cookie_header: str = "", proxy: str = "") -> ParsedContent:
@@ -1366,11 +1417,32 @@ def parse_twitter_x(url: str, *, cookie_header: str = "", proxy: str = "") -> Pa
                     media_note.append(f"GIF {len(gifs)} 个")
                 if media_note:
                     summary_lines.append("媒体：" + "、".join(media_note))
+                # 原图直链 + 竖切横图拼接还原（横图切多竖块玩法）。
+                photo_urls = [
+                    _twitter_large_url(str(photo.get("url") or ""))
+                    for photo in photos
+                    if photo.get("url")
+                ]
+                stitched = ""
+                image_refs: list[str] = []
+                if photo_urls:
+                    image_refs, stitched = try_stitch_strip(
+                        photo_urls, proxy=proxy, referer="https://x.com/"
+                    )
                 cover = ""
-                if photos:
-                    cover = str(photos[0].get("url") or "")
+                if stitched:
+                    cover = stitched
+                elif photo_urls:
+                    cover = photo_urls[0]
                 elif videos:
-                    cover = str(videos[0].get("thumbnail_url") or "")
+                    cover = _twitter_large_url(
+                        str(videos[0].get("thumbnail_url") or "")
+                    )
+                detail: dict = {}
+                if author_detail:
+                    detail["author"] = author_detail
+                if image_refs:
+                    detail["images"] = image_refs
                 return build_parsed_content(
                     platform="twitter",
                     item_id=status_id,
@@ -1382,7 +1454,7 @@ def parse_twitter_x(url: str, *, cookie_header: str = "", proxy: str = "") -> Pa
                     canonical_url=url,
                     stats=stats,
                     parse_depth="deep",
-                    detail={"author": author_detail} if author_detail else {},
+                    detail=detail,
                 )
         except Exception:  # noqa: BLE001, S110 - 聚合接口失败回退 og。
             pass

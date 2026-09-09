@@ -195,11 +195,18 @@ def _author_enrichment(mid: int, *, cookie_header: str = "") -> tuple[str, dict,
         )
         if upstat.get("code") == 0:
             updata = upstat.get("data") or {}
-            likes = _safe_int(updata.get("likes") or (updata.get("archive") or {}).get("likes"))
+            archive = updata.get("archive") or {}
+            likes = _safe_int(updata.get("likes") or archive.get("likes"))
             if likes is not None:
                 lines.append(f"获赞 {_format_count(likes)}")
                 counts["获赞"] = likes
                 author["received_likes"] = int(likes)
+            # 空间总播放（archive.view）：与获赞同接口，尽力而为。
+            views = _safe_int(archive.get("view"))
+            if views is not None:
+                lines.append(f"总播放 {_format_count(views)}")
+                counts["总播放"] = views
+                author["total_play"] = int(views)
     except Exception:  # noqa: BLE001, S110 - 获赞统计失败仅跳过。
         pass
     return " · ".join(lines), counts, author
@@ -613,6 +620,16 @@ def _parse_live(room_id: str, url: str, *, cookie_header: str = "") -> ParsedCon
         live_detail["start_time"] = live_start
     if room.get("description"):
         live_detail["intro"] = str(room["description"]).strip()
+    # 主播结构化信息：头像（base_info.face）+ 粉丝数（relation_info.follow）。
+    author_detail: dict = {}
+    face = str(base.get("face") or "").strip()
+    if face:
+        author_detail["avatar"] = face
+    follow_count = _safe_int((anchor.get("relation_info") or {}).get("follow"))
+    if follow_count is not None:
+        author_detail["fans"] = follow_count
+    if uid:
+        author_detail["uuid"] = str(uid)
     # 关键帧等字段由 Room/get_info 尽力补充，失败不影响主解析。
     try:
         extra_payload = http_get_json(
@@ -666,7 +683,12 @@ def _parse_live(room_id: str, url: str, *, cookie_header: str = "") -> ParsedCon
         canonical_url=f"https://live.bilibili.com/{room_id}",
         stats=stats,
         parse_depth="deep",
-        detail={"live": live_detail} if live_detail else {},
+        badge="直播",
+        detail={
+            key: value
+            for key, value in ({"live": live_detail, "author": author_detail}).items()
+            if value
+        },
     )
 
 
@@ -1330,6 +1352,13 @@ def _parse_article(article_id: str, url: str, *, cookie_header: str = "") -> Par
         author_detail["name"] = str(author["name"])
     if author.get("face"):
         author_detail["avatar"] = str(author["face"])
+    # UP 主级数据补齐：签名/粉丝/关注/视频数/专栏数/获赞/总播放（与视频卡同源）。
+    if author.get("mid"):
+        _author_lines, author_counts, author_enriched = _author_enrichment(
+            int(author["mid"]), cookie_header=cookie_header
+        )
+        stats.update(author_counts)
+        author_detail.update(author_enriched)
     detail: dict = {"article": {"id": str(data.get("id") or article_id)}}
     if author_detail:
         detail["author"] = author_detail
@@ -1474,8 +1503,35 @@ def _strip_html_text(value: object, limit: int = 200) -> str:
     return text
 
 
+def _show_module_text(module: object, limit: int = 160) -> str:
+    """图文详情模块 → 纯文本。details 可能是 HTML 串或 [{title,content}] 列表。"""
+    if isinstance(module, dict):
+        details = module.get("details")
+        if isinstance(details, list):
+            rows = [
+                _strip_html_text(f"{row.get('title')}：{row.get('content')}", limit)
+                for row in details
+                if isinstance(row, dict) and (row.get("title") or row.get("content"))
+            ]
+            return "\n".join(row for row in rows if row)
+        return _strip_html_text(details, limit)
+    return ""
+
+
+def _show_yuan(value: object) -> str:
+    """会员购价格为分 → '70'/'70.5' 元文本；非法返回空。"""
+    num = _safe_int(value)
+    if not num:
+        return ""
+    return f"{num / 100:g}"
+
+
 def parse_bilibili_show(url: str, *, cookie_header: str = "") -> ParsedContent:
-    """会员购项目：getV2（项目名/场馆/时间/票价/开售状态），可独立注册。"""
+    """会员购项目全字段：getV2（场次/票价档/票种/退票/嘉宾/主办/场馆/时间）。
+
+    可见面（summary/stats）保持紧凑行文本；结构化全量存 detail["show"]
+    （screens/tickets/guests/venue/merchant 等），供后续模板升级直接取用。
+    """
     id_match = _SHOW_ID_RE.search(url)
     if not id_match:
         raise ParseHttpError(f"bilibili show missing project id: {url}")
@@ -1492,65 +1548,201 @@ def parse_bilibili_show(url: str, *, cookie_header: str = "") -> ParsedContent:
     if not name:
         raise ParseHttpError("bilibili show missing project name")
     venue = data.get("venue_info") or {}
+    place = data.get("place_info") or {}
+    merchant = data.get("merchant") or {}
+    follow_info = data.get("follow_info") or {}
     stats: dict[str, object] = {}
-    price_low = _safe_int(data.get("price_low"))
-    if price_low:
-        stats["票价"] = f"¥{price_low / 100:g}起"
-    start_text = _fmt_ts(data.get("start_time"), "%Y-%m-%d %H:%M")
-    if start_text:
-        stats["开始时间"] = start_text
-    screens = data.get("screen_list") or []
-    sale_flags: list[str] = []
-    for screen in screens:
-        if not isinstance(screen, dict):
-            continue
-        flag = (screen.get("saleFlag") or {}).get("display_name")
-        if flag and str(flag) not in sale_flags:
-            sale_flags.append(str(flag))
     summary_lines: list[str] = []
+
+    # --- 时间 ---
     project_label = str(data.get("project_label") or "").strip()
     if project_label:
         summary_lines.append(f"档期：{project_label}")
+    start_text = _fmt_ts(data.get("start_time"), "%Y-%m-%d %H:%M")
+    end_text = _fmt_ts(data.get("end_time"), "%Y-%m-%d %H:%M")
+    if start_text:
+        stats["开始时间"] = start_text
+        if end_text and end_text != start_text:
+            summary_lines.append(f"时间：{start_text} ~ {end_text}")
+
+    # --- 场馆与地址 ---
     venue_name = str(venue.get("name") or "").strip()
+    place_name = str(place.get("name") or "").strip()
     if venue_name:
-        address = str(venue.get("address_detail") or "").strip()
-        summary_lines.append(f"场馆：{venue_name}" + (f"（{address}）" if address else ""))
+        summary_lines.append("场馆：" + (f"{venue_name}（{place_name}）" if place_name else venue_name))
+    city = str(venue.get("city_name") or "").strip()
+    province = str(venue.get("province_name") or "").strip()
+    address = str(venue.get("address_detail") or "").strip()
+    if address:
+        region = city or province
+        summary_lines.append("地址：" + (f"{region}·{address}" if region else address))
+
+    # --- 票价档（分 → 元） ---
+    price_low = _safe_int(data.get("price_low"))
+    price_high = _safe_int(data.get("price_high"))
+    if price_low and price_high and price_high != price_low:
+        stats["票价"] = f"¥{_show_yuan(price_low)}-{_show_yuan(price_high)}"
+    elif price_low:
+        stats["票价"] = f"¥{_show_yuan(price_low)}起"
+
+    # --- 场次与票档 ---
+    screens = data.get("screen_list") or []
+    screen_rows: list[dict] = []
+    sale_flags: list[str] = []
+    ticket_kinds: list[str] = []
+    for screen in screens:
+        if not isinstance(screen, dict):
+            continue
+        flag = str(((screen.get("saleFlag") or {}).get("display_name")) or "")
+        if flag and flag not in sale_flags:
+            sale_flags.append(flag)
+        tickets: list[dict] = []
+        for ticket in screen.get("ticket_list") or []:
+            if not isinstance(ticket, dict):
+                continue
+            desc = str(ticket.get("desc") or "").strip()
+            for keyword in ("电子", "实体", "兑换"):
+                if keyword in desc and desc not in ticket_kinds and len(ticket_kinds) < 6:
+                    ticket_kinds.append(desc)
+            tickets.append(
+                {
+                    "desc": desc,
+                    "price": _show_yuan(ticket.get("price")),
+                    "sale_start": str(ticket.get("sale_start") or ""),
+                    "sale_end": str(ticket.get("sale_end") or ""),
+                    "sale_flag": str(((ticket.get("sale_flag") or {}).get("display_name")) or ""),
+                }
+            )
+        screen_rows.append(
+            {
+                "name": str(screen.get("name") or ""),
+                "time": _fmt_ts(screen.get("start_time"), "%Y-%m-%d %H:%M"),
+                "date": str(screen.get("start_time_str") or ""),
+                "sale_flag": flag,
+                "tickets": tickets,
+            }
+        )
+    if screen_rows:
+        bits = [
+            f"{row['name'] or row['date']}" + (f"（{row['sale_flag']}）" if row["sale_flag"] else "")
+            for row in screen_rows[:6]
+        ]
+        summary_lines.append("场次：" + "、".join(bits) + ("…" if len(screen_rows) > 6 else ""))
     if sale_flags:
         summary_lines.append("售票状态：" + "、".join(sale_flags[:4]))
+
+    # --- 票种（电子/实体/兑换）与 7 天无理由退票 ---
+    kind_bits: list[str] = []
+    if data.get("has_eticket"):
+        kind_bits.append("电子票")
+    if data.get("has_paper_ticket"):
+        kind_bits.append("实体票")
+    for kind in ticket_kinds:
+        if kind not in kind_bits:
+            kind_bits.append(kind)
+    if kind_bits:
+        summary_lines.append("票种：" + "、".join(kind_bits[:5]))
+    refund_desc = str(data.get("refund_desc") or "").strip()
+    if refund_desc:
+        summary_lines.append(f"退票：{refund_desc}")
+
+    # --- 主办单位 / 博主信息（头像与博主位用真实主办方内容撑起） ---
+    company = str(merchant.get("company") or "").strip()
+    up_name = str(follow_info.get("up_name") or "").strip()
+    up_face = str(follow_info.get("up_face") or "").strip()
+    if up_face.startswith("//"):
+        up_face = f"https:{up_face}"
+    host_name = up_name or company or "主办方"
+    if company:
+        summary_lines.append(f"主办：{company}" + (f"（账号：{up_name}）" if up_name and up_name != company else ""))
+    author_detail: dict = {"name": host_name, "signature": company or "主办方"}
+    if up_face:
+        author_detail["avatar"] = up_face
+    if up_name:
+        author_detail["uuid"] = str(follow_info.get("up") or "")
+
+    # --- 参展嘉宾 ---
+    guests = [item for item in (data.get("guests") or []) if isinstance(item, dict) and item.get("name")]
+    if guests:
+        bits = []
+        for guest in guests[:5]:
+            guest_desc = _strip_html_text(guest.get("description"), 40)
+            bits.append(
+                str(guest["name"]) + (f"（{guest_desc}）" if guest_desc else "")
+            )
+        summary_lines.append(
+            "嘉宾：" + "、".join(bits) + ("…" if len(guests) > 5 else f"（共 {len(guests)} 位）" if len(guests) > 1 else "")
+        )
+
+    # --- 图文详情（正文模块文本 + 详情图） ---
     performance_desc = data.get("performance_desc") or {}
     desc_bits: list[str] = []
-    for module in (performance_desc.get("list") or [])[:3]:
+    gallery: list[str] = []
+    for module in (performance_desc.get("list") or [])[:4]:
         if not isinstance(module, dict):
             continue
         module_name = str(module.get("module_name") or "").strip()
-        text = _strip_html_text(module.get("details"), 160)
+        text = _show_module_text(module)
         if text:
             desc_bits.append(f"{module_name}：{text}" if module_name else text)
+        raw_details = module.get("details")
+        raw_html = raw_details if isinstance(raw_details, str) else ""
+        for src in re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', raw_html):
+            if src.startswith("//"):
+                src = f"https:{src}"
+            if src.startswith("http") and src not in gallery:
+                gallery.append(src)
     if desc_bits:
         summary_lines.append("\n".join(desc_bits[:2]))
+
     cover = str(data.get("cover") or "")
     if cover.startswith("//"):
         cover = f"https:{cover}"
     banner = str(data.get("banner") or "")
-    detail: dict = {
-        "show": {
-            "project_id": project_id,
-            "price_low": price_low,
-            "start_time": _safe_int(data.get("start_time")),
-            "end_time": _safe_int(data.get("end_time")),
-            "venue": venue_name,
-            "address": str(venue.get("address_detail") or ""),
-            "sale_flags": sale_flags,
-            "banner": banner,
-        }
+    if banner.startswith("//"):
+        banner = f"https:{banner}"
+    show_detail: dict = {
+        "project_id": project_id,
+        "price_low": price_low,
+        "price_high": price_high,
+        "start_time": _safe_int(data.get("start_time")),
+        "end_time": _safe_int(data.get("end_time")),
+        "project_label": project_label,
+        "venue": venue_name,
+        "place": place_name,
+        "city": city,
+        "address": address,
+        "ticket_kinds": kind_bits,
+        "has_eticket": bool(data.get("has_eticket")),
+        "has_paper_ticket": bool(data.get("has_paper_ticket")),
+        "refund_desc": refund_desc,
+        "all_refund": bool(data.get("all_refund")),
+        "screens": screen_rows,
+        "guests": [
+            {
+                "name": str(guest.get("name") or ""),
+                "description": _strip_html_text(guest.get("description"), 200),
+                "avatar": f"https:{guest['guest_img']}" if str(guest.get("guest_img") or "").startswith("//") else str(guest.get("guest_img") or ""),
+                "book_num": _safe_int(guest.get("book_num")),
+            }
+            for guest in guests
+        ],
+        "host": company,
+        "up_name": up_name,
+        "up_face": up_face,
+        "sale_flags": sale_flags,
+        "gallery": gallery[:12],
+        "banner": banner,
+        "disclaimer": str(data.get("disclaimer") or ""),
     }
     if data.get("keywords"):
-        detail["show"]["keywords"] = str(data["keywords"])
+        show_detail["keywords"] = str(data["keywords"])
     return build_parsed_content(
         platform="bilibili",
         item_id=project_id,
         item_kind="show",
         title=name,
+        author_name=host_name,
         summary="\n".join(summary_lines),
         cover_url=cover or banner,
         canonical_url=url,
@@ -1558,7 +1750,7 @@ def parse_bilibili_show(url: str, *, cookie_header: str = "") -> ParsedContent:
         parse_depth="deep",
         page_type="ticket",
         badge="会员购",
-        detail=detail,
+        detail={"show": show_detail, "author": author_detail},
     )
 
 

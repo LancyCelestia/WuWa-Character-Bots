@@ -15,8 +15,48 @@
 
 from __future__ import annotations
 
+import re
+import urllib.request
 from pathlib import Path
 from typing import Any, Protocol
+
+# Chromium 的 ORB（Opaque Response Blocking）会对部分图床（实测 wx*.sinaimg.cn：
+# 微博配图）的 <img> no-cors 请求直接拦断（net::ERR_BLOCKED_BY_ORB，卡上
+# 封面/头像全灰）。对命中名单的请求改走 python 侧取回字节再 fulfill，
+# 彻底绕开浏览器网络栈；名单外不拦截，避免每图双重下载。
+# 取回用直连 + curl 形态极简头：新浪图床 WAF 对「浏览器 UA 但缺完整浏览器头
+# 的请求」与代理出口 IP 均回 403（实测矩阵：curl 极简头直连/代理皆 200）。
+_ORB_PRONE_HOST_SUFFIXES = ("sinaimg.cn", "weibocdn.com")
+_ORB_FETCH_HEADERS = {"User-Agent": "curl/8.0.1", "Accept": "*/*"}
+_ORB_FETCH_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _orb_prone_url(url: str) -> bool:
+    from urllib.parse import urlsplit
+
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError:
+        return False
+    return any(host == suffix or host.endswith(f".{suffix}") for suffix in _ORB_PRONE_HOST_SUFFIXES)
+
+
+_HTML_URL_RE = re.compile(r"""(?:src=|url\()[\'"]?(https?://[^\'")\s>]+)""", re.IGNORECASE)
+
+
+def _html_mentions_orb_prone_image(html: str) -> bool:
+    return any(_orb_prone_url(url) for url in _HTML_URL_RE.findall(html or ""))
+
+
+def _fetch_image_bytes(url: str) -> tuple[bytes, str] | None:
+    request = urllib.request.Request(url, headers=_ORB_FETCH_HEADERS)
+    try:
+        with _ORB_FETCH_OPENER.open(request, timeout=10) as response:
+            data = response.read(16 * 1024 * 1024)
+            content_type = str(response.headers.get("Content-Type") or "image/jpeg")
+            return data, content_type.split(";")[0].strip()
+    except Exception:  # noqa: BLE001 - 取回失败交给 route.abort，模板 onerror 兜底。
+        return None
 
 
 class RenderBackend(Protocol):
@@ -164,6 +204,23 @@ class PlaywrightRenderBackend:
                         device_scale_factor=device_scale_factor,
                     )
                 try:
+                    def _orb_route(route: Any) -> None:
+                        request = route.request
+                        if (
+                            request.resource_type != "image"
+                            or not _orb_prone_url(str(request.url))
+                        ):
+                            route.continue_()
+                            return
+                        fetched = _fetch_image_bytes(str(request.url))
+                        if fetched is None:
+                            route.abort()
+                            return
+                        data, content_type = fetched
+                        route.fulfill(status=200, body=data, content_type=content_type)
+
+                    if _html_mentions_orb_prone_image(html):
+                        page.route("**/*", _orb_route)
                     page.set_content(html, wait_until="networkidle")
                     # 封面清晰度关键：等所有 <img> 真正解码完成（networkidle
                     # 只保证请求静默，大图可能仍在解码）；再兜底固定等待。

@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import datetime
 import html
+import http.cookiejar
 import json
 import re
 import time
 import urllib.parse
+import urllib.request
 
 from plugins.bot_unified_runtime.contracts.media import (
     ParsedContent,
@@ -27,6 +29,7 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
     http_get_json,
     http_get_text,
 )
+from plugins.bot_unified_runtime.sources.parsers.image_stitch import try_stitch_strip
 from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
     _og_scrape,
     _parse_cn_count,
@@ -60,6 +63,84 @@ _WEIBO_MOBILE_HEADERS = {
 }
 
 
+# ---------- 访客会话（genvisitor） ----------
+
+_VISITOR_GEN_API = "https://passport.weibo.com/visitor/genvisitor"
+_VISITOR_INCARNATE_API = "https://passport.weibo.com/visitor/visitor"
+_visitor_cache: dict = {"cookie": "", "at": 0.0}
+_VISITOR_TTL = 6 * 3600.0
+_VISITOR_FP = (
+    '{"os":"1","browser":"Chrome125,125,125,0","fonts":"undefined",'
+    '"screenInfo":"1920*1080*32","plugins":""}'
+)
+
+
+def _weibo_visitor_cookie() -> str:
+    """genvisitor→incarnate 换访客 cookie（SUB/SUBP/tid）；失败返回空串。
+
+    m.weibo.cn 对无 cookie 会话间歇风控（ok=-100/6102）；带访客身份可明显
+    提升深解析成功率。结果进程内缓存 6 小时。
+    """
+    now = time.time()
+    if _visitor_cache["cookie"] and now - _visitor_cache["at"] < _VISITOR_TTL:
+        return str(_visitor_cache["cookie"])
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    headers = {
+        "User-Agent": _WEIBO_MOBILE_UA,
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+    try:
+        body = urllib.parse.urlencode({"cb": "gen_callback", "fp": _VISITOR_FP}).encode()
+        request = urllib.request.Request(_VISITOR_GEN_API, data=body, headers=headers)
+        with opener.open(request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8", "replace"))
+        tid = str(((payload or {}).get("data") or {}).get("tid") or "")
+        if not tid:
+            return ""
+        query = urllib.parse.urlencode(
+            {
+                "a": "incarnate",
+                "t": tid,
+                "w": "2",
+                "c": "095",
+                "gc": "",
+                "cb": "cross_domain",
+                "from": "weibo",
+                "_rand": f"0.{int(now * 1000)}",
+            }
+        )
+        incarnate = urllib.request.Request(
+            f"{_VISITOR_INCARNATE_API}?{query}", headers=headers
+        )
+        with opener.open(incarnate, timeout=10) as response:
+            response.read()
+        cookie = "; ".join(
+            f"{item.name}={item.value}"
+            for item in jar
+            if item.name in ("SUB", "SUBP", "tid")
+        )
+        if cookie:
+            _visitor_cache["cookie"] = cookie
+            _visitor_cache["at"] = now
+        return cookie
+    except Exception:  # noqa: BLE001 - 访客流程失败不致命，回退无 cookie 通道。
+        return ""
+
+
+def _weibo_merge_cookies(cookie_header: str) -> str:
+    """调用方登录 cookie 优先；缺失时并入访客 cookie 补充身份。"""
+    base = (cookie_header or "").strip().rstrip(";")
+    extra = _weibo_visitor_cookie()
+    if not extra:
+        return base
+    owned = {pair.split("=", 1)[0].strip() for pair in base.split(";") if "=" in pair}
+    additions = [
+        pair for pair in extra.split("; ") if pair.split("=", 1)[0] not in owned
+    ]
+    return "; ".join([base, *additions]) if base else "; ".join(additions)
+
+
 def _strip_html(value: object) -> str:
     """微博正文 HTML → 纯文本（保留 <br> 换行）。"""
     text = str(value or "")
@@ -71,7 +152,11 @@ def _strip_html(value: object) -> str:
 
 
 def _weibo_created_at(value: object) -> str:
-    """'Wed Aug 26 17:35:31 +0800 2026' → 'YYYY-MM-DD HH:MM'；失败返回空。"""
+    """'Wed Aug 26 17:35:31 +0800 2026' → 带时区 ISO（秒级）；失败返回空。
+
+    必须保留 +0800 时区：builder 会把 naive 字符串误标成 UTC，展示层
+    astimezone 后整体漂移 8 小时（发布时间"不对"的根因）。
+    """
     raw = str(value or "").strip()
     if not raw:
         return ""
@@ -79,7 +164,18 @@ def _weibo_created_at(value: object) -> str:
         parsed = datetime.datetime.strptime(raw, "%a %b %d %H:%M:%S %z %Y")
     except ValueError:
         return ""
-    return parsed.astimezone().strftime("%Y-%m-%d %H:%M")
+    return parsed.isoformat(timespec="seconds")
+
+
+def _weibo_avatar(value: object, hd: object = None) -> str:
+    """头像取最高清可用：avatar_hd 优先，否则把 /50/ 小图升到 /180/。"""
+    hd_url = str(hd or "").strip()
+    if hd_url:
+        return hd_url
+    url = str(value or "").strip()
+    if not url:
+        return ""
+    return re.sub(r"/50/", "/180/", url, count=1)
 
 
 def _weibo_get_text_with_retry(
@@ -175,10 +271,9 @@ def _weibo_author_detail(user: dict) -> dict:
     detail: dict = {}
     if user.get("id"):
         detail["uuid"] = str(user.get("id"))
-    if user.get("profile_image_url"):
-        detail["avatar"] = str(user.get("profile_image_url"))
-    if user.get("avatar_hd"):
-        detail["avatar_hd"] = str(user.get("avatar_hd"))
+    avatar = _weibo_avatar(user.get("profile_image_url"), user.get("avatar_hd"))
+    if avatar:
+        detail["avatar"] = avatar
     if user.get("description"):
         detail["signature"] = str(user.get("description"))
     followers = _parse_cn_count(user.get("followers_count"))
@@ -231,7 +326,13 @@ def _weibo_video_meta(status: dict) -> dict | None:
     return meta or None
 
 
-def _weibo_status_result(status: dict, url: str) -> ParsedContent:
+def _weibo_status_result(
+    status: dict,
+    url: str,
+    *,
+    cookie_header: str = "",
+    proxy: str = "",
+) -> ParsedContent:
     """把 status 对象规整成深度微博卡（含转发摘要）。"""
     text = _strip_html(
         status.get("raw_text") or status.get("text_raw") or status.get("text")
@@ -242,8 +343,10 @@ def _weibo_status_result(status: dict, url: str) -> ParsedContent:
     if not text:
         raise ParseHttpError("weibo: status has no text")
     author = status.get("user") or {}
-    title = text.split("\n")[0][:40] or "微博"
-    if len(title) < len(text.split("\n")[0]):
+    first_line = text.split("\n")[0]
+    # 视频分享尾缀（"xxx的微博视频"）不是标题内容，剥掉防污染卡片标题。
+    title = re.sub(r"\s*\S{1,40}的微博视频$", "", first_line)[:40] or "微博"
+    if len(title) < len(first_line):
         title += "…"
     stats: dict = {}
     for key, label in (
@@ -270,12 +373,20 @@ def _weibo_status_result(status: dict, url: str) -> ParsedContent:
         retweet_text = _strip_html(retweet.get("text") or "")[:100]
         summary_lines.append(f"转发 @{retweet_user}：{retweet_text}")
     detail: dict = {"author": _weibo_author_detail(author)} if author else {}
-    if pics:
-        # 全量配图进 media（封面取首图，builder 保持首图位）。
-        detail["images"] = pics
     video_meta = _weibo_video_meta(status)
+    if pics:
+        # 竖切横图拼接还原（横图切多竖块玩法）：命中时整组替换为拼图。
+        stitched_images, _stitched = try_stitch_strip(
+            pics, cookie_header=cookie_header, proxy=proxy, referer="https://m.weibo.cn/"
+        )
+        # 全量配图进 media（封面取首图，builder 保持首图位）。
+        detail["images"] = stitched_images
+        pics = stitched_images
     if video_meta:
         detail["video"] = video_meta
+    cover = pics[0] if pics else str(
+        (video_meta or {}).get("preview_url") or ""
+    )
     return build_parsed_content(
         platform="weibo",
         item_id=str(status.get("id") or status.get("bid") or ""),
@@ -283,7 +394,7 @@ def _weibo_status_result(status: dict, url: str) -> ParsedContent:
         title=title,
         author_name=str(author.get("screen_name") or ""),
         summary="\n".join(summary_lines),
-        cover_url=pics[0] if pics else "",
+        cover_url=cover,
         canonical_url=url,
         stats=stats,
         parse_depth="deep",
@@ -305,7 +416,10 @@ def _weibo_status_card(
     1. ``m.weibo.cn/statuses/show?id={bid}``（JSON，接受 bid）；
     2. ``weibo.com/ajax/statuses/show?id={bid}``（PC ajax，text_raw 纯文本）；
     3. ``m.weibo.cn/status/{bid}`` 页面 ``$render_data``（对 302 循环风控带重试）。
+
+    无登录态时先并入访客 cookie（genvisitor 流程），降低风控概率。
     """
+    cookie_header = _weibo_merge_cookies(cookie_header)
     for api, data_key in ((_WEIBO_SHOW_API.format(bid=bid), "data"),):
         for attempt in range(2):
             try:
@@ -320,7 +434,9 @@ def _weibo_status_card(
                 )
                 data = (payload or {}).get(data_key) or {}
                 if (payload or {}).get("ok") == 1 and isinstance(data, dict) and data.get("text"):
-                    return _weibo_status_result(data, url)
+                    return _weibo_status_result(
+                        data, url, cookie_header=cookie_header, proxy=proxy
+                    )
             except Exception:  # noqa: BLE001, S110 - 风控窗口内失败短暂停后重试。
                 pass
             if attempt == 0:
@@ -336,7 +452,9 @@ def _weibo_status_card(
             )
             data = (payload or {}).get("data") or {}
             if (payload or {}).get("ok") == 1 and isinstance(data, dict) and data.get("text_raw"):
-                return _weibo_status_result(data, url)
+                return _weibo_status_result(
+                    data, url, cookie_header=cookie_header, proxy=proxy
+                )
         except Exception:  # noqa: BLE001, S110 - ajax 失败走页面兜底。
             pass
         if attempt == 0:
@@ -350,7 +468,9 @@ def _weibo_status_card(
     status = (payload or {}).get("status") or {}
     if not isinstance(status, dict) or (not status.get("text") and not status.get("raw_text")):
         raise ParseHttpError("weibo: render_data missing status")
-    return _weibo_status_result(status, url)
+    return _weibo_status_result(
+        status, url, cookie_header=cookie_header, proxy=proxy
+    )
 
 
 def _weibo_user_card(

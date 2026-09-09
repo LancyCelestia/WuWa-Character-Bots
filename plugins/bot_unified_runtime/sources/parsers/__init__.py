@@ -637,6 +637,13 @@ def platform_rules() -> list[tuple[str, str, list[str], ParseFn, int]]:
     return [*_PLATFORM_RULES]
 
 
+# 群门禁的 URL 支持判定（policy._has_supported_url）每条群消息都会以全默认
+# 参数调一次本函数：几十个 ParserRule 对象 + 正则重编译，纯浪费。全默认参数
+# 的返回值只用于 URL 模式匹配（不消费绑了 Cookie 的解析函数），缓存为进程级
+# 单例零行为差异；带参调用（真实解析路径，注入 Cookie/代理/Playwright）不受影响。
+_DEFAULT_REGISTRY_BUNDLE: dict[str, Any] | None = None
+
+
 def build_content_parser_registry(
     enabled_platforms: list[str] | None = None,
     cookie_provider: PlatformCookieProvider | None = None,
@@ -649,6 +656,16 @@ def build_content_parser_registry(
     ``cookie_provider`` 提供平台 Cookie 头（无则匿名解析）。
     ``proxy`` 给油管/推特/Spotify 等海外平台绑定 HTTP 代理。
     """
+    global _DEFAULT_REGISTRY_BUNDLE
+    if (
+        enabled_platforms is None
+        and cookie_provider is None
+        and not proxy
+        and playwright_backend is None
+    ):
+        cached = _DEFAULT_REGISTRY_BUNDLE
+        if cached is not None:
+            return cached
     allowed = {str(name).strip().lower() for name in (enabled_platforms or [])}
     cookies = cookie_provider or PlatformCookieProvider()
     registry = ParserRegistry()
@@ -675,7 +692,15 @@ def build_content_parser_registry(
         if parser_id in {"xiaohongshu", "kurobbs"} and playwright_backend is not None:
             bound = functools.partial(bound, playwright_backend=playwright_backend)  # type: ignore[call-arg]
         parsers[parser_id] = bound
-    return {"registry": registry, "parsers": parsers}
+    bundle = {"registry": registry, "parsers": parsers}
+    if (
+        enabled_platforms is None
+        and cookie_provider is None
+        and not proxy
+        and playwright_backend is None
+    ):
+        _DEFAULT_REGISTRY_BUNDLE = bundle
+    return bundle
 
 
 def music_candidate_providers(

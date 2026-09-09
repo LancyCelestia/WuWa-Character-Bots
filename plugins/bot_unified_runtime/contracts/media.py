@@ -794,6 +794,7 @@ def _engagement_from_legacy_stats(
     labels = {
         "播放": "view_count",
         "播放量": "view_count",
+        "阅读": "view_count",
         "浏览": "view_count",
         "浏览量": "view_count",
         "view_count": "view_count",
