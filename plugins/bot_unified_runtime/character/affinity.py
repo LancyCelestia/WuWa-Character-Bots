@@ -170,25 +170,6 @@ class DynamicAffinityStore:
             ):
                 if column not in columns:
                     connection.execute(f"ALTER TABLE user_affinity ADD COLUMN {column} {ddl}")
-            # 群镜像表（好感榜）：主表仍每用户一行；镜像行由 observe 同事务写，
-            # 数值与主行恒等（docs/affinity-design.md §9.3）。
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS group_affinity (
-                    group_id TEXT NOT NULL,
-                    sender_id TEXT NOT NULL,
-                    display_name TEXT NOT NULL DEFAULT '',
-                    affinity REAL NOT NULL DEFAULT 0.5,
-                    interaction_count INTEGER NOT NULL DEFAULT 0,
-                    positive_count INTEGER NOT NULL DEFAULT 0,
-                    negative_count INTEGER NOT NULL DEFAULT 0,
-                    tease_count INTEGER NOT NULL DEFAULT 0,
-                    insult_count INTEGER NOT NULL DEFAULT 0,
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY (group_id, sender_id)
-                )
-                """
-            )
 
     def _connect(self) -> sqlite3.Connection:
         if self._connection is None:
@@ -205,8 +186,6 @@ class DynamicAffinityStore:
         behavior: str,
         *,
         delta_override: float | None = None,
-        group_id: str | None = None,
-        display_name: str | None = None,
     ) -> float:
         """记录一次行为并更新好感度；返回更新后的 affinity。"""
         if not sender_id:
@@ -293,86 +272,7 @@ class DynamicAffinityStore:
                     now_text,
                 ),
             )
-            # 群镜像：带 group_id 时写该群；不带时同步该用户已镜像的全部群，
-            # 保证镜像行与主行数值恒等（排行榜因此无需再查主表）。
-            mirror_targets = [group_id] if group_id else [
-                str(row[0])
-                for row in connection.execute(
-                    "SELECT group_id FROM group_affinity WHERE sender_id = ?", (sender_id,)
-                ).fetchall()
-            ]
-            for target_group in mirror_targets:
-                connection.execute(
-                    """
-                    INSERT OR REPLACE INTO group_affinity
-                        (group_id, sender_id, display_name, affinity, interaction_count,
-                         positive_count, negative_count, tease_count, insult_count, updated_at)
-                    VALUES (?, ?, COALESCE(NULLIF(?, ''), (
-                               SELECT display_name FROM group_affinity
-                               WHERE group_id = ? AND sender_id = ?)), ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        target_group,
-                        sender_id,
-                        (display_name or "").strip()[:32],
-                        target_group,
-                        sender_id,
-                        affinity,
-                        interactions + 1,
-                        counters["positive"],
-                        counters["negative"],
-                        counters["tease"],
-                        counters["insult"],
-                        now_text,
-                    ),
-                )
             return affinity
-
-    def leaderboard(self, group_id: str, *, limit: int = 60) -> list[dict[str, Any]]:
-        """群好感榜：按印象好感度降序（互动次数、sender_id 兜底），score=0-100。"""
-        if not group_id:
-            return []
-        with self._lock, self._connect() as connection:
-            rows = connection.execute(
-                "SELECT sender_id, display_name, affinity, interaction_count FROM group_affinity"
-                " WHERE group_id = ? ORDER BY affinity DESC, interaction_count DESC, sender_id ASC"
-                " LIMIT ?",
-                (group_id, max(1, int(limit))),
-            ).fetchall()
-        return [
-            {
-                "sender_id": str(row["sender_id"]),
-                "display_name": str(row["display_name"] or ""),
-                "affinity": float(row["affinity"]),
-                "score": round(float(row["affinity"]) * 100.0, 1),
-                "tier": tier_for_affinity(float(row["affinity"])),
-            }
-            for row in rows
-        ]
-
-    def sentiment_for(self, sender_id: str) -> float:
-        """用户对机器人的表达倾向（加权正向占比 0-1；零信号默认 0.5）。
-
-        positive / (positive + negative + 2×insult)——从说出口的话估算的
-        表达比例，不是对内心的测量（docs/affinity-design.md §9.1）。
-        """
-        if not sender_id:
-            return 0.5
-        with self._lock, self._connect() as connection:
-            row = connection.execute(
-                "SELECT positive_count, negative_count, insult_count FROM user_affinity"
-                " WHERE sender_id = ?",
-                (sender_id,),
-            ).fetchone()
-        if row is None:
-            return 0.5
-        positive = max(0, int(row["positive_count"]))
-        negative = max(0, int(row["negative_count"]))
-        insult = max(0, int(row["insult_count"]))
-        denom = positive + negative + 2 * insult
-        if denom <= 0:
-            return 0.5
-        return positive / denom
 
     def snapshot(self, sender_id: str) -> dict[str, Any]:
         """读取好感度与印象；无记录返回中性默认。只读，不触发惰性回归。"""

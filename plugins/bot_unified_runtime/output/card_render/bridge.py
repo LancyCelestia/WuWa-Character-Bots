@@ -756,7 +756,7 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
         or _as_str(live.get("cover"))
         or cover
     )
-    payload.image_urls = [_inline_local_image(url) for url in images if _as_str(url)]
+    payload.image_urls = [_as_str(url) for url in images if _as_str(url)]
 
     # 分 P / 剧集
     pages: list[dict[str, Any]] = []
@@ -1143,31 +1143,6 @@ def render_song_candidates_html(payload_dict: dict[str, Any] | None = None) -> s
     )
 
 
-def render_affinity_card_html(payload_dict: dict[str, Any] | None = None) -> str:
-    """渲染好感度卡 HTML（Mica 规范，docs/affinity-design.md §9.5）。
-
-    payload_dict 分支字段：mode="group"（rows=[{sender_id, display_name,
-    score, tier}]、me_id）与 mode="private"（bot_to_user / user_to_bot =
-    {score, tier, bar}、rules=[...]、bot_name）。主色 pc 无平台语境，取
-    bot_help_card_color 同源配置，缺省回 UNKNOWN_PLATFORM_COLOR 中性灰。
-    任何字段缺失都有默认值，不抛异常。
-    """
-    data = dict(payload_dict or {})
-    template = _ENV.get_template("affinity_card.html")
-    return template.render(
-        pc=_as_str(data.get("pc")) or UNKNOWN_PLATFORM_COLOR,
-        title=_as_str(data.get("title")) or "好感度",
-        subtitle=_as_str(data.get("subtitle")),
-        mode=_as_str(data.get("mode")) or "private",
-        me_id=_as_str(data.get("me_id")),
-        bot_name=_as_str(data.get("bot_name")) or "守岸人",
-        rows=[row for row in (data.get("rows") or []) if isinstance(row, dict)],
-        bot_to_user=data.get("bot_to_user") or {"score": 50.0, "tier": "友善", "bar": 50.0},
-        user_to_bot=data.get("user_to_bot") or {"score": 50.0, "tier": "友善", "bar": 50.0},
-        rules=[rule for rule in (data.get("rules") or []) if isinstance(rule, dict)],
-    )
-
-
 __all__ = [
     "PLATFORM_COLORS",
     "PLATFORM_OFFICIAL_NAMES",
@@ -1175,7 +1150,6 @@ __all__ = [
     "RenderPayload",
     "flat_projection",
     "parse_to_render_payload",
-    "render_affinity_card_html",
     "render_song_candidates_html",
     "render_universal_card_html",
 ]
