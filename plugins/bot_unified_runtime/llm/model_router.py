@@ -266,6 +266,10 @@ class ModelSpec:
     priority: int = 100
     routing_group: str = ""
     effort: str = ""  # 思考强度覆盖；空 = 家族默认最高档，off = 不发送
+    # 渠道价格（每 1M tokens，币种随渠道报价）；按模型名聚合选渠道时用
+    # (price_in+price_out) 均值升序，缺价渠道排在有价渠道之后。
+    price_in: float | None = None
+    price_out: float | None = None
 
     def all_api_keys(self) -> tuple[str, ...]:
         """全部可用密钥（按顺序故障转移）；未配置 api_keys 时退回单密钥。"""
@@ -344,7 +348,81 @@ def _spec_from_entry(
         priority=priority,
         routing_group=str(item.get("group", "") or "").strip(),
         effort=normalize_effort(item.get("effort", "")),
+        price_in=_optional_price(item.get("price_in")),
+        price_out=_optional_price(item.get("price_out")),
     )
+
+
+def _health_filter_candidates(model_ids: list[str]) -> list[str]:
+    """从候选队列剔除「暂时不可用」渠道；全部不可用时放行原列表。"""
+    try:
+        import os
+
+        flag = os.environ.get("BOT_CHANNEL_HEALTH_ENABLED", "0").strip().lower()
+        if flag not in {"1", "true", "on"}:
+            return model_ids
+        from plugins.bot_unified_runtime.llm.channel_health import (
+            filter_healthy_candidates,
+            get_channel_health_store,
+        )
+
+        db = os.environ.get(
+            "BOT_CHANNEL_HEALTH_DB", "data/channel_health.sqlite3"
+        )
+        return filter_healthy_candidates(model_ids, get_channel_health_store(db))
+    except Exception:  # noqa: BLE001 - 健康层故障不阻塞路由。
+        return model_ids
+
+
+def _health_record_success(model_id: str, latency_ms: int) -> None:
+    try:
+        import os
+
+        if os.environ.get("BOT_CHANNEL_HEALTH_ENABLED", "0").strip().lower() not in {"1", "true", "on"}:
+            return
+        from plugins.bot_unified_runtime.llm.channel_health import (
+            get_channel_health_store,
+        )
+
+        db = os.environ.get("BOT_CHANNEL_HEALTH_DB", "data/channel_health.sqlite3")
+        get_channel_health_store(db).record_success(model_id, latency_ms)
+    except Exception:  # noqa: S110, BLE001 - 健康记录失败静默。
+        pass
+
+
+def _health_record_failure(model_id: str, error_kind: str) -> None:
+    try:
+        import os
+
+        if os.environ.get("BOT_CHANNEL_HEALTH_ENABLED", "0").strip().lower() not in {"1", "true", "on"}:
+            return
+        # auth/config 类失败不计渠道健康（是配置问题，不是渠道不可用）。
+        if error_kind in {"auth", "config_missing"}:
+            return
+        from plugins.bot_unified_runtime.llm.channel_health import (
+            get_channel_health_store,
+        )
+
+        db = os.environ.get("BOT_CHANNEL_HEALTH_DB", "data/channel_health.sqlite3")
+        get_channel_health_store(db).record_failure(model_id, f"kind={error_kind}")
+    except Exception:  # noqa: S110, BLE001 - 健康记录失败静默。
+        pass
+
+
+def _optional_price(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
+
+
+def _price_rank(spec: ModelSpec) -> float:
+    """渠道性价比排序键：输入/输出均价；缺价排最后。"""
+    if spec.price_in is None and spec.price_out is None:
+        return float("inf")
+    parts = [v for v in (spec.price_in, spec.price_out) if v is not None]
+    return sum(parts) / len(parts)
 
 
 def _priority_value(entry: dict[str, Any]) -> int:
@@ -605,12 +683,35 @@ class ModelRouter:
             )
         )
 
+    def channels_for_model(self, model_name: str) -> list[str]:
+        """按实际模型名聚合全部渠道：价格均值升序 → priority 升序。"""
+        name = (model_name or "").strip().lower()
+        if not name:
+            return []
+        matched = [
+            spec
+            for spec in self.specs.values()
+            if spec.model.lower() == name
+            or any(alias.lower() == name for alias in spec.aliases)
+        ]
+        matched.sort(key=lambda spec: (_price_rank(spec), spec.priority))
+        return [spec.model_id for spec in matched]
+
     def route_ids(self, *, message_text: str, override: str) -> list[str]:
-        """返回按优先级排列的候选模型 id 列表。"""
+        """返回按优先级排列的候选模型 id 列表。
+
+        override 既可以是注册条目 id，也可以是实际模型名（如
+        ``gemini-3.8-flash-high``）：后者自动聚合该模型的全部渠道，
+        按价格/优先级排序走故障转移。
+        """
         override = (override or "").strip()
         if override and override != _AUTO:
             if self._spec_for(override) is None:
-                # 管理员给了无法解析的 id：退回自动路由。
+                channels = self.channels_for_model(override)
+                if channels:
+                    return [*channels, *self._auto_route_ids(message_text, exclude=channels[0])]
+            # 管理员给了无法解析的 id：退回自动路由。
+            if self._spec_for(override) is None:
                 return self._auto_route_ids(message_text)
             return [override, *self._auto_route_ids(message_text, exclude=override)]
         return self._auto_route_ids(message_text)
@@ -684,6 +785,7 @@ class ModelRouter:
             message_text=effective_text,
             override=override,
         )
+        candidate_ids = _health_filter_candidates(candidate_ids)
         if require_vision:
             candidate_ids = [
                 model_id
@@ -769,6 +871,7 @@ class ModelRouter:
                         else self.timeout_seconds,
                         remaining,
                     )
+                attempt_started = time.monotonic()
                 try:
                     provider = self.provider_for(model_id, api_key)
                     reply = provider.generate(messages, **attempt_options)
@@ -790,6 +893,7 @@ class ModelRouter:
                             return reply
                     last_error = exc
                     self.last_attempts.append(f"{model_id}:{exc.error_kind}")
+                    _health_record_failure(model_id, exc.error_kind)
                     # A rejected key may be replaced by another explicitly configured
                     # credential for the same model. Never retry the same bad key.
                     if exc.error_kind == "auth" and key_index + 1 < len(api_keys):
@@ -805,6 +909,7 @@ class ModelRouter:
                     self.last_attempts.append(f"{model_id}:provider_error")
                     continue
                 self.last_attempts.append(f"{model_id}:success")
+                _health_record_success(model_id, int((time.monotonic() - attempt_started) * 1000))
                 return reply
         if last_error is not None:
             raise last_error

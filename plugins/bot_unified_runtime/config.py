@@ -276,6 +276,9 @@ class Config(BaseModel):
     # 点歌默认输出模式：card+voice+link（卡片/封面 + 语音试听 + 链接）。
     # 运行时 BOT_MUSIC_MODE 覆盖此处。
     bot_parse_subtitle_summary: bool = False
+    bot_eat_enabled: bool = True
+    bot_channel_health_enabled: bool = True
+    bot_channel_health_interval_seconds: float = 3600.0
     bot_music_default_mode: str = "card+voice+link"
     bot_music_candidates_enabled: bool = False
     bot_music_candidates_ttl_seconds: float = 300.0

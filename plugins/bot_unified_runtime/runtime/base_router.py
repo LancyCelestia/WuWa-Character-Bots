@@ -22,6 +22,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -31,6 +33,10 @@ from plugins.bot_unified_runtime.capabilities.auto_send import (
     is_auto_send_command_text,
 )
 from plugins.bot_unified_runtime.capabilities.chat import looks_like_chat_text
+from plugins.bot_unified_runtime.capabilities.eat import (
+    is_eat_command,
+    is_recipe_command,
+)
 from plugins.bot_unified_runtime.capabilities.epic import is_epic_command
 from plugins.bot_unified_runtime.capabilities.meme import is_meme_command
 from plugins.bot_unified_runtime.capabilities.meme_library import (
@@ -72,6 +78,7 @@ class RouteKind(str, Enum):
     MOEGIRL_QUESTION = "moegirl_question"
     EPIC = "epic"
     WEATHER = "weather"
+    EAT = "eat"
     NATURAL_COMMAND = "natural_command"
     CONTENT = "content"
     CHAT = "chat"
@@ -246,6 +253,13 @@ def build_route_rules() -> list[RouteRule]:
             return None
         return RouteDecision(RouteKind.WEATHER, "bot.weather", 41, "天气查询", ("base_route:weather",))
 
+    def eat_match(text, config, _alias):
+        if not getattr(config, "bot_eat_enabled", True):
+            return None
+        if is_recipe_command(text) or is_eat_command(text):
+            return RouteDecision(RouteKind.EAT, "bot.eat", 41, "吃什么推荐", ("base_route:eat",))
+        return None
+
     def moegirl_question_match(text, config, _alias):
         # 二次元实体问句（「初音未来是谁？」）：不进 COMMAND_ROUTE_KINDS，
         # 群聊不 @ 不抢答（与 CHAT 同门控）；未命中时 handler 无感降级聊天链路。
@@ -331,6 +345,7 @@ def build_route_rules() -> list[RouteRule]:
         RouteRule(RouteKind.MOEGIRL, "bot.moegirl", 41, "萌娘百科", "萌娘百科查询", ("base_route:moegirl",), moegirl_match),
         RouteRule(RouteKind.EPIC, "bot.epic", 41, "Epic 免费游戏", "Epic 免费游戏查询", ("base_route:epic",), epic_match),
         RouteRule(RouteKind.WEATHER, "bot.weather", 41, "天气查询", "天气查询", ("base_route:weather",), weather_match),
+        RouteRule(RouteKind.EAT, "bot.eat", 41, "吃什么推荐", "吃什么/菜谱推荐", ("base_route:eat",), eat_match),
         RouteRule(RouteKind.MOEGIRL_QUESTION, "bot.moegirl", 44, "二次元问句", "二次元问句（萌娘百科自动查询，未命中降级聊天）", ("base_route:moegirl_question",), moegirl_question_match),
         RouteRule(RouteKind.NATURAL_COMMAND, "bot.natural_command", 45, "自然语言命令", "自然语言命令归一化", ("base_route:natural_command",), natural_match),
         RouteRule(RouteKind.CONTENT, "bot.content", 46, "链接解析", "链接解析（视频/图片/社交媒体/商品等）", ("base_route:content",), content_match),
@@ -379,6 +394,7 @@ COMMAND_ROUTE_KINDS = frozenset(
         RouteKind.MOEGIRL,
         RouteKind.EPIC,
         RouteKind.WEATHER,
+        RouteKind.EAT,
         RouteKind.NATURAL_COMMAND,
     }
 )
@@ -412,19 +428,60 @@ def classify_message_route(
     """按声明式注册表顺序做确定性路由判断。
 
     ``alias_resolver`` 提供昵称命令解析；传入 None 时昵称命令落到后续路由。
+
+    每条消息最多触发 2-3 次全量分类（matcher plain/effective 各一次 +
+    群门禁 ``looks_like_command_text`` 再一次），而分类是纯函数——进程内
+    TTL-LRU 按 (有无 resolver, 文本) 去重，条目持有 config 强引用并在命中
+    时校验同一性，不同 config 对象（测试/多实例）互不串结果。TTL 仅 10 秒：
+    管理员修改路由相关配置（群名单/昵称/开关）最迟 10 秒生效；需要立即
+    生效可调 ``clear_route_decision_cache()``（settings 保存监听已自动接线）。
     """
     stripped = (text or "").strip()
     if not stripped:
         return RouteDecision(RouteKind.IGNORE, "bot.ignore", 999, "空消息")
+    cache_key = (alias_resolver is not None, stripped)
+    now = time.monotonic()
+    with _ROUTE_CACHE_LOCK:
+        hit = _ROUTE_CACHE.get(cache_key)
+    if (
+        hit is not None
+        and hit[1] is config
+        and now - hit[0] < _ROUTE_CACHE_TTL_SECONDS
+    ):
+        return hit[2]
     for rule in ROUTE_RULES:
         if rule.matcher is None:
             continue
         decision = rule.matcher(stripped, config, alias_resolver)
         if decision is not None:
+            _route_cache_put(cache_key, now, config, decision)
             return decision
-    return RouteDecision(
+    fallback = RouteDecision(
         RouteKind.IGNORE, "bot.ignore", 999, "无匹配路由（命令被禁用或文本不满足任何规则）"
     )
+    _route_cache_put(cache_key, now, config, fallback)
+    return fallback
+
+
+_ROUTE_CACHE: dict[tuple[bool, str], tuple[float, object, RouteDecision]] = {}
+_ROUTE_CACHE_LOCK = threading.Lock()
+_ROUTE_CACHE_TTL_SECONDS = 10.0
+_ROUTE_CACHE_MAX_ENTRIES = 1024
+
+
+def _route_cache_put(
+    key: tuple[bool, str], now: float, config: object, decision: RouteDecision
+) -> None:
+    with _ROUTE_CACHE_LOCK:
+        if len(_ROUTE_CACHE) >= _ROUTE_CACHE_MAX_ENTRIES:
+            _ROUTE_CACHE.clear()
+        _ROUTE_CACHE[key] = (now, config, decision)
+
+
+def clear_route_decision_cache() -> None:
+    """清空路由分类缓存（配置热更新立即生效、测试用）。"""
+    with _ROUTE_CACHE_LOCK:
+        _ROUTE_CACHE.clear()
 
 
 def list_route_rules_for_audit() -> list[dict]:

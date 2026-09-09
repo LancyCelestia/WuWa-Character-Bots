@@ -191,6 +191,57 @@ class MoegirlQuestionOutcome:
     elapsed_ms: int = 0
 
 
+_KB_PROVIDER_CACHE: dict[str, Any] = {}
+_KB_LOCK = __import__("threading").Lock()
+
+
+def local_kb_answer(config: Any | None, entity: str, *, max_chars: int = 500) -> str | None:
+    """本地向量知识库优先：命中返回格式化知识条目，未命中返回 None。
+
+    用户本地已建鸣潮/方舟/原神等全套游戏知识库——问这些内容时不应
+    再外查萌百（质量差且与本地设定冲突）。命中判定：top chunk 标题
+    与实体互含（规范化后），防止弱相关 chunk 冒充答案。
+    """
+    if config is None or not entity:
+        return None
+    try:
+        from plugins.bot_unified_runtime.character.vector_knowledge import (
+            build_vector_knowledge_provider,
+        )
+
+        key = str(id(config))
+        with _KB_LOCK:
+            provider = _KB_PROVIDER_CACHE.get(key)
+            if provider is None:
+                provider = build_vector_knowledge_provider(config)
+                _KB_PROVIDER_CACHE[key] = provider
+        if provider is None:
+            return None
+        retrieve = getattr(provider, "retrieve", None)
+        if not callable(retrieve):
+            return None
+        chunks = list(retrieve(entity) or [])
+    except Exception:  # noqa: BLE001 - 本地库不可用时走原有萌百链路。
+        return None
+    if not chunks:
+        return None
+
+    def _norm(value: str) -> str:
+        return re.sub(r"[\s_]+", "", (value or "")).casefold()
+
+    want = _norm(entity)
+    top = chunks[0]
+    if want not in _norm(top.title) and _norm(top.title) not in want:
+        return None
+    content = re.sub(r"\s+", " ", str(top.content or "")).strip()
+    if not content:
+        return None
+    body = f"【{top.title}】\n{content[:max_chars]}"
+    if len(content) > max_chars:
+        body += "…"
+    return body
+
+
 def question_lookup(
     text: str,
     *,
@@ -247,11 +298,11 @@ def question_lookup(
 
     main = pick_main_hit(hits, entity)
     if main is None:
+        # 多候选/无精确命中：多半是普通闲聊问题（"QQ用户是谁"）被问句
+        # 路由误捕，词条选择列表对这类场景是骚扰。无感降级聊天链路；
+        # 明确想查百科的用户请用 /萌娘 指令（那里保留候选列表）。
         return MoegirlQuestionOutcome(
-            status="hit",
-            body=format_candidates(hits),
-            entity=entity,
-            elapsed_ms=elapsed(),
+            status="degrade", entity=entity, elapsed_ms=elapsed()
         )
     page = main
     fetch_page = page_fn

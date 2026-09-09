@@ -198,6 +198,38 @@ def _active_priority_group(
     return str(active.get("name", "")), list(active.get("order", []))
 
 
+def _channel_health_suffix(model_id: str) -> str:
+    """渠道健康标注：暂不可用的条目在 list 里直接可见。"""
+    try:
+        from plugins.bot_unified_runtime.llm.channel_health import (
+            get_channel_health_store,
+        )
+
+        snapshot = get_channel_health_store().snapshot(model_id)
+        if snapshot and snapshot.get("state") == "temporarily_unavailable":
+            return " ⛔暂时不可用（已移出故障转移队列，自动重探中）"
+        if snapshot and snapshot.get("latency_ms"):
+            return f" ⚡{snapshot['latency_ms']}ms"
+    except Exception:  # noqa: S110, BLE001 - 健康层缺失不影响 list。
+        pass
+    return ""
+
+
+def _channel_price_text(entry: dict[str, Any]) -> str:
+    pin = entry.get("price_in")
+    pout = entry.get("price_out")
+    if pin is None and pout is None:
+        return ""
+    try:
+        pin_f = float(pin) if pin is not None else None
+        pout_f = float(pout) if pout is not None else None
+    except (TypeError, ValueError):
+        return ""
+    if pin_f is None and pout_f is None:
+        return ""
+    return f" ¥{pin_f if pin_f is not None else '?'}/{pout_f if pout_f is not None else '?'}"
+
+
 def _handle_model_command(
     store: RuntimeSettingsStore,
     config: object,
@@ -218,6 +250,65 @@ def _handle_model_command(
     presets = dict(getattr(config, "bot_model_presets", {}) or {})
     default_model = str(getattr(config, "bot_chat_model", ""))
     auto_route = bool(getattr(config, "bot_model_auto_route", True))
+    action0 = parts[0].lower() if parts else ""
+    if action0 == "health":
+        from plugins.bot_unified_runtime.llm.channel_health import (
+            build_health_summary_text,
+            get_channel_health_store,
+        )
+
+        return build_health_summary_text(get_channel_health_store().report())
+    if action0 == "probe":
+        import threading
+
+        from plugins.bot_unified_runtime.config import Config as _Cfg
+
+        def _run_probe() -> None:
+            try:
+                from plugins.bot_unified_runtime.llm.channel_health import (
+                    get_channel_health_store,
+                    probe_all,
+                )
+                from plugins.bot_unified_runtime.llm.model_router import (
+                    build_model_registry,
+                )
+
+                probe_all(_Cfg() if not isinstance(config, _Cfg) else config,
+                          build_model_registry(config),
+                          get_channel_health_store())
+            except Exception:  # noqa: S110, BLE001 - 后台巡检失败静默。
+                pass
+
+        threading.Thread(target=_run_probe, name="model-health-probe", daemon=True).start()
+        return "渠道巡检已启动（全部渠道一次最小调用，费用极低）：稍后用 /bot model health 查看。"
+    if action0 == "routes" and len(parts) > 1:
+        from plugins.bot_unified_runtime.llm.channel_health import (
+            get_channel_health_store,
+        )
+        from plugins.bot_unified_runtime.llm.model_router import (
+            build_model_router,
+        )
+
+        model_name = parts[1]
+        router = build_model_router(config)
+        channels = router.channels_for_model(model_name)
+        if not channels:
+            return f"没有渠道提供「{model_name}」。"
+        store_h = get_channel_health_store()
+        lines = [f"「{model_name}」可用渠道（按性价比/优先级）："]
+        for index, channel_id in enumerate(channels, start=1):
+            spec = router._spec_for(channel_id)
+            price = ""
+            if spec is not None and (spec.price_in is not None or spec.price_out is not None):
+                pin = spec.price_in if spec.price_in is not None else "?"
+                pout = spec.price_out if spec.price_out is not None else "?"
+                price = f" ¥{pin}/{pout}"
+            snap = store_h.snapshot(channel_id)
+            state = "⛔暂不可用" if (snap and snap.get("state") == "temporarily_unavailable") else "✅"
+            latency = f" {snap['latency_ms']}ms" if snap and snap.get("latency_ms") else ""
+            lines.append(f"{index}. {channel_id} @ {spec.base_url if spec else '?'}{price} {state}{latency}")
+        lines.append("指定方式：/bot model set " + channels[0] + "；或 /bot model set " + model_name + "（自动选渠道）")
+        return "\n".join(lines)
     if not parts or parts[0].lower() == "list":
         current = store.get_or("BOT_CHAT_MODEL", "")
         lines = [
@@ -269,11 +360,14 @@ def _handle_model_command(
                 effort_suffix = (
                     "" if entry.get("effort") else "（默认）"
                 )
+                health_suffix = _channel_health_suffix(str(model_id))
+                price_text = _channel_price_text(entry)
                 lines.append(
                     f"{order}. {model_id} = {entry['model']} @ {entry['base_url']}"
                     f" [{tag_text}] effort={effort_text or 'off'}{effort_suffix}"
-                    f" priority={entry['priority']}"
+                    f" priority={entry['priority']}{price_text}"
                     + ("（自定义）" if entry["source"] == "runtime" else "")
+                    + health_suffix
                 )
         else:
             lines.append("── 还没有注册任何模型（用 add 注册，见下方第 ③ 步）──")

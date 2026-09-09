@@ -18,11 +18,16 @@ from .audit import AuditRepository, build_audit_repository
 from .audit.file_logger import build_audit_with_file_log
 from .capabilities.content_parser import build_content_capability
 from .capabilities.download import build_download_capability
+from .capabilities.eat import build_eat_capability
 from .capabilities.epic import build_epic_capability
 from .capabilities.group_files import DirtyGuard, GroupFileStore
 from .capabilities.meme import build_meme_capability
 from .capabilities.meme_library import build_meme_library_capability
-from .capabilities.moegirl import build_moegirl_capability, question_lookup
+from .capabilities.moegirl import (
+    build_moegirl_capability,
+    local_kb_answer,
+    question_lookup,
+)
 from .capabilities.music import build_music_capability
 from .capabilities.platform_credentials import (
     cookie_status_text,
@@ -179,6 +184,7 @@ NO_RUNTIME_DIAGNOSTIC_CAPABILITY_IDS = frozenset(
         "bot.queue",
         "bot.context",
         "bot.content",
+        "bot.eat",
         "bot.help",
         "bot.llm",
         "bot.setup.llm",
@@ -198,6 +204,18 @@ OFFLOADED_CAPABILITY_IDS = frozenset(
         "bot.help",
         "bot.llm",
         "bot.dialogue",
+        # 网络/重 IO 命令能力：同步执行会把整个事件循环冻结数秒到数分钟
+        # （点歌含 Playwright 渲染与音频下载，download 最长 300s），期间全部
+        # 会话无响应，必须经 offload_capability 下放线程池。
+        "bot.weather",
+        "bot.music",
+        "bot.wiki",
+        "bot.epic",
+        "bot.today_history",
+        "bot.subscribe",
+        "bot.meme_library",
+        "bot.download",
+        "bot.search",
     }
 )
 
@@ -2054,6 +2072,9 @@ def _register_nonebot_handlers() -> None:
     def _build_weather_with_backend(config_: Any, **_kwargs: Any) -> Any:
         return build_weather_capability(config_, render_backend=render_backend)
 
+    def _build_eat_with_backend(config_: Any, **_kwargs: Any) -> Any:
+        return build_eat_capability(config_, render_backend=render_backend)
+
     try:
         from nonebot_plugin_apscheduler import scheduler
     except Exception as exc:  # noqa: BLE001 - optional worker must fail closed.
@@ -2215,6 +2236,46 @@ def _register_nonebot_handlers() -> None:
                 except (OSError, RuntimeError, TypeError, ValueError):
                     all_success = False
             return sent_any and all_success
+
+        # 模型渠道健康巡检：每小时全量探测一次（8 线程并发最小调用），
+        # 暂不可用渠道自动移出故障转移队列，恢复即自动回队。
+        if getattr(config, "bot_channel_health_enabled", True):
+            def _channel_health_job() -> None:
+                try:
+                    from plugins.bot_unified_runtime.llm.channel_health import (
+                        get_channel_health_store,
+                        probe_all,
+                    )
+                    from plugins.bot_unified_runtime.llm.model_router import (
+                        build_model_registry,
+                    )
+
+                    probe_all(
+                        config,
+                        build_model_registry(config),
+                        get_channel_health_store(),
+                    )
+                except Exception:  # noqa: S110, BLE001 - 巡检失败不影响主链路。
+                    pass
+
+            scheduler.add_job(
+                _channel_health_job,
+                "interval",
+                seconds=max(
+                    300,
+                    int(
+                        getattr(
+                            config,
+                            "bot_channel_health_interval_seconds",
+                            3600,
+                        )
+                        or 3600
+                    ),
+                ),
+                id="model_channel_health",
+                coalesce=True,
+                max_instances=1,
+            )
 
         if getattr(config, "bot_subscribe_enabled", True):
             subscription_registration = defer_optional_subscription_registration(
@@ -2966,6 +3027,12 @@ def _register_nonebot_handlers() -> None:
             is RouteKind.EPIC
         )
 
+    async def _is_eat_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.EAT
+        )
+
     async def _is_weather_event(state: T_State, event: Event) -> bool:
         return (
             _cached_route_decision(state, event, config=config).kind
@@ -2985,6 +3052,7 @@ def _register_nonebot_handlers() -> None:
     )
     epic = on_message(rule=_is_epic_event, priority=41, block=True)
     weather = on_message(rule=_is_weather_event, priority=41, block=True)
+    eat = on_message(rule=_is_eat_event, priority=41, block=True)
     subscribe_cmd = on_message(rule=_is_standalone_subscribe_event, priority=12, block=True)
 
     async def _is_alias_command(state: T_State, event: Event) -> bool:
@@ -3076,6 +3144,11 @@ def _register_nonebot_handlers() -> None:
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 synthetic = message.model_copy(update={"plain_text": f"wiki {query}"})
                 return build_wiki_capability(config)(synthetic, _decision)
+
+        elif resolution.capability_id == "bot.eat":
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_eat_capability(config, render_backend=render_backend)(message, _decision)
 
         elif resolution.capability_id == "bot.epic":
 
@@ -4505,6 +4578,11 @@ def _register_nonebot_handlers() -> None:
                 synthetic = message.model_copy(update={"plain_text": normalized_text})
                 return build_wiki_capability(config)(synthetic, _decision)
 
+        elif capability_id == "bot.eat":
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_eat_capability(config, render_backend=render_backend)(message, _decision)
+
         elif capability_id == "bot.epic":
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
@@ -4584,6 +4662,12 @@ def _register_nonebot_handlers() -> None:
     @weather.handle()
     async def _handle_weather(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
+            bot, event, _build_eat_with_backend, "bot.eat", eat
+        )
+
+    @eat.handle()
+    async def _handle_eat(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
             bot, event, _build_weather_with_backend, "bot.weather", weather
         )
 
@@ -4600,6 +4684,54 @@ def _register_nonebot_handlers() -> None:
             bot_id=str(getattr(bot, "self_id", "unknown")),
         )
         started_at = time.perf_counter()
+        # 本地知识库优先：鸣潮/方舟/原神等本地语料命中时直接回答，
+        # 绝不外查萌百（外链质量差且可能与本地设定冲突）。
+        kb_body = None
+        try:
+            kb_body = await asyncio.to_thread(
+                local_kb_answer, config, message.plain_text
+            )
+        except Exception:  # noqa: BLE001 - 本地库失败走萌百链路。
+            kb_body = None
+        if kb_body:
+            from plugins.bot_unified_runtime.contracts import (
+                CapabilityResult,
+                PrivacyLevel,
+                RiskLevel,
+                SendPolicy,
+            )
+
+            kb_result = CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.moegirl",
+                kind="text",
+                title="",
+                body=kb_body,
+                risk_level=RiskLevel.LOW,
+                privacy_level=PrivacyLevel.PUBLIC,
+                send_policy=SendPolicy.IMMEDIATE,
+                audit_tags=["moegirl_question", "local_kb_first"],
+            )
+            receipt = await _run_capability_through_pipeline(
+                bot=bot,
+                event=event,
+                config=config,
+                pipeline=pipeline,
+                send_queue=send_queue,
+                audit_logger=audit_logger,
+                receipt_repository=receipt_repository,
+                diagnostics_store=diagnostics_store,
+                capability=lambda _m, _d: kb_result,
+                capability_id="bot.moegirl",
+                record_diagnostic=False,
+                offload_sync_capability=False,
+                history_recorder=history_recorder,
+                history_kind="command",
+                operational_notifier=_notify_operational_receipt,
+            )
+            if should_finish_nonebot_matcher(receipt):
+                await moegirl_question.finish(receipt.public_message)
+            return
         try:
             # 网络查询放线程池，紧超时由 sources 层预算约束（默认 ≤2×5s）。
             outcome = await asyncio.to_thread(

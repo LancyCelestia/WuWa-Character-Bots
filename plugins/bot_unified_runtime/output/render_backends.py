@@ -172,7 +172,7 @@ class PlaywrightRenderBackend:
                             "Array.from(document.images).every(img => img.complete)",
                             timeout=8000,
                         )
-                    except Exception:  # noqa: BLE001 - 超时按已加载现状截图。
+                    except Exception:  # noqa: S110, BLE001 - 超时按已加载现状截图。
                         pass
                     page.wait_for_timeout(wait_ms)
                     element = page.query_selector(".card")
