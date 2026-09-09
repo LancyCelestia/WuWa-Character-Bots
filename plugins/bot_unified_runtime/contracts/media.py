@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from pydantic import Field, field_validator
@@ -189,9 +189,15 @@ def _optional_int(value: Any) -> int | None:
     return None
 
 
+# naive 时间统一按北京时间解释：站内解析器产出的无时区墙钟时间（网页展示
+# 口径）全部来自 CN 站点，此前误标 UTC 会令展示层 astimezone 后整体漂 8 小时
+# （微博/推特/专栏发布时间漂移事故的契约层根因）。
+_CN_TZ = timezone(timedelta(hours=8))
+
+
 def _optional_datetime(value: Any) -> datetime | None:
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=_CN_TZ)
     if isinstance(value, (int, float)) and value > 0:
         timestamp = float(value)
         if timestamp > 10**12:
@@ -218,7 +224,7 @@ def _optional_datetime(value: Any) -> datetime | None:
                     int(match.group(1)),
                     int(match.group(2)),
                     int(match.group(3)),
-                    tzinfo=timezone.utc,
+                    tzinfo=_CN_TZ,
                 )
             else:
                 match = re.search(r"(\d{1,2}) ([A-Za-z]{3,9}) (\d{4})", text)
@@ -227,14 +233,14 @@ def _optional_datetime(value: Any) -> datetime | None:
                         parsed = datetime.strptime(
                             f"{match.group(1)} {match.group(2)} {match.group(3)}",
                             "%d %b %Y",
-                        ).replace(tzinfo=timezone.utc)
+                        ).replace(tzinfo=_CN_TZ)
                     except ValueError:
                         parsed = None
             if parsed is None:
                 return None
     if parsed is None:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=_CN_TZ)
 
 
 _SENSITIVE_HEADER_MARKERS = (

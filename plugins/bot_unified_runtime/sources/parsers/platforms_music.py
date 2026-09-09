@@ -614,8 +614,13 @@ def _generic_candidates_from_search(
     return out
 
 
-def search_qqmusic_candidates(query: str, *, cookie_header: str = "") -> list[dict[str, str]]:
-    songs = _qqmusic_search_rows(query, limit=5, cookie_header=cookie_header)
+def search_qqmusic_candidates(
+    query: str,
+    *,
+    cookie_header: str = "",
+    limit: int = 5,
+) -> list[dict[str, str]]:
+    songs = _qqmusic_search_rows(query, limit=limit, cookie_header=cookie_header)
     out: list[dict[str, str]] = []
     for song in songs:
         name = str(song.get("name") or "").strip()
@@ -634,16 +639,21 @@ def search_qqmusic_candidates(query: str, *, cookie_header: str = "") -> list[di
                 "album_mid": str(((song.get("album") or {}).get("mid")) or "").strip(),
             }
         )
-        if len(out) >= 5:
+        if len(out) >= limit:
             break
     return out
 
 
-def search_kugou_candidates(query: str, *, cookie_header: str = "") -> list[dict[str, str]]:
+def search_kugou_candidates(
+    query: str,
+    *,
+    cookie_header: str = "",
+    limit: int = 5,
+) -> list[dict[str, str]]:
     encoded = urllib.parse.quote(query)
     payload = http_get_json(
         f"http://msearchcdn.kugou.com/api/v3/search/song?plat=0&keyword={encoded}"
-        "&tagtype=%E5%85%A8%E9%83%A8&pagesize=5&version=9108",  # 全部 必须百分号编码：裸中文会让 httpx 抛 UnicodeEncodeError
+        f"&tagtype=%E5%85%A8%E9%83%A8&pagesize={max(1, limit)}&version=9108",  # 全部 必须百分号编码：裸中文会让 httpx 抛 UnicodeEncodeError
         referer="https://www.kugou.com/",
         cookie=cookie_header,
     )
@@ -662,15 +672,20 @@ def search_kugou_candidates(query: str, *, cookie_header: str = "") -> list[dict
                 "album": str(item.get("album_name") or "").strip(),
             }
         )
-        if len(out) >= 5:
+        if len(out) >= limit:
             break
     return out
 
 
-def search_kuwo_candidates(query: str, *, cookie_header: str = "") -> list[dict[str, str]]:
+def search_kuwo_candidates(
+    query: str,
+    *,
+    cookie_header: str = "",
+    limit: int = 5,
+) -> list[dict[str, str]]:
     encoded = urllib.parse.quote(query)
     payload = http_get_json(
-        f"https://search.kuwo.cn/r.s?all={encoded}&ft=music&rformat=json&encoding=utf8&rn=5&pn=0",
+        f"https://search.kuwo.cn/r.s?all={encoded}&ft=music&rformat=json&encoding=utf8&rn={max(1, limit)}&pn=0",
         referer="https://www.kuwo.cn/",
         cookie=cookie_header,
     )
@@ -688,7 +703,7 @@ def search_kuwo_candidates(query: str, *, cookie_header: str = "") -> list[dict[
                 "album": str(item.get("ALBUM") or item.get("album") or "").strip(),
             }
         )
-        if len(out) >= 5:
+        if len(out) >= limit:
             break
     return out
 

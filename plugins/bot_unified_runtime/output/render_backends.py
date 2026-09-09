@@ -15,10 +15,14 @@
 
 from __future__ import annotations
 
+import logging
 import re
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any, Protocol
+
+_LOGGER = logging.getLogger(__name__)
 
 # Chromium 的 ORB（Opaque Response Blocking）会对部分图床（实测 wx*.sinaimg.cn：
 # 微博配图）的 <img> no-cors 请求直接拦断（net::ERR_BLOCKED_BY_ORB，卡上
@@ -126,6 +130,19 @@ class PlaywrightRenderBackend:
 
     name = "playwright"
     available = False
+    # 线程本地常驻浏览器的空闲回收阈值：超过即关旧开新，避免僵死实例常驻。
+    _BROWSER_IDLE_SECONDS = 600.0
+    # 单页内容加载超时：networkidle 等待上限，防止慢资源把锁持有 30s（默认）。
+    _SET_CONTENT_TIMEOUT_MS = 8000
+    # 浏览器级故障的特征串：命中才整体重启浏览器，页面级失败只关页面。
+    _BROWSER_CRASH_MARKERS = (
+        "target closed",
+        "browser has been closed",
+        "browser has crashed",
+        "connection closed",
+        "playwright closed",
+        "pipeline closed",
+    )
 
     def __init__(self, *, max_concurrency: int = 2) -> None:
         import threading
@@ -151,10 +168,12 @@ class PlaywrightRenderBackend:
         return browser, ctx
 
     def _get_browser(self) -> Any:
-        """懒启动并复用本线程的常驻 Chromium；浏览器已死则重启一次。"""
+        """懒启动并复用本线程的常驻 Chromium；空闲超限或已死则重建。"""
         browser, _ctx = self._thread_browser()
         if browser is not None and browser.is_connected():
-            return browser
+            last_used = float(getattr(self._local, "last_used", 0.0) or 0.0)
+            if last_used and (time.monotonic() - last_used) < self._BROWSER_IDLE_SECONDS:
+                return browser
         self._close_thread_browser()
         playwright_ctx = self._sync_playwright()
         playwright = playwright_ctx.start()
@@ -190,6 +209,7 @@ class PlaywrightRenderBackend:
         except (TypeError, ValueError):
             device_scale_factor = 2
         with self._lock:
+            page = None
             try:
                 browser = self._get_browser()
                 try:
@@ -221,6 +241,12 @@ class PlaywrightRenderBackend:
 
                     if _html_mentions_orb_prone_image(html):
                         page.route("**/*", _orb_route)
+                    # 显式加载超时：Playwright 默认 30s 会长时间持锁阻塞其他
+                    # 渲染。用页面级默认超时覆盖 set_content/wait_for_*（页面
+                    # 级失败只关页面，浏览器不受影响）。
+                    set_default_timeout = getattr(page, "set_default_timeout", None)
+                    if callable(set_default_timeout):
+                        set_default_timeout(self._SET_CONTENT_TIMEOUT_MS)
                     page.set_content(html, wait_until="networkidle")
                     # 封面清晰度关键：等所有 <img> 真正解码完成（networkidle
                     # 只保证请求静默，大图可能仍在解码）；再兜底固定等待。
@@ -240,10 +266,29 @@ class PlaywrightRenderBackend:
                         )
                     return bytes(page.screenshot(type="png", full_page=True))
                 finally:
-                    page.close()
-            except Exception:  # noqa: BLE001 - 浏览器渲染失败按无结果降级，并重置常驻浏览器。
-                self._close_thread_browser()
+                    if page is not None:
+                        try:
+                            page.close()
+                        except Exception:  # noqa: S110, BLE001 - 页面关闭失败不阻断。
+                            pass
+            except Exception as exc:  # noqa: BLE001 - 渲染失败按无结果降级。
+                # 页面级失败（加载超时/截图失败）只关页面（finally 已关），
+                # 浏览器复用不受影响；仅浏览器级错误（Target closed 等）重启。
+                if self._browser_looks_broken(exc):
+                    self._close_thread_browser()
                 return None
+            finally:
+                self._local.last_used = time.monotonic()
+
+    def _browser_looks_broken(self, exc: Exception) -> bool:
+        browser, _ctx = self._thread_browser()
+        try:
+            if browser is None or not browser.is_connected():
+                return True
+        except Exception:  # noqa: BLE001 - 连接状态探测失败按已损坏处理。
+            return True
+        message = str(exc).lower()
+        return any(marker in message for marker in self._BROWSER_CRASH_MARKERS)
 
     def close(self) -> None:
         self._close_thread_browser()
@@ -251,11 +296,18 @@ class PlaywrightRenderBackend:
 
 def build_render_backend(name: str = "") -> RenderBackend:
     normalized = (name or "").strip().lower()
+    if normalized not in {"playwright", "htmlkit", "auto"}:
+        # 配置拼错等场景：静默降级成 Null 会让卡片功能整体消失且无诊断线索。
+        _LOGGER.warning(
+            "unknown render backend name %r, falling back to null renderer",
+            name,
+        )
     if normalized in {"playwright", "htmlkit", "auto"}:
         backend = PlaywrightRenderBackend()
         if backend.available:
             return backend
         if normalized == "htmlkit":
             return HtmlKitRenderBackend()
+        _LOGGER.warning("playwright backend unavailable; cards fall back to text")
     return NullRenderBackend()
 

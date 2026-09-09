@@ -721,7 +721,8 @@ def build_music_capability(
             if candidates_enabled and not query.isdecimal() and candidate_pair is not None:
                 list_fn, _detail_fn = candidate_pair
                 try:
-                    cands = list_fn(query)[:candidates_limit]
+                    # limit 透传进平台搜索（原先各平台硬编码 5，配置调大被静默截断）。
+                    cands = list_fn(query, limit=candidates_limit)[:candidates_limit]
                 except Exception:  # noqa: BLE001 - 候选失败回退普通单结果路径。
                     cands = []
                 exact_hits = [

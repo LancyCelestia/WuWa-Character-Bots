@@ -55,7 +55,7 @@ def _build(*, enabled: bool, detail_calls: list[str] | None = None):
         # 纯数字不是歌名：模拟搜索无结果。
         return None if query.isdigit() else _item("第一命中")
 
-    def list_fn(query: str) -> list[dict[str, str]]:
+    def list_fn(query: str, limit: int = 5) -> list[dict[str, str]]:
         return _candidates()
 
     def detail_fn(candidate: dict, *, query: str = ""):
@@ -142,7 +142,7 @@ def test_qualified_query_with_exact_hit_still_shows_candidates() -> None:
         {"provider_track_id": "202", "name": "晴天", "artist": "周杰伦", "album": "叶惠美"},
     ]
 
-    def _list_fn(query: str) -> list[dict[str, str]]:
+    def _list_fn(query: str, limit: int = 5) -> list[dict[str, str]]:
         return qualified_candidates
 
     cap2 = build_music_capability(

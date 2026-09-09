@@ -742,13 +742,28 @@ def music_candidate_providers(
         )
 
     def _kugou_detail(candidate: dict, *, query: str = "") -> ParsedContent | None:
-        return build_parsed_content(
-            platform="kugou",
-            item_id=str(candidate.get("provider_track_id") or ""),
-            item_kind="music",
-            title=str(candidate.get("name") or ""),
-            author_name=str(candidate.get("artist") or ""),
+        # 酷狗按 hash 复用 getSongInfo 现有链路：标题/封面/试听直链一次拿全，
+        # 不再退回无图无声的候选构建（审计 P1#8）。
+        from plugins.bot_unified_runtime.sources.parsers.platforms_music import (
+            parse_kugou,
         )
+
+        file_hash = str(candidate.get("provider_track_id") or "")
+        if not file_hash:
+            return None
+        try:
+            return parse_kugou(
+                f"https://www.kugou.com/song/#hash={file_hash}",
+                cookie_header=cookies.cookie_header(_PARSER_COOKIE_PLATFORM.get("kugou", "")),
+            )
+        except Exception:  # noqa: BLE001 - 详情失败回退候选构建。
+            return build_parsed_content(
+                platform="kugou",
+                item_id=file_hash,
+                item_kind="music",
+                title=str(candidate.get("name") or ""),
+                author_name=str(candidate.get("artist") or ""),
+            )
 
     def _kuwo_detail(candidate: dict, *, query: str = "") -> ParsedContent | None:
         # 酷我按 rid 走真实详情接口（wapi musicInfo），信息比候选更全。

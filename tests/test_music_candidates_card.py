@@ -127,7 +127,7 @@ def _build(tmp_path: Path, backend):
     def search_fn(query: str):
         return None if query.isdigit() else _item("第一命中")
 
-    def list_fn(query: str) -> list[dict[str, str]]:
+    def list_fn(query: str, limit: int = 5) -> list[dict[str, str]]:
         return _candidates()
 
     def detail_fn(candidate: dict, *, query: str = ""):
