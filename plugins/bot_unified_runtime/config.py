@@ -457,6 +457,7 @@ class Config(BaseModel):
     bot_api_key_toolcode_gpt: str = ""
     bot_api_key_toolcode_gemini: str = ""
     bot_api_key_toolcode_grok: str = ""
+    bot_api_key_starapi: str = ""
     bot_chat_base_url: str = "https://api.openai.com/v1"
     bot_chat_temperature: float = 0.7
     bot_chat_reasoning_effort: str = ""

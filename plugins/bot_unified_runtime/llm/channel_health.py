@@ -301,8 +301,19 @@ def probe_entry(spec: Any, *, proxy: str = "", timeout_seconds: float = 25.0) ->
         return False, latency, f"{type(exc).__name__}: {str(exc)[:180]}"
 
 
-def probe_all(config: Any, specs: dict[str, Any], store: ChannelHealthStore) -> dict[str, Any]:
-    """全量巡检（线程池并发）；返回摘要。"""
+def probe_all(
+    config: Any,
+    specs: dict[str, Any],
+    store: ChannelHealthStore,
+    *,
+    mode: str = "background",
+) -> dict[str, Any]:
+    """全量巡检；返回摘要。
+
+    mode="manual"：手动 /bot model probe——高并发（8 线程）尽快出结果；
+    mode="background"：定时巡检——3 线程 + 0.4s 错峰抖动，避免突发
+    打爆共享 key 的限流窗口、殃及紧随其后的真实聊天。
+    """
     from concurrent.futures import ThreadPoolExecutor
 
     proxy = str(getattr(config, "bot_download_proxy", "") or "")
@@ -314,16 +325,29 @@ def probe_all(config: Any, specs: dict[str, Any], store: ChannelHealthStore) -> 
         ok, latency, err = probe_entry(spec, proxy=proxy, timeout_seconds=timeout)
         return model_id, ok, latency, err
 
-    # 限流保护：共享 key 的渠道多家共用，高并发探针会触发上游限流，
-    # 殃及紧随其后的真实聊天（21:30 巡检后聊天全失败的教训）。
+    pending = list(specs.items())
+    if mode == "manual":
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for model_id, ok, latency, err in pool.map(_one, pending):
+                if ok:
+                    store.record_success(model_id, latency)
+                else:
+                    store.record_failure(model_id, err)
+                results[model_id] = {"ok": ok, "latency_ms": latency, "error": err}
+        unavailable = store.unavailable_ids()
+        return {
+            "probed": len(results),
+            "ok": sum(1 for r in results.values() if r["ok"]),
+            "unavailable": sorted(unavailable),
+            "detail": results,
+        }
     with ThreadPoolExecutor(max_workers=3) as pool:
-        pending = list(specs.items())
-        results_stream = []
+        futures = []
         for index, item in enumerate(pending):
             if index:
                 time.sleep(0.4)
-            results_stream.append(pool.submit(_one, item))
-        for future in results_stream:
+            futures.append(pool.submit(_one, item))
+        for future in futures:
             model_id, ok, latency, err = future.result()
             if ok:
                 store.record_success(model_id, latency)

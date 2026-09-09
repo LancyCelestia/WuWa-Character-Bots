@@ -2338,6 +2338,7 @@ def _register_nonebot_handlers() -> None:
                         config,
                         build_model_registry(config),
                         get_channel_health_store(),
+                        mode="background",
                     )
                 except Exception:  # noqa: S110, BLE001 - 巡检失败不影响主链路。
                     pass

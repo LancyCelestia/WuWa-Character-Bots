@@ -127,6 +127,7 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 | 09-09 | 呈现层四断点 | 发布时间到秒+时区、AI总结/热评空行、卡片热评块（紧凑分支+白名单）、专栏标签；点歌 Mica 卡图替代 CQ:music；候选选歌启用；help 二级引导 |
 | 09-09 | 三平台解析 | 推特媒体推文、油管 innertube+新标记三层合并、小红书空 title 兜底；代码块反馈移除；llm 告警豁免 |
 | 09-09 | Help 重设计+新卡 | 双列网格手册卡、分类名直查；免费游戏卡（Epic+Steam 双源 `sources/steamfree.py`）、天气卡 |
+| 09-09 | 渠道+卡UI+话术 | StarAPI 渠道接入(gemini-3.8-flash,priority18)；视频卡UI(二维码112/博主id26px/数据icon30数字22/页脚缩小)；失败话术 shuorenhua 重写(12条去表演腔)；探针双模式(手动8并发/后台3线程错峰抖动)；实锤浅夜渠道 gemini 疑似 DeepSeek 套壳(自称深度求索开发) |
 | 09-09 | 路由救急+视觉直传 | Config补9个bot_api_key字段(env:解析config_missing根因)；vision默认direct直传多模态主模型(supports_vision放宽,file://转data URL,relay保留为兜底)；internal_error可观测(logger.exception+摘要入审计)；finish空文本兜底(NapCat该消息类型文案)；health报告运维化排版；天气误捕静默；eat约束白名单 |
 | 09-09 | 字幕+LLM总结 | B站 AI 字幕（player/wbi/v2, ai-zh 优先，连续重复去重）+油管 captionTracks（ASR 滚动重叠去重）→摘录进文本/卡；`BOT_PARSE_SUBTITLE_SUMMARY=true` 时主路由出【AI字幕总结】；bot.content 加入 offload 名单 |
 | 09-09 | 实卡反馈二轮 | 文本作者数据行归位（YT/B站/推特博主级数据+注册日期，订阅同值去重）、小红书字符串计数、卡图 alpha 裁剪（修小卡+透明边）、Help 视口 1040 防切断、「免费游戏」触发词 |

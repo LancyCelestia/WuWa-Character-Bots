@@ -314,7 +314,8 @@ def _handle_model_command(
 
                 probe_all(_Cfg() if not isinstance(config, _Cfg) else config,
                           build_model_registry(config),
-                          get_channel_health_store())
+                          get_channel_health_store(),
+                          mode="manual")
             except Exception:  # noqa: S110, BLE001 - 后台巡检失败静默。
                 pass
 
