@@ -443,10 +443,18 @@ class Config(BaseModel):
     # NoneBot dotenv 会把它们放进 driver.config，必须在这里保留，
     # 否则 Config.model_validate 会丢弃字段，真实运行态路由会拿到空 key。
     bot_api_key_qianqianye: str = ""
+    bot_api_key_qianqianye_night: str = ""
+    bot_api_key_deepseek_qian: str = ""
     bot_api_key_aiprc: str = ""
+    bot_api_key_aiprc_gemini: str = ""
+    bot_api_key_aiprc_grok: str = ""
     bot_api_key_umi_group1: str = ""
     bot_api_key_umi_group2: str = ""
     bot_api_key_hcn: str = ""
+    bot_api_key_zhipu: str = ""
+    bot_api_key_toolcode_gpt: str = ""
+    bot_api_key_toolcode_gemini: str = ""
+    bot_api_key_toolcode_grok: str = ""
     bot_chat_base_url: str = "https://api.openai.com/v1"
     bot_chat_temperature: float = 0.7
     bot_chat_reasoning_effort: str = ""

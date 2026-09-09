@@ -232,21 +232,29 @@ def test_question_lookup_unique_candidate_hits_without_page():
     assert "初音未来" in outcome.body
 
 
-def test_question_lookup_ambiguous_lists_candidates():
-    def fake_search(query, **kwargs):
-        return [_hit("东方Project", "同人企划。"), _hit("东方Project/音乐", "音乐条目。")]
+def test_question_lookup_ambiguous_degrades_to_chat():
+    """多候选无精确命中 → 降级聊天（词条选择列表只留给 /萌娘 显式指令）。"""
+    from plugins.bot_unified_runtime.capabilities.moegirl import MoegirlHit, question_lookup
 
-    outcome = question_lookup("东方是谁", search_fn=fake_search, page_fn=None)
-    assert outcome.status == "hit"
-    assert "东方Project" in outcome.body
-    assert "同人企划" in outcome.body
+    def fake_search(query, **kw):
+        return [MoegirlHit(title="腾讯QQ"), MoegirlHit(title="QQ宠物")]
+
+    outcome = question_lookup(
+        "QQ用户是谁",
+        config=SimpleNamespace(bot_moegirl_api_base="", bot_moegirl_mirror_api_base=""),
+        search_fn=fake_search,
+        page_fn=lambda title, **kw: None,
+    )
+    assert outcome.status == "degrade"
+
 
 
 @pytest.mark.parametrize(
-    ("hits", "exc"),
+    "hits, exc",
     [
         ([], None),
-        (None, ParseHttpError("boom")),
+        ([], ParseHttpError("timeout")),
+        (None, RuntimeError("boom")),
     ],
 )
 def test_question_lookup_miss_or_error_degrades(hits, exc):

@@ -188,8 +188,15 @@ def build_eat_capability(
         spicy: bool | None = (
             True if "辣" in extra and "不辣" not in extra else (False if "不辣" in extra else None)
         )
-        # 带复杂自然语言约束（忌口/食材/人数等）→ LLM 推荐
-        meaningful = extra and not again and count == 1 and not spicy and len(extra) >= 3
+        # 带实义约束（忌口/食材/人数/口味关键词）→ LLM 推荐；
+        # 纯修饰语（"朴实无华的"）不浪费一次模型调用，走本地随机。
+        _CONSTRAINT_RE = re.compile(
+            r"不吃|不要|别放|忌口|过敏|有|加|放|人多|\d人|两[人个]|三[人个]|四[人个]|"
+            "清淡|开胃|下饭|暖和|热乎|快手|省事|便宜|丰盛|减脂|健身"
+        )
+        meaningful = bool(extra) and not again and count == 1 and not spicy and bool(
+            _CONSTRAINT_RE.search(extra)
+        )
         if meaningful and config is not None:
             llm_text = _llm_constrained(config, extra)
             if llm_text:

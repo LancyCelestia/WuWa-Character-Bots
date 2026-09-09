@@ -100,12 +100,14 @@ def build_weather_capability(
             )
         match = _WEATHER_RE.match(text)
         if not match:
+            # 路由误捕（plain_text 可能被引用/上下文拼接污染）：不回复用法
+            # 说明骚扰用户，静默跳过。明确想查天气的用户会说「天气 <城市>」。
             return CapabilityResult(
                 request_id=message.request_id,
                 capability_id="bot.weather",
                 kind="text",
-                body="用法：天气 <城市>，例如『天气 北京』；同省同名可用『天气 河北-大城』。",
-                audit_tags=["weather", "missing_query"],
+                body="",
+                audit_tags=["weather", "missing_query_silent"],
             )
         query = match.group("query").strip()
         report = nmc_weather_query(query, proxy=proxy)
