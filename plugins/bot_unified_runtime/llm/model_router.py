@@ -1253,14 +1253,17 @@ class ModelRouter:
         )
         candidate_ids = _health_filter_candidates(candidate_ids, self._credential_config)
         if require_vision:
+            # 视觉双门槛与 supports_vision 对齐（管线检视 #3）：当前接入渠道
+            # 默认全部多模态，这里仅排除显式 text-only 标签，不再要求正向
+            # vision/multimodal/vlm 标签——否则新渠道忘打标、时段分组只含
+            # 无标渠道或健康层拉黑全部带标渠道时，候选集被清空 → 图片消息
+            # provider_not_configured 硬失败。
             candidate_ids = [
                 model_id
                 for model_id in candidate_ids
                 if (
                     (spec := self._spec_for(model_id)) is not None
-                    and {"vision", "multimodal", "vlm"}.intersection(
-                        tag.lower() for tag in spec.tags
-                    )
+                    and "text-only" not in {tag.lower() for tag in spec.tags}
                 )
             ]
         if fast_mode:

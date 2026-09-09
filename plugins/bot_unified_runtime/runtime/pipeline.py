@@ -5,7 +5,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 import asyncio
+import atexit
+import os
+import threading
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from plugins.bot_unified_runtime.audit import AuditRepository, redact_private_debug
@@ -58,12 +62,154 @@ AsyncCapabilityCallable = Callable[
 ]
 
 
+# ==================== 聊天专用有界线程池（管线检视 #4） ====================
+# 聊天能力是长任务（同步 LLM + ffmpeg 抽帧 + ASR + 串行检索，单条最长 150s）。
+# 原先经 asyncio.to_thread 挤占默认线程池（min(32, cpu+4)），与语音转码、kb
+# 拉取、订阅适配器共享；突发并发打满后所有 to_thread 任务排队，全站延迟
+# 分钟级叠加。现改为管线专用有界池：worker 数与等待队列均有界，超限快败
+# 返回 busy 结果而非无限排队；默认线程池完全留给管线外的 to_thread 用户，
+# 其 shutdown_default_executor 语义不受影响。
+
+_CHAT_POOL_WORKERS_DEFAULT = 8
+_CHAT_POOL_WORKERS_MIN = 1
+_CHAT_POOL_WORKERS_MAX = 64
+_CHAT_POOL_WORKERS_ENV = "BOT_PIPELINE_MAX_WORKERS"
+
+
+class _BoundedSubmissionGate:
+    """有界提交闸：在途（运行+排队）超过许可数时 try_acquire 立即失败。
+
+    只用 threading.Lock 计数，不引入事件循环绑定原语（跨 loop 与测试安全），
+    提交路径 O(1) 非阻塞。许可数 = worker 数 + 等待队列深度，即 ThreadPool
+    内部队列之外的第二道、也是唯一一道有界闸。
+    """
+
+    __slots__ = ("_in_flight", "_lock", "_permits")
+
+    def __init__(self, permits: int) -> None:
+        self._lock = threading.Lock()
+        self._permits = max(1, int(permits))
+        self._in_flight = 0
+
+    def try_acquire(self) -> bool:
+        with self._lock:
+            if self._in_flight >= self._permits:
+                return False
+            self._in_flight += 1
+            return True
+
+    def release(self) -> None:
+        with self._lock:
+            self._in_flight = max(0, self._in_flight - 1)
+
+    @property
+    def permits(self) -> int:
+        return self._permits
+
+    @property
+    def in_flight(self) -> int:
+        """当前在途（运行+排队）任务数；测试与诊断用。"""
+        with self._lock:
+            return self._in_flight
+
+
+_chat_pool_lock = threading.Lock()
+_chat_pool: ThreadPoolExecutor | None = None
+_chat_pool_gate: _BoundedSubmissionGate | None = None
+
+
+def _resolve_chat_pool_workers() -> int:
+    """worker 数解析链：nonebot driver config → os.environ → 默认 8，钳位 1..64。
+
+    与 llm/channel_health.py 的 config→env→默认同源模式。pipeline 不接收
+    注入 config（构造方在插件 __init__，不在本任务文件域），故经惰性
+    get_driver 读取；未初始化（单元测试/裸脚本）时自动短路。仅在池首次
+    创建时读取一次，运行中改配置需重启（与 .env 注册表语义一致）。
+    """
+    raw_values: list[object] = []
+    try:
+        import nonebot
+
+        driver_config = nonebot.get_driver().config
+        raw_values.append(getattr(driver_config, "bot_pipeline_max_workers", None))
+    except Exception:  # noqa: BLE001, S110 - 单元测试/独立脚本场景，静默落到下一级。
+        pass
+    raw_values.append(os.environ.get(_CHAT_POOL_WORKERS_ENV))
+    for raw in raw_values:
+        if raw is None:
+            continue
+        try:
+            value = int(str(raw).strip())
+        except (TypeError, ValueError):
+            continue
+        return max(_CHAT_POOL_WORKERS_MIN, min(_CHAT_POOL_WORKERS_MAX, value))
+    return _CHAT_POOL_WORKERS_DEFAULT
+
+
+def _shutdown_chat_pool() -> None:
+    """模块级关闭钩子：未启动的排队提交取消，已在跑的任务不等待。"""
+    global _chat_pool, _chat_pool_gate
+    with _chat_pool_lock:
+        pool, _chat_pool, _chat_pool_gate = _chat_pool, None, None
+    if pool is not None:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _get_chat_pool() -> tuple[ThreadPoolExecutor, _BoundedSubmissionGate]:
+    """懒创建管线专用池：worker N（config/env/默认 8），在途上限 2N（N 跑 + N 等）。"""
+    global _chat_pool, _chat_pool_gate
+    pool, gate = _chat_pool, _chat_pool_gate
+    if pool is not None and gate is not None:
+        return pool, gate
+    with _chat_pool_lock:
+        if _chat_pool is None or _chat_pool_gate is None:
+            workers = _resolve_chat_pool_workers()
+            _chat_pool = ThreadPoolExecutor(
+                max_workers=workers,
+                thread_name_prefix="chat-pipeline",
+            )
+            atexit.register(_shutdown_chat_pool)
+            _chat_pool_gate = _BoundedSubmissionGate(workers * 2)
+        return _chat_pool, _chat_pool_gate
+
+
+def _pipeline_busy_result(
+    message: IncomingMessage,
+    decision: BotDecision,
+) -> CapabilityResult:
+    """超限快败结果：SILENT_AUDIT 只留审计痕，不外发话术（超载时不放大流量）。"""
+    return CapabilityResult(
+        request_id=message.request_id,
+        capability_id=decision.capability_id,
+        kind="error",
+        title="",
+        summary="",
+        body="",
+        send_policy=SendPolicy.SILENT_AUDIT,
+        audit_tags=["pipeline_busy:v1"],
+        operational_issue=OperationalIssue(
+            stage="runtime",
+            kind="pipeline_busy",
+            retryable=True,
+            debug_id=message.debug_id,
+            safe_summary="pipeline_busy",
+        ),
+    )
+
+
 def offload_capability(capability: CapabilityCallable) -> AsyncCapabilityCallable:
     async def wrapped(
         message: IncomingMessage,
         decision: BotDecision,
     ) -> CapabilityResult:
-        return await asyncio.to_thread(capability, message, decision)
+        pool, gate = _get_chat_pool()
+        if not gate.try_acquire():
+            return _pipeline_busy_result(message, decision)
+        try:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(pool, capability, message, decision)
+        finally:
+            gate.release()
 
     return wrapped
 
