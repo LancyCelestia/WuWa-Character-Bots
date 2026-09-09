@@ -5,6 +5,7 @@
 - 行为驱动 affinity 增减（clamp [0,1]），并累计印象标签；
 - SQLite 持久化；与静态档案融合规则：档案有 affinity 用档案，否则用动态层。
 
+数值规范唯一权威描述见 docs/affinity-design.md（基数/因子表/每日上限/惰性回归/档位）。
 态度分档（注入 prompt 的一句话）：
 - >=0.75 亲近：更直接的关心，可用对方小名；
 - >=0.45 友善：温和有陪伴感；
@@ -14,6 +15,7 @@
 
 from __future__ import annotations
 
+import calendar
 import json
 import re
 import sqlite3
@@ -35,7 +37,16 @@ _IMPRESSION_RULES: tuple[tuple[str, int, str], ...] = (
 )
 _TEASE_RE = re.compile(r"(哈哈|笑死|逗你|骗你的|捉弄|整蛊)", re.IGNORECASE)
 
+# ---- 数值化常量（规范见 docs/affinity-design.md §2/§3）----
+_AFFINITY_BASE = 0.5
+_DAY_SECONDS = 86400
 _BEHAVIOR_DELTA = {"positive": 0.02, "neutral": 0.0, "tease": -0.01, "negative": -0.05, "insult": -0.10}
+# 每日有效次数上限（UTC 自然日）：同行为超出后 delta 记 0，计数器与标签照常累计。
+_DAILY_EFFECTIVE_CAPS: dict[str, int] = {"positive": 10, "tease": 5, "negative": 8, "insult": 8}
+# 惰性回归：写路径检查闲置天数，≥7 天起每天向基数回归 0.01，不超过剩余距离；读路径无副作用。
+_IDLE_REGRESSION_START_DAYS = 7
+_IDLE_REGRESSION_PER_DAY = 0.01
+
 _ATTITUDE_TIERS: tuple[tuple[float, str], ...] = (
     (0.75, "亲近：更直接的关心与陪伴，可以用你给对方起的小名称呼"),
     (0.45, "友善：温和有陪伴感，记得对方的偏好"),
@@ -59,6 +70,17 @@ def classify_behavior(text: str, *, safety_category: str = "", safety_action: st
     return "neutral"
 
 
+def tier_for_affinity(affinity: float) -> str:
+    """档位 id（左闭右开，边界值归上一档）：close/friendly/polite/distant。"""
+    if affinity >= 0.75:
+        return "close"
+    if affinity >= 0.45:
+        return "friendly"
+    if affinity >= 0.25:
+        return "polite"
+    return "distant"
+
+
 def attitude_for_affinity(affinity: float) -> str:
     for threshold, attitude in _ATTITUDE_TIERS:
         if affinity >= threshold:
@@ -66,6 +88,17 @@ def attitude_for_affinity(affinity: float) -> str:
     return _ATTITUDE_TIERS[-1][1]
 
 
+def _format_utc(timestamp: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp))
+
+
+def _parse_utc(text: str | None) -> float | None:
+    if not text:
+        return None
+    try:
+        return float(calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ")))
+    except (ValueError, TypeError):
+        return None
 
 
 _PROFILE_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -97,6 +130,10 @@ class DynamicAffinityStore:
         self.db_path = Path(db_path)
         self._clock = clock
         self._lock = threading.Lock()
+        # 进程内复用单一连接：每条聊天消息 observe/snapshot 各一次，SQLite
+        # 连接建立偏贵；全部操作已在 self._lock 下串行，check_same_thread=False
+        # 允许事件循环与 offload 线程池跨线程共用同一连接。
+        self._connection: sqlite3.Connection | None = None
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
@@ -115,6 +152,8 @@ class DynamicAffinityStore:
                     nickname TEXT NOT NULL DEFAULT '',
                     impression_tags TEXT NOT NULL DEFAULT '[]',
                     profile_notes TEXT NOT NULL DEFAULT '[]',
+                    counter_day_index INTEGER NOT NULL DEFAULT -1,
+                    day_counters TEXT NOT NULL DEFAULT '{}',
                     updated_at TEXT NOT NULL
                 )
                 """
@@ -123,15 +162,23 @@ class DynamicAffinityStore:
                 str(row[1])
                 for row in connection.execute("PRAGMA table_info(user_affinity)").fetchall()
             }
-            if "profile_notes" not in columns:
-                connection.execute(
-                    "ALTER TABLE user_affinity ADD COLUMN profile_notes TEXT NOT NULL DEFAULT '[]'"
-                )
+            # 存量库只加列迁移（沿用 profile_notes 先例）。
+            for column, ddl in (
+                ("profile_notes", "TEXT NOT NULL DEFAULT '[]'"),
+                ("counter_day_index", "INTEGER NOT NULL DEFAULT -1"),
+                ("day_counters", "TEXT NOT NULL DEFAULT '{}'"),
+            ):
+                if column not in columns:
+                    connection.execute(f"ALTER TABLE user_affinity ADD COLUMN {column} {ddl}")
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path, timeout=5.0)
-        connection.row_factory = sqlite3.Row
-        return connection
+        if self._connection is None:
+            connection = sqlite3.connect(
+                self.db_path, timeout=5.0, check_same_thread=False
+            )
+            connection.row_factory = sqlite3.Row
+            self._connection = connection
+        return self._connection
 
     def observe(
         self,
@@ -142,21 +189,27 @@ class DynamicAffinityStore:
     ) -> float:
         """记录一次行为并更新好感度；返回更新后的 affinity。"""
         if not sender_id:
-            return 0.5
-        delta = _BEHAVIOR_DELTA.get(behavior, 0.0) if delta_override is None else delta_override
-        now_text = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            return _AFFINITY_BASE
+        now = float(self._clock())
+        now_text = _format_utc(now)
+        day_index = int(now // _DAY_SECONDS)
         with self._lock, self._connect() as connection:
             row = connection.execute(
-                "SELECT affinity, interaction_count, positive_count, negative_count, tease_count, insult_count, impression_tags"
+                "SELECT affinity, interaction_count, positive_count, negative_count, tease_count, insult_count,"
+                " nickname, impression_tags, profile_notes, counter_day_index, day_counters, updated_at"
                 " FROM user_affinity WHERE sender_id = ?",
                 (sender_id,),
             ).fetchone()
             if row is None:
-                affinity = max(0.0, min(1.0, 0.5 + delta))
+                affinity = _AFFINITY_BASE
                 counters = {"positive": 0, "negative": 0, "tease": 0, "insult": 0}
                 tags: list[str] = []
+                nickname = ""
+                notes: list[str] = []
+                day_counters: dict[str, int] = {}
+                interactions = 0
             else:
-                affinity = max(0.0, min(1.0, float(row["affinity"]) + delta))
+                affinity = float(row["affinity"])
                 counters = {
                     "positive": int(row["positive_count"]),
                     "negative": int(row["negative_count"]),
@@ -164,6 +217,32 @@ class DynamicAffinityStore:
                     "insult": int(row["insult_count"]),
                 }
                 tags = json.loads(str(row["impression_tags"] or "[]"))
+                nickname = str(row["nickname"] or "")
+                notes = json.loads(str(row["profile_notes"] or "[]"))
+                interactions = int(row["interaction_count"])
+                # 每日计数仅当日有效；跨日自动清零（row_day != day_index 视为新的一天）。
+                row_day = int(row["counter_day_index"] if row["counter_day_index"] is not None else -1)
+                day_counters = (
+                    json.loads(str(row["day_counters"] or "{}")) if row_day == day_index else {}
+                )
+            # 惰性回归：闲置 ≥7 天起每天向基数 0.5 回归 0.01，不超过剩余距离。
+            if row is not None:
+                prev = _parse_utc(str(row["updated_at"]))
+                if prev is not None:
+                    idle_days = int(max(0.0, now - prev) // _DAY_SECONDS)
+                    if idle_days >= _IDLE_REGRESSION_START_DAYS:
+                        gap = _AFFINITY_BASE - affinity
+                        shift = min(idle_days * _IDLE_REGRESSION_PER_DAY, abs(gap))
+                        affinity += shift if gap > 0 else -shift
+            # delta：每日上限内全额、超限记 0；override 视为权威信号直用且不占每日额度。
+            if delta_override is not None:
+                delta = float(delta_override)
+            else:
+                cap = _DAILY_EFFECTIVE_CAPS.get(behavior)
+                used = int(day_counters.get(behavior, 0))
+                delta = 0.0 if (cap is not None and used >= cap) else _BEHAVIOR_DELTA.get(behavior, 0.0)
+                day_counters[behavior] = used + 1
+            affinity = max(0.0, min(1.0, affinity + delta))
             if behavior in counters:
                 counters[behavior] += 1
             for watch, threshold, tag in _IMPRESSION_RULES:
@@ -172,40 +251,62 @@ class DynamicAffinityStore:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO user_affinity
-                    (sender_id, affinity, interaction_count, positive_count, negative_count, tease_count, insult_count, nickname, impression_tags, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT nickname FROM user_affinity WHERE sender_id = ?), ''), ?, ?)
+                    (sender_id, affinity, interaction_count, positive_count, negative_count,
+                     tease_count, insult_count, nickname, impression_tags, profile_notes,
+                     counter_day_index, day_counters, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sender_id,
                     affinity,
-                    (int(row["interaction_count"]) + 1) if row else 1,
+                    interactions + 1,
                     counters["positive"],
                     counters["negative"],
                     counters["tease"],
                     counters["insult"],
-                    sender_id,
+                    nickname,
                     json.dumps(tags, ensure_ascii=False),
+                    json.dumps(notes, ensure_ascii=False),
+                    day_index,
+                    json.dumps(day_counters, ensure_ascii=False),
                     now_text,
                 ),
             )
             return affinity
 
     def snapshot(self, sender_id: str) -> dict[str, Any]:
-        """读取好感度与印象；无记录返回中性默认。"""
+        """读取好感度与印象；无记录返回中性默认。只读，不触发惰性回归。"""
         if not sender_id:
-            return {"affinity": 0.5, "tags": [], "nickname": "", "attitude": attitude_for_affinity(0.5)}
+            return {
+                "affinity": _AFFINITY_BASE,
+                "tags": [],
+                "nickname": "",
+                "profile_notes": [],
+                "tier": tier_for_affinity(_AFFINITY_BASE),
+                "attitude": attitude_for_affinity(_AFFINITY_BASE),
+            }
         with self._lock, self._connect() as connection:
             row = connection.execute(
-                "SELECT affinity, nickname, impression_tags FROM user_affinity WHERE sender_id = ?",
+                "SELECT affinity, nickname, impression_tags, profile_notes FROM user_affinity WHERE sender_id = ?",
                 (sender_id,),
             ).fetchone()
         if row is None:
-            return {"affinity": 0.5, "tags": [], "nickname": "", "attitude": attitude_for_affinity(0.5)}
+            return {
+                "affinity": _AFFINITY_BASE,
+                "tags": [],
+                "nickname": "",
+                "profile_notes": [],
+                "tier": tier_for_affinity(_AFFINITY_BASE),
+                "attitude": attitude_for_affinity(_AFFINITY_BASE),
+            }
+        affinity = float(row["affinity"])
         return {
-            "affinity": float(row["affinity"]),
+            "affinity": affinity,
             "nickname": str(row["nickname"] or ""),
             "tags": json.loads(str(row["impression_tags"] or "[]")),
-            "attitude": attitude_for_affinity(float(row["affinity"])),
+            "profile_notes": json.loads(str(row["profile_notes"] or "[]")),
+            "tier": tier_for_affinity(affinity),
+            "attitude": attitude_for_affinity(affinity),
         }
 
     def learn_profile(self, sender_id: str, text: str) -> list[str]:
@@ -213,7 +314,7 @@ class DynamicAffinityStore:
         facts = extract_profile_facts(text)
         if not facts or not sender_id:
             return []
-        now_text = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        now_text = _format_utc(float(self._clock()))
         merged: list[str] = []
         with self._lock, self._connect() as connection:
             row = connection.execute(
@@ -241,7 +342,7 @@ class DynamicAffinityStore:
         with self._lock, self._connect() as connection:
             connection.execute(
                 "INSERT OR IGNORE INTO user_affinity (sender_id, affinity, updated_at) VALUES (?, 0.5, ?)",
-                (sender_id, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
+                (sender_id, _format_utc(float(self._clock()))),
             )
             connection.execute(
                 "UPDATE user_affinity SET nickname = ? WHERE sender_id = ?",

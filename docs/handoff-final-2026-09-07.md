@@ -146,6 +146,7 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 | 09-09 | 私聊无回复+预算 | LLM 慢烧完 90s 预算→发送层丢消息（根因）；预算 150s+预算耗尽不丢消息；img complete 等待修封面糊 |
 | 09-09 | 模型路由渠道化 | registry 45 条目（StarAPI/umi 扩容/Claude 四渠道/key 轮换）；渠道健康巡检+价格选渠道；探针 key 解析 bug 修复（no_api_key 误判）；health 行动清单 |
 | 09-09 | 实卡反馈二轮 | 文本作者数据行归位（YT/B站/推特博主级数据+注册日期，订阅同值去重）、小红书字符串计数、卡图 alpha 裁剪（修小卡+透明边）、Help 视口 1040 防切断、「免费游戏」触发词 |
+| 09-10 | C组交付 | 好感度数值化（affinity-design.md 成文+每日上限/惰性回归/档位 id/画像清空 bug 修复）；capabilities 全面审查报告 36 项（docs/capability-audit-2026-09-10.md）；浸泡快速回归+长跑（RSS/线程/队列全有界）；帮助文本 13 模块补全取值与示例 |
 
 ## 9. 遗留事项与边界
 
@@ -193,14 +194,14 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 7. 订阅油管/推特拉取链路实测：adapter 已在（social_v2），需真实账号验证拉取与推送
 8. 点歌候选窗口：图片式候选选择卡（复用 Mica 规范建独立模板，不碰 universal_card.html——A组在同文件有改动）
 
-### C组（好感度系统数值化 + 全面质量审查）——待认领
+### C组（好感度系统数值化 + 全面质量审查）——已由本会话完成（2026-09-10）
 
-文件域：`character/affinity.py`、`character/providers.py` 好感度注入段、`tests/` 新增独立测试文件
+1. **好感度数值化**：规范成文 `docs/affinity-design.md`（基数 0.5、五行为影响因子表+每日有效次数上限、惰性回归向基数收敛、四档位→语气映射、providers 注入规则）；`character/affinity.py` 实现落地：修「observe 的 INSERT OR REPLACE 清空 profile_notes」数据丢失 bug、时钟统一走注入 clock、新增 `counter_day_index/day_counters` 只加列迁移、`tier_for_affinity()` 档位 id、`snapshot()` 增返 `tier/profile_notes`。回归 `tests/test_affinity_numerical.py`（独立命名，既有 test_affinity.py 不改一字全过）。
+2. **全面审查**：`docs/capability-audit-2026-09-10.md`——36 项发现（P1×5 / P2×16 / P3×15），逐项标归属：B组（runtime_admin 注册表烘焙遮蔽 .env、subscribe_v2 无权限校验、music 数字编号崩等）、A组（wbi 缓存无界、卡片非原子写）、无主待修（MCP 工具缓存永久中毒、httpx Client 泄漏、today_history 读失败覆写丢数据等）。
+3. **浸泡**：套件内快速回归 `tests/test_soak_growth.py`（多线程异常浸泡行数/线程/队列/幂等全有界）+ 分钟级长跑（3 线程轰击，RSS 105.6→108.5MB 增速收敛非泄漏、线程完全回收、队列封顶 max_items、幂等封顶 4096、零异常）。
+4. **帮助文本**：`_HELP_ENTRIES` 13 个模块补参数取值范围与示例（天气/维基/历史上的今天/点歌/表情/偷表情/订阅/草稿/搜索/下载/群策略/日志/路由）。
 
-1. 好感度系统数值化：确定基数（初始 0.5）、影响因子表（哪些行为加分/减分、幅度）、加减算法、档位划分、档位→回复语气/态度的映射规则——先成文档再实现
-2. 全面插件逻辑缺陷审查：逐 capabilities 过一遍算法/边界问题
-3. 完整 pytest 全绿验证（当前 600 passed）+ 内存泄露/异常浸泡测试（长跑观察队列/缓存/线程数增长）
-4. 帮助文本充实：各模块参数取值范围与示例补全（`_HELP_ENTRIES`）
+C 组验证快照：C 组文件域 ruff/mypy/pytest 全绿（新增 13 测试全过，mypy 202 文件全过）；树内同时刻 4 失败+9 lint 均位于并行会话进行中文件（test_video_reply_flow.py 等），不属本组域。
 
 **跨组约定**：`universal_card.html` 归 A组；`__init__.py` 谁动谁先 `git pull`；C组测试文件独立命名不碰他组测试。
 
