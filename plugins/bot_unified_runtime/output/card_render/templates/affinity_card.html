@@ -104,6 +104,19 @@ body {
     background: linear-gradient(90deg, color-mix(in srgb, var(--pc) 55%, #fff), var(--pc));
 }
 .dnote { margin-top: 10px; font-size: 12px; color: var(--text-secondary); }
+/* ===== 算法说明卡 ===== */
+.step-row, .tier-row {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, var(--pc) 8%, #fff);
+    font-size: 13px; color: var(--text-sub);
+}
+.step-row:last-child, .tier-row:last-child { border-bottom: none; }
+.step-row b { font-size: 16px; font-weight: 700; color: var(--text-main); flex: none; }
+.step-row b.up { color: var(--score-hot); }
+.step-row b.down { color: var(--score-cold); }
+.tier-row { flex-direction: column; align-items: flex-start; gap: 3px; }
+.tier-row b { font-size: 13px; font-weight: 700; color: color-mix(in srgb, var(--pc) 80%, #18191c); }
+.tier-row span { font-size: 12px; line-height: 1.5; }
 /* ===== 算法速览 ===== */
 .rules { margin-top: 18px; display: flex; gap: 10px; flex-wrap: wrap; }
 .rule {
@@ -143,6 +156,25 @@ body {
             <div class="score{{ ' hot' if row.score >= 75 else (' cold' if row.score < 25 else '') }}">{{ '%.1f' | format(row.score) }}</div>
         </div>
         {% endfor %}
+    </div>
+    {% elif mode == 'algorithm' %}
+    <div class="duel">
+        <div class="panel">
+            <div class="dlabel">你此刻的精确步长（印象好感 {{ bot_score }}）</div>
+            {% for s in steps %}
+            <div class="step-row"><span>{{ s.label }}</span><b class="{{ s.cls }}">{{ s.value }}</b></div>
+            {% endfor %}
+            <div class="dnote">步长 = 基准 × 幂律衰减（靠近 0/100 变小）× 个人系数（±15%），随分数动态变化</div>
+        </div>
+        <div class="panel">
+            <div class="dlabel">档位 → 回应方式（同一句话）</div>
+            {% for t in tiers %}
+            <div class="tier-row"><b>{{ t.label }}　{{ t.range }}</b><span>{{ t.attitude }}</span></div>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="rules">
+        {% for rule in rules %}<div class="rule"><b class="{{ rule.cls }}">{{ rule.label }}</b>　{{ rule.text }}</div>{% endfor %}
     </div>
     {% else %}
     <div class="duel">

@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from plugins.bot_unified_runtime.character.affinity import effective_delta
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -40,12 +41,28 @@ def parse_affinity_query(text: str) -> str:
 
 
 ALGORITHM_TEXT = (
-    "好感度算法（0-100，初始 50）：\n"
-    "① 加分：感谢/夸奖/问候/陪伴 +2/次（同一天前 10 次有效，防刷）。\n"
-    "② 轻微波动：玩笑与越界亲昵 -1/次（每日前 5 次）；普通聊天不变；"
-    "连续 7 天以上没说话，每天向 50 回归 1 点。\n"
-    "③ 扣分：抱怨/贬低 -5/次、辱骂/骚扰 -10/次（每日各前 8 次）。\n"
-    "好感只影响守岸人的语气态度（亲近/友善/客气/疏离），任何档位都不辱骂、不弃聊。"
+    "好感度算法（0-100，初始 10；步长动态变化、因人而异）：\n"
+    "① 加分：感谢/夸奖/问候/陪伴 每次 +2 起（同一天前 10 次有效）。\n"
+    "② 轻微波动：玩笑与越界亲昵 每次 -1 起（每日前 5 次）；普通聊天不变；闲置 7 天起每天向 10 回归 1 分。\n"
+    "③ 扣分：抱怨/贬低 每次 -5 起、辱骂/骚扰 每次 -10 起（每日各前 8 次）。\n"
+    "动态规则：当前分越靠近 0 或 100，单步越小（10~90 区间全额，两侧按幂律衰减）；"
+    "每人另有由 QQ 号确定性派生的 ±15% 个人系数——同一句话，不同人的实际增减不同。\n"
+    "档位态度：亲近 ≥75｜友善 45~74｜客气 25~44｜疏离 <25（任何档位都不辱骂、不弃聊）。"
+)
+
+# 档位 → 回应方式对照（docs/affinity-design.md §9.1b）
+_TIER_TABLE: list[dict[str, str]] = [
+    {"label": "亲近", "range": "≥75", "attitude": "更直接的关心与陪伴，可以用小名称呼，答应得干脆"},
+    {"label": "友善", "range": "45~74", "attitude": "温和有陪伴感，记得对方偏好，征询式回应"},
+    {"label": "客气", "range": "25~44", "attitude": "礼貌但有距离，就事论事，不假装熟识"},
+    {"label": "疏离", "range": "<25", "attitude": "简短、有分寸的疏离；保持体面，绝不辱骂"},
+]
+
+_STEP_LABELS: tuple[tuple[str, str], ...] = (
+    ("positive", "感谢/夸奖"),
+    ("tease", "玩笑/亲昵"),
+    ("negative", "抱怨/贬低"),
+    ("insult", "辱骂/骚扰"),
 )
 
 
@@ -132,6 +149,26 @@ def build_group_payload(
     }
 
 
+def build_algorithm_payload(
+    *,
+    bot_score: float,
+    steps: list[dict[str, str]],
+    accent_color: str,
+    subtitle: str = "算法 · 因人而异 · 档位回应方式",
+) -> dict[str, Any]:
+    """算法说明卡 payload：规则速览 + 请求者此刻的精确步长 + 档位态度对照。"""
+    return {
+        "pc": accent_color,
+        "title": "好感度算法",
+        "subtitle": subtitle,
+        "mode": "algorithm",
+        "bot_score": f"{bot_score:.1f}",
+        "steps": steps,
+        "tiers": [dict(tier) for tier in _TIER_TABLE],
+        "rules": _rules_chips(),
+    }
+
+
 def _tier_text(score: float) -> str:
     if score >= _HOT_SCORE:
         return "亲近"
@@ -210,22 +247,49 @@ def build_affinity_capability(
     *,
     affinity_store: Any | None = None,
     render_backend: Any | None = None,
+    card_dir: str | None = None,
 ) -> Any:
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         del decision
         request_id = message.request_id
         accent = _accent_color(config)
         bot_name = _bot_name(config)
-        card_dir = str(getattr(config, "bot_card_render_dir", "data/cards") or "data/cards")
+        resolved_card_dir = card_dir or str(
+            getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"
+        )
         arg = parse_affinity_query(message.plain_text)
 
         if arg in {"算法", "说明", "规则", "help"}:
+            steps: list[dict[str, str]] = []
+            bot_score = 10.0
+            if affinity_store is not None and message.sender_id:
+                snap = affinity_store.snapshot(message.sender_id)
+                current = float(snap.get("affinity", 0.1))
+                bot_score = round(current * 100.0, 1)
+                for behavior, label in _STEP_LABELS:
+                    value = round(
+                        effective_delta(message.sender_id, behavior, current) * 100.0, 2
+                    )
+                    steps.append(
+                        {"label": label, "value": f"{value:+.2f}", "cls": "up" if value >= 0 else "down"}
+                    )
+            body = ALGORITHM_TEXT
+            if steps:
+                body += (
+                    f"\n你此刻的精确步长（印象好感 {bot_score:.1f}）："
+                    + "｜".join(f"{s['label']} {s['value']}" for s in steps)
+                )
+            payload = build_algorithm_payload(
+                bot_score=bot_score, steps=steps, accent_color=accent
+            )
+            card = _render_card(payload, render_backend, resolved_card_dir, request_id)
             return CapabilityResult(
                 request_id=request_id,
                 capability_id="bot.affinity",
-                kind="text",
+                kind="mixed" if card else "text",
                 title="好感度算法",
-                body=ALGORITHM_TEXT,
+                body=body,
+                images=[{"file": card}] if card else [],
                 risk_level=RiskLevel.LOW,
                 privacy_level=PrivacyLevel.PUBLIC,
                 audit_tags=["affinity", "algorithm"],
@@ -269,7 +333,7 @@ def build_affinity_capability(
                 subtitle=where,
             )
 
-        card = _render_card(payload, render_backend, card_dir, request_id)
+        card = _render_card(payload, render_backend, resolved_card_dir, request_id)
         return CapabilityResult(
             request_id=request_id,
             capability_id="bot.affinity",
@@ -288,6 +352,7 @@ def build_affinity_capability(
 __all__ = [
     "ALGORITHM_TEXT",
     "build_affinity_capability",
+    "build_algorithm_payload",
     "build_group_payload",
     "build_private_payload",
     "is_affinity_command",

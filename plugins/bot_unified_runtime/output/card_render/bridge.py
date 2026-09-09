@@ -19,6 +19,7 @@ import html
 import io
 import os
 import re
+import urllib.parse
 from dataclasses import fields
 from datetime import datetime
 from pathlib import Path
@@ -634,7 +635,7 @@ def flat_projection(item: Any) -> Any:
     if isinstance(images, list):
         detail["images"] = [_inline_local_image(url) for url in images if str(url)]
     for key in (
-        "episodes", "live", "comments", "goods", "related",
+        "episodes", "live", "comments", "goods", "related", "show",
         "pinned_comment", "hot_comment", "hot_comments",
     ):
         if key in content_extras:
@@ -902,6 +903,19 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
     if not hot_list and payload.hot_comment is not None:
         hot_list = [payload.hot_comment]
     payload.hot_comments = hot_list[:3]
+
+    # 会员购参展嘉宾（detail.show.guests → 独立卡区）。
+    show_data = _as_dict(detail.get("show"))
+    payload.show_guests = [
+        {
+            "name": _as_str(guest.get("name")),
+            "description": _as_str(guest.get("description")),
+            "avatar": _inline_local_image(guest.get("avatar")),
+            "book_num": _as_str(guest.get("book_num") or ""),
+        }
+        for guest in _as_list(show_data.get("guests"))
+        if isinstance(guest, dict) and _as_str(guest.get("name"))
+    ][:12]
     # 作者栏"帖子/专栏"计数标签：B 站 post_count 语义是专栏数。
     payload.stats_post_label = "专栏" if platform == "bilibili" else "帖子"
 
@@ -1038,6 +1052,30 @@ def _render_payload_from_data(data: dict[str, Any]) -> RenderPayload:
     return payload
 
 
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_RGB_TRIPLET_RE = re.compile(r"^\d{1,3},\s*\d{1,3},\s*\d{1,3}$")
+
+
+def _safe_css_color(value: Any, fallback: str) -> str:
+    """CSS 变量语境只接受 #RRGGBB；非法值（含 CSS 注入载荷）回退中性色。"""
+    text = _as_str(value).strip()
+    return text if _HEX_COLOR_RE.match(text) else fallback
+
+
+def _safe_css_rgb(value: Any, fallback: str) -> str:
+    text = _as_str(value).strip()
+    return text if _RGB_TRIPLET_RE.match(text) else fallback
+
+
+def _css_url_token(url: Any) -> str:
+    """CSS url('...') 语境安全化：data URL 原样（base64 字符集不含引号/
+    括号，无法逃逸），其余 URL 百分号编码，阻断 `') 形式的样式注入。"""
+    text = _as_str(url).strip()
+    if not text or text.startswith("data:"):
+        return text
+    return urllib.parse.quote(text, safe=":/?&=%")
+
+
 def render_universal_card_html(payload_dict: dict[str, Any] | None = None) -> str:
     """渲染通用卡片 HTML。
 
@@ -1072,6 +1110,34 @@ def render_universal_card_html(payload_dict: dict[str, Any] | None = None) -> st
     elif isinstance(payload.forward, dict):
         payload.forward = dict(payload.forward)
         payload.forward["text"] = html.escape(_as_str(payload.forward.get("text")))
+    # repost.text / compact_translation / compact_romanization 同样走 |safe，
+    # 逐字段预转义（对纯文本内容渲染产物零变化）。
+    repost = payload.repost
+    if isinstance(repost, dict):
+        escaped_repost = dict(repost)
+        escaped_repost["text"] = html.escape(_as_str(escaped_repost.get("text")))
+        payload.repost = escaped_repost
+    elif repost is not None and isinstance(getattr(repost, "text", None), str):
+        try:
+            repost.text = html.escape(repost.text)
+        except AttributeError:  # noqa: S110 - 只读对象保持原样。
+            pass
+    payload.compact_translation = html.escape(_as_str(payload.compact_translation))
+    payload.compact_romanization = html.escape(_as_str(payload.compact_romanization))
+
+    # 平台色与横幅图进入 CSS 语境前做格式校验/编码，阻断样式注入。
+    payload.platform_color = _safe_css_color(
+        payload.platform_color, UNKNOWN_PLATFORM_COLOR
+    )
+    payload.platform_color_dark = _safe_css_color(
+        payload.platform_color_dark, UNKNOWN_PLATFORM_COLOR
+    )
+    payload.platform_color_light = _safe_css_color(
+        payload.platform_color_light, UNKNOWN_PLATFORM_COLOR
+    )
+    payload.platform_color_rgb = _safe_css_rgb(payload.platform_color_rgb, "96,112,128")
+    payload.banner = _css_url_token(payload.banner)
+    payload.cover_url = _css_url_token(payload.cover_url)
 
     # 可选 QR：优先调用方给的 qrcode，其次尝试生成；缺依赖则隐藏。
     if not _as_str(payload.qrcode) and _as_str(payload.url):
@@ -1161,7 +1227,10 @@ def render_affinity_card_html(payload_dict: dict[str, Any] | None = None) -> str
         mode=_as_str(data.get("mode")) or "private",
         me_id=_as_str(data.get("me_id")),
         bot_name=_as_str(data.get("bot_name")) or "守岸人",
+        bot_score=_as_str(data.get("bot_score")) or "10.0",
         rows=[row for row in (data.get("rows") or []) if isinstance(row, dict)],
+        steps=[row for row in (data.get("steps") or []) if isinstance(row, dict)],
+        tiers=[row for row in (data.get("tiers") or []) if isinstance(row, dict)],
         bot_to_user=data.get("bot_to_user") or {"score": 50.0, "tier": "友善", "bar": 50.0},
         user_to_bot=data.get("user_to_bot") or {"score": 50.0, "tier": "友善", "bar": 50.0},
         rules=[rule for rule in (data.get("rules") or []) if isinstance(rule, dict)],

@@ -16,7 +16,7 @@ from plugins.bot_unified_runtime.contracts.character import (
     ToneProfile,
 )
 
-from .affinity import DynamicAffinityStore
+from .affinity import AFFINITY_BASE, DynamicAffinityStore, tier_for_affinity
 from .documents import load_character_document
 from .emotion import EmotionProvider, NullEmotionProvider, build_emotion_provider
 from .glossary import GlossaryProvider, NullGlossaryProvider, build_glossary_provider
@@ -259,11 +259,12 @@ class FileCharacterContextProvider:
             request_id=request_id,
             sender_id=sender_id,
         )
-        # 动态好感度融合（批次 C）：行为驱动层有记录时覆盖 affinity/attitude；
+        # 动态好感度融合（批次 C / v3）：行为驱动层有记录时覆盖 affinity/attitude，
+        # 并把档位映射到 familiarity，使语气数值参数（warmth/directness）跟随动态档位；
         # 档案的其他字段（称呼/偏好/备注）保留。
         if self.affinity_store is not None and sender_id:
             dynamic = self.affinity_store.snapshot(sender_id)
-            if dynamic.get("affinity") is not None and (dynamic["affinity"] != 0.5 or dynamic.get("tags")):
+            if dynamic.get("affinity") is not None and (dynamic["affinity"] != AFFINITY_BASE or dynamic.get("tags")):
                 tags_text = "、".join(str(t) for t in dynamic.get("tags") or [])
                 notes_text = "；".join(str(n) for n in dynamic.get("profile_notes") or [])
                 nickname_text = str(dynamic.get("nickname") or "")
@@ -274,8 +275,14 @@ class FileCharacterContextProvider:
                     attitude += f"（已知画像：{notes_text}；可在对话中自然体现，不逐条复述）"
                 if nickname_text:
                     attitude += f"（对方的小名：{nickname_text}；可用它称呼对方）"
+                tier = tier_for_affinity(float(dynamic["affinity"]))
+                familiarity = {"close": "close", "friendly": "familiar"}.get(tier, "stranger")
                 relationship = relationship.model_copy(
-                    update={"affinity": float(dynamic["affinity"]), "attitude": attitude}
+                    update={
+                        "affinity": float(dynamic["affinity"]),
+                        "attitude": attitude,
+                        "familiarity": familiarity,
+                    }
                 )
         tone_warmth, tone_directness = apply_relationship_to_tone(
             self.tone_warmth,

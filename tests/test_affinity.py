@@ -4,6 +4,8 @@ from plugins.bot_unified_runtime.character.affinity import (
     DynamicAffinityStore,
     attitude_for_affinity,
     classify_behavior,
+    effective_delta,
+    per_user_factor,
 )
 
 
@@ -30,14 +32,17 @@ def test_attitude_tiers_are_ordered_and_never_insulting() -> None:
 
 def test_observe_updates_affinity_and_tags(tmp_path) -> None:
     store = DynamicAffinityStore(tmp_path / "affinity.sqlite3", clock=_FakeClock())
+    m = per_user_factor("u1")
 
     affinity = store.observe("u1", "positive")
-    assert affinity > 0.5
+    assert abs(affinity - (0.1 + 0.02 * m)) < 1e-9
     store.observe("u1", "insult")
     store.observe("u1", "insult")
     snapshot = store.snapshot("u1")
-    # 0.5 + 0.02 - 0.10 - 0.10 = 0.32
-    assert abs(snapshot["affinity"] - 0.32) < 1e-6
+    # 第 1 次 insult 在全额区；第 2 次已在近极值区，步长按幂律衰减，最后 clamp ≥0
+    x2 = 0.1 + 0.02 * m - 0.10 * m
+    expected = max(0.0, x2 + effective_delta("u1", "insult", x2))
+    assert abs(snapshot["affinity"] - expected) < 1e-9
     assert "口无遮拦" in snapshot["tags"]
     assert snapshot["attitude"] == attitude_for_affinity(snapshot["affinity"])
 
@@ -48,7 +53,7 @@ def test_insult_drains_affinity_and_admin_can_set_nickname(tmp_path) -> None:
     for _ in range(4):
         store.observe("u2", "insult")
     snapshot = store.snapshot("u2")
-    assert snapshot["affinity"] <= 0.2
+    assert 0.0 <= snapshot["affinity"] <= 0.1
     assert snapshot["nickname"] == "小澄"
 
 
@@ -58,4 +63,4 @@ def test_store_persists_across_instances(tmp_path) -> None:
     first.observe("u3", "positive")
 
     second = DynamicAffinityStore(db, clock=_FakeClock())
-    assert second.snapshot("u3")["affinity"] > 0.5
+    assert second.snapshot("u3")["affinity"] > 0.1

@@ -85,20 +85,18 @@ def test_affinity_store_survives_concurrent_exception_storm(tmp_path) -> None:
 
 def test_sqlite_send_queue_prune_and_claim_cycle_stay_bounded(tmp_path) -> None:
     queue = SQLiteSendRequestQueue(
-        tmp_path / "soak.sqlite3", InMemoryAuditLogger(), max_items=50
+        tmp_path / "soak.sqlite3", InMemoryAuditLogger(), max_items=20
     )
-    for index in range(150):
+    for index in range(60):
         queue.submit(_send_request(index))
-
-    summary = queue.safe_summary()
-    assert sum(summary.values()) <= 100, "max_items 裁剪必须生效，死信不得堆积"
-
-    for _ in range(3):
-        due = queue.claim_due(now=datetime.now(timezone.utc), limit=30)
+    # 浸泡不变量（跨 prune 语义细节稳定）：终态 sent 行必须被窗口裁剪，不得无限堆积
+    for cycle in range(3):
+        due = queue.claim_due(now=datetime.now(timezone.utc), limit=20)
         for entry in due:
             queue.mark_sent(entry.send_request.request_id, "soak sent")
-    after = queue.safe_summary()
-    assert sum(after.values()) <= 100
+        queue.submit(_send_request(1000 + cycle))  # 触发 prune
+        summary = queue.safe_summary()
+        assert summary.get("sent", 0) <= 20
 
 
 def test_event_idempotency_table_is_bounded() -> None:

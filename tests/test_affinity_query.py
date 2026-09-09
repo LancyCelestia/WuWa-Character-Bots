@@ -43,7 +43,7 @@ def test_observe_mirrors_group_rows_in_sync(tmp_path) -> None:
 
 def test_leaderboard_orders_desc_and_respects_limit(tmp_path) -> None:
     store = _store(tmp_path)
-    store.observe("high", "neutral", delta_override=0.3, group_id="g1", display_name="高分")
+    store.observe("high", "neutral", delta_override=0.65, group_id="g1", display_name="高分")
     store.observe("low", "insult", group_id="g1", display_name="低分")
     store.observe("low", "insult", group_id="g1", display_name="低分")
     store.observe("low", "insult", group_id="g1", display_name="低分")
@@ -59,7 +59,7 @@ def test_leaderboard_orders_desc_and_respects_limit(tmp_path) -> None:
 
 def test_sentiment_ratio_defaults_and_weights(tmp_path) -> None:
     store = _store(tmp_path)
-    assert abs(store.sentiment_for("nobody") - 0.5) < 1e-9  # 零信号默认 0.5
+    assert abs(store.sentiment_for("nobody") - 0.1) < 1e-9  # 零信号默认与初始好感一致（10 分）
     for _ in range(3):
         store.observe("u1", "positive")
     assert abs(store.sentiment_for("u1") - 1.0) < 1e-9
@@ -108,6 +108,7 @@ def test_private_result_shows_both_directions(tmp_path) -> None:
     from plugins.bot_unified_runtime.capabilities.affinity import (
         build_affinity_capability,
     )
+    from plugins.bot_unified_runtime.character.affinity import per_user_factor
 
     store = _store(tmp_path)
     store.observe("u1", "positive")
@@ -117,7 +118,8 @@ def test_private_result_shows_both_directions(tmp_path) -> None:
     # 双方向：机器人对用户 + 用户对机器人，且都有具体数值
     assert "守岸人对你" in result.body
     assert "你对守岸人" in result.body
-    assert "52.0" in result.body
+    bot_score = round((0.1 + 0.02 * per_user_factor("u1")) * 100, 1)
+    assert f"{bot_score:.1f}" in result.body
     assert "100.0" in result.body
     assert "算法" in result.body
 
@@ -138,16 +140,29 @@ def test_group_result_lists_impressed_members_and_highlights_me(tmp_path) -> Non
     assert result.privacy_level is not None
 
 
-def test_algorithm_query_returns_three_tier_explanation(tmp_path) -> None:
+def test_algorithm_query_returns_dynamic_personal_rules(tmp_path) -> None:
+    from types import SimpleNamespace
+
     from plugins.bot_unified_runtime.capabilities.affinity import (
         build_affinity_capability,
     )
+    from plugins.bot_unified_runtime.character.affinity import per_user_factor
 
-    capability = build_affinity_capability(affinity_store=_store(tmp_path))
+    store = _store(tmp_path)
+    backend = SimpleNamespace(available=True, render_card=lambda payload: b"png-bytes")
+    capability = build_affinity_capability(
+        affinity_store=store, render_backend=backend, card_dir=str(tmp_path)
+    )
     result = capability(_message("好感度 算法"), _decision())
-    assert "加分" in result.body
-    assert "波动" in result.body
-    assert "扣分" in result.body
+    assert result.kind == "mixed"
+    assert result.images and result.images[0]["file"]
+    assert "加分" in result.body and "波动" in result.body and "扣分" in result.body
+    assert "因人而异" in result.body
+    # 个人精确步长：按当前分（初始 10）与个人系数给出
+    m = per_user_factor("u1")
+    assert f"+{2 * m:.2f}" in result.body
+    # 渲染落盘为内容摘要文件名
+    assert "affinity_" in result.images[0]["file"]
 
 
 def _decision():
@@ -198,6 +213,9 @@ def test_help_entry_exists_public_and_unique() -> None:
     assert "好感度" in _PUBLIC_HELP_TOPICS
     assert "算法" in entry["detail"]
     assert any("好感度 我" in line for line in entry["lines"])
+    # 既有可见性缺陷修复：admin_only=False 的条目必须对普通用户可见
+    assert "吃什么" in _PUBLIC_HELP_TOPICS
+    assert "偷表情" in _PUBLIC_HELP_TOPICS
 
 
 def test_template_renders_scores_and_highlights() -> None:

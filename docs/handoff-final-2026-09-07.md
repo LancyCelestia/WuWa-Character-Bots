@@ -150,6 +150,7 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 | 09-10 | C组交付 | 好感度数值化（affinity-design.md 成文+每日上限/惰性回归/档位 id/画像清空 bug 修复）；capabilities 全面审查报告 36 项（docs/capability-audit-2026-09-10.md）；浸泡快速回归+长跑（RSS/线程/队列全有界）；帮助文本 13 模块补全取值与示例 |
 | 09-10 | 好感度查询卡 | bot.affinity 能力（好感度/好感查看/查询好感）：私聊双向好感卡+群好感榜（group_affinity 镜像表）；affinity_card.html 独立 Mica 模板+bridge 渲染；帮助页公开条目；test_affinity_query 10 项回归（含 base_router 路由）；双卡样例截图核对；__init__ 接线随并行会话落地（见 §9.9 C组⚠️）。⚠️ base_router 路由接线因 amend 落点失误混入并行会话的「候选卡渲染稳健化」提交（df27c56，原 a1bf17d），内容正确、标签错位，特此存证 |
 | 09-10 | A组解析专项 | 封面原图（推特 name=large 全量图组/小红书剥 ！后缀+WB_DFT/油管 onerror 回退）；发布时区根治（`_format_epoch` 带时区 ISO+微博 %z 保 +0800，治 naive 误标 UTC 漂 8 小时，推特/小红书连带）；微博 avatar_hd+视频帖封面+标题净化+genvisitor 访客兑子；B站专栏作者五项补齐（upstat archive.view）+直播头像/粉丝+会员购全字段重写（场次/票档/票种/7天退票/嘉宾/主办/场馆/图文详情列表适配）；竖切横图拼接 `image_stitch.py`；render_backends ORB 兑子（sinaimg 灰图根因）+bridge 本地图 data URL 内联；「阅读」入 view_count |
+| 09-10 | 好感度 v3 数值改版 | 用户裁定：初始好感 10（内部 0.1，旧库不迁移由惰性回归自然收敛）；步长幂律非线性（距极值 <10 分按 (d/0.1)^γ 缩小，10~90 全额）；因人而异（sha1 派生 ±15% 个人系数，`per_user_factor` 导出）；`好感度 算法` 升级为图文说明卡（mode=algorithm：个人精确步长+档位→回应方式对照表）；providers 动态融合补 familiarity 档位映射（warmth/directness 数值语气跟随动态档位）；修复 吃什么/偷表情 admin_only=False 却不在 _PUBLIC_HELP_TOPICS 的可见性缺陷；design 文档 v3+分档态度对照表 §9.1b |
 
 ## 9. 遗留事项与边界
 

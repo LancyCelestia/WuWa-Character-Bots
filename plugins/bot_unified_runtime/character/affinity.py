@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import calendar
+import hashlib
 import json
 import re
 import sqlite3
@@ -37,15 +38,48 @@ _IMPRESSION_RULES: tuple[tuple[str, int, str], ...] = (
 )
 _TEASE_RE = re.compile(r"(哈哈|笑死|逗你|骗你的|捉弄|整蛊)", re.IGNORECASE)
 
-# ---- 数值化常量（规范见 docs/affinity-design.md §2/§3）----
-_AFFINITY_BASE = 0.5
+# ---- 数值化常量（规范见 docs/affinity-design.md §2/§3，v3）----
+_AFFINITY_BASE = 0.1            # 初始好感 10（展示 0-100 = ×100）
+AFFINITY_BASE = _AFFINITY_BASE  # 公开只读别名（providers 等模块判断“非默认记录”用）
 _DAY_SECONDS = 86400
 _BEHAVIOR_DELTA = {"positive": 0.02, "neutral": 0.0, "tease": -0.01, "negative": -0.05, "insult": -0.10}
 # 每日有效次数上限（UTC 自然日）：同行为超出后 delta 记 0，计数器与标签照常累计。
 _DAILY_EFFECTIVE_CAPS: dict[str, int] = {"positive": 10, "tease": 5, "negative": 8, "insult": 8}
+# 幂律步长衰减（log-log 线性）：距极值 <0.1（即 <10 分）时步长按 (d/0.1)^γ 缩小。
+_DAMPING_RANGE = 0.1
+_DAMPING_EXPONENT = 1.0
 # 惰性回归：写路径检查闲置天数，≥7 天起每天向基数回归 0.01，不超过剩余距离；读路径无副作用。
 _IDLE_REGRESSION_START_DAYS = 7
 _IDLE_REGRESSION_PER_DAY = 0.01
+
+
+def per_user_factor(sender_id: str) -> float:
+    """因人而异的确定性步长系数（±15%）：同一 sender 恒定，跨重启不变。"""
+    if not sender_id:
+        return 1.0
+    digest = hashlib.sha1(str(sender_id).encode("utf-8")).hexdigest()
+    return 0.85 + 0.3 * (int(digest[:8], 16) % 1000) / 999
+
+
+def _damping(affinity: float) -> float:
+    """靠近极值步长幂律衰减：x∈[0.1,0.9] 全额；d=min(x,1-x)<0.1 时按 (d/0.1)^γ 缩小。"""
+    d = min(affinity, 1.0 - affinity)
+    if d >= _DAMPING_RANGE:
+        return 1.0
+    return (d / _DAMPING_RANGE) ** _DAMPING_EXPONENT
+
+
+def effective_delta(
+    sender_id: str,
+    behavior: str,
+    affinity: float,
+    *,
+    delta_override: float | None = None,
+) -> float:
+    """一次行为在当前状态下的精确增减（含衰减与个人系数；override 为权威信号不衰减）。"""
+    if delta_override is not None:
+        return float(delta_override)
+    return _BEHAVIOR_DELTA.get(behavior, 0.0) * _damping(affinity) * per_user_factor(sender_id)
 
 _ATTITUDE_TIERS: tuple[tuple[float, str], ...] = (
     (0.75, "亲近：更直接的关心与陪伴，可以用你给对方起的小名称呼"),
@@ -143,7 +177,7 @@ class DynamicAffinityStore:
                 """
                 CREATE TABLE IF NOT EXISTS user_affinity (
                     sender_id TEXT PRIMARY KEY,
-                    affinity REAL NOT NULL DEFAULT 0.5,
+                    affinity REAL NOT NULL DEFAULT 0.1,
                     interaction_count INTEGER NOT NULL DEFAULT 0,
                     positive_count INTEGER NOT NULL DEFAULT 0,
                     negative_count INTEGER NOT NULL DEFAULT 0,
@@ -178,7 +212,7 @@ class DynamicAffinityStore:
                     group_id TEXT NOT NULL,
                     sender_id TEXT NOT NULL,
                     display_name TEXT NOT NULL DEFAULT '',
-                    affinity REAL NOT NULL DEFAULT 0.5,
+                    affinity REAL NOT NULL DEFAULT 0.1,
                     interaction_count INTEGER NOT NULL DEFAULT 0,
                     positive_count INTEGER NOT NULL DEFAULT 0,
                     negative_count INTEGER NOT NULL DEFAULT 0,
@@ -246,7 +280,7 @@ class DynamicAffinityStore:
                 day_counters = (
                     json.loads(str(row["day_counters"] or "{}")) if row_day == day_index else {}
                 )
-            # 惰性回归：闲置 ≥7 天起每天向基数 0.5 回归 0.01，不超过剩余距离。
+            # 惰性回归：闲置 ≥7 天起每天向基数 0.1（10 分）回归 0.01，不超过剩余距离。
             if row is not None:
                 prev = _parse_utc(str(row["updated_at"]))
                 if prev is not None:
@@ -256,12 +290,16 @@ class DynamicAffinityStore:
                         shift = min(idle_days * _IDLE_REGRESSION_PER_DAY, abs(gap))
                         affinity += shift if gap > 0 else -shift
             # delta：每日上限内全额、超限记 0；override 视为权威信号直用且不占每日额度。
+            # 实际步长 = 因子表 × 幂律衰减 g(当前分) × 个人系数 m(uid)（docs §3 v3）。
             if delta_override is not None:
                 delta = float(delta_override)
             else:
                 cap = _DAILY_EFFECTIVE_CAPS.get(behavior)
                 used = int(day_counters.get(behavior, 0))
-                delta = 0.0 if (cap is not None and used >= cap) else _BEHAVIOR_DELTA.get(behavior, 0.0)
+                if cap is not None and used >= cap:
+                    delta = 0.0
+                else:
+                    delta = effective_delta(sender_id, behavior, affinity)
                 day_counters[behavior] = used + 1
             affinity = max(0.0, min(1.0, affinity + delta))
             if behavior in counters:
@@ -351,13 +389,13 @@ class DynamicAffinityStore:
         ]
 
     def sentiment_for(self, sender_id: str) -> float:
-        """用户对机器人的表达倾向（加权正向占比 0-1；零信号默认 0.5）。
+        """用户对机器人的表达倾向（加权正向占比 0-1；零信号默认 0.1，与初始好感一致）。
 
         positive / (positive + negative + 2×insult)——从说出口的话估算的
         表达比例，不是对内心的测量（docs/affinity-design.md §9.1）。
         """
         if not sender_id:
-            return 0.5
+            return 0.1
         with self._lock, self._connect() as connection:
             row = connection.execute(
                 "SELECT positive_count, negative_count, insult_count FROM user_affinity"
@@ -365,13 +403,13 @@ class DynamicAffinityStore:
                 (sender_id,),
             ).fetchone()
         if row is None:
-            return 0.5
+            return 0.1
         positive = max(0, int(row["positive_count"]))
         negative = max(0, int(row["negative_count"]))
         insult = max(0, int(row["insult_count"]))
         denom = positive + negative + 2 * insult
         if denom <= 0:
-            return 0.5
+            return 0.1
         return positive / denom
 
     def snapshot(self, sender_id: str) -> dict[str, Any]:
@@ -428,7 +466,7 @@ class DynamicAffinityStore:
                     merged.append(fact)
             merged = merged[-12:]
             connection.execute(
-                "INSERT OR IGNORE INTO user_affinity (sender_id, affinity, updated_at) VALUES (?, 0.5, ?)",
+                "INSERT OR IGNORE INTO user_affinity (sender_id, affinity, updated_at) VALUES (?, 0.1, ?)",
                 (sender_id, now_text),
             )
             connection.execute(
@@ -441,7 +479,7 @@ class DynamicAffinityStore:
         """管理员/本人设置用户小名；写入后 prompt 可用小名称呼。"""
         with self._lock, self._connect() as connection:
             connection.execute(
-                "INSERT OR IGNORE INTO user_affinity (sender_id, affinity, updated_at) VALUES (?, 0.5, ?)",
+                "INSERT OR IGNORE INTO user_affinity (sender_id, affinity, updated_at) VALUES (?, 0.1, ?)",
                 (sender_id, _format_utc(float(self._clock()))),
             )
             connection.execute(
