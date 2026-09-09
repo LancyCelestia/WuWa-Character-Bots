@@ -29,6 +29,7 @@ from plugins.bot_unified_runtime.contracts.media import (
     ParsedContent,
     build_parsed_content,
 )
+from plugins.bot_unified_runtime.sources.parsers import wbi as _wbi
 from plugins.bot_unified_runtime.sources.parsers.http_util import (
     ParseHttpError,
     http_get_json,
@@ -40,7 +41,6 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
     _truncate_keep_links,
 )
 from plugins.bot_unified_runtime.sources.parsers.wbi import (
-    extract_mixin_key,
     sign_wbi,
 )
 
@@ -82,26 +82,25 @@ def build_wbi_signed_url(
     cookie_header: str = "",
     proxy: str = "",
 ) -> str:
-    """构建 WBI 签名 URL。
+    """构建 WBI 签名 URL（薄壳）。
 
-    算法与 ``wbi.build_wbi_signed_url`` 一致，但刻意复用本模块的
-    ``http_get_json`` 名称：平台模块按既有惯例被 monkeypatch，这样
-    签名键请求也能被测试/运行时注入，避免产生真实网络请求。
+    mixin key 获取委托 ``wbi._cached_mixin_key``（30 分钟缓存 + single-flight），
+    避免每个视频解析都重复打 nav 接口；nav 请求仍经本模块 ``http_get_json``
+    名称发出，保留平台模块按既有惯例被 monkeypatch 的测试注入缝。
     """
     if params.get("w_rid"):
         return f"{url}?{urllib.parse.urlencode(params)}"
-    nav = http_get_json(
-        _WBI_NAV_API,
-        referer="https://www.bilibili.com/",
-        cookie=cookie_header,
-        proxy=proxy,
-    )
-    wbi_img = ((nav or {}).get("data") or {}).get("wbi_img") or {}
-    img_url = str(wbi_img.get("img_url") or "")
-    sub_url = str(wbi_img.get("sub_url") or "")
-    if not img_url or not sub_url:
-        raise ParseHttpError("bilibili nav missing wbi_img keys")
-    signed = sign_wbi(dict(params), extract_mixin_key(img_url, sub_url))
+
+    def _fetch_nav() -> dict:
+        return http_get_json(
+            _WBI_NAV_API,
+            referer="https://www.bilibili.com/",
+            cookie=cookie_header,
+            proxy=proxy,
+        )
+
+    mixin_key = _wbi._cached_mixin_key(cookie_header, proxy, fetch=_fetch_nav)
+    signed = sign_wbi(dict(params), mixin_key)
     return f"{url}?{urllib.parse.urlencode(signed)}"
 
 
@@ -266,7 +265,8 @@ def _bilibili_subtitle(
                 piece = str(item.get("content") or "").strip()
                 if piece and (not pieces or pieces[-1] != piece):
                     pieces.append(piece)
-            text = "".join(pieces)
+            # 行间以空格连接再压空白：直接 join 会让英文单词跨行粘连。
+            text = re.sub(r"\s+", " ", " ".join(pieces)).strip()
             if text.strip():
                 body = text.strip()
                 break
@@ -360,9 +360,9 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
             stats[label] = value
     duration = _safe_int(data.get("duration"))
     if duration is not None:
-        # Human-readable duration is retained for the duration pill/summary.
-        # Internal transport keys stay out of public stats.
-        stats["时长"] = f"{duration // 60}分{duration % 60}秒"
+        # 秒数整型入 stats：duration pill 的 _as_int 遇 "X分Y秒" 字符串会退化
+        # 成 0:00；人类可读口径只在摘要行拼装。
+        stats["时长"] = duration
     pubdate = _safe_int(data.get("pubdate"))
     aid = _safe_int(data.get("aid"))
     pages_note = f"；分P {len(pages)}" if len(pages) > 1 else ""
@@ -370,7 +370,10 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
     summary_lines: list[str] = []
     if data.get("tname"):
         summary_lines.append(f"分区：{data.get('tname')}")
-    summary_lines.append(f"时长：{stats.get('时长', '-')}{pages_note}")
+    duration_text = (
+        f"{duration // 60}分{duration % 60}秒" if duration is not None else "-"
+    )
+    summary_lines.append(f"时长：{duration_text}{pages_note}")
     if data.get("pubdate"):
         import datetime
 

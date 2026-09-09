@@ -106,9 +106,16 @@ def _og_scrape(
 
 
 def _xhs_note_deep_parse(
-    url: str, cookie_header: str = ""
+    url: str,
+    cookie_header: str = "",
+    playwright_backend=None,
 ) -> ParsedContent | None:
-    """带登录态抓取笔记页并复用 INITIAL_STATE 归一化。"""
+    """带登录态抓取笔记页并复用 INITIAL_STATE 归一化。
+
+    xhs 对脚本直连 GET 笔记页会间歇 403/461（即便带有效 cookie）——直连失败
+    时改用 playwright 真浏览器抓取（注册表对 xiaohongshu 绑定了后端）。
+    """
+    html = ""
     try:
         _, html = http_get_text(
             url,
@@ -117,6 +124,16 @@ def _xhs_note_deep_parse(
             cookie=cookie_header,
         )
     except ParseHttpError:
+        html = ""
+    if "INITIAL_STATE" not in html and playwright_backend is not None:
+        try:
+            _, html = playwright_backend.fetch_html(
+                url,
+                cookies=_xhs_cookie_pairs(cookie_header),
+            )
+        except Exception:  # noqa: BLE001 - 真浏览器通道也失败才放弃深解析。
+            html = ""
+    if not html:
         return None
     return _xhs_from_initial_state(html, url)
 
@@ -144,16 +161,21 @@ def parse_xiaohongshu(
     if "/search_result/" in final_url:
         return _xhs_search_result_card(final_url, cookie_header=cookie_header)
     if cookie_header:
-        item = _xhs_note_deep_parse(final_url, cookie_header)
+        item = _xhs_note_deep_parse(final_url, cookie_header, playwright_backend)
         if item is not None:
             return item
         # xsec_token 有时效：token 失效会整页 404。剥掉签名参数用登录态
         # 再试一次（部分场景 web_session 足以直接访问）。
         if "xsec_token=" in final_url:
-            stripped = urllib.parse.urlunsplit(
-                parsed._replace(query=re.sub(r"[?&]xsec_token=[^&]*", "", parsed.query).lstrip("&"))
-            )
-            item = _xhs_note_deep_parse(stripped, cookie_header)
+            # 基于路径归一化后的最终 URL 重新 urlsplit（parsed 可能已过期）；
+            # (^|&) 捕获分隔符：首参数形态（无前导 ?/&）也能剥掉且不破坏其余参数。
+            fresh = urllib.parse.urlsplit(final_url)
+            # &? 一并吃掉 token 后随分隔符，避免中间参数形态剥出空 &&。
+            stripped_query = re.sub(
+                r"(^|&)xsec_token=[^&]*&?", r"\1", fresh.query
+            ).strip("&")
+            stripped = urllib.parse.urlunsplit(fresh._replace(query=stripped_query))
+            item = _xhs_note_deep_parse(stripped, cookie_header, playwright_backend)
             if item is not None:
                 return item
     token_hint = ""
@@ -168,6 +190,40 @@ def parse_xiaohongshu(
     )
 
 
+def _strip_js_new_map(raw: str) -> str:
+    """把 ``new Map([...])``（可含嵌套数组/对象）平衡扫描后替换为 null。
+
+    简单的 ``[^\\]]*`` 正则遇嵌套数组会截断错位产生非法 JSON，导致整页
+    深解析静默退化；这里逐个定位括号配对，扫描不到闭合时保留原文。
+    """
+    marker = "new Map("
+    out: list[str] = []
+    index = 0
+    while True:
+        found = raw.find(marker, index)
+        if found < 0:
+            out.append(raw[index:])
+            return "".join(out)
+        out.append(raw[index:found])
+        depth = 0
+        end = -1
+        for pos in range(found + len(marker) - 1, len(raw)):
+            ch = raw[pos]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    end = pos
+                    break
+        if end < 0:
+            # 括号不平衡（截断页）：保留原文，交给上层解析失败降级浅卡。
+            out.append(raw[found:])
+            return "".join(out)
+        out.append("null")
+        index = end + 1
+
+
 def _xhs_initial_state_payload(html: str) -> dict | None:
     """提取并清洗 window.__INITIAL_STATE__（含 undefined / new Map 等 JS 语法）。"""
     marker = "window.__INITIAL_STATE__="
@@ -179,8 +235,11 @@ def _xhs_initial_state_payload(html: str) -> dict | None:
     if end < 0:
         return None
     raw = html[start:end].strip().rstrip(";")
-    raw = raw.replace("undefined", "null")
-    raw = re.sub(r"new Map\(\[[^\]]*\]\)", "null", raw)
+    # \b 词边界替换：只命中作为字面量/键值的 undefined，不再破坏含
+    # "undefined" 字样的英文正文。残留风险：正文若恰有独立单词 undefined
+    # 仍会被改写成 null（极低频且仅影响正文展示，可接受）。
+    raw = re.sub(r"\bundefined\b", "null", raw)
+    raw = _strip_js_new_map(raw)
     for candidate in (raw, urllib.parse.unquote(raw)):
         try:
             payload = json.loads(candidate)
@@ -268,18 +327,6 @@ def _parse_cn_count(value: object) -> int:
         return 0
 
 
-def _xhs_original_url(url: str) -> str:
-    """小红书 CDN 压缩图 → 原图。
-
-    ``!`` 后缀（``!nd_dft_hgtewebp...``）与 ``x-biz-process`` 查询串都是
-    服务端缩放/转 webp 指令，剥掉即返回原始位图；对无压缩直链保持原样。
-    """
-    base = str(url or "").split("!", 1)[0]
-    if "x-biz-process=" in base:
-        base = base.split("?", 1)[0]
-    return base
-
-
 def _xhs_from_initial_state(html: str, url: str) -> ParsedContent | None:
     payload = _xhs_initial_state_payload(html)
     if payload is None:
@@ -299,18 +346,17 @@ def _xhs_from_initial_state(html: str, url: str) -> ParsedContent | None:
     for image in note.get("imageList") or []:
         if not isinstance(image, dict):
             continue
-        # info_list 的 WB_DFT 档是端内原始质量；缺省退 urlDefault/url，
-        # 最后统一剥一次压缩后缀兜底。
+        # 质量档优先 info_list 的 WB_DFT（端内原始质量）。⚠️ 不要对 URL 做
+        # 剥 ！后缀/查询参数之类的"还原"：2026 版 xhscdn 签名路径对任何改动
+        # 都回 403（实测 200→403 对照），只原样使用接口给到的变体。
         raw_url = ""
         for scene in image.get("info_list") or []:
             if isinstance(scene, dict) and scene.get("image_scene") == "WB_DFT":
                 raw_url = str(scene.get("url") or "")
                 break
         raw_url = raw_url or str(image.get("urlDefault") or image.get("url") or "")
-        if raw_url:
-            original = _xhs_original_url(raw_url)
-            if original not in images:
-                images.append(original)
+        if raw_url and raw_url not in images:
+            images.append(raw_url)
     interact = note.get("interactInfo") or {}
     stats: dict[str, object] = {}
 
@@ -804,20 +850,38 @@ def _douyin_from_router_data(html: str, url: str) -> ParsedContent | None:
 
 _YOUTUBE_ID_RE = re.compile(r"(?:youtube\.com/(?:watch\?v=|shorts/)|youtu\.be/)([\w-]{6,})")
 
+# \uXXXX 代理对（emoji 等）与普通 BMP 转义。
+_UNICODE_SURROGATE_PAIR_RE = re.compile(
+    r"\\u([dD][89abAB][0-9a-fA-F]{2})\\u([dD][c-fC-F][0-9a-fA-F]{2})"
+)
+_UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
+
+
+def _unescape_js_unicode(text: str) -> str:
+    """仅对 ``\\uXXXX`` 转义序列做点转义，其余字符原样保留。
+
+    整段 ``encode().decode("unicode_escape")`` 会把字面中文按 UTF-8 字节
+    逐个碎成乱码（与 \\uXXXX 转义共存的页面常见），故弃用。
+    """
+    text = _UNICODE_SURROGATE_PAIR_RE.sub(
+        lambda m: chr(
+            0x10000
+            + ((int(m.group(1), 16) - 0xD800) << 10)
+            + (int(m.group(2), 16) - 0xDC00)
+        ),
+        text,
+    )
+    return _UNICODE_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 16)), text)
+
 
 def _yt_unescape(value: str) -> str:
     """YouTube 页面 JSON 文本：处理 \\n/\\u0026 与 \\uXXXX 转义。
 
-    页面里中文可能是字面 UTF-8，也可能是 \\uXXXX 转义；只在出现转义
-    序列时才做 unicode_escape 解码，避免破坏字面中文。
+    只对 \\uXXXX 序列逐个映射（含代理对），不做整段 unicode_escape 解码，
+    保证字面中文与转义序列共存时不乱码。
     """
     text = str(value or "").replace("\\n", " ").replace("\\u0026", "&")
-    if "\\u" in text:
-        try:
-            return text.encode("utf-8").decode("unicode_escape", errors="ignore")
-        except Exception:  # noqa: BLE001 - 解码失败保留原文。
-            return text
-    return text
+    return _unescape_js_unicode(text)
 
 
 def _truncate_keep_links(text: str, limit: int) -> str:
@@ -1125,6 +1189,11 @@ def _youtube_about_enrich(channel_url: str, *, proxy: str) -> dict[str, Any]:
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 
+# 油管富化链（watch 页 → innertube → about 页）整体预算：各步骤内部超时
+# 不动，只在步骤间检查；超预算即用已有数据出卡，不再串行白占线程
+# （最坏 2-3 步 × 15s × 2 次重试曾可拖到 1-2 分钟）。
+_YOUTUBE_ENRICH_BUDGET_SECONDS = 60.0
+
 _YT_SUBSCRIBER_RE = re.compile(
     r"([\d.,]+)\s*(万|千|K|M|百万|订阅者|subscribers?)", re.IGNORECASE
 )
@@ -1153,11 +1222,8 @@ def _youtube_channel_about(channel_url: str, *, proxy: str = "") -> dict:
     for key in ("subscriberCountText", "videoCountText", "joinedDateText", "viewCountText", "description"):
         match = re.search(rf'"{key}":{{"content":"([^"]{{0,200}})"', html_text)
         if match:
-            info[key] = (
-                match.group(1)
-                .replace("\n", " ")
-                .replace("\u0026", "&")
-                .encode().decode("unicode_escape", errors="ignore")
+            info[key] = _unescape_js_unicode(
+                match.group(1).replace("\n", " ").replace("\\u0026", "&")
             )
     return info
 
@@ -1189,7 +1255,13 @@ def parse_youtube(url: str, *, cookie_header: str = "", proxy: str = "") -> Pars
     video_id = shorts_match.group(1) if shorts_match else ""
     if "youtube.com/shorts/" in url and video_id:
         url = f"https://www.youtube.com/watch?v={video_id}"
-    if "/playlist" in url or "list=" in url and "watch" not in url:
+    # 歌单分支前置判断：youtu.be/<视频id>?list=xx 带着歌单参数仍是单视频，
+    # 只有不含有效视频 id 时才走歌单（/playlist 或纯 list= 链接）。
+    if (
+        ("/playlist" in url or "list=" in url)
+        and "watch" not in url
+        and not video_id
+    ):
         return _youtube_playlist(url, cookie_header=cookie_header, proxy=proxy)
     payload: dict | None = None
     for attempt in range(2):
@@ -1221,9 +1293,16 @@ def parse_youtube(url: str, *, cookie_header: str = "", proxy: str = "") -> Pars
         if handle:
             author_detail["handle"] = f"@{handle}"
     # 两跳深抓：watch 页互动数据 → 频道 about 页博主资料。全部尽力而为。
+    enrich_started = time.monotonic()
+
+    def _enrich_budget_left() -> bool:
+        return time.monotonic() - enrich_started < _YOUTUBE_ENRICH_BUDGET_SECONDS
+
     stats: dict[str, int] = {}
-    watch_info = _youtube_watch_enrich(url, proxy=proxy)
-    if video_id:
+    watch_info: dict[str, Any] = {}
+    if _enrich_budget_left():
+        watch_info = _youtube_watch_enrich(url, proxy=proxy)
+    if video_id and _enrich_budget_left():
         # Innertube 结构化端点补齐点赞/评论/头像/频道 ID（watch 页匿名
         # 精简后常缺这些）；非空值覆盖 watch 页正则结果。
         try:
@@ -1251,7 +1330,11 @@ def parse_youtube(url: str, *, cookie_header: str = "", proxy: str = "") -> Pars
         if channel_id:
             author_detail["uuid"] = channel_id
     video_desc = str(watch_info.get("_video_desc") or "").strip()
-    about_info = _youtube_about_enrich(watch_info.get("_channel_url", ""), proxy=proxy)
+    about_info = (
+        _youtube_about_enrich(watch_info.get("_channel_url", ""), proxy=proxy)
+        if _enrich_budget_left()
+        else {}
+    )
     if about_info.get("_description") and not author_detail.get("signature"):
         author_detail["signature"] = about_info["_description"]
     if about_info.get("_joined"):
