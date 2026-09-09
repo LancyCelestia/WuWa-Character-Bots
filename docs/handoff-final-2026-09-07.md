@@ -81,6 +81,7 @@ Tavily 主、You.com 备、LangSearch 备、TinyFish 搜索+正文抓取；不�
 **45 个注册条目**（`.env BOT_MODEL_REGISTRY`），8 家供应商：浅夜/恒星纪元/ToolCode/umi（含 Claude 四渠道、GLM/Kimi/MiniMax 新组）/DeepSeek 官方/智谱/StarAPI/hcn 兜底。**默认模型永远为 Gemini（用户裁定，人格扮演效果最好）**：qian-night-gemini p1 / qian-night-c-gemini p2 置顶，两组时段 order 同样 Gemini 簇置顶；aiprc-gemini 因渠道暂时缺该模型打 `manual` 标签移出自动轮换（恢复后去标签即回队）。
 - 选择：手动指定 > 时段组 order > 基础 priority（1..N 唯一槽位）> 故障转移同序；**`/bot model set <实际模型名>`（如 gemini-3.8-flash-high）自动聚合该模型全部渠道**（条目带 `price_in/price_out`）：健康库有实测数据时按「已实测延迟升序 → 未实测垫底（保价格/优先级序）」，否则价格升序；开关 `BOT_CHANNEL_HEALTH_LATENCY_FIRST` 默认开。auto-route 全局队列始终按策展 priority，不被延迟重排。
 - **渠道健康巡检**（`llm/channel_health.py`）：每小时全渠道最小调用探测（后台默认 3 线程+0.4s 错峰；手动 `/bot model probe` 默认 8 并发；`bot_channel_probe_threads/manual_threads/jitter_seconds` 可调，钳位 1..16 / 0..5s）；连续 2 次失败标「⛔暂时不可用」移出故障转移队列，30 分钟重探恢复即回队，**永不自动删除**；全部不可用时放行原队列防全瘫。`/bot model health` 出运维报告（含【需要你处理的】行动清单）、`/bot model routes <模型名>` 列单模型全渠道（未实测渠道 ⏳ 标注）。
+- **延迟择优 v2（09-10）**：`channel_health` 表增 `ema_ms/samples`（EWMA α=0.3，真实调用与探针统一记账=动态测量）；同名模型聚合按 ema 升序动态切换（未实测垫底）；自适应超时 `max(8s, ema*3)` 收紧挂死渠道；**影子并发（无损无感切换）**：`bot_chat_hedged_requests_enabled`（默认开）+ `bot_chat_hedge_delay_seconds=6`——首选渠道 6s 未回即向次优发起影子请求，先到先得，落选请求也记账（注意：落选仍计费 token，可关）。慢渠道阈值 `bot_channel_slow_ema_ms=15000` 只降序不摘除。路由器级 hedge 参数默认关、Config 默认开（既有用例兼容）。
 - 失败话术：私聊 LLM 失败回 12 条守岸人人格话术（`_PERSONA_FAILURE_MESSAGES` v4：无虚假承诺、句式打散，会话内轮换）；群聊静默。
 - 指令族 `/bot model list|set|add|update|priority|think|effort|price|remove|reset|usage|health|probe|routes`；密钥 `env:` 引用，**对应 `bot_api_key_*` Config 字段必须存在**（env: 解析链=os.environ→Config 字段回退，缺字段=config_missing 全渠道失败——09-09 事故根因）。
 - 请求总预算 150s（`bot_request_budget_seconds`）；**预算耗尽不再丢弃已生成回复**（发送给足传输超时）。记忆抽取复用主路由。
@@ -147,6 +148,7 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 | 09-09 | 模型路由渠道化 | registry 45 条目（StarAPI/umi 扩容/Claude 四渠道/key 轮换）；渠道健康巡检+价格选渠道；探针 key 解析 bug 修复（no_api_key 误判）；health 行动清单 |
 | 09-09 | 实卡反馈二轮 | 文本作者数据行归位（YT/B站/推特博主级数据+注册日期，订阅同值去重）、小红书字符串计数、卡图 alpha 裁剪（修小卡+透明边）、Help 视口 1040 防切断、「免费游戏」触发词 |
 | 09-10 | B组交付 | 渠道延迟择优(channels_for_model 实测快者优先,双开关)+巡检参数化(probe_threads/manual/jitter,Config+.env)+qian-night 重排(.env 原生 gemini 提前,p1/p2)+候选 Mica 卡(song_candidates.html+回退零回归)+话术 v4+油管@handle 解析修复+routes/health 展示；umi 重探=需充值；YT 订阅链路实测通过 |
+| 09-10 | B组二轮(用户加单) | 撤销浅夜降级(套壳说法不成立)+默认永远Gemini(两组order置顶)+aiprc-gemini暂时manual移出；延迟择优v2(EWMA/慢渠道检测/ema动态排序/自适应超时/影子并发无损切换,803 passed)；审计B组17项全修(subscribe权限/注册表烘焙防遮蔽+key零明文/probe重入/usage时区分页/outbox清理/music边界,19回归)；酷狗搜索URL裸中文编码bug修复(实测验证)；全平台实测20链路PASS；管线检视13条(vision双门槛统一+聊天专用有界池修复,余11条在途热区转交接)；混交历史plumbing重链(拆出视频内联/C组接线独立提交,force-with-lease) |
 | 09-10 | C组交付 | 好感度数值化（affinity-design.md 成文+每日上限/惰性回归/档位 id/画像清空 bug 修复）；capabilities 全面审查报告 36 项（docs/capability-audit-2026-09-10.md）；浸泡快速回归+长跑（RSS/线程/队列全有界）；帮助文本 13 模块补全取值与示例 |
 | 09-10 | 好感度查询卡 | bot.affinity 能力（好感度/好感查看/查询好感）：私聊双向好感卡+群好感榜（group_affinity 镜像表）；affinity_card.html 独立 Mica 模板+bridge 渲染；帮助页公开条目；test_affinity_query 10 项回归（含 base_router 路由）；双卡样例截图核对；__init__ 接线随并行会话落地（见 §9.9 C组⚠️）。⚠️ base_router 路由接线因 amend 落点失误混入并行会话的「候选卡渲染稳健化」提交（df27c56，原 a1bf17d），内容正确、标签错位，特此存证 |
 | 09-10 | A组解析专项 | 封面原图（推特 name=large 全量图组/小红书剥 ！后缀+WB_DFT/油管 onerror 回退）；发布时区根治（`_format_epoch` 带时区 ISO+微博 %z 保 +0800，治 naive 误标 UTC 漂 8 小时，推特/小红书连带）；微博 avatar_hd+视频帖封面+标题净化+genvisitor 访客兑子；B站专栏作者五项补齐（upstat archive.view）+直播头像/粉丝+会员购全字段重写（场次/票档/票种/7天退票/嘉宾/主办/场馆/图文详情列表适配）；竖切横图拼接 `image_stitch.py`；render_backends ORB 兑子（sinaimg 灰图根因）+bridge 本地图 data URL 内联；「阅读」入 view_count |
@@ -155,6 +157,7 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 | 09-10 | 嘉宾卡区+点歌实测修复批 | 会员购嘉宾独立卡区（show_guests 投影+网格区块，真实漫展 96799/88451 实卡核对）；**点歌候选卡不可达根治**（旧 exact_hits 一票否决——模糊搜索几乎总能搜出字面同名翻唱，实测「后来 钢琴版」直接放同名翻唱→改裸歌名精确命中才跳过）；编号无会话明确提示（原先拿数字当歌名搜）；候选会话按 session+sender 隔离；**QQ音乐搜索迁移 musicu.fcg**（旧 client_search_cp 服务端下线恒 500，实测）+封面 album.mid 拼 gtimg；网易云 pic_str 裂图/酷狗 {size} 占位符；渲染失败加 warning 日志；模板修 VIP 徽章写死 #fb7299→派生、Mica 简介双重转义、微博头像 http 升 https、og:image // 协议相对补全；微博登录 cookie 已灌入 Runtime（provider 链路验证）；独立审计报告 P0×1/P1×9/P2×15，实数据矩阵（B站热门视频/油管/推特时区/活跃漫展/点歌 e2e）全核对 |
 | 09-10 | 直播风控规避+死模板清理 | **B站直播主通道切换**：getInfoByRoom 对无登录态常态 -352（buvid3/4+浏览器 UA 实测无效）→Room/get_info 为主通道（匿名稳，失败 1s 重试）+get_status_info_by_uids 补主播昵称/头像/粉丝（匿名可用）+getInfoByRoom 降为尽力富集（人气/在线/大航海），实测 6 号房真实数据全字段出卡；专栏 -509/-352 瞬态风控短停重试一次；**死模板清理**：删除 universal_card 从未激活的 Compact 音乐版式七块+CSS（含 #2a2a3e/#ff4757 写死色违规源）+models 18 个死字段+bridge 死转义行，legacy 成功卡实渲零破坏；树内 B/C 组在途 lint 机械修复顺手 auto-fix；期间 chat.py 曾被并行会话编辑至语法半成品（已由其自愈） |
 | 09-10 | naive 时间契约根治+点歌二轮加固 | contracts/_optional_datetime naive 一律按北京时间解释(_CN_TZ，误标 UTC 是专栏等 14 处 naive 产出门面漂 8 小时的契约层根因，真实专栏实测 11:02+08)；点歌 limit 透传全平台(QQ/酷狗/酷我补 kwarg+music.py 下传，BOT_MUSIC_CANDIDATES_LIMIT 调大不再被硬编码 5 截断)；酷狗编号选歌详情富化(复用 parse_kugou 拿封面/标题，原先无图无声)；build_render_backend 未知名字/不可用打 warning(静默降 Null 收尾)；酷我 r.s 搜索服务端劣化返回非 JSON 登记为已知边界 |
+| 09-10 | xhs playwright 兜底+撤剥!回归+时长秒数化 | 笔记页深解析接入 playwright 兜底（parse_xiaohongshu 一直收了 backend 却只用于用户主页；笔记页裸 http_get 被间歇 403/461 后直接落 og 空卡），真实笔记实测全链路出卡；**撤回剥！后缀回归**——实测对照 2026 版 xhscdn 签名路径内含 !nd_dft_* 后缀，剥掉 200→403（ed0fedb 的剥！行为对 2026 版笔记有害），高质量档改 info_list WB_DFT 优先，960×1280 原图实测；B站视频时长秒数入 stats（字符串使 duration pill 退化 0:00）。⚠️ f96d1a1 因共享 index 裹挟并行会话已暂存的 runtime policy 审计改动集（pipeline 瘦身+config 清理+test_pipeline_review_fixes→test_auditfix_runtime_policy 改名），内容连贯、树级 865 passed，特此存证 |
 
 ## 9. 遗留事项与边界
 
@@ -217,6 +220,17 @@ B组提交：5d34884（延迟择优+参数化+展示）、Config 补 probe 字�
    ⚠️ 接线注意：`__init__.py` 的 dispatch/OFFLOADED/observe 传 group 已在工作树完成，但因同文件混有并行会话未提交的视频理解接线（引用未跟踪的 transcribe.py/media_registry.py），该文件**随并行会话提交落地**；已提交树上 `好感度` 会走 alias 兜底提示（不崩）。
 
 C 组验证快照：C 组文件域 ruff/mypy/pytest 全绿（新增 13 测试全过，mypy 202 文件全过）；树内同时刻 4 失败+9 lint 均位于并行会话进行中文件（test_video_reply_flow.py 等），不属本组域。
+
+### B组二轮（2026-09-10 用户加单，本会话完成）
+
+1. **路由裁定更正**：撤销浅夜 gemini 降级（「套壳」说法不成立），恢复 qian-night p1/p2；**默认模型永远为 Gemini**——两组时段 order Gemini 簇置顶；aiprc-gemini 暂时 `manual` 移出（实测其实 ok 3046ms，按指示执行；恢复=去标签）。
+2. **延迟择优 v2**：EWMA 动态测量 / 慢渠道动态检测 / ema 动态排序 / 自适应超时 / 影子并发无损切换（详见 §6.6）；24 项新回归，803 passed。
+3. **审计 B组 17 项全修**（commit 2c42282，19 项回归）：subscribe v1/v2 权限与目的地粒度、runtime_admin 烘焙防遮蔽+key 零明文落盘、probe 重入防护、usage 时区分页、outbox/seen 清理、music 数字边界、content_parser 守卫。music.py 5 项经核已由 A组 ed0fedb 覆盖。
+4. **全平台实测矩阵**：20 条链路 PASS（B站视频/专栏/字段、YT、推特 jack/status/20、小红书 cookie 发现式、Pixiv、Spotify、Steam、TG、萌百、四家音乐解析+候选、天气、steam-free）；**修复酷狗搜索 URL 裸中文编码 bug（95f2f63，实测验证）**。
+5. **管线检视 13 条**（Critical 0 / High 3）：已修 vision 双门槛统一 + 聊天专用有界线程池；其余 11 条（媒体预算协调、providers urllib 连接复用、MCP 负缓存、发送线程占用等）落在并行会话在途热区文件，见 `pipeline-review-report.md`（含 file:line 与修法）。
+6. **混交历史真修**：plumbing 重链把视频会话 `_inline_local_image` hunk（e1374b1）与 C组 base_router 接线（2309561）从候选卡提交中拆出，树零变化验证，force-with-lease 推送。
+
+**B组二轮凭据缺口（需用户）**：B站直播 -352 风控（需 B站 cookie）、linux.do 403（需登录 cookie）、知乎 403（需 cookie）、微博 403/432（现有 cookie 已失效，需重灌）；douyin/快手/酷安/LOFTER/ALLCPP/米画师/画加/BUFF/米游社/森空岛/库街区/小黑盒/5E/完美/大道/汽水/豆包/Facebook/会员购/B站游戏中心等无固定样例平台需真实分享链接后再实测。QQ 实际推送验证仍待用户指定目标。
 
 **跨组约定**：`universal_card.html` 归 A组；`__init__.py` 谁动谁先 `git pull`；C组测试文件独立命名不碰他组测试。
 **共享文件编辑登记（09-10 起）**：动 `__init__.py`/`bridge.py`/`echo.py` 等共享文件前在本行下追加「会话/组 → 文件」登记，提交后销记——09-10 教训：多会话并发改同一文件导致 lint 互破、amend 落点撞车、半成品互相裹挟。当前登记：无（本会话已全部提交）。
