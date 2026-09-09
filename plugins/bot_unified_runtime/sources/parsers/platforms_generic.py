@@ -144,11 +144,23 @@ def parse_xiaohongshu(
         item = _xhs_note_deep_parse(final_url, cookie_header)
         if item is not None:
             return item
+        # xsec_token 有时效：token 失效会整页 404。剥掉签名参数用登录态
+        # 再试一次（部分场景 web_session 足以直接访问）。
+        if "xsec_token=" in final_url:
+            stripped = urllib.parse.urlunsplit(
+                parsed._replace(query=re.sub(r"[?&]xsec_token=[^&]*", "", parsed.query).lstrip("&"))
+            )
+            item = _xhs_note_deep_parse(stripped, cookie_header)
+            if item is not None:
+                return item
+    token_hint = ""
+    if "xsec_token=" in final_url:
+        token_hint = "；链接里的 xsec_token 已失效——请从小红书 App 重新分享一次这条笔记，用新链接我就能看到图集和正文"
     return _og_scrape(
         final_url,
         platform="xiaohongshu",
         item_kind="note",
-        note="（浅层解析；小红书正文/图集需要登录 cookie）",
+        note=f"（浅层解析，没有拿到图集和正文{token_hint}）",
         cookie_header=cookie_header,
     )
 

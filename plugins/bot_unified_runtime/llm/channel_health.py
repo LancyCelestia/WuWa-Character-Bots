@@ -266,13 +266,20 @@ def probe_entry(spec: Any, *, proxy: str = "", timeout_seconds: float = 25.0) ->
     """
     import httpx
 
-    api_key = spec.api_key
-    if str(api_key).startswith("env:"):
+    api_key = str(spec.api_key)
+    if api_key.startswith("env:"):
         import os
 
-        api_key = os.environ.get(str(api_key)[4:], "")
+        env_name = api_key[4:].strip()
+        api_key = os.environ.get(env_name) or str(
+            getattr(spec, "_config_ref", None) and "" or ""
+        )
+        # 生产 os.environ 通常没有 .env 变量（NoneBot dotenv 不写入），
+        # 由 probe_all 预解析后经 spec._resolved_key 传入。
+        if not api_key:
+            api_key = str(getattr(spec, "_resolved_key", "") or "")
     if not api_key:
-        return False, 0, "no_api_key"
+        return False, 0, "no_api_key(需在系统环境变量或Config字段提供)"
     url = spec.base_url.rstrip("/") + "/chat/completions"
     payload = {
         "model": spec.model,
@@ -325,6 +332,17 @@ def probe_all(
         ok, latency, err = probe_entry(spec, proxy=proxy, timeout_seconds=timeout)
         return model_id, ok, latency, err
 
+    # env: 引用预解析（与 model_router._resolve_api_key 同语义：os.environ
+    # 优先，Config 字段回退），探针才能拿到真实 key。
+    try:
+        from plugins.bot_unified_runtime.llm.model_router import _resolve_api_key
+
+        for spec in specs.values():
+            resolved = _resolve_api_key(str(spec.api_key), config)
+            if resolved:
+                object.__setattr__(spec, "_resolved_key", resolved)
+    except Exception:  # noqa: BLE001 - 预解析失败退回 probe 内部解析。
+        pass
     pending = list(specs.items())
     if mode == "manual":
         with ThreadPoolExecutor(max_workers=8) as pool:

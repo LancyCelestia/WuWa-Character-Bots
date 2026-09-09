@@ -267,6 +267,27 @@ def _format_channel_health_report(report: list[dict[str, Any]]) -> str:
         "说明：聊天按上述顺序自动故障转移，暂不可用渠道会被跳过；"
         "手动重测 /bot model probe，单渠道验证 /bot model routes <模型名>。"
     )
+    if bad_rows:
+        lines.append("")
+        lines.append("【需要你处理的】")
+        for row in bad_rows:
+            err = row["last_error"] or ""
+            if "no_api_key" in err:
+                lines.append(f"  → {row['model_id']}: key 没取到，检查 .env 的 BOT_API_KEY_*")
+            elif "401" in err or "Invalid token" in err:
+                lines.append(f'  → {row["model_id"]}: key 已失效，去供应商后台换新 key')
+            elif "额度不足" in err:
+                lines.append(f'  → {row["model_id"]}: 余额用完，去充值')
+            elif "no access" in err:
+                lines.append(f'  → {row["model_id"]}: 该 key 无此模型权限，需开通或换模型')
+            elif "404" in err and "not supported" in err:
+                lines.append(f'  → {row["model_id"]}: 渠道已下架该模型，确认后可 /bot model remove')
+            elif "429" in err or "rate limit" in err.lower():
+                lines.append(f'  → {row["model_id"]}: 临时限流，等自动重探即可')
+            elif "503" in err or "No available channel" in err:
+                lines.append(f'  → {row["model_id"]}: 渠道上游没货，联系供应商或等待')
+            elif "Timeout" in err:
+                lines.append(f'  → {row["model_id"]}: 响应超时，渠道太慢可考虑移除')
     return '\n'.join(lines)
 
 
@@ -408,6 +429,16 @@ def _handle_model_command(
                     return "MiniMax"
                 return "其他"
 
+            _FAMILY_ORDER = {
+                "Gemini 系": 0, "GPT 系": 1, "Grok 系": 2,
+                "DeepSeek 系": 3, "GLM 系": 4, "Kimi": 5, "MiniMax": 6, "其他": 7,
+            }
+
+            def _family_order(entry: dict[str, Any]) -> int:
+                return _FAMILY_ORDER.get(_family(entry), 7)
+
+            # 族聚合重排（行首编号仍是全局故障转移顺序，仅展示分组）
+            ordered.sort(key=lambda kv: (_family_order(kv[1]), int(kv[1]["priority"])))
             prev_family = ""
             for order, (model_id, entry) in enumerate(ordered, start=1):
                 family = _family(entry)

@@ -8,7 +8,7 @@
 
 NoneBot2 + OneBot V11（NapCat）QQ 聊天机器人，附带 Telegram / Mail / Console 适配器。已上线：统一消息管线、37+ 平台链接解析（Mica 卡图渲染）、多供应商音乐点歌（卡图+语音）、四家搜索 API、模型路由与故障转移、记忆/人格/知识库、安全防线、订阅推送、运维告警。当前是功能完整、持续迭代的 alpha；不是全部需求完成的生产版。
 
-当前验证基线：**510 passed / Ruff 全过 / mypy 196 文件**（`dev.ps1` 三门禁），每轮交付后必须保持全绿。
+当前验证基线：**600 passed / Ruff 全过 / mypy 200 文件**（`dev.ps1` 三门禁），每轮交付后必须保持全绿。
 
 ## 2. 硬约束
 
@@ -40,7 +40,7 @@ TG 发送要点（`sender/nonebot.py`）：图片支持 http 直链**和本地�
 
 ```powershell
 # 门禁（每轮交付前全绿）
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task test"        # 510 passed
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task test"        # 600 passed
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task lint"       # ruff
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task typecheck"  # mypy
 
@@ -77,8 +77,13 @@ dev.ps1 -Task doctor / backend-base-smoke / backend-smoke / search-smoke / runti
 ### 6.5 搜索 API
 Tavily 主、You.com 备、LangSearch 备、TinyFish 搜索+正文抓取；不接 Bing。链式回退+瞬时重试；Tavily 一级参数 `search_depth/time_range`；抓取回退链 TinyFish fetch → Tavily extract → 通用 `fetch_page_text`（含反注入去噪）。验收工具 `dev.ps1 -Task search-smoke`。Tavily/You/TinyFish 已真实 key 验收；LangSearch 未验。
 
-### 6.6 模型路由
-优先级：手动指定 > 时段组 order（`BOT_MODEL_SCHEDULE`/`BOT_MODEL_PRIORITY_GROUPS`）> 基础 priority（1..N 唯一槽位）> 故障转移同序。指令族 `/bot model list|set|add|update|priority|think|effort|price|remove|reset|usage`；密钥只收 `env:` 引用；故障转移总时限 45s。记忆抽取复用主路由（独立超时/冷却，不阻塞回复）。
+### 6.6 模型路由（渠道化）
+**45 个注册条目**（`.env BOT_MODEL_REGISTRY`），8 家供应商：浅夜（Gemini 置顶）/恒星纪元/ToolCode/umi（含 Claude 四渠道、GLM/Kimi/MiniMax 新组）/DeepSeek 官方/智谱/StarAPI/hcn 兜底。
+- 选择：手动指定 > 时段组 order > 基础 priority（1..N 唯一槽位）> 故障转移同序；**`/bot model set <实际模型名>`（如 gemini-3.8-flash-high）自动聚合该模型全部渠道，按价格升序转移**（条目带 `price_in/price_out`）。
+- **渠道健康巡检**（`llm/channel_health.py`）：每小时全渠道最小调用探测（后台 3 线程+0.4s 错峰防限流；手动 `/bot model probe` 8 并发）；连续 2 次失败标「⛔暂时不可用」移出故障转移队列，30 分钟重探恢复即回队，**永不自动删除**；全部不可用时放行原队列防全瘫。`/bot model health` 出运维报告（含【需要你处理的】行动清单）、`/bot model routes <模型名>` 列单模型全渠道。
+- 失败话术：私聊 LLM 失败回 12 条守岸人人格话术（`_PERSONA_FAILURE_MESSAGES`，会话内轮换）；群聊静默。
+- 指令族 `/bot model list|set|add|update|priority|think|effort|price|remove|reset|usage|health|probe|routes`；密钥 `env:` 引用，**对应 `bot_api_key_*` Config 字段必须存在**（env: 解析链=os.environ→Config 字段回退，缺字段=config_missing 全渠道失败——09-09 事故根因）。
+- 请求总预算 150s（`bot_request_budget_seconds`）；**预算耗尽不再丢弃已生成回复**（发送给足传输超时）。记忆抽取复用主路由。
 
 ### 6.7 记忆/人格/知识库
 `character/affinity.py`（动态好感度/印象标签/昵称自学）；`security/memory_sanitize.py`（记忆清洗→隔离表）；知识库为向量检索（`character/vector_knowledge.py`，含 FTS）；「历史上的今天」本地 365 天库。人格 Prompt 注入预算见 §5。
@@ -94,6 +99,13 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 
 ### 6.11 运维告警
 `runtime/alerts.py`：按 (stage,kind,adapter,bot,target) 300s 窗口抑制；`llm deadline_exceeded` 不通知（常态降级）；result-unknown 记账 `runtime/result_unknown.py`（重连对账不盲发）。
+
+### 6.12 视觉与字幕
+**图片直传（vision direct，默认）**：聊天图片不再经 VLM 转译中间层，直接以 data URL 进主模型消息（`build_direct_vision_messages`）；`supports_vision` 默认全部渠道支持（`text-only` 标签排除）；relay（VLM 转译）保留为 direct 失败兜底；`/bot model vision mode relay|direct` 可切。
+**字幕总结**（`BOT_PARSE_SUBTITLE_SUMMARY=true` 已开）：B站 AI 字幕（player/wbi/v2，ai-zh 优先，连续重复去重）+ 油管 captionTracks（ASR 滚动重叠去重）→ 摘录进文本/卡，主路由出【AI字幕总结】。
+
+### 6.13 吃什么（bot.eat）
+`吃什么` 随机推荐（Mica 卡图+文本）/`吃什么 三选一`/`吃什么 不辣`；`菜谱 <菜名>`/`怎么做 <菜名>` 查做法（本地 60 道库，未收录走 LLM 生成）；带忌口/食材约束自动 LLM。菜品图：`Runtime data/food_images/<菜名>.jpg`。库在 `sources/food_data.py`，能力 `capabilities/eat.py`。
 
 ## 7. 排障手册（实战沉淀）
 
@@ -127,9 +139,12 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 | 09-09 | 呈现层四断点 | 发布时间到秒+时区、AI总结/热评空行、卡片热评块（紧凑分支+白名单）、专栏标签；点歌 Mica 卡图替代 CQ:music；候选选歌启用；help 二级引导 |
 | 09-09 | 三平台解析 | 推特媒体推文、油管 innertube+新标记三层合并、小红书空 title 兜底；代码块反馈移除；llm 告警豁免 |
 | 09-09 | Help 重设计+新卡 | 双列网格手册卡、分类名直查；免费游戏卡（Epic+Steam 双源 `sources/steamfree.py`）、天气卡 |
+| 09-09 | key批次+渠道扩容+token汇报 | umi 扩容(GLM-flash/Kimi/MiniMax 新组key+Claude四渠道新key+DeepSeek换key)+StarAPI加GPT三件套+浅夜/DeepSeek key轮换(45条目)；探针key解析bug修复(Config回退)；health报告加【需要你处理的】行动清单；model list族聚合修双Gemini组+价格列；xhs剥xsec_token重试+token失效汇报文案；封面竖图双层(blur填充+contain全露)；失败话术第三版(自然断句) |
 | 09-09 | 渠道+卡UI+话术 | StarAPI 渠道接入(gemini-3.8-flash,priority18)；视频卡UI(二维码112/博主id26px/数据icon30数字22/页脚缩小)；失败话术 shuorenhua 重写(12条去表演腔)；探针双模式(手动8并发/后台3线程错峰抖动)；实锤浅夜渠道 gemini 疑似 DeepSeek 套壳(自称深度求索开发) |
 | 09-09 | 路由救急+视觉直传 | Config补9个bot_api_key字段(env:解析config_missing根因)；vision默认direct直传多模态主模型(supports_vision放宽,file://转data URL,relay保留为兜底)；internal_error可观测(logger.exception+摘要入审计)；finish空文本兜底(NapCat该消息类型文案)；health报告运维化排版；天气误捕静默；eat约束白名单 |
 | 09-09 | 字幕+LLM总结 | B站 AI 字幕（player/wbi/v2, ai-zh 优先，连续重复去重）+油管 captionTracks（ASR 滚动重叠去重）→摘录进文本/卡；`BOT_PARSE_SUBTITLE_SUMMARY=true` 时主路由出【AI字幕总结】；bot.content 加入 offload 名单 |
+| 09-09 | 私聊无回复+预算 | LLM 慢烧完 90s 预算→发送层丢消息（根因）；预算 150s+预算耗尽不丢消息；img complete 等待修封面糊 |
+| 09-09 | 模型路由渠道化 | registry 45 条目（StarAPI/umi 扩容/Claude 四渠道/key 轮换）；渠道健康巡检+价格选渠道；探针 key 解析 bug 修复（no_api_key 误判）；health 行动清单 |
 | 09-09 | 实卡反馈二轮 | 文本作者数据行归位（YT/B站/推特博主级数据+注册日期，订阅同值去重）、小红书字符串计数、卡图 alpha 裁剪（修小卡+透明边）、Help 视口 1040 防切断、「免费游戏」触发词 |
 
 ## 9. 遗留事项与边界
@@ -140,7 +155,9 @@ Telegram（轮询+韧性重连+堆栈降噪，`bot.py` 过滤器）；Mail（`ma
 
 **数据级（P3）**：Runtime 迁移 manifest+SQLite 校验+可恢复归档；源码区 data/ 清理（须先备份验证）；alpha 备份包。
 
-**平台边界（非缺陷，勿当 bug 修）**：YouTube 不提供频道总获赞；长/短视频数与 post 数需逐 Tab 抓取未做；小红书深层依赖登录态与风控；AI 总结仅部分视频存在；NapCat 二维码刷新受 QQ 版本漂移影响（等上游）。
+**平台边界（非缺陷，勿当 bug 修）**：浅夜渠道 gemini-3.8 自报 DeepSeek 身份（套壳嫌疑，实测实锤，介意纯度用 aiprc-gemini/starapi-gemini）；vision relay 的 myvlm 首选曾 auth 失败（vision registry 已刷新 gemini-3.8 置顶）；YouTube 不提供频道总获赞；长/短视频数与 post 数需逐 Tab 抓取未做；小红书深层依赖登录态与风控（xsec_token 失效自动剥 token 重试，仍失败会明确汇报）；AI 总结仅部分视频存在；NapCat 二维码刷新受 QQ 版本漂移影响（等上游）。
+
+**旧边界行（已被上行取代，保留作历史对照）**：YouTube 不提供频道总获赞；长/短视频数与 post 数需逐 Tab 抓取未做；小红书深层依赖登录态与风控；AI 总结仅部分视频存在；NapCat 二维码刷新受 QQ 版本漂移影响（等上游）。
 
 **体验迭代**：视频解析/点歌卡按用户实卡反馈微调；help 各模块参数取值范围与示例持续充实。
 
