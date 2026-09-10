@@ -172,6 +172,10 @@ class Config(BaseModel):
     bot_send_queue_worker_enabled: bool = False
     bot_send_queue_worker_interval_seconds: int = 30
     bot_send_queue_worker_batch_size: int = 20
+    # B-4：bot_unavailable 挂起的绝对年龄上限（秒）——入队超过该时长仍因
+    # NapCat 断线不可投才置 FAILED_FINAL（防非终态行无限堆积）；缺字段 =
+    # env 键被 pydantic 丢弃、旋钮恒默认（§14.4.2：env 键须有同名小写字段）。
+    bot_send_bot_unavailable_max_age_seconds: float = 1800.0
     # 发送层单次请求硬超时（秒）：OneBot/Telegram/Mail 发送共用；0 或非法值在运行时回退 15。
     bot_transport_timeout_seconds: float = 15.0
     # 请求级总预算（秒）：单次聊天从 LLM/工具循环到发送共用一个单调 deadline；范围 (0,600]。

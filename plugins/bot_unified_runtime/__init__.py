@@ -1881,6 +1881,17 @@ def _register_nonebot_handlers() -> None:
     set_transport_timeout_provider(
         lambda: float(runtime_settings.get("BOT_TRANSPORT_TIMEOUT_SECONDS", config) or 15.0)
     )
+    # 语音下载代理（B-12）：同模式注入 getter，sender 层优先读运行时/插件
+    # Config，取不到再退回 driver config/env 探测链。
+    from .sender.nonebot import set_download_proxy_provider
+
+    set_download_proxy_provider(
+        lambda: str(
+            runtime_settings.get("BOT_DOWNLOAD_PROXY", config)
+            or getattr(config, "bot_download_proxy", "")
+            or ""
+        )
+    )
     alias_resolver = build_command_alias_resolver(
         config,
         extra_nicknames=runtime_settings.list_nicknames(),
@@ -2321,22 +2332,25 @@ def _register_nonebot_handlers() -> None:
                     all_success = False
             return sent_any and all_success
 
-        # 模型渠道健康巡检：每小时全量探测一次（8 线程并发最小调用），
+        # 模型渠道健康巡检：每小时全量探测一次（后台低并发最小调用），
         # 暂不可用渠道自动移出故障转移队列，恢复即自动回队。
+        # B-13（D7 残留）：取数走 _probe_specs 合并视图（.env 注册表 ∪
+        # 运行时注册表），管理员 /bot model add 的新渠道也进后台巡检——
+        # 此前只探 build_model_registry（仅 .env），运行时渠道永无健康数据。
         if getattr(config, "bot_channel_health_enabled", True):
             def _channel_health_job() -> None:
                 try:
+                    from plugins.bot_unified_runtime.capabilities.runtime_admin import (
+                        _probe_specs,
+                    )
                     from plugins.bot_unified_runtime.llm.channel_health import (
                         get_channel_health_store,
                         probe_all,
                     )
-                    from plugins.bot_unified_runtime.llm.model_router import (
-                        build_model_registry,
-                    )
 
                     probe_all(
                         config,
-                        build_model_registry(config),
+                        _probe_specs(runtime_settings, config),
                         get_channel_health_store(),
                         mode="background",
                     )
