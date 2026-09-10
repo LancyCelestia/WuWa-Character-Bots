@@ -793,11 +793,22 @@ class ModelRouter:
         spec = self._spec_for(model_id)
         if spec is None:
             raise KeyError(f"unknown model id: {model_id}")
+        # 未知 id 的合成 spec（幻觉模型名兜底）不缓存：否则每个噪声 id 都在
+        # _providers 里永久驻一个带 key 的 provider，长驻进程无界增长。
+        ephemeral = (
+            model_id not in self.specs
+            and (
+                self._fallback_spec is None
+                or model_id != self._fallback_spec.model_id
+            )
+        )
         cache_key: Any = model_id
         provider_spec = spec
         if api_key is not None and api_key != spec.api_key:
             cache_key = (model_id, api_key)
             provider_spec = replace(spec, api_key=api_key)
+        if ephemeral:
+            return self._factory(provider_spec)
         if cache_key not in self._providers:
             self._providers[cache_key] = self._factory(provider_spec)
         return self._providers[cache_key]
@@ -1109,6 +1120,11 @@ class ModelRouter:
                         reply = provider.generate(messages, **retry_options)
                     except LLMProviderError as retry_exc:
                         exc = retry_exc
+                    except Exception as retry_exc:  # noqa: BLE001 - 影子线程二次异常不得炸线程：炸了等待方永远等不到 settle。
+                        exc = LLMProviderError(
+                            f"model {model_id} failed: {type(retry_exc).__name__}",
+                            error_kind="provider_error",
+                        )
                     else:
                         _health_record_success(
                             model_id,
@@ -1425,6 +1441,13 @@ class ModelRouter:
                             attempts.append(
                                 f"{model_id}:success_without_reasoning"
                             )
+                            # 去参重试成功也必须记健康样本：恒拒 reasoning_effort
+                            # 的渠道若只记失败，EWMA 会把它永久饿死并误判超时拉黑。
+                            _health_record_success(
+                                model_id,
+                                int((time.monotonic() - attempt_started) * 1000),
+                                self._credential_config,
+                            )
                             reply.attempts = list(attempts)
                             self.last_attempts = attempts
                             return reply
@@ -1460,6 +1483,15 @@ class ModelRouter:
         if last_error is not None:
             last_error.attempts = list(attempts)
             raise last_error
+        if "failover:deadline" in attempts:
+            # 预算耗尽不是"未配置供应商"：没有任何候选来得及给出真错误时
+            # 保留 timeout 语义，别把诊断引去查配置。
+            budget_error = LLMProviderError(
+                "LLM failover budget exhausted before any candidate answered",
+                error_kind="timeout",
+            )
+            budget_error.attempts = list(attempts)
+            raise budget_error
         no_model_error = LLMProviderError(
             "no model available",
             error_kind="provider_not_configured",

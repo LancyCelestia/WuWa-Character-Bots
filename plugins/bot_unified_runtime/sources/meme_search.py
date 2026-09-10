@@ -133,7 +133,22 @@ class DuckDuckGoMemeSearchProvider:
                 return cached[:max_results]
         results = self._fetch(query)
         self._cache[key] = (time.monotonic(), results)
+        self._evict_cache()
         return results[:max_results]
+
+    def _evict_cache(self) -> None:
+        if len(self._cache) <= _CACHE_MAX_ENTRIES:
+            return
+        now = time.monotonic()
+        expired = [
+            k
+            for k, (cached_at, _) in self._cache.items()
+            if now - cached_at > self.cache_seconds
+        ]
+        for k in expired:
+            self._cache.pop(k, None)
+        while len(self._cache) > _CACHE_MAX_ENTRIES:
+            self._cache.pop(next(iter(self._cache)))
 
     def _fetch(self, query: str) -> list[MemeSearchResult]:
         url = (
@@ -227,9 +242,37 @@ def filter_meme_results(
     return results
 
 
+# 搜索缓存上限：长驻进程防无界增长（先清过期，再按最旧丢弃）。
+_CACHE_MAX_ENTRIES = 256
+_DDG_REDIRECT_HOSTS = frozenset({"duckduckgo.com", "www.duckduckgo.com"})
+
+
+def _resolve_ddg_redirect(url: str) -> str:
+    """解出 DDG 命中链接 ``//duckduckgo.com/l/?uddg=<编码真实地址>`` 壳。
+
+    不解壳的话所有结果的域名都是 duckduckgo.com，域名白名单过滤恒空。
+    与 web_search._resolve_ddg_redirect 同型（两模块刻意互不依赖）。
+    """
+    if url.startswith("//"):
+        url = "https:" + url
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return url
+    if "uddg=" not in (parts.query or ""):
+        return url
+    if parts.netloc and (parts.netloc or "").lower() not in _DDG_REDIRECT_HOSTS:
+        return url
+    targets = urllib.parse.parse_qs(parts.query).get("uddg")
+    return targets[0] if targets and targets[0] else url
+
+
 def _extract_ddg_items(html: str) -> list[tuple[str, str, str]]:
     items: list[tuple[str, str, str]] = []
-    for block in re.split(r'class="result', html)[1:]:
+    # 只在 result 结果块边界切（class="result" 或后跟空格）；
+    # 旧正则 r'class="result' 会把 class="result__a" 锚点自身切碎，
+    # 标题正则永远匹配不到——提取层恒空。
+    for block in re.split(r'class="result[" ]', html)[1:]:
         title_match = re.search(
             r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
             block,
@@ -242,7 +285,7 @@ def _extract_ddg_items(html: str) -> list[tuple[str, str, str]]:
         )
         if not title_match:
             continue
-        href = title_match.group(1)
+        href = _resolve_ddg_redirect(title_match.group(1))
         title = _strip_html(title_match.group(2))
         snippet = _strip_html(snippet_match.group(1)) if snippet_match else ""
         if title:

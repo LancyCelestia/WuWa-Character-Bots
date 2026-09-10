@@ -991,6 +991,8 @@ def _parse_opus(opus_id: str, url: str, *, cookie_header: str = "") -> ParsedCon
     if pics:
         summary_lines.append(f"图片数量：{len(pics)}")
         for index, pic in enumerate(pics[:4], start=1):
+            if not isinstance(pic, dict):
+                continue
             width, height = pic.get("width"), pic.get("height")
             size_kb = (pic.get("size") or 0) / 1024
             summary_lines.append(

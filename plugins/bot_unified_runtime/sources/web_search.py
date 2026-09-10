@@ -626,6 +626,31 @@ async def search_multi_async(
     return merged
 
 
+_DDG_REDIRECT_HOSTS = frozenset({"duckduckgo.com", "www.duckduckgo.com"})
+
+
+def _resolve_ddg_redirect(url: str) -> str:
+    """解出 DDG 命中链接重定向壳里的真实地址。
+
+    实测 html 版结果页的 result__a href 形如
+    ``//duckduckgo.com/l/?uddg=<URL编码的真实链接>``（含相对 ``/l/?uddg=``），
+    旧实现直接当目标 URL 用，导致域名判定与白名单过滤全部落空。
+    非 DDG 壳的链接原样返回。
+    """
+    if url.startswith("//"):
+        url = "https:" + url
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return url
+    if "uddg=" not in (parts.query or ""):
+        return url
+    if parts.netloc and (parts.netloc or "").lower() not in _DDG_REDIRECT_HOSTS:
+        return url
+    targets = urllib.parse.parse_qs(parts.query).get("uddg")
+    return targets[0] if targets and targets[0] else url
+
+
 def _extract_ddg_hits(html_text: str, *, max_results: int = 3) -> list[WebSearchHit]:
     hits: list[WebSearchHit] = []
     blocks = re.split(r'class="result"|class="result ', html_text)[1:]
@@ -636,7 +661,9 @@ def _extract_ddg_hits(html_text: str, *, max_results: int = 3) -> list[WebSearch
         snippet_match = re.search(
             r'class="result__snippet"[^>]*>(.*?)</(?:a|div)>', block, re.DOTALL
         )
-        link_match = re.search(r'href="(https?://[^"]+)"', block)
+        # 真实 DDG 命中链接是 //duckduckgo.com/l/?uddg=… 重定向壳（协议相对），
+        # 旧正则要求 https?:// 开头导致永远匹配不到——放宽到 uddg/绝对 URL 两形。
+        link_match = re.search(r'href="([^"]*(?:uddg=[^"]+|https?://[^"]+))"', block)
         if not title_match or not link_match:
             continue
         title = _clean_text(_HTML_TAG_RE.sub("", title_match.group(1)))
@@ -645,9 +672,7 @@ def _extract_ddg_hits(html_text: str, *, max_results: int = 3) -> list[WebSearch
             if snippet_match
             else ""
         )
-        url = link_match.group(1)
-        if url.startswith("//"):
-            url = "https:" + url
+        url = _resolve_ddg_redirect(link_match.group(1))
         domain = urllib.parse.urlsplit(url).netloc
         hits.append(
             WebSearchHit(title=title, snippet=snippet, url=url, source_domain=domain)

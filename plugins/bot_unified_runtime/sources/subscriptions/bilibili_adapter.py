@@ -248,8 +248,7 @@ class BilibiliAdapter:
             if spec.target_kind == "collection":
                 return self._fetch_collection(spec, cursor, cookie_header, proxy)
             if spec.target_kind == "live_room":
-                # 直播增量交给 fetch_live_statuses 轮询。
-                return SourceFetchResult(items=[], health_state="healthy")
+                return self._fetch_live(spec, cookie_header, proxy)
             raise ValueError(f"unsupported bilibili target_kind: {spec.target_kind}")
         except ParseHttpError as exc:
             return SourceFetchResult(
@@ -257,6 +256,46 @@ class BilibiliAdapter:
                 health_state="degraded",
                 error=type(exc).__name__,
             )
+
+    def _fetch_live(
+        self,
+        spec: SubscriptionSpec,
+        cookie_header: str,
+        proxy: str,
+    ) -> SourceFetchResult:
+        """V2 轮询的直播增量：开播即产出一条 level 触发条目。
+
+        幂等去重交给 V2 store 的 seen 集合（item_id 含 live_start_time，
+        同一场直播只推一次）；下播不单独推——边缘触发的开播/下播通知
+        语义仍属 fetch_live_statuses（V1 watcher 专用）。
+        """
+        try:
+            payload = http_get_json(
+                f"{_LIVE_INFO_API}?room_id={spec.target_id}",
+                referer=_LIVE_REFERER,
+                cookie=cookie_header,
+                proxy=proxy,
+            )
+            _require_code(payload)
+        except ParseHttpError as exc:
+            return SourceFetchResult(
+                items=[],
+                health_state="degraded",
+                error=type(exc).__name__,
+            )
+        room = ((payload or {}).get("data") or {}).get("room_info") or {}
+        if room.get("live_status") != 1:
+            return SourceFetchResult(items=[], health_state="healthy")
+        room_id = str(spec.target_id or "")
+        live_start_time = str(room.get("live_start_time") or "0")
+        item = NormalizedSubscriptionItem(
+            item_id=f"live:{room_id}:{live_start_time}",
+            kind="live",
+            title=str(room.get("title") or ""),
+            url=f"https://live.bilibili.com/{room_id}",
+            summary=f"{spec.target_name} 开播了",
+        )
+        return SourceFetchResult(items=[item], health_state="healthy")
 
     def _wbi_get(
         self,

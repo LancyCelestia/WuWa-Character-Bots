@@ -46,12 +46,16 @@ class PlatformThrottle:
                     name, asyncio.Semaphore(self._platform_limit)
                 )
             async with semaphore:
-                async with self._lock:
-                    elapsed = time.monotonic() - self._last_request.get(name, 0.0)
-                    wait_for = max(0.0, self._min_interval - elapsed)
-                    if wait_for:
-                        await asyncio.sleep(wait_for)
-                    self._last_request[name] = time.monotonic()
+                # 等最小间隔时不得持全局锁：否则所有平台被串行化，
+                # global_limit 并发形同虚设。锁内只读状态/占位，锁外 sleep。
+                while True:
+                    async with self._lock:
+                        elapsed = time.monotonic() - self._last_request.get(name, 0.0)
+                        wait_for = max(0.0, self._min_interval - elapsed)
+                        if not wait_for:
+                            self._last_request[name] = time.monotonic()
+                            break
+                    await asyncio.sleep(wait_for)
                 return await operation()
 
 

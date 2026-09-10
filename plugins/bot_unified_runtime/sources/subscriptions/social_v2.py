@@ -7,7 +7,9 @@ is temporarily unavailable.
 """
 from __future__ import annotations
 
+import asyncio
 import html
+import inspect
 import json
 import os
 import re
@@ -480,9 +482,15 @@ class _BaseAdapter:
                 error_code="unsupported",
                 retryable=False,
             )
-        result = self.client.fetch_incremental(target, cursors, context)
-        if hasattr(result, "__await__"):
-            result = await result
+        fetch = self.client.fetch_incremental
+        if inspect.iscoroutinefunction(fetch):
+            result = await fetch(target, cursors, context)
+        else:
+            # 同步客户端（Twitter/微博等，内部可串行多次 HTTP）直调会在
+            # 事件循环上阻塞数分钟——整体卸载到线程池执行。
+            result = await asyncio.to_thread(fetch, target, cursors, context)
+            if hasattr(result, "__await__"):
+                result = await result
         if not isinstance(result, SubscriptionFetchResult):
             raise TypeError("subscription client must return SubscriptionFetchResult")
         return result
@@ -536,7 +544,10 @@ class BilibiliSubscriptionAdapterV2(_BaseAdapter):
                 target_name=target.display_name or target.target_key,
                 created_by="v2",
             )
-            result = await legacy.fetch_latest(spec, legacy_cursor, context)
+            # legacy 适配器 async 壳包同步 IO：挪到线程驱动，避免阻塞事件循环。
+            result = await asyncio.to_thread(
+                lambda: asyncio.run(legacy.fetch_latest(spec, legacy_cursor, context))
+            )
         except (ImportError, ParseHttpError, TypeError, ValueError):
             return SubscriptionFetchResult(
                 health_state="degraded", error_code="network_error", retryable=True
@@ -616,7 +627,10 @@ class XiaohongshuSubscriptionAdapterV2(_BaseAdapter):
                 target_name=target.display_name or target.target_key,
                 created_by="v2",
             )
-            result = await legacy.fetch_latest(spec, legacy_cursor, context)
+            # legacy 适配器 async 壳包同步 IO：挪到线程驱动，避免阻塞事件循环。
+            result = await asyncio.to_thread(
+                lambda: asyncio.run(legacy.fetch_latest(spec, legacy_cursor, context))
+            )
         except (ImportError, ParseHttpError, TypeError, ValueError):
             return SubscriptionFetchResult(
                 health_state="degraded", error_code="network_error", retryable=True

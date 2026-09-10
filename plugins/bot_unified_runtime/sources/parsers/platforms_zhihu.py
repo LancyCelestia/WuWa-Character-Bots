@@ -73,6 +73,8 @@ def parse_zhihu_answer(answer_id: str, *, cookie_header: str = "") -> ParsedCont
     author = data.get("author") or {}
     question = data.get("question")
     title = str(question.get("title") or "") if isinstance(question, dict) else ""
+    # API 返回了真实 question.id，别再硬编码 question/0/（卡片链接会 404）。
+    question_id = str(question.get("id") or "") if isinstance(question, dict) else ""
     stats: dict[str, object] = {}
     voteup = _safe_int(data.get("voteup_count"))
     comments = _safe_int(data.get("comment_count"))
@@ -93,7 +95,9 @@ def parse_zhihu_answer(answer_id: str, *, cookie_header: str = "") -> ParsedCont
         title=title or "知乎回答",
         author_name=_author_lines(author),
         summary=str(data.get("excerpt") or "")[:1200],
-        canonical_url=f"https://www.zhihu.com/question/0/answer/{answer_id}",
+        canonical_url=(
+            f"https://www.zhihu.com/question/{question_id or '0'}/answer/{answer_id}"
+        ),
         stats=stats,
         detail={"published_at": published_at} if published_at is not None else {},
         parse_depth="deep",

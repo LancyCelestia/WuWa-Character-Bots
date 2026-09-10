@@ -337,7 +337,11 @@ def _xhs_from_initial_state(html: str, url: str) -> ParsedContent | None:
     note_map = ((payload or {}).get("note") or {}).get("noteDetailMap") or {}
     if not note_map:
         return None
-    note = next(iter(note_map.values())).get("note") or {}
+    # noteDetailMap 首值在异常页里可能不是 dict（登录墙/风控页变体），
+    # 直接 .get 会抛 AttributeError 穿透 og 兜底契约（消费方只捕
+    # ParseHttpError/ValueError/ParseFailure）——非 dict 一律视作未解析。
+    first_card = next(iter(note_map.values()), None)
+    note = (first_card.get("note") if isinstance(first_card, dict) else None) or {}
     # 小红书 2026 版 INITIAL_STATE 常返回空 title，正文 desc 仍在：
     # 两者任一存在即视为拿到笔记（否则登录墙下全是空 title 被误判失败）。
     desc_raw = str(note.get("desc") or "").strip()

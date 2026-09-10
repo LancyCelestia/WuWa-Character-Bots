@@ -463,7 +463,11 @@ def search_qqmusic(query: str, *, cookie_header: str = "") -> ParsedContent | No
     if not songs:
         return None
     song = songs[0]
-    singers = "、".join(item.get("name", "") for item in (song.get("singer") or []))
+    singers = "、".join(
+        item.get("name", "")
+        for item in (song.get("singer") or [])
+        if isinstance(item, dict)
+    )
     mid = str(song.get("mid") or "")
     album = song.get("album") or {}
     audio_url = _qqmusic_vkey_url(mid, cookie_header=cookie_header)

@@ -175,9 +175,24 @@ _HUMANIZE_OPENING_RE = re.compile(
 _HUMANIZE_CLOSING_RE = re.compile(
     r"(?:希望(?:这|以上)(?:些)?(?:内容)?(?:能)?(?:帮|对你有所)(?:到)?(?:助)?(?:你)?[！。~\s]*)+$|"
     r"(?:以上(?:就是|是).{0,12}全部内容[。！~\s]*)+$|"
-    r"(?:总之|综上所述|总结一下|总的来说)[，,：:]?[\s\S]{0,60}$|"
+    r"(?:总之|综上所述|总结一下|总的来说)[，,：:]?(?:希望|以上就是|记得|欢迎|祝|喜欢的话|一起)[\s\S]{0,40}$|"
     r"(?:如果还有(?:其他)?(?:问题|疑问)[，,]?.{0,20}(?:问我|告诉我|联系我|随时)[。！~\s]*)+$"
 )
+
+# 内心状态保密红线：LLM 偶尔会把好感度/心情的内部数值当聊天说出口，数值
+# 泄漏瞬间机器感拉满——态度只能通过行为体现，数值一律打码（拟人化整合报告裁决）。
+# 连接词用有界枚举而非通配，避免误伤"好感度排行榜前3名"这类正常表述。
+_INNER_STATE_NUM_RE = re.compile(
+    r"(好感度|亲密度|信任度|趣味相投|心情值|affinity|valence|arousal)"
+    r"\s*(?:值|分数|分)?\s*"
+    r"(?:(?:已经|已|至少|只有|才|高达|达到|达|是|为|现在|[+加:：=]){1,2})?\s*"
+    r"[-+]?\d+(?:\.\d+)?(?:\s*分|\s*%|%)?"
+)
+
+
+def _redact_inner_state_number(match: re.Match[str]) -> str:
+    name = match.group(1) or "内心状态"
+    return f"{name}…保密"
 
 
 def humanize_reply(text: str) -> str:
@@ -187,4 +202,5 @@ def humanize_reply(text: str) -> str:
         return value
     value = _HUMANIZE_OPENING_RE.sub("", value).strip()
     value = _HUMANIZE_CLOSING_RE.sub("", value).strip()
+    value = _INNER_STATE_NUM_RE.sub(_redact_inner_state_number, value)
     return value or (text or "").strip()

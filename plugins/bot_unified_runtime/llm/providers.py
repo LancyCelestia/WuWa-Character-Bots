@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections.abc import Callable
 from typing import Any, Protocol
 from urllib import error, request
@@ -193,14 +194,24 @@ def _shared_http_client(proxy: str = "") -> httpx.Client:
 
 
 def _read_stream_limited(
-    response: httpx.Response, limit: int, *, truncate: bool = False
+    response: httpx.Response,
+    limit: int,
+    *,
+    truncate: bool = False,
+    deadline: float | None = None,
 ) -> bytes:
     """限长流式读取。truncate=False：超限抛错（成功体护栏，防内存撑爆）；
     truncate=True：超限截断（错误体仅用于分类——超限抛 provider_error 会
-    掩盖真实状态码，401+超大错误体不得误判为 provider_error）。"""
+    掩盖真实状态码，401+超大错误体不得误判为 provider_error）。
+
+    deadline（time.monotonic 时刻）是整次响应的总预算：httpx 的 read 超时
+    按 chunk 计时，慢滴流响应可永不触发单次超时、无限突破总预算——这里兜底。
+    """
     chunks: list[bytes] = []
     total = 0
     for chunk in response.iter_bytes():
+        if deadline is not None and time.monotonic() > deadline:
+            raise LLMProviderError("LLM request timed out", error_kind="timeout")
         total += len(chunk)
         if total > limit:
             if not truncate:
@@ -561,6 +572,7 @@ class OpenAICompatibleLLMProvider:
     ) -> str:
         """生产传输路径：进程级 httpx.Client 连接池复用 + 响应限长。"""
         client = _shared_http_client(self.proxy)
+        deadline = time.monotonic() + max(0.0, request_timeout)
         try:
             with client.stream(
                 "POST",
@@ -571,7 +583,7 @@ class OpenAICompatibleLLMProvider:
             ) as response:
                 if response.status_code >= 400:
                     error_body = _read_stream_limited(
-                        response, _MAX_ERROR_BODY_BYTES, truncate=True
+                        response, _MAX_ERROR_BODY_BYTES, truncate=True, deadline=deadline
                     )
                     raise LLMProviderError(
                         f"LLM HTTP request failed with status {response.status_code}",
@@ -580,7 +592,9 @@ class OpenAICompatibleLLMProvider:
                             error_body.decode("utf-8", errors="replace"),
                         ),
                     )
-                return _read_stream_limited(response, _MAX_RESPONSE_BYTES).decode(
+                return _read_stream_limited(
+                    response, _MAX_RESPONSE_BYTES, deadline=deadline
+                ).decode(
                     "utf-8", errors="replace"
                 )
         except LLMProviderError:
