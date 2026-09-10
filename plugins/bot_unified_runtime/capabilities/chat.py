@@ -230,10 +230,11 @@ def _search_queries_concurrently(
     def _run_query(search_query: str) -> list[Any]:
         return list(provider.search(search_query, max_results=per_query))
 
-    with ThreadPoolExecutor(
+    executor = ThreadPoolExecutor(
         max_workers=min(len(queries), 4) or 1,
         thread_name_prefix="chat-web-search",
-    ) as executor:
+    )
+    try:
         futures = [executor.submit(_run_query, query) for query in queries]
         for future in futures:
             try:
@@ -256,6 +257,10 @@ def _search_queries_concurrently(
                 )
             if len(merged) >= hard_total_cap:
                 break
+    finally:
+        # 硬顶达成/异常提前退出时取消未起跑的查询（with 语义只等待不取消，
+        # 超出硬顶的查询会白跑完毕才弃结果）。
+        executor.shutdown(wait=True, cancel_futures=True)
     return merged
 
 
@@ -594,6 +599,7 @@ _SAFE_LLM_ERROR_KINDS = frozenset(
         "unsupported_model",
         "unsupported_parameter",
         "invalid_request",
+        "bad_request",
     }
 )
 _LLM_RETRYABLE_KINDS = frozenset(
