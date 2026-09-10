@@ -677,63 +677,6 @@ def search_kugou_candidates(
     return out
 
 
-def search_kuwo_candidates(
-    query: str,
-    *,
-    cookie_header: str = "",
-    limit: int = 5,
-) -> list[dict[str, str]]:
-    encoded = urllib.parse.quote(query)
-    payload = http_get_json(
-        f"https://search.kuwo.cn/r.s?all={encoded}&ft=music&rformat=json&encoding=utf8&rn={max(1, limit)}&pn=0",
-        referer="https://www.kuwo.cn/",
-        cookie=cookie_header,
-    )
-    songs = ((payload or {}).get("abslist") or []) if isinstance(payload, dict) else []
-    out: list[dict[str, str]] = []
-    for item in songs:
-        name = str(item.get("SONGNAME") or item.get("songname") or "").strip()
-        if not name:
-            continue
-        out.append(
-            {
-                "provider_track_id": str(item.get("DC_TARGETID") or item.get("MUSICRID") or "").strip().replace("MUSIC_", ""),
-                "name": name,
-                "artist": str(item.get("ARTIST") or item.get("artist") or "").strip(),
-                "album": str(item.get("ALBUM") or item.get("album") or "").strip(),
-            }
-        )
-        if len(out) >= limit:
-            break
-    return out
-
-
-def search_kuwo(query: str, *, cookie_header: str = "") -> ParsedContent | None:
-    # 官方搜索匿名 403；用公开聚合接口（第三方，仅信息+直链，失败返回 None）。
-    encoded = urllib.parse.quote(query)
-    try:
-        payload = http_get_json(
-            f"https://api.suyanw.cn/api/kw.php?msg={encoded}&n=1",
-            timeout=8,
-        )
-    except ParseHttpError:
-        return None
-    data = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(data, list) or not data:
-        return None
-    item = data[0]
-    return build_parsed_content(
-        platform="kuwo",
-        item_id=str(item.get("rid") or item.get("songid") or ""),
-        item_kind="music",
-        title=str(item.get("name") or item.get("song") or ""),
-        author_name=str(item.get("author") or item.get("singer") or ""),
-        audio_url=str(item.get("url") or ""),
-        canonical_url=str(item.get("link") or ""),
-        parse_depth="shallow",
-    )
-
-
 def _kugou_get_song_info(file_hash: str, *, cookie_header: str = "") -> dict:
     """酷狗现有链路：m.kugou.com getSongInfo（按文件 hash 拿信息+直链）。
 
@@ -900,12 +843,16 @@ def parse_apple_music(url: str) -> ParsedContent:
 
 def search_apple_music(query: str) -> ParsedContent | None:
     encoded = urllib.parse.quote(query)
-    # 中文曲目在大陆商店缺失时回退美国商店。
+    # 中文曲目在大陆商店缺失时回退美国商店；单国请求失败（超时/风控）
+    # 不中断循环，继续尝试下一国（对齐 _itunes_lookup 的写法）。
     for country in ("cn", "us"):
-        payload = http_get_json(
-            "https://itunes.apple.com/search"
-            f"?term={encoded}&country={country}&media=music&entity=song&limit=1"
-        )
+        try:
+            payload = http_get_json(
+                "https://itunes.apple.com/search"
+                f"?term={encoded}&country={country}&media=music&entity=song&limit=1"
+            )
+        except ParseHttpError:
+            continue
         results = (payload or {}).get("results") or []
         if results:
             track = results[0]

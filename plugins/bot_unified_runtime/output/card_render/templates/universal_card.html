@@ -39,6 +39,8 @@
     --pc-light: {{ platform_color_light }};
     --pc-mid: {{ platform_color }}55;
     --pc-rgb: {{ platform_color_rgb }};
+    /* 语义色豁免（非品牌底色）：--blue 是正文超链接/话题的通用链接蓝，
+       不随平台色派生（链接可点性语义优先）；X 认证徽章蓝为徽章品牌语义。 */
     --blue: #23ade5;
     --text-main: #18191c;
     --text-sub: #5b6069;
@@ -211,6 +213,7 @@ body {
 }
 
 .platform-mark.verified-blue {
+    /* 语义色豁免：X 平台认证徽章的品牌蓝（徽章语义=来源平台认证，不随 --pc 派生）。 */
     background: #1d9bf0;
     color: #fff;
     border-color: #fff;

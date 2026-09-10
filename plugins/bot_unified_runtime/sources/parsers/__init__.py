@@ -93,8 +93,6 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_music import (
     search_apple_music,
     search_kugou,
     search_kugou_candidates,
-    search_kuwo,
-    search_kuwo_candidates,
     search_netease_music,
     search_netease_music_candidates,
     search_qqmusic,
@@ -565,7 +563,10 @@ _MUSIC_SEARCH_PROVIDERS: list[tuple[str, str, Callable[[str], ParsedContent | No
     ("apple_music", "Apple Music", search_apple_music),
     ("kugou", "酷狗", search_kugou),
     ("qqmusic", "QQ音乐", search_qqmusic),
-    ("kuwo", "酷我", search_kuwo),
+    # 酷我/Spotify 搜索退役（09-10 决断）：酷我 r.s 官方接口服务端劣化返回非 JSON、
+    # suyanw 聚合改为 GBK 文本编号列表（无 rid/直链，无法构建可播放结果，实测两者
+    # 均恒 None=静默死代码）；Spotify 搜索本就是恒 None 占位。链接解析 parse_kuwo
+    # 保留（wapi musicInfo 匿名可用）。
     ("spotify", "Spotify", search_spotify),
 ]
 
@@ -765,24 +766,6 @@ def music_candidate_providers(
                 author_name=str(candidate.get("artist") or ""),
             )
 
-    def _kuwo_detail(candidate: dict, *, query: str = "") -> ParsedContent | None:
-        # 酷我按 rid 走真实详情接口（wapi musicInfo），信息比候选更全。
-        from plugins.bot_unified_runtime.sources.parsers.platforms_music import (
-            parse_kuwo,
-        )
-
-        rid = str(candidate.get("provider_track_id") or "")
-        try:
-            return parse_kuwo(f"https://kuwo.cn/play_detail/{rid}", cookie_header=cookies.cookie_header(_PARSER_COOKIE_PLATFORM.get("kuwo", "")))
-        except Exception:  # noqa: BLE001 - 详情失败回退候选构建。
-            return build_parsed_content(
-                platform="kuwo",
-                item_id=rid,
-                item_kind="music",
-                title=str(candidate.get("name") or ""),
-                author_name=str(candidate.get("artist") or ""),
-            )
-
     def _bound(platform: str, fn: Callable) -> Callable:
         return _bind_cookie(fn, cookies.cookie_header(_PARSER_COOKIE_PLATFORM.get(platform, "")))
 
@@ -796,7 +779,6 @@ def music_candidate_providers(
             _qq_detail,
         ),
         "kugou": (_bound("kugou", search_kugou_candidates), _kugou_detail),
-        "kuwo": (_bound("kuwo", search_kuwo_candidates), _kuwo_detail),
     }
 
 
