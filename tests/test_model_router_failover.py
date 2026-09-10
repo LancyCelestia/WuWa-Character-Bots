@@ -62,8 +62,12 @@ def test_transient_provider_error_fails_over_to_next_candidate() -> None:
     assert router.last_attempts == ["first:timeout", "second:success"]
 
 
-@pytest.mark.parametrize("error_kind", ["auth", "config_missing", "schema", "http"])
-def test_configuration_or_protocol_errors_stop_failover(error_kind: str) -> None:
+# B-2（管线检视 #2）：未分类的 "http"、auth、schema 均为渠道相关错误，
+# 纳入可故障转移（auth：各渠道 key 独立，一个 key 失效 ≠ 全部失效；
+# schema：中转站返回挑战页/非 JSON 垃圾是渠道级故障）。只有本地配置洞
+# （config_missing）仍判死——换候选同样无救，重试全渠道纯属浪费。
+@pytest.mark.parametrize("error_kind", ["config_missing"])
+def test_configuration_errors_stop_failover(error_kind: str) -> None:
     calls: list[str] = []
     router = _router(
         {"first": _spec("first", 1), "second": _spec("second", 2)},
@@ -77,6 +81,22 @@ def test_configuration_or_protocol_errors_stop_failover(error_kind: str) -> None
     assert raised.value.error_kind == error_kind
     assert calls == ["first"]
     assert router.last_attempts == [f"first:{error_kind}"]
+
+
+@pytest.mark.parametrize("error_kind", ["auth", "schema"])
+def test_auth_and_schema_errors_are_channel_specific_and_fail_over(error_kind: str) -> None:
+    calls: list[str] = []
+    router = _router(
+        {"first": _spec("first", 1), "second": _spec("second", 2)},
+        {"first": error_kind},
+        calls,
+    )
+
+    reply = router.generate([{"role": "user", "content": "hello"}], message_text="hello")
+
+    assert reply.text == "ok:second"
+    assert calls == ["first", "second"]
+    assert router.last_attempts == [f"first:{error_kind}", "second:success"]
 
 
 def test_provider_factory_error_is_recorded_and_does_not_break_next_candidate() -> None:
@@ -294,8 +314,11 @@ def test_unsupported_reasoning_parameter_retries_same_provider_without_it() -> N
     assert router.last_attempts == ["first:success_without_reasoning"]
 
 
+# B-2（管线检视 #2）：请求形状错误是渠道相关的——unsupported_parameter 先
+# 走剥参重试，重试无效或 invalid_request 时应转移下一候选，而不是判死整条
+# 多候选路由（一次中转站措辞变化曾是单点故障）。
 @pytest.mark.parametrize("error_kind", ["unsupported_parameter", "invalid_request"])
-def test_request_shape_errors_stop_failover(error_kind: str) -> None:
+def test_request_shape_errors_fail_over_to_next_candidate(error_kind: str) -> None:
     calls: list[str] = []
     router = _router(
         {"first": _spec("first", 1), "second": _spec("second", 2)},
@@ -303,10 +326,9 @@ def test_request_shape_errors_stop_failover(error_kind: str) -> None:
         calls,
     )
 
-    with pytest.raises(LLMProviderError) as raised:
-        router.generate([{"role": "user", "content": "hello"}], message_text="hello")
+    reply = router.generate([{"role": "user", "content": "hello"}], message_text="hello")
 
-    assert raised.value.error_kind == error_kind
-    assert calls == ["first"]
-    assert router.last_attempts == [f"first:{error_kind}"]
+    assert reply.text == "ok:second"
+    assert calls == ["first", "second"]
+    assert router.last_attempts == [f"first:{error_kind}", "second:success"]
 

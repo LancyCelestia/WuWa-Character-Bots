@@ -843,6 +843,7 @@ def _handle_model_command(
     return (
         "用法：/bot model set <id|auto> | list | add | update | "
         "priority | remove | effort | think | price | search | usage | "
+        "health | probe | routes <模型名> | "
         "vision <list|add|update|priority|remove|mode> | reset"
         "（/bot runtime model 同义）"
     )
@@ -868,33 +869,34 @@ def _merge_registry_entries(
     raw_env_registry: dict[str, dict[str, Any]],
     runtime_registry: dict[str, dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
-    """合并 .env 注册表与运行时条目（审计 P1#1 的合并语义）。
+    """合并 .env 注册表与运行时条目（审计 P1#1 的合并语义 + B-14 迁移）。
 
-    - 纯运行时条目（无 ``source`` 标记，管理员 add 的自定义模型或历史副本）：
-      整体覆盖 .env 同名条目。
-    - env 派生条目（``source == "env"``，管理端重排序/局部修改时写入）：
-      内容以当前 .env 实时值为准，仅 ``priority``（管理员重排序的结果）与
-      ``override_fields`` 列出的字段（管理员明确改过的字段）采用运行时副本；
-      .env 已删除的条目不再被旧运行时副本遮蔽（直接失效）。
+    - 凡 .env 仍存在同名条目的运行时副本：内容以当前 .env 实时值为准，
+      仅 ``priority``（管理员重排序的结果）与 ``override_fields`` 列出的
+      字段（管理员明确改过的字段）采用运行时副本。无 ``source`` 标记的
+      旧快照（Task4 之前的烘焙副本）按同一语义自动迁移，不再整体遮蔽
+      .env 后续修改。
+    - .env 已删除的条目：镜像条目（``source == "env"``）直接失效，不再被
+      旧运行时副本遮蔽；无标记条目按纯运行时条目原样保留。
     """
     merged = {key: dict(value) for key, value in raw_env_registry.items()}
     for key, entry in runtime_registry.items():
         entry = dict(entry)
-        if entry.get("source") == _ENV_DERIVED_SOURCE:
-            env_entry = raw_env_registry.get(key)
-            if env_entry is None:
+        env_entry = raw_env_registry.get(key)
+        if env_entry is None:
+            if entry.get("source") == _ENV_DERIVED_SOURCE:
                 continue
-            effective = dict(env_entry)
-            for field in entry.get("override_fields") or []:
-                if field == "priority" or field not in entry:
-                    continue
-                effective[field] = entry[field]
-            effective["priority"] = entry.get(
-                "priority", effective.get("priority", 100)
-            )
-            merged[key] = effective
-        else:
             merged[key] = entry
+            continue
+        effective = dict(env_entry)
+        for field in entry.get("override_fields") or []:
+            if field == "priority" or field not in entry:
+                continue
+            effective[field] = entry[field]
+        effective["priority"] = entry.get(
+            "priority", effective.get("priority", 100)
+        )
+        merged[key] = effective
     return merged
 
 

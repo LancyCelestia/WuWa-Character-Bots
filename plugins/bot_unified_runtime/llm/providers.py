@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable
 from typing import Any, Protocol
 from urllib import error, request
 from urllib.parse import urlsplit
 
+import httpx
 from pydantic import Field
 
 from plugins.bot_unified_runtime.contracts.runtime import StrictBaseModel
@@ -15,10 +17,16 @@ class LLMProviderError(RuntimeError):
     def __init__(self, message: str, *, error_kind: str = "provider_error") -> None:
         super().__init__(message)
         self.error_kind = error_kind
+        # 本次故障转移的尝试轨迹（ModelRouter.generate 抛出前填充）；
+        # 与具体请求绑定，审计消费点据此取数，避免跨请求共享状态串号。
+        self.attempts: list[str] = []
 
 
-# 只有临时传输/服务端故障值得尝试下一个候选；配置、鉴权与协议错误
-# 通常对所有候选都无效，继续切换只会放大等待和噪声。
+# 只有本地配置类错误（config_missing）假定对所有候选同样致命；其余——
+# 含 4xx 请求错误（管线检视 #2：中转站对参数/格式的拒绝是渠道相关的，
+# 措辞漂移不应把多候选路由打成单点）、auth（各渠道 key 独立，一个 key
+# 401/403 ≠ 全部失效）与 schema（中转站返回挑战页/非 JSON 垃圾是渠道级
+# 故障）——都值得尝试下一个候选。
 _FAILOVER_ERROR_KINDS = frozenset(
     {
         "timeout",
@@ -29,6 +37,12 @@ _FAILOVER_ERROR_KINDS = frozenset(
         "empty_response",
         "model_not_found",
         "unsupported_model",
+        "bad_request",
+        "invalid_request",
+        "unsupported_parameter",
+        "http",
+        "auth",
+        "schema",
     }
 )
 
@@ -46,8 +60,9 @@ _LLM_ERROR_PUBLIC_MESSAGES = {
     "http": "LLM 诊断失败：模型服务返回 HTTP 错误，请检查 base_url、model 和请求格式。",
     "model_not_found": "LLM 诊断失败：当前模型不存在或未被该中转站注册，已尝试故障转移。",
     "unsupported_model": "LLM 诊断失败：当前中转站不支持该模型，已尝试故障转移。",
-    "unsupported_parameter": "LLM 诊断失败：请求参数不被模型服务支持，请检查模型参数配置。",
-    "invalid_request": "LLM 诊断失败：请求格式或参数无效，请检查模型请求配置。",
+    "unsupported_parameter": "LLM 诊断失败：请求参数不被该渠道支持，已尝试故障转移。",
+    "invalid_request": "LLM 诊断失败：该渠道拒绝请求格式或参数，已尝试故障转移。",
+    "bad_request": "LLM 诊断失败：该渠道拒绝了本次请求（HTTP 4xx），已尝试故障转移。",
     "network": "LLM 诊断失败：无法连接模型服务，请检查网络、代理和 base_url。",
     "schema": "LLM 诊断失败：模型响应格式不符合 OpenAI-compatible chat/completions 规范。",
     "empty_response": "LLM 诊断失败：模型返回了空回复。",
@@ -69,6 +84,8 @@ class LLMReply(StrictBaseModel):
     confidence: float = 1.0
     raw_usage: dict[str, Any] = Field(default_factory=dict)
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    # 本次生成的路由尝试轨迹（ModelRouter.generate 成功返回前填充）。
+    attempts: list[str] = Field(default_factory=list)
 
 
 _SAFE_LLM_FINISH_REASONS = {
@@ -142,6 +159,53 @@ def build_urlopen(
     ).open
 
 
+# 响应体读取上限（管线检视 #7）：聊天补全正常响应远小于该值；故障中转站
+# 返回的超大响应读到上限即拒绝，不再无界占用内存。错误体仅用于分类，上限更小。
+_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+_MAX_ERROR_BODY_BYTES = 8192
+
+_HTTP_CLIENT_LOCK = threading.Lock()
+_HTTP_CLIENTS: dict[str, httpx.Client] = {}
+
+
+def _shared_http_client(proxy: str = "") -> httpx.Client:
+    """按代理维度缓存的进程级 httpx.Client（管线检视 #7）。
+
+    LLM 主链路、视觉转译与 ASR 经同一 provider 类共用本客户端：连接池
+    复用免去每次调用的 TCP+TLS 握手税。httpx 的代理是客户端级配置，故
+    按代理值各持实例；Client 线程安全，调用方仅做每请求超时覆盖。
+    """
+    key = str(proxy or "").strip()
+    cached = _HTTP_CLIENTS.get(key)
+    if cached is not None and not cached.is_closed:
+        return cached
+    with _HTTP_CLIENT_LOCK:
+        cached = _HTTP_CLIENTS.get(key)
+        if cached is not None and not cached.is_closed:
+            return cached
+        client = httpx.Client(
+            proxy=key or None,
+            timeout=httpx.Timeout(30.0),
+            limits=httpx.Limits(max_connections=32, max_keepalive_connections=8),
+        )
+        _HTTP_CLIENTS[key] = client
+        return client
+
+
+def _read_stream_limited(response: httpx.Response, limit: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in response.iter_bytes():
+        total += len(chunk)
+        if total > limit:
+            raise LLMProviderError(
+                "LLM response exceeds size limit",
+                error_kind="provider_error",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def is_loopback_http_url(value: str) -> bool:
     parsed = urlsplit(value.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -212,6 +276,10 @@ def _classify_http_error(status_code: int, response_body: str = "") -> str:
         )
     ):
         return "invalid_request"
+    # 其余 4xx 一律按渠道相关错误分类（可故障转移）；未被 urllib/httpx
+    # 以异常形式抛出的状态码才落到 "http" 兜底。
+    if 400 <= status_code <= 499:
+        return "bad_request"
     return "http"
 
 
@@ -312,7 +380,9 @@ class OpenAICompatibleLLMProvider:
         self.timeout_seconds = timeout_seconds
         self.provider_name = provider_name
         self.proxy = str(proxy or "").strip()
-        self._urlopen = build_urlopen(self.proxy, urlopen)
+        # 测试注入缝：显式传入 urlopen 走遗留 urllib 路径；None = 生产路径
+        # （进程级 httpx.Client 单例 + 响应限长，见 _post_via_httpx）。
+        self._urlopen = urlopen
 
     def generate(
         self,
@@ -356,39 +426,15 @@ class OpenAICompatibleLLMProvider:
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        http_request = request.Request(
-            self.endpoint_url,
-            data=body,
-            method="POST",
-            headers=headers,
-        )
         timeout_override = kwargs.get("timeout_seconds")
         request_timeout = self.timeout_seconds
         if isinstance(timeout_override, (int, float)) and float(timeout_override) > 0:
             request_timeout = min(request_timeout, float(timeout_override))
 
-        try:
-            with self._urlopen(http_request, timeout=request_timeout) as response:
-                response_body = response.read().decode("utf-8")
-        except error.HTTPError as exc:
-            response_body = _read_http_error_body(exc)
-            raise LLMProviderError(
-                f"LLM HTTP request failed with status {exc.code}",
-                error_kind=_classify_http_error(exc.code, response_body),
-            ) from exc
-        except TimeoutError as exc:
-            raise LLMProviderError("LLM request timed out", error_kind="timeout") from exc
-        except error.URLError as exc:
-            error_kind = "timeout" if _is_timeout_reason(exc.reason) else "network"
-            raise LLMProviderError(
-                "LLM network error",
-                error_kind=error_kind,
-            ) from exc
-        except Exception as exc:
-            raise LLMProviderError(
-                "LLM provider transport error",
-                error_kind="provider_error",
-            ) from exc
+        if self._urlopen is not None:
+            response_body = self._post_via_urllib(body, headers, request_timeout)
+        else:
+            response_body = self._post_via_httpx(body, headers, request_timeout)
 
         try:
             data = json.loads(response_body)
@@ -467,3 +513,74 @@ class OpenAICompatibleLLMProvider:
             raw_usage=usage,
             tool_calls=tool_calls,
         )
+
+    def _post_via_urllib(
+        self, body: bytes, headers: dict[str, str], request_timeout: float
+    ) -> str:
+        """遗留传输路径：仅当测试显式注入 urlopen 时使用。"""
+        assert self._urlopen is not None
+        http_request = request.Request(
+            self.endpoint_url,
+            data=body,
+            method="POST",
+            headers=headers,
+        )
+        try:
+            with self._urlopen(http_request, timeout=request_timeout) as response:
+                return response.read().decode("utf-8")
+        except error.HTTPError as exc:
+            response_body = _read_http_error_body(exc)
+            raise LLMProviderError(
+                f"LLM HTTP request failed with status {exc.code}",
+                error_kind=_classify_http_error(exc.code, response_body),
+            ) from exc
+        except TimeoutError as exc:
+            raise LLMProviderError("LLM request timed out", error_kind="timeout") from exc
+        except error.URLError as exc:
+            error_kind = "timeout" if _is_timeout_reason(exc.reason) else "network"
+            raise LLMProviderError(
+                "LLM network error",
+                error_kind=error_kind,
+            ) from exc
+        except Exception as exc:
+            raise LLMProviderError(
+                "LLM provider transport error",
+                error_kind="provider_error",
+            ) from exc
+
+    def _post_via_httpx(
+        self, body: bytes, headers: dict[str, str], request_timeout: float
+    ) -> str:
+        """生产传输路径：进程级 httpx.Client 连接池复用 + 响应限长。"""
+        client = _shared_http_client(self.proxy)
+        try:
+            with client.stream(
+                "POST",
+                self.endpoint_url,
+                content=body,
+                headers=headers,
+                timeout=request_timeout,
+            ) as response:
+                if response.status_code >= 400:
+                    error_body = _read_stream_limited(response, _MAX_ERROR_BODY_BYTES)
+                    raise LLMProviderError(
+                        f"LLM HTTP request failed with status {response.status_code}",
+                        error_kind=_classify_http_error(
+                            response.status_code,
+                            error_body.decode("utf-8", errors="replace"),
+                        ),
+                    )
+                return _read_stream_limited(response, _MAX_RESPONSE_BYTES).decode(
+                    "utf-8", errors="replace"
+                )
+        except LLMProviderError:
+            raise
+        except httpx.TimeoutException as exc:
+            raise LLMProviderError("LLM request timed out", error_kind="timeout") from exc
+        except httpx.HTTPError as exc:
+            raise LLMProviderError("LLM network error", error_kind="network") from exc
+        except Exception as exc:
+            raise LLMProviderError(
+                "LLM provider transport error",
+                error_kind="provider_error",
+            ) from exc

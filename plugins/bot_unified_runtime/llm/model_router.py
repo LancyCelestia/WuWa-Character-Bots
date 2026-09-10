@@ -54,6 +54,14 @@ from plugins.bot_unified_runtime.llm import (
     should_failover,
 )
 
+# 管线检视 #2：渠道 4xx 的拒绝措辞不可枚举（中文措辞、字段名漂移、上下文
+# 超限），请求携带 reasoning_effort 时先在同一渠道去参重试一次再进入故障
+# 转移——避免中转站措辞一变就把首选渠道打成单点。
+_PARAM_STRIP_RETRY_KINDS = frozenset(
+    {"unsupported_parameter", "bad_request", "invalid_request"}
+)
+
+
 # 复杂任务信号：命中即路由到 strong 档。
 _COMPLEX_KEYWORDS = (
     "教程",
@@ -711,21 +719,26 @@ class ModelRouter:
         }
 
     def _spec_from_dynamic_entry(self, model_id: str, item: dict[str, Any]) -> ModelSpec | None:
-        """运行时条目 → ModelSpec；env 镜像条目的内容字段以 .env 为新鲜值。
+        """运行时条目 → ModelSpec；.env 同名条目的内容字段以 .env 为新鲜值。
 
         Task4 之后 runtime store 里 .env 来源条目带 ``source: "env"`` 镜像
         标记。若按镜像快照整体重建，.env 后续编辑（换模型/换地址/换 key）
-        会被运行时旧副本遮蔽。因此对镜像条目：内容字段取 ``_base_specs``
-        （.env 注册表的最新解析视图）重建，仅 runtime 侧拥有的 priority 与
-        ``override_fields`` 里管理员明确改过的字段生效；.env 已删除的条目
-        不再被旧镜像复活。纯运行时条目（管理员 add 的自定义模型）整体
-        生效，行为不变。
+        会被运行时旧副本遮蔽。因此凡 .env 仍存在同名条目的运行时副本，内容
+        字段一律取 ``_base_specs``（.env 注册表的最新解析视图）重建，仅
+        runtime 侧拥有的 priority 与 ``override_fields`` 里管理员明确改过的
+        字段生效。
+        旧快照自动迁移（B-14，handoff §13.10）：Task4 之前写入的存量条目
+        没有 ``source`` 标记，内容字段是写入当时的 .env 烘焙副本，会永久
+        遮蔽 .env 后续修改。读取侧对这类条目按镜像语义处理（内容取 .env
+        实时值、priority 保留快照值），无需管理员逐条重新 update。
+        .env 已删除的条目：镜像条目不再被旧副本复活；无标记条目按纯运行时
+        条目（管理员 add 的自定义模型）原样生效，行为不变。
         """
-        if item.get("source") != _ENV_DERIVED_SOURCE:
-            return _spec_from_entry(model_id, item, self._credential_config)
         base = self._base_specs.get(model_id)
         if base is None:
-            return None
+            if item.get("source") == _ENV_DERIVED_SOURCE:
+                return None
+            return _spec_from_entry(model_id, item, self._credential_config)
         effective = dict(item)
         effective.update(
             {
@@ -742,6 +755,8 @@ class ModelRouter:
                 "price_out": base.price_out,
             }
         )
+        if item.get("source") != _ENV_DERIVED_SOURCE:
+            effective["source"] = _ENV_DERIVED_SOURCE
         for override_field in item.get("override_fields") or []:
             if override_field == "priority" or override_field not in item:
                 continue
@@ -1085,7 +1100,7 @@ class ModelRouter:
                 reply = provider.generate(messages, **options)
             except LLMProviderError as exc:
                 if (
-                    exc.error_kind == "unsupported_parameter"
+                    exc.error_kind in _PARAM_STRIP_RETRY_KINDS
                     and "reasoning_effort" in options
                 ):
                     retry_options = dict(options)
@@ -1253,14 +1268,17 @@ class ModelRouter:
         )
         candidate_ids = _health_filter_candidates(candidate_ids, self._credential_config)
         if require_vision:
+            # 视觉双门槛与 supports_vision 对齐（管线检视 #3）：当前接入渠道
+            # 默认全部多模态，这里仅排除显式 text-only 标签，不再要求正向
+            # vision/multimodal/vlm 标签——否则新渠道忘打标、时段分组只含
+            # 无标渠道或健康层拉黑全部带标渠道时，候选集被清空 → 图片消息
+            # provider_not_configured 硬失败。
             candidate_ids = [
                 model_id
                 for model_id in candidate_ids
                 if (
                     (spec := self._spec_for(model_id)) is not None
-                    and {"vision", "multimodal", "vlm"}.intersection(
-                        tag.lower() for tag in spec.tags
-                    )
+                    and "text-only" not in {tag.lower() for tag in spec.tags}
                 )
             ]
         if fast_mode:
@@ -1394,7 +1412,7 @@ class ModelRouter:
                     reply = provider.generate(messages, **attempt_options)
                 except LLMProviderError as exc:
                     if (
-                        exc.error_kind == "unsupported_parameter"
+                        exc.error_kind in _PARAM_STRIP_RETRY_KINDS
                         and "reasoning_effort" in attempt_options
                     ):
                         retry_options = dict(attempt_options)
