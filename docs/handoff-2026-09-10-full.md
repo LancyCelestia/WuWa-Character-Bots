@@ -1058,6 +1058,23 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 - **终审**：独立只读终审（子代理全量复核 14 项修复面）：Critical/Important 零。Minor 2 条处置：①`_SAFE_LLM_ERROR_KINDS` 补 `bad_request`（9ec8138 已修）；②B-4 旋钮 Config 字段缺失（11fdc78 已修+回归用例锁定）。
 - **遗留登记**：B-4 旋钮 30min 上限对超长断线仍会终态丢弃（有意取舍，防 A4 下死挂堆积；旋钮可调）；B-11 全局信号量跨测试理论上可残留 ≤4 槽（当前全绿）；lint 树级 `vision_describe.py` 3 项属他人在途。
 
+**B组收尾增补（终局审查与修复轮，2026-09-11 晚）**——销记后用户追加两轮「继续修复不完善内容」，全部完成：
+
+- **B-2 契约协同收尾（7c0b615）**：并行会话新写的契约测试 `tests/test_llm_error_classification.py`（36 用例，untracked）暴露语义差——其契约比本组初版更贴管线检视报告原文：`_PARAM_STRIP_RETRY_KINDS` 三类错误（bad_request/invalid_request/unsupported_parameter）携带 reasoning_effort 时**先同渠道去参重试一次，无效再转移**，而非初版的直接转移；auth（401/403）按状态码优先绝不剥参重试，同渠道凭据轮换穷尽后**转移下一候选而非判死整条链**（各渠道 key 相互独立）。其二轮实现 hunks 已随 c95f9db 吸收入库；本组测试按该契约对齐（剥参三类 calls=[first,first,second]、http 类直接转移）。llm 域合并态 70 用例全绿。
+- **终局审查（SDD final review，子代理全分支核证五提交 diff）**：Critical 零、Important 2、Minor 10。B-14 迁移对称性与手工构造的 `__init__`/config hunks（注入语法/缩进/闭包作用域/旋钮声明）被核实零问题。
+- **修复轮（90f590e）**——Important 2 全修+回归锁定：
+  1. **毒行隔离**：`_finalize_expired_lease` 在认领事务内解析损坏 `request_json` 会把整个 claim_due 批次拖到回滚停摆（单条坏行→全部排队消息不发且无自愈）。现降级为日志+该行保持 FAILED_FINAL；回归用例验证毒行终态、健康行照常认领。
+  2. **宽限期-超时旋钮耦合**：内联首投认领宽限期原为硬编码 60s，运维把 `bot_transport_timeout_seconds` 调到 ≥19s 时内联未完即被 worker 抢认领 → 同一消息双发。现 `_inline_delivery_grace_seconds() = max(60s, 3×resolve_transport_timeout())` 随动。
+  3. Minor 修 3：providers 错误体超限改截断不抛（>8KB 错误体不再把 401 掩盖成 provider_error）；`_soft_ceiling_warned` 补 `__init__` 声明；挂起间隔断言锁定 90s（±1s）。
+  4. 测试加固：B-3 并发断言改 `threading.Barrier(4)` 确定性同步（串行退化即 BrokenBarrier，消除 sleep 计时 CI 脆弱性）；MockTransport 客户端 autouse 清理；B-14 快照 priority「保留」语义注释明示受 rank 重排遮蔽、不可直接断言。
+- **做好/没做好底账（诚实清单）**：
+  - ✅ 做好：14 项任务全交付；终审/终局审查两轮（修复面审查 + 全分支核证）Critical 零；Important 2 修复带回归；B-2 契约与并行会话对齐；本组文件域 lint/mypy 零错。
+  - ❌ 裁定不做：B-11a token 级输出装箱（会钳 max_tokens 截断思考型模型 reasoning token → 空回复风险大于收益；字符级装箱已存在）。
+  - ⏸️ 攒批 Minor（7 条，均为理论性/已声明取舍，不阻塞）：defer/finalize 审计在事务提交前写（commit 失败留幻影审计）；mark_* deferred BEGIN 多进程共库时 BUSY_SNAPSHOT 理论窗口（本进程 RLock 串行化，单 worker 设计不受影响）；urllib 测试缝与 httpx 生产路径超时语义差异（per-op vs 四维分位）；B-7 十秒下限×N 段在默认 15s 总预算下交付概率低于理想均分（类文档已声明的取舍）；B-11 全局信号量跨测试理论残留 ≤4 槽；B-12 下载代理 getter 无卸载重置钩子（插件加载必覆盖注入）；`_INLINE_DELIVERY_GRACE_SECONDS` 与 worker 认领交互无直接回归用例（由 A1 用例间接覆盖）。
+  - 🤝 让渡/不代修（按 §11.3/§11.5 归属规则）：llm 剥参契约二轮实现主导权让渡给并行会话（其 hunks 经我方提交吸收）；订阅 pause target→destination 语义迁移（对方在途，观察期 2 红随其交付自愈转绿）；树级 lint 6 项（poke.py + 3 个 untracked 测试文件，各归属会话在途）。
+- **终态门禁**：**1033 passed / 0 failed（42s）**；本组文件域 ruff/mypy 零错。B组累计提交链（8 个）：c95f9db → 19e5d76 → 9ec8138 → 11fdc78 → 2f77f2e → 7c0b615 → 90f590e（全部在 origin）。
+- **仍待用户前置动作**：提权重启生产 bot（09-09 旧进程，全部交付未生效）；B站/X/知乎/linux.do cookie 重灌；umi 充值；QIANQIANYE 换 key；ds-official key 配置；toolcode-gemini 下架。
+
 
 ### C组（人格 / 知识 / 订阅 / 杂项能力 / 测试卫生域）——已由 C 组执行会话认领（2026-09-10 晚）；首轮执行完毕（C-1~C-5/C-7/C-8 完成，C-6 等用户前置）
 
