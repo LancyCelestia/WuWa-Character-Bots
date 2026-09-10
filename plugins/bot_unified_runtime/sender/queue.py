@@ -19,6 +19,7 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
 )
 from plugins.bot_unified_runtime.sender.receipts import sent_receipt, skipped_receipt
+from plugins.bot_unified_runtime.sender.timeout import resolve_transport_timeout
 
 SQLITE_QUEUE_TRANSPORT = "sqlite_queue"
 PROCESSING_STATE = "processing"
@@ -27,6 +28,22 @@ PROCESSING_STATE = "processing"
 # 负责（不走租约协议），避免 worker 与内联投递竞态重复发送同一消息。
 # 宽限期过后该行仍在 QUEUED 态（例如进程重启丢了内联投递），由 worker 接管。
 _INLINE_DELIVERY_GRACE_SECONDS = 60
+
+
+def _inline_delivery_grace_seconds() -> float:
+    """内联首投认领宽限期 = max(60s, 3×传输硬超时)（终审 Important 耦合修复）。
+
+    内联首投最坏耗时 ≈ 3×传输超时+缓冲；宽限期小于它时 worker 会在内联未
+    完成时认领同一行 → 同一条消息双发。传输超时是运维旋钮
+    （bot_transport_timeout_seconds，默认 15s），宽限期随之取 max 防漂移。
+    """
+    try:
+        transport_timeout = float(resolve_transport_timeout())
+    except Exception:  # noqa: BLE001 - 取不到配置回退默认 15s。
+        transport_timeout = 15.0
+    return max(
+        float(_INLINE_DELIVERY_GRACE_SECONDS), 3.0 * max(0.0, transport_timeout)
+    )
 # B-4（管线检视 #6）：bot_unavailable 挂起语义参数。
 # 挂起期间不消耗重试预算，重试间隔取固定 90s 下限（NapCat 断线窗口内
 # 慢速重探，不随重试预算配置变化）；入队超过绝对年龄上限（默认 30min，
@@ -161,6 +178,7 @@ class SQLiteSendRequestQueue:
             if bot_unavailable_max_age_seconds is not None
             else _BOT_UNAVAILABLE_MAX_AGE_SECONDS
         )
+        self._soft_ceiling_warned = False
         # 每次操作都重跑建表 DDL 是纯浪费：进程内建一次即可（含 WAL 切换）。
         self._schema_ready = False
         # 进程内长连接（B-10，管线检视 #13）：check_same_thread=False +
@@ -275,7 +293,7 @@ class SQLiteSendRequestQueue:
                     0,
                     (
                         current_time
-                        + timedelta(seconds=_INLINE_DELIVERY_GRACE_SECONDS)
+                        + timedelta(seconds=_inline_delivery_grace_seconds())
                     ).isoformat(),
                     "" if send_request.operational_issue is not None else "queued",
                     current_time.isoformat(),
@@ -445,7 +463,15 @@ class SQLiteSendRequestQueue:
                 row["dedupe_key"],
             ),
         )
-        send_request = SendRequest.model_validate_json(str(row["request_json"]))
+        try:
+            send_request = SendRequest.model_validate_json(str(row["request_json"]))
+        except Exception:  # noqa: BLE001 - 毒行隔离（终审 Important）：request_json
+            # 损坏时行已随上方 UPDATE 置终态，降级为日志——绝不让单条坏行把
+            # 整个 claim_due 批次的认领事务拖到回滚停摆。
+            logging.getLogger(__name__).warning(
+                "expired-lease row finalized without audit (corrupt request_json)"
+            )
+            return
         receipt = DeliveryReceipt(
             request_id=send_request.request_id,
             state=ReceiptState.FAILED_FINAL,

@@ -102,10 +102,21 @@ def test_unclassified_request_errors_fail_over_directly(error_kind: str) -> None
 # ==================== B-5 + B-2：httpx 生产路径 ====================
 
 
+_OPEN_MOCK_CLIENTS: list[httpx.Client] = []
+
+
+@pytest.fixture(autouse=True)
+def _close_mock_clients():
+    yield
+    while _OPEN_MOCK_CLIENTS:
+        _OPEN_MOCK_CLIENTS.pop().close()
+
+
 def _httpx_provider(
     monkeypatch: pytest.MonkeyPatch, handler: object
 ) -> OpenAICompatibleLLMProvider:
     client = httpx.Client(transport=httpx.MockTransport(handler))  # type: ignore[arg-type]
+    _OPEN_MOCK_CLIENTS.append(client)
     monkeypatch.setattr(providers_module, "_shared_http_client", lambda proxy="": client)
     return OpenAICompatibleLLMProvider(
         api_key="test-key",

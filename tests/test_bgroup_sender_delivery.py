@@ -134,13 +134,16 @@ def test_bot_unavailable_hold_expires_to_final(tmp_path) -> None:
 
 
 def test_bot_unavailable_defer_keeps_retry_interval_positive(tmp_path) -> None:
+    """锁定挂起重试间隔下限：90s（不随 retry_base 配置缩小）。"""
     queue = _build_queue(tmp_path)
     queue.submit(_send_request("req-b4b", "dedupe-b4b"))
+    fixed = _utc_now()
     receipt = queue.mark_retryable_failure(
-        "req-b4b", "failed", operational_issue=_bot_unavailable_issue()
+        "req-b4b", "failed", now=fixed, operational_issue=_bot_unavailable_issue()
     )
     assert receipt.next_retry_at is not None
-    assert receipt.next_retry_at > _utc_now() - timedelta(seconds=1)
+    assert receipt.next_retry_at >= fixed + timedelta(seconds=89)
+    assert receipt.next_retry_at <= fixed + timedelta(seconds=91)
 
 
 # ==================== B-7：分片超时下限 ====================
@@ -225,6 +228,34 @@ def test_bot_unavailable_max_age_knob_reaches_queue(tmp_path) -> None:
 
     assert isinstance(queue, SQLiteSendRequestQueue)
     assert queue._bot_unavailable_max_age_seconds == 60.0
+
+
+def test_corrupt_expired_lease_row_does_not_poison_claim_batch(tmp_path) -> None:
+    """终局审查 Important 回归：request_json 损坏的过期租约行被行级隔离。
+
+    毒行置 FAILED_FINAL（不再循环），同批健康行照常认领，claim_due 不停摆。
+    """
+    queue = _build_queue(tmp_path)
+    past = _utc_now() - timedelta(hours=1)  # 宽限期外，立即可认领
+    queue.submit(_send_request("req-good", "dedupe-good"), now=past)
+    queue.submit(_send_request("req-bad", "dedupe-bad"), now=past)
+    expired = (_utc_now() - timedelta(seconds=120)).isoformat()
+    with queue._transaction() as connection:
+        connection.execute(
+            "UPDATE send_requests SET state = 'processing', lease_expires_at = ?, "
+            "retry_count = 3, request_json = '{broken-json' WHERE request_id = 'req-bad'",
+            (expired,),
+        )
+
+    claimed = queue.claim_due()
+    claimed_ids = {entry.send_request.request_id for entry in claimed}
+    assert "req-good" in claimed_ids  # 健康行不被毒行拖累
+    assert "req-bad" not in claimed_ids  # 毒行不再进入投递
+    with queue._locked_connection() as connection:
+        row = connection.execute(
+            "SELECT state FROM send_requests WHERE request_id = 'req-bad'"
+        ).fetchone()
+    assert row["state"] == ReceiptState.FAILED_FINAL.value
 
 
 def test_download_proxy_provider_takes_priority(

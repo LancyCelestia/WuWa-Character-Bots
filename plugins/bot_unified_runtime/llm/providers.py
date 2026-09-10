@@ -192,16 +192,24 @@ def _shared_http_client(proxy: str = "") -> httpx.Client:
         return client
 
 
-def _read_stream_limited(response: httpx.Response, limit: int) -> bytes:
+def _read_stream_limited(
+    response: httpx.Response, limit: int, *, truncate: bool = False
+) -> bytes:
+    """限长流式读取。truncate=False：超限抛错（成功体护栏，防内存撑爆）；
+    truncate=True：超限截断（错误体仅用于分类——超限抛 provider_error 会
+    掩盖真实状态码，401+超大错误体不得误判为 provider_error）。"""
     chunks: list[bytes] = []
     total = 0
     for chunk in response.iter_bytes():
         total += len(chunk)
         if total > limit:
-            raise LLMProviderError(
-                "LLM response exceeds size limit",
-                error_kind="provider_error",
-            )
+            if not truncate:
+                raise LLMProviderError(
+                    "LLM response exceeds size limit",
+                    error_kind="provider_error",
+                )
+            chunks.append(chunk[: limit - (total - len(chunk))])
+            break
         chunks.append(chunk)
     return b"".join(chunks)
 
@@ -562,7 +570,9 @@ class OpenAICompatibleLLMProvider:
                 timeout=request_timeout,
             ) as response:
                 if response.status_code >= 400:
-                    error_body = _read_stream_limited(response, _MAX_ERROR_BODY_BYTES)
+                    error_body = _read_stream_limited(
+                        response, _MAX_ERROR_BODY_BYTES, truncate=True
+                    )
                     raise LLMProviderError(
                         f"LLM HTTP request failed with status {response.status_code}",
                         error_kind=_classify_http_error(

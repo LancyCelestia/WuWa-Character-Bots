@@ -99,23 +99,32 @@ class _SlowSearchProvider:
 
 
 def test_search_queries_run_concurrently() -> None:
-    provider = _SlowSearchProvider()
-    errors: set[str] = set()
-    started = time.perf_counter()
+    """Barrier 确定性并发断言：4 查询必须同时在飞（串行退化即 BrokenBarrier）。"""
+    barrier = threading.Barrier(4, timeout=5.0)
 
+    class _BarrierProvider:
+        def search(self, query: str, *, max_results: int) -> list[WebSearchHit]:
+            barrier.wait()  # 4 线程到齐才放行；串行实现此处超时破裂
+            return [
+                WebSearchHit(
+                    title=f"t-{query}",
+                    snippet="s",
+                    url=f"http://u/{query}",
+                    source_domain="d",
+                )
+            ]
+
+    errors: set[str] = set()
     merged = chat_module._search_queries_concurrently(
-        provider,
+        _BarrierProvider(),
         ["a", "b", "c", "d"],
         per_query=3,
         hard_total_cap=40,
         error_kinds=errors,
     )
 
-    elapsed = time.perf_counter() - started
     # 顺序确定性：合并结果按查询顺序排列。
     assert [hit.title for hit in merged] == ["t-a", "t-b", "t-c", "t-d"]
-    # 串行 4×0.25=1.0s；并发应接近单查询耗时（留足 CI 裕量）。
-    assert elapsed < 0.9
     assert errors == set()
 
 
