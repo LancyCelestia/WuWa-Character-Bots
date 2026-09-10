@@ -211,6 +211,9 @@ OFFLOADED_CAPABILITY_IDS = frozenset(
         # （点歌含 Playwright 渲染与音频下载，download 最长 300s），期间全部
         # 会话无响应，必须经 offload_capability 下放线程池。
         "bot.weather",
+        # bot.alert --probe 是同步 urllib 凭据巡检（串行多平台可达数十秒），
+        # 调度器路径已 to_thread，命令路径同款必须 offload（审计重发现 P1）。
+        "bot.alert",
         "bot.music",
         "bot.wiki",
         "bot.epic",
@@ -378,6 +381,10 @@ def _refresh_affinity_nicknames(affinity_store) -> None:
         _AFFINITY_NICKNAMES_LOADED_AT = time.time()
     except Exception:  # noqa: BLE001 - 小名加载失败不影响主链路。
         _AFFINITY_NICKNAMES_CACHE = []
+    finally:
+        # 失败也推进刷新时钟：否则持续失败时每条群消息都会在事件循环上
+        # 重试一次同步 sqlite 连接（审计重发现 P3）。
+        _AFFINITY_NICKNAMES_LOADED_AT = time.time()
 
 
 def set_runtime_mention_terms(terms: list[str] | tuple[str, ...]) -> None:
@@ -2240,15 +2247,18 @@ def _register_nonebot_handlers() -> None:
                 card_dir=str(getattr(config, "bot_card_render_dir", "data/cards")),
             )
         if getattr(config, "bot_today_history_enabled", True):
-            today_ctx = _register_today_history_scheduler(
-                scheduler=scheduler,
-                config=config,
-                pipeline=pipeline,
-                send_queue=send_queue,
-                audit_logger=audit_logger,
-                receipt_repository=receipt_repository,
-                bot_provider=_first_online_bot,
-            )
+            try:
+                today_ctx = _register_today_history_scheduler(
+                    scheduler=scheduler,
+                    config=config,
+                    pipeline=pipeline,
+                    send_queue=send_queue,
+                    audit_logger=audit_logger,
+                    receipt_repository=receipt_repository,
+                    bot_provider=_first_online_bot,
+                )
+            except Exception:  # noqa: BLE001 - 调度注册失败（如 apscheduler 缺失）不崩装配，
+                today_ctx = None  # 后续「历史上的今天」命令走无推送的直查路径。
         else:
             today_ctx = None
 
@@ -2283,7 +2293,11 @@ def _register_nonebot_handlers() -> None:
                 # 纯图/无文本订阅条目：用 vision 补一行描述，失败静默不阻断推送。
                 from .sources.vision_describe import describe_subscription_item
 
-                described = describe_subscription_item(vision_provider, payload)
+                # 同步 HTTP 描述调用必须下放线程池，否则每条无文本订阅条目
+                # 都会在事件循环上阻塞数秒（审计重发现 P2）。
+                described = await asyncio.to_thread(
+                    describe_subscription_item, vision_provider, payload
+                )
                 if described:
                     text += f"\\n图：{described}"
             from .capabilities.content_parser import build_subscription_push_capability
@@ -2291,6 +2305,10 @@ def _register_nonebot_handlers() -> None:
             sent_any = False
             all_success = True
             for destination in destinations:
+                # 目的地级暂停（pause 只作用于本目的地行）：跳过不投递，
+                # 也不计入失败（审计重发现 P2：此前 pause/resume 是 target 级）。
+                if not getattr(destination, "enabled", True):
+                    continue
                 scope = str(destination.scope or "private").lower()
                 session_type = SessionType.GROUP if scope == "group" else SessionType.PRIVATE
                 destination_id = str(destination.destination_id)
@@ -2889,7 +2907,9 @@ def _register_nonebot_handlers() -> None:
         text = event.get_plaintext().strip()
         return bool(re.match(r"^/bot\s+群文件", text))
 
-    group_file_stats = on_message(rule=_is_group_file_stats_command, priority=45, block=True)
+    # priority 8：抢在 /bot 命令 matcher（priority 11, block=True）之前消费
+    # 「/bot 群文件」，45 会被它完全遮蔽成死代码（兄弟命令 cookie/nickname 均 8）。
+    group_file_stats = on_message(rule=_is_group_file_stats_command, priority=8, block=True)
 
     @group_file_stats.handle()
     async def _handle_group_file_stats(bot: Bot, event: Event) -> None:
@@ -3217,6 +3237,7 @@ def _register_nonebot_handlers() -> None:
                     config,
                     request_id=message.request_id,
                     runtime_control=runtime_control,
+                    actor_roles=list(getattr(_decision, "actor_roles", []) or []),
                 )
 
         elif resolution.capability_id == "bot.why":
@@ -4065,6 +4086,7 @@ def _register_nonebot_handlers() -> None:
                     config,
                     request_id=message.request_id,
                     runtime_control=runtime_control,
+                    actor_roles=list(getattr(_decision, "actor_roles", []) or []),
                 )
 
         if capability_id == "bot.help":
@@ -4708,6 +4730,13 @@ def _register_nonebot_handlers() -> None:
                     config,
                     default_mode=mode,
                     request_store=music_request_store,
+                    # 自然语言点歌此前漏传候选 providers：别名/命令路径有、
+                    # 这里没有，导致自然语言路径静默丢失 cookie 候选搜索。
+                    candidate_providers=(
+                        music_candidate_providers(build_cookie_provider(config))
+                        if getattr(config, "bot_music_candidates_enabled", False)
+                        else None
+                    ),
                     render_backend=render_backend,
                 )(synthetic, _decision)
 
