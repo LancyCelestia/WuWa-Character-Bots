@@ -1549,7 +1549,13 @@ def _show_module_text(module: object, limit: int = 160) -> str:
                 if isinstance(row, dict) and (row.get("title") or row.get("content"))
             ]
             return "\n".join(row for row in rows if row)
-        return _strip_html_text(details, limit)
+        if isinstance(details, dict):
+            return _strip_html_text(
+                f"{details.get('title')}：{details.get('content')}", limit
+            )
+        if isinstance(details, str):
+            return _strip_html_text(details, limit)
+        return ""
     return ""
 
 
@@ -1583,12 +1589,14 @@ def parse_bilibili_show(url: str, *, cookie_header: str = "") -> ParsedContent:
     if not name:
         raise ParseHttpError("bilibili show missing project name")
     # getV2 偶发把这些结构字段置成 null/字符串：统一钳成 dict，防 .get 崩。
-    venue = data.get("venue_info") if isinstance(data.get("venue_info"), dict) else {}
-    place = data.get("place_info") if isinstance(data.get("place_info"), dict) else {}
-    merchant = data.get("merchant") if isinstance(data.get("merchant"), dict) else {}
-    follow_info = (
-        data.get("follow_info") if isinstance(data.get("follow_info"), dict) else {}
-    )
+
+    def _dict_or(value: object) -> dict:
+        return value if isinstance(value, dict) else {}
+
+    venue = _dict_or(data.get("venue_info"))
+    place = _dict_or(data.get("place_info"))
+    merchant = _dict_or(data.get("merchant"))
+    follow_info = _dict_or(data.get("follow_info"))
     stats: dict[str, object] = {}
     summary_lines: list[str] = []
 
@@ -1703,11 +1711,7 @@ def parse_bilibili_show(url: str, *, cookie_header: str = "") -> ParsedContent:
     guests = [item for item in (data.get("guests") or []) if isinstance(item, dict) and item.get("name")]
 
     # --- 图文详情（正文模块文本 + 详情图） ---
-    performance_desc = (
-        data.get("performance_desc")
-        if isinstance(data.get("performance_desc"), dict)
-        else {}
-    )
+    performance_desc = _dict_or(data.get("performance_desc"))
     desc_bits: list[str] = []
     gallery: list[str] = []
     for module in (performance_desc.get("list") or [])[:4]:
