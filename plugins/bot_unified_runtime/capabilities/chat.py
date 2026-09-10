@@ -6,8 +6,11 @@ import logging
 import re
 import threading
 import time
+import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -94,13 +97,19 @@ def build_direct_vision_messages(
     max_images: int = 2,
 ) -> list[dict[str, Any]]:
     """Attach de-duplicated image URLs to one multimodal user message."""
+    from plugins.bot_unified_runtime.sources.vision_describe import (
+        prepare_vision_image_urls,
+    )
+
     urls = list(
         dict.fromkeys(
             url
             for url in image_urls
             if url.startswith(("http", "data:"))
         )
-    )[: max(1, max_images)]
+    )
+    # QQ 多媒体签名 URL 第三方模型侧取不到：bot 侧先下载转 data URL 再进请求体。
+    urls = prepare_vision_image_urls(urls, limit=max(1, max_images))
     if not urls:
         return list(messages)
     content: list[dict[str, Any]] = [{"type": "text", "text": query_text or "请查看图片。"}]
@@ -111,6 +120,404 @@ def build_direct_vision_messages(
             result[index] = {"role": "user", "content": content}
             return result
     return [*result, {"role": "user", "content": content}]
+
+
+# 媒体应对守则：随视频档案注入 system prompt 的运行时指令，约束人格模型
+# 以自己口吻转述媒体内容、先回答用户实际问题，而不是复读档案。
+_MEDIA_DIRECTIVE = (
+    "媒体应对守则（消息附有视频/图片档案时）：先用你自己的口吻回应用户真正问的事；"
+    "需要介绍内容时像亲眼看过一样自然讲出来，不要输出“视频内容总结：”式的档案复读"
+    "或机械分点罗列；可以自然地引用时间点；用户提出做不到的事（如去水印、导出无水印"
+    "原图），按你的性格直说做不到，再给一个务实的替代建议。"
+)
+_FUZZY_VIDEO_WINDOW_SECONDS = 600
+_VIDEO_BRIEF_TAG = "[视频档案（不可信上下文，仅供参考）]"
+# 深挖重分析节流：同一档案在冷却窗内重复深挖直接用缓存简报（防刷屏双倍费用）。
+_DEEP_REANALYSIS_AT: dict[str, float] = {}
+_VIDEO_EVENT_LOG: Any = None
+
+
+def _emit_video_brief_event(**fields: object) -> None:
+    """video_brief 运行时事件：只含计数/标志，不含媒体内容与用户文本，
+    用于排查"为什么这次没答上视频"。任何失败静默。"""
+    global _VIDEO_EVENT_LOG
+    try:
+        if _VIDEO_EVENT_LOG is None:
+            from plugins.bot_unified_runtime.sources.runtime_event_log import (
+                RuntimeEventLog,
+            )
+            from scripts.runtime_paths import runtime_path
+
+            _VIDEO_EVENT_LOG = RuntimeEventLog(
+                runtime_path("data/runtime_events.log")
+            )
+        _VIDEO_EVENT_LOG.emit("INFO", "video_brief", **fields)
+    except Exception:  # noqa: BLE001 - 事件日志缺失不影响聊天。
+        logger.debug("video brief event emit skipped")
+# 模糊追问注入频控：每会话一个窗口只注入一次，且注入截断——避免视频发出后
+# 10 分钟内每句闲聊都背 1200 字简报的 token 放大。
+_FUZZY_INJECTION_AT: dict[str, float] = {}
+_FUZZY_INJECTION_MAX_CHARS = 600
+# 模糊追问触发词：显式媒体名词，或"刚才/那个 + 指代内容"的口语指代。
+_FUZZY_MEDIA_NOUN_PATTERN = re.compile(
+    r"(视频|影片|片子|镜头|画面|字幕|配音|bgm|背景音乐|开头|结尾)",
+    re.IGNORECASE,
+)
+_FUZZY_DEICTIC_TARGET_PATTERN = re.compile(r"(刚才|刚刚|上面|前面|那个|这个)")
+_FUZZY_DEICTIC_QUESTION_PATTERN = re.compile(
+    r"(讲了|说的|拍的|里面|内容|谁|什么|细节|讲解)"
+)
+_FUZZY_VIDEO_WINDOW_SECONDS = 600
+
+
+def _path_on_disk(path: str) -> bool:
+    if not path:
+        return False
+    try:
+        return Path(path).is_file()
+    except OSError:
+        return False
+
+
+def _media_config(vision_provider: Any | None, asr_provider: Any | None) -> Any:
+    """编排器配置句柄：provider 工厂不带 config，从其持有的 _config 取（同 ASR 超时惯例）。"""
+    config = getattr(vision_provider, "_config", None)
+    return config if config is not None else getattr(asr_provider, "_config", None)
+
+
+def _metadata_text_from_record(record: Any) -> str:
+    parts: list[str] = []
+    title = str(getattr(record, "title", "") or "").strip()
+    if title:
+        parts.append(f"标题：{title}")
+    creator = str(getattr(record, "creator_name", "") or "").strip()
+    if creator:
+        parts.append(f"作者：{creator}")
+    platform = str(getattr(record, "platform", "") or "").strip()
+    if platform:
+        parts.append(f"平台：{platform}")
+    duration_ms = getattr(record, "duration_ms", None)
+    if isinstance(duration_ms, int) and duration_ms > 0:
+        seconds = duration_ms // 1000
+        parts.append(f"时长：{seconds // 60}分{seconds % 60:02d}秒")
+    url = str(getattr(record, "canonical_url", "") or "").strip()
+    if url:
+        parts.append(f"链接：{url}")
+    return "；".join(parts)
+
+
+def _search_queries_concurrently(
+    provider: Any,
+    queries: list[str],
+    *,
+    per_query: int,
+    hard_total_cap: int,
+    error_kinds: set[str],
+) -> list[WebSearchHit]:
+    """B-3（管线检视 #5）：多 query 并发检索，按查询顺序去重合并。
+
+    此前最多 5 个 query 串行搜索最坏 30-40s 全部压在 LLM 首 token 之前；
+    并发后取最慢单查询。单查询失败只记异常类型（不写异常文本，避免把
+    URL/凭据/用户输入带进遥测），不阻断其余查询；结果顺序保持确定性。
+    submit + 逐 future 取结果（executor.map 的异常会在迭代处抛出，
+    单查询失败会炸掉整个合并循环）。
+    """
+    seen: set[tuple[str, str]] = set()
+    merged: list[WebSearchHit] = []
+    if not queries:
+        return merged
+
+    def _run_query(search_query: str) -> list[Any]:
+        return list(provider.search(search_query, max_results=per_query))
+
+    with ThreadPoolExecutor(
+        max_workers=min(len(queries), 4) or 1,
+        thread_name_prefix="chat-web-search",
+    ) as executor:
+        futures = [executor.submit(_run_query, query) for query in queries]
+        for future in futures:
+            try:
+                query_hits = list(future.result())
+            except Exception as exc:  # noqa: BLE001 - 单查询失败跳过。
+                error_kinds.add(f"provider:{type(exc).__name__[:40]}")
+                continue
+            for hit in query_hits:
+                key = (hit.url, hit.title[:24])
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(
+                    WebSearchHit(
+                        title=hit.title,
+                        snippet=hit.snippet,
+                        url=hit.url,
+                        source_domain=hit.source_domain,
+                    )
+                )
+            if len(merged) >= hard_total_cap:
+                break
+    return merged
+
+
+def _analyze_and_store(
+    *,
+    media_registry: Any | None,
+    vision_provider: Any | None,
+    asr_provider: Any | None,
+    query_text: str,
+    video_source: str,
+    subtitle_text: str = "",
+    metadata_text: str = "",
+    existing_record: Any | None = None,
+    new_asset: dict[str, str] | None = None,
+    media_config: Any | None = None,
+    deep: bool = False,
+    deadline_seconds: float | None = None,
+) -> str:
+    """编排一次视频分析并把简报写回档案；任何失败返回空串，绝不阻断聊天。"""
+    from plugins.bot_unified_runtime.sources.video_understanding import (
+        build_video_brief,
+    )
+
+    brief = build_video_brief(
+        media_config or _media_config(vision_provider, asr_provider) or {},
+        vision_provider=vision_provider,
+        asr_provider=asr_provider,
+        video_source=video_source,
+        subtitle_text=subtitle_text,
+        metadata_text=metadata_text,
+        question=query_text,
+        deep=deep,
+        deadline_seconds=deadline_seconds,
+    )
+    if media_registry is not None:
+        signals = dict(brief.signals)
+        if deep:
+            signals["deep"] = True
+        signals_json = json.dumps(signals, ensure_ascii=False)
+        try:
+            if existing_record is not None:
+                if brief.text:
+                    media_registry.update_brief(
+                        str(existing_record.media_id), brief.text, signals_json
+                    )
+            elif new_asset is not None:
+                from plugins.bot_unified_runtime.character.media_registry import (
+                    MediaAssetRecord,
+                )
+
+                media_id = media_registry.register(
+                    MediaAssetRecord.model_validate(
+                        {"media_id": uuid.uuid4().hex, **new_asset}
+                    )
+                )
+                if brief.text:
+                    media_registry.update_brief(media_id, brief.text, signals_json)
+        except Exception as exc:  # noqa: BLE001 - 媒体记忆缺失不影响本轮回复。
+            logger.warning(
+                "media registry update failed type=%s", type(exc).__name__
+            )
+    _emit_video_brief_event(
+        brief_chars=len(brief.text),
+        signals=json.dumps(brief.signals, ensure_ascii=False),
+        deep=bool(deep),
+        has_source=bool(video_source),
+    )
+    return str(brief.text or "")
+
+
+def _video_deadline_seconds(request_budget: Any | None) -> float | None:
+    """B-1（管线检视 #1）：视频阶段 deadline 与请求总预算协调。
+
+    此前 build_video_brief 的内部预算（普通 75s / 深挖 150s）与请求级
+    150s DeadlineBudget 彼此独立，深挖可烧光全部预算使 LLM 阶段必然
+    DeadlineExceeded（群内静默/私聊失败话术）。现在把「剩余预算 − LLM
+    保留 60s」传给视频阶段（下限 30s 保证至少能抽到基本帧），预算未启用
+    或已过期时返回 None 保持视频阶段自身默认。
+    """
+    if request_budget is None or not getattr(request_budget, "enabled", False):
+        return None
+    remaining = request_budget.remaining_seconds()
+    if not remaining or remaining <= 0:
+        return None
+    return max(30.0, remaining - 60.0)
+
+
+def _resolve_media_context(
+    *,
+    message: IncomingMessage,
+    media_registry: Any | None,
+    vision_provider: Any | None,
+    asr_provider: Any | None,
+    query_text: str,
+    media_config: Any | None = None,
+    request_budget: Any | None = None,
+) -> str:
+    """解析本轮可用的视频档案：回复命中缓存 → 现场分析 → 模糊追问；返回简报文本。
+
+    优先级：回复引用的档案（缓存简报零成本）> 当前消息自带视频（分析并建档）
+    > 模糊追问（配置开启时取会话内最近档案）。查不到任何档案返回空串。
+    自然语言深挖（"再仔细看看/没看懂"）命中时，对已缓存档案也会重新深分析。
+    """
+    from plugins.bot_unified_runtime.sources.video_understanding import (
+        detect_deep_video_request,
+    )
+    from plugins.bot_unified_runtime.sources.vision_describe import _clip
+
+    media_cfg = media_config or _media_config(vision_provider, asr_provider) or {}
+    deep = bool(getattr(media_cfg, "bot_video_deep_enabled", True)) and (
+        detect_deep_video_request(query_text)
+    )
+    deadline_seconds = _video_deadline_seconds(request_budget)
+    reply_id = str(getattr(message, "reply_to_message_id", "") or "")
+    record: Any | None = None
+    if media_registry is not None and reply_id:
+        try:
+            record = media_registry.lookup_by_message_id(reply_id)
+        except Exception:  # noqa: BLE001 - 档案库读失败按未命中处理。
+            record = None
+        if record is not None:
+            cached = str(getattr(record, "brief_text", "") or "").strip()
+            if cached and not deep:
+                return cached
+            local = str(getattr(record, "local_path", "") or "")
+            source = local if _path_on_disk(local) else str(
+                getattr(message, "reply_video_path", "") or ""
+            )
+            if source:
+                if deep and cached and '"deep": true' in str(
+                    getattr(record, "brief_signals", "") or ""
+                ):
+                    # 已是深挖版简报：终身复用，不再全价重算。
+                    return cached
+                if deep and cached:
+                    # 深挖节流：同一档案冷却窗内的重复深挖直接复用旧简报。
+                    cooldown = float(
+                        getattr(
+                            media_cfg, "bot_video_deep_cooldown_seconds", 300
+                        )
+                        or 300
+                    )
+                    last_deep = _DEEP_REANALYSIS_AT.get(
+                        str(record.media_id), 0.0
+                    )
+                    if time.monotonic() - last_deep < cooldown:
+                        return cached
+                result = _analyze_and_store(
+                    media_registry=media_registry,
+                    vision_provider=vision_provider,
+                    asr_provider=asr_provider,
+                    query_text=query_text,
+                    video_source=source,
+                    subtitle_text=str(getattr(record, "subtitle_text", "") or ""),
+                    metadata_text=_metadata_text_from_record(record),
+                    existing_record=record,
+                    media_config=media_config,
+                    deep=deep,
+                    deadline_seconds=deadline_seconds,
+                )
+                if deep:
+                    if result:
+                        _DEEP_REANALYSIS_AT[str(record.media_id)] = (
+                            time.monotonic()
+                        )
+                        while len(_DEEP_REANALYSIS_AT) > 512:
+                            _DEEP_REANALYSIS_AT.pop(next(iter(_DEEP_REANALYSIS_AT)))
+                        return result
+                    # 深挖失败不丢旧简报：回退缓存，避免"越问越失忆"。
+                    return cached
+                return result
+            # 有档案但拿不到文件：字幕与元数据本身就是可用的文本材料；
+            # 深挖请求拿不到文件时，已有的缓存简报也照常给。
+            if cached:
+                return cached
+            text_parts = []
+            meta = _metadata_text_from_record(record)
+            if meta:
+                text_parts.append(meta)
+            subtitle = str(getattr(record, "subtitle_text", "") or "").strip()
+            if subtitle:
+                text_parts.append(f"字幕摘录：{subtitle[:1500]}")
+            return "\n".join(text_parts)
+    # 档案未命中但 handler 已反查到被引用视频文件：以 reply_id 为锚建档分析，
+    # 否则 handler 发出的"稍等"会落空（层间组合洞）。
+    quoted_source = str(getattr(message, "reply_video_path", "") or "")
+    if reply_id and _path_on_disk(quoted_source):
+        return _analyze_and_store(
+            media_registry=media_registry,
+            vision_provider=vision_provider,
+            asr_provider=asr_provider,
+            query_text=query_text,
+            video_source=quoted_source,
+            new_asset={
+                "chat_message_id": reply_id,
+                "session_id": str(message.session_id or ""),
+                "source_kind": "user_sent",
+                "local_path": quoted_source,
+            },
+            media_config=media_config,
+            deep=deep,
+            deadline_seconds=deadline_seconds,
+        )
+    video_source = extract_video_source(getattr(message, "raw_segments", None)) or ""
+    if video_source:
+        return _analyze_and_store(
+            media_registry=media_registry,
+            vision_provider=vision_provider,
+            asr_provider=asr_provider,
+            query_text=query_text,
+            video_source=video_source,
+            new_asset={
+                "chat_message_id": str(getattr(message, "message_id", "") or ""),
+                "session_id": str(message.session_id or ""),
+                "source_kind": "user_sent",
+                "local_path": "" if video_source.startswith("http") else video_source,
+            },
+            media_config=media_config,
+            deep=deep,
+            deadline_seconds=deadline_seconds,
+        )
+    if (
+        not reply_id
+        and media_registry is not None
+        and bool(getattr(media_cfg, "bot_video_fuzzy_followup", True))
+        and (
+            _FUZZY_MEDIA_NOUN_PATTERN.search(query_text or "")
+            or (
+                _FUZZY_DEICTIC_TARGET_PATTERN.search(query_text or "")
+                and _FUZZY_DEICTIC_QUESTION_PATTERN.search(query_text or "")
+            )
+        )
+    ):
+        try:
+            recent = media_registry.lookup_recent_in_session(
+                str(message.session_id or ""),
+                within_seconds=_FUZZY_VIDEO_WINDOW_SECONDS,
+            )
+        except Exception:  # noqa: BLE001 - 模糊追问是尽力而为。
+            recent = None
+        if recent is not None:
+            cached = str(getattr(recent, "brief_text", "") or "").strip()
+            if not cached:
+                return ""
+            now = time.monotonic()
+            session_key = str(message.session_id or "")
+            if now - _FUZZY_INJECTION_AT.get(session_key, 0.0) < (
+                _FUZZY_VIDEO_WINDOW_SECONDS
+            ):
+                return ""
+            _FUZZY_INJECTION_AT[session_key] = now
+            while len(_FUZZY_INJECTION_AT) > 512:
+                _FUZZY_INJECTION_AT.pop(next(iter(_FUZZY_INJECTION_AT)))
+            try:
+                media_registry.touch(str(recent.media_id))
+            except Exception:  # noqa: BLE001, S110 - 触碰失败不影响注入。
+                pass
+            # 模糊指代优先给精简版：闲聊里赌中的注入不值得全量简报。
+            return _clip(cached, _FUZZY_INJECTION_MAX_CHARS)
+    return ""
+
+
 MIN_CHAT_PROMPT_BUDGET = 600
 TRUNCATION_NOTICE = "- 内容已按上下文预算裁剪。"
 USER_MESSAGE_TRUNCATION_NOTICE = "当前用户消息已按上下文预算裁剪。"
@@ -151,17 +558,22 @@ _PERSONA_FAILURE_MESSAGES: tuple[str, ...] = (
 
 
 def persona_failure_message(session_id: str = "") -> str:
-    """会话内轮换的失败话术；同会话连发不重复。"""
-    import random
+    """会话内轮换的失败话术；同会话连发不重复。
 
-    index = random.randrange(len(_PERSONA_FAILURE_MESSAGES))
-    if session_id:
-        offset = _FAILURE_MESSAGE_CURSOR.get(session_id, 0)
-        index = (offset + index) % len(_PERSONA_FAILURE_MESSAGES)
-        _FAILURE_MESSAGE_CURSOR[session_id] = (offset + 1) % len(_PERSONA_FAILURE_MESSAGES)
-        while len(_FAILURE_MESSAGE_CURSOR) > 512:
-            _FAILURE_MESSAGE_CURSOR.pop(next(iter(_FAILURE_MESSAGE_CURSOR)))
-    return _PERSONA_FAILURE_MESSAGES[index]
+    修 D9：有会话时纯按游标顺序轮换 ``(offset) % n``——旧实现又在游标
+    之上叠加 random 偏移，「连发不重复」并不成立。无会话（无法跟踪
+    游标）时才退回随机选取。
+    """
+    count = len(_PERSONA_FAILURE_MESSAGES)
+    if not session_id:
+        import random
+
+        return _PERSONA_FAILURE_MESSAGES[random.randrange(count)]
+    offset = _FAILURE_MESSAGE_CURSOR.get(session_id, 0)
+    _FAILURE_MESSAGE_CURSOR[session_id] = (offset + 1) % count
+    while len(_FAILURE_MESSAGE_CURSOR) > 512:
+        _FAILURE_MESSAGE_CURSOR.pop(next(iter(_FAILURE_MESSAGE_CURSOR)))
+    return _PERSONA_FAILURE_MESSAGES[offset % count]
 
 
 _FAILURE_MESSAGE_CURSOR: dict[str, int] = {}
@@ -762,6 +1174,8 @@ def build_chat_prompt_with_diagnostics(
         dynamic_parts += ["", "按需检索到的梗/热词：", meme_search_lines]
     if context.web_search_context and context.web_search_context.hits:
         dynamic_parts += ["", "联网检索到的信息（可能过时）：", web_search_lines]
+    if getattr(context, "media_directive", ""):
+        dynamic_parts += ["", str(context.media_directive)]
     # 人设文件原文非空时以其为系统提示词主体；否则沿用字段重组版。
     raw_persona = (getattr(persona, "raw_text", "") or "").strip()
     if raw_persona:
@@ -864,6 +1278,10 @@ def _clip_prompt_tail(system_prompt: str, context_budget: int) -> str:
 
 _mcp_probe_cache: tuple[object | None, object | None] | None = None
 _mcp_tools_schema_cache: list[dict[str, object]] | None = None
+# B-6（管线检视 #8）：探测失败的负缓存 TTL。此前首次异常把空列表永久写入
+# 缓存，MCP server 短暂离线后工具面静默失效直到进程重启；现在到期自动重探。
+_MCP_NEGATIVE_CACHE_TTL_SECONDS = 60.0
+_mcp_tools_schema_negative_until: float = 0.0
 
 
 def _mcp_client_modules() -> tuple[object | None, object | None]:
@@ -894,26 +1312,34 @@ def _mcp_client_modules() -> tuple[object | None, object | None]:
 
 
 def clear_mcp_tools_schema_cache() -> None:
-    global _mcp_tools_schema_cache
+    global _mcp_tools_schema_cache, _mcp_tools_schema_negative_until
     _mcp_tools_schema_cache = None
+    _mcp_tools_schema_negative_until = 0.0
 
 
 def _mcp_tools_schema() -> list[dict[str, object]]:
-    """取全部 MCP 工具并缓存；失败返回空列表，避免每条消息重复探测。"""
-    global _mcp_tools_schema_cache
+    """取全部 MCP 工具并缓存；失败走短 TTL 负缓存，避免每条消息重复探测。"""
+    global _mcp_tools_schema_cache, _mcp_tools_schema_negative_until
     if _mcp_tools_schema_cache is not None:
         return [dict(item) for item in _mcp_tools_schema_cache]
     get_tools, _ = _mcp_client_modules()
     if get_tools is None:
+        # 结构性缺失（插件未安装）：进程内不会变化，永久缓存。
         _mcp_tools_schema_cache = []
+        return []
+    if time.monotonic() < _mcp_tools_schema_negative_until:
         return []
     try:
         tools = asyncio.run(cast(Any, get_tools)())
-    except Exception:  # noqa: BLE001 - 插件未初始化/服务器离线时静默降级。
-        _mcp_tools_schema_cache = []
+    except Exception:  # noqa: BLE001 - 服务器离线时静默降级，TTL 到期后重探。
+        _mcp_tools_schema_negative_until = (
+            time.monotonic() + _MCP_NEGATIVE_CACHE_TTL_SECONDS
+        )
         return []
     if not isinstance(tools, list):
-        _mcp_tools_schema_cache = []
+        _mcp_tools_schema_negative_until = (
+            time.monotonic() + _MCP_NEGATIVE_CACHE_TTL_SECONDS
+        )
         return []
     _mcp_tools_schema_cache = [dict(item) for item in tools if isinstance(item, dict)]
     return [dict(item) for item in _mcp_tools_schema_cache]
@@ -965,6 +1391,31 @@ def _generate_with_tool_loop(
     max_rounds = max(1, int(max_rounds))
     current_messages: list[dict[str, Any]] = list(messages)
     last_reply: LLMReply | None = None
+    # 修 D10：中间轮真实计费调用的 raw_usage 此前被下一轮覆盖丢弃，账单
+    # 低估；循环内逐轮累计数值字段，随最终 reply 一起产出。
+    accumulated_usage: dict[str, Any] = {}
+    rounds_with_usage = 0
+
+    def _accumulate_usage(reply: LLMReply) -> None:
+        nonlocal rounds_with_usage
+        usage = getattr(reply, "raw_usage", None)
+        if not isinstance(usage, dict) or not usage:
+            return
+        rounds_with_usage += 1
+        for key, value in usage.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                accumulated_usage[key] = value
+            else:
+                current = accumulated_usage.get(key)
+                accumulated_usage[key] = (
+                    value + current if isinstance(current, (int, float)) and not isinstance(current, bool) else value
+                )
+
+    def _finalize(reply: LLMReply) -> LLMReply:
+        if rounds_with_usage > 1 and accumulated_usage:
+            return reply.model_copy(update={"raw_usage": dict(accumulated_usage)})
+        return reply
+
     for _round in range(max_rounds):
         options = dict(llm_options)
         if tools:
@@ -991,9 +1442,10 @@ def _generate_with_tool_loop(
             )
         else:
             last_reply = llm_provider.generate(current_messages, **options)
+        _accumulate_usage(last_reply)
         tool_calls = getattr(last_reply, "tool_calls", None) or []
         if not tool_calls:
-            return last_reply
+            return _finalize(last_reply)
         if request_budget is not None:
             request_budget.ensure_available(stage="tools")
         executed: list[tuple[dict[str, object], str]] = []
@@ -1014,7 +1466,7 @@ def _generate_with_tool_loop(
                 arguments = {}
             executed.append((call, _execute_mcp_tool_call(name, arguments)))
         if not executed:
-            return last_reply
+            return _finalize(last_reply)
         current_messages.append(
             {
                 "role": "assistant",
@@ -1031,7 +1483,47 @@ def _generate_with_tool_loop(
                 }
             )
     assert last_reply is not None
-    return last_reply
+    # B-8（管线检视 #11）：循环打满且末轮只有 tool_calls 没有文本时，追加
+    # 一次无工具的收尾轮，逼模型基于以上工具结果直接作答；否则前序轮的
+    # token 全部作废，用户只会得到 empty_response 失败。收尾轮任何失败都
+    # 回退到旧行为（返回末轮回复）。
+    if not str(last_reply.text or "").strip() and (
+        getattr(last_reply, "tool_calls", None) or []
+    ):
+        try:
+            if request_budget is None or not request_budget.expired():
+                wrap_options = dict(llm_options)
+                wrap_options.pop("tools", None)
+                if request_budget is not None:
+                    request_budget.ensure_available(stage="llm")
+                    if model_router is not None:
+                        wrap_options["deadline_monotonic"] = request_budget.deadline
+                    else:
+                        capped_timeout = request_budget.timeout_for(
+                            wrap_options.get("timeout_seconds")
+                        )
+                        if capped_timeout is not None:
+                            wrap_options["timeout_seconds"] = capped_timeout
+                if model_router is not None:
+                    wrap_options.pop("model", None)
+                    final_reply = model_router.generate(
+                        current_messages,
+                        message_text=message_text,
+                        override=override,
+                        fast_mode=fast_mode,
+                        fast_max_candidates=fast_max_candidates,
+                        **wrap_options,
+                    )
+                else:
+                    final_reply = llm_provider.generate(current_messages, **wrap_options)
+                _accumulate_usage(final_reply)
+                if str(final_reply.text or "").strip():
+                    return _finalize(final_reply)
+        except Exception:  # noqa: BLE001 - 收尾轮失败不劣化于旧行为。
+            logger.info(
+                "tool loop wrap-up round failed; falling back to last reply"
+            )
+    return _finalize(last_reply)
 
 
 def build_chat_result(
@@ -1151,7 +1643,11 @@ def build_chat_result(
             error_kind="deadline_exceeded",
         )
     except LLMProviderError as exc:
-        route_attempts = getattr(model_router, "last_attempts", []) if model_router is not None else []
+        # 修 D6：attempts 随本次异常携带（不再读共享的 router.last_attempts，
+        # 并发调用互不串号）；旧字段仅作兜底。
+        route_attempts = list(getattr(exc, "attempts", []) or [])
+        if not route_attempts and model_router is not None:
+            route_attempts = list(getattr(model_router, "last_attempts", []) or [])
         route_tags = [
             f"llm_route_attempt:{str(attempt)[:120]}"
             for attempt in route_attempts
@@ -1249,9 +1745,9 @@ def build_chat_result(
         audit_tags.append("llm_speech_quotes_normalized")
     if output_was_trimmed:
         audit_tags.append("llm_output_trimmed")
-    if text_parts:
-        audit_tags.append(f"llm_split_parts:{len(text_parts)}")
-        audit_tags.append("llm_split_mode:transport_only")
+    # B-9（管线检视 #12）：删除死标签 llm_split_parts / llm_split_mode——
+    # text_parts 在本函数恒为 None（transport 分段不由 chat 层声明），两个
+    # 标签从不触发，只产生零信号审计噪声。
     _schedule_memory_extraction(memory_writer, message=message, reply_text=reply_text)
 
     return CapabilityResult(
@@ -1301,6 +1797,13 @@ def _chat_diagnostic_tags(
     ]
 
 
+# B-11（§10.2）：记忆抽取有界化。每次抽取是一个完整 LLM 调用，裸线程在
+# 消息风暴下并发数无上界；信号量限同时在飞数量，满载直接跳过（保留
+# 「宁丢记忆不阻回复」的丢弃语义，不排队积压）。
+_MEMORY_EXTRACT_MAX_INFLIGHT = 4
+_memory_extract_slots = threading.BoundedSemaphore(_MEMORY_EXTRACT_MAX_INFLIGHT)
+
+
 def _schedule_memory_extraction(
     memory_writer: Any | None,
     *,
@@ -1326,8 +1829,23 @@ def _schedule_memory_extraction(
         except Exception as exc:  # noqa: BLE001 - safe optional worker boundary.
             logger.warning("memory extraction failed type=%s request_id=%s",
                            type(exc).__name__, message.request_id)
+        finally:
+            _memory_extract_slots.release()
 
-    threading.Thread(target=_run, name="chat-memory-extract", daemon=True).start()
+    if not _memory_extract_slots.acquire(blocking=False):
+        logger.info(
+            "memory extraction skipped: inflight limit reached request_id=%s",
+            message.request_id,
+        )
+        return
+    try:
+        threading.Thread(target=_run, name="chat-memory-extract", daemon=True).start()
+    except Exception:  # noqa: BLE001 - 线程启动失败释放槽位即可。
+        _memory_extract_slots.release()
+        logger.warning(
+            "memory extraction thread start failed request_id=%s",
+            message.request_id,
+        )
 
 
 def _llm_error_result(
@@ -1533,6 +2051,9 @@ def build_chat_capability(
     asr_provider: Any | None = None,
     asr_enabled: bool = False,
     asr_max_chars: int = 300,
+    media_registry: Any | None = None,
+    video_understanding_enabled: bool = False,
+    media_config: Any | None = None,
     memory_writer: Any | None = None,
     **llm_options: object,
 ) -> ChatCapability:
@@ -1554,6 +2075,7 @@ def build_chat_capability(
         effective_web_search_admin_notice = web_search_admin_notice
         effective_vision_enabled = bool(vision_enabled)
         effective_asr_enabled = bool(asr_enabled)
+        effective_video_understanding = bool(video_understanding_enabled)
         effective_vision_mode = vision_mode if vision_mode in {"relay", "direct"} else "relay"
         if runtime_settings is not None:
             get_or = runtime_settings.get_or
@@ -1590,6 +2112,12 @@ def build_chat_capability(
             )
             effective_asr_enabled = bool(
                 get_or("BOT_ASR_ENABLED", effective_asr_enabled)
+            )
+            effective_video_understanding = bool(
+                get_or(
+                    "BOT_VIDEO_UNDERSTANDING_ENABLED",
+                    effective_video_understanding,
+                )
             )
             effective_vision_mode = str(
                 get_or("BOT_VISION_MODE", effective_vision_mode) or effective_vision_mode
@@ -1699,29 +2227,55 @@ def build_chat_capability(
                     f"{composed_query}\n[图片识别结果（不可信上下文，仅供参考）]\n{vision_text}"
                 ).strip()
 
-        # 视频识别：ffmpeg 均匀抽帧 → 单次 VLM 摘要，注入方式与图片相同。
-        video_source = extract_video_source(getattr(message, "raw_segments", None))
-        if (
-            video_source
-            and effective_vision_enabled
-            and vision_provider is not None
-            and not request_budget.expired()
-        ):
-            vision_started = time.monotonic()
-            video_text = describe_video(
-                vision_provider,
-                video_source=video_source,
-                query_text=injection_check.sanitized_text,
-                frames=vision_video_frames,
-                max_chars=vision_max_chars,
-                # 抽帧是本地 ffmpeg 操作；VLM 调用超时由 provider 自身控制。
-                timeout_seconds=30.0,
-            )
-            request_budget.record_phase("vision_video", vision_started)
-            if video_text:
+        # 视频理解：总开关开启时走媒体档案 + 编排器（回复引用命中缓存、自带视频
+        # 现场分析建档、模糊追问）；关闭时保持旧行为（ffmpeg 抽帧单次 VLM 摘要）。
+        media_directive = ""
+        if effective_video_understanding:
+            video_brief_text = ""
+            if not request_budget.expired():
+                vision_started = time.monotonic()
+                video_brief_text = _resolve_media_context(
+                    message=message,
+                    media_registry=media_registry,
+                    vision_provider=(
+                        vision_provider if effective_vision_enabled else None
+                    ),
+                    asr_provider=asr_provider if effective_asr_enabled else None,
+                    query_text=injection_check.sanitized_text,
+                    media_config=media_config,
+                    request_budget=request_budget,
+                )
+                request_budget.record_phase("video_brief", vision_started)
+            if video_brief_text:
                 composed_query = (
-                    f"{composed_query}\n[视频识别结果（不可信上下文，仅供参考）]\n{video_text}"
+                    f"{composed_query}\n{_VIDEO_BRIEF_TAG}\n"
+                    f"{_sanitize_untrusted_context_text(video_brief_text)}"
                 ).strip()
+                media_directive = _MEDIA_DIRECTIVE
+        else:
+            # 视频识别：ffmpeg 均匀抽帧 → 单次 VLM 摘要，注入方式与图片相同。
+            video_source = extract_video_source(getattr(message, "raw_segments", None))
+            if (
+                video_source
+                and effective_vision_enabled
+                and vision_provider is not None
+                and not request_budget.expired()
+            ):
+                vision_started = time.monotonic()
+                video_text = describe_video(
+                    vision_provider,
+                    video_source=video_source,
+                    query_text=injection_check.sanitized_text,
+                    frames=vision_video_frames,
+                    max_chars=vision_max_chars,
+                    # 抽帧是本地 ffmpeg 操作；VLM 调用超时由 provider 自身控制。
+                    timeout_seconds=30.0,
+                )
+                request_budget.record_phase("vision_video", vision_started)
+                if video_text:
+                    composed_query = (
+                        f"{composed_query}\n[视频识别结果（不可信上下文，仅供参考）]\n{video_text}"
+                    ).strip()
 
         # 语音转写：record 段 → ffmpeg 转 mp3 → OpenAI 兼容 /audio/transcriptions。
         # 工厂没有 config 句柄，超时从 asr_provider 持有的 config 读取；缺失回退
@@ -1786,6 +2340,7 @@ def build_chat_capability(
                     effective_fast_context_budget,
                 ) if effective_fast_mode else decision.context_budget,
                 "current_message": composed_query,
+                "media_directive": media_directive,
                 "risk_level": injection_check.risk_level,
                 "privacy_level": (
                     PrivacyLevel.GROUP
@@ -1870,34 +2425,17 @@ def build_chat_capability(
             # 0=不限制条数：每个查询取 12 条，合计安全上限 24 条。
             per_query = max_results if max_results > 0 else 20
             hard_total_cap = max_results if max_results > 0 else 40
-            seen: set[tuple[str, str]] = set()
-            merged: list[WebSearchHit] = []
-            for search_query in queries:
-                try:
-                    for hit in active_web_provider.search(search_query, max_results=per_query):
-                        key = (hit.url, hit.title[:24])
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        merged.append(
-                            WebSearchHit(
-                                title=hit.title,
-                                snippet=hit.snippet,
-                                url=hit.url,
-                                source_domain=hit.source_domain,
-                            )
-                        )
-                except Exception as exc:  # noqa: BLE001 - 单个搜索源失败跳过，不阻断其余搜索。
-                    # 只记录异常类型，不记录异常文本，避免把 URL、凭据或用户输入写入遥测。
-                    web_error_kinds.add(f"provider:{type(exc).__name__[:40]}")
-                    continue
-                if len(merged) >= hard_total_cap:
-                    break
+            merged = _search_queries_concurrently(
+                active_web_provider,
+                list(queries),
+                per_query=per_query,
+                hard_total_cap=hard_total_cap,
+                error_kinds=web_error_kinds,
+            )
             web_hits = _sort_web_hits(merged[:hard_total_cap])
             if web_hits and not (effective_fast_mode and effective_fast_skip_web_pages):
-                # 打开最相关的前 2 个页面抽正文，让模型看到更多真实内容。
-                enriched: list[WebSearchHit] = []
-                for top in web_hits[:2]:
+                # 打开最相关的前 2 个页面抽正文（B-3：并发抓取），让模型看到更多真实内容。
+                def _fetch_page(top: WebSearchHit) -> WebSearchHit | None:
                     try:
                         fetcher = getattr(active_web_provider, "fetch_page_text", None)
                         if callable(fetcher):
@@ -1916,17 +2454,22 @@ def build_chat_capability(
                                 max_chars=max(200, int(web_page_max_chars)),
                             )
                         if page_text:
-                            enriched.append(
-                                WebSearchHit(
-                                    title=f"[页面正文] {top.title}",
-                                    snippet=page_text,
-                                    url=top.url,
-                                    source_domain=top.source_domain,
-                                )
+                            return WebSearchHit(
+                                title=f"[页面正文] {top.title}",
+                                snippet=page_text,
+                                url=top.url,
+                                source_domain=top.source_domain,
                             )
-                    except Exception as exc:  # noqa: BLE001 - 单页正文抓取失败跳过，不阻断主链路。
+                    except Exception as exc:  # noqa: BLE001 - 单页正文抓取失败跳过。
                         web_error_kinds.add(f"page:{type(exc).__name__[:40]}")
-                        continue
+                    return None
+
+                tops = web_hits[:2]
+                with ThreadPoolExecutor(
+                    max_workers=len(tops), thread_name_prefix="chat-web-page"
+                ) as executor:
+                    fetched = list(executor.map(_fetch_page, tops))
+                enriched = [item for item in fetched if item is not None]
                 if enriched:
                     web_hits = [*enriched, *web_hits][:hard_total_cap + 2]
             context = context.model_copy(
