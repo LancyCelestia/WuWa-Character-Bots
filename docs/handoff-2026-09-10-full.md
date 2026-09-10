@@ -261,6 +261,7 @@ CQ 组装规避 musicSignUrl 拒签；分片发送超时按段钳下限；队列
 1. **index 裹挟（正向）**：Task2 提交 bridge.py 时把视频会话在同文件在途的 `_inline_local_image` hunk 一起带入（2c42282 前身 6b16a90）。
 2. **amend 撞车（反向）**：B组提交 a1bf17d 后被 C组 `git commit --amend` 混入其 base_router.py/test_affinity_query.py（成 df27c56）。
 3. **共享 index 裹挟（三度）**：A组 f96d1a1 把并行会话已暂存的 runtime policy 改动集一起提交（对方已自行存证）。
+4. **共享 index 裹挟（四度，含旧基线回退，已即时修复）**：管线检视二轮会话提交 83c8d59（prfix 测试+meme_search）时，暂存区滞留着重审计会话的**旧基线** `__init__.py` blob（R15/R16/R17/R20 修复被呈现为"删除"），随 commit 入库——HEAD 的 `__init__.py` 瞬间回退到 f5bc35f 之前。发现后即用 plumbing 修复：`git update-index --cacheinfo` 取父提交正确 blob（c5696e5）+ `git commit --amend`（成 **735ac00**），工作树文件（含并行会话在途新工作 +355/−60）分毫未动，amend 后核验 blob 恢复 c5696e5、R15/R20 标记在位。**教训升级**：`git add` 前不仅要查 `git diff --cached --stat`（提交前那一刻的暂存内容仍可能是**旧基线 blob**，与 HEAD 比较会显示"删改"，需再比对 `git diff HEAD -- <file>` 确认暂存内容不是回退态）；提交后必须 `git show --stat HEAD` 复核实际入库文件集。无痕迹事故未遂一次：同窗口内 `diff --cached` 先显示他人在途 `__init__.py`，数十秒后对方会话自行 reset 校准，本会话提交时已不含——时序上纯属侥幸。
 **处置先例**：内容正确的不回退、存证+勘误；用户要求真修时用 §11.5 的 plumbing 重链拆分。
 
 ### 11.3 门禁红项归属判断（当前快照）
@@ -1059,6 +1060,8 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 
 ### B组（模型路由 / 管线 / 发送 / 聊天域）——已由 B组会话认领（2026-09-11，14 项全部交付）
 
+> **独立验证与补强（2026-09-11 深夜，验证会话）**：另一会话按本表独立开工（不知 B组会话在途），执行中经 git log 发现 14 项已全部交付后即时取消重复簇，转为①逐项 grep/git show 独立核实生产代码落地（B-1 deadline 线程/B-3 并发/B-6 负缓存 TTL/B-8 收尾轮/B-9 同阶段比较+死标签删除/B-11 有界化/sender 四件套/巡检合并视图/代理注入/旧快照迁移——全部属实）；②补齐 B-2/B-5 AC 缺口回归 `tests/test_llm_error_classification.py`（37 用例：分类矩阵+端到端去参/密钥轮换）与 `tests/test_llm_httpx_client.py`（10 用例：惰性单例/8 线程并发首建/限长/超时映射），独立评审 Approved；③检视 #7 全库最后残留点 `character/temporal.py` urlopen 已迁 `_shared_http_client`+8MB 限长（`tests/test_temporal_http_client.py` 12 用例；**注意该文件混有其他会话在途 hunks，提交需 §11.4**）；④**bot.py 启动崩溃修复（async on_startup）仍未提交**——工作树此前把降噪处理器挂成同步 on_startup 钩子，NoneBot 对同步 lifespan 钩子经 anyio 放工作线程执行致 `get_running_loop()` 必炸、uvicorn startup 失败；已改 async 并实测启动全链路通过，HEAD 仍是 import 期旧写法，**请尽快提交生效**。终态门禁：1033 passed / lint 全绿。
+
 文件域：`llm/**`、`runtime/**`、`sender/**`、`bot.py`、`capabilities/chat.py`、`capabilities/runtime_admin.py`、`llm/providers.py`、`sources/web_search.py`
 
 | # | 任务 | 交付（2026-09-11） |
@@ -1123,6 +1126,30 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 | C-6 | 订阅真实推送验证（**等 X cookie / B站样本 / 用户指定 QQ 目标**）：YT 已 healthy，推特 auth_required | §6.9/§9 | 真实账号端到端收到推送 | ⏸ **阻塞：等用户前置动作**（X/B站 cookie、指定 QQ 推送目标、生产 bot 提权重启——订阅调度在旧进程里跑的还是 09-09 代码）。机制侧无剩余代码工作 |
 | C-7 | `/bot cookie import` 后健康联动验证：import 即时反映到解析成功率（无需重启） | §4.3 热写语义 | import 前后同链接解析对比结论 | ✅ **机制验证通过，真实前后对比等用户重灌 cookie**。代码链路核实：import→`import_cookie_header` 写 `platform_cookies.txt`→解析注册表缓存 key 含 cookies 文件 mtime_ns（`__init__.py:1546-1571`）→下一条消息重建注册表+cookie provider，全程无需重启（与 COMMANDS.md L121 口径一致）。回归 `tests/test_cookie_import_hot_reload.py` 3 用例锁定（mtime 未变命中缓存/文件改写后重建且携带新 provider/平台范围变化重建/文件缺失稳定键）。真实「同链接 import 前后成功率对比」需用户重灌微博/灌 B站 cookie 后在**重启后的新进程**上做（当前生产进程 44708 是 09-09 旧代码，连 C14 缓存都没有） |
 | C-8 | COMMANDS.md / 帮助文本与新行为一致性复核（模式词转义「点歌 #X」、编号规则、会员购字段等 09-10 新行为是否都已写进用户手册） | 09-10 多批行为变化 | 文档抽查逐条对得上 | ✅ 十项逐条核对完毕（要点）：①**echo.py 修 4 条目**——点歌（过期编号行为矛盾更正：P2#7 后过期/无效编号回提示不再当歌名搜索；模式词补「全部」）、订阅（v2 真实命令面 add <公开目标>/list/pause/resume/remove+权限模型，删 v1 才有的 --digest/check/status；支持范围补 YT/微博/推特/Pixiv/TG/音乐）、凭据（补 /bot cookie import 全平台清单与 status 输出描述——原 alias 'cookie' 指向的条目完全无 cookie 内容）、模型（index/lines/detail 补 health/probe/routes 三子命令+「设置」条目摘要同步）；②COMMANDS.md 抽查 cookie/model/reply 节与代码一致、无矛盾，不需改（工作树中已有的未提交改动是并行会话的开发任务表述，与本轮无关）；③天气寒聊静默/吃什么语气助词/小名软点名/会员购嘉宾卡区属对用户透明或管理员行为注记，不进帮助卡（登记即可）；④**移交 B组**：runtime_admin.py:843 代码自身 fallback 用法提示也缺 health/probe/routes（B组文件域未动） |
+
+#### C组收尾总结（2026-09-11，两轮：首轮 C-1~C-8 + 第二轮全库重审计；提交链 f8609d6→6de4aa2→f5bc35f→5c85fd8→5b9877d，全部已推送）
+
+**做好（全部实测/门禁验证，无「声称完成」项）：**
+
+1. **首轮 7/8 项**（f8609d6）：C-1 小名否定（实跑推翻审计前提——紧邻「千万别叫我」本被挡住，真漏网=疑问词/顿号间隔；抽 `extract_learned_nickname` 纯函数+否定语境复核+修语气词粘名，回归 5+6 用例）、C-2 spicy flaky 根因（数据质量：鱼香肉丝简介改写；42 道零冲突+1000 进程内连跑+25 pytest）、C-3 观察结论（result_unknown 台账 2 行 0 pending，无需兜底，§13.10 销项）、C-4 评估（test_perf_* 5 文件=唯一契约回归，保留）、C-5 知识 mtime 签名缓存（管线检视 #9 销项）、C-7 机制回归锁定、C-8 帮助文本 4 条目修正（含订阅 v2 真实命令面）。
+2. **C-1 `__init__.py` 接线**（6de4aa2，§11.4 部分暂存，工作树他人改动分毫未动）。
+3. **第二轮全库重审计**（f5bc35f+5c85fd8，报告 `docs/code-reaudit-2026-09-11.md`）：8 只读子代理分域通读 → 主会话逐条实证 → **58 findings（P1×5/P2×13/P3×40）**；域内修 **19 条（R1-R20）**，其中 P1×4（向量库重建持锁冻结检索、知识文件缺失打断兜底链、订阅 add 无管理员门、alert --probe 阻塞事件循环）+ P2×7（订阅目的地粒度/status 管理员门/WAL/维度守卫等）+ P3×8；重审计还抓出**本会话首轮 C-1 新码的语气词回溯缺陷**（已修+回归）。新增回归 `test_reaudit_20260911.py`×6 + 定向 69 passed；mypy 205 文件零错。
+4. **协作纪律零事故**：两次 §11.4 部分暂存提交均与并行会话（A/B 组收尾、B 组毒行修复 90f590e）无裹挟；出域报告经主会话实证后才标注验证等级。
+
+**没做好 / 未完成（诚实底账）：**
+
+1. **C-6 订阅真实推送验证：未做**——卡用户前置（X/B站 cookie、QQ 推送目标、**生产 bot 提权重启**）。机制侧无剩余代码工作。
+2. **C-7 真实「import 前后同链接成功率对比」：只做了机制回归**——真实对比同样卡用户重灌 cookie+重启（旧进程 44708 连 C14 缓存都没有，对比无意义）。
+3. **两项 parked（有裁决记录，报告 §3）**：transport 穿透双通知/漏通知 P3（需逐 handler 复制 transport 分支，随 `__init__.py` 域提交队列）；`_incoming_from_nonebot_event` 文件段同步解析 P2（受 120k 上限约束、仅文件消息触发，结构性 to_thread 随 B 组管线工作）。
+4. **content_safety 插空格变体（「色 情」）仍可绕过**——裁决否决全剥空白方案（「三色情节」型误报），接受此缺口。
+5. **出域 39 条截至收尾仍开着的优先项**（B 组已自修 queue 毒行 P1=90f590e、llm 剥参 7c0b615，其余无人认领）：`sources/subscriptions/social_v2.py:507` 订阅轮询同步网络阻塞事件循环 **P1**（2026-09-11 复核仍在）；llm 慢滴流预算穿透 P2 + 去参成功漏记健康 P2（复核仍在，model_router.py:1428）；runtime 三 P2（pipeline 循环内同步 SQLite 限流、settings overrides 只增不删、model_schedule last_applied 不持久）；parsers P2×3（知乎 question_id=0、wmpvp 不带 id、xhs noteDetailMap 非.dict 崩）；bilibili live_room V2 恒空 P2；web_search/meme_search DDG 重定向解析 P2×2（子代理 curl 实测）；download.py SSRF 面 P3。**逐条带 file:line+证据见报告 §2**。
+6. **出域条目为子代理原码级报告**（方法契约：证据引用+禁臆测），除 2 条 P1 与抽查项外未逐条主会话复跑——认领会话动手前应先实证。
+
+**移交注意：**
+
+- **全部交付（含 A/B 组 09-10~09-11 全部）仍未生效**：生产 bot 44708 是 09-09 23:17 旧进程，等用户提权重启。重启前勿在旧进程上验收任何新行为。
+- 域内修复涉权限/语义变化（管理员可感知）：订阅群内 add 现需管理员；pause/resume/remove 只影响本目的地；`/bot status` 仅管理员；群推送时间设置/取消需管理员；「叫我就好」不再被当教名。
+- 复现/核查入口：报告 `docs/code-reaudit-2026-09-11.md`（58 条全清单+裁决）· 台账 `.superpowers/sdd/full-reaudit-20260911/progress.md` · 回归 `tests/test_reaudit_20260911.py`。
 
 ### 长期项（不进本轮分组，单独立项）
 
