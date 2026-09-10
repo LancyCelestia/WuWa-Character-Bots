@@ -1582,10 +1582,13 @@ def parse_bilibili_show(url: str, *, cookie_header: str = "") -> ParsedContent:
     name = str(data.get("name") or "").strip()
     if not name:
         raise ParseHttpError("bilibili show missing project name")
-    venue = data.get("venue_info") or {}
-    place = data.get("place_info") or {}
-    merchant = data.get("merchant") or {}
-    follow_info = data.get("follow_info") or {}
+    # getV2 偶发把这些结构字段置成 null/字符串：统一钳成 dict，防 .get 崩。
+    venue = data.get("venue_info") if isinstance(data.get("venue_info"), dict) else {}
+    place = data.get("place_info") if isinstance(data.get("place_info"), dict) else {}
+    merchant = data.get("merchant") if isinstance(data.get("merchant"), dict) else {}
+    follow_info = (
+        data.get("follow_info") if isinstance(data.get("follow_info"), dict) else {}
+    )
     stats: dict[str, object] = {}
     summary_lines: list[str] = []
 
@@ -1700,7 +1703,11 @@ def parse_bilibili_show(url: str, *, cookie_header: str = "") -> ParsedContent:
     guests = [item for item in (data.get("guests") or []) if isinstance(item, dict) and item.get("name")]
 
     # --- 图文详情（正文模块文本 + 详情图） ---
-    performance_desc = data.get("performance_desc") or {}
+    performance_desc = (
+        data.get("performance_desc")
+        if isinstance(data.get("performance_desc"), dict)
+        else {}
+    )
     desc_bits: list[str] = []
     gallery: list[str] = []
     for module in (performance_desc.get("list") or [])[:4]:

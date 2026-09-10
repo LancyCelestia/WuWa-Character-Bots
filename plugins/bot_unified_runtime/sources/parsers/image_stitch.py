@@ -35,6 +35,12 @@ _MIN_STRIP_WIDTH = 240
 _MIN_SINGLE_ASPECT = 1.12
 # 拼接后最大总宽/总高：超过视为碰巧同尺寸的普通图集。
 _MAX_TOTAL_ASPECT = 4.0
+# 串行下载整体预算（秒）：超时放弃拼接保持原图组，绝不阻塞整条解析链。
+_TOTAL_BUDGET_SECONDS = 20.0
+# 拼接画布像素上限（40MP，RGB 峰值约 120MB）。
+_MAX_CANVAS_PIXELS = 40_000_000
+# 缓存配额：超出保留最新 200 个（同 data/cards 的 prune_prefixed 口径）。
+_CACHE_KEEP = 200
 
 
 def _stitch_cache_dir() -> Path | None:
@@ -47,6 +53,27 @@ def _stitch_cache_dir() -> Path | None:
         # 与 cookies.py 同规则：相对路径按项目根（包结构上溯四级）解析。
         path = Path(__file__).resolve().parents[4] / path
     return (path / "media_stitch").resolve()
+
+
+def _prune_stitch_cache(cache_dir: Path) -> None:
+    """缓存配额：只保留最新 _CACHE_KEEP 个拼接产物（防目录无界增长）。"""
+    try:
+        files = sorted(
+            (
+                item
+                for item in cache_dir.glob("strip_*.jpg")
+                if item.is_file()
+            ),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return
+    for stale in files[_CACHE_KEEP:]:
+        try:
+            stale.unlink()
+        except OSError:  # 并发占用等删除失败留待下轮。
+            pass
 
 
 def _looks_like_vertical_strip(sizes: list[tuple[int, int]]) -> bool:
@@ -88,12 +115,20 @@ def try_stitch_strip(
     cache_dir = _stitch_cache_dir()
     if cache_dir is None:
         return list(urls), ""
+    import time
+
+    # 整体预算：串行下载最坏会阻塞整条解析链（每图 8s 超时 × N 张），
+    # 超预算即放弃拼接保持原图组——拼图是锦上添花，不是必需品。
+    deadline = time.monotonic() + _TOTAL_BUDGET_SECONDS
     images: list[Image.Image] = []
     for url in candidates[:_MAX_STRIP_IMAGES]:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.5:
+            return list(urls), ""
         try:
             _, payload = http_get(
                 url,
-                timeout=12,
+                timeout=max(1.0, min(8.0, remaining)),
                 cookie=cookie_header,
                 proxy=proxy,
                 referer=referer,
@@ -108,6 +143,9 @@ def try_stitch_strip(
         return list(urls), ""
     width = min(size[0] for size in sizes)
     height = min(size[1] for size in sizes)
+    # 内存护栏：拼接画布像素总量封顶（RGB 三字节，40MP≈120MB 峰值）。
+    if width * len(images) * height > _MAX_CANVAS_PIXELS:
+        return list(urls), ""
     canvas = Image.new("RGB", (width * len(images), height))
     for index, source_image in enumerate(images):
         frame: Image.Image = (
@@ -121,5 +159,6 @@ def try_stitch_strip(
     out_path = cache_dir / f"strip_{digest}.jpg"
     if not out_path.is_file():
         canvas.save(out_path, "JPEG", quality=90)
+    _prune_stitch_cache(cache_dir)
     local = str(out_path)
     return [local], local
