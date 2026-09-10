@@ -1197,3 +1197,30 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 > 编写时点：2026-09-10，分支 `v0.0.1-alpha.2`，HEAD 见 `git log -1`。
 
 ---
+
+## §16 人格化四层 + 功能 blitz 会话底账（2026-09-11，管线检视/审计后续会话）
+
+**提交链（均未推送，等用户指示）**：`0cac9ce`（fix reaudit 出域，13 文件 +564/−27）→ `0325a69`（feat 主体，24 文件 +6270/−5）→ `57327f3`（补全 3 文件 +186/−1，stat 核对抓回 base_router/runtime_admin/providers 漏暂存）。全部经 §11.4 临时索引「HEAD+仅本会话 hunk」重建提交，共享文件（config/`__init__`/chat/contracts/plain_text/web_search/social_v2/bilibili_adapter/subscription_scheduler）在途改动分毫未裹挟；**提交树自洽性已实证**：临时 worktree 检出 HEAD 跑全部新测试 230 passed。
+
+### 做好（全部实测）
+1. **L1 bot 心情**（`character/mood.py`+12 测）：valence[-1,1]/arousal[0,1] 双轴、半衰期指数回归基线、滚动窗防刷速率帽、`describe()` 纯自然语言注入 prompt（数值永不外泄）、`willingness_factor` 接群聊自动回复开火概率（`min(1.0, p×系数)`，只调概率不做硬开关）。
+2. **L4 人格 quirk 演化区**（`character/quirks.py`+10 测）：propose→pending_review→管理员 `/bot quirk approve|retire|add|list` 审核制；核心人格文件冻结不自动改；active 项才以自然语言渲染进 prompt。
+3. **反思回路=非线性记忆**（`character/reflection.py`+9 测）：夜间 cron（04:30，线程池）把 conversation_turns 沉淀为用户事实+会话摘要，`_MergedMemoryProvider` 并入记忆召回链（fact_id 去重+预算截断）；启发式归纳零 LLM 可跑，LLM 归纳 `BOT_REFLECTION_LLM_ENABLED` 可选。
+4. **命理三件套**（ganzhi/tarot/iching+76 测）：八字四柱（Meeus 太阳黄经节气，**否决寿星公式**——其 2000/2008 立秋有整日级误差）、塔罗 78 牌正逆位/三张牌阵/每日一抽、金钱卦六十四卦全表。**抓出验收向量真 bug**：截图里云崽排盘日期标错（2026-09-10 实为丁亥日，己丑=09-12），算法以权威历书为准未迁就。
+5. **全球股指**（东财 push2 15 指数本机实测有效+54 测）、**GitHub 仓库解析**（匿名 API+README 剥取）、**今日快报**（4 源 RSS 实测存活：IT之家/少数派/华尔街见闻/BBC中文；36kr/Solidot/机器之心返回 HTML 剔除，+53 测）。
+6. **reaudit 出域 13 处修复**（16 回归测）：订阅轮询 to_thread P1、bilibili V2 直播恒空接真实现、DDG 三重潜伏（uddg 重定向壳×2+分块正则切碎 result__a+链接正则要求 https://）、llm 五项（流式总预算 deadline/剥参成功补健康样本防 EWMA 饿死/影子线程兜底/预算耗尽误报/未知 id provider 缓存有界）、调度器全局锁串行化、解析器四项（知乎 canonical_url/xhs-B站-音乐 AttributeError 守卫）、「总之」吞尾收紧+**内心数值打码**（好感度0.78→「好感度…保密」，仅聊天路径不误伤命令）。
+7. **门禁**：全量 **1290 passed / 0 failed**、ruff All checks passed、mypy **218 文件零 issue**；提交树 worktree 检出 230 测再证。
+
+### 没做好 / 让渡（诚实清单）
+1. **心情观察钩子未入库**：`_passive_affinity_perception` 整个函数是并行会话**未提交新代码**，我的 mood observe 钩子搭在其内——该 hunk 按归属留给对方落库（工作树已就位，对方提交后自动生效）；期间 bot 心情只衰减不出事件（中性平静）。
+2. **让渡**：`settings.py:395` overrides 复活、`model_schedule.py:120` last_applied 重启失忆——修复区正被在途会话重写（+23 行 hunk 压在 `_load`），不纠缠；weather/eat handler 函数体互换（HEAD 既有 quirk）同属在途会话已修未提交。
+3. **未做**：好感度三维化（trust/intimacy/rapport+阶段滞后）、表情包情绪档位、主动搭话门控（Wave4 余量项）；反思→quirks.propose 自动投喂线（手动 add 直接可用）；新闻 Atom 真源未实测（4 存活源全 RSS2.0，Atom 仅标准 fixture）；反思群聊事实归属单一主 sender（文档化近似）；八字娱乐级精度（交节 ±7 分钟内日期归属可能差一天）、无藏干权重。
+4. **架构纠偏存证**：整合报告 Phase 2「意愿系数接 reply_budget」接错杆——reply_budget 是确定性上限无概率抽签；实际杠杆=群聊开火抽签概率（已按此实现）。
+5. 过程：提交 2 首次 stat 核对漏 3 文件（57327f3 补回）；重建脚本 3 次锚点断言失败均为在途≠HEAD 所致，断言机制全部安全拦截。
+
+### 待用户前置动作
+1. **提权重启生产 bot**（老进程仍跑 09-09 代码，本节全部交付未生效）。
+2. **记忆系统默认关**：生产 .env 需 `BOT_MEMORY_ENABLED=true`、`BOT_HISTORY_ENABLED=true`（反思回路依赖后者），建议加 `BOT_GROUP_DIGEST_ENABLED=true`；心情/quirk/反思/命理/股指/快报默认开（`BOT_DIVINATION_ENABLED` 等可单独关）。
+3. 推送 origin 等明确指示；其余待办（umi 充值、QIANQIANYE 换 key、ds-official key、toolcode-gemini 下架）沿用 §15 清单。
+
+---
