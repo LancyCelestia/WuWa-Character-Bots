@@ -26,6 +26,8 @@ from typing import Protocol
 _MEME_ASK_PATTERN = re.compile(
     r"(是什么梗|什么梗|啥梗|啥意思|什么意思|是什么意思|怎么来的|出自哪里)"
 )
+# 搜索结果页读取上限（限长读取，防异常超大响应占满内存）。
+_MAX_SEARCH_PAGE_BYTES = 2 * 1024 * 1024
 _QUOTE_CHARS = '"\'""''\u201c\u201d\u2018\u2019'
 _QUOTED_TERM = re.compile(
     rf"[{re.escape(_QUOTE_CHARS)}]([^{re.escape(_QUOTE_CHARS)}]{{2,20}})[{re.escape(_QUOTE_CHARS)}]"
@@ -150,7 +152,11 @@ class DuckDuckGoMemeSearchProvider:
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                html = response.read().decode("utf-8", errors="replace")
+                # 限长读取：DDG 结果页远小于该值；异常超大响应读到上限即止，
+                # 不给故障/敌意响应撑爆内存的机会。
+                html = response.read(_MAX_SEARCH_PAGE_BYTES).decode(
+                    "utf-8", errors="replace"
+                )
         except Exception:  # noqa: BLE001 - 搜索请求失败静默返回空结果。
             return []
         items = _extract_ddg_items(html)
