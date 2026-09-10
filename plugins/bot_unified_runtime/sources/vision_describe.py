@@ -366,6 +366,11 @@ def extract_video_source(raw_segments: list[dict[str, Any]] | None) -> str | Non
             local = _local_path_from_value(value)
             if local is not None:
                 return str(local)
+        # video 段存在但三键全空：视频理解静默失效的高频来源，留观测点。
+        logger.debug(
+            "vision: video segment without resolvable source keys=%s",
+            sorted(data.keys()),
+        )
     return None
 
 
