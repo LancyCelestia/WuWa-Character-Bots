@@ -106,7 +106,6 @@ def _encode_image_bytes(data: bytes, mime: str) -> str:
 
 def _pil_normalize(path: Path, *, first_frame_only: bool) -> str | None:
     """经 PIL 重编图片：GIF 取首帧转 PNG，超大图缩边转 JPEG；失败返回 None。"""
-    from io import BytesIO
 
     try:
         from PIL import Image
@@ -136,7 +135,6 @@ def _pil_normalize_image(image: Any, *, first_frame_only: bool) -> str | None:
 
 def _gif_filmstrip_data_url(path: Path) -> str | None:
     """动图抽 ≤3 帧拼成横向长条（单图预算内表达运动过程）；失败返回 None。"""
-    from io import BytesIO
 
     try:
         from PIL import Image
@@ -242,7 +240,7 @@ def _download_image_bytes(
     request = urllib.request.Request(url, headers={"User-Agent": _DESKTOP_UA})
     host = urlparse(url).hostname or ""
     try:
-        with urllib.request.urlopen(request, timeout=_REMOTE_DOWNLOAD_TIMEOUT) as response:  # noqa: S110
+        with urllib.request.urlopen(request, timeout=_REMOTE_DOWNLOAD_TIMEOUT) as response:
             payload = response.read(max_bytes + 1)
     except Exception as exc:  # noqa: BLE001 - 下载失败降级保留原 URL 并留诊断。
         logger.warning(
@@ -324,6 +322,15 @@ def extract_image_urls(raw_segments: list[dict[str, Any]] | None) -> list[str]:
         candidates = [
             str(data.get(key) or "").strip() for key in ("url", "file", "path")
         ]
+        if not any(candidates):
+            # mface/表情商城段常见无 url 形态：图拿不到是"读不到图"类报障的
+            # 高频来源，留 debug 观测点（ NapCat 侧字段变化时此处最先显形）。
+            logger.debug(
+                "vision: %s segment without url/file/path keys=%s",
+                segment.get("type"),
+                sorted(data.keys()),
+            )
+            continue
         local_url = ""
         http_url = ""
         for candidate in candidates:

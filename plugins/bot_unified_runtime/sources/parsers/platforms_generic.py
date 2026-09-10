@@ -88,7 +88,10 @@ def _og_scrape(
     if match:
         summary = _unescape_html(match.group(1))
         if len(summary) > 200:
-            summary = summary[:200] + "…"
+            # 按句截断：优先在句末标点收尾；标点过靠前（信息量不足）退回硬截。
+            window = summary[:200]
+            cut = max(window.rfind(p) for p in ("。", "！", "？", "；", "!", "?", ";"))
+            summary = window[: cut + 1] + "…" if cut >= 80 else window + "…"
     if note and summary:
         summary = f"{note}\n{summary}"
     elif note:
