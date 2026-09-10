@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import tempfile
 import threading
 import time
 from datetime import datetime
@@ -196,26 +197,75 @@ _PLATFORM_LOGIN_QR = {"bilibili": ("bilibili", ".bilibili.com")}
 # 扫码会话：短 key → {"platform", "qrcode_key", "qr_png", "created"}
 _QR_SESSIONS: dict[str, dict] = {}
 _QR_SESSION_CAP = 16
+# playwright 扫码会话的登录页截图落盘目录。
+_PLAYWRIGHT_LOGIN_DIR = str(
+    (Path(tempfile.gettempdir()) / "bot_login_screenshots").resolve()
+)
+
+
+# 扫码会话：短 key → {"platform", "qrcode_key", "qr_png", "created"}
+_QR_SESSION_CAP = 16
 
 
 def login_methods_line(platform: str) -> str:
     """返回该平台支持的登录方式提示（诚实版）。"""
+    from plugins.bot_unified_runtime.sources.parsers.platform_login import (
+        playwright_login_platforms,
+    )
+
     if platform in _PLATFORM_LOGIN_QR:
         return "支持扫码登录：/bot cookie login " + platform
+    if platform in playwright_login_platforms():
+        return (
+            "支持扫码登录（官方登录页模式）：/bot cookie login " + platform
+        )
     return (
-        "暂不支持自动登录（密码/短信需过平台人机验证，机器人无法代替人工）。"
+        "暂不支持自动登录（该平台登录接口无稳定公开方案）。"
         "请浏览器登录后导出 cookie，再 /bot cookie import 手动导入。"
     )
 
 
 def cookie_login_start(config: object, platform: str) -> tuple[str, str, str]:
     """发起扫码登录，返回 (session_key, qr_png_path, text)。"""
+    # Playwright 官方登录页模式（MediaCrawler 同款）：不逆向接口，
+    # 直接打开平台登录页截图给管理员扫，浏览器上下文持有登录态。
+    from plugins.bot_unified_runtime.sources.parsers.platform_login import (
+        LOGIN_PAGES,
+        start_playwright_login,
+    )
+
+    if platform in LOGIN_PAGES:
+        session = start_playwright_login(
+            platform, screenshots_dir=_PLAYWRIGHT_LOGIN_DIR
+        )
+        # 等首张登录页截图就绪（后台线程打开浏览器+加载页面需数秒）。
+        for _ in range(40):
+            if session.get("screenshot"):
+                break
+            if str(session.get("state")) == "error":
+                return "", "", "登录页打开失败：" + str(session.get("error") or "")[:80]
+            time.sleep(0.5)
+        state = str(session.get("state") or "")
+        if state == "unsupported":
+            return "", "", login_methods_line(platform)
+        return (
+            platform,
+            str(session.get("screenshot") or ""),
+            (
+                f"已打开 {platform} 官方登录页（见截图）。请用手机 App 扫描页面上的"
+                "二维码并确认登录，完成后发送：/bot cookie check "
+                + platform
+                + "\n（3 分钟内有效；若提示二维码过期，请重新发起登录获取新码）"
+            ),
+        )
     if platform not in _PLATFORM_LOGIN_QR:
         return (
             "",
             "",
             login_methods_line(platform)
-            + "\n当前已支持扫码登录的平台：bilibili（其余平台逐步接入）。",
+            + "\n当前已支持扫码登录的平台：bilibili、"
+            + "、".join(LOGIN_PAGES)
+            + "。",
         )
     from plugins.bot_unified_runtime.sources.parsers.http_util import (
         http_get_json,
@@ -272,6 +322,13 @@ def _render_qr_png(content: str, platform: str, session_key: str) -> str:
 
 def cookie_login_check(config: object, platform: str) -> str:
     """单次 poll：查询该平台最近一次扫码会话的结果。"""
+    # playwright 官方登录页会话（xhs/微博/抖音/知乎/快手）。
+    from plugins.bot_unified_runtime.sources.parsers.platform_login import (
+        LOGIN_PAGES,
+    )
+
+    if platform in LOGIN_PAGES:
+        return _playwright_login_check(config, platform)
     if platform not in _PLATFORM_LOGIN_QR:
         return f"{platform} 暂不支持扫码登录。" + login_methods_line(platform)
     session = next(
@@ -400,3 +457,68 @@ def cookie_expiry_report(config: object, *, warn_days: int = 7) -> str:
     if not lines:
         return ""
     return "平台凭证过期提醒：\n" + "\n".join(lines)
+
+
+def _playwright_login_check(config: object, platform: str) -> str:
+    """playwright 扫码会话的结果查询：成功即把平台域 cookie 写入凭证文件。"""
+    from plugins.bot_unified_runtime.sources.parsers.platform_login import (
+        login_session_state,
+    )
+
+    session = login_session_state(platform)
+    if session is None:
+        return (
+            f"没有进行中的 {platform} 扫码登录。"
+            f"先发送 /bot cookie login {platform} 生成二维码。"
+        )
+    state = str(session.get("state") or "")
+    if state in {"starting", "waiting_scan"}:
+        return "还在等扫码确认，扫完后再发一次 /bot cookie check " + platform + "。"
+    if state == "error":
+        return "登录页打开失败（" + str(session.get("error") or "")[:60] + "），请重试。"
+    if state == "timeout":
+        return "登录超时了，请重新发送 /bot cookie login " + platform + " 获取新二维码。"
+    if state != "ok":
+        return "登录状态未知，请重试。"
+    # ok：写 cookie 文件
+    from plugins.bot_unified_runtime.sources.parsers.platform_login import (
+        LOGIN_PAGES,
+    )
+
+    spec = LOGIN_PAGES[platform]
+    domain_suffix = spec["domain_suffix"]
+    now = int(time.time())
+    ttl = _BILI_COOKIE_TTL
+    rows: list[str] = []
+    names: list[str] = []
+    for cookie in session.get("cookies") or []:
+        domain = str(cookie.get("domain") or "")
+        if not domain.endswith(domain_suffix):
+            continue
+        expires = cookie.get("expires")
+        try:
+            expires_epoch = int(float(expires)) if float(expires) > 0 else now + ttl
+        except (TypeError, ValueError):
+            expires_epoch = now + ttl
+        rows.append(
+            f"{domain}	TRUE	{cookie.get('path', '/') or '/'}	TRUE	"
+            f"{expires_epoch}	{cookie.get('name')}	{cookie.get('value')}"
+        )
+        names.append(str(cookie.get("name")))
+    if not rows:
+        return "登录成功但未取到有效 cookie，请重试。"
+    cookie_path = _resolve_cookie_file(config)
+    if cookie_path is None:
+        return "未配置 BOT_COOKIES_FILE，无法写入凭证。"
+    with open(cookie_path, "a", encoding="utf-8") as handle:
+        handle.write(chr(10).join(rows) + chr(10))
+    from plugins.bot_unified_runtime.sources.parsers.platform_login import (
+        clear_login_session,
+    )
+
+    clear_login_session(platform)
+    return (
+        f"✅ {platform} 扫码登录成功，已写入 {len(rows)} 项凭证"
+        f"（{'、'.join(names[:6])}{'…' if len(names) > 6 else ''}）。"
+        "解析链热加载即时生效。"
+    )
