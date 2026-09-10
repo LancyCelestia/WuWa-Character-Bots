@@ -37,6 +37,8 @@ PLATFORM_COOKIE_DOMAINS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "xiaoheihe": ((".xiaoheihe.cn", "xiaoheihe.cn"), ("pkey", "hkey", "token")),
     "skland": ((".skland.com", "skland.com"), ()),
     "miyoushe": ((".miyoushe.com", "miyoushe.com", ".bbs.miyoushe.com", "bbs.miyoushe.com"), ()),
+    # 知乎：解析链 403 需登录态（d_c0 为关键登录凭证）；白名单此前缺失。
+    "zhihu": ((".zhihu.com", "zhihu.com"), ("d_c0", "_zap", "__snaker__id")),
 }
 
 
@@ -76,7 +78,13 @@ def parse_netscape_cookie_file(path: str | Path) -> list[CookieEntry]:
     with open(path, "r", encoding="utf-8", errors="replace") as handle:
         for raw_line in handle:
             line = raw_line.strip()
-            if not line or line.startswith("#"):
+            if not line:
+                continue
+            if line.startswith("#HttpOnly_"):
+                # 浏览器扩展导出的合法 Netscape 行：#HttpOnly_ 前缀只是标记
+                # HttpOnly 属性，剥掉后照常解析（否则关键登录态静默缺失）。
+                line = line[len("#HttpOnly_"):]
+            elif line.startswith("#"):
                 continue
             parts = line.split("\t")
             if len(parts) < 7:
@@ -150,5 +158,9 @@ def build_platform_cookie_provider(path: str | Path | None) -> PlatformCookiePro
             f"{entry.name}={entry.value}" for entry in ordered
         )
         provider.key_names[platform] = [entry.name for entry in ordered]
-        provider.expires[platform] = min(entry.expires for entry in ordered if entry.expires)
+        # 全为会话 cookie（expires=0/空）时 min() 空序列会抛 ValueError：
+        # 用 default=0 语义化为「无过期时间」，不让单条消息解析路径崩溃。
+        provider.expires[platform] = min(
+            (entry.expires for entry in ordered if entry.expires), default=0
+        )
     return provider

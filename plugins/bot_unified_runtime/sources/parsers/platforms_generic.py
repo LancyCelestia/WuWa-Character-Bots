@@ -1505,6 +1505,20 @@ def parse_twitter_x(url: str, *, cookie_header: str = "", proxy: str = "") -> Pa
                     media_note.append(f"GIF {len(gifs)} 个")
                 if media_note:
                     summary_lines.append("媒体：" + "、".join(media_note))
+                # 引用转推：fxtwitter 的 quote 字段此前未消费，引用推内容整段丢失。
+                quote = tweet.get("quote") or {}
+                if isinstance(quote, dict) and str(quote.get("text") or "").strip():
+                    q_author = str(
+                        ((quote.get("author") or {}).get("name"))
+                        or ((quote.get("author") or {}).get("screen_name"))
+                        or ""
+                    ).strip()
+                    q_text = str(quote.get("text") or "").strip()
+                    if len(q_text) > 140:
+                        q_text = q_text[:140] + "…"
+                    summary_lines.append(
+                        f"引用 @{q_author}：{q_text}" if q_author else f"引用：{q_text}"
+                    )
                 # 原图直链 + 竖切横图拼接还原（横图切多竖块玩法）。
                 photo_urls = [
                     _twitter_large_url(str(photo.get("url") or ""))

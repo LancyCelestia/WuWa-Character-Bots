@@ -329,7 +329,13 @@ def _bilibili_ai_conclusion(
     return {"summary": summary, "outline": outline_titles[:6]}
 
 
-def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") -> ParsedContent:
+def _lookup_video_by_id(
+    video_id: str,
+    kind: str,
+    *,
+    cookie_header: str = "",
+    page_url: str = "",
+) -> ParsedContent:
     import urllib.parse
 
     url = f"{_VIEW_API}?{urllib.parse.quote(kind)}={urllib.parse.quote(video_id)}"
@@ -366,7 +372,19 @@ def _lookup_video_by_id(video_id: str, kind: str, *, cookie_header: str = "") ->
     pubdate = _safe_int(data.get("pubdate"))
     aid = _safe_int(data.get("aid"))
     pages_note = f"；分P {len(pages)}" if len(pages) > 1 else ""
-    cid = (pages[0] or {}).get("cid") if pages else data.get("cid")
+    # 分P 选择：分享链接 ?p=N 时字幕/AI总结/视频资产须按指定分P取
+    # （此前恒用 P1，多P 视频第 N P 的内容完全错位）。
+    page_match = re.search(r"[?&]p=(\d+)", page_url)
+    page_index = 0
+    if page_match:
+        page_index = max(0, (_safe_int(page_match.group(1)) or 1) - 1)
+    if pages:
+        if len(pages) > 1 and page_index:
+            pages_note = f"；分P {len(pages)}·当前 P{page_index + 1}"
+        page = pages[page_index] if page_index < len(pages) else pages[0]
+        cid = _safe_int(page.get("cid")) if page else data.get("cid")
+    else:
+        cid = data.get("cid")
     summary_lines: list[str] = []
     if data.get("tname"):
         summary_lines.append(f"分区：{data.get('tname')}")
@@ -2105,8 +2123,12 @@ def parse_bilibili(url: str, *, cookie_header: str = "") -> ParsedContent:
         final_url = resolve_short_link(url)
     match = _BVID_RE.search(final_url)
     if match:
-        return _lookup_video_by_id(match.group(1), "bvid", cookie_header=cookie_header)
+        return _lookup_video_by_id(
+            match.group(1), "bvid", cookie_header=cookie_header, page_url=final_url
+        )
     match = _AVID_RE.search(final_url)
     if match:
-        return _lookup_video_by_id(match.group(1), "aid", cookie_header=cookie_header)
+        return _lookup_video_by_id(
+            match.group(1), "aid", cookie_header=cookie_header, page_url=final_url
+        )
     raise ParseHttpError(f"bilibili: no recognized content in {final_url}")
