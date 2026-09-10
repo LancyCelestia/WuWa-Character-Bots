@@ -324,11 +324,14 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '模型',
             "aliases": ('模型', 'model', 'llm', '供应商', '切换模型'),
-            "index": '【模型】/bot model list | set | add | update | priority | effort | price | remove | reset',
+            "index": '【模型】/bot model list | set | add | update | priority | effort | price | remove | reset | health | probe | routes',
             "title_line": '【模型】模型与供应商管理（管理员，改动即时生效）',
             "lines": [
                 '/bot llm: 诊断当前 provider/model/key 与一次短调用，不修改配置',
                 '/bot model list: 查看全部模型、思考强度档位与故障转移顺序（priority 越小越先；同时显示当前时段分组）',
+                '/bot model health: 查看渠道健康报告（正常/连续失败踢出/慢渠道，30 分钟半开重探自动回队）',
+                '/bot model probe: 手动发起一轮全渠道巡检（每渠道一次最小调用，与后台巡检互斥），结果用 health 查看',
+                '/bot model routes <模型名>: 按实测响应速度快→慢列出该模型的全部可用渠道（未实测的排后）',
                 '/bot model set <id|auto>: 切换当前模型；auto=按时段分组/priority 顺序自动选型',
                 '/bot model add <id> model=<模型名> base_url=<接口地址> key=<API密钥> [tags=档位] [effort=档位] [group=<分组>] [priority=<n>]: 新增供应商',
                 '/bot model update <id> model=... base_url=... key=... tags=... effort=... group=... priority=...: 修改任意参数（可只写要改的项，可覆盖 .env 同名条目）',
@@ -354,6 +357,16 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '■ /bot model list\n'
                 '  查看当前模型、当前时段分组、每个模型的思考强度档位（effort）与故障转移顺序。\n'
                 '  顺序 = 时段分组命中的组内 order，否则 priority 从小到大。\n'
+                '\n'
+                '■ /bot model health\n'
+                '  查看渠道健康报告：正常渠道、连续失败被踢出的渠道（30 分钟半开重探自动回队）与慢渠道标注。\n'
+                '\n'
+                '■ /bot model probe\n'
+                '  手动发起一轮全渠道巡检（每渠道一次最小调用，费用极低）。与后台巡检互斥，进行中重复发起会有提示；\n'
+                '  结果稍后用 /bot model health 查看。\n'
+                '\n'
+                '■ /bot model routes <模型名>\n'
+                '  按实测响应速度 快→慢 列出该模型的全部可用渠道；未实测的按价格/优先级排在后面。\n'
                 '\n'
                 '■ /bot model set <id|auto>\n'
                 '  切换当前使用的模型。id 必须是已存在的模型名或预设名；\n'
@@ -467,24 +480,24 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "aliases": ('设置', 'runtime', '参数', '运行时'),
             "index": '【设置】运行时参数：/bot runtime set|get|list',
             "title_line": '【设置】运行时参数管理（管理员）',
-            "lines": ['/bot runtime set: 设置参数，<key>：可写键名（如 BOT_REPLY_DETAIL），<value>：键对应取值', '/bot runtime get: 读取参数，<key>：键名', '/bot runtime list: 列出覆盖项，无参数', '/bot runtime reset: 恢复默认，<key>：可选，省略=全部', '/bot runtime persona: 人格管理，<action>：list | switch <id|default> | probability <id> <0-1>', '/bot model: 模型与供应商管理（详见 /bot help 模型）：list | set | add | update | priority | effort | price | remove | reset', '/bot runtime set BOT_MODEL_SCHEDULE: 分时段自动切换模型，<value>：JSON，如 {"23:00-07:00":"luna"}', '/bot runtime set BOT_MODEL_PRIORITY_GROUPS: 时段优先级分组（峰谷顺序），<value>：JSON 数组', '/bot runtime set BOT_MODEL_PRICES: 每模型价格表，<value>：JSON 对象，如 {"deepseek-v4-pro":{"input":4,"output":16}}', '/bot runtime set BOT_CHAT_REASONING_EFFORT: 全局思考强度，<value>：off|low|medium|high|xhigh|max|留空', '/bot runtime nickname: 昵称管理，<action>：add|remove|list，<name>：昵称文本', '--instance: 可选开关，<name>：目标实例名'],
+            "lines": ['/bot runtime set: 设置参数，<key>：可写键名（如 BOT_REPLY_DETAIL），<value>：键对应取值', '/bot runtime get: 读取参数，<key>：键名', '/bot runtime list: 列出覆盖项，无参数', '/bot runtime reset: 恢复默认，<key>：可选，省略=全部', '/bot runtime persona: 人格管理，<action>：list | switch <id|default> | probability <id> <0-1>', '/bot model: 模型与供应商管理（详见 /bot help 模型）：list | set | add | update | priority | effort | price | remove | reset | health | probe | routes', '/bot runtime set BOT_MODEL_SCHEDULE: 分时段自动切换模型，<value>：JSON，如 {"23:00-07:00":"luna"}', '/bot runtime set BOT_MODEL_PRIORITY_GROUPS: 时段优先级分组（峰谷顺序），<value>：JSON 数组', '/bot runtime set BOT_MODEL_PRICES: 每模型价格表，<value>：JSON 对象，如 {"deepseek-v4-pro":{"input":4,"output":16}}', '/bot runtime set BOT_CHAT_REASONING_EFFORT: 全局思考强度，<value>：off|low|medium|high|xhigh|max|留空', '/bot runtime nickname: 昵称管理，<action>：add|remove|list，<name>：昵称文本', '--instance: 可选开关，<name>：目标实例名'],
             "detail": '【设置】运行时参数管理（管理员）\n/bot runtime set: 设置参数，<key>：可写键名（如 BOT_REPLY_DETAIL），<value>：键对应取值\n/bot runtime get: 读取参数，<key>：键名\n/bot runtime list: 列出覆盖项，无参数\n/bot runtime reset: 恢复默认，<key>：可选，省略=全部\n/bot runtime persona: 人格管理，<action>：list | switch <id|default> | probability <id> <0-1>\n/bot runtime model: 模型管理（自定义供应商即时生效）\n  set <id|auto>: 切换当前模型（auto=自动选型）\n  list: 查看故障转移顺序与全部可用模型\n  add <id> model=<模型> base_url=<接口> key=<密钥|env:变量> [tags=fast,strong] [priority=<n>]: 新增供应商\n  update <id> <键=值...>: 修改供应商参数（可覆盖 .env 同名条目）\n  priority <id> <n>: 调整故障转移顺序（越小越先）\n  remove <id>: 删除自定义供应商\n  reset: 清除手动指定，回到自动选型\n/bot runtime set BOT_MODEL_SCHEDULE: 分时段自动切换模型，<value>：JSON 对象，如 {"23:00-07:00":"luna"}（跨零点窗口支持；窗口外自动回到自动选型）\n/bot runtime nickname: 昵称管理，<action>：add|remove|list，<name>：昵称文本\n--instance: 可选开关，<name>：目标实例名',
         },
         {
             "topic": '订阅',
             "aliases": ('订阅', 'subscribe'),
-            "index": '【订阅】订阅内容推送：/订阅 add|list|remove|pause|resume|check|status',
+            "index": '【订阅】订阅内容推送：/订阅 add|list|pause|resume|remove',
             "title_line": '【订阅】订阅平台新内容推送',
-            "lines": ['/订阅 add: 添加订阅，<目标>：平台链接或 platform:kind:id，<目的地>：可选，到本群（默认）|私聊我，--digest：可选，只进每天 20:00 的订阅日报（时间可配）', '/订阅 list: 列出我的订阅，无参数', '/订阅 remove: 删除订阅，<id>：订阅编号，来自 list', '/订阅 pause: 暂停订阅，<id>：订阅编号', '/订阅 resume: 恢复订阅，<id>：订阅编号', '/订阅 check: 立即检查一次，<id>：订阅编号', '/订阅 status: 查看订阅系统状态，无参数', '目标示例: https://space.bilibili.com/123456｜bilibili:up:123456', '支持范围: bilibili（UP主/直播间/番剧/收藏夹/合集）、小红书（创作者）；建议直接粘贴主页或直播间链接'],
-            "detail": '【订阅】订阅平台新内容推送\n/订阅 add: 添加订阅，<目标>：平台链接或 platform:kind:id，<目的地>：可选，到本群（默认）|私聊我，--digest：可选，只进每天 20:00 的订阅日报（时间可配）\n/订阅 list: 列出我的订阅，无参数\n/订阅 remove: 删除订阅，<id>：订阅编号，来自 list\n/订阅 pause: 暂停订阅，<id>：订阅编号\n/订阅 resume: 恢复订阅，<id>：订阅编号\n/订阅 check: 立即检查一次，<id>：订阅编号\n/订阅 status: 查看订阅系统状态，无参数\n目标示例: https://space.bilibili.com/123456｜bilibili:up:123456\n支持范围: bilibili（UP主/直播间/番剧/收藏夹/合集）、小红书（创作者）；建议直接粘贴主页或直播间链接\n/订阅 与 /bot subscribe 等价',
+            "lines": ['/订阅 add <公开目标>: 添加订阅并推送到当前会话（群=本群，私聊=自己）；目的地/日报等附加参数暂不支持', '/订阅 list: 列出订阅，群内仅管理员可看本群订阅，私聊只看推给自己的', '/订阅 pause|resume <id>: 暂停/恢复订阅，<id>：订阅编号，来自 list', '/订阅 remove <id>: 删除订阅', '权限: pause/resume/remove 群内需管理员且订阅推往本群，私聊需推给自己', '目标示例: https://space.bilibili.com/123456｜bilibili:up:123456｜music.163.com/playlist?id=xxx', '支持范围: B站（UP主/直播间/番剧/收藏夹/合集）、小红书、YouTube 频道、微博、推特、Pixiv、Telegram 频道、音乐平台（网易云/QQ/酷狗/酷我/Apple/Spotify 的歌手/专辑/歌单）；建议直接粘贴主页或链接'],
+            "detail": '【订阅】订阅平台新内容推送\n/订阅 add <公开目标>: 添加订阅并推送到当前会话（群=本群，私聊=自己）；目的地/日报等附加参数暂不支持\n/订阅 list: 列出订阅，群内仅管理员可看本群订阅，私聊只看推给自己的\n/订阅 pause|resume <id>: 暂停/恢复订阅，<id>：订阅编号，来自 list\n/订阅 remove <id>: 删除订阅\n权限: pause/resume/remove 群内需管理员且订阅推往本群，私聊需推给自己\n目标示例: https://space.bilibili.com/123456｜bilibili:up:123456｜music.163.com/playlist?id=xxx\n支持范围: B站（UP主/直播间/番剧/收藏夹/合集）、小红书、YouTube 频道、微博、推特、Pixiv、Telegram 频道、音乐平台（网易云/QQ/酷狗/酷我/Apple/Spotify 的歌手/专辑/歌单）；建议直接粘贴主页或链接\n/订阅 与 /bot subscribe 等价',
         },
         {
             "topic": '点歌',
             "aliases": ('点歌', 'music', '點歌', 'song'),
             "index": '【点歌】搜索并发送歌曲：点歌 / 点歌模式',
             "title_line": '【点歌】搜索并发送歌曲',
-            "lines": ['点歌: 播放指定歌曲，<song_name>：歌曲名称或关键词，支持中文或拼音', '点歌 <编号>: 多首同名歌曲时回复编号选择（如「点歌 2」），仅紧随候选列表、300 秒内有效', '点歌模式: 设置输出方式，<mode>：卡片|语音|音频|链接，可组合，管理员持久化', '示例: 点歌 晴天｜候选出来后回复「点歌 2」｜点歌模式 卡片+语音', '常见错误：候选列表过期后回复编号会当普通歌名搜索；直接搜编号数字不是有效歌名'],
-            "detail": '【点歌】搜索并发送歌曲\n点歌: 播放指定歌曲，<song_name>：歌曲名称或关键词，支持中文或拼音\n点歌 <编号>: 多首同名歌曲时回复编号选择（如「点歌 2」），仅紧随候选列表、300 秒内有效\n点歌模式: 设置输出方式，<mode>：卡片|语音|音频|链接，可组合，管理员持久化\n示例: 点歌 晴天｜候选出来后回复「点歌 2」｜点歌模式 卡片+语音\n常见错误：候选列表过期后回复编号会当普通歌名搜索；直接搜编号数字不是有效歌名',
+            "lines": ['点歌: 播放指定歌曲，<song_name>：歌曲名称或关键词，支持中文或拼音', '点歌 <编号>: 多首同名歌曲时回复编号选择（如「点歌 2」），仅紧随候选列表、300 秒内有效', '点歌模式: 设置输出方式，<mode>：卡片|语音|音频|链接|全部，可组合，管理员持久化', '示例: 点歌 晴天｜候选出来后回复「点歌 2」｜点歌模式 卡片+语音', '常见错误：编号只在候选列表 300 秒内有效，过期或无效会提示重新点歌（不再当歌名搜索）；直接拿数字当歌名搜索不是有效歌名'],
+            "detail": '【点歌】搜索并发送歌曲\n点歌: 播放指定歌曲，<song_name>：歌曲名称或关键词，支持中文或拼音\n点歌 <编号>: 多首同名歌曲时回复编号选择（如「点歌 2」），仅紧随候选列表、300 秒内有效\n点歌模式: 设置输出方式，<mode>：卡片|语音|音频|链接|全部，可组合，管理员持久化\n示例: 点歌 晴天｜候选出来后回复「点歌 2」｜点歌模式 卡片+语音\n常见错误：编号只在候选列表 300 秒内有效，过期或无效会提示重新点歌（不再当歌名搜索）；直接拿数字当歌名搜索不是有效歌名',
         },
         {
             "topic": '表情',
@@ -601,10 +614,10 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '凭据',
             "aliases": ('凭据', 'alert', 'cookie'),
-            "index": '【凭据】凭据健康检查：/bot alert check [--probe]',
+            "index": '【凭据】凭据健康检查与 cookie 导入：/bot alert check｜/bot cookie import|status',
             "title_line": '【凭据】检查 cookie/凭据健康',
-            "lines": ['/bot alert check: 检查凭据是否过期，--probe：可选，追加在线探测（401/403=需重登）'],
-            "detail": '【凭据】检查 cookie/凭据健康\n/bot alert check: 检查凭据是否过期，--probe：可选，追加在线探测（401/403=需重登）',
+            "lines": ['/bot alert check: 检查凭据是否过期，--probe：可选，追加在线探测（401/403=需重登）', '/bot cookie import <平台> <Cookie头>: 热写入平台 cookie（同名不覆盖，下一次解析即生效，无需重启），平台：bilibili/xiaohongshu/douyin/qqmusic/netease/kuwo/kugou/twitter/youtube/kurobbs/weibo/kuaishou/acfun/moegirl/xiaoheihe/skland/miyoushe', '/bot cookie status: 查看各平台已录入的 cookie 名与到期日（不显示值）'],
+            "detail": '【凭据】检查 cookie/凭据健康\n/bot alert check: 检查凭据是否过期，--probe：可选，追加在线探测（401/403=需重登）\n/bot cookie import <平台> <Cookie头>: 热写入平台 cookie（同名不覆盖，下一次解析即生效，无需重启）\n/bot cookie status: 查看各平台已录入的 cookie 名与到期日（不显示值）',
         },
         {
             "topic": '好感度',

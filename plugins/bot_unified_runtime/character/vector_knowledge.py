@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import struct
+import time
 
 try:
     import numpy as np
@@ -77,6 +78,43 @@ def _parse_model_list(model: str | list[str]) -> list[str]:
     else:
         parts = [str(part).strip() for part in model if str(part).strip()]
     return parts
+
+
+# 单文本查询嵌入 memo：聊天检索热路径（每条消息至少人格库+kb_wiki 库各一次）
+# 对同一 query 的重复嵌入跨库去重；TTL 过后自然失效，不做逐条淘汰。
+_QUERY_EMBED_MEMO: dict[tuple[str, str], tuple[float, list[list[float]]]] = {}
+_QUERY_EMBED_MEMO_LOCK = threading.Lock()
+_QUERY_EMBED_MEMO_TTL_SECONDS = 60.0
+_QUERY_EMBED_MEMO_MAX_ENTRIES = 256
+
+
+def _query_embed_memo_get(key: tuple[str, str]) -> list[list[float]] | None:
+    now = time.monotonic()
+    with _QUERY_EMBED_MEMO_LOCK:
+        hit = _QUERY_EMBED_MEMO.get(key)
+    if hit is None or now - hit[0] >= _QUERY_EMBED_MEMO_TTL_SECONDS:
+        return None
+    return hit[1]
+
+
+def _query_embed_memo_put(key: tuple[str, str], vectors: list[list[float]]) -> None:
+    with _QUERY_EMBED_MEMO_LOCK:
+        if len(_QUERY_EMBED_MEMO) >= _QUERY_EMBED_MEMO_MAX_ENTRIES:
+            _QUERY_EMBED_MEMO.clear()
+        _QUERY_EMBED_MEMO[key] = (
+            time.monotonic(),
+            [list(vector) for vector in vectors],
+        )
+
+
+def reset_query_embed_memo() -> None:
+    """清空查询嵌入 memo（测试用）。"""
+    with _QUERY_EMBED_MEMO_LOCK:
+        _QUERY_EMBED_MEMO.clear()
+
+
+# ANN 重建流式读取向量批大小（2048×1024 维 ≈ 8MB/批，替代全量驻留）。
+_ANN_BUILD_BATCH_SIZE = 2048
 
 
 class OpenAICompatibleEmbeddingProvider:
@@ -155,9 +193,26 @@ class OpenAICompatibleEmbeddingProvider:
         return list(enumerate(self.chains))
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """批量编码：本地优先、远程兜底；模型列表内部依次回退。"""
+        """批量编码：本地优先、远程兜底；模型列表内部依次回退。
+
+        单文本查询（聊天链路每次检索一条 query）走进程级 TTL memo：
+        人格库与 kb_wiki 库对同一 query 各嵌一次、且 provider 实例不同，
+        按 signature+文本为键即可跨库去重；批量文档嵌入不经 memo。
+        """
         if not texts:
             return []
+        memo_key: tuple[str, str] | None = None
+        if len(texts) == 1:
+            memo_key = (self.signature, texts[0])
+            cached = _query_embed_memo_get(memo_key)
+            if cached is not None:
+                return [list(vector) for vector in cached]
+        result = self._embed_texts_uncached(texts)
+        if memo_key is not None and result:
+            _query_embed_memo_put(memo_key, result)
+        return result
+
+    def _embed_texts_uncached(self, texts: list[str]) -> list[list[float]]:
         for index, chain in self._chain_order():
             for model in chain.models:
                 try:
@@ -245,18 +300,32 @@ def _rrf_fuse(
     keyword_ids: list[str],
     top_k: int,
     k: float = _RRF_K,
+    bonus_ids: list[str] | None = None,
 ) -> list[str]:
-    """Reciprocal Rank Fusion：把两个通道的排序融合成一个稳定排序。
+    """Reciprocal Rank Fusion：把多个通道的排序融合成一个稳定排序。
 
-    只做排序，不加载正文；同一 chunk 同时命中两通道时会获得更高权重。
+    bonus_ids（词条名命中通道）以双倍权重并入：查询里包含某词条名时
+    （如「纳西妲的元素战技叫什么」含词条《纳西妲》），该词条页应优先于
+    正文堆满相近词的机制/攻略页。只做排序，不加载正文。
     """
     scores: dict[str, float] = {}
     for rank, chunk_id in enumerate(vector_ids):
         scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (k + rank + 1)
     for rank, chunk_id in enumerate(keyword_ids):
         scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (k + rank + 1)
+    for rank, chunk_id in enumerate(bonus_ids or []):
+        scores[chunk_id] = scores.get(chunk_id, 0.0) + 2.0 / (k + rank + 1)
     ranked = sorted(scores, key=lambda chunk_id: (-scores[chunk_id], chunk_id))
     return ranked[: max(0, int(top_k))]
+
+
+def _file_signature(path: Path) -> tuple[int, int] | None:
+    """(mtime,size) 内容签名；文件不可达返回 None（调用方不得用它跳过同步）。"""
+    try:
+        stat = path.stat()
+        return (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return None
 
 
 class SqliteVectorKnowledgeStore:
@@ -290,6 +359,9 @@ class SqliteVectorKnowledgeStore:
         # 避免机器人进程与同步进程并发时互相清空、进度反复回退。
         self.auto_reset = bool(auto_reset)
         self._lock = threading.RLock()
+        # (mtime,size) 同步签名缓存：签名未变的知识文件在 sync_chunks 里跳过
+        # 重读/分块/哈希（管线检视 #9；每条消息至少进一次 sync_chunks）。
+        self._synced_signatures: dict[Path, tuple[int, int]] = {}
         self._vector_cache: Any | None = None
         self._vector_meta: list[dict] | None = None
         # FTS5 关键词通道状态；None 表示“本进程尚未确认”，
@@ -444,6 +516,12 @@ class SqliteVectorKnowledgeStore:
                     if cursor.rowcount > 0:
                         changed = True
                 for path in paths:
+                    # (mtime,size) 签名未变的文件跳过重读：retrieve 每条消息都会进这里，
+                    # 向量未命中为常态，无签名缓存时每次都要全量读盘+分块+双 sha1
+                    #（管线检视 #9；签名语义与 KeywordKnowledgeRetriever._sync_path 一致）。
+                    signature = _file_signature(path)
+                    if signature is not None and self._synced_signatures.get(path) == signature:
+                        continue
                     text = load_character_document(path)
                     source_id = path.stem
                     for index, content in enumerate(
@@ -483,6 +561,11 @@ class SqliteVectorKnowledgeStore:
                                 (source_id, source_id, content, content_hash, chunk_id),
                             )
                             changed = True
+                    if signature is not None:
+                        self._synced_signatures[path] = signature
+                # 清单里已移除的文件不再保留签名缓存条目。
+                for stale in set(self._synced_signatures) - set(paths):
+                    self._synced_signatures.pop(stale, None)
 
                 if changed:
                     # 内容/行集合变化会改变 FTS 索引内容：先删除共享签名，
@@ -671,6 +754,9 @@ class SqliteVectorKnowledgeStore:
         *,
         embed_backlog: bool = False,
     ) -> list[KnowledgeChunk]:
+        # 锁分段策略：查询嵌入是同步网络调用（httpx 最长 60s），绝不能持
+        # self._lock 执行，否则全会话检索在此串行停摆。锁内只保留
+        # sync_chunks / 积压补齐 / 候选索引一致读这些快操作。
         with self._lock:
             self.sync_chunks(list(files) if files else [])
             if self.top_k <= 0:
@@ -680,21 +766,69 @@ class SqliteVectorKnowledgeStore:
                 done, pending = self._embed_all_pending()
                 if done < pending:
                     return []
-            query_vectors = self._embed([str(query_text)])
-            if query_vectors is None or len(query_vectors) != 1:
-                return []
-            query_vector = query_vectors[0]
-
-            # 双通道候选：BM25/FTS 关键词 + 向量（HNSW/暴力），再 RRF 融合。
+        query_vectors = self._embed([str(query_text)])
+        if query_vectors is None or len(query_vectors) != 1:
+            return []
+        query_vector = query_vectors[0]
+        with self._lock:
+            # 三通道候选：BM25/FTS 关键词 + 向量（HNSW/暴力）+ 词条名命中，
+            # 再 RRF 融合（词条名通道双倍权重）。
             keyword_ranked = self._keyword_candidates(str(query_text))
             vector_ranked, best_cosine = self._vector_candidates(query_vector)
-            fused_ids = _rrf_fuse(vector_ranked, keyword_ranked, self.top_k)
+            try:
+                entry_ranked = self._entry_title_candidates(str(query_text))
+            except Exception:  # noqa: BLE001 - 词条通道失败不阻断其余两通道。
+                entry_ranked = []
+            fused_ids = _rrf_fuse(
+                vector_ranked, keyword_ranked, self.top_k, bonus_ids=entry_ranked
+            )
             if not fused_ids:
                 return []
             # 低置信未命中：既没有关键词命中、向量最强余弦也低于阈值 -> 空结果。
             if not keyword_ranked and best_cosine < self.min_cosine_threshold:
                 return []
             return self._fetch_chunks(fused_ids)
+
+    def _entry_title_candidates(self, query_text: str) -> list[str]:
+        """词条名命中通道：查询文本包含某条目标题时返回该词条的块。
+
+        例：查询「纳西妲的元素战技叫什么」包含词条《纳西妲》→ 其页面块
+        经 RRF 双倍权重优先于正文堆满相近词的机制页。wiki 库标题存储为
+        「标题·来源」，比对时剥掉来源后缀；人格知识库标题即文件名，天然
+        兼容。先走 FTS trigram 标题列取有界候选，再在 Python 侧做子串
+        校验，避免 20 万行级全表扫描（实测全表 instr 需 0.6~10 秒）。
+        """
+        text = str(query_text or "").strip()
+        if len(text) < 2 or not self.ensure_fts_index():
+            return []
+        # 全文 3 字滑窗覆盖中英混排边界词（「你知道AI梗…」→ 道AI/AI梗），
+        # 再补 3~6 字纯 CJK 短段整段匹配（词条名整体命中）。
+        windows = [text[index : index + 3] for index in range(len(text) - 2)]
+        for match in _CJK_RE.finditer(text):
+            segment = match.group(0)
+            if _FTS_MIN_MATCH_CHARS <= len(segment) <= 6:
+                windows.append(segment)
+        windows = list(dict.fromkeys(windows))[:_MAX_PHRASE_TERMS]
+        if not windows:
+            return []
+        match_query = "{title} : (" + " OR ".join(f'"{w}"' for w in windows) + ")"
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    f"SELECT chunk_id, title FROM {_FTS_TABLE_NAME} "
+                    f"WHERE {_FTS_TABLE_NAME} MATCH ? LIMIT 400",
+                    (match_query,),
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        scored: list[tuple[int, str]] = []
+        for row in rows:
+            title = str(row["title"] or "")
+            base = title.split("·", 1)[0] if "·" in title else title
+            if len(base) >= 2 and base in text:
+                scored.append((len(base), str(row["chunk_id"])))
+        scored.sort(key=lambda pair: (-pair[0], pair[1]))
+        return [chunk_id for _length, chunk_id in scored[: max(1, self.top_k) * 3]]
 
     def _brute_candidates_python(
         self, query_vector: list[float], limit: int
@@ -743,6 +877,12 @@ class SqliteVectorKnowledgeStore:
             if matrix is None or not chunk_ids:
                 return [], 0.0
             query_array = np.asarray(query_vector, dtype=np.float32)
+            # 查询向量必须归一化：matrix 已按行归一化，不归一查询时
+            # scores = cos * ||q||，得分被查询模长缩放，min_cosine_threshold 失效。
+            query_norm = float(np.linalg.norm(query_array))
+            if query_norm < 1e-9:
+                return [], 0.0
+            query_array = (query_array / query_norm).astype(np.float32)
             norms = np.linalg.norm(matrix, axis=1)
             matrix_norm = matrix / np.maximum(norms, 1e-9)[:, None]
             scores = matrix_norm @ query_array
@@ -865,55 +1005,72 @@ class SqliteVectorKnowledgeStore:
             return None
 
     def build_ann_index(self, on_progress=None) -> dict:
-        """由 knowledge-sync 调用：把全部向量归一化写入 faiss HNSW 并落盘。"""
+        """由 knowledge-sync 调用：把全部向量归一化写入 faiss HNSW 并落盘。
+
+        向量按批从 SQLite 流式读出、逐批归一化 add 进索引——此前一次性
+        fetchall + vstack 全量矩阵，10 万 chunk 级语料会产生数百 MB 内存尖峰。
+        """
         if faiss is None:
             # faiss 缺失不影响关键词索引：仍幂等构建 FTS，供关键词/降级检索使用。
             self.ensure_fts_index(force=True)
             return {"built": False, "reason": "faiss_missing"}
         with self._lock:
             with self._connect() as connection:
-                rows = connection.execute(
+                cursor = connection.execute(
                     """
                     SELECT chunk_id, vector_blob, vector_json
                     FROM knowledge_chunks
                     WHERE vector_json IS NOT NULL AND vector_json != ''
                     """
-                ).fetchall()
-            vectors: list = []
-            chunk_ids: list[str] = []
-            for row in rows:
-                raw_blob = row["vector_blob"]
-                vector = None
-                if isinstance(raw_blob, (bytes, bytearray, memoryview)):
-                    try:
-                        parsed = np.frombuffer(bytes(raw_blob), dtype=np.float32)
-                        if parsed.size > 0:
-                            vector = parsed.astype(np.float32)
-                    except Exception:  # noqa: BLE001
+                )
+                chunk_ids: list[str] = []
+                index = None
+                while True:
+                    rows = cursor.fetchmany(_ANN_BUILD_BATCH_SIZE)
+                    if not rows:
+                        break
+                    batch_vectors: list = []
+                    for row in rows:
+                        raw_blob = row["vector_blob"]
                         vector = None
-                if vector is None:
-                    try:
-                        vector = np.asarray(
-                            json.loads(str(row["vector_json"])), dtype=np.float32
-                        )
-                    except (TypeError, ValueError, json.JSONDecodeError):
+                        if isinstance(raw_blob, (bytes, bytearray, memoryview)):
+                            try:
+                                parsed = np.frombuffer(bytes(raw_blob), dtype=np.float32)
+                                if parsed.size > 0:
+                                    vector = parsed.astype(np.float32)
+                            except Exception:  # noqa: BLE001
+                                vector = None
+                        if vector is None:
+                            try:
+                                vector = np.asarray(
+                                    json.loads(str(row["vector_json"])), dtype=np.float32
+                                )
+                            except (TypeError, ValueError, json.JSONDecodeError):
+                                continue
+                        batch_vectors.append(vector)
+                        chunk_ids.append(str(row["chunk_id"]))
+                    if not batch_vectors:
                         continue
-                vectors.append(vector)
-                chunk_ids.append(str(row["chunk_id"]))
-            if not vectors:
+                    matrix = np.vstack(batch_vectors).astype(np.float32)
+                    norms = np.linalg.norm(matrix, axis=1).astype(np.float32)
+                    matrix = (matrix / np.maximum(norms, np.float32(1e-9))[:, None]).astype(np.float32)
+                    if index is None:
+                        try:
+                            faiss.omp_set_num_threads(1)
+                        except Exception:  # noqa: S110, BLE001 - 线程数设置失败按默认继续构建索引。
+                            pass
+                        dimension = int(matrix.shape[1])
+                        index = faiss.IndexHNSWFlat(dimension, 32, faiss.METRIC_INNER_PRODUCT)
+                        index.hnsw.efConstruction = 200
+                    index.add(matrix)
+                    if on_progress is not None:
+                        try:
+                            on_progress(len(chunk_ids))
+                        except Exception:  # noqa: S110, BLE001 - 进度回调失败不影响构建。
+                            pass
+            if index is None or not chunk_ids:
                 self.ensure_fts_index()
                 return {"built": False, "reason": "empty"}
-            matrix = np.vstack(vectors).astype(np.float32)
-            norms = np.linalg.norm(matrix, axis=1).astype(np.float32)
-            matrix = (matrix / np.maximum(norms, np.float32(1e-9))[:, None]).astype(np.float32)
-            dimension = int(matrix.shape[1])
-            try:
-                faiss.omp_set_num_threads(1)
-            except Exception:  # noqa: S110, BLE001 - 线程数设置失败按默认继续构建索引。
-                pass
-            index = faiss.IndexHNSWFlat(dimension, 32, faiss.METRIC_INNER_PRODUCT)
-            index.hnsw.efConstruction = 200
-            index.add(matrix)
             index_path, order_path = self._ann_files()
             Path(index_path).parent.mkdir(parents=True, exist_ok=True)
             faiss.write_index(index, str(index_path))
@@ -925,7 +1082,7 @@ class SqliteVectorKnowledgeStore:
             self._ann_order = None
             # knowledge-sync 一次性构建：ANN 落盘后顺带幂等构建 FTS 关键词索引。
             self.ensure_fts_index(force=True)
-            return {"built": True, "vectors": len(chunk_ids), "dim": dimension}
+            return {"built": True, "vectors": len(chunk_ids), "dim": int(index.d)}
 
     def _stored_ann_signature(self) -> str:
         with self._connect() as connection:
@@ -1361,11 +1518,7 @@ class KeywordKnowledgeRetriever:
         self._cache: dict[Path, tuple[tuple[int, int], list[tuple[str, str, str]]]] = {}
 
     def _signature(self, path: Path) -> tuple[int, int] | None:
-        try:
-            stat = path.stat()
-            return (stat.st_mtime_ns, stat.st_size)
-        except OSError:
-            return None
+        return _file_signature(path)
 
     def _sync_path(self, path: Path) -> None:
         signature = self._signature(path)
@@ -1524,6 +1677,9 @@ def build_vector_knowledge_provider(
             top_k=int(_first_defined(config, "bot_knowledge_top_k", 4)),
             signature=getattr(embed_provider, "signature", ""),
             auto_reset=False,
+            # 与 kb_wiki 同策略：请求路径发现 FTS 签名缺失不做分钟级内联
+            # 重建（会持锁卡死全部会话），重建由 knowledge-sync force 负责。
+            fts_auto_rebuild=False,
         )
         files = [
             Path(path).expanduser()

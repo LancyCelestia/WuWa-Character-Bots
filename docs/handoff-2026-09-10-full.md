@@ -244,10 +244,10 @@ CQ 组装规避 musicSignUrl 拒签；分片发送超时按段钳下限；队列
 ## 10. 待办清单（下一波认领参考）
 
 **用户动作**（上表）之外，代码侧已知待办：
-1. **管线检视余 11 条**（`pipeline-review-report.md`，全带 file:line 与修法）：#1 媒体预算与 150s 请求预算协调（视频会话落地时一并）；#2 providers.py HTTP 400 分类（可转移/去参重试）；#7 urllib→httpx.Client 单例+read 限长；#5 多 query 并发检索；#6 NapCat 断线 bot_unavailable 不计 attempts；#8 MCP 负缓存 TTL；#9 知识文件 mtime 缓存；#10 分片超时下限；#11 工具循环空文本收尾轮；#12 失效审计标签；#13 queue/receipts 长连接。
+1. **管线检视余 10 条**（`pipeline-review-report.md`，全带 file:line 与修法；**#9 知识文件 mtime 缓存已由 C组 09-10 晚完成销项**）：#1 媒体预算与 150s 请求预算协调（视频会话落地时一并）；#2 providers.py HTTP 400 分类（可转移/去参重试）；#7 urllib→httpx.Client 单例+read 限长；#5 多 query 并发检索；#6 NapCat 断线 bot_unavailable 不计 attempts；#8 MCP 负缓存 TTL；#10 分片超时下限；#11 工具循环空文本收尾轮；#12 失效审计标签；#13 queue/receipts 长连接。
 2. **chat.py 三项延后**（C组登记）：MCP 缓存中毒、输出预算装箱、记忆抽取线程池——同因待视频会话落地。
 3. **`__init__.py` 好感度 dispatch 接线**已在工作树，随视频会话提交落地。
-4. **测试树清理**：`tests/test_perf_*.py`（5 个）等历史性能脚本与正式回归并存，可评估归档；untracked 的 `-b` 垃圾文件已清（如再生是某会话命令 typo）。
+4. **测试树清理**：~~`tests/test_perf_*.py`（5 个）评估归档~~ **已评估（C组 09-10 晚）：全部保留**——实为性能改造批次的离线行为契约回归（30 用例，无计时断言），非重复职责、且是若干契约的唯一覆盖点，详见 §15 C-4。untracked 的 `-b` 垃圾文件已清（如再生是某会话命令 typo）。
 5. 架构级长线（旧文档 §9）：FileTransferGateway、claim-based RAG、TrustLevel、ToolCatalog 等不受本日工作影响。
 
 ## 11. 多会话协作协议（本日三次真实事故的沉淀）
@@ -471,9 +471,9 @@ PYTHONDONTWRITEBYTECODE=1 "ChatBot_Runtime\venv\Scripts\python.exe" -m pytest te
 | D7 后台巡检集合 | 手动 probe 已含运行时渠道；后台每小时巡检取数点在 `__init__.py` 仍只覆盖 .env 注册表 | 改为 `_probe_specs` 同款合并视图 |
 | 旧注册表快照迁移 | 无 source 标记的存量运行时条目仍整体遮蔽 .env 同名条目 | 对相关条目重新 `/bot model update` 一次即迁移 |
 | A9 代理解析 | sender 层拿不到运行时 Config，走 `bot.config→env` 探测 | 后续注入 provider 或统一读 env |
-| 小名否定排除宽度 | 只挡紧邻前缀，「千万别叫我X」仍会学 | 正则扩 `(?:别|不要|千万别|谁)\s*叫` 前置分支 |
-| spicy_filter flaky | `test_eat_capability::test_spicy_filter` 约 2.3% 随机失败（鱼香肉丝简介含"酸辣"；预存问题） | 固定 seed 或剔除歧义菜 |
-| C12 边缘语义 | transport 失败且回执无 public_message 时不再用管道回执 finish 兜底重发（去重方向的取舍） | 观察 result_unknown 台账量 |
+| 小名否定排除宽度 | **已解决（C组 09-10 晚，实跑修正前提）**：紧邻「千万别叫我」本就被 `(?<!别)` 挡住；真实漏网是疑问词（谁叫我/谁能喊我）与顿号间隔（别、叫我）——`character/affinity.py:extract_learned_nickname` 否定语境复核+非贪婪捕获修语气词粘连，`tests/test_nickname_learning.py` 锁定 | 已销项（§15 C-1；`__init__.py` 接线随域提交队列） |
+| spicy_filter flaky | **已解决（C组 09-10 晚）**：鱼香肉丝简介「甜酸辣」→「咸甜平衡」（数据质量根因，非仅测试问题）；42 道非辣池静态扫描零冲突+1000 次连跑+25 次 pytest 全绿 | 已销项（§15 C-2） |
+| C12 边缘语义 | **观察完毕（C组 09-10 晚）：无需兜底**——result_unknown 台账累计仅 2 行（09-08，均已对账 expired），C12 落地后零新增；transport 回执无条件记账机制核实无损 | 已销项（§15 C-3；账本无上限登记为低优先级长期项） |
 | 模板品牌色残留 | universal_card.html 仍有 `#fb7299`/`#1d9bf0` 等写死语义色（VIP/认证徽章、Top3 序号） | 卡 UI 迭代时收敛进 PLATFORM_COLORS 派生（改后必跑样例截图+三门禁） |
 | 本轮修复未提交 | §13.0：修复主体约 90+ 文件仍在工作树 | 按 §11.4 部分暂存规程分域提交 |
 
@@ -1048,20 +1048,25 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 | B-13 | D7 后台巡检取数点改 `_probe_specs` 同款合并视图（现只覆盖 .env 注册表） | §13.10 | 运行时新增渠道进后台巡检 |
 | B-14 | 旧注册表快照迁移：无 source 标记存量条目遮蔽 .env（引导重新 update 或启动时自动迁移） | §13.10 | 存量条目不再遮蔽 |
 
-### C组（人格 / 知识 / 订阅 / 杂项能力 / 测试卫生域）——已由 C 组执行会话认领（2026-09-10 晚）
+### C组（人格 / 知识 / 订阅 / 杂项能力 / 测试卫生域）——已由 C 组执行会话认领（2026-09-10 晚）；首轮执行完毕（C-1~C-5/C-7/C-8 完成，C-6 等用户前置）
+
+> **共享文件编辑登记（销记）**：`echo.py`（C-8 帮助修正）已随本轮提交；`__init__.py` 的 C-1 接线 hunk
+> （:4416-4431 小名提取改调 `character.affinity.extract_learned_nickname`）**已完成编辑、随「`__init__.py` 域提交队列」落地**
+> ——该文件工作树压着审计 C1-C16 及视频/好感度 dispatch 接线等多会话未提交改动，按 §11.4 拆 blob 的风险大于收益，
+> 接线与审计修复同队提交（工作树与全量测试均已验证该接线，900 passed 含其覆盖）。
 
 文件域：`character/**`、`security/**`、`capabilities/{subscribe,subscribe_v2,echo,eat,weather,wiki,today_history,poke,debug,file_exchange,group_files,image_search,meme,meme_library}.py`、`tests/` 卫生、`COMMANDS.md`
 
-| # | 任务 | 现状依据 | 验收标准 |
-|---|---|---|---|
-| C-1 | 小名否定排除宽度：正则扩「千万别/谁」叫 前置分支 | §13.10（现只挡紧邻「别/不要/不许/不准」） | 「千万别叫我X」不再学习；回归锁定 |
-| C-2 | spicy_filter flaky 修复（~2.3% 随机失败：鱼香肉丝简介含「酸辣」） | §13.10 | 固定 seed 或剔除歧义菜；100 连跑全绿 |
-| C-3 | C12 边缘语义观察与兜底：transport 失败无 public_message 时不重发（去重取舍）——观察 result_unknown 台账量，超阈值补兜底 | §13.10 | 台账有观察结论；必要时兜底+回归 |
-| C-4 | 测试树清理：`tests/test_perf_*.py` 5 个历史性能脚本评估归档（Archive），正式回归保留 | §10.4 | tests/ 无重复职责文件；全量仍绿 |
-| C-5 | 知识文件 mtime 缓存（管线检视 #9） | §10.1 | 知识文件未变时不重复加载 |
-| C-6 | 订阅真实推送验证（**等 X cookie / B站样本 / 用户指定 QQ 目标**）：YT 已 healthy，推特 auth_required | §6.9/§9 | 真实账号端到端收到推送 |
-| C-7 | `/bot cookie import` 后健康联动验证：import 即时反映到解析成功率（无需重启） | §4.3 热写语义 | import 前后同链接解析对比结论 |
-| C-8 | COMMANDS.md / 帮助文本与新行为一致性复核（模式词转义「点歌 #X」、编号规则、会员购字段等 09-10 新行为是否都已写进用户手册） | 09-10 多批行为变化 | 文档抽查逐条对得上 |
+| # | 任务 | 现状依据 | 验收标准 | 执行结果（2026-09-10 晚） |
+|---|---|---|---|---|
+| C-1 | 小名否定排除宽度：正则扩「千万别/谁」叫 前置分支 | §13.10（现只挡紧邻「别/不要/不许/不准」） | 「千万别叫我X」不再学习；回归锁定 | ✅ **审计前提部分推翻（实跑证据）**：「千万别叫我X/喊我X」已被紧邻 `(?<!别)` 挡住；真实漏网形态是「谁叫我X」「谁能喊我X吗」（疑问词）与「千万、叫我X」「别、叫我X」（顿号间隔）。修法：提取逻辑抽成 `character/affinity.py:extract_learned_nickname` 纯函数（模块级 `_NICKNAME_LEARN_RE` + 命中点前 6 字否定语境复核 `_NICKNAME_NEGATION_CONTEXT_RE`，谁分支不容顿号隔断——「那个谁，以后叫我X」仍算教名），并修同表达式贪婪捕获吃语气词缺陷（旧版「以后叫我小岸吧」学成「小岸吧」，现非贪婪走后缀分支得「小岸」）。回归 `tests/test_nickname_learning.py` 5 用例 + `test_affinity.py` 11 passed；`__init__.py` 接线随域提交队列 |
+| C-2 | spicy_filter flaky 修复（~2.3% 随机失败：鱼香肉丝简介含「酸辣」） | §13.10 | 固定 seed 或剔除歧义菜；100 连跑全绿 | ✅ 根因=数据质量（不只测试 flaky：用户点「不辣」也会收到简介带「酸辣」的卡）：`food_data.py` 鱼香肉丝简介「甜酸辣平衡」→「咸甜平衡」。验证：spicy=False 全池 42 道静态扫描零冲突 + 进程内 1000 次连跑 0 失败 + pytest 25 连跑全绿（断言逻辑与原测试一致） |
+| C-3 | C12 边缘语义观察与兜底：transport 失败无 public_message 时不重发（去重取舍）——观察 result_unknown 台账量，超阈值补兜底 | §13.10 | 台账有观察结论；必要时兜底+回归 | ✅ **观察结论：无需兜底**。台账 `ChatBot_Runtime/data/result_unknown.sqlite3` 实测总行数 **2**（均 2026-09-08 群聊发送超时，09-09 重连对账统一标 expired），pending=0，C12 落地（09-10）后**零新增**。机制核对：`_notify_operational_receipt` 对 transport 回执无条件记账（chat:4653/image_search:3030/content:4761/music:4817/parrot:4493），门槛函数语义已有 `test_operational_failures.py:334` 单元覆盖。账本无行数上限——按当前速率（约 2 行/天、单行极小）短期无膨胀风险，长期可加 TTL（登记为低优先级） |
+| C-4 | 测试树清理：`tests/test_perf_*.py` 5 个历史性能脚本评估归档（Archive），正式回归保留 | §10.4 | tests/ 无重复职责文件；全量仍绿 | ✅ **评估结论：全部保留，不归档**。逐文件核实：5 文件名带 perf 实为性能改造（P0/P1/P3 批次）的**离线行为契约回归**（30 用例：路由 TTL-LRU 缓存、offload 契约、注册表单例、embed memo、ANN 分批、互动计数节流等），无任何计时断言、未用 slow 标记；全仓库 grep 无其他文件覆盖同契约（无 import、无 pyproject/dev.ps1 特殊引用）——归档=删除唯一覆盖点，与验收标准「无重复职责文件」不符（它们不重复）。tests/ 计 111 文件与文档口径一致 |
+| C-5 | 知识文件 mtime 缓存（管线检视 #9） | §10.1 | 知识文件未变时不重复加载 | ✅ `SqliteVectorKnowledgeStore.sync_chunks` 加 (mtime,size) 签名缓存 `self._synced_signatures`：签名未变跳过 load_character_document+分块+双 sha1（旧路径每条消息×每文件全量重读，向量未命中为常态）；签名语义复用同文件 `KeywordKnowledgeRetriever` 先例并抽模块级 `_file_signature` 去重；清单移除的文件连带清缓存条目。安全性核实：sync_chunks 仅本类两处调用（retrieve:738 + 索引预热:710），kb-sync 外部进程走独立 db_path 的 sync_documents，进程内缓存无失效盲区；stat 在 C17 锁分段的第一段锁内（快操作，兼容）。回归 `tests/test_knowledge_mtime_cache.py` 3 用例（未变不重读/变更重读且内容更新/移除清缓存）+ kb_wiki/perf_p1/auditfix_main_character 共 32 passed |
+| C-6 | 订阅真实推送验证（**等 X cookie / B站样本 / 用户指定 QQ 目标**）：YT 已 healthy，推特 auth_required | §6.9/§9 | 真实账号端到端收到推送 | ⏸ **阻塞：等用户前置动作**（X/B站 cookie、指定 QQ 推送目标、生产 bot 提权重启——订阅调度在旧进程里跑的还是 09-09 代码）。机制侧无剩余代码工作 |
+| C-7 | `/bot cookie import` 后健康联动验证：import 即时反映到解析成功率（无需重启） | §4.3 热写语义 | import 前后同链接解析对比结论 | ✅ **机制验证通过，真实前后对比等用户重灌 cookie**。代码链路核实：import→`import_cookie_header` 写 `platform_cookies.txt`→解析注册表缓存 key 含 cookies 文件 mtime_ns（`__init__.py:1546-1571`）→下一条消息重建注册表+cookie provider，全程无需重启（与 COMMANDS.md L121 口径一致）。回归 `tests/test_cookie_import_hot_reload.py` 3 用例锁定（mtime 未变命中缓存/文件改写后重建且携带新 provider/平台范围变化重建/文件缺失稳定键）。真实「同链接 import 前后成功率对比」需用户重灌微博/灌 B站 cookie 后在**重启后的新进程**上做（当前生产进程 44708 是 09-09 旧代码，连 C14 缓存都没有） |
+| C-8 | COMMANDS.md / 帮助文本与新行为一致性复核（模式词转义「点歌 #X」、编号规则、会员购字段等 09-10 新行为是否都已写进用户手册） | 09-10 多批行为变化 | 文档抽查逐条对得上 | ✅ 十项逐条核对完毕（要点）：①**echo.py 修 4 条目**——点歌（过期编号行为矛盾更正：P2#7 后过期/无效编号回提示不再当歌名搜索；模式词补「全部」）、订阅（v2 真实命令面 add <公开目标>/list/pause/resume/remove+权限模型，删 v1 才有的 --digest/check/status；支持范围补 YT/微博/推特/Pixiv/TG/音乐）、凭据（补 /bot cookie import 全平台清单与 status 输出描述——原 alias 'cookie' 指向的条目完全无 cookie 内容）、模型（index/lines/detail 补 health/probe/routes 三子命令+「设置」条目摘要同步）；②COMMANDS.md 抽查 cookie/model/reply 节与代码一致、无矛盾，不需改（工作树中已有的未提交改动是并行会话的开发任务表述，与本轮无关）；③天气寒聊静默/吃什么语气助词/小名软点名/会员购嘉宾卡区属对用户透明或管理员行为注记，不进帮助卡（登记即可）；④**移交 B组**：runtime_admin.py:843 代码自身 fallback 用法提示也缺 health/probe/routes（B组文件域未动） |
 
 ### 长期项（不进本轮分组，单独立项）
 

@@ -49,6 +49,35 @@ _IMPRESSION_RULES: tuple[tuple[str, int, str], ...] = (
 )
 _TEASE_RE = re.compile(r"(哈哈|笑死|逗你|骗你的|捉弄|整蛊)", re.IGNORECASE)
 
+# ---- 小名自学（被动感知用，__init__ 每消息调用）----
+# 触发词前的紧邻否定由 lookbehind 挡（「别叫我/不要喊我/千万别叫我」）；
+# 「谁叫我」「别、叫我」这类隔着疑问词或顿号的否定 lookbehind 够不着，
+# 由命中点前 6 字的否定语境复核兜住。谁分支不允许顿号隔断（「那个谁，以后叫我」仍算教名）。
+_NICKNAME_LEARN_RE = re.compile(
+    r"(?<!别)(?<!不要)(?<!不许)(?<!不准)"
+    r"(?:你可以叫我|以后叫我|就叫我|叫我|喊我)\s*([\u4e00-\u9fa5A-Za-z0-9]{1,12}?)"
+    r"(?:吧|就好|就可以了|就行|哦|呀|~|！|!|。|\s|$)"
+)
+_NICKNAME_NEGATION_CONTEXT_RE = re.compile(
+    r"(?:(?:千万别|不要|不许|不准|千万|别)[、，,~～\s]*|谁\s*)"
+    r"[^、，,。.!！?？~～\s]{0,2}$"
+)
+
+
+def extract_learned_nickname(text: str) -> str | None:
+    """提取用户主动授予的小名；否定语境（「别/不要/谁…叫我X」）返回 None。
+
+    捕获为非贪婪：语气词（吧/哦/呀）走后缀分支，不粘进名字。
+    """
+    match = _NICKNAME_LEARN_RE.search(text)
+    if not match:
+        return None
+    prefix = text[max(0, match.start() - 6) : match.start()]
+    if _NICKNAME_NEGATION_CONTEXT_RE.search(prefix):
+        return None
+    learned = match.group(1).strip()
+    return learned or None
+
 # ---- 数值化常量（规范见 docs/affinity-design.md §2/§3，v3）----
 _AFFINITY_BASE = 0.1            # 初始好感 10（展示 0-100 = ×100）
 AFFINITY_BASE = _AFFINITY_BASE  # 公开只读别名（providers 等模块判断“非默认记录”用）
