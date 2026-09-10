@@ -1013,7 +1013,7 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 > umi 充值、QIANQIANYE 换 key、配 ds-official key、下架 toolcode-gemini、提权重启生产 bot
 > （**09-10 全部交付仍在旧进程里未生效**）、提供 21 平台真实分享链接。
 
-### A组（解析 / 卡片 / 点歌 / 实测验收域）——已由本会话认领；首轮（A-1/A-2/A-7）与二轮（P0 vision 修复 + A-6 xhs 用户页/搜索页/推特 4 图全链路回归 + A-7 18/18 全量复核 + og 按句截断/mface 观测点）执行完毕；A-3/A-4/A-5 等用户前置（cookie/链接）
+### A组（解析 / 卡片 / 点歌 / 实测验收域）——已由本会话认领并执行完毕（A-1/A-2/A-6/A-7/A-8/A-9 + 分P 修复/引用推/酷我退役等追加加固全交付）；**仅剩 A-3/A-4/A-5 三项等用户前置动作**（重灌微博 cookie / 灌 B站 cookie / 提供 21 平台真实链接），到位即验
 
 文件域：`sources/parsers/**`、`sources/steamfree.py`、`output/card_render/**`、`capabilities/music.py`、`capabilities/epic.py`
 
@@ -1029,6 +1029,34 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 | A-8 | **P0 vision 修复**：发图/GIF/视频 OCR 与大模型全部读不到的根因——直传与 OCR 双分支都把 QQ 多媒体签名 URL 原样透传给远程 AI 服务商抓取（第三方取不到）。修复：bot 侧下载（桌面 UA+8MB 上限+失败 warning）→ PIL 转 data URL（GIF 抽 3 帧拼条/超大缩边；FIFO 缓存 32）→ 进请求体；ffmpeg 抽帧/探测对 http 视频源加桌面 UA；三条消费路径全覆盖。回归 test_vision_remote_data_url 6 项。**合批存证**：b2de652 连带视频理解会话在途改动集入库（chat.py 704 行/transcribe/video_understanding/video_pipeline/media_registry/__init__ 接线 24 行——共享 index 惯例，依赖闭包完整，918 passed 树级验证）。**⚠️ 需重启生产 bot 才生效（现进程仍为 09-09 代码）** | 完成 |
 
 | A-9 | 三轮加固：image_stitch 资源护栏（20s 预算硬上限实测/40MP 画布上限/缓存 prune 200）+ getV2 五结构字段 _dict_or 钳卫 + 图文详情 dict 形态分支 + og 摘要按句截断 + mface 无 url 观测点 + E1 18/18 全量复核 + 推特 4 图真实全链路（a645a44/c838f3e/a2034b4）；对抗审查子代理被上游 1302 限流打死，自查接管完成 | 完成 |
+#### A组收尾总结（2026-09-10 深夜，收尾时点全量 1033 passed 全绿）
+
+**已交付（全部实测验证）：**
+
+| 交付 | 验证方式 |
+|---|---|
+| P0 vision 修复：图片/GIF/视频 OCR 与大模型全读不到（双分支 QQ 签名 URL 透传根因）→ bot 侧下载转 data URL + ffmpeg 桌面 UA | 单元 6 项 + NASA 推文真实大图（2048px）真机转换实测 + 直传漏斗端到端 |
+| B站分P cid 选择：?p=N 恒用 P1 的内容错位（dispatch 未传页面 URL 的连带缺陷一并修） | 回归 4 项（P2 选 cid 222/默认 P1/引用推/无引用） |
+| 推特引用推摘要：fxtwitter quote 字段此前未消费，引用内容整段丢失 | 回归 2 项 |
+| 会员购嘉宾独立卡区 + getV2 五结构字段钳卫 + 图文详情 dict/list/str 三形态 | 真实漫展 96799（4 嘉宾）/88451（12 嘉宾）实卡 |
+| B站直播主通道切 Room/get_info（getInfoByRoom 匿名常态 -352） | 6 号房真实数据全字段出卡 |
+| 微博：genvisitor 访客兑子/avatar_hd/视频封面/标题净化/发布时间 +08 契约 | 真实笔记 + 访客/登录双 cookie 链路实测（cookie 现又过期，见未完成） |
+| 竖切横图拼接 image_stitch（正例拼/反例不误拼/资源护栏三件套：20s 预算硬上限实测/40MP 画布/缓存 prune 200） | 单元 4 项 + 推特真实横图组不误拼反例 |
+| 小红书笔记 playwright 兜底 + 用户主页/搜索页真实回归 + 撤剥!后缀回归（2026 签名路径 200→403 对照） | 真实笔记/用户主页 deep（38644 粉丝）/搜索关键词卡 |
+| 点歌：候选卡不可达根治（裸歌名精确命中才跳过）/编号无会话提示/按人隔离/limit 透传/QQ musicu.fcg 迁移/酷狗详情富化 | 真实 e2e（候选卡渲染/二次选择/提示/隔离） |
+| og 按句截断 + mface/video 段观测点 + 推特 name=large 全量图组 + 酷我搜索/候选双链退役（suyanw 改 GBK 文本格式实锤） | 单测 + 实测 |
+| E1 组 18/18 全量复核（审计会话解析器修复逐项验收） | 实测+精确静态证据，零问题回退 |
+
+**未完成（3 项，全部卡用户前置动作，到位即验）：**
+
+| 项 | 阻塞 | 到位后的动作 |
+|---|---|---|
+| A-3 微博重灌回归 | §6.2：现有微博 cookie 已再失效 403/432 | 用户重灌后：三通道+图集+视频封面+发布时间+订阅拉取逐项过 |
+| A-4 B站 cookie 验证 | 用户未灌 B站 cookie | 灌入后：AI 字幕/直播 getInfoByRoom 富集/专栏 -509 面积实测 |
+| A-5 21 平台真实链接补测 | 用户未提供链接 | 每平台一条真实链接出深度卡，缺陷即修 |
+
+**移交注意**：本组全部修复需**重启生产 bot**（现进程仍 09-09 代码）才生效；vision 转换失败时会留 `vision: remote image download failed host=...` 日志，重启后图片仍读不到就把该行发回来。
+
 ### B组（模型路由 / 管线 / 发送 / 聊天域）——已由 B组会话认领（2026-09-11，14 项全部交付）
 
 文件域：`llm/**`、`runtime/**`、`sender/**`、`bot.py`、`capabilities/chat.py`、`capabilities/runtime_admin.py`、`llm/providers.py`、`sources/web_search.py`
