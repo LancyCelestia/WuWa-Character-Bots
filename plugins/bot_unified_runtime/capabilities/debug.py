@@ -787,11 +787,19 @@ def _try_render_llm_setup_image(
 
         target = Path(card_dir or "data/cards")
         target.mkdir(parents=True, exist_ok=True)
+        # 摘要只按内容（不含 request_id）：同一状态重复出卡复用同一文件，
+        # 配合配额清理，不再每次调用都新增一张 PNG（与 echo 帮助卡同法）。
         digest = hashlib.sha1(
-            f"{request_id}:{payload['status_label']}:{payload['rows']}".encode()
+            f"{payload['status_label']}:{payload['rows']}".encode()
         ).hexdigest()[:12]
         path = target / f"llm_setup_{digest}.png"
         path.write_bytes(png)
+        try:
+            from plugins.bot_unified_runtime.runtime.cache_policy import prune_prefixed
+
+            prune_prefixed(target, "llm_setup", keep=50)
+        except Exception:  # noqa: S110, BLE001 - 配额清理失败不影响本次出图。
+            pass
         return str(path)
     except Exception:  # noqa: BLE001 - 卡片失败回退精简文本。
         return ""

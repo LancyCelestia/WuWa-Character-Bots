@@ -29,11 +29,30 @@ class HelpEntry(TypedDict, total=False):
     detail: str
 
 
+def _is_admin_actor(actor_roles: list[str] | None) -> bool:
+    return "admin" in {str(role).strip() for role in (actor_roles or [])}
+
+
 def build_status_result(
     config: Config | None = None,
     request_id: str | None = None,
     runtime_control: RuntimeControlState | None = None,
+    actor_roles: list[str] | None = None,
 ) -> CapabilityResult:
+    # 管理员门（审计重发现 P2）：status 会输出软暂停状态/原因、角色计数、
+    # LLM provider/model、api_key set/missing、限速 bypass 角色等运行时姿态，
+    # 与 debug 排障命令同档，不对普通成员开放。
+    if not _is_admin_actor(actor_roles):
+        return CapabilityResult(
+            request_id=request_id or new_request_id("status"),
+            capability_id="bot.status",
+            kind="text",
+            title="状态",
+            body="只有管理员可以查看运行时状态。",
+            risk_level=RiskLevel.LOW,
+            privacy_level=PrivacyLevel.PUBLIC,
+            send_policy=SendPolicy.IMMEDIATE,
+        )
     status_config = config or Config()
     return CapabilityResult(
         request_id=request_id or new_request_id("status"),
@@ -1081,12 +1100,14 @@ def route_bot_command(
     request_id: str | None = None,
     config: Config | None = None,
     runtime_control: RuntimeControlState | None = None,
+    actor_roles: list[str] | None = None,
 ) -> CapabilityResult:
     if command_text.strip() == "status":
         return build_status_result(
             config=config,
             request_id=request_id,
             runtime_control=runtime_control,
+            actor_roles=actor_roles,
         )
     return build_help_result(request_id=request_id)
 

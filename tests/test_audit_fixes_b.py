@@ -189,15 +189,17 @@ def test_audit_p1_2_v2_permissions_readd_and_list_filter(tmp_path) -> None:
     assert "test:kind:1" not in leaked.body
 
     # 管理员（目的地本人）暂停后，重加不静默重启。
+    # （重审计 R10：pause 按目的地粒度生效、不再翻转 target.enabled；
+    #   re-add 走 INSERT OR IGNORE，被暂停的目的地行保持 disabled。）
     paused = capability(_message("订阅 pause test:kind:1", sender_id="admin1"), None)
     assert "已暂停" in paused.body
-    assert store.get_target("test:kind:1").enabled is False
+    assert store.list_destinations("test:kind:1")[0].enabled is False
     capability(_message("订阅 add https://x", sender_id="admin1"), None)
-    assert store.get_target("test:kind:1").enabled is False
+    assert store.list_destinations("test:kind:1")[0].enabled is False
 
     resumed = capability(_message("订阅 resume test:kind:1", sender_id="admin1"), None)
     assert "已恢复" in resumed.body
-    assert store.get_target("test:kind:1").enabled is True
+    assert store.list_destinations("test:kind:1")[0].enabled is True
 
 
 # ---------------------------------------------------------------- P1 #3 / #4

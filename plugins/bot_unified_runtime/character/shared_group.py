@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -174,7 +176,13 @@ class NullLLMGroupSummarizer:
 
 
 class OpenAICompatibleGroupSummarizer:
-    """按 TTL 缓存 LLM 摘要；失败回退原摘要，不阻塞对话。"""
+    """按 TTL 缓存 LLM 摘要；失败回退原摘要，不阻塞对话。
+
+    缓存键是群聊全文摘要（随对话持续变化），旧键几乎不会再次命中：
+    用 OrderedDict LRU（上限 32 条）防止进程常驻内存无限增长。
+    """
+
+    _CACHE_CAPACITY = 32
 
     def __init__(
         self,
@@ -186,15 +194,20 @@ class OpenAICompatibleGroupSummarizer:
         self.llm_provider = llm_provider
         self.ttl_seconds = max(60, int(ttl_seconds))
         self.max_chars = max(100, int(max_chars))
-        self._cache: dict[str, tuple[float, str]] = {}
+        self._cache: OrderedDict[str, tuple[float, str]] = OrderedDict()
+        # LRU get/move_to_end/popitem 序列跨线程不原子：并发驱逐会让
+        # move_to_end 抛 KeyError 穿透 load()，故所有缓存操作持锁。
+        self._cache_lock = threading.Lock()
 
     def summarize(self, digest_text: str) -> str:
         key = digest_text.strip()
         if not key:
             return key
-        cached_at, cached = self._cache.get(key, (0.0, ""))
-        if cached and time.monotonic() - cached_at <= self.ttl_seconds:
-            return cached
+        with self._cache_lock:
+            cached_at, cached = self._cache.get(key, (0.0, ""))
+            if cached and time.monotonic() - cached_at <= self.ttl_seconds:
+                self._cache.move_to_end(key)
+                return cached
         prompt = (
             "请把下面的群聊公共消息压缩成 3-5 条中性话题摘要，"
             "不保留任何个人敏感信息，不评价、不编造：\n" + key
@@ -214,7 +227,11 @@ class OpenAICompatibleGroupSummarizer:
         if not summary:
             return key
         summary = _strip_summary(summary)
-        self._cache[key] = (time.monotonic(), summary)
+        with self._cache_lock:
+            self._cache[key] = (time.monotonic(), summary)
+            self._cache.move_to_end(key)
+            while len(self._cache) > self._CACHE_CAPACITY:
+                self._cache.popitem(last=False)
         return summary
 
 

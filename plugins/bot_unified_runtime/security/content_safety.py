@@ -2,7 +2,23 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
+
+_ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\ufeff\u2060-\u2064\u00ad\u180e]")
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+
+
+def normalize_for_matching(text: str) -> str:
+    """规则匹配入口统一归一化：NFKC + 剥零宽字符 + 多空白折叠。
+
+    全角变体（ｎｓｆｗ/色情全角混排）与夹零宽字符（色\u200b情）的文本
+    此前无法命中既有规则，防护失效。归一化文本只用于匹配，
+    不得写回记忆、审计正文或回复。
+    """
+    value = unicodedata.normalize("NFKC", str(text or ""))
+    value = _ZERO_WIDTH_RE.sub("", value)
+    return _WHITESPACE_RUN_RE.sub(" ", value)
 
 
 @dataclass(frozen=True)
@@ -34,7 +50,7 @@ def assess_public_content(
     session_type: str = "private",
     admin: bool = False,
 ) -> SafetyAssessment:
-    value=(text or "").strip()
+    value = normalize_for_matching(text)
     for category, action, pattern, guidance in _RULES:
         if admin and category in _ADMIN_SOFT_CATEGORIES:
             continue

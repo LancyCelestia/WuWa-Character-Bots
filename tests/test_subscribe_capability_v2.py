@@ -54,11 +54,12 @@ def test_v2_subscribe_add_list_pause_resume_remove(tmp_path) -> None:
 
     paused = capability(_message(f"订阅 pause {target_id}"), None)
     assert "已暂停" in paused.body
-    assert runtime["store"].get_target(target_id).enabled is False
+    # 重审计 R10：pause/resume 按目的地粒度生效（对齐 v1），不再翻转 target。
+    assert runtime["store"].list_destinations(target_id)[0].enabled is False
 
     resumed = capability(_message(f"订阅 resume {target_id}"), None)
     assert "已恢复" in resumed.body
-    assert runtime["store"].get_target(target_id).enabled is True
+    assert runtime["store"].list_destinations(target_id)[0].enabled is True
 
     removed = capability(_message(f"订阅 remove {target_id}"), None)
     assert "已删除" in removed.body

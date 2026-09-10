@@ -62,12 +62,15 @@ _NICKNAME_NEGATION_CONTEXT_RE = re.compile(
     r"(?:(?:千万别|不要|不许|不准|千万|别)[、，,~～\s]*|谁\s*)"
     r"[^、，,。.!！?？~～\s]{0,2}$"
 )
+# 后缀语气词回溯成名字的防御：「叫我就好」会捕获「就好」，全数拒绝。
+_NICKNAME_SUFFIX_PARTICLES = frozenset({"吧", "就好", "就可以了", "就行", "哦", "呀"})
 
 
 def extract_learned_nickname(text: str) -> str | None:
     """提取用户主动授予的小名；否定语境（「别/不要/谁…叫我X」）返回 None。
 
-    捕获为非贪婪：语气词（吧/哦/呀）走后缀分支，不粘进名字。
+    捕获为非贪婪：语气词（吧/哦/呀）走后缀分支，不粘进名字；
+    「叫我就好/叫我就行」这类无名字的收尾话术，回溯会把语气词当名字，同样拒绝。
     """
     match = _NICKNAME_LEARN_RE.search(text)
     if not match:
@@ -76,7 +79,9 @@ def extract_learned_nickname(text: str) -> str | None:
     if _NICKNAME_NEGATION_CONTEXT_RE.search(prefix):
         return None
     learned = match.group(1).strip()
-    return learned or None
+    if not learned or learned in _NICKNAME_SUFFIX_PARTICLES:
+        return None
+    return learned
 
 # ---- 数值化常量（规范见 docs/affinity-design.md §2/§3，v3）----
 _AFFINITY_BASE = 0.1            # 初始好感 10（展示 0-100 = ×100）

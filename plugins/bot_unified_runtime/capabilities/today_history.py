@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -92,6 +93,17 @@ def build_today_history_capability(
         ) or "data/today_history_cache.json"
         provider = TodayHistoryProvider(proxy=proxy, cache_file=cache_file)
 
+    # 推送表读-改-写互斥：能力在 offload 线程池并发执行，两个会话同时
+    # 设置/取消会互相整表覆写丢订阅（load→change→save 全程持锁）。
+    _push_table_lock = threading.Lock()
+
+    def _require_group_admin(sender_key: str, decision: BotDecision) -> bool:
+        """群推送时间影响全群，设置/取消需要管理员；私聊键自助。"""
+        if not sender_key.startswith("g_"):
+            return True
+        roles = {str(role).strip() for role in (getattr(decision, "actor_roles", None) or [])}
+        return "admin" in roles
+
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         text = message.plain_text.strip()
         match = _QUERY_RE.match(text)
@@ -130,6 +142,14 @@ def build_today_history_capability(
                     audit_tags=["today_history", "push_status"],
                 )
             if "取消" in arg or "关闭" in arg:
+                if not _require_group_admin(sender_key, decision):
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.today_history",
+                        kind="text",
+                        body="群推送时间只有管理员可以取消。",
+                        audit_tags=["today_history", "push_cancelled", "denied"],
+                    )
                 if not load_ok:
                     return CapabilityResult(
                         request_id=message.request_id,
@@ -138,15 +158,16 @@ def build_today_history_capability(
                         body="推送表读取失败，已拒绝改写以免丢失其他订阅。",
                         audit_tags=["today_history", "push_cancelled", "load_failed"],
                     )
-                table.pop(sender_key, None)
-                if not _save_push_table(push_file, table):
-                    return CapabilityResult(
-                        request_id=message.request_id,
-                        capability_id="bot.today_history",
-                        kind="text",
-                        body="取消失败：推送表写盘出错，请查日志。",
-                        audit_tags=["today_history", "push_cancelled", "save_failed"],
-                    )
+                with _push_table_lock:
+                    table.pop(sender_key, None)
+                    if not _save_push_table(push_file, table):
+                        return CapabilityResult(
+                            request_id=message.request_id,
+                            capability_id="bot.today_history",
+                            kind="text",
+                            body="取消失败：推送表写盘出错，请查日志。",
+                            audit_tags=["today_history", "push_cancelled", "save_failed"],
+                        )
                 if on_subscriptions_changed is not None:
                     try:
                         on_subscriptions_changed()
@@ -178,6 +199,14 @@ def build_today_history_capability(
                         body="时间格式不对，小时 0-23、分钟 0-59。",
                         audit_tags=["today_history", "push_bad_format"],
                     )
+                if not _require_group_admin(sender_key, decision):
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.today_history",
+                        kind="text",
+                        body="群推送时间只有管理员可以设置。",
+                        audit_tags=["today_history", "push_subscribed", "denied"],
+                    )
                 if not load_ok:
                     return CapabilityResult(
                         request_id=message.request_id,
@@ -186,15 +215,16 @@ def build_today_history_capability(
                         body="推送表读取失败，已拒绝改写以免丢失其他订阅。",
                         audit_tags=["today_history", "push_subscribed", "load_failed"],
                     )
-                table[sender_key] = {"hour": hour, "minute": minute}
-                if not _save_push_table(push_file, table):
-                    return CapabilityResult(
-                        request_id=message.request_id,
-                        capability_id="bot.today_history",
-                        kind="text",
-                        body="设置失败：推送表写盘出错，请查日志。",
-                        audit_tags=["today_history", "push_subscribed", "save_failed"],
-                    )
+                with _push_table_lock:
+                    table[sender_key] = {"hour": hour, "minute": minute}
+                    if not _save_push_table(push_file, table):
+                        return CapabilityResult(
+                            request_id=message.request_id,
+                            capability_id="bot.today_history",
+                            kind="text",
+                            body="设置失败：推送表写盘出错，请查日志。",
+                            audit_tags=["today_history", "push_subscribed", "save_failed"],
+                        )
                 if on_subscriptions_changed is not None:
                     try:
                         on_subscriptions_changed()

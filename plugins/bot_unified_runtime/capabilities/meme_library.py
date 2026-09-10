@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections import OrderedDict
 from typing import Any
 
 from plugins.bot_unified_runtime.contracts import (
@@ -28,6 +29,9 @@ _COMMAND_RE = re.compile(
 _STATS_RE = re.compile(
     r"^[/!！]?(?:表情库统计|表情统计|表情库|meme stats)\s*$", re.IGNORECASE
 )
+
+# 冷却登记 LRU 上限：会话数极大时防止 dict 无界慢泄漏（审计 #30）。
+_COOLDOWN_CAP = 4096
 
 
 def is_meme_library_command(text: str) -> bool:
@@ -48,7 +52,7 @@ def parse_meme_library_command(text: str) -> tuple[str, str]:
 
 
 def build_meme_library_capability(store: Any, config: Any | None = None) -> Any:
-    cooldown: dict[str, float] = {}
+    cooldown: OrderedDict[str, float] = OrderedDict()
     cooldown_seconds = int(getattr(config, "bot_meme_library_cooldown_seconds", 20) or 20)
     nsfw_max = float(getattr(config, "bot_meme_library_nsfw_max", 0.2) or 0.2)
 
@@ -82,17 +86,25 @@ def build_meme_library_capability(store: Any, config: Any | None = None) -> Any:
         # 冷却：同一会话防刷屏，避免 QQ 风控。
         key = f"{message.session_id}:{message.sender_id}"
         now = time.monotonic()
-        if key in cooldown and now - cooldown[key] < cooldown_seconds:
-            remaining = int(cooldown_seconds - (now - cooldown[key])) + 1
-            return CapabilityResult(
-                request_id=message.request_id,
-                capability_id="bot.meme_library",
-                kind="text",
-                body=f"表情包还在冷却中，请 {remaining} 秒后再来偷～",
-                risk_level=RiskLevel.LOW,
-                privacy_level=PrivacyLevel.PERSONAL,
-                audit_tags=["meme_library", "cooldown"],
-            )
+        # 有界化（审计重发现）：会话键无界增长，超阈值先清过期再裁最旧。
+        if len(cooldown) > 512:
+            for stale in [k for k, ts in cooldown.items() if now - ts >= cooldown_seconds]:
+                cooldown.pop(stale, None)
+            while len(cooldown) > 512:
+                cooldown.popitem(last=False)
+        if key in cooldown:
+            cooldown.move_to_end(key)
+            if now - cooldown[key] < cooldown_seconds:
+                remaining = int(cooldown_seconds - (now - cooldown[key])) + 1
+                return CapabilityResult(
+                    request_id=message.request_id,
+                    capability_id="bot.meme_library",
+                    kind="text",
+                    body=f"表情包还在冷却中，请 {remaining} 秒后再来偷～",
+                    risk_level=RiskLevel.LOW,
+                    privacy_level=PrivacyLevel.PERSONAL,
+                    audit_tags=["meme_library", "cooldown"],
+                )
 
         keyword = "" if arg.lower() in {"私聊", "私聊我", "private", "私"} else arg
         picked = store.weighted_pick(keyword=keyword, nsfw_max=nsfw_max)
@@ -107,6 +119,9 @@ def build_meme_library_capability(store: Any, config: Any | None = None) -> Any:
                 audit_tags=["meme_library", "empty"],
             )
         cooldown[key] = now
+        cooldown.move_to_end(key)
+        while len(cooldown) > _COOLDOWN_CAP:
+            cooldown.popitem(last=False)
         return CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.meme_library",

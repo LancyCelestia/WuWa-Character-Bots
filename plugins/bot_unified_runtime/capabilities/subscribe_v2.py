@@ -100,7 +100,25 @@ def build_subscribe_capability_v2(
         if action == "add":
             if len(parts) < 3:
                 return result(message, "用法：订阅 add <公开目标>", ["subscribe_bad_format"])
+            if _session_scope(message) == "group" and not _is_admin(message):
+                # 群内 add 需要管理员：add 会把推送目的地写到当前群，
+                # 无门槛时任意成员可持续向全群推送外部内容（v1 同款校验）。
+                return result(
+                    message,
+                    "群内添加订阅需要管理员。",
+                    ["subscribe_add_denied"],
+                )
             raw_target = parts[2]
+            # 审计 E2-12：多余参数此前被静默丢弃（如指定目的地关键词写了
+            # 却不生效）。显式拒绝，避免用户误以为设置成功。
+            unsupported = parts[3:]
+            if unsupported:
+                return result(
+                    message,
+                    "暂不支持 " + " ".join(unsupported)
+                    + "（当前仅支持：订阅 add <公开目标>，推送到当前会话）",
+                    ["subscribe_unsupported_option"],
+                )
             target: SubscriptionTarget | None = None
             last_error: Exception | None = None
             runtime_error: Exception | None = None
@@ -186,13 +204,23 @@ def build_subscribe_capability_v2(
                     "没有权限操作该订阅。",
                     [f"subscribe_{action}_denied"],
                 )
+            # 目的地粒度操作：只影响本会话的目的地行，其他群/私聊不受牵连
+            #（此前 pause/resume/remove 作用于整条 target）。
+            own = _own_destinations(message, target_id)
             if action == "remove":
-                store.delete_target(target_id)
-                body = f"已删除订阅：{target_id}"
+                for destination in own:
+                    store.delete_destination(int(destination.id))
+                if store.list_destinations(target_id):
+                    body = f"已删除订阅（仅本目的地，其他目的地保留）：{target_id}"
+                else:
+                    # 最后一个目的地移除才删 target（连带游标），对齐 v1 语义。
+                    store.delete_target(target_id)
+                    body = f"已删除订阅：{target_id}"
             else:
                 enabled = action == "resume"
-                store.set_target_enabled(target_id, enabled)
-                body = f"已{'恢复' if enabled else '暂停'}订阅：{target_id}"
+                for destination in own:
+                    store.set_destination_enabled(int(destination.id), enabled)
+                body = f"已{'恢复' if enabled else '暂停'}订阅（仅本目的地）：{target_id}"
             return result(message, body, [f"subscribe_{action}"])
         return result(message, "用法：订阅 add <公开目标> / 订阅 list / 订阅 pause|resume|remove <id>", ["subscribe_help"])
 

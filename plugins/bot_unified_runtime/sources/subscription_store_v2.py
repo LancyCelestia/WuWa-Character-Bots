@@ -28,6 +28,11 @@ _OUTBOX_SENT_RETENTION_DAYS = 14
 # 推送重试上限：attempts 达到后转入死信（state='dead'，claim 不再捞起），
 # 默认 5 次——按指数退避计约半小时内放弃，避免坏事件无限重试。
 _OUTBOX_MAX_ATTEMPTS = 5
+# sending 滞留回收秒数：claim 把事件置为 state='sending' 后若进程在投递中
+# 崩溃，该行不再被 claim（只捞 pending/retry），推送静默丢失。claim 会同时
+# 回收 sending 超过此时长的陈旧行（claim 时把 next_attempt_at 刷新为当前
+# 时刻，超时判定因此精确），默认 300 秒远大于正常投递耗时。
+_OUTBOX_SENDING_STALE_SECONDS = 300.0
 # subscription_seen 去重行 TTL：默认 90 天。TTL 清掉的条目若仍出现在某
 # 频道的最新列表里会被再次推送，因此取远大于 outbox 保留期的值（只有
 # 超过 90 天无任何新内容的极静默频道才可能触发）。
@@ -58,6 +63,7 @@ class SubscriptionStoreV2:
         outbox_sent_retention_days: int | None = None,
         seen_retention_days: int | None = None,
         outbox_max_attempts: int | None = None,
+        outbox_sending_stale_seconds: float | None = None,
     ) -> None:
         self._db_path = prepare_subscription_database(db_path)
         self._connection: sqlite3.Connection | None = None
@@ -78,6 +84,11 @@ class SubscriptionStoreV2:
             outbox_max_attempts
             or getattr(config, "bot_subscription_outbox_max_attempts", 0)
             or _OUTBOX_MAX_ATTEMPTS
+        )
+        self._outbox_sending_stale_seconds = float(
+            outbox_sending_stale_seconds
+            or getattr(config, "bot_subscription_outbox_sending_stale_seconds", 0)
+            or _OUTBOX_SENDING_STALE_SECONDS
         )
         self._last_prune_monotonic = 0.0
 
@@ -290,6 +301,18 @@ class SubscriptionStoreV2:
                     (_iso(next_poll_at), _iso(datetime.now(timezone.utc)), target_id),
                 )
 
+    def release_target_lease(self, target_id: str) -> None:
+        """异常兜底：只清租约，不回写 next_poll_at。
+
+        回写过期的 next_poll_at 会让退避失效（目标每周期立即重轮询）；
+        保持原 next_poll_at 时，租约清空后目标到点自然可再次 claim。
+        """
+        with self._lock, self._get_connection() as connection:
+            connection.execute(
+                "UPDATE subscription_targets SET lease_until = NULL, updated_at = ? WHERE id = ?",
+                (_iso(datetime.now(timezone.utc)), target_id),
+            )
+
     def add_destination(self, destination: SubscriptionDestinationV2) -> None:
         with self._lock, self._get_connection() as connection:
             connection.execute(
@@ -329,6 +352,27 @@ class SubscriptionStoreV2:
                 )
                 for row in rows
             ]
+
+    def set_destination_enabled(self, destination_id: int, enabled: bool) -> bool:
+        """目的地级暂停/恢复（审计重发现 P2：此前 pause/resume 作用于整条
+        target，一个目的地的管理员能影响其他群/私聊的推送）。"""
+        with self._lock, self._get_connection() as connection:
+            return bool(
+                connection.execute(
+                    "UPDATE subscription_destinations SET enabled = ? WHERE id = ?",
+                    (int(bool(enabled)), int(destination_id)),
+                ).rowcount
+            )
+
+    def delete_destination(self, destination_id: int) -> bool:
+        """目的地级移除；最后一个目的地移除后由调用方决定是否删 target。"""
+        with self._lock, self._get_connection() as connection:
+            return bool(
+                connection.execute(
+                    "DELETE FROM subscription_destinations WHERE id = ?",
+                    (int(destination_id),),
+                ).rowcount
+            )
 
     def set_target_enabled(self, target_id: str, enabled: bool) -> bool:
         with self._lock, self._get_connection() as connection:
@@ -502,22 +546,28 @@ class SubscriptionStoreV2:
                 )
 
     def claim_outbox(self, now: datetime, limit: int) -> list[SubscriptionOutboxEvent]:
+        sending_stale_cutoff = _iso(
+            now - timedelta(seconds=self._outbox_sending_stale_seconds)
+        )
         with self._lock:
             connection = self._get_connection()
             with connection:
                 rows = connection.execute(
                     """
                     SELECT * FROM subscription_outbox
-                    WHERE state IN ('pending', 'retry') AND next_attempt_at <= ?
+                    WHERE (state IN ('pending', 'retry') AND next_attempt_at <= ?)
+                       OR (state = 'sending' AND next_attempt_at <= ?)
                     ORDER BY created_at LIMIT ?
                     """,
-                    (_iso(now), max(1, int(limit))),
+                    (_iso(now), sending_stale_cutoff, max(1, int(limit))),
                 ).fetchall()
                 events: list[SubscriptionOutboxEvent] = []
                 for row in rows:
+                    # 审计 E2-3：claim 时把 next_attempt_at 刷新为当前时刻，
+                    # sending 行的超时回收判定因此精确（不会被刚 claim 的行误回收）。
                     connection.execute(
-                        "UPDATE subscription_outbox SET state='sending', attempts=attempts+1 WHERE event_id=?",
-                        (row["event_id"],),
+                        "UPDATE subscription_outbox SET state='sending', attempts=attempts+1, next_attempt_at=? WHERE event_id=?",
+                        (_iso(now), row["event_id"]),
                     )
                     events.append(
                         SubscriptionOutboxEvent(

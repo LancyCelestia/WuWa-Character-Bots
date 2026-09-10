@@ -62,13 +62,16 @@ class PersonaSelector:
             candidates.append((spec, min(1.0, float(weight))))
         if not candidates:
             return None
-        draw = (rng or random).random()
+        # 权重按总和归一化抽样：不归一化时累计权重超过 1.0 会把排在
+        # 后面的人格永远截胡（三个 0.6 → 第三个 draw<1.8 恒不可达）。
+        total_weight = sum(weight for _, weight in candidates)
+        draw = (rng or random).random() * total_weight
         accumulated = 0.0
         for spec, weight in candidates:
             accumulated += weight
             if draw < accumulated:
                 return spec
-        return None
+        return candidates[-1][0]
 
 
 def build_alt_personas(config: object) -> dict[str, AltPersonaSpec]:

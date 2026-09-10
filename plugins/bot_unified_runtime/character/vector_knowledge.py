@@ -359,6 +359,9 @@ class SqliteVectorKnowledgeStore:
         # 避免机器人进程与同步进程并发时互相清空、进度反复回退。
         self.auto_reset = bool(auto_reset)
         self._lock = threading.RLock()
+        # 维护任务锁：embed_pending/build_ann_index 等分钟级重建相互互斥，
+        # 但绝不持 _lock（检索锁）执行——否则一次重建冻结所有会话的检索。
+        self._maintenance_lock = threading.Lock()
         # (mtime,size) 同步签名缓存：签名未变的知识文件在 sync_chunks 里跳过
         # 重读/分块/哈希（管线检视 #9；每条消息至少进一次 sync_chunks）。
         self._synced_signatures: dict[Path, tuple[int, int]] = {}
@@ -373,11 +376,32 @@ class SqliteVectorKnowledgeStore:
         # 会卡住消息处理），降级为纯向量通道，重建交给显式同步任务 force=True。
         self.fts_auto_rebuild = bool(fts_auto_rebuild)
         self._ensure_schema()
+        # 库内既有向量维度（首次写入时落 knowledge_meta，重启后恢复）：
+        # _save_vectors 用它拒绝混合维度语料入库。
+        self._vector_dim: int | None = self._stored_vector_dim()
+
+    def _stored_vector_dim(self) -> int | None:
+        if self.db_path == ":memory:":
+            return None
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT value FROM knowledge_meta WHERE key = 'vector_dim'"
+                ).fetchone()
+            return int(str(row[0])) if row else None
+        except (sqlite3.Error, TypeError, ValueError):
+            return None
 
     def _ensure_schema(self) -> None:
         if self.db_path != ":memory:":
             Path(self.db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
+            # WAL（持久属性，设一次即可）：与 knowledge-sync/kb-sync 独立进程
+            # 并发读写时不再互相阻塞成片 SQLITE_BUSY（affinity/media_registry 同款）。
+            try:
+                connection.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.Error:
+                pass
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS knowledge_chunks (
@@ -459,6 +483,10 @@ class SqliteVectorKnowledgeStore:
             return False
         with self._connect() as connection:
             connection.execute("UPDATE knowledge_chunks SET vector_json = NULL")
+            # 模型指纹变化常伴随维度变化：维度守卫一并复位，允许新维度重新入库。
+            connection.execute("DELETE FROM knowledge_meta WHERE key = 'vector_dim'")
+        with self._lock:
+            self._vector_dim = None
         self._set_stored_signature("")
         self._invalidate_vector_cache()
         return True
@@ -521,6 +549,19 @@ class SqliteVectorKnowledgeStore:
                     #（管线检视 #9；签名语义与 KeywordKnowledgeRetriever._sync_path 一致）。
                     signature = _file_signature(path)
                     if signature is not None and self._synced_signatures.get(path) == signature:
+                        continue
+                    if signature is None:
+                        if path.exists():
+                            # 存在但暂时不可读（占用/权限瞬态）：跳过，下条消息重试。
+                            continue
+                        # 文件已被删除：清掉旧块，避免被删知识继续被检索命中；
+                        # 清单仍包含该路径，顶部的 NOT IN 清理不会删它。
+                        cursor = connection.execute(
+                            "DELETE FROM knowledge_chunks WHERE source_id = ?",
+                            (path.stem,),
+                        )
+                        changed = changed or cursor.rowcount > 0
+                        self._synced_signatures.pop(path, None)
                         continue
                     text = load_character_document(path)
                     source_id = path.stem
@@ -728,7 +769,7 @@ class SqliteVectorKnowledgeStore:
         (本次成功嵌入行数, 处理前待嵌入行数)；中途失败即停止、可断点续跑。
         batch_size 覆盖每批行数（本地大批更快，见 _embed_all_pending）。
         """
-        with self._lock:
+        with self._maintenance_lock:
             if files:
                 self.sync_chunks(list(files))
             return self._embed_all_pending(on_progress=on_progress, batch_size=batch_size)
@@ -1014,7 +1055,7 @@ class SqliteVectorKnowledgeStore:
             # faiss 缺失不影响关键词索引：仍幂等构建 FTS，供关键词/降级检索使用。
             self.ensure_fts_index(force=True)
             return {"built": False, "reason": "faiss_missing"}
-        with self._lock:
+        with self._maintenance_lock:
             with self._connect() as connection:
                 cursor = connection.execute(
                     """
@@ -1181,6 +1222,15 @@ class SqliteVectorKnowledgeStore:
         rows: list[sqlite3.Row],
         vectors: list[list[float]],
     ) -> bool:
+        # 维度一致性守卫：本地/远程嵌入链回退可能产出不同维度，混入后
+        # numpy 路径会静默退化成 zip 截断的伪余弦，min_cosine_threshold 失真。
+        lengths = {len(vector) for vector in vectors if vector}
+        if len(lengths) != 1:
+            return False
+        with self._lock:
+            stored_dim = self._vector_dim
+        if stored_dim is not None and lengths and next(iter(lengths)) != stored_dim:
+            return False
         try:
             with self._connect() as connection:
                 for row, vector in zip(rows, vectors):
@@ -1192,6 +1242,15 @@ class SqliteVectorKnowledgeStore:
                             str(row["chunk_id"]),
                         ),
                     )
+                if stored_dim is None and lengths:
+                    connection.execute(
+                        "INSERT INTO knowledge_meta (key, value) VALUES ('vector_dim', ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (str(next(iter(lengths))),),
+                    )
+            if stored_dim is None and lengths:
+                with self._lock:
+                    self._vector_dim = next(iter(lengths))
             self._invalidate_vector_cache()
             return True
         except (TypeError, ValueError, sqlite3.Error):

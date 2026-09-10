@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import random
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
@@ -299,12 +301,21 @@ class FileCharacterContextProvider:
             action_brackets=self._action_brackets_enabled(),
         )
         knowledge_chunks: list[KnowledgeChunk] = []
+        retrieval_failed = False
         if self.vector_retriever is not None:
             try:
                 knowledge_chunks = list(self.vector_retriever(query_text) or [])
-            except Exception:  # noqa: BLE001 - 向量检索失败时回退文件知识，不阻断上下文构建。
+            except Exception as exc:  # noqa: BLE001 - 检索服务故障不阻断上下文构建。
+                retrieval_failed = True
                 knowledge_chunks = []
-        if not knowledge_chunks:
+                logging.getLogger(__name__).warning(
+                    "vector knowledge retrieval degraded (service failure), "
+                    "skipping static fallback: type=%s",
+                    type(exc).__name__,
+                )
+        if not knowledge_chunks and not retrieval_failed:
+            # 正常无命中：保留静态文件块兜底。服务故障（retrieval_failed）
+            # 不再注入整文件前几块——静态注入既掩盖故障又污染 prompt。
             knowledge_chunks = _build_knowledge_chunks(
                 files=self.knowledge_files,
                 max_chunks=self.knowledge_max_chunks,
@@ -488,9 +499,7 @@ def build_character_context_provider(
             interaction_counts=interaction_counts_provider,
         ),
         affinity_store=(
-            DynamicAffinityStore(
-                build_runtime_data_path(config, str(getattr(config, "bot_affinity_db_path", "data/user_affinity.sqlite3")))
-            )
+            _shared_affinity_store(config)
             if getattr(config, "bot_affinity_enabled", True)
             else None
         ),
@@ -564,6 +573,30 @@ def _build_persona_profile(
     )
 
 
+# 静态知识文件文本签名缓存（管线检视 #9）：向量检索未命中是闲聊常态，
+# 每条消息都会走 _build_knowledge_chunks 兜底，无签名缓存时每次都要对全部
+# 知识文件重读盘+解析。(mtime,size) 未变直接复用文本；签名语义与人格文件
+# 缓存（_load_persona_text）及 vector_knowledge._file_signature 一致。
+_KNOWLEDGE_TEXT_CACHE: dict[Path, tuple[tuple[int, int], str]] = {}
+_KNOWLEDGE_TEXT_CACHE_LOCK = threading.Lock()
+
+
+def _load_knowledge_text(path: Path) -> str:
+    """带 (mtime,size) 签名缓存的知识文件读取：未变复用，变了才重读重解析。"""
+    try:
+        stat = path.stat()
+        signature = (int(stat.st_mtime_ns), int(stat.st_size))
+    except OSError:
+        signature = (0, 0)
+    with _KNOWLEDGE_TEXT_CACHE_LOCK:
+        cached = _KNOWLEDGE_TEXT_CACHE.get(path)
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+        text = load_character_document(path)
+        _KNOWLEDGE_TEXT_CACHE[path] = (signature, text)
+        return text
+
+
 def _build_knowledge_chunks(
     *,
     files: list[Path],
@@ -574,7 +607,12 @@ def _build_knowledge_chunks(
     for path in files:
         if len(chunks) >= max_chunks:
             break
-        text = load_character_document(path)
+        try:
+            text = _load_knowledge_text(path)
+        except (OSError, ValueError):
+            # 单个知识文件缺失/不可读时跳过，不让它打断整个静态兜底链
+            #（此前 FileNotFoundError 会令 build_context 直接失败）。
+            continue
         for index, content in enumerate(_chunk_text(text, chunk_chars=chunk_chars), start=1):
             if len(chunks) >= max_chunks:
                 break
@@ -646,3 +684,23 @@ def build_runtime_data_path(config: object, value: str) -> Path:
     from scripts.runtime_paths import runtime_path
 
     return runtime_path(value)
+
+
+def _shared_affinity_store(config: object) -> Any | None:
+    """复用进程级共享好感度 store 单例（``__init__.build_character_affinity_store``）。
+
+    此前这里直接 ``DynamicAffinityStore(...)`` 自建实例：与共享工厂各持一把锁、
+    各开一条连接，每条聊天消息的被动感知与人格上下文构建互相争锁。
+    延迟导入避免模块级循环依赖；工厂不可用时退回本地实例保持可用性。
+    """
+    try:
+        from plugins.bot_unified_runtime import build_character_affinity_store
+
+        return build_character_affinity_store(config)
+    except Exception:  # noqa: BLE001 - 共享工厂失败时退回独立实例，不阻断上下文构建。
+        return DynamicAffinityStore(
+            build_runtime_data_path(
+                config,
+                str(getattr(config, "bot_affinity_db_path", "data/user_affinity.sqlite3")),
+            )
+        )
