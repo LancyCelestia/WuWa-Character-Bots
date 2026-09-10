@@ -1060,6 +1060,13 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 
 **移交注意**：本组全部修复需**重启生产 bot**（现进程仍 09-09 代码）才生效；vision 转换失败时会留 `vision: remote image download failed host=...` 日志，重启后图片仍读不到就把该行发回来。
 
+**追加交付（2026-09-11，cookie 过期提醒 + 平台登录框架）：**
+- **cookie 过期自动提醒**：`cookie_expiry_rows`/`cookie_expiry_report`（过期=⛔已过期 / ≤7 天=⚠️临期）+ 每日 10:00 cron job（`cookie_expiry_reminder`）自动私聊首个在线管理员；`/bot cookie expiry` 手动触发。
+- **扫码登录框架**：`/bot cookie login bilibili` → 生成 B站官方二维码 PNG 发给管理员（passport qrcode generate，公开接口实测可用）→ 扫码确认 → `/bot cookie check bilibili` 单次轮询写入 SESSDATA/bili_jct/DedeUserID（含过期时间），解析链热加载即时生效。会话 4 位短 key + 10 分钟 TTL + 容量 16。二维码渲染失败时文本兜底（二维码指向的确认链接可直接手机浏览器打开）。
+- **登录方式矩阵（诚实声明）**：bilibili=扫码全自动；其余平台密码/短信登录全部需要过平台人机验证（极验/行为验证），机器人通道无法代替人工——统一引导 `/bot cookie import <平台> <Cookie头>` 手动导入（管理员的浏览器导出文件可直接整份合并，脚本 `%TEMP%/agroup/merge_cookies.py` 按白名单域过滤+去重）。
+- **cookies.py 白名单补 zhihu 域**（d_c0 登录态，知乎解析 403 的缺口；用户导出中的知乎登录态已随之生效）。
+- **接入状态**：capability 层已全实现并实测（generate/poll 真连通过、poll 返回真实状态码 86101 未扫描）；`__init__.py` 的 handler 分支（login/check/expiry）与每日提醒 job 已在工作树，随并行会话同文件提交落地（同 §11 惯例）。
+
 ### B组（模型路由 / 管线 / 发送 / 聊天域）——已由 B组会话认领（2026-09-11，14 项全部交付）
 
 > **独立验证与补强（2026-09-11 深夜，验证会话）**：另一会话按本表独立开工（不知 B组会话在途），执行中经 git log 发现 14 项已全部交付后即时取消重复簇，转为①逐项 grep/git show 独立核实生产代码落地（B-1 deadline 线程/B-3 并发/B-6 负缓存 TTL/B-8 收尾轮/B-9 同阶段比较+死标签删除/B-11 有界化/sender 四件套/巡检合并视图/代理注入/旧快照迁移——全部属实）；②补齐 B-2/B-5 AC 缺口回归 `tests/test_llm_error_classification.py`（37 用例：分类矩阵+端到端去参/密钥轮换）与 `tests/test_llm_httpx_client.py`（10 用例：惰性单例/8 线程并发首建/限长/超时映射），独立评审 Approved；③检视 #7 全库最后残留点 `character/temporal.py` urlopen 已迁 `_shared_http_client`+8MB 限长（`tests/test_temporal_http_client.py` 12 用例；**注意该文件混有其他会话在途 hunks，提交需 §11.4**）；④**bot.py 启动崩溃修复（async on_startup）仍未提交**——工作树此前把降噪处理器挂成同步 on_startup 钩子，NoneBot 对同步 lifespan 钩子经 anyio 放工作线程执行致 `get_running_loop()` 必炸、uvicorn startup 失败；已改 async 并实测启动全链路通过，HEAD 仍是 import 期旧写法，**请尽快提交生效**。终态门禁：1033 passed / lint 全绿。
