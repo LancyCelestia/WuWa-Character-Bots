@@ -12,6 +12,7 @@
 > 源码工作区：`C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot`（下称「仓库根」）。
 > 运行数据根：`C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime`（下称「Runtime 根」，与仓库根是**兄弟目录**）。
 > 事实核对方式：本文所有断言都可由 `git log`、`dev.ps1` 三门禁、`docs/capability-audit-2026-09-10.md`、`.superpowers/sdd/handoff-final-2026-09-07/`（SDD 台账与六份任务报告）复核。
+> **入口（2026-09-11 起）**：接手先读 `docs/handoff-MASTER-2026-09-11.md`（文档族谱终裁/跨文档未完成总账/现行事实速查），再回本文读正文；最新增量见 `docs/handoff-session-2026-09-11-bgroup-verify.md`。
 
 ---
 
@@ -1066,6 +1067,9 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 - **登录方式矩阵（诚实声明）**：bilibili=扫码全自动；其余平台密码/短信登录全部需要过平台人机验证（极验/行为验证），机器人通道无法代替人工——统一引导 `/bot cookie import <平台> <Cookie头>` 手动导入（管理员的浏览器导出文件可直接整份合并，脚本 `%TEMP%/agroup/merge_cookies.py` 按白名单域过滤+去重）。
 - **cookies.py 白名单补 zhihu 域**（d_c0 登录态，知乎解析 403 的缺口；用户导出中的知乎登录态已随之生效）。
 - **接入状态**：capability 层已全实现并实测（generate/poll 真连通过、poll 返回真实状态码 86101 未扫描）；`__init__.py` 的 handler 分支（login/check/expiry）与每日提醒 job 已在工作树，随并行会话同文件提交落地（同 §11 惯例）。
+- **扫码登录框架扩展（2026-09-11，GitHub 查证后修正结论）**：此前「其余平台无法自动化」的结论**已被推翻**——MediaCrawler（30K+ Star）等成熟项目证明用 Playwright 打平台**官方登录页**扫码即可拿到登录态，无需逆向任何加密接口。已实现 `sources/parsers/platform_login.py`：后台线程打开官方登录页（每 3s 重截图保持二维码新鲜）→ 轮询 `context.cookies()` 检测目标登录 cookie（web_session/SUB/sessionid/z_c0/kuaishou.server.webday7_st）→ 成功导出平台域 cookie。覆盖 xiaohongshu/weibo/douyin/zhihu/kuaishou 五平台；`/bot cookie login|check <平台>` 与 B站同入口自动分派。手机号+验证码登录页也已在官方页面内（管理员可直接在页面上手动操作，浏览器上下文同持登录态）。
+- **A-3/A-5 实测记录（2026-09-11）**：真实链接 11/11 全 PASS——xhs×3（女漂猫meme MMD/本职厨子/明日方舟，全 deep+图集+发布时间+08）、微博×3（乐正绫推广站/洛天依官号/霁聆，全 deep+头像+图集）、推特×2（Fobing/鸣潮韩服官号，name=large 归一+时区+08）、YT×3（猫異常/鸣潮世界巡演/**Shorts 形态**）。B站×5（视频 AI 总结+字幕激活/直播 6 号+21452505/专栏+粉丝/分P BV1GJ411x7h7?p=2）。
+- **分P cid 选择修复**：`?p=N` 时字幕/AI 总结/视频资产按指定分P取（此前恒 P1 内容错位）；dispatch 补传 page_url。**引用推摘要**：fxtwitter quote 字段消费。**zhihu cookie 白名单**：d_c0 登录态生效。
 
 ### B组（模型路由 / 管线 / 发送 / 聊天域）——已由 B组会话认领（2026-09-11，14 项全部交付）
 
