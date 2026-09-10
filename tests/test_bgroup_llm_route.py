@@ -59,9 +59,31 @@ def test_request_error_kinds_are_failoverable(error_kind: str) -> None:
 
 @pytest.mark.parametrize(
     "error_kind",
-    ["bad_request", "invalid_request", "unsupported_parameter", "http"],
+    ["bad_request", "invalid_request", "unsupported_parameter"],
 )
-def test_request_shape_errors_fail_over_to_next_candidate(error_kind: str) -> None:
+def test_param_error_kinds_strip_retry_then_fail_over(error_kind: str) -> None:
+    """剥参类别（B-2 契约）：先同渠道去参重试一次，仍失败才转移下一候选。"""
+    calls: list[str] = []
+    router = ModelRouter(
+        {"first": _spec("first", 1), "second": _spec("second", 2)},
+        provider_factory=lambda spec: _FakeProvider(
+            spec.model_id, {"first": error_kind}, calls
+        ),
+    )
+
+    reply = router.generate(
+        [{"role": "user", "content": "hello"}],
+        message_text="hello",
+        reasoning_effort="high",
+    )
+
+    assert reply.text == "ok:second"
+    assert calls == ["first", "first", "second"]
+    assert router.last_attempts == [f"first:{error_kind}", "second:success"]
+
+
+@pytest.mark.parametrize("error_kind", ["http"])
+def test_unclassified_request_errors_fail_over_directly(error_kind: str) -> None:
     calls: list[str] = []
     router = ModelRouter(
         {"first": _spec("first", 1), "second": _spec("second", 2)},
