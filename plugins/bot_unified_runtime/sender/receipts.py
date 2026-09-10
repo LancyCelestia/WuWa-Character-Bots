@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+from contextlib import closing, contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol
@@ -30,10 +32,19 @@ class ReceiptRepository(Protocol):
 
 
 class InMemoryReceiptRepository:
-    def __init__(self) -> None:
+    """内存回执仓库：有界（FIFO 淘汰最旧）。
+
+    每条消息（含被拦截的）都记一条回执且进程内常驻，无上界时随运行
+    时长线性吃内存、find/list 全量倒扫越来越慢。
+    """
+
+    def __init__(self, *, max_receipts: int = 1000) -> None:
+        self.max_receipts = max(1, int(max_receipts))
         self._receipts: list[DeliveryReceipt] = []
 
     def record(self, receipt: DeliveryReceipt) -> DeliveryReceipt:
+        while len(self._receipts) >= self.max_receipts:
+            self._receipts.pop(0)
         self._receipts.append(receipt)
         return receipt
 
@@ -59,12 +70,67 @@ class SQLiteReceiptRepository:
     def __init__(self, db_path: str | Path, max_items: int = 1000) -> None:
         self.db_path = Path(db_path)
         self.max_items = max(1, int(max_items))
+        # 每次操作都重跑建表 DDL 是纯浪费：进程内建一次即可（含 WAL 切换）。
+        self._schema_ready = False
+        # 进程内长连接（B-10，管线检视 #13）：消除每操作建连开销
+        # （旧实现 with self._connect() 从不 close，连接全靠 GC 回收）。
+        self._connection: sqlite3.Connection | None = None
+        self._connection_lock = threading.RLock()
+
+    def _ensure_schema_once(self) -> None:
+        if self._schema_ready:
+            return
+        self._ensure_schema()
+        self._schema_ready = True
+
+    def _shared_connection(self) -> sqlite3.Connection:
+        with self._connection_lock:
+            if self._connection is None:
+                connection = sqlite3.connect(
+                    self.db_path, timeout=5.0, check_same_thread=False
+                )
+                connection.row_factory = sqlite3.Row
+                self._connection = connection
+            return self._connection
+
+    def _discard_connection(self) -> None:
+        with self._connection_lock:
+            if self._connection is not None:
+                try:
+                    self._connection.close()
+                except sqlite3.Error:
+                    pass
+                self._connection = None
+
+    @contextmanager
+    def _transaction(self):
+        """共享连接上的写事务：正常提交、异常回滚（sqlite3.Error 弃连接）。"""
+        with self._connection_lock:
+            connection = self._shared_connection()
+            try:
+                connection.execute("BEGIN")
+                yield connection
+            except sqlite3.Error:
+                connection.rollback()
+                self._discard_connection()
+                raise
+            except BaseException:
+                connection.rollback()
+                raise
+            else:
+                connection.commit()
+
+    @contextmanager
+    def _locked_connection(self):
+        """只读操作对共享连接的持锁借用。"""
+        with self._connection_lock:
+            yield self._shared_connection()
 
     def record(self, receipt: DeliveryReceipt) -> DeliveryReceipt:
-        self._ensure_schema()
+        self._ensure_schema_once()
         if receipt.operational_issue is not None:
             receipt = receipt.model_copy(update={"public_message": ""})
-        with self._connect() as connection:
+        with self._transaction() as connection:
             connection.execute(
                 """
                 INSERT INTO delivery_receipts (
@@ -117,8 +183,8 @@ class SQLiteReceiptRepository:
         return receipt
 
     def latest(self, request_id: str | None = None) -> DeliveryReceipt | None:
-        self._ensure_schema()
-        with self._connect() as connection:
+        self._ensure_schema_once()
+        with self._locked_connection() as connection:
             if request_id is None:
                 cursor = connection.execute(
                     """
@@ -145,8 +211,8 @@ class SQLiteReceiptRepository:
     def find(self, token: str) -> DeliveryReceipt | None:
         if not token:
             return None
-        self._ensure_schema()
-        with self._connect() as connection:
+        self._ensure_schema_once()
+        with self._locked_connection() as connection:
             cursor = connection.execute(
                 """
                 SELECT *
@@ -161,8 +227,8 @@ class SQLiteReceiptRepository:
             return self._from_row(row) if row is not None else None
 
     def list_receipts(self, request_id: str | None = None) -> list[DeliveryReceipt]:
-        self._ensure_schema()
-        with self._connect() as connection:
+        self._ensure_schema_once()
+        with self._locked_connection() as connection:
             if request_id is None:
                 cursor = connection.execute(
                     """
@@ -185,7 +251,12 @@ class SQLiteReceiptRepository:
 
     def _ensure_schema(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
+            # WAL：并发读写场景减少 busy；切换失败降级为默认模式，不致命。
+            try:
+                connection.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.Error:
+                pass
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS delivery_receipts (
@@ -224,7 +295,8 @@ class SQLiteReceiptRepository:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path)
+        # timeout：写锁被占时最多等 5s 再报 busy。
+        connection = sqlite3.connect(self.db_path, timeout=5.0)
         connection.row_factory = sqlite3.Row
         return connection
 

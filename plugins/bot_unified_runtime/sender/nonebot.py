@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 from email.message import EmailMessage
 from email.utils import formataddr
 from pathlib import Path
@@ -30,6 +32,42 @@ logger = logging.getLogger(__name__)
 _TG_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 _TG_MAX_AUDIO_BYTES = 45 * 1024 * 1024
 _TG_VOICE_CACHE_DIR = Path(tempfile.gettempdir()) / "bot_tg_voice"
+# 转码缓存有界：按 mtime 只保留最新 N 个文件（.ogg 缓存 + .src 中间产物）。
+_TG_VOICE_CACHE_MAX_FILES = 64
+
+
+class _FinalSendError(Exception):
+    """发送前已可判定不可重试的失败（如附件缺失）；对应 FAILED_FINAL。"""
+
+
+# B-12（A9 残留）：bot_download_proxy 的运行时注入 getter（支持热更新）。
+# sender 层拿不到插件运行时 Config 对象，显式注入优先于 bot.config→env 探测。
+_download_proxy_provider: Callable[[], str] | None = None
+
+
+def set_download_proxy_provider(provider: Callable[[], str] | None) -> None:
+    global _download_proxy_provider
+    _download_proxy_provider = provider
+
+
+def _resolve_download_proxy(bot: Any) -> str:
+    """解析 bot_download_proxy：注入 getter > driver config > 进程 env。
+
+    都取不到时返回空串（直连），不阻断发送。
+    """
+    if _download_proxy_provider is not None:
+        try:
+            value = str(_download_proxy_provider() or "").strip()
+        except (TypeError, ValueError, OSError, RuntimeError):
+            value = ""
+        if value:
+            return value
+    config = getattr(bot, "config", None)
+    for attr in ("bot_download_proxy", "BOT_DOWNLOAD_PROXY"):
+        value = str(getattr(config, attr, "") or "").strip()
+        if value:
+            return value
+    return os.environ.get("BOT_DOWNLOAD_PROXY", "").strip()
 
 
 def _telegram_media_parts(content_ref: Any) -> list[dict[str, Any]]:
@@ -63,12 +101,40 @@ def _voice_cache_path(key: str) -> Path:
     return _TG_VOICE_CACHE_DIR / f"{digest}.ogg"
 
 
+def _sweep_voice_cache() -> None:
+    """转码缓存有界清扫：按 mtime 保留最新 N 个文件，超出即删。"""
+    try:
+        entries = [p for p in _TG_VOICE_CACHE_DIR.iterdir() if p.is_file()]
+    except OSError:
+        return
+
+    def _mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    entries.sort(key=_mtime, reverse=True)
+    for path in entries[_TG_VOICE_CACHE_MAX_FILES:]:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
 def _convert_audio_to_ogg(source: Path, target: Path) -> bool:
-    """sendVoice 仅接受 OGG/OPUS，mp3/flac 直发会被 Telegram 拒收，须 ffmpeg 转码。"""
+    """sendVoice 仅接受 OGG/OPUS，mp3/flac 直发会被 Telegram 拒收，须 ffmpeg 转码。
+
+    ffmpeg 先写 ``.part`` 临时文件再 os.replace 原子落位：并发转码同一目标
+    时不会交错出损坏的 .ogg；结束后做一次有界缓存清扫。
+    """
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         return False
+    tmp_target = target.with_name(target.name + ".part")
     try:
+        # 本地语音源路径此前从不预建缓存目录，ffmpeg 会因目录缺失直接失败。
+        target.parent.mkdir(parents=True, exist_ok=True)
         completed = subprocess.run(
             [
                 ffmpeg,
@@ -82,39 +148,82 @@ def _convert_audio_to_ogg(source: Path, target: Path) -> bool:
                 "libopus",
                 "-b:a",
                 "64k",
-                str(target),
+                str(tmp_target),
             ],
             capture_output=True,
             check=False,
             timeout=120,
         )
     except (OSError, subprocess.TimeoutExpired):
+        _sweep_voice_cache()
         return False
-    return completed.returncode == 0 and target.is_file() and target.stat().st_size > 0
+    ok = completed.returncode == 0 and tmp_target.is_file() and tmp_target.stat().st_size > 0
+    if ok:
+        try:
+            os.replace(tmp_target, target)
+        except OSError:
+            ok = False
+    if not ok:
+        try:
+            tmp_target.unlink()
+        except OSError:
+            pass
+    _sweep_voice_cache()
+    return ok
 
 
-async def _download_voice_source(url: str, target: Path) -> Path | None:
+async def _download_voice_source(url: str, target: Path, *, proxy: str = "") -> Path | None:
     try:
         import httpx
     except ImportError:  # pragma: no cover - httpx 随 nonebot 必装
         return None
+    client_kwargs: dict[str, Any] = {
+        "timeout": httpx.Timeout(20.0),
+        "follow_redirects": True,
+    }
+    if proxy:
+        client_kwargs["proxy"] = proxy
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(20.0), follow_redirects=True
-        ) as client:
-            response = await client.get(url)
+        # 边下边限流：整包 response.content 会先把 45MB+ 全量吃进内存才判超限。
+        async with httpx.AsyncClient(**client_kwargs) as client, client.stream(
+            "GET", url
+        ) as response:
             response.raise_for_status()
-            payload = response.content
-        if not payload or len(payload) > _TG_MAX_AUDIO_BYTES:
+            declared = response.headers.get("content-length", "")
+            if declared.isdigit() and int(declared) > _TG_MAX_AUDIO_BYTES:
+                return None
+            chunks: list[bytes] = []
+            size = 0
+            async for chunk in response.aiter_bytes():
+                size += len(chunk)
+                if size > _TG_MAX_AUDIO_BYTES:
+                    return None
+                chunks.append(chunk)
+        if not chunks:
             return None
         _TG_VOICE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(payload)
+        target.write_bytes(b"".join(chunks))
         return target
     except Exception:  # noqa: BLE001 - 下载失败时降级为直链 audio，不阻断发送
         return None
 
 
-async def _prepare_telegram_voice(raw_ref: str) -> tuple[str, str]:
+def _cleanup_voice_source(raw_ref: str) -> None:
+    """发送成功后删除本次下载的 .src 中间产物（.ogg 转码结果保留作缓存）。"""
+    ref = (raw_ref or "").strip()
+    if not ref:
+        return
+    try:
+        _voice_cache_path(f"{ref}.src").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+async def _prepare_telegram_voice(
+    raw_ref: str,
+    *,
+    proxy: str = "",
+) -> tuple[str, str]:
     """归一化语音源，返回 (引用, 模式)；模式 ∈ {"voice", "audio", "none"}。
 
     不合规源先经 ffmpeg 落地转 OGG/OPUS；转换不可用时降级 sendAudio
@@ -126,7 +235,9 @@ async def _prepare_telegram_voice(raw_ref: str) -> tuple[str, str]:
     if ref.startswith(("http://", "https://")):
         if ref.lower().split("?", 1)[0].endswith((".ogg", ".oga")):
             return ref, "voice"
-        source = await _download_voice_source(ref, _voice_cache_path(f"{ref}.src"))
+        source = await _download_voice_source(
+            ref, _voice_cache_path(f"{ref}.src"), proxy=proxy
+        )
         if source is None:
             return ref, "audio"
         target = _voice_cache_path(ref)
@@ -241,7 +352,13 @@ async def send_nonebot_message(
             public_message="",
         )
 
+    # 部件级进度：已成功发出的媒体部件数。>0 时异常按结果未知终态处理，
+    # 上游不再整体重试（否则会把已送达图片/文件重发一遍）。
+    delivered_parts = 0
+    download_proxy = _resolve_download_proxy(bot)
+
     async def _send() -> Any:
+        nonlocal delivered_parts
         parts = media_parts
         # remaining 取代闭包 text：caption 随图发出后置空，避免同一段正文重复发送。
         remaining = text
@@ -253,9 +370,11 @@ async def send_nonebot_message(
             for part in files:
                 path = Path(str(part.get("file") or ""))
                 if not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
-                    raise ValueError("invalid generated attachment")
+                    # 附件缺失/超限在发送前即可判定，重试也不会成功。
+                    raise _FinalSendError("invalid generated attachment")
                 result = await bot.send_document(chat_id=send_request.target_id,
                     document=(path.name, path.read_bytes()), caption=remaining[:1000])
+                delivered_parts += 1
                 if not _provider_message_id(result):
                     raise RuntimeError("telegram attachment receipt missing")
             return result
@@ -278,6 +397,7 @@ async def send_nonebot_message(
                         await send_photo(
                             chat_id=send_request.target_id, photo=photo_ref
                         )
+                    delivered_parts += 1
                 except Exception:  # noqa: BLE001 - 图片失败降级为纯文本，避免重试重发已成功内容
                     logger.warning(
                         "telegram photo send failed request_id=%s",
@@ -287,8 +407,9 @@ async def send_nonebot_message(
             for part in parts:
                 if part.get("type") not in {"record", "voice"}:
                     continue
+                raw_voice_ref = str(part.get("file") or part.get("url") or "")
                 voice_ref, voice_mode = await _prepare_telegram_voice(
-                    str(part.get("file") or part.get("url") or "")
+                    raw_voice_ref, proxy=download_proxy
                 )
                 if voice_mode == "voice":
                     send_voice = getattr(bot, "send_voice", None)
@@ -296,12 +417,16 @@ async def send_nonebot_message(
                         result = await send_voice(
                             chat_id=send_request.target_id, voice=voice_ref
                         )
+                        delivered_parts += 1
+                        _cleanup_voice_source(raw_voice_ref)
                 elif voice_mode == "audio":
                     send_audio = getattr(bot, "send_audio", None)
                     if callable(send_audio):
                         result = await send_audio(
                             chat_id=send_request.target_id, audio=voice_ref
                         )
+                        delivered_parts += 1
+                        _cleanup_voice_source(raw_voice_ref)
             if result is not None and not remaining:
                 return result
             if result is None and not remaining and parts:
@@ -362,6 +487,30 @@ async def send_nonebot_message(
                 debug_id=debug_id,
             ),
         )
+    except _FinalSendError as exc:
+        debug_id = new_debug_id()
+        logger.warning(
+            "nonebot send not retryable kind=%s request_id=%s transport=%s",
+            str(exc),
+            send_request.request_id,
+            transport,
+        )
+        return DeliveryReceipt(
+            request_id=send_request.request_id,
+            state=ReceiptState.FAILED_FINAL,
+            transport=transport,
+            public_message="",
+            debug_id=debug_id,
+            operational_issue=OperationalIssue(
+                stage=transport.split(".", 1)[0]
+                if transport.split(".", 1)[0] in {"telegram", "mail"}
+                else "runtime",
+                kind=str(exc)[:48] or "send_failed_final",
+                retryable=False,
+                safe_summary=str(exc)[:48] or "send_failed_final",
+                debug_id=debug_id,
+            ),
+        )
     except Exception as exc:  # noqa: BLE001 - adapter errors become typed receipts.
         logger.warning(
             "nonebot transport send failed type=%s request_id=%s transport=%s",
@@ -371,6 +520,22 @@ async def send_nonebot_message(
         )
         debug_id = new_debug_id()
         stage = transport.split(".", 1)[0]
+        if delivered_parts > 0:
+            # 部分媒体已送达：整体重试会重发已投递部件，只能按结果未知终态处理。
+            return DeliveryReceipt(
+                request_id=send_request.request_id,
+                state=ReceiptState.FAILED_FINAL,
+                transport=transport,
+                public_message="",
+                debug_id=debug_id,
+                operational_issue=OperationalIssue(
+                    stage=stage if stage in {"telegram", "mail"} else "runtime",
+                    kind="result_unknown",
+                    retryable=False,
+                    safe_summary="result_unknown",
+                    debug_id=debug_id,
+                ),
+            )
         return DeliveryReceipt(
             request_id=send_request.request_id,
             state=ReceiptState.FAILED_RETRYABLE,
