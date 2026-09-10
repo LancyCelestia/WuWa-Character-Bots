@@ -1028,6 +1028,7 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 | A-7 | ✅ E1 抽验 17/17 PASS（覆盖 12 项：E1-1/2/3/5/6/8/9/10/14/15/17/18，含真连 youtu.be?list= 单视频、Apple cn→us 回退、HttpOnly cookie、js unicode 代理对） | 实测+精确静态证据 | 完成：零问题回退 |
 | A-8 | **P0 vision 修复**：发图/GIF/视频 OCR 与大模型全部读不到的根因——直传与 OCR 双分支都把 QQ 多媒体签名 URL 原样透传给远程 AI 服务商抓取（第三方取不到）。修复：bot 侧下载（桌面 UA+8MB 上限+失败 warning）→ PIL 转 data URL（GIF 抽 3 帧拼条/超大缩边；FIFO 缓存 32）→ 进请求体；ffmpeg 抽帧/探测对 http 视频源加桌面 UA；三条消费路径全覆盖。回归 test_vision_remote_data_url 6 项。**合批存证**：b2de652 连带视频理解会话在途改动集入库（chat.py 704 行/transcribe/video_understanding/video_pipeline/media_registry/__init__ 接线 24 行——共享 index 惯例，依赖闭包完整，918 passed 树级验证）。**⚠️ 需重启生产 bot 才生效（现进程仍为 09-09 代码）** | 完成 |
 
+| A-9 | 三轮加固：image_stitch 资源护栏（20s 预算硬上限实测/40MP 画布上限/缓存 prune 200）+ getV2 五结构字段 _dict_or 钳卫 + 图文详情 dict 形态分支 + og 摘要按句截断 + mface 无 url 观测点 + E1 18/18 全量复核 + 推特 4 图真实全链路（a645a44/c838f3e/a2034b4）；对抗审查子代理被上游 1302 限流打死，自查接管完成 | 完成 |
 ### B组（模型路由 / 管线 / 发送 / 聊天域）——已由 B组会话认领（2026-09-11，14 项全部交付）
 
 文件域：`llm/**`、`runtime/**`、`sender/**`、`bot.py`、`capabilities/chat.py`、`capabilities/runtime_admin.py`、`llm/providers.py`、`sources/web_search.py`
