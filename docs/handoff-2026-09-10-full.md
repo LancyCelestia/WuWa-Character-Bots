@@ -1028,26 +1028,35 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 | A-7 | ✅ E1 抽验 17/17 PASS（覆盖 12 项：E1-1/2/3/5/6/8/9/10/14/15/17/18，含真连 youtu.be?list= 单视频、Apple cn→us 回退、HttpOnly cookie、js unicode 代理对） | 实测+精确静态证据 | 完成：零问题回退 |
 | A-8 | **P0 vision 修复**：发图/GIF/视频 OCR 与大模型全部读不到的根因——直传与 OCR 双分支都把 QQ 多媒体签名 URL 原样透传给远程 AI 服务商抓取（第三方取不到）。修复：bot 侧下载（桌面 UA+8MB 上限+失败 warning）→ PIL 转 data URL（GIF 抽 3 帧拼条/超大缩边；FIFO 缓存 32）→ 进请求体；ffmpeg 抽帧/探测对 http 视频源加桌面 UA；三条消费路径全覆盖。回归 test_vision_remote_data_url 6 项。**合批存证**：b2de652 连带视频理解会话在途改动集入库（chat.py 704 行/transcribe/video_understanding/video_pipeline/media_registry/__init__ 接线 24 行——共享 index 惯例，依赖闭包完整，918 passed 树级验证）。**⚠️ 需重启生产 bot 才生效（现进程仍为 09-09 代码）** | 完成 |
 
-### B组（模型路由 / 管线 / 发送 / 聊天域）——待认领
+### B组（模型路由 / 管线 / 发送 / 聊天域）——已由 B组会话认领（2026-09-11，14 项全部交付）
 
 文件域：`llm/**`、`runtime/**`、`sender/**`、`bot.py`、`capabilities/chat.py`、`capabilities/runtime_admin.py`、`llm/providers.py`、`sources/web_search.py`
 
-| # | 任务 | 现状依据 | 验收标准 |
-|---|---|---|---|
-| B-1 | 管线检视 #1：媒体/视频预算与 150s 请求预算协调 | §10.1（与视频理解会话协同，其在途文件勿动） | 深挖视频不再挤占聊天预算 |
-| B-2 | 管线检视 #2：providers.py HTTP 400 分类（可转移/去参重试） | §10.1 | 400 带 channel 语义分类，故障转移决策正确 |
-| B-3 | 管线检视 #5：web_search 多 query 并发检索（非 fast 模式最坏 30-40s） | §6.5 | 并发后 P95≤10s |
-| B-4 | 管线检视 #6：NapCat 断线 bot_unavailable 不计 attempts | §10.1 | 断线期间排队回复不再被丢弃 |
-| B-5 | 管线检视 #7：urllib→httpx.Client 单例+响应 read 限长 | §10.1 | 单例复用+8MB 上限 |
-| B-6 | 管线检视 #8 + chat.py MCP 负缓存 TTL（缓存中毒） | §10.1/§10.2 | 失效工具结果有 TTL 不再永久缓存 |
-| B-7 | 管线检视 #10：分片超时下限 | §10.1 | 长文本分片不再被下限误判 |
-| B-8 | 管线检视 #11：工具循环空文本收尾轮 | §10.1 | 空文本轮触发强制收尾 |
-| B-9 | 管线检视 #12：失效审计标签清理 | §10.1 | audit_tags 与实际路径一致 |
-| B-10 | 管线检视 #13：queue/receipts 长连接复用 | §10.1 | 每操作新开连接消除（WAL 已开） |
-| B-11 | chat.py 输出预算装箱 + 记忆抽取线程池 | §10.2 | 输出不超预算截断；抽取不占聊天池 |
-| B-12 | A9 代理解析：sender 层 env 探测改显式注入 | §13.10 | Config 与 env 不同步时代理仍生效 |
-| B-13 | D7 后台巡检取数点改 `_probe_specs` 同款合并视图（现只覆盖 .env 注册表） | §13.10 | 运行时新增渠道进后台巡检 |
-| B-14 | 旧注册表快照迁移：无 source 标记存量条目遮蔽 .env（引导重新 update 或启动时自动迁移） | §13.10 | 存量条目不再遮蔽 |
+| # | 任务 | 交付（2026-09-11） |
+|---|---|---|
+| B-1 | 媒体/视频预算与 150s 请求预算协调 | ✅ `chat.py:_video_deadline_seconds`（剩余−60s LLM 保留、下限 30s）经 `_resolve_media_context` 三处调用点传入 `build_video_brief(deadline_seconds=…)`——被调方参数本就就绪，纯调用侧接线，未动视频会话文件。主体随 b2de652 合批入库 |
+| B-2 | providers.py HTTP 400 分类 | ✅ c95f9db：其余 4xx 兜底归新 kind `bad_request`；`_FAILOVER_ERROR_KINDS` 扩容 bad_request/invalid_request/unsupported_parameter/http——中文 400 文案/措辞漂移不再把多候选路由打成单点；去参重试失败后自然转移 |
+| B-3 | web_search 多 query 并发检索 | ✅ `chat.py:_search_queries_concurrently`（submit+逐 future、≤4 线程、顺序确定性、单查询失败隔离；收尾改进 cancel_futures）。主体随 b2de652 入库 |
+| B-4 | NapCat 断线 bot_unavailable 不计 attempts | ✅ 19e5d76：`_defer_for_bot_unavailable` 挂起不递增 retry_count，入队超年龄上限（默认 30min，旋钮 `bot_send_bot_unavailable_max_age_seconds`）置终态；**并行会话在本会话实现上追加了旋钮与参数改写（90s/30min），语义互补已吸收（diff 稳定性 12s×2 校验）** |
+| B-5 | urllib→httpx.Client 单例+read 限长 | ✅ c95f9db：`_shared_http_client`（按 proxy 键缓存+双检锁）+ 8MB/8KB 限长；`urlopen=` 注入缝保留 |
+| B-6 | MCP 负缓存 TTL | ✅ 负缓存 TTL 60s（结构性缺失仍永久缓存），clear 同步清计时器。随 b2de652 入库 |
+| B-7 | 分片超时下限 | ✅ 19e5d76：`slice_for` 每段下限钳 10s，外层 wait_for 不变兜总预算 |
+| B-8 | 工具循环空文本收尾轮 | ✅ 打满且末轮空文本+有 tool_calls → 一次无工具收尾轮（异常/空文本回退旧行为）。随 b2de652 入库 |
+| B-9 | 失效审计标签清理 | ✅ 核实 `llm_speech_quotes_normalized` 已被 D 系修复为有效；删除真死标签 `llm_split_parts`/`llm_split_mode`（text_parts 恒 None）。随 b2de652 入库 |
+| B-10 | queue/receipts 长连接复用 | ✅ 19e5d76：进程内长连接（check_same_thread=False + RLock）+ `_transaction`/`_transaction_immediate`；mark_* 单连接单事务；消除 receipts 连接 GC 泄漏；全流程实测单次建连 |
+| B-11 | 输出预算装箱+记忆抽取线程池 | ✅(b) BoundedSemaphore(4) 有界化（满载跳过不排队）。随 b2de652 入库。**(a) 裁定不做 token 级装箱**：字符级装箱已存在（`_apply_output_message_budget`）；token 装箱钳 max_tokens 会截断思考型模型 reasoning token（Gemini/DeepSeek 思考计入 max_tokens）→ 空回复风险 > 收益 |
+| B-12 | A9 代理解析显式注入 | ✅ 19e5d76（nonebot 侧 getter+探测链）+ 11fdc78（`__init__.py` 注入行，§11.4 部分暂存） |
+| B-13 | D7 巡检取数点改合并视图 | ✅ 11fdc78：`_channel_health_job` 改 `_probe_specs(runtime_settings, config)`，管理员 add 的渠道进后台巡检——D7 残留闭环 |
+| B-14 | 旧注册表快照迁移 | ✅ c95f9db：读取侧自动迁移（`_spec_from_dynamic_entry` + `_merge_registry_entries`：无标记且 .env 有同名 id → 内容取 .env 实时值、priority 保留快照、内存视图补打标记）；.env 已删的无标记条目原样保留；D3 的 wholesale 兼容测试按本验收改写 |
+
+**B组交付记录（2026-09-11）**：
+- **提交链**：c95f9db（llm 域）→ 19e5d76（sender 域）→ 9ec8138（chat 域测试+收尾）→ 11fdc78（`__init__`/config 接线，§11.4 部分暂存，read-tree+hash-object 手法仅含本组 3 hunks，工作树他人在途分毫未动；提交后主索引滞留旧基线已 `reset --mixed` 校准，暂存区核验无他人内容）。
+- **门禁**：pytest 全量 **923 passed**（865 基线+本组 41 新用例+并行会话新增）；ruff 本组文件域零错（残留 3 项在 `vision_describe.py`，他人在途）；mypy `Success: no issues found in 205 source files`。
+- **sweep 存证**：本组 chat.py 改动（B-1/B-3/B-6/B-8/B-9/B-11 主体）在共享工作树中被 A组 b2de652「视频理解合批」整文件 sweep 入库——提交前内容已完整且 923 树级验证，sweep 版本与本组工作树一致，追认有效。
+- **吸收记录**：llm/sender 提交吸收审计会话该域在途 hunks（D6/A1-A11，§13 已存证）；`tests/test_auditfix_llm_route.py`（审计 untracked 测试）随 c95f9db 入库；B-4 的并行改写按 §11.5 末条合并态吸收。
+- **终审**：独立只读终审（子代理全量复核 14 项修复面）：Critical/Important 零。Minor 2 条处置：①`_SAFE_LLM_ERROR_KINDS` 补 `bad_request`（9ec8138 已修）；②B-4 旋钮 Config 字段缺失（11fdc78 已修+回归用例锁定）。
+- **遗留登记**：B-4 旋钮 30min 上限对超长断线仍会终态丢弃（有意取舍，防 A4 下死挂堆积；旋钮可调）；B-11 全局信号量跨测试理论上可残留 ≤4 槽（当前全绿）；lint 树级 `vision_describe.py` 3 项属他人在途。
+
 
 ### C组（人格 / 知识 / 订阅 / 杂项能力 / 测试卫生域）——已由 C 组执行会话认领（2026-09-10 晚）；首轮执行完毕（C-1~C-5/C-7/C-8 完成，C-6 等用户前置）
 
