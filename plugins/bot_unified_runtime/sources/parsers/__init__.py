@@ -60,6 +60,7 @@ from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
     parse_xiaohongshu,
     parse_youtube,
 )
+from plugins.bot_unified_runtime.sources.parsers.platforms_github import parse_github
 from plugins.bot_unified_runtime.sources.parsers.platforms_huajia import parse_huajia
 from plugins.bot_unified_runtime.sources.parsers.platforms_kuaishou import (
     parse_kuaishou,
@@ -184,6 +185,15 @@ _PLATFORM_RULES: list[tuple[str, str, list[str], ParseFn, int]] = [
             r"facebook\.com/[^\s]+",
         ],
         parse_facebook,
+        12,
+    ),
+    (
+        "github",
+        "GitHub",
+        [
+            r"github\.com/[0-9A-Za-z][0-9A-Za-z-]{0,38}/[0-9A-Za-z_.-]+(?:/[^\s]*)?",
+        ],
+        parse_github,
         12,
     ),
     (

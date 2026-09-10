@@ -182,6 +182,25 @@ class Config(BaseModel):
     bot_request_budget_seconds: float = 150.0
     bot_emotion_enabled: bool = True
     bot_emotion_max_signals: int = 4
+    # 机器人自身心情（L1，character/mood.py）：分钟-小时尺度连续情绪，事件驱动、
+    # 按半衰期指数回归基线；与好感度（天-周尺度）时间尺度分离。
+    bot_mood_enabled: bool = True
+    bot_mood_db_path: str = "data/bot_mood.sqlite3"
+    bot_mood_half_life_minutes: float = 120.0
+    bot_mood_baseline_arousal: float = 0.3
+    bot_mood_rate_cap_per_hour: float = 0.5
+    # L4 人格演化区（审核制）：核心人格文件永不自动改；习惯沉淀在此，管理员审核后才生效。
+    bot_quirks_enabled: bool = True
+    bot_quirks_db_path: str = "data/persona_quirks.sqlite3"
+    bot_quirks_max_active: int = 6
+    # 反思回路（character/reflection.py）：夜间把当天对话沉淀为高层事实 + 会话摘要，
+    # 提供跨会话的"非线性记忆"召回；LLM 归纳默认关（用确定性启发式）。
+    bot_reflection_enabled: bool = True
+    bot_reflection_db_path: str = "data/reflection.sqlite3"
+    bot_reflection_hour: int = 4
+    bot_reflection_minute: int = 30
+    bot_reflection_max_sessions: int = 50
+    bot_reflection_llm_enabled: bool = False
     bot_trend_enabled: bool = False
     bot_trend_files: list[str] = []
     bot_trend_max_notes: int = 5
@@ -194,6 +213,15 @@ class Config(BaseModel):
     bot_weather_longitude: float = 0.0
     bot_weather_cache_seconds: int = 1800
     bot_weather_timeout_seconds: float = 8.0
+    # 全球股指行情（bot.market）：东方财富 push2 免费接口，免 key，进程内 TTL 缓存。
+    bot_market_enabled: bool = True
+    bot_market_timeout_seconds: float = 6.0
+    bot_market_cache_seconds: float = 60.0
+    # 今日快报（bot.news）：国内可达 RSS 聚合，进程内 TTL 缓存（按类目分桶）。
+    bot_news_enabled: bool = True
+    bot_news_timeout_seconds: float = 6.0
+    bot_news_cache_seconds: float = 600.0
+    bot_news_max_items: int = 8
     bot_holidays_file: str = ""
     bot_persona_action_brackets: bool = True
     bot_credentials_file: str = ""
@@ -281,6 +309,8 @@ class Config(BaseModel):
     # 运行时 BOT_MUSIC_MODE 覆盖此处。
     bot_parse_subtitle_summary: bool = False
     bot_eat_enabled: bool = True
+    # 占卜娱乐套件（bot.divination）：八字排盘/塔罗牌/金钱卦，纯本地计算、零网络。
+    bot_divination_enabled: bool = True
     bot_channel_health_enabled: bool = True
     bot_channel_health_interval_seconds: float = 3600.0
     # 巡检并发/错峰参数（B-2）：background 巡检并发、手动 probe 并发、
@@ -651,6 +681,7 @@ class Config(BaseModel):
             "bot_knowledge_db_path",
             "bot_kb_wiki_db_path",
             "bot_memory_db_path",
+            "bot_reflection_db_path",
             "bot_history_db_path",
             "bot_diagnostics_db_path",
             "bot_audit_db_path",

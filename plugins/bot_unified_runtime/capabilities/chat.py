@@ -1151,6 +1151,14 @@ def build_chat_prompt_with_diagnostics(
     dynamic_parts: list[str] = []
     if context.emotion_signals:
         dynamic_parts += ["", "情绪信号（仅影响语气分寸）：", emotion_lines]
+    if context.mood_description:
+        dynamic_parts += [
+            "",
+            "当前心情（bot 自己的状态，仅影响语气与积极度，不要主动汇报数值）：",
+            context.mood_description,
+        ]
+    if context.quirks_section:
+        dynamic_parts += ["", context.quirks_section]
     if context.memory_results.facts:
         dynamic_parts += ["", "已读取记忆：", memory_lines]
     if context.conversation_history.turns:

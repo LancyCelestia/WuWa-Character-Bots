@@ -19,10 +19,13 @@ from pydantic import BaseModel
 from .audit import AuditRepository, build_audit_repository
 from .audit.file_logger import build_audit_with_file_log
 from .capabilities.content_parser import build_content_capability
+from .capabilities.divination import build_divination_capability
 from .capabilities.download import build_download_capability
 from .capabilities.eat import build_eat_capability
 from .capabilities.epic import build_epic_capability
 from .capabilities.group_files import DirtyGuard, GroupFileStore
+from .capabilities.market import build_market_capability
+from .capabilities.news import build_news_capability
 from .capabilities.meme import build_meme_capability
 from .capabilities.meme_library import build_meme_library_capability
 from .capabilities.moegirl import (
@@ -1794,6 +1797,144 @@ def build_character_affinity_store(config: object):
         return store
 
 
+
+# 进程级共享 bot 心情 store（L1）：与好感度 store 同模式（构造即建连接+建表，
+# 复用单例消除热路径重复 schema ensure；store 自身带锁线程安全）。
+_MOOD_STORES: dict[str, Any] = {}
+_MOOD_STORES_LOCK = threading.Lock()
+
+
+def build_character_mood_store(config: object):
+    from .character.mood import BotMoodStore
+    from .character.providers import build_runtime_data_path
+
+    if not getattr(config, "bot_mood_enabled", True):
+        return None
+    db_path = build_runtime_data_path(
+        config, str(getattr(config, "bot_mood_db_path", "data/bot_mood.sqlite3"))
+    )
+    cache_key = str(db_path)
+    with _MOOD_STORES_LOCK:
+        store = _MOOD_STORES.get(cache_key)
+        if store is None:
+            store = BotMoodStore(
+                db_path,
+                half_life_minutes=float(
+                    getattr(config, "bot_mood_half_life_minutes", 120.0)
+                ),
+                baseline_arousal=float(
+                    getattr(config, "bot_mood_baseline_arousal", 0.3)
+                ),
+                rate_cap_per_hour=float(
+                    getattr(config, "bot_mood_rate_cap_per_hour", 0.5)
+                ),
+            )
+            _MOOD_STORES[cache_key] = store
+        return store
+
+
+def _build_mood_describe(config: object):
+    """返回 () -> str 的心情描述闭包（自然语言、无数值）；未启用返回 None。"""
+    store = build_character_mood_store(config)
+    if store is None:
+        return None
+
+    def _describe() -> str:
+        return store.describe(store.snapshot())
+
+    return _describe
+
+
+def _mood_willingness_factor(config: object) -> float:
+    """bot 心情 → 群聊开火概率系数 [0.75, 1.25]；任何失败回退 1.0（只调概率，不做硬开关）。"""
+    try:
+        store = build_character_mood_store(config)
+        if store is None:
+            return 1.0
+        return float(store.willingness_factor(store.snapshot()))
+    except Exception:  # noqa: BLE001 - 心情层失败不改变回复行为。
+        return 1.0
+
+
+# 进程级共享 L4 quirk store（审核制演化区）：与心情 store 同模式。
+_QUIRK_STORES: dict[str, Any] = {}
+_QUIRK_STORES_LOCK = threading.Lock()
+
+
+def build_character_quirk_store(config: object):
+    from .character.providers import build_runtime_data_path
+    from .character.quirks import QuirkStore
+
+    if not getattr(config, "bot_quirks_enabled", True):
+        return None
+    db_path = build_runtime_data_path(
+        config,
+        str(getattr(config, "bot_quirks_db_path", "data/persona_quirks.sqlite3")),
+    )
+    cache_key = str(db_path)
+    with _QUIRK_STORES_LOCK:
+        store = _QUIRK_STORES.get(cache_key)
+        if store is None:
+            store = QuirkStore(db_path)
+            _QUIRK_STORES[cache_key] = store
+        return store
+
+
+def _build_quirks_describe(config: object):
+    """返回 () -> str 的 quirk 提示区闭包（审核通过才渲染）；未启用返回 None。"""
+    store = build_character_quirk_store(config)
+    if store is None:
+        return None
+    max_active = int(getattr(config, "bot_quirks_max_active", 6))
+
+    def _describe() -> str:
+        return store.render_prompt_section(max_active=max_active)
+
+    return _describe
+
+
+def _register_reflection_scheduler(scheduler: Any, config: Any) -> dict:
+    """反思回路夜间任务：每日归纳 conversation_turns → 用户事实 + 会话摘要。
+
+    同步 job 跑在 APScheduler 线程池（与 kb_wiki 同款，不阻塞事件循环）；
+    无 turns 库/无轮次时 run_nightly_reflection 返回 skipped，静默跳过。
+    """
+
+    def _reflection_job() -> None:
+        try:
+            from nonebot.log import logger
+
+            from .character.reflection import run_nightly_reflection
+
+            summarizer = None
+            if bool(getattr(config, "bot_reflection_llm_enabled", False)):
+                from .character.reflection import LLMSummarizer
+
+                summarizer = LLMSummarizer(build_model_router(config))
+            logger.info(
+                "reflection: {}", run_nightly_reflection(config, summarizer=summarizer)
+            )
+        except Exception as exc:  # noqa: BLE001 - 夜间任务失败不影响主链路。
+            from nonebot.log import logger
+
+            logger.warning("reflection failed: {}", type(exc).__name__)
+
+    hour = max(0, min(23, int(getattr(config, "bot_reflection_hour", 4) or 4)))
+    minute = max(0, min(59, int(getattr(config, "bot_reflection_minute", 30) or 30)))
+    scheduler.add_job(
+        _reflection_job,
+        "cron",
+        id="bot_reflection_daily",
+        replace_existing=True,
+        hour=hour,
+        minute=minute,
+        misfire_grace_time=3600,
+        max_instances=1,
+        coalesce=True,
+    )
+    return {"hour": hour, "minute": minute}
+
+
 def _register_nonebot_handlers() -> None:
     try:
         from nonebot import (
@@ -1829,6 +1970,7 @@ def _register_nonebot_handlers() -> None:
     from .capabilities.memory import is_memory_command_text, route_memory_command
     from .capabilities.runtime_admin import (
         build_alert_check_result,
+        build_quirk_admin_result,
         build_runtime_admin_result,
     )
     from .capabilities.runtime_logs import build_logs_query_result
@@ -1929,7 +2071,12 @@ def _register_nonebot_handlers() -> None:
         forward_max_nodes=config.bot_render_forward_max_nodes,
         forward_node_chars=config.bot_render_forward_node_chars,
         group_auto_reply_enabled=config.bot_group_chat_auto_reply_enabled,
-        group_auto_reply_probability=config.bot_group_chat_auto_reply_probability,
+        # bot 心情联动（L1）：低落时少插话、兴奋时更活跃——只调概率，不做硬开关。
+        group_auto_reply_probability=min(
+            1.0,
+            config.bot_group_chat_auto_reply_probability
+            * _mood_willingness_factor(config),
+        ),
         vision_reply_probability=float(
             getattr(config, "bot_vision_reply_probability", 1.0)
         ),
@@ -2268,6 +2415,12 @@ def _register_nonebot_handlers() -> None:
         ):
             _register_kb_wiki_sync_scheduler(scheduler, config)
 
+        if (
+            getattr(config, "bot_history_enabled", False)
+            and getattr(config, "bot_reflection_enabled", False)
+        ):
+            _register_reflection_scheduler(scheduler, config)
+
         from .sources.subscription_runtime_v2 import register_subscription_runtime_v2
 
         async def _deliver_v2_event(event: Any) -> bool:
@@ -2483,6 +2636,8 @@ def _register_nonebot_handlers() -> None:
                 config,
                 runtime_settings=runtime_settings,
                 shared_group_llm_provider=_build_chat_llm_provider(config),
+                mood_describe=_build_mood_describe(config),
+                quirks_describe=_build_quirks_describe(config),
             ),
             llm_provider=_build_chat_llm_provider(config),
             affinity_store=(
@@ -3175,6 +3330,24 @@ def _register_nonebot_handlers() -> None:
             is RouteKind.WEATHER
         )
 
+    async def _is_market_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.MARKET
+        )
+
+    async def _is_divination_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.DIVINATION
+        )
+
+    async def _is_news_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.NEWS
+        )
+
     content = on_message(rule=_is_content_parse_event, priority=46, block=True)
     music_mode = on_message(rule=_is_music_mode_event, priority=40, block=True)
     music = on_message(rule=_is_music_event, priority=41, block=True)
@@ -3188,6 +3361,9 @@ def _register_nonebot_handlers() -> None:
     )
     epic = on_message(rule=_is_epic_event, priority=41, block=True)
     weather = on_message(rule=_is_weather_event, priority=41, block=True)
+    market = on_message(rule=_is_market_event, priority=41, block=True)
+    divination = on_message(rule=_is_divination_event, priority=41, block=True)
+    news = on_message(rule=_is_news_event, priority=41, block=True)
     eat = on_message(rule=_is_eat_event, priority=41, block=True)
     subscribe_cmd = on_message(rule=_is_standalone_subscribe_event, priority=12, block=True)
 
@@ -3726,6 +3902,19 @@ def _register_nonebot_handlers() -> None:
                     command_text=model_command,
                     diagnostics_store=diagnostics_store,
                     usage_store=runtime_event_log,
+                )
+
+        elif command_text == "quirk" or command_text.startswith("quirk "):
+            # /bot quirk ...：L4 人格演化区审核（管理员门在 result 构造内）。
+            capability_id = "bot.quirk"
+            quirk_command = command_text.removeprefix("quirk").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_quirk_admin_result(
+                    config,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    command_text=quirk_command,
                 )
 
         elif command_text == "route" or command_text.startswith("route "):
@@ -4832,6 +5021,24 @@ def _register_nonebot_handlers() -> None:
     async def _handle_weather(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
             bot, event, _build_eat_with_backend, "bot.eat", eat
+        )
+
+    @market.handle()
+    async def _handle_market(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, build_market_capability, "bot.market", market
+        )
+
+    @divination.handle()
+    async def _handle_divination(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, build_divination_capability, "bot.divination", divination
+        )
+
+    @news.handle()
+    async def _handle_news(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, build_news_capability, "bot.news", news
         )
 
     @eat.handle()

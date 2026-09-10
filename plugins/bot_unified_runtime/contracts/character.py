@@ -233,6 +233,10 @@ class ContextBundle(StrictBaseModel):
     sender_id: str
     session_id: str
     emotion_signals: list[EmotionSignal] = Field(default_factory=list)
+    # bot 自身心情（L1）：describe() 的自然语言短句；空 = 心情层未启用。
+    mood_description: str = ""
+    # L4 人格演化区：审核通过的 quirk 渲染块（自然语言）；空 = 无 quirk。
+    quirks_section: str = ""
     trend_context: TrendContext | None = None
     temporal_context: TemporalContext | None = None
     glossary_context: GlossaryContext | None = None
