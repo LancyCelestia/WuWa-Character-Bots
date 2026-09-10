@@ -4162,22 +4162,16 @@ def _register_nonebot_handlers() -> None:
                     facts = _epf(message.plain_text)
                     if facts:
                         _store.learn_profile(message.sender_id, message.plain_text)
-                    import re as _re
+                    from .character.affinity import extract_learned_nickname
 
-                    nickname_match = _re.search(
-                        r"(?:你可以叫我|以后叫我|就叫我|叫我|喊我)\s*([\u4e00-\u9fa5A-Za-z0-9]{1,12})"
-                        r"(?:吧|就好|就可以了|就行|哦|呀|~|！|!|。|\s|$)",
-                        message.plain_text,
-                    )
-                    if nickname_match:
-                        learned = nickname_match.group(1).strip()
+                    learned = extract_learned_nickname(message.plain_text)
+                    if (
+                        learned
+                        and learned not in _NICKNAME_STOPWORDS
+                        and len(learned) >= 2
+                    ):
                         current = _store.snapshot(message.sender_id).get("nickname") or ""
-                        if (
-                            learned
-                            and learned not in _NICKNAME_STOPWORDS
-                            and len(learned) >= 2
-                            and learned != current
-                        ):
+                        if learned != current:
                             _store.set_nickname(message.sender_id, learned)
             except Exception:  # noqa: BLE001, S110 - 被动感知失败不影响主链路。
                 pass
