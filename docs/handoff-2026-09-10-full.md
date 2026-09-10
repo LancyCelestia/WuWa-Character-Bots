@@ -1013,7 +1013,7 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 > umi 充值、QIANQIANYE 换 key、配 ds-official key、下架 toolcode-gemini、提权重启生产 bot
 > （**09-10 全部交付仍在旧进程里未生效**）、提供 21 平台真实分享链接。
 
-### A组（解析 / 卡片 / 点歌 / 实测验收域）——已由本会话认领；09-10 首轮执行完毕（A-1/A-2/A-6 部分/A-7 完成，A-3/A-4/A-5/A-6 样本项等用户前置）
+### A组（解析 / 卡片 / 点歌 / 实测验收域）——已由本会话认领；首轮（A-1/A-2/A-6 部分/A-7）与二轮（P0 vision 修复 + A-6 xhs 用户页/搜索页回归 + A-7 全量复核）执行完毕；A-3/A-4/A-5/A-6 样本项等用户前置
 
 文件域：`sources/parsers/**`、`sources/steamfree.py`、`output/card_render/**`、`capabilities/music.py`、`capabilities/epic.py`
 
@@ -1026,6 +1026,7 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 | A-5 | 21 平台真实分享链接逐个补测（**等用户提供链接**） | §6.2 无固定样例清单 | 每平台一条真实链接出深度卡；缺陷即修 |
 | A-6 | ◐ xhs 用户主页/搜索页 ✅ 真实回归通过（用户页 deep 38644 粉丝 capture_json 生效、搜索关键词卡正常）；推特竖切横图 ◑ 等真实 4 图样本 | 真实链接实测 | 推特样本到位后补验 |
 | A-7 | ✅ E1 抽验 17/17 PASS（覆盖 12 项：E1-1/2/3/5/6/8/9/10/14/15/17/18，含真连 youtu.be?list= 单视频、Apple cn→us 回退、HttpOnly cookie、js unicode 代理对） | 实测+精确静态证据 | 完成：零问题回退 |
+| A-8 | **P0 vision 修复**：发图/GIF/视频 OCR 与大模型全部读不到的根因——直传与 OCR 双分支都把 QQ 多媒体签名 URL 原样透传给远程 AI 服务商抓取（第三方取不到）。修复：bot 侧下载（桌面 UA+8MB 上限+失败 warning）→ PIL 转 data URL（GIF 抽 3 帧拼条/超大缩边；FIFO 缓存 32）→ 进请求体；ffmpeg 抽帧/探测对 http 视频源加桌面 UA；三条消费路径全覆盖。回归 test_vision_remote_data_url 6 项。**合批存证**：b2de652 连带视频理解会话在途改动集入库（chat.py 704 行/transcribe/video_understanding/video_pipeline/media_registry/__init__ 接线 24 行——共享 index 惯例，依赖闭包完整，918 passed 树级验证）。**⚠️ 需重启生产 bot 才生效（现进程仍为 09-09 代码）** | 完成 |
 
 ### B组（模型路由 / 管线 / 发送 / 聊天域）——待认领
 
