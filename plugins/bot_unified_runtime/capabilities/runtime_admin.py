@@ -1528,6 +1528,79 @@ def _handle_nickname_command(store: RuntimeSettingsStore, parts: list[str]) -> s
     return "用法：/bot runtime nickname add <昵称> | remove <昵称> | list"
 
 
+def build_quirk_admin_result(
+    config: object,
+    *,
+    request_id: str,
+    actor_roles: list[str],
+    command_text: str,
+) -> CapabilityResult:
+    """/bot quirk list|approve|retire|add —— L4 人格演化区审核（管理员专用）。
+
+    审核制红线：propose 来源（反思回路等）只进 pending_review，绝不直接
+    影响 prompt；仅 approve 后的 active 项由 providers 闭包渲染进上下文。
+    """
+    if "admin" not in actor_roles:
+        return _admin_only_result(request_id)
+    from plugins.bot_unified_runtime.character.providers import build_runtime_data_path
+    from plugins.bot_unified_runtime.character.quirks import QuirkStore
+
+    parts = command_text.split()
+    sub = parts[0].lower() if parts else "list"
+    if not getattr(config, "bot_quirks_enabled", True):
+        return _ok_result(request_id, "人格 quirk 演化区未启用（BOT_QUIRKS_ENABLED=false）。")
+    db_path = build_runtime_data_path(
+        config,
+        str(getattr(config, "bot_quirks_db_path", "data/persona_quirks.sqlite3")),
+    )
+    store = QuirkStore(db_path)
+    if sub == "list":
+        status_filter = parts[1].lower() if len(parts) > 1 else None
+        if status_filter not in (None, "pending", "active", "retired"):
+            return _error_result(request_id, "用法：/bot quirk list [pending|active|retired]")
+        normalized = "pending_review" if status_filter == "pending" else status_filter
+        quirks = store.list(status=normalized, limit=20)
+        if not quirks:
+            return _ok_result(request_id, "（对应状态下暂无 quirk。）")
+        label = {"pending_review": "待审", "active": "生效", "retired": "退役"}
+        lines = [
+            f"- {q.quirk_id[:8]} [{label.get(q.status, q.status)}] {q.quirk_text}（来源 {q.source or '未知'}）"
+            for q in quirks
+        ]
+        return _ok_result(request_id, "\n".join(lines), capability_id="bot.quirk")
+    if sub in ("approve", "retire"):
+        if len(parts) < 2:
+            return _error_result(
+                request_id, f"用法：/bot quirk {sub} <id前缀>（先 /bot quirk list 查 id）"
+            )
+        prefix = parts[1].strip().lower()
+        candidates = [q for q in store.list(limit=100) if q.quirk_id.startswith(prefix)]
+        if len(candidates) != 1:
+            return _error_result(
+                request_id, f"id 前缀 {prefix} 命中 {len(candidates)} 条，需要唯一。"
+            )
+        target = candidates[0]
+        changed = (
+            store.approve(target.quirk_id) if sub == "approve" else store.retire(target.quirk_id)
+        )
+        if not changed:
+            return _error_result(request_id, "状态流转不合法（approve 仅对待审项生效）。")
+        verb = "通过" if sub == "approve" else "退役"
+        return _ok_result(request_id, f"已{verb}：{target.quirk_text}", capability_id="bot.quirk")
+    if sub == "add":
+        text = command_text.removeprefix("add").strip()
+        if not text:
+            return _error_result(request_id, "用法：/bot quirk add <习惯描述>")
+        quirk = store.add_direct(text, source="admin")
+        return _ok_result(
+            request_id, f"已直接生效：{quirk.quirk_text}", capability_id="bot.quirk"
+        )
+    return _error_result(
+        request_id,
+        "用法：/bot quirk list [pending|active|retired] | approve <id前缀> | retire <id前缀> | add <text>",
+    )
+
+
 def build_runtime_admin_result(
     manager: InstanceSettingsManager,
     default_instance: str,

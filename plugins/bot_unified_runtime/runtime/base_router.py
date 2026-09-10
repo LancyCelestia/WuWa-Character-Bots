@@ -34,11 +34,13 @@ from plugins.bot_unified_runtime.capabilities.auto_send import (
     is_auto_send_command_text,
 )
 from plugins.bot_unified_runtime.capabilities.chat import looks_like_chat_text
+from plugins.bot_unified_runtime.capabilities.divination import is_divination_command
 from plugins.bot_unified_runtime.capabilities.eat import (
     is_eat_command,
     is_recipe_command,
 )
 from plugins.bot_unified_runtime.capabilities.epic import is_epic_command
+from plugins.bot_unified_runtime.capabilities.market import is_market_command
 from plugins.bot_unified_runtime.capabilities.meme import is_meme_command
 from plugins.bot_unified_runtime.capabilities.meme_library import (
     is_meme_library_command,
@@ -51,6 +53,7 @@ from plugins.bot_unified_runtime.capabilities.music import (
     is_music_command,
     is_music_mode_command,
 )
+from plugins.bot_unified_runtime.capabilities.news import is_news_command
 from plugins.bot_unified_runtime.capabilities.subscribe import (
     is_standalone_subscribe_command,
 )
@@ -79,8 +82,11 @@ class RouteKind(str, Enum):
     MOEGIRL_QUESTION = "moegirl_question"
     EPIC = "epic"
     WEATHER = "weather"
+    MARKET = "market"
+    NEWS = "news"
     EAT = "eat"
     AFFINITY = "affinity"
+    DIVINATION = "divination"
     NATURAL_COMMAND = "natural_command"
     CONTENT = "content"
     CHAT = "chat"
@@ -255,12 +261,36 @@ def build_route_rules() -> list[RouteRule]:
             return None
         return RouteDecision(RouteKind.WEATHER, "bot.weather", 41, "天气查询", ("base_route:weather",))
 
+    def market_match(text, config, _alias):
+        # 全球股指行情：短命令级触发（≤32 字、无链接），长句问盘自然落回聊天。
+        if not getattr(config, "bot_market_enabled", True):
+            return None
+        if not is_market_command(text):
+            return None
+        return RouteDecision(RouteKind.MARKET, "bot.market", 41, "全球股指行情", ("base_route:market",))
+
     def eat_match(text, config, _alias):
         if not getattr(config, "bot_eat_enabled", True):
             return None
         if is_recipe_command(text) or is_eat_command(text):
             return RouteDecision(RouteKind.EAT, "bot.eat", 41, "吃什么推荐", ("base_route:eat",))
         return None
+
+    def divination_match(text, config, _alias):
+        # 占卜娱乐三件套（八字/塔罗/金钱卦）：纯本地计算，显式触发词。
+        if not getattr(config, "bot_divination_enabled", True):
+            return None
+        if not is_divination_command(text):
+            return None
+        return RouteDecision(RouteKind.DIVINATION, "bot.divination", 41, "占卜（八字/塔罗/金钱卦）", ("base_route:divination",))
+
+    def news_match(text, config, _alias):
+        # 今日快报：仅显式触发词（快报/早报/科技新闻…），裸「新闻」让给联网搜索意图。
+        if not getattr(config, "bot_news_enabled", True):
+            return None
+        if not is_news_command(text):
+            return None
+        return RouteDecision(RouteKind.NEWS, "bot.news", 41, "今日快报", ("base_route:news",))
 
     def affinity_match(text, config, _alias):
         # 好感度查询与动态好感度层共用 bot_affinity_enabled 开关。
@@ -355,8 +385,11 @@ def build_route_rules() -> list[RouteRule]:
         RouteRule(RouteKind.MOEGIRL, "bot.moegirl", 41, "萌娘百科", "萌娘百科查询", ("base_route:moegirl",), moegirl_match),
         RouteRule(RouteKind.EPIC, "bot.epic", 41, "Epic 免费游戏", "Epic 免费游戏查询", ("base_route:epic",), epic_match),
         RouteRule(RouteKind.WEATHER, "bot.weather", 41, "天气查询", "天气查询", ("base_route:weather",), weather_match),
+        RouteRule(RouteKind.MARKET, "bot.market", 41, "全球股指行情", "全球股指行情（行情/美股行情/大盘）", ("base_route:market",), market_match),
         RouteRule(RouteKind.EAT, "bot.eat", 41, "吃什么推荐", "吃什么/菜谱推荐", ("base_route:eat",), eat_match),
         RouteRule(RouteKind.AFFINITY, "bot.affinity", 41, "好感度查询", "好感度/好感查看/查询好感", ("base_route:affinity",), affinity_match),
+        RouteRule(RouteKind.DIVINATION, "bot.divination", 41, "占卜", "占卜/塔罗/八字排盘", ("base_route:divination",), divination_match),
+        RouteRule(RouteKind.NEWS, "bot.news", 41, "今日快报", "今日快报（快报/科技新闻/财经快报/国际新闻）", ("base_route:news",), news_match),
         RouteRule(RouteKind.MOEGIRL_QUESTION, "bot.moegirl", 44, "二次元问句", "二次元问句（萌娘百科自动查询，未命中降级聊天）", ("base_route:moegirl_question",), moegirl_question_match),
         RouteRule(RouteKind.NATURAL_COMMAND, "bot.natural_command", 45, "自然语言命令", "自然语言命令归一化", ("base_route:natural_command",), natural_match),
         RouteRule(RouteKind.CONTENT, "bot.content", 46, "链接解析", "链接解析（视频/图片/社交媒体/商品等）", ("base_route:content",), content_match),
@@ -405,7 +438,10 @@ COMMAND_ROUTE_KINDS = frozenset(
         RouteKind.MOEGIRL,
         RouteKind.EPIC,
         RouteKind.WEATHER,
+        RouteKind.MARKET,
         RouteKind.EAT,
+        RouteKind.DIVINATION,
+        RouteKind.NEWS,
         RouteKind.NATURAL_COMMAND,
     }
 )

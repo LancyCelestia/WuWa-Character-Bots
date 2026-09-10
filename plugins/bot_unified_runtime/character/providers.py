@@ -127,6 +127,8 @@ class FileCharacterContextProvider:
         glossary_provider: GlossaryProvider | None = None,
         relationship_provider: RelationshipProvider | None = None,
         affinity_store: DynamicAffinityStore | None = None,
+        mood_describe: Callable[[], str] | None = None,
+        quirks_describe: Callable[[], str] | None = None,
         shared_group_provider: SharedGroupContextProvider | None = None,
         action_brackets: bool = True,
         action_brackets_provider: object | None = None,
@@ -163,6 +165,8 @@ class FileCharacterContextProvider:
         self.glossary_provider = glossary_provider or NullGlossaryProvider()
         self.relationship_provider = relationship_provider or NullRelationshipProvider()
         self.affinity_store: DynamicAffinityStore | None = affinity_store
+        self.mood_describe = mood_describe
+        self.quirks_describe = quirks_describe
         self.shared_group_provider = (
             shared_group_provider or NullSharedGroupContextProvider()
         )
@@ -236,6 +240,18 @@ class FileCharacterContextProvider:
             session_id=session_id,
             query_text=query_text,
         )
+        mood_description = ""
+        if callable(self.mood_describe):
+            try:
+                mood_description = str(self.mood_describe() or "")
+            except Exception:  # noqa: BLE001 - 心情层失败不影响主链路。
+                mood_description = ""
+        quirks_section = ""
+        if callable(self.quirks_describe):
+            try:
+                quirks_section = str(self.quirks_describe() or "")
+            except Exception:  # noqa: BLE001 - quirk 层失败不影响主链路。
+                quirks_section = ""
         active_persona = self.persona_selector.select(
             emotions=[signal.emotion_label for signal in emotion_signals],
             override=self._persona_override(),
@@ -366,6 +382,8 @@ class FileCharacterContextProvider:
             sender_id=sender_id,
             session_id=session_id,
             emotion_signals=emotion_signals,
+            mood_description=mood_description,
+            quirks_section=quirks_section,
             trend_context=trend_context,
             temporal_context=temporal_context,
             glossary_context=glossary_context,
@@ -375,12 +393,63 @@ class FileCharacterContextProvider:
         )
 
 
+from .reflection import build_reflection_memory_provider
+
+
+class _MergedMemoryProvider:
+    """合并多路记忆召回（主记忆库 + 反思事实库）：fact_id 去重 + 预算截断。"""
+
+    def __init__(self, providers: list[MemoryProvider]) -> None:
+        self._providers = providers
+
+    def retrieve(
+        self,
+        *,
+        request_id: str,
+        requester_id: str,
+        subject_user_id: str,
+        session_id: str,
+        query_text: str,
+        max_items: int,
+        max_chars: int,
+    ) -> MemoryRetrievalResult:
+        merged: dict[str, dict[str, str]] = {}
+        order: list[str] = []
+        used_chars = 0
+        for provider in self._providers:
+            try:
+                result = provider.retrieve(
+                    request_id=request_id,
+                    requester_id=requester_id,
+                    subject_user_id=subject_user_id,
+                    session_id=session_id,
+                    query_text=query_text,
+                    max_items=max_items,
+                    max_chars=max_chars,
+                )
+            except Exception:  # noqa: BLE001, S112 - 单路记忆失败静默降级（纯 provider 层无日志面），不断链。
+                continue
+            for fact in result.facts:
+                fact_id = str(fact.get("fact_id", ""))
+                text_len = len(str(fact.get("text", "")))
+                if not fact_id or fact_id in merged:
+                    continue
+                if len(merged) >= max_items or used_chars + text_len > max_chars:
+                    continue
+                merged[fact_id] = fact
+                order.append(fact_id)
+                used_chars += text_len
+        return MemoryRetrievalResult(request_id=request_id, facts=[merged[k] for k in order])
+
+
 def build_character_context_provider(
     config: object,
     *,
     conversation_history_provider: ConversationHistoryProvider | None = None,
     runtime_settings: Any | None = None,
     shared_group_llm_provider: object | None = None,
+    mood_describe: Callable[[], str] | None = None,
+    quirks_describe: Callable[[], str] | None = None,
 ) -> CharacterContextProvider:
     action_brackets_provider: object | None = None
     interaction_counts_provider: Callable[[], dict[str, int]] | None = None
@@ -481,7 +550,12 @@ def build_character_context_provider(
         tone_warmth=float(getattr(config, "bot_tone_warmth", 0.7)),
         tone_directness=float(getattr(config, "bot_tone_directness", 0.5)),
         tone_message_count_limit=int(getattr(config, "bot_tone_message_count_limit", 0)),
-        memory_provider=build_memory_provider(config),
+        memory_provider=_MergedMemoryProvider(
+            [
+                build_memory_provider(config),
+                build_reflection_memory_provider(config),
+            ]
+        ),
         memory_max_items=int(getattr(config, "bot_memory_max_items", 5)),
         memory_max_chars=int(getattr(config, "bot_memory_max_chars", 1200)),
         conversation_history_provider=(
@@ -507,6 +581,8 @@ def build_character_context_provider(
             config,
             llm_provider=shared_group_llm_provider,
         ),
+        mood_describe=mood_describe,
+        quirks_describe=quirks_describe,
         action_brackets=bool(getattr(config, "bot_persona_action_brackets", True)),
         action_brackets_provider=action_brackets_provider,
         persona_selector=PersonaSelector(build_alt_personas(config)),
