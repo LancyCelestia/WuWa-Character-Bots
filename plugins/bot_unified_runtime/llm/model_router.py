@@ -649,9 +649,13 @@ class ModelRouter:
         priority_groups: Callable[[], Any] | None = None,
         timezone_name: str = "Asia/Hong_Kong",
         credential_config: object | None = None,
+        call_record_sink: Any | None = None,
     ) -> None:
         self._credential_config = credential_config
         self._timezone_name = timezone_name
+        # B5 M1 计费账本 sink（CallRecordSink Protocol，见 llm/ledger.py）：
+        # None = 未注入，出口按账本开关（默认关）解析，行为回到现状。
+        self._call_record_sink = call_record_sink
         self._custom_factory = provider_factory
         self.specs = dict(specs)
         self._base_specs = dict(specs)
@@ -683,6 +687,7 @@ class ModelRouter:
             max_failover_seconds=self.max_failover_seconds,
             priority_groups=self._priority_groups_cb, timezone_name=self._timezone_name,
             credential_config=self._credential_config,
+            call_record_sink=self._call_record_sink,
         )
 
     def _refresh_dynamic_registry(self) -> None:
@@ -1264,6 +1269,123 @@ class ModelRouter:
             ids = [model_id for model_id in ids if model_id != exclude]
         return ids
 
+    # ==================== B5 M1：出口记账（唯一挂钩点） ====================
+
+    def _call_recording_enabled(self) -> bool:
+        """是否需要在 generate 出口记账：显式注入 sink 或账本开关打开。
+
+        开关解析在 llm/ledger.ledger_enabled（Config bot_llm_billing_enabled
+        → os.environ BOT_LLM_BILLING_ENABLED → 默认关）。惰性导入：开关
+        关闭时不引入任何 ledger 符号路径，行为与现状完全一致。
+        """
+        if getattr(self, "_call_record_sink", None) is not None:
+            return True
+        try:
+            from plugins.bot_unified_runtime.llm.ledger import ledger_enabled
+
+            return ledger_enabled(getattr(self, "_credential_config", None))
+        except Exception:  # noqa: BLE001 - 开关读取失败按关处理。
+            return False
+
+    @staticmethod
+    def _last_channel_id(attempts: list[str]) -> str:
+        """从 attempts 轨迹解析最后触达的渠道 id（记账投影用）。
+
+        记号格式：``{model_id}:{error_kind|success|config_missing}``、
+        ``failover:deadline``、``hedged:{model_id}:winner|loser``；后两类
+        非渠道路径标记，跳过。解析不出返回空串。
+        """
+        for mark in reversed(attempts):
+            if mark.startswith(("failover:", "hedged:")):
+                continue
+            model_id = mark.split(":", 1)[0].strip()
+            if model_id:
+                return model_id
+        return ""
+
+    def _emit_call_record(
+        self,
+        *,
+        request_id: str,
+        call_seq: int,
+        session_id: str,
+        capability: str,
+        started_at: str,
+        started_mono: float,
+        reply: LLMReply | None,
+        error: LLMProviderError | None,
+        global_effort: str,
+        complex_task: bool,
+    ) -> None:
+        """出口记账：组装一条 LLMCallDraft 交给 sink；吞掉一切异常。
+
+        与 D6 语义对齐：attempts 从 reply.attempts / exc.attempts（出口
+        已整体发布）读取，不触碰 self.last_attempts。status 映射：成功 =
+        success；失败轨迹含 ``failover:deadline`` = deadline；其余 =
+        provider_failed。M1 无 PricingService：cost 全 NULL、unpriced 按
+        token 消耗标记（见 llm/ledger.build_call_draft）。
+        """
+        try:
+            from plugins.bot_unified_runtime.llm.ledger import (
+                build_call_draft,
+                emit_call_record,
+            )
+
+            if reply is not None:
+                attempts = list(reply.attempts)
+                status = "success"
+                error_kind = ""
+                error_summary = ""
+            else:
+                attempts = list(
+                    getattr(error, "attempts", None)
+                    or getattr(self, "last_attempts", [])
+                    or []
+                )
+                error_kind = str(getattr(error, "error_kind", "") or "")
+                status = (
+                    "deadline" if "failover:deadline" in attempts else "provider_failed"
+                )
+                error_summary = str(error) if error is not None else ""
+            winner_id = self._last_channel_id(attempts)
+            spec = self._spec_for(winner_id) if winner_id else None
+            usage = dict(reply.raw_usage) if reply is not None else {}
+            draft = build_call_draft(
+                request_id=request_id,
+                call_seq=call_seq,
+                session_id=session_id,
+                capability=capability,
+                started_at=started_at,
+                completed_at=datetime.now(self._zone).isoformat(timespec="milliseconds"),
+                duration_ms=int((time.monotonic() - started_mono) * 1000),
+                provider_id=spec.model_id if spec is not None else winner_id,
+                model_id=spec.model_id if spec is not None else winner_id,
+                actual_model=(
+                    reply.model
+                    if reply is not None
+                    else (spec.model if spec is not None else "")
+                ),
+                effort=(
+                    self._resolve_effort(spec, global_effort, complex_task)
+                    if spec is not None
+                    else ""
+                ),
+                routing_group=spec.routing_group if spec is not None else "",
+                usage=usage,
+                attempts=attempts,
+                finish_reason=str(usage.get("finish_reason", "") or ""),
+                status=status,
+                error_kind=error_kind,
+                error_summary=error_summary,
+            )
+            emit_call_record(
+                sink=getattr(self, "_call_record_sink", None),
+                config=getattr(self, "_credential_config", None),
+                draft=draft,
+            )
+        except Exception:  # noqa: BLE001 - 计费故障绝不影响聊天（§4.1.2）。
+            return
+
     def generate(
         self,
         messages: list[dict[str, str]],
@@ -1278,7 +1400,89 @@ class ModelRouter:
         """按路由顺序生成；每个候选的每个密钥失败后自动切换下一个。
 
         尝试顺序：候选模型 × 该模型的密钥列表（api_keys 顺序），
-        全部失败抛出最后一个错误。"""
+        全部失败抛出最后一个错误。
+
+        B5 M1 出口记账：本方法只是薄包装——真实路由逻辑在
+        ``_generate_impl``；成功与最终异常两分支在此统一组装
+        ``LLMCallDraft`` 交给注入的 sink（llm/ledger），失败绝不阻塞聊天。
+        调用方可选传入账本作用域 kwargs：``request_id`` / ``call_seq`` /
+        ``session_id`` / ``capability``（进入路由前剥离，绝不透传给
+        provider）。未注入 sink 且账本开关关闭时零开销直通。
+        """
+        request_id = str(kwargs.pop("request_id", "") or "")
+        session_id = str(kwargs.pop("session_id", "") or "")
+        capability = str(kwargs.pop("capability", "") or "")
+        raw_call_seq = kwargs.pop("call_seq", 1)
+        try:
+            call_seq = max(1, int(raw_call_seq))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            call_seq = 1
+        impl_kwargs: dict[str, object] = dict(kwargs)
+        if not self._call_recording_enabled():
+            return self._generate_impl(
+                messages,
+                message_text=message_text,
+                override=override,
+                fast_mode=fast_mode,
+                fast_max_candidates=fast_max_candidates,
+                deadline_monotonic=deadline_monotonic,
+                **impl_kwargs,
+            )
+        started_mono = time.monotonic()
+        started_at = datetime.now(self._zone).isoformat(timespec="milliseconds")
+        global_effort = normalize_effort(impl_kwargs.get("reasoning_effort", ""))
+        effective_text = str(
+            message_text or (messages[-1].get("content", "") if messages else "")
+        )
+        complex_task = len(effective_text) >= _COMPLEX_MIN_CHARS or any(
+            keyword in effective_text for keyword in _COMPLEX_KEYWORDS
+        )
+        record_ctx: dict[str, object] = {
+            "request_id": request_id,
+            "call_seq": call_seq,
+            "session_id": session_id,
+            "capability": capability,
+            "started_at": started_at,
+            "started_mono": started_mono,
+            "global_effort": global_effort,
+            "complex_task": complex_task,
+        }
+        try:
+            reply = self._generate_impl(
+                messages,
+                message_text=message_text,
+                override=override,
+                fast_mode=fast_mode,
+                fast_max_candidates=fast_max_candidates,
+                deadline_monotonic=deadline_monotonic,
+                **impl_kwargs,
+            )
+        except LLMProviderError as exc:
+            self._emit_call_record(reply=None, error=exc, **record_ctx)
+            raise
+        except Exception as exc:
+            synthesized = LLMProviderError(
+                f"model router failed: {type(exc).__name__}",
+                error_kind="provider_error",
+            )
+            synthesized.attempts = list(getattr(self, "last_attempts", []) or [])
+            self._emit_call_record(reply=None, error=synthesized, **record_ctx)
+            raise
+        self._emit_call_record(reply=reply, error=None, **record_ctx)
+        return reply
+
+    def _generate_impl(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        message_text: str = "",
+        override: str = "",
+        fast_mode: bool = False,
+        fast_max_candidates: int = 2,
+        deadline_monotonic: float | None = None,
+        **kwargs: object,
+    ) -> LLMReply:
+        """原 generate() 路由主体（签名与语义不变，见薄包装 docstring）。"""
         self._refresh_dynamic_registry()
         require_vision = bool(kwargs.pop("require_vision", False))
         # 全局思考强度（/bot model think 或 .env 默认）：off = 明确不发送。
