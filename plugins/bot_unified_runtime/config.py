@@ -559,6 +559,9 @@ class Config(BaseModel):
     # 的 Config 回退取不到值，即使 .env 填了 key 也恒判 config_missing
     # （09-09「五连发全失败」同类事故的第三次）。字段必须与 .env 同名小写。
     bot_api_key_deepseek_official: str = ""
+    # axonhub 统一网关的 key 槽位（本地 OpenAI 兼容端点，默认模型与故障转移
+    # 都挂在它上面）。同样必须存在，否则 registry 里的 env: 引用解析为空。
+    bot_api_key_axonhub: str = ""
     bot_api_key_aiprc: str = ""
     bot_api_key_aiprc_gemini: str = ""
     bot_api_key_aiprc_grok: str = ""
