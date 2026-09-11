@@ -154,8 +154,12 @@ _RISK_ORDER = {
     RiskLevel.CRITICAL: 3,
 }
 
+# 内部标记白名单：这些标记由运行时代码生成，用户/被引用正文里出现同名标记
+# 即为伪造闭合越界。引用链标记（引用回复/引用内容/转发·聊天记录）此前不在
+# 该表内，而被引用者正文是任意群成员可控文本（评审 M2）。
 _INTERNAL_MARKER_PATTERN = re.compile(
-    r"\[(/?)(UNTRUSTED_USER_TEXT|TRUSTED_SYSTEM)\]",
+    r"\[(/?)(UNTRUSTED_USER_TEXT|TRUSTED_SYSTEM|引用回复|引用内容|转发/聊天记录)"
+    r"(?: 层级\d+)?\]",
     re.IGNORECASE,
 )
 

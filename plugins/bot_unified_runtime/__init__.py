@@ -78,7 +78,11 @@ from .diagnostics import (
 )
 from .llm import LLMProvider, OpenAICompatibleLLMProvider, StaticLLMProvider
 from .llm.model_router import build_model_router
-from .message_context import normalize_message_segments
+from .message_context import (
+    collect_reply_chain,
+    format_reply_chain,
+    normalize_message_segments,
+)
 from .output.render_backends import build_render_backend
 from .runtime.alerts import (
     AdminAlertSuppression,
@@ -853,29 +857,40 @@ def _incoming_from_nonebot_event(
         text = (text + "\n" + "\n".join(file_context)).strip()
     if not text.strip() and contains_visual_message_segments(raw_segments):
         text = "（用户发送了图片/表情包/视频，未附文字。）"
-    reply_to = getattr(event, "reply_to", None) or getattr(event, "reply_to_message", None)
-    if reply_to is not None:
-        if isinstance(reply_to, dict):
-            reply_text = str(reply_to.get("text") or reply_to.get("content") or "").strip()
-        else:
-            getter = getattr(reply_to, "get_plaintext", None)
-            reply_text = str(getter() if callable(getter) else getattr(reply_to, "text", "") or "").strip()
-    else:
-        reply_text = ""
+    # 引用链（评审需求 1/2）：结构化、递归、逐层预算、已消毒。
+    # 修复前：QQ 侧对 `event.reply` 取 get_plaintext()/.text —— OneBot V11 的
+    # Reply 模型没有这两个属性，reply_text **恒为空**，被引用内容完全不进提示词；
+    # Telegram 侧只读第一层，而适配器其实递归解析了 reply_to_message。
+    reply_chain = collect_reply_chain(event)
+    reply_text = reply_chain[0].text if reply_chain else ""
     reply_id = getattr(event, "reply_to_message_id", None) or getattr(event, "reply_to_msg_id", None)
     if reply_id is None:
         quote_segment = next((item for item in normalized_message.segments if item.get("type") == "quote"), None)
         if quote_segment:
             reply_id = (quote_segment.get("data") or {}).get("id") or (quote_segment.get("data") or {}).get("message_id")
-    # 纯文本 @ 只认用户自己打的字：在被引用文本拼接之前检测，
+    if reply_id is None and reply_chain and reply_chain[0].message_id:
+        # OneBot 的 reply 段只有 id，适配器把它放在 event.reply.message_id；
+        # 引用链已经解出该值，回填以便"回复机器人自己视频"等下游判定可用。
+        reply_id = reply_chain[0].message_id
+    # 纯文本 @ 只认用户自己打的字：必须在被引用文本拼接**之前**检测，
     # 防止引用内容里的 "@某人" 被当成用户对本机器人的点名。
-    text_at_mention = _detect_text_at_mention(text)
+    # 注意：下面的拼接是同一行内的字符串表达式，旧代码把本行放在拼接之后，
+    # 使注释声明的语义并未成立（评审 L1）；这里保持在拼接前。
+    own_text = text
+    text_at_mention = _detect_text_at_mention(own_text)
     if reply_text:
-        text = f"{text}\n[引用回复]\n{reply_text}\n[/引用回复]".strip()
+        text = f"{text}\n{format_reply_chain(reply_chain)}".strip()
     is_tome = getattr(event, "is_tome", None)
     adapter_mentions_bot = bool(is_tome()) if callable(is_tome) else False
-    persona_name_mention = detect_name_mention(text, _RUNTIME_MENTION_TERMS)
-    affinity_nickname_mention = _mentioned_by_affinity_nickname(text)
+    # 点名判定：
+    # - 人格名（岸宝/守岸人…）与策展昵称是**真点名**语义，两边都算——人格展示名
+    #   可能并不出现在 _RUNTIME_MENTION_TERMS 里，只查拼接前文本会漏判（实测回归）。
+    # - 好感度自学习小名常撞常用词，只认用户自己打的字：被引用内容里出现"岸宝"
+    #   不应让机器人以为是叫自己（评审 L1）。
+    persona_name_mention = detect_name_mention(
+        own_text, _RUNTIME_MENTION_TERMS
+    ) or detect_name_mention(text, _RUNTIME_MENTION_TERMS)
+    affinity_nickname_mention = _mentioned_by_affinity_nickname(own_text)
     hard_mention = adapter_mentions_bot or (
         normalized_adapter not in {"telegram", "mail"}
         and _detect_onebot_direct_mention(raw_segments, bot_id)
@@ -921,6 +936,7 @@ def _incoming_from_nonebot_event(
         raw_segments=normalized_message.segments or raw_segments,
         reply_to_message_id=str(reply_id) if reply_id is not None else None,
         reply_to_text=reply_text or normalized_message.quoted_text,
+        reply_chain=reply_chain,
         thread_id=str(getattr(event, "message_thread_id", "") or "") or None,
         mentions_bot=(
             session_type in {SessionType.PRIVATE, SessionType.EMAIL}

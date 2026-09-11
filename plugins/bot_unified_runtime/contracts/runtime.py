@@ -8,6 +8,10 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+# 引用链条目定义在 message_context（纯数据类，不依赖本包），放在这里只做类型
+# 透传——contracts 是叶子依赖，不再反向 import contracts，故无环。
+from plugins.bot_unified_runtime.message_context import ReplyChainItem
+
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:12]}"
@@ -132,6 +136,11 @@ class IncomingMessage(StrictBaseModel):
     name_mention_only: bool = False
     reply_to_message_id: str | None = None
     reply_to_text: str = ""
+    # 引用链（评审需求「综合解析回复消息 + 递归解析嵌套引用」）：自近及远逐层
+    # 采集被引用内容，含每层 message_id/发送者/文本/媒体标签。QQ 侧此前因读错
+    # Reply 属性而恒为空，Telegram 侧只读第一层；本字段是结构化载体，
+    # reply_to_text 保留为层级 1 的兼容别名。
+    reply_chain: list[ReplyChainItem] = Field(default_factory=list)
     thread_id: str | None = None
     timestamp: datetime = Field(default_factory=_utc_now)
     message_id: str | None = None

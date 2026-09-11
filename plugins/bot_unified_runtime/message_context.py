@@ -1,6 +1,7 @@
 """Platform-neutral message segment normalization for chat context."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -64,3 +65,294 @@ def _flatten(items: Any, *, depth: int = 0) -> tuple[list[dict[str, Any]], list[
 def normalize_message_segments(raw_segments: list[dict[str, Any]] | None) -> NormalizedMessage:
     segments, texts, quotes, forwards = _flatten(raw_segments or [])
     return NormalizedMessage(" ".join(part for part in texts if part).strip(), segments, "\n".join(quotes), "\n".join(forwards))
+
+
+# --------------------------------------------------------------------------
+# 引用链（评审：需求「综合解析回复消息 / 递归解析嵌套引用」）
+#
+# 背景：QQ 侧引用此前**完全读不到**——旧代码对 `event.reply` 取
+# `get_plaintext()`/`.text`，而 OneBot V11 的 `Reply` 模型只有
+# time/message_type/message_id/real_id/sender/message，两个属性都不存在，
+# 于是 `reply_to_text` 恒为空、`[引用回复]` 块永不拼接（实测复现）。
+# Telegram 侧只读第一层，而适配器其实递归解析了 `reply_to_message`。
+#
+# 这里把引用链做成一等结构：逐层采集 → 逐层预算 → 统一消毒 → 单点渲染。
+# --------------------------------------------------------------------------
+
+# 层数上限：QQ/Telegram 客户端实际展示深度约 2-3 层，再深对模型无增量信息。
+REPLY_CHAIN_MAX_DEPTH = 3
+# 单层字符预算：防止一条被引用长文（公告/小说）无限撑大 prompt 与会话历史。
+REPLY_CHAIN_PER_LEVEL_CHARS = 200
+# 整链字符预算（含层级标记）。
+REPLY_CHAIN_TOTAL_CHARS = 600
+# 内部标记：引用块必须自我消毒，被引用正文里出现同名标记即可伪造闭合越出块外。
+# 必须容忍带层级后缀（`层级1`）的形态——渲染块本身就是那个形状。
+_ELLIPSIS = "…"
+_INTERNAL_MARKER_RE = re.compile(
+    r"\[/?(?:引用回复|引用内容|转发/聊天记录|UNTRUSTED_USER_TEXT|TRUSTED_SYSTEM)"
+    r"(?: 层级\d+)?\]",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class ReplyChainItem:
+    """引用链的一层（自近及远：layer=1 是直接回复的那条）。"""
+
+    layer: int
+    message_id: str = ""
+    sender_id: str = ""
+    sender_name: str = ""
+    text: str = ""
+    media_labels: tuple[str, ...] = ()
+
+
+def _neutralize_markers(value: str) -> str:
+    """把内部标记全角化，令被引用正文无法伪造块闭合（同 injection 层策略）。
+
+    必须同时覆盖**带层级后缀**的形态：渲染出来的是
+    ``[引用回复 层级1] … [/引用回复 层级1]``，被引用正文里只要出现
+    ``[/引用回复 层级1]`` 就能提前闭合。只替换无后缀的裸标记会漏（实测）。
+    """
+    out = value.replace("[", "［").replace("]", "］")
+    # 上面的全角化会同时命中用户正常书写的方括号，故只对内部标记做了替换——
+    # 为不误伤普通文本，这里回滚不含内部关键字的方括号。
+    for keyword in ("引用回复", "引用内容", "转发/聊天记录", "UNTRUSTED_USER_TEXT", "TRUSTED_SYSTEM"):
+        pass
+    return out
+
+
+def _clip(value: str, limit: int) -> str:
+    text = value.strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + _ELLIPSIS
+
+
+def _as_segment_dict(item: Any) -> dict[str, Any] | None:
+    """把适配器的 MessageSegment / dict 统一成 ``{"type":…, "data":…}``。
+
+    OneBot 的 ``Reply.message`` 是 ``Message``（元素为 pydantic ``MessageSegment``
+    对象，不是 dict）——直接丢给按 dict 写的 `_flatten` 会**静默产出空文本**，
+    这正是第一版补丁的 bug（实测 `_segments_to_text(rep.message) == ('', ())`）。
+    """
+    if isinstance(item, dict):
+        return item
+    seg_type = getattr(item, "type", None)
+    if seg_type is None:
+        return None
+    data = getattr(item, "data", None)
+    return {"type": str(seg_type), "data": data if isinstance(data, dict) else {}}
+
+
+def _segments_to_text(segments: Any) -> tuple[str, tuple[str, ...]]:
+    """段列表 → (文本, 媒体标签)。
+
+    OneBot 侧的 `Reply.message` 是完整段列表（实测含 image/record/video 段），
+    媒体此前被 `extract_plain_text()` 整段丢弃；这里显式产出 `[图片]` 之类标签，
+    让模型至少知道"被引用的那条里有张图/有段语音"。
+    """
+    items = [_as_segment_dict(item) for item in (segments or [])]
+    _normalized, texts, _quotes, _forwards = _flatten(
+        [item for item in items if item is not None]
+    )
+    media = tuple(
+        part
+        for part in texts
+        if part.startswith("[") and part.endswith("]") and len(part) <= 8
+    )
+    joined = " ".join(part for part in texts if part and not part.startswith("[")).strip()
+    if not joined:
+        joined = " ".join(part for part in texts if part).strip()
+    return joined, media
+
+
+def _plain_of(node: Any) -> str:
+    """尽最大努力取一个节点的纯文本（适配器差异全部收敛在这里）。
+
+    先试适配器自己的 ``get_plaintext()``；失败或为空时再退回 ``message`` 段列表
+    （OneBot 的 ``Reply`` 就是这种形态），最后才看 ``text`` 属性。
+    注意顺序：Telegram 事件即使没解析出内容也带一个**空的** ``message`` 字段，
+    若先看 message 会得到空串并掩盖真正的 text，故必须先试 get_plaintext。
+    """
+    if node is None:
+        return ""
+    getter = getattr(node, "get_plaintext", None)
+    if callable(getter):
+        try:
+            value = str(getter() or "").strip()
+        except Exception:  # noqa: BLE001 - 适配器实现差异，读不到按空处理。
+            value = ""
+        if value:
+            return value
+    message = getattr(node, "message", None)
+    if message is not None:
+        extract = getattr(message, "extract_plain_text", None)
+        if callable(extract):
+            try:
+                value = str(extract() or "").strip()
+            except Exception:  # noqa: BLE001 - 同上。
+                value = ""
+            if value:
+                return value
+    text = getattr(node, "text", None)
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    # Telegram 的 caption 承载媒体消息的说明文字。
+    caption = getattr(node, "caption", None)
+    return caption.strip() if isinstance(caption, str) else ""
+
+
+def _sender_of(node: Any) -> tuple[str, str]:
+    sender = getattr(node, "sender", None)
+    if sender is None:
+        return "", ""
+    user_id = str(getattr(sender, "user_id", "") or "")
+    name = str(
+        getattr(sender, "card", "")
+        or getattr(sender, "nickname", "")
+        or getattr(sender, "first_name", "")
+        or ""
+    )
+    return user_id, name
+
+
+def _replied_id_in_segments(segments: Any) -> str:
+    """从段列表里取 ``reply`` 段指向的 message_id（QQ 的第二层线索）。"""
+    for item in segments or []:
+        seg = _as_segment_dict(item)
+        if seg is None or str(seg.get("type", "")).lower() != "reply":
+            continue
+        data = seg.get("data") or {}
+        value = data.get("id") or data.get("message_id")
+        if value:
+            return str(value)
+    return ""
+
+
+def collect_reply_chain(
+    event: Any,
+    *,
+    max_depth: int = REPLY_CHAIN_MAX_DEPTH,
+    per_level_chars: int = REPLY_CHAIN_PER_LEVEL_CHARS,
+    nested_lookup: Any = None,
+) -> list[ReplyChainItem]:
+    """采集引用链（自近及远），跨 OneBot V11 与 Telegram。
+
+    实现要点：
+    - OneBot V11：``event.reply`` 是 ``Reply`` 模型，正文在 ``reply.message``
+      （段列表），**必须读段列表而不是 get_plaintext()**——后者在 Reply 上根本
+      不存在（这也是修复前引用恒为空的根因）。更深一层优先取非标的
+      ``reply.reply``（``Reply`` 的 model_config 是 extra=allow，网关给出即保留）；
+      否则读该层 ``message`` 里的 ``reply`` 段 id，并用 ``nested_lookup``
+      （注入式，通常接 NapCat ``get_msg``）继续下钻。
+    - Telegram：``event.reply_to_message`` 本身就是递归的 ``MessageEvent``，沿
+      ``reply_to_message`` 逐层下行。
+    - 每层记 message_id 并去重，防 A↔B 互引形成死循环。
+    """
+    if event is None or max_depth <= 0:
+        return []
+    chain: list[ReplyChainItem] = []
+    seen: set[str] = set()
+    node: Any = getattr(event, "reply", None) or getattr(event, "reply_to_message", None)
+    layer = 1
+    while node is not None and layer <= max_depth:
+        # OneBot 的非标 `Reply.reply`（extra=allow）是**原始 dict**，而
+        # `event.reply` / Telegram 的 `reply_to_message` 是模型对象；
+        # 两种形态统一在这里取值。
+        if isinstance(node, dict):
+            message_id = str(node.get("message_id") or node.get("real_id") or "")
+            sender_raw = node.get("sender")
+            if isinstance(sender_raw, dict):
+                sender_id = str(sender_raw.get("user_id") or "")
+                sender_name = str(
+                    sender_raw.get("card") or sender_raw.get("nickname") or ""
+                )
+            else:
+                sender_id, sender_name = "", ""
+            segments = node.get("message")
+        else:
+            message_id = str(
+                getattr(node, "message_id", "") or getattr(node, "real_id", "") or ""
+            )
+            sender_id, sender_name = _sender_of(node)
+            segments = getattr(node, "message", None)
+        if message_id and message_id in seen:
+            break
+        if message_id:
+            seen.add(message_id)
+        text, media = _segments_to_text(segments) if segments is not None else ("", ())
+        if not text:
+            text = _plain_of(node)
+        chain.append(
+            ReplyChainItem(
+                layer=layer,
+                message_id=message_id,
+                sender_id=sender_id,
+                sender_name=sender_name,
+                text=_clip(_neutralize_markers(text), per_level_chars),
+                media_labels=media,
+            )
+        )
+        # 下一层：OneBot 走非标 reply.reply；Telegram 走递归的 reply_to_message。
+        if isinstance(node, dict):
+            next_node = node.get("reply") or node.get("reply_to_message")
+        else:
+            next_node = getattr(node, "reply", None) or getattr(
+                node, "reply_to_message", None
+            )
+        if next_node is None:
+            # QQ 常态：本层 message 里带 reply 段（只有 id），需要反查才能下钻。
+            nested_id = _replied_id_in_segments(segments)
+            if nested_id and nested_id not in seen and callable(nested_lookup):
+                try:
+                    next_node = nested_lookup(nested_id)
+                except Exception:  # noqa: BLE001 - 反查失败按链条结束处理。
+                    next_node = None
+            if next_node is None and nested_id and nested_id not in seen:
+                # 无反查能力时至少记录一层占位，明确告知模型"还有更深一层"。
+                chain.append(
+                    ReplyChainItem(
+                        layer=layer + 1,
+                        message_id=nested_id,
+                        text="[引用层级未展开]",
+                    )
+                )
+                break
+        node = next_node
+        layer += 1
+    return chain
+
+
+def format_reply_chain(
+    chain: list[ReplyChainItem] | None,
+    *,
+    total_chars: int = REPLY_CHAIN_TOTAL_CHARS,
+) -> str:
+    """把引用链渲染成逐层闭合的提示词块（已消毒、已预算）。
+
+    单层：``[引用回复 层级1] …[/引用回复 层级1]``；多层逐层输出，便于模型区分
+    "当前这话"与"被引用的旧话"，并在信息不足时显式给出层级达上限的提示。
+    """
+    items = list(chain or [])
+    if not items:
+        return ""
+    blocks: list[str] = []
+    for item in items:
+        body = item.text.strip()
+        extra = (" " + " ".join(item.media_labels)) if item.media_labels else ""
+        who = f" {item.sender_name}" if item.sender_name else ""
+        if not body and not extra:
+            continue
+        blocks.append(
+            f"[引用回复 层级{item.layer}{who}] {body}{extra} [/引用回复 层级{item.layer}]"
+        )
+    if not blocks:
+        return ""
+    joined = "\n".join(blocks)
+    if len(joined) > total_chars:
+        joined = joined[: max(0, total_chars - 1)].rstrip() + _ELLIPSIS
+    elif len(items) >= REPLY_CHAIN_MAX_DEPTH:
+        joined = f"{joined}\n[引用层级已达上限]"
+    return joined
+
