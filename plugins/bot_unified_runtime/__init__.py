@@ -27,6 +27,7 @@ from .capabilities.group_files import DirtyGuard, GroupFileStore
 from .capabilities.market import build_market_capability
 from .capabilities.news import build_news_capability
 from .capabilities.randpic import build_randpic_capability
+from .capabilities.reminder import build_reminder_capability
 from .capabilities.meme import build_meme_capability
 from .capabilities.meme_library import build_meme_library_capability
 from .capabilities.moegirl import (
@@ -1972,6 +1973,80 @@ def _register_reflection_scheduler(scheduler: Any, config: Any) -> dict:
     return {"hour": hour, "minute": minute}
 
 
+def _register_reminder_scheduler(scheduler: Any, config: Any, send_queue: Any) -> dict:
+    """提醒投递：每分钟检查到点提醒，构造 SendRequest 走统一发送队列。
+
+    到点文案由 character/reminders.build_reminder_text 提供（守岸人语气）；
+    投递失败只记日志，绝不阻塞主链路。
+    """
+
+    def _reminder_job() -> None:
+        try:
+            from .character.reminders import build_reminder_store, build_reminder_text
+            from .contracts import (
+                PrivacyLevel,
+                RenderedOutput,
+                SendPolicy,
+                SendRequest,
+                SessionType,
+            )
+
+            store = build_reminder_store(config)
+            for reminder in store.due():
+                request_id = f"reminder-{reminder.reminder_id}"
+                scope = SessionType(reminder.target_scope)
+                privacy = (
+                    PrivacyLevel.GROUP
+                    if scope is SessionType.GROUP
+                    else PrivacyLevel.PERSONAL
+                )
+                request = SendRequest(
+                    request_id=request_id,
+                    session_id=reminder.session_key,
+                    target_scope=scope,
+                    target_id=reminder.target_id,
+                    capability_id="bot.reminder",
+                    content=RenderedOutput(
+                        request_id=request_id,
+                        content_type="text",
+                        content_ref={},
+                        text_fallback=build_reminder_text(reminder),
+                        privacy_level=privacy,
+                    ),
+                    send_policy=SendPolicy.QUEUED,
+                    priority="normal",
+                    max_messages=1,
+                    dedupe_key=f"reminder:{reminder.reminder_id}",
+                    cooldown_key=f"reminder:{reminder.session_key}",
+                    privacy_level=privacy,
+                    persona_profile_id=str(
+                        getattr(config, "bot_persona_profile_id", "default")
+                    ),
+                    adapter=reminder.adapter,
+                    bot_id=reminder.bot_id,
+                    audit_tags=["reminder", "due"],
+                )
+                send_queue.submit(request)
+                store.mark_done(reminder.reminder_id)
+        except Exception as exc:  # noqa: BLE001 - 提醒投递失败不影响主链路。
+            from nonebot.log import logger
+
+            logger.warning("reminder delivery failed: {}", type(exc).__name__)
+
+    scheduler.add_job(
+        _reminder_job,
+        "cron",
+        id="bot_reminder_tick",
+        replace_existing=True,
+        minute="*",
+        second=5,
+        misfire_grace_time=120,
+        max_instances=1,
+        coalesce=True,
+    )
+    return {"interval": "1m"}
+
+
 def _register_nonebot_handlers() -> None:
     try:
         from nonebot import (
@@ -2458,6 +2533,9 @@ def _register_nonebot_handlers() -> None:
             and getattr(config, "bot_reflection_enabled", False)
         ):
             _register_reflection_scheduler(scheduler, config)
+
+        if getattr(config, "bot_reminder_enabled", True):
+            _register_reminder_scheduler(scheduler, config, send_queue)
 
         from .sources.subscription_runtime_v2 import register_subscription_runtime_v2
 
@@ -3393,6 +3471,12 @@ def _register_nonebot_handlers() -> None:
             is RouteKind.RANDPIC
         )
 
+    async def _is_reminder_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.REMINDER
+        )
+
     content = on_message(rule=_is_content_parse_event, priority=46, block=True)
     music_mode = on_message(rule=_is_music_mode_event, priority=40, block=True)
     music = on_message(rule=_is_music_event, priority=41, block=True)
@@ -3410,6 +3494,7 @@ def _register_nonebot_handlers() -> None:
     divination = on_message(rule=_is_divination_event, priority=41, block=True)
     news = on_message(rule=_is_news_event, priority=41, block=True)
     randpic = on_message(rule=_is_randpic_event, priority=41, block=True)
+    reminder = on_message(rule=_is_reminder_event, priority=41, block=True)
     eat = on_message(rule=_is_eat_event, priority=41, block=True)
     subscribe_cmd = on_message(rule=_is_standalone_subscribe_event, priority=12, block=True)
 
@@ -5105,6 +5190,12 @@ def _register_nonebot_handlers() -> None:
     async def _handle_randpic(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
             bot, event, build_randpic_capability, "bot.randpic", randpic
+        )
+
+    @reminder.handle()
+    async def _handle_reminder(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, build_reminder_capability, "bot.reminder", reminder
         )
 
     @eat.handle()
