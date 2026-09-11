@@ -19,6 +19,7 @@ import html
 import io
 import os
 import re
+import threading
 import urllib.parse
 from dataclasses import fields
 from datetime import datetime
@@ -27,6 +28,7 @@ from typing import Any
 
 import jinja2
 
+from ..render_backends import build_render_backend
 from .models import ForwardPayload, RenderPayload
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -1247,6 +1249,72 @@ def render_affinity_card_html(payload_dict: dict[str, Any] | None = None) -> str
     )
 
 
+# ==================== Mermaid 流程图卡（G-MERMAID） ====================
+_MERMAID_TEMPLATE = _ENV.get_template("mermaid_card.html")
+# 等待条件：.card 里出现 SVG 且不是 mermaid 的语法错误弹窗（error bomb）。
+# 脚本加载失败（无网）时条件永不成立，由 wait_js 超时兜底返回 None。
+_MERMAID_READY_JS = (
+    "() => {"
+    " const svg = document.querySelector('.card svg');"
+    " if (!svg) { return false; }"
+    " return (svg.textContent || '').toLowerCase().indexOf('syntax error') === -1;"
+    "}"
+)
+# 渲染后端单例：None=未初始化，False=已探测到不可用（不重复探测）。
+_MERMAID_BACKEND: Any = None
+_MERMAID_BACKEND_LOCK = threading.Lock()
+
+
+def _get_mermaid_backend() -> Any:
+    """懒初始化 mermaid 专用截图后端；仅接受 playwright（需要 wait_js）。"""
+    global _MERMAID_BACKEND
+    with _MERMAID_BACKEND_LOCK:
+        if _MERMAID_BACKEND is None:
+            backend = build_render_backend("auto")
+            _MERMAID_BACKEND = (
+                backend
+                if getattr(backend, "available", False)
+                and getattr(backend, "name", "") == "playwright"
+                else False
+            )
+        return _MERMAID_BACKEND or None
+
+
+def render_mermaid_html(code: str) -> str:
+    """渲染 mermaid 流程图卡 HTML（Mica 规范）。
+
+    code 经 Jinja2 autoescape 转义后注入 <pre class="mermaid">，页面内
+    从 jsDelivr CDN 加载 mermaid.min.js 并 startOnLoad 自动出图。
+    纯字符串组装，不访问网络，不抛异常（模板变量只有 code）。
+    """
+    return _MERMAID_TEMPLATE.render(code=code or "")
+
+
+def render_mermaid_png(code: str) -> bytes | None:
+    """mermaid 源码 → PNG 字节；任何失败（无网/超时/后端缺失/异常）返回 None。
+
+    走 render_backends 既有截图入口（PlaywrightRenderBackend.render_card），
+    通过 wait_js 在截图前等 SVG 真正出现（上限 6s）。
+    """
+    if not (code or "").strip():
+        return None
+    try:
+        backend = _get_mermaid_backend()
+        if backend is None:
+            return None
+        return backend.render_card(
+            {
+                "html": render_mermaid_html(code),
+                "viewport": {"width": 840, "height": 640},
+                "wait_ms": 120,
+                "wait_js": _MERMAID_READY_JS,
+                "wait_js_timeout_ms": 6000,
+            }
+        )
+    except Exception:  # noqa: BLE001 - mermaid 渲染绝不抛异常，失败降级文本。
+        return None
+
+
 __all__ = [
     "PLATFORM_COLORS",
     "PLATFORM_OFFICIAL_NAMES",
@@ -1255,6 +1323,8 @@ __all__ = [
     "flat_projection",
     "parse_to_render_payload",
     "render_affinity_card_html",
+    "render_mermaid_html",
+    "render_mermaid_png",
     "render_song_candidates_html",
     "render_universal_card_html",
 ]

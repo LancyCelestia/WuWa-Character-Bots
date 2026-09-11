@@ -1,0 +1,63 @@
+{# Mermaid 流程图卡（G-MERMAID）：无平台语境，主色固定中性灰 #607080，
+   走 --pc 派生 token；Mica 铁律 —— 无 <meta viewport>、.card 用 fit-content、
+   body 透明（截图 omit_background 依赖）、单一柔光阴影、字重≤700。
+   mermaid.min.js 从 jsDelivr CDN 加载，startOnLoad 自动把 code 渲成 SVG。 #}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+    mermaid.initialize({
+        startOnLoad: true,
+        securityLevel: "strict",
+        theme: "default",
+        fontFamily: "Segoe UI, Microsoft YaHei, PingFang SC, sans-serif"
+    });
+</script>
+<style>
+:root {
+    --pc: #607080;
+    --pc-soft: color-mix(in srgb, var(--pc) 7%, #fff);
+    --pc-line: color-mix(in srgb, var(--pc) 14%, #fff);
+    --r-shell: 30px;
+    --mica-shadow: 0 12px 32px rgba(0, 0, 0, 0.10), 0 3px 10px rgba(0, 0, 0, 0.05);
+    --text-main: #18191c;
+    --font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: var(--font-family);
+    background: transparent;
+    display: flex;
+    justify-content: center;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+.card {
+    width: fit-content;
+    max-width: 840px;
+    padding: 26px 30px;
+    border-radius: var(--r-shell);
+    background: var(--pc-soft);
+    border: 1px solid var(--pc-line);
+    box-shadow: var(--mica-shadow);
+}
+.card .mermaid {
+    display: flex;
+    justify-content: center;
+    color: var(--text-main);
+    font-weight: 400;
+    white-space: normal;
+}
+.card svg { max-width: 100%; height: auto; }
+</style>
+</head>
+<body>
+<div class="card">
+<pre class="mermaid">
+{{ code }}
+</pre>
+</div>
+</body>
+</html>

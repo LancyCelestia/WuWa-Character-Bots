@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import base64
+import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     PrivacyLevel,
@@ -10,6 +16,151 @@ from plugins.bot_unified_runtime.contracts import (
 
 from .plain_text import naturalize_chat_text
 
+# ==================== Mermaid 流程图（G-MERMAID） ====================
+# bot 回复文本里的 ```mermaid 围栏块 → PNG 随消息发出。检测必须在
+# naturalize_chat_text 之前：自然化会剥掉围栏行，之后就无法识别块了。
+_MERMAID_FENCE_RE = re.compile(
+    r"```[ \t]*mermaid\b[^\n]*\n(.*?)\n?[ \t]*```",
+    re.IGNORECASE | re.DOTALL,
+)
+# 护栏：单块源码超长不渲染、单条消息最多渲染张数、整体时间预算。
+MERMAID_MAX_SOURCE_CHARS = 8000
+MERMAID_MAX_BLOCKS = 3
+_MERMAID_PLACEHOLDER = "【流程图见下图】"
+_MERMAID_CALL_TIMEOUT_S = 20.0
+_MERMAID_TOTAL_BUDGET_S = 22.0
+
+_mermaid_executor: ThreadPoolExecutor | None = None
+_mermaid_executor_lock = threading.Lock()
+
+
+def _get_mermaid_executor() -> ThreadPoolExecutor:
+    """mermaid 渲染专用单线程池：playwright sync API 与事件循环互斥，
+    且其浏览器实例线程绑定，固定 worker 才能跨渲染复用常驻浏览器。"""
+    global _mermaid_executor
+    with _mermaid_executor_lock:
+        if _mermaid_executor is None:
+            _mermaid_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="mermaid-render",
+            )
+        return _mermaid_executor
+
+
+def _render_mermaid_png(code: str) -> bytes | None:
+    """渲染一块 mermaid 源码为 PNG 字节；失败/超时返回 None，绝不抛异常。
+
+    实际渲染在专用线程执行（render_reviewed_output 可能被 handle_async
+    直接调在事件循环线程上，playwright sync API 在那里会拒绝启动）。
+    """
+    try:
+        from .card_render.bridge import render_mermaid_png
+    except Exception:  # noqa: BLE001 - 桥接不可用按渲染失败降级。
+        return None
+    try:
+        future = _get_mermaid_executor().submit(render_mermaid_png, code)
+        return future.result(timeout=_MERMAID_CALL_TIMEOUT_S)
+    except Exception:  # noqa: BLE001 - 超时/线程异常一律按渲染失败降级。
+        return None
+
+
+def find_mermaid_blocks(text: str) -> list[re.Match[str]]:
+    """找出文本里所有 ```mermaid 围栏块（含开闭围栏整段）。"""
+    if not text:
+        return []
+    try:
+        return list(_MERMAID_FENCE_RE.finditer(text))
+    except Exception:  # noqa: BLE001 - 正则异常时按无块处理。
+        return []
+
+
+def _naturalize_keeping_edges(segment: str) -> str:
+    """自然化分段但保留两端换行，保证占位/围栏始终独立成行。"""
+    if not segment.strip():
+        return segment
+    stripped = segment.strip("\n")
+    if not stripped:
+        return segment
+    lead = segment[: len(segment) - len(segment.lstrip("\n"))]
+    trail = segment[len(segment.rstrip("\n")) :]
+    return lead + naturalize_chat_text(stripped) + trail
+
+
+def apply_mermaid_blocks(
+    text: str,
+    *,
+    is_chat: bool,
+) -> tuple[str, list[dict]]:
+    """把 ```mermaid 围栏块替换为一行占位并产出 PNG 图片部件（G-MERMAID）。
+
+    返回 (新文本, 阅读顺序交错的 text/image 部件)。护栏：单块源码
+    >8000 字符不渲染；单条消息最多渲染前 3 块；渲染总耗时超预算后
+    其余块保留文本。渲染失败/无网的块原样保留代码文本——绝不丢内容、
+    绝不抛异常；一张都没渲染成功时返回原文本与空列表（调用方继续走
+    既有纯文本管线，行为与未挂钩完全一致）。
+    """
+    try:
+        return _apply_mermaid_blocks_inner(text, is_chat=is_chat)
+    except Exception:  # noqa: BLE001 - mermaid 挂钩绝不阻断出站管线。
+        return text, []
+
+
+def _apply_mermaid_blocks_inner(
+    text: str,
+    *,
+    is_chat: bool,
+) -> tuple[str, list[dict]]:
+    matches = find_mermaid_blocks(text)
+    if not matches:
+        return text, []
+    # 先渲染再动文本：全部失败时对文本零改动，保持既有管线逐字节一致。
+    deadline = time.monotonic() + _MERMAID_TOTAL_BUDGET_S
+    rendered: list[bytes | None] = []
+    success_count = 0
+    for match in matches:
+        source = match.group(1).replace("\r\n", "\n").strip("\n")
+        if (
+            success_count >= MERMAID_MAX_BLOCKS
+            or len(source) > MERMAID_MAX_SOURCE_CHARS
+            or time.monotonic() >= deadline
+        ):
+            rendered.append(None)
+            continue
+        png = _render_mermaid_png(source)
+        rendered.append(png)
+        if png:
+            success_count += 1
+    if not any(rendered):
+        return text, []
+    ordered: list[dict] = []
+    new_text_chunks: list[str] = []
+    cursor = 0
+    for match, png in zip(matches, rendered):
+        before = text[cursor : match.start()]
+        if is_chat:
+            before = _naturalize_keeping_edges(before)
+        chunk = before + (
+            _MERMAID_PLACEHOLDER if png else text[match.start() : match.end()]
+        )
+        new_text_chunks.append(chunk)
+        if chunk:
+            ordered.append({"type": "text", "text": chunk})
+        if png:
+            ordered.append(
+                {
+                    "type": "image",
+                    "file": "base64://" + base64.b64encode(png).decode("ascii"),
+                }
+            )
+        cursor = match.end()
+    tail = text[cursor:]
+    if is_chat:
+        tail = _naturalize_keeping_edges(tail)
+    if tail:
+        new_text_chunks.append(tail)
+        ordered.append({"type": "text", "text": tail})
+    return "".join(new_text_chunks), ordered
+
 
 def render_reviewed_output(
     result: CapabilityResult,
@@ -17,7 +168,12 @@ def render_reviewed_output(
 ) -> RenderedOutput:
     text = review.safe_text or result.body or result.summary or result.title
     is_chat = result.capability_id == "bot.chat"
-    if is_chat:
+    # G-MERMAID：检测/渲染先于自然化（naturalize 会剥掉围栏行导致无法
+    # 识别块）；没有任何块渲染成功时返回原文本，行为与未挂钩完全一致。
+    mermaid_text, mermaid_parts = apply_mermaid_blocks(text, is_chat=is_chat)
+    if mermaid_parts:
+        text = mermaid_text
+    elif is_chat:
         text = naturalize_chat_text(text)
     # 能力层声明的图片/语音直链在审核通过后原样透传（内容来自平台
     # 官方接口，不是用户输入）；transport 不支持时按 text_fallback 降级。
@@ -37,7 +193,7 @@ def render_reviewed_output(
     for file_item in result.files or []:
         if isinstance(file_item, dict) and (file_item.get("file") or file_item.get("url")):
             media_parts.append({"type": "file", **file_item})
-    if not media_parts and result.text_parts and len(result.text_parts) > 1:
+    if not media_parts and not mermaid_parts and result.text_parts and len(result.text_parts) > 1:
         chunks = [str(part).strip() for part in result.text_parts if str(part).strip()]
         if is_chat:
             chunks = [clean for part in chunks if (clean := naturalize_chat_text(part))]
@@ -51,6 +207,21 @@ def render_reviewed_output(
                 risk_level=review.risk_level,
                 privacy_level=review.privacy_level,
             )
+    if mermaid_parts:
+        # 流程图已渲染：mermaid_parts 是阅读顺序交错的 text/image 部件
+        # （占位行与配图相邻）；能力层自带媒体仍排在最前（与既有 mixed
+        # 形态一致，聊天回复通常没有 media_parts）。text_fallback 保留
+        # 占位后的全文，transport 不支持图片时按文本降级不丢内容。
+        parts = [*media_parts, *mermaid_parts]
+        return RenderedOutput(
+            request_id=result.request_id,
+            content_type="mixed",
+            content_ref={"parts": parts},
+            text_fallback=text,
+            size_estimate=len(text),
+            risk_level=review.risk_level,
+            privacy_level=review.privacy_level,
+        )
     if media_parts:
         parts = [*media_parts]
         if text.strip():

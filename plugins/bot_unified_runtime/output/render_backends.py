@@ -257,6 +257,21 @@ class PlaywrightRenderBackend:
                         )
                     except Exception:  # noqa: S110, BLE001 - 超时按已加载现状截图。
                         pass
+                    # 动态渲染页（mermaid 等）在截图前等待指定 JS 条件成立；
+                    # 条件超时/脚本报错视为渲染失败返回 None（调用方降级文本），
+                    # 避免把半成品页截成图。不传 wait_js 的既有调用零变化。
+                    wait_js = payload.get("wait_js")
+                    if isinstance(wait_js, str) and wait_js.strip():
+                        try:
+                            wait_js_timeout_ms = int(
+                                payload.get("wait_js_timeout_ms", 6000)
+                            )
+                        except (TypeError, ValueError):
+                            wait_js_timeout_ms = 6000
+                        try:
+                            page.wait_for_function(wait_js, timeout=wait_js_timeout_ms)
+                        except Exception:  # noqa: BLE001 - 目标条件未达成按失败降级。
+                            return None
                     page.wait_for_timeout(wait_ms)
                     element = page.query_selector(".card")
                     if element is not None:
