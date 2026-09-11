@@ -54,8 +54,33 @@ def _flatten(items: Any, *, depth: int = 0) -> tuple[list[dict[str, Any]], list[
             label = str(data.get("raw") or data.get("text") or data.get("name") or "表情")
             texts.append(f"[Emoji:{label}]")
             normalized.append({"type": "emoji", "data": data})
-        elif kind in {"image", "sticker", "file", "record", "video"}:
-            label = {"image": "图片", "sticker": "表情包", "file": "文件", "record": "语音", "video": "视频"}[kind]
+        elif kind in {
+            "image",
+            "photo",
+            "sticker",
+            "animation",
+            "video_note",
+            "file",
+            "record",
+            "voice",
+            "audio",
+            "video",
+        }:
+            # 跨适配器归一：OneBot 的 image/record/video vs Telegram 的
+            # photo/sticker/animation/video_note/voice/audio 都要有可读标签，
+            # 否则纯媒体消息在提示词里连"有张图/有段语音"都体现不出来。
+            label = {
+                "image": "图片",
+                "photo": "图片",
+                "sticker": "表情包",
+                "animation": "动图",
+                "video_note": "圆形视频",
+                "file": "文件",
+                "record": "语音",
+                "voice": "语音",
+                "audio": "音频",
+                "video": "视频",
+            }[kind]
             texts.append(f"[{label}]")
             normalized.append({"type": kind, "data": data})
         elif kind:

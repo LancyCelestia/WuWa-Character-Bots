@@ -53,7 +53,17 @@ _VIDEO_SYSTEM_PROMPT = (
     "文字：<画面/字幕中出现的关键文字，逐字转写；没有写“无”>\n"
     "细节：<值得回应的显著细节、动作或情绪>"
 )
-_IMAGE_SEGMENT_TYPES = {"image", "mface"}
+# 图片段类型：OneBot 用 image/mface；Telegram 用 photo；动图/贴纸/圆形视频
+# 也按"可看的图"处理（此前缺 animation/sticker/photo/video_note，Telegram 侧
+# 这些一律只剩占位文本，评审需求 4）。
+_IMAGE_SEGMENT_TYPES = {
+    "image",
+    "mface",
+    "photo",
+    "sticker",
+    "animation",
+    "video_note",
+}
 _VIDEO_SEGMENT_TYPES = {"video"}
 _DEFAULT_MAX_IMAGES = 2
 _DEFAULT_MAX_CHARS = 500

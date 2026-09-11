@@ -31,7 +31,9 @@ from plugins.bot_unified_runtime.sources.vision_describe import _local_path_from
 
 logger = logging.getLogger(__name__)
 
-_RECORD_SEGMENT_TYPES = {"record"}
+# 语音段类型：OneBot 用 record，Telegram 用 voice（语音条）/audio（音频文件）。
+# 此前只认 record，于是 Telegram 侧语音在入站完全不识别（评审需求 3）。
+_RECORD_SEGMENT_TYPES = {"record", "voice", "audio"}
 _MAX_ASR_FAILOVER_ATTEMPTS = 3
 # 超大音频上传徒增超时风险；20MB 足够容纳数分钟语音。
 _MAX_AUDIO_BYTES = 20_000_000

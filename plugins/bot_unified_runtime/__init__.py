@@ -467,10 +467,31 @@ def _detect_text_at_mention(text: str) -> bool:
     return False
 
 def contains_visual_message_segments(raw_segments: list[dict[str, Any]] | None) -> bool:
-    """Return whether an event contains an image, sticker-like or video segment."""
+    """Return whether an event contains an image, sticker-like or video segment.
+
+    只覆盖"看得到"的媒体——语音不在这里（见 contains_audio_message_segments），
+    两者在 `_is_plain_chat_event` 里并列放行、在占位文案里分别命名。
+    """
     visual_types = {"image", "face", "mface", "marketface", "sticker", "video"}
     return any(
         str(segment.get("type", "")).strip().lower() in visual_types
+        for segment in raw_segments or []
+    )
+
+
+# 语音段类型：OneBot 用 record，Telegram 用 voice/audio。三者都要认——此前
+# 只认 record，于是 Telegram 语音在入站侧完全不识别（评审需求 3）。
+AUDIO_SEGMENT_TYPES = frozenset({"record", "voice", "audio"})
+
+
+def contains_audio_message_segments(raw_segments: list[dict[str, Any]] | None) -> bool:
+    """是否含语音段（OneBot record / Telegram voice·audio）。
+
+    关键：纯语音消息的 plain_text 为空 → 路由判 IGNORE → chat handler 不触发 →
+    ASR 永远跑不到（链路本身完好，死在上游门禁）。故这里必须与视觉段并列放行。
+    """
+    return any(
+        str(segment.get("type", "")).strip().lower() in AUDIO_SEGMENT_TYPES
         for segment in raw_segments or []
     )
 
@@ -855,8 +876,12 @@ def _incoming_from_nonebot_event(
         file_context = []
     if file_context:
         text = (text + "\n" + "\n".join(file_context)).strip()
-    if not text.strip() and contains_visual_message_segments(raw_segments):
-        text = "（用户发送了图片/表情包/视频，未附文字。）"
+    if not text.strip() and (contains_visual_message_segments(raw_segments) or contains_audio_message_segments(raw_segments)):
+        # 占位文案按实际媒体类型命名：纯语音此前既进不来也无法被说明（需求 3）。
+        if contains_audio_message_segments(raw_segments):
+            text = "（用户发送了语音消息，未附文字。）"
+        else:
+            text = "（用户发送了图片/表情包/视频，未附文字。）"
     # 引用链（评审需求 1/2）：结构化、递归、逐层预算、已消毒。
     # 修复前：QQ 侧对 `event.reply` 取 get_plaintext()/.text —— OneBot V11 的
     # Reply 模型没有这两个属性，reply_text **恒为空**，被引用内容完全不进提示词；
@@ -3069,7 +3094,11 @@ def _register_nonebot_handlers() -> None:
             raw_segments = _extract_onebot_raw_segments(event)
         except Exception:  # noqa: BLE001 - visual routing degrades to text routing.
             raw_segments = []
-        if contains_visual_message_segments(raw_segments):
+        if contains_visual_message_segments(raw_segments) or contains_audio_message_segments(
+            raw_segments
+        ):
+            # 纯媒体消息（图片/视频/语音）走聊天链路：空文本会被路由判 IGNORE，
+            # 若不在这里放行，视觉理解与 ASR 都永远跑不到（评审需求 3/4）。
             return bool(config.bot_chat_enabled)
         return (
             _cached_route_decision(state, event, config=config).kind
