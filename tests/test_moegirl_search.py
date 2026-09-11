@@ -234,7 +234,10 @@ def test_question_lookup_unique_candidate_hits_without_page():
 
 def test_question_lookup_ambiguous_degrades_to_chat():
     """多候选无精确命中 → 降级聊天（词条选择列表只留给 /萌娘 显式指令）。"""
-    from plugins.bot_unified_runtime.capabilities.moegirl import MoegirlHit, question_lookup
+    from plugins.bot_unified_runtime.capabilities.moegirl import (
+        MoegirlHit,
+        question_lookup,
+    )
 
     def fake_search(query, **kw):
         return [MoegirlHit(title="腾讯QQ"), MoegirlHit(title="QQ宠物")]

@@ -248,7 +248,9 @@ def test_private_llm_failure_is_generic_and_group_failure_is_silent_audit() -> N
             llm_provider=FailingRouter(),
             model_router=FailingRouter(),
         )
-        from plugins.bot_unified_runtime.capabilities.chat import _PERSONA_FAILURE_MESSAGES
+        from plugins.bot_unified_runtime.capabilities.chat import (
+            _PERSONA_FAILURE_MESSAGES,
+        )
         assert result.body in _PERSONA_FAILURE_MESSAGES or result.body == ""
         assert result.send_policy is expected_policy
         assert result.operational_issue is not None

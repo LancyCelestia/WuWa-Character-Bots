@@ -180,6 +180,25 @@ def test_fts_auto_rebuild_disabled_degrades(tmp_path):
 # ---------------------------------------------------------------- 合并检索器
 
 
+def test_entry_title_bonus_ranks_entry_page_first(tmp_path):
+    """自然问句包含词条名时，词条页应排在正文堆词的噪声页之前。"""
+
+    store = _store(tmp_path)
+    docs = [
+        _doc("梗知识/moegirl/目标条目", "这是一段与查询措辞几乎无关的说明性正文。"),
+        _doc(
+            "梗知识/moegirl/干扰页面",
+            "有什么用有什么用：正文密集堆叠查询词的干扰页。有什么用。",
+        ),
+    ]
+    store.sync_documents(docs)
+    hits = store.retrieve("目标条目有什么用", files=None)
+    assert hits, "词条名+关键词均应产生候选"
+    assert hits[0].title.startswith("目标条目"), (
+        f"词条名命中应排第一，实际排序: {[c.title for c in hits]}"
+    )
+
+
 def test_merged_retriever_interleaves_and_dedupes():
     def _chunk(chunk_id: str) -> KnowledgeChunk:
         return KnowledgeChunk(chunk_id=chunk_id, source_id=chunk_id, title=chunk_id, content=chunk_id)

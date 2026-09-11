@@ -113,7 +113,15 @@ def _run(
 
 def test_direct_video_auto_send_attaches_video_segment() -> None:
     result, downloader = _run(_video_item())
-    assert result.video == [{"file": r"C:\tmp\video.mp4"}]
+    assert len(result.video) == 1
+    assert result.video[0]["file"] == r"C:\tmp\video.mp4"
+    # meta 随视频段透传：发送点据此登记 bot_sent 媒体档案（视频追问复用）。
+    meta = result.video[0]["meta"]
+    assert meta["platform"] == "xiaohongshu"
+    assert meta["item_id"] == "note1"
+    assert meta["title"] == "视频笔记"
+    assert meta["canonical_url"] == "https://www.xiaohongshu.com/explore/note1"
+    assert meta["duration_ms"] is None
     assert downloader.downloaded_urls == ["https://sns-video/v.mp4"]
     assert "视频已发送 ✓（1.0MB）" in result.body
     assert "video_auto_sent" in result.audit_tags
