@@ -358,7 +358,7 @@ class Config(BaseModel):
     # fast_mode 时，首候选发出 hedge_delay 秒仍未回则并发发起次候选，
     # 先到先得；落选请求仍会飞完并正常计费 token（成本换尾延迟）。
     bot_chat_hedged_requests_enabled: bool = True
-    bot_chat_hedge_delay_seconds: float = 6.0
+    bot_chat_hedge_delay_seconds: float = 2.0
     bot_chat_hedge_max_candidates: int = 2
     bot_music_default_mode: str = "card+voice+link"
     bot_music_candidates_enabled: bool = False
@@ -589,12 +589,12 @@ class Config(BaseModel):
     bot_chat_temperature: float = 0.7
     bot_chat_reasoning_effort: str = ""
     bot_chat_max_tokens: int = 65538
-    bot_chat_timeout_seconds: float = 90.0
+    bot_chat_timeout_seconds: float = 20.0
     # QQ/群聊快速响应模式：限制上下文、输出和联网前置工作，优先首字响应速度。
     bot_chat_fast_mode: bool = True
     bot_chat_fast_max_tokens: int = 65538
     bot_chat_fast_max_candidates: int = 0
-    bot_chat_fast_timeout_seconds: float = 90.0
+    bot_chat_fast_timeout_seconds: float = 20.0
     bot_chat_fast_context_budget: int = 9600
     bot_chat_fast_web_max_queries: int = 3
     # 故障转移总时限（秒）：候选模型连续失败时的整体预算，防止响应被拖到分钟级；0=不限。
