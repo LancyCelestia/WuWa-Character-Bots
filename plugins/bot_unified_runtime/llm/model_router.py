@@ -1414,7 +1414,7 @@ class ModelRouter:
         capability = str(kwargs.pop("capability", "") or "")
         raw_call_seq = kwargs.pop("call_seq", 1)
         try:
-            call_seq = max(1, int(raw_call_seq))  # type: ignore[arg-type]
+            call_seq = max(1, int(raw_call_seq))  # type: ignore[call-overload]
         except (TypeError, ValueError):
             call_seq = 1
         impl_kwargs: dict[str, object] = dict(kwargs)
@@ -1437,16 +1437,6 @@ class ModelRouter:
         complex_task = len(effective_text) >= _COMPLEX_MIN_CHARS or any(
             keyword in effective_text for keyword in _COMPLEX_KEYWORDS
         )
-        record_ctx: dict[str, object] = {
-            "request_id": request_id,
-            "call_seq": call_seq,
-            "session_id": session_id,
-            "capability": capability,
-            "started_at": started_at,
-            "started_mono": started_mono,
-            "global_effort": global_effort,
-            "complex_task": complex_task,
-        }
         try:
             reply = self._generate_impl(
                 messages,
@@ -1458,7 +1448,18 @@ class ModelRouter:
                 **impl_kwargs,
             )
         except LLMProviderError as exc:
-            self._emit_call_record(reply=None, error=exc, **record_ctx)
+            self._emit_call_record(
+                reply=None,
+                error=exc,
+                request_id=request_id,
+                call_seq=call_seq,
+                session_id=session_id,
+                capability=capability,
+                started_at=started_at,
+                started_mono=started_mono,
+                global_effort=global_effort,
+                complex_task=complex_task,
+            )
             raise
         except Exception as exc:
             synthesized = LLMProviderError(
@@ -1466,9 +1467,31 @@ class ModelRouter:
                 error_kind="provider_error",
             )
             synthesized.attempts = list(getattr(self, "last_attempts", []) or [])
-            self._emit_call_record(reply=None, error=synthesized, **record_ctx)
+            self._emit_call_record(
+                reply=None,
+                error=synthesized,
+                request_id=request_id,
+                call_seq=call_seq,
+                session_id=session_id,
+                capability=capability,
+                started_at=started_at,
+                started_mono=started_mono,
+                global_effort=global_effort,
+                complex_task=complex_task,
+            )
             raise
-        self._emit_call_record(reply=reply, error=None, **record_ctx)
+        self._emit_call_record(
+            reply=reply,
+            error=None,
+            request_id=request_id,
+            call_seq=call_seq,
+            session_id=session_id,
+            capability=capability,
+            started_at=started_at,
+            started_mono=started_mono,
+            global_effort=global_effort,
+            complex_task=complex_task,
+        )
         return reply
 
     def _generate_impl(

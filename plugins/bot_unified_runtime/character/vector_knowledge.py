@@ -955,10 +955,10 @@ class SqliteVectorKnowledgeStore:
                 return []
             if pinned_ids:
                 pinned_seen = set(pinned_ids)
-                fused_ids = (
+                fused_ids = [
                     *pinned_ids,
                     *[chunk_id for chunk_id in fused_ids if chunk_id not in pinned_seen],
-                )
+                ]
             return self._fetch_chunks(list(fused_ids)[: max(1, self.top_k)])
 
     def _entry_title_candidates(self, query_text: str) -> list[tuple[int, bool, str]]:

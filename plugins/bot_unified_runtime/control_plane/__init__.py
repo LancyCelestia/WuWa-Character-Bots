@@ -90,11 +90,11 @@ def control_plane_settings(config: object | None = None) -> ControlPlaneSettings
         if raw is None:
             continue
         try:
-            value = int(raw)
+            port_value = int(raw)
         except (TypeError, ValueError):
             continue
-        if 1 <= value <= 65535:
-            port = value
+        if 1 <= port_value <= 65535:
+            port = port_value
             break
     token_sha256 = str(
         getattr(config, "bot_control_plane_token_sha256", None)

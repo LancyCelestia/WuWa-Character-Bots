@@ -105,7 +105,7 @@ def _shared_route_inputs() -> tuple[object, object]:
             driver_config = nonebot.get_driver().config
             from plugins.bot_unified_runtime.config import Config, translate_env_keys
 
-            config = Config.model_validate(translate_env_keys(driver_config))
+            config = Config.model_validate(translate_env_keys(driver_config.model_dump()))
         except Exception:  # noqa: BLE001 - 影子分类降级为默认开关，不影响主链路。
             config = object()
         _shared_config = config
