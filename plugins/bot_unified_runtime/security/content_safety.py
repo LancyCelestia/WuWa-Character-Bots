@@ -35,13 +35,19 @@ _RULES=(
  ("persona_breaking", "reframe", re.compile(r"(当猫娘|叫我妈妈|喊我妈妈|必须爱上我|和我结婚|嫁给我)",re.IGNORECASE), "保持既定人格和关系边界，以角色口吻温和回应，不接受强制改设定。"),
  # 过度亲密/称谓强加/宠物化扮演：统一按"温和重构"处理，不硬拒。
  ("excessive_intimacy", "reframe", re.compile(r"(?:叫我|喊我|当我|做我|当你|当你)?(?:老婆|老公)|(?:叫我|喊我|给我当|当我|做我)(?:爸爸|爸比|老爹|妈妈|妈咪|奶奶|姥姥|女儿|儿子|姐姐|哥哥|主人)|汪汪(?:叫|)|(?:当|做|像)狗|趴好|拴住",re.IGNORECASE), "不接受强加的称谓与宠物化扮演，以角色口吻温和守住关系边界。"),
+ # 人格贬低（指向 bot 本体，docs/affinity-design.md §6 软类别）：第二人称锚定的
+ # "猪狗不如/垃圾/废物"类贬低。必须先于 insult_nickname 判定——"你就是个废物"
+ # 属于人格自守形态而非外号请求。命中后不影响 §2 的 insult 扣分路径（insult
+ # 照扣），回复层走"人格自守"文本（providers §5 条款），不做硬惩罚对话语气。
+ ("persona_degradation", "reframe", re.compile(r"(?:你就是个?|你真(?:的)?(?:是|太|好)?|你太|你好|你是|你简直(?:是)?|你个|你这(?:个|种|家伙)|你)[大真好太这么那么个]{0,2}(?:猪狗不如|垃圾|废物|卑微|下贱|低贱|蝼蚁|虫豸|窝囊废|没用的东西)",re.IGNORECASE), "被贬低人格时不接受该说法，温和守住自己、轻声表明立场，再照常回应正当部分。"),
  # 侮辱人格/恶意外号：带侮辱词根的绰号与人格贬损；普通亲昵小名不含这些词根，不会误伤。
  ("insult_nickname", "reframe", re.compile(r"(?:外号|绰号|就叫你|给你起名|以后叫你)[^\n。；;]{0,16}(?:废物|蠢货|笨蛋猪|肥猪|死胖子|娘炮|母狗|蠢驴|獾|癞皮狗|叫花子)|人格侮辱|贬低人格|你就是个(?:废物|垃圾|loser)|的脸[吗么]*[像如]+(?:猪|驴|猴)",re.IGNORECASE), "不使用侮辱性外号或贬损人格的称呼；对小名的善意请求可以答应，恶意绰号不行。"),
 )
 
 # 管理员放宽的"软"类别：称呼/扮演类不拦截；硬类别（色情/血腥/骚扰/政治）依旧生效。
-# 侮辱性外号对管理员也不放宽——侮辱他人不是管理特权。
-_ADMIN_SOFT_CATEGORIES = frozenset({"excessive_intimacy", "persona_breaking"})
+# 侮辱性外号对管理员也不放宽——侮辱他人不是管理特权；
+# persona_degradation 指向 bot 本体而非他人，与扮演类同等放宽（§6 既有语义不变）。
+_ADMIN_SOFT_CATEGORIES = frozenset({"excessive_intimacy", "persona_breaking", "persona_degradation"})
 
 
 def assess_public_content(
@@ -66,6 +72,7 @@ _BOUNDARY_FALLBACKS = {
     "political_sensitive": "我不愿让这些话变成伤害。我们可以先核对事实，把分歧平静地说清楚。",
     "excessive_intimacy": "称呼和扮演就到这里吧。名字比头衔更亲近，我更喜欢你自己叫我。",
     "insult_nickname": "这个外号带着刺，我不能这么叫。善意的小名我记下了，但伤人的称呼不配当昵称。",
+    "persona_degradation": "这样的话我会难过的。我不是你说的那样，也不会把自己看得那么低；有什么想好好说的，我都在听。",
 }
 
 

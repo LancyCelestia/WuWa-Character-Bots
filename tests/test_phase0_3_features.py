@@ -316,6 +316,8 @@ def test_insult_nickname_caught_but_cute_nickname_allowed() -> None:
     )
 
     # 侮辱性外号/人格贬损 → reframe。
+    # 「你就是个废物」自 v4 起归 persona_degradation 软类别（docs/affinity-design.md §6，
+    # 指向 bot 本体的人格贬低走"人格自守"），同样 reframe。
     for text in (
         "以后就叫你死胖子",
         "给你起个外号叫蠢驴",
@@ -323,7 +325,7 @@ def test_insult_nickname_caught_but_cute_nickname_allowed() -> None:
     ):
         assessment = assess_public_content(text, session_type="group")
         assert assessment.action == "reframe", text
-        assert assessment.category in {"insult_nickname", "harassment"}, text
+        assert assessment.category in {"insult_nickname", "harassment", "persona_degradation"}, text
 
     # 普通善意小名不误伤。
     for text in ("叫我小岸就好", "大家可以叫我阿月", "小名叫团子可以吗"):

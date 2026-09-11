@@ -85,7 +85,8 @@ def test_affinity_store_survives_concurrent_exception_storm(tmp_path) -> None:
         connection.close()
     assert rows is not None
     assert rows[0] == 25, "行数必须等于用户数：observe 不得为同一用户产生重复行"
-    assert 0.0 <= rows[1] <= rows[2] <= 1.0
+    # v4 线性版值域 [-1,+1]（docs/affinity-design.md §1：写入路径全部 clamp）
+    assert -1.0 <= rows[1] <= rows[2] <= 1.0
 
 
 def test_sqlite_send_queue_prune_and_claim_cycle_stay_bounded(tmp_path) -> None:

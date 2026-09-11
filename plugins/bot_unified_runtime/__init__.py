@@ -5438,8 +5438,21 @@ def _register_nonebot_handlers() -> None:
                     _store = build_character_affinity_store(config)
                     from .character.affinity import classify_behavior
                     from .character.affinity import extract_profile_facts as _epf
+                    from .security.content_safety import assess_public_content
 
-                    behavior = classify_behavior(message.plain_text)
+                    # 安全评估喂给行为分类：persona_degradation/harassment 等类别
+                    # 才能映射到 insult/tease 路径（docs/affinity-design.md §6）。
+                    assessment = assess_public_content(
+                        message.plain_text,
+                        admin="admin" in {
+                            str(role).strip().lower() for role in message.sender_roles
+                        },
+                    )
+                    behavior = classify_behavior(
+                        message.plain_text,
+                        safety_category=assessment.category,
+                        safety_action=assessment.action,
+                    )
                     if _store is not None:
                         _store.observe(
                             message.sender_id,

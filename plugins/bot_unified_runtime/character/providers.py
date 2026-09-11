@@ -49,6 +49,13 @@ from .vector_knowledge import (
 
 LLM_SAFE_MEMORY_SENSITIVITIES = frozenset({"public", "group", "personal"})
 
+# docs/affinity-design.md §5 人格自守条款：追加在档位态度文本之后（独立一句，
+# 任何档位生效）；触发形态见 §6 软类别 persona_degradation（贬低不改变扣分路径）。
+_PERSONA_SELF_GUARD_CLAUSE = (
+    "（人格自守：若被以“猪狗不如”“垃圾”“废物”等贬低人格，温和地守住自己、"
+    "轻声表明立场，然后照常回应对方话语里正当的部分。）"
+)
+
 
 class CharacterContextProvider(Protocol):
     def build_context(
@@ -285,9 +292,10 @@ class FileCharacterContextProvider:
             request_id=request_id,
             sender_id=sender_id,
         )
-        # 动态好感度融合（批次 C / v3）：行为驱动层有记录时覆盖 affinity/attitude，
-        # 并把档位映射到 familiarity，使语气数值参数（warmth/directness）跟随动态档位；
-        # 档案的其他字段（称呼/偏好/备注）保留。
+        # 动态好感度融合（批次 C / v4 线性版）：行为驱动层有记录时覆盖 affinity/attitude，
+        # 并把档位映射到 familiarity（docs/affinity-design.md §5：档 ≥+2 → close、
+        # -1..+1 → familiar、≤-2 → stranger），使语气数值参数（warmth/directness）
+        # 跟随动态档位；档案的其他字段（称呼/偏好/备注）保留。
         if self.affinity_store is not None and sender_id:
             dynamic = self.affinity_store.snapshot(sender_id)
             if dynamic.get("affinity") is not None and (dynamic["affinity"] != AFFINITY_BASE or dynamic.get("tags")):
@@ -295,14 +303,22 @@ class FileCharacterContextProvider:
                 notes_text = "；".join(str(n) for n in dynamic.get("profile_notes") or [])
                 nickname_text = str(dynamic.get("nickname") or "")
                 attitude = str(dynamic.get("attitude") or "")
+                # §5 人格自守条款：追加在态度文本之后（独立一句，任何档位生效）。
+                attitude += _PERSONA_SELF_GUARD_CLAUSE
                 if tags_text:
                     attitude += f"（印象参考：{tags_text}；只影响语气，不外显为标签）"
                 if notes_text:
                     attitude += f"（已知画像：{notes_text}；可在对话中自然体现，不逐条复述）"
                 if nickname_text:
                     attitude += f"（对方的小名：{nickname_text}；可用它称呼对方）"
-                tier = tier_for_affinity(float(dynamic["affinity"]))
-                familiarity = {"close": "close", "friendly": "familiar"}.get(tier, "stranger")
+                tier = int(tier_for_affinity(float(dynamic["affinity"])))
+                # §5 familiarity 映射：档 ≥+2 close；档 -1..+1 familiar；档 ≤-2 stranger。
+                if tier >= 2:
+                    familiarity = "close"
+                elif tier <= -2:
+                    familiarity = "stranger"
+                else:
+                    familiarity = "familiar"
                 relationship = relationship.model_copy(
                     update={
                         "affinity": float(dynamic["affinity"]),

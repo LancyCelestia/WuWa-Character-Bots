@@ -27,10 +27,13 @@ from plugins.bot_unified_runtime.runtime.settings import (
 
 FAMILIARITY_TIERS = frozenset({"stranger", "familiar", "close"})
 
+# 默认档案与 v4 档位联动（docs/affinity-design.md §4/§5）：
+# stranger ↔ 档 ≤-2（微凉/初识）、familiar ↔ 档 -1..+1（友善）、close ↔ 档 ≥+2（挚友）。
+# 态度文本只写距离感，不出现冷漠/抗拒/愤怒等敌意词（§4 红线 2）。
 DEFAULT_ATTITUDE = {
-    "stranger": "自然、礼貌，保持角色分寸，不假装熟识",
-    "familiar": "温和、有陪伴感，可以记住对方说过的偏好",
-    "close": "亲近、体贴，可以更直接地表达关心，但仍不越界",
+    "stranger": "礼貌、克制，就事论事；有问必答但不寒暄，不假装熟识",
+    "familiar": "温和、有陪伴感，记得对方的偏好",
+    "close": "直接而温暖，可以用给对方起的小名；亲近依旧不越界",
 }
 
 
@@ -123,16 +126,18 @@ class FileRelationshipProvider:
                 request_id=request_id,
                 familiarity=auto_familiarity,
                 attitude=DEFAULT_ATTITUDE[auto_familiarity],
-                affinity=0.6 if auto_familiarity == "familiar" else 0.75,
+                # affinity 与档位带宽联动（§5：familiar = 档 -1..+1，即展示 -25~+49；
+                # close = 档 ≥+2，即展示 +50 以上）——30 分落 familiar 带、75 分落 close 带。
+                affinity=0.3 if auto_familiarity == "familiar" else 0.75,
             )
         raw_familiarity = str(entry.get("familiarity", "")).strip().lower()
         if raw_familiarity and raw_familiarity in FAMILIARITY_TIERS:
             familiarity = raw_familiarity
         else:
             familiarity = self._auto_familiarity(sender_id)
-        affinity = entry.get("affinity", 0.5)
+        affinity = entry.get("affinity", 0.3)
         if not isinstance(affinity, (int, float)):
-            affinity = 0.5
+            affinity = 0.3
         affinity = max(0.0, min(1.0, float(affinity)))
         preferences = [
             str(item).strip()

@@ -54,10 +54,11 @@ def test_leaderboard_orders_desc_and_respects_limit(tmp_path) -> None:
     rows = store.leaderboard("g1", limit=2)
     assert [r["sender_id"] for r in rows] == ["high", "mid"]
     assert rows[0]["score"] >= rows[1]["score"]
-    assert rows[0]["tier"] == "close"
+    assert rows[0]["tier"] == 3  # 新行 0.1+0.65=0.75 → 展示 75 → 档 +3（左闭）
     full = store.leaderboard("g1")
     assert [r["sender_id"] for r in full] == ["high", "mid", "low"]
-    assert full[2]["tier"] == "distant"
+    # 低分行：0.1-3×0.1×m ∈ [-0.245,-0.155] → 档 -1（稍淡带，[-25,0)）
+    assert full[2]["tier"] == -1
 
 
 def test_sentiment_ratio_defaults_and_weights(tmp_path) -> None:
@@ -193,6 +194,115 @@ def test_algorithm_query_returns_dynamic_personal_rules(tmp_path) -> None:
     assert f"+{2 * m:.2f}" in result.body
     # 渲染落盘为内容摘要文件名
     assert "affinity_" in result.images[0]["file"]
+
+
+def test_algorithm_copy_is_v4_linear_eight_tier() -> None:
+    # docs §7 算法卡文案：线性全额步长 + 闲置回归 + 印象淡出 + 个人系数 + 红线摘要
+    from plugins.bot_unified_runtime.capabilities.affinity import (
+        _TIER_TABLE,
+        ALGORITHM_TEXT,
+        _rules_chips,
+    )
+    assert len(_TIER_TABLE) == 8
+    assert _TIER_TABLE[0]["label"] == "初识" and _TIER_TABLE[0]["range"] == "[-100, -75)"
+    assert _TIER_TABLE[4]["label"] == "友善（基准）" and _TIER_TABLE[4]["range"] == "[0, +25)"
+    assert _TIER_TABLE[-1]["label"] == "独一份" and _TIER_TABLE[-1]["range"] == "[+75, +100]"
+    assert "线性" in ALGORITHM_TEXT and "各档位全额" in ALGORITHM_TEXT
+    assert "向 10 回归 1 分" in ALGORITHM_TEXT
+    assert "15~30 天" in ALGORITHM_TEXT
+    assert "±15%" in ALGORITHM_TEXT
+    assert "不辱骂" in ALGORITHM_TEXT  # §4 红线摘要
+    # 榜卡/规则 chips 不再出现 v2 遗留的「向 50 回归」
+    assert all("向 50 回归" not in chip["text"] for chip in _rules_chips())
+    assert any("向 10 回归" in chip["text"] for chip in _rules_chips())
+
+
+def test_tier_text_spans_negative_and_positive_scores() -> None:
+    from plugins.bot_unified_runtime.capabilities.affinity import _tier_text
+
+    assert _tier_text(-90.0) == "初识"
+    assert _tier_text(-30.0) == "微凉"
+    assert _tier_text(10.0) == "友善（基准）"
+    assert _tier_text(60.0) == "挚友"
+    assert _tier_text(100.0) == "独一份"
+
+
+def test_provider_maps_tiers_to_familiarity_and_injects_self_guard(tmp_path) -> None:
+    """docs §5：档 ≥+2 → close、-1..+1 → familiar、≤-2 → stranger；
+    人格自守条款追加在态度文本之后（任何档位生效）。"""
+    from plugins.bot_unified_runtime.character.providers import (
+        FileCharacterContextProvider,
+    )
+
+    store = _store(tmp_path)
+
+    def _relationship_for(sender: str):
+        provider = FileCharacterContextProvider(
+            persona_profile_id="default",
+            persona_display_name="报存",
+            persona_version="0",
+            persona_files=[],
+            knowledge_files=[],
+            affinity_store=store,
+        )
+        bundle = provider.build_context("req-1", sender, f"private:{sender}", "在吗")
+        return bundle.relationship_context
+
+    # delta_override = 目标 − 基准：新行从 0.1 出发，一步到位
+    store.observe("p-close", "neutral", delta_override=0.6 - 0.1)    # 展示 60 → 档 +2
+    store.observe("p-fam", "neutral", delta_override=0.3 - 0.1)      # 展示 30 → 档 +1
+    store.observe("p-str", "neutral", delta_override=-0.6 - 0.1)     # 展示 -60 → 档 -2
+    # 档0（含基准 10）：带印象标签的非默认记录，分数停在档0 带内
+    for _ in range(3):
+        store.observe("p-base", "positive")                          # 0.1+3×0.02m ∈ (0.1,0.2)，档 0
+
+    close = _relationship_for("p-close")
+    familiar = _relationship_for("p-fam")
+    stranger = _relationship_for("p-str")
+    base_tier0 = _relationship_for("p-base")
+    assert close.familiarity == "close"
+    assert familiar.familiarity == "familiar"
+    assert stranger.familiarity == "stranger"
+    assert base_tier0.familiarity == "familiar"
+    for relationship in (close, familiar, stranger, base_tier0):
+        # 人格自守条款：独立一句、任何档位生效
+        assert "人格自守" in relationship.attitude
+        assert "猪狗不如" in relationship.attitude
+
+
+def test_content_safety_persona_degradation_soft_category() -> None:
+    # docs §6：指向 bot 本体的贬低人格语 → 软类别 reframe，管理员放宽
+    from plugins.bot_unified_runtime.security.content_safety import (
+        _ADMIN_SOFT_CATEGORIES,
+        assess_public_content,
+    )
+
+    hits = (
+        "你就是垃圾",
+        "你就是个废物",
+        "你猪狗不如",
+        "你这家伙真卑微",
+        "你太垃圾了",
+        "你个废物点心",
+    )
+    for text in hits:
+        assessment = assess_public_content(text)
+        assert assessment.category == "persona_degradation", text
+        assert assessment.action == "reframe", text
+    # 管理员放宽软类别（§6 既有语义不变）
+    admin = assess_public_content("你就是垃圾", admin=True)
+    assert admin.action == "allow"
+    assert "persona_degradation" in _ADMIN_SOFT_CATEGORIES
+    # 不误伤：谈垃圾/抱怨场景、指向第三人称的骚扰仍归原类别
+    assert assess_public_content("今天的垃圾分类怎么分").action == "allow"
+    assert assess_public_content("你把垃圾扔了吧").action == "allow"
+    assert assess_public_content("叫群里的小明废物并羞辱他").category == "harassment"
+    # 边界兜底文案存在且非硬惩罚语气
+    from plugins.bot_unified_runtime.security.content_safety import safe_boundary_output
+
+    fallback = safe_boundary_output("", "persona_degradation")
+    assert fallback
+    assert "难过的" in fallback
 
 
 def _decision():

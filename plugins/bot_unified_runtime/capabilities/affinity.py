@@ -1,9 +1,10 @@
 """好感度查询能力（bot.affinity）：`好感度` / `好感查看` / `查询好感`。
 
 私聊返回双向分值卡（守岸人对你 / 你对守岸人），群聊返回本群好感榜
-（有印象成员网格，自己一行高亮）；`好感度 算法` 返回三档规则说明。
+（有印象成员网格，自己一行高亮）；`好感度 算法` 返回八档规则说明。
 Mica 卡走独立模板 affinity_card.html，渲染失败回退纯文本。
-数值口径见 docs/affinity-design.md §9。
+数值口径见 docs/affinity-design.md（v4 线性版）：展示 -100~+100、
+基准 10、线性步长（各档位全额）、闲置回归与印象淡出、8 档态度表。
 """
 
 from __future__ import annotations
@@ -14,7 +15,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from plugins.bot_unified_runtime.character.affinity import effective_delta
+from plugins.bot_unified_runtime.character.affinity import (
+    effective_delta,
+    tier_name_for_affinity,
+)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -24,9 +28,8 @@ from plugins.bot_unified_runtime.contracts import (
 )
 
 _COMMAND_RE = re.compile(r"^[/!！]?\s*(?:好感度|好感查看|查询好感)\s*(?P<arg>.*)$")
-# 与样本卡一致的展示口径：≥75 亲近强调、<25 疏离警示，单位 0-100。
-_HOT_SCORE = 75.0
-_COLD_SCORE = 25.0
+# v4 展示口径：-100~+100 八档（docs/affinity-design.md §4/§7）；档位命名由
+# character.affinity.tier_name_for_affinity 统一提供，此处不再维护阈值副本。
 _LEADERBOARD_LIMIT = 60
 _LEADERBOARD_PREVIEW = 12
 
@@ -41,21 +44,29 @@ def parse_affinity_query(text: str) -> str:
 
 
 ALGORITHM_TEXT = (
-    "好感度算法（0-100，初始 10；步长动态变化、因人而异）：\n"
+    "好感度算法（-100~+100，初始 10；线性步长、因人而异）：\n"
     "① 加分：感谢/夸奖/问候/陪伴 每次 +2 起（同一天前 10 次有效）。\n"
-    "② 轻微波动：玩笑与越界亲昵 每次 -1 起（每日前 5 次）；普通聊天不变；闲置 7 天起每天向 10 回归 1 分。\n"
+    "② 轻微波动：玩笑与越界亲昵 每次 -1 起（每日前 5 次）；普通聊天不变。\n"
     "③ 扣分：抱怨/贬低 每次 -5 起、辱骂/骚扰 每次 -10 起（每日各前 8 次）。\n"
-    "动态规则：当前分越靠近 0 或 100，单步越小（10~90 区间全额，两侧按幂律衰减）；"
-    "每人另有由 QQ 号确定性派生的 ±15% 个人系数——同一句话，不同人的实际增减不同。\n"
-    "档位态度：亲近 ≥75｜友善 45~74｜客气 25~44｜疏离 <25（任何档位都不辱骂、不弃聊）。"
+    "动态规则：步长线性，各档位全额（不做靠边衰减）；每人另有由 QQ 号确定性派生的"
+    " ±15% 个人系数——同一句话，不同人的实际增减不同。"
+    "好久不理我会慢慢回到 10 分（闲置 7 天起每天向 10 回归 1 分）；"
+    "难听的记忆也会随时间淡掉（15~30 天）。\n"
+    "档位态度：初识/生疏/微凉/稍淡/友善/亲近/挚友/独一份 共八档；"
+    "红线摘要：任何档位都不强硬、不辱骂、不贬低，负向档位只是距离感，"
+    "最高档也不越界，不冷暴力弃聊。"
 )
 
-# 档位 → 回应方式对照（docs/affinity-design.md §9.1b）
+# 档位 → 回应方式对照（docs/affinity-design.md §4，v4 八档；左闭右开、最高档含 +100）
 _TIER_TABLE: list[dict[str, str]] = [
-    {"label": "亲近", "range": "≥75", "attitude": "更直接的关心与陪伴，可以用小名称呼，答应得干脆"},
-    {"label": "友善", "range": "45~74", "attitude": "温和有陪伴感，记得对方偏好，征询式回应"},
-    {"label": "客气", "range": "25~44", "attitude": "礼貌但有距离，就事论事，不假装熟识"},
-    {"label": "疏离", "range": "<25", "attitude": "简短、有分寸的疏离；保持体面，绝不辱骂"},
+    {"label": "初识", "range": "[-100, -75)", "attitude": "初见不久的人：礼貌、克制、有问必答但不寒暄"},
+    {"label": "生疏", "range": "[-75, -50)", "attitude": "生疏的人：话少一截，依旧体面温和"},
+    {"label": "微凉", "range": "[-50, -25)", "attitude": "语气稍淡，不冷不热，就事论事"},
+    {"label": "稍淡", "range": "[-25, 0)", "attitude": "略淡于平时，但保持基本温柔"},
+    {"label": "友善（基准）", "range": "[0, +25)", "attitude": "温和、有陪伴感，记得对方的偏好（初始 10 在此档）"},
+    {"label": "亲近", "range": "[+25, +50)", "attitude": "更主动的关心，记得对方说过的事"},
+    {"label": "挚友", "range": "[+50, +75)", "attitude": "直接而温暖，可以用给对方起的小名"},
+    {"label": "独一份", "range": "[+75, +100]", "attitude": "最珍视的人：全然温柔的陪伴——依旧守全部安全边界"},
 ]
 
 _STEP_LABELS: tuple[tuple[str, str], ...] = (
@@ -64,14 +75,6 @@ _STEP_LABELS: tuple[tuple[str, str], ...] = (
     ("negative", "抱怨/贬低"),
     ("insult", "辱骂/骚扰"),
 )
-
-
-def _score_color_class(score: float) -> str:
-    if score >= _HOT_SCORE:
-        return " hot"
-    if score < _COLD_SCORE:
-        return " cold"
-    return ""
 
 
 def _accent_color(config: Any | None) -> str:
@@ -96,7 +99,7 @@ def _rules_chips() -> list[dict[str, str]]:
         {
             "cls": "flat",
             "label": "波动",
-            "text": "玩笑亲昵 -1 · 普通聊天不变 · 闲置 7 天起每天向 50 回归",
+            "text": "玩笑亲昵 -1/次（每日前 5 次）· 普通聊天不变 · 闲置 7 天起每天向 10 回归 1 分",
         },
         {
             "cls": "down",
@@ -170,13 +173,8 @@ def build_algorithm_payload(
 
 
 def _tier_text(score: float) -> str:
-    if score >= _HOT_SCORE:
-        return "亲近"
-    if score >= 45.0:
-        return "友善"
-    if score >= _COLD_SCORE:
-        return "客气"
-    return "疏离"
+    """展示分（-100~+100）→ §4 档位名称（与 attitude 注入层同一档表）。"""
+    return tier_name_for_affinity(score / 100.0)
 
 
 def _format_private_text(bot_name: str, bot_score: float, user_score: float) -> str:
@@ -188,7 +186,10 @@ def _format_private_text(bot_name: str, bot_score: float, user_score: float) -> 
 
 
 def _algorithm_one_liner() -> str:
-    return "算法：感谢夸奖问候 +2/次；玩笑 -1、闲置回归；抱怨 -5、辱骂 -10；区间 0-100。发「好感度 算法」看完整说明。"
+    return (
+        "算法：+2 起/-1 起/-5 起/-10 起（线性全额）；闲置 7 天起每天向 10 回归 1 分；"
+        "难听记忆 15~30 天淡出；×个人系数（±15%）。发「好感度 算法」看完整说明。"
+    )
 
 
 def _format_group_text(
@@ -311,7 +312,8 @@ def build_affinity_capability(
 
         me_id = message.sender_id
         snapshot = affinity_store.snapshot(me_id) if me_id else {}
-        bot_score = round(float(snapshot.get("affinity", 0.5)) * 100.0, 1)
+        # 初始值口径（docs §1）：无记录默认基准 0.1，展示 10 分。
+        bot_score = round(float(snapshot.get("affinity", 0.1)) * 100.0, 1)
         user_score = round(float(affinity_store.sentiment_for(me_id)) * 100.0, 1)
 
         show_group_board = bool(message.group_id) and arg not in {"我", "自己", "me"}
@@ -325,7 +327,7 @@ def build_affinity_capability(
             payload = build_group_payload(
                 rows,
                 me_id=me_id,
-                subtitle=f"有印象 {len(rows)} 人 · 分数=守岸人的印象好感（0-100）",
+                subtitle=f"有印象 {len(rows)} 人 · 分数=守岸人的印象好感（-100~+100）",
                 accent_color=accent,
             )
         else:

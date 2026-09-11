@@ -1,16 +1,14 @@
 """动态好感度与印象标签（批次 C 核心）。
 
 静态档案（relationship.py 的 JSON）之外的行为驱动层：
-- 每条消息按内容与安全评估归类行为：positive/neutral/negative/insult；
-- 行为驱动 affinity 增减（clamp [0,1]），并累计印象标签；
+- 每条消息按内容与安全评估归类行为：positive/neutral/tease/negative/insult；
+- 行为驱动 affinity 增减（clamp [-1,1]），并累计印象标签；
 - SQLite 持久化；与静态档案融合规则：档案有 affinity 用档案，否则用动态层。
 
-数值规范唯一权威描述见 docs/affinity-design.md（基数/因子表/每日上限/惰性回归/档位）。
-态度分档（注入 prompt 的一句话）：
-- >=0.75 亲近：更直接的关心，可用对方小名；
-- >=0.45 友善：温和有陪伴感；
-- >=0.25 客气：礼貌但有距离；
-- <0.25 严厉：简短、有分寸的疏离——始终保持人格，绝不人身攻击。
+数值规范唯一权威描述见 docs/affinity-design.md（v4 线性版，2026-09-12）：
+内部值域 [-1,+1]、展示口径 ×100（-100~+100）、基准 0.1（展示 10）、
+线性步长（v3 幂律阻尼废除）、闲置惰性回归与印象淡出、8 档态度表（档 id -4..+3）。
+所有数值常量集中在文件顶部，注释指向该文档对应章节。
 """
 
 from __future__ import annotations
@@ -83,20 +81,19 @@ def extract_learned_nickname(text: str) -> str | None:
         return None
     return learned
 
-# ---- 数值化常量（规范见 docs/affinity-design.md §2/§3，v3）----
-_AFFINITY_BASE = 0.1            # 初始好感 10（展示 0-100 = ×100）
+# ---- 数值化常量（规范唯一权威：docs/affinity-design.md v4 线性版）----
+_AFFINITY_BASE = 0.1            # §1 基准 0.1（展示 10 = ×100）：初始好感=回归收敛目标
 AFFINITY_BASE = _AFFINITY_BASE  # 公开只读别名（providers 等模块判断“非默认记录”用）
 _DAY_SECONDS = 86400
+# §2 因子表：步长全程线性（v3 的幂律阻尼 γ 已废除），乘法因子只剩个人系数。
 _BEHAVIOR_DELTA = {"positive": 0.02, "neutral": 0.0, "tease": -0.01, "negative": -0.05, "insult": -0.10}
-# 每日有效次数上限（UTC 自然日）：同行为超出后 delta 记 0，计数器与标签照常累计。
+# §2 每日有效次数上限（UTC 自然日）：同行为超出后 delta 记 0，计数器与标签照常累计。
 _DAILY_EFFECTIVE_CAPS: dict[str, int] = {"positive": 10, "tease": 5, "negative": 8, "insult": 8}
-# 幂律步长衰减（log-log 线性）：距极值 <0.1（即 <10 分）时步长按 (d/0.1)^γ 缩小。
-_DAMPING_RANGE = 0.1
-_DAMPING_EXPONENT = 1.0
-# 惰性回归：写路径检查闲置天数，≥7 天起每天向基数回归 0.01，不超过剩余距离；读路径无副作用。
+# §3 惰性回归（时间减退）：写路径检查闲置天数，≥7 天起每天向基准 0.1（10 分）
+# 回归 0.01，不超过剩余距离；时间源走注入 clock；updated_at 解析失败视为同日不衰减。
 _IDLE_REGRESSION_START_DAYS = 7
 _IDLE_REGRESSION_PER_DAY = 0.01
-# sentiment（表达倾向）半衰期（天）：辱骂淡出更快——宽恕快、忘善意慢。
+# §3 印象淡出（记忆减弱）半衰期（天）：辱骂 15、其余负面/正面 30；全部淡出回基准 10。
 _SENTIMENT_HALF_LIFE_DAYS = {"positive": 30.0, "negative": 30.0, "insult": 15.0}
 # 榜卡展示折算：闲置分数向基数衰减的半衰期（天），只影响展示，不落库。
 _LEADERBOARD_DECAY_HALF_LIFE_DAYS = 30.0
@@ -110,14 +107,6 @@ def per_user_factor(sender_id: str) -> float:
     return 0.85 + 0.3 * (int(digest[:8], 16) % 1000) / 999
 
 
-def _damping(affinity: float) -> float:
-    """靠近极值步长幂律衰减：x∈[0.1,0.9] 全额；d=min(x,1-x)<0.1 时按 (d/0.1)^γ 缩小。"""
-    d = min(affinity, 1.0 - affinity)
-    if d >= _DAMPING_RANGE:
-        return 1.0
-    return (d / _DAMPING_RANGE) ** _DAMPING_EXPONENT
-
-
 def effective_delta(
     sender_id: str,
     behavior: str,
@@ -125,21 +114,67 @@ def effective_delta(
     *,
     delta_override: float | None = None,
 ) -> float:
-    """一次行为在当前状态下的精确增减（含衰减与个人系数；override 为权威信号不衰减）。"""
+    """一次行为在当前状态下的精确增减（docs §2 v4：线性步长 × 个人系数）。
+
+    v4 无阻尼：步长不再随当前分靠近极值缩小（v3 的 _damping 幂律已废除），
+    全程 = 因子表 delta × m(uid)；override 为权威信号不乘系数（仅 clamp）。
+    """
     if delta_override is not None:
         return float(delta_override)
-    return _BEHAVIOR_DELTA.get(behavior, 0.0) * _damping(affinity) * per_user_factor(sender_id)
+    return _BEHAVIOR_DELTA.get(behavior, 0.0) * per_user_factor(sender_id)
 
-_ATTITUDE_TIERS: tuple[tuple[float, str], ...] = (
-    (0.75, "亲近：更直接的关心与陪伴，可以用你给对方起的小名称呼"),
-    (0.45, "友善：温和有陪伴感，记得对方的偏好"),
-    (0.25, "客气：礼貌但有距离，不假装熟识"),
-    (0.00, "严厉：简短、有分寸的疏离；保持人格与体面，绝不辱骂或人身攻击"),
+# ---- §4 档位表：线性 8 档，每档宽 25，档0=友善含基准 10；边界左闭右开（最高档含 +100）。
+# 展示区间 = internal × 100；档 id -4..+3（v3 曾返回具名 id close/friendly/polite/distant，
+# v4 改为整数档 id——向后兼容点，调用方以 providers.py 的 familiarity 映射为准）。
+_ATTITUDE_TIERS: tuple[tuple[int, str, str], ...] = (
+    (-4, "初识", "初见不久的人：礼貌、克制、有问必答但不寒暄"),
+    (-3, "生疏", "生疏的人：话少一截，依旧体面温和"),
+    (-2, "微凉", "语气稍淡，不冷不热，就事论事"),
+    (-1, "稍淡", "略淡于平时，但保持基本温柔"),
+    (0, "友善（基准）", "温和、有陪伴感，记得对方的偏好"),
+    (1, "亲近", "更主动的关心，记得对方说过的事"),
+    (2, "挚友", "直接而温暖，可以用给对方起的小名"),
+    (3, "独一份", "最珍视的人：全然温柔的陪伴"),
 )
+# §4 态度红线：每一档共同遵守，写死进注入文本（attitude_for_affinity 全文携带）。
+_TIER_RED_LINES: tuple[str, ...] = (
+    (
+        "任何档位都不强硬、不粗鲁、不攻击、不辱骂、不贬低、不谴责；"
+        "被冒犯时只温和表明立场（“这样的话我会难过的”量级），绝不坚决抵抗或反击"
+    ),
+    "负向档位只是“距离感”：不表现出任何敌意；最低档也是“礼貌的初见”，不是敌视",
+    "最高档也不越界：亲近不等于亲密关系升级，绝不出现性、R-18、引导上床类内容",
+    "任何档位都不辱骂、不冷暴力弃聊",
+)
+_TIER_BY_ID: dict[int, tuple[str, str]] = {tier_id: (name, instruction) for tier_id, name, instruction in _ATTITUDE_TIERS}
+
+
+def tier_for_affinity(affinity: float) -> int:
+    """§4 档 id（-4..+3）：展示分 floor(display/25) 后 clamp，边界左闭右开、最高档含 +100。
+
+    向后兼容标注：v3 返回具名 id（close/friendly/polite/distant），v4 起为整数档 id。
+    """
+    display = float(affinity) * 100.0
+    return max(-4, min(3, int(display // 25)))
+
+
+def tier_name_for_affinity(affinity: float) -> str:
+    """§4 档位名称（初识/生疏/微凉/稍淡/友善/亲近/挚友/独一份），展示层共用。"""
+    return _TIER_BY_ID[tier_for_affinity(affinity)][0]
+
+
+def attitude_for_affinity(affinity: float) -> str:
+    """§4 完整态度文本：档位基调 + 四条态度红线（每档共同遵守，注入 prompt 全文）。"""
+    name, instruction = _TIER_BY_ID[tier_for_affinity(affinity)]
+    red_lines = "；".join(
+        f"（{index}）{line}" for index, line in enumerate(_TIER_RED_LINES, start=1)
+    )
+    return f"对当前用户的态度（档位「{name}」）：{instruction}。共同态度红线：{red_lines}。"
 
 
 def classify_behavior(text: str, *, safety_category: str = "", safety_action: str = "allow") -> str:
-    if safety_category in {"harassment", "insult_nickname"} or safety_action == "refuse":
+    if safety_category in {"harassment", "insult_nickname", "persona_degradation"} or safety_action == "refuse":
+        # §2 insult 行含人格贬低类（docs §6）：persona_degradation 照走 insult 扣分路径。
         return "insult"
     if safety_category in {"excessive_intimacy", "persona_breaking"}:
         return "tease"
@@ -153,24 +188,6 @@ def classify_behavior(text: str, *, safety_category: str = "", safety_action: st
     if _NEGATIVE_RE.search(value):
         return "negative"
     return "neutral"
-
-
-def tier_for_affinity(affinity: float) -> str:
-    """档位 id（左闭右开，边界值归上一档）：close/friendly/polite/distant。"""
-    if affinity >= 0.75:
-        return "close"
-    if affinity >= 0.45:
-        return "friendly"
-    if affinity >= 0.25:
-        return "polite"
-    return "distant"
-
-
-def attitude_for_affinity(affinity: float) -> str:
-    for threshold, attitude in _ATTITUDE_TIERS:
-        if affinity >= threshold:
-            return attitude
-    return _ATTITUDE_TIERS[-1][1]
 
 
 def _format_utc(timestamp: float) -> str:
@@ -354,7 +371,7 @@ class DynamicAffinityStore:
                         shift = min(idle_days * _IDLE_REGRESSION_PER_DAY, abs(gap))
                         affinity += shift if gap > 0 else -shift
             # delta：每日上限内全额、超限记 0；override 视为权威信号直用且不占每日额度。
-            # 实际步长 = 因子表 × 幂律衰减 g(当前分) × 个人系数 m(uid)（docs §3 v3）。
+            # §2 v4：实际步长 = 因子表 × 个人系数 m(uid)，线性、无幂律阻尼。
             if delta_override is not None:
                 delta = float(delta_override)
             else:
@@ -365,7 +382,8 @@ class DynamicAffinityStore:
                 else:
                     delta = effective_delta(sender_id, behavior, affinity)
                 day_counters[behavior] = used + 1
-            affinity = max(0.0, min(1.0, affinity + delta))
+            # §1 v4：写入路径全部 clamp 到 [-1, +1]（存量 [0,1] 旧值恒等沿用，无迁移）。
+            affinity = max(-1.0, min(1.0, affinity + delta))
             if behavior in counters:
                 counters[behavior] += 1
             if behavior in last_seen:
