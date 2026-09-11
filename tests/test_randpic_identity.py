@@ -169,3 +169,18 @@ def test_session_identity_admin_gate(tmp_path: Path) -> None:
         session_key="group:1", command_text="show",
     )
     assert "岸宝" in shown.body
+
+
+# ---------- config：.env 字符串必须能解析成 randpic 列表（2026-09-12 潜伏启动崩修复） ----------
+
+def test_randpic_list_fields_parse_from_env_json_string() -> None:
+    from plugins.bot_unified_runtime.config import Config
+
+    config = Config.model_validate(
+        {
+            "bot_randpic_dirs": '["C:/Users/LancyCelestia/Picture"]',
+            "bot_randpic_trigger_words": '["随机图", "来张图"]',
+        }
+    )
+    assert config.bot_randpic_dirs == ["C:/Users/LancyCelestia/Picture"]
+    assert config.bot_randpic_trigger_words == ["随机图", "来张图"]

@@ -618,6 +618,9 @@ _RUNTIME_HOT_OVERRIDE_FIELDS: tuple[tuple[str, str], ...] = (
     ("BOT_GROUP_DIGEST_LIST_MODE", "bot_group_digest_list_mode"),
     ("BOT_GROUP_DIGEST_WHITELIST", "bot_group_digest_whitelist"),
     ("BOT_GROUP_DIGEST_BLACKLIST", "bot_group_digest_blacklist"),
+    # 夜间每日群通讯总结主动推送（G-DIGEST；消费点 _register_digest_push_scheduler）
+    ("BOT_GROUP_DIGEST_PUSH_ENABLED", "bot_group_digest_push_enabled"),
+    ("BOT_GROUP_DIGEST_PUSH_TIME", "bot_group_digest_push_time"),
 )
 
 
@@ -2481,6 +2484,140 @@ def _register_reminder_scheduler(scheduler: Any, config: Any, send_queue: Any) -
     return {"interval": "1m"}
 
 
+_DIGEST_PUSH_INTRO = "今天群里的对话，我都悄悄记下了："
+_DIGEST_PUSH_DEFAULT_CLOCK = (21, 30)
+
+
+def _build_digest_push_text(summary: str) -> str:
+    """守岸人语气的推送正文：一句克制引子 + 当日群摘要（不堆辞藻）。"""
+    return f"{_DIGEST_PUSH_INTRO}\n{summary.strip()}"
+
+
+def _parse_digest_push_clock(value: Any) -> tuple[int, int]:
+    """解析 HH:MM 推送时刻；非法值回退默认 21:30（严格校验在 config 层）。"""
+    parts = str(value or "").strip().split(":")
+    if len(parts) != 2:
+        return _DIGEST_PUSH_DEFAULT_CLOCK
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+    except ValueError:
+        return _DIGEST_PUSH_DEFAULT_CLOCK
+    if 0 <= hour <= 23 and 0 <= minute <= 59:
+        return hour, minute
+    return _DIGEST_PUSH_DEFAULT_CLOCK
+
+
+def _push_daily_group_digests(
+    config: Any,
+    send_queue: Any,
+    provider: Any,
+    *,
+    now: Any = None,
+) -> list[str]:
+    """把白名单群当日群摘要逐群投递 send_queue；返回已推送群号。
+
+    推送目标只取群摘要名单 whitelist 模式下的白名单群：list_mode 非
+    whitelist 一律不推（绝不猜群）。每群合成 request_id 调 shared_group
+    provider 取当日摘要，无可用摘要静默跳过；正文 = 守岸人引子 + 摘要；
+    dedupe_key 带当天日期，同群同天不重发。
+    """
+    from datetime import datetime
+
+    from .character.shared_group import GroupDigestListFilter
+    from .contracts import (
+        PrivacyLevel,
+        RenderedOutput,
+        SendPolicy,
+        SendRequest,
+        SessionType,
+    )
+
+    digest_list = GroupDigestListFilter(
+        mode=str(getattr(config, "bot_group_digest_list_mode", "") or ""),
+        whitelist=getattr(config, "bot_group_digest_whitelist", None),
+        blacklist=getattr(config, "bot_group_digest_blacklist", None),
+    )
+    if digest_list.mode != "whitelist" or not digest_list.whitelist:
+        return []
+    today = (now or datetime.now().astimezone()).date().isoformat()
+    persona_profile_id = str(
+        getattr(config, "bot_persona_profile_id", "default")
+    )
+    pushed: list[str] = []
+    for group_id in sorted(digest_list.whitelist):
+        request_id = f"digest-push-{group_id}-{today}"
+        context = provider.load(request_id, group_id, sender_id="")
+        summary = str(getattr(context, "summary", "") or "").strip()
+        if not getattr(context, "enabled", False) or not summary:
+            continue
+        request = SendRequest(
+            request_id=request_id,
+            session_id=f"group:{group_id}",
+            target_scope=SessionType.GROUP,
+            target_id=group_id,
+            capability_id="bot.group_digest_push",
+            content=RenderedOutput(
+                request_id=request_id,
+                content_type="text",
+                content_ref={},
+                text_fallback=_build_digest_push_text(summary),
+                privacy_level=PrivacyLevel.GROUP,
+            ),
+            send_policy=SendPolicy.QUEUED,
+            priority="normal",
+            max_messages=1,
+            dedupe_key=f"digest_push:{group_id}:{today}",
+            cooldown_key=f"digest_push:{group_id}",
+            privacy_level=PrivacyLevel.GROUP,
+            persona_profile_id=persona_profile_id,
+            audit_tags=["digest_push", "daily"],
+        )
+        send_queue.submit(request)
+        pushed.append(group_id)
+    return pushed
+
+
+def _register_digest_push_scheduler(
+    scheduler: Any, config: Any, send_queue: Any
+) -> dict:
+    """夜间每日群通讯总结主动推送（G-DIGEST 收尾）。
+
+    每日 cron（``bot_group_digest_push_time``，默认 21:30）把群摘要名单
+    whitelist 模式下的白名单群当日摘要各推一遍；同步 job 跑在 APScheduler
+    线程池（与 reminder/reflection 同款，不阻塞事件循环），失败只记日志。
+    """
+
+    def _digest_push_job() -> None:
+        try:
+            from .character.shared_group import build_shared_group_context_provider
+
+            _push_daily_group_digests(
+                config,
+                send_queue,
+                build_shared_group_context_provider(config),
+            )
+        except Exception as exc:  # noqa: BLE001 - 夜间推送失败不影响主链路。
+            from nonebot.log import logger
+
+            logger.warning("group digest push failed: {}", type(exc).__name__)
+
+    hour, minute = _parse_digest_push_clock(
+        getattr(config, "bot_group_digest_push_time", "21:30")
+    )
+    scheduler.add_job(
+        _digest_push_job,
+        "cron",
+        id="bot_group_digest_push_daily",
+        replace_existing=True,
+        hour=hour,
+        minute=minute,
+        misfire_grace_time=3600,
+        max_instances=1,
+        coalesce=True,
+    )
+    return {"hour": hour, "minute": minute}
+
+
 def _register_nonebot_handlers() -> None:
     try:
         from nonebot import (
@@ -2994,6 +3131,13 @@ def _register_nonebot_handlers() -> None:
 
         if getattr(config, "bot_reminder_enabled", True):
             _register_reminder_scheduler(scheduler, config, send_queue)
+
+        # 夜间每日群通讯总结推送：推送开关开启且共享群摘要能力开启才注册。
+        if (
+            getattr(config, "bot_group_digest_push_enabled", True)
+            and getattr(config, "bot_shared_group_context_enabled", False)
+        ):
+            _register_digest_push_scheduler(scheduler, config, send_queue)
 
         from .sources.subscription_runtime_v2 import register_subscription_runtime_v2
 

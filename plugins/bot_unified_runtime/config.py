@@ -270,6 +270,10 @@ class Config(BaseModel):
     bot_group_digest_list_mode: str = ""
     bot_group_digest_whitelist: list[str] = []
     bot_group_digest_blacklist: list[str] = []
+    # 夜间每日通讯总结主动推送（G-DIGEST）：每日 cron 把当日群摘要向
+    # 白名单群各推一遍；list_mode 非 whitelist 时不推送任何群（绝不猜群）。
+    bot_group_digest_push_enabled: bool = True
+    bot_group_digest_push_time: str = "21:30"
     # 群聊回复策略（群号列表）：
     # black1=完全静默只接收不发送；black2=只回“@它且带指令”的消息；
     # white1=正常回复并可按主动接话开关抽签；white2=只回“@它”或显式命令。
@@ -841,6 +845,8 @@ class Config(BaseModel):
         "bot_group_white2",
         "bot_group_digest_whitelist",
         "bot_group_digest_blacklist",
+        "bot_randpic_dirs",
+        "bot_randpic_trigger_words",
         mode="before",
     )
     @classmethod
@@ -861,6 +867,26 @@ class Config(BaseModel):
             normalized = stripped.replace(",", ";")
             return [item.strip() for item in normalized.split(";") if item.strip()]
         raise TypeError("id list must be a list, JSON array string, or delimiter string")
+
+    @field_validator("bot_group_digest_push_time")
+    @classmethod
+    def _validate_digest_push_clock(cls, value: str) -> str:
+        # 与安静时间键（policy/quiet_hours.QuietHoursSettings.validate_clock_time）
+        # 同款 HH:MM 校验风格：两段数字、时 0-23、分 0-59，返回去空白形式。
+        text = str(value or "").strip()
+        parts = text.split(":")
+        if len(parts) != 2:
+            raise ValueError("bot_group_digest_push_time must use HH:MM")
+        try:
+            hour = int(parts[0])
+            minute = int(parts[1])
+        except ValueError as exc:
+            raise ValueError(
+                "bot_group_digest_push_time must use numeric HH:MM"
+            ) from exc
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            raise ValueError("bot_group_digest_push_time is out of range")
+        return text
 
     @field_validator("bot_persona_alt_profiles", mode="before")
     @classmethod
