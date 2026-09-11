@@ -1,135 +1,107 @@
-# 开发命令
+# 守岸人命令手册（人读版）
 
-所有命令从以下目录执行：
+与机器人内 `/bot help <模块>` 深度帮助页同一口径：每个模块、每条指令、每个参数。
+- 参数标注：`<x>` 必填、`[x]` 可选；「默认」指省略参数时的行为。
+- 权限标注以代码内 actor_roles 判定为准（`仅管理员` / `全员`）。
+- 数据真相源：`plugins/bot_unified_runtime/capabilities/echo.py` 的 `_HELP_ENTRIES`（2026-09-12，59 模块）。
+- 开发/运维任务（dev.ps1、测试、smoke）见本文末尾「开发命令速查」。
 
-```text
-C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot
-```
+## 总览
 
-统一入口：`scripts/dev.ps1`。它优先使用工作区外的 `ChatBot_Runtime\venv`，不会要求把虚拟环境放回源码目录。
+- 帮助本体：`/bot help`、`/bot 帮助`（`/岸宝帮助`、`守岸人帮助` 等昵称形式等价）。
+- 模块深页：`/bot help <模块名>`（如 `/bot help 点歌`）；分类手册：`/bot help 管理员`、`/bot help 大模型`、`/bot help 子功能`。
+- 普通成员只见公开模块；管理员另见管理员专属模块（含本手册全部内容）。
 
-## 高频命令
+## 管理员专属（/bot 前缀命令族）
+
+| 模块 | 指令 | 作用 | 关键参数 |
+|---|---|---|---|
+| 状态 | `/bot status` | 运行状态摘要（暂停/角色/存储/LLM） | 无 |
+| 为什么 | `/bot why [id]` | 解释最近一次决策与错误 | id：可选，request_id/debug_id |
+| 回执 | `/bot receipt <id>` | 查发送回执 | id 必填 |
+| 审计 | `/bot audit <request_id>` | 查审计事件 | request_id 必填 |
+| 最近 | `/bot recent [数量]` | 诊断+回执+审计合并摘要 | 数量 1-20，默认 5 |
+| 队列 | `/bot queue` | 发送队列状态 | 无 |
+| 历史清理 | `/bot history clear` | 清本会话最近对话 | 无 |
+| 上下文 | `/bot context [文本]` | 看注入给模型的上下文 | 文本可选 |
+| 对话 | `/bot dialogue [文本]` | 本地跑一轮对话诊断 | 文本可选；可能一次 LLM 调用 |
+| 接入 | `/bot setup llm` | LLM 七键接入清单 | 无 |
+| 配置 | `/bot config` | 配置体检（脱敏） | 无 |
+| 就绪 | `/bot readiness` | 聚合就绪状态 | 无 |
+| 角色 | `/bot roles` | 角色数量摘要 | 无 |
+| 人格 | `/bot persona` | 人格材料自检 | 无 |
+| 暂停 | `/bot pause` / `/bot resume` | 软暂停/恢复 | 无 |
+| 回复 | `/bot reply [模式]` | 回复详略档位 | 详细/科普/详尽→detail；精简/简洁→concise；默认/自动→auto；持久化 |
+| 日志 | `/bot logs [级别] [数量]` | 运行时事件日志 | 级别 debug\|info\|warning\|error 默认 info；数量 1-200 默认 50 |
+| 解析 | `/bot parse [数量]` | 全局解析历史 | 数量 1-100，默认 10 |
+| 搜索 | `/bot search <问题>` | 验证联网检索 | 问题必填 |
+| 凭据 | `/bot alert check [--probe]`、`/bot cookie status\|import\|login\|check\|expiry` | 凭据健康与 18 平台 cookie 导入 | `--probe` 可选；import：`<平台> <Cookie头>`；login/check 仅 bilibili 支持扫码 |
+| 群策略 | `/bot group list\|add\|del\|set\|clear …` | 群黑白名单四档 | 档位 black1\|black2\|white1\|white2；群号数字可多个 |
+| 群文件 | `/bot 群文件` | 群上传统计（仅群聊） | 无 |
+| 文件 | `文件 <格式> <主题>` | 生成文档并上传群文件 | 格式 md\|markdown\|docx\|pptx\|xlsx\|pdf |
+| 身份 | `/bot identity show\|set\|tag\|clear` | 会话级身份记忆 | set `<昵称>`；tag 逗号分隔最多 8 个；对本会话生效，人格不变 |
+| 怪癖 | `/bot quirk list\|approve\|retire\|add` | 人格怪癖审核制 | list [pending\|active\|retired] 上限 20；approve/retire `<id前缀>` 唯一命中；add 直添即生效 |
+| 邮件 | `/mail status\|accounts\|use\|send\|pause\|resume` | Gmail/QQ 收发控制 | 仅 Telegram 管理端；send 三/四段用 `\|` 分隔 |
+
+### 大模型相关
+
+| 模块 | 指令 | 作用 | 关键参数 |
+|---|---|---|---|
+| 模型 | `/bot model list\|set\|add\|update\|priority\|effort\|think\|price\|search\|usage\|health\|probe\|routes\|vision\|remove\|reset`（`/bot llm` 诊断） | 模型注册表/故障转移/健康/计费总控 | add：`<id> model= base_url= key= [tags=] [effort=] [group=] [priority=]`；effort/think 档位 off\|low\|medium\|high\|xhigh\|max(default=清除)；price `input=/output=` 元/1M；usage [today\|YYYY-MM-DD]；全部热改即时生效 |
+| 用量 | `/bot model usage [日期]`、`/bot model price …` | Token 账单、价格维护、阈值提醒与 13/18/23 点定时报告 | 日期可选；阈值 .env：BOT_USAGE_ALERT_* |
+| 设置 | `/bot runtime set\|get\|list\|reset\|nickname\|persona\|model\|instance` | 运行时参数热改（白名单键，优先于 .env，可 `--instance <名称>`） | persona：list\|switch `<id\|default>`\|probability `<id> <0-1>`；nickname：add\|remove\|list |
+| 供应商 | BOT_MODEL_REGISTRY（.env） | 静态供应商注册表 | priority 1-999；探测脚本 `--max-tokens` 1-4096 默认 32 |
+| Telegram | TELEGRAM_BOTS、BOT_TELEGRAM_ADMIN_*（.env） | TG 提醒与远程控制 | JSON 数组 |
+
+### 运行开关类（.env 键，改后重启）
+
+- 限流：`BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR/_PER_MINUTE`（≥0，0=该帽不生效）、`BOT_RATE_LIMIT_EMOTION_EXEMPT`（默认 true）、`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED`（默认 false）+`…_PROBABILITY`（0..1 默认 0.05）、安静时间 6 键 `BOT_QUIET_HOURS_*`——以上均可 `/bot runtime set` 热改。
+- 合并转发：`BOT_RENDER_FORWARD_MIN_NODES`（默认 4）/`_MIN_CHARS`（1500）/`_MAX_NODES`（0=不限）/`_NODE_CHARS`（≥200，默认 900），热改；消费在装配期，需重启。
+- 群摘要：`BOT_SHARED_GROUP_CONTEXT_ENABLED`（默认 false）、`BOT_GROUP_DIGEST_LIST_MODE`（whitelist|blacklist|off|all）、`BOT_GROUP_DIGEST_WHITELIST/BLACKLIST`——热改；每日通讯总结推送 `BOT_GROUP_DIGEST_PUSH_ENABLED`（默认 true）+`BOT_GROUP_DIGEST_PUSH_TIME`（HH:MM，默认 21:30，仅白名单群、非 whitelist 零推送）——.env 键，重启生效。
+- 视频理解：`BOT_VISION_ENABLED`（默认 false）、`BOT_VISION_MODE`（relay|direct）、`BOT_VISION_REPLY_PROBABILITY`（0..1 默认 1.0）、`BOT_VIDEO_UNDERSTANDING_ENABLED`（默认 false）等——热改。
+- 运行开关：`BOT_SEND_QUEUE_ENABLED`、`BOT_SEND_QUEUE_WORKER_ENABLED`、`BOT_AUDIT_ENABLED`、`BOT_RECEIPTS_ENABLED`、`BOT_DIAGNOSTICS_ENABLED`——均默认 false，.env 键，重启生效。
+
+## 子功能（无需 /bot 前缀，自然语言/短命令触发）
+
+| 模块 | 触发 | 作用 | 关键参数 |
+|---|---|---|---|
+| 订阅 | `/订阅 add\|list\|pause\|resume\|remove` | 平台新内容推送 | add `<公开目标>`（群内需管理员）；pause/resume/remove `<id>` 目的地粒度 |
+| 点歌 | `点歌 <歌名>`、`点歌 <编号>`、`点歌模式 <模式>` | 搜歌发送 | 编号仅候选列表有效期内（默认 300 秒）；模式 卡片\|语音\|音频\|链接\|全部可组合（管理员持久化） |
+| 表情 | `表情 <模板> [文字]`、`表情 列表` | meme-generator-rs 生成表情 | 文字多段用 ｜ |
+| 偷表情 | `偷表情 [关键词]`、`表情库统计` | 表情库加权随机 | 关键词/情绪标签可选 |
+| 搜图 | `搜图`＋图片 | SauceNAO 反搜来源 | 图片需同条消息 |
+| 天气 | `天气 <城市>`、`支持区县 <省>` | NMC 天气（2527 区县） | 同名城市 省-市；查询词需像地名 |
+| 行情 | `行情`＋可选市场词 | 全球股指（东方财富，60s 缓存） | A股/B股/上证B/深证B/美股/港股/日经/纳斯达克/道指/标普/莫斯科/俄罗斯 等 |
+| 占卜 | `占卜`、`塔罗 [三张\|每日一抽]`、`八字 <生日时间>` | 金钱卦/塔罗/八字（含地支藏干） | 日期 `1998年3月2日\|1998-03-02\|1998/3/2`；只给日期按午时；1900-2100 年 |
+| 快报 | `快报`/`早报`/`晚报`/`今日热点`/`科技新闻`/`AI新闻`/`财经快报`/`国际新闻` | RSS 聚合快报（10 分钟缓存） | 类目：财经/国际/科技·AI/综合轮转；裸「新闻」不触发 |
+| 维基 | `维基 <词条>` | MediaWiki 百科 | 默认中文维基 |
+| 萌娘百科 | `萌娘百科 <词条>`；直接问「XX是谁？」 | 萌百查询＋实体问句自动查询 | 问句剥出实体 2-30 字；未命中转聊天 |
+| 历史上的今天 | `历史上的今天 [设置 HH:MM\|状态\|取消]` | 当日历史＋每日推送 | 群内设置/取消需管理员 |
+| 下载 | `/bot download <链接>`、`下载 <链接>` | yt-dlp 下载回传 | 单文件 ≤1GB；拒绝内网地址 |
+| 昵称 | `守岸人/岸宝 <命令>`；`/bot 昵称 set <QQ号> <小名>` | 昵称触发命令（后者管理员） | 昵称表经 `/bot runtime nickname` 维护 |
+| 链接 | 直接发 http(s) 链接 | 平台信息卡解析 | B站/抖音/小红书/油管/推特/GitHub 等 |
+| 草稿 | `报存 给 <收件人> 发消息\|邮件[，主题：…，内容：…]` | 自动发送草稿预览 | 收件人可用 、,， 分隔多个；当前仅预览不实发 |
+| 吃什么 | `吃什么 [三选一\|辣度\|忌口]`、`菜谱 <菜名>` | 家常菜推荐/菜谱 | 约束描述自动走 AI 菜谱 |
+| 好感度 | `好感度 [我\|算法]` | 双向好感（-100~+100 八档） | 群聊出榜，`我` 只看自己，`算法` 出规则卡 |
+| Epic | `epic`/`免费游戏`/`steam免费` | Epic+Steam 每周限免 | 无参数 |
+| 随机图 | `随机图`/`来张图` | 自建图库随机发图 | 目录 `BOT_RANDPIC_DIRS`；触发词 `BOT_RANDPIC_TRIGGER_WORDS` |
+| 提醒 | `<时间>提醒我 <事项>`、`提醒列表`、`取消提醒 <id前缀>` | 到点主动督促 | id 前缀 4-12 位唯一命中；事项 ≤120 字 |
+| 记忆 | `/bot memory add\|list\|delete` | 个人长期记忆（全员，仅本人） | add 支持 `--sensitivity=personal\|group\|public\|credentialed`（默认 personal）；群聊 list 只见 public/group |
+| 路由 | `/bot route <文本>`、`/bot routes` | 路由判定/路由表（全员只读） | 文本必填 |
+
+## 开发命令速查
+
+统一入口 `scripts/dev.ps1`（优先使用工作区外 `ChatBot_Runtime\venv`）。常用：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 help
-powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 doctor
-powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 readiness-smoke
-powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 console
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 help        # 任务帮助
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 doctor      # 依赖体检
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 test        # pytest 全量回归
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 lint        # ruff check
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 verify      # docs/plugin/pytest/ruff/mypy 总检
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 run         # 启动 NoneBot
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 console     # 控制台对话
 powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 backend-smoke -Message "测试后端主链路"
-powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 run
-powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 verify
 ```
 
-## 任务表
-
-| 任务 | 用途 | 网络/副作用 |
-|---|---|---|
-| `help` | 显示任务帮助 | 无 |
-| `doctor` | 检查 Python、NoneBot、适配器和本地依赖 | 不调用 LLM |
-| `install` | 用 `uv sync` 或 pip 安装依赖 | 修改外部 venv |
-| `dev` / `run` | 启动 NoneBot | 连接已配置平台 |
-| `run-watch` | 退出后自动重启 NoneBot | 连接已配置平台 |
-| `console` | 控制台对话，默认 static provider | 默认离线；可手动启用 LLM |
-| `backend-smoke` | 单轮执行核心后端链路并输出 JSON | 默认离线；不连接平台、不发送真实消息 |
-| `readiness-smoke` | 聚合本地就绪状态 | 默认不调用真实 LLM |
-| `dialogue-smoke` | 验证一轮对话诊断 | 依配置决定是否调用 LLM |
-| `chat-smoke` | 验证人格、知识、LLM 和发送链路 | 不连接 NapCat |
-| `config-smoke` | 检查配置和路径就绪 | 不联网 |
-| `persona-smoke` | 检查人格与知识来源 | 不调用 LLM |
-| `context-smoke` | 生成安全的上下文数字摘要 | 不输出原文/密钥 |
-| `why-smoke` | 解释路由、策略、回执和审计 | 本地优先 |
-| `llm-setup` | 输出安全的 LLM 配置清单 | 不写密钥、不调用 provider |
-| `llm-smoke` | 检查配置的 OpenAI-compatible LLM | 只读网络检查 |
-| `nonebot-smoke` | 检查 NoneBot/OneBot 插件导入 | 不连接 NapCat |
-| `startup-smoke` | 子进程加载 NoneBot 后退出 | 不连接 NapCat |
-| `queue-smoke` | 使用临时 SQLite 验证发送队列 | 不发送 QQ |
-| `transport-smoke` | 使用 fake transport 验证消息段 | 不连接 NapCat |
-| `online-transport-smoke` | 读取在线状态 | 不调用发送 API |
-| `credential-smoke` | 检查 Cookie/凭据状态 | 不打印凭据值 |
-| `embedding-smoke` | 检查嵌入服务 | 不改动向量数据库 |
-| `knowledge-sync` | 分块并写入向量知识库 | 修改外部 data |
-| `gscore-smoke` | 检查 GsCore 桥接就绪 | 只读 |
-| `route-demo` | 离线输出问法路由矩阵 | 无网络 |
-| `route-smoke` | 验证天气/wiki/Epic/点歌等真实能力 | 可能联网，不发送 QQ |
-| `docs-check` | 检查当前文档和关键配置锚点 | 只读 |
-| `plugin-check` | 检查 `plugins/` 发现契约 | 只读 |
-| `smoke` | 文档、插件、NoneBot import 和 CLI 检查 | 只读 |
-| `test` | 执行仓库内完整回归测试套件（`pytest tests/`，约 100 个文件） | 临时目录在外部 Runtime；不会生成源码 `.pytest_cache` |
-| `lint` | 执行 `ruff check .` | 只读，可能生成 `.ruff_cache/` |
-| `typecheck` | 通过当前 Python 执行 mypy 检查 `plugins/` | 只读，可能生成缓存 |
-| `verify` | docs/plugin/pytest/ruff/mypy 总检查 | 仓库内 pytest 全量回归会执行 |
-
-## 测试策略
-
-仓库 `tests/` 现已常驻完整回归测试套件（约 100 个文件、600+ 用例），直接通过 `test` 或 `verify` 执行。以下归档包为历史测试树存档，仅在需要考古时使用：
-
-```text
-C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Archive\2026-08-27_2026-08-28\development-materials-2026-08-28.tar.gz
-```
-
-恢复后执行：
-
-```powershell
-$PY = "C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\python.exe"
-& $PY -m pytest "C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot\tests"
-```
-
-完整测试完成后把恢复的 `tests/` 移出工作区；不要把日志、pytest 临时目录、数据库或虚拟环境复制回工作区。
-
-## 路径与安全规则
-
-- 运行数据统一在 `C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\data\`；其中包括向量库、聊天记忆、NoneBot data、日志和媒体缓存。
-- Ruff/mypy 缓存统一写入 C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\cache\，不会重新创建到当前工作区。
-- 归档统一在 `C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Archive\YYYY-MM-DD\`；压缩包不要留在当前工作区。
-- `.env`、Cookie、Token、数据库内容和完整 prompt 不进入聊天、日志或文档。
-- `.gitignore` 只减少 Git 跟踪内容；要减少 AI 上下文，必须把目录移到当前工作区之外。
-Canonical verification entry: scripts/dev.ps1 verify
-
-搜索 API 配置和验收顺序见 [docs/search-api-adapters-2026-09-06.md](docs/search-api-adapters-2026-09-06.md)。
-
-```powershell
-# 只生成并保存脱敏 Prompt，不调用 LLM；先看这个结果再允许后续执行
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task prompt-preview -Message '测试后端主链路'"
-```
-
-```powershell
-# 离线真实后端底座验收：NoneBot/plugin、startup、OneBot transport、backend pipeline
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task backend-base-smoke -Message '测试后端底座'"
-```
-
-## 2026-09-06 详细回答与记忆抽取调试
-
-```text
-/bot reply 详细
-/bot runtime get BOT_REPLY_DETAIL
-/bot runtime get BOT_CHAT_MAX_TOKENS
-/bot runtime set BOT_CHAT_FAST_MODE false
-/bot runtime set BOT_CHAT_MAX_TOKENS 65538
-/bot runtime set BOT_MEMORY_EXTRACT_TIMEOUT_SECONDS 15
-/bot runtime set BOT_MEMORY_EXTRACT_MAX_TOKENS 200
-/bot runtime set BOT_MEMORY_EXTRACT_ERROR_COOLDOWN_SECONDS 300
-/bot runtime set BOT_MEMORY_EXTRACT_ENABLED false
-/bot model list
-/bot model priority <注册ID> 1
-/bot help 回复
-/bot help 设置
-/bot help 模型
-/bot cookie
-/bot cookie import <平台> <Cookie头>
-```
-
-/bot cookie（管理员）：按平台查看 17 个平台凭证状态（只显示 cookie 名与到期日，不回显值）；/bot cookie import <平台> <Cookie头>：把浏览器复制的 `名=值; ...` 整行追加写入 cookies.txt（同名不覆盖），下一次解析即热生效。统一命令格式：/bot <模块词> <功能词> [参数]。
-
-65538（约 64K）是最大输出预算，不是强制长度；运行时覆盖优先于 .env。聊天上限允许 0..65538；抽取 timeout/cooldown 取有限值 (0,3600] 秒，抽取 tokens 取 1..4096。false 暂停自动抽取，不删除记忆；启动时本就关闭的实例需本地启用后重启，不能仅靠 true 热创建 writer。模型 priority 为 1..N 唯一槽位，移动其他项顺移；手动指定和生效时段组优先于基础 priority。model list 是候选配置，/bot llm 会新发可能收费的诊断请求。真实密钥只在本地安全配置，不在聊天发送。
-
-验收证据与完整待办：docs/chat-memory-routing-fixes-2026-09-06.md。
-
-## Wiki 列表条目与环境诊断续修
-`维基 守岸人`、`维基 鸣潮守岸人`、`维基 漂泊者`、`维基 卡提希娅·` 支持独立页缺失后的精确列表条目提取。
-本地 `.env` 可设置 `BOT_WIKI_ENTRY_PAGES=["鳴潮角色列表"]`（最多优先 3 页，`[]` 禁用），重启生效；不是 runtime set 热配置。
-`doctor` 现在优先寻找所选 Python 的同目录 nb.exe，避免 PATH 未激活误报。说明与待办见 docs/live-chat-followup-2026-09-06.md。
-
-
-## Phase 0-3 输出与安全
-`BOT_CHAT_MAX_TOKENS=65538`、`BOT_CHAT_FAST_MAX_TOKENS=65538` 是最大上限，不是强制每次生成 64K；科普/知识问题在 auto 模式下会优先完整解释核心内容、当前状态和相关关系。文件内容通过安全读取，不执行代码；代码/长文在用户明确要求生成或保存时写入文件并通过统一出站发送。
-
+完整任务表（smoke/queue/transport/credential/knowledge-sync 等约 40 项）执行 `dev.ps1 help` 查看；测试策略、路径与安全规则见 `AGENTS.md`、`WORKSPACE_GUIDE.md` 与 `docs/ai-setup-knowledge-pack.md`。运行数据统一在 `ChatBot_Runtime\data\`；`.env`、Cookie、Token、数据库内容不进入聊天、日志或文档。
