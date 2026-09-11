@@ -323,6 +323,25 @@ def _rate_limit_public_message(reason: str) -> str:
     return "当前会话回复过于频繁，已临时降频。"
 
 
+def _observe_decision_shadow(message: IncomingMessage, capability_id: str) -> None:
+    """B2 阶段 0 影子挂钩：shadow 模式下引擎只算 plan 写 decision_trace。
+
+    绝不发送、绝不改回执、绝不 claim 幂等；``legacy_only``（默认）时仅
+    一次模式解析即返回。全链 fail-open：影子观测的任何异常只降级为不观测，
+    绝不影响主链路。
+    """
+    try:
+        from plugins.bot_unified_runtime.decision.shadow import (
+            is_shadow_active,
+            observe_pipeline_event,
+        )
+
+        if is_shadow_active():
+            observe_pipeline_event(message, capability_id)
+    except Exception:  # noqa: BLE001 - 影子观测是旁路，任何异常只降级为不观测。
+        return
+
+
 class RuntimePipeline:
     def __init__(
         self,
@@ -825,6 +844,7 @@ class RuntimePipeline:
         capability: CapabilityCallable,
         capability_id: str = "bot.status",
     ) -> DeliveryReceipt:
+        _observe_decision_shadow(message, capability_id)
         try:
             if not self._claim_event(message, capability_id):
                 return self._duplicate_receipt(message, capability_id)
@@ -844,6 +864,7 @@ class RuntimePipeline:
         capability: AsyncCapabilityCallable,
         capability_id: str = "bot.status",
     ) -> DeliveryReceipt:
+        _observe_decision_shadow(message, capability_id)
         try:
             if not self._claim_event(message, capability_id):
                 return self._duplicate_receipt(message, capability_id)

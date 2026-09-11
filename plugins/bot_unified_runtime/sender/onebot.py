@@ -20,6 +20,11 @@ from plugins.bot_unified_runtime.runtime.deadline import (
     DeadlineExceeded,
     apply_request_deadline,
 )
+from plugins.bot_unified_runtime.sender.file_gateway import (
+    FileSource,
+    FileTransferError,
+    get_default_file_gateway,
+)
 from plugins.bot_unified_runtime.sender.timeout import resolve_transport_timeout
 
 ONEBOT_V11_TRANSPORT = "onebot.v11"
@@ -362,6 +367,11 @@ async def _send_file_parts(
 ) -> Any:
     """Files require upload APIs, not unsupported CQ:file. Never retry a bundle
     after any side effect: a later failure must not resend a delivered file.
+
+    B3 阶段 1：文件部件统一经 FileTransferGateway（stage → deliver）投递；
+    上传参数、超时切片、副作用计数与失败分类（missing_file / upload_rejected /
+    upload_failed_or_unknown / unsupported_file_target / upload_api_unavailable）
+    自 ``FileTransferGateway._deliver_onebot`` 等价搬运，对外行为不变。
     """
     upload_parts = [part for part in parts if part.get("type") == "file"]
     # M17：mixed 内容里除 file 外的部件（图片/语音/视频）此前被**静默丢弃**，
@@ -374,36 +384,30 @@ async def _send_file_parts(
     ]
     text = request.content.text_fallback
     calls = len(upload_parts) + (1 if text else 0) + (1 if extra_parts else 0)
+    gateway = get_default_file_gateway()
     result: Any = None
-    for part in upload_parts:
-        path = Path(str(part.get("file") or ""))
-        if not path.is_file():
-            raise _NonRetryableActionError("missing_file")
-        params: dict[str, Any] = {"file": str(path.resolve()), "name": str(part.get("name") or path.name)}
-        if request.target_scope is SessionType.GROUP:
-            api = "upload_group_file"
-            params["group_id"] = _coerce_onebot_id(request.target_id)
-        elif request.target_scope is SessionType.PRIVATE:
-            api = "upload_private_file"
-            params["user_id"] = _coerce_onebot_id(request.target_id)
-        else:
-            raise _NonRetryableActionError("unsupported_file_target")
-        method = getattr(bot, api, None)
+    for part_index, part in enumerate(upload_parts):
+        source = FileSource(
+            source_kind="path",
+            path=str(part.get("file") or ""),
+            name=str(part.get("name") or ""),
+        )
         try:
-            if callable(method):
-                result = await asyncio.wait_for(method(**params), timeout=budget.slice_for(calls))
-            else:
-                call_api = getattr(bot, "call_api", None)
-                if not callable(call_api):
-                    raise _NonRetryableActionError("upload_api_unavailable")
-                result = await asyncio.wait_for(call_api(api, **params), timeout=budget.slice_for(calls))
-            if not _onebot_result_is_success(result):
-                raise _NonRetryableActionError("upload_rejected")
-        except (_NonRetryableActionError, asyncio.TimeoutError):
+            ticket = gateway.stage(source, request_id=request.request_id)
+            # 与旧实现一致：每个上传调用前按 (段数) 切一次超时预算。
+            file_receipt = await gateway.deliver(
+                bot,
+                ticket,
+                target=request,
+                part_index=part_index,
+                budget=budget.slice_for(calls),
+            )
+        except asyncio.TimeoutError:
             raise
-        except Exception as exc:
-            logger.warning("onebot upload call failed type=%s detail=%s", type(exc).__name__, str(exc)[:120])
-            raise _NonRetryableActionError("upload_failed_or_unknown") from exc
+        except FileTransferError as exc:
+            # 失败分类字符串与既有 _NonRetryableActionError 逐字一致。
+            raise _NonRetryableActionError(str(exc.kind)) from exc
+        result = file_receipt.provider_result
         progress.count += 1
     # The short caption is sent only after every upload succeeded.
     if text:

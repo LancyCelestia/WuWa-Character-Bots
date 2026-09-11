@@ -24,6 +24,12 @@ from plugins.bot_unified_runtime.runtime.deadline import (
     DeadlineExceeded,
     apply_request_deadline,
 )
+from plugins.bot_unified_runtime.sender.file_gateway import (
+    FileSource,
+    FileTransferError,
+    FinalTransferError,
+    get_default_file_gateway,
+)
 from plugins.bot_unified_runtime.sender.timeout import resolve_transport_timeout
 
 logger = logging.getLogger(__name__)
@@ -367,15 +373,36 @@ async def send_nonebot_message(
             if adapter_name != "telegram":
                 raise RuntimeError("file attachments unsupported by this adapter")
             result: Any = None
-            for part in files:
-                path = Path(str(part.get("file") or ""))
-                if not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
+            # B3 阶段 1：附件统一经 FileTransferGateway 投递；缺失/超 2MB 的
+            # 不可重试判定、caption 截 1000 字、读全量字节、回执缺失按失败
+            # 的语义逐行等价搬运（见 file_gateway._deliver_telegram_document）。
+            gateway = get_default_file_gateway()
+            for part_index, part in enumerate(files):
+                try:
+                    ticket = gateway.stage(
+                        FileSource(
+                            source_kind="path",
+                            path=str(part.get("file") or ""),
+                            name=str(part.get("name") or ""),
+                        ),
+                        request_id=send_request.request_id,
+                    )
+                    file_receipt = await gateway.deliver(
+                        bot,
+                        ticket,
+                        target=send_request,
+                        transport="telegram",
+                        part_index=part_index,
+                        caption=remaining[:1000],
+                    )
+                except FinalTransferError as exc:
                     # 附件缺失/超限在发送前即可判定，重试也不会成功。
-                    raise _FinalSendError("invalid generated attachment")
-                result = await bot.send_document(chat_id=send_request.target_id,
-                    document=(path.name, path.read_bytes()), caption=remaining[:1000])
+                    raise _FinalSendError(str(exc)) from exc
+                except FileTransferError as exc:
+                    raise _FinalSendError("invalid generated attachment") from exc
+                result = file_receipt.provider_result
                 delivered_parts += 1
-                if not _provider_message_id(result):
+                if not file_receipt.provider_file_id:
                     raise RuntimeError("telegram attachment receipt missing")
             return result
         result = None
