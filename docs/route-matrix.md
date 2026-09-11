@@ -24,12 +24,12 @@ QQ/NapCat 消息
 `passive_group_message` 静默观察；`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED=true`
 时按概率做确定性哈希抽签接话。
 
-## 2. 问法矩阵（权威实现见 tests/test_route_matrix.py）
+## 2. 问法矩阵（设计文档；以 plugins/bot_unified_runtime 路由实现与 tests/ 下路由回归为准）
 
 | 问法示例 | 路由 kind | 优先级 | 进入的匹配器/处理程序 | 归一化命令 / 实际能力 |
 | --- | --- | --- | --- | --- |
 | `/岸宝帮助`、`/岸宝天气 杭州`、`守岸人点歌 晴天`（斜杠可省略） | alias | 10 | `on_message` alias -> `_handle_alias` | 昵称解析 -> help/weather/music/… |
-| `/bot status`、`/bot routes`、`/bot subscribe add …` | admin | 11 | `on_command("bot")` -> `_handle_status` 内部分派 | status/routes/subscribe/download/… |
+| `/bot status`、`/bot routes`、`/bot subscribe add …` | admin | 11 | `on_command("bot")` -> `_handle_status` 内部分派 | status/routes/subscribe/… ；**逐条权限以代码为准**：`status`/`parse`/`reply`/`群文件`/`cookie`/`logs`/`search`/`group` 等为管理员专属（能力入口 `actor_roles` 判定，未传即拒绝）；`download` **对普通成员开放**，安全边界由 `sources/downloader.check_download_url` 承担（只放行 http/https，拒绝内网/环回/保留地址与 `localhost`/云元数据主机，含 DNS 解析后的私网 IP 与十进制/十六进制 IP 形态） |
 | `/订阅 状态`、`/订阅 添加 <链接>` | subscribe | 12 | `_is_standalone_subscribe_event` -> `_handle_standalone_subscribe` | bot.subscribe |
 | `报存 给 A 发邮件，主题…` | auto_send | 13 | `_is_auto_send_plain_text` | bot.auto_send |
 | `/表情 列表`、`/meme petpet 可爱`、`/表情帮助` | meme | 20 | `_is_meme_event` -> `_handle_meme` | bot.meme -> 本地 meme-generator-rs |
@@ -57,7 +57,11 @@ QQ/NapCat 消息
   后端同为本地 `meme-generator-rs`（`MEME_GENERATOR_BASE_URL=http://127.0.0.1:2233`），
   支持 `摸 @某人`、`表情列表`、`随机表情` 等 Alconna 关键词玩法。
 - 后端 Windows 版已部署于 `C:\Software\MemeGenerator\meme.exe`，
-  服务端口 2233，素材已下载到 `%USERPROFILE%\.meme_generator\resources`。
+  服务端口 2233。数据目录（config.toml/fonts/images 素材）已迁入
+  `ChatBot_Runtime\data\meme_generator`（2026-09-11 自 `%USERPROFILE%\.meme_generator`
+  迁入，原路径留有 junction 兜底）。meme.exe 0.2.3 经 `MEME_HOME` 环境变量定位数据
+  目录，统一用 `ChatBot_Runtime\scripts\start_meme_server.ps1` 启动（进程内设置
+  `MEME_HOME`）；直启 `meme.exe run` 会回退主目录旧路径（经 junction 仍落到同一目录）。
 
 
 ## 4. 现实问题 vs 世界观问题的智能判定 v2（不斩断联网权限）
@@ -92,14 +96,14 @@ card=平台音乐卡片（无卡信息用封面）、voice=语音、file=音频�
 
 ## 7. 下载与缓存策略（不挤占硬盘）
 
-- 下载走 yt-dlp：cookie（Netscape）+ 代理 `BOT_DOWNLOAD_PROXY`（外网走 7890）+ 单线程重试 1 次 + 高度上限 1080P + 单文件 200MB 上限；
+- 下载走 yt-dlp：cookie（Netscape）+ 代理 `BOT_DOWNLOAD_PROXY`（外网走 7890）+ 单线程重试 1 次 + 高度默认不限（`BOT_DOWNLOAD_MAX_HEIGHT=0`）+ 单文件默认 1GB 上限（`BOT_DOWNLOAD_MAX_BYTES`）；
 - 目录配额 LRU 最旧先删：下载 2GB/7 天、点歌 512MB、卡片 256MB、表情 256MB，每次落盘即清理；
 - 配置：`BOT_DOWNLOAD_CACHE_MAX_BYTES/MAX_AGE_DAYS`、`BOT_MUSIC_CACHE_MAX_BYTES`、`BOT_CARD_CACHE_MAX_BYTES`、`BOT_MEME_CACHE_MAX_BYTES`；
 - 运行入口：`nb run --reload`，代码改动自动热重载，无需手动重启终端。
 
 ## 8. 联网检索质量增强（v3，本轮再放宽）
 
-- 检索条数不设硬限制（默认 12 条，`BOT_WEB_SEARCH_MAX_RESULTS=0` 表示不限制，内部安全上限 24 条），并自动补“百科 / 简介 成立 作品 发展历程 / 是什么 介绍 / 最新 / 更新 内容”等多组查询合并去重；
+- 检索条数不设硬限制（默认 20 条，`BOT_WEB_SEARCH_MAX_RESULTS=0` 表示不限制，内部安全上限 24 条），并自动补“百科 / 简介 成立 作品 发展历程 / 是什么 介绍 / 最新 / 更新 内容”等多组查询合并去重；
 - 过滤字典/拼音/笔顺类垃圾结果（按域名与标题特征），只保留与查询关键词相关的来源；
 - 自动打开最相关结果页面抽取正文（≤900 字）注入回复，让模型拿到真实事实而非只有标题摘要；
 - 提示词强制：现实问题必须基于检索结果先给事实、结果没有就明说“未检索到”，禁止用世界观或想象替代；

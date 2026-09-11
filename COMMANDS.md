@@ -54,14 +54,14 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 verify
 | `docs-check` | 检查当前文档和关键配置锚点 | 只读 |
 | `plugin-check` | 检查 `plugins/` 发现契约 | 只读 |
 | `smoke` | 文档、插件、NoneBot import 和 CLI 检查 | 只读 |
-| `test` | 执行当前保留的 4 个关键回归测试 | 临时目录在外部 Runtime；不会生成源码 `.pytest_cache` |
+| `test` | 执行仓库内完整回归测试套件（`pytest tests/`，约 100 个文件） | 临时目录在外部 Runtime；不会生成源码 `.pytest_cache` |
 | `lint` | 执行 `ruff check .` | 只读，可能生成 `.ruff_cache/` |
 | `typecheck` | 通过当前 Python 执行 mypy 检查 `plugins/` | 只读，可能生成缓存 |
-| `verify` | docs/plugin/pytest/ruff/mypy 总检查 | 当前 4 个测试会执行；完整测试树仍在外部归档 |
+| `verify` | docs/plugin/pytest/ruff/mypy 总检查 | 仓库内 pytest 全量回归会执行 |
 
 ## 测试策略
 
-当前源码保留 4 个低体积关键回归测试，可直接通过 `test` 或 `verify` 执行。完整测试套件不常驻当前 AI 工作区；需要时从以下归档包恢复到项目根目录：
+仓库 `tests/` 现已常驻完整回归测试套件（约 100 个文件、600+ 用例），直接通过 `test` 或 `verify` 执行。以下归档包为历史测试树存档，仅在需要考古时使用：
 
 ```text
 C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Archive\2026-08-27_2026-08-28\development-materials-2026-08-28.tar.gz
