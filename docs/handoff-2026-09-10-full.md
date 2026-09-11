@@ -1297,3 +1297,38 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 **工作树遗留说明**：`__init__.py` intake 区工作树仍保留并行会话的过时遗留（分离变量旧写法+心情钩子行），已全部被 HEAD 的 soft_name_mention 版本取代——下次任何会话清理工作树时该区直接以 HEAD 为准，不会丢失任何本会话交付。
 
 **给下一会话的速读清单**：§16 + §17（本节）+ §15 未尽项；未做项计划在 §17 第四节（Help 深度教学化 D / W4 六项 / 提醒 LLM 进阶轨）；全部代码交付已入库，**只差用户提权重启 + 配 `BOT_RANDPIC_DIRS` + 推送指示**。
+
+### 七、全量要求复核（2026-09-11 深夜收尾轮，逐条对代码核验）
+
+用户要求把全部需求再核一遍：已实现的下表给出证据位置；**未实现的一律不改代码，只写计划**（G 系列，编号沿用 §17 第四节计划体系）。
+
+| # | 用户要求 | 状态 | 证据/缺口 |
+|---|---|---|---|
+| 1 | 线性记忆 | ✅ | character/history.py（SQLite conversation_turns，会话线性滚动） |
+| 2 | 非线性记忆 | ✅ | 反思回路（reflection.py，夜间沉淀→_MergedMemoryProvider 召回）；工作树心情钩子待并行会话落库（见 §17 一#4） |
+| 3 | 情绪系统 | ✅ | emotion.py（用户情绪信号）+ mood.py（bot 心情，事件源待钩子落库） |
+| 4 | 身份标签系统 | ✅ | affinity impression_tags + /bot identity tag + quirks 审核区 |
+| 5 | 人格设定系统 | ✅ | personas/shorekeeper/* + alt_profiles + PersonaSelector |
+| 6 | 读 GitHub 仓库 | ✅ | parsers/platforms_github.py（仓库/README/星标卡） |
+| 7 | 读图/视频/动图理解 | ✅ | vision_describe + video_understanding（VLM+ASR+字幕，既有交付） |
+| 8 | **自己画流程图** | ❌ **G-MERMAID** | 全库 grep mermaid/流程图 零命中。**计划**：bot 回复内 ```mermaid 代码块 → 用 Mica 卡渲染管线渲染 PNG（card_render 后端 page.set_content 本就允许网络加载 CDN mermaid.js，wait_for_function 等待 SVG 完成再截图）；无网降级为原样输出代码块；触发=回复含 mermaid 块自动渲染 |
+| 9 | 文本/文件交付 | ✅ | file_exchange + sender upload_private/group_file（既有） |
+| 10 | 生辰八字/塔罗/八卦阵 | ✅ | ganzhi/tarot/iching 三件套（76 测） |
+| 11 | **总结今日通讯** | ⚠️ **G-DIGEST** | 能力在（shared_group 摘要+LLM 压缩）但**生产 `BOT_GROUP_DIGEST_ENABLED=false`**。**计划**：①用户开启该开关（操作项）；②夜间任务增补"每日通讯总结"主动推送（复用 reflection 调度骨架） |
+| 12 | 今日快报/新闻/AI/财经/科技 | ✅ | 4 实测源（IT之家/少数派/华尔街见闻/BBC中文） |
+| 13 | **全球股指** | ⚠️ **G-INDEX** | 15 指数 ✓（A股/港股/日/韩/新加坡/印度/伦敦/巴黎/纳斯达克/美股/台湾）。**缺口**：①**B股**（上证B股 1.000003/深证B股 0.399003，东财同接口可补）；②**莫斯科 MOEX** 东财无数据（模块 docstring 已记录剔除），需备选源（MOEX ISS 官方 API iss.moex.com 免 key） |
+| 14 | 订阅全平台全类型 | ⚠️ **G-SUB-LIVE** | B站 creator(动态)/live_room(直播，本会话修通)/bangumi/favorite/collection ✓；YT channel/playlist ✓；xhs/推特/微博 creator ✓；**缺口**：YouTube 直播、小红书直播/专栏细分无独立 kind——计划增补 kind 与拉取逻辑 |
+| 15 | 实时更新/解析/投递指定会话 | ✅ | subscription v2 outbox+目的地粒度（A组 11 真实链接验收） |
+| 16 | 情绪→回复意愿/主动搭话/表情档/三维化/阶段滞后 | ❌ | 全部在 §17 计划 W4（未变） |
+| 17 | 画像自学习/反思→quirk 投喂/per-sender 归属 | ⚠️ | 自学习✅；投喂与归属在计划 W4 |
+| 18 | 内心保密/防 OOC | ✅ | 数值打码+persona 冻结+credentialed 过滤+identity 渲染护栏 |
+| 19 | Help 深度教学化 | ⚠️ | 新功能条目已有用法；四段式深度版=计划 D |
+| 20 | 每用户/每群独立记忆+管理员身份 | ✅ | memory_facts 会话作用域 + /bot identity |
+| 21 | 时间点提醒 | ✅ | 46588d6（显式提醒词轨）；**进阶轨**（"中午12点要写作业"无提醒词）= 计划 R 增补 |
+| 22 | 鸣潮梗/严格身份/非 AI 设定/语音风格 | ✅ | 库街区百科向量库 + identity.md 硬档案 + 语录锚点 |
+| 23 | randpic（读自定义文件夹） | ✅ | 46588d6 前一提交（f80a8b1 批次后独立提交） |
+| 24 | SillyTavern 角色卡格式 | ⚠️ | 现有 identity.md 分区已等价（身份/风格/红线）；可选：增加 ST 卡导入器（低优先） |
+
+**G 系列计划汇总（全部未动代码，供下一会话执行）**：G-MERMAID 画流程图、G-INDEX 补 B股+莫斯科备选源、G-DIGEST 开启群摘要+每日通讯总结推送、G-SUB-LIVE 补 YT/xhs 直播 kind、§17 计划 D/W4/R-进阶轨 维持不变。**用户操作项**：`BOT_GROUP_DIGEST_ENABLED=true`（如需"总结今日通讯"立即生效）。
+
+---
