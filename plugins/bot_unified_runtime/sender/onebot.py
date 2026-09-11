@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -31,6 +32,14 @@ _ONEBOT_SEND_RETRY_DELAYS = (0.8, 1.6)
 _MIN_CHUNK_WAIT_SECONDS = 10.0
 OneBotMessageSegment = dict[str, Any]
 _FORWARD_API_UNAVAILABLE = object()
+# §9.3：chunk 级 part 观测回报值（与 queue.py 的 PART_STATE_SENT/UNKNOWN 同值；
+# worker 是唯一的桥接方，字符串契约由测试固定）。
+PART_REPORT_SENT = "sent"
+PART_REPORT_UNKNOWN = "unknown"
+# part 观测回调：(part_index, state) -> None；state ∈ {PART_REPORT_SENT,
+# PART_REPORT_UNKNOWN}。仅 chunks 分片路径回报；同一请求整体重试时会重复
+# 回报（消费方按 part 键幂等落库）。
+PartSink = Callable[[int, str], None]
 
 
 class OneBotV11Bot(Protocol):
@@ -291,17 +300,34 @@ class _NonRetryableActionError(Exception):
     pass
 
 
+class _ChunkRejectedError(Exception):
+    """平台对某个 chunk 返回明确失败 retcode：该段**未送达**。
+
+    与超时/断连的「结果未知」不同，retcode 拒绝是明确的失败——重发该段
+    是安全的（规格 §9.3 验收场景 2）。多段整体路径下若此前段已送达，
+    仍沿用「有副作用即不整体重投」→ result_unknown，由 send_onebot_v11
+    统一裁决。
+    """
+
+    def __init__(self, retcode: int | None) -> None:
+        super().__init__(f"chunk rejected retcode={retcode}")
+        self.retcode = retcode
+
+
 class _SendSideEffects:
     """记录本次发送已产生的对外副作用（已成功发出的 chunk/文件数）。
 
     供 send_onebot_v11 判断"整体重试是否安全"：一旦有副作用，从头重试
-    会把已送达内容重发一遍。
+    会把已送达内容重发一遍。§9.3 起另记分片级 delivered/unknown 索引，
+    供 part 级幂等恢复与观测使用。
     """
 
-    __slots__ = ("count",)
+    __slots__ = ("count", "delivered_parts", "unknown_parts")
 
     def __init__(self) -> None:
         self.count = 0
+        self.delivered_parts: list[int] = []
+        self.unknown_parts: list[int] = []
 
 
 class _TimeoutBudget:
@@ -445,11 +471,14 @@ async def _dispatch_onebot_send(
     *,
     budget: _TimeoutBudget,
     progress: _SendSideEffects,
+    part_sink: PartSink | None = None,
 ) -> Any | DeliveryReceipt:
     """执行一次发送：返回 OneBot API 结果，或不可重试的 BLOCKED 回执。
 
     多段/多文件发送按段数切分超时预算，每段独立 wait_for；每成功发出
     一段就在 progress 记一次副作用，供上层判断能否安全整体重试。
+    §9.3：chunks 路径每段成功/结果未知时经 part_sink 回报 part 观测，
+    供上层做 part 级幂等落库；回报异常绝不影响发送主链路。
     """
     parts = send_request.content.content_ref.get("parts", [])
     if isinstance(parts, list) and any(isinstance(p, dict) and p.get("type") == "file" for p in parts):
@@ -478,25 +507,41 @@ async def _dispatch_onebot_send(
                 ),
             )
         result = None
-        for chunk in chunks:
+        for part_index, chunk in enumerate(chunks):
             segment = _text_segment(chunk)
-            if send_request.target_scope is SessionType.PRIVATE:
-                result = await asyncio.wait_for(
-                    bot.send_private_msg(
-                        user_id=_coerce_onebot_id(send_request.target_id),
-                        message=[segment],
-                    ),
-                    timeout=budget.slice_for(len(chunks)),
-                )
-            else:
-                result = await asyncio.wait_for(
-                    bot.send_group_msg(
-                        group_id=_coerce_onebot_id(send_request.target_id),
-                        message=[segment],
-                    ),
-                    timeout=budget.slice_for(len(chunks)),
-                )
+            try:
+                if send_request.target_scope is SessionType.PRIVATE:
+                    result = await asyncio.wait_for(
+                        bot.send_private_msg(
+                            user_id=_coerce_onebot_id(send_request.target_id),
+                            message=[segment],
+                        ),
+                        timeout=budget.slice_for(len(chunks)),
+                    )
+                else:
+                    result = await asyncio.wait_for(
+                        bot.send_group_msg(
+                            group_id=_coerce_onebot_id(send_request.target_id),
+                            message=[segment],
+                        ),
+                        timeout=budget.slice_for(len(chunks)),
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # 结果未知（超时/断连/异常）：该 part 记 UNKNOWN 后按原样
+                # 抛出，由上层沿用既有 result_unknown 语义终态化。
+                progress.unknown_parts.append(part_index)
+                if part_sink is not None:
+                    _report_part_safely(part_sink, part_index, PART_REPORT_UNKNOWN)
+                raise
+            if not _onebot_result_is_success(result):
+                # 平台明确拒绝该段：未送达，不计副作用（重发安全）。
+                raise _ChunkRejectedError(_extract_onebot_retcode(result))
             progress.count += 1
+            progress.delivered_parts.append(part_index)
+            if part_sink is not None:
+                _report_part_safely(part_sink, part_index, PART_REPORT_SENT)
         if result is None:
             raise RuntimeError("chunk transport returned no result")
     else:
@@ -530,11 +575,22 @@ async def _dispatch_onebot_send(
     return result
 
 
+def _report_part_safely(part_sink: PartSink, part_index: int, state: str) -> None:
+    """part 观测回报：消费方异常绝不能反噬发送主链路。"""
+    try:
+        part_sink(part_index, state)
+    except Exception:  # noqa: BLE001 - 观测是旁路，失败仅降级为无回报。
+        logger.debug(
+            "onebot part sink failed part_index=%s state=%s", part_index, state
+        )
+
+
 async def send_onebot_v11(
     bot: OneBotV11Bot,
     send_request: SendRequest,
     *,
     timeout_seconds: float | None = None,
+    part_sink: PartSink | None = None,
 ) -> DeliveryReceipt:
     result: Any = None
     last_error: Exception | None = None
@@ -566,7 +622,13 @@ async def send_onebot_v11(
         progress = _SendSideEffects()
         budget = _TimeoutBudget(timeout)
         try:
-            dispatch = _dispatch_onebot_send(bot, send_request, budget=budget, progress=progress)
+            dispatch = _dispatch_onebot_send(
+                bot,
+                send_request,
+                budget=budget,
+                progress=progress,
+                part_sink=part_sink,
+            )
             dispatched = await asyncio.wait_for(dispatch, timeout=timeout)
             if isinstance(dispatched, DeliveryReceipt):
                 return dispatched
@@ -581,6 +643,50 @@ async def send_onebot_v11(
             return DeliveryReceipt(request_id=send_request.request_id, state=ReceiptState.FAILED_FINAL,
                 transport=ONEBOT_V11_TRANSPORT, public_message="", debug_id=debug_id,
                 operational_issue=_onebot_issue(str(exc)[:48] or "file_delivery_failed_or_unknown", retryable=False, debug_id=debug_id))
+        except _ChunkRejectedError as exc:
+            # §9.3：被拒段未送达（明确失败）。若此前段已送达（多段整体路径），
+            # 整体重试会重发已送达内容 → 沿用 result_unknown 终态；否则与既有
+            # retcode_failure 分类一致（可重试，重发安全）。
+            if progress.count > 0:
+                debug_id = new_debug_id()
+                logger.warning(
+                    "onebot chunk rejected after partial delivery retcode=%s request_id=%s debug_id=%s",
+                    exc.retcode,
+                    send_request.request_id,
+                    debug_id,
+                )
+                return DeliveryReceipt(
+                    request_id=send_request.request_id,
+                    state=ReceiptState.FAILED_FINAL,
+                    transport=ONEBOT_V11_TRANSPORT,
+                    public_message="",
+                    debug_id=debug_id,
+                    operational_issue=_onebot_issue(
+                        "result_unknown",
+                        retryable=False,
+                        debug_id=debug_id,
+                        attempts=attempt + 1,
+                    ),
+                )
+            debug_id = new_debug_id()
+            state = (
+                ReceiptState.FAILED_FINAL
+                if _is_final_failure_retcode(exc.retcode)
+                else ReceiptState.FAILED_RETRYABLE
+            )
+            return DeliveryReceipt(
+                request_id=send_request.request_id,
+                state=state,
+                transport=ONEBOT_V11_TRANSPORT,
+                provider_message_id=None,
+                public_message="",
+                debug_id=debug_id,
+                operational_issue=_onebot_issue(
+                    "retcode_failure",
+                    retryable=state is ReceiptState.FAILED_RETRYABLE,
+                    debug_id=debug_id,
+                ),
+            )
         except asyncio.TimeoutError:
             debug_id = new_debug_id()
             logger.warning(

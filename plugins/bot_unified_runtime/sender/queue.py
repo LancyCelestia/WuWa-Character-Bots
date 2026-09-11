@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import threading
@@ -23,6 +24,19 @@ from plugins.bot_unified_runtime.sender.timeout import resolve_transport_timeout
 
 SQLITE_QUEUE_TRANSPORT = "sqlite_queue"
 PROCESSING_STATE = "processing"
+# §9.3 part 级幂等恢复：PARTIAL 是请求行终态（contracts/ 本轮禁改，无法新增
+# ReceiptState 枚举成员，故以裸字符串落库）。语义：parts_delivered>0 且未全部
+# 送达时不得置 FAILED_FINAL 盲重发，也不得伪装成功——记录断点，由补偿扫描
+# （claim_due 扫 state='partial' 且 next_retry_at 到期的行）续发剩余 part。
+PARTIAL_ROW_STATE = "partial"
+# part 级状态机（规格 §9.3.2）：PENDING/SENT/UNKNOWN/FAILED_FINAL。
+PART_STATE_PENDING = "pending"
+PART_STATE_SENT = "sent"
+PART_STATE_UNKNOWN = "unknown"
+PART_STATE_FAILED_FINAL = "failed_final"
+# PARTIAL 行补偿扫描的重试间隔：与 bot_unavailable 挂起的 90s 对齐（慢速重探，
+# 不随 retry_base_seconds 变化；确认类扫描本身不重发任何 part）。
+_PARTIAL_RESUME_BACKOFF_SECONDS = 90.0
 # 新入队行的认领宽限期：submit 写入 next_retry_at=now+宽限期，宽限期内
 # worker 的 claim_due 不得认领该行——入队后的首次投递由 handler 内联
 # 负责（不走租约协议），避免 worker 与内联投递竞态重复发送同一消息。
@@ -76,6 +90,11 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _part_key(request_id: str, part_index: int) -> str:
+    """规格 §9.3.1：part 稳定键 = message_request_id + part_index，重试不换键。"""
+    return f"{request_id}#part{int(part_index)}"
+
+
 def _queued_receipt(send_request: SendRequest) -> DeliveryReceipt:
     return DeliveryReceipt(
         request_id=send_request.request_id,
@@ -95,6 +114,43 @@ class QueuedSendRequest:
     created_at: datetime
     updated_at: datetime
     lease_expires_at: datetime | None = None
+    # §9.3：part 级进度（仅 SQLite 队列装载；None=无 part 跟踪，走既有整发语义）。
+    parts: PartProgress | None = None
+
+
+@dataclass(frozen=True)
+class PartRecord:
+    """单条 part 的持久化状态（send_request_parts 行投影）。"""
+
+    part_index: int
+    state: str
+    attempts: int = 0
+    last_error_kind: str | None = None
+    provider_message_id: str | None = None
+    payload_digest: str | None = None
+
+
+@dataclass(frozen=True)
+class PartProgress:
+    """一个请求的 part 级进度快照（只读视图）。"""
+
+    total: int
+    records: dict[int, PartRecord]
+
+    @property
+    def delivered(self) -> int:
+        return sum(1 for record in self.records.values() if record.state == PART_STATE_SENT)
+
+    def indexes_in_state(self, state: str) -> list[int]:
+        return sorted(
+            index for index, record in self.records.items() if record.state == state
+        )
+
+    def pending_indexes(self) -> list[int]:
+        return self.indexes_in_state(PART_STATE_PENDING)
+
+    def unknown_indexes(self) -> list[int]:
+        return self.indexes_in_state(PART_STATE_UNKNOWN)
 
 
 class SendQueue(Protocol):
@@ -388,6 +444,11 @@ class SQLiteSendRequestQueue:
                     AND lease_expires_at IS NOT NULL
                     AND lease_expires_at <= ?
                 )
+                OR (
+                    state = ?
+                    AND next_retry_at IS NOT NULL
+                    AND next_retry_at <= ?
+                )
                 ORDER BY created_at ASC, rowid ASC
                 LIMIT ?
                 """,
@@ -397,27 +458,37 @@ class SQLiteSendRequestQueue:
                     current_time.isoformat(),
                     PROCESSING_STATE,
                     current_time.isoformat(),
+                    PARTIAL_ROW_STATE,
+                    current_time.isoformat(),
                     safe_limit,
                 ),
             ).fetchall()
             claimed_keys: list[str] = []
             for row in rows:
-                claimed_from_state = (
-                    str(row["claimed_from_state"])
-                    if row["state"] == PROCESSING_STATE
-                    and row["claimed_from_state"] is not None
-                    else str(row["state"])
-                )
-                retry_count = int(row["retry_count"])
-                if row["state"] == PROCESSING_STATE:
-                    # 租约过期重认领意味着上一次投递结果未知（可能已送达），
-                    # 必须计入尝试次数；否则进程崩溃循环会无限重发。
-                    retry_count += 1
-                    if retry_count >= self.max_attempts:
-                        self._finalize_expired_lease(
-                            connection, row, retry_count, current_time
-                        )
-                        continue
+                if row["state"] == PARTIAL_ROW_STATE:
+                    # §9.3 补偿扫描：PARTIAL 行续发。claimed_from_state 只能取
+                    # 合法 ReceiptState 值（'partial' 会让 _entry_from_row 误判
+                    # 毒行）；续发预算由 part 级 attempts 约束，不烧请求级
+                    # retry_count（PARTIAL 行通常是请求预算已烧尽后转换来的）。
+                    claimed_from_state = ReceiptState.FAILED_RETRYABLE.value
+                    retry_count = int(row["retry_count"])
+                else:
+                    claimed_from_state = (
+                        str(row["claimed_from_state"])
+                        if row["state"] == PROCESSING_STATE
+                        and row["claimed_from_state"] is not None
+                        else str(row["state"])
+                    )
+                    retry_count = int(row["retry_count"])
+                    if row["state"] == PROCESSING_STATE:
+                        # 租约过期重认领意味着上一次投递结果未知（可能已送达），
+                        # 必须计入尝试次数；否则进程崩溃循环会无限重发。
+                        retry_count += 1
+                        if retry_count >= self.max_attempts:
+                            self._finalize_expired_lease(
+                                connection, row, retry_count, current_time
+                            )
+                            continue
                 connection.execute(
                     """
                     UPDATE send_requests
@@ -451,7 +522,7 @@ class SQLiteSendRequestQueue:
                 """,
                 claimed_keys,
             ).fetchall()
-        return self._entries_from_rows(refreshed)
+        return self._entries_from_rows(refreshed, connection)
 
     # ---- 毒行隔离（评审 H9）------------------------------------------------
     # 90f590e 只给 _finalize_expired_lease 加了隔离，_entry_from_row 的两个
@@ -473,14 +544,14 @@ class SQLiteSendRequestQueue:
             ORDER BY created_at ASC, rowid ASC
             LIMIT ?
             """,
-            (
-                ReceiptState.QUEUED.value,
-                ReceiptState.FAILED_RETRYABLE.value,
-                current_time.isoformat(),
-                limit,
-            ),
-        )
-        return self._entries_from_rows(cursor.fetchall())
+                (
+                    ReceiptState.QUEUED.value,
+                    ReceiptState.FAILED_RETRYABLE.value,
+                    current_time.isoformat(),
+                    limit,
+                ),
+            )
+        return self._entries_from_rows(cursor.fetchall(), connection)
 
     def _corrupt_row_kind(self, row: sqlite3.Row, exc: Exception) -> str:
         """区分「跨版本未知字段」与「结构真损坏」，供日志与审计归类。"""
@@ -537,13 +608,13 @@ class SQLiteSendRequestQueue:
         )
 
     def _entries_from_rows(
-        self, rows: list[sqlite3.Row]
+        self, rows: list[sqlite3.Row], connection: sqlite3.Connection
     ) -> list[QueuedSendRequest]:
         """逐行解析：坏行终态化后跳过，健康行照常返回（毒行隔离）。"""
         entries: list[QueuedSendRequest] = []
         for row in rows:
             try:
-                entries.append(self._entry_from_row(row))
+                entries.append(self._entry_from_row(row, connection))
             except _CorruptQueueRow as exc:
                 self._finalize_corrupt_row(row, exc.cause)
         return entries
@@ -556,6 +627,16 @@ class SQLiteSendRequestQueue:
         current_time: datetime,
     ) -> None:
         """租约反复过期的行达到 max_attempts 后置终态，不再交投。"""
+        # §9.3 断点守卫：已有 part 送达且未全部完成时改置 PARTIAL（带扫描
+        # 退避），租约循环烧完请求预算也不得整封盲重发。
+        if self._convert_terminal_to_partial_in(
+            connection, str(row["request_id"]), now=current_time
+        ):
+            logging.getLogger(__name__).warning(
+                "expired-lease row deferred to partial breakpoint request_id=%s",
+                row["request_id"],
+            )
+            return
         connection.execute(
             """
             UPDATE send_requests
@@ -673,6 +754,23 @@ class SQLiteSendRequestQueue:
                 )
             retry_count = entry.retry_count + 1
             if retry_count >= self.max_attempts:
+                # §9.3 断点守卫：请求重试预算烧尽但有 part 已送达时改置
+                # PARTIAL 断点（补偿扫描续发），不整封 FAILED_FINAL 盲重发。
+                if self._convert_terminal_to_partial_in(
+                    connection, request_id, now=current_time
+                ):
+                    receipt = DeliveryReceipt(
+                        request_id=request_id,
+                        state=ReceiptState.FAILED_FINAL,
+                        transport=SQLITE_QUEUE_TRANSPORT,
+                        retry_count=retry_count,
+                        public_message="",
+                        operational_issue=issue,
+                    )
+                    self._append_sender_audit(
+                        entry.send_request, receipt, "send_deferred_partial"
+                    )
+                    return receipt
                 receipt = self._update_state_in(
                     connection,
                     entry.send_request,
@@ -760,6 +858,23 @@ class SQLiteSendRequestQueue:
                 )
             issue = operational_issue or entry.send_request.operational_issue
             public_message = "" if issue is not None else public_message
+            # §9.3 断点守卫：显式终态失败前，若已有 part 送达且未全部完成，
+            # 改置 PARTIAL 断点由补偿扫描续发，绝不整封盲重发已送达内容。
+            if self._convert_terminal_to_partial_in(
+                connection, request_id, now=current_time
+            ):
+                receipt = DeliveryReceipt(
+                    request_id=request_id,
+                    state=ReceiptState.FAILED_FINAL,
+                    transport=SQLITE_QUEUE_TRANSPORT,
+                    retry_count=entry.retry_count,
+                    public_message="",
+                    operational_issue=issue,
+                )
+                self._append_sender_audit(
+                    entry.send_request, receipt, "send_deferred_partial"
+                )
+                return receipt
             receipt = self._update_state_in(
                 connection,
                 entry.send_request,
@@ -773,6 +888,423 @@ class SQLiteSendRequestQueue:
         self._append_sender_audit(entry.send_request, receipt, "send_failed_final")
         return receipt
 
+    # ---- §9.3 part 级幂等进度与 PARTIAL 断点 --------------------------------
+    # 目标：长回复切成多个 part 后，每个 part 成功即落库；已 SENT 的 part 永不
+    # 重发；结果未知的 part 记 UNKNOWN 走确认协议；有副作用又无法立即完成时
+    # 请求行置 PARTIAL 终态+断点，由 claim_due 的补偿扫描续发剩余 part。
+    # 所有写路径沿用共享连接单事务（WAL）惯例；part 明细表与请求行汇总列在同
+    # 一事务内更新。
+
+    def ensure_parts_planned(
+        self,
+        request_id: str,
+        payload_digests: list[str],
+        *,
+        now: datetime | None = None,
+    ) -> PartProgress | None:
+        """首次 part 化发送前预写全部 PENDING part 行（幂等，ON CONFLICT 跳过）。
+
+        只保存 payload 摘要，不保存用户正文副本（规格 §9.3.2）。请求行不存在
+        或写入失败时返回 None，调用方降级为既有整发语义。
+        """
+        current_time = now or _utc_now()
+        digests = list(payload_digests)
+        if not digests:
+            return None
+        self._ensure_schema_once()
+        try:
+            with self._transaction() as connection:
+                total = len(digests)
+                for index, digest in enumerate(digests):
+                    connection.execute(
+                        """
+                        INSERT INTO send_request_parts (
+                            part_key,
+                            request_id,
+                            part_index,
+                            parts_total,
+                            state,
+                            attempts,
+                            payload_digest,
+                            updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(part_key) DO NOTHING
+                        """,
+                        (
+                            _part_key(request_id, index),
+                            request_id,
+                            index,
+                            total,
+                            PART_STATE_PENDING,
+                            0,
+                            digest,
+                            current_time.isoformat(),
+                        ),
+                    )
+                self._refresh_request_part_summary_in(connection, request_id, now=current_time)
+                return self._load_part_progress_in(connection, request_id)
+        except sqlite3.Error:
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                "part plan persist failed request_id=%s", request_id
+            )
+            return None
+
+    def part_progress(self, request_id: str) -> PartProgress | None:
+        """读取请求的 part 级进度快照（只读；无 part 跟踪时返回 None）。"""
+        self._ensure_schema_once()
+        with self._locked_connection() as connection:
+            return self._load_part_progress_in(connection, request_id)
+
+    def list_partial_requests(self, *, now: datetime | None = None) -> list[QueuedSendRequest]:
+        """PARTIAL 断点行的运维/测试视图（含休眠行，供人工确认与排查）。"""
+        del now  # 保持签名稳定：扫描不依赖时间，断点行无论是否可调度都可见。
+        self._ensure_schema_once()
+        with self._locked_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM send_requests
+                WHERE state = ?
+                ORDER BY created_at ASC, rowid ASC
+                """,
+                (PARTIAL_ROW_STATE,),
+            ).fetchall()
+            return self._entries_from_rows(rows, connection)
+
+    def mark_part_attempt(
+        self,
+        request_id: str,
+        part_index: int,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        """发送前原子写入：state→PENDING 且 attempts+1（规格 §9.3.3）。
+
+        崩溃在写入后、dispatch 前只会多计一次尝试（保守方向，受 attempts
+        上限约束），绝不会漏记「可能已在平台侧送达」的事实。
+        """
+        return self._update_part_row(
+            request_id,
+            part_index,
+            state=PART_STATE_PENDING,
+            increment_attempts=True,
+            now=now,
+        )
+
+    def mark_part_sent(
+        self,
+        request_id: str,
+        part_index: int,
+        *,
+        provider_message_id: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        return self._update_part_row(
+            request_id,
+            part_index,
+            state=PART_STATE_SENT,
+            provider_message_id=provider_message_id,
+            now=now,
+        )
+
+    def mark_part_unknown(
+        self,
+        request_id: str,
+        part_index: int,
+        *,
+        error_kind: str | None = None,
+        provider_message_id: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """结果未知（超时/断连/无法判定）：记 UNKNOWN，绝不静默当失败盲重发。"""
+        return self._update_part_row(
+            request_id,
+            part_index,
+            state=PART_STATE_UNKNOWN,
+            last_error_kind=error_kind,
+            provider_message_id=provider_message_id,
+            now=now,
+        )
+
+    def mark_part_failed_final(
+        self,
+        request_id: str,
+        part_index: int,
+        *,
+        error_kind: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """平台明确拒绝且不可重试（如 403）：该 part 终态，不回 PENDING。"""
+        return self._update_part_row(
+            request_id,
+            part_index,
+            state=PART_STATE_FAILED_FINAL,
+            last_error_kind=error_kind,
+            now=now,
+        )
+
+    def mark_part_pending(
+        self,
+        request_id: str,
+        part_index: int,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        """明确可重试的失败（或确认「未送达」的 UNKNOWN）回到 PENDING。"""
+        return self._update_part_row(
+            request_id,
+            part_index,
+            state=PART_STATE_PENDING,
+            now=now,
+        )
+
+    def _update_part_row(
+        self,
+        request_id: str,
+        part_index: int,
+        *,
+        state: str,
+        increment_attempts: bool = False,
+        last_error_kind: str | None = None,
+        provider_message_id: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        current_time = now or _utc_now()
+        self._ensure_schema_once()
+        try:
+            with self._transaction() as connection:
+                row = connection.execute(
+                    """
+                    SELECT parts_total
+                    FROM send_request_parts
+                    WHERE part_key = ?
+                    """,
+                    (_part_key(request_id, part_index),),
+                ).fetchone()
+                if row is None:
+                    return False
+                assignments = ["state = ?", "updated_at = ?"]
+                params: list[object] = [state, current_time.isoformat()]
+                if increment_attempts:
+                    assignments.append("attempts = attempts + 1")
+                if last_error_kind is not None:
+                    assignments.append("last_error_kind = ?")
+                    params.append(last_error_kind)
+                if provider_message_id is not None:
+                    assignments.append("provider_message_id = ?")
+                    params.append(provider_message_id)
+                params.extend([request_id, part_index])
+                connection.execute(
+                    f"""
+                    UPDATE send_request_parts
+                    SET {", ".join(assignments)}
+                    WHERE request_id = ? AND part_index = ?
+                    """,
+                    params,
+                )
+                self._refresh_request_part_summary_in(
+                    connection, request_id, now=current_time
+                )
+            return True
+        except sqlite3.Error:
+            logging.getLogger(__name__).warning(
+                "part state persist failed request_id=%s part_index=%s state=%s",
+                request_id,
+                part_index,
+                state,
+            )
+            return False
+
+    def _refresh_request_part_summary_in(
+        self,
+        connection: sqlite3.Connection,
+        request_id: str,
+        *,
+        now: datetime,
+    ) -> None:
+        """把 part 明细表汇总进请求行列（同事务；必须在调用方事务内执行）。"""
+        rows = connection.execute(
+            """
+            SELECT part_index, parts_total, state
+            FROM send_request_parts
+            WHERE request_id = ?
+            ORDER BY part_index ASC
+            """,
+            (request_id,),
+        ).fetchall()
+        if not rows:
+            return
+        total = max(int(row["parts_total"]) for row in rows)
+        delivered = sum(1 for row in rows if str(row["state"]) == PART_STATE_SENT)
+        progress_json = json.dumps(
+            {str(row["part_index"]): str(row["state"]) for row in rows},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        connection.execute(
+            """
+            UPDATE send_requests
+            SET parts_total = ?,
+                parts_delivered = ?,
+                parts_progress = ?,
+                updated_at = ?
+            WHERE request_id = ?
+            """,
+            (
+                total,
+                delivered,
+                progress_json,
+                now.isoformat(),
+                request_id,
+            ),
+        )
+
+    def _load_part_progress_in(
+        self,
+        connection: sqlite3.Connection,
+        request_id: str,
+    ) -> PartProgress | None:
+        """在调用方连接上读取 part 进度（事务内/持锁读均可，RLock 可重入）。"""
+        rows = connection.execute(
+            """
+            SELECT part_index, parts_total, state, attempts, last_error_kind,
+                   provider_message_id, payload_digest
+            FROM send_request_parts
+            WHERE request_id = ?
+            ORDER BY part_index ASC
+            """,
+            (request_id,),
+        ).fetchall()
+        if not rows:
+            return None
+        records: dict[int, PartRecord] = {}
+        total = 1
+        for row in rows:
+            index = int(row["part_index"])
+            total = max(total, index + 1, int(row["parts_total"]))
+            records[index] = PartRecord(
+                part_index=index,
+                state=str(row["state"]),
+                attempts=int(row["attempts"]),
+                last_error_kind=(
+                    str(row["last_error_kind"])
+                    if row["last_error_kind"] is not None
+                    else None
+                ),
+                provider_message_id=(
+                    str(row["provider_message_id"])
+                    if row["provider_message_id"] is not None
+                    else None
+                ),
+                payload_digest=(
+                    str(row["payload_digest"])
+                    if row["payload_digest"] is not None
+                    else None
+                ),
+            )
+        return PartProgress(total=total, records=records)
+
+    def mark_partial(
+        self,
+        request_id: str,
+        *,
+        resumable: bool = True,
+        now: datetime | None = None,
+        operational_issue: OperationalIssue | None = None,
+    ) -> DeliveryReceipt:
+        """置 PARTIAL 终态+断点：有已送达 part 但无法立即全部完成。
+
+        resumable=True 时带 90s 补偿扫描退避（下轮 claim_due 扫描续发/确认）；
+        resumable=False（本轮零进展：无可续发 part 且确认无变化）时休眠
+        （next_retry_at=NULL），仍可经 list_partial_requests 检视或人工推进。
+        """
+        current_time = now or _utc_now()
+        self._ensure_schema_once()
+        with self._transaction() as connection:
+            entry = self._find_entry_in(connection, request_id)
+            if entry is None:
+                return DeliveryReceipt(
+                    request_id=request_id,
+                    state=ReceiptState.FAILED_FINAL,
+                    transport=SQLITE_QUEUE_TRANSPORT,
+                    public_message="send request not found",
+                    operational_issue=operational_issue,
+                )
+            issue = operational_issue or entry.send_request.operational_issue
+            next_retry_at = (
+                current_time + timedelta(seconds=_PARTIAL_RESUME_BACKOFF_SECONDS)
+                if resumable
+                else None
+            )
+            connection.execute(
+                """
+                UPDATE send_requests
+                SET state = ?,
+                    claimed_from_state = NULL,
+                    lease_expires_at = NULL,
+                    next_retry_at = ?,
+                    last_public_message = '',
+                    updated_at = ?
+                WHERE request_id = ?
+                """,
+                (
+                    PARTIAL_ROW_STATE,
+                    next_retry_at.isoformat() if next_retry_at is not None else None,
+                    current_time.isoformat(),
+                    request_id,
+                ),
+            )
+            receipt = DeliveryReceipt(
+                request_id=request_id,
+                state=ReceiptState.FAILED_FINAL,
+                transport=SQLITE_QUEUE_TRANSPORT,
+                retry_count=entry.retry_count,
+                next_retry_at=next_retry_at,
+                public_message="",
+                operational_issue=issue,
+            )
+        self._append_sender_audit(entry.send_request, receipt, "send_deferred_partial")
+        return receipt
+
+    def _convert_terminal_to_partial_in(
+        self,
+        connection: sqlite3.Connection,
+        request_id: str,
+        *,
+        now: datetime,
+    ) -> bool:
+        """FAILED_FINAL 前的断点守卫：0<已送达<总数 时改写 PARTIAL。
+
+        在调用方事务内执行；返回 True 表示调用方应跳过 FAILED_FINAL 写入
+        （PARTIAL 断点已落库，由补偿扫描续发，绝不整封盲重发）。
+        """
+        progress = self._load_part_progress_in(connection, request_id)
+        if progress is None or progress.total <= 0:
+            return False
+        if not 0 < progress.delivered < progress.total:
+            return False
+        next_retry_at = now + timedelta(seconds=_PARTIAL_RESUME_BACKOFF_SECONDS)
+        connection.execute(
+            """
+            UPDATE send_requests
+            SET state = ?,
+                claimed_from_state = NULL,
+                lease_expires_at = NULL,
+                next_retry_at = ?,
+                updated_at = ?
+            WHERE request_id = ?
+            """,
+            (
+                PARTIAL_ROW_STATE,
+                next_retry_at.isoformat(),
+                now.isoformat(),
+                request_id,
+            ),
+        )
+        return True
+
     def safe_summary(self) -> dict[str, int]:
         self._ensure_schema_once()
         summary = {
@@ -782,6 +1314,7 @@ class SQLiteSendRequestQueue:
             ReceiptState.SENT.value: 0,
             ReceiptState.SKIPPED.value: 0,
             PROCESSING_STATE: 0,
+            PARTIAL_ROW_STATE: 0,
         }
         with self._locked_connection() as connection:
             cursor = connection.execute(
@@ -834,6 +1367,49 @@ class SQLiteSendRequestQueue:
                 "send_requests",
                 "lease_expires_at",
                 "TEXT",
+            )
+            # §9.3 请求行 part 级进度扩展：total/delivered 汇总 + 逐 part 状态
+            # JSON 镜像（{"0":"sent",...}）。权威逐 part 明细在 send_request_parts
+            # 伴生表，请求行列只是同事务内写入的廉价读视图。
+            self._ensure_column(
+                connection,
+                "send_requests",
+                "parts_total",
+                "INTEGER",
+            )
+            self._ensure_column(
+                connection,
+                "send_requests",
+                "parts_delivered",
+                "INTEGER",
+            )
+            self._ensure_column(
+                connection,
+                "send_requests",
+                "parts_progress",
+                "TEXT",
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS send_request_parts (
+                    part_key TEXT PRIMARY KEY,
+                    request_id TEXT NOT NULL,
+                    part_index INTEGER NOT NULL,
+                    parts_total INTEGER NOT NULL,
+                    state TEXT NOT NULL,
+                    attempts INTEGER NOT NULL,
+                    last_error_kind TEXT,
+                    provider_message_id TEXT,
+                    payload_digest TEXT,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_send_request_parts_request
+                ON send_request_parts (request_id)
+                """
             )
             connection.execute(
                 """
@@ -942,12 +1518,14 @@ class SQLiteSendRequestQueue:
         if row is None:
             return None
         try:
-            return self._entry_from_row(row)
+            return self._entry_from_row(row, connection)
         except _CorruptQueueRow as exc:
             self._finalize_corrupt_row(row, exc.cause)
             return None
 
-    def _entry_from_row(self, row: sqlite3.Row) -> QueuedSendRequest:
+    def _entry_from_row(
+        self, row: sqlite3.Row, connection: sqlite3.Connection
+    ) -> QueuedSendRequest:
         """把队列行还原为条目；坏行统一抛 ``_CorruptQueueRow`` 供调用方隔离。
 
         解析失败（跨版本未知字段 / request_json 损坏 / 时间戳非法）在这里被
@@ -956,11 +1534,24 @@ class SQLiteSendRequestQueue:
         """
         try:
             raw_state = str(row["state"])
-            public_state = (
-                str(row["claimed_from_state"])
-                if raw_state == PROCESSING_STATE and row["claimed_from_state"] is not None
-                else raw_state
-            )
+            if raw_state == PARTIAL_ROW_STATE:
+                # 'partial' 不是 ReceiptState 成员：对外投影为 FAILED_FINAL
+                # （终态语义一致）；part 级断点经 entry.parts 供 worker 续发。
+                public_state = ReceiptState.FAILED_FINAL.value
+            else:
+                public_state = (
+                    str(row["claimed_from_state"])
+                    if raw_state == PROCESSING_STATE and row["claimed_from_state"] is not None
+                    else raw_state
+                )
+            # 建表/迁移后 SELECT * 必含 parts_total 列；极端损坏场景由外层
+            # _CorruptQueueRow 兜底隔离。
+            parts_total = row["parts_total"]
+            parts = self._load_part_progress_in(connection, str(row["request_id"]))
+            if parts_total is not None and int(parts_total) > 0 and parts is None:
+                # part 明细丢失但请求行声明了分片：进度不可信，按毒行隔离
+                # （终态化，绝不整封盲重发——防重复投递优先）。
+                raise ValueError("part progress missing for chunked request")
             return QueuedSendRequest(
                 send_request=SendRequest.model_validate_json(str(row["request_json"])),
                 state=ReceiptState(public_state),
@@ -977,6 +1568,7 @@ class SQLiteSendRequestQueue:
                     if row["lease_expires_at"] is not None
                     else None
                 ),
+                parts=parts,
             )
         except Exception as exc:
             raise _CorruptQueueRow(
