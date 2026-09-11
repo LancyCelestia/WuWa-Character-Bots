@@ -134,7 +134,8 @@ _HELP_CATEGORIES = (
             "状态", "为什么", "回执", "审计", "最近", "日志", "解析", "记忆",
             "上下文", "对话", "历史", "人格", "角色", "队列", "配置", "就绪",
             "接入", "暂停", "回复", "设置", "路由", "邮件", "Telegram", "供应商",
-            "草稿", "凭据", "群策略",
+            "草稿", "凭据", "群策略", "身份", "怪癖", "限流", "合并转发",
+            "群摘要", "视频理解", "运行开关",
         },
     ),
     ("大模型相关", {"模型", "搜索"}),
@@ -342,7 +343,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         },
         {
             "topic": '模型',
-            "aliases": ('模型', 'model', 'llm', '供应商', '切换模型'),
+            "aliases": ('模型', 'model', 'llm', '渠道', '切换模型'),
             "index": '【模型】/bot model list | set | add | update | priority | effort | price | remove | reset | health | probe | routes',
             "title_line": '【模型】模型与供应商管理（管理员，改动即时生效）',
             "lines": [
@@ -803,6 +804,278 @@ _HELP_ENTRIES: list[HelpEntry] = [
         "priority: 全局尝试顺序，整数 1-999，数字越小越优先；HCN 保底项放最后\n"
         "BOT_CHAT_FAST_MAX_CANDIDATES: 快速模式候选上限，0=不限制候选数量，1-100=最多尝试数量\n"
         "scripts/probe_llm_providers.py: 每模型一次脱敏探测；--max-tokens：1-4096，默认 32，不删除配置",
+    },
+    {
+        "topic": "身份",
+        "admin_only": True,
+        "aliases": ("身份", "identity", "会话身份"),
+        "index": "【身份】会话身份记忆：/bot identity show|set|tag|clear",
+        "title_line": "【身份】会话级身份记忆（管理员）",
+        "lines": [
+            "/bot identity show: 查看本会话身份，无参数",
+            "/bot identity set <昵称>: 设定本会话称呼，<昵称>：必填（如 set 岸宝）",
+            "/bot identity tag <标签1,标签2>: 设定标签，逗号分隔，最多 8 个",
+            "/bot identity clear: 清除本会话身份设定，无参数",
+            "权限: 仅管理员；在哪个群/私聊执行就对哪个会话生效",
+            "护栏: 只影响称呼与语气，人格不变（渲染层内建防 OOC 护栏）",
+        ],
+        "detail": (
+            "【身份】会话级身份记忆（管理员专属）\n"
+            "\n"
+            "■ 板块介绍\n"
+            "  给单个会话（群或私聊）设置独立的身份记忆：机器人怎么称呼你、带哪些标签。\n"
+            "  在哪个会话里执行，就只对那个会话生效，各会话互不影响。\n"
+            "\n"
+            "■ 参数与命令\n"
+            "  /bot identity show：查看当前会话的称呼、标签、设置人与更新时间。\n"
+            "  /bot identity set <昵称>：设定称呼，昵称必填。\n"
+            "  /bot identity tag <标签1,标签2>：设定标签，逗号分隔。\n"
+            "  /bot identity clear：清除本会话身份设定。\n"
+            "\n"
+            "■ 取值范围\n"
+            "  昵称：非空文本；标签：逗号分隔，最多保留 8 个。\n"
+            "  数据存 data/session_identity.sqlite3（.env 可用 BOT_SESSION_IDENTITY_DB_PATH 改路径）。\n"
+            "\n"
+            "■ 效果\n"
+            "  只调整该会话内的称呼与语气，不改变守岸人核心人格；渲染层内建防 OOC 护栏，\n"
+            "  会话身份永远不能推翻人格设定。仅管理员可用。"
+        ),
+    },
+    {
+        "topic": "怪癖",
+        "admin_only": True,
+        "aliases": ("怪癖", "quirk", "人格怪癖"),
+        "index": "【怪癖】人格怪癖审核：/bot quirk list|approve|retire|add",
+        "title_line": "【怪癖】人格怪癖演化区（管理员，审核制）",
+        "lines": [
+            "/bot quirk list [pending|active|retired]: 列出 quirk，可按状态过滤，省略=全部，最多 20 条",
+            "/bot quirk approve <id前缀>: 待审 → 生效；仅对待审项生效，id 前缀需唯一命中",
+            "/bot quirk retire <id前缀>: 把某条 quirk 退役，id 前缀需唯一命中",
+            "/bot quirk add <习惯描述>: 管理员直接添加并立即生效（跳过审核）",
+            "审核制: 反思回路等自动来源只进待审（pending_review），approve 后才影响 prompt",
+            "开关: BOT_QUIRKS_ENABLED=false 时整个演化区停用",
+        ],
+        "detail": (
+            "【怪癖】人格怪癖演化区（管理员专属，审核制）\n"
+            "\n"
+            "■ 板块介绍\n"
+            "  L4 人格演化区：一小批可选的说话习惯/怪癖，生效后由人格装配渲染进上下文。\n"
+            "  审核制红线：自动来源（反思回路等 propose）只进待审队列，绝不直接影响 prompt。\n"
+            "\n"
+            "■ 参数与命令\n"
+            "  /bot quirk list [pending|active|retired]：列出，最多 20 条；先 list 拿 id。\n"
+            "  /bot quirk approve <id前缀>：待审 → 生效；只对待审项合法，流转错误会提示。\n"
+            "  /bot quirk retire <id前缀>：把生效项退役。\n"
+            "  /bot quirk add <习惯描述>：管理员直添，跳过审核立即生效。\n"
+            "\n"
+            "■ 取值范围\n"
+            "  状态只有三种：待审 pending / 生效 active / 退役 retired；\n"
+            "  id 前缀必须唯一命中（命中 0 条或多条都会要求换更长前缀）；\n"
+            "  BOT_QUIRKS_ENABLED=false 时命令只返回停用提示。\n"
+            "\n"
+            "■ 效果\n"
+            "  approve 后的 active 项渲染进人格上下文；retire 后不再渲染，记录保留；\n"
+            "  待审项在 approve 前对回复没有任何影响。"
+        ),
+    },
+    {
+        "topic": "限流",
+        "admin_only": True,
+        "aliases": ("限流", "句数帽", "安静时间", "情绪豁免", "自动接话"),
+        "index": "【限流】群句数帽/情绪豁免/安静时间/自动接话：BOT_RATE_LIMIT_*、BOT_QUIET_HOURS_*",
+        "title_line": "【限流】群聊句数帽、情绪豁免、安静时间与自动接话（管理员）",
+        "lines": [
+            "群聊句数帽: BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR / BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE，≥0 整数，0=该帽不生效；建议 60/小时、3/分钟",
+            "情绪低落豁免: BOT_RATE_LIMIT_EMOTION_EXEMPT，true/false，默认 true；安抚类回复不被句数帽拦截",
+            "自动接话: BOT_GROUP_CHAT_AUTO_REPLY_ENABLED（默认 false）+ BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY（0..1，默认 0.05）",
+            "安静时间 6 键: BOT_QUIET_HOURS_ENABLED / START / END / TIMEZONE / SESSION_TYPES / BYPASS_ROLES",
+            "示例: /bot runtime set BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR 60",
+        ],
+        "detail": (
+            "【限流】群聊句数帽、情绪豁免、安静时间与自动接话（管理员专属）\n"
+            "\n"
+            "■ 板块介绍\n"
+            "  控制机器人在群里的回复频率与时机：句数帽封顶、情绪豁免保安抚、\n"
+            "  安静时间定时闭嘴、自动接话按概率抽签。全部经 /bot runtime set 修改。\n"
+            "\n"
+            "■ 参数与命令\n"
+            "  BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR：群聊每小时回复句数帽。\n"
+            "  BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE：群聊每分钟回复句数帽。\n"
+            "  BOT_RATE_LIMIT_EMOTION_EXEMPT：用户情绪低落时限流豁免。\n"
+            "  BOT_GROUP_CHAT_AUTO_REPLY_ENABLED：未点名群消息自动接话总开关。\n"
+            "  BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY：自动接话概率（与心情系数相乘）。\n"
+            "  BOT_QUIET_HOURS_ENABLED：安静时间总开关。\n"
+            "  BOT_QUIET_HOURS_START / BOT_QUIET_HOURS_END：安静窗口起止时刻。\n"
+            "  BOT_QUIET_HOURS_TIMEZONE：窗口使用的时区。\n"
+            "  BOT_QUIET_HOURS_SESSION_TYPES：窗口对哪些会话类型生效。\n"
+            "  BOT_QUIET_HOURS_BYPASS_ROLES：窗口内仍可触发回复的角色。\n"
+            "\n"
+            "■ 取值范围\n"
+            "  句数帽：≥0 整数，0=该帽不生效（默认 0；用户口径建议 60/小时、3/分钟）。\n"
+            "  概率：0..1，自动接话默认 0.05，与心情系数相乘后封顶 1.0。\n"
+            "  时刻：HH:MM（小时 0-23、分钟 0-59），默认 00:00-06:00；支持跨零点（起>止）。\n"
+            "  时区：IANA 名称（如 Asia/Hong_Kong）。\n"
+            "  会话类型：group|private|email 逗号分隔，默认 group。\n"
+            "  bypass 角色：逗号分隔，默认 admin。\n"
+            "\n"
+            "■ 效果\n"
+            "  句数帽/情绪豁免/安静时间 6 键/接话概率均支持 /bot runtime set 热改，立即生效；\n"
+            "  接话总开关 ENABLED 在装配期读取，改动需重启；\n"
+            "  安静时间窗口内只拦截未点名的普通聊天/解析（@机器人或显式命令不受限）；\n"
+            "  自动接话用确定性哈希抽签，同一消息结果稳定；点名/命令永远不受概率影响。"
+        ),
+    },
+    {
+        "topic": "合并转发",
+        "admin_only": True,
+        "aliases": ("合并转发", "转发合并"),
+        "index": "【合并转发】长回复按条数/字数合并：/bot runtime set BOT_RENDER_FORWARD_MIN_NODES",
+        "title_line": "【合并转发】长回复合并为转发消息的阈值（管理员）",
+        "lines": [
+            "BOT_RENDER_FORWARD_MIN_NODES: ≥0 整数，默认 4；回复切分后达到该条数即合并成转发消息；0=不按条数，只看字数",
+            "BOT_RENDER_FORWARD_MIN_CHARS: ≥0 整数，默认 1500；达到该字数也触发合并",
+            "BOT_RENDER_FORWARD_MAX_NODES: ≥0 整数，默认 0=不限制；切分块数尽量压到该上限（硬长度边界优先）",
+            "BOT_RENDER_FORWARD_NODE_CHARS: ≥200 整数，默认 900；每个转发节点的目标字数",
+        ],
+        "detail": (
+            "【合并转发】长回复合并为转发消息的阈值（管理员专属）\n"
+            "\n"
+            "■ 板块介绍\n"
+            "  长回复默认按字数/条数切成多个节点并合并成一条 QQ 合并转发消息，\n"
+            "  四个键分别控制条数触发、字数触发、节点上限与单节点字数。\n"
+            "\n"
+            "■ 参数与命令\n"
+            "  /bot runtime set BOT_RENDER_FORWARD_MIN_NODES <n>：按条数触发。\n"
+            "  /bot runtime set BOT_RENDER_FORWARD_MIN_CHARS <n>：按字数触发。\n"
+            "  /bot runtime set BOT_RENDER_FORWARD_MAX_NODES <n>：节点数上限。\n"
+            "  /bot runtime set BOT_RENDER_FORWARD_NODE_CHARS <n>：单节点目标字数。\n"
+            "\n"
+            "■ 取值范围\n"
+            "  全部为整数：MIN_NODES / MIN_CHARS / MAX_NODES ≥0，NODE_CHARS ≥200；\n"
+            "  MIN_NODES 默认 4（用户口径“超过 3 条就合并”），0=不按条数合并；\n"
+            "  MAX_NODES 默认 0=不限制。\n"
+            "\n"
+            "■ 效果\n"
+            "  回复切分后条数达到 MIN_NODES 或字数达到 MIN_CHARS 即合并为转发消息；\n"
+            "  消费点在装配期读取，改动需重启生效。"
+        ),
+    },
+    {
+        "topic": "群摘要",
+        "admin_only": True,
+        "aliases": ("群摘要", "群聊摘要", "群概要"),
+        "index": "【群摘要】群聊上下文摘要名单：BOT_SHARED_GROUP_CONTEXT_ENABLED、BOT_GROUP_DIGEST_LIST_MODE",
+        "title_line": "【群摘要】群聊上下文摘要与群名单模式（管理员）",
+        "lines": [
+            "总开关: BOT_SHARED_GROUP_CONTEXT_ENABLED，true/false，默认 false",
+            "名单模式: BOT_GROUP_DIGEST_LIST_MODE，取值 whitelist|blacklist|off|all",
+            "白名单: BOT_GROUP_DIGEST_WHITELIST，数字群号列表，逗号/分号/顿号/空白分隔或 JSON 数组",
+            "黑名单: BOT_GROUP_DIGEST_BLACKLIST，格式同白名单",
+            "示例: /bot runtime set BOT_GROUP_DIGEST_LIST_MODE whitelist",
+            "/bot runtime set BOT_GROUP_DIGEST_WHITELIST 1108838060,1076073471",
+        ],
+        "detail": (
+            "【群摘要】群聊上下文摘要与群名单模式（管理员专属）\n"
+            "\n"
+            "■ 板块介绍\n"
+            "  群聊上下文摘要（shared_group）：把群内近期对话浓缩成摘要供人格参考；\n"
+            "  名单模式决定哪些群参与。\n"
+            "\n"
+            "■ 参数与命令\n"
+            "  BOT_SHARED_GROUP_CONTEXT_ENABLED：总开关，关闭时完全不生成群摘要。\n"
+            "  BOT_GROUP_DIGEST_LIST_MODE：名单模式（whitelist=仅名单内群，blacklist=名单内群排除）。\n"
+            "  BOT_GROUP_DIGEST_WHITELIST / BOT_GROUP_DIGEST_BLACKLIST：群号名单。\n"
+            "  均可用 /bot runtime set 热改。\n"
+            "\n"
+            "■ 取值范围\n"
+            "  LIST_MODE 只接受 whitelist|blacklist|off|all；\n"
+            "  名单：数字群号，逗号/分号/顿号/空白分隔或 JSON 数组，重复群号自动去重，\n"
+            "  非数字群号会被拒绝；留空=空名单。\n"
+            "\n"
+            "■ 效果\n"
+            "  总开关开启后按名单筛选参与群摘要的群；白名单模式只有名单内群生效，\n"
+            "  黑名单模式排除名单内群；相关衍生键：BOT_GROUP_DIGEST_MAX_TURNS（默认 150）、\n"
+            "  BOT_GROUP_DIGEST_MAX_CHARS（默认 800）、BOT_GROUP_DIGEST_LLM_ENABLED（默认 false）。"
+        ),
+    },
+    {
+        "topic": "视频理解",
+        "admin_only": True,
+        "aliases": ("视频理解", "识图", "vision", "视频"),
+        "index": "【视频理解】图片识别与视频理解开关：BOT_VISION_ENABLED、BOT_VIDEO_UNDERSTANDING_ENABLED",
+        "title_line": "【视频理解】图片/表情包识别与视频理解（管理员）",
+        "lines": [
+            "识图开关: BOT_VISION_ENABLED，true/false，默认 false；启用且注册表有可用模型才调用 VLM",
+            "识图模式: BOT_VISION_MODE，relay|direct，默认 direct；relay=视觉模型转文字，direct=图片直传主模型",
+            "识图概率: BOT_VISION_REPLY_PROBABILITY，0..1，默认 1.0=发图即识别回应；0=仅 @ 时看图",
+            "视频理解: BOT_VIDEO_UNDERSTANDING_ENABLED，true/false，默认 false；关闭时走旧抽帧摘要，零额外开销",
+            "识别模型管理: /bot model vision list|add|update|priority|remove（详见 /bot help 模型）",
+        ],
+        "detail": (
+            "【视频理解】图片/表情包识别与视频理解（管理员专属）\n"
+            "\n"
+            "■ 板块介绍\n"
+            "  识图（vision）：群里图片/表情包的内容识别；视频理解：视频抽帧+音轨/字幕\n"
+            "  生成感知简报，支持后续追问。两者各自有总开关与模型注册表。\n"
+            "\n"
+            "■ 参数与命令\n"
+            "  BOT_VISION_ENABLED：识图总开关；/bot runtime set BOT_VISION_ENABLED true。\n"
+            "  BOT_VISION_MODE：relay|direct；/bot runtime set BOT_VISION_MODE relay\n"
+            "  或 /bot model vision mode relay|direct。\n"
+            "  BOT_VISION_REPLY_PROBABILITY：群里发图即识别回应的概率。\n"
+            "  BOT_VIDEO_UNDERSTANDING_ENABLED：视频理解总开关。\n"
+            "  BOT_VIDEO_MAX_FRAMES：常规分析抽帧数（默认 6）。\n"
+            "  BOT_VIDEO_SKIP_ASR_WITH_SUBTITLE：有 CC 字幕时跳过音轨转写（默认 true）。\n"
+            "  BOT_VIDEO_FUZZY_FOLLOWUP：模糊追问（“刚才那个讲了什么”）默认 true。\n"
+            "  BOT_VIDEO_DEEP_ENABLED：深挖重分析（“再仔细看看”）默认 true。\n"
+            "\n"
+            "■ 取值范围\n"
+            "  VISION_MODE 只接受 relay|direct；概率 0..1；抽帧数为正整数（0 视同 1）。\n"
+            "  视觉/视频模型经 /bot model vision add 注册（base_url/key 等参数同模型条目）。\n"
+            "\n"
+            "■ 效果\n"
+            "  direct 模式主模型直接收图（多模态更优、省一次调用），relay 由视觉模型转文字；\n"
+            "  视频理解开启后自动生成简报并支持追问与深挖（更多帧+强制 ASR，耗时更长）；\n"
+            "  进度提示（“视频我看一下，稍等…”）默认开，同会话 60 秒节流。"
+        ),
+    },
+    {
+        "topic": "运行开关",
+        "admin_only": True,
+        "aliases": ("运行开关", "诊断开关", "持久化开关"),
+        "index": "【运行开关】发送队列/审计/回执/诊断持久化：BOT_SEND_QUEUE_ENABLED 等 5 键",
+        "title_line": "【运行开关】发送队列、审计、回执、诊断持久化开关（管理员）",
+        "lines": [
+            "发送队列: BOT_SEND_QUEUE_ENABLED，默认 false",
+            "队列 worker: BOT_SEND_QUEUE_WORKER_ENABLED，默认 false；后台线程按批投递待发消息",
+            "审计: BOT_AUDIT_ENABLED，默认 false",
+            "发送回执: BOT_RECEIPTS_ENABLED，默认 false",
+            "运行诊断: BOT_DIAGNOSTICS_ENABLED，默认 false",
+            "说明: 5 键均为 .env 配置（不支持 /bot runtime set 热改），改后重启生效",
+        ],
+        "detail": (
+            "【运行开关】发送队列、审计、回执、诊断持久化开关（管理员专属）\n"
+            "\n"
+            "■ 板块介绍\n"
+            "  五个持久化开关：发送队列、队列后台 worker、审计记录、发送回执、运行诊断。\n"
+            "  全部默认关闭；关闭时对应记录仅内存态，重启不保留。\n"
+            "\n"
+            "■ 参数与命令\n"
+            "  BOT_SEND_QUEUE_ENABLED：发送队列持久化。\n"
+            "  BOT_SEND_QUEUE_WORKER_ENABLED：队列后台投递线程。\n"
+            "  BOT_AUDIT_ENABLED：审计记录（/bot audit 查询）。\n"
+            "  BOT_RECEIPTS_ENABLED：发送回执（/bot receipt 查询）。\n"
+            "  BOT_DIAGNOSTICS_ENABLED：运行诊断（/bot recent 汇总）。\n"
+            "\n"
+            "■ 取值范围\n"
+            "  均为 true/false，默认 false；均为 .env 键，不在 /bot runtime set 可写集合内，\n"
+            "  改动需重启生效。落库路径由对应 BOT_*_DB_PATH 配置（留空=内存态）。\n"
+            "\n"
+            "■ 效果\n"
+            "  开启后各自记录写入 SQLite，重启后可继续查询；/bot status 显示各开关与\n"
+            "  存储状态（store=sqlite/memory）；队列参数（max_items/max_attempts/retry）\n"
+            "  另有 .env 键可调。"
+        ),
     },
 ]
 
