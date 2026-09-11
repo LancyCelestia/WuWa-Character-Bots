@@ -60,10 +60,12 @@ _install_crash_guards(getattr(_driver_config, "bot_runtime_data_dir", None))
 # Telegram 轮询在代理瞬断/网络抖动时每 30 秒打一条完整堆栈；限速为首次与
 # 每 5 分钟放行一条，其余丢弃。轮询失败由适配器自动重试并恢复，无需干预。
 # OneBot V11 适配器在 NapCat 未启动时同样每 5 秒重连并打完整堆栈，一并限速。
+import time
+
 from nonebot.log import default_filter, default_format
 
 _POLL_FAILURE_COOLDOWN_SECONDS = 300.0
-_POLL_FAILURE_STATE = {"last_shown": 0.0, "suppressed": 0}
+_POLL_FAILURE_STATE = {"last_shown": None, "suppressed": 0}
 
 
 def _rate_limited_log_filter(record) -> bool:
@@ -76,7 +78,15 @@ def _rate_limited_log_filter(record) -> bool:
     onebot_reconnect = "Error while setup websocket" in message
     if tg_poll_failure or onebot_reconnect:
         # 这类错误是代理/网络抖动的已知可恢复场景，韧性层会以简短行报告
-        # 退避与恢复；完整堆栈对排障价值低且刷屏，直接吞掉。
+        # 退避与恢复；完整堆栈对排障价值低且刷屏。按冷却限速放行：
+        # 首条与每 5 分钟放行一条（运维必须能看见错误仍在发生），
+        # 其余丢弃并计数。
+        now = time.monotonic()
+        last_shown = _POLL_FAILURE_STATE["last_shown"]
+        if last_shown is None or now - last_shown >= _POLL_FAILURE_COOLDOWN_SECONDS:
+            _POLL_FAILURE_STATE["last_shown"] = now
+            _POLL_FAILURE_STATE["suppressed"] = 0
+            return True
         _POLL_FAILURE_STATE["suppressed"] += 1
         return False
     return True
@@ -147,9 +157,22 @@ def _quiet_loop_exception_handler(loop, context):
 
 
 driver = nonebot.get_driver()
-import asyncio as _asyncio
 
-_asyncio.get_event_loop().set_exception_handler(_quiet_loop_exception_handler)
+
+@driver.on_startup
+async def _install_quiet_loop_exception_handler() -> None:
+    """把降噪异常处理器装到真正运行中的事件循环上。
+
+    此前在 import 期对 ``asyncio.get_event_loop()`` 的返回值安装，而
+    ``nonebot.run()`` → ``asyncio.run()`` 会新建事件循环，处理器实际装在
+    从未运行的旧循环上（该写法 Python 3.12+ 已弃用、3.14 直接报错）。
+    必须是 async def：NoneBot 对同步 lifespan 钩子经 anyio run_sync 放到
+    工作线程执行，那里没有事件循环（get_running_loop 直接报错）；async
+    钩子才会被 await 在主循环上，此时取到的才是运行中的循环。
+    """
+    asyncio.get_running_loop().set_exception_handler(_quiet_loop_exception_handler)
+
+
 driver.register_adapter(OneBotV11Adapter)
 driver.register_adapter(TelegramAdapter)
 
