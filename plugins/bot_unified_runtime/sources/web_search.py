@@ -12,13 +12,18 @@ from __future__ import annotations
 
 import asyncio
 import html
+import logging
 import re
+import threading
+import time
 import urllib.parse
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -28,6 +33,18 @@ _HTML_HIDDEN_BLOCK_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 _HTML_HEAD_BLOCK_RE = re.compile(r"<head[^>]*>.*?</head>", re.DOTALL | re.IGNORECASE)
+# 未闭合残段兜底：抓取到的页面常被截断，闭合标签配对不上时上面的闭合
+# 正则剥不掉 <script>... / <!--... 残段，注入载荷会泄漏进正文；这里把
+# 从残段起点到文本末尾的内容一并剥离（代价是残段之后的合法正文丢失，
+# 对注入防护而言是安全侧倾斜）。
+_HTML_UNCLOSED_COMMENT_RE = re.compile(r"<!--.*\Z", re.DOTALL)
+# 剩除比例护栏：兜底剥离若吃掉大半页面，说明命中的更可能是 void/畸形标签
+# 而非真截断残段——记 warning 以便现场可观测（行为不变，安全侧倾斜保留）。
+_HTML_STRIP_RATIO_WARN = 0.5
+_HTML_UNCLOSED_HIDDEN_RE = re.compile(
+    r"<(?:script|style|noscript|template|iframe|object|svg)[^>]*>.*\Z",
+    re.DOTALL | re.IGNORECASE,
+)
 # nav/footer/aside/form/dialog 是导航/页脚/侧栏/表单类样板块（去广告向），与注入隐藏块分开剥。
 _HTML_BOILERPLATE_BLOCK_RE = re.compile(
     r"<(nav|footer|aside|form|dialog)[^>]*>.*?</\1>",
@@ -234,6 +251,19 @@ def fetch_page_text(
         return ""
     text = _HTML_COMMENT_RE.sub(" ", html_text)
     text = _HTML_HIDDEN_BLOCK_RE.sub(" ", text)
+    text = _HTML_UNCLOSED_COMMENT_RE.sub(" ", text)
+    text = _HTML_UNCLOSED_HIDDEN_RE.sub(" ", text)
+    # 可观测护栏：兜底剥离吃掉大半页面时记 warning（评审 M1）。多数情况意味着
+    # 命中的是畸形/void 标签而非真截断残段，便于现场发现"正文莫名变空"。
+    # 注意：字面 `%` 必须写成 `%%`——logging 走的是 `%` 式惰性格式化。
+    if html_text and len(text) < len(html_text) * (1.0 - _HTML_STRIP_RATIO_WARN):
+        logger.warning(
+            "page text stripped more than %d%%: url=%s before=%d after=%d",
+            int(_HTML_STRIP_RATIO_WARN * 100),
+            url,
+            len(html_text),
+            len(text),
+        )
     text = _HTML_BOILERPLATE_BLOCK_RE.sub(" ", text)
     text = _HTML_HEAD_BLOCK_RE.sub(" ", text)
     text = _HTML_TAG_RE.sub("\n", text)
@@ -422,7 +452,15 @@ def filter_search_hits(hits: list[WebSearchHit]) -> list[WebSearchHit]:
 
 
 class ChainedWebSearchProvider:
-    """按顺序尝试多个提供器，任一命中即返回；记录命中的提供器名。"""
+    """按顺序尝试多个提供器，任一命中即返回；记录命中的提供器名。
+
+    同步 search 结果带 TTL 缓存：时效/百科类问题常被反复追问，而
+    检索链最坏 5 查询×3 源全计费计时；600s 内同查询直接复用（与
+    meme 梗检索 DDG 缓存同量级）。异步路径（工具循环）不缓存。
+    """
+
+    _CACHE_TTL_SECONDS = 600.0
+    _CACHE_MAX_ENTRIES = 256
 
     def __init__(
         self,
@@ -437,6 +475,22 @@ class ChainedWebSearchProvider:
         self.proxy = proxy
         self.page_fetcher = page_fetcher
         self.last_provider_name = ""
+        self._search_cache: dict[tuple[str, int], tuple[float, list[WebSearchHit]]] = {}
+        self._search_cache_lock = threading.Lock()
+
+    def _cache_get(self, key: tuple[str, int]) -> list[WebSearchHit] | None:
+        now = time.monotonic()
+        with self._search_cache_lock:
+            hit = self._search_cache.get(key)
+        if hit is None or now - hit[0] >= self._CACHE_TTL_SECONDS:
+            return None
+        return list(hit[1])
+
+    def _cache_put(self, key: tuple[str, int], hits: list[WebSearchHit]) -> None:
+        with self._search_cache_lock:
+            if len(self._search_cache) >= self._CACHE_MAX_ENTRIES:
+                self._search_cache.clear()
+            self._search_cache[key] = (time.monotonic(), list(hits))
 
     def fetch_page_text(self, url: str, *, max_chars: int = 800) -> str:
         fetcher = self.page_fetcher
@@ -453,6 +507,10 @@ class ChainedWebSearchProvider:
             max_chars=max_chars,
         )
     def search(self, query: str, *, max_results: int = 3) -> list[WebSearchHit]:
+        cache_key = (query, max_results)
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
         for provider in self.providers:
             try:
                 hits = provider.search(query, max_results=max_results)
@@ -460,7 +518,9 @@ class ChainedWebSearchProvider:
                 hits = []
             if hits:
                 self.last_provider_name = str(getattr(provider, "name", "unknown"))
-                return filter_search_hits(hits)
+                filtered = filter_search_hits(hits)
+                self._cache_put(cache_key, filtered)
+                return filtered
         return []
 
     async def search_async(
@@ -518,9 +578,22 @@ def _build_chained_provider(
     proxy: str,
     config: object | None = None,
 ) -> ChainedWebSearchProvider:
-    """Build the configured API chain: Tavily, You.com, LangSearch, optional TinyFish."""
+    """Build the configured API chain: Tavily, You.com, LangSearch, optional TinyFish.
+
+    无 config 上下文（如 MCP web_search 工具直调 search_async）时装配免 key
+    的 DuckDuckGo → Bing 兜底链，而不是空 provider 链（空链会让每次检索
+    都返回空结果）；key 类提供器在 build_api_search_provider 里按缺失 key
+    自然跳过。
+    """
     if config is None:
-        return ChainedWebSearchProvider([], timeout_seconds=timeout_seconds, proxy=proxy)
+        return ChainedWebSearchProvider(
+            [
+                DuckDuckGoWebSearchProvider(timeout_seconds=timeout_seconds, proxy=proxy),
+                BingWebSearchProvider(timeout_seconds=timeout_seconds, proxy=proxy),
+            ],
+            timeout_seconds=timeout_seconds,
+            proxy=proxy,
+        )
     providers, fetcher = build_api_search_provider(
         config,
         timeout_seconds=timeout_seconds,

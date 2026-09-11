@@ -77,7 +77,12 @@ def _goods_parse_from_item(item: dict, url: str) -> ParsedContent:
     show_market_price = item.get("showMarketPrice") or detail_dto.get("marketPrice")
     if show_price is None:
         price_fen = item.get("price")
-        show_price = round(float(price_fen) / 100, 2) if price_fen is not None else None
+        if price_fen is not None:
+            try:
+                show_price = round(float(price_fen) / 100, 2)
+            except (TypeError, ValueError):
+                # 脏数据降级：价格解析失败按缺失处理，不让商品卡抛异常。
+                show_price = None
 
     seller = str(item.get("uname") or "")
     lines: list[str] = []

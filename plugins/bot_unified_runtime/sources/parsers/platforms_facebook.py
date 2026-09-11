@@ -14,6 +14,7 @@ og:description / og:image / og:url（分享链接还会在 og:url 里给出规�
 from __future__ import annotations
 
 import html
+import os
 import re
 
 from plugins.bot_unified_runtime.contracts.media import (
@@ -25,8 +26,11 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
     http_get_text,
 )
 
-# 大陆直连失败后兜底代理（与 epic/steam 模块同一出口）。
-_FALLBACK_PROXY = "http://127.0.0.1:7890"
+
+# 大陆直连失败后兜底代理走环境变量 BOT_DOWNLOAD_PROXY（与 epic/steam
+# 模块同一出口）；未配置则不追加兜底跳。
+def _fallback_proxy() -> str:
+    return os.environ.get("BOT_DOWNLOAD_PROXY", "").strip()
 
 # 匿名可拿 og 的唯一姿势：声明为 FB 自己的爬虫（页面本身是公开内容）。
 _FB_CRAWLER_UA = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
@@ -76,7 +80,8 @@ def _kind_of(url: str) -> str:
 
 def _fetch_og_html(url: str, *, proxy: str, timeout: float = 15.0) -> tuple[str, str]:
     """直连 → 代理依次尝试，返回 (最终 URL, HTML)；都失败抛 ParseHttpError。"""
-    attempts = [proxy] if proxy else ["", _FALLBACK_PROXY]
+    fallback = _fallback_proxy()
+    attempts = [proxy] if proxy else (["", fallback] if fallback else [""])
     last: Exception | None = None
     for attempt in attempts:
         try:

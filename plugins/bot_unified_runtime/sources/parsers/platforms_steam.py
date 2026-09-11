@@ -40,8 +40,11 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
 )
 from plugins.bot_unified_runtime.sources.parsers.platforms_generic import _og_scrape
 
-# 大陆直连 Steam 通常可达；直连失败再走默认代理兜底。
-_FALLBACK_PROXY = "http://127.0.0.1:7890"
+
+# 大陆直连 Steam 通常可达；直连失败再走环境变量指定的兜底代理
+# （BOT_DOWNLOAD_PROXY，如 http://127.0.0.1:7890）；未配置则不追加兜底跳。
+def _fallback_proxy() -> str:
+    return os.environ.get("BOT_DOWNLOAD_PROXY", "").strip()
 
 _STEAM_COOKIE_DOMAINS = ("steamcommunity.com", "steampowered.com")
 _COOKIES_ENV = "BOT_COOKIES_FILE"
@@ -155,7 +158,8 @@ def steam_cookie_header(host: str = "steamcommunity.com") -> str:
 def _proxy_attempts(proxy: str) -> list[str]:
     if proxy:
         return [proxy]
-    return ["", _FALLBACK_PROXY]
+    fallback = _fallback_proxy()
+    return ["", fallback] if fallback else [""]
 
 
 def _get_text_dual(

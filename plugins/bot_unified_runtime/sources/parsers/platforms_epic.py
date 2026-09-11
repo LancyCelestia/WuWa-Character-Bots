@@ -35,8 +35,11 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
     http_get_text,
 )
 
-# 大陆直连 Epic 商城被 Cloudflare 拦（匿名 403），失败走代理兜底。
-_FALLBACK_PROXY = "http://127.0.0.1:7890"
+
+# 大陆直连 Epic 商城被 Cloudflare 拦（匿名 403），失败走环境变量指定的
+# 兜底代理（BOT_DOWNLOAD_PROXY）；未配置则不追加兜底跳。
+def _fallback_proxy() -> str:
+    return os.environ.get("BOT_DOWNLOAD_PROXY", "").strip()
 
 _EPIC_COOKIE_DOMAINS = ("epicgames.com", "unrealengine.com")
 _COOKIES_ENV = "BOT_COOKIES_FILE"
@@ -138,7 +141,8 @@ def epic_cookie_header(host: str = "store.epicgames.com") -> str:
 
 
 def _fetch_page_html(url: str, *, cookie_header: str, proxy: str) -> str:
-    attempts = [proxy] if proxy else ["", _FALLBACK_PROXY]
+    fallback = _fallback_proxy()
+    attempts = [proxy] if proxy else (["", fallback] if fallback else [""])
     last: Exception | None = None
     for attempt in attempts:
         try:
@@ -478,7 +482,8 @@ def _og_fallback(url: str, *, cookie_header: str, proxy: str) -> ParsedContent:
     if not cookie_header:
         cookie_header = epic_cookie_header()
     last: Exception | None = None
-    for attempt in ([proxy] if proxy else ["", _FALLBACK_PROXY]):
+    fallback = _fallback_proxy()
+    for attempt in ([proxy] if proxy else (["", fallback] if fallback else [""])):
         try:
             _, text = http_get_text(
                 url,

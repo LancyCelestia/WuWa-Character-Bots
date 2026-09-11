@@ -15,7 +15,6 @@ from __future__ import annotations
 import gzip
 import json
 import re
-import ssl
 from typing import Any
 from urllib import parse as urlparse
 from urllib import request as urlrequest
@@ -70,9 +69,10 @@ def _kuro_post_detail(post_id: str, *, cookie_header: str) -> dict:
         method="POST",
     )
     try:
-        with urlrequest.build_opener(
-            urlrequest.HTTPSHandler(context=ssl._create_unverified_context())
-        ).open(request, timeout=12) as response:
+        # 默认开启证书校验：api.kurobbs.com 证书链正常（2026-09 curl 实测
+        # ssl_verify_result=0），此前全局跳过校验没有依据，还让带
+        # user_token 的登录态请求暴露于中间人风险。
+        with urlrequest.build_opener().open(request, timeout=12) as response:
             payload = response.read()
             if response.headers.get("Content-Encoding", "").lower() == "gzip":
                 payload = gzip.decompress(payload)

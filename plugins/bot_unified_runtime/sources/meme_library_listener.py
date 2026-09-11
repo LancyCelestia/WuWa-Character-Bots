@@ -214,32 +214,49 @@ async def absorb_event_images(bot: Any, event: Any, config: Any, store: Any) -> 
     proxy = str(getattr(config, "bot_meme_library_proxy", "") or "")
 
     saved = 0
+    pending: list[tuple[str, str, bytes]] = []  # (md5, ext, image_bytes)
     for url in urls[:4]:
         result = await _download_once(url, max_bytes=max_bytes, proxy=proxy)
         if not result:
             continue
         image_bytes, content_type = result
         md5 = hashlib.md5(image_bytes).hexdigest()
-        if store.exists(md5):
-            continue
         ext = _EXT_BY_CONTENT_TYPE.get(content_type.split(";")[0].strip().lower())
         if not ext:
             match = _URL_EXT_RE.search(url)
             ext = (match.group(1) if match else "png").lower()
-        path = target_dir / f"{md5}.{ext}"
-        try:
-            path.write_bytes(image_bytes)
-        except OSError:
-            continue
-        store.add(md5=md5, path=str(path), ext=ext, group_id=group_id)
-        saved += 1
+        pending.append((md5, ext, image_bytes))
+    if pending:
+
+        def _persist() -> list[tuple[str, bytes]]:
+            # 写盘 + SQLite 入库是同步 IO，挪到线程池避免占用事件循环。
+            saved_items: list[tuple[str, bytes]] = []
+            for md5, ext, image_bytes in pending:
+                if store.exists(md5):
+                    continue
+                path = target_dir / f"{md5}.{ext}"
+                try:
+                    path.write_bytes(image_bytes)
+                except OSError:
+                    continue
+                store.add(md5=md5, path=str(path), ext=ext, group_id=group_id)
+                saved_items.append((md5, image_bytes))
+            return saved_items
+
+        saved_items = await asyncio.to_thread(_persist)
+        saved = len(saved_items)
         if getattr(config, "bot_meme_library_vlm_enabled", False):
-            _spawn_vlm_task(store, config, md5, image_bytes)
-    try:
+            for md5, image_bytes in saved_items:
+                _spawn_vlm_task(store, config, md5, image_bytes)
+
+    def _cleanup() -> None:
         store.cleanup(
             max_files=int(getattr(config, "bot_meme_library_max_files", 20000) or 0),
             max_age_days=int(getattr(config, "bot_meme_library_max_age_days", 30) or 0),
         )
+
+    try:
+        await asyncio.to_thread(_cleanup)
     except Exception:  # noqa: BLE001, S110 - 清理失败不影响入库结果。
         pass
     return {"handled": True, "reason": "saved", "saved": saved}

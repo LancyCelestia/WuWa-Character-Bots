@@ -74,10 +74,10 @@ def _parse_moment_payload(payload: dict, item_id: str, kind: str) -> ParsedConte
 def parse_taptap_moment(moment_id: str, *, cookie_header: str = "") -> ParsedContent | None:
     payload = http_get_json(
         "https://www.taptap.cn/webapiv2/moment/v2/detail?"
-        + urllib.parse.urlencode({"moment_id": moment_id, "X-UA": "V=1&PN=WebApp&LANG=zh_CN"})
-        + (("&device=&cookie=" + cookie_header) if cookie_header else ""),
+        + urllib.parse.urlencode({"moment_id": moment_id, "X-UA": "V=1&PN=WebApp&LANG=zh_CN"}),
         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0",
         timeout=8,
+        cookie=cookie_header,
     )
     return _parse_moment_payload(payload if isinstance(payload, dict) else {}, moment_id, "moment")
 

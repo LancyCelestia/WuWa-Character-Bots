@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import random
 import time
 from collections.abc import Awaitable, Callable
@@ -15,10 +16,11 @@ from plugins.bot_unified_runtime.contracts.subscription import (
     SubscriptionOutboxEvent,
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 from plugins.bot_unified_runtime.sources.subscription_store_v2 import (
     SubscriptionStoreV2,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -130,9 +132,11 @@ class SubscriptionScheduler:
             if not self.store.claim_due_target(target.id, current, self._lease_seconds):
                 continue
             adapter = self._adapters.get(target.platform)
+            settled = False
             try:
                 if adapter is None:
                     self.store.record_failure(target.id, "unsupported", retry_at=self._retry_at(current, target.failure_count, None))
+                    settled = True
                     continue
                 cursors = self.store.get_cursors(target.id)
                 async def fetch(
@@ -154,6 +158,7 @@ class SubscriptionScheduler:
                 if result.error_code:
                     retry_at = self._retry_at(current, target.failure_count, result.retry_after_seconds)
                     self.store.record_failure(target.id, result.error_code, retry_at=retry_at)
+                    settled = True
                     continue
                 new_events = self.store.save_fetch_result(
                     target,
@@ -165,18 +170,35 @@ class SubscriptionScheduler:
                     target, now=current, random_value=self._random()
                 )
                 self.store.release_target(target.id, next_poll_at=next_poll)
-            except (OSError, ParseHttpError, RuntimeError, TypeError, ValueError):
+                settled = True
+            except Exception:
+                # 收窄为 Exception：KeyError/sqlite3.Error/ET.ParseError 等
+                # 逃逸异常此前会中断整轮轮询，且租约被过期 next_poll_at 释放
+                # 导致退避失效、该目标每周期重复失败。
+                _LOGGER.warning("subscription poll failed for %s", target.id, exc_info=True)
                 retry_at = self._retry_at(current, target.failure_count, None)
-                self.store.record_failure(target.id, "network_error", retry_at=retry_at)
-            finally:
-                saved = self.store.get_target(target.id)
-                if saved is not None and saved.lease_until is not None:
-                    self.store.release_target(
+                try:
+                    self.store.record_failure(target.id, "network_error", retry_at=retry_at)
+                    settled = True
+                except Exception:
+                    _LOGGER.warning(
+                        "subscription failure accounting failed for %s",
                         target.id,
-                        next_poll_at=saved.next_poll_at or self.next_poll_at(
-                            saved, now=current, random_value=self._random()
-                        ),
+                        exc_info=True,
                     )
+            finally:
+                if not settled:
+                    # 兜底：record_failure/release 正常路径都未走到（如记账分支
+                    # 自身再抛异常）时只释放租约，不回写 next_poll_at——回写过
+                    # 期的 next_poll_at 会让退避失效并立即重轮询同一目标。
+                    try:
+                        self.store.release_target_lease(target.id)
+                    except Exception:
+                        _LOGGER.warning(
+                            "subscription lease fallback release failed for %s",
+                            target.id,
+                            exc_info=True,
+                        )
         return events
 
     async def deliver_outbox_once(self, *, limit: int = 20) -> int:
@@ -191,17 +213,40 @@ class SubscriptionScheduler:
                 )
             return 0
         delivered = 0
-        for event in events:
-            try:
-                success = await self._delivery_fn(event)
-            except (OSError, RuntimeError, TypeError, ValueError):
-                success = False
-            if success:
-                self.store.mark_outbox_sent(event.event_id, self._clock())
-                delivered += 1
-            else:
-                self.store.mark_outbox_retry(
-                    event.event_id,
-                    self._clock() + timedelta(seconds=self._retry_base),
-                )
+        settled: set[str] = set()
+        try:
+            for event in events:
+                try:
+                    success = await self._delivery_fn(event)
+                except Exception:  # noqa: BLE001 - 单事件投递失败转重试，不弃队。
+                    success = False
+                if success:
+                    self.store.mark_outbox_sent(event.event_id, self._clock())
+                    delivered += 1
+                else:
+                    self.store.mark_outbox_retry(
+                        event.event_id,
+                        self._clock() + timedelta(seconds=self._retry_base),
+                    )
+                settled.add(event.event_id)
+        finally:
+            # 兜底：mark_* 自身抛异常或任务被取消时，已 claim 但仍滞留
+            # state='sending' 的事件必须落回 retry，否则 claim 只捞
+            # pending/retry，推送会静默丢失且重启不自愈。
+            for event in events:
+                if event.event_id in settled:
+                    continue
+                try:
+                    if self.store.outbox_state(event.event_id) != "sending":
+                        continue
+                    self.store.mark_outbox_retry(
+                        event.event_id,
+                        self._clock() + timedelta(seconds=self._retry_base),
+                    )
+                except Exception:
+                    _LOGGER.warning(
+                        "outbox fallback retry failed for %s",
+                        event.event_id,
+                        exc_info=True,
+                    )
         return delivered

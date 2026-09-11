@@ -11,15 +11,21 @@ WBI 签名流程：
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
+import logging
 import threading
 import time
+from collections.abc import Callable
+from typing import Any
 from urllib.parse import urlencode, urlsplit
 
 from plugins.bot_unified_runtime.sources.parsers.http_util import (
     ParseHttpError,
     http_get_json,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 _NAV_API = "https://api.bilibili.com/x/web-interface/nav"
 _WBI_FILTER_CHARS = "!'()*"
@@ -28,29 +34,82 @@ _WBI_FILTER_CHARS = "!'()*"
 _WBI_CACHE_TTL_SECONDS = 1800.0
 _WBI_CACHE_LOCK = threading.Lock()
 _WBI_CACHE: dict[str, tuple[float, str]] = {}
+# 审计#9：cookie 轮换会不断产生新 cache_key；过期条目原先只在同名 key
+# 重访时被覆写，从未重访的永久残留且无上限。惰性清扫 + 容量封顶。
+_WBI_CACHE_CAP = 64
+# single-flight：同一 cache_key 并发 miss 时只允许一个线程打 nav，
+# 其余等待其结果（过期瞬间的并发签名不重复请求风控接口）。
+_WBI_INFLIGHT: dict[str, concurrent.futures.Future[str]] = {}
+# 等待 other 线程拉取 nav 的上限（nav 请求自身超时 10s，留余量）。
+_WBI_INFLIGHT_WAIT_SECONDS = 15.0
+_NavFetcher = Callable[[], Any]
 
 
-def _cached_mixin_key(cookie_header: str, proxy: str) -> str:
-    cache_key = f"{cookie_header}|{proxy}"
-    now = time.monotonic()
-    with _WBI_CACHE_LOCK:
-        hit = _WBI_CACHE.get(cache_key)
-        if hit is not None and now - hit[0] < _WBI_CACHE_TTL_SECONDS:
-            return hit[1]
-    nav = http_get_json(
-        _NAV_API,
-        referer="https://www.bilibili.com/",
-        cookie=cookie_header,
-        proxy=proxy,
+def _fetch_nav_mixin_key(
+    cookie_header: str, proxy: str, *, fetch: _NavFetcher | None = None
+) -> str:
+    nav = (
+        fetch()
+        if fetch is not None
+        else http_get_json(
+            _NAV_API,
+            referer="https://www.bilibili.com/",
+            cookie=cookie_header,
+            proxy=proxy,
+        )
     )
     wbi_img = ((nav or {}).get("data") or {}).get("wbi_img") or {}
     img_url = str(wbi_img.get("img_url") or "")
     sub_url = str(wbi_img.get("sub_url") or "")
     if not img_url or not sub_url:
         raise ParseHttpError("bilibili nav missing wbi_img keys")
-    mixin_key = extract_mixin_key(img_url, sub_url)
+    return extract_mixin_key(img_url, sub_url)
+
+
+def _cached_mixin_key(
+    cookie_header: str, proxy: str, *, fetch: _NavFetcher | None = None
+) -> str:
+    cache_key = f"{cookie_header}|{proxy}"
+    while True:
+        with _WBI_CACHE_LOCK:
+            now = time.monotonic()
+            expired = [
+                key
+                for key, (fetched_at, _) in _WBI_CACHE.items()
+                if now - fetched_at >= _WBI_CACHE_TTL_SECONDS
+            ]
+            for key in expired:
+                _WBI_CACHE.pop(key, None)
+            while len(_WBI_CACHE) >= _WBI_CACHE_CAP:
+                _WBI_CACHE.pop(next(iter(_WBI_CACHE)), None)
+            hit = _WBI_CACHE.get(cache_key)
+            if hit is not None and now - hit[0] < _WBI_CACHE_TTL_SECONDS:
+                return hit[1]
+            inflight = _WBI_INFLIGHT.get(cache_key)
+            if inflight is None:
+                # 本线程成为 leader：占位后到锁外拉取 nav。
+                inflight = concurrent.futures.Future()
+                _WBI_INFLIGHT[cache_key] = inflight
+                break
+        # 其他线程正在拉取：等它完成后直接用结果；失败则循环重试。
+        try:
+            return inflight.result(timeout=_WBI_INFLIGHT_WAIT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            continue
+        except Exception as exc:  # noqa: BLE001 - leader 拉取失败，本线程接手重试。
+            _LOGGER.debug("wbi nav single-flight leader failed: %s", type(exc).__name__)
+            continue
+    try:
+        mixin_key = _fetch_nav_mixin_key(cookie_header, proxy, fetch=fetch)
+    except BaseException as exc:
+        with _WBI_CACHE_LOCK:
+            _WBI_INFLIGHT.pop(cache_key, None)
+        inflight.set_exception(exc)
+        raise
     with _WBI_CACHE_LOCK:
         _WBI_CACHE[cache_key] = (time.monotonic(), mixin_key)
+        _WBI_INFLIGHT.pop(cache_key, None)
+    inflight.set_result(mixin_key)
     return mixin_key
 
 WBI_KEY_TABLE = [

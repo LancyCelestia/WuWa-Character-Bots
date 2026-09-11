@@ -50,6 +50,10 @@ _BID_RE = re.compile(r"weibo\.com/(?:\d+)/([0-9A-Za-z]+)")
 _M_STATUS_RE = re.compile(r"m\.weibo\.cn/status/([0-9A-Za-z]+)")
 _UID_RE = re.compile(r"weibo\.com/(?:u/)?(\d{5,})(?:[/?#]|$)")
 
+# 单条微博三通道深解析的整体预算：通道内部超时/重试不动，只在通道间
+# 检查；超预算直接抛错回退 og 浅卡（最坏曾串行 1-2 分钟占线程）。
+_WEIBO_STATUS_BUDGET_SECONDS = 45.0
+
 # m.weibo.cn 对 PC UA 一律 302 到访客验证（retcode=6102），即使带登录 Cookie；
 # 必须用移动端 UA + XHR 头才会返回 JSON/页面数据（实测确认）。
 _WEIBO_MOBILE_UA = (
@@ -427,8 +431,15 @@ def _weibo_status_card(
     无登录态时先并入访客 cookie（genvisitor 流程），降低风控概率。
     """
     cookie_header = _weibo_merge_cookies(cookie_header)
+    budget_started = time.monotonic()
+
+    def _status_budget_left() -> bool:
+        return time.monotonic() - budget_started < _WEIBO_STATUS_BUDGET_SECONDS
+
     for api, data_key in ((_WEIBO_SHOW_API.format(bid=bid), "data"),):
         for attempt in range(2):
+            if not _status_budget_left():
+                break
             try:
                 payload = http_get_json(
                     api,
@@ -446,9 +457,11 @@ def _weibo_status_card(
                     )
             except Exception:  # noqa: BLE001, S110 - 风控窗口内失败短暂停后重试。
                 pass
-            if attempt == 0:
+            if attempt == 0 and _status_budget_left():
                 time.sleep(1.0)
     for attempt in range(2):
+        if not _status_budget_left():
+            break
         try:
             payload = http_get_json(
                 _WEIBO_AJAX_API.format(bid=bid),
@@ -464,8 +477,10 @@ def _weibo_status_card(
                 )
         except Exception:  # noqa: BLE001, S110 - ajax 失败走页面兜底。
             pass
-        if attempt == 0:
+        if attempt == 0 and _status_budget_left():
             time.sleep(1.0)
+    if not _status_budget_left():
+        raise ParseHttpError("weibo: status budget exhausted")
     text = _weibo_get_text_with_retry(
         _WEIBO_STATUS_URL.format(bid=bid),
         cookie_header=cookie_header,

@@ -14,6 +14,9 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
     http_get_json,
     http_get_text,
 )
+from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
+    _unescape_js_unicode,
+)
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0"
 
@@ -46,8 +49,8 @@ def parse_qsmusic(url: str, *, cookie_header: str = "") -> ParsedContent:
         platform="qsmusic",
         item_id=track_id,
         item_kind="music",
-        title=(title_m.group(1).encode().decode("unicode_escape", errors="ignore") if title_m else "汽水音乐"),
-        author_name=(artist_m.group(1).encode().decode("unicode_escape", errors="ignore") if artist_m else ""),
+        title=(_unescape_js_unicode(title_m.group(1)) if title_m else "汽水音乐"),
+        author_name=(_unescape_js_unicode(artist_m.group(1)) if artist_m else ""),
         cover_url=cover_m.group(1).replace("\\u002F", "/") if cover_m else "",
         canonical_url=f"https://qishui.douyin.com/s/{match.group(1)}/",
         parse_depth="deep",

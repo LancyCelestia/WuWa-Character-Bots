@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -60,9 +61,43 @@ class RuntimeEventLog:
         self.max_bytes = max(64 * 1024, int(max_bytes))
         self.min_level = _normalize_level(min_level)
         self._lock = threading.Lock()
+        # 每聊天消息 4-7 次 emit：持久句柄替代每次 open/close + mkdir/exists/stat。
+        # Windows 不允许重命名已打开文件，轮转前必须先关句柄。
+        self._handle: Any = None
+        self._handle_bytes = 0
 
     def _ts(self) -> str:
         return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+    def _write_line_locked(self, line: str) -> None:
+        if self._handle is None or self._handle.closed:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._handle = self.path.open("a", encoding="utf-8")
+            self._handle_bytes = self.path.stat().st_size if self.path.exists() else 0
+        if self._handle_bytes >= self.max_bytes:
+            self._handle.close()
+            self._handle = None
+            old_path = self.path.with_suffix(self.path.suffix + ".old")
+            try:
+                old_path.unlink()
+            except OSError:
+                pass
+            try:
+                self.path.rename(old_path)
+            except OSError:
+                pass
+            self._handle = self.path.open("a", encoding="utf-8")
+            # rename 失败时原文件仍在且很大：计数必须按真实大小回填。
+            # 若归零，轮转条件（_handle_bytes >= max_bytes）之后的判断虽然
+            # 仍会触发，但字节统计失真且与磁盘状态脱钩。
+            try:
+                self._handle_bytes = os.path.getsize(self.path)
+            except OSError:
+                self._handle_bytes = 0
+        payload = line + "\n"
+        self._handle.write(payload)
+        self._handle.flush()
+        self._handle_bytes += len(payload.encode("utf-8"))
 
     def emit(self, level: str, event: str, **fields: Any) -> None:
         level = _normalize_level(level)
@@ -77,17 +112,17 @@ class RuntimeEventLog:
         line = " ".join(parts)
         try:
             with self._lock:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                if self.path.exists() and self.path.stat().st_size >= self.max_bytes:
-                    old_path = self.path.with_suffix(self.path.suffix + ".old")
+                try:
+                    self._write_line_locked(line)
+                except OSError:
+                    # 句柄可能因外部删文件/磁盘抖动失效：关掉重开一次，再失败则放弃。
                     try:
-                        old_path.unlink()
+                        if self._handle is not None and not self._handle.closed:
+                            self._handle.close()
                     except OSError:
                         pass
-                    self.path.rename(old_path)
-                with self.path.open("a", encoding="utf-8") as handle:
-                    handle.write(line)
-                    handle.write("\n")
+                    self._handle = None
+                    self._write_line_locked(line)
         except OSError:
             return
 
@@ -103,15 +138,31 @@ class RuntimeEventLog:
     def debug(self, event: str, **fields: Any) -> None:
         self.emit("DEBUG", event, **fields)
 
+    # 审计#18：/bot logs 不再整文件读入——只从尾部读这么多字节
+    # （正常日志有 2MB 轮转；此上限同时约束异常不轮转的坏情况）。
+    _READ_RECENT_MAX_BYTES = 512 * 1024
+
     def read_recent(self, limit: int = 50, min_level: str = "INFO") -> list[str]:
         min_level = _normalize_level(min_level)
         threshold = _LEVEL_ORDER[min_level]
         if not self.path.exists():
             return []
         try:
-            lines = self.path.read_text(encoding="utf-8").splitlines()
+            with self.path.open("rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                cap = min(size, max(self._READ_RECENT_MAX_BYTES, int(limit) * 8192))
+                handle.seek(size - cap)
+                chunk = handle.read(cap)
         except OSError:
             return []
+        text = chunk.decode("utf-8", errors="replace")
+        if cap < size:
+            # 从文件中段起读：首个半行不完整，丢弃到下一个换行。
+            newline = text.find("\n")
+            if newline >= 0:
+                text = text[newline + 1 :]
+        lines = text.splitlines()
         filtered: list[str] = []
         for line in lines:
             for level_name, level_value in _LEVEL_ORDER.items():

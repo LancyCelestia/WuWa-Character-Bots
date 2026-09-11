@@ -280,6 +280,131 @@ def _analysis_from_info(info: dict) -> MediaAnalysis:
     )
 
 
+class RejectedUrlError(Exception):
+    """URL 被下载护栏拒绝（SSRF / 协议 / 内网地址）。"""
+
+
+# 内网与保留网段黑名单（评审 H6）：/bot download 对普通用户开放，若不做地址
+# 过滤，任意成员都能让 bot 以自身主机身份请求 http://127.0.0.1:<port>/ 或
+# 云元数据地址，形成内网端口扫描 + 云凭据窃取面。这里按「字面量 + DNS 解析」
+# 双重判定，避免攻击者用域名指向 127.0.0.1 绕过。
+_BLOCKED_HOSTNAMES = frozenset(
+    {
+        "localhost",
+        "localhost.localdomain",
+        "ip6-localhost",
+        "ip6-loopback",
+        "metadata",
+        "metadata.google.internal",
+        "metadata.goog",
+    }
+)
+_BLOCKED_NETWORKS = (
+    "0.0.0.0/8",
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.0.0.0/24",
+    "192.0.2.0/24",
+    "192.88.99.0/24",
+    "192.168.0.0/16",
+    "198.18.0.0/15",
+    "198.51.100.0/24",
+    "203.0.113.0/24",
+    "224.0.0.0/4",
+    "240.0.0.0/4",
+    "255.255.255.255/32",
+    "::/128",
+    "::1/128",
+    "::ffff:0:0/96",
+    "64:ff9b::/96",
+    "100::/64",
+    "2001:db8::/32",
+    "fc00::/7",
+    "fe80::/10",
+    "ff00::/8",
+)
+_ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+
+def _ip_is_blocked(ip_text: str) -> bool:
+    import ipaddress
+
+    try:
+        address = ipaddress.ip_address(ip_text)
+    except ValueError:
+        return True
+    # IPv4-mapped IPv6（::ffff:127.0.0.1）要按映射后的 v4 判定。
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    if any(
+        address in ipaddress.ip_network(network, strict=False)
+        for network in _BLOCKED_NETWORKS
+    ):
+        return True
+    return bool(
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_multicast
+        or address.is_unspecified
+    )
+
+
+def check_download_url(url: str) -> None:
+    """下载入口护栏：非法协议 / 内网 / 保留地址一律拒绝（抛 RejectedUrlError）。
+
+    覆盖度与已知残余：
+    - 协议白名单只放 http/https（挡 file://、ftp://、gopher:// 等）。
+    - 主机名先查黑名单（localhost/metadata.*），再对**所有** DNS 解析结果做
+      内网判定（不只看第一个，避免多 A 记录轮询绕过）。
+    - 已知残余：yt-dlp 自己会跟随播放列表/清单里的子 URL，且另有独立的重定向
+      解析路径，本函数只在入口校验一次；彻底收敛需在 yt-dlp 侧挂连接级钩子
+      （登记为后续项，不在本次修复范围）。
+    """
+    from urllib.parse import urlsplit
+
+    candidate = (url or "").strip()
+    if not candidate:
+        raise RejectedUrlError("地址为空")
+    parts = urlsplit(candidate)
+    scheme = (parts.scheme or "").lower()
+    if scheme not in _ALLOWED_SCHEMES:
+        raise RejectedUrlError(f"只支持 http/https 链接（收到 {scheme or '空协议'}）")
+    host = (parts.hostname or "").strip().lower().rstrip(".")
+    if not host:
+        raise RejectedUrlError("地址缺少主机名")
+    if host in _BLOCKED_HOSTNAMES or host.endswith(".localhost"):
+        raise RejectedUrlError("该地址指向本机，已拒绝")
+    # 字面量 IP：直接判定，不做 DNS。
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        if _ip_is_blocked(host):
+            raise RejectedUrlError("该地址属于内网/保留网段，已拒绝")
+        return
+    # 域名：解析全部结果，任一落在内网即拒绝。
+    import socket
+
+    try:
+        infos = socket.getaddrinfo(host, parts.port or (443 if scheme == "https" else 80))
+    except OSError as exc:
+        raise RejectedUrlError(f"域名无法解析：{type(exc).__name__}") from exc
+    resolved = {str(info[4][0]) for info in infos if info[4]}
+    if not resolved:
+        raise RejectedUrlError("域名未解析出任何地址")
+    for address in resolved:
+        if _ip_is_blocked(address):
+            raise RejectedUrlError("该域名解析到内网/保留网段，已拒绝")
+
+
 def _find_ffmpeg(explicit_path: str = "") -> str:
     """定位 ffmpeg：显式配置 → PATH → winget 安装目录（Windows）。"""
     if explicit_path and Path(explicit_path).exists():
@@ -532,6 +657,12 @@ class MediaDownloader:
     def download(self, url: str) -> DownloadOutcome:
         if not self.available():
             return DownloadOutcome(error="yt-dlp 未安装，无法下载")
+        # SSRF 护栏（评审 H6）：普通用户可用 /bot download，下载前先拒掉
+        # 非 http(s) 协议与内网/保留地址，避免内网探测与云元数据读取。
+        try:
+            check_download_url(url)
+        except RejectedUrlError as exc:
+            return DownloadOutcome(error=f"下载被拒绝：{exc}")
         self.download_dir.mkdir(parents=True, exist_ok=True)
         # 画质阶梯：最高画质(8K/Hi-Res) → 2160 → 1440 → 1080 → 720，超 1GB 自动降级。
         caps: list[int | None]

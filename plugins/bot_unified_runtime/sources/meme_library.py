@@ -37,6 +37,10 @@ CREATE INDEX IF NOT EXISTS idx_memes_weight ON memes(weight DESC);
 CREATE INDEX IF NOT EXISTS idx_memes_added_at ON memes(added_at);
 """
 
+# 单次随机挑选最多回读的候选行数（按 added_at 取最新）。库上限 2 万行时
+# 全表回读 + 逐行 stat() 会拖慢 /偷表情 命令；有界扫描把最坏成本封顶。
+_PICK_SCAN_LIMIT = 1000
+
 
 def _now() -> float:
     return time.time()
@@ -182,7 +186,9 @@ class MemeLibraryStore:
                 SELECT md5, path, ext, description, emotion_tags, scene_tags, weight, nsfw_score
                 FROM memes WHERE weight > 0
                 ORDER BY added_at DESC
-                """
+                LIMIT ?
+                """,
+                (_PICK_SCAN_LIMIT,),
             ).fetchall()
         candidates: list[dict[str, Any]] = []
         keyword = (keyword or "").strip().lower()

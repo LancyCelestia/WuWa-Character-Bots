@@ -132,6 +132,10 @@ class TwitterGraphQLClient:
                 )
                 if match:
                     operations[operation] = match.group(1)
+            if bearer and "UserByScreenName" in operations and "UserTweets" in operations:
+                # 审计 E2-5：两项凭据拿齐即停，不再串行全量下载其余 JS bundle
+                #（最多 12 个 x.com 包，单轮浪费数十秒与流量）。
+                break
         return bearer, operations
 
     @staticmethod
@@ -414,6 +418,26 @@ def _parse_dt(value: str | None) -> datetime | None:
         except ValueError:
             return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _reached_cursor(item_id: str, previous: str) -> bool:
+    """游标截止判断：数值型 id 用 int 比较（审计 E2-4）。
+
+    只做相等判断时，上游删掉恰好等于游标的那条内容，整页更旧条目会每轮
+    作为新增重复产出；数值 id（微博/网易云/Pixiv 等）改为
+    ``int(item_id) <= int(previous)`` 截止。任一侧非数值（如 B 站 BV 号）
+    保留旧的相等语义。
+    """
+    item_text = str(item_id or "").strip()
+    previous_text = str(previous or "").strip()
+    if not previous_text:
+        return False
+    if item_text == previous_text:
+        return True
+    try:
+        return int(item_text) <= int(previous_text)
+    except ValueError:
+        return False
 
 
 def _parse_public_count(value: str | None) -> int | None:
@@ -1123,7 +1147,7 @@ class PixivSubscriptionAdapterV2(_BaseAdapter):
             ids = [str(key) for key in value] if isinstance(value, dict) else []
             previous = str(getattr(cursors.get(stream), "last_item_id", "") or "") if cursors else ""
             for item_id in ids:
-                if item_id == previous:
+                if _reached_cursor(item_id, previous):
                     break
                 kind = "novel" if stream == "novel" else "illust"
                 path = "novel" if stream == "novel" else "artworks"
@@ -1190,7 +1214,7 @@ class WeiboSubscriptionAdapterV2(_BaseAdapter):
             if not isinstance(status, dict) or status.get("isTop"):
                 continue
             item_id = str(status.get("id") or "")
-            if not item_id or item_id == previous:
+            if not item_id or _reached_cursor(item_id, previous):
                 break
             items.append(ContentReference(
                 item_id=item_id,

@@ -67,14 +67,29 @@ def _filter_until(
     last_id: str,
     id_getter: Any,
 ) -> list[Any]:
-    """按列表顺序（新→旧）保留到 ``last_id`` 匹配为止，且不含该条。"""
+    """按列表顺序（新→旧）保留到 ``last_id`` 游标为止，且不含该条。
+
+    审计 E2-4：数值型 id（收藏夹/合集回退的 av 号）用 int 比较——只做相等
+    判断时，上游删掉恰好等于游标的条目会让整页旧条目每轮重复推送；任一侧
+    非数值（如 BV 号）保留相等语义。
+    """
     if not isinstance(entries, list):
         return []
     if not last_id:
         return [*entries]
+    last_text = str(last_id)
+    last_key = _numeric_key(last_text)
     kept: list[Any] = []
     for entry in entries:
-        if str(id_getter(entry) or "") == str(last_id):
+        entry_id = str(id_getter(entry) or "")
+        if last_key is not None:
+            entry_key = _numeric_key(entry_id)
+            if entry_key is not None:
+                if entry_key <= last_key:
+                    break
+                kept.append(entry)
+                continue
+        if entry_id == last_text:
             break
         kept.append(entry)
     return kept

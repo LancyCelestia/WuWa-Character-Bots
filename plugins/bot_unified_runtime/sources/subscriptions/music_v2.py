@@ -15,6 +15,9 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
     ParseHttpError,
     http_get_json,
 )
+from plugins.bot_unified_runtime.sources.subscriptions.social_v2 import (
+    _reached_cursor,
+)
 
 
 class MusicSubscriptionAdapterV2:
@@ -115,7 +118,8 @@ class MusicSubscriptionAdapterV2:
                 item_id = str(track.get("id") or "")
                 if not item_id:
                     continue
-                if item_id == previous:
+                # 审计 E2-4：网易云曲目 id 为数值，删除旧曲目后不再重复整页。
+                if _reached_cursor(item_id, previous):
                     break
                 items.append(ContentReference(
                     item_id=item_id,
