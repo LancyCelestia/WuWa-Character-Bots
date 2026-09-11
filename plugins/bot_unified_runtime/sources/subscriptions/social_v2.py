@@ -1169,7 +1169,8 @@ class TelegramSubscriptionAdapterV2(_BaseAdapter):
             item_id = post.group(1).rsplit("/", 1)[-1]
             if not item_id.isdigit() or (last_item_id.isdigit() and int(item_id) <= int(last_item_id)):
                 continue
-            text_match = re.search(r'class="[^"]*tgme_widget_message_text[^"]*">(.*?)</', block, re.DOTALL)
+            # 块级闭合前瞻：内联标签（</b></a> 等）不再截断正文（同 platforms_telegram 修复口径）。
+            text_match = re.search(r'class="[^"]*tgme_widget_message_text[^"]*">(.*?)(?=<div|</div>)', block, re.DOTALL)
             body = re.sub(r"<[^>]+>", " ", text_match.group(1) if text_match else "")
             body = html.unescape(re.sub(r"\s+", " ", body)).strip()
             time_match = re.search(r'<time[^>]+datetime=["\']([^"\']+)', block)

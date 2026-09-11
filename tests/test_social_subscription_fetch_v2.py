@@ -28,6 +28,10 @@ _YOUTUBE_XML = """
 
 _TELEGRAM_HTML = """
 <div class="tgme_channel_info"><div class="tgme_channel_info_header_title">示例频道</div></div>
+<div class="tgme_widget_message_wrap" data-post="example/12">
+ <div class="tgme_widget_message_text"><b>加粗开头</b>后续正文不能丢 <a href="https://example.com/x">链接</a>尾</div>
+ <time datetime="2026-08-31T10:00:00+00:00"></time>
+</div>
 <div class="tgme_widget_message_wrap" data-post="example/11">
  <div class="tgme_widget_message_text">新消息</div>
  <time datetime="2026-08-30T10:00:00+00:00"></time>
@@ -64,5 +68,8 @@ def test_telegram_html_fetch_excludes_pinned_and_maps_views(monkeypatch) -> None
     adapter = TelegramSubscriptionAdapterV2()
     monkeypatch.setattr(adapter, "_fetch_text", lambda target, context: _TELEGRAM_HTML)
     result = asyncio.run(adapter.fetch_incremental(_target("telegram", "public_channel", "example"), {}, {}))
-    assert [item.item_id for item in result.items] == ["11"]
-    assert result.items[0].source_payload["view_count"] == 1200
+    assert [item.item_id for item in result.items] == ["12", "11"]
+    # 内联闭合标签不再截断正文（FIX-1 同型缺陷在订阅路径的销项）。
+    text12 = result.items[0].source_payload["text"]
+    assert "加粗开头" in text12 and "后续正文不能丢" in text12 and "尾" in text12
+    assert result.items[1].source_payload["view_count"] == 1200
