@@ -846,8 +846,17 @@ def run_nightly_reflection(
         turns_by_session = gather_turns_by_date(history_db, scope_date)
         if not turns_by_session:
             return {"skipped": "no_turns", "scope_date": scope_date}
-        reflection_db = str(
-            getattr(config, "bot_reflection_db_path", "") or "data/reflection.sqlite3"
+        # DATAFIX（2026-09-12）：getattr 兜底 "data/reflection.sqlite3" 是
+        # CWD 相对路径，曾把 reflection.sqlite3 写进源码树；统一经
+        # runtime_path 解析到 Runtime 数据根（对已解析的绝对路径幂等）。
+        from .providers import build_runtime_data_path
+
+        reflection_db = build_runtime_data_path(
+            config,
+            str(
+                getattr(config, "bot_reflection_db_path", "")
+                or "data/reflection.sqlite3"
+            ),
         )
         quirk_proposer = build_reflection_quirk_proposer(config)
         quirk_proposals = 0

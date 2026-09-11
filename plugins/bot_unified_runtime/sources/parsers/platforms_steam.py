@@ -48,7 +48,6 @@ def _fallback_proxy() -> str:
 
 _STEAM_COOKIE_DOMAINS = ("steamcommunity.com", "steampowered.com")
 _COOKIES_ENV = "BOT_COOKIES_FILE"
-_RUNTIME_DATA_ENV = "BOT_RUNTIME_DATA_DIR"
 
 _MARKET_TITLE_SUFFIXES = (" - Steam 社区市场", " - Steam Community Market")
 
@@ -80,19 +79,26 @@ def _cookie_file_candidates() -> list[Path]:
     if path.is_absolute():
         candidates.append(path)
         return candidates
-    runtime = os.getenv(_RUNTIME_DATA_ENV, "").strip()
-    if runtime:
-        runtime_root = Path(runtime).expanduser()
-        normalized = raw
-        if normalized == "data":
-            candidates.append(runtime_root)
-        elif normalized.startswith("data/"):
-            candidates.append(runtime_root / normalized[5:])
-        else:
-            candidates.append(runtime_root / path)
+    # DATAFIX（2026-09-12）：首选数据根改走 scripts/runtime_paths（env 优先、
+    # .env/.env.prod 兜底）——此前只认进程 env，dotenv-only 的入口会直接跳到
+    # 源码树候选。后两个旧候选保留作迁移期兜底（本模块只读不写）。
+    import sys
+
     project_root = Path(__file__).resolve().parents[4]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    from scripts.runtime_paths import runtime_data_dir
+
+    runtime_root = runtime_data_dir()
+    normalized = raw
+    if normalized == "data":
+        candidates.append(runtime_root)
+    elif normalized.startswith("data/"):
+        candidates.append(runtime_root / normalized[5:])
+    else:
+        candidates.append(runtime_root / path)
     candidates.append(project_root / path)
-    # .env 未注入环境变量时（独立脚本场景），再试兄弟 Runtime 目录。
+    # .env 也未命中时（数据根回退源码 data/），再试兄弟 Runtime 目录。
     candidates.append(project_root.parent / "ChatBot_Runtime" / "data" / "platform_cookies.txt")
     return candidates
 

@@ -43,7 +43,6 @@ def _fallback_proxy() -> str:
 
 _EPIC_COOKIE_DOMAINS = ("epicgames.com", "unrealengine.com")
 _COOKIES_ENV = "BOT_COOKIES_FILE"
-_RUNTIME_DATA_ENV = "BOT_RUNTIME_DATA_DIR"
 
 _PAGE_URL = "https://store.epicgames.com/zh-CN/p/{slug}"
 
@@ -70,16 +69,23 @@ def _cookie_file_candidates() -> list[Path]:
     if path.is_absolute():
         candidates.append(path)
         return candidates
-    runtime = os.getenv(_RUNTIME_DATA_ENV, "").strip()
-    if runtime:
-        runtime_root = Path(runtime).expanduser()
-        if raw == "data":
-            candidates.append(runtime_root)
-        elif raw.startswith("data/"):
-            candidates.append(runtime_root / raw[5:])
-        else:
-            candidates.append(runtime_root / path)
+    # DATAFIX（2026-09-12）：首选数据根改走 scripts/runtime_paths（env 优先、
+    # .env/.env.prod 兜底）——此前只认进程 env，dotenv-only 的入口会直接跳到
+    # 源码树候选。后两个旧候选保留作迁移期兜底（本模块只读不写）。
+    import sys
+
     project_root = Path(__file__).resolve().parents[4]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    from scripts.runtime_paths import runtime_data_dir
+
+    runtime_root = runtime_data_dir()
+    if raw == "data":
+        candidates.append(runtime_root)
+    elif raw.startswith("data/"):
+        candidates.append(runtime_root / raw[5:])
+    else:
+        candidates.append(runtime_root / path)
     candidates.append(project_root / path)
     candidates.append(project_root.parent / "ChatBot_Runtime" / "data" / "platform_cookies.txt")
     return candidates

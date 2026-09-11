@@ -282,8 +282,24 @@ def register_usage_monitor_scheduler(
         zone: Any = ZoneInfo(timezone_name)
     except Exception:  # noqa: BLE001 - 时区配置错误回退系统本地时区。
         zone = datetime.now().astimezone().tzinfo
+    # DATAFIX（2026-09-12）：state file 此前不在 config 重映射白名单里，
+    # getattr 兜底默认值是 CWD 相对路径，独立入口会把 usage_report_state.json
+    # 写进源码树。这里统一经 scripts.runtime_paths.runtime_path 解析
+    # （env 优先、.env/.env.prod 兜底），无论入口/CWD 如何都落 Runtime 数据根。
+    import sys as _sys
+
+    _project_root = Path(__file__).resolve().parents[3]
+    if str(_project_root) not in _sys.path:
+        _sys.path.insert(0, str(_project_root))
+    from scripts.runtime_paths import runtime_path as _runtime_path
+
     state_path = Path(
-        str(getattr(config, "bot_usage_report_state_file", "data/usage_report_state.json"))
+        _runtime_path(
+            str(
+                getattr(config, "bot_usage_report_state_file", "")
+                or "data/usage_report_state.json"
+            )
+        )
     ).expanduser()
     output_limit = max(0, int(getattr(config, "bot_usage_alert_output_tokens", 5_000_000) or 0))
     input_limit = max(0, int(getattr(config, "bot_usage_alert_input_tokens", 50_000_000) or 0))

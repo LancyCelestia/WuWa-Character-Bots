@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -107,22 +106,32 @@ def parse_netscape_cookie_file(path: str | Path) -> list[CookieEntry]:
 
 
 def _resolve_relative_cookie_path(cookie_path: Path) -> Path:
-    """Resolve relative cookies from external Runtime first, never from CWD."""
+    """Resolve relative cookies from external Runtime first, never from CWD.
+
+    DATAFIX（2026-09-12）：此前只读进程 env（``os.getenv``），而 nonebot 的
+    dotenv 只注入 driver config 不导出 os.environ——独立脚本/未导出 env 的
+    入口会回退 ``project_root / data/...``，把写入落到源码树（实际泄漏：
+    platform_cookies.txt）。现改走 scripts/runtime_paths 的数据根解析：
+    env 优先，其次 .env/.env.prod，与 config 校验器同一口径。
+    """
     if cookie_path.is_absolute():
         return cookie_path
+    import sys
+
     project_root = Path(__file__).resolve().parents[4]
-    raw_runtime = os.getenv("BOT_RUNTIME_DATA_DIR", "").strip()
-    if raw_runtime:
-        runtime_root = Path(raw_runtime).expanduser()
-        if not runtime_root.is_absolute():
-            runtime_root = project_root / runtime_root
-        normalized = str(cookie_path).replace("\\", "/")
-        if normalized == "data":
-            return runtime_root
-        if normalized.startswith("data/"):
-            return runtime_root / normalized[5:]
-        return runtime_root / cookie_path
-    return project_root / cookie_path
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    from scripts.runtime_paths import runtime_data_dir
+
+    runtime_root = runtime_data_dir()
+    normalized = str(cookie_path).replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if normalized.lower() == "data":
+        return runtime_root
+    if normalized.lower().startswith("data/"):
+        return (runtime_root / normalized[5:]).resolve()
+    return (runtime_root / cookie_path).resolve()
 
 
 def build_platform_cookie_provider(path: str | Path | None) -> PlatformCookieProvider:

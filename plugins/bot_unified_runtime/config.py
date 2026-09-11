@@ -189,6 +189,10 @@ class Config(BaseModel):
     # 避免长任务挤占语音转码/kb 拉取等 to_thread；在途上限为 2 倍（含排队），
     # 超限快败记 pipeline_busy 审计。钳位 1..64；env 兜底 BOT_PIPELINE_MAX_WORKERS。
     bot_pipeline_max_workers: int = 8
+    # B2 中央决策引擎迁移模式（阶段 0）：legacy_only（默认，引擎不参与）/
+    # shadow（引擎只算 plan 写 decision_trace，绝不发送）/ engine_only
+    # （随迁移阶段 1+ 启用）。非法值在运行时一律回落 legacy_only（fail-closed）。
+    bot_decision_engine_mode: str = "legacy_only"
     bot_emotion_enabled: bool = True
     bot_emotion_max_signals: int = 4
     # 机器人自身心情（L1，character/mood.py）：分钟-小时尺度连续情绪，事件驱动、
@@ -491,6 +495,10 @@ class Config(BaseModel):
     bot_music_analytics_enabled: bool = True
     bot_music_analytics_db_path: str = "data/music_analytics.sqlite3"
     bot_music_analytics_retention_days: int = 365
+    # 试听音频下载目录（capabilities/music.py）。此前无此字段，消费点
+    # getattr 兜底 "data/music" 是纯 CWD 相对路径，独立入口会把音频
+    # 写进源码树；收口为正式字段并纳入下方 data/ 重映射。
+    bot_music_dir: str = "data/music"
     # 解析/点歌请求的统一超时（秒）。
     bot_fetch_timeout_seconds: float = 10.0
     # 含合并转发的消息抓取转发正文超时（秒）；仅影响带 forward 段的消息。
@@ -705,6 +713,15 @@ class Config(BaseModel):
             raise ValueError("memory duration must be finite and in (0,3600]")
         return value
 
+    @field_validator("bot_decision_engine_mode")
+    @classmethod
+    def _normalize_decision_engine_mode(cls, value: str) -> str:
+        # fail-closed：非法值一律回落 legacy_only（引擎骨架阶段零行为变化）。
+        normalized = str(value or "").strip().lower()
+        if normalized in {"legacy_only", "shadow", "engine_only"}:
+            return normalized
+        return "legacy_only"
+
     @field_validator("bot_chat_max_tokens", "bot_chat_fast_max_tokens")
     @classmethod
     def _validate_chat_output_tokens(cls, value: int) -> int:
@@ -806,6 +823,19 @@ class Config(BaseModel):
             "bot_subscribe_db_path",
             "bot_runtime_log_file",
             "bot_cookies_file",
+            # DATAFIX（2026-09-12）：以下字段此前遗漏在重映射之外，默认值
+            # 保持 data/ 相对路径，getattr 兜底消费点按 CWD 解析会把运行时
+            # 数据写进源码树（实际泄漏：usage_report_state.json）。其余
+            # mood/quirks 等 CursorStore 字段虽在调用点二次兜底，仍统一
+            # 收口到本解析器，保证任何入口拿到绝对路径。
+            "bot_usage_report_state_file",
+            "bot_media_registry_path",
+            "bot_music_dir",
+            "bot_mood_db_path",
+            "bot_quirks_db_path",
+            "bot_session_identity_db_path",
+            "bot_reminder_db_path",
+            "bot_affinity_db_path",
         )
         for name in path_fields:
             setattr(self, name, resolve(getattr(self, name)))

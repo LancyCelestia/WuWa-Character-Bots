@@ -293,9 +293,29 @@ def _render_music_body(item: Any, mode: str) -> str:
     return "\n".join(lines)
 
 
+def _resolve_music_data_dir(raw: str) -> Path:
+    """把 ``data/...`` 相对默认值解析到 Runtime 数据根（runtime_paths 口径）。
+
+    DATAFIX（2026-09-12）：``bot_music_dir`` 此前不是正式 config 字段，
+    getattr 兜底 "data/music" 是纯 CWD 相对路径，独立入口会把试听音频
+    写进源码树。绝对路径原样返回（config 校验器已解析的正式配置）。
+    """
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path
+    import sys
+
+    project_root = Path(__file__).resolve().parents[3]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    from scripts.runtime_paths import runtime_path
+
+    return runtime_path(raw)
+
+
 def _default_audio_downloader(config: Any | None = None) -> Callable[[str], str | None]:
-    """把试听直链下载到 data/music/；失败返回 None，不抛异常。"""
-    target_dir = Path(
+    """把试听直链下载到 data/music/（Runtime 数据根）；失败返回 None，不抛异常。"""
+    target_dir = _resolve_music_data_dir(
         str(getattr(config, "bot_music_dir", "") or "data/music")
     ).expanduser()
     max_bytes = int(getattr(config, "bot_download_max_bytes", 209715200) or 0)
