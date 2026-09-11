@@ -127,11 +127,17 @@ class IncomingMessage(StrictBaseModel):
     raw_segments: list[dict[str, Any]] = Field(default_factory=list)
     plain_text: str = ""
     mentions_bot: bool = False
+    # True=mentions_bot 仅由软触发（文本昵称/小名）贡献，无硬 @/回复 bot；
+    # white2 门用它把“写了名字”与“真 @”区分开。
+    name_mention_only: bool = False
     reply_to_message_id: str | None = None
     reply_to_text: str = ""
     thread_id: str | None = None
     timestamp: datetime = Field(default_factory=_utc_now)
     message_id: str | None = None
+    # 视频理解：回复引用的视频经适配器反查（NapCat get_msg）拿到的本地文件路径；
+    # 空 = 未获取或不可用。由 handler 在异步上下文填充，能力层只读。
+    reply_video_path: str = ""
     sender_roles: list[str] = Field(default_factory=lambda: ["user"])
     risk_level: RiskLevel = RiskLevel.LOW
     privacy_level: PrivacyLevel | None = None

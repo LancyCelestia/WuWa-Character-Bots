@@ -246,6 +246,9 @@ class ContextBundle(StrictBaseModel):
     shared_group_context: SharedGroupContext | None = None
     meme_search_context: MemeSearchContext | None = None
     web_search_context: WebSearchContext | None = None
+    # 媒体应对守则：消息附有视频/图片档案时追加的系统级行为指令（可信运营配置，
+    # 不是用户输入）；空 = 本轮没有媒体档案，不出现该分区。
+    media_directive: str = ""
     active_persona_id: str = "default"
     context_budget: int = 2048
     reply_detail: str = "auto"  # auto / detail / concise

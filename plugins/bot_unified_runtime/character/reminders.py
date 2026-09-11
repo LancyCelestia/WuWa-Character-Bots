@@ -186,7 +186,7 @@ class ReminderStore:
     ) -> Reminder:
         created = datetime.now(UTC).isoformat()
         reminder_id = sha1(
-            f"{session_key}:{remind_at.isoformat()}:{text}:{created}".encode("utf-8")
+            f"{session_key}:{remind_at.isoformat()}:{text}:{created}".encode()
         ).hexdigest()[:12]
         with self._lock, self._conn:
             pending = self._conn.execute(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 import sqlite3
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
@@ -10,6 +12,35 @@ from plugins.bot_unified_runtime.contracts import (
     ConversationTurn,
     PrivacyLevel,
 )
+
+# H8 防线一（写入侧脱敏）：管理员会按官方用法输入 `/bot model add … key=<明文>`
+# （capabilities/runtime_admin.py 的用法文案主动引导明文），而命令原文此前会
+# **不加处理**写进 conversation_turns，随后被拼进 system prompt 发给当轮路由到
+# 的任意模型供应商 —— 直接违反「密钥永不入库不入聊天」硬约束。
+# 这里在落库前遮蔽赋值形态的密钥；`env:变量名` 这类间接引用保持可读，避免把
+# 正常配置记录改得不可辨认。
+_HISTORY_SECRET_RE = re.compile(
+    r"(?i)(\b[a-z0-9_]*(?:key|token|secret|password|passwd|authkey|credential|"
+    r"cookie|session[_-]?id)[a-z0-9_]*\s*[:=]\s*)"
+    r"(?!env:)([^\s,;]+)"
+)
+_HISTORY_BEARER_RE = re.compile(r"(?i)(\bbearer\s+)([A-Za-z0-9._\-]{8,})")
+_HISTORY_SK_RE = re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9][A-Za-z0-9_\-]{8,}")
+# 平台 Cookie 罐的关键名（`/bot cookie import weibo SUB=…` 这类命令的原文里
+# 是裸 `名称=值`，不含 token/key 之类字样，上面的通用规则抓不到）。
+_HISTORY_COOKIE_KEY_RE = re.compile(
+    r"(?i)\b(SESSDATA|SESSDATA_|bili_jct|DedeUserID|SUBP|SUB|ALF|SSOLoginState|"
+    r"web_session|sessionid|sessionid_ss|d_c0|z_c0|auth_token|ct0|kuaishou\.[a-z0-9_]+)"
+    r"\s*=\s*([^\s;]+)"
+)
+
+
+def redact_history_text(text: str) -> str:
+    """遮蔽对话历史里的明文凭据（H8）。``env:`` 间接引用保持原样。"""
+    value = _HISTORY_SECRET_RE.sub(lambda m: f"{m.group(1)}[redacted]", text or "")
+    value = _HISTORY_BEARER_RE.sub(lambda m: f"{m.group(1)}[redacted]", value)
+    value = _HISTORY_SK_RE.sub("sk-[redacted]", value)
+    return _HISTORY_COOKIE_KEY_RE.sub(lambda m: f"{m.group(1)}=[redacted]", value)
 
 
 class ConversationHistoryProvider(Protocol):
@@ -133,7 +164,7 @@ class InMemoryConversationHistoryStore:
         text: str,
         kind: str = "chat",
     ) -> None:
-        clean_text = text.strip()
+        clean_text = redact_history_text(text.strip())
         if not clean_text:
             return
         self._turns.append(
@@ -200,6 +231,19 @@ class SQLiteConversationHistoryRepository:
     def __init__(self, db_path: str | Path, *, max_items: int = 1000) -> None:
         self.db_path = Path(db_path)
         self.max_items = max(1, int(max_items))
+        # 每次 append 都重跑建表 DDL 是纯浪费：进程内建一次即可。
+        self._schema_ready = False
+        # 冷启动时事件循环与 offload 线程可能并发首写：无锁会双跑 ALTER。
+        self._schema_lock = threading.Lock()
+
+    def _ensure_schema_once(self) -> None:
+        if self._schema_ready:
+            return
+        with self._schema_lock:
+            if self._schema_ready:
+                return
+            self._ensure_schema()
+            self._schema_ready = True
 
     def append_turn(
         self,
@@ -214,10 +258,10 @@ class SQLiteConversationHistoryRepository:
         text: str,
         kind: str = "chat",
     ) -> None:
-        clean_text = text.strip()
+        clean_text = redact_history_text(text.strip())
         if not clean_text:
             return
-        self._ensure_schema()
+        self._ensure_schema_once()
         safe_kind = kind if kind in {"chat", "command", "system"} else "chat"
         now = datetime.now(UTC).isoformat()
         with self._connect() as connection:
@@ -273,7 +317,7 @@ class SQLiteConversationHistoryRepository:
     ) -> ConversationHistoryResult:
         if max_turns <= 0 or max_chars <= 0:
             return ConversationHistoryResult(request_id=request_id)
-        self._ensure_schema()
+        self._ensure_schema_once()
         rows = self._fetch_rows(
             platform=platform,
             adapter=adapter,
@@ -318,7 +362,7 @@ class SQLiteConversationHistoryRepository:
         session_id: str,
         sender_id: str,
     ) -> int:
-        self._ensure_schema()
+        self._ensure_schema_once()
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -353,6 +397,11 @@ class SQLiteConversationHistoryRepository:
                   AND bot_id = ?
                   AND session_id = ?
                   AND sender_id = ?
+                  -- H8 防线二：命令轮次不进上下文。用户侧命令原文（例如
+                  -- /bot model add … key=…）会经 providers → chat 拼进 system
+                  -- prompt 并外发给模型供应商；这里把 kind='command' 整体挡在
+                  -- 召回之外（防线一在写入侧做脱敏，见 _redact_history_text）。
+                  AND kind != 'command'
                 ORDER BY created_at DESC, rowid DESC
                 LIMIT ?
                 """,

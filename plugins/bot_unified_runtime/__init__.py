@@ -8,6 +8,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, cast
 
 from nonebot.adapters import Bot, Event
@@ -18,6 +19,7 @@ from pydantic import BaseModel
 
 from .audit import AuditRepository, build_audit_repository
 from .audit.file_logger import build_audit_with_file_log
+from .capabilities.affinity import build_affinity_capability
 from .capabilities.content_parser import build_content_capability
 from .capabilities.divination import build_divination_capability
 from .capabilities.download import build_download_capability
@@ -25,9 +27,6 @@ from .capabilities.eat import build_eat_capability
 from .capabilities.epic import build_epic_capability
 from .capabilities.group_files import DirtyGuard, GroupFileStore
 from .capabilities.market import build_market_capability
-from .capabilities.news import build_news_capability
-from .capabilities.randpic import build_randpic_capability
-from .capabilities.reminder import build_reminder_capability
 from .capabilities.meme import build_meme_capability
 from .capabilities.meme_library import build_meme_library_capability
 from .capabilities.moegirl import (
@@ -36,12 +35,18 @@ from .capabilities.moegirl import (
     question_lookup,
 )
 from .capabilities.music import build_music_capability
+from .capabilities.news import build_news_capability
 from .capabilities.platform_credentials import (
+    cookie_expiry_report,
+    cookie_login_check,
+    cookie_login_start,
     cookie_status_text,
     import_cookie_header,
     is_cookie_command,
     parse_cookie_command,
 )
+from .capabilities.randpic import build_randpic_capability
+from .capabilities.reminder import build_reminder_capability
 from .capabilities.today_history import build_today_history_capability
 from .capabilities.weather import build_weather_capability
 from .capabilities.wiki import build_wiki_capability
@@ -100,6 +105,22 @@ from .runtime.event_idempotency import build_event_idempotency_table
 from .runtime.intent_telemetry import build_intent_telemetry
 from .runtime.parrot import ParrotDetector
 from .runtime.result_unknown import ResultUnknownLedger
+from .runtime.video_pipeline import _MEDIA_RUNTIME_SINGLETON as _MEDIA_RUNTIME_SINGLETON
+from .runtime.video_pipeline import _VIDEO_ACK_TEXT as _VIDEO_ACK_TEXT
+from .runtime.video_pipeline import _VIDEO_ACK_THROTTLE as _VIDEO_ACK_THROTTLE
+from .runtime.video_pipeline import _fetch_reply_video_file as _fetch_reply_video_file
+from .runtime.video_pipeline import _get_media_registry as _get_media_registry
+from .runtime.video_pipeline import _local_file_usable as _local_file_usable
+from .runtime.video_pipeline import (
+    _prepare_video_understanding_message as _prepare_video_understanding_message,
+)
+from .runtime.video_pipeline import _provider_enabled as _provider_enabled
+from .runtime.video_pipeline import (
+    _register_bot_sent_video_assets as _register_bot_sent_video_assets,
+)
+from .runtime.video_pipeline import (
+    _video_understanding_enabled_now as _video_understanding_enabled_now,
+)
 
 
 def _runtime_scripts_path(value: str):
@@ -216,6 +237,8 @@ OFFLOADED_CAPABILITY_IDS = frozenset(
         # （点歌含 Playwright 渲染与音频下载，download 最长 300s），期间全部
         # 会话无响应，必须经 offload_capability 下放线程池。
         "bot.weather",
+        # bot.eat 同样含 Playwright 渲染 + LLM 推荐，同步跑会阻塞事件循环数秒。
+        "bot.eat",
         # bot.alert --probe 是同步 urllib 凭据巡检（串行多平台可达数十秒），
         # 调度器路径已 to_thread，命令路径同款必须 offload（审计重发现 P1）。
         "bot.alert",
@@ -225,8 +248,12 @@ OFFLOADED_CAPABILITY_IDS = frozenset(
         "bot.today_history",
         "bot.subscribe",
         "bot.meme_library",
+        # bot.memory 的 retrieve/upsert 是同步 SQLite 写，留在事件循环内
+        # 并发时会阻塞甚至 database is locked（审计#29）。
+        "bot.memory",
         "bot.download",
         "bot.search",
+        "bot.affinity",
     }
 )
 
@@ -378,10 +405,13 @@ def _refresh_affinity_nicknames(affinity_store) -> None:
         import sqlite3 as _sq
 
         connection = _sq.connect(affinity_store.db_path)
-        rows = connection.execute(
-            "SELECT nickname FROM user_affinity WHERE nickname != ''"
-        ).fetchall()
-        connection.close()
+        try:
+            rows = connection.execute(
+                "SELECT nickname FROM user_affinity WHERE nickname != ''"
+            ).fetchall()
+        finally:
+            # 读库异常时也必须关闭连接，否则 60s 一次的刷新会泄漏连接。
+            connection.close()
         _AFFINITY_NICKNAMES_CACHE = [str(r[0]) for r in rows]
         _AFFINITY_NICKNAMES_LOADED_AT = time.time()
     except Exception:  # noqa: BLE001 - 小名加载失败不影响主链路。
@@ -396,6 +426,41 @@ def set_runtime_mention_terms(terms: list[str] | tuple[str, ...]) -> None:
     """在插件初始化时登记人格昵称，用于“只写名字也算点名”。"""
     global _RUNTIME_MENTION_TERMS
     _RUNTIME_MENTION_TERMS = [str(item).strip() for item in terms if str(item).strip()]
+
+
+_TEXT_AT_MENTION_PATTERN = re.compile(r"@\s*([^\s@，。,@！!？?]{1,32})")
+# 软边界：昵称后紧跟这些字/符号才算完整点名，防"@守岸人后援会"误报；
+# 中文无词边界，用高频接续字白名单代替分词。
+_AT_MENTION_SOFT_BOUNDARY = set("在吗哦呀吧的呢这那你是帮我忙看看去跟我给说讲下啦~")
+
+
+def _detect_text_at_mention(text: str) -> bool:
+    """复制/手打的纯文本 @（非平台 at 段）也算硬点名。
+
+    平台真 @ 走 at 段检测（_detect_onebot_direct_mention）；用户从别处
+    复制或手打的 "@小维/@岸宝" 只会落在 plain_text 里。名字候选 = 人格
+    昵称 + 好感度小名（停用词除外）；只认 @ 后紧跟的称呼，普通问句
+    与邮箱等含 @ 的无关文本不受影响。
+    """
+    if not text or "@" not in text:
+        return False
+    candidates = [str(term) for term in _RUNTIME_MENTION_TERMS if str(term).strip()]
+    if _AFFINITY_NICKNAMES_CACHE:
+        candidates.extend(
+            str(item)
+            for item in _AFFINITY_NICKNAMES_CACHE
+            if str(item).strip() and str(item) not in _NICKNAME_STOPWORDS
+        )
+    if not candidates:
+        return False
+    for match in _TEXT_AT_MENTION_PATTERN.finditer(text):
+        token = match.group(1).strip()
+        for candidate in candidates:
+            if candidate and token.startswith(candidate):
+                rest = token[len(candidate):]
+                if not rest or rest[0] in _AT_MENTION_SOFT_BOUNDARY:
+                    return True
+    return False
 
 def contains_visual_message_segments(raw_segments: list[dict[str, Any]] | None) -> bool:
     """Return whether an event contains an image, sticker-like or video segment."""
@@ -608,8 +673,12 @@ async def _transcode_record_segments(bot: Any, raw_segments: list[dict[str, Any]
         if not file_id:
             continue
         try:
-            result = await bot.call_api("get_record", file_id=file_id, out_format="mp3")
-        except Exception as exc:  # noqa: BLE001 - 适配器不支持/转码失败时保持原段。
+            # NapCat 偶发挂起不返回：无超时会把这个用户的后续消息永久卡死。
+            result = await asyncio.wait_for(
+                bot.call_api("get_record", file_id=file_id, out_format="mp3"),
+                timeout=20.0,
+            )
+        except Exception as exc:  # noqa: BLE001 - 适配器不支持/超时/转码失败时保持原段。
             logging.getLogger(__name__).debug(
                 "get_record skipped type=%s", type(exc).__name__
             )
@@ -798,18 +867,38 @@ def _incoming_from_nonebot_event(
         quote_segment = next((item for item in normalized_message.segments if item.get("type") == "quote"), None)
         if quote_segment:
             reply_id = (quote_segment.get("data") or {}).get("id") or (quote_segment.get("data") or {}).get("message_id")
+    # 纯文本 @ 只认用户自己打的字：在被引用文本拼接之前检测，
+    # 防止引用内容里的 "@某人" 被当成用户对本机器人的点名。
+    text_at_mention = _detect_text_at_mention(text)
     if reply_text:
         text = f"{text}\n[引用回复]\n{reply_text}\n[/引用回复]".strip()
     is_tome = getattr(event, "is_tome", None)
     adapter_mentions_bot = bool(is_tome()) if callable(is_tome) else False
     persona_name_mention = detect_name_mention(text, _RUNTIME_MENTION_TERMS)
     affinity_nickname_mention = _mentioned_by_affinity_nickname(text)
-    soft_name_mention = persona_name_mention or affinity_nickname_mention
     hard_mention = adapter_mentions_bot or (
         normalized_adapter not in {"telegram", "mail"}
         and _detect_onebot_direct_mention(raw_segments, bot_id)
     )
-    # 触发语义分层（2026-09-11「叫岸宝没反应」修复）：
+    if not hard_mention:
+        if text_at_mention:
+            hard_mention = True
+        elif reply_id:
+            # 回复机器人自己发过的视频 = 明确的追问意图，等同硬点名
+            # （档案 bot_sent 锚点可查；回复别人的视频不算）。
+            registry = _get_media_registry()
+            replied_asset = None
+            if registry is not None:
+                try:
+                    replied_asset = registry.lookup_by_message_id(str(reply_id))
+                except Exception:  # noqa: BLE001 - 档案库读失败按未命中处理。
+                    replied_asset = None
+            if (
+                replied_asset is not None
+                and str(getattr(replied_asset, "source_kind", "")) == "bot_sent"
+            ):
+                hard_mention = True
+    # 私聊/邮件永远回复，软硬之分无意义。触发语义分层（2026-09-11「叫岸宝没反应」修复）：
     # - 策展人格昵称（岸宝/守岸人/小岸同学/我的蒙娜丽莎/第二实例…）= 真点名：
     #   经由 mentions_bot 等同 @，white1/未名单群直接应答，white2 严格群也应答；
     # - 好感度自学习小名常撞常用词（可能误学「什么」这类词），无硬点名时仅记
@@ -836,7 +925,7 @@ def _incoming_from_nonebot_event(
         mentions_bot=(
             session_type in {SessionType.PRIVATE, SessionType.EMAIL}
             or hard_mention
-            or soft_name_mention
+            or (persona_name_mention and not hard_mention)
         ),
         name_mention_only=name_mention_only,
         message_id=str(message_id) if message_id is not None else None,
@@ -1031,7 +1120,11 @@ def _register_credential_check_scheduler(
 
     async def _check_job() -> None:
         try:
-            reports = check_credentials_and_report(config, probe=True)
+            # 凭据探测是同步 urllib HTTP（串行多平台可达数十秒），必须下放线程，
+            # 否则巡检期间整个事件循环冻结、全部会话无响应。
+            reports = await asyncio.to_thread(
+                check_credentials_and_report, config, probe=True
+            )
         except Exception as exc:  # noqa: BLE001 - 检查失败不能中断机器人。
             audit_logger.append(
                 AuditRecord(
@@ -1412,6 +1505,12 @@ def _audit_chat_history_skipped(
     )
 
 
+# C14: 解析卡每条消息都要头像 URL，而查询走适配器 RPC（1.2s 超时）；
+# 按 self_id 缓存 600s，避免每条消息一次跨进程调用。配置头像优先且不缓存。
+_BOT_AVATAR_URL_CACHE: dict[str, tuple[float, str]] = {}
+_BOT_AVATAR_URL_TTL_SECONDS = 600.0
+
+
 async def _resolve_bot_avatar_url(bot: Any, config: Config) -> str:
     """Use configured avatar, then ask OneBot/NapCat for the bot avatar briefly."""
     configured = str(getattr(config, "bot_persona_avatar_url", "") or "").strip()
@@ -1420,6 +1519,16 @@ async def _resolve_bot_avatar_url(bot: Any, config: Config) -> str:
     self_id = str(getattr(bot, "self_id", "") or "").strip()
     if not self_id:
         return ""
+    now = time.monotonic()
+    cached = _BOT_AVATAR_URL_CACHE.get(self_id)
+    if cached is not None and cached[0] > now:
+        return cached[1]
+    url = await _lookup_bot_avatar_url(bot, self_id)
+    _BOT_AVATAR_URL_CACHE[self_id] = (now + _BOT_AVATAR_URL_TTL_SECONDS, url)
+    return url
+
+
+async def _lookup_bot_avatar_url(bot: Any, self_id: str) -> str:
     # qlogo is the stable public avatar endpoint for a numeric QQ account.  It
     # avoids a placeholder when an adapter omits the avatar field altogether.
     qq_avatar_fallback = (
@@ -1448,6 +1557,39 @@ async def _resolve_bot_avatar_url(bot: Any, config: Config) -> str:
     if not isinstance(data, dict):
         return qq_avatar_fallback
     return str(data.get("avatar") or data.get("avatar_url") or data.get("face") or "").strip() or qq_avatar_fallback
+
+
+# C14: 内容解析注册表构建要绑定 cookie/代理/Playwright 后端，每条消息重建纯浪费；
+# 单槽缓存按 cookies 文件 mtime 失效——文件热更新后下一条消息自动重建。
+_CONTENT_REGISTRY_CACHE: dict[str, tuple[tuple[Any, ...], Any]] = {}
+
+
+def _cached_content_parser_registry(config: Config, playwright_backend: Any) -> Any:
+    """按 cookies 文件 mtime 缓存 build_content_parser_registry 结果。"""
+    from plugins.bot_unified_runtime.sources.parsers import (
+        build_content_parser_registry,
+        build_cookie_provider,
+    )
+
+    cookies_path = str(getattr(config, "bot_cookies_file", "") or "")
+    try:
+        cookies_stamp = Path(cookies_path).stat().st_mtime_ns if cookies_path else 0
+    except OSError:
+        cookies_stamp = -1
+    platforms = tuple(getattr(config, "bot_content_parse_platforms", []) or [])
+    proxy = str(getattr(config, "bot_download_proxy", "") or "")
+    key = (cookies_path, cookies_stamp, platforms, proxy)
+    cached = _CONTENT_REGISTRY_CACHE.get("single")
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    built = build_content_parser_registry(
+        list(platforms) or None,
+        cookie_provider=build_cookie_provider(config),
+        proxy=proxy,
+        playwright_backend=playwright_backend,
+    )
+    _CONTENT_REGISTRY_CACHE["single"] = (key, built)
+    return built
 
 
 def should_finish_nonebot_matcher(receipt: DeliveryReceipt) -> bool:
@@ -1646,7 +1788,9 @@ async def _deliver_transport_send_request(
         nonebot_sender=send_nonebot_message,
         record_receipt=_record,
     )
-    return await gateway.deliver(bot, event, send_request)
+    receipt = await gateway.deliver(bot, event, send_request)
+    _register_bot_sent_video_assets(send_request, receipt)
+    return receipt
 async def _notify_operational_callback(
     notifier: Any,
     message: IncomingMessage,
@@ -1801,7 +1945,6 @@ def build_character_affinity_store(config: object):
             store = DynamicAffinityStore(db_path)
             _AFFINITY_STORES[cache_key] = store
         return store
-
 
 
 # 进程级共享 bot 心情 store（L1）：与好感度 store 同模式（构造即建连接+建表，
@@ -2236,7 +2379,9 @@ def _register_nonebot_handlers() -> None:
             return {}
 
     def _first_online_bot() -> OneBotV11Bot | None:
-        return next(iter(_all_online_bots().values()), None)
+        # 历史上的今天等系统推送要发 OneBot 请求：注册表首个 bot 可能是
+        # Telegram/Mail 账号，跨适配器调用必然失败；只取 onebot 适配器账号。
+        return cast(Any, _select_credential_bot(_all_online_bots()))
 
     operational_alert_suppression = AdminAlertSuppression()
 
@@ -2557,7 +2702,7 @@ def _register_nonebot_handlers() -> None:
                 f"{event.item.url}"
             )
             if body:
-                text += f"\\n{body[:500]}"
+                text += f"\n{body[:500]}"
             elif bool(getattr(config, "bot_vision_enabled", False)):
                 # 纯图/无文本订阅条目：用 vision 补一行描述，失败静默不阻断推送。
                 from .sources.vision_describe import describe_subscription_item
@@ -2568,7 +2713,7 @@ def _register_nonebot_handlers() -> None:
                     describe_subscription_item, vision_provider, payload
                 )
                 if described:
-                    text += f"\\n图：{described}"
+                    text += f"\n图：{described}"
             from .capabilities.content_parser import build_subscription_push_capability
 
             sent_any = False
@@ -2663,6 +2808,53 @@ def _register_nonebot_handlers() -> None:
                 max_instances=1,
             )
 
+        # 平台凭证过期每日提醒：过期/7 天内临期 → 私聊管理员（config.bot_admin_user_ids 首个在线）。
+        if getattr(config, "bot_cookie_expiry_reminder_enabled", True):
+
+            async def _cookie_expiry_reminder_job() -> None:
+                try:
+                    from plugins.bot_unified_runtime.capabilities.platform_credentials import (
+                        cookie_expiry_report,
+                    )
+
+                    report = await asyncio.to_thread(cookie_expiry_report, config)
+                except Exception:  # noqa: BLE001 - 巡检失败不影响主链路。
+                    return
+                if not report:
+                    return
+                bot = _select_credential_bot(_all_online_bots())
+                if bot is None:
+                    return
+                admins = [
+                    str(item).strip()
+                    for item in (getattr(config, "bot_admin_user_ids", []) or [])
+                    if str(item).strip()
+                ]
+                for admin_id in admins[:3]:
+                    try:
+                        await bot.call_api(
+                            "send_private_msg",
+                            user_id=int(admin_id),
+                            message=[{"type": "text", "data": {"text": report}}],
+                        )
+                        break
+                    except Exception as exc:  # noqa: BLE001 - 换下一个管理员。
+                        logging.getLogger(__name__).debug(
+                            "cookie expiry notice to %s failed: %s", admin_id, exc
+                        )
+                        continue
+
+            scheduler.add_job(
+                _cookie_expiry_reminder_job,
+                "cron",
+                hour=10,
+                minute=0,
+                id="cookie_expiry_reminder",
+                replace_existing=True,
+                misfire_grace_time=600,
+                max_instances=1,
+            )
+
         if getattr(config, "bot_subscribe_enabled", True):
             subscription_registration = defer_optional_subscription_registration(
                 register_subscription_runtime_v2,
@@ -2737,6 +2929,18 @@ def _register_nonebot_handlers() -> None:
         config,
         settings_store=runtime_settings,
     )
+    from plugins.bot_unified_runtime.character.media_registry import (
+        build_media_registry,
+    )
+
+    media_registry = build_media_registry(
+        config,
+        ttl_seconds=int(
+            getattr(config, "bot_media_registry_ttl_days", 7) or 7
+        )
+        * 86400,
+    )
+    _MEDIA_RUNTIME_SINGLETON["registry"] = media_registry
     model_router = build_model_router(
         config,
         dynamic_registry=runtime_settings.list_model_registry,
@@ -2797,6 +3001,11 @@ def _register_nonebot_handlers() -> None:
             asr_provider=asr_provider,
             asr_enabled=bool(getattr(config, "bot_asr_enabled", False)),
             asr_max_chars=int(getattr(config, "bot_asr_max_chars", 300)),
+            media_registry=media_registry,
+            video_understanding_enabled=bool(
+                getattr(config, "bot_video_understanding_enabled", False)
+            ),
+            media_config=config,
             memory_writer=memory_writer,
             request_budget_seconds=float(
                 getattr(config, "bot_request_budget_seconds", 0.0)
@@ -3019,7 +3228,8 @@ def _register_nonebot_handlers() -> None:
     async def _handle_admin_file_notice(bot: Bot, event: Event) -> None:
         file_info = getattr(event, "file", None)
         file_id = str(getattr(file_info, "file_id", "") or "")
-        file_name = str(getattr(file_info, "name", "") or "file")
+        # 只取文件名本身：平台侧 name 可能带路径分隔符，直接拼接会写出 incoming 之外。
+        file_name = _Path(str(getattr(file_info, "name", "") or "")).name.strip() or "file"
         file_url = str(getattr(file_info, "url", "") or "")
         if not file_id and not file_url:
             return
@@ -3041,7 +3251,10 @@ def _register_nonebot_handlers() -> None:
             if base64_body:
                 import base64
 
-                target.write_bytes(base64.b64decode(base64_body))
+                # 大文件写盘放线程池，避免事件循环被阻塞在 IO 上。
+                await asyncio.to_thread(
+                    target.write_bytes, base64.b64decode(base64_body)
+                )
                 saved_path = str(target)
             elif local_path and _Path(local_path).exists():
                 saved_path = local_path
@@ -3051,7 +3264,8 @@ def _register_nonebot_handlers() -> None:
         if not saved_path:
             await _send_text_through_unified_pipeline(bot, event, "文件接收失败：平台未返回可读文件内容。")
             return
-        report = run_code_debug(saved_path)
+        # run_code_debug 内部是同步 subprocess（timeout=15s），必须下放线程池。
+        report = await asyncio.to_thread(run_code_debug, saved_path)
         await _send_text_through_unified_pipeline(bot, event, f"[文件调试] {file_name}\n{report}")
 
     async def _is_admin_file_export(event: Event) -> bool:
@@ -3147,6 +3361,35 @@ def _register_nonebot_handlers() -> None:
             capability_id="bot.image_search",
         )
         await _notify_operational_receipt(message, receipt)
+        # 管道只把发送请求入队（内存队列回执是假 sent），真实网络投递必须由
+        # handler 显式完成——与 _handle_content 的投递模式完全同构。
+        sent_request = _find_sent_request(send_queue, message.request_id)
+        if sent_request is not None:
+            transport_receipt = await _deliver_transport_send_request(
+                bot,
+                event,
+                sent_request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+            _record_runtime_diagnostic(
+                config=config,
+                diagnostics_store=diagnostics_store,
+                message=message,
+                capability_id="bot.image_search",
+                receipt=transport_receipt,
+                send_queue=send_queue,
+                audit_logger=audit_logger,
+            )
+            await _notify_operational_receipt(message, transport_receipt)
+            if transport_receipt.state.value == "sent":
+                return
+            if should_finish_nonebot_matcher(transport_receipt):
+                await image_search.finish(transport_receipt.public_message)
+            return
+        if should_finish_nonebot_matcher(receipt):
+            await image_search.finish(receipt.public_message)
 
     cookie_admin = on_message(rule=_is_admin_cookie_command, priority=8, block=True)
 
@@ -3185,6 +3428,10 @@ def _register_nonebot_handlers() -> None:
 
     @group_file_stats.handle()
     async def _handle_group_file_stats(bot: Bot, event: Event) -> None:
+        # 群文件统计暴露群内上传者/文件清单，与管理命令同级：仅管理员可查。
+        if not await _is_admin_origin(event):
+            await _send_text_through_unified_pipeline(bot, event, "只有管理员才能查看群文件统计。")
+            return
         group_id = str(getattr(event, "group_id", "") or "")
         if not group_id:
             await _send_text_through_unified_pipeline(bot, event, "群文件统计仅在群聊可用。")
@@ -3197,6 +3444,55 @@ def _register_nonebot_handlers() -> None:
         if parsed is None:
             return
         action, platform, header = parsed
+        if action == "login":
+            if not platform:
+                await _send_text_through_unified_pipeline(
+                    bot,
+                    event,
+                    "用法：/bot cookie login bilibili（当前已支持扫码登录的平台：bilibili；其余平台请用 /bot cookie import 手动导入）",
+                )
+                return
+            _session_key, png_path, login_text = cookie_login_start(config, platform)
+            await _send_text_through_unified_pipeline(bot, event, login_text)
+            if png_path:
+                image_segment = {
+                    "type": "image",
+                    "data": {"file": "file:///" + png_path.replace("\\", "/")},
+                }
+                try:
+                    if isinstance(event, GroupMessageEvent):
+                        await bot.call_api(
+                            "send_group_msg",
+                            group_id=event.group_id,
+                            message=[image_segment],
+                        )
+                    else:
+                        await bot.call_api(
+                            "send_private_msg",
+                            user_id=int(event.get_user_id()),
+                            message=[image_segment],
+                        )
+                except Exception as exc:  # noqa: BLE001 - 图片发送失败时文本兜底已给出链接。
+                    logging.getLogger(__name__).debug("qr image send failed: %s", exc)
+            return
+        if action == "check":
+            if not platform:
+                await _send_text_through_unified_pipeline(
+                    bot,
+                    event,
+                    "用法：/bot cookie check bilibili（查询最近一次扫码登录的结果）",
+                )
+                return
+            await _send_text_through_unified_pipeline(
+                bot, event, cookie_login_check(config, platform)
+            )
+            return
+        if action == "expiry":
+            report = cookie_expiry_report(config)
+            await _send_text_through_unified_pipeline(
+                bot, event, report or "所有平台凭证均有效，无需处理。"
+            )
+            return
         if action == "import":
             if not platform or not header:
                 await _send_text_through_unified_pipeline(
@@ -3622,6 +3918,15 @@ def _register_nonebot_handlers() -> None:
                 )
                 return build_today_history_capability(config)(synthetic, _decision)
 
+        elif resolution.capability_id == "bot.affinity":
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_affinity_capability(
+                    config,
+                    affinity_store=build_character_affinity_store(config),
+                    render_backend=render_backend,
+                )(message, _decision)
+
         elif resolution.capability_id == "bot.subscribe":
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
@@ -3629,13 +3934,25 @@ def _register_nonebot_handlers() -> None:
                 from .capabilities.subscribe_v2 import build_subscribe_capability_v2
 
                 sub_ctx = subscription_ctx if isinstance(subscription_ctx, dict) else {}
+                store = sub_ctx.get("store")
+                adapters = sub_ctx.get("adapters")
+                if store is None or adapters is None:
+                    # 订阅运行时注册失败时返回空字典而非半可用上下文：
+                    # 静默 KeyError 会让用户命令石沉大海。
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.subscribe",
+                        kind="text",
+                        body="订阅运行时未启动，暂时无法处理订阅命令。",
+                        audit_tags=["subscribe", "runtime_unavailable"],
+                    )
                 normalized = normalize_subscribe_text(
                     f"/bot subscribe {resolution.rest_text}".strip()
                 )
                 synthetic = message.model_copy(update={"plain_text": normalized})
                 return build_subscribe_capability_v2(
-                    store=sub_ctx["store"],
-                    adapters=sub_ctx["adapters"],
+                    store=store,
+                    adapters=adapters,
                     config=config,
                 )(synthetic, _decision)
 
@@ -3768,13 +4085,24 @@ def _register_nonebot_handlers() -> None:
         from .capabilities.subscribe_v2 import build_subscribe_capability_v2
 
         sub_ctx = subscription_ctx if isinstance(subscription_ctx, dict) else {}
+        _sub_store = sub_ctx.get("store")
+        _sub_adapters = sub_ctx.get("adapters")
 
         def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+            if _sub_store is None or _sub_adapters is None:
+                # 订阅运行时注册失败时给用户明确反馈，而不是 KeyError 静默。
+                return CapabilityResult(
+                    request_id=message.request_id,
+                    capability_id="bot.subscribe",
+                    kind="text",
+                    body="订阅运行时未启动，暂时无法处理订阅命令。",
+                    audit_tags=["subscribe", "runtime_unavailable"],
+                )
             normalized = normalize_subscribe_text(message.plain_text)
             synthetic_message = message.model_copy(update={"plain_text": normalized})
             return build_subscribe_capability_v2(
-                store=sub_ctx["store"],
-                adapters=sub_ctx["adapters"],
+                store=_sub_store,
+                adapters=_sub_adapters,
                 config=config,
             )(synthetic_message, _decision)
 
@@ -4167,6 +4495,18 @@ def _register_nonebot_handlers() -> None:
             parse_query = command_text.removeprefix("parse").strip()
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                # M24：解析历史是**全局**范围（跨群/跨私聊的 URL+标题+时间），
+                # 此前无门，任意成员 `/bot parse 20` 即可读到其他会话解析过的
+                # 链接（链接自带 token 时等于二次扩散）。与 /bot status、debug
+                # 排障命令同档，收紧为管理员可见。
+                if "admin" not in {str(role).lower() for role in _decision.actor_roles}:
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.parse",
+                        kind="text",
+                        body="只有管理员才能查看解析历史。",
+                        audit_tags=["parse_history", "denied"],
+                    )
                 return build_parse_history_result(
                     parse_history_store,
                     request_id=message.request_id,
@@ -4177,6 +4517,10 @@ def _register_nonebot_handlers() -> None:
             capability_id = "bot.download"
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                # H6 定案：download 保留给普通用户（产品需要），安全边界改由
+                # downloader 侧承担——sources/downloader.check_download_url 拒绝
+                # 非 http(s) 协议与内网/保留地址（含 DNS 解析后的私网 IP、云元数据
+                # 主机），并覆盖十进制/十六进制 IP 等绕过形态。此处不设管理员门。
                 return cast(
                     CapabilityResult,
                     build_download_capability(config, downloader=downloader)(
@@ -4193,8 +4537,6 @@ def _register_nonebot_handlers() -> None:
                 "默认": "auto", "自动": "auto", "auto": "auto",
             }
             normalized_mode = mode_map.get(reply_mode, "" if not reply_mode else None)
-            if normalized_mode is None:
-                normalized_mode = "auto"
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 if "admin" not in {str(role).lower() for role in _decision.actor_roles}:
@@ -4204,6 +4546,18 @@ def _register_nonebot_handlers() -> None:
                         kind="text",
                         body="只有管理员才能调整回复详略。",
                         audit_tags=["reply_detail", "denied"],
+                    )
+                if normalized_mode is None:
+                    # 未知参数不再静默当 auto：明确回用法，避免误设置却以为生效。
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.reply",
+                        kind="text",
+                        body=(
+                            f"未知的回复详略参数：{reply_mode}。\n"
+                            "用法：/bot reply <详细|精简|默认>"
+                        ),
+                        audit_tags=["reply_detail", f"invalid:{reply_mode}"],
                     )
                 if not reply_mode:
                     current = runtime_settings.get("BOT_REPLY_DETAIL", config) or "auto"
@@ -4245,9 +4599,20 @@ def _register_nonebot_handlers() -> None:
                 from .capabilities.subscribe_v2 import build_subscribe_capability_v2
 
                 sub_ctx = subscription_ctx if isinstance(subscription_ctx, dict) else {}
+                store = sub_ctx.get("store")
+                adapters = sub_ctx.get("adapters")
+                if store is None or adapters is None:
+                    # 订阅运行时注册失败时给用户明确反馈，而不是 KeyError 静默。
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.subscribe",
+                        kind="text",
+                        body="订阅运行时未启动，暂时无法处理订阅命令。",
+                        audit_tags=["subscribe", "runtime_unavailable"],
+                    )
                 return build_subscribe_capability_v2(
-                    store=sub_ctx["store"],
-                    adapters=sub_ctx["adapters"],
+                    store=store,
+                    adapters=adapters,
                     config=config,
                 )(message, _decision)
 
@@ -4518,39 +4883,58 @@ def _register_nonebot_handlers() -> None:
         )
         # 被动感知（批次 C）：所有群/私聊消息都观察行为、自述画像与小名自学，
         # 不依赖 @/白名单触发；只影响后续态度与称呼，不改变本轮是否回复。
+        # observe/learn_profile 是多次 SQLite 事务并与 offload 线程争锁，
+        # 必须下放线程池执行，否则每条消息都在事件循环内同步写库。
         if message.sender_id and message.plain_text.strip():
-            try:
-                _store = build_character_affinity_store(config)
-                if _store is not None:
+            def _passive_affinity_perception() -> None:
+                try:
+                    _store = build_character_affinity_store(config)
                     from .character.affinity import classify_behavior
                     from .character.affinity import extract_profile_facts as _epf
 
-                    _store.observe(
-                        message.sender_id,
-                        classify_behavior(message.plain_text),
-                    )
-                    facts = _epf(message.plain_text)
-                    if facts:
-                        _store.learn_profile(message.sender_id, message.plain_text)
-                    import re as _re
+                    behavior = classify_behavior(message.plain_text)
+                    if _store is not None:
+                        _store.observe(
+                            message.sender_id,
+                            behavior,
+                            group_id=message.group_id or None,
+                            display_name=(message.sender_display_name or "").strip() or None,
+                        )
+                        facts = _epf(message.plain_text)
+                        if facts:
+                            _store.learn_profile(message.sender_id, message.plain_text)
+                        from .character.affinity import extract_learned_nickname
 
-                    nickname_match = _re.search(
-                        r"(?:你可以叫我|以后叫我|就叫我|叫我|喊我)\s*([\u4e00-\u9fa5A-Za-z0-9]{1,12})"
-                        r"(?:吧|就好|就可以了|就行|哦|呀|~|！|!|。|\s|$)",
-                        message.plain_text,
-                    )
-                    if nickname_match:
-                        learned = nickname_match.group(1).strip()
-                        current = _store.snapshot(message.sender_id).get("nickname") or ""
+                        learned = extract_learned_nickname(message.plain_text)
                         if (
                             learned
                             and learned not in _NICKNAME_STOPWORDS
                             and len(learned) >= 2
-                            and learned != current
                         ):
-                            _store.set_nickname(message.sender_id, learned)
-            except Exception:  # noqa: BLE001, S110 - 被动感知失败不影响主链路。
-                pass
+                            current = _store.snapshot(message.sender_id).get("nickname") or ""
+                            if learned != current:
+                                _store.set_nickname(message.sender_id, learned)
+                    # 机器人心情（L1）：同一行为+情绪信号驱动 bot 自身心情。
+                    _mood = build_character_mood_store(config)
+                    if _mood is not None:
+                        from .character.emotion import build_emotion_provider
+
+                        _mood.observe_interaction(
+                            behavior,
+                            [
+                                signal.emotion_label
+                                for signal in build_emotion_provider(config).analyze(
+                                    request_id=message.request_id,
+                                    sender_id=message.sender_id,
+                                    session_id=message.session_id,
+                                    query_text=message.plain_text,
+                                )
+                            ],
+                        )
+                except Exception:  # noqa: BLE001, S110 - 被动感知失败不影响主链路。
+                    pass
+
+            await asyncio.to_thread(_passive_affinity_perception)
         # 小名缓存刷新（60s），供动态昵称 mention 判定。
         if time.time() - _AFFINITY_NICKNAMES_LOADED_AT > 60.0:
             _refresh_affinity_nicknames(_affinity_store_runtime(config))
@@ -4575,7 +4959,7 @@ def _register_nonebot_handlers() -> None:
                 from .contracts import RiskLevel as _RL
                 from .contracts import SendPolicy as _SP
 
-                await pipeline.handle_async(
+                parrot_receipt = await pipeline.handle_async(
                     message,
                     offload_capability(lambda m, d: _CR(
                         request_id=m.request_id,
@@ -4589,6 +4973,20 @@ def _register_nonebot_handlers() -> None:
                     )),
                     capability_id="bot.chat",
                 )
+                await _notify_operational_receipt(message, parrot_receipt)
+                # 管道只入队不投递：复读吐槽也要显式走 transport 发出去，
+                # 否则 InMemory 队列的假 sent 回执让吐槽永远发不出来。
+                parrot_request = _find_sent_request(send_queue, message.request_id)
+                if parrot_request is not None:
+                    parrot_transport = await _deliver_transport_send_request(
+                        bot,
+                        event,
+                        parrot_request,
+                        audit_logger,
+                        receipt_repository,
+                        send_queue,
+                    )
+                    await _notify_operational_receipt(message, parrot_transport)
                 return
         is_mail_event = ".mail" in event_module
         mail_reply_id, mail_reply_id_is_fallback = mail_event_dedupe_id(event)
@@ -4649,6 +5047,25 @@ def _register_nonebot_handlers() -> None:
                         f"{message.plain_text}\n【合并转发内容】\n{forward_text}"
                     ).strip()
                 }
+            )
+        # 视频理解预处理：回复引用的视频反查落盘文件；确认要现场分析时发进度提示。
+        try:
+            message = await _prepare_video_understanding_message(
+                bot,
+                message,
+                chat.send,
+                config=config,
+                runtime_settings=runtime_settings,
+                media_registry=media_registry,
+                media_providers_ready=bool(
+                    (vision_provider and _provider_enabled(vision_provider))
+                    or (asr_provider and _provider_enabled(asr_provider))
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - 预处理失败不影响正常聊天链路，仅留调试痕迹。
+            logging.getLogger(__name__).debug(
+                "video understanding preprocess skipped type=%s",
+                type(exc).__name__,
             )
         _log_runtime_event(
             runtime_event_log,
@@ -4763,8 +5180,10 @@ def _register_nonebot_handlers() -> None:
             release_mail_reply_claim()
             if should_finish_nonebot_matcher(transport_receipt):
                 await chat.finish(transport_receipt.public_message)
-        else:
-            release_mail_reply_claim()
+            # 走过 transport 分支就不再落回管道回执：管道回执诊断/通知只适用
+            # 于无 sent_request 的路径，否则 transport 失败时双诊断+重复通知。
+            return
+        release_mail_reply_claim()
         _record_runtime_diagnostic(
             config=config,
             diagnostics_store=diagnostics_store,
@@ -4801,6 +5220,10 @@ def _register_nonebot_handlers() -> None:
             offload_capability(
                 build_content_capability(
                     config,
+                    # 注册表按 cookies 文件 mtime 缓存：热更新 cookie 后自动重建。
+                    registry=_cached_content_parser_registry(
+                        config, playwright_fetch_backend
+                    ),
                     parse_history_store=parse_history_store,
                     downloader=downloader,
                     render_backend=render_backend,
@@ -4836,6 +5259,9 @@ def _register_nonebot_handlers() -> None:
                 return
             if should_finish_nonebot_matcher(transport_receipt):
                 await content.finish(transport_receipt.public_message)
+            # 走过 transport 分支就不再落回管道回执：管道回执在此前已通知过，
+            # 再落回会重复诊断+重复通知（管道回执诊断仅适用于无 sent_request 的路径）。
+            return
         await _notify_operational_receipt(message, receipt)
         if should_finish_nonebot_matcher(receipt):
             await content.finish(receipt.public_message)
@@ -4889,6 +5315,9 @@ def _register_nonebot_handlers() -> None:
                 return
             if should_finish_nonebot_matcher(transport_receipt):
                 await music.finish(transport_receipt.public_message)
+            # 走过 transport 分支就不再落回管道回执：管道回执在此前已通知过，
+            # 再落回会重复诊断+重复通知（管道回执诊断仅适用于无 sent_request 的路径）。
+            return
         await _notify_operational_receipt(message, receipt)
         if should_finish_nonebot_matcher(receipt):
             await music.finish(receipt.public_message)
@@ -5165,7 +5594,7 @@ def _register_nonebot_handlers() -> None:
     @weather.handle()
     async def _handle_weather(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
-            bot, event, _build_eat_with_backend, "bot.eat", eat
+            bot, event, _build_weather_with_backend, "bot.weather", weather
         )
 
     @market.handle()
@@ -5201,7 +5630,7 @@ def _register_nonebot_handlers() -> None:
     @eat.handle()
     async def _handle_eat(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
-            bot, event, _build_weather_with_backend, "bot.weather", weather
+            bot, event, _build_eat_with_backend, "bot.eat", eat
         )
 
     @moegirl.handle()

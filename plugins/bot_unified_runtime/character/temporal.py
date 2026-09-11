@@ -15,15 +15,23 @@
 from __future__ import annotations
 
 import json
+import logging
+import threading
 import time
-import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import httpx
+
 from plugins.bot_unified_runtime.contracts.character import TemporalContext
+from plugins.bot_unified_runtime.llm.providers import (
+    _MAX_RESPONSE_BYTES,
+    _shared_http_client,
+)
 
 WEEKDAY_NAMES = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 
@@ -165,6 +173,21 @@ class _WeatherSnapshot:
     source: str = "open-meteo"
 
 
+def _read_body_limited(response: httpx.Response, limit: int) -> bytes:
+    """限长流式读取响应体（读法对齐 ``llm.providers._read_stream_limited``）。
+
+    超限抛异常，由调用方既有失败分支处理，不无界占用内存。
+    """
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in response.iter_bytes():
+        total += len(chunk)
+        if total > limit:
+            raise ValueError("weather response exceeds size limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 class OpenMeteoWeatherProvider:
     """Open-Meteo 免费天气接口（无需 API key）。
 
@@ -179,12 +202,20 @@ class OpenMeteoWeatherProvider:
         longitude: float,
         timeout_seconds: float = 8.0,
         cache_seconds: int = 1800,
+        http_client_factory: Callable[[], httpx.Client] | None = None,
     ) -> None:
         self.latitude = float(latitude)
         self.longitude = float(longitude)
         self.timeout_seconds = max(1.0, float(timeout_seconds))
         self.cache_seconds = max(60, int(cache_seconds))
         self._cache: _WeatherSnapshot | None = None
+        # 后台刷新去重：同一时刻只允许一个刷新线程在跑。
+        self._refresh_lock = threading.Lock()
+        # 传输层（管线检视 #7 收尾）：默认复用 llm.providers 的进程级
+        # 单例 httpx.Client（无代理概念，走空代理键），连接池复用免去
+        # 每次调用的 TCP+TLS 握手税；import 方向已核实——llm 不反向
+        # 依赖 character，无循环导入。测试可注入 MockTransport 客户端工厂。
+        self._http_client_factory = http_client_factory or _shared_http_client
 
     def current_weather(self, request_id: str) -> str:
         snapshot = self._fetch_snapshot()
@@ -194,8 +225,34 @@ class OpenMeteoWeatherProvider:
 
     def _fetch_snapshot(self) -> _WeatherSnapshot | None:
         now = time.monotonic()
-        if self._cache is not None and now - self._cache.fetched_at <= self.cache_seconds:
-            return self._cache
+        cached = self._cache
+        if cached is not None and now - cached.fetched_at <= self.cache_seconds:
+            return cached
+        if cached is not None:
+            # 缓存过期：同步拉取（8s 超时）会卡住过期后的第一条消息。
+            # 先返回旧值（可能略旧，天气是可选上下文），由后台守护线程刷新。
+            self._refresh_in_background()
+            return cached
+        # 无旧值才同步拉一次；之后走缓存/后台刷新路径。
+        return self._fetch_remote(now)
+
+    def _refresh_in_background(self) -> None:
+        if not self._refresh_lock.acquire(blocking=False):
+            return  # 已有刷新在跑，不重复起线程。
+
+        def _run() -> None:
+            try:
+                self._fetch_remote(time.monotonic())
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "weather background refresh failed", exc_info=True
+                )
+            finally:
+                self._refresh_lock.release()
+
+        threading.Thread(target=_run, name="bot-weather-refresh", daemon=True).start()
+
+    def _fetch_remote(self, now: float) -> _WeatherSnapshot | None:
         url = (
             "https://api.open-meteo.com/v1/forecast"
             f"?latitude={self.latitude}&longitude={self.longitude}"
@@ -203,8 +260,17 @@ class OpenMeteoWeatherProvider:
             "&timezone=auto&forecast_days=1"
         )
         try:
-            with urllib.request.urlopen(url, timeout=self.timeout_seconds) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+            with self._http_client_factory().stream(
+                "GET", url, timeout=self.timeout_seconds
+            ) as response:
+                # 非 2xx 走既有失败分支（返回过期缓存），不解析错误体。
+                if not 200 <= response.status_code < 300:
+                    raise ValueError(f"weather HTTP status {response.status_code}")
+                # 响应体限长（对齐 providers 的 8MB 口径）：读到上限即拒，
+                # 超限异常落进下方既有失败分支，不静默吞成空数据。
+                payload = json.loads(
+                    _read_body_limited(response, _MAX_RESPONSE_BYTES).decode("utf-8")
+                )
         except Exception:  # noqa: BLE001 - 网络失败时返回过期缓存（如果有），天气是可选信息，不抛错。
             return self._cache
         current = payload.get("current") if isinstance(payload, dict) else None
