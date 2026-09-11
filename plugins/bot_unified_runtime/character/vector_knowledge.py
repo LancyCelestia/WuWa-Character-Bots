@@ -54,6 +54,10 @@ _ALNUM_RE = re.compile(r"[A-Za-z0-9_]{3,}")
 # 无任何关键词命中且向量最高余弦低于该阈值 -> 判定未命中（可经构造参数覆盖）。
 _MISS_COSINE_THRESHOLD = 0.30
 
+# sync_chunks 源级同步台账（knowledge_meta key 前缀）：按 (mtime,size) 精确
+# 删除「曾同步过、已移出清单」的源，取代旧的 `NOT IN (清单)` 全集删除。
+_SOURCE_SIG_KEY_PREFIX = "sync_source_sig:"
+
 
 class EmbeddingProvider(Protocol):
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -331,6 +335,21 @@ def _entry_title_match_len(title: str, text: str) -> int:
     return best
 
 
+def _title_exact_hit(title: str, text: str) -> bool:
+    """词条标题是否被查询**整段**包含（区别于 2~4 字前缀的部分命中）。
+
+    人格库标题按 ``_``/``-``/空白切分后，任一 >=2 字的段完整出现在查询
+    中即为精确命中（如查询「守岸人是谁」整段包含词条《守岸人》）；
+    wiki 库标题先剥「·来源」后缀再切分。精确命中供检索置顶（直通第一），
+    前缀命中只保留原有的 RRF 加权，不置顶。
+    """
+    base = title.split("·", 1)[0] if "·" in title else title
+    return any(
+        len(segment) >= _TITLE_PREFIX_MIN_CHARS and segment in text
+        for segment in _TITLE_SEGMENT_SPLIT_RE.split(base)
+    )
+
+
 def _rrf_fuse(
     vector_ids: list[str],
     keyword_ids: list[str],
@@ -398,6 +417,8 @@ class SqliteVectorKnowledgeStore:
         # 维护任务锁：embed_pending/build_ann_index 等分钟级重建相互互斥，
         # 但绝不持 _lock（检索锁）执行——否则一次重建冻结所有会话的检索。
         self._maintenance_lock = threading.Lock()
+        # 线程局部连接缓存（见 _connect）；:memory: 库不缓存。
+        self._conn_tls = threading.local()
         # (mtime,size) 同步签名缓存：签名未变的知识文件在 sync_chunks 里跳过
         # 重读/分块/哈希（管线检视 #9；每条消息至少进一次 sync_chunks）。
         self._synced_signatures: dict[Path, tuple[int, int]] = {}
@@ -559,44 +580,99 @@ class SqliteVectorKnowledgeStore:
         self._vector_meta = None
 
     def _connect(self) -> sqlite3.Connection:
+        """线程局部连接复用（本机延迟压榨项）：一次检索要开 6~8 个连接
+        （sync_chunks/FTS 探查×2/短语 MATCH/词条 MATCH/正文懒加载），人格库
+        +wiki 库每条消息合计 12~16 次 sqlite3.connect；Windows 上每次建连
+        0.1~0.3ms 且伴随文件句柄开销。按 (store, thread) 缓存后归零。
 
+        安全边界：``check_same_thread=False`` 下并发共享同一连接不安全，
+        因此按线程隔离（每线程各一条，互不交叉）；``:memory:`` 库按线程
+        缓存会变成各线程一张空库，必须每次新建。连接异常自愈交给上层
+        检索器的兜底（_VectorKnowledgeRetriever/KBWikiRetriever 捕获降级）。
+        """
+        if self.db_path == ":memory:":
+            return self._new_connection()
+        connection = getattr(self._conn_tls, "connection", None)
+        if connection is None:
+            connection = self._new_connection()
+            self._conn_tls.connection = connection
+        return connection
+
+    def _new_connection(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, check_same_thread=False)
         connection.row_factory = sqlite3.Row
         return connection
 
+    def _ensure_source_ledger(
+        self,
+        connection: sqlite3.Connection,
+        source_id: str,
+        signature: tuple[int, int],
+        ledger: set[str],
+    ) -> None:
+        """确保源级台账有记录；首次升级/首次同步时补写一次，之后零写入。"""
+        if source_id in ledger:
+            return
+        connection.execute(
+            "INSERT OR IGNORE INTO knowledge_meta (key, value) VALUES (?, ?)",
+            (_SOURCE_SIG_KEY_PREFIX + source_id, f"{signature[0]}:{signature[1]}"),
+        )
+        ledger.add(source_id)
+
     def sync_chunks(self, files: list[Path]) -> None:
         with self._lock:
             paths = [Path(path).expanduser() for path in files]
+            manifest_stems = {path.stem for path in paths}
             changed = False
             with self._connect() as connection:
-                # 已从 BOT_KNOWLEDGE_FILES 移除的旧文件不再保留在知识库里。
-                source_ids = [path.stem for path in paths]
-                if source_ids:
-                    placeholders = ",".join("?" for _ in source_ids)
-                    cursor = connection.execute(
-                        f"DELETE FROM knowledge_chunks WHERE source_id NOT IN ({placeholders})",
-                        source_ids,
+                # 精确删除（清单过期不得删清单外新块）：旧实现
+                # `DELETE ... WHERE source_id NOT IN (当前清单)` 以本次清单为
+                # 全集，机器人进程清单过期/偏小时会把 knowledge-sync 等其他
+                # 写入方刚落库的清单外新块连同旧块一起清掉。改为按台账精确
+                # 删除：只删「本库此前同步过（台账有记录）、且已不在当前清单」
+                # 的源；台账 key=sync_source_sig:<source_id> 持久化在
+                # knowledge_meta，跨进程、跨重启有效。
+                ledger = {
+                    str(row["key"])[len(_SOURCE_SIG_KEY_PREFIX) :]
+                    for row in connection.execute(
+                        "SELECT key FROM knowledge_meta WHERE key LIKE ?",
+                        (_SOURCE_SIG_KEY_PREFIX + "%",),
                     )
-                    if cursor.rowcount > 0:
-                        changed = True
+                }
+                for stale_source in sorted(ledger - manifest_stems):
+                    cursor = connection.execute(
+                        "DELETE FROM knowledge_chunks WHERE source_id = ?",
+                        (stale_source,),
+                    )
+                    changed = changed or cursor.rowcount > 0
+                    connection.execute(
+                        "DELETE FROM knowledge_meta WHERE key = ?",
+                        (_SOURCE_SIG_KEY_PREFIX + stale_source,),
+                    )
                 for path in paths:
                     # (mtime,size) 签名未变的文件跳过重读：retrieve 每条消息都会进这里，
                     # 向量未命中为常态，无签名缓存时每次都要全量读盘+分块+双 sha1
                     #（管线检视 #9；签名语义与 KeywordKnowledgeRetriever._sync_path 一致）。
                     signature = _file_signature(path)
                     if signature is not None and self._synced_signatures.get(path) == signature:
+                        self._ensure_source_ledger(connection, path.stem, signature, ledger)
                         continue
                     if signature is None:
                         if path.exists():
                             # 存在但暂时不可读（占用/权限瞬态）：跳过，下条消息重试。
                             continue
                         # 文件已被删除：清掉旧块，避免被删知识继续被检索命中；
-                        # 清单仍包含该路径，顶部的 NOT IN 清理不会删它。
+                        # 台账记录一并移除。
                         cursor = connection.execute(
                             "DELETE FROM knowledge_chunks WHERE source_id = ?",
                             (path.stem,),
                         )
                         changed = changed or cursor.rowcount > 0
+                        connection.execute(
+                            "DELETE FROM knowledge_meta WHERE key = ?",
+                            (_SOURCE_SIG_KEY_PREFIX + path.stem,),
+                        )
+                        ledger.discard(path.stem)
                         self._synced_signatures.pop(path, None)
                         continue
                     text = load_character_document(path)
@@ -640,6 +716,7 @@ class SqliteVectorKnowledgeStore:
                             changed = True
                     if signature is not None:
                         self._synced_signatures[path] = signature
+                        self._ensure_source_ledger(connection, path.stem, signature, ledger)
                 # 清单里已移除的文件不再保留签名缓存条目。
                 for stale in set(self._synced_signatures) - set(paths):
                     self._synced_signatures.pop(stale, None)
@@ -674,7 +751,9 @@ class SqliteVectorKnowledgeStore:
         """
         stats = {"added": 0, "changed": 0, "removed": 0, "skipped": 0, "chunks": 0}
         changed_any = False
-        connection = self._connect()
+        # 批量同步走一次性新建连接（方法结尾显式 close）：不能复用线程局部
+        # 缓存连接，否则 close 会毒化本线程后续所有 _connect() 调用。
+        connection = self._new_connection()
         try:
             ledger = {
                 str(row["doc_id"]): str(row["hash"] or "")
@@ -853,29 +932,48 @@ class SqliteVectorKnowledgeStore:
             keyword_ranked = self._keyword_candidates(str(query_text))
             vector_ranked, best_cosine = self._vector_candidates(query_vector)
             try:
-                entry_ranked = self._entry_title_candidates(str(query_text))
+                entry_hits = self._entry_title_candidates(str(query_text))
             except Exception:  # noqa: BLE001 - 词条通道失败不阻断其余两通道。
-                entry_ranked = []
+                entry_hits = []
+            entry_ranked = [chunk_id for _match_len, _exact, chunk_id in entry_hits]
+            # 人格词条置顶（最高优先）：查询**整段包含**某条目标题时，该词条
+            # 的块直通结果头部，不再依赖 RRF 相对分数——「守岸人是谁」必须先
+            # 命中人格库《守岸人》词条，而不是正文堆满「守岸人」的相邻页。
+            pinned_ids = [chunk_id for _match_len, exact, chunk_id in entry_hits if exact]
             fused_ids = _rrf_fuse(
                 vector_ranked, keyword_ranked, self.top_k, bonus_ids=entry_ranked
             )
-            if not fused_ids:
+            if not fused_ids and not pinned_ids:
                 return []
-            # 低置信未命中：既没有关键词命中、向量最强余弦也低于阈值 -> 空结果。
-            if not keyword_ranked and best_cosine < self.min_cosine_threshold:
+            # 低置信未命中：既没有关键词命中、也没有精确词条命中、向量最强
+            # 余弦又低于阈值 -> 空结果。
+            if (
+                not keyword_ranked
+                and not pinned_ids
+                and best_cosine < self.min_cosine_threshold
+            ):
                 return []
-            return self._fetch_chunks(fused_ids)
+            if pinned_ids:
+                pinned_seen = set(pinned_ids)
+                fused_ids = (
+                    *pinned_ids,
+                    *[chunk_id for chunk_id in fused_ids if chunk_id not in pinned_seen],
+                )
+            return self._fetch_chunks(list(fused_ids)[: max(1, self.top_k)])
 
-    def _entry_title_candidates(self, query_text: str) -> list[str]:
+    def _entry_title_candidates(self, query_text: str) -> list[tuple[int, bool, str]]:
         """词条名命中通道：查询包含/前缀命中某条目标题（或其切分段）时返回该词条的块。
 
         例：查询「纳西妲的元素战技叫什么」包含词条《纳西妲》→ 其页面块
-        经 RRF 双倍权重优先于正文堆满相近词的机制页。wiki 库标题存储为
+        经 RRF 双倍权重优先于正文堆满相近词的机制/攻略页。wiki 库标题存储为
         「标题·来源」，比对时剥掉来源后缀；人格知识库标题即文件名，按
         ``_``/``-``/空白切分后逐段比对（包含命中或 2~4 字中文前缀命中，
         见 ``_entry_title_match_len``）。先走 FTS trigram 标题列取有界
         候选，再在 Python 侧做切分/前缀校验，避免 20 万行级全表扫描
         （实测全表 instr 需 0.6~10 秒）。
+
+        返回 ``(match_len, exact, chunk_id)`` 列表，按命中长度降序；
+        ``exact=True`` 表示标题整段出现在查询中（供检索置顶，见 retrieve）。
         """
         text = str(query_text or "").strip()
         if len(text) < 2 or not self.ensure_fts_index():
@@ -900,13 +998,14 @@ class SqliteVectorKnowledgeStore:
                 ).fetchall()
         except sqlite3.Error:
             return []
-        scored: list[tuple[int, str]] = []
+        scored: list[tuple[int, bool, str]] = []
         for row in rows:
-            match_len = _entry_title_match_len(str(row["title"] or ""), text)
+            title = str(row["title"] or "")
+            match_len = _entry_title_match_len(title, text)
             if match_len:
-                scored.append((match_len, str(row["chunk_id"])))
-        scored.sort(key=lambda pair: (-pair[0], pair[1]))
-        return [chunk_id for _length, chunk_id in scored[: max(1, self.top_k) * 3]]
+                scored.append((match_len, _title_exact_hit(title, text), str(row["chunk_id"])))
+        scored.sort(key=lambda triple: (-triple[0], triple[2]))
+        return scored[: max(1, self.top_k) * 3]
 
     def _brute_candidates_python(
         self, query_vector: list[float], limit: int
@@ -1304,8 +1403,12 @@ class SqliteVectorKnowledgeStore:
         聚合派生。``force=True`` 供显式同步任务绕过 fts_auto_rebuild=False。
         """
         with self._lock:
-            if self._fts_valid is False:
-                return False
+            # 快路径（本机延迟压榨项）：状态已确认（True 可用 / False 不可用）
+            # 时直接返回，不再每条消息重复执行 sqlite_master 探查 + 签名
+            # SELECT（关键词 + 词条两通道各调一次，合计 4 次往返/条）。
+            # 内容变化由 _invalidate_fts 复位为 None 强制重新探查。
+            if self._fts_valid is not None:
+                return self._fts_valid
             try:
                 self._ensure_fts_table()
                 stored = self._stored_fts_signature()
@@ -1334,9 +1437,14 @@ class SqliteVectorKnowledgeStore:
                 return False
 
     def _invalidate_fts(self) -> None:
-        """内容变化后允许此前判定“不可用”的 FTS 通道重试一次。"""
-        if self._fts_valid is False:
-            self._fts_valid = None
+        """内容变化后强制重探 FTS 通道（下一次访问重读签名/必要时重建）。
+
+        必须无条件复位（含 True→None）：共享 store 进程内同步后 FTS 表
+        已是旧行集合，若保留 True 快路径会让关键词通道一直命中被删文档
+        的过期 chunk_id（_fetch_chunks 静默丢弃 → 召回静默劣化）。探查
+        只有两条轻量查询，复位成本低。
+        """
+        self._fts_valid = None
 
     def _ensure_fts_table(self) -> None:
         """确保 FTS5 trigram 虚拟表存在；不可用时抛异常由调用方降级。"""

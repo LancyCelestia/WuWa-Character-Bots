@@ -36,7 +36,10 @@ from plugins.bot_unified_runtime.llm import (
     LLMReply,
     safe_llm_finish_reason,
 )
-from plugins.bot_unified_runtime.output.plain_text import naturalize_chat_text
+from plugins.bot_unified_runtime.output.plain_text import (
+    naturalize_chat_text,
+    redact_local_secrets,
+)
 from plugins.bot_unified_runtime.output.roleplay import (
     format_roleplay_paragraphs,
     strip_action_brackets,
@@ -543,6 +546,29 @@ _INTERNAL_MARKER_PATTERN = re.compile(
 )
 _UNTRUSTED_USER_PREFIX = "[UNTRUSTED_USER_TEXT]\n"
 _UNTRUSTED_USER_SUFFIX = "\n[/UNTRUSTED_USER_TEXT]"
+# 检索块不可信标记（反注入，最小可信版）：知识库/联网/梗检索块与用户消息
+# 同级不可信，注入 prompt 前统一打上标记，让模型在来源层面区分「指令」与
+# 「资料」，而不是靠正文自觉。
+_UNTRUSTED_CONTEXT_PREFIX = "[UNTRUSTED_USER_TEXT]"
+_UNTRUSTED_CONTEXT_SUFFIX = "[/UNTRUSTED_USER_TEXT]"
+_UNTRUSTED_WRAP_OVERHEAD = (
+    len(_UNTRUSTED_CONTEXT_PREFIX) + len(_UNTRUSTED_CONTEXT_SUFFIX) + 2
+)
+# 指令行剥离（反注入第二层，只做确定性形态匹配）：检索正文可能被第三方
+# 投毒（"忽略以上指令"式注入、chat 模板特殊 token）。命中形态的整行直接
+# 丢弃——这类行对回答零价值，保留只会给注入留通道；宁可错删一行资料，
+# 也不放一条指令进上下文。刻意不收录「系统：」「System:」等宽泛前缀
+# （游戏 wiki 正文大量以"XX系统："开头的正常标题）。
+_PROMPT_INJECTION_LINE_RE = re.compile(
+    r"(?:"
+    r"[忽略无视].{0,6}(?:之前|上面|以上|先前|前面|前文)"
+    r"|ignore\s+(?:all\s+|any\s+)?(?:previous|prior|above|earlier)"
+    r"|disregard\s+(?:all\s+|any\s+)?(?:previous|prior|above|earlier)"
+    r"|<\|?(?:im_start|im_end|endoftext|system|assistant|user)\|?>"
+    r"|\[/?(?:INST|SYS)\]|<<SYS>>"
+    r")",
+    re.IGNORECASE,
+)
 _GENERIC_OPERATIONAL_MESSAGE = "这次暂时没能稳定完成，请稍后再试。"
 # 守岸人格失败话术池：泰提斯系统的"系统性坦诚"——承认故障但保持角色。
 # 会话内轮换，避免连发时重复刷屏。
@@ -680,6 +706,40 @@ def _sanitize_untrusted_context_text(value: object) -> str:
     return _INTERNAL_MARKER_PATTERN.sub(_replace_internal_marker, sanitized)
 
 
+def _strip_injection_instruction_lines(value: object) -> str:
+    """丢弃命中指令形态的整行（见 _PROMPT_INJECTION_LINE_RE）。"""
+    lines = str(value or "").splitlines()
+    if not lines:
+        return ""
+    return "\n".join(
+        line for line in lines if not _PROMPT_INJECTION_LINE_RE.search(line)
+    )
+
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?\.])\s*")
+
+
+def _strip_injection_instruction_spans(value: object) -> str:
+    """句级剥离：联网/梗摘要常是单行拼合文本，整行丢会连坐正常内容——
+    按句切分后只丢弃命中指令形态的句子；全部命中则整体丢弃。"""
+    text = str(value or "")
+    if not text or not _PROMPT_INJECTION_LINE_RE.search(text):
+        return text
+    pieces = [piece for piece in _SENTENCE_SPLIT_RE.split(text) if piece]
+    return " ".join(
+        piece
+        for piece in pieces
+        if not _PROMPT_INJECTION_LINE_RE.search(piece)
+    )
+
+
+def _wrap_untrusted_context_block(body: str) -> str:
+    """把检索块包进不可信标记，与用户消息同级对待。"""
+    return (
+        f"{_UNTRUSTED_CONTEXT_PREFIX}\n{body}\n{_UNTRUSTED_CONTEXT_SUFFIX}"
+    )
+
+
 def _replace_internal_marker(match: re.Match[str]) -> str:
     slash = match.group(1)
     marker = match.group(2).upper()
@@ -742,6 +802,8 @@ def _emotion_lines(context: ContextBundle, max_chars: int | None = None) -> str:
 
 _MD_TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
 _MD_BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
+_MD_HEADER_PREFIX_RE = re.compile(r"^#{1,6}\s*")
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
 _KNOWLEDGE_CHUNK_MAX_CHARS = 300
 
 
@@ -750,6 +812,7 @@ def _clean_knowledge_chunk(text: object) -> str:
 
     原始百科含大量表格与数值表，直接注入既费 token 又容易把词条腔
     带进生成；这里只保留可读正文，单段上限 520 字。
+    指令行剥离（反注入）：命中注入形态的整行在此直接丢弃。
     """
     kept: list[str] = []
     for raw_line in str(text or "").splitlines():
@@ -758,11 +821,13 @@ def _clean_knowledge_chunk(text: object) -> str:
             continue
         if _MD_TABLE_ROW_RE.match(line):
             continue
+        if _PROMPT_INJECTION_LINE_RE.search(line):
+            continue
         line = _MD_BOLD_RE.sub(r"\1", line)
-        line = re.sub(r"^#{1,6}\s*", "", line)
+        line = _MD_HEADER_PREFIX_RE.sub("", line)
         if line:
             kept.append(line)
-    joined = re.sub(r"\s+", " ", " ".join(kept)).strip()
+    joined = _WHITESPACE_RUN_RE.sub(" ", " ".join(kept)).strip()
     if len(joined) > _KNOWLEDGE_CHUNK_MAX_CHARS:
         joined = f"{joined[:_KNOWLEDGE_CHUNK_MAX_CHARS]}…"
     return joined
@@ -779,8 +844,11 @@ def _knowledge_lines(context: ContextBundle, max_chars: int | None = None) -> st
         for chunk in context.knowledge_results.chunks
     ]
     if max_chars is None:
-        return "\n".join(lines)
-    return _budgeted_lines(lines, max_chars)
+        return _wrap_untrusted_context_block("\n".join(lines))
+    # 预算先扣掉不可信标记的开销，保证包裹后不超分区预算。
+    return _wrap_untrusted_context_block(
+        _budgeted_lines(lines, max(80, max_chars - _UNTRUSTED_WRAP_OVERHEAD))
+    )
 
 
 def _trend_lines(context: ContextBundle, max_chars: int | None = None) -> str:
@@ -893,13 +961,15 @@ def _meme_search_lines(context: ContextBundle, max_chars: int | None = None) -> 
     lines = [
         (
             f"- [{_sanitize_untrusted_context_text(hit.source_domain)}] "
-            f"{_sanitize_untrusted_context_text(hit.summary)}"
+            f"{_sanitize_untrusted_context_text(_strip_injection_instruction_spans(hit.summary))}"
         )
         for hit in meme.hits
     ]
     if max_chars is None:
-        return "\n".join(lines)
-    return _budgeted_lines(lines, max_chars)
+        return _wrap_untrusted_context_block("\n".join(lines))
+    return _wrap_untrusted_context_block(
+        _budgeted_lines(lines, max(80, max_chars - _UNTRUSTED_WRAP_OVERHEAD))
+    )
 
 
 _WEB_SOURCE_PRIORITY = (
@@ -958,14 +1028,16 @@ def _web_search_lines(context: ContextBundle, max_chars: int | None = None) -> s
     lines = [
         (
             f"- [{_sanitize_untrusted_context_text(hit.source_domain)}] "
-            f"{_sanitize_untrusted_context_text(hit.title)}："
-            f"{_sanitize_untrusted_context_text(hit.snippet)}"
+            f"{_sanitize_untrusted_context_text(_strip_injection_instruction_spans(hit.title))}："
+            f"{_sanitize_untrusted_context_text(_strip_injection_instruction_spans(hit.snippet))}"
         )
         for hit in web.hits
     ]
     if max_chars is None:
-        return "\n".join(lines)
-    return _budgeted_lines(lines, max_chars)
+        return _wrap_untrusted_context_block("\n".join(lines))
+    return _wrap_untrusted_context_block(
+        _budgeted_lines(lines, max(80, max_chars - _UNTRUSTED_WRAP_OVERHEAD))
+    )
 
 
 def _section_budget(total_budget: int, weight: float, minimum: int = 80) -> int:
@@ -1738,6 +1810,9 @@ def build_chat_result(
     )
 
     reply_text = humanize_reply(reply_text)
+    # 本机信息外泄红线（输出侧）：模型被诱导复述 .env 内容/本机路径/ key
+    # 形态时，发送前确定性打码（盘符绝对路径 / BOT_XXX= 赋值 / sk- 类 key）。
+    reply_text = redact_local_secrets(reply_text)
     generated_files: list[dict[str, str]] = []
     # Leave paragraph structure to the model. Transport-level splitting is only
     # allowed when an adapter imposes a hard payload limit; no fixed part count.
