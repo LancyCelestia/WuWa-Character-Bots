@@ -33,6 +33,26 @@ def _group_session_id(group_id: str) -> str:
     return f"{_GROUP_SESSION_PREFIX}{group_id}"
 
 
+def _normalize_group_id(value: Any) -> str:
+    """群号规范形式：字符串化去空白（名单/会话 id 存在 int/str 混型）。"""
+    return str(value).strip()
+
+
+def _group_id_set(value: Any) -> set[str]:
+    """名单项规范成去空白群号字符串集合；int/str 混型、单字符串均安全。"""
+    if isinstance(value, str):
+        candidates: list[Any] = [value]
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        candidates = list(value)
+    else:
+        candidates = []
+    return {
+        normalized
+        for normalized in (_normalize_group_id(item) for item in candidates)
+        if normalized
+    }
+
+
 def _clock_gap_minutes(previous: str, current: str) -> int | None:
     """HH:MM 分钟差（跨小时简单展开）；解析失败返回 None。"""
     try:
@@ -66,6 +86,74 @@ class NullSharedGroupContextProvider:
         sender_id: str,
     ) -> SharedGroupContext:
         return SharedGroupContext(request_id=request_id, enabled=False)
+
+
+class GroupDigestListFilter:
+    """群摘要白/黑名单参与判定。
+
+    名单键（运行时 store 可热改，消费在此）：
+    ``BOT_GROUP_DIGEST_LIST_MODE`` / ``_WHITELIST`` / ``_BLACKLIST``。
+
+    - mode=whitelist：仅名单内群参与摘要注入；
+    - mode=blacklist：名单内群排除；
+    - mode 空/off/all/未知：不过滤（完全向后兼容，既有行为零变化）。
+
+    名单项与群号统一字符串化比对（int/str 混型安全）。
+    """
+
+    _FILTERING_MODES = frozenset({"whitelist", "blacklist"})
+
+    def __init__(
+        self,
+        *,
+        mode: str = "",
+        whitelist: Any = None,
+        blacklist: Any = None,
+    ) -> None:
+        self.mode = str(mode or "").strip().lower()
+        self.whitelist = _group_id_set(whitelist)
+        self.blacklist = _group_id_set(blacklist)
+
+    @property
+    def filtering(self) -> bool:
+        """名单是否生效；未配置/模式未知一律不改变既有行为。"""
+        return self.mode in self._FILTERING_MODES
+
+    def allows(self, group_id: str) -> bool:
+        if not self.filtering:
+            return True
+        normalized = _normalize_group_id(group_id)
+        if self.mode == "whitelist":
+            return normalized in self.whitelist
+        return normalized not in self.blacklist
+
+
+class ListFilteredSharedGroupContextProvider:
+    """按白/黑名单过滤群摘要参与资格；名单外群返回 enabled=False。
+
+    包在确定性摘要（与可选 LLM 压缩）**之外**：名单外群连 SQLite
+    读取与 LLM 压缩调用都不发生。全局开关关闭时上游直接返回
+    Null provider，本层不会被构建（名单无意义）。
+    """
+
+    def __init__(
+        self,
+        inner: SharedGroupContextProvider,
+        *,
+        list_filter: GroupDigestListFilter,
+    ) -> None:
+        self.inner = inner
+        self.list_filter = list_filter
+
+    def load(
+        self,
+        request_id: str,
+        group_id: str,
+        sender_id: str,
+    ) -> SharedGroupContext:
+        if not self.list_filter.allows(group_id):
+            return SharedGroupContext(request_id=request_id, enabled=False)
+        return self.inner.load(request_id, group_id, sender_id)
 
 
 class SQLiteGroupDigestProvider:
@@ -284,6 +372,17 @@ def build_shared_group_context_provider(
         max_turns=int(getattr(config, "bot_group_digest_max_turns", 150)),
         max_chars=int(getattr(config, "bot_group_digest_max_chars", 800)),
     )
+    # 白/黑名单参与过滤（装配期快照；模式空/未知不过滤=既有行为零变化）。
+    digest_list = GroupDigestListFilter(
+        mode=str(getattr(config, "bot_group_digest_list_mode", "") or ""),
+        whitelist=getattr(config, "bot_group_digest_whitelist", None),
+        blacklist=getattr(config, "bot_group_digest_blacklist", None),
+    )
+    if digest_list.filtering:
+        provider = ListFilteredSharedGroupContextProvider(
+            provider,
+            list_filter=digest_list,
+        )
     if (
         bool(getattr(config, "bot_group_digest_llm_enabled", False))
         and llm_provider is not None

@@ -263,6 +263,13 @@ class Config(BaseModel):
     bot_group_digest_max_chars: int = 800
     bot_group_digest_llm_enabled: bool = False
     bot_group_digest_llm_ttl_seconds: int = 3600
+    # 群摘要白/黑名单（消费点 character/shared_group.py）：名单键已在
+    # 运行时 store SETTABLE_KEYS 注册（/bot runtime set 可热改）。
+    # list_mode=whitelist 仅名单内群参与摘要注入；blacklist 名单内群排除；
+    # 空/off/all/未知不过滤（向后兼容）。全局开关关闭时名单无意义。
+    bot_group_digest_list_mode: str = ""
+    bot_group_digest_whitelist: list[str] = []
+    bot_group_digest_blacklist: list[str] = []
     # 群聊回复策略（群号列表）：
     # black1=完全静默只接收不发送；black2=只回“@它且带指令”的消息；
     # white1=正常回复并可按主动接话开关抽签；white2=只回“@它”或显式命令。
@@ -832,6 +839,8 @@ class Config(BaseModel):
         "bot_group_black2",
         "bot_group_white1",
         "bot_group_white2",
+        "bot_group_digest_whitelist",
+        "bot_group_digest_blacklist",
         mode="before",
     )
     @classmethod
