@@ -85,14 +85,12 @@ def test_telegram_nested_dom_reply_quote_and_entities(monkeypatch) -> None:
     summary = result.content.summary
     assert "置顶：频道公告" not in summary  # 回复引用块不进正文
     assert "&amp;" not in summary and "&quot;" not in summary
-    # 已知局限（如实锁定）：正文提取在第一个内联闭合标签处截断，
-    # `</b>` 之后的 `<br/>尾行 & "引用"` 不进 summary。修复属解析器行为变更，
-    # 另立任务处理（见 task-n5re-report）。
-    assert summary == "完整 重点"
+    # 内联闭合标签（</b>）不再截断正文：`<br/>` 转换行，实体反转义。
+    assert summary == "完整 重点\n尾行 & \"引用\""
 
 
-def test_telegram_leading_inline_tag_truncates_summary(monkeypatch) -> None:
-    """已知局限锁定：行内标签开头（<b>加粗</b>…）时正文被截断为标签内文字。"""
+def test_telegram_leading_inline_tag_keeps_full_summary(monkeypatch) -> None:
+    """行内标签开头（<b>加粗</b>…）时正文不再截断，标签后文字保留。"""
     page = _tg_page(
         '<div class="tgme_widget_message_wrap" data-post="example/42">'
         '<div class="tgme_widget_message_text" dir="auto"><b>加粗开头</b> 后续文字</div>'
@@ -104,7 +102,24 @@ def test_telegram_leading_inline_tag_truncates_summary(monkeypatch) -> None:
 
     result = platforms_telegram.parse_telegram("https://t.me/example/42")
 
-    assert result.content.summary == "加粗开头"
+    assert result.content.summary == "加粗开头 后续文字"
+
+
+def test_telegram_inline_markup_link_and_newlines_preserved(monkeypatch) -> None:
+    """回归：内联加粗/链接/换行混合形态，正文完整提取（不截断、不吞实体）。"""
+    page = _tg_page(
+        '<div class="tgme_widget_message_wrap" data-post="example/42">'
+        '<div class="tgme_widget_message_text" dir="auto">'
+        '<b>加粗</b> 与 <a href="https://example.com/a">链接</a><br/>'
+        "<i>斜体</i>第二行 &amp; 符号<br/>尾行</div></div>"
+    )
+    monkeypatch.setattr(
+        platforms_telegram, "http_get_text", lambda url, **kwargs: (url, page)
+    )
+
+    result = platforms_telegram.parse_telegram("https://t.me/example/42")
+
+    assert result.content.summary == "加粗 与 链接\n斜体第二行 & 符号\n尾行"
 
 
 def test_telegram_edit_time_does_not_override_publish_time(monkeypatch) -> None:

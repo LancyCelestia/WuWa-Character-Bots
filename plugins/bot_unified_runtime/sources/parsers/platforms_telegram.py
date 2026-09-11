@@ -73,7 +73,13 @@ def parse_telegram(url: str, *, cookie_header: str = "", proxy: str = "") -> Par
         re.IGNORECASE | re.DOTALL,
     )
     block = block_match.group(1) if block_match else body
-    message_text = _first(r'class=["\'][^"\']*tgme_widget_message_text[^"\']*["\'][^>]*>(.*?)</', block)
+    # 正文提取到块级闭合标签为止：内联标签（</b></a> 等）不再截断正文，
+    # `<br/>` 与实体交由 _text 统一转纯文本。
+    message_text = _first(
+        r'class=["\'][^"\']*tgme_widget_message_text[^"\']*["\'][^>]*>'
+        r"(.*?)(?=</div>|</p>|</blockquote>|</body>)",
+        block,
+    )
     if not message_text:
         message_text = _first(r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)', body)
     title = _first(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)', body)
