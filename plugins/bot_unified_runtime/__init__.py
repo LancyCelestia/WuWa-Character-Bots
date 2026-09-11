@@ -544,6 +544,20 @@ def contains_visual_message_segments(raw_segments: list[dict[str, Any]] | None) 
 # 只认 record，于是 Telegram 语音在入站侧完全不识别（评审需求 3）。
 AUDIO_SEGMENT_TYPES = frozenset({"record", "voice", "audio"})
 
+# 合并转发段类型：OneBot 用 forward，部分实现用 chat_history/messages。
+# 转发消息的 plain_text **是空的**（正文要靠 get_forward_msg 反查），
+# 若不在这里放行，路由会判 IGNORE → chat handler 不触发 → 抓正文的代码
+# （在 handler 内部）永远跑不到，表现为"转发聊天记录给 bot 毫无回应"。
+FORWARD_SEGMENT_TYPES = frozenset({"forward", "chat_history", "messages"})
+
+
+def contains_forward_message_segments(raw_segments: list[dict[str, Any]] | None) -> bool:
+    """是否含合并转发段（正文需异步反查，见 _forward_message_text）。"""
+    return any(
+        str(segment.get("type", "")).strip().lower() in FORWARD_SEGMENT_TYPES
+        for segment in raw_segments or []
+    )
+
 
 def contains_audio_message_segments(raw_segments: list[dict[str, Any]] | None) -> bool:
     """是否含语音段（OneBot record / Telegram voice·audio）。
@@ -677,47 +691,121 @@ def _forward_segment_id(event: Any) -> str:
     return ""
 
 
+def _forward_message_text_sync(result: Any) -> str:
+    """把 get_forward_msg 的回执解析成正文（容忍多种形态）。
+
+    历史实现只认 ``result["messages"][*]["message"][*]`` 的 dict 嵌套，且**任何**
+    异常都被静默吞掉；只要 NapCat 换成对象形态 / 改字段名 / 带 shell 包装，
+    整条转发就表现为"bot 毫无回应且日志无痕"。这里做归一 + 带发送者前缀。
+    """
+    if result is None:
+        return ""
+    payload = result
+    # 有些实现把业务数据包在 data 里
+    if isinstance(payload, dict) and "messages" not in payload and "data" in payload:
+        inner = payload.get("data")
+        if isinstance(inner, dict):
+            payload = inner
+    if hasattr(payload, "messages"):
+        payload = payload.messages
+    # 取消息列表：dict 形态取 messages / message 键；对象形态取同名属性。
+    if isinstance(payload, dict):
+        messages = payload.get("messages")
+        if messages is None:
+            messages = payload.get("message")
+    else:
+        messages = getattr(payload, "messages", None)
+        if messages is None:
+            messages = getattr(payload, "message", None)
+    if not isinstance(messages, list):
+        return ""
+    lines: list[str] = []
+    for item in messages:
+        if isinstance(item, dict):
+            segments = item.get("message") or item.get("segments") or item.get("content") or []
+            sender = item.get("sender") or {}
+            nickname = ""
+            if isinstance(sender, dict):
+                nickname = str(sender.get("card") or sender.get("nickname") or "").strip()
+        else:
+            segments = getattr(item, "message", None) or getattr(item, "segments", None) or []
+            sender = getattr(item, "sender", None)
+            nickname = ""
+            if sender is not None:
+                nickname = str(
+                    getattr(sender, "card", "") or getattr(sender, "nickname", "") or ""
+                ).strip()
+        if hasattr(segments, "extract_plain_text"):
+            text = str(segments.extract_plain_text() or "").strip()
+        else:
+            parts: list[str] = []
+            for segment in segments or []:
+                if isinstance(segment, dict):
+                    seg_type = str(segment.get("type", ""))
+                    data = segment.get("data") or {}
+                else:
+                    seg_type = str(getattr(segment, "type", ""))
+                    data = getattr(segment, "data", {}) or {}
+                if seg_type == "text":
+                    value = str(data.get("text", "")).strip() if isinstance(data, dict) else ""
+                    if value:
+                        parts.append(value)
+                elif seg_type == "image":
+                    parts.append("[图片]")
+                elif seg_type in AUDIO_SEGMENT_TYPES:
+                    parts.append("[语音]")
+                elif seg_type == "video":
+                    parts.append("[视频]")
+            text = " ".join(parts).strip()
+        if text:
+            lines.append(f"{nickname}：{text}" if nickname else text)
+    return "\n".join(lines)
+
+
 async def _forward_message_text(
     bot: Any, event: Any, timeout_seconds: float | None = None
 ) -> str:
-    """读取合并转发（forward）消息正文；失败返回空串。
+    """读取合并转发（forward）消息正文；失败返回空串并留 warning。
 
     只在消息确实包含 forward 段时才调用 NapCat 的 get_forward_msg。
-    普通消息 id 不是合并转发 id，NapCat 会拒绝为“消息已过期或者为
-    内层消息”；带上限超时是为了防止上游回执异常时卡住消息处理。
+    普通消息 id 不是合并转发 id，NapCat 会拒绝为"消息已过期或者为
+    内层消息"；带上限超时是为了防止上游回执异常时卡住消息处理。
+
+    失败必须**可观测**：早期版本把异常全吞掉，导致"转发无回应"现场没有任何
+    线索（本次排查即因此耗时）。现在失败路径固定打一条 warning。
     """
     forward_id = _forward_segment_id(event)
     if not forward_id:
         return ""
+    call_api = getattr(bot, "call_api", None)
+    if not callable(call_api):
+        logging.getLogger(__name__).warning("forward message fetch skipped: bot has no call_api")
+        return ""
+    timeout = float(timeout_seconds or _FORWARD_MESSAGE_API_TIMEOUT_SECONDS)
     try:
-        call_api = getattr(bot, "call_api", None)
-        if not callable(call_api):
-            return ""
-        timeout = float(timeout_seconds or _FORWARD_MESSAGE_API_TIMEOUT_SECONDS)
         result = await asyncio.wait_for(
             call_api("get_forward_msg", message_id=forward_id),
             timeout=timeout,
         )
-        if not isinstance(result, dict):
-            return ""
-        messages = result.get("messages")
-        if not isinstance(messages, list):
-            return ""
-        lines: list[str] = []
-        for item in messages:
-            if not isinstance(item, dict):
-                continue
-            segments = item.get("message") or item.get("segments") or []
-            if not isinstance(segments, list):
-                continue
-            for segment in segments:
-                if isinstance(segment, dict) and segment.get("type") == "text":
-                    text = str((segment.get("data") or {}).get("text", "")).strip()
-                    if text:
-                        lines.append(text)
-        return "\n".join(lines)
-    except Exception:  # noqa: BLE001 - 合并转发消息读取失败时返回空串。
+    except asyncio.TimeoutError:
+        logging.getLogger(__name__).warning("forward message fetch timed out after %.1fs id=%s", timeout, forward_id)
         return ""
+    except Exception as exc:  # noqa: BLE001 - 上游回执异常不阻断消息处理。
+        logging.getLogger(__name__).warning(
+            "forward message fetch failed id=%s type=%s detail=%s",
+            forward_id,
+            type(exc).__name__,
+            str(exc)[:160],
+        )
+        return ""
+    text = _forward_message_text_sync(result)
+    if not text:
+        logging.getLogger(__name__).warning(
+            "forward message fetch returned no text id=%s result_type=%s",
+            forward_id,
+            type(result).__name__,
+        )
+    return text
 
 
 def _detect_onebot_direct_mention(
@@ -3158,11 +3246,14 @@ def _register_nonebot_handlers() -> None:
             raw_segments = _extract_onebot_raw_segments(event)
         except Exception:  # noqa: BLE001 - visual routing degrades to text routing.
             raw_segments = []
-        if contains_visual_message_segments(raw_segments) or contains_audio_message_segments(
-            raw_segments
+        if (
+            contains_visual_message_segments(raw_segments)
+            or contains_audio_message_segments(raw_segments)
+            or contains_forward_message_segments(raw_segments)
         ):
-            # 纯媒体消息（图片/视频/语音）走聊天链路：空文本会被路由判 IGNORE，
-            # 若不在这里放行，视觉理解与 ASR 都永远跑不到（评审需求 3/4）。
+            # 纯媒体/转发消息走聊天链路：这些消息的 plain_text 往往为空，
+            # 会被路由判 IGNORE；若不在这里放行，视觉理解、ASR 与合并转发正文
+            # 反查（都在 handler 内部）都永远跑不到。
             return bool(config.bot_chat_enabled)
         return (
             _cached_route_decision(state, event, config=config).kind
