@@ -207,12 +207,31 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\data\kb_wik
 |---|---|---|
 | 线性历史 | ✅ 启用 | `conversation_turns` 2721 行；作用域 5 元组 → **同群不同成员各自一条线** |
 | 长期事实 | ✅ 启用 | `memory_facts` 49 行；用户×会话作用域；**隐私闸** `requester != subject` 即返回空；无群级记忆 |
-| 反思回路 | ⚠️ 启用但**零产出** | `reflection_facts`/`reflection_digests` **均 0 行** → 见 §4 |
+| 反思回路 | ✅ **代码正常，已加启动补偿** | 见 §4.1 N5：直接跑一次出 23 digest + 5 fact；零产出真因是"04:30 进程不在线" |
 | 好感度 v3 | ✅ | 初始 0.1（展示 10）；步长 `+0.02/-0.01/-0.05/-0.10`；幂律衰减；个人系数 0.85–1.15；每日上限 10/5/8/8；`insult` 半衰期 15 天 |
 | 用户情绪 | ✅ | 规则 5 类，**只看当前这轮**关键词 |
 | bot 心情 | ✅ 且**在写库** | `bot_mood` 有 1 行且 WAL 活跃；`describe()` 输出纯中文无数字 |
 | 会话身份 | ⚠️ 从未使用 | `session_identity.sqlite3` **文件不存在** |
 | quirks | ⚠️ 空池 | `persona_quirks` 0 行 |
+
+### 3.4 群限流（本轮新增的两个时间窗维度）
+
+`RateLimitSettings` 原有 `window_seconds=60`（全局/会话/发送者三档）与
+`proactive_window_seconds=3600`（主动回复），**没有"每小时/每分钟"这对群维度**——
+所以"把配置写进去"不会生效，必须改代码。本轮新增：
+
+- `group_hourly_max_requests=60` / `group_minute_max_requests=3`（**0 = 该帽不生效**，
+  显式语义，避免 `min(n,0)=0` 把帽反向变成"不限"）
+- `InMemoryRateLimiter._check_group_windows()`：先判后记的双窗口滑动判定，只作用于群聊
+- `emotion_exempt_enabled=True`：命中 `support_needed/lonely/low_energy/frustrated`
+  即豁免群句数帽（"有要紧的事不受限制"）
+- **已知残余**：`SQLiteRateLimiter`（`BOT_RATE_LIMIT_DB_PATH` 有值时启用）**未实现**群帽
+
+### 3.5 合并转发触发（本轮改为按条数）
+
+`should_forward_by_node_count()`：切分后 **≥4 条**（用户口径"超过 3 条"）才合并，
+3 条以内直发；原按字数触发保留为兼容路径（`bot_render_forward_min_chars`）。
+**节点署名用 bot 自己**（`forward_sender_name` ← `bot_persona_display_name`）。
 
 ---
 
@@ -226,12 +245,12 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\data\kb_wik
 | N2 | `_neutralize_markers` 有 `for …: pass` 空转循环 | 我上一批写的：注释说"回滚正常方括号"，实际整段把 `[`/`]` 全角化 → 篡改被引用正文里的代码/数组/`[图片]` 标签。已改成正则只命中内部标记 |
 | N3 | 三处 `logger.warning("…", …)` 字面量被误替换 | 用字符串替换批量改 `logger.warning(` 时把三处**字符串里的说明文字**也改了 → 语法坏、`name` 未定义（本就是既有隐患）。已还原 |
 | N4 | 日志格式串里的字面 `%` | `"…more than {}%"` 在 `%`-式惰性格式化下炸 `ValueError: unsupported format character`。已改 `%%` |
+| N5 | **「反思回路零产出」的归因一开始判错了** | 上一轮我据"两张表 0 行"推断"cron 未真正 add 或时区错位"。本轮**实测推翻**：直接跑 `run_nightly_reflection(config)` 返回 `{'sessions_seen': 23, 'digests_saved': 23, 'facts_saved': 5}`，用真实 APScheduler 验证 job 也确实注册在位。**真因是"04:30 那一刻进程不在运行"**——生产 bot 至今是 09-09 旧进程（连这套 scheduler 都没有），而"只挂一条每日 cron"本身也有漏洞：进程在 04:30 不在线时当天反思**永久丢失**，下次要等一整天。已加**启动补偿**（`_should_catch_up_reflection()`：今天没有 digest 就立即补跑一次，已有则不补）。<br>**方法论教训**：「表里 0 行」只能证明**没发生过**，不能证明**代码不工作**；区分这两者必须实跑一次。 |
 
 ### 4.2 未修（按优先级）
 
 | 优先级 | 问题 | 位置/说明 | 影响 |
 |---|---|---|---|
-| **高** | **反思回路零产出** | `bot_reflection_enabled=True` + cron 04:30 已注册，但两张表 0 行、日志无记录。最可能：APScheduler job 未真正 add，或 `gather_turns_by_date` 用 UTC 当天与本地 04:30 错位 | 整条"非线性记忆"链路零输入 |
 | **高** | **发送队列/审计/回执/诊断全关** | `BOT_SEND_QUEUE_ENABLED=false`、`WORKER_ENABLED=false`、`RECEIPTS/AUDIT/DIAGNOSTICS_ENABLED=false` → 队列退化为**进程内一次尝试**，重试语义与审计持久化都不生效 | 丢消息无痕迹、无法对账 |
 | 中 | `chat` 主链路 `llm_provider` 直连是死代码 | `chat.py:1452` 恒走 `model_router` 且 `options.pop("model")`，故 `BOT_CHAT_API_KEY/BASE_URL/BOT_CHAT_MODEL` 直连只在 router 为 None 时可达 | 配置误解；本轮 base_url 已指向 axonhub 使其"看似有用" |
 | 中 | 配置冗余/空转 | `BOT_MODEL_PRIORITY_GROUPS` 两组 order **26 项逐字相同**（分时段路由零差异）；`BOT_MODEL_SCHEDULE={}` 定时器空转；`BOT_TREND/GLOSSARY/USER_PROFILES/MEME_SEARCH` 全空或关 → 对应 prompt 分区永不出现 | 白占预算与认知成本 |
@@ -273,7 +292,7 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\data\kb_wik
 
 1. **系统提示词 token 压缩**（用户明确要求，且要求"不一刀切砍头部/预算"）——重点：把运行时上下文的冗长中文标签改成紧凑格式；按需裁剪 13 个分区里长期为空的块；评估人设全文是否可分段懒加载
 2. **好感度 v3 数值再平衡**——初始值下调；`+2%` 步长下调；后期增长加阻尼（距高位越近越难加）
-3. **反思回路零产出修复**——先查 cron job 是否真注册、`scope_date` 与本地 04:30 的时区错位
+3. ~~反思回路零产出~~ ✅ **已完成**（见 §4.1 N5：加启动补偿；代码本身无问题）
 4. **死资产清理**——`identity.md` 接入 `BOT_PERSONA_FILES` 或与 Runtime 副本对齐；补 `identity`/`quirk` 帮助条目
 5. **九个昵称全量唤醒** + white1/white2 双档验证
 6. **群摘要白/黑名单消费点接线**（键已就位，代码未读）
@@ -284,9 +303,15 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\data\kb_wik
 
 ---
 
-## 7. 提交链（本轮，20+ 提交，均未推送）
+## 7. 提交链（本轮，均未推送）
 
 ```
+75e57ad docs(handoff): 评审修复 + 配置治理会话交接文档（2026-09-12）
+c7657a7 fix(reflection): 反思回路加启动补偿，修「一直零产出」
+f2d4732 feat(limit): 群聊句数帽（60/小时、3/分钟）+ 情绪低落豁免 + 模型注册表归并
+47bdf86 feat(config): 高频参数移入运行时 store + 合并转发按条数 + 心情实时联动 + 安静时间热生效
+2e98e38 docs(model): 保存原 45 条模型注册表快照
+0234547 feat(llm): 接入 axonhub 统一网关 + 注册表移出 .env
 97e7e15 fix(message): 引用块消毒改为只命中内部标记，不再篡改正常方括号
 f7aef59 feat(message): 引用链放宽到 5 层 + get_msg 反查更深层引用
 d3fd4b8 feat(message): 语音消息入站可达 + 跨适配器媒体段识别（需求 3/4）
@@ -300,19 +325,22 @@ b4f0003 fix(sources): 解析/订阅域修复 + /bot download SSRF 护栏
 4199c69 fix(runtime): 运行时/策略域健壮性 + Config 密钥字段与 env: 自检
 f621b5a fix(sender): 队列毒行隔离 + mixed 媒体部件投递 + forward 降级 + retcode 副作用守卫
 f4e29a2 fix(bot): 启动期异常处理器改挂到运行中的事件循环（生产重启硬前置）
-0234547 feat(llm): 接入 axonhub 统一网关 + 注册表移出 .env
-2e98e38 docs(model): 保存原 45 条模型注册表快照
-47bdf86 feat(config): 高频参数移入运行时 store + 合并转发按条数 + 心情实时联动 + 安静时间热生效
-f2d4732 feat(limit): 群聊句数帽（60/小时、3/分钟）+ 情绪低落豁免 + 模型注册表归并
 ```
 
-**新增脚本（可复跑，默认 dry-run）**：
+> 使用 `git log --oneline -19` 可复核；本文档自身的提交排在链首。
+
+**新增脚本（可复跑，默认 dry-run、写前备份）**：
 - `scripts/configure_axonhub_registry.py` —— 配置 axonhub 网关与注册表
 - `scripts/consolidate_model_registry.py` —— 同族归并与优先级重排
 - `scripts/apply_config_batch.py` —— 配置批次（安静时间/群名单/限流/转发等）
-- `scripts/scrub_history_credentials.py` —— 历史库明文凭据清理（带备份 + 复核）
+- `scripts/scrub_history_credentials.py` —— 历史库明文凭据清理（带备份 + 独立复核）
 
-**新增回归**：引用链 17 · 语音媒体 14 · 转发入站 14 · 毒行隔离 9 · 群限流 16 · 转发与心情 11。
+**新增回归**（合计 81 例）：引用链 17 · 语音媒体 14 · 转发入站 14 · 毒行隔离 9 ·
+群限流 16 · 转发与心情 11。
+
+**备份位置**（每次写运行时数据前自动落盘）：
+`C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\backups\`
+（`.env`、`runtime_settings_shorekeeper.json`、`wuwa_history.sqlite3` 各带时间戳）
 
 ---
 
