@@ -610,23 +610,51 @@ class BilibiliSubscriptionAdapterV2(_BaseAdapter):
 
 
 class XiaohongshuSubscriptionAdapterV2(_BaseAdapter):
+    """小红书 V2 订阅适配器。
+
+    kinds：
+    - ``creator``：主页全部笔记增量（既有语义）。
+    - ``column``：图文/专栏增量——复用 creator 的 legacy 拉取链路
+      （spec.target_kind 透传给 legacy，由其在游标切分前过滤 video）。
+    - ``live``：直播状态订阅。小红书直播状态没有稳定的匿名探测通道
+      （直播状态接口需要登录态签名，主页 HTML / user_posted 均不保证
+      暴露），fetch 按「尽力而为、失败降级」语义直接返回 degraded，
+      不产出条目、不硬造探测；待有可靠通道后再补实现。
+    """
+
     platform = "xiaohongshu"
-    target_kinds = frozenset({"creator"})
+    target_kinds = frozenset({"creator", "column", "live"})
 
     async def resolve_target(self, raw_target: str, ctx: dict[str, Any]) -> SubscriptionTarget:
         raw = str(raw_target or "").strip()
+        for prefix, kind in (
+            ("xiaohongshu:creator:", "creator"),
+            ("xiaohongshu:column:", "column"),
+            ("xiaohongshu:live:", "live"),
+        ):
+            if raw.startswith(prefix):
+                key = raw.removeprefix(prefix).strip()
+                if key:
+                    return _target(self.platform, kind, key, raw)
         match = re.search(r"xiaohongshu\.com/user/profile/([0-9A-Za-z]+)", raw)
-        if not match and raw.startswith("xiaohongshu:creator:"):
-            key = raw.removeprefix("xiaohongshu:creator:").strip()
-        else:
-            key = match.group(1) if match else ""
-        if not key:
-            raise ValueError("小红书订阅仅支持公开创作者主页")
-        return _target(self.platform, "creator", key, raw)
+        if not match:
+            raise ValueError(
+                "小红书订阅仅支持公开创作者主页"
+                "（图文/专栏用 xiaohongshu:column:<用户ID>，直播用 xiaohongshu:live:<用户ID>）"
+            )
+        return _target(self.platform, "creator", match.group(1), raw)
 
     async def fetch_incremental(self, target, cursors, context):
         if self.client is not None:
             return await self._fetch_or_unsupported(target, cursors, context)
+        if target.target_kind == "live":
+            # 探测通道受限（见类 docstring）：尽力而为=直接降级。返回
+            # 结构化结果不产出条目，retryable 走常规退避，不中止整轮。
+            return SubscriptionFetchResult(
+                health_state="degraded",
+                error_code="live_probe_unavailable",
+                retryable=True,
+            )
         try:
             from plugins.bot_unified_runtime.sources.subscriptions.xiaohongshu_adapter import (
                 XiaohongshuAdapter,
@@ -691,8 +719,18 @@ class XiaohongshuSubscriptionAdapterV2(_BaseAdapter):
 
 
 class YouTubeSubscriptionAdapterV2(_BaseAdapter):
+    """YouTube V2 订阅适配器。
+
+    kinds：
+    - ``channel`` / ``playlist``：Atom feeds 增量（既有语义）。
+    - ``live``：频道直播状态。GET 频道 ``/live`` 页，在播时 YouTube 302
+      到 ``watch?v=<videoId>``（匿名可得，主信号）；次信号为页面
+      ``"isLive":true``。在播且 videoId 与 cursor 不同→播报一次并回写
+      cursor；同一场直播靠 cursor 相等去重；下播无信号→静默返回空。
+    """
+
     platform = "youtube"
-    target_kinds = frozenset({"channel", "playlist"})
+    target_kinds = frozenset({"channel", "playlist", "live"})
 
     async def resolve_target(self, raw_target: str, ctx: dict[str, Any]) -> SubscriptionTarget:
         raw = str(raw_target or "").strip()
@@ -700,6 +738,15 @@ class YouTubeSubscriptionAdapterV2(_BaseAdapter):
             kind, _, key = raw.removeprefix("youtube:").partition(":")
             if kind in self.target_kinds and key:
                 return _target(self.platform, kind, key, raw)
+        # /live 页面必须先于普通频道/播放列表匹配，否则会被吞成 channel。
+        match = re.search(r"youtube\.com/channel/(UC[0-9A-Za-z_-]+)/live(?:[/?#]|$)", raw, re.IGNORECASE)
+        if match:
+            return _target(self.platform, "live", match.group(1), raw)
+        match = re.search(r"youtube\.com/@([0-9A-Za-z_.-]+)/live(?:[/?#]|$)", raw, re.IGNORECASE)
+        if match:
+            handle = match.group(1)
+            channel_id = self._resolve_handle_channel_id(handle, ctx)
+            return _target(self.platform, "live", channel_id or handle, raw)
         match = re.search(r"youtube\.com/channel/(UC[0-9A-Za-z_-]+)", raw)
         if match:
             return _target(self.platform, "channel", match.group(1), raw)
@@ -742,9 +789,89 @@ class YouTubeSubscriptionAdapterV2(_BaseAdapter):
             return f"https://www.youtube.com/feeds/videos.xml?channel_id={target.target_key}"
         return f"https://www.youtube.com/feeds/videos.xml?playlist_id={target.target_key}"
 
+    @staticmethod
+    def _live_probe_url(key: str) -> str:
+        if str(key or "").startswith("UC"):
+            return f"https://www.youtube.com/channel/{key}/live"
+        return f"https://www.youtube.com/@{str(key or '').lstrip('@')}/live"
+
+    @staticmethod
+    def _detect_live(final_url: str, body: str) -> tuple[str, str]:
+        """匿名探测直播状态，返回 (video_id, title)；不在播返回 ("", "")。
+
+        主信号：/live 页 302 落点到 watch?v=；次信号：页面内
+        ``"isLive":true``（配 videoId）。两者皆无按不在播处理。
+        """
+        watch = re.search(r"[?&]v=([0-9A-Za-z_-]{6,})", final_url or "")
+        if watch:
+            video_id = watch.group(1)
+        elif '"isLive":true' in (body or ""):
+            marker = re.search(r'"videoId":"([0-9A-Za-z_-]{6,})"', body or "")
+            video_id = marker.group(1) if marker else ""
+        else:
+            video_id = ""
+        if not video_id:
+            return "", ""
+        title_match = re.search(
+            r'<meta[^>]+property="og:title"[^>]+content="([^"]*)"', body or ""
+        )
+        title = html.unescape(title_match.group(1)).strip() if title_match else ""
+        return video_id, title
+
+    def _fetch_live(self, target: SubscriptionTarget, cursors: dict[str, Any], context: dict[str, Any]) -> SubscriptionFetchResult:
+        """频道直播探测：在播播报一次（cursor 去重），下播恢复静默。
+
+        cursor（stream="live"）记上次播报的 videoId：同一场直播每轮命中
+        相等分支不再产出；换场次（新 videoId）自然再播报一次；下播返回
+        healthy 空结果且不动 cursor。探测页需要登录态/被 consent 拦下时
+        （401/403）沿用 auth_required 降级语义，其余网络失败走 degraded。
+        """
+        try:
+            final_url, body = http_get_text(
+                self._live_probe_url(target.target_key),
+                timeout=float((context or {}).get("timeout_seconds", 10.0) or 10.0),
+                cookie=str((context or {}).get("cookie_header", "") or ""),
+                proxy=str((context or {}).get("proxy", "") or ""),
+                referer="https://www.youtube.com/",
+            )
+            video_id, title = self._detect_live(final_url, body)
+        except ParseHttpError as exc:
+            if getattr(exc, "status_code", None) in (401, 403):
+                return SubscriptionFetchResult(
+                    health_state="auth_required",
+                    error_code="auth_required",
+                    retryable=False,
+                )
+            return SubscriptionFetchResult(
+                health_state="degraded", error_code="network_error", retryable=True
+            )
+        if not video_id:
+            return SubscriptionFetchResult(items=[], health_state="healthy")
+        cursor = cursors.get("live") if cursors else None
+        if video_id == str(getattr(cursor, "last_item_id", "") or ""):
+            # 同一场直播已播报过：静默，cursor 留在 store 不动。
+            return SubscriptionFetchResult(items=[], health_state="healthy")
+        return SubscriptionFetchResult(
+            items=[ContentReference(
+                item_id=video_id,
+                item_kind="live",
+                url=f"https://www.youtube.com/watch?v={video_id}",
+                source_payload={"title": title, "channel_key": target.target_key},
+            )],
+            cursors=[SubscriptionCursorV2(
+                target_id=target.id,
+                stream="live",
+                last_item_id=video_id,
+                updated_at=datetime.now(timezone.utc),
+            )],
+        )
+
     async def fetch_incremental(self, target, cursors, context):
         if self.client is not None:
             return await self._fetch_or_unsupported(target, cursors, context)
+        if target.target_kind == "live":
+            # http_get_text 是同步 IO：卸载到线程，避免阻塞事件循环。
+            return await asyncio.to_thread(self._fetch_live, target, cursors, context)
         try:
             body = self._fetch_text(target, context)
             root = ET.fromstring(body)

@@ -4,6 +4,10 @@
 ``explore`` 笔记链接不在订阅范围内，统一拒绝。抓取优先通过
 ``capture_json`` 监听 ``user_posted`` 接口，失败时退化为页面 HTML
 正则提取；两次都失败则返回 degraded 结果，不泄漏底层异常正文。
+
+``spec.target_kind == "column"``（V2 专栏/图文订阅）复用同一条抓取链路，
+仅在游标切分前过滤 video 类型笔记；直播状态（``live``）没有稳定的匿名
+探测通道，不在本 adapter 做探测。
 """
 from __future__ import annotations
 
@@ -169,6 +173,23 @@ class XiaohongshuAdapter:
             last_timestamp=XiaohongshuAdapter._publish_time(anchor),
         )
 
+    @staticmethod
+    def _apply_kind_filter(notes: list[Any], spec: SubscriptionSpec) -> list[Any]:
+        """column kind 过滤：剔除 video 笔记，只保留图文/专栏（非 video）。
+
+        过滤必须发生在游标切分之前：cursor 锚点要取最新一条目标类型笔记。
+        若在切分后过滤，夹在更旧图文之上的新视频会把 cursor 顶过去，
+        那条图文增量会被永久跳过。
+        """
+        if str(spec.target_kind or "") != "column":
+            return notes
+        return [
+            note
+            for note in notes
+            if isinstance(note, dict)
+            and str(note.get("type") or "").lower() != "video"
+        ]
+
     def _filter_notes(
         self,
         notes: list[Any],
@@ -242,7 +263,7 @@ class XiaohongshuAdapter:
             payload = None
 
         if isinstance(payload, (dict, list)):
-            notes = self._extract_notes(payload)
+            notes = self._apply_kind_filter(self._extract_notes(payload), spec)
             if notes:
                 items, new_cursor = self._filter_notes(notes, spec, cursor)
                 return SourceFetchResult(
@@ -251,6 +272,10 @@ class XiaohongshuAdapter:
                     health_state="healthy",
                     error="",
                 )
+            if spec.target_kind == "column":
+                # 过滤后无目标类型新内容：healthy 空结果，cursor 保持不动；
+                # 不落入 HTML 兜底——兜底提取不出笔记类型，会把视频混进来。
+                return SourceFetchResult(items=[], health_state="healthy", error="")
 
         try:
             _, html = await asyncio.to_thread(

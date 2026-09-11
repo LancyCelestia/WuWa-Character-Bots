@@ -222,6 +222,12 @@ def build_subscribe_capability_v2(
                     store.set_destination_enabled(int(destination.id), enabled)
                 body = f"已{'恢复' if enabled else '暂停'}订阅（仅本目的地）：{target_id}"
             return result(message, body, [f"subscribe_{action}"])
-        return result(message, "用法：订阅 add <公开目标> / 订阅 list / 订阅 pause|resume|remove <id>", ["subscribe_help"])
+        return result(
+            message,
+            "用法：订阅 add <公开目标> / 订阅 list / 订阅 pause|resume|remove <id>\n"
+            "类型示例：YouTube 频道/播放列表链接；YouTube 直播 youtube:live:<频道ID或@handle>；"
+            "小红书图文/专栏 xiaohongshu:column:<用户ID>；小红书直播 xiaohongshu:live:<用户ID>（探测受限）",
+            ["subscribe_help"],
+        )
 
     return capability
