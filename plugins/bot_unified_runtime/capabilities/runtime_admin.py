@@ -165,10 +165,16 @@ def _handle_runtime_command(
     )
 
 
-def _family_default_effort(model_name: str) -> str:
-    from plugins.bot_unified_runtime.llm.model_router import default_effort
+def _family_baseline_effort(model_name: str) -> str:
+    """家族基线档（普通任务实际默认发送的 reasoning_effort）。
 
-    return default_effort(model_name)
+    展示口径对齐 model_router：请求按 条目 effort > 全局覆盖 > 家族基线
+    发送；家族最高档（default_effort）只是复杂任务的升档上限，不再
+    标注为「默认」。
+    """
+    from plugins.bot_unified_runtime.llm.model_router import baseline_effort
+
+    return baseline_effort(model_name)
 
 
 def _active_priority_group(
@@ -535,7 +541,7 @@ def _handle_model_command(
                 tag_text = (
                     ",".join(tags) if isinstance(tags, (list, tuple)) else str(tags)
                 )
-                effort_text = str(entry.get("effort", "") or "") or _family_default_effort(
+                effort_text = str(entry.get("effort", "") or "") or _family_baseline_effort(
                     str(entry.get("model", ""))
                 )
                 effort_suffix = (
@@ -608,13 +614,13 @@ def _handle_model_command(
         if effort == "off":
             return "reasoning_effort 已设为 off：不发送思考强度字段。"
         if not effort:
-            return "reasoning_effort 已清空：各模型回到家族默认最高档。"
+            return "reasoning_effort 已清空：各模型回到家族基线档（复杂任务自动升到家族最高档）。"
         return f"reasoning_effort（推理思考强度）已设为：{effort}。"
     if action in {"effort", "强度", "思考强度"}:
         if len(parts) < 3:
             return (
                 "用法：/bot model effort <id> <off|low|medium|high|xhigh|max|default>；"
-                "default=清除覆盖回到家族默认最高档"
+                "default=清除覆盖回到家族基线档（普通任务默认，复杂任务自动升档）"
             )
         model_id = parts[1].strip()
         value = parts[2].strip().lower()
@@ -631,7 +637,7 @@ def _handle_model_command(
             )
             return (
                 f"已清除 {model_id} 的思考强度覆盖，回到家族默认"
-                f"（{_family_default_effort(str(entry.get('model', ''))) or '不发送'}）。"
+                f"（{_family_baseline_effort(str(entry.get('model', ''))) or '不发送'}）。"
             )
         from plugins.bot_unified_runtime.llm.model_router import normalize_effort
 

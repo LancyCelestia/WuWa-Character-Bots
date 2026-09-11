@@ -86,11 +86,16 @@ class Turn:
 
 @dataclass(frozen=True)
 class FactDraft:
-    """待入库的事实草稿：正文 + 类别 + 置信度。"""
+    """待入库的事实草稿：正文 + 类别 + 置信度。
+
+    ``sender_id``：该事实归属的用户（启发式抽取按发言轮次带出，群聊场景
+    精确到人）；LLM 归纳拿不到逐条归属时留空，由主流程回退主 sender。
+    """
 
     text: str
     category: str = ""
     confidence: float = 0.6
+    sender_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -176,8 +181,9 @@ def build_reflection_fact_id(sender_id: str, normalized_text: str) -> str:
 def _primary_sender(turns: Sequence[Turn]) -> str:
     """会话内发言最多的 user 角色 sender（并列取字典序最小，确定性）。
 
-    私聊会话即本人；群聊无 per-fact 归属信息，退化为最活跃者——
-    反思事实是会话级的粗粒度沉淀，该近似可接受（docstring 已注明）。
+    私聊会话即本人。现在仅作兜底：启发式事实已按发言轮次携带精确
+    sender（见 _heuristic_facts）；只有 LLM 归纳事实与无 sender 信息的
+    历史轮次才回退到最活跃者。
     """
     counts: Counter[str] = Counter(
         turn.sender_id.strip()
@@ -440,20 +446,35 @@ def _extractive_summary(user_texts: list[str]) -> str:
     return f"开场话题：{first}。后来聊到：{last}。"
 
 
-def _heuristic_facts(user_texts: list[str]) -> tuple[FactDraft, ...]:
-    """正则抽取用户自述事实：≤3 条、每条 ≤60 字、归一化去重、确定性。"""
+def _heuristic_facts(
+    user_turns: Sequence[Turn],
+) -> tuple[FactDraft, ...]:
+    """正则抽取用户自述事实：≤3 条、每条 ≤60 字、按 (sender, 文本) 去重。
+
+    ``user_turns`` 只含 role=user 的轮次；事实按发言轮次携带精确
+    ``sender_id``，群聊场景不再一律归到主 sender。确定性输出。
+    """
     drafts: list[FactDraft] = []
-    seen: set[str] = set()
-    for text in user_texts:
+    seen: set[tuple[str, str]] = set()
+    for turn in user_turns:
+        text = turn.text.strip()
+        sender = turn.sender_id.strip()
+        if not text:
+            continue
         for pattern, category in _SELF_STATEMENT_PATTERNS:
             for match in pattern.finditer(text):
                 fact = _clip(match.group(0), _MAX_FACT_CHARS)
-                key = _normalize_fact_text(fact)
+                key = (sender, _normalize_fact_text(fact))
                 if not fact or key in seen:
                     continue
                 seen.add(key)
                 drafts.append(
-                    FactDraft(text=fact, category=category, confidence=_HEURISTIC_CONFIDENCE)
+                    FactDraft(
+                        text=fact,
+                        category=category,
+                        confidence=_HEURISTIC_CONFIDENCE,
+                        sender_id=sender,
+                    )
                 )
                 if len(drafts) >= _MAX_SESSION_FACTS:
                     return tuple(drafts)
@@ -464,14 +485,13 @@ class HeuristicSummarizer:
     """零 LLM 的确定性归纳：正则抽自述事实 + 抽取式两句话摘要。"""
 
     def summarize(self, session_key: str, turns: Sequence[Turn]) -> SessionReflection:
-        user_texts = [
-            turn.text.strip()
-            for turn in turns
-            if turn.role == "user" and turn.text.strip()
+        user_turns = [
+            turn for turn in turns if turn.role == "user" and turn.text.strip()
         ]
+        user_texts = [turn.text.strip() for turn in user_turns]
         return SessionReflection(
             summary=_extractive_summary(user_texts),
-            facts=_heuristic_facts(user_texts),
+            facts=_heuristic_facts(user_turns),
         )
 
 
@@ -537,6 +557,97 @@ class LLMSummarizer:
         return facts
 
 
+# ---- 反思事实 → persona_quirks 待审提案（自动投喂，仍走管理员审核）----
+
+
+# 类目白名单：启发式事实只有这四类用户自述有资格成为提案。
+_QUIRK_CATEGORY_WHITELIST = frozenset({"preference", "activity", "plan", "identity"})
+# LLM 事实无类目：额外要求自述句式（「我」开头）+ 更高置信度门槛。
+_QUIRK_UNCATEGORIZED_MIN_CONFIDENCE = 0.6
+# 单次提案条数上限（pending 队列整体另有 max_pending 封顶，这里是限流）。
+_QUIRK_PROPOSE_CAP_PER_SESSION = 3
+
+
+def quirk_proposal_texts(
+    facts: Sequence[FactDraft], *, min_confidence: float
+) -> list[str]:
+    """按白名单规则从事实草稿筛出 quirk 提案文本（确定性、封顶）。
+
+    规则：置信度不低于 ``min_confidence``；有类目 → 类目必须在白名单；
+    无类目（LLM 归纳）→ 还须以「我」开头且置信度达
+    ``_QUIRK_UNCATEGORIZED_MIN_CONFIDENCE``。提案只进 pending_review，
+    对 prompt 零影响，不直接生效。
+    """
+    texts: list[str] = []
+    seen: set[str] = set()
+    for fact in facts:
+        confidence = float(fact.confidence)
+        text = fact.text.strip()
+        if not text or confidence < min_confidence:
+            continue
+        if fact.category:
+            if fact.category not in _QUIRK_CATEGORY_WHITELIST:
+                continue
+        elif (
+            confidence < _QUIRK_UNCATEGORIZED_MIN_CONFIDENCE
+            or not text.startswith("我")
+        ):
+            continue
+        from .quirks import normalize_quirk_text
+
+        key = normalize_quirk_text(text)
+        if key in seen:
+            continue
+        seen.add(key)
+        texts.append(text)
+        if len(texts) >= _QUIRK_PROPOSE_CAP_PER_SESSION:
+            break
+    return texts
+
+
+def build_reflection_quirk_proposer(config: object) -> Callable[[Sequence[FactDraft]], int] | None:
+    """构建「事实 → persona_quirks 待审提案」投喂器；未启用返回 None。
+
+    复用 __init__ 同款 QuirkStore 路径与去重（本模块独立实例，同一
+    SQLite 文件，WAL + busy timeout 下并发安全）；任何构造失败都返回
+    None，绝不影响反思主流程。
+    """
+    try:
+        if not bool(getattr(config, "bot_quirks_enabled", True)):
+            return None
+        if not bool(getattr(config, "bot_reflection_quirks_propose_enabled", True)):
+            return None
+        from .providers import build_runtime_data_path
+        from .quirks import QuirkStore
+
+        db_path = build_runtime_data_path(
+            config,
+            str(getattr(config, "bot_quirks_db_path", "data/persona_quirks.sqlite3")),
+        )
+        store = QuirkStore(db_path)
+        min_confidence = float(
+            getattr(config, "bot_reflection_quirks_min_confidence", 0.5)
+        )
+
+        def _propose(facts: Sequence[FactDraft]) -> int:
+            proposed = 0
+            for text in quirk_proposal_texts(facts, min_confidence=min_confidence):
+                try:
+                    store.propose(text, source="reflection")
+                except Exception as exc:  # noqa: BLE001 - 单条失败不拖垮其余提案。
+                    logger.warning(
+                        "reflection quirk propose failed type=%s",
+                        type(exc).__name__,
+                    )
+                    continue
+                proposed += 1
+            return proposed
+
+        return _propose
+    except Exception:  # noqa: BLE001 - 投喂器构造失败按未启用处理。
+        return None
+
+
 # ---- 反思主流程 ----
 
 
@@ -547,11 +658,14 @@ def run_reflection(
     summarizer: SessionSummarizer,
     scope_date: str,
     source_limit_sessions: int = 50,
+    quirk_collector: Callable[[Sequence[FactDraft]], None] | None = None,
 ) -> ReflectionReport:
     """对每个会话做「摘要 + 事实」归纳并落库；纯函数，不触碰 IO 之外的状态。
 
     会话按 session_key 字典序处理并截断到 source_limit_sessions（单次运行
     的爆炸半径上限）；空会话跳过；同日重跑由 save_digest 的替换语义兜底。
+    ``quirk_collector``：可选的事实旁路消费者（如 quirks.propose 自动投喂），
+    每个含事实的会话调用一次，collector 内部自行过滤与兜错。
     """
     ordered_keys = sorted(turns_by_session)[: max(0, int(source_limit_sessions))]
     processed = 0
@@ -574,9 +688,17 @@ def run_reflection(
         digests_saved += 1
         processed += 1
         if reflection.facts:
-            facts_saved += store.save_facts(
-                digest_id, _primary_sender(turns), reflection.facts
-            )
+            # 群聊归属：启发式事实自带精确 sender（按发言轮次）；LLM 事实与
+            # 无 sender 的历史轮次回退到会话主 sender（最活跃者）。
+            primary = _primary_sender(turns)
+            facts_by_sender: dict[str, list[FactDraft]] = {}
+            for draft in reflection.facts:
+                sender = draft.sender_id.strip() or primary
+                facts_by_sender.setdefault(sender, []).append(draft)
+            for sender, drafts in facts_by_sender.items():
+                facts_saved += store.save_facts(digest_id, sender, drafts)
+            if quirk_collector is not None:
+                quirk_collector(reflection.facts)
     return ReflectionReport(
         scope_date=scope_date,
         sessions_seen=len(turns_by_session),
@@ -727,6 +849,14 @@ def run_nightly_reflection(
         reflection_db = str(
             getattr(config, "bot_reflection_db_path", "") or "data/reflection.sqlite3"
         )
+        quirk_proposer = build_reflection_quirk_proposer(config)
+        quirk_proposals = 0
+
+        def _collector(facts: Sequence[FactDraft]) -> None:
+            nonlocal quirk_proposals
+            if quirk_proposer is not None:
+                quirk_proposals += quirk_proposer(facts)
+
         report = run_reflection(
             ReflectionStore(reflection_db),
             turns_by_session,
@@ -735,8 +865,13 @@ def run_nightly_reflection(
             source_limit_sessions=int(
                 getattr(config, "bot_reflection_max_sessions", 50)
             ),
+            quirk_collector=_collector,
         )
-        return {"scope_date": scope_date, **asdict(report)}
+        return {
+            "scope_date": scope_date,
+            **asdict(report),
+            "quirk_proposals": quirk_proposals,
+        }
     except Exception as exc:  # noqa: BLE001 - 夜间任务失败只记日志，不打印敏感内容。
         logger.warning(
             "nightly reflection failed type=%s", type(exc).__name__

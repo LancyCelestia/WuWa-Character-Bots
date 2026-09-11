@@ -30,6 +30,9 @@ from plugins.bot_unified_runtime.contracts import (
 )
 from plugins.bot_unified_runtime.sources.ganzhi import (
     CST,
+    STEM_ELEMENTS,
+    STEMS,
+    BaziChart,
     bazi_chart,
     format_bazi_text,
 )
@@ -48,6 +51,8 @@ from plugins.bot_unified_runtime.sources.tarot import (
 __all__ = [
     "DivinationIntent",
     "build_divination_capability",
+    "hidden_stems_for_branch",
+    "hidden_stems_section",
     "parse_divination_intent",
 ]
 
@@ -66,6 +71,54 @@ _PERIOD_RE = re.compile(r"早上|上午|中午|下午|傍晚|晚上|夜里|深�
 _TIME_RE = re.compile(r"(?P<hour>\d{1,2})[点时:：]\s*(?:(?P<minute>\d{1,2})分|半)?")
 
 _BAZI_HINT = "提示：带上出生时间可以排得更准，例如「八字 1998年3月2日早上7点」。"
+
+# ---------------------------------------------------------------------------
+# 地支藏干（纯历法数据，离线可测）：branch_index → ((stem_index, 权重%), …)，
+# 首位为本气、其后为中气/余气；权重用通行子平口径（单支合计 100），
+# 只用于排盘展示，不参与任何断语。
+# ---------------------------------------------------------------------------
+_HIDDEN_STEMS: tuple[tuple[tuple[int, int], ...], ...] = (
+    ((9, 100),),                  # 子：癸
+    ((5, 60), (9, 30), (7, 10)),  # 丑：己癸辛
+    ((0, 60), (2, 30), (4, 10)),  # 寅：甲丙戊
+    ((1, 100),),                  # 卯：乙
+    ((4, 60), (1, 30), (9, 10)),  # 辰：戊乙癸
+    ((2, 60), (6, 30), (4, 10)),  # 巳：丙庚戊
+    ((3, 70), (5, 30)),           # 午：丁己
+    ((5, 60), (3, 30), (1, 10)),  # 未：己丁乙
+    ((6, 60), (8, 30), (4, 10)),  # 申：庚壬戊
+    ((7, 100),),                  # 酉：辛
+    ((4, 60), (7, 30), (3, 10)),  # 戌：戊辛丁
+    ((8, 70), (0, 30)),           # 亥：壬甲
+)
+_PILLAR_LABELS = ("年柱", "月柱", "日柱", "时柱")
+_ELEMENT_ORDER = ("木", "火", "土", "金", "水")
+
+
+def hidden_stems_for_branch(branch_index: int) -> tuple[tuple[str, int], ...]:
+    """地支藏干与权重（本气在前，权重合计 100）；序号按 12 取模防越界。"""
+    return tuple(
+        (STEMS[stem_index], weight)
+        for stem_index, weight in _HIDDEN_STEMS[branch_index % 12]
+    )
+
+
+def hidden_stems_section(chart: BaziChart) -> str:
+    """渲染藏干区块：逐柱「藏干」一行 + 全盘加权五行统计一行。"""
+    weighted: dict[str, float] = {name: 0.0 for name in _ELEMENT_ORDER}
+    parts: list[str] = []
+    for label, pillar in zip(_PILLAR_LABELS, chart.pillars):
+        stems = hidden_stems_for_branch(pillar.branch_index)
+        parts.append(
+            f"{label}{pillar.branch} "
+            + "".join(f"{stem}{weight}" for stem, weight in stems)
+        )
+        for stem_index, weight in _HIDDEN_STEMS[pillar.branch_index]:
+            weighted[STEM_ELEMENTS[stem_index]] += weight / 100.0
+    summary = "　".join(
+        f"{name}{weighted[name]:.1f}" for name in _ELEMENT_ORDER
+    )
+    return "藏干：" + "　".join(parts) + "\n藏干五行（加权）：" + summary
 
 
 @dataclass(frozen=True)
@@ -188,7 +241,14 @@ def build_divination_capability(config: Any | None = None) -> Any:
                     message.timestamp.astimezone(CST)
                 )
                 chart = bazi_chart(when)
-                body = format_bazi_text(chart)
+                # 藏干区块插在免责尾注之前（format_bazi_text 末行固定为尾注）。
+                rendered = format_bazi_text(chart)
+                head, sep, tail = rendered.rpartition("\n")
+                body = (
+                    f"{head}\n{hidden_stems_section(chart)}\n{tail}"
+                    if sep
+                    else f"{rendered}\n{hidden_stems_section(chart)}"
+                )
                 if not intent.date_given:
                     body = f"{body}\n（未带出生时间，按当前时点排盘。{_BAZI_HINT}）"
                 return CapabilityResult(

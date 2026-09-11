@@ -3,8 +3,8 @@
 夹具按 2026-09-11 真实探针裁剪：IT之家 / 少数派 / 华尔街见闻 / BBC 中文
 四个存活源的 item 结构逐字段保留（华尔街见闻 CDATA 标题实测带首尾空格、
 BBC 链接带 ``&amp;`` 实体与 dc/content/atom/media 命名空间、IT之家 GMT
-pubDate、少数派 +0800 pubDate）。四个存活源均为 RSS 2.0，无真实 Atom
-探针可用，Atom 夹具按 W3C 标准样例构造（命名空间、href 链接、ISO 时间）。
+pubDate、少数派 +0800 pubDate）。N4（2026-09-12）新增 V2EX 真 Atom 1.0
+源：结构按当日真实响应裁剪（href 链接、ISO updated、tag:id）。
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ from plugins.bot_unified_runtime.sources.news_feeds import (
 
 ITHOME_URL = "https://www.ithome.com/rss/"
 SSPAI_URL = "https://sspai.com/feed"
+V2EX_URL = "https://www.v2ex.com/index.xml"
 WSCN_URL = "https://dedicated.wallstreetcn.com/rss.xml"
 BBC_URL = "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml"
 
@@ -66,6 +67,33 @@ ITHOME_RSS = """<rss version="2.0">
 SSPAI_RSS = """<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/"><channel><title>少数派</title><link>https://sspai.com</link><item><title>App+1｜下一节：教学工作紧张忙碌，下一节课从从容容</title><link>https://sspai.com/post/114384</link><pubDate>Thu, 10 Sep 2026 14:51:52 +0800</pubDate></item><item><title>派早报：Apple 发布 iPhone Duo 折叠屏等</title><link>https://sspai.com/post/114394</link><pubDate>Thu, 10 Sep 2026 06:38:42 +0800</pubDate></item></channel>
 </rss>
+"""
+
+# V2EX：真 Atom 1.0（2026-09-12 实测探针裁剪），rel=alternate href 链接、
+# ISO updated、tag:id。
+V2EX_ATOM = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<title>V2EX</title>
+<subtitle>way to explore</subtitle>
+<link rel="alternate" type="text/html" href="https://www.v2ex.com/" />
+<link rel="self" type="application/atom+xml" href="https://www.v2ex.com/index.xml" />
+<id>https://www.v2ex.com/</id>
+<updated>2026-09-11T18:17:06Z</updated>
+<entry>
+\t<title>[问与答] 有做跨境电商和出海的吗</title>
+\t<link rel="alternate" type="text/html" href="https://www.v2ex.com/t/1241462#reply0" />
+\t<id>tag:www.v2ex.com,2026-09-11:nodeTopic/1241462</id>
+\t<published>2026-09-11T18:17:06Z</published>
+\t<updated>2026-09-11T18:17:06Z</updated>
+</entry>
+<entry>
+\t<title>[分享创造] 如果用 iPhone Duo 来展示 App</title>
+\t<link rel="alternate" type="text/html" href="https://www.v2ex.com/t/1241461#reply0" />
+\t<id>tag:www.v2ex.com,2026-09-11:nodeTopic/1241461</id>
+\t<published>2026-09-11T18:13:09Z</published>
+\t<updated>2026-09-11T18:13:09Z</updated>
+</entry>
+</feed>
 """
 
 # 华尔街见闻：RSS 2.0，CDATA 标题实测带首尾空格。
@@ -132,6 +160,7 @@ ATOM_FEED = """<?xml version="1.0" encoding="utf-8"?>
 _LIVE_FIXTURES: dict[str, str] = {
     ITHOME_URL: ITHOME_RSS,
     SSPAI_URL: SSPAI_RSS,
+    V2EX_URL: V2EX_ATOM,
     WSCN_URL: WSCN_RSS,
     BBC_URL: BBC_RSS,
 }
@@ -214,6 +243,18 @@ def test_parse_atom_namespace_links_and_iso_dates() -> None:
     assert second.published_at is None
 
 
+def test_parse_v2ex_atom_real_probe_fixture() -> None:
+    items = parse_feed(V2EX_ATOM, source="V2EX", category="tech")
+    assert [item.title for item in items] == [
+        "[问与答] 有做跨境电商和出海的吗",
+        "[分享创造] 如果用 iPhone Duo 来展示 App",
+    ]
+    assert items[0].url == "https://www.v2ex.com/t/1241462#reply0"
+    assert items[0].published_at == datetime(
+        2026, 9, 11, 18, 17, 6, tzinfo=timezone.utc
+    )
+
+
 def test_parse_garbage_and_empty_return_empty() -> None:
     assert parse_feed("这不是 XML", source="x", category="tech") == []
     assert parse_feed("", source="x", category="tech") == []
@@ -258,8 +299,8 @@ def test_fetch_category_mapping_uses_only_matching_feeds(
 
     calls.clear()
     tech = fetch_headlines("tech")
-    assert set(calls) == {ITHOME_URL, SSPAI_URL}
-    assert {item.source for item in tech} == {"IT之家", "少数派"}
+    assert set(calls) == {ITHOME_URL, SSPAI_URL, V2EX_URL}
+    assert {item.source for item in tech} == {"IT之家", "少数派", "V2EX"}
 
 
 def test_fetch_unknown_category_falls_back_to_mix(
@@ -274,9 +315,9 @@ def test_fetch_unknown_category_falls_back_to_mix(
     monkeypatch.setattr(news_feeds, "_fetch_feed_text", _fake)
     items = fetch_headlines("不存在的类目")
     assert set(calls) == set(_LIVE_FIXTURES)
-    # mix 轮转合并：四个源的条目都会出现，且单源条数被封顶（各取若干）。
+    # mix 轮转合并：各源的条目都会出现，且单源条数被封顶（各取若干）。
     sources = [item.source for item in items]
-    assert set(sources) == {"IT之家", "少数派", "华尔街见闻", "BBC中文"}
+    assert set(sources) == {"IT之家", "少数派", "V2EX", "华尔街见闻", "BBC中文"}
     assert sources.index("华尔街见闻") < sources.index("BBC中文") + len(sources)
 
 
@@ -290,7 +331,7 @@ def test_fetch_per_feed_failure_skipped_silently(
 
     monkeypatch.setattr(news_feeds, "_fetch_feed_text", _fake)
     items = fetch_headlines("tech")
-    assert {item.source for item in items} == {"少数派"}
+    assert {item.source for item in items} == {"少数派", "V2EX"}
 
 
 def test_fetch_never_raises_when_all_feeds_fail(
@@ -354,8 +395,8 @@ def test_fetch_cache_stores_full_list_sliced_by_max_items(
     assert len(fetch_headlines("tech", max_items=1)) == 1
     # 同一 TTL 内换更大的 max_items：命中缓存全量快照，不再外呼。
     tech = fetch_headlines("tech", max_items=8)
-    assert len(calls) == 2
-    assert len(tech) == 4  # IT之家 2 条 + 少数派 2 条
+    assert len(calls) == 3
+    assert len(tech) == 6  # IT之家 2 条 + 少数派 2 条 + V2EX 2 条
     assert len(fetch_headlines("tech", max_items=0)) == 1  # 非法值钳到 ≥1
 
 

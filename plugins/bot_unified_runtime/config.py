@@ -210,6 +210,10 @@ class Config(BaseModel):
     bot_reflection_minute: int = 30
     bot_reflection_max_sessions: int = 50
     bot_reflection_llm_enabled: bool = False
+    # N4：夜间反思高置信用户事实 → persona_quirks 待审提案（白名单过滤，
+    # 只进 pending_review 队列，仍需管理员审核，不直接生效）。
+    bot_reflection_quirks_propose_enabled: bool = True
+    bot_reflection_quirks_min_confidence: float = 0.5
     # 会话级身份记忆（管理员设置）：每群/每私聊独立的 bot 称呼与身份标签。
     bot_session_identity_db_path: str = "data/session_identity.sqlite3"
     bot_trend_enabled: bool = False
@@ -236,6 +240,9 @@ class Config(BaseModel):
     # 时间点提醒（bot.reminder）：记住"几点要做什么"，到点主动督促。
     bot_reminder_enabled: bool = True
     bot_reminder_db_path: str = "data/reminders.sqlite3"
+    # R-进阶轨（默认关）：LLM 轮末抽取无「提醒」词的时间陈述为提醒（如
+    # 「中午12点要写作业」）；复用 memory_extract 同款后台机制，失败静默。
+    bot_reminder_llm_extract_enabled: bool = False
     # 今日快报（bot.news）：国内可达 RSS 聚合，进程内 TTL 缓存（按类目分桶）。
     bot_news_enabled: bool = True
     bot_news_timeout_seconds: float = 6.0
@@ -457,6 +464,9 @@ class Config(BaseModel):
     bot_group_chat_auto_reply_probability: float = 0.05
     bot_group_proactive_max_replies_per_hour: int = 6
     bot_group_proactive_cooldown_seconds: int = 90
+    # N4：主动搭话亲和门——群聊抽签主动接话只对好感档 ≥ 亲近（close）的用户
+    # 触发；会话冷却与每小时频控沿用上面两项（rate_limit 层已实现）。
+    bot_proactive_affinity_gate_enabled: bool = True
     bot_poke_enabled: bool = True
     bot_poke_private_cooldown_seconds: float = 30.0
     bot_poke_group_cooldown_seconds: float = 10.0

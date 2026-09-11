@@ -308,7 +308,13 @@ def _build_memory_writer(
 
     def _writer(*, user_text: str, reply_text: str, sender_id: str, session_id: str) -> None:
         nonlocal cooldown_until
-        if not setting("BOT_MEMORY_EXTRACT_ENABLED", config.bot_memory_extract_enabled):
+        memory_extract_on = bool(setting(
+            "BOT_MEMORY_EXTRACT_ENABLED", config.bot_memory_extract_enabled))
+        # R-进阶轨（默认关）：同一轮末后台预算内顺带抽取隐含提醒。
+        reminder_extract_on = bool(
+            getattr(config, "bot_reminder_llm_extract_enabled", False)
+        ) and bool(getattr(config, "bot_reminder_enabled", True))
+        if not (memory_extract_on or reminder_extract_on):
             return
         if not worker_lock.acquire(blocking=False):
             return  # Drop optional extraction, never queue an unbounded background workload.
@@ -318,22 +324,52 @@ def _build_memory_writer(
             provider = router.fork() if callable(getattr(router, "fork", None)) else router
             timeout = float(setting("BOT_MEMORY_EXTRACT_TIMEOUT_SECONDS",
                                     getattr(config, "bot_memory_extract_timeout_seconds", 15.0)))
-            texts = extract_memory_texts(
-                provider, user_text=user_text, reply_text=reply_text,
-                generation_options={
+
+            def _generation_options(max_tokens: int) -> dict[str, Any]:
+                return {
                     "override": str(setting("BOT_CHAT_MODEL", "") or ""),
                     "message_text": user_text,
                     "reasoning_effort": setting("BOT_CHAT_REASONING_EFFORT",
                                                 getattr(config, "bot_chat_reasoning_effort", "")),
                     "timeout_seconds": timeout,
                     "deadline_monotonic": time.monotonic() + timeout,
-                    "max_tokens": int(setting("BOT_MEMORY_EXTRACT_MAX_TOKENS",
-                                              getattr(config, "bot_memory_extract_max_tokens", 200))),
-                },
-            )
-            if texts:
-                store_extracted_memories(repository, subject_user_id=sender_id,
-                                         session_id=session_id, texts=texts)
+                    "max_tokens": max_tokens,
+                }
+
+            if memory_extract_on:
+                texts = extract_memory_texts(
+                    provider, user_text=user_text, reply_text=reply_text,
+                    generation_options=_generation_options(int(setting(
+                        "BOT_MEMORY_EXTRACT_MAX_TOKENS",
+                        getattr(config, "bot_memory_extract_max_tokens", 200)))),
+                )
+                if texts:
+                    store_extracted_memories(repository, subject_user_id=sender_id,
+                                             session_id=session_id, texts=texts)
+            if reminder_extract_on:
+                from plugins.bot_unified_runtime.character.memory_extract import (
+                    extract_reminder_drafts,
+                    store_extracted_reminders,
+                )
+                from plugins.bot_unified_runtime.character.reminders import (
+                    build_reminder_store,
+                )
+
+                # session_id 形如 "group:<id>" / "private:<id>"（ingress 约定）。
+                scope, _, target = session_id.partition(":")
+                drafts = extract_reminder_drafts(
+                    provider, user_text=user_text, reply_text=reply_text,
+                    generation_options=_generation_options(120),
+                )
+                if drafts:
+                    store_extracted_reminders(
+                        build_reminder_store(config),
+                        drafts=drafts,
+                        session_key=session_id,
+                        sender_id=sender_id,
+                        target_scope=scope if scope in {"group", "private"} else "private",
+                        target_id=target.strip() or sender_id,
+                    )
         except Exception as exc:  # noqa: BLE001 - optional memory failures must not escape.
             cooldown_until = time.monotonic() + float(setting(
                 "BOT_MEMORY_EXTRACT_ERROR_COOLDOWN_SECONDS",
@@ -2245,6 +2281,17 @@ def _build_mood_describe(config: object):
     return _describe
 
 
+def _mood_valence(config: object) -> float:
+    """bot 心情 valence（-1..1）；未启用/失败回退 0.0（中性，情绪档不介入）。"""
+    try:
+        store = build_character_mood_store(config)
+        if store is None:
+            return 0.0
+        return float(store.snapshot().valence)
+    except Exception:  # noqa: BLE001 - 心情层失败不改变回复行为。
+        return 0.0
+
+
 def _mood_willingness_factor(config: object) -> float:
     """bot 心情 → 群聊开火概率系数 [0.75, 1.25]；任何失败回退 1.0（只调概率，不做硬开关）。"""
     try:
@@ -2827,6 +2874,27 @@ def _register_nonebot_handlers() -> None:
             return dict(get_bots())
         except Exception:  # noqa: BLE001 - 获取在线 Bot 失败时降级为空注册表。
             return {}
+
+    # N4 主动搭话亲和门：群聊抽签主动接话只对好感档 ≥ 亲近（close）的用户。
+    # 冷却/频控由 rate_limit 层 proactive 分桶承担（bot_group_proactive_*）。
+    if bool(getattr(config, "bot_proactive_affinity_gate_enabled", True)):
+        from .character.affinity import tier_for_affinity
+        from .policy.gate import configure_proactive_affinity_gate
+
+        def _proactive_affinity_check(sender_id: str) -> bool:
+            store = build_character_affinity_store(config)
+            if store is None:
+                return False
+            affinity = float(
+                store.snapshot(str(sender_id)).get("affinity", 0.0) or 0.0
+            )
+            return tier_for_affinity(affinity) == "close"
+
+        configure_proactive_affinity_gate(_proactive_affinity_check)
+    else:
+        from .policy.gate import configure_proactive_affinity_gate
+
+        configure_proactive_affinity_gate(None)
 
     def _first_online_bot() -> OneBotV11Bot | None:
         # 历史上的今天等系统推送要发 OneBot 请求：注册表首个 bot 可能是
@@ -4441,7 +4509,10 @@ def _register_nonebot_handlers() -> None:
                     synthetic = synthetic.model_copy(
                         update={"session_type": SessionType.PRIVATE, "group_id": None}
                     )
-                return build_meme_library_capability(meme_library_store, config)(
+                return build_meme_library_capability(
+                    meme_library_store, config,
+                    mood_valence_fn=lambda: _mood_valence(config),
+                )(
                     synthetic, _decision
                 )
 
@@ -5922,7 +5993,10 @@ def _register_nonebot_handlers() -> None:
         receipt = await pipeline.handle_async(
             message,
             offload_capability(
-                build_meme_library_capability(meme_library_store, config)
+                build_meme_library_capability(
+                    meme_library_store, config,
+                    mood_valence_fn=lambda: _mood_valence(config),
+                )
             ),
             capability_id="bot.meme_library",
         )
@@ -6008,7 +6082,10 @@ def _register_nonebot_handlers() -> None:
                         body="表情库未启用。",
                         audit_tags=["meme_library", "disabled"],
                     )
-                return build_meme_library_capability(meme_library_store, config)(
+                return build_meme_library_capability(
+                    meme_library_store, config,
+                    mood_valence_fn=lambda: _mood_valence(config),
+                )(
                     synthetic, _decision
                 )
 

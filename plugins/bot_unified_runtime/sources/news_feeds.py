@@ -2,9 +2,10 @@
 
 实测探针（2026-09-11，本机直连验证，浏览器 UA，≤1MB 限长读取）：
 
-- 可用（4 源）：IT之家 ``https://www.ithome.com/rss/``、少数派
-  ``https://sspai.com/feed``、华尔街见闻
-  ``https://dedicated.wallstreetcn.com/rss.xml``、BBC 中文
+- 可用（5 源）：IT之家 ``https://www.ithome.com/rss/``、少数派
+  ``https://sspai.com/feed``、V2EX ``https://www.v2ex.com/index.xml``
+  （2026-09-12 实测接入：首个 Atom 1.0 真源，走下方 Atom 解析支路）、
+  华尔街见闻 ``https://dedicated.wallstreetcn.com/rss.xml``、BBC 中文
   ``https://feeds.bbci.co.uk/zhongwen/simp/rss.xml``（注意：该源实际
   返回繁体中文条目，收录为「国际」类目）；
 - 不可用已剔除：36kr ``/feed``、Solidot ``index?rss``、机器之心 ``/rss``
@@ -64,6 +65,9 @@ class NewsItem:
 _FEEDS: tuple[tuple[str, str, str], ...] = (
     ("https://www.ithome.com/rss/", "IT之家", "tech"),
     ("https://sspai.com/feed", "少数派", "tech"),
+    # N4 实测（2026-09-12，本机直连 200，parse_feed 通配命名空间解析出 50 条
+    # 含 link/published）：首个真 Atom 1.0 源，走既有 Atom 解析支路。
+    ("https://www.v2ex.com/index.xml", "V2EX", "tech"),
     ("https://dedicated.wallstreetcn.com/rss.xml", "华尔街见闻", "finance"),
     ("https://feeds.bbci.co.uk/zhongwen/simp/rss.xml", "BBC中文", "world"),
 )

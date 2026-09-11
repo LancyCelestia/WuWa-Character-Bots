@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -108,6 +109,45 @@ def deterministic_group_reply_lottery(seed: str, probability: float) -> bool:
         return True
     bucket = int(hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8], 16) % 10000
     return bucket < probability * 10000
+
+
+# ---------------------------------------------------------------------------
+# 主动搭话亲和门（N4）：群聊抽签主动接话（proactive_reply_selected）只对
+# 好感档 ≥ 亲近（close）的用户触发。会话冷却与每小时频控不在这里做——
+# rate_limit 层的 proactive 分桶已实现（bot_group_proactive_cooldown_seconds
+# / bot_group_proactive_max_replies_per_hour），避免双份记账。
+#
+# evaluate_policy 不接触 config/存储：装配方（__init__）在启动期通过
+# configure_proactive_affinity_gate 注入判定函数；未注入时门不生效，
+# 保持既有行为（单测与既有 RuntimePipeline 用户零感知）。
+# ---------------------------------------------------------------------------
+
+_PROACTIVE_AFFINITY_LOCK = threading.Lock()
+_proactive_affinity_checker: Callable[[str], bool] | None = None
+
+
+def configure_proactive_affinity_gate(
+    checker: Callable[[str], bool] | None,
+) -> None:
+    """注入/清除「sender_id → 好感档是否 ≥ 亲近」判定（装配期调用一次）。
+
+    传 None 即清除（开关关闭或测试复位）。判定函数内部失败按拒绝处理
+    （见 _proactive_affinity_allows），注入方无需自带兜错。
+    """
+    global _proactive_affinity_checker
+    with _PROACTIVE_AFFINITY_LOCK:
+        _proactive_affinity_checker = checker
+
+
+def _proactive_affinity_allows(sender_id: str) -> bool:
+    with _PROACTIVE_AFFINITY_LOCK:
+        checker = _proactive_affinity_checker
+    if checker is None:
+        return True  # 未装配：门不生效，保持既有行为。
+    try:
+        return bool(checker(sender_id))
+    except Exception:  # noqa: BLE001 - 判定失败宁可沉默，不冒险主动搭话。
+        return False
 
 
 def _effective_group_lists(settings: PolicySettings) -> dict[str, frozenset[str]]:
@@ -292,6 +332,11 @@ def evaluate_policy(
                     _resolve_probability(active_settings.group_auto_reply_probability),
                 )
             ):
+                # N4 亲和门：主动接话只对好感档 ≥ 亲近的用户；门未装配时不拦。
+                if not _proactive_affinity_allows(message.sender_id):
+                    return _denied(
+                        "proactive_affinity_gate", ("proactive_affinity_gate",)
+                    )
                 return PolicyEvaluation(
                     request_id=message.request_id,
                     allowed=True,
