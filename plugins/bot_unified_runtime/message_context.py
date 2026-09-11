@@ -141,13 +141,14 @@ def _neutralize_markers(value: str) -> str:
     必须同时覆盖**带层级后缀**的形态：渲染出来的是
     ``[引用回复 层级1] … [/引用回复 层级1]``，被引用正文里只要出现
     ``[/引用回复 层级1]`` 就能提前闭合。只替换无后缀的裸标记会漏（实测）。
+
+    只命中内部关键字，不碰用户正常书写的方括号（早期版本整段全角化 `[`/`]`，
+    会篡改被引用正文里的代码、数组、`[图片]` 之类正常文本）。
     """
-    out = value.replace("[", "［").replace("]", "］")
-    # 上面的全角化会同时命中用户正常书写的方括号，故只对内部标记做了替换——
-    # 为不误伤普通文本，这里回滚不含内部关键字的方括号。
-    for keyword in ("引用回复", "引用内容", "转发/聊天记录", "UNTRUSTED_USER_TEXT", "TRUSTED_SYSTEM"):
-        pass
-    return out
+    return _INTERNAL_MARKER_RE.sub(
+        lambda match: match.group(0).replace("[", "［").replace("]", "］"),
+        value,
+    )
 
 
 def _clip(value: str, limit: int) -> str:
