@@ -555,6 +555,13 @@ class SQLiteRateLimiter:
             self._cleanup_expired(connection, now_epoch)
             for _scope, key, _limit in scoped_buckets:
                 self._prune(connection, key, cutoff_epoch)
+            # 群聊专属句数帽（语义对齐 InMemoryRateLimiter._check_group_windows）：
+            # 先判后记，豁免/拒绝都直接返回、不写入任何桶。
+            group_limited = self._check_group_windows(
+                connection, message, capability_id, now_epoch, safe_amount
+            )
+            if group_limited is not None:
+                return group_limited
             if self.settings.target_min_interval_seconds > 0:
                 self._prune(connection, target_key, target_cutoff_epoch)
                 latest_target_event = self._latest_created_at(connection, target_key)
@@ -672,6 +679,62 @@ class SQLiteRateLimiter:
         bypass_roles = set(self.settings.bypass_roles)
         return any(role.strip().lower() in bypass_roles for role in message.sender_roles)
 
+    def _check_group_windows(
+        self,
+        connection: sqlite3.Connection,
+        message: IncomingMessage,
+        capability_id: str,
+        now_epoch: float,
+        amount: int,
+    ) -> RateLimitDecision | None:
+        """群聊每小时/每分钟滑动窗口判定（SQLite 版，语义对齐 InMemory 实现）。
+
+        只作用于群聊；两个窗口任一超限即拒绝且不记账（先判后记，避免部分记账）；
+        情绪低落豁免命中时直接放行，同样不记账。判定通过才写入时间戳行。
+        """
+        if not is_group_session(message):
+            return None
+        if (
+            self.settings.group_hourly_max_requests <= 0
+            and self.settings.group_minute_max_requests <= 0
+        ):
+            return None
+        exemption = (
+            distress_exemption(message) if self.settings.emotion_exempt_enabled else None
+        )
+        if exemption is not None:
+            return exemption
+        group_key = str(message.group_id or message.session_id)
+        active: list[tuple[str, str, int, int]] = []
+        for scope, window_seconds, limit in (
+            ("group_hour", 3600, self.settings.group_hourly_max_requests),
+            ("group_minute", 60, self.settings.group_minute_max_requests),
+        ):
+            if limit <= 0:
+                continue
+            bucket_key = self._bucket_key(capability_id, scope, group_key)
+            self._prune(connection, bucket_key, now_epoch - window_seconds)
+            active.append((scope, bucket_key, limit, window_seconds))
+        for scope, bucket_key, limit, window_seconds in active:
+            if self._count(connection, bucket_key) + amount > limit:
+                return RateLimitDecision(
+                    allowed=False,
+                    reason=f"{scope}_exceeded",
+                    retry_after_seconds=self._window_retry_after_seconds(
+                        connection, bucket_key, now_epoch, window_seconds
+                    ),
+                    audit_tags=["rate_limit:blocked", f"rate_limit:{scope}_exceeded"],
+                )
+        for _scope, bucket_key, _limit, _window in active:
+            connection.executemany(
+                """
+                INSERT INTO rate_limit_events (bucket_key, created_at)
+                VALUES (?, ?)
+                """,
+                [(bucket_key, now_epoch) for _ in range(amount)],
+            )
+        return None
+
     def _ensure_schema(self) -> None:
         try:
             schema_key = str(self.db_path.resolve())
@@ -714,6 +777,10 @@ class SQLiteRateLimiter:
             self.settings.window_seconds,
             self.settings.target_min_interval_seconds,
             self.settings.proactive_window_seconds,
+            # 群句数帽窗口：低频清理不得删掉仍在计数窗口内的时间戳行，
+            # 否则小时帽会少算（proactive 窗口被调小时这里兜底）。
+            3600 if self.settings.group_hourly_max_requests > 0 else 0,
+            60 if self.settings.group_minute_max_requests > 0 else 0,
         )
         connection.execute(
             "DELETE FROM rate_limit_events WHERE created_at < ?",
@@ -755,6 +822,18 @@ class SQLiteRateLimiter:
         bucket_key: str,
         now_epoch: float,
     ) -> int:
+        return self._window_retry_after_seconds(
+            connection, bucket_key, now_epoch, self.settings.window_seconds
+        )
+
+    def _window_retry_after_seconds(
+        self,
+        connection: sqlite3.Connection,
+        bucket_key: str,
+        now_epoch: float,
+        window_seconds: int,
+    ) -> int:
+        """按桶内最老存活事件估算解禁秒数（空桶回退整窗，对齐 InMemory）。"""
         cursor = connection.execute(
             """
             SELECT MIN(created_at)
@@ -765,9 +844,9 @@ class SQLiteRateLimiter:
         )
         oldest = cursor.fetchone()[0]
         if oldest is None:
-            return self.settings.window_seconds
+            return window_seconds
         elapsed = int(now_epoch - float(oldest))
-        return max(1, self.settings.window_seconds - elapsed)
+        return max(1, window_seconds - elapsed)
 
     def _latest_created_at(
         self,
