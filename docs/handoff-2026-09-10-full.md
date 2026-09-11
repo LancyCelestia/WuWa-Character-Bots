@@ -1067,6 +1067,13 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 - **登录方式矩阵（诚实声明）**：bilibili=扫码全自动；其余平台密码/短信登录全部需要过平台人机验证（极验/行为验证），机器人通道无法代替人工——统一引导 `/bot cookie import <平台> <Cookie头>` 手动导入（管理员的浏览器导出文件可直接整份合并，脚本 `%TEMP%/agroup/merge_cookies.py` 按白名单域过滤+去重）。
 - **cookies.py 白名单补 zhihu 域**（d_c0 登录态，知乎解析 403 的缺口；用户导出中的知乎登录态已随之生效）。
 - **接入状态**：capability 层已全实现并实测（generate/poll 真连通过、poll 返回真实状态码 86101 未扫描）；`__init__.py` 的 handler 分支（login/check/expiry）与每日提醒 job 已在工作树，随并行会话同文件提交落地（同 §11 惯例）。
+- **低开销纯 HTTP 登录调研结论（2026-09-11 实测，防重试死路）**：
+  - ✅ B站 qrcode API：纯 HTTP 零浏览器，已实现。
+  - ❌ 微博 `login.sina.com.cn/sso/qrcode/image`：实测空 body（200+chunked 0B），接口行为已变不可用；带完整浏览器 UA 时部分请求 200，但 `requests`/`urllib` 的 TLS 指纹被 sina 风控识别间歇 403——**维护成本>收益**（SUB cookie 有效期 1-2 年，手动导入够用）。
+  - ❌ 抖音/快手/小红书扫码接口：需要请求签名（verify_fp/x-s/x-t），签名算法随版本漂移。
+  - ✅ playwright 官方登录页模式（已实现）：开销**仅发生在登录那一刻**（管理员手动触发、3 分钟窗口、用完关浏览器）；日常链接解析路径零浏览器。cookie 有效期月~年级，登录是低频动作。
+  - 结论：**当前方案已是开销最优解**。未来若需扩平台登录，优先查该项目是否有纯 HTTP 扫码接口（如 NeteaseCloudMusicApi 的 qrcode/login 接口），否则 playwright 模式。
+- **B站分P 修复真实验证**：BV1GJ411x7h7 单 P 视频不崩（pages_note 空=设计正确）；?p=2 逻辑由单元测试锁定（stub 双 cid 验证 P2 选择）。热门 50 流无多 P 视频，真实多 P 样本待遇。
 - **扫码登录框架扩展（2026-09-11，GitHub 查证后修正结论）**：此前「其余平台无法自动化」的结论**已被推翻**——MediaCrawler（30K+ Star）等成熟项目证明用 Playwright 打平台**官方登录页**扫码即可拿到登录态，无需逆向任何加密接口。已实现 `sources/parsers/platform_login.py`：后台线程打开官方登录页（每 3s 重截图保持二维码新鲜）→ 轮询 `context.cookies()` 检测目标登录 cookie（web_session/SUB/sessionid/z_c0/kuaishou.server.webday7_st）→ 成功导出平台域 cookie。覆盖 xiaohongshu/weibo/douyin/zhihu/kuaishou 五平台；`/bot cookie login|check <平台>` 与 B站同入口自动分派。手机号+验证码登录页也已在官方页面内（管理员可直接在页面上手动操作，浏览器上下文同持登录态）。
 - **A-3/A-5 实测记录（2026-09-11）**：真实链接 11/11 全 PASS——xhs×3（女漂猫meme MMD/本职厨子/明日方舟，全 deep+图集+发布时间+08）、微博×3（乐正绫推广站/洛天依官号/霁聆，全 deep+头像+图集）、推特×2（Fobing/鸣潮韩服官号，name=large 归一+时区+08）、YT×3（猫異常/鸣潮世界巡演/**Shorts 形态**）。B站×5（视频 AI 总结+字幕激活/直播 6 号+21452505/专栏+粉丝/分P BV1GJ411x7h7?p=2）。
 - **分P cid 选择修复**：`?p=N` 时字幕/AI 总结/视频资产按指定分P取（此前恒 P1 内容错位）；dispatch 补传 page_url。**引用推摘要**：fxtwitter quote 字段消费。**zhihu cookie 白名单**：d_c0 登录态生效。
