@@ -29,6 +29,7 @@ class ReconcileSummary:
     pending: int
     expired: int
     by_bot: dict[str, int]
+    purged: int = 0
 
     def render(self) -> str:
         if self.pending == 0 and self.expired == 0:
@@ -47,10 +48,18 @@ class ResultUnknownLedger:
         db_path: str | Path,
         *,
         expire_seconds: float = 86400.0,
+        purge_after_seconds: float | None = None,
         clock: Any = time.time,
     ) -> None:
         self.db_path = Path(db_path)
         self.expire_seconds = max(60.0, float(expire_seconds))
+        # 过期行在标记 expired 后仍保留一个排查窗口，超过 purge_after_seconds
+        # 才物理删除（默认与 expire_seconds 相同），防台账随时间无上限增长。
+        self.purge_after_seconds = (
+            self.expire_seconds
+            if purge_after_seconds is None
+            else max(60.0, float(purge_after_seconds))
+        )
         self._clock = clock
         self._lock = threading.Lock()
         self._ensure_schema()
@@ -126,12 +135,18 @@ class ResultUnknownLedger:
             return True
 
     def reconcile(self, *, bot_id: str | None = None) -> ReconcileSummary:
-        """重连对账：过期标记 expired，返回仍 pending 的摘要。"""
+        """重连对账：过期标记 expired，返回仍 pending 的摘要。
+
+        顺带执行 TTL 清理：删除已过期超过 ``purge_after_seconds`` 的行，
+        台账不会随历史对账无上限增长（pending 行永不清理）。
+        """
         now = float(self._clock())
         cutoff = now - self.expire_seconds
+        purge_cutoff = now - self.purge_after_seconds
         by_bot: dict[str, int] = {}
         pending = 0
         expired = 0
+        purged = 0
         with self._lock, closing(self._connect()) as connection, connection:
             cursor = connection.execute(
                 """
@@ -141,6 +156,15 @@ class ResultUnknownLedger:
                 (now, cutoff),
             )
             expired = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+            purged = connection.execute(
+                """
+                    DELETE FROM result_unknown
+                    WHERE status = 'expired'
+                      AND COALESCE(resolved_at, created_at) <= ?
+                    """,
+                (purge_cutoff,),
+            ).rowcount
+            purged = purged if purged and purged > 0 else 0
             rows = connection.execute(
                 """
                     SELECT bot_id, COUNT(*) AS n FROM result_unknown
@@ -152,7 +176,24 @@ class ResultUnknownLedger:
                 count = int(row["n"])
                 by_bot[str(row["bot_id"])] = count
                 pending += count
-        return ReconcileSummary(pending=pending, expired=expired, by_bot=by_bot)
+        return ReconcileSummary(
+            pending=pending, expired=expired, by_bot=by_bot, purged=purged
+        )
+
+    def purge_expired(self, *, now: float | None = None) -> int:
+        """手动 TTL 清理：删除过期超过 ``purge_after_seconds`` 的行，返回删除数。"""
+        moment = float(self._clock() if now is None else now)
+        purge_cutoff = moment - self.purge_after_seconds
+        with self._lock, closing(self._connect()) as connection, connection:
+            removed = connection.execute(
+                """
+                    DELETE FROM result_unknown
+                    WHERE status = 'expired'
+                      AND COALESCE(resolved_at, created_at) <= ?
+                    """,
+                (purge_cutoff,),
+            ).rowcount
+        return removed if removed and removed > 0 else 0
 
     def pending_count(self) -> int:
         with self._lock, closing(self._connect()) as connection, connection:

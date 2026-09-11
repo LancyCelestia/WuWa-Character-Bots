@@ -126,11 +126,11 @@ def _httpx_router(
              "However, your messages resulted in 5000 tokens."),
             "bad_request",
         ),
-            # "Bad Request" 措辞命中 invalid_request 标记（同属去参重试类别）。
-            (400, '{"error":{"message":"Bad Request"}}', "invalid_request"),
-            # 未知 400 / 冷门 4xx：无任何标记命中，归渠道相关 bad_request 兜底。
-            (400, '{"error":{"message":"request rejected"}}', "bad_request"),
-            (418, "teapot", "bad_request"),
+        # "Bad Request" 措辞命中 invalid_request 标记（同属去参重试类别）。
+        (400, '{"error":{"message":"Bad Request"}}', "invalid_request"),
+        # 未知 400 / 冷门 4xx：无任何标记命中，归渠道相关 bad_request 兜底。
+        (400, '{"error":{"message":"request rejected"}}', "bad_request"),
+        (418, "teapot", "bad_request"),
         # 参数字段变化的 422 也按参数类别收编。
         (422, '{"error":{"message":"invalid parameter: temperature"}}', "unsupported_parameter"),
         # 鉴权/限流/服务端：状态码优先于响应体语义。

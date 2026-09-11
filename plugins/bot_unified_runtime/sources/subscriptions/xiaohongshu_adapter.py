@@ -157,6 +157,9 @@ class XiaohongshuAdapter:
             url=f"https://www.xiaohongshu.com/explore/{note_id}",
             author_name=author_name,
             cover_url=cover_url,
+            # user_posted 载荷的发布时间（publish_time/time）随条目透传，
+            # 供推送卡与日报排序使用（B7：正文时间字段纯解析可离线测）。
+            published_at=self._publish_time(note),
             stats=stats,
         )
 

@@ -196,6 +196,14 @@ class SubscriptionStoreV2:
                 item_count INTEGER NOT NULL DEFAULT 0,
                 error_code TEXT NOT NULL DEFAULT ''
             );
+            CREATE TABLE IF NOT EXISTS subscription_target_metadata (
+                target_id TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (target_id, key),
+                FOREIGN KEY(target_id) REFERENCES subscription_targets(id) ON DELETE CASCADE
+            );
             """
         )
 
@@ -382,6 +390,40 @@ class SubscriptionStoreV2:
                     (int(bool(enabled)), _iso(datetime.now(timezone.utc)), target_id),
                 ).rowcount
             )
+
+    def set_target_metadata(self, target_id: str, metadata: dict[str, Any]) -> None:
+        """合并写入目标运行期元数据（如 X rest_id），键级 upsert。
+
+        adapter 在 fetch 中向 ``target.target_payload`` 注入的显式元数据由
+        调度器经本 API 落库：既有 target_payload 是建订时的静态载荷，而
+        rest_id 这类解析产物需要独立、可查询的持久化位置，重启后由
+        ``get_target_metadata`` 回灌。value 以 JSON 文本存储，任意
+        JSON 兼容类型均可往返；空 dict 不写库。
+        """
+        if not metadata:
+            return
+        now = _iso(datetime.now(timezone.utc))
+        with self._lock, self._get_connection() as connection:
+            connection.executemany(
+                """
+                INSERT INTO subscription_target_metadata (target_id, key, value, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(target_id, key) DO UPDATE SET
+                    value=excluded.value, updated_at=excluded.updated_at
+                """,
+                [
+                    (target_id, str(key), json.dumps(value, ensure_ascii=False), now)
+                    for key, value in metadata.items()
+                ],
+            )
+
+    def get_target_metadata(self, target_id: str) -> dict[str, Any]:
+        with self._lock:
+            rows = self._get_connection().execute(
+                "SELECT key, value FROM subscription_target_metadata WHERE target_id = ?",
+                (target_id,),
+            ).fetchall()
+            return {str(row["key"]): json.loads(row["value"]) for row in rows}
 
     def delete_target(self, target_id: str) -> bool:
         with self._lock, self._get_connection() as connection:

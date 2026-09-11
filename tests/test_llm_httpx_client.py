@@ -84,6 +84,31 @@ def test_shared_http_client_lazy_per_proxy_key() -> None:
         _purge_probe_client(key)
 
 
+def test_shared_http_client_buckets_by_proxy_key() -> None:
+    """分桶语义：不同代理键各持独立 Client，代理与空代理互不串池。"""
+    key_a = "http://bucket-a.invalid:9"
+    key_b = "http://bucket-b.invalid:9"
+    assert key_a not in _HTTP_CLIENTS and key_b not in _HTTP_CLIENTS
+    # 空代理键是生产默认桶：若此前已存在则测试后原样归还。
+    preexisting_direct = _HTTP_CLIENTS.get("")
+    try:
+        client_a = _shared_http_client(key_a)
+        client_b = _shared_http_client(key_b)
+        client_direct = _shared_http_client("")
+        assert client_a is not client_b
+        assert client_a is not client_direct
+        assert client_b is not client_direct
+        # 各桶内仍保持单例。
+        assert _shared_http_client(key_a) is client_a
+        assert _shared_http_client(key_b) is client_b
+        assert _shared_http_client("") is client_direct
+    finally:
+        _purge_probe_client(key_a)
+        _purge_probe_client(key_b)
+        if preexisting_direct is None:
+            _purge_probe_client("")
+
+
 def test_shared_http_client_creation_is_thread_safe() -> None:
     """并发首建：工作线程同时取同一键，进程内只落一个 Client。"""
     key = "http://thread-probe.invalid:9"
@@ -215,6 +240,7 @@ def test_oversized_success_body_rejected_as_failoverable(
     with pytest.raises(LLMProviderError) as raised:
         provider.generate([{"role": "user", "content": "hi"}])
 
+    assert raised.value.error_kind == "provider_error"
     assert should_failover(raised.value.error_kind)
 
 
@@ -231,4 +257,7 @@ def test_oversized_error_body_rejected_not_swallowed(
     with pytest.raises(LLMProviderError) as raised:
         provider.generate([{"role": "user", "content": "hi"}])
 
+    # 超限错误体被截断后仍按状态码分类（400→bad_request），
+    # 不得因读体超限误判为 provider_error（掩盖真实状态码）。
+    assert raised.value.error_kind == "bad_request"
     assert should_failover(raised.value.error_kind)

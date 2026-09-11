@@ -139,6 +139,13 @@ class SubscriptionScheduler:
                     settled = True
                     continue
                 cursors = self.store.get_cursors(target.id)
+                # 运行期元数据（如 X rest_id）回灌进 target_payload：adapter
+                # 优先读 payload 里的解析产物，重启后无需重新解析。
+                metadata = self.store.get_target_metadata(target.id)
+                if metadata:
+                    target.target_payload = {**target.target_payload, **metadata}
+                payload_before = dict(target.target_payload)
+
                 async def fetch(
                     selected_adapter: SubscriptionAdapter = adapter,
                     selected_target: SubscriptionTarget = target,
@@ -165,6 +172,15 @@ class SubscriptionScheduler:
                     result,
                     baseline=not target.baseline_initialized,
                 )
+                # fetch 中 adapter 注入 payload 的显式元数据（键值有变化的子集）
+                # 落库，下一轮经 get_target_metadata 回灌（B8）。
+                payload_delta = {
+                    key: value
+                    for key, value in target.target_payload.items()
+                    if key not in payload_before or payload_before[key] != value
+                }
+                if payload_delta:
+                    self.store.set_target_metadata(target.id, payload_delta)
                 events.extend(new_events)
                 next_poll = self.next_poll_at(
                     target, now=current, random_value=self._random()
