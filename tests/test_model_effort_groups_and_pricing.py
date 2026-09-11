@@ -12,6 +12,7 @@ from plugins.bot_unified_runtime.capabilities.runtime_admin import (
 from plugins.bot_unified_runtime.llm.model_router import (
     ModelRouter,
     ModelSpec,
+    baseline_effort,
     build_model_router,
     default_effort,
     model_family,
@@ -65,16 +66,23 @@ def test_model_family_and_default_effort() -> None:
     assert default_effort("gpt-5.6-terra") == "xhigh"
     assert default_effort("gemini-3.7-flash-high") == "high"
     assert default_effort("unknown-model") == ""
+    # 基线档 = 家族最低档（普通任务无全局配置时的默认）。
+    assert baseline_effort("deepseek-v4-pro") == "low"
+    assert baseline_effort("glm-5.3-flash") == "low"
+    assert baseline_effort("kimi-k3") == "low"
+    assert baseline_effort("gpt-5.6-terra") == "low"
+    assert baseline_effort("gemini-3.7-flash-high") == "low"
+    assert baseline_effort("unknown-model") == ""
 
 
-def test_router_sends_family_default_effort_and_respects_overrides() -> None:
+def test_router_sends_family_baseline_effort_and_respects_overrides() -> None:
     calls: list[dict[str, object]] = []
     router = ModelRouter(
         {"ds": _spec("ds", "deepseek-v4-pro", 1)},
         provider_factory=lambda _spec: _CaptureProvider(calls),
     )
     router.generate([{"role": "user", "content": "hi"}], message_text="hi")
-    assert calls[-1]["reasoning_effort"] == "max"  # 家族默认最高档
+    assert calls[-1]["reasoning_effort"] == "low"  # 家族基线（最低档）
 
     # 全局覆盖（/bot model think low）
     router.generate(
@@ -106,8 +114,13 @@ def test_router_complex_task_escalates_global_or_default_effort() -> None:
         reasoning_effort="low",
     )
     assert calls[-1]["reasoning_effort"] == "max"  # 复杂任务升到家族最高档
-    # 无全局设置时家族默认本来就是 max
+    # 无全局设置：普通任务走家族基线（最低档），复杂任务升到家族最高档。
     router.generate([{"role": "user", "content": "hi"}], message_text="hi")
+    assert calls[-1]["reasoning_effort"] == "low"
+    router.generate(
+        [{"role": "user", "content": complex_text}],
+        message_text=complex_text,
+    )
     assert calls[-1]["reasoning_effort"] == "max"
 
 

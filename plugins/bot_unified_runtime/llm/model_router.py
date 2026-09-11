@@ -18,11 +18,12 @@ gpt-5.6-terra/luna/sol、deepseek-v4-pro、kimi-k3。每个条目：
 
 标签即思考强度档位（2026-09 改版）：deepseek/glm/kimi/minimax =
 low,high,max；gpt/grok = low,medium,high,xhigh；gemini = low,medium,high。
-默认思考强度 = 家族最高档；条目可用 ``effort`` 字段显式指定（含 off）。
-请求时按 条目 effort > 全局 BOT_CHAT_REASONING_EFFORT > 家族默认最高档
+普通任务默认思考强度 = 家族基线（baseline_effort，家族最低档）；
+条目可用 ``effort`` 字段显式指定（含 off）。
+请求时按 条目 effort > 全局 BOT_CHAT_REASONING_EFFORT > 家族基线档
 发送 ``reasoning_effort``（接口不支持时自动去参重试）。
-复杂任务（长文本/教程/排查/分析/写作类关键词）会把来自全局/家族默认的
-档位临时升到该模型家族最高档。
+复杂任务（长文本/教程/排查/分析/写作类关键词）会把来自全局/家族基线的
+档位临时升到该模型家族最高档（default_effort，上限语义保留）。
 
 自动选型（纯规则，不烧钱）：
 
@@ -85,8 +86,9 @@ _COMPLEX_KEYWORDS = (
 _COMPLEX_MIN_CHARS = 300
 
 # ==================== 思考强度档位 ====================
-# 按模型名家族划分的思考强度档位；注册表 tags 直接使用这些档位字符串，
-# 默认思考强度 = 家族最高档（元组最后一个元素）。
+# 按模型名家族划分的思考强度档位；注册表 tags 直接使用这些档位字符串。
+# baseline_effort = 家族基线档（元组第一个元素，普通任务默认）；
+# default_effort = 家族最高档（元组最后一个元素，复杂任务升档上限）。
 FAMILY_EFFORT_TIERS: dict[str, tuple[str, ...]] = {
     "deepseek": ("low", "high", "max"),
     "glm": ("low", "high", "max"),
@@ -122,9 +124,15 @@ def model_family(model_name: str) -> str:
 
 
 def default_effort(model_name: str) -> str:
-    """模型家族的默认思考强度 = 家族最高档；未知家族返回空（不发送）。"""
+    """模型家族的最高思考强度（上限语义，复杂任务升档目标）；未知家族返回空。"""
     tiers = FAMILY_EFFORT_TIERS.get(model_family(model_name))
     return tiers[-1] if tiers else ""
+
+
+def baseline_effort(model_name: str) -> str:
+    """模型家族的基线思考强度 = 家族最低档（普通任务默认）；未知家族返回空。"""
+    tiers = FAMILY_EFFORT_TIERS.get(model_family(model_name))
+    return tiers[0] if tiers else ""
 
 
 def normalize_effort(value: object) -> str:
@@ -284,7 +292,7 @@ class ModelSpec:
     aliases: tuple[str, ...] = ()
     priority: int = 100
     routing_group: str = ""
-    effort: str = ""  # 思考强度覆盖；空 = 家族默认最高档，off = 不发送
+    effort: str = ""  # 思考强度覆盖；空 = 家族基线（最低档），off = 不发送
     # 渠道价格（每 1M tokens，币种随渠道报价）；按模型名聚合选渠道时用
     # (price_in+price_out) 均值升序，缺价渠道排在有价渠道之后。
     price_in: float | None = None
@@ -875,16 +883,17 @@ class ModelRouter:
 
     @staticmethod
     def _resolve_effort(spec: ModelSpec, global_effort: str, complex_task: bool) -> str:
-        """思考强度：条目显式设置（含 off）> 全局 > 家族默认最高档。
+        """思考强度：条目显式设置（含 off）> 全局 > 家族基线（最低档）。
 
-        复杂任务把来自全局/家族默认的档位升到家族最高档（串行/影子两路共用）。
+        复杂任务把来自全局/家族基线的档位升到家族最高档（串行/影子两路共用）。
         """
         if spec.effort:
             return spec.effort
         if global_effort:
             family_default = default_effort(spec.model)
             return family_default if complex_task and family_default else global_effort
-        return default_effort(spec.model)
+        baseline = baseline_effort(spec.model)
+        return default_effort(spec.model) if complex_task else baseline
 
     @staticmethod
     def _tighten_timeout(
@@ -1390,8 +1399,8 @@ class ModelRouter:
                 continue
             for key_index, api_key in enumerate(api_keys):
                 attempt_options = dict(kwargs)
-                # 思考强度：条目显式设置（含 off）> 全局 > 家族默认最高档；
-                # 复杂任务把来自全局/家族默认的档位升到家族最高档
+                # 思考强度：条目显式设置（含 off）> 全局 > 家族基线最低档；
+                # 复杂任务把来自全局/家族基线的档位升到家族最高档
                 # （与影子并发 worker 共用同一解析）。
                 effort = self._resolve_effort(spec, global_effort, complex_task)
                 if effort and effort != "off":

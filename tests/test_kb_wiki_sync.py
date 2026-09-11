@@ -199,6 +199,81 @@ def test_entry_title_bonus_ranks_entry_page_first(tmp_path):
     )
 
 
+# ---------------------------------------------------------------- 词条名切分与前缀匹配
+
+
+def test_entry_title_match_len_segment_and_prefix():
+    """词条名按 _/-/空白切分后：段包含命中，纯中文段 2~4 字前缀命中。"""
+    from plugins.bot_unified_runtime.character.vector_knowledge import (
+        _entry_title_match_len,
+    )
+
+    # 全名包含（wiki「标题·来源」剥后缀后命中）。
+    assert _entry_title_match_len("纳西妲·moegirl", "纳西妲的元素战技叫什么") == 3
+    # 人格库下划线词条名：切分出「纳西妲」段包含命中。
+    assert _entry_title_match_len("纳西妲_背景故事", "聊聊纳西妲") == 3
+    assert _entry_title_match_len("纳西妲_背景故事", "纳西妲的背景") == 3
+    # 切分出的子题段整体包含命中（长度取段长）。
+    assert _entry_title_match_len("尘歌壶_系统说明", "怎么进入系统说明界面") == 4
+    # 纯中文长段前缀命中：查询只提到词条名前几个字。
+    assert _entry_title_match_len("尘歌壶系统说明", "尘歌壶怎么用") == 3
+    assert _entry_title_match_len("西风骑士团", "西风骑士的职责是什么") == 4
+    # 连字符/空白切分同样生效。
+    assert _entry_title_match_len("深境螺旋-第12层", "深境螺旋多少层满星") == 4
+    assert _entry_title_match_len("枫丹科学院 档案", "枫丹科学院在哪") == 5
+    # 未命中：无包含、无前缀、非纯中文段不走前缀。
+    assert _entry_title_match_len("枫丹科学院", "须弥城的天气如何") == 0
+    assert _entry_title_match_len("AI梗图鉴", "今天天气怎么样") == 0
+    # 过短段（1 字）不参与匹配。
+    assert _entry_title_match_len("猫 睡姿大全", "猫有多大") == 0
+
+
+def test_entry_title_prefix_match_ranks_entry_page_first(tmp_path):
+    """人格库式词条名：查询只提到词条名前 2~4 字也能把词条页顶到最前。"""
+
+    store = _store(tmp_path)
+    docs = [
+        _doc(
+            "梗知识/moegirl/尘歌壶系统说明",
+            "这是一段与查询措辞几乎无关的说明性正文。",
+            title="尘歌壶系统说明",
+        ),
+        _doc(
+            "梗知识/moegirl/干扰页面",
+            "怎么用怎么用：正文密集堆叠查询词的干扰页。怎么用。",
+        ),
+    ]
+    store.sync_documents(docs)
+    hits = store.retrieve("尘歌壶怎么用", files=None)
+    assert hits, "前缀命中词条名+关键词均应产生候选"
+    assert hits[0].title.startswith("尘歌壶"), (
+        f"词条名前缀命中应排第一，实际排序: {[c.title for c in hits]}"
+    )
+
+
+def test_entry_title_segment_match_hits_underscored_title(tmp_path):
+    """下划线词条名的切分段（主名）被查询包含时，词条页应排在干扰页之前。"""
+
+    store = _store(tmp_path)
+    docs = [
+        _doc(
+            "梗知识/moegirl/纳西妲_背景故事",
+            "这是一段与查询措辞几乎无关的说明性正文。",
+            title="纳西妲_背景故事",
+        ),
+        _doc(
+            "梗知识/moegirl/干扰页面",
+            "元素战技元素战技：正文密集堆叠查询词的干扰页。元素战技。",
+        ),
+    ]
+    store.sync_documents(docs)
+    hits = store.retrieve("纳西妲的元素战技叫什么", files=None)
+    assert hits, "词条名切分段+关键词均应产生候选"
+    assert hits[0].title.startswith("纳西妲"), (
+        f"词条名切分段命中应排第一，实际排序: {[c.title for c in hits]}"
+    )
+
+
 def test_merged_retriever_interleaves_and_dedupes():
     def _chunk(chunk_id: str) -> KnowledgeChunk:
         return KnowledgeChunk(chunk_id=chunk_id, source_id=chunk_id, title=chunk_id, content=chunk_id)

@@ -295,6 +295,42 @@ def _escape_like(term: str) -> str:
     )
 
 
+# 词条名通道的切分与前缀匹配参数：人格知识库标题即文件名，常用 _/-/空白
+# 连接主名与子题（如「纳西妲_背景故事」）；用户提及常只说到词条名前 2~4 字。
+_TITLE_SEGMENT_SPLIT_RE = re.compile(r"[_\-\s]+")
+_TITLE_PREFIX_MIN_CHARS = 2
+_TITLE_PREFIX_MAX_CHARS = 4
+
+
+def _entry_title_match_len(title: str, text: str) -> int:
+    """词条名与查询文本的命中长度；0 = 未命中。
+
+    人格库词条名按 ``_``/``-``/空白切分后逐段匹配：段整体包含于查询即
+    命中（包含匹配）；纯中文段再取 2~4 字前缀（从长到宽尝试）出现在
+    查询中也算命中（前缀匹配），容忍用户只提到词条名开头几个字。
+    wiki 库标题「标题·来源」先剥来源后缀再比对。返回最长命中长度供排序。
+    """
+    base = title.split("·", 1)[0] if "·" in title else title
+    best = 0
+    for segment in _TITLE_SEGMENT_SPLIT_RE.split(base):
+        if len(segment) < _TITLE_PREFIX_MIN_CHARS:
+            continue
+        if segment in text:
+            best = max(best, len(segment))
+            continue
+        if not _CJK_RE.fullmatch(segment):
+            continue
+        for length in range(
+            min(_TITLE_PREFIX_MAX_CHARS, len(segment) - 1),
+            _TITLE_PREFIX_MIN_CHARS - 1,
+            -1,
+        ):
+            if segment[:length] in text:
+                best = max(best, length)
+                break
+    return best
+
+
 def _rrf_fuse(
     vector_ids: list[str],
     keyword_ids: list[str],
@@ -831,13 +867,15 @@ class SqliteVectorKnowledgeStore:
             return self._fetch_chunks(fused_ids)
 
     def _entry_title_candidates(self, query_text: str) -> list[str]:
-        """词条名命中通道：查询文本包含某条目标题时返回该词条的块。
+        """词条名命中通道：查询包含/前缀命中某条目标题（或其切分段）时返回该词条的块。
 
         例：查询「纳西妲的元素战技叫什么」包含词条《纳西妲》→ 其页面块
         经 RRF 双倍权重优先于正文堆满相近词的机制页。wiki 库标题存储为
-        「标题·来源」，比对时剥掉来源后缀；人格知识库标题即文件名，天然
-        兼容。先走 FTS trigram 标题列取有界候选，再在 Python 侧做子串
-        校验，避免 20 万行级全表扫描（实测全表 instr 需 0.6~10 秒）。
+        「标题·来源」，比对时剥掉来源后缀；人格知识库标题即文件名，按
+        ``_``/``-``/空白切分后逐段比对（包含命中或 2~4 字中文前缀命中，
+        见 ``_entry_title_match_len``）。先走 FTS trigram 标题列取有界
+        候选，再在 Python 侧做切分/前缀校验，避免 20 万行级全表扫描
+        （实测全表 instr 需 0.6~10 秒）。
         """
         text = str(query_text or "").strip()
         if len(text) < 2 or not self.ensure_fts_index():
@@ -864,10 +902,9 @@ class SqliteVectorKnowledgeStore:
             return []
         scored: list[tuple[int, str]] = []
         for row in rows:
-            title = str(row["title"] or "")
-            base = title.split("·", 1)[0] if "·" in title else title
-            if len(base) >= 2 and base in text:
-                scored.append((len(base), str(row["chunk_id"])))
+            match_len = _entry_title_match_len(str(row["title"] or ""), text)
+            if match_len:
+                scored.append((match_len, str(row["chunk_id"])))
         scored.sort(key=lambda pair: (-pair[0], pair[1]))
         return [chunk_id for _length, chunk_id in scored[: max(1, self.top_k) * 3]]
 

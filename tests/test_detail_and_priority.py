@@ -83,6 +83,9 @@ def test_model_priority_command_reorders_runtime_slots():
 def test_detail_policy_requires_expanded_relationship_answer():
     from plugins.bot_unified_runtime.capabilities.chat import _RUNTIME_ANSWER_RULES
 
+    # 回复相关性：先回应最后一条消息的核心意图，不得脱离当前话题。
+    assert "先直接回应用户最后一条消息的核心意图" in _RUNTIME_ANSWER_RULES
+    assert "不要脱离当前话题" in _RUNTIME_ANSWER_RULES
     assert "身份" in _RUNTIME_ANSWER_RULES
     assert "关系" in _RUNTIME_ANSWER_RULES
     assert "一两句定性" not in _RUNTIME_ANSWER_RULES
