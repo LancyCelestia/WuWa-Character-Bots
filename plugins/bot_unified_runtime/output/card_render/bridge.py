@@ -15,6 +15,7 @@ Copyright (c) 2024 Les Freire）。
 from __future__ import annotations
 
 import base64
+import colorsys
 import html
 import io
 import os
@@ -267,6 +268,46 @@ def _format_duration(seconds: int) -> str:
     if hours:
         return f"{hours}:{minutes:02d}:{secs:02d}"
     return f"{minutes}:{secs:02d}"
+
+
+# ==================== 釉瑚云母洗派生（mica-glass v1 2026-09-12） ====================
+# 工艺出处=用户裁定：「粉里透紫、蓝里透粉」是邻近色透色的 pastel 工艺，不是固定色值。
+# 每张卡以平台代表色 --pc 为相：取 HSL 色相 H，生成 H±30° 两个邻近色，全部
+# pastel 化（饱和度降至原 30~40%、明度提到 88~92%），得到
+# --wash-1（H 原相）/ --wash-2（H+30°）/ --wash-3（H-30°，仅作第三色透底）/
+# --wash-mist（同色相近白 ≥94% 明度）。灰阶输入（S 极低）直接生成中性雾底。
+# --pc 继续作徽章/链接/高亮等 accent，并允许 ≤18% 混进 wash-1 色斑透出平台色。
+
+_WASH_HUE_SHIFT = 30 / 360  # 邻近色相偏移 28°~35° 取中值 30°
+_WASH_SAT_RATIO = 0.35      # pastel 化：原饱和度的 30~40% 取 35%
+_WASH_LIGHT = 0.90          # 洗色明度 88~92% 取 90%
+_WASH_MIST_LIGHT = 0.96     # 雾底明度 ≥94%
+_WASH_GRAY_SAT = 0.04       # 灰阶输入的中性雾底饱和度
+_WASH_GRAY_THRESHOLD = 0.10  # S 低于此值视为无有效色相的灰阶
+
+
+def _wash_hex(hue: float, sat_in: float, light: float) -> str:
+    sat = sat_in * _WASH_SAT_RATIO
+    if sat_in < _WASH_GRAY_THRESHOLD:
+        sat = _WASH_GRAY_SAT
+    red, green, blue = colorsys.hls_to_rgb(hue % 1.0, light, min(sat, 0.45))
+    return f"#{round(red * 255):02x}{round(green * 255):02x}{round(blue * 255):02x}"
+
+
+def _derive_wash_tokens(hex_color: str) -> dict[str, str]:
+    """平台代表色 → 釉瑚云母洗四 token（wash_1/2/3/mist，#RRGGBB）。
+
+    纯函数不抛异常：非法值经 _hex_to_rgb 回退中性灰（96,112,128，
+    S≈0.14 → 派生出极浅蓝灰雾洗，即中性回退）。
+    """
+    red, green, blue = _hex_to_rgb(hex_color)
+    hue, _lightness, sat = colorsys.rgb_to_hls(red / 255, green / 255, blue / 255)
+    return {
+        "wash_1": _wash_hex(hue, sat, _WASH_LIGHT),
+        "wash_2": _wash_hex(hue + _WASH_HUE_SHIFT, sat, _WASH_LIGHT),
+        "wash_3": _wash_hex(hue - _WASH_HUE_SHIFT, sat, _WASH_LIGHT + 0.01),
+        "wash_mist": _wash_hex(hue, sat, _WASH_MIST_LIGHT),
+    }
 
 
 # ==================== 颜色派生 ====================
@@ -1157,6 +1198,8 @@ def render_universal_card_html(payload_dict: dict[str, Any] | None = None) -> st
 
     context = dict(_DEFAULT_CONTEXT)
     context.update(payload.to_dict())
+    # 釉瑚云母洗：与 --pc 同点注入（mica-glass v1 2026-09-12，工艺出处=用户裁定）。
+    context.update(_derive_wash_tokens(payload.platform_color))
     return _TEMPLATE.render(**context)
 
 
@@ -1218,6 +1261,8 @@ def render_song_candidates_html(payload_dict: dict[str, Any] | None = None) -> s
         platform_color_light=_rgb_to_hex(_lighten(rgb)),
         ttl_seconds=_as_int(data.get("ttl_seconds"), 300),
         candidates=candidates,
+        # 釉瑚云母洗：与 --pc 同点注入（mica-glass v1 2026-09-12）。
+        **_derive_wash_tokens(color),
     )
 
 
@@ -1232,8 +1277,11 @@ def render_affinity_card_html(payload_dict: dict[str, Any] | None = None) -> str
     """
     data = dict(payload_dict or {})
     template = _ENV.get_template("affinity_card.html")
+    pc = _as_str(data.get("pc")) or UNKNOWN_PLATFORM_COLOR
     return template.render(
-        pc=_as_str(data.get("pc")) or UNKNOWN_PLATFORM_COLOR,
+        pc=pc,
+        # 釉瑚云母洗：与 --pc 同点注入（mica-glass v1 2026-09-12）。
+        **_derive_wash_tokens(pc),
         title=_as_str(data.get("title")) or "好感度",
         subtitle=_as_str(data.get("subtitle")),
         mode=_as_str(data.get("mode")) or "private",
@@ -1285,9 +1333,13 @@ def render_mermaid_html(code: str) -> str:
 
     code 经 Jinja2 autoescape 转义后注入 <pre class="mermaid">，页面内
     从 jsDelivr CDN 加载 mermaid.min.js 并 startOnLoad 自动出图。
-    纯字符串组装，不访问网络，不抛异常（模板变量只有 code）。
+    纯字符串组装，不访问网络，不抛异常；釉瑚云母洗按中性灰派生注入
+    （mica-glass v1 2026-09-12）。
     """
-    return _MERMAID_TEMPLATE.render(code=code or "")
+    return _MERMAID_TEMPLATE.render(
+        code=code or "",
+        **_derive_wash_tokens(UNKNOWN_PLATFORM_COLOR),
+    )
 
 
 def render_mermaid_png(code: str) -> bytes | None:

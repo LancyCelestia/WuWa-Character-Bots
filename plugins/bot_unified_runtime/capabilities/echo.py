@@ -1187,8 +1187,15 @@ def _help_mica_html(
 
     ``sections`` 提供结构化索引（总览页 → 两列网格 + 命令药丸）；缺省时
     按正文解析（模块详情页：首行作卡题，其余行拆「命令段 + 说明段」）。
+    mica-glass v1 2026-09-12：釉瑚云母底（bridge 按 accent 派生 --wash-* 注入；
+    工艺出处=用户裁定）+ 液态玻璃面板 + 三枚柔光色斑漂移 + 内联脚本随机相位。
     """
+    from plugins.bot_unified_runtime.output.card_render.bridge import (
+        _derive_wash_tokens,
+    )
+
     accent, accent_ink = _resolve_help_accent(accent_color)
+    wash = _derive_wash_tokens(accent)
     detail_title = ""
     if sections is None:
         sections = []
@@ -1228,7 +1235,7 @@ def _help_mica_html(
     if detail_title:
         # 模块详情/分类说明书：单列卡，首段为主卡。
         cards = "".join(
-            "<section class=\"help-section" + (" main" if index == 0 else "") + "\">"
+            "<section class=\"help-section glass" + (" main" if index == 0 else "") + "\">"
             f"<h2><span class=\"dot\"></span>{_esc(title)}</h2>"
             f"<div class=\"command-list\">{_rows_html(rows)}</div></section>"
             for index, (title, rows) in enumerate(sections)
@@ -1238,7 +1245,7 @@ def _help_mica_html(
         header_sub = "参数标注：<> 必填、[] 可选；把命令复制到聊天即可使用，具体取值见各行说明。"
     else:
         cards = "".join(
-            "<section class=\"help-section" + (" wide" if len(rows) >= 40 else "") + "\">"
+            "<section class=\"help-section glass" + (" wide" if len(rows) >= 40 else "") + "\">"
             f"<h2><span class=\"dot\"></span>{_esc(title)}</h2>"
             f"<div class=\"command-list\">{_rows_html(rows)}</div></section>"
             for title, rows in sections
@@ -1254,12 +1261,46 @@ def _help_mica_html(
     avatar_block = avatar or f"<span class=\"avatar-fallback\">{_esc((bot_name or '守')[:1])}</span>"
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
-:root {{ --accent:{accent}; --accent-ink:{accent_ink}; --ink:#27232a; --muted:#6f646c; }}
+:root {{ --phase:0.2; --accent:{accent}; --accent-ink:{accent_ink};
+  /* 釉瑚云母底主题 token，全卡统一（bridge 按 --accent 派生；工艺出处=用户裁定）。 */
+  --wash-1:{wash['wash_1']}; --wash-2:{wash['wash_2']}; --wash-3:{wash['wash_3']}; --wash-mist:{wash['wash_mist']};
+  --wash-blob-1:color-mix(in srgb, var(--accent) 14%, var(--wash-1));
+  --ink:#27232a; --muted:#6f646c; }}
 * {{ box-sizing:border-box; }}
 body {{ margin:0; padding:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; background:transparent; color:var(--ink); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }}
 .help-stage {{ width:auto; padding:26px; background:transparent; }}
-.help-shell {{ width:940px; overflow:hidden; border-radius:24px; border:1px solid rgba(255,255,255,.92); background:linear-gradient(168deg, color-mix(in srgb, var(--accent) 3%, #fff) 0%, color-mix(in srgb, var(--accent) 7%, #fff) 100%); box-shadow:0 14px 34px rgba(31,35,41,.10); }}
-.help-head {{ display:flex; align-items:center; gap:14px; padding:22px 26px 18px; border-bottom:1px solid color-mix(in srgb, var(--accent) 14%, #fff); }}
+/* 釉瑚云母外壳：雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底（不透明基础层）
+   + 1px 内高光渐变描边；色斑垫底、内容抬升；阴影两枚 token。 */
+.help-shell {{ position:relative; width:940px; overflow:hidden; border-radius:24px; border:1px solid transparent;
+  background:linear-gradient(145deg, var(--wash-mist) 0%, color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
+    color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%, color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%) padding-box,
+    linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
+  box-shadow:0 14px 34px rgba(31,35,41,.10); }}
+.help-shell > :not(.drift-blobs) {{ position:relative; z-index:1; }}
+/* 渐变漂移色斑（wash 三色半透明互相透过，46s/52s/58s 交错漂移+呼吸）。 */
+.drift-blobs {{ position:absolute; inset:0; z-index:0; overflow:hidden; pointer-events:none; border-radius:inherit; }}
+.drift-blob {{ position:absolute; display:block; border-radius:50%; will-change:transform; }}
+.drift-blob.drift-a {{ width:58%; aspect-ratio:1; left:-14%; top:-22%;
+  background:radial-gradient(closest-side, color-mix(in srgb, var(--wash-blob-1) 34%, transparent) 0%,
+    color-mix(in srgb, var(--wash-blob-1) 18%, transparent) 46%, color-mix(in srgb, var(--wash-blob-1) 5%, transparent) 70%, transparent 100%);
+  animation:mica-drift-a 46s ease-in-out infinite alternate; animation-delay:calc(var(--phase, 0.2) * -46s); }}
+.drift-blob.drift-b {{ width:52%; aspect-ratio:1; right:-16%; bottom:-24%;
+  background:radial-gradient(closest-side, color-mix(in srgb, var(--wash-2) 30%, transparent) 0%,
+    color-mix(in srgb, var(--wash-2) 16%, transparent) 48%, color-mix(in srgb, var(--wash-2) 5%, transparent) 72%, transparent 100%);
+  animation:mica-drift-b 58s ease-in-out infinite alternate; animation-delay:calc(var(--phase, 0.2) * -58s - 9s); }}
+.drift-blob.drift-c {{ width:64%; aspect-ratio:1; left:22%; top:34%;
+  background:radial-gradient(closest-side, color-mix(in srgb, var(--wash-3) 26%, transparent) 0%,
+    color-mix(in srgb, var(--wash-3) 14%, transparent) 48%, color-mix(in srgb, var(--wash-3) 5%, transparent) 72%, transparent 100%);
+  animation:mica-drift-c 52s ease-in-out infinite alternate; animation-delay:calc(var(--phase, 0.2) * -52s - 21s); }}
+@keyframes mica-drift-a {{ 0% {{ transform:translate3d(-4%,-2%,0) scale(1); }} 50% {{ transform:translate3d(7%,9%,0) scale(1.18); }} 100% {{ transform:translate3d(-3%,14%,0) scale(.92); }} }}
+@keyframes mica-drift-b {{ 0% {{ transform:translate3d(3%,4%,0) scale(1.05); }} 50% {{ transform:translate3d(-8%,-6%,0) scale(.9); }} 100% {{ transform:translate3d(-2%,-12%,0) scale(1.2); }} }}
+@keyframes mica-drift-c {{ 0% {{ transform:translate3d(-5%,4%,0) scale(1.1); }} 50% {{ transform:translate3d(9%,-7%,0) scale(.88); }} 100% {{ transform:translate3d(2%,-3%,0) scale(1.16); }} }}
+@media (prefers-reduced-motion: reduce) {{ .drift-blob.drift-a, .drift-blob.drift-b, .drift-blob.drift-c {{ animation:none; }} }}
+/* 液态玻璃面板：半透明白 + 1px 内高光渐变描边（无 backdrop-filter）。 */
+.glass {{ background:linear-gradient(150deg, rgba(255,255,255,.66) 0%, rgba(255,255,255,.44) 100%) padding-box,
+    linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
+  border:1px solid transparent; box-shadow:0 3px 10px rgba(31,35,41,.05); }}
+.help-head {{ display:flex; align-items:center; gap:14px; padding:22px 26px 18px; border-bottom:1px solid rgba(255,255,255,.78); }}
 .avatar-wrap {{ flex:0 0 auto; width:52px; height:52px; border-radius:16px; overflow:hidden; background:color-mix(in srgb, var(--accent) 14%, #fff); display:flex; align-items:center; justify-content:center; box-shadow:inset 0 0 0 1px rgba(255,255,255,.9); }}
 .avatar-wrap img {{ width:100%; height:100%; object-fit:cover; }}
 .avatar-fallback {{ font-size:24px; font-weight:700; color:var(--accent-ink); }}
@@ -1267,24 +1308,28 @@ body {{ margin:0; padding:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif
 .help-kicker {{ color:var(--accent-ink); font-size:11px; font-weight:700; letter-spacing:.14em; }}
 .help-title {{ margin-top:6px; font-size:27px; font-weight:700; letter-spacing:.01em; }}
 .help-subtitle {{ margin-top:6px; color:var(--muted); font-size:12.5px; line-height:1.55; }}
-.help-chip {{ flex:0 0 auto; padding:7px 14px; border-radius:999px; color:var(--accent-ink); background:color-mix(in srgb, var(--accent) 6%, #fff); border:1px solid color-mix(in srgb, var(--accent) 20%, #fff); font-size:12px; font-weight:650; }}
-.help-body {{ padding:14px; background:color-mix(in srgb, var(--accent) 3%, #fff); }}
+.help-chip {{ flex:0 0 auto; padding:7px 14px; border-radius:999px; color:var(--accent-ink); background:color-mix(in srgb, var(--accent) 8%, rgba(255,255,255,.80)); border:1px solid rgba(255,255,255,.90); font-size:12px; font-weight:650; }}
+.help-body {{ padding:14px; }}
 .help-grid.masonry {{ column-count:2; column-gap:12px; }}
 .help-grid.masonry .help-section {{ break-inside:avoid; margin-bottom:12px; }}
 .help-grid.masonry .help-section.wide {{ column-span:all; }}
 .help-grid.single {{ display:grid; grid-template-columns:1fr; gap:12px; }}
-.help-section {{ border-radius:16px; overflow:hidden; border:1px solid rgba(255,255,255,.95); background:linear-gradient(150deg, color-mix(in srgb, var(--accent) 2%, #fff), color-mix(in srgb, var(--accent) 5%, #fff)); box-shadow:0 3px 10px rgba(31,35,41,.05); }}
-.help-section h2 {{ display:flex; align-items:center; gap:8px; margin:0; padding:10px 14px; color:var(--accent-ink); background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, #fff), color-mix(in srgb, var(--accent) 12%, #fff)); border-left:4px solid var(--accent); font-size:14.5px; font-weight:700; letter-spacing:.02em; }}
+.help-section {{ border-radius:16px; overflow:hidden; }}
+.help-section h2 {{ display:flex; align-items:center; gap:8px; margin:0; padding:10px 14px; color:var(--accent-ink); background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, rgba(255,255,255,.62)), color-mix(in srgb, var(--accent) 12%, rgba(255,255,255,.48))); border-bottom:1px solid rgba(255,255,255,.85); font-size:14.5px; font-weight:700; letter-spacing:.02em; }}
 .help-section h2 .dot {{ flex:0 0 auto; width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 18%, #fff); }}
 .command-list {{ padding:9px; display:grid; gap:6px; }}
-.command-row {{ display:flex; align-items:flex-start; gap:9px; padding:7px 10px; border-radius:11px; background:rgba(255,255,255,.72); font-size:12px; line-height:1.55; }}
-.command-row .pill {{ flex:0 0 auto; max-width:62%; padding:2px 10px; border-radius:999px; color:var(--accent-ink); background:color-mix(in srgb, var(--accent) 13%, #fff); font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.command-row {{ display:flex; align-items:flex-start; gap:9px; padding:7px 10px; border-radius:11px; background:rgba(255,255,255,.62); font-size:12px; line-height:1.55; }}
+.command-row .pill {{ flex:0 0 auto; max-width:62%; padding:2px 10px; border-radius:999px; color:var(--accent-ink); background:color-mix(in srgb, var(--accent) 13%, rgba(255,255,255,.82)); font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 .command-row .desc {{ color:var(--muted); min-width:0; overflow-wrap:anywhere; }}
-.help-foot {{ display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 16px; background:color-mix(in srgb, var(--accent) 9%, #fff); border-top:1px solid color-mix(in srgb, var(--accent) 15%, #fff); }}
+.help-foot {{ display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 16px; background:rgba(255,255,255,.42); border-top:1px solid rgba(255,255,255,.80); }}
 .help-foot .tip {{ color:var(--muted); font-size:11.5px; }}
-.help-bot-pill {{ display:flex; align-items:center; gap:8px; padding:5px 13px 5px 6px; border-radius:999px; color:var(--accent-ink); background:color-mix(in srgb, var(--accent) 4%, #fff); border:1px solid #fff; box-shadow:0 4px 10px rgba(31,35,41,.07); font-size:13px; font-weight:600; }}
+.help-bot-pill {{ display:flex; align-items:center; gap:8px; padding:5px 13px 5px 6px; border-radius:999px; color:var(--accent-ink); background:color-mix(in srgb, var(--accent) 6%, rgba(255,255,255,.72)); border:1px solid #fff; box-shadow:0 4px 10px rgba(31,35,41,.07); font-size:13px; font-weight:600; }}
 .help-bot-avatar {{ width:27px; height:27px; object-fit:cover; border-radius:50%; }}
-</style></head><body><div class="help-stage card"><section class="help-shell"><header class="help-head"><div class="avatar-wrap">{avatar_block}</div><div class="head-main"><div class="help-kicker">{_esc(role)}</div><div class="help-title">{_esc(header_title)}</div><div class="help-subtitle">{_esc(header_sub)}</div></div><div class="help-chip">发 /bot help 获取本图</div></header><main class="help-body"><div class="help-grid {grid_cls}">{cards}</div></main><footer class="help-foot"><span class="tip">参数标注：&lt;&gt; 必填，[] 可选；群里直接发命令即可触发。</span><div class="help-bot-pill">{avatar}<span>{_esc(bot_name)} · 命令手册</span></div></footer></section></div></body></html>"""
+</style></head><body><div class="help-stage card"><section class="help-shell">
+<div class="drift-blobs" aria-hidden="true"><span class="drift-blob drift-a"></span><span class="drift-blob drift-b"></span><span class="drift-blob drift-c"></span></div>
+<header class="help-head"><div class="avatar-wrap">{avatar_block}</div><div class="head-main"><div class="help-kicker">{_esc(role)}</div><div class="help-title">{_esc(header_title)}</div><div class="help-subtitle">{_esc(header_sub)}</div></div><div class="help-chip">发 /bot help 获取本图</div></header><main class="help-body"><div class="help-grid {grid_cls}">{cards}</div></main><footer class="help-foot"><span class="tip">参数标注：&lt;&gt; 必填，[] 可选；群里直接发命令即可触发。</span><div class="help-bot-pill">{avatar}<span>{_esc(bot_name)} · 命令手册</span></div></footer></section></div>
+<script>/* mica-glass v1 2026-09-12：随机漂移相位，纯内联零依赖，失败静默。 */
+try{{document.documentElement.style.setProperty("--phase",Math.random().toFixed(4));}}catch(e){{}}</script></body></html>"""
 
 
 def _help_category_body(query: str, *, is_admin: bool) -> str | None:

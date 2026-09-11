@@ -1,5 +1,8 @@
 <!--
   Universal card HTML template.
+  mica-glass v1 2026-09-12：外壳换「釉瑚云母 + 液态玻璃 + 渐变漂移」背景层
+  （釉瑚洗由 bridge 按 --pc 派生注入；色斑/动画/随机相位见 .drift-* 与底部内联
+  脚本）；内部版式、文字、结构不变。
 
   Ported and adapted from astrbot_plugin_parser
   (https://github.com/Zhalslar/astrbot_plugin_parser).
@@ -75,7 +78,13 @@ body {
 .card {
     width: {{ card_width }};
     max-width: 100%;
-    background: color-mix(in srgb, var(--pc) 4%, #ffffff);
+    /* mica-glass：釉瑚云母底——雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底
+       （不透明基础层，对齐官方 Mica「opaque base + 低不透明内容层」分层）。 */
+    background: linear-gradient(145deg,
+        var(--wash-mist) 0%,
+        color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
+        color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%,
+        color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%);
     border: 1px solid color-mix(in srgb, var(--pc) 14%, #e4e6eb);
     border-radius: 28px;
     box-shadow: var(--shadow-card);
@@ -84,6 +93,44 @@ body {
     margin: 18px;
     zoom: {{ scale_factor | default(font_scale | default(1.0)) }};
 }
+
+/* mica-glass：非 video 布局直出的 .card（body 直接子级）用双伪元素充当漂移色斑
+   （::before 叠 wash-1/wash-3 两枚柔光，::after 一枚 wash-2）；
+   mica-stage 截图外壳与 video-card-shell 内层 .card 均被 :not 排除。
+   内容全部抬到 z-index:1（仅定位，不改动版式），色斑垫底。 */
+body > .card:not(.mica-stage)::before,
+body > .card:not(.mica-stage)::after {
+    content: "";
+    position: absolute;
+    z-index: 0;
+    display: block;
+    border-radius: 50%;
+    pointer-events: none;
+}
+body > .card:not(.mica-stage)::before {
+    width: 62%; aspect-ratio: 1; left: -16%; top: -24%;
+    background:
+        radial-gradient(closest-side at 32% 32%,
+            color-mix(in srgb, var(--wash-blob-1) 34%, transparent) 0%,
+            color-mix(in srgb, var(--wash-blob-1) 18%, transparent) 46%,
+            color-mix(in srgb, var(--wash-blob-1) 5%, transparent) 70%, transparent 100%),
+        radial-gradient(closest-side at 72% 78%,
+            color-mix(in srgb, var(--wash-3) 30%, transparent) 0%,
+            color-mix(in srgb, var(--wash-3) 16%, transparent) 48%,
+            color-mix(in srgb, var(--wash-3) 5%, transparent) 72%, transparent 100%);
+    animation: mica-drift-a 46s ease-in-out infinite alternate;
+    animation-delay: calc(var(--phase, 0.2) * -46s);
+}
+body > .card:not(.mica-stage)::after {
+    width: 56%; aspect-ratio: 1; right: -16%; bottom: -24%;
+    background: radial-gradient(closest-side,
+        color-mix(in srgb, var(--wash-2) 30%, transparent) 0%,
+        color-mix(in srgb, var(--wash-2) 16%, transparent) 48%,
+        color-mix(in srgb, var(--wash-2) 5%, transparent) 72%, transparent 100%);
+    animation: mica-drift-b 58s ease-in-out infinite alternate;
+    animation-delay: calc(var(--phase, 0.2) * -58s - 9s);
+}
+body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 
 
 /* ===== Banner ===== */
@@ -132,7 +179,8 @@ body {
 
 /* ===== Header ===== */
 .header {
-    background: linear-gradient(180deg, color-mix(in srgb, var(--pc) 10%, #ffffff) 0%, color-mix(in srgb, var(--pc) 5%, #ffffff) 100%);
+    /* mica-glass：半透明白玻璃层，透出釉瑚云母底（对齐官方「透出材质的层必须透明」）。 */
+    background: linear-gradient(180deg, rgba(255,255,255,.60) 0%, rgba(255,255,255,.30) 100%);
     padding: 20px 24px 14px;
     display: flex;
     justify-content: space-between;
@@ -790,7 +838,7 @@ body {
 }
 
 .footer {
-    background: color-mix(in srgb, var(--pc) 6%, #ffffff);
+    background: rgba(255, 255, 255, 0.50);
     border-top: 1px solid color-mix(in srgb, var(--pc) 12%, #e4e6eb);
     padding: 8px 20px 6px;
     position: relative;
@@ -889,6 +937,16 @@ body {
 
 /* ===== Mica video/content card ===== */
 :root {
+    /* 漂移相位：内联脚本每次渲染随机覆写（负 animation-delay 取随机瞬间）。 */
+    --phase: 0.2;
+    /* 釉瑚云母底主题 token，全卡统一：bridge._derive_wash_tokens 按 --pc 派生注入
+       （H 原相 / H+30° / H-30° 邻近 pastel + 近白雾底；工艺出处=用户裁定）。
+       --pc 不再作背景主色，退为徽章/链接/高亮 accent，仅 ≤18% 混入 wash-1 色斑。 */
+    --wash-1: {{ wash_1 | default('#e5ecf1') }};
+    --wash-2: {{ wash_2 | default('#e3e5f1') }};
+    --wash-3: {{ wash_3 | default('#e3eeee') }};
+    --wash-mist: {{ wash_mist | default('#f3f5f6') }};
+    --wash-blob-1: color-mix(in srgb, var(--pc) 14%, var(--wash-1));
     --mica-shadow: 0 12px 32px rgba(31, 35, 41, .10), 0 2px 8px rgba(31, 35, 41, .05);
     --mica-shadow-soft: 0 3px 10px rgba(31, 35, 41, .06);
     --mica-border: rgba(255, 255, 255, .85);
@@ -912,8 +970,13 @@ body {
     width: calc({{ card_width }} / {{ scale_factor | default(font_scale | default(1.0)) }});
     overflow: hidden;
     border-radius: var(--r-shell);
-    background: color-mix(in srgb, var(--pc) 11%, #fff);
-    background: linear-gradient(140deg, color-mix(in srgb, var(--pc) 5%, #fff) 0%, color-mix(in srgb, var(--pc) 11%, #fff) 100%);
+    background: var(--wash-mist);
+    /* mica-glass：釉瑚云母底——雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底。 */
+    background: linear-gradient(145deg,
+        var(--wash-mist) 0%,
+        color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
+        color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%,
+        color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%);
     border: 1px solid var(--mica-border);
     box-shadow: var(--mica-shadow);
     position: relative;
@@ -928,11 +991,68 @@ body {
     content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none;
     border: 1px solid rgba(255,255,255,.75); border-radius: inherit;
 }
-.video-card-shell > .card { width:100%; max-width:none; margin:0; overflow:visible; border:0; border-radius:0; background:transparent; box-shadow:none; zoom:1; }
+.video-card-shell > .card { width:100%; max-width:none; margin:0; overflow:visible; border:0; border-radius:0; background:transparent; box-shadow:none; zoom:1; position:relative; z-index:1; }
+/* mica-glass：半透明白玻璃面板 + 1px 内高光渐变描边（padding-box/border-box 双背景），
+   无 backdrop-filter（透明截图下无物可糊）；漂移色斑从玻璃后透出。 */
 .mica-surface {
-    background: linear-gradient(135deg, color-mix(in srgb, var(--pc) 4%, #fff) 0%, color-mix(in srgb, var(--pc) 8%, #fff) 100%);
-    border: 1px solid rgba(255,255,255,.9);
+    background:
+        linear-gradient(150deg, rgba(255,255,255,.72) 0%, rgba(255,255,255,.46) 100%) padding-box,
+        linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
+    border: 1px solid transparent;
     box-shadow: var(--mica-shadow-soft);
+}
+/* ===== 渐变漂移色斑（mica-glass v1 2026-09-12）===== */
+/* 三枚大型柔光色斑 = wash-1（≤18% 混 --pc 透出平台色）/ wash-2 / wash-3，
+   46s/52s/58s 交错漂移+呼吸（alternate），半透明互相透过（无硬边界），
+   相位由内联脚本随机注入；动画元素全部在 .card 内（截图裁剪安全）。 */
+.drift-blobs { position:absolute; inset:0; z-index:0; overflow:hidden; pointer-events:none; border-radius:inherit; }
+.drift-blob { position:absolute; display:block; border-radius:50%; will-change:transform; }
+.drift-blob.drift-a {
+    width:58%; aspect-ratio:1; left:-14%; top:-22%;
+    background:radial-gradient(closest-side,
+        color-mix(in srgb, var(--wash-blob-1) 34%, transparent) 0%,
+        color-mix(in srgb, var(--wash-blob-1) 18%, transparent) 46%,
+        color-mix(in srgb, var(--wash-blob-1) 5%, transparent) 70%, transparent 100%);
+    animation:mica-drift-a 46s ease-in-out infinite alternate;
+    animation-delay:calc(var(--phase, 0.2) * -46s);
+}
+.drift-blob.drift-b {
+    width:52%; aspect-ratio:1; right:-16%; bottom:-24%;
+    background:radial-gradient(closest-side,
+        color-mix(in srgb, var(--wash-2) 30%, transparent) 0%,
+        color-mix(in srgb, var(--wash-2) 16%, transparent) 48%,
+        color-mix(in srgb, var(--wash-2) 5%, transparent) 72%, transparent 100%);
+    animation:mica-drift-b 58s ease-in-out infinite alternate;
+    animation-delay:calc(var(--phase, 0.2) * -58s - 9s);
+}
+.drift-blob.drift-c {
+    width:64%; aspect-ratio:1; left:22%; top:34%;
+    background:radial-gradient(closest-side,
+        color-mix(in srgb, var(--wash-3) 26%, transparent) 0%,
+        color-mix(in srgb, var(--wash-3) 14%, transparent) 48%,
+        color-mix(in srgb, var(--wash-3) 5%, transparent) 72%, transparent 100%);
+    animation:mica-drift-c 52s ease-in-out infinite alternate;
+    animation-delay:calc(var(--phase, 0.2) * -52s - 21s);
+}
+@keyframes mica-drift-a {
+    0% { transform:translate3d(-4%, -2%, 0) scale(1); }
+    50% { transform:translate3d(7%, 9%, 0) scale(1.18); }
+    100% { transform:translate3d(-3%, 14%, 0) scale(.92); }
+}
+@keyframes mica-drift-b {
+    0% { transform:translate3d(3%, 4%, 0) scale(1.05); }
+    50% { transform:translate3d(-8%, -6%, 0) scale(.9); }
+    100% { transform:translate3d(-2%, -12%, 0) scale(1.2); }
+}
+@keyframes mica-drift-c {
+    0% { transform:translate3d(-5%, 4%, 0) scale(1.1); }
+    50% { transform:translate3d(9%, -7%, 0) scale(.88); }
+    100% { transform:translate3d(2%, -3%, 0) scale(1.16); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .drift-blob.drift-a, .drift-blob.drift-b, .drift-blob.drift-c,
+    body > .card:not(.mica-stage)::before,
+    body > .card:not(.mica-stage)::after { animation:none; }
 }
 .video-topbar { margin:var(--video-inset); padding:15px 15px 8px; border-radius:var(--r-panel); }
 .video-author-layout { display: grid; grid-template-columns: 116px minmax(0, 1fr) 174px; column-gap: 12px; min-height: 110px; }
@@ -978,7 +1098,7 @@ body {
 .metric-value { display:block; overflow:hidden; color:var(--text-main); font-size:22px; font-weight:700; text-overflow:ellipsis; white-space:nowrap; font-variant-numeric:tabular-nums; }
 .metric-label { display:block; margin-top:3px; color:var(--text-secondary); font-size:12px; }
 .video-card-summary { margin: 0 var(--video-inset) var(--video-inset); padding:15px 18px; border-radius:var(--r-panel); color:var(--text-sub); font-size:15.5px; line-height:1.75; white-space:pre-line; box-shadow:var(--mica-shadow-soft); }
-.footer.footer-colored { margin: 0 var(--video-inset) var(--video-inset); border:1px solid rgba(255,255,255,.92); padding:12px 15px 15px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-radius:var(--r-panel); background:color-mix(in srgb, var(--pc) 8%, #fff); color:var(--pc-dark); box-shadow:var(--mica-shadow-soft); }
+.footer.footer-colored { margin: 0 var(--video-inset) var(--video-inset); border:1px solid transparent; padding:12px 15px 15px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-radius:var(--r-panel); background:linear-gradient(150deg, rgba(255,255,255,.62) 0%, rgba(255,255,255,.40) 100%) padding-box, linear-gradient(150deg, rgba(255,255,255,.92), rgba(255,255,255,.35) 60%, rgba(255,255,255,.70)) border-box; color:var(--pc-dark); box-shadow:var(--mica-shadow-soft); }
 .footer-platform-name { display:flex; align-items:center; min-width:112px; font-size:12px; font-weight:600; }
 .footer.footer-colored .footer-bottom { margin:0; display:flex; align-items:center; justify-content:flex-end; gap:6px; }
 .footer-bot-pill { display:flex; align-items:center; gap:3px; padding:4px 7px 4px 4px; border-radius:999px; background:color-mix(in srgb, var(--pc) 6%, #fff); border:1px solid rgba(255,255,255,.98); box-shadow:inset 0 1px 0 rgba(255,255,255,.98); }
@@ -1000,6 +1120,7 @@ body {
 {% if page_type in ["video", "dynamic", "article", "column", "note", "post", "tweet", "opus", "game", "store_page", "market_listing", "community_hub", "ticket", "cheese", "charity", "search", "project", "goods", "share_post", "share_video", "public_page", "works"] %}
 <div class="card mica-stage">
 <div class="video-card-shell">
+<div class="drift-blobs" aria-hidden="true"><span class="drift-blob drift-a"></span><span class="drift-blob drift-b"></span><span class="drift-blob drift-c"></span></div>
 <div class="card">
     <div class="video-topbar mica-surface">
         <div class="video-author-layout">
@@ -1503,9 +1624,16 @@ body {
         <div class="footer-bottom">
             <div class="footer-bot-left">{% if bot_avatar_url %}<img class="footer-bot-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="footer-bot-dot">{{ (bot_name | default('A', true))[:1] }}</span>{% endif %}</div>
             <div class="footer-bot-right"><span class="footer-bot-name">{{ bot_name | default('守岸人', true) }}</span><span class="footer-parser-text">· Shorekeeper Parser</span></div>
-        </div>
-    </div>
+</div>
+</div>
 </div>
 {% endif %}
+<script>
+/* mica-glass v1 2026-09-12：随机漂移相位——每次渲染定格在动画不同瞬间。
+   纯内联零依赖，失败静默回落 :root 的 --phase 默认值。 */
+try {
+    document.documentElement.style.setProperty("--phase", Math.random().toFixed(4));
+} catch (e) { /* 相位随机化失败不影响渲染 */ }
+</script>
 </body>
 </html>

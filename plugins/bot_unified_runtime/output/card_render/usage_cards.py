@@ -1,12 +1,14 @@
-"""模型用量/账单报告卡：Mica 云母质感（Windows 11 规范）。
+"""模型用量/账单报告卡：釉瑚云母 + 液态玻璃 + 渐变漂移（mica-glass v1 2026-09-12）。
 
 规范要点（与 parse 卡/帮助卡一致）：
-- 底色渐变只从平台色派生；无平台语境的用量卡主色来自
-  ``bot_help_card_color``（留空回退中性灰），经 ``--accent`` 用
-  ``color-mix(in srgb, ... #fff)`` 掺白派生，不写死品牌色。
-- 阴影只允许两枚 token（外壳大柔光 + 面板微光）；圆角走 --r-shell/--r-panel。
+- 底色/色斑用 bridge._derive_wash_tokens 按 --accent（bot_help_card_color 派生）
+  生成的釉瑚洗（邻近色 pastel，工艺出处=用户裁定），经 ``--wash-*`` 消费；
+  --accent 退为状态/费用等 accent，语义状态色（红绿黄）置于玻璃层之上。
+- 液态玻璃 = 半透明白 + 1px 内高光渐变描边，无 backdrop-filter（透明截图无物可糊）。
+- 三枚柔光色斑缓慢漂移 + 内联脚本随机相位；动画元素全部在 .shell（即截图
+  .card 内层）中；阴影只允许两枚 token（--mica-shadow/--mica-shadow-soft）。
 - 字重最大 700；body 透明背景 + antialiased（截图 omit_background 依赖）。
-- 纯 HTML+CSS，无外链字体/图片，单页单图，渲染开销最小化。
+- 纯 HTML+CSS+一段内联脚本，无外链字体/图片，单页单图，渲染开销最小化。
 """
 
 from __future__ import annotations
@@ -70,10 +72,15 @@ def usage_report_mica_html(
     """
     import html as _html
 
+    from plugins.bot_unified_runtime.output.card_render.bridge import (
+        _derive_wash_tokens,
+    )
+
     accent, accent_ink = usage_card_accent(config)
+    wash = _derive_wash_tokens(accent)
     kind = status_kind if status_kind in {"ok", "warn", "bad"} else "ok"
     rows_html = "".join(
-        "<div class=\"mrow\">"
+        "<div class=\"mrow glass\">"
         f"<span class=\"mcell model\" title=\"{_html.escape(str(row['model']))}\">{_html.escape(str(row['model']))}</span>"
         f"<span class=\"mcell num\">{_fmt_int(row.get('prompt'))}</span>"
         f"<span class=\"mcell num\">{_fmt_int(row.get('cache_read'))}</span>"
@@ -100,19 +107,51 @@ def usage_report_mica_html(
     )
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
-:root {{ --accent:{accent}; --accent-ink:{accent_ink}; --ink:#27232a; --muted:#6f646c;
+:root {{ --phase:0.2; --accent:{accent}; --accent-ink:{accent_ink};
+  /* 釉瑚云母底主题 token，全卡统一（bridge 按 --accent 派生；工艺出处=用户裁定）。 */
+  --wash-1:{wash['wash_1']}; --wash-2:{wash['wash_2']}; --wash-3:{wash['wash_3']}; --wash-mist:{wash['wash_mist']};
+  --wash-blob-1:color-mix(in srgb, var(--accent) 14%, var(--wash-1));
+  --ink:#27232a; --muted:#6f646c;
   --r-shell:24px; --r-panel:12px; --mica-shadow:0 12px 32px rgba(31,35,41,.10); --mica-shadow-soft:0 3px 10px rgba(31,35,41,.05); }}
 * {{ box-sizing:border-box; }}
 body {{ margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; background:transparent; color:var(--ink);
   -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }}
 .stage {{ padding:26px; background:transparent; }}
-.shell {{ width:900px; overflow:hidden; border-radius:var(--r-shell); border:1px solid rgba(255,255,255,.9);
-  background:linear-gradient(165deg, color-mix(in srgb, var(--accent) 3%, #fff) 0%, color-mix(in srgb, var(--accent) 8%, #fff) 100%);
+/* 釉瑚云母外壳：雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底（不透明基础层）
+   + 1px 内高光渐变描边；色斑垫底、内容抬升。 */
+.shell {{ position:relative; width:900px; overflow:hidden; border-radius:var(--r-shell); border:1px solid transparent;
+  background:linear-gradient(145deg, var(--wash-mist) 0%, color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
+    color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%, color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%) padding-box,
+    linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
   box-shadow:var(--mica-shadow); }}
-.head {{ padding:20px 26px 16px; background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 2%, #fff), color-mix(in srgb, var(--accent) 6%, #fff));
-  border-bottom:1px solid color-mix(in srgb, var(--accent) 16%, #fff); }}
+.shell > :not(.drift-blobs) {{ position:relative; z-index:1; }}
+/* 渐变漂移色斑（wash 三色半透明互相透过，46s/52s/58s 交错漂移+呼吸）。 */
+.drift-blobs {{ position:absolute; inset:0; z-index:0; overflow:hidden; pointer-events:none; border-radius:inherit; }}
+.drift-blob {{ position:absolute; display:block; border-radius:50%; will-change:transform; }}
+.drift-blob.drift-a {{ width:58%; aspect-ratio:1; left:-14%; top:-22%;
+  background:radial-gradient(closest-side, color-mix(in srgb, var(--wash-blob-1) 34%, transparent) 0%,
+    color-mix(in srgb, var(--wash-blob-1) 18%, transparent) 46%, color-mix(in srgb, var(--wash-blob-1) 5%, transparent) 70%, transparent 100%);
+  animation:mica-drift-a 46s ease-in-out infinite alternate; animation-delay:calc(var(--phase, 0.2) * -46s); }}
+.drift-blob.drift-b {{ width:52%; aspect-ratio:1; right:-16%; bottom:-24%;
+  background:radial-gradient(closest-side, color-mix(in srgb, var(--wash-2) 30%, transparent) 0%,
+    color-mix(in srgb, var(--wash-2) 16%, transparent) 48%, color-mix(in srgb, var(--wash-2) 5%, transparent) 72%, transparent 100%);
+  animation:mica-drift-b 58s ease-in-out infinite alternate; animation-delay:calc(var(--phase, 0.2) * -58s - 9s); }}
+.drift-blob.drift-c {{ width:64%; aspect-ratio:1; left:22%; top:34%;
+  background:radial-gradient(closest-side, color-mix(in srgb, var(--wash-3) 26%, transparent) 0%,
+    color-mix(in srgb, var(--wash-3) 14%, transparent) 48%, color-mix(in srgb, var(--wash-3) 5%, transparent) 72%, transparent 100%);
+  animation:mica-drift-c 52s ease-in-out infinite alternate; animation-delay:calc(var(--phase, 0.2) * -52s - 21s); }}
+@keyframes mica-drift-a {{ 0% {{ transform:translate3d(-4%,-2%,0) scale(1); }} 50% {{ transform:translate3d(7%,9%,0) scale(1.18); }} 100% {{ transform:translate3d(-3%,14%,0) scale(.92); }} }}
+@keyframes mica-drift-b {{ 0% {{ transform:translate3d(3%,4%,0) scale(1.05); }} 50% {{ transform:translate3d(-8%,-6%,0) scale(.9); }} 100% {{ transform:translate3d(-2%,-12%,0) scale(1.2); }} }}
+@keyframes mica-drift-c {{ 0% {{ transform:translate3d(-5%,4%,0) scale(1.1); }} 50% {{ transform:translate3d(9%,-7%,0) scale(.88); }} 100% {{ transform:translate3d(2%,-3%,0) scale(1.16); }} }}
+@media (prefers-reduced-motion: reduce) {{ .drift-blob.drift-a, .drift-blob.drift-b, .drift-blob.drift-c {{ animation:none; }} }}
+/* 液态玻璃面板：半透明白 + 1px 内高光渐变描边（无 backdrop-filter）。 */
+.glass {{ background:linear-gradient(150deg, rgba(255,255,255,.66) 0%, rgba(255,255,255,.44) 100%) padding-box,
+    linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
+  border:1px solid transparent; box-shadow:var(--mica-shadow-soft); }}
+.head {{ padding:20px 26px 16px; border-bottom:1px solid rgba(255,255,255,.78); }}
 .kicker {{ color:var(--accent-ink); font-size:11px; font-weight:700; letter-spacing:.14em; }}
 .title {{ margin-top:8px; font-size:26px; font-weight:700; }}
+/* 语义状态色（红绿黄）置于玻璃层之上，不随釉瑚洗派生。 */
 .status {{ display:inline-flex; align-items:center; gap:8px; margin-top:12px; padding:6px 14px; border-radius:999px;
   font-size:14px; font-weight:700; border:1px solid #fff; }}
 .status.ok {{ color:#1a9e6c; background:color-mix(in srgb, #1a9e6c 8%, #fff); }}
@@ -120,8 +159,7 @@ body {{ margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; backgroun
 .status.bad {{ color:#d64545; background:color-mix(in srgb, #d64545 8%, #fff); }}
 .window {{ margin-top:10px; color:var(--muted); font-size:13px; }}
 .totals {{ display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; padding:14px 14px 4px; }}
-.tile {{ border-radius:var(--r-panel); padding:10px 14px; background:color-mix(in srgb, var(--accent) 4%, #ffffff);
-  border:1px solid rgba(255,255,255,.95); box-shadow:var(--mica-shadow-soft); }}
+.tile {{ border-radius:var(--r-panel); padding:10px 14px; }}
 .tile .k {{ font-size:11px; color:var(--muted); font-weight:600; letter-spacing:.04em; }}
 .tile .v {{ margin-top:4px; font-size:18px; font-weight:700; font-variant-numeric:tabular-nums; }}
 .tile.cost .v {{ color:var(--accent-ink); }}
@@ -129,32 +167,32 @@ body {{ margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; backgroun
 .mhead, .mrow {{ display:grid; grid-template-columns:minmax(150px,1.6fr) repeat(4,1fr) 1.1fr; gap:6px;
   padding:8px 12px; border-radius:10px; align-items:center; }}
 .mhead {{ font-size:11px; color:var(--muted); font-weight:700; letter-spacing:.03em; padding-bottom:2px; }}
-.mrow {{ background:color-mix(in srgb, var(--accent) 4%, #ffffff); border:1px solid rgba(255,255,255,.95);
-  font-size:12.5px; font-variant-numeric:tabular-nums; }}
+.mrow {{ font-size:12.5px; font-variant-numeric:tabular-nums; }}
 .mcell {{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
 .mcell.model {{ font-family:Consolas,monospace; font-weight:650; }}
 .mcell.num {{ text-align:right; }}
 .mcell.cost {{ font-weight:700; color:var(--accent-ink); }}
 .mcell.cost.unpriced {{ color:var(--muted); font-weight:400; }}
 .unote {{ padding:2px 12px 8px; color:var(--muted); font-size:12px; }}
-.foot {{ padding:12px 26px 16px; border-top:1px solid color-mix(in srgb, var(--accent) 16%, #fff);
-  background:color-mix(in srgb, var(--accent) 10%, #fff); font-size:12px; color:var(--muted); }}
+.foot {{ padding:12px 26px 16px; border-top:1px solid rgba(255,255,255,.80);
+  background:rgba(255,255,255,.42); font-size:12px; color:var(--muted); }}
 </style></head><body><div class="stage card"><section class="shell">
-<header class="head">
+<div class="drift-blobs" aria-hidden="true"><span class="drift-blob drift-a"></span><span class="drift-blob drift-b"></span><span class="drift-blob drift-c"></span></div>
+<header class="head glass">
 <div class="kicker">{_html.escape(kicker)}</div>
 <div class="title">{_html.escape(title)}</div>
 <div class="status {kind}">{_html.escape(status_label)}</div>
 <div class="window">{_html.escape(window_label)} · 生成于 {_html.escape(generated_at)}</div>
 </header>
 <div class="totals">
-<div class="tile"><div class="k">输入 Token</div><div class="v">{_fmt_int(totals.get("prompt_tokens"))}</div></div>
-<div class="tile"><div class="k">缓存命中</div><div class="v">{_fmt_int(totals.get("cache_read_tokens"))}</div></div>
-<div class="tile"><div class="k">缓存创建</div><div class="v">{_fmt_int(totals.get("cache_write_tokens"))}</div></div>
-<div class="tile"><div class="k">输出 Token</div><div class="v">{_fmt_int(totals.get("completion_tokens"))}</div></div>
-<div class="tile cost"><div class="k">总 Token</div><div class="v">{_fmt_int(totals.get("total_tokens"))}</div></div>
-<div class="tile cost"><div class="k">账单（元）</div><div class="v">{_html.escape(totals_cost)}</div></div>
-<div class="tile"><div class="k">调用次数</div><div class="v">{_fmt_int(totals.get("calls", 0))}</div></div>
-<div class="tile"><div class="k">统计口径</div><div class="v" style="font-size:13px;">按调用时价格</div></div>
+<div class="tile glass"><div class="k">输入 Token</div><div class="v">{_fmt_int(totals.get("prompt_tokens"))}</div></div>
+<div class="tile glass"><div class="k">缓存命中</div><div class="v">{_fmt_int(totals.get("cache_read_tokens"))}</div></div>
+<div class="tile glass"><div class="k">缓存创建</div><div class="v">{_fmt_int(totals.get("cache_write_tokens"))}</div></div>
+<div class="tile glass"><div class="k">输出 Token</div><div class="v">{_fmt_int(totals.get("completion_tokens"))}</div></div>
+<div class="tile cost glass"><div class="k">总 Token</div><div class="v">{_fmt_int(totals.get("total_tokens"))}</div></div>
+<div class="tile cost glass"><div class="k">账单（元）</div><div class="v">{_html.escape(totals_cost)}</div></div>
+<div class="tile glass"><div class="k">调用次数</div><div class="v">{_fmt_int(totals.get("calls", 0))}</div></div>
+<div class="tile glass"><div class="k">统计口径</div><div class="v" style="font-size:13px;">按调用时价格</div></div>
 </div>
 <main class="body">
 <div class="mhead"><span>模型</span><span class="mcell num">输入</span><span class="mcell num">缓存命中</span><span class="mcell num">缓存创建</span><span class="mcell num">输出</span><span class="mcell num">费用（元）</span></div>
@@ -163,7 +201,9 @@ body {{ margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; backgroun
 {unpriced_html}
 {note_html}
 <footer class="foot">账单 = Σ(输入×输入价 + 输出×输出价)，按每次调用时刻的价格表记账；价格用 /bot model price 维护。</footer>
-</section></div></body></html>"""
+</section></div>
+<script>/* mica-glass v1 2026-09-12：随机漂移相位，纯内联零依赖，失败静默。 */
+try{{document.documentElement.style.setProperty("--phase",Math.random().toFixed(4));}}catch(e){{}}</script></body></html>"""
 
 
 def render_usage_card_png(

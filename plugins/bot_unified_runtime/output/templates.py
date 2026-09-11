@@ -1,6 +1,11 @@
 """HTML 卡片模板：把解析结果渲染成可截图的信息卡 HTML。
 
 模板只做展示，不决定发送；所有字段都经 html.escape 防注入。
+mica-glass v1 2026-09-12：视觉层统一「釉瑚云母 + 液态玻璃 + 渐变漂移」——
+底色/色斑用 bridge._derive_wash_tokens 按 --pc 派生的釉瑚洗（__WASH_*__ 注入，
+禁纯色），--pc 退为徽章/高亮 accent；半透明白玻璃面板 + 1px 内高光渐变描边、
+三枚柔光色斑缓慢漂移 + 内联脚本随机相位（零外部依赖，失败静默）；
+数据绑定与 __PC__ 注入契约不变。
 """
 
 from __future__ import annotations
@@ -8,6 +13,9 @@ from __future__ import annotations
 import html
 from typing import Any
 
+from plugins.bot_unified_runtime.output.card_render.bridge import (
+    _derive_wash_tokens,
+)
 from plugins.bot_unified_runtime.output.card_render.bridge import (
     flat_projection as _flat_projection,
 )
@@ -19,6 +27,12 @@ from plugins.bot_unified_runtime.output.card_render.bridge import (
 )
 from plugins.bot_unified_runtime.output.card_render.bridge import (
     render_universal_card_html as _render_universal_card_html,
+)
+
+# mica-glass v1 2026-09-12：随机漂移相位脚本（纯内联零依赖，失败静默回落 CSS 默认值）。
+_PHASE_JS = (
+    '<script>try{document.documentElement.style.setProperty("--phase",'
+    "Math.random().toFixed(4));}catch(e){}</script>"
 )
 
 _CARD_CSS = """
@@ -36,13 +50,85 @@ body {
   width: auto; background: transparent; border: 0; border-radius: 0;
   box-shadow: none; padding: 24px;
 }
-:root { --pc: __PC__; --pc-dark: __PC_DARK__; --pc-rgb: __PC_RGB__; }
+:root { --phase: 0.2; --pc: __PC__; --pc-dark: __PC_DARK__; --pc-rgb: __PC_RGB__;
+  /* 釉瑚云母底主题 token，全卡统一（bridge 按 --pc 派生注入；工艺出处=用户裁定）。 */
+  --wash-1: __WASH_1__; --wash-2: __WASH_2__; --wash-3: __WASH_3__; --wash-mist: __WASH_MIST__;
+  --wash-blob-1: color-mix(in srgb, var(--pc) 14%, var(--wash-1)); }
+/* mica-glass：釉瑚云母外壳（雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底，
+   不透明基础层）+ 1px 内高光渐变描边；色斑垫底、内容抬升；
+   阴影只允许两枚 token。 */
 .panel {
+  position: relative;
   width: 640px;
-  background: color-mix(in srgb, var(--pc) 5%, #ffffff);
   border-radius: 18px; overflow: hidden;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(145deg, var(--wash-mist) 0%,
+      color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
+      color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%,
+      color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%) padding-box,
+    linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%,
+      rgba(255,255,255,.72) 100%) border-box;
   box-shadow: 0 12px 32px rgba(31, 35, 41, 0.10), 0 2px 8px rgba(31, 35, 41, 0.05);
-  border: 1px solid color-mix(in srgb, var(--pc) 14%, #e4e6eb);
+}
+.panel > :not(.drift-blobs) { position: relative; z-index: 1; }
+/* 渐变漂移色斑（wash 三色半透明互相透过，46s/52s/58s 交错漂移+呼吸）。 */
+.drift-blobs { position: absolute; inset: 0; z-index: 0; overflow: hidden;
+  pointer-events: none; border-radius: inherit; }
+.drift-blob { position: absolute; display: block; border-radius: 50%; will-change: transform; }
+.drift-blob.drift-a {
+  width: 58%; aspect-ratio: 1; left: -14%; top: -22%;
+  background: radial-gradient(closest-side,
+    color-mix(in srgb, var(--wash-blob-1) 34%, transparent) 0%,
+    color-mix(in srgb, var(--wash-blob-1) 18%, transparent) 46%,
+    color-mix(in srgb, var(--wash-blob-1) 5%, transparent) 70%, transparent 100%);
+  animation: mica-drift-a 46s ease-in-out infinite alternate;
+  animation-delay: calc(var(--phase, 0.2) * -46s);
+}
+.drift-blob.drift-b {
+  width: 52%; aspect-ratio: 1; right: -16%; bottom: -24%;
+  background: radial-gradient(closest-side,
+    color-mix(in srgb, var(--wash-2) 30%, transparent) 0%,
+    color-mix(in srgb, var(--wash-2) 16%, transparent) 48%,
+    color-mix(in srgb, var(--wash-2) 5%, transparent) 72%, transparent 100%);
+  animation: mica-drift-b 58s ease-in-out infinite alternate;
+  animation-delay: calc(var(--phase, 0.2) * -58s - 9s);
+}
+.drift-blob.drift-c {
+  width: 64%; aspect-ratio: 1; left: 22%; top: 34%;
+  background: radial-gradient(closest-side,
+    color-mix(in srgb, var(--wash-3) 26%, transparent) 0%,
+    color-mix(in srgb, var(--wash-3) 14%, transparent) 48%,
+    color-mix(in srgb, var(--wash-3) 5%, transparent) 72%, transparent 100%);
+  animation: mica-drift-c 52s ease-in-out infinite alternate;
+  animation-delay: calc(var(--phase, 0.2) * -52s - 21s);
+}
+@keyframes mica-drift-a {
+  0% { transform: translate3d(-4%, -2%, 0) scale(1); }
+  50% { transform: translate3d(7%, 9%, 0) scale(1.18); }
+  100% { transform: translate3d(-3%, 14%, 0) scale(.92); }
+}
+@keyframes mica-drift-b {
+  0% { transform: translate3d(3%, 4%, 0) scale(1.05); }
+  50% { transform: translate3d(-8%, -6%, 0) scale(.9); }
+  100% { transform: translate3d(-2%, -12%, 0) scale(1.2); }
+}
+@keyframes mica-drift-c {
+  0% { transform: translate3d(-5%, 4%, 0) scale(1.1); }
+  50% { transform: translate3d(9%, -7%, 0) scale(.88); }
+  100% { transform: translate3d(2%, -3%, 0) scale(1.16); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .drift-blob.drift-a, .drift-blob.drift-b, .drift-blob.drift-c { animation: none; }
+}
+/* 液态玻璃面板：半透明白 + 内高光描边（无 backdrop-filter，透明截图无物可糊）。 */
+.glass {
+  background:
+    linear-gradient(150deg, rgba(255,255,255,.68) 0%, rgba(255,255,255,.44) 100%) padding-box,
+    linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%,
+      rgba(255,255,255,.72) 100%) border-box;
+  border: 1px solid transparent;
+  box-shadow: 0 3px 10px rgba(31, 35, 41, 0.06);
 }
 .cover-wrap { position: relative; width: 100%; height: 240px;
   background: linear-gradient(135deg, color-mix(in srgb, var(--pc) 10%, #ffffff) 0%, color-mix(in srgb, var(--pc) 18%, #ffffff) 100%); }
@@ -55,12 +141,12 @@ body {
 .title { font-size: 19px; font-weight: 700; color: #2b3440; line-height: 1.4; }
 .author { margin-top: 6px; font-size: 13px; color: #66727f; }
 .stats { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
-.stat { background: color-mix(in srgb, var(--pc) 10%, #ffffff); color: var(--pc-dark);
+.stat { background: color-mix(in srgb, var(--pc) 10%, rgba(255, 255, 255, 0.72)); color: var(--pc-dark);
   font-size: 12px; padding: 3px 9px; border-radius: 999px; }
 .summary { margin-top: 10px; font-size: 13px; color: #4a5560;
   line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
 .footer { margin-top: 10px; font-size: 11px; color: #7a8699;
-  border-top: 1px dashed color-mix(in srgb, var(--pc) 12%, #e4e6eb); padding-top: 8px; }
+  border-top: 1px dashed color-mix(in srgb, var(--pc) 14%, rgba(255, 255, 255, 0.60)); padding-top: 8px; }
 """
 
 
@@ -84,11 +170,16 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
     pc = _esc(payload.get("platform_color")) or "#607080"
     pc_dark = _esc(payload.get("platform_color_dark")) or "#4a5866"
     pc_rgb = _esc(payload.get("platform_color_rgb")) or "96,112,128"
+    wash = _derive_wash_tokens(pc)
     css = (
         _CARD_CSS
         .replace("__PC__", pc)
         .replace("__PC_DARK__", pc_dark)
         .replace("__PC_RGB__", pc_rgb)
+        .replace("__WASH_1__", wash["wash_1"])
+        .replace("__WASH_2__", wash["wash_2"])
+        .replace("__WASH_3__", wash["wash_3"])
+        .replace("__WASH_MIST__", wash["wash_mist"])
     )
 
     cover_block = ""
@@ -105,6 +196,10 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
     return (
         "<html><head><meta charset=\"utf-8\"><style>"
         f"{css}</style></head><body><div class=\"card\"><div class=\"panel\">"
+        '<div class="drift-blobs" aria-hidden="true">'
+        '<span class="drift-blob drift-a"></span>'
+        '<span class="drift-blob drift-b"></span>'
+        '<span class="drift-blob drift-c"></span></div>'
         f'<div class="cover-wrap">{cover_block}'
         f'<div class="badge">{platform}</div>'
         '<div class="cover-fallback">🖼</div></div>'
@@ -113,7 +208,7 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
         + (f'<div class="stats">{stats_html}</div>' if stats_html else "")
         + (f'<div class="summary">{summary}</div>' if summary else "")
         + (f'<div class="footer">{footer}</div>' if footer else "")
-        + "</div></div></div></body></html>"
+        + "</div></div></div>" + _PHASE_JS + "</body></html>"
     )
 
 
