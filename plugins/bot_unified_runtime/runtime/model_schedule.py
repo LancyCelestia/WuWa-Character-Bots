@@ -87,6 +87,49 @@ def resolve_scheduled_model(
     return ""
 
 
+def run_model_schedule_job(
+    *,
+    settings_store: Any,
+    default_schedule: Any,
+    state: dict[str, str],
+    zone: Any = None,
+) -> None:
+    """执行一次分时段切换判定（独立函数便于离线回归测试）。
+
+    ``state`` 是调用方持有的 ``{"last_applied": str}`` 记忆：
+    - 命中窗口且目标变化 → 设置 BOT_CHAT_MODEL 覆盖；
+    - 未命中窗口且上次是调度器设置的 → 清除覆盖；
+    - 时段表被清空但状态里仍有上次应用记录 → 同样清除覆盖，
+      否则此前设置的 BOT_CHAT_MODEL 覆盖会永久卡死。
+    """
+    raw = settings_store.get_or(
+        "BOT_MODEL_SCHEDULE",
+        default_schedule,
+    )
+    schedule = parse_model_schedule(raw)
+    if not schedule:
+        if state.get("last_applied"):
+            settings_store.reset_override("BOT_CHAT_MODEL")
+            state["last_applied"] = ""
+            logger.info("model schedule cleared override (schedule emptied)")
+        return
+    if zone is None:
+        zone = datetime.now().astimezone().tzinfo
+    now_local = datetime.now(zone).time()
+    target = resolve_scheduled_model(schedule, now_local)
+    if target == state["last_applied"]:
+        return
+    if target:
+        settings_store.set_override("BOT_CHAT_MODEL", target)
+        logger.info(
+            "model schedule switched override=%s window active", target
+        )
+    else:
+        settings_store.reset_override("BOT_CHAT_MODEL")
+        logger.info("model schedule cleared override (outside windows)")
+    state["last_applied"] = target
+
+
 def _register_model_schedule_scheduler(
     *,
     scheduler: Any,
@@ -107,26 +150,12 @@ def _register_model_schedule_scheduler(
 
     def _job() -> None:
         try:
-            raw = settings_store.get_or(
-                "BOT_MODEL_SCHEDULE",
-                getattr(config, "bot_model_schedule", {}),
+            run_model_schedule_job(
+                settings_store=settings_store,
+                default_schedule=getattr(config, "bot_model_schedule", {}),
+                state=state,
+                zone=zone,
             )
-            schedule = parse_model_schedule(raw)
-            if not schedule:
-                return
-            now_local = datetime.now(zone).time()
-            target = resolve_scheduled_model(schedule, now_local)
-            if target == state["last_applied"]:
-                return
-            if target:
-                settings_store.set_override("BOT_CHAT_MODEL", target)
-                logger.info(
-                    "model schedule switched override=%s window active", target
-                )
-            else:
-                settings_store.reset_override("BOT_CHAT_MODEL")
-                logger.info("model schedule cleared override (outside windows)")
-            state["last_applied"] = target
         except Exception:  # 调度任务失败不影响主链路。
             logger.exception("model schedule job failed")
 

@@ -13,12 +13,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
+import os
 import re
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+_logger = logging.getLogger(__name__)
 
 # 互动次数 -> 自动关系层级（档案未显式指定 familiarity 时生效）。
 FAMILIAR_INTERACTION_THRESHOLD = 8
@@ -307,6 +312,14 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_REPLY_DETAIL": _reply_detail_converter,
     "BOT_VISION_ENABLED": _bool_converter,
     "BOT_VISION_MODE": _vision_mode_converter,
+    "BOT_ASR_ENABLED": _bool_converter,
+    "BOT_VIDEO_UNDERSTANDING_ENABLED": _bool_converter,
+    "BOT_VIDEO_MAX_FRAMES": lambda value: max(1, int(str(value).strip() or "1")),
+    "BOT_VIDEO_SKIP_ASR_WITH_SUBTITLE": _bool_converter,
+    "BOT_VIDEO_PROGRESS_ACK_ENABLED": _bool_converter,
+    "BOT_VIDEO_FUZZY_FOLLOWUP": _bool_converter,
+    "BOT_VIDEO_DEEP_ENABLED": _bool_converter,
+    "BOT_VIDEO_NATIVE_INPUT": _bool_converter,
     "BOT_CONTENT_VIDEO_AUTO_SEND": _bool_converter,
     "BOT_POKE_ENABLED": _bool_converter,
     "BOT_POKE_PRIVATE_COOLDOWN_SECONDS": _memory_duration_converter,
@@ -328,7 +341,9 @@ class RuntimeSettingsStore:
     ) -> None:
         self.instance = instance
         self.path = Path(path).expanduser() if path else None
-        self._lock = threading.Lock()
+        # RLock：mutator 持锁调用 _save，_save 内通知监听时需再次判锁。
+        self._lock = threading.RLock()
+        self._change_listeners: list[Callable[[], None]] = []
         self._overrides: dict[str, Any] = {}
         self._nicknames: list[str] = []
         self._interactions: dict[str, int] = {}
@@ -337,6 +352,11 @@ class RuntimeSettingsStore:
         self._model_registry: dict[str, dict[str, Any]] = {}
         self._vision_registry: dict[str, dict[str, Any]] = {}
         self._mtime: float = 0.0
+        # 互动计数写盘节流：每条聊天回复都会 +1，若每次都全量重写整个
+        # settings JSON，纯属性能摩擦。内存即时生效，落盘按最小间隔节流；
+        # 其他 mutator 的 _save 是全量转储，顺带把未落盘的计数一并写掉。
+        # 代价：进程崩溃最多丢最近 30 秒的互动计数（纯统计，可接受）。
+        self._last_interaction_save = 0.0
         self._load()
 
     # ---- 持久化 ----
@@ -346,8 +366,29 @@ class RuntimeSettingsStore:
             return
         try:
             self._mtime = self.path.stat().st_mtime
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            raw_text = self.path.read_text(encoding="utf-8")
+        except OSError:
+            return
+        try:
+            payload = json.loads(raw_text)
+        except ValueError as exc:
+            # 文件损坏（截断/写坏）时保留现场并改名，绝不让下次 _save
+            # 把损坏内容静默覆盖成空态（否则历史覆盖项/计数被永久清零）。
+            _logger.warning(
+                "runtime settings file is corrupt; preserving as *.corrupt: %s (%s)",
+                self.path.name,
+                exc,
+            )
+            self._quarantine_corrupt_file()
+            self._mtime = 0.0
+            return
+        if not isinstance(payload, dict):
+            _logger.warning(
+                "runtime settings file is not a JSON object; preserving as *.corrupt: %s",
+                self.path.name,
+            )
+            self._quarantine_corrupt_file()
+            self._mtime = 0.0
             return
         if not isinstance(payload, dict):
             return
@@ -373,11 +414,14 @@ class RuntimeSettingsStore:
             ]
         interactions = payload.get("interactions")
         if isinstance(interactions, dict):
-            self._interactions = {
-                str(key): int(value)
-                for key, value in interactions.items()
-                if isinstance(value, int) and value > 0
-            }
+            # 按键 max 合并：本进程可能有未落盘的新计数（写盘节流 30s），
+            # 外部修改触发的重载不能把内存计数整体替换掉。
+            for key, value in interactions.items():
+                if isinstance(value, int) and value > 0:
+                    normalized_key = str(key)
+                    self._interactions[normalized_key] = max(
+                        self._interactions.get(normalized_key, 0), value
+                    )
         persona_override = payload.get("persona_override")
         if isinstance(persona_override, str):
             self._persona_override = persona_override.strip()
@@ -403,6 +447,17 @@ class RuntimeSettingsStore:
                 if isinstance(item, dict)
             }
 
+    def _quarantine_corrupt_file(self) -> None:
+        """把损坏的设置文件改名保留（.corrupt-<时间戳>）；失败则原地不动。"""
+        if self.path is None:
+            return
+        try:
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            quarantined = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
+            os.replace(self.path, quarantined)
+        except OSError:
+            return
+
     def _reload_if_changed(self) -> None:
         """文件被其他进程（例如管理员命令）修改后，本进程读时自动刷新。"""
         if not self.path or not self.path.exists():
@@ -414,12 +469,29 @@ class RuntimeSettingsStore:
         if mtime != self._mtime:
             self._load()
 
+    def register_change_listener(self, callback: Callable[[], None]) -> None:
+        """注册设置变更监听（持久化保存时触发；路由缓存等用）。"""
+        with self._lock:
+            self._change_listeners.append(callback)
+
     def _save(self) -> None:
+        # 通知放在持久化之前：即使写盘失败（OSError 提前返回），
+        # 内存中的覆盖也已生效，监听方（路由缓存）必须失效。
+        with self._lock:
+            listeners = list(self._change_listeners)
+        for callback in listeners:
+            try:
+                callback()
+            except Exception:  # noqa: BLE001, S110 - 监听失败不影响设置保存。
+                pass
         if not self.path:
             return
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(
+            # 临时文件 + os.replace 原子落盘：进程中途被杀/磁盘满时不会留下
+            # 半截 JSON（写坏一次会让下次 _load 走空态，历史设置被清零）。
+            temp_path = self.path.with_name(f"{self.path.name}.tmp")
+            temp_path.write_text(
                 json.dumps(
                     {
                         "overrides": self._overrides,
@@ -435,6 +507,7 @@ class RuntimeSettingsStore:
                 ),
                 encoding="utf-8",
             )
+            os.replace(temp_path, self.path)
             self._mtime = self.path.stat().st_mtime
         except OSError:
             return
@@ -540,7 +613,10 @@ class RuntimeSettingsStore:
             self._reload_if_changed()
             count = self._interactions.get(sender_id, 0) + 1
             self._interactions[sender_id] = count
-            self._save()
+            now = time.monotonic()
+            if now - self._last_interaction_save >= 30.0:
+                self._last_interaction_save = now
+                self._save()
         return count
 
     def interaction_count(self, sender_id: str) -> int:
@@ -662,17 +738,24 @@ class InstanceSettingsManager:
         self._lock = threading.Lock()
 
     def _path_for(self, instance: str) -> Path:
-        safe_instance = re.sub(r"[^A-Za-z0-9_\-\u4e00-\u9fff]+", "_", instance) or "default"
-        return self.settings_dir / f"runtime_settings_{safe_instance}.json"
+        return self.settings_dir / f"runtime_settings_{self._safe_name(instance)}.json"
+
+    @staticmethod
+    def _safe_name(instance: str) -> str:
+        return re.sub(r"[^A-Za-z0-9_\-\u4e00-\u9fff]+", "_", instance) or "default"
 
     def get(self, instance: str) -> RuntimeSettingsStore:
+        # 缓存键必须用清洗后的名字：原名 "a/b" 与 "a b" 会映射到同一个
+        # 设置文件，若按原名缓存会出现两个互不知晓的 store 共写同一文件
+        # （内存计数互相覆盖、变更监听各自为政）。
+        safe_instance = self._safe_name(instance)
         with self._lock:
-            if instance not in self._stores:
-                self._stores[instance] = RuntimeSettingsStore(
-                    self._path_for(instance),
+            if safe_instance not in self._stores:
+                self._stores[safe_instance] = RuntimeSettingsStore(
+                    self._path_for(safe_instance),
                     instance=instance,
                 )
-            return self._stores[instance]
+            return self._stores[safe_instance]
 
     def list_instances(self) -> list[str]:
         if not self.settings_dir.exists():
@@ -693,15 +776,25 @@ def effective_instance(config: object) -> str:
 
 
 def build_runtime_settings_store(config: object) -> RuntimeSettingsStore:
-    manager = InstanceSettingsManager(
-        str(getattr(config, "bot_runtime_settings_dir", "data/settings")).strip()
-        or "data/settings"
-    )
-    return manager.get(effective_instance(config))
+    return build_instance_settings_manager(config).get(effective_instance(config))
+
+
+# 进程级缓存：同一 settings_dir 共享同一 manager/store。此前每次调用新建
+# store，同一设置文件在进程内出现多个互不知晓的实例（变更监听、内存中的
+# interactions 计数各自为政）；共享后「保存→监听（路由缓存失效）」链路才
+# 对所有调用方一致生效。
+_MANAGER_CACHE: dict[str, InstanceSettingsManager] = {}
+_MANAGER_CACHE_LOCK = threading.Lock()
 
 
 def build_instance_settings_manager(config: object) -> InstanceSettingsManager:
-    return InstanceSettingsManager(
+    settings_dir = (
         str(getattr(config, "bot_runtime_settings_dir", "data/settings")).strip()
         or "data/settings"
     )
+    with _MANAGER_CACHE_LOCK:
+        manager = _MANAGER_CACHE.get(settings_dir)
+        if manager is None:
+            manager = InstanceSettingsManager(settings_dir)
+            _MANAGER_CACHE[settings_dir] = manager
+        return manager

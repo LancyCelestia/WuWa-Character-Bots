@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
@@ -69,7 +70,7 @@ class SQLiteIntentTelemetry:
 
     def _ensure_schema(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS intent_telemetry (
@@ -115,7 +116,7 @@ class SQLiteIntentTelemetry:
         web_error_kind: str = "",
         legacy_category: str = "",
     ) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO intent_telemetry (
@@ -163,7 +164,7 @@ class SQLiteIntentTelemetry:
 
     def list_records(self, limit: int | None = None) -> list[dict[str, Any]]:
         take = max(1, int(limit or self.max_items))
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             rows = connection.execute(
                 "SELECT * FROM intent_telemetry ORDER BY event_id ASC LIMIT ?",
                 (take,),
@@ -171,7 +172,7 @@ class SQLiteIntentTelemetry:
         return [dict(row) for row in rows]
 
     def summary(self) -> dict[str, Any]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             total = int(
                 connection.execute("SELECT COUNT(*) FROM intent_telemetry").fetchone()[0]
             )

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, ValidationInfo, field_validator, model_validator
+
+_logger = logging.getLogger(__name__)
 
 
 def translate_env_keys(values: dict[str, Any]) -> dict[str, Any]:
@@ -176,10 +179,16 @@ class Config(BaseModel):
     # NapCat 断线不可投才置 FAILED_FINAL（防非终态行无限堆积）；缺字段 =
     # env 键被 pydantic 丢弃、旋钮恒默认（§14.4.2：env 键须有同名小写字段）。
     bot_send_bot_unavailable_max_age_seconds: float = 1800.0
-    # 发送层单次请求硬超时（秒）：OneBot/Telegram/Mail 发送共用；0 或非法值在运行时回退 15。
+    # 发送层单次请求硬超时（秒）：OneBot/Telegram/Mail 发送共用；
+    # 合法范围 (0, 600]，0/负数/NaN/Infinity/超大值在启动校验时直接报错
+    # （与 _validate_transport_timeout_seconds 一致，无"回退 15"的隐式兜底）。
     bot_transport_timeout_seconds: float = 15.0
     # 请求级总预算（秒）：单次聊天从 LLM/工具循环到发送共用一个单调 deadline；范围 (0,600]。
     bot_request_budget_seconds: float = 150.0
+    # 聊天管线专用线程池 worker 数（管线检视 #4）：与默认线程池隔离，
+    # 避免长任务挤占语音转码/kb 拉取等 to_thread；在途上限为 2 倍（含排队），
+    # 超限快败记 pipeline_busy 审计。钳位 1..64；env 兜底 BOT_PIPELINE_MAX_WORKERS。
+    bot_pipeline_max_workers: int = 8
     bot_emotion_enabled: bool = True
     bot_emotion_max_signals: int = 4
     # 机器人自身心情（L1，character/mood.py）：分钟-小时尺度连续情绪，事件驱动、
@@ -245,7 +254,11 @@ class Config(BaseModel):
     bot_glossary_max_chars: int = 1500
     bot_user_profiles_file: str = ""
     bot_shared_group_context_enabled: bool = False
-    bot_group_digest_enabled: bool = False
+    # H4：此处原有 `bot_group_digest_enabled` 字段，全库**零读取**（死字段），
+    # 而真正生效的总开关是上面的 `bot_shared_group_context_enabled`
+    # （唯一读取点 character/shared_group.py）。手册一度把死字段当作
+    # "用户操作项 BOT_GROUP_DIGEST_ENABLED=true 即时生效"来指导用户，照做无效，
+    # 故删除死字段以消除这个陷阱。
     bot_group_digest_max_turns: int = 150
     bot_group_digest_max_chars: int = 800
     bot_group_digest_llm_enabled: bool = False
@@ -390,6 +403,37 @@ class Config(BaseModel):
     bot_asr_enabled: bool = False
     bot_asr_timeout_seconds: float = 20.0
     bot_asr_max_chars: int = 300
+    # 视频理解（媒体档案库 + 抽帧/音轨/字幕 → 人格化追问）：
+    # 总开关。关闭时完全走旧的 describe_video 抽帧摘要行为，零额外开销。
+    bot_video_understanding_enabled: bool = False
+    # 媒体档案库：message_id ↔ 视频文件 ↔ 字幕 ↔ 简报 的 SQLite 关联存储。
+    bot_media_registry_path: str = "data/media_registry.sqlite3"
+    # 档案（含感知简报）保留天数：过期自动剪枝，追问会重新分析；文本量级
+    # 上限另受 5000 行 FIFO 约束，不会无限增长。视频文件本身仍由下载缓存
+    # 配额（bot_download_cache_max_bytes / max_age_days）单独清理。
+    bot_media_registry_ttl_days: int = 7
+    # 抽帧数（单次 VLM 调用内的图片预算）与简报硬预算：到点用已完成的信号合成。
+    bot_video_max_frames: int = 6
+    bot_video_brief_deadline_seconds: float = 75.0
+    bot_video_brief_max_chars: int = 1200
+    # 音轨转写：已有平台 CC 字幕时默认跳过 ASR（字幕已含语言信息，ASR 是纯增量成本）。
+    # 默认分析前 600 秒（10 分钟）；ASR 超时随上限缩放（上限的 25%，封顶 150s）。
+    bot_video_asr_max_seconds: int = 600
+    bot_video_skip_asr_with_subtitle: bool = True
+    # 原生视频直传（video_url content part，仅部分供应商支持）：默认关，失败自动回退抽帧。
+    bot_video_native_input: bool = False
+    bot_video_native_max_mb: int = 20
+    # 进度提示（"视频我看一下，稍等…"）与同会话节流。
+    bot_video_progress_ack_enabled: bool = True
+    bot_video_progress_ack_cooldown_seconds: int = 60
+    # 模糊追问（无回复引用、文本提到"视频/刚才那个"等指代时用会话内最近档案）：
+    # 默认开——口语指代（"刚才那个讲了什么"）不再需要 @ 或回复。
+    bot_video_fuzzy_followup: bool = True
+    # 自然语言深挖（"再仔细看看/没看懂"命中时重新分析）：更多帧 + 音频放宽 + 强制 ASR。
+    bot_video_deep_enabled: bool = True
+    bot_video_deep_frames: int = 16
+    bot_video_deep_asr_max_seconds: int = 1800
+    bot_video_deep_deadline_seconds: float = 150.0
     # NSFW 直接删除阈值（淫秽色情不存储）：>= 该分数删除文件与记录。
     bot_meme_library_nsfw_delete: float = 0.8
     # 群图下载代理（默认直连 QQ 多媒体源；外网源可走 7890）。
@@ -490,6 +534,8 @@ class Config(BaseModel):
     bot_render_forward_node_chars: int = 900
     bot_audit_log_file: str = ""
     bot_audit_log_max_bytes: int = 2097152
+    # prompt audit 配置组：当前仅 prompt_preview CLI 使用（bot_prompt_audit_dir /
+    # bot_prompt_audit_max_chars），主链路不读取；保留字段供 CLI 与未来扩展。
     bot_prompt_audit_enabled: bool = True
     bot_prompt_audit_dir: str = "data/prompt_audit"
     bot_prompt_audit_include_messages: bool = True
@@ -508,6 +554,11 @@ class Config(BaseModel):
     bot_api_key_qianqianye: str = ""
     bot_api_key_qianqianye_night: str = ""
     bot_api_key_deepseek_qian: str = ""
+    # H3：registry 里 ds-official-flash / -flash-vision / -pro 三条目都引用
+    # `env:BOT_API_KEY_DEEPSEEK_OFFICIAL`，但字段长期缺失 → `_resolve_api_key`
+    # 的 Config 回退取不到值，即使 .env 填了 key 也恒判 config_missing
+    # （09-09「五连发全失败」同类事故的第三次）。字段必须与 .env 同名小写。
+    bot_api_key_deepseek_official: str = ""
     bot_api_key_aiprc: str = ""
     bot_api_key_aiprc_gemini: str = ""
     bot_api_key_aiprc_grok: str = ""
@@ -677,9 +728,13 @@ class Config(BaseModel):
                 return value
             text = value.strip()
             normalized = text.replace("\\", "/")
-            if normalized == "data":
+            # 与 scripts/runtime_paths.py 对齐：剥 ./ 前缀并对 data/ 前缀
+            # 大小写不敏感重映射，两侧对 "./DATA/x" 得到同一结果。
+            while normalized.startswith("./"):
+                normalized = normalized[2:]
+            if normalized.lower() == "data":
                 return str(data_root)
-            if normalized.startswith("data/"):
+            if normalized.lower().startswith("data/"):
                 return str(data_root / normalized[5:])
             return value
 
@@ -789,7 +844,7 @@ class Config(BaseModel):
 
     @field_validator("bot_persona_alt_profiles", mode="before")
     @classmethod
-    def _parse_alt_profiles(cls, value: Any) -> dict[str, dict[str, Any]]:
+    def _parse_alt_profiles(cls, value: Any, info: ValidationInfo) -> dict[str, dict[str, Any]]:
         if value is None or value == "":
             return {}
         if isinstance(value, dict):
@@ -800,7 +855,15 @@ class Config(BaseModel):
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)
-            except ValueError:
+            except ValueError as exc:
+                # 解析失败只报键名与异常摘要（禁止打出配置内容防密钥泄漏），
+                # 保持返回空值的既有降级行为，不做启动硬失败。
+                _logger.error(
+                    "配置项 %s JSON 解析失败，按空值降级（%s: %s）",
+                    info.field_name,
+                    type(exc).__name__,
+                    exc,
+                )
                 return {}
             if isinstance(parsed, dict):
                 return {
@@ -820,7 +883,7 @@ class Config(BaseModel):
         mode="before",
     )
     @classmethod
-    def _parse_model_dicts(cls, value: Any) -> dict[str, Any]:
+    def _parse_model_dicts(cls, value: Any, info: ValidationInfo) -> dict[str, Any]:
         if value is None or value == "":
             return {}
         if isinstance(value, dict):
@@ -828,7 +891,15 @@ class Config(BaseModel):
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)
-            except ValueError:
+            except ValueError as exc:
+                # 例：BOT_MODEL_REGISTRY 少一个引号会让全部渠道无声降级为单
+                # 模型；至少要 ERROR 级别可见（只报键名，不打出配置内容）。
+                _logger.error(
+                    "配置项 %s JSON 解析失败，按空值降级（%s: %s）",
+                    info.field_name,
+                    type(exc).__name__,
+                    exc,
+                )
                 return {}
             if isinstance(parsed, dict):
                 return {str(k): v for k, v in parsed.items()}
@@ -836,7 +907,7 @@ class Config(BaseModel):
 
     @field_validator("bot_model_priority_groups", mode="before")
     @classmethod
-    def _parse_model_priority_groups(cls, value: Any) -> list[dict[str, Any]]:
+    def _parse_model_priority_groups(cls, value: Any, info: ValidationInfo) -> list[dict[str, Any]]:
         """BOT_MODEL_PRIORITY_GROUPS：接受 JSON 数组字符串或 list[dict]。"""
         if value is None or value == "":
             return []
@@ -845,7 +916,13 @@ class Config(BaseModel):
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)
-            except ValueError:
+            except ValueError as exc:
+                _logger.error(
+                    "配置项 %s JSON 解析失败，按空值降级（%s: %s）",
+                    info.field_name,
+                    type(exc).__name__,
+                    exc,
+                )
                 return []
             if isinstance(parsed, list):
                 return [item for item in parsed if isinstance(item, dict)]
@@ -860,7 +937,7 @@ class Config(BaseModel):
         except (TypeError, ValueError) as exc:
             raise ValueError("BOT_TRANSPORT_TIMEOUT_SECONDS 必须是数字（秒）") from exc
         if math.isnan(number) or number <= 0 or number > 600:
-            raise ValueError("BOT_TRANSPORT_TIMEOUT_SECONDS 必须在 0-600 秒之间")
+            raise ValueError("BOT_TRANSPORT_TIMEOUT_SECONDS 必须在 (0, 600] 秒之间（0 不合法）")
         return number
 
     @field_validator("bot_request_budget_seconds", mode="before")
@@ -877,7 +954,7 @@ class Config(BaseModel):
 
     @field_validator("bot_credential_probe_urls", mode="before")
     @classmethod
-    def _parse_probe_urls(cls, value: Any) -> dict[str, str]:
+    def _parse_probe_urls(cls, value: Any, info: ValidationInfo) -> dict[str, str]:
         if value is None or value == "":
             return {}
         if isinstance(value, dict):
@@ -885,7 +962,13 @@ class Config(BaseModel):
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)
-            except ValueError:
+            except ValueError as exc:
+                _logger.error(
+                    "配置项 %s JSON 解析失败，按空值降级（%s: %s）",
+                    info.field_name,
+                    type(exc).__name__,
+                    exc,
+                )
                 return {}
             if isinstance(parsed, dict):
                 return {str(k): str(v) for k, v in parsed.items()}

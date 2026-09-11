@@ -273,7 +273,7 @@ def _build_runtime(
 
 
 def _reply_text(send_queue: SendQueue, request_id: str) -> str | None:
-    for request in reversed(send_queue.sent_requests):
+    for request in reversed(getattr(send_queue, "sent_requests", [])):
         if request.request_id != request_id:
             continue
         content_ref = request.content.content_ref
@@ -643,7 +643,9 @@ def run_interactive(config: Config) -> int:
             sent_request = next(
                 (
                     request
-                    for request in reversed(pipeline.send_queue.sent_requests)
+                    for request in reversed(
+                        getattr(pipeline.send_queue, "sent_requests", [])
+                    )
                     if request.request_id == message.request_id
                 ),
                 None,

@@ -18,6 +18,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -56,7 +57,7 @@ class ResultUnknownLedger:
 
     def _ensure_schema(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS result_unknown (
@@ -99,7 +100,7 @@ class ResultUnknownLedger:
         if not request_id or not adapter:
             return False
         with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection, connection:
                 existing = connection.execute(
                     "SELECT 1 FROM result_unknown WHERE request_id = ? LIMIT 1",
                     (request_id,),
@@ -131,7 +132,7 @@ class ResultUnknownLedger:
         by_bot: dict[str, int] = {}
         pending = 0
         expired = 0
-        with self._lock, self._connect() as connection:
+        with self._lock, closing(self._connect()) as connection, connection:
             cursor = connection.execute(
                 """
                     UPDATE result_unknown SET status = 'expired', resolved_at = ?
@@ -154,7 +155,7 @@ class ResultUnknownLedger:
         return ReconcileSummary(pending=pending, expired=expired, by_bot=by_bot)
 
     def pending_count(self) -> int:
-        with self._lock, self._connect() as connection:
+        with self._lock, closing(self._connect()) as connection, connection:
             return int(
                 connection.execute(
                     "SELECT COUNT(*) FROM result_unknown WHERE status = 'pending'"

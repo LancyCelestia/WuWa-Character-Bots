@@ -17,6 +17,7 @@ import sqlite3
 import threading
 import time
 from collections import OrderedDict
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -104,7 +105,7 @@ class SqliteEventIdempotencyTable:
 
     def _ensure_schema(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS event_idempotency (
@@ -132,7 +133,7 @@ class SqliteEventIdempotencyTable:
         now = float(self._clock())
         cutoff = now - self.ttl_seconds
         with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection, connection:
                 connection.execute(
                     "DELETE FROM event_idempotency WHERE claimed_at_unix < ?",
                     (cutoff,),
@@ -186,7 +187,7 @@ class SqliteEventIdempotencyTable:
 
     def __len__(self) -> int:
         with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection, connection:
                 connection.execute(
                     "DELETE FROM event_idempotency WHERE claimed_at_unix < ?",
                     (float(self._clock()) - self.ttl_seconds,),

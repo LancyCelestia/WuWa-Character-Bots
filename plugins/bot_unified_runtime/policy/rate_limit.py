@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+import time
 from collections import defaultdict, deque
 from collections.abc import Callable
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import ClassVar, Protocol
 
 from pydantic import Field, field_validator
 
@@ -89,6 +92,9 @@ class RateLimiter(Protocol):
 
 
 class InMemoryRateLimiter:
+    # 桶清扫间隔：只访问被命中的桶会让未再命中的桶永久滞留（键集合无界增长）。
+    _SWEEP_INTERVAL_SECONDS = 600.0
+
     def __init__(
         self,
         settings: RateLimitSettings | None = None,
@@ -98,6 +104,26 @@ class InMemoryRateLimiter:
         self.settings = settings or RateLimitSettings()
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self._buckets: dict[str, deque[datetime]] = defaultdict(deque)
+        self._last_sweep = time.monotonic()
+
+    def _maybe_sweep(self, now: datetime) -> None:
+        """低频清扫空/过期桶，防止长期运行下键集合无界增长。"""
+        if time.monotonic() - self._last_sweep < self._SWEEP_INTERVAL_SECONDS:
+            return
+        self._last_sweep = time.monotonic()
+        horizon = max(
+            self.settings.window_seconds,
+            self.settings.target_min_interval_seconds,
+            self.settings.proactive_window_seconds,
+        )
+        for key in list(self._buckets.keys()):
+            bucket = self._buckets.get(key)  # .get 不触发 defaultdict 建桶
+            if bucket is None:
+                continue
+            while bucket and (now - bucket[0]).total_seconds() >= horizon:
+                bucket.popleft()
+            if not bucket:
+                del self._buckets[key]
 
     def check_and_record(
         self,
@@ -137,6 +163,7 @@ class InMemoryRateLimiter:
             )
 
         now = self.clock()
+        self._maybe_sweep(now)
         target_key = self._target_bucket_key(capability_id, message)
         if self.settings.target_min_interval_seconds > 0:
             target_bucket = self._buckets[target_key]
@@ -209,6 +236,7 @@ class InMemoryRateLimiter:
                 audit_tags=["rate_limit:disabled"],
             )
         now = self.clock()
+        self._maybe_sweep(now)
         key = self._bucket_key(
             capability_id,
             "proactive_group",
@@ -287,6 +315,14 @@ class InMemoryRateLimiter:
 
 
 class SQLiteRateLimiter:
+    # 建表 DDL 一次即可：此前每次 check 都跑 2 条 DDL + 新建连接。
+    # 键为 resolve 后的 db 路径，多实例共享同一库时不重复建表。
+    _schema_ready_paths: ClassVar[set[str]] = set()
+    _SCHEMA_LOCK = threading.Lock()
+    # 全表过期清理间隔（低频）：逐桶 prune 只清理被访问的键，
+    # 不被访问的键会永久滞留并拖慢 COUNT/DELETE。
+    _CLEANUP_INTERVAL_SECONDS = 300.0
+
     def __init__(
         self,
         db_path: str | Path,
@@ -297,6 +333,11 @@ class SQLiteRateLimiter:
         self.db_path = Path(db_path)
         self.settings = settings or RateLimitSettings()
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        # APScheduler 线程与事件循环并发调用 check：进程内锁串行化，
+        # 跨进程并发由 SQLite 文件锁 + busy_timeout 兜底，避免
+        # "database is locked" 直接变成用户可见失败。
+        self._lock = threading.Lock()
+        self._last_cleanup = 0.0
 
     def check_and_record(
         self,
@@ -335,6 +376,17 @@ class SQLiteRateLimiter:
                 audit_tags=["rate_limit:bypass_role"],
             )
 
+        with self._lock:
+            return self._check_and_record_locked(
+                message, capability_id, safe_amount
+            )
+
+    def _check_and_record_locked(
+        self,
+        message: IncomingMessage,
+        capability_id: str,
+        safe_amount: int,
+    ) -> RateLimitDecision:
         self._ensure_schema()
         now = self.clock()
         now_epoch = now.timestamp()
@@ -358,7 +410,8 @@ class SQLiteRateLimiter:
                 self.settings.chat_sender_max_requests,
             ),
         ]
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
+            self._cleanup_expired(connection, now_epoch)
             for _scope, key, _limit in scoped_buckets:
                 self._prune(connection, key, cutoff_epoch)
             if self.settings.target_min_interval_seconds > 0:
@@ -425,47 +478,49 @@ class SQLiteRateLimiter:
                 reason="disabled",
                 audit_tags=["rate_limit:disabled"],
             )
-        self._ensure_schema()
-        now_epoch = self.clock().timestamp()
-        key = self._bucket_key(
-            capability_id,
-            "proactive_group",
-            message.group_id or message.session_id,
-        )
-        cutoff = now_epoch - max(1, self.settings.proactive_window_seconds)
-        with self._connect() as connection:
-            self._prune(connection, key, cutoff)
-            count = self._count(connection, key)
-            latest = self._latest_created_at(connection, key)
-            if latest is not None and self.settings.proactive_group_cooldown_seconds > 0:
-                elapsed = now_epoch - latest
-                if elapsed < self.settings.proactive_group_cooldown_seconds:
+        with self._lock:
+            self._ensure_schema()
+            now_epoch = self.clock().timestamp()
+            key = self._bucket_key(
+                capability_id,
+                "proactive_group",
+                message.group_id or message.session_id,
+            )
+            cutoff = now_epoch - max(1, self.settings.proactive_window_seconds)
+            with closing(self._connect()) as connection, connection:
+                self._cleanup_expired(connection, now_epoch)
+                self._prune(connection, key, cutoff)
+                count = self._count(connection, key)
+                latest = self._latest_created_at(connection, key)
+                if latest is not None and self.settings.proactive_group_cooldown_seconds > 0:
+                    elapsed = now_epoch - latest
+                    if elapsed < self.settings.proactive_group_cooldown_seconds:
+                        return RateLimitDecision(
+                            allowed=False,
+                            reason="proactive_cooldown",
+                            retry_after_seconds=max(
+                                1,
+                                int(self.settings.proactive_group_cooldown_seconds - elapsed),
+                            ),
+                            audit_tags=[
+                                "rate_limit:proactive_blocked",
+                                "rate_limit:proactive_cooldown",
+                            ],
+                        )
+                if count >= self.settings.proactive_group_max_replies:
                     return RateLimitDecision(
                         allowed=False,
-                        reason="proactive_cooldown",
-                        retry_after_seconds=max(
-                            1,
-                            int(self.settings.proactive_group_cooldown_seconds - elapsed),
-                        ),
+                        reason="proactive_window_exceeded",
+                        retry_after_seconds=max(1, self.settings.proactive_window_seconds),
                         audit_tags=[
                             "rate_limit:proactive_blocked",
-                            "rate_limit:proactive_cooldown",
+                            "rate_limit:proactive_window_exceeded",
                         ],
                     )
-            if count >= self.settings.proactive_group_max_replies:
-                return RateLimitDecision(
-                    allowed=False,
-                    reason="proactive_window_exceeded",
-                    retry_after_seconds=max(1, self.settings.proactive_window_seconds),
-                    audit_tags=[
-                        "rate_limit:proactive_blocked",
-                        "rate_limit:proactive_window_exceeded",
-                    ],
+                connection.execute(
+                    "INSERT INTO rate_limit_events (bucket_key, created_at) VALUES (?, ?)",
+                    (key, now_epoch),
                 )
-            connection.execute(
-                "INSERT INTO rate_limit_events (bucket_key, created_at) VALUES (?, ?)",
-                (key, now_epoch),
-            )
         return RateLimitDecision(
             allowed=True,
             reason="proactive_allowed",
@@ -477,26 +532,55 @@ class SQLiteRateLimiter:
         return any(role.strip().lower() in bypass_roles for role in message.sender_roles)
 
     def _ensure_schema(self) -> None:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS rate_limit_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    bucket_key TEXT NOT NULL,
-                    created_at REAL NOT NULL
+        try:
+            schema_key = str(self.db_path.resolve())
+        except OSError:
+            schema_key = str(self.db_path)
+        if schema_key in SQLiteRateLimiter._schema_ready_paths:
+            return
+        with SQLiteRateLimiter._SCHEMA_LOCK:
+            if schema_key in SQLiteRateLimiter._schema_ready_paths:
+                return
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            with closing(self._connect()) as connection, connection:
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS rate_limit_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        bucket_key TEXT NOT NULL,
+                        created_at REAL NOT NULL
+                    )
+                    """
                 )
-                """
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_rate_limit_events_bucket_time
-                ON rate_limit_events (bucket_key, created_at)
-                """
-            )
+                connection.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_rate_limit_events_bucket_time
+                    ON rate_limit_events (bucket_key, created_at)
+                    """
+                )
+            SQLiteRateLimiter._schema_ready_paths.add(schema_key)
+
+    def _cleanup_expired(
+        self,
+        connection: sqlite3.Connection,
+        now_epoch: float,
+    ) -> None:
+        """低频全表过期清理：删除超过所有限制窗口的旧事件行。"""
+        if time.monotonic() - self._last_cleanup < self._CLEANUP_INTERVAL_SECONDS:
+            return
+        self._last_cleanup = time.monotonic()
+        horizon = max(
+            self.settings.window_seconds,
+            self.settings.target_min_interval_seconds,
+            self.settings.proactive_window_seconds,
+        )
+        connection.execute(
+            "DELETE FROM rate_limit_events WHERE created_at < ?",
+            (now_epoch - horizon - 1.0,),
+        )
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+        return sqlite3.connect(self.db_path, timeout=5.0)
 
     def _prune(
         self,

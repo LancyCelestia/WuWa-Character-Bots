@@ -16,6 +16,19 @@ from .roles import ROLE_BLOCKED, role_audit_tags
 
 COMMAND_PREFIX = "/bot"
 
+
+def is_command_text(text: str, prefix: str = COMMAND_PREFIX) -> bool:
+    """命令态判定：文本以命令前缀开头且带词边界。
+
+    ``/bot help``、``/bot`` 命中；``/botxxx`` 这类无边界前缀不算命令，
+    避免普通聊天文本被误判进命令态。
+    """
+    normalized_prefix = (prefix or "").strip()
+    if not normalized_prefix or not text.startswith(normalized_prefix):
+        return False
+    rest = text[len(normalized_prefix):]
+    return not rest or rest[0].isspace()
+
 # 四档群聊策略槽位；动态名单 provider 用这些键返回覆盖集合。
 GROUP_POLICY_SLOTS = ("black1", "black2", "white1", "white2")
 
@@ -45,11 +58,17 @@ class PolicySettings:
 
 
 def _message_has_image(message: IncomingMessage) -> bool:
-    """消息是否携带图片/表情包段（供白名单1图片回复概率判定）。"""
-    from plugins.bot_unified_runtime.sources.vision_describe import extract_image_urls
+    """消息是否携带可识别的图片/表情包/视频段（供白名单1视觉回复概率判定）。"""
+    from plugins.bot_unified_runtime.sources.vision_describe import (
+        extract_image_urls,
+        extract_video_source,
+    )
 
+    raw_segments = getattr(message, "raw_segments", None)
     try:
-        return bool(extract_image_urls(getattr(message, "raw_segments", None)))
+        if extract_image_urls(raw_segments):
+            return True
+        return bool(extract_video_source(raw_segments))
     except Exception:  # noqa: BLE001 - 图片判定失败按无图处理。
         return False
 
@@ -161,7 +180,9 @@ def evaluate_policy(
     # 私聊：有问必回（角色/风险拦截除外），不做群聊策略限制。
     if message.session_type is SessionType.GROUP:
         text = message.plain_text.strip()
-        command_triggered = text.startswith(active_settings.group_command_prefix)
+        command_triggered = is_command_text(
+            text, active_settings.group_command_prefix
+        )
         extra_check = active_settings.extra_command_check
         if extra_check is not None and extra_check(text):
             command_triggered = True
@@ -189,9 +210,14 @@ def evaluate_policy(
         if group_id in group_lists["black2"] and not (message.mentions_bot and command_triggered):
                 return _denied("group_black2", ("group_black2",))
 
-        # 白名单2：只回“@它”或显式命令，普通消息不主动接话。
+        # 白名单2：只回“真 @ 它（@段/回复 bot）”或显式命令；
+        # 仅写了昵称/小名（软点名）不算触发，不主动接话。
         if group_id in group_lists["white2"] and not (
-            message.mentions_bot or command_triggered
+            (
+                message.mentions_bot
+                and not getattr(message, "name_mention_only", False)
+            )
+            or command_triggered
         ):
             return _denied("group_white2_need_trigger", ("group_white2",))
 

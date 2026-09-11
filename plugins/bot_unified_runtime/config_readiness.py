@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import os
+import threading
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -106,6 +108,45 @@ def llm_generation_parameter_errors(config: Config) -> list[str]:
     return errors
 
 
+def registry_env_reference_errors(config: Config) -> list[str]:
+    """启动期自检：注册表里每个 ``env:变量名`` 引用都必须有对应 Config 字段。
+
+    09-09 的真实事故是「.env 填了 key、registry 也引用了，但 Config 少了
+    同名字段 → `_resolve_api_key` 的 Config 回退取不到 → 整渠道
+    config_missing 全失败」，此后同类问题又复发两次（c614025 补 9 个字段、
+    评审 H3 的 BOT_API_KEY_DEEPSEEK_OFFICIAL）。逐次手工补字段治不了根，
+    这里把契约做成启动期可检的显式检查。
+
+    返回形如 ``["BOT_API_KEY_X"]`` 的缺失变量名列表（已去重、保序）。
+    """
+    entries = getattr(config, "bot_model_registry", None)
+    if not isinstance(entries, dict):
+        return []
+    missing: list[str] = []
+    for entry in entries.values():
+        if not isinstance(entry, dict):
+            continue
+        for slot in ("api_key", "api_keys"):
+            raw = entry.get(slot)
+            candidates = raw if isinstance(raw, (list, tuple)) else [raw]
+            for candidate in candidates:
+                text = str(candidate or "").strip()
+                if not text.startswith("env:"):
+                    continue
+                env_name = text.removeprefix("env:").strip()
+                if not env_name:
+                    continue
+                # 与 llm/model_router._resolve_api_key 同一契约：进程环境命中即
+                # 可用，否则必须能从 Config 同名字段回退。
+                if os.environ.get(env_name):
+                    continue
+                if not str(getattr(config, env_name.lower(), "") or "").strip() and (
+                    env_name not in missing
+                ):
+                    missing.append(env_name)
+    return missing
+
+
 def diagnostic_llm_temperature(config: Config) -> float:
     if not _is_valid_temperature(config.bot_chat_temperature):
         return 0.0
@@ -155,12 +196,12 @@ def run_config_smoke(
     knowledge_missing = [path for path in knowledge_paths if not path.exists()]
     persona_unsupported = _unsupported_character_paths(persona_paths)
     knowledge_unsupported = _unsupported_character_paths(knowledge_paths)
-    persona_readiness = _inspect_character_paths(
+    persona_readiness = _inspect_character_paths_cached(
         persona_paths,
         missing_paths=persona_missing,
         unsupported_paths=persona_unsupported,
     )
-    knowledge_readiness = _inspect_character_paths(
+    knowledge_readiness = _inspect_character_paths_cached(
         knowledge_paths,
         missing_paths=knowledge_missing,
         unsupported_paths=knowledge_unsupported,
@@ -418,6 +459,71 @@ def _unsupported_character_paths(paths: list[Path]) -> list[Path]:
         for path in paths
         if path.suffix.lower() not in SUPPORTED_CHARACTER_DOCUMENT_SUFFIXES
     ]
+
+
+# 诊断路径每条消息都会跑 run_config_smoke：人格/知识文件全文读盘（.docx 还要
+# 解 zip）是热路径单点最重开销。按「路径+mtime+size」签名缓存文件检查结果，
+# 文件未变化时零读盘；只缓存读取部分，配置标量仍每次现算。
+_READINESS_INSPECT_CACHE: dict[tuple, dict[str, int]] = {}
+_READINESS_INSPECT_CACHE_LOCK = threading.Lock()
+_READINESS_INSPECT_CACHE_MAX_ENTRIES = 8
+
+
+def _reset_readiness_cache() -> None:
+    """清空文件检查缓存（测试用）。"""
+    with _READINESS_INSPECT_CACHE_LOCK:
+        _READINESS_INSPECT_CACHE.clear()
+
+
+def _inspect_signature(
+    paths: list[Path],
+    *,
+    missing_paths: list[Path],
+    unsupported_paths: list[Path],
+) -> tuple:
+    missing_set = {path.resolve() for path in missing_paths}
+    unsupported_set = {path.resolve() for path in unsupported_paths}
+    signature: list[tuple] = []
+    for path in paths:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            signature.append((str(path), "resolve_error"))
+            continue
+        if resolved in missing_set or resolved in unsupported_set:
+            continue
+        try:
+            status = path.stat()
+        except OSError:
+            signature.append((str(resolved), "stat_error"))
+            continue
+        signature.append((str(resolved), status.st_mtime_ns, status.st_size))
+    return tuple(signature)
+
+
+def _inspect_character_paths_cached(
+    paths: list[Path],
+    *,
+    missing_paths: list[Path],
+    unsupported_paths: list[Path],
+) -> dict[str, int]:
+    signature = _inspect_signature(
+        paths, missing_paths=missing_paths, unsupported_paths=unsupported_paths
+    )
+    with _READINESS_INSPECT_CACHE_LOCK:
+        cached = _READINESS_INSPECT_CACHE.get(signature)
+    if cached is not None:
+        return cached
+    result = _inspect_character_paths(
+        paths,
+        missing_paths=missing_paths,
+        unsupported_paths=unsupported_paths,
+    )
+    with _READINESS_INSPECT_CACHE_LOCK:
+        if len(_READINESS_INSPECT_CACHE) >= _READINESS_INSPECT_CACHE_MAX_ENTRIES:
+            _READINESS_INSPECT_CACHE.clear()
+        _READINESS_INSPECT_CACHE[signature] = result
+    return result
 
 
 def _inspect_character_paths(

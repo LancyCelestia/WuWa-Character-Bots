@@ -122,6 +122,18 @@ def build_reply_budget_settings(config: object) -> ReplyBudgetSettings:
     )
 
 
+def _cap_max_messages(value: int, cap: int) -> int:
+    """对条数上限取帽；``0`` 语义为"不限"，因此 ``cap<=0`` 视为该帽不生效。
+
+    直接 ``min()`` 会把 ``min(4, 0)=0`` 误解成不限条数，反而放大上限。
+    """
+    if cap <= 0:
+        return value
+    if value <= 0:
+        return cap
+    return min(value, cap)
+
+
 def decide_reply_budget(
     message: IncomingMessage,
     capability_id: str,
@@ -163,7 +175,9 @@ def decide_reply_budget(
 
     if message.session_type is SessionType.GROUP:
         return ReplyBudget(
-            max_messages=min(budget.max_messages, settings.group_max_messages),
+            max_messages=_cap_max_messages(
+                budget.max_messages, settings.group_max_messages
+            ),
             context_budget=min(budget.context_budget, settings.group_context_budget),
             reason=f"{budget.reason}; group cap",
             audit_tags=[*budget.audit_tags, "reply_budget:group_cap"],
@@ -171,7 +185,9 @@ def decide_reply_budget(
 
     if message.risk_level in {RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL}:
         return ReplyBudget(
-            max_messages=min(budget.max_messages, settings.risk_max_messages),
+            max_messages=_cap_max_messages(
+                budget.max_messages, settings.risk_max_messages
+            ),
             context_budget=min(budget.context_budget, settings.default_context_budget),
             reason=f"{budget.reason}; risk cap",
             audit_tags=[*budget.audit_tags, "reply_budget:risk_cap"],

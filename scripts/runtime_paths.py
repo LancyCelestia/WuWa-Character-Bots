@@ -13,6 +13,24 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _strip_inline_comment(raw_value: str) -> str:
+    """去掉 dotenv 行内注释（引号感知）：仅在未闭合引号外、且 ``#`` 前有空白时截断。
+
+    与 python-dotenv 行为对齐：``data # 注释`` → ``data``；
+    ``"a # b"`` 引号内的 # 不算注释；``a#b`` 无空白不算注释。
+    """
+    quote = ""
+    for index, char in enumerate(raw_value):
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char == "#" and index > 0 and raw_value[index - 1] in " \t":
+            return raw_value[:index].rstrip()
+    return raw_value
+
+
 def _dotenv_value(key: str) -> str:
     """Read one non-secret setting using the same .env then .env.prod order."""
     value = ""
@@ -27,7 +45,7 @@ def _dotenv_value(key: str) -> str:
             name, raw_value = line.split("=", 1)
             if name.strip() != key:
                 continue
-            value = raw_value.strip().strip('"').strip("'")
+            value = _strip_inline_comment(raw_value).strip().strip('"').strip("'")
     return os.environ.get(key, value).strip()
 
 
@@ -44,10 +62,14 @@ def runtime_path(value: str | Path) -> Path:
     path = Path(value).expanduser()
     if path.is_absolute():
         return path.resolve()
-    normalized = str(path).replace("\\", "/")
+    # 与 config.py 的路径解析器对齐：统一剥 ./ 前缀并对 data/ 前缀
+    # 大小写不敏感重映射，两侧对 "./DATA/x"、"data/x" 得到同一结果。
+    normalized = str(path).replace("\\", "/").strip()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
     data_root = runtime_data_dir()
-    if normalized == "data":
+    if normalized.lower() == "data":
         return data_root
-    if normalized.startswith("data/"):
+    if normalized.lower().startswith("data/"):
         return (data_root / normalized[5:]).resolve()
     return (PROJECT_ROOT / path).resolve()

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -151,14 +152,27 @@ class DisconnectNotifier:
         text = build_disconnect_notice_text(bot_id, adapter_name, reason)
         delivered: list[str] = []
         title = f"机器人掉线：{adapter_name or 'bot'} {bot_id}"
-        if self._options.serverchan_sendkey and push_serverchan(
-            self._options.serverchan_sendkey, title, text
-        ):
-            delivered.append("serverchan")
-        if self._options.pushplus_token and push_pushplus(
-            self._options.pushplus_token, title, text
-        ):
-            delivered.append("pushplus")
+        # HTTP 推送是同步 httpx 调用（单渠道 timeout 8s），必须丢进线程池：
+        # 掉线通知本身发生在事件循环里，直接 await 串行两个 8s 请求会阻塞
+        # 整个 bot 最长 16s（心跳/其他适配器全部停摆）。
+        if self._options.serverchan_sendkey:
+            serverchan_ok: bool = await asyncio.to_thread(
+                push_serverchan,
+                self._options.serverchan_sendkey,
+                title,
+                text,
+            )
+            if serverchan_ok:
+                delivered.append("serverchan")
+        if self._options.pushplus_token:
+            pushplus_ok: bool = await asyncio.to_thread(
+                push_pushplus,
+                self._options.pushplus_token,
+                title,
+                text,
+            )
+            if pushplus_ok:
+                delivered.append("pushplus")
         if self._options.telegram_chat_ids:
             try:
                 sent = await notify_telegram_admins(
