@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 from plugins.bot_unified_runtime.contracts import (
@@ -18,8 +19,10 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
 )
 from plugins.bot_unified_runtime.sources.nmc_weather import (
+    find_city_code,
     list_districts,
     nmc_weather_query,
+    search_city_code,
 )
 from plugins.bot_unified_runtime.sources.open_meteo import (
     format_open_meteo,
@@ -32,6 +35,37 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
 
 _WEATHER_RE = re.compile(r"^[/!！]?(?:天气|查天气|天氣|查天氣|weather)\s*(?P<query>.+)$")
 _DISTRICT_RE = re.compile(r"^[/!！]?(?:支持区县|查询区县|可查区县)\s*(?P<province>.+)$")
+
+# ---------------------------------------------------------------- 主通道重试
+# NMC rest/weather 主接口本身存活（2026-09-12 复测：curl 与项目链路 10/10
+# 站点 200 全量数据，无 cookie 墙；`data:""` 是无/无效 stationid 的固定响应）。
+# 真实缺陷是单次尝试：实测约 1/8 概率瞬时超时/空 data，一旦命中即静默降级
+# Open-Meteo、预警支路随之跳过。故对「码表命中」的查询加一次快速重试；
+# 码表未命中（海外/乡镇）不重试不外呼，保持 Open-Meteo 快速兜底路径。
+_NMC_RETRY_ATTEMPTS = 2
+_NMC_RETRY_BACKOFF_SECONDS = 0.5
+
+
+def _nmc_query_with_retry(query: str, *, proxy: str) -> str | None:
+    """NMC 主通道：城市在码表内但拉取失败（超时/空 data）时重试一次。
+
+    码表未命中直接返回 None（调用方走 Open-Meteo 全球兜底，不空耗延迟）。
+    """
+    parts = [part.strip() for part in str(query or "").split("-") if part.strip()]
+    in_db = bool(
+        (len(parts) >= 2 and find_city_code(parts[0], parts[1])) or search_city_code(query)
+    )
+    if not in_db:
+        return None
+    report: str | None = None
+    for attempt in range(_NMC_RETRY_ATTEMPTS):
+        report = nmc_weather_query(query, proxy=proxy)
+        if report is not None:
+            return report
+        if attempt + 1 < _NMC_RETRY_ATTEMPTS:
+            time.sleep(_NMC_RETRY_BACKOFF_SECONDS)
+    return report
+
 
 # ---------------------------------------------------------------- 预警支路
 # NMC 全国预警在报清单（免 key；2026-09-12 curl 实测 200，单页 pageSize=300
@@ -238,7 +272,7 @@ def build_weather_capability(
                 audit_tags=["weather", "missing_query_silent"],
             )
         query = match.group("query").strip()
-        report = nmc_weather_query(query, proxy=proxy)
+        report = _nmc_query_with_retry(query, proxy=proxy)
         source = "nmc"
         if report is None:
             # 海外城市/中国乡镇街道级：NMC 城市库查不到时用 Open-Meteo 全球兜底
