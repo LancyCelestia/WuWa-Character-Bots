@@ -40,7 +40,11 @@ class PolicySettings:
     extra_command_check: Callable[[str], bool] | None = None
     # 群聊自动接话：关闭时只有命令/点名才回复；开启时按概率抽签回复。
     group_auto_reply_enabled: bool = False
-    group_auto_reply_probability: float = 0.0
+    # 抽签概率。可以是 float（静态配置），也可以是**无参 callable**——后者用于
+    # 让概率随 bot 心情实时变化。此前调用方在装配期就把
+    # `0.05 × 心情系数` 算成一个 float 冻进 PolicySettings，导致心情后续怎么变
+    # 都不影响开火概率（评审实锤的时序 bug：只在进程重启那一刻采样一次）。
+    group_auto_reply_probability: float | Callable[[], float] = 0.0
     # 群聊回复策略：black1/black2/white1/white2 四张静态群号集合。
     group_black1: frozenset[str] = frozenset()
     group_black2: frozenset[str] = frozenset()
@@ -55,6 +59,25 @@ class PolicySettings:
     # 动态名单 provider：返回 {black1/black2/white1/white2: 群号集合}。
     # 返回的键会覆盖对应静态集合（管理员热改优先于 .env），未返回的键保持静态。
     group_lists_provider: Callable[[], dict[str, frozenset[str]]] | None = None
+
+
+def _resolve_probability(value: float | Callable[[], float] | None) -> float:
+    """把概率配置解析成 float（支持实时 callable，失败回退 0）。
+
+    用于群聊开火概率：心情参与的系数必须是**每次抽签时求值**，不能在装配期
+    冻成常量，否则"心情低落时少插话"永远不会生效。
+    """
+    if value is None:
+        return 0.0
+    if callable(value):
+        try:
+            return float(value())
+        except Exception:  # noqa: BLE001 - 求值失败按"不抽签"处理，避免误开火。
+            return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _message_has_image(message: IncomingMessage) -> bool:
@@ -266,7 +289,7 @@ def evaluate_policy(
                 and active_settings.group_auto_reply_enabled
                 and deterministic_group_reply_lottery(
                     f"{message.session_id}:{message.message_id or message.request_id}",
-                    active_settings.group_auto_reply_probability,
+                    _resolve_probability(active_settings.group_auto_reply_probability),
                 )
             ):
                 return PolicyEvaluation(

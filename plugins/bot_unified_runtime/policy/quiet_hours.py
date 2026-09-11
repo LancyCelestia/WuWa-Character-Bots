@@ -66,12 +66,27 @@ class QuietHoursSettings(StrictBaseModel):
 class QuietHoursChecker:
     def __init__(
         self,
-        settings: QuietHoursSettings | None = None,
+        settings: QuietHoursSettings | Callable[[], QuietHoursSettings] | None = None,
         *,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
-        self.settings = settings or QuietHoursSettings()
+        # settings 可以是静态对象，也可以是**每次判定时求值的 callable**。
+        # 后者让安静时间能读运行时 store 热改（否则装配期快照会把
+        # /bot runtime set 的效果吃掉，直到进程重启才生效）。
+        self._settings_source = settings or QuietHoursSettings()
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+
+    @property
+    def settings(self) -> QuietHoursSettings:
+        """当前安静时间设置（callable 时实时求值）。"""
+        source = self._settings_source
+        if callable(source):
+            try:
+                resolved = source()
+            except Exception:  # noqa: BLE001 - 求值失败回退默认（不误拦消息）。
+                return QuietHoursSettings()
+            return resolved if isinstance(resolved, QuietHoursSettings) else QuietHoursSettings()
+        return source
 
     def check(
         self,
@@ -151,7 +166,18 @@ def build_quiet_hours_settings(config: object) -> QuietHoursSettings:
     )
 
 
-def build_quiet_hours_checker(config: object) -> QuietHoursChecker:
+def build_quiet_hours_checker(
+    config: object,
+    *,
+    settings_provider: Callable[[], QuietHoursSettings] | None = None,
+) -> QuietHoursChecker:
+    """构造安静时间检查器。
+
+    传 ``settings_provider`` 时每次判定实时求值（可读运行时 store 热改）；
+    否则退回启动期快照（旧行为）。
+    """
+    if settings_provider is not None:
+        return QuietHoursChecker(settings_provider)
     return QuietHoursChecker(build_quiet_hours_settings(config))
 
 

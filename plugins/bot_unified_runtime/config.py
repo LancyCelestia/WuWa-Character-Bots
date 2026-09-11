@@ -530,6 +530,9 @@ class Config(BaseModel):
     # 中文天气查询（bot.weather）：`天气 <城市>`，中国气象局 NMC 免 key。
     bot_weather_query_enabled: bool = True
     bot_render_forward_min_chars: int = 1500
+    # 按**条数**触发合并转发：切分后条数达到该值即合并（用户口径"超过 3 条就
+    # 合并"→ 4）。0=关闭该规则，只看 min_chars。
+    bot_render_forward_min_nodes: int = 4
     bot_render_forward_max_nodes: int = 0
     bot_render_forward_node_chars: int = 900
     bot_audit_log_file: str = ""

@@ -33,6 +33,7 @@ from plugins.bot_unified_runtime.output import (
     build_forward_output,
     render_reviewed_output,
     review_capability_result,
+    should_forward_by_node_count,
     should_forward_long_text,
 )
 from plugins.bot_unified_runtime.policy import (
@@ -338,9 +339,11 @@ class RuntimePipeline:
         forward_min_chars: int = 1500,
         forward_max_nodes: int = 0,
         forward_node_chars: int = 900,
+        forward_min_nodes: int = 4,
+        forward_sender_name: str = "",
         alias_command_check: Callable[[str], bool] | None = None,
         group_auto_reply_enabled: bool = False,
-        group_auto_reply_probability: float = 0.0,
+        group_auto_reply_probability: float | Callable[[], float] = 0.0,
         vision_reply_probability: float = 1.0,
         group_black1: frozenset[str] = frozenset(),
         group_black2: frozenset[str] = frozenset(),
@@ -357,10 +360,15 @@ class RuntimePipeline:
         self.runtime_control = runtime_control or RuntimeControlState()
         self.rate_limiter = rate_limiter or InMemoryRateLimiter()
         self.quiet_hours_checker = quiet_hours_checker or QuietHoursChecker()
-        # 0=禁用合并转发（短消息与已分段回复都直接发送）。
+        # 0=禁用按字数的合并转发（短消息与已分段回复都直接发送）。
         self.forward_min_chars = int(forward_min_chars)
         self.forward_max_nodes = max(0, int(forward_max_nodes))
         self.forward_node_chars = max(200, int(forward_node_chars))
+        # 按条数触发合并转发：切分后 >= forward_min_nodes 条才合并
+        # （用户口径"超过 3 条就合并"→ 4）。0/负数 = 关闭该规则。
+        self.forward_min_nodes = max(0, int(forward_min_nodes))
+        # 合并转发节点里署谁的名字：用户要求"转发内发送的用户仍为 bot 自己"。
+        self.forward_sender_name = str(forward_sender_name or "").strip()
         policy_settings = PolicySettings(
             group_command_prefix=group_command_prefix,
             group_auto_reply_enabled=group_auto_reply_enabled,
@@ -649,9 +657,17 @@ class RuntimePipeline:
 
         rendered = render_reviewed_output(result, review)
         use_forward = False
-        if (
-            rendered.content_type == "text"
-            and should_forward_long_text(
+        # 合并转发触发条件（用户口径）：切分后**>3 条**（即 ≥4 条）才合并，
+        # 3 条以内照常直发；另保留按字数的兼容触发（min_chars>0 时）。
+        # 转发内的发送者名用 bot 自己的名字（由调用方传入），不再署用户昵称。
+        if rendered.content_type == "text" and (
+            should_forward_by_node_count(
+                rendered.text_fallback,
+                node_chars=self.forward_node_chars,
+                min_nodes=self.forward_min_nodes,
+                max_nodes=self.forward_max_nodes,
+            )
+            or should_forward_long_text(
                 rendered.text_fallback,
                 min_chars=self.forward_min_chars,
             )
@@ -661,7 +677,7 @@ class RuntimePipeline:
                 rendered.text_fallback,
                 node_chars=self.forward_node_chars,
                 max_nodes=self.forward_max_nodes,
-                sender_name=message.sender_display_name or "",
+                sender_name=self.forward_sender_name,
                 risk_level=rendered.risk_level,
                 privacy_level=rendered.privacy_level,
             )

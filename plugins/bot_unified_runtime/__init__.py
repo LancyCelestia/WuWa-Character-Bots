@@ -597,6 +597,47 @@ def _urls_from_message_segments(raw_segments: list[dict[str, Any]]) -> list[str]
     return urls
 
 
+_QUIET_HOURS_OVERRIDE_KEYS: tuple[tuple[str, str], ...] = (
+    ("BOT_QUIET_HOURS_ENABLED", "bot_quiet_hours_enabled"),
+    ("BOT_QUIET_HOURS_START", "bot_quiet_hours_start"),
+    ("BOT_QUIET_HOURS_END", "bot_quiet_hours_end"),
+    ("BOT_QUIET_HOURS_TIMEZONE", "bot_quiet_hours_timezone"),
+    ("BOT_QUIET_HOURS_SESSION_TYPES", "bot_quiet_hours_session_types"),
+    ("BOT_QUIET_HOURS_BYPASS_ROLES", "bot_quiet_hours_bypass_roles"),
+)
+
+
+def _config_with_runtime_overrides(config: Any, runtime_settings: Any) -> Any:
+    """把安静时间相关的运行时覆盖合并进 config（供判定时实时求值）。
+
+    安静时间的 6 个键已从 .env 移入运行时 store（避免"改了 .env 不生效 /
+    实际值与 .env 漂移"），但 `build_quiet_hours_settings` 读的是 config 字段，
+    因此这里每个判定周期做一次浅合并。没有任何覆盖时直接返回原对象，零开销。
+    """
+    if runtime_settings is None:
+        return config
+    updates: dict[str, Any] = {}
+    for env_key, field_name in _QUIET_HOURS_OVERRIDE_KEYS:
+        try:
+            value = runtime_settings.get(env_key, None)
+        except Exception as exc:  # noqa: BLE001 - store 读取失败按未覆盖处理。
+            logging.getLogger(__name__).debug(
+                "quiet-hours override read failed key=%s error=%s", env_key, type(exc).__name__
+            )
+            continue
+        if value is None or value == "":
+            continue
+        current = getattr(config, field_name, None)
+        if value != current:
+            updates[field_name] = value
+    if not updates:
+        return config
+    try:
+        return config.model_copy(update=updates)
+    except Exception:  # noqa: BLE001 - 合并失败回退原 config。
+        return config
+
+
 def _effective_route_text(event: Any) -> str:
     """路由判定文本：纯文本 + 卡片/HTML 段里的链接。"""
     plain = event.get_plaintext().strip()
@@ -2439,6 +2480,7 @@ def _register_nonebot_handlers() -> None:
     )
     from .policy import (
         build_quiet_hours_checker,
+        build_quiet_hours_settings,
         build_rate_limiter,
         build_reply_budget_settings,
         build_role_settings,
@@ -2514,14 +2556,28 @@ def _register_nonebot_handlers() -> None:
         runtime_enabled=config.bot_runtime_enabled,
         receipt_repository=receipt_repository,
         rate_limiter=build_rate_limiter(config),
-        quiet_hours_checker=build_quiet_hours_checker(config),
+        quiet_hours_checker=build_quiet_hours_checker(
+            config,
+            # 实时求值：安静时间窗口/开关纳入运行时 store 后必须热生效，
+            # 不能在装配期快照（否则 /bot runtime set 改了要等重启才生效）。
+            settings_provider=lambda: build_quiet_hours_settings(
+                _config_with_runtime_overrides(config, runtime_settings)
+            ),
+        ),
         runtime_control=runtime_control,
         forward_min_chars=config.bot_render_forward_min_chars,
         forward_max_nodes=config.bot_render_forward_max_nodes,
         forward_node_chars=config.bot_render_forward_node_chars,
+        # 合并转发：切分后 >3 条（≥4）才合并；节点署名用 bot 自己的名字。
+        forward_min_nodes=int(getattr(config, "bot_render_forward_min_nodes", 4) or 4),
+        forward_sender_name=(
+            getattr(config, "bot_persona_display_name", "") or "守岸人"
+        ),
         group_auto_reply_enabled=config.bot_group_chat_auto_reply_enabled,
         # bot 心情联动（L1）：低落时少插话、兴奋时更活跃——只调概率，不做硬开关。
-        group_auto_reply_probability=min(
+        # 传 **callable** 而不是当场求值的 float：装配期求值会让心情变化永不生效
+        # （评审实锤的时序 bug），必须在每次抽签时现算。
+        group_auto_reply_probability=lambda: min(
             1.0,
             config.bot_group_chat_auto_reply_probability
             * _mood_willingness_factor(config),

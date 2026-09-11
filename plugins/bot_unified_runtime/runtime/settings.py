@@ -284,6 +284,57 @@ def _memory_tokens_converter(value: str) -> int:
     return number
 
 
+def _non_negative_int_converter(value: str) -> int:
+    number = int(str(value).strip() or "0")
+    if number < 0:
+        raise ValueError("该参数不能为负数")
+    return number
+
+
+def _clock_converter(value: str) -> str:
+    """HH:MM 时刻（安静时间窗口端点）。"""
+    raw = str(value).strip()
+    if not re.fullmatch(r"\d{1,2}:\d{2}", raw):
+        raise ValueError("时间格式必须是 HH:MM，例如 00:00 或 07:00")
+    hour, minute = (int(part) for part in raw.split(":"))
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError("时间超出范围（小时 0-23、分钟 0-59）")
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _timezone_converter(value: str) -> str:
+    raw = str(value).strip()
+    if not raw:
+        raise ValueError("时区不能为空，例如 Asia/Hong_Kong")
+    try:
+        from zoneinfo import ZoneInfo
+
+        ZoneInfo(raw)
+    except Exception as exc:
+        raise ValueError(f"无效时区：{raw}") from exc
+    return raw
+
+
+def _session_types_converter(value: str) -> list[str]:
+    items = [item.strip().lower() for item in re.split(r"[,\s;]+", str(value)) if item.strip()]
+    allowed = {"group", "private", "email"}
+    invalid = [item for item in items if item not in allowed]
+    if invalid:
+        raise ValueError(f"会话类型只能是 {sorted(allowed)}，收到 {invalid}")
+    return items
+
+
+def _role_list_converter(value: str) -> list[str]:
+    return [item.strip().lower() for item in re.split(r"[,\s;]+", str(value)) if item.strip()]
+
+
+def _digest_list_mode_converter(value: str) -> str:
+    raw = str(value).strip().lower()
+    if raw not in {"whitelist", "blacklist", "off", "all"}:
+        raise ValueError("群摘要名单模式只能是 whitelist|blacklist|off|all")
+    return raw
+
+
 # 白名单键 -> 转换函数；转换失败抛 ValueError，不会写入。
 SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_CHAT_TEMPERATURE": _temperature_converter,
@@ -329,6 +380,33 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_GROUP_BLACK2": _group_list_converter,
     "BOT_GROUP_WHITE1": _group_list_converter,
     "BOT_GROUP_WHITE2": _group_list_converter,
+    # ---- 本轮新增：这些键此前只能写 .env，改一次就要动整个 .env，且极易与
+    # 实际生效值漂移（用户实测反馈：.env 写 gpt-5.6-terra、实际跑的是
+    # qian-night-gemini；群名单两处不一致）。纳入运行时 store 后，
+    # /bot runtime set 即可热改，且只有一处真相。
+    "BOT_GROUP_CHAT_AUTO_REPLY_ENABLED": _bool_converter,
+    "BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY": _probability_converter,
+    "BOT_QUIET_HOURS_ENABLED": _bool_converter,
+    "BOT_QUIET_HOURS_START": _clock_converter,
+    "BOT_QUIET_HOURS_END": _clock_converter,
+    "BOT_QUIET_HOURS_TIMEZONE": _timezone_converter,
+    "BOT_QUIET_HOURS_SESSION_TYPES": _session_types_converter,
+    "BOT_QUIET_HOURS_BYPASS_ROLES": _role_list_converter,
+    "BOT_SHARED_GROUP_CONTEXT_ENABLED": _bool_converter,
+    "BOT_GROUP_DIGEST_LIST_MODE": _digest_list_mode_converter,
+    "BOT_GROUP_DIGEST_WHITELIST": _group_list_converter,
+    "BOT_GROUP_DIGEST_BLACKLIST": _group_list_converter,
+    "BOT_GROUP_PROACTIVE_COOLDOWN_SECONDS": _memory_duration_converter,
+    "BOT_GROUP_PROACTIVE_MAX_REPLIES_PER_HOUR": lambda value: max(
+        0, int(str(value).strip() or "0")
+    ),
+    "BOT_RENDER_FORWARD_MIN_NODES": lambda value: max(0, int(str(value).strip() or "0")),
+    "BOT_RENDER_FORWARD_MIN_CHARS": lambda value: max(0, int(str(value).strip() or "0")),
+    "BOT_RENDER_FORWARD_MAX_NODES": lambda value: max(0, int(str(value).strip() or "0")),
+    "BOT_RENDER_FORWARD_NODE_CHARS": lambda value: max(200, int(str(value).strip() or "900")),
+    "BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR": _non_negative_int_converter,
+    "BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE": _non_negative_int_converter,
+    "BOT_RATE_LIMIT_EMOTION_EXEMPT": _bool_converter,
 }
 
 

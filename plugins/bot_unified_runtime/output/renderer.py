@@ -181,7 +181,26 @@ def should_forward_long_text(
     *,
     min_chars: int = 1500,
 ) -> bool:
-    """min_chars<=0 表示不拆转发，长文本直接单条发送。"""
+    """min_chars<=0 表示不按字数拆转发。"""
     if min_chars <= 0:
         return False
     return bool(text) and len(text.strip()) >= max(1, min_chars)
+
+
+def should_forward_by_node_count(
+    text: str,
+    *,
+    node_chars: int = 900,
+    min_nodes: int = 4,
+    max_nodes: int = 0,
+) -> bool:
+    """按**条数**判断是否合并转发：切分后条数达到 min_nodes 即合并。
+
+    用户口径："需要发送的消息 > 3 条（不含 3 条）就合并转发"，即切分后
+    **≥4 条**才合并。min_nodes<=0 表示该规则关闭。
+    比按字数判断更贴近真实体验：4 条以上刷屏时收进一条合并转发，3 条以内照常直发。
+    """
+    if min_nodes <= 0 or not text:
+        return False
+    chunks = split_text_chunks(text, node_chars=node_chars, max_nodes=max_nodes)
+    return len(chunks) >= min_nodes
