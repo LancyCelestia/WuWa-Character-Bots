@@ -163,6 +163,7 @@ from .sources.parsers import (
     extract_http_urls,
     music_candidate_providers,
 )
+from .sources.telegram_media import enrich_telegram_file_segments
 from .sources.web_search import build_web_search_provider
 
 try:
@@ -613,6 +614,10 @@ _RUNTIME_HOT_OVERRIDE_FIELDS: tuple[tuple[str, str], ...] = (
     ("BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY", "bot_group_chat_auto_reply_probability"),
     # 合并转发阈值
     ("BOT_RENDER_FORWARD_MIN_NODES", "bot_render_forward_min_nodes"),
+    # 群摘要白/黑名单（名单外群跳过摘要注入；消费点 shared_group.py）
+    ("BOT_GROUP_DIGEST_LIST_MODE", "bot_group_digest_list_mode"),
+    ("BOT_GROUP_DIGEST_WHITELIST", "bot_group_digest_whitelist"),
+    ("BOT_GROUP_DIGEST_BLACKLIST", "bot_group_digest_blacklist"),
 )
 
 
@@ -5193,6 +5198,10 @@ def _register_nonebot_handlers() -> None:
         event_segments = _extract_onebot_raw_segments(event)
         if any(str(s.get("type", "")).lower() == "record" for s in event_segments):
             await _transcode_record_segments(bot, event_segments)
+        # TG 媒体段富化：file_id → 字节落临时文件写回 data.file，vision/ASR 的
+        # 既有本机路径链路即可直接消费；模块内部自判 TG 事件且绝不抛异常，
+        # 非 TG 事件零成本直通，失败保持段原样（标签降级行为不变）。
+        await enrich_telegram_file_segments(bot, event, event_segments)
         # 引用链：QQ 的"引用的引用"不随事件下发，需按 id 反查（get_msg）。
         # 只在确有更深 reply 段时才发请求；失败/超时按链条结束，不阻断消息。
         resolved_chain = await collect_reply_chain_async(
