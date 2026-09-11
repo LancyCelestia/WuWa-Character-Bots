@@ -1231,3 +1231,57 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 3. 推送 origin 等明确指示；其余待办（umi 充值、QIANQIANYE 换 key、ds-official key、toolcode-gemini 下架）沿用 §15 清单。
 
 ---
+
+## §17 人格记忆/昵称叫应/randpic 会话底账（2026-09-11 晚，用户需求驱动）
+
+**提交**：`f80a8b1`（18 文件 +1082/−13，§11.4 重建，未推送）。门禁：全量 **1303 passed** / lint 全过 / mypy **220 文件零 issue**。
+
+### 一、发现的问题与解决方法
+
+| # | 问题 | 根因 | 解法 | 状态 |
+|---|---|---|---|---|
+| 1 | **群里叫「岸宝」bot 不应答** | ①`personas/<profile>/aliases.txt` 长期是**死资产**（全库无代码消费），昵称词表全靠 env；②white2 严格门把**策展昵称**（岸宝/守岸人）和**好感度误学小名**捆在一起按软触发拦掉 | ①aliases.txt 真正接线 + 官方昵称硬编码兜底（`DEFAULT_PERSONA_NICKNAMES`，含「我的蒙娜丽莎」「第二实例」）；②触发语义分层：策展昵称=真点名（等同 @，white1/未名单/white2 都应答），误学小名保持软 | ✅ 已修（19 个新回归测） |
+| 2 | 「记忆开关默认关需用户开启」——**勘误** | 上轮只查了代码默认值，没查生产 `.env` | 实查 `ChatBot/.env`：`BOT_HISTORY_ENABLED=true`、`BOT_MEMORY_ENABLED=true` **早已开启**，无需任何改动；反思回路依赖的 history 也已满足 | ✅ 勘误入库 |
+| 3 | `test_text_at_mention.py` 随 f80a8b1 整文件入库（+155） | 该文件是并行会话遗留的**未跟踪完整测试**，非我有意裹挟 | 内容正确且在全量绿内，按 §11.2「内容正确不回退、存证+勘误」处理 | ✅ 存证 |
+| 4 | `__init__.py` intake 区工作树 vs HEAD 分叉 | 并行会话已把软点名重构为 `soft_name_mention` 并提交（HEAD），工作树留有**过时遗留**（分离变量旧写法） | 重建脚本以 HEAD 的 soft_name_mention 为基底重新表达分层语义；工作树该区遗留已被 HEAD 取代 | ✅ 已处理 |
+
+### 二、本轮已实现（全部实测）
+
+1. **会话级身份记忆**：`character/session_identity.py`（每群/每私聊独立 SQLite，WAL+锁同款）；管理员命令 **`/bot identity set <昵称>` / `tag <标签1,标签2>` / `show` / `clear`**（在哪个会话执行就对哪个会话生效）；渲染进 prompt 时**内建防 OOC 护栏**（「只调整称呼与语气，你永远是守岸人本人」）。
+2. **随机图片（randpic 融入）**：`capabilities/randpic.py`——借鉴 HuParry/nonebot-plugin-randpic 的"指令→随机图"玩法（MIT），**只读取用户自定义文件夹**（`BOT_RANDPIC_DIRS`，支持多个、递归扫描、30s 缓存），**绝不自建 randpic 目录/数据库/OSS**（原插件存储层全部不要）；触发词默认「随机图/来张图」（`BOT_RANDPIC_TRIGGER_WORDS` 可加）；空图库/未配置友好降级；`images=[{"file": 本地路径}]` 走既有 renderer→OneBot 本地直发链路。
+3. **persona 硬身份资产**：`identity.md` 增 1.0 硬档案（本名/外文名 The Shorekeeper・ショアキーパー・파수인/别号第二实例/蓝发紫瞳 170cm/5000+岁/衍射/音感仪/四语配音/萌点清单/黑海岸出身/索拉里斯活动/花房钢琴旁常驻）+ 1.1 语音风格三规范（天然呆不迟钝、三无以行动与海岸意象表达、细腻绵长文学质地非文言非大白话、意象禁天马行空）；知识库增**语录锚点**11 条（黄金样本对齐语气）；runtime 活跃人格副本同步追加；aliases.txt 更新全量子昵称。
+4. **昵称兜底与入口**：`/bot identity`、`随机图`、`帮助`相应条目已入 echo 帮助。
+
+### 三、用户要求逐条对账（未完成的都在第四节有计划）
+
+| 要求 | 状态 |
+|---|---|
+| Help 页面教学化（板块/命令/参数范围/效果） | ⚠️ 部分：新功能条目已带用法与参数来源；**全板块深度教学版未做**（计划 D） |
+| 每用户/每群/每私聊独立记忆 | ✅ 基础已有（memory_facts 按 subject+session 作用域、affinity 按 user×group、会话身份 per-session） |
+| 管理员设群内昵称/身份标签，bot 据此行事 | ✅ `/bot identity`（渲染护栏防 OOC） |
+| 个性化记忆不得 OOC | ✅ 三层防线：persona 文件冻结 + 记忆分区标「仅影响语气」+ credentialed 过滤 + 会话身份渲染护栏 |
+| 时间点记忆→主动提醒（12点写作业→12点督促） | ❌ 未实现（计划 R，四件套设计已写） |
+| 记住基本信息并结合回答 | ✅ 已有（memory_extract LLM 抽取 + affinity 画像笔记 + 反思回路夜间沉淀） |
+| 准确理解鸣潮梗 | ✅ 已有（库街区百科.md 在 BOT_KNOWLEDGE_FILES 向量库 + meme_search）；持续增强靠知识库维护 |
+| 严格身份设定（角色卡全量） | ✅ 本轮 identity.md/知识库/runtime 副本三处落地 |
+| 打开记忆功能且不 OOC | ✅ 勘误：早已开启；OOC 防线如上 |
+| 融入 randpic（读自定义文件夹） | ✅ 已实现，**今晚只需在 .env 配 `BOT_RANDPIC_DIRS`** |
+| 心情观察钩子入库 | ❌ 仍搭在并行会话未提交的 `_passive_affinity_perception` 内（对方落库即生效）；期间心情只衰减不出事件 |
+| settings.py overrides 复活 / model_schedule 重启失忆 / weather-eat handler 互换 | ❌ 仍在途会话手里（diff 持续增长），不纠缠 |
+
+### 四、未实现项的实施计划（下一会话按此执行）
+
+- **计划 R（提醒/主动督促）**：①`character/reminders.py`：SQLite `reminders`（reminder_id, session_key, sender_id, remind_at, text, status, created_at；status+remind_at 索引）；②解析双轨：命令 `/提醒 <时间> <事>` + 自然语言「X点提醒我/叫我…」正则（时间词+提醒/叫我 共现才触发，防误报）；进阶轨=复用 memory_extract 的 LLM 轮末抽取模式抽 {time, action}（用户例句"中午12点要写作业"无提醒词，靠这轨）；③apscheduler 每分钟 tick（misfire_grace/max_instances=1）；④投递复用订阅推送同款 send_queue 通道，语气走人格（温柔督促）。**验收**：说"12点提醒我写作业"→12:00 收到守岸人语气的提醒；`/提醒` 列表/取消可用。
+- **计划 D（Help 教学化）**：echo 帮助条目扩为四段式（板块介绍/命令与参数/参数范围/设置效果），覆盖 行情/快报/占卜/随机图/identity/quirk/好感度/记忆/提醒；`/帮助 <板块>` 深度页复用 detail 字段。
+- **计划 W4**：好感度三维化（trust/intimacy/rapport 列迁移+阶段滞后）、表情包情绪档（meme 候选按 mood.valence 过滤语气档）、主动搭话门控（affinity≥close+冷却+频控才允许 auto_send 主动消息）、反思→`quirks.propose` 自动投喂（夜间 top 置信事实进待审池）、新闻 Atom 真源实测（候选：ruanyifeng.com/blog/atom.xml）、反思群聊按 sender 归属、八字藏干权重。
+- **遗留**：心情钩子随并行会话 perception 落库；settings/model_schedule/weather-eat 互换在并行会话手里；`test_text_at_mention.py` 入库存证（本文第三节#3）。
+
+### 五、今晚用户操作清单
+
+1. **提权重启生产 bot**（老进程跑的还是 09-09 代码，§16+§17 全部交付都等这一步）。
+2. 在 `ChatBot/.env` 追加一行（randpic 图库，改成你自己的文件夹，支持多个）：
+   `BOT_RANDPIC_DIRS=["C:/你的/图片文件夹"]`
+3. 重启后验收五连：群里叫「岸宝」→ 应答；发「随机图」→ 从你文件夹甩一张图；`/bot identity set 岸宝` → 本群称呼生效；`八字` / `塔罗 三张` / `行情` / `快报` → 各自出结果；`/bot quirk list` → 演化区空池正常。
+4. 推送 origin：`git push origin v0.0.1-alpha.2`（提交链 f80a8b1←3528478←b6cd444←57327f3←0325a69←0cac9ce，全部等指示）。
+
+---
