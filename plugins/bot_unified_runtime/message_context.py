@@ -104,14 +104,17 @@ def normalize_message_segments(raw_segments: list[dict[str, Any]] | None) -> Nor
 # 这里把引用链做成一等结构：逐层采集 → 逐层预算 → 统一消毒 → 单点渲染。
 # --------------------------------------------------------------------------
 
-# 层数上限：QQ/Telegram 客户端实际展示深度约 2-3 层，再深对模型无增量信息。
-REPLY_CHAIN_MAX_DEPTH = 3
-# 单层字符预算：防止一条被引用长文（公告/小说）无限撑大 prompt 与会话历史。
-REPLY_CHAIN_PER_LEVEL_CHARS = 200
-# 整链字符预算（含层级标记）。
-REPLY_CHAIN_TOTAL_CHARS = 600
-# 内部标记：引用块必须自我消毒，被引用正文里出现同名标记即可伪造闭合越出块外。
-# 必须容忍带层级后缀（`层级1`）的形态——渲染块本身就是那个形状。
+# 层数上限：QQ/Telegram 客户端实际展示深度约 2-3 层。用户指示放宽到 5 层，
+# 以便较长的引用链也能被完整读取。
+REPLY_CHAIN_MAX_DEPTH = 5
+# 单层字符预算：**放宽后的上限**，不是目标值。正常引用（一两句话）只会用到
+# 几十字；该值只用于拦住"被引用一条公告/小说"这类极端长文，避免撑大 prompt。
+REPLY_CHAIN_PER_LEVEL_CHARS = 500
+# 整链字符预算：同样是上限。实际注入量取决于引用链的真实内容，
+# 由 format_reply_chain 的"有多少写多少"语义决定，不会为了凑预算而填充。
+REPLY_CHAIN_TOTAL_CHARS = 2000
+# 链条在"真实需要时"才展开：层数上限虽为 5，但只有确实存在更深引用时才会去取，
+# 避免为了凑层数而做多余的反查请求或注入空层。
 _ELLIPSIS = "…"
 _INTERNAL_MARKER_RE = re.compile(
     r"\[/?(?:引用回复|引用内容|转发/聊天记录|UNTRUSTED_USER_TEXT|TRUSTED_SYSTEM)"
@@ -243,16 +246,84 @@ def _sender_of(node: Any) -> tuple[str, str]:
 
 
 def _replied_id_in_segments(segments: Any) -> str:
-    """从段列表里取 ``reply`` 段指向的 message_id（QQ 的第二层线索）。"""
-    for item in segments or []:
+    """从段列表里取 ``reply`` 段指向的 message_id（QQ 的第二层线索）。
+
+    QQ 的引用链是"逐段内嵌"的：本条消息的 reply 段给出被引用的 id，被引用消息
+    自己的段列表里又可能带一个 reply 段指向更早的一条——这是继续下钻的唯一线索。
+    """
+    for item in segments or ():
         seg = _as_segment_dict(item)
-        if seg is None or str(seg.get("type", "")).lower() != "reply":
+        if seg is None:
+            continue
+        if str(seg.get("type", "")).lower() != "reply":
             continue
         data = seg.get("data") or {}
         value = data.get("id") or data.get("message_id")
         if value:
             return str(value)
     return ""
+
+
+async def collect_reply_chain_async(
+    event: Any,
+    *,
+    lookup: Any = None,
+    max_depth: int = REPLY_CHAIN_MAX_DEPTH,
+    per_level_chars: int = REPLY_CHAIN_PER_LEVEL_CHARS,
+) -> list[ReplyChainItem]:
+    """``collect_reply_chain`` 的异步版：能用 ``lookup`` 按 id 反查更深层引用。
+
+    QQ 的 ``reply`` 段只带 id，"引用的引用"不随事件下发；``lookup(message_id)``
+    由调用方注入（通常接 OneBot ``get_msg``），返回形如
+    ``{"message_id":…, "message":[段…], "sender":{…}}`` 的映射。
+    **只在确实存在更深 reply 段时才反查**——没有更深引用就不产生额外网络调用。
+    反查失败/超时一律按链条结束处理，绝不阻断消息处理。
+    """
+    chain = collect_reply_chain(
+        event, max_depth=max_depth, per_level_chars=per_level_chars
+    )
+    if not chain:
+        return chain
+    # 同步版在没有反查能力时会补一层 "[引用层级未展开]" 占位；这里既然能反查，
+    # 就把该占位摘掉后用真实内容替换（否则会重复一层）。
+    if chain[-1] and chain[-1].text == "[引用层级未展开]":
+        chain.pop()
+    if not callable(lookup):
+        return chain
+    seen = {item.message_id for item in chain if item.message_id}
+    node: Any = getattr(event, "reply", None) or getattr(event, "reply_to_message", None)
+    # 沿链条往下走：第一层来自事件，更深层靠反查。
+    while node is not None and len(chain) < max_depth:
+        segments = node.get("message") if isinstance(node, dict) else getattr(node, "message", None)
+        nested_id = _replied_id_in_segments(segments)
+        if not nested_id or nested_id in seen:
+            break
+        seen.add(nested_id)
+        fetched = await _maybe_await(lookup(nested_id))
+        if not isinstance(fetched, dict):
+            break
+        text, media = _segments_to_text(fetched.get("message"))
+        sender_raw = fetched.get("sender")
+        sender = sender_raw if isinstance(sender_raw, dict) else {}
+        chain.append(
+            ReplyChainItem(
+                layer=len(chain) + 1,
+                message_id=str(fetched.get("message_id") or nested_id),
+                sender_id=str(sender.get("user_id") or ""),
+                sender_name=str(sender.get("nickname") or sender.get("card") or ""),
+                text=_clip(_neutralize_markers(text), per_level_chars),
+                media_labels=media,
+            )
+        )
+        node = fetched
+    return chain
+
+
+async def _maybe_await(value: Any) -> Any:
+    """lookup 允许同步或异步实现。"""
+    if hasattr(value, "__await__"):
+        return await value
+    return value
 
 
 def collect_reply_chain(

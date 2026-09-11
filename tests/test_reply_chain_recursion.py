@@ -24,6 +24,7 @@ from plugins.bot_unified_runtime.message_context import (
     REPLY_CHAIN_PER_LEVEL_CHARS,
     ReplyChainItem,
     collect_reply_chain,
+    collect_reply_chain_async,
     format_reply_chain,
 )
 
@@ -175,11 +176,12 @@ def test_telegram_reply_chain_walks_reply_to_message() -> None:
 
 
 def test_telegram_reply_chain_respects_depth_limit() -> None:
-    """层数上限生效，且超限时渲染给出明确提示。"""
-    event = _telegram_event(5)
+    """层数上限生效（超过上限时渲染给出明确提示）。"""
+    event = _telegram_event(REPLY_CHAIN_MAX_DEPTH + 2)
     chain = collect_reply_chain(event)
     assert len(chain) <= REPLY_CHAIN_MAX_DEPTH
     rendered = format_reply_chain(chain)
+    assert rendered, "应至少有若干层被读出"
     assert "[引用层级已达上限]" in rendered
 
 
@@ -249,9 +251,150 @@ def test_format_reply_chain_empty() -> None:
 
 
 def test_format_reply_chain_total_budget() -> None:
-    """整链预算生效。"""
+    """整链预算生效（超限截断到 REPLY_CHAIN_TOTAL_CHARS 以内）。"""
+    from plugins.bot_unified_runtime.message_context import REPLY_CHAIN_TOTAL_CHARS
+
     chain = [
-        ReplyChainItem(layer=index, message_id=str(index), text="字" * 200)
-        for index in range(1, 4)
+        ReplyChainItem(layer=index, message_id=str(index), text="字" * 500)
+        for index in range(1, 6)
     ]
-    assert len(format_reply_chain(chain)) <= 600
+    rendered = format_reply_chain(chain)
+    assert len(rendered) <= REPLY_CHAIN_TOTAL_CHARS
+
+
+# ------------------------------------------------- 异步下钻（get_msg 反查更深层）
+
+
+class _FakeBot:
+    """最小 OneBot bot 替身：只提供 get_msg，并记录被反查的 id。"""
+
+    def __init__(self, store: dict[str, dict]) -> None:
+        self.store = store
+        self.calls: list[int] = []
+
+    async def get_msg(self, *, message_id: int) -> dict:
+        self.calls.append(message_id)
+        return self.store.get(str(message_id), {})
+
+
+def _event_with_nested_reply_ids(depth: int):
+    """构造"只带 id"的引用链（QQ 常态：每层 message 里只有一个 reply 段）。"""
+    outer_reply = {
+        "time": 1699999000, "message_type": "group", "message_id": 55, "real_id": 55,
+        "sender": {"user_id": 30000, "nickname": "other"},
+        "message": [
+            {"type": "text", "data": {"text": "第一层"}},
+            {"type": "reply", "data": {"id": "44"}},
+        ],
+    }
+    raw = {
+        "time": 1700000000, "self_id": 10000, "post_type": "message", "message_type": "group",
+        "sub_type": "normal", "message_id": 99, "group_id": 123456, "user_id": 20000,
+        "raw_message": "看", "font": 0,
+        "sender": {"user_id": 20000, "nickname": "tester", "role": "member"},
+        "message": [
+            {"type": "text", "data": {"text": "看"}},
+            {"type": "reply", "data": {"id": "55"}},
+        ],
+        "reply": outer_reply,
+    }
+    return GroupMessageEvent.model_validate(raw)
+
+
+def test_async_chain_drills_down_via_lookup() -> None:
+    """无嵌套对象时（QQ 常态）用 get_msg 反查继续下钻到更深层。"""
+    import asyncio
+
+    from plugins.bot_unified_runtime.__init__ import _make_onebot_reply_lookup
+
+    store = {
+        "44": {
+            "message_id": 44,
+            "sender": {"user_id": 40000, "nickname": "third"},
+            "message": [
+                {"type": "text", "data": {"text": "第二层"}},
+                {"type": "reply", "data": {"id": "33"}},
+            ],
+        },
+        "33": {
+            "message_id": 33,
+            "sender": {"user_id": 50000, "nickname": "fourth"},
+            "message": [{"type": "text", "data": {"text": "第三层"}}],
+        },
+    }
+    bot = _FakeBot(store)
+    event = _event_with_nested_reply_ids(3)
+    chain = asyncio.run(
+        collect_reply_chain_async(event, lookup=_make_onebot_reply_lookup(bot))
+    )
+    texts = [item.text for item in chain]
+    assert texts[0] == "第一层"
+    assert "第二层" in texts[1]
+    assert texts[2] == "第三层"
+    assert bot.calls == [44, 33], f"反查次数/顺序不符: {bot.calls}"
+
+
+def test_async_chain_stops_when_lookup_fails() -> None:
+    """反查失败不得抛异常，链条降级为已读到的层数。"""
+    import asyncio
+
+    from plugins.bot_unified_runtime.__init__ import _make_onebot_reply_lookup
+
+    bot = _FakeBot({})  # get_msg 返回空
+    event = _event_with_nested_reply_ids(2)
+    chain = asyncio.run(
+        collect_reply_chain_async(event, lookup=_make_onebot_reply_lookup(bot))
+    )
+    assert len(chain) == 1
+    assert chain[0].text == "第一层"
+
+
+def test_async_chain_does_not_call_lookup_without_nested_reply() -> None:
+    """没有更深引用时不得产生任何反查请求（避免无谓网络开销）。"""
+    import asyncio
+
+    from plugins.bot_unified_runtime.__init__ import _make_onebot_reply_lookup
+
+    bot = _FakeBot({"44": {"message_id": 44, "message": [{"type": "text", "data": {"text": "x"}}]}})
+    event = _onebot_event(reply=_onebot_reply())  # 第一层没有 reply 段
+    chain = asyncio.run(
+        collect_reply_chain_async(event, lookup=_make_onebot_reply_lookup(bot))
+    )
+    assert len(chain) == 1
+    assert bot.calls == []
+
+
+def test_async_chain_respects_depth_cap() -> None:
+    """反查链条同样受 REPLY_CHAIN_MAX_DEPTH 约束（不会无限下钻）。"""
+    import asyncio
+
+    from plugins.bot_unified_runtime.__init__ import _make_onebot_reply_lookup
+
+    # 无限链：每层都指向下一层
+    store = {
+        str(100 + index): {
+            "message_id": 100 + index,
+            "sender": {"user_id": 1, "nickname": "n"},
+            "message": [
+                {"type": "text", "data": {"text": f"层{index}"}},
+                {"type": "reply", "data": {"id": str(101 + index)}},
+            ],
+        }
+        for index in range(20)
+    }
+    bot = _FakeBot(store)
+    event = _event_with_nested_reply_ids(2)
+    chain = asyncio.run(
+        collect_reply_chain_async(event, lookup=_make_onebot_reply_lookup(bot))
+    )
+    assert len(chain) <= REPLY_CHAIN_MAX_DEPTH
+    assert len(bot.calls) <= REPLY_CHAIN_MAX_DEPTH
+
+
+def test_budget_constants_match_user_spec() -> None:
+    """用户指示的预算口径：5 层 / 每层 500 字 / 整链 2000 字（上限而非目标值）。"""
+    from plugins.bot_unified_runtime.message_context import REPLY_CHAIN_TOTAL_CHARS
+
+    assert REPLY_CHAIN_MAX_DEPTH == 5
+    assert REPLY_CHAIN_PER_LEVEL_CHARS == 500
+    assert REPLY_CHAIN_TOTAL_CHARS == 2000

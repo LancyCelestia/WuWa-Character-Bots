@@ -80,6 +80,7 @@ from .llm import LLMProvider, OpenAICompatibleLLMProvider, StaticLLMProvider
 from .llm.model_router import build_model_router
 from .message_context import (
     collect_reply_chain,
+    collect_reply_chain_async,
     format_reply_chain,
     normalize_message_segments,
 )
@@ -351,6 +352,66 @@ def _is_plain_chat_text(text: str) -> bool:
 
     stripped = text.strip()
     return looks_like_chat_text(stripped) and not is_auto_send_command_text(stripped)
+
+
+def _onebot_segments_from_message_payload(payload: Any) -> list[dict[str, Any]]:
+    """把 ``get_msg`` 返回的 message 字段归一成段列表（兼容 dict/对象两种形态）。"""
+    message = payload
+    if isinstance(payload, dict):
+        message = payload.get("message") or payload.get("messages") or []
+    segments: list[dict[str, Any]] = []
+    for segment in message or ():
+        if isinstance(segment, dict):
+            seg_type = segment.get("type", "")
+            seg_data = segment.get("data", {})
+        else:
+            seg_type = getattr(segment, "type", "")
+            seg_data = getattr(segment, "data", {})
+        if not seg_type:
+            continue
+        segments.append(
+            {
+                "type": str(seg_type),
+                "data": dict(seg_data) if isinstance(seg_data, dict) else {},
+            }
+        )
+    return segments
+
+
+def _make_onebot_reply_lookup(bot: Any) -> Any:
+    """构造注入给 collect_reply_chain 的异步反查器（失败一律返回 None）。"""
+
+    async def _lookup(message_id: str) -> Any:
+        getter = getattr(bot, "get_msg", None)
+        if not callable(getter) or not message_id:
+            return None
+        try:
+            payload = await asyncio.wait_for(
+                getter(message_id=int(message_id)), timeout=3.0
+            )
+        except (asyncio.TimeoutError, ValueError, TypeError):
+            return None
+        except Exception:  # noqa: BLE001 - 反查失败按"取不到更深层"处理。
+            return None
+        segments = _onebot_segments_from_message_payload(payload)
+        if not segments:
+            return None
+        sender_raw = (
+            payload.get("sender")
+            if isinstance(payload, dict)
+            else getattr(payload, "sender", None)
+        )
+        sender = sender_raw if isinstance(sender_raw, dict) else {}
+        return {
+            "message_id": message_id,
+            "message": segments,
+            "sender": {
+                "user_id": sender.get("user_id", ""),
+                "nickname": sender.get("nickname") or sender.get("card") or "",
+            },
+        }
+
+    return _lookup
 
 
 def _extract_onebot_raw_segments(event: Any) -> list[dict[str, Any]]:
@@ -789,6 +850,7 @@ def _incoming_from_nonebot_event(
     bot_id: str = "unknown",
     adapter_name: str = "",
     segments: list[dict[str, Any]] | None = None,
+    reply_chain: list[Any] | None = None,
 ) -> IncomingMessage:
     text = event.get_plaintext()
     session_id = event.get_session_id()
@@ -886,7 +948,9 @@ def _incoming_from_nonebot_event(
     # 修复前：QQ 侧对 `event.reply` 取 get_plaintext()/.text —— OneBot V11 的
     # Reply 模型没有这两个属性，reply_text **恒为空**，被引用内容完全不进提示词；
     # Telegram 侧只读第一层，而适配器其实递归解析了 reply_to_message。
-    reply_chain = collect_reply_chain(event)
+    # `reply_chain` 可由调用方**预先异步解析**（含 get_msg 反查的更深层）后传入，
+    # 这样本函数保持同步、纯函数可测。
+    reply_chain = list(reply_chain) if reply_chain is not None else collect_reply_chain(event)
     reply_text = reply_chain[0].text if reply_chain else ""
     reply_id = getattr(event, "reply_to_message_id", None) or getattr(event, "reply_to_msg_id", None)
     if reply_id is None:
@@ -4923,8 +4987,16 @@ def _register_nonebot_handlers() -> None:
         event_segments = _extract_onebot_raw_segments(event)
         if any(str(s.get("type", "")).lower() == "record" for s in event_segments):
             await _transcode_record_segments(bot, event_segments)
+        # 引用链：QQ 的"引用的引用"不随事件下发，需按 id 反查（get_msg）。
+        # 只在确有更深 reply 段时才发请求；失败/超时按链条结束，不阻断消息。
+        resolved_chain = await collect_reply_chain_async(
+            event, lookup=_make_onebot_reply_lookup(bot)
+        )
         message = _incoming_from_nonebot_event(
-            bot_id=bot_id, event=event, segments=event_segments or None
+            bot_id=bot_id,
+            event=event,
+            segments=event_segments or None,
+            reply_chain=resolved_chain,
         )
         # 被动感知（批次 C）：所有群/私聊消息都观察行为、自述画像与小名自学，
         # 不依赖 @/白名单触发；只影响后续态度与称呼，不改变本轮是否回复。
