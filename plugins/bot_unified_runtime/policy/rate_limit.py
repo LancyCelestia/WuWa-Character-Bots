@@ -37,6 +37,11 @@ class RateLimitSettings(StrictBaseModel):
     proactive_window_seconds: int = 3600
     proactive_group_max_replies: int = 6
     proactive_group_cooldown_seconds: int = 90
+    # 群聊专属句数帽（用户口径：每小时 60 句、每分钟 3 句）。0 = 该帽不生效。
+    group_hourly_max_requests: int = 0
+    group_minute_max_requests: int = 0
+    # 用户情绪低落时的豁免：安抚不该被句数帽挡住（"要紧的事不受限制"）。
+    emotion_exempt_enabled: bool = True
     bypass_roles: list[str] = Field(default_factory=lambda: list(DEFAULT_BYPASS_ROLES))
 
     @field_validator("window_seconds")
@@ -71,6 +76,14 @@ class RateLimitSettings(StrictBaseModel):
             raise ValueError("proactive group reply cap must be at least 1")
         return value
 
+    @field_validator("group_hourly_max_requests", "group_minute_max_requests")
+    @classmethod
+    def require_non_negative_group_caps(cls, value: int) -> int:
+        # 0 = 该帽不生效（显式语义，避免 min(n, 0)=0 把帽反向变成"不限"）。
+        if value < 0:
+            raise ValueError("group request caps must not be negative")
+        return value
+
     @field_validator("bypass_roles")
     @classmethod
     def normalize_bypass_roles(cls, values: list[str]) -> list[str]:
@@ -91,20 +104,90 @@ class RateLimiter(Protocol):
         raise NotImplementedError
 
 
+# 情绪低落标签集合：命中即豁免群句数帽（"要紧的事不受限制"）。
+_DISTRESS_LABELS = frozenset({"support_needed", "lonely", "low_energy", "frustrated"})
+
+
+def is_group_session(message: IncomingMessage) -> bool:
+    """是否群聊会话（群句数帽只作用于群）。"""
+    session_type = getattr(message, "session_type", None)
+    value = getattr(session_type, "value", session_type)
+    if str(value).strip().lower() == "group":
+        return True
+    return bool(getattr(message, "group_id", None))
+
+
+def distress_exemption(message: IncomingMessage) -> RateLimitDecision | None:
+    """用户情绪低落时的限流豁免决定（不命中返回 None）。
+
+    复用聊天链路的规则情绪识别（纯关键词匹配、无 I/O），命中
+    support_needed / lonely / low_energy / frustrated 即豁免。
+    识别失败按"不豁免"处理，保持限流而不是放开。
+    """
+    text = str(getattr(message, "plain_text", "") or "")
+    if not text.strip():
+        return None
+    try:
+        from plugins.bot_unified_runtime.character.emotion import (
+            RuleBasedEmotionProvider,
+        )
+
+        # 直接构造规则识别器：不依赖 config（限流器拿不到完整 Config），
+        # 也避免把"情绪功能总开关"耦合进限流豁免判断。
+        signals = RuleBasedEmotionProvider(max_signals=4).analyze(
+            request_id=str(getattr(message, "request_id", "") or ""),
+            sender_id=str(getattr(message, "sender_id", "") or ""),
+            session_id=str(getattr(message, "session_id", "") or ""),
+            query_text=text,
+        )
+    except Exception:  # noqa: BLE001 - 识别失败按不豁免处理。
+        return None
+    # 注意字段名是 emotion_label（不是 label）——写错会静默恒不豁免。
+    labels = {
+        str(getattr(signal, "emotion_label", "") or "").strip().lower()
+        for signal in signals
+    }
+    hit = labels & _DISTRESS_LABELS
+    if not hit:
+        return None
+    return RateLimitDecision(
+        allowed=True,
+        reason="emotion_exempt",
+        audit_tags=[
+            "rate_limit:emotion_exempt",
+            f"rate_limit:emotion:{min(hit)}",
+        ],
+    )
+
+
 class InMemoryRateLimiter:
     # 桶清扫间隔：只访问被命中的桶会让未再命中的桶永久滞留（键集合无界增长）。
     _SWEEP_INTERVAL_SECONDS = 600.0
 
     def __init__(
         self,
-        settings: RateLimitSettings | None = None,
+        settings: RateLimitSettings | Callable[[], RateLimitSettings] | None = None,
         *,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
-        self.settings = settings or RateLimitSettings()
+        # settings 可以是静态对象，也可以是**每次判定实时求值**的 callable——
+        # 后者让 /bot runtime set 改的群句数帽/情绪豁免立刻生效，而不是等重启。
+        self._settings_source = settings or RateLimitSettings()
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self._buckets: dict[str, deque[datetime]] = defaultdict(deque)
         self._last_sweep = time.monotonic()
+
+    @property
+    def settings(self) -> RateLimitSettings:
+        """当前限流设置（callable 时实时求值；失败回退默认，保持限流不放开）。"""
+        source = self._settings_source
+        if callable(source):
+            try:
+                resolved = source()
+            except Exception:  # noqa: BLE001 - 求值失败回退默认设置。
+                return RateLimitSettings()
+            return resolved if isinstance(resolved, RateLimitSettings) else RateLimitSettings()
+        return source
 
     def _maybe_sweep(self, now: datetime) -> None:
         """低频清扫空/过期桶，防止长期运行下键集合无界增长。"""
@@ -164,6 +247,12 @@ class InMemoryRateLimiter:
 
         now = self.clock()
         self._maybe_sweep(now)
+        # 群聊专属句数帽（用户口径：每小时 60 句、每分钟 3 句）。情绪低落时豁免。
+        group_limited = self._check_group_windows(
+            capability_id, message, now, safe_amount
+        )
+        if group_limited is not None:
+            return group_limited
         target_key = self._target_bucket_key(capability_id, message)
         if self.settings.target_min_interval_seconds > 0:
             target_bucket = self._buckets[target_key]
@@ -281,6 +370,58 @@ class InMemoryRateLimiter:
     def _has_bypass_role(self, message: IncomingMessage) -> bool:
         bypass_roles = set(self.settings.bypass_roles)
         return any(role.strip().lower() in bypass_roles for role in message.sender_roles)
+
+    def _check_group_windows(
+        self,
+        capability_id: str,
+        message: IncomingMessage,
+        now: datetime,
+        amount: int,
+    ) -> RateLimitDecision | None:
+        """群聊每小时/每分钟滑动窗口判定；通过则记账并返回 None。
+
+        只作用于群聊；两个窗口任一超限即拒绝（先判后记，避免部分记账）。
+        """
+        if not is_group_session(message):
+            return None
+        if (
+            self.settings.group_hourly_max_requests <= 0
+            and self.settings.group_minute_max_requests <= 0
+        ):
+            return None
+        exemption = (
+            distress_exemption(message) if self.settings.emotion_exempt_enabled else None
+        )
+        if exemption is not None:
+            return exemption
+        group_key = str(message.group_id or message.session_id)
+        active: list[tuple[str, deque[datetime], int, int]] = []
+        for scope, window_seconds, limit in (
+            ("group_hour", 3600, self.settings.group_hourly_max_requests),
+            ("group_minute", 60, self.settings.group_minute_max_requests),
+        ):
+            if limit <= 0:
+                continue
+            bucket = self._buckets[self._bucket_key(capability_id, scope, group_key)]
+            while bucket and (now - bucket[0]).total_seconds() >= window_seconds:
+                bucket.popleft()
+            active.append((scope, bucket, limit, window_seconds))
+        for scope, bucket, limit, window_seconds in active:
+            if len(bucket) + amount > limit:
+                retry_after = window_seconds
+                if bucket:
+                    elapsed = int((now - bucket[0]).total_seconds())
+                    retry_after = max(1, window_seconds - elapsed)
+                return RateLimitDecision(
+                    allowed=False,
+                    reason=f"{scope}_exceeded",
+                    retry_after_seconds=retry_after,
+                    audit_tags=["rate_limit:blocked", f"rate_limit:{scope}_exceeded"],
+                )
+        for _scope, bucket, _limit, _window in active:
+            for _range in range(amount):
+                bucket.append(now)
+        return None
 
     def _prune(self, bucket: deque[datetime], now: datetime) -> None:
         cutoff_seconds = self.settings.window_seconds
@@ -685,15 +826,35 @@ def build_rate_limit_settings(config: object) -> RateLimitSettings:
         proactive_group_cooldown_seconds=int(
             getattr(config, "bot_group_proactive_cooldown_seconds", 90)
         ),
+        group_hourly_max_requests=int(
+            getattr(config, "bot_rate_limit_group_max_per_hour", 0) or 0
+        ),
+        group_minute_max_requests=int(
+            getattr(config, "bot_rate_limit_group_max_per_minute", 0) or 0
+        ),
+        emotion_exempt_enabled=bool(
+            getattr(config, "bot_rate_limit_emotion_exempt", True)
+        ),
         bypass_roles=list(
             getattr(config, "bot_rate_limit_bypass_roles", DEFAULT_BYPASS_ROLES)
         ),
     )
 
 
-def build_rate_limiter(config: object) -> RateLimiter:
-    settings = build_rate_limit_settings(config)
+def build_rate_limiter(
+    config: object,
+    *,
+    settings_provider: Callable[[], RateLimitSettings] | None = None,
+) -> RateLimiter:
+    """构造限流器。
+
+    传 ``settings_provider`` 时每次判定实时求值（群句数帽/情绪豁免可热改）；
+    否则退回启动期快照（旧行为）。
+    """
+    settings = settings_provider if settings_provider is not None else build_rate_limit_settings(config)
     db_path = str(getattr(config, "bot_rate_limit_db_path", "")).strip()
     if db_path:
-        return SQLiteRateLimiter(db_path, settings=settings)
+        # SQLite 版目前不支持 callable settings（其判定走 SQL 窗口），传静态快照。
+        resolved = settings() if callable(settings) else settings
+        return SQLiteRateLimiter(db_path, settings=resolved)
     return InMemoryRateLimiter(settings)

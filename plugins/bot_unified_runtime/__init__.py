@@ -597,32 +597,41 @@ def _urls_from_message_segments(raw_segments: list[dict[str, Any]]) -> list[str]
     return urls
 
 
-_QUIET_HOURS_OVERRIDE_KEYS: tuple[tuple[str, str], ...] = (
+_RUNTIME_HOT_OVERRIDE_FIELDS: tuple[tuple[str, str], ...] = (
+    # 安静时间（纳入 store 后必须实时求值，否则 /bot runtime set 要等重启）
     ("BOT_QUIET_HOURS_ENABLED", "bot_quiet_hours_enabled"),
     ("BOT_QUIET_HOURS_START", "bot_quiet_hours_start"),
     ("BOT_QUIET_HOURS_END", "bot_quiet_hours_end"),
     ("BOT_QUIET_HOURS_TIMEZONE", "bot_quiet_hours_timezone"),
     ("BOT_QUIET_HOURS_SESSION_TYPES", "bot_quiet_hours_session_types"),
     ("BOT_QUIET_HOURS_BYPASS_ROLES", "bot_quiet_hours_bypass_roles"),
+    # 群限流句数帽与情绪豁免
+    ("BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR", "bot_rate_limit_group_max_per_hour"),
+    ("BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE", "bot_rate_limit_group_max_per_minute"),
+    ("BOT_RATE_LIMIT_EMOTION_EXEMPT", "bot_rate_limit_emotion_exempt"),
+    # 群自动回复概率（与心情系数相乘，必须现算）
+    ("BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY", "bot_group_chat_auto_reply_probability"),
+    # 合并转发阈值
+    ("BOT_RENDER_FORWARD_MIN_NODES", "bot_render_forward_min_nodes"),
 )
 
 
 def _config_with_runtime_overrides(config: Any, runtime_settings: Any) -> Any:
-    """把安静时间相关的运行时覆盖合并进 config（供判定时实时求值）。
+    """把"热改参数"的运行时覆盖合并进 config（供判定时实时求值）。
 
-    安静时间的 6 个键已从 .env 移入运行时 store（避免"改了 .env 不生效 /
-    实际值与 .env 漂移"），但 `build_quiet_hours_settings` 读的是 config 字段，
-    因此这里每个判定周期做一次浅合并。没有任何覆盖时直接返回原对象，零开销。
+    这些键已从 .env 移入运行时 store（避免"改了 .env 不生效 / 实际值与 .env
+    漂移"），但消费方读的是 config 字段，因此每次判定做一次浅合并。
+    没有任何覆盖时直接返回原对象，零额外开销。
     """
     if runtime_settings is None:
         return config
     updates: dict[str, Any] = {}
-    for env_key, field_name in _QUIET_HOURS_OVERRIDE_KEYS:
+    for env_key, field_name in _RUNTIME_HOT_OVERRIDE_FIELDS:
         try:
             value = runtime_settings.get(env_key, None)
         except Exception as exc:  # noqa: BLE001 - store 读取失败按未覆盖处理。
             logging.getLogger(__name__).debug(
-                "quiet-hours override read failed key=%s error=%s", env_key, type(exc).__name__
+                "hot override read failed key=%s error=%s", env_key, type(exc).__name__
             )
             continue
         if value is None or value == "":
@@ -2481,6 +2490,7 @@ def _register_nonebot_handlers() -> None:
     from .policy import (
         build_quiet_hours_checker,
         build_quiet_hours_settings,
+        build_rate_limit_settings,
         build_rate_limiter,
         build_reply_budget_settings,
         build_role_settings,
@@ -2555,7 +2565,13 @@ def _register_nonebot_handlers() -> None:
         group_command_prefix=config.bot_runtime_group_command_prefix,
         runtime_enabled=config.bot_runtime_enabled,
         receipt_repository=receipt_repository,
-        rate_limiter=build_rate_limiter(config),
+        rate_limiter=build_rate_limiter(
+            config,
+            # 群句数帽/情绪豁免纳入 store，需实时求值（/bot runtime set 立即生效）。
+            settings_provider=lambda: build_rate_limit_settings(
+                _config_with_runtime_overrides(config, runtime_settings)
+            ),
+        ),
         quiet_hours_checker=build_quiet_hours_checker(
             config,
             # 实时求值：安静时间窗口/开关纳入运行时 store 后必须热生效，

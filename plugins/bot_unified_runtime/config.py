@@ -639,6 +639,11 @@ class Config(BaseModel):
     bot_rate_limit_chat_session_max_requests: int = 6
     bot_rate_limit_chat_sender_max_requests: int = 4
     bot_rate_limit_target_min_interval_seconds: int = 0
+    # 群聊专属句数帽（用户口径：每小时 60 句、每分钟 3 句）。0 = 该帽不生效。
+    bot_rate_limit_group_max_per_hour: int = 0
+    bot_rate_limit_group_max_per_minute: int = 0
+    # 用户情绪低落时的限流豁免：安抚不该被句数帽挡住。
+    bot_rate_limit_emotion_exempt: bool = True
     bot_rate_limit_bypass_roles: list[str] = ["admin"]
     bot_rate_limit_db_path: str = ""
     bot_quiet_hours_enabled: bool = True
