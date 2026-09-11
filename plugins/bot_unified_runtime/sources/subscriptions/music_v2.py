@@ -1,4 +1,12 @@
-"""音乐动态订阅 V2：统一目标解析和可注入 provider 客户端。"""
+"""音乐动态订阅 V2：统一目标解析和可注入 provider 客户端。
+
+网易云匿名端点（2026-09-12 只读探测验证）：
+- playlist: GET /api/playlist/detail?id=…（顶层键 ``result``）
+- album:    GET /api/album/{id}（路径形态；?id= 404。匿名探测遇 -462 风控，
+            带登录 Cookie 的环境可用，取不到时返回零条目不伪造）
+- artist:   GET /api/artist/{id}（路径形态；?id= 404）
+- public_user: GET /api/user/playlist?uid=…（参数名 uid；传 id 返回 400）
+"""
 from __future__ import annotations
 
 import re
@@ -67,6 +75,36 @@ class MusicSubscriptionAdapterV2:
             return self._make_target(provider, resolved_kind, key, raw)
         raise ValueError("无法识别的音乐订阅目标")
 
+    @staticmethod
+    def _netease_track_payload(track: dict) -> dict[str, Any]:
+        """把曲目元数据展开进 source_payload：title/歌手/封面/时长（可获取即填）。
+
+        text 键被推送渲染消费（`[订阅] … 更新《title》：url` 下一行），
+        其余字段按 ParsedContent 契约语义命名，供卡片/审计读取。
+        """
+        payload: dict[str, Any] = {"title": str(track.get("name") or "")}
+        raw_artists = track.get("artists") or track.get("ar") or []
+        artist_names = [
+            str(item.get("name") or "").strip()
+            for item in (raw_artists if isinstance(raw_artists, list) else [])
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        ]
+        if artist_names:
+            payload["artist_names"] = artist_names
+            payload["text"] = f"歌手：{'、'.join(artist_names)}"
+        album = track.get("album") or track.get("al") or {}
+        artwork = (
+            str(album.get("picUrl") or "").strip()
+            if isinstance(album, dict)
+            else ""
+        )
+        if artwork:
+            payload["artwork_url"] = artwork
+        duration = track.get("duration") or track.get("dt")
+        if isinstance(duration, (int, float)) and duration >= 0:
+            payload["duration_ms"] = int(duration)
+        return payload
+
     async def fetch_incremental(self, target, cursors, context):
         client = self.clients.get(target.platform)
         if client is not None:
@@ -79,15 +117,24 @@ class MusicSubscriptionAdapterV2:
         if target.platform == "netease" and target.target_kind in {"playlist", "album", "artist", "public_user"}:
             try:
                 if target.target_kind == "playlist":
-                    endpoint = "https://music.163.com/api/playlist/detail"
+                    endpoint = (
+                        "https://music.163.com/api/playlist/detail"
+                        f"?id={target.target_key}&limit=50"
+                    )
                 elif target.target_kind == "album":
-                    endpoint = "https://music.163.com/api/album"
+                    # 实测 2026-09-12：/api/album?id= 返回 404，仅路径形态可用。
+                    endpoint = f"https://music.163.com/api/album/{target.target_key}"
                 elif target.target_kind == "artist":
-                    endpoint = "https://music.163.com/api/artist"
+                    # 实测 2026-09-12：/api/artist?id= 返回 404，仅路径形态可用。
+                    endpoint = f"https://music.163.com/api/artist/{target.target_key}"
                 else:
-                    endpoint = "https://music.163.com/api/user/playlist"
+                    # 实测 2026-09-12：参数名是 uid，传 id 返回 400。
+                    endpoint = (
+                        "https://music.163.com/api/user/playlist"
+                        f"?uid={target.target_key}&limit=50"
+                    )
                 payload = http_get_json(
-                    f"{endpoint}?id={target.target_key}&limit=50",
+                    endpoint,
                     timeout=float((context or {}).get("timeout_seconds", 10.0) or 10.0),
                     cookie=str((context or {}).get("cookie_header", "") or ""),
                     proxy=str((context or {}).get("proxy", "") or ""),
@@ -98,7 +145,9 @@ class MusicSubscriptionAdapterV2:
                     health_state="degraded", error_code="network_error", retryable=True
                 )
             if target.target_kind == "playlist":
-                owner = payload.get("playlist") if isinstance(payload, dict) else None
+                # 实测 2026-09-12：/api/playlist/detail 顶层键为 result（旧代码
+                # 读 playlist 键恒为空，等于所有网易云歌单订阅静默零条目）。
+                owner = payload.get("result") or payload.get("playlist") if isinstance(payload, dict) else None
                 tracks = owner.get("tracks") if isinstance(owner, dict) else []
             elif target.target_kind == "album":
                 owner = payload.get("album") if isinstance(payload, dict) else None
@@ -125,7 +174,7 @@ class MusicSubscriptionAdapterV2:
                     item_id=item_id,
                     item_kind="music_track",
                     url=f"https://music.163.com/song?id={item_id}",
-                    source_payload={"title": str(track.get("name") or "")},
+                    source_payload=self._netease_track_payload(track),
                 ))
             latest = items[0].item_id if items else previous
             return SubscriptionFetchResult(

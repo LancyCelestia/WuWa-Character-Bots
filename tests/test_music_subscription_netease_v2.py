@@ -26,19 +26,30 @@ def _target(kind: str, key: str) -> SubscriptionTarget:
 
 
 def test_netease_playlist_returns_only_tracks_after_cursor(monkeypatch) -> None:
+    # 实测 2026-09-12：/api/playlist/detail 顶层键为 result（不是 playlist——
+    # 旧代码读错键导致所有网易云歌单订阅静默零条目，B6 修复）。
     payload = {
-        "playlist": {
+        "code": 200,
+        "result": {
             "name": "歌单",
+            "trackCount": 3,
             "tracks": [
-                {"id": 3, "name": "新歌"},
-                {"id": 2, "name": "已见"},
-                {"id": 1, "name": "更旧"},
+                {
+                    "id": 3,
+                    "name": "新歌",
+                    "artists": [{"id": 9, "name": "歌手甲"}],
+                    "album": {"id": 11, "name": "专辑甲", "picUrl": "http://p1.music.126.net/x/1.jpg"},
+                    "duration": 210000,
+                },
+                {"id": 2, "name": "已见", "artists": [], "album": {}, "duration": 200000},
+                {"id": 1, "name": "更旧", "artists": [], "album": {}, "duration": 190000},
             ],
-        }
+        },
     }
+    requested_urls: list[str] = []
 
     def fake_get_json(url: str, **kwargs):
-        assert "/api/playlist/detail" in url
+        requested_urls.append(url)
         return payload
 
     monkeypatch.setattr(
@@ -59,8 +70,16 @@ def test_netease_playlist_returns_only_tracks_after_cursor(monkeypatch) -> None:
             {"cookie_header": "", "proxy": ""},
         )
     )
+    assert "api/playlist/detail?id=10" in requested_urls[0]
     assert [item.item_id for item in result.items] == ["3"]
     assert result.cursors[0].last_item_id == "3"
+    # 字段补全：歌手/封面/时长随条目下发，text 供推送渲染消费。
+    fields = result.items[0].source_payload
+    assert fields["title"] == "新歌"
+    assert fields["artist_names"] == ["歌手甲"]
+    assert fields["artwork_url"] == "http://p1.music.126.net/x/1.jpg"
+    assert fields["duration_ms"] == 210000
+    assert fields["text"] == "歌手：歌手甲"
 
 
 def test_netease_adapter_reports_unknown_provider_as_unsupported() -> None:

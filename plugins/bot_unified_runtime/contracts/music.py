@@ -110,6 +110,19 @@ class MusicChartEntry(StrictBaseModel):
     rank: int
     title: str = ""
     canonical_track_id: str | None = None
+    # B6 字段补全（handover 10.5-5）：可获取即填，不可得保持默认（空/None=未知，不伪造）。
+    artist_names: list[str] = Field(default_factory=list)
+    album_name: str = ""
+    artwork_url: str = ""
+    duration_ms: int | None = None
+    url: str = ""
+
+    @field_validator("duration_ms")
+    @classmethod
+    def require_non_negative_duration(cls, value: int | None) -> int | None:
+        if value is not None and value < 0:
+            raise ValueError("chart entry duration must be non-negative")
+        return value
 
 
 class MusicChartSnapshot(StrictBaseModel):
@@ -120,4 +133,6 @@ class MusicChartSnapshot(StrictBaseModel):
     region: str = ""
     source_type: str
     fetched_at: datetime
+    # 榜单期号/更新时间（如 QQ「2026-09-11」、酷狗 rank_id_publish_date）；未知留空。
+    period: str = ""
     entries: list[MusicChartEntry] = Field(default_factory=list)
