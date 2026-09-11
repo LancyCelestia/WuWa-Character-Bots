@@ -134,6 +134,63 @@ def _table_text(text: str) -> str:
     return "\n".join(result)
 
 
+# 行级 TeX 兜底规则只命中这几种带参数的算子命令；转换时只替换命令 token，
+# 行内其余文字原样保留（整行跑 _math_text 会把普通数学词句一起改写）。
+_LINE_TEX_COMMAND_RE = re.compile(r"\\(?:frac|dfrac|sqrt|sum|int|prod|lim)\b")
+_TEX_OPERATOR_LABELS = {"sum": "求和", "prod": "连乘", "int": "积分", "lim": "取极限"}
+
+
+def _convert_single_tex_command(text: str) -> tuple[str, int]:
+    """转换行首的一个 TeX 命令 token（含参数组），返回 (转换文本, 消费长度)。"""
+    match = re.match(r"\\([A-Za-z]+)", text)
+    if match is None:
+        return text, 0
+    command = match[1]
+    index = match.end()
+    if command in {"frac", "dfrac"}:
+        numerator, index = _group(text, index)
+        denominator, index = _group(text, index)
+        return (
+            f"分子为（{_math_text(numerator)}）、分母为（{_math_text(denominator)}）的分数",
+            index,
+        )
+    if command == "sqrt":
+        order = ""
+        if index < len(text) and text[index] == "[":
+            end = text.find("]", index + 1)
+            if end >= 0:
+                order, index = text[index + 1 : end], end + 1
+        value, index = _group(text, index)
+        label = "平方根" if not order else f"{_math_text(order)}次方根"
+        return f"（{_math_text(value)}）的{label}", index
+    # sum / prod / int / lim：带上/下界算子；算子体不在此转换。
+    bounds: list[str] = []
+    while index < len(text) and (text[index].isspace() or text[index] in "_^"):
+        if text[index].isspace():
+            index += 1
+            continue
+        label = "下界" if text[index] == "_" else "上界"
+        bound, index = _group(text, index + 1)
+        bounds.append(label + "为" + _math_text(bound))
+    head = _TEX_OPERATOR_LABELS[command]
+    return head + ("（" + "，".join(bounds) + "）" if bounds else "") + "：", index
+
+
+def _convert_line_tex_tokens(line: str) -> str:
+    pieces: list[str] = []
+    consumed = 0
+    for match in _LINE_TEX_COMMAND_RE.finditer(line):
+        start = match.start()
+        if start < consumed:
+            continue
+        pieces.append(line[consumed:start])
+        converted, length = _convert_single_tex_command(line[start:])
+        pieces.append(converted)
+        consumed = start + length
+    pieces.append(line[consumed:])
+    return "".join(pieces)
+
+
 def naturalize_chat_text(text: str) -> str:
     """Idempotent presentation conversion for natural chat, not arbitrary code."""
     value = html.unescape(text or "").replace("\r\n", "\n").replace("\u200b", "")
@@ -148,9 +205,23 @@ def naturalize_chat_text(text: str) -> str:
     # Remove fences, retaining their contents. Explicit TeX fences are verbalized.
     value = re.sub(r"```(?:latex|tex|math)\s*\n(.*?)```", lambda m: _math_text(m[1]), value, flags=re.DOTALL)
     value = re.sub(r"(?m)^\s*(?:```|~~~)[^\n]*$", "", value)
-    value = re.sub(r"\$\$(.*?)\$\$|\\\[(.*?)\\\]|\\\((.*?)\\\)|(?<!\\)\$([^$\n]+)\$",
-                   lambda m: _math_text(next(g for g in m.groups() if g is not None)), value, flags=re.DOTALL)
-    value = re.sub(r"(?m)^.*\\(?:frac|dfrac|sqrt|sum|int|prod|lim)\b.*$", lambda m: _math_text(m[0]), value)
+    # 行内 $...$ 公式：两侧禁邻字母/数字，避免把“价格 $5 和 $10”这类
+    # 货币写法误判成公式（开 $ 后不得紧跟空白，闭 $ 后不得紧跟字母/数字）。
+    # 守卫必须写成 ASCII 类 `[A-Za-z0-9_]` 而**不是** `\w`：Python 的 `\w` 对
+    # str 是 Unicode 语义，汉字本身就是 `\w`，于是「$E=mc^2$是爱因斯坦…」
+    # 这类**中文行文里最常见的写法**（闭 $ 紧邻汉字、无空格）会被误判成
+    # 货币而跳过转换，LaTeX 原文直接漏进回复（评审 M2 回归）。
+    value = re.sub(
+        r"\$\$(.*?)\$\$|\\\[(.*?)\\\]|\\\((.*?)\\\)|(?<![\\$A-Za-z0-9_])\$(?!\s)([^$\n]+?)(?<!\s)\$(?![A-Za-z0-9_$])",
+        lambda m: _math_text(next(g for g in m.groups() if g is not None)),
+        value,
+        flags=re.DOTALL,
+    )
+    value = re.sub(
+        r"(?m)^.*\\(?:frac|dfrac|sqrt|sum|int|prod|lim)\b.*$",
+        lambda m: _convert_line_tex_tokens(m[0]),
+        value,
+    )
     value = _table_text(value)
     value = re.sub(r"(?m)^\s{0,3}#{1,6}\s+|(?m:^\s*(?:>\s*)+)", "", value)
     value = re.sub(r"(?m)^\s*[-+*]\s+(?:\[[ xX]\]\s*)?", "", value)
@@ -175,7 +246,15 @@ _HUMANIZE_OPENING_RE = re.compile(
 _HUMANIZE_CLOSING_RE = re.compile(
     r"(?:希望(?:这|以上)(?:些)?(?:内容)?(?:能)?(?:帮|对你有所)(?:到)?(?:助)?(?:你)?[！。~\s]*)+$|"
     r"(?:以上(?:就是|是).{0,12}全部内容[。！~\s]*)+$|"
-    r"(?:总之|综上所述|总结一下|总的来说)[，,：:]?(?:希望|以上就是|记得|欢迎|祝|喜欢的话|一起)[\s\S]{0,40}$|"
+    # 「总之…」只剥离**纯收尾客套**。不得把后面的实质指令一起吃掉（评审 M19）：
+    # 旧写法 `(?:…|记得|欢迎|祝|喜欢的话|一起)[\s\S]{0,40}$` 会把
+    # 「总之记得明天早上八点叫我，别睡过头」整段删除 → 时间点与动作丢失。
+    # 收窄为：只认「希望/以上就是/喜欢的话」这类无信息量的收尾语；且其后
+    # 40 字内不得出现时间/数字/动作宾语等可执行信息。
+    r"(?:总之|综上所述|总结一下|总的来说)[，,：:]?"
+    r"(?:希望|以上就是|喜欢的话)"
+    r"(?![^。！？\n]{0,40}(?:\d|点|明天|后天|早上|中午|晚上|叫我|提醒|别忘|记得|一起|帮我))"
+    r"[^。！？\n]{0,40}[。！~\s]*$|"
     r"(?:如果还有(?:其他)?(?:问题|疑问)[，,]?.{0,20}(?:问我|告诉我|联系我|随时)[。！~\s]*)+$"
 )
 

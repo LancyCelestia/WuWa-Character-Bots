@@ -98,7 +98,18 @@ def build_download_capability(
             kind="mixed",
             title=analysis.title if analysis else "下载完成",
             body="\n".join(lines),
-            video=[{"file": outcome.path}],
+            video=[
+                {
+                    "file": outcome.path,
+                    # meta 随视频段透传到发送点：发送成功后据此登记 bot_sent 媒体档案。
+                    "meta": {
+                        "platform": "",
+                        "canonical_url": url,
+                        "title": (analysis.title if analysis else "")[:200],
+                        "subtitle_text": "",
+                    },
+                }
+            ],
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PUBLIC,
             audit_tags=[

@@ -19,6 +19,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .content_safety import normalize_for_matching
+
 # 与 content_safety 同源的类别词表；记忆清洗比公开内容更严格——
 # 出现在长期记忆里的越界内容即使只是引用也会持续污染人格，故全部清除。
 _SANITIZE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -47,8 +49,11 @@ class SanitizeReport:
 
 
 def _match_category(text: str) -> str | None:
+    # 匹配前统一归一化（NFKC/零宽/空白折叠），全角或夹零宽字符的变体
+    # 也能命中既有规则；归一化文本只用于匹配，不写回任何存储。
+    normalized = normalize_for_matching(text)
     for category, pattern in _SANITIZE_PATTERNS:
-        if pattern.search(text or ""):
+        if pattern.search(normalized):
             return category
     return None
 

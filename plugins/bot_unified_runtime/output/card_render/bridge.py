@@ -1067,12 +1067,25 @@ def _safe_css_rgb(value: Any, fallback: str) -> str:
     return text if _RGB_TRIPLET_RE.match(text) else fallback
 
 
+# data: URL 白名单（评审 M25）：只放行「base64 图片」这一种形态。旧实现在
+# data: 分支**原样返回**，而 base64 字符集之外的内容（引号、括号、分号）可以
+# 从 `style="background-image:url('{{ banner }}')"` 逃逸出新 CSS 声明——Jinja
+# 的 autoescape 只把 `'` 变成 `&#39;`，浏览器解码后照样交给 CSS 解析器。
+# 非白名单形态一律返回空串（模板侧表现为无图，安全侧倾斜）。
+_CSS_DATA_URL_RE = re.compile(
+    r"^data:image/(?:png|jpe?g|gif|webp|bmp|avif);base64,[A-Za-z0-9+/]+={0,2}$",
+    re.IGNORECASE,
+)
+
+
 def _css_url_token(url: Any) -> str:
-    """CSS url('...') 语境安全化：data URL 原样（base64 字符集不含引号/
-    括号，无法逃逸），其余 URL 百分号编码，阻断 `') 形式的样式注入。"""
+    """CSS url('...') 语境安全化：仅放行 base64 图片 data URL，其余 URL 百分号
+    编码，阻断 `') 形式的样式注入。"""
     text = _as_str(url).strip()
-    if not text or text.startswith("data:"):
+    if not text:
         return text
+    if text.startswith("data:"):
+        return text if _CSS_DATA_URL_RE.match(text) else ""
     return urllib.parse.quote(text, safe=":/?&=%")
 
 

@@ -42,8 +42,14 @@ def build_image_search_capability(config: Any | None = None):
             )
         image_url = _extract_image_url(message)
         if not image_url and message.reply_to_text:
-            # 引用回复：无法直接拿到原图 URL，提示用户直接发图+搜图。
-            image_url = ""
+            # 审计#35：引用消息拿不到原图 URL；旧实现此处赋空串是死分支，静默落通用提示。
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.image_search",
+                kind="text",
+                body="引用消息里的原图链接拿不到，把图片和『搜图』发在同一条消息里再试一次。",
+                audit_tags=["image_search", "image_search_reply_hint"],
+            )
         if not image_url:
             return CapabilityResult(
                 request_id=message.request_id,

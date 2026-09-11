@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -27,14 +28,30 @@ from plugins.bot_unified_runtime.sources.food_data import (
 )
 
 _EAT_RE = re.compile(
-    r"^[/!！]?(?:今天)?吃(?:点|什|啥|么什么)?[什么啥]*(?:呢|好)?[？?]?\s*"
+    r"^[/!！]?(?:今天)?吃(?:点|什|啥|么什么)?[什么啥]*(?:呢|好|啊|呀|嘛)?[？?]?\s*"
     r"(?P<extra>三选一|来三道|再来一道|再来|辣的|不辣|.*)?$"
 )
 _RECIPE_RE = re.compile(r"^[/!！]?(?:菜谱|菜譜|怎么做|怎麼做|如何做)\s*[:：]?\s*(?P<name>.+)$")
 
+# 审计 E2-8：extra 非空时必须命中已知修饰/约束词表，否则不路由（落入闲聊）。
+# 此前 `.*` 兜底让任何「吃」开头的句子（吃了吗/吃火锅）都被判成点菜指令。
+_EAT_MODIFIER_RE = re.compile(r"三选一|来三道|再来一道|再来|辣的|不辣|微辣|中辣|特辣")
+_CONSTRAINT_RE = re.compile(
+    r"不吃|不要|别放|忌口|过敏|有|加|放|人多|\d人|两[人个]|三[人个]|四[人个]|"
+    "清淡|开胃|下饭|暖和|热乎|快手|省事|便宜|丰盛|减脂|健身"
+)
+
 
 def is_eat_command(text: str) -> bool:
-    return bool(_EAT_RE.match((text or "").strip()))
+    match = _EAT_RE.match((text or "").strip())
+    if match is None:
+        return False
+    extra = (match.group("extra") or "").strip()
+    if not extra:
+        return True
+    return bool(
+        _EAT_MODIFIER_RE.search(extra) or _CONSTRAINT_RE.search(extra)
+    )
 
 
 def is_recipe_command(text: str) -> bool:
@@ -121,14 +138,19 @@ def _llm_constrained(config: Any, raw_extra: str) -> str:
         return ""
 
 
-# 近期推荐（换菜不重复）：会话 -> 菜名集合
-_RECENT: dict[str, set[str]] = {}
+# 近期推荐（换菜不重复）：会话 -> 菜名集合。
+# bot.eat 已进 offload 名单，多线程并发是常态：全部读写走锁；
+# 值用 dict[str, None]（保插入序的集合），超限逐出最旧一半而不是清空，
+# 保住"最近吃过的不再推"的语义（审计#31）。
+_RECENT: dict[str, dict[str, None]] = {}
+_RECENT_LOCK = threading.Lock()
 _RECENT_MAX_SESSIONS = 256
 
 
 def clear_recent_dishes() -> None:
     """清空近期推荐（测试与运维用）。"""
-    _RECENT.clear()
+    with _RECENT_LOCK:
+        _RECENT.clear()
 
 
 def build_eat_capability(
@@ -137,7 +159,8 @@ def build_eat_capability(
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         text = (message.plain_text or "").strip()
         session = f"{message.session_type.value}:{message.session_id}"
-        recent = _RECENT.setdefault(session, set())
+        with _RECENT_LOCK:
+            recent = _RECENT.setdefault(session, {})
 
         # 菜谱查询：菜谱 <菜名> / 怎么做 <菜名>
         recipe_match = _RECIPE_RE.match(text)
@@ -190,10 +213,7 @@ def build_eat_capability(
         )
         # 带实义约束（忌口/食材/人数/口味关键词）→ LLM 推荐；
         # 纯修饰语（"朴实无华的"）不浪费一次模型调用，走本地随机。
-        _CONSTRAINT_RE = re.compile(
-            r"不吃|不要|别放|忌口|过敏|有|加|放|人多|\d人|两[人个]|三[人个]|四[人个]|"
-            "清淡|开胃|下饭|暖和|热乎|快手|省事|便宜|丰盛|减脂|健身"
-        )
+        # _CONSTRAINT_RE 提升到模块级，与 is_eat_command 的路由校验共用。
         meaningful = bool(extra) and not again and count == 1 and not spicy and bool(
             _CONSTRAINT_RE.search(extra)
         )
@@ -212,13 +232,18 @@ def build_eat_capability(
                 )
         picks: list[Dish] = []
         for _ in range(count):
-            picked = random_dish(exclude=recent if not again else set(), spicy=spicy)
+            with _RECENT_LOCK:
+                exclude: set[str] | None = set(recent) if not again else None
+            picked = random_dish(exclude=exclude, spicy=spicy)
             if picked is None:
                 continue
             picks.append(picked)
-            if len(recent) > 24:
-                recent.clear()
-            recent.add(picked.name)
+            with _RECENT_LOCK:
+                if len(recent) > 24:
+                    # 审计#31：全清会让"换菜不重复"失忆；逐出最旧一半。
+                    for stale in list(recent)[: len(recent) // 2]:
+                        recent.pop(stale, None)
+                recent[picked.name] = None
         if not picks:
             return CapabilityResult(
                 request_id=message.request_id,
@@ -227,8 +252,9 @@ def build_eat_capability(
                 body="菜品库暂时抽不出菜了，稍后再试。",
                 audit_tags=["eat", "empty"],
             )
-        while len(_RECENT) > _RECENT_MAX_SESSIONS:
-            _RECENT.pop(next(iter(_RECENT)))
+        with _RECENT_LOCK:
+            while len(_RECENT) > _RECENT_MAX_SESSIONS:
+                _RECENT.pop(next(iter(_RECENT)), None)
         bodies = [_format_dish_body(dish, with_steps=(len(picks) == 1)) for dish in picks]
         body = "\n\n".join(bodies)
         if len(picks) > 1:

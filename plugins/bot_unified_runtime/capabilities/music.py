@@ -59,7 +59,9 @@ PART_LABELS = {
     "file": "音频文件",
     "link": "链接",
 }
-ALL_PARTS = frozenset({"card", "voice", "link"})
+# 审计 E2-6：ALL_PARTS 必须包含全部四个部件——缺 "file" 时
+# 「点歌模式 全部」会静默丢掉音频文件部件。
+ALL_PARTS = frozenset({"card", "voice", "file", "link"})
 # 兼容旧值：旧“card”= 卡片 + 语音 + 链接。
 DEFAULT_PARTS = frozenset({"card", "voice", "link"})
 _MODE_SPLIT_RE = re.compile(r"[\s+＋&,，、/]|and|plus|和|与|跟|加|及", re.IGNORECASE)
@@ -677,7 +679,10 @@ def build_music_capability(
         # 审计 P2#6：isdigit() 对 "²"/"①" 为 True 而 int() 崩溃，改 isdecimal + try/except。
         if candidates_enabled and query.isdecimal():
             _prune_candidate_sessions(now())
-            stored = _CANDIDATE_SESSIONS.get(session_key)
+            # 审计 E2-6：dict.pop 原子取用——get 与 pop 之间不再留窗口，
+            # 同一发送者并发双发同一编号不会重复出歌（取用后他人/再次请求
+            # 都拿不到同一份候选）。
+            stored = _CANDIDATE_SESSIONS.pop(session_key, None)
             if stored is not None:
                 _expires, parser_id, cands = stored
                 try:
@@ -699,7 +704,6 @@ def build_music_capability(
                         except Exception:  # noqa: BLE001 - 详情失败按未找到降级。
                             item = None
                     if item is not None:
-                        _CANDIDATE_SESSIONS.pop(session_key, None)
                         return _render_hit(
                             item,
                             parser_id,

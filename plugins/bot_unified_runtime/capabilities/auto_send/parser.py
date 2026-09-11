@@ -21,8 +21,10 @@ _COMMAND_RE = re.compile(
 
 
 def is_auto_send_command_text(text: str) -> bool:
+    # 审计#16：门控与 _COMMAND_RE 对齐——正则本身要求完整语法，
+    # 旧实现额外要求「报存 」带空格，把无空格的合法指令挡在门外。
     stripped = text.strip()
-    return stripped.startswith("报存 ") and _COMMAND_RE.match(stripped) is not None
+    return _COMMAND_RE.match(stripped) is not None
 
 
 def _split_recipients(raw: str) -> list[RecipientDescriptor]:
@@ -39,7 +41,10 @@ def _extract_instruction(rest: str | None) -> tuple[str, str | None]:
     subject_match = re.search(r"主题[:：]\s*(?P<subject>[^，,]+)", content)
     if subject_match:
         subject = subject_match.group("subject").strip()
-    content_match = re.search(r"内容(?P<content>.+)$", content)
+        # 审计#16：主题本身含「内容」时，从主题之后搜正文，避免截到主题内部。
+        content_match = re.search(r"内容(?P<content>.+)$", content[subject_match.end():])
+    else:
+        content_match = re.search(r"内容(?P<content>.+)$", content)
     if content_match:
         content = content_match.group("content").lstrip(":：，, ").strip()
     return content, subject

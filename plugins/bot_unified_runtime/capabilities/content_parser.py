@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import io as _io
+import os
+import threading
 from typing import Any
 
 from plugins.bot_unified_runtime.capabilities.music import (
@@ -430,7 +432,15 @@ def render_card_png(
                     png = buf.getvalue()
         except Exception:  # noqa: S110, BLE001 - 裁剪失败用原始截图。
             pass
-        path.write_bytes(png)
+        # 审计#17：固定 digest 文件名 + 非原子写，并发解析同一链接时另一线程
+        # 可能读到半截 PNG；先写线程私有临时文件，再 os.replace 原子落位。
+        tmp_path = path.with_name(f"{path.name}.{threading.get_ident()}.tmp")
+        try:
+            tmp_path.write_bytes(png)
+            os.replace(tmp_path, path)
+        except OSError:
+            tmp_path.unlink(missing_ok=True)
+            raise
         try:
             from plugins.bot_unified_runtime.runtime.cache_policy import (
                 enforce_quota,
@@ -740,7 +750,37 @@ def build_content_capability(
                     if outcome.error:
                         media_lines = [f"下载：/bot download {direct_video.url!s}"]
                     else:
-                        video_parts = [{"file": outcome.path}]
+                        # meta 随视频段透传到发送点：发送成功后据此登记
+                        # bot_sent 媒体档案（平台/标题/字幕供视频追问复用）。
+                        video_parts = [
+                            {
+                                "file": outcome.path,
+                                "meta": {
+                                    "platform": match.parser_id,
+                                    "item_id": item_id,
+                                    "canonical_url": canonical_url or candidate,
+                                    "title": (content.title if content else "")[:200],
+                                    "creator_name": (
+                                        item.creator.name if item and item.creator else ""
+                                    ),
+                                    "duration_ms": (
+                                        direct_video.duration_ms
+                                        if direct_video.duration_ms
+                                        else None
+                                    ),
+                                    "subtitle_text": (
+                                        str(
+                                            (content.platform_extra or {}).get(
+                                                "subtitle"
+                                            )
+                                            or ""
+                                        )[:3000]
+                                        if content
+                                        else ""
+                                    ),
+                                },
+                            }
+                        ]
                         size_mb = ""
                         if (
                             outcome.analysis is not None

@@ -1,7 +1,9 @@
 """文件收发能力（接收代码/Markdown 调试 + 导出多格式文档）。
 
-接收：管理员上传 .py 等文件 → 语法检查 + 受限子进程运行 → 回报错误与输出。
-子进程无 shell、隔离模式（-I）、限时、工作目录为临时目录、不继承用户环境。
+接收：管理员上传 .py 等文件 → 语法检查 + 子进程运行 → 回报错误与输出。
+注意：子进程不是沙箱——-I 只隔离 Python 环境（不继承用户 site/环境变量），
+无 shell、限时、工作目录为临时目录，但进程仍以 bot 账户的全部 OS 权限运行，
+可访问 bot 能访问的任意文件与网络，因此仅限管理员触发使用。
 
 发送：``/bot 文件 <md|docx|pptx|xlsx|pdf> <主题>`` → LLM 生成 Markdown →
 转换为目标格式 → 以平台上传文件接口发送。文档库缺失时诚实说明，不伪造。
@@ -9,6 +11,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import subprocess
@@ -52,7 +55,11 @@ def run_code_debug(
     timeout_seconds: float = 15.0,
     python_executable: str = "",
 ) -> str:
-    """受限运行代码文件并返回调试报告（只含退出码与 stdout/stderr 摘要）。"""
+    """运行代码文件并返回调试报告（只含退出码与 stdout/stderr 摘要）。
+
+    非沙箱：以 bot 进程同等 OS 权限运行上传代码（-I 仅隔离 Python 环境），
+    仅限管理员使用，不得对不可信输入开放。
+    """
     path = Path(file_path)
     if not path.exists():
         return "文件不存在或无法读取。"
@@ -78,7 +85,12 @@ def run_code_debug(
         "COMSPEC": os.environ.get("COMSPEC", ""),
     }
     try:
-        with tempfile.TemporaryDirectory(prefix="bot_debug_") as workdir:
+        # 审计#19：Windows 下孙进程可能仍锁着 workdir，with 退出清理抛 OSError
+        # 会经外层 except 把真实运行结果吞成"运行环境异常"；ignore_cleanup_errors
+        # 让清理失败静默，结果照常交付。
+        with tempfile.TemporaryDirectory(
+            prefix="bot_debug_", ignore_cleanup_errors=True
+        ) as workdir:
             try:
                 completed = subprocess.run(  # noqa: PLW1510 - 非零退出码是调试结果，不抛异常。
                     [executable, "-I", str(path.resolve())],
@@ -169,9 +181,13 @@ def parse_markdown_blocks(markdown: str) -> list[DocumentBlock]:
 
 
 def _safe_file_name(title: str, fmt: str) -> str:
-    slug = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", str(title or "document").strip())[:40]
+    normalized = str(title or "document").strip()
+    slug = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", normalized)[:40]
     slug = slug.strip("_") or "document"
-    return f"{slug}.{fmt}"
+    # 审计#36：截断归一化后不同主题可能得到同一 slug，静默覆盖旧导出；
+    # 追加主题内容短 hash 区分。
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:8]
+    return f"{slug}_{digest}.{fmt}"
 
 
 def _find_cjk_font() -> str:

@@ -13,14 +13,17 @@
 命令（大小写均可、斜杠可省略）：
 - /表情 列表                列出可用表情 key
 - /表情 <key> <文字…>       生成文字表情（“｜”分隔多段文字）
+- /表情 <key>（发图或 @人）  生成图片表情：消息内图片 > @头像 > 发送者头像
 - /表情帮助 / /meme help    用法
 
 后端未启动时优雅降级提示，不抛异常；生成图片写入 data/memes/ 后
-以图片形式走统一流水线发送。
+以图片形式走统一流水线发送。QQ 多媒体签名 URL 第三方抓不到（A-8 同款
+结论），需要图片时一律 bot 侧下载后以 data 形式上传。
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import re
 import threading
@@ -47,6 +50,55 @@ _HELP_VERBS = {"帮助", "用法", "help", "?"}
 
 # 可注入的请求函数便于单元测试：request_fn(method, path, json=None) -> (status, body)
 RequestFn = Callable[..., tuple[int, Any]]
+# 图片抓取注入缝：image_fetch_fn(url) -> bytes | None（None=抓取失败）。
+ImageFetchFn = Callable[[str], "bytes | None"]
+
+# 图片下载上限：表情图不需要更大；异常超大响应直接放弃。
+_IMAGE_FETCH_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _collect_image_sources(message: IncomingMessage) -> list[str]:
+    """图片来源优先级：消息内图片 URL → @群友 QQ 头像 → 发送者头像（仅 OneBot）。"""
+    sources: list[str] = []
+    for segment in message.raw_segments or []:
+        seg_type = str(segment.get("type", "")).strip().lower()
+        data = segment.get("data") or {}
+        if seg_type == "image":
+            url = str(data.get("url") or "").strip()
+            if url.startswith("http"):
+                sources.append(url)
+        elif seg_type == "at":
+            qq = str(data.get("qq") or "").strip()
+            if qq and qq != "all":
+                sources.append(f"https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640")
+    if not sources and message.platform == "onebot":
+        sender = str(message.sender_id or "").strip()
+        if sender:
+            sources.append(f"https://q1.qlogo.cn/g?b=qq&nk={sender}&s=640")
+    return list(dict.fromkeys(sources))
+
+
+def _default_image_fetch_fn(url: str) -> bytes | None:
+    import httpx
+
+    try:
+        with httpx.Client(
+            timeout=10.0,
+            follow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+        ) as client, client.stream("GET", url) as response:
+            if response.status_code != 200:
+                return None
+            chunks: list[bytes] = []
+            size = 0
+            for chunk in response.iter_bytes():
+                size += len(chunk)
+                if size > _IMAGE_FETCH_MAX_BYTES:
+                    return None
+                chunks.append(chunk)
+        return b"".join(chunks) or None
+    except Exception:  # noqa: BLE001 - 图片抓取失败按无图处理。
+        return None
 
 
 def is_meme_command(text: str) -> bool:
@@ -69,7 +121,9 @@ def parse_meme_command(text: str) -> tuple[str, str, list[str]]:
         # “表情 列表”这种整体是关键词。
         if first.lower() in _LIST_VERBS:
             return "list", "", []
-        return "help", "", []
+        # 纯 key（无文字）：可能是零文字的图片表情（如 petpet），
+        # 也可能只是打错了 key——由能力层按 info 的 min_texts 区分。
+        return "render", first, []
     if first.lower() in _LIST_VERBS:
         return "list", "", []
     texts = [item.strip() for item in remainder.split("｜") if item.strip()] or [
@@ -84,7 +138,9 @@ def _usage_body() -> str:
         "1. /表情 列表 —— 列出可用表情 key\n"
         "2. /表情 <key> <文字> —— 生成表情，如『/表情 petpet 可爱』\n"
         "   多段文字用 ｜ 分隔：『/表情 文字表情 早上好｜晚上好』\n"
-        "3. /表情帮助 —— 查看本说明\n"
+        "3. 需要图片的表情（如 petpet）：发图或 @ 群友后输命令，"
+        "不带图时会用你的头像\n"
+        "4. /表情帮助 —— 查看本说明\n"
         "需要本地运行 meme-generator-rs（默认 http://127.0.0.1:2233）。"
     )
 
@@ -129,6 +185,7 @@ def build_meme_capability(
     *,
     request_fn: RequestFn | None = None,
     output_dir: str | None = None,
+    image_fetch_fn: ImageFetchFn | None = None,
 ) -> Any:
     enabled = bool(getattr(config, "bot_meme_api_enabled", False)) if config else False
     base_url = (
@@ -190,13 +247,76 @@ def build_meme_capability(
                 audit_tags=["meme", f"meme_keys:{len(body)}"],
             )
 
+        # 图片表情：按 info 的参数决定是否带图（info 拿不到时按纯文字处理，
+        # 与旧版行为兼容）。图片一律 bot 侧下载后转 data 上传——QQ 多媒体
+        # 签名 URL 服务端抓不到。
+        image_fetch = image_fetch_fn or _default_image_fetch_fn
+        min_images = max_images = min_texts = 0
+        info_ok = False
+        status, info = requester("GET", f"/memes/{key}/info")
+        if status == 200 and isinstance(info, dict):
+            params = info.get("params") or {}
+            if isinstance(params, dict):
+                try:
+                    min_images = max(0, int(params.get("min_images") or 0))
+                    max_images = max(0, int(params.get("max_images") or 0))
+                    min_texts = max(0, int(params.get("min_texts") or 0))
+                    info_ok = True
+                except (TypeError, ValueError):
+                    min_images = max_images = min_texts = 0
+
+        # 纯 key 无文字：确属零文字表情才渲染；否则当打错 key 回帮助。
+        if not texts and not (info_ok and min_texts == 0):
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.meme",
+                kind="text",
+                body=_usage_body(),
+                audit_tags=["meme", "meme_missing_query"],
+            )
+
+        image_params: list[dict[str, str]] = []
+        if max_images > 0 or min_images > 0:
+            sources = _collect_image_sources(message)
+            for source in sources[:max(1, max_images)]:
+                payload = image_fetch(source)
+                if not payload:
+                    continue
+                status, uploaded = requester(
+                    "POST",
+                    "/image/upload",
+                    json={"type": "data", "data": base64.b64encode(payload).decode()},
+                )
+                if status == 200 and isinstance(uploaded, dict) and uploaded.get("image_id"):
+                    image_params.append(
+                        {"name": f"img{len(image_params)}.png", "id": str(uploaded["image_id"])}
+                    )
+            if len(image_params) < min_images:
+                return CapabilityResult(
+                    request_id=message.request_id,
+                    capability_id="bot.meme",
+                    kind="text",
+                    body=(
+                        f"表情『{key}』需要 {min_images} 张图片：把图片和命令发在同一条"
+                        "消息里，或 @ 一位群友（我会用 Ta 的头像）。"
+                    ),
+                    risk_level=RiskLevel.LOW,
+                    privacy_level=PrivacyLevel.PUBLIC,
+                    audit_tags=["meme", "meme_need_images"],
+                )
+
         status, body = requester(
             "POST",
             f"/memes/{key}",
-            json={"images": [], "texts": texts, "options": {}},
+            json={"images": image_params, "texts": texts, "options": {}},
         )
         if status != 200 or not isinstance(body, dict) or not body.get("image_id"):
-            return _service_down_result(message, requester, base_url, key=key)
+            # 服务端错误体为 {"code":…,"message":"…"}（meme-generator-rs 实测），
+            # 透传 message 让用户知道是缺文字/缺图还是 key 不存在。
+            detail = ""
+            if isinstance(body, dict):
+                detail = str(body.get("message") or body.get("detail") or "").strip()[:160]
+            return _service_down_result(message, requester, base_url, key=key, detail=detail)
         image_id = str(body["image_id"])
         status, content = requester("GET", f"/image/{image_id}")
         if status != 200 or not isinstance(content, (bytes, bytearray)):
@@ -204,7 +324,10 @@ def build_meme_capability(
         try:
             out_dir.mkdir(parents=True, exist_ok=True)
             digest = hashlib.sha256(bytes(content)).hexdigest()[:12]
-            path = out_dir / f"meme_{key}_{digest}.png"
+            # petpet 等表情产物是 GIF 动图；按魔数定扩展名，避免 QQ 端按
+            # 扩展名渲染失败。
+            suffix = ".gif" if bytes(content)[:3] == b"GIF" else ".png"
+            path = out_dir / f"meme_{key}_{digest}{suffix}"
             path.write_bytes(bytes(content))
             try:
                 from plugins.bot_unified_runtime.runtime.cache_policy import (
@@ -246,10 +369,13 @@ def _service_down_result(
     base_url: str,
     *,
     key: str | None = None,
+    detail: str = "",
 ) -> CapabilityResult:
     status, version = requester("GET", "/meme/version")
     if status == 200 and isinstance(version, (str, bytes)):
         hint = f"表情『{key}』参数不对或生成失败。" if key else "表情服务异常。"
+        if detail and key:
+            hint += f"原因：{detail}"
     else:
         hint = (
             f"表情包服务未启动或不可达（{base_url}）。"

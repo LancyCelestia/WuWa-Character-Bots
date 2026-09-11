@@ -1114,7 +1114,15 @@ def build_help_result(
         if not is_admin and entry["topic"] not in _PUBLIC_HELP_TOPICS:
             body = _help_unknown_body(cleaned)
         else:
+            # M7：`detail` 字段过去是**只写死数据**——49 个条目的四段式文案
+            # （板块介绍 / 命令与参数 / 参数范围 / 设置效果）全部写好了，
+            # 但没有任何读取点，深度页只输出 `lines` 的简表。
+            # 这里把它接进 `/bot help <模块>` 的详情页，同时保留 `lines`，
+            # 让"计划 D 四段式深度教学版"直接落地而不是从零重写。
             body = entry["title_line"] + "\n" + "\n".join(entry["lines"])
+            detail_text = str(entry.get("detail") or "").strip()
+            if detail_text and detail_text not in body:
+                body = f"{body}\n\n{detail_text}"
     actual_request_id = request_id or new_request_id("help")
     image_path = _try_render_help_image(
         body,

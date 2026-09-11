@@ -574,14 +574,17 @@ def persona_failure_message(session_id: str = "") -> str:
         import random
 
         return _PERSONA_FAILURE_MESSAGES[random.randrange(count)]
-    offset = _FAILURE_MESSAGE_CURSOR.get(session_id, 0)
-    _FAILURE_MESSAGE_CURSOR[session_id] = (offset + 1) % count
-    while len(_FAILURE_MESSAGE_CURSOR) > 512:
-        _FAILURE_MESSAGE_CURSOR.pop(next(iter(_FAILURE_MESSAGE_CURSOR)))
+    # 审计#15：get/set/逐出整体持锁；pop 带默认值，防并发逐出同一键时 KeyError。
+    with _FAILURE_CURSOR_LOCK:
+        offset = _FAILURE_MESSAGE_CURSOR.get(session_id, 0)
+        _FAILURE_MESSAGE_CURSOR[session_id] = (offset + 1) % count
+        while len(_FAILURE_MESSAGE_CURSOR) > 512:
+            _FAILURE_MESSAGE_CURSOR.pop(next(iter(_FAILURE_MESSAGE_CURSOR)), None)
     return _PERSONA_FAILURE_MESSAGES[offset % count]
 
 
 _FAILURE_MESSAGE_CURSOR: dict[str, int] = {}
+_FAILURE_CURSOR_LOCK = threading.Lock()
 _SAFE_LLM_ERROR_KINDS = frozenset(
     {
         "config_missing",
@@ -2720,7 +2723,7 @@ def _apply_output_message_budget(
     max_messages: int,
     max_chars_per_message: int,
 ) -> tuple[str, bool]:
-    """0/负数 = 不限制：不做任何裁剪，也不追加截断提示。"""
+    """段数 0/负数 = 不限段：保留全部块；单条字符上限仍生效并照常提示。"""
     normalized = text.strip()
     if not normalized:
         return normalized, False
@@ -2731,8 +2734,14 @@ def _apply_output_message_budget(
     if unlimited_blocks and unlimited_chars:
         return normalized, False
 
-    allowed_blocks = max(1, max_messages)
-    total_char_budget = max(200, max_chars_per_message) * allowed_blocks
+    if unlimited_blocks:
+        # 审计#14：不限段时保留全部块，字符预算按单条计；
+        # 旧实现 allowed_blocks 落到 1，多块输出被静默砍成首块。
+        allowed_blocks = len(blocks)
+        total_char_budget = max(200, max_chars_per_message)
+    else:
+        allowed_blocks = max(1, max_messages)
+        total_char_budget = max(200, max_chars_per_message) * allowed_blocks
     blocks_trimmed = not unlimited_blocks and len(blocks) > allowed_blocks
     kept = "\n\n".join(blocks[:allowed_blocks]).strip()
     chars_trimmed = not unlimited_chars and len(kept) > total_char_budget

@@ -15,6 +15,7 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     PrivacyLevel,
     RiskLevel,
+    SendPolicy,
 )
 from plugins.bot_unified_runtime.sources.nmc_weather import (
     list_districts,
@@ -28,9 +29,40 @@ from plugins.bot_unified_runtime.sources.open_meteo import (
 _WEATHER_RE = re.compile(r"^[/!！]?(?:天气|查天气|天氣|查天氣|weather)\s*(?P<query>.+)$")
 _DISTRICT_RE = re.compile(r"^[/!！]?(?:支持区县|查询区县|可查区县)\s*(?P<province>.+)$")
 
+# 审计 E2-7：触发收窄。任何「天气」开头的自然句（如日常感慨「天气真好」）
+# 此前都会路由并外呼两次再回错误提示。查询词需像地名：长度受限、不以常见
+# 口语感叹词开头、不以语气助词/标点收尾。注意词表避开真实城市前缀：
+# 太原/太仓（太）、那曲（那）、哈尔滨（哈）等不能被词首过滤误杀。
+_WEATHER_QUERY_MAX_LEN = 20
+_WEATHER_COLLOQUIAL_RE = re.compile(
+    r"^(?:真是|真的|真好|太好|好热|好冷|好差|好闷|好棒|挺|超|这么|那么|"
+    r"今天|昨天|明天|后天|最近|感觉|要是|如果|因为|所以|但是|可是|还是|"
+    r"不错|不好|简直|可算|终于|怎么样|怎样|如何|啥|什么|为什么|"
+    r"咦|哇|哇塞|唉|哎|哎呀|哦|嗯)"
+)
+_WEATHER_TAIL_PARTICLE_RE = re.compile(r"[的了了吗呢吧呀啊嘛哦哟唻啦~～！？?！。，,、…\s]$")
+_WEATHER_UNROUTABLE_QUERIES = frozenset(
+    {"真好", "不错", "怎么样", "怎样", "咋样", "如何", "预报", "热", "冷", "热死了", "冷死了"}
+)
+
+
+def _plausible_weather_query(query: str) -> bool:
+    """查询词预校验：过滤纯口语感叹，放行真实城市形态。"""
+    text = str(query or "").strip()
+    if not text or len(text) > _WEATHER_QUERY_MAX_LEN:
+        return False
+    if text in _WEATHER_UNROUTABLE_QUERIES:
+        return False
+    if _WEATHER_COLLOQUIAL_RE.match(text):
+        return False
+    return not _WEATHER_TAIL_PARTICLE_RE.search(text)
+
 
 def is_weather_command(text: str) -> bool:
-    return _WEATHER_RE.match(text.strip()) is not None
+    match = _WEATHER_RE.match(text.strip())
+    if match is None:
+        return False
+    return _plausible_weather_query(match.group("query"))
 
 
 def is_district_command(text: str) -> bool:
@@ -99,9 +131,10 @@ def build_weather_capability(
                 audit_tags=["weather", f"weather_districts:{len(result['districts'])}"],
             )
         match = _WEATHER_RE.match(text)
-        if not match:
-            # 路由误捕（plain_text 可能被引用/上下文拼接污染）：不回复用法
-            # 说明骚扰用户，静默跳过。明确想查天气的用户会说「天气 <城市>」。
+        if not match or not _plausible_weather_query(match.group("query")):
+            # 路由误捕（plain_text 可能被引用/上下文拼接污染，或纯口语感叹）：
+            # 不回复用法说明骚扰用户，静默跳过。明确想查天气的用户会说
+            # 「天气 <城市>」。
             return CapabilityResult(
                 request_id=message.request_id,
                 capability_id="bot.weather",
@@ -120,6 +153,20 @@ def build_weather_capability(
             except Exception:  # noqa: BLE001 - 全球源失败按未找到降级。
                 global_result = None
             if global_result is None:
+                session_scope = str(
+                    getattr(getattr(message, "session_type", None), "value", "private")
+                )
+                if session_scope != "private":
+                    # 审计 E2-7：群聊查不到城市时静默（审计后不回复），不再向
+                    # 全群刷「没有查到」错误提示；私聊保留明确报错。
+                    return CapabilityResult(
+                        request_id=message.request_id,
+                        capability_id="bot.weather",
+                        kind="text",
+                        body="",
+                        send_policy=SendPolicy.SILENT_AUDIT,
+                        audit_tags=["weather", "weather_not_found_silent"],
+                    )
                 return CapabilityResult(
                     request_id=message.request_id,
                     capability_id="bot.weather",

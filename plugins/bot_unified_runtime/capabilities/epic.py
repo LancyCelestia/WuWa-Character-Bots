@@ -35,10 +35,14 @@ def _format_games(games: list[dict[str, Any]]) -> str:
         return "这周没有正在进行的免费游戏活动。"
     lines = ["本周免费游戏："]
     for game in games:
+        title = game.get("title") or ""
+        if not title:
+            # 审计#33：源偶发缺 title，旧实现 game['title'] 直接 KeyError；无标题条目整行跳过。
+            continue
         source = str(game.get("source") or "").strip()
-        line = f"- {game['title']}"
+        line = f"- {title}"
         if source:
-            line = f"- [{source}] {game['title']}"
+            line = f"- [{source}] {title}"
         if game.get("end"):
             line += f"（截止 {game['end']}）"
         if game.get("url"):

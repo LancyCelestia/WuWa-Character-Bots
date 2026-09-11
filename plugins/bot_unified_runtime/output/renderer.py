@@ -123,7 +123,19 @@ def split_text_chunks(
     if max_nodes > 0:
         while len(chunks) > max_nodes:
             overflow = chunks.pop()
-            chunks[-1] = f"{chunks[-1]}\n{overflow}"
+            merged = f"{chunks[-1]}\n{overflow}" if chunks else overflow
+            if chunks:
+                chunks[-1] = merged
+            else:
+                chunks.append(merged)
+        # 溢出反复合并会突破 node_chars 硬边界：对尾块按边界二次切分，
+        # 代价是块数可能临时超过 max_nodes（硬长度边界优先于节点数上限）。
+        tail = chunks[-1]
+        if len(tail) > node_chars:
+            chunks[-1:] = [
+                tail[index : index + node_chars]
+                for index in range(0, len(tail), node_chars)
+            ]
     return chunks
 
 
