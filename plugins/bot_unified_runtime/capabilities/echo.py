@@ -96,6 +96,9 @@ def resolve_help_query(command_text: str) -> str:
     if lowered.startswith("/bot"):
         text = text[len("/bot"):].strip()
         lowered = text.lower()
+    # /bot commands：命令目录（机器可读），与 help 总览分开，不渲染卡片。
+    if lowered in _COMMANDS_CATALOG_QUERY:
+        return "commands"
     if (
         lowered in {"help", "帮助"}
         or lowered.startswith(("help ", "帮助 ", "help　", "帮助　"))
@@ -2056,6 +2059,42 @@ def _try_render_help_image(
         return ""
 
 
+_COMMANDS_CATALOG_QUERY = frozenset({"commands", "cmds", "命令", "命令列表", "命令目录"})
+
+
+def build_commands_catalog_body(*, is_admin: bool = False) -> str:
+    """`/bot commands` 命令目录：机器可读纯文本，不走帮助卡渲染。
+
+    自动生成，数据源两处，新增能力无需改本函数：
+    - runtime.base_router 路由注册表（确定性路由：kind/capability/优先级）；
+    - echo._HELP_ENTRIES（帮助模块：主题/别名/可见性）。
+    行格式：区段头 `[名称] 字段 | 字段 | …`，数据行以 ` | ` 分隔。
+    非管理员只列公开模块（与帮助总览同门控）；路由表为公开路由语义，全列。
+    """
+    from plugins.bot_unified_runtime.runtime.base_router import (
+        list_route_rules_for_audit,
+    )
+
+    rules = sorted(list_route_rules_for_audit(), key=lambda item: int(item["priority"]))
+    lines = [
+        "命令目录 v1（机器可读：区段头 [名称]，数据行「字段 | 字段 | …」；模块详情 /bot help 模块名）",
+        f"[routes] priority | kind | capability_id | label（{len(rules)} 条）",
+    ]
+    for rule in rules:
+        lines.append(
+            f"{rule['priority']} | {rule['kind']} | {rule['capability_id']} | {rule['label']}"
+        )
+    entries = _visible_help_entries(is_admin)
+    lines.append(f"[commands] topic | aliases | access（{len(entries)} 条）")
+    for entry in entries:
+        aliases = "/".join(str(alias) for alias in (entry.get("aliases") or ())) or str(
+            entry["topic"]
+        )
+        access = "admin" if entry.get("admin_only") else "public"
+        lines.append(f"{entry['topic']} | {aliases} | {access}")
+    return "\n".join(lines)
+
+
 def build_help_result(
     request_id: str | None = None,
     query: str = "",
@@ -2068,6 +2107,19 @@ def build_help_result(
     accent_color: str = "",
 ) -> CapabilityResult:
     cleaned = parse_help_command_text(query)
+    if cleaned.strip().lower() in _COMMANDS_CATALOG_QUERY:
+        # 命令目录：文本直出，不做帮助卡渲染（与 /bot help 不重复）。
+        return CapabilityResult(
+            request_id=request_id or new_request_id("commands"),
+            capability_id="bot.commands",
+            kind="text",
+            title="命令目录",
+            body=build_commands_catalog_body(is_admin=is_admin),
+            risk_level=RiskLevel.LOW,
+            privacy_level=PrivacyLevel.PUBLIC,
+            send_policy=SendPolicy.IMMEDIATE,
+            audit_tags=["help", "commands_catalog"],
+        )
     topic = normalize_help_topic(cleaned)
     page = 1 if cleaned in {"1", "2"} else None
     is_index = not cleaned or page is not None

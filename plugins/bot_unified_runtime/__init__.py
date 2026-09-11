@@ -3733,8 +3733,10 @@ def _register_nonebot_handlers() -> None:
 
     file_notice = on_notice(rule=_is_admin_file_notice, priority=8, block=False)
 
-    from .capabilities.poke import PokeLimiter, build_poke_text
-    _poke_limiter = PokeLimiter(clock=time.monotonic)
+    # 统一戳一戳分发：OneBot 适配器只做事件归一与执行，门控/话术/回戳
+    # 意图全部收敛在 capabilities.poke.PokeDispatcher（未来其他适配器同构复用）。
+    from .capabilities.poke import PokeDispatcher
+    _poke_dispatcher = PokeDispatcher(clock=time.monotonic)
 
     async def _is_poke_event(event: Event) -> bool:
         return str(getattr(event, "notice_type", "")) == "notify" and str(getattr(event, "sub_type", "")) == "poke"
@@ -3743,18 +3745,33 @@ def _register_nonebot_handlers() -> None:
 
     @poke_notice.handle()
     async def _handle_poke_notice(bot: Bot, event: Event) -> None:
-        if not _poke_limiter.accept(
-            event, str(getattr(bot, "self_id", "")), bool(getattr(config, "bot_poke_enabled", True)),
-            float(getattr(config, "bot_poke_private_cooldown_seconds", 30.0)),
-            float(getattr(config, "bot_poke_group_cooldown_seconds", 10.0)),
-            float(getattr(config, "bot_poke_probability", 1.0)),
-        ):
-            return
-        await _send_text_through_unified_pipeline(
-            bot, event,
-            build_poke_text(group=bool(getattr(event, "group_id", None)), nickname=""),
-            "bot.poke",
+        reaction = _poke_dispatcher.build_poke_reaction(
+            event,
+            bot_id=str(getattr(bot, "self_id", "")),
+            # 运行时热覆盖合并：/bot runtime set BOT_POKE_* 立即生效。
+            config=_config_with_runtime_overrides(config, runtime_settings),
         )
+        if reaction is None or not reaction.active:
+            return
+        if reaction.poke_back:
+            # 回戳：NapCat/OneBot V11 扩展 API，平台不支持时静默降级。
+            try:
+                if reaction.group:
+                    await bot.call_api(
+                        "group_poke",
+                        group_id=int(getattr(event, "group_id", 0) or 0),
+                        user_id=int(getattr(event, "user_id", 0) or 0),
+                    )
+                else:
+                    await bot.call_api("friend_poke", user_id=int(getattr(event, "user_id", 0) or 0))
+            except Exception:  # noqa: BLE001, S110 - 回戳失败不影响话术回复。
+                pass
+        if reaction.reply:
+            await _send_text_through_unified_pipeline(
+                bot, event,
+                reaction.reply,
+                "bot.poke",
+            )
 
     @file_notice.handle()
     async def _handle_admin_file_notice(bot: Bot, event: Event) -> None:

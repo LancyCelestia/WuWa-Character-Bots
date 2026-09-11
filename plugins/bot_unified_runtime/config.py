@@ -472,6 +472,11 @@ class Config(BaseModel):
     bot_poke_group_cooldown_seconds: float = 10.0
     bot_poke_probability: float = 1.0
     bot_poke_admin_bypass: bool = False
+    # 统一戳一戳分发（capabilities.poke.PokeDispatcher）：回戳与话术可配。
+    bot_poke_reply_enabled: bool = True
+    bot_poke_poke_back: bool = False
+    bot_poke_group_text: str = ""
+    bot_poke_private_text: str = ""
     # 链接解析能力（bot.content）：识别消息里的平台链接 → 解析 → 信息卡。
     bot_content_parse_enabled: bool = True
     # 平台白名单（空=全部）：bilibili, douyin, xiaohongshu, youtube,

@@ -376,6 +376,11 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_POKE_PRIVATE_COOLDOWN_SECONDS": _memory_duration_converter,
     "BOT_POKE_GROUP_COOLDOWN_SECONDS": _memory_duration_converter,
     "BOT_POKE_PROBABILITY": _probability_converter,
+    # B10 统一戳一戳分发：回戳/话术开关与文案（消费点 capabilities.poke.PokeDispatcher）。
+    "BOT_POKE_REPLY_ENABLED": _bool_converter,
+    "BOT_POKE_POKE_BACK": _bool_converter,
+    "BOT_POKE_GROUP_TEXT": lambda value: str(value),
+    "BOT_POKE_PRIVATE_TEXT": lambda value: str(value),
     "BOT_GROUP_BLACK1": _group_list_converter,
     "BOT_GROUP_BLACK2": _group_list_converter,
     "BOT_GROUP_WHITE1": _group_list_converter,

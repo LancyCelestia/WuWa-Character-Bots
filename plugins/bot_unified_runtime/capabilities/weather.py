@@ -25,9 +25,21 @@ from plugins.bot_unified_runtime.sources.open_meteo import (
     format_open_meteo,
     open_meteo_query,
 )
+from plugins.bot_unified_runtime.sources.parsers.http_util import (
+    ParseHttpError,
+    http_get_json,
+)
 
 _WEATHER_RE = re.compile(r"^[/!！]?(?:天气|查天气|天氣|查天氣|weather)\s*(?P<query>.+)$")
 _DISTRICT_RE = re.compile(r"^[/!！]?(?:支持区县|查询区县|可查区县)\s*(?P<province>.+)$")
+
+# ---------------------------------------------------------------- 预警支路
+# NMC 全国预警在报清单（免 key；2026-09-12 curl 实测 200，单页 pageSize=300
+# 即可取全量当日预警）。条目：alertid/issuetime/title/url/pic，颜色与类型
+# 均含在 title（如「…气象台发布大雾橙色预警信号」）。
+_NMC_FIND_ALARM_URL = "https://www.nmc.cn/rest/findAlarm?pageNo=1&pageSize=300"
+_ALARM_COLOR_RANK = {"蓝色": 1, "黄色": 2, "橙色": 3, "红色": 4}
+_ALARM_MAX_SHOWN = 5
 
 # 审计 E2-7：触发收窄。任何「天气」开头的自然句（如日常感慨「天气真好」）
 # 此前都会路由并外呼两次再回错误提示。查询词需像地名：长度受限、不以常见
@@ -67,6 +79,89 @@ def is_weather_command(text: str) -> bool:
 
 def is_district_command(text: str) -> bool:
     return _DISTRICT_RE.match(text.strip()) is not None
+
+
+def parse_alert_title(title: str) -> tuple[str, str]:
+    """从预警标题提取 (类型, 颜色)；缺失回退空串。
+
+    例：「辽宁省锦州市黑山县气象台发布大雾橙色预警信号」→ ("大雾", "橙色")。
+    """
+    text = str(title or "").strip()
+    color = ""
+    for name in _ALARM_COLOR_RANK:
+        if name in text:
+            color = name
+            break
+    kind = ""
+    if "发布" in text:
+        segment = text.split("发布", 1)[1]
+        for suffix in ("预警信号", "预警"):
+            if suffix in segment:
+                # 「发布大雾橙色预警信号」：先把颜色词剔出类型段。
+                kind = segment.split(suffix, 1)[0]
+                for name in _ALARM_COLOR_RANK:
+                    kind = kind.replace(name, "")
+                kind = kind.strip("（）() 　")
+                break
+    return kind, color
+
+
+def fetch_city_alerts(
+    query: str, *, proxy: str = "", timeout: float = 8.0
+) -> list[dict[str, str]]:
+    """NMC 预警支路：按查询词过滤全国在报预警。
+
+    查询词按「省-市」拆 token，要求全部 token 命中 title（如「河北-大城」
+    需同时含「河北」「大城」，避免「大城」误中他省同名）；接口不可达、
+    响应异常或无命中一律返回 []（调用方静默），绝不抛出。
+    """
+    tokens = [part.strip() for part in str(query or "").split("-") if part.strip()]
+    if not tokens:
+        return []
+    try:
+        payload = http_get_json(
+            _NMC_FIND_ALARM_URL, proxy=proxy, timeout=timeout, verify_ssl=False
+        )
+    except (ParseHttpError, ValueError, OSError):
+        return []
+    entries = ((((payload or {}).get("data") or {}).get("page") or {}).get("list")) or []
+    hits: list[dict[str, str]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        title = str(entry.get("title") or "").strip()
+        if not title or not all(token in title for token in tokens):
+            continue
+        kind, color = parse_alert_title(title)
+        url = str(entry.get("url") or "").strip()
+        hits.append(
+            {
+                "title": title,
+                "kind": kind,
+                "color": color,
+                "issued": str(entry.get("issuetime") or "").strip(),
+                "url": f"https://www.nmc.cn{url}" if url.startswith("/") else url,
+            }
+        )
+    # 高等级（红>橙>黄>蓝）排前；同级保持 NMC 原序（新发布在前）。
+    hits.sort(key=lambda item: _ALARM_COLOR_RANK.get(item["color"], 0), reverse=True)
+    return hits
+
+
+def format_city_alerts(alerts: list[dict[str, str]]) -> str:
+    """预警条目 → 附在天气报告后的文本段；空列表返回空串。"""
+    if not alerts:
+        return ""
+    shown = alerts[:_ALARM_MAX_SHOWN]
+    lines = [f"⚠️ 气象预警（NMC 当前在报 {len(alerts)} 条）"]
+    for item in shown:
+        kind_part = f"{item['kind']}预警" if item["kind"] else "预警"
+        label = f"{item['color']}{kind_part}" if item["color"] else kind_part
+        lines.append(f"• {label}｜发布 {item['issued'] or '时间未知'}")
+        lines.append(f"  {item['title']}")
+    if len(alerts) > len(shown):
+        lines.append(f"（其余 {len(alerts) - len(shown)} 条略）")
+    return "\n".join(lines)
 
 
 def build_weather_capability(
@@ -177,7 +272,25 @@ def build_weather_capability(
                 )
             report = format_open_meteo(global_result)
             source = "open-meteo"
+        # 预警支路：仅 NMC 城市命中时附带（Open-Meteo 海外/乡镇无预警语义）。
+        # 接口不可达/无预警时 fetch_city_alerts 返回空，静默不加段。
+        alerts: list[dict[str, str]] = []
+        if source == "nmc":
+            try:
+                alerts = fetch_city_alerts(query, proxy=proxy)
+            except Exception:  # noqa: BLE001 - 预警支路失败不影响天气主报告。
+                alerts = []
+            if alerts:
+                report = f"{report}\n\n{format_city_alerts(alerts)}"
         card = _render_weather_card(query, report, source)
+        audit_tags = [
+            "weather",
+            f"weather_source:{source}",
+            f"weather_query:{query[:20]}",
+            "card_rendered" if card else "text_only",
+        ]
+        if alerts:
+            audit_tags.append(f"weather_alerts:{len(alerts)}")
         return CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.weather",
@@ -187,12 +300,7 @@ def build_weather_capability(
             images=[{"file": card}] if card else [],
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PUBLIC,
-            audit_tags=[
-                "weather",
-                f"weather_source:{source}",
-                f"weather_query:{query[:20]}",
-                "card_rendered" if card else "text_only",
-            ],
+            audit_tags=audit_tags,
         )
 
     return capability
