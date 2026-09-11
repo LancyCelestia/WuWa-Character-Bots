@@ -2322,6 +2322,11 @@ def _register_reflection_scheduler(scheduler: Any, config: Any) -> dict:
 
     同步 job 跑在 APScheduler 线程池（与 kb_wiki 同款，不阻塞事件循环）；
     无 turns 库/无轮次时 run_nightly_reflection 返回 skipped，静默跳过。
+
+    **启动补偿（本轮新增）**：只挂 04:30 的 cron 会有一个真实漏洞——进程在
+    04:30 时不在运行（重启/维护/崩溃）时当天反思永久丢失，下一次要等一整天。
+    实测就该数据库一直零行的现象即由此放大。这里在启动时补一次：
+    若"今天"还没有 digest，就用 misfire 容忍窗口立即补跑一次。
     """
 
     def _reflection_job() -> None:
@@ -2341,7 +2346,9 @@ def _register_reflection_scheduler(scheduler: Any, config: Any) -> dict:
         except Exception as exc:  # noqa: BLE001 - 夜间任务失败不影响主链路。
             from nonebot.log import logger
 
-            logger.warning("reflection failed: {}", type(exc).__name__)
+            logger.warning(
+                "reflection failed: {}", type(exc).__name__
+            )
 
     hour = max(0, min(23, int(getattr(config, "bot_reflection_hour", 4) or 4)))
     minute = max(0, min(59, int(getattr(config, "bot_reflection_minute", 30) or 30)))
@@ -2356,7 +2363,43 @@ def _register_reflection_scheduler(scheduler: Any, config: Any) -> dict:
         max_instances=1,
         coalesce=True,
     )
-    return {"hour": hour, "minute": minute}
+    # 启动补偿：当天还没跑过就立刻补一次（跑在调度线程池，不阻塞启动）。
+    catch_up = _should_catch_up_reflection(config)
+    if catch_up:
+        try:
+            scheduler.add_job(
+                _reflection_job,
+                "date",
+                id="bot_reflection_catch_up",
+                replace_existing=True,
+                run_date=None,  # 立即
+                misfire_grace_time=3600,
+                max_instances=1,
+            )
+        except Exception:  # noqa: BLE001 - 补偿任务挂不上不影响 cron 本身。
+            catch_up = False
+    return {"hour": hour, "minute": minute, "catch_up": catch_up}
+
+
+def _should_catch_up_reflection(config: Any) -> bool:
+    """今天是否还没有反思 digest（需要启动补偿）。只读，失败按不补处理。"""
+    try:
+        import sqlite3
+        from contextlib import closing
+        from datetime import datetime
+
+        path = str(getattr(config, "bot_reflection_db_path", "") or "").strip()
+        if not path:
+            return False
+        today = datetime.now().astimezone().date().isoformat()
+        with closing(sqlite3.connect(path)) as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) FROM reflection_digests WHERE scope_date = ?",
+                (today,),
+            ).fetchone()
+        return int(row[0] if row else 0) == 0
+    except Exception:  # noqa: BLE001 - 判断失败就不补，避免重复跑。
+        return False
 
 
 def _register_reminder_scheduler(scheduler: Any, config: Any, send_queue: Any) -> dict:
