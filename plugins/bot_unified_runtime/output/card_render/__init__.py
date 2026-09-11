@@ -1,4 +1,4 @@
-"""通用卡片渲染子包（移植自 astrbot_plugin_parser，MIT 许可）。"""
+"""通用卡片渲染子包（移植自 MIT 许可的开源上游项目，出处见 docs/THIRD_PARTY_NOTICES.md）。"""
 
 from .bridge import (
     PLATFORM_COLORS,

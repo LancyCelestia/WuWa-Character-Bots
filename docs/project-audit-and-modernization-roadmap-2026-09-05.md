@@ -358,7 +358,7 @@ Ruff 当前有 6 项：
 2. API 优先：UI 只调用稳定的 `/admin/api/v1` 契约，不能直接读写 `.env`、SQLite 或 Python 全局对象。
 3. 数据事实优先：LLM 调用、费用、告警、订阅、模型配置均进入结构化存储。
 4. 安全默认关闭：命令执行、外部发帖、自动互动、文件执行、凭据读写都需显式启用、角色授权、审计与限流。
-5. 不直接照搬 AstrBot 插件：只借鉴能力边界、状态机、API 使用方法和失败策略；重写为 NoneBot2 adapter/capability/runtime 结构，并先核对许可证和上游 API 条款。
+5. 不直接照搬外部参考插件：只借鉴能力边界、状态机、API 使用方法和失败策略；重写为 NoneBot2 adapter/capability/runtime 结构，并先核对许可证和上游 API 条款。
 
 ### 8.2 推荐控制面模块
 
@@ -558,7 +558,7 @@ rate_limit / error_mapping / fixture_tests / capability_status
 
 ### 11.1 气象预警
 
-参考公开 AstrBot 气象预警项目的能力思路，但按 NoneBot2 重写为：
+参考公开的气象预警外部项目的能力思路，但按 NoneBot2 重写为：
 
 1. `AlertRegion`：机器人实例、群、城市/区县、预警类型、最低等级、时段、目标 adapter。
 2. `WeatherWarningProvider`：官方气象局数据源 adapter；数据格式、缓存、去重、失效和错误映射独立。
@@ -620,13 +620,13 @@ CMD 控制台不直接提供任意 PowerShell。若确有需求，仅提供：
 
 ## 13. 外部参考项目的使用原则
 
-用户提供的 AstrBot 项目应作为“能力调研对象”，不是可直接装入 NoneBot 的依赖：
+用户提供的外部参考项目应作为“能力调研对象”，不是可直接装入 NoneBot 的依赖：
 
 - 气象预警：借鉴多地区订阅、预警去重、等级升级、群目的地映射和 API 容错；重写为 NoneBot capability/scheduler/store。
 - QQ 空间：借鉴草稿、发布、互动、状态持久化和频率控制；任何发布必须先审计、先人工批准。
 - 戳一戳：借鉴按场景的 reaction router；映射到 OneBot notify event 和现有 policy gate。
 
-实现前必须逐个审查：许可证、上游 API 合法性、账号风控、Cookie 处理方式、依赖体积、资源占用和可测试性。不得复制未确认许可证的代码，也不得把 AstrBot 的同步/生命周期假设直接带入 NoneBot2。
+实现前必须逐个审查：许可证、上游 API 合法性、账号风控、Cookie 处理方式、依赖体积、资源占用和可测试性。不得复制未确认许可证的代码，也不得把外部框架的同步/生命周期假设直接带入 NoneBot2。
 
 ## 14. 建议的第一批实现任务
 

@@ -126,7 +126,7 @@ chat-smoke 输出 llm_status=ok 且
 
 - 深解析结果（B站 PGC/直播/动态/商品、小红书等）会走 `output/card_render/` 的通用信息卡模板渲染成 PNG 卡片；渲染后端失败时自动降级为文本卡。
 - B站商品：魔力赏市集（mall.bilibili.com，需要 BOT_COOKIES_FILE 的 bilibili 登录 Cookie）按 itemsId 匹配列表接口；会员购（show.bilibili.com）走 og 兜底；两者都失败时返回浅层降级卡片，不会中断对话。
-- 卡片模板参考 MIT 许可的 astrbot_plugin_parser，出处记录在 THIRD_PARTY_NOTICES.md。
+- 卡片模板参考 MIT 许可的开源上游项目，出处记录在 docs/THIRD_PARTY_NOTICES.md。
 
 ## 6.2 向量知识库（本地 Ollama bge-m3 优先，百炼兜底）
 

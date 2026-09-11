@@ -1,4 +1,4 @@
-"""GsCore / gsuid-core 适配桥（参考 astrbot_plugin_gscore_adapter 实现）。
+"""GsCore / gsuid-core 适配桥（参考社区开源适配器实现，出处见 docs/THIRD_PARTY_NOTICES.md）。
 
 目标：把 GsCore 当作相邻的 AI/游戏服务接进统一运行时。桥接层只做
 协议转换与连接维护，不决定权限、不绕过审查与审计：

@@ -1,7 +1,7 @@
 """通用卡片渲染桥接。
 
-移植并适配自 astrbot_plugin_parser core/render_html/bridge.py
-（https://github.com/Zhalslar/astrbot_plugin_parser，MIT License，
+移植并适配自一个 MIT 许可的开源卡片渲染上游项目 core/render_html/bridge.py
+（完整出处与许可声明见 docs/THIRD_PARTY_NOTICES.md，
 Copyright (c) 2024 Les Freire）。
 
 职责：

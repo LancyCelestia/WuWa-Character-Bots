@@ -1,7 +1,7 @@
 """通用卡片渲染的数据模型。
 
-移植并精简自 astrbot_plugin_parser core/render_html/models.py
-（https://github.com/Zhalslar/astrbot_plugin_parser，MIT License，
+移植并精简自一个 MIT 许可的开源卡片渲染上游项目 core/render_html/models.py
+（完整出处与许可声明见 docs/THIRD_PARTY_NOTICES.md，
 Copyright (c) 2024 Les Freire）。
 
 保持“精简但字段完整”：RenderPayload / ForwardPayload 覆盖模板会用到的
@@ -147,7 +147,7 @@ class RenderPayload:
     platform_logo_svg: str = ""
     platform_mark: str = ""
     platform_mark_style: str = ""
-    bot_name: str = "AstrBot"
+    bot_name: str = "守岸人"
     bot_avatar_url: str = ""
     card_width: str = "1440px"
     font_scale: float = 1.0

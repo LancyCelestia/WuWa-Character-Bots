@@ -4,8 +4,8 @@
   （釉瑚洗由 bridge 按 --pc 派生注入；色斑/动画/随机相位见 .drift-* 与底部内联
   脚本）；内部版式、文字、结构不变。
 
-  Ported and adapted from astrbot_plugin_parser
-  (https://github.com/Zhalslar/astrbot_plugin_parser).
+  Ported and adapted from an MIT-licensed open-source upstream renderer
+  (full attribution: docs/THIRD_PARTY_NOTICES.md).
 
   MIT License
 
@@ -45,6 +45,16 @@
     /* 语义色豁免（非品牌底色）：--blue 是正文超链接/话题的通用链接蓝，
        不随平台色派生（链接可点性语义优先）；X 认证徽章蓝为徽章品牌语义。 */
     --blue: #23ade5;
+    /* 语义色豁免（非品牌底色）：琥珀系强调——「置顶/热评/装扮徽章/闪电/金牌」
+       语义不随平台色派生（热评色条已占用 --pc，置顶徽章必须与之区分）。
+       浅底 wash 优先由 color-mix 从主 token 掺白派生：
+       装扮徽章底=12% 掺白（=#fff3e0）、置顶卡底=5% 掺白（≈#fffbf0）。 */
+    --amber-strong: #ff9800;
+    --amber-deep: #e65100;
+    --amber-gold: #f5b83b;
+    --amber-bolt: #f0b429;
+    --amber-bolt-deep: #b77900;
+    --amber-bolt-wash: #fff7d6;
     --text-main: #18191c;
     --text-sub: #5b6069;
     --text-secondary: #7a828c;
@@ -254,9 +264,9 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 }
 
 .platform-mark.bolt {
-    background: #fff7d6;
-    color: #b77900;
-    border-color: #f0b429;
+    background: var(--amber-bolt-wash);
+    color: var(--amber-bolt-deep);
+    border-color: var(--amber-bolt);
     font-size: 13px;
 }
 
@@ -269,7 +279,8 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 }
 
 .platform-mark.verified-gold {
-    background: #f5b83b;
+    /* 金牌认证徽章：琥珀金语义（--amber-gold），不随 --pc 派生。 */
+    background: var(--amber-gold);
     color: #fff;
     border-color: #fff;
     font-size: 13px;
@@ -352,6 +363,13 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     border-radius: 12px;
     padding: 1px 8px;
     white-space: nowrap;
+}
+
+/* 评论装扮徽章（粉丝牌/装扮，琥珀浅底深字）：
+   底色= --amber-strong 12% 掺白（=#fff3e0），收敛自模板内联样式的写死色。 */
+.comment-title-badge {
+    background: color-mix(in srgb, var(--amber-strong) 12%, #fff);
+    color: var(--amber-deep);
 }
 
 .meta-stat {
@@ -509,9 +527,10 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 
 /* ===== 置顶评论 / 热评 ===== */
 .pinned-comment {
-    background: #fffbf0;
+    /* 置顶卡底由 --amber-strong 掺白派生（5% ≈ 原 #fffbf0）。 */
+    background: color-mix(in srgb, var(--amber-strong) 5%, #fff);
     border: none;
-    border-left: 3px solid #ff9800;
+    border-left: 3px solid var(--amber-strong);
     border-radius: var(--radius-sm);
     padding: 10px 14px;
     margin: 8px 0;
@@ -555,7 +574,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     font-size: 10px;
     padding: 1px 5px;
     border-radius: 3px;
-    background: #ff9800;
+    background: var(--amber-strong);
     color: #fff;
     font-weight: 600;
     vertical-align: middle;
@@ -1332,7 +1351,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
                 <span> · {{ pinned_comment.time }}</span>
                 {% endif %}
                 {% if pinned_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ pinned_comment.level }}</span>{% endif %}
-                {% if pinned_comment.title_badge %}<span class="uid-tag" style="font-size:10px;padding:0 6px;background:#fff3e0;color:#e65100;">{{ pinned_comment.title_badge }}</span>{% endif %}
+                {% if pinned_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:10px;padding:0 6px;">{{ pinned_comment.title_badge }}</span>{% endif %}
                 {% if pinned_comment.dress %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ pinned_comment.dress }}</span>{% endif %}
                 {% if pinned_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ pinned_comment.handle }}</span>{% endif %}
             </div>
@@ -1360,7 +1379,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
                 <span> · {{ hot_comment.time }}</span>
                 {% endif %}
                 {% if hot_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ hot_comment.level }}</span>{% endif %}
-                {% if hot_comment.title_badge %}<span class="uid-tag" style="font-size:10px;padding:0 6px;background:#fff3e0;color:#e65100;">{{ hot_comment.title_badge }}</span>{% endif %}
+                {% if hot_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:10px;padding:0 6px;">{{ hot_comment.title_badge }}</span>{% endif %}
                 {% if hot_comment.dress %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ hot_comment.dress }}</span>{% endif %}
                 {% if hot_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ hot_comment.handle }}</span>{% endif %}
             </div>
@@ -1398,7 +1417,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
             <div class="comment-item">
                 <div class="comment-avatar">{% if comment.avatar %}<img src="{{ comment.avatar }}" alt="" onerror="this.remove()">{% endif %}</div>
                 <div class="comment-body">
-                    <div class="comment-author">{{ comment.author }}{% if comment.level %} <span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ comment.level }}</span>{% endif %}{% if comment.title_badge %} <span class="uid-tag" style="font-size:10px;padding:0 6px;background:#fff3e0;color:#e65100;">{{ comment.title_badge }}</span>{% endif %}{% if comment.dress %} <span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ comment.dress }}</span>{% endif %}{% if comment.handle %} <span style="font-size:10px;color:var(--text-secondary);">{{ comment.handle }}</span>{% endif %}</div>
+                    <div class="comment-author">{{ comment.author }}{% if comment.level %} <span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ comment.level }}</span>{% endif %}{% if comment.title_badge %} <span class="uid-tag comment-title-badge" style="font-size:10px;padding:0 6px;">{{ comment.title_badge }}</span>{% endif %}{% if comment.dress %} <span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ comment.dress }}</span>{% endif %}{% if comment.handle %} <span style="font-size:10px;color:var(--text-secondary);">{{ comment.handle }}</span>{% endif %}</div>
                     <div class="comment-text">{{ comment.content }}</div>
                     <div class="comment-meta">
                         {% if comment.time %}{{ comment.time }} · {% endif %}
@@ -1455,14 +1474,14 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
             {% endif %}
             {% if forward.pinned_comment %}
             <div class="pinned-comment" style="margin-top: 8px;">
-                <div class="pc-header"><span class="pc-badge">置顶</span>{% if forward.pinned_comment.avatar %}<img src="{{ forward.pinned_comment.avatar }}" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.pinned_comment.author }}</span>{% if forward.pinned_comment.time %}<span> · {{ forward.pinned_comment.time }}</span>{% endif %}{% if forward.pinned_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ forward.pinned_comment.level }}</span>{% endif %}{% if forward.pinned_comment.title_badge %}<span class="uid-tag" style="font-size:10px;padding:0 6px;background:#fff3e0;color:#e65100;">{{ forward.pinned_comment.title_badge }}</span>{% endif %}{% if forward.pinned_comment.dress %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ forward.pinned_comment.dress }}</span>{% endif %}{% if forward.pinned_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ forward.pinned_comment.handle }}</span>{% endif %}</div>
+                <div class="pc-header"><span class="pc-badge">置顶</span>{% if forward.pinned_comment.avatar %}<img src="{{ forward.pinned_comment.avatar }}" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.pinned_comment.author }}</span>{% if forward.pinned_comment.time %}<span> · {{ forward.pinned_comment.time }}</span>{% endif %}{% if forward.pinned_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ forward.pinned_comment.level }}</span>{% endif %}{% if forward.pinned_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:10px;padding:0 6px;">{{ forward.pinned_comment.title_badge }}</span>{% endif %}{% if forward.pinned_comment.dress %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ forward.pinned_comment.dress }}</span>{% endif %}{% if forward.pinned_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ forward.pinned_comment.handle }}</span>{% endif %}</div>
                 <div class="pc-content">{{ forward.pinned_comment.content }}</div>
                 {% if forward.pinned_comment.likes %}<div class="pc-likes">{{ forward.pinned_comment.likes }} 赞{% if forward.pinned_comment.replies_count %} · {{ forward.pinned_comment.replies_count }} 回复{% endif %}</div>{% endif %}
             </div>
             {% endif %}
             {% if forward.hot_comment %}
             <div class="pinned-comment" style="margin-top: 8px;">
-                <div class="pc-header"><span class="pc-badge">热评</span>{% if forward.hot_comment.avatar %}<img src="{{ forward.hot_comment.avatar }}" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.hot_comment.author }}</span>{% if forward.hot_comment.time %}<span> · {{ forward.hot_comment.time }}</span>{% endif %}{% if forward.hot_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ forward.hot_comment.level }}</span>{% endif %}{% if forward.hot_comment.title_badge %}<span class="uid-tag" style="font-size:10px;padding:0 6px;background:#fff3e0;color:#e65100;">{{ forward.hot_comment.title_badge }}</span>{% endif %}{% if forward.hot_comment.dress %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ forward.hot_comment.dress }}</span>{% endif %}{% if forward.hot_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ forward.hot_comment.handle }}</span>{% endif %}</div>
+                <div class="pc-header"><span class="pc-badge">热评</span>{% if forward.hot_comment.avatar %}<img src="{{ forward.hot_comment.avatar }}" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.hot_comment.author }}</span>{% if forward.hot_comment.time %}<span> · {{ forward.hot_comment.time }}</span>{% endif %}{% if forward.hot_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ forward.hot_comment.level }}</span>{% endif %}{% if forward.hot_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:10px;padding:0 6px;">{{ forward.hot_comment.title_badge }}</span>{% endif %}{% if forward.hot_comment.dress %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ forward.hot_comment.dress }}</span>{% endif %}{% if forward.hot_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ forward.hot_comment.handle }}</span>{% endif %}</div>
                 <div class="pc-content">{{ forward.hot_comment.content }}</div>
                 {% if forward.hot_comment.likes %}<div class="pc-likes">{{ forward.hot_comment.likes }} 赞{% if forward.hot_comment.replies_count %} · {{ forward.hot_comment.replies_count }} 回复{% endif %}</div>{% endif %}
             </div>
@@ -1518,7 +1537,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
                     <span> · {{ repost.pinned_comment.time }}</span>
                     {% endif %}
                     {% if repost.pinned_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ repost.pinned_comment.level }}</span>{% endif %}
-                    {% if repost.pinned_comment.title_badge %}<span class="uid-tag" style="font-size:10px;padding:0 6px;background:#fff3e0;color:#e65100;">{{ repost.pinned_comment.title_badge }}</span>{% endif %}
+                    {% if repost.pinned_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:10px;padding:0 6px;">{{ repost.pinned_comment.title_badge }}</span>{% endif %}
                     {% if repost.pinned_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ repost.pinned_comment.handle }}</span>{% endif %}
                 </div>
                 <div class="pc-content">{{ repost.pinned_comment.content }}</div>
@@ -1536,7 +1555,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
                     <span> · {{ repost.hot_comment.time }}</span>
                     {% endif %}
                     {% if repost.hot_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ repost.hot_comment.level }}</span>{% endif %}
-                    {% if repost.hot_comment.title_badge %}<span class="uid-tag" style="font-size:10px;padding:0 6px;background:#fff3e0;color:#e65100;">{{ repost.hot_comment.title_badge }}</span>{% endif %}
+                    {% if repost.hot_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:10px;padding:0 6px;">{{ repost.hot_comment.title_badge }}</span>{% endif %}
                     {% if repost.hot_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ repost.hot_comment.handle }}</span>{% endif %}
                 </div>
                 <div class="pc-content">{{ repost.hot_comment.content }}</div>
