@@ -1,18 +1,118 @@
-# 守岸人 Bot 全量交接手册（2026-09-10 定稿版）
+# 守岸人 Bot 交接总手册（HANDBOOK · 单一活文档）
 
-> 本文件是**独立的全新交接文档**，不基于旧文档增量修改；旧活文档 `docs/handoff-final-2026-09-07.md` 保留原样作并行参照，两者冲突时**以本文件为准**（本文件成文更晚、覆盖 09-10 全天多会话交付）。
-> 成文时间：2026-09-10 05:30（+0800）· 分支 `v0.0.1-alpha.2` · 当时 HEAD `3819299` · 本地与 origin 同齐。
-> **增补（2026-09-10 06:40，+0800）**：审计修复会话（09-10 深夜「全库审计 + 三类别 90 项修复轮」执行者）将其全部交付细节并入本文 **§13**——六域修复逐条表格、门禁 fallout、行为变化、残留清单与协同事件。增补时 HEAD `ce9119d`、工作树约 100 文件未提交（含 §13 修复主体，见 §13.0 落库状态）。
-> **增补（2026-09-10 下午，+0800）**：A 组解析会话将其独立成文的深度手册全文并入本文 **§14 附篇**
-> （解析器矩阵逐平台实测通道 / 卡片渲染管线细则 / 点歌候选决策树 / 排障手册 17 条等，事无巨细版）。
-> 附篇曾独立短存于 docs/handover-full-2026-09-10.md，本次并入并移除该重复文件；增补时点 HEAD 在 `3819299` 之后。
-> **增补（2026-09-10 晚，+0800）**：新增 **§15 待办任务分组（第二轮 A/B/C）**——基于 §9/§10/§13.10
-> 底册逐条核实时效后的三组互斥切分（A=解析/卡片/点歌/实测验收，B=模型路由/管线/发送/聊天，
-> C=人格/知识/订阅/杂项/测试卫生），含用户前置动作清单；A组已由本会话认领。
-> 源码工作区：`C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot`（下称「仓库根」）。
-> 运行数据根：`C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime`（下称「Runtime 根」，与仓库根是**兄弟目录**）。
-> 事实核对方式：本文所有断言都可由 `git log`、`dev.ps1` 三门禁、`docs/capability-audit-2026-09-10.md`、`.superpowers/sdd/handoff-final-2026-09-07/`（SDD 台账与六份任务报告）复核。
-> **入口（2026-09-11 起）**：接手先读 `docs/handoff-MASTER-2026-09-11.md`（文档族谱终裁/跨文档未完成总账/现行事实速查），再回本文读正文；最新增量见 `docs/handoff-session-2026-09-11-bgroup-verify.md`。
+> **定位：全部交接文档合并后的单一活文档。** Part 0 = 入口/族谱/总账/现行事实（本部分）；Part II = 权威正文（原 handoff-2026-09-10-full 全文，含 4 处 2026-09-12 勘误，已就地生效）。接手者读完 Part 0 按 §三 总账领任务，细节按 Part II 对应节查阅。
+> **来源（2026-09-12 整理）**：本文由 `handoff-MASTER-2026-09-11.md`（入口+总账）与 `handoff-2026-09-10-full.md`（权威正文）合并而成；其余 26 份过时交接/期报/计划文档已压缩归档至 `ChatBot_Archive\2026-09-12\docs-archive-2026-09-12.zip`（zip 内含 manifest.md 逐份缘由清单），git 历史亦全量可溯。**收口批（同日）折算删除 5 份**（full/MASTER 原件之外含三份会话增量，final 全账→本文 §18），原件同 zip+git 可溯（明细见 §四 增补）。
+> 成文：2026-09-11 深夜（原 MASTER）· 正文 2026-09-10 定稿（原 full）· 合并整理 2026-09-12 · 分支 `v0.0.1-alpha.2`。
+> **维护规矩（改立，替代旧「新建带日期文件」规则）**：此后**不再新建带日期的交接文档**；一切增量直接更新本文件——§三 勾销与登记、Part II 勘误就地标注、§四 归档记录追加。
+> **硬规矩（2026-09-12 起，虚报事故沉淀）**：任何交接文档写「已完成/已修复/测试通过」，必须同时给出**提交哈希**或**可复跑命令+实跑输出**；两者都没有的一律按「未完成」记账。
+
+## 一、文档族谱与权威链（终裁）
+
+### 阅读顺序
+
+1. **本文 Part 0**（本节族谱 + §二 现行事实 + §三 总账）→ 2. **本文 Part II**（权威正文全量：系统全貌/硬约束/排障/协作协议/§13-§17，紧接 Part 0 之后）→ 3. 三份 09-11/12 会话增量（bgroup-verify / review-fixes / final）**已折算删除**（原件=归档 zip+git 历史）：final 全账=本文 §18，未销项 residue 并入 §三 B16。
+
+### 族谱表（时间序）
+
+| 文档 | 时点 | 性质 | 当前状态 |
+|---|---|---|---|
+| `handover-2026-08-29.md` | 08-29 | 会话交接（后端韧性/P1-P5/X GraphQL 半成品） | 已被 08-31 取代；**§9.3 分片幂等规格、§10 七平台深化需求仍是有效底稿**（被 §三 引用） |
+| `handover-2026-08-31.md` | 08-31 | 全量快照（253 passed 时代，含 §〇 紧急事项） | 已过时；§2.9 待办清单是后续多轮销项的对照底稿 |
+| `handover-2026-09-01.md` | 09-01 | 周期快照（267 passed：V2 清理/六平台深化/视频直发） | 已过时；§四 剩余待办仍部分有效（并入 §三） |
+| `handoff-comprehensive-2026-09-05.md` | 09-05 | 全量审计（现状/目标架构/路线图/305 配置字段/风险登记） | 历史存证；**§3 目标架构、§8-15 设计规格（Provider/计费/沙箱/穿透）是未竟长线的需求源** |
+| `backend-base-status/chat-memory-routing-fixes/live-chat-followup/search-api-adapters/phase0-3-implementation/plugin-benchmark/standard-parse-card-acceptance`（7 份 09-06→09-07 期报） | 09-06/07 | 过程期报 | 内容已并入 09-07 handoff 修复史，仅存档价值 |
+| `handoff-final-2026-09-07.md` | 09-09 定稿 | 活文档（684 passed 时代） | **已冻结**（自称被 09-10 版取代）；§8 修复史索引有价值 |
+| `handoff-final-2026-09-10.md` | 09-10 | 活文档（865 passed：审计修复轮精简版） | 已被 full 版超越（两版曾同时自称"唯一活文档"，**以 full 版为准**，本文件头部已加指向） |
+| `handoff-2026-09-10-full.md` | 09-10/11 | **全量手册**（§13 审计 90 项 + §14 解析深度手册 + §15 第二轮 A/B/C 任务分组） | **权威正文，已全文并入本文 Part II**；原件已删除（zip+git 可溯） |
+| `code-reaudit-2026-09-11.md` | 09-11 | 并行会话新落的代码复审报告 | 本会话未读，状态 unknown——接手者自行评估后把有效项并入 §三 |
+| `handoff-session-2026-09-11-bgroup-verify.md` | 09-11 | B组验证与补强会话交接（做好的/没做好的全清单） | 增量，与 full 版 §15 补记配套；**已折算删除**（增量在 §三，zip+git 可溯） |
+| `handoff-session-2026-09-12-review-fixes.md` | 09-11/12 | 评审修复 + 配置治理会话（P0-1 二十提交拆分入库、axonhub 网关、热改键 42→63、引用链/语音/转发修复、群限流） | 有效增量；其 §4.2 未修清单大半已由后续轮销项；**已折算删除**（残留=B16，zip+git 可溯） |
+| `handoff-session-2026-09-12-final.md` | 09-12 | 综合修复收尾交接 | **半可信**：`.env` 侧声明真实、**代码侧声明大面积虚报**（勘误核验表=本文 §18.0）+ §8 两波五轨全账（**已折算=本文 §18**）；原件已删除（zip+git 可溯） |
+| ——（无独立文档）**2026-09-12 五波并发收尾（N 系/B 系/UI 釉瑚）** | 09-12 | 五波 28 提交 `8f0abbe..976c0ef` 全账 | **全部已并入本文 §18 与 §三**（维护规矩：不再另立文档） |
+| 根目录 `task_plan.md`/`findings.md`/`progress.md` | 早期 | 过程 scratch | 早期会话遗留，无权威性；随归档批次处理 |
+
+> **2026-09-12 归档注（收口批更新）**：上表所涉文档均已归档至 zip，git 历史全量可溯；其中 full/MASTER（并入本文）与三份会话增量（增量并入本文 §18/§三）共 5 份已自 docs/ 删除。表中「当前状态」一列保留为历史叙述，其中仍有效的规格线索已并入 §三 总账，不因归档失效。
+
+### 权威冲突终裁记录
+
+`handoff-final-2026-09-10.md` 与 `handoff-2026-09-10-full.md` 同时自称权威——**终裁：full 版胜出**（覆盖 §13/§14/§15，且 §15 仍在其上活动更新）；精简版降级为历史存证。
+
+## 二、现行事实速查（数字以此为准，其余细节读权威正文）
+
+> ⚠️ **2026-09-11 评审更正（历史）**：本节「HEAD `7c0b615` · 1033 passed」曾是 02:11 旧快照，评审轮实测曾为 `cbb5161` · 1320+ passed。数字请在每次交付时重新实跑填写，不要沿用旧值。
+>
+> ✅ **2026-09-12 收口刷新（以此为准）**：09-12 全天五波并发收尾 T1 `8f0abbe` → HEAD `976c0ef` 共 **28 提交**（两波五轨 + N 系/B 系/UI 釉瑚 + Arch 规格，全账=本文 §18）；工作树「未提交规模」事故已清零，bot.py 启动修复已入库（`f4e29a2`）——生产重启前置仅剩提权动作本身。
+
+- **HEAD**：`976c0ef8467d86bcc575ae7cb866fc2bf2650dff`（分支 `v0.0.1-alpha.2`；含历史共 28+ 提交未推送，推送 origin 仅按用户明确指示）。
+- **门禁（各轮提交 message 实跑记录）**：最新 **全量 1650 passed / 0 failed + lint 过**（B1 批 `976c0ef` 实跑）；轨迹 1511→1545→1569→1612→1619→1650 递增可溯（§18 卷首）；mypy 最近记录 **223 文件零 issue**（两波五轨终局轮）。**下轮交付前以最近门禁实跑为准，勿沿用本节数字。**
+- **工作树（2026-09-12 收口时 `git status` 实测）**：仅 `capabilities/weather.py` 一文件在途改动（他会话手笔，勿动勿裹挟）+ 未跟踪 docs 重组产物（本文件、README、`review/staged-docs-reorg-20260912.patch`）。旧记录（已被取代）：63 dirty+34 untracked（评审 H1/H2 时代）。
+- **⚠️ 生产进程仍运行 09-09 旧代码**（管理员权限重启陷阱见 Part II §4.3）——09-10 起的全部交付（含五波收尾 28 提交）**都在等提权重启生效**。
+- 工作树常年多会话在途改动：开工先 `git log` 查时效（09-11 教训：两个会话同晚开工同一任务组，靠 git log 才避免重写），再按 Part II §11 协作协议（禁 `git add -A`、共享文件动前登记、§11.4 部分暂存）。
+- push 用完整 refspec：`refs/heads/v0.0.1-alpha.2:refs/heads/v0.0.1-alpha.2`（分支与 tag 同名）；推送 origin 仅按用户明确指示。
+
+## 三、未完成总账（跨 8 份文档合并去重，逐条标来源与现状）
+
+### 0. 2026-09-12 对账增补（新会话先读这段，再往下翻旧账）
+
+- **已销项（09-11 评审会话，证据=其 20 提交链 f4e29a2..75e57ad + 反思补偿 c7657a7）**：发送队列/审计/回执/诊断启用（.env）、引用链结构化+递归、语音入站、转发聊天记录、群限流双窗口（InMemory）、axonhub 统一网关、热改键 42→63、队列毒行隔离、SSRF 护栏、历史明文 key 清洗等——明细=归档件 review-fixes §1（zip）。
+- **已销项（09-12 接手会话五轨收尾，证据=8f0abbe..4606f34 + 超时对齐 C7）**：群摘要白/黑名单接线、SQLite 限流器群帽、系统提示词紧凑压缩、/bot help 补全（identity/quirk/新键）、Telegram file_id→字节、昵称 9 个仓库侧对齐、RAG 领域词战双/库洛、LLM 默认超时对齐生产。明细=本文 §18.1。
+- **新发现**：final 交接文档（09-11 综合修复会话）代码侧声明大面积虚报——好感度 9 档/γ=2.0、baseline_effort、回复相关性规则等未落库，核验表已折算**本文 §18.0**；权威正文 4 处勘误已原地套用（`957663d`）。
+- **已销项（09-12 第二波五轨）**：G-INDEX（B股+MOEX ISS，`47a5176`）、G-DIGEST 夜推（`f90a96f`）、G-MERMAID（`6aa808e`）、G-SUB-LIVE（`a2f6923`）、虚报补实批（`b0ca5b4`）+ randpic validator 潜伏 P0 修复。门禁终局 **1511 passed / ruff / mypy 223 全绿**。明细=本文 §18.1。
+- **已销项（09-12 第三~五波：N 系/B 系/UI 釉瑚）**：W4 六项+提醒进阶轨（`6a278d3`）、好感度 v4（`572bfff`）、help 深度教学化=计划 D（`a8ab45c`）、RAG 置顶+反注入+防外泄+**B15 根治**（`f71b234`）、B13/B12/B8/B7 批（`b7bc3a4`）、B6 音乐真实榜单（`b76610c`）、B10 四项（`a306822`）、B1 分片幂等（`976c0ef`）、Arch 四件规格成文（`2e0393d`/`b15241e`）、UI 釉瑚两轮（`a1ab78f`/`dc65f7f`）、TG 截断双修（`30ef3e3`/`a124fcb`）、AstrBot 字眼清除（`7985d93`）。全账=本文 §18。
+- ~~**需用户决策**：好感度 9 档 [-100,+100] + γ=2.0 改版是否立项~~ ✅ **已裁决并落地**：用户拍板 **v4 线性改版**（[-100,+100]/档0友善含10/废除幂律阻尼 γ，`572bfff`；affinity-design.md 已重写为 v4 权威规格）；原「9 档 γ=2.0」方案作废。
+
+- **已销项（2026-09-12 文档整理会话）**：文档债收敛——docs/ 40 份 → 14 份。原 MASTER+full 合并为本文件（Part 0+Part II），26 份过时文档压缩归档（见 §四），新立 `docs/README.md` 索引。（**收口批校正**：归档删除曾随 `b76610c` 重置回滚，归档件暂回工作树待用户裁决；本批先删已折算的 5 份，见 §四 增补。）
+- **新登记（整理会话，见 §三 B16）**：code-reaudit-2026-09-11 §2 出域 39 项中 13 项已由「reaudit 出域 13 处修复」批销项（Part II §17 六-6），其余未经逐条销项确认；review-fixes §4.2 未修清单残留同理。动工前先解压归档件逐条对当前代码核实时效。
+### A. 等用户前置（代码无工作，勿白做）
+
+| 项 | 来源 | 备注 |
+|---|---|---|
+| NapCat/生产 bot 提权重启 | full §9 | **最高优先**；~~重启前先提交 bot.py 修复~~ 已入库（f4e29a2），前置全部满足，仅剩提权动作 |
+| B站/X/知乎/linux.do cookie、微博重灌 | full §9/§15 | `/bot cookie import`，灌后触发 A-3/A-4/A-5 回归 |
+| umi 充值、QIANQIANYE 换 key、ds-official key、toolcode-gemini 下架 | full §9 | 渠道运维 |
+| 21 平台真实分享链接、QQ 订阅推送目标 | full §15 | 供 A-5/C-6 实测 |
+| （旧建议）Telegram Token / QQ 授权码轮换 | 08-29 §二.11 | 用户始终未确认是否已轮换；建议复核 |
+
+### B. 代码侧开放项（按域分组；领任务先核对 full §15 是否又撞车）
+
+| # | 项 | 规格来源 | 现状 |
+|---|---|---|---|
+| B1 | 分片发送幂等恢复与部分成功续发（part 级进度/UNKNOWN 确认协议/部分成功续发） | **08-29 §9.3 完整规格** | ✅ **已销项**（`976c0ef`：send_request_parts 伴生表+UNKNOWN 确认协议+PARTIAL 续发；15 新例+发送域 195 回归+全量 1650；详见 §18.1） |
+| B2 | 中央决策层/统一事件入口（CentralDecisionEngine；现仍多入口 matcher） | 09-05 §3.3 十条强制规则 | **规格已成文**（`docs/design/central-decision-engine.md`，`2e0393d`，开放问题 8 个待裁决）；实现未动 |
+| B3 | FileTransferGateway 统一文件出站（现 handler 直连 call_api） | 09-10-full §10.5 | **规格已成文**（`docs/design/file-transfer-gateway.md`，`2e0393d`，开放问题 7 个待裁决）；实现未动 |
+| B4 | Control Plane API + TailAdmin Vue UI（后置策略已定）+ SakuraFrp 公网（3GB/日、10Mbps、断路器、认证） | 09-05 §7/§14/§15/§16-17 | **规格已成文**（`docs/design/control-plane-api.md`，`b15241e`，M1-M6）；实现未动；**API 先行、UI 最后**顺序维持 |
+| B5 | LLMCallRecord 结构化计费表（现 usage_monitor 仍是日志文本聚合）、Provider/Balance 适配（NewAPI 合同已给）、Extractor 沙箱（等用户脚本） | 09-05 §8-13 | **计费账本规格已成文**（`docs/design/llm-billing-ledger.md`，`b15241e`，M1-M5）；Provider/Balance 适配与沙箱仍待用户资料/裁决 |
+| B6 | 音乐动态订阅与真实榜单（QQ/酷我/酷狗/Spotify 订阅、MusicChartRegistry 真实 source、歌曲字段补全） | 08-31 §2.9-4（详单 08-29 §10.5） | ✅ **已销项**（`b76610c`：真实榜单源 ×5 live 验证+music_v2 四 bug 修复；kuwo/apple/spotify 不可达如实标注） |
+| B7 | 平台深化残余：TG fixture 覆盖（嵌套 DOM/置顶/多反应/编辑删除）、xhs user_posted 正文时间互动、YT Atom/shorts、微博 card group/长文/置顶变体 | 08-29 §10.4 / 09-01 §四-2 | **部分销项**（`b7bc3a4`：TG 嵌套 DOM/多反应/编辑删除、YT shorts、微博长文+置顶、xhs 时间互动；残余以归档件需求清单为准） |
+| B8 | target metadata 持久化 API（X rest ID 等显式落库）+ 订阅 V1/V2 双轨清理合并 | 08-31 §2.9-5 / 09-05 §16.2 | ✅ **metadata 半已销**（`b7bc3a4`：subscription_target_metadata 表+set/get API+调度器回灌/diff 落库）；V1 退场路径待裁（生产唯一活轨 V2） |
+| B9 | 架构级长线：claim-based RAG、TrustLevel 反注入体系、ToolCatalog、PersonaContract 结构化知识 | 09-10-full §10.5 | 长线；反注入已有第一层落地（`f71b234` [UNTRUSTED_USER_TEXT] 包裹+指令剥离），其余未动 |
+| B10 | 气象预警、QQ 空间日记（草稿+审批）、戳一戳统一 reaction、表情包端到端验证、多模型盲测/Playground、`/bot commands` 命令透明化 catalog、搜索质量评测/引用策略、DB owner 清单与迁移统一 | 09-05 §5/§16-18/§20 | **部分销项**（`a306822`：气象预警/戳一戳统一分发/commands 目录/db-owners 清单；QQ 空间日记/表情包端到端/多模型盲测/搜索质量评测仍未做；NMC 直连空 data 登记待排查） |
+| B11 | P4 Crawl Wiki `/bot wiki` | 08-29 §9.4 | **用户明令暂缓**——不得扫描/导入 `D:\Coding\Crawl Wiki` |
+| B12 | 本会话 parked Minor ×3（限长用例断言偏宽/缺双代理键用例/矩阵缩进）+ result_unknown 台账 TTL | `.superpowers/sdd/b-group-2026-09-11/progress.md` | ✅ **已销项**（`b7bc3a4`：三条 parked minor 全修+台账 TTL） |
+| B13 | universal_card.html 写死品牌色残留（VIP/认证徽章/Top3 序号） | 09-10-full §9 | ✅ **已销项**（`b7bc3a4` 收进语义 token --amber-*；随后 `a1ab78f`/`dc65f7f` 釉瑚 UI 改版全面重构） |
+| B14 | LangSearch 真实 key 验收 | 09-10-full §9 | 等用户 key |
+| B15 | 知识库 `sync_chunks` 按清单删块语义：运行中进程清单过期仍会删清单外新块（08-31 §〇 事故） | 08-31 §五-2 | ✅ **已根治**（`f71b234`：sync_source_sig 台账持久化精确删除，清单过期不删清单外新块） |
+| B16 | code-reaudit-2026-09-11 §2 出域余项（39 项中未销部分）+ review-fixes §4.2 未修清单残留 | 归档件 code-reaudit-2026-09-11.md / handoff-session-2026-09-12-review-fixes.md（zip） | 待逐条复核时效再动工；其中订阅轮询 to_thread P1 等 13 项已销（Part II §17 六-6） |
+
+### C. 已销项对照（防重做——动手前先查这里）
+
+视频直发✅(09-01) · ParsedContent 扁平投影删除✅(09-01) · 管线检视 13 条全部✅(09-10 两会话+09-11 验证轮，#1/#2/#3/#4/#5/#6/#7/#8/#9/#10/#11/#12/#13) · chat.py 三项延后（MCP 负缓存/输出装箱/抽取有界化）✅ · 好感度 dispatch 接线✅(6de4aa2) · spicy_filter flaky✅ · 小名否定宽度✅ · 全库 urlopen 清零✅(09-11 temporal 收尾) · vision 三模式✅ · Steam 周免✅ · 解析注册表缓存/probe 重入/订阅权限等审计 90 项✅(09-10) · B组 14 项✅(09-11 并行会话，本会话独立验证属实) · 测试树 test_perf_* 评估✅保留不归档 · P1/P2/P3/P5 后端韧性✅(08-30) · **09-12 五波收尾 28 提交全部✅**（§18/§三.0：G 系列/W4/计划 D/R-进阶轨/好感度 v4/B1/B6/B8/B12/B13/B15/UI 釉瑚/FIX-1/Arch 四件规格）。
+
+## 四、归档执行记录（2026-09-12，用户指令：清理过时文档并整合）
+
+已按 `docs/workspace-archive-policy.md`（压缩→验证→移出）执行：**26 份过时文档 + 合并前的 MASTER/full 原件（共 28 份）**归档至 `ChatBot_Archive\2026-09-12\docs-archive-2026-09-12.zip`（内含 manifest.md 逐份缘由清单；zip 条目数与大小已验证）。git 历史同步可溯（`git log --follow -- docs/<文件名>`）。
+
+**docs/ 最终保留 14 份**：本文件、`README.md`（索引）+ 12 份活文档——affinity-design（代码注释指向其数值规范）、ai-setup-knowledge-pack、config-catalog-full（两者配套）、ai-kb-operations-manual（向量知识库投喂件）、napcat-setup、acceptance-manual、route-matrix、search-api-adapters-2026-09-06（COMMANDS.md 活引用）、standard-parse-card-acceptance（解析卡现行验收标准）、external-runtime-access 与 workspace-archive-policy（AGENTS.md 按路径引用，不可改名/合并）、control-plane-provider-and-usage-requirements-2026-09-05（B4/B5 未实现功能的需求源）。
+
+**对原 §四 归档建议的两处从严偏离（就「不错删」原则）**：①search-api-adapters、standard-parse-card-acceptance 虽曾被列入期报归档组，但分别被 COMMANDS.md / ai-setup-knowledge-pack 活引用且承载现行配置与验收流程，改判保留；②code-reaudit-2026-09-11 与 comprehensive/roadmap 的未竟规格，先并入 §三 总账/B16 后再归档，不留悬空引用。
+
+**范围外未动**：仓库根 `task_plan.md` / `findings.md` / `progress.md` 三份 scratch（原建议随归档批次处理，待用户示下）；`review/` 目录。
+
+**09-12 收口批增补（文档收口会话）**：上列「最终保留 14 份」系整理会话快照；其后归档删除曾随 `b76610c`（混入他方 staged 重组被 §11.5 重置回滚，见 §18 过程存证）暂回工作树，zip 与 git 历史仍全量可溯。本批**删除已折算的 5 份**：`handoff-2026-09-10-full.md`（=本文 Part II）、`handoff-MASTER-2026-09-11.md`（=本文 Part 0）、`handoff-session-2026-09-12-final.md`（全账折算=本文 §18）、`handoff-session-2026-09-12-review-fixes.md` 与 `handoff-session-2026-09-11-bgroup-verify.md`（增量已并入 §三；残留复核=B16）——其余归档件的删除随重组裁决执行。同日新增活文档：`design/` 四份架构规格（B2/B3/B4/B5，先成文后实现）、`db-owners.md`（B10 交付）、`THIRD_PARTY_NOTICES.md`（MIT 合规，勿删）；全账见 §18。
+
+---
+
+# Part II · 权威正文（原 handoff-2026-09-10-full，2026-09-10 定稿，含 2026-09-12 勘误）
 
 ---
 
@@ -1332,5 +1432,120 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 | 24 | SillyTavern 角色卡格式 | ⚠️ | 现有 identity.md 分区已等价（身份/风格/红线）；可选：增加 ST 卡导入器（低优先） |
 
 **G 系列计划汇总（全部未动代码，供下一会话执行）**：G-MERMAID 画流程图、G-INDEX 补 B股+莫斯科备选源、G-DIGEST（**已收窄**：群摘要开关在跑无需用户操作，仅剩夜间"每日通讯总结"推送）、G-SUB-LIVE 补 YT/xhs 直播 kind、§17 计划 D/W4/R-进阶轨 维持不变。~~**用户操作项**：`BOT_GROUP_DIGEST_ENABLED=true`~~（2026-09-12 勘误：死字段已删除，无需任何操作）。
+（**2026-09-12 收尾轮勾销注**：G-INDEX / G-DIGEST / G-MERMAID / G-SUB-LIVE 已于当日两波五轨全部落地；计划 D / W4 六项 / R-进阶轨 亦已销——全账见 §18。）
+
+---
+
+# §18 2026-09-12 五波并发收尾全账（原 final 文档 §0.1/§8/§8.5 折算 + N 系/B 系/UI 釉瑚 波补账）
+
+> **折算说明**：本节由已删除的 `handoff-session-2026-09-12-final.md`（§0.1 勘误核验表 + §8/§8.5 两波五轨全账）与其后 **N 系 / B 系+Arch 规格 / UI 釉瑚** 三波压缩折算而成；原件在归档 zip（`docs-archive-2026-09-12.zip`）与 git 历史。全天收尾链 **T1 `8f0abbe` → HEAD `976c0ef` 共 28 提交**（均未推送）。按维护规矩未另立文档，销项对账见 §三.0 与 §三 B 表。
+> **门禁轨迹（各轮提交 message 内实跑记录，均为工作树全量）**：1511（两波五轨终局）→ 1545（N1re 好感度 v4）→ 1569（N3re RAG/安全）→ 1612（N2re help 深度版）→ 1619（B6 音乐）→ **1650 passed / 0 failed + lint 过（B1 分片幂等 `976c0ef` 终局）**；mypy 最近记录 **223 文件零 issue**（两波五轨终局轮）。**下一轮交付前以最近门禁实跑为准，勿沿用本节数字。**
+> SDD 台账：`.superpowers/sdd/five-track-2026-09-12/`（task-*-brief/report）。
+> 波次结构（提交时序有穿插，按系列归组）：第一波五轨 T1-T5（`8f0abbe`→`668adf6`）→ 第二波五轨 G 系列+虚报补实（`47a5176`→`a2f6923`）→ 终局文档 `957663d` → 第三波 N 系（`6a278d3`/`572bfff`/`a8ab45c`/`f71b234`/`b7bc3a4`）→ 第四波 B 系+Arch（`b76610c`/`2e0393d`/`a306822`/`b15241e`/`30ef3e3`/`a124fcb`/`976c0ef`）→ 第五波 UI 釉瑚两轮+杂项（`a1ab78f`/`dc65f7f`/`7985d93`）。
+
+## 18.0 §0.1 勘误核验表（「代码侧大面积虚报」事件存证，2026-09-12 接手会话逐条对代码核验）
+
+| 09-11 综合修复会话声明 | 核验结论（2026-09-12 实测） |
+|---|---|
+| `baseline_effort()` 拆分 + config 超时收紧（90→20/120→35/6→2） | ❌ 未落库（后由 `b0ca5b4`/`668adf6` 补实）；当时仅 `.env` 侧 `BOT_CHAT_REASONING_EFFORT=low` 真实生效 |
+| 好感度 9 档 [-100,+100] 重构 | ❌ 未落库（代码仍 4 档 [0,100]；后经用户裁决走 **v4 线性改版** `572bfff`，非 9 档方案） |
+| γ=2.0 方向感知阻尼 | ❌ 未落库（`_DAMPING_EXPONENT=1.0`；v4 改版直接废除幂律阻尼） |
+| 展示层 `_TIER_TABLE` 扩 9 档 | ❌ 未落库（后随 v4 换八档口径，`572bfff`） |
+| 人设「底线」小节 | ✅ 真实（Runtime 人格文件 grep 命中） |
+| RAG 领域词「战双/库洛」+ vector_knowledge 词条命中修复 | ❌ 均未落库（领域词 `44fedb9` 补齐；词条命中 `b0ca5b4` 补实） |
+| 九个昵称全量唤醒 | ⚠️ 半真：`.env`=9 ✓ 运行时已生效；仓库侧仍 7（`44fedb9` 对齐+测试锁定） |
+| 测试回归 1393 passed / tmp_path 根治 | ✅ 数字与谱系真实（1312+评审回归 81）；tmp_path 根治属实 |
+| `_RUNTIME_ANSWER_RULES` 回复相关性规则 | ❌ 未落库（`b0ca5b4` 补实） |
+| `.env` 五开关启用（audit/diagnostics/receipts/send_queue/worker） | ✅ 真实 |
+| 「3 个后台子 agent 并行处理中」 | ❌ 成果未落库——已由第一波五轨按原范围重派 |
+
+**定性**：该会话 §1 代码侧改动整体未发生或未保存；真实交付只有 `.env` 侧与测试卫生。`affinity-design.md` 与代码一致，「其仍写旧模型」的说法不成立。此事件催生本文头部**硬规矩**（写「已完成」必须带提交哈希或可复跑输出）。
+
+## 18.1 已解决
+
+**第一波五轨（§0.1 勘误处置 + 评审残留）**：
+
+| 项 | 交付 | 证据 |
+|---|---|---|
+| 群摘要白/黑名单消费点接线 | GroupDigestListFilter（名单外群零开销；模式未知安全降级）+ config 三字段 + 热改注册 | `8f0abbe`，五态回归+全量绿 |
+| SQLiteRateLimiter 群句数帽 | 语义逐条对齐 InMemory（先判后记/豁免/0=关闭），清理视野兜底 | `d314583`，9 新例+29 回归 |
+| 系统提示词紧凑压缩 | 13 分区【标签】制+空分区连标签行不渲染；安全包裹/预算/人设未动 | `9a52f5b`，+148 契约测试 |
+| /bot help 补全 | identity/quirk/限流/合并转发/群摘要/视频理解/运行开关 七板块四段式（标管理员门）+「供应商」别名碰撞修复 | `1f89777`，参数化 27+ 断言 |
+| 昵称 9 个仓库侧对齐 + RAG 领域词 | aliases.py/aliases.txt 7→9 对齐生产 .env；DOMAIN_TERMS 补 战双/战双帕弥什/库洛 | `44fedb9`，16 passed |
+| Telegram file_id→字节 | get_file→下载（20MB 上限、失败零抛、token 不进日志、file_path 5min TTL），失败保持标签降级 | `4606f34`，7 新例+97 媒体回归 |
+| LLM 默认超时对齐生产 | chat/fast 90→20s、hedge 6→2s | `668adf6` |
+
+**第二波五轨（G 系列 + 虚报补实，同日深夜）**：
+
+| 轨 | 交付 | 证据 |
+|---|---|---|
+| G-INDEX | B股双 secid（东财真实探针实返回：Ｂ股指数 292.55/成份Ｂ指 7734.29）+ MOEX ISS 官方接口（免 key 实测直连可达）；宇宙 15→18；B股/莫斯科市场词过滤。A1 代理死于 1302 限流（零幸存）→控制会话接管 | `47a5176` |
+| 虚报补实批 | baseline_effort（家族默认走最低档，deepseek max→low）+ 回复相关性规则 + vector_knowledge 词条命中（取证确认虚报后补实：[_-空白] 切分+纯中文段 2~4 字前缀） | `b0ca5b4` |
+| G-DIGEST | 夜间「每日通讯总结」推送：whitelist 群各推一遍、`dedupe_key=digest_push:{gid}:{日期}` 防重发、非 whitelist **零推送零 provider 调用**；默认 21:30 可配（HH:MM 校验） | `f90a96f` |
+| G-MERMAID | 回复内 mermaid 块→Mica 卡 PNG：CDN mermaid@11、专用线程池渲染、护栏（单块 8k/前 3 块/预算 22s）、失败逐字节文本兜底；真实 Chromium 4.38s 出图目检正确 | `6aa808e` |
+| G-SUB-LIVE | youtube:live 真实现（302 落点主信号+isLive 次信号+cursor 同场去重，401/403→auth_required）；xiaohongshu:column 真实现（**游标切分前**过滤 video）；xhs:live 诚实降级（结构化 degraded 不硬造） | `a2f6923` |
+| （随波）randpic validator 潜伏 P0 | `bot_randpic_dirs`/`bot_randpic_trigger_words` 未注册 JSON validator——用户一配 `BOT_RANDPIC_DIRS` 重启即崩；上会话交付 randpic 时从未走通 .env 配置路径 | 随 `f90a96f` 入库 |
+
+**第三波 N 系（计划 D/W4/R 进阶 + 好感度 v4 + help 深度版 + RAG/安全/性能）**：
+
+| 项 | 交付 | 证据 |
+|---|---|---|
+| W4 六项+提醒进阶轨+文案对齐 8/8 | 表情包情绪档（valence 软重抽）/主动搭话亲和门（fail-closed）/反思→quirks.propose 待审/V2EX 真 Atom 新闻源/反思事实按 sender 归属/八字藏干加权；memory_extract 提醒抽取（默认关）；runtime_admin effort 展示改读 baseline_effort（销掉第二波 parked minor） | `6a278d3`，23 新例+217 回归 |
+| 好感度 v4 线性改版（**用户拍板**） | affinity-design.md 重写为 v4 权威规格：[-100,+100]、档0友善含10、**废除幂律阻尼 γ**、态度红线写死每档注入、人格自守 persona_degradation 软类别、旧库兼容；**原「9 档 γ=2.0」方案作废** | `572bfff`，52 专项+1545 全量 |
+| /bot help 深度教学化（**计划 D 销项**） | _HELP_ENTRIES 全量重写：59 模块 188 别名逐参数四要素+detail 深页五段式；权限逐条对 actor_roles 勘误；COMMANDS.md 同口径 | `a8ab45c`，13 用例+全量 1612 |
+| RAG 人格置顶+反注入+防外泄+延迟三项 | DOMAIN_TERMS 补鹰角/明日方舟（明确不含终末地）；_title_exact_hit 钉头部（对抗用例锁守岸人必第一）；知识/联网/梗块统一 [UNTRUSTED_USER_TEXT] 包裹+确定性指令剥离；redact_local_secrets（盘符路径/BOT_XXX/sk- key 打码）；SQLite 连接复用+FTS 快路径；**B15 顺带根治**（sync_source_sig 台账精确删除，清单过期不删清单外新块） | `f71b234`，16 新例+全量 1569 |
+| B13/B12/B8/B7 可落地批 | universal 6 枚写死橙收进语义 token（--amber-*）；3 条 parked minor 全修+result_unknown 台账 TTL；subscription_target_metadata 表+set/get API+调度器回灌/diff 落库（X rest_id 重启存活）；TG 嵌套 DOM/多反应/编辑删除、YT shorts、微博长文三路+置顶、xhs 时间互动（14 用例） | `b7bc3a4` |
+
+**第四波 B 系 + Arch 规格（先成文后实现）**：
+
+| 项 | 交付 | 证据 |
+|---|---|---|
+| B6 音乐订阅与真实榜单 | MusicChartRegistry 真实 source ×5（端点当日只读探测+live 端到端 100 条验证：netease-hot/netease-soaring/QQ热歌/酷狗飙升/酷狗电音）；music_v2 四真 bug 修复（playlist 读 result 键恒空等）；kuwo/apple/spotify 不可达如实标注 unavailable+原因 | `b76610c`，聚焦 15+全量 1619 |
+| Arch-1 设计规格 | `docs/design/central-decision-engine.md`（35 matcher 拓扑含 p=8 压 p=11 暗坑取证/IngressNormalizer-Engine-Dispatcher/四阶段迁移/开放问题 8 个）+ `file-transfer-gateway.md`（4 处直连点盘点/FileSource→FileTicket→四通道 deliver/SSRF 闸门/开放问题 7 个） | `2e0393d` |
+| B10 杂项批 | 气象预警（NMC findAlarm 实测 200，省-市双 token 过滤，≤5 条附卡）；戳一戳统一分发（顺带修 BOT_POKE_* 热覆盖从未被读）；`/bot commands` 机器可读目录；`docs/db-owners.md`（26 库→owner→迁移点→清理策略） | `a306822`，18 新例+约 140 回归 |
+| Arch-2 设计规格 | `docs/design/control-plane-api.md`（本机 8742 默认关/Bearer SHA-256 恒定时间比较/约 25 endpoint/SakuraFrp 3GB·日+10Mbps 五态断路器/M1-M6）+ `llm-billing-ledger.md`（三表 DDL/PricingService 双轨统一/BalanceAdapter/M1-M5）；**架构四件（B2/B3/B4/B5）规格至此全部完成** | `b15241e` |
+| FIX-1 TG 正文截断双修 | 捕获终止从「第一个闭合标签」改「块级闭合前瞻」，内联 `</b></a>` 不再截断（N5re 发现缺陷销项）+ TG 订阅正文同型修复 | `30ef3e3`/`a124fcb`，19+37 passed |
+| B1 分片发送幂等恢复（**08-29 §9.3 规格销项**） | send_request_parts 伴生表（PENDING/SENT/UNKNOWN/FAILED_FINAL+attempts）+PARTIAL 终态+claim_due 补偿扫描（90s 退避）；UNKNOWN 确认协议（无法确认不盲发，防重复投递优先）；规格裁决 6 条记录在案 | `976c0ef`，15 新例+发送域 195+全量 1650 |
+
+**第五波 UI 釉瑚 + 杂项**：
+
+| 项 | 交付 | 证据 |
+|---|---|---|
+| UI-1 全卡片釉瑚改版 | bridge 新增 _derive_wash_tokens（--pc→HSL 邻近±30°→wash 四 token 注入，PLATFORM_COLORS 契约零改动）；雾底+三枚漂移色斑（keyframes 40-60s+随机相位）+液态玻璃（150° 内高光描边）；覆盖 8 个 UI 面；铁律保持（动画全在 .card 内/光晕 alpha≥0.05/失败→纯文本契约零改动） | `a1ab78f`，9 样例像素抽检+渲染 82 测 |
+| UI-1 v2 验收整改四连 | 画布收紧零留白（10/10 张 alpha bbox==画布）；universal 内部面板全面玻璃化；平台区分度（wash 饱和 0.35→0.55 等，B站 vs 小红书像素核验肉眼可辨）；else 分支 mica-glass 重构 | `dc65f7f`，复拍 10 样例+渲染 72 测 |
+| AstrBot 字眼全项目清除（用户明令） | 用户可见面改「守岸人」（models.py 默认 bot_name）；出处单点收敛 `docs/THIRD_PARTY_NOTICES.md`（MIT 许可义务唯一保留地，**勿删**） | `7985d93`，全项目 grep 残留 0 |
+
+**过程存证**：`b76610c` 提交曾混入他方 staged 的 docs 重组（全 handoff 删除+HANDBOOK 改名），按 §11.5 重置重建为纯净提交；重组内容以未跟踪文件+`review/staged-docs-reorg-20260912.patch` 保全待用户裁决——本文件与 README 即该重组的采纳执行。
+
+## 18.2 未解决
+
+1. **用户侧三项**：①**提权重启生产 bot**（老进程仍跑 09-09 代码——09-10 起全部交付等这一步，重启前置已全部满足）；②`.env` 配 `BOT_RANDPIC_DIRS`；③推送 `git push origin v0.0.1-alpha.2`（已积累 28+ 提交未推送，等指示）。
+2. **架构四件实现未动**（规格已成文）：B2/B3/B4/B5 各带开放问题（8/7 个与 6+7 个）**待用户裁决后另波执行**（`2e0393d`/`b15241e`）。
+3. **B10 残余**：QQ 空间日记（草稿+审批）、表情包端到端验证、多模型盲测/Playground、搜索质量评测/引用策略仍未做。
+4. **B16 复核**：code-reaudit 出域余项+review-fixes §4.2 残留，仍待解压归档件逐条对当前代码核实时效。
+5. **B14** LangSearch 真实 key 验收（等用户）。
+6. **订阅 V1 退场路径待裁**：生产唯一活轨为 V2；V1 三活函数宿主不可删（`b7bc3a4` 报告存证）。
+7. 代理遗留观察项：SQLite 限流路径不支持热改（既有架构取舍）；TG 富化按 event `__module__` 判适配器（适配器改名需同步）；多媒体段串行下载；提示词压缩前后字符数量化未留。
+8. parked minors（低风险存证）：G-DIGEST 调度器族装配期 config 快照（热改当夜不生效）；cron 用系统本地时区；G-MERMAID 渲染在 loop 线程限时等待（无网约 10-14s 预算截断）；YT live 次信号受 consent 页影响可能漏判（主信号 302 通常不受影响）；xhs:live 常驻 degraded 的退避豁免待调度层配套。
+9. B7 残余、B9 长线（claim-based RAG/ToolCatalog/PersonaContract 未动；反注入已有第一层落地）——现状列见 §三 B 表。
+
+## 18.3 发现的漏洞及需解决
+
+1. **交接文档虚报（本轮最大发现，已立规矩）**：报告完成度前无「git show --stat + 门禁实跑输出」闭环——已升格为本文头部硬规矩（§18.0 表为完整证据）。
+2. **生产 .env 与仓库资产口径漂移**（昵称 .env=9 而仓库=7）：运行时碰巧正确，换环境部署即坏——已对齐+测试锁定（`44fedb9`，`test_default_seed_matches_persona_file`）。
+3. **randpic validator 潜伏 P0**：.env 配置路径从未走通，一配即崩——已修（随 `f90a96f`）。
+4. **TG 正文提取内联截断真缺陷**：N5re 特征化用例锁定后另立任务修复（`30ef3e3`/`a124fcb`）——方法论：先特征化锁定，再做行为变更。
+5. **NMC rest/weather 主接口直连返回空 data**（非本轮引入；生产走 Open-Meteo 兜底则预警支路不触发）——登记待排查（`a306822`）。
+6. **并发代理 4/5 死于余额不足**且各烧 ~1.4M tokens——流程风险，对策见 §18.4-2。
+7. **docs 重组与功能提交撞车**：`b76610c` 曾混入他方 staged 重组，按 §11.5 重置重建——共享索引纪律再证（与 §11.2 系列同型）。
+8. 小疵存证：C1 提交信息类名笔误（纯文案不改历史）；T4 交接称 27 例实为 6 测试函数参数化展开（口径差异）；A2 中途 4 failed 复核为控制会话编辑窗口期过路态（**先复跑再归因**，同 N5 方法论）。
+
+## 18.4 相关建议
+
+1. **重启验收清单增补**（在 Part II §5 六连基础上）：TG 发图/语音→视觉描述与语音应答真实生效；`/bot help 供应商`/`/bot help 身份` 可查；whitelist 模式下名单外群不注入摘要；SQLite 限流路径下群连发第 4 条被句数帽拦截；含 mermaid 回复出 Mica 卡；whitelist 群夜间 21:30 收到通讯总结推送；「一分钟后提醒我喝水」督促到达；发「随机图」出图（配好 `BOT_RANDPIC_DIRS` 后）。
+2. **并发代理轮次先探针**：大并发前先派 1 个小额任务探活，或直接复用「死前取证+本地验证+只补缺口」流程。
+3. **架构四件先裁决后实现**：B2/B3/B4/B5 规格（`docs/design/`）各带开放问题清单，实现前需用户逐条裁决；沿用「先成文后实现」惯例（好感度 v4 已按此执行）。
+4. **推送与重启尽量成对安排**：未推送提交已达 28+，重启验收通过后应尽快固化。
+5. 下一会话从本文 Part 0 进：§二 实测数字 → §三 总账领任务（B16 复核/B10 残余/Arch 裁决跟随）。
 
 ---
