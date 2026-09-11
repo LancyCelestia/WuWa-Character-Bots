@@ -338,8 +338,16 @@ async def _send_file_parts(
     after any side effect: a later failure must not resend a delivered file.
     """
     upload_parts = [part for part in parts if part.get("type") == "file"]
+    # M17：mixed 内容里除 file 外的部件（图片/语音/视频）此前被**静默丢弃**，
+    # 用户只收到附件与文案，媒体凭空消失。这里把它们按既有 CQ 组装路径单独
+    # 发一轮（一次 API 调用），保持「有副作用即不再整体重试」的契约不变。
+    extra_parts = [
+        part
+        for part in parts
+        if isinstance(part, dict) and part.get("type") not in {"file", "text"}
+    ]
     text = request.content.text_fallback
-    calls = len(upload_parts) + (1 if text else 0)
+    calls = len(upload_parts) + (1 if text else 0) + (1 if extra_parts else 0)
     result: Any = None
     for part in upload_parts:
         path = Path(str(part.get("file") or ""))
@@ -389,6 +397,45 @@ async def _send_file_parts(
         except Exception as exc:
             raise _NonRetryableActionError("caption_failed_after_upload") from exc
         progress.count += 1
+    # M17：上传与文案之后，再发一轮除 file/text 外的媒体部件（图片/语音/视频）。
+    # 这些部件此前被丢弃；沿用 build_onebot_message_segments 的既有组装逻辑，
+    # 避免与 CQ 转义/本地文件内联等规则重复实现。
+    if extra_parts:
+        media_only = request.content.model_copy(update={"content_ref": {"parts": extra_parts}})
+        segments = build_onebot_message_segments(
+            request.model_copy(update={"content": media_only})
+        )
+        if segments:
+            try:
+                if request.target_scope is SessionType.GROUP:
+                    result = await asyncio.wait_for(
+                        bot.send_group_msg(
+                            group_id=_coerce_onebot_id(request.target_id),
+                            message=segments,
+                        ),
+                        timeout=budget.slice_for(calls),
+                    )
+                else:
+                    result = await asyncio.wait_for(
+                        bot.send_private_msg(
+                            user_id=_coerce_onebot_id(request.target_id),
+                            message=segments,
+                        ),
+                        timeout=budget.slice_for(calls),
+                    )
+            except asyncio.TimeoutError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "onebot mixed media parts failed after upload type=%s request_id=%s",
+                    type(exc).__name__,
+                    request.request_id,
+                )
+                raise _NonRetryableActionError("media_parts_failed_after_upload") from exc
+            if not _onebot_result_is_success(result):
+                # 与下面的 retcode 契约一致：已有副作用 → 不得整体重投。
+                raise _NonRetryableActionError("media_parts_rejected_after_upload")
+            progress.count += 1
     return result
 
 
@@ -607,6 +654,34 @@ async def send_onebot_v11(
     if not _onebot_result_is_success(result):
         debug_id = new_debug_id()
         retcode = _extract_onebot_retcode(result)
+        # M10：retcode 分支此前**无视 progress.count**，与异常分支
+        # （见上方 `if progress.count > 0` 守卫）语义不一致。文件类投递里
+        # 上传可能已经成功、只有 caption 的 retcode 失败，此时整条链路回到
+        # 队列重试会**重新上传同一个文件**（max_attempts=3 → 最多 3 份）。
+        # 只要本次尝试已产生副作用且不是明确的永久失败码，就按 result_unknown
+        # 终态化——与 `_send_file_parts` 文档声明的「有副作用后绝不重投」一致。
+        if progress.count > 0 and not _is_final_failure_retcode(retcode):
+            logger.warning(
+                "onebot send retcode failure after partial delivery side_effects=%d retcode=%s request_id=%s debug_id=%s",
+                progress.count,
+                retcode,
+                send_request.request_id,
+                debug_id,
+            )
+            return DeliveryReceipt(
+                request_id=send_request.request_id,
+                state=ReceiptState.FAILED_FINAL,
+                transport=ONEBOT_V11_TRANSPORT,
+                provider_message_id=None,
+                public_message="",
+                debug_id=debug_id,
+                operational_issue=_onebot_issue(
+                    "result_unknown",
+                    retryable=False,
+                    debug_id=debug_id,
+                    attempts=attempt + 1,
+                ),
+            )
         state = (
             ReceiptState.FAILED_FINAL
             if _is_final_failure_retcode(retcode)
@@ -671,11 +746,29 @@ async def _call_optional_onebot_api(
     api_name: str,
     payload: dict[str, Any],
 ) -> Any:
+    """调用「可选」的 OneBot API；不可用或被实现端拒绝时返回哨兵值。
+
+    M18：实现端（NapCat）对 forward API 的拒绝是以**异常**形式抛出的
+    （ActionFailed / 4xx）。此前只有「方法不存在」才返回哨兵，异常会穿透到
+    重试循环，三次重试后整条消息 FAILED_RETRYABLE，而 `_mixed_segments` 里
+    准备好的文本降级永不生效。这里把异常也收敛成哨兵，让调用方落到降级分支。
+    """
     direct_method = getattr(bot, api_name, None)
-    if callable(direct_method):
-        return await direct_method(**payload)
-    call_api = getattr(bot, "call_api", None)
-    if callable(call_api):
-        return await call_api(api_name, **payload)
+    try:
+        if callable(direct_method):
+            return await direct_method(**payload)
+        call_api = getattr(bot, "call_api", None)
+        if callable(call_api):
+            return await call_api(api_name, **payload)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - 可选 API：任何失败都应降级而非中断投递。
+        logger.warning(
+            "optional onebot api unavailable api=%s error=%s detail=%s",
+            api_name,
+            type(exc).__name__,
+            str(exc)[:120],
+        )
+        return _FORWARD_API_UNAVAILABLE
     return _FORWARD_API_UNAVAILABLE
 

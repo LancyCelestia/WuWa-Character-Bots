@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from plugins.bot_unified_runtime.audit import (
@@ -25,6 +26,9 @@ class FileAuditLog:
     def __init__(self, path: str | Path, *, max_bytes: int = 2 * 1024 * 1024) -> None:
         self.path = Path(path).expanduser()
         self.max_bytes = max(64 * 1024, int(max_bytes))
+        # 多线程（APScheduler + 事件循环 + 各能力）并发 append：不加锁会在
+        # 「检查大小 → rename 轮转 → 追加」之间交错，丢行或写到已改名句柄。
+        self._lock = threading.Lock()
 
     def append(self, record: AuditRecord) -> None:
         safe_record = record.model_copy(
@@ -32,17 +36,23 @@ class FileAuditLog:
         )
         line = safe_record.model_dump_json()
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            if self.path.exists() and self.path.stat().st_size >= self.max_bytes:
-                old_path = self.path.with_suffix(self.path.suffix + ".old")
-                try:
-                    old_path.unlink()
-                except OSError:
-                    pass
-                self.path.rename(old_path)
-            with self.path.open("a", encoding="utf-8") as handle:
-                handle.write(line)
-                handle.write("\n")
+            with self._lock:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                if self.path.exists() and self.path.stat().st_size >= self.max_bytes:
+                    old_path = self.path.with_suffix(self.path.suffix + ".old")
+                    try:
+                        old_path.unlink()
+                    except OSError:
+                        pass
+                    try:
+                        self.path.rename(old_path)
+                    except OSError:
+                        # rename 失败（如 .old 被占用）不能丢审计行：
+                        # 降级继续向当前文件追加，等下次再尝试轮转。
+                        pass
+                with self.path.open("a", encoding="utf-8") as handle:
+                    handle.write(line)
+                    handle.write("\n")
         except OSError:
             # 文件日志失败不能打断业务；审计主仓库仍然在写。
             return

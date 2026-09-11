@@ -24,6 +24,17 @@ from plugins.bot_unified_runtime.sender.receipts import ReceiptRepository
 SEND_QUEUE_WORKER_TRANSPORT = "send_queue_worker"
 SendTransport = Callable[[SendRequest], Awaitable[DeliveryReceipt]]
 
+# create_task 返回的 task 只被事件循环弱引用，无强引用时可能在完成前被 GC。
+# 模块级集合持引用，done callback 里移除。
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_background_task(coro: Awaitable) -> asyncio.Task:
+    task: asyncio.Task = asyncio.create_task(coro)  # type: ignore[arg-type]
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -214,7 +225,7 @@ async def _notify_operational_issue_safely(
                 except Exception:  # noqa: BLE001 - alerting is a side channel.
                     return
 
-            asyncio.create_task(_await_notification())
+            _spawn_background_task(_await_notification())
             # Start the task without waiting for the notifier's I/O to finish.
             await asyncio.sleep(0)
     except Exception:  # noqa: BLE001 - alerting must not affect queue state.

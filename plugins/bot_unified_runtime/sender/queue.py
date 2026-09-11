@@ -54,6 +54,24 @@ _BOT_UNAVAILABLE_RETRY_DELAY_SECONDS = 90.0
 _BOT_UNAVAILABLE_MAX_AGE_SECONDS = 1800.0
 
 
+class _CorruptQueueRow(Exception):
+    """队列行无法还原为条目的哨兵异常（毒行隔离，评审 H9）。
+
+    ``_entry_from_row`` 把解析期的一切异常（pydantic ValidationError、非法
+    时间戳、缺列）统一包成本类型，调用方据此把该行就地终态化并跳过，避免
+    **单条**坏行毒死整批已认领的消息。
+    """
+
+    def __init__(self, message: str, *, cause: Exception | None = None) -> None:
+        super().__init__(message)
+        # 只接受普通 Exception：调用方按 `Exception | None` 使用该属性，
+        # 避免把 BaseException 混进日志/类型面（system-exiting 异常不在此路径）。
+        original = cause if cause is not None else self.__cause__
+        self.cause: Exception | None = (
+            original if isinstance(original, Exception) else None
+        )
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -235,7 +253,13 @@ class SQLiteSendRequestQueue:
 
     @contextmanager
     def _transaction_immediate(self):
-        """写优先事务：认领租约用 IMMEDIATE 先取写锁，避免锁升级死锁。"""
+        """写优先事务：认领租约用 IMMEDIATE 先取写锁，避免锁升级死锁。
+
+        毒行隔离（评审 H9）：``_CorruptQueueRow`` 是**业务失败而非事务失败**，
+        因此先提交已完成的工作（认领写入 + 坏行终态化），再向外抛出——若走
+        通用回滚分支，已提交的认领会被撤销，坏行又退回 QUEUED 每轮重复毒杀，
+        正是事故的原始形态。DB 级错误（sqlite3.Error）仍走回滚+丢连接。
+        """
         with self._connection_lock:
             connection = self._shared_connection()
             try:
@@ -244,6 +268,14 @@ class SQLiteSendRequestQueue:
             except sqlite3.Error:
                 connection.rollback()
                 self._discard_connection()
+                raise
+            except _CorruptQueueRow:
+                # 提交：本批的认领与坏行终态化必须落盘才能达成隔离目的。
+                try:
+                    connection.commit()
+                except sqlite3.Error:
+                    connection.rollback()
+                    self._discard_connection()
                 raise
             except BaseException:
                 connection.rollback()
@@ -321,23 +353,7 @@ class SQLiteSendRequestQueue:
         self._ensure_schema_once()
         safe_limit = max(1, int(limit))
         with self._locked_connection() as connection:
-            cursor = connection.execute(
-                """
-                SELECT *
-                FROM send_requests
-                WHERE state IN (?, ?)
-                  AND (next_retry_at IS NULL OR next_retry_at <= ?)
-                ORDER BY created_at ASC, rowid ASC
-                LIMIT ?
-                """,
-                (
-                    ReceiptState.QUEUED.value,
-                    ReceiptState.FAILED_RETRYABLE.value,
-                    current_time.isoformat(),
-                    safe_limit,
-                ),
-            )
-            return [self._entry_from_row(row) for row in cursor.fetchall()]
+            return self._list_due_unlocked(connection, current_time, safe_limit)
 
     def find_request(self, request_id: str) -> SendRequest | None:
         normalized = request_id.strip()
@@ -435,7 +451,102 @@ class SQLiteSendRequestQueue:
                 """,
                 claimed_keys,
             ).fetchall()
-        return [self._entry_from_row(row) for row in refreshed]
+        return self._entries_from_rows(refreshed)
+
+    # ---- 毒行隔离（评审 H9）------------------------------------------------
+    # 90f590e 只给 _finalize_expired_lease 加了隔离，_entry_from_row 的两个
+    # 调用点（claim_due 批量重读 / list_due / find_request）仍会让**单条**
+    # request_json 损坏的行把整批已认领的行一起拖垮：claim_due 的事务此时
+    # 已提交，行已变 processing，异常却让整批条目全部丢弃 → 队列周期性停摆
+    # 且同批健康行从未投递。这里逐行解析并把坏行就地终态化。
+
+    def _list_due_unlocked(
+        self, connection: sqlite3.Connection, current_time: datetime, limit: int
+    ) -> list[QueuedSendRequest]:
+        """list_due 的裸查询体（调用方已完成加锁与建表）。"""
+        cursor = connection.execute(
+            """
+            SELECT *
+            FROM send_requests
+            WHERE state IN (?, ?)
+              AND (next_retry_at IS NULL OR next_retry_at <= ?)
+            ORDER BY created_at ASC, rowid ASC
+            LIMIT ?
+            """,
+            (
+                ReceiptState.QUEUED.value,
+                ReceiptState.FAILED_RETRYABLE.value,
+                current_time.isoformat(),
+                limit,
+            ),
+        )
+        return self._entries_from_rows(cursor.fetchall())
+
+    def _corrupt_row_kind(self, row: sqlite3.Row, exc: Exception) -> str:
+        """区分「跨版本未知字段」与「结构真损坏」，供日志与审计归类。"""
+        name = type(exc).__name__
+        if name in {"ValidationError", "ValueError", "KeyError", "TypeError"}:
+            return "unknown_field" if "Extra inputs" in str(exc) else "invalid_payload"
+        return "invalid_payload"
+
+    def _finalize_corrupt_row(
+        self,
+        row: sqlite3.Row,
+        exc: Exception | None,
+        current_time: datetime | None = None,
+    ) -> None:
+        """把无法解析的队列行就地置终态，避免它每轮都毒死整个批次。
+
+        关键：**不要**在调用方那条共享连接上执行。该连接以 autocommit 模式
+        创建（``isolation_level=None``），``BEGIN``/``commit``/``rollback`` 都是
+        无效操作，DML 会留下一个隐式打开的事务——后果是终态化时隐时现、并把
+        连接卡在怪异状态（实测：行停在 processing）。这里改用独立短连接，
+        使隔离动作与调用方的连接状态彻底解耦。
+
+        与非终态行永不被 _prune 淘汰的契约一致：置 FAILED_FINAL 后由既有
+        A4 淘汰路径回收；不删除行，保留事后取证能力。
+        """
+        stamp = (current_time or _utc_now()).isoformat()
+        dedupe_key = str(row["dedupe_key"])
+        kind = "invalid_payload" if exc is None else self._corrupt_row_kind(row, exc)
+        try:
+            with closing(self._connect()) as connection, connection:
+                connection.execute(
+                    """
+                    UPDATE send_requests
+                    SET state = ?,
+                        claimed_from_state = NULL,
+                        lease_expires_at = NULL,
+                        next_retry_at = NULL,
+                        updated_at = ?
+                    WHERE dedupe_key = ?
+                    """,
+                    (ReceiptState.FAILED_FINAL.value, stamp, dedupe_key),
+                )
+        except sqlite3.Error as db_exc:
+            logging.getLogger(__name__).warning(
+                "corrupt-row finalize failed dedupe_key=%s error=%s",
+                dedupe_key,
+                db_exc,
+            )
+        logging.getLogger(__name__).warning(
+            "corrupt send-queue row skipped and finalized kind=%s dedupe_key=%s error=%s",
+            kind,
+            dedupe_key,
+            type(exc).__name__ if exc is not None else "unknown",
+        )
+
+    def _entries_from_rows(
+        self, rows: list[sqlite3.Row]
+    ) -> list[QueuedSendRequest]:
+        """逐行解析：坏行终态化后跳过，健康行照常返回（毒行隔离）。"""
+        entries: list[QueuedSendRequest] = []
+        for row in rows:
+            try:
+                entries.append(self._entry_from_row(row))
+            except _CorruptQueueRow as exc:
+                self._finalize_corrupt_row(row, exc.cause)
+        return entries
 
     def _finalize_expired_lease(
         self,
@@ -828,32 +939,49 @@ class SQLiteSendRequestQueue:
             """,
             (request_id,),
         ).fetchone()
-        return self._entry_from_row(row) if row is not None else None
+        if row is None:
+            return None
+        try:
+            return self._entry_from_row(row)
+        except _CorruptQueueRow as exc:
+            self._finalize_corrupt_row(row, exc.cause)
+            return None
 
     def _entry_from_row(self, row: sqlite3.Row) -> QueuedSendRequest:
-        raw_state = str(row["state"])
-        public_state = (
-            str(row["claimed_from_state"])
-            if raw_state == PROCESSING_STATE and row["claimed_from_state"] is not None
-            else raw_state
-        )
-        return QueuedSendRequest(
-            send_request=SendRequest.model_validate_json(str(row["request_json"])),
-            state=ReceiptState(public_state),
-            retry_count=int(row["retry_count"]),
-            next_retry_at=(
-                datetime.fromisoformat(str(row["next_retry_at"]))
-                if row["next_retry_at"] is not None
-                else None
-            ),
-            created_at=datetime.fromisoformat(str(row["created_at"])),
-            updated_at=datetime.fromisoformat(str(row["updated_at"])),
-            lease_expires_at=(
-                datetime.fromisoformat(str(row["lease_expires_at"]))
-                if row["lease_expires_at"] is not None
-                else None
-            ),
-        )
+        """把队列行还原为条目；坏行统一抛 ``_CorruptQueueRow`` 供调用方隔离。
+
+        解析失败（跨版本未知字段 / request_json 损坏 / 时间戳非法）在这里被
+        包成固定类型的哨兵异常：调用方据此把该行就地终态化并**跳过**，而不是
+        让单条坏行把整批已认领的消息一起丢弃。
+        """
+        try:
+            raw_state = str(row["state"])
+            public_state = (
+                str(row["claimed_from_state"])
+                if raw_state == PROCESSING_STATE and row["claimed_from_state"] is not None
+                else raw_state
+            )
+            return QueuedSendRequest(
+                send_request=SendRequest.model_validate_json(str(row["request_json"])),
+                state=ReceiptState(public_state),
+                retry_count=int(row["retry_count"]),
+                next_retry_at=(
+                    datetime.fromisoformat(str(row["next_retry_at"]))
+                    if row["next_retry_at"] is not None
+                    else None
+                ),
+                created_at=datetime.fromisoformat(str(row["created_at"])),
+                updated_at=datetime.fromisoformat(str(row["updated_at"])),
+                lease_expires_at=(
+                    datetime.fromisoformat(str(row["lease_expires_at"]))
+                    if row["lease_expires_at"] is not None
+                    else None
+                ),
+            )
+        except Exception as exc:
+            raise _CorruptQueueRow(
+                f"unparsable queue row dedupe_key={row['dedupe_key']}", cause=exc
+            ) from exc
 
     def _update_state_in(
         self,
