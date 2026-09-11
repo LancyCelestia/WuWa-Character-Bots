@@ -1159,6 +1159,8 @@ def build_chat_prompt_with_diagnostics(
         ]
     if context.quirks_section:
         dynamic_parts += ["", context.quirks_section]
+    if context.session_identity_note:
+        dynamic_parts += ["", context.session_identity_note]
     if context.memory_results.facts:
         dynamic_parts += ["", "已读取记忆：", memory_lines]
     if context.conversation_history.turns:

@@ -237,6 +237,8 @@ class ContextBundle(StrictBaseModel):
     mood_description: str = ""
     # L4 人格演化区：审核通过的 quirk 渲染块（自然语言）；空 = 无 quirk。
     quirks_section: str = ""
+    # 会话级身份记忆（管理员设置）：每群/每私聊独立的称呼与标签渲染块。
+    session_identity_note: str = ""
     trend_context: TrendContext | None = None
     temporal_context: TemporalContext | None = None
     glossary_context: GlossaryContext | None = None

@@ -26,6 +26,7 @@ from .capabilities.epic import build_epic_capability
 from .capabilities.group_files import DirtyGuard, GroupFileStore
 from .capabilities.market import build_market_capability
 from .capabilities.news import build_news_capability
+from .capabilities.randpic import build_randpic_capability
 from .capabilities.meme import build_meme_capability
 from .capabilities.meme_library import build_meme_library_capability
 from .capabilities.moegirl import (
@@ -800,17 +801,21 @@ def _incoming_from_nonebot_event(
         text = f"{text}\n[引用回复]\n{reply_text}\n[/引用回复]".strip()
     is_tome = getattr(event, "is_tome", None)
     adapter_mentions_bot = bool(is_tome()) if callable(is_tome) else False
-    soft_name_mention = (
-        detect_name_mention(text, _RUNTIME_MENTION_TERMS)
-        or _mentioned_by_affinity_nickname(text)
-    )
+    persona_name_mention = detect_name_mention(text, _RUNTIME_MENTION_TERMS)
+    affinity_nickname_mention = _mentioned_by_affinity_nickname(text)
+    soft_name_mention = persona_name_mention or affinity_nickname_mention
     hard_mention = adapter_mentions_bot or (
         normalized_adapter not in {"telegram", "mail"}
         and _detect_onebot_direct_mention(raw_segments, bot_id)
     )
-    # 私聊/邮件永远回复，软硬之分无意义；软触发且无硬触发时标记仅供 white2 门收紧。
+    # 触发语义分层（2026-09-11「叫岸宝没反应」修复）：
+    # - 策展人格昵称（岸宝/守岸人/小岸同学/我的蒙娜丽莎/第二实例…）= 真点名：
+    #   经由 mentions_bot 等同 @，white1/未名单群直接应答，white2 严格群也应答；
+    # - 好感度自学习小名常撞常用词（可能误学「什么」这类词），无硬点名时仅记
+    #   name_mention_only 供 white2 严格门判定，不主动接话。
     name_mention_only = (
-        soft_name_mention
+        affinity_nickname_mention
+        and not persona_name_mention
         and not hard_mention
         and session_type not in {SessionType.PRIVATE, SessionType.EMAIL}
     )
@@ -1893,6 +1898,38 @@ def _build_quirks_describe(config: object):
     return _describe
 
 
+# 进程级共享会话身份 store（管理员设置的每群/每私聊称呼与标签）。
+_IDENTITY_STORES: dict[str, Any] = {}
+_IDENTITY_STORES_LOCK = threading.Lock()
+
+
+def build_session_identity_store(config: object):
+    from .character.providers import build_runtime_data_path
+    from .character.session_identity import SessionIdentityStore
+
+    db_path = build_runtime_data_path(
+        config,
+        str(getattr(config, "bot_session_identity_db_path", "data/session_identity.sqlite3")),
+    )
+    cache_key = str(db_path)
+    with _IDENTITY_STORES_LOCK:
+        store = _IDENTITY_STORES.get(cache_key)
+        if store is None:
+            store = SessionIdentityStore(db_path)
+            _IDENTITY_STORES[cache_key] = store
+        return store
+
+
+def _build_identity_describe(config: object):
+    """返回 (session_key) -> str 的会话身份渲染闭包；未启用返回 None。"""
+    store = build_session_identity_store(config)
+
+    def _describe(session_key: str) -> str:
+        return store.render_prompt_section(session_key)
+
+    return _describe
+
+
 def _register_reflection_scheduler(scheduler: Any, config: Any) -> dict:
     """反思回路夜间任务：每日归纳 conversation_turns → 用户事实 + 会话摘要。
 
@@ -1972,6 +2009,7 @@ def _register_nonebot_handlers() -> None:
         build_alert_check_result,
         build_quirk_admin_result,
         build_runtime_admin_result,
+        build_session_identity_admin_result,
     )
     from .capabilities.runtime_logs import build_logs_query_result
     from .character import (
@@ -2638,6 +2676,7 @@ def _register_nonebot_handlers() -> None:
                 shared_group_llm_provider=_build_chat_llm_provider(config),
                 mood_describe=_build_mood_describe(config),
                 quirks_describe=_build_quirks_describe(config),
+                identity_describe=_build_identity_describe(config),
             ),
             llm_provider=_build_chat_llm_provider(config),
             affinity_store=(
@@ -3348,6 +3387,12 @@ def _register_nonebot_handlers() -> None:
             is RouteKind.NEWS
         )
 
+    async def _is_randpic_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.RANDPIC
+        )
+
     content = on_message(rule=_is_content_parse_event, priority=46, block=True)
     music_mode = on_message(rule=_is_music_mode_event, priority=40, block=True)
     music = on_message(rule=_is_music_event, priority=41, block=True)
@@ -3364,6 +3409,7 @@ def _register_nonebot_handlers() -> None:
     market = on_message(rule=_is_market_event, priority=41, block=True)
     divination = on_message(rule=_is_divination_event, priority=41, block=True)
     news = on_message(rule=_is_news_event, priority=41, block=True)
+    randpic = on_message(rule=_is_randpic_event, priority=41, block=True)
     eat = on_message(rule=_is_eat_event, priority=41, block=True)
     subscribe_cmd = on_message(rule=_is_standalone_subscribe_event, priority=12, block=True)
 
@@ -3915,6 +3961,20 @@ def _register_nonebot_handlers() -> None:
                     request_id=message.request_id,
                     actor_roles=_decision.actor_roles,
                     command_text=quirk_command,
+                )
+
+        elif command_text == "identity" or command_text.startswith("identity "):
+            # /bot identity ...：会话级身份记忆（在哪个会话执行就对哪个会话生效）。
+            capability_id = "bot.identity"
+            identity_command = command_text.removeprefix("identity").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_session_identity_admin_result(
+                    config,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    session_key=message.session_id,
+                    command_text=identity_command,
                 )
 
         elif command_text == "route" or command_text.startswith("route "):
@@ -5039,6 +5099,12 @@ def _register_nonebot_handlers() -> None:
     async def _handle_news(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
             bot, event, build_news_capability, "bot.news", news
+        )
+
+    @randpic.handle()
+    async def _handle_randpic(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, build_randpic_capability, "bot.randpic", randpic
         )
 
     @eat.handle()

@@ -54,6 +54,7 @@ from plugins.bot_unified_runtime.capabilities.music import (
     is_music_mode_command,
 )
 from plugins.bot_unified_runtime.capabilities.news import is_news_command
+from plugins.bot_unified_runtime.capabilities.randpic import is_randpic_command
 from plugins.bot_unified_runtime.capabilities.subscribe import (
     is_standalone_subscribe_command,
 )
@@ -84,6 +85,7 @@ class RouteKind(str, Enum):
     WEATHER = "weather"
     MARKET = "market"
     NEWS = "news"
+    RANDPIC = "randpic"
     EAT = "eat"
     AFFINITY = "affinity"
     DIVINATION = "divination"
@@ -292,6 +294,16 @@ def build_route_rules() -> list[RouteRule]:
             return None
         return RouteDecision(RouteKind.NEWS, "bot.news", 41, "今日快报", ("base_route:news",))
 
+    def randpic_match(text, config, _alias):
+        # 随机图片：触发词（默认 随机图/来张图）即从用户自定义图库发一张。
+        if not getattr(config, "bot_randpic_enabled", True):
+            return None
+        if not is_randpic_command(
+            text, getattr(config, "bot_randpic_trigger_words", []) or None
+        ):
+            return None
+        return RouteDecision(RouteKind.RANDPIC, "bot.randpic", 41, "随机图片", ("base_route:randpic",))
+
     def affinity_match(text, config, _alias):
         # 好感度查询与动态好感度层共用 bot_affinity_enabled 开关。
         if not getattr(config, "bot_affinity_enabled", True):
@@ -390,6 +402,7 @@ def build_route_rules() -> list[RouteRule]:
         RouteRule(RouteKind.AFFINITY, "bot.affinity", 41, "好感度查询", "好感度/好感查看/查询好感", ("base_route:affinity",), affinity_match),
         RouteRule(RouteKind.DIVINATION, "bot.divination", 41, "占卜", "占卜/塔罗/八字排盘", ("base_route:divination",), divination_match),
         RouteRule(RouteKind.NEWS, "bot.news", 41, "今日快报", "今日快报（快报/科技新闻/财经快报/国际新闻）", ("base_route:news",), news_match),
+        RouteRule(RouteKind.RANDPIC, "bot.randpic", 41, "随机图片", "随机图片（随机图/来张图）", ("base_route:randpic",), randpic_match),
         RouteRule(RouteKind.MOEGIRL_QUESTION, "bot.moegirl", 44, "二次元问句", "二次元问句（萌娘百科自动查询，未命中降级聊天）", ("base_route:moegirl_question",), moegirl_question_match),
         RouteRule(RouteKind.NATURAL_COMMAND, "bot.natural_command", 45, "自然语言命令", "自然语言命令归一化", ("base_route:natural_command",), natural_match),
         RouteRule(RouteKind.CONTENT, "bot.content", 46, "链接解析", "链接解析（视频/图片/社交媒体/商品等）", ("base_route:content",), content_match),
@@ -442,6 +455,7 @@ COMMAND_ROUTE_KINDS = frozenset(
         RouteKind.EAT,
         RouteKind.DIVINATION,
         RouteKind.NEWS,
+        RouteKind.RANDPIC,
         RouteKind.NATURAL_COMMAND,
     }
 )

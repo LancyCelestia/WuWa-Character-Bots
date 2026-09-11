@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 MODULE_ALIASES: dict[str, str] = {
     "model": "model",
@@ -197,28 +198,66 @@ class CommandAliasResolver:
         return None
 
 
+def _load_persona_alias_file(config: object) -> list[str]:
+    """读取 personas/<profile>/aliases.txt（竖线分隔）。
+
+    历史事故：该文件曾长期没有任何代码消费——昵称词表全靠 env，生产没配
+    BOT_PERSONA_NICKNAMES 时「岸宝」根本不在称呼词表里，群里叫破喉咙也没人应。
+    这里把它真正接线；文件缺失/不可读时静默跳过（下方还有硬编码兜底）。
+    """
+    profile = str(getattr(config, "bot_persona_profile_id", "") or "").strip()
+    if not profile:
+        return []
+    candidate = Path("personas") / profile / "aliases.txt"
+    try:
+        raw = candidate.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return [item.strip() for item in raw.replace("\n", "|").split("|") if item.strip()]
+
+
+# 官方策展昵称硬编码兜底：与 personas/shorekeeper/aliases.txt 保持一致。
+# 用户实际使用中的子昵称全集（含「我的蒙娜丽莎」「第二实例」）——
+# env 未配置任何昵称时也必须能被叫应（2026-09-11 昵称无响应问题根因修复）。
+DEFAULT_PERSONA_NICKNAMES: tuple[str, ...] = (
+    "岸宝",
+    "守岸人",
+    "小岸同学",
+    "我的蒙娜丽莎",
+    "第二实例",
+    "蓝蝴蝶",
+    "花房的守护者",
+)
+
+
 def build_command_alias_resolver(
     config: object,
     extra_nicknames: list[str] | tuple[str, ...] = (),
 ) -> CommandAliasResolver:
     """按配置构造；昵称优先取人格级配置（随人格走），兼容旧的
-    runtime 级字段，再叠加实例设置 store 里的动态昵称。"""
+    runtime 级字段，再叠加实例设置 store 里的动态昵称；
+    全部为空时落官方策展昵称兜底（保证默认可被叫应）。"""
     nicknames: list[str] = []
     persona_nicknames = getattr(config, "bot_persona_nicknames", []) or []
     for item in persona_nicknames:
-        if str(item).strip():
+        if str(item).strip() and str(item).strip() not in nicknames:
             nicknames.append(str(item).strip())
     single = str(getattr(config, "bot_runtime_persona_nickname", "")).strip()
-    if single:
+    if single and single not in nicknames:
         nicknames.append(single)
     configured = getattr(config, "bot_runtime_persona_nicknames", []) or []
     for item in configured:
-        if str(item).strip():
+        if str(item).strip() and str(item).strip() not in nicknames:
             nicknames.append(str(item).strip())
+    for item in _load_persona_alias_file(config):
+        if item not in nicknames:
+            nicknames.append(item)
     for item in extra_nicknames:
-        if str(item).strip():
+        if str(item).strip() and str(item).strip() not in nicknames:
             nicknames.append(str(item).strip())
     instance_name = str(getattr(config, "bot_runtime_instance", "")).strip()
-    if instance_name and instance_name.lower() != "default":
+    if instance_name and instance_name.lower() != "default" and instance_name not in nicknames:
         nicknames.append(instance_name)
+    if not nicknames:
+        nicknames.extend(DEFAULT_PERSONA_NICKNAMES)
     return CommandAliasResolver(nicknames=nicknames)

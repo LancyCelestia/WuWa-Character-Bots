@@ -201,6 +201,8 @@ class Config(BaseModel):
     bot_reflection_minute: int = 30
     bot_reflection_max_sessions: int = 50
     bot_reflection_llm_enabled: bool = False
+    # 会话级身份记忆（管理员设置）：每群/每私聊独立的 bot 称呼与身份标签。
+    bot_session_identity_db_path: str = "data/session_identity.sqlite3"
     bot_trend_enabled: bool = False
     bot_trend_files: list[str] = []
     bot_trend_max_notes: int = 5
@@ -217,6 +219,11 @@ class Config(BaseModel):
     bot_market_enabled: bool = True
     bot_market_timeout_seconds: float = 6.0
     bot_market_cache_seconds: float = 60.0
+    # 随机图片（bot.randpic）：只读取用户自定义文件夹随机发图，绝不自建目录。
+    bot_randpic_enabled: bool = True
+    bot_randpic_dirs: list[str] = []
+    bot_randpic_trigger_words: list[str] = []
+    bot_randpic_max_file_mb: int = 20
     # 今日快报（bot.news）：国内可达 RSS 聚合，进程内 TTL 缓存（按类目分桶）。
     bot_news_enabled: bool = True
     bot_news_timeout_seconds: float = 6.0

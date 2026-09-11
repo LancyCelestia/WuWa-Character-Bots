@@ -1528,6 +1528,79 @@ def _handle_nickname_command(store: RuntimeSettingsStore, parts: list[str]) -> s
     return "用法：/bot runtime nickname add <昵称> | remove <昵称> | list"
 
 
+def build_session_identity_admin_result(
+    config: object,
+    *,
+    request_id: str,
+    actor_roles: list[str],
+    session_key: str,
+    command_text: str,
+) -> CapabilityResult:
+    """/bot identity set|tag|show|clear —— 会话级身份记忆（管理员专用）。
+
+    在哪个群/私聊里执行，就设置哪个会话的身份。防 OOC：渲染层内建护栏，
+    会话身份只调整称呼与语气，永远不推翻守岸人核心人格。
+    """
+    if "admin" not in actor_roles:
+        return _admin_only_result(request_id)
+    from plugins.bot_unified_runtime.character.providers import build_runtime_data_path
+    from plugins.bot_unified_runtime.character.session_identity import (
+        SessionIdentityStore,
+    )
+
+    if not session_key.strip():
+        return _error_result(request_id, "无法确定当前会话（仅在群聊/私聊内可用）。")
+    parts = command_text.split()
+    sub = parts[0].lower() if parts else "show"
+    db_path = build_runtime_data_path(
+        config,
+        str(getattr(config, "bot_session_identity_db_path", "data/session_identity.sqlite3")),
+    )
+    store = SessionIdentityStore(db_path)
+    if sub == "show":
+        identity = store.get(session_key)
+        if identity is None or (not identity.nickname and not identity.tags):
+            return _ok_result(
+                request_id, "本会话还没有身份设定（/bot identity set <昵称> 开始）。"
+            )
+        lines = [f"本会话身份：称呼「{identity.nickname or '（未设）'}」"]
+        if identity.tags:
+            lines.append(f"标签：{'、'.join(identity.tags)}")
+        lines.append(f"设置人：{identity.set_by or '未知'}；更新于 {identity.updated_at}")
+        return _ok_result(request_id, "\n".join(lines), capability_id="bot.identity")
+    if sub == "set":
+        nickname = command_text.removeprefix("set").strip()
+        if not nickname:
+            return _error_result(request_id, "用法：/bot identity set <昵称>（如 set 岸宝）")
+        identity = store.set(session_key, nickname=nickname, set_by="admin")
+        return _ok_result(
+            request_id,
+            f"已设定：本会话称呼你为「{identity.nickname}」。（只影响称呼与语气，人格不变）",
+            capability_id="bot.identity",
+        )
+    if sub == "tag":
+        raw = command_text.removeprefix("tag").strip()
+        if not raw:
+            return _error_result(request_id, "用法：/bot identity tag <标签1,标签2>（最多 8 个）")
+        identity = store.set(session_key, tags=raw, set_by="admin")
+        return _ok_result(
+            request_id,
+            "已设定标签：" + ("、".join(identity.tags) if identity.tags else "（空）"),
+            capability_id="bot.identity",
+        )
+    if sub == "clear":
+        removed = store.clear(session_key)
+        return _ok_result(
+            request_id,
+            "已清除本会话身份设定。" if removed else "本会话本就没有身份设定。",
+            capability_id="bot.identity",
+        )
+    return _error_result(
+        request_id,
+        "用法：/bot identity show | set <昵称> | tag <标签1,标签2> | clear（在本会话内执行即对本会话生效）",
+    )
+
+
 def build_quirk_admin_result(
     config: object,
     *,
