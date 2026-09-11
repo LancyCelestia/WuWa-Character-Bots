@@ -66,7 +66,8 @@
     --r-shell: 30px;
     --r-panel: 18px;
     --r-tile: 14px;
-    --shadow-card: 0 12px 32px rgba(var(--pc-rgb), 0.12), 0 3px 10px rgba(0,0,0,0.05);
+    /* mica-glass：外壳柔光改釉瑚派生（裸 --pc 高饱和 ring 已按 v2 验收去除）。 */
+    --shadow-card: 0 12px 32px color-mix(in srgb, var(--wash-2) 26%, transparent), 0 3px 10px rgba(0,0,0,0.05);
     --font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
     --font-scale: {{ font_scale | default(1.0) }};
 }
@@ -100,7 +101,7 @@ body {
     box-shadow: var(--shadow-card);
     overflow: hidden;
     position: relative;
-    margin: 18px;
+    margin: 0;
     zoom: {{ scale_factor | default(font_scale | default(1.0)) }};
 }
 
@@ -121,9 +122,9 @@ body > .card:not(.mica-stage)::before {
     width: 62%; aspect-ratio: 1; left: -16%; top: -24%;
     background:
         radial-gradient(closest-side at 32% 32%,
-            color-mix(in srgb, var(--wash-blob-1) 34%, transparent) 0%,
-            color-mix(in srgb, var(--wash-blob-1) 18%, transparent) 46%,
-            color-mix(in srgb, var(--wash-blob-1) 5%, transparent) 70%, transparent 100%),
+            color-mix(in srgb, var(--wash-blob-1) 50%, transparent) 0%,
+            color-mix(in srgb, var(--wash-blob-1) 28%, transparent) 46%,
+            color-mix(in srgb, var(--wash-blob-1) 6%, transparent) 70%, transparent 100%),
         radial-gradient(closest-side at 72% 78%,
             color-mix(in srgb, var(--wash-3) 30%, transparent) 0%,
             color-mix(in srgb, var(--wash-3) 16%, transparent) 48%,
@@ -437,7 +438,8 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 /* ===== 内容区 ===== */
 .content {
     padding: 0 24px 16px;
-    background: #fff;
+    /* mica-glass：半透明白玻璃，透出釉瑚渐变与漂移色斑（v2 验收反馈 2）。 */
+    background: rgba(255, 255, 255, 0.55);
 }
 
 .text-body {
@@ -472,9 +474,10 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     flex-wrap: wrap;
     gap: 12px;
     padding: 8px 24px;
-    background: #fafafa;
-    border-top: 1px solid #f0f0f0;
-    border-bottom: 1px solid #f0f0f0;
+    /* mica-glass：玻璃统计带，分隔线用中性半透明。 */
+    background: rgba(255, 255, 255, 0.60);
+    border-top: 1px solid rgba(31, 35, 41, 0.06);
+    border-bottom: 1px solid rgba(31, 35, 41, 0.06);
 }
 
 .stat-item {
@@ -584,7 +587,8 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 
 /* 热评使用平台主题色做左侧色条 */
 .hot-comment {
-    background: #fafafa;
+    /* mica-glass：玻璃热评卡（左侧 --pc 语义色条保留）。 */
+    background: rgba(255, 255, 255, 0.55);
     border: none;
     border-left: 3px solid var(--pc);
     border-radius: var(--radius-sm);
@@ -639,7 +643,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 
 /* ===== 评论区 ===== */
 .comments-section {
-    border-top: 1px solid #f0f0f0;
+    border-top: 1px solid rgba(31, 35, 41, 0.06);
     padding: 12px 0;
 }
 
@@ -658,7 +662,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 }
 
 .comment-item + .comment-item {
-    border-top: 1px solid #f5f5f5;
+    border-top: 1px solid rgba(31, 35, 41, 0.05);
 }
 
 .comment-avatar {
@@ -666,7 +670,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     height: 28px;
     border-radius: 50%;
     flex-shrink: 0;
-    background: #f0f0f0;
+    background: rgba(255, 255, 255, 0.72);
     overflow: hidden;
     display: flex;
     align-items: center;
@@ -717,7 +721,8 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 
 /* ===== 转发框（forward / repost 两种格式共用） ===== */
 .forward-box {
-    background: #f7f8fa;
+    /* mica-glass：玻璃转发框（左侧 --pc 语义色条保留）。 */
+    background: rgba(255, 255, 255, 0.55);
     border-radius: 12px;
     padding: 16px 20px;
     margin: 8px 0;
@@ -960,23 +965,24 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     --phase: 0.2;
     /* 釉瑚云母底主题 token，全卡统一：bridge._derive_wash_tokens 按 --pc 派生注入
        （H 原相 / H+30° / H-30° 邻近 pastel + 近白雾底；工艺出处=用户裁定）。
-       --pc 不再作背景主色，退为徽章/链接/高亮 accent，仅 ≤18% 混入 wash-1 色斑。 */
+       --pc 不再作背景主色，退为徽章/链接/高亮 accent，仅 ≤32% 混入 wash-1 主色斑。 */
     --wash-1: {{ wash_1 | default('#e5ecf1') }};
     --wash-2: {{ wash_2 | default('#e3e5f1') }};
     --wash-3: {{ wash_3 | default('#e3eeee') }};
     --wash-mist: {{ wash_mist | default('#f3f5f6') }};
-    --wash-blob-1: color-mix(in srgb, var(--pc) 14%, var(--wash-1));
+    --wash-blob-1: color-mix(in srgb, var(--pc) 35%, var(--wash-1));
     --mica-shadow: 0 12px 32px rgba(31, 35, 41, .10), 0 2px 8px rgba(31, 35, 41, .05);
     --mica-shadow-soft: 0 3px 10px rgba(31, 35, 41, .06);
     --mica-border: rgba(255, 255, 255, .85);
     --video-inset: 18px;
 }
-/* 截图容器：透明留白让外壳柔光真正出现在 PNG 里（.card 即渲染选择器）。 */
+/* 截图容器：零留白——元素截图 bbox = 可见卡本体（v2 验收反馈 1），
+   外圈柔光由生产侧 alpha 裁剪 + 8px 余量承载。 */
 .card.mica-stage {
-    width: calc({{ card_width }} + 56px);
+    width: fit-content;
     max-width: none;
     margin: 0;
-    padding: 28px;
+    padding: 0;
     overflow: visible;
     border: 0;
     border-radius: 0;
@@ -1015,13 +1021,13 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
    无 backdrop-filter（透明截图下无物可糊）；漂移色斑从玻璃后透出。 */
 .mica-surface {
     background:
-        linear-gradient(150deg, rgba(255,255,255,.72) 0%, rgba(255,255,255,.46) 100%) padding-box,
+        linear-gradient(150deg, rgba(255,255,255,.60) 0%, rgba(255,255,255,.44) 100%) padding-box,
         linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
     border: 1px solid transparent;
     box-shadow: var(--mica-shadow-soft);
 }
 /* ===== 渐变漂移色斑（mica-glass v1 2026-09-12）===== */
-/* 三枚大型柔光色斑 = wash-1（≤18% 混 --pc 透出平台色）/ wash-2 / wash-3，
+/* 三枚大型柔光色斑 = wash-1（主色斑，--pc 本相 ≤32% 混入透出平台色）/ wash-2 / wash-3，
    46s/52s/58s 交错漂移+呼吸（alternate），半透明互相透过（无硬边界），
    相位由内联脚本随机注入；动画元素全部在 .card 内（截图裁剪安全）。 */
 .drift-blobs { position:absolute; inset:0; z-index:0; overflow:hidden; pointer-events:none; border-radius:inherit; }
@@ -1029,9 +1035,9 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .drift-blob.drift-a {
     width:58%; aspect-ratio:1; left:-14%; top:-22%;
     background:radial-gradient(closest-side,
-        color-mix(in srgb, var(--wash-blob-1) 34%, transparent) 0%,
-        color-mix(in srgb, var(--wash-blob-1) 18%, transparent) 46%,
-        color-mix(in srgb, var(--wash-blob-1) 5%, transparent) 70%, transparent 100%);
+        color-mix(in srgb, var(--wash-blob-1) 50%, transparent) 0%,
+        color-mix(in srgb, var(--wash-blob-1) 28%, transparent) 46%,
+        color-mix(in srgb, var(--wash-blob-1) 6%, transparent) 70%, transparent 100%);
     animation:mica-drift-a 46s ease-in-out infinite alternate;
     animation-delay:calc(var(--phase, 0.2) * -46s);
 }
@@ -1117,7 +1123,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .metric-value { display:block; overflow:hidden; color:var(--text-main); font-size:22px; font-weight:700; text-overflow:ellipsis; white-space:nowrap; font-variant-numeric:tabular-nums; }
 .metric-label { display:block; margin-top:3px; color:var(--text-secondary); font-size:12px; }
 .video-card-summary { margin: 0 var(--video-inset) var(--video-inset); padding:15px 18px; border-radius:var(--r-panel); color:var(--text-sub); font-size:15.5px; line-height:1.75; white-space:pre-line; box-shadow:var(--mica-shadow-soft); }
-.footer.footer-colored { margin: 0 var(--video-inset) var(--video-inset); border:1px solid transparent; padding:12px 15px 15px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-radius:var(--r-panel); background:linear-gradient(150deg, rgba(255,255,255,.62) 0%, rgba(255,255,255,.40) 100%) padding-box, linear-gradient(150deg, rgba(255,255,255,.92), rgba(255,255,255,.35) 60%, rgba(255,255,255,.70)) border-box; color:var(--pc-dark); box-shadow:var(--mica-shadow-soft); }
+.footer.footer-colored { margin: 0 var(--video-inset) var(--video-inset); border:1px solid transparent; padding:12px 15px 15px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-radius:var(--r-panel); background:linear-gradient(150deg, rgba(255,255,255,.55) 0%, rgba(255,255,255,.40) 100%) padding-box, linear-gradient(150deg, rgba(255,255,255,.92), rgba(255,255,255,.35) 60%, rgba(255,255,255,.70)) border-box; color:var(--pc-dark); box-shadow:var(--mica-shadow-soft); }
 .footer-platform-name { display:flex; align-items:center; min-width:112px; font-size:12px; font-weight:600; }
 .footer.footer-colored .footer-bottom { margin:0; display:flex; align-items:center; justify-content:flex-end; gap:6px; }
 .footer-bot-pill { display:flex; align-items:center; gap:3px; padding:4px 7px 4px 4px; border-radius:999px; background:color-mix(in srgb, var(--pc) 6%, #fff); border:1px solid rgba(255,255,255,.98); box-shadow:inset 0 1px 0 rgba(255,255,255,.98); }
@@ -1307,10 +1313,10 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 
     <!-- 多P视频分P列表 -->
     {% if video_pages %}
-    <div class="video-pages" style="border-top:1px solid #f0f0f0;padding:12px 24px;">
+    <div class="video-pages" style="border-top:1px solid rgba(31,35,41,.06);padding:12px 24px;">
         <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:8px;">分P列表 (共{{ video_pages|length }}P)</div>
         {% for page in video_pages %}
-        <div style="display:flex;align-items:center;gap:10px;padding:6px 0;{% if not loop.last %}border-bottom:1px solid #f5f5f5;{% endif %}">
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0;{% if not loop.last %}border-bottom:1px solid rgba(31,35,41,.05);{% endif %}">
             {% if page.cover %}<img src="{{ page.cover }}" style="width:80px;height:45px;border-radius:6px;object-fit:cover;flex-shrink:0;" onerror="this.style.display='none'">{% endif %}
             <div style="flex:1;min-width:0;">
                 <div style="font-size:13px;color:var(--text-main);line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ page.title }}</div>
@@ -1622,7 +1628,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
         <div style="margin-top:12px;">
             <div style="font-size:14px;font-weight:600;color:var(--text-main);margin-bottom:8px;">{% if page_type in ["generic", "article"] %}页面内容{% else %}最近动态{% endif %}</div>
             {% for post in recent_posts[:5] %}
-            <div style="background:#f7f8fa;border-radius:8px;padding:12px;margin-bottom:8px;">
+            <div style="background:rgba(255,255,255,.55);border-radius:8px;padding:12px;margin-bottom:8px;">
                 {% if post.sender %}<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">{% if post.sender_avatar %}<img src="{{ post.sender_avatar }}" style="width:20px;height:20px;border-radius:50%;" onerror="this.style.display='none'">{% endif %}<span style="font-size:12px;font-weight:600;color:var(--text-main);">{{ post.sender }}</span>{% if post.sender_time %}<span style="font-size:10px;color:var(--text-secondary);">{{ post.sender_time }}</span>{% endif %}</div>{% endif %}
                 {% if post.title %}<div style="font-size:14px;font-weight:600;color:var(--text-main);margin-bottom:4px;">{{ post.title }}</div>{% endif %}
                 {% if post.video_duration %}<span style="font-size:11px;background:var(--pc-light);color:var(--pc);padding:2px 8px;border-radius:6px;font-weight:600;">{{ post.video_duration }}</span>{% endif %}

@@ -23,11 +23,12 @@
     --wash-2: {{ wash_2 | default('#e3e5f1') }};
     --wash-3: {{ wash_3 | default('#e3eeee') }};
     --wash-mist: {{ wash_mist | default('#f3f5f6') }};
-    --wash-blob-1: color-mix(in srgb, var(--pc) 14%, var(--wash-1));
+    --wash-blob-1: color-mix(in srgb, var(--pc) 35%, var(--wash-1));
     --r-shell: 30px;
     --r-panel: 18px;
     --r-tile: 14px;
-    --mica-shadow: 0 12px 32px rgba(var(--pc-rgb), 0.12), 0 3px 10px rgba(0, 0, 0, 0.05);
+    /* 外壳柔光改釉瑚派生（裸 --pc 高饱和 ring 已按 v2 验收去除）。 */
+    --mica-shadow: 0 12px 32px color-mix(in srgb, var(--wash-2) 26%, transparent), 0 3px 10px rgba(0, 0, 0, 0.05);
     --mica-shadow-soft: 0 3px 10px rgba(31, 35, 41, 0.06);
     --font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
 }
@@ -45,14 +46,14 @@ body {
     text-rendering: optimizeLegibility;
 }
 
-/* 透明留白承载柔光阴影（元素截图范围=24px padding 内）。 */
+/* 零留白：元素截图 bbox = 可见卡本体（v2 验收反馈 1）。 */
 .card {
     width: fit-content;
     background: transparent;
     border: 0;
     border-radius: 0;
     box-shadow: none;
-    padding: 24px;
+    padding: 0;
 }
 
 /* ===== 釉瑚云母外壳：雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底；
@@ -83,9 +84,9 @@ body {
 .drift-blob.drift-a {
     width: 58%; aspect-ratio: 1; left: -14%; top: -22%;
     background: radial-gradient(closest-side,
-        color-mix(in srgb, var(--wash-blob-1) 34%, transparent) 0%,
-        color-mix(in srgb, var(--wash-blob-1) 18%, transparent) 46%,
-        color-mix(in srgb, var(--wash-blob-1) 5%, transparent) 70%, transparent 100%);
+        color-mix(in srgb, var(--wash-blob-1) 50%, transparent) 0%,
+        color-mix(in srgb, var(--wash-blob-1) 28%, transparent) 46%,
+        color-mix(in srgb, var(--wash-blob-1) 6%, transparent) 70%, transparent 100%);
     animation: mica-drift-a 46s ease-in-out infinite alternate;
     animation-delay: calc(var(--phase, 0.2) * -46s);
 }

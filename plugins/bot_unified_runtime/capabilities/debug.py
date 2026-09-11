@@ -731,11 +731,11 @@ def _llm_setup_mica_html(payload: dict[str, Any]) -> str:
 :root {{ --phase:0.2; --accent:{accent}; --accent-ink:{accent_ink};
   /* 釉瑚云母底主题 token，全卡统一（bridge 按 --accent 派生；工艺出处=用户裁定）。 */
   --wash-1:{wash['wash_1']}; --wash-2:{wash['wash_2']}; --wash-3:{wash['wash_3']}; --wash-mist:{wash['wash_mist']};
-  --wash-blob-1:color-mix(in srgb, var(--accent) 14%, var(--wash-1));
+  --wash-blob-1:color-mix(in srgb, var(--accent) 35%, var(--wash-1));
   --ink:#27232a; --muted:#6f646c; --good:#1a9e6c; --bad:#d64545; }}
 * {{ box-sizing:border-box; }}
 body {{ margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; background:transparent; color:var(--ink); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }}
-.setup-stage {{ padding:26px; background:transparent; }}
+.setup-stage {{ padding:0; width:fit-content; background:transparent; }}
 /* 釉瑚云母外壳：雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底（不透明基础层）
    + 1px 内高光渐变描边；色斑垫底、内容抬升；阴影两枚 token。 */
 .setup-shell {{ position:relative; width:880px; overflow:hidden; border-radius:24px; border:1px solid transparent;
@@ -748,8 +748,8 @@ body {{ margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; backgroun
 .drift-blobs {{ position:absolute; inset:0; z-index:0; overflow:hidden; pointer-events:none; border-radius:inherit; }}
 .drift-blob {{ position:absolute; display:block; border-radius:50%; will-change:transform; }}
 .drift-blob.drift-a {{ width:58%; aspect-ratio:1; left:-14%; top:-22%;
-  background:radial-gradient(closest-side, color-mix(in srgb, var(--wash-blob-1) 34%, transparent) 0%,
-    color-mix(in srgb, var(--wash-blob-1) 18%, transparent) 46%, color-mix(in srgb, var(--wash-blob-1) 5%, transparent) 70%, transparent 100%);
+  background:radial-gradient(closest-side, color-mix(in srgb, var(--wash-blob-1) 50%, transparent) 0%,
+    color-mix(in srgb, var(--wash-blob-1) 28%, transparent) 46%, color-mix(in srgb, var(--wash-blob-1) 6%, transparent) 70%, transparent 100%);
   animation:mica-drift-a 46s ease-in-out infinite alternate; animation-delay:calc(var(--phase, 0.2) * -46s); }}
 .drift-blob.drift-b {{ width:52%; aspect-ratio:1; right:-16%; bottom:-24%;
   background:radial-gradient(closest-side, color-mix(in srgb, var(--wash-2) 30%, transparent) 0%,

@@ -10,6 +10,10 @@ import html
 import re
 
 PLAIN_TEXT_VERSION = "chat_plain_text:v1"
+# TeX token 提阶为模块级编译（热路径压榨项）：_math_text 逐字符循环内此前
+# 每次 re.match 都要过 re 模块缓存查找；长公式一段上百次。
+_TEX_TOKEN_RE = re.compile(r"\\([A-Za-z]+|.)", re.DOTALL)
+_TEX_COMMAND_NAME_RE = re.compile(r"\\([A-Za-z]+)")
 _QUOTES = str.maketrans("", "", '"“”„‟「」『』«»‹›')
 _COMMANDS = {
     "alpha": "阿尔法", "beta": "贝塔", "gamma": "伽马", "theta": "西塔",
@@ -56,7 +60,7 @@ def _math_text(text: str, depth: int = 0) -> str:
     while i < len(text):
         char = text[i]
         if char == "\\":
-            match = re.match(r"\\([A-Za-z]+|.)", text[i:], re.DOTALL)
+            match = _TEX_TOKEN_RE.match(text[i:])
             if match is None:
                 out.append("反斜线")
                 i += 1
@@ -142,7 +146,7 @@ _TEX_OPERATOR_LABELS = {"sum": "求和", "prod": "连乘", "int": "积分", "lim
 
 def _convert_single_tex_command(text: str) -> tuple[str, int]:
     """转换行首的一个 TeX 命令 token（含参数组），返回 (转换文本, 消费长度)。"""
-    match = re.match(r"\\([A-Za-z]+)", text)
+    match = _TEX_COMMAND_NAME_RE.match(text)
     if match is None:
         return text, 0
     command = match[1]
@@ -283,3 +287,31 @@ def humanize_reply(text: str) -> str:
     value = _HUMANIZE_CLOSING_RE.sub("", value).strip()
     value = _INNER_STATE_NUM_RE.sub(_redact_inner_state_number, value)
     return value or (text or "").strip()
+
+
+# --- 本机信息外泄红线（输出侧，最小可信版） -----------------------------------
+# 模型被诱导复述 .env / 本机文件路径时，在发送前做确定性打码。只覆盖三种
+# 高置信形态（Windows 盘符绝对路径 / BOT_XXX= 赋值 / sk- 类 key），避免
+# 误伤正常对话；函数幂等，替换产物不会被二次匹配。
+_BOT_ENV_ASSIGN_RE = re.compile(
+    r"\b(BOT_[A-Z0-9_]{1,64})\s*=\s*[^\s，。；！？、）】」”\"'<>]{1,200}"
+)
+_API_KEY_RE = re.compile(r"\b(sk-[A-Za-z0-9_\-]{8,})")
+_LOCAL_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9:])([A-Za-z]):[\\/][^\s，。；！？、）】」”\"'<>]{0,200}"
+)
+_LOCAL_PATH_PLACEHOLDER = "<本机路径已隐藏>"
+_SECRET_VALUE_PLACEHOLDER = "<已隐藏>"
+
+
+def redact_local_secrets(text: str) -> str:
+    """打码回复文本中的本机敏感形态；无命中时原样返回（热路径零成本）。"""
+    value = text or ""
+    if "BOT_" not in value and "sk-" not in value and ":\\" not in value and ":/" not in value:
+        return value
+    # 顺序：先整段打掉 BOT_XXX=赋值（值里可能含路径/key），再打独立 key，
+    # 最后打剩余的盘符绝对路径。
+    value = _BOT_ENV_ASSIGN_RE.sub(r"\1=" + _SECRET_VALUE_PLACEHOLDER, value)
+    value = _API_KEY_RE.sub("sk-" + _SECRET_VALUE_PLACEHOLDER, value)
+    value = _LOCAL_PATH_RE.sub(_LOCAL_PATH_PLACEHOLDER, value)
+    return value

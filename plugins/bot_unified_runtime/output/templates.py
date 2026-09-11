@@ -45,15 +45,15 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
-/* 截图容器：透明留白承载柔光阴影（.card 即渲染选择器）。 */
+/* 截图容器：零留白——元素截图 bbox = 可见卡本体（v2 验收反馈 1）。 */
 .card {
   width: auto; background: transparent; border: 0; border-radius: 0;
-  box-shadow: none; padding: 24px;
+  box-shadow: none; padding: 0;
 }
 :root { --phase: 0.2; --pc: __PC__; --pc-dark: __PC_DARK__; --pc-rgb: __PC_RGB__;
   /* 釉瑚云母底主题 token，全卡统一（bridge 按 --pc 派生注入；工艺出处=用户裁定）。 */
   --wash-1: __WASH_1__; --wash-2: __WASH_2__; --wash-3: __WASH_3__; --wash-mist: __WASH_MIST__;
-  --wash-blob-1: color-mix(in srgb, var(--pc) 14%, var(--wash-1)); }
+  --wash-blob-1: color-mix(in srgb, var(--pc) 35%, var(--wash-1)); }
 /* mica-glass：釉瑚云母外壳（雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底，
    不透明基础层）+ 1px 内高光渐变描边；色斑垫底、内容抬升；
    阴影只允许两枚 token。 */
@@ -79,9 +79,9 @@ body {
 .drift-blob.drift-a {
   width: 58%; aspect-ratio: 1; left: -14%; top: -22%;
   background: radial-gradient(closest-side,
-    color-mix(in srgb, var(--wash-blob-1) 34%, transparent) 0%,
-    color-mix(in srgb, var(--wash-blob-1) 18%, transparent) 46%,
-    color-mix(in srgb, var(--wash-blob-1) 5%, transparent) 70%, transparent 100%);
+    color-mix(in srgb, var(--wash-blob-1) 50%, transparent) 0%,
+    color-mix(in srgb, var(--wash-blob-1) 28%, transparent) 46%,
+    color-mix(in srgb, var(--wash-blob-1) 6%, transparent) 70%, transparent 100%);
   animation: mica-drift-a 46s ease-in-out infinite alternate;
   animation-delay: calc(var(--phase, 0.2) * -46s);
 }

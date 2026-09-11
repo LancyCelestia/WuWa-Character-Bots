@@ -17,12 +17,12 @@
     --pc: {{ pc | default('#607080') }};
     /* 釉瑚云母底主题 token，全卡统一（工艺出处=用户裁定）：
        wash-1 = H 原相 pastel、wash-2 = H+30°、wash-3 = H-30°（仅第三色透底）、
-       wash-mist = 同色相近白雾底；--wash-blob-1 允许 ≤18% 混 --pc 透出主色。 */
+       wash-mist = 同色相近白雾底；--wash-blob-1 允许 ≤32% 混 --pc 透出主色。 */
     --wash-1: {{ wash_1 | default('#e5ecf1') }};
     --wash-2: {{ wash_2 | default('#e3e5f1') }};
     --wash-3: {{ wash_3 | default('#e3eeee') }};
     --wash-mist: {{ wash_mist | default('#f3f5f6') }};
-    --wash-blob-1: color-mix(in srgb, var(--pc) 14%, var(--wash-1));
+    --wash-blob-1: color-mix(in srgb, var(--pc) 35%, var(--wash-1));
     --pc-soft: color-mix(in srgb, var(--pc) 7%, #fff);
     --pc-panel: color-mix(in srgb, var(--pc) 4%, #fff);
     --pc-panel-me: color-mix(in srgb, var(--pc) 11%, #fff);
@@ -78,9 +78,9 @@ body {
 .drift-blob.drift-a {
     width: 58%; aspect-ratio: 1; left: -14%; top: -22%;
     background: radial-gradient(closest-side,
-        color-mix(in srgb, var(--wash-blob-1) 34%, transparent) 0%,
-        color-mix(in srgb, var(--wash-blob-1) 18%, transparent) 46%,
-        color-mix(in srgb, var(--wash-blob-1) 5%, transparent) 70%, transparent 100%);
+        color-mix(in srgb, var(--wash-blob-1) 50%, transparent) 0%,
+        color-mix(in srgb, var(--wash-blob-1) 28%, transparent) 46%,
+        color-mix(in srgb, var(--wash-blob-1) 6%, transparent) 70%, transparent 100%);
     animation: mica-drift-a 46s ease-in-out infinite alternate;
     animation-delay: calc(var(--phase, 0.2) * -46s);
 }

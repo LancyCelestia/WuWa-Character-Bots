@@ -273,14 +273,15 @@ def _format_duration(seconds: int) -> str:
 # ==================== 釉瑚云母洗派生（mica-glass v1 2026-09-12） ====================
 # 工艺出处=用户裁定：「粉里透紫、蓝里透粉」是邻近色透色的 pastel 工艺，不是固定色值。
 # 每张卡以平台代表色 --pc 为相：取 HSL 色相 H，生成 H±30° 两个邻近色，全部
-# pastel 化（饱和度降至原 30~40%、明度提到 88~92%），得到
-# --wash-1（H 原相）/ --wash-2（H+30°）/ --wash-3（H-30°，仅作第三色透底）/
-# --wash-mist（同色相近白 ≥94% 明度）。灰阶输入（S 极低）直接生成中性雾底。
-# --pc 继续作徽章/链接/高亮等 accent，并允许 ≤18% 混进 wash-1 色斑透出平台色。
+# pastel 化（饱和度降至原 50~60%、明度提到 88~92%），得到
+# --wash-1（H 原相，主色斑用 --pc 本相）/ --wash-2（H+30°）/
+# --wash-3（H-30°，仅作第三色透底）/ --wash-mist（同色相近白 ≥94% 明度）。
+# 灰阶输入（S 极低）直接生成中性雾底。--pc 继续作徽章/链接/高亮等 accent，
+# 并允许 ≤32% 混进 wash-1 主色斑让平台色"透"出（v2 验收：14%→32% 加大区分度）。
 
 _WASH_HUE_SHIFT = 30 / 360  # 邻近色相偏移 28°~35° 取中值 30°
-_WASH_SAT_RATIO = 0.35      # pastel 化：原饱和度的 30~40% 取 35%
-_WASH_LIGHT = 0.90          # 洗色明度 88~92% 取 90%
+_WASH_SAT_RATIO = 0.55      # pastel 化：原饱和度的 50~60% 取 55%（v2 验收调参，加大平台区分度）
+_WASH_LIGHT = 0.88          # 洗色明度 88~92% 取 88%（v2：取下限加大色相可辨度）
 _WASH_MIST_LIGHT = 0.96     # 雾底明度 ≥94%
 _WASH_GRAY_SAT = 0.04       # 灰阶输入的中性雾底饱和度
 _WASH_GRAY_THRESHOLD = 0.10  # S 低于此值视为无有效色相的灰阶
@@ -290,7 +291,7 @@ def _wash_hex(hue: float, sat_in: float, light: float) -> str:
     sat = sat_in * _WASH_SAT_RATIO
     if sat_in < _WASH_GRAY_THRESHOLD:
         sat = _WASH_GRAY_SAT
-    red, green, blue = colorsys.hls_to_rgb(hue % 1.0, light, min(sat, 0.45))
+    red, green, blue = colorsys.hls_to_rgb(hue % 1.0, light, min(sat, 0.60))
     return f"#{round(red * 255):02x}{round(green * 255):02x}{round(blue * 255):02x}"
 
 
