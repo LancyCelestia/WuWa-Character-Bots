@@ -9,8 +9,16 @@
 - ``f12``=指数代码、``f14``=指数名称；secid 市场前缀 1=上交所、0=深交所、
   100=国际指数；
 - 无效 secid 不会报错，只会从响应的 ``data.diff`` 里消失。实测
-  ``100.BSESN`` 无效（正确代码是 ``100.SENSEX``）、``100.IMOEX``（俄罗斯
-  MOEX）无数据，两者均未收录；其余 15 个指数全部有效。
+  ``100.BSESN`` 无效（正确代码是 ``100.SENSEX``）；东财无 ``100.IMOEX``
+  （俄罗斯 MOEX）数据，该指数改走 MOEX ISS 官方接口备选源（见下）。
+
+MOEX ISS 备选源（2026-09-12 实测本机直连可达，免 key，无需代理）：
+
+    GET https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off
+
+- ``marketdata`` 按列名取 ``CURRENTVALUE``（现值，缺则 ``LASTVALUE``）、
+  ``LASTCHANGEPRC``（涨跌%）、``LASTCHANGE``（涨跌额）；列序变更不敏感；
+  单源失败该指数缺席，不拖垮整卡。
 
 任何网络/解析失败一律返回空列表（成功结果才进进程内 TTL 缓存，失败不缓存，
 便于用户立即重试），由能力层给降级文案，绝不向上抛异常。
@@ -29,8 +37,15 @@ _EASTMONEY_URL = (
     "https://push2.eastmoney.com/api/qt/ulist.np/get"
     "?fltt=2&secids={secids}&fields=f2,f3,f4,f12,f14"
 )
+_MOEX_URL = (
+    "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX"
+    "/securities/IMOEX.json?iss.meta=off"
+)
 
-# 响应体上限：15 个指数的 JSON 实测约 2KB，1MB 已是数百倍冗余，
+# MOEX 指数在宇宙表里的内部 secid 键（东财侧无此数据，仅作展示/过滤键）。
+_MOEX_SECID = "100.IMOEX"
+
+# 响应体上限：17 个东财指数的 JSON 实测约 2KB，1MB 已是数百倍冗余，
 # 只为防异常超大响应撑爆内存。
 _MAX_PAYLOAD_BYTES = 1024 * 1024
 
@@ -52,6 +67,8 @@ _INDEX_UNIVERSE: tuple[tuple[str, str, str], ...] = (
     ("1.000001", "上证指数", "中国区"),
     ("0.399001", "深证成指", "中国区"),
     ("0.399006", "创业板指", "中国区"),
+    ("1.000003", "上证B股", "中国区"),
+    ("0.399003", "深证B股", "中国区"),
     ("100.HSI", "恒生指数", "亚太"),
     ("100.N225", "日经225", "亚太"),
     ("100.KS11", "韩国KOSPI", "亚太"),
@@ -61,6 +78,7 @@ _INDEX_UNIVERSE: tuple[tuple[str, str, str], ...] = (
     ("100.FTSE", "英国富时100", "欧美"),
     ("100.FCHI", "法国CAC40", "欧美"),
     ("100.GDAXI", "德国DAX", "欧美"),
+    ("100.IMOEX", "俄罗斯MOEX", "欧美"),
     ("100.DJIA", "道琼斯", "欧美"),
     ("100.SPX", "标普500", "欧美"),
     ("100.NDX", "纳斯达克", "欧美"),
@@ -93,6 +111,46 @@ def _fetch_payload(secids: str, timeout_seconds: float) -> Any:
         _EASTMONEY_URL.format(secids=secids),
         timeout=timeout_seconds,
         max_bytes=_MAX_PAYLOAD_BYTES,
+    )
+
+
+def _fetch_moex_quote(timeout_seconds: float) -> IndexQuote | None:
+    """MOEX ISS 备选源拉取；任何失败返回 None（该指数缺席，不拖垮整卡）。"""
+    try:
+        payload = http_get_json(
+            _MOEX_URL,
+            timeout=max(1.0, float(timeout_seconds)),
+            max_bytes=_MAX_PAYLOAD_BYTES,
+        )
+    except Exception:  # noqa: BLE001 - 单源失败静默缺席，行情链路绝不抛。
+        return None
+    marketdata = payload.get("marketdata") if isinstance(payload, dict) else None
+    if not isinstance(marketdata, dict):
+        return None
+    columns = marketdata.get("columns")
+    rows = marketdata.get("data")
+    if not isinstance(columns, list) or not isinstance(rows, list) or not rows:
+        return None
+    row = rows[0] if isinstance(rows[0], list) else None
+    if row is None or len(row) != len(columns):
+        return None
+    by_name = {str(name): value for name, value in zip(columns, row)}
+    price = _as_float(by_name.get("CURRENTVALUE"))
+    if price is None:
+        price = _as_float(by_name.get("LASTVALUE"))
+    change_pct = _as_float(by_name.get("LASTCHANGEPRC"))
+    if price is None or change_pct is None:
+        return None
+    display = next(
+        (name for secid, name, _group in _INDEX_UNIVERSE if secid == _MOEX_SECID),
+        "俄罗斯MOEX",
+    )
+    return IndexQuote(
+        name=display,
+        code=_MOEX_SECID,
+        price=price,
+        change_pct=change_pct,
+        change_abs=_as_float(by_name.get("LASTCHANGE")),
     )
 
 
@@ -160,12 +218,18 @@ def fetch_index_quotes(
     cached = _CACHE
     if cached is not None and now - cached[0] <= max(0.0, float(cache_seconds)):
         return list(cached[1])
-    secids = ",".join(secid for secid, _name, _group in _INDEX_UNIVERSE)
+    secids = ",".join(
+        secid for secid, _name, _group in _INDEX_UNIVERSE if secid != _MOEX_SECID
+    )
     try:
         payload = _fetch_payload(secids, max(1.0, float(timeout_seconds)))
         quotes = _parse_quotes(payload)
     except Exception:  # noqa: BLE001 - 行情失败静默降级，不阻塞会话链路。
         quotes = []
+    # MOEX 走独立备选源：东财整体失败也允许只剩 MOEX 一条（有总比没有强）。
+    moex = _fetch_moex_quote(timeout_seconds)
+    if moex is not None:
+        quotes.append(moex)
     if quotes:
         _CACHE = (now, tuple(quotes))
     return quotes

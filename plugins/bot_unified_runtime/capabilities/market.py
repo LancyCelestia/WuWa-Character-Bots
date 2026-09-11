@@ -40,6 +40,9 @@ _EMPTY_DEGRADED_TEXT = "行情数据暂时拉不到，晚点再试试？"
 # 明确市场词 → 指数 secid（多个词命中取并集；空 = 全部指数）。
 _MARKET_FILTERS: tuple[tuple[str, frozenset[str]], ...] = (
     ("A股", frozenset({"1.000001", "0.399001", "0.399006"})),
+    ("B股", frozenset({"1.000003", "0.399003"})),
+    ("上证B", frozenset({"1.000003"})),
+    ("深证B", frozenset({"0.399003"})),
     ("美股", frozenset({"100.DJIA", "100.SPX", "100.NDX"})),
     ("港股", frozenset({"100.HSI"})),
     ("恒生", frozenset({"100.HSI"})),
@@ -58,6 +61,8 @@ _MARKET_FILTERS: tuple[tuple[str, frozenset[str]], ...] = (
     ("富时", frozenset({"100.FTSE"})),
     ("法国", frozenset({"100.FCHI"})),
     ("德国", frozenset({"100.GDAXI"})),
+    ("莫斯科", frozenset({"100.IMOEX"})),
+    ("俄罗斯", frozenset({"100.IMOEX"})),
 )
 
 

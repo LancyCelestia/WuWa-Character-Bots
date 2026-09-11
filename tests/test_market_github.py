@@ -1,8 +1,9 @@
 """全球股指行情 + GitHub 仓库解析回归测试（全部离线，HTTP 均打桩）。
 
-夹具取自 2026-09-11 真实探针：
-- 东方财富 push2 ``ulist.np/get``（15 个有效指数，``100.BSESN``/``100.IMOEX``
-  实测无数据已从宇宙剔除）；
+夹具取自真实探针：
+- 东方财富 push2 ``ulist.np/get``（17 个有效指数，2026-09-12 增补 B股两 secid；
+  ``100.BSESN`` 实测无效已纠正为 ``100.SENSEX``）；
+- MOEX ISS 官方接口（俄罗斯 MOEX 备选源，2026-09-12 实测直连可达）；
 - api.github.com ``/repos/psf/requests`` 与 ``/readme``（字段按真实响应保留）。
 """
 
@@ -114,6 +115,21 @@ GH_README_FIXTURE: dict = {
     "content": base64.b64encode(GH_README_MARKDOWN.encode("utf-8")).decode("ascii"),
 }
 
+# 真实响应（iss.moex.com SNDX/IMOEX.json，iss.meta=off；列名全保留）。
+MOEX_FIXTURE: dict = {
+    "marketdata": {
+        "columns": [
+            "SECID",
+            "BOARDID",
+            "LASTVALUE",
+            "CURRENTVALUE",
+            "LASTCHANGE",
+            "LASTCHANGEPRC",
+        ],
+        "data": [["IMOEX", "SNDX", 2308.93, 2281.04, -27.89, -1.21]],
+    }
+}
+
 
 class _Clock:
     """可控单调时钟：fetch TTL 测试用，避免依赖真实睡眠。"""
@@ -126,7 +142,9 @@ class _Clock:
 
 
 @pytest.fixture()
-def _clean_market_cache() -> Iterator[None]:
+def _clean_market_cache(monkeypatch) -> Iterator[None]:
+    # 默认静默 MOEX 备选源（单源测东财）；MOEX 专项测试自行覆盖此桩。
+    monkeypatch.setattr(market_data, "_fetch_moex_quote", lambda timeout: None)
     reset_market_cache()
     yield
     reset_market_cache()
@@ -152,10 +170,13 @@ def test_parse_quotes_from_real_fixture(_clean_market_cache, monkeypatch) -> Non
     # 实测无效的 secid 不应出现在宇宙里。
     all_codes = {quote.code for quote in quotes}
     assert "100.BSESN" not in all_codes
+    # 100.IMOEX 不走东财（东财无数据），由 MOEX ISS 备选源单独供给，
+    # 故东财解析结果里没有它，但宇宙表里必须有（供展示/过滤）。
     assert "100.IMOEX" not in all_codes
     universe_codes = {secid for secid, _n, _g in market_data._INDEX_UNIVERSE}
     assert "100.BSESN" not in universe_codes
-    assert "100.IMOEX" not in universe_codes
+    assert {"1.000003", "0.399003", "100.IMOEX"} <= universe_codes
+    assert len(market_data._INDEX_UNIVERSE) == 18
 
 
 def test_quote_rows_with_missing_values_skipped(_clean_market_cache, monkeypatch) -> None:
@@ -192,6 +213,7 @@ def test_fetch_failure_returns_empty_never_raises(
 
 def test_cache_ttl_hit_expiry_and_failure_not_cached(monkeypatch) -> None:
     reset_market_cache()
+    monkeypatch.setattr(market_data, "_fetch_moex_quote", lambda timeout: None)
     clock = _Clock()
     calls: list[int] = []
 
@@ -294,6 +316,77 @@ def test_market_filter_secids() -> None:
     assert market_filter_secids("日经行情") == frozenset({"100.N225"})
     assert "1.000001" in market_filter_secids("A股行情")
     assert market_filter_secids("行情") == frozenset()
+
+
+def test_moex_quote_parsed_from_iss_columns(monkeypatch) -> None:
+    monkeypatch.setattr(market_data, "http_get_json", lambda *a, **k: MOEX_FIXTURE)
+    quote = market_data._fetch_moex_quote(6.0)
+    assert quote is not None
+    assert quote.code == "100.IMOEX"
+    assert quote.name == "俄罗斯MOEX"
+    assert quote.price == 2281.04
+    assert quote.change_pct == -1.21
+    assert quote.change_abs == -27.89
+
+
+def test_moex_quote_failure_and_malformed_return_none(monkeypatch) -> None:
+    def _boom(*a, **k):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(market_data, "http_get_json", _boom)
+    assert market_data._fetch_moex_quote(6.0) is None
+    malformed: tuple[dict, ...] = (
+        {},
+        {"marketdata": None},
+        {"marketdata": {"columns": ["A"], "data": [[1]]}},
+        {"marketdata": {"columns": ["CURRENTVALUE"], "data": [[None]]}},
+        {"marketdata": {"columns": ["CURRENTVALUE"], "data": "not-a-row"}},
+    )
+    for bad in malformed:
+        monkeypatch.setattr(
+            market_data, "http_get_json", lambda *a, payload=bad: payload
+        )
+        assert market_data._fetch_moex_quote(6.0) is None
+
+
+def test_fetch_index_quotes_merges_moex_and_survives_eastmoney_failure(
+    _clean_market_cache, monkeypatch
+) -> None:
+    moex = IndexQuote(
+        name="俄罗斯MOEX", code="100.IMOEX", price=2281.04, change_pct=-1.21, change_abs=-27.89
+    )
+
+    def _boom(secids: str, timeout: float) -> dict:
+        raise OSError("eastmoney down")
+
+    monkeypatch.setattr(market_data, "_fetch_payload", _boom)
+    monkeypatch.setattr(market_data, "_fetch_moex_quote", lambda timeout: moex)
+    quotes = fetch_index_quotes()
+    assert [quote.code for quote in quotes] == ["100.IMOEX"]
+    assert "俄罗斯MOEX" in format_market_brief(quotes)
+
+
+def test_fetch_index_quotes_keeps_moex_out_of_eastmoney_request(
+    _clean_market_cache, monkeypatch
+) -> None:
+    seen: dict[str, str] = {}
+
+    def _fake(secids: str, timeout: float) -> dict:
+        seen["secids"] = secids
+        return EM_FIXTURE
+
+    monkeypatch.setattr(market_data, "_fetch_payload", _fake)
+    monkeypatch.setattr(market_data, "_fetch_moex_quote", lambda timeout: None)
+    quotes = fetch_index_quotes()
+    assert "100.IMOEX" not in seen["secids"]
+    assert len(quotes) == 15
+
+
+def test_market_filter_secids_b_shares_and_moex() -> None:
+    assert market_filter_secids("B股行情") == frozenset({"1.000003", "0.399003"})
+    assert market_filter_secids("深证B 行情") == frozenset({"0.399003"})
+    assert market_filter_secids("莫斯科股指") == frozenset({"100.IMOEX"})
+    assert market_filter_secids("俄罗斯行情") == frozenset({"100.IMOEX"})
 
 
 def _make_message(text: str) -> IncomingMessage:
