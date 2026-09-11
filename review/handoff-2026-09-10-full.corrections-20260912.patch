@@ -1,0 +1,39 @@
+diff --git a/docs/handoff-2026-09-10-full.md b/docs/handoff-2026-09-10-full.md
+index 939d875..f67586d 100644
+--- a/docs/handoff-2026-09-10-full.md
++++ b/docs/handoff-2026-09-10-full.md
+@@ -1227,7 +1227,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系
+ 
+ ### 待用户前置动作
+ 1. **提权重启生产 bot**（老进程仍跑 09-09 代码，本节全部交付未生效）。
+-2. **记忆系统默认关**：生产 .env 需 `BOT_MEMORY_ENABLED=true`、`BOT_HISTORY_ENABLED=true`（反思回路依赖后者），建议加 `BOT_GROUP_DIGEST_ENABLED=true`；心情/quirk/反思/命理/股指/快报默认开（`BOT_DIVINATION_ENABLED` 等可单独关）。
++2. **记忆系统默认关**：生产 .env 需 `BOT_MEMORY_ENABLED=true`、`BOT_HISTORY_ENABLED=true`（反思回路依赖后者），群摘要真开关是 `BOT_SHARED_GROUP_CONTEXT_ENABLED`（生产已开启，白名单模式运行中；~~`BOT_GROUP_DIGEST_ENABLED` 为死字段，2026-09-12 勘误——评审 M4 实测全库零读取并已删除~~）；心情/quirk/反思/命理/股指/快报默认开（`BOT_DIVINATION_ENABLED` 等可单独关）。
+ 3. 推送 origin 等明确指示；其余待办（umi 充值、QIANQIANYE 换 key、ds-official key、toolcode-gemini 下架）沿用 §15 清单。
+ 
+ ---
+@@ -1296,6 +1296,8 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系
+ 
+ **工作树遗留说明**：`__init__.py` intake 区工作树仍保留并行会话的过时遗留（分离变量旧写法+心情钩子行），已全部被 HEAD 的 soft_name_mention 版本取代——下次任何会话清理工作树时该区直接以 HEAD 为准，不会丢失任何本会话交付。
+ 
++> ⚠️ **勘误（2026-09-11 评审 H1-a 提出，2026-09-12 复核）**：上文「直接以 HEAD 为准」**只对本会话自己的交付成立**——工作树该区当时是 HEAD 的严格超集，额外承载 `_passive_affinity_perception`（`mood.observe_interaction` 心情事件源）等 HEAD 零命中内容，照做会永久丢失 mood 事件源。**现状：隐患已消解**——mood 钩子已随评审会话修复批落库（e1d2b02 等 20 提交），09-12 复核工作树干净、bot_mood 实测在写库（final 交接 §3.3）。原文保留作历史存证。
++
+ **给下一会话的速读清单**：§16 + §17（本节）+ §15 未尽项；未做项计划在 §17 第四节（Help 深度教学化 D / W4 六项 / 提醒 LLM 进阶轨）；全部代码交付已入库，**只差用户提权重启 + 配 `BOT_RANDPIC_DIRS` + 推送指示**。
+ 
+ ### 七、全量要求复核（2026-09-11 深夜收尾轮，逐条对代码核验）
+@@ -1314,7 +1316,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系
+ | 8 | **自己画流程图** | ❌ **G-MERMAID** | 全库 grep mermaid/流程图 零命中。**计划**：bot 回复内 ```mermaid 代码块 → 用 Mica 卡渲染管线渲染 PNG（card_render 后端 page.set_content 本就允许网络加载 CDN mermaid.js，wait_for_function 等待 SVG 完成再截图）；无网降级为原样输出代码块；触发=回复含 mermaid 块自动渲染 |
+ | 9 | 文本/文件交付 | ✅ | file_exchange + sender upload_private/group_file（既有） |
+ | 10 | 生辰八字/塔罗/八卦阵 | ✅ | ganzhi/tarot/iching 三件套（76 测） |
+-| 11 | **总结今日通讯** | ⚠️ **G-DIGEST** | 能力在（shared_group 摘要+LLM 压缩）但**生产 `BOT_GROUP_DIGEST_ENABLED=false`**。**计划**：①用户开启该开关（操作项）；②夜间任务增补"每日通讯总结"主动推送（复用 reflection 调度骨架） |
++| 11 | **总结今日通讯** | ⚠️ **G-DIGEST（范围收窄）** | 原判定依据 `BOT_GROUP_DIGEST_ENABLED=false` **系死字段，作废（2026-09-12 勘误）**。实况：真开关 `BOT_SHARED_GROUP_CONTEXT_ENABLED` 生产已开、白名单模式运行中，摘要能力本身在跑。**剩余计划仅一项**：夜间任务增补"每日通讯总结"主动推送（复用 reflection 调度骨架） |
+ | 12 | 今日快报/新闻/AI/财经/科技 | ✅ | 4 实测源（IT之家/少数派/华尔街见闻/BBC中文） |
+ | 13 | **全球股指** | ⚠️ **G-INDEX** | 15 指数 ✓（A股/港股/日/韩/新加坡/印度/伦敦/巴黎/纳斯达克/美股/台湾）。**缺口**：①**B股**（上证B股 1.000003/深证B股 0.399003，东财同接口可补）；②**莫斯科 MOEX** 东财无数据（模块 docstring 已记录剔除），需备选源（MOEX ISS 官方 API iss.moex.com 免 key） |
+ | 14 | 订阅全平台全类型 | ⚠️ **G-SUB-LIVE** | B站 creator(动态)/live_room(直播，本会话修通)/bangumi/favorite/collection ✓；YT channel/playlist ✓；xhs/推特/微博 creator ✓；**缺口**：YouTube 直播、小红书直播/专栏细分无独立 kind——计划增补 kind 与拉取逻辑 |
+@@ -1329,6 +1331,6 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系
+ | 23 | randpic（读自定义文件夹） | ✅ | 46588d6 前一提交（f80a8b1 批次后独立提交） |
+ | 24 | SillyTavern 角色卡格式 | ⚠️ | 现有 identity.md 分区已等价（身份/风格/红线）；可选：增加 ST 卡导入器（低优先） |
+ 
+-**G 系列计划汇总（全部未动代码，供下一会话执行）**：G-MERMAID 画流程图、G-INDEX 补 B股+莫斯科备选源、G-DIGEST 开启群摘要+每日通讯总结推送、G-SUB-LIVE 补 YT/xhs 直播 kind、§17 计划 D/W4/R-进阶轨 维持不变。**用户操作项**：`BOT_GROUP_DIGEST_ENABLED=true`（如需"总结今日通讯"立即生效）。
++**G 系列计划汇总（全部未动代码，供下一会话执行）**：G-MERMAID 画流程图、G-INDEX 补 B股+莫斯科备选源、G-DIGEST（**已收窄**：群摘要开关在跑无需用户操作，仅剩夜间"每日通讯总结"推送）、G-SUB-LIVE 补 YT/xhs 直播 kind、§17 计划 D/W4/R-进阶轨 维持不变。~~**用户操作项**：`BOT_GROUP_DIGEST_ENABLED=true`~~（2026-09-12 勘误：死字段已删除，无需任何操作）。
+ 
+ ---
