@@ -1234,7 +1234,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 
 ## §17 人格记忆/昵称叫应/randpic 会话底账（2026-09-11 晚，用户需求驱动）
 
-**提交**：`f80a8b1`（18 文件 +1082/−13，§11.4 重建，未推送）。门禁：全量 **1303 passed** / lint 全过 / mypy **220 文件零 issue**。
+**提交**：`f80a8b1`（18 文件 +1082/−13，昵称修复+会话身份+randpic+persona 资产）→ `e973a6c`（本文 §17）→ `46588d6`（7 文件 +674，提醒功能）；全部 §11.4 重建，未推送。门禁：全量 **1312 passed** / lint 全过 / mypy **222 文件零 issue**。
 
 ### 一、发现的问题与解决方法
 
@@ -1260,7 +1260,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 | 每用户/每群/每私聊独立记忆 | ✅ 基础已有（memory_facts 按 subject+session 作用域、affinity 按 user×group、会话身份 per-session） |
 | 管理员设群内昵称/身份标签，bot 据此行事 | ✅ `/bot identity`（渲染护栏防 OOC） |
 | 个性化记忆不得 OOC | ✅ 三层防线：persona 文件冻结 + 记忆分区标「仅影响语气」+ credentialed 过滤 + 会话身份渲染护栏 |
-| 时间点记忆→主动提醒（12点写作业→12点督促） | ❌ 未实现（计划 R，四件套设计已写） |
+| 时间点记忆→主动提醒（12点写作业→12点督促） | ✅ 已实现（46588d6）：自然语言「12点提醒我写作业/明天早上8点叫我起床/半小时后提醒我」→ 确定性解析（已过点顺延明天、中午=12:00 等时段默认值）→ 会话级待办（上限 20/会话、过期 24h 作废）→ 每分钟调度投递（复用发送队列、守岸人语气督促文案）；`提醒列表`/`取消提醒 <id前几位>` 可管理。进阶轨（无提醒词的纯陈述抽取）留待 LLM 轮末抽取补全 |
 | 记住基本信息并结合回答 | ✅ 已有（memory_extract LLM 抽取 + affinity 画像笔记 + 反思回路夜间沉淀） |
 | 准确理解鸣潮梗 | ✅ 已有（库街区百科.md 在 BOT_KNOWLEDGE_FILES 向量库 + meme_search）；持续增强靠知识库维护 |
 | 严格身份设定（角色卡全量） | ✅ 本轮 identity.md/知识库/runtime 副本三处落地 |
@@ -1271,7 +1271,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 
 ### 四、未实现项的实施计划（下一会话按此执行）
 
-- **计划 R（提醒/主动督促）**：①`character/reminders.py`：SQLite `reminders`（reminder_id, session_key, sender_id, remind_at, text, status, created_at；status+remind_at 索引）；②解析双轨：命令 `/提醒 <时间> <事>` + 自然语言「X点提醒我/叫我…」正则（时间词+提醒/叫我 共现才触发，防误报）；进阶轨=复用 memory_extract 的 LLM 轮末抽取模式抽 {time, action}（用户例句"中午12点要写作业"无提醒词，靠这轨）；③apscheduler 每分钟 tick（misfire_grace/max_instances=1）；④投递复用订阅推送同款 send_queue 通道，语气走人格（温柔督促）。**验收**：说"12点提醒我写作业"→12:00 收到守岸人语气的提醒；`/提醒` 列表/取消可用。
+- **计划 R（提醒/主动督促）**：✅ 已落地（46588d6，见第三节对账表）。**进阶轨未做**：用户例句"中午12点要写作业"（无"提醒"词）需 LLM 轮末抽取——复用 `character/memory_extract.py` 同款机制加一条提醒抽取提示词即可（约 30 行，风险低）。
 - **计划 D（Help 教学化）**：echo 帮助条目扩为四段式（板块介绍/命令与参数/参数范围/设置效果），覆盖 行情/快报/占卜/随机图/identity/quirk/好感度/记忆/提醒；`/帮助 <板块>` 深度页复用 detail 字段。
 - **计划 W4**：好感度三维化（trust/intimacy/rapport 列迁移+阶段滞后）、表情包情绪档（meme 候选按 mood.valence 过滤语气档）、主动搭话门控（affinity≥close+冷却+频控才允许 auto_send 主动消息）、反思→`quirks.propose` 自动投喂（夜间 top 置信事实进待审池）、新闻 Atom 真源实测（候选：ruanyifeng.com/blog/atom.xml）、反思群聊按 sender 归属、八字藏干权重。
 - **遗留**：心情钩子随并行会话 perception 落库；settings/model_schedule/weather-eat 互换在并行会话手里；`test_text_at_mention.py` 入库存证（本文第三节#3）。
@@ -1281,7 +1281,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 1. **提权重启生产 bot**（老进程跑的还是 09-09 代码，§16+§17 全部交付都等这一步）。
 2. 在 `ChatBot/.env` 追加一行（randpic 图库，改成你自己的文件夹，支持多个）：
    `BOT_RANDPIC_DIRS=["C:/你的/图片文件夹"]`
-3. 重启后验收五连：群里叫「岸宝」→ 应答；发「随机图」→ 从你文件夹甩一张图；`/bot identity set 岸宝` → 本群称呼生效；`八字` / `塔罗 三张` / `行情` / `快报` → 各自出结果；`/bot quirk list` → 演化区空池正常。
-4. 推送 origin：`git push origin v0.0.1-alpha.2`（提交链 f80a8b1←3528478←b6cd444←57327f3←0325a69←0cac9ce，全部等指示）。
+3. 重启后验收**六连**：群里叫「岸宝」→ 应答；发「随机图」→ 从你文件夹甩一张图；`/bot identity set 岸宝` → 本群称呼生效；**「一分钟后提醒我喝水」→ 约 1 分钟后收到守岸人语气的督促**，再发「提醒列表」可见待办；`八字` / `塔罗 三张` / `行情` / `快报` → 各自出结果；`/bot quirk list` → 演化区空池正常。
+4. 推送 origin：`git push origin v0.0.1-alpha.2`（本轮提交链 `46588d6←e973a6c←f80a8b1←` 并行会话若干提交，全部等指示）。
 
 ---

@@ -224,9 +224,6 @@ class Config(BaseModel):
     bot_randpic_dirs: list[str] = []
     bot_randpic_trigger_words: list[str] = []
     bot_randpic_max_file_mb: int = 20
-    # 时间点提醒（bot.reminder）：记住"几点要做什么"，到点主动督促。
-    bot_reminder_enabled: bool = True
-    bot_reminder_db_path: str = "data/reminders.sqlite3"
     # 今日快报（bot.news）：国内可达 RSS 聚合，进程内 TTL 缓存（按类目分桶）。
     bot_news_enabled: bool = True
     bot_news_timeout_seconds: float = 6.0
