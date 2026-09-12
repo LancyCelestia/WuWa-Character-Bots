@@ -333,7 +333,7 @@ class InMemoryRateLimiter:
         return self._bucket_key(capability_id, "sender_interval", message.sender_id)
 
     def _check_sender_min_interval(
-        self, message: IncomingMessage, capability_id: str, now: object
+        self, message: IncomingMessage, capability_id: str, now: datetime
     ) -> RateLimitDecision | None:
         bucket = self._buckets[self._sender_interval_key(capability_id, message)]
         if bucket:
@@ -544,6 +544,13 @@ class SQLiteRateLimiter:
                 reason="non_chat_capability",
                 audit_tags=["rate_limit:non_chat"],
             )
+        # R3 同人点名最小间隔：先于 role bypass（与 InMemory 同语义——
+        # 刷屏保护人人平等，管理员连喊同样冷却）。
+        min_interval_decision = self._check_sender_min_interval(
+            message, capability_id
+        )
+        if min_interval_decision is not None:
+            return min_interval_decision
         if self._has_bypass_role(message):
             return RateLimitDecision(
                 allowed=True,
@@ -551,13 +558,7 @@ class SQLiteRateLimiter:
                 audit_tags=["rate_limit:bypass_role"],
             )
 
-        # R3 同人点名最小间隔（与 InMemory 同语义）：管理员连喊同样冷却。
         with self._lock:
-            min_interval_decision = self._check_sender_min_interval(
-                message, capability_id
-            )
-            if min_interval_decision is not None:
-                return min_interval_decision
             return self._check_and_record_locked(
                 message, capability_id, safe_amount
             )

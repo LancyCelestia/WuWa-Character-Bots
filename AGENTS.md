@@ -104,7 +104,7 @@ QQ/NapCat(WS 3001) ⇄ bot.py(forward-WS)
 ## 第五部分：验证与门禁
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task test"           # 全量（终稿基线 1758+ passed）
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task test"           # 全量（基线 1787+ passed）
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task lint"           # ruff All checks passed
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task typecheck"      # mypy Success 238 文件
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task runtime-layout" # 源码树/边界体检
@@ -136,7 +136,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 | 19 | **F7 随机 cos 照片未做**：等用户提供 gs_kuro_cos 插件+油猴脚本；思路=借鉴其接口做 xhs/推特 cos 图检索随机发（两份参考油猴脚本已读：xhs CI 原图 token 接口 + X name=orig 直链） | 等外部 |
 | 20 | F13 queue 告警 `source_bot=unknown`：**已定性**（153fd78 记录）——历史批次终态+300s 抑制聚合（bot_unavailable=worker 阶段无在线 OneBot 的挂起回执，1800s 年龄上限自动清理），非现行缺陷 | 重启后观察 |
 | 21 | help 页脚 bot 头像：`.env` 的 BOT_PERSONA_AVATAR_URL 为空 → 页脚用「守」字圆点；用户可提供头像图路径后配置 | 等用户（可选） |
-| 22 | **R 系列角色体系**（2026-09-12 晚已落码）：R1 超管/管理员六级角色（超管自动叠加 admin）+BOT_ADMIN_PROFILES 档案注入；R3 同人点名最小间隔 45s（仅 mentions_bot 生效，双限流器同语义）；R4 长文软点名观察门（≥50 字含昵称、非@/非开头称呼/非问句 → 不抢答） | 待全量测试确认+重启生效 |
+| 22 | **R 系列角色体系**（2026-09-12 晚，73d8c6a+测试批）：R1 超管/管理员六级角色（超管自动叠加 admin）+BOT_ADMIN_PROFILES 档案注入；R3 同人点名最小间隔 45s（仅 mentions_bot 生效，InMemory+SQLite 同语义且都先于 role bypass——SQLite 顺序不一致已修）；R4 长文软点名观察门；21 例专属回归（test_policy_sender_interval/test_policy_soft_mention_gate/test_admin_roster_and_roles） | 代码+测试完成，重启生效 |
 | 23 | **CC 字幕必存**（77d8b28）：下载自动抓 CC（zh 优先 srt）落盘+纯文本进 meta.subtitle_text；压制不做（ROI 为负）；追问链路零改动可引用 | 完成，重启生效 |
 | 24 | **Ghost Downloader 集成**：有 aria2 兼容 RPC（无 CLI）；需用户开 RPC+确认端口/token；当前 yt-dlp 原生 8 并发+16MB Range 分块已可用，装 aria2（winget install aria2.aria2）自动委托 | 可选优化 |
 | 25 | **账单计价已接**（483f852）：ledger 写入时按渠道价计价（含缓存命中/创建价+按次计费）；38 条价目已写入生产 store（scripts/import_model_prices.py 幂等导入）；价有出入用 /bot model price 改 | 完成，重启生效 |

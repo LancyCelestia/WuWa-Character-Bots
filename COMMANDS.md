@@ -47,7 +47,7 @@
 
 | 模块 | 指令 | 作用 | 关键参数 |
 |---|---|---|---|
-| 模型 | `/bot model list\|set\|add\|update\|priority\|effort\|think\|price\|search\|usage\|health\|probe\|routes\|vision\|remove\|reset`（`/bot llm` 诊断） | 模型注册表/故障转移/健康/计费总控 | add：`<id> model= base_url= key= [tags=] [effort=] [group=] [priority=]`；effort/think 档位 off\|low\|medium\|high\|xhigh\|max(default=清除)；price `input=/output=` 元/1M；usage [today\|YYYY-MM-DD]；全部热改即时生效 |
+| 模型 | `/bot model list\|set\|add\|update\|priority\|effort\|think\|price\|search\|usage\|health\|probe\|routes\|vision\|remove\|reset`（`/bot llm` 诊断） | 模型注册表/故障转移/健康/计费总控 | add：`<id> model= base_url= key= [tags=] [effort=] [group=] [priority=]`；effort/think 档位 off\|low\|medium\|high\|xhigh\|max(default=清除)；price `input=/output=/cache_read=/cache_creation=/per_call=`（元/1M tokens；per_call 为元/请求，按次计费）；usage [today\|YYYY-MM-DD]；全部热改即时生效 |
 | 用量 | `/bot model usage [日期]`、`/bot model price …` | Token 账单、价格维护、阈值提醒与 13/18/23 点定时报告 | 日期可选；阈值 .env：BOT_USAGE_ALERT_* |
 | 设置 | `/bot runtime set\|get\|list\|reset\|nickname\|persona\|model\|instance` | 运行时参数热改（白名单键，优先于 .env，可 `--instance <名称>`） | persona：list\|switch `<id\|default>`\|probability `<id> <0-1>`；nickname：add\|remove\|list |
 | 供应商 | BOT_MODEL_REGISTRY（.env） | 静态供应商注册表 | priority 1-999；探测脚本 `--max-tokens` 1-4096 默认 32 |
@@ -56,6 +56,7 @@
 ### 运行开关类（.env 键，改后重启）
 
 - 限流：`BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR/_PER_MINUTE`（≥0，0=该帽不生效）、`BOT_RATE_LIMIT_EMOTION_EXEMPT`（默认 true）、`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED`（默认 false）+`…_PROBABILITY`（0..1 默认 0.05）、安静时间 6 键 `BOT_QUIET_HOURS_*`——以上均可 `/bot runtime set` 热改。
+- 点名回复节流：`BOT_RATE_LIMIT_CHAT_SENDER_MIN_INTERVAL_SECONDS`（默认 45，同一人点名回复最小间隔秒数，0=关闭）——可 `/bot runtime set` 热改。
 - 合并转发：`BOT_RENDER_FORWARD_MIN_NODES`（默认 4）/`_MIN_CHARS`（1500）/`_MAX_NODES`（0=不限）/`_NODE_CHARS`（≥200，默认 900），热改；消费在装配期，需重启。
 - 群摘要：`BOT_SHARED_GROUP_CONTEXT_ENABLED`（默认 false）、`BOT_GROUP_DIGEST_LIST_MODE`（whitelist|blacklist|off|all）、`BOT_GROUP_DIGEST_WHITELIST/BLACKLIST`——热改；每日通讯总结推送 `BOT_GROUP_DIGEST_PUSH_ENABLED`（默认 true）+`BOT_GROUP_DIGEST_PUSH_TIME`（HH:MM，默认 21:30，仅白名单群、非 whitelist 零推送）——.env 键，重启生效。
 - 视频理解：`BOT_VISION_ENABLED`（默认 false）、`BOT_VISION_MODE`（relay|direct）、`BOT_VISION_REPLY_PROBABILITY`（0..1 默认 1.0）、`BOT_VIDEO_UNDERSTANDING_ENABLED`（默认 false）等——热改。
@@ -66,25 +67,25 @@
 | 模块 | 触发 | 作用 | 关键参数 |
 |---|---|---|---|
 | 订阅 | `/订阅 add\|list\|pause\|resume\|remove` | 平台新内容推送 | add `<公开目标>`（群内需管理员）；pause/resume/remove `<id>` 目的地粒度 |
-| 点歌 | `点歌 <歌名>`、`点歌 <编号>`、`点歌模式 <模式>` | 搜歌发送 | 编号仅候选列表有效期内（默认 300 秒）；模式 卡片\|语音\|音频\|链接\|全部可组合（管理员持久化） |
+| 点歌 | `点歌 <歌名>`、`点歌 <编号>`、`点歌模式 <模式>` | 搜歌发送（候选选择窗默认开启） | 同名/多候选 ≥2 首一律先出候选卡询问，回复序号数字（如 `2`）或 `点歌 2` 即选播，不再直接播首选；候选 300 秒内有效，不回复不播放；模式 卡片\|语音\|音频\|链接\|全部可组合（管理员持久化） |
 | 表情 | `表情 <模板> [文字]`、`表情 列表` | meme-generator-rs 生成表情 | 文字多段用 ｜ |
 | 偷表情 | `偷表情 [关键词]`、`表情库统计` | 表情库加权随机 | 关键词/情绪标签可选 |
 | 搜图 | `搜图`＋图片 | SauceNAO 反搜来源 | 图片需同条消息 |
 | 天气 | `天气 <城市>`、`支持区县 <省>` | NMC 天气（2527 区县） | 同名城市 省-市；查询词需像地名 |
 | 行情 | `行情`＋可选市场词 | 全球股指（东方财富，60s 缓存） | A股/B股/上证B/深证B/美股/港股/日经/纳斯达克/道指/标普/莫斯科/俄罗斯 等 |
 | 占卜 | `占卜`、`塔罗 [三张\|每日一抽]`、`八字 <生日时间>` | 金钱卦/塔罗/八字（含地支藏干） | 日期 `1998年3月2日\|1998-03-02\|1998/3/2`；只给日期按午时；1900-2100 年 |
-| 快报 | `快报`/`早报`/`晚报`/`今日热点`/`科技新闻`/`AI新闻`/`财经快报`/`国际新闻` | RSS 聚合快报（10 分钟缓存） | 类目：财经/国际/科技·AI/综合轮转；裸「新闻」不触发 |
+| 快报 | `快报`/`早报`/`晚报`/`今日热点`/`科技新闻`/`AI新闻`/`财经快报`/`财经新闻`/`国际新闻`；昵称形式 `守岸人 快报`/`守岸人 AI新闻` 等等价触发 | RSS 聚合快报（10 分钟缓存）：默认 20 条；标题下带 RSS 摘要行（治标题党）；自动过滤营销条目（求职/招聘/推广/优惠等） | 类目：财经/国际/科技·AI/综合轮转；裸「新闻」不触发 |
 | 维基 | `维基 <词条>` | MediaWiki 百科 | 默认中文维基 |
 | 萌娘百科 | `萌娘百科 <词条>`；直接问「XX是谁？」 | 萌百查询＋实体问句自动查询 | 问句剥出实体 2-30 字；未命中转聊天 |
 | 历史上的今天 | `历史上的今天 [设置 HH:MM\|状态\|取消]` | 当日历史＋每日推送 | 群内设置/取消需管理员 |
-| 下载 | `/bot download <链接>`、`下载 <链接>` | yt-dlp 下载回传 | 单文件 ≤1GB；拒绝内网地址 |
-| 昵称 | `守岸人/岸宝 <命令>`；`/bot 昵称 set <QQ号> <小名>` | 昵称触发命令（后者管理员） | 昵称表经 `/bot runtime nickname` 维护 |
+| 下载 | `/bot download <链接>`、`下载 <链接>` | yt-dlp 下载回传；多连接并行（分片 8 并发+16MB Range 分块，装有 aria2c 时自动委托 -x16）；平台有 CC 字幕时自动下载保存（srt 优先、zh 简体优先），回复显示「字幕已保存：路径」 | 单文件 ≤1GB；拒绝内网地址 |
+| 昵称 | `守岸人/岸宝 <命令>`；`/bot 昵称 set <QQ号> <小名>` | 昵称触发命令（后者管理员）；繁体触发词已支持：`點歌`/`快報`/`財經新聞`/`國際新聞`/`親密度`/`天氣`/`天氣預報`/`隨機圖`/`來張圖` 等 | 昵称表经 `/bot runtime nickname` 维护 |
 | 链接 | 直接发 http(s) 链接 | 平台信息卡解析 | B站/抖音/小红书/油管/推特/GitHub 等 |
 | 草稿 | `报存 给 <收件人> 发消息\|邮件[，主题：…，内容：…]` | 自动发送草稿预览 | 收件人可用 、,， 分隔多个；当前仅预览不实发 |
 | 吃什么 | `吃什么 [三选一\|辣度\|忌口]`、`菜谱 <菜名>` | 家常菜推荐/菜谱 | 约束描述自动走 AI 菜谱 |
-| 好感度 | `好感度 [我\|算法]` | 双向好感（-100~+100 八档） | 群聊出榜，`我` 只看自己，`算法` 出规则卡 |
+| 好感度 | `好感度`/`好感查看`/`查询好感`/`好感`/`好感值`/`亲密度`/`affinity`；`好感度 算法` | 双向好感（-100~+100 八档，v5 多因素线性步长） | `好感` 仅独立成词时触发（防「好感消失了」误触）；群聊出榜，`我` 只看自己，`算法` 输出 v5 定性说明（多因素：说话温度×相处时长×第一印象×当日心情，不展示固定加减数值） |
 | Epic | `epic`/`免费游戏`/`steam免费` | Epic+Steam 每周限免 | 无参数 |
-| 随机图 | `随机图`/`来张图` | 自建图库随机发图 | 目录 `BOT_RANDPIC_DIRS`；触发词 `BOT_RANDPIC_TRIGGER_WORDS` |
+| 随机图 | `随机图`/`来张图` | 自建图库随机发图（仅发原图本体，不附带「随机图片」等文字标注） | 目录 `BOT_RANDPIC_DIRS`；触发词 `BOT_RANDPIC_TRIGGER_WORDS` |
 | 提醒 | `<时间>提醒我 <事项>`、`提醒列表`、`取消提醒 <id前缀>` | 到点主动督促 | id 前缀 4-12 位唯一命中；事项 ≤120 字 |
 | 记忆 | `/bot memory add\|list\|delete` | 个人长期记忆（全员，仅本人） | add 支持 `--sensitivity=personal\|group\|public\|credentialed`（默认 personal）；群聊 list 只见 public/group |
 | 路由 | `/bot route <文本>`、`/bot routes` | 路由判定/路由表（全员只读） | 文本必填 |
