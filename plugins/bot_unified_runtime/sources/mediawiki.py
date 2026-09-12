@@ -303,9 +303,12 @@ _GAME_NOISE_RE = re.compile(r"(?:\b(?:19|20)\d{2}\b|(?:立项|公布|公开|公�
 def build_wiki_brief(text: str, *, max_chars: int = 1800) -> str:
     """Turn a page/list excerpt into a user-oriented entity brief.
 
-    This is intentionally deterministic: it prioritizes what/creator/type,
-    premise, gameplay and a conservative current-status line, while dropping
-    chronology and boilerplate. It does not invent facts.
+    Deterministic, no invented facts. F12（2026-09-12 实弹反馈⑫）：
+    - 机械标签「这是什么：」「当前状态：」废除——概述直接给正文行；
+    - 状态段拿不到实质内容时整行省略，绝不输出「现有页面没有给出足够
+      的当前状态信息」这类机器人腔；
+    - 概述不再过 _GAME_NOISE_RE（该过滤把「于2022年5月公测」洗成残句），
+      只用于状态段提纯。
     """
     raw = re.sub(r"\s+", " ", (text or "")).strip()
     if not raw:
@@ -318,18 +321,19 @@ def build_wiki_brief(text: str, *, max_chars: int = 1800) -> str:
         for i in range(1, len(chunks), 2):
             current = chunks[i].strip().lower()
             sections[current] = chunks[i + 1] if i + 1 < len(chunks) else ""
+    def tidy(value: str) -> str:
+        return re.sub(r"\s{2,}", " ", value).strip(" ，。；;")
     def clean(value: str) -> str:
         value = _GAME_NOISE_RE.sub("", value)
-        value = re.sub(r"\s{2,}", " ", value).strip(" ，。；;")
-        return value
-    overview = clean(sections.get("overview", raw))
-    gameplay = clean(next((v for k, v in sections.items() if any(x in k for x in ("玩法", "游戏", "系统"))), ""))
-    story = clean(next((v for k, v in sections.items() if any(x in k for x in ("剧情", "故事", "世界观"))), ""))
+        return tidy(value)
+    overview = tidy(sections.get("overview", raw))
+    gameplay = tidy(next((v for k, v in sections.items() if any(x in k for x in ("玩法", "游戏", "系统"))), ""))
+    story = tidy(next((v for k, v in sections.items() if any(x in k for x in ("剧情", "故事", "世界观"))), ""))
     status = clean(next((v for k, v in sections.items() if any(x in k for x in ("运营", "现状", "发行", "更新"))), ""))
     lines = []
-    if overview: lines.append("这是什么：" + overview)
-    if gameplay: lines.append("主要玩法：" + gameplay)
-    if story: lines.append("核心故事：" + story)
-    lines.append("当前状态：" + (status or "现有页面没有给出足够的当前状态信息。"))
+    if overview: lines.append(overview)
+    if gameplay: lines.append("玩法：" + gameplay)
+    if story: lines.append("剧情：" + story)
+    if status: lines.append(status)
     result = "\n".join(lines)
     return _clip_summary(result, max_chars)

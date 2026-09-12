@@ -251,7 +251,7 @@ class Config(BaseModel):
     bot_news_enabled: bool = True
     bot_news_timeout_seconds: float = 6.0
     bot_news_cache_seconds: float = 600.0
-    bot_news_max_items: int = 8
+    bot_news_max_items: int = 20
     bot_holidays_file: str = ""
     bot_persona_action_brackets: bool = True
     bot_credentials_file: str = ""
@@ -376,7 +376,9 @@ class Config(BaseModel):
     bot_chat_hedge_delay_seconds: float = 2.0
     bot_chat_hedge_max_candidates: int = 2
     bot_music_default_mode: str = "card+voice+link"
-    bot_music_candidates_enabled: bool = False
+    # F20（2026-09-12 实弹反馈⑳）：候选选择窗默认开启——同名歌必须先问再播，
+    # 不经询问直接播首选曾被用户实弹否决。
+    bot_music_candidates_enabled: bool = True
     bot_music_candidates_ttl_seconds: float = 300.0
     bot_music_candidates_limit: int = 5
     # 外挂表情包生成插件 nonebot-plugin-memes（能力空白补齐）；

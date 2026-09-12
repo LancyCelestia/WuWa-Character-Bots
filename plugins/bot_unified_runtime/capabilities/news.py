@@ -91,7 +91,7 @@ def build_news_capability(config: Any | None = None) -> Any:
             cache_seconds=float(
                 getattr(config, "bot_news_cache_seconds", 600.0) or 600.0
             ),
-            max_items=int(getattr(config, "bot_news_max_items", 8) or 8),
+            max_items=int(getattr(config, "bot_news_max_items", 20) or 20),
         )
         if not items:
             return CapabilityResult(

@@ -176,7 +176,7 @@ def test_backend_none_result_falls_back_to_text_numbered_list(tmp_path: Path) ->
 
     assert result.kind == "text"
     assert "1. 晴天 - 周杰伦" in result.body
-    assert "回复编号" in result.body
+    assert "序号数字" in result.body
     assert "music_candidates" in result.audit_tags
     assert "music_candidates_card" not in result.audit_tags
     assert not list(tmp_path.rglob("*.png"))
@@ -189,6 +189,6 @@ def test_backend_absent_uses_legacy_text_path(tmp_path: Path) -> None:
     result = capability(_message("点歌 晴天remix"), None)
 
     assert result.kind == "text"
-    assert "回复编号" in result.body
+    assert "序号数字" in result.body
     assert "music_candidates" in result.audit_tags
     assert "music_candidates_card" not in result.audit_tags

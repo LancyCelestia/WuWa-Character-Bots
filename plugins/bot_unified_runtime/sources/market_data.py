@@ -243,6 +243,15 @@ def _quote_group(quote: IndexQuote) -> str:
     return _OTHER_GROUP
 
 
+def group_quotes(quotes: Sequence[IndexQuote]) -> dict[str, list[IndexQuote]]:
+    """按 中国区/亚太/欧美(其他) 分组（保宇宙顺序）；空组剔除。"""
+    grouped: dict[str, list[IndexQuote]] = {group: [] for group in _GROUP_ORDER}
+    grouped.setdefault(_OTHER_GROUP, [])
+    for quote in quotes:
+        grouped.setdefault(_quote_group(quote), []).append(quote)
+    return {name: rows for name, rows in grouped.items() if rows}
+
+
 def format_quote_line(quote: IndexQuote) -> str:
     """单行行情：`道琼斯 42114.40 +0.58%`，涨跌幅带符号，附涨跌额可选。"""
     if quote.change_pct > 0:

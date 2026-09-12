@@ -59,6 +59,15 @@ class NewsItem:
     source: str
     published_at: datetime | None = None
     category: str = "tech"
+    summary: str = ""  # F9：RSS 描述首句（禁标题党——标题后给真实内容行）
+
+
+# F9 营销/广告条目过滤（用户实弹点名「求职」「推广」）：标题或摘要命中即弃。
+_AD_TITLE_RE = re.compile(
+    r"(求职|招聘|急聘|推广|赞助|广告|优惠|折扣|优惠券|薅羊毛|拼团|抽奖|送码|"
+    r"众测|内测招募|招商|加盟|带货|限时购|秒杀|白嫖|福利社|好物)",
+    re.IGNORECASE,
+)
 
 
 # (url, 展示名, 类目)；类目取值见 _CATEGORY_KEYS。
@@ -150,10 +159,30 @@ def _entry_date(node: ET.Element) -> str:
     return ""
 
 
+def _entry_summary(node: ET.Element, *, max_chars: int = 80) -> str:
+    """条目摘要：RSS description / Atom summary|content 的首段纯文本。
+
+    F9 禁标题党：标题之下必须给真实内容行。剥 HTML 标签/实体，截 80 字。
+    """
+    for tag in ("description", "summary", "content"):
+        raw = node.findtext("{*}" + tag)
+        if not raw or not raw.strip():
+            continue
+        text = _HTML_TAG_RE.sub(" ", raw)
+        text = _html.unescape(text)
+        text = _WS_RE.sub(" ", text).strip()
+        # 常见 boilerplate 前缀（全图：(图)/图片来自网络 等）跳过
+        if len(text) < 8:
+            continue
+        return text[:max_chars].rstrip() + ("…" if len(text) > max_chars else "")
+    return ""
+
+
 def parse_feed(text: str, *, source: str, category: str) -> list[NewsItem]:
     """解析单源 XML（RSS 2.0 / Atom / RDF 均可）；坏 XML 返回 []。
 
     缺标题的条目跳过，缺链接/时间的条目保留（字段尽力而为）。
+    F9：营销/广告条目（求职/推广/优惠 等）直接过滤；摘要入 NewsItem。
     """
     try:
         root = ET.fromstring(text)
@@ -167,6 +196,9 @@ def parse_feed(text: str, *, source: str, category: str) -> list[NewsItem]:
         title = _clean_title(node.findtext("{*}title") or "")
         if not title:
             continue
+        summary = _entry_summary(node)
+        if _AD_TITLE_RE.search(title) or _AD_TITLE_RE.search(summary):
+            continue
         items.append(
             NewsItem(
                 title=title,
@@ -174,6 +206,7 @@ def parse_feed(text: str, *, source: str, category: str) -> list[NewsItem]:
                 source=source,
                 published_at=_parse_datetime(_entry_date(node)),
                 category=category,
+                summary=summary,
             )
         )
     return items
@@ -297,7 +330,11 @@ def fetch_headlines(
 
 
 def format_news_brief(items: Sequence[NewsItem], category_label: str) -> str:
-    """渲染纯文本快报：首行日期+类目，正文 ``1. 标题（来源）``；空给降级文案。"""
+    """渲染纯文本快报：首行日期+类目，正文 ``1. 标题（来源）``＋摘要行。
+
+    F9：有摘要的条目标题下缩进给真实内容行（禁标题党——用户要求把真实
+    内容写在里面）；无摘要的只上标题。
+    """
     if not items:
         return _EMPTY_DEGRADED_TEXT
     # 本地时区日期（astimezone 使 aware，规避 DTZ005）。
@@ -306,4 +343,6 @@ def format_news_brief(items: Sequence[NewsItem], category_label: str) -> str:
     for index, item in enumerate(items, 1):
         source_text = f"（{item.source}）" if item.source else ""
         lines.append(f"{index}. {item.title}{source_text}")
+        if item.summary:
+            lines.append(f"    {item.summary}")
     return "\n".join(lines)

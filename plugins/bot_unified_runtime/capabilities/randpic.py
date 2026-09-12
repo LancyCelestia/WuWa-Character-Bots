@@ -129,11 +129,14 @@ def build_randpic_capability(config: Any | None = None) -> Any:
                 send_policy=SendPolicy.SILENT_AUDIT,
                 audit_tags=["randpic", "gallery_empty"],
             )
+        # F5（2026-09-12 实弹反馈⑤）：不标注「随机图片/随机发送」话术——
+        # title 留空，否则 renderer 的 body→summary→title 兜底链会把标题
+        # 当文案跟图一起发；图片本体 file:// 原字节直发，无重编码（原图）。
         return CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.randpic",
             kind="text",
-            title="随机图片",
+            title="",
             body="",
             images=[{"file": str(picked)}],
             audit_tags=["randpic", "sent"],

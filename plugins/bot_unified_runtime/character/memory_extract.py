@@ -23,11 +23,25 @@ _EXTRACT_SYSTEM_PROMPT = (
     "身份、偏好、约定、重要经历、稳定的情感倾向。\n"
     "规则：只输出事实条目，每行一条，每条不超过60字，最多3条；"
     "只记稳定信息，不记寒暄和一次性话题；"
+    "不记对 AI 工具/机器人/模型的评价与使用偏好（那是对工具的吐槽，不是用户本人）；"
+    "不记临时情绪、玩笑、抽象观点、当下正在讨论的话题本身；"
     "没有值得记住的内容时只输出一个字：无"
 )
 _FACT_LINE_PREFIX = re.compile(r"^[\s\-—•·*>)）\]】\d+ [.、)）]*\s*")
 _NO_FACT_MARKERS = {"无", "没有", "没有。", "无。", "none", "n/a"}
 _MAX_FACT_CHARS = 120
+# F16（2026-09-12 实弹反馈⑯）：LLM 抽取曾把「用户对AI推理速度慢敏感」「用过
+# 名为QQ的AI工具」这类工具吐槽当事实入库。提示词硬化之外再设确定性闸：
+# 命中工具谈资关键词的一律不入库（宁可漏记，不可记琐事）。
+_TRIVIAL_FACT_RE = re.compile(
+    r"(AI工具|AI应用|人工智能工具|大模型|模型|机器人|多智能体|识图|推理速度|"
+    r"理解偏差|重复回复|响应慢|使用过名为|偏好免费)",
+    re.IGNORECASE,
+)
+
+
+def _is_trivial_fact(line: str) -> bool:
+    return bool(_TRIVIAL_FACT_RE.search(line))
 
 
 def extract_memory_texts(
@@ -61,6 +75,8 @@ def extract_memory_texts(
         key = line.lower()
         if key in seen:
             continue
+        if _is_trivial_fact(line):
+            continue  # F16 工具谈资/琐事不入库
         seen.add(key)
         facts.append(line)
         if len(facts) >= max_facts:

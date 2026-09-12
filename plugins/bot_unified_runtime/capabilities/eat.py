@@ -22,6 +22,7 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
 )
 from plugins.bot_unified_runtime.sources.food_data import (
+    DISHES,
     Dish,
     random_dish,
     search_dishes,
@@ -32,6 +33,83 @@ _EAT_RE = re.compile(
     r"(?P<extra>三选一|来三道|再来一道|再来|辣的|不辣|.*)?$"
 )
 _RECIPE_RE = re.compile(r"^[/!！]?(?:菜谱|菜譜|怎么做|怎麼做|如何做)\s*[:：]?\s*(?P<name>.+)$")
+
+# 实弹反馈③轮修复（2026-09-12 群 662948429 现场）：
+# a) 触发过灵：「怎么做到的」被 _RECIPE_RE 捕成菜名「到的」——菜名合法性守卫，
+#    粒子/代词开头或过短的一律不算菜名（回落静默，不回骚扰文案）。
+# b) 特定词打不中：「西红柿炒鸡蛋」查不到（库内叫「番茄炒蛋」）——同义词归一 +
+#    反向包含兜底（菜名含于问句，如「西红柿炒蛋怎么做才嫩」→ 番茄炒蛋）。
+# c) 带前缀消息误入随机推荐：@提及/昵称前缀未剥时 ^ 锚定正则全失配 → 掉进
+#    随机推荐路径当众推错菜——入口剥前导 @提及；两类正则都不匹配时静默跳过
+#    （随机推荐只服务真正「吃什么」类指令，绝不当兜底话术）。
+_MENTION_TOKEN_RE = re.compile(r"^(?:@\S+[\s,，]*)+")
+_RECIPE_NAME_INVALID_RE = re.compile(
+    r"^(?:到|了|的|得|这样|那样|这么|那么|什么|怎么样|怎样|咋|难道|难道说|"
+    r"吗|呢|吧|啊|呀|哦|嘛|嗯|就|才|都|也|又|再|还|被|把|将|会让|能|会|要|想)"
+)
+_DISH_SYNONYM_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"西红柿"), "番茄"),
+    (re.compile(r"马铃薯|洋芋"), "土豆"),
+    (re.compile(r"卷心菜|圆白菜|高丽菜"), "包菜"),
+    (re.compile(r"花椰菜|花菜"), "菜花"),
+    (re.compile(r"凤梨"), "菠萝"),
+    (re.compile(r"奇异果"), "猕猴桃"),
+    (re.compile(r"蛋炒饭"), "炒饭"),
+    (re.compile(r"番薯|地瓜"), "红薯"),
+    (re.compile(r"四季豆|芸豆"), "豆角"),
+    (re.compile(r"青椒|菜椒|甜椒"), "辣椒"),
+)
+
+
+def strip_mentions(text: str) -> str:
+    """剥掉消息开头的全部 @提及 token（多连 @ 场景，实弹 17:01:33 案例）。"""
+    value = (text or "").strip()
+    while True:
+        stripped = _MENTION_TOKEN_RE.sub("", value).strip()
+        if stripped == value or not stripped:
+            return stripped
+        value = stripped
+
+
+def is_valid_recipe_name(name: str) -> bool:
+    """菜名合法性：≥2 字且不以粒子/代词/助动词开头（「到的」「了」拒绝）。"""
+    value = (name or "").strip()
+    return len(value) >= 2 and not _RECIPE_NAME_INVALID_RE.match(value)
+
+
+def normalize_dish_query(name: str) -> str:
+    """食材同义词归一（西红柿→番茄等），命中同义词库的查询用它重试一次。"""
+    value = name or ""
+    for pattern, replacement in _DISH_SYNONYM_RULES:
+        if pattern.search(value):
+            return pattern.sub(replacement, value)
+    return value
+
+
+def _bigrams(value: str) -> set[str]:
+    return {value[index : index + 2] for index in range(len(value) - 1)}
+
+
+def fuzzy_dish_hits(name: str) -> list[Dish]:
+    """bigram 重叠模糊匹配：问句与库内菜名不必互为子串。
+
+    「西红柿炒鸡蛋」→同义词归一→「番茄炒鸡蛋」与库内「番茄炒蛋」重叠
+    {番茄,茄炒} ≥ 半数菜名 bigram 即命中，按覆盖率降序；无噪声脆弱性
+    （纯子串方案在 鸡蛋/蛋 断点处失配）。
+    """
+    query = _bigrams(normalize_dish_query(name))
+    if not query:
+        return []
+    scored: list[tuple[float, str, Dish]] = []
+    for dish in DISHES:
+        dish_bigrams = _bigrams(dish.name)
+        if not dish_bigrams:
+            continue
+        overlap = len(dish_bigrams & query)
+        if overlap >= 2 and overlap / len(dish_bigrams) >= 0.5:
+            scored.append((overlap / len(dish_bigrams), dish.name, dish))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [dish for _coverage, _name, dish in scored]
 
 # F10 真实封面：本地图包未命中时经 Bing 图搜抓一张真实菜品图，
 # 落盘 food_images/<菜名>.jpg 作常驻缓存（下次直接本地命中）。
@@ -239,25 +317,36 @@ def build_eat_capability(
     config: Any | None = None, *, render_backend: Any | None = None
 ) -> Any:
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
-        text = (message.plain_text or "").strip()
+        # 入口剥前导 @提及（多连 @ 场景由 strip_mentions 循环处理），
+        # 保证 ^ 锚定的菜谱/吃什么正则能命中（实弹 17:01:33 案例）。
+        text = strip_mentions((message.plain_text or "").strip())
         session = f"{message.session_type.value}:{message.session_id}"
         with _RECENT_LOCK:
             recent = _RECENT.setdefault(session, {})
 
-        # 菜谱查询：菜谱 <菜名> / 怎么做 <菜名>
+        # 菜谱查询：菜谱 <菜名> / 怎么做 <菜名>；菜名必须像菜名（守卫拒绝
+        # 「怎么做到的」→「到的」这类误捕，回落到下方静默跳过）。
         recipe_match = _RECIPE_RE.match(text)
-        if recipe_match:
-            name = recipe_match.group("name").strip()
-            hits = search_dishes(name)
+        recipe_name = recipe_match.group("name").strip() if recipe_match else ""
+        if recipe_match and is_valid_recipe_name(recipe_name):
+            hits = search_dishes(recipe_name)
+            if not hits:
+                normalized = normalize_dish_query(recipe_name)
+                if normalized != recipe_name:
+                    hits = search_dishes(normalized)
+            if not hits:
+                # bigram 模糊兜底：「西红柿炒鸡蛋」归一后与库内「番茄炒蛋」
+                # 重叠过半即命中（纯子串在 鸡蛋/蛋 断点处失配）。
+                hits = fuzzy_dish_hits(recipe_name)
             if not hits:
                 # 本地没有 → LLM 生成菜谱，失败才告知未收录。
-                llm_text = _llm_constrained(config, f"教我做「{name}」这道菜") if config else ""
+                llm_text = _llm_constrained(config, f"教我做「{recipe_name}」这道菜") if config else ""
                 if llm_text:
                     return CapabilityResult(
                         request_id=message.request_id,
                         capability_id="bot.eat",
                         kind="text",
-                        title=f"菜谱：{name}",
+                        title=f"菜谱：{recipe_name}",
                         body=llm_text,
                         risk_level=RiskLevel.LOW,
                         privacy_level=PrivacyLevel.PUBLIC,
@@ -267,7 +356,7 @@ def build_eat_capability(
                     request_id=message.request_id,
                     capability_id="bot.eat",
                     kind="text",
-                    body=f"菜谱库里还没有「{name}」，换个常见家常菜试试？",
+                    body=f"菜谱库里还没有「{recipe_name}」，换个常见家常菜试试？",
                     audit_tags=["eat", "recipe_not_found"],
                 )
             dish = hits[0]
@@ -287,7 +376,18 @@ def build_eat_capability(
 
         # 推荐路径
         eat_match = _EAT_RE.match(text)
-        extra = (eat_match.group("extra") or "").strip() if eat_match else ""
+        if not eat_match:
+            # 路由误捕/前缀污染文本（如「怎么做到的」剥不出合法菜名）：
+            # 静默跳过——随机推荐只服务真正的「吃什么」类指令，绝不当兜底
+            # 话术（实弹 17:01:22/17:01:33 当众推错菜事故的根修）。
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.eat",
+                kind="text",
+                body="",
+                audit_tags=["eat", "missing_query_silent"],
+            )
+        extra = (eat_match.group("extra") or "").strip()
         count = 3 if ("三" in extra or "3" in extra) else 1
         again = "再来" in extra
         spicy: bool | None = (

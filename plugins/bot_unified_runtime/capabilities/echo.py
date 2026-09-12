@@ -1638,9 +1638,9 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "lines": [
                 '好感度：作用=查好感；参数=无；内容=私聊=双向好感卡；群聊=本群好感榜（有印象成员，自己高亮，展示前 12/上限 60）；意义=关系可视化。',
                 '好感度 我：作用=只看自己；参数=我（别名 自己/me）；内容=双向分值；意义=群里不想看榜时用。',
-                '好感度 算法：作用=说明规则；参数=算法（别名 说明/规则/help）；内容=图文算法卡＋你此刻的精确步长；意义=透明化。',
-                '计分：-100~+100 八档，初始 10 分；加分（感谢/夸奖/问候/陪伴）每次 +2 起（每日前 10 次）；波动（玩笑/越界亲昵）每次 -1 起（每日前 5 次）；扣分（抱怨/贬低）-5 起、辱骂/骚扰 -10 起（每日各前 8 次）；步长线性全额，每人另有 ±15% 个人系数。',
-                '档位：初识[-100,-75)/生疏[-75,-50)/微凉[-50,-25)/稍淡[-25,0)/友善[0,+25)/亲近[+25,+50)/挚友[+50,+75)/独一份[+75,+100]；闲置 7 天起每天向 10 分回归 1 分，难听记忆 15~30 天淡出；任何档位都不强硬、不辱骂、不弃聊。',
+                '好感度 算法：作用=说明规则；参数=算法（别名 说明/规则/help）；内容=图文算法卡＋你与守岸人之间的氛围画像；意义=透明化。',
+                '计分（v5 定性版）：好感随言行连续累积——综合说话的温度、相处的时间、第一印象、当天状态平滑变化，没有固定加几减几；同一天同类言行影响递减；久不联系慢慢回到基准；难听的记忆随时间淡去。',
+                '档位：初识/生疏/微凉/稍淡/友善（基准）/亲近/挚友/独一份 共八档，连续过渡、不在门槛上生硬跳变；任何档位都不强硬、不辱骂、不弃聊。',
             ],
             "detail": (
                 '【板块介绍】\n'
@@ -1650,7 +1650,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '【指令与参数】\n'
                 '好感度：作用=查好感；参数=无；内容=双向卡或群榜；意义=关系可视化。\n'
                 '好感度 我|自己|me：作用=只看自己；参数=任选其一；内容=双向分值；意义=隐私。\n'
-                '好感度 算法|说明|规则|help：作用=算法说明；参数=任选其一；内容=规则＋档位态度对照＋你此刻的精确步长（按你的 QQ 号确定性派生）；意义=透明。\n'
+                '好感度 算法|说明|规则|help：作用=算法说明；参数=任选其一；内容=规则＋档位态度对照＋你与守岸人之间的氛围画像（定性描述，不展示具体加减数值）；意义=透明。\n'
                 '【权限与效果】\n'
                 '  权限=全员。好感度功能总开关 bot_affinity_enabled。\n'
                 '【示例】好感度｜好感度 我｜好感度 算法'
@@ -2004,7 +2004,8 @@ def _help_category_body(query: str, *, is_admin: bool) -> str | None:
             lines = [f"{name} · 命令手册"]
             for entry in entries:
                 lines.append(f"【{entry['topic']}】")
-                lines.extend(str(line) for line in entry["lines"])
+                for line in entry["lines"]:
+                    lines.extend(_split_facets(str(line)))
             return "\n".join(lines)
     return None
 
@@ -2095,6 +2096,24 @@ def build_commands_catalog_body(*, is_admin: bool = False) -> str:
     return "\n".join(lines)
 
 
+_FACET_SPLIT_RE = re.compile(r"；(?=[^；=：]{1,6}=)")
+
+
+def _split_facets(line: str) -> list[str]:
+    """F8（2026-09-12 实弹反馈⑧）：四要素「作用/参数/内容/意义」连排拆行。
+
+    「好感度：作用=查好感；参数=无；内容=卡；意义=可视化」→ 首行保留
+    前缀与第一要素，其余要素各占一行（全角空格缩进）。无要素连排的
+    普通行原样返回。
+    """
+    if "=" not in line or "；" not in line:
+        return [line]
+    parts = [part.strip() for part in _FACET_SPLIT_RE.split(line) if part.strip()]
+    if len(parts) <= 1:
+        return [line]
+    return [parts[0]] + [f"　{part}" for part in parts[1:]]
+
+
 def build_help_result(
     request_id: str | None = None,
     query: str = "",
@@ -2137,8 +2156,18 @@ def build_help_result(
             # 但没有任何读取点，深度页只输出 `lines` 的简表。
             # 这里把它接进 `/bot help <模块>` 的详情页，同时保留 `lines`，
             # 让"计划 D 四段式深度教学版"直接落地而不是从零重写。
-            body = entry["title_line"] + "\n" + "\n".join(entry["lines"])
+            body = entry["title_line"] + "\n" + "\n".join(
+                split
+                for line in entry["lines"]
+                for split in _split_facets(str(line))
+            )
             detail_text = str(entry.get("detail") or "").strip()
+            if detail_text:
+                detail_text = "\n".join(
+                    split
+                    for detail_line in detail_text.splitlines()
+                    for split in _split_facets(detail_line)
+                )
             if detail_text and detail_text not in body:
                 body = f"{body}\n\n{detail_text}"
     actual_request_id = request_id or new_request_id("help")

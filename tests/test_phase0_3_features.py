@@ -233,8 +233,11 @@ def test_wiki_structured_game_brief_uses_story_not_release_chronology():
     text='《海岸》是由甲工作室开发的开放世界动作角色扮演游戏。2021年立项。2023年公布。\n== 玩法 ==\n玩家可以探索岛屿、解谜和战斗。\n== 剧情 ==\n故事发生在灾后世界，主角寻找失落的记忆。\n== 发行 ==\n2024年发行。'
     brief=build_wiki_brief(text,max_chars=1600)
     assert '甲工作室' in brief and '灾后世界' in brief and '探索岛屿' in brief
-    assert '2021' not in brief and '2023' not in brief
-    assert '当前状态' in brief
+    # F12（2026-09-12 实弹反馈⑫）：概述不再做日期外科手术（曾把句子洗成残句），
+    # 机械标签「这是什么/当前状态」废除；状态段无实质内容时整行省略。
+    assert '这是什么' not in brief and '当前状态' not in brief
+    assert '2024年发行' not in brief  # 状态段提纯保留（日期噪声只在状态段过滤）
+    assert '2021年立项' in brief  # 概述完整成句，立项年份是关键事实
 
 
 def test_poke_limits_bot_target_and_global_cooldown():

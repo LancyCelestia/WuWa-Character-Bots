@@ -1228,6 +1228,84 @@ def _song_candidates_platform_color(platform: str) -> str:
     return UNKNOWN_PLATFORM_COLOR
 
 
+# ==================== 全球股指卡（F19 2026-09-12） ====================
+_MARKET_CARD_TEMPLATE = _ENV.get_template("market_card.html")
+
+
+def _spark_points(closes: Any) -> tuple[str, str]:
+    """收盘序列（旧→新）→ SVG polyline points + 涨跌描边色（红涨绿跌）。
+
+    点位不足 2 个返回 ("", "")（模板隐藏折线）；任何输入异常同样静默。
+    """
+    try:
+        values = [float(v) for v in (closes or [])]
+    except (TypeError, ValueError):
+        return "", ""
+    if len(values) < 2:
+        return "", ""
+    low, high = min(values), max(values)
+    span = (high - low) or 1.0
+    width, height = 128.0, 40.0
+    step = width / (len(values) - 1)
+    points = " ".join(
+        f"{index * step:.1f},{height - (value - low) / span * (height - 4) - 2:.1f}"
+        for index, value in enumerate(values)
+    )
+    color = "#d54941" if values[-1] >= values[0] else "#2e9e6b"
+    return points, color
+
+
+def render_market_card_html(payload_dict: dict[str, Any] | None = None) -> str:
+    """渲染全球股指卡 HTML（mica-glass 规范，F19）。
+
+    payload_dict 字段：subtitle、groups=[{name, rows=[{name, price, pct, cls,
+    trend=[float,...]}]}]、platform_color、bot_name、bot_avatar_url、
+    feature_label。折线由 trend 收盘序列在此生成 polyline points；
+    缺数据区块静默隐藏，不抛异常。
+    """
+    data = dict(payload_dict or {})
+    color = _safe_css_color(
+        _as_str(data.get("platform_color")) or UNKNOWN_PLATFORM_COLOR,
+        UNKNOWN_PLATFORM_COLOR,
+    )
+    rgb = _hex_to_rgb(color)
+    groups_out: list[dict[str, Any]] = []
+    for group in _as_list(data.get("groups")):
+        if not isinstance(group, dict):
+            continue
+        rows_out: list[dict[str, Any]] = []
+        for row in _as_list(group.get("rows")):
+            if not isinstance(row, dict):
+                continue
+            points, spark_color = _spark_points(row.get("trend"))
+            change = _as_float(row.get("change_pct"), 0.0)
+            rows_out.append(
+                {
+                    "name": _as_str(row.get("name")) or "指数",
+                    "price": _as_str(row.get("price")),
+                    "pct": _as_str(row.get("pct")),
+                    "cls": (
+                        "up" if change > 0 else ("down" if change < 0 else "flat")
+                    ),
+                    "spark_points": points,
+                    "spark_color": spark_color,
+                }
+            )
+        if rows_out:
+            groups_out.append({"name": _as_str(group.get("name")), "rows": rows_out})
+    return _MARKET_CARD_TEMPLATE.render(
+        platform_color=color,
+        platform_color_dark=_rgb_to_hex(_darken(rgb)),
+        subtitle=_as_str(data.get("subtitle")),
+        groups=groups_out,
+        bot_name=_as_str(data.get("bot_name")) or "守岸人",
+        bot_avatar_url=_as_str(data.get("bot_avatar_url")),
+        feature_label=_as_str(data.get("feature_label")) or "全球股指",
+        # 釉瑚云母洗：与 --pc 同点注入（mica-glass v2 本命基底）。
+        **_derive_wash_tokens(color),
+    )
+
+
 def render_song_candidates_html(payload_dict: dict[str, Any] | None = None) -> str:
     """渲染点歌多候选选择卡 HTML（Mica 规范）。
 

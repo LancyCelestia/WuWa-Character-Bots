@@ -547,7 +547,7 @@ def test_news_capability_full_result(monkeypatch) -> None:
     # config=None → 默认超时/缓存/条数。
     assert captured["timeout_seconds"] == 6.0
     assert captured["cache_seconds"] == 600.0
-    assert captured["max_items"] == 8
+    assert captured["max_items"] == 20
 
 
 def test_news_capability_config_overrides(monkeypatch) -> None:
@@ -591,9 +591,9 @@ def test_news_config_field_defaults_documented() -> None:
         bot_news_enabled=True,
         bot_news_timeout_seconds=6.0,
         bot_news_cache_seconds=600.0,
-        bot_news_max_items=8,
+        bot_news_max_items=20,
     )
     assert config.bot_news_enabled is True
     assert config.bot_news_timeout_seconds == 6.0
     assert config.bot_news_cache_seconds == 600.0
-    assert config.bot_news_max_items == 8
+    assert config.bot_news_max_items == 20

@@ -23,7 +23,9 @@ from plugins.bot_unified_runtime.contracts import (
 from plugins.bot_unified_runtime.sources.market_data import (
     IndexQuote,
     fetch_index_quotes,
+    fetch_index_trend,
     format_market_brief,
+    group_quotes,
 )
 
 # 触发词：全球股市 > 股指/大盘/股市/行情（行情放最后避免误伤面过大时漏判）。
@@ -90,14 +92,109 @@ def is_market_command(text: str) -> bool:
     )
 
 
-def build_market_capability(config: Any | None = None) -> Any:
+def build_market_capability(
+    config: Any | None = None, *, render_backend: Any | None = None
+) -> Any:
     """构建行情能力闭包；超时/缓存时长可由配置覆盖。"""
+    import hashlib
+    from concurrent.futures import ThreadPoolExecutor
+    from pathlib import Path
+
+    def _fetch_trends(quotes: list[IndexQuote], timeout: float) -> dict[str, tuple[float, ...]]:
+        """并行拉取各指数 30 日收盘（10min 缓存在 market_data 侧）；失败空序列。"""
+        trends: dict[str, tuple[float, ...]] = {}
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            futures = {
+                quote.code: pool.submit(
+                    fetch_index_trend, quote.code, timeout_seconds=timeout
+                )
+                for quote in quotes
+            }
+            for code, future in futures.items():
+                try:
+                    trends[code] = future.result(timeout=timeout + 2.0)
+                except Exception:  # noqa: BLE001 - 单指数折线失败静默缺席。
+                    trends[code] = ()
+        return trends
+
+    def _render_card(
+        quotes: list[IndexQuote],
+        trends: dict[str, tuple[float, ...]],
+        card_dir: str,
+        subtitle: str,
+    ) -> str:
+        """釉瑚股指卡 PNG（分组网格+折线）；后端缺失/失败返回空串回退文本。"""
+        if render_backend is None or not getattr(render_backend, "available", False):
+            return ""
+        try:
+            from plugins.bot_unified_runtime.output.card_render.bridge import (
+                render_market_card_html,
+            )
+
+            payload = {
+                "subtitle": subtitle,
+                "groups": [
+                    {
+                        "name": group_name,
+                        "rows": [
+                            {
+                                "name": quote.name,
+                                "price": f"{quote.price:.2f}",
+                                "pct": (
+                                    f"+{quote.change_pct:.2f}%"
+                                    if quote.change_pct > 0
+                                    else f"{quote.change_pct:.2f}%"
+                                ),
+                                "change_pct": quote.change_pct,
+                                "trend": list(trends.get(quote.code) or ()),
+                            }
+                            for quote in group_rows
+                        ],
+                    }
+                    for group_name, group_rows in group_quotes(quotes).items()
+                ],
+                "bot_name": str(
+                    getattr(config, "bot_persona_display_name", "") or ""
+                ).strip()
+                or "守岸人",
+                "bot_avatar_url": str(
+                    getattr(config, "bot_persona_avatar_url", "") or ""
+                ),
+                "feature_label": "全球股指",
+            }
+            png = render_backend.render_card(
+                {
+                    "html": render_market_card_html(payload),
+                    "viewport": {"width": 1160, "height": 1400},
+                    "device_scale_factor": 2,
+                    "wait_ms": 0,
+                }
+            )
+            if not isinstance(png, bytes) or not png:
+                return ""
+            digest = hashlib.sha1(
+                ("market|" + "|".join(f"{q.code}:{q.price}" for q in quotes)).encode()
+            ).hexdigest()[:12]
+            target = Path(card_dir or "data/cards")
+            target.mkdir(parents=True, exist_ok=True)
+            path = target / f"market_{digest}.png"
+            path.write_bytes(png)
+            try:
+                from plugins.bot_unified_runtime.runtime.cache_policy import (
+                    prune_prefixed,
+                )
+
+                prune_prefixed(target, "market", keep=120)
+            except Exception:  # noqa: S110, BLE001 - 配额清理失败不影响本次出图。
+                pass
+            return str(path)
+        except Exception:  # noqa: BLE001 - 渲染失败回退纯文本。
+            return ""
 
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
+        timeout = float(getattr(config, "bot_market_timeout_seconds", 6.0) or 6.0)
         quotes: list[IndexQuote] = fetch_index_quotes(
-            timeout_seconds=float(
-                getattr(config, "bot_market_timeout_seconds", 6.0) or 6.0
-            ),
+            timeout_seconds=timeout,
             cache_seconds=float(
                 getattr(config, "bot_market_cache_seconds", 60.0) or 60.0
             ),
@@ -115,15 +212,28 @@ def build_market_capability(config: Any | None = None) -> Any:
         if not shown:
             # 过滤词没命中任何指数（如「A股大盘行情」里的生僻组合）→ 回退全部。
             shown = quotes
+        subtitle = "红涨绿跌 · 折线为近 30 个交易日收盘"
+        trends = _fetch_trends(shown, timeout)
+        card = _render_card(
+            shown,
+            trends,
+            str(getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"),
+            subtitle,
+        )
         return CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.market",
-            kind="text",
+            kind="mixed" if card else "text",
             title="全球股指速览",
             body=format_market_brief(shown),
+            images=[{"file": card}] if card else [],
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PUBLIC,
-            audit_tags=["capability:market", f"market_quotes:{len(shown)}"],
+            audit_tags=[
+                "capability:market",
+                f"market_quotes:{len(shown)}",
+                "card_rendered" if card else "text_only",
+            ],
         )
 
     return capability

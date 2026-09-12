@@ -609,6 +609,14 @@ def build_music_capability(
                 "platform": parser_id,
                 "platform_name": platform_name,
                 "ttl_seconds": int(candidates_ttl),
+                "bot_name": str(
+                    getattr(config, "bot_persona_display_name", "") or ""
+                ).strip()
+                or "守岸人",
+                "bot_avatar_url": str(
+                    getattr(config, "bot_persona_avatar_url", "") or ""
+                ),
+                "feature_label": "点歌",
                 "candidates": [
                     {
                         "index": index,
@@ -749,20 +757,11 @@ def build_music_capability(
                     cands = list_fn(query, limit=candidates_limit)[:candidates_limit]
                 except Exception:  # noqa: BLE001 - 候选失败回退普通单结果路径。
                     cands = []
-                exact_hits = [
-                    cand
-                    for cand in cands
-                    if cand.get("name", "").strip().lower() == query.strip().lower()
-                ]
-                # 裸歌名（无空格）且首条候选同名 → 无歧义直接播放；
-                # 带限定词（歌手/钢琴版/live 等）的查询即使存在同名精确命中也给
-                # 候选窗口——模糊搜索几乎总能搜出与查询字面同名的翻唱/变体，
-                # 旧的 exact_hits 一票否决让候选卡几乎不可达（实测「后来 钢琴版」
-                # 直接放了一首同名翻唱）。
-                bare_exact = bool(exact_hits) and not any(
-                    ch.isspace() for ch in query
-                )
-                if len(cands) >= 2 and not bare_exact:
+                # F20（2026-09-12 实弹反馈⑳）：同名歧义必须先问再播——
+                # 只要候选 ≥2 一律出候选窗（裸歌名同名捷径 bare_exact 废除：
+                # 「点歌 晴天」直接放首条曾被用户实弹否决，"既未询问我的同意"）。
+                # 唯一候选才直接播放。
+                if len(cands) >= 2:
                     _CANDIDATE_SESSIONS[session_key] = (
                         now() + candidates_ttl,
                         parser_id,
@@ -786,9 +785,10 @@ def build_music_capability(
                         capability_id="bot.music",
                         kind="text",
                         body=(
-                            f"为你找到多首「{query}」相关歌曲，回复编号直接点：\n"
+                            f"「{query}」找到了 {len(cands)} 个版本（同名歌曲/翻唱/变体），"
+                            "回复**序号数字**（如 2）或「点歌 2」选你想听的那首：\n"
                             + "\n".join(lines)
-                            + f"\n（{int(candidates_ttl)} 秒内有效）"
+                            + f"\n（{int(candidates_ttl)} 秒内有效，不回复则不播放）"
                         ),
                         audit_tags=[
                             "music_request",

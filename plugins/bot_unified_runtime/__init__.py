@@ -245,6 +245,8 @@ OFFLOADED_CAPABILITY_IDS = frozenset(
         "bot.weather",
         # bot.eat 同样含 Playwright 渲染 + LLM 推荐，同步跑会阻塞事件循环数秒。
         "bot.eat",
+        # bot.market 出釉瑚折线卡（Playwright 渲染 + 18 指数走势并行拉取）。
+        "bot.market",
         # bot.alert --probe 是同步 urllib 凭据巡检（串行多平台可达数十秒），
         # 调度器路径已 to_thread，命令路径同款必须 offload（审计重发现 P1）。
         "bot.alert",
@@ -3107,6 +3109,9 @@ def _register_nonebot_handlers() -> None:
             render_backend=render_backend,
         )
 
+    def _build_market_with_backend(config_: Any, **_kwargs: Any) -> Any:
+        return build_market_capability(config_, render_backend=render_backend)
+
     try:
         from nonebot_plugin_apscheduler import scheduler
     except Exception as exc:  # noqa: BLE001 - optional worker must fail closed.
@@ -4455,6 +4460,11 @@ def _register_nonebot_handlers() -> None:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 return build_eat_capability(config, render_backend=render_backend)(message, _decision)
+
+        elif resolution.capability_id == "bot.news":
+            # F9：别名链此前无 bot.news 分支，「守岸人 AI新闻」坠 help。
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_news_capability(config)(message, _decision)
 
         elif resolution.capability_id == "bot.epic":
 
@@ -6132,7 +6142,17 @@ def _register_nonebot_handlers() -> None:
         elif capability_id == "bot.eat":
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                return build_eat_capability(config, render_backend=render_backend)(message, _decision)
+                # 与 wiki 分支同型：归一文本必须重写进 plain_text——原文本可能
+                # 带多连 @ 前缀，eat 的 ^ 锚定正则会全部失配掉进随机推荐
+                # （实弹 17:01:33「@颜佑° @守岸人 菜谱 西红柿炒鸡蛋」当众推错菜）。
+                synthetic = message.model_copy(update={"plain_text": normalized_text})
+                return build_eat_capability(config, render_backend=render_backend)(synthetic, _decision)
+
+        elif capability_id == "bot.news":
+            # F9：自然语言链补 bot.news 分支（新闻类触发此前只有裸命令面）。
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                synthetic = message.model_copy(update={"plain_text": normalized_text})
+                return build_news_capability(config)(synthetic, _decision)
 
         elif capability_id == "bot.epic":
 
@@ -6223,7 +6243,7 @@ def _register_nonebot_handlers() -> None:
     @market.handle()
     async def _handle_market(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
-            bot, event, build_market_capability, "bot.market", market
+            bot, event, _build_market_with_backend, "bot.market", market
         )
 
     @divination.handle()

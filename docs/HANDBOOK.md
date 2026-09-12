@@ -1550,3 +1550,37 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 5. 下一会话从本文 Part 0 进：§二 实测数字 → §三 总账领任务（B16 复核/B10 残余/Arch 裁决跟随）。
 
 ---
+
+# §19 实弹验收②轮 20 项反馈会话底账（2026-09-12 下午，群 662948429/私聊实弹后）
+
+用户以真实群聊/私聊实测后提出 20 项反馈（F1~F20），单进程逐项修复；本节为全账。
+
+## 19.1 已解决（提交 a9d1222 + 菜谱修复批）
+
+| 项 | 内容 | 根因与修法 |
+|---|---|---|
+| F1/F17 | 好感度指令黑洞 | **根因**：base_router 一直有 `RouteKind.AFFINITY` 判定，但 `__init__.py` 从未注册对应 NoneBot matcher/handler——「好感度」系消息在分发层静默坠地（为何维基/天气正常而好感度全灭）。修复：补 `_is_affinity_event` matcher + `affinity` on_message(41) + handler；`/bot 好感度` 在 status 链补显式分支（此前坠入 help 兜底）；触发词扩 好感/好感值/亲密度/affinity |
+| F4 | 好感度 v5 多因素算法 | 用户裁定废除「一次加几减几」：实际步长=基准因子 × f1 说话温度 × f2 相处时长 × f3 第一印象(建档±30%、随互动指数衰减，**只影响速度永不影响态度档位**——反歧视护栏) × f4 当日心情 × m(uid)；SQLite 自动迁移 first_signals/first_impression/created_at；算法说明/规则卡/卡片全量定性化，测试锁死不再出现 +2/-5 数值 |
+| F3 | 解析/能力卡全灰 | **根因**：weather/eat/help 等无平台语境卡走 media 卡路径，`--pc` 回退 `#607080` 灰 → wash 全灰。修复：`_derive_wash_tokens` 基底重锚守岸人本命色（淡蓝210°/星空紫265°/深蓝228°/近白蓝雾底），平台色仅 ±30° 内轻推 wash-1 + accent/色斑 ≤35% 透色 |
+| F2 | B站热评圆角 | `.hot-comment/.pinned-comment` radius-sm(8px)→radius-md(16px) |
+| F10 | eat 卡 about:blank+占位图 | **根因**：`contracts/media.py` build_parsed_content 默认 canonical_url="about:blank" 直接上卡。修复：媒体卡对占位值抑制；无封面时封面区整体折叠（🖼 占位废除）；eat 真实封面三级来源（本地图包→Bing 图搜→静默折叠），复用 `check_download_url` SSRF 护栏+魔数校验+落盘缓存 |
+| F11 | 页脚 头像+名字+功能名 | 贯通 5 模板（universal 两处/media/song/affinity/mermaid）+ RenderPayload.feature_label + render_card_png 双分支；weather/eat 传「天气」/「美食推荐」 |
+| F18 | 天气定位 | **根因**：open-meteo geocoding `count=1` 使人口排序形同虚设（「东京」命中华东小镇）；zh 库缺「华沙」类城市无重试。修复：count=10+精确名/人口双键排序+60+ 中英城市别名+`_query_variants` 查询变体链（『湘潭-雨湖』逐级拆到行政区） |
+| 菜谱三连 | 「怎么做到的」误触发/「西红柿炒鸡蛋」打不中/带@消息推错菜 | 三根因：①`_RECIPE_RE` 捕「到的」类粒子菜名（补菜名合法性守卫）②库内叫「番茄炒蛋」同义词失配（补同义词归一+bigram 重叠模糊匹配，纯子串在鸡蛋/蛋断点失配）③**natural 链 bot.eat 分支没像 wiki 分支那样把 normalized_text 重写进 plain_text**，带@前缀原文本致 ^ 锚定正则全失配→掉进随机推荐当众推错菜（补 model_copy 重写+能力入口 strip_mentions+两类正则都不匹配时静默跳过，随机推荐永不当兜底） |
+
+## 19.2 发现（方法论沉淀）
+
+1. **「路由判定存在 ≠ 分发存在」**：base_router 的 RouteKind 判定与 `__init__.py` 的 NoneBot matcher 注册是两张皮，新增 RouteKind 时漏注册 matcher 即静默黑洞，无任何报错。本轮 AFFINITY 即此类。**建议**：加一条守卫测试遍历 ROUTE_RULES 断言每个非 CHAT/IGNORE kind 在 `__init__` 有对应 matcher。
+2. **contract 默认值泄漏到 UI**：`canonical_url="about:blank"` 是 ingest 层占位约定，展示层直接消费即事故；UI 侧应对契约占位值白名单抑制。
+3. **geocoding count=1 + 后置排序**是反模式：先限 1 再排序等于没排序；凡「取最优」必须先取 N。
+4. 源码树 `data/` 残留（台账 #1）会随每次全量测试再生——tmp_path 化（Wave-6）前，runtime-layout 门禁是最后防线，本轮已再次拦截（备份 %TEMP% 后清理）。
+
+## 19.3 未竟（20 项内的剩余，接手即做）
+
+F19 折线卡接线（bridge 渲染函数+market.py 出图，模板/走势 API 已入库）· F20 同名歌先问再播+music.py 页脚 · F12 维基「这是什么/当前状态」去除+概述提质 · F9 快报去营销/20条/标题党/AI新闻 · F8/F15 help 管理员隔离+分行两栏+三语触发 · F16 记忆抽取质量门槛 · F5 randpic 原图原分辨率+去「随机发送」标注 · F6 meme 生成器主动调用 · F13 queue 告警重启后观察 · F7 随机 cos（等用户插件）· F14 已答：表情包仓库=`ChatBot_Runtime/data/meme_library/`+`meme_library.sqlite3`（生成表情在 `data/memes/`）。
+
+## 19.4 建议
+
+1. 重启后真机验收清单增补：`好感度 算法`/`/bot 好感度`/`菜谱 西红柿炒鸡蛋`/`怎么做西红柿炒鸡蛋`/`天气 雨湖`/`天气 华沙`（应各命中正确路径，前三者出釉瑚卡）。
+2. media 卡与 universal 卡双轨并存是历史包袱，能力卡（weather/eat/market）建议长期收敛到 universal 模板+detail 区块。
+3. 守卫测试补齐（19.2-1 路由分发一致性 + 19.3 各项的回归锁）。

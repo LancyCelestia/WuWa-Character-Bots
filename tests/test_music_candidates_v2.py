@@ -79,7 +79,8 @@ def test_ambiguous_query_returns_numbered_candidates() -> None:
 
     assert result.kind == "text"
     assert "1. 晴天 - 周杰伦" in result.body
-    assert "回复编号" in result.body
+    # F20：指引必须写清「回复序号数字」这一操作方式与「不回复则不播放」。
+    assert "序号数字" in result.body and "不回复则不播放" in result.body
     assert "music_candidates" in result.audit_tags
     assert detail_calls == []  # 展示列表不应触发详情请求
     assert search_calls == []  # 歧义路径也不重复搜索
@@ -89,11 +90,12 @@ def test_exact_name_match_plays_directly_without_list() -> None:
     clear_music_candidate_sessions()
     capability, _search_calls, detail_calls = _build(enabled=True)
 
-    # 候选中存在与 query 同名的精确项 → 沿用既有"直接播放"行为。
+    # F20（2026-09-12 实弹反馈⑳）：裸歌名同名捷径废除——候选 ≥2 一律
+    # 先出候选窗问用户（"既未询问我的同意"被实弹否决），唯一候选才直播。
     result = capability(_message("点歌 晴天"), None)
 
-    assert result.body != "" and "music_candidates" not in result.audit_tags
-    assert "回复编号" not in result.body
+    assert "music_candidates" in result.audit_tags
+    assert "序号数字" in result.body
     assert detail_calls == []
 
 
@@ -156,7 +158,7 @@ def test_qualified_query_with_exact_hit_still_shows_candidates() -> None:
     )
     r2 = cap2(_message("点歌 晴天 钢琴版"), None)
     assert "music_candidates" in r2.audit_tags
-    assert "回复编号" in r2.body
+    assert "序号数字" in r2.body
     assert detail_calls == []
     assert search_calls == []
 

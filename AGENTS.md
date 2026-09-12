@@ -75,7 +75,7 @@ QQ/NapCat(WS 3001) ⇄ bot.py(forward-WS)
 | 功能 | 载体文件 | 子模块/作用 | 入口 |
 |---|---|---|---|
 | 人格对话 | capabilities/chat.py + character/providers.py | 人设全文+运行时上下文【标签】13 分区（空分区不渲染）；反注入包裹+指令剥离；好感/心情/怪癖/身份四层注入 | @bot、白名单抽签、昵称点名 |
-| 好感度 v4 | character/affinity.py + capabilities/affinity.py | -100~+100 线性、基准10=档0友善、8 档温和态度、惰性回归+印象淡出、人格自守（persona_degradation 软类别） | `好感度`/`好感度 算法` |
+| 好感度 v5 | character/affinity.py + capabilities/affinity.py | -100~+100、基准10=档0友善、8 档温和态度连续过渡（无门槛跳变）；**v5 多因素线性步长**：基准因子 × 说话温度 × 相处时长 × 第一印象(建档±30%,随相处衰减) × 当日心情 × 个人节奏，**算法说明一律定性、不展示固定加减数值**（2026-09-12 实弹反馈④ 用户裁定）；惰性回归+印象淡出；SQLite 列 first_signals/first_impression/created_at 自动迁移 | `好感度`/`好感度 算法`/`好感`/`亲密度`/`affinity`（v5 起 RouteKind.AFFINITY 已接 NoneBot matcher，/bot 链也有显式分支） |
 | bot 心情 | character/mood.py | valence/arousal 双轴半衰回归；驱动开火概率/表情档/语气 | 内部 |
 | 人格怪癖 | character/quirks.py | 审核制演化：propose→管理员 approve→渲染；反思回路自动投喂 | `/bot quirk` |
 | 会话身份 | character/session_identity.py | 每群/私聊独立昵称+标签，防 OOC 护栏内建 | `/bot identity` |
@@ -85,9 +85,9 @@ QQ/NapCat(WS 3001) ⇄ bot.py(forward-WS)
 | 链接解析 | sources/parsers/（34 文件） | 37+ 平台；引用/语音/转发/TG 媒体全通；cookie 18 平台已灌 | 发链接即解析 |
 | 卡片渲染 | output/card_render/ | 釉瑚云母卡片（见第三部分） | 随各能力 |
 | 点歌 | capabilities/music.py + sources/music_charts.py | 5 供应商+候选卡；真实榜单 ×5（netease×2/QQ/酷狗×2） | `点歌`/`来首` |
-| 全球股指 | capabilities/market.py + sources/market_data.py | 18 指数（东财 17+MOEX ISS）；市场词过滤 | `行情`/`B股行情`/`莫斯科股指` |
-| 今日快报 | sources/news_feeds.py | V2EX 真 Atom + IT之家/少数派/华尔街见闻/BBC中文 | `快报` |
-| 天气+预警 | capabilities/weather.py + sources/nmc_weather.py | NMC 主通道 2 次重试+Open-Meteo 兜底+预警支路（≤5 条） | `天气 城市` |
+| 全球股指 | capabilities/market.py + sources/market_data.py | 18 指数（东财 17+MOEX ISS）；市场词过滤；`fetch_index_trend` 30 日收盘 API 已入库 | `行情`/`B股行情`/`莫斯科股指`（**釉瑚折线卡半成品见台账 #11**） |
+| 今日快报 | sources/news_feeds.py | V2EX 真 Atom + IT之家/少数派/华尔街见闻/BBC中文（**营销条目过滤/20条/AI新闻未做，见台账 #12**） | `快报` |
+| 天气+预警 | capabilities/weather.py + sources/nmc_weather.py + sources/open_meteo.py | NMC 主通道 2 次重试+Open-Meteo 兜底+预警支路（≤5 条）；F18：geocoding count=10 按人口/精确名排序（治「东京→江苏小镇」）、60+ 中英城市别名（治「华沙」查不到）、查询变体链（『湘潭-雨湖』→逐级拆到行政区/乡镇） | `天气 城市`/`天气 湘潭 雨湖` |
 | 占卜 | capabilities/divination.py 等 | 八字（Meeus 节气+藏干权重）/塔罗 78/金钱卦 | `八字`/`塔罗`/`占卜` |
 | 随机图 | capabilities/randpic.py | 只读 BOT_RANDPIC_DIRS 自定义文件夹 | `随机图` |
 | 订阅 | sources/subscriptions/ + capabilities/subscribe_v2.py | B站/YT(含 live)/xhs(creator/column/live-degraded)/推特/微博；outbox+metadata 落库 | `/订阅` |
@@ -114,7 +114,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 
 | # | 问题 | 状态 |
 |---|---|---|
-| 1 | 部分测试以默认路径写源码树 `data/`（reflection/user_affinity sqlite ~52K；主路径已由 DATAFIX 治本，此为测试卫生残余） | Wave-6：测试 tmp_path 化 |
+| 1 | 部分测试以默认路径写源码树 `data/`（reflection/user_affinity sqlite；主路径已由 DATAFIX 治本，此为测试卫生残余；2026-09-12 下午再现一轮，已备份 %TEMP% 后清理） | Wave-6：测试 tmp_path 化 |
 | 2 | TG 正文嵌套块级元素早停；social_v2 同函数 channel_title/bio 未改（纯文本无实据） | 罕见残余，登记 |
 | 3 | SQLite 限流路径不支持热改；G-DIGEST 等调度器族装配期 config 快照（热改当夜不生效） | 架构取舍，待统一改造 |
 | 4 | B2/B3/B4/B5 规格开放问题（8+7+6+7 个）待用户裁决后才进阶段 2/M2+ | 规格在 docs/design/ |
@@ -123,7 +123,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 | 7 | YT live 次信号受 consent 页影响可能漏判；xhs:live 常驻 degraded（无匿名探测通道） | 已知边界 |
 | 8 | G-MERMAID 渲染在 loop 线程限时等待（典型 1-2s/张；无网 10-14s 预算截断） | 已知取舍 |
 | 9 | NMC findAlarm 只有发布时间无失效时间；rest/weather 必须带码表有效 stationid（无重试已修） | 已知边界 |
-| 10 | 生产 bot 未重启——最新交付全部待生效 | **等用户提权重启** |
+| 10 | 生产 bot 未重启——a9d1222 批次（好感度黑洞修复/v5 算法/釉瑚本命底/天气定位）全部待生效 | **等用户提权重启** |
+| 11 | **F19 股指折线卡半成品**：`fetch_index_trend` API + `market_card.html` 模板已入库，但 bridge 缺 `render_market_card_html`、market.py 仍纯文本输出未接图卡；MOEX 无东财 kline（折线缺席需 MOEX ISS history 补源） | 下一批优先 |
+| 12 | **F9 快报未做**：营销条目（求职/推广）过滤、凑满 20 条、标题党治理（正文里没干货）、「AI新闻」触发词未接 | 待做（用户实弹反馈⑨） |
+| 13 | **F8/F15 help 未做**：管理员专属条目未按角色隔离；长文案未分行/两栏；触发词三语（斜杠英文/中文/自然语言含繁体）覆盖不全 | 待做（反馈⑧⑮） |
+| 14 | **F12 维基未做**：正文「这是什么：/当前状态：」标签话术未去除；概述质量差（缺关键要点） | 待做（反馈⑫） |
+| 15 | **F16 记忆抽取质量未做**：LLM 抽取把琐事（"用过QQ工具"类）入库，缺重要性过滤门槛 | 待做（反馈⑯；默认关，开启才暴露） |
+| 16 | **F5 randpic 未做**：应发原图原分辨率；不要「随机发送」类标注话术 | 待做（反馈⑤） |
+| 17 | **F6 meme 生成器主动调用未做**：meme-generator-rs API 已有（bot.meme），缺"心情/语境合适时主动生成表情包"的主动触发链 | 待做（反馈⑥） |
+| 18 | **F20 点歌同名歌先问未做**：候选卡指引已改，但"多候选同名时自动播首选未经同意"的自动挑选逻辑待改（music.py 候选链）；bot 页脚 payload 未贯通 music.py | 待做（反馈⑳） |
+| 19 | **F7 随机 cos 照片未做**：等用户提供 gs_kuro_cos 插件+油猴脚本；思路=借鉴其接口做 xhs/推特 cos 图检索随机发（两份参考油猴脚本已读：xhs CI 原图 token 接口 + X name=orig 直链） | 等外部 |
+| 20 | F13 queue 告警 `source_bot=unknown`：初步判断为 e2e 修复 --bot-id 前的历史批次终态告警（300s 抑制聚合）；重启后若复现需查 worker 回退选 bot 链 | 观察中 |
+| 21 | help 页脚 bot 头像：`.env` 的 BOT_PERSONA_AVATAR_URL 为空 → 页脚用「守」字圆点；用户可提供头像图路径后配置 | 等用户（可选） |
 
 ## 第七部分：交接史与权威链
 
