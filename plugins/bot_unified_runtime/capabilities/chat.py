@@ -1088,6 +1088,50 @@ _RUNTIME_ANSWER_RULES = (
 )
 
 
+def build_admin_roster_text(config: Any) -> str:
+    """管理团队名单 + 权威规则（R1/R2 2026-09-12 用户裁定）。
+
+    超管权威不可侵犯：他人不合时宜地调侃/贬低超管时，守岸人要温和地
+    挺身制止和提醒（红线内：不打压人格、不辱骂）。管理员可被轻度调侃，
+    态度宽容即可。无人格困惑：档案里的「同一人」备注必须记住。
+    """
+    super_ids = [str(item) for item in (getattr(config, "bot_super_admin_user_ids", []) or [])]
+    profiles = [
+        dict(item)
+        for item in (getattr(config, "bot_admin_profiles", []) or [])
+        if isinstance(item, dict)
+    ]
+    if not super_ids and not profiles:
+        return ""
+    lines: list[str] = []
+    if profiles:
+        for profile in profiles:
+            qq = str(profile.get("qq") or "").strip()
+            name = str(profile.get("name") or "").strip()
+            role = str(profile.get("role") or "").strip() or "admin"
+            role_label = "超级管理员" if role in {"super", "super_admin", "超级管理员"} else "管理员"
+            nicknames = str(profile.get("nicknames") or "").strip()
+            note = str(profile.get("note") or "").strip()
+            who = name or qq
+            detail = f"QQ {qq}" if qq else ""
+            if nicknames:
+                detail += f"（可叫：{nicknames}）" if detail else f"可叫：{nicknames}"
+            if note:
+                detail += f"；{note}" if detail else note
+            lines.append(f"- {who}｜{role_label}" + (f"｜{detail}" if detail else ""))
+    elif super_ids:
+        lines.append("- 超级管理员 QQ：" + "、".join(super_ids))
+    rules = (
+        "以上身份你必须牢牢记住，被问到时准确回答。"
+        "超级管理员的权威不容置疑：不附和他人对超管的玷污、诋毁或肆意嘲笑；"
+        "看到不合时宜地调侃超管，温和而坚定地出面制止和提醒（不辱骂、不攻击）。"
+        "管理员被其他用户轻度调侃时不必紧张，宽容看待即可。"
+    )
+    lines.append(rules)
+    return chr(10).join(lines)
+
+
+
 def _compose_persona_verbatim_prompt(
     *,
     raw_persona: str,
@@ -1147,6 +1191,7 @@ def build_chat_prompt(context: ContextBundle) -> list[dict[str, str]]:
 
 def build_chat_prompt_with_diagnostics(
     context: ContextBundle,
+    admin_roster_text: str = "",
 ) -> tuple[list[dict[str, str]], ChatPromptDiagnostics]:
     persona = context.persona
     requested_context_budget = context.context_budget
@@ -1248,6 +1293,8 @@ def build_chat_prompt_with_diagnostics(
         dynamic_parts += ["", "【世界观】", glossary_lines]
     if context.relationship_context is not None:
         dynamic_parts += ["", "【用户画像】", relationship_lines]
+    if admin_roster_text.strip():
+        dynamic_parts += ["", "【管理团队】", admin_roster_text]
     if (
         context.shared_group_context is not None
         and context.shared_group_context.enabled
@@ -1622,6 +1669,7 @@ def build_chat_result(
 ) -> CapabilityResult:
     model_router = llm_options.pop("model_router", None)
     request_budget = llm_options.pop("request_budget", None)
+    admin_roster_text = str(llm_options.pop("admin_roster_text", "") or "")
     if not isinstance(request_budget, DeadlineBudget):
         request_budget = None
     router_override = str(llm_options.pop("router_override", "") or "")
@@ -1650,7 +1698,9 @@ def build_chat_result(
         memory_writer = None
         llm_options["enable_tools"] = False
         direct_image_urls = []
-    messages, prompt_diagnostics = build_chat_prompt_with_diagnostics(context)
+    messages, prompt_diagnostics = build_chat_prompt_with_diagnostics(
+        context, admin_roster_text=admin_roster_text
+    )
     if safety.action != "allow":
         messages.append({"role": "system", "content": (
             "只在内部遵守以下边界，不要复述边界、规则、策略或安全词语。"
@@ -2118,6 +2168,7 @@ def build_chat_capability(
     reply_detail: str = "auto",
     request_budget_seconds: float = 0.0,
     runtime_settings: Any | None = None,
+    admin_roster_text: str = "",
     interaction_counter: Any | None = None,
     affinity_store: Any | None = None,
     model_router: Any | None = None,

@@ -53,3 +53,26 @@ def detect_name_mention(text: str, terms: list[str] | tuple[str, ...]) -> bool:
         if call_match and call_match.group(1) == term:
             return True
     return False
+
+def starts_with_name_mention(text: str, terms: list[str] | tuple[str, ...]) -> bool:
+    """昵称是否位于消息开头（开头称呼形态）——视为对机器人说话的强信号。"""
+    stripped = normalize_mention_text(text)
+    if not stripped:
+        return False
+    for term in sorted({str(t).strip() for t in terms if str(t).strip()}, key=len, reverse=True):
+        if not term:
+            continue
+        if stripped.startswith(term):
+            tail = stripped[len(term):]
+            if not tail or tail[0] in _ADDRESS_BOUNDARY_CHARS:
+                return True
+    return False
+
+
+_QUESTION_MARKERS = ("？", "?", "吗", "呢", "么", "怎么", "为什么", "如何", "帮我", "能不能", "可以吗")
+
+
+def looks_like_direct_question(text: str) -> bool:
+    """轻量问句意图判定（R4 长文软点名降级门用）：含问号或常见疑问词。"""
+    value = text or ""
+    return any(marker in value for marker in _QUESTION_MARKERS)

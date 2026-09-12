@@ -64,6 +64,13 @@ class Config(BaseModel):
     bot_gscore_bot_id: str = "NoneBot2"
     bot_gscore_bot_self_id: str = ""
     bot_admin_user_ids: list[str] = []
+    # 超级管理员（R1 2026-09-12）：权威高于 admin，人格层有专属保护规则；
+    # 超管自动具备全部 admin 权限。管理员档案见 bot_admin_profiles。
+    bot_super_admin_user_ids: list[str] = []
+    # 管理团队身份档案（人格层注入）：[{qq,name,nicknames,role,note}, ...]。
+    # qq=QQ号；name=显示名；nicknames=别名（分隔符任意的单字符串）；
+    # role=super/admin；note=补充（如「与某某为同一人」）。
+    bot_admin_profiles: list[dict[str, str]] = []
     bot_telegram_admin_user_ids: list[str] = []
     bot_telegram_admin_chat_ids: list[str] = []
     bot_mail_bridge_enabled: bool = False
@@ -677,6 +684,8 @@ class Config(BaseModel):
     bot_rate_limit_chat_global_max_requests: int = 60
     bot_rate_limit_chat_session_max_requests: int = 6
     bot_rate_limit_chat_sender_max_requests: int = 4
+    # R3 防刷屏：同一发送者两次 bot.chat 回复最小间隔（秒），0=关闭。
+    bot_rate_limit_chat_sender_min_interval_seconds: int = 45
     bot_rate_limit_target_min_interval_seconds: int = 0
     # 群聊专属句数帽（用户口径：每小时 60 句、每分钟 3 句）。0 = 该帽不生效。
     bot_rate_limit_group_max_per_hour: int = 0
@@ -883,6 +892,7 @@ class Config(BaseModel):
 
     @field_validator(
         "bot_admin_user_ids",
+        "bot_super_admin_user_ids",
         "bot_telegram_admin_user_ids",
         "bot_telegram_admin_chat_ids",
         "bot_enterprise_user_ids",

@@ -20,6 +20,9 @@ from pydantic import BaseModel
 from .audit import AuditRepository, build_audit_repository
 from .audit.file_logger import build_audit_with_file_log
 from .capabilities.affinity import build_affinity_capability
+from .capabilities.chat import (
+    build_admin_roster_text as _build_admin_roster_text_for_chat,
+)
 from .capabilities.content_parser import build_content_capability
 from .capabilities.divination import build_divination_capability
 from .capabilities.download import build_download_capability
@@ -1197,6 +1200,13 @@ def _incoming_from_nonebot_event(
         and not hard_mention
         and session_type not in {SessionType.PRIVATE, SessionType.EMAIL}
     )
+    # R4 场景化回应：策展昵称软点名（无硬 @/回复 bot）单独标记，供门禁把
+    # 「长文本里顺带提到名字」与「真在叫机器人」区分开。
+    soft_persona_mention = (
+        persona_name_mention
+        and not hard_mention
+        and session_type not in {SessionType.PRIVATE, SessionType.EMAIL}
+    )
     return IncomingMessage(
         platform=platform,
         adapter=adapter,
@@ -1217,6 +1227,7 @@ def _incoming_from_nonebot_event(
             or (persona_name_mention and not hard_mention)
         ),
         name_mention_only=name_mention_only,
+        soft_persona_mention=soft_persona_mention,
         message_id=str(message_id) if message_id is not None else None,
     )
 
@@ -2840,6 +2851,7 @@ def _register_nonebot_handlers() -> None:
         group_white1=frozenset(config.bot_group_white1),
         group_white2=frozenset(config.bot_group_white2),
         natural_chat_check=looks_like_question_text,
+        mention_terms=tuple(_RUNTIME_MENTION_TERMS),
         group_lists_provider=lambda: {
             "black1": frozenset(
                 str(item).strip()
@@ -3519,6 +3531,7 @@ def _register_nonebot_handlers() -> None:
                 identity_describe=_build_identity_describe(config),
             ),
             llm_provider=_build_chat_llm_provider(config),
+            admin_roster_text=_build_admin_roster_text_for_chat(config),
             affinity_store=(
                 build_character_affinity_store(config)
             ),

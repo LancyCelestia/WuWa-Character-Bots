@@ -3,9 +3,12 @@
 NoneBot2 聊天机器人项目：守岸人人格对话、向量知识检索、聊天记忆、QQ/Telegram/Mail 适配器、
 37+ 平台媒体解析、订阅推送、表情包、釉瑚云母卡片渲染与统一运行时插件（`plugins/bot_unified_runtime/`）。
 
-> **接手必读**：[AGENTS.md](AGENTS.md)（工作区规则 + 项目全貌，自动加载）→
-> [docs/HANDBOOK.md](docs/HANDBOOK.md)（单一活文档：族谱/现行事实/总账/全史）。
+> **接手必读**：[AGENTS.md](AGENTS.md)（工作区规则 + 项目全貌 + 架构/流程图，自动加载）→
+> [docs/HANDBOOK.md](docs/HANDBOOK.md)（单一活文档：族谱/现行事实/总账/全史；§20 最新会话底账含权限链路图）。
 > 命令手册：[COMMANDS.md](COMMANDS.md)；路由矩阵：[docs/route-matrix.md](docs/route-matrix.md)。
+>
+> **接手三步**：①读本文件+AGENTS.md 掌握边界与架构 → ②按 AGENTS.md 第五部分跑四门禁确认基线 →
+> ③从 HANDBOOK §20.3 的「残余与建议」领任务。改代码必须重启 bot 才生效（铁律）。
 
 ## 工作区边界（重要）
 
@@ -55,7 +58,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 ## 验证门禁（每轮交付前全绿）
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task test"           # 全量回归（基线 1761+ passed）
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task test"           # 全量回归（基线 1766+ passed）
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task lint"           # ruff
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task typecheck"      # mypy（238 文件）
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task runtime-layout" # 源码树/边界体检

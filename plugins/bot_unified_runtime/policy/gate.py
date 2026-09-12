@@ -12,6 +12,10 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
     SessionType,
 )
+from plugins.bot_unified_runtime.runtime.mentions import (
+    looks_like_direct_question,
+    starts_with_name_mention,
+)
 
 from .roles import ROLE_BLOCKED, role_audit_tags
 
@@ -57,6 +61,8 @@ class PolicySettings:
     supported_url_check: Callable[[str], bool] | None = None
     # 白名单1 图片消息的回复概率：独立于闲聊抽签（发图希望被看到时设 1.0）。
     vision_reply_probability: float = 1.0
+    # R4 场景化回应：策展昵称词表（开头称呼判定用）。
+    mention_terms: tuple[str, ...] = ()
     # 动态名单 provider：返回 {black1/black2/white1/white2: 群号集合}。
     # 返回的键会覆盖对应静态集合（管理员热改优先于 .env），未返回的键保持静态。
     group_lists_provider: Callable[[], dict[str, frozenset[str]]] | None = None
@@ -297,6 +303,19 @@ def evaluate_policy(
                 except Exception:  # noqa: BLE001 - 判定失败按未触发处理。
                     natural_triggered = False
             supported_url_triggered = _has_supported_url(text, active_settings)
+
+        # R4 场景化回应（2026-09-12 用户裁定）：长文本里只是「顺带提到昵称」
+        # （软点名、非 @/回复/指令/开头称呼、且无问句意图）不抢答——找存在感
+        # 刷的是算力和别人的屏。开头称呼（「岸宝 你觉得…」）与问句仍正常回复。
+        if getattr(message, "soft_persona_mention", False):
+            stripped_text = text.strip()
+            if (
+                len(stripped_text) >= 50
+                and not command_triggered
+                and not starts_with_name_mention(stripped_text, active_settings.mention_terms)
+                and not looks_like_direct_question(stripped_text)
+            ):
+                return _denied("long_text_soft_mention", ("soft_mention_observe",))
 
         if (
             not command_triggered

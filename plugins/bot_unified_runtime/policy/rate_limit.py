@@ -33,6 +33,10 @@ class RateLimitSettings(StrictBaseModel):
     chat_global_max_requests: int = 60
     chat_session_max_requests: int = 6
     chat_sender_max_requests: int = 4
+    # R3 防刷屏（2026-09-12 用户裁定）：同一发送者两次 bot.chat 回复的最小
+    # 间隔（秒）。1 分钟喊 5 次只回 1 次；不受 bypass_roles 豁免（刷屏保护
+    # 对所有人一致）。0 = 关闭。
+    chat_sender_min_interval_seconds: int = 45
     target_min_interval_seconds: int = 0
     proactive_window_seconds: int = 3600
     proactive_group_max_replies: int = 6
@@ -238,6 +242,14 @@ class InMemoryRateLimiter:
                 reason="non_chat_capability",
                 audit_tags=["rate_limit:non_chat"],
             )
+        # R3 同人点名最小间隔：先于 role bypass（刷屏保护人人平等）。
+        if (
+            self.settings.chat_sender_min_interval_seconds > 0
+            and message.mentions_bot
+        ):
+            decision = self._check_sender_min_interval(message, capability_id, self.clock())
+            if decision is not None:
+                return decision
         if self._has_bypass_role(message):
             return RateLimitDecision(
                 allowed=True,
@@ -316,6 +328,28 @@ class InMemoryRateLimiter:
             reason="allowed",
             audit_tags=["rate_limit:ok"],
         )
+
+    def _sender_interval_key(self, capability_id: str, message: IncomingMessage) -> str:
+        return self._bucket_key(capability_id, "sender_interval", message.sender_id)
+
+    def _check_sender_min_interval(
+        self, message: IncomingMessage, capability_id: str, now: object
+    ) -> RateLimitDecision | None:
+        bucket = self._buckets[self._sender_interval_key(capability_id, message)]
+        if bucket:
+            elapsed = (now - bucket[-1]).total_seconds()
+            if elapsed < self.settings.chat_sender_min_interval_seconds:
+                return RateLimitDecision(
+                    allowed=False,
+                    reason="sender_min_interval",
+                    retry_after_seconds=max(
+                        1,
+                        int(self.settings.chat_sender_min_interval_seconds - elapsed),
+                    ),
+                    audit_tags=["rate_limit:blocked", "rate_limit:sender_min_interval"],
+                )
+        bucket.append(now)
+        return None
 
     def _check_proactive(self, message: IncomingMessage, capability_id: str) -> RateLimitDecision:
         if not self.settings.enabled:
@@ -517,10 +551,54 @@ class SQLiteRateLimiter:
                 audit_tags=["rate_limit:bypass_role"],
             )
 
+        # R3 同人点名最小间隔（与 InMemory 同语义）：管理员连喊同样冷却。
         with self._lock:
+            min_interval_decision = self._check_sender_min_interval(
+                message, capability_id
+            )
+            if min_interval_decision is not None:
+                return min_interval_decision
             return self._check_and_record_locked(
                 message, capability_id, safe_amount
             )
+
+    def _check_sender_min_interval(
+        self, message: IncomingMessage, capability_id: str
+    ) -> RateLimitDecision | None:
+        """SQLite 版同人点名最小间隔；放行即记录（bot 真回复才进入冷却）。"""
+        if self.settings.chat_sender_min_interval_seconds <= 0:
+            return None
+        if not message.mentions_bot:
+            return None  # 仅点名回复防刷屏；主动接话/图片路径不受限
+        self._ensure_schema()
+        now_epoch = self.clock().timestamp()
+        key = self._bucket_key(capability_id, "sender_interval", message.sender_id)
+        with closing(self._connect()) as connection, connection:
+            self._cleanup_expired(connection, now_epoch)
+            latest = self._latest_created_at(connection, key)
+            if latest is not None:
+                elapsed = now_epoch - latest
+                if elapsed < self.settings.chat_sender_min_interval_seconds:
+                    return RateLimitDecision(
+                        allowed=False,
+                        reason="sender_min_interval",
+                        retry_after_seconds=max(
+                            1,
+                            int(
+                                self.settings.chat_sender_min_interval_seconds
+                                - elapsed
+                            ),
+                        ),
+                        audit_tags=[
+                            "rate_limit:blocked",
+                            "rate_limit:sender_min_interval",
+                        ],
+                    )
+            connection.execute(
+                "INSERT INTO rate_limit_events (bucket_key, created_at) VALUES (?, ?)",
+                (key, now_epoch),
+            )
+        return None
 
     def _check_and_record_locked(
         self,

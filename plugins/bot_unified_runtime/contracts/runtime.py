@@ -134,6 +134,9 @@ class IncomingMessage(StrictBaseModel):
     # True=mentions_bot 仅由软触发（文本昵称/小名）贡献，无硬 @/回复 bot；
     # white2 门用它把“写了名字”与“真 @”区分开。
     name_mention_only: bool = False
+    # R4 场景化回应（2026-09-12 用户裁定）：文本含策展昵称但无硬 @/回复 bot
+    # 的「软点名」。长文本埋昵称不一定是对机器人说话，门禁可据此降级为观察。
+    soft_persona_mention: bool = False
     reply_to_message_id: str | None = None
     reply_to_text: str = ""
     # 引用链（评审需求「综合解析回复消息 + 递归解析嵌套引用」）：自近及远逐层

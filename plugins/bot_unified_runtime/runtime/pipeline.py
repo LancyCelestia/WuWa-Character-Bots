@@ -369,6 +369,7 @@ class RuntimePipeline:
         group_white1: frozenset[str] = frozenset(),
         group_white2: frozenset[str] = frozenset(),
         natural_chat_check: Callable[[str], bool] | None = None,
+        mention_terms: tuple[str, ...] = (),
         group_lists_provider: Callable[[], dict[str, frozenset[str]]] | None = None,
         idempotency_table: EventIdempotencyTable | SqliteEventIdempotencyTable | None = None,
     ) -> None:
@@ -397,6 +398,7 @@ class RuntimePipeline:
             group_black2=frozenset(group_black2),
             group_white1=frozenset(group_white1),
             group_white2=frozenset(group_white2),
+            mention_terms=tuple(mention_terms),
             natural_chat_check=natural_chat_check,
             group_lists_provider=group_lists_provider,
             extra_command_check=alias_command_check,

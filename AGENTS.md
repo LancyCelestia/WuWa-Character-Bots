@@ -76,6 +76,7 @@ QQ/NapCat(WS 3001) ⇄ bot.py(forward-WS)
 |---|---|---|---|
 | 人格对话 | capabilities/chat.py + character/providers.py | 人设全文+运行时上下文【标签】13 分区（空分区不渲染）；反注入包裹+指令剥离；好感/心情/怪癖/身份四层注入 | @bot、白名单抽签、昵称点名 |
 | 好感度 v5 | character/affinity.py + capabilities/affinity.py | -100~+100、基准10=档0友善、8 档温和态度连续过渡（无门槛跳变）；**v5 多因素线性步长**：基准因子 × 说话温度 × 相处时长 × 第一印象(建档±30%,随相处衰减) × 当日心情 × 个人节奏，**算法说明一律定性、不展示固定加减数值**（2026-09-12 实弹反馈④ 用户裁定）；惰性回归+印象淡出；SQLite 列 first_signals/first_impression/created_at 自动迁移 | `好感度`/`好感度 算法`/`好感`/`亲密度`/`affinity`（v5 起 RouteKind.AFFINITY 已接 NoneBot matcher，/bot 链也有显式分支） |
+| 角色/权限 v2 | policy/roles.py + capabilities/chat.py | user/trusted/enterprise/**admin/super_admin**/blocked 六级；超管自动叠加 admin 权限；【管理团队】分区注入人格（档案+权威规则：超管不可侵犯/被调侃时温和制止、管理员宽容）；`.env` BOT_SUPER_ADMIN_USER_IDS + BOT_ADMIN_PROFILES 普适化配置 | 内部（生产：澜汐/霞月） |
 | bot 心情 | character/mood.py | valence/arousal 双轴半衰回归；驱动开火概率/表情档/语气 | 内部 |
 | 人格怪癖 | character/quirks.py | 审核制演化：propose→管理员 approve→渲染；反思回路自动投喂 | `/bot quirk` |
 | 会话身份 | character/session_identity.py | 每群/私聊独立昵称+标签，防 OOC 护栏内建 | `/bot identity` |
@@ -135,6 +136,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 | 19 | **F7 随机 cos 照片未做**：等用户提供 gs_kuro_cos 插件+油猴脚本；思路=借鉴其接口做 xhs/推特 cos 图检索随机发（两份参考油猴脚本已读：xhs CI 原图 token 接口 + X name=orig 直链） | 等外部 |
 | 20 | F13 queue 告警 `source_bot=unknown`：**已定性**（153fd78 记录）——历史批次终态+300s 抑制聚合（bot_unavailable=worker 阶段无在线 OneBot 的挂起回执，1800s 年龄上限自动清理），非现行缺陷 | 重启后观察 |
 | 21 | help 页脚 bot 头像：`.env` 的 BOT_PERSONA_AVATAR_URL 为空 → 页脚用「守」字圆点；用户可提供头像图路径后配置 | 等用户（可选） |
+| 22 | **R 系列角色体系**（2026-09-12 晚已落码）：R1 超管/管理员六级角色（超管自动叠加 admin）+BOT_ADMIN_PROFILES 档案注入；R3 同人点名最小间隔 45s（仅 mentions_bot 生效，双限流器同语义）；R4 长文软点名观察门（≥50 字含昵称、非@/非开头称呼/非问句 → 不抢答） | 待全量测试确认+重启生效 |
+| 23 | **CC 字幕必存**（77d8b28）：下载自动抓 CC（zh 优先 srt）落盘+纯文本进 meta.subtitle_text；压制不做（ROI 为负）；追问链路零改动可引用 | 完成，重启生效 |
+| 24 | **Ghost Downloader 集成**：有 aria2 兼容 RPC（无 CLI）；需用户开 RPC+确认端口/token；当前 yt-dlp 原生 8 并发+16MB Range 分块已可用，装 aria2（winget install aria2.aria2）自动委托 | 可选优化 |
+| 25 | **账单计价已接**（483f852）：ledger 写入时按渠道价计价（含缓存命中/创建价+按次计费）；38 条价目已写入生产 store（scripts/import_model_prices.py 幂等导入）；价有出入用 /bot model price 改 | 完成，重启生效 |
 
 ## 第七部分：交接史与权威链
 

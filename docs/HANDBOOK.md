@@ -1585,3 +1585,48 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 1. 重启后真机验收清单增补：`好感度 算法`/`/bot 好感度`/`菜谱 西红柿炒鸡蛋`/`怎么做西红柿炒鸡蛋`/`天气 雨湖`/`天气 华沙`（应各命中正确路径，前三者出釉瑚卡）。
 2. media 卡与 universal 卡双轨并存是历史包袱，能力卡（weather/eat/market）建议长期收敛到 universal 模板+detail 区块。
 3. 守卫测试补齐（19.2-1 路由分发一致性 + 19.3 各项的回归锁）。
+
+# §20 权限体系+字幕+账单+表情补标 会话底账（2026-09-12 晚）
+
+## 20.1 本轮交付（提交 77d8b28 + 角色批次）
+
+| 项 | 内容 | 状态 |
+|---|---|---|
+| R1 角色 | 六级角色 user/trusted/enterprise/admin/super_admin/blocked；超管自动叠加 admin；config: BOT_SUPER_ADMIN_USER_IDS + BOT_ADMIN_PROFILES；chat.py build_admin_roster_text 注入【管理团队】分区（档案+权威规则） | 代码完成 |
+| R2 权威规则 | 超管权威不可侵犯（不附和玷污/诋毁，被调侃时温和制止）；管理员轻度调侃宽容；档案含「澜汐=霞月 同一人」 | 代码完成 |
+| R3 防刷屏 | 同人点名回复最小间隔 45s（仅 mentions_bot；双限流器 InMemory+SQLite 同语义；不受 role bypass 豁免）；config: bot_rate_limit_chat_sender_min_interval_seconds | 代码完成 |
+| R4 场景化 | 长文软点名观察门：≥50 字含昵称+非硬@+非开头称呼+非问句 → 不抢答（gate.py，PolicySettings.mention_terms 从 _RUNTIME_MENTION_TERMS 贯通） | 代码完成 |
+| CC 字幕 | 下载自动抓字幕（write+auto sub，zh-Hans/zh-CN/zh/zh-TW/en，srt 优先）→ DownloadOutcome.subtitle_path → _subtitle_plain_text 纯文本进 meta.subtitle_text/subtitle_file；**压制不做**（重编码分钟级 CPU+损画质+QQ 不渲染软字幕轨，ROI 为负） | 完成 77d8b28 |
+| 账单计价 | build_call_draft 接收渠道价（元/1M：price_in/out/cache_read/cache_creation + price_per_call 按次）写入时计价；`账单=(prompt-cache命中-cache创建)×in + 命中×read价 + 创建×creation价(缺省回退in) + 输出×out (+按次价)`；价缺省保持 NULL/unpriced（未知≠0） | 完成 483f852 |
+| 价目导入 | scripts/import_model_prices.py（幂等 dry-run/--apply；渠道 host+模型名双匹配；axonhub 网关条目按上游模型名直配）38 条已写入生产 store | 完成 |
+| 表情补标 | store.list_untagged 队列 + backfill_meme_tags_loop（批 20 张/间隔 10min/直到清空，bot 连接后驱动）；用户图库 392 张已导入（全库 3845，待标 3193→自动消化）；发送侧只按语义标签匹配=先理解后发送 | 完成 483f852 |
+| 渲染自愈 | 连续页面失败≥2 强制重建 playwright 常驻浏览器（僵死循环根治）+launch 重试+解析侧渲染失败 warning 日志 | 完成 77d8b28 |
+| 下载并发 | concurrent_fragment_downloads=8 + http_chunk_size 16MB Range 并行；检测 aria2c 自动委托（-x16 -k1M --file-allocation=none） | 完成 77d8b28 |
+
+## 20.2 权限/回复链路图（R 系列落点）
+
+```mermaid
+flowchart TD
+    A[消息入站] --> B{提及判定 ingest}
+    B -->|硬@/回复bot| C[mentions_bot=true]
+    B -->|策展昵称文本| D[soft_persona_mention=true]
+    B -->|自学习小名| E[name_mention_only]
+    C --> F{gate 门禁}
+    D --> G{长文软点名门 R4}
+    G -->|≥50字 且 非开头称呼 且 非问句| H[观察不回复]
+    G -->|否则| F
+    E --> F
+    F -->|allow bot.chat| I{限流 rate_limit}
+    I -->|同人点名间隔<45s R3| J[blocked: sender_min_interval]
+    I -->|ok| K[chat 能力]
+    K --> L[prompt 注入【管理团队】R1/R2]
+```
+
+## 20.3 已知残余与建议
+
+1. **R 系列测试欠账**：R1-R4 无专属回归测试（roster 文案/min-interval 双实现/长文门各需 2-3 例）；本轮靠全量回归兜底，接手先补。
+2. **min-interval 默认 45s 会拦管理员连测**：调试时用 `/bot runtime set BOT_RATE_LIMIT_CHAT_SENDER_MIN_INTERVAL_SECONDS 0` 热改关。
+3. **表情补标约 1-2 天**：3193 张待标按批 20/10min 消化；期间偷表情可能命中未标图（按权重随机不挑无描述图，安全）；VLM 端点走 BOT_MEME_LIBRARY_VLM_* 配置。
+4. **账单口径**：上游中转若不回缓存 token 字段，报表显示 0（如实）；价格表更新直接改 scripts/import_model_prices.py 重跑 --apply。
+5. **Ghost Downloader**：aria2 兼容 RPC 可作 yt-dlp external_downloader 备选；需用户 GUI 常驻+开 RPC，暂未接。
+6. 重启后真机验收：`@守岸人 好感度`（出卡）/连续喊 5 次（只回 1 次）/长文埋昵称（不抢答）/问「管理员是谁」（准确答澜汐=霞月）。
