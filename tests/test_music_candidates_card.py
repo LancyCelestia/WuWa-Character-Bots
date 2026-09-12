@@ -39,7 +39,9 @@ def test_render_html_contains_query_index_ttl_platform() -> None:
     assert "01" in html_text and "02" in html_text
     assert "300s 内有效" in html_text
     assert "网易云" in html_text
-    assert "回复编号直接点" in html_text
+    # F20 选歌指引改版：必须明确「回复序号数字」这一操作方式。
+    assert "序号数字" in html_text and "点歌 2" in html_text
+    assert "守岸人" in html_text and "点歌" in html_text  # F11 bot 页脚
     assert "Top" in html_text  # 前 3 名加重视觉
     assert "None" not in html_text
 

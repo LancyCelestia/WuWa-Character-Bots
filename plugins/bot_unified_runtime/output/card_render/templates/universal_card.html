@@ -534,7 +534,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     background: color-mix(in srgb, var(--amber-strong) 5%, #fff);
     border: none;
     border-left: 3px solid var(--amber-strong);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     padding: 10px 14px;
     margin: 8px 0;
 }
@@ -587,11 +587,11 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 
 /* 热评使用平台主题色做左侧色条 */
 .hot-comment {
-    /* mica-glass：玻璃热评卡（左侧 --pc 语义色条保留）。 */
+    /* mica-glass：玻璃热评卡（左侧 --pc 语义色条保留）；圆角对齐其余玻璃面（F2）。 */
     background: rgba(255, 255, 255, 0.55);
     border: none;
     border-left: 3px solid var(--pc);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     padding: 10px 14px;
     margin: 8px 0;
 }
@@ -1166,7 +1166,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     {% if video_desc or summary or text %}<div class="video-card-summary mica-surface">{{ video_desc or summary | safe or text | safe }}</div>{% endif %}
     {% if hot_comment or hot_comments %}<div style="display:flex;flex-direction:column;gap:8px;margin:0 var(--video-inset) var(--video-inset);">{% for comment in ((hot_comments or [])[:3] if hot_comments else ([hot_comment])) %}<div class="hot-comment mica-surface"><div class="pc-header"><span class="pc-badge">热评</span>{% if comment.avatar %}<img class="pc-avatar" src="{{ comment.avatar }}" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ comment.author }}</span>{% if comment.time %}<span> · {{ comment.time }}</span>{% endif %}</div><div class="pc-content">{{ comment.content }}</div>{% if comment.likes %}<div class="pc-likes">{{ comment.likes }} 赞</div>{% endif %}</div>{% endfor %}</div>{% endif %}
     {% if show_guests %}<div class="show-guests"><div class="sg-title">参展嘉宾<span class="sg-count">{{ show_guests | length }}</span></div><div class="sg-grid">{% for guest in show_guests %}<div class="sg-tile mica-surface">{% if guest.avatar %}<img class="sg-avatar" src="{{ guest.avatar }}" onerror="this.style.display='none'">{% else %}<div class="sg-avatar sg-avatar-ph">{{ guest.name[:1] }}</div>{% endif %}<span class="sg-name">{{ guest.name }}</span>{% if guest.description %}<span class="sg-desc">{{ guest.description }}</span>{% endif %}{% if guest.book_num %}<span class="sg-book">♥ {{ guest.book_num }} 预约</span>{% endif %}</div>{% endfor %}</div></div>{% endif %}
-    <div class="footer footer-colored"><span class="footer-platform-name">{% if platform_logo_svg %}<span class="footer-platform-logo" data-icon-source="iconfont">{{ platform_logo_svg | safe }}</span>{% else %}{{ platform_footer_label or platform_official_name or platform }}{% endif %}</span><div class="footer-bot-pill"><div class="footer-bot-left">{% if bot_avatar_url %}<img class="footer-bot-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="footer-bot-dot">{{ (bot_name | default('A', true))[:1] }}</span>{% endif %}</div><div class="footer-bot-right"><span class="footer-bot-name">{{ bot_name | default('守岸人', true) }}</span><span class="footer-parser-text">· Shorekeeper Parser</span></div></div></div>
+    <div class="footer footer-colored"><span class="footer-platform-name">{% if platform_logo_svg %}<span class="footer-platform-logo" data-icon-source="iconfont">{{ platform_logo_svg | safe }}</span>{% else %}{{ platform_footer_label or platform_official_name or platform }}{% endif %}</span><div class="footer-bot-pill"><div class="footer-bot-left">{% if bot_avatar_url %}<img class="footer-bot-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="footer-bot-dot">{{ (bot_name | default('A', true))[:1] }}</span>{% endif %}</div><div class="footer-bot-right"><span class="footer-bot-name">{{ bot_name | default('守岸人', true) }}</span><span class="footer-parser-text">· {{ feature_label or 'Shorekeeper' }}</span></div></div></div>
 </div>
 </div>
 </div>
@@ -1648,7 +1648,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
         <div class="footer-platform">{{ platform_official_name or platform_display or type or 'Platform' }}</div>
         <div class="footer-bottom">
             <div class="footer-bot-left">{% if bot_avatar_url %}<img class="footer-bot-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="footer-bot-dot">{{ (bot_name | default('A', true))[:1] }}</span>{% endif %}</div>
-            <div class="footer-bot-right"><span class="footer-bot-name">{{ bot_name | default('守岸人', true) }}</span><span class="footer-parser-text">· Shorekeeper Parser</span></div>
+            <div class="footer-bot-right"><span class="footer-bot-name">{{ bot_name | default('守岸人', true) }}</span><span class="footer-parser-text">· {{ feature_label or 'Shorekeeper' }}</span></div>
 </div>
 </div>
 </div>

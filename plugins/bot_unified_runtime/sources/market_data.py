@@ -27,6 +27,7 @@ MOEX ISS 备选源（2026-09-12 实测本机直连可达，免 key，无需代�
 from __future__ import annotations
 
 import time
+import urllib.parse
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -278,3 +279,60 @@ def format_market_brief(quotes: Sequence[IndexQuote]) -> str:
         lines.append(f"—— {group} ——")
         lines.extend(format_quote_line(quote) for quote in group_quotes)
     return "\n".join(lines)
+
+
+# ==================== F19 指数走势（30 日收盘，折线卡用） ====================
+_KLINE_URL = (
+    "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+    "?secid={secid}&fields1=f1&fields2=f51,f53&klt=101&fqt=1&lmt={days}"
+)
+_TREND_CACHE_TTL_SECONDS = 600.0
+_TREND_MAX_POINTS = 60
+_TREND_CACHE: dict[str, tuple[float, tuple[float, ...]]] = {}
+
+
+def reset_market_trend_cache() -> None:
+    """清空走势缓存（测试用）。"""
+    _TREND_CACHE.clear()
+
+
+def fetch_index_trend(
+    secid: str,
+    *,
+    timeout_seconds: float = 6.0,
+    cache_seconds: float = _TREND_CACHE_TTL_SECONDS,
+) -> tuple[float, ...]:
+    """单个指数近 30 日收盘序列（旧→新）；失败/无数据返回空元组，绝不抛。
+
+    东财 kline 单指数一调；MOEX 走东财无数据，直接空序列（卡上无折线）。
+    10 分钟进程内缓存：18 指数逐个外呼较重，折线不需要实时。
+    """
+    if secid == _MOEX_SECID:
+        return ()
+    cached = _TREND_CACHE.get(secid)
+    now = time.monotonic()
+    if cached is not None and now - cached[0] <= max(1.0, float(cache_seconds)):
+        return cached[1]
+    closes: tuple[float, ...] = ()
+    try:
+        payload = http_get_json(
+            _KLINE_URL.format(secid=urllib.parse.quote(secid), days=_TREND_MAX_POINTS),
+            timeout=max(1.0, float(timeout_seconds)),
+            max_bytes=_MAX_PAYLOAD_BYTES,
+        )
+        data = payload.get("data") if isinstance(payload, dict) else None
+        klines = data.get("klines") if isinstance(data, dict) else None
+        if isinstance(klines, list):
+            values: list[float] = []
+            for row in klines:
+                # fields2=f51,f53 → "日期,收盘"；只取收盘。
+                parts = str(row).split(",")
+                if len(parts) >= 2:
+                    close = _as_float(parts[1])
+                    if close is not None:
+                        values.append(close)
+            closes = tuple(values[-_TREND_MAX_POINTS:])
+    except Exception:  # noqa: BLE001 - 走势失败静默缺席，不拖垮行情卡。
+        closes = ()
+    _TREND_CACHE[secid] = (now, closes)
+    return closes

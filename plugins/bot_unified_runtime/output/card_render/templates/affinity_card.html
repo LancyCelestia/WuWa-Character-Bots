@@ -221,6 +221,15 @@ body {
 .rule .up { color: var(--score-hot); font-weight: 700; }
 .rule .down { color: var(--score-cold); font-weight: 700; }
 .foot { margin-top: 16px; font-size: 12px; color: var(--text-secondary); }
+/* F11 bot 页脚：头像 + 机器人名 + 功能名。 */
+.bot-foot { margin-top: 14px; padding-top: 10px; display: flex; align-items: center; gap: 7px;
+    border-top: 1px dashed var(--pc-line); font-size: 12px; color: var(--text-secondary); }
+.bot-foot .bf-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
+    border: 1px solid #fff; box-shadow: var(--mica-shadow-soft); }
+.bot-foot .bf-dot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 650; color: var(--pc); background: var(--pc-chip); }
+.bot-foot .bf-name { font-weight: 650; color: var(--text-sub); }
 </style>
 </head>
 <body>
@@ -254,11 +263,11 @@ body {
     {% elif mode == 'algorithm' %}
     <div class="duel">
         <div class="panel glass">
-            <div class="dlabel">你此刻的精确步长（印象好感 {{ bot_score }}）</div>
+            <div class="dlabel">你与我之间的氛围（印象好感 {{ bot_score }}）</div>
             {% for s in steps %}
             <div class="step-row"><span>{{ s.label }}</span><b class="{{ s.cls }}">{{ s.value }}</b></div>
             {% endfor %}
-            <div class="dnote">步长线性全额：+2/-1/-5/-10 起 × 个人系数（±15%）；闲置 7 天起每天向 10 回归；难听的记忆 15~30 天淡出</div>
+            <div class="dnote">好感随言行连续累积：说话温度 × 相处时长 × 第一印象 × 我当天的状态，平滑变化、没有固定加几减几；久不联系慢慢回归基准，难听的记忆会随时间淡去</div>
         </div>
         <div class="panel glass">
             <div class="dlabel">档位 → 回应方式（同一句话）</div>
@@ -292,6 +301,7 @@ body {
     </div>
     {% endif %}
     <div class="foot">好感区间 -100~+100 · 档0 友善（基准 10）· 任何档位都保持人格与体面</div>
+    <div class="bot-foot">{% if bot_avatar_url %}<img class="bf-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="bf-dot">{{ (bot_name | default('守岸人', true))[:1] }}</span>{% endif %}<span class="bf-name">{{ bot_name | default('守岸人', true) }}</span><span>· {{ feature_label | default('好感度', true) }}</span></div>
 </div>
 <script>
 /* mica-glass v1 2026-09-12：随机漂移相位，纯内联零依赖，失败静默。 */

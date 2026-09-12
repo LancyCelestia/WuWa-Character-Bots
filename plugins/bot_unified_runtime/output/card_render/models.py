@@ -149,6 +149,7 @@ class RenderPayload:
     platform_mark_style: str = ""
     bot_name: str = "守岸人"
     bot_avatar_url: str = ""
+    feature_label: str = ""  # 页脚功能名（F11：头像+名字+功能名），空回退通用文案
     card_width: str = "1440px"
     font_scale: float = 1.0
     scale_factor: float = 1.0

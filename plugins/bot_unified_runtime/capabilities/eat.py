@@ -33,6 +33,24 @@ _EAT_RE = re.compile(
 )
 _RECIPE_RE = re.compile(r"^[/!！]?(?:菜谱|菜譜|怎么做|怎麼做|如何做)\s*[:：]?\s*(?P<name>.+)$")
 
+# F10 真实封面：本地图包未命中时经 Bing 图搜抓一张真实菜品图，
+# 落盘 food_images/<菜名>.jpg 作常驻缓存（下次直接本地命中）。
+# 全程 best-effort：任何网络/解析失败都返回空串（封面区折叠，不阻断出卡）。
+_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+_FETCH_TIMEOUT = 6.0
+_IMAGE_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+)
+_BING_RESULT_RE = re.compile(r'murl&quot;:&quot;(https?://[^&"]+)&quot;')
+_IMAGE_MAGIC: tuple[tuple[bytes, str], ...] = (
+    (b"\xff\xd8", ".jpg"),
+    (b"\x89PNG", ".png"),
+    (b"GIF8", ".gif"),
+    (b"RIFF", ".webp"),
+)
+_ILLEGAL_FILENAME_RE = re.compile(r'[\\/:*?"<>|\s]+')
+
 # 审计 E2-8：extra 非空时必须命中已知修饰/约束词表，否则不路由（落入闲聊）。
 # 此前 `.*` 兜底让任何「吃」开头的句子（吃了吗/吃火锅）都被判成点菜指令。
 _EAT_MODIFIER_RE = re.compile(r"三选一|来三道|再来一道|再来|辣的|不辣|微辣|中辣|特辣")
@@ -68,17 +86,22 @@ def _format_dish_body(dish: Dish, *, with_steps: bool = True) -> str:
     return "\n".join(lines)
 
 
-def _dish_image(dish: Dish, config: Any) -> str:
-    """本地图包：Runtime data/food_images/<菜名>.jpg|.png 存在则用作封面。"""
+def _food_image_root(config: Any) -> Path:
+    """food_images 目录解析（Runtime 重映射），失败退回相对路径。"""
     base = str(getattr(config, "bot_food_image_dir", "") or "data/food_images")
     try:
         from plugins.bot_unified_runtime.character.providers import (
             build_runtime_data_path,
         )
 
-        root = build_runtime_data_path(config, base)
+        return build_runtime_data_path(config, base)
     except Exception:  # noqa: BLE001 - 路径解析失败退回相对路径。
-        root = Path(base)
+        return Path(base)
+
+
+def _dish_image(dish: Dish, config: Any) -> str:
+    """封面图三级来源：本地图包 → 抓取缓存 → 空串（卡面折叠封面区）。"""
+    root = _food_image_root(config)
     for suffix in (".jpg", ".png", ".webp"):
         candidate = root / f"{dish.name}{suffix}"
         try:
@@ -86,6 +109,64 @@ def _dish_image(dish: Dish, config: Any) -> str:
                 return str(candidate)
         except OSError:
             continue
+    return _fetch_dish_image(root, dish.name)
+
+
+def _fetch_dish_image(root: Path, name: str) -> str:
+    """Bing 图搜抓一张真实菜品图并缓存；best-effort，失败返回空串。"""
+    import urllib.parse
+    import urllib.request
+
+    query = urllib.parse.quote_plus(f"{name} 菜品 实拍")
+    search_url = f"https://cn.bing.com/images/search?q={query}&first=1&count=8"
+    try:
+        req = urllib.request.Request(
+            search_url,
+            headers={
+                "User-Agent": _IMAGE_UA,
+                "Referer": "https://cn.bing.com/",
+                "Accept-Language": "zh-CN,zh;q=0.9",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
+            page = resp.read(_IMAGE_MAX_BYTES).decode("utf-8", "ignore")
+    except Exception:  # noqa: BLE001 - 搜索失败静默降级。
+        return ""
+    from plugins.bot_unified_runtime.sources.downloader import (
+        RejectedUrlError,
+        check_download_url,
+    )
+
+    for match in _BING_RESULT_RE.finditer(page):
+        image_url = match.group(1)
+        try:
+            check_download_url(image_url)  # SSRF 护栏：内网/保留网段拒绝
+        except RejectedUrlError:
+            continue
+        try:
+            req = urllib.request.Request(
+                image_url,
+                headers={"User-Agent": _IMAGE_UA, "Referer": "https://cn.bing.com/"},
+            )
+            with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
+                data = resp.read(_IMAGE_MAX_BYTES + 1)
+        except Exception:  # noqa: BLE001, S112 - 单个候选失败静默试下一个。
+            continue
+        if not (1024 <= len(data) <= _IMAGE_MAX_BYTES):
+            continue
+        suffix = next(
+            (ext for magic, ext in _IMAGE_MAGIC if data.startswith(magic)), ""
+        )
+        if not suffix:
+            continue  # 不是图片字节（多为错误页 HTML），换下一个候选
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            safe_name = _ILLEGAL_FILENAME_RE.sub("_", name).strip("_") or "dish"
+            target = root / f"{safe_name}{suffix}"
+            target.write_bytes(data)
+            return str(target)
+        except OSError:
+            return ""
     return ""
 
 
@@ -115,6 +196,7 @@ def _eat_card(config: Any, render_backend: Any, dish: Dish, body: str) -> str:
             item,
             config=config,
             card_dir=str(getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"),
+            feature_label="美食推荐",
         )
     except Exception:  # noqa: BLE001 - 渲染失败回退纯文本。
         return ""

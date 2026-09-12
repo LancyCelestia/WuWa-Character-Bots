@@ -81,14 +81,34 @@ def extract_learned_nickname(text: str) -> str | None:
         return None
     return learned
 
-# ---- 数值化常量（规范唯一权威：docs/affinity-design.md v4 线性版）----
+# ---- 数值化常量（规范唯一权威：docs/affinity-design.md）----
 _AFFINITY_BASE = 0.1            # §1 基准 0.1（展示 10 = ×100）：初始好感=回归收敛目标
 AFFINITY_BASE = _AFFINITY_BASE  # 公开只读别名（providers 等模块判断“非默认记录”用）
 _DAY_SECONDS = 86400
-# §2 因子表：步长全程线性（v3 的幂律阻尼 γ 已废除），乘法因子只剩个人系数。
+# §2 因子表：步长全程线性（v3 幂律阻尼废除）。v5（用户裁定 2026-09-12 实弹反馈④）：
+# 固定「一次加几减几」口径废除，实际步长 = 基准因子 × 多因素连续调制——
+#   f1 说话温度（文本里善意/恶意词的密度，同一行为内部再分级）
+#   f2 相处时长（认识越久信任越稳，正向变化略增；对新面孔保守）
+#   f3 第一印象（由最初几次互动的善恶构成定一次，±30%；随长期相处权重衰减趋 1，
+#      ——只影响速度、永不影响态度档位，任何用户都不会被区别对待）
+#   f4 当天基础状态（bot 心情 valence 派生，由调用方注入）
+#   m  个人节奏（uid 确定性派生，±15%，非歧视：只是每个人的「相处节奏」不同）
 _BEHAVIOR_DELTA = {"positive": 0.02, "neutral": 0.0, "tease": -0.01, "negative": -0.05, "insult": -0.10}
 # §2 每日有效次数上限（UTC 自然日）：同行为超出后 delta 记 0，计数器与标签照常累计。
 _DAILY_EFFECTIVE_CAPS: dict[str, int] = {"positive": 10, "tease": 5, "negative": 8, "insult": 8}
+# §2 v5 多因素调制幅度（全部 clamp 在界内，合成步长永不过猛）。
+_POLITE_RE = re.compile(r"(请|麻烦|辛苦|劳驾|有劳|费心)", re.IGNORECASE)
+_HARSH_RE = re.compile(r"(滚|闭嘴|废物|恶心|烦|傻|蠢|别来)", re.IGNORECASE)
+# f2 相处时长：认识 1 年 → 满增 15%（log 缓增，前期敏感后期平缓）。
+_COMPANION_MAX_BONUS = 0.15
+_COMPANION_SATURATION_DAYS = 365.0
+# f3 第一印象：最初 3 次有效互动定盘，±30% 调制；interaction_count 每翻倍，
+# 偏差权重 ×0.5（约 80 次互动后基本归零）——长期相处抹平第一眼。
+_FIRST_IMPRESSION_WINDOW = 3
+_FIRST_IMPRESSION_MAX_SHIFT = 0.30
+_FIRST_IMPRESSION_DECAY_BASE = 80.0
+# f4 当天基础状态：bot 心情 valence ∈ [-1,1] → ±15%（调用方注入，缺省 1.0）。
+_STATE_MAX_SHIFT = 0.15
 # §3 惰性回归（时间减退）：写路径检查闲置天数，≥7 天起每天向基准 0.1（10 分）
 # 回归 0.01，不超过剩余距离；时间源走注入 clock；updated_at 解析失败视为同日不衰减。
 _IDLE_REGRESSION_START_DAYS = 7
@@ -100,11 +120,66 @@ _LEADERBOARD_DECAY_HALF_LIFE_DAYS = 30.0
 
 
 def per_user_factor(sender_id: str) -> float:
-    """因人而异的确定性步长系数（±15%）：同一 sender 恒定，跨重启不变。"""
+    """因人而异的确定性节奏系数（±15%）：同一 sender 恒定，跨重启不变。
+
+    非歧视声明（用户裁定）：这只让每个人的相处节奏略有差异（如同现实里
+    每段关系都有自己的步调），态度档位、红线、回应方式对所有用户完全一致。
+    """
     if not sender_id:
         return 1.0
     digest = hashlib.sha1(str(sender_id).encode("utf-8")).hexdigest()
     return 0.85 + 0.3 * (int(digest[:8], 16) % 1000) / 999
+
+
+def pleasantness_factor(text: str, behavior: str) -> float:
+    """f1 说话温度（≥0.7, ≤1.5）：同一行为内部按用词密度再分级。
+
+    「谢谢！麻烦你啦，真是太棒了」比单个「谢了」更暖；
+    连串恶言比一句抱怨更伤。中性话不调制。
+    """
+    value = text or ""
+    if behavior == "positive":
+        warm = len(_POSITIVE_RE.findall(value))
+        polite = len(_POLITE_RE.findall(value))
+        return max(0.7, min(1.4, 1.0 + 0.12 * max(0, warm - 1) + 0.06 * polite))
+    if behavior in {"negative", "insult"}:
+        harsh = len(_NEGATIVE_RE.findall(value)) + len(_INSULT_RE.findall(value))
+        return max(0.7, min(1.5, 1.0 + 0.15 * max(0, harsh - 1)))
+    if behavior == "tease":
+        return 0.9
+    return 1.0
+
+
+def companionship_factor(days: float) -> float:
+    """f2 相处时长（1.0~1.15）：认识越久，正向积累越稳；当日/新面孔 = 1.0。
+
+    只放大不缩小（负面行为不吃时长红利——老朋友骂人同样伤人）。
+    """
+    if days <= 0:
+        return 1.0
+    ratio = min(1.0, days / _COMPANION_SATURATION_DAYS)
+    return 1.0 + _COMPANION_MAX_BONUS * ratio
+
+
+def first_impression_factor(
+    first_impression: float | None, interaction_count: int
+) -> float:
+    """f3 第一印象（0.7~1.3 → 随相处趋 1.0）：最初互动的善恶定一次盘。
+
+    first_impression ∈ [-1, +1]（None=信号不足，不调制）。好印象：好话
+    来得更快；差印象：需要更多努力。偏差随互动次数指数衰减——相处本身
+    会抹平第一眼，任何人都有长期等价的机会（反歧视护栏）。
+    """
+    if first_impression is None:
+        return 1.0
+    decay = 0.5 ** (max(0, interaction_count) / _FIRST_IMPRESSION_DECAY_BASE)
+    shift = _FIRST_IMPRESSION_MAX_SHIFT * max(-1.0, min(1.0, first_impression)) * decay
+    return 1.0 + shift
+
+
+def state_factor_from_valence(valence: float) -> float:
+    """f4 当天基础状态（0.85~1.15）：bot 心情 valence ∈ [-1,1] 线性映射。"""
+    return 1.0 + _STATE_MAX_SHIFT * max(-1.0, min(1.0, float(valence)))
 
 
 def effective_delta(
@@ -113,15 +188,38 @@ def effective_delta(
     affinity: float,
     *,
     delta_override: float | None = None,
+    text: str = "",
+    first_impression: float | None = None,
+    interaction_count: int = 0,
+    companion_days: float = 0.0,
+    mood_valence: float | None = None,
 ) -> float:
-    """一次行为在当前状态下的精确增减（docs §2 v4：线性步长 × 个人系数）。
+    """一次行为在当前状态下的综合步长（docs §2 v5：多因素线性调制）。
 
-    v4 无阻尼：步长不再随当前分靠近极值缩小（v3 的 _damping 幂律已废除），
-    全程 = 因子表 delta × m(uid)；override 为权威信号不乘系数（仅 clamp）。
+    实际步长 = 基准因子表 × f1 说话温度 × f2 相处时长 × f3 第一印象
+    × f4 当日状态 × m(uid)，全程无阻尼、无固定「加几减几」口径；
+    override 为权威信号直用（其余因子不参与，仅 clamp）。
     """
     if delta_override is not None:
         return float(delta_override)
-    return _BEHAVIOR_DELTA.get(behavior, 0.0) * per_user_factor(sender_id)
+    base = _BEHAVIOR_DELTA.get(behavior, 0.0)
+    if base == 0.0:
+        return 0.0
+    state = (
+        1.0 if mood_valence is None else state_factor_from_valence(mood_valence)
+    )
+    factor = (
+        pleasantness_factor(text, behavior)
+        * companionship_factor(companion_days)
+        * first_impression_factor(first_impression, interaction_count)
+        * state
+        * per_user_factor(sender_id)
+    )
+    # 负向行为不吃 f2 时长红利（f2 ≥ 1 恒放大）——对负面取倒数会加重惩罚，
+    # 与"相处时间不该加倍惩罚老朋友"的本意相悖，这里对 negative/insult 只保留 f2=1。
+    if base < 0:
+        factor = factor / companionship_factor(companion_days)
+    return base * factor
 
 # ---- §4 档位表：线性 8 档，每档宽 25，档0=友善含基准 10；边界左闭右开（最高档含 +100）。
 # 展示区间 = internal × 100；档 id -4..+3（v3 曾返回具名 id close/friendly/polite/distant，
@@ -296,6 +394,10 @@ class DynamicAffinityStore:
                 ("last_positive_at", "TEXT"),
                 ("last_negative_at", "TEXT"),
                 ("last_insult_at", "TEXT"),
+                # v5 多因素：第一印象（建档窗口内收集的善恶信号 + 定盘值）与认识时间。
+                ("first_signals", "TEXT NOT NULL DEFAULT '[]'"),
+                ("first_impression", "REAL"),
+                ("created_at", "TEXT"),
             ):
                 if column not in columns:
                     connection.execute(f"ALTER TABLE user_affinity ADD COLUMN {column} {ddl}")
@@ -338,19 +440,26 @@ class DynamicAffinityStore:
         delta_override: float | None = None,
         group_id: str | None = None,
         display_name: str | None = None,
+        text: str = "",
+        mood_valence: float | None = None,
     ) -> float:
-        """记录一次行为并更新好感度；返回更新后的 affinity。"""
+        """记录一次行为并更新好感度；返回更新后的 affinity。
+
+        v5：``text`` 供 f1 说话温度分级；``mood_valence`` 供 f4 当日状态
+        （bot 心情模块注入，缺省不调制）。
+        """
         if not sender_id:
             return _AFFINITY_BASE
         now = float(self._clock())
         now_text = _format_utc(now)
-        # 每日上限按进程本地时区自然日（bot_timezone），对用户体感即「北京时间每日重置」。
+        # 每日计数按进程本地时区自然日（bot_timezone），对用户体感即「北京时间每日重置」。
         day_index = int(time.strftime("%Y%m%d", time.localtime(now)))
         with self._lock, self._connect() as connection:
             row = connection.execute(
                 "SELECT affinity, interaction_count, positive_count, negative_count, tease_count, insult_count,"
                 " nickname, impression_tags, profile_notes, counter_day_index, day_counters, updated_at,"
-                " last_positive_at, last_negative_at, last_insult_at"
+                " last_positive_at, last_negative_at, last_insult_at,"
+                " first_signals, first_impression, created_at"
                 " FROM user_affinity WHERE sender_id = ?",
                 (sender_id,),
             ).fetchone()
@@ -363,6 +472,9 @@ class DynamicAffinityStore:
                 day_counters: dict[str, int] = {}
                 interactions = 0
                 last_seen: dict[str, str | None] = {"positive": None, "negative": None, "insult": None}
+                first_signals: list[float] = []
+                first_impression: float | None = None
+                created_at = now_text
             else:
                 affinity = float(row["affinity"])
                 counters = {
@@ -380,6 +492,13 @@ class DynamicAffinityStore:
                     "negative": row["last_negative_at"],
                     "insult": row["last_insult_at"],
                 }
+                first_signals = json.loads(str(row["first_signals"] or "[]"))
+                first_impression = (
+                    float(row["first_impression"])
+                    if row["first_impression"] is not None
+                    else None
+                )
+                created_at = str(row["created_at"] or row["updated_at"] or now_text)
                 # 每日计数仅当日有效；跨日自动清零（row_day != day_index 视为新的一天）。
                 row_day = int(row["counter_day_index"] if row["counter_day_index"] is not None else -1)
                 day_counters = (
@@ -395,7 +514,9 @@ class DynamicAffinityStore:
                         shift = min(idle_days * _IDLE_REGRESSION_PER_DAY, abs(gap))
                         affinity += shift if gap > 0 else -shift
             # delta：每日上限内全额、超限记 0；override 视为权威信号直用且不占每日额度。
-            # §2 v4：实际步长 = 因子表 × 个人系数 m(uid)，线性、无幂律阻尼。
+            # §2 v5：实际步长 = 基准因子 × f1 说话温度 × f2 相处时长 × f3 第一印象
+            # × f4 当日状态 × m(uid)，多因素连续调制，无固定加减数值。
+            companion_days = max(0.0, now - (_parse_utc(created_at) or now)) / _DAY_SECONDS
             if delta_override is not None:
                 delta = float(delta_override)
             else:
@@ -404,7 +525,16 @@ class DynamicAffinityStore:
                 if cap is not None and used >= cap:
                     delta = 0.0
                 else:
-                    delta = effective_delta(sender_id, behavior, affinity)
+                    delta = effective_delta(
+                        sender_id,
+                        behavior,
+                        affinity,
+                        text=text,
+                        first_impression=first_impression,
+                        interaction_count=interactions,
+                        companion_days=companion_days,
+                        mood_valence=mood_valence,
+                    )
                 day_counters[behavior] = used + 1
             # §1 v4：写入路径全部 clamp 到 [-1, +1]（存量 [0,1] 旧值恒等沿用，无迁移）。
             affinity = max(-1.0, min(1.0, affinity + delta))
@@ -412,6 +542,17 @@ class DynamicAffinityStore:
                 counters[behavior] += 1
             if behavior in last_seen:
                 last_seen[behavior] = now_text
+            # v5 第一印象：建档窗口内累积善恶信号，攒够一次定盘（此后不再改动）。
+            if first_impression is None:
+                first_signals.append(
+                    {"positive": 1.0, "neutral": 0.0, "tease": -0.25, "negative": -0.75, "insult": -1.0}.get(
+                        behavior, 0.0
+                    )
+                )
+                if len(first_signals) >= _FIRST_IMPRESSION_WINDOW:
+                    first_impression = max(
+                        -1.0, min(1.0, sum(first_signals) / len(first_signals))
+                    )
             for watch, threshold, tag in _IMPRESSION_RULES:
                 if watch in counters and counters[watch] >= threshold and tag not in tags:
                     tags.append(tag)
@@ -421,8 +562,9 @@ class DynamicAffinityStore:
                     (sender_id, affinity, interaction_count, positive_count, negative_count,
                      tease_count, insult_count, nickname, impression_tags, profile_notes,
                      counter_day_index, day_counters, updated_at,
-                     last_positive_at, last_negative_at, last_insult_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     last_positive_at, last_negative_at, last_insult_at,
+                     first_signals, first_impression, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sender_id,
@@ -441,6 +583,9 @@ class DynamicAffinityStore:
                     last_seen["positive"],
                     last_seen["negative"],
                     last_seen["insult"],
+                    json.dumps(first_signals if first_impression is None else [], ensure_ascii=False),
+                    first_impression,
+                    created_at,
                 ),
             )
             # 群镜像：带 group_id 时写该群；不带时同步该用户已镜像的全部群，
@@ -591,6 +736,32 @@ class DynamicAffinityStore:
             "profile_notes": json.loads(str(row["profile_notes"] or "[]")),
             "tier": tier_for_affinity(affinity),
             "attitude": attitude_for_affinity(affinity),
+        }
+
+    def factor_profile(self, sender_id: str) -> dict[str, Any]:
+        """v5 因子画像（展示层定性描述用）：第一印象/互动次数/认识天数。"""
+        empty = {"first_impression": None, "interaction_count": 0, "known_days": 0.0}
+        if not sender_id:
+            return empty
+        now = float(self._clock())
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT first_impression, interaction_count, created_at, updated_at"
+                " FROM user_affinity WHERE sender_id = ?",
+                (sender_id,),
+            ).fetchone()
+        if row is None:
+            return empty
+        created = _parse_utc(str(row["created_at"] or row["updated_at"] or ""))
+        known_days = max(0.0, now - created) / _DAY_SECONDS if created is not None else 0.0
+        return {
+            "first_impression": (
+                float(row["first_impression"])
+                if row["first_impression"] is not None
+                else None
+            ),
+            "interaction_count": int(row["interaction_count"]),
+            "known_days": round(known_days, 1),
         }
 
     def learn_profile(self, sender_id: str, text: str) -> list[str]:

@@ -318,11 +318,13 @@ def render_card_png(
     config: Any,
     card_dir: str = "data/cards",
     bot_avatar_url: str = "",
+    feature_label: str = "",
 ) -> dict | None:
     """把解析结果渲染成 PNG 信息卡并写入 ``card_dir``；失败返回 None。
 
     模块级独立函数：bot.content 与订阅推送共用同一条卡片渲染管线，
     渲染失败一律返回 None，由调用方回退各自的文本输出。
+    ``feature_label`` 进入卡片页脚「守岸人 · <功能名>」（F11）。
     """
     if render_backend is None or not getattr(render_backend, "available", False):
         return None
@@ -362,6 +364,7 @@ def render_card_png(
             payload = card_payload_from_parse(item)
             payload["bot_name"] = bot_name
             payload["bot_avatar_url"] = resolved_bot_avatar_url
+            payload["feature_label"] = feature_label
             html_text = render_universal_card_html(payload)
             # 整体 UI 缩放（bot_card_ui_scale，1.0=100%，1.25=125%）。
             # 语义同 Windows 显示缩放：card_width 传 1440px 原基准，模板把
@@ -389,6 +392,9 @@ def render_card_png(
                 for label, value in payload["stats"].items()
                 if not isinstance(value, (dict, list))
             }
+            payload["bot_name"] = bot_name
+            payload["bot_avatar_url"] = resolved_bot_avatar_url
+            payload["feature_label"] = feature_label
             html_text = render_media_card_html(payload)
             render_payload = {"html": html_text}
         png = render_backend.render_card(render_payload)

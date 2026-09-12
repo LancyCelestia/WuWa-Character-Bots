@@ -3100,6 +3100,13 @@ def _register_nonebot_handlers() -> None:
     def _build_eat_with_backend(config_: Any, **_kwargs: Any) -> Any:
         return build_eat_capability(config_, render_backend=render_backend)
 
+    def _build_affinity_with_backend(config_: Any, **_kwargs: Any) -> Any:
+        return build_affinity_capability(
+            config_,
+            affinity_store=build_character_affinity_store(config_),
+            render_backend=render_backend,
+        )
+
     try:
         from nonebot_plugin_apscheduler import scheduler
     except Exception as exc:  # noqa: BLE001 - optional worker must fail closed.
@@ -4343,6 +4350,16 @@ def _register_nonebot_handlers() -> None:
     eat = on_message(rule=_is_eat_event, priority=41, block=True)
     subscribe_cmd = on_message(rule=_is_standalone_subscribe_event, priority=12, block=True)
 
+    async def _is_affinity_event(state: T_State, event: Event) -> bool:
+        # F1/F17 修复：路由层一直有 RouteKind.AFFINITY 判定，但主模块从未注册
+        # 对应 matcher——「好感度」系消息全部静默坠地（用户实弹反馈：发了没回复）。
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.AFFINITY
+        )
+
+    affinity = on_message(rule=_is_affinity_event, priority=41, block=True)
+
     async def _is_alias_command(state: T_State, event: Event) -> bool:
         return (
             _cached_route_decision(
@@ -4696,6 +4713,26 @@ def _register_nonebot_handlers() -> None:
                     db_path=memory_db_path,
                     request_id=message.request_id,
                 )
+
+        elif command_text == "好感度" or command_text.startswith(
+            ("好感度 ", "好感查看", "查询好感", "好感值", "亲密度")
+        ):
+            # F1/F17：/bot 好感度 [算法] 显式接入（此前坠入 help 兜底，算法页不可达）。
+            capability_id = "bot.affinity"
+            affinity_rest = (
+                command_text.removeprefix("好感度")
+                .removeprefix("好感查看")
+                .removeprefix("查询好感")
+                .removeprefix("好感值")
+                .removeprefix("亲密度")
+                .strip()
+            )
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                synthetic = message.model_copy(
+                    update={"plain_text": f"好感度 {affinity_rest}".strip()}
+                )
+                return _build_affinity_with_backend(config)(synthetic, _decision)
 
         elif command_text == "why" or command_text.startswith("why "):
             capability_id = "bot.why"
@@ -5476,6 +5513,9 @@ def _register_nonebot_handlers() -> None:
                             behavior,
                             group_id=message.group_id or None,
                             display_name=(message.sender_display_name or "").strip() or None,
+                            # v5 多因素：说话原文供 f1 温度分级；当日心情供 f4 状态调制。
+                            text=message.plain_text,
+                            mood_valence=_mood_valence(config),
                         )
                         facts = _epf(message.plain_text)
                         if facts:
@@ -6208,6 +6248,12 @@ def _register_nonebot_handlers() -> None:
     async def _handle_reminder(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
             bot, event, build_reminder_capability, "bot.reminder", reminder
+        )
+
+    @affinity.handle()
+    async def _handle_affinity(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, _build_affinity_with_backend, "bot.affinity", affinity
         )
 
     @eat.handle()

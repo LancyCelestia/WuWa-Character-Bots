@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 from plugins.bot_unified_runtime.character.affinity import (
-    effective_delta,
     tier_name_for_affinity,
 )
 from plugins.bot_unified_runtime.contracts import (
@@ -27,9 +26,13 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
 )
 
-_COMMAND_RE = re.compile(r"^[/!！]?\s*(?:好感度|好感查看|查询好感)\s*(?P<arg>.*)$")
-# v4 展示口径：-100~+100 八档（docs/affinity-design.md §4/§7）；档位命名由
-# character.affinity.tier_name_for_affinity 统一提供，此处不再维护阈值副本。
+_COMMAND_RE = re.compile(
+    r"^[/!！]?\s*(?:好感度|好感查看|查询好感|好感值|亲密度|affinity"
+    r"|好感(?=\s|$|算法|说明|规则|榜|我))\s*(?P<arg>.*)$",
+    re.IGNORECASE,
+)
+# v5 展示口径（用户裁定 2026-09-12 实弹反馈④）：-100~+100 八档不变；
+# 算法说明一律定性描述，不再展示「一次加几减几」的具体数值口径。
 _LEADERBOARD_LIMIT = 60
 _LEADERBOARD_PREVIEW = 12
 
@@ -44,15 +47,20 @@ def parse_affinity_query(text: str) -> str:
 
 
 ALGORITHM_TEXT = (
-    "好感度算法（-100~+100，初始 10；线性步长、因人而异）：\n"
-    "① 加分：感谢/夸奖/问候/陪伴 每次 +2 起（同一天前 10 次有效）。\n"
-    "② 轻微波动：玩笑与越界亲昵 每次 -1 起（每日前 5 次）；普通聊天不变。\n"
-    "③ 扣分：抱怨/贬低 每次 -5 起、辱骂/骚扰 每次 -10 起（每日各前 8 次）。\n"
-    "动态规则：步长线性，各档位全额（不做靠边衰减）；每人另有由 QQ 号确定性派生的"
-    " ±15% 个人系数——同一句话，不同人的实际增减不同。"
-    "好久不理我会慢慢回到 10 分（闲置 7 天起每天向 10 回归 1 分）；"
-    "难听的记忆也会随时间淡掉（15~30 天）。\n"
-    "档位态度：初识/生疏/微凉/稍淡/友善/亲近/挚友/独一份 共八档；"
+    "好感度算法（-100~+100，初始 10）：\n"
+    "好感不是记次数的账本，而是一段连续流动的印象。每次相处，好感都会综合这些"
+    "因素平滑地变化：\n"
+    "① 说话的温度——真诚的感谢、问候与陪伴让好感自然升温；抱怨与恶言会让它"
+    "降温，说得越难听降温越多。\n"
+    "② 相处的时间——认识越久、相处越多，信任的积累越稳；刚认识时会更谨慎一些。\n"
+    "③ 第一印象——最初几次互动的善恶会定下一个「起点偏差」：第一印象好，好话"
+    "来得更明显；第一印象不佳，则需要更多温柔与耐心来弥补。\n"
+    "④ 我当天的状态——我也会累也会开心，状态不同，感受的敏锐度也不同。\n"
+    "⑤ 每个人的相处节奏略有差异，但态度与心意对所有人完全一致，绝无厚此薄彼。\n"
+    "动态规则：好感没有固定加几减几；同一天内重复同类的言行影响会递减；"
+    "好久不联系，好感会慢慢回到平静的基准；难听的记忆也会随时间淡去。\n"
+    "档位态度：初识/生疏/微凉/稍淡/友善/亲近/挚友/独一份 共八档，连续过渡、"
+    "绝不在门槛上生硬跳变。\n"
     "红线摘要：任何档位都不强硬、不辱骂、不贬低，负向档位只是距离感，"
     "最高档也不越界，不冷暴力弃聊。"
 )
@@ -70,11 +78,33 @@ _TIER_TABLE: list[dict[str, str]] = [
 ]
 
 _STEP_LABELS: tuple[tuple[str, str], ...] = (
-    ("positive", "感谢/夸奖"),
-    ("tease", "玩笑/亲昵"),
-    ("negative", "抱怨/贬低"),
-    ("insult", "辱骂/骚扰"),
+    ("first_impression", "第一印象"),
+    ("known_days", "相处时长"),
 )
+
+
+def _factor_steps(profile: dict[str, Any]) -> list[dict[str, str]]:
+    """请求者此刻的因子画像（定性方向词，不展示具体步长数值——F4）。"""
+    steps: list[dict[str, str]] = []
+    first = profile.get("first_impression")
+    if first is None:
+        steps.append({"label": "第一印象", "value": "还在积累中（最初几次相处定下起点）", "cls": "flat"})
+    elif float(first) >= 0.25:
+        steps.append({"label": "第一印象", "value": "起点不错，好话来得更明显", "cls": "up"})
+    elif float(first) <= -0.25:
+        steps.append({"label": "第一印象", "value": "起点偏冷，需要更多温柔来弥补", "cls": "down"})
+    else:
+        steps.append({"label": "第一印象", "value": "平静的起点，不快不慢", "cls": "flat"})
+    days = float(profile.get("known_days") or 0.0)
+    if days < 1.0:
+        steps.append({"label": "相处时长", "value": "刚认识不久，还在慢慢熟悉", "cls": "flat"})
+    elif days < 30.0:
+        steps.append({"label": "相处时长", "value": "认识些日子了，信任在稳步积累", "cls": "up"})
+    elif days < 365.0:
+        steps.append({"label": "相处时长", "value": "相处了好几个月，已经很熟了", "cls": "up"})
+    else:
+        steps.append({"label": "相处时长", "value": "陪伴了一年以上的老朋友", "cls": "up"})
+    return steps
 
 
 def _accent_color(config: Any | None) -> str:
@@ -90,21 +120,22 @@ def _bot_name(config: Any | None) -> str:
 
 
 def _rules_chips() -> list[dict[str, str]]:
+    """规则速览（v5：定性描述，不展示具体加减数值口径）。"""
     return [
         {
             "cls": "up",
-            "label": "加分",
-            "text": "感谢 / 夸奖 / 问候 / 陪伴　+2/次（每日前 10 次）",
+            "label": "升温",
+            "text": "真诚的感谢 / 夸奖 / 问候 / 陪伴——说得越暖，升温越明显",
         },
         {
             "cls": "flat",
-            "label": "波动",
-            "text": "玩笑亲昵 -1/次（每日前 5 次）· 普通聊天不变 · 闲置 7 天起每天向 10 回归 1 分",
+            "label": "平稳",
+            "text": "普通聊天 · 相处越久信任越稳 · 久不联系会慢慢回到基准",
         },
         {
             "cls": "down",
-            "label": "扣分",
-            "text": "抱怨 -5 / 次 · 辱骂骚扰 -10 / 次（每日前 8 次）",
+            "label": "降温",
+            "text": "玩笑轻微 / 抱怨更多 / 辱骂最重——越难听降温越多",
         },
     ]
 
@@ -116,6 +147,7 @@ def build_private_payload(
     bot_name: str,
     accent_color: str,
     subtitle: str,
+    bot_avatar_url: str = "",
 ) -> dict[str, Any]:
     """私聊双向卡 payload（纯函数，便于测试）。"""
     return {
@@ -124,6 +156,8 @@ def build_private_payload(
         "subtitle": subtitle,
         "mode": "private",
         "bot_name": bot_name,
+        "bot_avatar_url": bot_avatar_url,
+        "feature_label": "好感度",
         "bot_to_user": {
             "score": bot_to_user,
             "tier": _tier_text(bot_to_user),
@@ -158,13 +192,17 @@ def build_algorithm_payload(
     steps: list[dict[str, str]],
     accent_color: str,
     subtitle: str = "算法 · 因人而异 · 档位回应方式",
+    bot_avatar_url: str = "",
 ) -> dict[str, Any]:
-    """算法说明卡 payload：规则速览 + 请求者此刻的精确步长 + 档位态度对照。"""
+    """算法说明卡 payload：规则速览 + 请求者的因子画像（定性）+ 档位态度对照。"""
     return {
         "pc": accent_color,
         "title": "好感度算法",
         "subtitle": subtitle,
         "mode": "algorithm",
+        "bot_name": "守岸人",
+        "bot_avatar_url": bot_avatar_url,
+        "feature_label": "好感度",
         "bot_score": f"{bot_score:.1f}",
         "steps": steps,
         "tiers": [dict(tier) for tier in _TIER_TABLE],
@@ -187,8 +225,8 @@ def _format_private_text(bot_name: str, bot_score: float, user_score: float) -> 
 
 def _algorithm_one_liner() -> str:
     return (
-        "算法：+2 起/-1 起/-5 起/-10 起（线性全额）；闲置 7 天起每天向 10 回归 1 分；"
-        "难听记忆 15~30 天淡出；×个人系数（±15%）。发「好感度 算法」看完整说明。"
+        "算法：好感随言行连续累积——说话的温度、相处的时间、第一印象、我当天的"
+        "状态都会平滑地影响变化，没有固定的加几减几。发「好感度 算法」看完整说明。"
     )
 
 
@@ -266,28 +304,23 @@ def build_affinity_capability(
         )
         arg = parse_affinity_query(message.plain_text)
 
-        if arg in {"算法", "说明", "规则", "help"}:
+        if arg in {"算法", "说明", "规则", "help", "算法说明", "怎么算", "如何算", "如何计算"}:
             steps: list[dict[str, str]] = []
             bot_score = 10.0
             if affinity_store is not None and message.sender_id:
                 snap = affinity_store.snapshot(message.sender_id)
                 current = float(snap.get("affinity", 0.1))
                 bot_score = round(current * 100.0, 1)
-                for behavior, label in _STEP_LABELS:
-                    value = round(
-                        effective_delta(message.sender_id, behavior, current) * 100.0, 2
-                    )
-                    steps.append(
-                        {"label": label, "value": f"{value:+.2f}", "cls": "up" if value >= 0 else "down"}
-                    )
+                try:
+                    steps = _factor_steps(affinity_store.factor_profile(message.sender_id))
+                except Exception:  # noqa: BLE001 - 画像缺失时只展示通用说明。
+                    steps = []
             body = ALGORITHM_TEXT
-            if steps:
-                body += (
-                    f"\n你此刻的精确步长（印象好感 {bot_score:.1f}）："
-                    + "｜".join(f"{s['label']} {s['value']}" for s in steps)
-                )
             payload = build_algorithm_payload(
-                bot_score=bot_score, steps=steps, accent_color=accent
+                bot_score=bot_score,
+                steps=steps,
+                accent_color=accent,
+                bot_avatar_url=str(getattr(config, "bot_persona_avatar_url", "") or ""),
             )
             card = _render_card(payload, render_backend, resolved_card_dir, request_id)
             return CapabilityResult(
@@ -339,6 +372,7 @@ def build_affinity_capability(
                 bot_name=bot_name,
                 accent_color=accent,
                 subtitle=where,
+                bot_avatar_url=str(getattr(config, "bot_persona_avatar_url", "") or ""),
             )
 
         card = _render_card(payload, render_backend, resolved_card_dir, request_id)

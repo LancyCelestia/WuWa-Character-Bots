@@ -147,6 +147,17 @@ body {
   line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
 .footer { margin-top: 10px; font-size: 11px; color: #7a8699;
   border-top: 1px dashed color-mix(in srgb, var(--pc) 14%, rgba(255, 255, 255, 0.60)); padding-top: 8px; }
+/* F11 页脚：头像 + 机器人名 + 功能名（weather/eat 等媒体卡路径同样强制带）。 */
+.card-footer-bot { margin-top: 10px; display: flex; align-items: center; gap: 7px;
+  border-top: 1px dashed color-mix(in srgb, var(--pc) 14%, rgba(255, 255, 255, 0.60)); padding-top: 8px; }
+.cfb-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
+  border: 1px solid #fff; box-shadow: 0 1px 4px rgba(31, 35, 41, 0.12); }
+.cfb-dot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+  background: color-mix(in srgb, var(--pc) 18%, #fff); color: var(--pc-dark);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600; }
+.cfb-name { font-size: 12px; font-weight: 650; color: var(--pc-dark); white-space: nowrap; }
+.cfb-label { font-size: 11px; color: #7a8699; }
 """
 
 
@@ -158,7 +169,9 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
     """结构化 payload → 信息卡 HTML。
 
     payload 字段：title, platform, author, cover_url, stats{label:value},
-    summary（多行文本）, footer。
+    summary（多行文本）, footer, bot_name, bot_avatar_url, feature_label。
+    无封面时封面区整体折叠（不再渲染占位图块）；canonical_url 为合约
+    占位值 about:blank 时按无页脚链接处理（F10）。
     """
     title = _esc(payload.get("title")) or "未命名内容"
     platform = _esc(payload.get("platform")) or ""
@@ -167,6 +180,11 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
     stats = payload.get("stats") or {}
     summary = _esc(payload.get("summary")) or ""
     footer = _esc(payload.get("footer")) or ""
+    if footer == "about:blank":
+        footer = ""
+    bot_name = _esc(payload.get("bot_name")) or "守岸人"
+    bot_avatar = _esc(payload.get("bot_avatar_url"))
+    feature_label = _esc(payload.get("feature_label"))
     pc = _esc(payload.get("platform_color")) or "#607080"
     pc_dark = _esc(payload.get("platform_color_dark")) or "#4a5866"
     pc_rgb = _esc(payload.get("platform_color_rgb")) or "96,112,128"
@@ -184,14 +202,29 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
 
     cover_block = ""
     if cover:
+        # 徽章显功能名（F10：裸平台键如 "eat" 无意义），缺省回平台名。
+        badge_text = feature_label or platform
         cover_block = (
+            f'<div class="cover-wrap">'
             f'<img src="{cover}" '
             'onerror="this.style.display=\'none\'" alt="cover"/>'
+            f'<div class="badge">{badge_text}</div></div>'
         )
     stats_html = "".join(
         f'<span class="stat">{_esc(label)} {_esc(value)}</span>'
         for label, value in stats.items()
         if not isinstance(value, (dict, list))
+    )
+    avatar_block = (
+        f'<img class="cfb-avatar" src="{bot_avatar}" alt="" '
+        'onerror="this.style.display=\'none\'"/>'
+        if bot_avatar
+        else f'<span class="cfb-dot">{bot_name[:1]}</span>'
+    )
+    bot_footer = (
+        f'<div class="card-footer-bot">{avatar_block}'
+        f'<span class="cfb-name">{bot_name}</span>'
+        f'<span class="cfb-label">· {feature_label or "Shorekeeper"}</span></div>'
     )
     return (
         "<html><head><meta charset=\"utf-8\"><style>"
@@ -200,14 +233,13 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
         '<span class="drift-blob drift-a"></span>'
         '<span class="drift-blob drift-b"></span>'
         '<span class="drift-blob drift-c"></span></div>'
-        f'<div class="cover-wrap">{cover_block}'
-        f'<div class="badge">{platform}</div>'
-        '<div class="cover-fallback">🖼</div></div>'
-        f'<div class="body"><div class="title">{title}</div>'
+        + cover_block
+        + f'<div class="body"><div class="title">{title}</div>'
         + (f'<div class="author">{author}</div>' if author else "")
         + (f'<div class="stats">{stats_html}</div>' if stats_html else "")
         + (f'<div class="summary">{summary}</div>' if summary else "")
         + (f'<div class="footer">{footer}</div>' if footer else "")
+        + bot_footer
         + "</div></div></div>" + _PHASE_JS + "</body></html>"
     )
 

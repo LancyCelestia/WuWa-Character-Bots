@@ -177,8 +177,6 @@ def test_algorithm_query_returns_dynamic_personal_rules(tmp_path) -> None:
     from plugins.bot_unified_runtime.capabilities.affinity import (
         build_affinity_capability,
     )
-    from plugins.bot_unified_runtime.character.affinity import per_user_factor
-
     store = _store(tmp_path)
     backend = SimpleNamespace(available=True, render_card=lambda payload: b"png-bytes")
     capability = build_affinity_capability(
@@ -187,11 +185,9 @@ def test_algorithm_query_returns_dynamic_personal_rules(tmp_path) -> None:
     result = capability(_message("好感度 算法"), _decision())
     assert result.kind == "mixed"
     assert result.images and result.images[0]["file"]
-    assert "加分" in result.body and "波动" in result.body and "扣分" in result.body
-    assert "因人而异" in result.body
-    # 个人精确步长：按当前分（初始 10）与个人系数给出
-    m = per_user_factor("u1")
-    assert f"+{2 * m:.2f}" in result.body
+    # v5：算法说明定性化（F4 用户裁定——不展示固定加减数值口径）
+    assert "升温" in result.body and "降温" in result.body and "第一印象" in result.body
+    assert "节奏" in result.body or "因人而异" in result.body
     # 渲染落盘为内容摘要文件名
     assert "affinity_" in result.images[0]["file"]
 
@@ -207,14 +203,15 @@ def test_algorithm_copy_is_v4_linear_eight_tier() -> None:
     assert _TIER_TABLE[0]["label"] == "初识" and _TIER_TABLE[0]["range"] == "[-100, -75)"
     assert _TIER_TABLE[4]["label"] == "友善（基准）" and _TIER_TABLE[4]["range"] == "[0, +25)"
     assert _TIER_TABLE[-1]["label"] == "独一份" and _TIER_TABLE[-1]["range"] == "[+75, +100]"
-    assert "线性" in ALGORITHM_TEXT and "各档位全额" in ALGORITHM_TEXT
-    assert "向 10 回归 1 分" in ALGORITHM_TEXT
-    assert "15~30 天" in ALGORITHM_TEXT
-    assert "±15%" in ALGORITHM_TEXT
+    # v5 多因素定性文案（F4）：描述多因素连续累积，且不得再出现固定加减数值
+    assert "说话的温度" in ALGORITHM_TEXT and "第一印象" in ALGORITHM_TEXT
+    assert "相处的时间" in ALGORITHM_TEXT or "相处" in ALGORITHM_TEXT
+    assert "+2" not in ALGORITHM_TEXT and "-5" not in ALGORITHM_TEXT
+    assert "连续过渡" in ALGORITHM_TEXT
     assert "不辱骂" in ALGORITHM_TEXT  # §4 红线摘要
     # 榜卡/规则 chips 不再出现 v2 遗留的「向 50 回归」
     assert all("向 50 回归" not in chip["text"] for chip in _rules_chips())
-    assert any("向 10 回归" in chip["text"] for chip in _rules_chips())
+    assert any(("回归" in chip["text"] or "回到" in chip["text"]) for chip in _rules_chips())
 
 
 def test_tier_text_spans_negative_and_positive_scores() -> None:

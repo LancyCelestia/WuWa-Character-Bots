@@ -36,6 +36,27 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
 _WEATHER_RE = re.compile(r"^[/!！]?(?:天气|查天气|天氣|查天氣|weather)\s*(?P<query>.+)$")
 _DISTRICT_RE = re.compile(r"^[/!！]?(?:支持区县|查询区县|可查区县)\s*(?P<province>.+)$")
 
+
+def _query_variants(query: str) -> list[str]:
+    """F18 查询变体链：『湘潭 雨湖』→ [原串, 去分隔串, 雨湖, 湘潭]。
+
+    原串（含省-市合成）→ 去分隔符合成 → 各段倒序（末段=区县/乡镇名优先）。
+    NMC 与 Open-Meteo 兜底都会逐个尝试，命中即止；去重保序。
+    """
+    raw = (query or "").strip()
+    if not raw:
+        return []
+    variants = [raw]
+    collapsed = re.sub(r"[\s\-—·、,，]+", "", raw)
+    if collapsed != raw and collapsed:
+        variants.append(collapsed)
+    parts = [part for part in re.split(r"[\s\-—·、,，]+", raw) if part]
+    if len(parts) >= 2:
+        for part in reversed(parts[1:]):
+            if part not in variants:
+                variants.append(part)
+    return variants
+
 # ---------------------------------------------------------------- 主通道重试
 # NMC rest/weather 主接口本身存活（2026-09-12 复测：curl 与项目链路 10/10
 # 站点 200 全量数据，无 cookie 墙；`data:""` 是无/无效 stationid 的固定响应）。
@@ -229,6 +250,7 @@ def build_weather_capability(
                 item,
                 config=config,
                 card_dir=str(getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"),
+                feature_label="天气",
             )
         except Exception:  # noqa: BLE001 - 渲染失败回退纯文本报告。
             return ""
@@ -272,15 +294,28 @@ def build_weather_capability(
                 audit_tags=["weather", "missing_query_silent"],
             )
         query = match.group("query").strip()
-        report = _nmc_query_with_retry(query, proxy=proxy)
+        # F18 查询变体链：『湘潭 雨湖』/『湘潭-雨湖』/『湘潭雨湖』逐级降维——
+        # 原串失败后拆出末段行政区（区县/乡镇）再查，直到命中为止。
+        variants = _query_variants(query)
+        report: str | None = None
         source = "nmc"
+        for variant in variants:
+            report = _nmc_query_with_retry(variant, proxy=proxy)
+            if report is not None:
+                query = variant
+                break
         if report is None:
             # 海外城市/中国乡镇街道级：NMC 城市库查不到时用 Open-Meteo 全球兜底
             # （点位级精度，覆盖乡镇/村庄/社区与全部海外地区，免 key）。
-            try:
-                global_result = open_meteo_query(query, proxy=proxy)
-            except Exception:  # noqa: BLE001 - 全球源失败按未找到降级。
-                global_result = None
+            global_result: dict[str, Any] | None = None
+            for variant in variants:
+                try:
+                    global_result = open_meteo_query(variant, proxy=proxy)
+                except Exception:  # noqa: BLE001 - 全球源失败按未找到降级。
+                    global_result = None
+                if global_result is not None:
+                    query = variant
+                    break
             if global_result is None:
                 session_scope = str(
                     getattr(getattr(message, "session_type", None), "value", "private")

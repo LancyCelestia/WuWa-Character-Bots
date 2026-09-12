@@ -94,8 +94,9 @@ def test_daily_cap_still_bounds_positive_gain(tmp_path) -> None:
     last = 0.1
     for _ in range(15):
         last = store.observe("u1", "positive")
-    # 前 10 次有效：总增益必然小于 10×全额步长
-    assert last < 0.1 + 10 * 0.02 * per_user_factor("u1")
+    # 前 10 次有效：总增益小于 10×全额步长×各因子上限（v5：第一印象 ±30%
+    # 放大 + 说话温度 ≤1.4，正向首次印象会让好话来得更快——用户裁定语义）。
+    assert last < 0.1 + 10 * 0.02 * 1.4 * 1.3 * per_user_factor("u1")
     settled = store.observe("u1", "positive")
     assert abs(settled - last) < 1e-12, "超每日上限后不再增减"
 
