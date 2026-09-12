@@ -18,7 +18,12 @@ from plugins.bot_unified_runtime.contracts.character import (
     ToneProfile,
 )
 
-from .affinity import AFFINITY_BASE, DynamicAffinityStore, tier_for_affinity
+from .affinity import (
+    AFFINITY_BASE,
+    DynamicAffinityStore,
+    linear_transition_for_affinity,
+    tier_for_affinity,
+)
 from .documents import load_character_document
 from .emotion import EmotionProvider, NullEmotionProvider, build_emotion_provider
 from .glossary import GlossaryProvider, NullGlossaryProvider, build_glossary_provider
@@ -303,6 +308,10 @@ class FileCharacterContextProvider:
                 notes_text = "；".join(str(n) for n in dynamic.get("profile_notes") or [])
                 nickname_text = str(dynamic.get("nickname") or "")
                 attitude = str(dynamic.get("attitude") or "")
+                # v4.1 线性态度：距档界很近时注入自然过渡措辞，门槛两侧语气连续渐变，
+                # 不因生硬的档位门槛剧烈转变（用户裁定，docs/affinity-design.md §4）。
+                attitude += linear_transition_for_affinity(float(dynamic["affinity"]))
+                attitude += "（好感语气为线性连续渐变，临近任何档位边界都不得生硬跳变）"
                 # §5 人格自守条款：追加在态度文本之后（独立一句，任何档位生效）。
                 attitude += _PERSONA_SELF_GUARD_CLAUSE
                 if tags_text:

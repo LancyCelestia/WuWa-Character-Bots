@@ -568,11 +568,14 @@ class RuntimePipeline:
             proactive=proactive_request,
         )
         if not rate_limit.allowed:
+            # 限流拦截一律静默（2026-09-12 实弹反馈）：降频是内部状态，
+            # 把「已临时降频」发进群只会刷屏（且连续拦截会连发多条）。
+            # 审计与 private_debug 仍完整留痕；public_message 置空即不投递。
             receipt = DeliveryReceipt(
                 request_id=message.request_id,
                 state=ReceiptState.BLOCKED,
                 transport="policy",
-                public_message=_rate_limit_public_message(rate_limit.reason),
+                public_message="",
                 debug_id=rate_limit.debug_id,
             )
             self._append_audit_safely(
@@ -676,15 +679,19 @@ class RuntimePipeline:
 
         rendered = render_reviewed_output(result, review)
         use_forward = False
-        # 合并转发触发条件（用户口径）：切分后**>3 条**（即 ≥4 条）才合并，
-        # 3 条以内照常直发；另保留按字数的兼容触发（min_chars>0 时）。
+        # 合并转发触发条件：切分后**>3 条**（即 ≥4 条）才合并，仅对非 chat
+        # 能力生效（2026-09-12 实弹反馈：chat 回复四段话被切成四条再触发合并，
+        # 整段被折叠成聊天记录——chat 回复按整条直发，仅保留超长字数触发）。
         # 转发内的发送者名用 bot 自己的名字（由调用方传入），不再署用户昵称。
         if rendered.content_type == "text" and (
-            should_forward_by_node_count(
-                rendered.text_fallback,
-                node_chars=self.forward_node_chars,
-                min_nodes=self.forward_min_nodes,
-                max_nodes=self.forward_max_nodes,
+            (
+                result.capability_id != "bot.chat"
+                and should_forward_by_node_count(
+                    rendered.text_fallback,
+                    node_chars=self.forward_node_chars,
+                    min_nodes=self.forward_min_nodes,
+                    max_nodes=self.forward_max_nodes,
+                )
             )
             or should_forward_long_text(
                 rendered.text_fallback,

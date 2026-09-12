@@ -158,6 +158,30 @@ def tier_for_affinity(affinity: float) -> int:
     return max(-4, min(3, int(display // 25)))
 
 
+_LINEAR_TRANSITION_BAND_DISPLAY = 6.0  # 展示分距档界 ±6 分内视为线性过渡带
+
+
+def linear_transition_for_affinity(affinity: float) -> str:
+    """v4.1 线性态度（用户裁定：不得在档位门槛上生硬跳变）。
+
+    距档位边界 ±6 展示分内时，返回一句"正处在向邻档自然过渡"的措辞，
+    由 providers 拼进态度注入，使门槛两侧语气衔接为连续渐变；
+    区间中部返回空串。极值档没有更外侧的邻档，返回空串。
+    """
+    display = max(-100.0, min(100.0, float(affinity) * 100.0))
+    tier = tier_for_affinity(affinity)
+    lo = -100.0 + 25.0 * (tier + 4)
+    hi = lo + 25.0
+    cur = _TIER_BY_ID[tier][0]
+    if display - lo <= _LINEAR_TRANSITION_BAND_DISPLAY and tier - 1 >= -4:
+        prev_name = _TIER_BY_ID[tier - 1][0]
+        return f"（此刻你们之间的氛围，正处在从「{prev_name}」流向「{cur}」的自然过渡里，语气顺势而为即可）"
+    if hi - display <= _LINEAR_TRANSITION_BAND_DISPLAY and tier + 1 <= 3:
+        next_name = _TIER_BY_ID[tier + 1][0]
+        return f"（此刻你们之间的氛围，正处在从「{cur}」流向「{next_name}」的自然过渡里，语气顺势而为即可）"
+    return ""
+
+
 def tier_name_for_affinity(affinity: float) -> str:
     """§4 档位名称（初识/生疏/微凉/稍淡/友善/亲近/挚友/独一份），展示层共用。"""
     return _TIER_BY_ID[tier_for_affinity(affinity)][0]
