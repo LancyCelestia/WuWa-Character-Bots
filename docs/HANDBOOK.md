@@ -1575,9 +1575,10 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 3. **geocoding count=1 + 后置排序**是反模式：先限 1 再排序等于没排序；凡「取最优」必须先取 N。
 4. 源码树 `data/` 残留（台账 #1）会随每次全量测试再生——tmp_path 化（Wave-6）前，runtime-layout 门禁是最后防线，本轮已再次拦截（备份 %TEMP% 后清理）。
 
-## 19.3 未竟（20 项内的剩余，接手即做）
+## 19.3 第二批（153fd78）后的终态
 
-F19 折线卡接线（bridge 渲染函数+market.py 出图，模板/走势 API 已入库）· F20 同名歌先问再播+music.py 页脚 · F12 维基「这是什么/当前状态」去除+概述提质 · F9 快报去营销/20条/标题党/AI新闻 · F8/F15 help 管理员隔离+分行两栏+三语触发 · F16 记忆抽取质量门槛 · F5 randpic 原图原分辨率+去「随机发送」标注 · F6 meme 生成器主动调用 · F13 queue 告警重启后观察 · F7 随机 cos（等用户插件）· F14 已答：表情包仓库=`ChatBot_Runtime/data/meme_library/`+`meme_library.sqlite3`（生成表情在 `data/memes/`）。
+第二批已完成：菜谱三连修（误触发/西红柿炒鸡蛋/带@推错菜——natural 链 bot.eat 未重写 normalized_text 为第三根因）· F19 折线卡接线（render_market_card_html+并行走势，offload 纳入 bot.market）· F20 同名歌先问（候选默认开+bare_exact 废除）· F12 维基去标签提质 · F9 快报（营销过滤+摘要行+20条+三链触发）· F16 记忆琐事黑名单 · F5 randpic 去标注（renderer 兜底链 body→summary→title 是元凶）· F8/F15 help 四要素拆行+好感度文案 v5 化+繁体触发 11 条。
+剩余：F6 meme 主动发送（需防骚扰门设计评审，有意不上线半吊子）· F7 随机 cos（等用户插件）· help Mica 卡两栏排版 · MOEX 折线源（东财无 kline）· F13 queue 告警重启后观察。F14 已答：表情包仓库=`ChatBot_Runtime/data/meme_library/`+`meme_library.sqlite3`（生成表情在 `data/memes/`）。
 
 ## 19.4 建议
 
