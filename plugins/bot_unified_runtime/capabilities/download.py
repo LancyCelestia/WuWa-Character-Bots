@@ -53,6 +53,8 @@ def build_download_capability(
             max_bytes=int(getattr(config, "bot_download_max_bytes", 1073741824)),
             max_height=int(getattr(config, "bot_download_max_height", 0)),
             timeout_seconds=int(getattr(config, "bot_download_timeout_seconds", 120)),
+            concurrency=int(getattr(config, "bot_download_concurrency", 8) or 8),
+            aria2_enabled=bool(getattr(config, "bot_download_aria2_enabled", True)),
         )
     if downloader is None:
         downloader = MediaDownloader()

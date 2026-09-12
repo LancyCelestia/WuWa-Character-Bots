@@ -252,6 +252,9 @@ class Config(BaseModel):
     bot_news_timeout_seconds: float = 6.0
     bot_news_cache_seconds: float = 600.0
     bot_news_max_items: int = 20
+    bot_download_concurrency: int = 8
+    # 装有 aria2c 时自动委托多连接下载（-x16 免预分配）；False 强制 yt-dlp 原生并发。
+    bot_download_aria2_enabled: bool = True
     bot_holidays_file: str = ""
     bot_persona_action_brackets: bool = True
     bot_credentials_file: str = ""

@@ -585,14 +585,27 @@ def build_content_capability(
     )
 
     def _render_card_image(item: Any) -> dict | None:
-        """把解析结果渲染成 PNG 信息卡；失败返回 None（文本兜底）。"""
-        return render_card_png(
+        """把解析结果渲染成 PNG 信息卡；失败返回 None（文本兜底）。
+
+        失败必须留日志痕（2026-09-12 实弹：浏览器僵死后全部解析静默降级
+        封面图，无任何诊断线索，排查靠猜）。"""
+        card = render_card_png(
             render_backend,
             item,
             config=config,
             card_dir=card_dir,
             bot_avatar_url=bot_avatar_url,
         )
+        if card is None:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "parse card render failed, falling back to cover; "
+                "backend=%s available=%s",
+                getattr(render_backend, "name", "?"),
+                getattr(render_backend, "available", False),
+            )
+        return card
 
     def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
         source_input = build_source_input(

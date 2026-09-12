@@ -119,11 +119,14 @@ def _dynamic_range_tier(fmt: dict) -> int:
 
 
 def _audio_rank(fmt: dict) -> tuple[int, int, float, int]:
-    """音频档位：Hi-Res（无损）> 杜比全景声 > 普通；同级码率/采样率高者优先。"""
+    """音频档位（用户裁定 2026-09-12）：杜比全景声 > Hi-Res（无损）> 普通高码率。
+
+    同级内按码率/采样率高者优先。
+    """
     acodec = str(fmt.get("acodec") or "").lower()
-    lossless = 1 if acodec in _LOSSLESS_CODECS else 0
     dolby = 1 if any(h in acodec for h in _ATMOS_HINTS) else 0
-    return lossless, dolby, float(fmt.get("abr") or 0.0), int(fmt.get("asr") or 0)
+    lossless = 1 if acodec in _LOSSLESS_CODECS else 0
+    return dolby, lossless, float(fmt.get("abr") or 0.0), int(fmt.get("asr") or 0)
 
 
 def _fmt_size(fmt: dict, duration_seconds: float) -> int:
@@ -146,8 +149,10 @@ def select_media_streams(
 ) -> tuple[dict | None, dict | None, str]:
     """按用户画质要求选流（纯函数，可离线测试）。
 
-    视频顺序：最高分辨率 → 动态范围（杜比视界 > HDR > SDR）→ 帧率 → 码率；
-    音频顺序：Hi-Res（无损）→ 杜比全景声 → 码率/采样率。
+    视频顺序（用户裁定 2026-09-12：杜比视界 > HDR > 8K > 4K > 2K >
+    1080P60 > 1080P高码率 > 1080P）：动态范围（杜比视界 > HDR > SDR）
+    → 分辨率 → 帧率 → 码率；
+    音频顺序（用户裁定）：杜比全景声 > Hi-Res（无损）→ 码率/采样率。
     音视频组合超过 max_bytes 时回退到小于上限的最高画质组合；
     全部超限返回 (None, None, "over_limit")，不悄悄下载低画质。
     """
@@ -164,8 +169,8 @@ def select_media_streams(
         videos = capped or videos
     videos.sort(
         key=lambda f: (
-            int(f.get("height") or 0),
             _dynamic_range_tier(f),
+            int(f.get("height") or 0),
             float(f.get("fps") or 0.0),
             float(f.get("tbr") or 0.0),
         ),
@@ -442,6 +447,8 @@ class MediaDownloader:
         ffmpeg_path: str = "",
         cache_max_bytes: int = 0,
         cache_max_age_days: int = 0,
+        concurrency: int = 8,
+        aria2_enabled: bool = True,
     ) -> None:
         self.cookies_file = str(cookies_file or "")
         self.proxy = str(proxy or "")
@@ -452,6 +459,16 @@ class MediaDownloader:
         self.ffmpeg_path = _find_ffmpeg(str(ffmpeg_path or ""))
         self.cache_max_bytes = int(cache_max_bytes)
         self.cache_max_age_days = int(cache_max_age_days)
+        # 下载并发（用户实测单连接串行太慢）：分片流（HLS）用 yt-dlp 原生
+        # concurrent_fragment_downloads；单文件大流（B站 DASH m4s）用
+        # http_chunk_size Range 分块并行。装了 aria2c 时整体委托 aria2
+        # 多连接（-x16），--file-allocation=none 免预分配、内存占用极小。
+        self.concurrency = max(1, int(concurrency))
+        self.aria2_path = ""
+        if aria2_enabled:
+            import shutil
+
+            self.aria2_path = shutil.which("aria2c") or ""
         self._lock = threading.Lock()
 
     def available(self) -> bool:
@@ -551,6 +568,27 @@ class MediaDownloader:
             opts["proxy"] = self.proxy
         if self.ffmpeg_path:
             opts["ffmpeg_location"] = self.ffmpeg_path
+        if not skip_download:
+            # 多连接提速（300Mbps 带宽实测单连接吃不满）：
+            # - 分片流（HLS/DASH 清单）并发 N 片；
+            # - 单文件流按 16MB 一块 Range 并行拉取（aria2 未装时也生效）；
+            # - 装有 aria2c 时 http(s) 整体委托 aria2（16 连接，免预分配，
+            #   内存占用≈连接数×块缓存，远低于 yt-dlp 常驻缓冲）。
+            opts["concurrent_fragment_downloads"] = self.concurrency
+            opts["http_chunk_size"] = 16 * 1024 * 1024
+            if self.aria2_path:
+                opts["external_downloader"] = {"default": "aria2c"}
+                opts["external_downloader_args"] = {
+                    "aria2c": [
+                        f"-x{min(16, self.concurrency * 2)}",
+                        f"-s{min(16, self.concurrency * 2)}",
+                        "-k1M",
+                        "-j1",
+                        "--file-allocation=none",
+                        "--console-log-level=warn",
+                        "--summary-interval=0",
+                    ]
+                }
         return opts
 
     def probe(self, url: str) -> MediaAnalysis:

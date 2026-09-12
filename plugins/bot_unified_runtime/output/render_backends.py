@@ -143,6 +143,11 @@ class PlaywrightRenderBackend:
         "playwright closed",
         "pipeline closed",
     )
+    # 连续页面级失败阈值：is_connected()=True 但内核已僵死时，页面级失败
+    # （超时/截图失败）永远不满足崩溃标记，浏览器永久卡死、所有渲染降级
+    # （2026-09-12 实弹：15:58 出卡正常 → 17:28 起全部发封面）。连续失败
+    # 达到阈值即强制丢弃线程常驻实例，下次渲染懒启动新浏览器自愈。
+    _MAX_CONSECUTIVE_PAGE_FAILURES = 2
 
     def __init__(self, *, max_concurrency: int = 2) -> None:
         import threading
@@ -168,19 +173,30 @@ class PlaywrightRenderBackend:
         return browser, ctx
 
     def _get_browser(self) -> Any:
-        """懒启动并复用本线程的常驻 Chromium；空闲超限或已死则重建。"""
+        """懒启动并复用本线程的常驻 Chromium；空闲超限或已死则重建。
+
+        launch 失败重试一次（资源瞬时紧张常见），仍失败才向上抛。
+        """
         browser, _ctx = self._thread_browser()
         if browser is not None and browser.is_connected():
             last_used = float(getattr(self._local, "last_used", 0.0) or 0.0)
             if last_used and (time.monotonic() - last_used) < self._BROWSER_IDLE_SECONDS:
                 return browser
         self._close_thread_browser()
-        playwright_ctx = self._sync_playwright()
-        playwright = playwright_ctx.start()
-        browser = playwright.chromium.launch()
-        self._local.browser = browser
-        self._local.playwright_ctx = playwright_ctx
-        return browser
+        last_launch_error: Exception | None = None
+        for _attempt in range(2):
+            try:
+                playwright_ctx = self._sync_playwright()
+                playwright = playwright_ctx.start()
+                browser = playwright.chromium.launch()
+            except Exception as exc:  # noqa: BLE001 - 启动失败重试一次。
+                last_launch_error = exc
+                time.sleep(0.5)
+                continue
+            self._local.browser = browser
+            self._local.playwright_ctx = playwright_ctx
+            return browser
+        raise last_launch_error  # type: ignore[misc]
 
     def _close_thread_browser(self) -> None:
         browser, ctx = self._thread_browser()
@@ -276,9 +292,11 @@ class PlaywrightRenderBackend:
                     element = page.query_selector(".card")
                     if element is not None:
                         # 元素截图自带裁切范围，不需要 clip 参数。
+                        self._local.page_failures = 0
                         return bytes(
                             element.screenshot(type="png", omit_background=True)
                         )
+                    self._local.page_failures = 0
                     return bytes(page.screenshot(type="png", full_page=True))
                 finally:
                     if page is not None:
@@ -289,8 +307,17 @@ class PlaywrightRenderBackend:
             except Exception as exc:  # noqa: BLE001 - 渲染失败按无结果降级。
                 # 页面级失败（加载超时/截图失败）只关页面（finally 已关），
                 # 浏览器复用不受影响；仅浏览器级错误（Target closed 等）重启。
-                if self._browser_looks_broken(exc):
+                failures = int(getattr(self._local, "page_failures", 0) or 0) + 1
+                self._local.page_failures = failures
+                if self._browser_looks_broken(exc) or failures >= self._MAX_CONSECUTIVE_PAGE_FAILURES:
+                    # 僵死浏览器（连接在但内核卡死）不会命中崩溃标记：
+                    # 连续页面失败达阈值同样强制丢弃，下次懒启动重建自愈。
                     self._close_thread_browser()
+                    _LOGGER.warning(
+                        "render browser rebuilt after failure streak (%d): %s",
+                        failures,
+                        type(exc).__name__,
+                    )
                 return None
             finally:
                 self._local.last_used = time.monotonic()

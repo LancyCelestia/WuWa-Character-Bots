@@ -44,18 +44,20 @@ def test_prefers_dolby_vision_over_hdr_over_sdr_at_same_height() -> None:
     assert video["dynamic_range"] == "DOLBY VISION"
 
 
-def test_height_dominates_then_dynamic_range() -> None:
+def test_dynamic_range_dominates_then_height() -> None:
+    # 用户裁定 2026-09-12：杜比视界 > HDR > 8K > 4K > …（动态范围先于分辨率）
     formats = [_v(2160), _v(1080, dr="DOLBY VISION")]
     video, _audio, _note = select_media_streams(formats, max_bytes=0)
     assert video is not None
-    assert video["height"] == 2160
+    assert video["height"] == 1080  # 杜比视界 1080P 胜出 4K SDR
 
 
-def test_audio_prefers_lossless_then_dolby_then_bitrate() -> None:
+def test_audio_prefers_dolby_then_lossless_then_bitrate() -> None:
+    # 用户裁定 2026-09-12：杜比全景声 > Hi-Res（无损）> 普通高码率
     formats = [_a(abr=320), _a(codec="ec-3", abr=640), _a(codec="flac", abr=1000)]
     _video, audio, _note = select_media_streams(formats, max_bytes=0)
     assert audio is not None
-    assert audio["acodec"] == "flac"
+    assert audio["acodec"] == "ec-3"
     _video2, audio2, _note2 = select_media_streams(
         [_a(abr=128), _a(codec="ec-3", abr=384)], max_bytes=0
     )
