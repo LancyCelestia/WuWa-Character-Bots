@@ -201,19 +201,66 @@ def build_call_draft(
     status: str = "",
     error_kind: str = "",
     error_summary: str = "",
+    price_in: float | None = None,
+    price_out: float | None = None,
+    price_cache_read: float | None = None,
+    price_cache_creation: float | None = None,
+    price_per_call: float | None = None,
 ) -> LLMCallDraft:
     """从出口原语组装 draft；token 取自 raw_usage 归一化键，缺失即 NULL。
 
-    M1 计费口径：无 PricingService → cost 全 NULL、pricing_source 固定
-    ``unknown``；有 token 消耗（total>0）的行标 ``unpriced=1``。
+    计费口径（2026-09-12 起接入渠道价）：调用方（router）透传该渠道
+    单价（元 / 1M tokens：price_in/price_out/price_cache_read/
+    price_cache_creation）；四价齐备 in/out 时即计价——
+    ``账单 = 输入(未命中部分)×in + 缓存创建×creation价(缺省回退 in)
+    + 缓存命中×read价(缺省回退 in) + 输出×out``，pricing_source=
+    ``channel_spec``。价格缺失时 cost 保持 NULL、unpriced=1
+    （「未知不是 0」），报表按未计价调用计数展示。
     """
     usage = usage if isinstance(usage, dict) else {}
     total_tokens = _optional_token_int(usage.get("total_tokens"))
+    prompt_tokens = _optional_token_int(usage.get("prompt_tokens"))
+    cache_creation_tokens = _optional_token_int(usage.get("cache_write_tokens"))
+    cache_read_tokens = _optional_token_int(usage.get("cache_read_tokens"))
+    completion_tokens = _optional_token_int(usage.get("completion_tokens"))
     # finish_reason：显式参数优先；否则取 usage 内的白名单校验值（§3 DDL：
     # safe_llm_finish_reason 白名单值）。
     safe_finish = safe_llm_finish_reason(finish_reason)
     if not safe_finish:
         safe_finish = safe_llm_finish_reason(usage.get("finish_reason"))
+    # 计价：in/out 缺任一即视为未配置价格（保持 NULL 口径）。
+    input_cost_milli: int | None = None
+    cache_read_cost_milli: int | None = None
+    output_cost_milli: int | None = None
+    total_cost_milli: int | None = None
+    pricing_source = "unknown"
+    unpriced = 1 if (total_tokens is not None and total_tokens > 0) else 0
+    if price_in is not None and price_out is not None:
+        cached_read = cache_read_tokens or 0
+        cached_write = cache_creation_tokens or 0
+        prompt = prompt_tokens or 0
+        billed_input = max(0, prompt - cached_read - cached_write)
+        creation_price = (
+            price_cache_creation if price_cache_creation is not None else price_in
+        )
+        read_price = price_cache_read if price_cache_read is not None else price_in
+        input_cost_milli = round(billed_input * price_in + cached_write * creation_price)
+        cache_read_cost_milli = round(cached_read * read_price)
+        output_cost_milli = round((completion_tokens or 0) * price_out)
+        total_cost_milli = (
+            input_cost_milli + cache_read_cost_milli + output_cost_milli
+        )
+        pricing_source = "channel_spec"
+        unpriced = 0
+    # 按次计费渠道（0.18元/请求类）：与 token 价并存则叠加，单独存在时
+    # 独立成账（token 列保持 NULL）。
+    per_call_milli = (
+        round(price_per_call * 1000) if price_per_call is not None else None
+    )
+    if per_call_milli is not None:
+        total_cost_milli = (total_cost_milli or 0) + per_call_milli
+        pricing_source = "channel_spec"
+        unpriced = 0
     return LLMCallDraft(
         request_id=str(request_id or ""),
         call_seq=max(1, int(call_seq)),
@@ -227,17 +274,17 @@ def build_call_draft(
         actual_model=str(actual_model or ""),
         effort=str(effort or ""),
         routing_group=str(routing_group or ""),
-        prompt_tokens=_optional_token_int(usage.get("prompt_tokens")),
-        cache_creation_tokens=_optional_token_int(usage.get("cache_write_tokens")),
-        cache_read_tokens=_optional_token_int(usage.get("cache_read_tokens")),
-        completion_tokens=_optional_token_int(usage.get("completion_tokens")),
+        prompt_tokens=prompt_tokens,
+        cache_creation_tokens=cache_creation_tokens,
+        cache_read_tokens=cache_read_tokens,
+        completion_tokens=completion_tokens,
         total_tokens=total_tokens,
-        input_cost_milli=None,
-        cache_read_cost_milli=None,
-        output_cost_milli=None,
-        total_cost_milli=None,
-        pricing_source="unknown",
-        unpriced=1 if (total_tokens is not None and total_tokens > 0) else 0,
+        input_cost_milli=input_cost_milli,
+        cache_read_cost_milli=cache_read_cost_milli,
+        output_cost_milli=output_cost_milli,
+        total_cost_milli=total_cost_milli,
+        pricing_source=pricing_source,
+        unpriced=unpriced,
         attempts=list(attempts or []),
         finish_reason=safe_finish,
         status=str(status or ""),

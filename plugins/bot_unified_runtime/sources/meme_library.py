@@ -217,6 +217,21 @@ class MemeLibraryStore:
         self.mark_used(str(picked["md5"]))
         return picked
 
+    def list_untagged(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        """未打标图片（description 为空），启动补标队列用；md5+path。"""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT md5, path FROM memes
+                WHERE IFNULL(description, '') = ''
+                ORDER BY added_at ASC LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [
+            {"md5": str(row["md5"]), "path": str(row["path"])} for row in rows
+        ]
+
     def stats(self) -> dict[str, Any]:
         with self._lock, self._connect() as connection:
             total = connection.execute("SELECT COUNT(*) AS c FROM memes").fetchone()["c"]

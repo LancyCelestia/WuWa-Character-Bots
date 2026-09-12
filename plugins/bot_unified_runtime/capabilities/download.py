@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 from plugins.bot_unified_runtime.contracts import (
@@ -36,6 +37,39 @@ def extract_download_url(text: str) -> str | None:
         return match.group("url")
     urls = extract_http_urls(text)
     return urls[0] if urls else None
+
+
+def _subtitle_plain_text(path: str, *, max_chars: int = 4000) -> str:
+    """srt/vtt → 纯文本（剥 WEBVTT 头/序号/时间轴行），供视频追问直接引用。
+
+    用户裁定 2026-09-12：有字幕必存；文本直接进 meta 比"抽帧+识图+语音
+    转文字"便宜两个数量级且零幻听。解析失败返回空串，绝不抛。
+    """
+    if not path:
+        return ""
+    try:
+        raw = Path(path).read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+    lines: list[str] = []
+    seen: set[str] = set()
+    for line in raw.splitlines():
+        text = line.strip()
+        if (
+            not text
+            or text == "WEBVTT"
+            or text.isdigit()  # srt 序号
+            or "-->" in text  # 时间轴
+            or text.startswith(("NOTE", "STYLE", "Kind:", "Language:"))
+        ):
+            continue
+        if text in seen:
+            continue  # 滚动字幕里整行重复的极常见
+        seen.add(text)
+        lines.append(text)
+        if sum(len(item) for item in lines) >= max_chars:
+            break
+    return "\n".join(lines)[: max_chars + 200]
 
 
 def build_download_capability(
@@ -87,6 +121,7 @@ def build_download_capability(
                 audit_tags=["download", "download_failed"],
             )
         analysis = outcome.analysis
+        subtitle_text = _subtitle_plain_text(outcome.subtitle_path)
         lines = ["下载完成 ✓"]
         if analysis:
             lines.append(f"标题：{analysis.title[:120]}")
@@ -94,6 +129,8 @@ def build_download_capability(
             if analysis.hdr:
                 lines.append(f"画面：{analysis.hdr}")
         lines.append(f"文件：{outcome.path}")
+        if outcome.subtitle_path:
+            lines.append(f"字幕已保存：{outcome.subtitle_path}")
         return CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.download",
@@ -104,11 +141,13 @@ def build_download_capability(
                 {
                     "file": outcome.path,
                     # meta 随视频段透传到发送点：发送成功后据此登记 bot_sent 媒体档案。
+                    # subtitle_text=CC 字幕纯文本：追问链路直接引用（用户裁定有字幕必存）。
                     "meta": {
                         "platform": "",
                         "canonical_url": url,
                         "title": (analysis.title if analysis else "")[:200],
-                        "subtitle_text": "",
+                        "subtitle_text": subtitle_text,
+                        "subtitle_file": outcome.subtitle_path,
                     },
                 }
             ],

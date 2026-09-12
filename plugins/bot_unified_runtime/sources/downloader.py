@@ -104,6 +104,7 @@ class DownloadOutcome:
     path: str = ""
     analysis: MediaAnalysis | None = None
     error: str = ""
+    subtitle_path: str = ""  # CC 字幕文件（srt/vtt）；平台无字幕为空。用户裁定：有字幕必存""
 
 
 def _dynamic_range_tier(fmt: dict) -> int:
@@ -664,11 +665,22 @@ class MediaDownloader:
                     parts.append(str(audio_fmt["format_id"]))
                 if parts:
                     fmt = "+".join(parts) + f"/{fmt}"
+        # CC 字幕随片抓取（用户裁定 2026-09-12：只要有字幕必须保存）——
+        # 手动 CC 优先、自动字幕兜底；追问链路直接用文本，比语音转文字
+        # 便宜且零幻听。压制进视频不做：重编码数分钟 CPU+损画质，
+        # 且 QQ 播放器不渲染软字幕轨，收益为零。
+        subs_opts = {
+            "writesubtitles": True,
+            "writeautomaticsub": True,
+            "subtitleslangs": ["zh-Hans", "zh-CN", "zh", "zh-TW", "en", "-live_chat"],
+            "subtitlesformat": "srt/vtt/best",
+        }
         opts.update(
             {
                 "outtmpl": str(self.download_dir / "%(id)s.%(ext)s"),
                 "format": fmt,
                 "max_filesize": self.max_bytes,
+                **subs_opts,
                 **merge,
             }
         )
@@ -690,7 +702,43 @@ class MediaDownloader:
                 merged = Path(str(prepared).rsplit(".", 1)[0] + ".mp4")
                 if merged.exists():
                     path = str(merged)
-            return DownloadOutcome(path=path, analysis=analysis)
+            subtitle_path = self._locate_subtitle_file(info, prepared or path)
+            return DownloadOutcome(
+                path=path, analysis=analysis, subtitle_path=subtitle_path
+            )
+
+    def _locate_subtitle_file(self, info: dict, media_path: str) -> str:
+        """下载后定位落盘的 CC 字幕（zh 优先）；无字幕返回空串。
+
+        yt-dlp 落盘名 = 媒体主名 + 语言码 + .srt/.vtt；优先级 zh-Hans >
+        zh-CN > zh > zh-TW > en，同级 srt 优于 vtt（追问链路更好解析）。
+        """
+        try:
+            stem = Path(media_path or "").stem or str(info.get("id") or "")
+            if not stem:
+                return ""
+            candidates = sorted(self.download_dir.glob(f"{stem}*"))
+            best = ""
+            best_rank = (-1, -1)
+            lang_rank = {"zh-Hans": 5, "zh-CN": 4, "zh": 3, "zh-TW": 2, "en": 1}
+            for candidate in candidates:
+                if candidate.suffix.lower() not in {".srt", ".vtt"}:
+                    continue
+                name = candidate.name.lower()
+                rank = 0
+                for lang, value in lang_rank.items():
+                    if lang.lower() in name:
+                        rank = max(rank, value)
+                if rank == 0:
+                    continue
+                ext_rank = 1 if candidate.suffix.lower() == ".srt" else 0
+                score = (rank, ext_rank)
+                if score > best_rank:
+                    best_rank = score
+                    best = str(candidate)
+            return best
+        except Exception:  # noqa: BLE001 - 字幕定位失败不影响下载结果。
+            return ""
 
     def download(self, url: str) -> DownloadOutcome:
         if not self.available():

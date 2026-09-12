@@ -295,8 +295,13 @@ class ModelSpec:
     effort: str = ""  # 思考强度覆盖；空 = 家族基线（最低档），off = 不发送
     # 渠道价格（每 1M tokens，币种随渠道报价）；按模型名聚合选渠道时用
     # (price_in+price_out) 均值升序，缺价渠道排在有价渠道之后。
+    # cache_read/cache_creation 价缺省回退 price_in（账本计价侧处理）。
     price_in: float | None = None
     price_out: float | None = None
+    price_cache_read: float | None = None
+    price_cache_creation: float | None = None
+    # 按次计费渠道（元/请求，如 0.18/次）：与 token 价并存时叠加进账单总额。
+    price_per_call: float | None = None
 
     def all_api_keys(self) -> tuple[str, ...]:
         """全部可用密钥（按顺序故障转移）；未配置 api_keys 时退回单密钥。"""
@@ -377,6 +382,9 @@ def _spec_from_entry(
         effort=normalize_effort(item.get("effort", "")),
         price_in=_optional_price(item.get("price_in")),
         price_out=_optional_price(item.get("price_out")),
+        price_cache_read=_optional_price(item.get("price_cache_read")),
+        price_cache_creation=_optional_price(item.get("price_cache_creation")),
+        price_per_call=_optional_price(item.get("price_per_call")),
     )
 
 
@@ -1377,6 +1385,16 @@ class ModelRouter:
                 status=status,
                 error_kind=error_kind,
                 error_summary=error_summary,
+                # 渠道价随调用透传账本（元/1M tokens）；缺价保持 NULL/unpriced。
+                price_in=spec.price_in if spec is not None else None,
+                price_out=spec.price_out if spec is not None else None,
+                price_cache_read=(
+                    spec.price_cache_read if spec is not None else None
+                ),
+                price_cache_creation=(
+                    spec.price_cache_creation if spec is not None else None
+                ),
+                price_per_call=spec.price_per_call if spec is not None else None,
             )
             emit_call_record(
                 sink=getattr(self, "_call_record_sink", None),

@@ -184,6 +184,59 @@ async def _tag_with_vlm(store: Any, config: Any, md5: str, image_bytes: bytes) -
         return
 
 
+async def backfill_meme_tags(store: Any, config: Any, *, limit: int = 20) -> int:
+    """启动补标：给描述为空的图库图补 VLM 打标（用户导入表情包场景）。
+
+    每轮最多 limit 张防打爆；逐张读文件 → 复用 _tag_with_vlm（含 NSFW
+    删除语义）。返回实际处理张数；未配置视觉端点时直接返回 0。
+    """
+    vision = _resolve_vision_config(config)
+    if not (vision["model"] and vision["base_url"]):
+        return 0
+    try:
+        pending = store.list_untagged(limit=limit)
+    except Exception:  # noqa: BLE001 - 队列查询失败按无待标处理。
+        return 0
+    processed = 0
+    for row in pending:
+        path = store._resolve_media_path(row.get("path", ""))
+        try:
+            if not path.is_file():
+                continue
+            image_bytes = path.read_bytes()
+        except OSError:
+            continue
+        if not image_bytes:
+            continue
+        before = str(row.get("md5", ""))
+        await _tag_with_vlm(store, config, before, image_bytes)
+        processed += 1
+    return processed
+
+
+async def backfill_meme_tags_loop(
+    store: Any, config: Any, *, batch: int = 20, interval_seconds: float = 600.0
+) -> None:
+    """周期补标循环：直到图库无待标图为止（每批 batch 张，批间隔 10 分钟）。
+
+    防打爆设计：串行逐张 + 批间长休眠；视觉端点未配置时立即退出。
+    """
+    vision = _resolve_vision_config(config)
+    if not (vision["model"] and vision["base_url"]):
+        return
+    while True:
+        try:
+            processed = await backfill_meme_tags(store, config, limit=batch)
+        except Exception:  # noqa: BLE001 - 循环体异常不外泄。
+            processed = 0
+        if processed < batch:
+            return  # 本批不足 = 已清空（或端点失效），结束循环
+        try:
+            await asyncio.sleep(interval_seconds)
+        except asyncio.CancelledError:
+            return
+
+
 async def absorb_event_images(bot: Any, event: Any, config: Any, store: Any) -> dict[str, Any]:
     """监听事件中的图片：异步下载、MD5 去重、入库、可选打标。"""
     enabled = bool(getattr(config, "bot_meme_library_enabled", False))

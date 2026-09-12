@@ -3031,12 +3031,33 @@ def _register_nonebot_handlers() -> None:
             )
             driver = get_driver()
 
+            _BACKFILL_TASKS: set[asyncio.Task[None]] = set()
+
             @driver.on_bot_connect
             async def _log_bot_connect(bot):
                 runtime_event_log.info(
                     "bot_connected",
                     bot_id=str(getattr(bot, "self_id", "unknown")),
                 )
+                # 表情库启动补标（F6/用户裁定：导入的表情包必须先被理解才
+                # 允许被发）：描述为空的图逐张过 VLM；每轮限 20 张防打爆。
+                if bool(getattr(config, "bot_meme_library_enabled", False)):
+                    try:
+                        from .sources.meme_library_listener import (
+                            backfill_meme_tags_loop,
+                        )
+
+                        _store = meme_library_store
+                        if _store is not None:
+                            _backfill_task = asyncio.create_task(
+                                backfill_meme_tags_loop(_store, config)
+                            )
+                            _BACKFILL_TASKS.add(_backfill_task)
+                            _backfill_task.add_done_callback(
+                                _BACKFILL_TASKS.discard
+                            )
+                    except Exception:  # noqa: BLE001 - 补标失败不影响启动。
+                        runtime_event_log.warning("meme_backfill_failed")
                 try:
                     summary = result_unknown_ledger.reconcile(
                         bot_id=str(getattr(bot, "self_id", "unknown"))
