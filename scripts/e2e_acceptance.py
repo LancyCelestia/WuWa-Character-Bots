@@ -216,7 +216,7 @@ def load_group_lists(config: Any) -> dict[str, frozenset[str]]:
 
 
 def check_group_allowed(runtime: E2eRuntime, group_id: str) -> tuple[bool, str]:
-    """群验收目标必须在 white1（运行时 store 覆盖优先），black1/black2 直接拒绝。"""
+    """群验收目标必须在 white1/white2（运行时 store 覆盖优先），black1/black2 直接拒绝。"""
     lists = load_group_lists(runtime.config)
     gid = str(group_id).strip()
     if gid in lists["black1"]:
@@ -225,8 +225,10 @@ def check_group_allowed(runtime: E2eRuntime, group_id: str) -> tuple[bool, str]:
         return False, f"群 {gid} 在 BOT_GROUP_BLACK2，拒绝执行"
     if gid in lists["white1"]:
         return True, f"群 {gid} 在 BOT_GROUP_WHITE1"
+    if gid in lists["white2"]:
+        return True, f"群 {gid} 在 BOT_GROUP_WHITE2"
     reason = (
-        f"群 {gid} 不在 BOT_GROUP_WHITE1（运行时 store 白名单），拒绝执行；"
+        f"群 {gid} 不在 BOT_GROUP_WHITE1/WHITE2（运行时 store 白名单），拒绝执行；"
         "先把群加入白名单（/bot runtime set BOT_GROUP_WHITE1 ...）再跑 --execute"
     )
     return False, reason
@@ -665,8 +667,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--sender-id",
-        default="10000",
-        help="合成消息的发送者 QQ 号（默认 10000 占位）",
+        default="",
+        help="合成消息的发送者 QQ 号（留空=私聊时跟随 --target-user，群聊用占位 10000）",
     )
     parser.add_argument(
         "--city", default="北京", help="天气+预警项的查询城市（默认 北京）"
@@ -689,7 +691,12 @@ def main(argv: list[str] | None = None) -> int:
         execute=bool(args.execute),
         city=str(args.city or "").strip(),
         bot_id=str(args.bot_id or "").strip(),
-        sender_id=str(args.sender_id or "10000").strip(),
+        # 私聊回执 target=sender：默认值必须跟随目标用户，否则私聊件投递到占位号。
+        sender_id=str(
+            args.sender_id
+            or str(args.target_user or "").strip()
+            or "10000"
+        ).strip(),
     )
     matrix = build_matrix(runtime)
     if args.list:
@@ -714,6 +721,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         session_type = SessionType.PRIVATE
         target_id = str(args.target_user or "").strip()
+        # 私聊场景收件人=发信人：sender_id 未显式给定时跟随目标用户，
+        # 否则 pipeline 生成的 SendRequest.target_id 会指向占位 id 导致投递失败。
+        if target_id and not str(args.sender_id or "").strip():
+            args.sender_id = target_id
         print(f"[安全阀] 私聊目标 {target_id}（私聊策略默认放行，角色/风控拦截除外）")
 
     mode_line = (
