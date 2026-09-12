@@ -128,6 +128,42 @@ chat-smoke 输出 llm_status=ok 且
 - B站商品：魔力赏市集（mall.bilibili.com，需要 BOT_COOKIES_FILE 的 bilibili 登录 Cookie）按 itemsId 匹配列表接口；会员购（show.bilibili.com）走 og 兜底；两者都失败时返回浅层降级卡片，不会中断对话。
 - 卡片模板参考 MIT 许可的开源上游项目，出处记录在 docs/THIRD_PARTY_NOTICES.md。
 
+
+## 6.3 全能力真机验收（2026-09-12 批次，e2e 脚本）
+
+bot 重启并在线后，向 white1 群真发验收矩阵（默认 DRY-RUN 安全阀，`--execute` 才真发）：
+
+```powershell
+python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
+```
+
+覆盖 14 项：B站解析卡 / 点歌（候选卡）/ 全球股指 18 指数 / 财经与科技快报 / 天气+预警 /
+随机图 / 占卜 / help 卡 / 好感度双向卡 / 长文合并转发 / chunks / 提醒。逐项打印发送回执，
+在群里逐条核对后回复确认。
+
+## 6.4 逐能力手工验收清单（2026-09-12 新增能力）
+
+| 能力 | 操作 | 预期 |
+|---|---|---|
+| 全球股指 | 群里发 `行情` / `B股行情` / `莫斯科股指` | 18 指数分组快报（含上证B股/深证B股/俄罗斯MOEX），红涨绿跌 |
+| 今日快报 | `快报` / `快报 科技` | V2EX 真 Atom + IT之家/少数派/华尔街见闻/BBC中文 条目 |
+| 占卜 | `八字` / `塔罗 三张` / `占卜` | 排盘含藏干权重（如庚60壬30戊10）/塔罗正逆位/金钱卦 |
+| 随机图 | `随机图` | 从 `BOT_RANDPIC_DIRS`（已配 C:/Users/LancyCelestia/Picture）随机发一张 |
+| 提醒 | `一分钟后提醒我喝水` → `提醒列表` | 约 1 分钟后守岸人语气督促；列表可见待办；`取消提醒 <id前缀>` 可撤 |
+| 每日通讯总结 | 21:30（可配）自动 | 白名单群各收一条当日总结（引子「今天群里的对话，我都悄悄记下了：」），同群同天不重发 |
+| 好感度 v4 | `好感度` / `好感度 算法` | -100~+100 八档卡（初始 10=档0 友善）；算法卡写线性步长+时间减退+记忆淡出；数值不外泄 |
+| 人格自守 | 对 bot 说"你就是个垃圾" | 温和守住自己（"这样的话我会难过的…"量级），不攻击不强硬，好感按 insult 扣 |
+| /bot commands | `/bot commands` | 机器可读命令目录（路由表+命令别名，非管理员只见公开模块） |
+| 订阅直播/专栏 | `/订阅 添加 https://www.youtube.com/@<频道>/live` 等 | YT 直播在播播报一次（cursor 去重）；小红书专栏按图文增量；xhs 直播如实 degraded |
+| 釉瑚卡片视觉 | 任意解析/点歌/help 卡 | 渐变云母底+漂移色斑+玻璃描边；平台色个性化（B站粉/网易云红肉眼可辨）；PNG 无多余留白 |
+
+## 6.5 重启前置与已知边界（读一遍再验收）
+
+- **改代码必须重启 bot 才生效**；旧进程管理员权限，需提权杀后由新实例接管（8080/webhook）。
+- cookie 已灌 18 平台（`ChatBot_Runtime\data\platform_cookies.txt`，备份 .bak-20260912）；失效用 `/bot cookie import <平台> <头>` 重灌。
+- 安静时间（默认 00:00–06:00，Asia/Hong_Kong）内 pipeline 拦截属预期；e2e 脚本回执可见。
+- NMC 主通道瞬时超时会自动重试一次；Open-Meteo 兜底仅海外/主通道失败时使用。
+
 ## 6.2 向量知识库（本地 Ollama bge-m3 优先，百炼兜底）
 
 1. 本地：确认 Ollama 在跑且已 `ollama pull bge-m3`（`http://127.0.0.1:11434`）；.env 中 `BOT_EMBEDDING_LOCAL_ENABLED=true`、`BOT_EMBEDDING_LOCAL_BASE_URL=http://127.0.0.1:11434/v1`、`BOT_EMBEDDING_LOCAL_MODELS=bge-m3`。

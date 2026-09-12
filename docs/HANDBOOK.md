@@ -44,7 +44,7 @@
 > ✅ **2026-09-12 收口刷新（以此为准）**：09-12 全天五波并发收尾 T1 `8f0abbe` → HEAD `976c0ef` 共 **28 提交**（两波五轨 + N 系/B 系/UI 釉瑚 + Arch 规格，全账=本文 §18）；工作树「未提交规模」事故已清零，bot.py 启动修复已入库（`f4e29a2`）——生产重启前置仅剩提权动作本身。
 
 - **HEAD**：`976c0ef8467d86bcc575ae7cb866fc2bf2650dff`（分支 `v0.0.1-alpha.2`；含历史共 28+ 提交未推送，推送 origin 仅按用户明确指示）。
-- **门禁（各轮提交 message 实跑记录）**：最新 **全量 1650 passed / 0 failed + lint 过**（B1 批 `976c0ef` 实跑）；轨迹 1511→1545→1569→1612→1619→1650 递增可溯（§18 卷首）；mypy 最近记录 **223 文件零 issue**（两波五轨终局轮）。**下轮交付前以最近门禁实跑为准，勿沿用本节数字。**
+- **门禁（终稿实跑，2026-09-12 收口）**：全量 **1761 passed / 0 failed**、ruff **All checks passed**、mypy **Success 238 source files**、runtime-layout **PASS**；轨迹 1511→1545→1569→1612→1619→1650→1706→1738→1758→**1761** 递增可溯（§18 卷首）。**下轮交付前以最近门禁实跑为准，勿沿用本节数字。**
 - **工作树（2026-09-12 收口时 `git status` 实测）**：仅 `capabilities/weather.py` 一文件在途改动（他会话手笔，勿动勿裹挟）+ 未跟踪 docs 重组产物（本文件、README、`review/staged-docs-reorg-20260912.patch`）。旧记录（已被取代）：63 dirty+34 untracked（评审 H1/H2 时代）。
 - **⚠️ 生产进程仍运行 09-09 旧代码**（管理员权限重启陷阱见 Part II §4.3）——09-10 起的全部交付（含五波收尾 28 提交）**都在等提权重启生效**。
 - 工作树常年多会话在途改动：开工先 `git log` 查时效（09-11 教训：两个会话同晚开工同一任务组，靠 git log 才避免重写），再按 Part II §11 协作协议（禁 `git add -A`、共享文件动前登记、§11.4 部分暂存）。
@@ -58,7 +58,7 @@
 - **已销项（09-12 接手会话五轨收尾，证据=8f0abbe..4606f34 + 超时对齐 C7）**：群摘要白/黑名单接线、SQLite 限流器群帽、系统提示词紧凑压缩、/bot help 补全（identity/quirk/新键）、Telegram file_id→字节、昵称 9 个仓库侧对齐、RAG 领域词战双/库洛、LLM 默认超时对齐生产。明细=本文 §18.1。
 - **新发现**：final 交接文档（09-11 综合修复会话）代码侧声明大面积虚报——好感度 9 档/γ=2.0、baseline_effort、回复相关性规则等未落库，核验表已折算**本文 §18.0**；权威正文 4 处勘误已原地套用（`957663d`）。
 - **已销项（09-12 第二波五轨）**：G-INDEX（B股+MOEX ISS，`47a5176`）、G-DIGEST 夜推（`f90a96f`）、G-MERMAID（`6aa808e`）、G-SUB-LIVE（`a2f6923`）、虚报补实批（`b0ca5b4`）+ randpic validator 潜伏 P0 修复。门禁终局 **1511 passed / ruff / mypy 223 全绿**。明细=本文 §18.1。
-- **已销项（09-12 第三~五波：N 系/B 系/UI 釉瑚）**：W4 六项+提醒进阶轨（`6a278d3`）、好感度 v4（`572bfff`）、help 深度教学化=计划 D（`a8ab45c`）、RAG 置顶+反注入+防外泄+**B15 根治**（`f71b234`）、B13/B12/B8/B7 批（`b7bc3a4`）、B6 音乐真实榜单（`b76610c`）、B10 四项（`a306822`）、B1 分片幂等（`976c0ef`）、Arch 四件规格成文（`2e0393d`/`b15241e`）、UI 釉瑚两轮（`a1ab78f`/`dc65f7f`）、TG 截断双修（`30ef3e3`/`a124fcb`）、AstrBot 字眼清除（`7985d93`）。全账=本文 §18。
+- **已销项（09-12 第三~五波：N 系/B 系/UI 釉瑚）**：W4 六项+提醒进阶轨（`6a278d3`）、好感度 v4（`572bfff`）、help 深度教学化=计划 D（`a8ab45c`）、RAG 置顶+反注入+防外泄+**B15 根治**（`f71b234`）、B13/B12/B8/B7 批（`b7bc3a4`）、B6 音乐真实榜单（`b76610c`）、B10 四项（`a306822`）、B1 分片幂等（`976c0ef`）、Arch 四件规格成文（`2e0393d`/`b15241e`）、UI 釉瑚两轮（`a1ab78f`/`dc65f7f`）、TG 截断双修（`30ef3e3`/`a124fcb`）、守岸人框架 字眼清除（`7985d93`）。全账=本文 §18。
 - ~~**需用户决策**：好感度 9 档 [-100,+100] + γ=2.0 改版是否立项~~ ✅ **已裁决并落地**：用户拍板 **v4 线性改版**（[-100,+100]/档0友善含10/废除幂律阻尼 γ，`572bfff`；affinity-design.md 已重写为 v4 权威规格）；原「9 档 γ=2.0」方案作废。
 
 - **已销项（2026-09-12 文档整理会话）**：文档债收敛——docs/ 40 份 → 14 份。原 MASTER+full 合并为本文件（Part 0+Part II），26 份过时文档压缩归档（见 §四），新立 `docs/README.md` 索引。（**收口批校正**：归档删除曾随 `b76610c` 重置回滚，归档件暂回工作树待用户裁决；本批先删已折算的 5 份，见 §四 增补。）
@@ -1440,6 +1440,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 
 > **折算说明**：本节由已删除的 `handoff-session-2026-09-12-final.md`（§0.1 勘误核验表 + §8/§8.5 两波五轨全账）与其后 **N 系 / B 系+Arch 规格 / UI 釉瑚** 三波压缩折算而成；原件在归档 zip（`docs-archive-2026-09-12.zip`）与 git 历史。全天收尾链 **T1 `8f0abbe` → HEAD `976c0ef` 共 28 提交**（均未推送）。按维护规矩未另立文档，销项对账见 §三.0 与 §三 B 表。
 > **门禁轨迹（各轮提交 message 内实跑记录，均为工作树全量）**：1511（两波五轨终局）→ 1545（N1re 好感度 v4）→ 1569（N3re RAG/安全）→ 1612（N2re help 深度版）→ 1619（B6 音乐）→ **1650 passed / 0 failed + lint 过（B1 分片幂等 `976c0ef` 终局）**；mypy 最近记录 **223 文件零 issue**（两波五轨终局轮）。**下一轮交付前以最近门禁实跑为准，勿沿用本节数字。**
+> **终稿增补（收口日）**：P1（B2/B3 shadow+文件网关 Phase-1，45 例）→ P2（控制面/账本 M1，37 例）→ DATAFIX（路径根治三根因，10 例）→ mypy 清零与类型修复 → 全量 **1761 passed / 0 failed**、typecheck **Success 238 files**、runtime-layout PASS；docs 终稿收口（AGENTS.md 合并版/README/WORKSPACE_GUIDE/REVIEW-WORKFLOW/route-matrix/config-catalog/acceptance-manual 全部刷新）。下轮以最近门禁实跑为准。
 > SDD 台账：`.superpowers/sdd/five-track-2026-09-12/`（task-*-brief/report）。
 > 波次结构（提交时序有穿插，按系列归组）：第一波五轨 T1-T5（`8f0abbe`→`668adf6`）→ 第二波五轨 G 系列+虚报补实（`47a5176`→`a2f6923`）→ 终局文档 `957663d` → 第三波 N 系（`6a278d3`/`572bfff`/`a8ab45c`/`f71b234`/`b7bc3a4`）→ 第四波 B 系+Arch（`b76610c`/`2e0393d`/`a306822`/`b15241e`/`30ef3e3`/`a124fcb`/`976c0ef`）→ 第五波 UI 釉瑚两轮+杂项（`a1ab78f`/`dc65f7f`/`7985d93`）。
 
@@ -1513,7 +1514,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 |---|---|---|
 | UI-1 全卡片釉瑚改版 | bridge 新增 _derive_wash_tokens（--pc→HSL 邻近±30°→wash 四 token 注入，PLATFORM_COLORS 契约零改动）；雾底+三枚漂移色斑（keyframes 40-60s+随机相位）+液态玻璃（150° 内高光描边）；覆盖 8 个 UI 面；铁律保持（动画全在 .card 内/光晕 alpha≥0.05/失败→纯文本契约零改动） | `a1ab78f`，9 样例像素抽检+渲染 82 测 |
 | UI-1 v2 验收整改四连 | 画布收紧零留白（10/10 张 alpha bbox==画布）；universal 内部面板全面玻璃化；平台区分度（wash 饱和 0.35→0.55 等，B站 vs 小红书像素核验肉眼可辨）；else 分支 mica-glass 重构 | `dc65f7f`，复拍 10 样例+渲染 72 测 |
-| AstrBot 字眼全项目清除（用户明令） | 用户可见面改「守岸人」（models.py 默认 bot_name）；出处单点收敛 `docs/THIRD_PARTY_NOTICES.md`（MIT 许可义务唯一保留地，**勿删**） | `7985d93`，全项目 grep 残留 0 |
+| 守岸人框架 字眼全项目清除（用户明令） | 用户可见面改「守岸人」（models.py 默认 bot_name）；出处单点收敛 `docs/THIRD_PARTY_NOTICES.md`（MIT 许可义务唯一保留地，**勿删**） | `7985d93`，全项目 grep 残留 0 |
 
 **过程存证**：`b76610c` 提交曾混入他方 staged 的 docs 重组（全 handoff 删除+HANDBOOK 改名），按 §11.5 重置重建为纯净提交；重组内容以未跟踪文件+`review/staged-docs-reorg-20260912.patch` 保全待用户裁决——本文件与 README 即该重组的采纳执行。
 

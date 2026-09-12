@@ -22,7 +22,8 @@ QQ/NapCat 消息
 群聊门禁（`policy/gate.py`）在进入能力前执行：私聊放行；群聊只有
 **命令 / 昵称命令 / @点名 / 写昵称点名**才放行，其余为
 `passive_group_message` 静默观察；`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED=true`
-时按概率做确定性哈希抽签接话。
+时按概率做确定性哈希抽签接话，且主动搭话受好感档门控
+（`bot_proactive_affinity_gate_enabled`，默认开：仅对好感档 ≥ 亲近的用户主动接话）。
 
 ## 2. 问法矩阵（设计文档；以 plugins/bot_unified_runtime 路由实现与 tests/ 下路由回归为准）
 
@@ -33,12 +34,21 @@ QQ/NapCat 消息
 | `/订阅 状态`、`/订阅 添加 <链接>` | subscribe | 12 | `_is_standalone_subscribe_event` -> `_handle_standalone_subscribe` | bot.subscribe |
 | `报存 给 A 发邮件，主题…` | auto_send | 13 | `_is_auto_send_plain_text` | bot.auto_send |
 | `/表情 列表`、`/meme petpet 可爱`、`/表情帮助` | meme | 20 | `_is_meme_event` -> `_handle_meme` | bot.meme -> 本地 meme-generator-rs |
+| `/偷表情 关键词`、`表情库统计` | meme_library | 22 | `_is_meme_library_event` | bot.meme_library（群图收库 NSFW 降权；心情低时吵闹梗软重抽） |
 | `/点歌模式 卡片` | music_mode | 40 | `_is_music_mode_event` | bot.music_mode |
 | `/点歌 晴天` | music | 41 | `_is_music_event` -> `_handle_music` | bot.music（网易云/酷我/酷狗/QQ/Apple/Spotify 依次） |
 | `/历史上的今天` | today_history | 41 | `_is_today_history_event` | bot.today_history |
 | `/wiki 鸣潮`、`/WIKIPEDIA Python` | wiki | 41 | `_is_wiki_event` | bot.wiki |
 | `/epic`、`/Epic Free`、`/Epic 免费` | epic | 41 | `_is_epic_event` | bot.epic |
-| `/天气 杭州`、`/查天气 上海` | weather | 41 | `_is_weather_event` | bot.weather（中国气象局 NMC） |
+| `/天气 杭州`、`/查天气 上海` | weather | 41 | `_is_weather_event` | bot.weather（中国气象局 NMC 主通道 2 次重试+预警支路+Open-Meteo 兜底） |
+| `行情`、`B股行情`、`莫斯科股指` | market | 41 | `_is_market_event` -> `_build_market_capability` | bot.market（东财 push2 17 指数 + MOEX ISS 备选源；市场词过滤） |
+| `快报`、`今日快报 科技` | news | 41 | `_is_news_event` | bot.news（V2EX 真 Atom + IT之家/少数派/华尔街见闻/BBC中文） |
+| `八字`、`塔罗 三张`、`占卜` | divination | 41 | `_is_divination_event` | bot.divination（Meeus 节气八字含藏干权重/塔罗 78/金钱卦） |
+| `随机图`、`来张图` | randpic | 41 | `_is_randpic_event` | bot.randpic（只读 BOT_RANDPIC_DIRS 自定义文件夹，绝不自建目录） |
+| `12点提醒我写作业`、`提醒列表`、`取消提醒 <id前缀>` | reminder | 41 | `_is_reminder_event` | bot.reminder（自然语言时间点→会话待办→每分钟投递；进阶轨 LLM 抽取默认关） |
+| `好感度`、`好感度 算法` | affinity | 41 | `_is_affinity_event` | bot.affinity（v4：-100~+100 八档，档0友善基准10；双向卡/群榜/算法卡） |
+| `吃什么`、`中午吃什么啊` | eat | 41 | `_is_eat_event` | bot.eat（60 道本地库+LLM 约束推荐+Mica 卡） |
+| `/萌娘 鸣潮` | moegirl | 41 | `_is_moegirl_event` | bot.moegirl（萌娘百科查询） |
 | `帮我查一下杭州天气` / `杭州天气怎么样` / `帮我查天气 杭州` | natural_command | 45 | `_is_natural_event` -> `_handle_natural` | 归一化 `天气 杭州` -> bot.weather |
 | `来首晴天` / `放首歌 晴天` / `帮我放一首周杰伦的歌` | natural_command | 45 | 同上 | 归一化 `点歌 …` -> bot.music |
 | `帮我查维基 鸣潮` | natural_command | 45 | 同上 | 归一化 `wiki 鸣潮` -> bot.wiki |

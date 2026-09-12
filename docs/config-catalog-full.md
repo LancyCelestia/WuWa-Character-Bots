@@ -482,6 +482,30 @@
 
 ---
 
+### A26 增量补录（2026-09-12 批次起新增，逐键对 config.py 核实）
+
+| 键（BOT_ 前缀省略） | 默认值 | 作用/效果 |
+|---|---|---|
+| `_decision_engine_mode` | `legacy_only` | 中央决策引擎模式：legacy_only（默认，不接管）/ shadow（影子对照记录分歧，P95≈0.04ms，绝不发送）。阶段 2 前保持默认 |
+| `_group_digest_push_enabled` | `true` | 夜间"每日通讯总结"主动推送总开关；仅推群摘要白名单群（list_mode 非 whitelist 时零推送） |
+| `_group_digest_push_time` | `21:30` | 推送时刻，HH:MM 校验 |
+| `_group_digest_list_mode` / `_group_digest_whitelist` / `_group_digest_blacklist` | 空 | 群摘要名单：whitelist=仅名单内群注入/被推送；blacklist=排除；空=不过滤。运行时 store 可热改 |
+| `_proactive_affinity_gate_enabled` | `true` | 群聊主动接话好感门：仅对好感档 ≥ 亲近（close）用户抽签接话（冷却/频控沿用 rate_limit） |
+| `_reflection_quirks_propose_enabled` | `true` | 夜间反思高置信事实 → persona_quirks 待审池（仍需管理员 approve，不直接生效） |
+| `_reflection_quirks_min_confidence` | `0.5` | 投喂置信度门槛 |
+| `_reminder_llm_extract_enabled` | **`false`** | 提醒进阶轨：LLM 轮末抽取无"提醒"词的时间陈述（"中午12点要写作业"）；默认关 |
+| `_market_enabled` / `_market_timeout_seconds` / `_market_cache_seconds` | `true` / `6.0` / `60.0` | 全球股指能力（东财 17+MOEX ISS，18 指数） |
+| `_randpic_enabled` / `_randpic_dirs` / `_randpic_trigger_words` / `_randpic_max_file_mb` | `true` / `[]` / `[]` / `20` | 随机图：只读用户自定义文件夹（**必须配 `_randpic_dirs`**，JSON 字符串数组），绝不自建目录 |
+| `_poke_enabled` / `_poke_private_cooldown_seconds` / `_poke_group_cooldown_seconds` / `_poke_probability` / `_poke_admin_bypass` / `_poke_reply_enabled` / `_poke_poke_back` / `_poke_group_text` / `_poke_private_text` | 见 config.py:474-483 | 戳一戳统一分发：回戳（NapCat 扩展 API，失败静默）/话术/冷却/概率 |
+| `_music_dir` | `data/music` | 点歌音频缓存目录（经 runtime_paths 重映射；DATAFIX 收口） |
+| `_group_hourly_max_requests` / `_group_minute_max_requests` | `60` / `3` | 群聊句数帽（0=该帽不生效）；InMemory 与 SQLite 限流器双实现均生效 |
+| `_rate_limit_emotion_exempt` | `true` | 情绪低落豁免群句数帽 |
+| `_shared_group_context_enabled` | `true` | 群摘要**真总开关**（原 `BOT_GROUP_DIGEST_ENABLED` 为死字段已删，勿再配置） |
+| `_rate_limit_group_hourly...` 之外的新限流键 | — | 见 A24 与 policy/rate_limit.py `RateLimitSettings`（SQLite 版群帽/豁免已对齐 InMemory，热改不支持=架构取舍） |
+
+**非 Config 键（getattr 防御式读取，未入本表字段域）**：`BOT_LLM_BILLING_ENABLED`（计费账本，默认关）、
+`BOT_CONTROL_PLANE_ENABLED/HOST/PORT/TOKEN_SHA256`（控制面，默认关）——见 docs/design/llm-billing-ledger.md 与 control-plane-api.md。
+
 ## B. 「LLM 引擎七必配键」专节
 
 readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对应的七个核心键；`BOT_CHAT_ENABLED=true` 是进入体检与对话的**总闸**（第八个隐含前提）。
