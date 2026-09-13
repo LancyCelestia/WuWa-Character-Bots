@@ -27,6 +27,7 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
     resolve_short_link,
 )
 from plugins.bot_unified_runtime.sources.parsers.image_stitch import try_stitch_strip
+from plugins.bot_unified_runtime.sources.parsers.ssrf_guard import check_fetch_landing
 
 _OG_TITLE_RE = re.compile(
     r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)',
@@ -67,6 +68,9 @@ def _og_scrape(
     final_url, text = http_get_text(
         url, timeout=10, referer=referer or url, cookie=cookie_header, proxy=proxy
     )
+    # SSRF 落点复查（审计 I-2）：入口 URL 已在分发器查过，这里拦「重定向
+    # 落到内网」——在解析/回显内容之前拒绝，走既有 ParseHttpError 降级。
+    check_fetch_landing(final_url, url)
     title = ""
     match = _OG_TITLE_RE.search(text)
     if match:

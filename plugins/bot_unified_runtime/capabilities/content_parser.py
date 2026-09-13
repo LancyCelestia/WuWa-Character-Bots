@@ -36,6 +36,7 @@ from plugins.bot_unified_runtime.sources.parsers.context import (
     ParseFailure,
 )
 from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
+from plugins.bot_unified_runtime.sources.parsers.ssrf_guard import guard_user_url
 from plugins.bot_unified_runtime.sources.parsers.types import ParsedContent
 
 
@@ -647,6 +648,20 @@ def build_content_capability(
                 body="链接解析失败，先把原链接放在这里，晚点我再试试：\n"
                 + (source_input.urls[0] if source_input.urls else message.plain_text),
                 audit_tags=["content_parse", f"platform:{match.parser_id}", "parse_failed"],
+            )
+        # SSRF 入口护栏（审计 I-2）：candidate 是用户消息里贴出的 URL，
+        # 分发前先过内网/保留网段校验；解析器内部的固定 API host 不经此护栏。
+        guard_reason = guard_user_url(candidate)
+        if guard_reason is not None:
+            return _content_failure_result(
+                message,
+                body="这条链接指向内网或本机地址，我不去抓了；"
+                "想解析外网内容的话，把外网链接发我就好。原链接：\n" + candidate,
+                audit_tags=[
+                    "content_parse",
+                    f"platform:{match.parser_id}",
+                    "ssrf_guard_rejected",
+                ],
             )
         try:
             item = parse_fn(candidate)
