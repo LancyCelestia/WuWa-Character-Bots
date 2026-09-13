@@ -1698,3 +1698,28 @@ flowchart TD
 - 裸「守岸人天气预报」静默（与简体既有口径一致，产品裁决项）；「天气预报称多」无空格句式被陈述守卫拦下（概率极低，陈述语义优先）。
 - 天气预报陈述句的 natural_language.py 二阶提取点为白名单偏离（已声明论证并验收）。
 - 全部触发改动待生产 bot 提权重启生效（台账 #10）。
+
+## §23 媒体归档批（2026-09-13，bot.media_archive 新能力）
+
+> 证据指针：`tests/test_media_archive.py`（35 例，条数以实跑为准）；帮助 topic=媒体归档（admin_only=True）；RouteKind.MEDIA_ARCHIVE（priority 43）。配置键族 BOT_MEDIA_ARCHIVE_ENABLED/_DIR/_DB_PATH/_MIN_ROLE/_MAX_FILE_MB/_DAILY_LIMIT/_PER_MESSAGE_LIMIT/_SUMMARY_ENABLED/_VIDEO_FRAMES（config.py+config-catalog A26+.env.example 已登记，_DIR/_DB_PATH 进 path_fields 重映射到 Runtime）。代码+测试完成，**待生产 bot 提权重启生效**（台账 #10/#28）；真机验收清单=acceptance-manual §6.6.2。
+
+### 23.1 产品四裁定
+
+1. **双指令形态**：媒体+指令同条消息直发；或回复媒体消息发指令（handler 经 NapCat get_msg 反查注入媒体段，摄取契约新增 reply_media_segments/chat_record_text 字段）；回复对象为合并转发时说「存聊天记录」→ get_forward_msg 展开为 Markdown 归档（chats 目录）。
+2. **类别×IP 双层目录**：VLM（复用识图 registry）判 类别（cosplay/二次元插图/表情包/截图/照片/风景/人物/动图）× 作品来源 IP，判不出落「未识别」；落盘 `data/media_archive/<类别>/<IP>/`，sha256 去重+JSON 旁车；用户可带 分类=/IP=/角色= 参数覆写，管理员另可 子路径=。
+3. **视频轻抽帧**：ffmpeg 轻抽帧 5 帧（BOT_MEDIA_ARCHIVE_VIDEO_FRAMES）拼给 VLM 一次判类，不做 ASR。
+4. **权限默认超管**：BOT_MEDIA_ARCHIVE_MIN_ROLE 默认 super_admin（归档落本机磁盘），后续可改 user 开放全员，限额照常（单文件 100MB/每日 50 件/单条 4 件）。
+
+### 23.2 复用件清单（不重造轮子）
+
+- 识图链 vision_describe：视频抽帧与 data-url 编码直接复用，不另起 VLM 通道。
+- `check_download_url` SSRF 护栏（文件网关/eat 落盘缓存先例）。
+- 表情库存储范式（meme_library 落盘+索引+旁车）。
+- eat 能力 magic bytes 质检先例（F10 修复批引入的魔数校验）。
+
+### 23.3 缺口登记（v1 已知边界）
+
+1. 回复媒体反查仅一层 get_msg（回复链不再上溯，回复的回复取不到媒体）。
+2. TG 视频段不支持归档。
+3. `save` 裸词弃用：英文口语劫持（误触面大），触发词裁定不启用，英文触发只留 archive。
+4. 聊天记录内嵌图片 v1 仅 [图片] 标注占位，不做内嵌媒体抽取落盘。

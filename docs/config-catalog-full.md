@@ -758,6 +758,10 @@
 | `_reflection_quirks_propose_enabled` | `true` | 夜间反思高置信事实 → persona_quirks 待审池（仍需管理员 approve，不直接生效） |
 | `_reflection_quirks_min_confidence` | `0.5` | 投喂置信度门槛 |
 | `_reminder_llm_extract_enabled` | **`false`** | 提醒进阶轨：LLM 轮末抽取无"提醒"词的时间陈述（"中午12点要写作业"）；默认关 |
+| `_media_archive_enabled` / `_media_archive_dir` / `_media_archive_db_path` | `true` / `data/media_archive` / `data/media_archive.sqlite3` | 媒体归档（bot.media_archive）：发媒体+收藏/归档/archive → VLM 判 类别×IP（cosplay/二次元插图等）双层目录落盘；dir/db_path 走 runtime 重映射 |
+| `_media_archive_min_role` | `super_admin` | 触发角色门槛（user<trusted<enterprise<admin<super_admin）；放开全员改 user，限额/冷却照常 |
+| `_media_archive_max_file_mb` / `_media_archive_daily_limit` / `_media_archive_per_message_limit` | `100` / `50` / `4` | 单文件上限（MB）/每日件数额度/单条消息件数上限 |
+| `_media_archive_summary_enabled` / `_media_archive_video_frames` | `true` / `5` | 聊天记录归档一句话 VLM 摘要开关 / 视频轻量抽帧数（ffmpeg） |
 | `_market_enabled` / `_market_timeout_seconds` / `_market_cache_seconds` | `true` / `6.0` / `60.0` | 全球股指能力（东财 17+MOEX ISS，18 指数） |
 | `_stocks_enabled` / `_fx_enabled` | `true` / `true` | 个股行情/汇率路由开关（已落 config.py `bot_stocks_enabled`/`bot_fx_enabled`，.env `BOT_STOCKS_ENABLED`/`BOT_FX_ENABLED` 可关；base_router getattr 读取） |
 | `_market_retry_on_empty` | `true` | 东财空响应受控重试（限流返回空 JSON 时单次重试+0.6s 退避；真异常不重试；仍空→诚实降级不缓存） |

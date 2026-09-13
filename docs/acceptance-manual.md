@@ -254,3 +254,18 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 > 两字母缩写误伤观察：`hq/gs/dp/mb/kb`（批一）与 `pp/tl/hh/sg/qg`（批三）等缩写在真实群聊偶作他义（mb≈my bad、hh≈笑），三重查重无冲突故已入表；群内反弹属误伤非缺陷 → 词表行级回滚（台账制），不在本清单判「不符」。
 
 **收尾纪律**：任何一项不符 → 按 systematic-debugging 走：先记录复现（触发消息原文、时间点、`data/runtime_events.log` 对应行、当日是否东财凌晨限流时段），定位根因后再修；禁止症状性补丁。全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 台账 #10/#26 记重启生效。
+
+### 6.6.2 媒体归档验收（bot.media_archive，重启生效）
+
+> 前置：`.env` 设 `BOT_MEDIA_ARCHIVE_ENABLED=true`；落盘根 `BOT_MEDIA_ARCHIVE_DIR`（默认 `data/media_archive/`，经 runtime_paths 重映射到 `ChatBot_Runtime\data\media_archive\`，源码树不应再现 `data/`）；`BOT_MEDIA_ARCHIVE_MIN_ROLE` 默认 super_admin——①②③⑤⑥用超管账号（生产：澜汐/霞月），④用非超管账号；VLM 复用识图 registry 配置（未配 VLM 时按⑥核对，不算异常）。
+
+| # | 操作 | 预期 | 异常时看哪 |
+|---|---|---|---|
+| ① | 超管发一条图片消息（图片/动图/视频均可），同条消息文字带 `收藏` | 回执含判得的 类别/IP 与相对路径；磁盘出现媒体文件+同名 .json 旁车，目录=`ChatBot_Runtime\data\media_archive\<类别>\<IP>\` | 无回执 → `data/runtime_events.log` 搜 media_archive；类别/IP 落「未识别」属 VLM 判不出预期落点；文件未落 → 查目录重映射与目录名消毒日志 |
+| ② | 回复一张图片消息发 `收藏 IP=原神` | 媒体落 `原神` IP 目录（get_msg 反查注入生效） | 落「未识别」→ 确认回复目标是纯媒体消息（反查仅一层，HANDBOOK §23.3） |
+| ③ | 回复一条合并转发消息发 `存聊天记录` | chats 目录出现 Markdown 归档（.md） | 无文件 → 确认回复目标确为 forward 消息（get_forward_msg 展开）；内嵌图片仅 [图片] 标注属 v1 预期 |
+| ④ | 非超管发 `收藏`（带图） | 礼貌拒绝，不落盘 | 误放行 → 查 `BOT_MEDIA_ARCHIVE_MIN_ROLE` 当前值与六级角色判定（policy/roles.py） |
+| ⑤ | 同一张图再次发 `收藏` | 回「已归档过」幂等，磁盘不新增文件 | 重复落盘 → 查 sha256 去重逻辑 |
+| ⑥ | VLM 未配置时发图+`收藏` | 回执标注「未分析」，按类型归类（无 VLM 语义类别/来源） | 全部落「未识别」且无「未分析」标注 → 查识图 registry 配置与未配置降级分支 |
+
+**收尾纪律**：全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 台账 #28 记重启生效；任一项不符按 §6.6 收尾纪律走 systematic-debugging。
