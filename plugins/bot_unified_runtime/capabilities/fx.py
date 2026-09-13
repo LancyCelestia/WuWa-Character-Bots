@@ -28,6 +28,7 @@ from plugins.bot_unified_runtime.contracts import (
     PrivacyLevel,
     RiskLevel,
 )
+from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
 
 _URL_HINT_RE = re.compile(r"https?://", re.IGNORECASE)
 _MAX_TRIGGER_LEN = 48
@@ -152,7 +153,7 @@ def build_fx_capability(
                 getattr(config, "bot_persona_display_name", "") or ""
             ).strip() or "守岸人"
             payload["bot_avatar_url"] = str(
-                getattr(config, "bot_persona_avatar_url", "") or ""
+                bot_avatar_uri(config)
             )
             png = render_backend.render_card(
                 {

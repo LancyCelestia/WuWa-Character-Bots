@@ -25,6 +25,7 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
 )
 from plugins.bot_unified_runtime.contracts.media import build_parsed_content
+from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
 from plugins.bot_unified_runtime.sources.parsers import (
     build_content_parser_registry,
     build_cookie_provider,
@@ -358,7 +359,7 @@ def render_card_png(
         )
         resolved_bot_avatar_url = (
             str(bot_avatar_url or "").strip()
-            or str(getattr(config, "bot_persona_avatar_url", "") or "").strip()
+            or bot_avatar_uri(config)
         )
         if use_universal:
             payload = card_payload_from_parse(item)

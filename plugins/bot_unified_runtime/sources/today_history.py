@@ -133,7 +133,14 @@ class TodayHistoryProvider:
 
 def format_history_text(events: list[HistoryEvent]) -> str:
     now = datetime.now()  # noqa: DTZ005 - 本地时间有意 naive。
-    lines = [f"历史上的今天 {now.strftime('%m%d')}"]
+    # vis3（2026-09-13 用户裁定）：日期格式改"xx月xx日"，并附多历法纪年行
+    # （黄帝纪元/佛历/伊斯兰历/日本和历/拜占庭历——纯函数确定性换算）。
+    from .multi_calendar import multi_calendar_line
+
+    lines = [
+        f"历史上的今天 {now.month}月{now.day}日",
+        multi_calendar_line(now.date()),
+    ]
     for event in events:
         lines.append(f"{event.year} {event.title}")
     return "\n".join(lines)

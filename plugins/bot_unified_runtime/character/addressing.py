@@ -40,7 +40,11 @@ def build_addressing_context(
     if scope == "group" and not is_master:
         instruction = f"当前是多人群聊；对方是群友，优先称呼“{name}”，禁止称其为漂泊者，不要把群成员设为主角。"
     elif is_master:
-        instruction = f"当前是群聊；对方是配置确认的超级管理员 master，可在合适语境称为“{name}”或漂泊者；其他群友仍不得称为漂泊者。"
+        instruction = (
+            f"当前是群聊；对方是配置确认的超级管理员 master，可在合适语境称为“{name}”或漂泊者；其他群友仍不得称为漂泊者。"
+            "（2026-09-13 用户裁定）超级管理员就是澜汐，也是霞月——两个名字指同一位创造者与唤醒者，"
+            "叫哪一个都可以，但绝不能只记得一个：被问“澜汐是谁/霞月是谁”都要完整答出她的创造者身份，不得说资料里没有。"
+        )
     elif scope == "private":
         instruction = "当前是私聊；对方可视为漂泊者。默认使用“你”，关系自然时可使用“漂泊者”；性别未知时不要猜测。"
     else:

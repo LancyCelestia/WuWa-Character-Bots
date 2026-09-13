@@ -29,6 +29,7 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     new_request_id,
 )
+from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
 from plugins.bot_unified_runtime.sources.parsers import (
     build_cookie_provider,
     music_search_providers,
@@ -633,7 +634,7 @@ def build_music_capability(
                 ).strip()
                 or "守岸人",
                 "bot_avatar_url": str(
-                    getattr(config, "bot_persona_avatar_url", "") or ""
+                    bot_avatar_uri(config)
                 ),
                 "feature_label": "点歌",
                 "candidates": [

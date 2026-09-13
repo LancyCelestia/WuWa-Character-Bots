@@ -235,8 +235,14 @@ def build_operational_alert_text(
     suppressed_count: int = 0,
 ) -> str:
     elapsed = "" if issue.elapsed_ms is None else f" elapsed_ms={issue.elapsed_ms:.1f}"
+    # vis3（2026-09-13）：detail=安全摘要（能力名:异常类型），让告警自解释。
+    detail = (
+        f" detail={str(issue.safe_summary).strip()[:60]}"
+        if str(issue.safe_summary).strip()
+        else ""
+    )
     return (
-        f"[运行时告警] stage={issue.stage} kind={issue.kind} "
+        f"[运行时告警] stage={issue.stage} kind={issue.kind}{detail} "
         f"retryable={str(issue.retryable).lower()} attempts={issue.attempts}{elapsed} "
         f"debug_id={issue.debug_id} source_adapter={str(source_adapter).strip()[:40]} "
         f"source_bot={str(source_bot).strip()[:80]} session_type={session_type.value} "

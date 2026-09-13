@@ -6,6 +6,7 @@ import logging
 import re
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -1225,6 +1226,10 @@ def _incoming_from_nonebot_event(
     sender_title = str(getattr(onebot_sender, "title", None) or "").strip() or None
     group_title = str(getattr(event, "group_title", None) or "").strip() or None
     sender_display_name = sender_card or sender_nickname or None
+    if group_id is not None:
+        _remember_group_images(
+            str(group_id), normalized_message.segments or raw_segments
+        )
     return IncomingMessage(
         platform=platform,
         adapter=adapter,
@@ -1783,6 +1788,65 @@ def _record_runtime_diagnostic(
     return diagnostics_store.record(diagnostic)
 
 
+# ---- 群聊最近图片上下文（vis3 2026-09-13 用户指令）----
+# 实战：群里别人刚发图，另一用户 @bot "总结一下"——vision 只看提问者自带图，
+# 读不到图。环形缓存按群记最近 5 分钟的 http 图片（最多 5 张），chat 在
+# 「无自带图 + 文本带看图意图」时注入最新一张（标注"取自群里最近图片"）。
+_GROUP_RECENT_IMAGES: dict[str, deque[tuple[float, str]]] = {}
+_GROUP_RECENT_IMAGE_TTL_SECONDS = 300.0
+_GROUP_RECENT_IMAGE_MAX = 5
+_VISION_HINT_RE = re.compile(
+    r"总结|概括|识别|看看|看一下|这图|什么图|分析|读懂|描述|梳理|讲了什么|说了什么"
+)
+
+
+def _remember_group_images(group_id: str, segments: list[dict[str, Any]]) -> None:
+    """摄取侧登记：群消息里的 http 图片进环形缓存（进程内，重启即清）。"""
+    now = time.monotonic()
+    bucket = _GROUP_RECENT_IMAGES.setdefault(
+        str(group_id), deque(maxlen=_GROUP_RECENT_IMAGE_MAX)
+    )
+    for segment in segments:
+        if str(segment.get("type", "")).strip().lower() != "image":
+            continue
+        url = str((segment.get("data") or {}).get("url") or "")
+        if url.startswith("http"):
+            bucket.append((now, url))
+
+
+def _latest_fresh_group_image(group_id: str, now: float) -> str:
+    """取群内 TTL 内最新一张 http 图片；过期条目（最旧端）顺手清理。"""
+    bucket = _GROUP_RECENT_IMAGES.get(str(group_id))
+    if not bucket:
+        return ""
+    while bucket and now - bucket[0][0] > _GROUP_RECENT_IMAGE_TTL_SECONDS:
+        bucket.popleft()
+    return bucket[-1][1] if bucket else ""
+
+
+def _learned_name_is_admin_identity(name: str, config: Any) -> bool:
+    """自学习昵称护栏（2026-09-13 实战）：管理团队档案名是身份不是外号。
+
+    实战事故：霞月的 QQ 说过"叫我澜汐更顺口"式的话，"澜汐"被学成她的
+    昵称，称谓注入张冠李戴（bot 把霞月当澜汐）。护栏：学习到的昵称若
+    命中任何管理档案的 name/nicknames，一律不学——身份名只能来自配置。
+    """
+    target = str(name or "").strip()
+    if not target:
+        return False
+    for profile in getattr(config, "bot_admin_profiles", []) or []:
+        if not isinstance(profile, dict):
+            continue
+        names = {str(profile.get("name") or "").strip()}
+        for part in str(profile.get("nicknames") or "").replace("／", "/").split("/"):
+            part = part.strip()
+            if part:
+                names.add(part)
+        if target in names:
+            return True
+    return False
+
+
 def _record_chat_history_turn(
     recorder: ConversationHistoryRecorder,
     *,
@@ -1849,6 +1913,17 @@ def _audit_chat_history_skipped(
 # 按 self_id 缓存 600s，避免每条消息一次跨进程调用。配置头像优先且不缓存。
 _BOT_AVATAR_URL_CACHE: dict[str, tuple[float, str]] = {}
 _BOT_AVATAR_URL_TTL_SECONDS = 600.0
+
+
+def _refresh_local_bot_avatar(bot_id: str, config: Config) -> str:
+    """连接钩子的同步下载体：qlogo → Runtime data/avatar/ 本地缓存。"""
+    from .output.bot_avatar import refresh_from_qq
+
+    data_dir = str(getattr(config, "bot_runtime_data_dir", "data") or "data")
+    root = Path(data_dir)
+    if not root.is_absolute():
+        root = Path(__file__).resolve().parents[2] / data_dir
+    return refresh_from_qq(bot_id, root)
 
 
 async def _resolve_bot_avatar_url(bot: Any, config: Config) -> str:
@@ -3091,6 +3166,24 @@ def _register_nonebot_handlers() -> None:
                     "bot_connected",
                     bot_id=str(getattr(bot, "self_id", "unknown")),
                 )
+                # Bot 本地头像（2026-09-13 用户指令）：连接即从 qlogo 下载
+                # 持久化到 Runtime data/avatar/，全卡片按需取 file URI。
+                try:
+                    await asyncio.to_thread(
+                        _refresh_local_bot_avatar,
+                        str(getattr(bot, "self_id", "") or ""),
+                        config,
+                    )
+                except Exception as exc:  # noqa: BLE001 - 头像缺失仅观感降级。
+                    _log_runtime_event(
+                        runtime_event_log,
+                        "DEBUG",
+                        "bot_avatar_prefetch_failed",
+                        adapter="onebot",
+                        platform="qq",
+                        bot_id=str(getattr(bot, "self_id", "unknown")),
+                        detail=type(exc).__name__,
+                    )
                 # 表情库启动补标（F6/用户裁定：导入的表情包必须先被理解才
                 # 允许被发）：描述为空的图逐张过 VLM；每轮限 20 张防打爆。
                 if bool(getattr(config, "bot_meme_library_enabled", False)):
@@ -4008,6 +4101,34 @@ def _register_nonebot_handlers() -> None:
         )
         if message is None:
             return
+        # 回复图片可触发（2026-09-13 用户指令）：反查被引用消息拿 http 图链。
+        if (
+            message.reply_to_message_id
+            and not any(
+                str(s.get("type", "")).lower() == "image"
+                for s in message.raw_segments or []
+            )
+        ):
+            getter = getattr(bot, "get_msg", None)
+            if callable(getter) and str(message.reply_to_message_id).strip():
+                try:
+                    replied_payload = await asyncio.wait_for(
+                        getter(message_id=int(str(message.reply_to_message_id))),
+                        timeout=5.0,
+                    )
+                except (asyncio.TimeoutError, ValueError, TypeError):
+                    replied_payload = None
+                except Exception:  # noqa: BLE001 - 反查失败按无图处理。
+                    replied_payload = None
+                if replied_payload is not None:
+                    replied_segments = (
+                        _onebot_segments_from_message_payload(replied_payload) or []
+                    )
+                    message.raw_segments.extend(
+                        segment
+                        for segment in replied_segments
+                        if str(segment.get("type", "")).lower() == "image"
+                    )
         from .capabilities.image_search import (
             build_image_search_capability,
         )
@@ -5607,6 +5728,23 @@ def _register_nonebot_handlers() -> None:
             segments=event_segments or None,
             reply_chain=resolved_chain,
         )
+        # 群聊最近图片上下文（vis3 2026-09-13）：无自带图 + 看图意图 →
+        # 注入群里 TTL 内最新一张；模型视角即"总结这张图"。
+        if (
+            message.group_id
+            and message.plain_text
+            and _VISION_HINT_RE.search(message.plain_text)
+            and not any(
+                str(s.get("type", "")).strip().lower() == "image"
+                for s in message.raw_segments or []
+            )
+        ):
+            recent_url = _latest_fresh_group_image(message.group_id, time.monotonic())
+            if recent_url:
+                message.raw_segments.append(
+                    {"type": "image", "data": {"url": recent_url}}
+                )
+                message.audit_tags.append("vision_from_group_recent")
         # 被动感知（批次 C）：所有群/私聊消息都观察行为、自述画像与小名自学，
         # 不依赖 @/白名单触发；只影响后续态度与称呼，不改变本轮是否回复。
         # observe/learn_profile 是多次 SQLite 事务并与 offload 线程争锁，
@@ -5652,6 +5790,7 @@ def _register_nonebot_handlers() -> None:
                             learned
                             and learned not in _NICKNAME_STOPWORDS
                             and len(learned) >= 2
+                            and not _learned_name_is_admin_identity(learned, config)
                         ):
                             current = _store.snapshot(message.sender_id).get("nickname") or ""
                             if learned != current:

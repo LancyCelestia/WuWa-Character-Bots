@@ -765,7 +765,9 @@ class RuntimePipeline:
             kind="internal_error",
             retryable=False,
             debug_id=debug_id,
-            safe_summary="internal_error",
+            # vis3（2026-09-13）：告警自带能力名+异常类型——旧告警只给
+            # "internal_error"四个词，日志轮转后完全无法定位。
+            safe_summary=f"{capability_id}:{type(exc).__name__}",
         )
         public_message = ""
         # 可观测性：能力层未预期异常必须留痕（类型+消息摘要+关键栈帧），

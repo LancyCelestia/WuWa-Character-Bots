@@ -13,7 +13,7 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
     SendPolicy,
 )
-from plugins.bot_unified_runtime.sources.sauce_search import search_saucenao
+from plugins.bot_unified_runtime.sources.sauce_search import search_saucenao_ex
 
 _TRIGGER_RE = re.compile(r"^[/!！]?搜图\s*$|^[/!！]?搜图\s+\S+", re.IGNORECASE)
 
@@ -58,13 +58,32 @@ def build_image_search_capability(config: Any | None = None):
                 body="把要搜的图片和『搜图』发在同一条消息里，或直接发图后跟上搜图指令。",
                 audit_tags=["image_search", "missing_image"],
             )
-        hits = search_saucenao(image_url, config=config)
+        hits, error_kind = search_saucenao_ex(image_url, config=config)
+        if error_kind == "no_key":
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.image_search",
+                kind="text",
+                body="反搜服务还没配置 API key（SAUCENAO_API_KEY），暂时搜不了。",
+                audit_tags=["image_search", "no_key"],
+            )
+        if error_kind == "http_error":
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.image_search",
+                kind="text",
+                body="反搜服务暂时连不上（SauceNAO 超时/拒绝），稍后再试一次。",
+                audit_tags=["image_search", "service_error"],
+            )
         if not hits:
             return CapabilityResult(
                 request_id=message.request_id,
                 capability_id="bot.image_search",
                 kind="text",
-                body="没有找到相似图源（可能需要更多线索，或图源站点未收录）。",
+                body=(
+                    "没有找到相似图源（图源站点未收录，或 QQ 图床链接被图源拒绝抓取；"
+                    "可以试试直接发原图文件再搜）。"
+                ),
                 audit_tags=["image_search", "not_found"],
             )
         lines = ["反搜结果（按相似度）："]

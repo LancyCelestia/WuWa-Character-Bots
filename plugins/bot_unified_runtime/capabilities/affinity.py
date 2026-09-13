@@ -25,6 +25,7 @@ from plugins.bot_unified_runtime.contracts import (
     PrivacyLevel,
     RiskLevel,
 )
+from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
 
 _COMMAND_RE = re.compile(
     # affinity(?![a-z0-9])：ASCII 别名右侧词边界（wiki _alias_hit 先例），
@@ -332,7 +333,7 @@ def build_affinity_capability(
                 bot_score=bot_score,
                 steps=steps,
                 accent_color=accent,
-                bot_avatar_url=str(getattr(config, "bot_persona_avatar_url", "") or ""),
+                bot_avatar_url=bot_avatar_uri(config),
             )
             card = _render_card(payload, render_backend, resolved_card_dir, request_id)
             return CapabilityResult(
@@ -384,7 +385,7 @@ def build_affinity_capability(
                 bot_name=bot_name,
                 accent_color=accent,
                 subtitle=where,
-                bot_avatar_url=str(getattr(config, "bot_persona_avatar_url", "") or ""),
+                bot_avatar_url=bot_avatar_uri(config),
             )
 
         card = _render_card(payload, render_backend, resolved_card_dir, request_id)

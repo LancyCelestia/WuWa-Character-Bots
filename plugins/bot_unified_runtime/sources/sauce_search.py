@@ -27,10 +27,18 @@ class SauceHit:
     url: str
 
 
-def search_saucenao(image_url: str, *, api_key: str = "", config: object | None = None) -> list[SauceHit]:
-    """反搜一张图；失败/无结果返回空列表。"""
+def search_saucenao_ex(
+    image_url: str, *, api_key: str = "", config: object | None = None
+) -> tuple[list[SauceHit], str]:
+    """反搜一张图；返回 (hits, error_kind)。
+
+    error_kind：""=成功（含真的无结果）、"no_key"=未配置 key、
+    "http_error"=SauceNAO 服务不可达/非 200/响应坏——调用方须区分
+    「服务失败」与「真的没有相似结果」（2026-09-13 实战：两者此前共用
+    同一句提示，误导排障）。
+    """
     if not image_url.startswith(("http://", "https://")):
-        return []
+        return [], "no_key"
     key = str(
         api_key
         or resolve_search_secret(
@@ -38,7 +46,7 @@ def search_saucenao(image_url: str, *, api_key: str = "", config: object | None 
         )
     ).strip()
     if not key:
-        return []
+        return [], "no_key"
     try:
         response = httpx.get(
             _API,
@@ -53,8 +61,8 @@ def search_saucenao(image_url: str, *, api_key: str = "", config: object | None 
         )
         response.raise_for_status()
         payload = response.json()
-    except Exception:  # noqa: BLE001 - 反搜失败静默降级。
-        return []
+    except Exception:  # noqa: BLE001 - 服务失败与无结果必须可区分。
+        return [], "http_error"
     hits: list[SauceHit] = []
     for item in (payload or {}).get("results") or []:
         header = item.get("header") or {}
@@ -73,4 +81,9 @@ def search_saucenao(image_url: str, *, api_key: str = "", config: object | None 
             )
         )
     hits.sort(key=lambda hit: hit.similarity, reverse=True)
-    return hits[:3]
+    return hits[:3], ""
+
+
+def search_saucenao(image_url: str, *, api_key: str = "", config: object | None = None) -> list[SauceHit]:
+    """兼容包装：只要 hits（旧调用方）。"""
+    return search_saucenao_ex(image_url, api_key=api_key, config=config)[0]
