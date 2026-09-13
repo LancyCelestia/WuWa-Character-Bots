@@ -1,6 +1,6 @@
 """卡面样张一键渲染：离线出全套卡片 PNG，供重启后人工验收。
 
-覆盖 9 族 17 张样张（payload 结构抄自生产链路对应能力/契约测试）：
+覆盖 10 族 18 张样张（payload 结构抄自生产链路对应能力/契约测试）：
 - universal：bilibili/netease/未知默认三主题 × 视频/BGV/搜图/音乐四形态；
 - market：股指（market_card）+ 大宗商品/国债/北向（finance 卡三形态）；
 - finance：个股行情卡（sections + 折线 SVG）；
@@ -11,7 +11,9 @@
 - help：帮助目录卡（/bot help 总览，真实 72 topic payload）；
 - usage：模型用量账单卡（含渠道子行）；
 - media_archive：媒体归档结果卡（通用媒体卡壳；生产归档回执为纯文本，
-  本样张为卡面验收供参考形态）。
+  本样张为卡面验收供参考形态）；
+- error_card：运行异常诊断卡（红强调 + 分区齐全；payload 抄
+  tests/test_error_card_contract.py 全量构造，视口同生产 render_error_card_png）。
 
 全部 payload 零外网图片（封面/头像/图库均为脚本内 PIL 生成的 base64 PNG），
 mermaid.min.js 走本地素材（ChatBot_Runtime/card_render_assets/mermaid/），
@@ -867,6 +869,62 @@ def build_help_index() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# error_card：运行异常诊断卡
+# ---------------------------------------------------------------------------
+
+
+def build_error_card() -> dict[str, Any]:
+    """运行异常诊断卡（payload 抄 tests/test_error_card_contract.py 全量构造）。
+
+    分区齐全形态：触发回显/栈摘录/触发方法/配置快照/版本与构建/平台与协议/
+    IDs 与时间全量上卡；红强调由 ERROR_THEME 注入 --pc（非平台色）；
+    bot_name/bot_avatar_url 走 _COMMON_FOOTER（与契约构造同值）。
+    """
+    html_text = bridge.render_error_card_html(
+        {
+            "card_title": "运行异常",
+            "exc_type": "TimeoutError",
+            "exc_message": "connect timeout after 6s",
+            "human_text": "这条指令处理的时候出了岔子（TimeoutError），细节都在卡上了。",
+            "trigger_echo": "天气 北京",
+            "stack_lines": [
+                "  weather.py:120 in fetch_city: requests.get(url)",
+                "  pipeline.py:861 in handle: capability(prepared.message, ...)",
+            ],
+            "method_pairs": [
+                {"label": "能力", "value": "bot.weather"},
+                {"label": "函数", "value": "fetch_city"},
+                {"label": "路由", "value": "RouteKind.WEATHER"},
+            ],
+            "config_pairs": [{"label": "bot_weather_api_key", "value": "***"}],
+            "version_pairs": [
+                {"label": "NoneBot", "value": "2.x.y"},
+                {"label": "构建", "value": "abc1234 (2026-09-13)"},
+            ],
+            "env_pairs": [
+                {"label": "平台", "value": "qq"},
+                {"label": "协议", "value": "OneBot V11"},
+                {"label": "通信", "value": "正向 WS"},
+                {"label": "会话", "value": "群聊 123"},
+            ],
+            "id_pairs": [
+                {"label": "触发时间", "value": "2026-09-14T12:00:00+08:00"},
+                {"label": "message_id", "value": "m-9"},
+            ],
+            "help_text": "把这张卡截图发给创造者（澜汐/霞月）即可，信息已齐备且脱敏。",
+            **_COMMON_FOOTER,
+        }
+    )
+    return {
+        "html": html_text,
+        # 视口同生产 render_error_card_png（error_report.py）。
+        "viewport": {"width": 1160, "height": 1800},
+        "device_scale_factor": 2,
+        "wait_ms": 0,
+    }
+
+
+# ---------------------------------------------------------------------------
 # 卡型登记表 / 渲染循环
 # ---------------------------------------------------------------------------
 
@@ -896,6 +954,7 @@ CARDS: tuple[SampleCard, ...] = (
     SampleCard("help_index", "help · 帮助目录（两栏）", build_help_index),
     SampleCard("usage_report", "usage · 模型账单(渠道子行)", build_usage_report),
     SampleCard("media_archive", "media_archive · 归档结果", build_media_archive),
+    SampleCard("error_card", "error_card · 运行异常诊断", build_error_card),
 )
 
 _REGISTRY: dict[str, SampleCard] = {card.key: card for card in CARDS}

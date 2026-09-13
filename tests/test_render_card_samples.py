@@ -1,7 +1,7 @@
 """卡面样张脚本回归（scripts/render_card_samples.py，全离线不真开浏览器）。
 
 覆盖：
-- 16 张样张 payload 构造函数逐卡非空断言（HTML 体量/守岸人署名/视口键）；
+- 18 张样张 payload 构造函数逐卡非空断言（HTML 体量/守岸人署名/视口键）；
 - 关键卡面内容抽查（平台主题色、渠道子行、脏数据归一、非上市红线等）；
 - --list 输出包含全部登记卡型（main(["--list"]) 返回 0，纯离线）；
 - 渲染函数在假后端下的调用路径：payload 透传 / 文件名含卡型 / 单卡失败
@@ -175,6 +175,33 @@ def test_media_archive_card_content() -> None:
     assert "原神" in html
 
 
+def test_error_card_red_accent_and_full_sections() -> None:
+    from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
+        ERROR_ACCENT,
+    )
+
+    html = rcs.build_error_card()["html"]
+    assert f"--pc: {ERROR_ACCENT}" in html  # 红强调（ERROR_THEME 注入，非平台色）。
+    for marker in (
+        "运行异常",
+        "RUNTIME DIAGNOSTIC",
+        "触发回显",
+        "栈摘录",
+        "触发方法",
+        "配置快照",
+        "版本与构建",
+        "平台与协议",
+        "IDs 与时间",
+        "TimeoutError",
+        "weather.py:120",
+        "bot_weather_api_key",
+    ):
+        assert marker in html, f"缺分区/内容: {marker}"
+    assert re.search(r'class="shell card"', html)  # 元素截图契约根。
+    payload = rcs.build_error_card()
+    assert payload["viewport"] == {"width": 1160, "height": 1800}  # 同生产 render_error_card_png。
+
+
 # ==================== 3. --list 模式 ====================
 
 
@@ -189,7 +216,7 @@ def test_list_mode_prints_all_registered_keys(capsys: pytest.CaptureFixture[str]
 def test_registry_has_no_duplicate_keys() -> None:
     keys = [card.key for card in rcs.CARDS]
     assert len(keys) == len(set(keys))
-    assert len(keys) >= 16
+    assert len(keys) >= 17
 
 
 # ==================== 4. 假后端渲染路径（≥6 例） ====================
