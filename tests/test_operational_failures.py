@@ -21,6 +21,7 @@ from plugins.bot_unified_runtime import contracts as runtime_contracts
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
 from plugins.bot_unified_runtime.capabilities.chat import (
     _execute_mcp_tool_call,
+    _llm_error_result,
     build_chat_result,
 )
 from plugins.bot_unified_runtime.config import Config
@@ -235,6 +236,33 @@ def test_operational_issue_is_strict_and_serializes_through_all_contracts() -> N
         OperationalIssue.model_validate({"stage": "llm", "kind": "timeout", "unknown": 1})
 
 
+def test_llm_error_result_preserves_attempt_count_and_defaults_to_one() -> None:
+    message = _message(SessionType.PRIVATE)
+    decision = _decision(message)
+    context = _context(message.request_id, SessionType.PRIVATE)
+
+    retried = _llm_error_result(
+        message=message,
+        decision=decision,
+        context=context,
+        diagnostic_tags=[],
+        error_kind="provider_error",
+        attempts=3,
+    )
+    assert retried.operational_issue is not None
+    assert retried.operational_issue.attempts == 3
+
+    untracked = _llm_error_result(
+        message=message,
+        decision=decision,
+        context=context,
+        diagnostic_tags=[],
+        error_kind="provider_error",
+    )
+    assert untracked.operational_issue is not None
+    assert untracked.operational_issue.attempts == 1
+
+
 def test_private_llm_failure_is_generic_and_group_failure_is_silent_audit() -> None:
     for session_type, expected_body, expected_policy in (
         (SessionType.PRIVATE, GENERIC_FAILURE_MESSAGE, SendPolicy.IMMEDIATE),
@@ -256,6 +284,7 @@ def test_private_llm_failure_is_generic_and_group_failure_is_silent_audit() -> N
         assert result.operational_issue is not None
         assert result.operational_issue.stage == "llm"
         assert result.operational_issue.kind == "timeout"
+        assert result.operational_issue.attempts == 2
         assert all("secret" not in tag.lower() for tag in result.audit_tags)
 
 

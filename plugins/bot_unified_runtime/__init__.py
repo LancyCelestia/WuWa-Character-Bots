@@ -1221,6 +1221,9 @@ def _incoming_from_nonebot_event(
     onebot_sender = getattr(event, "sender", None)
     sender_card = str(getattr(onebot_sender, "card", None) or "").strip()
     sender_nickname = str(getattr(onebot_sender, "nickname", None) or "").strip()
+    sender_platform_role = str(getattr(onebot_sender, "role", None) or "").strip() or None
+    sender_title = str(getattr(onebot_sender, "title", None) or "").strip() or None
+    group_title = str(getattr(event, "group_title", None) or "").strip() or None
     sender_display_name = sender_card or sender_nickname or None
     return IncomingMessage(
         platform=platform,
@@ -1245,6 +1248,11 @@ def _incoming_from_nonebot_event(
         soft_persona_mention=soft_persona_mention,
         message_id=str(message_id) if message_id is not None else None,
         sender_display_name=sender_display_name,
+        sender_platform_role=sender_platform_role,
+        sender_card=sender_card or None,
+        sender_nickname=sender_nickname or None,
+        sender_title=sender_title,
+        group_title=group_title,
     )
 
 

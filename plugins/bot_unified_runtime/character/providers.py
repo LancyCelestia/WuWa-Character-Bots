@@ -78,6 +78,7 @@ class CharacterContextProvider(Protocol):
         sender_roles: list[str] | None = None,
         gender_identity: str = "unknown",
         addressing_preference: str = "",
+        sender_profile_note: str = "",
     ) -> ContextBundle:
         raise NotImplementedError
 
@@ -97,6 +98,7 @@ class NullCharacterContextProvider:
         sender_roles: list[str] | None = None,
         gender_identity: str = "unknown",
         addressing_preference: str = "",
+        sender_profile_note: str = "",
     ) -> ContextBundle:
         addressing_context = build_addressing_context(
             session_type="group" if group_id else "private",
@@ -124,6 +126,7 @@ class NullCharacterContextProvider:
             current_message=query_text,
             sender_id=sender_id,
             session_id=session_id,
+            sender_profile_note=sender_profile_note,
         )
 
 
@@ -270,6 +273,7 @@ class FileCharacterContextProvider:
         sender_roles: list[str] | None = None,
         gender_identity: str = "unknown",
         addressing_preference: str = "",
+        sender_profile_note: str = "",
     ) -> ContextBundle:
         # 用户显式偏好（调用方参数）优先于持久化偏好；两者都缺时退回群昵称/漂泊者规则。
         stored_preference, stored_gender = ("", "unknown")
@@ -457,6 +461,7 @@ class FileCharacterContextProvider:
             mood_description=mood_description,
             quirks_section=quirks_section,
             session_identity_note=session_identity_note,
+            sender_profile_note=sender_profile_note,
             trend_context=trend_context,
             temporal_context=temporal_context,
             glossary_context=glossary_context,

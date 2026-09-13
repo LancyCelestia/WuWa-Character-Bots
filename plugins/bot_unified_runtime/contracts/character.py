@@ -252,6 +252,8 @@ class ContextBundle(StrictBaseModel):
     quirks_section: str = ""
     # 会话级身份记忆（管理员设置）：每群/每私聊独立的称呼与标签渲染块。
     session_identity_note: str = ""
+    # 当前群成员的 OneBot 身份事实（只作上下文，不参与权限判定）。
+    sender_profile_note: str = ""
     trend_context: TrendContext | None = None
     temporal_context: TemporalContext | None = None
     glossary_context: GlossaryContext | None = None

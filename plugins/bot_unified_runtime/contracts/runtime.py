@@ -127,6 +127,12 @@ class IncomingMessage(StrictBaseModel):
     session_type: SessionType
     sender_id: str
     sender_display_name: str | None = None
+    # OneBot 原生身份事实：只作上下文与审计展示，权限仍由 RoleSettings 按 sender_id 决定。
+    sender_platform_role: str | None = None
+    sender_card: str | None = None
+    sender_nickname: str | None = None
+    sender_title: str | None = None
+    group_title: str | None = None
     group_id: str | None = None
     raw_segments: list[dict[str, Any]] = Field(default_factory=list)
     plain_text: str = ""

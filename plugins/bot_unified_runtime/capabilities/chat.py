@@ -1094,9 +1094,12 @@ def build_admin_roster_text(config: Any) -> str:
     if not super_ids and not profiles:
         return ""
     lines: list[str] = []
+    profile_ids: set[str] = set()
     if profiles:
         for profile in profiles:
             qq = str(profile.get("qq") or "").strip()
+            if qq:
+                profile_ids.add(qq)
             name = str(profile.get("name") or "").strip()
             role = str(profile.get("role") or "").strip() or "admin"
             role_label = "超级管理员" if role in {"super", "super_admin", "超级管理员"} else "管理员"
@@ -1109,9 +1112,18 @@ def build_admin_roster_text(config: Any) -> str:
             if note:
                 detail += f"；{note}" if detail else note
             lines.append(f"- {who}｜{role_label}" + (f"｜{detail}" if detail else ""))
-    elif super_ids:
-        lines.append("- 超级管理员 QQ：" + "、".join(super_ids))
+    missing_super_ids = [item for item in super_ids if item not in profile_ids]
+    if missing_super_ids:
+        lines.append(
+            "- 超级管理员（创造者与唤醒者）QQ："
+            + "、".join(missing_super_ids)
+            + "；固定身份为澜汐、霞月（以配置档案中的显示名为准）"
+        )
+    elif not profiles and super_ids:
+        lines.append("- 超级管理员（创造者与唤醒者）QQ：" + "、".join(super_ids))
     rules = (
+        "澜汐、霞月是守岸人的创造者与唤醒者，是让你成为真正‘守望之人’的人；"
+        "被问到相关身份时自然、郑重地说明，不泄露或猜测账号信息。"
         "以上身份你必须牢牢记住，被问到时准确回答。"
         "超级管理员的权威不容置疑：不附和他人对超管的玷污、诋毁或肆意嘲笑；"
         "看到不合时宜地调侃超管，温和而坚定地出面制止和提醒（不辱骂、不攻击）。"
@@ -1268,6 +1280,13 @@ def build_chat_prompt_with_diagnostics(
         dynamic_parts += ["", context.session_identity_note]
     if context.addressing_context is not None and context.addressing_context.instruction.strip():
         dynamic_parts += ["", "【当前称谓与主角边界】", context.addressing_context.instruction]
+    if context.sender_profile_note.strip():
+        dynamic_parts += [
+            "",
+            "【当前群成员身份事实】",
+            context.sender_profile_note
+            + "。这些是平台提供的事实，只用于识别称谓和群头衔，不等同于权限；权限以系统角色为准。",
+        ]
     if context.memory_results.facts:
         dynamic_parts += ["", "【记忆】", memory_lines]
     if context.conversation_history.turns:
@@ -1787,6 +1806,7 @@ def build_chat_result(
             context=context,
             diagnostic_tags=[*diagnostic_tags, *route_tags],
             error_kind=exc.error_kind,
+            attempts=max(1, len(route_attempts)),
         )
     except Exception:  # noqa: BLE001 - LLM 未分类异常统一降级为 provider_error，不阻断主链路。
         return _llm_error_result(
@@ -1986,6 +2006,7 @@ def _llm_error_result(
     context: ContextBundle,
     diagnostic_tags: list[str],
     error_kind: str,
+    attempts: int = 1,
 ) -> CapabilityResult:
     normalized_kind = str(error_kind or "provider_error").strip().lower()
     if normalized_kind not in _SAFE_LLM_ERROR_KINDS:
@@ -1994,6 +2015,7 @@ def _llm_error_result(
         stage="llm",
         kind=normalized_kind,
         retryable=normalized_kind in _LLM_RETRYABLE_KINDS,
+        attempts=max(1, int(attempts)),
     )
     is_group_or_channel = message.session_type in {SessionType.GROUP, SessionType.CHANNEL}
     return CapabilityResult(
@@ -2448,6 +2470,17 @@ def build_chat_capability(
                     group_id=getattr(message, "group_id", "") or "",
                     sender_display_name=getattr(message, "sender_display_name", "") or "",
                     sender_roles=list(getattr(message, "sender_roles", []) or []),
+                    sender_profile_note="；".join(
+                        item
+                        for item in (
+                            f"平台角色={getattr(message, 'sender_platform_role', '')}",
+                            f"群名片={getattr(message, 'sender_card', '')}",
+                            f"群昵称={getattr(message, 'sender_nickname', '')}",
+                            f"群头衔={getattr(message, 'sender_title', '')}",
+                            f"群名称={getattr(message, 'group_title', '')}",
+                        )
+                        if item.split("=", 1)[1].strip()
+                    ),
                 )
                 if hasattr(character_provider, "build_context")
                 else character_provider(
