@@ -168,6 +168,14 @@ SHADOW_LEVELS: dict[str, str] = {
     # L1 瓦片级：指标小卡/评论条等小件（原 SHADOW_SECONDARY，兼容名保留）。
     "elev_tile": SHADOW_SECONDARY,
 }
+# 模板侧阴影 CSS 变量 → token 值的唯一登记处。契约/视觉审计测试从本表动态
+# 派生白名单：新增档位先在这里入册（并补 :root 注入点），族外一次性阴影
+# 一票否决——只开正门，不留后门。
+SHADOW_CSS_VARS: dict[str, str] = {
+    "--mica-shadow": SHADOW_LEVELS["elev_shell"],
+    "--mica-shadow-soft": SHADOW_LEVELS["elev_tile"],
+    "--mica-shadow-panel": SHADOW_LEVELS["elev_panel"],
+}
 # 辉光 token：作背景层（radial 光晕），不是 box-shadow——不与阴影 token 冲突。
 GLOW_ACCENT = (
     "radial-gradient(closest-side, "

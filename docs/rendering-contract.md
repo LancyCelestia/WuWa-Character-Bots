@@ -14,7 +14,7 @@
 | 3 | **字重 ≤ 700**（`FONT_WEIGHT_MAX = 700`） | 中文粗体渲染发糊，700 封顶 |
 | 4 | **动画元素必须在 `.card` 子树内** | 截图目标是 `.card`（`render_backends` 固定 `query_selector(".card")`）；色斑可走 `.card::before/::after` 伪元素或 `.card` 内 `.drift-blobs` 容器 |
 | 5 | **光晕 alpha ≥ 0.05** | 低于该阈值的柔光在生产裁剪后不可见却增加合成开销 |
-| 6 | **恰好两枚阴影 token**：`--mica-shadow` + `--mica-shadow-soft`，每模板各定义一次；`box-shadow` 只允许 `none` / 两个 `var()` 引用，**禁止表外值（含 inset 内高光、光晕）** | 统一投影体系；内高光语言由 1px 渐变描边（padding-box/border-box 双背景）承担，不走阴影 |
+| 6 | **阴影只准用登记族**（vis4 分级）：`theme_tokens.SHADOW_CSS_VARS` 为唯一登记处——`--mica-shadow`(L3 外壳) + `--mica-shadow-panel`(L2 面板大件) + `--mica-shadow-soft`(L1 瓦片小件)；`box-shadow` 只允许 `none` / `var()` 引用登记表成员，**禁止表外值（含 inset 内高光、光晕）**；契约/审计测试白名单从登记表动态派生，新增档位先入册再使用 | 统一投影体系 + 层次可辨；内高光语言由 1px 渐变描边（padding-box/border-box 双背景）承担，不走阴影 |
 | 7 | **渲染失败 → 纯文本兜底，契约零破坏** | 后端 `render_card` 失败返回 `None`；各能力收到 `None`/空 PNG 必须回退纯文本（如点歌候选列表、mermaid 代码块原样保留）；bridge 各 `render_*_html` 对 `None`/`{}` payload 不抛异常 |
 
 ## 二、守岸人本命色（品牌基底，不可被平台色覆盖）
@@ -55,7 +55,7 @@
 |------|-----|------|
 | `--r-shell` | `30px` | 外壳圆角（五模板一致） |
 | `--r-panel` / `--r-tile` | `18px` / `14px` | 面板 / 瓦片圆角 |
-| 阴影 | `SHADOW_PRIMARY` / `SHADOW_SECONDARY` | 两枚 token 的唯一取值来源，模板内字面量必须与之逐字符一致 |
+| 阴影 | `SHADOW_CSS_VARS`（= SHADOW_LEVELS 三级族） | 阴影档位的唯一登记处：shell/panel/tile 三级；模板内字面量必须与登记值逐字符一致（或引用 bridge 注入的同名上下文键） |
 | 字体 | `FONT_FAMILY_STACK` | 五模板同栈；模板内硬编码（CSS 不能吃 HTML 转义），契约测试锁一致 |
 | 间距 | `GAP_SCALE_PX = {3,4,6,7,8,10,12,14,16}` | 模板 `gap` 只允许取刻度内值，禁止发明新间距 |
 | 宽度 | `CARD_SHELL_WIDTHS` | 宽度按内容族登记：universal 1440（payload `card_width` 驱动）/ affinity 1180 / market·finance 1080 / song_panel 980 / mermaid_max 840（fit-content 上限）；新模板宽度必须先进本表 |

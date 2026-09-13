@@ -1,4 +1,4 @@
-"""vis2 模板视觉审计固化测试（2026-09-12）。
+"""vis2/vis4 模板视觉审计固化测试（2026-09-12 / 2026-09-13）。
 
 审计基准：友商解析卡质量维度（信息层级/瓦片化/角标/元数据页脚/留白节奏）。
 本次审计结论（详见 .superpowers/sdd/2026-09-12-shorekeeper-global-audit/vis2-report.md）：
@@ -6,6 +6,8 @@
   已补液态玻璃表面（与 affinity/song 的 .glass 同配方）；
 - affinity / song_candidates / mermaid 审计通过，不動。
 本文件锁定「行瓦片必须带玻璃表面」这一结构事实，防回归。全离线字符串断言。
+vis4（2026-09-13）：行瓦片与页脚胶囊升 L2 面板阴影；阴影白名单改由
+theme_tokens.SHADOW_CSS_VARS 动态派生——登记表即正门，族外零容忍。
 """
 
 from __future__ import annotations
@@ -16,16 +18,17 @@ from pathlib import Path
 import pytest
 
 from plugins.bot_unified_runtime.output.card_render import bridge
+from plugins.bot_unified_runtime.output.card_render.theme_tokens import SHADOW_CSS_VARS
 
 _TEMPLATES_DIR = Path(bridge.__file__).resolve().parent / "templates"
 
 # 液态玻璃瓦片表面要素：半透明白 padding-box + 1px 内高光渐变 border-box
-# + 透明边框 + soft 阴影 token（阴影值契约已由 test_rendering_contract 锁定）。
+# + 透明边框 + L2 面板阴影 token（值契约由 test_rendering_contract 锁定）。
 _GLASS_MARKERS = (
     "padding-box",
     "border-box",
     "border: 1px solid transparent",
-    "box-shadow: var(--mica-shadow-soft)",
+    "box-shadow: var(--mica-shadow-panel)",
 )
 
 # 模板 → 液态玻璃表面载体选择器。market/finance 的行瓦片表面直接写在
@@ -95,14 +98,11 @@ def test_dom_rows_compose_glass_class(name: str) -> None:
 
 @pytest.mark.parametrize("name", sorted(_SURFACE_RULES))
 def test_tile_surface_shadow_is_token_only(name: str) -> None:
-    """瓦片表面新增阴影只允许引用两枚 token（与全仓契约同口径）。"""
+    """瓦片表面新增阴影只允许引用 SHADOW_CSS_VARS 登记族（动态白名单）。"""
+    allowed = {"none"} | {f"var({var})" for var in SHADOW_CSS_VARS}
     css = re.search(
         r"<style>(.*?)</style>", _strip_comments(_tpl(name)), re.DOTALL
     ).group(1)
     for value in re.findall(r"box-shadow\s*:\s*([^;]+);", css):
         normalized = re.sub(r"\s+", " ", value).strip()
-        assert normalized in {
-            "none",
-            "var(--mica-shadow)",
-            "var(--mica-shadow-soft)",
-        }, f"{name} 出现非 token 阴影: {normalized!r}"
+        assert normalized in allowed, f"{name} 出现非 token 阴影: {normalized!r}"

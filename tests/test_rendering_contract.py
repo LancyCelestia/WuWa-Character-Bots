@@ -5,7 +5,8 @@
 docs/rendering-contract.md（本测试的软文档镜像）。
 
 铁律：模板无 <meta viewport>；body 透明；字重 ≤700；动画必须在 .card 内；
-光晕 alpha ≥ 0.05；恰好两枚阴影 token；渲染失败→纯文本兜底契约零破坏；
+光晕 alpha ≥ 0.05；阴影只准用 theme_tokens.SHADOW_CSS_VARS 登记族
+（shell/panel/tile 分级，动态白名单）；渲染失败→纯文本兜底契约零破坏；
 守岸人本命色为唯一基底，平台色只做受控 accent。
 
 注意：显式枚举全部既有模板（universal/market/affinity/mermaid/song/finance），
@@ -31,6 +32,7 @@ from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
     META_VIEWPORT_POLICY,
     PLATFORM_FOOTER_LABELS,
     PLATFORM_THEMES,
+    SHADOW_CSS_VARS,
     SHADOW_PRIMARY,
     SHADOW_SECONDARY,
     THEME_ALIASES,
@@ -131,7 +133,10 @@ def test_font_weight_at_most_700(name: str) -> None:
 # ==================== 4. 阴影 token 族（vis4 层次化升级） ====================
 # 2026-09-13 用户裁定：层次阴影区分——阴影 token 从 2 枚扩为分级族
 # （shell/panel/tile 三级），仍全局唯一来源 theme_tokens，禁止自造一次性阴影。
-_SHADOW_TOKEN_NAMES = {"--mica-shadow", "--mica-shadow-soft", "--mica-shadow-panel"}
+# 白名单从 theme_tokens.SHADOW_CSS_VARS 动态派生：新增档位在登记表入册后
+# 自动合法，登记表之外的一票否决——只开正门，不留后门。
+_SHADOW_TOKEN_NAMES = set(SHADOW_CSS_VARS)
+_BOX_SHADOW_ALLOWED = {"none"} | {f"var({name})" for name in SHADOW_CSS_VARS}
 
 
 @pytest.mark.parametrize("name", CARD_TEMPLATES)
@@ -147,12 +152,9 @@ def test_shadow_tokens_within_family(name: str) -> None:
     for _selector, body in _css_rules(css):
         for value in re.findall(r"box-shadow\s*:\s*([^;]+);", body):
             normalized = _norm_css(value)
-            assert normalized in {
-                "none",
-                "var(--mica-shadow)",
-                "var(--mica-shadow-soft)",
-                "var(--mica-shadow-panel)",
-            }, f"{name} 出现非 token 阴影: {normalized!r}"
+            assert (
+                normalized in _BOX_SHADOW_ALLOWED
+            ), f"{name} 出现非 token 阴影: {normalized!r}"
 
 
 @pytest.mark.parametrize("name", CARD_TEMPLATES)
@@ -167,6 +169,18 @@ def test_shadow_token_values_single_source(name: str) -> None:
     assert _norm_css(soft.group(1)) == _norm_css(SHADOW_SECONDARY), (
         f"{name} --mica-shadow-soft 与 theme_tokens.SHADOW_SECONDARY 不一致"
     )
+    # 登记表内其余档位（如 panel）：字面量须与登记值一致，或引用 bridge 注入
+    # 的同名上下文键（值同源，见 bridge._vis4_context）。
+    context_keys = {"--mica-shadow-panel": "shadow_elev_panel"}
+    for var, ctx_key in context_keys.items():
+        m = re.search(re.escape(var) + r":\s*([^;]+);", css)
+        if not m:
+            continue
+        raw = _norm_css(m.group(1))
+        expected = _norm_css(SHADOW_CSS_VARS[var])
+        assert raw == expected or raw == f"{{{{ {ctx_key} }}}}", (
+            f"{name} {var} 与 theme_tokens 登记值不一致: {raw!r}"
+        )
 
 
 # ==================== 5. shell 半径/宽度/间距统一 ====================
