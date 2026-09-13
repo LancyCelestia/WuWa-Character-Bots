@@ -310,13 +310,18 @@ def cookie_login_start(config: object, platform: str) -> tuple[str, str, str]:
 
 def _render_qr_png(content: str, platform: str, session_key: str) -> str:
     """二维码内容渲染为 PNG 落盘（qrcode 库已在依赖中）。失败返回空串。"""
+    import os
     import tempfile
 
     try:
         import qrcode
 
         image = qrcode.make(content)
-        path = tempfile.mktemp(prefix=f"login_{platform}_{session_key}_", suffix=".png")
+        # 安全审计 M-6：mktemp 有 TOCTOU 竞态，改 mkstemp 独占创建后关句柄复用路径。
+        fd, path = tempfile.mkstemp(
+            prefix=f"login_{platform}_{session_key}_", suffix=".png"
+        )
+        os.close(fd)
         image.save(path)
         return path
     except Exception:  # noqa: BLE001 - 二维码渲染失败走链接兜底。

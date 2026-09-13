@@ -340,6 +340,8 @@ def _fetch_dish_image(root: Path, name: str, config: Any | None = None) -> str:
                 headers={"User-Agent": _IMAGE_UA, "Referer": "https://cn.bing.com/"},
             )
             with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
+                final_url = str(resp.geturl() or image_url)
+                check_download_url(final_url)  # 重定向落点复查（安全审计 I-1：公网候选 302→内网拒绝）
                 data = resp.read(_IMAGE_MAX_BYTES + 1)
         except Exception:  # noqa: BLE001 - 单个候选失败静默试下一个。
             return ""

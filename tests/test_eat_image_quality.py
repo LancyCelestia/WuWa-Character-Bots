@@ -53,8 +53,12 @@ def _search_url() -> str:
 class _FakeResp:
     """带上下文管理器的假响应（eat 用 with + read(n) 消费）。"""
 
-    def __init__(self, payload: bytes) -> None:
+    def __init__(self, payload: bytes, url: str = "") -> None:
         self._payload = payload
+        self._url = url
+
+    def geturl(self) -> str:
+        return self._url
 
     def read(self, size: int = -1) -> bytes:
         if size is None or size < 0:
@@ -296,3 +300,22 @@ def test_tavily_candidates_without_key_returns_empty(
     monkeypatch.delenv("BOT_SEARCH_TAVILY_API_KEY", raising=False)
     monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: None)
     assert _tavily_image_candidates(DISH, None) == []
+
+
+def test_redirect_to_internal_host_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """安全审计 I-1：公网候选 302 跳内网 = 拒绝，不落盘零数据残留。"""
+    url = f"http://{_HOST}/redirect.png"
+    internal_url = "http://169.254.169.254/latest/meta.png"
+    payload = _png_bytes(NORMAL_SIZE)
+
+    def fake_urlopen(req: object, timeout: object = None) -> _FakeResp:
+        url_req = str(getattr(req, "full_url", req))
+        if url_req == url:
+            return _FakeResp(payload, url=internal_url)  # 302 已跟到内网
+        return _FakeResp(_bing_page([url]))
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    assert _fetch_dish_image(tmp_path, DISH) == ""
+    assert list(tmp_path.iterdir()) == []
