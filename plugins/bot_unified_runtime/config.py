@@ -510,6 +510,12 @@ class Config(BaseModel):
     # 缺省=字节级现状（并发 1/预算 0=不生效）；解锁值经 .env 或 driver config。
     bot_render_max_concurrency: int = 1
     bot_render_wait_budget_ms: int = 0
+    # 表情回应（bot.reactions）：识别 QQ(NapCat)/TG 消息贴纸回应并注入人格
+    # 上下文；bot 按心情/好感/概率主动给消息贴表情（NapCat set_msg_emoji_like）。
+    bot_reactions_enabled: bool = True
+    bot_reactions_probability: float = 0.2
+    bot_reactions_cooldown_seconds: int = 30
+    bot_reactions_max_per_hour: int = 20
     # NSFW 直接删除阈值（淫秽色情不存储）：>= 该分数删除文件与记录。
     bot_meme_library_nsfw_delete: float = 0.8
     # 群图下载代理（默认直连 QQ 多媒体源；外网源可走 7890）。
