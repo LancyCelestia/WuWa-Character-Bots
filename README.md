@@ -1,106 +1,114 @@
 # 守岸人 Bot（WuWa Character Bot）
 
-NoneBot2 聊天机器人项目：守岸人人格对话、向量知识检索、聊天记忆、QQ/Telegram/Mail 适配器、
-37+ 平台媒体解析、订阅推送、表情包、釉瑚云母卡片渲染与统一运行时插件（`plugins/bot_unified_runtime/`）。
+以游戏《鸣潮》角色「守岸人」为人格的 QQ 聊天机器人：NoneBot2 + OneBot V11（NapCat）构建，
+角色扮演对话之外内置行情查询、链接解析、订阅推送、媒体归档等 29+ 项日常能力，
+回复统一渲染为「釉瑚云母」卡片样式；另附带 Telegram / Mail / Console 适配器。
 
-- 个股行情 / 汇率：`英伟达股价`、`汇率` 等问法触发，金融卡展示并标注数据来源延迟
-- 用户自助称谓：`/bot identity set-name` / `set-gender` 自定义机器人对你的称呼与性别自述（无需管理员）
+> AI 协作者请从 [AGENTS.md](AGENTS.md) 进入（工作区规则 + 项目全貌，自动加载）；
+> 新接手 AI 读 [HANDOFF-NEXT.md](HANDOFF-NEXT.md)。
 
-> **接手必读**：[AGENTS.md](AGENTS.md)（工作区规则 + 项目全貌 + 架构/流程图，自动加载）→
-> [docs/HANDBOOK.md](docs/HANDBOOK.md)（单一活文档：族谱/现行事实/总账/全史；§20 最新会话底账含权限链路图）。
-> 命令手册：[COMMANDS.md](COMMANDS.md)；路由矩阵：[docs/route-matrix.md](docs/route-matrix.md)。
->
-> **接手三步**：①读本文件+AGENTS.md 掌握边界与架构 → ②按 AGENTS.md 第五部分跑四门禁确认基线 →
-> ③从 HANDBOOK §20.3 的「残余与建议」领任务。改代码必须重启 bot 才生效（铁律）。
+## 能力全景
 
-## 工作区边界（重要）
+| 分类 | 能力 | 触发示例 |
+|---|---|---|
+| 人格对话 | 守岸人人格（人设+心情+怪癖+称谓偏好）、好感度 v5（8 档温和态度连续过渡）、六级角色权限、会话记忆+夜间反思+时间窗总结 | @bot 说话 |
+| 提醒与笔记 | 自然语言定时提醒、Markdown 笔记、时间授时校准 | `12点提醒我…` |
+| 金融行情 | 全球股指（18 指数）、个股行情（9 家科技巨头 OHLCV/市值/KDJ）、汇率（11 币种）、大宗商品、国债收益率、北向资金 | `行情` / `英伟达股价` / `美元兑人民币` |
+| 生活查询 | 天气+预警（NMC 主通道+Open-Meteo 兜底）、今日快报、历史上的今天、维基/萌娘百科、占卜（八字/塔罗/金钱卦） | `天气 城市` / `快报` / `塔罗` |
+| 娱乐 | 点歌（5 供应商+真实榜单候选卡）、随机图、表情包、菜谱图库、戳一戳 | `点歌` / `随机图` |
+| 媒体与解析 | 37+ 平台链接解析（引用/语音/转发全通）、订阅推送（B站/YT/小红书/推特/微博）、媒体归档（VLM 判类）、识图、搜图 | 直接发链接 / `/订阅` / `收藏` |
+| 运维与诊断 | 每日 21:30 群通讯总结、统一错误报告卡（故障自动生成云母诊断卡）、文件出站、控制面/LLM 计费账本（默认关） | 自动 |
 
-当前 AI 工作区**只能打开源码子目录**：
+命令全集见 [COMMANDS.md](COMMANDS.md)（与 `/bot help` 同口径）；逐问法路由见
+[docs/route-matrix.md](docs/route-matrix.md)；自动生成的逐参数教程见 [docs/command-catalog.md](docs/command-catalog.md)。
 
-```text
-C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot\
-```
+## 快速上手
 
-磁盘布局：
+环境要求：Windows + Python 3.10+（`pyproject.toml` 锁定 `>=3.10, <4.0`）；venv 由
+`scripts\dev.ps1` 自动定位到 `ChatBot_Runtime\venv`，勿手工搬动。QQ 侧需先跑 NapCat
+（正向 WS 127.0.0.1:3001，配置见 [docs/napcat-setup.md](docs/napcat-setup.md)）。
 
-```text
-C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\
-├─ ChatBot\          生产源码（AI 工作区）
-├─ ChatBot_Runtime\  运行数据、SQLite 群、cookie、日志、缓存、卡片资产、虚拟环境
-└─ ChatBot_Archive\  历史文档/测试/研究/备份压缩归档（按日期目录 + manifest）
-```
-
-`ChatBot_Runtime\`、`ChatBot_Archive\`、上层目录不属于 AI 工作区，默认不扫描不读取；
-压缩运行数据不会减少 AI 上下文，**真正的隔离是只把源码子目录设为工作区**。
-归档统一写入 `ChatBot_Archive\YYYY-MM-DD\`，先压缩验证再移出，详见
-[WORKSPACE_GUIDE.md](WORKSPACE_GUIDE.md) 与 [docs/workspace-archive-policy.md](docs/workspace-archive-policy.md)。
-
-## 快速启动
-
-Windows 统一从源码目录执行（venv 由 `scripts\dev.ps1` 自动定位到外部 Runtime，勿手工搬回）：
+启动顺序：**先 NapCat，后 bot.py（管理员权限）**。生产进程常驻且提权启动，只有用户能重启；
+改代码必须重启 bot 才生效（铁律）。
 
 ```powershell
 Set-Location 'C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot'
 
-# 离线控制台对话（默认静态 LLM，不真调）
+# 统一任务入口（test / lint / typecheck / sync / run / console …全部任务用 help 查看）
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task help"
+
+# 离线控制台对话（不连 QQ，快速体验人格链路）
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task console"
 
-# 一轮就绪冒烟 / 后端核心链路（离线）
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task readiness-smoke"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task backend-smoke"
+# 四门禁（每轮交付前全绿；结果以本次实跑输出为准，不在文档手写数字）
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task test"            # 全量回归（全离线 mock）
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task lint"            # ruff
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task typecheck"       # mypy
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task runtime-layout"  # 源码树/边界体检
 
-# 启动 NoneBot（生产/开发；需先起 NapCat，见 docs/napcat-setup.md）
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task run"
-
-# 全部 40 个任务清单
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task help"
+# 重启生产 bot 前的一键预检（收尾中：全 PASS 再动手；未落盘前先手动核对 git status + 全量测试）
+python scripts/pre_restart_check.py
 ```
 
-真实 LLM 参数只放本地 `.env`（gitignored），不写入文档/日志/Git。
-
-## 验证门禁（每轮交付前全绿）
+真机验收（bot 重启并在线后向白名单群真发能力矩阵，默认 DRY-RUN）：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task test"           # 全量回归（以本次实跑输出为准；不在文档中手写固定用例数）
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task lint"           # ruff
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task typecheck"      # mypy（238 文件）
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task runtime-layout" # 源码树/边界体检
+python scripts/e2e_acceptance.py --target-group <白名单群ID> --execute
 ```
 
-绕开 dev.ps1 直跑 python/pytest 必须 `PYTHONDONTWRITEBYTECODE=1` 并把临时目录指到源码树外。
+真实 LLM 参数与密钥只放本地 `.env`（gitignored），不写入文档/日志/Git。
+绕开 dev.ps1 直跑 python/pytest 必须加 `PYTHONDONTWRITEBYTECODE=1`，临时目录指到源码树外。
 
-## 真机验收
+## 架构极简图
 
-bot 在线后向白名单群真发全能力矩阵（解析卡/点歌/全球股指 18 指数/财经科技快报/天气预警/
-随机图/占卜/help/好感度卡/长文转发）：
-
-```powershell
-& "$ROOT\scripts\dev.ps1" -Task run   # 先起 bot
-python scripts\e2e_acceptance.py --target-group <white1群ID> --execute   # 默认 DRY-RUN
+```mermaid
+flowchart LR
+    QQ["NapCat（WS 3001）"] <-- forward-WS --> bot["bot.py（崩溃守卫，webhook 8080）"]
+    bot --> ingest["摄取：段归一/引用反查/语音预转码"]
+    ingest --> route["路由 base_router ‖ decision 影子"]
+    route --> gate["门禁：黑白名单/安静时间/限流/幂等"]
+    gate --> pipe["RuntimePipeline（offload 线程池）"]
+    pipe --> caps["capabilities 29+ 能力"]
+    caps --> render["输出治理：说人话/脱敏 → 釉瑚云母卡片渲染"]
+    render --> queue["SendQueue：part 幂等/断点续发"]
+    queue --> out["QQ / Telegram / Mail"]
 ```
 
-## 项目结构
+完整链路与 LLM 子链路说明见 [AGENTS.md](AGENTS.md) 第三部分。
+
+## 目录导览
 
 ```text
-bot.py                         # NoneBot 初始化、适配器注册、插件加载、崩溃守卫
-plugins/bot_unified_runtime/   # 统一运行时：路由/人格/记忆/LLM/策略/解析/订阅/发送/渲染
-personas/shorekeeper/          # 守岸人人格与知识源（含 aliases.txt 昵称表）
-scripts/                       # dev.ps1 统一入口、runtime_paths、e2e_acceptance 等
-docs/                          # 单一活文档 HANDBOOK + 索引 README + design/ 架构规格 ×4 + 运维手册
-tests/                         # ~1760 离线回归（全 mock）
-COMMANDS.md                    # 命令人读手册（与 /bot help 同口径）
-AGENTS.md                      # 工作区规则 + 项目全貌（AI 自动加载）
-.env                           # 本地实际配置，禁止提交
-.env.example / .env.prod       # 配置键模板 / 本地生产覆盖（禁止提交）
-pyproject.toml                 # 依赖、NoneBot 插件目录与适配器配置
+MyWorkspace\ChatBot\
+├─ ChatBot\          唯一代码区（本工作区）：bot.py + plugins/ + personas/ + scripts/ + tests/ + docs/
+├─ ChatBot_Runtime\  运行数据：venv、26 个 SQLite 库、cookie、日志、缓存、头像（不可删改，默认不扫描）
+└─ ChatBot_Archive\  历史归档：按日期目录压缩包 + manifest
 ```
 
-## 运行数据与知识
+代码中的 `data/...` 相对路径经 `scripts/runtime_paths.py` 全部重映射到 Runtime，
+源码树永不被写（`tests/test_datafix_runtime_paths.py` 锁定）；因此不要为清理工作区
+删除或压缩活动中的 SQLite、向量嵌入、记忆、Cookie、订阅和媒体库。
+归档规程见 [docs/workspace-archive-policy.md](docs/workspace-archive-policy.md)。
 
-代码中的 `data/...` 相对路径经 `BOT_RUNTIME_DATA_DIR` 解析到外部运行目录
-（`tests/test_datafix_runtime_paths.py` 锁定"源码树永不被写"）。
-因此**不要**为清理工作区删除或压缩活动中的 SQLite、向量嵌入、记忆、Cookie、订阅和媒体库。
+## 文档指引
 
-当前必须保留：`plugins/` 生产源码、`personas/shorekeeper/`、`scripts/`、`docs/` 现行文档、
-`tests/` 回归树、`bot.py`、`pyproject.toml`、`.env*`。
-历史文档/评审/研究/旧工作树已归档（见 `ChatBot_Archive\2026-09-12\`，内含 manifest）。
+| 文档 | 定位 |
+|---|---|
+| [AGENTS.md](AGENTS.md) | AI 向全景（工作区规则 + 架构图 + 功能×子模块清单 + 已知问题台账），LLM 自动加载唯一入口 |
+| [docs/HANDBOOK.md](docs/HANDBOOK.md) | 单一活文档（族谱/现行事实/总账/全史） |
+| [docs/acceptance-manual.md](docs/acceptance-manual.md) | 验收手册（含 §6.6 重启验收清单族） |
+| [HANDOFF-NEXT.md](HANDOFF-NEXT.md) | 新接手 AI 唯一交接入口（一句话现状/硬规矩/开工三步） |
+| [docs/config-catalog-full.md](docs/config-catalog-full.md) | 全量配置键目录（A1-A26 分域 + 同步门禁） |
+| [COMMANDS.md](COMMANDS.md) | 命令手册人读版（与 `/bot help` 同口径） |
+| [docs/README.md](docs/README.md) | docs 全量索引 |
+
+## 人格与红线
+
+- **人格**：守岸人（《鸣潮》角色，泰缇斯系统第二实例，非 AI 设定）；人格源在
+  `personas/shorekeeper/`，话术改动必须维持守岸人语气（去 AI 味）。
+- **创造者**：澜汐与霞月是守岸人的创造者与唤醒者（也是生产环境的超管），这份联系写入人设
+  （`personas/shorekeeper/identity.md`）。
+- **红线**：好感度任何档位都不攻击、不强硬、不 R-18（红线写死在 `character/affinity.py` 态度文本）。
+- **隐私与脱敏**：真实密钥只在 `.env`（gitignored），配置以 `env:变量名` 引用；出站前统一脱敏
+  （盘符路径 / `BOT_XXX=` / `sk-` 形态自动打码，见 `output/plain_text.py` 的
+  `redact_local_secrets`），不要绕过。
