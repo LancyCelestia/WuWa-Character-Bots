@@ -10,14 +10,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import html
 import logging
 import re
 import threading
 import time
 import urllib.parse
-from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -616,11 +614,6 @@ def build_web_search_provider(config: object | None = None) -> WebSearchProvider
     proxy = str(getattr(config, "bot_download_proxy", "") or "").strip()
     return _build_chained_provider(timeout, proxy, config)
 
-def _hit_dedupe_key(hit: WebSearchHit) -> str:
-    """跨查询去重的稳定键：URL 小写、去尾部斜杠；无 URL 回退为标题。"""
-    url = (hit.url or "").strip().rstrip("/").lower()
-    return url or _clean_text(hit.title).lower()
-
 
 async def search_async(
     query: str,
@@ -646,57 +639,6 @@ async def search_async(
                 await client.aclose()
             except Exception:  # noqa: BLE001, S110 - 连接关闭失败忽略。
                 pass
-
-
-async def search_multi_async(
-    queries: Iterable[str],
-    max_results: int = 3,
-    *,
-    timeout_seconds: float = 3.0,
-    proxy: str = "",
-) -> list[WebSearchHit]:
-    """并发执行多个查询（每个查询仍 DDG 优先、Bing 兜底），按 URL 去重合并。
-
-    结果顺序由查询顺序与每个查询内部的命中顺序共同决定，保持确定性。
-    """
-    query_list = [str(query or "").strip() for query in queries]
-    query_list = [query for query in query_list if query]
-    if not query_list:
-        return []
-    provider = _build_chained_provider(timeout_seconds, proxy)
-    client: httpx.AsyncClient | None = None
-    try:
-        client = _build_async_client(proxy, timeout_seconds)
-        async with client:
-            results = await asyncio.gather(
-                *[
-                    provider.search_async(
-                        query, max_results=max_results, client=client
-                    )
-                    for query in query_list
-                ],
-                return_exceptions=True,
-                )
-    except Exception:  # noqa: BLE001 - 搜索失败静默返回空结果。
-        return []
-    finally:
-        if client is not None and not client.is_closed:
-            try:
-                await client.aclose()
-            except Exception:  # noqa: BLE001, S110 - 连接关闭失败忽略。
-                pass
-    merged: list[WebSearchHit] = []
-    seen: set[str] = set()
-    for result in results:
-        if isinstance(result, BaseException):
-            continue
-        for hit in result:
-            key = _hit_dedupe_key(hit)
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(hit)
-    return merged
 
 
 _DDG_REDIRECT_HOSTS = frozenset({"duckduckgo.com", "www.duckduckgo.com"})

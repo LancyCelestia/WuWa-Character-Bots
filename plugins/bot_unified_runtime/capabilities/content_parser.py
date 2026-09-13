@@ -627,7 +627,7 @@ def build_content_capability(
         if parse_fn is None:
             return _content_failure_result(
                 message,
-                body="这个平台的解析器还没有接入。",
+                body="这个平台的链接我还没学会解析。可以先发已有支持的链接，或把平台名告诉管理员。",
                 audit_tags=["content_parse", f"platform:{match.parser_id}", "parser_missing"],
             )
         # URL 已由 ParserRegistry 按规则匹配；不再先调用 parser 探测，

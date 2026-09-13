@@ -4,8 +4,8 @@
 mica-glass v1 2026-09-12：视觉层统一「釉瑚云母 + 液态玻璃 + 渐变漂移」——
 底色/色斑用 bridge._derive_wash_tokens 按 --pc 派生的釉瑚洗（__WASH_*__ 注入，
 禁纯色），--pc 退为徽章/高亮 accent；半透明白玻璃面板 + 1px 内高光渐变描边、
-三枚柔光色斑缓慢漂移 + 内联脚本随机相位（零外部依赖，失败静默）；
-数据绑定与 __PC__ 注入契约不变。
+三枚柔光色斑缓慢漂移 + 漂移相位按 payload digest 确定注入（E01 D2→D1，
+页面零 JS）；数据绑定与 __PC__ 注入契约不变。
 """
 
 from __future__ import annotations
@@ -23,22 +23,25 @@ from plugins.bot_unified_runtime.output.card_render.bridge import (
     parse_to_render_payload as _parse_to_render_payload,
 )
 from plugins.bot_unified_runtime.output.card_render.bridge import (
+    payload_phase as _payload_phase,
+)
+from plugins.bot_unified_runtime.output.card_render.bridge import (
     render_song_candidates_html as _render_song_candidates_html,
 )
 from plugins.bot_unified_runtime.output.card_render.bridge import (
     render_universal_card_html as _render_universal_card_html,
 )
-
-# mica-glass v1 2026-09-12：随机漂移相位脚本（纯内联零依赖，失败静默回落 CSS 默认值）。
-_PHASE_JS = (
-    '<script>try{document.documentElement.style.setProperty("--phase",'
-    "Math.random().toFixed(4));}catch(e){}</script>"
+from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
+    BRAND_THEME,
+    FONT_FAMILY_STACK,
+    SHADOW_PRIMARY,
+    SHADOW_SECONDARY,
 )
 
 _CARD_CSS = """
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  font-family: var(--font-family);
   background: transparent;
   display: flex; align-items: flex-start; justify-content: center;
   padding: 0;
@@ -50,17 +53,21 @@ body {
   width: auto; background: transparent; border: 0; border-radius: 0;
   box-shadow: none; padding: 0;
 }
-:root { --phase: 0.2; --pc: __PC__; --pc-dark: __PC_DARK__; --pc-rgb: __PC_RGB__;
+:root { --phase: __PHASE__; --pc: __PC__; --pc-dark: __PC_DARK__; --pc-rgb: __PC_RGB__;
   /* 釉瑚云母底主题 token，全卡统一（bridge 按 --pc 派生注入；工艺出处=用户裁定）。 */
   --wash-1: __WASH_1__; --wash-2: __WASH_2__; --wash-3: __WASH_3__; --wash-mist: __WASH_MIST__;
-  --wash-blob-1: color-mix(in srgb, var(--pc) 35%, var(--wash-1)); }
+  --wash-blob-1: color-mix(in srgb, var(--pc) 35%, var(--wash-1));
+  --text-main: __TEXT_MAIN__; --text-sub: __TEXT_SUB__;
+  --font-family: __FONT_STACK__;
+  --r-shell: __R_SHELL__; --r-panel: __R_PANEL__; --r-tile: __R_TILE__;
+  --mica-shadow: __SHADOW_PRIMARY__; --mica-shadow-soft: __SHADOW_SECONDARY__; }
 /* mica-glass：釉瑚云母外壳（雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底，
    不透明基础层）+ 1px 内高光渐变描边；色斑垫底、内容抬升；
    阴影只允许两枚 token。 */
 .panel {
   position: relative;
   width: 640px;
-  border-radius: 18px; overflow: hidden;
+  border-radius: var(--r-shell); overflow: hidden;
   border: 1px solid transparent;
   background:
     linear-gradient(145deg, var(--wash-mist) 0%,
@@ -69,7 +76,7 @@ body {
       color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%) padding-box,
     linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%,
       rgba(255,255,255,.72) 100%) border-box;
-  box-shadow: 0 12px 32px rgba(31, 35, 41, 0.10), 0 2px 8px rgba(31, 35, 41, 0.05);
+  box-shadow: var(--mica-shadow);
 }
 .panel > :not(.drift-blobs) { position: relative; z-index: 1; }
 /* 渐变漂移色斑（wash 三色半透明互相透过，46s/52s/58s 交错漂移+呼吸）。 */
@@ -128,7 +135,7 @@ body {
     linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%,
       rgba(255,255,255,.72) 100%) border-box;
   border: 1px solid transparent;
-  box-shadow: 0 3px 10px rgba(31, 35, 41, 0.06);
+  box-shadow: var(--mica-shadow-soft);
 }
 .cover-wrap { position: relative; width: 100%; height: 240px;
   background: linear-gradient(135deg, color-mix(in srgb, var(--pc) 10%, #ffffff) 0%, color-mix(in srgb, var(--pc) 18%, #ffffff) 100%); }
@@ -138,26 +145,26 @@ body {
 .badge { position: absolute; left: 12px; top: 12px; background: rgba(38,46,56,.75);
   color: #fff; font-size: 12px; padding: 3px 10px; border-radius: 999px; }
 .body { padding: 14px 18px 16px; }
-.title { font-size: 19px; font-weight: 700; color: #2b3440; line-height: 1.4; }
-.author { margin-top: 6px; font-size: 13px; color: #66727f; }
+.title { font-size: 19px; font-weight: 700; color: var(--text-main); line-height: 1.4; }
+.author { margin-top: 6px; font-size: 13px; color: var(--text-sub); }
 .stats { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
 .stat { background: color-mix(in srgb, var(--pc) 10%, rgba(255, 255, 255, 0.72)); color: var(--pc-dark);
   font-size: 12px; padding: 3px 9px; border-radius: 999px; }
-.summary { margin-top: 10px; font-size: 13px; color: #4a5560;
+.summary { margin-top: 10px; font-size: 13px; color: var(--text-sub);
   line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
-.footer { margin-top: 10px; font-size: 11px; color: #7a8699;
+.footer { margin-top: 10px; font-size: 11px; color: var(--text-sub);
   border-top: 1px dashed color-mix(in srgb, var(--pc) 14%, rgba(255, 255, 255, 0.60)); padding-top: 8px; }
 /* F11 页脚：头像 + 机器人名 + 功能名（weather/eat 等媒体卡路径同样强制带）。 */
 .card-footer-bot { margin-top: 10px; display: flex; align-items: center; gap: 7px;
   border-top: 1px dashed color-mix(in srgb, var(--pc) 14%, rgba(255, 255, 255, 0.60)); padding-top: 8px; }
 .cfb-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
-  border: 1px solid #fff; box-shadow: 0 1px 4px rgba(31, 35, 41, 0.12); }
+  border: 1px solid #fff; box-shadow: var(--mica-shadow-soft); }
 .cfb-dot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
   background: color-mix(in srgb, var(--pc) 18%, #fff); color: var(--pc-dark);
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 600; }
 .cfb-name { font-size: 12px; font-weight: 650; color: var(--pc-dark); white-space: nowrap; }
-.cfb-label { font-size: 11px; color: #7a8699; }
+.cfb-label { font-size: 11px; color: var(--text-sub); }
 """
 
 
@@ -191,6 +198,8 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
     wash = _derive_wash_tokens(pc)
     css = (
         _CARD_CSS
+        # E01：漂移相位按 payload digest 确定注入（页面零 JS，同 payload 同帧）。
+        .replace("__PHASE__", _payload_phase(payload))
         .replace("__PC__", pc)
         .replace("__PC_DARK__", pc_dark)
         .replace("__PC_RGB__", pc_rgb)
@@ -198,6 +207,14 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
         .replace("__WASH_2__", wash["wash_2"])
         .replace("__WASH_3__", wash["wash_3"])
         .replace("__WASH_MIST__", wash["wash_mist"])
+        .replace("__TEXT_MAIN__", BRAND_THEME.text_main)
+        .replace("__TEXT_SUB__", BRAND_THEME.text_sub)
+        .replace("__FONT_STACK__", FONT_FAMILY_STACK)
+        .replace("__R_SHELL__", f"{BRAND_THEME.shell_radius}px")
+        .replace("__R_PANEL__", f"{BRAND_THEME.panel_radius}px")
+        .replace("__R_TILE__", f"{BRAND_THEME.tile_radius}px")
+        .replace("__SHADOW_PRIMARY__", SHADOW_PRIMARY)
+        .replace("__SHADOW_SECONDARY__", SHADOW_SECONDARY)
     )
 
     cover_block = ""
@@ -240,7 +257,7 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
         + (f'<div class="summary">{summary}</div>' if summary else "")
         + (f'<div class="footer">{footer}</div>' if footer else "")
         + bot_footer
-        + "</div></div></div>" + _PHASE_JS + "</body></html>"
+        + "</div></div></div></body></html>"
     )
 
 

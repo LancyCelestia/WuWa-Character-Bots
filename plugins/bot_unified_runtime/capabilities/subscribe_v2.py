@@ -6,9 +6,11 @@ SubscriptionStoreV2 and target parsing to the V2 adapters.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     IncomingMessage,
@@ -19,14 +21,16 @@ from plugins.bot_unified_runtime.sources.subscription_store_v2 import (
     SubscriptionStoreV2,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _normalize(text: str) -> str:
     stripped = str(text or "").strip()
     if stripped.startswith("/bot "):
         stripped = stripped[5:].strip()
-    if stripped.startswith("/订阅"):
+    if stripped.startswith(("/订阅", "/訂閱")):
         return "subscribe" + stripped[3:]
-    if stripped.startswith("订阅"):
+    if stripped.startswith(("订阅", "訂閱")):
         return "subscribe" + stripped[2:]
     return stripped
 
@@ -136,9 +140,13 @@ def build_subscribe_capability_v2(
                     runtime_error = exc
             if target is None:
                 if runtime_error is not None:
+                    # 原始异常只进日志；用户侧不暴露「事件循环」等内部术语。
+                    logger.warning(
+                        "subscribe target resolve hit runtime error: %s", runtime_error
+                    )
                     return result(
                         message,
-                        f"订阅解析器运行异常（可能处于运行中的事件循环）：{runtime_error}",
+                        "这个订阅目标暂时解析不出来（内部调度冲突，已记日志）。稍后再试，或换个目标链接。",
                         ["subscribe_target_invalid"],
                     )
                 if last_error is not None:
@@ -180,7 +188,7 @@ def build_subscribe_capability_v2(
             if _session_scope(message) == "group" and not _is_admin(message):
                 return result(
                     message,
-                    "只有管理员才能查看本群订阅。",
+                    user_copy.ADMIN_GATE_REQUIRED.format(action="看本群订阅"),
                     ["subscribe_list_denied"],
                 )
             targets = [

@@ -1,4 +1,4 @@
-"""Crawl Wiki 知识库桥：同步 + 检索器 + 合并检索 + 实时爬降级。
+"""Crawl Wiki 知识库桥：同步 + 检索器 + 合并检索。
 
 对接 Crawl Wiki 仓库（``bot_kb_wiki_root``，默认 D:\\Coding\\Crawl Wiki）导出的
 知识库，协议见该仓库 ``docs/KB_HANDOFF.md``：
@@ -14,14 +14,13 @@
 - 聊天链路经 ``MergedKnowledgeRetriever`` 把人格知识块与 wiki 知识块
   轮询交错注入 prompt（人格知识优先）。
 
-未做：检索不到时的自动实时爬降级。``realtime_lookup`` 仅作预留工具，
-不接进聊天链路（单页 3-10 秒 + 目标站反爬礼节，需人工决策频率）。
+未做：检索不到时的自动实时爬降级（单页 3-10 秒 + 目标站反爬礼节，
+需人工决策频率；此前预留的 ``realtime_lookup`` 工具因全仓零引用已移除）。
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
 import threading
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
@@ -514,62 +513,3 @@ def run_kb_sync_task(
         result["error_kind"] = "exception"
         result["public_message"] = f"kb-sync 异常：{type(exc).__name__}: {exc}"[:400]
         return result
-
-
-# ---------------------------------------------------------------- 实时爬降级（预留）
-
-
-def realtime_lookup(
-    config: object,
-    title: str,
-    source: str,
-    *,
-    store: bool = False,
-    topic: str = "",
-    proxy: str = "none",
-    timeout_seconds: float = 120.0,
-) -> dict[str, Any]:
-    """知识库没有时单页实时爬取（3-10 秒）。预留工具，未接入聊天链路。
-
-    ``store=True`` 会把结果落盘进 Crawl Wiki 语料树（当晚知识库自动并入）；
-    默认纯查询零写入。source 取值如 moegirl / bilibili_wiki_wutheringwaves。
-    """
-    root, _kb_dir = kb_paths(config)
-    python = root / ".venv" / "Scripts" / "python.exe"
-    if not python.is_file():
-        return {"status": "error", "error": f"解释器不存在: {python}"}
-    args = [
-        str(python),
-        str(root / "realtime_lookup_cli.py"),
-        "--source",
-        source,
-        "--title",
-        title,
-        "--proxy",
-        proxy,
-    ]
-    if store:
-        args.append("--store")
-        if topic:
-            args += ["--topic", topic]
-    try:
-        proc = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=float(timeout_seconds),
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "error": f"realtime_lookup 超时（{timeout_seconds}s）"}
-    except OSError as exc:
-        return {"status": "error", "error": f"realtime_lookup 启动失败: {exc}"}
-    for line in reversed((proc.stdout or "").strip().splitlines()):
-        line = line.strip()
-        if line.startswith("{"):
-            try:
-                return json.loads(line)
-            except json.JSONDecodeError:
-                break
-    return {"status": "error", "error": "无结构化输出", "stdout": (proc.stdout or "")[-400:]}

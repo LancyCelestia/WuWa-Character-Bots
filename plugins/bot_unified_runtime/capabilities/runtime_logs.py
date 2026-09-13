@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     PrivacyLevel,
@@ -33,7 +34,7 @@ def build_logs_query_result(
             capability_id="bot.logs",
             kind="text",
             title="运行时日志",
-            body="只有管理员才能查询运行时日志。",
+            body=user_copy.ADMIN_GATE_REQUIRED.format(action="查运行时日志"),
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PERSONAL,
             send_policy=SendPolicy.IMMEDIATE,

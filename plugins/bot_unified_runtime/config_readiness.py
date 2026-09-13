@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -106,45 +105,6 @@ def llm_generation_parameter_errors(config: Config) -> list[str]:
     if not _is_valid_timeout_seconds(config.bot_chat_timeout_seconds):
         errors.append("openai_timeout_seconds_invalid")
     return errors
-
-
-def registry_env_reference_errors(config: Config) -> list[str]:
-    """启动期自检：注册表里每个 ``env:变量名`` 引用都必须有对应 Config 字段。
-
-    09-09 的真实事故是「.env 填了 key、registry 也引用了，但 Config 少了
-    同名字段 → `_resolve_api_key` 的 Config 回退取不到 → 整渠道
-    config_missing 全失败」，此后同类问题又复发两次（c614025 补 9 个字段、
-    评审 H3 的 BOT_API_KEY_DEEPSEEK_OFFICIAL）。逐次手工补字段治不了根，
-    这里把契约做成启动期可检的显式检查。
-
-    返回形如 ``["BOT_API_KEY_X"]`` 的缺失变量名列表（已去重、保序）。
-    """
-    entries = getattr(config, "bot_model_registry", None)
-    if not isinstance(entries, dict):
-        return []
-    missing: list[str] = []
-    for entry in entries.values():
-        if not isinstance(entry, dict):
-            continue
-        for slot in ("api_key", "api_keys"):
-            raw = entry.get(slot)
-            candidates = raw if isinstance(raw, (list, tuple)) else [raw]
-            for candidate in candidates:
-                text = str(candidate or "").strip()
-                if not text.startswith("env:"):
-                    continue
-                env_name = text.removeprefix("env:").strip()
-                if not env_name:
-                    continue
-                # 与 llm/model_router._resolve_api_key 同一契约：进程环境命中即
-                # 可用，否则必须能从 Config 同名字段回退。
-                if os.environ.get(env_name):
-                    continue
-                if not str(getattr(config, env_name.lower(), "") or "").strip() and (
-                    env_name not in missing
-                ):
-                    missing.append(env_name)
-    return missing
 
 
 def diagnostic_llm_temperature(config: Config) -> float:

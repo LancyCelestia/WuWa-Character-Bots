@@ -155,20 +155,3 @@ def start_playwright_login(platform: str, *, screenshots_dir: str = "") -> dict[
     thread = threading.Thread(target=_run, name=f"qr-login-{platform}", daemon=True)
     thread.start()
     return session
-
-
-def collect_login_cookies(platform: str) -> list[dict[str, str]]:
-    """登录成功后取该平台全部 cookie（Netscape 行所需字段）。"""
-    with _SESSIONS_LOCK:
-        session = _LOGIN_SESSIONS.get(platform) or {}
-        cookies = session.get("cookies") or []
-    return [
-        {
-            "domain": str(cookie.get("domain", "")),
-            "name": str(cookie.get("name", "")),
-            "value": str(cookie.get("value", "")),
-            "path": str(cookie.get("path", "/")) or "/",
-            "expires": str(int(float(cookie.get("expires", 0) or 0))),
-        }
-        for cookie in cookies
-    ]

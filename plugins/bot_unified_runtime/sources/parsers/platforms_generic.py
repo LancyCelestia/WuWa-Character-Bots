@@ -786,6 +786,47 @@ def parse_douyin(url: str, *, cookie_header: str = "", proxy: str = "") -> Parse
     )
 
 
+_DOUYIN_TOPIC_MAX = 10
+
+# desc 兜底话题正则：#/＃ 后接非空白/非##/非 emoji 的连续段（emoji 视作边界）。
+_DOUYIN_TOPIC_RE = re.compile(r"[#＃]([^\s#＃\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]+)")
+
+
+def _douyin_extract_topics(item: dict) -> list[str]:
+    """douyin 话题抽取：结构化节点优先，desc ``#xx`` 兜底；去重保序、上限 10。
+
+    结构化来源（按序）：text_extra[].hashtag_name → cha_list{*.cha_name} →
+    video_tag[].tag_name；有任一结构化节点时不再走 desc 正则。只做字段
+    填充（ContentMetadata.tags，经既有 chip 钩子上卡），不改写正文。
+    """
+    topics: list[str] = []
+
+    def _push(raw: object) -> None:
+        name = str(raw or "").strip().lstrip("#＃").strip()
+        if name and name not in topics:
+            topics.append(name)
+
+    text_extra = item.get("text_extra")
+    if isinstance(text_extra, list):
+        for entry in text_extra:
+            if isinstance(entry, dict):
+                _push(entry.get("hashtag_name"))
+    cha_list = item.get("cha_list")
+    if isinstance(cha_list, dict):
+        for entry in cha_list.values():
+            if isinstance(entry, dict):
+                _push(entry.get("cha_name") or entry.get("hashtag_name"))
+    video_tag = item.get("video_tag")
+    if isinstance(video_tag, list):
+        for entry in video_tag:
+            if isinstance(entry, dict):
+                _push(entry.get("tag_name"))
+    if not topics:
+        for match in _DOUYIN_TOPIC_RE.finditer(str(item.get("desc") or "")):
+            _push(match.group(1))
+    return topics[:_DOUYIN_TOPIC_MAX]
+
+
 def _douyin_from_router_data(html: str, url: str) -> ParsedContent | None:
     marker = "window._ROUTER_DATA"
     start = html.find(marker)
@@ -851,6 +892,7 @@ def _douyin_from_router_data(html: str, url: str) -> ParsedContent | None:
             stats=mapped_stats,
             parse_depth="deep",
             detail={"author": author_detail} if author_detail else {},
+            tags=_douyin_extract_topics(item),
         )
     return None
 
@@ -1200,39 +1242,6 @@ _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like
 # 不动，只在步骤间检查；超预算即用已有数据出卡，不再串行白占线程
 # （最坏 2-3 步 × 15s × 2 次重试曾可拖到 1-2 分钟）。
 _YOUTUBE_ENRICH_BUDGET_SECONDS = 60.0
-
-_YT_SUBSCRIBER_RE = re.compile(
-    r"([\d.,]+)\s*(万|千|K|M|百万|订阅者|subscribers?)", re.IGNORECASE
-)
-
-
-def _parse_count_text(text: str) -> int | None:
-    match = re.search(r"([\d.,]+)\s*(万|千|[KMB])", text, re.IGNORECASE)
-    if not match:
-        digits = re.sub(r"[^\d]", "", text)
-        return int(digits) if digits else None
-    number = float(match.group(1).replace(",", ""))
-    unit = match.group(2).upper()
-    multiplier = {"万": 10000, "千": 1000, "K": 1000, "M": 1000000, "B": 1000000000}.get(unit, 1)
-    return int(number * multiplier)
-
-
-def _youtube_channel_about(channel_url: str, *, proxy: str = "") -> dict:
-    """抓频道页 from-about 区块（订阅数/视频数/简介/加入时间/国家）。"""
-    try:
-        _, html_text = http_get_text(
-            channel_url + "/about", user_agent=_UA, timeout=12, proxy=proxy
-        )
-    except Exception:  # noqa: BLE001 - about 抓取失败返回空。
-        return {}
-    info: dict[str, str] = {}
-    for key in ("subscriberCountText", "videoCountText", "joinedDateText", "viewCountText", "description"):
-        match = re.search(rf'"{key}":{{"content":"([^"]{{0,200}})"', html_text)
-        if match:
-            info[key] = _unescape_js_unicode(
-                match.group(1).replace("\n", " ").replace("\\u0026", "&")
-            )
-    return info
 
 
 def parse_youtube(url: str, *, cookie_header: str = "", proxy: str = "") -> ParsedContent:

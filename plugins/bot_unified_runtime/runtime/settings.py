@@ -647,19 +647,6 @@ class RuntimeSettingsStore:
                 return self._overrides[normalized_key]
         return default
 
-    def get_bool(self, key: str, config: object, default: bool = False) -> bool:
-        value = self.get(key, config)
-        if value is None:
-            return default
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            try:
-                return _bool_converter(value)
-            except ValueError:
-                return default
-        return bool(value)
-
     # ---- 昵称 ----
 
     def list_nicknames(self) -> list[str]:
@@ -785,17 +772,6 @@ class RuntimeSettingsStore:
         with self._lock:
             self._reload_if_changed()
             return {key: dict(item) for key, item in self._vision_registry.items()}
-
-    def set_vision_entry(self, model_id: str, entry: dict[str, Any]) -> None:
-        cleaned = (model_id or "").strip()
-        if not cleaned:
-            raise ValueError("视觉模型 id 不能为空")
-        if not isinstance(entry, dict):
-            raise TypeError("视觉模型条目必须是对象")
-        with self._lock:
-            self._reload_if_changed()
-            self._vision_registry[cleaned] = dict(entry)
-            self._save()
 
     def remove_vision_entry(self, model_id: str) -> bool:
         cleaned = (model_id or "").strip()

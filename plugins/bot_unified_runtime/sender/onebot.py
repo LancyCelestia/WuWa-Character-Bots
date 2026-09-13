@@ -120,12 +120,6 @@ def _is_final_failure_retcode(retcode: int | None) -> bool:
     return retcode in {403, 404, 1003, 1200, 1201, 1401, 1403, 1404}
 
 
-def _safe_onebot_failure_message(result: Any, debug_id: str) -> str:
-    # Compatibility helper retained for internal callers; operational details
-    # must never be exposed in a public receipt.
-    return ""
-
-
 def _onebot_issue(
     kind: str,
     *,

@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass
 
 from plugins.bot_unified_runtime.capabilities.music import parse_music_mode_spec
+from plugins.bot_unified_runtime.capabilities.weather import is_statement_lead
 from plugins.bot_unified_runtime.config import Config
 
 
@@ -25,7 +26,8 @@ class NaturalResolution:
     intent_label: str
 
 
-_POLITE_PREFIX = r"(?:帮我|麻烦|请你?|请|给我|我想)"
+# 禮貌前綴（TRA 草稿 幫我 词条）：繁體形与简体逐一成对（影响全部 NL 问句入口）。
+_POLITE_PREFIX = r"(?:帮我|幫我|麻烦|麻煩|请你?|請你?|请|請|给我|給我|我想)"
 _POLITE_OPT = rf"(?:{_POLITE_PREFIX})?"
 _LOOKUP_PREFIX = r"(?:查一下|查查|查询|查|搜一下|搜索|搜|看看|看|告诉我)?"
 
@@ -44,7 +46,9 @@ _WEATHER_PLEASE_RE = re.compile(
 
 _MUSIC_TRIGGERS = (
     r"点一首|点首歌|点首|点歌|来一首|来首歌|来首|放一首|放首歌|放首|"
-    r"播放一首|播一首|唱一首|唱首歌|来点音乐|放点音乐|播放点音乐"
+    r"播放一首|播一首|唱一首|唱首歌|来点音乐|放点音乐|播放点音乐|"
+    # 繁體形（TRA 草稿 點一首/來首 词条；放/播/唱/播放 简繁同形不重列）。
+    r"點一首|點首歌|點首|點歌|來一首|來首歌|來首|來點音樂|放點音樂"
 )
 _MUSIC_RE = re.compile(
     rf"^{_POLITE_OPT}(?:{_MUSIC_TRIGGERS})(?:歌|音乐)?\s*"
@@ -103,8 +107,8 @@ _WIKI_RE = re.compile(
 )
 
 _EPIC_RE = re.compile(
-    r"^(?:这周|本周|今天|今日)?(?:有)?(?:什么|哪些)?(?:的)?"
-    r"(?:epic\s*)?免费游戏(?:有哪些|有什么|是什么)?[?？]?$",
+    r"^(?:这周|本周|今天|今日|這週|本週)?(?:有)?(?:什么|哪些|什麼)?(?:的)?"
+    r"(?:epic\s*)?(?:免费游戏|免費遊戲)(?:有哪些|有什么|是什么|有什麼|是什麼)?[?？]?$",
     re.IGNORECASE,
 )
 
@@ -113,10 +117,14 @@ _HISTORY_RE = re.compile(
 )
 
 # 城市里出现这些词说明吞进了动作/礼貌词，不是真实地名，必须拒绝。
+# （繁體形与简体同口径，TRA 草稿 幫我 词条连动。）
 _CITY_FORBIDDEN_FRAGMENTS = (
     "帮我",
+    "幫我",
     "麻烦",
+    "麻煩",
     "请",
+    "請",
     "查",
     "搜",
     "看看",
@@ -124,11 +132,18 @@ _CITY_FORBIDDEN_FRAGMENTS = (
     "查询",
     "告诉",
     "给我",
+    "給我",
     "我想",
     "放",
     "点",
     "来",
     "天气",
+    # 反噬守卫（invest-moegirl-hijack §四 C）：moegirl_question 让路到 46 后，
+    # 「帮我查一下天气之子是谁」会先到本层，若把「之子是谁」吞成城市就会
+    # 反噬成 weather——问句后缀不是地名，必须拒绝（让路 46 萌百实体问句）。
+    "是谁",
+    "是什么",
+    "是啥",
 )
 EN_CITY_MAP = {
     "beijing": "北京", "shanghai": "上海", "guangzhou": "广州", "shenzhen": "深圳",
@@ -168,6 +183,11 @@ def _clean_city(raw: str | None) -> str | None:
     if not city or city in _WEATHER_CITY_BLACKLIST:
         return None
     if any(fragment in city for fragment in _CITY_FORBIDDEN_FRAGMENTS):
+        return None
+    # 陈述句守卫（与 weather 触发层共用 is_statement_lead）：weather 基层
+    # 让位后，本层 weather 问法不得把「天气预报说明天下雨」整段当地名
+    # 归一化成「天气 预报说明天下雨」（二阶劫持）。
+    if is_statement_lead(city):
         return None
     return city
 

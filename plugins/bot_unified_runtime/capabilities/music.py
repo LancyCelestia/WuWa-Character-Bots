@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -36,10 +37,28 @@ from plugins.bot_unified_runtime.sources.parsers import (
 _LOGGER = logging.getLogger(__name__)
 
 _COMMAND_RE = re.compile(
-    r"^[/!！]?(?:点歌|點歌|music|song)\s*(?P<query>.+)$", re.IGNORECASE
+    # mode 词族（点歌模式/點歌模式/music mode/song mode）裸词整体让渡给
+    # music_mode（_MODE_COMMAND_RE）：mode 短语吃满整串（\s*$）时点歌主命令
+    # 不抢匹配（触发规格体检冲突 ×4 清账）；带歌名/参数后继（如「music mode
+    # link」「點歌模式 卡片」）仍归本能力当歌名候选，由路由优先级裁定
+    # （test_trigger_english.PRIORITY_PAIRS 既有形态）。
+    # (?![a-z0-9])：ASCII 词右侧词边界（wiki _alias_hit 先例），
+    # musicqq/songqq 类胶合不触发（边界体检 ×2 清账）。
+    r"^[/!！]?(?:点歌(?!模式\s*$)|點歌(?!模式\s*$)|点唱|點唱"
+    # 全拼/缩写（T-Spec T1.5/T1.6）：diange/dg 同样覆盖 繁体 點歌 同音；
+    # (?![a-z0-9]) 右边界使 diangemoshi/dgmoshi/dgms 类拼音 mode 短语
+    # 不抢主命令匹配（mode 族拼音化已在第二批 _MODE_COMMAND_RE 落地，
+    # 与「点歌模式」让渡语义对齐）。
+    r"|diange(?![a-z0-9])|dg(?![a-z0-9])"
+    r"|music(?![a-z0-9])(?![- ]?mode\s*$)|song(?![a-z0-9])(?! mode\s*$))\s*(?P<query>.+)$",
+    re.IGNORECASE,
 )
 _MODE_COMMAND_RE = re.compile(
-    r"^[/!！]?(?:点歌模式|點歌模式|music mode|music-mode|song mode)"
+    # 全拼/缩写（T-Spec T1.5/T1.6 第二批）：diangemoshi/dgms 同 點歌模式；
+    # 右侧由 (?:\s+.+)?$ 结构天然成界（dgmsx/diangemoshiq 类胶合不触发），
+    # 主命令侧 dg/diange 的 (?![a-z0-9]) 边界保证 mode 短语不被抢匹配
+    # （test_pinyin_triggers_2 锁定让渡语义）。
+    r"^[/!！]?(?:点歌模式|點歌模式|diangemoshi|dgms|music mode|music-mode|song mode)"
     r"(?:\s+(?P<mode>.+))?$",
     re.IGNORECASE,
 )
@@ -402,7 +421,7 @@ def build_music_mode_result(
             capability_id="bot.music_mode",
             kind="text",
             title="点歌模式",
-            body="只有管理员才能修改点歌输出模式。",
+            body=user_copy.ADMIN_GATE_REQUIRED.format(action="改点歌输出模式"),
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PERSONAL,
             send_policy=SendPolicy.IMMEDIATE,

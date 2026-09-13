@@ -17,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -32,8 +33,11 @@ from plugins.bot_unified_runtime.sources.moegirl import (
 )
 from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 
+# ASCII 别名右侧词边界（stocks _alias_hit 先例）：moegirlxx 字母延续不触发。
+# 拼音（T-Spec T1.5/T1.6）：mengbai/mb 查重无冲突（fix-py1-report.md）。
 _COMMAND_RE = re.compile(
-    r"^[/!！]?(?:萌娘百科|萌百|moegirl)\s*(?P<query>.+)$", re.IGNORECASE
+    r"^[/!！]?(?:萌娘百科|萌百|moegirl(?![a-z0-9])|mengbai(?![a-z0-9])|mb(?![a-z0-9]))\s*(?P<query>.+)$",
+    re.IGNORECASE,
 )
 
 # 长条目在前，避免「帮我查」抢在「帮我查一下」之前剥离。
@@ -42,6 +46,10 @@ _QUESTION_STRIP_PREFIXES = sorted(
         "请问", "帮我查一下", "帮我查查", "帮我查", "帮我看看",
         "我想了解一下", "我想知道", "介绍一下", "介绍下", "查一下",
         "查查", "搜索", "搜一下", "什么是",
+        # 繁體形（TRA 草稿 介紹一下 词条）：繁體问句入口同口径。
+        "請問", "幫我查一下", "幫我查查", "幫我查", "幫我看看",
+        "我想了解一下", "我想知道", "介紹一下", "介紹下", "查一下",
+        "查查", "搜索", "搜一下", "什麼是",
     ),
     key=len,
     reverse=True,
@@ -51,6 +59,10 @@ _QUESTION_STRIP_SUFFIXES = sorted(
         "是谁呀", "是谁啊", "是谁呢", "是谁", "是什么呀", "是什么啊",
         "是什么意思", "是什么", "是啥呀", "是啥", "什么东西", "的资料",
         "的介绍", "的信息", "的词条",
+        # 繁體形（TRA 草稿 是誰/是什麼 词条）。
+        "是誰呀", "是誰啊", "是誰呢", "是誰", "是什麼呀", "是什麼啊",
+        "是什麼意思", "是什麼", "是啥呀", "是啥", "什麼東西", "的資料",
+        "的介紹", "的信息", "的詞條",
     ),
     key=len,
     reverse=True,
@@ -66,6 +78,19 @@ _PRONOUN_PREFIXES = ("你", "我", "您", "咱")
 _ENTITY_MIN_LEN = 2
 _ENTITY_MAX_LEN = 30
 _CANDIDATE_SNIPPET_CHARS = 60
+
+# 域词守卫（invest-moegirl-hijack §四 B）：剥词后的剩串若是其他能力域词
+# （天气/预报形），不是萌百实体——「帮我查X天气」应让路 NL 层归一化天气。
+# 「天气之子」类词条无空格、不以域词收尾，零误伤。
+_DOMAIN_TAIL_SUFFIXES = ("天气", "天氣", "预报", "預報")
+_DOMAIN_HEAD_PREFIXES = ("天气", "天氣")
+
+
+def _is_domain_entity(value: str) -> bool:
+    """剥词后的实体命中其他能力域词形态（天气/预报）→ True。"""
+    if value.endswith(_DOMAIN_TAIL_SUFFIXES):
+        return True
+    return value.startswith(_DOMAIN_HEAD_PREFIXES) and " " in value
 
 
 def normalize_entity_question(text: str) -> str | None:
@@ -102,6 +127,8 @@ def normalize_entity_question(text: str) -> str | None:
     if value in _PRONOUN_ENTITIES or value.startswith(_PRONOUN_PREFIXES):
         return None
     if "http" in value.lower() or "/" in value:
+        return None
+    if _is_domain_entity(value):
         return None
     return value
 
@@ -394,7 +421,7 @@ def build_moegirl_capability(config: Any | None = None) -> Any:
                 request_id=message.request_id,
                 capability_id="bot.moegirl",
                 kind="text",
-                body="萌娘百科暂时连不上，稍后再试试。",
+                body=user_copy.DATASOURCE_TEMP_FAILURE.format(reason="萌娘百科暂时连不上"),
                 audit_tags=["moegirl", "network_error"],
             )
         if not hits:

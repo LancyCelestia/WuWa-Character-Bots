@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
 import threading
 import time
@@ -22,7 +23,9 @@ from plugins.bot_unified_runtime.sources.parsers.cookies import (
     build_platform_cookie_provider,
 )
 
-_COMMAND_ALIASES = ("cookie", "凭证", "登录凭证")
+logger = logging.getLogger(__name__)
+
+_COMMAND_ALIASES = ("cookie", "凭证", "憑證", "凭据", "憑據", "登录凭证", "登錄憑證")
 # 统一命令格式：/bot <模块词:cookie> <功能词:status|import> [参数]
 _COMMAND_PREFIX = "/bot "
 _IMPORT_VERBS = ("import", "导入")
@@ -475,7 +478,15 @@ def _playwright_login_check(config: object, platform: str) -> str:
     if state in {"starting", "waiting_scan"}:
         return "还在等扫码确认，扫完后再发一次 /bot cookie check " + platform + "。"
     if state == "error":
-        return "登录页打开失败（" + str(session.get("error") or "")[:60] + "），请重试。"
+        logger.warning(
+            "playwright login page failed for %s: %s",
+            platform,
+            session.get("error"),
+        )
+        return (
+            f"{platform} 的登录页暂时打不开，通常是网络问题。"
+            f"等几分钟再发 /bot cookie login {platform} 重新生成二维码。"
+        )
     if state == "timeout":
         return "登录超时了，请重新发送 /bot cookie login " + platform + " 获取新二维码。"
     if state != "ok":

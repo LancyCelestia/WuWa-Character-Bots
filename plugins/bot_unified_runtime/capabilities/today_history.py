@@ -9,17 +9,24 @@
 订阅表存在 data/today_history_push.json（git 忽略），
 { "f_<user_id>": {"hour":8,"minute":0}, "g_<group_id>": {...} }。
 NoneBot 入口在启动/bot 连接时按表注册 APScheduler 定时任务。
+
+事件列表在渲染后端可用时合成 Mica 信息卡图（复用解析卡的 render_card_png
+管线），文本作 caption/兜底——后端缺失或渲染失败时输出与纯文字版完全一致。
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import re
+import shutil
 import threading
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -32,9 +39,28 @@ from plugins.bot_unified_runtime.sources.today_history import (
     format_history_text,
 )
 
-_QUERY_RE = re.compile(r"^[/!！]?(?:历史上的今天|歷史上的今天)\s*(?P<arg>.*)$")
-# 短别名必须带斜杠，避免把普通聊天里的“历史”一词误触发。
-_SHORT_RE = re.compile(r"^[/!！](?:历史|今日历史|歷史|今日歷史)\s*(?P<arg>.*)$")
+logger = logging.getLogger(__name__)
+
+# 英文短语右侧词边界（stocks _alias_hit 先例）：historyqq 类字母延续不触发；
+# 中文别名与全角标点后缀（today in history？）不受影响。
+_QUERY_RE = re.compile(
+    r"^[/!！]?(?:历史上的今天|歷史上的今天|today in history(?![a-z0-9])"
+    # 拼音全拼/缩写（T-Spec T1.5/T1.6）：lishishangdejintian 同覆盖繁体同音；
+    # lssd 为截断缩写（原 lssdjt，≤4 位口径），查重无冲突；前缀锚定防左胶合，
+    # (?![A-Za-z0-9]) 防右胶合（lssdqq）。
+    r"|lishishangdejintian(?![A-Za-z0-9])|lssd(?![A-Za-z0-9]))\s*(?P<arg>.*)$",
+    re.IGNORECASE,
+)
+# 短别名必须带斜杠，避免把普通聊天里的“历史”一词误触发；
+# 英文 today/history 同门槛（T-Spec T1.2：today in history 短语可裸发，
+# today/history 单词与「历史」同属聊天高频词，必须带斜杠）。
+# 拼音同门槛（T-Spec T1.5/T1.6）：lishi/jinrilishi/ls/jrls 须 /前缀，
+# 斜杠门槛天然低误伤（/ls 冲突组=历史×歷史 同源变体不算冲突）。
+_SHORT_RE = re.compile(
+    r"^[/!！](?:历史|今日历史|歷史|今日歷史|today|history"
+    r"|lishi(?![A-Za-z0-9])|jinrilishi(?![A-Za-z0-9])|ls(?![A-Za-z0-9])|jrls(?![A-Za-z0-9]))\s*(?P<arg>.*)$",
+    re.IGNORECASE,
+)
 _TIME_RE = re.compile(r"(\d{1,2})[:：](\d{1,2})")
 
 
@@ -73,8 +99,60 @@ def _save_push_table(push_file: str, table: dict[str, dict[str, int]]) -> bool:
             encoding="utf-8",
         )
         return True
-    except OSError:
+    except OSError as exc:
+        logger.warning("push table save failed (%s): %s", push_file, exc)
         return False
+
+
+def _card_dir_token(raw: str) -> str:
+    """去重键 → 安全目录名：只留 ``[0-9A-Za-z_-]``，空则回退随机串。"""
+    token = re.sub(r"[^0-9A-Za-z_-]", "", str(raw or ""))[:64]
+    return token or uuid.uuid4().hex[:12]
+
+
+def _prune_card_dirs(root: Path, *, keep: int = 120) -> int:
+    """按 mtime 只保留 ``root`` 下最新 ``keep`` 个子目录，淘汰更旧的。
+
+    历史卡按日落独立子目录，``cache_policy.prune_prefixed`` 的平铺文件
+    前缀语义不适用；这里只删直接子目录（整棵子树），不碰散落文件。
+    失败由调用方吞掉——配额清理绝不阻塞出图。
+    """
+    if keep <= 0 or not root.is_dir():
+        return 0
+    entries: list[tuple[int, Path]] = []
+    for child in root.iterdir():
+        try:
+            if child.is_dir():
+                entries.append((int(child.stat().st_mtime), child))
+        except OSError:
+            continue
+    entries.sort(reverse=True)
+    for _, stale in entries[max(0, keep):]:
+        shutil.rmtree(stale, ignore_errors=True)
+    return max(0, len(entries) - max(0, keep))
+
+
+def build_history_card_content(body: str, *, month_day: str = "") -> Any:
+    """事件列表 → 通用卡 payload（纯构造，无 IO；能力层与测试共用）。
+
+    ``summary`` 只承载已拉取的真实事件行（截 1200 字），条数随现有结果，
+    不为凑数编造；``month_day`` 来自正文首行（同一时间口径），缺省退回
+    纯「历史上的今天」标题。``canonical_url`` 恒为 ``about:blank``（F10
+    约定：无真实来源的卡不渲染页脚，评审 C2——``history://`` 伪 URL 不得
+    泄漏给用户）；同日落盘去重由 ``_render_card`` 的 card_dir 子目录承载。
+    """
+    from plugins.bot_unified_runtime.contracts import build_parsed_content
+
+    return build_parsed_content(
+        platform="today_history",
+        item_id="events",
+        item_kind="article",
+        title=f"历史上的今天 {month_day}" if month_day else "历史上的今天",
+        author_name="百度百科 · 历史上的今天",
+        summary=body[:1200],
+        canonical_url="about:blank",
+        parse_depth="deep",
+    )
 
 
 def build_today_history_capability(
@@ -83,6 +161,7 @@ def build_today_history_capability(
     provider: TodayHistoryProvider | None = None,
     push_file: str = "data/today_history_push.json",
     on_subscriptions_changed: Callable[[], None] | None = None,
+    render_backend: Any | None = None,
 ) -> Any:
     if provider is None:
         proxy = str(getattr(config, "bot_download_proxy", "") or "") if config else ""
@@ -96,6 +175,40 @@ def build_today_history_capability(
     # 推送表读-改-写互斥：能力在 offload 线程池并发执行，两个会话同时
     # 设置/取消会互相整表覆写丢订阅（load→change→save 全程持锁）。
     _push_table_lock = threading.Lock()
+
+    def _render_card(body: str, month_day: str) -> str:
+        """事件列表合成 Mica 卡图；后端不可用或任何失败返回空串。
+
+        落盘走 ``today_history/<month_day>`` 子目录：同日事件列表内容一致，
+        同日同卡同文件（去重）；不同日互不覆写。去重键不进 canonical_url。
+        """
+        if render_backend is None or not getattr(render_backend, "available", False):
+            return ""
+        try:
+            from plugins.bot_unified_runtime.capabilities.content_parser import (
+                render_card_png,
+            )
+
+            item = build_history_card_content(body, month_day=month_day)
+            base_dir = str(
+                getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"
+            )
+            history_root = Path(base_dir) / "today_history"
+            payload = render_card_png(
+                render_backend,
+                item,
+                config=config,
+                card_dir=str(history_root / _card_dir_token(month_day or "today")),
+                feature_label="历史上的今天",
+            )
+            if isinstance(payload, dict) and payload.get("file"):
+                try:
+                    _prune_card_dirs(history_root, keep=120)
+                except Exception:  # noqa: S110, BLE001 - 配额清理失败不影响出图。
+                    pass
+        except Exception:  # noqa: BLE001 - 渲染失败回退纯文本列表。
+            return ""
+        return str(payload.get("file") or "") if isinstance(payload, dict) else ""
 
     def _require_group_admin(sender_key: str, decision: BotDecision) -> bool:
         """群推送时间影响全群，设置/取消需要管理员；私聊键自助。"""
@@ -147,7 +260,7 @@ def build_today_history_capability(
                         request_id=message.request_id,
                         capability_id="bot.today_history",
                         kind="text",
-                        body="群推送时间只有管理员可以取消。",
+                        body=user_copy.ADMIN_GATE_REQUIRED.format(action="取消群推送时间"),
                         audit_tags=["today_history", "push_cancelled", "denied"],
                     )
                 if not load_ok:
@@ -165,7 +278,7 @@ def build_today_history_capability(
                             request_id=message.request_id,
                             capability_id="bot.today_history",
                             kind="text",
-                            body="取消失败：推送表写盘出错，请查日志。",
+                            body=user_copy.PUSH_SAVE_FAILED,
                             audit_tags=["today_history", "push_cancelled", "save_failed"],
                         )
                 if on_subscriptions_changed is not None:
@@ -204,7 +317,7 @@ def build_today_history_capability(
                         request_id=message.request_id,
                         capability_id="bot.today_history",
                         kind="text",
-                        body="群推送时间只有管理员可以设置。",
+                        body=user_copy.ADMIN_GATE_REQUIRED.format(action="设置群推送时间"),
                         audit_tags=["today_history", "push_subscribed", "denied"],
                     )
                 if not load_ok:
@@ -222,7 +335,7 @@ def build_today_history_capability(
                             request_id=message.request_id,
                             capability_id="bot.today_history",
                             kind="text",
-                            body="设置失败：推送表写盘出错，请查日志。",
+                            body=user_copy.PUSH_SAVE_FAILED,
                             audit_tags=["today_history", "push_subscribed", "save_failed"],
                         )
                 if on_subscriptions_changed is not None:
@@ -254,15 +367,24 @@ def build_today_history_capability(
                 body="历史上的今天数据拉取失败，稍后再试。",
                 audit_tags=["today_history", "fetch_failed"],
             )
+        body = format_history_text(events)
+        # 月份日期取自正文首行（format_history_text 统一时间口径）。
+        month_day = body.split("\n", 1)[0].removeprefix("历史上的今天").strip()
+        card = _render_card(body, month_day)
         return CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.today_history",
-            kind="text",
+            kind="mixed" if card else "text",
             title="历史上的今天",
-            body=format_history_text(events),
+            body=body,
+            images=[{"file": card}] if card else [],
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PUBLIC,
-            audit_tags=["today_history", f"today_history_events:{len(events)}"],
+            audit_tags=[
+                "today_history",
+                f"today_history_events:{len(events)}",
+                "card_rendered" if card else "text_only",
+            ],
         )
 
     return capability

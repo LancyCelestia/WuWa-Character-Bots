@@ -13,16 +13,17 @@
    --pc 仅作徽章/高亮/Top 序号 accent（.num/.ttl/.top-chip）。
    阴影只允许两枚 token（--mica-shadow + --mica-shadow-soft）。 */
 :root {
-    /* 漂移相位：内联脚本每次渲染随机覆写（负 animation-delay 取随机瞬间）。 */
-    --phase: 0.2;
+    /* 漂移相位：bridge 按 payload digest 确定注入（E01，D2→D1；同 payload 同帧，
+       缺省 0.2 兜底）。负 animation-delay 取该确定瞬间的静止构图。 */
+    --phase: {{ phase | default('0.2', true) }};
     --pc: {{ platform_color }};
     --pc-dark: {{ platform_color_dark }};
     --pc-light: {{ platform_color_light }};
     --pc-rgb: {{ platform_color_rgb }};
-    --wash-1: {{ wash_1 | default('#e5ecf1') }};
-    --wash-2: {{ wash_2 | default('#e3e5f1') }};
-    --wash-3: {{ wash_3 | default('#e3eeee') }};
-    --wash-mist: {{ wash_mist | default('#f3f5f6') }};
+    --wash-1: {{ wash_1 | default('#d9e0e7') }};
+    --wash-2: {{ wash_2 | default('#dfdae7') }};
+    --wash-3: {{ wash_3 | default('#dcdfea') }};
+    --wash-mist: {{ wash_mist | default('#f4f5f6') }};
     --wash-blob-1: color-mix(in srgb, var(--pc) 35%, var(--wash-1));
     --r-shell: 30px;
     --r-panel: 18px;
@@ -171,6 +172,8 @@ body {
     font-size: 12px;
     font-weight: 700;
     color: var(--pc-dark);
+    letter-spacing: 0.06em;
+    font-variant-numeric: tabular-nums;
     background:
         linear-gradient(color-mix(in srgb, var(--pc) 14%, rgba(255, 255, 255, 0.72)), color-mix(in srgb, var(--pc) 14%, rgba(255, 255, 255, 0.72))) padding-box,
         linear-gradient(150deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.45)) border-box;
@@ -205,6 +208,7 @@ body {
     font-size: 18px;
     font-weight: 700;
     color: var(--pc-dark);
+    font-variant-numeric: tabular-nums;
     background: color-mix(in srgb, var(--pc) 12%, rgba(255, 255, 255, 0.80));
     border: 1px solid color-mix(in srgb, var(--pc) 18%, rgba(255, 255, 255, 0.90));
 }
@@ -249,7 +253,7 @@ body {
     padding: 10px 14px;
     border-radius: var(--r-tile);
     font-size: 12.5px;
-    line-height: 1.7;
+    line-height: 1.6;
     color: #4a5560;
     text-align: center;
 }
@@ -301,11 +305,5 @@ body {
     <div class="foot glass">想听哪首就<b>直接回复它的序号数字</b>（如 <b>2</b>），也可以说「点歌 2」；<br>{{ ttl_seconds }}s 内有效，超时不回复则不播放，可重新点歌。</div>
     <div class="bot-foot">{% if bot_avatar_url %}<img class="bf-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="bf-dot">{{ (bot_name | default('守岸人', true))[:1] }}</span>{% endif %}<span class="bf-name">{{ bot_name | default('守岸人', true) }}</span><span>· {{ feature_label | default('点歌', true) }}</span></div>
 </div></div>
-<script>
-/* mica-glass v1 2026-09-12：随机漂移相位，纯内联零依赖，失败静默。 */
-try {
-    document.documentElement.style.setProperty("--phase", Math.random().toFixed(4));
-} catch (e) { /* 相位随机化失败不影响渲染 */ }
-</script>
 </body>
 </html>

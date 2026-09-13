@@ -59,13 +59,6 @@ def build_request_headers(context: Any) -> dict[str, str]:
     return headers
 
 
-
-def set_default_proxy(proxy_url: str) -> None:
-    """为后续请求设置全局 HTTP 代理（如 http://127.0.0.1:7890）。"""
-    global _DEFAULT_PROXY
-    _DEFAULT_PROXY = str(proxy_url or "").strip()
-
-
 def _build_opener(proxy: str = "", *, verify_ssl: bool = True) -> urlrequest.OpenerDirector:
     effective = (proxy or "").strip() or _DEFAULT_PROXY
     handlers: list[Any] = []
@@ -305,13 +298,6 @@ class _ShortLinkResolved(Exception):
         self.url = url
 
 
-class _NoBodyRedirectHandler(urlrequest.HTTPRedirectHandler):
-    """记录重定向落点后立即中止请求（短链解析只关心落点 URL）。"""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise _ShortLinkResolved(newurl)
-
-
 def resolve_short_link(url: str, *, timeout: float = 10.0) -> str:
     """跟随重定向拿最终落点 URL（B 站 b23.tv、小红书 xhslink 等）。
 
@@ -330,11 +316,6 @@ def resolve_short_link(url: str, *, timeout: float = 10.0) -> str:
     except Exception as exc:
         raise ParseHttpError(f"GET {url} failed: {type(exc).__name__}") from exc
 
-
-def strip_tracking_query(url: str) -> str:
-    """只保留 scheme/netloc/path，丢弃查询串（解析用，避免签名参数干扰）。"""
-    parts = urlparse.urlsplit(url)
-    return urlparse.urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 def http_post_form(
     url: str,

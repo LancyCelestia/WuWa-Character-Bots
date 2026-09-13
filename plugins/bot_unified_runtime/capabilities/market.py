@@ -29,10 +29,30 @@ from plugins.bot_unified_runtime.sources.market_data import (
 )
 
 # 触发词：全球股市 > 股指/大盘/股市/行情（行情放最后避免误伤面过大时漏判）。
-_MARKET_TRIGGER_RE = re.compile(r"(全球股市|股指|大盘|股市|行情)")
-# 非股市的"行情"（房价/基金/币圈/显卡/期货）：命中且无股/大盘/股指/指数词时不触发。
-_NON_STOCK_RE = re.compile(r"(房价|基金|币圈|加密|显卡|期货|汇率)")
-_STOCK_HINT_RE = re.compile(r"(股|大盘|指数)")
+# 「大盤」为繁体变体（2026-09-13 多语言触发覆盖）；语境守卫 _STOCK_HINT_RE
+# 同步收录（评审 P1-2，繁体非股市守卫才不失效）。
+# 英文 market/markets/stock market（词边界，T-Spec T1.2）同表触发；
+# 「stock market」与 stocks 让路对由 base_router 优先级裁定（market 41 先于 42）。
+_MARKET_TRIGGER_RE = re.compile(
+    r"(全球股市|股指|大盘|大盤|股市|行情"
+    # 全拼/缩写（T-Spec T1.5/T1.6）：全拼同覆盖繁体同音（大盤/股價类）；
+    # 缩写 hq/dp/gs 查重无跨能力冲突（gz 与 affinity「规则」冲突故不上）。
+    # 本正则无 IGNORECASE，按 RF 波先例用 [A-Za-z0-9] 全字母数字区间边界。
+    r"|(?<![A-Za-z0-9])(?:quanqiugushi|guzhi|dapan|gushi|hangqing|hq|dp|gs)(?![A-Za-z0-9])"
+    r"|(?<![a-z0-9])(?:stock\s+)?markets?(?![a-z0-9]))"
+)
+# 非股市的"行情"（房价/基金/币圈/显卡/期货/油价/金价等商品价格）：命中且无
+# 股/大盘/股指/指数词时不触发（触发劫持③修复：油价/金价行情让路 chat，
+# tests/test_market_exclusion_guard.py 回归锁）。
+# 繁体变体（房價/顯卡/期貨/匯率/油價/金價…）与 大盤 语境词为多语言覆盖（评审 P1-2）。
+# 英文 labor/job/housing market（就业/楼市语境）为 T1.2 英文 market 触发的配套守卫。
+_NON_STOCK_RE = re.compile(
+    r"(房价|基金|币圈|加密|显卡|期货|汇率"
+    r"|油价|金价|银价|铜价|煤价|电价|菜价|石油|黄金"
+    r"|房價|幣圈|顯卡|期貨|匯率|油價|金價|銀價|銅價|石油|黃金"
+    r"|labor market|labour market|job market|housing market)"
+)
+_STOCK_HINT_RE = re.compile(r"(股|大盘|大盤|指数)")
 
 _URL_HINT_RE = re.compile(r"https?://", re.IGNORECASE)
 _MAX_TRIGGER_LEN = 32
@@ -75,6 +95,15 @@ def market_filter_secids(text: str) -> frozenset[str]:
         if keyword in text:
             matched.update(secids)
     return frozenset(matched)
+
+
+def _format_change_abs(change_abs: float | None) -> str:
+    """涨跌额带符号文本（卡上名称/点位旁展示）；缺数据返回空串不伪造。"""
+    if change_abs is None:
+        return ""
+    if change_abs > 0:
+        return f"+{change_abs:.2f}"
+    return f"{change_abs:.2f}"
 
 
 def is_market_command(text: str) -> bool:
@@ -122,10 +151,13 @@ def build_market_capability(
         trends: dict[str, tuple[float, ...]],
         card_dir: str,
         subtitle: str,
+        crosscheck_note: str = "",
     ) -> str:
         """釉瑚股指卡 PNG（分组网格+折线）；后端缺失/失败返回空串回退文本。"""
         if render_backend is None or not getattr(render_backend, "available", False):
             return ""
+        import time as _time
+
         try:
             from plugins.bot_unified_runtime.output.card_render.bridge import (
                 render_market_card_html,
@@ -146,13 +178,38 @@ def build_market_capability(
                                     else f"{quote.change_pct:.2f}%"
                                 ),
                                 "change_pct": quote.change_pct,
+                                "change": (
+                                    _format_change_abs(quote.change_abs)
+                                ),
+                                # Task 4 增量：行级 provenance（机器可读，
+                                # 与上方 *_note 展示文案互补；bridge 未知键忽略）。
+                                "source": quote.source,
+                                "status": quote.status,
+                                "delayed": quote.delayed,
                                 "trend": list(trends.get(quote.code) or ()),
+                                # MOEX 无历史 K 线源（东财 100.IMOEX 不存在）：
+                                # 卡上明确标注缺口，不伪造折线（2026-09-12 裁定）。
+                                "trend_note": (
+                                    "暂无历史走势数据"
+                                    if quote.code == "100.IMOEX"
+                                    and not trends.get(quote.code)
+                                    else ""
+                                ),
                             }
                             for quote in group_rows
                         ],
                     }
                     for group_name, group_rows in group_quotes(quotes).items()
                 ],
+                "source_note": "数据源：东方财富 · MOEX ISS（俄罗斯）",
+                "updated_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
+                "delayed_note": "部分海外指数行情可能有延迟",
+                # 多源交叉查验声明（腾讯 qt.gtimg.cn；通道不可用为空串=不声明）。
+                "crosscheck_note": crosscheck_note,
+                # Task 4 增量：机器可读状态与数据时点（unix 秒，取各行最新；
+                # bridge 未知键忽略，finance_card 接线时直接可用）。
+                "status": "ok",
+                "as_of": max((quote.as_of or 0.0) for quote in quotes) if quotes else None,
                 "bot_name": str(
                     getattr(config, "bot_persona_display_name", "") or ""
                 ).strip()
@@ -214,24 +271,38 @@ def build_market_capability(
             shown = quotes
         subtitle = "红涨绿跌 · 折线为近 30 个交易日收盘"
         trends = _fetch_trends(shown, timeout)
+        # 多源交叉查验（腾讯）：best-effort，通道不可用为空串=不声明。
+        from plugins.bot_unified_runtime.sources.market_crosscheck import (
+            crosscheck_quotes,
+            format_crosscheck_note,
+        )
+
+        cross_note = format_crosscheck_note(
+            crosscheck_quotes(shown, timeout_seconds=min(timeout, 4.0))
+        )
         card = _render_card(
             shown,
             trends,
             str(getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"),
             subtitle,
+            cross_note,
         )
+        body = format_market_brief(shown)
+        if cross_note:
+            body = f"{body}\n{cross_note}"
         return CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.market",
             kind="mixed" if card else "text",
             title="全球股指速览",
-            body=format_market_brief(shown),
+            body=body,
             images=[{"file": card}] if card else [],
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PUBLIC,
             audit_tags=[
                 "capability:market",
                 f"market_quotes:{len(shown)}",
+                "market:crosscheck" if cross_note else "market:crosscheck_unavailable",
                 "card_rendered" if card else "text_only",
             ],
         )

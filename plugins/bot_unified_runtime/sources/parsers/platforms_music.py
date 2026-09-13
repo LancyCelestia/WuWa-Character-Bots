@@ -574,50 +574,6 @@ def parse_kuwo(url: str, *, cookie_header: str = "") -> ParsedContent:
 
 
 
-def _generic_candidates_from_search(
-    provider: str,
-    songs: list[dict],
-    *,
-    name_key: tuple[str, ...],
-    artist_key: str | None,
-    id_key: str,
-) -> list[dict[str, str]]:
-    """从平台搜索响应提取轻量候选列表（多候选点歌共用）。"""
-    out: list[dict[str, str]] = []
-    for song in songs:
-        name = ""
-        for key in name_key:
-            name = str(song.get(key) or "").strip()
-            if name:
-                break
-        if not name:
-            continue
-        artist = ""
-        if artist_key:
-            artists = song.get(artist_key) or []
-            if isinstance(artists, list):
-                parts = []
-                for item in artists:
-                    value = item.get("name") if isinstance(item, dict) else item
-                    value = str(value or "").strip()
-                    if value:
-                        parts.append(value)
-                artist = "、".join(parts)
-            elif isinstance(artists, str):
-                artist = artists
-        out.append(
-            {
-                "provider_track_id": str(song.get(id_key) or "").strip(),
-                "name": name,
-                "artist": artist,
-                "album": "",
-            }
-        )
-        if len(out) >= 5:
-            break
-    return out
-
-
 def search_qqmusic_candidates(
     query: str,
     *,

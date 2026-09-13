@@ -26,6 +26,7 @@ MOEX ISS 备选源（2026-09-12 实测本机直连可达，免 key，无需代�
 
 from __future__ import annotations
 
+import os
 import time
 import urllib.parse
 from collections.abc import Sequence
@@ -53,13 +54,23 @@ _MAX_PAYLOAD_BYTES = 1024 * 1024
 
 @dataclass(frozen=True)
 class IndexQuote:
-    """单个指数的行情快照。"""
+    """单个指数的行情快照。
+
+    provenance 四件套（Task 4 增量，默认值向后兼容旧调用点）：
+    ``source`` 数据源（eastmoney / moex_iss）、``as_of`` 数据抓取时间
+    （unix 秒）、``delayed=True`` 免费行情恒为延迟口径、``status`` 预留
+    状态位（当前快照要么完整要么缺席，缺席行不进列表）。
+    """
 
     name: str
     code: str  # eastmoney secid，如 1.000001 / 100.DJIA
     price: float
     change_pct: float
     change_abs: float | None = None
+    source: str = "eastmoney"
+    as_of: float | None = None
+    delayed: bool = True
+    status: str = "ok"
 
 
 # (secid, 展示名, 分组)；展示名沿用约定俗成的简称（接口原始名
@@ -98,6 +109,45 @@ _CACHE_TTL_DEFAULT_SECONDS = 60.0
 _CACHE: tuple[float, tuple[IndexQuote, ...]] | None = None
 
 _EMPTY_DEGRADED_TEXT = "行情数据暂时拉不到，晚点再试试？"
+
+
+# ==================== 东财空响应受控重试（G2，2026-09-13） ====================
+# 东财限流表现为 HTTP 200 但业务体为空（空 JSON/缺行，无错误码），与真异常
+# （网络错/非 200 → ParseHttpError）不同，值得退避后再试一次。本节是
+# market_data / stock_data / fx_data 三源共用的重试缝：开关解析链 + 退避单点。
+# 纪律：只对「HTTP 200 但解析为空」重试；真异常不重试；仍空走既有诚实降级
+# 且不缓存（「失败不缓存」语义不变，重试不改变缓存键与缓存条件）。
+
+_RETRY_BACKOFF_SECONDS = 0.6  # 0.5~1s 区间取 0.6s；monkeypatch 本常量可覆盖。
+
+
+def retry_on_empty_enabled() -> bool:
+    """东财空响应重试开关（config ``bot_market_retry_on_empty``，默认开）。
+
+    解析链与 ``runtime/pipeline.py`` 的 ``_resolve_chat_pool_workers`` 同源
+    模式：nonebot driver config → 环境变量 → 默认 True；数据层不接收注入
+    config，经惰性 get_driver 读取，未初始化（单元测试/裸脚本）自动短路。
+    任一级显式给出 False 即关闭——关闭时空响应不重试，行为与既往逐字节一致。
+    """
+    try:
+        import nonebot
+
+        value = getattr(
+            nonebot.get_driver().config, "bot_market_retry_on_empty", None
+        )
+        if value is not None:
+            return bool(value)
+    except Exception:  # noqa: BLE001, S110 - 未初始化场景静默落到下一级。
+        pass
+    raw = os.environ.get("BOT_MARKET_RETRY_ON_EMPTY")
+    if raw is None or not str(raw).strip():
+        return True
+    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def empty_backoff_sleep() -> None:
+    """空响应重试前的退避（time.sleep 单点；测试 monkeypatch 本函数/常量）。"""
+    time.sleep(_RETRY_BACKOFF_SECONDS)
 
 
 def reset_market_cache() -> None:
@@ -152,6 +202,10 @@ def _fetch_moex_quote(timeout_seconds: float) -> IndexQuote | None:
         price=price,
         change_pct=change_pct,
         change_abs=_as_float(by_name.get("LASTCHANGE")),
+        source="moex_iss",
+        as_of=time.time(),
+        delayed=True,
+        status="ok",
     )
 
 
@@ -219,14 +273,37 @@ def fetch_index_quotes(
     cached = _CACHE
     if cached is not None and now - cached[0] <= max(0.0, float(cache_seconds)):
         return list(cached[1])
+    fetched_at = time.time()  # 数据时间戳（墙钟），进缓存随快照保留。
     secids = ",".join(
         secid for secid, _name, _group in _INDEX_UNIVERSE if secid != _MOEX_SECID
     )
-    try:
-        payload = _fetch_payload(secids, max(1.0, float(timeout_seconds)))
-        quotes = _parse_quotes(payload)
-    except Exception:  # noqa: BLE001 - 行情失败静默降级，不阻塞会话链路。
-        quotes = []
+    # G2：东财限流=HTTP 200 空响应（空 JSON/缺行）→ 退避后至多重试 1 次；
+    # 真异常（网络错/非 200）不重试；仍空照旧诚实降级且不缓存。
+    attempts = 2 if retry_on_empty_enabled() else 1
+    quotes: list[IndexQuote] = []
+    for attempt in range(attempts):
+        try:
+            payload = _fetch_payload(secids, max(1.0, float(timeout_seconds)))
+            quotes = [
+                IndexQuote(
+                    name=quote.name,
+                    code=quote.code,
+                    price=quote.price,
+                    change_pct=quote.change_pct,
+                    change_abs=quote.change_abs,
+                    source="eastmoney",
+                    as_of=fetched_at,
+                    delayed=True,
+                    status="ok",
+                )
+                for quote in _parse_quotes(payload)
+            ]
+        except Exception:  # noqa: BLE001 - 行情失败静默降级，不阻塞会话链路。
+            quotes = []
+            break  # 真异常不重试。
+        if quotes or attempt + 1 >= attempts:
+            break
+        empty_backoff_sleep()
     # MOEX 走独立备选源：东财整体失败也允许只剩 MOEX 一条（有总比没有强）。
     moex = _fetch_moex_quote(timeout_seconds)
     if moex is not None:
@@ -291,18 +368,68 @@ def format_market_brief(quotes: Sequence[IndexQuote]) -> str:
 
 
 # ==================== F19 指数走势（30 日收盘，折线卡用） ====================
+# end=20500101：2026-09-13 实测该接口缺 end 参数时返回空 klines（疑似上游
+# 行为变更，当日真实渲染验收抓到），显式带上远期上界拿「最近 N 根」。
 _KLINE_URL = (
     "https://push2his.eastmoney.com/api/qt/stock/kline/get"
     "?secid={secid}&fields1=f1&fields2=f51,f53&klt=101&fqt=1&lmt={days}"
+    "&end=20500101"
 )
 _TREND_CACHE_TTL_SECONDS = 600.0
 _TREND_MAX_POINTS = 60
 _TREND_CACHE: dict[str, tuple[float, tuple[float, ...]]] = {}
 
+# MOEX ISS 历史端点（2026-09-13 实测可达）：/iss/history 按 TRADEDATE 升序
+# 全量分页（1997 年起 7000+ 行），借 history.cursor 的 TOTAL 取尾部窗口，
+# 令 MOEX 也拿到真实走势（替代此前「暂无历史走势数据」的缺口展示）。
+_MOEX_HISTORY_URL = (
+    "https://iss.moex.com/iss/history/engines/stock/markets/index/boards/SNDX"
+    "/securities/IMOEX.json?iss.meta=off&iss.only=history,history.cursor&start={start}"
+)
+_MOEX_TREND_POINTS = 30
+
 
 def reset_market_trend_cache() -> None:
     """清空走势缓存（测试用）。"""
     _TREND_CACHE.clear()
+
+
+def _fetch_moex_trend(timeout_seconds: float) -> tuple[float, ...]:
+    """MOEX 指数近 30 日收盘（ISS history 尾部窗口）；失败返回空元组。"""
+
+    def _get(start: int) -> Any:
+        return http_get_json(
+            _MOEX_HISTORY_URL.format(start=start),
+            timeout=max(1.0, float(timeout_seconds)),
+            max_bytes=_MAX_PAYLOAD_BYTES,
+        )
+
+    try:
+        first = _get(0)
+        cursor = first.get("history.cursor") if isinstance(first, dict) else None
+        total = 0
+        if isinstance(cursor, dict):
+            columns = cursor.get("columns") or []
+            rows = cursor.get("data") or []
+            if rows and "TOTAL" in columns:
+                total = int(rows[0][columns.index("TOTAL")])
+        if total <= 0:
+            return ()
+        payload = _get(max(0, total - _MOEX_TREND_POINTS))
+        history = payload.get("history") if isinstance(payload, dict) else None
+        columns = history.get("columns") if isinstance(history, dict) else None
+        rows = history.get("data") if isinstance(history, dict) else None
+        if not isinstance(columns, list) or not isinstance(rows, list):
+            return ()
+        close_idx = columns.index("CLOSE")
+        closes = [
+            float(row[close_idx])
+            for row in rows
+            if len(row) > close_idx and row[close_idx] is not None
+        ]
+        return tuple(closes[-_MOEX_TREND_POINTS:])
+    except Exception:  # noqa: BLE001 - 单源失败静默缺席，不拖垮行情卡。
+        return ()
 
 
 def fetch_index_trend(
@@ -313,35 +440,50 @@ def fetch_index_trend(
 ) -> tuple[float, ...]:
     """单个指数近 30 日收盘序列（旧→新）；失败/无数据返回空元组，绝不抛。
 
-    东财 kline 单指数一调；MOEX 走东财无数据，直接空序列（卡上无折线）。
-    10 分钟进程内缓存：18 指数逐个外呼较重，折线不需要实时。
+    东财 kline 单指数一调；MOEX 走 ISS history 尾部窗口（两次分页请求）。
+    10 分钟进程内缓存：18 指数逐个外呼较重，折线不需要实时；失败（空序列）
+    不缓存，下一次调用立即重试。
     """
-    if secid == _MOEX_SECID:
-        return ()
     cached = _TREND_CACHE.get(secid)
     now = time.monotonic()
     if cached is not None and now - cached[0] <= max(1.0, float(cache_seconds)):
         return cached[1]
     closes: tuple[float, ...] = ()
-    try:
-        payload = http_get_json(
-            _KLINE_URL.format(secid=urllib.parse.quote(secid), days=_TREND_MAX_POINTS),
-            timeout=max(1.0, float(timeout_seconds)),
-            max_bytes=_MAX_PAYLOAD_BYTES,
-        )
-        data = payload.get("data") if isinstance(payload, dict) else None
-        klines = data.get("klines") if isinstance(data, dict) else None
-        if isinstance(klines, list):
-            values: list[float] = []
-            for row in klines:
-                # fields2=f51,f53 → "日期,收盘"；只取收盘。
-                parts = str(row).split(",")
-                if len(parts) >= 2:
-                    close = _as_float(parts[1])
-                    if close is not None:
-                        values.append(close)
-            closes = tuple(values[-_TREND_MAX_POINTS:])
-    except Exception:  # noqa: BLE001 - 走势失败静默缺席，不拖垮行情卡。
-        closes = ()
-    _TREND_CACHE[secid] = (now, closes)
+    if secid == _MOEX_SECID:
+        closes = _fetch_moex_trend(timeout_seconds)
+        if closes:
+            _TREND_CACHE[secid] = (now, closes)
+        return closes
+    # G2：东财 kline 空响应（空 JSON/缺行）退避后至多重试 1 次；真异常不
+    # 重试；仍空照旧不缓存（「空结果不缓存」纪律不变）。
+    attempts = 2 if retry_on_empty_enabled() else 1
+    for attempt in range(attempts):
+        try:
+            payload = http_get_json(
+                _KLINE_URL.format(
+                    secid=urllib.parse.quote(secid), days=_TREND_MAX_POINTS
+                ),
+                timeout=max(1.0, float(timeout_seconds)),
+                max_bytes=_MAX_PAYLOAD_BYTES,
+            )
+            data = payload.get("data") if isinstance(payload, dict) else None
+            klines = data.get("klines") if isinstance(data, dict) else None
+            if isinstance(klines, list):
+                values: list[float] = []
+                for row in klines:
+                    # fields2=f51,f53 → "日期,收盘"；只取收盘。
+                    parts = str(row).split(",")
+                    if len(parts) >= 2:
+                        close = _as_float(parts[1])
+                        if close is not None:
+                            values.append(close)
+                closes = tuple(values[-_TREND_MAX_POINTS:])
+        except Exception:  # noqa: BLE001 - 走势失败静默缺席，不拖垮行情卡。
+            closes = ()
+            break  # 真异常不重试。
+        if closes or attempt + 1 >= attempts:
+            break
+        empty_backoff_sleep()
+    if closes:
+        _TREND_CACHE[secid] = (now, closes)
     return closes

@@ -1,6 +1,7 @@
 """V2 subscription persistence: targets, cursors, seen items and outbox."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -660,6 +661,99 @@ class SubscriptionStoreV2:
                 (event_id,),
             ).fetchone()
             return str(row["state"]) if row is not None else None
+
+    # ---- async 门面（性能分诊 P2-1：调度器此前在 event loop 上直跑同步
+    # SQLite，活跃源多条 item 时造成毫秒级 loop 停顿）。同步实现保持不动、
+    # 被 asyncio.to_thread 下放到工作线程执行；线程安全由既有 self._lock
+    # （RLock + check_same_thread=False 连接）保证，语义与直调完全一致。
+    # 调度器（subscription_scheduler）只经这些门面访问存储。----
+
+    async def upsert_target_async(self, target: SubscriptionTarget) -> None:
+        return await asyncio.to_thread(self.upsert_target, target)
+
+    async def list_targets_async(
+        self, *, due_before: datetime | None = None
+    ) -> list[SubscriptionTarget]:
+        return await asyncio.to_thread(self.list_targets, due_before=due_before)
+
+    async def claim_due_target_async(
+        self, target_id: str, now: datetime, lease_seconds: int
+    ) -> bool:
+        return await asyncio.to_thread(
+            self.claim_due_target, target_id, now, lease_seconds
+        )
+
+    async def release_target_async(
+        self, target_id: str, *, next_poll_at: datetime
+    ) -> None:
+        return await asyncio.to_thread(
+            self.release_target, target_id, next_poll_at=next_poll_at
+        )
+
+    async def release_target_lease_async(self, target_id: str) -> None:
+        return await asyncio.to_thread(self.release_target_lease, target_id)
+
+    async def record_failure_async(
+        self, target_id: str, error_code: str, *, retry_at: datetime
+    ) -> None:
+        return await asyncio.to_thread(
+            self.record_failure, target_id, error_code, retry_at=retry_at
+        )
+
+    async def get_cursors_async(
+        self, target_id: str
+    ) -> dict[str, SubscriptionCursorV2]:
+        return await asyncio.to_thread(self.get_cursors, target_id)
+
+    async def get_target_metadata_async(self, target_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(self.get_target_metadata, target_id)
+
+    async def set_target_metadata_async(
+        self, target_id: str, metadata: dict[str, Any]
+    ) -> None:
+        return await asyncio.to_thread(self.set_target_metadata, target_id, metadata)
+
+    async def save_fetch_result_async(
+        self,
+        target: SubscriptionTarget,
+        result: SubscriptionFetchResult,
+        *,
+        baseline: bool,
+    ) -> list[SubscriptionOutboxEvent]:
+        return await asyncio.to_thread(
+            self.save_fetch_result, target, result, baseline=baseline
+        )
+
+    async def claim_outbox_async(
+        self, now: datetime, limit: int
+    ) -> list[SubscriptionOutboxEvent]:
+        return await asyncio.to_thread(self.claim_outbox, now, limit)
+
+    async def mark_outbox_sent_async(self, event_id: str, sent_at: datetime) -> None:
+        return await asyncio.to_thread(self.mark_outbox_sent, event_id, sent_at)
+
+    async def mark_outbox_retry_async(
+        self, event_id: str, next_attempt_at: datetime
+    ) -> None:
+        return await asyncio.to_thread(
+            self.mark_outbox_retry, event_id, next_attempt_at
+        )
+
+    async def outbox_state_async(self, event_id: str) -> str | None:
+        return await asyncio.to_thread(self.outbox_state, event_id)
+
+    async def add_destination_async(self, destination: SubscriptionDestinationV2) -> None:
+        return await asyncio.to_thread(self.add_destination, destination)
+
+    async def set_destination_enabled_async(
+        self, destination_id: int, enabled: bool
+    ) -> bool:
+        return await asyncio.to_thread(
+            self.set_destination_enabled, destination_id, enabled
+        )
+
+    async def set_target_enabled_async(self, target_id: str, enabled: bool) -> bool:
+        return await asyncio.to_thread(self.set_target_enabled, target_id, enabled)
 
     def close(self) -> None:
         with self._lock:

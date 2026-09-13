@@ -5,6 +5,18 @@ from pydantic import Field
 from .runtime import PrivacyLevel, RiskLevel, StrictBaseModel
 
 
+class AddressingContext(StrictBaseModel):
+    """当前会话的称谓与主角边界。"""
+
+    scope: str = "other"
+    preferred_name: str = "你"
+    gender_identity: str = "unknown"
+    gender_confidence: str = "unknown"
+    can_use_wanderer_title: bool = False
+    is_master: bool = False
+    instruction: str = ""
+
+
 class EmotionSignal(StrictBaseModel):
     request_id: str
     session_id: str
@@ -221,6 +233,7 @@ class WebSearchContext(StrictBaseModel):
 
 
 class ContextBundle(StrictBaseModel):
+    addressing_context: AddressingContext | None = None
     request_id: str
     persona: PersonaProfile
     tone: ToneProfile

@@ -791,14 +791,6 @@ def _reply_budget_note(max_messages: int) -> str:
     )
 
 
-def _reply_trim_note(max_messages: int) -> str:
-    return (
-        "已按传输长度限制收口"
-        if max_messages <= 0
-        else f"已按回复预算收口，只保留前 {max_messages} 段"
-    )
-
-
 def build_diagnostic_why_summary(
     *,
     runtime_enabled: bool,

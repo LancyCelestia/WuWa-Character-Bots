@@ -227,6 +227,8 @@ class Config(BaseModel):
     bot_reflection_quirks_min_confidence: float = 0.5
     # 会话级身份记忆（管理员设置）：每群/每私聊独立的 bot 称呼与身份标签。
     bot_session_identity_db_path: str = "data/session_identity.sqlite3"
+    # 用户称谓/性别偏好持久化（用户显式设置或纠正；优先于一切推断）。
+    bot_addressing_preferences_db_path: str = "data/addressing_preferences.sqlite3"
     bot_trend_enabled: bool = False
     bot_trend_files: list[str] = []
     bot_trend_max_notes: int = 5
@@ -241,6 +243,12 @@ class Config(BaseModel):
     bot_weather_timeout_seconds: float = 8.0
     # 全球股指行情（bot.market）：东方财富 push2 免费接口，免 key，进程内 TTL 缓存。
     bot_market_enabled: bool = True
+    # 个股行情/汇率路由开关（base_router getattr 读取；无此字段时 .env 无法关闭）。
+    bot_stocks_enabled: bool = True
+    bot_fx_enabled: bool = True
+    # 东财空响应受控重试（G2）：限流时 HTTP 200 但业务体为空（空 JSON/缺行），
+    # 三源数据层至多重试 1 次（退避 0.6s）；关闭后行为与无重试逐字节一致。
+    bot_market_retry_on_empty: bool = True
     bot_market_timeout_seconds: float = 6.0
     bot_market_cache_seconds: float = 60.0
     # 随机图片（bot.randpic）：只读取用户自定义文件夹随机发图，绝不自建目录。
@@ -848,6 +856,7 @@ class Config(BaseModel):
             "bot_mood_db_path",
             "bot_quirks_db_path",
             "bot_session_identity_db_path",
+            "bot_addressing_preferences_db_path",
             "bot_reminder_db_path",
             "bot_affinity_db_path",
         )
@@ -927,6 +936,30 @@ class Config(BaseModel):
             normalized = stripped.replace(",", ";")
             return [item.strip() for item in normalized.split(";") if item.strip()]
         raise TypeError("id list must be a list, JSON array string, or delimiter string")
+
+    @field_validator(
+        "bot_admin_profiles",
+        "bot_disconnect_notice_mail_recipients",
+        "bot_disconnect_notice_telegram_chat_ids",
+        "bot_wiki_entry_pages",
+        mode="before",
+    )
+    @classmethod
+    def _decode_json_collection_strings(cls, value: Any) -> Any:
+        """裸 JSON 串兜底（旁路装载路径）：list/dict 字段收到以 {/[ 开头的
+        字符串且 json.loads 合法时解码；其余输入原样返回，交给既有校验，
+        错误信息保持不变。与 nonebot dotenv 用户键解析同语义（生产主链路
+        靠它在 driver config 里已完成解码，此处补齐非 smoke 旁路）。
+        """
+        if not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        if not stripped or stripped[0] not in "{[":
+            return value
+        try:
+            return json.loads(stripped)
+        except ValueError:
+            return value
 
     @field_validator("bot_group_digest_push_time")
     @classmethod

@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sqlite3
@@ -649,24 +648,3 @@ def resolve_slow_ema_ms(config: Any) -> int:
         if value >= 1:
             return value
     return _SLOW_EMA_MS
-
-
-def build_health_summary_text(report: list[dict[str, Any]]) -> str:
-    """/bot model health 展示文本。"""
-    if not report:
-        return "渠道健康：暂无巡检数据（等待首轮探测或手动 /bot model probe）。"
-    ok_rows = [r for r in report if r["state"] == "ok"]
-    bad_rows = [r for r in report if r["state"] != "ok"]
-    lines = [f"渠道健康：{len(ok_rows)} 可用 / {len(bad_rows)} 暂不可用"]
-    for row in ok_rows:
-        latency = f"{row['latency_ms']}ms" if row["latency_ms"] else "-"
-        lines.append(f"✅ {row['model_id']} {latency}")
-    for row in bad_rows:
-        err = (row["last_error"] or "unknown")[:80]
-        lines.append(f"⛔ {row['model_id']} 暂时不可用（连续失败 {row['consecutive_fails']}）：{err}")
-    lines.append("说明：暂不可用渠道已移出故障转移队列，每 30 分钟自动重探，恢复即自动回队；永不自动删除。")
-    return "\n".join(lines)
-
-
-def dumps_payload(data: Any) -> str:
-    return json.dumps(data, ensure_ascii=False)

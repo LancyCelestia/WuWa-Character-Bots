@@ -232,22 +232,3 @@ def resolve_credential(
             f"credential ref not found: {ref_id!r}"
         )
     return value
-
-
-def build_credential_headers(
-    store: CredentialStore,
-    ref_id: str,
-    *,
-    header_name: str = "",
-) -> dict[str, str]:
-    """把凭据引用转成 HTTP 头（仅在 fetch 边界调用）。
-
-    默认映射：cookie -> ``Cookie``，api_key/oauth -> ``Authorization:
-    Bearer ...``。需要其他头名时用 ``header_name`` 覆盖。
-    """
-    value = resolve_credential(store, ref_id)
-    if header_name:
-        return {header_name: value.value}
-    if value.kind == KIND_COOKIE:
-        return {"Cookie": value.value}
-    return {"Authorization": f"Bearer {value.value}"}

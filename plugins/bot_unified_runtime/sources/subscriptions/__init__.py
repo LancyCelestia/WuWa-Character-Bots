@@ -25,9 +25,6 @@ class SubscriptionRegistry:
     def register(self, adapter: Any) -> None:
         self._adapters.append(adapter)
 
-    def list_adapters(self) -> list[Any]:
-        return [*self._adapters]
-
     def find(self, platform: str) -> Any | None:
         return next(
             (

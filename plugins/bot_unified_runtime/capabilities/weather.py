@@ -33,7 +33,23 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
     http_get_json,
 )
 
-_WEATHER_RE = re.compile(r"^[/!！]?(?:天气|查天气|天氣|查天氣|weather)\s*(?P<query>.+)$")
+# 天气预报/天氣預報 前置（长词优先）：带城市时 query 直接落城市名，
+# 不再把「预报」当地名喂进变体链外呼。裸词无城市由 query 侧屏蔽表拒绝
+# （与简体「天气预报」同口径；昵称动词「天氣預報」裸喊经别名链合成
+# 「天气 」本就 missing_query_silent，此处不扩权）。
+_WEATHER_RE = re.compile(
+    # weather(?![A-Za-z0-9])：ASCII 别名右侧词边界（wiki _alias_hit 先例；
+    # 本正则无 IGNORECASE，须显式含大写），weatherqq 类胶合不触发
+    # （边界体检清账）；中文胶合查询（天气 上海）与全角标点后缀不受影响。
+    # 全拼/缩写（T-Spec T1.5/T1.6 第二批）：tianqi/chatianqi 同音覆盖
+    # 天氣/查天氣；tq/ctq 为变体对口径无真冲突缩写。右侧 (?![A-Za-z0-9])
+    # 同边界纪律；无城市裸词与口语/陈述句查询仍由 _plausible_weather_query
+    # 守卫拒绝（对拼音同口径，test_pinyin_triggers_2 锁定）。本正则无
+    # IGNORECASE：拼音别名按小写生效（与 weather 英文别名同口径）。
+    r"^[/!！]?(?:天气预报|天氣預報|天气|查天气|chatianqi(?![A-Za-z0-9])|ctq(?![A-Za-z0-9])"
+    r"|天氣|查天氣|tianqi(?![A-Za-z0-9])|tq(?![A-Za-z0-9])"
+    r"|weather(?![A-Za-z0-9]))\s*(?P<query>.+)$"
+)
 _DISTRICT_RE = re.compile(r"^[/!！]?(?:支持区县|查询区县|可查区县)\s*(?P<province>.+)$")
 
 
@@ -109,8 +125,29 @@ _WEATHER_COLLOQUIAL_RE = re.compile(
 )
 _WEATHER_TAIL_PARTICLE_RE = re.compile(r"[的了了吗呢吧呀啊嘛哦哟唻啦~～！？?！。，,、…\s]$")
 _WEATHER_UNROUTABLE_QUERIES = frozenset(
-    {"真好", "不错", "怎么样", "怎样", "咋样", "如何", "预报", "热", "冷", "热死了", "冷死了"}
+    {"真好", "不错", "怎么样", "怎样", "咋样", "如何", "预报", "預報", "热", "冷", "热死了", "冷死了"}
 )
+
+# 陈述句守卫（ORDER-FIX 探针移交）：「天气预报说明天下雨」是陈述
+# （天气预报说：明天下雨），不是「天气 <城市>」查询；照查地名必经
+# geocoding 必败外呼。两层判定：
+# ①触发词剥离后的查询词以陈述引导词开头 → 非地名候选；
+# ②「天气预报/天氣預報」后无空格紧跟「说/称」→ 陈述句式（正因不留空格，
+# 「天气预报 称多」这类带空格的真实县名查询不受影响）。
+# 繁體「天氣預報說…」同款句式一并防护；正常查询与 F18 变体链零改动。
+# ①的判定经 is_statement_lead 供自然语言层（runtime/natural_language.py
+# 的 _clean_city）共享——weather 基层让位后，自然语言 weather 问法是同一
+# 陈述句的第二个地名提取点（二阶劫持，探针全清所必需）。
+_WEATHER_STATEMENT_LEAD_RE = re.compile(
+    r"^(?:预[报報][说說称稱曰]|聽[說聞]|听[说闻]|據[說悉]|据[说悉]|"
+    r"消息[称稱]|报道[说稱]|報道[說稱]|報導[说說]|据[报報])"
+)
+_WEATHER_FORECAST_STATEMENT_RE = re.compile(r"(?:天气预报|天氣預報)[说說称稱]")
+
+
+def is_statement_lead(text: str) -> bool:
+    """地名候选是否以陈述引导词开头（weather 触发层与自然语言层共用守卫）。"""
+    return _WEATHER_STATEMENT_LEAD_RE.match(str(text or "").strip()) is not None
 
 
 def _plausible_weather_query(query: str) -> bool:
@@ -122,18 +159,18 @@ def _plausible_weather_query(query: str) -> bool:
         return False
     if _WEATHER_COLLOQUIAL_RE.match(text):
         return False
+    if is_statement_lead(text):
+        return False
     return not _WEATHER_TAIL_PARTICLE_RE.search(text)
 
 
 def is_weather_command(text: str) -> bool:
+    if _WEATHER_FORECAST_STATEMENT_RE.search(text.strip()):
+        return False
     match = _WEATHER_RE.match(text.strip())
     if match is None:
         return False
     return _plausible_weather_query(match.group("query"))
-
-
-def is_district_command(text: str) -> bool:
-    return _DISTRICT_RE.match(text.strip()) is not None
 
 
 def parse_alert_title(title: str) -> tuple[str, str]:

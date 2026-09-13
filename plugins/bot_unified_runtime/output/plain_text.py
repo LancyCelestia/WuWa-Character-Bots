@@ -116,13 +116,18 @@ def _math_text(text: str, depth: int = 0) -> str:
     return re.sub(r"[ \t]+", " ", "".join(out)).strip()
 
 
+# Markdown 表格分隔行（---|---）判定：热路径压榨项，提为模块级编译，
+# 出站归一每条文本都会进 _table_text。
+_TABLE_SEP_RE = re.compile(r"\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*")
+
+
 def _table_text(text: str) -> str:
     lines = text.splitlines()
     result: list[str] = []
     index = 0
     while index < len(lines):
         if (index + 1 < len(lines) and "|" in lines[index]
-                and re.fullmatch(r"\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*", lines[index + 1])):
+                and _TABLE_SEP_RE.fullmatch(lines[index + 1])):
             headers = [cell.strip() for cell in lines[index].strip().strip("|").split("|")]
             index += 2
             while index < len(lines) and "|" in lines[index] and lines[index].strip():

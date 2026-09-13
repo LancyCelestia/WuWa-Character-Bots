@@ -8,19 +8,24 @@
 - 塔罗/抽塔罗/塔罗牌 → 塔罗：「每日一抽/今日塔罗」按 (日期, 用户)
   哈希确定同日同牌；带「三张/过去/未来/牌阵」走三张牌阵；
   否则单张指引。
-- 占卜/起卦/算卦/摇卦/六十四卦/金钱卦 → 金钱卦。
+- 占卜/起卦/算卦/摇卦/六十四卦/金钱卦/求签/求籤 → 金钱卦。
 
-能力只返回 ``CapabilityResult``（kind="divination"），不直接发送；
-人格化包装、渲染与发送由管线统一处理。输出为娱乐向文本并附免责
-尾注，不含医疗/投资等严肃建议。
+能力只返回 ``CapabilityResult``（有图时 kind="mixed"、否则 "divination"），
+不直接发送；人格化包装、渲染与发送由管线统一处理。输出为娱乐向文本并附免责
+尾注，不含医疗/投资等严肃建议。渲染后端可用时为结果合成 Mica 信息卡图
+（复用解析卡的 render_card_png 管线），文本作 caption/兜底——后端缺失或
+渲染失败时输出与纯文字版完全一致。
 """
 
 from __future__ import annotations
 
 import random
 import re
+import shutil
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from plugins.bot_unified_runtime.contracts import (
@@ -51,16 +56,39 @@ from plugins.bot_unified_runtime.sources.tarot import (
 __all__ = [
     "DivinationIntent",
     "build_divination_capability",
+    "build_divination_card_content",
     "hidden_stems_for_branch",
     "hidden_stems_section",
     "parse_divination_intent",
 ]
 
-_BAZI_RE = re.compile(r"八字|排盘|四柱|命盘|算命|生辰")
-_TAROT_RE = re.compile(r"塔罗")
-_TAROT_DAILY_RE = re.compile(r"每日一抽|每日一簽|每日一签|今日塔罗|今日塔羅|今天塔罗")
-_TAROT_THREE_RE = re.compile(r"三张|三張|过去现在未来|過去現在未來|牌阵|牌陣")
-_ICHING_RE = re.compile(r"占卜|起卦|算卦|搖卦|摇卦|六十四卦|金錢卦|金钱卦|掷卦|擲卦")
+# 英文 bazi/tarot/iching/hexagram 为 T-Spec T1.2 英文触发：意图正则与
+# 路由词表 _DIVINATION_COMMAND_RE 同步收录（词边界防 enriching 误中
+# iching），保证 is_divination_command 命中后 parse_divination_intent 必承接。
+# 全拼/缩写（T-Spec T1.5/T1.6 第三批）：拼音分支与英文同用双侧 ASCII 词边界
+# （＝独立成词锚定的拼音模拟，qiguai/yaoguai 类近形词被右边界拦住）；
+# 长度/URL/惯用语三守卫在 is_divination_command 判定层，拼音天然继承。
+# bz（×帮助）/zb（×早报）/sz（×市值/设置）/sm（×说明）真冲突缩写不启用；
+# 意图正则与路由词表逐词同步（命中必承接不变式）。
+_BAZI_RE = re.compile(
+    r"八字|排盘|排盤|四柱|命盘|命盤|算命|生辰|(?<![a-z0-9])bazi(?![a-z0-9])"
+    r"|(?<![a-z0-9])(?:paipan|sizhu|mingpan|suanming|pp|mp)(?![a-z0-9])"
+)
+_TAROT_RE = re.compile(
+    r"塔罗|塔羅|(?<![a-z0-9])tarots?(?![a-z0-9])|(?<![a-z0-9])(?:taluo|tl)(?![a-z0-9])"
+)
+_TAROT_DAILY_RE = re.compile(
+    r"每日一抽|每日一簽|每日一签|今日塔罗|今日塔羅|今天塔罗|daily tarot|tarot daily"
+)
+_TAROT_THREE_RE = re.compile(
+    r"三张|三張|过去现在未来|過去現在未來|牌阵|牌陣|three cards|tarot three"
+)
+_ICHING_RE = re.compile(
+    r"占卜|起卦|算卦|搖卦|摇卦|六十四卦|金錢卦|金钱卦|掷卦|擲卦|一卦|求籤|求签"
+    r"|(?<![a-z0-9])(?:i-?ching|hexagrams?)(?![a-z0-9])"
+    r"|(?<![a-z0-9])(?:zhanbu|qigua|suangua|yaogua|liushisigua|jinqiangua"
+    r"|qg|sg|yg|lssg)(?![a-z0-9])"
+)
 
 # 出生日期：「1998年3月2日」「1998-03-02」「1998/3/2」。
 _DATE_RE = re.compile(
@@ -191,7 +219,9 @@ def parse_divination_intent(text: str) -> DivinationIntent | None:
             kind="bazi", when=when, date_given=date_given, error=error
         )
 
-    if _TAROT_RE.search(stripped):
+    # 每日一抽/每日一签 不含「塔罗」子串，路由词表整词收录后须在此承接
+    # （头注释不变式：is_divination_command 命中 ⇒ 本函数必返回意图）。
+    if _TAROT_RE.search(stripped) or _TAROT_DAILY_RE.search(stripped):
         if _TAROT_DAILY_RE.search(stripped):
             return DivinationIntent(kind="tarot", target="daily")
         if _TAROT_THREE_RE.search(stripped):
@@ -204,16 +234,185 @@ def parse_divination_intent(text: str) -> DivinationIntent | None:
     return None
 
 
-_DIVINATION_COMMAND_RE = re.compile(r"八字|排盘|四柱|命盘|算命|塔罗|占卜|起卦|算卦|摇卦|六十四卦")
+# ── 路由触发判定（probe-hijack-report §① 8/8 劫持修复；只收紧此处）──
+# 守卫次序（惯用语优先级最高，先于前缀白名单）：
+# ①惯用语排除表——「八字还没一撇」等俗语一票否决（白名单也不豁免）；
+# ②长度 + URL 守卫——>32 字或含 http(s) 链接不触发（对齐 stocks/market 的
+#   _MAX_TRIGGER_LEN/_URL_HINT_RE 模式，链接让位内容解析）；
+# ③独立成词锚定——中文触发词前后不贴 CJK 字符（「塔罗牌在哪买」的塔罗
+#   贴着牌 → 不触发；「塔罗」「八字 1998年3月2日」裸短词照常），复合命令
+#   （今日塔罗/塔罗三张/生辰八字/金钱卦/每日一抽…）与口语「X一卦」整词
+#   显式收录；
+# ④良性前缀白名单——「帮我/求/来/想」等口语引导豁免「前贴」否决（恢复
+#   帮我占卜/来个塔罗类口语命令；简繁双表，繁體「幫我占卜/幫我搖一卦」同
+#   款可达），中贴/后贴锚定照旧；否定/负面词（别/不/少/骗子…）一律不入表，
+#   维持落 chat。
+# 不变式维持：路由命中 ⇒ parse_divination_intent 必承接（每日一抽等
+# 不含「塔罗」子串的独立触发已由意图解析的 _TAROT_DAILY_RE 分支承接，
+# 「X一卦」由 _ICHING_RE 的 一卦 分支承接）。
+_CJK_CHAR = r"\u4e00-\u9fff\u3400-\u4dbf"
+_URL_HINT_RE = re.compile(r"https?://", re.IGNORECASE)
+_MAX_TRIGGER_LEN = 32
+_DIVINATION_IDIOM_RE = re.compile("八字还没一撇|八字没一撇|八字還沒一撇|八字沒一撇")
+_DIVINATION_COMMAND_RE = re.compile(
+    rf"(?<![{_CJK_CHAR}])(?:八字|排盘|排盤|四柱|命盘|命盤|算命|生辰八字|塔罗|塔羅|占卜|起卦|算卦|摇卦|搖卦"
+    rf"|六十四卦|金钱卦|金錢卦|今日塔罗|今天塔罗|今日塔羅|今天塔羅|塔罗三张|塔羅三張|每日一抽|每日一签|每日一簽"
+    rf"|一卦|算一卦|起一卦|摇一卦|搖一卦|掷一卦|擲一卦|占一卦|求籤|求签)"
+    rf"(?![{_CJK_CHAR}])"
+    r"|(?<![a-z0-9])(?:divination|tarots?|bazi|i-?ching|hexagrams?)(?![a-z0-9])"
+    # 全拼/缩写（T-Spec T1.5/T1.6 第三批）：与上方意图正则逐词同步（命中必承接）。
+    r"|(?<![a-z0-9])(?:zhanbu|taluo|paipan|sizhu|mingpan|suanming|qigua|suangua"
+    r"|yaogua|liushisigua|jinqiangua|tl|pp|mp|qg|sg|yg|lssg)(?![a-z0-9])"
+)
+
+# 良性前缀白名单（前贴口语恢复）：触发词前的常见口语引导，命中后剥掉前缀
+# 再查锚定触发。表内刻意不含 算/起/摇/占 等触发词单字头（剥字会吃掉
+# 「算命/起卦」的动词头，对应口语改以「X一卦」整词收录，见上）；「X个」
+# 量词框架不受此限（个字隔断触发词头，算个≠算命前缀），故 算个/起个/占个
+# 可入表。也不含任何否定/负面词。仅锚定字符串开头（match），不从句中剥
+# （不重开句中劫持）。简繁双表同款语义：繁體新词（幫我/幫忙/請/麻煩/給我/
+# 來個/來/問個/問/測個/測/搖個/擲個 及 X個 族）与简体一一对应；简繁同形词
+# （求/抽/想/我想要/想要/我想/我要）只收一份。同族长词先于短词（來個 先于
+# 來，剥短会留 個 隔断锚定）。
+_DIVINATION_BENIGN_PREFIX_RE = re.compile(
+    r"(?:请|請|麻烦|麻煩|帮我|幫我|幫忙|给我|給我|我想要|想要|我想|我要"
+    r"|来个|來個|抽个|抽個|算个|算個|起个|起個|占个|占個"
+    r"|摇个|搖个|搖個|掷个|擲个|擲個|问个|問個|测个|測個"
+    r"|来|來|求|抽|问|問|测|測|想)+"
+)
+# 前缀豁免只放宽前贴；句尾语气/程度词同步豁免后贴（帮我占卜一下/来一卦吧），
+# 其余后贴 CJK（塔罗牌/占卜小店）仍被锚定拦住。
+_DIVINATION_SOFT_TAIL_RE = re.compile(
+    r"(?:一下|一回|试试|玩玩|[呗啦吧呀嘛吗呢哦喔哈咯])+$"
+)
 
 
 def is_divination_command(text: str) -> bool:
-    """显式玄学触发词（娱乐向）；不用泛化词，避免误伤普通对话。"""
-    return bool(_DIVINATION_COMMAND_RE.search((text or "").strip()))
+    """显式玄学触发词（娱乐向）：惯用语/长度/URL/独立成词守卫 + 前缀白名单。
+
+    含触发词的普通聊天句（塔罗牌在哪买/这事八字还没一撇呢/推荐个八字APP）
+    不被占卜劫持、落回聊天；否定语境（别给我算命/少来这套迷信）不进白名单，
+    照落 chat；裸短词、复合命令与白名单前缀口语命令（帮我占卜/来一卦/
+    幫我搖一卦/想算命…，简繁双表）照常触发。
+    """
+    stripped = (text or "").strip()
+    if not stripped or len(stripped) > _MAX_TRIGGER_LEN:
+        return False
+    if _URL_HINT_RE.search(stripped):
+        return False
+    # 惯用语排除表优先级高于白名单：俗语在任何前缀下都一票否决。
+    if _DIVINATION_IDIOM_RE.search(stripped):
+        return False
+    if _DIVINATION_COMMAND_RE.search(stripped):
+        return True
+    prefix = _DIVINATION_BENIGN_PREFIX_RE.match(stripped)
+    if prefix is None:
+        return False
+    residual = _DIVINATION_SOFT_TAIL_RE.sub("", stripped[prefix.end():])
+    # 残串复用同一锚定词表：前贴已被白名单豁免，中贴/后贴锚定原样生效。
+    return bool(residual) and bool(_DIVINATION_COMMAND_RE.search(residual))
 
 
-def build_divination_capability(config: Any | None = None) -> Any:
-    """构建占卜能力：与 eat 等能力一致，返回 (message, decision) -> 结果。"""
+# 卡片来源署名：全部为本地计算，无外部数据源。
+_CARD_AUTHORS = {
+    "bazi": "干支历法 · 本地排盘",
+    "tarot": "七十八张塔罗 · 本地抽取",
+    "iching": "六十四卦金钱卦 · 本地起卦",
+}
+
+
+def _card_dir_token(raw: str) -> str:
+    """去重键 → 安全目录名：只留 ``[0-9A-Za-z_-]``，空则回退随机串。"""
+    token = re.sub(r"[^0-9A-Za-z_-]", "", str(raw or ""))[:64]
+    return token or uuid.uuid4().hex[:12]
+
+
+def _prune_card_dirs(root: Path, *, keep: int = 120) -> int:
+    """按 mtime 只保留 ``root`` 下最新 ``keep`` 个子目录，淘汰更旧的。
+
+    占卜卡每抽落独立子目录，``cache_policy.prune_prefixed`` 的平铺文件
+    前缀语义不适用；这里只删直接子目录（整棵子树），不碰散落文件。
+    失败由调用方吞掉——配额清理绝不阻塞出图。
+    """
+    if keep <= 0 or not root.is_dir():
+        return 0
+    entries: list[tuple[int, Path]] = []
+    for child in root.iterdir():
+        try:
+            if child.is_dir():
+                entries.append((int(child.stat().st_mtime), child))
+        except OSError:
+            continue
+    entries.sort(reverse=True)
+    for _, stale in entries[max(0, keep):]:
+        shutil.rmtree(stale, ignore_errors=True)
+    return max(0, len(entries) - max(0, keep))
+
+
+def build_divination_card_content(kind: str, title: str, body: str) -> Any:
+    """占卜结果 → 通用卡 payload（纯构造，无 IO；能力层与测试共用）。
+
+    ``summary`` 只承载已算出的正文文本（截 1200 字），不编造任何区块；
+    ``canonical_url`` 恒为 ``about:blank``（F10 约定：无真实来源的卡不渲染
+    页脚，评审 C2——内部去重键不得经 footer 泄漏给用户）。每次抽牌的
+    落盘唯一性由 ``_render_card`` 的 card_dir 子目录承载，与本字段解耦。
+    """
+    from plugins.bot_unified_runtime.contracts import build_parsed_content
+
+    return build_parsed_content(
+        platform="divination",
+        item_id=kind,
+        item_kind="article",
+        title=title,
+        author_name=_CARD_AUTHORS.get(kind, "本地玄学计算"),
+        summary=body[:1200],
+        canonical_url="about:blank",
+        parse_depth="deep",
+    )
+
+
+def build_divination_capability(
+    config: Any | None = None, *, render_backend: Any | None = None
+) -> Any:
+    """构建占卜能力：与 eat 等能力一致，返回 (message, decision) -> 结果。
+
+    ``render_backend`` 可选：传入可用渲染后端时结果合成卡片图（kind 变
+    mixed），不传或渲染失败时保持纯文字输出（行为与旧版完全一致）。
+    """
+
+    def _render_card(kind: str, title: str, body: str, dedupe_key: str) -> str:
+        """占卜结果合成 Mica 卡图；后端不可用或任何失败返回空串。
+
+        去重键只进落盘目录（``card_dir`` 的每抽唯一子目录），不进
+        canonical_url——占卜卡文件名互不覆写，footer 零内部信息。
+        """
+        if render_backend is None or not getattr(render_backend, "available", False):
+            return ""
+        try:
+            from plugins.bot_unified_runtime.capabilities.content_parser import (
+                render_card_png,
+            )
+
+            item = build_divination_card_content(kind, title, body)
+            base_dir = str(
+                getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"
+            )
+            divination_root = Path(base_dir) / "divination"
+            payload = render_card_png(
+                render_backend,
+                item,
+                config=config,
+                card_dir=str(divination_root / _card_dir_token(dedupe_key)),
+                feature_label="占卜",
+            )
+            if isinstance(payload, dict) and payload.get("file"):
+                try:
+                    _prune_card_dirs(divination_root, keep=120)
+                except Exception:  # noqa: S110, BLE001 - 配额清理失败不影响出图。
+                    pass
+        except Exception:  # noqa: BLE001 - 渲染失败回退纯文本结果。
+            return ""
+        return str(payload.get("file") or "") if isinstance(payload, dict) else ""
 
     def capability(message: IncomingMessage, _decision: BotDecision) -> CapabilityResult:
         intent = parse_divination_intent(message.plain_text or "")
@@ -251,57 +450,85 @@ def build_divination_capability(config: Any | None = None) -> Any:
                 )
                 if not intent.date_given:
                     body = f"{body}\n（未带出生时间，按当前时点排盘。{_BAZI_HINT}）"
+                card = _render_card(
+                    "bazi", "八字排盘", body, message.request_id or ""
+                )
                 return CapabilityResult(
                     request_id=message.request_id,
                     capability_id="bot.divination",
-                    kind="divination",
+                    kind="mixed" if card else "divination",
                     title="八字排盘",
                     body=body,
-                    audit_tags=tags,
+                    images=[{"file": card}] if card else [],
+                    audit_tags=[*tags, "card_rendered" if card else "text_only"],
                 )
             if intent.kind == "tarot":
                 if intent.target == "daily":
                     local_day = message.timestamp.astimezone(CST).date()
                     drawn = daily_card(local_day, message.sender_id or "anonymous")
+                    body = (
+                        f"☀️ {local_day.isoformat()} 的每日一抽（今天全天不变哦）：\n\n"
+                        f"{format_single_text(drawn)}"
+                    )
+                    card = _render_card(
+                        "tarot", "今日塔罗", body, message.request_id or ""
+                    )
                     return CapabilityResult(
                         request_id=message.request_id,
                         capability_id="bot.divination",
-                        kind="divination",
+                        kind="mixed" if card else "divination",
                         title="今日塔罗",
-                        body=(
-                            f"☀️ {local_day.isoformat()} 的每日一抽（今天全天不变哦）：\n\n"
-                            f"{format_single_text(drawn)}"
-                        ),
-                        audit_tags=[*tags, "divination:daily"],
+                        body=body,
+                        images=[{"file": card}] if card else [],
+                        audit_tags=[
+                            *tags,
+                            "divination:daily",
+                            "card_rendered" if card else "text_only",
+                        ],
                     )
                 rng = random.Random()
                 if intent.target == "three":
                     spread = three_card_spread(rng)
+                    body = format_three_text(spread)
+                    card = _render_card(
+                        "tarot", "塔罗三张牌阵", body, message.request_id or ""
+                    )
                     return CapabilityResult(
                         request_id=message.request_id,
                         capability_id="bot.divination",
-                        kind="divination",
+                        kind="mixed" if card else "divination",
                         title="塔罗三张牌阵",
-                        body=format_three_text(spread),
-                        audit_tags=[*tags, "divination:three"],
+                        body=body,
+                        images=[{"file": card}] if card else [],
+                        audit_tags=[
+                            *tags,
+                            "divination:three",
+                            "card_rendered" if card else "text_only",
+                        ],
                     )
                 drawn = single_guidance(rng)
+                body = format_single_text(drawn)
+                card = _render_card("tarot", "塔罗指引", body, message.request_id or "")
                 return CapabilityResult(
                     request_id=message.request_id,
                     capability_id="bot.divination",
-                    kind="divination",
+                    kind="mixed" if card else "divination",
                     title="塔罗指引",
-                    body=format_single_text(drawn),
-                    audit_tags=tags,
+                    body=body,
+                    images=[{"file": card}] if card else [],
+                    audit_tags=[*tags, "card_rendered" if card else "text_only"],
                 )
             cast = cast_hexagram(random.Random())
+            body = format_cast_text(cast)
+            card = _render_card("iching", "金钱卦", body, message.request_id or "")
             return CapabilityResult(
                 request_id=message.request_id,
                 capability_id="bot.divination",
-                kind="divination",
+                kind="mixed" if card else "divination",
                 title="金钱卦",
-                body=format_cast_text(cast),
-                audit_tags=[*tags, "divination:cast"],
+                body=body,
+                images=[{"file": card}] if card else [],
+                audit_tags=[*tags, "divination:cast", "card_rendered" if card else "text_only"],
             )
         except ValueError as exc:
             # 超出支持区间等计算错误：优雅降级为提示，不抛给管线。

@@ -216,16 +216,6 @@ class SubscriptionStore:
                 )
             return bool(deleted)
 
-    def set_spec_enabled(self, spec_id: str, enabled: bool) -> bool:
-        with self._lock:
-            connection = self._get_connection()
-            with connection:
-                updated = connection.execute(
-                    "UPDATE subscriptions SET enabled = ? WHERE id = ?",
-                    (int(bool(enabled)), spec_id),
-                ).rowcount
-            return bool(updated)
-
     def set_spec_health(self, spec_id: str, state: str, error: str = "") -> None:
         # 表结构与 SubscriptionSpec 一致，没有独立 error 列；error 仅保留在
         # 接口中以兼容 watcher/诊断调用，这里只更新 health_state。

@@ -18,6 +18,7 @@ from plugins.bot_unified_runtime.contracts.character import (
     ToneProfile,
 )
 
+from .addressing import AddressingPreferenceStore, build_addressing_context
 from .affinity import (
     AFFINITY_BASE,
     DynamicAffinityStore,
@@ -73,6 +74,10 @@ class CharacterContextProvider(Protocol):
         adapter: str = "unknown",
         bot_id: str = "unknown",
         group_id: str = "",
+        sender_display_name: str | None = None,
+        sender_roles: list[str] | None = None,
+        gender_identity: str = "unknown",
+        addressing_preference: str = "",
     ) -> ContextBundle:
         raise NotImplementedError
 
@@ -88,7 +93,18 @@ class NullCharacterContextProvider:
         adapter: str = "unknown",
         bot_id: str = "unknown",
         group_id: str = "",
+        sender_display_name: str | None = None,
+        sender_roles: list[str] | None = None,
+        gender_identity: str = "unknown",
+        addressing_preference: str = "",
     ) -> ContextBundle:
+        addressing_context = build_addressing_context(
+            session_type="group" if group_id else "private",
+            sender_display_name=sender_display_name,
+            sender_roles=sender_roles,
+            gender_identity=gender_identity,
+            addressing_preference=addressing_preference,
+        )
         persona = PersonaProfile(
             profile_id="default",
             version="0",
@@ -98,6 +114,7 @@ class NullCharacterContextProvider:
         )
         tone = ToneProfile(profile_id="default", mode="private_chat")
         return ContextBundle(
+            addressing_context=addressing_context,
             request_id=request_id,
             persona=persona,
             tone=tone,
@@ -139,6 +156,7 @@ class FileCharacterContextProvider:
         glossary_provider: GlossaryProvider | None = None,
         relationship_provider: RelationshipProvider | None = None,
         affinity_store: DynamicAffinityStore | None = None,
+        addressing_preferences: AddressingPreferenceStore | None = None,
         mood_describe: Callable[[], str] | None = None,
         quirks_describe: Callable[[], str] | None = None,
         identity_describe: Callable[[str], str] | None = None,
@@ -178,6 +196,7 @@ class FileCharacterContextProvider:
         self.glossary_provider = glossary_provider or NullGlossaryProvider()
         self.relationship_provider = relationship_provider or NullRelationshipProvider()
         self.affinity_store: DynamicAffinityStore | None = affinity_store
+        self.addressing_preferences = addressing_preferences
         self.mood_describe = mood_describe
         self.quirks_describe = quirks_describe
         self.identity_describe = identity_describe
@@ -247,7 +266,26 @@ class FileCharacterContextProvider:
         adapter: str = "unknown",
         bot_id: str = "unknown",
         group_id: str = "",
+        sender_display_name: str | None = None,
+        sender_roles: list[str] | None = None,
+        gender_identity: str = "unknown",
+        addressing_preference: str = "",
     ) -> ContextBundle:
+        # 用户显式偏好（调用方参数）优先于持久化偏好；两者都缺时退回群昵称/漂泊者规则。
+        stored_preference, stored_gender = ("", "unknown")
+        if self.addressing_preferences is not None:
+            stored_preference, stored_gender = self.addressing_preferences.get(
+                session_type="group" if group_id else "private",
+                session_id=str(group_id or ""),
+                sender_id=str(sender_id or ""),
+            )
+        addressing_context = build_addressing_context(
+            session_type="group" if group_id else "private",
+            sender_display_name=sender_display_name,
+            sender_roles=sender_roles,
+            gender_identity=gender_identity if gender_identity != "unknown" else stored_gender,
+            addressing_preference=addressing_preference or stored_preference,
+        )
         emotion_signals = self.emotion_provider.analyze(
             request_id=request_id,
             sender_id=sender_id,
@@ -400,6 +438,7 @@ class FileCharacterContextProvider:
             sender_id=sender_id,
         )
         return ContextBundle(
+            addressing_context=addressing_context,
             request_id=request_id,
             persona=persona,
             tone=tone,
@@ -474,6 +513,42 @@ class _MergedMemoryProvider:
                 order.append(fact_id)
                 used_chars += text_len
         return MemoryRetrievalResult(request_id=request_id, facts=[merged[k] for k in order])
+
+
+_ADDRESSING_STORES_LOCK = threading.Lock()
+_ADDRESSING_STORES: dict[str, AddressingPreferenceStore] = {}
+
+
+def _shared_addressing_preferences(config: object) -> AddressingPreferenceStore | None:
+    """进程级共享称谓偏好 store（懒构建；路径解析/建库失败返回 None 不阻断对话）。"""
+    try:
+        path = build_runtime_data_path(
+            config,
+            str(
+                getattr(
+                    config,
+                    "bot_addressing_preferences_db_path",
+                    "data/addressing_preferences.sqlite3",
+                )
+            ),
+        )
+    except Exception:  # noqa: BLE001 - 路径解析失败时降级为无持久化称谓上下文。
+        return None
+    cache_key = str(path)
+    with _ADDRESSING_STORES_LOCK:
+        store = _ADDRESSING_STORES.get(cache_key)
+        if store is None:
+            try:
+                store = AddressingPreferenceStore(path)
+            except Exception:  # noqa: BLE001 - SQLite 不可用时降级，不阻断对话。
+                return None
+            _ADDRESSING_STORES[cache_key] = store
+        return store
+
+
+def build_addressing_preference_store(config: object) -> AddressingPreferenceStore | None:
+    """公开入口：进程级共享称谓偏好 store（供命令面读写用户显式偏好）。"""
+    return _shared_addressing_preferences(config)
 
 
 def build_character_context_provider(
@@ -612,6 +687,7 @@ def build_character_context_provider(
             if getattr(config, "bot_affinity_enabled", True)
             else None
         ),
+        addressing_preferences=_shared_addressing_preferences(config),
         shared_group_provider=build_shared_group_context_provider(
             config,
             llm_provider=shared_group_llm_provider,

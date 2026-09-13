@@ -19,7 +19,6 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
@@ -41,13 +40,6 @@ class TrendProvider(Protocol):
 class NullTrendProvider:
     def load(self, request_id: str) -> TrendContext:
         return TrendContext(request_id=request_id, notes=[])
-
-
-@dataclass(frozen=True)
-class TrendSettings:
-    max_notes: int = 5
-    max_chars: int = 500
-    max_age_days: int = 14
 
 
 def _parse_observed_on(heading: str) -> tuple[str, str]:

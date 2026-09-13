@@ -41,7 +41,29 @@ from plugins.bot_unified_runtime.contracts import (
 
 _COMMAND_RE = re.compile(
     r"^[/!！]?(?:表情|表情包|表情生成|表情包生成|表情制作|表情包制作|"
-    r"表情製作|表情包製作|表情产生|表情包產生|meme|memes|meme generate)"
+    # meme(?! (?:random|stats)\b)：裸 meme/memes 不吃「meme random/meme stats」
+    # （归 bot.meme_library，见 meme_library._COMMAND_RE/_STATS_RE；触发
+    # 规格体检冲突 ×2 清账）。\b 保证只挡这两条短语，meme generate /
+    # meme statistics 等其余后继仍归本能力（meme generate 备选在后兜底）。
+    # (?! generate[a-z0-9]) / meme generate(?![a-z0-9])：右侧词边界
+    # （wiki _alias_hit 先例），generateqq 类胶合不再落入 rest
+    # （边界体检清账）；「meme generate」裸词仍走裸 meme 路径（rest 兜底），
+    # parse 口径零改动。
+    r"表情製作|表情包製作|表情产生|表情產生|表情包產生|"
+    # 全拼/缩写（T-Spec T1.5/T1.6 第二批）：biaoqing 族同音覆盖 製作/產生
+    # 简繁词；(?![a-z0-9]) 右边界使 biaoqingbaox/bqbcs 类胶合不触发；
+    # 帮助/用法/菜单/列表 tail 词族不拼音化（同批一 eat 参数词族先例），
+    # 故 bz/cd/lb/yf 缩写一并放弃（bz 另有 八字/帮助 真冲突）。
+    r"biaoqingbaoshengcheng(?![a-z0-9])|bqbs(?![a-z0-9])"
+    r"|biaoqingbaochansheng(?![a-z0-9])|bqbc(?![a-z0-9])"
+    r"|biaoqingbaozhizuo(?![a-z0-9])|bqbz(?![a-z0-9])"
+    r"|biaoqingbao(?![a-z0-9])|bqb(?![a-z0-9])"
+    r"|biaoqingshengcheng(?![a-z0-9])|bqsc(?![a-z0-9])"
+    r"|biaoqingzhizuo(?![a-z0-9])|bqzz(?![a-z0-9])"
+    r"|biaoqingchansheng(?![a-z0-9])|bqcs(?![a-z0-9])"
+    r"|biaoqing(?![a-z0-9])"
+    r"|meme(?! (?:random|stats)\b)(?! generate[a-z0-9])"
+    r"|memes(?! (?:random|stats)\b)(?! generate[a-z0-9])|meme generate(?![a-z0-9]))"
     r"(?:\s+(?P<rest>.+)|(?P<tail>帮助|幫助|help|用法|菜单|菜單|列表|list)?$)",
     re.IGNORECASE,
 )
@@ -204,7 +226,7 @@ def build_meme_capability(
                 request_id=message.request_id,
                 capability_id="bot.meme",
                 kind="text",
-                body="表情包功能未启用。设置 BOT_MEME_API_ENABLED=true 并启动 meme-generator-rs 后重试。",
+                body="表情包功能还没开，等管理员把它打开就能玩了。",
                 audit_tags=["meme", "meme_disabled"],
             )
         try:

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import functools
 import re
 
 # 称呼后允许跟的边界字符（单字符集合，含常见时间/请求词的首字）。
@@ -25,6 +26,14 @@ def normalize_mention_text(text: str) -> str:
     """去掉开头的 @/斜杠/感叹号/空白，便于做昵称前缀判定。"""
     stripped = (text or "").strip()
     return re.sub(r"^[@＠!！/\\\s]+", "", stripped)
+
+
+@functools.lru_cache(maxsize=256)
+def _sentence_mention_pattern(term: str) -> re.Pattern[str]:
+    """句中称呼 pattern 按 term 缓存（P1-2：消除每消息重复构造+查询）。"""
+    return re.compile(
+        rf"(?:^|[^\w\u4e00-\u9fff]){re.escape(term)}(?P<after>[\s，,。！？!?：:、]|$)"
+    )
 
 
 def detect_name_mention(text: str, terms: list[str] | tuple[str, ...]) -> bool:
@@ -43,10 +52,7 @@ def detect_name_mention(text: str, terms: list[str] | tuple[str, ...]) -> bool:
             if not tail or tail[0] in _ADDRESS_BOUNDARY_CHARS:
                 return True
         # 句中称呼：前面是非文字（行首/标点/空白/括号），后面是标点或结尾。
-        pattern = re.compile(
-            rf"(?:^|[^\w\u4e00-\u9fff]){re.escape(term)}(?P<after>[\s，,。！？!?：:、]|$)"
-        )
-        if pattern.search(stripped):
+        if _sentence_mention_pattern(term).search(stripped):
             return True
         # 呼叫/召唤/在吗 + 昵称。
         call_match = _CALL_PATTERN.search(stripped)

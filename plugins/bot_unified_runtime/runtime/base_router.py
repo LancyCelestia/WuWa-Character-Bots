@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -40,6 +41,7 @@ from plugins.bot_unified_runtime.capabilities.eat import (
     is_recipe_command,
 )
 from plugins.bot_unified_runtime.capabilities.epic import is_epic_command
+from plugins.bot_unified_runtime.capabilities.fx import is_fx_command
 from plugins.bot_unified_runtime.capabilities.market import is_market_command
 from plugins.bot_unified_runtime.capabilities.meme import is_meme_command
 from plugins.bot_unified_runtime.capabilities.meme_library import (
@@ -56,6 +58,7 @@ from plugins.bot_unified_runtime.capabilities.music import (
 from plugins.bot_unified_runtime.capabilities.news import is_news_command
 from plugins.bot_unified_runtime.capabilities.randpic import is_randpic_command
 from plugins.bot_unified_runtime.capabilities.reminder import is_reminder_command
+from plugins.bot_unified_runtime.capabilities.stocks import is_stocks_command
 from plugins.bot_unified_runtime.capabilities.subscribe import (
     is_standalone_subscribe_command,
 )
@@ -85,6 +88,8 @@ class RouteKind(str, Enum):
     EPIC = "epic"
     WEATHER = "weather"
     MARKET = "market"
+    STOCKS = "stocks"
+    FX = "fx"
     NEWS = "news"
     RANDPIC = "randpic"
     REMINDER = "reminder"
@@ -127,7 +132,11 @@ class RouteDecision:
 
 @dataclass(frozen=True)
 class InterfaceEntry:
-    """接口清单条目：把基层要接的所有接口提前登记，便于审计与规划。"""
+    """接口清单条目：把基层要接的所有接口提前登记，便于审计与规划。
+
+    help_topic/internal_note 是审计元数据：active 接口必须指向一个帮助主题
+    （capabilities/echo.py 的 topic）或登记为内部功能；reserved 接口必须登记说明。
+    """
 
     interface_id: str
     label: str
@@ -135,6 +144,8 @@ class InterfaceEntry:
     route_kind: str
     priority: int | None
     description: str
+    help_topic: str = ""
+    internal_note: str = ""
 
 
 @dataclass(frozen=True)
@@ -161,7 +172,11 @@ def _resolve_alias(text: str, alias_resolver: Any) -> Any | None:
 
 
 def build_route_rules() -> list[RouteRule]:
-    """按优先级升序构建全部路由规则；新增能力在此表加一行即可。"""
+    """构建全部路由规则；新增能力在此表加一行即可。
+
+    书写序=声明登记序（审计/文档生成依赖，不做物理重排）；真实判定序由
+    判定循环按 (priority, 书写序) 稳定排序得出（见 classify_message_route）。
+    """
 
     def subscribe_match(text, config, _alias):
         if not getattr(config, "bot_subscribe_enabled", True):
@@ -273,6 +288,24 @@ def build_route_rules() -> list[RouteRule]:
             return None
         return RouteDecision(RouteKind.MARKET, "bot.market", 41, "全球股指行情", ("base_route:market",))
 
+    def fx_match(text, config, _alias):
+        # 汇率查询：fx 触发词「汇率」已被 market 非股市词表排除（天然互斥）；
+        # 与 stocks 触发面若重叠，fx 数值优先级更高（41 < 42）。
+        if not getattr(config, "bot_fx_enabled", True):
+            return None
+        if not is_fx_command(text):
+            return None
+        return RouteDecision(RouteKind.FX, "bot.fx", 41, "汇率查询", ("base_route:fx",))
+
+    def stocks_match(text, config, _alias):
+        # 个股行情：英伟达/AMD/英特尔股价兜底；裸「行情」归 market（互不抢路由），
+        # 排在 market/fx 之后做让路（同文本先到先得）。
+        if not getattr(config, "bot_stocks_enabled", True):
+            return None
+        if not is_stocks_command(text):
+            return None
+        return RouteDecision(RouteKind.STOCKS, "bot.stocks", 42, "个股行情", ("base_route:stocks",))
+
     def eat_match(text, config, _alias):
         if not getattr(config, "bot_eat_enabled", True):
             return None
@@ -334,7 +367,7 @@ def build_route_rules() -> list[RouteRule]:
         return RouteDecision(
             RouteKind.MOEGIRL_QUESTION,
             "bot.moegirl",
-            44,
+            46,
             "二次元问句（萌娘百科自动查询）",
             ("base_route:moegirl_question",),
         )
@@ -408,13 +441,15 @@ def build_route_rules() -> list[RouteRule]:
         RouteRule(RouteKind.EPIC, "bot.epic", 41, "Epic 免费游戏", "Epic 免费游戏查询", ("base_route:epic",), epic_match),
         RouteRule(RouteKind.WEATHER, "bot.weather", 41, "天气查询", "天气查询", ("base_route:weather",), weather_match),
         RouteRule(RouteKind.MARKET, "bot.market", 41, "全球股指行情", "全球股指行情（行情/美股行情/大盘）", ("base_route:market",), market_match),
+        RouteRule(RouteKind.FX, "bot.fx", 41, "汇率查询", "汇率（美元兑人民币/汇率面板）", ("base_route:fx",), fx_match),
+        RouteRule(RouteKind.STOCKS, "bot.stocks", 42, "个股行情", "个股行情（英伟达/AMD/英特尔股价）", ("base_route:stocks",), stocks_match),
         RouteRule(RouteKind.EAT, "bot.eat", 41, "吃什么推荐", "吃什么/菜谱推荐", ("base_route:eat",), eat_match),
         RouteRule(RouteKind.AFFINITY, "bot.affinity", 41, "好感度查询", "好感度/好感查看/查询好感", ("base_route:affinity",), affinity_match),
         RouteRule(RouteKind.DIVINATION, "bot.divination", 41, "占卜", "占卜/塔罗/八字排盘", ("base_route:divination",), divination_match),
         RouteRule(RouteKind.NEWS, "bot.news", 41, "今日快报", "今日快报（快报/科技新闻/财经快报/国际新闻）", ("base_route:news",), news_match),
         RouteRule(RouteKind.RANDPIC, "bot.randpic", 41, "随机图片", "随机图片（随机图/来张图）", ("base_route:randpic",), randpic_match),
         RouteRule(RouteKind.REMINDER, "bot.reminder", 41, "提醒", "提醒（12点提醒我写作业/提醒列表/取消提醒）", ("base_route:reminder",), reminder_match),
-        RouteRule(RouteKind.MOEGIRL_QUESTION, "bot.moegirl", 44, "二次元问句", "二次元问句（萌娘百科自动查询，未命中降级聊天）", ("base_route:moegirl_question",), moegirl_question_match),
+        RouteRule(RouteKind.MOEGIRL_QUESTION, "bot.moegirl", 46, "二次元问句", "二次元问句（萌娘百科自动查询，未命中降级聊天）", ("base_route:moegirl_question",), moegirl_question_match),
         RouteRule(RouteKind.NATURAL_COMMAND, "bot.natural_command", 45, "自然语言命令", "自然语言命令归一化", ("base_route:natural_command",), natural_match),
         RouteRule(RouteKind.CONTENT, "bot.content", 46, "链接解析", "链接解析（视频/图片/社交媒体/商品等）", ("base_route:content",), content_match),
         RouteRule(RouteKind.CHAT, "bot.chat", 50, "人格对话", "自然语言对话（人格+世界观+价值观+方法论）", ("base_route:chat",), chat_match),
@@ -427,24 +462,34 @@ ROUTE_RULES: list[RouteRule] = build_route_rules()
 def build_interface_manifest() -> list[InterfaceEntry]:
     """把所有可能接口（含未来预留）登记成审计清单。"""
     return [
-        InterfaceEntry("transport.onebot", "NapCat / OneBot V11 传输", "active", "transport", None, "入站 QQ 消息与出站发送统一走 OneBot V11（NapCat），由发送队列收口"),
-        InterfaceEntry("core.gscore", "GsCore / 早柚核心桥", "active", "bridge", None, "ws://HOST:PORT/BOT_ID?token=TOKEN 桥接，接收游戏侧消息，配置 BOT_GSCORE_*"),
-        InterfaceEntry("parser.content", "平台链接解析插件组", "active", "content", 46, "B站/小红书/抖音/油管/推特/Lofter/Pixiv/allcpp/米画师/小黑盒/音乐平台"),
-        InterfaceEntry("persona.chat", "人格大模型对话", "active", "chat", 50, "人格档案 + 向量知识库 + 世界观注入的大模型回复"),
-        InterfaceEntry("capability.weather", "天气", "active", "weather", 41, "中国气象局 NMC 免 key 查询"),
-        InterfaceEntry("capability.music", "点歌", "active", "music", 41, "网易云/酷我/酷狗/QQ音乐/Apple Music/Spotify 搜索"),
-        InterfaceEntry("capability.wiki", "维基百科", "active", "wiki", 41, "MediaWiki 公开 API"),
-        InterfaceEntry("capability.moegirl", "萌娘百科", "active", "moegirl", 44, "萌百 MediaWiki 公开 API：显式指令 + 二次元问句自动查询（未命中降级人格聊天）"),
-        InterfaceEntry("capability.epic", "Epic 免费游戏", "active", "epic", 41, "Epic 公开接口"),
-        InterfaceEntry("capability.today_history", "历史上的今天", "active", "today_history", 41, "百度百科公开接口 + 每日推送"),
-        InterfaceEntry("capability.subscribe", "订阅博主/直播推送", "active", "subscribe", 12, "UP主/番剧/小红书博主等新内容与开播推送"),
-        InterfaceEntry("capability.meme", "表情包生成", "active", "meme", 20, "调用本地 meme-generator-rs HTTP API 生成表情包"),
-        InterfaceEntry("capability.auto_send", "自动发送/定时任务", "active", "auto_send", 13, "报存 给 A 发… 草稿/预览/发送"),
-        InterfaceEntry("capability.game_live", "游戏直播状态", "reserved", "game_live", None, "预留：游戏内直播/活动事件接入"),
-        InterfaceEntry("capability.meme_absorb", "吸收表情包", "active", "meme_absorb", None, "监听群图片异步下载、MD5 去重、权重筛选、VLM 打标与 NSFW 过滤"),
-        InterfaceEntry("capability.emotion", "情绪状态注入", "active", "context", None, "作为上下文能力注入，不单独占用文本路由"),
-        InterfaceEntry("capability.gscore", "GsCore 上行命令", "reserved", "gscore", None, "预留：GsCore 侧指令统一进入基层路由"),
+        InterfaceEntry("transport.onebot", "NapCat / OneBot V11 传输", "active", "transport", None, "入站 QQ 消息与出站发送统一走 OneBot V11（NapCat），由发送队列收口", internal_note="内部：传输层，无用户命令"),
+        InterfaceEntry("core.gscore", "GsCore / 早柚核心桥", "active", "bridge", None, "ws://HOST:PORT/BOT_ID?token=TOKEN 桥接，接收游戏侧消息，配置 BOT_GSCORE_*", internal_note="内部：桥接层，接收游戏侧消息，无用户命令"),
+        InterfaceEntry("parser.content", "平台链接解析插件组", "active", "content", 46, "B站/小红书/抖音/油管/推特/Lofter/Pixiv/allcpp/米画师/小黑盒/音乐平台", help_topic="链接"),
+        InterfaceEntry("persona.chat", "人格大模型对话", "active", "chat", 50, "人格档案 + 向量知识库 + 世界观注入的大模型回复", help_topic="聊天"),
+        InterfaceEntry("capability.weather", "天气", "active", "weather", 41, "中国气象局 NMC 免 key 查询", help_topic="天气"),
+        InterfaceEntry("capability.music", "点歌", "active", "music", 41, "网易云/酷我/酷狗/QQ音乐/Apple Music/Spotify 搜索", help_topic="点歌"),
+        InterfaceEntry("capability.wiki", "维基百科", "active", "wiki", 41, "MediaWiki 公开 API", help_topic="维基"),
+        InterfaceEntry("capability.moegirl", "萌娘百科", "active", "moegirl", 46, "萌百 MediaWiki 公开 API：显式指令 + 二次元问句自动查询（未命中降级人格聊天）", help_topic="萌娘百科"),
+        InterfaceEntry("capability.epic", "Epic 免费游戏", "active", "epic", 41, "Epic 公开接口", help_topic="Epic"),
+        InterfaceEntry("capability.today_history", "历史上的今天", "active", "today_history", 41, "百度百科公开接口 + 每日推送", help_topic="历史上的今天"),
+        InterfaceEntry("capability.subscribe", "订阅博主/直播推送", "active", "subscribe", 12, "UP主/番剧/小红书博主等新内容与开播推送", help_topic="订阅"),
+        InterfaceEntry("capability.meme", "表情包生成", "active", "meme", 20, "调用本地 meme-generator-rs HTTP API 生成表情包", help_topic="表情"),
+        InterfaceEntry("capability.auto_send", "自动发送/定时任务", "active", "auto_send", 13, "报存 给 A 发… 草稿/预览/发送", help_topic="草稿"),
+        InterfaceEntry("capability.game_live", "游戏直播状态", "reserved", "game_live", None, "预留：游戏内直播/活动事件接入", internal_note="预留：游戏直播事件接入，尚未实现"),
+        InterfaceEntry("capability.meme_absorb", "吸收表情包", "active", "meme_absorb", None, "监听群图片异步下载、MD5 去重、权重筛选、VLM 打标与 NSFW 过滤", help_topic="表情收库"),
+        InterfaceEntry("capability.emotion", "情绪状态注入", "active", "context", None, "作为上下文能力注入，不单独占用文本路由", internal_note="内部：心情引擎，经上下文注入，不占文本路由"),
+        InterfaceEntry("capability.gscore", "GsCore 上行命令", "reserved", "gscore", None, "预留：GsCore 侧指令统一进入基层路由", internal_note="预留：GsCore 侧指令统一进入基层路由，尚未实现"),
     ]
+
+
+# 内部路由能力的补充说明登记：
+# 已主题化的能力不在此登记；此表仅收 stocks/fx 等仍有独立说明价值的内部条目，
+# 供命令目录（scripts/command_catalog.py，帮助主题优先、此表兜底展示）
+# 与 tests/test_finance_routing.py 的 stocks/fx 防脱册断言消费。
+INTERNAL_CAPABILITY_NOTES: dict[str, str] = {
+    "bot.stocks": "个股行情（英伟达/AMD/英特尔股价兜底，触发词见 capabilities/stocks.py；帮助页 topic=个股行情）",
+    "bot.fx": "汇率查询（美元兑人民币/汇率面板，触发词见 capabilities/fx.py；帮助页 topic=汇率）",
+}
 
 
 COMMAND_ROUTE_KINDS = frozenset(
@@ -463,6 +508,8 @@ COMMAND_ROUTE_KINDS = frozenset(
         RouteKind.EPIC,
         RouteKind.WEATHER,
         RouteKind.MARKET,
+        RouteKind.STOCKS,
+        RouteKind.FX,
         RouteKind.EAT,
         RouteKind.DIVINATION,
         RouteKind.NEWS,
@@ -498,7 +545,8 @@ def classify_message_route(
     config: object,
     alias_resolver=None,
 ) -> RouteDecision:
-    """按声明式注册表顺序做确定性路由判断。
+    """按 (priority, 声明序) 稳定排序后的注册表顺序做确定性路由判断
+    （低数值优先；同 priority 保持清单书写序先到先得，见 T-Spec T2）。
 
     ``alias_resolver`` 提供昵称命令解析；传入 None 时昵称命令落到后续路由。
 
@@ -522,7 +570,10 @@ def classify_message_route(
         and now - hit[0] < _ROUTE_CACHE_TTL_SECONDS
     ):
         return hit[2]
-    for rule in ROUTE_RULES:
+    # T-Spec T2：priority 数值即真实判定序——按 (priority, 原清单序) 稳定排序
+    # 后遍历（低数值优先；同值保持书写序先到先得）。每次调用实时对模块全局
+    # ROUTE_RULES 排序，保持测试/决策引擎对该注册表的替换语义不变。
+    for rule in sorted(ROUTE_RULES, key=lambda candidate: candidate.priority):
         if rule.matcher is None:
             continue
         decision = rule.matcher(stripped, config, alias_resolver)
@@ -571,13 +622,14 @@ def list_route_rules_for_audit() -> list[dict]:
     ]
 
 
+# 热路径压榨项：每消息路由/摄取/影子决策都会调用，pattern 提为模块级。
+_URL_RE = re.compile(r"https?://[^\s<>\"\'（）()【】\[\]{}]+")
+
+
 def extract_http_urls(text: str) -> list[str]:
     """基层判定链接解析用；实现与 parsers 注册表一致，避免循环依赖。"""
-    import re
-
-    pattern = re.compile(r"https?://[^\s<>\"\'（）()【】\[\]{}]+")
     candidates: list[str] = []
-    for match in pattern.findall(text or ""):
+    for match in _URL_RE.findall(text or ""):
         raw = match
         while raw and raw[-1] in ".,;:!?，。；：！？":
             raw = raw[:-1]

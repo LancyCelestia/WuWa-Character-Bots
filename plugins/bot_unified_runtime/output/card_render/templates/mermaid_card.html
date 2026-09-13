@@ -1,10 +1,10 @@
 {# Mermaid 流程图卡（G-MERMAID）：无平台语境，主色固定中性灰 #607080，
    走 --pc 派生 token；Mica 铁律 —— 无 <meta viewport>、.card 用 fit-content、
-   body 透明（截图 omit_background 依赖）、单一柔光阴影、字重≤700。
+   body 透明（截图 omit_background 依赖）、两枚阴影 token、字重≤700。
    mermaid.min.js 从 jsDelivr CDN 加载，startOnLoad 自动把 code 渲成 SVG。
    mica-glass v1 2026-09-12：釉瑚云母底（bridge 按中性灰派生的 --wash-* 注入；
    工艺出处=用户裁定）+ 1px 内高光渐变描边 + 双伪元素三色柔光斑缓慢漂移
-   （内联脚本随机相位；box-shadow 仍只此一枚 token）。 #}
+   （内联脚本随机相位）。 #}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -20,21 +20,25 @@
 </script>
 <style>
 :root {
-    /* 漂移相位：内联脚本每次渲染随机覆写（负 animation-delay 取随机瞬间）。 */
-    --phase: 0.2;
+    /* 漂移相位：bridge 按 mermaid 源码 digest 确定注入（E01，D2→D1；同源码同帧，
+       缺省 0.2 兜底）。负 animation-delay 取该确定瞬间的静止构图。 */
+    --phase: {{ phase | default('0.2', true) }};
     --pc: #607080;
     /* 釉瑚云母底主题 token，全卡统一（bridge._derive_wash_tokens 按中性灰注入；
        工艺出处=用户裁定）：wash-1 = H 原相 pastel、wash-2 = H+30°、
        wash-3 = H-30°（仅第三色透底）、wash-mist = 近白雾底。 */
-    --wash-1: {{ wash_1 | default('#e5ecf1') }};
-    --wash-2: {{ wash_2 | default('#e3e5f1') }};
-    --wash-3: {{ wash_3 | default('#e3eeee') }};
-    --wash-mist: {{ wash_mist | default('#f3f5f6') }};
+    --wash-1: {{ wash_1 | default('#d9e0e7') }};
+    --wash-2: {{ wash_2 | default('#dfdae7') }};
+    --wash-3: {{ wash_3 | default('#dcdfea') }};
+    --wash-mist: {{ wash_mist | default('#f4f5f6') }};
     --wash-blob-1: color-mix(in srgb, var(--pc) 35%, var(--wash-1));
     --pc-soft: color-mix(in srgb, var(--pc) 7%, #fff);
     --pc-line: color-mix(in srgb, var(--pc) 14%, #fff);
     --r-shell: 30px;
-    --mica-shadow: 0 12px 32px rgba(0, 0, 0, 0.10), 0 3px 10px rgba(0, 0, 0, 0.05);
+    /* 恰好两枚阴影 token（UI 铁律）：取值单一来源
+       theme_tokens.SHADOW_PRIMARY / SHADOW_SECONDARY。 */
+    --mica-shadow: 0 12px 32px color-mix(in srgb, var(--wash-2) 26%, transparent), 0 3px 10px rgba(0, 0, 0, 0.05);
+    --mica-shadow-soft: 0 3px 10px rgba(31, 35, 41, 0.06);
     --text-main: #18191c;
     --font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
 }
@@ -123,6 +127,8 @@ body {
     color: var(--text-main);
     font-weight: 400;
     white-space: normal;
+    /* E03：节点文本内数字经继承吃到等宽数字（SVG text 未被 mermaid 覆写的可继承属性）。 */
+    font-variant-numeric: tabular-nums;
 }
 .card svg { max-width: 100%; height: auto; }
 /* F11 bot 页脚：头像 + 机器人名 + 功能名。 */
@@ -142,11 +148,5 @@ body {
 </pre>
 <div class="bot-foot"><span class="bf-dot">守</span><span class="bf-name">{{ bot_name | default('守岸人', true) }}</span><span>· {{ feature_label | default('流程图', true) }}</span></div>
 </div>
-<script>
-/* mica-glass v1 2026-09-12：随机漂移相位，纯内联零依赖，失败静默。 */
-try {
-    document.documentElement.style.setProperty("--phase", Math.random().toFixed(4));
-} catch (e) { /* 相位随机化失败不影响渲染 */ }
-</script>
 </body>
 </html>

@@ -28,7 +28,7 @@ def route_memory_command(
     normalized = command_text.strip()
     if not db_path:
         return _memory_result(
-            body="记忆数据库未配置：请先设置 BOT_MEMORY_ENABLED=true 和 BOT_MEMORY_DB_PATH。",
+            body="记忆功能还没打开。让管理员在 .env 里设 BOT_MEMORY_ENABLED=true 与 BOT_MEMORY_DB_PATH，重启后生效，再用 /bot status 确认。",
             request_id=request_id,
         )
     if normalized == "memory list":

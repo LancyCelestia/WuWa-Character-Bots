@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import subprocess
@@ -20,7 +21,11 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from plugins.bot_unified_runtime.capabilities import user_copy
+
 EXPORT_FORMATS = ("md", "docx", "pptx", "xlsx", "pdf")
+
+logger = logging.getLogger(__name__)
 _RUNNABLE_EXTENSIONS = {".py"}
 _TEXT_EXTENSIONS = {".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".toml", ".csv"}
 _FILE_EXPORT_RE = re.compile(
@@ -105,9 +110,11 @@ def run_code_debug(
             except subprocess.TimeoutExpired:
                 return f"语法检查通过 ✓；运行超时（>{timeout_seconds:.0f}s），已终止。"
             except OSError as exc:
-                return f"语法检查通过 ✓；运行失败：{type(exc).__name__}"
+                logger.warning("run_code_debug: failed to start python: %s", exc)
+                return f"语法检查通过 ✓；本机没能启动 Python 跑这段代码，这次运行不了。{user_copy.RUN_ENV_FAILURE_ADVICE}"
     except OSError as exc:
-        return f"运行环境异常：{type(exc).__name__}"
+        logger.warning("run_code_debug: failed to prepare workdir: %s", exc)
+        return f"本机没法准备运行用的临时目录，这次跑不了。{user_copy.RUN_ENV_FAILURE_ADVICE}"
     parts = ["语法检查通过 ✓"]
     if completed.returncode == 0:
         parts.append("运行成功（退出码 0）")

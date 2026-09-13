@@ -582,7 +582,7 @@ _PERSONA_FAILURE_MESSAGES: tuple[str, ...] = (
     "嗯……刚才卡住了。再给我一次机会。",
     "处理到一半失败了。原因我记下了，先重试吧。",
     "抱歉，响应沉下去了。稍等片刻再发一次。",
-    "生成异常，这一份作废了。请再说一遍。",
+    "这条没写完，我重写。再说一次好吗。",
     "超时了。天然呆的锅……你再喊我一次。",
     "这次没接稳。缓一缓再发一次就好。",
 )
@@ -704,16 +704,6 @@ def _bullet_lines(values: list[str], max_chars: int | None = None) -> str:
 def _sanitize_untrusted_context_text(value: object) -> str:
     sanitized = str(value)
     return _INTERNAL_MARKER_PATTERN.sub(_replace_internal_marker, sanitized)
-
-
-def _strip_injection_instruction_lines(value: object) -> str:
-    """丢弃命中指令形态的整行（见 _PROMPT_INJECTION_LINE_RE）。"""
-    lines = str(value or "").splitlines()
-    if not lines:
-        return ""
-    return "\n".join(
-        line for line in lines if not _PROMPT_INJECTION_LINE_RE.search(line)
-    )
 
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?\.])\s*")
@@ -1276,6 +1266,8 @@ def build_chat_prompt_with_diagnostics(
         dynamic_parts += ["", context.quirks_section]
     if context.session_identity_note.strip():
         dynamic_parts += ["", context.session_identity_note]
+    if context.addressing_context is not None and context.addressing_context.instruction.strip():
+        dynamic_parts += ["", "【当前称谓与主角边界】", context.addressing_context.instruction]
     if context.memory_results.facts:
         dynamic_parts += ["", "【记忆】", memory_lines]
     if context.conversation_history.turns:
@@ -2454,6 +2446,8 @@ def build_chat_capability(
                     adapter=getattr(message, "adapter", "unknown"),
                     bot_id=getattr(message, "bot_id", "unknown"),
                     group_id=getattr(message, "group_id", "") or "",
+                    sender_display_name=getattr(message, "sender_display_name", "") or "",
+                    sender_roles=list(getattr(message, "sender_roles", []) or []),
                 )
                 if hasattr(character_provider, "build_context")
                 else character_provider(

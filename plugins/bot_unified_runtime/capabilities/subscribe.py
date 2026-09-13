@@ -15,6 +15,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, cast
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import CapabilityResult, IncomingMessage
 from plugins.bot_unified_runtime.contracts.subscription import (
     SubscriptionDestination,
@@ -43,18 +44,24 @@ _USAGE = (
 
 
 _SUBSCRIBE_EN_RE = re.compile(r"^\s*(?:[/!！]?subscribe)\s*(?P<rest>.*)$", re.IGNORECASE)
-_SUBSCRIBE_ZH_RE = re.compile(r"^\s*(?:[/!！]?订阅)\s*(?P<rest>.*)$", re.IGNORECASE)
+_SUBSCRIBE_ZH_RE = re.compile(r"^\s*(?:[/!！]?(?:订阅|訂閱))\s*(?P<rest>.*)$", re.IGNORECASE)
 _SUBSCRIBE_ACTION_ZH = {
     "添加": "add",
     "新增": "add",
     "删除": "remove",
+    "刪除": "remove",
     "移除": "remove",
     "列表": "list",
     "暂停": "pause",
+    "暫停": "pause",
     "恢复": "resume",
+    "恢復": "resume",
     "继续": "resume",
+    "繼續": "resume",
     "检查": "check",
+    "檢查": "check",
     "状态": "status",
+    "狀態": "status",
 }
 
 # 审计 P3#25：standalone「订阅 …」只有首词是订阅动作词才算命令；
@@ -249,7 +256,7 @@ def build_subscribe_capability(
                 if not _is_admin(message):
                     return _result(
                         message,
-                        "只有管理员才能把订阅推送到本群。",
+                        user_copy.ADMIN_GATE_REQUIRED.format(action="把订阅推送到本群"),
                         [tag, "subscribe_group_denied"],
                         "订阅",
                     )
@@ -328,7 +335,7 @@ def build_subscribe_capability(
                 if not _is_admin(message):
                     return _result(
                         message,
-                        "只有管理员才能查看本群订阅。",
+                        user_copy.ADMIN_GATE_REQUIRED.format(action="看本群订阅"),
                         [tag, "subscribe_group_denied"],
                         "订阅",
                     )

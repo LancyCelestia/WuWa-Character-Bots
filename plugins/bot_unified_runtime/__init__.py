@@ -28,6 +28,7 @@ from .capabilities.divination import build_divination_capability
 from .capabilities.download import build_download_capability
 from .capabilities.eat import build_eat_capability
 from .capabilities.epic import build_epic_capability
+from .capabilities.fx import build_fx_capability
 from .capabilities.group_files import DirtyGuard, GroupFileStore
 from .capabilities.market import build_market_capability
 from .capabilities.meme import build_meme_capability
@@ -50,6 +51,7 @@ from .capabilities.platform_credentials import (
 )
 from .capabilities.randpic import build_randpic_capability
 from .capabilities.reminder import build_reminder_capability
+from .capabilities.stocks import build_stocks_capability
 from .capabilities.today_history import build_today_history_capability
 from .capabilities.weather import build_weather_capability
 from .capabilities.wiki import build_wiki_capability
@@ -250,6 +252,9 @@ OFFLOADED_CAPABILITY_IDS = frozenset(
         "bot.eat",
         # bot.market 出釉瑚折线卡（Playwright 渲染 + 18 指数走势并行拉取）。
         "bot.market",
+        # bot.stocks / bot.fx 与 market 同构：行情外呼 + 可选 Playwright 金融卡渲染。
+        "bot.stocks",
+        "bot.fx",
         # bot.alert --probe 是同步 urllib 凭据巡检（串行多平台可达数十秒），
         # 调度器路径已 to_thread，命令路径同款必须 offload（审计重发现 P1）。
         "bot.alert",
@@ -1207,6 +1212,13 @@ def _incoming_from_nonebot_event(
         and not hard_mention
         and session_type not in {SessionType.PRIVATE, SessionType.EMAIL}
     )
+    # 评审D2：QQ 摄取层填充 sender_display_name——OneBot v11 群内 card=群名片、
+    # nickname=昵称，card 优先；strip 后为空不传（保持 None，称谓链回退不变）。
+    # TG/Mail 事件无 sender.card/nickname 形态，自然落 None（各有独立摄取路径，不在此扩）。
+    onebot_sender = getattr(event, "sender", None)
+    sender_card = str(getattr(onebot_sender, "card", None) or "").strip()
+    sender_nickname = str(getattr(onebot_sender, "nickname", None) or "").strip()
+    sender_display_name = sender_card or sender_nickname or None
     return IncomingMessage(
         platform=platform,
         adapter=adapter,
@@ -1229,6 +1241,7 @@ def _incoming_from_nonebot_event(
         name_mention_only=name_mention_only,
         soft_persona_mention=soft_persona_mention,
         message_id=str(message_id) if message_id is not None else None,
+        sender_display_name=sender_display_name,
     )
 
 
@@ -1523,6 +1536,7 @@ def _register_today_history_scheduler(
     audit_logger: AuditRepository,
     receipt_repository: ReceiptRepository | None,
     bot_provider: Any,
+    render_backend: Any = None,
 ) -> dict[str, object]:
     """「历史上的今天」每日推送：按订阅表注册 cron 任务，走统一流水线发送。"""
     from .capabilities.today_history import (
@@ -1610,11 +1624,24 @@ def _register_today_history_scheduler(
         except Exception:  # noqa: BLE001 - 任务重载失败不影响主链路。
             return
 
+    # 评审C1 产品裁定：推送调度器保持纯文字、不注入渲染后端——定时推送运行在
+    # 调度线程，不依赖 Playwright 渲染进程。显式 render_backend=None 是有意为之，
+    # 勿改回注入；交互出卡由下方 interactive_capability 分流承担。
     capability = build_today_history_capability(
         config,
         provider=provider,
         push_file=push_file,
         on_subscriptions_changed=_resync_jobs,
+        render_backend=None,
+    )
+    # 评审C1：交互路径（today_history matcher）复用同一 provider/推送表/订阅重挂，
+    # 但注入渲染后端出卡——与推送能力分流，互不影响。
+    interactive_capability = build_today_history_capability(
+        config,
+        provider=provider,
+        push_file=push_file,
+        on_subscriptions_changed=_resync_jobs,
+        render_backend=render_backend,
     )
 
     # 每日 00:30 强制刷新缓存。
@@ -1632,6 +1659,8 @@ def _register_today_history_scheduler(
         "registered": True,
         "push_file": push_file,
         "capability": capability,
+        # 评审C1：交互 matcher 用这个（注入后端）；"capability" 仅供定时推送（纯文字）。
+        "interactive_capability": interactive_capability,
         "resync": _resync_jobs,
         "provider": provider,
     }
@@ -3145,6 +3174,15 @@ def _register_nonebot_handlers() -> None:
     def _build_market_with_backend(config_: Any, **_kwargs: Any) -> Any:
         return build_market_capability(config_, render_backend=render_backend)
 
+    def _build_stocks_with_backend(config_: Any, **_kwargs: Any) -> Any:
+        return build_stocks_capability(config_, render_backend=render_backend)
+
+    def _build_fx_with_backend(config_: Any, **_kwargs: Any) -> Any:
+        return build_fx_capability(config_, render_backend=render_backend)
+
+    def _build_divination_with_backend(config_: Any, **_kwargs: Any) -> Any:
+        return build_divination_capability(config_, render_backend=render_backend)
+
     try:
         from nonebot_plugin_apscheduler import scheduler
     except Exception as exc:  # noqa: BLE001 - optional worker must fail closed.
@@ -3224,6 +3262,7 @@ def _register_nonebot_handlers() -> None:
                     audit_logger=audit_logger,
                     receipt_repository=receipt_repository,
                     bot_provider=_first_online_bot,
+                    render_backend=render_backend,
                 )
             except Exception:  # noqa: BLE001 - 调度注册失败（如 apscheduler 缺失）不崩装配，
                 today_ctx = None  # 后续「历史上的今天」命令走无推送的直查路径。
@@ -3934,7 +3973,8 @@ def _register_nonebot_handlers() -> None:
         return is_cookie_command(event.get_plaintext()) and await _is_admin_origin(event)
 
     async def _is_image_search_event(event: Event) -> bool:
-        return bool(re.match(r"^[/!！]?搜图(\s|$)", event.get_plaintext().strip()))
+        # 搜圖（TRA 草稿）：繁體形与简体同口径（旁路 matcher 不入 base_router 审计）。
+        return bool(re.match(r"^[/!！]?(?:搜图|搜圖)(\s|$)", event.get_plaintext().strip()))
 
     image_search = on_message(rule=_is_image_search_event, priority=46, block=True)
 
@@ -3988,7 +4028,7 @@ def _register_nonebot_handlers() -> None:
 
     cookie_admin = on_message(rule=_is_admin_cookie_command, priority=8, block=True)
 
-    _NICKNAME_RE = re.compile(r"^/bot\s+(?:昵称|nickname)\s+set\s+(\d{5,11})\s+(\S{1,32})$")
+    _NICKNAME_RE = re.compile(r"^/bot\s+(?:昵称|暱稱|nickname)\s+set\s+(\d{5,11})\s+(\S{1,32})$")
 
     async def _is_nickname_set_command(event: Event) -> bool:
         return bool(_NICKNAME_RE.match(event.get_plaintext().strip())) and await _is_admin_origin(event)
@@ -4344,6 +4384,18 @@ def _register_nonebot_handlers() -> None:
             is RouteKind.MARKET
         )
 
+    async def _is_stocks_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.STOCKS
+        )
+
+    async def _is_fx_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.FX
+        )
+
     async def _is_divination_event(state: T_State, event: Event) -> bool:
         return (
             _cached_route_decision(state, event, config=config).kind
@@ -4377,11 +4429,13 @@ def _register_nonebot_handlers() -> None:
     wiki = on_message(rule=_is_wiki_event, priority=41, block=True)
     moegirl = on_message(rule=_is_moegirl_event, priority=41, block=True)
     moegirl_question = on_message(
-        rule=_is_moegirl_question_event, priority=44, block=True
+        rule=_is_moegirl_question_event, priority=46, block=True
     )
     epic = on_message(rule=_is_epic_event, priority=41, block=True)
     weather = on_message(rule=_is_weather_event, priority=41, block=True)
     market = on_message(rule=_is_market_event, priority=41, block=True)
+    fx = on_message(rule=_is_fx_event, priority=41, block=True)
+    stocks = on_message(rule=_is_stocks_event, priority=42, block=True)
     divination = on_message(rule=_is_divination_event, priority=41, block=True)
     news = on_message(rule=_is_news_event, priority=41, block=True)
     randpic = on_message(rule=_is_randpic_event, priority=41, block=True)
@@ -4526,7 +4580,7 @@ def _register_nonebot_handlers() -> None:
                 synthetic = message.model_copy(
                     update={"plain_text": f"历史上的今天 {query}".strip()}
                 )
-                return build_today_history_capability(config)(synthetic, _decision)
+                return build_today_history_capability(config, render_backend=render_backend)(synthetic, _decision)
 
         elif resolution.capability_id == "bot.affinity":
 
@@ -5010,7 +5064,9 @@ def _register_nonebot_handlers() -> None:
                 )
 
         elif command_text == "identity" or command_text.startswith("identity "):
-            # /bot identity ...：会话级身份记忆（在哪个会话执行就对哪个会话生效）。
+            # /bot identity ...：会话级身份记忆（在哪个会话执行就对哪个会话生效）；
+            # set-name/set-gender/unset-name/unset-gender 为用户自助称谓偏好
+            # （runtime_admin 内在管理员门前拦截转发，需 sender_id/group_id 定位本人）。
             capability_id = "bot.identity"
             identity_command = command_text.removeprefix("identity").strip()
 
@@ -5021,6 +5077,8 @@ def _register_nonebot_handlers() -> None:
                     actor_roles=_decision.actor_roles,
                     session_key=message.session_id,
                     command_text=identity_command,
+                    sender_id=str(message.sender_id or ""),
+                    group_id=str(message.group_id or ""),
                 )
 
         elif command_text == "route" or command_text.startswith("route "):
@@ -5313,7 +5371,7 @@ def _register_nonebot_handlers() -> None:
                 action_aliases = {
                     "add": "add", "加": "add", "加入": "add",
                     "del": "del", "delete": "del", "remove": "del",
-                    "删": "del", "移除": "del",
+                    "删": "del", "刪": "del", "移除": "del",
                     "set": "set", "设": "set", "设置": "set",
                     "clear": "clear", "清": "clear", "清空": "clear", "reset": "clear",
                     "list": "list", "show": "list", "查": "list", "查看": "list",
@@ -5989,10 +6047,12 @@ def _register_nonebot_handlers() -> None:
             event,
             bot_id=str(getattr(bot, "self_id", "unknown")),
         )
+        # 评审C1：交互走注入渲染后端的独立实例；today_ctx["capability"] 按产品裁定
+        # 仅供定时推送（纯文字），二者在 _register_today_history_scheduler 内分流。
         capability = (
-            today_ctx["capability"]
+            today_ctx["interactive_capability"]
             if today_ctx is not None
-            else build_today_history_capability(config)
+            else build_today_history_capability(config, render_backend=render_backend)
         )
         receipt = await pipeline.handle_async(
             message,
@@ -6231,7 +6291,7 @@ def _register_nonebot_handlers() -> None:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 synthetic = message.model_copy(update={"plain_text": normalized_text})
-                return build_today_history_capability(config)(synthetic, _decision)
+                return build_today_history_capability(config, render_backend=render_backend)(synthetic, _decision)
 
         else:
             await natural.finish("无法识别的自然语言命令。")
@@ -6280,10 +6340,22 @@ def _register_nonebot_handlers() -> None:
             bot, event, _build_market_with_backend, "bot.market", market
         )
 
+    @stocks.handle()
+    async def _handle_stocks(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, _build_stocks_with_backend, "bot.stocks", stocks
+        )
+
+    @fx.handle()
+    async def _handle_fx(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, _build_fx_with_backend, "bot.fx", fx
+        )
+
     @divination.handle()
     async def _handle_divination(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
-            bot, event, build_divination_capability, "bot.divination", divination
+            bot, event, _build_divination_with_backend, "bot.divination", divination
         )
 
     @news.handle()

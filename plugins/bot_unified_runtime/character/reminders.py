@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha1
 from pathlib import Path
 
-_REMIND_SIGNAL_RE = re.compile(r"提醒|叫我|记得叫")
+_REMIND_SIGNAL_RE = re.compile(r"提醒|叫我|记得叫|記得叫")
 _PERIOD_DEFAULTS: dict[str, tuple[int, int]] = {
     "凌晨": (5, 0),
     "早上": (8, 0),
@@ -33,13 +33,13 @@ _DAY_OFFSETS = {"今天": 0, "今晚": 0, "今早": 0, "明天": 1, "明晚": 1,
 
 _ABS_TIME_RE = re.compile(
     r"(今天|明天|后天|今晚|今早|明晚)?\s*(凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*"
-    r"(\d{1,2})\s*[点時时:：]\s*(\d{1,2})?\s*分?"
+    r"(\d{1,2})\s*[点點時时:：]\s*(\d{1,2})?\s*分?"
 )
-_PERIOD_ONLY_RE = re.compile(r"(今天|明天|后天|今晚|今早|明晚)?\s*(凌晨|早上|上午|中午|下午|傍晚|晚上)(?![点時时:：\d])")
+_PERIOD_ONLY_RE = re.compile(r"(今天|明天|后天|今晚|今早|明晚)?\s*(凌晨|早上|上午|中午|下午|傍晚|晚上)(?![点點時时:：\d])")
 _REL_MINUTES_RE = re.compile(r"(\d{1,3})\s*分钟后")
 _REL_HOURS_RE = re.compile(r"(\d{1,2})\s*(?:个)?小时后")
 _REL_HALF_HOUR_RE = re.compile(r"半(?:个)?小时后")
-_CLEAN_RE = re.compile(r"提醒我?|叫我|记得叫|一下|吧|哦|呀|啊|，|,|。|！|!|？|\?")
+_CLEAN_RE = re.compile(r"提醒我?|叫我|记得叫|記得叫|一下|吧|哦|呀|啊|，|,|。|！|!|？|\?")
 
 
 @dataclass(frozen=True)

@@ -9,30 +9,31 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=1200, initial-scale=1.0">
 <style>
 :root {
-    /* 漂移相位：内联脚本每次渲染随机覆写（负 animation-delay 取随机瞬间）。 */
-    --phase: 0.2;
+    /* 漂移相位：bridge 按 payload digest 确定注入（E01，D2→D1；同 payload 同帧，
+       缺省 0.2 兜底）。负 animation-delay 取该确定瞬间的静止构图。 */
+    --phase: {{ phase | default('0.2', true) }};
     --pc: {{ pc | default('#607080') }};
     /* 釉瑚云母底主题 token，全卡统一（工艺出处=用户裁定）：
        wash-1 = H 原相 pastel、wash-2 = H+30°、wash-3 = H-30°（仅第三色透底）、
        wash-mist = 同色相近白雾底；--wash-blob-1 允许 ≤32% 混 --pc 透出主色。 */
-    --wash-1: {{ wash_1 | default('#e5ecf1') }};
-    --wash-2: {{ wash_2 | default('#e3e5f1') }};
-    --wash-3: {{ wash_3 | default('#e3eeee') }};
-    --wash-mist: {{ wash_mist | default('#f3f5f6') }};
+    --wash-1: {{ wash_1 | default('#d9e0e7') }};
+    --wash-2: {{ wash_2 | default('#dfdae7') }};
+    --wash-3: {{ wash_3 | default('#dcdfea') }};
+    --wash-mist: {{ wash_mist | default('#f4f5f6') }};
     --wash-blob-1: color-mix(in srgb, var(--pc) 35%, var(--wash-1));
     --pc-soft: color-mix(in srgb, var(--pc) 7%, #fff);
     --pc-panel: color-mix(in srgb, var(--pc) 4%, #fff);
     --pc-panel-me: color-mix(in srgb, var(--pc) 11%, #fff);
     --pc-line: color-mix(in srgb, var(--pc) 14%, #fff);
     --pc-chip: color-mix(in srgb, var(--pc) 14%, #fff);
+    --pc-light: color-mix(in srgb, var(--pc) 14%, #fff);
     --r-shell: 30px;
     --r-panel: 18px;
     --r-tile: 14px;
-    --mica-shadow: 0 12px 32px rgba(0, 0, 0, 0.10), 0 3px 10px rgba(0, 0, 0, 0.05);
-    --mica-shadow-soft: 0 2px 8px rgba(0, 0, 0, 0.04);
+    --mica-shadow: 0 12px 32px color-mix(in srgb, var(--wash-2) 26%, transparent), 0 3px 10px rgba(0, 0, 0, 0.05);
+    --mica-shadow-soft: 0 3px 10px rgba(31, 35, 41, 0.06);
     --text-main: #18191c;
     --text-sub: #5b6069;
     --text-secondary: #8a919b;
@@ -71,7 +72,7 @@ body {
             rgba(255, 255, 255, 0.72) 100%) border-box;
     box-shadow: var(--mica-shadow);
 }
-.shell > :not(.drift-blobs) { position: relative; z-index: 1; }
+.shell > :not(.drift-blobs):not(.star-motes) { position: relative; z-index: 1; }
 /* ===== 渐变漂移色斑（wash 三色半透明互相透过，46s/52s/58s 交错漂移+呼吸）===== */
 .drift-blobs { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; border-radius: inherit; }
 .drift-blob { position: absolute; display: block; border-radius: 50%; will-change: transform; }
@@ -120,6 +121,16 @@ body {
 @media (prefers-reduced-motion: reduce) {
     .drift-blob.drift-a, .drift-blob.drift-b, .drift-blob.drift-c { animation: none; }
 }
+/* ===== E02 星尘上升定格（庆祝粒子·静版，docs/design/visual-effects-catalog.md §E02）=====
+   纯 CSS 静态星点：零 animation、零 JS；摆位/粒径/透明度由 --phase（payload
+   digest，E01 已钉帧）在 Jinja 侧确定性派生（D0，同 payload 同构图）。
+   三通道：wash-2 星空紫 / 白 / --pc-light；alpha 0.06–0.35、粒径 2–5px、≤24 枚、
+   总覆盖 ≤ 卡面 8%；只走 background 径向渐变，不触两枚阴影 token 铁律。 */
+.star-motes { position: absolute; inset: 0; z-index: 2; overflow: hidden; pointer-events: none; border-radius: inherit; }
+.star-mote { position: absolute; display: block; border-radius: 50%; }
+.star-mote.sm-v { background: radial-gradient(circle, var(--wash-2) 45%, transparent 100%); }
+.star-mote.sm-w { background: radial-gradient(circle, #ffffff 50%, transparent 100%); }
+.star-mote.sm-l { background: radial-gradient(circle, var(--pc-light) 50%, transparent 100%); }
 /* ===== 液态玻璃面板：半透明白 + 1px 内高光渐变描边（无 backdrop-filter）===== */
 .glass {
     background:
@@ -153,7 +164,7 @@ body {
 /* ===== 群排行榜网格 ===== */
 .grid {
     margin-top: 22px;
-    display: grid; grid-template-columns: repeat(5, 1fr); gap: 11px;
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;
 }
 .tile {
     border-radius: var(--r-tile); padding: 11px 13px;
@@ -165,8 +176,8 @@ body {
     font-size: 14px; font-weight: 600; color: var(--text-main);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px;
 }
-.tile .sid { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
-.tile .score { font-size: 17px; font-weight: 700; color: var(--text-main); flex: none; }
+.tile .sid { font-size: 11px; color: var(--text-secondary); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.tile .score { font-size: 17px; font-weight: 700; color: var(--text-main); flex: none; font-variant-numeric: tabular-nums; }
 .tile .score.hot { color: var(--score-hot); }
 .tile .score.cold { color: var(--score-cold); }
 .tile.me {
@@ -181,8 +192,8 @@ body {
     border-radius: var(--r-panel);
     padding: 22px 24px;
 }
-.dlabel { font-size: 15px; color: var(--text-sub); font-weight: 600; }
-.dscore { font-size: 46px; font-weight: 700; color: var(--text-main); margin-top: 6px; line-height: 1.1; }
+.dlabel { font-size: 15px; color: var(--text-sub); font-weight: 600; letter-spacing: 0.06em; }
+.dscore { font-size: 46px; font-weight: 700; color: var(--text-main); margin-top: 6px; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .dscore.hot { color: var(--score-hot); }
 .dscore.cold { color: var(--score-cold); }
 .dtier {
@@ -204,7 +215,7 @@ body {
     font-size: 13px; color: var(--text-sub);
 }
 .step-row:last-child, .tier-row:last-child { border-bottom: none; }
-.step-row b { font-size: 16px; font-weight: 700; color: var(--text-main); flex: none; }
+.step-row b { font-size: 16px; font-weight: 700; color: var(--text-main); flex: none; font-variant-numeric: tabular-nums; }
 .step-row b.up { color: var(--score-hot); }
 .step-row b.down { color: var(--score-cold); }
 .tier-row { flex-direction: column; align-items: flex-start; gap: 3px; }
@@ -235,6 +246,31 @@ body {
 <body>
 <div class="shell card">
     <div class="drift-blobs" aria-hidden="true"><span class="drift-blob drift-a"></span><span class="drift-blob drift-b"></span><span class="drift-blob drift-c"></span></div>
+    {# E02 星尘（私聊高阶档常显微版）：payload 现无升档标记，按任务书以
+       bot_to_user ≥ 50（挚友/独一份）为「高级位档」触发；摆位由 --phase
+       （payload digest）确定性派生，同 payload 同构图。 #}
+    {% if mode == 'private' and (bot_to_user.score | float(0)) >= 50 %}
+    {% set _sm_ns = namespace(seed=(((phase | default('0.2', true) | float(0)) * 10000) | round(0, 'floor') | int) % 10000) %}
+    <div class="star-motes" aria-hidden="true">
+    {%- for _ in range(18) -%}
+    {%- set _sm_ns.seed = (_sm_ns.seed * 1103515245 + 12345) % 2147483648 -%}
+    {%- set _rx = _sm_ns.seed / 2147483648 -%}
+    {%- set _sm_ns.seed = (_sm_ns.seed * 1103515245 + 12345) % 2147483648 -%}
+    {%- set _ry = _sm_ns.seed / 2147483648 -%}
+    {%- set _sm_ns.seed = (_sm_ns.seed * 1103515245 + 12345) % 2147483648 -%}
+    {%- set _rs = _sm_ns.seed / 2147483648 -%}
+    {%- set _sm_ns.seed = (_sm_ns.seed * 1103515245 + 12345) % 2147483648 -%}
+    {%- set _rc = _sm_ns.seed / 2147483648 -%}
+    {%- set _p = loop.index0 / 17 -%}
+    {%- set _size = [([5.0 - 2.2 * _p + (_rs * 1.4 - 0.7), 2.0] | max), 5.0] | min -%}
+    {%- set _alpha = [0.35 - 0.18 * _p - _ry * 0.04, 0.06] | max -%}
+    {%- set _x = 62 + _rx * 32 -%}
+    {%- set _y = [2 + _p * 78 + (_ry * 6 - 3), 0] | max -%}
+    {%- set _ch = 'sm-v' if _rc < 0.55 else ('sm-w' if _rc < 0.8 else 'sm-l') -%}
+    <span class="star-mote {{ _ch }}" style="left:{{ '%.1f' | format(_x) }}%;bottom:{{ '%.1f' | format(_y) }}%;width:{{ '%.2f' | format(_size) }}px;height:{{ '%.2f' | format(_size) }}px;opacity:{{ '%.2f' | format(_alpha) }};"></span>
+    {%- endfor -%}
+    </div>
+    {% endif %}
     <div class="head">
         <div class="icon">
             <svg width="30" height="30" viewBox="0 0 24 24" fill="#fff" xmlns="http://www.w3.org/2000/svg">
@@ -303,11 +339,5 @@ body {
     <div class="foot">好感区间 -100~+100 · 档0 友善（基准 10）· 任何档位都保持人格与体面</div>
     <div class="bot-foot">{% if bot_avatar_url %}<img class="bf-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="bf-dot">{{ (bot_name | default('守岸人', true))[:1] }}</span>{% endif %}<span class="bf-name">{{ bot_name | default('守岸人', true) }}</span><span>· {{ feature_label | default('好感度', true) }}</span></div>
 </div>
-<script>
-/* mica-glass v1 2026-09-12：随机漂移相位，纯内联零依赖，失败静默。 */
-try {
-    document.documentElement.style.setProperty("--phase", Math.random().toFixed(4));
-} catch (e) { /* 相位随机化失败不影响渲染 */ }
-</script>
 </body>
 </html>

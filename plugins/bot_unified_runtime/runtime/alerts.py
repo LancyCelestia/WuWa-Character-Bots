@@ -439,19 +439,3 @@ def send_admin_alert_requests(
             created.append((admin_id, message.request_id))
     return created
 
-
-def send_admin_alert(
-    pipeline: Any,
-    admin_ids: list[str],
-    alert: AlertContent,
-) -> list[str]:
-    """Compatibility wrapper for existing QQ credential alert callers."""
-    return [
-        admin_id
-        for admin_id, _request_id in send_admin_alert_requests(
-            pipeline,
-            admin_ids,
-            alert,
-        )
-    ]
-

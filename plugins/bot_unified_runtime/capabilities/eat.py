@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import re
 import threading
+from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -29,10 +31,27 @@ from plugins.bot_unified_runtime.sources.food_data import (
 )
 
 _EAT_RE = re.compile(
-    r"^[/!！]?(?:今天)?吃(?:点|什|啥|么什么)?[什么啥]*(?:呢|好|啊|呀|嘛)?[？?]?\s*"
-    r"(?P<extra>三选一|来三道|再来一道|再来|辣的|不辣|.*)?$"
+    r"^[/!！]?(?:(?:今天)?吃(?:点|什|啥|么什么)?[什么啥]*(?:呢|好|啊|呀|嘛)?"
+    r"|eat|food"
+    # 拼音全拼/缩写（T-Spec T1.5/T1.6）：吃什么→chishenme/csm（查重无冲突）；
+    # 前缀锚定天然防左胶合，(?![A-Za-z0-9]) 防右胶合（chishenmeqq）。
+    r"|chishenme(?![A-Za-z0-9])|csm(?![A-Za-z0-9]))[？?]?\s*"
+    r"(?P<extra>三选一|来三道|再来一道|再来|辣的|不辣"
+    r"|spicy|mild|random|anything|something|.*)?$"
 )
-_RECIPE_RE = re.compile(r"^[/!！]?(?:菜谱|菜譜|怎么做|怎麼做|如何做)\s*[:：]?\s*(?P<name>.+)$")
+# 英文 eat/food（前缀锚定）与 recipes? 为 T-Spec T1.2 英文触发；
+# 带尾巴的英文句子（eating/foodie/fast food）由 extra 守卫拦回聊天。
+# ASCII 别名右侧词边界（stocks _alias_hit 先例）：recipesxx / recipexx 等
+# 字母延续不触发；本正则无 IGNORECASE，故用显式大小写区间。全角标点后缀
+# （recipes？）不受影响。
+_RECIPE_RE = re.compile(
+    r"^[/!！]?(?:菜谱|菜譜|怎么做|怎麼做|如何做"
+    # 拼音全拼/缩写（T-Spec T1.5/T1.6）：caipu/zenmezuo 同覆盖繁体同音
+    # （菜譜/怎麼做）；cp/zmz 查重仅同源变体对不算冲突。前缀锚定防左胶合，
+    # (?![A-Za-z0-9]) 防右胶合（cpqq/caipuqq）。
+    r"|caipu(?![A-Za-z0-9])|zenmezuo(?![A-Za-z0-9])|cp(?![A-Za-z0-9])|zmz(?![A-Za-z0-9])"
+    r"|recipes?(?![A-Za-z0-9]))\s*[:：]?\s*(?P<name>.+)$"
+)
 
 # 实弹反馈③轮修复（2026-09-12 群 662948429 现场）：
 # a) 触发过灵：「怎么做到的」被 _RECIPE_RE 捕成菜名「到的」——菜名合法性守卫，
@@ -129,9 +148,15 @@ _IMAGE_MAGIC: tuple[tuple[bytes, str], ...] = (
 )
 _ILLEGAL_FILENAME_RE = re.compile(r'[\\/:*?"<>|\s]+')
 
+# 像素级封面质检阈值：min 边 < 300 多为图标/占位缩略图；宽高比超出
+# [1/3, 3] 多为横幅广告条/雪碧图——都不适合当菜品封面，按候选拒绝。
+_IMG_MIN_SIDE = 300
+_IMG_ASPECT_MIN = 1 / 3
+_IMG_ASPECT_MAX = 3.0
+
 # 审计 E2-8：extra 非空时必须命中已知修饰/约束词表，否则不路由（落入闲聊）。
 # 此前 `.*` 兜底让任何「吃」开头的句子（吃了吗/吃火锅）都被判成点菜指令。
-_EAT_MODIFIER_RE = re.compile(r"三选一|来三道|再来一道|再来|辣的|不辣|微辣|中辣|特辣")
+_EAT_MODIFIER_RE = re.compile(r"三选一|来三道|再来一道|再来|辣的|不辣|微辣|中辣|特辣|spicy|mild|random|anything|something")
 _CONSTRAINT_RE = re.compile(
     r"不吃|不要|别放|忌口|过敏|有|加|放|人多|\d人|两[人个]|三[人个]|四[人个]|"
     "清淡|开胃|下饭|暖和|热乎|快手|省事|便宜|丰盛|减脂|健身"
@@ -178,7 +203,7 @@ def _food_image_root(config: Any) -> Path:
 
 
 def _dish_image(dish: Dish, config: Any) -> str:
-    """封面图三级来源：本地图包 → 抓取缓存 → 空串（卡面折叠封面区）。"""
+    """封面图四级来源：本地图包 → SQLite 图库索引 → 抓取缓存 → 空串。"""
     root = _food_image_root(config)
     for suffix in (".jpg", ".png", ".webp"):
         candidate = root / f"{dish.name}{suffix}"
@@ -187,11 +212,43 @@ def _dish_image(dish: Dish, config: Any) -> str:
                 return str(candidate)
         except OSError:
             continue
+    library = _library_lookup(root, dish.name)
+    if library:
+        return library
     return _fetch_dish_image(root, dish.name)
 
 
+def _pixels_ok(data: bytes) -> bool:
+    """PIL 像素级质检：解码成功且 min 边/宽高比达标才放行。
+
+    PIL 不可用（未安装）时跳过本检查不阻断；Image.open/verify 异常按拒绝
+    处理（字节头伪装成图片的坏文件在这里拦下）。
+    """
+    try:
+        from PIL import Image
+    except Exception:  # noqa: BLE001 - PIL 缺席 → 跳过该检查。
+        return True
+    try:
+        with Image.open(BytesIO(data)) as image:
+            width, height = image.size
+            image.verify()
+    except Exception:  # noqa: BLE001 - 解码失败按拒绝处理。
+        return False
+    if width <= 0 or height <= 0:
+        return False
+    if min(width, height) < _IMG_MIN_SIDE:
+        return False
+    aspect = width / height
+    return _IMG_ASPECT_MIN <= aspect <= _IMG_ASPECT_MAX
+
+
 def _fetch_dish_image(root: Path, name: str) -> str:
-    """Bing 图搜抓一张真实菜品图并缓存；best-effort，失败返回空串。"""
+    """Bing 图搜按序抓第一张通过全部质检的菜品图并缓存；失败返回空串。
+
+    候选校验链：SSRF 护栏 → 字节数(1KB~8MB) → magic bytes → 像素质检
+    （PIL，可跳过）；任一环不过即换下一个候选。落盘时同目录写
+    <菜名>.source.txt（首行图片 URL，次行 ISO 时间戳）作来源记录。
+    """
     import urllib.parse
     import urllib.request
 
@@ -237,15 +294,140 @@ def _fetch_dish_image(root: Path, name: str) -> str:
         )
         if not suffix:
             continue  # 不是图片字节（多为错误页 HTML），换下一个候选
+        if not _pixels_ok(data):
+            continue  # 像素质检不过（图标/占位图/横竖条），换下一个候选
         try:
             root.mkdir(parents=True, exist_ok=True)
             safe_name = _ILLEGAL_FILENAME_RE.sub("_", name).strip("_") or "dish"
             target = root / f"{safe_name}{suffix}"
             target.write_bytes(data)
+            try:
+                (root / f"{safe_name}.source.txt").write_text(
+                    f"{image_url}\n"
+                    f"{datetime.now().astimezone().isoformat(timespec='seconds')}\n",
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass  # 来源记录 best-effort，不影响封面返回
             return str(target)
         except OSError:
             return ""
     return ""
+
+
+# ==================== 图库 SQLite 索引 + 预热（用户裁定 2026-09-13） ====================
+# 「按菜谱全量预先把合格实拍图下载进图库，按需调用」：文件仍是事实来源
+# （food_images/<菜名>.<ext> + .source.txt），SQLite 只做 name→path 的
+# 可查询索引；索引任何失败都不影响主链路（退回常规三级缓存链）。
+
+
+def _library_db_path(root: Path) -> Path:
+    return root / "library.sqlite"
+
+
+def _library_record(root: Path, name: str, path: str) -> None:
+    """写入/更新索引行（name → 图片路径 + 来源 URL + 时间）；best-effort。"""
+    try:
+        import sqlite3
+
+        source_url = ""
+        try:
+            source_file = Path(path).with_suffix(".source.txt")
+            if source_file.is_file():
+                source_url = (
+                    source_file.read_text(encoding="utf-8").splitlines()[0].strip()
+                )
+        except (OSError, IndexError):
+            source_url = ""
+        conn = sqlite3.connect(_library_db_path(root))
+        try:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS food_images ("
+                "name TEXT PRIMARY KEY, path TEXT NOT NULL, "
+                "source_url TEXT NOT NULL DEFAULT '', fetched_at TEXT NOT NULL DEFAULT '')"
+            )
+            conn.execute(
+                "INSERT INTO food_images(name, path, source_url, fetched_at) "
+                "VALUES(?,?,?,?) ON CONFLICT(name) DO UPDATE SET "
+                "path=excluded.path, source_url=excluded.source_url, "
+                "fetched_at=excluded.fetched_at",
+                (
+                    name,
+                    path,
+                    source_url,
+                    datetime.now().astimezone().isoformat(timespec="seconds"),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001, S110 - 索引失败不影响主链路。
+        pass
+
+
+def _library_lookup(root: Path, name: str) -> str:
+    """按索引查封面路径；索引缺失或文件已被清理返回空串。"""
+    try:
+        import sqlite3
+
+        db = _library_db_path(root)
+        if not db.is_file():
+            return ""
+        conn = sqlite3.connect(db)
+        try:
+            row = conn.execute(
+                "SELECT path FROM food_images WHERE name = ?", (name,)
+            ).fetchone()
+        finally:
+            conn.close()
+        if row and Path(row[0]).is_file():
+            return str(row[0])
+    except Exception:  # noqa: BLE001 - 索引失败退回常规缓存链。
+        return ""
+    return ""
+
+
+def prewarm_food_images(
+    config: Any | None = None,
+    *,
+    dishes: list[str] | None = None,
+    limit: int = 0,
+) -> dict[str, str]:
+    """图库预热：把菜品库封面按需预下载进本地图包（幂等，可反复跑）。
+
+    - dishes 缺省 = sources.food_data.DISHES 全量菜名；
+    - 已有本地缓存的菜直接登记索引并跳过下载；
+    - limit>0 只处理前 N 个缺失项（控速用）；
+    - 返回 {菜名: 路径或空串}（空 = 该菜本轮没有拿到合格图，下次重试）。
+    """
+    if dishes is None:
+        dishes = [dish.name for dish in DISHES]
+    root = _food_image_root(config)
+    results: dict[str, str] = {}
+    pending = 0
+    for name in dishes:
+        existing = ""
+        for suffix in (".jpg", ".png", ".webp"):
+            candidate = root / f"{name}{suffix}"
+            try:
+                if candidate.is_file():
+                    existing = str(candidate)
+                    break
+            except OSError:
+                continue
+        if existing:
+            results[name] = existing
+            _library_record(root, name, existing)
+            continue
+        if limit and pending >= limit:
+            results[name] = ""
+            continue
+        pending += 1
+        fetched = _fetch_dish_image(root, name)
+        results[name] = fetched
+        if fetched:
+            _library_record(root, name, fetched)
+    return results
 
 
 def _eat_card(config: Any, render_backend: Any, dish: Dish, body: str) -> str:
@@ -459,3 +641,19 @@ def build_eat_capability(
         )
 
     return capability
+
+
+if __name__ == "__main__":  # pragma: no cover - 运维预热入口（python -m ...eat --prewarm）
+    import argparse
+
+    _parser = argparse.ArgumentParser(
+        description="菜谱封面图库预热（Bing 实拍图 + 像素质检 + SQLite 索引）"
+    )
+    _parser.add_argument("--limit", type=int, default=0, help="只预热前 N 个缺失项（0=全部）")
+    _parser.add_argument("--dishes", nargs="*", default=None, help="指定菜名（缺省=全量菜品库）")
+    _args = _parser.parse_args()
+    _results = prewarm_food_images(dishes=_args.dishes, limit=_args.limit)
+    _ok = sum(1 for _v in _results.values() if _v)
+    print(f"预热完成：{_ok}/{len(_results)} 有图")
+    for _name, _path in _results.items():
+        print(("  OK  " if _path else "  MISS ") + _name + ("" if _path else "（下次重试）"))

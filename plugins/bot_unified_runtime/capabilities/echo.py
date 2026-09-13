@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any, TypedDict
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.config_readiness import run_config_smoke
 from plugins.bot_unified_runtime.contracts import (
@@ -27,6 +28,19 @@ class HelpEntry(TypedDict, total=False):
     title_line: str
     lines: list[str]
     detail: str
+    # 结构化扩展（向后兼容）：未填可省。数据经 _HELP_ENTRY_META 侧表登记、
+    # 运行时合并；约定只在条目文本或项目文档有据时填写，宁缺勿臆造。
+    capability: str
+    network: bool
+    chat_scope: str
+    triggers_nl: tuple[str, ...]
+    triggers_nickname: tuple[str, ...]
+    config_vars: tuple[str, ...]
+    examples: tuple[str, ...]
+    tests: tuple[str, ...]
+    outputs: tuple[str, ...]
+    html_image: bool
+    fallback: str
 
 
 def _is_admin_actor(actor_roles: list[str] | None) -> bool:
@@ -48,7 +62,7 @@ def build_status_result(
             capability_id="bot.status",
             kind="text",
             title="状态",
-            body="只有管理员可以查看运行时状态。",
+            body=user_copy.ADMIN_GATE_REQUIRED.format(action="看运行时状态"),
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PUBLIC,
             send_policy=SendPolicy.IMMEDIATE,
@@ -107,17 +121,14 @@ def resolve_help_query(command_text: str) -> str:
     return ""
 
 
-_HELP_PAGE_COUNT = 1
-_HELP_INDEX_COMMAND_TOPICS = frozenset(
-    {"上下文", "对话", "模型", "接入", "配置", "就绪", "角色", "人格"}
-)
 # Ordinary users see only interactive public capabilities. Diagnostics, state,
 # history and administration remain available to administrators.
 _PUBLIC_HELP_TOPICS = frozenset(
     {
-        "订阅", "点歌", "表情", "天气", "行情", "占卜", "快报", "维基", "萌娘百科",
+        "订阅", "点歌", "表情", "天气", "行情", "个股行情", "汇率", "占卜", "快报", "维基", "萌娘百科",
         "历史上的今天", "下载", "昵称", "链接", "Epic", "好感度", "吃什么", "偷表情",
         "随机图", "提醒", "搜图", "记忆", "路由", "草稿",
+        "帮助", "聊天", "戳一戳", "表情收库", "自然语言",
     }
 )
 
@@ -128,12 +139,6 @@ def _visible_help_entries(is_admin: bool) -> list[HelpEntry]:
     return [entry for entry in _HELP_ENTRIES if entry["topic"] in _PUBLIC_HELP_TOPICS]
 
 
-def _help_index_line(entry: HelpEntry) -> str:
-    if entry["topic"] in _HELP_INDEX_COMMAND_TOPICS:
-        return str(entry["index"])
-    return f"【{entry['topic']}】"
-
-
 _HELP_CATEGORIES = (
     (
         "管理员专属",
@@ -142,7 +147,7 @@ _HELP_CATEGORIES = (
             "对话", "历史", "人格", "角色", "队列", "配置", "就绪", "接入",
             "暂停", "回复", "设置", "凭据", "群策略", "群文件", "文件",
             "身份", "怪癖", "限流", "合并转发", "群摘要", "视频理解", "运行开关",
-            "邮件", "Telegram", "供应商",
+            "邮件", "Telegram", "供应商", "忽略",
         },
     ),
     ("大模型相关", {"模型", "用量", "搜索"}),
@@ -150,9 +155,9 @@ _HELP_CATEGORIES = (
         "子功能",
         {
             "订阅", "点歌", "表情", "偷表情", "搜图", "Epic", "历史上的今天",
-            "天气", "行情", "占卜", "快报", "维基", "萌娘百科", "下载",
+            "天气", "行情", "个股行情", "汇率", "占卜", "快报", "维基", "萌娘百科", "下载",
             "昵称", "链接", "吃什么", "好感度", "随机图", "提醒", "记忆", "路由",
-            "草稿",
+            "草稿", "帮助", "聊天", "戳一戳", "表情收库", "自然语言",
         },
     ),
 )
@@ -205,7 +210,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '状态',
             "admin_only": True,
-            "aliases": ('状态', 'status'),
+            "aliases": ('状态', '狀態', 'status'),
             "index": '【状态】查看运行状态摘要：/bot status',
             "title_line": '【状态】查看运行状态摘要',
             "lines": [
@@ -551,7 +556,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '暂停',
             "admin_only": True,
-            "aliases": ('暂停', 'pause', 'resume', '恢复'),
+            "aliases": ('暂停', '暫停', 'pause', 'resume', '恢复', '继续', '繼續'),
             "index": '【暂停】软暂停/恢复：/bot pause|resume',
             "title_line": '【暂停】软暂停/恢复机器人回复',
             "lines": [
@@ -692,7 +697,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '设置',
             "admin_only": True,
-            "aliases": ('设置', 'runtime', '参数', '运行时'),
+            "aliases": ('设置', 'runtime', '参数', '設置', '參數', '运行时'),
             "index": '【设置】运行时参数：/bot runtime set|get|list|reset|nickname|persona|instance',
             "title_line": '【设置】运行时参数管理（管理员）',
             "lines": [
@@ -773,7 +778,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '凭据',
             "admin_only": True,
-            "aliases": ('凭据', 'alert', 'cookie'),
+            "aliases": ('凭据', '凭证', '憑據', '憑證', '登录凭证', '登錄憑證', 'alert', 'cookie'),
             "index": '【凭据】凭据健康与 cookie 导入：/bot alert check｜/bot cookie status|import|login|check|expiry',
             "title_line": '【凭据】检查 cookie/凭据健康',
             "lines": [
@@ -905,30 +910,43 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '身份',
             "admin_only": True,
             "aliases": ('身份', 'identity', '会话身份'),
-            "index": '【身份】会话身份记忆：/bot identity show|set|tag|clear',
-            "title_line": '【身份】会话级身份记忆（管理员）',
+            "index": '【身份】会话身份记忆：/bot identity show|set|tag|clear｜自助称谓偏好：set-name|set-gender|unset-name|unset-gender',
+            "title_line": '【身份】会话级身份记忆（管理员）＋用户自助称谓偏好',
             "lines": [
                 '/bot identity show：作用=查看本会话身份；参数=无；内容=称呼/标签/设置人/更新时间（未设置会明说）；意义=核对当前会话的身份设定。',
                 '/bot identity set <昵称>：作用=设定本会话称呼；参数=昵称（必填，非空文本，如 set 岸宝）；内容=已设定称呼确认；意义=让机器人在这群/这个私聊里只这么叫你。',
                 '/bot identity tag <标签1,标签2>：作用=设定标签；参数=标签串（必填，逗号分隔，最多保留 8 个）；内容=已设定标签确认；意义=给语气调整提供更多线索。',
                 '/bot identity clear：作用=清除本会话身份；参数=无；内容=已清除/本就没有；意义=恢复默认。',
                 '权限=仅管理员；在哪个群/私聊执行就对哪个会话生效，各会话互不影响；只影响称呼与语气，人格不变（渲染层内建防 OOC 护栏）。',
+                '/bot identity set-name <称呼>：作用=设置机器人对你的称谓偏好；参数=称呼（必填，非空，≤32 字）；内容=已记下确认；意义=无需管理员，你自己决定机器人怎么叫你（群里按「这个群+你」生效，私聊按你生效）。',
+                '/bot identity set-gender <male|female|nonbinary|custom|unknown>：作用=登记你的性别自述；参数=五个值之一（大小写不敏感）；内容=已记下确认；意义=让语气分寸更合适；非法值不记录并列出可接受值。',
+                '/bot identity unset-name：作用=清除称谓偏好；参数=无；内容=已清除/本就没有；意义=恢复自动称呼。',
+                '/bot identity unset-gender：作用=清除性别自述；参数=无；内容=已清除/本就没有；意义=恢复 unknown。',
+                '自助子命令权限=所有用户（只能操作自己的偏好，无他人参数）；unset 为整条记录清除（称谓与性别自述一并移除）；称谓偏好与上方管理员会话身份是两套数据，自助偏好优先级更高。',
             ],
             "detail": (
                 '【板块介绍】\n'
                 '  给单个会话（群或私聊）设置独立的身份记忆：机器人怎么称呼你、带哪些\n'
                 '  标签。在哪个会话执行就只对那个会话生效。数据存\n'
                 '  data/session_identity.sqlite3（.env 可用 BOT_SESSION_IDENTITY_DB_PATH 改路径）。\n'
+                '  另有无需管理员的用户自助称谓偏好（set-name/set-gender/unset-name/\n'
+                '  unset-gender）：存 data/addressing_preferences.sqlite3，聊天人格上下文\n'
+                '  会优先采用你显式声明的称谓与性别。\n'
                 '【指令与参数】\n'
                 '/bot identity show：作用=查看；参数=无；内容=称呼「…」＋标签＋设置人＋更新时间；意义=核对。\n'
                 '/bot identity set <昵称>：作用=设称呼；参数=昵称必填（非空文本，可含中文/英文，建议 ≤16 字）；内容=已设定确认；意义=个性化称呼。\n'
                 '/bot identity tag <标签1,标签2>：作用=设标签；参数=逗号分隔标签串（最多保留 8 个，超出截断）；内容=已设定确认；意义=补充语气线索。\n'
                 '/bot identity clear：作用=清除；参数=无；内容=清除确认；意义=重置。\n'
+                '/bot identity set-name <称呼>：作用=自助设称谓；参数=称呼必填（非空，≤32 字）；内容=已记下确认；意义=无需管理员，自己定称呼。\n'
+                '/bot identity set-gender <值>：作用=自助登记性别自述；参数=male|female|nonbinary|custom|unknown（大小写不敏感）；内容=已记下确认；意义=语气分寸更合适，非法值不落库。\n'
+                '/bot identity unset-name：作用=清除称谓偏好；参数=无；内容=已清除/本就没有；意义=恢复自动称呼。\n'
+                '/bot identity unset-gender：作用=清除性别自述；参数=无；内容=已清除/本就没有；意义=恢复 unknown。\n'
                 '【权限与效果】\n'
                 '  权限=仅管理员。只调整该会话内的称呼与语气，不改变守岸人核心人格；\n'
                 '  防止会话身份被用来推翻人格设定（防 OOC 护栏内建于渲染层）。\n'
-                '【示例】/bot identity set 岸宝｜/bot identity tag 早起,秃头,干饭人'
-            ),
+                '  例外：set-name/set-gender/unset-name/unset-gender 四个自助子命令\n'
+                '  所有用户可用，且只能操作自己的偏好。\n'
+                '【示例】/bot identity set 岸宝｜/bot identity tag 早起,秃头,干饭人｜/bot identity set-name 岸友')
         },
         {
             "topic": '怪癖',
@@ -969,10 +987,12 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "index": '【限流】群句数帽/情绪豁免/安静时间/自动接话：BOT_RATE_LIMIT_*、BOT_QUIET_HOURS_*',
             "title_line": '【限流】群聊句数帽、情绪豁免、安静时间与自动接话（管理员）',
             "lines": [
-                '群聊句数帽：BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR / BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE，取值=≥0 整数（0=该帽不生效），默认 0；内容=超帽后普通回复被静默拦截；意义=防刷屏。',
-                '情绪豁免：BOT_RATE_LIMIT_EMOTION_EXEMPT，取值=true/false，默认 true；内容=安抚类回复不被句数帽拦截；意义=该安慰的时候不被限流卡住。',
-                '自动接话：BOT_GROUP_CHAT_AUTO_REPLY_ENABLED（true/false，默认 false）＋BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY（0..1，默认 0.05）；内容=未点名消息按概率（与心情系数相乘）抽签接话；意义=群活跃度调节。',
-                '安静时间 6 键：BOT_QUIET_HOURS_ENABLED / BOT_QUIET_HOURS_START / BOT_QUIET_HOURS_END / BOT_QUIET_HOURS_TIMEZONE / BOT_QUIET_HOURS_SESSION_TYPES / BOT_QUIET_HOURS_BYPASS_ROLES；内容=窗口内只拦截未点名的普通聊天/解析；意义=定时闭嘴。',
+                'BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR：作用=每小时群聊句数帽；参数=≥0 整数（默认 0=该帽不生效）；内容=超帽后普通回复被静默拦截；意义=防刷屏。',
+                'BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE：作用=每分钟群聊句数帽；参数=≥0 整数（默认 0=该帽不生效）；内容=超帽即拦，管住脉冲连发；意义=小时帽的补充。',
+                'BOT_RATE_LIMIT_EMOTION_EXEMPT：作用=情绪豁免；参数=true/false（默认 true）；内容=安抚类回复不被句数帽拦截；意义=该安慰的时候不被限流卡住。',
+                'BOT_GROUP_CHAT_AUTO_REPLY_ENABLED：作用=自动接话总开关；参数=true/false（默认 false）；内容=开启后未点名群消息按概率抽签接话，点名/命令不受影响；意义=群活跃度调节。',
+                'BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY：作用=接话概率；参数=0..1（默认 0.004，与心情系数相乘后封顶 1.0）；内容=每次抽签现算，低落时少插话、兴奋时更活跃；意义=心情联动的活跃度旋钮。',
+                'BOT_QUIET_HOURS_*：作用=安静时间窗；参数=BOT_QUIET_HOURS_ENABLED（true/false）/BOT_QUIET_HOURS_START·END（HH:MM，支持跨零点，默认 00:00-06:00）/BOT_QUIET_HOURS_TIMEZONE（IANA 名）/BOT_QUIET_HOURS_SESSION_TYPES（group|private|email 逗号分隔，默认 group）/BOT_QUIET_HOURS_BYPASS_ROLES（默认 admin）；内容=窗口内只拦截未点名的普通聊天/解析；意义=定时闭嘴。',
                 '修改方式：以上全部支持 /bot runtime set 热改，立即生效（接话总开关 ENABLED 装配期读取，改后需重启）。',
                 '示例：/bot runtime set BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR 60',
             ],
@@ -985,8 +1005,8 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 'BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE：作用=每分钟句数帽；参数=同上；内容=同上；意义=脉冲防护；用户口径建议 60/小时、3/分钟。\n'
                 'BOT_RATE_LIMIT_EMOTION_EXEMPT：作用=情绪豁免；参数=true/false（默认 true）；内容=安抚类回复绕过句数帽；意义=该安慰的时候不被限流卡住。\n'
                 'BOT_GROUP_CHAT_AUTO_REPLY_ENABLED：作用=自动接话总开关；参数=true/false（默认 false）；内容=开/关；意义=接话前提。\n'
-                'BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY：作用=接话概率；参数=0..1（默认 0.05，与心情系数相乘后封顶 1.0）；内容=抽签；意义=频率。\n'
-                '安静时间 6 键：ENABLED（true/false）、START/END（HH:MM，支持跨零点，默认 00:00-06:00）、TIMEZONE（IANA 名）、SESSION_TYPES（group|private|email 逗号分隔，默认 group）、BYPASS_ROLES（默认 admin）；内容=窗口内只拦未点名普通聊天/解析；意义=作息。\n'
+                'BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY：作用=接话概率；参数=0..1（默认 0.004，与心情系数相乘后封顶 1.0）；内容=每次抽签现算；意义=频率。\n'
+                '安静时间 6 键：作用=安静时间窗；参数=ENABLED（true/false）、START/END（HH:MM，支持跨零点，默认 00:00-06:00）、TIMEZONE（IANA 名）、SESSION_TYPES（group|private|email 逗号分隔，默认 group）、BYPASS_ROLES（默认 admin）；内容=窗口内只拦未点名普通聊天/解析；意义=作息。\n'
                 '【权限与效果】\n'
                 '  权限=仅管理员。热改立即生效；点名/显式命令永远不受安静时间与概率影响；\n'
                 '  自动接话用确定性哈希抽签，同一消息结果稳定。\n'
@@ -1028,11 +1048,14 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "index": '【群摘要】群聊摘要与名单：BOT_SHARED_GROUP_CONTEXT_ENABLED、BOT_GROUP_DIGEST_*、每日通讯总结推送',
             "title_line": '【群摘要】群聊上下文摘要、群名单与每日通讯总结推送（管理员）',
             "lines": [
-                '总开关：BOT_SHARED_GROUP_CONTEXT_ENABLED，取值=true/false，默认 false；内容=开启才生成群摘要；意义=群上下文感知的前提。',
-                '名单模式：BOT_GROUP_DIGEST_LIST_MODE，取值=whitelist|blacklist|off|all，默认空；内容=whitelist 仅名单内群/blacklist 排除名单内群；意义=控制哪些群参与。',
-                '名单：BOT_GROUP_DIGEST_WHITELIST / BOT_GROUP_DIGEST_BLACKLIST，取值=数字群号列表（逗号/分号/顿号/空白分隔或 JSON 数组，自动去重，非数字拒绝）；内容=名单生效；意义=精确圈群。',
-                '每日通讯总结推送：BOT_GROUP_DIGEST_PUSH_ENABLED（.env 键，true/false，默认 true）＋BOT_GROUP_DIGEST_PUSH_TIME（HH:MM，0-23:0-59，默认 21:30）；内容=每天定时把当日群摘要推给白名单群各一遍（list_mode 非 whitelist 时零推送，绝不猜群）；意义=夜间日报。',
-                '衍生键：BOT_GROUP_DIGEST_MAX_TURNS（默认 150）、BOT_GROUP_DIGEST_MAX_CHARS（默认 800）、BOT_GROUP_DIGEST_LLM_ENABLED（默认 false）。',
+                'BOT_SHARED_GROUP_CONTEXT_ENABLED：作用=群摘要总开关；参数=true/false（默认 false）；内容=开启才把群内近期对话浓缩成摘要供人格参考，关闭则完全不生成；意义=群上下文感知的前提。',
+                'BOT_GROUP_DIGEST_LIST_MODE：作用=名单模式；参数=whitelist|blacklist|off|all（默认空=不过滤）；内容=whitelist 仅名单内群参与摘要/blacklist 排除名单内群；意义=控制哪些群参与。',
+                'BOT_GROUP_DIGEST_WHITELIST / BOT_GROUP_DIGEST_BLACKLIST：作用=摘要白/黑名单；参数=数字群号列表（逗号/分号/顿号/空白分隔或 JSON 数组，自动去重，非数字拒绝）；内容=名单生效，精确圈定参与群；意义=该收的收、该避的避。',
+                'BOT_GROUP_DIGEST_PUSH_ENABLED：作用=每日通讯总结推送开关；参数=true/false（.env 键，默认 true，不进 runtime set 白名单）；内容=开/关每日定时推送；意义=夜间日报总闸。',
+                'BOT_GROUP_DIGEST_PUSH_TIME：作用=推送时刻；参数=HH:MM（时 0-23 分 0-59，默认 21:30，非法值启动即报错）；内容=每天这个时刻把当日群摘要推给白名单群各一遍（list_mode 非 whitelist 时零推送，绝不猜群）；意义=错峰推送。',
+                'BOT_GROUP_DIGEST_MAX_TURNS：作用=摘要收录轮数上限；参数=正整数（默认 150）；内容=摘要最多回看最近 150 轮对话；意义=控制上下文窗口。',
+                'BOT_GROUP_DIGEST_MAX_CHARS：作用=摘要字数预算；参数=≥100 整数（默认 800）；内容=摘要文本按字数预算截取；意义=控制注入长度。',
+                'BOT_GROUP_DIGEST_LLM_ENABLED：作用=LLM 润色摘要；参数=true/false（默认 false）；内容=开启后用 LLM 把对话浓缩成更顺的摘要（结果缓存 1 小时）；意义=默认关闭零额外开销。',
                 '示例：/bot runtime set BOT_GROUP_DIGEST_LIST_MODE whitelist → /bot runtime set BOT_GROUP_DIGEST_WHITELIST 1108838060,1076073471',
             ],
             "detail": (
@@ -1059,10 +1082,10 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "index": '【视频理解】识图与视频理解开关：BOT_VISION_ENABLED、BOT_VIDEO_UNDERSTANDING_ENABLED',
             "title_line": '【视频理解】图片/表情包识别与视频理解（管理员）',
             "lines": [
-                '识图开关：BOT_VISION_ENABLED，取值=true/false，默认 false；内容=开启且注册表有可用模型才调用视觉模型；意义=群里发图能被看懂的前提。',
-                '识图模式：BOT_VISION_MODE，取值=relay|direct，默认 direct（relay=视觉模型转文字，direct=图片直传主模型）；内容=识别管线选择；意义=质量与成本取舍。',
-                '识图概率：BOT_VISION_REPLY_PROBABILITY，取值=0..1，默认 1.0（发图即识别回应；0=仅 @ 时看图）；内容=识别触发频率；意义=控制打扰与开销。',
-                '视频理解：BOT_VIDEO_UNDERSTANDING_ENABLED，取值=true/false，默认 false；内容=开启后视频抽帧＋音轨/字幕生成感知简报，支持追问与深挖；关闭走旧抽帧摘要零额外开销；意义=视频消息的深度理解。',
+                'BOT_VISION_ENABLED：作用=识图总闸；参数=true/false（默认 false）；内容=开启且注册表有可用模型才调用视觉模型；意义=群里发图能被看懂的前提。',
+                'BOT_VISION_MODE：作用=识别管线选择；参数=relay|direct（默认 direct）；内容=relay=视觉模型转文字，direct=图片直传主模型；意义=质量与成本取舍。',
+                'BOT_VISION_REPLY_PROBABILITY：作用=识图回应概率；参数=0..1（默认 1.0，0=仅 @ 时看图）；内容=识别触发频率；意义=控制打扰与开销。',
+                'BOT_VIDEO_UNDERSTANDING_ENABLED：作用=视频理解总闸；参数=true/false（默认 false）；内容=开启后视频抽帧＋音轨/字幕生成感知简报，支持追问与深挖，关闭走旧抽帧摘要零额外开销；意义=视频消息的深度理解。',
                 '识别模型管理：/bot model vision list|add|update|priority|remove（详见 /bot help 模型）。',
             ],
             "detail": (
@@ -1205,7 +1228,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '订阅',
             "admin_only": False,
-            "aliases": ('订阅', 'subscribe'),
+            "aliases": ('订阅', '訂閱', 'subscribe'),
             "index": '【订阅】平台新内容推送：/订阅 add|list|pause|resume|remove',
             "title_line": '【订阅】订阅平台新内容推送',
             "lines": [
@@ -1239,7 +1262,8 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '点歌',
             "admin_only": False,
-            "aliases": ('点歌', 'music', '點歌', 'song'),
+            # 點唱/点唱（tra3 波入 music._COMMAND_RE）help 同步入册。
+            "aliases": ('点歌', 'music', '點歌', '点唱', '點唱', 'song', 'diange', 'dg', 'diangemoshi', 'dgms'),
             "index": '【点歌】搜索并发送歌曲：点歌 <歌名>｜点歌 <编号>｜点歌模式 <部件组合>',
             "title_line": '【点歌】搜索并发送歌曲',
             "lines": [
@@ -1269,7 +1293,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '表情',
             "admin_only": False,
-            "aliases": ('表情', 'meme', '表情包', '表情生成'),
+            "aliases": ('表情', 'meme', '表情包', '表情生成', '表情制作', '表情包制作', '表情产生', '表情包产生', '表情製作', '表情包製作', '表情產生', '表情包產生', 'biaoqing', 'biaoqingbao', 'bqb', 'biaoqingshengcheng', 'bqsc'),
             "index": '【表情】生成文字表情：表情 <模板> <文字>｜表情 列表',
             "title_line": '【表情】生成文字表情',
             "lines": [
@@ -1280,7 +1304,8 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "detail": (
                 '【板块介绍】\n'
                 '  对接本地 meme-generator-rs HTTP API（默认 http://127.0.0.1:2233）。\n'
-                '  未安装/未启动服务时能力不可用。总开关 BOT_MEME_COMMAND_ENABLED。\n'
+                '  未安装/未启动服务时能力不可用。总开关 BOT_MEME_COMMAND_ENABLED；\n'
+                '  功能开关 BOT_MEME_API_ENABLED=true（管理员在 .env 配置，需本地 meme-generator-rs 服务）。\n'
                 '【指令与参数】\n'
                 '表情 <模板> [文字]：作用=生成；参数=模板 key 必填；文字按模板 min_texts/max_texts 要求，多段用全角 ｜ 分隔；内容=表情图；意义=梗图。纯 key 无文字时按模板的最少文字数判断是零文字模板还是打错 key。\n'
                 '表情 列表：作用=列模板；参数=无；内容=模板清单；意义=发现。\n'
@@ -1293,7 +1318,9 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '偷表情',
             "admin_only": False,
-            "aliases": ('偷表情', '偷表情包', 'steal'),
+            # 偷圖/偷图（meme_library 双向补齐波）与 表情隨機/隨機表情/隨機表情包/
+            # 表情抽籤（tra49 波）均已入 meme_library._COMMAND_RE，help 同步入册。
+            "aliases": ('偷表情', '偷表情包', '偷圖', '偷图', '表情隨機', '隨機表情', '隨機表情包', '表情抽籤', 'steal', 'toubiaoqing', 'tbq', 'toubiaoqingbao', 'tbqb'),
             "index": '【偷表情】表情库随机：偷表情 [关键词]｜表情库统计',
             "title_line": '【偷表情】从表情库随机抽取',
             "lines": [
@@ -1317,7 +1344,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '搜图',
             "admin_only": False,
-            "aliases": ('搜图', '以图搜图'),
+            "aliases": ('搜图', '搜圖', '以图搜图'),
             "index": '【搜图】图片反搜来源：搜图 ＋图片/@图片',
             "title_line": '【搜图】SauceNAO 图片反搜',
             "lines": [
@@ -1337,7 +1364,9 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '天气',
             "admin_only": False,
-            "aliases": ('天气', 'weather'),
+            # 天氣/查天氣/天氣預報均在 weather._WEATHER_RE（天氣預報=tra3 修活），
+            # 与 META triggers_nickname 已登记词形对齐，help 解析同步。
+            "aliases": ('天气', 'weather', '天氣', '查天氣', '天氣預報', 'tianqi', 'tq', 'chatianqi', 'ctq'),
             "index": '【天气】查询城市/区县天气：天气 <城市>｜支持区县 <省>',
             "title_line": '【天气】查询城市与区县天气',
             "lines": [
@@ -1361,7 +1390,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '行情',
             "admin_only": False,
-            "aliases": ('行情', 'market', '股指', '大盘', '美股行情', '港股行情', 'A股行情'),
+            "aliases": ('行情', 'market', 'stock market', '股指', '大盘', '美股行情', '港股行情', 'A股行情', 'hangqing', 'hq', 'gushi', 'gs', 'dapan', 'dp', 'guzhi'),
             "index": '【行情】全球股指：行情 或 美股行情/港股行情/A股行情/B股行情/莫斯科行情…',
             "title_line": '【行情】全球主要股指行情',
             "lines": [
@@ -1381,9 +1410,67 @@ _HELP_ENTRIES: list[HelpEntry] = [
             ),
         },
         {
+            "topic": '个股行情',
+            "admin_only": False,
+            "aliases": ('个股行情', '股价', '股票价格', '市值', '股價', '個股', '英伟达股价', 'AMD 股价', '英特尔股价', '美股股价', 'stocks', 'stock', 'gujia', 'gj', 'gupiao'),
+            "index": '【个股行情】科技公司股价：英伟达股价/AMD 股价/英特尔股价 或 股价/市值/stocks',
+            "title_line": '【个股行情】上市科技公司股价与市值',
+            "lines": [
+                '股价 / 市值 / stocks：作用=九家科技巨头面板；参数=无（不点名公司）；内容=九家美股科技公司一行一价（现价/涨跌幅/近 30 个交易日走势折线＋日收益分布箱形图）；意义=一图看盘。',
+                '公司名 + 股价：作用=查单家公司行情；参数=公司名或 ticker（必填）；内容=现价/涨跌幅/日 K/KDJ/总市值金融卡＋延迟标注；意义=聚焦关注的股票。',
+                'OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有来源的估值口径说明（官方公告/公开报道）；意义=未上市不给股价，只给可信估值。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  数据来自东方财富免费接口（免 key），进程内 60 秒缓存，免费源为\n'
+                '  延迟口径、卡上如实标注。当前支持：英伟达（NVDA）、AMD、英特尔\n'
+                '  （INTC）、苹果（AAPL）、微软（MSFT）、谷歌（GOOGL）、亚马逊（AMZN）、\n'
+                '  Meta（META）、台积电（TSM）；OpenAI/Anthropic/字节跳动未上市，只给\n'
+                '  有来源的估值说明、不接行情。触发收窄：≤32 字、不带链接；裸「行情」\n'
+                '  仍归全球股指，两者互不抢路由。\n'
+                '【指令与参数】\n'
+                '股价 [公司名]：作用=查股价/市值；参数=公司名或 ticker 可选（英伟达/AMD/英特尔/苹果/微软/谷歌/亚马逊/Meta/台积电，繁体 股價/個股 与英文 stock/stocks 同样可触发；不点名=九家面板）；内容=金融卡或纯文本速览；意义=个股速览。\n'
+                '【权限与效果】\n'
+                '  权限=全员，群聊/私聊行为一致。走势折线为近 30 个交易日收盘；\n'
+                '  箱形图只画多日分布，单日 K 线不成箱（不把 K 线冒充分布）。\n'
+                '【失败兜底】行情拉不到回「美股行情暂时拉不到，晚点再试试？」；\n'
+                '  卡片渲染失败自动回退纯文本。\n'
+                '【示例】英伟达股价｜AMD 股价｜英特尔股价｜股价｜市值｜美股股价｜stocks'
+            ),
+        },
+        {
+            "topic": '汇率',
+            "admin_only": False,
+            "aliases": ('汇率', '匯率', '主要货币', '美元兑人民币', '100日元换多少人民币', 'USD/CNY', 'fx', 'forex', 'exchange rate', 'huilv', '换算', '換算'),
+            "index": '【汇率】主要货币汇率：汇率 或 美元兑人民币/100日元换多少人民币/USD/CNY',
+            "title_line": '【汇率】主要货币汇率速览与换算',
+            "lines": [
+                '汇率：作用=主要货币面板；参数=无；内容=USD 基准的主要货币对速览（中间价/参考价口径）＋无源货币对诚实标注；意义=一眼看汇市。',
+                '美元兑人民币 / USD/CNY：作用=查指定货币对；参数=两种币名或 ISO 代码（中文、英文大小写均可）；内容=单行换算与口径/延迟标注；意义=定点查询。',
+                '100日元换多少人民币：作用=带金额换算；参数=金额+币名（金额可省，省略按 1 计）；内容=按中间价折算的结果；意义=换钱参考。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  数据来自东方财富快查（免 key），进程内 60 秒缓存；中间价/参考价\n'
+                '  口径、延迟行情与非可成交价提示都标在卡上。覆盖 11 币种（USD/EUR/\n'
+                '  GBP/JPY/KRW/TWD/CNY/HKD/SGD/MOP/AED）；USD/TWD、USD/MOP、USD/AED\n'
+                '  东财暂无行情，会诚实说「暂无数据」，绝不补 0。汇率无可用日 K，\n'
+                '  卡上走势一栏如实标注，不伪造走势。\n'
+                '【指令与参数】\n'
+                '汇率 [币种]：作用=面板或单查；参数=币种可选（美元/人民币/日元/韩元/港币/欧元/英镑/新台币/新加坡元/澳门币/迪拉姆 或 ISO 代码；「美元汇率」这类单查默认兑人民币）；内容=汇率速览或换算行；意义=日常查询。\n'
+                '【权限与效果】\n'
+                '  权限=全员，群聊/私聊行为一致。繁体（匯率/兌換/換匯）与英文\n'
+                '  （fx/forex/exchange rate）同样可触发；股价/股指等股票语境词会\n'
+                '  自动让路给行情模块，不会误触汇率。\n'
+                '【失败兜底】汇率拉不到回「汇率数据暂时拉不到，稍后再试。」；\n'
+                '  卡片渲染失败自动回退纯文本。\n'
+                '【示例】汇率｜美元兑人民币｜100日元换多少人民币｜USD/CNY｜匯率'
+            ),
+        },
+        {
             "topic": '占卜',
             "admin_only": False,
-            "aliases": ('占卜', '塔罗', '八字', '算命', '算卦', '起卦'),
+            "aliases": ('占卜', '塔罗', '八字', '算命', '算卦', '起卦', '塔羅', '排盤', '排盘', '命盤', '命盘', '搖卦', '摇卦', '今日塔羅', '今日塔罗', '今天塔羅', '今天塔罗', '塔羅三張', '塔罗三张', 'divination', 'tarot', 'bazi', 'iching', 'zhanbu', 'taluo', 'tl', 'suanming', 'suangua', 'sg', 'qigua', 'qg', '求籤', '求签', '六十四卦', '金錢卦', '金钱卦', '生辰八字', '算一卦', '起一卦', '摇一卦', '搖一卦', '掷一卦', '擲一卦', '占一卦', '一卦', '每日一签', '每日一簽', '每日一抽', 'paipan', 'sizhu', 'mingpan', 'pp', 'mp', 'yaogua', 'yg', 'liushisigua', 'lssg', 'jinqiangua', 'hexagram'),
             "index": '【占卜】八字排盘/塔罗/金钱卦（含地支藏干）：占卜 | 塔罗 三张 | 八字 1998年3月2日早上7点',
             "title_line": '【占卜】玄学娱乐三件套',
             "lines": [
@@ -1413,7 +1500,8 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '快报',
             "admin_only": False,
-            "aliases": ('快报', '今日快报', '早报', '晚报', '今日热点', '科技新闻', 'AI新闻', '财经快报', '国际新闻'),
+            # 快報族 10 词（tra2 波入 _NEWS_TRIGGER_RE，与简体逐词同序）help 同步入册。
+            "aliases": ('快报', '快報', '今日快报', '早报', '早報', '晚报', '晚報', '今日热点', '今日熱點', '科技新闻', '科技新聞', 'AI新闻', 'AI新聞', 'AI快報', '财经快报', '財經快報', '财经新闻', '財經新聞', '国际新闻', '國際新聞', 'news', 'kuaibao', 'kb', 'jinrikuaibao', 'jrkb'),
             "index": '【快报】今日新闻快报：快报 或 科技新闻/AI新闻/财经快报/国际新闻',
             "title_line": '【快报】今日新闻快报',
             "lines": [
@@ -1440,7 +1528,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '维基',
             "admin_only": False,
-            "aliases": ('维基', 'wiki', '百科'),
+            "aliases": ('维基', 'wiki', '百科', 'weiji', 'wjbk'),
             "index": '【维基】查询百科词条：维基 <词条>',
             "title_line": '【维基】查询百科词条',
             "lines": [
@@ -1461,7 +1549,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '萌娘百科',
             "admin_only": False,
-            "aliases": ('萌娘百科', '萌百', 'moegirl'),
+            "aliases": ('萌娘百科', '萌百', 'moegirl', 'mengbai', 'mb', '是誰', '是什麼', '介紹一下', '是谁', '是什么', '介绍一下'),
             "index": '【萌娘百科】查询萌娘百科：萌娘百科 <词条>｜直接问 XX是谁',
             "title_line": '【萌娘百科】查询萌娘百科词条',
             "lines": [
@@ -1485,7 +1573,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '历史上的今天',
             "admin_only": False,
-            "aliases": ('历史上的今天', 'today', '今日'),
+            "aliases": ('历史上的今天', 'today', 'today in history', '今日', 'lssd', 'jinrilishi', 'jrls'),
             "index": '【历史上的今天】每日历史推送：立即查 | 设置 HH:MM | 状态 | 取消',
             "title_line": '【历史上的今天】每天定时推送历史',
             "lines": [
@@ -1515,7 +1603,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '下载',
             "admin_only": False,
             "aliases": ('下载', 'download'),
-            "index": '【下载】下载视频/音频：/bot download <链接> 或 下载 <链接>',
+            "index": '【下载】下载视频/音频：/bot download <链接>',
             "title_line": '【下载】下载视频/音频',
             "lines": [
                 '/bot download <链接>：作用=下载媒体并回传文件；参数=链接（必填，http(s) 开头；B站/油管/推特/小红书/抖音等）；内容=文字摘要（标题/大小/分辨率/时长/画质标注）＋视频文件段；意义=把在线视频搬进群。',
@@ -1527,7 +1615,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '  yt-dlp 下载到 data/downloads/ 并做媒体分析，经发送管线回传文件段。\n'
                 '  cookies（/bot cookie import）与代理（BOT_DOWNLOAD_PROXY）对下载同样生效。\n'
                 '【指令与参数】\n'
-                '/bot download <链接>（别名：下载 <链接>）：作用=下载；参数=URL 必填；内容=摘要＋文件；意义=核心功能。\n'
+                '/bot download <链接>：作用=下载；参数=URL 必填（http(s) 开头）；内容=摘要＋文件；意义=核心功能。裸发「下载 …」当前不走路由，请使用 /bot 前缀。\n'
                 '【取值范围】\n'
                 '  大小上限 BOT_DOWNLOAD_MAX_BYTES（默认 1073741824=1GB）；最大高度\n'
                 '  BOT_DOWNLOAD_MAX_HEIGHT（默认 0=不限制，超限自动降级）；超时\n'
@@ -1586,7 +1674,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '草稿',
             "admin_only": False,
-            "aliases": ('草稿', 'autosend', '自动发送'),
+            "aliases": ('草稿', 'autosend', '自动发送', '报存', '報存'),
             "index": '【草稿】自然语言起草自动发送：报存 给 <收件人> 发消息|邮件，内容…',
             "title_line": '【草稿】自然语言起草自动发送',
             "lines": [
@@ -1607,7 +1695,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '吃什么',
             "admin_only": False,
-            "aliases": ('吃什么', '吃啥', '菜谱'),
+            "aliases": ('吃什么', '吃啥', '菜谱', 'eat', 'food', 'recipe', 'chishenme', 'csm', 'caipu', 'cp', 'zenmezuo', 'zmz'),
             "index": '【吃什么】随机推荐家常菜/查菜谱：吃什么 | 吃什么 三选一 | 菜谱 番茄炒蛋',
             "title_line": '【吃什么】解决选择困难',
             "lines": [
@@ -1632,7 +1720,8 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '好感度',
             "admin_only": False,
-            "aliases": ('好感度', '好感查看', '查询好感'),
+            # 親密度（tra3）/查詢好感（tra49）已入 affinity._COMMAND_RE，help 同步入册。
+            "aliases": ('好感度', '好感查看', '查询好感', '查詢好感', '親密度', 'affinity', 'haogandu', 'hgd', 'haoganchakan', 'hgck', 'chaxunhaogan', 'cxhg'),
             "index": '【好感度】双向好感与算法：好感度｜好感度 我｜好感度 算法',
             "title_line": '【好感度】守岸人与你的双向好感',
             "lines": [
@@ -1659,7 +1748,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": 'Epic',
             "admin_only": False,
-            "aliases": ('epic', 'epicfree', 'epic free', 'epic 免费', '免费游戏'),
+            "aliases": ('epic', 'epic free', 'epic 免费', '免费游戏', '免費遊戲', '遊戲免費', 'steam免費', '游戏免费', 'steam免费', 'steam 免费'),
             "index": '【Epic】每周免费游戏：epic 或 Epic 免费',
             "title_line": '【Epic】查询每周免费游戏',
             "lines": [
@@ -1679,7 +1768,8 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '随机图',
             "admin_only": False,
-            "aliases": ('随机图', '来张图', 'randpic'),
+            # 隨機圖/來張圖（tra2 波入 DEFAULT_TRIGGER_WORDS）help 同步入册。
+            "aliases": ('随机图', '来张图', '隨機圖', '來張圖', 'randpic', 'suijitu', 'sjt', 'laizhangtu', 'lzt'),
             "index": '【随机图】从图库随机发一张：随机图 / 来张图',
             "title_line": '【随机图】图库随机发图',
             "lines": [
@@ -1704,7 +1794,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '提醒',
             "admin_only": False,
-            "aliases": ('提醒', 'reminder', '叫我', '定时提醒'),
+            "aliases": ('提醒', 'reminder', '叫我', '记得叫', '記得叫', '定时提醒', 'tixingliebiao', 'txlb', 'wodetixing', 'wdtx', 'kankantixing', 'kktx', 'younaxietixing', 'ynxt'),
             "index": '【提醒】到点督促：12点提醒我写作业｜提醒列表｜取消提醒 <id前几位>',
             "title_line": '【提醒】时间点记忆与主动督促',
             "lines": [
@@ -1728,47 +1818,770 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '【示例】12点提醒我写作业｜明天早上8点叫我起床｜半小时后提醒我去看汤｜提醒列表｜取消提醒 a3f2'
             ),
         },
+        {
+            "topic": '帮助',
+            "admin_only": False,
+            "aliases": ('帮助', 'help', '菜单'),
+            "index": '【帮助】查看功能总览与模块教程：/bot help｜/bot help <模块>',
+            "title_line": '【帮助】功能总览与模块教程',
+            "lines": [
+                '/bot help：作用=按权限输出分类总览；参数=无；内容=管理员/大模型/子功能三类清单，每行附「/bot help <模块>」展开引导；意义=一切入口的入口。渲染成功发 Mica 卡，失败回纯文本。',
+                '/bot help <模块>：作用=单模块深度页；参数=模块名或别名（如 /bot help 点歌、/bot help music）；内容=作用/参数/取值/权限四要素＋示例＋详细教程；意义=逐参数自助。',
+                '权限=普通用户只见公开模块，管理员另见诊断与配置模块；查无此模块回「没有找到」并提示相近分类。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  帮助系统自己也是一条命令：总览管「有什么」，深度页管「怎么用」，\n'
+                '  机器可读目录 /bot commands 管「程序对账」。三者和 docs/command-catalog.md\n'
+                '  共享同一份注册数据，改一处全端生效。\n'
+                '【指令与参数】\n'
+                '/bot help：作用=总览；参数=无；内容=分类清单；意义=发现功能。\n'
+                '/bot help <模块>：作用=深度页；参数=模块名/别名；内容=逐参数说明；意义=自助排障。\n'
+                '/bot commands：作用=机器可读目录；参数=无；内容=路由表＋命令清单；意义=脚本对账。\n'
+                '【权限与效果】\n'
+                '  权限=全员；可见范围按角色切换（非管理员查管理员模块会得到「没有找到」）。\n'
+                '【示例】/bot help｜/bot help 点歌｜/bot help help'
+            ),
+        },
+        {
+            "topic": '聊天',
+            "admin_only": False,
+            "aliases": ('聊天', 'chat', '闲聊'),
+            "index": '【聊天】和守岸人自然对话：群里 @点名，私聊直接说',
+            "title_line": '【聊天】人格对话（不可显式调用，靠触发）',
+            "lines": [
+                '群聊：@机器人、昵称点名或直接写名字才会回；其余消息默认静默观察，自动接话开启时按概率抽签，且主动接话受好感门（好感档 ≥ 亲近）。',
+                '私聊：白名单内直接发消息即可对话。',
+                '边界：现实问题会联网检索（仅管理员可见 🔎 调试标记）；世界观问题走人格档案＋向量知识库。',
+                '失败：私聊回守岸人话术提示，群聊保持静默不刷屏。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  聊天是兜底能力：没有任何「/bot chat」式命令，命中不了其他路由的\n'
+                '  文本最终落到这里。它承载人格档案、向量知识库、世界观与好感语气。\n'
+                '【指令与参数】\n'
+                '  无指令：作用=承接所有未命中路由的自然对话；参数=无；内容=人格化回复；意义=产品主体验。触发方式=@点名 / 昵称点名 / 私聊直说。\n'
+                '【权限与效果】\n'
+                '  权限=全员（受群聊门禁与好感门约束）。回复经统一审查与渲染管线。\n'
+                '【示例】（群里 @守岸人）今天状态怎么样？'
+            ),
+        },
+        {
+            "topic": '戳一戳',
+            "admin_only": False,
+            "aliases": ('戳一戳', 'poke'),
+            "index": '【戳一戳】戳机器人有概率收到回应（有冷却）',
+            "title_line": '【戳一戳】戳一戳互动回应',
+            "lines": [
+                '触发=QQ「戳一戳」头像互动；行为=按概率回应，默认有冷却防骚扰。',
+                '可调：BOT_POKE_ENABLED（开关）、BOT_POKE_*_COOLDOWN_SECONDS（冷却）、BOT_POKE_PROBABILITY（概率）。',
+                '权限=全员；无文字命令，属互动事件。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  戳一戳是轻量互动：群友戳机器人头像，机器人按概率回一句话。\n'
+                '  冷却与概率防止连戳刷屏。\n'
+                '【指令与参数】\n'
+                '  无指令：作用=头像互动回应；参数=无；内容=概率性一句回应；意义=轻互动。配置经 .env 或 /bot runtime set（可写键以 runtime 白名单为准）。\n'
+                '【权限与效果】\n'
+                '  权限=全员。开关关闭时戳一戳无任何回应。\n'
+                '【示例】戳一戳守岸人的头像 → 有概率收到回应'
+            ),
+        },
+        {
+            "topic": '表情收库',
+            "admin_only": False,
+            "aliases": ('表情收库', '表情库', 'biaoqingku', 'bqk'),
+            "index": '【表情收库】群聊图片自动入库，成为「偷表情」的弹药库',
+            "title_line": '【表情收库】表情包自动收集（监听生效，无命令）',
+            "lines": [
+                '行为：监听群聊图片，自动异步下载、MD5 去重、≤5MB 入库，SQLite 记元数据。',
+                '筛选：权重打分（守岸人×8 → 鸣潮/战双/库洛×4 → ACG×1.5 → 普通×1；非表情×0.25）；NSFW≥0.2 降权、≥0.8 永不发送；可选 VLM 自动打标。',
+                '消费：用「偷表情 [关键词]」加权随机抽取，用「表情库统计」看库存；本模块自身无命令、靠监听生效。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  表情收库是「偷表情」的后勤：群友发的图自动攒成表情库，机器人\n'
+                '  心情低时还会偏向发吵闹梗。工程上有冷却、群黑白名单与 LRU 上限。\n'
+                '【指令与参数】\n'
+                '  本模块无命令：作用=自动收库；参数=无；内容=群图异步入库（不直接回复）；意义=偷表情的弹药库。库存操作入口：偷表情｜表情库统计（见「偷表情」模块）。\n'
+                '【权限与效果】\n'
+                '  权限=全员（被动机制）。下载绝不阻塞消息主链路。\n'
+                '【示例】群里发一张表情图 → 自动入库 → 之后「偷表情」可能抽到它'
+            ),
+        },
+        {
+            "topic": '自然语言',
+            "admin_only": False,
+            "aliases": ('自然语言', '自然语言命令'),
+            "index": '【自然语言】不用记命令，直接说话：帮我查杭州天气/来首晴天/今天有什么免费游戏',
+            "title_line": '【自然语言】一句话归一成命令',
+            "lines": [
+                '天气：帮我查一下杭州天气｜杭州天气怎么样 → 「天气 杭州」。',
+                '点歌：来首晴天｜放首歌 晴天｜帮我放一首周杰伦的歌 → 「点歌 …」。',
+                '维基：帮我查维基 鸣潮 → 「wiki 鸣潮」；Epic：今天有什么免费游戏 → 「epic」。',
+                '历史上的今天：今天历史上发生了什么 → 「历史上的今天」；偷表情：来张表情包 → 「偷表情」。',
+                '未命中自然语言意图的文本会正常落入人格聊天，不会报错。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  自然语言层（priority 45）把口语说法归一成标准命令再进对应模块，\n'
+                '  带城市黑名单与禁词保护，避免把「天气真好」当成天气查询。\n'
+                '【指令与参数】\n'
+                '  无固定指令：作用=把口语归一成标准命令；参数=自然语言本身；内容=命中后按目标模块回复；意义=零记忆成本。查询类动词：帮我/麻烦/请/查一下/看看/告诉我…\n'
+                '【权限与效果】\n'
+                '  权限=全员。命中后按目标模块的权限与门禁执行。\n'
+                '【示例】帮我查杭州天气｜来首晴天｜今天有什么免费游戏'
+            ),
+        },
+        {
+            "topic": '忽略',
+            "admin_only": True,
+            "aliases": ('忽略', 'ignore'),
+            "index": '【忽略】哪些消息会被静默不回（排障「为什么不回我」）',
+            "title_line": '【忽略】静默路由与沉默原因',
+            "lines": [
+                '空消息/无有效文本 → IGNORE，不回复。',
+                '群聊非命令、非 @点名、非昵称点名 → passive 静默观察；自动接话开启时按概率抽签，且受好感门（≥ 亲近）。',
+                '安静时间窗内、限流句数帽超帽、群策略 black1 → 静默拦截（黑名单完全只收不发）。',
+                '排障路径：/bot status 看姿态 → /bot why <id> 看单条决策 → 本模块理解沉默语义。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  「忽略」是路由兜底语义：机器人不回 ≠ 出故障，多数沉默是门禁与\n'
+                '  策略按设计工作。本模块帮助管理员区分「按设计沉默」与「真异常」。\n'
+                '【指令与参数】\n'
+                '  无专属命令：作用=解释沉默；参数=无；内容=不回复（按设计）；意义=区分按设计沉默与真异常。相关诊断：/bot status、/bot why、/bot route <文本>（route 会直接告诉你这段文本命中哪条路由）。\n'
+                '【权限与效果】\n'
+                '  权限=仅管理员（排障语义）。\n'
+                '【示例】/bot route 今天天气不错 → 显示 chat 路由（正常回复场景）'
+            ),
+        },
     ]
+
+# 结构化元数据侧表：运行时（下方合并循环）与 scripts/command_catalog.py 的静态
+# 提取共享同一份数据，防止帮助页与命令目录漂移。只登记有条目文本或项目文档依据的事实。
+_HELP_ENTRY_META: dict[str, dict[str, Any]] = {
+    "状态": {
+        "capability": "bot.status",
+        "triggers_nickname": ("状态", "狀態", "status", "查询"),
+        "examples": ("/bot status",),
+        "tests": ("tests/test_bot_commands_catalog_b10.py",),
+    },
+    "记忆": {
+        "capability": "bot.memory",
+        "network": False,
+        "outputs": ("文本",),
+        "triggers_nickname": ("记忆", "memory"),
+        "chat_scope": "私聊=全部个人记忆；群聊=仅 public/group 两级，防止个人私事被围观",
+        "config_vars": ("BOT_MEMORY_ENABLED", "BOT_MEMORY_DB_PATH"),
+        "examples": ("/bot memory add 我对芒果过敏 --sensitivity=group",),
+        "tests": ("tests/test_memory_router_reuse.py", "tests/test_memory_sanitize.py"),
+    },
+    "为什么": {
+        "capability": "bot.why",
+        "triggers_nickname": ("为什么", "为啥", "why"),
+        "examples": ("/bot why｜/bot why help_8f2a1b3c",),
+    },
+    "回执": {
+        "capability": "/bot receipt",
+        "outputs": ("文本",),
+        "config_vars": ("BOT_RECEIPTS_ENABLED",),
+        "examples": ("/bot receipt 7c9f…（用 /bot recent 里出现的 id）",),
+    },
+    "审计": {
+        "capability": "/bot audit",
+        "outputs": ("文本",),
+        "config_vars": ("BOT_AUDIT_ENABLED",),
+        "examples": ("/bot audit music_9a3bb2",),
+    },
+    "最近": {
+        "capability": "/bot recent",
+        "outputs": ("文本",),
+        "examples": ("/bot recent 10",),
+    },
+    "队列": {
+        "capability": "/bot queue",
+        "outputs": ("文本",),
+        "config_vars": ("BOT_SEND_QUEUE_ENABLED",),
+        "examples": ("/bot queue",),
+        "tests": ("tests/test_part_idempotent_resume.py", "tests/test_queue_poison_row.py", "tests/test_auditfix_sender_queue.py"),
+    },
+    "上下文": {
+        "capability": "/bot context",
+        "network": True,
+        "outputs": ("文本",),
+        "examples": ("/bot context 鸣潮的守岸人是谁",),
+    },
+    "对话": {
+        "capability": "bot.dialogue",
+        "network": True,
+        "outputs": ("文本诊断",),
+        "triggers_nickname": ("对话验收", "dialogue"),
+        "examples": ("/bot dialogue 今天状态怎么样",),
+    },
+    "接入": {
+        "capability": "/bot setup llm",
+        "network": False,
+        "outputs": ("Mica 配置卡",),
+        "html_image": True,
+        "fallback": "渲染失败回退纯文本",
+        "config_vars": ("BOT_CHAT_PROVIDER",),
+        "examples": ("/bot setup llm",),
+    },
+    "配置": {
+        "capability": "bot.config",
+        "network": False,
+        "outputs": ("文本",),
+        "triggers_nickname": ("配置", "config"),
+        "examples": ("/bot config",),
+    },
+    "就绪": {
+        "capability": "bot.readiness",
+        "network": False,
+        "outputs": ("文本",),
+        "triggers_nickname": ("就绪", "readiness"),
+        "examples": ("/bot readiness",),
+    },
+    "角色": {
+        "capability": "bot.roles",
+        "network": False,
+        "outputs": ("文本",),
+        "triggers_nickname": ("角色", "roles"),
+        "config_vars": ("BOT_ADMIN_USER_IDS", "BOT_TELEGRAM_ADMIN_USER_IDS"),
+        "examples": ("/bot roles",),
+        "tests": ("tests/test_admin_roster_and_roles.py",),
+    },
+    "人格": {
+        "capability": "bot.persona",
+        "network": False,
+        "outputs": ("文本",),
+        "triggers_nickname": ("人格", "persona"),
+        "examples": ("/bot persona",),
+    },
+    "路由": {
+        "capability": "/bot route",
+        "network": False,
+        "outputs": ("文本",),
+        "examples": ("/bot route 点歌 晴天",),
+    },
+    "历史": {
+        "capability": "bot.history",
+        "network": False,
+        "outputs": ("文本",),
+        "triggers_nickname": ("清理历史", "历史", "history"),
+        "examples": ("/bot history clear",),
+    },
+    "暂停": {
+        "capability": "bot.control",
+        "network": False,
+        "outputs": ("文本",),
+        "triggers_nickname": ("暂停", "暫停", "pause", "继续", "繼續", "resume"),
+        "examples": ("/bot pause → 维护 → /bot resume",),
+    },
+    "回复": {
+        "capability": "/bot reply",
+        "network": False,
+        "outputs": ("文本",),
+        "config_vars": ("BOT_REPLY_DETAIL", "BOT_CHAT_MAX_TOKENS", "BOT_CHAT_FAST_MODE"),
+        "examples": ("/bot reply 详细",),
+    },
+    "模型": {
+        "capability": "/bot model",
+        "triggers_nickname": ("切换模型", "渠道"),
+        "network": True,
+        "config_vars": ("BOT_MODEL_SCHEDULE", "BOT_MODEL_PRIORITY_GROUPS"),
+        "examples": ("/bot model add myapi model=deepseek-v4-pro base_url=https://api.xxx.com/v1 key=sk-xxx tags=low,high,max priority=1",),
+        "tests": ("tests/test_model_admin_and_schedule.py", "tests/test_model_router_failover.py"),
+    },
+    "用量": {
+        "capability": "/bot model usage",
+        "network": False,
+        "outputs": ("文本＋Mica 账单卡",),
+        "html_image": True,
+        "fallback": "渲染失败回退纯文本",
+        "config_vars": ("BOT_USAGE_ALERT_INPUT_TOKENS", "BOT_USAGE_ALERT_OUTPUT_TOKENS", "BOT_USAGE_ALERT_DAILY_COST_YUAN", "BOT_USAGE_REPORT_HOURS"),
+        "examples": ("/bot model usage 2026-09-01",),
+        "tests": ("tests/test_llm_ledger.py", "tests/test_model_effort_groups_and_pricing.py"),
+    },
+    "设置": {
+        "capability": "/bot runtime",
+        "triggers_nickname": ("設置", "參數"),
+        "config_vars": (
+            "BOT_REPLY_DETAIL", "BOT_CHAT_MAX_TOKENS", "BOT_CHAT_FAST_MODE", "BOT_CHAT_REASONING_EFFORT",
+            "BOT_MODEL_PRICES", "BOT_MODEL_SCHEDULE", "BOT_MODEL_PRIORITY_GROUPS", "BOT_VISION_ENABLED",
+            "BOT_QUIET_HOURS_ENABLED", "BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR", "BOT_GROUP_CHAT_AUTO_REPLY_ENABLED",
+        ),
+        "examples": ("/bot runtime set BOT_QUIET_HOURS_ENABLED true",),
+        "tests": ("tests/test_help_entries_coverage.py",),
+    },
+    "搜索": {
+        "capability": "/bot search",
+        "outputs": ("文本（标题/摘要/链接列表）",),
+        "network": True,
+        "config_vars": ("BOT_WEB_SEARCH_MAX_RESULTS",),
+        "examples": ("/bot search 守岸人是什么游戏的角色",),
+        "tests": ("tests/test_search_api_providers.py",),
+    },
+    "解析": {
+        "capability": "/bot parse",
+        "network": False,
+        "outputs": ("文本",),
+        "chat_scope": "解析历史是全局范围（跨群/跨私聊），因此仅管理员可见",
+        "examples": ("/bot parse 20",),
+        "tests": ("tests/test_parse_presentation_v2.py",),
+    },
+    "凭据": {
+        "capability": "/bot cookie",
+        "network": True,
+        "outputs": ("文本；cookie login 另含二维码图",),
+        "chat_scope": "cookie 过期会私聊推送管理员告警",
+        "triggers_nickname": ("凭证", "憑證", "憑據", "登录凭证", "登錄憑證"),
+        "examples": ("/bot cookie import bilibili SESSDATA=...; bili_jct=...",),
+        "tests": ("tests/test_cookie_import_hot_reload.py", "tests/test_platform_credentials.py"),
+    },
+    "群策略": {
+        "capability": "/bot group",
+        "chat_scope": "作用于群聊门禁：black1=完全静默只收不发；black2=只回「@且带指令」",
+        "config_vars": ("BOT_GROUP_BLACK1",),
+        "examples": ("/bot group add white1 123456789 987654321",),
+        "tests": ("tests/test_group_policy.py",),
+    },
+    "群文件": {
+        "capability": "/bot 群文件",
+        "network": False,
+        "outputs": ("文本",),
+        "chat_scope": "仅群聊可用（统计当前群；私聊提示不可用）",
+        "examples": ("/bot 群文件",),
+    },
+    "日志": {
+        "capability": "bot.logs",
+        "network": False,
+        "outputs": ("文本",),
+        "triggers_nickname": ("日志", "logs", "查询日志"),
+        "examples": ("/bot logs error 20",),
+    },
+    "文件": {
+        "capability": "matcher:admin_file_export（文件导出）",
+        "network": True,
+        "fallback": "LLM 失败/转换失败/上传失败均回文本报错",
+        "outputs": ("文件",),
+        "examples": ("文件 docx 鸣潮 2.0 版本角色梯度整理",),
+        "tests": ("tests/test_file_exchange.py", "tests/test_file_gateway_phase1.py"),
+    },
+    "身份": {
+            "capability": "/bot identity",
+            "network": False,
+            "outputs": ("文本",),
+        "chat_scope": "在哪个群/私聊执行就对哪个会话生效，各会话互不影响",
+        "config_vars": ("BOT_SESSION_IDENTITY_DB_PATH",),
+        "examples": ("/bot identity set 岸宝｜/bot identity tag 早起,秃头,干饭人",),
+    },
+    "怪癖": {
+        "capability": "/bot quirk",
+        "network": False,
+        "outputs": ("文本",),
+        "config_vars": ("BOT_QUIRKS_ENABLED",),
+        "examples": ("/bot quirk list pending → /bot quirk approve 3fa2",),
+        "tests": ("tests/test_quirks.py",),
+    },
+    "限流": {
+        "capability": "/bot runtime set（配置型模块，无独立命令）",
+        "outputs": ("无直接输出（配置型模块）",),
+        "chat_scope": "群聊门禁：安静时间、句数帽、情绪豁免、自动接话",
+        "config_vars": (
+            "BOT_QUIET_HOURS_ENABLED", "BOT_QUIET_HOURS_START", "BOT_QUIET_HOURS_END", "BOT_QUIET_HOURS_TIMEZONE",
+            "BOT_QUIET_HOURS_SESSION_TYPES", "BOT_QUIET_HOURS_BYPASS_ROLES", "BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR",
+            "BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE", "BOT_RATE_LIMIT_EMOTION_EXEMPT",
+            "BOT_GROUP_CHAT_AUTO_REPLY_ENABLED", "BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY",
+        ),
+        "examples": ("/bot runtime set BOT_QUIET_HOURS_START 01:00",),
+        "tests": ("tests/test_group_rate_limit.py", "tests/test_sqlite_rate_limit_group.py", "tests/test_policy_sender_interval.py"),
+    },
+    "合并转发": {
+        "capability": "/bot runtime set（配置型模块，无独立命令）",
+        "network": False,
+        "outputs": ("无直接输出（配置型模块）",),
+        "config_vars": ("BOT_RENDER_FORWARD_MIN_NODES", "BOT_RENDER_FORWARD_MIN_CHARS", "BOT_RENDER_FORWARD_MAX_NODES", "BOT_RENDER_FORWARD_NODE_CHARS"),
+        "examples": ("/bot runtime set BOT_RENDER_FORWARD_MIN_NODES 3",),
+    },
+    "群摘要": {
+        "capability": "/bot runtime set（配置型模块，无独立命令）",
+        "outputs": ("每日定时推送文本摘要",),
+        "network": True,
+        "chat_scope": "面向群聊：每日定时向摘要白名单群推送（非白名单零推送）",
+        "config_vars": (
+            "BOT_GROUP_DIGEST_LIST_MODE", "BOT_GROUP_DIGEST_WHITELIST", "BOT_GROUP_DIGEST_BLACKLIST",
+            "BOT_GROUP_DIGEST_LLM_ENABLED", "BOT_GROUP_DIGEST_MAX_CHARS", "BOT_GROUP_DIGEST_MAX_TURNS",
+            "BOT_GROUP_DIGEST_PUSH_ENABLED", "BOT_GROUP_DIGEST_PUSH_TIME", "BOT_SHARED_GROUP_CONTEXT_ENABLED",
+        ),
+        "examples": ("/bot runtime set BOT_GROUP_DIGEST_LIST_MODE whitelist",),
+        "tests": ("tests/test_group_digest_push.py", "tests/test_shared_group_digest_list.py"),
+    },
+    "视频理解": {
+        "capability": "/bot runtime set（配置型模块，无独立命令）",
+        "outputs": ("随回复注入理解结果",),
+        "network": True,
+        "config_vars": (
+            "BOT_VISION_ENABLED", "BOT_VISION_MODE", "BOT_VIDEO_UNDERSTANDING_ENABLED", "BOT_VIDEO_DEEP_ENABLED",
+            "BOT_VIDEO_MAX_FRAMES", "BOT_VIDEO_FUZZY_FOLLOWUP", "BOT_VIDEO_PROGRESS_ACK_ENABLED",
+            "BOT_VIDEO_SKIP_ASR_WITH_SUBTITLE", "BOT_VISION_REPLY_PROBABILITY",
+        ),
+        "examples": ("/bot runtime set BOT_VISION_MODE relay",),
+        "tests": ("tests/test_video_understanding.py", "tests/test_video_seam.py"),
+    },
+    "运行开关": {
+        "capability": ".env（持久化开关，改后重启生效，无运行时命令）",
+        "network": False,
+        "outputs": ("无直接输出（.env 开关）",),
+        "config_vars": ("BOT_SEND_QUEUE_ENABLED", "BOT_SEND_QUEUE_WORKER_ENABLED", "BOT_AUDIT_ENABLED", "BOT_RECEIPTS_ENABLED", "BOT_DIAGNOSTICS_ENABLED", "BOT_SEND_QUEUE_MAX_ITEMS"),
+        "examples": (".env 里 BOT_AUDIT_ENABLED=true 后重启。",),
+    },
+    "邮件": {
+        "capability": "on_command:mail",
+        "outputs": ("文本确认",),
+        "network": True,
+        "examples": ("/mail send someone@example.com | 测试 | 这是一封测试邮件",),
+        "tests": ("tests/test_mail_bridge.py", "tests/test_mail_adapter_resilience.py"),
+    },
+    "Telegram": {
+        "capability": ".env（Telegram 适配器配置）",
+        "outputs": ("跨平台消息/提醒",),
+        "network": True,
+        "config_vars": ("BOT_TELEGRAM_ADMIN_USER_IDS", "BOT_TELEGRAM_ADMIN_CHAT_IDS"),
+        "examples": ('TELEGRAM_BOTS=["123456:ABC-DEF..."]',),
+        "tests": ("tests/test_telegram_parser_v2.py", "tests/test_telegram_media.py"),
+    },
+    "供应商": {
+        "capability": ".env（模型注册表；/bot model 亦可视图）",
+        "network": False,
+        "outputs": ("配置视图（.env/模型注册表）",),
+        "config_vars": ("BOT_MODEL_REGISTRY", "BOT_CHAT_FAST_MAX_CANDIDATES"),
+        "examples": ('BOT_MODEL_REGISTRY={"myapi":{"model":"deepseek-v4-pro","base_url":"https://api.xxx.com/v1","api_key":"env:MY_KEY","group":"g1","priority":1}}',),
+        "tests": ("tests/test_chat_provider_chain.py",),
+    },
+    "订阅": {
+        "capability": "bot.subscribe",
+        "triggers_nickname": ("订阅", "訂閱", "subscribe", "查询订阅"),
+        "network": True,
+        "chat_scope": "群内 add/list 需管理员且推往本群，pause/resume/remove 群内需管理员；私聊添加=推给自己",
+        "examples": ("/订阅 add https://space.bilibili.com/123456",),
+        "tests": ("tests/test_subscribe_capability_v2.py", "tests/test_subscription_delivery_v2.py"),
+    },
+    "点歌": {
+        "capability": "bot.music / bot.music_mode",
+        "chat_scope": "群聊/私聊行为一致（会话仅用作统计 scope/候选键）",
+
+        "triggers_nickname": ("点歌", "點歌", "点唱", "點唱", "music", "点歌模式"),
+        "network": True,
+        "triggers_nl": ("点歌 <歌名>", "来一首", "来首", "放一首", "播放 <歌名>", "唱一首歌"),
+        "outputs": ("卡片图/文本/语音（按点歌模式组合）",),
+        "html_image": True,
+        "fallback": "渲染失败回退纯文本",
+        "config_vars": ("BOT_MUSIC_MODE", "BOT_MUSIC_CANDIDATES_ENABLED", "BOT_MUSIC_CANDIDATES_LIMIT", "BOT_MUSIC_CANDIDATES_TTL_SECONDS"),
+        "examples": ("点歌 晴天｜点歌 2｜点歌模式 卡片+语音",),
+        "tests": ("tests/test_music_capability_analytics_v2.py", "tests/test_music_candidates_card.py", "tests/test_music_charts_real_sources_v2.py"),
+    },
+    "表情": {
+        "capability": "bot.meme",
+        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+
+        "network": False,
+        "triggers_nickname": ("表情製作", "表情包製作", "表情產生", "表情包產生", "表情制作", "表情包制作", "表情产生", "表情包产生"),
+        "triggers_nl": ("表情 <模板> <文字>", "表情帮助"),
+        "outputs": ("图片",),
+        "config_vars": ("BOT_MEME_COMMAND_ENABLED",),
+        "examples": ("表情 petpet 可爱｜表情 文字表情 早上好",),
+        "tests": ("tests/test_meme_domain_fixes.py",),
+    },
+    "偷表情": {
+        "capability": "bot.meme_library",
+        "triggers_nickname": ("偷表情", "偷表情包", "偷圖", "偷图", "随机表情", "表情隨機", "隨機表情", "隨機表情包", "表情抽籤", "表情库统计", "表情统计"),
+        "triggers_nl": ("偷表情", "偷张表情包", "随机来张表情"),
+        "outputs": ("图片",),
+        "chat_scope": "写「私聊/私聊我」等同不填关键词，但改为私聊发送",
+        "config_vars": ("BOT_MEME_LIBRARY_ENABLED", "BOT_MEME_LIBRARY_COOLDOWN_SECONDS"),
+        "examples": ("偷表情｜偷表情 猫猫",),
+        "tests": ("tests/test_meme_domain_fixes.py",),
+    },
+    "搜图": {
+        "capability": "on_message:搜图",
+        "outputs": ("文本（相似度/标题/URL 列表）",),
+        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+
+        "network": True,
+        "triggers_nickname": ("搜图", "搜圖"),
+        "examples": ("（发一张图＋文字）搜图",),
+    },
+    "天气": {
+        "capability": "bot.weather",
+        "chat_scope": "查不到城市：群聊静默不回，私聊回明确报错文本（weather.py 会话分支）",
+
+        "triggers_nickname": ("天气", "查天气", "weather", "天氣", "查天氣", "天氣預報"),
+        "network": True,
+        "triggers_nl": ("天气 <城市>", "帮我查<城市>天气", "<城市>天气怎么样"),
+        "examples": ("天气 上海｜天气 河北-大城｜支持区县 浙江",),
+        "tests": ("tests/test_weather_alerts_b10.py", "tests/test_weather_nmc_retry_nmcflix.py"),
+    },
+    "行情": {
+        "capability": "bot.market",
+        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+
+        "network": True,
+        "triggers_nl": ("行情", "A股行情", "全球股市", "大盘", "market", "stock market"),
+        "outputs": ("釉瑚折线卡（MOEX 无东财 kline 时卡上无折线）/文本",),
+        "html_image": True,
+        "fallback": "渲染失败回退纯文本",
+        "examples": ("行情｜A股行情｜B股行情｜莫斯科行情",),
+        "tests": ("tests/test_market_github.py",),
+    },
+    "个股行情": {
+        "capability": "bot.stocks",
+        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+
+        "network": True,
+        "triggers_nl": ("英伟达股价", "AMD 股价", "英特尔股价", "股价", "市值", "股價", "個股", "美股股价", "stocks", "stock"),
+        "outputs": ("釉瑚金融卡（现价/日 K/KDJ/市值/走势折线/箱形图）/文本",),
+        "html_image": True,
+        "fallback": "行情拉不到回「美股行情暂时拉不到，晚点再试试？」；渲染失败回退纯文本",
+        "config_vars": ("BOT_CARD_RENDER_DIR",),
+        "examples": ("英伟达股价｜AMD 股价｜英特尔股价｜股价｜市值｜美股股价｜stocks",),
+        "tests": ("tests/test_stock_data.py", "tests/test_finance_data.py", "tests/test_finance_routing.py"),
+    },
+    "汇率": {
+        "capability": "bot.fx",
+        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+
+        "network": True,
+        "triggers_nl": ("汇率", "匯率", "美元兑人民币", "100日元换多少人民币", "美元汇率", "换算", "換算", "USD/CNY", "fx", "forex", "exchange rate"),
+        "outputs": ("釉瑚金融卡（货币面板/换算行）/文本",),
+        "html_image": True,
+        "fallback": "汇率拉不到回「汇率数据暂时拉不到，稍后再试。」；渲染失败回退纯文本",
+        "config_vars": ("BOT_CARD_RENDER_DIR",),
+        "examples": ("汇率｜美元兑人民币｜100日元换多少人民币｜USD/CNY｜匯率",),
+        "tests": ("tests/test_fx_data.py", "tests/test_finance_routing.py"),
+    },
+    "占卜": {
+        "capability": "bot.divination",
+        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+
+        "network": False,
+        "triggers_nl": ("占卜", "塔罗", "塔羅", "八字", "算命", "起卦", "排盘", "排盤", "命盘", "命盤", "摇卦", "搖卦", "求签", "求籤", "今日塔罗", "今日塔羅", "今天塔罗", "今天塔羅", "塔罗三张", "塔羅三張", "tarot", "bazi", "iching", "divination"),
+        "examples": ("占卜｜塔罗 三张｜八字 1998年3月2日早上7点",),
+        "tests": ("tests/test_divination.py",),
+    },
+    "快报": {
+        "capability": "bot.news",
+        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+
+        "triggers_nickname": ("快报", "今日快报", "今日热点", "AI新闻", "AI快报", "科技新闻", "财经新闻", "财经快报", "国际新闻", "ai news", "news", "快報", "早報", "晚報", "今日熱點", "科技新聞", "AI新聞", "AI快報", "財經新聞", "財經快報", "國際新聞"),
+        "network": True,
+        "triggers_nl": ("快报", "快報", "今日热点", "今日熱點", "科技新闻", "科技新聞", "AI新闻", "AI新聞", "财经快报", "財經快報", "国际新闻", "國際新聞"),
+        "examples": ("快报｜科技新闻｜财经快报｜国际新闻",),
+        "tests": ("tests/test_news.py",),
+    },
+    "维基": {
+        "capability": "bot.wiki",
+        "outputs": ("文本",),
+        "fallback": "区分「独立页缺失/列表缺失/网络失败」的文本提示",
+        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+
+        "triggers_nickname": ("wiki", "维基", "维基百科", "wikipedia"),
+        "network": True,
+        "triggers_nl": ("维基 <词条>", "wiki <词条>"),
+        "config_vars": ("BOT_WIKI_LANG", "BOT_WIKI_ENTRY_PAGES"),
+        "examples": ("维基 量子力学｜维基 鸣潮守岸人",),
+    },
+    "萌娘百科": {
+        "capability": "bot.moegirl（二次元问句路由同归此能力）",
+        "network": True,
+        "triggers_nl": ("萌娘百科 <词条>", "<角色名>是谁？", "是谁", "是誰", "是什么", "是什麼", "介绍一下", "介紹一下"),
+        "chat_scope": "二次元问句自动查询在群聊不 @ 不抢答（与聊天同门控）",
+        "config_vars": ("BOT_MOEGIRL_QUESTION_ENABLED",),
+        "examples": ("萌娘百科 初音未来｜初音未来是谁？",),
+        "tests": ("tests/test_moegirl_search.py", "tests/test_moegirl_question_fix.py"),
+    },
+    "历史上的今天": {
+        "capability": "bot.today_history",
+        "triggers_nickname": ("历史上的今天", "今日历史", "today in history"),
+        "network": True,
+        "chat_scope": "设置每日推送时间：群内需管理员（影响全群），私聊自助",
+        "examples": ("历史上的今天 设置 08:30",),
+        "tests": ("tests/test_today_history_robustness.py",),
+    },
+    "下载": {
+        "capability": "/bot download",
+        "fallback": "失败优雅降级为文字（只说原因类型，不泄露堆栈与 cookie）",
+        "network": True,
+        "outputs": ("文件＋文字摘要",),
+        "config_vars": ("BOT_DOWNLOAD_MAX_BYTES", "BOT_DOWNLOAD_MAX_HEIGHT", "BOT_DOWNLOAD_TIMEOUT_SECONDS", "BOT_DOWNLOAD_PROXY"),
+        "examples": ("/bot download https://www.bilibili.com/video/BVxxxxxxxx",),
+        "tests": ("tests/test_file_gateway_phase1.py", "tests/test_unified_gateways.py"),
+    },
+    "昵称": {
+        "capability": "bot.alias",
+        "triggers_nickname": ("帮助", "状态", "为什么", "天气", "点歌", "订阅", "日志", "清理历史", "暂停", "继续"),
+        "config_vars": ("BOT_PERSONA_NICKNAMES",),
+        "examples": ("/岸宝帮助｜守岸人 天气 上海｜/岸宝点歌 晴天",),
+        "tests": ("tests/test_nickname_default_seed.py", "tests/test_nickname_learning.py"),
+    },
+    "链接": {
+        "capability": "bot.content",
+        "chat_scope": "群聊/私聊行为一致（解析按链接触发）",
+
+        "network": True,
+        "triggers_nl": ("直接粘贴平台链接",),
+        "examples": ("直接粘贴 https://www.bilibili.com/video/BVxxxx",),
+        "tests": ("tests/test_parser_v2_boundary.py",),
+    },
+    "草稿": {
+        "capability": "bot.auto_send",
+        "chat_scope": "群聊/私聊行为一致（仅预览不实发）",
+
+        "triggers_nl": ("报存", "報存", "报存 给 <收件人> 发邮件", "報存 給 <收件人> 發郵件"),
+        "examples": ("报存 给小明、小红 发邮件，主题：周末聚餐，内容：周六晚上六点老地方见",),
+        "tests": ("tests/test_content_video_auto_send.py",),
+    },
+    "吃什么": {
+        "capability": "bot.eat",
+        "chat_scope": "群聊/私聊行为一致（会话仅用作去重缓存键）",
+
+        "triggers_nickname": ("吃什么", "吃啥", "今天吃什么", "菜谱", "怎么做", "eat", "food", "recipe"),
+        "triggers_nl": ("吃什么", "吃啥", "菜谱 <菜名>", "怎么做"),
+        "examples": ("吃什么｜吃什么 三选一｜菜谱 番茄炒蛋",),
+        "tests": ("tests/test_eat_capability.py",),
+    },
+    "好感度": {
+        "capability": "bot.affinity",
+        "triggers_nickname": ("好感度", "好感查看", "查询好感", "查詢好感", "好感值", "親密度", "affinity"),
+        "chat_scope": "私聊=双向好感卡；群聊=本群好感榜（自己高亮，展示前 12/上限 60）",
+        "triggers_nl": ("好感度", "查询好感", "查詢好感", "亲密度", "親密度", "affinity"),
+        "examples": ("好感度｜好感度 我｜好感度 算法",),
+        "tests": ("tests/test_affinity.py", "tests/test_affinity_query.py", "tests/test_affinity_numerical.py"),
+    },
+    "Epic": {
+        "capability": "bot.epic",
+        "outputs": ("卡片图＋文本（mixed）/文本",),
+        "html_image": True,
+        "fallback": "单源挂文本尾注；双源全挂回文本「拉取失败，稍后再试」",
+        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+
+        "triggers_nickname": ("epic", "epicfree", "epic免费", "epic free", "免费游戏", "免費遊戲", "游戏免费", "遊戲免費", "steam免费", "steam免費", "steam free", "steam 免费"),
+        "network": True,
+        "triggers_nl": ("epic", "免费游戏", "免費遊戲"),
+        "examples": ("epic",),
+    },
+    "随机图": {
+        "capability": "bot.randpic",
+        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+
+        "triggers_nickname": ("隨機圖", "來張圖"),
+        "network": False,
+        "triggers_nl": ("随机图", "来张图", "隨機圖", "來張圖"),
+        "outputs": ("图片",),
+        "config_vars": ("BOT_RANDPIC_DIRS", "BOT_RANDPIC_TRIGGER_WORDS"),
+        "examples": ("随机图｜来张图",),
+        "tests": ("tests/test_randpic_identity.py",),
+    },
+    "提醒": {
+        "capability": "bot.reminder",
+        "chat_scope": "投递目标：群聊=原群，私聊=本人（target_scope=会话类型）",
+
+        "triggers_nl": ("<时间>提醒我…", "<时间>叫我…", "记得叫", "記得叫", "提醒列表", "取消提醒 <id>"),
+        "examples": ("12点提醒我写作业｜明天早上8点叫我起床｜半小时后提醒我去看汤｜提醒列表｜取消提醒 a3f2",),
+        "tests": ("tests/test_reminder.py",),
+    },
+    "帮助": {
+        "capability": "bot.help",
+        "network": False,
+        "outputs": ("Mica 卡/文本",),
+        "html_image": True,
+        "fallback": "渲染失败回退纯文本",
+        "chat_scope": "普通用户只见公开模块；查管理员模块回「没有找到」",
+        "triggers_nickname": ("帮助", "help"),
+        "examples": ("/bot help｜/bot help 点歌｜/bot help help",),
+        "tests": ("tests/test_bot_commands_catalog_b10.py", "tests/test_help_entries_coverage.py", "tests/test_documentation_consistency.py"),
+    },
+    "聊天": {
+        "capability": "bot.chat",
+        "network": True,
+        "outputs": ("文本",),
+        "fallback": "私聊回守岸人话术提示，群聊保持静默不刷屏",
+        "chat_scope": "群聊=@点名/昵称点名/接话抽签（好感门）；私聊=白名单直说",
+    },
+    "戳一戳": {
+        "capability": "on_notice:戳一戳",
+        "network": False,
+        "outputs": ("文本回应",),
+        "config_vars": ("BOT_POKE_ENABLED", "BOT_POKE_PROBABILITY"),
+    },
+    "表情收库": {
+        "capability": "meme_absorb（群图自动收库，无命令）",
+        "network": True,
+        "outputs": ("无直接输出（图片异步入库）",),
+    },
+    "自然语言": {
+        "capability": "bot.natural_command",
+        "outputs": ("归一化后转目标模块执行",),
+    },
+    "忽略": {
+        "capability": "matcher:IGNORE（空消息兜底，不回复）",
+        "outputs": ("无回复（按设计静默）",),
+    },
+}
+
+# 追加式补充说明：与 _HELP_ENTRY_META 同理以字面量侧表维护，保持文本帮助与
+# 渲染帮助卡的操作指引一致，并让静态目录能合并出与运行时相同的内容。
+_HELP_EXTRA_LINES: dict[str, tuple[str, ...]] = {
+    "回复": (
+        "/bot reply 详细：先说明结论、身份、关系、关键经历和资料缺口，不强制凑字数。",
+        "/bot runtime set BOT_CHAT_MAX_TOKENS 8192：输出上限，不是必须生成的长度。",
+        "/bot runtime set BOT_CHAT_FAST_MODE false：知识验收阶段关闭快速模式。",
+        "BOT_CHAT_MAX_TOKENS=65538 是最大上限，不是每次强制生成 64K。",
+        "文件生成：明确说“生成/保存/导出文件”，机器人会先写文件，再走上传接口。",
+        "戳一戳：默认响应有冷却；BOT_POKE_ENABLED、BOT_POKE_*_COOLDOWN_SECONDS、BOT_POKE_PROBABILITY 可调。",
+        "/bot runtime set BOT_CHAT_FAST_MAX_TOKENS 8192：重新启用快速模式时的输出上限。",
+        "运行时覆盖优先于 .env；用 runtime get 查看实际设置。",
+    ),
+    "设置": (
+        "/bot runtime get BOT_REPLY_DETAIL：查看实际详略模式及覆盖来源。",
+        "/bot runtime set BOT_MEMORY_EXTRACT_ENABLED false：暂停自动抽取，不删除已有记忆。",
+        "/bot runtime set BOT_MEMORY_EXTRACT_TIMEOUT_SECONDS 15：抽取总预算（秒）。",
+        "/bot runtime set BOT_MEMORY_EXTRACT_MAX_TOKENS 200：抽取输出上限（1..4096）。",
+        "/bot runtime set BOT_MEMORY_EXTRACT_ERROR_COOLDOWN_SECONDS 300：抽取失败后冷却。",
+        "记忆抽取复用聊天路由配置，采用独立调用状态；不使用另一枚基础 key 绕开模型注册表。",
+    ),
+    "模型": (
+        "priority 是 1..N 唯一槽位：移动一个模型，其他模型自动顺移；0 兼容为移到首位。",
+        "手动指定 > 时段组 order > 基础 priority。时段组启用时基础排序不覆盖组内顺序。",
+        "model list 显示候选配置，不等于上一条实际回答的供应商；/bot llm 会产生新的诊断调用。",
+        "不要在群聊发送真实 Key；使用 key=env:变量名，在本地安全配置凭据。",
+    ),
+}
 
 # Keep text help and rendered help cards on the same operational instructions.
 for _entry in _HELP_ENTRIES:
-    _extra: list[str] = []
-    if _entry["topic"] == "回复":
-        _extra = [
-            "/bot reply 详细：先说明结论、身份、关系、关键经历和资料缺口，不强制凑字数。",
-            "/bot runtime set BOT_CHAT_MAX_TOKENS 8192：输出上限，不是必须生成的长度。",
-            "/bot runtime set BOT_CHAT_FAST_MODE false：知识验收阶段关闭快速模式。",
-            "BOT_CHAT_MAX_TOKENS=65538 是最大上限，不是每次强制生成 64K。",
-            "文件生成：明确说“生成/保存/导出文件”，机器人会先写文件，再走上传接口。",
-            "戳一戳：默认响应有冷却；BOT_POKE_ENABLED、BOT_POKE_*_COOLDOWN_SECONDS、BOT_POKE_PROBABILITY 可调。",
-            "/bot runtime set BOT_CHAT_FAST_MAX_TOKENS 8192：重新启用快速模式时的输出上限。",
-            "运行时覆盖优先于 .env；用 runtime get 查看实际设置。",
-        ]
-    elif _entry["topic"] == "设置":
-        _extra = [
-            "/bot runtime get BOT_REPLY_DETAIL：查看实际详略模式及覆盖来源。",
-            "/bot runtime set BOT_MEMORY_EXTRACT_ENABLED false：暂停自动抽取，不删除已有记忆。",
-            "/bot runtime set BOT_MEMORY_EXTRACT_TIMEOUT_SECONDS 15：抽取总预算（秒）。",
-            "/bot runtime set BOT_MEMORY_EXTRACT_MAX_TOKENS 200：抽取输出上限（1..4096）。",
-            "/bot runtime set BOT_MEMORY_EXTRACT_ERROR_COOLDOWN_SECONDS 300：抽取失败后冷却。",
-            "记忆抽取复用聊天路由配置，采用独立调用状态；不使用另一枚基础 key 绕开模型注册表。",
-        ]
-    elif _entry["topic"] == "模型":
-        _extra = [
-            "priority 是 1..N 唯一槽位：移动一个模型，其他模型自动顺移；0 兼容为移到首位。",
-            "手动指定 > 时段组 order > 基础 priority。时段组启用时基础排序不覆盖组内顺序。",
-            "model list 显示候选配置，不等于上一条实际回答的供应商；/bot llm 会产生新的诊断调用。",
-            "不要在群聊发送真实 Key；使用 key=env:变量名，在本地安全配置凭据。",
-        ]
+    _extra = _HELP_EXTRA_LINES.get(_entry["topic"], ())
     if _extra:
         _entry["lines"] = [*_entry.get("lines", []), *_extra]
         _entry["detail"] = _entry.get("detail", "") + "\n" + "\n".join(_extra)
+    for _key, _value in _HELP_ENTRY_META.get(_entry["topic"], {}).items():
+        _entry.setdefault(_key, _value)  # type: ignore[misc]
 
-_HELP_ALIAS_MAP = {
+# T5 结构修复（fix-trae2）：_HELP_ALIAS_MAP 此前只从 aliases 构建，META 的
+# triggers_nickname/triggers_nl「深度页元数据看得见、help 查询搜不到」——
+# aliases 漏登即搜不到的复发模式由此而来。现在 META 触发词一并纳入可搜索集合；
+# aliases 永远优先（setdefault 不覆盖既有键），既有命中与管理员隔离零变化。
+_HELP_ALIAS_MAP: dict[str, str] = {
     alias.lower(): entry["topic"]
     for entry in _HELP_ENTRIES
     for alias in entry["aliases"]
 }
+for _entry in _HELP_ENTRIES:
+    _entry_meta = _HELP_ENTRY_META.get(_entry["topic"], {})
+    for _field in ("triggers_nickname", "triggers_nl"):
+        for _trigger in _entry_meta.get(_field) or ():
+            _HELP_ALIAS_MAP.setdefault(str(_trigger).strip().lower(), _entry["topic"])
 
 HELP_ENTRIES = _HELP_ENTRIES
 
@@ -1839,10 +2652,18 @@ def _help_mica_html(
     ``sections`` 提供结构化索引（总览页 → 两列网格 + 命令药丸）；缺省时
     按正文解析（模块详情页：首行作卡题，其余行拆「命令段 + 说明段」）。
     mica-glass v1 2026-09-12：釉瑚云母底（bridge 按 accent 派生 --wash-* 注入；
-    工艺出处=用户裁定）+ 液态玻璃面板 + 三枚柔光色斑漂移 + 内联脚本随机相位。
+    工艺出处=用户裁定）+ 液态玻璃面板 + 三枚柔光色斑漂移（E01 二批：相位由
+    payload digest 钉帧，bridge.payload_phase 单一事实源，页面零 JS）。
     """
     from plugins.bot_unified_runtime.output.card_render.bridge import (
         _derive_wash_tokens,
+        payload_phase,
+    )
+    from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
+        BRAND_THEME,
+        FONT_FAMILY_STACK,
+        SHADOW_PRIMARY,
+        SHADOW_SECONDARY,
     )
 
     accent, accent_ink = _resolve_help_accent(accent_color)
@@ -1905,6 +2726,8 @@ def _help_mica_html(
         header_title = f"{bot_name} · 命令手册"
         header_sub = "按模块分类汇总；回复「/bot help 模块名」展开该模块的子命令、参数与示例（如 /bot help 点歌、/bot help 订阅）。"
     role = "管理员帮助" if is_admin else "公开帮助"
+    # E01 二批：漂移相位 = 内容 digest 钉帧（同 payload 双渲一致、零 JS 随机源）。
+    phase = payload_phase({"sections": sections, "detail_title": detail_title})
     avatar = (
         f'<img class="help-bot-avatar" src="{html.escape(bot_avatar_url)}" alt="" />'
         if bot_avatar_url else ""
@@ -1912,21 +2735,25 @@ def _help_mica_html(
     avatar_block = avatar or f"<span class=\"avatar-fallback\">{_esc((bot_name or '守')[:1])}</span>"
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
-:root {{ --phase:0.2; --accent:{accent}; --accent-ink:{accent_ink};
+:root {{ --phase:{phase}; --accent:{accent}; --accent-ink:{accent_ink};
   /* 釉瑚云母底主题 token，全卡统一（bridge 按 --accent 派生；工艺出处=用户裁定）。 */
   --wash-1:{wash['wash_1']}; --wash-2:{wash['wash_2']}; --wash-3:{wash['wash_3']}; --wash-mist:{wash['wash_mist']};
   --wash-blob-1:color-mix(in srgb, var(--accent) 35%, var(--wash-1));
-  --ink:#27232a; --muted:#6f646c; }}
+  --text-main:{BRAND_THEME.text_main}; --text-sub:{BRAND_THEME.text_sub};
+  --ink:var(--text-main); --muted:var(--text-sub);
+  --font-family:{FONT_FAMILY_STACK};
+  --r-shell:{BRAND_THEME.shell_radius}px; --r-panel:{BRAND_THEME.panel_radius}px; --r-tile:{BRAND_THEME.tile_radius}px;
+  --mica-shadow:{SHADOW_PRIMARY}; --mica-shadow-soft:{SHADOW_SECONDARY}; }}
 * {{ box-sizing:border-box; }}
-body {{ margin:0; padding:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; background:transparent; color:var(--ink); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }}
+body {{ margin:0; padding:0; font-family:var(--font-family); background:transparent; color:var(--ink); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }}
 .help-stage {{ width:fit-content; padding:0; background:transparent; }}
 /* 釉瑚云母外壳：雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底（不透明基础层）
    + 1px 内高光渐变描边；色斑垫底、内容抬升；阴影两枚 token。 */
-.help-shell {{ position:relative; width:940px; overflow:hidden; border-radius:24px; border:1px solid transparent;
+.help-shell {{ position:relative; width:940px; overflow:hidden; border-radius:var(--r-shell); border:1px solid transparent;
   background:linear-gradient(145deg, var(--wash-mist) 0%, color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
     color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%, color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%) padding-box,
     linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
-  box-shadow:0 14px 34px rgba(31,35,41,.10); }}
+  box-shadow:var(--mica-shadow); }}
 .help-shell > :not(.drift-blobs) {{ position:relative; z-index:1; }}
 /* 渐变漂移色斑（wash 三色半透明互相透过，46s/52s/58s 交错漂移+呼吸）。 */
 .drift-blobs {{ position:absolute; inset:0; z-index:0; overflow:hidden; pointer-events:none; border-radius:inherit; }}
@@ -1950,9 +2777,9 @@ body {{ margin:0; padding:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif
 /* 液态玻璃面板：半透明白 + 1px 内高光渐变描边（无 backdrop-filter）。 */
 .glass {{ background:linear-gradient(150deg, rgba(255,255,255,.66) 0%, rgba(255,255,255,.44) 100%) padding-box,
     linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
-  border:1px solid transparent; box-shadow:0 3px 10px rgba(31,35,41,.05); }}
+  border:1px solid transparent; box-shadow:var(--mica-shadow-soft); }}
 .help-head {{ display:flex; align-items:center; gap:14px; padding:22px 26px 18px; border-bottom:1px solid rgba(255,255,255,.78); }}
-.avatar-wrap {{ flex:0 0 auto; width:52px; height:52px; border-radius:16px; overflow:hidden; background:color-mix(in srgb, var(--accent) 14%, #fff); display:flex; align-items:center; justify-content:center; box-shadow:inset 0 0 0 1px rgba(255,255,255,.9); }}
+.avatar-wrap {{ flex:0 0 auto; width:52px; height:52px; border-radius:16px; overflow:hidden; background:color-mix(in srgb, var(--accent) 14%, #fff); display:flex; align-items:center; justify-content:center; box-shadow:var(--mica-shadow-soft); }}
 .avatar-wrap img {{ width:100%; height:100%; object-fit:cover; }}
 .avatar-fallback {{ font-size:24px; font-weight:700; color:var(--accent-ink); }}
 .head-main {{ flex:1 1 auto; min-width:0; }}
@@ -1967,20 +2794,19 @@ body {{ margin:0; padding:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif
 .help-grid.single {{ display:grid; grid-template-columns:1fr; gap:12px; }}
 .help-section {{ border-radius:16px; overflow:hidden; }}
 .help-section h2 {{ display:flex; align-items:center; gap:8px; margin:0; padding:10px 14px; color:var(--accent-ink); background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, rgba(255,255,255,.62)), color-mix(in srgb, var(--accent) 12%, rgba(255,255,255,.48))); border-bottom:1px solid rgba(255,255,255,.85); font-size:14.5px; font-weight:700; letter-spacing:.02em; }}
-.help-section h2 .dot {{ flex:0 0 auto; width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 18%, #fff); }}
+.help-section h2 .dot {{ flex:0 0 auto; width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:var(--mica-shadow-soft); }}
 .command-list {{ padding:9px; display:grid; gap:6px; }}
 .command-row {{ display:flex; align-items:flex-start; gap:9px; padding:7px 10px; border-radius:11px; background:rgba(255,255,255,.62); font-size:12px; line-height:1.55; }}
 .command-row .pill {{ flex:0 0 auto; max-width:62%; padding:2px 10px; border-radius:999px; color:var(--accent-ink); background:color-mix(in srgb, var(--accent) 13%, rgba(255,255,255,.82)); font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 .command-row .desc {{ color:var(--muted); min-width:0; overflow-wrap:anywhere; }}
 .help-foot {{ display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 16px; background:rgba(255,255,255,.42); border-top:1px solid rgba(255,255,255,.80); }}
 .help-foot .tip {{ color:var(--muted); font-size:11.5px; }}
-.help-bot-pill {{ display:flex; align-items:center; gap:8px; padding:5px 13px 5px 6px; border-radius:999px; color:var(--accent-ink); background:color-mix(in srgb, var(--accent) 6%, rgba(255,255,255,.72)); border:1px solid #fff; box-shadow:0 4px 10px rgba(31,35,41,.07); font-size:13px; font-weight:600; }}
+.help-bot-pill {{ display:flex; align-items:center; gap:8px; padding:5px 13px 5px 6px; border-radius:999px; color:var(--accent-ink); background:color-mix(in srgb, var(--accent) 6%, rgba(255,255,255,.72)); border:1px solid #fff; box-shadow:var(--mica-shadow-soft); font-size:13px; font-weight:600; }}
 .help-bot-avatar {{ width:27px; height:27px; object-fit:cover; border-radius:50%; }}
 </style></head><body><div class="help-stage card"><section class="help-shell">
 <div class="drift-blobs" aria-hidden="true"><span class="drift-blob drift-a"></span><span class="drift-blob drift-b"></span><span class="drift-blob drift-c"></span></div>
 <header class="help-head"><div class="avatar-wrap">{avatar_block}</div><div class="head-main"><div class="help-kicker">{_esc(role)}</div><div class="help-title">{_esc(header_title)}</div><div class="help-subtitle">{_esc(header_sub)}</div></div><div class="help-chip">发 /bot help 获取本图</div></header><main class="help-body"><div class="help-grid {grid_cls}">{cards}</div></main><footer class="help-foot"><span class="tip">参数标注：&lt;&gt; 必填，[] 可选；群里直接发命令即可触发。</span><div class="help-bot-pill">{avatar}<span>{_esc(bot_name)} · 命令手册</span></div></footer></section></div>
-<script>/* mica-glass v1 2026-09-12：随机漂移相位，纯内联零依赖，失败静默。 */
-try{{document.documentElement.style.setProperty("--phase",Math.random().toFixed(4));}}catch(e){{}}</script></body></html>"""
+</body></html>"""
 
 
 def _help_category_body(query: str, *, is_admin: bool) -> str | None:
@@ -2151,7 +2977,7 @@ def build_help_result(
         if not is_admin and entry["topic"] not in _PUBLIC_HELP_TOPICS:
             body = _help_unknown_body(cleaned)
         else:
-            # M7：`detail` 字段过去是**只写死数据**——49 个条目的四段式文案
+            # M7：`detail` 字段过去是**只写死数据**——全部条目的四段式文案
             # （板块介绍 / 命令与参数 / 参数范围 / 设置效果）全部写好了，
             # 但没有任何读取点，深度页只输出 `lines` 的简表。
             # 这里把它接进 `/bot help <模块>` 的详情页，同时保留 `lines`，
@@ -2207,21 +3033,134 @@ def build_help_result(
     )
 
 
-def route_bot_command(
-    command_text: str,
-    request_id: str | None = None,
-    config: Config | None = None,
-    runtime_control: RuntimeControlState | None = None,
-    actor_roles: list[str] | None = None,
+_ADDRESSING_GENDER_VALUES = ("male", "female", "nonbinary", "custom", "unknown")
+_ADDRESSING_NAME_MAX_CHARS = 32
+_IDENTITY_PREFERENCE_SUBCOMMANDS = frozenset(
+    {"set-name", "set-gender", "unset-name", "unset-gender"}
+)
+
+
+def _identity_preference_usage() -> str:
+    return (
+        "用法：/bot identity set-name <称呼> | set-gender <male|female|nonbinary|custom|unknown>"
+        " | unset-name | unset-gender"
+        "（只能设置你自己的称谓偏好，无需管理员；set 即记录、unset 即清除）"
+    )
+
+
+def _identity_preference_result(
+    request_id: str, body: str, *, risk_level: RiskLevel = RiskLevel.LOW
 ) -> CapabilityResult:
-    if command_text.strip() == "status":
-        return build_status_result(
-            config=config,
-            request_id=request_id,
-            runtime_control=runtime_control,
-            actor_roles=actor_roles,
+    return CapabilityResult(
+        request_id=request_id,
+        capability_id="bot.identity",
+        kind="text",
+        title="称谓偏好",
+        body=body,
+        confidence=1.0,
+        risk_level=risk_level,
+        privacy_level=PrivacyLevel.PERSONAL,
+        send_policy=SendPolicy.IMMEDIATE,
+        audit_tags=["identity", "identity_preference"],
+    )
+
+
+def build_identity_preference_result(
+    config: object,
+    *,
+    request_id: str,
+    sender_id: str,
+    group_id: str = "",
+    command_text: str,
+) -> CapabilityResult:
+    """/bot identity set-name|set-gender|unset-name|unset-gender —— 用户自助称谓偏好。
+
+    与管理员会话身份（session_identity）不同：这里写的是「用户显式声明」，
+    存进 AddressingPreferenceStore，被聊天人格上下文优先读取
+    （键位与读取端 providers.build_context 完全一致：群=group_id，私聊=空）。
+    仅能操作发送者本人的偏好，无管理员门槛。
+    """
+    from plugins.bot_unified_runtime.character.providers import (
+        build_addressing_preference_store,
+    )
+
+    parts = command_text.split()
+    sub = parts[0].lower() if parts else ""
+    if sub not in _IDENTITY_PREFERENCE_SUBCOMMANDS:
+        return _identity_preference_result(request_id, _identity_preference_usage())
+    if not str(sender_id or "").strip():
+        return _identity_preference_result(
+            request_id,
+            "无法识别发送者，暂时记不了称谓偏好。",
+            risk_level=RiskLevel.MEDIUM,
         )
-    return build_help_result(request_id=request_id)
+    store = build_addressing_preference_store(config)
+    if store is None:
+        return _identity_preference_result(
+            request_id,
+            "我这边记称谓的小本本暂时打不开，是我这边要修的。你可以稍后再发一次 set-name，还不行就找管理员。",
+            risk_level=RiskLevel.MEDIUM,
+        )
+    # 键位必须与读取端 providers.build_context 完全一致：群=group_id，私聊=空。
+    session_type = "group" if str(group_id or "").strip() else "private"
+    session_id = str(group_id or "").strip() if session_type == "group" else ""
+    sender = str(sender_id).strip()
+    if sub == "set-name":
+        raw_name = command_text.removeprefix("set-name")
+        # 消毒：拒绝换行/制表等控制字符（防持久化后经人格上下文分区注入提示）；
+        # 多内部连续空格折叠为单个；既有合法一行称呼行为不变（帮助口径 ≤32 字）。
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw_name):
+            return _identity_preference_result(
+                request_id,
+                f"称呼须为一行普通文字（不含换行/制表），≤{_ADDRESSING_NAME_MAX_CHARS} 字，"
+                "重新说一个吧。",
+                risk_level=RiskLevel.MEDIUM,
+            )
+        name = " ".join(raw_name.split())
+        if not name:
+            return _identity_preference_result(
+                request_id, f"用法：/bot identity set-name <称呼>（必填，≤{_ADDRESSING_NAME_MAX_CHARS} 字）"
+            )
+        if len(name) > _ADDRESSING_NAME_MAX_CHARS:
+            return _identity_preference_result(
+                request_id,
+                f"这个称呼太长（{_ADDRESSING_NAME_MAX_CHARS} 字以内才记得住），重新说一个吧。",
+                risk_level=RiskLevel.MEDIUM,
+            )
+        store.set(
+            session_type=session_type, session_id=session_id, sender_id=sender,
+            addressing_preference=name,
+        )
+        return _identity_preference_result(
+            request_id, f"已记下：以后称呼你为「{name}」。（仅影响称呼与语气，人格不变）"
+        )
+    if sub == "set-gender":
+        raw = command_text.removeprefix("set-gender").strip()
+        value = raw.split()[0].lower() if raw.split() else ""
+        if value not in _ADDRESSING_GENDER_VALUES:
+            choices = " / ".join(_ADDRESSING_GENDER_VALUES)
+            return _identity_preference_result(
+                request_id,
+                f"性别自述只接受这些值：{choices}（大小写不敏感）。刚才那句没有记录。",
+                risk_level=RiskLevel.MEDIUM,
+            )
+        store.set(
+            session_type=session_type, session_id=session_id, sender_id=sender,
+            gender_identity=value,
+        )
+        return _identity_preference_result(
+            request_id, f"已记下你的性别自述：{value}。仅用于称呼与语气分寸。"
+        )
+    # unset-name / unset-gender：store.clear 为整行清除（称谓与性别自述一并移除）。
+    before_preference, before_gender = store.get(
+        session_type=session_type, session_id=session_id, sender_id=sender
+    )
+    store.clear(session_type=session_type, session_id=session_id, sender_id=sender)
+    if not before_preference and before_gender == "unknown":
+        return _identity_preference_result(request_id, "你还没有设置过称谓偏好。")
+    return _identity_preference_result(
+        request_id, "已清除称谓偏好（整条记录移除，含性别自述），恢复自动称呼。"
+    )
 
 
 def _build_status_body(config: Config, runtime_control: RuntimeControlState) -> str:

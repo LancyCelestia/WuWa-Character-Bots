@@ -35,6 +35,10 @@ MODULE_ALIASES: dict[str, str] = {
     "wiki": "wiki",
     "维基": "wiki",
     "百科": "wiki",
+    # 繁體形（TRA 草稿 幫助/設置/參數 词条）：/bot 幫助 等此前墜 help 兜底。
+    "幫助": "help",
+    "設置": "runtime",
+    "參數": "runtime",
 }
 
 _COMMAND_ACTION_ALIASES: dict[str, str] = {
@@ -97,6 +101,7 @@ DEFAULT_VERB_MAP: dict[str, str] = {
     "继续": "bot.control",
     "resume": "bot.control",
     "天气": "bot.weather",
+    "天气预报": "bot.weather",
     "查询天气": "bot.weather",
     "查询": "bot.status",
     "查询订阅": "bot.subscribe",
@@ -105,6 +110,7 @@ DEFAULT_VERB_MAP: dict[str, str] = {
     "查天气": "bot.weather",
     "weather": "bot.weather",
     "点歌": "bot.music",
+    "点唱": "bot.music",
     "点歌模式": "bot.music_mode",
     "music mode": "bot.music_mode",
     "music": "bot.music",
@@ -156,14 +162,26 @@ DEFAULT_VERB_MAP: dict[str, str] = {
     "国际新闻": "bot.news",
     "ai news": "bot.news",
     "订阅": "bot.subscribe",
+    "訂閱": "bot.subscribe",
     "subscribe": "bot.subscribe",
     "日志": "bot.logs",
     "偷表情": "bot.meme_library",
     "偷表情包": "bot.meme_library",
     "随机表情": "bot.meme_library",
+    "隨機表情": "bot.meme_library",
     "表情库统计": "bot.meme_library",
     "表情统计": "bot.meme_library",
     "logs": "bot.logs",
+    # TRA 草稿（2026-09-13 繁體缺失补齐批）：昵称动词繁體对向补齐，
+    # 防「守岸人幫助/守岸人暫停」类坠空（F15 同哲学）。
+    "幫助": "bot.help",
+    "狀態": "bot.status",
+    "暫停": "bot.control",
+    "繼續": "bot.control",
+    "查詢好感": "bot.affinity",
+    "免費遊戲": "bot.epic",
+    "遊戲免費": "bot.epic",
+    "steam免費": "bot.epic",
 }
 
 

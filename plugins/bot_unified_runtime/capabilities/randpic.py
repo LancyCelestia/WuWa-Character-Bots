@@ -21,7 +21,13 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
 )
 
-DEFAULT_TRIGGER_WORDS: tuple[str, ...] = ("随机图", "来张图")
+# 拼音全拼/缩写（T-Spec T1.5/T1.6）：suijitu/laizhangtu 同覆盖繁体同音
+# （隨機圖/來張圖）；sjt/lzt 查重无冲突。前缀+标点边界逻辑天然防
+# suijituqq 类字母胶合（tail 首字符不在标点集即拒绝）。
+DEFAULT_TRIGGER_WORDS: tuple[str, ...] = (
+    "随机图", "来张图", "隨機圖", "來張圖", "randpic",
+    "suijitu", "laizhangtu", "sjt", "lzt",
+)
 _IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"})
 _SCAN_CACHE_TTL_SECONDS = 30.0
 _MAX_FILE_BYTES = 20 * 1024 * 1024

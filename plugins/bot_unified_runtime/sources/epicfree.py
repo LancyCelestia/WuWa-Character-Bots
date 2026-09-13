@@ -87,17 +87,3 @@ def _wide_image(element: dict[str, Any]) -> str:
             if str(image.get("type") or "") == kind and image.get("url"):
                 return str(image["url"])
     return ""
-
-
-def format_epic_free_games(games: list[dict[str, Any]]) -> str:
-    if not games:
-        return "这周没有正在进行的免费游戏活动。"
-    lines = ["Epic 本周免费游戏："]
-    for game in games:
-        line = f"- {game['title']}"
-        if game["end"]:
-            line += f"（截止 {game['end']}）"
-        if game["url"]:
-            line += f"\n  {game['url']}"
-        lines.append(line)
-    return "\n".join(lines)

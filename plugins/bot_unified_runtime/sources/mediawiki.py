@@ -63,22 +63,6 @@ def _api_base(lang: str) -> str:
     return f"https://{lang}.wikipedia.org/w/api.php"
 
 
-def wiki_search(query: str, *, lang: str = "zh", limit: int = 5, proxy: str = "") -> list[str]:
-    """搜索词条名（opensearch）。"""
-    payload = _cached_get_json(
-        _api_base(lang)
-        + "?action=opensearch&format=json&redirects=resolve&limit="
-        + str(max(1, min(int(limit), 10)))
-        + f"&search={urllib.parse.quote(query)}",
-        proxy=proxy,
-        timeout=10,
-    )
-    if not isinstance(payload, list) or len(payload) < 2:
-        return []
-    titles = payload[1]
-    return [str(title) for title in titles if str(title).strip()]
-
-
 def wiki_summary(
     title: str,
     *,

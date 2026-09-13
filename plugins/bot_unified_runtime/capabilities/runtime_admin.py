@@ -49,7 +49,7 @@ def _admin_only_result(request_id: str) -> CapabilityResult:
         capability_id="bot.runtime",
         kind="text",
         title="权限不足",
-        body="该命令只允许管理员使用。",
+        body="这个命令只允许管理员用。",
         confidence=1.0,
         risk_level=RiskLevel.MEDIUM,
         privacy_level=PrivacyLevel.PERSONAL,
@@ -1541,12 +1541,32 @@ def build_session_identity_admin_result(
     actor_roles: list[str],
     session_key: str,
     command_text: str,
+    sender_id: str = "",
+    group_id: str = "",
 ) -> CapabilityResult:
     """/bot identity set|tag|show|clear —— 会话级身份记忆（管理员专用）。
 
     在哪个群/私聊里执行，就设置哪个会话的身份。防 OOC：渲染层内建护栏，
     会话身份只调整称呼与语气，永远不推翻守岸人核心人格。
+    例外（Task 2 用户自助，无需管理员）：set-name/set-gender/unset-name/
+    unset-gender 四个子命令在管理员门**之前**拦截，转交
+    capabilities/echo.build_identity_preference_result 处理发送者本人的
+    称谓偏好（AddressingPreferenceStore）。
     """
+    parts = command_text.split()
+    sub = parts[0].lower() if parts else ""
+    if sub in {"set-name", "set-gender", "unset-name", "unset-gender"}:
+        from plugins.bot_unified_runtime.capabilities.echo import (
+            build_identity_preference_result,
+        )
+
+        return build_identity_preference_result(
+            config,
+            request_id=request_id,
+            sender_id=sender_id,
+            group_id=group_id,
+            command_text=command_text,
+        )
     if "admin" not in actor_roles:
         return _admin_only_result(request_id)
     from plugins.bot_unified_runtime.character.providers import build_runtime_data_path

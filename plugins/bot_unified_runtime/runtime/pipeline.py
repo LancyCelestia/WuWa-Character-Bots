@@ -315,14 +315,6 @@ def _review_block_public_message(
     return "输出未通过安全或隐私检查。"
 
 
-def _rate_limit_public_message(reason: str) -> str:
-    if reason == "target_min_interval":
-        return "当前目标回复间隔过短，已临时降频。"
-    if reason == "global_window_exceeded":
-        return "当前机器人整体回复过于频繁，已临时降频。"
-    return "当前会话回复过于频繁，已临时降频。"
-
-
 def _observe_decision_shadow(message: IncomingMessage, capability_id: str) -> None:
     """B2 阶段 0 影子挂钩：shadow 模式下引擎只算 plan 写 decision_trace。
 

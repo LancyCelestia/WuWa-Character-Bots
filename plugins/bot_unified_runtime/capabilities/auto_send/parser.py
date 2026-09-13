@@ -15,7 +15,9 @@ from plugins.bot_unified_runtime.contracts.auto_send import (
 )
 
 _COMMAND_RE = re.compile(
-    r"^报存\s*给\s*(?P<recipients>.+?)\s*发(?P<channel>邮件|消息)"
+    # 繁體链（TRA 草稿「報存」词条）：報存/給/發/郵件 整链同改才可达；
+    # 「訊息」为台湾惯用形并收（简体「消息」保留）。
+    r"^(?:报存|報存)\s*[给給]\s*(?P<recipients>.+?)\s*[发發](?P<channel>邮件|消息|郵件|訊息)"
     r"(?:[，,:：]\s*(?P<rest>.*))?$"
 )
 
@@ -38,13 +40,13 @@ def _extract_instruction(rest: str | None) -> tuple[str, str | None]:
 
     subject: str | None = None
     content = rest.strip()
-    subject_match = re.search(r"主题[:：]\s*(?P<subject>[^，,]+)", content)
+    subject_match = re.search(r"(?:主题|主題)[:：]\s*(?P<subject>[^，,]+)", content)
     if subject_match:
         subject = subject_match.group("subject").strip()
         # 审计#16：主题本身含「内容」时，从主题之后搜正文，避免截到主题内部。
-        content_match = re.search(r"内容(?P<content>.+)$", content[subject_match.end():])
+        content_match = re.search(r"(?:内容|內容)(?P<content>.+)$", content[subject_match.end():])
     else:
-        content_match = re.search(r"内容(?P<content>.+)$", content)
+        content_match = re.search(r"(?:内容|內容)(?P<content>.+)$", content)
     if content_match:
         content = content_match.group("content").lstrip(":：，, ").strip()
     return content, subject
@@ -60,7 +62,11 @@ def parse_auto_send_command(
     if not match:
         raise ValueError("unsupported auto-send command")
 
-    channel = "email" if match.group("channel") == "邮件" else "chat_message"
+    channel = (
+        "email"
+        if match.group("channel") in ("邮件", "郵件")
+        else "chat_message"
+    )
     content_instruction, subject_instruction = _extract_instruction(match.group("rest"))
     return AutoSendIntent(
         actor_sender_id=actor_sender_id,

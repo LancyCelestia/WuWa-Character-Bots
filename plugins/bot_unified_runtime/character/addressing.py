@@ -1,0 +1,175 @@
+from __future__ import annotations
+
+import sqlite3
+import threading
+from datetime import UTC, datetime
+from pathlib import Path
+
+from plugins.bot_unified_runtime.contracts.character import AddressingContext
+
+_GENDER_VALUES = {"unknown", "male", "female", "nonbinary", "custom"}
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def build_addressing_context(
+    *,
+    session_type: str,
+    sender_display_name: str | None = None,
+    sender_roles: list[str] | None = None,
+    gender_identity: str = "unknown",
+    addressing_preference: str = "",
+) -> AddressingContext:
+    scope = str(session_type or "other").strip().lower()
+    scope = scope if scope in {"private", "group"} else "other"
+    roles = {str(role).strip().lower() for role in (sender_roles or [])}
+    is_master = scope == "group" and "super_admin" in roles
+    can_use = scope == "private" or is_master
+    explicit_gender = str(gender_identity or "unknown").strip() or "unknown"
+    preference = str(addressing_preference or "").strip()
+    name = str(preference or sender_display_name or "你").strip() or "你"
+    if can_use and not preference:
+        name = "漂泊者"
+    if scope == "group" and not is_master and preference == "漂泊者":
+        # 保留字兜底（评审 D1）：群友自设「漂泊者」会造出
+        # 「优先称呼“漂泊者”+禁止称其为漂泊者」的自斥指令，击穿群聊主角
+        # 边界——群聊非 master 一律忽略该偏好，回退展示名。
+        name = str(sender_display_name or "你").strip() or "你"
+    if scope == "group" and not is_master:
+        instruction = f"当前是多人群聊；对方是群友，优先称呼“{name}”，禁止称其为漂泊者，不要把群成员设为主角。"
+    elif is_master:
+        instruction = f"当前是群聊；对方是配置确认的超级管理员 master，可在合适语境称为“{name}”或漂泊者；其他群友仍不得称为漂泊者。"
+    elif scope == "private":
+        instruction = "当前是私聊；对方可视为漂泊者。默认使用“你”，关系自然时可使用“漂泊者”；性别未知时不要猜测。"
+    else:
+        instruction = "当前称谓身份未知；使用中性称谓“你”，不要猜测性别或擅自称为漂泊者。"
+    return AddressingContext(
+        scope=scope,
+        preferred_name=name,
+        gender_identity=explicit_gender,
+        gender_confidence="explicit" if explicit_gender != "unknown" else "unknown",
+        can_use_wanderer_title=can_use,
+        is_master=is_master,
+        instruction=instruction,
+    )
+
+
+class AddressingPreferenceStore:
+    """用户主动设置的称谓与性别偏好（显式声明，优先于一切推断）。
+
+    SQLite 单连接 + ``threading.Lock`` + WAL 先于 DDL（与会话身份 store 同款）。
+    主键 (session_type, session_id, sender_id)：私聊按人、群聊按群+人。
+    只存用户显式设置/纠正的值；本 store 不做任何推断。
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self._path = Path(path)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(self._path, check_same_thread=False)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._ensure_schema()
+
+    def _ensure_schema(self) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS addressing_preferences (
+                    session_type TEXT NOT NULL,
+                    session_id TEXT NOT NULL DEFAULT '',
+                    sender_id TEXT NOT NULL,
+                    addressing_preference TEXT NOT NULL DEFAULT '',
+                    gender_identity TEXT NOT NULL DEFAULT 'unknown',
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (session_type, session_id, sender_id)
+                )
+                """
+            )
+
+    @staticmethod
+    def _normalize_gender(raw: str | None) -> str:
+        value = str(raw or "").strip().lower()
+        return value if value in _GENDER_VALUES else "unknown"
+
+    def get(
+        self,
+        *,
+        session_type: str,
+        session_id: str = "",
+        sender_id: str,
+    ) -> tuple[str, str]:
+        """返回 (addressing_preference, gender_identity)；无记录返回 ("", "unknown")。"""
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT addressing_preference, gender_identity"
+                    " FROM addressing_preferences"
+                    " WHERE session_type=? AND session_id=? AND sender_id=?",
+                    (str(session_type), str(session_id), str(sender_id)),
+                ).fetchone()
+        except sqlite3.Error:
+            return "", "unknown"
+        if row is None:
+            return "", "unknown"
+        return str(row[0] or ""), self._normalize_gender(str(row[1]))
+
+    def set(
+        self,
+        *,
+        session_type: str,
+        session_id: str = "",
+        sender_id: str,
+        addressing_preference: str | None = None,
+        gender_identity: str | None = None,
+    ) -> None:
+        """部分更新：未指定的字段保留原值；性别超出已知集合时归一为 unknown。"""
+        current_preference, current_gender = self.get(
+            session_type=session_type, session_id=session_id, sender_id=sender_id
+        )
+        preference = (
+            str(addressing_preference).strip()
+            if addressing_preference is not None
+            else current_preference
+        )
+        gender = (
+            self._normalize_gender(gender_identity)
+            if gender_identity is not None
+            else current_gender
+        )
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO addressing_preferences (
+                    session_type, session_id, sender_id,
+                    addressing_preference, gender_identity, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_type, session_id, sender_id) DO UPDATE SET
+                    addressing_preference=excluded.addressing_preference,
+                    gender_identity=excluded.gender_identity,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    str(session_type),
+                    str(session_id),
+                    str(sender_id),
+                    preference,
+                    gender,
+                    _utc_now_iso(),
+                ),
+            )
+
+    def clear(
+        self,
+        *,
+        session_type: str,
+        session_id: str = "",
+        sender_id: str,
+    ) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM addressing_preferences"
+                " WHERE session_type=? AND session_id=? AND sender_id=?",
+                (str(session_type), str(session_id), str(sender_id)),
+            )

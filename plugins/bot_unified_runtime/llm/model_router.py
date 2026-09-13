@@ -464,28 +464,6 @@ def _health_ema_latencies(config: object | None = None) -> dict[str, int] | None
         return None
 
 
-def _health_latencies(config: object | None = None) -> dict[str, int] | None:
-    """实测延迟表（B-1 延迟择优）；健康层关闭/故障时返回 None（回落价格序）。
-
-    与 _health_ema_latencies 同一套开关来源；保留原始实测表给
-    channels_for_model 的既有排序语义。
-    """
-    try:
-        from plugins.bot_unified_runtime.llm.channel_health import (
-            channel_health_enabled,
-            channel_health_latency_first,
-            get_channel_health_store,
-        )
-
-        if not channel_health_latency_first(config):
-            return None
-        if not channel_health_enabled(config):
-            return None
-        return get_channel_health_store().latencies()
-    except Exception:  # noqa: BLE001 - 健康层故障不阻塞路由。
-        return None
-
-
 def _optional_price(value: Any) -> float | None:
     try:
         number = float(value)

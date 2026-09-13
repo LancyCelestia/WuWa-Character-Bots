@@ -52,13 +52,6 @@ class MoegirlHit:
     pageid: int = 0
 
 
-def clear_moegirl_cache() -> None:
-    """清空萌百响应缓存（测试与运行时管理用）。"""
-    with _CACHE_LOCK:
-        _MOEGIRL_RESPONSE_CACHE.clear()
-        _LAST_MOEGIRL_REQUEST[0] = 0.0
-
-
 def _cached_get_json(
     url: str, *, timeout: float, proxy: str
 ) -> object:

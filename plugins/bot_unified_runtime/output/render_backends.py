@@ -19,6 +19,7 @@ import logging
 import re
 import time
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -61,6 +62,66 @@ def _fetch_image_bytes(url: str) -> tuple[bytes, str] | None:
             return data, content_type.split(";")[0].strip()
     except Exception:  # noqa: BLE001 - 取回失败交给 route.abort，模板 onerror 兜底。
         return None
+
+
+# ---- 渲染等待策略（render-pipeline-optimization-spec §2.1b，Phase-1 框架）----
+# 预算等待的就绪信号（依次等待、齐即截；仅 ``wait_budget_ms`` 模式启用）：
+# ① document.fonts.ready——晚到字体 swap 是截图换字形的直接来源；
+# ② 全部 <img> complete 且 naturalWidth 两次采样一致——解码稳定，排除
+#    「刚 complete 仍在改布局」的半帧窗口（比既有单次 complete 更强）；
+# ③ 双 requestAnimationFrame 帧界——保证至少跨过一个新绘制帧再截图。
+_RENDER_READY_SIGNALS: tuple[str, ...] = (
+    "async () => { await document.fonts.ready; return true; }",
+    (
+        "async () => {"
+        "const snap = () => Array.from(document.images)"
+        ".map(img => img.complete ? img.naturalWidth : -1).join(',');"
+        "const first = snap();"
+        "await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));"
+        "return first === snap();"
+        "}"
+    ),
+    (
+        "async () => {"
+        "await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));"
+        "return true;"
+        "}"
+    ),
+)
+
+
+def _parse_wait_budget_ms(payload: dict[str, Any]) -> int | None:
+    """解析可选 ``wait_budget_ms``；缺省/非法/负值 → None（回落旧固定等待）。"""
+    raw = payload.get("wait_budget_ms")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _wait_render_budget(
+    page: Any, budget_ms: int, *, clock: Callable[[], float] = time.monotonic
+) -> None:
+    """预算上限等待（规格 §2.1b）：依次等就绪信号，齐即提前返回。
+
+    与固定 sleep 的差异：信号全部达成时提前截图；未达成则等到预算封顶
+    按当前画面截断。不抛错不降级——降级仍由 .card 缺失/截图失败链路承担
+    （契约 #7 语义不变）。总等待时间保证 ≤ budget_ms。某信号等待中途抛错
+    （超时=预算已耗尽；页面异常=后续渲染步骤会自然失败）即停止追加等待，
+    不继续消耗剩余预算。
+    """
+    deadline = clock() + max(0, int(budget_ms)) / 1000.0
+    for signal_js in _RENDER_READY_SIGNALS:
+        remaining_ms = max(0, round((deadline - clock()) * 1000))
+        if remaining_ms <= 0:
+            return
+        try:
+            page.wait_for_function(signal_js, timeout=remaining_ms)
+        except Exception:  # noqa: BLE001 - 预算封顶/页面异常：按已就绪现状继续。
+            return
 
 
 class RenderBackend(Protocol):
@@ -149,13 +210,20 @@ class PlaywrightRenderBackend:
     # 达到阈值即强制丢弃线程常驻实例，下次渲染懒启动新浏览器自愈。
     _MAX_CONSECUTIVE_PAGE_FAILURES = 2
 
-    def __init__(self, *, max_concurrency: int = 2) -> None:
+    def __init__(self, *, max_concurrency: int = 1) -> None:
         import threading
 
-        # sync playwright 非线程安全且对象线程绑定：渲染全程持大锁串行，
-        # 常驻浏览器按线程存放（help/卡片渲染可能来自不同工作线程，
-        # 各线程复用各自的常驻实例，仍消除冷启动）。
-        self._lock = threading.Lock()
+        # sync playwright 非线程安全且对象线程绑定：常驻浏览器按线程存放
+        # （help/卡片渲染可能来自不同工作线程，各线程复用各自的常驻实例，
+        # 仍消除冷启动）。渲染间的互斥/限并发由下面的信号量承担。
+        # 并发模型（规格 §3，Phase-1 缺省安全子集）：_lock 属性从全程大锁
+        # 升级为 BoundedSemaphore(max_concurrency)——默认 1 = 与旧全程大锁
+        # 等价的串行语义（天然回滚位）；>1 时允许至多 N 张卡跨线程并行，
+        # 线程本地浏览器复用、懒启动、自愈逻辑零改动，不触碰「同线程任一
+        # 时刻至多一个活跃 sync ctx」不变量（并行只来自跨线程）。属性名
+        # 保留 _lock：手工装配替身（测试）塞 threading.Lock 同样合法，
+        # 仅语义退化为串行。
+        self._lock: Any = threading.BoundedSemaphore(max(1, int(max_concurrency)))
         self._local = threading.local()
         self._max_concurrency = max(1, int(max_concurrency))
         try:
@@ -176,6 +244,11 @@ class PlaywrightRenderBackend:
         """懒启动并复用本线程的常驻 Chromium；空闲超限或已死则重建。
 
         launch 失败重试一次（资源瞬时紧张常见），仍失败才向上抛。
+        重试前必须先 ``__exit__`` 掉本次已 start 的 playwright ctx
+        （评审 C-1）：泄漏的 start 实例会让同线程下一次 start() 命中
+        playwright 的 running-loop 守卫，报 "Sync API inside the asyncio
+        loop"，且 thread-local 只在成功后写入、``_close_thread_browser``
+        对泄漏实例不可达——该线程渲染永久中毒至进程重启。
         """
         browser, _ctx = self._thread_browser()
         if browser is not None and browser.is_connected():
@@ -185,11 +258,21 @@ class PlaywrightRenderBackend:
         self._close_thread_browser()
         last_launch_error: Exception | None = None
         for _attempt in range(2):
+            playwright_ctx: Any = None
             try:
                 playwright_ctx = self._sync_playwright()
                 playwright = playwright_ctx.start()
                 browser = playwright.chromium.launch()
             except Exception as exc:  # noqa: BLE001 - 启动失败重试一次。
+                # C-1：launch 失败时当场正确退出本次已 start 的 ctx（幂等，
+                # __enter__ 未走完时内部守卫短路/异常被吞），否则同线程重试
+                # 的 start() 必报 Sync-inside-asyncio 且泄漏实例不可达。
+                try:
+                    exit_ctx = getattr(playwright_ctx, "__exit__", None)
+                    if callable(exit_ctx):
+                        exit_ctx(None, None, None)
+                except Exception:  # noqa: BLE001, S110 - 清理失败不阻断重试。
+                    pass
                 last_launch_error = exc
                 time.sleep(0.5)
                 continue
@@ -202,13 +285,26 @@ class PlaywrightRenderBackend:
         browser, ctx = self._thread_browser()
         self._local.browser = None
         self._local.playwright_ctx = None
-        for resource in (browser, ctx):
-            if resource is None:
-                continue
+        # ctx 是 PlaywrightContextManager：没有 .close()（旧实现调用被静默
+        # 吞掉 → 僵尸浏览器的传输掐不断 → 该线程 asyncio loop 永久中毒，
+        # 后续 start() 必报 Sync-inside-asyncio）。公开协议是 __exit__；
+        # 2026-09-12 实测修复「自愈后同线程永久 None」（评审复测：双
+        # __exit__ 幂等 / 正确退出后同线程可重启 / 端到端自愈复用）。
+        if ctx is not None:
             try:
-                resource.close()
+                exit_ctx = getattr(ctx, "__exit__", None)
+                if callable(exit_ctx):
+                    exit_ctx(None, None, None)
+                elif hasattr(ctx, "close"):
+                    ctx.close()
             except Exception:  # noqa: BLE001, S110 - 关闭失败忽略，下次懒启动重建。
                 pass
+        if browser is None:
+            return
+        try:
+            browser.close()
+        except Exception:  # noqa: BLE001, S110 - 关闭失败忽略，下次懒启动重建。
+            pass
 
     def render_card(self, payload: dict[str, Any]) -> bytes | None:
         if not self.available or self._sync_playwright is None:
@@ -220,6 +316,10 @@ class PlaywrightRenderBackend:
         width = int(viewport.get("width", 672))
         height = int(viewport.get("height", 480))
         wait_ms = int(payload.get("wait_ms", 1500))
+        # Phase-1（规格 §2.1b）：可选 wait_budget_ms 把该等待从「固定 sleep」
+        # 升级为「预算上限」。缺省/非法 → None：维持旧固定地板，不传新键的
+        # 调用行为逐字节一致（wait_ms 在预算模式下作为旧值被忽略）。
+        wait_budget_ms = _parse_wait_budget_ms(payload)
         try:
             device_scale_factor = int(payload.get("device_scale_factor", 2))
         except (TypeError, ValueError):
@@ -288,7 +388,12 @@ class PlaywrightRenderBackend:
                             page.wait_for_function(wait_js, timeout=wait_js_timeout_ms)
                         except Exception:  # noqa: BLE001 - 目标条件未达成按失败降级。
                             return None
-                    page.wait_for_timeout(wait_ms)
+                    if wait_budget_ms is None:
+                        # 缺省路径：固定地板等待，与既有行为逐字节一致。
+                        page.wait_for_timeout(wait_ms)
+                    else:
+                        # 预算上限路径：就绪信号齐即提前截图，超预算封顶截断。
+                        _wait_render_budget(page, wait_budget_ms)
                     element = page.query_selector(".card")
                     if element is not None:
                         # 元素截图自带裁切范围，不需要 clip 参数。

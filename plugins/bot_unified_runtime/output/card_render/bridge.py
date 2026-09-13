@@ -15,12 +15,14 @@ Copyright (c) 2024 Les Freire）。
 from __future__ import annotations
 
 import base64
-import colorsys
+import hashlib
 import html
 import io
+import json
 import os
 import re
 import threading
+import time
 import urllib.parse
 from dataclasses import fields
 from datetime import datetime
@@ -41,56 +43,38 @@ _ENV = jinja2.Environment(
 _TEMPLATE = _ENV.get_template("universal_card.html")
 
 # ==================== 平台配色 / 官方名映射 ====================
+# 主题 token 单一来源在 theme_tokens.py（C 方向 UI 统一 2026-09-12）：
+# bridge 只保留渲染投影所需的查找表与再导出（含历史别名 `_derive_wash_tokens`，
+# echo/debug/usage_cards/templates 直接从本模块导入该私有名，勿删）。
+from .theme_tokens import (
+    BRAND_THEME,
+    DEFAULT_THEME,
+    PLATFORM_FOOTER_LABELS,
+    PLATFORM_THEMES,
+    THEME_ALIASES,
+    UNKNOWN_PLATFORM_COLOR,
+    ThemeTokens,
+    derive_wash_tokens,
+    get_platform_theme,
+    theme_to_css_vars,
+)
+
 PLATFORM_COLORS: dict[str, str] = {
-    "bilibili": "#fb7299",
-    "xiaohongshu": "#ff2442",
-    "xhs": "#ff2442",
-    "douyin": "#111111",
-    "weibo": "#e6162d",
-    "youtube": "#ff0000",
-    "twitter": "#1d9bf0",
-    "x": "#1d9bf0",
-    "pixiv": "#0096fa",
-    "lofter": "#3fa1ad",
-    "allcpp": "#2f6bff",
-    "cpp": "#2f6bff",
-    # 音乐平台品牌色
-    "netease": "#c20c0c",
-    "ncm": "#c20c0c",
-    "qqmusic": "#00c853",
-    "kugou": "#ff5722",
-    "kuwo": "#ff6f00",
-    "apple_music": "#fa243c",
-    "spotify": "#1db954",
-    "facebook": "#1877f2",
-    "instagram": "#d62976",
+    key: theme.accent for key, theme in PLATFORM_THEMES.items()
 }
-UNKNOWN_PLATFORM_COLOR = "#607080"
+PLATFORM_COLORS.update(
+    {alias: PLATFORM_THEMES[target].accent for alias, target in THEME_ALIASES.items()}
+)
 
 PLATFORM_OFFICIAL_NAMES: dict[str, str] = {
-    "bilibili": "Bilibili",
-    "xiaohongshu": "Xiaohongshu",
-    "xhs": "Xiaohongshu",
-    "douyin": "Douyin",
-    "weibo": "Weibo",
-    "youtube": "YouTube",
-    "twitter": "Twitter/X",
-    "x": "Twitter/X",
-    "pixiv": "Pixiv",
-    "lofter": "LOFTER",
-    "allcpp": "AllCPP",
-    "cpp": "AllCPP",
-    "netease": "NetEase Cloud Music",
-    "ncm": "NetEase Cloud Music",
-    "qqmusic": "QQ Music",
-    "kugou": "KuGou Music",
-    "kuwo": "Kuwo Music",
-    "apple_music": "Apple Music",
-    "spotify": "Spotify",
-    "facebook": "Facebook",
-    "instagram": "Instagram",
-    "generic": "Web",
+    key: theme.display_name for key, theme in PLATFORM_THEMES.items()
 }
+for _alias, _key in THEME_ALIASES.items():
+    PLATFORM_OFFICIAL_NAMES.setdefault(_alias, PLATFORM_THEMES[_key].display_name)
+PLATFORM_OFFICIAL_NAMES.setdefault("generic", "Web")
+
+# 兼容别名：跨模块历史导入面（templates.py/usage_cards.py/echo.py/debug.py）。
+_derive_wash_tokens = derive_wash_tokens
 
 # 模板“已知键”特殊标签已覆盖的统计键（其余走通用遍历）。
 _KNOWN_STAT_KEYS = frozenset({
@@ -149,22 +133,9 @@ _PLATFORM_LOGO_FILES = {
     "facebook": "../platforms/facebook_user.svg",
     "instagram": "../platforms/instagram_user.svg",
 }
-_PLATFORM_FOOTER_LABELS = {
-    "bilibili": "哔哩哔哩",
-    "xiaohongshu": "小红书",
-    "xhs": "小红书",
-    "douyin": "抖音",
-    "weibo": "微博",
-    "youtube": "YouTube",
-    "twitter": "Twitter/X",
-    "x": "Twitter/X",
-    "pixiv": "Pixiv",
-    "lofter": "LOFTER",
-    "spotify": "Spotify",
-    "apple_music": "Apple Music",
-    "facebook": "Facebook",
-    "instagram": "Instagram",
-}
+# 平台页脚标签：单一来源 theme_tokens.PLATFORM_FOOTER_LABELS（契约测试锁定）；
+# 未登记平台回退 platform_official_name。
+_PLATFORM_FOOTER_LABELS = PLATFORM_FOOTER_LABELS
 
 
 # ==================== 基础工具 ====================
@@ -270,54 +241,40 @@ def _format_duration(seconds: int) -> str:
     return f"{minutes}:{secs:02d}"
 
 
+# ==================== 清晰度角标（vis1r H1 2026-09-12） ====================
+# 行业口径按「短边」取档（竖屏 1080×1920 仍是 1080P 而非 2K）；非整档高度
+# 向下取档（B 站常见 1088 扫描线 → 1080P）。宽高缺任一边时单边档位有歧义
+# （1920×? 可能是 1080P 也可能是 2K），宁可不出角标也不猜：返回空串由模板
+# {% if video_quality %} 钩子整块隐藏。
+_QUALITY_TIERS: tuple[tuple[int, str], ...] = (
+    (4320, "8K"),
+    (2160, "4K"),
+    (1440, "2K"),
+    (1080, "1080P"),
+    (720, "720P"),
+    (540, "540P"),
+    (480, "480P"),
+    (360, "360P"),
+    (240, "240P"),
+)
+
+
+def _format_video_quality(width: int, height: int) -> str:
+    """视频宽高 → 清晰度文案（如 1920×1080 → "1080P"）；宽高不全/无档位返回空串。"""
+    if width <= 0 or height <= 0:
+        return ""
+    tier_side = min(width, height)
+    for floor, label in _QUALITY_TIERS:
+        if tier_side >= floor:
+            return label
+    return ""
+
+
 # ==================== 釉瑚云母洗派生（mica-glass v2 2026-09-12） ====================
-# 工艺出处=用户裁定两轮收敛：
-# v1「粉里透紫、蓝里透粉」邻近色 pastel 工艺；v2（实弹验收 F3）基底不再随
-# 平台色漂移——守岸人标志色（淡蓝/白/深蓝/星空紫）是唯一基底，所有卡片
-# （含 weather/eat/help 等无平台语境卡）一律本命洗；平台个性只保留在
-# --pc accent（徽章/高亮）与主色斑 ≤35% 透色两层。
-# 色相锚点：wash-1 淡蓝 210°（可被平台色相 ±30° 内轻推）、wash-2 星空紫 265°、
-# wash-3 深蓝 228°、mist 近白蓝雾 214°。灰阶/未知平台推力为零 → 纯本命洗。
-
-_WASH_HUE_SHIFT = 30 / 360      # 平台色相对本命相的最大推幅
-_WASH_HUE_PULL = 0.5            # 平台色相 → 推幅的比例（本命相权重 3:1）
-_WASH_SAT_RATIO = 0.55          # pastel 化：输入饱和度保留比例
-_WASH_LIGHT = 0.88              # 洗色明度
-_WASH_MIST_LIGHT = 0.96         # 雾底明度 ≥94%
-_WASH_BASE_HUE = 210 / 360      # 守岸人淡蓝本命相
-_WASH_PURPLE_HUE = 265 / 360    # 星空紫
-_WASH_DEEP_HUE = 228 / 360      # 深蓝
-_WASH_MIST_HUE = 214 / 360      # 雾底淡蓝相
-_WASH_BASE_SAT = 0.42           # 本命洗基准饱和度（×0.55 后为柔和 pastel）
-_WASH_GRAY_THRESHOLD = 0.10     # S 低于此值视为无有效色相的灰阶（推力归零）
-
-
-def _wash_hex(hue: float, sat_in: float, light: float) -> str:
-    sat = sat_in * _WASH_SAT_RATIO
-    red, green, blue = colorsys.hls_to_rgb(hue % 1.0, light, min(sat, 0.60))
-    return f"#{round(red * 255):02x}{round(green * 255):02x}{round(blue * 255):02x}"
-
-
-def _derive_wash_tokens(hex_color: str) -> dict[str, str]:
-    """守岸人本命釉瑚云母洗四 token（wash_1/2/3/mist，#RRGGBB）。
-
-    纯函数不抛异常：非法值经 _hex_to_rgb 回退中性灰（无有效色相，
-    推力归零 → 纯本命洗）。平台色仅在有效色相时把 wash-1 淡蓝往
-    平台相轻推（≤±30°，比例 0.5），保证基底永远是守岸人渐变。
-    """
-    red, green, blue = _hex_to_rgb(hex_color)
-    hue, _lightness, sat = colorsys.rgb_to_hls(red / 255, green / 255, blue / 255)
-    base_hue = _WASH_BASE_HUE
-    if sat >= _WASH_GRAY_THRESHOLD:
-        delta = ((hue - base_hue + 0.5) % 1.0) - 0.5
-        shift = max(-_WASH_HUE_SHIFT, min(_WASH_HUE_SHIFT, delta * _WASH_HUE_PULL))
-        base_hue = (base_hue + shift) % 1.0
-    return {
-        "wash_1": _wash_hex(base_hue, _WASH_BASE_SAT, _WASH_LIGHT),
-        "wash_2": _wash_hex(_WASH_PURPLE_HUE, 0.40, _WASH_LIGHT),
-        "wash_3": _wash_hex(_WASH_DEEP_HUE, 0.45, _WASH_LIGHT + 0.01),
-        "wash_mist": _wash_hex(_WASH_MIST_HUE, 0.20, _WASH_MIST_LIGHT),
-    }
+# 派生算法与色相锚点已上收 theme_tokens.derive_wash_tokens（单一事实来源，
+# 工艺出处=用户裁定两轮收敛：v1 邻近色 pastel；v2 守岸人本命为唯一基底，
+# 平台个性只留 --pc accent 与 ≤35% 主色斑透色两层）。本模块经文件头部的
+# `_derive_wash_tokens` 别名再导出，历史调用面零变化。
 
 
 # ==================== 颜色派生 ====================
@@ -451,6 +408,12 @@ _METRIC_DEFINITIONS: dict[str, tuple[tuple[str, str, tuple[str, ...]], ...]] = {
     ),
 }
 
+# 平台级标签覆盖（VIS-FIX）：只改瓦片标签，不动数据抽取与瓦片结构。
+# 抖音语义 shares 应为「分享」（其余平台保持通用「转发」）。
+_METRIC_LABEL_OVERRIDES: dict[str, dict[str, str]] = {
+    "douyin": {"shares": "分享"},
+}
+
 
 # 新平台页面类型 → 走 raw 指标策略（stats 原键直接进指标栏，无图标）。
 _RAW_METRIC_PAGE_TYPES = frozenset(
@@ -514,6 +477,7 @@ def _build_metric_items(
             ("comments", "评论", ("comments", "评论", "评论数")),
             ("shares", "转发", ("shares", "转发", "转发数", "分享", "reposts")),
         )
+    label_overrides = _METRIC_LABEL_OVERRIDES.get(platform) or {}
     items: list[dict[str, Any]] = []
     for key, label, aliases in definitions:
         value = _first_nonempty_stat(stats, aliases)
@@ -522,7 +486,7 @@ def _build_metric_items(
         items.append(
             {
                 "key": key,
-                "label": label,
+                "label": label_overrides.get(key, label),
                 "value": value,
                 "icon_svg": _load_icon_asset(_METRIC_ICON_FILES.get(key, "")),
                 "source": "iconfont" if key in _METRIC_ICON_FILES else "none",
@@ -684,6 +648,22 @@ def flat_projection(item: Any) -> Any:
         video["pubdate"] = int(published_at.timestamp())
     if video:
         detail["video"] = video
+    # vis1r H2：音乐署名（MusicTrack 契约字段已由音乐解析器灌入，此前未投影）。
+    music = item.music
+    if music is not None and music.title:
+        detail["music"] = {
+            "name": str(music.title),
+            "author": "、".join(
+                contributor.name
+                for contributor in music.contributors
+                if getattr(contributor, "name", "")
+            ),
+        }
+    # vis1r H3：话题标签（ContentMetadata.tags 契约字段，github 等解析器已灌）。
+    if content is not None:
+        tags = [str(tag).strip() for tag in content.tags if str(tag).strip()]
+        if tags:
+            detail["tags"] = tags
     images = content_extras.get("images")
     if isinstance(images, list):
         detail["images"] = [_inline_local_image(url) for url in images if str(url)]
@@ -1042,6 +1022,46 @@ def parse_to_render_payload(item: Any) -> RenderPayload:
     return payload
 
 
+# ==================== E01 漂移相位策展（D2→D1 确定性定格） ====================
+# 相位单一事实来源：payload 稳定序列化 sha1 → [0,1) 四位小数，经模板 :root
+# 直注 --phase，页面零 JS（原 Math.random 内联脚本已删）。同一 payload 永远
+# 定格同一帧（视觉回归可逐像素比对），不同 payload 仍各有姿态；与渲染缓存
+# 键同源思路（docs/design/visual-effects-catalog.md §E01 / 管线规格 §4.2.2）。
+# digest 剥离易变字段（updated_at 等）：内容相同仅刷新时间不同的两次渲染
+# 定格同一帧，避免「缓存内外两种构图」。
+_PHASE_VOLATILE_KEYS = frozenset({"updated_at", "fetched_at", "generated_at"})
+
+
+def _stable_digest_text(payload: Any) -> str:
+    """payload → 稳定序列化文本；不可 JSON 化对象退 repr（进程内仍稳定）。"""
+    try:
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    except Exception:  # noqa: BLE001 - 序列化失败不阻断渲染，退 repr 保稳定。
+        return repr(payload)
+
+
+def stable_payload_digest(payload: Any) -> str:
+    """payload → sha1 hexdigest（E01 相位来源；bridge/templates 共用单点）。"""
+    if isinstance(payload, dict):
+        payload = {
+            key: value
+            for key, value in payload.items()
+            if key not in _PHASE_VOLATILE_KEYS
+        }
+    return hashlib.sha1(_stable_digest_text(payload).encode("utf-8")).hexdigest()
+
+
+def digest_phase(digest: str) -> str:
+    """digest hexdigest → [0,1) 相位串（4 位小数，CSS --phase 直用）。"""
+    spread = int(hashlib.sha1(digest.encode("utf-8")).hexdigest(), 16) % 10000
+    return f"{spread / 10000:.4f}"
+
+
+def payload_phase(payload: Any) -> str:
+    """payload → 确定性相位串（各 render_* 的统一注入入口）。"""
+    return digest_phase(stable_payload_digest(payload))
+
+
 # ==================== 渲染 ====================
 def _build_qr_data_url(url: str) -> str:
     """生成链接 QR 码；生成失败时返回空串（区块整体隐藏）。"""
@@ -1210,6 +1230,20 @@ def render_universal_card_html(payload_dict: dict[str, Any] | None = None) -> st
     context.update(payload.to_dict())
     # 釉瑚云母洗：与 --pc 同点注入（mica-glass v1 2026-09-12，工艺出处=用户裁定）。
     context.update(_derive_wash_tokens(payload.platform_color))
+    # vis1r 移交项投影增量（H1-H3，2026-09-12）：RenderPayload 未扩字段的
+    # 轻量上下文注入，模板钩子缺数据整块隐藏；显式入参优先于投影推导。
+    detail_data = _as_dict(data.get("detail"))
+    video_data = _as_dict(detail_data.get("video"))
+    context["video_quality"] = _as_str(data.get("video_quality")) or _format_video_quality(
+        _as_int(video_data.get("width")), _as_int(video_data.get("height"))
+    )
+    music_data = _as_dict(detail_data.get("music"))
+    context["music_name"] = _as_str(data.get("music_name")) or _as_str(music_data.get("name"))
+    context["music_author"] = _as_str(data.get("music_author")) or _as_str(music_data.get("author"))
+    topics_raw = data.get("topics") if isinstance(data.get("topics"), list) else detail_data.get("tags")
+    context["topics"] = [str(tag) for tag in _as_list(topics_raw) if _as_str(tag)]
+    # E01：漂移相位按 payload digest 确定注入（模板 :root --phase 直读）。
+    context["phase"] = payload_phase(data)
     return _TEMPLATE.render(**context)
 
 
@@ -1256,12 +1290,14 @@ def _spark_points(closes: Any) -> tuple[str, str]:
 
 
 def render_market_card_html(payload_dict: dict[str, Any] | None = None) -> str:
-    """渲染全球股指卡 HTML（mica-glass 规范，F19）。
+    """渲染全球股指卡 HTML（mica-glass 规范，F19；C 方向统一扩展 2026-09-12）。
 
-    payload_dict 字段：subtitle、groups=[{name, rows=[{name, price, pct, cls,
-    trend=[float,...]}]}]、platform_color、bot_name、bot_avatar_url、
-    feature_label。折线由 trend 收盘序列在此生成 polyline points；
-    缺数据区块静默隐藏，不抛异常。
+    payload_dict 字段：subtitle、groups=[{name, rows=[{name, price, pct,
+    change(涨跌额,可选), cls, trend=[float,...], trend_note(无走势文案,可选)}]}]、
+    platform_color、bot_name、bot_avatar_url、feature_label、source_note、
+    updated_at、delayed_note。折线由 trend 收盘序列在此生成 polyline points；
+    指数无历史走势时展示 trend_note（如 MOEX「暂无历史走势数据」），
+    不伪造折线；缺数据区块静默隐藏，不抛异常。
     """
     data = dict(payload_dict or {})
     color = _safe_css_color(
@@ -1284,11 +1320,15 @@ def render_market_card_html(payload_dict: dict[str, Any] | None = None) -> str:
                     "name": _as_str(row.get("name")) or "指数",
                     "price": _as_str(row.get("price")),
                     "pct": _as_str(row.get("pct")),
+                    "change": _as_str(row.get("change")),
                     "cls": (
                         "up" if change > 0 else ("down" if change < 0 else "flat")
                     ),
                     "spark_points": points,
                     "spark_color": spark_color,
+                    "trend_note": (
+                        "" if points else _as_str(row.get("trend_note"))
+                    ),
                 }
             )
         if rows_out:
@@ -1298,10 +1338,89 @@ def render_market_card_html(payload_dict: dict[str, Any] | None = None) -> str:
         platform_color_dark=_rgb_to_hex(_darken(rgb)),
         subtitle=_as_str(data.get("subtitle")),
         groups=groups_out,
+        source_note=_as_str(data.get("source_note")),
+        updated_at=_as_str(data.get("updated_at")),
+        delayed_note=_as_str(data.get("delayed_note")),
+        # 多源交叉查验声明（腾讯；通道不可用为空串=区块隐藏）。
+        crosscheck_note=_as_str(data.get("crosscheck_note")),
         bot_name=_as_str(data.get("bot_name")) or "守岸人",
         bot_avatar_url=_as_str(data.get("bot_avatar_url")),
         feature_label=_as_str(data.get("feature_label")) or "全球股指",
+        # 漂移相位按 payload digest 确定注入（E01，D2→D1）。
+        phase=payload_phase(data),
         # 釉瑚云母洗：与 --pc 同点注入（mica-glass v2 本命基底）。
+        **_derive_wash_tokens(color),
+    )
+
+
+# ==================== 股票/汇率金融卡（C 方向 UI 统一 2026-09-12） ====================
+_FINANCE_CARD_TEMPLATE = _ENV.get_template("finance_card.html")
+# trend_svg 只放行内部 finance_chart 生成的整段 <svg>…</svg>（数值/转义后
+# 文本构成，无属性注入面）；其余形态一律丢弃，模板侧回退趋势文案。
+_FINANCE_TREND_SVG_RE = re.compile(r"^<svg[\s\S]*</svg>$")
+
+
+def render_finance_card_html(payload_dict: dict[str, Any] | None = None) -> str:
+    """渲染股票/汇率金融卡 HTML（mica-glass 规范，stocks/fx 共用壳）。
+
+    payload_dict 字段：title、subtitle、badge、sections=[{name, rows=[
+    {label, value, delta, cls(up/down/flat), sub, trend_svg, trend_note}]}]、
+    platform_color(可选,缺省守岸人品牌 accent)、source_note、updated_at、
+    delayed_note、bot_name、bot_avatar_url、feature_label。
+    主题取守岸人品牌基底（金融卡无平台语境，本命洗不随内容漂移）；
+    无数据的行内区块静默隐藏，不抛异常。
+    """
+    data = dict(payload_dict or {})
+    color = _safe_css_color(
+        _as_str(data.get("platform_color")) or BRAND_THEME.accent,
+        BRAND_THEME.accent,
+    )
+    rgb = _hex_to_rgb(color)
+    sections_out: list[dict[str, Any]] = []
+    for section in _as_list(data.get("sections")):
+        if not isinstance(section, dict):
+            continue
+        rows_out: list[dict[str, Any]] = []
+        for row in _as_list(section.get("rows")):
+            if not isinstance(row, dict):
+                continue
+            raw_svg = _as_str(row.get("trend_svg")).strip()
+            trend_svg = raw_svg if _FINANCE_TREND_SVG_RE.match(raw_svg) else ""
+            delta = _as_str(row.get("delta"))
+            cls = _as_str(row.get("cls")) or "flat"
+            rows_out.append(
+                {
+                    "label": _as_str(row.get("label")) or "—",
+                    "value": _as_str(row.get("value")),
+                    "delta": delta,
+                    "cls": cls if cls in {"up", "down", "flat"} else "flat",
+                    "sub": _as_str(row.get("sub")),
+                    "trend_svg": trend_svg,
+                    "trend_note": (
+                        "" if trend_svg else _as_str(row.get("trend_note"))
+                    ),
+                }
+            )
+        if rows_out:
+            sections_out.append(
+                {"name": _as_str(section.get("name")), "rows": rows_out}
+            )
+    return _FINANCE_CARD_TEMPLATE.render(
+        platform_color=color,
+        platform_color_dark=_rgb_to_hex(_darken(rgb)),
+        title=_as_str(data.get("title")) or "金融速览",
+        subtitle=_as_str(data.get("subtitle")),
+        badge=_as_str(data.get("badge")),
+        sections=sections_out,
+        source_note=_as_str(data.get("source_note")),
+        updated_at=_as_str(data.get("updated_at")),
+        delayed_note=_as_str(data.get("delayed_note")),
+        bot_name=_as_str(data.get("bot_name")) or "守岸人",
+        bot_avatar_url=_as_str(data.get("bot_avatar_url")),
+        feature_label=_as_str(data.get("feature_label")) or "金融",
+        # 漂移相位按 payload digest 确定注入（E01，D2→D1）。
+        phase=payload_phase(data),
+        # 釉瑚云母洗：与 --pc 同点注入（品牌 accent → 纯本命基底）。
         **_derive_wash_tokens(color),
     )
 
@@ -1352,6 +1471,8 @@ def render_song_candidates_html(payload_dict: dict[str, Any] | None = None) -> s
         bot_name=_as_str(data.get("bot_name")) or "守岸人",
         bot_avatar_url=_as_str(data.get("bot_avatar_url")),
         feature_label=_as_str(data.get("feature_label")) or "点歌",
+        # 漂移相位按 payload digest 确定注入（E01，D2→D1）。
+        phase=payload_phase(data),
         # 釉瑚云母洗：与 --pc 同点注入（mica-glass v1 2026-09-12）。
         **_derive_wash_tokens(color),
     )
@@ -1387,6 +1508,8 @@ def render_affinity_card_html(payload_dict: dict[str, Any] | None = None) -> str
         bot_to_user=data.get("bot_to_user") or {"score": 50.0, "tier": "友善", "bar": 50.0},
         user_to_bot=data.get("user_to_bot") or {"score": 50.0, "tier": "友善", "bar": 50.0},
         rules=[rule for rule in (data.get("rules") or []) if isinstance(rule, dict)],
+        # 漂移相位按 payload digest 确定注入（E01，D2→D1）。
+        phase=payload_phase(data),
     )
 
 
@@ -1405,20 +1528,61 @@ _MERMAID_READY_JS = (
 _MERMAID_BACKEND: Any = None
 _MERMAID_BACKEND_LOCK = threading.Lock()
 
+# 重试预算门（评审 I-1）：单次渲染 attempt 最坏 ≈ 14.2s（set_content 上限
+# 8s + wait_js 6s + 余量），外层 renderer._MERMAID_CALL_TIMEOUT_S=20s 钳的
+# 只是调用方等待（future.result 超时不能取消在跑任务）。首败已耗时超过
+# （20s − 单 attempt 最坏）≈ 5.5s 时放弃重试直接 None——否则最坏总工作量
+# 顶到 ~28s，mermaid 专用单 worker 被弃渲染占住，断网期后续消息逐条排队
+# 20s 超时；重试只留给「快速失败」（浏览器级故障自愈重建，秒级）场景。
+_MERMAID_RETRY_MAX_FIRST_ATTEMPT_S = 5.5
+
 
 def _get_mermaid_backend() -> Any:
-    """懒初始化 mermaid 专用截图后端；仅接受 playwright（需要 wait_js）。"""
+    """懒初始化 mermaid 专用截图后端；仅接受 playwright（需要 wait_js）。
+
+    装配时给后端实例补一个自愈前置钩子（_install_ctx_exit_on_self_heal）：
+    历史 bug 是 render_backends._close_thread_browser 对 playwright ctx 调
+    .close()（该对象并无 close 方法，AttributeError 被静默吞掉），ctx 退出
+    全靠 browser.close() 隐式掐断传输；浏览器「僵死但管道未断」时传输掐
+    不断，线程常驻停车中的 asyncio loop，之后同线程每次 start() 都报
+    "Sync API inside the asyncio loop"（实弹复现）。render_backends 已于
+    2026-09-12 根治（_close_thread_browser 改走 __exit__，launch 重试路径
+    同步堵漏）；本钩子按幂等语义保留为双保险，待评审 M-4 清理时整体移除。
+    """
     global _MERMAID_BACKEND
     with _MERMAID_BACKEND_LOCK:
         if _MERMAID_BACKEND is None:
             backend = build_render_backend("auto")
-            _MERMAID_BACKEND = (
-                backend
-                if getattr(backend, "available", False)
+            if (
+                getattr(backend, "available", False)
                 and getattr(backend, "name", "") == "playwright"
-                else False
-            )
+            ):
+                _install_ctx_exit_on_self_heal(backend)
+                _MERMAID_BACKEND = backend
+            else:
+                _MERMAID_BACKEND = False
         return _MERMAID_BACKEND or None
+
+
+def _install_ctx_exit_on_self_heal(backend: Any) -> None:
+    """包装后端实例的自愈关闭：先正确退出 playwright ctx，再走原关闭路径。
+
+    只包装 bridge 自持的单例实例（不改 render_backends 源）；ctx.__exit__
+    是 playwright 上下文管理器的公开协议（with 语句即此入口），重复退出
+    幂等（内部 _exit_was_called 守卫）。上游根治后本钩子可整体移除。
+    """
+    orig_close = backend._close_thread_browser
+
+    def _close_with_ctx_exit() -> None:
+        ctx = getattr(getattr(backend, "_local", None), "playwright_ctx", None)
+        if ctx is not None:
+            try:
+                ctx.__exit__(None, None, None)
+            except Exception:  # noqa: BLE001, S110 - 退出失败不阻断原关闭路径。
+                pass
+        orig_close()
+
+    backend._close_thread_browser = _close_with_ctx_exit
 
 
 def render_mermaid_html(code: str) -> str:
@@ -1433,6 +1597,8 @@ def render_mermaid_html(code: str) -> str:
         code=code or "",
         bot_name="守岸人",
         feature_label="流程图",
+        # 漂移相位按 mermaid 源码 digest 确定注入（E01，D2→D1）。
+        phase=payload_phase(code or ""),
         **_derive_wash_tokens(UNKNOWN_PLATFORM_COLOR),
     )
 
@@ -1441,7 +1607,14 @@ def render_mermaid_png(code: str) -> bytes | None:
     """mermaid 源码 → PNG 字节；任何失败（无网/超时/后端缺失/异常）返回 None。
 
     走 render_backends 既有截图入口（PlaywrightRenderBackend.render_card），
-    通过 wait_js 在截图前等 SVG 真正出现（上限 6s）。
+    通过 wait_js 在截图前等 SVG 真正出现（上限 6s）。首败若为快速失败
+    （浏览器级故障：render_card 内部自愈已重建浏览器，重试即用新实例出图
+    ——把自愈收益从「下一次调用」提前到「本张卡」）则紧接重试一次、同
+    payload；首败已耗时超过 _MERMAID_RETRY_MAX_FIRST_ATTEMPT_S 时放弃重试
+    直接 None——否则最坏 ~28s 会越过外层 renderer._MERMAID_CALL_TIMEOUT_S=20s
+    （该超时只钳调用方等待，不能取消 worker 上在跑的渲染，弃渲染仍占住
+    mermaid 专用单 worker，断网期后续消息逐条排队超时；评审 I-1）。
+    重试仍失败（如无网）保持 None 降级。
     """
     if not (code or "").strip():
         return None
@@ -1449,29 +1622,46 @@ def render_mermaid_png(code: str) -> bytes | None:
         backend = _get_mermaid_backend()
         if backend is None:
             return None
-        return backend.render_card(
-            {
-                "html": render_mermaid_html(code),
-                "viewport": {"width": 840, "height": 640},
-                "wait_ms": 120,
-                "wait_js": _MERMAID_READY_JS,
-                "wait_js_timeout_ms": 6000,
-            }
-        )
+        payload = {
+            "html": render_mermaid_html(code),
+            "viewport": {"width": 840, "height": 640},
+            "wait_ms": 120,
+            "wait_js": _MERMAID_READY_JS,
+            "wait_js_timeout_ms": 6000,
+        }
+        started = time.monotonic()
+        png = backend.render_card(payload)
+        if png is None and (
+            time.monotonic() - started <= _MERMAID_RETRY_MAX_FIRST_ATTEMPT_S
+        ):
+            png = backend.render_card(payload)
+        return png
     except Exception:  # noqa: BLE001 - mermaid 渲染绝不抛异常，失败降级文本。
         return None
 
 
 __all__ = [
+    "BRAND_THEME",
+    "DEFAULT_THEME",
     "PLATFORM_COLORS",
     "PLATFORM_OFFICIAL_NAMES",
+    "PLATFORM_THEMES",
     "ForwardPayload",
     "RenderPayload",
+    "ThemeTokens",
+    "derive_wash_tokens",
+    "digest_phase",
     "flat_projection",
+    "get_platform_theme",
     "parse_to_render_payload",
+    "payload_phase",
     "render_affinity_card_html",
+    "render_finance_card_html",
+    "render_market_card_html",
     "render_mermaid_html",
     "render_mermaid_png",
     "render_song_candidates_html",
     "render_universal_card_html",
+    "stable_payload_digest",
+    "theme_to_css_vars",
 ]

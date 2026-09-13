@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import re
 
 from plugins.bot_unified_runtime.contracts.media import (
@@ -45,6 +46,12 @@ def _match_keyword(text: str, keywords: list[str]) -> str | None:
     return max(matched, key=len)
 
 
+@functools.cache
+def _compiled_pattern(pattern: str) -> re.Pattern[str]:
+    """注册表 pattern 只编译一次（P1-3：消除解析循环内重复 compile）。"""
+    return re.compile(pattern)
+
+
 def _match_url(source_input: SourceInput, patterns: list[str]) -> str | None:
     if not patterns:
         return None
@@ -52,7 +59,7 @@ def _match_url(source_input: SourceInput, patterns: list[str]) -> str | None:
     if source_input.raw_text:
         candidates.append(source_input.raw_text)
     for pattern in patterns:
-        compiled = re.compile(pattern)
+        compiled = _compiled_pattern(pattern)
         for candidate in candidates:
             match = compiled.search(candidate)
             if match:

@@ -444,10 +444,6 @@ def classify_question_intent_legacy(text: str) -> IntentDecision:
     )
 
 
-def should_web_search(text: str) -> bool:
-    return classify_question_intent(text).intent is QuestionIntent.WEB_SEARCH
-
-
 def looks_like_question_text(text: str) -> bool:
     """判断文本是否像提问，供群聊自然语言回复策略使用。"""
     return _is_question_like(_strip(text))

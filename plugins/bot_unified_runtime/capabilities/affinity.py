@@ -27,8 +27,20 @@ from plugins.bot_unified_runtime.contracts import (
 )
 
 _COMMAND_RE = re.compile(
-    r"^[/!！]?\s*(?:好感度|好感查看|查询好感|好感值|亲密度|affinity"
-    r"|好感(?=\s|$|算法|说明|规则|榜|我))\s*(?P<arg>.*)$",
+    # affinity(?![a-z0-9])：ASCII 别名右侧词边界（wiki _alias_hit 先例），
+    # affinityqq 类字母延续不触发（边界体检清账）；中文胶合不受影响。
+    # 全拼/缩写（T-Spec T1.5/T1.6 第二批）：haogandu 等同音覆盖 親密度/好感值
+    # 等简繁词；haogan 镜像中文「好感」的独立成词约束（后随仅限
+    # 空白/串尾/算法/说明/规则/榜/我），haogandu 类长词先匹配、
+    # haogansuanfa 类拼音 arg 延续不触发（arg 词族不拼音化，同批一 eat 先例）。
+    r"^[/!！]?\s*(?:好感度|好感查看|查询好感|查詢好感|好感值|亲密度|親密度|affinity(?![a-z0-9])"
+    r"|haoganchakan(?![a-z0-9])|hgck(?![a-z0-9])"
+    r"|chaxunhaogan(?![a-z0-9])|cxhg(?![a-z0-9])"
+    r"|haogandu(?![a-z0-9])|hgd(?![a-z0-9])"
+    r"|haoganzhi(?![a-z0-9])|hgz(?![a-z0-9])"
+    r"|qinmidu(?![a-z0-9])|qmd(?![a-z0-9])"
+    r"|好感(?=\s|$|算法|说明|规则|榜|我)"
+    r"|haogan(?=\s|$|算法|说明|规则|榜|我))\s*(?P<arg>.*)$",
     re.IGNORECASE,
 )
 # v5 展示口径（用户裁定 2026-09-12 实弹反馈④）：-100~+100 八档不变；

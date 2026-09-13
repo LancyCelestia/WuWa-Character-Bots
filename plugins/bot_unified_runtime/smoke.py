@@ -202,6 +202,26 @@ raise SystemExit(0 if result["ok"] else 1)
 """
 
 
+def _json_decode_env_values(values: dict[str, str]) -> dict[str, Any]:
+    """与 NoneBot dotenv 用户键解析同语义：env 值若以 ``{``/``[`` 开头且是合法
+    JSON 就解码为对象，失败保持原字符串（nonebot/config.py 对 env_file 用户
+    自定义键即此行为）。Config 的 list/dict 字段里仍有少数没有
+    before-validator（含 BOT_ADMIN_PROFILES），裸 JSON 字符串会在
+    ``Config.model_validate`` 直接 ``list_type`` 崩溃，故 smoke 装载必须补齐
+    这步解码，才能与生产 ``driver_config`` 路径同构。"""
+    decoded: dict[str, Any] = {}
+    for key, value in values.items():
+        text = value.strip()
+        if text[:1] in {"{", "["}:
+            try:
+                decoded[key] = json.loads(text)
+                continue
+            except ValueError:
+                pass
+        decoded[key] = value
+    return decoded
+
+
 def load_smoke_config(env_file: str | Path | None = None) -> Config:
     path = _resolve_smoke_env_file(env_file)
     values: dict[str, str] = {}
@@ -214,11 +234,13 @@ def load_smoke_config(env_file: str | Path | None = None) -> Config:
             values[key.strip().lower()] = value.strip().strip('"').strip("'")
     # 注入进程环境（不覆盖已存在的变量），使模型注册表里的
     # env:BOT_API_KEY_* 引用在 smoke/控制台路径与 NoneBot dotenv 行为一致。
+    # 这里保持原始字符串（env var 本就是字符串形态），JSON 解码只作用于
+    # 下面的 Config 校验入参。
     import os
 
     for key, value in values.items():
         os.environ.setdefault(key.upper(), value)
-    return Config.model_validate(translate_env_keys(values))
+    return Config.model_validate(translate_env_keys(_json_decode_env_values(values)))
 
 
 def _resolve_smoke_env_file(env_file: str | Path | None) -> Path:
@@ -743,43 +765,6 @@ def run_why_smoke(
 
 def _why_smoke_should_record_history_skip(send_request: SendRequest) -> bool:
     return any(tag.startswith("prompt_injection") for tag in send_request.audit_tags)
-
-
-def _build_why_summary(
-    *,
-    runtime_enabled: bool,
-    policy_allowed: bool,
-    policy_reason: str,
-    session_type: SessionType,
-    mentions_bot: bool,
-    group_command_prefix: str,
-    max_messages: int,
-    reply_budget_reason: str,
-    send_request_created: bool,
-    receipt_state: str,
-) -> str:
-    if not runtime_enabled:
-        return "统一运行时已暂停，所以不会进入能力链路，也不会发送消息。"
-    if not policy_allowed:
-        if policy_reason == "passive_group_message" and session_type is SessionType.GROUP:
-            return (
-                "群聊未提及机器人或命令前缀"
-                f" {group_command_prefix}，所以只观察不回复。"
-            )
-        if policy_reason == "sender_blocked":
-            return "发送者命中拉黑角色，所以在策略阶段阻断。"
-        if policy_reason == "critical_input_risk":
-            return "输入风险为 critical，所以在策略阶段阻断。"
-        return f"策略阶段不允许回复：{policy_reason}。"
-    if not send_request_created:
-        return f"策略允许，但后续链路没有创建发送请求；最终回执为 {receipt_state}。"
-    if reply_budget_reason:
-        return (
-            f"策略允许回复；回复预算原因是 {reply_budget_reason}，"
-            f"最多回复 {max_messages} 条；已创建 SendRequest。"
-        )
-    mention_text = "已提及机器人" if mentions_bot else "未提及机器人"
-    return f"策略允许回复，{mention_text}，已创建 SendRequest。"
 
 
 def run_context_smoke(

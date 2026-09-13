@@ -21,9 +21,20 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
 )
 
-_LIST_RE = re.compile(r"提醒列表|我的提醒|看看提醒|有哪些提醒")
+# 英文 reminder/reminders 精确等值与 my reminders/reminder list 短语为
+# T-Spec T1.2 英文触发（列表查询面）；精确等值防英文整句（set a reminder）误触。
+# 全拼/缩写（T-Spec T1.5/T1.6 第三批）：列表查询面拼音入表（双侧 ASCII 词边界）。
+# 信号词面（提醒/叫我/记得叫 → tixing/jiaowo/jidejiao）不入表：端到端承接依赖
+# character/reminders.parse_reminder_intent 的 _REMIND_SIGNAL_RE（白名单外）同步，
+# 半边入表只会产生永不命中的死词（fix-py3-report 结构性边界）。
+_LIST_RE = re.compile(
+    r"提醒列表|我的提醒|看看提醒|有哪些提醒"
+    r"|^(?:my\s+)?reminders?$|^(?:reminders?\s+list|list\s+reminders)$"
+    r"|(?<![A-Za-z0-9])(?:tixingliebiao|wodetixing|kankantixing|younaxietixing"
+    r"|txlb|wdtx|kktx|ynxt)(?![A-Za-z0-9])"
+)
 _CANCEL_RE = re.compile(r"取消提醒\s*([0-9a-fA-F]{4,12})?")
-_SIGNAL_RE = re.compile(r"提醒|叫我|记得叫")
+_SIGNAL_RE = re.compile(r"提醒|叫我|记得叫|記得叫")
 
 
 def is_reminder_command(text: str) -> bool:

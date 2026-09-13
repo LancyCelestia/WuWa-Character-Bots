@@ -211,7 +211,8 @@ class SQLiteGroupDigestProvider:
             lines.append(line)
             chars_used += len(line)
         summary = (
-            "最近群聊公共话题（确定性摘要，不含个人私聊内容）：\n"
+            "最近群聊公共话题（确定性摘要，不含个人私聊内容；"
+            "发言成员均为群友，不存在唯一主角，不要称任何成员为漂泊者）：\n"
             + "\n".join(lines)
         )
         return SharedGroupContext(
@@ -253,16 +254,6 @@ class SQLiteGroupDigestProvider:
             return []
 
 
-class LLMGroupSummarizer(Protocol):
-    def summarize(self, digest_text: str) -> str:
-        """把确定性摘要压成话题总结；失败返回原摘要。"""
-
-
-class NullLLMGroupSummarizer:
-    def summarize(self, digest_text: str) -> str:
-        return digest_text
-
-
 class OpenAICompatibleGroupSummarizer:
     """按 TTL 缓存 LLM 摘要；失败回退原摘要，不阻塞对话。
 
@@ -298,7 +289,9 @@ class OpenAICompatibleGroupSummarizer:
                 return cached
         prompt = (
             "请把下面的群聊公共消息压缩成 3-5 条中性话题摘要，"
-            "不保留任何个人敏感信息，不评价、不编造：\n" + key
+            "不保留任何个人敏感信息，不评价、不编造；"
+            "成员一律按其原有称呼呈现，均为群友，"
+            "不得把任何成员塑造成唯一主角或称为漂泊者：\n" + key
         )
         try:
             reply = self.llm_provider.generate(

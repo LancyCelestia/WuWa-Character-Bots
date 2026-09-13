@@ -4,8 +4,11 @@
 - 底色/色斑用 bridge._derive_wash_tokens 按 --accent（bot_help_card_color 派生）
   生成的釉瑚洗（邻近色 pastel，工艺出处=用户裁定），经 ``--wash-*`` 消费；
   --accent 退为状态/费用等 accent，语义状态色（红绿黄）置于玻璃层之上。
+- 颜色换算/加深一律消费 theme_tokens 单一来源（Task3 收尾统一：本模块不再
+  持有私有 hex 助手副本，数学与旧实现逐位一致，输出零变化）。
 - 液态玻璃 = 半透明白 + 1px 内高光渐变描边，无 backdrop-filter（透明截图无物可糊）。
-- 三枚柔光色斑缓慢漂移 + 内联脚本随机相位；动画元素全部在 .shell（即截图
+- 三枚柔光色斑缓慢漂移（E01 二批：相位由内容 digest 钉帧，bridge.payload_phase
+  单一事实源，页面零 JS）；动画元素全部在 .shell（即截图
   .card 内层）中；阴影只允许两枚 token（--mica-shadow/--mica-shadow-soft）。
 - 字重最大 700；body 透明背景 + antialiased（截图 omit_background 依赖）。
 - 纯 HTML+CSS+一段内联脚本，无外链字体/图片，单页单图，渲染开销最小化。
@@ -17,30 +20,24 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
-
-def _hex_to_rgb(color: str) -> tuple[int, int, int]:
-    color = (color or "").lstrip("#")
-    if len(color) != 6:
-        return (96, 112, 128)
-    try:
-        return tuple(int(color[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
-    except ValueError:
-        return (96, 112, 128)
-
-
-def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
-    return "#{:02x}{:02x}{:02x}".format(*rgb)
-
-
-def _darken(rgb: tuple[int, int, int]) -> tuple[int, int, int]:
-    red, green, blue = (max(0, min(255, int(channel * 0.8))) for channel in rgb)
-    return red, green, blue
+from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
+    BRAND_THEME,
+    FONT_FAMILY_STACK,
+    SHADOW_PRIMARY,
+    SHADOW_SECONDARY,
+    _darken_hex,
+    _hex_to_rgb,
+    _rgb_to_hex,
+)
 
 
 def usage_card_accent(config: object) -> tuple[str, str]:
-    """主色（accent）与深墨色（accent-ink）：来自 bot_help_card_color 派生。"""
-    rgb = _hex_to_rgb(str(getattr(config, "bot_help_card_color", "") or ""))
-    return _rgb_to_hex(rgb), _rgb_to_hex(_darken(rgb))
+    """主色（accent）与深墨色（accent-ink）：来自 bot_help_card_color 派生。
+
+    hex 换算与加深消费 theme_tokens 单一来源（math 与旧私有副本逐位一致）。
+    """
+    color = str(getattr(config, "bot_help_card_color", "") or "")
+    return _rgb_to_hex(_hex_to_rgb(color)), _darken_hex(color)
 
 
 def _fmt_int(value: object) -> str:
@@ -74,6 +71,7 @@ def usage_report_mica_html(
 
     from plugins.bot_unified_runtime.output.card_render.bridge import (
         _derive_wash_tokens,
+        payload_phase,
     )
 
     accent, accent_ink = usage_card_accent(config)
@@ -102,19 +100,36 @@ def usage_report_mica_html(
         if note
         else ""
     )
+    # E01 二批：漂移相位 = 内容 digest 钉帧；config 为运行时对象、generated_at
+    # 为易变字段（同 bridge._PHASE_VOLATILE_KEYS 口径），均不进 digest。
+    phase = payload_phase(
+        {
+            "kicker": kicker,
+            "title": title,
+            "status_label": status_label,
+            "status_kind": status_kind,
+            "window_label": window_label,
+            "totals": totals,
+            "model_rows": model_rows,
+            "note": note,
+        }
+    )
     unpriced_html = (
         f"<div class=\"unote\">{unpriced_note}</div>" if unpriced_note else ""
     )
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
-:root {{ --phase:0.2; --accent:{accent}; --accent-ink:{accent_ink};
+:root {{ --phase:{phase}; --accent:{accent}; --accent-ink:{accent_ink};
   /* 釉瑚云母底主题 token，全卡统一（bridge 按 --accent 派生；工艺出处=用户裁定）。 */
   --wash-1:{wash['wash_1']}; --wash-2:{wash['wash_2']}; --wash-3:{wash['wash_3']}; --wash-mist:{wash['wash_mist']};
   --wash-blob-1:color-mix(in srgb, var(--accent) 35%, var(--wash-1));
-  --ink:#27232a; --muted:#6f646c;
-  --r-shell:24px; --r-panel:12px; --mica-shadow:0 12px 32px rgba(31,35,41,.10); --mica-shadow-soft:0 3px 10px rgba(31,35,41,.05); }}
+  --text-main:{BRAND_THEME.text_main}; --text-sub:{BRAND_THEME.text_sub};
+  --ink:var(--text-main); --muted:var(--text-sub);
+  --font-family:{FONT_FAMILY_STACK};
+  --r-shell:{BRAND_THEME.shell_radius}px; --r-panel:{BRAND_THEME.panel_radius}px; --r-tile:{BRAND_THEME.tile_radius}px;
+  --mica-shadow:{SHADOW_PRIMARY}; --mica-shadow-soft:{SHADOW_SECONDARY}; }}
 * {{ box-sizing:border-box; }}
-body {{ margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; background:transparent; color:var(--ink);
+body {{ margin:0; font-family:var(--font-family); background:transparent; color:var(--ink);
   -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }}
 .stage {{ padding:0; width:fit-content; background:transparent; }}
 /* 釉瑚云母外壳：雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底（不透明基础层）
@@ -202,8 +217,7 @@ body {{ margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; backgroun
 {note_html}
 <footer class="foot">账单 = Σ(输入×输入价 + 输出×输出价)，按每次调用时刻的价格表记账；价格用 /bot model price 维护。</footer>
 </section></div>
-<script>/* mica-glass v1 2026-09-12：随机漂移相位，纯内联零依赖，失败静默。 */
-try{{document.documentElement.style.setProperty("--phase",Math.random().toFixed(4));}}catch(e){{}}</script></body></html>"""
+</body></html>"""
 
 
 def render_usage_card_png(

@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 from plugins.bot_unified_runtime.audit import AuditRepository, redact_private_debug
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.capabilities.chat import (
     ChatPromptDiagnostics,
     build_chat_prompt_with_diagnostics,
@@ -57,7 +58,7 @@ from plugins.bot_unified_runtime.security import (
 )
 from plugins.bot_unified_runtime.sender import ReceiptRepository, SendQueue
 
-_DENIED_BODY = "只有管理员可以查看运行时排障记录。"
+_DENIED_BODY = user_copy.ADMIN_GATE_REQUIRED.format(action="看运行时排障记录")
 
 
 def build_receipt_query_result(
@@ -701,13 +702,21 @@ def _llm_setup_mica_html(payload: dict[str, Any]) -> str:
     """LLM 接入检查卡：中文说明 + 参数取值范围 + 当前值。
 
     mica-glass v1 2026-09-12：釉瑚云母底（bridge 按 accent 派生 --wash-* 注入；
-    工艺出处=用户裁定）+ 液态玻璃面板 + 三枚柔光色斑漂移 + 内联脚本随机相位；
+    工艺出处=用户裁定）+ 液态玻璃面板 + 三枚柔光色斑漂移（E01 二批：相位由
+    payload digest 钉帧，bridge.payload_phase 单一事实源，页面零 JS）；
     语义状态色（红绿黄）置于玻璃层之上。
     """
     import html as _html
 
     from plugins.bot_unified_runtime.output.card_render.bridge import (
         _derive_wash_tokens,
+        payload_phase,
+    )
+    from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
+        BRAND_THEME,
+        FONT_FAMILY_STACK,
+        SHADOW_PRIMARY,
+        SHADOW_SECONDARY,
     )
 
     accent, accent_ink = _llm_setup_accent(payload["config"])
@@ -726,23 +735,32 @@ def _llm_setup_mica_html(payload: dict[str, Any]) -> str:
         "</div>"
         for row in payload["rows"]
     )
+    # E01 二批：漂移相位 = 内容 digest 钉帧；config 是运行时对象（非卡面语义，
+    # repr 含内存地址不稳定），排除在 digest 之外，只取卡面展示字段。
+    phase = payload_phase(
+        {key: value for key, value in payload.items() if key != "config"}
+    )
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
-:root {{ --phase:0.2; --accent:{accent}; --accent-ink:{accent_ink};
+:root {{ --phase:{phase}; --accent:{accent}; --accent-ink:{accent_ink};
   /* 釉瑚云母底主题 token，全卡统一（bridge 按 --accent 派生；工艺出处=用户裁定）。 */
   --wash-1:{wash['wash_1']}; --wash-2:{wash['wash_2']}; --wash-3:{wash['wash_3']}; --wash-mist:{wash['wash_mist']};
   --wash-blob-1:color-mix(in srgb, var(--accent) 35%, var(--wash-1));
-  --ink:#27232a; --muted:#6f646c; --good:#1a9e6c; --bad:#d64545; }}
+  --text-main:{BRAND_THEME.text_main}; --text-sub:{BRAND_THEME.text_sub};
+  --ink:var(--text-main); --muted:var(--text-sub); --good:#1a9e6c; --bad:#d64545;
+  --font-family:{FONT_FAMILY_STACK};
+  --r-shell:{BRAND_THEME.shell_radius}px; --r-panel:{BRAND_THEME.panel_radius}px; --r-tile:{BRAND_THEME.tile_radius}px;
+  --mica-shadow:{SHADOW_PRIMARY}; --mica-shadow-soft:{SHADOW_SECONDARY}; }}
 * {{ box-sizing:border-box; }}
-body {{ margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; background:transparent; color:var(--ink); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }}
+body {{ margin:0; font-family:var(--font-family); background:transparent; color:var(--ink); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }}
 .setup-stage {{ padding:0; width:fit-content; background:transparent; }}
 /* 釉瑚云母外壳：雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底（不透明基础层）
    + 1px 内高光渐变描边；色斑垫底、内容抬升；阴影两枚 token。 */
-.setup-shell {{ position:relative; width:880px; overflow:hidden; border-radius:24px; border:1px solid transparent;
+.setup-shell {{ position:relative; width:880px; overflow:hidden; border-radius:var(--r-shell); border:1px solid transparent;
   background:linear-gradient(145deg, var(--wash-mist) 0%, color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
     color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%, color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%) padding-box,
     linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
-  box-shadow:0 12px 32px rgba(31,35,41,.10); }}
+  box-shadow:var(--mica-shadow); }}
 .setup-shell > :not(.drift-blobs) {{ position:relative; z-index:1; }}
 /* 渐变漂移色斑（wash 三色半透明互相透过，46s/52s/58s 交错漂移+呼吸）。 */
 .drift-blobs {{ position:absolute; inset:0; z-index:0; overflow:hidden; pointer-events:none; border-radius:inherit; }}
@@ -766,7 +784,7 @@ body {{ margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; backgroun
 /* 液态玻璃面板：半透明白 + 1px 内高光渐变描边（无 backdrop-filter）。 */
 .glass {{ background:linear-gradient(150deg, rgba(255,255,255,.66) 0%, rgba(255,255,255,.44) 100%) padding-box,
     linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
-  border:1px solid transparent; box-shadow:0 3px 10px rgba(31,35,41,.05); }}
+  border:1px solid transparent; box-shadow:var(--mica-shadow-soft); }}
 .setup-head {{ padding:20px 26px 16px; border-bottom:1px solid rgba(255,255,255,.78); }}
 .setup-kicker {{ color:var(--accent-ink); font-size:11px; font-weight:700; letter-spacing:.14em; }}
 .setup-title {{ margin-top:8px; font-size:28px; font-weight:700; }}
@@ -779,11 +797,11 @@ body {{ margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; backgroun
 .setup-body {{ padding:12px; display:grid; gap:6px; }}
 .row {{ display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:12px; }}
 .dot {{ width:9px; height:9px; border-radius:50%; flex:none; }}
-.dot.ok {{ background:var(--good); box-shadow:0 0 0 3px color-mix(in srgb, var(--good) 14%, transparent); }}
-.dot.bad {{ background:var(--bad); box-shadow:0 0 0 3px color-mix(in srgb, var(--bad) 14%, transparent); }}
+.dot.ok {{ background:var(--good); box-shadow:var(--mica-shadow-soft); }}
+.dot.bad {{ background:var(--bad); box-shadow:var(--mica-shadow-soft); }}
 .row-main {{ flex:1; min-width:0; }}
 .row-key {{ font-size:14px; font-weight:700; font-family:Consolas,monospace; }}
-.row-desc {{ margin-left:10px; font-size:12px; color:var(--muted); font-weight:400; font-family:"Segoe UI","Microsoft YaHei",sans-serif; }}
+.row-desc {{ margin-left:10px; font-size:12px; color:var(--muted); font-weight:400; font-family:var(--font-family); }}
 .row-range {{ margin-top:3px; font-size:12px; color:var(--muted); }}
 .row-value {{ font-size:13px; font-weight:650; color:var(--accent-ink); max-width:300px; overflow-wrap:anywhere; text-align:right; }}
 .setup-foot {{ padding:12px 26px 16px; border-top:1px solid rgba(255,255,255,.80); background:rgba(255,255,255,.42); }}
@@ -792,8 +810,7 @@ body {{ margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; backgroun
 </style></head><body><div class="setup-stage card"><section class="setup-shell">
 <div class="drift-blobs" aria-hidden="true"><span class="drift-blob drift-a"></span><span class="drift-blob drift-b"></span><span class="drift-blob drift-c"></span></div>
 <header class="setup-head glass"><div class="setup-kicker">管理员诊断 · 只读，不改动 .env</div><div class="setup-title">LLM 接入检查</div><div class="setup-status {status_kind}">{_html.escape(status_label)}</div><div class="setup-message">{_html.escape(str(payload["message"]))}</div></header><main class="setup-body">{rows_html}</main><footer class="setup-foot"><div class="setup-next"><b>下一步：</b>{_html.escape(str(payload["next_step"]))}</div></footer></section></div>
-<script>/* mica-glass v1 2026-09-12：随机漂移相位，纯内联零依赖，失败静默。 */
-try{{document.documentElement.style.setProperty("--phase",Math.random().toFixed(4));}}catch(e){{}}</script></body></html>"""
+</body></html>"""
 
 
 def _try_render_llm_setup_image(
@@ -1204,52 +1221,6 @@ def _format_llm_diagnostic(result: dict[str, object]) -> str:
             f"reply_preview_chars={_safe_int(result['reply_preview_chars'])}",
             f"usage_total_tokens={_safe_int(result['usage_total_tokens'])}",
             f"llm_finish_reason={_safe_token(str(result['llm_finish_reason']))}",
-            f"public_message={_safe_message(str(result['public_message']))}",
-        ]
-    )
-
-
-def _format_llm_setup_diagnostic(result: dict[str, object]) -> str:
-    return "\n".join(
-        [
-            "LLM 接入清单：",
-            (
-                "说明：仅管理员可用；只读检查真实 LLM 接入步骤，不写 .env，"
-                "不调用真实 LLM，不连接 NapCat，不发送 QQ，不展示密钥、路径、prompt 或人格正文。"
-            ),
-            f"ok={str(bool(result['ok'])).lower()}",
-            f"llm_setup_status={_safe_token(str(result['llm_setup_status']))}",
-            f"ready_for_real_llm={str(bool(result['ready_for_real_llm'])).lower()}",
-            (
-                "llm_readiness_status="
-                f"{_safe_token(str(result['llm_readiness_status']))}"
-            ),
-            f"llm_next_action={_safe_token(str(result['llm_next_action']))}",
-            (
-                "llm_readiness_reasons="
-                f"{_format_list_field(result.get('llm_readiness_reasons', []))}"
-            ),
-            f"llm_fix_hints={_format_list_field(result.get('llm_fix_hints', []))}",
-            f"required_env_keys={_format_list_field(result.get('required_env_keys', []))}",
-            (
-                "missing_or_placeholder_env_keys="
-                f"{_format_list_field(result.get('missing_or_placeholder_env_keys', []))}"
-            ),
-            (
-                "safe_env_template="
-                f"{_format_semicolon_list(result.get('safe_env_template', []))}"
-            ),
-            f"next_commands={_format_semicolon_list(result.get('next_commands', []))}",
-            f"manual_steps={_format_semicolon_list(result.get('manual_steps', []))}",
-            (
-                "real_llm_probe_performed="
-                f"{str(bool(result['real_llm_probe_performed'])).lower()}"
-            ),
-            f"napcat_connected={str(bool(result['napcat_connected'])).lower()}",
-            f"message_sent={str(bool(result['message_sent'])).lower()}",
-            f"writes_env={str(bool(result['writes_env'])).lower()}",
-            f"secrets_hidden={str(bool(result['secrets_hidden'])).lower()}",
-            f"error_kind={_safe_token(str(result['error_kind']))}",
             f"public_message={_safe_message(str(result['public_message']))}",
         ]
     )

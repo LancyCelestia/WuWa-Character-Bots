@@ -1,3 +1,4 @@
+from .addressing import build_addressing_context
 from .emotion import (
     EmotionProvider,
     NullEmotionProvider,
@@ -42,6 +43,7 @@ __all__ = [
     "RuleBasedEmotionProvider",
     "SQLiteConversationHistoryRepository",
     "SQLiteMemoryRepository",
+    "build_addressing_context",
     "build_character_context_provider",
     "build_conversation_history_provider",
     "build_emotion_provider",

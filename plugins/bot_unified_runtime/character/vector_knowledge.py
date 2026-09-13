@@ -1027,10 +1027,6 @@ class SqliteVectorKnowledgeStore:
             float(scored[0][0]) if scored else 0.0,
         )
 
-    def _brute_force_python(self, query_vector: list[float]) -> list[KnowledgeChunk]:
-        chunk_ids, _best = self._brute_candidates_python(query_vector, self.top_k)
-        return self._fetch_chunks(chunk_ids)
-
     def _vector_candidates(
         self, query_vector: list[float]
     ) -> tuple[list[str], float]:
@@ -1131,28 +1127,6 @@ class SqliteVectorKnowledgeStore:
             self._ann_index = None
             self._ann_order = None
             return False
-
-    def _try_ann_search(self, query_vector: list[float]) -> list[KnowledgeChunk] | None:
-        if not self.load_ann_index():
-            return None
-        index = self._ann_index
-        order = self._ann_order
-        if index is None or order is None:
-            return None
-        try:
-            query = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
-            norm = float(np.linalg.norm(query))
-            if norm > 0:
-                query = query / norm
-            _scores, indices = index.search(query, self.top_k)
-            picked_ids = [
-                str(order[int(index)])
-                for index in indices[0]
-                if 0 <= int(index) < len(order)
-            ]
-            return self._fetch_chunks(picked_ids)
-        except Exception:  # noqa: BLE001
-            return None
 
     def _ann_candidates(
         self, query_vector: list[float], limit: int

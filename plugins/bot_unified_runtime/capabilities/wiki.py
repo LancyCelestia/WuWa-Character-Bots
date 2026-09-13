@@ -18,7 +18,15 @@ from plugins.bot_unified_runtime.contracts import (
 )
 from plugins.bot_unified_runtime.sources.mediawiki import build_wiki_brief, wiki_lookup
 
-_COMMAND_RE = re.compile(r"^[/!！]?(?:维基百科|維基百科|wikipedia|维基|維基|wiki)\s*(?P<query>.+)$", re.IGNORECASE)
+# ASCII 别名右侧词边界（stocks _alias_hit 先例）：wikipediaxx / wikixx 等
+# 字母延续不触发；中文胶合查询（维基鸣潮）与全角标点后缀（wiki？）不受影响。
+# 拼音（T-Spec T1.5/T1.6）：weiji/weijibaike 同覆盖繁体同音（維基/維基百科）；
+# wjbk 查重无冲突（wj 与 echo「文件」冲突故不上，fix-py1-report.md）。
+_COMMAND_RE = re.compile(
+    r"^[/!！]?(?:维基百科|維基百科|wikipedia(?![a-z0-9])|维基|維基|wiki(?![a-z0-9])"
+    r"|weijibaike(?![a-z0-9])|weiji(?![a-z0-9])|wjbk(?![a-z0-9]))\s*(?P<query>.+)$",
+    re.IGNORECASE,
+)
 
 
 def is_wiki_command(text: str) -> bool:

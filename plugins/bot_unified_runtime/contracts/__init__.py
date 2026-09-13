@@ -6,6 +6,7 @@ from .auto_send import (
     RecipientResolution,
 )
 from .character import (
+    AddressingContext,
     ContextBundle,
     ConversationHistoryResult,
     ConversationTurn,
@@ -85,6 +86,7 @@ from .subscription import (
 )
 
 __all__ = [
+    "AddressingContext",
     "AuditRecord",
     "AutoSendIntent",
     "BotDecision",

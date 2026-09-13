@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -26,9 +27,7 @@ _COMMAND_RE = re.compile(
     re.IGNORECASE,
 )
 
-
-def is_download_command(text: str) -> bool:
-    return _COMMAND_RE.match(text.strip()) is not None
+logger = logging.getLogger(__name__)
 
 
 def extract_download_url(text: str) -> str | None:
@@ -37,6 +36,18 @@ def extract_download_url(text: str) -> str | None:
         return match.group("url")
     urls = extract_http_urls(text)
     return urls[0] if urls else None
+
+
+def _download_failure_reason(error: str) -> str:
+    """把下载器的原始错误串归为一句用户能懂的中文原因（细节只进日志）。"""
+    text = str(error or "")
+    if any(key in text for key in ("超时", "网络", "连接", "登录态")):
+        return "网络或链接访问不稳定"
+    if any(key in text for key in ("拒绝", "权限", "403", "401", "forbidden")):
+        return "对方站点拒绝了这次请求"
+    if any(key in text for key in ("不支持", "unsupported", "无法提取", "返回空结果")):
+        return "这个链接暂时不支持下载"
+    return "下载过程中出了点问题"
 
 
 def _subtitle_plain_text(path: str, *, max_chars: int = 4000) -> str:
@@ -108,16 +119,22 @@ def build_download_capability(
                 request_id=message.request_id,
                 capability_id="bot.download",
                 kind="text",
-                body="yt-dlp 未安装，无法下载。请先安装依赖。",
+                body="下载器组件（yt-dlp）还没装好，这次下不了。让管理员在 Runtime venv 里补装后重发链接。",
                 audit_tags=["download", "ytdlp_missing"],
             )
         outcome = downloader.download(url)
         if outcome.error:
+            # 原始错误串（常为英文/内部细节）只进日志；用户侧只给分类后的中文原因。
+            logger.warning("download failed: %s (url=%s)", outcome.error, url)
             return CapabilityResult(
                 request_id=message.request_id,
                 capability_id="bot.download",
                 kind="text",
-                body=f"下载失败：{outcome.error}\n原链接：{url}",
+                body=(
+                    f"这次没下载成功：{_download_failure_reason(outcome.error)}。"
+                    "可以稍后重发，或换个链接。\n"
+                    f"原链接：{url}"
+                ),
                 audit_tags=["download", "download_failed"],
             )
         analysis = outcome.analysis

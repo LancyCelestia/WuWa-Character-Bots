@@ -5,6 +5,7 @@
 
 - 只认显式触发词：快报 / 早报 / 晚报 / 今日热点 / 类目词×新闻|快报
   （科技新闻、AI新闻、AI快报、财经新闻、财经快报、国际新闻）；
+  繁體同族（快報/早報/晚報/今日熱點/科技新聞/AI新聞/AI快報/財經新聞/財經快報/國際新聞）同表生效；
 - 裸「新闻」**不**触发——那是联网搜索链路的地盘（question_intent 的
   ``_CURRENT_REQUEST_RE`` 含裸 `新闻`，剥走会互相打架）；
 - 短文本（≤32 字）、无链接（带链接是链接解析的活）；「搜索/搜一下/
@@ -33,17 +34,32 @@ from plugins.bot_unified_runtime.sources.news_feeds import (
 )
 
 # 显式触发词：复合词在前仅便于阅读；「新闻」单独出现不算触发。
+# 繁體同族与简体逐词对齐（快報/財經新聞/國際新聞…），边界守卫/搜索让路共用。
 _NEWS_TRIGGER_RE = re.compile(
-    r"(今日热点|科技新闻|AI新闻|AI快报|财经新闻|财经快报|国际新闻|快报|早报|晚报)",
+    r"(今日热点|科技新闻|AI新闻|AI快报|财经新闻|财经快报|国际新闻|快报|早报|晚报"
+    r"|今日熱點|科技新聞|AI新聞|AI快報|財經新聞|財經快報|國際新聞|快報|早報|晚報"
+    # 全拼/缩写（T-Spec T1.5/T1.6）：全拼同覆盖繁体同音；双侧 [a-z0-9] 边界
+    # 防 kuaibaoqq 类胶合、jinrikuaibao 内嵌 kuaibao 误配。缩写查重仅 zb
+    # （早报×占卜）冲突不上，其余 kb/wb/jrkb/jrrd/kjxw/cjxw/cjkb/gjxw/axw/akb
+    # 无冲突入表（fix-py1-report.md）。
+    r"|(?<![a-z0-9])(?:jinriredian|jinrikuaibao|kejixinwen|aixinwen|aikuaibao"
+    r"|caijingxinwen|caijingkuaibao|guojixinwen|kuaibao|zaobao|wanbao"
+    r"|jrkb|jrrd|kjxw|cjxw|cjkb|gjxw|axw|akb|kb|wb)(?![a-z0-9])"
+    r"|(?<![a-z0-9])news(?![a-z0-9]))",
     re.IGNORECASE,
 )
-# 明确联网搜索意图 → 让路（与 question_intent._EXPLICIT_SEARCH_RE 同向）。
-_SEARCH_INTENT_RE = re.compile(r"(搜索|搜一下|查一下|检索|找新闻|联网|上网)")
+# 明确联网搜索意图 → 让路（与 question_intent._EXPLICIT_SEARCH_RE 同向）；
+# 英文 search news / news search 同向让路（T-Spec T1.2 配套）。
+_SEARCH_INTENT_RE = re.compile(r"(搜索|搜一下|查一下|检索|找新闻|联网|上网|search news|news search)")
 _URL_HINT_RE = re.compile(r"https?://", re.IGNORECASE)
 _MAX_TRIGGER_LEN = 32
 
-# 类目提示词 → 类目键（AI 用「紧邻 新闻/快报」匹配，避免英文单词误伤）。
-_AI_HINT_RE = re.compile(r"((?:ai|人工智能)\s*(?:新闻|快报)|人工智能)", re.IGNORECASE)
+# 类目提示词 → 类目键（AI 用「紧邻 新闻/快报」匹配，避免英文单词误伤）；
+# ai news 为 T1.2 英文触发配套类目映射（归 tech，与 AI新闻 同语义）；
+# AI拼音 aixinwen/aikuaibao 同归 tech（T-Spec T1.5/T1.6 配套类目）。
+_AI_HINT_RE = re.compile(
+    r"((?:ai|人工智能)\s*(?:新闻|快报|news)|人工智能|aixinwen|aikuaibao)", re.IGNORECASE
+)
 
 _EMPTY_DEGRADED_TEXT = "快报暂时拉不到，稍后再试试？"
 

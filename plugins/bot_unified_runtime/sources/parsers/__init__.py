@@ -644,10 +644,6 @@ def extract_http_urls(text: str) -> list[str]:
     return candidates
 
 
-def platform_rules() -> list[tuple[str, str, list[str], ParseFn, int]]:
-    return [*_PLATFORM_RULES]
-
-
 # 群门禁的 URL 支持判定（policy._has_supported_url）每条群消息都会以全默认
 # 参数调一次本函数：几十个 ParserRule 对象 + 正则重编译，纯浪费。全默认参数
 # 的返回值只用于 URL 模式匹配（不消费绑了 Cookie 的解析函数），缓存为进程级

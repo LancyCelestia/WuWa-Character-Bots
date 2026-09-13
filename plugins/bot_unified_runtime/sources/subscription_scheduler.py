@@ -128,20 +128,28 @@ class SubscriptionScheduler:
             return []
         current = now or self._clock()
         events: list[SubscriptionOutboxEvent] = []
-        for target in self.store.list_targets(due_before=current):
-            if not self.store.claim_due_target(target.id, current, self._lease_seconds):
+        # P2-1：store 全部经 *_async 门面（asyncio.to_thread）访问，同步
+        # SQLite 不再阻塞 event loop；语义与直调同步方法完全一致。
+        for target in await self.store.list_targets_async(due_before=current):
+            if not await self.store.claim_due_target_async(
+                target.id, current, self._lease_seconds
+            ):
                 continue
             adapter = self._adapters.get(target.platform)
             settled = False
             try:
                 if adapter is None:
-                    self.store.record_failure(target.id, "unsupported", retry_at=self._retry_at(current, target.failure_count, None))
+                    await self.store.record_failure_async(
+                        target.id,
+                        "unsupported",
+                        retry_at=self._retry_at(current, target.failure_count, None),
+                    )
                     settled = True
                     continue
-                cursors = self.store.get_cursors(target.id)
+                cursors = await self.store.get_cursors_async(target.id)
                 # 运行期元数据（如 X rest_id）回灌进 target_payload：adapter
                 # 优先读 payload 里的解析产物，重启后无需重新解析。
-                metadata = self.store.get_target_metadata(target.id)
+                metadata = await self.store.get_target_metadata_async(target.id)
                 if metadata:
                     target.target_payload = {**target.target_payload, **metadata}
                 payload_before = dict(target.target_payload)
@@ -164,10 +172,12 @@ class SubscriptionScheduler:
                 )
                 if result.error_code:
                     retry_at = self._retry_at(current, target.failure_count, result.retry_after_seconds)
-                    self.store.record_failure(target.id, result.error_code, retry_at=retry_at)
+                    await self.store.record_failure_async(
+                        target.id, result.error_code, retry_at=retry_at
+                    )
                     settled = True
                     continue
-                new_events = self.store.save_fetch_result(
+                new_events = await self.store.save_fetch_result_async(
                     target,
                     result,
                     baseline=not target.baseline_initialized,
@@ -180,12 +190,12 @@ class SubscriptionScheduler:
                     if key not in payload_before or payload_before[key] != value
                 }
                 if payload_delta:
-                    self.store.set_target_metadata(target.id, payload_delta)
+                    await self.store.set_target_metadata_async(target.id, payload_delta)
                 events.extend(new_events)
                 next_poll = self.next_poll_at(
                     target, now=current, random_value=self._random()
                 )
-                self.store.release_target(target.id, next_poll_at=next_poll)
+                await self.store.release_target_async(target.id, next_poll_at=next_poll)
                 settled = True
             except Exception:
                 # 收窄为 Exception：KeyError/sqlite3.Error/ET.ParseError 等
@@ -194,7 +204,9 @@ class SubscriptionScheduler:
                 _LOGGER.warning("subscription poll failed for %s", target.id, exc_info=True)
                 retry_at = self._retry_at(current, target.failure_count, None)
                 try:
-                    self.store.record_failure(target.id, "network_error", retry_at=retry_at)
+                    await self.store.record_failure_async(
+                        target.id, "network_error", retry_at=retry_at
+                    )
                     settled = True
                 except Exception:
                     _LOGGER.warning(
@@ -208,7 +220,7 @@ class SubscriptionScheduler:
                     # 自身再抛异常）时只释放租约，不回写 next_poll_at——回写过
                     # 期的 next_poll_at 会让退避失效并立即重轮询同一目标。
                     try:
-                        self.store.release_target_lease(target.id)
+                        await self.store.release_target_lease_async(target.id)
                     except Exception:
                         _LOGGER.warning(
                             "subscription lease fallback release failed for %s",
@@ -220,10 +232,10 @@ class SubscriptionScheduler:
     async def deliver_outbox_once(self, *, limit: int = 20) -> int:
         if self.store is None:
             return 0
-        events = self.store.claim_outbox(self._clock(), limit)
+        events = await self.store.claim_outbox_async(self._clock(), limit)
         if self._delivery_fn is None:
             for event in events:
-                self.store.mark_outbox_retry(
+                await self.store.mark_outbox_retry_async(
                     event.event_id,
                     self._clock() + timedelta(seconds=self._retry_base),
                 )
@@ -237,10 +249,12 @@ class SubscriptionScheduler:
                 except Exception:  # noqa: BLE001 - 单事件投递失败转重试，不弃队。
                     success = False
                 if success:
-                    self.store.mark_outbox_sent(event.event_id, self._clock())
+                    await self.store.mark_outbox_sent_async(
+                        event.event_id, self._clock()
+                    )
                     delivered += 1
                 else:
-                    self.store.mark_outbox_retry(
+                    await self.store.mark_outbox_retry_async(
                         event.event_id,
                         self._clock() + timedelta(seconds=self._retry_base),
                     )
@@ -253,9 +267,9 @@ class SubscriptionScheduler:
                 if event.event_id in settled:
                     continue
                 try:
-                    if self.store.outbox_state(event.event_id) != "sending":
+                    if await self.store.outbox_state_async(event.event_id) != "sending":
                         continue
-                    self.store.mark_outbox_retry(
+                    await self.store.mark_outbox_retry_async(
                         event.event_id,
                         self._clock() + timedelta(seconds=self._retry_base),
                     )

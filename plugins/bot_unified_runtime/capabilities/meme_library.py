@@ -26,12 +26,37 @@ from plugins.bot_unified_runtime.contracts import (
 )
 
 _COMMAND_RE = re.compile(
+    # meme random(?![a-z0-9]) / steal meme(?![a-z0-9])：ASCII 短语右侧词边界
+    # （wiki _alias_hit 先例），randomqq/memeqq 类胶合不触发（边界体检 ×2 清账）。
+    # steal(?!\S)(?! meme[a-z0-9])：裸「steal」精确命中（帮助别名 'steal' 的
+    # 实际触发，T-Spec T1.2）之外，再挡「steal memeqq」借道裸 steal 把胶合
+    # 吃进 arg；stealing/steal a car 等不触发。
+    # 全拼/缩写（T-Spec T1.5/T1.6 第二批）：toutu/toubiaoqing 族同音覆盖
+    # 偷圖/偷图 简繁词；(?![a-z0-9]) 右边界同边界纪律（toutuq/tbqq 类胶合
+    # 不触发）；sjbq 为 随机表情/随机表情包 同能力双词共享缩写（变体对口径
+    # 启用一次）；bqsj/tbq 与 bot.meme 的 bqb 族前缀不同串、零冲突。
     r"^[/!！]?(?:偷表情|偷表情包|表情随机|随机表情|随机表情包|"
-    r"表情抽签|meme random|steal meme|偷圖|偷表情包)\s*(?P<arg>.*)$",
+    r"表情抽签|表情隨機|隨機表情|隨機表情包|表情抽籤|"
+    r"toubiaoqingbao(?![a-z0-9])|tbqb(?![a-z0-9])"
+    r"|toubiaoqing(?![a-z0-9])|tbq(?![a-z0-9])"
+    r"|suijibiaoqingbao(?![a-z0-9])|suijibiaoqing(?![a-z0-9])|sjbq(?![a-z0-9])"
+    r"|biaoqingsuiji(?![a-z0-9])|bqsj(?![a-z0-9])"
+    r"|biaoqingchouqian(?![a-z0-9])|bqcq(?![a-z0-9])"
+    r"|toutu(?![a-z0-9])|tt(?![a-z0-9])"
+    r"|memes? random(?![a-z0-9])|steal meme(?![a-z0-9])"
+    r"|steal(?!\S)(?! meme[a-z0-9])|偷圖|偷图|偷表情包)\s*(?P<arg>.*)$",
     re.IGNORECASE,
 )
 _STATS_RE = re.compile(
-    r"^[/!！]?(?:表情库统计|表情统计|表情库|meme stats)\s*$", re.IGNORECASE
+    # 全拼/缩写（T-Spec T1.5/T1.6 第二批）：biaoqingku/biaoqingtongji 同
+    # 表情库/表情统计；\s*$ 结构天然成界。memes? stats(?![a-z0-9]) 兜底
+    # 「memes stats」复数误拼（同 _COMMAND_RE 的 memes? random 款）；
+    # bot.meme 侧 meme/memes 双裸词均带 (?! (?:random|stats)\b) 负向前瞻，
+    # 本变体不被表情生成抢匹配。
+    r"^[/!！]?(?:表情库统计|biaoqingtongji(?![a-z0-9])|bqtj(?![a-z0-9])"
+    r"|表情统计|表情库|biaoqingku(?![a-z0-9])|bqk(?![a-z0-9])"
+    r"|memes? stats(?![a-z0-9]))\s*$",
+    re.IGNORECASE,
 )
 
 # 冷却登记 LRU 上限：会话数极大时防止 dict 无界慢泄漏（审计 #30）。
