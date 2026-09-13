@@ -491,6 +491,16 @@ class Config(BaseModel):
     # 聊天记录归档附一句 VLM 摘要（复用识图 registry；关闭则纯文本归档）。
     bot_media_archive_summary_enabled: bool = True
     bot_media_archive_video_frames: int = 5
+    # 笔记/备忘录（bot.notes）：Markdown 笔记+待办勾选+图片收纳；
+    # 「做完了/完成了」自然语言勾选对应事项，展示与提醒语气分型人格化。
+    bot_notes_enabled: bool = True
+    bot_notes_db_path: str = "data/notes.sqlite3"
+    bot_notes_max_per_chat: int = 200
+    # 联网授时（bot.timesync）：NTP 校准提醒/调度的时间基准（不改系统钟，
+    # 只提供校正后的 now；全部服务器超时则回退系统钟并记告警）。
+    bot_time_sync_enabled: bool = True
+    bot_time_sync_servers: str = "ntp.aliyun.com,cn.ntp.org.cn,pool.ntp.org"
+    bot_time_sync_max_drift_ms: int = 1500
     # NSFW 直接删除阈值（淫秽色情不存储）：>= 该分数删除文件与记录。
     bot_meme_library_nsfw_delete: float = 0.8
     # 群图下载代理（默认直连 QQ 多媒体源；外网源可走 7890）。
@@ -876,6 +886,7 @@ class Config(BaseModel):
             "bot_affinity_db_path",
             "bot_media_archive_dir",
             "bot_media_archive_db_path",
+            "bot_notes_db_path",
         )
         for name in path_fields:
             setattr(self, name, resolve(getattr(self, name)))

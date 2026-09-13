@@ -10,6 +10,6 @@
 
 - 帮助 topic 数：68（重名 0）
 - 测试文件数：245
-- config.py bot_* 字段数：494
+- config.py bot_* 字段数：500
 
 - 哈希清单范围（12）：plugins/bot_unified_runtime/output/card_render/templates/universal_card.html, plugins/bot_unified_runtime/output/card_render/templates/affinity_card.html, plugins/bot_unified_runtime/output/card_render/templates/finance_card.html, plugins/bot_unified_runtime/output/card_render/templates/market_card.html, plugins/bot_unified_runtime/output/card_render/templates/mermaid_card.html, plugins/bot_unified_runtime/output/card_render/templates/song_candidates.html, plugins/bot_unified_runtime/output/card_render/theme_tokens.py, docs/rendering-contract.md, DESIGN-SPEC.md, docs/design/fstring-card-dom-spec.md, docs/design/render-pipeline-optimization-spec.md, docs/design/visual-effects-catalog.md
