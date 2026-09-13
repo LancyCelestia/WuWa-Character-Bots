@@ -5,7 +5,13 @@
   （低误报）；②进阶轨留接口（LLM 轮末抽取同 memory_extract 模式）。
 - 存储与投递解耦：本模块只管 SQLite 与解析；到点投递由 __init__ 的
   每分钟调度任务构造 SendRequest 走统一发送队列（语气由人格文案承担）。
-- 绝不打扰失控：单会话待办上限、过期 24h 自动作废、取消可用。
+- 绝不打扰失控：单会话待办上限、过期治理（迟到 >30 分钟顺延、
+  >24h 作废）、取消可用。
+- 时区口径（2026-09-13 修复）：全链路统一**进程本地时区**（naive 视为
+  本地，aware 一律转本地再比较/落库）。到点判定用 aware datetime 的
+  时刻比较，**禁止 ISO 字符串字典序比较**——旧实现拿 ``+08:00`` 存储
+  串与 ``datetime.now(UTC)`` 串直接比字典序，跨时区早/晚触发 8 小时，
+  且离线错过后的补投递没有过期检查（凌晨的提醒下午才"到时间了"）。
 """
 
 from __future__ import annotations
@@ -41,6 +47,45 @@ _REL_HOURS_RE = re.compile(r"(\d{1,2})\s*(?:个)?小时后")
 _REL_HALF_HOUR_RE = re.compile(r"半(?:个)?小时后")
 _CLEAN_RE = re.compile(r"提醒我?|叫我|记得叫|記得叫|一下|吧|哦|呀|啊|，|,|。|！|!|？|\?")
 
+# 迟到投递容忍窗：到点后 30 分钟内仍照常投递（跨过投递巡检间隙）；
+# 超过则视为"离线错过"，不再原样补投（见 ReminderStore.due）。
+LATE_DELIVERY_GRACE = timedelta(minutes=30)
+
+
+def _local_now() -> datetime:
+    """统一本地时区口径的"现在"（aware、进程本地时区）。"""
+    return datetime.now().astimezone()
+
+
+def _as_local(moment: datetime) -> datetime:
+    """naive 视为本地时间；aware 转本地时区。全模块唯一的时刻归一口径。"""
+    return moment.astimezone()
+
+
+def _parse_stored_moment(raw: str) -> datetime | None:
+    """存储串 -> 本地 aware 时刻；解析失败返回 None（按过期治理）。"""
+    try:
+        moment = datetime.fromisoformat(str(raw or "").strip())
+    except ValueError:
+        return None
+    return _as_local(moment)
+
+
+def _next_occurrence(remind_at: datetime, current: datetime) -> datetime:
+    """错过的提醒顺延到「下一个同一时刻」（通常即明天同一时刻）。
+
+    以 now 所在日期的同一墙钟时刻为候选；若该时刻已过（如 23:00 的提醒
+    23:45 才被捡起），顺延一天。统一本地时区口径。
+    """
+    wall = _as_local(remind_at)
+    base = _as_local(current)
+    candidate = base.replace(
+        hour=wall.hour, minute=wall.minute, second=wall.second, microsecond=0
+    )
+    if candidate <= base:
+        candidate += timedelta(days=1)
+    return candidate
+
 
 @dataclass(frozen=True)
 class Reminder:
@@ -65,11 +110,21 @@ class ReminderIntent:
 
 
 def parse_reminder_intent(text: str, *, now: datetime | None = None) -> ReminderIntent | None:
-    """解析「X点提醒我/叫我做Y」。无提醒信号或无时间表达 → None。"""
+    """解析「X点提醒我/叫我做Y」。无提醒信号或无时间表达 → None。
+
+    ``now`` 缺省=本地当前时刻；naive 视为本地；aware 注入沿用其时区做墙钟
+    推算（"X点"= 该时刻所在时区的 X 点整）。结果统一转**本地时区**落库，
+    后续比较一律走时刻（instant）语义。
+    """
     raw = (text or "").strip()
     if not raw or not _REMIND_SIGNAL_RE.search(raw):
         return None
-    current = now or datetime.now().astimezone()
+    if now is None:
+        current = _local_now()
+    elif now.tzinfo is None:
+        current = _as_local(now)  # naive 视为本地时间。
+    else:
+        current = now
 
     target: datetime | None = None
     match = _REL_HALF_HOUR_RE.search(raw)
@@ -119,7 +174,9 @@ def parse_reminder_intent(text: str, *, now: datetime | None = None) -> Reminder
     content = re.sub(r"\s+", " ", content).strip(" ，,。！!？?、")
     if not content:
         content = "你之前在等的那件事"
-    return ReminderIntent(remind_at=target, text=content[:120], label=_format_when(target, current))
+    return ReminderIntent(
+        remind_at=_as_local(target), text=content[:120], label=_format_when(target, current)
+    )
 
 
 def _format_when(target: datetime, current: datetime) -> str:
@@ -185,8 +242,10 @@ class ReminderStore:
         text: str,
     ) -> Reminder:
         created = datetime.now(UTC).isoformat()
+        # 落库统一本地时区口径（naive 视为本地），后续到点判定做时刻比较。
+        stored_at = _as_local(remind_at)
         reminder_id = sha1(
-            f"{session_key}:{remind_at.isoformat()}:{text}:{created}".encode()
+            f"{session_key}:{stored_at.isoformat()}:{text}:{created}".encode()
         ).hexdigest()[:12]
         with self._lock, self._conn:
             pending = self._conn.execute(
@@ -205,46 +264,79 @@ class ReminderStore:
                 " target_id, adapter, bot_id, remind_at, text, status, created_at)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
                 (reminder_id, session_key, sender_id, target_scope, target_id, adapter,
-                 bot_id, remind_at.isoformat(), text, created),
+                 bot_id, stored_at.isoformat(), text, created),
             )
         return Reminder(
             reminder_id=reminder_id, session_key=session_key, sender_id=sender_id,
             target_scope=target_scope, target_id=target_id, adapter=adapter,
-            bot_id=bot_id, remind_at=remind_at.isoformat(), text=text,
+            bot_id=bot_id, remind_at=stored_at.isoformat(), text=text,
             status="pending", created_at=created,
         )
 
     def due(self, *, now: datetime | None = None, grace_hours: int = 24) -> list[Reminder]:
-        current = now or datetime.now(UTC)
-        floor = (current - timedelta(hours=grace_hours)).isoformat()
+        """到点提醒 + 过期治理（2026-09-13 修复早/晚触发与无检查补投递）。
+
+        - 时刻比较：存储串（可能混有时区偏移）一律先解析成 aware datetime
+          再比较，不再做 ISO 字符串字典序比较（旧实现 +08:00 存储串 vs
+          UTC now 串，会晚 8 小时触发、且让过期判定同样错档）。
+        - 迟到 ≤ ``LATE_DELIVERY_GRACE``（30 分钟）→ 照常投递（跨过巡检
+          间隙的正常情况）。
+        - 迟到 > 30 分钟但未超 ``grace_hours`` → **不顺延原样补投**：离线
+          错过几个小时的提醒，"到时间了"此时是误导（事情多半已做或窗口
+          已过），用户需要的也不是迟到的催促——顺延到下一个同一时刻再
+          温柔提醒，宁可晚一天也不在错误的时间点打扰。
+        - 迟到超 ``grace_hours``（默认 24h）→ 标记 expired 作废。
+        """
+        current = _as_local(now) if now is not None else _local_now()
+        grace = timedelta(hours=max(1, int(grace_hours)))
         with self._lock:
             rows = self._conn.execute(
                 "SELECT reminder_id, session_key, sender_id, target_scope, target_id,"
                 " adapter, bot_id, remind_at, text, status, created_at"
-                " FROM reminders WHERE status = 'pending' AND remind_at <= ?"
-                " ORDER BY remind_at ASC LIMIT 20",
-                (current.isoformat(),),
+                " FROM reminders WHERE status = 'pending'"
+                " ORDER BY remind_at ASC LIMIT 200",
             ).fetchall()
-            expired = self._conn.execute(
-                "SELECT COUNT(*) FROM reminders WHERE status = 'pending' AND remind_at < ?",
-                (floor,),
-            ).fetchone()[0]
-        if expired:
-            with self._lock, self._conn:
-                self._conn.execute(
-                    "UPDATE reminders SET status = 'expired'"
-                    " WHERE status = 'pending' AND remind_at < ?",
-                    (floor,),
-                )
-        return [
-            Reminder(
+        delivered: list[Reminder] = []
+        postponed: list[tuple[str, str]] = []
+        expired: list[str] = []
+        for row in rows:
+            reminder = Reminder(
                 reminder_id=str(row[0]), session_key=str(row[1]), sender_id=str(row[2]),
                 target_scope=str(row[3]), target_id=str(row[4]), adapter=str(row[5]),
                 bot_id=str(row[6]), remind_at=str(row[7]), text=str(row[8]),
                 status=str(row[9]), created_at=str(row[10]),
             )
-            for row in rows
-        ]
+            remind_at = _parse_stored_moment(reminder.remind_at)
+            if remind_at is None:
+                # 历史脏数据（解析不出时刻）无法判定到点，按过期治理。
+                expired.append(reminder.reminder_id)
+                continue
+            late = current - remind_at
+            if late <= timedelta(0):
+                continue  # 还没到点（含未来提醒）。
+            if late <= LATE_DELIVERY_GRACE:
+                delivered.append(reminder)
+            elif late <= grace:
+                postponed.append(
+                    (reminder.reminder_id, _next_occurrence(remind_at, current).isoformat())
+                )
+            else:
+                expired.append(reminder.reminder_id)
+        if postponed or expired:
+            with self._lock, self._conn:
+                for reminder_id, next_at in postponed:
+                    self._conn.execute(
+                        "UPDATE reminders SET remind_at = ?"
+                        " WHERE reminder_id = ? AND status = 'pending'",
+                        (next_at, reminder_id),
+                    )
+                for reminder_id in expired:
+                    self._conn.execute(
+                        "UPDATE reminders SET status = 'expired'"
+                        " WHERE reminder_id = ? AND status = 'pending'",
+                        (reminder_id,),
+                    )
+        return delivered
 
     def mark_done(self, reminder_id: str) -> None:
         with self._lock, self._conn:

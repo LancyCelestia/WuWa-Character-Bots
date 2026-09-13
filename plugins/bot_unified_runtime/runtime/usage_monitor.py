@@ -126,26 +126,106 @@ def build_threshold_alert(
 
 
 # ==================== 报告内容（纯函数） ====================
-def build_model_rows(aggregate: dict[str, Any]) -> list[dict[str, Any]]:
-    """把聚合结果转成报告卡行（按费用降序，未计价的排后面）。"""
+def build_model_rows(
+    aggregate: dict[str, Any],
+    *,
+    prices: dict[str, dict[str, float]] | None = None,
+) -> list[dict[str, Any]]:
+    """把聚合结果转成报告卡行（按费用降序，未计价的排后面）。
+
+    2026-09-13 用量合并：同一模型被上游回报成多种写法（大小写差异、
+    ``-high/-low`` 等推理档位后缀）时按家族键合并为一行——token/次数/费用
+    求和，代表名取调用次数最多的原始名（无次数数据时退回 token 最多者）；
+    行上带 ``calls``/``variants``/``pricing_note``，``pricing_note`` 对
+    "真免费"与"未配置价格"显式注明，费用列不再静默显示 0.00。
+    ``prices`` 提供时按 精确 → casefold → 家族 链匹配价格。
+    """
+    from plugins.bot_unified_runtime.runtime.pricing import (
+        lookup_model_price,
+        model_family_key,
+    )
+
     by_model = aggregate.get("by_model") or {}
-    rows: list[dict[str, Any]] = []
+    merged: dict[str, dict[str, Any]] = {}
     for model in by_model:
         prompt = int((aggregate.get("by_model_prompt") or {}).get(model, 0) or 0)
         cache_read = int((aggregate.get("by_model_cache_read") or {}).get(model, 0) or 0)
         cache_write = int((aggregate.get("by_model_cache_write") or {}).get(model, 0) or 0)
         completion = int((aggregate.get("by_model_completion") or {}).get(model, 0) or 0)
         cost_milli = int((aggregate.get("by_model_cost_milli") or {}).get(model, 0) or 0)
+        calls = int((aggregate.get("by_model_calls") or {}).get(model, 0) or 0)
+        unpriced = int((aggregate.get("by_model_unpriced") or {}).get(model, 0) or 0)
+        family = model_family_key(model) or str(model)
+        bucket = merged.get(family)
+        if bucket is None:
+            bucket = {
+                "prompt": 0,
+                "cache_read": 0,
+                "cache_write": 0,
+                "completion": 0,
+                "cost_milli": 0,
+                "calls": 0,
+                "unpriced": 0,
+                "variants": {},
+            }
+            merged[family] = bucket
+        bucket["prompt"] += prompt
+        bucket["cache_read"] += cache_read
+        bucket["cache_write"] += cache_write
+        bucket["completion"] += completion
+        bucket["cost_milli"] += cost_milli
+        bucket["calls"] += calls
+        bucket["unpriced"] += unpriced
+        bucket["variants"][model] = bucket["variants"].get(model, 0) + max(1, calls)
+
+    rows: list[dict[str, Any]] = []
+    for family, bucket in merged.items():
+        variants: dict[str, int] = bucket["variants"]
+        # 代表名：调用次数最多的原始名；次数并列时优先与家族键同形的写法
+        # （无档位后缀的规范名），再退回 token 最多者，最后按名字稳定排序。
+        tokens_by_name = by_model
+        representative = min(
+            variants,
+            key=lambda name: (
+                0 if name.casefold() == family else 1,
+                -variants[name],
+                -int(tokens_by_name.get(name, 0) or 0),
+                name,
+            ),
+        )
+        cost_milli = int(bucket["cost_milli"])
+        pricing_note = ""
+        priced = True
+        cost_text = format_milli_yuan(cost_milli)
+        if prices is not None:
+            entry = lookup_model_price(representative, prices)
+            if entry is None:
+                priced = False
+                pricing_note = "未配置价格"
+                cost_text = "未计价"
+            elif bucket["unpriced"] > 0:
+                # 窗口内有按调用时刻记账时未配价的调用：显式注明笔数，
+                # 这些调用未计入本行费用（历史无法补算）。
+                pricing_note = f"历史未计价 {bucket['unpriced']} 次"
+            elif (
+                cost_milli == 0
+                and float(entry.get("input", 0.0)) == 0.0
+                and float(entry.get("output", 0.0)) == 0.0
+            ):
+                pricing_note = "免费"
         rows.append(
             {
-                "model": model,
-                "prompt": prompt,
-                "cache_read": cache_read,
-                "cache_write": cache_write,
-                "completion": completion,
+                "model": representative,
+                "prompt": bucket["prompt"],
+                "cache_read": bucket["cache_read"],
+                "cache_write": bucket["cache_write"],
+                "completion": bucket["completion"],
                 "cost_milli": cost_milli,
-                "cost_text": format_milli_yuan(cost_milli),
-                "priced": True,
+                "cost_text": cost_text,
+                "priced": priced,
+                "calls": bucket["calls"],
+                "variants": sorted(variants),
+                "pricing_note": pricing_note,
             }
         )
     rows.sort(key=lambda row: (-row["cost_milli"], row["model"]))
@@ -156,6 +236,7 @@ def build_report_text(
     aggregate: dict[str, Any],
     *,
     window_label: str,
+    prices: dict[str, dict[str, float]] | None = None,
 ) -> str:
     """定时报告的纯文本版本（渲染失败/控制台回退）。"""
     lines = [
@@ -172,9 +253,14 @@ def build_report_text(
     cache_write = int(aggregate.get("cache_write_tokens", 0) or 0)
     if cache_read or cache_write:
         lines.append(f"缓存：命中 {cache_read:,}，创建 {cache_write:,}")
-    for row in build_model_rows(aggregate):
+    for row in build_model_rows(aggregate, prices=prices):
+        variants = row.get("variants") or []
+        suffix = f"（合并 {len(variants)} 种写法）" if len(variants) > 1 else ""
+        note = str(row.get("pricing_note") or "")
+        note_text = f"（{note}）" if note else ""
         lines.append(
-            f"- {row['model']}：入 {row['prompt']:,} / 出 {row['completion']:,}"
+            f"- {row['model']}{suffix}{note_text}：入 {row['prompt']:,}"
+            f" / 出 {row['completion']:,}"
             f" / 费 {row['cost_text']} 元"
         )
     unpriced = int(aggregate.get("unpriced_calls", 0) or 0)
@@ -188,12 +274,13 @@ def build_report_alert(
     *,
     window_label: str,
     extra_24h: dict[str, Any] | None = None,
+    prices: dict[str, dict[str, float]] | None = None,
 ) -> AlertContent:
     """定时报告 -> 五要素 AlertContent（info 级）。"""
-    what = build_report_text(aggregate, window_label=window_label)
+    what = build_report_text(aggregate, window_label=window_label, prices=prices)
     if extra_24h is not None:
         what += "\n\n过去 24 小时总花费：\n" + build_report_text(
-            extra_24h, window_label="过去 24 小时"
+            extra_24h, window_label="过去 24 小时", prices=prices
         )
     return AlertContent(
         title=f"模型用量账单报告 · {window_label}",
@@ -305,6 +392,22 @@ def register_usage_monitor_scheduler(
     input_limit = max(0, int(getattr(config, "bot_usage_alert_input_tokens", 50_000_000) or 0))
     daily_cost_yuan = max(0.0, float(getattr(config, "bot_usage_alert_daily_cost_yuan", 10.0) or 0.0))
     cost_limit_milli = round(daily_cost_yuan * 1000)
+    # 价格表：settings 覆盖（/bot model price 写入）优先，config 兜底；解析失败视为空。
+    from plugins.bot_unified_runtime.runtime.pricing import parse_model_prices
+
+    try:
+        raw_prices: object
+        if settings_store is not None and callable(
+            getattr(settings_store, "get_or", None)
+        ):
+            raw_prices = settings_store.get_or(
+                "BOT_MODEL_PRICES", getattr(config, "bot_model_prices", {}) or {}
+            )
+        else:
+            raw_prices = getattr(config, "bot_model_prices", {}) or {}
+        prices = parse_model_prices(raw_prices)
+    except Exception:  # noqa: BLE001 - 价格表读不到只影响注记，不阻塞监控。
+        prices = {}
     fired: dict[str, str] = {}
 
     def _dispatch(alert: AlertContent, *, image_path: str = "") -> None:
@@ -342,7 +445,7 @@ def register_usage_monitor_scheduler(
                 **aggregate,
                 "cost_text": format_milli_yuan(int(aggregate.get("cost_milli", 0) or 0)),
             },
-            model_rows=build_model_rows(aggregate),
+            model_rows=build_model_rows(aggregate, prices=prices),
         )
         return render_usage_card_png(
             render_backend,
@@ -413,7 +516,10 @@ def register_usage_monitor_scheduler(
             )
             _dispatch(
                 build_report_alert(
-                    aggregate, window_label=window_label, extra_24h=extra_24h
+                    aggregate,
+                    window_label=window_label,
+                    extra_24h=extra_24h,
+                    prices=prices,
                 ),
                 image_path=image_path,
             )

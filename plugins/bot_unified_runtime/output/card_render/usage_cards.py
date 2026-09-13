@@ -77,9 +77,21 @@ def usage_report_mica_html(
     accent, accent_ink = usage_card_accent(config)
     wash = _derive_wash_tokens(accent)
     kind = status_kind if status_kind in {"ok", "warn", "bad"} else "ok"
+
+    def _model_cell(row: dict[str, Any]) -> str:
+        """模型名 + 价格注记（免费/未配置价格/历史未计价，不静默 0.00）。
+
+        合并进来的原始写法清单只在 title 悬浮提示里给（外层 span 已带）。
+        """
+        name = _html.escape(str(row["model"]))
+        note = str(row.get("pricing_note") or "")
+        if not note:
+            return name
+        return f"{name}<span class=\"mnote\">（{_html.escape(note)}）</span>"
+
     rows_html = "".join(
         "<div class=\"mrow glass\">"
-        f"<span class=\"mcell model\" title=\"{_html.escape(str(row['model']))}\">{_html.escape(str(row['model']))}</span>"
+        f"<span class=\"mcell model\" title=\"{_html.escape(', '.join(str(item) for item in (row.get('variants') or [row['model']])))}\">{_model_cell(row)}</span>"
         f"<span class=\"mcell num\">{_fmt_int(row.get('prompt'))}</span>"
         f"<span class=\"mcell num\">{_fmt_int(row.get('cache_read'))}</span>"
         f"<span class=\"mcell num\">{_fmt_int(row.get('cache_write'))}</span>"
@@ -185,6 +197,7 @@ body {{ margin:0; font-family:var(--font-family); background:transparent; color:
 .mrow {{ font-size:12.5px; font-variant-numeric:tabular-nums; }}
 .mcell {{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
 .mcell.model {{ font-family:Consolas,monospace; font-weight:650; }}
+.mcell.model .mnote {{ font-family:var(--font-family); font-weight:400; color:var(--muted); font-size:11px; margin-left:4px; }}
 .mcell.num {{ text-align:right; }}
 .mcell.cost {{ font-weight:700; color:var(--accent-ink); }}
 .mcell.cost.unpriced {{ color:var(--muted); font-weight:400; }}

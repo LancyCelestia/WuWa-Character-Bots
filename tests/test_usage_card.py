@@ -181,6 +181,27 @@ class TestUsageCardContent:
     def test_custom_note_text_enters_html(self) -> None:
         assert "只有管理员能看到这份报告" in _html(note="只有管理员能看到这份报告")
 
+    def test_pricing_note_and_merged_variants_enter_html(self) -> None:
+        rows = [
+            dict(
+                _MODEL_ROWS[0],
+                model="gemini-3.8-flash",
+                pricing_note="免费",
+                variants=[
+                    "Gemini-3.8-Flash",
+                    "gemini-3.8-flash",
+                    "gemini-3.8-flash-high",
+                ],
+            ),
+        ]
+        html_text = _html(model_rows=rows)
+        # 注记上卡（span 拼接在模型名后），不静默 0.00。
+        assert '<span class="mcell model" title="Gemini-3.8-Flash, gemini-3.8-flash, gemini-3.8-flash-high">gemini-3.8-flash<span class="mnote">（免费）</span></span>' in html_text
+
+    def test_no_pricing_note_renders_plain_model_cell(self) -> None:
+        html_text = _html()
+        assert '<span class="mnote">' not in html_text
+
 
 # ---------------------------------------------------------------------------
 # render_usage_card_png 三态：出图 / 后端缺失与坏后端 / 渲染异常 → 空串。

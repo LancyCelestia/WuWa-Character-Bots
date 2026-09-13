@@ -341,6 +341,90 @@ def test_usage_monitor_thresholds_and_state() -> None:
     assert "big" in report
 
 
+def test_model_usage_merges_family_variants_with_representative_name() -> None:
+    """同一模型三种写法合并一行：token/费用求和、代表名=最常见原始名。"""
+    store = RuntimeSettingsStore(_temp_dir() / "settings.json")
+    config = _fake_config()
+    # 价格表按家族规范名配置（input=4/output=16 元每百万）。
+    assert "已设置" in _handle_model_command(
+        store, config, ["price", "gemini-3.8-flash", "input=4", "output=16"]
+    )
+    usage_store = SimpleNamespace(
+        aggregate_llm_usage_range=lambda start, end: {
+            "prompt_tokens": 3_500_000,
+            "completion_tokens": 800_000,
+            "total_tokens": 4_300_000,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "cost_milli": 6_000,
+            "calls": 10,
+            "by_model": {
+                "Gemini-3.8-Flash": 3_000_000,
+                "gemini-3.8-flash": 1_000_000,
+                "gemini-3.8-flash-high": 300_000,
+            },
+            "by_model_prompt": {
+                "Gemini-3.8-Flash": 2_000_000,
+                "gemini-3.8-flash": 1_000_000,
+                "gemini-3.8-flash-high": 500_000,
+            },
+            "by_model_completion": {
+                "Gemini-3.8-Flash": 500_000,
+                "gemini-3.8-flash": 200_000,
+                "gemini-3.8-flash-high": 100_000,
+            },
+            "by_model_cache_read": {},
+            "by_model_cache_write": {},
+            "by_model_cost_milli": {
+                "Gemini-3.8-Flash": 3_000,
+                "gemini-3.8-flash": 1_800,
+                "gemini-3.8-flash-high": 1_200,
+            },
+            "by_model_calls": {
+                "Gemini-3.8-Flash": 5,
+                "gemini-3.8-flash": 3,
+                "gemini-3.8-flash-high": 2,
+            },
+            "by_model_unpriced": {},
+            "unpriced_calls": 0,
+        }
+    )
+    result = _handle_model_command(store, config, ["usage"], usage_store=usage_store)
+    assert "（合并 3 种写法）" in result
+    assert result.count("Gemini-3.8-Flash") == 1  # 代表名 = 最常见原始名，只出现一行
+    assert "gemini-3.8-flash-high" not in result
+    assert "入 3,500,000" in result  # token 求和
+    assert "费 6.00 元" in result  # 费用求和
+
+
+def test_model_usage_annotates_unpriced_instead_of_silent_zero() -> None:
+    store = RuntimeSettingsStore(_temp_dir() / "settings.json")
+    config = _fake_config()
+    usage_store = SimpleNamespace(
+        aggregate_llm_usage_range=lambda start, end: {
+            "prompt_tokens": 1_000,
+            "completion_tokens": 100,
+            "total_tokens": 1_100,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "cost_milli": 0,
+            "calls": 1,
+            "by_model": {"gemini-3.8-flash-high": 1_100},
+            "by_model_prompt": {"gemini-3.8-flash-high": 1_000},
+            "by_model_completion": {"gemini-3.8-flash-high": 100},
+            "by_model_cache_read": {},
+            "by_model_cache_write": {},
+            "by_model_cost_milli": {"gemini-3.8-flash-high": 0},
+            "by_model_calls": {"gemini-3.8-flash-high": 1},
+            "by_model_unpriced": {"gemini-3.8-flash-high": 1},
+            "unpriced_calls": 1,
+        }
+    )
+    result = _handle_model_command(store, config, ["usage"], usage_store=usage_store)
+    assert "（未配置价格）" in result
+    assert "费 未计价 元" in result  # 不静默 0.00
+
+
 def test_priority_groups_converter_accepts_json_array() -> None:
     converter = SETTABLE_KEYS["BOT_MODEL_PRIORITY_GROUPS"]
     raw = converter('[{"name":"高峰","order":["a"]}]')
