@@ -300,3 +300,59 @@ def test_glow_alpha_floor(mica_html: str) -> None:
         r"color-mix\([^)]*?(\d+(?:\.\d+)?)%\s*,\s*transparent", css
     ):
         assert float(value) >= 5.0, f"color-mix 光晕 {value}% < 5%"
+
+
+# ==================== 9. vis5 收官补充（2026-09-13） ====================
+# 范围说明：字号下限/字距刻度/gap 刻度三门锁 usage_report / media_card /
+# debug_llm_setup（debug 卡 2026-09-13 视觉收口补丁并入：kicker 11px→12px、
+# 字距 .14em→0.06em 刻度值；阴影本就全 var() 引用，gap 8/6/12 原在刻度内）。
+# echo_help 载体在 capabilities/echo.py（他席在飞），收口后再并入本门。
+_VIS5_GATE_BUILDERS: tuple[tuple[str, Callable[[], str]], ...] = (
+    ("usage_report", _usage_html),
+    ("media_card", _media_html),
+    ("debug_llm_setup", _llm_setup_html),
+)
+
+
+def test_font_size_floor_12px_output_domain() -> None:
+    """字号下限 12px（AGENTS.md UI 铁律；usage 卡 mnote 旧值 11px 已修）。"""
+    for label, build in _VIS5_GATE_BUILDERS:
+        html_text = build()
+        sizes = [float(v) for v in re.findall(r"font-size\s*:\s*([\d.]+)px", html_text)]
+        assert sizes, f"{label} 无 font-size 声明？"
+        below = sorted({v for v in sizes if v < 12})
+        assert not below, f"{label} 字号低于 12px 下限: {below}"
+
+
+def test_letter_spacing_on_e03_scale_output_domain() -> None:
+    """字距与六张 Jinja 卡同刻度 {0.02, 0.06}（usage 卡旧值 .14/.04/.03em 已修）。"""
+    for label, build in _VIS5_GATE_BUILDERS:
+        html_text = build()
+        values = [
+            float(v)
+            for v in re.findall(r"letter-spacing\s*:\s*([\d.]+)em", html_text)
+        ]
+        off_scale = [v for v in values if v not in {0.02, 0.06}]
+        assert not off_scale, f"{label} letter-spacing 脱离刻度: {off_scale}"
+
+
+def test_gaps_on_audited_scale_output_domain() -> None:
+    from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
+        GAP_SCALE_PX,
+    )
+
+    for label, build in _VIS5_GATE_BUILDERS:
+        html_text = build()
+        gaps = [int(v) for v in re.findall(r"gap\s*:\s*(\d+)px", html_text)]
+        bad = sorted({g for g in gaps if g not in GAP_SCALE_PX})
+        assert not bad, f"{label} 间距 {bad}px 不在审计过的 gap 刻度内"
+
+
+def test_usage_card_carries_vis4_keys_and_bot_footer() -> None:
+    """usage 卡补齐 vis4 六键 + F11 bot 页脚（vis5 前是唯一无署名卡）。"""
+    html_text = _usage_html()
+    for token in ("--glow-accent:", "--divider-line:", "--surface-a:", "--surface-b:", "--surface-neutral:"):
+        assert token in html_text, f"usage 卡缺 {token}"
+    assert 'class="bot-foot"' in html_text
+    assert "守岸人" in html_text.split('class="bot-foot"', 1)[1]
+    assert "· 模型用量" in html_text

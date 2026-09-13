@@ -155,7 +155,9 @@ body {
 .title { font-size: 19px; font-weight: 700; color: var(--text-main); line-height: 1.4; }
 .author { margin-top: 6px; font-size: 13px; color: var(--text-sub); }
 .stats { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
-.stat { background: color-mix(in srgb, var(--pc) 10%, rgba(255, 255, 255, 0.72)); color: var(--pc-dark);
+/* vis5 收口（2026-09-13）：平台色只做文字 accent 不做底色——基规则底色改
+   本命中性表面 token；zebra 相邻胶囊 inline 覆盖 var(--surface-a/b)。 */
+.stat { background: var(--surface-neutral); color: var(--pc-dark);
   font-size: 12px; padding: 3px 9px; border-radius: 999px; }
 .summary { margin-top: 10px; font-size: 13px; color: var(--text-sub);
   line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
@@ -247,8 +249,9 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
             'onerror="this.style.display=\'none\'" alt="cover"/>'
             f'<div class="badge">{badge_text}</div></div>'
         )
-    # 统计胶囊 vis4 zebra：相邻胶囊三档表面交替（本命淡蓝/星空紫，不用平台 accent），
-    # 行内 style 只覆盖背景，颜色/圆角沿用 .stat 规则。
+    # 统计胶囊 vis5 zebra：相邻胶囊三档表面交替（本命淡蓝/星空紫，不用平台 accent），
+    # 行内 style 只覆盖背景，颜色/圆角沿用 .stat 规则；token 引用与 universal_card
+    # 同类胶囊同法（var(--surface-a/b)，值由 :root 注入单一源）。
     stat_items = [
         (label, value)
         for label, value in stats.items()
@@ -256,7 +259,7 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
     ]
     stats_html = "".join(
         '<span class="stat" style="background: {}">{} {}</span>'.format(
-            SURFACE_TINTS["tint_a"] if index % 2 == 0 else SURFACE_TINTS["tint_b"],
+            "var(--surface-a)" if index % 2 == 0 else "var(--surface-b)",
             _esc(label),
             _esc(value),
         )

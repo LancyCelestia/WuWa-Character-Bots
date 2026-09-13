@@ -786,7 +786,7 @@ body {{ margin:0; font-family:var(--font-family); background:transparent; color:
     linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
   border:1px solid transparent; box-shadow:var(--mica-shadow-soft); }}
 .setup-head {{ padding:20px 26px 16px; border-bottom:1px solid rgba(255,255,255,.78); }}
-.setup-kicker {{ color:var(--accent-ink); font-size:11px; font-weight:700; letter-spacing:.14em; }}
+.setup-kicker {{ color:var(--accent-ink); font-size:12px; font-weight:700; letter-spacing:0.06em; }}
 .setup-title {{ margin-top:8px; font-size:28px; font-weight:700; }}
 /* 语义状态色（红绿黄）置于玻璃层之上，不随釉瑚洗派生。 */
 .setup-status {{ display:inline-flex; align-items:center; gap:8px; margin-top:12px; padding:6px 14px; border-radius:999px; font-size:14px; font-weight:700; border:1px solid #fff; }}
