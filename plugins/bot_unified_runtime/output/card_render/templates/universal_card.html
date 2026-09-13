@@ -56,7 +56,7 @@
     --amber-bolt-wash: #fff7d6;
     --text-main: #18191c;
     --text-sub: #5b6069;
-    --text-secondary: #7a828c;
+    --text-secondary: #576272;
     --bg-body: #f1f2f3;
     --bg-card: #ffffff;
     --radius-lg: 24px;
@@ -260,7 +260,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     color: var(--pc-dark);
     border: 2px solid var(--pc);
     box-sizing: border-box;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     line-height: 1;
     z-index: 3;
@@ -578,7 +578,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 
 .pinned-comment .pc-badge {
     display: inline-block;
-    font-size: 10px;
+    font-size: 12px;
     padding: 1px 5px;
     border-radius: 3px;
     background: var(--amber-strong);
@@ -618,7 +618,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 
 .hot-comment .pc-badge {
     display: inline-block;
-    font-size: 10px;
+    font-size: 12px;
     padding: 1px 5px;
     border-radius: 3px;
     background: var(--pc);
@@ -1124,7 +1124,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .author-row { min-width:0; display:flex; align-items:center; flex-wrap:wrap; gap:4px; color:var(--text-secondary); font-size:13.5px; line-height:1.4; }
 .author-row-primary { align-items:baseline; color:var(--text-main); font-size:26px; font-weight:700; line-height:1.15; gap:4px; }
 .author-row-primary .author-name-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.author-badge { align-self:flex-end; margin:0 0 1px 0; padding:2px 7px; border-radius:999px; color:var(--pc-dark); background:color-mix(in srgb,var(--pc) 18%,#fff); border:1px solid rgba(255,255,255,.90); font-size:10px; font-weight:600; }
+.author-badge { align-self:flex-end; margin:0 0 1px 0; padding:2px 7px; border-radius:999px; color:var(--pc-dark); background:color-mix(in srgb,var(--pc) 18%,#fff); border:1px solid rgba(255,255,255,.90); font-size:12px; font-weight:600; }
 .author-badge-vip,.author-name-vip { color:var(--pc-dark); } .author-badge-vip { background:color-mix(in srgb,var(--pc) 14%,#fff); } .author-badge-verified { margin-left:-3px; }
 .author-row-identifiers { flex-wrap:wrap; gap:4px; }
 .author-id { padding:2px 8px; border-radius:999px; color:var(--pc-dark); background:color-mix(in srgb,var(--pc) 12%,#fff); border:1px solid rgba(255,255,255,.90); font-variant-numeric:tabular-nums; font-size:13.5px; }
@@ -1448,10 +1448,10 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
                 {% if pinned_comment.time %}
                 <span> · {{ pinned_comment.time }}</span>
                 {% endif %}
-                {% if pinned_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ pinned_comment.level }}</span>{% endif %}
-                {% if pinned_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:10px;padding:0 6px;">{{ pinned_comment.title_badge }}</span>{% endif %}
-                {% if pinned_comment.dress %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ pinned_comment.dress }}</span>{% endif %}
-                {% if pinned_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ pinned_comment.handle }}</span>{% endif %}
+                {% if pinned_comment.level %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ pinned_comment.level }}</span>{% endif %}
+                {% if pinned_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ pinned_comment.title_badge }}</span>{% endif %}
+                {% if pinned_comment.dress %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">{{ pinned_comment.dress }}</span>{% endif %}
+                {% if pinned_comment.handle %}<span style="font-size:12px;color:var(--text-secondary);">{{ pinned_comment.handle }}</span>{% endif %}
             </div>
             <div class="pc-content">{{ pinned_comment.content }}</div>
             {% if pinned_comment.images %}
@@ -1476,10 +1476,10 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
                 {% if hot_comment.time %}
                 <span> · {{ hot_comment.time }}</span>
                 {% endif %}
-                {% if hot_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ hot_comment.level }}</span>{% endif %}
-                {% if hot_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:10px;padding:0 6px;">{{ hot_comment.title_badge }}</span>{% endif %}
-                {% if hot_comment.dress %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ hot_comment.dress }}</span>{% endif %}
-                {% if hot_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ hot_comment.handle }}</span>{% endif %}
+                {% if hot_comment.level %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ hot_comment.level }}</span>{% endif %}
+                {% if hot_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ hot_comment.title_badge }}</span>{% endif %}
+                {% if hot_comment.dress %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">{{ hot_comment.dress }}</span>{% endif %}
+                {% if hot_comment.handle %}<span style="font-size:12px;color:var(--text-secondary);">{{ hot_comment.handle }}</span>{% endif %}
             </div>
             <div class="pc-content">{{ hot_comment.content }}</div>
             {% if hot_comment.likes %}
@@ -1515,7 +1515,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
             <div class="comment-item">
                 <div class="comment-avatar">{% if comment.avatar %}<img src="{{ comment.avatar }}" alt="" onerror="this.remove()">{% endif %}</div>
                 <div class="comment-body">
-                    <div class="comment-author">{{ comment.author }}{% if comment.level %} <span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ comment.level }}</span>{% endif %}{% if comment.title_badge %} <span class="uid-tag comment-title-badge" style="font-size:10px;padding:0 6px;">{{ comment.title_badge }}</span>{% endif %}{% if comment.dress %} <span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ comment.dress }}</span>{% endif %}{% if comment.handle %} <span style="font-size:10px;color:var(--text-secondary);">{{ comment.handle }}</span>{% endif %}</div>
+                    <div class="comment-author">{{ comment.author }}{% if comment.level %} <span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ comment.level }}</span>{% endif %}{% if comment.title_badge %} <span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ comment.title_badge }}</span>{% endif %}{% if comment.dress %} <span class="uid-tag" style="font-size:12px;padding:0 6px;">{{ comment.dress }}</span>{% endif %}{% if comment.handle %} <span style="font-size:12px;color:var(--text-secondary);">{{ comment.handle }}</span>{% endif %}</div>
                     <div class="comment-text">{{ comment.content }}</div>
                     <div class="comment-meta">
                         {% if comment.time %}{{ comment.time }} · {% endif %}
@@ -1572,14 +1572,14 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
             {% endif %}
             {% if forward.pinned_comment %}
             <div class="pinned-comment" style="margin-top: 8px;">
-                <div class="pc-header"><span class="pc-badge">置顶</span>{% if forward.pinned_comment.avatar %}<img src="{{ forward.pinned_comment.avatar }}" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.pinned_comment.author }}</span>{% if forward.pinned_comment.time %}<span> · {{ forward.pinned_comment.time }}</span>{% endif %}{% if forward.pinned_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ forward.pinned_comment.level }}</span>{% endif %}{% if forward.pinned_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:10px;padding:0 6px;">{{ forward.pinned_comment.title_badge }}</span>{% endif %}{% if forward.pinned_comment.dress %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ forward.pinned_comment.dress }}</span>{% endif %}{% if forward.pinned_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ forward.pinned_comment.handle }}</span>{% endif %}</div>
+                <div class="pc-header"><span class="pc-badge">置顶</span>{% if forward.pinned_comment.avatar %}<img src="{{ forward.pinned_comment.avatar }}" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.pinned_comment.author }}</span>{% if forward.pinned_comment.time %}<span> · {{ forward.pinned_comment.time }}</span>{% endif %}{% if forward.pinned_comment.level %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ forward.pinned_comment.level }}</span>{% endif %}{% if forward.pinned_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ forward.pinned_comment.title_badge }}</span>{% endif %}{% if forward.pinned_comment.dress %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">{{ forward.pinned_comment.dress }}</span>{% endif %}{% if forward.pinned_comment.handle %}<span style="font-size:12px;color:var(--text-secondary);">{{ forward.pinned_comment.handle }}</span>{% endif %}</div>
                 <div class="pc-content">{{ forward.pinned_comment.content }}</div>
                 {% if forward.pinned_comment.likes %}<div class="pc-likes">{{ forward.pinned_comment.likes }} 赞{% if forward.pinned_comment.replies_count %} · {{ forward.pinned_comment.replies_count }} 回复{% endif %}</div>{% endif %}
             </div>
             {% endif %}
             {% if forward.hot_comment %}
             <div class="pinned-comment" style="margin-top: 8px;">
-                <div class="pc-header"><span class="pc-badge">热评</span>{% if forward.hot_comment.avatar %}<img src="{{ forward.hot_comment.avatar }}" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.hot_comment.author }}</span>{% if forward.hot_comment.time %}<span> · {{ forward.hot_comment.time }}</span>{% endif %}{% if forward.hot_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ forward.hot_comment.level }}</span>{% endif %}{% if forward.hot_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:10px;padding:0 6px;">{{ forward.hot_comment.title_badge }}</span>{% endif %}{% if forward.hot_comment.dress %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">{{ forward.hot_comment.dress }}</span>{% endif %}{% if forward.hot_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ forward.hot_comment.handle }}</span>{% endif %}</div>
+                <div class="pc-header"><span class="pc-badge">热评</span>{% if forward.hot_comment.avatar %}<img src="{{ forward.hot_comment.avatar }}" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.hot_comment.author }}</span>{% if forward.hot_comment.time %}<span> · {{ forward.hot_comment.time }}</span>{% endif %}{% if forward.hot_comment.level %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ forward.hot_comment.level }}</span>{% endif %}{% if forward.hot_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ forward.hot_comment.title_badge }}</span>{% endif %}{% if forward.hot_comment.dress %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">{{ forward.hot_comment.dress }}</span>{% endif %}{% if forward.hot_comment.handle %}<span style="font-size:12px;color:var(--text-secondary);">{{ forward.hot_comment.handle }}</span>{% endif %}</div>
                 <div class="pc-content">{{ forward.hot_comment.content }}</div>
                 {% if forward.hot_comment.likes %}<div class="pc-likes">{{ forward.hot_comment.likes }} 赞{% if forward.hot_comment.replies_count %} · {{ forward.hot_comment.replies_count }} 回复{% endif %}</div>{% endif %}
             </div>
@@ -1634,9 +1634,9 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
                     {% if repost.pinned_comment.time %}
                     <span> · {{ repost.pinned_comment.time }}</span>
                     {% endif %}
-                    {% if repost.pinned_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ repost.pinned_comment.level }}</span>{% endif %}
-                    {% if repost.pinned_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:10px;padding:0 6px;">{{ repost.pinned_comment.title_badge }}</span>{% endif %}
-                    {% if repost.pinned_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ repost.pinned_comment.handle }}</span>{% endif %}
+                    {% if repost.pinned_comment.level %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ repost.pinned_comment.level }}</span>{% endif %}
+                    {% if repost.pinned_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ repost.pinned_comment.title_badge }}</span>{% endif %}
+                    {% if repost.pinned_comment.handle %}<span style="font-size:12px;color:var(--text-secondary);">{{ repost.pinned_comment.handle }}</span>{% endif %}
                 </div>
                 <div class="pc-content">{{ repost.pinned_comment.content }}</div>
                 {% if repost.pinned_comment.likes %}
@@ -1652,9 +1652,9 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
                     {% if repost.hot_comment.time %}
                     <span> · {{ repost.hot_comment.time }}</span>
                     {% endif %}
-                    {% if repost.hot_comment.level %}<span class="uid-tag" style="font-size:10px;padding:0 6px;">Lv.{{ repost.hot_comment.level }}</span>{% endif %}
-                    {% if repost.hot_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:10px;padding:0 6px;">{{ repost.hot_comment.title_badge }}</span>{% endif %}
-                    {% if repost.hot_comment.handle %}<span style="font-size:10px;color:var(--text-secondary);">{{ repost.hot_comment.handle }}</span>{% endif %}
+                    {% if repost.hot_comment.level %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ repost.hot_comment.level }}</span>{% endif %}
+                    {% if repost.hot_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ repost.hot_comment.title_badge }}</span>{% endif %}
+                    {% if repost.hot_comment.handle %}<span style="font-size:12px;color:var(--text-secondary);">{{ repost.hot_comment.handle }}</span>{% endif %}
                 </div>
                 <div class="pc-content">{{ repost.hot_comment.content }}</div>
                 {% if repost.hot_comment.likes %}
@@ -1724,7 +1724,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
             <div style="font-size:14px;font-weight:600;color:var(--text-main);margin-bottom:8px;">{% if page_type in ["generic", "article"] %}页面内容{% else %}最近动态{% endif %}</div>
             {% for post in recent_posts[:5] %}
             <div style="background:rgba(255,255,255,.55);border-radius:8px;padding:12px;margin-bottom:8px;">
-                {% if post.sender %}<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">{% if post.sender_avatar %}<img src="{{ post.sender_avatar }}" style="width:20px;height:20px;border-radius:50%;" onerror="this.style.display='none'">{% endif %}<span style="font-size:12px;font-weight:600;color:var(--text-main);">{{ post.sender }}</span>{% if post.sender_time %}<span style="font-size:10px;color:var(--text-secondary);">{{ post.sender_time }}</span>{% endif %}</div>{% endif %}
+                {% if post.sender %}<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">{% if post.sender_avatar %}<img src="{{ post.sender_avatar }}" style="width:20px;height:20px;border-radius:50%;" onerror="this.style.display='none'">{% endif %}<span style="font-size:12px;font-weight:600;color:var(--text-main);">{{ post.sender }}</span>{% if post.sender_time %}<span style="font-size:12px;color:var(--text-secondary);">{{ post.sender_time }}</span>{% endif %}</div>{% endif %}
                 {% if post.title %}<div style="font-size:14px;font-weight:600;color:var(--text-main);margin-bottom:4px;">{{ post.title }}</div>{% endif %}
                 {% if post.video_duration %}<span style="font-size:12px;background:var(--pc-light);color:var(--pc);padding:2px 8px;border-radius:6px;font-weight:600;">{{ post.video_duration }}</span>{% endif %}
                 {% if post.text %}<div style="font-size:13px;color:var(--text-sub);line-height:1.5;">{{ post.text }}</div>{% endif %}
@@ -1740,7 +1740,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 
     <!-- ===== 页脚 ===== -->
     <div class="footer">
-        <div class="footer-platform">{{ platform_official_name or platform_display or type or 'Platform' }}</div>
+        <div class="footer-platform">{{ platform_official_name or platform_display or type or 'Web' }}</div>
         <div class="footer-bottom">
             <div class="footer-bot-left">{% if bot_avatar_url %}<img class="footer-bot-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="footer-bot-dot">{{ (bot_name | default('A', true))[:1] }}</span>{% endif %}</div>
             <div class="footer-bot-right"><span class="footer-bot-name">{{ bot_name | default('守岸人', true) }}</span><span class="footer-parser-text">· {{ feature_label or 'Shorekeeper' }}</span></div>

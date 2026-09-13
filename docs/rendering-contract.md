@@ -57,6 +57,9 @@
 | `--r-panel` / `--r-tile` | `18px` / `14px` | 面板 / 瓦片圆角 |
 | 阴影 | `SHADOW_CSS_VARS`（= SHADOW_LEVELS 三级族） | 阴影档位的唯一登记处：shell/panel/tile 三级；模板内字面量必须与登记值逐字符一致（或引用 bridge 注入的同名上下文键） |
 | 字体 | `FONT_FAMILY_STACK` | 五模板同栈；模板内硬编码（CSS 不能吃 HTML 转义），契约测试锁一致 |
+| 次级文字 | `TEXT_SECONDARY`（`#576272`，vis5） | 全模板 `--text-secondary` 单一来源；对三档 zebra 表面对比 ≥4.5:1（WCAG AA@12px），机器门 `test_template_visual_audit.py`；旧散值 #7a828c/#8a919b/#66727f/#7a8699 已收编（market/finance 已同步收编） |
+| 字号下限 | `12px` | UI 铁律；机器门锁可编辑 4 模板 + usage/media f-string 卡；`TYPE_SCALE_PX` 为新增/改版模板选用阶梯，既有卡实弹验收字号不受追溯 |
+| zebra 表面 | `SURFACE_TINTS` 三档 | vis5 数值门：onstage 相邻 ΔE(a,b)≥3.0、对 neutral ≥2.5；text_sub 对每档 ≥4.5:1 |
 | 间距 | `GAP_SCALE_PX = {3,4,6,7,8,10,12,14,16}` | 模板 `gap` 只允许取刻度内值，禁止发明新间距 |
 | 宽度 | `CARD_SHELL_WIDTHS` | 宽度按内容族登记：universal 1440（payload `card_width` 驱动）/ affinity 1180 / market·finance 1080 / song_panel 980 / mermaid_max 840（fit-content 上限）；新模板宽度必须先进本表 |
 
@@ -84,4 +87,5 @@
 - `render_market_card_html(payload)`：股指卡（groups/rows/trend/trend_note/source_note/updated_at/delayed_note）。
 - `render_finance_card_html(payload)`：股票/汇率金融卡（stocks/fx 共用壳；主题取 `BRAND_THEME` 本命基底）——属金融任务文件域，契约规则与本页一致。
 - `render_affinity_card_html` / `render_song_candidates_html` / `render_mermaid_html`：各自能力域；同样遵守本页全部铁律。
+- **好感度卡脏数据归一**（vis5 加固，2026-09-13）：rows/steps/tiers/bot_to_user/user_to_bot 逐字段桥层归一——score None/字符串/缺键 → 0.0（双向面板缺省 50.0）、bar 钳 0-100、cls 白名单 {up,down,flat}、None 值显示 "—"；模板 `%.1f` 格式化不再可能抛 TypeError（铁律 7 的前置保证），回归 `test_rendering_contract.py::test_affinity_card_never_raises_on_dirty_payload`。
 - 逐能力接线（天气/菜谱/历史/占卜/游戏/usage → 统一 payload）由各能力调用既有 `render_*_html`；bridge 层不感知能力业务。

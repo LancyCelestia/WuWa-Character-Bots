@@ -43,6 +43,9 @@
     --surface-a: {{ surface_a }};
     --surface-b: {{ surface_b }};
     --surface-neutral: {{ surface_neutral }};
+    --text-main: #18191c;
+    --text-sub: #5b6069;
+    --text-secondary: #576272;
     --font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
 }
 
@@ -165,7 +168,7 @@ body {
 .title {
     font-size: 20px;
     font-weight: 700;
-    color: #232a33;
+    color: var(--text-main);
     line-height: 1.4;
     white-space: nowrap;
     overflow: hidden;
@@ -174,7 +177,7 @@ body {
 .sub {
     margin-top: 5px;
     font-size: 12px;
-    color: #66727f;
+    color: var(--text-secondary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -244,7 +247,7 @@ body {
 .name {
     font-size: 15px;
     font-weight: 700;
-    color: #232a33;
+    color: var(--text-main);
     line-height: 1.4;
     white-space: nowrap;
     overflow: hidden;
@@ -253,7 +256,7 @@ body {
 .meta {
     margin-top: 3px;
     font-size: 12px;
-    color: #66727f;
+    color: var(--text-secondary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -266,7 +269,7 @@ body {
     border-radius: var(--r-tile);
     font-size: 12.5px;
     line-height: 1.6;
-    color: #4a5560;
+    color: var(--text-sub);
     text-align: center;
 }
 .foot b { color: var(--pc-dark); }
@@ -287,7 +290,7 @@ body {
     align-items: center;
     gap: 7px;
     font-size: 12px;
-    color: #7a8699;
+    color: var(--text-secondary);
     background:
         var(--glow-accent) right center / 62% 190% no-repeat,
         linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.46) 100%) padding-box,
@@ -302,7 +305,7 @@ body {
     font-size: 12px; font-weight: 650; color: var(--pc-dark);
     background: color-mix(in srgb, var(--pc) 14%, #fff);
     border: 1px solid color-mix(in srgb, var(--pc) 22%, #fff); }
-.bot-foot .bf-name { font-weight: 650; color: #57626f; }
+.bot-foot .bf-name { font-weight: 650; color: var(--text-sub); }
 </style>
 </head>
 <body>

@@ -183,15 +183,23 @@ GLOW_ACCENT = (
     "color-mix(in srgb, var(--pc) 8%, transparent) 46%, transparent 74%)"
 )
 _BRAND_WASH = derive_wash_tokens(BRAND_ACCENT)
+# vis5 收官（2026-09-13 用户裁定「区分度拉高」）：三档表面按相邻可辨调参——
+# 对称合成 alpha≈0.83（液态玻璃质感与色斑透出保留）， onstage 混色（叠本命
+# wash 渐变中部）ΔE(a,b)≈3.8、对 neutral ≥7，text_sub 对比 ≥5:1。
+# 机器门：tests/test_template_visual_audit.py::test_zebra_surfaces_distinct。
 SURFACE_TINTS: dict[str, str] = {
     "tint_a": (
-        f"color-mix(in srgb, {_BRAND_WASH['wash_1']} 14%, rgba(255, 255, 255, 0.82))"
+        f"color-mix(in srgb, {_BRAND_WASH['wash_1']} 75%, rgba(255, 255, 255, 0.35))"
     ),
     "tint_b": (
-        f"color-mix(in srgb, {_BRAND_WASH['wash_2']} 12%, rgba(255, 255, 255, 0.64))"
+        f"color-mix(in srgb, {_BRAND_WASH['wash_2']} 80%, rgba(255, 255, 255, 0.20))"
     ),
-    "tint_neutral": "rgba(255, 255, 255, 0.85)",
+    "tint_neutral": "rgba(255, 255, 255, 0.92)",
 }
+# 次级文字统一灰（vis5）：全模板 --text-secondary 单一来源，取值在本批三档
+# 表面（含最暗 tint_b）上对比 ≥4.5:1（WCAG AA@12px）。旧散值 #7a828c/#8a919b/
+# #66727f/#7a8699 对比 2.8-4.8 不达 AA，全部收编。
+TEXT_SECONDARY = "#576272"
 # 区分线 token：清晰可见的平台色 22% 细线（替代旧 14% 淡线）。
 DIVIDER = "1px solid color-mix(in srgb, var(--pc) 22%, rgba(255, 255, 255, 0.65))"
 # 字号阶梯（px）：全模板字号只允许取本表值（契约测试锁定），小件下限 12。
@@ -375,6 +383,8 @@ __all__ = [
     "PLATFORM_THEMES",
     "SHADOW_PRIMARY",
     "SHADOW_SECONDARY",
+    "SURFACE_TINTS",
+    "TEXT_SECONDARY",
     "THEME_ALIASES",
     "UNKNOWN_PLATFORM_COLOR",
     "UNKNOWN_THEME_KEYS",
