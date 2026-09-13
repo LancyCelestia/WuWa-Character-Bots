@@ -179,7 +179,12 @@ class _JsonSearchProvider:
             True,
         )
 
-    def _request_json(self, query: str, max_results: int) -> object:
+    def _request_json(
+        self,
+        query: str,
+        max_results: int,
+        body_override: Mapping[str, Any] | None = None,
+    ) -> object:
         if not self.api_key or not self.endpoint or not query.strip():
             return {}
         client, owned = self._client_or_create()
@@ -188,6 +193,8 @@ class _JsonSearchProvider:
             body = self._build_body(query, max_results)
             body.update({key: value for key, value in self.options.items() if key not in {"headers", "params", "body"}})
             body.update(body_overrides)
+            if body_override:
+                body.update(body_override)
             attempts = self.retry_attempts
             for attempt in range(attempts + 1):
                 try:
@@ -230,6 +237,32 @@ class TavilyWebSearchProvider(_JsonSearchProvider):
 
     def _build_body(self, query: str, max_results: int) -> dict[str, Any]:
         return {"query": query, "max_results": max(1, int(max_results))}
+
+    def image_urls(self, query: str, *, max_results: int = 8) -> list[str]:
+        """图搜通道（include_images=True）：按 API 给序返回图片直链候选。
+
+        响应 images 项兼容两种形态：纯 URL 字符串与 {url: ...} 对象；
+        未配 key / 网络 / 解析失败一律返回空表，由调用方走候选降级链。
+        """
+        payload = self._request_json(
+            query, max_results, body_override={"include_images": True}
+        )
+        if not isinstance(payload, Mapping):
+            return []
+        raw = payload.get("images")
+        if not isinstance(raw, list):
+            return []
+        urls: list[str] = []
+        for item in raw:
+            if isinstance(item, str):
+                url = item.strip()
+            elif isinstance(item, Mapping):
+                url = str(item.get("url") or "").strip()
+            else:
+                continue
+            if url:
+                urls.append(url)
+        return urls[: max(1, int(max_results))]
 
 
 class YouSearchProvider(_JsonSearchProvider):

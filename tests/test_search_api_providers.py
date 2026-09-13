@@ -384,3 +384,49 @@ def test_filter_search_hits_drops_low_quality_and_defers_short_snippets():
     ]
     kept = filter_search_hits(hits)
     assert [h.url for h in kept] == ["https://good.example/a", "https://mid.example/c"]
+
+
+def test_tavily_image_urls_normalizes_string_and_object_entries():
+    """图搜通道：images 项兼容纯 URL 串与 {url} 对象，空串/异型剔除。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["include_images"] is True
+        assert payload["query"] == "麻婆豆腐 实拍"
+        return httpx.Response(
+            200,
+            json={
+                "images": [
+                    "https://a.example/1.jpg",
+                    {"url": "https://b.example/2.png"},
+                    "",
+                    42,
+                ]
+            },
+        )
+
+    provider = TavilyWebSearchProvider(
+        api_key="k",
+        endpoint="https://tavily.test/search",
+        client=_client(handler),
+    )
+    assert provider.image_urls("麻婆豆腐 实拍", max_results=8) == [
+        "https://a.example/1.jpg",
+        "https://b.example/2.png",
+    ]
+
+
+def test_tavily_image_urls_degrades_to_empty_on_error_or_missing_key():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500)
+
+    provider = TavilyWebSearchProvider(
+        api_key="k",
+        endpoint="https://tavily.test/search",
+        client=_client(handler),
+    )
+    assert provider.image_urls("x") == []
+    no_key = TavilyWebSearchProvider(
+        api_key="", endpoint="https://tavily.test/search", client=_client(handler)
+    )
+    assert no_key.image_urls("x") == []

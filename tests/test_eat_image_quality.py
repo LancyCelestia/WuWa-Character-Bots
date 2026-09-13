@@ -198,3 +198,101 @@ def test_capability_text_fallback_unaffected(
     assert result.kind == "text"
     assert "番茄炒蛋" in result.body
     assert list(tmp_path.iterdir()) == []  # 失败候选不落盘
+
+
+# ==================== Tavily 图搜兜底通道（用户裁定 2026-09-14） ====================
+
+
+def _patch_tavily_candidates(
+    monkeypatch: pytest.MonkeyPatch, urls: list[str]
+) -> None:
+    monkeypatch.setattr(
+        "plugins.bot_unified_runtime.capabilities.eat._tavily_image_candidates",
+        lambda name, config=None: list(urls),
+    )
+
+
+def test_bing_empty_page_falls_back_to_tavily(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bing 页零候选（或搜索失败）→ Tavily 兜底，同一质检闸放行落盘。"""
+    url = f"http://{_HOST}/tavily.png"
+    payload = _png_bytes(NORMAL_SIZE)
+
+    _patch_tavily_candidates(monkeypatch, [url])
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda req, timeout=None: (
+            _FakeResp(b"<html>no result</html>")
+            if str(getattr(req, "full_url", req)).startswith("https://cn.bing.com")
+            else _FakeResp(payload)
+        ),
+    )
+    saved = _fetch_dish_image(tmp_path, DISH)
+    assert saved != ""
+    assert Path(saved).read_bytes() == payload
+    lines = (tmp_path / f"{DISH}.source.txt").read_text(
+        encoding="utf-8"
+    ).splitlines()
+    assert lines[0] == url  # 来源记录首行 = Tavily 候选 URL
+
+
+def test_bing_all_rejected_still_reaches_tavily(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bing 候选全被质检拒绝（过小）→ 同样落到 Tavily 兜底候选。"""
+    tiny_url = f"http://{_HOST}/tiny.png"
+    ok_url = f"http://{_HOST}/tavily-ok.png"
+    good = _png_bytes(NORMAL_SIZE)
+
+    def fake_urlopen(req: object, timeout: object = None) -> _FakeResp:
+        url_req = str(getattr(req, "full_url", req))
+        if url_req == tiny_url:
+            return _FakeResp(_png_bytes(TINY_SIZE))
+        if url_req == ok_url:
+            return _FakeResp(good)
+        return _FakeResp(_bing_page([tiny_url]))
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    _patch_tavily_candidates(monkeypatch, [ok_url])
+    saved = _fetch_dish_image(tmp_path, DISH)
+    assert saved != ""
+    assert Path(saved).read_bytes() == good
+
+
+def test_tavily_candidates_respect_domain_blocklist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tavily 兜底候选同样过来源域黑名单，防兜底通道引入污染源。"""
+    blocked_url = "https://img.sinaimg.cn/pollution.jpg"
+    ok_url = f"http://{_HOST}/clean.png"
+    good = _png_bytes(NORMAL_SIZE)
+
+    def fake_urlopen(req: object, timeout: object = None) -> _FakeResp:
+        url_req = str(getattr(req, "full_url", req))
+        if url_req == ok_url:
+            return _FakeResp(good)
+        return _FakeResp(b"<html>no result</html>")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    _patch_tavily_candidates(monkeypatch, [blocked_url, ok_url])
+    saved = _fetch_dish_image(tmp_path, DISH)
+    assert saved != ""
+    assert Path(saved).read_bytes() == good
+    requested_lines = (tmp_path / f"{DISH}.source.txt").read_text(
+        encoding="utf-8"
+    ).splitlines()
+    assert requested_lines[0] == ok_url  # 黑名单域没被下载
+
+
+def test_tavily_candidates_without_key_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """未配 key（且 CLI 态取不到 env）→ 兜底通道静默返回空表，零网络。"""
+    from plugins.bot_unified_runtime.capabilities.eat import (
+        _tavily_image_candidates,
+    )
+
+    monkeypatch.delenv("BOT_SEARCH_TAVILY_API_KEY", raising=False)
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: None)
+    assert _tavily_image_candidates(DISH, None) == []

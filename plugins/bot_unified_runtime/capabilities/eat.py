@@ -238,7 +238,7 @@ def _dish_image(dish: Dish, config: Any) -> str:
     library = _library_lookup(root, dish.name)
     if library:
         return library
-    return _fetch_dish_image(root, dish.name)
+    return _fetch_dish_image(root, dish.name, config)
 
 
 def _pixels_ok(data: bytes) -> bool:
@@ -265,15 +265,108 @@ def _pixels_ok(data: bytes) -> bool:
     return _IMG_ASPECT_MIN <= aspect <= _IMG_ASPECT_MAX
 
 
-def _fetch_dish_image(root: Path, name: str) -> str:
-    """Bing 图搜按序抓第一张通过全部质检的菜品图并缓存；失败返回空串。
+def _tavily_image_candidates(name: str, config: Any | None = None) -> list[str]:
+    """Tavily 图搜直链候选（Bing 空手时的兜底通道）；未配 key/失败返回空表。
 
-    候选校验链：来源域黑名单 → SSRF 护栏 → 字节数(1KB~8MB) → magic bytes
+    key 解析复用 web_search 链同一套：config 字段（支持 env: 间接引用）；
+    CLI 预热态（config=None，nonebot 未加载配置）从 .env 直取真实 key。
+    """
+    import os
+
+    from plugins.bot_unified_runtime.sources.search_api import resolve_search_secret
+
+    api_key = resolve_search_secret(
+        str(getattr(config, "bot_search_tavily_api_key", "") or ""), config
+    )
+    if not api_key and config is None:
+        try:
+            from dotenv import load_dotenv
+
+            load_dotenv()
+        except Exception:  # noqa: BLE001, S110 - 无 dotenv 环境就直读进程环境变量。
+            pass
+        api_key = os.environ.get("BOT_SEARCH_TAVILY_API_KEY", "")
+    if not api_key:
+        return []
+    try:
+        from plugins.bot_unified_runtime.sources.search_api import (
+            TavilyWebSearchProvider,
+        )
+
+        endpoint = (
+            str(getattr(config, "bot_web_search_tavily_endpoint", "") or "").strip()
+            or "https://api.tavily.com/search"
+        )
+        provider = TavilyWebSearchProvider(api_key=api_key, endpoint=endpoint)
+        try:
+            return provider.image_urls(f"{name} 菜品 实拍", max_results=8)
+        finally:
+            provider.close()
+    except Exception:  # noqa: BLE001 - 兜底通道任何失败都静默降级。
+        return []
+
+
+def _fetch_dish_image(root: Path, name: str, config: Any | None = None) -> str:
+    """图搜按序抓第一张通过全部质检的菜品图并缓存；失败返回空串。
+
+    候选通道两跳：Bing 图搜 HTML → Tavily 图搜 API（用户 2026-09-14 裁定：
+    Bing 缺图时用已配的 Tavily key 兜底，不自造离线假图）。所有候选过同一
+    校验链：来源域黑名单 → SSRF 护栏 → 字节数(1KB~8MB) → magic bytes
     → 像素质检（PIL，可跳过）；任一环不过即换下一个候选。落盘时同目录写
     <菜名>.source.txt（首行图片 URL，次行 ISO 时间戳）作来源记录。
     """
     import urllib.parse
     import urllib.request
+
+    from plugins.bot_unified_runtime.sources.downloader import (
+        RejectedUrlError,
+        check_download_url,
+    )
+
+    safe_name = _ILLEGAL_FILENAME_RE.sub("_", name).strip("_") or "dish"
+
+    def _accepts(image_url: str) -> str:
+        """单候选质检+落盘：通过返回落盘路径，不过返回空串（闸序固定）。"""
+
+        if _url_domain_blocked(image_url):
+            return ""  # 已知污染源域（剧照/防盗链/wallpaper），零成本先拒
+        try:
+            check_download_url(image_url)  # SSRF 护栏：内网/保留网段拒绝
+        except RejectedUrlError:
+            return ""
+        try:
+            req = urllib.request.Request(
+                image_url,
+                headers={"User-Agent": _IMAGE_UA, "Referer": "https://cn.bing.com/"},
+            )
+            with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
+                data = resp.read(_IMAGE_MAX_BYTES + 1)
+        except Exception:  # noqa: BLE001 - 单个候选失败静默试下一个。
+            return ""
+        if not (1024 <= len(data) <= _IMAGE_MAX_BYTES):
+            return ""
+        suffix = next(
+            (ext for magic, ext in _IMAGE_MAGIC if data.startswith(magic)), ""
+        )
+        if not suffix:
+            return ""  # 不是图片字节（多为错误页 HTML），换下一个候选
+        if not _pixels_ok(data):
+            return ""  # 像素质检不过（图标/占位图/横竖条），换下一个候选
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            target = root / f"{safe_name}{suffix}"
+            target.write_bytes(data)
+            try:
+                (root / f"{safe_name}.source.txt").write_text(
+                    f"{image_url}\n"
+                    f"{datetime.now().astimezone().isoformat(timespec='seconds')}\n",
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass  # 来源记录 best-effort，不影响封面返回
+            return str(target)
+        except OSError:
+            return ""
 
     query = urllib.parse.quote_plus(f"{name} 菜品 实拍")
     search_url = f"https://cn.bing.com/images/search?q={query}&first=1&count=8"
@@ -288,55 +381,16 @@ def _fetch_dish_image(root: Path, name: str) -> str:
         )
         with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
             page = resp.read(_IMAGE_MAX_BYTES).decode("utf-8", "ignore")
-    except Exception:  # noqa: BLE001 - 搜索失败静默降级。
-        return ""
-    from plugins.bot_unified_runtime.sources.downloader import (
-        RejectedUrlError,
-        check_download_url,
-    )
-
+    except Exception:  # noqa: BLE001 - Bing 搜索失败不放弃，继续走 Tavily 兜底。
+        page = ""
     for match in _BING_RESULT_RE.finditer(page):
-        image_url = match.group(1)
-        if _url_domain_blocked(image_url):
-            continue  # 已知污染源域（剧照/防盗链/wallpaper），零成本先拒
-        try:
-            check_download_url(image_url)  # SSRF 护栏：内网/保留网段拒绝
-        except RejectedUrlError:
-            continue
-        try:
-            req = urllib.request.Request(
-                image_url,
-                headers={"User-Agent": _IMAGE_UA, "Referer": "https://cn.bing.com/"},
-            )
-            with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
-                data = resp.read(_IMAGE_MAX_BYTES + 1)
-        except Exception:  # noqa: BLE001, S112 - 单个候选失败静默试下一个。
-            continue
-        if not (1024 <= len(data) <= _IMAGE_MAX_BYTES):
-            continue
-        suffix = next(
-            (ext for magic, ext in _IMAGE_MAGIC if data.startswith(magic)), ""
-        )
-        if not suffix:
-            continue  # 不是图片字节（多为错误页 HTML），换下一个候选
-        if not _pixels_ok(data):
-            continue  # 像素质检不过（图标/占位图/横竖条），换下一个候选
-        try:
-            root.mkdir(parents=True, exist_ok=True)
-            safe_name = _ILLEGAL_FILENAME_RE.sub("_", name).strip("_") or "dish"
-            target = root / f"{safe_name}{suffix}"
-            target.write_bytes(data)
-            try:
-                (root / f"{safe_name}.source.txt").write_text(
-                    f"{image_url}\n"
-                    f"{datetime.now().astimezone().isoformat(timespec='seconds')}\n",
-                    encoding="utf-8",
-                )
-            except OSError:
-                pass  # 来源记录 best-effort，不影响封面返回
-            return str(target)
-        except OSError:
-            return ""
+        fetched = _accepts(match.group(1))
+        if fetched:
+            return fetched
+    for image_url in _tavily_image_candidates(name, config):
+        fetched = _accepts(image_url)
+        if fetched:
+            return fetched
     return ""
 
 
@@ -448,7 +502,7 @@ def prewarm_food_images(
             results[name] = ""
             continue
         pending += 1
-        fetched = _fetch_dish_image(root, name)
+        fetched = _fetch_dish_image(root, name, config)
         results[name] = fetched
         if fetched:
             _library_record(root, name, fetched)
@@ -668,7 +722,7 @@ def build_eat_capability(
     return capability
 
 
-if __name__ == "__main__":  # pragma: no cover - 运维预热入口（python -m ...eat --prewarm）
+if __name__ == "__main__":  # pragma: no cover - 运维预热入口（裸跑=全量幂等预热；--dishes 指定菜名）
     import argparse
 
     _parser = argparse.ArgumentParser(
