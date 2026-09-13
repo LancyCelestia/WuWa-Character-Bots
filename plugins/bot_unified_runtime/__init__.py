@@ -31,7 +31,12 @@ from .capabilities.eat import build_eat_capability
 from .capabilities.epic import build_epic_capability
 from .capabilities.fx import build_fx_capability
 from .capabilities.group_files import DirtyGuard, GroupFileStore
-from .capabilities.market import build_market_capability
+from .capabilities.market import (
+    build_bond_capability,
+    build_commodities_capability,
+    build_market_capability,
+    build_northbound_capability,
+)
 from .capabilities.media_archive import build_media_archive_capability
 from .capabilities.meme import build_meme_capability
 from .capabilities.meme_library import build_meme_library_capability
@@ -1911,6 +1916,8 @@ def _audit_chat_history_skipped(
 
 # C14: 解析卡每条消息都要头像 URL，而查询走适配器 RPC（1.2s 超时）；
 # 按 self_id 缓存 600s，避免每条消息一次跨进程调用。配置头像优先且不缓存。
+# F3（2026-09-14 素材本地化）：本地缓存 file URI 插队到远端链之前——命中
+# 即直接返回，不占用也不刷新 600s 远端缓存，help 卡/派发卡不再周期回源。
 _BOT_AVATAR_URL_CACHE: dict[str, tuple[float, str]] = {}
 _BOT_AVATAR_URL_TTL_SECONDS = 600.0
 
@@ -1927,10 +1934,22 @@ def _refresh_local_bot_avatar(bot_id: str, config: Config) -> str:
 
 
 async def _resolve_bot_avatar_url(bot: Any, config: Config) -> str:
-    """Use configured avatar, then ask OneBot/NapCat for the bot avatar briefly."""
+    """Resolve the bot avatar: configured URL > local cached file > remote.
+
+    F3（2026-09-14 素材本地化）：本地头像文件存在即直接用 file URI（经
+    output.bot_avatar.bot_avatar_uri 统一入口，含内存登记与磁盘兜底发现），
+    不再进入 NapCat RPC / qlogo 远端链——消灭 600s TTL 周期性 Chromium
+    回源。本地缺失才走既有远端链，其语义原样保留（RPC/qlogo 回退、600s
+    缓存、最终空串由卡片回落「守」字圆点）。
+    """
     configured = str(getattr(config, "bot_persona_avatar_url", "") or "").strip()
     if configured:
         return configured
+    from .output.bot_avatar import bot_avatar_uri
+
+    local_uri = bot_avatar_uri(config)
+    if local_uri:
+        return local_uri
     self_id = str(getattr(bot, "self_id", "") or "").strip()
     if not self_id:
         return ""
@@ -3284,6 +3303,15 @@ def _register_nonebot_handlers() -> None:
     def _build_fx_with_backend(config_: Any, **_kwargs: Any) -> Any:
         return build_fx_capability(config_, render_backend=render_backend)
 
+    def _build_commodities_with_backend(config_: Any, **_kwargs: Any) -> Any:
+        return build_commodities_capability(config_, render_backend=render_backend)
+
+    def _build_bond_with_backend(config_: Any, **_kwargs: Any) -> Any:
+        return build_bond_capability(config_, render_backend=render_backend)
+
+    def _build_northbound_with_backend(config_: Any, **_kwargs: Any) -> Any:
+        return build_northbound_capability(config_, render_backend=render_backend)
+
     def _build_divination_with_backend(config_: Any, **_kwargs: Any) -> Any:
         return build_divination_capability(config_, render_backend=render_backend)
 
@@ -4540,6 +4568,24 @@ def _register_nonebot_handlers() -> None:
             is RouteKind.FX
         )
 
+    async def _is_commodities_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.COMMODITIES
+        )
+
+    async def _is_bond_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.BOND
+        )
+
+    async def _is_northbound_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.NORTHBOUND
+        )
+
     async def _is_divination_event(state: T_State, event: Event) -> bool:
         return (
             _cached_route_decision(state, event, config=config).kind
@@ -4580,6 +4626,9 @@ def _register_nonebot_handlers() -> None:
     market = on_message(rule=_is_market_event, priority=41, block=True)
     fx = on_message(rule=_is_fx_event, priority=41, block=True)
     stocks = on_message(rule=_is_stocks_event, priority=42, block=True)
+    commodities = on_message(rule=_is_commodities_event, priority=41, block=True)
+    bond = on_message(rule=_is_bond_event, priority=41, block=True)
+    northbound = on_message(rule=_is_northbound_event, priority=41, block=True)
     divination = on_message(rule=_is_divination_event, priority=41, block=True)
     news = on_message(rule=_is_news_event, priority=41, block=True)
     randpic = on_message(rule=_is_randpic_event, priority=41, block=True)
@@ -6642,6 +6691,24 @@ def _register_nonebot_handlers() -> None:
     async def _handle_fx(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
             bot, event, _build_fx_with_backend, "bot.fx", fx
+        )
+
+    @commodities.handle()
+    async def _handle_commodities(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, _build_commodities_with_backend, "bot.commodities", commodities
+        )
+
+    @bond.handle()
+    async def _handle_bond(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, _build_bond_with_backend, "bot.bond", bond
+        )
+
+    @northbound.handle()
+    async def _handle_northbound(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, _build_northbound_with_backend, "bot.northbound", northbound
         )
 
     @divination.handle()

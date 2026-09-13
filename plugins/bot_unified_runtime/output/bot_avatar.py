@@ -2,8 +2,10 @@
 下载持久化到 Runtime data/avatar/，此后所有卡片按需取 file URI，不再因
 BOT_PERSONA_AVATAR_URL 为空而回落"守"字圆点。
 
-优先级：config.bot_persona_avatar_url 显式配置 > 本地缓存文件 > 空。
-下载动作由连接钩子触发（__init__ on_bot_connect → refresh_from_qq）。
+优先级：config.bot_persona_avatar_url 显式配置 > 本地缓存（内存登记；
+内存为空时磁盘兜底发现 avatar/bot_*.png，F3 2026-09-14）> 空。
+下载动作由连接钩子触发（__init__ on_bot_connect → refresh_from_qq）；
+读取侧（F3）统一走 bot_avatar_uri——本地命中即 file URI，不再周期回源。
 """
 
 from __future__ import annotations
@@ -63,10 +65,45 @@ def set_local_path(path: str | Path) -> None:
             _LOCAL_AVATAR_URI = candidate.as_uri()
 
 
+def _discover_local_uri(config: object | None) -> str:
+    """磁盘兜底（F3 2026-09-14）：avatar 目录挑最新的 bot_*.png 登记激活。
+
+    覆盖「重启后 qlogo 拉取失败但上轮文件还在」的边角——文件存在即直接
+    用 file URI，无需再回源。目录解析与写入侧（__init__._refresh_local_
+    bot_avatar）同口径：config.bot_runtime_data_dir 绝对路径直用，相对路径
+    挂工作区根；config 未提供该字段时放弃发现（保持测试/裸调用的确定性）。
+    任何失败返回空串，绝不抛。
+    """
+    global _LOCAL_AVATAR_URI
+    data_dir = ""
+    if config is not None:
+        data_dir = str(getattr(config, "bot_runtime_data_dir", "") or "").strip()
+    if not data_dir:
+        return ""
+    try:
+        root = Path(data_dir).expanduser()
+        if not root.is_absolute():
+            root = Path(__file__).resolve().parents[3] / root
+        candidates = sorted(
+            (root / "avatar").glob("bot_*.png"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        for candidate in candidates:
+            if candidate.is_file() and candidate.stat().st_size > 0:
+                with _LOCK:
+                    _LOCAL_AVATAR_URI = candidate.as_uri()
+                return _LOCAL_AVATAR_URI
+    except Exception:  # noqa: BLE001 - 磁盘兜底失败静默（观感降级非功能）。
+        return ""
+    return ""
+
+
 def bot_avatar_uri(config: object | None = None) -> str:
-    """卡片统一入口：显式配置 > 本地缓存 > 空（调用方自行回落圆点）。"""
+    """卡片统一入口：显式配置 > 本地缓存（内存，缺失时磁盘兜底）> 空。"""
     configured = str(getattr(config, "bot_persona_avatar_url", "") or "").strip()
     if configured:
         return configured
     with _LOCK:
-        return _LOCAL_AVATAR_URI
+        uri = _LOCAL_AVATAR_URI
+    return uri or _discover_local_uri(config)
