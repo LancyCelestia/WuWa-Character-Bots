@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import gc
+import threading
+import warnings
 from datetime import datetime, timezone
 
 from plugins.bot_unified_runtime.contracts.subscription import SubscriptionTarget
+from plugins.bot_unified_runtime.sources.subscriptions import (
+    bilibili_adapter,
+    social_v2,
+    xiaohongshu_adapter,
+)
 from plugins.bot_unified_runtime.sources.subscriptions.social_v2 import (
+    BilibiliSubscriptionAdapterV2,
     TelegramSubscriptionAdapterV2,
+    XiaohongshuSubscriptionAdapterV2,
     YouTubeSubscriptionAdapterV2,
 )
 
@@ -73,3 +83,110 @@ def test_telegram_html_fetch_excludes_pinned_and_maps_views(monkeypatch) -> None
     text12 = result.items[0].source_payload["text"]
     assert "加粗开头" in text12 and "后续正文不能丢" in text12 and "尾" in text12
     assert result.items[1].source_payload["view_count"] == 1200
+
+
+# --------------------------------------------------------------------------
+# legacy async 壳桥接（_run_legacy_coroutine）：协程零泄漏回归
+# 背景：red50 A47/A60 实测 16 条 `coroutine 'XiaohongshuAdapter.fetch_latest'
+# was never awaited`——asyncio.run 形态在残留 running-loop 状态的线程里
+# 先构造协程再抛 RuntimeError，协程被弃 → GC 告警。
+# --------------------------------------------------------------------------
+
+
+def test_run_legacy_coroutine_awaits_and_returns_on_clean_thread() -> None:
+    observed: list[str] = []
+
+    async def leaf() -> str:
+        observed.append("awaited")
+        return "ok"
+
+    def factory() -> object:
+        return leaf()
+
+    assert social_v2._run_legacy_coroutine(factory) == "ok"
+    assert observed == ["awaited"]
+
+
+def test_run_legacy_coroutine_propagates_coro_error_without_leaking() -> None:
+    created: list[object] = []
+
+    async def boom() -> None:
+        raise ValueError("legacy 内部失败")
+
+    def factory() -> object:
+        coro = boom()
+        created.append(coro)
+        return coro
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        try:
+            social_v2._run_legacy_coroutine(factory)
+        except ValueError:
+            pass
+        # 若协程未被消费，GC 时会补发 never awaited 告警；强制扫一遍。
+        gc.collect()
+    assert len(created) == 1
+    assert not any("never awaited" in str(w.message) for w in caught)
+
+
+def test_run_legacy_coroutine_refuses_poisoned_thread_without_creating_coroutine() -> None:
+    """中毒线程（残留 running-loop 状态）在协程构造之前就得上抛。"""
+    from asyncio import events as _asyncio_events
+
+    out: dict[str, object] = {"created": 0, "error": None}
+
+    class _SentinelLoop:
+        pass
+
+    def poisoned_worker() -> None:
+        def factory() -> object:
+            out["created"] = out["created"] + 1  # type: ignore[operator]
+            async def leaf() -> None:
+                return None
+            return leaf()
+
+        try:
+            # 模拟 playwright sync greenlet 残留：线程本地 running-loop 非空。
+            _asyncio_events._set_running_loop(_SentinelLoop())
+            try:
+                social_v2._run_legacy_coroutine(factory)
+            except RuntimeError as exc:
+                out["error"] = str(exc)
+        finally:
+            _asyncio_events._set_running_loop(None)
+
+    thread = threading.Thread(target=poisoned_worker)
+    thread.start()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert out["error"] is not None and "running-loop" in str(out["error"])
+    assert out["created"] == 0  # 协程从未构造 → 零泄漏。
+
+
+class _NoopLegacy:
+    def __init__(self) -> None:
+        pass
+
+
+def test_xhs_and_bilibili_fetch_degrade_on_bridged_runtime_error(monkeypatch) -> None:
+    """桥接层 RuntimeError（含中毒线程拒绝）映射为结构化 degraded，不再裸抛。"""
+    monkeypatch.setattr(xiaohongshu_adapter, "XiaohongshuAdapter", _NoopLegacy)
+    monkeypatch.setattr(bilibili_adapter, "BilibiliAdapter", _NoopLegacy)
+
+    def poisoned_bridge(factory) -> object:
+        raise RuntimeError("legacy async 壳不能在残留 running-loop 状态的线程里桥接")
+
+    monkeypatch.setattr(social_v2, "_run_legacy_coroutine", poisoned_bridge)
+
+    for adapter in (
+        XiaohongshuSubscriptionAdapterV2(),
+        BilibiliSubscriptionAdapterV2(),
+    ):
+        result = asyncio.run(
+            adapter.fetch_incremental(_target(adapter.platform, "creator", "u1"), {}, {})
+        )
+        assert result.items == []
+        assert result.health_state == "degraded"
+        assert result.error_code == "network_error"
+        assert result.retryable is True

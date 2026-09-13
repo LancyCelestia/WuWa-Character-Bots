@@ -478,6 +478,39 @@ def _target(
     )
 
 
+def _run_legacy_coroutine(factory: Callable[[], Any]) -> Any:
+    """在线程池工作线程里驱动 legacy async 壳的协程（替代 ``asyncio.run``）。
+
+    ``asyncio.run(coro)`` 的形态是「先构造入参协程、再做入口
+    running-loop 检查」：所在线程若残留 running-loop 状态（playwright
+    sync API 的 greenlet 中毒残留，见 docs HANDBOOK 渲染线程中毒根修与
+    ``.superpowers/sdd/2026-09-13-six-domain-batch/red50-triage.md`` §三.1），
+    检查先抛 ``RuntimeError``，入参协程已构造却永不 await → GC 时触发
+    ``RuntimeWarning: coroutine ... was never awaited``（2026-09-14 全量
+    套件实测 16 条的下游症状）。
+
+    这里改为公开 API 预检线程状态：中毒线程在协程构造**之前**上抛，
+    干净线程才创建协程并显式驱动——任何路径协程要么被完整 await、
+    要么根本不创建，零泄漏。事件循环语义与 ``asyncio.run`` 对齐
+    （运行期间 set_event_loop，退出还原 None）。
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass  # 干净线程：没有 running loop，可以驱动独立 loop。
+    else:
+        raise RuntimeError(
+            "legacy async 壳不能在残留 running-loop 状态的线程里桥接"
+        )
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(factory())
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
 class _BaseAdapter:
     platform = ""
     target_kinds = frozenset[str]()
@@ -569,10 +602,13 @@ class BilibiliSubscriptionAdapterV2(_BaseAdapter):
                 created_by="v2",
             )
             # legacy 适配器 async 壳包同步 IO：挪到线程驱动，避免阻塞事件循环。
+            # 不用 asyncio.run 硬套（中毒线程残留 running-loop 时协程构造后
+            # 永不 await → "never awaited" 泄漏，见 _run_legacy_coroutine）。
             result = await asyncio.to_thread(
-                lambda: asyncio.run(legacy.fetch_latest(spec, legacy_cursor, context))
+                _run_legacy_coroutine,
+                lambda: legacy.fetch_latest(spec, legacy_cursor, context),
             )
-        except (ImportError, ParseHttpError, TypeError, ValueError):
+        except (ImportError, ParseHttpError, TypeError, ValueError, RuntimeError):
             return SubscriptionFetchResult(
                 health_state="degraded", error_code="network_error", retryable=True
             )
@@ -680,10 +716,13 @@ class XiaohongshuSubscriptionAdapterV2(_BaseAdapter):
                 created_by="v2",
             )
             # legacy 适配器 async 壳包同步 IO：挪到线程驱动，避免阻塞事件循环。
+            # 不用 asyncio.run 硬套（中毒线程残留 running-loop 时协程构造后
+            # 永不 await → "never awaited" 泄漏，见 _run_legacy_coroutine）。
             result = await asyncio.to_thread(
-                lambda: asyncio.run(legacy.fetch_latest(spec, legacy_cursor, context))
+                _run_legacy_coroutine,
+                lambda: legacy.fetch_latest(spec, legacy_cursor, context),
             )
-        except (ImportError, ParseHttpError, TypeError, ValueError):
+        except (ImportError, ParseHttpError, TypeError, ValueError, RuntimeError):
             return SubscriptionFetchResult(
                 health_state="degraded", error_code="network_error", retryable=True
             )
