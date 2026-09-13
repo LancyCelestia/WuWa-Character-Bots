@@ -49,8 +49,12 @@ _TEMPLATE = _ENV.get_template("universal_card.html")
 from .theme_tokens import (
     BRAND_THEME,
     DEFAULT_THEME,
+    DIVIDER,
+    GLOW_ACCENT,
     PLATFORM_FOOTER_LABELS,
     PLATFORM_THEMES,
+    SHADOW_LEVELS,
+    SURFACE_TINTS,
     THEME_ALIASES,
     UNKNOWN_PLATFORM_COLOR,
     ThemeTokens,
@@ -91,6 +95,23 @@ _KNOWN_STAT_KEYS = frozenset({
 })
 
 _DEFAULT_CONTEXT = RenderPayload().to_dict()
+
+# vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，2026-09-13）：非 universal
+# 渲染函数与 universal 的 context 段同键同值注入六键——改 theme_tokens 一处，
+# 全部模板自动生效。
+_VIS4_KEYS: dict[str, str] = {
+    "shadow_elev_panel": SHADOW_LEVELS["elev_panel"],
+    "glow_accent": GLOW_ACCENT,
+    "divider_line": DIVIDER,
+    "surface_a": SURFACE_TINTS["tint_a"],
+    "surface_b": SURFACE_TINTS["tint_b"],
+    "surface_neutral": SURFACE_TINTS["tint_neutral"],
+}
+
+
+def _vis4_context() -> dict[str, str]:
+    """非 universal 渲染函数的 vis4 注入段（返回副本，防调用方误改模块级常量）。"""
+    return dict(_VIS4_KEYS)
 
 def _resolve_icon_asset_root() -> Path:
     """Resolve card SVG assets outside the AI workspace when available."""
@@ -1365,6 +1386,8 @@ def render_market_card_html(payload_dict: dict[str, Any] | None = None) -> str:
         phase=payload_phase(data),
         # 釉瑚云母洗：与 --pc 同点注入（mica-glass v2 本命基底）。
         **_derive_wash_tokens(color),
+        # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
+        **_vis4_context(),
     )
 
 
@@ -1437,6 +1460,8 @@ def render_finance_card_html(payload_dict: dict[str, Any] | None = None) -> str:
         phase=payload_phase(data),
         # 釉瑚云母洗：与 --pc 同点注入（品牌 accent → 纯本命基底）。
         **_derive_wash_tokens(color),
+        # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
+        **_vis4_context(),
     )
 
 
@@ -1490,6 +1515,8 @@ def render_song_candidates_html(payload_dict: dict[str, Any] | None = None) -> s
         phase=payload_phase(data),
         # 釉瑚云母洗：与 --pc 同点注入（mica-glass v1 2026-09-12）。
         **_derive_wash_tokens(color),
+        # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
+        **_vis4_context(),
     )
 
 
@@ -1525,6 +1552,8 @@ def render_affinity_card_html(payload_dict: dict[str, Any] | None = None) -> str
         rules=[rule for rule in (data.get("rules") or []) if isinstance(rule, dict)],
         # 漂移相位按 payload digest 确定注入（E01，D2→D1）。
         phase=payload_phase(data),
+        # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
+        **_vis4_context(),
     )
 
 
@@ -1615,6 +1644,8 @@ def render_mermaid_html(code: str) -> str:
         # 漂移相位按 mermaid 源码 digest 确定注入（E01，D2→D1）。
         phase=payload_phase(code or ""),
         **_derive_wash_tokens(UNKNOWN_PLATFORM_COLOR),
+        # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
+        **_vis4_context(),
     )
 
 

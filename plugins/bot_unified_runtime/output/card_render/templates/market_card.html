@@ -7,7 +7,9 @@
    C 方向统一（2026-09-12）：根元素带 .card（render_backends 元素截图
    选择器契约）；无历史走势的指数展示
    trend_note（MOEX「暂无历史走势数据」），不伪造折线；脚注展示数据源/
-   数据时间/延迟提示。 #}
+   数据时间/延迟提示。
+   vis4（2026-09-13）：指数瓦片三档表面 zebra（--surface-a/b 本命淡蓝/星空紫）；
+   分隔线统一 --divider-line；页脚胶囊叠 --glow-accent 辉光背景层。 #}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -31,6 +33,16 @@
     --down: #2e9e6b;
     --mica-shadow: 0 12px 32px color-mix(in srgb, var(--wash-2) 26%, transparent), 0 3px 10px rgba(0, 0, 0, 0.05);
     --mica-shadow-soft: 0 3px 10px rgba(31, 35, 41, 0.06);
+    /* vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源经 bridge 注入）：
+       L2 面板级阴影入册（box-shadow 档位受 vis2 瓦片审计门锁定，瓦片维持 soft 档）；
+       辉光只作背景层；相邻色块三档表面 zebra 交替保证区分度；
+       区分线=平台色 22% 清晰细线。 */
+    --mica-shadow-panel: {{ shadow_elev_panel }};
+    --glow-accent: {{ glow_accent }};
+    --divider-line: {{ divider_line }};
+    --surface-a: {{ surface_a }};
+    --surface-b: {{ surface_b }};
+    --surface-neutral: {{ surface_neutral }};
     --text-main: #18191c;
     --text-sub: #5b6069;
     --font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
@@ -84,12 +96,12 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
 /* E01 二批：守卫提到 .card .drift-blob（0,2,0 ≥ 基线 0,2,0 且靠后，真生效）。 */
 @media (prefers-reduced-motion: reduce) { .card .drift-blob { animation: none; } }
 .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
-    padding-bottom: 14px; border-bottom: 1px solid color-mix(in srgb, var(--pc) 12%, rgba(255,255,255,.65)); }
+    padding-bottom: 14px; border-bottom: var(--divider-line); }
 .title { font-size: 21px; font-weight: 700; color: var(--text-main); }
 .subtitle { font-size: 12px; color: var(--text-sub); margin-top: 4px; }
 .group { margin-top: 16px; }
 .group-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; color: var(--pc-dark); letter-spacing: 0.06em; }
-.group-title::after { content: ""; flex: 1; height: 1px; background: color-mix(in srgb, var(--pc) 14%, rgba(255,255,255,.6)); }
+.group-title::after { content: ""; flex: 1; border-bottom: var(--divider-line); }
 .grid { margin-top: 10px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 /* 指数瓦片带液态玻璃表面（vis2 审计 2026-09-12：此前行体悬空无瓦片感，
    与 affinity/song 的 .glass 同配方：半透明白 + 1px 内高光渐变描边）。 */
@@ -115,9 +127,16 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
 .index .pct.flat { color: var(--text-sub); background: color-mix(in srgb, var(--pc) 10%, #fff); }
 .index svg.spark { width: 128px; height: 40px; flex-shrink: 0; }
 .index .trend-note { font-size: 12px; color: var(--text-sub); flex-shrink: 0; align-self: center; }
-.bot-foot { margin-top: 14px; padding-top: 10px; display: flex; align-items: center; gap: 7px;
-    border-top: 1px dashed color-mix(in srgb, var(--pc) 14%, rgba(255,255,255,.6)); font-size: 12px; color: #7a8699; }
 .data-foot { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11.5px; color: var(--text-sub); font-variant-numeric: tabular-nums; }
+/* vis4 页脚胶囊：玻璃底 + 辉光背景层（glow 只作背景层，alpha≥0.05）。 */
+.bot-foot { margin-top: 14px; padding: 9px 14px; border-radius: var(--r-tile); display: flex; align-items: center; gap: 7px;
+    background:
+        var(--glow-accent) right center / 62% 190% no-repeat,
+        linear-gradient(150deg, rgba(255,255,255,.66) 0%, rgba(255,255,255,.46) 100%) padding-box,
+        linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
+    border: 1px solid transparent;
+    box-shadow: var(--mica-shadow-soft);
+    font-size: 12px; color: #7a8699; }
 .bot-foot .bf-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
     border: 1px solid #fff; box-shadow: var(--mica-shadow-soft); }
 .bot-foot .bf-dot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
@@ -140,7 +159,7 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
         <div class="group-title">{{ group.name }}</div>
         <div class="grid">
             {% for item in group.rows %}
-            <div class="index glass-fallback">
+            <div class="index glass-fallback"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% else %} style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% endif %}>
                 <div class="info">
                     <div class="name">{{ item.name }}</div>
                     <div class="price-row">

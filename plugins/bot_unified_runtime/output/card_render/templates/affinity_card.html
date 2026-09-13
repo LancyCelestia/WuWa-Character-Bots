@@ -1,10 +1,12 @@
 {# 好感度卡（docs/affinity-design.md §9.5）：主色 = bot_help_card_color（无平台语境），
-   走 --pc / color-mix 派生；仅两枚阴影 token；body 透明（截图 omit_background 依赖）。
+   走 --pc / color-mix 派生；阴影=分级族 token；body 透明（截图 omit_background 依赖）。
    mica-glass v1 2026-09-12：视觉层换「釉瑚云母 + 液态玻璃 + 渐变漂移」——
    底色/色斑用 --wash-*（釉瑚云母底主题 token，全卡统一，bridge 按 --pc 派生注入；
    工艺出处=用户裁定），--pc 退为徽章/进度/档位 accent；面板半透明白玻璃 +
    1px 内高光渐变描边；三枚 wash 柔光色斑缓慢漂移（内联脚本随机相位）；
-   档位/排行循环渲染，不写死行数与档名，payload 契约不变。 #}
+   档位/排行循环渲染，不写死行数与档名，payload 契约不变。
+   vis4（2026-09-13）：相邻瓦片/面板三档表面 zebra（--surface-a/b 本命淡蓝/星空紫）；
+   分隔线统一 --divider-line；页脚胶囊叠 --glow-accent 辉光背景层。 #}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -34,6 +36,16 @@
     --r-tile: 14px;
     --mica-shadow: 0 12px 32px color-mix(in srgb, var(--wash-2) 26%, transparent), 0 3px 10px rgba(0, 0, 0, 0.05);
     --mica-shadow-soft: 0 3px 10px rgba(31, 35, 41, 0.06);
+    /* vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源经 bridge 注入）：
+       L2 面板级阴影入册（box-shadow 档位受 vis2 瓦片审计门锁定，瓦片维持 soft 档）；
+       辉光只作背景层；相邻色块三档表面 zebra 交替保证区分度；
+       区分线=平台色 22% 清晰细线。 */
+    --mica-shadow-panel: {{ shadow_elev_panel }};
+    --glow-accent: {{ glow_accent }};
+    --divider-line: {{ divider_line }};
+    --surface-a: {{ surface_a }};
+    --surface-b: {{ surface_b }};
+    --surface-neutral: {{ surface_neutral }};
     --text-main: #18191c;
     --text-sub: #5b6069;
     --text-secondary: #8a919b;
@@ -211,7 +223,7 @@ body {
 /* ===== 算法说明卡 ===== */
 .step-row, .tier-row {
     display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-    padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, var(--pc) 10%, rgba(255, 255, 255, 0.60));
+    padding: 7px 0; border-bottom: var(--divider-line);
     font-size: 13px; color: var(--text-sub);
 }
 .step-row:last-child, .tier-row:last-child { border-bottom: none; }
@@ -232,9 +244,15 @@ body {
 .rule .up { color: var(--score-hot); font-weight: 700; }
 .rule .down { color: var(--score-cold); font-weight: 700; }
 .foot { margin-top: 16px; font-size: 12px; color: var(--text-secondary); }
-/* F11 bot 页脚：头像 + 机器人名 + 功能名。 */
-.bot-foot { margin-top: 14px; padding-top: 10px; display: flex; align-items: center; gap: 7px;
-    border-top: 1px dashed var(--pc-line); font-size: 12px; color: var(--text-secondary); }
+/* F11 bot 页脚：头像 + 机器人名 + 功能名（vis4 胶囊化：玻璃底 + 辉光背景层）。 */
+.bot-foot { margin-top: 14px; padding: 9px 14px; border-radius: var(--r-tile); display: flex; align-items: center; gap: 7px;
+    background:
+        var(--glow-accent) right center / 62% 190% no-repeat,
+        linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.46) 100%) padding-box,
+        linear-gradient(150deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.35) 55%, rgba(255, 255, 255, 0.72) 100%) border-box;
+    border: 1px solid transparent;
+    box-shadow: var(--mica-shadow-soft);
+    font-size: 12px; color: var(--text-secondary); }
 .bot-foot .bf-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
     border: 1px solid #fff; box-shadow: var(--mica-shadow-soft); }
 .bot-foot .bf-dot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
@@ -287,7 +305,7 @@ body {
     {% if mode == 'group' %}
     <div class="grid">
         {% for row in rows %}
-        <div class="tile{{ ' me' if row.sender_id == me_id else '' }} glass">
+        <div class="tile{{ ' me' if row.sender_id == me_id else '' }} glass"{% if row.sender_id != me_id %}{% if loop.index is odd %} style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% else %} style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% endif %}{% endif %}>
             <div class="who">
                 <div class="name">{{ (row.display_name or row.sender_id) }}</div>
                 <div class="sid">{{ row.sender_id }}</div>
@@ -298,14 +316,14 @@ body {
     </div>
     {% elif mode == 'algorithm' %}
     <div class="duel">
-        <div class="panel glass">
+        <div class="panel glass" style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box">
             <div class="dlabel">你与我之间的氛围（印象好感 {{ bot_score }}）</div>
             {% for s in steps %}
             <div class="step-row"><span>{{ s.label }}</span><b class="{{ s.cls }}">{{ s.value }}</b></div>
             {% endfor %}
             <div class="dnote">好感随言行连续累积：说话温度 × 相处时长 × 第一印象 × 我当天的状态，平滑变化、没有固定加几减几；久不联系慢慢回归基准，难听的记忆会随时间淡去</div>
         </div>
-        <div class="panel glass">
+        <div class="panel glass" style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box">
             <div class="dlabel">档位 → 回应方式（同一句话）</div>
             {% for t in tiers %}
             <div class="tier-row"><b>{{ t.label }}　{{ t.range }}</b><span>{{ t.attitude }}</span></div>
@@ -313,18 +331,18 @@ body {
         </div>
     </div>
     <div class="rules">
-        {% for rule in rules %}<div class="rule glass"><b class="{{ rule.cls }}">{{ rule.label }}</b>　{{ rule.text }}</div>{% endfor %}
+        {% for rule in rules %}<div class="rule glass"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% else %} style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% endif %}><b class="{{ rule.cls }}">{{ rule.label }}</b>　{{ rule.text }}</div>{% endfor %}
     </div>
     {% else %}
     <div class="duel">
-        <div class="panel glass">
+        <div class="panel glass" style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box">
             <div class="dlabel">{{ bot_name | default('守岸人') }}对你</div>
             <div class="dscore{{ ' hot' if bot_to_user.score >= 75 else (' cold' if bot_to_user.score < 25 else '') }}">{{ '%.1f' | format(bot_to_user.score) }}</div>
             <div class="dtier">{{ bot_to_user.tier }}</div>
             <div class="bar"><div class="fill" style="width: {{ bot_to_user.bar }}%"></div></div>
             <div class="dnote">印象好感度：由你的言行长期累积，只影响语气，不外显为标签</div>
         </div>
-        <div class="panel glass">
+        <div class="panel glass" style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box">
             <div class="dlabel">你对{{ bot_name | default('守岸人') }}</div>
             <div class="dscore{{ ' hot' if user_to_bot.score >= 75 else (' cold' if user_to_bot.score < 25 else '') }}">{{ '%.1f' | format(user_to_bot.score) }}</div>
             <div class="dtier">{{ user_to_bot.tier }}</div>
@@ -333,7 +351,7 @@ body {
         </div>
     </div>
     <div class="rules">
-        {% for rule in rules %}<div class="rule glass"><b class="{{ rule.cls }}">{{ rule.label }}</b>　{{ rule.text }}</div>{% endfor %}
+        {% for rule in rules %}<div class="rule glass"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% else %} style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% endif %}><b class="{{ rule.cls }}">{{ rule.label }}</b>　{{ rule.text }}</div>{% endfor %}
     </div>
     {% endif %}
     <div class="foot">好感区间 -100~+100 · 档0 友善（基准 10）· 任何档位都保持人格与体面</div>

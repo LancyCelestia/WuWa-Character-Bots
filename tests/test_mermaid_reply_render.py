@@ -194,7 +194,11 @@ def test_render_mermaid_html_mica_and_escapes() -> None:
     assert "<meta viewport" not in html_text
     assert "fit-content" in html_text
     assert "background: transparent" in html_text
-    assert html_text.count("box-shadow") == 1  # 单一柔光阴影 token
+    # vis4 分级族（2026-09-13）：页脚胶囊升 L2 panel 阴影，外壳保留 shell 档——
+    # 全部出自两枚 token 的 var() 引用，禁自造第三种。
+    assert html_text.count("box-shadow") == 2
+    assert "var(--mica-shadow-panel)" in html_text
+    assert "var(--mica-shadow)" in html_text
     assert "--pc: #607080" in html_text
     assert 'class="card"' in html_text
     # CDN + startOnLoad

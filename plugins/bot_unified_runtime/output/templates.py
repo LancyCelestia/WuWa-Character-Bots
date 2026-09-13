@@ -33,9 +33,12 @@ from plugins.bot_unified_runtime.output.card_render.bridge import (
 )
 from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
     BRAND_THEME,
+    DIVIDER,
     FONT_FAMILY_STACK,
+    GLOW_ACCENT,
     SHADOW_PRIMARY,
     SHADOW_SECONDARY,
+    SURFACE_TINTS,
 )
 
 _CARD_CSS = """
@@ -60,7 +63,11 @@ body {
   --text-main: __TEXT_MAIN__; --text-sub: __TEXT_SUB__;
   --font-family: __FONT_STACK__;
   --r-shell: __R_SHELL__; --r-panel: __R_PANEL__; --r-tile: __R_TILE__;
-  --mica-shadow: __SHADOW_PRIMARY__; --mica-shadow-soft: __SHADOW_SECONDARY__; }
+  --mica-shadow: __SHADOW_PRIMARY__; --mica-shadow-soft: __SHADOW_SECONDARY__;
+  /* vis4 辉光/表面/分隔线（theme_tokens 单一源注入；阴影档位受 mica-builders
+     契约锁定为固定两枚，panel 级不入册）。 */
+  --glow-accent: __GLOW_ACCENT__; --divider-line: __DIVIDER_LINE__;
+  --surface-a: __SURFACE_A__; --surface-b: __SURFACE_B__; --surface-neutral: __SURFACE_NEUTRAL__; }
 /* mica-glass：釉瑚云母外壳（雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底，
    不透明基础层）+ 1px 内高光渐变描边；色斑垫底、内容抬升；
    阴影只允许两枚 token。 */
@@ -153,10 +160,17 @@ body {
 .summary { margin-top: 10px; font-size: 13px; color: var(--text-sub);
   line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
 .footer { margin-top: 10px; font-size: 12px; color: var(--text-sub);
-  border-top: 1px dashed color-mix(in srgb, var(--pc) 14%, rgba(255, 255, 255, 0.60)); padding-top: 8px; }
-/* F11 页脚：头像 + 机器人名 + 功能名（weather/eat 等媒体卡路径同样强制带）。 */
+  border-top: var(--divider-line); padding-top: 8px; }
+/* F11 页脚：头像 + 机器人名 + 功能名（weather/eat 等媒体卡路径同样强制带）。
+   vis4 胶囊化：玻璃底 + 辉光背景层（glow 只作背景层，alpha≥0.05）。 */
 .card-footer-bot { margin-top: 10px; display: flex; align-items: center; gap: 7px;
-  border-top: 1px dashed color-mix(in srgb, var(--pc) 14%, rgba(255, 255, 255, 0.60)); padding-top: 8px; }
+  padding: 8px 12px; border-radius: var(--r-tile);
+  background:
+    var(--glow-accent) right center / 62% 190% no-repeat,
+    linear-gradient(150deg, rgba(255,255,255,.66) 0%, rgba(255,255,255,.46) 100%) padding-box,
+    linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
+  border: 1px solid transparent;
+  box-shadow: var(--mica-shadow-soft); }
 .cfb-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
   border: 1px solid #fff; box-shadow: var(--mica-shadow-soft); }
 .cfb-dot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
@@ -207,6 +221,12 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
         .replace("__WASH_2__", wash["wash_2"])
         .replace("__WASH_3__", wash["wash_3"])
         .replace("__WASH_MIST__", wash["wash_mist"])
+        # vis4 辉光/分隔线/三档表面（theme_tokens 单一源，与六张 Jinja 卡同值）。
+        .replace("__GLOW_ACCENT__", GLOW_ACCENT)
+        .replace("__DIVIDER_LINE__", DIVIDER)
+        .replace("__SURFACE_A__", SURFACE_TINTS["tint_a"])
+        .replace("__SURFACE_B__", SURFACE_TINTS["tint_b"])
+        .replace("__SURFACE_NEUTRAL__", SURFACE_TINTS["tint_neutral"])
         .replace("__TEXT_MAIN__", BRAND_THEME.text_main)
         .replace("__TEXT_SUB__", BRAND_THEME.text_sub)
         .replace("__FONT_STACK__", FONT_FAMILY_STACK)
@@ -227,10 +247,20 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
             'onerror="this.style.display=\'none\'" alt="cover"/>'
             f'<div class="badge">{badge_text}</div></div>'
         )
-    stats_html = "".join(
-        f'<span class="stat">{_esc(label)} {_esc(value)}</span>'
+    # 统计胶囊 vis4 zebra：相邻胶囊三档表面交替（本命淡蓝/星空紫，不用平台 accent），
+    # 行内 style 只覆盖背景，颜色/圆角沿用 .stat 规则。
+    stat_items = [
+        (label, value)
         for label, value in stats.items()
         if not isinstance(value, (dict, list))
+    ]
+    stats_html = "".join(
+        '<span class="stat" style="background: {}">{} {}</span>'.format(
+            SURFACE_TINTS["tint_a"] if index % 2 == 0 else SURFACE_TINTS["tint_b"],
+            _esc(label),
+            _esc(value),
+        )
+        for index, (label, value) in enumerate(stat_items)
     )
     avatar_block = (
         f'<img class="cfb-avatar" src="{bot_avatar}" alt="" '

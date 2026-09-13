@@ -2,7 +2,9 @@
 <!-- mica-glass v1 2026-09-12：以 universal_card 外壳语言重写视觉层——
      釉瑚云母底（bridge 按 --pc 派生的邻近 pastel 洗，禁纯色）+ 液态玻璃面板
      （半透明白 + 1px 内高光渐变描边，无 backdrop-filter）+ wash 三枚柔光色斑
-     缓慢漂移；--pc 退为 accent；payload 契约与 DOM 数据绑定结构原样保留。 -->
+     缓慢漂移；--pc 退为 accent；payload 契约与 DOM 数据绑定结构原样保留。
+     vis4（2026-09-13）：候选行三档表面 zebra（--surface-a/b 本命淡蓝/星空紫）；
+     分隔线统一 --divider-line；.foot 与页脚胶囊叠 --glow-accent 辉光背景层。 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -11,7 +13,7 @@
    底色/色斑唯一来源：--wash-*（釉瑚云母底主题 token，全卡统一，
    bridge._derive_wash_tokens 按 --pc 派生注入；工艺出处=用户裁定）；
    --pc 仅作徽章/高亮/Top 序号 accent（.num/.ttl/.top-chip）。
-   阴影只允许两枚 token（--mica-shadow + --mica-shadow-soft）。 */
+   阴影=分级族 token（shell/soft 固有两枚 + vis4 panel 级经 bridge 注入）。 */
 :root {
     /* 漂移相位：bridge 按 payload digest 确定注入（E01，D2→D1；同 payload 同帧，
        缺省 0.2 兜底）。负 animation-delay 取该确定瞬间的静止构图。 */
@@ -31,6 +33,16 @@
     /* 外壳柔光改釉瑚派生（裸 --pc 高饱和 ring 已按 v2 验收去除）。 */
     --mica-shadow: 0 12px 32px color-mix(in srgb, var(--wash-2) 26%, transparent), 0 3px 10px rgba(0, 0, 0, 0.05);
     --mica-shadow-soft: 0 3px 10px rgba(31, 35, 41, 0.06);
+    /* vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源经 bridge 注入）：
+       L2 面板级阴影入册（box-shadow 档位受 vis2 瓦片审计门锁定，瓦片维持 soft 档）；
+       辉光只作背景层；相邻色块三档表面 zebra 交替保证区分度；
+       区分线=平台色 22% 清晰细线。 */
+    --mica-shadow-panel: {{ shadow_elev_panel }};
+    --glow-accent: {{ glow_accent }};
+    --divider-line: {{ divider_line }};
+    --surface-a: {{ surface_a }};
+    --surface-b: {{ surface_b }};
+    --surface-neutral: {{ surface_neutral }};
     --font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
 }
 
@@ -147,7 +159,7 @@ body {
     align-items: flex-start;
     gap: 16px;
     padding: 22px 26px 16px;
-    border-bottom: 1px solid color-mix(in srgb, var(--pc) 12%, rgba(255, 255, 255, 0.65));
+    border-bottom: var(--divider-line);
 }
 .head-left { flex: 1; min-width: 0; }
 .title {
@@ -258,14 +270,30 @@ body {
     text-align: center;
 }
 .foot b { color: var(--pc-dark); }
-/* F11 bot 页脚：头像 + 机器人名 + 功能名。 */
+/* vis4：.foot 提示条叠辉光背景层（glow 只作背景层，alpha≥0.05；
+   border/阴影沿用 .glass 既有配方）。 */
+.foot.glass {
+    background:
+        var(--glow-accent) center top / 70% 220% no-repeat,
+        linear-gradient(150deg, rgba(255, 255, 255, 0.68) 0%, rgba(255, 255, 255, 0.5) 100%) padding-box,
+        linear-gradient(150deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.35) 55%, rgba(255, 255, 255, 0.72) 100%) border-box;
+}
+/* F11 bot 页脚：头像 + 机器人名 + 功能名（vis4 胶囊化：玻璃底 + 辉光背景层）。 */
 .bot-foot {
     margin: 10px 18px 16px;
+    padding: 9px 14px;
+    border-radius: var(--r-tile);
     display: flex;
     align-items: center;
     gap: 7px;
     font-size: 12px;
     color: #7a8699;
+    background:
+        var(--glow-accent) right center / 62% 190% no-repeat,
+        linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.46) 100%) padding-box,
+        linear-gradient(150deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.35) 55%, rgba(255, 255, 255, 0.72) 100%) border-box;
+    border: 1px solid transparent;
+    box-shadow: var(--mica-shadow-soft);
 }
 .bot-foot .bf-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
     border: 1px solid #fff; box-shadow: var(--mica-shadow-soft); }
@@ -289,7 +317,7 @@ body {
     </div>
     <div class="list">
         {% for cand in candidates %}
-        <div class="row{{ ' top' if cand.is_top else '' }} glass">
+        <div class="row{{ ' top' if cand.is_top else '' }} glass"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% else %} style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% endif %}>
             <div class="num">{{ cand.index_label }}</div>
             {% if cand.is_top %}<span class="top-chip">Top</span>{% endif %}
             <div class="info">
