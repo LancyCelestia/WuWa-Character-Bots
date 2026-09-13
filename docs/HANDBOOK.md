@@ -41,12 +41,14 @@
 
 > ⚠️ **2026-09-11 评审更正（历史）**：本节「HEAD `7c0b615` · 1033 passed」曾是 02:11 旧快照，评审轮实测曾为 `cbb5161` · 1320+ passed。数字请在每次交付时重新实跑填写，不要沿用旧值。
 >
-> ✅ **2026-09-12 收口刷新（以此为准）**：09-12 全天五波并发收尾 T1 `8f0abbe` → HEAD `976c0ef` 共 **28 提交**（两波五轨 + N 系/B 系/UI 釉瑚 + Arch 规格，全账=本文 §18）；工作树「未提交规模」事故已清零，bot.py 启动修复已入库（`f4e29a2`）——生产重启前置仅剩提权动作本身。
+> ✅ **2026-09-14 六域+续批刷新（以此为准）**：`976c0ef` → HEAD `e520f9d` 累计 **100 笔**（09-12 凌晨→09-14 07:42；09-13 当日 26 笔+09-14 当日 55 笔——09-13 深夜启动的六域并发批与多轮续批跨午夜落至 09-14，全账=本文 §24）；全量 **5209 passed / 0 failed**（`c42b92e` 实跑）、ruff 全绿、mypy 260 文件零错（证据见下行门禁条）。前快照（09-12 五波 28 笔 `976c0ef` · 1761 passed，全账=§18）已成历史。
 
-- **HEAD**：`976c0ef8467d86bcc575ae7cb866fc2bf2650dff`（分支 `v0.0.1-alpha.2`；含历史共 28+ 提交未推送，推送 origin 仅按用户明确指示）。
-- **门禁（终稿实跑，2026-09-12 收口）**：全量 **1761 passed / 0 failed**、ruff **All checks passed**、mypy **Success 238 source files**、runtime-layout **PASS**；轨迹 1511→1545→1569→1612→1619→1650→1706→1738→1758→**1761** 递增可溯（§18 卷首）。**下轮交付前以最近门禁实跑为准，勿沿用本节数字。**
-- **工作树（2026-09-12 收口时 `git status` 实测）**：仅 `capabilities/weather.py` 一文件在途改动（他会话手笔，勿动勿裹挟）+ 未跟踪 docs 重组产物（本文件、README、`review/staged-docs-reorg-20260912.patch`）。旧记录（已被取代）：63 dirty+34 untracked（评审 H1/H2 时代）。
-- **⚠️ 生产进程仍运行 09-09 旧代码**（管理员权限重启陷阱见 Part II §4.3）——09-10 起的全部交付（含五波收尾 28 提交）**都在等提权重启生效**。
+- **HEAD**：`e520f9d55eeebbb14bca03430edff8cc33d3c221`（分支 `v0.0.1-alpha.2`；`origin/v0.0.1-alpha.2..HEAD` 实测 **155 笔未推送**，推送 origin 仅按用户明确指示）。
+- **门禁（最近实跑，2026-09-14）**：全量 **5209 passed / 7 skipped / 0 failed**（`c42b92e` 实跑=xhs-leak-fix-report；其后 `b63392e`/`7967aea`/`92ba1a2`/`8cbd4b6` 各域内绿+净增新例，HEAD `e520f9d` 为纯 docs 笔）；ruff **All checks passed**、mypy **Success 260 source files**（staticgate-final.md 实跑；238→260 系批次新增文件非漂移；runtime-layout 本批未终跑，下轮交付补）。轨迹 4523（09-13 实战审计批）→4809+20（§24.1 六域中基线，20 红全归因在飞半成品）→**5209** 递增可溯。**下轮交付前以最近门禁实跑为准，勿沿用本节数字。**
+- **工作树（2026-09-14 本刷新 `git status` 实测）**：仅 e2e 两件在途——`scripts/e2e_acceptance.py` 改动+`tests/test_e2e_help_matrix.py` 未跟踪（A4 席收尾中，§24.13-8 同口径）；更旧记录（09-12 weather.py 单件、63 dirty+34 untracked 时代）均已被取代。
+- **⚠️ 生产进程仍运行 09-09 旧代码**（管理员权限重启陷阱见 Part II §4.3）——09-10 起的全部交付（含 09-13 审计批+09-14 六域批，§24.9-8 同口径）**都在等提权重启生效**；重启前先跑 `python scripts/pre_restart_check.py` 一键预检 7 项（`051261d`，acceptance §6.5③）。
+- **09-14 批新能力现行事实（全部已入库，随重启生效）**：金融三能力（商品/国债/北向）生产 matcher 注册（`691d6e1`；`789700c` 先接 base_router+帮助层）·统一错误报告卡两段式异步——毫秒级文本回执+卡图 ≈3-33s 补发（`de6ba91`+`84b3915`+`1651544`）·表情回应能力（`6724782`+`eaa8fd9` config 四键）·笔记/NTP 授时全链（`789700c`）·解析链 SSRF 双护栏（`efe7b79`：`guard_user_url` 咽喉+og 落点双查）·渲染 Phase 2 解锁（`13fcd30` 接线+`.env` 并发 2/预算 1500ms——本刷新实读 .env 复核；性能席实测 warm P50 −64%，删行即回滚）·mermaid 素材本地化（`959630a` 下载+`e37817f` page.route 拦截，治已知问题 #8 根因）·stocks logo 三级兜底（`a4371d2`）+bot 头像本地优先（`691d6e1`）。
+- **运行数据现行事实（2026-09-14）**：knowledge 库三重漂移已清（A45 实修：pending 113→0/vector_dim 激活 1024/ANN ntotal 35,341，§24.13-7）·`.env` `BOT_KB_WIKI_ROOT` 已修至 `D:/Coding/01_Projects/Crawl Wiki`（本刷新实读 .env 复核）·图库 61/61 满编（`bdbc88b`）·channel_health 测试隔离加固（`10ef40f`，生产库 md5 跑前跑后一致）。
 - 工作树常年多会话在途改动：开工先 `git log` 查时效（09-11 教训：两个会话同晚开工同一任务组，靠 git log 才避免重写），再按 Part II §11 协作协议（禁 `git add -A`、共享文件动前登记、§11.4 部分暂存）。
 - push 用完整 refspec：`refs/heads/v0.0.1-alpha.2:refs/heads/v0.0.1-alpha.2`（分支与 tag 同名）；推送 origin 仅按用户明确指示。
 
