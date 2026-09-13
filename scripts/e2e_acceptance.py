@@ -2,7 +2,9 @@
 
 目的：bot 重启后，向真实群/私聊逐条发送「所有可能的消息种类」（文本/长文本/
 多段、解析卡、点歌候选卡、全球股指 18 指数全量、财经/科技快报全量、天气+预警、
-随机图、占卜、help 卡、好感度卡、提醒查询），供用户回 ``test`` 人工验收。
+随机图、占卜、help 卡、好感度卡、提醒查询、个股行情+非上市守卫、汇率面板/
+定向换算、称谓自助），供用户回 ``test`` 人工验收。2026-09-13 批次起部分检查项
+带 ``expect`` 回执断言（作用于入队 SendRequest 层，DRY-RUN/--execute 同语义）。
 
 真实管线（不绕过）：
     合成 IncomingMessage
@@ -51,14 +53,26 @@ from plugins.bot_unified_runtime.capabilities.content_parser import (
 )
 from plugins.bot_unified_runtime.capabilities.divination import (
     build_divination_capability,
+    is_divination_command,
 )
 from plugins.bot_unified_runtime.capabilities.echo import build_help_result
-from plugins.bot_unified_runtime.capabilities.market import build_market_capability
+from plugins.bot_unified_runtime.capabilities.fx import build_fx_capability
+from plugins.bot_unified_runtime.capabilities.market import (
+    build_market_capability,
+    is_market_command,
+)
+from plugins.bot_unified_runtime.capabilities.meme_library import (
+    build_meme_library_capability,
+)
 from plugins.bot_unified_runtime.capabilities.music import build_music_capability
 from plugins.bot_unified_runtime.capabilities.news import build_news_capability
 from plugins.bot_unified_runtime.capabilities.randpic import build_randpic_capability
 from plugins.bot_unified_runtime.capabilities.reminder import (
     build_reminder_capability,
+)
+from plugins.bot_unified_runtime.capabilities.stocks import (
+    build_stocks_capability,
+    is_stocks_command,
 )
 from plugins.bot_unified_runtime.capabilities.weather import build_weather_capability
 from plugins.bot_unified_runtime.contracts import (
@@ -84,6 +98,7 @@ from plugins.bot_unified_runtime.runtime.settings import (
 from plugins.bot_unified_runtime.sender import InMemorySendQueue
 from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
 from plugins.bot_unified_runtime.smoke import load_smoke_config
+from plugins.bot_unified_runtime.sources.meme_library import MemeLibraryStore
 from plugins.bot_unified_runtime.sources.parsers import (
     build_cookie_provider,
     music_candidate_providers,
@@ -278,6 +293,9 @@ class MatrixItem:
     build: Callable[[E2eRuntime], Callable[[IncomingMessage, BotDecision], CapabilityResult]]
     text: Callable[[E2eRuntime], str] | str
     note: str = ""
+    # 回执断言（可省）：入参 ItemOutcome，返回空串=PASS、非空=失败原因。
+    # None=该检查项不做断言（2026-09-13 之前的存量项全部保持 None）。
+    expect: Callable[[ItemOutcome], str] | None = None
 
     def trigger_text(self, runtime: E2eRuntime) -> str:
         return self.text(runtime) if callable(self.text) else self.text
@@ -373,6 +391,31 @@ def _affinity_capability(
     )
 
 
+def _identity_preference_capability(
+    runtime: E2eRuntime, *, command_text: str
+) -> Callable[[IncomingMessage, BotDecision], CapabilityResult]:
+    """镜像 __init__ `/bot identity` 分支 + runtime_admin 对四个自助子命令
+    （set-name/set-gender/unset-name/unset-gender）管理员门前的拦截转发
+    （echo.build_identity_preference_result）。写真实 AddressingPreferenceStore
+    （与 bot 同库，data/ 相对路径经 runtime_paths 落运行区）；验收矩阵里
+    set-name 与 unset-name 成对出现，净效果为零。"""
+
+    def capability(message: IncomingMessage, _decision: BotDecision) -> CapabilityResult:
+        from plugins.bot_unified_runtime.capabilities.echo import (
+            build_identity_preference_result,
+        )
+
+        return build_identity_preference_result(
+            runtime.config,
+            request_id=message.request_id,
+            sender_id=str(message.sender_id or ""),
+            group_id=str(message.group_id or ""),
+            command_text=command_text,
+        )
+
+    return capability
+
+
 def _content_capability(
     runtime: E2eRuntime,
 ) -> Callable[[IncomingMessage, BotDecision], CapabilityResult]:
@@ -397,9 +440,252 @@ def _content_capability(
     )
 
 
+def _meme_library_capability(
+    runtime: E2eRuntime,
+) -> Callable[[IncomingMessage, BotDecision], CapabilityResult]:
+    """镜像 __init__ 表情收库装配：MemeLibraryStore（运行区库；pick/stats 只读）
+    + build_meme_library_capability（mood_valence_fn 不接=中性档）。
+    BOT_MEME_LIBRARY_ENABLED 未启用时给降级文案（与生产不注册 handler 同语义）。"""
+    config = runtime.config
+    if not bool(getattr(config, "bot_meme_library_enabled", False)):
+        return _text_capability(
+            runtime,
+            body="E2E：BOT_MEME_LIBRARY_ENABLED 未启用，表情收库链路按生产语义跳过。",
+        )
+    store = MemeLibraryStore(
+        str(
+            getattr(config, "bot_meme_library_db_path", "data/meme_library.sqlite3")
+            or ""
+        ),
+        prefer=list(getattr(config, "bot_meme_library_prefer", []) or []),
+    )
+    return build_meme_library_capability(store, config)
+
+
+def _router_gated_capability(
+    runtime: E2eRuntime,
+    *,
+    detector: Callable[[str], bool],
+    domain_builder: Callable[
+        [E2eRuntime],
+        Callable[[IncomingMessage, BotDecision], CapabilityResult],
+    ],
+    domain_label: str,
+) -> Callable[[IncomingMessage, BotDecision], CapabilityResult]:
+    """劫持守卫负样本专用：镜像 base_router 分流语义。
+
+    真机链路里劫持守卫生在路由层（base_router 用 is_* 检测器定 RouteKind），
+    本脚本绕过路由直挂能力，故用与路由同源的 detector 复现分流：
+    命中 → 原样委托真实领域能力（守卫被改坏时仍可观察真实形态）；
+    不命中 → 让路（生产由 chat/其他域接管，验收用确定性占位文本）。
+    注意：负样本不能直喂领域能力——stocks/divination 的能力体对未命中文本
+    会走 NON_PUBLIC/兜底分支（如 resolve_company_query('openai是什么')=OPENAI、
+    parse_divination_intent 对算命句返回 bazi 意图，均实跑核实），
+    与生产「根本不进该能力」语义不符。"""
+    domain_capability = domain_builder(runtime)
+
+    def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
+        if detector(str(message.plain_text or "")):
+            return domain_capability(message, decision)
+        return CapabilityResult(
+            request_id=message.request_id,
+            capability_id="bot.text",
+            kind="text",
+            body="E2E 守卫观察：该消息未命中本域触发词，生产语义=让路（chat/其他域接管）。",
+            audit_tags=["e2e_acceptance", "hijack_guard_negative"],
+        )
+
+    return capability
+
+
+# --------------------------------------------------------------------------
+# 回执断言（2026-09-13 批次：作用于入队 SendRequest 层，DRY-RUN/--execute 同语义；
+# 渲染形态对照 renderer：能力 images 非空 ⇔ content_type=mixed + 图片部件）
+# --------------------------------------------------------------------------
+
+
+def _expect_preamble(outcome: ItemOutcome) -> tuple[SendRequest | None, str]:
+    if outcome.error:
+        return None, outcome.error
+    if outcome.send_request is None:
+        return None, "无入队请求（能力可能被静默/拦截，回执状态见上）"
+    return outcome.send_request, ""
+
+
+def _media_part_count(send_request: SendRequest | None) -> int:
+    parts = send_request.content.content_ref if send_request is not None else None
+    if not isinstance(parts, dict) or not isinstance(parts.get("parts"), list):
+        return 0
+    return sum(
+        1
+        for part in parts["parts"]
+        if isinstance(part, dict) and str(part.get("type", "")) != "text"
+    )
+
+
+def expect_stock_card(outcome: ItemOutcome) -> str:
+    """⑫ 英伟达股价 → 期望个股卡（images 非空或 kind=mixed 的入队等价形态）。"""
+    request, reason = _expect_preamble(outcome)
+    if reason:
+        return reason
+    media = _media_part_count(request)
+    if request.content.content_type == "mixed" or media >= 1:
+        return ""
+    return (
+        f"期望个股卡（content_type=mixed 或含图片部件），实际 "
+        f"content_type={request.content.content_type} media={media}"
+        "（多为行情源失败或渲染后端不可用时的文本降级）"
+    )
+
+
+# 守卫禁词：出现即视为产生了股价/OHLC 内容（估值口径说明文本不含这些词，
+# 含「OpenAI 目前未上市…／最近公开估值：约 … 亿美元／来源 …」）。
+_STOCK_CONTENT_MARKERS = ("现价", "KDJ", "收盘序列", "涨跌幅", "开 ", "OHLC")
+
+
+def expect_nonpublic_guard(outcome: ItemOutcome) -> str:
+    """⑫ OpenAI 估值 → 非上市守卫：不得产生任何股价/OHLC 内容或卡图。"""
+    request, reason = _expect_preamble(outcome)
+    if reason:
+        return reason
+    media = _media_part_count(request)
+    if media:
+        return f"守卫失败：产生了 {media} 个媒体部件（非上市公司不得出任何行情卡图）"
+    text = request.content.text_fallback
+    hits = [marker for marker in _STOCK_CONTENT_MARKERS if marker in text]
+    if hits:
+        return f"守卫失败：文本命中股价/OHLC 形态 {hits}"
+    if "openai" not in text.lower():
+        return "守卫失败：回复未指向 OpenAI（疑似误路由）"
+    return ""
+
+
+def expect_fx_panel_card(outcome: ItemOutcome) -> str:
+    """⑬ 汇率 → 期望面板卡（mixed + 图片部件）+ 主要货币面板文本。"""
+    request, reason = _expect_preamble(outcome)
+    if reason:
+        return reason
+    text = request.content.text_fallback
+    if "拉不到" in text:
+        return "汇率快照拉取失败（上游不可用），未产出面板"
+    media = _media_part_count(request)
+    if request.content.content_type == "mixed" and media >= 1:
+        return ""
+    return (
+        f"期望汇率面板卡，实际 content_type={request.content.content_type} "
+        f"media={media}（渲染后端不可用时会文本降级，真机应出卡）"
+    )
+
+
+def expect_fx_converted(outcome: ItemOutcome) -> str:
+    """⑬ 100日元换多少人民币 → 期望定向换算结果（≈ 折算行，JPY→CNY）。"""
+    request, reason = _expect_preamble(outcome)
+    if reason:
+        return reason
+    text = request.content.text_fallback
+    if "拉不到" in text:
+        return "汇率快照拉取失败（上游不可用），未产出换算"
+    if "≈" in text and ("人民币" in text or "CNY" in text):
+        return ""
+    return (
+        "期望定向换算结果（形如 100日元 ≈ X 人民币），"
+        f"实际预览：{_flatten(text)[:120]!r}"
+    )
+
+
+def expect_divination_two_state(outcome: ItemOutcome) -> str:
+    """⑭ 占卜 → 出卡（mixed）或纯文本二态皆可；断言本身不抛异常。
+
+    纯文本态在入队层可能是 text，也可能是 pipeline 对超阈值长文的
+    合并转发形态（forward，text_fallback 保留全文）——实测 192 字卦文
+    即转 forward，两者同为「无卡图纯文本」，均算通过。"""
+    request, reason = _expect_preamble(outcome)
+    if reason:
+        return reason
+    if request.content.content_type not in ("mixed", "text", "forward"):
+        return (
+            "期望 mixed/纯文本（含合并转发形态）二态之一，实际 "
+            f"content_type={request.content.content_type}"
+        )
+    if not request.content.text_fallback.strip():
+        return "正文为空"
+    return ""
+
+
+def expect_identity_set_confirmed(outcome: ItemOutcome) -> str:
+    """⑮ /bot identity set-name → 期望「已记下」确认回复。"""
+    request, reason = _expect_preamble(outcome)
+    if reason:
+        return reason
+    text = request.content.text_fallback
+    if "已记下" in text:
+        return ""
+    return f"期望「已记下」确认回复，实际：{_flatten(text)[:120]!r}"
+
+
+def expect_identity_unset_confirmed(outcome: ItemOutcome) -> str:
+    """⑮ /bot identity unset-name → 清理确认（已清除/本就没有均算达成）。"""
+    request, reason = _expect_preamble(outcome)
+    if reason:
+        return reason
+    text = request.content.text_fallback
+    if "已清除" in text or "还没有设置过" in text:
+        return ""
+    return f"期望清理确认（已清除/本就没有），实际：{_flatten(text)[:120]!r}"
+
+
+def expect_chat_fallthrough(
+    *, markers: tuple[str, ...], domain_label: str
+) -> Callable[[ItemOutcome], str]:
+    """劫持/排除守卫负样本通用断言：必须落纯文本（零卡图），
+    且正文不含任何领域能力内容形态（markers 取自领域能力产出文案特征词，
+    已逐一对照让路占位文本排除误伤）。"""
+    def expect(outcome: ItemOutcome) -> str:
+        request, reason = _expect_preamble(outcome)
+        if reason:
+            return reason
+        media = _media_part_count(request)
+        if media:
+            return f"守卫失败：产生了 {media} 个媒体部件（{domain_label}不应被触发）"
+        if request.content.content_type not in ("text", "forward"):
+            return (
+                "守卫失败：期望纯文本让路落点，实际 content_type="
+                f"{request.content.content_type}"
+            )
+        text = request.content.text_fallback
+        hits = [marker for marker in markers if marker in text]
+        if hits:
+            return f"守卫失败：文本命中{domain_label}内容形态 {hits}"
+        return ""
+
+    return expect
+
+
+# 表情收库 pick 的三态确定性文案（出图 mixed 的 text_fallback 也含首句）。
+_MEME_PICK_TEXTS = ("给你偷来一张表情", "表情库还是空的", "冷却中")
+
+
+def expect_meme_library_pick(outcome: ItemOutcome) -> str:
+    """表情收库（steal meme / meme random）→ 三态皆算真实行为：
+    出图（mixed）/空库文案/会话冷却文案；落到其他文案才算异常。"""
+    request, reason = _expect_preamble(outcome)
+    if reason:
+        return reason
+    text = request.content.text_fallback
+    if any(token in text for token in _MEME_PICK_TEXTS):
+        return ""
+    if request.content.content_type == "mixed":
+        return ""
+    return (
+        "期望表情收库 pick 三态之一（出图/空库/冷却），"
+        f"实际：{_flatten(text)[:120]!r}"
+    )
+
+
 def build_matrix(runtime: E2eRuntime) -> list[MatrixItem]:
     """验收矩阵（①文本/长文本/多段 ②解析卡 ③点歌候选 ④全球股指 ⑤财经/科技快报
-    ⑥天气+预警 ⑦随机图 ⑧占卜 ⑨help ⑩好感度 ⑪提醒查询）。"""
+    ⑥天气+预警 ⑦随机图 ⑧占卜 ⑨help ⑩好感度 ⑪提醒查询
+    ⑫个股行情+非上市守卫 ⑬汇率面板/定向换算 ⑭占卜金钱卦 ⑮称谓自助）。"""
     return [
         MatrixItem(
             key="text-short",
@@ -526,6 +812,234 @@ def build_matrix(runtime: E2eRuntime) -> list[MatrixItem]:
                 "预期收到 skipped 回执而非消息"
             ),
         ),
+        MatrixItem(
+            key="stocks-nvda",
+            label="⑫个股卡（英伟达）",
+            capability_id="bot.stocks",
+            build=lambda rt: build_stocks_capability(
+                rt.config, render_backend=rt.render_backend
+            ),
+            text="英伟达股价",
+            note="2026-09-13 批次：期望釉瑚金融卡（行情源/渲染失败降级文本会判 expect-FAIL）",
+            expect=expect_stock_card,
+        ),
+        MatrixItem(
+            key="stocks-nonpublic",
+            label="⑫非上市守卫（OpenAI 估值）",
+            capability_id="bot.stocks",
+            build=lambda rt: build_stocks_capability(
+                rt.config, render_backend=rt.render_backend
+            ),
+            text="OpenAI 估值",
+            note="NON_PUBLIC 分支不触行情外呼：只给有来源的估值口径，零股价/OHLC/卡图",
+            expect=expect_nonpublic_guard,
+        ),
+        MatrixItem(
+            key="fx-panel",
+            label="⑬汇率面板卡",
+            capability_id="bot.fx",
+            build=lambda rt: build_fx_capability(
+                rt.config, render_backend=rt.render_backend
+            ),
+            text="汇率",
+            note="主要货币（USD 基准）面板卡",
+            expect=expect_fx_panel_card,
+        ),
+        MatrixItem(
+            key="fx-convert",
+            label="⑬汇率定向换算",
+            capability_id="bot.fx",
+            build=lambda rt: build_fx_capability(
+                rt.config, render_backend=rt.render_backend
+            ),
+            text="100日元换多少人民币",
+            note="JPY→CNY 定向换算（含 unit_base 折算，评审 P0-1 口径）",
+            expect=expect_fx_converted,
+        ),
+        MatrixItem(
+            key="divination-iching",
+            label="⑭占卜（金钱卦，出卡二态）",
+            capability_id="bot.divination",
+            build=lambda rt: build_divination_capability(rt.config),
+            text="占卜",
+            note="渲染后端可用出 mixed 卡，不可用回纯文本——二态均算通过，断言不抛异常",
+            expect=expect_divination_two_state,
+        ),
+        MatrixItem(
+            key="identity-set-name",
+            label="⑮称谓自助 set-name",
+            capability_id="bot.identity",
+            build=lambda rt: _identity_preference_capability(
+                rt, command_text="set-name 岸友"
+            ),
+            text="/bot identity set-name 岸友",
+            note=(
+                "镜像 runtime_admin 管理员门前拦截转发；写真实 AddressingPreferenceStore"
+                "（运行区库），随后由 identity-unset-name 项成对清理"
+            ),
+            expect=expect_identity_set_confirmed,
+        ),
+        MatrixItem(
+            key="identity-unset-name",
+            label="⑮称谓自助 unset-name（清理）",
+            capability_id="bot.identity",
+            build=lambda rt: _identity_preference_capability(
+                rt, command_text="unset-name"
+            ),
+            text="/bot identity unset-name",
+            note="整行移除称谓偏好（含性别自述），与 set-name 成对执行、净效果为零",
+            expect=expect_identity_unset_confirmed,
+        ),
+        # ---- 二期扩展（2026-09-13）：多语言触发形态抽样 + 劫持守卫负样本 ----
+        # 词表取证：.superpowers/sdd/2026-09-12-shorekeeper-global-audit/ 下
+        # fix-py1/py2（拼音全拼/缩写）、fix-eng-verify（英文）、fix-tra2/tra3
+        # （繁體）报告 + is_* 检测器实跑核验；fix-py1 市场词表无 meiguhang，
+        # 按其实际入表词取 hangqing/hq。存量 21 项零改动。
+        MatrixItem(
+            key="music-pinyin",
+            label="③点歌（拼音全拼 diange）",
+            capability_id="bot.music",
+            build=_music_capability,
+            text="diange 晴天",
+            note="fix-py1：_COMMAND_RE 全拼 diange（同音覆盖 點歌）；候选/歌曲卡同点歌主链路",
+        ),
+        MatrixItem(
+            key="music-abbr",
+            label="③点歌（缩写 dg）",
+            capability_id="bot.music",
+            build=_music_capability,
+            text="dg 晴天",
+            note="fix-py1：dg 入表缩写（(?![a-z0-9]) 右界；dgms/diangemoshi 归 mode 族不抢主命令）",
+        ),
+        MatrixItem(
+            key="weather-pinyin",
+            label="⑥天气（拼音全拼 tianqi）",
+            capability_id="bot.weather",
+            build=lambda rt: build_weather_capability(
+                rt.config, render_backend=rt.render_backend
+            ),
+            text="tianqi 台北",
+            note="fix-py2：tianqi/tq 入表（正则无 IGNORECASE，小写生效）；台北走 F18 城市别名",
+        ),
+        MatrixItem(
+            key="weather-english",
+            label="⑥天气（英文 weather）",
+            capability_id="bot.weather",
+            build=lambda rt: build_weather_capability(
+                rt.config, render_backend=rt.render_backend
+            ),
+            text="weather 台北",
+            note="T1.2 英文别名（weather(?![A-Za-z0-9]) 词界，weatherqq 胶合不触发）；"
+            "query 必填故裸 weather 不匹配（实跑核实）",
+        ),
+        MatrixItem(
+            key="market-pinyin",
+            label="④股指（拼音全拼 hangqing）",
+            capability_id="bot.market",
+            build=lambda rt: build_market_capability(rt.config),
+            text="hangqing",
+            note="fix-py1：非锚定 search 双侧词界；无市场过滤词 → 18 指数全量（同 全球股市）",
+        ),
+        MatrixItem(
+            key="market-abbr",
+            label="④股指（缩写 hq）",
+            capability_id="bot.market",
+            build=lambda rt: build_market_capability(rt.config),
+            text="hq",
+            note="fix-py1：hq 入表缩写；两字母缩写群聊误伤面（hq≈总部等）即在本项真机观察",
+        ),
+        MatrixItem(
+            key="meme-lib-steal-eng",
+            label="表情收库（英文 steal meme）",
+            capability_id="bot.meme_library",
+            build=_meme_library_capability,
+            text="steal meme",
+            note="T1.2：按权重偷一张（mixed 出图）或空库/冷却文案；"
+            "读真实运行区表情库（只读 pick，与好感度项同口径）",
+            expect=expect_meme_library_pick,
+        ),
+        MatrixItem(
+            key="meme-lib-random-eng",
+            label="表情收库（英文 meme random）",
+            capability_id="bot.meme_library",
+            build=_meme_library_capability,
+            text="meme random",
+            note="T1.2：memes? random 同支；与 steal meme 同会话连跑时第二项常落 "
+            "20s 会话冷却文案（真实防刷屏风控，非缺陷）",
+            expect=expect_meme_library_pick,
+        ),
+        MatrixItem(
+            key="news-trad",
+            label="⑤快報（繁體）",
+            capability_id="bot.news",
+            build=lambda rt: build_news_capability(rt.config),
+            text="快報",
+            note="fix-tra2：繁體族 10 词入 _NEWS_TRIGGER_RE；类目提取繁體缺口（tra2 残余①）→ 落 mix 类目",
+        ),
+        MatrixItem(
+            key="randpic-trad",
+            label="⑦隨機圖（繁體）",
+            capability_id="bot.randpic",
+            build=lambda rt: build_randpic_capability(rt.config),
+            text="隨機圖",
+            note="fix-tra2：隨機圖/來張圖 对向繁體；BOT_RANDPIC_DIRS 未配置时降级文案（真实行为）",
+        ),
+        MatrixItem(
+            key="guard-stocks-openai-question",
+            label="劫持守卫（openai是什么 → 不触发个股）",
+            capability_id="bot.text",
+            build=lambda rt: _router_gated_capability(
+                rt,
+                detector=is_stocks_command,
+                domain_builder=lambda rt2: build_stocks_capability(
+                    rt2.config, render_backend=rt2.render_backend
+                ),
+                domain_label="个股行情",
+            ),
+            text="openai是什么",
+            note="test_stocks_hijack_guard：路由层让路 moegirl_question；"
+            "本项镜像 is_stocks_command 门（直喂会误走 NON_PUBLIC 分支），断言零股价/估值内容",
+            expect=expect_chat_fallthrough(
+                markers=_STOCK_CONTENT_MARKERS + ("估值",),
+                domain_label="个股行情",
+            ),
+        ),
+        MatrixItem(
+            key="guard-divination-fortune-sentence",
+            label="劫持守卫（算命陈述句 → 不触发占卜）",
+            capability_id="bot.text",
+            build=lambda rt: _router_gated_capability(
+                rt,
+                detector=is_divination_command,
+                domain_builder=lambda rt2: build_divination_capability(rt2.config),
+                domain_label="占卜",
+            ),
+            text="我说算命都是骗人的",
+            note="test_divination_hijack_guard 八连样例之一：应落 chat；"
+            "本项镜像 is_divination_command 门（直喂会误出 bazi 排盘），断言零排盘/塔罗内容",
+            expect=expect_chat_fallthrough(
+                markers=("排盘", "四柱", "干造", "塔罗", "金钱卦"),
+                domain_label="占卜",
+            ),
+        ),
+        MatrixItem(
+            key="guard-market-oil-price",
+            label="排除守卫（油价行情 → 不触发股指）",
+            capability_id="bot.text",
+            build=lambda rt: _router_gated_capability(
+                rt,
+                detector=is_market_command,
+                domain_builder=lambda rt2: build_market_capability(rt2.config),
+                domain_label="全球股指",
+            ),
+            text="油价行情",
+            note="test_market_exclusion_guard：非股市「行情」（油价/金价族）让路 chat；"
+            "本项镜像 is_market_command 门（含 _NON_STOCK_RE 排除），断言零股指面板形态",
+            expect=expect_chat_fallthrough(
+                markers=("全球股指", "红涨绿跌", "行情数据", "拉不到"),
+                domain_label="全球股指",
+            ),
+        ),
     ]
 
 
@@ -542,6 +1056,8 @@ class ItemOutcome:
     send_request: SendRequest | None = None
     error: str = ""
     trigger_text: str = ""
+    # expect 断言结果：空串=PASS / 未断言；非空=失败原因（断言自身异常也折算进来）。
+    expect_fail_reason: str = ""
 
 
 def _flatten(text: str) -> str:
@@ -627,6 +1143,19 @@ def print_outcome(index: int, total: int, outcome: ItemOutcome, execute: bool) -
         print(f"          ↳ {format_preview(outcome.send_request)}")
     if item.note:
         print(f"          ↳ note: {item.note}")
+    if item.expect is not None:
+        try:
+            outcome.expect_fail_reason = item.expect(outcome)
+        except Exception as exc:  # noqa: BLE001 - 断言自身不得抛异常拖垮验收。
+            outcome.expect_fail_reason = (
+                f"expect check raised: {type(exc).__name__}: {exc}"
+            )
+        verdict = (
+            "PASS"
+            if not outcome.expect_fail_reason
+            else f"FAIL: {outcome.expect_fail_reason}"
+        )
+        print(f"          ↳ expect: {verdict}")
 
 
 # --------------------------------------------------------------------------
@@ -788,13 +1317,19 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(args.interval)
 
     errors = [outcome for outcome in outcomes if outcome.error]
+    expect_fails = [
+        outcome
+        for outcome in outcomes
+        if not outcome.error and outcome.expect_fail_reason
+    ]
     print("\n===== 验收汇总 =====")
     for outcome in outcomes:
         state = outcome.receipt.state.value if outcome.receipt else "error"
-        mark = "✗" if outcome.error else "·"
-        print(f"{mark} {outcome.item.key:18s} {state}")
+        mark = "✗" if outcome.error or outcome.expect_fail_reason else "·"
+        suffix = " expect-FAIL" if outcome.expect_fail_reason else ""
+        print(f"{mark} {outcome.item.key:18s} {state}{suffix}")
     print(
-        f"共 {len(outcomes)} 项，错误 {len(errors)} 项。"
+        f"共 {len(outcomes)} 项，错误 {len(errors)} 项，期望未达成 {len(expect_fails)} 项。"
         + (
             "\n真发提示：--execute 项已入队，bot 的 send-queue worker 会按 "
             "BOT_SEND_QUEUE_WORKER_INTERVAL_SECONDS 逐条投递；请在目标群/私聊回 test 验收。"
@@ -802,7 +1337,7 @@ def main(argv: list[str] | None = None) -> int:
             else "\nDRY-RUN：以上为「将发内容」，未入真实队列。确认无误后加 --execute 重跑。"
         )
     )
-    return 1 if errors else 0
+    return 1 if errors or expect_fails else 0
 
 
 if __name__ == "__main__":
