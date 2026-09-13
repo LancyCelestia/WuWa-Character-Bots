@@ -1182,6 +1182,19 @@ class ModelRouter:
             race.finished += 1
             race.cond.notify_all()
 
+    def _sibling_channel_ids(self, spec: ModelSpec, *, exclude: str) -> list[str]:
+        """同一实际模型名的兄弟渠道（价格/EWMA 序），exclude 自己。
+
+        「单个渠道入口」与「模型 ID 入口」连通（2026-09-13 用户裁定）：
+        管理员指定注册条目 id 时，服务同一模型名的其余渠道自动进入候选集，
+        首选渠道失败即同模型内拨转，用户无感。
+        """
+        try:
+            channels = self.channels_for_model(spec.model)
+        except Exception:  # noqa: BLE001 - 聚合失败退回单渠道，不阻塞路由。
+            return []
+        return [model_id for model_id in channels if model_id != exclude]
+
     def route_ids(self, *, message_text: str, override: str) -> list[str]:
         """返回按优先级排列的候选模型 id 列表。
 
@@ -1194,6 +1207,11 @@ class ModelRouter:
         不可达）：注册条目 id 精确命中 → 单渠道路由；未命中但能按模型名/
         别名聚合出 ≥1 渠道 → channels_for_model 聚合；再未命中才按完整
         模型名合成 fallback spec（旧版「直接给模型名」兼容）。
+
+        同模型多渠道连通（2026-09-13）：注册条目 id 精确命中时，该 id 排
+        首位，同模型名的兄弟渠道紧随其后（价格/EWMA 序），再接其余模型；
+        模型名聚合分支同样去重——已进候选集的渠道不再重复出现在尾部自动
+        队列里（旧实现兄弟渠道会被尝试两次）。
         """
         override = (override or "").strip()
         if override and override != _AUTO:
@@ -1201,11 +1219,32 @@ class ModelRouter:
                 self._fallback_spec is not None
                 and override == self._fallback_spec.model_id
             ):
-                # 管理员给的注册条目 id：单渠道优先，失败按序转移。
-                return [override, *self._auto_route_ids(message_text, exclude=override)]
+                # 管理员给的注册条目 id：该渠道优先，同模型兄弟渠道紧随
+                # （首选失败 → 同模型下一渠道，计费归因实际服务渠道），
+                # 最后按序转移其他模型。
+                spec = self._spec_for(override)
+                siblings = (
+                    self._sibling_channel_ids(spec, exclude=override)
+                    if spec is not None
+                    else []
+                )
+                head = [override, *siblings]
+                taken = set(head)
+                tail = [
+                    model_id
+                    for model_id in self._auto_route_ids(message_text)
+                    if model_id not in taken
+                ]
+                return [*head, *tail]
             channels = self.channels_for_model(override)
             if channels:
-                return [*channels, *self._auto_route_ids(message_text, exclude=channels[0])]
+                taken = set(channels)
+                tail = [
+                    model_id
+                    for model_id in self._auto_route_ids(message_text)
+                    if model_id not in taken
+                ]
+                return [*channels, *tail]
             if self._fallback_spec is not None:
                 # 完全未知的 id：当作完整模型名走主配置的接口/密钥（旧版兼容）。
                 return [override, *self._auto_route_ids(message_text, exclude=override)]
@@ -1278,11 +1317,24 @@ class ModelRouter:
         """从 attempts 轨迹解析最后触达的渠道 id（记账投影用）。
 
         记号格式：``{model_id}:{error_kind|success|config_missing}``、
-        ``failover:deadline``、``hedged:{model_id}:winner|loser``；后两类
-        非渠道路径标记，跳过。解析不出返回空串。
+        ``failover:deadline``、``hedged:{model_id}:winner|loser``。
+        ``failover:`` 非渠道路径标记，跳过；``hedged:`` 记号里只有
+        ``:winner`` 代表实际服务的渠道（影子竞速赢家）——计费归因必须落
+        在赢家上（2026-09-13 修复：旧实现跳过全部 hedged 记号，影子并发
+        成功时渠道/价格归因双双落空）；``:loser`` 落选未服务，跳过。
+        全是 loser 记号时返回空串（attempts_json 里保留完整轨迹可溯）。
         """
         for mark in reversed(attempts):
-            if mark.startswith(("failover:", "hedged:")):
+            if mark.startswith("hedged:"):
+                parts = mark[len("hedged:") :].rsplit(":", 1)
+                if (
+                    len(parts) == 2
+                    and parts[1] == "winner"
+                    and parts[0].strip()
+                ):
+                    return parts[0].strip()
+                continue
+            if mark.startswith("failover:"):
                 continue
             model_id = mark.split(":", 1)[0].strip()
             if model_id:
