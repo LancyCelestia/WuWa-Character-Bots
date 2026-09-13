@@ -46,6 +46,9 @@
 | `data/group_files.sqlite3`（`__init__.py` `_runtime_scripts_path`） | `capabilities/group_files.py` | `CREATE TABLE group_files` | 群文件索引可再生，可整库重建 |
 | `data/channel_health.sqlite3`（`llm/channel_health.py` `runtime_path`） | `llm/channel_health.py` | `CREATE TABLE channel_health` | 渠道健康探针状态，停机后可清（重启后重新积累） |
 | `data/food_images/library.sqlite`（`capabilities/eat.py` `_library_db_path`；落在 Runtime 图库目录 `ChatBot_Runtime\data\food_images\`，非源码树） | `capabilities/eat.py`（eat.py 预热/封面链路） | `CREATE TABLE food_images`（`name` 主键 → `path/source_url/fetched_at`） | 纯 name→path 索引可再生，可整库删（预热脚本重建索引）；图片文件 `<菜名>.<ext>`+`.source.txt` 是事实来源，删索引不删图 |
+| `data/media_archive.sqlite3` | `BOT_MEDIA_ARCHIVE_DB_PATH` | `sources/media_archive.py`（`MediaArchiveStore`，注册期单例；接线 `capabilities/media_archive.py`） | `CREATE TABLE IF NOT EXISTS media_archive`（sources/media_archive.py:134） | 媒体归档索引；文件树 `data/media_archive/`+JSON 旁车为事实来源，索引可按文件树重建；禁整库删文件树 |
+| `data/notes.sqlite3`（待生成：生产未重启） | `BOT_NOTES_DB_PATH` | `character/notes_store.py`（`build_notes_store`；消费方 `capabilities/notes.py` + `capabilities/reminder.py` 待办注入） | `CREATE TABLE IF NOT EXISTS notes`（notes_store.py:92，WAL 先于 DDL；单表） | 笔记/待办属用户数据禁整库删；待办随完成/过期按行清理 |
+| `data/web_intent_telemetry.sqlite3`（待生成：功能默认关） | `BOT_WEB_INTENT_TELEMETRY_DB_PATH` | `runtime/intent_telemetry.py`（`build_intent_telemetry`，`__init__.py` 装配） | `CREATE TABLE IF NOT EXISTS intent_telemetry`（intent_telemetry.py:76） | 遥测可再生，可整库重建；上限 `bot_web_intent_telemetry_max_items`（默认 10000）自滚动 |
 
 ## 三、统一清理纪律
 
