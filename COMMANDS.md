@@ -1,9 +1,11 @@
 # 守岸人命令手册（人读版）
 
 与机器人内 `/bot help <模块>` 深度帮助页同一口径：每个模块、每条指令、每个参数。
+
+完整自动同步教程目录：[docs/command-catalog.md](docs/command-catalog.md)。修改 `_HELP_ENTRIES` 后运行 `python scripts/command_catalog.py --write`，一致性测试会拒绝过期文档。
 - 参数标注：`<x>` 必填、`[x]` 可选；「默认」指省略参数时的行为。
 - 权限标注以代码内 actor_roles 判定为准（`仅管理员` / `全员`）。
-- 数据真相源：`plugins/bot_unified_runtime/capabilities/echo.py` 的 `_HELP_ENTRIES`（2026-09-12，59 模块）。
+- 数据真相源：`plugins/bot_unified_runtime/capabilities/echo.py` 的 `_HELP_ENTRIES`；模块/别名总数以 [docs/command-catalog.md](docs/command-catalog.md) 的自动统计为准，不在此手写。
 - 开发/运维任务（dev.ps1、测试、smoke）见本文末尾「开发命令速查」。
 
 ## 总览
@@ -22,7 +24,7 @@
 | 审计 | `/bot audit <request_id>` | 查审计事件 | request_id 必填 |
 | 最近 | `/bot recent [数量]` | 诊断+回执+审计合并摘要 | 数量 1-20，默认 5 |
 | 队列 | `/bot queue` | 发送队列状态 | 无 |
-| 历史清理 | `/bot history clear` | 清本会话最近对话 | 无 |
+| 历史 | `/bot history clear` | 清本会话最近对话 | 无 |
 | 上下文 | `/bot context [文本]` | 看注入给模型的上下文 | 文本可选 |
 | 对话 | `/bot dialogue [文本]` | 本地跑一轮对话诊断 | 文本可选；可能一次 LLM 调用 |
 | 接入 | `/bot setup llm` | LLM 七键接入清单 | 无 |
@@ -39,7 +41,7 @@
 | 群策略 | `/bot group list\|add\|del\|set\|clear …` | 群黑白名单四档 | 档位 black1\|black2\|white1\|white2；群号数字可多个 |
 | 群文件 | `/bot 群文件` | 群上传统计（仅群聊） | 无 |
 | 文件 | `文件 <格式> <主题>` | 生成文档并上传群文件 | 格式 md\|markdown\|docx\|pptx\|xlsx\|pdf |
-| 身份 | `/bot identity show\|set\|tag\|clear` | 会话级身份记忆 | set `<昵称>`；tag 逗号分隔最多 8 个；对本会话生效，人格不变 |
+| 身份 | `/bot identity show\|set\|tag\|clear`；自助 `/bot identity set-name\|set-gender\|unset-name\|unset-gender` | 会话级身份记忆＋用户自助称谓偏好 | set `<昵称>`；tag 逗号分隔最多 8 个；自助四子命令所有用户可用、只能改自己（set-gender 取值 male\|female\|nonbinary\|custom\|unknown，set-name ≤32 字）；对本会话生效，人格不变 |
 | 怪癖 | `/bot quirk list\|approve\|retire\|add` | 人格怪癖审核制 | list [pending\|active\|retired] 上限 20；approve/retire `<id前缀>` 唯一命中；add 直添即生效 |
 | 邮件 | `/mail status\|accounts\|use\|send\|pause\|resume` | Gmail/QQ 收发控制 | 仅 Telegram 管理端；send 三/四段用 `\|` 分隔 |
 
@@ -55,7 +57,7 @@
 
 ### 运行开关类（.env 键，改后重启）
 
-- 限流：`BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR/_PER_MINUTE`（≥0，0=该帽不生效）、`BOT_RATE_LIMIT_EMOTION_EXEMPT`（默认 true）、`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED`（默认 false）+`…_PROBABILITY`（0..1 默认 0.05）、安静时间 6 键 `BOT_QUIET_HOURS_*`——以上均可 `/bot runtime set` 热改。
+- 限流：`BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR/_PER_MINUTE`（≥0，0=该帽不生效）、`BOT_RATE_LIMIT_EMOTION_EXEMPT`（默认 true）、`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED`（默认 false）+`…_PROBABILITY`（0..1 默认 0.004，2026-09-12 实弹调低防自我触发限流）、安静时间 6 键 `BOT_QUIET_HOURS_*`——以上均可 `/bot runtime set` 热改。
 - 点名回复节流：`BOT_RATE_LIMIT_CHAT_SENDER_MIN_INTERVAL_SECONDS`（默认 45，同一人点名回复最小间隔秒数，0=关闭）——可 `/bot runtime set` 热改。
 - 合并转发：`BOT_RENDER_FORWARD_MIN_NODES`（默认 4）/`_MIN_CHARS`（1500）/`_MAX_NODES`（0=不限）/`_NODE_CHARS`（≥200，默认 900），热改；消费在装配期，需重启。
 - 群摘要：`BOT_SHARED_GROUP_CONTEXT_ENABLED`（默认 false）、`BOT_GROUP_DIGEST_LIST_MODE`（whitelist|blacklist|off|all）、`BOT_GROUP_DIGEST_WHITELIST/BLACKLIST`——热改；每日通讯总结推送 `BOT_GROUP_DIGEST_PUSH_ENABLED`（默认 true）+`BOT_GROUP_DIGEST_PUSH_TIME`（HH:MM，默认 21:30，仅白名单群、非 whitelist 零推送）——.env 键，重启生效。
@@ -71,14 +73,16 @@
 | 表情 | `表情 <模板> [文字]`、`表情 列表` | meme-generator-rs 生成表情 | 文字多段用 ｜ |
 | 偷表情 | `偷表情 [关键词]`、`表情库统计` | 表情库加权随机 | 关键词/情绪标签可选 |
 | 搜图 | `搜图`＋图片 | SauceNAO 反搜来源 | 图片需同条消息 |
-| 天气 | `天气 <城市>`、`支持区县 <省>` | NMC 天气（2527 区县） | 同名城市 省-市；查询词需像地名 |
+| 天气 | `天气 <城市>` | NMC 天气（支持 2527 区县级查询） | 同名城市 省-市；查询词需像地名 |
 | 行情 | `行情`＋可选市场词 | 全球股指（东方财富，60s 缓存） | A股/B股/上证B/深证B/美股/港股/日经/纳斯达克/道指/标普/莫斯科/俄罗斯 等 |
+| 个股行情 | `英伟达股价`、`AMD 股价`、`英特尔股价`、`股价`、`股價`、`個股`、英文 `stocks`＋公司别名；`市值` 须与公司别名共现（如 `英伟达市值`，裸词不触发） | 个股行情（OHLCV/市值，出金融卡；数据带来源与延迟标注） | 与「行情」互不抢路由（裸「行情」归行情）；OpenAI 未上市，只给有来源的公开估值说明 |
+| 汇率 | `汇率`、`美元兑人民币`、`100日元换多少人民币`、`匯率`/`兌換` 等 | 汇率查询/主要货币面板（出金融卡） | 11 币种、基准货币明确；中间价口径带延迟标注；TWD/MOP/AED 暂无行情会明说；与 stocks 重叠时汇率优先 |
 | 占卜 | `占卜`、`塔罗 [三张\|每日一抽]`、`八字 <生日时间>` | 金钱卦/塔罗/八字（含地支藏干） | 日期 `1998年3月2日\|1998-03-02\|1998/3/2`；只给日期按午时；1900-2100 年 |
 | 快报 | `快报`/`早报`/`晚报`/`今日热点`/`科技新闻`/`AI新闻`/`财经快报`/`财经新闻`/`国际新闻`；昵称形式 `守岸人 快报`/`守岸人 AI新闻` 等等价触发 | RSS 聚合快报（10 分钟缓存）：默认 20 条；标题下带 RSS 摘要行（治标题党）；自动过滤营销条目（求职/招聘/推广/优惠等） | 类目：财经/国际/科技·AI/综合轮转；裸「新闻」不触发 |
 | 维基 | `维基 <词条>` | MediaWiki 百科 | 默认中文维基 |
 | 萌娘百科 | `萌娘百科 <词条>`；直接问「XX是谁？」 | 萌百查询＋实体问句自动查询 | 问句剥出实体 2-30 字；未命中转聊天 |
 | 历史上的今天 | `历史上的今天 [设置 HH:MM\|状态\|取消]` | 当日历史＋每日推送 | 群内设置/取消需管理员 |
-| 下载 | `/bot download <链接>`、`下载 <链接>` | yt-dlp 下载回传；多连接并行（分片 8 并发+16MB Range 分块，装有 aria2c 时自动委托 -x16）；平台有 CC 字幕时自动下载保存（srt 优先、zh 简体优先），回复显示「字幕已保存：路径」 | 单文件 ≤1GB；拒绝内网地址 |
+| 下载 | `/bot download <链接>`（裸发「下载 …」当前不走路由，请用 /bot 前缀） | yt-dlp 下载回传；多连接并行（分片 8 并发+16MB Range 分块，装有 aria2c 时自动委托 -x16）；平台有 CC 字幕时自动下载保存（srt 优先、zh 简体优先），回复显示「字幕已保存：路径」 | 单文件 ≤1GB；拒绝内网地址 |
 | 昵称 | `守岸人/岸宝 <命令>`；`/bot 昵称 set <QQ号> <小名>` | 昵称触发命令（后者管理员）；繁体触发词已支持：`點歌`/`快報`/`財經新聞`/`國際新聞`/`親密度`/`天氣`/`天氣預報`/`隨機圖`/`來張圖` 等 | 昵称表经 `/bot runtime nickname` 维护 |
 | 链接 | 直接发 http(s) 链接 | 平台信息卡解析 | B站/抖音/小红书/油管/推特/GitHub 等 |
 | 草稿 | `报存 给 <收件人> 发消息\|邮件[，主题：…，内容：…]` | 自动发送草稿预览 | 收件人可用 、,， 分隔多个；当前仅预览不实发 |
@@ -89,6 +93,11 @@
 | 提醒 | `<时间>提醒我 <事项>`、`提醒列表`、`取消提醒 <id前缀>` | 到点主动督促 | id 前缀 4-12 位唯一命中；事项 ≤120 字 |
 | 记忆 | `/bot memory add\|list\|delete` | 个人长期记忆（全员，仅本人） | add 支持 `--sensitivity=personal\|group\|public\|credentialed`（默认 personal）；群聊 list 只见 public/group |
 | 路由 | `/bot route <文本>`、`/bot routes` | 路由判定/路由表（全员只读） | 文本必填 |
+
+**拼音与英文触发**：子功能各能力的触发词除中文/繁體（见上表「昵称」行）外，另有英文与拼音全拼/缩写等价形态（如 `点歌`/`diange`/`dg`、`行情`/`hangqing`/`hq`）。
+- 每个能力的完整词表（英文/拼音全拼/缩写/繁體）以 `/bot help <模块>` 深度页与 [docs/command-catalog.md](docs/command-catalog.md) 为准，此处不逐词罗列。
+- 拼音缩写为渐进特性：上线后观察群聊误伤，行级可回撤——`.env` 无法逐词关闭，回撤＝改词表（删除对应能力触发正则或 `_HELP_ENTRIES` 别名中的词条，重启后生效）。
+- 两字母缩写（如 `dg`/`hq`）在群聊可能撞日常语义，遇到误触发按上条指引回撤对应词条即可。
 
 ## 开发命令速查
 

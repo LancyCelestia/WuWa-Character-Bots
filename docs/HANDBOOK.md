@@ -1563,7 +1563,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 | F4 | 好感度 v5 多因素算法 | 用户裁定废除「一次加几减几」：实际步长=基准因子 × f1 说话温度 × f2 相处时长 × f3 第一印象(建档±30%、随互动指数衰减，**只影响速度永不影响态度档位**——反歧视护栏) × f4 当日心情 × m(uid)；SQLite 自动迁移 first_signals/first_impression/created_at；算法说明/规则卡/卡片全量定性化，测试锁死不再出现 +2/-5 数值 |
 | F3 | 解析/能力卡全灰 | **根因**：weather/eat/help 等无平台语境卡走 media 卡路径，`--pc` 回退 `#607080` 灰 → wash 全灰。修复：`_derive_wash_tokens` 基底重锚守岸人本命色（淡蓝210°/星空紫265°/深蓝228°/近白蓝雾底），平台色仅 ±30° 内轻推 wash-1 + accent/色斑 ≤35% 透色 |
 | F2 | B站热评圆角 | `.hot-comment/.pinned-comment` radius-sm(8px)→radius-md(16px) |
-| F10 | eat 卡 about:blank+占位图 | **根因**：`contracts/media.py` build_parsed_content 默认 canonical_url="about:blank" 直接上卡。修复：媒体卡对占位值抑制；无封面时封面区整体折叠（🖼 占位废除）；eat 真实封面三级来源（本地图包→Bing 图搜→静默折叠），复用 `check_download_url` SSRF 护栏+魔数校验+落盘缓存 |
+| F10 | eat 卡 about:blank+占位图 | **根因**：`contracts/media.py` build_parsed_content 默认 canonical_url="about:blank" 直接上卡。修复：媒体卡对占位值抑制；无封面时封面区整体折叠（🖼 占位废除）；eat 真实封面四级来源（本地图包→SQLite 图库索引→抓取缓存→空），复用 `check_download_url` SSRF 护栏+魔数校验+落盘缓存 |
 | F11 | 页脚 头像+名字+功能名 | 贯通 5 模板（universal 两处/media/song/affinity/mermaid）+ RenderPayload.feature_label + render_card_png 双分支；weather/eat 传「天气」/「美食推荐」 |
 | F18 | 天气定位 | **根因**：open-meteo geocoding `count=1` 使人口排序形同虚设（「东京」命中华东小镇）；zh 库缺「华沙」类城市无重试。修复：count=10+精确名/人口双键排序+60+ 中英城市别名+`_query_variants` 查询变体链（『湘潭-雨湖』逐级拆到行政区） |
 | 菜谱三连 | 「怎么做到的」误触发/「西红柿炒鸡蛋」打不中/带@消息推错菜 | 三根因：①`_RECIPE_RE` 捕「到的」类粒子菜名（补菜名合法性守卫）②库内叫「番茄炒蛋」同义词失配（补同义词归一+bigram 重叠模糊匹配，纯子串在鸡蛋/蛋断点失配）③**natural 链 bot.eat 分支没像 wiki 分支那样把 normalized_text 重写进 plain_text**，带@前缀原文本致 ^ 锚定正则全失配→掉进随机推荐当众推错菜（补 model_copy 重写+能力入口 strip_mentions+两类正则都不匹配时静默跳过，随机推荐永不当兜底） |
@@ -1624,9 +1624,77 @@ flowchart TD
 
 ## 20.3 已知残余与建议
 
-1. **R 系列测试欠账**：R1-R4 无专属回归测试（roster 文案/min-interval 双实现/长文门各需 2-3 例）；本轮靠全量回归兜底，接手先补。
-2. **min-interval 默认 45s 会拦管理员连测**：调试时用 `/bot runtime set BOT_RATE_LIMIT_CHAT_SENDER_MIN_INTERVAL_SECONDS 0` 热改关。
+1. **R 系列测试欠账（已销项）**：R1-R4 专属回归测试已补齐共 21 例——`tests/test_policy_sender_interval.py`（min-interval 双实现同语义且先于 role bypass）、`tests/test_policy_soft_mention_gate.py`（长文软点名门 R4）、`tests/test_admin_roster_and_roles.py`（roster 文案/六级角色 R1）；后续改动维护这三份即可。
+2. **min-interval 默认 45s 会拦管理员连测**：`BOT_RATE_LIMIT_CHAT_SENDER_MIN_INTERVAL_SECONDS` 不在 runtime set 白名单（`SETTABLE_KEYS` 无此键，热改会被「不支持运行时修改的键」拒绝；邻近可设键仅 GROUP_MAX_PER_MINUTE/HOUR 与 EMOTION_EXEMPT，均非同人点名间隔）——该键只读，需改 `.env` 后重启生效。
 3. **表情补标约 1-2 天**：3193 张待标按批 20/10min 消化；期间偷表情可能命中未标图（按权重随机不挑无描述图，安全）；VLM 端点走 BOT_MEME_LIBRARY_VLM_* 配置。
 4. **账单口径**：上游中转若不回缓存 token 字段，报表显示 0（如实）；价格表更新直接改 scripts/import_model_prices.py 重跑 --apply。
 5. **Ghost Downloader**：aria2 兼容 RPC 可作 yt-dlp external_downloader 备选；需用户 GUI 常驻+开 RPC，暂未接。
 6. 重启后真机验收：`@守岸人 好感度`（出卡）/连续喊 5 次（只回 1 次）/长文埋昵称（不抢答）/问「管理员是谁」（准确答澜汐=霞月）。
+
+---
+
+# §21 全域审计批次总账（2026-09-13，A/B/C 三方协同 + 独立只读评审终裁）
+
+> 批次按 plan `docs/superpowers/plans/2026-09-12-shorekeeper-global-audit.md` 执行，全程**零 git 提交、改动全部留在工作树**——故本节各「已完成」的证据指针为下述台账/交接文档+门禁实跑（哈希规矩的等价物；下轮若成批提交须回填哈希）。
+> 证据全集：SDD 台账 `.superpowers/sdd/2026-09-12-shorekeeper-global-audit/`（progress.md 主账/事件簿/裁定 + progress-agent-b.md + review-report-c1c2-unclaimed.md + task-*/fix-* 各 brief-report）；C 域交接 `docs/handover-c-20260913.md`；渲染契约软文档 `docs/rendering-contract.md`。
+
+## 21.1 批次构成与终态
+
+- **三方协同**（文件域互斥、同一工作树）：**A=本 SDD 主会话**（计划落地/称谓体系/集成收口/修复波 F1-F3）；**B=命令帮助域**（帮助注册表扩容：B 域 6 新主题+stocks/fx 帮助随 B1 上车，模块/别名计数以 `python scripts/command_catalog.py` 自动统计为准；一致性门禁大扩容 2→20 条，全离线、注入探针验证能变红，条数以 `pytest tests/test_documentation_consistency.py` 实跑为准；identity 自助收尾验证）；**C=渲染契约+金融+卡片化域**（theme_tokens 单一事实源+渲染契约测试+stocks/fx/MOEX 真走势+菜谱图库预热 60/61+两轮真机验收 8 张 PNG 亲检，见 handover-c）。用户侧并行会话（Codex）产出的占卜/历史/吃菜/天气 Epic 卡片化与 mica builder 收编经评审收编、归属在案（progress.md 事件簿）。
+- **独立只读评审代理终裁**：四域 spec 全 ✅，**Critical 0 / Important 6（已全修，见 21.2）/ Minor 12（其中 2 park，其余流转终审 triage）**，明细 review-report-c1c2-unclaimed.md。
+- **门禁终态：四道门全绿**（ruff/mypy/runtime-layout exit 0；全量 test 以实跑输出为准）。
+
+## 21.2 已修 Important 六项（修复波 F1-F3，各一行）
+
+| 项 | 修法一行 |
+|---|---|
+| B1 stocks/fx 帮助上车 | 生产接线残余仅剩帮助注册表：补帮助条目+catalog 再生成+过期注释收口（路由/分发/渲染登记/route-matrix 已由并行批次先行完成） |
+| B2 别名词边界 | resolve_company_query 子串误命中根治（词边界，TDD 9 红先行） |
+| C1 渲染后端接线 | divination/today_history 生产调用点传入共享 render backend；推送调度器显式 render_backend=None 保持纯文字（交互/推送分流，产品裁定） |
+| C2 footer 伪 URL | 卡 footer 泄漏内部伪 URL+request_id 清零（about:blank 占位抑制+card_dir 子目录去重） |
+| D1 漂泊者保留字 | 群成员自设「漂泊者」与人格世界观冲突→保留字回退；群摘要确定性头+LLM 压缩提示词双侧加「成员均为群友/不得称漂泊者」边界 |
+| D2 摄取层 display name | QQ 摄取层三处 sender_display_name 填充（card>nickname>None），称谓体系获得真实展示名 |
+
+## 21.3 必须保留的四条事实（C 方向指定，动模板/数据源前必读）
+
+1. **无 `<meta viewport>`=铁律**：全部卡片模板清零并由渲染契约测试锁定（浏览器直开模板只见 Jinja 占位符，真实渲染=bridge 注入→Playwright 截图）。
+2. **「K」语义=K 线烛台 OHLCV**，KDJ 独立为 KDJSnapshot；单日 OHLC 被箱形图语义门拒绝。
+3. **USD/TWD、USD/MOP、USD/AED 东财无源→诚实「暂无数据」**，不硬造。
+4. **东财 kline 接口 2026-09-13 起必须带 `end` 参数**（缺则空 klines；market_data/stock_data 两处 `_KLINE_URL` 已补 `&end=20500101` 并回归锁死）。
+
+## 21.4 Parked/待办
+
+1. 占卜卡每抽一子目录暂不受 enforce_quota（评审 Minor C5，未恶化未解，等后续 prune 接管）。
+2. route-matrix 覆盖门子串匹配偏弱（B park M-2，低价值暂不改）。
+3. mermaid 真机出图待重启观察（根因已根治：`render_backends._close_thread_browser` 改 `ctx.__exit__` 上游修复+渲染失败单次重试+自愈钩子，波及所有 Playwright 渲染线程）。
+4. **生产 bot 未重启，本批次全部改动待生效**（等用户提权，台账 #10 同口径）。
+
+## 21.5 交互事件记录（一句话级）
+
+- B/C 两会话与 A 的 SDD 波次在同一工作树交错：曾出现 mica 契约 26→6→0 的在途中间态（根因=上会话带红灯进库欠账+并行编辑者收编）与 data/ 三度残留（台账 #1 模式），均以测试对账收口；多会话写盘已约定单线程化（账外会话冻结源码改动、handover 走独立文档）。
+- 过程教训：评审自查测试与门禁并发会让中间态看似 flaky——pytest/ruff 只在无实现者写入的稳定窗口跑（progress.md 事件簿）。
+
+## §22 触发指令规范化波（2026-09-14，T-Spec V1 用户确认执行）
+
+> 证据链：`.superpowers/sdd/2026-09-12-shorekeeper-global-audit/`（trg-inventory/fix-eng/py1-3/tra2-3/hj1-3/wx/order/ratchet/sync-rm 报告）+ `scripts/probe_trigger_hijack.py`（37 样例探针）。
+
+### 22.1 规格（T-Spec V1，用户确认）
+八层触发分层（/bot 子命令 > 英文短命令[词边界≥3字母] > 简体 > 繁體 > 全拼 > 缩写[查重无冲突才启用] > 自然语言[防劫持] > 昵称动词）；RouteRule priority 41=基础/42=让路成为真实判定序；help 保持功能分组；四要素腔调（作用=/参数=/内容=/意义=，shuorenhua 去 AI 味，触发词/参数/配置键为 protected spans）。
+
+### 22.2 落地量化（全部实跑取证）
+- **英文触发**：9 能力 32 词入表（market/stocks/eat/news/reminder/randpic/divination/today_history/meme_library）+11 既有锁定；auto_send（中文语法绑定 parser）与 'history'（撞 admin 历史 topic）登记不实施。
+- **拼音三批**：57+49+30=136 词（全拼 76+缩写 60）覆盖全部路由能力；真冲突缩写审慎弃用（bz/bq/cs/sf/gz/gg 等，"真冲突无人得缩写"一致性裁决）；多音字 pypinyin 生成器 `scripts/gen_trigger_pinyin.py`（仅生成期依赖）。
+- **繁體补齐**：news 快報族 10 词、randpic 隨機圖/來張圖、affinity 親密度、music 點唱、weather 天氣預報（**推翻"死词"定性**：真死因=昵称动词合成串失配+屏蔽表漏繁体，双管修活）、meme_library 偷图简体。
+- **昵称动词缺口**：runtime/aliases.py DEFAULT_VERB_MAP 补「点唱/天气预报」（守岸人点唱/守岸人天气预报 台北 离线可达；陈述句「天气预报说明天下雨」不经昵称路径）。
+- **劫持清零**（探针 37 样例 0 HIJACKED）：divination 三守卫（CJK 独立成词锚定+长度 URL+惯用语排除，8/8；已知取舍="帮我占卜"类前贴 CJK 口语随锚定失效）、stocks 豁免词语境共现+问答句式否决（4/4；"openai是什么"落问答）、market 排除表补油价/金价/石油/黄金+繁体（3/3；"黄金股行情"照旧）、weather 陈述引导词守卫双点接入（含 natural_language `_clean_city` 二阶提取）。
+- **路由判定序**：classify_message_route 改按 (priority, 清单序) 稳定排序——stocks(42) 不再因列表书写位置抢占 eat/affinity 等(41) 组；探针零回退。
+- **基础设施**：`scripts/extract_trigger_words.py` 提取器、`tests/test_trigger_spec.py` 体检棘轮（24 红点→11→**0**，新违规硬失败）、`scripts/probe_trigger_hijack.py` 劫持探针、`scripts/gen_trigger_pinyin.py`、`tests/test_doc_sync_gates.py` 两孤岛收编（route-matrix 全行门禁 5 漂移修正；config-catalog 键覆盖门禁 **157→0 全量同步**，KNOWN_MISSING 空集语义核实）。
+- **文档联动**：echo aliases/META→catalog(--write)→COMMANDS.md→route-matrix 触发词列（19 行对齐）→config-catalog 全量同步，全部有测试门禁；拼音词真相源=command-catalog。
+
+### 22.3 已知取舍与遗留
+- divination 前贴 CJK 口语（帮我占卜/抽塔罗）随锚定失效——与"别给我算命"在锚定层不可区分，探针预期内建。
+- 2 字母拼音缩写（dg/hq/gs/mb 等）有俚语他义误伤可能——上线观察，词表行级单点回撤。
+- zb 归属（占卜 vs 早报）维持"真冲突无人得缩写"，单行可改裁。
+- 裸「守岸人天气预报」静默（与简体既有口径一致，产品裁决项）；「天气预报称多」无空格句式被陈述守卫拦下（概率极低，陈述语义优先）。
+- 天气预报陈述句的 natural_language.py 二阶提取点为白名单偏离（已声明论证并验收）。
+- 全部触发改动待生产 bot 提权重启生效（台账 #10）。

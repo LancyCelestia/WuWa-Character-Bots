@@ -3,6 +3,9 @@
 NoneBot2 聊天机器人项目：守岸人人格对话、向量知识检索、聊天记忆、QQ/Telegram/Mail 适配器、
 37+ 平台媒体解析、订阅推送、表情包、釉瑚云母卡片渲染与统一运行时插件（`plugins/bot_unified_runtime/`）。
 
+- 个股行情 / 汇率：`英伟达股价`、`汇率` 等问法触发，金融卡展示并标注数据来源延迟
+- 用户自助称谓：`/bot identity set-name` / `set-gender` 自定义机器人对你的称呼与性别自述（无需管理员）
+
 > **接手必读**：[AGENTS.md](AGENTS.md)（工作区规则 + 项目全貌 + 架构/流程图，自动加载）→
 > [docs/HANDBOOK.md](docs/HANDBOOK.md)（单一活文档：族谱/现行事实/总账/全史；§20 最新会话底账含权限链路图）。
 > 命令手册：[COMMANDS.md](COMMANDS.md)；路由矩阵：[docs/route-matrix.md](docs/route-matrix.md)。
@@ -58,7 +61,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 ## 验证门禁（每轮交付前全绿）
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task test"           # 全量回归（基线 1766+ passed）
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task test"           # 全量回归（以本次实跑输出为准；不在文档中手写固定用例数）
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task lint"           # ruff
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task typecheck"      # mypy（238 文件）
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task runtime-layout" # 源码树/边界体检

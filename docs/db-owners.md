@@ -28,6 +28,7 @@
 | `data/persona_quirks.sqlite3` | `BOT_QUIRKS_DB_PATH` | `character/quirks.py` | `CREATE TABLE persona_quirks` | 怪癖属学习数据，禁随意删 |
 | `data/reflection.sqlite3` | `BOT_REFLECTION_DB_PATH` | `character/reflection.py` | `CREATE TABLE reflection_facts / reflection_digests`（含列迁移） | 反思库属学习数据，禁随意删 |
 | `data/session_identity.sqlite3` | `BOT_SESSION_IDENTITY_DB_PATH` | `character/session_identity.py` | `CREATE TABLE session_identity`（含列迁移） | 会话身份可再生 |
+| `data/addressing_preferences.sqlite3` | `BOT_ADDRESSING_PREFERENCES_DB_PATH` | `character/addressing.py`（`AddressingPreferenceStore`） | `CREATE TABLE addressing_preferences`（主键 `session_type+session_id+sender_id`；WAL） | 用户显式设置的称谓/性别偏好；清理=按行删（清行后回退推断），不整库删 |
 | `data/reminders.sqlite3` | `BOT_REMINDER_DB_PATH` | `character/reminders.py` | `CREATE TABLE reminders` | 用户取消提醒即删对应行；不整库删 |
 | `data/user_affinity.sqlite3` | `BOT_AFFINITY_DB_PATH` | `character/affinity.py` | `CREATE TABLE user_affinity / group_affinity`（含 `ALTER TABLE` 增列迁移） | 管理员可按 config 注释直接改值；禁整库删 |
 | `data/media_registry.sqlite3` | `BOT_MEDIA_REGISTRY_PATH` | `character/media_registry.py` | `CREATE TABLE media_assets`；库内 `_prune_locked` 自动过期 | 自滚动，无需手工清 |
@@ -44,6 +45,7 @@
 | `data/result_unknown.sqlite3`（`__init__.py` `_runtime_scripts_path`） | `runtime/result_unknown.py` | `CREATE TABLE result_unknown` | 未知结果兜底记录，可再生 |
 | `data/group_files.sqlite3`（`__init__.py` `_runtime_scripts_path`） | `capabilities/group_files.py` | `CREATE TABLE group_files` | 群文件索引可再生，可整库重建 |
 | `data/channel_health.sqlite3`（`llm/channel_health.py` `runtime_path`） | `llm/channel_health.py` | `CREATE TABLE channel_health` | 渠道健康探针状态，停机后可清（重启后重新积累） |
+| `data/food_images/library.sqlite`（`capabilities/eat.py` `_library_db_path`；落在 Runtime 图库目录 `ChatBot_Runtime\data\food_images\`，非源码树） | `capabilities/eat.py`（eat.py 预热/封面链路） | `CREATE TABLE food_images`（`name` 主键 → `path/source_url/fetched_at`） | 纯 name→path 索引可再生，可整库删（预热脚本重建索引）；图片文件 `<菜名>.<ext>`+`.source.txt` 是事实来源，删索引不删图 |
 
 ## 三、统一清理纪律
 

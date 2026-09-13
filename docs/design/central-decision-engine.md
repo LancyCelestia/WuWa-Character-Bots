@@ -11,7 +11,9 @@
 
 ### 1.1 入口总账
 
-所有 NoneBot matcher 都注册在 `plugins/bot_unified_runtime/__init__.py` 的 `_register_nonebot_handlers()`（`__init__.py:2668`，模块尾部 `__init__.py:6396` 调用一次）。**共 35 个 matcher、35 个 `.handle()`**（`@*.handle()` 共 35 处，从 `__init__.py:3700` 到 `__init__.py:6225`）。`plugins/` 下只有 `bot_unified_runtime` 一个插件包，无其他 matcher 入口。
+所有 NoneBot matcher 都注册在 `plugins/bot_unified_runtime/__init__.py` 的 `_register_nonebot_handlers()`（`__init__.py:2710`，模块尾部 `__init__.py:6567` 调用一次）。**共 38 个 matcher、38 个 `.handle()`**（2026-09-13 复核：`@*.handle()` 共 38 处，从 `__init__.py:3785` 到 `__init__.py:6396`；on_message 33 / on_notice 3 / on_command 2）。`plugins/` 下只有 `bot_unified_runtime` 一个插件包，无其他 matcher 入口。
+>
+> 注：下文各表/明细中的 `L` 行号是 2026-09-12 规格成文时快照，代码后续有漂移；matcher 总数与类型分布以上述 2026-09-13 复核为准。
 
 按类型与优先级（NoneBot 数值越小越先跑）：
 
@@ -19,7 +21,7 @@
 |---|---|---|
 | `on_command` | 2 | `status`（11, True, L3595）；`mail_control`（10, True, L3603） |
 | `on_notice` | 3 | `group_upload_notice`（6, False, L3698）；`poke_notice`（7, False, L3744）；`file_notice`（8, False, L3734） |
-| `on_message` | 30 | 见下表 |
+| `on_message` | 33 | 见下表 |
 
 `on_message` 明细（L = `__init__.py` 行号）：
 
@@ -36,7 +38,8 @@
 | 20, True | `meme`（L3624） |
 | 22, True | `meme_library`（L3633） |
 | 40, True | `music_mode`（L4325） |
-| 41, True ×12 | `music`（L4326）`today_history`（L4327）`wiki`（L4330）`moegirl`（L4331）`epic`（L4335）`weather`（L4336）`market`（L4337）`divination`（L4338）`news`（L4339）`randpic`（L4340）`reminder`（L4341）`eat`（L4342） |
+| 41, True ×14 | `music`（L4326）`today_history`（L4327）`wiki`（L4330）`moegirl`（L4331）`epic`（L4335）`weather`（L4336）`market`（L4337）`divination`（L4338）`news`（L4339）`randpic`（L4340）`reminder`（L4341）`eat`（L4342）`fx`（L4436）`affinity`（L4453，行号为 2026-09-13 补录时实测） |
+| 42, True | `stocks`（L4437，行号为 2026-09-13 补录时实测） |
 | 44, True | `moegirl_question`（L4332） |
 | 45, True | `natural`（L3625） |
 | 46, True | `image_search`（L3892）；`content`（L4324） |
@@ -51,7 +54,7 @@
                        │  OneBot V11 (NapCat)      Telegram      ResilientMailAdapter                    │
                        └──────────────────────────────────┬──────────────────────────────────────────────┘
                                                           ▼
-                    35 个 NoneBot matcher（_register_nonebot_handlers, __init__.py:2668）
+                    38 个 NoneBot matcher（_register_nonebot_handlers, __init__.py:2710）
    ┌──────────────────────────────────────────────────┼──────────────────────────────────────────────┐
    │ 规则层（各 matcher 的 _is_*_event）                                                            │
    │  • 多数读 _cached_route_decision（L710-734，事件级 state 缓存）                                  │
@@ -109,7 +112,7 @@
 
 | # | 强制规则 | 现状差距（file:line） |
 |---|---|---|
-| 1 | 所有事件必须经过中央决策层 | 35 个 matcher 平行入口（§1.1）；三类 handler 写法（§1.2 A/B/C） |
+| 1 | 所有事件必须经过中央决策层 | 38 个 matcher 平行入口（§1.1）；三类 handler 写法（§1.2 A/B/C） |
 | 2 | 新功能不得绕过决策层直发 | 无守门机制约束新 handler；C 类写法仍被复制 |
 | 3 | capability 不得直接调用平台发送 API | capability 层总体守约；违规在 handler/任务层：`__init__.py:3730/3759/3766/3864/3872/4012/4019/3360` |
 | 4 | 只有统一发送网关可发送 | `mail_bridge.py:312`（SMTP 直连）、`__init__.py:3360`（call_api 直发）绕过 gateway |
@@ -231,7 +234,7 @@ async def _dispatch_capability(ctx, plan) -> DeliveryReceipt:
 
 | # | 落地 |
 |---|---|
-| 1 | 35 matcher → 引擎单一入口；NoneBot 侧只留 1 个 `on_message` + 1 个 `on_notice` + 1 个 `on_command`（`/bot` 保留命令前缀解析收益，内部转投引擎）或全部 `on_message`（阶段 2 决定，见开放问题 Q4） |
+| 1 | 38 matcher → 引擎单一入口；NoneBot 侧只留 1 个 `on_message` + 1 个 `on_notice` + 1 个 `on_command`（`/bot` 保留命令前缀解析收益，内部转投引擎）或全部 `on_message`（阶段 2 决定，见开放问题 Q4） |
 | 2 | 引擎注册表成为唯一入口；`INTERFACE_MANIFEST`（base_router.py:427）加 `entry_engine: bool` 审计列；CI 加 grep 检查：新增 `on_message(`/`on_command(` 出现在 `decision/` 之外即 fail |
 | 3/4 | C 类直连点迁移清单（§3 阶段表逐行列出）；Mail SMTP 收编为 `UnifiedDeliveryGateway` 的 `mail_sender` 通道（网关扩展，与 B3 同一批做） |
 | 5 | ActionPlan 唯一性 + 互斥组；迁移期用"决策日志比对"验证与旧 matcher 行为一致（§3 验收） |
@@ -262,7 +265,7 @@ async def _dispatch_capability(ctx, plan) -> DeliveryReceipt:
 
 ## 3. 迁移路径（四阶段，每阶段可独立合入并回滚）
 
-总原则：**引擎骨架与现行 35 matcher 并存 → 按能力逐个迁 → 删旧口**。每阶段迁移 = 把目标 matcher 的 rule+handler 改写为 ROUTE_RULES 行（如已是）+ `ActionResolver` 行 + 删原 matcher；引擎提供 `migration_mode` 配置（`legacy_only` / `shadow` / `engine_only`，键名建议 `bot_decision_engine_mode`，默认 `legacy_only`）。
+总原则：**引擎骨架与现行 38 matcher 并存 → 按能力逐个迁 → 删旧口**。每阶段迁移 = 把目标 matcher 的 rule+handler 改写为 ROUTE_RULES 行（如已是）+ `ActionResolver` 行 + 删原 matcher；引擎提供 `migration_mode` 配置（`legacy_only` / `shadow` / `engine_only`，键名建议 `bot_decision_engine_mode`，默认 `legacy_only`）。
 
 ### 阶段 0：引擎骨架 + shadow 模式（只记不发）
 

@@ -28,6 +28,8 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\
 | `ChatBot_Runtime\card_render_assets\` | 否 | 卡片渲染资产 |
 | `ChatBot_Archive\` | 否 | 历史压缩归档（docs-archive / code-hygiene 等，内含 manifest） |
 
+> 卡片渲染 token 单一来源见 `docs/rendering-contract.md`（改模板前必读）；命令教程以自动生成的 `docs/command-catalog.md` 为准。
+
 ## 启动与验证
 
 从源码目录执行（`scripts\dev.ps1` 自动定位外部 venv 并设置 `PYTHONDONTWRITEBYTECODE=1`）：
@@ -41,7 +43,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Tas
 四道交付门禁（每轮改动前全绿）：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Task test"           # 全量回归，基线 1761+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Task test"           # 全量回归（以本次实跑输出为准；不在文档中手写固定用例数）
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Task lint"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Task typecheck"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Task runtime-layout"

@@ -178,3 +178,79 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 6. 验证检索：`scripts/dev.ps1 context-smoke`（或 QQ 私聊问一个鸣潮设定问题），确认知识库命中而不是顺序取块。
 
 > 外部运行时说明：LOCALSTORE_USE_CWD 必须保持为 false。ChatBot_Runtime\\config、cache\\nonebot 和 data\\nonebot 是第三方插件的实际落盘位置；不要把它们改回源码目录。详见 [外部运行时访问与工作区边界](external-runtime-access.md)。
+
+## 6.6 2026-09-13 批次重启验收清单（全域审计批次，重启生效）
+
+> 覆盖 2026-09-13 全域审计批次：称谓体系 / 渲染契约 / 金融能力（个股+汇率）/ 占卜历史卡卡片化 / 帮助注册表 / mermaid 修复（AGENTS.md 台账 #26，同批含 #10/#22 重启生效项）。
+> 这些项离线测试已绿，但**生产真机多未验证**（handover-c §三 诚实声明：重启后 Playwright 线程浏览器首启、占卜/历史卡出图、C5 启动接线均属首验）——首验不符不等于回归，先取证。
+
+**前置**：管理员权限重启 bot（改代码必须重启才生效；生产进程常驻且管理员权限启动，杀它需要提权——台账 #10）。重启后先发 `/bot status` 确认 NapCat WS 重连正常，再逐项验收。
+
+| # | 验收项 | 触发方式 | 预期 | 异常时看哪 | 预期来源 |
+|---|---|---|---|---|---|
+| ① | 私聊/群聊称谓 | 私聊与 bot 多轮对话；群内不同群友分别 @bot 对话 | 私聊可出现「漂泊者」语境；群聊群友**不被**称「漂泊者」（群友/群昵称口径）且群昵称被实际使用；超管（生产：澜汐/霞月）走 master 例外口径；性别未知不被推断 | `character/addressing.py` AddressingContext（【当前称谓与主角边界】分区）+ 摄取层 sender_display_name；先确认进程确为重启后实例（旧进程无此代码） | 台账 #26① |
+| ② | `/bot identity` 自助 | `/bot identity set-name 小澜`；`/bot identity set-gender female`；群聊发 `/bot identity set-name 漂泊者`；`/bot identity unset-name` | 无需管理员即回「已记下」确认；群聊设「漂泊者」为保留字**自动回退不落库**；unset 恢复自动称呼；非法 gender 值不落库并列出五个可接受值 | `data/addressing_preferences.sqlite3` 落库情况 + echo.py 自助分支（绕管理员门逻辑） | 台账 #26① |
+| ③ | 个股行情卡 | `英伟达股价`；`美股股价`；问 `OpenAI 值多少钱`（估值问法） | 个股卡含 KDJ/市值/收盘折线/多日分布箱形图；`美股股价` 出九家面板卡（NVDA/AMD/INTC/AAPL/MSFT/GOOGL/AMZN/META/TSM）含日收益分布箱形图；问 OpenAI 出**非上市说明**（估值唯一口径=官方公告/注明口径的公开报道），绝无价格字段 | 折线/K 线全空 → 优先查东财 kline `end` 参数与凌晨限流（handover-c §三.3）；该触发而未触发、或日常聊天被劫持出卡 → 查 stocks 触发正则语境守卫 | handover-c §五.3 + 台账 #26③ |
+| ④ | 汇率 | `汇率`；`100日元换多少人民币`；`美元兑人民币` | 面板卡 10 对实时中间价（含中间价/基准货币/延迟语义标注）；定向换算按 unit_base 折算（100 日元≈个位数人民币，**不得**出现「1 日元=4.36 元」百倍错值）；USD/TWD、USD/MOP、USD/AED 三行诚实「暂无数据」 | `sources/fx_data.py` 东财通道与 unit_base 折算；顺手人审一眼反向换算文案（如「1人民币≈多少日元」） | handover-c §五.3 + 台账 #26③ |
+| ⑤ | 行情卡 | `行情` / `莫斯科股指` | 折线正常；MOEX 出**真走势**（ISS history 30 收盘）；6 个已验证映射指数带「已与腾讯行情交叉核验 ✓ n/n」脚注，两源不一致时显式标注双方数值 | MOEX 无折线 → 查 MOEX ISS 端点可用性；无脚注 → 属设计（仅 6 指数有已验证映射）；卡图带透明边 → 查 market_card 根元素 `.card` 类 | handover-c §五.3 + 台账 #26③ |
+| ⑥ | 占卜/历史上的今天出卡 | `八字` / `塔罗 三张` / `占卜` / `历史上的今天` | 渲染后端可用时出卡；后端失败**回纯文字**不报错（mixed/text 逐字节兜底；推送调度器保持纯文字属预期设计） | 真机出图此前从未验证（handover-c §三.5，today_history 数据源夜间不可拉），属首验项；失败先看渲染日志，再查 payload/后端接线 | handover-c §五.3 + 台账 #26⑤ |
+| ⑦ | help 新口径 | `/bot help`；`/bot help 个股行情`、`/bot help 汇率`；再抽验 帮助/聊天/戳一戳/表情收库/自然语言/忽略 六个新主题深度页 | 帮助卡按新口径 **67 模块**；8 个新主题（帮助/聊天/戳一戳/表情收库/自然语言/忽略/个股行情/汇率）深度页齐全、逐参数四要素 | echo.py `_HELP_ENTRIES` 与帮助注册表一致性门禁（tests/test_help_registry*） | 帮助注册表（台账 #26④） |
+| ⑧ | 帮助卡/用量卡新视觉 | `/bot help` 与用量卡各出一张，肉眼比对 | f-string 直拼卡接入 theme_tokens 后视觉统一（守岸人淡蓝 accent、两枚阴影 token、统一圆角），无透明边、无字重超标 | 对照 C 方向验收图（`%TEMP%\agent-c-visual\`，若已清理则以 tests/test_mica_builders_contract.py 契约为准） | handover-c §五.3 + 台账 #26② |
+| ⑨ | mermaid 出图 | 会话里发一段 mermaid 代码块 | 正常出图；单张失败后单次重试救回，**不再**「永久 None 直到重启」（渲染线程 asyncio 中毒已根治：`_close_thread_browser` 改 `ctx.__exit__` + 重试） | 仍 None → 设 `BOT_MERMAID_NET_TESTS=1` 跑 tests/test_mermaid_reply_render.py 烟测定位（区分网络/上游 vs 渲染线程） | handover-c §五.3 + 台账 #26（mermaid 待重启观察） |
+
+### 6.6.1 触发形态验收（英文/拼音/繁體/昵称抽样 + 劫持守卫负样本，同批生效）
+
+> 抽样冒烟性质：拼音/英文/繁體触发词的**完整真相源** = help 注册表（echo.py `_HELP_ENTRIES` aliases）与 `docs/command-catalog.md`（`scripts/command_catalog.py` 自动生成同步），本清单只抽代表词；逐词机械断言见 tests/test_trigger_english.py、tests/test_pinyin_triggers*.py、tests/test_traditional_triggers.py、tests/test_traditional_news_randpic.py。
+> 取证底稿：`.superpowers/sdd/2026-09-12-shorekeeper-global-audit/` 下 fix-eng / fix-py1~py3 / fix-tra2~tra3 / fix-nick / fix-hj1~hj3 / fix-wx / probe-hijack 各报告。
+
+**英文触发抽样**（fix-eng：本批 9 处新增 + 既有词回归锁定）
+
+| 输入 | 预期 | 异常时看哪 |
+|---|---|---|
+| `weather 台北` | 天气卡（台北）——既有英文词回归锁定 | `capabilities/weather.py` `_WEATHER_RE`（无 IGNORECASE，英文/拼音别名小写生效）+ tests/test_trigger_english.py |
+| `stock market`（`market`/`markets`） | 股指面板卡（stock market 先于 stocks 命中，先到先得）；`housing market`/`labor market`/`supermarket` 不触发属守卫预期 | `capabilities/market.py` `_MARKET_TRIGGER_RE` + `_NON_STOCK_RE` |
+| `stocks` | 九巨头个股面板卡（裸词精确等值）；`stockholm` 不触发 | `capabilities/stocks.py` `is_stocks_command` |
+| `steal meme`（裸 `steal` 同效） | 表情收库回执（收图入库）；`stealing`/`steal a car` 不触发 | `capabilities/meme_library.py` `_COMMAND_RE`（help 别名 'steal' 补实） |
+| `meme generate`（`meme`/`memes`） | 表情生成卡——既有英文词回归锁定 | `capabilities/meme.py` `_COMMAND_RE` |
+
+**拼音抽样**（fix-py1~py3：三批共 136 词入表，此处只抽样）
+
+| 输入 | 预期 | 异常时看哪 |
+|---|---|---|
+| `diange 晴天`（`dg 晴天`） | 点歌候选卡（晴天）；`diangemoshi`/`dgms` 走点歌模式族、不被主命令当歌名抢匹配 | `capabilities/music.py` `_COMMAND_RE`/`_MODE_COMMAND_RE` |
+| `tianqi 台北`（`tq 台北`） | 天气卡（台北）；`tq 今天`/`ctq 预报说下雨` 类无城市/陈述引导被口语查询校验拒绝（落 chat 属预期） | `capabilities/weather.py` `_WEATHER_RE` 拼音分支 + tests/test_pinyin_triggers_2.py |
+| `hq` / `hangqing`（`gs`/`dp`/`dapan` 同面） | 股指面板卡（双侧 ASCII 词边界，`xhq` 类胶合不触发） | `capabilities/market.py` `_MARKET_TRIGGER_RE` |
+| `haogandu`（`hgd`/`qmd`） | 好感度卡；`haogan 算法` 可达算法页（arg 位词族未拼音化，`haogansuanfa` 不触发属预期） | `capabilities/affinity.py` `_COMMAND_RE` |
+| `zhanbu` | 占卜（六爻面；`taluo`→塔罗、`paipan`→八字排盘子意图各归各位） | `capabilities/divination.py` `_DIVINATION_COMMAND_RE` + tests/test_pinyin_triggers_3.py |
+| `kuaibao`（`kb`）/ `suijitu`（`sjt`） | 快报卡 / 随机图发图 | `capabilities/news.py` / `capabilities/randpic.py` |
+
+**繁體抽样**（fix-tra2/tra3）
+
+| 输入 | 预期 | 异常时看哪 |
+|---|---|---|
+| `快報`（`早報`/`晚報`/`科技新聞`） | 快报卡（默认 20 条） | `capabilities/news.py` `_NEWS_TRIGGER_RE`；「財經新聞/國際新聞/AI新聞」可触发但类目回落 mix 属 fix-tra2 登记残余（类目提取繁體缺口，行为层），非触发层异常 |
+| `隨機圖`（`來張圖`） | 随机图发图 | `capabilities/randpic.py` `DEFAULT_TRIGGER_WORDS` + tests/test_traditional_news_randpic.py |
+| `親密度` | 好感度卡；`親密度 算法` 直达算法说明页 | `capabilities/affinity.py` `_COMMAND_RE`（fix-tra3 错位④） |
+| `點唱 晴天` | 点歌候选卡；候选二次选择「點唱 2」同形态可达 | `capabilities/music.py` `_COMMAND_RE`（`点唱`/`點唱`）+ tests/test_traditional_triggers.py |
+| `天氣預報 台北` | 天气卡（台北） | `capabilities/weather.py` `_WEATHER_RE` 长词前置；裸「天氣預報」无城市 → 与简体「天气预报」同口径静默不达（fix-tra3 §一.2 产品裁决项，不算异常） |
+
+**昵称形式**（fix-nick：`DEFAULT_VERB_MAP` 补「点唱」「天气预报」两动词）
+
+| 输入 | 预期 | 异常时看哪 |
+|---|---|---|
+| `守岸人点唱`（`守岸人点唱 晴天`） | 命中 bot.music（昵称动词链合成 `点歌`；无参数行为与裸「点歌」同口径，带歌名出候选卡）；动词后必须空白或结尾，胶合文本不进昵称链 | `runtime/aliases.py` `DEFAULT_VERB_MAP` + tests/test_nickname_verb_gaps.py |
+| `守岸人天气预报 台北` | 天气卡（台北）——合成 `天气 台北` 走既有能力 | 同上；裸「守岸人天气预报」rest 为空 → 合成后失配静默（fix-nick 登记既有口径）；「守岸人天气预报说明天下雨」动词后无空白 → 走路由层被陈述句守卫拦落 chat |
+
+**劫持守卫负样本**（probe-hijack 实测 16 HIJACKED → fix-hj1~hj3/fix-wx 全清）
+
+| 输入 | 预期 | 异常时看哪 |
+|---|---|---|
+| `openai是什么` | 落问答（moegirl 问答卡），绝无个股面板；`openai 估值多少` 带语境词才出个股 | `capabilities/stocks.py` 豁免词语境共现（`_NON_PUBLIC_CONTEXT_RE`）+ tests/test_stocks_hijack_guard.py |
+| `我说算命都是骗人的`（「塔罗牌在哪买」「这事八字还没一撇」同族） | 落 chat，无占卜卡 | `capabilities/divination.py` 三守卫（锚定/长度/URL）+ tests/test_divination_hijack_guard.py |
+| `油价行情`（`金价行情`/`看看油价行情`） | 落 chat，不出股指面板；`行情`/`美股行情`/`大盘行情` 真命令照常出卡 | `capabilities/market.py` `_NON_STOCK_RE` 商品价格语境排除 + tests/test_market_exclusion_guard.py |
+| `天气预报说明天下雨` | 落 chat（陈述句守卫）；「天气预报 称多」带空格的真实县名查询不受影响照常出卡 | `capabilities/weather.py` `is_statement_lead` + tests/test_weather_statement_guard.py |
+
+> 劫持面口径：群聊未 @ 不进路由；劫持面 = 私聊全部消息 + 群聊被 @/昵称点名/长文软点名/抽签接话的消息（probe-hijack §范围口径）。真机复现可疑劫持 → `PYTHONDONTWRITEBYTECODE=1 ChatBot_Runtime\venv\Scripts\python.exe scripts/probe_trigger_hijack.py --markdown` 复跑定位（只读探针，不联网不发消息不写运行数据）。
+> 两字母缩写误伤观察：`hq/gs/dp/mb/kb`（批一）与 `pp/tl/hh/sg/qg`（批三）等缩写在真实群聊偶作他义（mb≈my bad、hh≈笑），三重查重无冲突故已入表；群内反弹属误伤非缺陷 → 词表行级回滚（台账制），不在本清单判「不符」。
+
+**收尾纪律**：任何一项不符 → 按 systematic-debugging 走：先记录复现（触发消息原文、时间点、`data/runtime_events.log` 对应行、当日是否东财凌晨限流时段），定位根因后再修；禁止症状性补丁。全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 台账 #10/#26 记重启生效。
