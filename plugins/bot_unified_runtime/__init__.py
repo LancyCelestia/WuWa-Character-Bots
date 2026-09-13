@@ -121,6 +121,21 @@ from .runtime.disconnect_notice import (
 from .runtime.event_idempotency import build_event_idempotency_table
 from .runtime.intent_telemetry import build_intent_telemetry
 from .runtime.parrot import ParrotDetector
+from .runtime.reactions import (
+    SHARED_PROACTIVE_GATE as _REACTION_PROACTIVE_GATE,
+)
+from .runtime.reactions import (
+    SHARED_REACTION_BUFFER as _REACTION_BUFFER,
+)
+from .runtime.reactions import (
+    describe_chat_reactions as _describe_chat_reactions,
+)
+from .runtime.reactions import (
+    maybe_react_on_message as _maybe_react_on_message,
+)
+from .runtime.reactions import (
+    normalize_onebot_emoji_like as _normalize_onebot_emoji_like,
+)
 from .runtime.result_unknown import ResultUnknownLedger
 from .runtime.video_pipeline import _MEDIA_RUNTIME_SINGLETON as _MEDIA_RUNTIME_SINGLETON
 from .runtime.video_pipeline import _VIDEO_ACK_TEXT as _VIDEO_ACK_TEXT
@@ -2416,6 +2431,17 @@ def build_character_mood_store(config: object):
         return store
 
 
+def _build_reactions_describe(config: object):
+    """返回 (session_id) -> str 的【表情回应】分区正文闭包；未启用返回 None。"""
+    if not bool(getattr(config, "bot_reactions_enabled", True)):
+        return None
+
+    def _describe(session_id: str) -> str:
+        return _describe_chat_reactions(str(session_id or ""))
+
+    return _describe
+
+
 def _build_mood_describe(config: object):
     """返回 () -> str 的心情描述闭包（自然语言、无数值）；未启用返回 None。"""
     store = build_character_mood_store(config)
@@ -3712,6 +3738,7 @@ def _register_nonebot_handlers() -> None:
                 mood_describe=_build_mood_describe(config),
                 quirks_describe=_build_quirks_describe(config),
                 identity_describe=_build_identity_describe(config),
+                reactions_describe=_build_reactions_describe(config),
             ),
             llm_provider=_build_chat_llm_provider(config),
             admin_roster_text=_build_admin_roster_text_for_chat(config),
@@ -4001,6 +4028,27 @@ def _register_nonebot_handlers() -> None:
                 reaction.reply,
                 "bot.poke",
             )
+
+    # 表情贴纸回应识别（bot.reactions）：NapCat 贴纸回应 notice 只做归一与
+    # 会话缓冲登记（供 chat 注入【表情回应】分区），本 handler 不回话、不贴表
+    # 情——主动贴表情在 chat 链路的情绪信号/回复后触发点完成。私聊等价形态
+    # 按容错解析，生产实机待验证；失败静默不影响任何主链路。
+    async def _is_msg_emoji_like_event(event: Event) -> bool:
+        return str(getattr(event, "notice_type", "")) in {
+            "group_msg_emoji_like",
+            "private_msg_emoji_like",
+            "msg_emoji_like",
+        }
+
+    emoji_like_notice = on_notice(rule=_is_msg_emoji_like_event, priority=7, block=False)
+
+    @emoji_like_notice.handle()
+    async def _handle_msg_emoji_like_notice(bot: Bot, event: Event) -> None:
+        try:
+            for reaction_event in _normalize_onebot_emoji_like(event):
+                _REACTION_BUFFER.record(reaction_event)
+        except Exception:  # noqa: BLE001, S110 - 回应识别失败不影响主链路。
+            pass
 
     @file_notice.handle()
     async def _handle_admin_file_notice(bot: Bot, event: Event) -> None:
@@ -5800,6 +5848,22 @@ def _register_nonebot_handlers() -> None:
                         "data": {"text": "（附注：这张图取自群里最近发送的图片。）"},
                     }
                 )
+        # 表情贴纸回应·触发 B（bot.reactions）：用户消息命中情绪信号时，
+        # 小概率给这条消息贴一个表情表达态度。五层门（开关/每消息去重/
+        # 确定性概率/会话冷却/每小时时限）全在 reactions 模块内，失败静默。
+        if ".mail" not in event_module:
+            try:
+                await _maybe_react_on_message(
+                    bot,
+                    session_key=message.session_id,
+                    user_message_id=str(getattr(event, "message_id", "") or ""),
+                    text=message.plain_text,
+                    config=_config_with_runtime_overrides(config, runtime_settings),
+                    trigger="emotion_signal",
+                    gate=_REACTION_PROACTIVE_GATE,
+                )
+            except Exception:  # noqa: BLE001, S110 - 贴表情失败绝不影响聊天。
+                pass
         # 被动感知（批次 C）：所有群/私聊消息都观察行为、自述画像与小名自学，
         # 不依赖 @/白名单触发；只影响后续态度与称呼，不改变本轮是否回复。
         # observe/learn_profile 是多次 SQLite 事务并与 offload 线程争锁，
@@ -6084,6 +6148,31 @@ def _register_nonebot_handlers() -> None:
             )
             await _notify_operational_receipt(message, transport_receipt)
             if transport_receipt.state.value == "sent":
+                # 表情贴纸回应·触发 A（bot.reactions）：回复发出后小概率给
+                # 用户这条消息贴表情表达态度；同时登记 bot 自己的消息 id，
+                # 让后续【表情回应】分区能说出"给我的消息贴了"。
+                if ".mail" not in event_module:
+                    try:
+                        bot_sent_id = transport_receipt.provider_message_id
+                        if bot_sent_id:
+                            _REACTION_BUFFER.register_bot_message(
+                                message.session_id, bot_sent_id
+                            )
+                        await _maybe_react_on_message(
+                            bot,
+                            session_key=message.session_id,
+                            user_message_id=str(
+                                getattr(event, "message_id", "") or ""
+                            ),
+                            text=message.plain_text,
+                            config=_config_with_runtime_overrides(
+                                config, runtime_settings
+                            ),
+                            trigger="after_reply",
+                            gate=_REACTION_PROACTIVE_GATE,
+                        )
+                    except Exception:  # noqa: BLE001, S110 - 贴表情失败绝不影响投递结果。
+                        pass
                 if history_should_record:
                     _record_chat_history_turn(
                         history_recorder,

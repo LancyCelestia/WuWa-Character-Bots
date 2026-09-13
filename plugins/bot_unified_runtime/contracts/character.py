@@ -250,6 +250,8 @@ class ContextBundle(StrictBaseModel):
     mood_description: str = ""
     # L4 人格演化区：审核通过的 quirk 渲染块（自然语言）；空 = 无 quirk。
     quirks_section: str = ""
+    # 表情回应（bot.reactions）：会话最近贴纸回应渲染块；空 = 无互动，整块不出现。
+    reactions_section: str = ""
     # 会话级身份记忆（管理员设置）：每群/每私聊独立的称呼与标签渲染块。
     session_identity_note: str = ""
     # 当前群成员的 OneBot 身份事实（只作上下文，不参与权限判定）。

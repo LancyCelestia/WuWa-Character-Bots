@@ -163,6 +163,7 @@ class FileCharacterContextProvider:
         mood_describe: Callable[[], str] | None = None,
         quirks_describe: Callable[[], str] | None = None,
         identity_describe: Callable[[str], str] | None = None,
+        reactions_describe: Callable[[str], str] | None = None,
         shared_group_provider: SharedGroupContextProvider | None = None,
         action_brackets: bool = True,
         action_brackets_provider: object | None = None,
@@ -203,6 +204,7 @@ class FileCharacterContextProvider:
         self.mood_describe = mood_describe
         self.quirks_describe = quirks_describe
         self.identity_describe = identity_describe
+        self.reactions_describe = reactions_describe
         self.shared_group_provider = (
             shared_group_provider or NullSharedGroupContextProvider()
         )
@@ -314,6 +316,12 @@ class FileCharacterContextProvider:
                 session_identity_note = str(self.identity_describe(session_id) or "")
             except Exception:  # noqa: BLE001 - 会话身份层失败不影响主链路。
                 session_identity_note = ""
+        reactions_section = ""
+        if callable(self.reactions_describe):
+            try:
+                reactions_section = str(self.reactions_describe(session_id) or "")
+            except Exception:  # noqa: BLE001 - 表情回应层失败不影响主链路。
+                reactions_section = ""
         active_persona = self.persona_selector.select(
             emotions=[signal.emotion_label for signal in emotion_signals],
             override=self._persona_override(),
@@ -460,6 +468,7 @@ class FileCharacterContextProvider:
             emotion_signals=emotion_signals,
             mood_description=mood_description,
             quirks_section=quirks_section,
+            reactions_section=reactions_section,
             session_identity_note=session_identity_note,
             sender_profile_note=sender_profile_note,
             trend_context=trend_context,
@@ -565,6 +574,7 @@ def build_character_context_provider(
     mood_describe: Callable[[], str] | None = None,
     quirks_describe: Callable[[], str] | None = None,
     identity_describe: Callable[[str], str] | None = None,
+    reactions_describe: Callable[[str], str] | None = None,
 ) -> CharacterContextProvider:
     action_brackets_provider: object | None = None
     interaction_counts_provider: Callable[[], dict[str, int]] | None = None
@@ -700,6 +710,7 @@ def build_character_context_provider(
         mood_describe=mood_describe,
         quirks_describe=quirks_describe,
         identity_describe=identity_describe,
+        reactions_describe=reactions_describe,
         action_brackets=bool(getattr(config, "bot_persona_action_brackets", True)),
         action_brackets_provider=action_brackets_provider,
         persona_selector=PersonaSelector(build_alt_personas(config)),

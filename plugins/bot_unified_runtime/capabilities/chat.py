@@ -1337,6 +1337,8 @@ def build_chat_prompt_with_diagnostics(
         dynamic_parts += ["", "【实时感知】", emotion_lines]
     if context.mood_description.strip():
         dynamic_parts += ["", "【当前心情】", context.mood_description]
+    if context.reactions_section.strip():
+        dynamic_parts += ["", "【表情回应】", context.reactions_section]
     if context.quirks_section.strip():
         dynamic_parts += ["", context.quirks_section]
     if context.session_identity_note.strip():
