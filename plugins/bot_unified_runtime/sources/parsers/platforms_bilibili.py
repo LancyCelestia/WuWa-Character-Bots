@@ -518,14 +518,9 @@ def _lookup_video_by_id(
                         }
                     )
             if hot_comments:
+                # vis2r 修复③去重：热评只进 detail.hot_comments（卡片独立热评区
+                # 渲染），不再拼进 summary 文本——摘要与热评区此前重复同一套内容。
                 video_detail["hot_comments"] = hot_comments
-                summary_lines.append("")
-                summary_lines.append("热门评论：")
-                for comment in hot_comments:
-                    author = comment.get("author") or "匿名"
-                    text = str(comment.get("text") or "")[:80]
-                    likes = comment.get("likes") or 0
-                    summary_lines.append(f"· {author}：{text}（赞 {likes}）")
         except Exception:  # noqa: BLE001, S110 - 评论拉取失败不影响解析。
             pass
     if len(pages) > 1:

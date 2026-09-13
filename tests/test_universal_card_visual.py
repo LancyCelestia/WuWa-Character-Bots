@@ -117,10 +117,15 @@ def test_summary_block_has_tag_and_accent_bar() -> None:
 
 
 # ==================== 媒体角标 ====================
-def test_duration_pill_sits_bottom_left_in_video_inset() -> None:
+def test_duration_pill_sits_bottom_right_in_video_inset() -> None:
+    """vis2r 用户裁定（2026-09-13）：时长移封面右下角并加大字号；清晰度角标让位左下。"""
     rule = _css_rule(".video-cover-inset .duration-pill")
-    assert "left:12px" in rule
-    assert "right:auto" in rule
+    assert "right:12px" in rule
+    assert "left:auto" in rule
+    assert "font-size:15px" in rule
+    quality_rule = _css_rule(".video-cover-inset .quality-pill")
+    assert "left:12px" in quality_rule
+    assert "right:auto" in quality_rule
 
 
 def test_quality_pill_is_template_hook_only() -> None:
@@ -132,11 +137,15 @@ def test_quality_pill_is_template_hook_only() -> None:
 
 
 # ==================== 页脚媒体 ID ====================
-def test_footer_media_id_prefers_bvid_then_av() -> None:
-    html_text = _render({**_VIDEO_BASE, "bvid": "BV1uvbL6iE8z"})
-    assert '<span class="footer-media-id">BV1uvbL6iE8z</span>' in html_text
+def test_footer_media_id_prefers_av_then_bvid() -> None:
+    """vis2r 用户裁定（2026-09-13）：页脚优先展示 AV 号（更大字号），无 AV 回落 BV。"""
     av_only = _render({**_VIDEO_BASE, "av_id": "112874701"})
     assert '<span class="footer-media-id">AV 112874701</span>' in av_only
+    both = _render({**_VIDEO_BASE, "bvid": "BV1uvbL6iE8z", "av_id": "112874701"})
+    assert '<span class="footer-media-id">AV 112874701</span>' in both
+    assert "BV1uvbL6iE8z" not in both.split("footer-bot-pill")[0]
+    bvid_only = _render({**_VIDEO_BASE, "bvid": "BV1uvbL6iE8z"})
+    assert '<span class="footer-media-id">BV1uvbL6iE8z</span>' in bvid_only
     neither = _render(dict(_VIDEO_BASE))
     assert '<span class="footer-media-id">' not in neither
 

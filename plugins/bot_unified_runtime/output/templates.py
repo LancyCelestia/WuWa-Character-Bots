@@ -152,7 +152,7 @@ body {
   font-size: 12px; padding: 3px 9px; border-radius: 999px; }
 .summary { margin-top: 10px; font-size: 13px; color: var(--text-sub);
   line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
-.footer { margin-top: 10px; font-size: 11px; color: var(--text-sub);
+.footer { margin-top: 10px; font-size: 12px; color: var(--text-sub);
   border-top: 1px dashed color-mix(in srgb, var(--pc) 14%, rgba(255, 255, 255, 0.60)); padding-top: 8px; }
 /* F11 页脚：头像 + 机器人名 + 功能名（weather/eat 等媒体卡路径同样强制带）。 */
 .card-footer-bot { margin-top: 10px; display: flex; align-items: center; gap: 7px;
@@ -164,7 +164,7 @@ body {
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 600; }
 .cfb-name { font-size: 12px; font-weight: 650; color: var(--pc-dark); white-space: nowrap; }
-.cfb-label { font-size: 11px; color: var(--text-sub); }
+.cfb-label { font-size: 12px; color: var(--text-sub); }
 """
 
 

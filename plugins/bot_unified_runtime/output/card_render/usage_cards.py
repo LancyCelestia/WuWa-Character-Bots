@@ -164,7 +164,7 @@ body {{ margin:0; font-family:var(--font-family); background:transparent; color:
     linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
   border:1px solid transparent; box-shadow:var(--mica-shadow-soft); }}
 .head {{ padding:20px 26px 16px; border-bottom:1px solid rgba(255,255,255,.78); }}
-.kicker {{ color:var(--accent-ink); font-size:11px; font-weight:700; letter-spacing:.14em; }}
+.kicker {{ color:var(--accent-ink); font-size:12px; font-weight:700; letter-spacing:.14em; }}
 .title {{ margin-top:8px; font-size:26px; font-weight:700; }}
 /* 语义状态色（红绿黄）置于玻璃层之上，不随釉瑚洗派生。 */
 .status {{ display:inline-flex; align-items:center; gap:8px; margin-top:12px; padding:6px 14px; border-radius:999px;
@@ -175,13 +175,13 @@ body {{ margin:0; font-family:var(--font-family); background:transparent; color:
 .window {{ margin-top:10px; color:var(--muted); font-size:13px; }}
 .totals {{ display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; padding:14px 14px 4px; }}
 .tile {{ border-radius:var(--r-panel); padding:10px 14px; }}
-.tile .k {{ font-size:11px; color:var(--muted); font-weight:600; letter-spacing:.04em; }}
+.tile .k {{ font-size:12px; color:var(--muted); font-weight:600; letter-spacing:.04em; }}
 .tile .v {{ margin-top:4px; font-size:18px; font-weight:700; font-variant-numeric:tabular-nums; }}
 .tile.cost .v {{ color:var(--accent-ink); }}
 .body {{ padding:10px 14px 14px; display:grid; gap:5px; }}
 .mhead, .mrow {{ display:grid; grid-template-columns:minmax(150px,1.6fr) repeat(4,1fr) 1.1fr; gap:6px;
   padding:8px 12px; border-radius:10px; align-items:center; }}
-.mhead {{ font-size:11px; color:var(--muted); font-weight:700; letter-spacing:.03em; padding-bottom:2px; }}
+.mhead {{ font-size:12px; color:var(--muted); font-weight:700; letter-spacing:.03em; padding-bottom:2px; }}
 .mrow {{ font-size:12.5px; font-variant-numeric:tabular-nums; }}
 .mcell {{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
 .mcell.model {{ font-family:Consolas,monospace; font-weight:650; }}
