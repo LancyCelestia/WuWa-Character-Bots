@@ -282,7 +282,12 @@ def test_render_samples_builder_exception_isolated(tmp_path: Path) -> None:
     assert "boom" in results[0].error
 
 
-def test_main_only_filter_and_unknown_key(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_only_filter_and_unknown_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 全离线口径：注入假后端，防真开 Playwright 把 running loop 留在主线程
+    # 毒化后续套件的 asyncio.run() 用例（A43 76 红根因）。
+    monkeypatch.setattr(rcs, "build_render_backend", lambda name="": FakeBackend())
     exit_code = rcs.main(["--out", str(tmp_path), "--only", "market_bond,media_archive"])
     assert exit_code == 0
     out = capsys.readouterr().out
