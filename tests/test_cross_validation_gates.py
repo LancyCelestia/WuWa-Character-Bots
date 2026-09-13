@@ -1,10 +1,10 @@
-"""交叉验证机制常驻门（哈希漂移 / 机器事实漂移 / 热路径性能）。
+"""交叉验证机制常驻门（哈希漂移 / 机器事实漂移）。
 
-三个子机制：
+两个子机制：
 - tests/verify_hashes.py --check：交付物 SHA-256 清单（DESIGN-SPEC.md §三）；
-- scripts/doc_sync.py --check：docs/auto-facts.md 机器册与代码互证；
-- tests/perf_regression.py：热路径数量级守卫（函数经本模块再导出给 pytest 收集）。
+- scripts/doc_sync.py --check：docs/auto-facts.md 机器册与代码互证。
 
+热路径性能门在 tests/test_perf_regression.py（pytest 直收集，独立文件）。
 漂移处理约定：确认属预期改动后跑对应 --write，门即恢复绿——"有意识地改"。
 """
 
@@ -15,18 +15,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(Path(__file__).parent))
-
-import perf_regression
-
-# 性能门再导出（pytest 按函数名收集；标记随函数对象保留）。
-test_route_classify_throughput_stays_order_of_magnitude = (
-    perf_regression.test_route_classify_throughput_stays_order_of_magnitude
-)
-test_core_modules_import_under_budget = perf_regression.test_core_modules_import_under_budget
-test_render_and_data_modules_import_cleanly = (
-    perf_regression.test_render_and_data_modules_import_cleanly
-)
 
 
 def _run_script(script: str, flag: str) -> subprocess.CompletedProcess[str]:

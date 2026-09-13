@@ -78,7 +78,7 @@ def _network_retry(fetch, *, attempts: int = 3):
             if attempt + 1 >= attempts:
                 raise
             empty_backoff_sleep()
-    raise last_exc  # pragma: no cover
+    raise last_exc if last_exc is not None else RuntimeError("unreachable")  # pragma: no cover
 
 # ==================== 公司注册表（显式 ticker，可扩展） ====================
 

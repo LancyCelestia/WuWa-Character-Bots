@@ -52,37 +52,6 @@ SHADOW_PRIMARY = (
 )
 SHADOW_SECONDARY = "0 3px 10px rgba(31, 35, 41, 0.06)"
 
-# ==================== 层次化阴影 + 辉光 + 表面/字体/分隔线（vis4，2026-09-13）====
-# 用户裁定升级：所有元素都要有层次阴影区分 + 辉光 + 清晰区分线；相邻色块
-# 颜色不得过于相似。全部 token 化钉在本模块——模板只允许 var()/常量引用，
-# 契约测试锁定；改这里=全部模板自动生效（牵一发自动全改的根）。
-SHADOW_LEVELS: dict[str, str] = {
-    # L3 外壳：深投影 + wash 染色（原 SHADOW_PRIMARY，兼容名保留）。
-    "elev_shell": SHADOW_PRIMARY,
-    # L2 面板级：摘要块/页脚胶囊等大件内件——比瓦片深一档，层次可辨。
-    "elev_panel": (
-        "0 8px 22px color-mix(in srgb, var(--wash-2) 18%, transparent), "
-        "0 2px 6px rgba(31, 35, 41, 0.05)"
-    ),
-    # L1 瓦片级：指标小卡/评论条等小件（原 SHADOW_SECONDARY，兼容名保留）。
-    "elev_tile": SHADOW_SECONDARY,
-}
-# 辉光 token：作背景层（radial 光晕），不是 box-shadow——不与阴影 token 冲突。
-GLOW_ACCENT = (
-    "radial-gradient(closest-side, "
-    "color-mix(in srgb, var(--pc) 20%, transparent) 0%, "
-    "color-mix(in srgb, var(--pc) 8%, transparent) 46%, transparent 74%)"
-)
-# 区分线 token：清晰可见的平台色 22% 细线（替代旧 14% 淡线）。
-DIVIDER = "1px solid color-mix(in srgb, var(--pc) 22%, rgba(255, 255, 255, 0.65))"
-# 字号阶梯（px）：全模板字号只允许取本表值（契约测试锁定），小件下限 12。
-TYPE_SCALE_PX: dict[str, int] = {
-    "display": 26,
-    "title": 20,
-    "body": 15,
-    "label": 13,
-    "caption": 12,
-}
 
 # ==================== 渲染契约常量（契约测试锁定，2026-09-12） ====================
 # 语义化策略常量：所有模板禁止 <meta viewport>（playwright viewport 由

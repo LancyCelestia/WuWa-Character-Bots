@@ -5744,7 +5744,13 @@ def _register_nonebot_handlers() -> None:
                 message.raw_segments.append(
                     {"type": "image", "data": {"url": recent_url}}
                 )
-                message.audit_tags.append("vision_from_group_recent")
+                # 来源附注（vis3）：随图注入让模型知道这是群里最近的图，非提问者上传。
+                message.raw_segments.append(
+                    {
+                        "type": "text",
+                        "data": {"text": "（附注：这张图取自群里最近发送的图片。）"},
+                    }
+                )
         # 被动感知（批次 C）：所有群/私聊消息都观察行为、自述画像与小名自学，
         # 不依赖 @/白名单触发；只影响后续态度与称呼，不改变本轮是否回复。
         # observe/learn_profile 是多次 SQLite 事务并与 offload 线程争锁，
