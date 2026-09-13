@@ -163,6 +163,9 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 - cookie 已灌 18 平台（`ChatBot_Runtime\data\platform_cookies.txt`，备份 .bak-20260912）；失效用 `/bot cookie import <平台> <头>` 重灌。
 - 安静时间（默认 00:00–06:00，Asia/Hong_Kong）内 pipeline 拦截属预期；e2e 脚本回执可见。
 - NMC 主通道瞬时超时会自动重试一次；Open-Meteo 兜底仅海外/主通道失败时使用。
+- **2026-09-14 六域批重启前置（已就绪，重启前逐项核对）**：
+  ① `.env` 的 `BOT_KB_WIKI_ROOT` 已修至 `D:/Coding/01_Projects/Crawl Wiki`（wiki-health-report 实核 manifest 探测 400/400 全命中），且 knowledge-sync 修复已跑（人格 knowledge 库 113 pending 清零 + FTS/ANN 签名重建；离线探针实跑 wiki 检索 4 hits、知识检索「守岸人是谁」5 hits）——重启后按 §6.6.5④ 验证检索；
+  ② 渲染预算键已解锁：`.env` `BOT_RENDER_MAX_CONCURRENCY=2` + `BOT_RENDER_WAIT_BUDGET_MS=1500`（13fcd30 机制层接线 `resolve_render_max_concurrency`/`resolve_render_wait_budget_ms`，缺省=字节级现状，删行即回滚）。
 
 ## 6.2 向量知识库（本地 Ollama bge-m3 优先，百炼兜底）
 
@@ -194,9 +197,9 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 | ④ | 汇率 | `汇率`；`100日元换多少人民币`；`美元兑人民币` | 面板卡 10 对实时中间价（含中间价/基准货币/延迟语义标注）；定向换算按 unit_base 折算（100 日元≈个位数人民币，**不得**出现「1 日元=4.36 元」百倍错值）；USD/TWD、USD/MOP、USD/AED 三行诚实「暂无数据」 | `sources/fx_data.py` 东财通道与 unit_base 折算；顺手人审一眼反向换算文案（如「1人民币≈多少日元」） | handover-c §五.3 + 台账 #26③ |
 | ⑤ | 行情卡 | `行情` / `莫斯科股指` | 折线正常；MOEX 出**真走势**（ISS history 30 收盘）；6 个已验证映射指数带「已与腾讯行情交叉核验 ✓ n/n」脚注，两源不一致时显式标注双方数值 | MOEX 无折线 → 查 MOEX ISS 端点可用性；无脚注 → 属设计（仅 6 指数有已验证映射）；卡图带透明边 → 查 market_card 根元素 `.card` 类 | handover-c §五.3 + 台账 #26③ |
 | ⑥ | 占卜/历史上的今天出卡 | `八字` / `塔罗 三张` / `占卜` / `历史上的今天` | 渲染后端可用时出卡；后端失败**回纯文字**不报错（mixed/text 逐字节兜底；推送调度器保持纯文字属预期设计） | 真机出图此前从未验证（handover-c §三.5，today_history 数据源夜间不可拉），属首验项；失败先看渲染日志，再查 payload/后端接线 | handover-c §五.3 + 台账 #26⑤ |
-| ⑦ | help 新口径 | `/bot help`；`/bot help 个股行情`、`/bot help 汇率`；再抽验 帮助/聊天/戳一戳/表情收库/自然语言/忽略 六个新主题深度页 | 帮助卡按新口径 **67 模块**；8 个新主题（帮助/聊天/戳一戳/表情收库/自然语言/忽略/个股行情/汇率）深度页齐全、逐参数四要素 | echo.py `_HELP_ENTRIES` 与帮助注册表一致性门禁（tests/test_help_registry*） | 帮助注册表（台账 #26④） |
+| ⑦ | help 新口径 | `/bot help`；`/bot help 个股行情`、`/bot help 汇率`；再抽验 帮助/聊天/戳一戳/表情收库/自然语言/忽略 六主题与 商品行情/国债收益率/北向资金/笔记 深度页 | 帮助卡按现行口径 **72 模块**（`docs/command-catalog.md` 自动生成口径：模块数 72；0913 批 67 之后六域批净增 商品行情/国债收益率/北向资金/笔记/吃什么 等 5 topic）；深度页齐全、逐参数四要素 | echo.py `_HELP_ENTRIES` 一致性门禁：tests/test_help_entries_coverage.py + tests/test_e2e_help_matrix.py + tests/test_help_meta_search_and_tra49_aliases.py | 帮助注册表（台账 #26④+#31） |
 | ⑧ | 帮助卡/用量卡新视觉 | `/bot help` 与用量卡各出一张，肉眼比对 | f-string 直拼卡接入 theme_tokens 后视觉统一（守岸人淡蓝 accent、两枚阴影 token、统一圆角），无透明边、无字重超标 | 对照 C 方向验收图（`%TEMP%\agent-c-visual\`，若已清理则以 tests/test_mica_builders_contract.py 契约为准） | handover-c §五.3 + 台账 #26② |
-| ⑨ | mermaid 出图 | 会话里发一段 mermaid 代码块 | 正常出图；单张失败后单次重试救回，**不再**「永久 None 直到重启」（渲染线程 asyncio 中毒已根治：`_close_thread_browser` 改 `ctx.__exit__` + 重试） | 仍 None → 设 `BOT_MERMAID_NET_TESTS=1` 跑 tests/test_mermaid_reply_render.py 烟测定位（区分网络/上游 vs 渲染线程） | handover-c §五.3 + 台账 #26（mermaid 待重启观察） |
+| ⑨ | mermaid 出图 | 会话里发一段 mermaid 代码块 | 正常出图；单张失败后单次重试救回，**不再**「永久 None 直到重启」（渲染线程 asyncio 中毒已根治：`_close_thread_browser` 改 `ctx.__exit__` + 重试）；mermaid.min.js 已本地化（`card_render_assets/mermaid/`，渲染期 `page.route` 传输层本地校验 fulfill、缺失自动放行 CDN——与生产同路径）→ **离线也可出图**，治已知 #8「无网 10-14s 预算截断」根因 | 仍 None → 设 `BOT_MERMAID_NET_TESTS=1` 跑 tests/test_mermaid_reply_render.py 烟测定位（区分网络/上游 vs 渲染线程）；本地素材缺文件 → 跑 scripts/fetch_mermaid_js.py 幂等补齐 | handover-c §五.3 + 台账 #26/#31（959630a+e37817f） |
 
 ### 6.6.1 触发形态验收（英文/拼音/繁體/昵称抽样 + 劫持守卫负样本，同批生效）
 
@@ -269,3 +272,49 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 | ⑥ | VLM 未配置时发图+`收藏` | 回执标注「未分析」，按类型归类（无 VLM 语义类别/来源） | 全部落「未识别」且无「未分析」标注 → 查识图 registry 配置与未配置降级分支 |
 
 **收尾纪律**：全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 台账 #28 记重启生效；任一项不符按 §6.6 收尾纪律走 systematic-debugging。
+
+### 6.6.3 金融扩容+账单渠道验收（2026-09-14 六域批，重启生效）
+
+> 覆盖：大宗商品/国债收益率/北向资金三新卡（HANDBOOK §24.2）+ 账单渠道子行（§24.3）+ 个股 logo 缓存。证据=`.superpowers/sdd/2026-09-13-six-domain-batch/`（fin-report / billing-report）。
+> **接线状态**：三新能力**已接线**（`789700c`：base_router 三 RouteKind+echo 帮助三 topic+route-matrix 补行、商品触发股词让路；`691d6e1`：commodities/bond/northbound 生产 matcher 注册三工厂三 handle）；重启后若仍不触发，快速判定排查：`/bot help` 或 `/bot commands` 能否搜到 商品行情/国债收益率/北向资金 新 topic（搜不到=注册/接线问题）。
+> **账单前置**：渠道子行需 `.env` `BOT_LLM_BILLING_ENABLED=true`（账本关闭时报告无子行=与旧版一致非回归）；`/bot model usage` 交互卡渠道子行**已接线**（A8 席，随 `3592793` 入库；账本关时无子行=与旧版字节级一致非回归）→ 定时报告/超限即时卡/交互卡三处均可验收。
+
+| # | 验收项 | 触发方式 | 预期 | 异常时看哪 | 预期来源 |
+|---|---|---|---|---|---|
+| ① | 大宗商品卡 | `黄金` / `原油` / `大宗商品` | 商品速览卡：贵金属（COMEX 黄金/白银）/基本金属（COMEX 铜）/能源（NYMEX 原油）分组，红涨绿跌，30 日折线可得时随行；铜行带「LME 无稳定免费公开源，铜采用 COMEX 主力连续（美元/磅）」注 | 无卡 → 先按接线前置确认已接线；折线区「暂无历史走势数据」=push2his 瞬断诚实降级非缺陷（fin-report §二.6）；东财凌晨限流时段先排除 | fin-report §〇.2/§二 |
+| ② | 国债收益率卡 | `国债收益率` / `期限利差` | 中/美国债 2/5/10/30 年+10Y−2Y 期限利差卡，带交易日/收盘口径/延迟标注；**无 1Y 行**（无源诚实不接）；「债券基金」不触发属守卫预期 | 全空 → 东财 datacenter `RPTA_WEB_TREASURYYIELD` 可达性；利差数值错 → 列映射交叉验证链（bond_data.py） | fin-report §〇.3 |
+| ③ | 北向资金卡 | `北向资金` / `北上资金` | 沪/深股通各自：当日成交总额（亿元）+笔数+领涨股+参考指数收盘；显式注明「不含净买入口径」；**卡上绝无净买入数字**（2024-08 起交易所停止披露）；「南向资金」不触发属守卫预期 | 成交额量级存疑 → DEAL_AMT 百万→亿元 /100 换算链（fin-report §二.4 量纲自洽推理）；领涨股空 → 上游字段缺失诚实降级 | fin-report §〇.4/§二.4 |
+| ④ | 账单渠道子行 | 等 21:30 定时报告（或触发账单超限即时卡），账本开启 | 模型家族行下缩进 `└ 渠道 <id>：N 次 / 费 X.XX 元` 子行（费用降序）；跨零点日期不串行（substr 日界） | 无子行 → 查 `BOT_LLM_BILLING_ENABLED` 当前值与装配期快照语义（台账 #3 同族）；交互卡无子行 → 账本关属预期（字节级一致） | billing-report §一.3/§四.4；usage-card-report |
+| ⑤ | logo 缓存命中 | `英伟达股价` 连发两次 | `ChatBot_Runtime\data\stock_logos\<sha256(域名)>.png` 落盘；第二次出卡不再触发下载（clearbit 不可达时自动 Google s2 二源，PNG magic 校验）；**卡面是否显示 logo=模板槽位未裁决（休眠契约），卡面无 logo 不算异常** | 目录无文件 → clearbit/s2 双源均不可达（网络面，看渲染日志）；反复下载 → stocks.py `local_logo_uri`（download=False 纯查缓存）命中逻辑 | fin-report §〇.5/§四.风险2 |
+
+**收尾纪律**：全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 台账 #31 记重启生效；任一项不符按 §6.6 收尾纪律走 systematic-debugging。
+
+### 6.6.4 提醒/笔记/授时+错误报告卡验收（2026-09-14 六域批 A2 收编+后续，重启生效）
+
+> 覆盖：笔记 CRUD+图片收纳 / 「做完了」自然勾选 / 分型提醒语气 / NTP 授时（HANDBOOK §24.10 A12 条）+ 统一错误报告卡触发形态。证据=`.superpowers/sdd/2026-09-13-six-domain-batch/`（route-help-report / startup-audit-report / security-report / pixel-audit-report）。
+> 前置：bot 已提权重启且在线；config 六键默认即启用（`bot_notes_*`/`bot_time_sync_*`，7414e87+789700c）；授时**首次校时在启动后 ~65 秒**（startup-audit §4.2，非装配期），此前时序走系统钟属预期。
+> ⑥ 错误报告卡**已落地**（A28 批 + 2026-09-14 P0 两段式异步化 A-rec；工作树待提交——随收尾批入库、重启后生效；HANDBOOK §24.12）——按本表可执行验收，预期形态=**即时文本回执 + 诊断卡后台补发**（见⑥）。
+
+| # | 验收项 | 触发方式 | 预期 | 异常时看哪 | 预期来源 |
+|---|---|---|---|---|---|
+| ① | NTP 校时 | 重启后等 ~65s 以上，看运行日志 | 出现授时日志（服务器 ntp.aliyun.com 等 3 台之一，drift 在 ±1.5s 钳制内，成功缓存 10 分钟/失败冷却 5 分钟）；防火墙拦 UDP 123 时周期性 warning+回退系统钟=**预期降级**，提醒投递仍正常（最多偏 1.5s） | 全无授时日志 → 查 `BOT_TIME_SYNC_ENABLED` 与出站 UDP 123；offset 拒收 → 解包门（1970 前/unix≤0 拒收）+钳制语义（timesync.py，M-3/M-4 已修） | startup-audit §四.2/§六 |
+| ② | 笔记 CRUD | `笔记 明天带伞`（记）→ `笔记列表`（看；裸 `笔记` 同效）→ `删笔记 1`（删） | 记：回执「记下了，第 N 条，安稳收好」；看：列表含该条；删：回执用「**放下**」措辞（「第 1 条笔记已经放下了」，统一隐喻非「放开」；注意「放下第 N 条」只是 usage 文案里的描述，**不是指令**——指令面=删(除)笔记 N/笔记删 N/shanbiji N）；删除后列表不再出现 | 无回执 → 路由 REMINDER 族（base_router）+信号词命中；库路径 → `ChatBot_Runtime\data\notes.sqlite3`（runtime_paths 重映射，源码树零 `data/`） | route-help §2/§五.2 |
+| ③ | 笔记图片收纳 | 发一张图片、同条消息带 `笔记`（或回复图片发笔记指令） | 图片经 SSRF **入口+落点双查**后落盘（uuid 文件名），笔记内容带图片引用行；引用行被改成 `../` 也取不到目录外文件（basename 防穿越） | 拒绝落盘 → 核对 URL 是否内网/重定向落点命中护栏；同批对照 eat.py I-1 已补同款双查（93e8195） | security-report §2 #11；A12 收编 |
+| ④ | 做完了自然勾选 | 先 `笔记 交报告`（成待办），再发 `交报告做完了` | 唯一命中→直接勾选，回执「已经替你放下了」族；2-3 条并列→「**有几件事都对得上，是哪一件完成了？**」列候选清单（不说「两件」硬编码）；重复勾选不挂死（mark_done 死锁已修） | 误勾/不勾 → resolve_todo_match 候选逻辑（reminders.py）；卡死 → Critical 死锁修复回归（789700c） | copy-audit C1；route-help §3.1 |
+| ⑤ | 分型提醒语气 | `半小时后提醒我吃药` / `明天 9 点提醒我开会` / `回来提醒我买牛奶` | 到点投递按五分型（吃药/约会/购物/待办/自定义）出对应守岸人语气开场（「喝口水，慢慢来」「像钟摆」「海还在这边」族），均带「你之前说过的：原文」；全文无性别化称呼/无「您」/无道歉垫话/无单名 | 不投递 → bot_reminder_tick 每分钟 job（startup-audit §三-9）+授时链路；语气不符 → reminders.py 分型五模板（A21 审计全净基线） | persona-audit §二/§三 |
+| ⑥ | 错误报告卡触发形态（两段式异步化） | 重启后临时制造一次能力异常：断网（或拔网线）发一条 `行情` 指令 → 期待**先收到即时文本回执，约 1 分钟内诊断卡补发**；**冷却期内（60s）再制造一次异常** → 期待降级为一句守岸人纯文本（防刷屏）；恢复网络后重试同命令 | 断网时第一段：毫秒级文本回执（守岸人话术人话区 + 尾注「详细诊断卡随后补发。」，渲染零参与不阻塞 loop）；第二段：云母诊断卡（触发回显≤80 字符+栈摘录暗底块+分区瓦片，本机路径/密钥已打码）由专用单线程 `error-card-render` 渲染后经 send_queue worker 补发（request_id=原 id+`-card`；认领宽限 60s 后 worker 接管，约 1 分钟量级属预期节奏非卡死）；渲染失败 → 补发全量诊断文本（完整性不丢）；冷却期内第二次：纯文本一句；恢复后：同命令正常出卡 | 无回执 → 查 `bot_error_card_enabled`（缺省 true）与 pipeline `_internal_error` 旁路钩子；卡迟迟不来 → 查 send_queue worker 与 `:card` dedupe 行（宽限期语义 sender/queue.py）；无冷却降级 → ErrorCardGate（`bot_error_card_cooldown_seconds`=60，进程内滑动窗）；卡上敏感信息未打码 → redact 链（栈帧逐行，缺省 8 帧）；卡渲染失败应自动降级纯文本（契约零破坏） | error-card-report + error-card-async-design（P0 两段式）；HANDBOOK §24.12-4 |
+
+**收尾纪律**：全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 台账 #31 记重启生效；任一项不符按 §6.6 收尾纪律走 systematic-debugging。
+
+### 6.6.5 本批新增能力验收（视觉收口+样张+知识库检索，重启生效）
+
+> 覆盖：帮助卡两栏排版（台账 #13 残余收口）/ 卡面样张脚本 / logo 预热 CLI / knowledge-sync 修复后检索验证（§6.5 六域批前置①的验证半边）。证据=`.superpowers/sdd/2026-09-13-six-domain-batch/`（visual-closure-report / samples-script-report / wiki-health-report / error-card-async-design）；错误卡 P0 异步化形态已并入 §6.6.4⑥，不另立条。
+
+| # | 验收项 | 触发方式 | 预期 | 异常时看哪 | 预期来源 |
+|---|---|---|---|---|---|
+| ① | 帮助卡两栏排版 | `/bot help` 总览页肉眼比对；窄窗口（<560px 等效）再发一次对照 | 总览页 masonry 双栏分区分栏 + 分区内 topic 行两栏 CSS columns；窄卡自动退单栏；长摘要两行截断（line-clamp:2）不破行高；无透明边/无字重超标 | 版式塌陷 → echo.py 帮助 CSS（`.help-grid.masonry` 族）；离线断言 → tests/test_help_card_twocol.py；离线样张 → §6.6.5② `help_index` 卡 | 台账 #13 残余 + visual-closure-report |
+| ② | 卡面样张脚本 | `python scripts/render_card_samples.py --list`（只列 17 卡型，离线快）→ 全量 `python scripts/render_card_samples.py`（缺省落 %TEMP%\card_samples\；`--out <dir>` 指定；`--only market_index,affinity_group` 抽样） | 9 族 17 张全离线真渲染（universal×4 / market+金融三卡×4 / 个股 / 好感度×3 含脏数据卡 / 点歌候选 / mermaid 本地素材真出图 / help 两栏目录（真实 72 topic payload）/ usage 账单含渠道子行 / media_archive 样张）；退出码 0=全过、1=有卡失败（其余照常出图）、2=渲染后端不可用；PNG 供与生产出卡肉眼比对 | 全红（退出码 2）→ playwright 后端不可用（与生产渲染同因，先修后端）；单卡红 → 对应能力 payload 漂移，按 --list 卡名 key 查 bridge | samples-script-report（8520813+收尾批增补至 17 张） |
+| ③ | logo 预热 CLI | 工作区根执行 `python -m plugins.bot_unified_runtime.capabilities.stocks` | 幂等预热：输出「logo 预热：全部命中本地缓存（data/stock_logos，零网络）」或失败名单（不阻塞，真实查询懒补）；与 §6.6.3⑤ 同一缓存面（已预热 8/9，meta.com 因 s2 返 JPEG 过不了 magic 契约诚实降级） | 反复全量回源下载 → local_logo_uri「缓存命中零网络→clearbit→s2」链路断（查 `ChatBot_Runtime\data\stock_logos\` 落盘与渲染日志） | a4371d2（fin-report §〇.5） |
+| ④ | knowledge-sync 修复后检索 | bot 重启在线后：`powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 context-smoke`；再 QQ 私聊问一个鸣潮设定问题 + 一个 wiki 条目问题 | context-smoke 报告语义检索命中（非顺序取块）；wiki 通道 available（§6.5 前置①已修根，manifest 探测通过；启动后 ~45s 补同步 job 增量幂等）；人格 knowledge 库向量/FTS 通道可用（修复批已 113 pending 清零+签名重建） | 仍顺序取块 → vector_knowledge.py ann/fts 签名与库 meta 对账；wiki 空结果 → kb_wiki.py manifest 探测与 `BOT_KB_WIKI_ROOT` 值；离线实跑底稿=`$TEMP\wiki-audit\`（probe_retrieval：wiki 4 hits/知识 5 hits） | wiki-health-report + vector-audit |
+
+**收尾纪律**：全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 台账 #31 记重启生效；任一项不符按 §6.6 收尾纪律走 systematic-debugging。
