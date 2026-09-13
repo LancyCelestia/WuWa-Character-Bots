@@ -1244,6 +1244,21 @@ def render_universal_card_html(payload_dict: dict[str, Any] | None = None) -> st
     context["topics"] = [str(tag) for tag in _as_list(topics_raw) if _as_str(tag)]
     # E01：漂移相位按 payload digest 确定注入（模板 :root --phase 直读）。
     context["phase"] = payload_phase(data)
+    # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，全模板同一值——
+    # 改 theme_tokens = 全模板自动生效）。
+    from .theme_tokens import (
+        DIVIDER,
+        GLOW_ACCENT,
+        SHADOW_LEVELS,
+        SURFACE_TINTS,
+    )
+
+    context["shadow_elev_panel"] = SHADOW_LEVELS["elev_panel"]
+    context["glow_accent"] = GLOW_ACCENT
+    context["divider_line"] = DIVIDER
+    context["surface_a"] = SURFACE_TINTS["tint_a"]
+    context["surface_b"] = SURFACE_TINTS["tint_b"]
+    context["surface_neutral"] = SURFACE_TINTS["tint_neutral"]
     return _TEMPLATE.render(**context)
 
 

@@ -978,6 +978,15 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     --wash-mist: {{ wash_mist | default('#f4f5f6') }};
     --wash-blob-1: color-mix(in srgb, var(--pc) 35%, var(--wash-1));
     --mica-border: rgba(255, 255, 255, .85);
+    /* vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源经 bridge 注入）：
+       L2 面板级阴影给摘要/页脚胶囊等大件；辉光只作背景层；相邻色块三档表面
+       zebra 交替保证区分度；区分线=平台色 22% 清晰细线。 */
+    --mica-shadow-panel: {{ shadow_elev_panel }};
+    --glow-accent: {{ glow_accent }};
+    --divider-line: {{ divider_line }};
+    --surface-a: {{ surface_a }};
+    --surface-b: {{ surface_b }};
+    --surface-neutral: {{ surface_neutral }};
     --video-inset: 18px;
 }
 /* 截图容器：零留白——元素截图 bbox = 可见卡本体（v2 验收反馈 1），
@@ -1144,15 +1153,16 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .video-cover-inset .quality-pill { left:12px; right:auto; }
 .quality-pill { position:absolute; left:12px; right:auto; bottom:12px; z-index:2; background:rgba(10, 12, 16, 0.72); color:#ffffff; font-size:12px; font-weight:700; padding:3px 9px; border-radius:11px; letter-spacing:0.02em; box-shadow:var(--mica-shadow-soft); }
 .video-metric-columns { display:grid; grid-template-columns:repeat(auto-fit, minmax(96px, 1fr)); gap:8px; margin: 0 var(--video-inset) var(--video-inset); }
-.video-metric-card { min-width:0; min-height:86px; padding:12px 8px 11px; border-radius:var(--r-tile); display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--text-main); box-shadow:var(--mica-shadow-soft); }
+.video-metric-card { min-width:0; min-height:86px; padding:12px 8px 11px; border-radius:var(--r-tile); display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--text-main); box-shadow:var(--mica-shadow-panel); }
+/* vis4 相邻色块高区分度：指标瓦片 zebra 交替三档表面（inline 覆盖 surface）。 */
 .metric-icon { width:30px; height:30px; display:flex; align-items:center; justify-content:center; margin-bottom:7px; color:var(--pc); }
 .metric-icon svg { width:22px; height:22px; display:block; fill:currentColor; color:currentColor; }
 .metric-value { display:block; overflow:hidden; color:var(--pc-dark); font-size:22px; font-weight:700; text-overflow:ellipsis; white-space:nowrap; font-variant-numeric:tabular-nums; }
 .metric-label { display:block; margin-top:3px; color:var(--text-secondary); font-size:13px; }
 /* 摘要块：左侧 --pc 竖条 + 「内容摘要」小标（对齐基准解析卡的摘要层级）。 */
-.video-card-summary { position:relative; margin: 0 var(--video-inset) var(--video-inset); padding:15px 18px 15px 27px; border-radius:var(--r-panel); color:var(--text-sub); font-size:17px; line-height:1.6; white-space:pre-line; box-shadow:var(--mica-shadow-soft); overflow:hidden; }
+.video-card-summary { position:relative; margin: 0 var(--video-inset) var(--video-inset); padding:15px 18px 15px 27px; border-radius:var(--r-panel); color:var(--text-sub); font-size:17px; line-height:1.6; white-space:pre-line; box-shadow:var(--mica-shadow-panel); overflow:hidden; }
 .video-card-summary::before { content:""; position:absolute; left:0; top:0; bottom:0; width:9px; border-radius:var(--r-panel) 0 0 var(--r-panel); background:var(--pc); }
-.summary-tag { display:block; margin-bottom:6px; font-size:12px; font-weight:600; color:var(--pc-dark); letter-spacing:0.06em; }
+.summary-tag { display:block; margin-bottom:6px; padding-bottom:4px; border-bottom:var(--divider-line); font-size:12px; font-weight:600; color:var(--pc-dark); letter-spacing:0.06em; }
 /* 话题标签 chip（vis1r H3）：payload.topics 由 bridge 从 content.tags 投影；无数据整块隐藏。 */
 .topic-row { display:block; margin:0 0 4px; }
 .topic-chip { display:inline-block; margin:0 6px 4px 0; padding:1px 8px; border-radius:999px; background:color-mix(in srgb, var(--pc) 10%, #fff); color:var(--pc-dark); font-size:12px; font-weight:600; }
@@ -1243,7 +1253,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     </div>
     {% if title %}<div class="video-title"><div class="video-title-quote mica-surface"><span class="video-title-marker"></span><span class="video-title-text">{{ title }}</span></div></div>{% endif %}
     {% if banner or cover_url %}<div class="video-cover-inset"><div class="cover-fill" style="background-image:url('{{ banner or cover_url }}')"></div><img class="cover-contain" src="{{ banner or cover_url }}" alt="cover" onerror="if(this.src.indexOf('maxresdefault')>-1){this.onerror=null;this.src=this.src.replace('maxresdefault','hqdefault');}else{this.style.display='none';var fill=this.parentElement.querySelector('.cover-fill');if(fill){fill.style.display='none';};}">{% if video_duration %}<span class="duration-pill">{{ video_duration }}</span>{% endif %}{% if video_quality %}<span class="quality-pill">{{ video_quality }}</span>{% endif %}</div>{% endif %}
-    {% if stats_bar_items %}<div class="video-metric-columns">{% for item in stats_bar_items %}<div class="video-metric-card mica-surface" aria-label="{{ item.label }}">{% if item.icon_svg %}<span class="metric-icon metric-{{ item.key }}" data-icon-source="{{ item.source | default('iconfont', true) }}">{{ item.icon_svg | safe }}</span>{% endif %}<span class="metric-value">{{ fmt_count(item.value) }}</span><span class="metric-label">{{ item.label }}</span></div>{% endfor %}</div>{% endif %}
+    {% if stats_bar_items %}<div class="video-metric-columns">{% for item in stats_bar_items %}<div class="video-metric-card mica-surface" aria-label="{{ item.label }}"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% else %} style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% endif %}>{% if item.icon_svg %}<span class="metric-icon metric-{{ item.key }}" data-icon-source="{{ item.source | default('iconfont', true) }}">{{ item.icon_svg | safe }}</span>{% endif %}<span class="metric-value">{{ fmt_count(item.value) }}</span><span class="metric-label">{{ item.label }}</span></div>{% endfor %}</div>{% endif %}
     {% if video_desc or summary or text or topics %}<div class="video-card-summary mica-surface"><span class="summary-tag">内容摘要</span>{% if topics %}<span class="topic-row">{% for tag in topics %}<span class="topic-chip">#{{ tag }}</span>{% endfor %}</span>{% endif %}{{ video_desc or summary | safe or text | safe }}</div>{% endif %}
     {% if music_name %}<div class="music-credit mica-surface"><span class="music-note">♪</span><span class="music-name">{{ music_name }}</span>{% if music_author %}<span class="music-author">{{ music_author }}</span>{% endif %}</div>{% endif %}
     {% if hot_comment or hot_comments %}<div style="display:flex;flex-direction:column;gap:8px;margin:0 var(--video-inset) var(--video-inset);">{% for comment in ((hot_comments or [])[:3] if hot_comments else ([hot_comment])) %}<div class="hot-comment mica-surface"><div class="pc-header"><span class="pc-badge">热评</span>{% if comment.avatar %}<img class="pc-avatar" src="{{ comment.avatar }}" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ comment.author }}</span>{% if comment.time %}<span> · {{ comment.time }}</span>{% endif %}</div><div class="pc-content">{{ comment.content }}</div>{% if comment.likes %}<div class="pc-likes">{{ comment.likes }} 赞</div>{% endif %}</div>{% endfor %}</div>{% endif %}

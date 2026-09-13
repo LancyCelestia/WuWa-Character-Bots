@@ -52,6 +52,38 @@ SHADOW_PRIMARY = (
 )
 SHADOW_SECONDARY = "0 3px 10px rgba(31, 35, 41, 0.06)"
 
+# ==================== 层次化阴影 + 辉光 + 表面/字体/分隔线（vis4，2026-09-13）====
+# 用户裁定升级：所有元素都要有层次阴影区分 + 辉光 + 清晰区分线；相邻色块
+# 颜色不得过于相似。全部 token 化钉在本模块——模板只允许 var()/常量引用，
+# 契约测试锁定；改这里=全部模板自动生效（牵一发自动全改的根）。
+SHADOW_LEVELS: dict[str, str] = {
+    # L3 外壳：深投影 + wash 染色（原 SHADOW_PRIMARY，兼容名保留）。
+    "elev_shell": SHADOW_PRIMARY,
+    # L2 面板级：摘要块/页脚胶囊等大件内件——比瓦片深一档，层次可辨。
+    "elev_panel": (
+        "0 8px 22px color-mix(in srgb, var(--wash-2) 18%, transparent), "
+        "0 2px 6px rgba(31, 35, 41, 0.05)"
+    ),
+    # L1 瓦片级：指标小卡/评论条等小件（原 SHADOW_SECONDARY，兼容名保留）。
+    "elev_tile": SHADOW_SECONDARY,
+}
+# 辉光 token：作背景层（radial 光晕），不是 box-shadow——不与阴影 token 冲突。
+GLOW_ACCENT = (
+    "radial-gradient(closest-side, "
+    "color-mix(in srgb, var(--pc) 20%, transparent) 0%, "
+    "color-mix(in srgb, var(--pc) 8%, transparent) 46%, transparent 74%)"
+)
+# 区分线 token：清晰可见的平台色 22% 细线（替代旧 14% 淡线）。
+DIVIDER = "1px solid color-mix(in srgb, var(--pc) 22%, rgba(255, 255, 255, 0.65))"
+# 字号阶梯（px）：全模板字号只允许取本表值（契约测试锁定），小件下限 12。
+TYPE_SCALE_PX: dict[str, int] = {
+    "display": 26,
+    "title": 20,
+    "body": 15,
+    "label": 13,
+    "caption": 12,
+}
+
 # ==================== 渲染契约常量（契约测试锁定，2026-09-12） ====================
 # 语义化策略常量：所有模板禁止 <meta viewport>（playwright viewport 由
 # render_backends 的 new_page viewport 参数控制，meta 只在移动仿真下生效）。
@@ -148,6 +180,51 @@ def derive_wash_tokens(hex_color: str) -> dict[str, str]:
 # 未知平台（中性灰）的本命洗四 token——纯守岸人基底（推力为零），
 # 模板 --wash-* 注入点的 default 字面量必须与本表逐键一致（契约测试锁定）。
 DEFAULT_WASH_TOKENS = derive_wash_tokens(UNKNOWN_PLATFORM_COLOR)
+
+# ==================== 层次化阴影 + 辉光 + 表面/分隔线/字号（vis4）====================
+# 用户裁定升级：所有元素都要有层次阴影区分 + 辉光 + 清晰区分线；相邻色块
+# 颜色不得过于相似。全部 token 化钉在本模块——模板只允许 var()/常量引用，
+# 契约测试锁定；改这里=全部模板自动生效（牵一发自动全改的根）。
+# （本段必须在 derive_wash_tokens 定义之后：三档表面用 BRAND_ACCENT 纯本命洗
+# 派生固定 hex——用户裁定 2026-09-13：表面 zebra 只用守岸人本命三色
+# （淡蓝/星空蓝/星空紫），不用平台 accent，任何平台卡上都保持本命三色。）
+SHADOW_LEVELS: dict[str, str] = {
+    # L3 外壳：深投影 + wash 染色（原 SHADOW_PRIMARY，兼容名保留）。
+    "elev_shell": SHADOW_PRIMARY,
+    # L2 面板级：摘要块/页脚胶囊等大件内件——比瓦片深一档，层次可辨。
+    "elev_panel": (
+        "0 8px 22px color-mix(in srgb, var(--wash-2) 18%, transparent), "
+        "0 2px 6px rgba(31, 35, 41, 0.05)"
+    ),
+    # L1 瓦片级：指标小卡/评论条等小件（原 SHADOW_SECONDARY，兼容名保留）。
+    "elev_tile": SHADOW_SECONDARY,
+}
+# 辉光 token：作背景层（radial 光晕），不是 box-shadow——不与阴影 token 冲突。
+GLOW_ACCENT = (
+    "radial-gradient(closest-side, "
+    "color-mix(in srgb, var(--pc) 20%, transparent) 0%, "
+    "color-mix(in srgb, var(--pc) 8%, transparent) 46%, transparent 74%)"
+)
+_BRAND_WASH = derive_wash_tokens(BRAND_ACCENT)
+SURFACE_TINTS: dict[str, str] = {
+    "tint_a": (
+        f"color-mix(in srgb, {_BRAND_WASH['wash_1']} 14%, rgba(255, 255, 255, 0.82))"
+    ),
+    "tint_b": (
+        f"color-mix(in srgb, {_BRAND_WASH['wash_2']} 12%, rgba(255, 255, 255, 0.64))"
+    ),
+    "tint_neutral": "rgba(255, 255, 255, 0.85)",
+}
+# 区分线 token：清晰可见的平台色 22% 细线（替代旧 14% 淡线）。
+DIVIDER = "1px solid color-mix(in srgb, var(--pc) 22%, rgba(255, 255, 255, 0.65))"
+# 字号阶梯（px）：全模板字号只允许取本表值（契约测试锁定），小件下限 12。
+TYPE_SCALE_PX: dict[str, int] = {
+    "display": 26,
+    "title": 20,
+    "body": 15,
+    "label": 13,
+    "caption": 12,
+}
 
 
 # ==================== 主题 token 结构 ====================
@@ -289,6 +366,13 @@ def theme_to_css_vars(theme: ThemeTokens) -> dict[str, str]:
         "--font-family": theme.font_family,
         "--shadow-card": theme.shadow_primary,
         "--shadow-soft": theme.shadow_secondary,
+        # vis4 层次化阴影/辉光/表面/分隔线（值出自本模块常量，非平台可写层）。
+        "--shadow-elev-panel": SHADOW_LEVELS["elev_panel"],
+        "--glow-accent": GLOW_ACCENT,
+        "--divider": DIVIDER,
+        "--surface-a": SURFACE_TINTS["tint_a"],
+        "--surface-b": SURFACE_TINTS["tint_b"],
+        "--surface-neutral": SURFACE_TINTS["tint_neutral"],
         "--text-main": theme.text_main,
         "--text-sub": theme.text_sub,
     }

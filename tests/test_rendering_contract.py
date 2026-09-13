@@ -60,7 +60,6 @@ _SHELL_WIDTH_KEYS: dict[str, str] = {
     "finance_card.html": "finance",
 }
 
-_SHADOW_TOKEN_NAMES = {"--mica-shadow", "--mica-shadow-soft"}
 
 _TEMPLATES_DIR = Path(bridge.__file__).resolve().parent / "templates"
 
@@ -129,13 +128,21 @@ def test_font_weight_at_most_700(name: str) -> None:
     assert max(weights) <= FONT_WEIGHT_MAX
 
 
-# ==================== 4. 恰好两枚阴影 token ====================
+# ==================== 4. 阴影 token 族（vis4 层次化升级） ====================
+# 2026-09-13 用户裁定：层次阴影区分——阴影 token 从 2 枚扩为分级族
+# （shell/panel/tile 三级），仍全局唯一来源 theme_tokens，禁止自造一次性阴影。
+_SHADOW_TOKEN_NAMES = {"--mica-shadow", "--mica-shadow-soft", "--mica-shadow-panel"}
+
+
 @pytest.mark.parametrize("name", CARD_TEMPLATES)
-def test_exactly_two_shadow_tokens(name: str) -> None:
+def test_shadow_tokens_within_family(name: str) -> None:
     css = _css_of(name)
     defined = re.findall(r"(--[a-z-]*shadow[a-z-]*)\s*:", css)
-    assert set(defined) == _SHADOW_TOKEN_NAMES, f"{name} 阴影 token 集合违规: {sorted(set(defined))}"
-    assert len(defined) == 2, f"{name} 每枚阴影 token 只允许定义一次"
+    unknown = set(defined) - _SHADOW_TOKEN_NAMES
+    assert not unknown, f"{name} 出现族外阴影 token: {sorted(unknown)}"
+    # 族内每枚至多定义一次；核心两枚（shell/soft）必须 always 在册。
+    assert len(defined) == len(set(defined)), f"{name} 阴影 token 重复定义"
+    assert {"--mica-shadow", "--mica-shadow-soft"} <= set(defined)
 
     for _selector, body in _css_rules(css):
         for value in re.findall(r"box-shadow\s*:\s*([^;]+);", body):
@@ -144,6 +151,7 @@ def test_exactly_two_shadow_tokens(name: str) -> None:
                 "none",
                 "var(--mica-shadow)",
                 "var(--mica-shadow-soft)",
+                "var(--mica-shadow-panel)",
             }, f"{name} 出现非 token 阴影: {normalized!r}"
 
 
