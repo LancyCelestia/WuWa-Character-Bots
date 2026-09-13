@@ -59,7 +59,26 @@ from plugins.bot_unified_runtime.sources.market_data import (
     empty_backoff_sleep,
     retry_on_empty_enabled,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import http_get_json
+from plugins.bot_unified_runtime.sources.parsers.http_util import (
+    ParseHttpError,
+    http_get_json,
+)
+
+
+def _network_retry(fetch, *, attempts: int = 3):
+    """瞬时网络故障退避重试（vis3 2026-09-13 实测：push2his 会 RemoteDisconnected
+    掉线——「暂无历史走势」与 ParseHttpError 的共同根因）。ParseHttpError/
+    ConnectionError/TimeoutError 各退避重试，其他异常原样抛。"""
+    last_exc: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            return fetch()
+        except (ParseHttpError, ConnectionError, TimeoutError) as exc:
+            last_exc = exc
+            if attempt + 1 >= attempts:
+                raise
+            empty_backoff_sleep()
+    raise last_exc  # pragma: no cover
 
 # ==================== 公司注册表（显式 ticker，可扩展） ====================
 
@@ -74,6 +93,10 @@ class CompanyRef:
     secid: str  # 东财 secid：105=NASDAQ（惯例，未实测）
     exchange: str
     aliases: tuple[str, ...] = ()
+    # vis3（2026-09-13 用户裁定）：股市卡 accent 跟上市公司 logo 代表色相近；
+    # logo 走 logo.clearbit.com/<domain>（keyless 稳定直链），失败回退首字母徽章。
+    brand_color: str = ""
+    logo_domain: str = ""
 
 
 _LISTED_COMPANIES: tuple[CompanyRef, ...] = (
@@ -84,6 +107,8 @@ _LISTED_COMPANIES: tuple[CompanyRef, ...] = (
         secid="105.NVDA",
         exchange="NASDAQ",
         aliases=("英伟达", "nvda", "nvidia"),
+        brand_color="#76b900",
+        logo_domain="nvidia.com",
     ),
     CompanyRef(
         ticker="AMD",
@@ -92,6 +117,8 @@ _LISTED_COMPANIES: tuple[CompanyRef, ...] = (
         secid="105.AMD",
         exchange="NASDAQ",
         aliases=("amd", "超威", "超威半导体"),
+        brand_color="#ed1c24",
+        logo_domain="amd.com",
     ),
     CompanyRef(
         ticker="INTC",
@@ -100,6 +127,8 @@ _LISTED_COMPANIES: tuple[CompanyRef, ...] = (
         secid="105.INTC",
         exchange="NASDAQ",
         aliases=("英特尔", "intc", "intel"),
+        brand_color="#0068b5",
+        logo_domain="intel.com",
     ),
     CompanyRef(
         ticker="AAPL",
@@ -108,6 +137,8 @@ _LISTED_COMPANIES: tuple[CompanyRef, ...] = (
         secid="105.AAPL",
         exchange="NASDAQ",
         aliases=("苹果", "aapl", "apple"),
+        brand_color="#1d1d1f",
+        logo_domain="apple.com",
     ),
     CompanyRef(
         ticker="MSFT",
@@ -116,6 +147,8 @@ _LISTED_COMPANIES: tuple[CompanyRef, ...] = (
         secid="105.MSFT",
         exchange="NASDAQ",
         aliases=("微软", "msft", "microsoft"),
+        brand_color="#00a4ef",
+        logo_domain="microsoft.com",
     ),
     CompanyRef(
         ticker="GOOGL",
@@ -124,6 +157,8 @@ _LISTED_COMPANIES: tuple[CompanyRef, ...] = (
         secid="105.GOOGL",
         exchange="NASDAQ",
         aliases=("谷歌", "googl", "alphabet", "google"),
+        brand_color="#4285f4",
+        logo_domain="google.com",
     ),
     CompanyRef(
         ticker="AMZN",
@@ -132,6 +167,8 @@ _LISTED_COMPANIES: tuple[CompanyRef, ...] = (
         secid="105.AMZN",
         exchange="NASDAQ",
         aliases=("亚马逊", "amzn", "amazon"),
+        brand_color="#ff9900",
+        logo_domain="amazon.com",
     ),
     CompanyRef(
         ticker="META",
@@ -140,6 +177,8 @@ _LISTED_COMPANIES: tuple[CompanyRef, ...] = (
         secid="105.META",
         exchange="NASDAQ",
         aliases=("meta", "meta platforms"),
+        brand_color="#0081fb",
+        logo_domain="meta.com",
     ),
     CompanyRef(
         ticker="TSM",
@@ -148,6 +187,8 @@ _LISTED_COMPANIES: tuple[CompanyRef, ...] = (
         secid="106.TSM",
         exchange="NYSE",
         aliases=("台积电", "tsm", "tsmc", "台湾积体电路"),
+        brand_color="#c8102e",
+        logo_domain="tsmc.com",
     ),
 )
 
@@ -254,7 +295,7 @@ def resolve_company_query(text: str) -> str | None:
 
 _QUOTE_URL = (
     "https://push2.eastmoney.com/api/qt/ulist.np/get"
-    "?fltt=2&secids={secid}&fields=f2,f3,f4,f12,f14,f20"
+    "?fltt=2&secids={secid}&fields=f2,f3,f4,f12,f14,f20,f47,f48,f84,f85"
 )
 _KLINE_URL = (
     "https://push2his.eastmoney.com/api/qt/stock/kline/get"
@@ -353,6 +394,9 @@ def _parse_quote(
             delayed=True,
             note="上游未返回可用现价（字段缺失或停牌）",
         )
+    # vis3 指标完善：f47 成交量（手→股 ×100）/ f48 成交额（美元）/ f85 流通股 /
+    # f84 总股本；上游 "-" 或缺失一律 None，绝不造 0。
+    volume_hand = _as_float(row.get("f47"))
     return EquityQuote(
         ticker=ticker,
         name=str(row.get("f14") or (ref.display if ref else "") or ""),
@@ -361,6 +405,10 @@ def _parse_quote(
         price=price,
         change_pct=change_pct,
         change_abs=_as_float(row.get("f4")),
+        volume=volume_hand * 100 if volume_hand is not None else None,
+        amount=_as_float(row.get("f48")),
+        float_shares=_as_float(row.get("f85")),
+        total_shares=_as_float(row.get("f84")),
         source=_SOURCE_QUOTE,
         as_of=_now_utc(),
         status=FinanceDataStatus.OK,
@@ -490,7 +538,7 @@ def fetch_stock_quote(ticker: str, timeout_seconds: float = 6.0) -> EquityQuote:
     attempts = 2 if retry_on_empty_enabled() else 1
     for attempt in range(attempts):
         try:
-            payload = _fetch_quote_payload(normalized, timeout_seconds)
+            payload = _network_retry(lambda: _fetch_quote_payload(normalized, timeout_seconds))
         except Exception as exc:  # noqa: BLE001 - 行情失败静默降级。
             return EquityQuote(
                 ticker=normalized,
@@ -530,7 +578,7 @@ def fetch_stock_ohlcv(
     attempts = 2 if retry_on_empty_enabled() else 1
     for attempt in range(attempts):
         try:
-            payload = _fetch_kline_payload(normalized, days, timeout_seconds)
+            payload = _network_retry(lambda: _fetch_kline_payload(normalized, days, timeout_seconds))
             series = _parse_klines(payload, ref)
         except Exception as exc:  # noqa: BLE001
             return OHLCVSeries(
@@ -578,7 +626,7 @@ def fetch_market_cap(ticker: str, timeout_seconds: float = 6.0) -> MarketCap:
     attempts = 2 if retry_on_empty_enabled() else 1
     for attempt in range(attempts):
         try:
-            payload = _fetch_quote_payload(normalized, timeout_seconds)
+            payload = _network_retry(lambda: _fetch_quote_payload(normalized, timeout_seconds))
         except Exception as exc:  # noqa: BLE001
             return MarketCap(
                 ticker=normalized,
@@ -1059,9 +1107,9 @@ def fetch_stock_history(
         attempts = 2 if retry_on_empty_enabled() else 1
         for attempt in range(attempts):
             try:
-                payload = _fetch_kline_payload(
+                payload = _network_retry(lambda: _fetch_kline_payload(
                     normalized, _MAX_HISTORY_POINTS, max(1.0, float(timeout_seconds))
-                )
+                ))
                 points = _parse_history_points(payload)
             except Exception:  # noqa: BLE001 - K 线失败静默缺席。
                 return ()

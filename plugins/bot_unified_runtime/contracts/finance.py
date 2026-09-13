@@ -83,6 +83,12 @@ class EquityQuote(_ProvenanceMixin):
     price: float | None = None
     change_pct: float | None = None
     change_abs: float | None = None
+    # vis3（2026-09-13 指标完善）：成交量（股）/成交额（美元）/流通股/总股本；
+    # 上游缺失一律 None，绝不造 0。
+    volume: float | None = None
+    amount: float | None = None
+    float_shares: float | None = None
+    total_shares: float | None = None
 
     @field_validator("ticker")
     @classmethod

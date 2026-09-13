@@ -37,6 +37,7 @@ from plugins.bot_unified_runtime.contracts.finance import (
     MarketCap,
     OHLCVSeries,
 )
+from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
 from plugins.bot_unified_runtime.sources.stock_data import (
     NON_PUBLIC_EQUITIES,
     compute_kdj,
@@ -175,11 +176,14 @@ def build_stocks_card_payload(
     series: OHLCVSeries | None,
     kdj: KDJSnapshot | None,
     cap: MarketCap | None,
+    ref: Any | None = None,
 ) -> dict[str, Any]:
     """组装 finance_card（render_finance_card_html）payload。
 
     图表语义：trend_svg 只放多日收盘折线（趋势）；箱形图区块放多日收盘
     分布（≥5 根才成箱）；缺数据行/块直接省略，不伪造 0。
+    vis3（2026-09-13 指标完善）：标题官方中文名、accent 跟公司 logo 代表色、
+    成交量/成交额/流通股/总股本入指标区；「状态 OK」debug 字样出卡。
     """
     ref_display = quote.name or quote.ticker
     main_rows: list[dict[str, Any]] = []
@@ -239,6 +243,47 @@ def build_stocks_card_payload(
             else f"≈ {value_yi:,.0f} 亿美元"
         )
         indicator_rows.append({"label": "总市值", "value": cap_text, "cls": "flat"})
+    # vis3 指标完善：成交量（今日）/成交额/流通股/总股本——缺数据诚实省略。
+    if quote.volume is not None:
+        vol_text = (
+            f"{quote.volume / 1e8:.2f} 亿股"
+            if quote.volume >= 1e8
+            else f"{quote.volume / 1e4:,.0f} 万股"
+        )
+        avg5 = (
+            sum(b.volume or 0 for b in series.bars[-5:]) / 5
+            if series is not None and len(series.bars) >= 5
+            and all(b.volume is not None for b in series.bars[-5:])
+            else None
+        )
+        if avg5:
+            vol_text += (
+                f"（近5日均 {avg5 / 1e8:.2f} 亿股）"
+                if avg5 >= 1e8
+                else f"（近5日均 {avg5 / 1e4:,.0f} 万股）"
+            )
+        indicator_rows.append({"label": "成交量", "value": vol_text, "cls": "flat"})
+    if quote.amount is not None:
+        amt_text = (
+            f"≈ {quote.amount / 1e8:,.2f} 亿美元"
+            if quote.amount >= 1e8
+            else f"{quote.amount:,.0f} 美元"
+        )
+        indicator_rows.append({"label": "成交额", "value": amt_text, "cls": "flat"})
+    if quote.float_shares is not None:
+        fs_text = (
+            f"{quote.float_shares / 1e8:.2f} 亿股"
+            if quote.float_shares >= 1e8
+            else f"{quote.float_shares / 1e4:,.0f} 万股"
+        )
+        indicator_rows.append({"label": "流通股", "value": fs_text, "cls": "flat"})
+    if quote.total_shares is not None:
+        ts_text = (
+            f"{quote.total_shares / 1e8:.2f} 亿股"
+            if quote.total_shares >= 1e8
+            else f"{quote.total_shares / 1e4:,.0f} 万股"
+        )
+        indicator_rows.append({"label": "总股本", "value": ts_text, "cls": "flat"})
     sections: list[dict[str, Any]] = [{"name": "个股行情", "rows": main_rows}]
     if indicator_rows:
         sections.append({"name": "指标与市值", "rows": indicator_rows})
@@ -251,15 +296,25 @@ def build_stocks_card_payload(
         if quote.as_of is not None
         else "时间未知"
     )
-    return {
-        "title": f"{quote.ticker} 行情速览",
-        "subtitle": f"状态 {quote.status.value} · {stamp}",
+    # vis3（2026-09-13 用户裁定）：标题用官方中文名；"状态 OK"是 debug 信息
+    # 不进卡面（保留在文本回执与审计）；公司 logo + logo 代表色 accent。
+    logo_domain = str(getattr(ref, "logo_domain", "") or "") if ref is not None else ""
+    brand_color = str(getattr(ref, "brand_color", "") or "") if ref is not None else ""
+    title_name = quote.name or ref_display or quote.ticker
+    payload = {
+        "title": f"{title_name}（{quote.ticker} · {quote.exchange or '美股'}）行情速览",
+        "subtitle": stamp,
         "badge": "延迟行情" if quote.delayed else "实时",
         "sections": sections,
         "source_note": f"数据源：{quote.source or 'eastmoney'}",
         "delayed_note": "免费行情源为延迟口径",
         "feature_label": "个股行情",
     }
+    if logo_domain:
+        payload["logo_url"] = f"https://logo.clearbit.com/{logo_domain}"
+    if brand_color:
+        payload["platform_color"] = brand_color
+    return payload
 
 
 def build_stocks_capability(config: Any | None = None, *, render_backend: Any | None = None) -> Any:
@@ -285,7 +340,7 @@ def build_stocks_capability(config: Any | None = None, *, render_backend: Any | 
                 getattr(config, "bot_persona_display_name", "") or ""
             ).strip() or "守岸人"
             payload["bot_avatar_url"] = str(
-                getattr(config, "bot_persona_avatar_url", "") or ""
+                bot_avatar_uri(config)
             )
             png = render_backend.render_card(
                 {
@@ -327,7 +382,7 @@ def build_stocks_capability(config: Any | None = None, *, render_backend: Any | 
                 getattr(config, "bot_persona_display_name", "") or ""
             ).strip() or "守岸人"
             payload["bot_avatar_url"] = str(
-                getattr(config, "bot_persona_avatar_url", "") or ""
+                bot_avatar_uri(config)
             )
             png = render_backend.render_card(
                 {
@@ -551,7 +606,14 @@ def build_stocks_capability(config: Any | None = None, *, render_backend: Any | 
             )
         card = ""
         if quote.price is not None:
-            payload = build_stocks_card_payload(quote, series, kdj, cap)
+            from plugins.bot_unified_runtime.sources.stock_data import (
+                _COMPANY_BY_TICKER,
+            )
+
+            payload = build_stocks_card_payload(
+                quote, series, kdj, cap,
+                ref=_COMPANY_BY_TICKER.get(quote.ticker),
+            )
             card = _render_card(
                 payload,
                 quote,

@@ -719,7 +719,7 @@ class TestStocksCapability:
         from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
 
         payload = stocks_cap.build_stocks_card_payload(_quote(), _series(), _kdj(), _cap())
-        assert payload["title"] == "NVDA 行情速览"
+        assert payload["title"] == "英伟达（NVDA · NASDAQ）行情速览"  # vis3：标题官方中文名
         assert payload["badge"] == "延迟行情"
         names = [s["name"] for s in payload["sections"]]
         assert "个股行情" in names
