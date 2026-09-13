@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from concurrent.futures import Future
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,11 @@ import pytest
 
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
+    PrivacyLevel,
     ReceiptState,
+    RenderedOutput,
+    SendPolicy,
+    SendRequest,
     SessionType,
 )
 from plugins.bot_unified_runtime.runtime import error_report
@@ -38,6 +43,7 @@ from plugins.bot_unified_runtime.runtime.error_report import (
 )
 from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
 from plugins.bot_unified_runtime.sender import InMemorySendQueue
+from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
 
 
 class _NullAuditLogger:
@@ -106,9 +112,12 @@ class _FakeBackend:
 class _QueueStub:
     def __init__(self) -> None:
         self.requests: list[Any] = []
+        # A-plus：记录每次 submit 的 kwargs（断言 ack 不带延迟、卡带延迟）。
+        self.submit_calls: list[tuple[Any, dict[str, Any]]] = []
 
-    def submit(self, send_request: Any) -> None:
+    def submit(self, send_request: Any, **kwargs: Any) -> None:
         self.requests.append(send_request)
+        self.submit_calls.append((send_request, kwargs))
 
 
 class _PipelineStub:
@@ -507,3 +516,88 @@ def test_pipeline_hook_survives_error_report_failure(
     receipt = pipeline.handle(_message(), failing_capability, "bot.market")
     assert receipt.state is ReceiptState.FAILED_FINAL
     assert pipeline.send_queue.sent_requests == []
+
+
+# ==================== A-plus 补发延迟（deliver_after） ====================
+def _queue_request(request_id: str, dedupe_key: str) -> SendRequest:
+    """队列级行为测试用最小 SendRequest（离线，无渲染）。"""
+    rendered = RenderedOutput(
+        request_id=request_id,
+        content_type="text",
+        content_ref={"text": "诊断卡补发正文"},
+        text_fallback="诊断卡补发正文",
+        privacy_level=PrivacyLevel.PERSONAL,
+    )
+    return SendRequest(
+        request_id=request_id,
+        session_id="private:u1",
+        target_scope=SessionType.PRIVATE,
+        target_id="u1",
+        capability_id="bot.error_report",
+        content=rendered,
+        send_policy=SendPolicy.IMMEDIATE,
+        priority="normal",
+        max_messages=1,
+        dedupe_key=dedupe_key,
+        cooldown_key="bot.error_report:private:u1",
+        privacy_level=PrivacyLevel.PERSONAL,
+        persona_profile_id="default",
+    )
+
+
+def test_queue_deliver_after_defers_claim_until_due(tmp_path: Path) -> None:
+    """A-plus：带 deliver_after 的入队，到点前 worker 不认领（不投递），到点后接管。"""
+    queue = SQLiteSendRequestQueue(tmp_path / "q.sqlite3", _NullAuditLogger())
+    base = datetime.now(timezone.utc)
+    due = base + timedelta(seconds=3)
+    queue.submit(
+        _queue_request("req-err-card", "dedupe-err-card"),
+        now=base,
+        deliver_after=due,
+    )
+    # 到点前：claim_due / list_due 都拿不到该行 → worker 不投递。
+    assert queue.claim_due(now=base + timedelta(seconds=2)) == []
+    assert queue.list_due(now=base + timedelta(seconds=2)) == []
+    # 到点后：worker 正常接管（后台渲染线程崩溃也不丢卡，跨重启续发语义不变）。
+    claimed = queue.claim_due(now=due + timedelta(seconds=1))
+    assert [entry.send_request.request_id for entry in claimed] == ["req-err-card"]
+
+
+def test_queue_default_submit_keeps_inline_grace(tmp_path: Path) -> None:
+    """A-plus：缺省（不传 deliver_after）=现状——60s 内联宽限期内 worker 不认领。"""
+    queue = SQLiteSendRequestQueue(tmp_path / "q.sqlite3", _NullAuditLogger())
+    base = datetime.now(timezone.utc)
+    queue.submit(_queue_request("req-plain", "dedupe-plain"), now=base)
+    # 宽限期（60s）内立即认领拿不到，与 A1 语义字节级一致。
+    assert queue.claim_due(now=base + timedelta(seconds=30)) == []
+    assert queue.list_due(now=base + timedelta(seconds=30)) == []
+    claimed = queue.claim_due(now=base + timedelta(seconds=120))
+    assert [entry.send_request.request_id for entry in claimed] == ["req-plain"]
+
+
+def test_error_card_resubmit_passes_deliver_after(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A-plus：补发请求（:card）带 deliver_after≈+3s；即时 ack 不带（零变化）。"""
+    monkeypatch.setattr(
+        error_report, "_stable_report_digest", lambda report: "fixeddigest"
+    )
+    settings = ErrorCardSettings(enabled=True, cooldown_seconds=60, stack_frames=8)
+    pipeline = _PipelineStub()
+    maybe_submit_error_card(
+        pipeline, _message(), "bot.market", _captured_exc(),
+        settings=settings, gate=_ManualGate([True]),
+        backend=_FakeBackend(), card_dir=str(tmp_path),
+        render_pool=_InlinePool(),
+    )
+    assert len(pipeline.send_queue.requests) == 2
+    ack_request, card_request = pipeline.send_queue.requests
+    # 第一段 ack：无 deliver_after（缺省路径字节级现状）。
+    assert ack_request.dedupe_key.endswith(":ack")
+    assert pipeline.send_queue.submit_calls[0][1] == {}
+    # 第二段卡：deliver_after = 提交时刻 + ~3s（aware UTC；上限含执行抖动）。
+    assert card_request.dedupe_key.endswith(":card")
+    deliver_after = pipeline.send_queue.submit_calls[1][1]["deliver_after"]
+    assert deliver_after.tzinfo is timezone.utc
+    delay = (deliver_after - datetime.now(timezone.utc)).total_seconds()
+    assert 0 <= delay <= 5

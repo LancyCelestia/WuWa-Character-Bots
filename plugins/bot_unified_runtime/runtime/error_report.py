@@ -37,6 +37,7 @@ IDs 与时间 / 求助指引。控制台完整栈仍走既有 runtime/alerts 告
 from __future__ import annotations
 
 import atexit
+import inspect
 import logging
 import os
 import random
@@ -49,7 +50,7 @@ from collections import deque
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from importlib import metadata
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,12 @@ _HELP_TEXT = "把这张卡截图发给创造者（澜汐/霞月）即可，信�
 
 # 文本回执尾注：告知诊断卡随后补发（两段式，2026-09-14 P0 修复）。
 _ACK_FOLLOWUP_HINT = "详细诊断卡随后补发。"
+
+# A-plus（2026-09-14）：补发请求的 deliver_after 延迟（秒）。后台补发无内联
+# 首投，覆盖队列内联宽限后，卡从提交到 worker 认领 ≈ 3s + 0~30s 扫描抖动
+# ≈ 3–33s（原基线 60–92s=内联宽限 60s + 扫描抖动）。3s 下限保证卡排到即时
+# 文本回执之后，顺序不倒挂。
+_CARD_DELIVER_DELAY_SECONDS = 3.0
 
 # 触发回显上限（用户裁定 ≤80 字符，脱敏后截断）。
 _TRIGGER_ECHO_MAX_CHARS = 80
@@ -805,8 +812,31 @@ def _build_error_send_request(
     )
 
 
-def _submit_error_request(pipeline: Any, send_request: SendRequest) -> None:
-    pipeline.send_queue.submit(send_request)
+def _submit_error_request(
+    pipeline: Any,
+    send_request: SendRequest,
+    *,
+    deliver_after: datetime | None = None,
+) -> None:
+    if deliver_after is None:
+        pipeline.send_queue.submit(send_request)
+        return
+    # deliver_after 只有 SQLiteSendRequestQueue 支持（InMemory 队列是即时
+    # 语义，无延迟概念）；与 worker._call_queue_state_method 同款内省：
+    # 不支持时按现状立即提交，绝不让延迟参数把卡吞掉（fail-open）。
+    submit = pipeline.send_queue.submit
+    try:
+        parameters = inspect.signature(submit).parameters
+        supported = "deliver_after" in parameters or any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+    except (TypeError, ValueError):
+        supported = False
+    if supported:
+        submit(send_request, deliver_after=deliver_after)
+    else:
+        submit(send_request)
 
 
 def maybe_submit_error_card(
@@ -942,10 +972,20 @@ def _render_and_submit_card(
     backend: Any,
     card_dir: str | None,
 ) -> None:
-    """渲染线程任务：成功→图片卡补发；失败→全量诊断文本补发；异常只 log。"""
+    """渲染线程任务：成功→图片卡补发；失败→全量诊断文本补发；异常只 log。
+
+    A-plus：补发请求带 ``deliver_after=now+3s``（覆盖队列内联宽限），投递
+    等待从 60–92s 压到 ≈3–33s；两分支（卡/降级文本）同延迟同语义。
+    """
     try:
         png_path = render_error_card_png(
             report, backend=backend, card_dir=card_dir
+        )
+        # 必须是 aware UTC：队列行以 ISO 字符串做 SQL 比较，worker 以
+        # datetime.now(timezone.utc).isoformat() 生成比较基准，混入本地
+        # 时区（astimezone()）会让字符串序错乱。
+        deliver_after = datetime.now(timezone.utc) + timedelta(
+            seconds=_CARD_DELIVER_DELAY_SECONDS
         )
         card_request_id = f"{message.request_id}-card"
         if png_path:
@@ -968,6 +1008,7 @@ def _render_and_submit_card(
                     dedupe_key=f"{base_dedupe}:card",
                     audit_tags=[*base_tags, "card"],
                 ),
+                deliver_after=deliver_after,
             )
         else:
             _submit_error_request(
@@ -981,6 +1022,7 @@ def _render_and_submit_card(
                     dedupe_key=f"{base_dedupe}:card",
                     audit_tags=[*base_tags, "text_only"],
                 ),
+                deliver_after=deliver_after,
             )
     except Exception:
         # fail-open：文本回执已先行，卡静默放弃；告警链留全栈（既有

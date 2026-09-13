@@ -350,8 +350,22 @@ class SQLiteSendRequestQueue:
         send_request: SendRequest,
         *,
         now: datetime | None = None,
+        deliver_after: datetime | None = None,
     ) -> DeliveryReceipt:
+        """入队；``deliver_after`` 指定 worker 最早投递时刻（A-plus）。
+
+        - 缺省 ``None``：与既有行为字节级一致（next_retry_at=内联宽限期，
+          首叛逆由 handler 内联负责，宽限过后 worker 接管）。
+        - 非 ``None``：该行在 ``deliver_after`` 之前 claim_due/list_due 均不
+          认领（不到点不投递）。调用方以该参数**覆盖**内联宽限，即声明此
+          请求无内联首投（如后台线程补发），不存在 worker 抢跑双发窗口。
+        """
         current_time = now or _utc_now()
+        next_retry_at = (
+            deliver_after
+            if deliver_after is not None
+            else current_time + timedelta(seconds=_inline_delivery_grace_seconds())
+        )
         self._ensure_schema_once()
         with self._transaction() as connection:
             # 去重与写入必须原子：SELECT→INSERT 两步在并发下会同时通过
@@ -379,10 +393,7 @@ class SQLiteSendRequestQueue:
                     ReceiptState.QUEUED.value,
                     send_request.model_dump_json(),
                     0,
-                    (
-                        current_time
-                        + timedelta(seconds=_inline_delivery_grace_seconds())
-                    ).isoformat(),
+                    next_retry_at.isoformat(),
                     "" if send_request.operational_issue is not None else "queued",
                     current_time.isoformat(),
                     current_time.isoformat(),
