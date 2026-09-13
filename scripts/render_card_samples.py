@@ -1,6 +1,6 @@
 """卡面样张一键渲染：离线出全套卡片 PNG，供重启后人工验收。
 
-覆盖 9 族 16 张样张（payload 结构抄自生产链路对应能力/契约测试）：
+覆盖 9 族 17 张样张（payload 结构抄自生产链路对应能力/契约测试）：
 - universal：bilibili/netease/未知默认三主题 × 视频/BGV/搜图/音乐四形态；
 - market：股指（market_card）+ 大宗商品/国债/北向（finance 卡三形态）；
 - finance：个股行情卡（sections + 折线 SVG）；
@@ -8,6 +8,7 @@
 - song_candidates：点歌候选卡；
 - mermaid：流程图卡（本地素材拦截在 render_backends 传输层自动生效，
   本地缺失时放行 jsDelivr CDN——与生产链路同一条路径）；
+- help：帮助目录卡（/bot help 总览，真实 72 topic payload）；
 - usage：模型用量账单卡（含渠道子行）；
 - media_archive：媒体归档结果卡（通用媒体卡壳；生产归档回执为纯文本，
   本样张为卡面验收供参考形态）。
@@ -834,6 +835,37 @@ def build_media_archive() -> dict[str, Any]:
     }
 
 
+def build_help_index() -> dict[str, Any]:
+    """帮助目录卡（/bot help 总览：masonry 双栏分区 + 分区内 topic 两栏）。
+
+    payload 抄生产链路：echo.build_help_result 总览页同款——
+    body=_help_index_body，sections=_help_index_sections（真实 72 topic），
+    视口/缩放/等待与 _try_render_help_image 一致。accent 走本命色
+    （生产传 config.bot_help_card_color，样张配置面同 usage 卡取 BRAND_THEME）。
+    """
+    from plugins.bot_unified_runtime.capabilities.echo import (
+        _help_index_body,
+        _help_index_sections,
+        _help_mica_html,
+    )
+
+    is_admin = True  # 管理员视角 topic 最全（公开视角同壳、条目少一档）。
+    html_text = _help_mica_html(
+        _help_index_body(page=1, is_admin=is_admin),
+        is_admin=is_admin,
+        bot_name="守岸人",
+        bot_avatar_url="",  # 空即走「守」字圆点兜底（同生产未配头像形态）。
+        accent_color=BRAND_THEME.accent,
+        sections=_help_index_sections(is_admin),
+    )
+    return {
+        "html": html_text,
+        "viewport": {"width": 1040, "height": 1200},
+        "device_scale_factor": 2,
+        "wait_ms": 0,
+    }
+
+
 # ---------------------------------------------------------------------------
 # 卡型登记表 / 渲染循环
 # ---------------------------------------------------------------------------
@@ -861,6 +893,7 @@ CARDS: tuple[SampleCard, ...] = (
     SampleCard("affinity_dirty", "affinity · 脏数据", build_affinity_dirty),
     SampleCard("song_candidates", "song_candidates · 点歌候选", build_song_candidates),
     SampleCard("mermaid_flow", "mermaid · 流程图", build_mermaid),
+    SampleCard("help_index", "help · 帮助目录（两栏）", build_help_index),
     SampleCard("usage_report", "usage · 模型账单(渠道子行)", build_usage_report),
     SampleCard("media_archive", "media_archive · 归档结果", build_media_archive),
 )

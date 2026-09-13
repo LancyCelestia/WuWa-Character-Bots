@@ -1390,7 +1390,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '行情',
             "admin_only": False,
-            "aliases": ('行情', 'market', 'stock market', '股指', '大盘', '美股行情', '港股行情', 'A股行情', 'hangqing', 'hq', 'gushi', 'gs', 'dapan', 'dp', 'guzhi'),
+            "aliases": ('行情', 'market', 'stock market', '股指', '股市', '大盘', '美股行情', '港股行情', 'A股行情', 'B股行情', '莫斯科股指', '莫斯科行情', 'hangqing', 'hq', 'gushi', 'gs', 'dapan', 'dp', 'guzhi'),
             "index": '【行情】全球股指：行情 或 美股行情/港股行情/A股行情/B股行情/莫斯科行情…',
             "title_line": '【行情】全球主要股指行情',
             "lines": [
@@ -1541,7 +1541,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '占卜',
             "admin_only": False,
-            "aliases": ('占卜', '塔罗', '八字', '算命', '算卦', '起卦', '塔羅', '排盤', '排盘', '命盤', '命盘', '搖卦', '摇卦', '今日塔羅', '今日塔罗', '今天塔羅', '今天塔罗', '塔羅三張', '塔罗三张', 'divination', 'tarot', 'bazi', 'iching', 'zhanbu', 'taluo', 'tl', 'suanming', 'suangua', 'sg', 'qigua', 'qg', '求籤', '求签', '六十四卦', '金錢卦', '金钱卦', '生辰八字', '算一卦', '起一卦', '摇一卦', '搖一卦', '掷一卦', '擲一卦', '占一卦', '一卦', '每日一签', '每日一簽', '每日一抽', 'paipan', 'sizhu', 'mingpan', 'pp', 'mp', 'yaogua', 'yg', 'liushisigua', 'lssg', 'jinqiangua', 'hexagram'),
+            "aliases": ('占卜', '塔罗', '八字', '算命', '算卦', '起卦', '塔羅', '排盤', '排盘', '命盤', '命盘', '四柱', '搖卦', '摇卦', '今日塔羅', '今日塔罗', '今天塔羅', '今天塔罗', '塔羅三張', '塔罗三张', 'divination', 'tarot', 'bazi', 'iching', 'zhanbu', 'taluo', 'tl', 'suanming', 'suangua', 'sg', 'qigua', 'qg', '求籤', '求签', '六十四卦', '金錢卦', '金钱卦', '生辰八字', '算一卦', '起一卦', '摇一卦', '搖一卦', '掷一卦', '擲一卦', '占一卦', '一卦', '每日一签', '每日一簽', '每日一抽', 'paipan', 'sizhu', 'mingpan', 'pp', 'mp', 'yaogua', 'yg', 'liushisigua', 'lssg', 'jinqiangua', 'hexagram'),
             "index": '【占卜】八字排盘/塔罗/金钱卦（含地支藏干）：占卜 | 塔罗 三张 | 八字 1998年3月2日早上7点',
             "title_line": '【占卜】玄学娱乐三件套',
             "lines": [
@@ -1816,7 +1816,8 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "topic": '好感度',
             "admin_only": False,
             # 親密度（tra3）/查詢好感（tra49）已入 affinity._COMMAND_RE，help 同步入册。
-            "aliases": ('好感度', '好感查看', '查询好感', '查詢好感', '親密度', 'affinity', 'haogandu', 'hgd', 'haoganchakan', 'hgck', 'chaxunhaogan', 'cxhg'),
+            # 裸「好感」（后随 空白/算法/说明/规则/榜/我 时触发）为 A21 审计补登词形。
+            "aliases": ('好感度', '好感', '好感查看', '查询好感', '查詢好感', '親密度', 'affinity', 'haogandu', 'hgd', 'haoganchakan', 'hgck', 'chaxunhaogan', 'cxhg'),
             "index": '【好感度】双向好感与算法：好感度｜好感度 我｜好感度 算法',
             "title_line": '【好感度】守岸人与你的双向好感',
             "lines": [
@@ -2453,11 +2454,11 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "chat_scope": "群聊/私聊行为一致（无会话分支）",
 
         "network": True,
-        "triggers_nl": ("行情", "A股行情", "全球股市", "大盘", "market", "stock market"),
+        "triggers_nl": ("行情", "A股行情", "B股行情", "莫斯科股指", "莫斯科行情", "全球股市", "股市", "大盘", "market", "stock market"),
         "outputs": ("釉瑚折线卡（MOEX 无东财 kline 时卡上无折线）/文本",),
         "html_image": True,
         "fallback": "渲染失败回退纯文本",
-        "examples": ("行情｜A股行情｜B股行情｜莫斯科行情",),
+        "examples": ("行情｜股市｜A股行情｜B股行情｜莫斯科行情",),
         "tests": ("tests/test_market_github.py",),
     },
     "个股行情": {
@@ -2527,7 +2528,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "chat_scope": "群聊/私聊行为一致（无会话分支）",
 
         "network": False,
-        "triggers_nl": ("占卜", "塔罗", "塔羅", "八字", "算命", "起卦", "排盘", "排盤", "命盘", "命盤", "摇卦", "搖卦", "求签", "求籤", "今日塔罗", "今日塔羅", "今天塔罗", "今天塔羅", "塔罗三张", "塔羅三張", "tarot", "bazi", "iching", "divination"),
+        "triggers_nl": ("占卜", "塔罗", "塔羅", "八字", "算命", "起卦", "排盘", "排盤", "命盘", "命盤", "四柱", "摇卦", "搖卦", "求签", "求籤", "今日塔罗", "今日塔羅", "今天塔罗", "今天塔羅", "塔罗三张", "塔羅三張", "tarot", "bazi", "iching", "divination"),
         "examples": ("占卜｜塔罗 三张｜八字 1998年3月2日早上7点",),
         "tests": ("tests/test_divination.py",),
     },
@@ -2623,9 +2624,9 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     },
     "好感度": {
         "capability": "bot.affinity",
-        "triggers_nickname": ("好感度", "好感查看", "查询好感", "查詢好感", "好感值", "親密度", "affinity"),
+        "triggers_nickname": ("好感度", "好感", "好感查看", "查询好感", "查詢好感", "好感值", "親密度", "affinity"),
         "chat_scope": "私聊=双向好感卡；群聊=本群好感榜（自己高亮，展示前 12/上限 60）",
-        "triggers_nl": ("好感度", "查询好感", "查詢好感", "亲密度", "親密度", "affinity"),
+        "triggers_nl": ("好感度", "好感", "查询好感", "查詢好感", "亲密度", "親密度", "affinity"),
         "examples": ("好感度｜好感度 我｜好感度 算法",),
         "tests": ("tests/test_affinity.py", "tests/test_affinity_query.py", "tests/test_affinity_numerical.py"),
     },
@@ -2666,10 +2667,10 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "network": False,
         "chat_scope": "笔记按会话隔离（A 群看不到 B 群）；配图落 data/notes_images",
         "outputs": ("文本", "图片（回看补发）"),
-        "triggers_nl": ("笔记 记 <内容>", "笔记列表", "笔记 看 N", "做完 N", "删笔记 N", "<事项>做完了"),
-        "triggers_nickname": ("笔记", "筆記", "biji", "bijiliebiao", "bjlb", "kanbiji", "shanbiji"),
+        "triggers_nl": ("笔记 记 <内容>", "笔记列表", "笔记 看 N", "看笔记 N", "做完 N", "完成 N", "办完 N", "删笔记 N", "<事项>做完了"),
+        "triggers_nickname": ("笔记", "筆記", "biji", "note", "bijiliebiao", "bjlb", "kanbiji", "shanbiji"),
         "config_vars": ("BOT_NOTES_ENABLED", "BOT_NOTES_DB_PATH", "BOT_NOTES_MAX_PER_CHAT"),
-        "examples": ("笔记 记 周三要交总结｜笔记列表｜笔记 看 1｜做完 1｜删笔记 1",),
+        "examples": ("笔记 记 周三要交总结｜笔记列表｜笔记 看 1｜做完 1｜完成 1｜删笔记 1",),
         "tests": ("tests/test_notes.py", "tests/test_todo_checkoff.py", "tests/test_reminder_tone.py"),
     },
     "帮助": {
@@ -2832,6 +2833,8 @@ def _help_mica_html(
 
     ``sections`` 提供结构化索引（总览页 → 两列网格 + 命令药丸）；缺省时
     按正文解析（模块详情页：首行作卡题，其余行拆「命令段 + 说明段」）。
+    总览页 topic 目录两栏化（台账 #13 残余）：外层 masonry 双栏分区 +
+    分区内 topic 行再走两栏 CSS columns，<560px 媒体查询退回单栏。
     mica-glass v1 2026-09-12：釉瑚云母底（bridge 按 accent 派生 --wash-* 注入；
     工艺出处=用户裁定）+ 液态玻璃面板 + 三枚柔光色斑漂移（E01 二批：相位由
     payload digest 钉帧，bridge.payload_phase 单一事实源，页面零 JS）。
@@ -2972,6 +2975,15 @@ body {{ margin:0; padding:0; font-family:var(--font-family); background:transpar
 .help-grid.masonry {{ column-count:2; column-gap:12px; }}
 .help-grid.masonry .help-section {{ break-inside:avoid; margin-bottom:12px; }}
 .help-grid.masonry .help-section.wide {{ column-span:all; }}
+/* 帮助目录两栏（台账 #13 残余）：总览页 topic 行在分区内再走两栏 CSS columns
+   （栏距取 GAP_SCALE_PX 刻度 8；行 break-inside:avoid 防腰斩、摘要钳两行防
+   窄栏溢出），72 topic 卡高实测显著下降（admin -35% / public -37%）。
+   行样式不变（药丸名+一句摘要）。 */
+.help-grid.masonry .command-list {{ display:block; columns:2; column-gap:8px; }}
+.help-grid.masonry .command-row {{ break-inside:avoid; margin-bottom:3px; padding:6px 9px; }}
+/* 窄栏防溢出：目录摘要钳两行（-webkit-line-clamp，Chromium 渲染后端原生支持），
+   治 211px 栏宽下长摘要 3 行折叠吃掉两栏收益；详情页不受影响。 */
+.help-grid.masonry .command-row .desc {{ display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }}
 .help-grid.single {{ display:grid; grid-template-columns:1fr; gap:12px; }}
 .help-section {{ border-radius:16px; overflow:hidden; }}
 .help-section h2 {{ display:flex; align-items:center; gap:8px; margin:0; padding:10px 14px; color:var(--accent-ink); background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, rgba(255,255,255,.62)), color-mix(in srgb, var(--accent) 12%, rgba(255,255,255,.48))); border-bottom:1px solid rgba(255,255,255,.85); font-size:14.5px; font-weight:700; letter-spacing:.02em; }}
@@ -2984,6 +2996,10 @@ body {{ margin:0; padding:0; font-family:var(--font-family); background:transpar
 .help-foot .tip {{ color:var(--muted); font-size:11.5px; }}
 .help-bot-pill {{ display:flex; align-items:center; gap:8px; padding:5px 13px 5px 6px; border-radius:999px; color:var(--accent-ink); background:color-mix(in srgb, var(--accent) 6%, rgba(255,255,255,.72)); border:1px solid #fff; box-shadow:var(--mica-shadow-soft); font-size:13px; font-weight:600; }}
 .help-bot-avatar {{ width:27px; height:27px; object-fit:cover; border-radius:50%; }}
+/* 窄卡（<560px）：目录两栏退回单栏，防挤压（.card 内媒体查询合规，无 viewport
+   meta 铁律不受影响；置于样式块末尾保证覆盖基线规则）。 */
+@media (max-width:559px) {{ .help-grid.masonry {{ column-count:1; }}
+  .help-grid.masonry .command-list {{ columns:1; }} }}
 </style></head><body><div class="help-stage card"><section class="help-shell">
 <div class="drift-blobs" aria-hidden="true"><span class="drift-blob drift-a"></span><span class="drift-blob drift-b"></span><span class="drift-blob drift-c"></span></div>
 <header class="help-head"><div class="avatar-wrap">{avatar_block}</div><div class="head-main"><div class="help-kicker">{_esc(role)}</div><div class="help-title">{_esc(header_title)}</div><div class="help-subtitle">{_esc(header_sub)}</div></div><div class="help-chip">发 /bot help 获取本图</div></header><main class="help-body"><div class="help-grid {grid_cls}">{cards}</div></main><footer class="help-foot"><span class="tip">参数标注：&lt;&gt; 必填，[] 可选；群里直接发命令即可触发。</span><div class="help-bot-pill">{avatar}<span>{_esc(bot_name)} · 命令手册</span></div></footer></section></div>
