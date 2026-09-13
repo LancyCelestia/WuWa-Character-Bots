@@ -501,6 +501,15 @@ class Config(BaseModel):
     bot_time_sync_enabled: bool = True
     bot_time_sync_servers: str = "ntp.aliyun.com,cn.ntp.org.cn,pool.ntp.org"
     bot_time_sync_max_drift_ms: int = 1500
+    # 统一错误报告卡（bot.error_card）：能力异常时向触发者回云母诊断卡
+    # （方法名/栈摘录/脱敏配置/版本/平台协议/IDs/运行时长+求助指引）。
+    bot_error_card_enabled: bool = True
+    bot_error_card_cooldown_seconds: int = 60
+    bot_error_card_stack_frames: int = 8
+    # 渲染 Phase 2（perf-optimization-plan §三）：并发上限与单卡等待预算，
+    # 缺省=字节级现状（并发 1/预算 0=不生效）；解锁值经 .env 或 driver config。
+    bot_render_max_concurrency: int = 1
+    bot_render_wait_budget_ms: int = 0
     # NSFW 直接删除阈值（淫秽色情不存储）：>= 该分数删除文件与记录。
     bot_meme_library_nsfw_delete: float = 0.8
     # 群图下载代理（默认直连 QQ 多媒体源；外网源可走 7890）。

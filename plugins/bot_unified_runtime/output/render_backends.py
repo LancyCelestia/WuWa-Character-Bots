@@ -7,6 +7,10 @@
   Playwright；未安装时自动不可用，不影响主链路。
 - ``build_render_backend(name)``：按名字选择；未来可加
   cardimg / PIL / 小程序卡等后端，不改调用方。
+- Phase-2 渲染开关（perf-optimization-plan §三.1，缺省=字节级现状）：
+  ``BOT_RENDER_MAX_CONCURRENCY``（默认 1=串行）、
+  ``BOT_RENDER_WAIT_BUDGET_MS``（默认空/0=不启用）；
+  解析链 driver config → 进程 env → 缺省。
 
 后续把游戏 wiki 卡、媒体卡接到 ``render_card`` 时，仍然走
 ``CapabilityResult -> ReviewResult -> RenderedOutput``，渲染只负责
@@ -16,6 +20,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 import urllib.request
@@ -122,6 +127,77 @@ def _wait_render_budget(
             page.wait_for_function(signal_js, timeout=remaining_ms)
         except Exception:  # noqa: BLE001 - 预算封顶/页面异常：按已就绪现状继续。
             return
+
+
+# ---- Phase-2 渲染并发/等待预算开关（perf-optimization-plan §三.1）----
+# 解析链与 decision.resolve_decision_mode 同源模式：driver config（防御式
+# import；同时查小写字段名与原始 BOT_* 键，兼容 .env 两种书写）→ 进程 env
+# → 缺省。缺省安全：并发=1（=旧全程大锁串行语义）、预算=不启用（None →
+# 旧固定等待）——两键不配置时行为与今天逐字节一致。
+_RENDER_MAX_CONCURRENCY_CONFIG_KEY = "bot_render_max_concurrency"
+_RENDER_MAX_CONCURRENCY_ENV = "BOT_RENDER_MAX_CONCURRENCY"
+_RENDER_WAIT_BUDGET_MS_CONFIG_KEY = "bot_render_wait_budget_ms"
+_RENDER_WAIT_BUDGET_MS_ENV = "BOT_RENDER_WAIT_BUDGET_MS"
+
+
+def _render_setting_raw(config_key: str, env_key: str) -> tuple[object, ...]:
+    """按解析链收集候选原始值（driver config 两形态 → 进程 env）。"""
+    raw_values: list[object] = []
+    try:
+        import nonebot
+
+        driver_config = nonebot.get_driver().config
+        raw_values.append(getattr(driver_config, config_key, None))
+        raw_values.append(getattr(driver_config, env_key, None))
+    except Exception:  # noqa: BLE001, S110 - 单测/裸脚本无 driver 时静默落下一级。
+        pass
+    raw_values.append(os.environ.get(env_key))
+    return tuple(raw_values)
+
+
+def _coerce_setting_int(raw: object, *, minimum: int) -> int | None:
+    """原始值 → int；缺省/非法/低于下限 → None（保持当前级缺省语义）。
+
+    经 ``str`` 归一后解析：driver config/env 来的值本就是文本形态，
+    ``"12.5"`` 等非整数文本一律视为非法（不静默截断）。
+    """
+    if raw is None:
+        return None
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value >= minimum else None
+
+
+def resolve_render_max_concurrency() -> int:
+    """渲染并发上限：driver config → env ``BOT_RENDER_MAX_CONCURRENCY`` → **1**。
+
+    1 = 现状串行（与旧全程大锁等价）；>1 传给
+    ``PlaywrightRenderBackend(max_concurrency=N)`` 放行跨线程并行。
+    """
+    for raw in _render_setting_raw(
+        _RENDER_MAX_CONCURRENCY_CONFIG_KEY, _RENDER_MAX_CONCURRENCY_ENV
+    ):
+        value = _coerce_setting_int(raw, minimum=1)
+        if value is not None:
+            return value
+    return 1
+
+
+def resolve_render_wait_budget_ms() -> int | None:
+    """单卡等待预算 ms：driver config → env ``BOT_RENDER_WAIT_BUDGET_MS``。
+
+    缺省/空/0/负值/非法 → **None = 不启用**（payload 未带
+    ``wait_budget_ms`` 时维持旧固定等待，逐字节现状）。
+    """
+    for raw in _render_setting_raw(
+        _RENDER_WAIT_BUDGET_MS_CONFIG_KEY, _RENDER_WAIT_BUDGET_MS_ENV
+    ):
+        value = _coerce_setting_int(raw, minimum=1)
+        if value is not None:
+            return value
+    return None
 
 
 class RenderBackend(Protocol):
@@ -319,7 +395,12 @@ class PlaywrightRenderBackend:
         # Phase-1（规格 §2.1b）：可选 wait_budget_ms 把该等待从「固定 sleep」
         # 升级为「预算上限」。缺省/非法 → None：维持旧固定地板，不传新键的
         # 调用行为逐字节一致（wait_ms 在预算模式下作为旧值被忽略）。
+        # Phase-2（perf-optimization-plan §三.1）：payload 未显式携带时回落
+        # 全局预算缺省（driver config / env 注入）；未配置仍是 None——
+        # 缺省路径不变，payload 显式值恒优先于全局缺省。
         wait_budget_ms = _parse_wait_budget_ms(payload)
+        if wait_budget_ms is None:
+            wait_budget_ms = resolve_render_wait_budget_ms()
         try:
             device_scale_factor = int(payload.get("device_scale_factor", 2))
         except (TypeError, ValueError):
@@ -450,7 +531,11 @@ def build_render_backend(name: str = "") -> RenderBackend:
             name,
         )
     if normalized in {"playwright", "htmlkit", "auto"}:
-        backend = PlaywrightRenderBackend()
+        # Phase-2：并发上限由 driver config / env ``BOT_RENDER_MAX_CONCURRENCY``
+        # 解析；未配置 = 1 = 旧串行语义（字节级现状）。
+        backend = PlaywrightRenderBackend(
+            max_concurrency=resolve_render_max_concurrency()
+        )
         if backend.available:
             return backend
         if normalized == "htmlkit":

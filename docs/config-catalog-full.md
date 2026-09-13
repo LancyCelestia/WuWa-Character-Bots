@@ -764,6 +764,8 @@
 | `_media_archive_summary_enabled` / `_media_archive_video_frames` | `true` / `5` | 聊天记录归档一句话 VLM 摘要开关 / 视频轻量抽帧数（ffmpeg） |
 | `_notes_enabled` / `_notes_db_path` / `_notes_max_per_chat` | `true` / `data/notes.sqlite3` / `200` | 笔记/备忘录（bot.notes）：Markdown 笔记+待办勾选+图片收纳；「做完了/完成了」自然语言勾选；db_path 走 runtime 重映射 |
 | `_time_sync_enabled` / `_time_sync_servers` / `_time_sync_max_drift_ms` | `true` / `ntp.aliyun.com,cn.ntp.org.cn,pool.ntp.org` / `1500` | 联网授时（bot.timesync）：NTP 校准提醒/调度时间基准（不改系统钟，全服务器超时回退系统钟+告警） |
+| `_error_card_enabled` / `_error_card_cooldown_seconds` / `_error_card_stack_frames` | `true` / `60` / `8` | 统一错误报告卡（bot.error_card）：能力异常回云母诊断卡（方法/栈摘录/脱敏配置/版本/协议/IDs/运行时长+求助指引）；同会话冷却防刷屏 |
+| `_render_max_concurrency` / `_render_wait_budget_ms` | `1` / `0` | 渲染 Phase 2：后端并发信号量上限 / 单卡等待预算（超预算纯文本兜底）；0=预算不生效；解锁建议 2 / 1500（性能席实测 warm P50 −64%） |
 | `_market_enabled` / `_market_timeout_seconds` / `_market_cache_seconds` | `true` / `6.0` / `60.0` | 全球股指能力（东财 17+MOEX ISS，18 指数） |
 | `_stocks_enabled` / `_fx_enabled` | `true` / `true` | 个股行情/汇率路由开关（已落 config.py `bot_stocks_enabled`/`bot_fx_enabled`，.env `BOT_STOCKS_ENABLED`/`BOT_FX_ENABLED` 可关；base_router getattr 读取） |
 | `_market_retry_on_empty` | `true` | 东财空响应受控重试（限流返回空 JSON 时单次重试+0.6s 退避；真异常不重试；仍空→诚实降级不缓存） |
