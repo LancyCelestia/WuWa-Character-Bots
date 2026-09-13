@@ -210,6 +210,18 @@ def test_render_mermaid_html_mica_and_escapes() -> None:
     assert "graph TD" in html_text
 
 
+def test_template_cdn_url_matches_intercept_target() -> None:
+    """模板零分叉契约：src 仍是 CDN URL，且与 render_backends 拦截目标一致。
+
+    本地供给走传输层 page.route() 换血（素材本地化 F1）；两者失配即拦截
+    落空、静默回源，用此契约锁死。
+    """
+    from plugins.bot_unified_runtime.output.render_backends import _MERMAID_CDN_URL
+
+    html_text = bridge.render_mermaid_html("graph TD\nA --> B")
+    assert _MERMAID_CDN_URL in html_text
+
+
 def test_render_mermaid_png_empty_code_is_none() -> None:
     assert bridge.render_mermaid_png("   \n") is None
 

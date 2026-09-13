@@ -1,7 +1,10 @@
 {# Mermaid 流程图卡（G-MERMAID）：无平台语境，主色固定中性灰 #607080，
    走 --pc 派生 token；Mica 铁律 —— 无 <meta viewport>、.card 用 fit-content、
    body 透明（截图 omit_background 依赖）、分级阴影族 token、字重≤700。
-   mermaid.min.js 从 jsDelivr CDN 加载，startOnLoad 自动把 code 渲成 SVG。
+   mermaid.min.js 的 src 保持 jsDelivr CDN URL 不变（模板零分叉），传输层由
+   render_backends 渲染期 page.route() 拦截换血为本地素材
+   （card_render_assets/mermaid/mermaid.min.js，scripts/fetch_mermaid_js.py
+   落盘；素材缺失即放行网络），startOnLoad 自动把 code 渲成 SVG。
    mica-glass v1 2026-09-12：釉瑚云母底（bridge 按中性灰派生的 --wash-* 注入；
    工艺出处=用户裁定）+ 1px 内高光渐变描边 + 双伪元素三色柔光斑缓慢漂移
    （内联脚本随机相位）。
