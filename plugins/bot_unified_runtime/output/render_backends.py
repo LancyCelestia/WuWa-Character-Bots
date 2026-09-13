@@ -69,6 +69,64 @@ def _fetch_image_bytes(url: str) -> tuple[bytes, str] | None:
         return None
 
 
+# ---- mermaid.min.js 本地供给（素材本地化 F1，2026-09-14）----
+# 常驻浏览器每次 new_page 是全新 context、无 HTTP 缓存复用 → 不落盘就每张
+# mermaid 卡回源 jsDelivr（~3.4MB），离线吃满 set_content 8s 预算截断（已知
+# 问题 #8 根因之一）。模板 script src 保持 CDN URL 不变（mermaid_card.html
+# 零分叉），此处渲染期 page.route() 在传输层换血：本地素材校验通过才注册
+# 拦截（命中即 fulfill 本地字节），缺失/损坏则不注册、放行走网络（优雅
+# 降级回现状）。落盘由 scripts/fetch_mermaid_js.py 一次性完成。
+_MERMAID_CDN_URL = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"
+# 真身 ~3.4MB（11.17.2 实测 3,572,661 B）；低于阈值按截断/错误页拒收。
+_MERMAID_MIN_BYTES = 512 * 1024
+
+
+def mermaid_asset_dir() -> Path:
+    """mermaid 素材目录（与平台 logo 同区 card_render_assets/mermaid/）。
+
+    解析序与 bridge._resolve_icon_asset_root 同型：BOT_CARD_ASSET_DIR 显式
+    配置 → 祖先目录搜索 ChatBot_Runtime/card_render_assets（支持
+    MyWorkspace\\ChatBot 与 Archive\\ChatBot\\ChatBot 两种布局）→ 源码树
+    开发兜底。返回目录不保证已存在（fetch 工具负责创建）。
+    """
+    configured = os.getenv("BOT_CARD_ASSET_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser() / "mermaid"
+    for ancestor in Path(__file__).resolve().parents:
+        asset_root = ancestor / "ChatBot_Runtime" / "card_render_assets"
+        if asset_root.is_dir():
+            return asset_root / "mermaid"
+    return Path(__file__).resolve().parent / "card_render" / "assets" / "mermaid"
+
+
+def resolve_mermaid_asset_path() -> Path:
+    """mermaid.min.js 本地素材路径（不保证存在，缺失=拦截不启用）。"""
+    return mermaid_asset_dir() / "mermaid.min.js"
+
+
+def validate_mermaid_asset_bytes(data: bytes) -> bytes | None:
+    """本地/下载字节的收货校验；不合格返回 None（拒收/放行网络）。
+
+    三道闸：大小阈值（截断防护）、首字节非 ``<``（CDN HTML 错误页防护）、
+    前部含 ``mermaid`` 标记（随机大文件误配防护）。
+    """
+    if len(data) < _MERMAID_MIN_BYTES:
+        return None
+    if data[:4096].lstrip().startswith(b"<"):
+        return None
+    if b"mermaid" not in data[:65536].lower():
+        return None
+    return data
+
+
+def _mermaid_asset_bytes() -> bytes | None:
+    """读取并校验本地 mermaid.min.js；缺失/损坏返回 None（放行网络）。"""
+    try:
+        return validate_mermaid_asset_bytes(resolve_mermaid_asset_path().read_bytes())
+    except OSError:
+        return None
+
+
 # ---- 渲染等待策略（render-pipeline-optimization-spec §2.1b，Phase-1 框架）----
 # 预算等待的就绪信号（依次等待、齐即截；仅 ``wait_budget_ms`` 模式启用）：
 # ① document.fonts.ready——晚到字体 swap 是截图换字形的直接来源；
@@ -438,6 +496,24 @@ class PlaywrightRenderBackend:
 
                     if _html_mentions_orb_prone_image(html):
                         page.route("**/*", _orb_route)
+                    # mermaid 本地供给（F1）：模板 src 是 CDN URL，传输层拦截
+                    # 换血为本地字节。注册在 ORB 路由之后（Playwright 按注册
+                    # 逆序匹配，后注册者优先），精确 URL 模式不碰其他请求。
+                    # 本地素材缺失/损坏 → 不注册放行网络；page 无 route（假
+                    # page 测试替身）→ 同样跳过，零回归。
+                    if _MERMAID_CDN_URL in html:
+                        mermaid_js = _mermaid_asset_bytes()
+                        register_route = getattr(page, "route", None)
+                        if mermaid_js is not None and callable(register_route):
+
+                            def _mermaid_route(route: Any) -> None:
+                                route.fulfill(
+                                    status=200,
+                                    body=mermaid_js,
+                                    content_type="text/javascript",
+                                )
+
+                            register_route(_MERMAID_CDN_URL, _mermaid_route)
                     # 显式加载超时：Playwright 默认 30s 会长时间持锁阻塞其他
                     # 渲染。用页面级默认超时覆盖 set_content/wait_for_*（页面
                     # 级失败只关页面，浏览器不受影响）。
