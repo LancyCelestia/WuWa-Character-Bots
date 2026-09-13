@@ -1,7 +1,7 @@
 """笔记能力（bot.notes，经 bot.reminder 路由面）：Markdown 笔记 + 待办勾选。
 
 触发（全部收在 REMINDER 路由的 is_reminder_command 判定里，不新增
-RouteKind——route-matrix §2 的 reminder 行零改动）：
+RouteKind——笔记词形已并入 route-matrix §2 reminder 行，A34 终审核验）：
 - 「笔记 记 <内容>」/「筆記 記」/「biji 记」：新增（可带图片消息一起发，
   图落 data/notes_images/，content_md 落 ![图片N](文件名) 引用行）；
 - 「笔记列表」/「bijiliebiao / bjlb」：本会话清单；
