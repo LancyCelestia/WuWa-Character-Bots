@@ -44,6 +44,7 @@
 | 文档事实 | 机器册与代码互证 | scripts/doc_sync.py --check（pytest 常驻） |
 | 全量回归 | 4500+ 用例 | scripts/dev.ps1 -Task test |
 | 交叉验证 | 双引擎各自全量、结果互证 | python tests/cross_validate.py |
+| 自动同步 | `BOT_AUTOSYNC=1` 时 session 级钩子静默 `--write` 修漂移（人无感；失败仅 warning，由上两行门兜底报红） | tests/conftest.py `_autosync_session_gate` |
 
 **交叉验证方法**：`python tests/cross_validate.py` 先后以「默认引擎」与「隔离引擎」（独立 basetemp、禁缓存、PYTHONDONTWRITEBYTECODE=1）各跑一遍，两组结果逐项比对——同一次提交在两种环境下必须同绿/同红，不一致即环境耦合缺陷。全量两遍约 5–6 分钟，用于提交前/大改后，不进单测门。
 

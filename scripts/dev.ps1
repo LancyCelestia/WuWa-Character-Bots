@@ -40,6 +40,7 @@ param(
         "memory-sanitize",
         "docs-check",
         "plugin-check",
+        "sync",
         "smoke",
         "verify"
     )]
@@ -235,6 +236,10 @@ function Invoke-Test {
         throw "The pytest suite is archived outside the workspace. Restore tests/ from development-materials-2026-08-28.tar.gz before using the test task."
     }
 
+    # autosync（2026-09-13 用户裁定）：test 任务启用 conftest 常驻自动同步——
+    # session 开始自动 --write 修正漂移，测试跑完文档/哈希已是同步态，人无感。
+    $env:BOT_AUTOSYNC = "1"
+
     $python = Get-ProjectPython
     $pytest = Get-ProjectCommand "pytest"
 
@@ -294,6 +299,28 @@ function Invoke-Test {
         Pop-Location
     }
 }
+
+function Invoke-Sync {
+    # autosync（2026-09-13 用户裁定）：链式执行全部 --write 联动——
+    # 命令目录 -> 机器事实册 -> 哈希清单。改完代码跑一次本任务，
+    # 全项目对应部分自动更正，替代三个手动 write。
+    $python = Get-ProjectPython
+    Push-Location $Root
+    try {
+        Write-Step "sync: regenerating command catalog"
+        Invoke-External $python @("scripts/command_catalog.py", "--write")
+        Write-Step "sync: regenerating auto-facts"
+        Invoke-External $python @("scripts/doc_sync.py", "--write")
+        Write-Step "sync: re-recording render hashes"
+        Invoke-External $python @("tests/verify_hashes.py", "--write")
+        Write-Step "sync: verifying all gates green"
+        Invoke-External $python @("scripts/doc_sync.py", "--check")
+        Invoke-External $python @("tests/verify_hashes.py", "--check")
+        Write-Step "sync complete - all generated docs & hashes up to date"
+    }
+    finally { Pop-Location }
+}
+
 
 function Invoke-Lint {
     $ruff = Get-ProjectCommand "ruff"
@@ -880,6 +907,7 @@ switch ($Task) {
     "memory-sanitize" { Invoke-MemorySanitize }
     "docs-check" { Invoke-DocsCheck }
     "plugin-check" { Invoke-PluginCheck }
+    "sync" { Invoke-Sync }
     "smoke" { Invoke-Smoke }
     "verify" { Invoke-Verify }
 }
