@@ -1,8 +1,9 @@
 """双引擎交叉验证执行器（2026-09-13）。
 
 同一份测试套在两种隔离口径下各跑一遍，结果必须互证一致：
-- 引擎 A（默认）：dev.ps1 同口径——venv pytest，进程内缓存默认；
-- 引擎 B（隔离）：独立 basetemp、`-p no:cacheprovider`、PYTHONDONTWRITEBYTECODE=1。
+- 引擎 A（默认）：dev.ps1 同口径——venv pytest + 独立 basetemp + `-p no:cacheprovider`
+  （源码树零缓存铁律：缓存/临时物一律落 %TEMP%，.pytest_cache 不落源码树根）；
+- 引擎 B（隔离）：在 A 之上再加 PYTHONDONTWRITEBYTECODE=1（.pyc 亦不落盘）。
 
 不一致（同提交一绿一红）= 环境耦合缺陷，当场暴露。全量两遍约 5–6 分钟，
 用于提交前/大改后；不进 pytest 常驻门（避免每次全量翻倍）。
@@ -36,11 +37,12 @@ def _run_engine(engine: str, sample: str) -> tuple[int, str]:
         sample,
         "--basetemp",
         str(basetemp),
+        "-p",
+        "no:cacheprovider",
         "-q",
     ]
     if engine == "isolated":
         env["PYTHONDONTWRITEBYTECODE"] = "1"
-        cmd += ["-p", "no:cacheprovider"]
     result = subprocess.run(
         cmd, cwd=str(ROOT), capture_output=True, text=True, timeout=1800, env=env,
         check=False,
