@@ -127,7 +127,10 @@ def test_new_topics_categorized_as_admin() -> None:
 
 
 def test_alias_map_stays_collision_free() -> None:
-    from plugins.bot_unified_runtime.capabilities.echo import _HELP_ALIAS_MAP
+    from plugins.bot_unified_runtime.capabilities.echo import (
+        _HELP_ALIAS_MAP,
+        _HELP_ENTRY_META,
+    )
 
     seen: dict[str, str] = {}
     for entry in HELP_ENTRIES:
@@ -135,4 +138,18 @@ def test_alias_map_stays_collision_free() -> None:
             lowered = alias.lower()
             assert lowered not in seen, f"别名 {alias} 在 {seen[lowered]} 与 {entry['topic']} 间冲突"
             seen[lowered] = entry["topic"]
-    assert len(_HELP_ALIAS_MAP) == len(seen)
+    # T5 结构修复（fix-trae2）：映射口径=aliases ∪ META 触发词（aliases 优先）。
+    for entry in HELP_ENTRIES:
+        meta = _HELP_ENTRY_META.get(entry["topic"], {})
+        for field in ("triggers_nickname", "triggers_nl"):
+            for word in meta.get(field) or ():
+                seen.setdefault(str(word).strip().lower(), entry["topic"])
+    assert set(_HELP_ALIAS_MAP) == set(seen)
+
+
+def test_q1_dead_symbols_removed() -> None:
+    """Q1 死代码清扫防复现：_help_index_line / route_bot_command 及其专属常量已删。"""
+    import plugins.bot_unified_runtime.capabilities.echo as echo_mod
+
+    for gone in ("_help_index_line", "route_bot_command", "_HELP_INDEX_COMMAND_TOPICS"):
+        assert not hasattr(echo_mod, gone), f"已删除的死代码符号 {gone} 不得回归"

@@ -246,6 +246,14 @@ def test_alias_map_still_collision_free() -> None:
             lowered = alias.lower()
             assert lowered not in seen
             seen.add(lowered)
-    assert len(_HELP_ALIAS_MAP) == len(seen)
+    # T5 结构修复（fix-trae2）：映射口径=aliases ∪ META 触发词（aliases 优先）。
+    from plugins.bot_unified_runtime.capabilities.echo import _HELP_ENTRY_META
+
+    for entry in HELP_ENTRIES:
+        meta = _HELP_ENTRY_META.get(entry["topic"], {})
+        for field in ("triggers_nickname", "triggers_nl"):
+            for word in meta.get(field) or ():
+                seen.add(str(word).strip().lower())
+    assert set(_HELP_ALIAS_MAP) == seen
     for topic in ("随机图", "提醒", "搜图", "群文件", "文件", "日志"):
         assert normalize_help_topic(topic) == topic

@@ -340,3 +340,19 @@ def test_mixed_image_part_maps_to_onebot_segment() -> None:
     assert segment is not None
     assert segment["type"] == "image"
     assert segment["data"]["file"].startswith("base64://")
+
+
+# ==================== 真实渲染烟测（默认跳过；BOT_MERMAID_NET_TESTS=1 启用） ====================
+def test_render_mermaid_png_real_network_smoke() -> None:
+    """真实浏览器 + CDN 全链路：render_mermaid_png 非 None 且 PNG > 10000 字节。
+
+    门控先例与 test_finance_data 的 BOT_FINANCE_NET_TESTS 一致：默认跳过，
+    设 BOT_MERMAID_NET_TESTS=1 才跑；无网/上游受限环境不算失败。
+    """
+    import os
+
+    if os.environ.get("BOT_MERMAID_NET_TESTS", "") != "1":
+        pytest.skip("真实渲染烟测默认跳过（BOT_MERMAID_NET_TESTS=1 启用）")
+    png = bridge.render_mermaid_png("graph TD;A-->B;")
+    assert png is not None
+    assert len(png) > 10000

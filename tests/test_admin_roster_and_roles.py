@@ -39,13 +39,13 @@ def _message(sender_id: str) -> IncomingMessage:
 
 
 def _empty_settings(**overrides) -> RoleSettings:
-    base = dict(
-        admin_user_ids=frozenset(),
-        enterprise_user_ids=frozenset(),
-        trusted_user_ids=frozenset(),
-        blocked_user_ids=frozenset(),
-        super_admin_user_ids=frozenset(),
-    )
+    base = {
+        "admin_user_ids": frozenset(),
+        "enterprise_user_ids": frozenset(),
+        "trusted_user_ids": frozenset(),
+        "blocked_user_ids": frozenset(),
+        "super_admin_user_ids": frozenset(),
+    }
     base.update(overrides)
     return RoleSettings(**base)
 

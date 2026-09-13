@@ -690,7 +690,8 @@ def test_audit_p3_26_v2_resolve_error_messages(tmp_path) -> None:
         [_V2Adapter(error=ValueError("a")), _V2Adapter(error=RuntimeError("loop"))],
     )
     body2 = capability2(_message("订阅 add xyz"), None).body
-    assert "运行异常" in body2
+    # UX 改写波（q1-inventory U7）：运行异常不再暴露内部术语，统一为"暂时解析不出来"话术。
+    assert "暂时解析不出来" in body2
 
     capability3, _store3 = _v2_capability(tmp_path, [])
     body3 = capability3(_message("订阅 add xyz"), None).body
