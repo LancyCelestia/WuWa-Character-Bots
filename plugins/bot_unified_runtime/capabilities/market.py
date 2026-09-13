@@ -122,6 +122,468 @@ def is_market_command(text: str) -> bool:
     )
 
 
+# ==================== 金融 Phase-1 扩容（2026-09-13）：商品/国债/北向 ==========
+# 三条新能力闭包与 is_*_command 纯谓词。接线（base_router/echo）归主会话；
+# 本文件只提供可独立离线测试的构件。数据源：
+# - 商品：sources.commodities_data（东财外盘主力连续，LME 无源用 COMEX 铜）；
+# - 国债：sources.bond_data（东财 datacenter RPTA_WEB_TREASURYYIELD，1Y 无源
+#   诚实不接，利差=上游直供 10Y−2Y）；
+# - 北向：sources.market_data.fetch_northbound_flows（2024-08 起无净买入口径，
+#   只报成交总额等仍在披露字段）。
+# 三者共用既有渲染契约（render_finance_card_html sections/rows），模板零改动。
+
+# 评审 A13-I1：IGNORECASE 让 Gold/Crude Oil 等大写形态命中（golden 仍被边界
+# 拒）；A13-M1：黄金/原油后置 (?!基金) 语境排除，基金类查询不误触商品卡。
+_COMMODITY_TRIGGER_RE = re.compile(
+    r"(黄金(?!基金)|金价|原油(?!基金)|油价|白银|银价|铜价|大宗商品"
+    r"|黃金|金價|白銀|銀價|油價|銅價"
+    r"|(?<![a-z0-9])(?:gold|silver|(?:crude\s+)?oil|commodit(?:y|ies))(?![a-z0-9]))",
+    re.IGNORECASE,
+)
+_BOND_TRIGGER_RE = re.compile(
+    r"(国债收益率|国债|债券收益率|期限利差|收益率曲线|中美国债|國債|債券收益率)"
+)
+_NORTHBOUND_TRIGGER_RE = re.compile(
+    r"(北向资金|北上资金|北向|沪股通|深股通|北向資金|北上資金|滬股通|深股通)"
+)
+
+
+def is_commodity_command(text: str) -> bool:
+    """商品触发判定（黄金/原油/白银/铜价等）：短文本、无链接、命中触发词。"""
+    stripped = (text or "").strip()
+    if not stripped or len(stripped) > _MAX_TRIGGER_LEN:
+        return False
+    if _URL_HINT_RE.search(stripped):
+        return False
+    return bool(_COMMODITY_TRIGGER_RE.search(stripped))
+
+
+def is_bond_command(text: str) -> bool:
+    """国债收益率触发判定：短文本、无链接、命中触发词。"""
+    stripped = (text or "").strip()
+    if not stripped or len(stripped) > _MAX_TRIGGER_LEN:
+        return False
+    if _URL_HINT_RE.search(stripped):
+        return False
+    return bool(_BOND_TRIGGER_RE.search(stripped))
+
+
+def is_northbound_command(text: str) -> bool:
+    """北向资金触发判定：短文本、无链接、命中触发词。"""
+    stripped = (text or "").strip()
+    if not stripped or len(stripped) > _MAX_TRIGGER_LEN:
+        return False
+    if _URL_HINT_RE.search(stripped):
+        return False
+    return bool(_NORTHBOUND_TRIGGER_RE.search(stripped))
+
+
+def _card_common_payload(config: Any | None, feature_label: str) -> dict[str, Any]:
+    """三张新卡共用的页脚字段（与 market/stocks 能力同源口径）。"""
+    import time as _time
+
+    return {
+        "updated_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
+        "bot_name": (
+            str(getattr(config, "bot_persona_display_name", "") or "").strip()
+            or "守岸人"
+        ),
+        "bot_avatar_url": str(bot_avatar_uri(config)),
+        "feature_label": feature_label,
+    }
+
+
+def _render_finance_sections_card(
+    render_backend: Any | None,
+    payload: dict[str, Any],
+    card_dir: str,
+    prefix: str,
+) -> str:
+    """sections/rows 契约 → 釉瑚金融卡 PNG；后端缺失/失败返回空串回退文本。"""
+    if render_backend is None or not getattr(render_backend, "available", False):
+        return ""
+    try:
+        import hashlib
+        from pathlib import Path
+
+        from plugins.bot_unified_runtime.output.card_render.bridge import (
+            render_finance_card_html,
+        )
+        from plugins.bot_unified_runtime.runtime.cache_policy import prune_prefixed
+
+        png = render_backend.render_card(
+            {
+                "html": render_finance_card_html(payload),
+                "viewport": {"width": 1160, "height": 1400},
+                "device_scale_factor": 2,
+                "wait_ms": 0,
+            }
+        )
+        if not isinstance(png, bytes) or not png:
+            return ""
+        rows = [
+            row
+            for section in payload.get("sections", [])
+            if isinstance(section, dict)
+            for row in section.get("rows", [])
+            if isinstance(row, dict)
+        ]
+        digest = hashlib.sha1(
+            (prefix + "|" + "|".join(str(row.get("value", "")) for row in rows))
+            .encode()
+        ).hexdigest()[:12]
+        target = Path(card_dir or "data/cards")
+        target.mkdir(parents=True, exist_ok=True)
+        path = target / f"{prefix}_{digest}.png"
+        path.write_bytes(png)
+        try:
+            prune_prefixed(target, prefix, keep=120)
+        except Exception:  # noqa: S110, BLE001 - 配额清理失败不影响出图。
+            pass
+        return str(path)
+    except Exception:  # noqa: BLE001 - 渲染失败回退纯文本。
+        return ""
+
+
+def _trend_svg_safe(closes: tuple[float, ...]) -> str:
+    """多日收盘 → 折线 SVG；失败空串回退（与 stocks 能力同款兜底）。"""
+    if not closes or len(closes) < 2:
+        return ""
+    try:
+        from plugins.bot_unified_runtime.sources.finance_chart import line_chart_svg
+
+        return line_chart_svg(closes).svg
+    except Exception:  # noqa: BLE001 - 折线失败静默回退文案。
+        return ""
+
+
+def build_commodities_capability(
+    config: Any | None = None, *, render_backend: Any | None = None
+) -> Any:
+    """商品行情能力闭包（bot.commodities）：黄金/白银/铜/原油现价+30日走势。"""
+    from plugins.bot_unified_runtime.sources.commodities_data import (
+        fetch_commodity_quotes,
+        fetch_commodity_trend,
+        format_commodities_brief,
+        format_price,
+        group_commodity_quotes,
+    )
+
+    def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
+        timeout = float(getattr(config, "bot_market_timeout_seconds", 6.0) or 6.0)
+        quotes = fetch_commodity_quotes(
+            timeout_seconds=timeout,
+            cache_seconds=float(
+                getattr(config, "bot_market_cache_seconds", 60.0) or 60.0
+            ),
+        )
+        if not quotes:
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.commodities",
+                kind="text",
+                body="大宗商品行情暂时拉不到，晚点再试试？",
+                audit_tags=["capability:commodities", "commodities:fetch_failed"],
+            )
+        # 走势折线（10min TTL 在数据侧）；并行拉取，失败静默缺席。
+        from concurrent.futures import ThreadPoolExecutor
+
+        trends: dict[str, tuple[float, ...]] = {}
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {
+                quote.code: pool.submit(
+                    fetch_commodity_trend, quote.code, timeout_seconds=timeout
+                )
+                for quote in quotes
+            }
+            for code, future in futures.items():
+                try:
+                    trends[code] = future.result(timeout=timeout + 2.0)
+                except Exception:  # noqa: BLE001 - 单商品折线失败静默缺席。
+                    trends[code] = ()
+        sections: list[dict[str, Any]] = []
+        for group_name, rows in group_commodity_quotes(quotes).items():
+            sections.append(
+                {
+                    "name": group_name,
+                    "rows": [
+                        {
+                            "label": quote.name,
+                            "value": format_price(quote.price),
+                            "delta": (
+                                f"+{quote.change_pct:.2f}%"
+                                if quote.change_pct > 0
+                                else f"{quote.change_pct:.2f}%"
+                            ),
+                            "cls": (
+                                "up"
+                                if quote.change_pct > 0
+                                else ("down" if quote.change_pct < 0 else "flat")
+                            ),
+                            "sub": quote.unit,
+                            "trend_svg": _trend_svg_safe(trends.get(quote.code) or ()),
+                            "trend_note": (
+                                "" if trends.get(quote.code) else "暂无历史走势数据"
+                            ),
+                        }
+                        for quote in rows
+                    ],
+                }
+            )
+        payload = {
+            "title": "大宗商品速览",
+            "subtitle": "红涨绿跌 · 折线为近 30 个交易日收盘",
+            "badge": "延迟行情",
+            "sections": sections,
+            "source_note": "数据源：东方财富（外盘主力连续）",
+            "delayed_note": "LME 无稳定免费源，铜采用 COMEX 主力连续（美元/磅）",
+            **_card_common_payload(config, "商品行情"),
+        }
+        card = _render_finance_sections_card(
+            render_backend,
+            payload,
+            str(getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"),
+            "commodities",
+        )
+        body = format_commodities_brief(quotes)
+        return CapabilityResult(
+            request_id=message.request_id,
+            capability_id="bot.commodities",
+            kind="mixed" if card else "text",
+            title="大宗商品速览",
+            body=body,
+            images=[{"file": card}] if card else [],
+            risk_level=RiskLevel.LOW,
+            privacy_level=PrivacyLevel.PUBLIC,
+            audit_tags=[
+                "capability:commodities",
+                f"commodities_quotes:{len(quotes)}",
+                "card_rendered" if card else "text_only",
+            ],
+        )
+
+    return capability
+
+
+def build_bond_capability(
+    config: Any | None = None, *, render_backend: Any | None = None
+) -> Any:
+    """国债收益率能力闭包（bot.bonds）：中美国债 2/5/10/30 年 + 10Y−2Y 利差。"""
+    from plugins.bot_unified_runtime.sources.bond_data import (
+        fetch_bond_yields,
+        format_bond_brief,
+    )
+
+    def _yield_rows(points: Any, spread: float | None, spread_label: str) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for point in points:
+            rows.append(
+                {
+                    "label": point.label,
+                    "value": "暂无" if point.value is None else f"{point.value:.3f}%",
+                    "delta": "",
+                    "cls": "flat",
+                    "sub": "",
+                    "trend_svg": "",
+                }
+            )
+        rows.append(
+            {
+                "label": spread_label,
+                "value": "暂无" if spread is None else f"{spread:+.3f}%",
+                "delta": "",
+                "cls": "flat",
+                "sub": "",
+                "trend_svg": "",
+            }
+        )
+        return rows
+
+    def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
+        timeout = float(getattr(config, "bot_market_timeout_seconds", 6.0) or 6.0)
+        snapshot = fetch_bond_yields(timeout_seconds=timeout)
+        if snapshot.status != "ok":
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.bonds",
+                kind="text",
+                body=format_bond_brief(snapshot),
+                audit_tags=["capability:bonds", "bonds:fetch_failed"],
+            )
+        sections = [
+            {
+                "name": "中国国债（收益率 · 收盘口径）",
+                "rows": _yield_rows(snapshot.cn, snapshot.cn_spread_10y2y, "10Y−2Y 期限利差"),
+            },
+            {
+                "name": "美国国债（收益率 · 收盘口径）",
+                "rows": _yield_rows(snapshot.us, snapshot.us_spread_10y2y, "10Y−2Y 期限利差"),
+            },
+        ]
+        payload = {
+            "title": "国债收益率速览",
+            "subtitle": (
+                f"交易日 {snapshot.as_of_date}" if snapshot.as_of_date else "交易日未知"
+            ),
+            "badge": "延迟数据",
+            "sections": sections,
+            "source_note": "数据源：东方财富数据中心",
+            "delayed_note": "1 年期暂无稳定免费源，不展示；利差为 10Y−2Y 口径",
+            **_card_common_payload(config, "国债收益率"),
+        }
+        card = _render_finance_sections_card(
+            render_backend,
+            payload,
+            str(getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"),
+            "bonds",
+        )
+        body = format_bond_brief(snapshot)
+        audit = [
+            "capability:bonds",
+            "bonds:ok" if not snapshot.missing else "bonds:degraded",
+            "card_rendered" if card else "text_only",
+        ]
+        return CapabilityResult(
+            request_id=message.request_id,
+            capability_id="bot.bonds",
+            kind="mixed" if card else "text",
+            title="国债收益率速览",
+            body=body,
+            images=[{"file": card}] if card else [],
+            risk_level=RiskLevel.LOW,
+            privacy_level=PrivacyLevel.PUBLIC,
+            audit_tags=audit,
+        )
+
+    return capability
+
+
+def build_northbound_capability(
+    config: Any | None = None, *, render_backend: Any | None = None
+) -> Any:
+    """北向资金能力闭包（bot.northbound）：沪深股通当日成交总额（无净买入口径）。"""
+    from plugins.bot_unified_runtime.sources.market_data import (
+        fetch_northbound_flows,
+        format_northbound_brief,
+    )
+
+    def capability(message: IncomingMessage, decision: BotDecision) -> CapabilityResult:
+        timeout = float(getattr(config, "bot_market_timeout_seconds", 6.0) or 6.0)
+        flows = fetch_northbound_flows(timeout_seconds=timeout)
+        if not flows:
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.northbound",
+                kind="text",
+                body="北向资金数据暂时拉不到，晚点再试试？",
+                audit_tags=["capability:northbound", "northbound:fetch_failed"],
+            )
+        main_rows: list[dict[str, Any]] = []
+        context_rows: list[dict[str, Any]] = []
+        for flow in flows:
+            main_rows.append(
+                {
+                    "label": flow.name,
+                    "value": (
+                        f"{flow.deal_amt_yi:,.2f} 亿元"
+                        if flow.deal_amt_yi is not None
+                        else "暂无"
+                    ),
+                    "delta": "",
+                    "cls": "flat",
+                    "sub": (
+                        f"当日成交总额 · {flow.deal_num:,} 笔"
+                        if flow.deal_num is not None
+                        else "当日成交总额"
+                    ),
+                    "trend_svg": "",
+                }
+            )
+            if flow.index_close is not None:
+                pct = (
+                    f"{flow.index_change_pct:+.2f}%"
+                    if flow.index_change_pct is not None
+                    else ""
+                )
+                cls = (
+                    "up"
+                    if (flow.index_change_pct or 0.0) > 0
+                    else ("down" if (flow.index_change_pct or 0.0) < 0 else "flat")
+                )
+                context_rows.append(
+                    {
+                        "label": f"{flow.name}参考 · {flow.index_name}",
+                        "value": f"{flow.index_close:.2f}",
+                        "delta": pct,
+                        "cls": cls,
+                        "sub": "",
+                        "trend_svg": "",
+                    }
+                )
+            if flow.lead_stock:
+                pct = (
+                    f"{flow.lead_stock_pct:+.2f}%"
+                    if flow.lead_stock_pct is not None
+                    else ""
+                )
+                cls = (
+                    "up"
+                    if (flow.lead_stock_pct or 0.0) > 0
+                    else ("down" if (flow.lead_stock_pct or 0.0) < 0 else "flat")
+                )
+                context_rows.append(
+                    {
+                        "label": f"{flow.name}领涨股",
+                        "value": flow.lead_stock,
+                        "delta": pct,
+                        "cls": cls,
+                        "sub": "",
+                        "trend_svg": "",
+                    }
+                )
+        sections: list[dict[str, Any]] = [
+            {"name": "沪深股通（当日成交）", "rows": main_rows}
+        ]
+        if context_rows:
+            sections.append({"name": "参考", "rows": context_rows})
+        trade_dates = sorted({flow.trade_date for flow in flows})
+        payload = {
+            "title": "北向资金速览",
+            "subtitle": (
+                f"交易日 {trade_dates[-1]}" if trade_dates else "交易日未知"
+            ),
+            "badge": "收盘披露",
+            "sections": sections,
+            "source_note": "数据源：东方财富数据中心",
+            "delayed_note": "2024-08 起不再披露北向当日净买入，本卡不含净买入口径",
+            **_card_common_payload(config, "北向资金"),
+        }
+        card = _render_finance_sections_card(
+            render_backend,
+            payload,
+            str(getattr(config, "bot_card_render_dir", "data/cards") or "data/cards"),
+            "northbound",
+        )
+        body = format_northbound_brief(flows)
+        return CapabilityResult(
+            request_id=message.request_id,
+            capability_id="bot.northbound",
+            kind="mixed" if card else "text",
+            title="北向资金速览",
+            body=body,
+            images=[{"file": card}] if card else [],
+            risk_level=RiskLevel.LOW,
+            privacy_level=PrivacyLevel.PUBLIC,
+            audit_tags=[
+                "capability:northbound",
+                f"northbound_channels:{len(flows)}",
+                "card_rendered" if card else "text_only",
+            ],
+        )
+
+    return capability
+
+
 def build_market_capability(
     config: Any | None = None, *, render_backend: Any | None = None
 ) -> Any:

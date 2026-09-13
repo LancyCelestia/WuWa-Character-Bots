@@ -229,6 +229,10 @@ def build_call_draft(
     if not safe_finish:
         safe_finish = safe_llm_finish_reason(usage.get("finish_reason"))
     # 计价：in/out 缺任一即视为未配置价格（保持 NULL 口径）。
+    # 单位换算（修 2026-09-13 千倍计价错账）：价格是 元/1M tokens，
+    # 毫厘 = 1/1000 元 → cost_milli = tokens × price / 1000
+    # （与 design §5.1 公式、runtime/pricing.model_call_cost_milli 同口径；
+    #  旧实现 tokens × price 恰好放大 1000 倍）。
     input_cost_milli: int | None = None
     cache_read_cost_milli: int | None = None
     output_cost_milli: int | None = None
@@ -244,9 +248,11 @@ def build_call_draft(
             price_cache_creation if price_cache_creation is not None else price_in
         )
         read_price = price_cache_read if price_cache_read is not None else price_in
-        input_cost_milli = round(billed_input * price_in + cached_write * creation_price)
-        cache_read_cost_milli = round(cached_read * read_price)
-        output_cost_milli = round((completion_tokens or 0) * price_out)
+        input_cost_milli = round(
+            billed_input * price_in / 1000 + cached_write * creation_price / 1000
+        )
+        cache_read_cost_milli = round(cached_read * read_price / 1000)
+        output_cost_milli = round((completion_tokens or 0) * price_out / 1000)
         total_cost_milli = (
             input_cost_milli + cache_read_cost_milli + output_cost_milli
         )
@@ -634,6 +640,103 @@ CREATE INDEX IF NOT EXISTS idx_balance_provider ON balance_snapshots (provider_i
 """
 
 
+# ==================== 渠道维度只读聚合（报告侧渠道子行） ====================
+
+
+def aggregate_channel_usage(
+    db_path: str,
+    *,
+    start_day: str,
+    end_day: str,
+    since_iso: str = "",
+) -> dict[tuple[str, str], dict[str, int]]:
+    """按 (实际模型名, 渠道 model_id) 只读聚合窗口内 ``llm_call_records``。
+
+    报告侧「家族行 → 渠道子行」的数据源：账本每行本就保留渠道字段
+    （provider_id/model_id = 渠道注册 id），这里按窗口聚合出每个渠道的
+    调用数/失败数/token/费用，供 usage_monitor 把同模型跨渠道消耗拆到
+    「实际服务的渠道」。failover 拨转后计费归因真实渠道即由此可追溯。
+
+    - 只读连接（URI mode=ro），失败/库不存在返回 {}——报告注记缺渠道
+      明细好过报错；WAL 下与写线程并发安全。
+    - 日期过滤用 ``substr(completed_at, 1, 10)``（completed_at 由
+      ``datetime.now(zone).isoformat()`` 写入，前缀即本地日）。不能用
+      ``date()``：它会把带时区偏移的时间戳换算成 UTC，本地日会被整体
+      错移 8 小时（+08:00 写 09-14 00:10 会被算进 09-13）。
+      ``since_iso`` 给定时附加 ``completed_at >= since_iso`` 文本比较
+      （同构造器 ISO 文本，字典序即时序；恰好等于边界的行按 ``.000``
+      毫秒尾缀大于 ``+08:00`` 偏移尾缀被包含，与事件日志 since 语义一致）。
+    """
+    results: dict[tuple[str, str], dict[str, int]] = {}
+    try:
+        if not str(db_path):
+            return {}
+        import pathlib
+
+        connection = sqlite3.connect(
+            f"file:{pathlib.Path(db_path).as_posix()}?mode=ro",
+            uri=True,
+            timeout=5.0,
+        )
+        connection.row_factory = sqlite3.Row
+        try:
+            sql = """
+                SELECT actual_model, model_id,
+                       COUNT(*)                     AS calls,
+                       SUM(status != 'success')     AS failed_calls,
+                       SUM(COALESCE(prompt_tokens, 0))          AS prompt_tokens,
+                       SUM(COALESCE(cache_creation_tokens, 0))  AS cache_creation_tokens,
+                       SUM(COALESCE(cache_read_tokens, 0))      AS cache_read_tokens,
+                       SUM(COALESCE(completion_tokens, 0))      AS completion_tokens,
+                       SUM(COALESCE(total_tokens, 0))           AS total_tokens,
+                       SUM(COALESCE(total_cost_milli, 0))       AS total_cost_milli,
+                       SUM(unpriced)                AS unpriced_calls
+                FROM llm_call_records
+                WHERE substr(completed_at, 1, 10) BETWEEN ? AND ?
+                GROUP BY actual_model, model_id
+            """
+            # 评审 A13-M4：完整 SQL 二选一，禁运行期字符串替换拼 SQL 片段。
+            params: list[str] = [str(start_day), str(end_day)]
+            if since_iso:
+                sql = """
+                SELECT actual_model, model_id,
+                       COUNT(*)                     AS calls,
+                       SUM(status != 'success')     AS failed_calls,
+                       SUM(COALESCE(prompt_tokens, 0))          AS prompt_tokens,
+                       SUM(COALESCE(cache_creation_tokens, 0))  AS cache_creation_tokens,
+                       SUM(COALESCE(cache_read_tokens, 0))      AS cache_read_tokens,
+                       SUM(COALESCE(completion_tokens, 0))      AS completion_tokens,
+                       SUM(COALESCE(total_tokens, 0))           AS total_tokens,
+                       SUM(COALESCE(total_cost_milli, 0))       AS total_cost_milli,
+                       SUM(unpriced)                AS unpriced_calls
+                FROM llm_call_records
+                WHERE substr(completed_at, 1, 10) BETWEEN ? AND ?
+                AND completed_at >= ?
+                GROUP BY actual_model, model_id
+            """
+                params.append(str(since_iso))
+            rows = connection.execute(sql, params).fetchall()
+        finally:
+            connection.close()
+    except (sqlite3.Error, OSError, ValueError):
+        return {}
+    for row in rows:
+        stats = {
+            "calls": int(row["calls"] or 0),
+            "failed_calls": int(row["failed_calls"] or 0),
+            "prompt_tokens": int(row["prompt_tokens"] or 0),
+            "cache_creation_tokens": int(row["cache_creation_tokens"] or 0),
+            "cache_read_tokens": int(row["cache_read_tokens"] or 0),
+            "completion_tokens": int(row["completion_tokens"] or 0),
+            "total_tokens": int(row["total_tokens"] or 0),
+            "cost_milli": int(row["total_cost_milli"] or 0),
+            "unpriced_calls": int(row["unpriced_calls"] or 0),
+        }
+        pair = (str(row["actual_model"] or ""), str(row["model_id"] or ""))
+        results[pair] = stats
+    return results
+
+
 # ==================== 进程级单例（未显式注入时的默认 sink） ====================
 
 _GLOBAL_SERVICE: LedgerService | None = None
@@ -703,6 +806,7 @@ __all__ = [
     "CallRecordSink",
     "LLMCallDraft",
     "LedgerService",
+    "aggregate_channel_usage",
     "build_call_draft",
     "emit_call_record",
     "get_ledger_service",

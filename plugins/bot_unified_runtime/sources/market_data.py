@@ -487,3 +487,183 @@ def fetch_index_trend(
     if closes:
         _TREND_CACHE[secid] = (now, closes)
     return closes
+
+
+# ==================== 北向资金（金融 Phase-1 扩容，2026-09-13） ====================
+# 诚实边界（2026-09-13 本机实测）：2024-08-19 起交易所调整沪深股通披露口径，
+# 当日净买入不再公开。两条候选通道实测均如此——
+# - datacenter ``RPT_MUTUAL_DEAL_HISTORY``：北向（001 沪股通 / 003 深股通）行的
+#   NET_DEAL_AMT / BUY_AMT / SELL_AMT / FUND_INFLOW 全部为 null；
+# - push2 ``kamt/get``：hk2sh/hk2sz 的 dayNetAmtIn 恒 0.0 占位（年净流入=额度
+#   阈值的占位数）。
+# 因此本模块只提供仍在披露的真实字段：当日成交总额（DEAL_AMT）、成交笔数
+# （DEAL_NUM）、领涨股、对应指数收盘/涨跌幅。净买入字段结构性缺席，本模块
+# 不输出任何净买入数字（不造 0、不猜数），能力层文案显式说明口径。
+#
+# DEAL_AMT 量纲实证：2026-09-11 沪股通 DEAL_AMT=142256.09、DEAL_NUM=7,114,374
+# → 按「百万元」读 = 1422.56 亿元、每笔约 2 万元（合理）；按「万元」读 =
+# 14.2 亿元、每笔 200 元（荒谬）→ 量纲取百万元，展示换算 亿元 = 原值/100。
+
+_NORTHBOUND_URL = (
+    "https://datacenter-web.eastmoney.com/api/data/v1/get"
+    "?reportName=RPT_MUTUAL_DEAL_HISTORY&columns=ALL&source=WEB&client=WEB"
+    "&filter=(MUTUAL_TYPE%3D%22{mutual_type}%22)"
+    "&sortColumns=TRADE_DATE&sortTypes=-1&pageNumber=1&pageSize=1"
+)
+# MUTUAL_TYPE 实测：001 行 INDEX_CLOSE_PRICE=上证收盘、003 行=深证成指收盘
+# → 001=沪股通、003=深股通（002/004 为南向，暂不接入）。
+_NORTHBOUND_TYPES: tuple[tuple[str, str, str], ...] = (
+    ("001", "沪股通", "上证指数"),
+    ("003", "深股通", "深证成指"),
+)
+_NORTHBOUND_SOURCE = "eastmoney_datacenter"
+_NORTHBOUND_CACHE_TTL_SECONDS = 300.0
+_NORTHBOUND_CACHE: tuple[float, tuple[NorthboundFlow, ...]] | None = None
+
+
+@dataclass(frozen=True)
+class NorthboundFlow:
+    """单条沪深股通当日成交快照（净买入自 2024-08 起无公开数据，不设字段）。"""
+
+    name: str  # 沪股通 / 深股通
+    mutual_type: str  # 001 / 003
+    trade_date: str  # 交易日 YYYY-MM-DD
+    deal_amt_yi: float | None  # 当日成交总额（亿元）
+    deal_num: int | None  # 成交笔数
+    lead_stock: str  # 领涨股名称
+    lead_stock_pct: float | None  # 领涨股涨跌幅 %
+    index_name: str  # 对应指数（上证指数/深证成指）
+    index_close: float | None
+    index_change_pct: float | None
+    source: str = _NORTHBOUND_SOURCE
+    as_of: float | None = None
+    delayed: bool = True
+    status: str = "ok"
+
+
+def _northbound_first_row(payload: Any) -> dict[str, Any] | None:
+    result = payload.get("result") if isinstance(payload, dict) else None
+    rows = result.get("data") if isinstance(result, dict) else None
+    if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+        return rows[0]
+    return None
+
+
+def _parse_northbound_flow(
+    mutual_type: str, name: str, index_name: str, row: dict[str, Any], fetched_at: float
+) -> NorthboundFlow | None:
+    """行 → 快照；缺交易日/全部数值缺失返回 None（该通道缺席不造行）。"""
+    trade_date = str(row.get("TRADE_DATE") or "").strip()[:10]
+    if not trade_date:
+        return None
+    deal_amt = _as_float(row.get("DEAL_AMT"))
+    deal_num = _as_float(row.get("DEAL_NUM"))
+    return NorthboundFlow(
+        name=name,
+        mutual_type=mutual_type,
+        trade_date=trade_date,
+        deal_amt_yi=deal_amt / 100.0 if deal_amt is not None else None,
+        deal_num=int(deal_num) if deal_num is not None else None,
+        lead_stock=str(row.get("LEAD_STOCKS_NAME") or "").strip(),
+        lead_stock_pct=_as_float(row.get("LS_CHANGE_RATE")),
+        index_name=index_name,
+        index_close=_as_float(row.get("INDEX_CLOSE_PRICE")),
+        index_change_pct=_as_float(row.get("INDEX_CHANGE_RATE")),
+        source=_NORTHBOUND_SOURCE,
+        as_of=fetched_at,
+        delayed=True,
+        status="ok",
+    )
+
+
+def _fetch_northbound_channel(
+    mutual_type: str, timeout_seconds: float
+) -> Any:
+    """单通道网络出口（测试 monkeypatch 本函数按 mutual_type 拦截）。"""
+    return http_get_json(
+        _NORTHBOUND_URL.format(mutual_type=mutual_type),
+        timeout=max(1.0, float(timeout_seconds)),
+        max_bytes=_MAX_PAYLOAD_BYTES,
+    )
+
+
+def reset_northbound_cache() -> None:
+    """清空北向资金进程内缓存（测试与运维手动刷新用）。"""
+    global _NORTHBOUND_CACHE
+    _NORTHBOUND_CACHE = None
+
+
+def fetch_northbound_flows(
+    timeout_seconds: float = 6.0,
+    cache_seconds: float = _NORTHBOUND_CACHE_TTL_SECONDS,
+) -> list[NorthboundFlow]:
+    """拉取沪股通/深股通当日成交快照；失败返回 []，绝不抛异常。
+
+    两通道各自独立拉取、独立降级（单通道失败不拖垮另一通道）；每通道
+    G2 纪律：空响应退避重试 1 次，真异常不重试；任一通道成功即进 TTL
+    缓存（缓存成功子集，单通道缺席在卡面诚实标注；两通道全失败不缓存，
+    下轮查询重试。默认 5 分钟，数据按交易日更新）。
+    """
+    global _NORTHBOUND_CACHE
+    now = time.monotonic()
+    cached = _NORTHBOUND_CACHE
+    if cached is not None and now - cached[0] <= max(0.0, float(cache_seconds)):
+        return list(cached[1])
+    fetched_at = time.time()
+    flows: list[NorthboundFlow] = []
+    for mutual_type, name, index_name in _NORTHBOUND_TYPES:
+        attempts = 2 if retry_on_empty_enabled() else 1
+        flow: NorthboundFlow | None = None
+        for attempt in range(attempts):
+            try:
+                payload = _fetch_northbound_channel(mutual_type, timeout_seconds)
+                row = _northbound_first_row(payload)
+                if row is not None:
+                    flow = _parse_northbound_flow(
+                        mutual_type, name, index_name, row, fetched_at
+                    )
+            except Exception:  # noqa: BLE001 - 单通道失败静默缺席。
+                flow = None
+                break  # 真异常不重试。
+            if flow is not None or attempt + 1 >= attempts:
+                break
+            empty_backoff_sleep()
+        if flow is not None:
+            flows.append(flow)
+    if flows:
+        _NORTHBOUND_CACHE = (now, tuple(flows))
+    return flows
+
+
+def format_northbound_brief(flows: Sequence[NorthboundFlow]) -> str:
+    """北向资金纯文本快报：只报仍在披露的口径（成交总额等），空给降级文案。"""
+    if not flows:
+        return "北向资金数据暂时拉不到，晚点再试试？"
+    lines = ["北向资金速览（沪深股通）"]
+    trade_dates = sorted({flow.trade_date for flow in flows})
+    if trade_dates:
+        lines.append(f"交易日 {trade_dates[-1]} · 收盘披露口径")
+    for flow in flows:
+        amount = (
+            f"{flow.deal_amt_yi:,.2f} 亿元" if flow.deal_amt_yi is not None else "暂无"
+        )
+        line = f"{flow.name} 当日成交总额 {amount}"
+        if flow.deal_num is not None:
+            line += f"（{flow.deal_num:,} 笔）"
+        lines.append(line)
+        if flow.index_close is not None:
+            pct = (
+                f"{flow.index_change_pct:+.2f}%"
+                if flow.index_change_pct is not None
+                else ""
+            )
+            lines.append(f"{flow.name}参考·{flow.index_name}收盘 {flow.index_close:.2f} {pct}".rstrip())
+        if flow.lead_stock:
+            pct = (
+                f"{flow.lead_stock_pct:+.2f}%"
+                if flow.lead_stock_pct is not None
+                else ""
+            )
+            lines.append(f"领涨股 {flow.lead_stock} {pct}".rstrip())
+    lines.append("注：2024-08 起交易所不再披露北向当日净买入，本卡不含净买入口径。")
+    return "\n".join(lines)
