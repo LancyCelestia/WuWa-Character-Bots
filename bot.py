@@ -179,6 +179,45 @@ driver.register_adapter(TelegramAdapter)
 # 从 pyproject.toml 的 [tool.nonebot] 加载插件与适配器配置。
 nonebot.load_from_toml("pyproject.toml")
 
+
+def _probe_onebot_endpoints() -> None:
+    """启动预检：NapCat 未监听时给出人话告警（WinError 1225 高频现场）。
+
+    OneBot V11 正向 WS 地址来自 driver 配置 ``onebot_ws_urls``（适配器
+    adapter.py 的真实消费键）。探测失败绝不阻断启动——适配器韧性重连仍在，
+    这里只是把「连接被拒绝 = 该地址没有进程在听」翻译成一句可执行的操作提示，
+    代替让用户面对重连堆栈自行排障。
+    """
+    import socket
+    from urllib.parse import urlsplit
+
+    urls = getattr(_driver_config, "onebot_ws_urls", None) or []
+    for raw in urls:
+        try:
+            parts = urlsplit(str(raw))
+            host = parts.hostname or "127.0.0.1"
+            port = parts.port or (443 if parts.scheme == "wss" else 80)
+        except ValueError:
+            continue
+        try:
+            with socket.create_connection((host, port), timeout=1.5):
+                pass
+        except ConnectionRefusedError:
+            nonebot.logger.warning(
+                "NapCat 未在 {host}:{port} 监听（WinError 1225 连接被拒绝 = 该地址没有进程在听）。"
+                "请先启动 NapCat 并确认其『正向 WebSocket 服务』监听地址与 access_token "
+                "和 .env 一致；bot 会继续启动，NapCat 上线后自动连上。",
+                host=host,
+                port=port,
+            )
+        except OSError:
+            continue
+        except Exception:  # noqa: BLE001 - 预检绝不影响启动。
+            return
+
+
+_probe_onebot_endpoints()
+
 # Import the patched Mail adapter only after NoneBot has loaded project plugins;
 # importing the package earlier triggers its plugin module initialization too soon.
 # 插件未加载成功时不要导入其子模块：失败后父包已从 sys.modules 移除，
