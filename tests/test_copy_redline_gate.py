@@ -374,13 +374,15 @@ def allowlist_problems(allowlist: dict[str, dict[str, str]], scope_rel_paths: se
 
 def gate_scope() -> list[Path]:
     """任务口径扫描面：capabilities/*.py（含 capabilities/auto_send/ 子目录，
-    2026-09-14 扩面）+ character/*.py + runtime/usage_monitor.py。"""
+    2026-09-14 扩面）+ character/*.py + runtime/usage_monitor.py +
+    runtime/error_report.py（2026-09-14 二次扩面，A69-I1）。"""
     files = (
         sorted(RUNTIME_PKG.glob("capabilities/*.py"))
         + sorted(RUNTIME_PKG.glob("capabilities/auto_send/**/*.py"))
         + sorted(RUNTIME_PKG.glob("character/*.py"))
     )
     files.append(RUNTIME_PKG / "runtime" / "usage_monitor.py")
+    files.append(RUNTIME_PKG / "runtime" / "error_report.py")
     return [f for f in files if f.exists()]
 
 

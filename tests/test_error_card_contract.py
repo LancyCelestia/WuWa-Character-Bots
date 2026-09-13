@@ -50,7 +50,7 @@ def _full_payload() -> dict[str, Any]:
             {"label": "触发时间", "value": "2026-09-14T12:00:00+08:00"},
             {"label": "message_id", "value": "m-9"},
         ],
-        "help_text": "把这张卡截图发给创造者（澜汐/霞月）即可，信息已齐备且脱敏。",
+        "help_text": "把这张卡截图发给创造者即可，信息已齐备且脱敏。",
         "bot_name": "守岸人",
         "bot_avatar_url": "",
     }
@@ -76,12 +76,13 @@ def test_full_payload_renders_all_sections() -> None:
         "weather.py:120",
         "bot_weather_api_key",
         "RouteKind.WEATHER",
-        "澜汐/霞月",
         "守岸人",
     ):
         assert marker in html, f"缺分区/内容: {marker}"
     # 红色强调色（ERROR_THEME accent）注入 --pc。
     assert f"--pc: {ERROR_ACCENT}" in html
+    # A69-C1：创造者真名不得入卡（群广播隐私级）。
+    assert "澜汐" not in html and "霞月" not in html
 
 
 def test_empty_and_dirty_payload_never_raises() -> None:
