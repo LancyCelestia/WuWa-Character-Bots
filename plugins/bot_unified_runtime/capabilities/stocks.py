@@ -85,6 +85,93 @@ _NON_PUBLIC_CONTEXT_RE = re.compile(
 _EMPTY_PANEL_TEXT = "美股行情暂时拉不到，晚点再试试？"
 
 
+# ==================== logo 本地缓存（金融 Phase-1，2026-09-13） ====================
+# clearbit logo（https://logo.clearbit.com/<domain>）按域名落盘缓存：文件名
+# =sha256(域名小写)（任务口径），路径 data/stock_logos/（经 runtime_paths 解析
+# 到 Runtime 数据根）。命中缓存不再下载；下载失败/非 PNG 返回 ""。
+# F2（2026-09-14 素材本地化）：payload 组装侧（build_stocks_card_payload）
+# 只落本地 file URI，全败诚实省略 logo 字段，不再把远程 URL 塞给渲染期
+# Chromium；``_apply_cached_logo`` 保留为外部/历史 payload 的兼容兜底。
+# 缓存目录缺自身清理——logo 域名集固定（9 家注册表），增长有界。
+# 2026-09-13 实测：logo.clearbit.com 本机不可达（URLError），Google s2 favicon
+# （PNG，sz=128）可达 → 作为第二源（同样过 PNG magic 校验），两源都失败才放弃。
+_LOGO_CACHE_DIR_REL = "data/stock_logos"
+_LOGO_MAX_BYTES = 2 * 1024 * 1024  # clearbit/s2 PNG 实测量级远小于此，防御上限
+_LOGO_SOURCES: tuple[str, ...] = (
+    "https://logo.clearbit.com/{domain}",
+    "https://www.google.com/s2/favicons?domain={domain}&sz=128",
+)
+
+
+def _logo_cache_dir() -> Path:
+    """缓存目录：data/stock_logos 经 runtime_paths 重映射到 Runtime 数据根。"""
+    from scripts.runtime_paths import runtime_path
+
+    return Path(runtime_path(_LOGO_CACHE_DIR_REL))
+
+
+def _download_logo_bytes(domain: str, timeout: float) -> bytes:
+    """按源序下载 logo 字节；非 PNG 或全部失败抛 ParseHttpError/ValueError。"""
+    from plugins.bot_unified_runtime.sources.parsers.http_util import (
+        ParseHttpError,
+        http_get,
+    )
+
+    last_error: Exception | None = None
+    for template in _LOGO_SOURCES:
+        try:
+            _final, payload = http_get(
+                template.format(domain=domain),
+                timeout=max(1.0, float(timeout)),
+                max_bytes=_LOGO_MAX_BYTES,
+            )
+        except ParseHttpError as exc:
+            last_error = exc
+            continue
+        if payload.startswith(b"\x89PNG"):
+            return payload
+        last_error = ParseHttpError("logo source returned non-PNG payload")
+    raise last_error if last_error is not None else ParseHttpError("no logo source")
+
+
+def local_logo_uri(domain: str, *, timeout: float = 6.0, download: bool = True) -> str:
+    """域名 → 本地缓存 logo 的 file URI；未命中且允许时下载落盘。
+
+    源序：本地缓存（零网络）→ clearbit → Google s2，下载成功即入缓存
+    （下次零网络）。任何失败返回空串（绝不抛）——logo 只影响观感，不能
+    影响行情主链路；payload 组装侧全败则诚实省略 logo 字段（F2 起），
+    ``download=False`` 只查缓存不出网（离线路径）。
+    """
+    clean = (domain or "").strip().lower()
+    if not clean or "/" in clean or "." not in clean:
+        return ""
+    try:
+        cache_dir = _logo_cache_dir()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256(clean.encode("utf-8")).hexdigest()
+        target = cache_dir / f"{digest}.png"
+        if target.exists() and target.stat().st_size > 0:
+            return target.as_uri()
+        if not download:
+            return ""
+        payload = _download_logo_bytes(clean, timeout)
+        target.write_bytes(payload)
+        return target.as_uri()
+    except Exception:  # noqa: BLE001 - 下载失败静默，回退远程 URL。
+        return ""
+
+
+def _apply_cached_logo(payload: dict[str, Any]) -> None:
+    """渲染前把 clearbit 远程 URL 换成本地缓存 URI（失败保持远程，原兜底）。"""
+    url = str(payload.get("logo_url") or "")
+    if not url.startswith("https://logo.clearbit.com/"):
+        return
+    domain = url.rsplit("/", 1)[-1]
+    local = local_logo_uri(domain)
+    if local:
+        payload["logo_url"] = local
+
+
 def is_stocks_command(text: str) -> bool:
     """个股触发判定：短文本、无链接、显式股票词，或公司别名+股票语境。
 
@@ -311,7 +398,14 @@ def build_stocks_card_payload(
         "feature_label": "个股行情",
     }
     if logo_domain:
-        payload["logo_url"] = f"https://logo.clearbit.com/{logo_domain}"
+        # F2（2026-09-14 素材本地化，治 clearbit 死源兜底）：payload 只落
+        # 本地 file URI——缓存命中零网络；未命中经 clearbit→Google s2 补
+        # 下载（local_logo_uri 既有机制，成功即入缓存，下次零网络）；两源
+        # 全败诚实省略 logo 字段，卡片不出 logo，绝不再让 Chromium 渲染期
+        # 回源 logo.clearbit.com 死域名（networkidle 8s 页超时根因）。
+        local_logo = local_logo_uri(logo_domain)
+        if local_logo:
+            payload["logo_url"] = local_logo
     if brand_color:
         payload["platform_color"] = brand_color
     return payload
@@ -336,6 +430,7 @@ def build_stocks_capability(config: Any | None = None, *, render_backend: Any | 
             from plugins.bot_unified_runtime.runtime.cache_policy import prune_prefixed
 
             payload = dict(payload)
+            _apply_cached_logo(payload)
             payload["bot_name"] = str(
                 getattr(config, "bot_persona_display_name", "") or ""
             ).strip() or "守岸人"
@@ -639,3 +734,46 @@ def build_stocks_capability(config: Any | None = None, *, render_backend: Any | 
         )
 
     return capability
+
+
+def warm_logo_cache(
+    domains: list[str] | None = None, *, timeout: float = 6.0
+) -> list[str]:
+    """幂等预热：注册域名 logo 逐个补缓存，返回仍失败的域名清单（不抛）。
+
+    ``domains=None`` 时取上市公司注册表全量（去重排序，当前 9 家）。命中
+    缓存的域名零网络直接跳过，因此可重复执行；失败域名只记录不阻塞——
+    后续真实查询会各自懒加载补缓存。CLI 入口见文件末尾 ``__main__``。
+    """
+    if domains is None:
+        from plugins.bot_unified_runtime.sources.stock_data import (
+            list_listed_companies,
+        )
+
+        domains = sorted(
+            {
+                str(getattr(ref, "logo_domain", "") or "").strip().lower()
+                for ref in list_listed_companies()
+            }
+            - {""},
+        )
+    failed: list[str] = []
+    for domain in domains:
+        # local_logo_uri 自带「缓存命中零网络 → clearbit → s2」全链，
+        # 失败内部吞异常返回空串——这里只收集失败名单。
+        if not local_logo_uri(domain, timeout=timeout):
+            failed.append(domain)
+    return failed
+
+
+if __name__ == "__main__":
+    # CLI 预热（工作区根执行）：
+    #   python -m plugins.bot_unified_runtime.capabilities.stocks
+    _failed = warm_logo_cache()
+    if _failed:
+        print(
+            f"logo 预热：{len(_failed)} 家失败（不阻塞，查询时自动补）："
+            + "、".join(_failed)
+        )
+    else:
+        print("logo 预热：全部命中本地缓存（data/stock_logos，零网络）")
