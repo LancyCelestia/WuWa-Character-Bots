@@ -1,11 +1,11 @@
-# 交接提示词（2026-09-13 晚 · 给下一个 AI）
+# 交接提示词（2026-09-14 凌晨 · 六域批次后 · 给下一个 AI）
 
 > **你是谁**：守岸人 Bot 项目的新接手 AI。本文件是唯一交接入口，读完即可开工。
 > 读完本文件后，按 §7 的「开工流程」三步走，不要跳过。
 
 ## 0. 一句话现状
 
-代码与测试全部健康（全量 4623+ passed / lint / typecheck 全绿），今天两批大改动**已全部提交但生产 bot 未重启**——你的第一件事通常是提醒用户提权重启 bot（见 §5），然后做 §6 的在飞任务收尾。
+代码与测试健康（六域各域测试全绿、哈希/事实册/性能三类常驻门随批重录），2026-09-13/14 六域批次（金融/账单/视觉/图库/e2e 自测/笔记授时）+ 安全审计 + 双评审修复已分批落检查点：`cfd7d83` 四卡阴影解锁 / `7414e87` 笔记授时 config 六键 / `bdbc88b` Tavily 图搜兜底+图库满编 / `93e8195` 安全修复包 / `f3962f1` 视觉评审修复 / `5ba7c0f` 金融评审修复——但**仍有工作树未提交件**（错误卡全批/视觉 f-string 收口件/e2e/解析链护栏等，见 §6；在飞事项收尾中，以 git log 最新为准），且**生产 bot 未重启**——你的第一件事通常是提醒用户提权重启 bot（见 §5），然后做 §6 收尾。
 
 ## 1. 项目 30 秒
 
@@ -44,7 +44,7 @@ QQ 聊天机器人「守岸人」（鸣潮角色人格，非 AI 设定），None
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task test"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task lint"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task typecheck"
-# 真机验收（bot 重启后）：DRY-RUN 缺省，--execute 真发
+# 真机验收（bot 重启后）：DRY-RUN 缺省，--execute 真发；--selftest 离线自检 12 项
 python scripts/e2e_acceptance.py --target-group <白名单群ID> --execute
 # 性能基线 / 渲染样本 / 命令目录 / 机器事实册 / 哈希清单
 python scripts/measure_latency_chains.py all
@@ -52,32 +52,51 @@ python scripts/command_catalog.py --write     # 改 echo.py/base_router.py 后�
 python scripts/doc_sync.py --write            # 机器事实册（--check 已进测试门）
 python tests/verify_hashes.py --write         # 视觉交付物哈希（--check 已进测试门）
 python scripts/clean_food_gallery.py --execute  # 图库污染清理（VLM 复判）
+python -m plugins.bot_unified_runtime.capabilities.eat --prewarm  # 图库补图（质检链自动过滤）
 ```
 
-## 4. 今天（09-13）已落库的东西（都在 git log 里，哈希可溯）
+## 4. 本批（09-13/14 六域批次）已落库滚动清单（哈希可溯；标「工作树」= 未提交在飞件）
 
-- **媒体归档能力**（bot.media_archive：发媒体+收藏/归档→VLM 判类别×IP 落盘；台账 #28）。
-- **vis2r 社媒卡六项修复 + vis4 视觉体系**（台账 #29）：层次阴影三级族/辉光/分隔线/三档本命色表面，全部钉在 `theme_tokens.py`——**改视觉先改 token，一处改全模板生效**；根部规范 `DESIGN-SPEC.md`（设计/执行/验证三合一，已入哈希清单）。
-- **交叉验证机制**：哈希清单+性能门+机器事实册+双引擎互证（`tests/verify_hashes.py` / `test_perf_regression.py` / `scripts/doc_sync.py` / `tests/cross_validate.py`）。
-- **股价链路**：push2his 瞬断重试、成交量/流通股等指标、公司 logo 色/域名、标题中文化（台账 #29③）。
-- **账单家族合并**（三行 gemini 并一行）+提醒过期治理（修 13 点报 23 点）。
-- **搜图回复触发/失败分类、识图群最近图、澜汐=霞月双名钉死+昵称学习护栏、Bot 头像本地缓存（重启后自动从 qlogo 拉）、历史上的今天多历法、LLM 告警 attempts 真实化+detail 自解释**。
-- **WinError 1225**：bot.py 启动预检（NapCat 没开时人话提示，不是代码 bug）。
+批次报告与评审全文在 `.superpowers/sdd/2026-09-13-six-domain-batch/`（fin/billing/visual/visual-closure/gallery/usage-card/perf/security/ssrf-guard/e2e/docs 九域报告 + review-fin-billing/review-visual-infra 双评审）。
+
+- **金融扩容**（A1 席；能力闭包/北向数据段/新源文件已入库 `5ba7c0f`+`3592793`，生产 matcher 注册 `691d6e1` 三谓词+三 matcher+三工厂+三 handle）：大宗商品（COMEX 金/银/铜+NYMEX 油，30 日折线）、国债收益率（中美 2/5/10/30 年+10Y−2Y 期限利差）、北向资金（净买入 2024-08 起停止披露→只报成交总额/笔数/领涨股，`NorthboundFlow` 结构性无 net 字段绝不造数）、个股 logo 三级兜底+预热已入库 `a4371d2`（8/9 域名落盘，meta.com s2 返 JPEG 诚实降级零死链）。**诚实降级清单**见 fin-report §四：印度 Nifty 50 东财无源不接、LME 铜无源→COMEX 铜显式替代、Brent 无行不接、1 年期国债无源不接、北向净买入绝不编数、南向未接。
+- **账单域**（A3 席）：同模型多渠道候选集+跨渠道 failover 拨转（渠道 id 入口连通兄弟渠道，model_router **仍在工作树**）、影子并发 `hedged:winner` 计费归因修复、**千倍计价修复**（cost 虚大 1000 倍→`/1000` 与 pricing 同口径；ledger 侧已落库 `5ba7c0f`）、渠道子行展示（定时报告/超限即时卡/交互卡三处，已随 `3592793` 入库）；52 条价目逐条审计（25 条可疑/过时待用户裁定，入 issue-ledger P2-10）。
+- **视觉五工序+收口+阴影解锁**（A6 席+收口席）：好感度卡脏数据 6 连崩修复（bridge 归一+10 组参数化回归）、zebra 三档表面 ΔE 0.81→3.76、TEXT_SECONDARY 单源（评审后调深终值 #576272，premultiplied 真模型 4.72 达 AA）、字号 12px 下限全卡收口、usage 卡补 vis4 六键+bot 页脚胶囊；四卡阴影解锁（`cfd7d83`：SHADOW_CSS_VARS 登记表+双门动态白名单，族外一票否决不留后门）；market/finance/媒体卡/debug 卡收口并入可编辑门。bridge.py/templates.py 在工作树（usage_cards.py 已随 `3592793` 入库）。
+- **笔记/提醒/授时**（A2 席，**已收编 `789700c`**）：notes/notes_store/timesync/reminders 全功能入库（mark_done 死锁 Critical 修+timesync now() global 修+授时全链+安全包 M-2/3/4/8+分型提醒语气+自然勾选+Markdown 笔记 CRUD），config 六键（`7414e87`）；⚠️ 原 P1（`now()` 缺 `global _SHARED` 声明毒化 reminder 路由链）**已随此笔修复**，警示撤销。
+- **SSRF 解析链护栏**（安全审计 I-2 修复，工作树）：`sources/parsers/ssrf_guard.py`（新增）+content_parser 入口+og 兜底落点双查（内网/元数据 URL 借平台关键词混入也拒），13 例回归；安全修复包 `93e8195` 已入库（I-1 图搜重定向落点复查+M-6 mkstemp）。安全审计终态 Critical 0 / Important 2 全修。
+- **Tavily 图搜兜底**（`bdbc88b`）：Bing 缺图/缺候选时走已配 key 的 include_images 直链候选，域黑名单/SSRF/字节/magic/像素五道质检闸全链复用。
+- **图库治理**：清污 53→13（VLM 复判+人工抽验 7/7，40 图入 %TEMP% 隔离区，总账 53=13+11+29 闭合）；Tavily 补图链路实证 **61/61 满编**（`bdbc88b`）——现库 13/61，重启前重跑 `eat --prewarm` 补 48 道缺口（质检链会重新过滤）。
+- **性能门收紧+五链路复测**：吞吐门循环 500→5000 次修正（真余量 120x→牙齿 8~14x，阈值未放宽）；路由 P50 0.016ms/P95 0.058ms（噪声带内无代码退化）、渲染 warm P50 2141ms、`BOT_RENDER_WAIT_BUDGET_MS=1500` 离线实证 P50 772.9ms（**−64%**）；六域新模块全惰性化（启动关键路径仅 +3.2ms）。
+- **e2e 实战自测增强**（A4 席，**收尾中**）：e2e_acceptance.py +700 行（命令矩阵/响应收集/私聊报告/`--selftest` 12 项，按 69 topics 动态生成）。
+- **续批四件+两件闭环**（2026-09-14 回填，git log 实查）：素材本地化 F2 stocks logo 三级兜底+8/9 预热 `a4371d2`、F3 bot 头像本地优先+金融三能力生产 matcher 注册 `691d6e1`、F1 mermaid.min.js 本地化治 #8 `959630a`+`871beb2`（⚠️ 拦截半边 render_backends page.route 仍在工作树）；渲染 Phase 2 已收官 `13fcd30`（.env 解锁并发 2/预算 1500ms）；**统一错误报告卡全链已落地仍在工作树待提交**（error-card-report：全链+冷却+脱敏，测试 22+契约 199+回归 292）。
+- **文档预收尾**：HANDBOOK §24（六域总账）、acceptance-manual §6.6.3（金融+账单验收五项）、issue-ledger P2-10/P2-11/P3-7/P3-8、AGENTS.md #31。
+- 前批已落（可溯 git log）：时间窗总结 `1b23622`、vis4 全卡迁移 `77f56de`、自动同步闭环 `ccd38b9`（dev.ps1 -Task sync + BOT_AUTOSYNC=1）、图库清理器 `3e0f507`。
 
 ## 5. 用户必须做的事（你只能提醒）
 
-**提权重启生产 bot**——不重启，以上全部不生效。重启顺序：**先 NapCat 后 bot.py**（管理员）。重启后验收：`acceptance-manual.md` §6.6（九项卡面）/§6.6.1（触发五表）/§6.6.2（媒体归档六项）；再跑 `measure_latency_chains.py all` 补 NapCat/Mail/TG 在线延迟（此前 unreachable）。
+**提权重启生产 bot**——不重启，以上全部不生效。重启顺序：**先 NapCat 后 bot.py**（管理员）。重启后验收：`acceptance-manual.md` §6.6（九项卡面）/§6.6.1（触发五表）/§6.6.2（媒体归档六项）/**§6.6.3（金融扩容+账单渠道五项）**/§6.6.4 ⑥ 错误报告卡——重启后临时断网发一条 `行情`，期待云母诊断卡+冷却期内第二条降级纯文本（错误卡批随收尾提交入库后验）；再跑 `measure_latency_chains.py all` 补 NapCat/Mail/TG 在线延迟（此前 unreachable）。
 
 ## 6. 在飞/待办（按优先级）
 
-1. **时间窗总结**（代理可能已交付）：history 时间窗查询+"总结 N 分钟内消息"→注入 chat 总结。验证：`pytest tests/test_time_window_summary.py`。
-2. **图库清理收尾**（代理在飞）：查 `ChatBot_Runtime/data/food_images/library.sqlite` 行数（首轮 53→42）+`%TEMP%/food_quarantine_20260913/` 隔离数；二轮 `--execute` 兜 VLM 瞬时失败；eat.py 入库防污染加固。
-3. **全卡 vis4 迁移**：其余 5 模板+f-string 卡照 DESIGN-SPEC 迁（universal_card.html 是范本）。
-4. **e2e 实战自测增强**：e2e_acceptance.py 加命令矩阵+响应收集+私聊报告+离线 selftest。
-5. 23:00 定时任务（automation-4ee2c3bf）：按 `docs/perf-optimization-plan.md` §三执行渲染 Phase 2 接线——若该任务没触发，手动照文档做。
+1. **收尾提交**（2026-09-14 回填时点实测 20 M + 15 ??）：错误卡全批（error_report.py/error_card.html/theme_tokens/bridge/pipeline+测试+哈希）/视觉 f-string 收口件（bridge/templates/debug）/渠道候选集（model_router）/e2e/解析链护栏/文档数件——逐域跑域测试后显式 add 提交。⚠️ **HEAD 不自含新形态**：`959630a` 的 tests/test_mermaid_local_asset.py 依赖 render_backends.py 的 mermaid 拦截半边（`mermaid_asset_dir`/page.route，工作树待提交）——收尾提交必须带上 render_backends.py（旧例 commodities_data/bond_data 悬空已随 `3592793` 入库闭合）。
+2. ~~金融三能力触发词接线~~ → **已注册生产 matcher**（`691d6e1`：三谓词+三 matcher+三工厂+三 handle，照 market/stocks 装配，90 例回归绿；此前 `789700c` 只接了 base_router RouteKind+echo 帮助层，生产装配由本笔补齐）。
+3. ~~时间窗总结~~ → 已落库（`1b23622`：「总结 N 分钟内消息」→history 时间窗召回注入 chat）。
+4. ~~图库清理收尾~~ → 已闭合：53=13+11+29、人工抽验 7/7；重启前重跑 `eat --prewarm` 补 48 道缺口。
+5. ~~全卡 vis4 迁移~~ → 已落库（`77f56de`+`cfd7d83`+`f3962f1`+收口席：六模板+媒体卡+usage/debug 卡全部收口）。
+6. ~~23:00 定时任务：渲染 Phase 2 接线~~ → 已落地（`13fcd30`：两键解析链+config/catalog/.env.example 三件套；.env 已解锁并发 2/预算 1500ms，删行即回滚）。
+7. **收尾波统一门禁**：三联动 `--write`（command_catalog/doc_sync/verify_hashes）→ `dev.ps1 -Task test`（BOT_AUTOSYNC=1 自动兜底）+ lint + typecheck（在飞残留 lint 错以实跑为准，历史上 26 错口径已过期勿引用）→ `cross_validate` 互证。
+
+**等用户裁定（AI 只提醒，不代决）**：
+- 25 条价目可疑/过时清单（billing-report §3.3 / P2-10；6 项优先：deepseek-v4-pro 输入价、v4-flash 族已下线、qianqianye 3~4.5× 倒挂、gpt-5.6-luna 2.1× 倒挂、aiprc fable-5 两行互斥 6.7×、axonhub gemini 裸名上游归属）。
+- 账本历史行 cost 千倍虚大是否清洗（P2-11，本批未动生产库）。
+- Apple Music×小红书 accent 是否拉开（ΔE=2.7，P3-1）。
+- 页脚第二槽 'Shorekeeper' 是否改「解析」（视觉 clarify 裁定行）。
+- usage 卡 kicker 去留（P3-2）。
+- 磁盘 pagefile.sys 82GB 需重启回落。
+- $TEMP oopz 安装包 458MB 是否删。
 
 ## 7. 开工流程（三步）
 
-1. 读 `AGENTS.md`（重点：第一部分规则、第六部分台账 #26-#30）；
+1. 读 `AGENTS.md`（重点：第一部分规则、第六部分台账 #26-#31）；
 2. `git status --porcelain` + `git log --oneline -10` 摸清现场；若有未提交遗留，先取证（跑对应域测试）再收编；
 3. 跑一次 `dev.ps1 -Task test` 确认基线全绿，然后按 §6 顺序干活。**用户会说"继续"和"开 N 并发子代理"——照 §2.7 纪律执行即可。**
