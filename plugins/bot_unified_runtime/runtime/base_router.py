@@ -43,6 +43,9 @@ from plugins.bot_unified_runtime.capabilities.eat import (
 from plugins.bot_unified_runtime.capabilities.epic import is_epic_command
 from plugins.bot_unified_runtime.capabilities.fx import is_fx_command
 from plugins.bot_unified_runtime.capabilities.market import is_market_command
+from plugins.bot_unified_runtime.capabilities.media_archive import (
+    is_media_archive_command,
+)
 from plugins.bot_unified_runtime.capabilities.meme import is_meme_command
 from plugins.bot_unified_runtime.capabilities.meme_library import (
     is_meme_library_command,
@@ -93,6 +96,7 @@ class RouteKind(str, Enum):
     NEWS = "news"
     RANDPIC = "randpic"
     REMINDER = "reminder"
+    MEDIA_ARCHIVE = "media_archive"
     EAT = "eat"
     AFFINITY = "affinity"
     DIVINATION = "divination"
@@ -426,6 +430,19 @@ def build_route_rules() -> list[RouteRule]:
             RouteKind.CHAT, "bot.chat", 50, "自然语言对话（人格+世界观+价值观+方法论）", ("base_route:chat",)
         )
 
+    def media_archive_match(text, config, _alias):
+        if not getattr(config, "bot_media_archive_enabled", True):
+            return None
+        if not is_media_archive_command(text):
+            return None
+        return RouteDecision(
+            RouteKind.MEDIA_ARCHIVE,
+            "bot.media_archive",
+            43,
+            "媒体归档（收藏/归档媒体，VLM 分类落盘）",
+            ("base_route:media_archive",),
+        )
+
     return [
         RouteRule(RouteKind.ALIAS, "bot.alias", 10, "昵称命令", "昵称命令（/岸宝… /守岸人…）", ("base_route:alias",), alias_match),
         RouteRule(RouteKind.ADMIN, "bot.status", 11, "管理员命令", "管理员命令（/bot …）", ("base_route:admin",), admin_match),
@@ -449,6 +466,7 @@ def build_route_rules() -> list[RouteRule]:
         RouteRule(RouteKind.NEWS, "bot.news", 41, "今日快报", "今日快报（快报/科技新闻/财经快报/国际新闻）", ("base_route:news",), news_match),
         RouteRule(RouteKind.RANDPIC, "bot.randpic", 41, "随机图片", "随机图片（随机图/来张图）", ("base_route:randpic",), randpic_match),
         RouteRule(RouteKind.REMINDER, "bot.reminder", 41, "提醒", "提醒（12点提醒我写作业/提醒列表/取消提醒）", ("base_route:reminder",), reminder_match),
+        RouteRule(RouteKind.MEDIA_ARCHIVE, "bot.media_archive", 43, "媒体归档", "媒体归档（收藏/归档/存图+媒体；存聊天记录）", ("base_route:media_archive",), media_archive_match),
         RouteRule(RouteKind.MOEGIRL_QUESTION, "bot.moegirl", 46, "二次元问句", "二次元问句（萌娘百科自动查询，未命中降级聊天）", ("base_route:moegirl_question",), moegirl_question_match),
         RouteRule(RouteKind.NATURAL_COMMAND, "bot.natural_command", 45, "自然语言命令", "自然语言命令归一化", ("base_route:natural_command",), natural_match),
         RouteRule(RouteKind.CONTENT, "bot.content", 46, "链接解析", "链接解析（视频/图片/社交媒体/商品等）", ("base_route:content",), content_match),
@@ -515,6 +533,7 @@ COMMAND_ROUTE_KINDS = frozenset(
         RouteKind.NEWS,
         RouteKind.RANDPIC,
         RouteKind.REMINDER,
+        RouteKind.MEDIA_ARCHIVE,
         RouteKind.NATURAL_COMMAND,
     }
 )

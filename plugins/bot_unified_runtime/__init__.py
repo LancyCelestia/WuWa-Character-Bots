@@ -31,6 +31,7 @@ from .capabilities.epic import build_epic_capability
 from .capabilities.fx import build_fx_capability
 from .capabilities.group_files import DirtyGuard, GroupFileStore
 from .capabilities.market import build_market_capability
+from .capabilities.media_archive import build_media_archive_capability
 from .capabilities.meme import build_meme_capability
 from .capabilities.meme_library import build_meme_library_capability
 from .capabilities.moegirl import (
@@ -268,6 +269,8 @@ OFFLOADED_CAPABILITY_IDS = frozenset(
         # 并发时会阻塞甚至 database is locked（审计#29）。
         "bot.memory",
         "bot.download",
+        # bot.media_archive：媒体字节下载 + VLM 分析 + 落盘，重 IO 线程池执行。
+        "bot.media_archive",
         "bot.search",
         "bot.affinity",
     }
@@ -3530,6 +3533,18 @@ def _register_nonebot_handlers() -> None:
         dynamic_registry=runtime_settings.list_vision_registry,
         settings_store=runtime_settings,
     )
+    # 媒体归档存储：注册期单例（评审 I-4）——每消息重建实例会让实例级锁与
+    # sha256 去重的 check-then-act 全部失效。关闭时不建（零开销）。
+    from plugins.bot_unified_runtime.sources.media_archive import MediaArchiveStore
+
+    media_archive_store = (
+        MediaArchiveStore(
+            config.bot_media_archive_db_path,
+            config.bot_media_archive_dir,
+        )
+        if getattr(config, "bot_media_archive_enabled", True)
+        else None
+    )
     from plugins.bot_unified_runtime.sources.transcribe import (
         build_asr_provider,
     )
@@ -6136,6 +6151,130 @@ def _register_nonebot_handlers() -> None:
                 receipt.public_message or "（处理完成，没有需要展示的内容。）"
             )
 
+
+    async def _is_media_archive_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.MEDIA_ARCHIVE
+        )
+
+    media_archive = on_message(rule=_is_media_archive_event, priority=43, block=True)
+
+    async def _enrich_media_archive_message(bot: Bot, event: Event, message: Any) -> None:
+        """媒体归档的反查注入（ NapCat get_msg / get_forward_msg）。
+
+        - 同条消息带合并转发 → get_forward_msg 展开逐条正文注入 chat_record_text；
+        - 回复的是合并转发 → 反查被引用消息拿 forward id 后同上；
+        - 回复的是媒体 → 把 image/animation/video 段注入 reply_media_segments。
+        失败一律静默降级（能力层按"无回复媒体"回话）。
+        """
+
+        async def _fetch_forward_text(fid: str) -> str:
+            try:
+                payload = await asyncio.wait_for(
+                    bot.call_api("get_forward_msg", message_id=fid),
+                    timeout=float(
+                        getattr(config, "bot_forward_fetch_timeout_seconds", 5.0)
+                    ),
+                )
+            except Exception:  # noqa: BLE001 - 展开失败按无转发处理。
+                return ""
+            return _forward_message_text_sync(payload)
+
+        forward_id = _forward_segment_id(event)
+        if forward_id:
+            forward_text = await _fetch_forward_text(forward_id)
+            if forward_text:
+                message.chat_record_text = forward_text
+                return
+        reply_id = str(message.reply_to_message_id or "").strip()
+        if not reply_id:
+            return
+        getter = getattr(bot, "get_msg", None)
+        if not callable(getter):
+            return
+        try:
+            payload = await asyncio.wait_for(
+                getter(message_id=int(reply_id)), timeout=5.0
+            )
+        except (asyncio.TimeoutError, ValueError, TypeError):
+            return
+        except Exception:  # noqa: BLE001 - 反查失败按"无回复媒体"处理。
+            return
+        segments = _onebot_segments_from_message_payload(payload) or []
+        reply_forward_id = ""
+        media_segments: list[dict[str, Any]] = []
+        for segment in segments:
+            seg_type = str(segment.get("type", ""))
+            if seg_type in FORWARD_SEGMENT_TYPES:
+                reply_forward_id = str((segment.get("data") or {}).get("id") or "").strip()
+                break
+            if seg_type in {
+                "image",
+                "photo",
+                "sticker",
+                "mface",
+                "animation",
+                "video",
+                "video_note",
+            }:
+                media_segments.append(segment)
+        if reply_forward_id:
+            forward_text = await _fetch_forward_text(reply_forward_id)
+            if forward_text:
+                message.chat_record_text = forward_text
+                return
+        if media_segments:
+            message.reply_media_segments = media_segments
+
+    @media_archive.handle()
+    async def _handle_media_archive(bot: Bot, event: Event) -> None:
+        message = _incoming_from_nonebot_event(
+            event, bot_id=str(getattr(bot, "self_id", "unknown"))
+        )
+        await _enrich_media_archive_message(bot, event, message)
+        receipt = await pipeline.handle_async(
+            message,
+            offload_capability(
+                build_media_archive_capability(
+                    config,
+                    vision_provider=vision_provider,
+                    store=media_archive_store,
+                )
+            ),
+            capability_id="bot.media_archive",
+        )
+        await _notify_operational_receipt(message, receipt)
+        sent_request = _find_sent_request(send_queue, message.request_id)
+        if sent_request is not None:
+            transport_receipt = await _deliver_transport_send_request(
+                bot,
+                event,
+                sent_request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+            _record_runtime_diagnostic(
+                config=config,
+                diagnostics_store=diagnostics_store,
+                message=message,
+                capability_id="bot.media_archive",
+                receipt=transport_receipt,
+                send_queue=send_queue,
+                audit_logger=audit_logger,
+            )
+            await _notify_operational_receipt(message, transport_receipt)
+            if transport_receipt.state.value == "sent":
+                return
+            if should_finish_nonebot_matcher(transport_receipt):
+                await media_archive.finish(
+                    transport_receipt.public_message or "（处理完成，没有需要展示的内容。）"
+                )
+        if should_finish_nonebot_matcher(receipt):
+            await media_archive.finish(
+                receipt.public_message or "（处理完成，没有需要展示的内容。）"
+            )
 
     @meme.handle()
     async def _handle_meme(bot: Bot, event: Event) -> None:

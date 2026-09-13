@@ -476,6 +476,21 @@ class Config(BaseModel):
     bot_video_deep_frames: int = 16
     bot_video_deep_asr_max_seconds: int = 1800
     bot_video_deep_deadline_seconds: float = 150.0
+    # 媒体归档（bot.media_archive）：用户发媒体+指令（收藏/归档/archive）→
+    # VLM 分析内容 → 类别×IP（作品来源）双层目录落盘（cosplay/二次元插图等），
+    # sha256 去重 + JSON 旁车元数据；聊天记录走 get_forward_msg 展开归 Markdown。
+    bot_media_archive_enabled: bool = True
+    bot_media_archive_dir: str = "data/media_archive"
+    bot_media_archive_db_path: str = "data/media_archive.sqlite3"
+    # 触发角色门槛（user<trusted<enterprise<admin<super_admin）：默认仅超管
+    # （归档落本机磁盘）；放开全员改 user，配额与冷却照常生效。
+    bot_media_archive_min_role: str = "super_admin"
+    bot_media_archive_max_file_mb: int = 100
+    bot_media_archive_daily_limit: int = 50
+    bot_media_archive_per_message_limit: int = 4
+    # 聊天记录归档附一句 VLM 摘要（复用识图 registry；关闭则纯文本归档）。
+    bot_media_archive_summary_enabled: bool = True
+    bot_media_archive_video_frames: int = 5
     # NSFW 直接删除阈值（淫秽色情不存储）：>= 该分数删除文件与记录。
     bot_meme_library_nsfw_delete: float = 0.8
     # 群图下载代理（默认直连 QQ 多媒体源；外网源可走 7890）。
@@ -859,6 +874,8 @@ class Config(BaseModel):
             "bot_addressing_preferences_db_path",
             "bot_reminder_db_path",
             "bot_affinity_db_path",
+            "bot_media_archive_dir",
+            "bot_media_archive_db_path",
         )
         for name in path_fields:
             setattr(self, name, resolve(getattr(self, name)))

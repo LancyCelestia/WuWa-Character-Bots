@@ -147,7 +147,7 @@ _HELP_CATEGORIES = (
             "对话", "历史", "人格", "角色", "队列", "配置", "就绪", "接入",
             "暂停", "回复", "设置", "凭据", "群策略", "群文件", "文件",
             "身份", "怪癖", "限流", "合并转发", "群摘要", "视频理解", "运行开关",
-            "邮件", "Telegram", "供应商", "忽略",
+            "邮件", "Telegram", "供应商", "忽略", "媒体归档",
         },
     ),
     ("大模型相关", {"模型", "用量", "搜索"}),
@@ -1718,6 +1718,30 @@ _HELP_ENTRIES: list[HelpEntry] = [
             ),
         },
         {
+            "topic": '媒体归档',
+            "admin_only": True,
+            "aliases": ('收藏', '归档', '存图', '收图', '存聊天记录', '存记录', 'archive', 'shoucang', 'guidang'),
+            "index": '【媒体归档】媒体按 类别/作品 归档：收藏｜归档 IP=原神｜存聊天记录',
+            "title_line": '【媒体归档】把媒体按 类别×作品 归档到本机',
+            "lines": [
+                '收藏：作用=归档媒体；参数=可选 分类= IP= 角色=（管理员另可 子路径=）；内容=与图片/动图/视频同条发送，或回复那条媒体；意义=自动分类存档。',
+                '归档：作用=同收藏；参数=同上；内容=VLM 判类别与作品来源（cosplay/二次元插图/表情包/截图/照片/风景/人物/动图），判不出落「未识别」；意义=双层目录管理。',
+                '存聊天记录：作用=归档聊天记录；参数=无（回复合并转发触发）；内容=展开为 Markdown（含一句话摘要）；意义=永久留档。',
+                '安全=SSRF 护栏+magic bytes 质检+sha256 去重+单文件/每日限额；权限=仅管理员（bot_media_archive_min_role，默认超管）。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  把发到 bot 的图片/动图/视频/聊天记录分析内容并按 类别×作品 双层\n'
+                '  目录归档到本机 data/media_archive（VLM 判定，指令可覆盖）。\n'
+                '【指令与参数】\n'
+                '收藏|归档 [分类=x] [IP=x] [角色=x]：作用=归档；参数=可选；内容=自动/指定分类；意义=整理。\n'
+                '存聊天记录：作用=归档合并转发；参数=无；内容=Markdown+摘要；意义=留档。\n'
+                '【权限与效果】\n'
+                '  权限=仅管理员（bot_media_archive_min_role，默认 super_admin；改 user 开放全员+限额）。\n'
+                '【示例】[图片] 收藏｜[图片] 收藏 分类=cosplay IP=鸣潮｜（回复图片）收藏｜（回复转发）存聊天记录'
+            ),
+        },
+        {
             "topic": '好感度',
             "admin_only": False,
             # 親密度（tra3）/查詢好感（tra49）已入 affinity._COMMAND_RE，help 同步入册。
@@ -2450,6 +2474,15 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "triggers_nl": ("吃什么", "吃啥", "菜谱 <菜名>", "怎么做"),
         "examples": ("吃什么｜吃什么 三选一｜菜谱 番茄炒蛋",),
         "tests": ("tests/test_eat_capability.py",),
+    },
+    "媒体归档": {
+        "capability": "bot.media_archive",
+        "network": True,
+        "triggers_nickname": ("收藏", "归档", "存图", "收图", "存聊天记录", "archive"),
+        "chat_scope": "私聊/群聊行为一致（回复媒体或媒体+指令同条触发）",
+        "triggers_nl": ("收藏", "归档", "存图", "存聊天记录", "archive"),
+        "examples": ("[图片] 收藏 分类=cosplay IP=鸣潮｜（回复转发）存聊天记录",),
+        "tests": ("tests/test_media_archive.py",),
     },
     "好感度": {
         "capability": "bot.affinity",
