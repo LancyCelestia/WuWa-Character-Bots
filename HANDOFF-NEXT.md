@@ -22,6 +22,21 @@ QQ 聊天机器人「守岸人」（鸣潮角色人格，非 AI 设定），None
 7. **代理纪律**（用户常要求 2 并发子代理）：按文件域互斥切分；代理禁 git 写、禁再派代理；**并发上限受当日用量约束**（高消耗日 2-3 并发即被上游 1302 弹回，弹回=串行自己做，不要硬重派）；代理阵亡先取证遗留（git diff + 跑域测试），能收编就收编。
 8. 直跑 python 用绝对路径：`"C:/Users/LancyCelestia/Documents/MyWorkspace/ChatBot/ChatBot_Runtime/venv/Scripts/python.exe"`（shell 里相对路径会因 profile 报错）。
 
+## 2.5 自动同步铁律（用户核心要求：改一处，全局联动，一处都不许漏）
+
+这是本项目最重要的机制，**任何改动必须走对应的联动流程，漏一步测试门直接红**：
+
+| 你改了什么 | 必须联动 | 机制 |
+|---|---|---|
+| **HTML 渲染模板/视觉 token** | 视觉值只准改 `theme_tokens.py`（token 单一事实源），模板只准 `var()`/注入引用——**改 token=全模板自动生效**；模板结构改动后跑渲染契约族测试；交付物（6 模板+theme_tokens+契约文+DESIGN-SPEC 等 12 文件）字节变了必须 `python tests/verify_hashes.py --write` 重录 SHA-256（`--check` 已是 pytest 常驻门，漏录直接红） | 根部 `DESIGN-SPEC.md`（设计/执行/验证三规范）+ `docs/rendering-contract.md` |
+| **全项目代码/命令/触发词** | 改 `echo.py`（帮助注册表/触发词）或 `base_router.py`（路由）后必跑 `python scripts/command_catalog.py --write`——`docs/command-catalog.md` 与 `COMMANDS.md` 自动重生成，漏跑 `test_catalog_document_matches_registry` 红 | "一处修改，全局联动"用户裁定 |
+| **文档中的清单/数字类事实** | 代码变了跑 `python scripts/doc_sync.py --write`——`docs/auto-facts.md`（模板清单/RouteKind/帮助 topic 数/测试文件数/配置键数）整册从代码重生成，`--check` 常驻门；**该册机器所有，禁止手改** | 交叉验证机制·文档层 |
+| **设定/提示词/人格**（personas/） | 无机械门（叙述类人工维护），但 `identity.md` 等已在哈希清单内的文件改后同样 `--write`；话术红线见 AGENTS 规则 8 | 人工纪律+哈希兜底 |
+| **热路径性能** | `tests/test_perf_regression.py`（pytest 常驻）：路由吞吐/导入时长超数量级阈值直接红——**不许抬阈值**，先 systematic-debugging 定位 | 交叉验证机制·性能层 |
+| **双引擎交叉验证** | 提交前/大改后跑 `python tests/cross_validate.py`：同一套测试默认引擎与隔离引擎各跑全量，结果必须一致，不一致=环境耦合缺陷 | 交叉验证机制·执行层 |
+
+**记忆口诀**：改模板→跑契约族；改交付物→`verify_hashes --write`；改代码事实→`doc_sync --write`；改命令→`command_catalog --write`；动性能→`test_perf_regression` 说话；收尾→`cross_validate` 互证。**全部 `--check` 形态已进全量测试门，漏一步全量必红**——这就是 SHA-256 哈希、pytest、延迟/性能测试的常驻形态。
+
 ## 3. 常用命令
 
 ```powershell
