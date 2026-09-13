@@ -46,7 +46,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task typecheck"       # mypy
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task runtime-layout"  # 源码树/边界体检
 
-# 重启生产 bot 前的一键预检（收尾中：全 PASS 再动手；未落盘前先手动核对 git status + 全量测试）
+# 重启生产 bot 前的一键预检（已落地 051261d；7 项检查，无 FAIL 再动手）
 python scripts/pre_restart_check.py
 ```
 
@@ -81,7 +81,7 @@ flowchart LR
 ```text
 MyWorkspace\ChatBot\
 ├─ ChatBot\          唯一代码区（本工作区）：bot.py + plugins/ + personas/ + scripts/ + tests/ + docs/
-├─ ChatBot_Runtime\  运行数据：venv、26 个 SQLite 库、cookie、日志、缓存、头像（不可删改，默认不扫描）
+├─ ChatBot_Runtime\  运行数据：venv、SQLite 库群（26 原有+media_archive/notes/web_intent_telemetry 等，实况 32，清单唯 docs/db-owners.md）、cookie、日志、缓存、头像（不可删改，默认不扫描）
 └─ ChatBot_Archive\  历史归档：按日期目录压缩包 + manifest
 ```
 

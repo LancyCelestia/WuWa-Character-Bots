@@ -5,7 +5,7 @@
 
 ## 0. 一句话现状
 
-代码与测试健康（六域各域测试全绿、哈希/事实册/性能三类常驻门随批重录），2026-09-13/14 六域批次（金融/账单/视觉/图库/e2e 自测/笔记授时）+ 安全审计 + 双评审修复已分批落检查点：`cfd7d83` 四卡阴影解锁 / `7414e87` 笔记授时 config 六键 / `bdbc88b` Tavily 图搜兜底+图库满编 / `93e8195` 安全修复包 / `f3962f1` 视觉评审修复 / `5ba7c0f` 金融评审修复——但**仍有工作树未提交件**（数量与构成以 `git status` 实况为准，归属索引见 §6 与 AGENTS.md 台账 #31；截稿时点仅 e2e 实战自测收尾件在飞，以 git log 最新为准），且**生产 bot 未重启**——你的第一件事通常是提醒用户提权重启 bot（见 §5），然后做 §6 收尾。
+代码与测试健康（六域各域测试全绿、哈希/事实册/性能三类常驻门随批重录），2026-09-13/14 六域批次（金融/账单/视觉/图库/e2e 自测/笔记授时）+ 安全审计 + 双评审修复已分批落检查点：`cfd7d83` 四卡阴影解锁 / `7414e87` 笔记授时 config 六键 / `bdbc88b` Tavily 图搜兜底+图库满编 / `93e8195` 安全修复包 / `f3962f1` 视觉评审修复 / `5ba7c0f` 金融评审修复——但**仍有工作树未提交件**（数量与构成以 `git status` 实况为准，归属索引见 §6 与 AGENTS.md 台账 #31；截稿时点在飞=e2e 实战自测席，XHS 泄漏桥接席已落库 `8cbd4b6`，以 git status 最新为准），且**生产 bot 未重启**——你的第一件事通常是提醒用户提权重启 bot（见 §5），然后做 §6 收尾。
 
 ## 1. 项目 30 秒
 
@@ -19,7 +19,7 @@ QQ 聊天机器人「守岸人」（鸣潮角色人格，非 AI 设定），None
 4. **git**：禁 `git add -A/.`；逐文件显式 add；提交后 `git show --stat HEAD` 核对；**push 只在用户明确指示时**，refspec `refs/heads/v0.0.1-alpha.2:refs/heads/v0.0.1-alpha.2`。
 5. **说"完成"必须有证据**：提交哈希或可复跑命令+实跑输出。测试/lint 结果必须实跑，禁编造。
 6. **人格资产**（personas/）改前读 AGENTS 规则 8；守岸人语气红线写死在 affinity.py。
-7. **代理纪律**（用户常要求 2 并发子代理）：按文件域互斥切分；代理禁 git 写、禁再派代理；**并发上限受当日累计用量动态约束**（非固定值）：高消耗日 2-3 并发即触发 1302（09-13 观测），低消耗日可 6-7（09-14 观测）；机制同 AGENTS 规则 7（其括号内旧观测归因待该文件下次修订时对齐）；弹回=串行自己做，不要硬重派；代理阵亡先取证遗留（git diff + 跑域测试），能收编就收编。
+7. **代理纪律**（用户常要求 2 并发子代理）：按文件域互斥切分；代理禁 git 写、禁再派代理；**并发上限受当日累计用量动态约束**（非固定值）：高消耗日 2-3 并发即触发 1302（09-13 观测），低消耗日可 6-7（09-14 观测）；机制同 AGENTS 规则 7（两处观测归因已对齐）；弹回=串行自己做，不要硬重派；代理阵亡先取证遗留（git diff + 跑域测试），能收编就收编。
 8. 直跑 python 用绝对路径：`"C:/Users/LancyCelestia/Documents/MyWorkspace/ChatBot/ChatBot_Runtime/venv/Scripts/python.exe"`（shell 里相对路径会因 profile 报错）。
 
 ## 2.5 自动同步铁律（用户核心要求：改一处，全局联动，一处都不许漏）
@@ -31,7 +31,7 @@ QQ 聊天机器人「守岸人」（鸣潮角色人格，非 AI 设定），None
 | **HTML 渲染模板/视觉 token** | 视觉值只准改 `theme_tokens.py`（token 单一事实源），模板只准 `var()`/注入引用——**改 token=全模板自动生效**；模板结构改动后跑渲染契约族测试；交付物（6 模板+theme_tokens+契约文+DESIGN-SPEC 等 12 文件）字节变了必须 `python tests/verify_hashes.py --write` 重录 SHA-256（`--check` 已是 pytest 常驻门，漏录直接红） | 根部 `DESIGN-SPEC.md`（设计/执行/验证三规范）+ `docs/rendering-contract.md` |
 | **全项目代码/命令/触发词** | 改 `echo.py`（帮助注册表/触发词）或 `base_router.py`（路由）后必跑 `python scripts/command_catalog.py --write`——`docs/command-catalog.md` 与 `COMMANDS.md` 自动重生成，漏跑 `test_catalog_document_matches_registry` 红 | "一处修改，全局联动"用户裁定 |
 | **文档中的清单/数字类事实** | 代码变了跑 `python scripts/doc_sync.py --write`——`docs/auto-facts.md`（模板清单/RouteKind/帮助 topic 数/测试文件数/配置键数）整册从代码重生成，`--check` 常驻门；**该册机器所有，禁止手改** | 交叉验证机制·文档层 |
-| **设定/提示词/人格**（personas/） | 无机械门（叙述类人工维护），但 `identity.md` 等已在哈希清单内的文件改后同样 `--write`；话术红线见 AGENTS 规则 8 | 人工纪律+哈希兜底 |
+| **设定/提示词/人格**（personas/） | 人格源-副本一致性已有机械门：`python scripts/sync_persona_source.py --check`（`a1cf739`；改人格后 `--adopt` 重录锚定复绿）；`identity.md` 等已在哈希清单内的文件改后同样 `--write`；话术红线见 AGENTS 规则 8；蒸馏拟稿待用户裁决（.superpowers/sdd/2026-09-13-six-domain-batch/persona-distill-draft.md） | 机械门+哈希兜底 |
 | **热路径性能** | `tests/test_perf_regression.py`（pytest 常驻）：路由吞吐/导入时长超数量级阈值直接红——**不许抬阈值**，先 systematic-debugging 定位 | 交叉验证机制·性能层 |
 | **双引擎交叉验证** | 提交前/大改后跑 `python tests/cross_validate.py`：同一套测试默认引擎与隔离引擎各跑全量，结果必须一致，不一致=环境耦合缺陷 | 交叉验证机制·执行层 |
 
@@ -68,18 +68,18 @@ python -m plugins.bot_unified_runtime.capabilities.eat --prewarm  # 图库补图
 - **Tavily 图搜兜底**（`bdbc88b`）：Bing 缺图/缺候选时走已配 key 的 include_images 直链候选，域黑名单/SSRF/字节/magic/像素五道质检闸全链复用。
 - **图库治理**：清污 53→13（VLM 复判+人工抽验 7/7，40 图入 %TEMP% 隔离区，总账 53=13+11+29 闭合）；Tavily 补图链路实证 **61/61 满编**（`bdbc88b`）——现库 13/61，重启前重跑 `eat --prewarm` 补 48 道缺口（质检链会重新过滤）。
 - **性能门收紧+五链路复测**：吞吐门循环 500→5000 次修正（真余量 120x→牙齿 8~14x，阈值未放宽）；路由 P50 0.016ms/P95 0.058ms（噪声带内无代码退化）、渲染 warm P50 2141ms、`BOT_RENDER_WAIT_BUDGET_MS=1500` 离线实证 P50 772.9ms（**−64%**）；六域新模块全惰性化（启动关键路径仅 +3.2ms）。
-- **e2e 实战自测增强**（A4 席，**收尾中**）：e2e_acceptance.py +700 行（命令矩阵/响应收集/私聊报告/`--selftest` 11 项，按命令目录动态生成；topic 数不写死，以 `command_catalog.py --write` 生成值为准）。
+- **e2e 实战自测增强**（A4 席，**收尾中·真实在飞**）：e2e_acceptance.py 大幅增强（命令矩阵/响应收集/私聊报告/`--selftest` 11 项，按命令目录动态生成；topic 数不写死，以 `command_catalog.py --write` 生成值为准）；工作树件=scripts/e2e_acceptance.py+tests/test_e2e_help_matrix.py。
 - **续批四件+两件闭环**（2026-09-14 回填，git log 实查）：素材本地化 F2 stocks logo 三级兜底+8/9 预热 `a4371d2`、F3 bot 头像本地优先+金融三能力生产 matcher 注册 `691d6e1`、F1 mermaid.min.js 本地化治 #8 `959630a`+`871beb2`（拦截半边 render_backends page.route 已随 `e37817f` 入库）；渲染 Phase 2 已收官 `13fcd30`（.env 解锁并发 2/预算 1500ms）；**统一错误报告卡全链已入库**（`1651544` 模板/bridge/契约 + `84b3915` 补发加速 + `de6ba91` 异步化两段式；error-card-report：全链+冷却+脱敏，测试 22+契约 199+回归 292）。
 - **文档预收尾**：HANDBOOK §24（六域总账）、acceptance-manual §6.6.3（金融+账单验收五项）、issue-ledger P2-10/P2-11/P3-7/P3-8、AGENTS.md #31。
 - 前批已落（可溯 git log）：时间窗总结 `1b23622`、vis4 全卡迁移 `77f56de`、自动同步闭环 `ccd38b9`（dev.ps1 -Task sync + BOT_AUTOSYNC=1）、图库清理器 `3e0f507`。
 
 ## 5. 用户必须做的事（你只能提醒）
 
-**提权重启生产 bot**——不重启，以上全部不生效。重启前置：先跑 `python scripts/pre_restart_check.py`，**全 PASS 再动手**（该脚本收尾中，未落盘前按 §7 流程手动核对 git status+全量测试）。重启顺序：**先 NapCat 后 bot.py**（管理员）。重启后验收：`acceptance-manual.md` §6.6（九项卡面）/§6.6.1（触发五表）/§6.6.2（媒体归档六项）/**§6.6.3（金融扩容+账单渠道五项）**/**§6.6.4（提醒/笔记/授时+错误报告卡：临时断网发一条 `行情`，期待云母诊断卡+冷却期内第二条降级纯文本）**/**§6.6.5（本批新增能力：视觉收口+样张+知识库检索）**；再跑 `measure_latency_chains.py all` 补 NapCat/Mail/TG 在线延迟（此前 unreachable）。
+**提权重启生产 bot**——不重启，以上全部不生效。重启前置：先跑 `python scripts/pre_restart_check.py`，**全 PASS 再动手**（已入库 `051261d`：7 项检查 PASS/SKIP/FAIL+exit code+`--json`，无 FAIL 再动手）。重启顺序：**先 NapCat 后 bot.py**（管理员）。重启后验收：`acceptance-manual.md` §6.6（九项卡面）/§6.6.1（触发五表）/§6.6.2（媒体归档六项）/**§6.6.3（金融扩容+账单渠道五项）**/**§6.6.4（提醒/笔记/授时+错误报告卡：临时断网发一条 `行情`，期待云母诊断卡+冷却期内第二条降级纯文本）**/**§6.6.5（本批新增能力：视觉收口+样张+知识库检索）**；再跑 `measure_latency_chains.py all` 补 NapCat/Mail/TG 在线延迟（此前 unreachable）。
 
 ## 6. 在飞/待办（按优先级）
 
-1. **收尾提交**：清单与数量**以 `git status --porcelain` 实况为准**（收尾批持续推进，不写死构成；2026-09-14 截稿快照仅 e2e 实战自测两件：`scripts/e2e_acceptance.py` + `tests/test_e2e_help_matrix.py`）——逐域跑域测试后显式 add 提交。归属索引：`AGENTS.md` 台账 #31（六域各席归属）+ `.superpowers/sdd/2026-09-13-six-domain-batch/sdd-INDEX.md`（分域报告目录）。~~⚠️ HEAD 不自含~~ → **已闭环**：commodities_data/bond_data 已随 `3592793` 入库、render_backends mermaid 拦截半边已随 `e37817f` 入库，现 HEAD 自含，可安全 checkout/diff 取证。
+1. **收尾提交**：清单与数量**以 `git status --porcelain` 实况为准**（收尾批持续推进，不写死构成；2026-09-14 截稿快照=e2e 实战自测席 `scripts/e2e_acceptance.py`+`tests/test_e2e_help_matrix.py`；XHS 泄漏桥接收尾移交席已落库 `8cbd4b6`）——逐域跑域测试后显式 add 提交。归属索引：`AGENTS.md` 台账 #31（六域各席归属）+ `.superpowers/sdd/2026-09-13-six-domain-batch/sdd-INDEX.md`（分域报告目录）。~~⚠️ HEAD 不自含~~ → **已闭环**：commodities_data/bond_data 已随 `3592793` 入库、render_backends mermaid 拦截半边已随 `e37817f` 入库，现 HEAD 自含，可安全 checkout/diff 取证。
 2. ~~金融三能力触发词接线~~ → **已注册生产 matcher**（`691d6e1`：三谓词+三 matcher+三工厂+三 handle，照 market/stocks 装配，90 例回归绿；此前 `789700c` 只接了 base_router RouteKind+echo 帮助层，生产装配由本笔补齐）。
 3. ~~时间窗总结~~ → 已落库（`1b23622`：「总结 N 分钟内消息」→history 时间窗召回注入 chat）。
 4. ~~图库清理收尾~~ → 已闭合：53=13+11+29、人工抽验 7/7；重启前重跑 `eat --prewarm` 补 48 道缺口。
@@ -100,4 +100,4 @@ python -m plugins.bot_unified_runtime.capabilities.eat --prewarm  # 图库补图
 
 1. 读 `AGENTS.md`（重点：第一部分规则、第六部分台账 #26-#31）；
 2. `git status --porcelain` + `git log --oneline -10` 摸清现场；若有未提交遗留，先取证（跑对应域测试）再收编；
-3. 跑一次 `dev.ps1 -Task test` 确认基线全绿（提醒用户重启前另跑 `python scripts/pre_restart_check.py` 全 PASS，见 §5；脚本收尾中），然后按 §6 顺序干活。**用户会说"继续"和"开 N 并发子代理"——照 §2.7 纪律执行即可。**
+3. 跑一次 `dev.ps1 -Task test` 确认基线全绿（提醒用户重启前另跑 `python scripts/pre_restart_check.py` 全 PASS，见 §5），然后按 §6 顺序干活。**用户会说"继续"和"开 N 并发子代理"——照 §2.7 纪律执行即可。**
