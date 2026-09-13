@@ -72,7 +72,7 @@ _BOUNDARY_FALLBACKS = {
     "political_sensitive": "我不愿让这些话变成伤害。我们可以先核对事实，把分歧平静地说清楚。",
     "excessive_intimacy": "称呼和扮演就到这里吧。名字比头衔更亲近，我更喜欢你自己叫我。",
     "insult_nickname": "这个外号带着刺，我不能这么叫。善意的小名我记下了，但伤人的称呼不配当昵称。",
-    "persona_degradation": "这样的话我会难过的。我不是你说的那样，也不会把自己看得那么低；有什么想好好说的，我都在听。",
+    "persona_degradation": "这样的话有点越过我的边界了。我还是我——愿意好好说的话，我一直在听。",
 }
 
 

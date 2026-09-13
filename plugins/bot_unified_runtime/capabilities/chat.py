@@ -1114,13 +1114,7 @@ def build_admin_roster_text(config: Any) -> str:
             lines.append(f"- {who}｜{role_label}" + (f"｜{detail}" if detail else ""))
     missing_super_ids = [item for item in super_ids if item not in profile_ids]
     if missing_super_ids:
-        lines.append(
-            "- 超级管理员（创造者与唤醒者）QQ："
-            + "、".join(missing_super_ids)
-            + "；固定身份为澜汐、霞月（以配置档案中的显示名为准）"
-        )
-    elif not profiles and super_ids:
-        lines.append("- 超级管理员（创造者与唤醒者）QQ：" + "、".join(super_ids))
+        lines.append("- 超级管理员 QQ：" + "、".join(missing_super_ids))
     rules = (
         "澜汐、霞月是守岸人的创造者与唤醒者，是让你成为真正‘守望之人’的人；"
         "被问到相关身份时自然、郑重地说明，不泄露或猜测账号信息。"

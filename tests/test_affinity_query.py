@@ -299,7 +299,9 @@ def test_content_safety_persona_degradation_soft_category() -> None:
 
     fallback = safe_boundary_output("", "persona_degradation")
     assert fallback
-    assert "难过的" in fallback
+    # 2026-09-13 用户裁定：愧疚式话术（"我会难过的"）弃用，改温和边界+开放对话。
+    assert "越过我的边界" in fallback
+    assert "难过的" not in fallback
 
 
 def _decision():
