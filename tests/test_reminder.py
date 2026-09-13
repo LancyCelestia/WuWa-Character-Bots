@@ -11,6 +11,7 @@ from plugins.bot_unified_runtime.capabilities.reminder import (
 )
 from plugins.bot_unified_runtime.character.reminders import (
     ReminderStore,
+    build_reminder_store,
     build_reminder_text,
     parse_reminder_intent,
 )
@@ -223,3 +224,58 @@ def test_store_late_beyond_grace_expires(tmp_path) -> None:
     now = datetime(2026, 9, 13, 13, 51, tzinfo=_TZ)  # 迟到 ~29.9 小时
     assert store.due(now=now) == []
     assert store.list_pending("group:1") == []
+
+
+# ---------- 文案审计三处回归（2026-09-13 收编） ----------
+
+
+def _tone_capability(tmp_path, monkeypatch):
+    import plugins.bot_unified_runtime.character.reminders as reminders_mod
+
+    monkeypatch.setattr(reminders_mod, "_STORES", {})
+    return build_reminder_capability(_tone_config(tmp_path))
+
+
+def _tone_config(tmp_path) -> SimpleNamespace:
+    return SimpleNamespace(
+        bot_reminder_db_path=str(tmp_path / "r.sqlite3"),
+        bot_notes_enabled=False,  # 勾选/取消文案回归只看提醒侧，不建 notes store。
+    )
+
+
+def test_checkoff_ambiguous_copy_is_count_agnostic(tmp_path, monkeypatch) -> None:
+    """文案审计①：3 个并列候选时正文不点数（不得写死「两件事」）。"""
+    capability = _tone_capability(tmp_path, monkeypatch)
+    for index in range(3):
+        capability(_message(f"12点提醒我抄作业{['一', '二', '三'][index]}"), object())
+    # 「作业」包含于三个事项 → 并列最高分 → ambiguous（前 3 个）。
+    result = capability(_message("作业做完了"), object())
+    assert result.audit_tags[-1] == "ambiguous" or "ambiguous" in result.audit_tags
+    assert "两件事" not in result.body, "并列 3 个时「两件事」是硬编码点数"
+    assert "有几件事" in result.body
+    for label in ("抄作业一", "抄作业二", "抄作业三"):
+        assert label in result.body, "歧义清单应列出全部并列候选"
+
+
+def test_cancel_ambiguous_copy_is_human(tmp_path, monkeypatch) -> None:
+    """文案审计③：取消提醒歧义回执不再是裸机器腔（"需要唯一"）。"""
+    capability = _tone_capability(tmp_path, monkeypatch)
+    capability(_message("12点提醒我写作业"), object())
+    capability(_message("13点提醒我交表"), object())
+    store = build_reminder_store(_tone_config(tmp_path))
+    # id 是 sha1 截断，前缀碰撞不可控：逐行改成同前缀，锁定歧义分支。
+    with store._lock, store._conn:
+        first = store._conn.execute(
+            "SELECT MIN(reminder_id) FROM reminders"
+        ).fetchone()[0]
+        store._conn.execute(
+            "UPDATE reminders SET reminder_id = 'deadbeef1' WHERE reminder_id = ?",
+            (first,),
+        )
+        store._conn.execute(
+            "UPDATE reminders SET reminder_id = 'deadbeef2'"
+            " WHERE reminder_id <> 'deadbeef1'"
+        )
+    result = capability(_message("取消提醒 deadbeef"), object())
+    assert "需要唯一" not in result.body and "命中" not in result.body
+    assert "deadbeef" in result.body and "提醒列表" in result.body

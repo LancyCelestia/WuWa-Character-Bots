@@ -53,8 +53,16 @@ LATE_DELIVERY_GRACE = timedelta(minutes=30)
 
 
 def _local_now() -> datetime:
-    """统一本地时区口径的"现在"（aware、进程本地时区）。"""
-    return datetime.now().astimezone()
+    """统一本地时区口径的"现在"（aware、进程本地时区）。
+
+    2026-09-13 六域批起「现在」一律经 runtime/timesync（联网授时）校正：
+    未绑定配置/校准失败/未启用时回退系统钟，语义与原实现完全一致；
+    绝不改系统钟，只在校正过的时刻上做比较。惰性导入防 runtime 包
+    __init__（pipeline）与能力层形成导入环。
+    """
+    from plugins.bot_unified_runtime.runtime import timesync
+
+    return timesync.now()
 
 
 def _as_local(moment: datetime) -> datetime:
@@ -183,15 +191,6 @@ def _format_when(target: datetime, current: datetime) -> str:
     delta_days = (target.date() - current.date()).days
     day_label = {0: "今天", 1: "明天", 2: "后天"}.get(delta_days, "那一天")
     return f"{day_label} {target.hour:02d}:{target.minute:02d}"
-
-
-def build_reminder_text(reminder: Reminder) -> str:
-    """到点督促的文案（守岸人语气，温柔不啰嗦）。"""
-    return (
-        "（远处的海浪声）……到时间了。\n"
-        f"你之前说过的：{reminder.text}。\n"
-        "我就守在这里。慢一点也没关系，记得去做。"
-    )
 
 
 class ReminderStore:
@@ -384,7 +383,11 @@ _STORES_LOCK = threading.Lock()
 def build_reminder_store(config: object) -> ReminderStore:
     """进程级共享提醒 store（能力与每分钟调度任务共用，避免连接泄漏）。"""
     from plugins.bot_unified_runtime.character.providers import build_runtime_data_path
+    from plugins.bot_unified_runtime.runtime import timesync
 
+    # 提醒链路的"现在"统一经 timesync：真实配置绑定于此（含每分钟调度
+    # 任务），字段缺失（测试局部 config）时 timesync 保持禁用零联网。
+    timesync.configure_from(config)
     db_path = str(
         build_runtime_data_path(
             config, str(getattr(config, "bot_reminder_db_path", "data/reminders.sqlite3"))
@@ -396,3 +399,187 @@ def build_reminder_store(config: object) -> ReminderStore:
             store = ReminderStore(db_path)
             _STORES[db_path] = store
         return store
+
+
+# ---------------------------------------------------------------------------
+# 用途分型 + 差异化语气（2026-09-13 六域批）：按关键词把提醒分成
+# 吃药/约会出行/购物/待办/自定义五型，到点投递文案按型切换。语气基准取
+# personas/shorekeeper（温柔、克制、海与星的意象、不生硬不 AI 味）。
+# ---------------------------------------------------------------------------
+
+REMINDER_KINDS: tuple[str, ...] = (
+    "medicine", "appointment", "shopping", "todo", "custom",
+)
+
+# 分型关键词（有序，先命中先得；顺序即优先级：健康 > 时间约束 > 采购 > 日常）。
+_KIND_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "medicine",
+        ("吃药", "服药", "用药", "吃药了", "药", "输液", "打针", "复诊", "体检", "滴眼药"),
+    ),
+    (
+        "appointment",
+        (
+            "开会", "会议", "上课", "下课", "考试", "面试", "约会", "见面", "出门",
+            "出发", "赶车", "赶飞机", "赶船", "航班", "登机", "火车", "高铁", "飞机",
+            "上班", "下班", "交表", "截止", "交付", "直播", "网课", "接送",
+        ),
+    ),
+    (
+        "shopping",
+        ("买", "购物", "下单", "抢购", "秒杀", "快递", "取件", "外卖", "囤", "缴费"),
+    ),
+    (
+        "todo",
+        ("写", "做", "复习", "预习", "背", "练", "刷", "锻炼", "运动", "跑步",
+         "喝水", "休息", "睡觉", "起床", "收衣服", "晾衣服", "洗澡"),
+    ),
+)
+
+
+def classify_reminder_kind(text: str) -> str:
+    """按关键词给提醒事项分型（确定性、零依赖；自定义兜底）。"""
+    content = str(text or "")
+    for kind, keywords in _KIND_KEYWORDS:
+        for word in keywords:
+            if word in content:
+                return kind
+    return "custom"
+
+
+# 到点投递文案：按型切换（守岸人语气；结构与既有默认保持同族——
+# 到点信号 + 事项复述 + 温柔的收尾）。custom 沿用历史默认文案。
+_KIND_DELIVERY_TEXTS: dict[str, str] = {
+    "medicine": (
+        "……到时间了，该吃药了。\n"
+        "你之前说过的：{text}。\n"
+        "喝口水，慢慢来。身体的事，不能总交给以后。我陪着你。"
+    ),
+    "appointment": (
+        "（频率轻轻响了一声，像钟摆）时间到了。\n"
+        "你之前说过的：{text}。\n"
+        "这一件有时间在前面等着，别让它等太久。去吧，我守在这里。"
+    ),
+    "shopping": (
+        "到点了。\n"
+        "你之前说过的：{text}。\n"
+        "要带走的东西，别落在世界的另一头。回来的时候，海还在这边。"
+    ),
+    "todo": (
+        "（潮声很轻）到时间了。\n"
+        "你之前说过的：{text}。\n"
+        "一步一步来就好，不着急。我守在这里。"
+    ),
+}
+
+
+def build_reminder_text(reminder: Reminder) -> str:
+    """到点督促的文案（守岸人语气，温柔不啰嗦；按用途分型切换）。"""
+    text = str(reminder.text or "")
+    template = _KIND_DELIVERY_TEXTS.get(
+        classify_reminder_kind(text),
+        "（远处的海浪声）……到时间了。\n"
+        "你之前说过的：{text}。\n"
+        "我就守在这里。慢一点也没关系，记得去做。",
+    )
+    return template.format(text=text)
+
+
+# ---------------------------------------------------------------------------
+# 自然语言勾选的模糊匹配（含勾选对象=未完成提醒 + 笔记待办，见
+# capabilities/reminder.py）：包含 + 编辑距离，纯 stdlib、确定性。
+# ---------------------------------------------------------------------------
+
+_MATCH_STRIP_RE = re.compile(
+    r"[\s，,。！!？?、~～·…\-—_()（）\[\]【】「」『』\"'“”‘’:：;；]+"
+)
+
+
+def normalize_for_match(text: str) -> str:
+    """匹配归一：去标点空白 + casefold（中文主体不受影响）。"""
+    return _MATCH_STRIP_RE.sub("", str(text or "")).casefold()
+
+
+def _levenshtein(a: str, b: str, *, cap: int | None = None) -> int:
+    """编辑距离（两行滚动 DP；``cap`` 供提前止损，超限返回 cap+1）。"""
+    if a == b:
+        return 0
+    if cap is not None and abs(len(a) - len(b)) > cap:
+        return cap + 1
+    previous = list(range(len(b) + 1))
+    for i, char_a in enumerate(a, start=1):
+        current = [i]
+        row_min = i
+        for j, char_b in enumerate(b, start=1):
+            cost = 0 if char_a == char_b else 1
+            value = min(previous[j] + cost, current[j - 1] + 1, previous[j - 1] + 1)
+            current.append(value)
+            row_min = min(row_min, value)
+        if cap is not None and row_min > cap:
+            return cap + 1
+        previous = current
+    return previous[-1]
+
+
+def match_similarity(query: str, name: str) -> float:
+    """「事项名 vs 待办名」相似度（0~1）：
+
+    - 完全一致 = 1.0；
+    - 包含关系（短在长内）= 0.7 + 0.3 × 短/长（"作业" vs "写作业" ≈ 0.9）；
+    - 其余按编辑距离比例打分（命中阈值以下自然落空）。
+    """
+    q = normalize_for_match(query)
+    n = normalize_for_match(name)
+    if not q or not n:
+        return 0.0
+    if q == n:
+        return 1.0
+    if q in n or n in q:
+        shorter, longer = (q, n) if len(q) <= len(n) else (n, q)
+        return 0.7 + 0.3 * (len(shorter) / len(longer))
+    distance = _levenshtein(q, n)
+    ratio = 1.0 - distance / max(len(q), len(n))
+    return max(0.0, ratio)
+
+
+MATCH_MIN_SCORE = 0.45
+AMBIGUITY_MARGIN = 0.05
+NEAR_MISS_FLOOR = 0.3
+
+
+def match_todo_candidates(
+    query: str, names: list[str], *, min_score: float = MATCH_MIN_SCORE
+) -> list[tuple[int, float]]:
+    """query 对候选名的相似度评分（降序；低于阈值剔除）。"""
+    scored = [
+        (index, match_similarity(query, name))
+        for index, name in enumerate(names)
+        if str(name or "").strip()
+    ]
+    return sorted(
+        (item for item in scored if item[1] >= min_score),
+        key=lambda item: (-item[1], item[0]),
+    )
+
+
+def resolve_todo_match(
+    query: str,
+    names: list[str],
+    *,
+    min_score: float = MATCH_MIN_SCORE,
+    ambiguity_margin: float = AMBIGUITY_MARGIN,
+) -> tuple[str, list[int]]:
+    """勾选裁决：返回 (outcome, 索引列表)。
+
+    - ``"hit"``：唯一最高分（或与次高分差距 ≥ ambiguity_margin）；
+    - ``"ambiguous"``：并列高分（差距 < margin），索引给前 3 个；
+    - ``"miss"``：无人过线。
+    """
+    ranked = match_todo_candidates(query, names, min_score=min_score)
+    if not ranked:
+        return "miss", []
+    best_score = ranked[0][1]
+    tied = [index for index, score in ranked if best_score - score <= ambiguity_margin]
+    if len(tied) == 1:
+        return "hit", tied
+    return "ambiguous", tied[:3]

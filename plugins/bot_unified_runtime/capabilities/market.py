@@ -369,7 +369,7 @@ def build_commodities_capability(
 def build_bond_capability(
     config: Any | None = None, *, render_backend: Any | None = None
 ) -> Any:
-    """国债收益率能力闭包（bot.bonds）：中美国债 2/5/10/30 年 + 10Y−2Y 利差。"""
+    """国债收益率能力闭包（bot.bond）：中美国债 2/5/10/30 年 + 10Y−2Y 利差。"""
     from plugins.bot_unified_runtime.sources.bond_data import (
         fetch_bond_yields,
         format_bond_brief,
@@ -406,7 +406,7 @@ def build_bond_capability(
         if snapshot.status != "ok":
             return CapabilityResult(
                 request_id=message.request_id,
-                capability_id="bot.bonds",
+                capability_id="bot.bond",
                 kind="text",
                 body=format_bond_brief(snapshot),
                 audit_tags=["capability:bonds", "bonds:fetch_failed"],
@@ -446,7 +446,7 @@ def build_bond_capability(
         ]
         return CapabilityResult(
             request_id=message.request_id,
-            capability_id="bot.bonds",
+            capability_id="bot.bond",
             kind="mixed" if card else "text",
             title="中美国债收益率速览",
             body=body,

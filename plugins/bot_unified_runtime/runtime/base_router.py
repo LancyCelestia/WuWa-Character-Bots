@@ -42,7 +42,12 @@ from plugins.bot_unified_runtime.capabilities.eat import (
 )
 from plugins.bot_unified_runtime.capabilities.epic import is_epic_command
 from plugins.bot_unified_runtime.capabilities.fx import is_fx_command
-from plugins.bot_unified_runtime.capabilities.market import is_market_command
+from plugins.bot_unified_runtime.capabilities.market import (
+    is_bond_command,
+    is_commodity_command,
+    is_market_command,
+    is_northbound_command,
+)
 from plugins.bot_unified_runtime.capabilities.media_archive import (
     is_media_archive_command,
 )
@@ -92,6 +97,9 @@ class RouteKind(str, Enum):
     WEATHER = "weather"
     MARKET = "market"
     STOCKS = "stocks"
+    COMMODITIES = "commodities"
+    BOND = "bond"
+    NORTHBOUND = "northbound"
     FX = "fx"
     NEWS = "news"
     RANDPIC = "randpic"
@@ -284,6 +292,42 @@ def build_route_rules() -> list[RouteRule]:
             return None
         return RouteDecision(RouteKind.WEATHER, "bot.weather", 41, "天气查询", ("base_route:weather",))
 
+    # 金融三能力让路口径（2026-09-13 六域批接线）：商品触发词（黄金/金价/
+    # 原油…）撞上股/大盘/指数词时是股市语境（「黄金股行情」=黄金板块股票），
+    # 商品卡不抢、让位 market（与 market._NON_STOCK_RE/_STOCK_HINT_RE 守卫
+    # 同源语义；market.py 本席只读，故正则在此地持有）。
+    _FIN_STOCK_HINT_RE = re.compile(r"(股|大盘|大盤|指数|指數)")
+
+    def commodities_match(text, config, _alias):
+        # 商品行情：黄金/金价/白银/原油/铜价/大宗商品（+gold/silver/oil）。
+        if not getattr(config, "bot_commodities_enabled", True):
+            return None
+        if not is_commodity_command(text):
+            return None
+        if _FIN_STOCK_HINT_RE.search(text):
+            return None  # 股市语境让位 market（黄金股行情仍归股指面板）。
+        return RouteDecision(
+            RouteKind.COMMODITIES, "bot.commodities", 41, "商品行情", ("base_route:commodities",)
+        )
+
+    def bond_match(text, config, _alias):
+        # 国债收益率：国债/期限利差/收益率曲线（中美国债利差）。
+        if not getattr(config, "bot_bond_enabled", True):
+            return None
+        if not is_bond_command(text):
+            return None
+        return RouteDecision(RouteKind.BOND, "bot.bond", 41, "国债收益率", ("base_route:bond",))
+
+    def northbound_match(text, config, _alias):
+        # 北向资金：北向资金/沪股通/深股通（成交总额口径）。
+        if not getattr(config, "bot_northbound_enabled", True):
+            return None
+        if not is_northbound_command(text):
+            return None
+        return RouteDecision(
+            RouteKind.NORTHBOUND, "bot.northbound", 41, "北向资金", ("base_route:northbound",)
+        )
+
     def market_match(text, config, _alias):
         # 全球股指行情：短命令级触发（≤32 字、无链接），长句问盘自然落回聊天。
         if not getattr(config, "bot_market_enabled", True):
@@ -344,10 +388,11 @@ def build_route_rules() -> list[RouteRule]:
         return RouteDecision(RouteKind.RANDPIC, "bot.randpic", 41, "随机图片", ("base_route:randpic",))
 
     def reminder_match(text, config, _alias):
-        # 时间点提醒：自然语言「12点提醒我写作业」或列表/取消查询。
+        # 时间点提醒：自然语言「12点提醒我写作业」或列表/取消查询；
+        # 亦含笔记指令面与自然语言勾选（复用 REMINDER 路由，不新增 kind）。
         if not getattr(config, "bot_reminder_enabled", True):
             return None
-        if not is_reminder_command(text):
+        if not is_reminder_command(text, config=config):
             return None
         return RouteDecision(RouteKind.REMINDER, "bot.reminder", 41, "提醒", ("base_route:reminder",))
 
@@ -457,6 +502,12 @@ def build_route_rules() -> list[RouteRule]:
         RouteRule(RouteKind.MOEGIRL, "bot.moegirl", 41, "萌娘百科", "萌娘百科查询", ("base_route:moegirl",), moegirl_match),
         RouteRule(RouteKind.EPIC, "bot.epic", 41, "Epic 免费游戏", "Epic 免费游戏查询", ("base_route:epic",), epic_match),
         RouteRule(RouteKind.WEATHER, "bot.weather", 41, "天气查询", "天气查询", ("base_route:weather",), weather_match),
+        # 金融三能力（2026-09-13 六域批）：排在 market 之前（同 41 先到先得）
+        # ——「黄金行情」这类商品语境由特异触发词先接住；股市语境经
+        # commodities_match 的股词让路仍归 market，互不劫持。
+        RouteRule(RouteKind.COMMODITIES, "bot.commodities", 41, "商品行情", "商品行情（黄金/金价/白银/原油/铜价/大宗商品）", ("base_route:commodities",), commodities_match),
+        RouteRule(RouteKind.BOND, "bot.bond", 41, "国债收益率", "国债收益率（国债/期限利差/收益率曲线）", ("base_route:bond",), bond_match),
+        RouteRule(RouteKind.NORTHBOUND, "bot.northbound", 41, "北向资金", "北向资金（北向资金/沪股通/深股通）", ("base_route:northbound",), northbound_match),
         RouteRule(RouteKind.MARKET, "bot.market", 41, "全球股指行情", "全球股指行情（行情/美股行情/大盘）", ("base_route:market",), market_match),
         RouteRule(RouteKind.FX, "bot.fx", 41, "汇率查询", "汇率（美元兑人民币/汇率面板）", ("base_route:fx",), fx_match),
         RouteRule(RouteKind.STOCKS, "bot.stocks", 42, "个股行情", "个股行情（英伟达/AMD/英特尔股价）", ("base_route:stocks",), stocks_match),
@@ -507,6 +558,9 @@ def build_interface_manifest() -> list[InterfaceEntry]:
 INTERNAL_CAPABILITY_NOTES: dict[str, str] = {
     "bot.stocks": "个股行情（英伟达/AMD/英特尔股价兜底，触发词见 capabilities/stocks.py；帮助页 topic=个股行情）",
     "bot.fx": "汇率查询（美元兑人民币/汇率面板，触发词见 capabilities/fx.py；帮助页 topic=汇率）",
+    "bot.commodities": "商品行情（黄金/白银/原油/铜现货与 30 日走势，触发词见 capabilities/market.py；帮助页 topic=商品行情）",
+    "bot.bond": "国债收益率（国债/期限利差/收益率曲线，触发词见 capabilities/market.py；帮助页 topic=国债收益率）",
+    "bot.northbound": "北向资金（北向资金/沪股通/深股通成交总额，触发词见 capabilities/market.py；帮助页 topic=北向资金）",
 }
 
 
@@ -527,6 +581,9 @@ COMMAND_ROUTE_KINDS = frozenset(
         RouteKind.WEATHER,
         RouteKind.MARKET,
         RouteKind.STOCKS,
+        RouteKind.COMMODITIES,
+        RouteKind.BOND,
+        RouteKind.NORTHBOUND,
         RouteKind.FX,
         RouteKind.EAT,
         RouteKind.DIVINATION,
