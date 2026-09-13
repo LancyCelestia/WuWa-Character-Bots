@@ -6,6 +6,10 @@ A1 席落地的三能力闭包（bot.commodities/bot.bond/bot.northbound）在�
 - 商品规则带股语境让路（黄金股行情仍归 market，守卫先例）；
 - echo 帮助注册表三 topic（商品行情/国债收益率/北向资金）与路由口径一致。
 本文件锁 L2 判定语义；生产 NoneBot matcher 注册在 __init__.py（主会话联动）。
+2026-09-14 A34 终审遗留③：三族全拼路由对齐（商品 huangjin/jinjia/baiyin/
+youjia/yuanyou；国债 guozhai；北向 beixiang/hugutong/shengutong），双侧
+ASCII 词边界 + 基金语境排除同款；弃用词（yinyuan/youtong/hj/by/yj 等）
+与胶合边界负例同锁。
 """
 
 from __future__ import annotations
@@ -105,6 +109,87 @@ def test_northbound_samples_hit_route(text: str) -> None:
 @pytest.mark.parametrize("text", ["港股通", "南向资金", "融资余额多少"])
 def test_northbound_false_positives_stay_away(text: str) -> None:
     assert _route(text).kind is not RouteKind.NORTHBOUND, text
+
+
+# ---------- 全拼路由对齐（2026-09-14 A34 终审遗留③）：命中 ----------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "huangjin",  # 黄金
+        "jinjia",  # 金价
+        "baiyin",  # 白银
+        "youjia",  # 油价
+        "yuanyou",  # 原油
+        "huangjin 多少钱",  # 句式拼音
+    ],
+)
+def test_commodity_pinyin_hits_route(text: str) -> None:
+    decision = _route(text)
+    assert decision.kind is RouteKind.COMMODITIES, text
+    assert decision.capability_id == "bot.commodities"
+
+
+@pytest.mark.parametrize("text", ["guozhai", "guozhai收益率"])
+def test_bond_pinyin_hits_route(text: str) -> None:
+    decision = _route(text)
+    assert decision.kind is RouteKind.BOND, text
+    assert decision.capability_id == "bot.bond"
+
+
+@pytest.mark.parametrize("text", ["beixiang", "hugutong", "shengutong"])
+def test_northbound_pinyin_hits_route(text: str) -> None:
+    decision = _route(text)
+    assert decision.kind is RouteKind.NORTHBOUND, text
+    assert decision.capability_id == "bot.northbound"
+
+
+# ---------- 全拼路由对齐：边界守卫与弃用词负例 ----------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "xhuangjin",  # 左胶合：边界拒。
+        "jinjiaxing",  # 右胶合（金家兴类）：边界拒。
+        "guozhai123",  # 右邻数字：边界拒。
+        "huangjinjijin",  # 胶合「黄金基金」拼音：右边界 + (?!基金) 同拒。
+        "yinyuan",  # 姻缘 高频同音：弃用不路由。
+        "youtong",  # 幼童 同音：弃用不路由。
+        "hj",  # 缩写弃用（滑稽类撞车）。
+        "by",  # 缩写弃用（毕业类撞车）。
+        "yj",  # 缩写弃用（意见类撞车）。
+        "dagutong",  # 无对应触发词：弃用不路由。
+    ],
+)
+def test_finance_pinyin_drop_and_boundary_words_stay_away(text: str) -> None:
+    decision = _route(text)
+    assert decision.kind not in (
+        RouteKind.COMMODITIES,
+        RouteKind.BOND,
+        RouteKind.NORTHBOUND,
+    ), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "金家人真多",  # 中文「金家」人名句：ASCII 拼音正则天然不涉。
+        "人情过债真累",  # 中文「过债」：非 guozhai 拼音。
+        "黄金基金怎么样",  # (?!基金) 中文排除既有语义。
+        "huangjin基金",  # 拼音触发词 + 中文基金排除同款语义。
+    ],
+)
+def test_finance_pinyin_chinese_homophone_stays_away(text: str) -> None:
+    decision = _route(text)
+    assert decision.kind is not RouteKind.COMMODITIES, text
+    assert decision.kind is not RouteKind.BOND, text
+
+
+def test_gold_pinyin_stock_context_yields_market() -> None:
+    """拼音商品词撞股词让位 market（与「黄金股行情」守卫同源语义）。"""
+    assert _route("huangjin股行情").kind is RouteKind.MARKET
 
 
 # ---------- 既有金融路由零回归 ----------

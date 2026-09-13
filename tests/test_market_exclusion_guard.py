@@ -127,3 +127,33 @@ def test_non_card_commodity_context_still_chat(text: str) -> None:
 def test_routing_true_commands_unchanged(text: str) -> None:
     decision = classify_message_route(text, config=_DefaultConfig(), alias_resolver=None)
     assert decision.kind is RouteKind.MARKET
+
+
+# ---------- 全拼路由对齐（2026-09-14 A34 终审遗留③）：market 不劫持拼音商品语境 ----------
+
+# 拼音商品词 + 「行情」：路由级 COMMODITIES 先接（规则序先于 MARKET）。
+# 注意谓词级 is_market_command 对拼音词仍为 True（_NON_STOCK_RE 只收中文
+# 商品语境词，market 族正则不在本席改动范围）——防劫持由路由序锁死。
+_PINYIN_COMMODITY_HIJACK_SAMPLES = (
+    "huangjin行情",
+    "jinjia行情",
+    "youjia行情",
+    "baiyin行情",
+    "yuanyou行情",
+)
+
+
+@pytest.mark.parametrize("text", _PINYIN_COMMODITY_HIJACK_SAMPLES)
+def test_pinyin_commodity_hijack_routes_to_commodities(text: str) -> None:
+    decision = classify_message_route(text, config=_DefaultConfig(), alias_resolver=None)
+    assert decision.kind is RouteKind.COMMODITIES, text
+    assert decision.kind is not RouteKind.MARKET, text
+
+
+@pytest.mark.parametrize("text", _PINYIN_COMMODITY_HIJACK_SAMPLES)
+def test_pinyin_word_still_hits_own_commodity_predicate(text: str) -> None:
+    """拼音词在无「行情」时命中商品卡判定（正向对照，非 market 劫持面）。"""
+    from plugins.bot_unified_runtime.capabilities.market import is_commodity_command
+
+    bare = text.replace("行情", "")
+    assert is_commodity_command(bare) is True, bare

@@ -137,14 +137,34 @@ def is_market_command(text: str) -> bool:
 _COMMODITY_TRIGGER_RE = re.compile(
     r"(黄金(?!基金)|金价|原油(?!基金)|油价|白银|银价|铜价|大宗商品"
     r"|黃金|金價|白銀|銀價|油價|銅價"
-    r"|(?<![a-z0-9])(?:gold|silver|(?:crude\s+)?oil|commodit(?:y|ies))(?![a-z0-9]))",
+    r"|(?<![a-z0-9])(?:gold|silver|(?:crude\s+)?oil|commodit(?:y|ies))(?![a-z0-9])"
+    # 全拼路由（T-Spec T1.5 对齐，2026-09-14 A34 终审遗留③）：与英文分支同款
+    # 双侧 [a-z0-9] 词边界（IGNORECASE 下大写邻字同被拦，golden/xhuangjin 类
+    # 近形胶合拒）；huangjin/yuanyou 与中文 黄金/原油 同款 (?!基金) 后置排除。
+    # 弃用（逐词评估，宁缺勿滥）：hj/by/yj 缩写（帮助面未注册且滑稽/毕业/
+    # 意见类聊天高频缩写撞车）；yinyuan（姻缘 高频同音，且 原油=yuanyou 非
+    # yinyuan）；youtong（幼童 同音，无对应触发词）；tongjia/yinjia（帮助面
+    # A39 未注册拼音，路由会造成反向失配）。
+    r"|(?<![a-z0-9])(?:huangjin(?![a-z0-9])(?!基金)"
+    r"|jinjia|baiyin|youjia|yuanyou)(?![a-z0-9]))",
     re.IGNORECASE,
 )
 _BOND_TRIGGER_RE = re.compile(
-    r"(国债收益率|国债|债券收益率|期限利差|收益率曲线|中美国债|國債|債券收益率)"
+    r"(国债收益率|国债|债券收益率|期限利差|收益率曲线|中美国债|國債|債券收益率"
+    # 全拼路由（T-Spec T1.5 对齐）：guozhai 双侧全字母数字边界（本正则无
+    # IGNORECASE，沿用 market 拼音分支 [A-Za-z0-9] 先例，hguozhai/guozhai123
+    # 类胶合拒）。弃用：xianqicha（echo A39 侧残缺拼形——期限利差应为
+    # xianqilicha，本席禁改 echo，路由残缺形属误导，待 echo 侧勘误后对齐）；
+    # shouyilv（收益率全拼过长弃）；gz（与 affinity「规则」冲突，既有裁定）。
+    r"|(?<![A-Za-z0-9])guozhai(?![A-Za-z0-9]))"
 )
 _NORTHBOUND_TRIGGER_RE = re.compile(
-    r"(北向资金|北上资金|北向|沪股通|深股通|北向資金|北上資金|滬股通|深股通)"
+    r"(北向资金|北上资金|北向|沪股通|深股通|北向資金|北上資金|滬股通|深股通"
+    # 全拼路由（T-Spec T1.5 对齐）：与 A39 帮助面注册逐词对齐（beixiang/
+    # hugutong/shengutong 三词均已注册），双侧全字母数字边界。
+    # 弃用：dagutong（无对应触发词，简报原文疑为笔误）；beishangzijin
+    # （帮助面未注册，裸拼场景罕见）。
+    r"|(?<![A-Za-z0-9])(?:beixiang|hugutong|shengutong)(?![A-Za-z0-9]))"
 )
 
 
