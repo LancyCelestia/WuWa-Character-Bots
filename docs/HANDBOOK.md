@@ -1723,3 +1723,130 @@ flowchart TD
 2. TG 视频段不支持归档。
 3. `save` 裸词弃用：英文口语劫持（误触面大），触发词裁定不启用，英文触发只留 archive。
 4. 聊天记录内嵌图片 v1 仅 [图片] 标注占位，不做内嵌媒体抽取落盘。
+
+## §24 2026-09-14 六域并发批次总账（金融扩容/账单渠道/视觉收官/图库清污——A7-A26 逐席补记终稿）
+
+> 证据全集：`.superpowers/sdd/2026-09-13-six-domain-batch/`（fin-report / billing-report / visual-report / gallery-report / e2e-report + RESUME.md 断网恢复指引；批次目录名 2026-09-13，跨午夜落至 09-14）。
+> 已入库检查点**十四笔**：24.6 两笔（`cfd7d83`/`7414e87`）+ 24.11 续记八笔（`bdbc88b`/`93e8195`/`f3962f1`/`5ba7c0f`/`3592793`/`789700c`/`13fcd30`/`0ecf4a5`）+ 24.12 续记四笔（`a4371d2`/`691d6e1`/`959630a`/`871beb2`）；A7 f-string 收口件/A15 SSRF 护栏/错误卡全批/e2e 件等**余件仍在工作树待提交**（git status 实测）——各席「已完成」的证据指针为各报告内实跑输出（哈希规矩的等价物；收尾批成批提交后回填哈希，§21 同口径）。
+> 断网插曲：批次中途全网中断主动全停一次（RESUME.md 记录现场与恢复流程），恢复后按原 brief 重派，四席报告齐。
+
+### 24.1 批次构成与终态
+
+- 六路编队（文件域互斥）：**A1 金融**（fin-report）/ **A3 账单**（billing-report）/ **A6 视觉 vis5**（visual-report）/ **A5 图库二轮清污**（gallery-report）四席已落地；**A2 提醒/笔记/授时已收编**（`789700c`，见 24.10 A12 条）；A9 文档预收尾后又落地 **A7-A26 一大批**（逐席补记=24.10，检查点续记八笔=24.11）；**原「收尾中四席」已三席落地**（素材本地化 A27/统一错误报告卡 A28/mermaid 本地化 A29 遗产，+渲染 Phase 2 终态与金融生产注册两件——24.12 回填补记，检查点续记四笔 `a4371d2`/`691d6e1`/`959630a`/`871beb2`），仅 **A4 e2e 实战自测仍收尾中**（24.12 占位）。
+- 全量回归基线（visual-report §9 实跑）：`dev.ps1 -Task test` → **4809 passed / 20 failed**——20 例全部归属并行在飞半成品与共享件漂移（**19 例**=A2 域在飞件 `runtime/timesync.py:254` UnboundLocalError 毒化 base_router import 链；**1 例**=doc_sync 共享计数漂移，再收口后 cross_validation_gates 2 passed），四席域零失败。
+- **A2 落地必修（已闭环）**：`runtime/timesync.py` `now()` 缺 `global _SHARED, _SHARED_SIGNATURE` 声明（一行修+离线回归）——含「提醒」信号词的消息在**下次重启后**将路由崩溃、无回复（visual-report §7.0 与 e2e-report §四 双报告独立实锤）；生产现进程未重启故未触雷。**已由 `789700c` 修复并全功能收编**（A12 席，含在 31 例接线回归内）。
+
+### 24.2 A1 金融席（市场监测 Phase-1 扩容）
+
+- **大宗商品**（新 `sources/commodities_data.py`）：COMEX 黄金/白银/铜 + NYMEX 原油 4 secid，ulist 批量快照+push2his 走势（vis3 瞬断退避重试语义），真机 4/4 有行；**LME 铜无源→COMEX HG00Y 主力连续替代（美元/磅，文案显式声明）**；Brent 无行不接。
+- **国债收益率**（新 `sources/bond_data.py`）：东财 datacenter `RPTA_WEB_TREASURYYIELD`（免 key），中/美国债 2/5/10/30 年 + 10Y−2Y 期限利差（上游直供列，映射交叉验证逐位一致，列映射锚定 akshare 1.18.94）；**1Y 无列不接**（故利差口径为 10Y−2Y 而非任务原文 10Y−1Y）；missing 诚实清单+300s TTL 缓存。
+- **北向资金**（`market_data.py` 增段）：**净买入自 2024-08-19 起交易所停止披露**（两通道 API 实测全 null）→ `NorthboundFlow` 结构性无 net 字段；落地口径=当日成交总额（亿元）+笔数+领涨股+参考指数收盘，文案显式注明「不含净买入口径」；DEAL_AMT 百万→亿元 /100 换算由 DEAL_NUM 每笔均额（~2 万元）自洽推断，代码注释锚定推理链。
+- **logo 本地缓存**（`stocks.py`）：sha256(域名小写) 文件名落 `data/stock_logos/`（runtime_paths 重映射），clearbit→Google s2 favicon 双源+PNG magic 校验，真机首次 1.8s/二次 0.00s 零下载；**模板暂无 logo 槽位（`payload["logo_url"]` 为既有休眠契约）——加槽位属渲染契约改动，留主会话裁决**。
+- **卡面零模板改动**：三能力全走既有 `finance_card.html` sections/rows 契约（共用壳 `_render_finance_sections_card`，商品行带 30 日折线 SVG），两道渲染门禁 129 passed。
+- 能力闭包 `build_commodities/bond/northbound_capability`+纯谓词已就绪；**触发词/帮助/路由接线已闭环**（`789700c`：base_router 三 RouteKind+echo 三 topic+route-matrix 补行；capability id 统一 `bot.bond`；商品触发股词让路，L2 语义迁移 9 例测试锁新口径）；无独立 config 开关（沿用 market 族超时/缓存配置；enabled 走 getattr 缺省=True 休眠预留键）；market `_NON_STOCK_RE` 已对黄金/油价/银价/铜价让路。
+- 测试：新增 66 例（19+13+8+26），金融族 412 passed 2 skipped；ruff/mypy 本批文件零错误。
+
+### 24.3 A3 账单席（渠道候选集+计费归因+价目审计）
+
+- **渠道候选集缺口 A/B**（`llm/model_router.py`）：管理员 `/bot model set <渠道id>` 精确命中分支补 `[该渠道, *同模型兄弟渠道(价格/EWMA 序), *其余模型]`——首选渠道失败自动切同模型下一渠道（用户无感），同模型全败才转其他模型；模型名聚合渠道整体从尾部自动队列去重（消灭兄弟渠道失败后的必败重试）。EWMA 延迟择优/影子并发 2s/预算钳制/manual 预设语义保持不变。
+- **影子并发归因修复**：`_last_channel_id()` 解析 `hedged:{渠道id}:winner` 归因赢家、`:loser` 跳过、纯 loser 轨迹诚实留空（attempts_json 全轨迹可溯）——旧实现影子并发成功时账本行渠道字段为空致渠道价落空；串行 failover 归因原本正确，补测试锁死。
+- **千倍计价错账修复**（`ledger.build_call_draft`）：旧 `round(tokens × price)` 未除 1000，按「价=元/1M tokens、cost=毫厘（1 元=1000 毫厘）」口径恰好放大 1000 倍，已改 `/1000` 与 `runtime/pricing` 同口径；**历史行（`pricing_source='channel_spec'`，若账本开过）cost 列虚大 1000 倍，清洗/标注待用户裁定**（入 issue-ledger P2-11，本批未动生产库）；事件日志 transport_receipt cost_milli 走 pricing.py 正确口径不受影响。
+- **渠道子行**：`ledger.aggregate_channel_usage`（按 (actual_model, 渠道) 只读聚合，mode=ro、缺库/坏库返 {}、WAL 并发安全）+ `build_model_rows(channel_stats=...)`（不传时旧行为逐字节一致）；定时报告/账单超限即时卡在账本开启时自动附缩进子行 `└ 渠道 <id>：N 次 / 费 X.XX 元`（费用降序）；日期过滤用 `substr(completed_at,1,10)` 而非 `date()`——后者把带 +08:00 时间戳换算 UTC 致本地日整体错移 8 小时（实测实锤）。**`/bot model usage` 交互卡渠道子行已接线**（A8 席：runtime_admin `_usage_channel_stats`+`usage_cards.py` 渠道子行渲染，随 `3592793` 入库，见 24.10 A8 条）。
+- **52 条价目逐条审计**（官方直连按厂商刊例逐位核对；中转折算假设 ¥7.2/USD，low 置信）：官方直连 11 行=7 OK / 1 可疑（deepseek-v4-pro 输入价 3 无出处）/ 2 过时（v4-flash 族官方下线）/ 1 unknown（glm-5.3-coding）；中转 41 行=4 可疑-高 / 18 可疑-低 / 2 低-关注 / 13 OK≈ / 2 unknown（2 过时与可疑-高重叠计数）；axonhub 网关覆盖 3 条含 2 unknown。**需用户更新价目表的 6 项优先清单+分档全表**入 `docs/issue-ledger-p2-p3.md` P2-10。
+- 测试：新增 18 例（渠道 failover 11+渠道聚合 7），关联族 173 passed；ruff/mypy 本域零错误。
+
+### 24.4 A6 视觉席（vis5 · impeccable 五工序）
+
+- **P1×3 全修**：①好感度卡脏数据 6 连崩（score None/字符串/缺键等实跑全 RAISE，违反「渲染失败→纯文本兜底」铁律）→ bridge 层逐字段归一（`_num`/`_pair`/rows/steps/tiers + bar 钳制），10 例参数化回归锁死；②zebra 三档表面不可辨（tint_a/b onstage ΔE=0.81，低于 2.5 可辨阈）→ token 调参至 **ΔE(a,b)=3.76 / ΔE(a,n)=7.99 / ΔE(b,n)=9.90**（对称合成 alpha≈0.83，液态玻璃质感保留）；③次级文字对比度不达 AA → 新增单一来源 `TEXT_SECONDARY=#5c6773`（对三档表面全部 ≥4.55），旧散灰 6 色清零。
+- **P2 可编辑域收口**：字号 12px 下限（universal 31 处 10px→12px + usage mnote 11px→12px）+数值门；usage/账单卡补 vis4 六键+**全卡最后一张补 bot 页脚胶囊**（F11 胶囊页脚 8 卡覆盖收口）+排版刻度收口（gap 5→6、字距→.06/.06/.02、圆角→var(--r-tile)）；zebra ΔE 数值门/文字对比度门/次级灰单源门/字号下限门四道机器门入 `test_template_visual_audit`（测试内纯函数实算，不开浏览器不联网）。
+- **clarify 对照表**（4 改 1 裁定）：universal 旧版页脚兜底 'Platform'→'Web'（同 bridge PLATFORM_OFFICIAL_NAMES 口径）、affinity 算法卡 steps None→'—'、usage 卡补「守岸人 · 模型用量」页脚、页脚第二槽 `feature_label or 'Shorekeeper'` **保持不变**（品牌词非错误文案，改「解析」待用户裁决）。
+- **门禁实跑**：契约族 282 passed 1 skipped；卡片全域 28 测试文件 609 passed 3 skipped；DESIGN-SPEC.md 一.6/一.7/一.8 与 `docs/rendering-contract.md` §四/§六 同步（哈希重录）；本席 12 文件清单见 visual-report §6。
+- 遗留裁决项入 issue-ledger P3-7/P3-8（accent ΔE=2.7、页脚第二槽、kicker、别席字号豁免收口）。
+
+### 24.5 A5 图库席（清污二轮）
+
+- 二轮 DRY-RUN 全量复判 42 张：食物保留 14 / 污染移出 28 / 无法判定 0（首轮瞬时失败保守保留的全部在本轮判出）；两波 `--execute`+一波补判后终态**现存 13 张**（12 张经两轮、1 张经一轮连续判食物）；隔离区累计 **40 图+40 source**（首轮 11+本轮 29，`%TEMP%/food_quarantine_20260913` 与 `_20260914` 两目录；日期滚动属按日建目录设计非缺陷）；总账闭合 **53 = 13（现存）+ 11 + 29**。
+- 人工抽验 7/7 判定正确（含「可乐鸡翅」跨轮判定翻转：首轮漏判保留→末轮判饮料广告移出，人眼复核证实末轮正确）；三方对账（DB 行/图文件/source.txt）13=13=13 零孤儿零缺图；`clean_food_gallery.py` 本轮零缺陷（测试 2 passed）。
+- **运行时影响**：图库 13/61 道有图（缺口 48 道），eat 推荐出卡封面命中率短期下降（无图分支功能不中断）；建议重启前后任一时点重跑 `python -m plugins.bot_unified_runtime.capabilities.eat --prewarm` 补齐（幂等可重跑，重新走下载质检链；入库防污染加固+域黑名单已入库，污染图不回流）。
+- 风险登记：VLM 判定有波动性（temperature=0 也不保证跨轮一致），剩余 13 张如需更强保证可再跑一轮 DRY-RUN 复核；隔离区在 %TEMP%（系统清理可能丢失），如需长期保留可移入 ChatBot_Archive。
+
+### 24.6 检查点两笔（已提交）
+
+- `cfd7d83` **四卡阴影彻底解锁**：`SHADOW_CSS_VARS` 登记表钉根，契约/审计两道门改**动态白名单（族外零容忍、不留后门）**；market/finance/affinity/song 行瓦片与页脚胶囊升 L2 面板阴影；rendering-contract 文档口径同步+哈希重录。
+- `7414e87` **笔记/授时 config 六键预置**：`bot_notes_enabled/_db_path/_max_per_chat` + `bot_time_sync_enabled/_servers/_max_drift_ms` 三件套同步（config.py+catalog+.env.example）+path_fields 重映射+机器事实册刷新（A2 席的地基）。
+
+### 24.7 关键裁定
+
+1. **四卡阴影解锁=登记表白名单制**：阴影不再是「恰好两枚」死数，`SHADOW_CSS_VARS` 登记表即白名单，动态门禁族外零容忍、不留后门（cfd7d83）。
+2. **千倍计价错账修复**：cost 口径=毫厘（1 元=1000 毫厘），公式 `tokens/1e6 × price × 1000`；历史错账行处置交用户裁定，不自行改生产库。
+3. **北向净买入不造数**：结构性无 net 字段，只报仍在披露的真实口径（成交总额/笔数/领涨股/指数收盘）。
+4. **LME→COMEX 替代=显式声明**：卡面文案注明「LME 无稳定免费公开源，铜采用 COMEX 主力连续（美元/磅）」，诚实替代非静默换源。
+5. **DeepSeek 峰谷价**：注册表单一价按谷价记账→峰时调用账单低估一半；精确记账需扩 price 字段（超本批范围未动，结构性提示入 P2-10）。
+6. **图库清污=宁留勿删**：VLM 判定失败保守保留+人工重跑；53→13 清污+40 隔离归档，全程生产库未被锁（copy 只读探查）。
+7. **Tavily 图搜兜底通道**（主会话工作树增补，无报告，git diff 为证）：`sources/search_api.py` `TavilyWebSearchProvider.image_urls()`（`include_images=True`，images 项兼容 URL 字符串与 `{url}` 对象两形态）；未配 key/网络/解析失败一律返空表，由调用方走候选降级链。
+
+### 24.8 诚实降级清单（无源不接，照 fin-report §四）
+
+1. 印度 Nifty 50：东财无指数源（仅 ETF），不接；SENSEX 已覆盖。
+2. LME 铜：东财多候选 secid 实测无行、官网无免 key 稳定接口 → COMEX HG00Y 替代（美元/磅显式声明）。
+3. Brent 原油：102.BZ00Y/CO00Y 无行，不接。
+4. 中国国债 1Y：报表无该列+中债官网本机不可达 → 不接；利差=上游直供 10Y−2Y。
+5. 北向净买入：2024-08-19 起交易所停止披露 → 只报成交总额/笔数/领涨股/指数参考，绝不编净买入数字。
+6. 南向资金（002/004）：数据可得但不在任务范围，未接（一行注册表即可扩）。
+7. 商品/指数折线：push2his 当日瞬断频率偏高（对照实验连挂），退避重试仍失败则卡上「暂无历史走势数据」——诚实降级非缺陷。
+
+### 24.9 联动/风险（主会话收编清单）
+
+1. **A2 在飞必修——已闭环**：timesync `now()` global 一行修+全功能收编落 `789700c`（24.1/24.10 A12）；A4 收尾中（24.12）。
+2. **已闭环（789700c）**：金融三能力触发词/帮助/路由接线完成（enabled 开关=休眠预留键缺省 True，未加显式 config 字段）；帮助新 topic 已注册：商品行情/国债收益率/北向资金。
+3. **已闭环（A8，随 3592793 入库）**：`/bot model usage` 交互卡渠道子行接线完成（runtime_admin 传 channel_stats+卡渲染子行，24.10 A8 条）。
+4. 账本历史 cost 千倍虚大行清洗裁定（P2-11）；价目表 6 项优先更新（P2-10）。
+5. 视觉裁决三项：Apple Music×小红书 accent 是否拉开（P3-7）、页脚第二槽 'Shorekeeper' 是否改「解析」、usage 卡 kicker 去留（P3-8）；market/finance data-foot 11.5px 与 echo/debug 卡 9/10px 豁免收口——**前半已闭环**：market/finance 12px 与 debug 卡字号收口由 A7 完成（24.10 A7 条）；echo 卡豁免留收尾（echo_help 未并入 `_VIS5_GATE_BUILDERS`）。
+6. 图库 48 道缺口预热重跑（24.5）。
+7. 全仓门禁终跑：原现存 26 ruff errors 全部属并行批次在飞文件，四席域 0——**后续已收敛**：A12 域内 12 文件 ruff 全清+23 文件 1845 passed；预扫描双路放行（A22 九域 754+A23 五扩展域 389 全绿、零跨席破坏）；verify_hashes 2 项漂移由 `0ecf4a5` 重录闭环。全量套件终跑（lint/typecheck/test 一把）随收尾批执行。
+8. 全部改动待生产 bot 提权重启生效（台账 #10 同口径）；真机验收=acceptance-manual §6.6.3（金融/账单）+ §6.6.4（提醒/笔记/授时+错误报告卡）。
+
+### 24.10 A7-A26 逐席补记（A9 后续批次终稿，证据=`.superpowers/sdd/2026-09-13-six-domain-batch/` 各报告）
+
+- **A7 视觉收口席**（visual-closure-report；模板 Jinja 侧已随 `f3962f1` 入库，f-string 媒体卡/debug 卡件在工作树）：①market/finance 三处 11.5px→12px（market `.data-foot`+finance `.row .sub`/`.data-foot`），`:root` 补 `--text-secondary` 单源引用，`.bot-foot`/`.bf-name` 旧灰 `#7a8699`/`#57626f` 清零并入；`_EDITABLE_TEMPLATES` 并入两模板（+2 模板×2 门）。②媒体卡 stat 胶囊平台色退出底色→`var(--surface-neutral)`+zebra `var(--surface-a/b)` token 引用。③debug 卡 LLM 接入检查卡 `.setup-kicker` 11px→12px、字距 .14em→.06em（刻度内）；`test_mica_builders_contract` vis5 三门并入 `debug_llm_setup`（echo_help 待 echo 域收口后并入）。证据：契约族 209 passed；渲染依赖面 189 passed 2 skipped；哈希 `--write` 12 交付物；闭环 §24.9-5 前半。
+- **A8 账单交互卡渠道子行席**（usage-card-report；已随 `3592793` 入库——该提交主题为 A17 修复包，文件清单实含三件）：`usage_cards.py` 新增 `_CHANNEL_SUBROW_CSS`+每家族行后 `└ 渠道` 子行（CSS 条件注入，无渠道数据字节不变；payload 相位 digest 剔除空 `channels` 键归一）；`runtime_admin.py` 新增 `_usage_channel_stats`（账本开→只读聚合→家族键折叠；关/败/空返 None 只影响子行不阻塞账单）。新建 `tests/test_usage_card_channels.py` 18 例（三态锁定+渠道 id HTML 转义+契约红线+字节级 A/B：no-channel byte identical True）；验收合并 247 passed。闭环 §24.9-3。
+- **A9 文档预收尾席**（docs-report）：HANDBOOK §24 新章 82 行（本节前身）+issue-ledger P2-10/P2-11/P3-7/P3-8 入账+acceptance-manual §6.6.3+AGENTS.md 功能清单两行与台账 #31+章号枚举同步（+125/−2 行四文件）；另实查三事实（金融未接线/usage 交互卡未接/Tavily 图搜 git diff 取证入 24.7-7）——前两项后分别由 789700c/A8 闭环。
+- **A18 HANDOFF-NEXT 刷新席**（handoff-refresh-report）：§0 六域态+六哈希、§4 滚动清单、§6 完成三项划掉（时间窗总结 1b23622/图库闭合 53=13+11+29/vis4 迁移 77f56de+cfd7d83+f3962f1）+新增收尾提交与「等用户裁定」七条（25 条价目/账本千倍清洗/Apple Music accent/'Shorekeeper' 页脚/usage kicker/pagefile.sys/oopz）；§1/§2/§2.5 逐字节未动（diff 实证）。实查发现「HEAD 不自含」（commodities_data/bond_data 未跟踪惰性引用悬空）→ `3592793` 入库修复。
+- **A10 性能席**（perf-report；`tests/test_perf_regression.py` 在工作树）：①吞吐门 **500→真 5000 次修正**（原 `_SAMPLES*5` 因 ×10 复制实只 500 次、余量 120x 失真；改 ×50=5000 次，阈值 3s 不动=设计 10x）；牙齿标定 ≈8~14x（busy-wait 注入：0/+400µs PASS、+700µs FAIL 3.5s、+25ms 双门全红）；单次 P99 门边界实红 26.1ms。②五链路复测：路由 P50 0.014→0.016ms（+14% 噪声带内；进程内 A/B 实证 media_archive +1 规则成本低于噪声地板，**定性测量噪声不立项**；基线口径钉「新进程 3 次取中位」）；渲染 warm P50 2222→2140.9ms（−3.7% 无漂移）、P95 2251.2ms（+0.1%）；NapCat/Mail/TG 三链 unreachable/no-config（待重启）。③预算 preview：`BOT_RENDER_WAIT_BUDGET_MS=1500` → warm P50 **772.9ms（−64%）**——A26 接线的实测依据。④导入链路：六域新增模块对启动关键路径 ≈3.2ms（notes_store 一项，金融/授时全惰性化）。
+- **A11 安全审计席**（security-report；修复包 `93e8195` 已入库）：总裁决 **Critical 0 / Important 2 / Minor 8**；危险 sink（eval/exec/system/shell=True/yaml.load/pickle）全树零命中；SQL f-string 5 处全内部常量 DDL；路径穿越新落盘点（logo 缓存 sha256 文件名/notes uuid/图库消毒/文件 basename）全安全；`aggregate_channel_usage` 参数化 verified；pip-audit（临时 venv 法）5 漏洞 2 包与 0913 基线一致**零新增**。I-1 eat.py 图搜抓图仅入口校验、302→内网盲 SSRF 缝 → `93e8195` 补重定向落点复查（对齐 notes.py 入口+geturl 双查）；M-6 platform_credentials mktemp TOCTOU → mkstemp 独占创建（同 commit）。I-2 解析链零内网过滤（读回型 SSRF，比 I-1 更强）→ A15 护栏闭环。NTP 畸形包离线 fuzz 实验（13 组，verified）：M-1 无响应源校验/M-2 病态钟兜底自反/M-3「1970 编码」±1e9s 过单机校验/M-4 `max_drift_ms=0` 关钳制/M-8 mode=5 接受——M-2/M-3/M-4/M-8 由 A12 收编，M-1/M-5/M-7 登记（P3-15/P2-12）。
+- **A12 收编席**（route-help-report；`789700c` 已入库）：①A2 前席遗产修复：**NotesStore.mark_done 非重入锁死锁 Critical**（重复勾选路径整线程永久挂死；基线 pytest 卡死 4 分钟实锤；UPDATE 与 get 分两段）+`_TODO_BOX_PREFIX_RE` 补定义（HEAD 既有 mypy NameError 清零）+`_NOTES_ADD_RE` ASCII 词边界吞词修（bijiqq/notesqq 不再误吞）+notes 测试错哈希目录改现算。②timesync 安全包 M-2/M-3/M-4/M-8 全落地（解包门拒收 1970 前且 unix≤0 双道；`max_drift_ms<=0` 取默认 1500；生产仅收 mode=4，mode=5 须显式测试开关）；fuzz 回归 6 例。③**金融三能力接线闭环 §24.9-2**：base_router RouteKind +COMMODITIES/BOND/NORTHBOUND（声明在 market 前，priority 41）+echo 三 topic+`_HELP_ENTRY_META` 三条+route-matrix 补行；capability id 统一 `bot.bond`；商品 L2 语义迁移（金价/油价/黄金行情等 9 例 CHAT→COMMODITIES、「今天金价多少」上车、「原油行情」MARKET→COMMODITIES）测试锁新口径。④文案三处：勾选歧义「有几件事都对得上，是哪一件完成了？」（保持原问哪件行为）/删笔记「放下了」/取消提醒人话化。证据：23 文件 **1845 passed** 2 skipped；mypy 五文件零错；ruff 域内 12 文件全清；`test_finance_route_wiring.py` 31 例。
+- **A13 评审席·金融+账单**（review-fin-billing；修复包 `5ba7c0f` 已入库）：独立只读评审（测试实跑重验+逐文件审读+git show 对照 HEAD+本机联网探针独立复现）。两席规格符合 ✅；发现 I1×1/M4：金融触发正则补 `re.IGNORECASE`（Gold/Crude Oil 命中、golden 仍拒）+黄金/原油 `(?!基金)` 语境排除+北向 docstring 对齐「任一成功即缓存」真实语义+空气断言清除；账单 ledger 聚合 SQL 废运行期 `replace` 改完整常量。86 例回归全绿。复核两报告 per-file 计数笔误（金融总数 66 恰对、账单 18→20 方向安全）——勘误入 A20 闭环。
+- **A14 评审席·视觉基建四席+图库**（review-visual-infra；修复包 `f3962f1` 已入库）：四件交付（视觉五工序/收口/四卡阴影 cfd7d83/Tavily 兜底 bdbc88b）裁决全 ✅、「不留后门」成立（`SHADOW_CSS_VARS` 动态白名单双门无硬编码残留）。I-1：对比度门混色模型偏离 CSS **premultiplied** 语义——TEXT_SECONDARY `#5c6773` 真实混色下 4.39:1 不达 AA → 调深 `#576272`（真模型 4.72 达标）+审计测试公式改预乘语义（直混系统性偏亮假阳性根除）+六模板字面量/两文档同步+哈希重录；133 例门禁全绿。M-1 ΔE 数字勘误/M-3 阴影门 context_keys 手工映射/M-4 box-shadow 门正则行尾分号/M-6~M-9 清理脚本三缺陷与 affinity「红色 0.0 分」——收编入 P3-11~P3-14（A20）。
+- **A15 SSRF 解析链护栏席**（ssrf-guard-report；工作树待提交）：**咽喉双点**收口（不撒 34 文件）：`capabilities/content_parser.py` `capability()` 分发前挂 `guard_user_url`（全部用户 URL 唯一汇聚点，拒绝→既有降级：群 SILENT_AUDIT/私聊人话+原链接回放+audit tag `ssrf_guard_rejected`）；`platforms_generic.py` `_og_scrape` 落点 `check_fetch_landing`（对齐 geturl 双查范式）。新增 `sources/parsers/ssrf_guard.py`（55 行，本体只读复用 `downloader.check_download_url` 零复制）。关键裁定：**DNS 解析失败（gaierror 结构判定）放行**——油管/推特/Pixiv 等走 bot_download_proxy 代理侧解析，硬拒会误伤纯代理平台；其余拒绝（内网字面量/localhost/metadata/DNS 成功解析到内网）照拒。非 HTML 无 title 结构性进不了卡（测试锁死）。13 例新测试（127.0.0.1:8742/10.1.2.3/169.254.169.254 借平台关键词子串混过注册表的真实向量）+16 文件 163 回归零回归；mypy 258 文件零错。已知残余（重定向事后复查/DNS rebind 窗口/深解析链无落点复查）入 P2-12。
+- **A16 像素自检席**（pixel-audit-report；只读）：六域视觉批真渲染像素级验收 **13/13 全成功**（12 常规卡+mermaid 真链路，另有壳兜底张）；PNG 宽全命中登记档（×2 缩放）；market/finance `.data-foot` @12px `scrollW==clientW==1018` **零溢出**（四段长页脚单行放下）；溢出分级 Critical 0/Important 0/Minor 2（均设计内 ellipsis）；affinity 脏数据钳制正确（None→0.0/"80"→80.0/bar 250→100%）；L2 阴影落点 HTML 级实锤存活。产物双备份 `%TEMP%/vispix`+`vispix2`，`render_audit.py` 可确定性重跑（首轮产物被系统临时目录清理后重跑两轮 issue 逐条一致——E01 钉帧确定性实证）。
+- **A17 文案审计席**（copy-audit-report；修复包 `3592793` 已入库）：58 处抽样、5 类覆盖；人格红线词（您/抱歉/作为一个/带来不便）**零命中**。C1 勾选「有两件事」硬编码 vs 候选可 3 条自相矛盾；I2 国债卡/文标题统一「中美国债收益率速览」；I3 LME 说明单一来源化（`LME_NOTE` 公开+卡面引用）；I6 账单行 `cost_clause` 助手（未计价不挂悬空「元」）+「未计价：价格未配置」双术语统一；I4 放下/放开、I5 机器腔回执由 A12 落地；M1-M12 登记（口径速查表入报告 §六：暂无族/涨跌幅/金额/卡文同名规则/放下隐喻/全角括号）。85 例回归全绿。
+- **A19 导入门落地席**（import-gate-report；`tests/test_perf_regression.py` 在工作树）：`test_package_import_duration_no_collapse`——子进程口径整包导入 **3 次取中位、阈值 10s**（基线 ~1.0-1.3s，≥5x 余量，只守依赖树塌方/import 期塞重活）；探针解释器按仓库布局解析（venv 缺失回退 sys.executable）；cwd=仓库根+PYTHONDONTWRITEBYTECODE 注入；失败红带 stderr 尾 800 字符。牙齿测试：阈值调 1s **真红**（1.03s>1.0）→还原 10s 后 3 遍实跑全绿（3 passed×3，净增 ~2.3s）。docstring 补常驻门清单三条（路由吞吐 3s/单次 P99 20ms/整包导入 10s，「只许新增/收紧，禁放宽」）。闭环 perf-report §五-1 草案。
+- **A20 台账归档席**（ledger-triage-report；issue-ledger 文件本席禁碰，此处只记总账）：新增 **8 条**（P2-12 HTTP 抓取重定向「事后复查」家族残余收编+P3-9 账本聚合无 completed_at 索引+P3-10 价目审计 ¥7.2 汇率假设+P3-11 视觉报告 ΔE 数字勘误+P3-12 阴影门 context_keys 手工映射+P3-13 box-shadow 门正则行尾分号+P3-14 clean_food_gallery 三缺陷合一+P3-15 NTP 无响应源校验）+**闭环/定性 6 条**（fin/billing 测试计数笔误勘误/run_code_debug 接受风险保持 admin-only/解析链 DNS 失败放行裁定/三道菜 Bing 源缺已闭环 bdbc88b/导入门已落地/路由 P50 +14% 漂移定性测量噪声不立项+基线口径钉入）；P2-10/P2-11/P3-7/P3-8 防重未触碰。
+- **A21 人格资产与触发词审计席**（persona-trigger-audit；只读）：AST 提取 echo `_HELP_ENTRIES`(72)+`_HELP_ENTRY_META`(69) 全量 **527 词形**三源对账（实现谓词离线真值探测↔aliases.txt↔route-matrix）。昵称源 **9/9 逐词一致零漂移**；人格红线（攻击性/愧疚话术/R-18/AI 味/意象越界/称谓越界）**C0/I0/M1**——notes/reminder/reminders 分型五模板零性别词、零单名（澜汐/霞月）、零「漂泊者」误称（提醒文案不区分身份，称谓由注入层 AddressingContext 承担，分层正确）；唯一 Minor=bond「先不瞎猜数字」大白话微瑕（登记）。触发词发现：route-matrix 缺本批四组问法行（后 789700c 补行闭环）+存量 2 处词形漂移（`/萌娘 X` 实现不认、`steam free` 不触发）+echo META 漏登记 9 词形（股市/好感/四柱/看笔记等，影响=帮助触发词栏不全非功能缺失）+capability id `bot.bonds`→`bot.bond`（789700c 统一）。
+- **A22 预集成扫描席**（pre-integration-scan；只读）：九域定向（渲染 231/金融+账单 409/图链 85/机制 29）**754 passed+3 skipped 零跨席破坏**，A12 在飞席域无半成品红例；首跑 26+27 ERROR 定性 basetemp 父链未预创建环境性（pytest-asyncio mkdir 无 parents）；verify_hashes 2 项漂移归因文档台账录制时点错位（非代码）→ `0ecf4a5` 重录闭环。**集成放行建议成立**。
+- **A23 第二路扩展域扫描席**（prescan2-report；只读）：订阅+推送 182/识图+群最近图 37/角色权限+身份+称谓 62/人格+好感+心情 81/记忆+时间窗 27——五域合计 **389 passed / 0 failed** 零回归（在飞席域回避）。A22+A23 合计 1143 绿。
+- **A24 启动链路审计席**（startup-audit-report；只读）：**判定可重启（restart-safe），Critical 0 / Important 0 / 观察 4 全非阻断**。纯导入探针（socket 守卫全开禁联网）3 次 OK：中位 1.02s、warning 0、导入期零联网、源码树零写入；全量装载探针复刻 bot.py（nonebot.init+双适配器+load_from_toml+mail 适配器，不 run）STATUS=OK 3.36s、11 插件装载、APScheduler **装配期 14 job 实证**（17 处 add_job 中 2 被 .env 关闭、3 推送表空）；reminders 每分钟 tick 确经 timesync.now（APScheduler 工作线程不碰事件循环）；timesync 首次校时在重启后 ~65s 非装配期、启动期零联网；notes_store 启动期不建库（路径重映射双保险，落 Runtime 不落源码树）；渲染两键当时全树零引用（口子后由 `13fcd30` 闭合）。观察项：重启后每 10 分钟 NTP 出站（UDP 123→3 台），防火墙拦截会周期刷 warning 属预期（介意则 `BOT_TIME_SYNC_ENABLED=false`）；G-DIGEST 21:30 不注册=`BOT_SHARED_GROUP_CONTEXT_ENABLED=false` 既有配置意图非回归；ledger 渠道子行开关装配期快照（台账 #3 同族既有取舍）。
+- **A25 素材本地化审计席**（asset-audit-report；只读）：完成度 **70/100**——静态素材层 95（平台 logo 登记件 10/10 磁盘全在+指标图标 7/7+字体栈全命中零豆腐块，扣 7/17 平台无 logo 观感缺口）；动态缓存层 ~30（bot 头像 0/1 落盘（待重启生成）+help 卡/派发路径 `_resolve_bot_avatar_url` 绕过 bot_avatar_uri 本地缓存 600s TTL 回源 qlogo、股票 logo 1/9+payload 兜底恒 clearbit 死源）；远端依赖 0/1（**mermaid.min.js 每渲染回源 jsDelivr**，new_page 无跨渲染缓存，无网 10-14s 截断根因之一）。缺口三件 F1 mermaid 本地化/F2 股票 logo 预热 9 域名+兜底换 s2/F3 头像路径插本地优先——**素材修复席收尾中**（24.12；后三件已全落地，见 24.12 回填补记）。
+- **A26 渲染 Phase 2 接线席**（render-phase2-report；`13fcd30` 已入库）：`resolve_render_max_concurrency`/`resolve_render_wait_budget_ms`（仿 decision/shadow 解析链：driver config→进程 env→缺省）；**缺省=字节级现状**（并发 1 串行/预算不启用，15 例锁死）；config 两字段+catalog+.env.example 三件套随 commit 补齐；**.env 解锁并发 2/预算 1500ms**（性能席 warm P50 −64% 实测；删行即回滚，无需回滚代码）；A24「两键零引用」口子闭合。证据：渲染回归组 37 passed+契约 179 passed+ruff/mypy 零错；哈希门零影响。偏差声明：注入点 bridge→render_card 全局缺省回落（payload 显式值恒优先，可观测等价）；并发解析在装配期（改并发须重启，台账 #3 同取舍）。
+
+### 24.11 检查点续记（A9 后八笔，已提交）
+
+- `bdbc88b` **Tavily 图搜兜底通道**：Bing 缺图/缺候选走 include_images 直链候选，五道质检闸全链复用；图库 61/61 满编实证（三道 Bing 三轮未中菜一次全收）；16 例离线回归。（§24.7-7 由「git diff 为证」升级为已入库）
+- `93e8195` **安全审计修复包**：I-1 图搜抓图补重定向落点复查（302→内网拒绝）+M-6 mktemp→mkstemp；A11 本批项清零。
+- `f3962f1` **A14-I1 修复**：TEXT_SECONDARY 调深 `#576272`（premultiplied 真模型 4.72 达标）+混色公式改预乘语义+六模板/两文档同步+哈希重录；133 例门禁全绿。
+- `5ba7c0f` **A13 修复包**：商品触发 IGNORECASE+`(?!基金)` 排除+北向 docstring+ledger SQL 常量化+空气断言清除；86 例全绿。（同笔首次入库 market 能力层 462 行+market_data 北向段）
+- `3592793` **A17 修复包+HEAD 自含补齐**：commodities_data/bond_data 入库（修 5ba7c0f 惰性引用悬空=A18 实查的「HEAD 不自含」）+I2 标题统一+I3 LME 单源+I6 cost_clause；85 例全绿。（文件清单实含 A8 usage 渠道子行三件：usage_cards.py/runtime_admin.py/test_usage_card_channels.py）
+- `789700c` **A2 全功能收编+A12 遗产修复+金融接线**：mark_done 死锁 Critical/_TODO_BOX_PREFIX_RE/词边界/错哈希目录+timesync now() 全链+钳制语义+分型提醒语气+自然勾选+Markdown 笔记 CRUD+图片收纳+base_router 三 RouteKind+echo 三 topic+route-matrix 补行+bot.bond 统一；31 例接线回归+域内 1845 passed。
+- `13fcd30` **A26 渲染 Phase 2 接线**：解析链一跳补齐+config 两字段+catalog+.env.example 三件套；.env 解锁并发 2/预算 1500ms（删行即回滚）。
+- `0ecf4a5` **哈希重录**：rendering-contract/DESIGN-SPEC 漂移闭环（A22 放行条件之一）。
+
+### 24.12 收尾批落地补记（2026-09-14 回填：原占位四席三席已落地，仅 A4 e2e 仍收尾中）
+
+> 回填代理据 `git log` 实查+各席报告取证；接 24.11 十笔之后**新增检查点四笔**：`a4371d2`/`691d6e1`/`959630a`/`871beb2`。
+
+1. **A4 e2e 实战自测**：仍收尾中（工作树件 scripts/e2e_acceptance.py+tests/test_e2e_help_matrix.py）。
+2. **素材本地化席（A27）已落地**——A25 审计缺口三件全闭合：F2=`a4371d2` stocks logo 三级兜底（缓存→clearbit→Google s2，全败**诚实省略 logo_url 字段**，根治渲染期 Chromium 请求死域名→networkidle 8s 超时陷阱）+`warm_logo_cache` 幂等预热 CLI，**8/9 域名预热落盘**（meta.com s2 返 JPEG 过不了 PNG magic 契约→诚实降级，META 卡无 logo 零死链）；F3=`691d6e1` bot 头像本地优先（`bot_avatar_uri` 统一入口「显式配置>内存>磁盘>空」，磁盘兜底发现 avatar/bot_*.png 取最新 mtime，命中零回源 qlogo，help/派发等 9 处消费方自动受益）；F1 mermaid 见下。
+3. **mermaid 素材本地化（A29 遗产收编）已落地**：`959630a`——`scripts/fetch_mermaid_js.py` 幂等下载+sha256 旁车（真身 mermaid@11 3.4MB 已落 `ChatBot_Runtime/card_render_assets/mermaid/` 实核）+`mermaid_card.html` 模板改造，36 例回归绿，**治已知问题 #8「无网 10-14s 截断」根因**；`871beb2` 清 RUF100 静态门残留。边界如实记：渲染期拦截半边（render_backends `page.route` 本地 fulfill，`mermaid_asset_dir`）**在工作树待提交**；资产本体不入库（运行时脚本落盘，冷机首用跑一次 fetch 脚本）。
+4. **统一错误报告卡（A28）已落地（工作树待提交，哈希随收尾批回填）**：全链=runtime/error_report.py（诊断收集+ErrorCardGate 冷却闸+render_error_card_png+maybe_submit_error_card 发送编排，全链 fail-open）+templates/error_card.html（云母契约全门：本命 wash 打底+红强调）+theme_tokens `ERROR_ACCENT=#d54941`/`ERROR_THEME`（key=system_error，独立系统主题不进 PLATFORM_THEMES）+`CARD_SHELL_WIDTHS["error"]=1080`+bridge `render_error_card_html`+pipeline `_internal_error` 尾部旁路钩子；脱敏=触发回显≤80 字符/栈摘录末 N 帧逐帧 redact/配置快照白名单密钥 `***`；语义=私聊话术+诊断卡、群聊诊断卡（受冷却），**冷却期内降级一句守岸人纯文本**；渲染失败→纯文本兜底契约零破坏；config 三键已预置（`bot_error_card_enabled` 缺省 True/`cooldown_seconds` 60/`stack_frames` 8）。测试证据（error-card-report 实跑）：新增 22+契约族 199+回归 292，ruff 域内全绿+mypy 259 文件零错+真渲染冒烟出图目检通过；验收=acceptance-manual §6.6.4 ⑥。
+5. **渲染 Phase 2（A26）终态确认**：`13fcd30` 已入库——两键解析链（driver config→进程 env→缺省，缺省=字节级现状）+config 两字段+catalog+.env.example 三件套；**.env 已解锁并发 2/预算 1500ms**（性能席实测 warm P50 −64%；删行即回滚，无需回滚代码）。
+6. **金融三能力生产注册（691d6e1）**：`789700c` 接的是 base_router RouteKind+echo 帮助层；`691d6e1` 补齐 NoneBot 生产 matcher 装配（commodities/bond/northbound 三谓词+三 matcher+三工厂+三 handle，照 market/stocks 模式），触发→路由→能力→出卡全链生产可用；90 例回归绿（同笔含 F3 头像件）。

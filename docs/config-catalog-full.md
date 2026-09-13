@@ -654,7 +654,7 @@
 | `BOT_DIRTY_GUARD_ENABLED` | bool | `False` | | | 逆天发言检测开关（on_message matcher 优先级 3、block=False，只评估不阻塞其他处理器） | |
 | `BOT_DIRTY_GUARD_DELETE` | bool | `False` | | | 判定为 severe 时自动撤回消息；仅机器人有群管理员权限时才可能生效 | |
 
-### A20 点歌与音乐（12 键 + 1 个运行时专属键）
+### A20 点歌与音乐（9 键 + 1 个运行时专属键）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -667,21 +667,15 @@
 | `BOT_MUSIC_ANALYTICS_ENABLED` | bool | `True` | （.env 缺） | | 点歌行为分析：只记成功结果，不记原始查询词 | |
 | `BOT_MUSIC_ANALYTICS_DB_PATH` | str | `data/music_analytics.sqlite3` | 路径（.env 缺） | | 分析库 | |
 | `BOT_MUSIC_ANALYTICS_RETENTION_DAYS` | int | `365` | ≥0（.env 缺） | | 分析数据保留天数 | |
-| `BOT_MUSIC_CHART_ENABLED` | bool | `False` | （.env 缺） | | 音乐榜单开关 | |
-| `BOT_MUSIC_CHART_SOURCES` | dict[str,Any] | `{}` | JSON（.env 缺） | | 榜单数据源配置 | |
-| `BOT_MUSIC_CHART_POLL_INTERVAL_SECONDS` | int | `3600` | ≥0（.env 缺） | | 榜单轮询间隔 | |
 | `BOT_MUSIC_MODE` * | str | （无默认；回退 `BOT_MUSIC_DEFAULT_MODE`=`card+voice+link`） | `audio`/`voice`/`link`/`card`（中文别名：音频/语音/链接/卡片；default→card） | ✅热更 | **config.py 无此字段**，纯运行时覆盖键：点歌返回形态；未设置时回退 `BOT_MUSIC_DEFAULT_MODE` | 仅存于 settings 覆盖层（`__init__.py` 点歌出口消费） |
 
-### A21 订阅系统 bot.subscribe（17 键）
+### A21 订阅系统 bot.subscribe（13 键）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
 | `BOT_SUBSCRIBE_ENABLED` | bool | `True` | | | 定时拉取平台新内容并推送 | |
 | `BOT_SUBSCRIBE_DB_PATH` | str | `data/subscriptions.sqlite3` | 路径 | | 订阅库 | |
 | `BOT_SUBSCRIBE_POLL_INTERVAL_SECONDS` | int | `300` | ≥0 | | 常规轮询间隔 | |
-| `BOT_SUBSCRIBE_LIVE_POLL_SECONDS` | int | `60` | ≥0 | | 直播类快速轮询 | |
-| `BOT_SUBSCRIBE_DIGEST_HOUR` | int | `20` | 0~23 | | 日报小时 | 与分钟组成推送时刻 |
-| `BOT_SUBSCRIBE_DIGEST_MINUTE` | int | `0` | 0~59 | | 日报分钟 | |
 | `BOT_SUBSCRIBE_MAX_ITEMS_PER_TICK` | int | `20` | ≥0 | | 单轮最大处理条数 | |
 | `BOT_SUBSCRIBE_JITTER_RATIO` | float | `0.20` | 0.0~1.0（.env 缺） | | 轮询抖动比例 | |
 | `BOT_SUBSCRIBE_GLOBAL_CONCURRENCY` | int | `3` | ≥1（.env 缺） | | 全局并发 | |
@@ -692,7 +686,6 @@
 | `BOT_SUBSCRIBE_RETRY_CAP_SECONDS` | int | `1800` | ≥base（.env 缺） | | 重试间隔上限 | |
 | `BOT_SUBSCRIBE_OUTBOX_INTERVAL_SECONDS` | int | `15` | ≥0（.env 缺） | | 发件箱扫描间隔 | |
 | `BOT_SUBSCRIBE_CARD_ENABLED` | bool | `True` | | | 即时推送附带解析卡片图（kind=mixed）；渲染失败自动回退纯文本 | 依赖卡片渲染 |
-| `BOT_SUBSCRIBE_PLAYWRIGHT_POLL_SECONDS` | int | `1800` | ≥0 | | Playwright 类源轮询间隔 | 依赖 `BOT_FETCH_PLAYWRIGHT_ENABLED` |
 
 ### A22 凭据检查（6 键）
 
@@ -766,6 +759,7 @@
 | `_time_sync_enabled` / `_time_sync_servers` / `_time_sync_max_drift_ms` | `true` / `ntp.aliyun.com,cn.ntp.org.cn,pool.ntp.org` / `1500` | 联网授时（bot.timesync）：NTP 校准提醒/调度时间基准（不改系统钟，全服务器超时回退系统钟+告警） |
 | `_error_card_enabled` / `_error_card_cooldown_seconds` / `_error_card_stack_frames` | `true` / `60` / `8` | 统一错误报告卡（bot.error_card）：能力异常回云母诊断卡（方法/栈摘录/脱敏配置/版本/协议/IDs/运行时长+求助指引）；同会话冷却防刷屏 |
 | `_render_max_concurrency` / `_render_wait_budget_ms` | `1` / `0` | 渲染 Phase 2：后端并发信号量上限 / 单卡等待预算（超预算纯文本兜底）；0=预算不生效；解锁建议 2 / 1500（性能席实测 warm P50 −64%） |
+| `_reactions_enabled` / `_reactions_probability` / `_reactions_cooldown_seconds` / `_reactions_max_per_hour` | `true` / `0.2` / `30` / `20` | 表情回应（bot.reactions）：识别 QQ(NapCat)/TG 贴纸回应注入上下文+主动贴表情；概率/冷却/时限三重防刷屏门 |
 | `_market_enabled` / `_market_timeout_seconds` / `_market_cache_seconds` | `true` / `6.0` / `60.0` | 全球股指能力（东财 17+MOEX ISS，18 指数） |
 | `_stocks_enabled` / `_fx_enabled` | `true` / `true` | 个股行情/汇率路由开关（已落 config.py `bot_stocks_enabled`/`bot_fx_enabled`，.env `BOT_STOCKS_ENABLED`/`BOT_FX_ENABLED` 可关；base_router getattr 读取） |
 | `_market_retry_on_empty` | `true` | 东财空响应受控重试（限流返回空 JSON 时单次重试+0.6s 退避；真异常不重试；仍空→诚实降级不缓存） |
@@ -963,7 +957,7 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 
 **E1 样例值 ≠ 代码默认**（.env.example 给的是本机推荐值，代码默认仍是权威缺省）：`BOT_RUNTIME_DEFAULT_PERSONA`(shorekeeper/default)、`BOT_RUNTIME_DATA_DIR`(../ChatBot_Runtime/data/data)、`BOT_RUNTIME_INSTANCE`(空/default)、`BOT_PERSONA_PROFILE_ID`(shorekeeper/default)、`BOT_PERSONA_DISPLAY_NAME`(守岸人/报存)、`BOT_PERSONA_VERSION`(local/0)、`BOT_TONE_WARMTH`(0.8/0.7)、`BOT_TONE_DIRECTNESS`(0.4/0.5)、`BOT_GROUP_DIGEST_MAX_TURNS`(20/150)、`BOT_RATE_LIMIT_CHAT_SESSION_MAX_REQUESTS`(12/6)、`BOT_RATE_LIMIT_CHAT_SENDER_MAX_REQUESTS`(8/4)、`BOT_RENDER_FORWARD_MIN_CHARS`(0/1500)、`BOT_REPLY_DETAIL`(detail/auto)、四个 `BOT_REPLY_*_CONTEXT_BUDGET`(8192/8192/12288/8192 vs 2048/2560/3072/2048)、`BOT_KNOWLEDGE_CHUNK_CHARS`(600/900)、`BOT_KNOWLEDGE_MAX_CHUNKS`(2/4)、`BOT_KNOWLEDGE_TOP_K`(5/4)、`BOT_EMBEDDING_TIMEOUT_SECONDS`(30/15.0)、`BOT_CHAT_PROVIDER`(openai_compatible/static)、`BOT_CHAT_MODEL`(gpt-5.6-terra/static)、`BOT_CHAT_BASE_URL`(中转站/api.openai.com)、`BOT_CHAT_FAST_CONTEXT_BUDGET`(32768/9600)、`BOT_CHAT_FAST_WEB_MAX_QUERIES`(5/3)、`BOT_DOWNLOAD_PROXY`(7890/直连)、`BOT_COOKIES_FILE`(data/platform_cookies.txt/空)、`BOT_MEME_LIBRARY_VLM_PRESET`(空/deepseek-vision)；另 memory/history/diagnostics/audit/receipts/send_queue/rate_limit 的 db_path 代码默认空（内存/禁用），样例填了 `data/wuwa_*.sqlite3` 等具体文件。
 
-**E2 `.env.example` 未列出（实际生效代码默认）**：`BOT_MUSIC_ANALYTICS_ENABLED/DB_PATH/RETENTION_DAYS`、`BOT_MUSIC_CHART_ENABLED/SOURCES/POLL_INTERVAL_SECONDS`、`BOT_VISION_REPLY_PROBABILITY`、`BOT_SUBSCRIBE_JITTER_RATIO/GLOBAL_CONCURRENCY/PLATFORM_CONCURRENCY/MIN_INTERVAL_SECONDS/LEASE_SECONDS/RETRY_BASE_SECONDS/RETRY_CAP_SECONDS/OUTBOX_INTERVAL_SECONDS`（共 15 键）。
+**E2 `.env.example` 未列出（实际生效代码默认）**：`BOT_MUSIC_ANALYTICS_ENABLED/DB_PATH/RETENTION_DAYS`、`BOT_VISION_REPLY_PROBABILITY`、`BOT_SUBSCRIBE_JITTER_RATIO/GLOBAL_CONCURRENCY/PLATFORM_CONCURRENCY/MIN_INTERVAL_SECONDS/LEASE_SECONDS/RETRY_BASE_SECONDS/RETRY_CAP_SECONDS/OUTBOX_INTERVAL_SECONDS`（共 12 键）。
 
 **E3 `.env.example` 有而 Config 无**：`MAIL_BOTS`、`TELEGRAM_BOTS`、`TELEGRAM_PROXY`、`TELEGRAM_WEBHOOK_URL`、`MCP_CACHE_TTL/SERVERS/TOOL_TIMEOUT`、`SQLALCHEMY_DATABASE_URL`、`LOCALSTORE_*`（4 键）——由邮件/Telegram 插件、MCP 插件、可选 ORM、nonebot-plugin-localstore 消费。
 

@@ -6,7 +6,7 @@
 > `/bot help`、`/bot help <模块>` 与本目录共享同一数据源。
 
 - 模块数：72
-- 别名数：472
+- 别名数：478
 - 普通用户可用模块：34；仅管理员模块：38
 - 路由规则数：30；其中登记为内部能力：5
 
@@ -1476,15 +1476,15 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
 ## 行情
 
 - 权限：普通用户可用
-- 触发别名：行情；market；stock market；股指；大盘；美股行情；港股行情；A股行情；hangqing；hq；gushi；gs；dapan；dp；guzhi
+- 触发别名：行情；market；stock market；股指；股市；大盘；美股行情；港股行情；A股行情；B股行情；莫斯科股指；莫斯科行情；hangqing；hq；gushi；gs；dapan；dp；guzhi
 - 能力入口：bot.market
-- 自然语言触发：行情；A股行情；全球股市；大盘；market；stock market
+- 自然语言触发：行情；A股行情；B股行情；莫斯科股指；莫斯科行情；全球股市；股市；大盘；market；stock market
 - 群聊/私聊差异：群聊/私聊行为一致（无会话分支）
 - 网络依赖：需要联网
 - 输出形式：釉瑚折线卡（MOEX 无东财 kline 时卡上无折线）/文本
 - 会渲染卡片图：是（失败自动回退纯文本）
 - 失败兜底：渲染失败回退纯文本
-- 可复制示例：行情｜A股行情｜B股行情｜莫斯科行情
+- 可复制示例：行情｜股市｜A股行情｜B股行情｜莫斯科行情
 - 关联回归测试：tests/test_market_github.py
 - 总览：【行情】全球股指：行情 或 美股行情/港股行情/A股行情/B股行情/莫斯科行情…
 - 标题：【行情】全球主要股指行情
@@ -1689,9 +1689,9 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
 ## 占卜
 
 - 权限：普通用户可用
-- 触发别名：占卜；塔罗；八字；算命；算卦；起卦；塔羅；排盤；排盘；命盤；命盘；搖卦；摇卦；今日塔羅；今日塔罗；今天塔羅；今天塔罗；塔羅三張；塔罗三张；divination；tarot；bazi；iching；zhanbu；taluo；tl；suanming；suangua；sg；qigua；qg；求籤；求签；六十四卦；金錢卦；金钱卦；生辰八字；算一卦；起一卦；摇一卦；搖一卦；掷一卦；擲一卦；占一卦；一卦；每日一签；每日一簽；每日一抽；paipan；sizhu；mingpan；pp；mp；yaogua；yg；liushisigua；lssg；jinqiangua；hexagram
+- 触发别名：占卜；塔罗；八字；算命；算卦；起卦；塔羅；排盤；排盘；命盤；命盘；四柱；搖卦；摇卦；今日塔羅；今日塔罗；今天塔羅；今天塔罗；塔羅三張；塔罗三张；divination；tarot；bazi；iching；zhanbu；taluo；tl；suanming；suangua；sg；qigua；qg；求籤；求签；六十四卦；金錢卦；金钱卦；生辰八字；算一卦；起一卦；摇一卦；搖一卦；掷一卦；擲一卦；占一卦；一卦；每日一签；每日一簽；每日一抽；paipan；sizhu；mingpan；pp；mp；yaogua；yg；liushisigua；lssg；jinqiangua；hexagram
 - 能力入口：bot.divination
-- 自然语言触发：占卜；塔罗；塔羅；八字；算命；起卦；排盘；排盤；命盘；命盤；摇卦；搖卦；求签；求籤；今日塔罗；今日塔羅；今天塔罗；今天塔羅；塔罗三张；塔羅三張；tarot；bazi；iching；divination
+- 自然语言触发：占卜；塔罗；塔羅；八字；算命；起卦；排盘；排盤；命盘；命盤；四柱；摇卦；搖卦；求签；求籤；今日塔罗；今日塔羅；今天塔罗；今天塔羅；塔罗三张；塔羅三張；tarot；bazi；iching；divination
 - 群聊/私聊差异：群聊/私聊行为一致（无会话分支）
 - 网络依赖：纯本地
 - 可复制示例：占卜｜塔罗 三张｜八字 1998年3月2日早上7点
@@ -2023,9 +2023,9 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
 ## 好感度
 
 - 权限：普通用户可用
-- 触发别名：好感度；好感查看；查询好感；查詢好感；親密度；affinity；haogandu；hgd；haoganchakan；hgck；chaxunhaogan；cxhg
+- 触发别名：好感度；好感；好感查看；查询好感；查詢好感；親密度；affinity；haogandu；hgd；haoganchakan；hgck；chaxunhaogan；cxhg
 - 能力入口：bot.affinity
-- 自然语言触发：好感度；查询好感；查詢好感；亲密度；親密度；affinity
+- 自然语言触发：好感度；好感；查询好感；查詢好感；亲密度；親密度；affinity
 - 群聊/私聊差异：私聊=双向好感卡；群聊=本群好感榜（自己高亮，展示前 12/上限 60）
 - 可复制示例：好感度｜好感度 我｜好感度 算法
 - 关联回归测试：tests/test_affinity.py；tests/test_affinity_query.py；tests/test_affinity_numerical.py
@@ -2150,12 +2150,12 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 - 权限：普通用户可用
 - 触发别名：笔记；筆記；biji；note；笔记列表；bijiliebiao；bjlb
 - 能力入口：bot.reminder
-- 自然语言触发：笔记 记 <内容>；笔记列表；笔记 看 N；做完 N；删笔记 N；<事项>做完了
+- 自然语言触发：笔记 记 <内容>；笔记列表；笔记 看 N；看笔记 N；做完 N；完成 N；办完 N；删笔记 N；<事项>做完了
 - 群聊/私聊差异：笔记按会话隔离（A 群看不到 B 群）；配图落 data/notes_images
 - 网络依赖：纯本地
 - 输出形式：文本；图片（回看补发）
 - 配置变量：BOT_NOTES_ENABLED；BOT_NOTES_DB_PATH；BOT_NOTES_MAX_PER_CHAT
-- 可复制示例：笔记 记 周三要交总结｜笔记列表｜笔记 看 1｜做完 1｜删笔记 1
+- 可复制示例：笔记 记 周三要交总结｜笔记列表｜笔记 看 1｜做完 1｜完成 1｜删笔记 1
 - 关联回归测试：tests/test_notes.py；tests/test_todo_checkoff.py；tests/test_reminder_tone.py
 - 总览：【笔记】Markdown 笔记与待办：笔记 记 <内容>｜笔记列表｜笔记 看 N｜做完 N｜删笔记 N
 - 标题：【笔记】Markdown 笔记与待办勾选
