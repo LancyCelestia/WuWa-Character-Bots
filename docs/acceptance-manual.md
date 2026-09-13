@@ -166,6 +166,7 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 - **2026-09-14 六域批重启前置（已就绪，重启前逐项核对）**：
   ① `.env` 的 `BOT_KB_WIKI_ROOT` 已修至 `D:/Coding/01_Projects/Crawl Wiki`（wiki-health-report 实核 manifest 探测 400/400 全命中），且 knowledge-sync 修复已跑（人格 knowledge 库 113 pending 清零 + FTS/ANN 签名重建；离线探针实跑 wiki 检索 4 hits、知识检索「守岸人是谁」5 hits）——重启后按 §6.6.5④ 验证检索；
   ② 渲染预算键已解锁：`.env` `BOT_RENDER_MAX_CONCURRENCY=2` + `BOT_RENDER_WAIT_BUDGET_MS=1500`（13fcd30 机制层接线 `resolve_render_max_concurrency`/`resolve_render_wait_budget_ms`，缺省=字节级现状，删行即回滚）。
+  ③ **重启前一键预检（A56，051261d 已入库）**：工作区根跑 `python scripts/pre_restart_check.py`（venv python 等价；`--json` 结构化输出）——7 项（env 路径/人格锚定/哈希台账/事实册/KB 漂移/静态门/NapCat 探针）**无 FAIL（EXIT=0）再动手重启**；napcat 项在重启前未启动=SKIP 不阻断（bot 自带重连），kb_drift 首跑拷库到 %TEMP% 需数秒～数十秒属预期非卡死；FAIL 项消息自带修复指引，先修后复跑至全绿。
 
 ## 6.2 向量知识库（本地 Ollama bge-m3 优先，百炼兜底）
 
@@ -293,7 +294,7 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 
 > 覆盖：笔记 CRUD+图片收纳 / 「做完了」自然勾选 / 分型提醒语气 / NTP 授时（HANDBOOK §24.10 A12 条）+ 统一错误报告卡触发形态。证据=`.superpowers/sdd/2026-09-13-six-domain-batch/`（route-help-report / startup-audit-report / security-report / pixel-audit-report）。
 > 前置：bot 已提权重启且在线；config 六键默认即启用（`bot_notes_*`/`bot_time_sync_*`，7414e87+789700c）；授时**首次校时在启动后 ~65 秒**（startup-audit §4.2，非装配期），此前时序走系统钟属预期。
-> ⑥ 错误报告卡**已落地**（A28 批 + 2026-09-14 P0 两段式异步化 A-rec；工作树待提交——随收尾批入库、重启后生效；HANDBOOK §24.12）——按本表可执行验收，预期形态=**即时文本回执 + 诊断卡后台补发**（见⑥）。
+> ⑥ 错误报告卡**已落地**（A28 批 + 2026-09-14 P0 两段式异步化 A-rec + A52 补发加速 84b3915；HANDBOOK §24.12）——按本表可执行验收，预期形态=**即时文本回执 + 诊断卡后台补发（约 3-33 秒送达）**（见⑥）。
 
 | # | 验收项 | 触发方式 | 预期 | 异常时看哪 | 预期来源 |
 |---|---|---|---|---|---|
@@ -302,7 +303,7 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 | ③ | 笔记图片收纳 | 发一张图片、同条消息带 `笔记`（或回复图片发笔记指令） | 图片经 SSRF **入口+落点双查**后落盘（uuid 文件名），笔记内容带图片引用行；引用行被改成 `../` 也取不到目录外文件（basename 防穿越） | 拒绝落盘 → 核对 URL 是否内网/重定向落点命中护栏；同批对照 eat.py I-1 已补同款双查（93e8195） | security-report §2 #11；A12 收编 |
 | ④ | 做完了自然勾选 | 先 `笔记 交报告`（成待办），再发 `交报告做完了` | 唯一命中→直接勾选，回执「已经替你放下了」族；2-3 条并列→「**有几件事都对得上，是哪一件完成了？**」列候选清单（不说「两件」硬编码）；重复勾选不挂死（mark_done 死锁已修） | 误勾/不勾 → resolve_todo_match 候选逻辑（reminders.py）；卡死 → Critical 死锁修复回归（789700c） | copy-audit C1；route-help §3.1 |
 | ⑤ | 分型提醒语气 | `半小时后提醒我吃药` / `明天 9 点提醒我开会` / `回来提醒我买牛奶` | 到点投递按五分型（吃药/约会/购物/待办/自定义）出对应守岸人语气开场（「喝口水，慢慢来」「像钟摆」「海还在这边」族），均带「你之前说过的：原文」；全文无性别化称呼/无「您」/无道歉垫话/无单名 | 不投递 → bot_reminder_tick 每分钟 job（startup-audit §三-9）+授时链路；语气不符 → reminders.py 分型五模板（A21 审计全净基线） | persona-audit §二/§三 |
-| ⑥ | 错误报告卡触发形态（两段式异步化） | 重启后临时制造一次能力异常：断网（或拔网线）发一条 `行情` 指令 → 期待**先收到即时文本回执，约 1 分钟内诊断卡补发**；**冷却期内（60s）再制造一次异常** → 期待降级为一句守岸人纯文本（防刷屏）；恢复网络后重试同命令 | 断网时第一段：毫秒级文本回执（守岸人话术人话区 + 尾注「详细诊断卡随后补发。」，渲染零参与不阻塞 loop）；第二段：云母诊断卡（触发回显≤80 字符+栈摘录暗底块+分区瓦片，本机路径/密钥已打码）由专用单线程 `error-card-render` 渲染后经 send_queue worker 补发（request_id=原 id+`-card`；认领宽限 60s 后 worker 接管，约 1 分钟量级属预期节奏非卡死）；渲染失败 → 补发全量诊断文本（完整性不丢）；冷却期内第二次：纯文本一句；恢复后：同命令正常出卡 | 无回执 → 查 `bot_error_card_enabled`（缺省 true）与 pipeline `_internal_error` 旁路钩子；卡迟迟不来 → 查 send_queue worker 与 `:card` dedupe 行（宽限期语义 sender/queue.py）；无冷却降级 → ErrorCardGate（`bot_error_card_cooldown_seconds`=60，进程内滑动窗）；卡上敏感信息未打码 → redact 链（栈帧逐行，缺省 8 帧）；卡渲染失败应自动降级纯文本（契约零破坏） | error-card-report + error-card-async-design（P0 两段式）；HANDBOOK §24.12-4 |
+| ⑥ | 错误报告卡触发形态（两段式异步化） | 重启后临时制造一次能力异常：断网（或拔网线）发一条 `行情` 指令 → 期待**先收到即时文本回执，约 3-33 秒内诊断卡补发**；**冷却期内（60s）再制造一次异常** → 期待降级为一句守岸人纯文本（防刷屏）；恢复网络后重试同命令 | 断网时第一段：毫秒级文本回执（守岸人话术人话区 + 尾注「详细诊断卡随后补发。」，渲染零参与不阻塞 loop）；第二段：云母诊断卡（触发回显≤80 字符+栈摘录暗底块+分区瓦片，本机路径/密钥已打码）由专用单线程 `error-card-render` 渲染后经 send_queue worker 补发（request_id=原 id+`-card`；卡以 `deliver_after=+3s` 入队、worker 30s tick 认领，**约 3-33 秒送达属预期节奏非卡死**——A52 已把补发等待从原 60-92s 基线压到 3-33s，84b3915）；渲染失败 → 补发全量诊断文本（完整性不丢，同延迟同语义）；冷却期内第二次：纯文本一句；恢复后：同命令正常出卡 | 无回执 → 查 `bot_error_card_enabled`（缺省 true）与 pipeline `_internal_error` 旁路钩子；卡迟迟不来 → 查 send_queue worker 与 `:card` dedupe 行（deliver_after 到点后 worker 才认领，sender/queue.py）；无冷却降级 → ErrorCardGate（`bot_error_card_cooldown_seconds`=60，进程内滑动窗）；卡上敏感信息未打码 → redact 链（栈帧逐行，缺省 8 帧）；卡渲染失败应自动降级纯文本（契约零破坏） | error-card-report §P0/§A-plus + error-card-async-design（P0 两段式）；HANDBOOK §24.12-4 |
 
 **收尾纪律**：全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 台账 #31 记重启生效；任一项不符按 §6.6 收尾纪律走 systematic-debugging。
 
@@ -318,3 +319,19 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 | ④ | knowledge-sync 修复后检索 | bot 重启在线后：`powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 context-smoke`；再 QQ 私聊问一个鸣潮设定问题 + 一个 wiki 条目问题 | context-smoke 报告语义检索命中（非顺序取块）；wiki 通道 available（§6.5 前置①已修根，manifest 探测通过；启动后 ~45s 补同步 job 增量幂等）；人格 knowledge 库向量/FTS 通道可用（修复批已 113 pending 清零+签名重建） | 仍顺序取块 → vector_knowledge.py ann/fts 签名与库 meta 对账；wiki 空结果 → kb_wiki.py manifest 探测与 `BOT_KB_WIKI_ROOT` 值；离线实跑底稿=`$TEMP\wiki-audit\`（probe_retrieval：wiki 4 hits/知识 5 hits） | wiki-health-report + vector-audit |
 
 **收尾纪律**：全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 台账 #31 记重启生效；任一项不符按 §6.6 收尾纪律走 systematic-debugging。
+
+### 6.6.6 表情贴纸回应验收（bot.reactions，重启生效）
+
+> 覆盖：QQ 侧贴纸回应识别（NapCat notice → 人格上下文【表情回应】分区注入）+ 主动贴表情（五层门限流：开关→每消息去重→确定性概率→会话冷却→每小时滑窗）。证据=`.superpowers/sdd/2026-09-13-six-domain-batch/reactions-report.md`（代码+测试 23 例完成，重启生效）。
+> 前置：`BOT_REACTIONS_ENABLED` **缺省即开**（config.py `bot_reactions_enabled=True`，无需 .env 配置；配套 `bot_reactions_probability=0.2`/`bot_reactions_cooldown_seconds=30`/`bot_reactions_max_per_hour=20`）；QQ 主动贴依赖 NapCat 扩展 API `set_msg_emoji_like`（同戳一戳 `call_api` 裸调模式，失败静默）；QQ 识别依赖 NapCat notice `group_msg_emoji_like`——**事件实际字段形态属生产实机首验**（容错解析已覆盖 likes 数组+平铺 emoji_id 两种社区形态，解析失败=零记录零影响）。
+> **TG 诚实边界**：识别当前不可用（nonebot-adapter-telegram 0.1.0b20 的 `event_map` 无 `message_reaction` 键，该 Update 在事件转换时被丢弃、到不了任何 handler，等上游升级后接一行 on_notice 即可复用现成归一接口）；主动贴 wrapper 已实现但**不接线**（且 Bot API 要求 bot 在该群为管理员）——**TG 侧零预期，本节全部条目只在 QQ 侧验收，TG 无反应属预期非异常**。
+
+| # | 验收项 | 触发方式 | 预期 | 异常时看哪 | 预期来源 |
+|---|---|---|---|---|---|
+| ① | 回应识别→人格感知 | 白名单群对 bot 的一条消息贴一个 QQ 表情（群消息回应）→ 10 分钟内 @bot 继续对话 2-3 轮 | 人格回复可自然呼应被贴表情（「你刚才给那条消息点了表情」族语气）——【表情回应】分区已注入人格上下文（bot 自己的消息 id 在回复 sent 分支登记，措辞能说「给我的消息贴了 X」；分区无独立日志，以回复语气变化为观察面）；LLM 有机反应**非必现**，多轮抽样观察，连续多轮全无呼应才算疑点 | 首要嫌疑=NapCat 是否真的下发 `group_msg_emoji_like` notice 及字段形态与容错解析是否相符（查 NapCat 日志原始事件；不符只需调 `runtime/reactions.py` `normalize_onebot_emoji_like` 一处）；离线基线=tests/test_reactions.py（23 例） | reactions-report §三/§四.2/§六.2 |
+| ② | 主动贴表情（概率门） | 正常聊天；用户消息含情绪信号词（「谢谢帮大忙」「太棒了」「加油」等，简繁均收）可提高触发命中 | 小概率（缺省 0.2，确定性哈希——同一条消息判定恒定，重放不摇摆）给消息贴出 QQ 表情（守岸人温和池：鼓掌/呲牙/偷笑/害羞/惊讶/可爱/流泪/奋斗/憨笑，无攻击性项）；**不贴属概率门正常表现非缺陷**，多发几条信号消息再观察 | 有正常回复但表情从未出现 → 查 `BOT_REACTIONS_ENABLED` 当前值与 NapCat `set_msg_emoji_like` 权限（无权限静默失败属设计取舍：该消息不重试，防骚扰） | reactions-report §四.3 |
+| ③ | 冷却+时限限流 | ②某次贴出后，30s 内同会话再制造触发 | **30s 冷却内同会话第二次不贴**（`bot_reactions_cooldown_seconds`）；每小时滑窗上限 20 条（`bot_reactions_max_per_hour`）为后台保守限流，真机只做统计性观察不做机械验收；同一条消息双触发（回复后 after_reply+情绪信号 emotion_signal）只贴一次（每消息去重） | 30s 内连贴 → ProactiveGate 冷却/去重语义回归（tests/test_reactions.py 五层门 6 例锁死） | reactions-report §四.3/§五 |
+| ④ | TG 诚实边界复核 | TG 侧对 bot 消息贴回应，或期待 TG 主动贴 | **均不生效=预期**：识别侧适配器不投递该 Update；主动贴未接线（平台权限受限）。不得作为不符项记账 | 未来升级 nonebot-adapter-telegram 后想接通：识别侧接一个 on_notice 分发复用 `normalize_telegram_reaction` 即可（现成接口已留） | reactions-report §三 |
+| ⑤ | 关闭零痕迹 | `.env` 设 `BOT_REACTIONS_ENABLED=false` 重启后重复 ①② | 人格侧【表情回应】分区不再出现（provider 拿到 None 整块消失）、主动贴零发生（两触发点在门入口即返回，门状态零消耗）；识别侧 notice 缓冲仍会进程内静默记录但**无任何用户可见痕迹**（内存态，重启即清） | 关闭后仍贴表情 → 先确认进程确为重启后实例（改配置必须重启）+ `bot_reactions_enabled` 热覆盖当前值 | reactions-report §四.3/§七 |
+
+**收尾纪律**：全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 记重启生效（reactions 批与 0913 各批次同车）；任一项不符按 §6.6 收尾纪律走 systematic-debugging——QQ 识别侧属「事件形态待验证」首验项，首验不符先取证 NapCat notice 原始字段再定位，不等于回归。
