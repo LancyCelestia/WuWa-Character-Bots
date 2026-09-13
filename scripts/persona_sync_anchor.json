@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "copy_path": "C:\\Users\\LancyCelestia\\Documents\\MyWorkspace\\ChatBot\\ChatBot_Runtime\\data\\persona\\守岸人_核心人格.md",
+  "copy_sha256": "80627d6815e8b419fc879d837b096957b1a0d1d2c659b4632fd38f6242185398",
+  "copy_size": 9807,
+  "adopted_at": "2026-09-13T21:38:47+00:00",
+  "note": "初始锚定(2026-09-14测绘批)：副本=09-11 22:46版(独立演化文本)；源侧 identity.md 领先两提交(f80a8b1后 46dc8cd+f08a853 称谓边界/超管身份/黄腔回应柔化)待用户裁决同步方向",
+  "source_snapshot": {
+    "personas/shorekeeper/aliases.txt": "340decd6c38a67513367d3b83e6af2d2df4c24062027bba7d8580d3943d55ae2",
+    "personas/shorekeeper/identity.md": "2a44a5f2914fb0178a31ef1bfaca213d83880931e5651b54011299853b9b3bd2",
+    "personas/shorekeeper/knowledge/守岸人_核心知识.md": "5dc7fbe0c57b2bdb61bf767c2b86a155e3ee5384c962ecfecc87a7edc3782134",
+    "personas/shorekeeper/knowledge/守岸人_人格与表达规范.md": "2320425e08a4995c61875ed53a676e0cf42e8b2d3c3995d1a281667cfacfef26"
+  }
+}
