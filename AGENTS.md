@@ -26,7 +26,7 @@
 4. **git 纪律**：禁 `git add -A`/`git add .`；逐文件显式 add；共享文件动前读最新态；提交后必 `git show --stat HEAD` 核对；push 用完整 refspec `refs/heads/v0.0.1-alpha.2:refs/heads/v0.0.1-alpha.2` 且**仅按用户明确指示**。
 5. **交接硬规矩**：写「已完成/已修复/测试通过」必须同时给出**提交哈希**或**可复跑命令+实跑输出**，否则一律按未完成记账。
 6. **源码树零缓存**：绕开 dev.ps1 直跑 python/pytest 必须 `PYTHONDONTWRITEBYTECODE=1` + `--basetemp=$TEMP/xxx -p no:cacheprovider`；源码树不应出现 `__pycache__`/`*.pyc`/`.pytest_cache`/`.ruff_cache`/`.mypy_cache`/`data/`。**例外**：`plugins/bot_unified_runtime/sources/data/qx.json`（NMC 天气 2527 区县码表）是随包内置资产（.gitignore 已加否定规则），清理波不得误删——2026-09-13 曾被误清致 NMC 路径整体塌向 open-meteo（wx7 报告）。
-7. **多代理并发**：并发受**当日累计用量**动态约束（非固定值）：2026-09-13 高消耗日实测 6-7 并发即触发 1302 限流（×4），低消耗日可更高；按文件域互斥切分，避免多人同时改同一文件；遇 1302 立即停止派遣、守住存量在飞、顺手取证阵亡者幸存成果（git diff+本地测试）再补缺，不盲目重做；单任务超 20 分钟的大任务在简报中要求分阶段落盘检查点；代理一律禁 git 写操作、禁再派代理。
+7. **多代理并发**：并发受**当日累计用量**动态约束（非固定值）：2026-09-13 高消耗日实测 2-3 并发即触发 1302 限流（09-14 低消耗日 6-7 并发实测正常）；按文件域互斥切分，避免多人同时改同一文件；遇 1302 立即停止派遣、守住存量在飞、顺手取证阵亡者幸存成果（git diff+本地测试）再补缺，不盲目重做；单任务超 20 分钟的大任务在简报中要求分阶段落盘检查点；代理一律禁 git 写操作、禁再派代理。
 8. **人格资产**：`personas/` 与 Runtime 人格副本是项目灵魂，话术改动必须维持守岸人语气（去 AI 味，参照 `.agents/skills/shuorenhua`）；好感度任何档位都**不攻击/不强硬/不 R-18**（红线已写死进 affinity.py 态度文本）。
 9. **归档规程**：压缩 → 验证（testzip+副本）→ 移出，附 manifest（先例：`ChatBot_Archive/2026-09-12/code-hygiene-20260912.zip`）。不要把 Runtime/Archive 设为工作区，不要重建废弃的嵌套 `_Archive` 路径。
 

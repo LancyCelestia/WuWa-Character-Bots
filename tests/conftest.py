@@ -92,6 +92,14 @@ def run_autosync(root: Path | None = None) -> list[str]:
     return changed
 
 
+@pytest.fixture(autouse=True)
+def _isolate_render_phase2_env(monkeypatch):
+    """渲染 Phase 2 解锁键属机器级 .env 配置（A43 预跑 5 红根因）：
+    契约测试断言「缺省=字节级现状」，套件内一律隔离；单测自设用 monkeypatch.setenv 在本 fixture 之后生效。"""
+    monkeypatch.delenv("BOT_RENDER_MAX_CONCURRENCY", raising=False)
+    monkeypatch.delenv("BOT_RENDER_WAIT_BUDGET_MS", raising=False)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _autosync_session_gate():
     _autosync_changed.extend(run_autosync())
