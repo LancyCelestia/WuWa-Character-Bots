@@ -262,6 +262,7 @@ def build_commodities_capability(
 ) -> Any:
     """商品行情能力闭包（bot.commodities）：黄金/白银/铜/原油现价+30日走势。"""
     from plugins.bot_unified_runtime.sources.commodities_data import (
+        LME_NOTE,
         fetch_commodity_quotes,
         fetch_commodity_trend,
         format_commodities_brief,
@@ -336,7 +337,7 @@ def build_commodities_capability(
             "badge": "延迟行情",
             "sections": sections,
             "source_note": "数据源：东方财富（外盘主力连续）",
-            "delayed_note": "LME 无稳定免费源，铜采用 COMEX 主力连续（美元/磅）",
+            "delayed_note": LME_NOTE,
             **_card_common_payload(config, "商品行情"),
         }
         card = _render_finance_sections_card(
@@ -421,7 +422,7 @@ def build_bond_capability(
             },
         ]
         payload = {
-            "title": "国债收益率速览",
+            "title": "中美国债收益率速览",
             "subtitle": (
                 f"交易日 {snapshot.as_of_date}" if snapshot.as_of_date else "交易日未知"
             ),
@@ -447,7 +448,7 @@ def build_bond_capability(
             request_id=message.request_id,
             capability_id="bot.bonds",
             kind="mixed" if card else "text",
-            title="国债收益率速览",
+            title="中美国债收益率速览",
             body=body,
             images=[{"file": card}] if card else [],
             risk_level=RiskLevel.LOW,

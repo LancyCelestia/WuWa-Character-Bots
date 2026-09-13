@@ -353,6 +353,47 @@ def _format_channel_health_report(
     return '\n'.join(lines)
 
 
+def _usage_channel_stats(
+    config: object,
+    target_date: date,
+) -> dict[str, dict[str, dict[str, int]]] | None:
+    """账本开时读当日 (实际模型, 渠道) 聚合并折叠到家族键；关/失败 = None。
+
+    数据源复用 llm/ledger.aggregate_channel_usage（只读 SQL，不重复造聚合），
+    家族折叠口径与 usage_monitor._channel_stats_for 一致；输出直接喂
+    build_model_rows(channel_stats=...) 的渠道子行（账本关返回 None，
+    build_model_rows 行为与旧版完全一致）。
+    """
+    try:
+        from plugins.bot_unified_runtime.llm.ledger import (
+            aggregate_channel_usage,
+            ledger_enabled,
+            resolve_default_db_path,
+        )
+
+        if not ledger_enabled(config):
+            return None
+        raw = aggregate_channel_usage(
+            resolve_default_db_path(),
+            start_day=target_date.isoformat(),
+            end_day=target_date.isoformat(),
+        )
+    except Exception:  # noqa: BLE001 - 渠道明细读不到只影响子行，不阻塞账单。
+        return None
+    if not raw:
+        return None
+    from plugins.bot_unified_runtime.runtime.pricing import model_family_key
+
+    stats: dict[str, dict[str, dict[str, int]]] = {}
+    for (actual_model, channel_id), bucket in raw.items():
+        family = model_family_key(actual_model) or actual_model
+        channels = stats.setdefault(family, {})
+        target = channels.setdefault(channel_id, {"calls": 0, "cost_milli": 0})
+        target["calls"] += int((bucket or {}).get("calls", 0) or 0)
+        target["cost_milli"] += int((bucket or {}).get("cost_milli", 0) or 0)
+    return stats or None
+
+
 def _handle_model_command(
     store: RuntimeSettingsStore,
     config: object,
@@ -740,6 +781,7 @@ def _handle_model_command(
         )
         from plugins.bot_unified_runtime.runtime.usage_monitor import (
             build_model_rows,
+            cost_clause,
         )
 
         prices = parse_model_prices(
@@ -841,7 +883,11 @@ def _handle_model_command(
             "by_model_unpriced": by_unpriced,
             "unpriced_calls": unpriced_calls,
         }
-        rows = build_model_rows(aggregate, prices=prices)
+        rows = build_model_rows(
+            aggregate,
+            prices=prices,
+            channel_stats=_usage_channel_stats(config, target_date),
+        )
         if not rows:
             lines.append("（当日还没有成功调用记录）")
         for row in rows:
@@ -853,10 +899,18 @@ def _handle_model_command(
                 f"- {row['model']}{suffix}{note_text}：入 {row['prompt']:,}"
                 f" / 出 {row['completion']:,}"
                 f" / 共 {row['completion'] + row['prompt']:,}"
-                f" / 费 {row['cost_text']} 元"
+                f" / {cost_clause(row['cost_text'])}"
             )
+            # 渠道子行（账本开时）：与定时报告 build_report_text 同款缩进风格。
+            for sub in row.get("channels") or []:
+                lines.append(
+                    f"  └ 渠道 {sub['channel']}：{int(sub['calls']):,} 次"
+                    f" / {cost_clause(sub['cost_text'])}"
+                )
         if unpriced_calls:
-            lines.append(f"（{unpriced_calls} 次调用未配置价格，未计入账单；用 /bot model price 维护）")
+            lines.append(
+                f"（{unpriced_calls} 次调用未计价：价格未配置，未计入账单；用 /bot model price 维护）"
+            )
         return "\n".join(lines)
     if action in {"add", "update", "remove", "priority"}:
         return _handle_model_registry_command(

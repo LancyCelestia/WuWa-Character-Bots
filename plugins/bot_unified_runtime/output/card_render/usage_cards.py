@@ -22,9 +22,12 @@ from typing import Any
 
 from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
     BRAND_THEME,
+    DIVIDER,
     FONT_FAMILY_STACK,
+    GLOW_ACCENT,
     SHADOW_PRIMARY,
     SHADOW_SECONDARY,
+    SURFACE_TINTS,
     _darken_hex,
     _hex_to_rgb,
     _rgb_to_hex,
@@ -38,6 +41,20 @@ def usage_card_accent(config: object) -> tuple[str, str]:
     """
     color = str(getattr(config, "bot_help_card_color", "") or "")
     return _rgb_to_hex(_hex_to_rgb(color)), _darken_hex(color)
+
+
+# 渠道子行样式（账单席 2026-09-13）：沿用行胶囊写法（.crow 挂 .glass），
+# token 只准 var() 引用（半径/色/字重全部走 :root 既有 token）。
+# 仅在 model_rows 携带渠道数据时注入 <style>——账本关/无渠道数据时本段
+# 不出现，卡面 HTML 与旧版字节级一致（零回归）。
+_CHANNEL_SUBROW_CSS = """
+/* 渠道子行（家族行下拆渠道消耗；费用降序由 build_model_rows 排好）。 */
+.crow { margin-left:26px; display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding:5px 12px; border-radius:var(--r-tile); font-size:12px; color:var(--muted); }
+.crow .cname { font-family:Consolas,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.crow .cmeta { flex-shrink:0; font-variant-numeric:tabular-nums; }
+.crow .ccost { color:var(--accent-ink); font-weight:700; }
+"""
 
 
 def _fmt_int(value: object) -> str:
@@ -61,11 +78,18 @@ def usage_report_mica_html(
     totals: dict[str, Any],
     model_rows: list[dict[str, Any]],
     note: str = "",
+    bot_name: str = "守岸人",
+    bot_avatar_url: str = "",
+    feature_label: str = "模型用量",
 ) -> str:
     """渲染用量/账单报告卡 HTML。
 
     model_rows 每行：{"model", "prompt", "cache_read", "cache_write",
     "completion", "cost_text", "priced"}；totals 键同 aggregate_llm_usage_range。
+    可选键 ``channels``（账本渠道聚合，build_model_rows 产出）：家族行下渲染
+    渠道子行（└ 渠道 <id> · N 次 · 费 X 元，费用降序原样透传）。
+    vis5（2026-09-13）：补齐 vis4 键（辉光/分隔线/三档表面，--pc 为 --accent
+    的共享 token 别名）+ F11 bot 页脚胶囊（此前本卡是唯一无署名卡）。
     """
     import html as _html
 
@@ -89,6 +113,18 @@ def usage_report_mica_html(
             return name
         return f"{name}<span class=\"mnote\">（{_html.escape(note)}）</span>"
 
+    def _channel_subrows_html(row: dict[str, Any]) -> str:
+        """渠道子行：└ 渠道 <id> + 次数 + 费用（胶囊样式沿用 .glass 行）。"""
+        return "".join(
+            '<div class="crow glass">'
+            f'<span class="cname" title="{_html.escape(str(sub.get("channel") or ""))}">'
+            f'└ 渠道 {_html.escape(str(sub.get("channel") or ""))}</span>'
+            f'<span class="cmeta">{_fmt_int(sub.get("calls"))} 次 · '
+            f'<span class="ccost">{_html.escape(str(sub.get("cost_text") or "0.00"))}</span> 元</span>'
+            "</div>"
+            for sub in (row.get("channels") or [])
+        )
+
     rows_html = "".join(
         "<div class=\"mrow glass\">"
         f"<span class=\"mcell model\" title=\"{_html.escape(', '.join(str(item) for item in (row.get('variants') or [row['model']])))}\">{_model_cell(row)}</span>"
@@ -99,11 +135,16 @@ def usage_report_mica_html(
         f"<span class=\"mcell num cost{' unpriced' if not row.get('priced') else ''}\">"
         f"{_html.escape(str(row.get('cost_text') or '未计价'))}</span>"
         "</div>"
+        + _channel_subrows_html(row)
         for row in model_rows
     )
+    # 渠道子行样式只在真有渠道数据时注入（账本关/无渠道 → 字节级旧版）。
+    channel_css = _CHANNEL_SUBROW_CSS if any(
+        row.get("channels") for row in model_rows
+    ) else ""
     totals_cost = str(totals.get("cost_text", "0.00"))
     unpriced_note = (
-        f"{int(totals.get('unpriced_calls', 0) or 0)} 次调用未配置价格，未计入账单"
+        f"{int(totals.get('unpriced_calls', 0) or 0)} 次调用未计价：价格未配置，未计入账单"
         if int(totals.get("unpriced_calls", 0) or 0) > 0
         else ""
     )
@@ -114,6 +155,15 @@ def usage_report_mica_html(
     )
     # E01 二批：漂移相位 = 内容 digest 钉帧；config 为运行时对象、generated_at
     # 为易变字段（同 bridge._PHASE_VOLATILE_KEYS 口径），均不进 digest。
+    # 渠道子行相位归一：空 channels 列表与无键同摘要（渲染零差异，相位不抖）。
+    digest_rows = [
+        {
+            key: value
+            for key, value in row.items()
+            if key != "channels" or row.get("channels")
+        }
+        for row in model_rows
+    ]
     phase = payload_phase(
         {
             "kicker": kicker,
@@ -122,16 +172,30 @@ def usage_report_mica_html(
             "status_kind": status_kind,
             "window_label": window_label,
             "totals": totals,
-            "model_rows": model_rows,
+            "model_rows": digest_rows,
             "note": note,
         }
     )
     unpriced_html = (
         f"<div class=\"unote\">{unpriced_note}</div>" if unpriced_note else ""
     )
+    # F11 bot 页脚胶囊（与 templates.py card-footer-bot 同构；avatar 失败隐藏）。
+    avatar_html = (
+        f'<img class="bf-avatar" src="{_html.escape(bot_avatar_url)}" alt="" '
+        'onerror="this.style.display=\'none\'"/>'
+        if bot_avatar_url
+        else f'<span class="bf-dot">{_html.escape((bot_name or "守")[:1])}</span>'
+    )
+    bot_footer_html = (
+        f'<footer class="bot-foot">{avatar_html}'
+        f'<span class="bf-name">{_html.escape(bot_name or "守岸人")}</span>'
+        f'<span>· {_html.escape(feature_label)}</span></footer>'
+    )
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
 :root {{ --phase:{phase}; --accent:{accent}; --accent-ink:{accent_ink};
+  /* --pc = --accent 别名：GLOW_ACCENT 等 theme_tokens 共享 token 以 --pc 取色。 */
+  --pc:{accent};
   /* 釉瑚云母底主题 token，全卡统一（bridge 按 --accent 派生；工艺出处=用户裁定）。 */
   --wash-1:{wash['wash_1']}; --wash-2:{wash['wash_2']}; --wash-3:{wash['wash_3']}; --wash-mist:{wash['wash_mist']};
   --wash-blob-1:color-mix(in srgb, var(--accent) 35%, var(--wash-1));
@@ -139,7 +203,10 @@ def usage_report_mica_html(
   --ink:var(--text-main); --muted:var(--text-sub);
   --font-family:{FONT_FAMILY_STACK};
   --r-shell:{BRAND_THEME.shell_radius}px; --r-panel:{BRAND_THEME.panel_radius}px; --r-tile:{BRAND_THEME.tile_radius}px;
-  --mica-shadow:{SHADOW_PRIMARY}; --mica-shadow-soft:{SHADOW_SECONDARY}; }}
+  --mica-shadow:{SHADOW_PRIMARY}; --mica-shadow-soft:{SHADOW_SECONDARY};
+  /* vis4 辉光/分隔线/三档表面（theme_tokens 单一源，与六张 Jinja 卡同值）。 */
+  --glow-accent:{GLOW_ACCENT}; --divider-line:{DIVIDER};
+  --surface-a:{SURFACE_TINTS['tint_a']}; --surface-b:{SURFACE_TINTS['tint_b']}; --surface-neutral:{SURFACE_TINTS['tint_neutral']}; }}
 * {{ box-sizing:border-box; }}
 body {{ margin:0; font-family:var(--font-family); background:transparent; color:var(--ink);
   -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }}
@@ -175,8 +242,8 @@ body {{ margin:0; font-family:var(--font-family); background:transparent; color:
 .glass {{ background:linear-gradient(150deg, rgba(255,255,255,.66) 0%, rgba(255,255,255,.44) 100%) padding-box,
     linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
   border:1px solid transparent; box-shadow:var(--mica-shadow-soft); }}
-.head {{ padding:20px 26px 16px; border-bottom:1px solid rgba(255,255,255,.78); }}
-.kicker {{ color:var(--accent-ink); font-size:12px; font-weight:700; letter-spacing:.14em; }}
+.head {{ padding:20px 26px 16px; border-bottom:var(--divider-line); }}
+.kicker {{ color:var(--accent-ink); font-size:12px; font-weight:700; letter-spacing:.06em; }}
 .title {{ margin-top:8px; font-size:26px; font-weight:700; }}
 /* 语义状态色（红绿黄）置于玻璃层之上，不随釉瑚洗派生。 */
 .status {{ display:inline-flex; align-items:center; gap:8px; margin-top:12px; padding:6px 14px; border-radius:999px;
@@ -187,24 +254,39 @@ body {{ margin:0; font-family:var(--font-family); background:transparent; color:
 .window {{ margin-top:10px; color:var(--muted); font-size:13px; }}
 .totals {{ display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; padding:14px 14px 4px; }}
 .tile {{ border-radius:var(--r-panel); padding:10px 14px; }}
-.tile .k {{ font-size:12px; color:var(--muted); font-weight:600; letter-spacing:.04em; }}
+.tile .k {{ font-size:12px; color:var(--muted); font-weight:600; letter-spacing:.06em; }}
 .tile .v {{ margin-top:4px; font-size:18px; font-weight:700; font-variant-numeric:tabular-nums; }}
 .tile.cost .v {{ color:var(--accent-ink); }}
-.body {{ padding:10px 14px 14px; display:grid; gap:5px; }}
+.body {{ padding:10px 14px 14px; display:grid; gap:6px; }}
 .mhead, .mrow {{ display:grid; grid-template-columns:minmax(150px,1.6fr) repeat(4,1fr) 1.1fr; gap:6px;
-  padding:8px 12px; border-radius:10px; align-items:center; }}
-.mhead {{ font-size:12px; color:var(--muted); font-weight:700; letter-spacing:.03em; padding-bottom:2px; }}
+  padding:8px 12px; border-radius:var(--r-tile); align-items:center; }}
+.mhead {{ font-size:12px; color:var(--muted); font-weight:700; letter-spacing:.02em; padding-bottom:2px; }}
 .mrow {{ font-size:12.5px; font-variant-numeric:tabular-nums; }}
 .mcell {{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
 .mcell.model {{ font-family:Consolas,monospace; font-weight:650; }}
-.mcell.model .mnote {{ font-family:var(--font-family); font-weight:400; color:var(--muted); font-size:11px; margin-left:4px; }}
+.mcell.model .mnote {{ font-family:var(--font-family); font-weight:400; color:var(--muted); font-size:12px; margin-left:4px; }}
 .mcell.num {{ text-align:right; }}
 .mcell.cost {{ font-weight:700; color:var(--accent-ink); }}
 .mcell.cost.unpriced {{ color:var(--muted); font-weight:400; }}
 .unote {{ padding:2px 12px 8px; color:var(--muted); font-size:12px; }}
-.foot {{ padding:12px 26px 16px; border-top:1px solid rgba(255,255,255,.80);
+.foot {{ padding:12px 26px 16px; border-top:var(--divider-line);
   background:rgba(255,255,255,.42); font-size:12px; color:var(--muted); }}
-</style></head><body><div class="stage card"><section class="shell">
+/* F11 bot 页脚胶囊（vis5 补齐：此前本卡是唯一无署名卡）。 */
+.bot-foot {{ margin:0 14px 14px; padding:9px 14px; border-radius:var(--r-tile);
+  display:flex; align-items:center; gap:7px; font-size:12px; color:var(--muted);
+  background:
+    var(--glow-accent) right center / 62% 190% no-repeat,
+    linear-gradient(150deg, rgba(255,255,255,.66) 0%, rgba(255,255,255,.46) 100%) padding-box,
+    linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
+  border:1px solid transparent; box-shadow:var(--mica-shadow-soft); }}
+.bot-foot .bf-dot {{ width:22px; height:22px; border-radius:50%; flex-shrink:0;
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:12px; font-weight:650; color:var(--accent-ink);
+  background:color-mix(in srgb, var(--accent) 14%, #fff); }}
+.bot-foot .bf-avatar {{ width:22px; height:22px; border-radius:50%; object-fit:cover;
+  border:1px solid #fff; box-shadow:var(--mica-shadow-soft); }}
+.bot-foot .bf-name {{ font-weight:650; color:var(--text-main); }}
+{channel_css}</style></head><body><div class="stage card"><section class="shell">
 <div class="drift-blobs" aria-hidden="true"><span class="drift-blob drift-a"></span><span class="drift-blob drift-b"></span><span class="drift-blob drift-c"></span></div>
 <header class="head glass">
 <div class="kicker">{_html.escape(kicker)}</div>
@@ -229,6 +311,7 @@ body {{ margin:0; font-family:var(--font-family); background:transparent; color:
 {unpriced_html}
 {note_html}
 <footer class="foot">账单 = Σ(输入×输入价 + 输出×输出价)，按每次调用时刻的价格表记账；价格用 /bot model price 维护。</footer>
+{bot_footer_html}
 </section></div>
 </body></html>"""
 

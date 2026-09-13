@@ -123,6 +123,12 @@ def build_threshold_alert(
         level="warning",
         occurred_at=occurred_at,
     )
+def cost_clause(cost_text: str) -> str:
+    """「费 …」片段：未计价行不挂悬空单位「元」（文案审计 I6）。"""
+    text = str(cost_text or "").strip()
+    return "费 未计价" if text == "未计价" else f"费 {text} 元"
+
+
 
 
 # ==================== 报告内容（纯函数） ====================
@@ -130,6 +136,7 @@ def build_model_rows(
     aggregate: dict[str, Any],
     *,
     prices: dict[str, dict[str, float]] | None = None,
+    channel_stats: dict[str, dict[str, dict[str, int]]] | None = None,
 ) -> list[dict[str, Any]]:
     """把聚合结果转成报告卡行（按费用降序，未计价的排后面）。
 
@@ -139,6 +146,12 @@ def build_model_rows(
     行上带 ``calls``/``variants``/``pricing_note``，``pricing_note`` 对
     "真免费"与"未配置价格"显式注明，费用列不再静默显示 0.00。
     ``prices`` 提供时按 精确 → casefold → 家族 链匹配价格。
+
+    2026-09-13 渠道子行：``channel_stats``（家族键 → 渠道 id → 计数/费用，
+    数据源 = llm/ledger.aggregate_channel_usage，账本行自带渠道字段）提供
+    时，家族行附带 ``channels`` 子行列表（按费用降序），把同模型跨渠道的
+    消耗拆到实际服务的渠道——failover 拨转后计费归因可追溯。未提供时
+    行为与旧版完全一致。
     """
     from plugins.bot_unified_runtime.runtime.pricing import (
         lookup_model_price,
@@ -228,6 +241,26 @@ def build_model_rows(
                 "pricing_note": pricing_note,
             }
         )
+        if channel_stats:
+            family_channels = channel_stats.get(family) or {}
+            if family_channels:
+                rows[-1]["channels"] = [
+                    {
+                        "channel": channel_id,
+                        "calls": int((entry or {}).get("calls", 0) or 0),
+                        "cost_milli": int((entry or {}).get("cost_milli", 0) or 0),
+                        "cost_text": format_milli_yuan(
+                            int((entry or {}).get("cost_milli", 0) or 0)
+                        ),
+                    }
+                    for channel_id, entry in sorted(
+                        family_channels.items(),
+                        key=lambda item: (
+                            -int((item[1] or {}).get("cost_milli", 0) or 0),
+                            item[0],
+                        ),
+                    )
+                ]
     rows.sort(key=lambda row: (-row["cost_milli"], row["model"]))
     return rows
 
@@ -237,8 +270,14 @@ def build_report_text(
     *,
     window_label: str,
     prices: dict[str, dict[str, float]] | None = None,
+    channel_stats: dict[str, dict[str, dict[str, int]]] | None = None,
 ) -> str:
-    """定时报告的纯文本版本（渲染失败/控制台回退）。"""
+    """定时报告的纯文本版本（渲染失败/控制台回退）。
+
+    ``channel_stats`` 提供时（账本渠道聚合），家族行下缩进渲染渠道子行：
+    ``└ 渠道 <channel_id>：N 次 / 费 X.XX 元``（按费用降序）——同模型跨
+    渠道的费用差异在此追溯，贴 /bot model usage 报告的逐行风格。
+    """
     lines = [
         f"[用量报告] {window_label}",
         (
@@ -253,7 +292,9 @@ def build_report_text(
     cache_write = int(aggregate.get("cache_write_tokens", 0) or 0)
     if cache_read or cache_write:
         lines.append(f"缓存：命中 {cache_read:,}，创建 {cache_write:,}")
-    for row in build_model_rows(aggregate, prices=prices):
+    for row in build_model_rows(
+        aggregate, prices=prices, channel_stats=channel_stats
+    ):
         variants = row.get("variants") or []
         suffix = f"（合并 {len(variants)} 种写法）" if len(variants) > 1 else ""
         note = str(row.get("pricing_note") or "")
@@ -261,11 +302,16 @@ def build_report_text(
         lines.append(
             f"- {row['model']}{suffix}{note_text}：入 {row['prompt']:,}"
             f" / 出 {row['completion']:,}"
-            f" / 费 {row['cost_text']} 元"
+            f" / {cost_clause(row['cost_text'])}"
         )
+        for sub in row.get("channels") or []:
+            lines.append(
+                f"  └ 渠道 {sub['channel']}：{int(sub['calls']):,} 次"
+                f" / {cost_clause(sub['cost_text'])}"
+            )
     unpriced = int(aggregate.get("unpriced_calls", 0) or 0)
     if unpriced:
-        lines.append(f"（{unpriced} 次调用未配置价格，未计入账单）")
+        lines.append(f"（{unpriced} 次调用未计价：价格未配置，未计入账单）")
     return "\n".join(lines)
 
 
@@ -275,12 +321,22 @@ def build_report_alert(
     window_label: str,
     extra_24h: dict[str, Any] | None = None,
     prices: dict[str, dict[str, float]] | None = None,
+    channel_stats: dict[str, dict[str, dict[str, int]]] | None = None,
+    extra_24h_channel_stats: dict[str, dict[str, dict[str, int]]] | None = None,
 ) -> AlertContent:
     """定时报告 -> 五要素 AlertContent（info 级）。"""
-    what = build_report_text(aggregate, window_label=window_label, prices=prices)
+    what = build_report_text(
+        aggregate,
+        window_label=window_label,
+        prices=prices,
+        channel_stats=channel_stats,
+    )
     if extra_24h is not None:
         what += "\n\n过去 24 小时总花费：\n" + build_report_text(
-            extra_24h, window_label="过去 24 小时", prices=prices
+            extra_24h,
+            window_label="过去 24 小时",
+            prices=prices,
+            channel_stats=extra_24h_channel_stats,
         )
     return AlertContent(
         title=f"模型用量账单报告 · {window_label}",
@@ -410,6 +466,64 @@ def register_usage_monitor_scheduler(
         prices = {}
     fired: dict[str, str] = {}
 
+    # 渠道子行数据源（2026-09-13）：账本开时按窗口读 llm_call_records 的
+    # (实际模型, 渠道) 聚合，折叠到家族键；关/读失败 = None（无子行，
+    # 报告行为与旧版一致）。开关在装配期判定一次（与调度器族 config 快照
+    # 同一取舍，热改当夜不生效是已知边界）。
+    channel_stats_enabled = False
+    channel_stats_db_path = ""
+    try:
+        from plugins.bot_unified_runtime.llm.ledger import (
+            ledger_enabled as _ledger_enabled,
+        )
+        from plugins.bot_unified_runtime.llm.ledger import (
+            resolve_default_db_path as _ledger_db_path,
+        )
+
+        channel_stats_enabled = _ledger_enabled(config)
+        if channel_stats_enabled:
+            channel_stats_db_path = _ledger_db_path()
+    except Exception:  # noqa: BLE001 - 账本模块不可用只影响渠道子行。
+        channel_stats_enabled = False
+
+    def _channel_stats_for(since: datetime, now: datetime) -> dict[str, dict[str, dict[str, int]]] | None:
+        if not channel_stats_enabled or not channel_stats_db_path:
+            return None
+        try:
+            from plugins.bot_unified_runtime.llm.ledger import (
+                aggregate_channel_usage,
+            )
+            from plugins.bot_unified_runtime.runtime.pricing import model_family_key
+
+            raw = aggregate_channel_usage(
+                channel_stats_db_path,
+                start_day=since.date().isoformat(),
+                end_day=now.date().isoformat(),
+                since_iso=since.isoformat(timespec="seconds"),
+            )
+        except Exception:  # noqa: BLE001 - 渠道明细读不到不阻塞报告。
+            return None
+        if not raw:
+            return None
+        stats: dict[str, dict[str, dict[str, int]]] = {}
+        for (actual_model, channel_id), bucket in raw.items():
+            family = model_family_key(actual_model) or actual_model
+            channels = stats.setdefault(family, {})
+            target = channels.setdefault(
+                channel_id,
+                {
+                    "calls": 0,
+                    "failed_calls": 0,
+                    "cost_milli": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "unpriced_calls": 0,
+                },
+            )
+            for field_name in target:
+                target[field_name] += int((bucket or {}).get(field_name, 0) or 0)
+        return stats or None
+
     def _dispatch(alert: AlertContent, *, image_path: str = "") -> None:
         try:
             send_admin_alert_requests(
@@ -430,6 +544,7 @@ def register_usage_monitor_scheduler(
         status_kind: str,
         window_label: str,
         request_id: str,
+        channel_stats: dict[str, dict[str, dict[str, int]]] | None = None,
     ) -> str:
         if render_backend is None or not getattr(render_backend, "available", False):
             return ""
@@ -445,7 +560,9 @@ def register_usage_monitor_scheduler(
                 **aggregate,
                 "cost_text": format_milli_yuan(int(aggregate.get("cost_milli", 0) or 0)),
             },
-            model_rows=build_model_rows(aggregate, prices=prices),
+            model_rows=build_model_rows(
+                aggregate, prices=prices, channel_stats=channel_stats
+            ),
         )
         return render_usage_card_png(
             render_backend,
@@ -484,6 +601,10 @@ def register_usage_monitor_scheduler(
                         status_kind="warn",
                         window_label=f"{today} 00:00 至今",
                         request_id=f"cost-alert-{today}",
+                        channel_stats=_channel_stats_for(
+                            datetime.combine(now.date(), datetime.min.time(), tzinfo=zone),
+                            now,
+                        ),
                     )
                 _dispatch(alert, image_path=image_path)
         except Exception:
@@ -500,11 +621,13 @@ def register_usage_monitor_scheduler(
                 f"{since.strftime('%m-%d %H:%M')} 至 {now.strftime('%m-%d %H:%M')}"
             )
             aggregate = _aggregate_since(usage_log, since=since, now=now)
+            window_channel_stats = _channel_stats_for(since, now)
             extra_24h = None
+            extra_24h_channel_stats = None
             if now.hour == 13:
-                extra_24h = _aggregate_since(
-                    usage_log, since=now - timedelta(hours=24), now=now
-                )
+                day_ago = now - timedelta(hours=24)
+                extra_24h = _aggregate_since(usage_log, since=day_ago, now=now)
+                extra_24h_channel_stats = _channel_stats_for(day_ago, now)
             image_path = _render_report_card(
                 aggregate,
                 kicker="定时报告 · 模型用量",
@@ -513,6 +636,7 @@ def register_usage_monitor_scheduler(
                 status_kind="ok",
                 window_label=window_label,
                 request_id=f"report-{now.strftime('%Y%m%d%H%M')}",
+                channel_stats=window_channel_stats,
             )
             _dispatch(
                 build_report_alert(
@@ -520,6 +644,8 @@ def register_usage_monitor_scheduler(
                     window_label=window_label,
                     extra_24h=extra_24h,
                     prices=prices,
+                    channel_stats=window_channel_stats,
+                    extra_24h_channel_stats=extra_24h_channel_stats,
                 ),
                 image_path=image_path,
             )
