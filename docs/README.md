@@ -63,3 +63,4 @@
 | [design/fstring-card-dom-spec.md](design/fstring-card-dom-spec.md) | f-string 卡 DOM 层统一设计规格（共享 mica 卡壳 `mica_shell`；**未实施，待用户裁决**） |
 | [design/render-pipeline-optimization-spec.md](design/render-pipeline-optimization-spec.md) | 渲染管线性能优化规格（等待预算/并发模型/渲染缓存/热点清理；独立核验报告 `.superpowers/sdd/2026-09-12-shorekeeper-global-audit/spec-verify-render.md` 七项全实；**未实施，待用户裁决**） |
 | [design/visual-effects-catalog.md](design/visual-effects-catalog.md) | 视觉特效目录（11 候选按性价比排序，基于管线规格性能基线；**未实施，待用户裁决**） |
+| [codebase-slim-plan.md](codebase-slim-plan.md) | 规模审计与精简提案（2026-09-13 实测 162k 行分布 + `__init__`/smoke/echo 三热点方案 + 主 Agent 执行提示词；**未实施，待用户裁决**） |
