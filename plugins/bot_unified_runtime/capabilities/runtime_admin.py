@@ -732,7 +732,22 @@ def _handle_model_command(
         by_prompt: dict[str, int] = {}
         by_completion: dict[str, int] = {}
         by_cost: dict[str, int] = {}
+        by_calls: dict[str, int] = {}
+        by_unpriced: dict[str, int] = {}
         unpriced_calls = 0
+        from plugins.bot_unified_runtime.runtime.pricing import (
+            parse_model_prices,
+        )
+        from plugins.bot_unified_runtime.runtime.usage_monitor import (
+            build_model_rows,
+        )
+
+        prices = parse_model_prices(
+            store.get_or(
+                "BOT_MODEL_PRICES",
+                getattr(config, "bot_model_prices", {}) or {},
+            )
+        )
         if usage_store is not None and callable(
             getattr(usage_store, "aggregate_llm_usage_range", None)
         ):
@@ -748,19 +763,14 @@ def _handle_model_command(
             by_prompt = dict(usage.get("by_model_prompt", {}) or {})
             by_completion = dict(usage.get("by_model_completion", {}) or {})
             by_cost = dict(usage.get("by_model_cost_milli", {}) or {})
+            by_calls = dict(usage.get("by_model_calls", {}) or {})
+            by_unpriced = dict(usage.get("by_model_unpriced", {}) or {})
             unpriced_calls = int(usage.get("unpriced_calls", 0) or 0)
         elif diagnostics_store is not None:
             from plugins.bot_unified_runtime.runtime.pricing import (
                 model_call_cost_milli,
-                parse_model_prices,
             )
 
-            prices = parse_model_prices(
-                store.get_or(
-                    "BOT_MODEL_PRICES",
-                    getattr(config, "bot_model_prices", {}) or {},
-                )
-            )
             # 审计 P2#21：list_recent(1000) 截断会少算账单；翻倍分页取到
             # 尽头（存储自身有上限时 len(batch) < page 自然终止）。
             records: list[Any] = []
@@ -793,6 +803,7 @@ def _handle_model_command(
                 totals["calls"] += 1
                 model_name = str(getattr(record, "llm_model", "unknown") or "unknown")
                 by_model[model_name] = by_model.get(model_name, 0) + values[2]
+                by_calls[model_name] = by_calls.get(model_name, 0) + 1
                 by_prompt[model_name] = by_prompt.get(model_name, 0) + values[0]
                 by_completion[model_name] = (
                     by_completion.get(model_name, 0) + values[1]
@@ -805,6 +816,7 @@ def _handle_model_command(
                     by_cost[model_name] = by_cost.get(model_name, 0) + cost_milli
                 else:
                     unpriced_calls += 1
+                    by_unpriced[model_name] = by_unpriced.get(model_name, 0) + 1
         from plugins.bot_unified_runtime.runtime.pricing import format_milli_yuan
 
         lines = [
@@ -819,19 +831,29 @@ def _handle_model_command(
             f"账单：{format_milli_yuan(totals['cost_milli'])} 元",
             "── 按模型 ──",
         ]
-        models_sorted = sorted(
-            by_model,
-            key=lambda name: (-int(by_cost.get(name, 0) or 0), -by_model[name], name),
-        )
-        if not models_sorted:
+        aggregate = {
+            **totals,
+            "by_model": by_model,
+            "by_model_prompt": by_prompt,
+            "by_model_completion": by_completion,
+            "by_model_cost_milli": by_cost,
+            "by_model_calls": by_calls,
+            "by_model_unpriced": by_unpriced,
+            "unpriced_calls": unpriced_calls,
+        }
+        rows = build_model_rows(aggregate, prices=prices)
+        if not rows:
             lines.append("（当日还没有成功调用记录）")
-        for name in models_sorted:
-            cost_milli = int(by_cost.get(name, 0) or 0)
+        for row in rows:
+            variants = row.get("variants") or []
+            suffix = f"（合并 {len(variants)} 种写法）" if len(variants) > 1 else ""
+            note = str(row.get("pricing_note") or "")
+            note_text = f"（{note}）" if note else ""
             lines.append(
-                f"- {name}：入 {int(by_prompt.get(name, 0) or 0):,}"
-                f" / 出 {int(by_completion.get(name, 0) or 0):,}"
-                f" / 共 {by_model[name]:,}"
-                f" / 费 {format_milli_yuan(cost_milli)} 元"
+                f"- {row['model']}{suffix}{note_text}：入 {row['prompt']:,}"
+                f" / 出 {row['completion']:,}"
+                f" / 共 {row['completion'] + row['prompt']:,}"
+                f" / 费 {row['cost_text']} 元"
             )
         if unpriced_calls:
             lines.append(f"（{unpriced_calls} 次调用未配置价格，未计入账单；用 /bot model price 维护）")

@@ -202,6 +202,11 @@ class RuntimeEventLog:
         by_model_cache_read: dict[str, int] = {}
         by_model_cache_write: dict[str, int] = {}
         by_model_cost_milli: dict[str, int] = {}
+        # 2026-09-13 用量合并：按原始模型名计调用次数与未计价次数，
+        # 供报告按家族合并时取"最常见原始名"做代表名，并对历史未计价
+        # 调用显式注明（不静默显示 0.00）。
+        by_model_calls: dict[str, int] = {}
+        by_model_unpriced: dict[str, int] = {}
         unpriced_calls: int = 0
         seen_requests: set[str] = set()
         lines: list[str] = []
@@ -251,6 +256,7 @@ class RuntimeEventLog:
             totals["total_tokens"] += int(total)
             model = fields.get("model", "unknown") or "unknown"
             by_model[model] = by_model.get(model, 0) + int(total)
+            by_model_calls[model] = by_model_calls.get(model, 0) + 1
             by_model_prompt[model] = by_model_prompt.get(model, 0) + prompt_value
             by_model_completion[model] = (
                 by_model_completion.get(model, 0) + completion_value
@@ -273,6 +279,7 @@ class RuntimeEventLog:
                 )
             elif "cost_unpriced=1" in line:
                 unpriced_calls += 1
+                by_model_unpriced[model] = by_model_unpriced.get(model, 0) + 1
         totals["calls"] = len(seen_requests)
         return {
             **totals,
@@ -282,6 +289,8 @@ class RuntimeEventLog:
             "by_model_cache_read": by_model_cache_read,
             "by_model_cache_write": by_model_cache_write,
             "by_model_cost_milli": by_model_cost_milli,
+            "by_model_calls": by_model_calls,
+            "by_model_unpriced": by_model_unpriced,
             "unpriced_calls": unpriced_calls,
         }
 
