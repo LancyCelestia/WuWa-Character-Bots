@@ -7,8 +7,9 @@
    接口（见下方平台能力实况）。
 2. 会话级环形缓冲：每会话最近回应（默认 TTL 10 分钟、每会话上限 8 条），
    供人格上下文注入【表情回应】分区（空则整块不出现）。
-3. 主动贴表情门控：开关 → 每消息去重 → 确定性概率 → 会话冷却 → 每小时
-   滑窗限额，五层全过才贴（``set_msg_emoji_like``，失败静默）。
+3. 主动贴表情门控：开关 → 每消息去重 → 「本消息已骰」单次登记 →
+   确定性概率 → 会话冷却 → 每小时滑窗限额，五层全过才贴
+   （``set_msg_emoji_like``，失败静默）；同一消息跨触发只骰一次。
 
 平台能力实况（2026-09-14 实查 venv 依赖版本，诚实记录）：
 
@@ -84,7 +85,8 @@ REACTION_INTENT_EMOJIS: dict[str, int] = {
     "有趣": 19,  # 偷笑
     "害羞": 6,   # 害羞
     "惊讶": 14,  # 惊讶
-    "安慰": 20,  # 可爱
+    "安慰": 5,   # 流泪（共情同悲，审计 I1：可爱(20) 是卖萌不是共情；
+    #            与「感动」同 id，语义随上下文；经典 0-43 无可靠的摸头/亲亲）
     "感动": 5,   # 流泪
     "加油": 29,  # 奋斗
     "憨笑": 27,  # 憨笑
@@ -94,12 +96,14 @@ _REACTION_FALLBACK_INTENTS = ("开心", "赞同", "有趣", "憨笑")
 
 # 情绪信号关键词（触发 B：用户消息命中即视为态度时刻；简繁都收）。
 _SIGNAL_INTENT_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("感动", ("谢谢", "多谢", "感谢", "辛苦", "帮大忙", "救星", "感謝", "多謝", "辛苦了")),
+    ("感动", ("谢谢", "多谢", "感谢", "辛苦", "帮大忙", "救星", "感謝", "多謝", "辛苦了", "謝謝")),
     ("赞同", ("厉害", "太棒", "好棒", "真棒", "厉害了", "優秀", "厲害", "太棒了", "說得對", "说得对")),
     ("害羞", ("可爱", "喜欢你", "想你", "最棒", "可愛", "喜歡你")),
     ("惊讶", ("居然", "不会吧", "真的假的", "震驚", "震惊")),
     ("加油", ("加油", "冲鸭", "沖鴨")),
-    ("安慰", ("难过", "难受", "傷心", "好難過")),
+    # I3：补简体「伤心」与繁体裸「難過」（原只有 傷心/好難過，最需共情的
+    # 消息落不进安慰路径，恰好滑进 after_reply 笑脸兜底——缺口开在最险处）。
+    ("安慰", ("难过", "难受", "伤心", "傷心", "難過")),
 )
 
 
@@ -113,6 +117,30 @@ def infer_signal_intent(text: str) -> str | None:
             if word and word in stripped:
                 return intent
     return None
+
+
+# 悲伤/低落词族（审计 C1）：after_reply 兜底触发前先看消息情绪，命中即
+# 整条不贴——安慰在言语与陪伴里，绝不对悲伤消息贴呲牙/偷笑/憨笑等笑脸。
+# 简繁都收；误伤（如「积累经验」含「累」、「我先走了」的告别义）的代价
+# 只是少贴一张随机脸，可忽略；漏放过的代价是给悲伤贴笑脸（红线级）。
+_SAD_TONE_WORDS: tuple[str, ...] = (
+    "累", "难过", "難過", "伤心", "傷心", "难受", "難受",
+    "去世", "走了", "哭", "emo", "崩溃", "崩潰",
+    "撑不", "撐不", "抑郁", "抑鬱", "低落",
+)
+
+
+def is_sad_message(text: str) -> bool:
+    """消息是否命中悲伤/低落词族（C1 情绪门；lower() 兼容 EMO/Emo 大小写）。"""
+    stripped = str(text or "").strip().lower()
+    if not stripped:
+        return False
+    return any(word in stripped for word in _SAD_TONE_WORDS)
+
+
+def _is_group_session(session_key: str) -> bool:
+    """会话键是否群聊形态（session_key_from_ids：群=f"group_<gid>_<uid>"）。"""
+    return str(session_key or "").startswith("group_")
 
 
 def select_reaction_emoji(intent: str, seed: str) -> int:
@@ -392,6 +420,9 @@ class ProactiveGate:
         self._last: OrderedDict[str, float] = OrderedDict()
         self._window: dict[str, deque[float]] = {}
         self._reacted: OrderedDict[tuple[str, str], None] = OrderedDict()
+        # 「本消息已骰」登记（双骰漏洞修复）：同一消息无论 salt/触发（B 败
+        # 后 A 换 salt 重掷）只掷一次概率骰，登记发生在实际掷骰前。
+        self._rolled: OrderedDict[tuple[str, str], None] = OrderedDict()
 
     def allow(
         self,
@@ -414,6 +445,8 @@ class ProactiveGate:
         message_dedupe = (key, msg_key)
         if message_dedupe in self._reacted:
             return False
+        if message_dedupe in self._rolled:
+            return False
         current = self.clock() if now is None else float(now)
         last = self._last.get(key, -1e9)
         if current - last < max(0.0, float(cooldown_seconds)):
@@ -423,6 +456,12 @@ class ProactiveGate:
             window.popleft()
         if len(window) >= max(1, int(max_per_hour)):
             return False
+        # 登记已骰（先于掷骰）：无论中不中，这条消息不再二次掷骰——
+        # 否则触发 B 概率败后触发 A 换 salt 仍可独立命中。
+        self._rolled[message_dedupe] = None
+        self._rolled.move_to_end(message_dedupe)
+        while len(self._rolled) > _REACTION_LRU_CAP:
+            self._rolled.popitem(last=False)
         digest = int(
             hashlib.sha256(
                 f"react:{salt}:{key}:{msg_key}".encode()
@@ -442,6 +481,10 @@ class ProactiveGate:
             self._last.popitem(last=False)
         window.append(current)
         return True
+
+    def has_rolled(self, session_key: str, message_key: str) -> bool:
+        """本消息是否已掷过概率骰（跨 salt/跨触发共享：同消息只骰一次）。"""
+        return (str(session_key), str(message_key)) in self._rolled
 
 
 # --------------------------------------------------------------- 动作包装
@@ -510,23 +553,37 @@ async def maybe_react_on_message(
     trigger: str,
     gate: ProactiveGate | None = None,
     now: float | None = None,
+    bot_related: bool | None = None,
 ) -> bool:
     """主动贴表情编排：门控全过 → 给用户这条消息贴一个表情。
 
     trigger：
     - ``emotion_signal``：文本须命中情绪信号关键词（命中决定意图）；
-    - ``after_reply``：bot 刚回复完，意图按确定性哈希从温和池里挑。
+      仅在与 bot 相关的对话贴（审计 I2）：``bot_related=True`` 由调用方按
+      mentions_bot/回复 bot 消息/含 bot 昵称口径判定后传入；``None``
+      （旧调用方未判定）时私聊天然相关放行，群聊一律不介入第三方对话。
+    - ``after_reply``：bot 刚回复完，意图按确定性哈希从温和池里挑；
+      消息命中悲伤/低落词族时整条不贴（审计 C1：刚安慰完转头贴笑脸
+      等同嘲讽），呲牙/偷笑/憨笑等笑脸族因此到不了悲伤场景。
+
+    bot_related 仅约束触发 B（after_reply 时 bot 已参与对话，天然相关）。
     """
     knobs = reaction_knobs(config)
     mid = str(user_message_id or "").strip()
     if not knobs["enabled"] or not mid:
         return False
     if trigger == "emotion_signal":
+        if bot_related is False or (
+            bot_related is None and _is_group_session(session_key)
+        ):
+            return False
         intent = infer_signal_intent(text)
         if intent is None:
             return False
         salt = f"signal:{intent}"
     else:
+        if is_sad_message(text):
+            return False
         intent = ""
         salt = "reply"
     active_gate = gate if gate is not None else SHARED_PROACTIVE_GATE

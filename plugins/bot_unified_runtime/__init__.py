@@ -5861,6 +5861,7 @@ def _register_nonebot_handlers() -> None:
                     config=_config_with_runtime_overrides(config, runtime_settings),
                     trigger="emotion_signal",
                     gate=_REACTION_PROACTIVE_GATE,
+                    bot_related=bool(message.mentions_bot),
                 )
             except Exception:  # noqa: BLE001, S110 - 贴表情失败绝不影响聊天。
                 pass

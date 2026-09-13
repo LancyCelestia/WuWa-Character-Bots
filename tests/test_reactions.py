@@ -398,3 +398,165 @@ def test_chat_prompt_hides_empty_reactions_partition():
 
     prompt = build_chat_prompt(_base_context())[0]["content"]
     assert "【表情回应】" not in prompt
+
+
+# ------------------------------------------------- 语气审计修复（C1/I1/I2/I3）
+
+
+def test_c1_after_reply_skips_sad_messages():
+    """C1 回归：悲伤/低落消息 after_reply 一律不贴（笑脸池到不了悲伤场景）。"""
+    bot = FakeBot()
+    gate = ProactiveGate()
+    sad_texts = (
+        "我心好累，撑不下去了",
+        "我家人去世了",
+        "呜呜想哭",
+        "最近有点emo",
+        "我心态崩潰了",
+        "我先走了",
+        "我好難過",
+    )
+    for idx, text in enumerate(sad_texts):
+        assert asyncio.run(maybe_react_on_message(
+            bot, session_key="group_1_2", user_message_id=500 + idx, text=text,
+            config=_Cfg(), trigger="after_reply", gate=gate,
+        )) is False, text
+    assert bot.calls == []
+
+
+def test_c1_sad_word_list_coverage():
+    from plugins.bot_unified_runtime.runtime.reactions import is_sad_message
+
+    for text in (
+        "好累", "心累了", "我好伤心", "傷心", "有點難過", "難受",
+        "爷爷去世了", "呜呜想哭", "EMO了", "心态崩潰", "實在撐不住",
+        "情绪低落", "最近好抑鬱",
+    ):
+        assert is_sad_message(text) is True, text
+    for text in ("今天真开心", "谢谢你帮大忙", "一起去吃饭吗", "太厉害了", ""):
+        assert is_sad_message(text) is False, text
+
+
+def test_double_roll_second_salt_cannot_reroll():
+    """双骰漏洞：B 骰败后 A 换 salt 重掷必须被「已骰」登记挡下。"""
+    gate = ProactiveGate()
+    kwargs = {"enabled": True, "cooldown_seconds": 0.0, "max_per_hour": 100}
+    # 触发 B：概率骰 0.0 必败（该 key 确定性骰值 0.718 ≠ 0）
+    assert gate.allow("s", "m1", probability=0.0,
+                      salt="signal:安慰", **kwargs) is False
+    assert gate.has_rolled("s", "m1") is True
+    # 触发 A：换 salt 且概率骰 1.0 必中，但仍不得重掷
+    assert gate.allow("s", "m1", probability=1.0,
+                      salt="reply", **kwargs) is False
+    # 其他消息不受牵连，照常可骰可中
+    assert gate.allow("s", "m2", probability=1.0,
+                      salt="reply", **kwargs) is True
+
+
+def test_double_trigger_b_fail_blocks_a_reroll():
+    """端到端：B 骰败 → 同消息 A 换 salt 不可再骰；B 未骰（无信号词）→ A 可骰。"""
+    bot = FakeBot()
+    gate = ProactiveGate()
+
+    class P0:
+        bot_reactions_enabled = True
+        bot_reactions_probability = 0.0
+        bot_reactions_cooldown_seconds = 0
+        bot_reactions_max_per_hour = 20
+
+    # B：命中感动信号但概率败（骰值 0.219 ≠ 0）→ 已骰登记
+    assert asyncio.run(maybe_react_on_message(
+        bot, session_key="priv", user_message_id=62, text="谢谢你呀",
+        config=P0(), trigger="emotion_signal", gate=gate,
+    )) is False
+    # A：换 salt + 概率 1.0，仍被已骰登记挡下
+    assert asyncio.run(maybe_react_on_message(
+        bot, session_key="priv", user_message_id=62, text="谢谢你呀",
+        config=_Cfg(), trigger="after_reply", gate=gate,
+    )) is False
+    assert bot.calls == []
+    # 对照：B 未命中信号词（没骰）→ A 正常可贴
+    assert asyncio.run(maybe_react_on_message(
+        bot, session_key="priv", user_message_id=63, text="今天天气不错",
+        config=P0(), trigger="emotion_signal", gate=gate,
+    )) is False
+    assert asyncio.run(maybe_react_on_message(
+        bot, session_key="priv", user_message_id=63, text="今天天气不错",
+        config=_Cfg(), trigger="after_reply", gate=gate,
+    )) is True
+    assert len(bot.calls) == 1
+
+
+def test_i1_comfort_intent_maps_to_empathy_emoji():
+    """I1：安慰 → 流泪(5) 共情同悲，不再用可爱(20) 卖萌脸。"""
+    from plugins.bot_unified_runtime.runtime.reactions import REACTION_INTENT_EMOJIS
+
+    assert REACTION_INTENT_EMOJIS["安慰"] == 5
+    bot = FakeBot()
+    assert asyncio.run(maybe_react_on_message(
+        bot, session_key="group_7_8", user_message_id=71, text="我好难过",
+        config=_Cfg(), trigger="emotion_signal", gate=ProactiveGate(),
+        bot_related=True,
+    )) is True
+    assert bot.calls == [(
+        "set_msg_emoji_like", {"message_id": 71, "emoji_id": "5"},
+    )]
+
+
+def test_i2_group_signal_requires_bot_related():
+    """I2：群聊触发 B 须显式确认与 bot 相关；未确认/明确无关不贴。"""
+    bot = FakeBot()
+    kw = {
+        "session_key": "group_1_2", "user_message_id": 81, "text": "你真厉害",
+        "config": _Cfg(), "trigger": "emotion_signal",
+    }
+    assert asyncio.run(maybe_react_on_message(bot, gate=ProactiveGate(), **kw)) is False
+    assert asyncio.run(maybe_react_on_message(
+        bot, gate=ProactiveGate(), bot_related=False, **kw)) is False
+    assert bot.calls == []
+    assert asyncio.run(maybe_react_on_message(
+        bot, gate=ProactiveGate(), bot_related=True, **kw)) is True
+    assert len(bot.calls) == 1
+
+
+def test_i2_private_signal_still_reacts_and_explicit_false_blocks():
+    """I2：私聊=与 bot 直接对话，缺省放行；显式 False 仍拦。"""
+    bot = FakeBot()
+    base = {
+        "user_message_id": 82, "text": "谢谢你帮大忙", "config": _Cfg(),
+        "trigger": "emotion_signal",
+    }
+    assert asyncio.run(maybe_react_on_message(
+        bot, session_key="9900", gate=ProactiveGate(), **base)) is True
+    assert asyncio.run(maybe_react_on_message(
+        bot, session_key="9901", gate=ProactiveGate(),
+        bot_related=False, **base)) is False
+    assert len(bot.calls) == 1
+
+
+def test_i3_comfort_keywords_simplified_traditional():
+    """I3：简体「伤心」与繁体裸「難過」命中安慰；繁体「謝謝」命中感动。"""
+    from plugins.bot_unified_runtime.runtime.reactions import infer_signal_intent
+
+    assert infer_signal_intent("我好伤心") == "安慰"
+    assert infer_signal_intent("有點難過") == "安慰"
+    assert infer_signal_intent("好難過啊") == "安慰"
+    assert infer_signal_intent("謝謝你，辛苦了") == "感动"
+    assert infer_signal_intent("今天运气不错") is None
+
+
+def test_normal_scenes_unaffected():
+    """正常场景照常：非悲伤消息 after_reply 照贴、私聊信号照贴。"""
+    bot = FakeBot()
+    assert asyncio.run(maybe_react_on_message(
+        bot, session_key="g1", user_message_id=91, text="今天赢了比赛好开心",
+        config=_Cfg(), trigger="after_reply", gate=ProactiveGate(),
+    )) is True
+    assert len(bot.calls) == 1
+    bot2 = FakeBot()
+    assert asyncio.run(maybe_react_on_message(
+        bot2, session_key="group_3_4", user_message_id=92, text="太棒了，说得好",
+        config=_Cfg(), trigger="emotion_signal", gate=ProactiveGate(),
+        bot_related=True,
+    )) is True
+    assert len(bot2.calls) == 1
