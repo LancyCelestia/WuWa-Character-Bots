@@ -718,12 +718,17 @@ def test_goods_valid_price_still_converts():
 
 def test_weibo_status_budget_exhausted_raises(monkeypatch):
     monkeypatch.setattr(platforms_weibo, "_WEIBO_STATUS_BUDGET_SECONDS", 0.0)
-    started = time.monotonic()
+
+    def _must_not_fetch(*args, **kwargs):
+        raise AssertionError("budget=0 但仍尝试了网络请求（预算未前置判定）")
+
+    monkeypatch.setattr(platforms_weibo, "http_get_json", _must_not_fetch)
+    # 2026-09-13 去抖动：旧版断言墙钟 <2s，在全量套件高负载下会抖红；
+    # 改为确定性断言——预算耗尽时零网络尝试 + 必抛 budget ParseHttpError。
     with pytest.raises(ParseHttpError, match="budget"):
         platforms_weibo._weibo_status_card(
             "ABCDEF123", "https://weibo.com/1/ABCDEF123", cookie_header="", proxy=""
         )
-    assert time.monotonic() - started < 2.0
 
 
 def test_youtube_enrich_budget_zero_skips_enrichment(monkeypatch):

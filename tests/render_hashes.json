@@ -10,5 +10,5 @@
   "plugins/bot_unified_runtime/output/card_render/templates/mermaid_card.html": "58a3d7651b5fed2afaa5479f766cf83717ded04fec2927be6b3a8a49e7cd6302",
   "plugins/bot_unified_runtime/output/card_render/templates/song_candidates.html": "15b96987c62d726f952a8b9608df776349217d5efda0947392bef4f115fe638f",
   "plugins/bot_unified_runtime/output/card_render/templates/universal_card.html": "fa06872dea6a1749bef132a3527a54d21ba0cbeecc1670107773f3f0b1eb6de8",
-  "plugins/bot_unified_runtime/output/card_render/theme_tokens.py": "8064ae346620357698ac803fc3d2073f36d34d349aca53dd6bff929cb7f79c8a"
+  "plugins/bot_unified_runtime/output/card_render/theme_tokens.py": "481c01c961e56eb194de7923eb7d253218183fd614af19366abb8c91c016acb9"
 }
