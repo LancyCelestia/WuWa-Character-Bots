@@ -27,6 +27,10 @@ env/
 
 # Runtime state
 data/
+# 例外：包内资产目录（NMC 天气 2527 区县码表，nmc_weather.py 随包引用）——
+# 清理波不得误删（2026-09-13 曾被误清致 NMC 路径整体塌向 open-meteo，wx7 报告）。
+!plugins/bot_unified_runtime/sources/data/
+!plugins/bot_unified_runtime/sources/data/qx.json
 *.sqlite
 *.sqlite3
 *.db
@@ -71,3 +75,8 @@ research/bilibili_api_sdists/
 
 # third-party NoneBot localstore config (actual runtime location is ChatBot_Runtime\\config)
 config/
+
+# Local agent tool configs (workspace-local, never commit)
+.claude/
+.codex/
+.grok/
