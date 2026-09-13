@@ -9,7 +9,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 import re
 from collections import Counter
 from datetime import datetime, timezone
@@ -24,6 +23,9 @@ from plugins.bot_unified_runtime.contracts.subscription import (
 from plugins.bot_unified_runtime.sources.subscription_store import SubscriptionStore
 from plugins.bot_unified_runtime.sources.subscriptions import (
     build_subscription_registry,
+)
+from plugins.bot_unified_runtime.sources.subscriptions.social_v2 import (
+    _run_legacy_coroutine,
 )
 
 _SUBSCRIBE_RE = re.compile(
@@ -476,8 +478,14 @@ def build_subscribe_capability(
                 )
             cursor = store.get_cursor(spec_id)
             try:
-                result = asyncio.run(
-                    adapter.fetch_latest(spec, cursor, _ctx(spec.platform))
+                # A63 移交件（xhs-leak-fix-report §五.2）：``asyncio.run(coro)``
+                # 是「先构造入参协程、再做入口 running-loop 检查」——所在线程若
+                # 残留 running-loop 状态（playwright sync greenlet 中毒），检查
+                # 先抛 RuntimeError 且协程永不 await → GC "never awaited"。
+                # 换 _run_legacy_coroutine：预检先行，中毒线程在协程构造**之前**
+                # 上抛，被下方 broad except 收敛为结构化失败（不炸调度器）。
+                result = _run_legacy_coroutine(
+                    lambda: adapter.fetch_latest(spec, cursor, _ctx(spec.platform))
                 )
             except Exception as exc:  # noqa: BLE001 - 用户需要失败原因。
                 return _result(

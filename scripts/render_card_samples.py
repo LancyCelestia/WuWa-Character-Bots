@@ -981,32 +981,45 @@ def render_samples(
     keys: list[str] | None = None,
     backend: Any = None,
 ) -> list[SampleResult]:
-    """逐卡渲染落 PNG；单卡失败记录原因继续下一张。backend 可注入（测试）。"""
-    if backend is None:
+    """逐卡渲染落 PNG；单卡失败记录原因继续下一张。backend 可注入（测试）。
+
+    内部创建的后端渲染完成后显式 ``close()``（finally 兜底）——playwright
+    sync 后端不 close 会在调用线程残留 running-loop 状态（毒化同进程后续
+    ``asyncio.run`` 用例，见 .superpowers/sdd/2026-09-13-six-domain-batch/
+    xhs-leak-fix-report.md §一.1）；注入后端归调用方管理，不代关。
+    """
+    owns_backend = backend is None
+    if owns_backend:
         backend = build_render_backend("auto")
     if not getattr(backend, "available", False):
         raise RuntimeError(f"渲染后端不可用（name={getattr(backend, 'name', '?')}），无法出样张")
     selected = [card for card in CARDS if not keys or card.key in set(keys)]
     out_dir.mkdir(parents=True, exist_ok=True)
     results: list[SampleResult] = []
-    for index, card in enumerate(selected, start=1):
-        result = SampleResult(key=card.key, ok=False)
-        started = time.monotonic()
-        try:
-            payload = card.build()
-            png = backend.render_card(payload)
-            if not isinstance(png, bytes) or not png:
-                raise RuntimeError("后端返回空/None（渲染失败）")
-            target = out_dir / f"{index:02d}_{card.key}.png"
-            target.write_bytes(png)
-            result.path = target
-            result.size_bytes = len(png)
-            result.dimensions = _png_dimensions(png)
-            result.ok = True
-        except Exception as exc:  # noqa: BLE001 - 单卡失败不中断其余卡。
-            result.error = f"{type(exc).__name__}: {exc}"
-        result.elapsed_ms = int((time.monotonic() - started) * 1000)
-        results.append(result)
+    try:
+        for index, card in enumerate(selected, start=1):
+            result = SampleResult(key=card.key, ok=False)
+            started = time.monotonic()
+            try:
+                payload = card.build()
+                png = backend.render_card(payload)
+                if not isinstance(png, bytes) or not png:
+                    raise RuntimeError("后端返回空/None（渲染失败）")
+                target = out_dir / f"{index:02d}_{card.key}.png"
+                target.write_bytes(png)
+                result.path = target
+                result.size_bytes = len(png)
+                result.dimensions = _png_dimensions(png)
+                result.ok = True
+            except Exception as exc:  # noqa: BLE001 - 单卡失败不中断其余卡。
+                result.error = f"{type(exc).__name__}: {exc}"
+            result.elapsed_ms = int((time.monotonic() - started) * 1000)
+            results.append(result)
+    finally:
+        if owns_backend:
+            close = getattr(backend, "close", None)
+            if callable(close):
+                close()
     return results
 
 
