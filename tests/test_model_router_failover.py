@@ -14,6 +14,41 @@ from plugins.bot_unified_runtime.llm.providers import (
     OpenAICompatibleLLMProvider,
 )
 
+# ==================== A50 加固：channel_health 单例每测复位 ====================
+
+
+@pytest.fixture(autouse=True)
+def _reset_channel_health_singleton(tmp_path, monkeypatch):
+    """每个测试前复位 channel_health 进程级单例并隔离到 tmp_path 独立库。
+
+    背景（A50 排查实锤）：``channel_health._GLOBAL_STORE`` 是进程级单例 +
+    SQLite 持久化 + latency_first 默认开；全量套件下一旦 .env 装载路径把
+    ``BOT_CHANNEL_HEALTH_ENABLED`` 泄漏进 os.environ（生产 .env 确有该键），
+    健康层会在这些纯路由测试中激活，读到单例里此前测试残留的 EMA 行 /
+    不可用标记 → 候选序被延迟降序或健康过滤改写（'first' 系假红的根因）。
+    channel_health 没有公开复位函数，故按仓库既有手法（test_channel_health_v2 /
+    test_auditfix_llm_route 直接替换模块全局）做三重隔离：
+
+    1) 全新空 store 替换 ``_GLOBAL_STORE``（monkeypatch 自动还原，不外溢）；
+    2) ``resolve_default_db_path`` 钉到 tmp_path——单例即使被置 None 再取，
+       也落临时库，绝不触生产 channel_health.sqlite3；
+    3) 两个开关环境变量显式钉 0，锁死「本文件 = 健康层关闭」的语义前提；
+       个别用例如需健康层，在用例内自行 monkeypatch 覆盖即可。
+    """
+    import plugins.bot_unified_runtime.llm.channel_health as channel_health_module
+
+    db_path = str(tmp_path / "channel_health.sqlite3")
+    monkeypatch.setattr(
+        channel_health_module,
+        "_GLOBAL_STORE",
+        channel_health_module.ChannelHealthStore(db_path),
+    )
+    monkeypatch.setattr(
+        channel_health_module, "resolve_default_db_path", lambda: db_path
+    )
+    monkeypatch.setenv("BOT_CHANNEL_HEALTH_ENABLED", "0")
+    monkeypatch.setenv("BOT_CHANNEL_HEALTH_LATENCY_FIRST", "0")
+
 
 class FakeProvider:
     def __init__(self, model_id: str, failures: dict[str, str], calls: list[str]) -> None:
