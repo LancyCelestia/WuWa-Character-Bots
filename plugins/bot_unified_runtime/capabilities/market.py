@@ -151,12 +151,13 @@ _COMMODITY_TRIGGER_RE = re.compile(
 )
 _BOND_TRIGGER_RE = re.compile(
     r"(国债收益率|国债|债券收益率|期限利差|收益率曲线|中美国债|國債|債券收益率"
-    # 全拼路由（T-Spec T1.5 对齐）：guozhai 双侧全字母数字边界（本正则无
-    # IGNORECASE，沿用 market 拼音分支 [A-Za-z0-9] 先例，hguozhai/guozhai123
-    # 类胶合拒）。弃用：xianqicha（echo A39 侧残缺拼形——期限利差应为
-    # xianqilicha，本席禁改 echo，路由残缺形属误导，待 echo 侧勘误后对齐）；
+    # 全拼路由（T-Spec T1.5 对齐）：guozhai/xianqilicha 双侧全字母数字边界
+    # （本正则无 IGNORECASE，沿用 market 拼音分支 [A-Za-z0-9] 先例，
+    # hguozhai/guozhai123 类胶合拒）。xianqilicha 为 A72 echo 勘误后的正形
+    # （原 xianqicha 残缺形已在 echo 侧改正，路由面对齐收口）；
     # shouyilv（收益率全拼过长弃）；gz（与 affinity「规则」冲突，既有裁定）。
-    r"|(?<![A-Za-z0-9])guozhai(?![A-Za-z0-9]))"
+    r"|(?<![A-Za-z0-9])guozhai(?![A-Za-z0-9])"
+    r"|(?<![A-Za-z0-9])xianqilicha(?![A-Za-z0-9]))"
 )
 _NORTHBOUND_TRIGGER_RE = re.compile(
     r"(北向资金|北上资金|北向|沪股通|深股通|北向資金|北上資金|滬股通|深股通"

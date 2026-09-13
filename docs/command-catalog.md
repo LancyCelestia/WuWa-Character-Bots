@@ -6,7 +6,7 @@
 > `/bot help`、`/bot help <模块>` 与本目录共享同一数据源。
 
 - 模块数：72
-- 别名数：478
+- 别名数：479
 - 普通用户可用模块：34；仅管理员模块：38
 - 路由规则数：30；其中登记为内部能力：5
 
@@ -1547,7 +1547,7 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
 ## 商品行情
 
 - 权限：普通用户可用
-- 触发别名：商品行情；黄金；金价；白银；银价；原油；油价；铜价；大宗商品；黃金；金價；白銀；銀價；油價；銅價；gold；silver；oil；commodity；huangjin；jijia；yanyou；baiyin
+- 触发别名：商品行情；黄金；金价；白银；银价；原油；油价；铜价；大宗商品；黃金；金價；白銀；銀價；油價；銅價；gold；silver；oil；commodity；huangjin；jinjia；youjia；yuanyou；baiyin
 - 能力入口：bot.commodities
 - 自然语言触发：黄金；金价；白银；银价；原油；油价；铜价；大宗商品；黃金；金價；白銀；油價；銅價；gold；silver；oil；commodity
 - 群聊/私聊差异：群聊/私聊行为一致（无会话分支）
@@ -1582,7 +1582,7 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
 ## 国债收益率
 
 - 权限：普通用户可用
-- 触发别名：国债收益率；国债；债券收益率；期限利差；收益率曲线；中美国债；國債；債券收益率；guozhai；xianqicha
+- 触发别名：国债收益率；国债；债券收益率；期限利差；收益率曲线；中美国债；國債；債券收益率；guozhai；xianqilicha
 - 能力入口：bot.bond
 - 自然语言触发：国债；国债收益率；期限利差；收益率曲线；中美国债；國債；債券收益率
 - 群聊/私聊差异：群聊/私聊行为一致（无会话分支）

@@ -1441,7 +1441,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '商品行情',
             "admin_only": False,
-            "aliases": ('商品行情', '黄金', '金价', '白银', '银价', '原油', '油价', '铜价', '大宗商品', '黃金', '金價', '白銀', '銀價', '油價', '銅價', 'gold', 'silver', 'oil', 'commodity', 'huangjin', 'jijia', 'yanyou', 'baiyin'),
+            "aliases": ('商品行情', '黄金', '金价', '白银', '银价', '原油', '油价', '铜价', '大宗商品', '黃金', '金價', '白銀', '銀價', '油價', '銅價', 'gold', 'silver', 'oil', 'commodity', 'huangjin', 'jinjia', 'youjia', 'yuanyou', 'baiyin'),
             "index": '【商品行情】黄金/白银/原油/铜现价：黄金 或 金价/油价/大宗商品/gold',
             "title_line": '【商品行情】国际大宗商品现价与走势',
             "lines": [
@@ -1466,7 +1466,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '国债收益率',
             "admin_only": False,
-            "aliases": ('国债收益率', '国债', '债券收益率', '期限利差', '收益率曲线', '中美国债', '國債', '債券收益率', 'guozhai', 'xianqicha'),
+            "aliases": ('国债收益率', '国债', '债券收益率', '期限利差', '收益率曲线', '中美国债', '國債', '債券收益率', 'guozhai', 'xianqilicha'),
             "index": '【国债收益率】主要期限国债收益率与利差：国债 或 国债收益率/期限利差/收益率曲线',
             "title_line": '【国债收益率】国债收益率与期限利差速览',
             "lines": [
