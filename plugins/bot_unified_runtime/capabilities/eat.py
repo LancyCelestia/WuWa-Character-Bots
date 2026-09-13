@@ -279,12 +279,9 @@ def _tavily_image_candidates(name: str, config: Any | None = None) -> list[str]:
         str(getattr(config, "bot_search_tavily_api_key", "") or ""), config
     )
     if not api_key and config is None:
-        try:
-            from dotenv import load_dotenv
-
-            load_dotenv()
-        except Exception:  # noqa: BLE001, S110 - 无 dotenv 环境就直读进程环境变量。
-            pass
+        # CLI 预热态（config=None，nonebot 未加载配置）：直读进程环境变量。
+        # 注意：库代码不做 load_dotenv()——运行时读 .env 会把生产开关泄进
+        # 测试进程（A43 全量预跑 20 红根因）；.env 装载是 CLI 入口的职责。
         api_key = os.environ.get("BOT_SEARCH_TAVILY_API_KEY", "")
     if not api_key:
         return []
@@ -727,6 +724,12 @@ def build_eat_capability(
 if __name__ == "__main__":  # pragma: no cover - 运维预热入口（裸跑=全量幂等预热；--dishes 指定菜名）
     import argparse
 
+    try:  # CLI 预热需要 Tavily 兜底 key：入口处装 .env（库代码保持纯净）。
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except Exception:  # noqa: BLE001, S110 - 无 dotenv 环境直读进程环境变量。
+        pass
     _parser = argparse.ArgumentParser(
         description="菜谱封面图库预热（Bing 实拍图 + 像素质检 + SQLite 索引）"
     )
