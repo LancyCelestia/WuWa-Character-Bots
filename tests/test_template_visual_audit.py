@@ -48,6 +48,7 @@ _SURFACE_RULES: dict[str, tuple[str, ...]] = {
     "finance_card.html": (".row",),
     "affinity_card.html": (".glass",),
     "song_candidates.html": (".glass",),
+    "error_card.html": (".row",),
 }
 
 # DOM 上必须以 glass 类组合出瓦片的选择器（affinity/song 的表面挂法）。
@@ -127,6 +128,7 @@ _EDITABLE_TEMPLATES: tuple[str, ...] = (
     "mermaid_card.html",
     "market_card.html",
     "finance_card.html",
+    "error_card.html",
 )
 # 旧散灰（vis5 前各模板私有的次级文字色，全部收编 TEXT_SECONDARY）。
 _LEGACY_SECONDARY_GRAYS = ("#7a828c", "#8a919b", "#66727f", "#7a8699", "#57626f", "#4a5560")

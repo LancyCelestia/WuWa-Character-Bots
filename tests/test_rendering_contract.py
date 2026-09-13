@@ -50,6 +50,7 @@ CARD_TEMPLATES: tuple[str, ...] = (
     "mermaid_card.html",
     "song_candidates.html",
     "finance_card.html",
+    "error_card.html",
 )
 
 # 模板名 → CARD_SHELL_WIDTHS 登记键（宽度按内容族分化，但必须登记）。
@@ -60,6 +61,7 @@ _SHELL_WIDTH_KEYS: dict[str, str] = {
     "mermaid_card.html": "mermaid_max",
     "song_candidates.html": "song_panel",
     "finance_card.html": "finance",
+    "error_card.html": "error",
 }
 
 
@@ -326,6 +328,7 @@ class _CardScopeParser(HTMLParser):
         ("render_affinity_card_html", {}, True),
         ("render_song_candidates_html", {"candidates": [{"name": "歌"}]}, True),
         ("render_finance_card_html", {}, True),  # 漂移色斑为静态 DOM，空 payload 也在
+        ("render_error_card_html", {}, True),  # 运行异常诊断卡（2026-09-13）
         ("render_mermaid_html", None, False),  # 色斑走 .card::before/::after 伪元素
     ],
 )
@@ -455,6 +458,7 @@ def test_wash_derivation_brand_base_is_stable() -> None:
         "render_affinity_card_html",
         "render_song_candidates_html",
         "render_finance_card_html",
+        "render_error_card_html",
     ],
 )
 @pytest.mark.parametrize("payload", [None, {}])
@@ -464,6 +468,43 @@ def test_renderers_never_raise_on_empty_payload(
     html_text = getattr(bridge, renderer_name)(payload)
     assert isinstance(html_text, str) and html_text.strip()
     assert "守岸人" in html_text
+
+
+# ==================== 10b. vis5 边界加固：好感度卡脏数据不抛异常 ====================
+# 审计实锤（vis5 前）：rows.score=None/"80"/缺键 → 模板 `%.1f` 格式化抛
+# TypeError/UndefinedError；bar 越界直出 250%。桥层归一是契约铁律 7 的前置。
+_AFFINITY_DIRTY_PAYLOADS: tuple[dict[str, Any], ...] = (
+    {"mode": "group", "rows": [{"sender_id": "1", "display_name": "甲", "score": None}]},
+    {"mode": "group", "rows": [{"sender_id": "1", "display_name": "甲", "score": "80"}]},
+    {"mode": "group", "rows": [{"sender_id": "1"}]},
+    {"mode": "group", "rows": ["not-a-dict", None]},
+    {"mode": "private", "bot_to_user": {"score": None, "tier": "友善", "bar": None}},
+    {"mode": "private", "bot_to_user": {"score": 80.0, "tier": "友善", "bar": 250}},
+    {"mode": "private", "bot_to_user": {"score": 10.0, "bar": -5}},
+    {"mode": "algorithm", "steps": [{"label": "基准", "value": None, "cls": "flat"}]},
+    {"mode": "algorithm", "steps": [{"label": "x", "value": "ok", "cls": "爆"}]},
+    {"mode": "algorithm", "tiers": [{"label": None, "range": None, "attitude": None}]},
+)
+
+
+@pytest.mark.parametrize("payload", _AFFINITY_DIRTY_PAYLOADS)
+def test_affinity_card_never_raises_on_dirty_payload(payload: dict[str, Any]) -> None:
+    html_text = bridge.render_affinity_card_html(payload)
+    assert isinstance(html_text, str) and html_text.strip()
+    assert "守岸人" in html_text
+    # 缺省分数按 0.0 渲染，不出现 None/undefined 字样。
+    assert "None" not in html_text.split("<body>", 1)[-1]
+
+
+def test_affinity_bar_clamped_into_track() -> None:
+    html_text = bridge.render_affinity_card_html(
+        {"mode": "private", "bot_to_user": {"score": 80.0, "tier": "友善", "bar": 250}}
+    )
+    assert "width: 100.0%" in html_text
+    html_text = bridge.render_affinity_card_html(
+        {"mode": "private", "user_to_bot": {"score": 10.0, "bar": -5}}
+    )
+    assert "width: 0.0%" in html_text
 
 
 def test_mermaid_png_falls_back_to_none_without_backend(

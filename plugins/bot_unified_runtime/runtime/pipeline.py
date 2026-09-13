@@ -801,7 +801,32 @@ class RuntimePipeline:
             debug_id=debug_id,
             operational_issue=issue,
         )
+        # 统一错误报告卡（2026-09-13）：能力执行异常向触发者回诊断卡。
+        # 旁路钩子：fail-open，任何异常不影响既有回执路径；开关关=零动作。
+        self._maybe_send_error_card(message, capability_id, exc)
         return self._record_receipt_safely(receipt, message)
+
+    def _maybe_send_error_card(
+        self,
+        message: IncomingMessage,
+        capability_id: str,
+        exc: Exception,
+    ) -> None:
+        """统一错误报告卡旁路钩子（error_report.py 供实现）。
+
+        - 只挂在能力执行异常 catch 点（_internal_error），LLM 链路语义不动；
+        - bot_error_card_enabled=false 时零动作（与现状字节级一致）；
+        - 冷却/渲染/提交全部在 error_report 内部 fail-open，这里再兜一层：
+          钩子自身绝不让回执路径变形。
+        """
+        try:
+            from plugins.bot_unified_runtime.runtime.error_report import (
+                maybe_submit_error_card,
+            )
+
+            maybe_submit_error_card(self, message, capability_id, exc)
+        except Exception:
+            logger.debug("error report card hook failed", exc_info=True)
 
     def _duplicate_receipt(
         self,

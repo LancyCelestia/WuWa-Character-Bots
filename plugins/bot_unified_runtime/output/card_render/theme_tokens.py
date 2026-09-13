@@ -89,6 +89,7 @@ CARD_SHELL_WIDTHS: dict[str, int] = {
     "finance": 1080,     # 股票/汇率金融卡
     "song_panel": 980,   # 点歌候选面板（透明壳内层）
     "mermaid_max": 840,  # mermaid 卡 fit-content 上限
+    "error": 1080,       # 运行异常诊断卡（error_card.html）
 }
 
 
@@ -315,6 +316,16 @@ THEME_ALIASES: dict[str, str] = {
 UNKNOWN_THEME_KEYS: tuple[str, ...] = ("steam", "epic")
 
 
+# ==================== 系统主题（非平台，独立于平台注册表） ====================
+# 运行异常诊断卡（error_card.html）专用：强调色=语义红（与金融卡 --up 同源
+# 红系，红=异常语义），走独立 ERROR_THEME 注入 --pc，**不进 PLATFORM_THEMES**
+# ——平台注册表只收「内容来源平台」，系统态不污染该命名空间。云母洗仍由
+# derive_wash_tokens 从红色 accent 派生（wash-1 轻推向暖相，mist 保持本命
+# 打底），满足「本命 wash 打底 + 红强调」的视觉裁定。
+ERROR_ACCENT = "#d54941"
+ERROR_THEME = _make_theme("system_error", "运行异常", ERROR_ACCENT)
+
+
 def get_platform_theme(platform: str) -> ThemeTokens:
     """平台 identifier → 主题 token；未知平台安全兜底 DEFAULT_THEME。"""
     key = (platform or "").strip().lower()
@@ -375,6 +386,8 @@ __all__ = [
     "CARD_SHELL_WIDTHS",
     "DEFAULT_THEME",
     "DEFAULT_WASH_TOKENS",
+    "ERROR_ACCENT",
+    "ERROR_THEME",
     "FONT_WEIGHT_MAX",
     "GAP_SCALE_PX",
     "META_VIEWPORT_POLICY",

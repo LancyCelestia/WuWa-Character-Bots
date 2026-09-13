@@ -31,6 +31,7 @@ TRACKED_FILES: tuple[str, ...] = (
     "plugins/bot_unified_runtime/output/card_render/templates/market_card.html",
     "plugins/bot_unified_runtime/output/card_render/templates/mermaid_card.html",
     "plugins/bot_unified_runtime/output/card_render/templates/song_candidates.html",
+    "plugins/bot_unified_runtime/output/card_render/templates/error_card.html",
     "plugins/bot_unified_runtime/output/card_render/theme_tokens.py",
     "docs/rendering-contract.md",
     "DESIGN-SPEC.md",

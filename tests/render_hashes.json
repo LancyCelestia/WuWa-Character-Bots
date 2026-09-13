@@ -5,10 +5,11 @@
   "docs/design/visual-effects-catalog.md": "84541fbd07dfd65e1a7cf359a74eebda73336507edcde80ff2782d3a6597d7cf",
   "docs/rendering-contract.md": "fd9a47c7328d16118f09af92329e51ebfaed2288db4b9c3a02a840eab0ac79c1",
   "plugins/bot_unified_runtime/output/card_render/templates/affinity_card.html": "273c3821e63f8f9346257308d316af40d09b05bef0699a9305ce7a484a2dbced",
+  "plugins/bot_unified_runtime/output/card_render/templates/error_card.html": "7d5d98e443ad637f324f9631eaabe222d1a2bc5eb6302308ef4b0b144a1e3e3c",
   "plugins/bot_unified_runtime/output/card_render/templates/finance_card.html": "ed4e8eee31c0ef9df8284d5979cf8b64d0ef6c73af71f1f9431d1882e059b374",
   "plugins/bot_unified_runtime/output/card_render/templates/market_card.html": "ab8306347526fe43112719d9f8bbacdd279276ee38e04a6280e5a1bf91f89a0d",
-  "plugins/bot_unified_runtime/output/card_render/templates/mermaid_card.html": "eb9576254864ad218ee1e98f39fa5e4537fc2171d427f601f3529ef276571fac",
+  "plugins/bot_unified_runtime/output/card_render/templates/mermaid_card.html": "cc2460a76b6a51c1cdb83ee7ea5c0ed799324fe8a3f32ecfb97a9b241a2e98da",
   "plugins/bot_unified_runtime/output/card_render/templates/song_candidates.html": "b9b1ebd784c6dbaead14861676efcbd19797c93151316b5b14ea67665661480a",
   "plugins/bot_unified_runtime/output/card_render/templates/universal_card.html": "5ace0428ab3dac973c9f126d06c522fe51e3eb55908004a4aa36dd57ded76026",
-  "plugins/bot_unified_runtime/output/card_render/theme_tokens.py": "0527135368a3db4840c1f9cecfa164a94eacfdf20bd33cd7367f5a50d8256db4"
+  "plugins/bot_unified_runtime/output/card_render/theme_tokens.py": "0e862f1ca67beff9d88864ed018ea8da58219f26c3232ca5ad546cece53af71b"
 }

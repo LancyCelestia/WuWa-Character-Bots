@@ -50,6 +50,7 @@ from .theme_tokens import (
     BRAND_THEME,
     DEFAULT_THEME,
     DIVIDER,
+    ERROR_THEME,
     GLOW_ACCENT,
     PLATFORM_FOOTER_LABELS,
     PLATFORM_THEMES,
@@ -1528,10 +1529,61 @@ def render_affinity_card_html(payload_dict: dict[str, Any] | None = None) -> str
     {score, tier, bar}、rules=[...]、bot_name）。主色 pc 无平台语境，取
     bot_help_card_color 同源配置，缺省回 UNKNOWN_PLATFORM_COLOR 中性灰。
     任何字段缺失都有默认值，不抛异常。
+    vis5 加固（2026-09-13）：rows/steps/tiers/双向面板逐字段归一——score
+    None/字符串/缺键不再让模板 `%.1f` 格式化抛 TypeError（契约铁律 7：
+    渲染失败→纯文本兜底，桥层先保证可渲染），bar 钳 0-100，cls 白名单。
     """
     data = dict(payload_dict or {})
     template = _ENV.get_template("affinity_card.html")
     pc = _as_str(data.get("pc")) or UNKNOWN_PLATFORM_COLOR
+
+    def _num(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _pair(raw: Any) -> dict[str, Any]:
+        src = raw if isinstance(raw, dict) else {}
+        score = _num(src.get("score"), 50.0)
+        bar = max(0.0, min(100.0, _num(src.get("bar"), score)))
+        return {"score": score, "tier": _as_str(src.get("tier")) or "友善", "bar": bar}
+
+    rows_out: list[dict[str, Any]] = []
+    for row in _as_list(data.get("rows")):
+        if not isinstance(row, dict):
+            continue
+        rows_out.append(
+            {
+                "sender_id": _as_str(row.get("sender_id")),
+                "display_name": _as_str(row.get("display_name")),
+                "score": _num(row.get("score"), 0.0),
+                "tier": _as_str(row.get("tier")),
+            }
+        )
+    cls_allowed = {"up", "down", "flat", ""}
+    steps_out: list[dict[str, Any]] = []
+    for step in _as_list(data.get("steps")):
+        if not isinstance(step, dict):
+            continue
+        value = step.get("value")
+        cls_raw = _as_str(step.get("cls"))
+        steps_out.append(
+            {
+                "label": _as_str(step.get("label")),
+                "value": "—" if value is None else str(value),
+                "cls": cls_raw if cls_raw in cls_allowed else "",
+            }
+        )
+    tiers_out = [
+        {
+            "label": _as_str(t.get("label")),
+            "range": _as_str(t.get("range")),
+            "attitude": _as_str(t.get("attitude")),
+        }
+        for t in _as_list(data.get("tiers"))
+        if isinstance(t, dict)
+    ]
     return template.render(
         pc=pc,
         # 釉瑚云母洗：与 --pc 同点注入（mica-glass v1 2026-09-12）。
@@ -1544,15 +1596,73 @@ def render_affinity_card_html(payload_dict: dict[str, Any] | None = None) -> str
         bot_avatar_url=_as_str(data.get("bot_avatar_url")),
         feature_label=_as_str(data.get("feature_label")) or "好感度",
         bot_score=_as_str(data.get("bot_score")) or "10.0",
-        rows=[row for row in (data.get("rows") or []) if isinstance(row, dict)],
-        steps=[row for row in (data.get("steps") or []) if isinstance(row, dict)],
-        tiers=[row for row in (data.get("tiers") or []) if isinstance(row, dict)],
-        bot_to_user=data.get("bot_to_user") or {"score": 50.0, "tier": "友善", "bar": 50.0},
-        user_to_bot=data.get("user_to_bot") or {"score": 50.0, "tier": "友善", "bar": 50.0},
+        rows=rows_out,
+        steps=steps_out,
+        tiers=tiers_out,
+        bot_to_user=_pair(data.get("bot_to_user")),
+        user_to_bot=_pair(data.get("user_to_bot")),
         rules=[rule for rule in (data.get("rules") or []) if isinstance(rule, dict)],
         # 漂移相位按 payload digest 确定注入（E01，D2→D1）。
         phase=payload_phase(data),
         # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，同 universal 段）。
+        **_vis4_context(),
+    )
+
+
+# ==================== 运行异常诊断卡（统一错误报告卡 2026-09-13） ====================
+_ERROR_CARD_TEMPLATE = _ENV.get_template("error_card.html")
+
+
+def _error_kv_rows(raw: Any) -> list[dict[str, str]]:
+    """label/value 键值对行归一：脏输入逐项丢弃，绝不抛异常。"""
+    rows: list[dict[str, str]] = []
+    for item in _as_list(raw):
+        if not isinstance(item, dict):
+            continue
+        label = _as_str(item.get("label"))
+        value = item.get("value")
+        if not label or value is None or str(value) == "":
+            continue
+        rows.append({"label": label, "value": _as_str(value)})
+    return rows
+
+
+def render_error_card_html(payload_dict: dict[str, Any] | None = None) -> str:
+    """渲染运行异常诊断卡 HTML（mica 契约，runtime.error_report 供载荷）。
+
+    payload_dict 字段：human_text（人话区）、exc_type/exc_message、trigger_echo
+    （≤80 字符脱敏回显）、stack_lines（末 N 帧，路径已脱敏）、method_pairs/
+    config_pairs/version_pairs/env_pairs/id_pairs（label/value 键值行）、
+    help_text、bot_name、bot_avatar_url。强调色走 theme_tokens.ERROR_THEME
+    （独立系统主题，不进平台注册表）；全字段缺省可渲染（空 payload 契约）。
+    """
+    data = dict(payload_dict or {})
+    rgb = _hex_to_rgb(ERROR_THEME.accent)
+    return _ERROR_CARD_TEMPLATE.render(
+        platform_color=ERROR_THEME.accent,
+        platform_color_dark=_rgb_to_hex(_darken(rgb)),
+        card_title=_as_str(data.get("card_title")) or "运行异常",
+        exc_type=_as_str(data.get("exc_type")) or "EXCEPTION",
+        exc_message=_as_str(data.get("exc_message")),
+        human_text=_as_str(data.get("human_text")),
+        trigger_echo=_as_str(data.get("trigger_echo")),
+        stack_lines=[
+            line for line in (_as_str(item) for item in _as_list(data.get("stack_lines")))
+            if line
+        ],
+        method_pairs=_error_kv_rows(data.get("method_pairs")),
+        config_pairs=_error_kv_rows(data.get("config_pairs")),
+        version_pairs=_error_kv_rows(data.get("version_pairs")),
+        env_pairs=_error_kv_rows(data.get("env_pairs")),
+        id_pairs=_error_kv_rows(data.get("id_pairs")),
+        help_text=_as_str(data.get("help_text")),
+        bot_name=_as_str(data.get("bot_name")) or "守岸人",
+        bot_avatar_url=_as_str(data.get("bot_avatar_url")),
+        # 漂移相位按 payload digest 确定注入（E01 同源语义）。
+        phase=payload_phase(data),
+        # 釉瑚云母洗：与 --pc 同点注入（红 accent 派生，mist 保持本命打底）。
+        **_derive_wash_tokens(ERROR_THEME.accent),
+        # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源）。
         **_vis4_context(),
     )
 
