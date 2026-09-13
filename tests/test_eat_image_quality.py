@@ -169,6 +169,17 @@ def test_pixel_check_skipped_without_pil(
     assert _fetch_dish_image(tmp_path, DISH) != ""
 
 
+def test_blocked_domain_candidate_skipped_without_fetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """来源域命中防污染黑名单 → 不下载不落盘（2026-09-13 图库污染加固）。"""
+    url = "http://www.boredpanda.com/x.png"
+    # 候选本身完全合格（字节数/magic/像素质检全能过）：唯一拦截手段是黑名单。
+    _install_fake_net(monkeypatch, {url: _png_bytes(NORMAL_SIZE)})
+    assert _fetch_dish_image(tmp_path, DISH) == ""
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_capability_text_fallback_unaffected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

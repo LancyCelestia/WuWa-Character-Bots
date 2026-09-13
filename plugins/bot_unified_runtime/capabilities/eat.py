@@ -154,6 +154,29 @@ _IMG_MIN_SIDE = 300
 _IMG_ASPECT_MIN = 1 / 3
 _IMG_ASPECT_MAX = 3.0
 
+# 轻量防污染域黑名单（2026-09-13 图库污染清理隔离区实测来源注册域）：
+# boredpanda=娱乐段子站（动漫剧照）、moyubuluo=动漫图床、sinaimg=新浪防盗链
+# 广告位、699pic=摄图网水印 stock、duitang=堆糖杂图——这些域的「菜品图」
+# 实测多为剧照/广告/风景。整域拒绝零成本（先于下载），不逐张 VLM。
+_IMAGE_DOMAIN_BLOCKLIST: tuple[str, ...] = (
+    "boredpanda.com",
+    "moyubuluo.com",
+    "sinaimg.cn",
+    "699pic.com",
+    "duitang.com",
+)
+
+
+def _url_domain_blocked(url: str) -> bool:
+    """来源域命中黑名单（注册域后缀匹配，覆盖全部子域）→ True。"""
+    from urllib.parse import urlparse
+
+    host = (urlparse(url).hostname or "").lower().rstrip(".")
+    return any(
+        host == domain or host.endswith("." + domain)
+        for domain in _IMAGE_DOMAIN_BLOCKLIST
+    )
+
 # 审计 E2-8：extra 非空时必须命中已知修饰/约束词表，否则不路由（落入闲聊）。
 # 此前 `.*` 兜底让任何「吃」开头的句子（吃了吗/吃火锅）都被判成点菜指令。
 _EAT_MODIFIER_RE = re.compile(r"三选一|来三道|再来一道|再来|辣的|不辣|微辣|中辣|特辣|spicy|mild|random|anything|something")
@@ -245,8 +268,8 @@ def _pixels_ok(data: bytes) -> bool:
 def _fetch_dish_image(root: Path, name: str) -> str:
     """Bing 图搜按序抓第一张通过全部质检的菜品图并缓存；失败返回空串。
 
-    候选校验链：SSRF 护栏 → 字节数(1KB~8MB) → magic bytes → 像素质检
-    （PIL，可跳过）；任一环不过即换下一个候选。落盘时同目录写
+    候选校验链：来源域黑名单 → SSRF 护栏 → 字节数(1KB~8MB) → magic bytes
+    → 像素质检（PIL，可跳过）；任一环不过即换下一个候选。落盘时同目录写
     <菜名>.source.txt（首行图片 URL，次行 ISO 时间戳）作来源记录。
     """
     import urllib.parse
@@ -274,6 +297,8 @@ def _fetch_dish_image(root: Path, name: str) -> str:
 
     for match in _BING_RESULT_RE.finditer(page):
         image_url = match.group(1)
+        if _url_domain_blocked(image_url):
+            continue  # 已知污染源域（剧照/防盗链/wallpaper），零成本先拒
         try:
             check_download_url(image_url)  # SSRF 护栏：内网/保留网段拒绝
         except RejectedUrlError:
