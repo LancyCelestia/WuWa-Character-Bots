@@ -145,9 +145,16 @@ def build_reminder_capability(config: Any | None = None) -> Any:
             open_todos = notes_store.list_open_todos(message.session_id, limit=50)
         if not pending and not open_todos:
             return None
-        names = [item.text for item in pending] + [
-            todo.display_headline(max_chars=40) for todo in open_todos
-        ]
+        # 候选文本：提醒取原文；笔记待办取**逐条未勾选条目行**（剥勾选框
+        # 前缀）而非 display_headline 首行标题——「买牛奶」要对上
+        # 「采购清单\n- [ ] 买牛奶」里的那一行，标题匹配永远勾不掉。
+        names = [item.text for item in pending]
+        todo_owners: list[Any] = []  # 与 names 笔记段一一对应（条目行 → 所属笔记）
+        if notes_enabled:
+            for todo in open_todos:
+                for line_text in todo.todo_match_texts(max_chars=40):
+                    names.append(line_text)
+                    todo_owners.append(todo)
         outcome, indexes = resolve_todo_match(query, names)
         reminder_count = len(pending)
 
@@ -156,10 +163,10 @@ def build_reminder_capability(config: Any | None = None) -> Any:
                 reminder = pending[index]
                 store.mark_done(reminder.reminder_id)
                 return reminder.text
-            todo = open_todos[index - reminder_count]
+            todo = todo_owners[index - reminder_count]
             todo_store = build_notes_store(config)
             todo_store.mark_done(todo.note_id, message.session_id)
-            return todo.display_headline(max_chars=40)
+            return names[index]
 
         if outcome == "hit":
             name = _mark(indexes[0])

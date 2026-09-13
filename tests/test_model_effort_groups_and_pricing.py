@@ -422,7 +422,7 @@ def test_model_usage_annotates_unpriced_instead_of_silent_zero() -> None:
     )
     result = _handle_model_command(store, config, ["usage"], usage_store=usage_store)
     assert "（未配置价格）" in result
-    assert "费 未计价 元" in result  # 不静默 0.00
+    assert "费 未计价" in result  # 不静默 0.00（I6：不挂悬空元）
 
 
 def test_priority_groups_converter_accepts_json_array() -> None:

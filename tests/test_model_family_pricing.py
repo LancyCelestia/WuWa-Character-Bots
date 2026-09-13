@@ -188,7 +188,7 @@ def test_build_report_text_merges_and_annotates() -> None:
     )
     assert "- Gemini-3.8-Flash（合并 3 种写法）：入 3,500,000 / 出 800,000 / 费 6.00 元" in text
     assert "gemini-3.8-flash-high" not in text  # 不再拆行
-    assert "- deepseek-v4-pro（未配置价格）：入 100,000 / 出 100,000 / 费 未计价 元" in text
+    assert "- deepseek-v4-pro（未配置价格）：入 100,000 / 出 100,000 / 费 未计价" in text
 
 
 def test_build_report_text_annotates_unpriced_instead_of_zero() -> None:
@@ -206,7 +206,7 @@ def test_build_report_text_annotates_unpriced_instead_of_zero() -> None:
         window_label="测试窗口",
         prices={},
     )
-    assert "- gemini-3.8-flash-high（未配置价格）：入 1,000 / 出 100 / 费 未计价 元" in text
+    assert "- gemini-3.8-flash-high（未配置价格）：入 1,000 / 出 100 / 费 未计价" in text
 
 
 # ---------- 聚合源：按原始名计次数/未计价 ----------

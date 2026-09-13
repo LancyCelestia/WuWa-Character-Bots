@@ -29,6 +29,9 @@ _TODO_BOX_RE = re.compile(r"(?m)^\s*[-*]?\s*\[\s?\]\s")
 # 等形态；与 capabilities/notes.py 的 _TODO_BOX_PREFIX_RE 同一风格。
 _TODO_BOX_PREFIX_RE = re.compile(r"^[-*]?\s*\[[ xX]?\]\s*|^[☐☑☒]\s*")
 
+# 未勾选条目行（todo_match_texts 逐行判定用）：与 _TODO_BOX_RE 同口径去 (?m)。
+_TODO_OPEN_LINE_RE = re.compile(r"^\s*[-*]?\s*\[\s?\]\s")
+
 
 def detect_note_kind(content_md: str) -> tuple[str, str]:
     """内容 → (kind, todo_state)：含未勾选框 = 待办；否则普通笔记。"""
@@ -66,6 +69,26 @@ class Note:
             line = _TODO_BOX_PREFIX_RE.sub("", line).strip()
             return line[:max_chars] if line else "(空待办)"
         return "(空笔记)"
+
+    def todo_match_texts(self, *, max_chars: int = 40) -> list[str]:
+        """勾选匹配用的待办条目行：每条**未勾选** todo 行剥壳后的文本。
+
+        与 display_headline（首行摘要）的分工：自然语言勾选（「买牛奶
+        搞定了」）的候选必须是逐条条目而非整篇标题，否则 ``采购清单
+        \\n- [ ] 买牛奶`` 的候选是「采购清单」，「买牛奶」永远勾不掉
+        （2026-09-13 勾选回归修复）。已勾选（``[x]``）行不算候选。
+        """
+        texts: list[str] = []
+        for raw_line in str(self.content_md or "").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("![图片"):
+                continue
+            if not _TODO_OPEN_LINE_RE.match(line):
+                continue
+            text = _TODO_BOX_PREFIX_RE.sub("", line).strip()
+            if text:
+                texts.append(text[:max_chars])
+        return texts
 
 
 def _utc_now_iso() -> str:

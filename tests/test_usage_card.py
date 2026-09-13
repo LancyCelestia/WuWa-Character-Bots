@@ -176,7 +176,7 @@ class TestUsageCardContent:
     def test_unpriced_note_shown_only_when_present(self) -> None:
         assert "未配置价格" not in _html()
         html_text = _html(totals={**_AGGREGATE, "unpriced_calls": 3})
-        assert "3 次调用未配置价格，未计入账单" in html_text
+        assert "3 次调用未计价：价格未配置，未计入账单" in html_text
 
     def test_custom_note_text_enters_html(self) -> None:
         assert "只有管理员能看到这份报告" in _html(note="只有管理员能看到这份报告")

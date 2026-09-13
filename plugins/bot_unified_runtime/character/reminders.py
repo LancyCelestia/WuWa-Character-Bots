@@ -512,7 +512,11 @@ def _levenshtein(a: str, b: str, *, cap: int | None = None) -> int:
         row_min = i
         for j, char_b in enumerate(b, start=1):
             cost = 0 if char_a == char_b else 1
-            value = min(previous[j] + cost, current[j - 1] + 1, previous[j - 1] + 1)
+            # 经典三源：删除（上）+1、插入（左）+1、替换/相等（左上）+cost。
+            # 相等字符的 0 代价必须落在对角线（2026-09-13 勾选回归修复：
+            # 原 cost 误加在 previous[j]，对角线恒 +1，"交报告/交周报"
+            # 真距离 2 被算成 3，近失提示整条消失）。
+            value = min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost)
             current.append(value)
             row_min = min(row_min, value)
         if cap is not None and row_min > cap:
