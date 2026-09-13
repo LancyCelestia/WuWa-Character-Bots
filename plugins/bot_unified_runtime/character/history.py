@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
@@ -41,6 +42,36 @@ def redact_history_text(text: str) -> str:
     value = _HISTORY_BEARER_RE.sub(lambda m: f"{m.group(1)}[redacted]", value)
     value = _HISTORY_SK_RE.sub("sk-[redacted]", value)
     return _HISTORY_COOKIE_KEY_RE.sub(lambda m: f"{m.group(1)}=[redacted]", value)
+
+
+@dataclass(frozen=True)
+class HistoryWindowTurn:
+    """时间窗召回的一行记录（多说话人，带 sender_id）。
+
+    与 contracts.ConversationTurn 分开：时间窗总结需要区分同一会话里的
+    不同说话人，而既有 ConversationTurn 无 sender 字段且契约文件保持
+    不动，此处新增 dataclass 保证既有读取面零破坏。
+    """
+
+    sender_id: str
+    role: str
+    text: str
+    created_at: str
+
+
+def _epoch_to_iso(epoch: float) -> str:
+    return datetime.fromtimestamp(float(epoch), tz=UTC).isoformat()
+
+
+def _parse_epoch(created_at: str) -> float | None:
+    """把 ISO 时间串解析成 epoch；解析失败返回 None（由调用方兜底）。"""
+    try:
+        value = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.timestamp()
 
 
 class ConversationHistoryProvider(Protocol):
@@ -128,6 +159,21 @@ class NullConversationHistoryProvider:
     ) -> ConversationHistoryResult:
         return ConversationHistoryResult(request_id=request_id)
 
+    def retrieve_window(
+        self,
+        *,
+        platform: str,
+        adapter: str,
+        bot_id: str,
+        session_id: str,
+        since_epoch: float,
+        until_epoch: float,
+        max_turns: int,
+        max_chars: int,
+        exclude_request_id: str = "",
+    ) -> list[HistoryWindowTurn]:
+        return []
+
     def clear_scope(
         self,
         *,
@@ -212,6 +258,46 @@ class InMemoryConversationHistoryStore:
             turns=selected,
             privacy_level=PrivacyLevel.PERSONAL,
         )
+
+    def retrieve_window(
+        self,
+        *,
+        platform: str,
+        adapter: str,
+        bot_id: str,
+        session_id: str,
+        since_epoch: float,
+        until_epoch: float,
+        max_turns: int,
+        max_chars: int,
+        exclude_request_id: str = "",
+    ) -> list[HistoryWindowTurn]:
+        """内存版时间窗召回（控制台/测试用）；该存储不区分说话人，sender 留空。"""
+        if max_turns <= 0 or max_chars <= 0:
+            return []
+        selected: list[HistoryWindowTurn] = []
+        chars_used = 0
+        for turn in reversed(self._turns):
+            turn_epoch = _parse_epoch(turn.created_at)
+            if turn_epoch is None or not (since_epoch <= turn_epoch <= until_epoch):
+                continue
+            if len(selected) >= max_turns:
+                break
+            remaining = max_chars - chars_used
+            if remaining <= 0:
+                break
+            text = _clip_text(turn.text, remaining)
+            chars_used += len(text)
+            selected.append(
+                HistoryWindowTurn(
+                    sender_id="",
+                    role=turn.role,
+                    text=text,
+                    created_at=turn.created_at,
+                )
+            )
+        selected.reverse()
+        return selected
 
     def clear_scope(
         self,
@@ -352,6 +438,84 @@ class SQLiteConversationHistoryRepository:
             turns=list(reversed(selected)),
             privacy_level=PrivacyLevel.PERSONAL,
         )
+
+    def retrieve_window(
+        self,
+        *,
+        platform: str,
+        adapter: str,
+        bot_id: str,
+        session_id: str,
+        since_epoch: float,
+        until_epoch: float,
+        max_turns: int,
+        max_chars: int,
+        exclude_request_id: str = "",
+    ) -> list[HistoryWindowTurn]:
+        """按 created_at 时间窗召回多说话人记录（时间窗总结用）。
+
+        created_at 落库为 UTC ISO 串且全部出自同一 `datetime.now(UTC).isoformat()`
+        格式，字典序即时间序，故 SQL 里与同格式 ISO 边界做 `>= / <=` 字符串
+        比较（epoch 数值直接比 TEXT 会因 SQLite 类型序全部错判）；Python 侧
+        再按解析出的 epoch 复核一遍，异构时间串（他方写入）也不漏。输出按
+        时间升序、从最新往回收，受 max_turns / max_chars 双预算钳制；命令
+        轮次与 exclude_request_id 命中的当前轮照旧排除。
+        """
+        if max_turns <= 0 or max_chars <= 0:
+            return []
+        self._ensure_schema_once()
+        selected: list[HistoryWindowTurn] = []
+        chars_used = 0
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                SELECT request_id, sender_id, role, text, created_at
+                FROM conversation_turns
+                WHERE platform = ?
+                  AND adapter = ?
+                  AND bot_id = ?
+                  AND session_id = ?
+                  AND kind != 'command'
+                  AND created_at >= ?
+                  AND created_at <= ?
+                ORDER BY created_at DESC, rowid DESC
+                """,
+                (
+                    platform,
+                    adapter,
+                    bot_id,
+                    session_id,
+                    _epoch_to_iso(since_epoch),
+                    _epoch_to_iso(until_epoch),
+                ),
+            )
+            for row in cursor:  # 惰性逐行：预算耗尽即停，不做全量 fetch。
+                if str(row["request_id"]) == exclude_request_id:
+                    continue
+                row_epoch = _parse_epoch(str(row["created_at"]))
+                if row_epoch is not None and not (
+                    since_epoch <= row_epoch <= until_epoch
+                ):
+                    continue
+                remaining = max_chars - chars_used
+                if remaining <= 0:
+                    break
+                text = str(row["text"])
+                if len(text) > remaining:
+                    text = _clip_text(text, remaining)
+                chars_used += len(text)
+                selected.append(
+                    HistoryWindowTurn(
+                        sender_id=str(row["sender_id"]),
+                        role=str(row["role"]),
+                        text=text,
+                        created_at=str(row["created_at"]),
+                    )
+                )
+                if len(selected) >= max_turns:
+                    break
+        selected.reverse()
+        return selected
 
     def clear_scope(
         self,

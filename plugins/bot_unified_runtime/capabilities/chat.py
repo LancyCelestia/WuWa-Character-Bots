@@ -15,6 +15,7 @@ from typing import Any, cast
 from urllib.parse import urlparse
 
 from plugins.bot_unified_runtime.character import CharacterContextProvider
+from plugins.bot_unified_runtime.character.history import redact_history_text
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -56,6 +57,7 @@ from plugins.bot_unified_runtime.runtime.question_intent import (
     classify_question_intent,
     classify_question_intent_legacy,
 )
+from plugins.bot_unified_runtime.runtime.time_window import detect_time_window_summary
 from plugins.bot_unified_runtime.security import (
     InjectionAction,
     InjectionCheckInput,
@@ -772,6 +774,71 @@ def _history_lines(context: ContextBundle, max_chars: int | None = None) -> str:
     return _budgeted_lines(lines, max_chars)
 
 
+# 时间窗总结（「总结一下N分钟内的消息」）：召回预算与 system 指示句。
+# 记录文本本身不可信，进 prompt 前过 redact + 不可信上下文消毒。
+_TIME_WINDOW_MAX_TURNS = 80
+_TIME_WINDOW_MAX_CHARS = 1800
+_TIME_WINDOW_DIRECTIVE = (
+    "用户要求总结这段时间的聊天：按话题归纳要点；"
+    "@提到但没说话的人不要编造发言。"
+)
+
+
+def _time_window_summary_section(
+    character_provider: object,
+    message: IncomingMessage,
+    text: str,
+    *,
+    now_epoch: float | None = None,
+) -> str:
+    """时间窗总结挂接点：意图命中时召回时间窗记录、拼成分区文本。
+
+    命中返回「时间窗描述 + 说话人行 + 总结指示句」的分区正文（分区标签
+    【时间窗聊天记录】由 build_chat_prompt_with_diagnostics 统一加挂）；
+    未命中、无历史存储或任何一步失败都返回空串，prompt 与既有链路
+    保持原样。脱敏走现有 redact（写入侧已 redact，此处兜底再过一遍）。
+    """
+    try:
+        spec = detect_time_window_summary(text, now_epoch=now_epoch)
+    except Exception:  # noqa: BLE001 - 意图解析失败不影响主链路。
+        return ""
+    if spec is None:
+        return ""
+    provider = getattr(character_provider, "conversation_history_provider", None)
+    retrieve_window = getattr(provider, "retrieve_window", None)
+    if not callable(retrieve_window):
+        return ""
+    try:
+        turns = retrieve_window(
+            platform=str(getattr(message, "platform", "unknown")),
+            adapter=str(getattr(message, "adapter", "unknown")),
+            bot_id=str(getattr(message, "bot_id", "unknown")),
+            session_id=str(getattr(message, "session_id", "")),
+            since_epoch=spec.since_epoch,
+            until_epoch=spec.until_epoch,
+            max_turns=spec.max_turns or _TIME_WINDOW_MAX_TURNS,
+            max_chars=_TIME_WINDOW_MAX_CHARS,
+            exclude_request_id=str(getattr(message, "request_id", "")),
+        )
+    except Exception as exc:  # noqa: BLE001 - 召回失败降级为无分区。
+        logger.warning(
+            "time window retrieve failed type=%s request_id=%s",
+            type(exc).__name__,
+            getattr(message, "request_id", ""),
+        )
+        return ""
+    if not turns:
+        return ""
+    lines = [
+        (
+            f"- {_sanitize_untrusted_context_text(redact_history_text(turn.sender_id or turn.role))}: "
+            f"{_sanitize_untrusted_context_text(redact_history_text(turn.text))}"
+        )
+        for turn in turns
+    ]
+    return "\n".join([f"时间窗：{spec.description}", *lines, "", _TIME_WINDOW_DIRECTIVE])
+
+
 def _emotion_lines(context: ContextBundle, max_chars: int | None = None) -> str:
     if not context.emotion_signals:
         return "- 未识别到需要调整语气的情绪信号"
@@ -1188,6 +1255,7 @@ def build_chat_prompt(context: ContextBundle) -> list[dict[str, str]]:
 def build_chat_prompt_with_diagnostics(
     context: ContextBundle,
     admin_roster_text: str = "",
+    time_window_section: str = "",
 ) -> tuple[list[dict[str, str]], ChatPromptDiagnostics]:
     persona = context.persona
     requested_context_budget = context.context_budget
@@ -1247,6 +1315,7 @@ def build_chat_prompt_with_diagnostics(
         "emotion": emotion_lines,
         "memory": memory_lines,
         "history": history_lines,
+        "time_window": time_window_section,
         "knowledge": knowledge_lines,
         "trend": trend_lines,
         "temporal": temporal_lines,
@@ -1285,6 +1354,8 @@ def build_chat_prompt_with_diagnostics(
         dynamic_parts += ["", "【记忆】", memory_lines]
     if context.conversation_history.turns:
         dynamic_parts += ["", "【最近对话】", history_lines]
+    if time_window_section.strip():
+        dynamic_parts += ["", "【时间窗聊天记录】", time_window_section]
     if context.knowledge_results.chunks:
         dynamic_parts += ["", "【知识库】", knowledge_lines]
     temporal = context.temporal_context
@@ -1684,6 +1755,7 @@ def build_chat_result(
         model_prices_raw if isinstance(model_prices_raw, dict) else {}
     )
     memory_writer = llm_options.pop("memory_writer", None)
+    time_window_section = str(llm_options.pop("time_window_section", "") or "")
     generated_files_dir = str(llm_options.pop("generated_files_dir", "data/generated_files") or "data/generated_files")
     direct_image_urls = llm_options.pop("direct_image_urls", [])
     direct_query_text = str(llm_options.pop("direct_query_text", "") or context.current_message)
@@ -1704,7 +1776,9 @@ def build_chat_result(
         llm_options["enable_tools"] = False
         direct_image_urls = []
     messages, prompt_diagnostics = build_chat_prompt_with_diagnostics(
-        context, admin_roster_text=admin_roster_text
+        context,
+        admin_roster_text=admin_roster_text,
+        time_window_section=time_window_section,
     )
     if safety.action != "allow":
         messages.append({"role": "system", "content": (
@@ -2697,6 +2771,13 @@ def build_chat_capability(
             effective_options["fast_max_candidates"] = effective_fast_max_candidates
         if effective_fast_mode and effective_fast_max_tokens > 0:
             effective_options["max_tokens"] = effective_fast_max_tokens
+        # 时间窗总结挂接点：「总结一下N分钟内的消息」等请求把时间窗聊天
+        # 记录注入 system prompt 并附总结指示；未命中返回空串，链路原样。
+        time_window_section = _time_window_summary_section(
+            character_provider,
+            message,
+            injection_check.sanitized_text,
+        )
         llm_started = time.perf_counter()
         result = build_chat_result(
             message=message,
@@ -2707,6 +2788,7 @@ def build_chat_capability(
             model_router=model_router,
             router_override=router_override,
             router_message_text=injection_check.sanitized_text,
+            time_window_section=time_window_section,
             enable_tools=enable_tools,
             memory_writer=memory_writer,
             request_budget=request_budget,
