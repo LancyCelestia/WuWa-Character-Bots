@@ -40,6 +40,7 @@ import atexit
 import inspect
 import logging
 import os
+import platform
 import random
 import re
 import subprocess
@@ -110,14 +111,31 @@ _FRAME_LINE_MAX_CHARS = 160
 # 命中密钥类命名的一律 ***（值不看内容直接掩码，双保险）。
 _SECRET_KEY_RE = re.compile(r"(token|secret|api_key|apikey|password|passwd|cookie)", re.IGNORECASE)
 _CONFIG_SNAPSHOT_MAX_ROWS = 12
+# E-10：能力同前缀字段不足时补的全局兜底键（横切运行相关的布尔与阈值，
+# 非密钥命名；bot.status 等无同前缀字段的能力配置区不再恒空）。值仍走既有
+# 脱敏管线（密钥正则 *** → redact_local_secrets），白名单机制不变。
+_CONFIG_GLOBAL_FALLBACK_KEYS: tuple[str, ...] = (
+    "bot_error_card_enabled",
+    "bot_error_card_cooldown_seconds",
+    "bot_quiet_hours_enabled",
+    "bot_reminder_enabled",
+)
+_CONFIG_SNAPSHOT_MIN_PREFIX_ROWS = 3
 
-# 适配器 → 协议标准展示名（未知回退原值）。
+# 适配器 → 协议展示名（E-04：标注协议实现名，OneBot 的生产实现 = NapCat；
+# mail/telegram/console 同口径补实现名）。
+# E-05：本表同时是协议判定的唯一事实源——只做键的精确匹配（含生产实际写入
+# 的 "onebot.v11" 点分变体），不再做子串模糊匹配（"onebot" in "nonebot" 的
+# 巧合曾把兜底 adapter 名 "nonebot" 误判成 OneBot V11）；查不到回退 unknown。
 _ADAPTER_PROTOCOLS: dict[str, str] = {
-    "onebot": "OneBot V11",
-    "onebot_v11": "OneBot V11",
+    "onebot": "OneBot V11（NapCat）",
+    "onebot.v11": "OneBot V11（NapCat）",
+    "onebot_v11": "OneBot V11（NapCat）",
+    "napcat": "OneBot V11（NapCat）",
     "onebot_v12": "OneBot V12",
+    "onebot.v12": "OneBot V12",
     "telegram": "Telegram Bot API",
-    "mail": "SMTP/IMAP",
+    "mail": "IMAP/SMTP",
     "console": "本地控制台",
 }
 
@@ -378,17 +396,31 @@ def _config_snapshot(
     except Exception:  # noqa: BLE001 - 配置模型不可用时快照为空。
         candidates = []
     rows: list[dict[str, str]] = []
-    for name in sorted(candidates):
+
+    def _append_row(name: str) -> None:
         if _SECRET_KEY_RE.search(name):
             value = "***"
         else:
             raw = config_getter(name)
             if raw is None:
-                continue
+                return
             value = redact_local_secrets(str(raw))
         rows.append({"label": name, "value": value})
+
+    for name in sorted(candidates):
+        _append_row(name)
         if len(rows) >= _CONFIG_SNAPSHOT_MAX_ROWS:
             break
+    # E-10：前缀命中（getter 有值的行）不足 _CONFIG_SNAPSHOT_MIN_PREFIX_ROWS
+    # 条时，补一组全局运行键兜底；已出现的前缀键不重复补，行数上限照旧钳制。
+    if len(rows) < _CONFIG_SNAPSHOT_MIN_PREFIX_ROWS:
+        seen = {row["label"] for row in rows}
+        for name in _CONFIG_GLOBAL_FALLBACK_KEYS:
+            if len(rows) >= _CONFIG_SNAPSHOT_MAX_ROWS:
+                break
+            if name not in seen:
+                _append_row(name)
+                seen.add(name)
     return rows
 
 
@@ -461,6 +493,46 @@ def _plugin_version() -> str:
         return "unknown"
 
 
+def _python_version() -> str:
+    """E-03：Python 解释器版本（platform 读取失败退 unknown，fail-open）。"""
+    try:
+        return platform.python_version() or "unknown"
+    except Exception:  # noqa: BLE001 - 元数据缺失不阻塞诊断卡。
+        return "unknown"
+
+
+def _os_label() -> str:
+    """E-03：操作系统「系统名 版本号」（读不到退 unknown，fail-open）。"""
+    try:
+        label = f"{platform.system()} {platform.release()}".strip()
+        return label or "unknown"
+    except Exception:  # noqa: BLE001 - 同上，缺失不阻塞诊断卡。
+        return "unknown"
+
+
+def _adapter_dists_label() -> str:
+    """E-03：已安装 nonebot-adapter* 发行版全景「名字 版本」（顿号合并）。
+
+    ``_dist_version`` 只能点名查一个发行版，这里要的是全景（实际装了哪些
+    协议实现）；单个损坏发行版跳过，枚举整体失败或一个都没有 → unknown
+    （fail-open：清单缺席绝不让诊断卡构建抛错）。键名白名单脱敏机制不涉及
+    此段（发行名/版本号无密钥形态）。
+    """
+    entries: list[str] = []
+    try:
+        for dist in metadata.distributions():
+            try:
+                name = str(dist.metadata.get("Name") or "").strip()
+                version = str(dist.version or "").strip()
+            except Exception:  # noqa: BLE001, S112 - 损坏发行版换下一个。
+                continue
+            if name.lower().startswith("nonebot-adapter"):
+                entries.append(f"{name} {version or 'unknown'}")
+    except Exception:  # noqa: BLE001 - 枚举本身失败整体降级 unknown。
+        return "unknown"
+    return "、".join(sorted(entries)) or "unknown"
+
+
 def format_uptime(now_monotonic: float | None = None) -> str:
     """进程运行时长：「X 小时 Y 分」/「Y 分钟」。"""
     now = time.monotonic() if now_monotonic is None else now_monotonic
@@ -472,10 +544,25 @@ def format_uptime(now_monotonic: float | None = None) -> str:
     return f"{minutes} 分钟"
 
 
+# E-05：OneBot 族名单直接从协议表派生（label 以 OneBot 开头的键），非 OneBot
+# 适配器的通信方式显式映射——两处都不再靠子串匹配。
+_ONEBOT_ADAPTER_NAMES: frozenset[str] = frozenset(
+    name
+    for name, label in _ADAPTER_PROTOCOLS.items()
+    if label.startswith("OneBot")
+)
+_CONNECTION_MODES: dict[str, str] = {
+    "telegram": "Bot API 轮询",
+    "mail": "SMTP",
+    "console": "本地",
+}
+
+
 def _connection_mode(adapter: str) -> str:
-    """通信方式：onebot 按 onebot_ws_urls 配置判正向 WS，否则 webhook；其他适配器直述。"""
+    """通信方式：OneBot 族按 onebot_ws_urls 配置判正向 WS，否则 webhook；
+    其他适配器显式映射直述（E-05：精确匹配，查不到回退 unknown）。"""
     normalized = (adapter or "").strip().lower()
-    if "onebot" in normalized:
+    if normalized in _ONEBOT_ADAPTER_NAMES:
         try:
             import nonebot
 
@@ -485,23 +572,14 @@ def _connection_mode(adapter: str) -> str:
             return "正向 WS" if urls else "webhook"
         except Exception:  # noqa: BLE001 - 非生产环境降级 unknown。
             return "unknown"
-    if "telegram" in normalized:
-        return "Bot API 轮询"
-    if "mail" in normalized:
-        return "SMTP"
-    if "console" in normalized:
-        return "本地"
-    return "unknown"
+    return _CONNECTION_MODES.get(normalized, "unknown")
 
 
 def _protocol_label(adapter: str) -> str:
+    """E-05：协议判定只做显式映射的精确查表，查不到回退 unknown——
+    不再做子串模糊匹配（消除 "onebot" in "nonebot" 误判）。"""
     normalized = (adapter or "").strip().lower()
-    if normalized in _ADAPTER_PROTOCOLS:
-        return _ADAPTER_PROTOCOLS[normalized]
-    for key, label in _ADAPTER_PROTOCOLS.items():
-        if key in normalized:
-            return label
-    return normalized or "unknown"
+    return _ADAPTER_PROTOCOLS.get(normalized, "unknown")
 
 
 def _session_label(message: IncomingMessage) -> str:
@@ -510,6 +588,28 @@ def _session_label(message: IncomingMessage) -> str:
     if message.session_type is SessionType.CHANNEL:
         return f"频道 {message.group_id or '未知频道'}"
     return "私聊"
+
+
+def _trigger_time_label(message: IncomingMessage) -> str:
+    """触发时刻（E-07）：优先 message.timestamp（摄取时刻），缺失/解析失败
+    退当前时刻——离线补投、链路延迟时 ``datetime.now()`` 会把触发时间说谎。
+    timestamp 契约是 datetime（摄取层 default_factory 当前时刻），这里仍按
+    fail-open 兜字符串解析与类型异常；统一本地时区、秒精度 ISO。"""
+    moment: datetime | None = None
+    raw = getattr(message, "timestamp", None)
+    if isinstance(raw, datetime):
+        moment = raw
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            moment = datetime.fromisoformat(raw.strip())
+        except ValueError:
+            moment = None
+    if moment is None:
+        moment = datetime.now().astimezone()  # 展示口径=本地时刻（astimezone 免 DTZ005）。
+    try:
+        return moment.astimezone().isoformat(timespec="seconds")
+    except Exception:  # noqa: BLE001 - 时区归一失败退裸 ISO（fail-open）。
+        return moment.isoformat(timespec="seconds")
 
 
 def build_error_report(
@@ -525,6 +625,21 @@ def build_error_report(
     exc_type = type(exc).__name__ or "Exception"
     exc_message = redact_local_secrets(str(exc)[:300])
     stack_lines = _stack_excerpt(exc, stack_frames)
+    # E-07：触发时刻优先消息时间戳；E-06：sender/bot/群号有则显示、无则省略行。
+    id_pairs: list[dict[str, str]] = [
+        {"label": "触发时刻", "value": _trigger_time_label(message)},
+        {"label": "message_id", "value": message.message_id or "—"},
+        {"label": "session_id", "value": message.session_id or "—"},
+    ]
+    for label, value in (
+        ("sender_id", message.sender_id),
+        ("bot_id", message.bot_id),
+        ("group_id", message.group_id),
+    ):
+        if value:
+            id_pairs.append({"label": label, "value": value})
+    id_pairs.append({"label": "request_id", "value": message.request_id or "—"})
+    id_pairs.append({"label": "告警关联", "value": message.debug_id or "—"})
     return {
         "card_title": "运行异常",
         "exc_type": exc_type,
@@ -546,6 +661,10 @@ def build_error_report(
                     ("nonebot-adapter-onebot", "nonebot_adapter_onebot")
                 ),
             },
+            # E-03：补运行时事实三件——解释器版本/操作系统/适配器实现全景。
+            {"label": "Python", "value": _python_version()},
+            {"label": "系统", "value": _os_label()},
+            {"label": "适配器", "value": _adapter_dists_label()},
             {"label": "插件包", "value": _plugin_version()},
             {"label": "构建", "value": _git_build_info()},
             {"label": "运行时长", "value": format_uptime()},
@@ -556,19 +675,7 @@ def build_error_report(
             {"label": "通信", "value": _connection_mode(message.adapter)},
             {"label": "会话", "value": _session_label(message)},
         ],
-        "id_pairs": [
-            {
-                "label": "触发时间",
-                "value": datetime.now().astimezone().isoformat(timespec="seconds"),
-            },
-            {"label": "message_id", "value": message.message_id or "—"},
-            {"label": "session_id", "value": message.session_id or "—"},
-            {"label": "request_id", "value": message.request_id or "—"},
-            {
-                "label": "告警关联",
-                "value": message.debug_id or "—",
-            },
-        ],
+        "id_pairs": id_pairs,
         "help_text": _HELP_TEXT,
         "bot_name": "守岸人",
         "bot_avatar_url": "",

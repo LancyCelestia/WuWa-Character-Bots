@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import platform
 import re
 from concurrent.futures import Future
 from datetime import datetime, timedelta, timezone
@@ -615,3 +616,140 @@ def test_plugin_version_resolves_from_pyproject() -> None:
         (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text("utf-8")
     )["project"]["version"]
     assert _plugin_version() == expected != "unknown"
+
+
+# ==================== 审查补全（E-03/E-04/E-05/E-06/E-07/E-10，2026-09-14） ====================
+def test_version_pairs_runtime_facts_and_adapter_list() -> None:
+    """E-03：版本区补 Python / 系统 / 适配器实现全景，且进纯文本兜底。"""
+    report = build_error_report(
+        _message(), "bot.market", _captured_exc(), config_getter=lambda name: None
+    )
+    versions = {row["label"]: row["value"] for row in report["version_pairs"]}
+    assert {"Python", "系统", "适配器"} <= set(versions)
+    assert versions["Python"].startswith("3.")
+    assert platform.system().lower() in versions["系统"].lower()
+    # venv 实装 nonebot-adapter-{onebot,telegram,mail,console,qq}，顿号合并列出。
+    assert versions["适配器"].startswith("nonebot-adapter-")
+    assert "nonebot-adapter-onebot" in versions["适配器"]
+    # 通用 pairs 渲染：新字段自动进纯文本兜底（结构零改动）。
+    fallback = build_text_fallback(report)
+    assert "Python=" in fallback
+    assert "适配器=" in fallback
+
+
+def test_adapter_dist_label_fail_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E-03 fail-open：发行版枚举抛错整体退 unknown，诊断卡构建不抛。"""
+
+    def boom() -> Any:
+        raise RuntimeError("scan failed")
+
+    monkeypatch.setattr(error_report.metadata, "distributions", boom)
+    assert error_report._adapter_dists_label() == "unknown"
+
+
+def test_protocol_and_connection_use_explicit_mapping() -> None:
+    """E-04/E-05：协议/通信按显式映射精确匹配并带实现名；"nonebot" 不再被子串巧合误判成 OneBot。"""
+    assert error_report._protocol_label("onebot") == "OneBot V11（NapCat）"
+    assert error_report._protocol_label("onebot.v11") == "OneBot V11（NapCat）"
+    assert error_report._protocol_label("telegram") == "Telegram Bot API"
+    assert error_report._protocol_label("mail") == "IMAP/SMTP"
+    assert error_report._protocol_label("console") == "本地控制台"
+    # 生产兜底 adapter 名 "nonebot"：精确查表查不到 → unknown（旧子串逻辑误报 OneBot V11）。
+    assert error_report._protocol_label("nonebot") == "unknown"
+    assert error_report._protocol_label("") == "unknown"
+    assert error_report._connection_mode("telegram") == "Bot API 轮询"
+    assert error_report._connection_mode("mail") == "SMTP"
+    assert error_report._connection_mode("console") == "本地"
+    assert error_report._connection_mode("nonebot") == "unknown"
+    # env_pairs 集成：协议行带实现名标注。
+    report = build_error_report(
+        _message(), "bot.market", _captured_exc(), config_getter=lambda name: None
+    )
+    env = {row["label"]: row["value"] for row in report["env_pairs"]}
+    assert env["协议"] == "OneBot V11（NapCat）"
+
+
+def test_id_pairs_add_sender_bot_group_ids() -> None:
+    """E-06：sender_id/bot_id/group_id 有则显示、无则整行省略。"""
+    group_report = build_error_report(
+        _message("group:g1", SessionType.GROUP, group_id="g1"),
+        "bot.market",
+        _captured_exc(),
+        config_getter=lambda name: None,
+    )
+    ids = {row["label"]: row["value"] for row in group_report["id_pairs"]}
+    assert ids["sender_id"] == "u1"
+    assert ids["bot_id"] == "10000"
+    assert ids["group_id"] == "g1"
+    # 私聊无群号 → group_id 行省略；兜底文本自动携带（通用 pairs）。
+    private_report = build_error_report(
+        _message(), "bot.market", _captured_exc(), config_getter=lambda name: None
+    )
+    private_ids = {row["label"] for row in private_report["id_pairs"]}
+    assert "group_id" not in private_ids
+    assert "sender_id=u1" in build_text_fallback(private_report)
+
+
+def test_trigger_time_prefers_message_timestamp() -> None:
+    """E-07：触发时刻优先 message.timestamp（摄取时刻），label 改「触发时刻」。"""
+    ts = datetime(2026, 9, 14, 8, 30, 5, tzinfo=timezone.utc)
+    message = _message(timestamp=ts)
+    report = build_error_report(
+        message, "bot.market", _captured_exc(), config_getter=lambda name: None
+    )
+    ids = {row["label"]: row["value"] for row in report["id_pairs"]}
+    assert ids["触发时刻"] == ts.astimezone().isoformat(timespec="seconds")
+
+
+def test_trigger_time_falls_back_to_now_on_bad_timestamp() -> None:
+    """E-07 fail-open：timestamp 不可解析/缺失退当前时刻，绝不抛错。"""
+    # model_copy(update=...) 不做校验：故意把 datetime 字段换成坏字符串。
+    broken = _message().model_copy(update={"timestamp": "not-a-date"})
+    parsed = datetime.fromisoformat(error_report._trigger_time_label(broken))
+    assert abs(datetime.now().astimezone() - parsed) < timedelta(seconds=10)
+
+    class _Missing:
+        timestamp = None
+
+    missing = error_report._trigger_time_label(_Missing())  # type: ignore[arg-type]
+    assert "T" in missing
+
+
+def test_config_snapshot_global_fallback_when_prefix_sparse() -> None:
+    """E-10：前缀命中不足 3 条时补全局运行键（值走既有脱敏管线）；前缀充足不补。"""
+    values = {
+        "bot_error_card_enabled": True,
+        "bot_quiet_hours_enabled": False,
+        "bot_reminder_enabled": True,
+    }
+    report = build_error_report(
+        _message(), "bot.status", _captured_exc(), config_getter=values.get
+    )
+    rows = {row["label"]: row["value"] for row in report["config_pairs"]}
+    assert rows["bot_error_card_enabled"] == "True"
+    assert rows["bot_quiet_hours_enabled"] == "False"
+    assert rows["bot_reminder_enabled"] == "True"
+    # 前缀充足（≥3 条）→ 不补全局键，快照仍是纯同前缀白名单。
+    market_values = {
+        "bot_market_enabled": True,
+        "bot_market_retry_on_empty": True,
+        "bot_market_timeout_seconds": 6.0,
+        "bot_market_cache_seconds": 60.0,
+    }
+    full = build_error_report(
+        _message(), "bot.market", _captured_exc(), config_getter=market_values.get
+    )
+    labels = {row["label"] for row in full["config_pairs"]}
+    assert labels == set(market_values)
+    # 兜底键的值同样过 redact_local_secrets（本机路径打码）。
+    leaky = build_error_report(
+        _message(),
+        "bot.status",
+        _captured_exc(),
+        config_getter=lambda name: (
+            "C:/Users/LancyCelestia/leak"
+            if name == "bot_error_card_cooldown_seconds"
+            else None
+        ),
+    )
+    assert "C:/Users" not in repr(leaky["config_pairs"])
