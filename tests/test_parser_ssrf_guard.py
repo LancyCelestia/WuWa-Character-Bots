@@ -1,18 +1,21 @@
 """链接解析链 SSRF 护栏回归（安全审计 I-2 修复，2026-09-14）。
 
-覆盖三件事：
+覆盖四件事：
 1. 入口护栏（content_parser 分发前）：内网/保留网段/localhost/内网域名
    一律拒绝且走既有「解析失败」降级路径（群静默/私聊人话提示），
    解析函数绝不收到内网 URL；
-2. 公网 URL 正常放行（mock DNS），DNS 解析失败放行策略锁死
-   （纯代理可达平台不被本机 DNS 误伤）；
+2. 公网 URL 正常放行（mock DNS），不误伤字面量公网整型 IP；
 3. og 兜底落点复查（platforms_generic._og_scrape）：重定向落到内网时
    在解析/回显内容之前抛 ParseHttpError（mock http_get_text 的 final url，
-   等价于 geturl 落点）。全离线，无真实网络。
+   等价于 geturl 落点）。全离线，无真实网络；
+4. 审查 F-04（解析失败=拒绝）：整型 IP（十进制/十六进制/八进制，
+   2130706433=127.0.0.1）归一化后拒绝、DNS 解析失败拒绝（旧版放行
+   已改判）、无 host/畸形 URL 拒绝、护栏崩溃才允许 fail-open+WARNING。
 """
 
 from __future__ import annotations
 
+import logging
 import socket
 from types import SimpleNamespace
 
@@ -30,8 +33,13 @@ from plugins.bot_unified_runtime.contracts.media import (
     ParserRule,
     build_parsed_content,
 )
+from plugins.bot_unified_runtime.sources import downloader as downloader_module
 from plugins.bot_unified_runtime.sources.parsers import platforms_generic
 from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
+from plugins.bot_unified_runtime.sources.parsers.ssrf_guard import (
+    check_fetch_landing,
+    guard_user_url,
+)
 from plugins.bot_unified_runtime.sources.registry import ParserRegistry
 
 _PUBLIC_IP = "93.184.216.34"
@@ -217,8 +225,15 @@ def test_entry_guard_allows_public_host_with_platform_substring(monkeypatch) -> 
     assert "ssrf_guard_rejected" not in result.audit_tags
 
 
-def test_entry_guard_allows_when_dns_unresolvable(monkeypatch) -> None:
-    """DNS 解析失败放行（锁死策略）：纯代理可达平台不被本机 DNS 误伤。"""
+def test_entry_guard_rejects_when_dns_unresolvable(monkeypatch) -> None:
+    """DNS 解析失败=拒绝（审查 F-04 改判）。
+
+    旧行为（已废，2026-09-14 前锁死过相反断言）：DNS 失败放行，给
+    纯代理可达平台让路——但整型 IP、rebind 域名恰好借这条 OSError
+    cause 路径穿透入口（Critical）。新语义：无法确证公网一律拒绝，
+    走既有「解析失败」降级；代价是代理可达平台少解析一条链接，
+    换取入口护栏零放行。
+    """
     _patch_dns_failure(monkeypatch)
     calls: list[str] = []
 
@@ -227,9 +242,10 @@ def test_entry_guard_allows_when_dns_unresolvable(monkeypatch) -> None:
         return _item()
 
     url = "https://proxy-only.example/video/1"
-    result = _run(url, r"proxy-only\.example", parse_fn)
-    assert calls == [url]
-    assert "ssrf_guard_rejected" not in result.audit_tags
+    result = _run(url, r"proxy-only\.example", parse_fn, group=True)
+    assert calls == [], "解析函数绝不能收到无法确证公网的 URL"
+    assert "ssrf_guard_rejected" in result.audit_tags
+    assert result.send_policy == SendPolicy.SILENT_AUDIT
 
 
 # ---------- 3. og 兜底落点复查（重定向 landing = mock geturl） ----------
@@ -273,7 +289,10 @@ def test_og_scrape_allows_public_landing(monkeypatch) -> None:
 
 def test_og_scrape_non_html_garbage_never_echoed(monkeypatch) -> None:
     """非 HTML 响应（内网服务二进制/纯文本）：无 title 即 ParseHttpError，
-    乱码不进卡（结构性防线，此处锁行为）。"""
+    乱码不进卡（结构性防线，此处锁行为）。
+    （F-04 后须 mock 公网 DNS：旧版此用例隐性依赖「DNS 失败放行」才能
+    走到 no title 断言，新语义下解析失败在落点复查即拒绝。）"""
+    _patch_dns(monkeypatch, _PUBLIC_IP)
 
     def fake_get_text(url, **kwargs):
         return "https://public.example.com/bin", "\x00\x01binary garbage \xff\xfe"
@@ -285,3 +304,95 @@ def test_og_scrape_non_html_garbage_never_echoed(monkeypatch) -> None:
             platform="generic",
             item_kind="post",
         )
+
+
+# ---------- 4. 审查 F-04：解析失败=拒绝，整型 IP 归一化 ----------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # 十进制整型：2130706433 = 127.0.0.1（F-04 原始向量）。
+        "http://2130706433/?u=xiaohongshu.com/explore/abc",
+        # 十六进制整型：0x7f000001 = 127.0.0.1。
+        "http://0x7f000001/",
+        # 八进制整型（inet_aton 前导 0 语义）：017700000001 = 127.0.0.1。
+        "http://017700000001/",
+        # 整型 IP + 端口/userinfo：归一化必须保留端口再判定。
+        "https://user:pass@2130706433:8443/x",
+    ],
+)
+def test_guard_rejects_integer_form_loopback(url: str) -> None:
+    """整型 IP 归一化成点分十进制后必须命中既有私网段判定（F-04）。"""
+    reason = guard_user_url(url)
+    assert reason is not None, f"整型回环地址必须拒绝：{url}"
+    assert "内网" in reason or "本机" in reason
+
+
+def test_guard_allows_public_integer_form_ip() -> None:
+    """整型公网 IP 不误伤：16843009 = 1.1.1.1，按字面量公网放行（离线、零 DNS）。"""
+    assert guard_user_url("http://16843009/") is None
+
+
+def test_guard_rejects_when_dns_unresolvable(monkeypatch) -> None:
+    """护栏单元级：DNS 解析失败=拒绝（旧版放行，F-04 改判）。"""
+    _patch_dns_failure(monkeypatch)
+    assert guard_user_url("https://rebind.attacker.example/x") is not None
+
+
+def test_landing_rejects_when_dns_unresolvable(monkeypatch) -> None:
+    """落点复查同样适用「解析失败=拒绝」：og 兜底链拦住 rebind 回显。"""
+    _patch_dns_failure(monkeypatch)
+    with pytest.raises(ParseHttpError, match="SSRF guard"):
+        check_fetch_landing(
+            "https://rebind.attacker.example/final", "https://public.example/origin"
+        )
+
+
+def test_landing_rejects_integer_form_loopback() -> None:
+    with pytest.raises(ParseHttpError, match="SSRF guard"):
+        check_fetch_landing("http://2130706433/final", "https://public.example/origin")
+
+
+def test_landing_rejects_empty_target() -> None:
+    """落点目标为空=无法确证公网 → 拒绝（旧版静默放行）。"""
+    with pytest.raises(ParseHttpError, match="SSRF guard"):
+        check_fetch_landing("", "")
+
+
+def test_guard_rejects_no_host_and_malformed() -> None:
+    """无 host / 畸形 URL 一律拒绝（F-04：旧版畸形 URL 会炸出护栏外）。"""
+    assert guard_user_url("http:///path") is not None  # 无 host
+    assert guard_user_url("http://[::1") is not None  # urlsplit ValueError
+    assert guard_user_url("http://host:port/") is not None  # 非法端口
+    assert guard_user_url("") is not None  # 空地址
+
+
+def test_guard_crash_fail_open_logs_warning(monkeypatch, caplog) -> None:
+    """护栏自身意外崩溃是唯一允许的 fail-open，且必须记 WARNING（F-04 裁定）。"""
+
+    def boom(url: str) -> None:
+        raise RuntimeError("guard internal bug")
+
+    monkeypatch.setattr(downloader_module, "check_download_url", boom)
+    with caplog.at_level(
+        logging.WARNING, logger="plugins.bot_unified_runtime.sources.parsers.ssrf_guard"
+    ):
+        reason = guard_user_url("https://example.com/")
+    assert reason is None, "仅护栏崩溃才允许 fail-open"
+    assert any("fail-open" in record.getMessage() for record in caplog.records)
+
+
+def test_entry_guard_rejects_decimal_ip_chain() -> None:
+    """链路级：十进制整型回环借平台关键词过匹配 → 入口护栏拒绝，解析函数零触达。"""
+    calls: list[str] = []
+
+    def parse_fn(url_arg: str):
+        calls.append(url_arg)
+        return _item()
+
+    url = "http://2130706433/?u=xiaohongshu.com/explore/abc"
+    result = _run(url, r"xiaohongshu\.com/explore", parse_fn, group=True)
+    assert calls == []
+    assert "ssrf_guard_rejected" in result.audit_tags
+    assert result.send_policy == SendPolicy.SILENT_AUDIT
