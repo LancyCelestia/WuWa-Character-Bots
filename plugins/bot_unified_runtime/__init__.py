@@ -115,6 +115,7 @@ from .runtime.base_router import (
     RouteKind,
     classify_message_route,
     clear_route_decision_cache,
+    is_command_form_text,
     list_route_rules_for_audit,
     looks_like_command_text,
 )
@@ -6690,6 +6691,37 @@ def _register_nonebot_handlers() -> None:
             await group_info_matcher.finish(
                 receipt.public_message or "（处理完成，没有需要展示的内容。）"
             )
+
+    # 审查 C-07：IGNORE 命令形态引导闭环——「/help」类命令形态落 IGNORE
+    # 时回一句守岸人引导（60s/会话节流），普通闲聊零波及；限流/安静时间
+    # 拦截的静默语义（09-12 实弹裁定）不经过本 matcher。
+    from .capabilities.echo import IgnoreGuideGate, build_ignore_guide_result
+
+    _ignore_guide_gate = IgnoreGuideGate()
+
+    async def _is_ignore_command_guide_event(state: T_State, event: Event) -> bool:
+        if not _ignore_guide_gate.check_and_mark(str(event.get_session_id())):
+            return False  # 节流在 rule 侧：被拦尝试也占名额，只会更保守少回
+        decision = _cached_route_decision(state, event, config=config)
+        return decision.kind is RouteKind.IGNORE and is_command_form_text(
+            event.get_plaintext()
+        )
+
+    ignore_guide = on_message(
+        rule=_is_ignore_command_guide_event, priority=60, block=True
+    )
+
+    @ignore_guide.handle()
+    async def _handle_ignore_guide(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot,
+            event,
+            lambda cfg: lambda message, _decision: build_ignore_guide_result(
+                message.request_id
+            ),
+            "bot.ignore",
+            ignore_guide,
+        )
 
     async def _is_media_archive_event(state: T_State, event: Event) -> bool:
         return (
