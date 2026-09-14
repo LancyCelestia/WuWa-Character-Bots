@@ -43,9 +43,9 @@
 >
 > ✅ **2026-09-14 六域+续批刷新（以此为准）**：`976c0ef` → HEAD 终局集成后累计（09-12 凌晨→09-14 08:4x；09-13 当日 26 笔+09-14 六域并发批与多轮续批跨午夜，全账=本文 §24）；全量终跑 **5294 passed / 0 failed**（e2e 收编 `a9898f5` 后终跑实跑）+cross_validate 双引擎一致绿（default/isolated 各 5294 passed，exit 0）、ruff 全绿、mypy 260 文件零错（证据见下行门禁条）。前快照（09-12 五波 28 笔 `976c0ef` · 1761 passed，全账=§18）已成历史。
 
-- **HEAD**：`e520f9d55eeebbb14bca03430edff8cc33d3c221`（分支 `v0.0.1-alpha.2`；`origin/v0.0.1-alpha.2..HEAD` 实测 **155 笔未推送**，推送 origin 仅按用户明确指示）。
+- **HEAD**：`aa1543a716932b94cb63037304c799824bd65d60`（分支 `v0.0.1-alpha.2`；`origin/v0.0.1-alpha.2..HEAD` 实测 **255 笔未推送**，推送 origin 仅按用户明确指示；2026-09-15 06:0x 夜批 §26 刷新，git rev-parse/rev-list --count 实跑）。
 - **门禁（终局实跑，2026-09-14 08:3x）**：全量 **5294 passed / 7 skipped / 0 failed**（`a9898f5` e2e 收编后终跑）；cross_validate 双引擎 **各 5294 passed exit 0 一致绿**；ruff **All checks passed**、mypy **Success 260 source files**（staticgate-final.md 实跑；238→260 系批次新增文件非漂移；runtime-layout 下轮交付补）。轨迹 4523 →4809+20 →5209 →**5294** 递增可溯。**下轮交付前以最近门禁实跑为准，勿沿用本节数字。**
-- **工作树（2026-09-14 本刷新 `git status` 实测）**：仅 e2e 两件在途——`scripts/e2e_acceptance.py` 改动+`tests/test_e2e_help_matrix.py` 未跟踪（A4 席收尾中，§24.13-8 同口径）；更旧记录（09-12 weather.py 单件、63 dirty+34 untracked 时代）均已被取代。
+- **工作树（2026-09-15 06:0x 夜批 §26 刷新 `git status` 实测）**：共 21 项（14 改+7 未跟踪），全部属在飞未落库席（campus/daily_assist/词汇回忆方向：未跟踪 `campus.py`/`daily_assist.py`/`campus_store.py`/`test_campus_digest.py`/`test_daily_assist.py`/`test_glossary_recall.py` 等，持锁修改 `__init__.py`/`config.py`/`base_router.py`/`chat.py`/`glossary.py` 等；§26.10 同口径）；旧「仅 e2e 两件在途」（2026-09-14）与更旧记录（09-12 weather.py 单件、63 dirty+34 untracked 时代）均已被取代。
 - **⚠️ 生产进程仍运行 09-09 旧代码**（管理员权限重启陷阱见 Part II §4.3）——09-10 起的全部交付（含 09-13 审计批+09-14 六域批，§24.9-8 同口径）**都在等提权重启生效**；重启前先跑 `python scripts/pre_restart_check.py` 一键预检 7 项（`051261d`，acceptance §6.5③）。
 - **09-14 批新能力现行事实（全部已入库，随重启生效）**：金融三能力（商品/国债/北向）生产 matcher 注册（`691d6e1`；`789700c` 先接 base_router+帮助层）·统一错误报告卡两段式异步——毫秒级文本回执+卡图 ≈3-33s 补发（`de6ba91`+`84b3915`+`1651544`）·表情回应能力（`6724782`+`eaa8fd9` config 四键）·笔记/NTP 授时全链（`789700c`）·解析链 SSRF 双护栏（`efe7b79`：`guard_user_url` 咽喉+og 落点双查）·渲染 Phase 2 解锁（`13fcd30` 接线+`.env` 并发 2/预算 1500ms——本刷新实读 .env 复核；性能席实测 warm P50 −64%，删行即回滚）·mermaid 素材本地化（`959630a` 下载+`e37817f` page.route 拦截，治已知问题 #8 根因）·stocks logo 三级兜底（`a4371d2`）+bot 头像本地优先（`691d6e1`）。
 - **运行数据现行事实（2026-09-14）**：knowledge 库三重漂移已清（A45 实修：pending 113→0/vector_dim 激活 1024/ANN ntotal 35,341，§24.13-7）·`.env` `BOT_KB_WIKI_ROOT` 已修至 `D:/Coding/01_Projects/Crawl Wiki`（本刷新实读 .env 复核）·图库 61/61 满编（`bdbc88b`）·channel_health 测试隔离加固（`10ef40f`，生产库 md5 跑前跑后一致）。
@@ -80,9 +80,9 @@
 | # | 项 | 规格来源 | 现状 |
 |---|---|---|---|
 | B1 | 分片发送幂等恢复与部分成功续发（part 级进度/UNKNOWN 确认协议/部分成功续发） | **08-29 §9.3 完整规格** | ✅ **已销项**（`976c0ef`：send_request_parts 伴生表+UNKNOWN 确认协议+PARTIAL 续发；15 新例+发送域 195 回归+全量 1650；详见 §18.1） |
-| B2 | 中央决策层/统一事件入口（CentralDecisionEngine；现仍多入口 matcher） | 09-05 §3.3 十条强制规则 | **规格已成文**（`docs/design/central-decision-engine.md`，`2e0393d`，开放问题 8 个待裁决）；实现未动 |
+| B2 | 中央决策层/统一事件入口（CentralDecisionEngine；现仍多入口 matcher） | 09-05 §3.3 十条强制规则 | **规格已成文**（`docs/design/central-decision-engine.md`，`2e0393d`，开放问题 8 个待裁决）；引擎本体未动；**09-15 夜批增量**：影子决策痕迹持久化+超管查询出口+「决策」触发词已落库（`cb73ae8`+`aa1543a`+`037bbc8`），生产 __init__ /bot decision 接线待做（§26.2/§26.10） |
 | B3 | FileTransferGateway 统一文件出站（现 handler 直连 call_api） | 09-10-full §10.5 | **规格已成文**（`docs/design/file-transfer-gateway.md`，`2e0393d`，开放问题 7 个待裁决）；实现未动 |
-| B4 | Control Plane API + TailAdmin Vue UI（后置策略已定）+ SakuraFrp 公网（3GB/日、10Mbps、断路器、认证） | 09-05 §7/§14/§15/§16-17 | **规格已成文**（`docs/design/control-plane-api.md`，`b15241e`，M1-M6）；实现未动；**API 先行、UI 最后**顺序维持 |
+| B4 | Control Plane API + TailAdmin Vue UI（后置策略已定）+ SakuraFrp 公网（3GB/日、10Mbps、断路器、认证） | 09-05 §7/§14/§15/§16-17 | **规格已成文**（`docs/design/control-plane-api.md`，`b15241e`，M1-M6）；实现未动；**API 先行、UI 最后**顺序维持；**09-15 夜批安全加固增量**：Host 头白名单校验（`eba69b4`，P-01 Critical，DNS rebinding 防护，`BOT_CONTROL_PLANE_HOST_ALLOWLIST`） |
 | B5 | LLMCallRecord 结构化计费表（现 usage_monitor 仍是日志文本聚合）、Provider/Balance 适配（NewAPI 合同已给）、Extractor 沙箱（等用户脚本） | 09-05 §8-13 | **计费账本规格已成文**（`docs/design/llm-billing-ledger.md`，`b15241e`，M1-M5）；Provider/Balance 适配与沙箱仍待用户资料/裁决 |
 | B6 | 音乐动态订阅与真实榜单（QQ/酷我/酷狗/Spotify 订阅、MusicChartRegistry 真实 source、歌曲字段补全） | 08-31 §2.9-4（详单 08-29 §10.5） | ✅ **已销项**（`b76610c`：真实榜单源 ×5 live 验证+music_v2 四 bug 修复；kuwo/apple/spotify 不可达如实标注） |
 | B7 | 平台深化残余：TG fixture 覆盖（嵌套 DOM/置顶/多反应/编辑删除）、xhs user_posted 正文时间互动、YT Atom/shorts、微博 card group/长文/置顶变体 | 08-29 §10.4 / 09-01 §四-2 | **部分销项**（`b7bc3a4`：TG 嵌套 DOM/多反应/编辑删除、YT shorts、微博长文+置顶、xhs 时间互动；残余以归档件需求清单为准） |
@@ -2000,3 +2000,80 @@ flowchart TD
 - 真机验收=acceptance-manual §6.6 族（§6.6.1 触发形态/§6.6.2 媒体归档/§6.6.3 金融/§6.6.4 错误报告卡/§6.6.5/§6.6.6 表情回应）；本批 E 组补全后错误卡观察点新增：页脚「自动生成诊断卡」口径（E-11）、渲染卡可用原 request_id 寻址（E-12）、版本区/协议标注全景（E-03~E-10）。
 - 本批新增真机观察点：提醒「记了即响」（A-01 内联投递）与勾选消歧追问（A-10/A-11）/笔记「取消勾选 X」（A-14）/群 @bot 45s 冷却恢复而私聊不误拦（A-04）/「/help」类未知命令获守岸人引导（C-07）/入群欢迎语（B-05）/「群主是谁」等群信息问句（B-01）/自然语言改设置（C-01/C-02）/订阅关闭平台显式人话拒绝（J-02）/Mail HTML 正文（`a3e78a3`）。
 - 重启后可选：`python scripts/measure_latency_chains.py` 补五链路在线段（渲染并发 2/预算 1500ms 已随 §24.13 解锁，L-04 合一后渲染常驻内存应可见下降）。
+
+# §26 2026-09-15 夜间审查执行批总账（§25 续段：08600f7→aa1543a）
+
+> 范围与口径：§25（90274f5..08600f7，73 笔，入册提交=`d6cc1f6`）之后的续段——`git log --oneline 08600f7..HEAD | wc -l` 实跑 **共 20 笔**（窗口=09-15 04:56 `81b7e3f` → 09-15 06:02 `aa1543a`；本节为落笔时点快照，其后在飞件以 git log 实况为准）。任务简报曾按 90274f5..HEAD 报「70+ 笔」，其中前 73 笔（含重构计划文档/Mail 适配器修复/审查验证批）已由 §25 逐笔收录，本节不重复、只录 §25 之后增量段。
+> 本批闭合 §25 两笔待续 WIP：`325212c`（F-13）→ `81b7e3f`；`64fe7e0`（L-08）→ `d5772ca`（见 26.1）。20 笔提交信息均内嵌域内实跑数字+主会话复核记录；本段**无新全量套件终跑**（全量最近记录仍=5736 passed/0 failed，`a9edfe0`，演进链见 §25 文头），全部为域内定向回归+静态门（ruff/mypy 260→266 零红随文件数自然增长，`61e97ed` 录 266 Success）。
+
+### 26.1 §25 待续 WIP 闭合（F-13/L-08 续作）
+
+- `81b7e3f`：**F-13 续作**——chat 检索/记忆块伪造引用族标记（全角化形态）此前原样透传，改引 `message_context.INTERNAL_MARKER_PATTERN` 统一常量（本地两枚英文标记旧正则删除，棘轮断言禁第二份）；新增 14 例（八标记开闭/尾巴形态/全角化剥离/良性不误剥/棘轮）。域 58 passed（闭合 `325212c` WIP）。
+- `d5772ca`：**L-08 续作**——`_sweep_quota` 锁内读时钟+记账（临界区不含扫盘），并发 8 线程 barrier 断言恰 1 次扫盘；多目录键控裁定不做（理由入注释）。6 passed×3 轮（闭合 `64fe7e0` WIP）。
+
+### 26.2 决策痕迹持久化与控制面安全（P 组）
+
+- `cb73ae8`：**P-03 决策痕迹持久化+超管查询**——`decision/trace.py` SqliteDecisionTraceSink（WAL/批量 ≤64/保留 5 万滚动/fail-open 不阻塞主链）替代内存丢弃式痕迹；build_decision_query_result 超管限定+脱敏；capability_registry 新增「决策」help topic（admin_only）；echo 消费查询结果。52 passed。
+- `aa1543a`：P-03 收尾——「决策」/「decision」触发词入 DEFAULT_VERB_MAP（昵称命令解析面；bot.decision admin_only）。159 passed。
+- `037bbc8`：db-owners 登记补全——decision_trace.sqlite3 新行+user_affinity 列清单补 impression_tag_times。
+- `eba69b4`：**P-01（Critical 安全）控制面 Host 头白名单校验**——DNS rebinding 防护：守卫中间件先于 Bearer 硬拒；默认白名单 127.0.0.1/localhost、跟随配置端口只增不减；畸形 Host（裸 IPv6/多值/越界端口）一律 400 不回显攻击串；Bearer 流不受影响、拒绝留审计痕；`BOT_CONTROL_PLANE_HOST_ALLOWLIST` 可扩展。新测试 18 例+域 32 passed。
+
+### 26.3 错误卡与运行时回收（E/L-12 族）
+
+- `dcb7b02`：**ack 回执阻塞根因修复**——cProfile 冷进程实测：E-01/E-03 批把环境盘点放进同步回执路径（326 次 importlib.metadata 全盘扫描 0.87s+2 次 git subprocess 0.26s→ack 1.2s，打穿「毫秒级回执」契约；全量绿系执行序预热掩盖，单文件/冷进程必红）。三层修复：同步路径轻量报告（include_env=False）/全量报告移交渲染线程经 report_builder 重建（失败回退轻量 fail-open）/适配器盘点进程级缓存。实测冷进程 1.2s→0.006s（604118→1285 次函数调用）。47 passed+1 skipped。
+- `0e8bc7e`：L-12 线程池 atexit 回收——错误卡渲染池 wait=False→wait=True+cancel_futures=False（排队诊断卡渲染完再收，ack 先行路径不受影响）+防重复注册布尔；mermaid 渲染池补齐完全缺失的回收（锁下换出全局→shutdown(wait=True,cancel_futures=False) 仓内先例形态）；崩溃强杀路径行为不变。新测试 5 例+域 108 passed。
+- `6327b32`：L-12 批回归——去掉时序敏感断言（「返回时渲染尚未执行 calls==[]」与池线程起跑存在良性竞态，属实现细节非契约；P0「回执不等渲染」elapsed<0.5 硬锁与「恰一次渲染」锁保持）。三连复验 16 passed 稳定。
+- `7311a22`：渲染序阵亡席幸存补丁收编（作者=render-order 根因席，05:29 撞 1302 阵亡前落盘成果，主会话取证收编）——test_render_never_runs_on_event_loop_thread 增 loop 检查点确定性同步（轮询本用例后端 loop_running 到达检查点 ≤10s 再 flush），替代全局 flush 等待（flush 等待序无序、域外滞留真渲染吃超时预算致全量序偶红；flush 只作事后排空）。11 passed。
+
+### 26.4 管线幂等与群失败降级（A 组）
+
+- `dd1dc61`：**A-22 内联认领台账互斥**——进程内 request_id→提交任务台账把「内联在途」从时间推断升级为任务存活推断：提交任务存活且认领者非本人即否决认领（与宽限期长短无关），四终结口释放台账；自认领豁免保持顺序管线语义。修前双发实锤（FAILED 1==0）+修后 31/165 passed；残余窗口（transport 已送达 mark 前崩溃等）同既有风险类别如实披露。
+- `739cf59`：**A-19 群聊能力失败降级池**——语义分界（09-12 实弹裁定）：限流拦截/安静时间拦截/超载快败(pipeline_busy) 静默保持=故意降频设计零变化；新增仅「能力执行失败错误态且群聊/频道」→池内一句温和短句（GROUP_FAILURE_ACK_TEMPLATES 4 变体守岸人语气）+会话级 300s 进程内节流（表容量 512）；失败结果仍压空正文 SILENT_AUDIT（细节零回群）；私聊守岸人话术池语义不同不入本池；_internal_error 路径不加（防与错误卡双重刷屏）；全程 fail-open。三代理接力+双报告互证，主会话复验 55 passed。
+
+### 26.5 设置诚实化与哈希门（C-09/K-06）
+
+- `9e3d3d8`：**C-09 死开关诚实化**——BOT_GROUP_CHAT_AUTO_REPLY_ENABLED/BOT_SHARED_GROUP_CONTEXT_ENABLED 移出 SETTABLE_KEYS（消费点装配期冻结，热改假成功），runtime set 明确拒绝+提示 .env+重启；新增 RESTART_REQUIRED_KEYS 登记+幽灵覆盖加载即丢弃；映射层保留识别、派发层诚实拒绝。新测试文件+三测试文件口径迁移+域 239 passed。
+- `e2a5b86`：K-06 配套——render_hashes.json 13→19 项重录落库与 TRACKED_FILES 同步；--check EXIT=0。
+
+### 26.6 金融技术指标（H-08）
+
+- `2f07a08`：stocks 技术指标补全 MACD/RSI/WR/CCI——纯本地标准公式零第三方库（EMA/SMA 种子对齐东财口径、RSI Wilder 1978、WR 中国软件 0-100 口径、CCI Lambert），窗口不足 None 不造数；format_stock_brief 非空才出四行，KDJ 既有断言零回退。新测试 19 例（手算分数精确对拍）+域 175 passed。
+
+### 26.7 好感度印象淡出（G-11）
+
+- `61e97ed`：**印象标签时间淡出**——impression_tag_times JSON 新列（PRAGMA+ALTER 幂等迁移，沿 profile_notes 先例）；_filter_fresh_impression_tags 快照出口过滤（显式打标时间优先，存量行回退行级 updated_at 锚点，锚点缺失视同当日=容错口径一致）；observe() 滚动强化再打标（持续强化不超龄，中性消息精确匹配不续命）；超龄标签库内全量保留可溯仅退出注入面（providers/好感卡/回显全走 snapshot() 一次闭环）。有效龄=§3 半衰×2（口无遮拦 30 天/友善·老朋友·爱抱怨·爱戏弄 60 天），零新增独立数值、数值规范零触碰。两代理断点互证，主会话复验 47 passed；mypy 266 文件 Success。
+
+### 26.8 安全测试补齐（F-08）
+
+- `d4bfb49`：注入检测模块 40 例零覆盖补齐（F-08 三派）——八类别（内部标记伪造/凭据外泄/本机文件/脚本执行/指令覆盖/角色抬升/运行时绕过/集成门）正反例+边界+零误报参数化+跨类别行为；发现 2 处实现缺口以 strict xfail 登记（引用链标记类绕过/受信层级后缀绕过，修复转 XPASS 会亮红）+2 项保真小项登记。38 passed+2 xfailed。
+
+### 26.9 文档同步席（N/D 组+§25 入册）
+
+- `d6cc1f6`：§25 夜间审计修复批次总账入册（73 笔逐笔哈希核对，16 子节按域群组化+待续队列+真机验收指引）。
+- `ce3e925`：**D-13 验收手册数字同步**——7 处陈旧值对齐实测（双代理独立互证+主会话抽验）：e2e 矩阵 14→34 项/好感度 v4→v5/help 模块 72→74（help 注册表 AST 计数=auto-facts=command-catalog 三方一致）/卡型 17 卡 9 族→18 卡 10 族（render_card_samples --list 实跑）/reactions 手写数废除改「以最近一次实跑为准」；核实无误保留清单 19 项。
+- `df7ce11`：N-15 §0 自相矛盾句修复——「工作树 0 项」降级为带日期历史快照+滚动声明；手写测试计数声明废除；7 个引用哈希逐一 git cat-file 实证；「未重启」补进程启动时间实证（2026-09-14 21:58 < HEAD 提交时刻）。
+
+### 26.10 待办与遗留
+
+- **生产 bot 未重启**——§24/§25/本节全部改动待用户提权重启生效（台账 #10 同口径）；重启前先跑 `python scripts/pre_restart_check.py`。
+- **campus/daily_assist 席在飞未收**——工作树实测 21 项（14 改+7 未跟踪，2026-09-15 06:0x git status 实跑）：未跟踪含 `capabilities/campus.py`/`capabilities/daily_assist.py`/`character/daily_assist.py`/`sources/campus_store.py`/`tests/test_campus_digest.py`/`tests/test_daily_assist.py`/`tests/test_glossary_recall.py`，被持锁修改含 `__init__.py`/`config.py`/`base_router.py`/`chat.py`/`glossary.py` 等；`aa1543a` 披露 __init__ 现由 campus 席持锁。
+- **机器册 doc_sync 收敛待在飞席落库后执行**——本批新增测试文件（d4bfb49/9e3d3d8 等）与 G-11 列清单等未入机器册计数，待 campus/daily_assist 席收库后按批尾惯例统一收敛（先例 `47d9fdc`/`0537aa7`）。
+- **/bot decision 生产 __init__ 接线待做**——查询出口（`cb73ae8`）+触发词（`aa1543a`）已落库，生产 __init__ /bot decision elif 分支接线待 campus 席释放 __init__ 后由主会话贴入（`aa1543a` message 显式登记）。
+- **strict xfail 2 处**（`d4bfb49`：引用链标记类绕过/受信层级后缀绕过）——修复转 XPASS 会亮红，属有意安排。
+- **A-22 残余窗口**（`dd1dc61`：transport 已送达 mark 前崩溃等）同既有风险类别，如实披露。
+- §25.15 未尽项继续有效（A-15 start==end 全天静默待产品裁定/105.UAE 与非美元市值待裁/爱称与时梗接线待批/B-07「None 字面渲染」缺陷待入台账）。
+
+### 26.11 真机验收指引
+
+- 口径沿用 §25.16（acceptance-manual §6.6 族+重启前预检）；本批新增真机观察点：群聊能力失败温和短句+300s 节流而拦截族仍静默（A-19）、超管「决策」查询（`aa1543a` 触发词）、控制面 Host 白名单拒绝留痕（M1 开启时）、stocks brief 四行技术指标（`2f07a08`）、印象标签超龄淡出与强化再打标（G-11）、错误卡 ack 毫秒级回执冷进程达标（`dcb7b02`）。
+
+---
+
+## §27 日常助理批（2026-09-15，ZCode 会话，bot.daily_assist）
+
+- **能力面**：`收件箱 <内容>` 速记 / `收件箱` 查看待处理（aliases inbox/shoujianxiang；RouteKind.DAILY_ASSIST priority 42，matcher `_is_daily_assist_event`，帮助 topic=收件箱）。落盘为纯文本收件箱（`character/daily_assist.py`：inbox.md `## 待处理` 段逐条 `- [时间] 内容`；早报读取后整段归档 `daily/YYYY-MM-DD.md` 并清空，其余分节原样保留）。
+- **定时面**（`_register_daily_assist_scheduler`，APScheduler 线程池同步 job，装配期 cron 快照与 G-DIGEST 同口径）：到点吃什么（`BOT_DAILY_ASSIST_MEAL_TIMES` 默认 11:15/17:15；`choose_meal` 自定义 food.md 优先、内置 DISHES 兜底、jsonl 历史 7 天不重复、全排除回退全量池）；早报 09:00（读收件箱+任务清单→LLM 划重点（主路由故障转移链，失败回退原文）→推送→归档）；晚报 21:00（当日对账+清单盘点+LLM 主动琐事建议）。投递=纯 submit 进 SQLite 发送队列（dedupe 按日），私聊 SessionType.PRIVATE。
+- **门**：推送名单 `BOT_DAILY_ASSIST_PUSH_USER_IDS` 为空则调度整链不注册（只记不推，绝不猜人）；`BOT_DAILY_ASSIST_ENABLED` 总开关进路由判定。
+- **配置 6 键**：enabled/dir/push_user_ids/meal_times/morning_time/evening_time（config.py+config-catalog「日常助理」小节+SETTABLE+.env.example）；生产 `.env` 已置 dir=`C:/Users/LancyCelestia/Assistant`、名单=主人 QQ——收件箱/菜单/任务清单与 ZCode 共享同一份文件。
+- **验证**：`tests/test_daily_assist.py` 18 例全离线（择菜/收件箱往返/文案/命令面/调度注册/SendRequest 形状/runner 打桩）；ruff 零红；mypy 与全量套件结果见批次提交说明。
+- **并发事故记录**：echo.py 与 capability_registry.py 的本批改动被并行批 `cb73ae8`（05:54，P-03 决策痕迹）卷入提交；其余文件由本批后续提交补齐，HEAD 一致性以两提交合流为准。HANDBOOK 本节与 AGENTS.md 台账 #32 因共享文件并发编辑暂不随批提交，按收敛流程并入。
