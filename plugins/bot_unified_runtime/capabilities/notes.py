@@ -281,7 +281,7 @@ _USAGE_TEXT = (
     "- 「笔记 记 内容」：记一条（可以配图一起发）\n"
     "- 「笔记列表」：看看都记了什么\n"
     "- 「笔记 看 N」：翻开第 N 条（配图会一起补发）\n"
-    "- 「做完 N」：把第 N 条待办勾掉\n"
+    "- 「做完 N」：把第 N 条里头一件没做的事勾掉（有几件就说几次）\n"
     "- 「删笔记 N」：放下第 N 条\n"
     "内容里写「- [ ] 待办」的行，会被我当作待办来看。"
 )
@@ -380,12 +380,42 @@ def build_notes_capability(config: Any | None = None) -> Any:
                     f"第 {note_id} 条已经完成过了。安心。",
                     tags=["done_repeat"],
                 )
-            store.mark_done(note_id, chat_id)
+            # 审查 A-06：勾选粒度=条目而非整篇。编号勾选固定勾掉第一个
+            # 未勾条目；要点名具体哪一件，用「<事项>做完了」自然语言勾选
+            # （reminder 侧，多命中会列候选问人）。
+            open_items = note.todo_open_items()
+            if not open_items:
+                # kind=todo 却无未勾条目（历史整篇 done 的残余形态，正常
+                # 路径到不了这里）：按兼容路径收口状态，不再走条目改写。
+                store.mark_done(note_id, chat_id)
+                return _result(
+                    message,
+                    f"第 {note_id} 条已经完成过了。安心。",
+                    tags=["done_repeat"],
+                )
+            first_index, first_text = open_items[0]
+            updated = store.mark_item_done(note_id, chat_id, first_index)
+            if updated is None:
+                # 并发窗口内笔记被删/改写：按未命中回话，不编造成功。
+                return _result(
+                    message,
+                    f"这个会话里没有第 {note_id} 条笔记。「笔记列表」里看看？",
+                    tags=["done_miss"],
+                )
+            if updated.todo_state == "done":
+                # 勾掉的正是最后一件：整篇完成，观感与旧版一致。
+                return _result(
+                    message,
+                    f"（轻轻点头）第 {note_id} 条，完成了。「{updated.display_headline(max_chars=16)}」"
+                    "——剩下的事不着急，一件一件来。",
+                    tags=["done"],
+                )
+            remaining = len(updated.todo_open_items())
             return _result(
                 message,
-                f"（轻轻点头）第 {note_id} 条，完成了。「{note.display_headline(max_chars=16)}」"
-                "——剩下的事不着急，一件一件来。",
-                tags=["done"],
+                f"嗯，那一条勾掉了：「{first_text[:24]}」。"
+                f"这篇还剩 {remaining} 件待办，不急，一件一件来。",
+                tags=["done_item"],
             )
 
         if _NOTES_LIST_RE.search(text):
