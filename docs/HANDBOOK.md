@@ -1865,3 +1865,138 @@ flowchart TD
 6. **A56 重启预检+文档四件+A53 拟稿索引**：`051261d`（A56）`scripts/pre_restart_check.py` 一键预检 **7 项**（env 路径/人格锚定/哈希台账/事实册/KB 漂移/静态门/NapCat 探针）PASS/SKIP/FAIL+exit code+`--json`，FAIL 自带修复指引，12 例离线；`7b6ac37`（A49 验收终稿核对：§6.6 系 2 实错修正+5 过时更新+§6.6.5 新增 4 条+AGENTS topics 67→72 漂移修正）；A58 HANDOFF 十断点打磨随 `bae69d4`（同族 `85571d3` 为 A37 回填件：金融接线行划掉/timesync P1 撤销/Phase 2 钉死/收尾清单按实测重写）；`919276a`（A59 根 README 人类访客视角终稿重写：能力七分类/快速上手/极简架构图/三区导览，与 AGENTS.md 全量对账零冲突）；`d8ec5eb`（A62 验收补全：§6.6.6 表情回应验收五条+§6.5③ 预检条目+§6.6.4⑥ 错误卡时序对齐 3-33s）。**A53 人格蒸馏拟稿+索引未入库（如实标注）**：`persona-distill-draft.md`（09-13 三段人格规则——称谓边界/创造者身份/黄腔回应柔化——→运行时副本蒸馏拟稿，**拟稿不落地**，采纳=用户说「准」→主会话套用+`sync_persona_source.py --adopt` 复绿同步门）与 `sdd-INDEX.md` 均为 `.superpowers/` 工作区件（.gitignore:42，git 不追踪）；INDEX 收录止于 `84b3915` 时点，其后批次以本节为准。
 7. **A45 knowledge-sync 实修+wiki 根修复+向量栈立账**：wiki-health-report 实跑 `smoke knowledge-sync` 一次修复（bot 离线窗口，任务授权的唯一写动作），人格 knowledge 库**三重漂移全部清零**（pending 113→0/fts_signature MISSING→已写/vector_dim 激活 1024/ANN ntotal 30,946→35,341，Ollama bge-m3 约 2 分钟；修复前若直接重启=向量 4,282 行静默不可召回+关键词通道静默禁用，最难察觉的静默质量塌方）；`.env` 的 `BOT_KB_WIKI_ROOT` 已由用户修至 `D:/Coding/01_Projects/Crawl Wiki`（wiki 库本身零漂移，实跑探针 4 hits）；`vector-audit.md` 立账（只读副本分析，Runtime 原库零改动）：kb_wiki 库 5.27GiB 账目自洽，唯一膨胀根因=**vector_json 与 blob 同数据 JSON 文本双存（3.057GiB/58%，热路径只读 blob——纯占地）**，推荐路线 L3-1 废除双存一次回收 ≈3.5GiB（需代码+迁移同批，等用户裁决）。
 8. **在飞席位现状（2026-09-14 07:0x 实查，如实记录）**：e2e（A4）仍收尾中（工作树 `e2e_acceptance.py` 改+`test_e2e_help_matrix.py` 未跟踪）；红线扩面（A44）已落 `4f5de7e`；互证预检（A47）纯报告已交（窗口判定可行，红基线已被本批修复消解）；**六红修复已入库 `16e9201`（A61）**——D 簇 2 真缺陷（Levenshtein DP 系统性纠偏+勾选候选取待办条目行 `todo_match_texts`）+F/E 簇 4 例收口（A42/A52 落地自愈后的 I6 断言漏网四处），58 例回归绿，brief 拟稿时在飞、本节落笔时刚落地；**XHS 修复无独立落盘件**（git log/工作树/报告三处零命中）：`XiaohongshuAdapter.fetch_latest` unawaited RuntimeWarning 定性=loop 泄漏下游症状（创建点 `subscribe.py:479-481` asyncio.run 参数协程被弃），随 A60 中毒源修复消解、全量终跑观察；README（A59）已落 `919276a`。channel_health 单例 ~13 假红的 fixture 隔离修复已入库 `10ef40f`（A64：failover 两文件 autouse 三重隔离——tmp 库+开关钉 0+单例重实例，顺序敏感 13 假红根除；生产库 md5 跑前跑后一致）。现工作树在飞（**以 git status 实况为准**）：e2e 两件（A4 收尾中）；XHS 泄漏桥接收尾移交席已落库 `8cbd4b6`（A71：subscribe.py:479 构造点换 `_run_legacy_coroutine` 桥接+样张后端 finally close+test_subscribe_capability_bridge 四新例）；`docs/auto-facts.md` 漂移已随批重录入库（本节落笔时点的快照，后续在飞件不再逐条回改本节）。
+
+## 25. 2026-09-14/15 夜间审计修复批次总账（§24.14）
+
+> 范围与口径：自主仓基点 `90274f5`（09-14 08:12，§24 批终门数回填 5294 passed/0 failed）之后至 `08600f7`（09-15 04:54），**共 73 笔**（`git log --oneline 90274f5..HEAD | wc -l` 实跑；窗口=09-14 21:48 `a3e78a3` → 09-15 04:54 `08600f7`；本节为落笔时点快照，其后在飞件以 git log 实况为准）。本批不再按席位（A1-A71）而按**夜间审计项编号**驱动（A/J/G/L/E/F/H/K/M/Q/C/O/N/B 组，出处=`审查结论与重构计划.md` 合订版，随 `a3e78a3`/`7a40fa5`/`8fc70d1` 落盘入档）。全部 72 笔已逐笔 `git log --stat` 核对（哈希↔提交信息↔文件域一致）；各笔提交信息内嵌域内实跑数字+主会话复核记录（若干笔标「主会话亲接线/亲跑/亲读 diff」）。
+> 全量计数演进（提交信息实跑口径）：5294（基点 `90274f5`）→ 5297（`a3e78a3`）→ 5305（`7a40fa5`）→ 5559（`b7ffa81`）→ **5736（`a9edfe0`，本批最近一笔全量实跑，主会话亲跑，0 failed）**；其后各笔为域内定向回归+静态门（ruff/mypy 260→264 零红随文件数自然增长/哈希/目录/机器册门），未再录全量。测试文件数 284→297（`47d9fdc` 机器册重录）。
+> 如实在飞披露：两笔 **WIP 半成品落库（原席停摆，续作待接）**——`64fe7e0`（L-08 配额巡检限频主体已绿）与 `325212c`（F-13 引用 marker 正则统一，消费点统一与测试待续作）；机器册测试文件数随在飞批持续漂移，按批尾「机器册收敛」惯例重录（见 25.15）。
+
+### 25.1 门禁可信与机器册（K 组+机器册）
+
+- `a3e78a3`：**哈希门 EOL 归一+写盘显式 LF+autosync 重录留痕**+源码树 `data/` 泄漏 6 处 tmp_path 化（治台账 #1 测试卫生残余）。域：`tests/verify_hashes.py`/`scripts/doc_sync.py`/`scripts/command_catalog.py`/`tests/conftest.py`+6 测试文件。
+- `5769099`：**K-06 哈希清单补 6 个 builder 源文件**——bridge/debug/echo/usage_cards/renderer/templates 入 TRACKED_FILES（13→19），builder 改文案从此触发哈希门；简报前提订正（verify_hashes 自身不在清单，排除法无自锁）；真实验证演练（临时改→红→还原→绿）+幂等双写证明。
+- `c9dc1d2`：K-06 清单重录（`render_hashes.json`）。
+- `47d9fdc`+`0537aa7`：机器册两轮收敛（测试文件数 284→297 重录+随批收敛）。
+
+### 25.2 Mail 适配器
+
+- `a3e78a3`（同笔）：**重连选箱早退缓存根治**（`SEARCH illegal in state AUTH`）+`fetch_mail_by_uid` 接线+单封隔离+**HTML 正文**（multipart/alternative）。域：`mail_adapter.py`+`sender/nonebot.py`+`test_mail_adapter_resilience.py`（+259 行）。
+
+### 25.3 提醒与笔记（A 组投递/勾选族）
+
+- `7a40fa5`：**A-01 提醒投递死路根治**——submit 后内联投递/送达才销账/回执仓防双发/无 bot 不销账留待重投（治「记了但永远不响」的结构性死路）。
+- `b2a1ad0`：A-07 清单满不再静默挤掉最旧一条（store.add 超限返回 None+能力层如实回复先取消再记）+A-09「7点半」解析落地 7:30（正则补「半」分支）+A-08 复核已修。
+- `f61dbd3`：**A-06 笔记待办逐条勾选**——按「全部勾选框行」稳定条目号回写 [x]（勾一条不动其余编号，并发安全），全部勾完才置整篇 done，回执报剩余件数（阵亡代理幸存成果主会话亲读核心 diff 收编）。
+- `107112e`：**A-14 勾选可撤销**——`mark_item_undone` 与 done 完全对称（同条目号/锁纪律/守护重试），能力层「取消勾选 X」/「X 还没做」两组自然形态，撤销任意一条整篇回 open。
+- `443680f`：**A-10/A-11 消歧 UX**——单候选相似度<0.8 判 uncertain 追问确认（回「是」才勾，TTL 300s 过期诚实提示重说）/歧义清单带编号（回「1/第一件」勾对应项）；追问态进程内注册表，路由闸窗口外绝不放行光杆短句；A-14 撤销正则收编进笔记面（「取消笔记」零互抢）。
+- `54651cd`：A-13 分型提醒文案模板化——五分型变体表+sha1 确定性选型（零随机），capability 层 8 个回执文案常量化、f-string 直拼清零；**文案字面零改动**（既有锁定句面全数保持）。
+
+### 25.4 记忆与人格收敛（G 组）
+
+- `7a40fa5`（同笔）：**G-04 记忆串群修复**——`facts_for` 下推 session 闸（同会话+全局可见，对齐 memory.py 范式）。
+- `1809b18`：**G-07 quirk 跨用户泄漏根治**——scope 维度（global/user:sender）进 SQLite（照 affinity 先例自动迁移，存量=global 语义不变）；反思投喂一律 user scope 带来源 sender；render_prompt_section SQL 层过滤+无 sender fail-closed；`/bot quirk list` 加范围标注。
+- `3d799c2`：G-06 残余贯通——LLM 事实抽取 per-line 归属（转写行「user(说话人N):」编号注入+正则回填 FactDraft.sender_id，越界编号剥标签回退主 sender，宁粗不可错；去重键对齐 save_facts 口径）。
+- `8fa9fc4`：**G-01/G-02/G-03 人格三处矛盾修复**（生产副本 :83 愧疚例句改边界+方向、:28 自责句改平静淡出、:3 括号动作口径对齐 identity.md:101；人格与表达规范 1154-1161 早期代文本收敛为单一权威口径，残留 1162-1183 软代差如实登记待裁——后由 `d6484d7` 收敛闭合）+**G-08 红线门扩面**（扫描面扩 personas/**+生产副本；澜汐/霞月 2 处世界观事实白名单登记；sync 锚定 --adopt 带审阅注记重录）。
+- `d6484d7`：G-03b 残留段收敛——1162-1183 三小节（迂回情话/过度道歉/沉默最擅长）对齐权威段：情话迂回改赤诚坦荡、受害者道歉例句删除换郑重道歉原文、习惯性沉默改倾听陪伴+笃定表态；世界观意象白名单零触碰。
+- `b5e6b33`：**G-05 创造者双名结构化**——addressing 抽 CREATOR_ALIASES/CREATOR_NOTE 单一事实源（澜汐=霞月，创造者/唤醒者/超管），chat 新增【创造者】分区一行稳定注入（不依赖人格文件与管理配置非空，verbatim/legacy 双路径可见）。
+- `3ab1ff3`：**G-13 好感度态度注入消失边界修复**——判据从「分值偏离基准或有标签」改为「库中存在该用户记录即注入」（热路径单点探查不加开销；数值/档位/文案零改动，affinity-design 权威不碰）。
+- `f1b796e`：G-14 identity 颜文字示例去「抱歉」愧疚话术（「（…抱歉）」→「（…让我想想）」同结构零愧疚化）。
+
+### 25.5 错误卡补全与出站脱敏（E 组+F-01/F-02）
+
+- `7a40fa5`（同笔）：E-01/E-02——插件版本改读 pyproject（源码运行无 pip 元数据，venv 实证）+纯文本兜底补配置快照。
+- `085b292`：**E-03~E-10 求助信息补全**——版本区补 Python/系统/nonebot-adapter 全景；协议实现标注（NapCat/IMAP-SMTP/BotAPI/本地）+判定改显式查表根治子串巧合；id_pairs 补 sender/bot/group；触发时刻优先 message.timestamp；配置快照前缀不足补全局横切键（走既有脱敏）。E-01/E-02 保留不回退。
+- `db37834`：E-11「截图」口径对齐——页脚如实声明自动生成诊断卡（非控制台截图）+纯文本兜底独立 `_FALLBACK_HELP_TEXT`（无图场景「这张图」指代不再悬空）。
+- `477be8c`：E-12 渲染卡复用原 request_id——废除「原 id-card」派生（:card/:ack/无后缀三态互斥），卡从此可被回执路径寻址；卡实际投递仍走 worker，3-33s 补发语义不变。
+- `e39ac0b`：**E-13 烟测名实相符**——两处「patch 真实路径」用例 docstring 如实声明 mock 路径；新增 env 门控真烟测（`BOT_ASR_SMOKE=1` 真 ffmpeg 转码 1s 静音 wav/`BOT_ERRCARD_SMOKE=1` 真 playwright 渲染诊断卡→PNG 魔数断言），默认环境 skip 不碍门。
+- `1d089d7`：**F-01/F-02 脱敏加固**——plain_text 新增 URL userinfo/Bearer/JWT/裸键值对四形态（各带防误伤边界）；`_SECRET_KEY_RE` 补 sendkey/credential/proxy/webhook/auth（auth 用字母级环视，author 不误伤——代理首版被自测当场抓出修正）。
+
+### 25.6 管线/发送/进程守护（A 组管线族+L-02）
+
+- `686b69c`：**A-04 防刷屏门打正**——R3 同人点名最小间隔移到 interactive_bypass 之前且仅群聊点名生效（InMemory+SQLite 同序同语义）：群 @bot 45s 冷却恢复生效、私聊连续对话不再被误拦；role_bypass 仍居其后。
+- `1e2cc8f`：**A-18 幂等键门禁后置+失败额度回滚**——claim 移到门禁全过后（被拦消息重发不再被幂等吞掉），能力异常回滚本次限流记账（fail-open）；R3 记账在 role_bypass/emotion_exempt 早退路径同样回滚。A-04 序零回退。
+- `86aae1c`：A-03 发送超时语义分级——零内容送达超时改 FAILED_RETRYABLE（交回队列退避重试），部分送达维持 FAILED_FINAL+result_unknown（防重复投递）；诚实披露 count==0 不严格排除在途模糊性（与既有 generic 路径同一取舍）。
+- `c6a6ee4`：A-20 worker per-session 串行化+饱和可见——claim_due 增同会话在途互斥（过期死认领不阻塞防会话锁死；NULL session 零变化），批内单 pass 保序（ack+卡片同批不拆批不变量实测钉死）；饱和时审计 WARN 走管理员告警链（300s 抑制，群聊零打扰红线钉死）；queue 增 session_id 列+索引自动迁移。
+- `75a2b04`：A-02 内存队列启动如实告警（send_queue 装配后 isinstance 探针，丢消息不许无声发生；SQLite 队列不误报）；`92b33f5` 清理其遗留未用 import。
+- `b26bb4d`：A-21 可选进程守护——`BOT_SUPERVISE=1` 时非零退出按 5/15/60s 退避重启+600s 滑窗 5 次熔断写摘要防 crash-loop；Ctrl+C 双进程同退；默认未设=行为字节级不变。
+- `41c6a8b`：L-02 表情回应滑窗无界增长治理——`_window` 改 OrderedDict LRU（封顶 4096），键数≤上界时五层门判定与旧实现逐字节一致（纯内存治理零行为变更）。
+
+### 25.7 渲染域（L 组渲染/缓存族）
+
+- `c8d88be`：**L-04 双 Chromium 合一**——mermaid 后端与主渲染后端单例合一（build_render_backend 工厂先到先得登记共享实例+自愈钩子；消除第二 Python 常驻实例；线程 thread-local 模型与纯文本兜底契约零破坏）。
+- `fc3b3b7`：**L-13 launch 退避 sleep 移出槽位临界区**（先放槽再睡再取回+复查，末次失败不再空睡；槽位守恒/重进锁复查/C-1 段零触碰四点论证入注释）+**L-07 封面图 URL→bytes LRU 缓存**（64 条/8MB 上限，失败不缓存负结果）。
+- `4fdd07f`：L-14 头像缺失探测负结果 TTL 缓存——缺失态 300s 内不再逐卡 glob+stat，文件新出现最多延迟一个 TTL 生效（取舍入注释）。
+- `8a0d369`：L-10 randpic 扫描缓存无界增长治理——`_SCAN_CACHE` 改 OrderedDict LRU（封顶 512），扫描结果语义零变化。
+- `08600f7`：L-09 图标/logo 进程内 lru_cache——`_load_icon_asset` 唯一咽喉加 lru_cache(64，覆盖 19 注册键)，失败路径逐位一致（异常不进缓存，缺失照旧重试回退）；逐消息用户图有意不缓存。
+- `64fe7e0`：L-08 配额巡检限频——enforce_quota 60s 窗限频（时钟可注入），窗内跳过全量 rglob+stat，超限淘汰语义零变化；**WIP 半成品落库，续作待接**。
+
+### 25.8 群上下文/路由引导/注册表（B 组+C 组）
+
+- `b7ffa81`+`462813a`：**B-01/B-04 群上下文能力 bot.group_info**（用户实测痛点收口）——19 触发词 6 意图（群信息/群主是谁/群人数/本群多大了/群公告/群精华），TTL 缓存（600/900/600s），成员名单绝不整列只给统计，公告/精华管理员门，诚实降级清单（群链接/等级/相册协议无 API 不做不假装）；RouteKind.GROUP_INFO+帮助+机器册联动+matcher 三件套与 OneBot API 桥主会话接线（照 media_archive `691d6e1` 形态）；「群主是谁」与 moegirl 词表冲突按台账形态登记（优先级兜底实测稳定）；43 例测试补录随 `462813a`。
+- `d876ed1`：B-03 群号入 prompt——【当前群聊】群号一行（照 G-05 dynamic_parts 模式，verbatim/legacy 双路径可见，私聊零注入，空白群号宁缺毋滥）。
+- `69f15cf`：**B-05 群成员变更通知**——入群欢迎（group_increase 此前零消费）：守岸人语气一行+昵称富集（5s 超时退通用称呼）+独立开关 `bot_group_welcome_enabled` 默认开；退群/管理变更只记 runtime 事件不发言（公开点名离开者是打扰）；config 509→510。
+- `6f7b25f`：B-07 QQ 群等级摄取入画像——IncomingMessage 加 sender_level（照 group_title 先例零破坏），等级 0 不展示；代理如实登记既有「None 字面渲染」缺陷未越界（建议入台账）。
+- `8172c1a`：C-01/C-02 自然语言改设置映射+派发——14 功能/38 词条→SETTABLE_KEYS 真实布尔键（遍历断言防漂移），派发走 build_runtime_admin_result 既有管理员门（处理方法统一），ambiguous 回守岸人口语追问。
+- `ec18e56`+`5c17df0`：**C-06 能力/帮助单一声明源 Keystone 两期**——RouteCapabilityDecl 32 行+InterfaceDecl 18 行+HelpTopicDecl 73 行权威声明+12+6 条常驻强校验，「公开能力漏登即隐形」漏洞类被门封死；四表字面派生被 doc_sync/command_catalog/AST 门三处域外静态解析器锁死如实降级（声明源=权威数据+字面=投影）；`/bot help` 与 command-catalog 逐字节不变双门证实。
+- `66e2d89`+`144bc5c`+`45fb6dd`：**C-07 IGNORE 命令形态引导闭环**——is_command_form_text 判定（与 looks_like_chat_text 同源反义，空文本/纯媒体/chat 关闭恒 False 红线）+`_IGNORE_GUIDE_LINES` 三句守岸人轮换+IgnoreGuideGate 60s 会话节流（容量 4096）；`144bc5c` 属主接线缝 12 行主会话亲贴（「/help」类从此有守岸人引导而非静默；chat(50) 与引导(60) 按 RouteKind 天然分流）；`45fb6dd`（C-07b）echo「忽略」帮助四处口径对齐接线后行为+command-catalog 重生成。
+
+### 25.9 订阅可靠性与诚实化（J 组）
+
+- `5da0627`：**J-03/J-04 推送可靠性**——①目的地级投递台账（唯一约束 event_id+destination_key，投递前查重+claim 回收，成功台账先行于 sent 标记——两写间崩溃不再重复推送；查重故障 fail-open 宁重复不丢失）；②dead 死信转移复用 OperationalIssue+AdminAlertSuppression（300s 抑制）+`requeue_dead` 幂等重投。
+- `dbd8aa8`：J-06 音乐订阅诚实化——qqmusic/kuwo/kugou/apple_music/spotify 五平台「注册可用但 fetch 恒 unsupported」全部摘除，`/订阅 add` 显式人话拒绝并引导网易云，零落库不静默；恢复条件=补 fetch 实现后重新注册。
+- `7dbbc4b`：**J-01/J-02/J-06 收口**——推特注册面摘除（无 cookie 显式人话拒绝含 `/bot cookie import` 恢复条件，配 cookie 自动恢复零改码）+per-platform 开关 7 键（config+catalog+env 三件套，add/轮询两处尊重，轮询跳过不占租约，需重启如实标注）+SubscriptionTargetNotice 异常类型出面优先（推特与摘除音乐平台的专属人话提示不再被「无法识别」泛化文案覆盖）。
+- `03fc5da`：J-14 file_gateway declare_only 死代码清除（全仓零生产调用点 grep 实证，字段+分支整体移除主链语义零变化，防回潮测试锁死）。
+
+### 25.10 安全加固与解析链（F 组+取图移植）
+
+- `a93175d`：**F-04（Critical）SSRF 解析失败改拒绝**——整型 IP（十进制/十六进制/八进制）归一化后走私网判定，DNS 失败/畸形 URL/空落点一律拒绝不再放行；护栏自身崩溃为唯一 fail-open（强制 WARNING 留痕）；两条已知取舍（重定向事后复查/DNS rebind TOCTOU）保持登记。
+- `df865d5`：**F-05（Critical）短链解析逐跳 SSRF 校验**——`_GuardedShortLinkRedirectHandler` 每一跳 30x 落点先过 ssrf_guard（继承 F-04 拒绝语义），命中私网/metadata 立即中止零内网请求；跳数显式≤5。
+- `e778ecd`：**F-06（Critical）媒体归档 SSRF 拒绝逃逸补捕**——RejectedUrlError 不再逃逸成未捕获异常（一票坏 URL 拖垮整批），拒绝条目 WARNING 留痕后跳过继续归档。
+- `3eb4252`：F-03 告警/系统通知文本脱敏收口——alerts 出站唯一收口+operational 告警文本+sender FinalSendError 明细+download 失败回显统一过 redact_local_secrets；聊天回复链零改动（硬边界）。
+- `9191b7f`：**取图三件算法移植**（阶段 2 已定①②③，移植自实战油猴脚本）——①xhs 视频流全键遍历 (height,bitrate) 降序取最优（治 720p 顶替 1080p，兼容 EF4-EF7 与 h264/h265）；②推特原图 format 须匹配存储扩展名+name=orig 归一（转换请求一律 404，顺带根治旧子串误匹配 platform=/filename= 隐患）；③429 遵循 Retry-After（60s 封顶）有界重试+其余 4xx 快速失败。
+- `b7588b9`：xhs 视频流旧形态兜底——url 键末位回退（历史夹具/旧接口仅 url 键不空转，masterUrl 仍优先）；C-01 全量回归抓出的回归，主会话根因修复。
+
+### 25.11 金融扩容（H 组，真机实证批）
+
+- `29018b9`：**H-01/H-02/H-03/H-04/H-07**——①迪拜/阿联酋/澳门 push2 探针实证无源→INDEX_UNAVAILABLE 显式登记上卡「暂无」区（绝不造数），105.UAE 为 ETF 语义不符入候选待裁；②A股 9 家（CNY）+港股 8 家（HKD）secid 全实测上卡，CompanyRef 币种链自适应（未知币用 ISO 绝不冒充），非美元市值诚实门扣下待能力层币种标注（注释含回删指引）；③f47/f48/f84/f85 未实测单位置 None 不上卡（H-03 诚实裁定，留待实测回填标记）；④fetch_index_trend 接瞬断重试（对齐 commodities 先例）；⑤控股市伪词劫持修复（腾讯控股市值不再被劫持到股指面板）。
+- `3246292`：H-02 移交项——无 ticker 帮助文案补 A股 9 家/港股 8 家（落库 `29018b9` 的注册表同步）。
+
+### 25.12 知识面与文案统一（O 组+Q 组）
+
+- `40bc9f4`：O-02/O-03 术语表激活——种子回退装配（空配置不再 NullGlossaryProvider 空转，生产 .env 实测生效）+worldview_glossary 38 条全部取自守岸人_核心知识.md（知识源无载的一律不编），每轮注入上限 8 条。
+- `22267ec`：O-05 时梗层显式写入接口——原子写（tmp+os.replace）/同名覆盖 keep-newest/上限 200 FIFO 淘汰/source 留痕行不进注入面；默认关语义与既有读取注入零变化；调用方接线待批（自动学习需 propose→approve 评审）已入 docstring。
+- `a19677e`：O-07 角色爱称映射（只理解不学舌）——静态映射 15 爱称→12 角色（萌娘百科梗表核对，宁缺毋滥），与昵称小名学习零互抢（「以后叫我龙哥」仍学小名/「我抽了个龙哥」不学）；上下文注入接线待批已入 docstring。
+- `a9edfe0`：**Q-01/Q-02/Q-04 用户文案全量入池**——数据源失败池扩 5 变体/管理员门禁池扩 4 变体，16+6 处散装文案全量改池引用（九统一·格式统一/处理方法统一）；自称三处统一第三人称「守岸人」；新增 AST 常驻门（四旧句式+五旧写法负向扫描+白名单精确豁免+回潮锁）；本笔含全量 5736 实跑。
+- `64efadf`：Q-03/Q-05 文案残余收口——meme_library 失败/冷却类文案去语气符「～」（成功回执类按令保留，门锁同步防回潮）；样张脚本错误卡文案去创造者真名点名。
+- `486309c`：Q-03 扩展——语气符统一至剩余 6 文件（media_archive/group_info 失败/拒绝类去「～」句号收尾，门扫描扩展+独立作用域+真红真绿自检）。
+
+### 25.13 测试质量（M 组+A-16+回归锁死）
+
+- `54d9318`：**M-04/M-10/M-12 测试质量清扫**——autosync 空测试体补实质断言；llm_ledger 假不抛断言补 4 条实质断言（吞异常必须 DEBUG 留痕且 exc_info 指向原异常——吞掉≠静默）；no_source_tree 弱断言补实质；perf_regression 名为 P99 实为 max 改名如实声明。
+- `b47aaad`：A-16 安静时间策略零覆盖收口——57 例全离线行为测试（跨午夜/同日窗口边界、start==end 全天静默现状锁死（A-15 待产品裁定）、BYPASS_ROLES 归一、时区换算与 naive=UTC 现状、非法时间串校验矩阵、provider 热改容错）；实现零缺陷发现，两项现状如实标注待裁定。
+- `e57b1f9`：分片超时下限回归锁死（管线检视#10 残余——下限钳制已在位 `_MIN_CHUNK_WAIT_SECONDS=10.0`，交付 4 例回归含 A-03 新语义循环上界证明：单级封顶总网络尝试≤3）。
+- `e39ac0b`：E-13 烟测门控（见 25.5，测试质量同域）。
+- `92b33f5`：清理未用 import（独立证伪代理发现，`75a2b04` 遗留）。
+
+### 25.14 文档与勘误（N 组+风险裁决）
+
+- `c71c52a`：N-14/N-16/N-17 文档漂移清扫——perf-plan 文头加历史档案状态注记；REVIEW-WORKFLOW 标题与不存在目录引用修正；WORKSPACE_GUIDE 删写死的用例数/任务数改指 auto-facts 与 help 实时输出。
+- `e31a933`：HANDBOOK 影子并发延迟文档勘误——hedge_delay 6.0→2.0（主仓 config.py 实况）。
+- `8fc70d1`：外部 24h 风险报告复核裁决入档（审查结论与重构计划 §十二）——R1/R2 实为外部工作树陈旧残片误报（主仓 v5 线性 8 档零波及）/R3 已自披露维持/R4 裁定伪矛盾（错误卡≠人格上下文）。
+
+### 25.15 待续队列
+
+- **已落**：A-18（`1e2cc8f`）、J-01（`7dbbc4b` 收口）。
+- **WIP 续作待接（原席停摆，半成品已落库）**：`64fe7e0`（L-08 配额巡检限频，调用侧续作待接）、`325212c`（F-13 引用 marker 正则统一，消费点统一与测试待续作）。
+- **接线待批**：爱称上下文注入（`a19677e`）、时梗自动学习（`22267ec`，需 propose→approve 评审）——均已在 docstring 声明。
+- **待产品/用户裁定**：A-15 start==end 全天静默现状（`b47aaad` 锁死待裁）；105.UAE ETF 语义不符入候选待裁、非美元市值币种能力层标注（`29018b9` 注释含回删指引）；B-07 代理登记的「None 字面渲染」既有缺陷（`6f7b25f` 建议入台账）。
+- **机器册漂移**：测试文件数随在飞批持续变化，按批尾「机器册收敛」惯例重录（本批先例 `47d9fdc`/`0537aa7`）。
+- 其余按《审查结论与重构计划》（`a3e78a3` 合订版落盘）§八计划推进。
+
+### 25.16 真机验收指引
+
+- 全部改动待生产 bot 提权重启生效（台账 #10 同口径）；重启前先跑 `python scripts/pre_restart_check.py`（§24.13 A56 七项预检，FAIL 自带修复指引）。
+- 真机验收=acceptance-manual §6.6 族（§6.6.1 触发形态/§6.6.2 媒体归档/§6.6.3 金融/§6.6.4 错误报告卡/§6.6.5/§6.6.6 表情回应）；本批 E 组补全后错误卡观察点新增：页脚「自动生成诊断卡」口径（E-11）、渲染卡可用原 request_id 寻址（E-12）、版本区/协议标注全景（E-03~E-10）。
+- 本批新增真机观察点：提醒「记了即响」（A-01 内联投递）与勾选消歧追问（A-10/A-11）/笔记「取消勾选 X」（A-14）/群 @bot 45s 冷却恢复而私聊不误拦（A-04）/「/help」类未知命令获守岸人引导（C-07）/入群欢迎语（B-05）/「群主是谁」等群信息问句（B-01）/自然语言改设置（C-01/C-02）/订阅关闭平台显式人话拒绝（J-02）/Mail HTML 正文（`a3e78a3`）。
+- 重启后可选：`python scripts/measure_latency_chains.py` 补五链路在线段（渲染并发 2/预算 1500ms 已随 §24.13 解锁，L-04 合一后渲染常驻内存应可见下降）。
