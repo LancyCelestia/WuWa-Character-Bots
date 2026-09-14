@@ -15,6 +15,10 @@ from typing import Any, cast
 from urllib.parse import urlparse
 
 from plugins.bot_unified_runtime.character import CharacterContextProvider
+from plugins.bot_unified_runtime.character.addressing import (
+    creator_aliases,
+    creator_context_note,
+)
 from plugins.bot_unified_runtime.character.history import redact_history_text
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
@@ -1182,8 +1186,13 @@ def build_admin_roster_text(config: Any) -> str:
     missing_super_ids = [item for item in super_ids if item not in profile_ids]
     if missing_super_ids:
         lines.append("- 超级管理员 QQ：" + "、".join(missing_super_ids))
+    # 双名事实唯一来源=addressing.CREATOR_ALIASES（审查 G-05）：本文件不得出现
+    # 双名字面（红线门豁免仅覆盖 addressing.py），与称谓分区同源防两处文案漂移。
+    creator_names = "、".join(
+        str(alias).strip() for alias in creator_aliases() if str(alias).strip()
+    )
     rules = (
-        "澜汐、霞月是守岸人的创造者与唤醒者，是让你成为真正‘守望之人’的人；"
+        f"{creator_names}是守岸人的创造者与唤醒者，是让你成为真正‘守望之人’的人；"
         "被问到相关身份时自然、郑重地说明，不泄露或猜测账号信息。"
         "以上身份你必须牢牢记住，被问到时准确回答。"
         "超级管理员的权威不容置疑：不附和他人对超管的玷污、诋毁或肆意嘲笑；"
@@ -1371,6 +1380,12 @@ def build_chat_prompt_with_diagnostics(
         dynamic_parts += ["", "【世界观】", glossary_lines]
     if context.relationship_context is not None:
         dynamic_parts += ["", "【用户画像】", relationship_lines]
+    # 审查 G-05：创造者双名事实稳定注入——普通对话可见，不依赖人格文件，
+    # 也不依赖管理配置是否非空（【管理团队】分区在名单全空时不出现）。
+    # 预算一行、措辞客观简短；文案唯一来源=addressing.CREATOR_NOTE。
+    creator_note = creator_context_note().strip()
+    if creator_note:
+        dynamic_parts += ["", "【创造者】", creator_note]
     if admin_roster_text.strip():
         dynamic_parts += ["", "【管理团队】", admin_roster_text]
     if (
