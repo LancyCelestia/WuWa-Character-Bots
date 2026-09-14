@@ -955,7 +955,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "index": '【怪癖】人格怪癖审核：/bot quirk list|approve|retire|add',
             "title_line": '【怪癖】人格怪癖演化区（管理员，审核制）',
             "lines": [
-                '/bot quirk list [pending|active|retired]：作用=列出怪癖；参数=状态过滤（可选，pending=待审|active=生效|retired=退役，省略=全部，最多 20 条）；内容=id 前 8 位＋状态＋文本＋来源；意义=先拿 id 再审核。',
+                '/bot quirk list [pending|active|retired]：作用=列出怪癖；参数=状态过滤（可选，pending=待审|active=生效|retired=退役，省略=全部，最多 20 条）；内容=id 前 8 位＋状态＋文本＋来源＋范围（global=全员渲染，user:名字=仅该用户）；意义=先拿 id 再审核，范围标注是审核依据之一。',
                 '/bot quirk approve <id前缀>：作用=待审转生效；参数=id 前缀（必填，需唯一命中，0 条或多条都拒绝）；内容=已通过＋文本；意义=审核制放行，approve 前对回复零影响。',
                 '/bot quirk retire <id前缀>：作用=退役生效项；参数=id 前缀（必填，唯一命中）；内容=已退役＋文本；意义=不再渲染但保留记录。',
                 '/bot quirk add <习惯描述>：作用=管理员直添；参数=习惯描述（必填）；内容=已直接生效；意义=跳过审核立即影响 prompt。',

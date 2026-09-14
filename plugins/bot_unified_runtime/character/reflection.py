@@ -28,7 +28,7 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -581,17 +581,18 @@ _QUIRK_UNCATEGORIZED_MIN_CONFIDENCE = 0.6
 _QUIRK_PROPOSE_CAP_PER_SESSION = 3
 
 
-def quirk_proposal_texts(
+def quirk_proposal_drafts(
     facts: Sequence[FactDraft], *, min_confidence: float
-) -> list[str]:
-    """按白名单规则从事实草稿筛出 quirk 提案文本（确定性、封顶）。
+) -> list[FactDraft]:
+    """按白名单规则从事实草稿筛出 quirk 提案（确定性、封顶、保留归属）。
 
     规则：置信度不低于 ``min_confidence``；有类目 → 类目必须在白名单；
     无类目（LLM 归纳）→ 还须以「我」开头且置信度达
     ``_QUIRK_UNCATEGORIZED_MIN_CONFIDENCE``。提案只进 pending_review，
-    对 prompt 零影响，不直接生效。
+    对 prompt 零影响，不直接生效。返回草稿本身（text 归一为去首尾空白）：
+    投喂侧需要 sender_id 落 user scope（审查 G-07）。
     """
-    texts: list[str] = []
+    drafts: list[FactDraft] = []
     seen: set[str] = set()
     for fact in facts:
         confidence = float(fact.confidence)
@@ -612,10 +613,20 @@ def quirk_proposal_texts(
         if key in seen:
             continue
         seen.add(key)
-        texts.append(text)
-        if len(texts) >= _QUIRK_PROPOSE_CAP_PER_SESSION:
+        drafts.append(fact if fact.text == text else replace(fact, text=text))
+        if len(drafts) >= _QUIRK_PROPOSE_CAP_PER_SESSION:
             break
-    return texts
+    return drafts
+
+
+def quirk_proposal_texts(
+    facts: Sequence[FactDraft], *, min_confidence: float
+) -> list[str]:
+    """``quirk_proposal_drafts`` 的纯文本视图（兼容既有调用方/测试）。"""
+    return [
+        draft.text
+        for draft in quirk_proposal_drafts(facts, min_confidence=min_confidence)
+    ]
 
 
 def build_reflection_quirk_proposer(config: object) -> Callable[[Sequence[FactDraft]], int] | None:
@@ -623,7 +634,8 @@ def build_reflection_quirk_proposer(config: object) -> Callable[[Sequence[FactDr
 
     复用 __init__ 同款 QuirkStore 路径与去重（本模块独立实例，同一
     SQLite 文件，WAL + busy timeout 下并发安全）；任何构造失败都返回
-    None，绝不影响反思主流程。
+    None，绝不影响反思主流程。投喂条目一律 user scope + 来源 sender
+    （审查 G-07：per-user 自述不得经 approve 升格为全员渲染）。
     """
     try:
         if not bool(getattr(config, "bot_quirks_enabled", True)):
@@ -631,7 +643,7 @@ def build_reflection_quirk_proposer(config: object) -> Callable[[Sequence[FactDr
         if not bool(getattr(config, "bot_reflection_quirks_propose_enabled", True)):
             return None
         from .providers import build_runtime_data_path
-        from .quirks import QuirkStore
+        from .quirks import SCOPE_USER, QuirkStore
 
         db_path = build_runtime_data_path(
             config,
@@ -644,9 +656,19 @@ def build_reflection_quirk_proposer(config: object) -> Callable[[Sequence[FactDr
 
         def _propose(facts: Sequence[FactDraft]) -> int:
             proposed = 0
-            for text in quirk_proposal_texts(facts, min_confidence=min_confidence):
+            for draft in quirk_proposal_drafts(facts, min_confidence=min_confidence):
+                # 审查 G-07：反思投喂的是 per-user 自述，一律 user scope 并把
+                # 来源 sender 落进 scope_key——approve 后也只在该用户的上下文
+                # 渲染，绝不默认 global 外溢给所有人。sender 缺失（归属链拿
+                # 不到）时落 user+空 key：永远渲染不到任何人（fail-closed），
+                # 由管理员在 /bot quirk list 看到「user:（无来源）」后裁决。
                 try:
-                    store.propose(text, source="reflection")
+                    store.propose(
+                        draft.text,
+                        source="reflection",
+                        scope_kind=SCOPE_USER,
+                        scope_key=draft.sender_id.strip(),
+                    )
                 except Exception as exc:  # noqa: BLE001 - 单条失败不拖垮其余提案。
                     logger.warning(
                         "reflection quirk propose failed type=%s",
@@ -678,7 +700,8 @@ def run_reflection(
     会话按 session_key 字典序处理并截断到 source_limit_sessions（单次运行
     的爆炸半径上限）；空会话跳过；同日重跑由 save_digest 的替换语义兜底。
     ``quirk_collector``：可选的事实旁路消费者（如 quirks.propose 自动投喂），
-    每个含事实的会话调用一次，collector 内部自行过滤与兜错。
+    每个含事实的会话调用一次，collector 内部自行过滤与兜错；调用前已把
+    无归属草稿补上会话主 sender（审查 G-07，供投喂侧落 user scope）。
     """
     ordered_keys = sorted(turns_by_session)[: max(0, int(source_limit_sessions))]
     processed = 0
@@ -711,7 +734,16 @@ def run_reflection(
             for sender, drafts in facts_by_sender.items():
                 facts_saved += store.save_facts(digest_id, sender, drafts)
             if quirk_collector is not None:
-                quirk_collector(reflection.facts)
+                # 审查 G-07：投喂 quirk 池前把无归属草稿补上主 sender（与
+                # save_facts 同一归属规则），投喂侧才能按人落 user scope；
+                # collector 协议不变（仍收一元序列），既有消费者不受影响。
+                attributed: tuple[FactDraft, ...] = tuple(
+                    draft
+                    if draft.sender_id.strip()
+                    else replace(draft, sender_id=primary)
+                    for draft in reflection.facts
+                )
+                quirk_collector(attributed)
     return ReflectionReport(
         scope_date=scope_date,
         sessions_seen=len(turns_by_session),

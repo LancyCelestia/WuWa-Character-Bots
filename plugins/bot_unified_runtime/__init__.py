@@ -2507,8 +2507,9 @@ def _build_quirks_describe(config: object):
         return None
     max_active = int(getattr(config, "bot_quirks_max_active", 6))
 
-    def _describe() -> str:
-        return store.render_prompt_section(max_active=max_active)
+    # G-07：透传 sender——user scope 怪癖只渲染给本人；无 sender 只给 global。
+    def _describe(sender_id: str | None = None) -> str:
+        return store.render_prompt_section(max_active=max_active, sender_id=sender_id)
 
     return _describe
 

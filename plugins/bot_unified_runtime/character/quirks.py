@@ -12,6 +12,14 @@
   - add_direct：管理员手动录入，跳过评审直接生效（同文本去重规则一致：
     已 active 原样返回；命中 pending 视为当场转正；命中 retired 视为复活）。
 
+scope 维度（审查 G-07 跨用户泄漏防线，2026-09-14）：每条 quirk 带
+scope_kind/scope_key 两列——
+- global：管理员 /bot quirk add 直添与全部历史存量，对所有人渲染；
+- user：反思回路投喂的 per-user 自述（scope_key=来源 sender），approve
+  后也只在 sender 匹配的会话渲染，绝不外溢到他人 prompt。
+渲染入口 render_prompt_section(sender_id=...) 按 scope 过滤；无 sender
+上下文时 fail-closed 只渲染 global（宁可不渲染，不可跨用户泄漏）。
+
 线程模型与 affinity.py / mood.py 相同：进程内单一 SQLite 连接 +
 threading.Lock 串行全部读写，check_same_thread=False 允许事件循环与
 offload 线程池跨线程共用同一连接；WAL 在任何 DML 之前设置。
@@ -32,6 +40,11 @@ STATUS_PENDING = "pending_review"
 STATUS_ACTIVE = "active"
 STATUS_RETIRED = "retired"
 _STATUSES: frozenset[str] = frozenset({STATUS_PENDING, STATUS_ACTIVE, STATUS_RETIRED})
+
+# scope 维度（审查 G-07）：global=全员渲染；user=仅 scope_key==sender 渲染。
+SCOPE_GLOBAL = "global"
+SCOPE_USER = "user"
+_SCOPE_KINDS: frozenset[str] = frozenset({SCOPE_GLOBAL, SCOPE_USER})
 
 # prompt 注入区块的固定引导语（渲染时置于首行；条目逐行以「- 」起头）。
 _PROMPT_HEADER = "最近养成的小习惯（可自然运用，不要刻意罗列）："
@@ -59,7 +72,12 @@ def _quirk_id_for(normalized: str) -> str:
 
 @dataclass(frozen=True)
 class Quirk:
-    """一条小习惯的完整簿记视图（admin/审计用；prompt 渲染只取 quirk_text）。"""
+    """一条小习惯的完整簿记视图（admin/审计用；prompt 渲染只取 quirk_text）。
+
+    scope_kind/scope_key（审查 G-07）：global 条目 scope_key 恒为空串；
+    user 条目 scope_key=来源 sender（反思投喂链拿不到归属时为空串，
+    该条永远渲染不到任何人，fail-closed）。
+    """
 
     quirk_id: str
     quirk_text: str
@@ -67,6 +85,8 @@ class Quirk:
     source: str
     created_at: str
     reviewed_at: str | None
+    scope_kind: str = SCOPE_GLOBAL
+    scope_key: str = ""
 
 
 def _row_to_quirk(row: sqlite3.Row) -> Quirk:
@@ -78,10 +98,27 @@ def _row_to_quirk(row: sqlite3.Row) -> Quirk:
         source=str(row["source"]),
         created_at=str(row["created_at"]),
         reviewed_at=None if reviewed is None else str(reviewed),
+        scope_kind=str(row["scope_kind"]),
+        scope_key=str(row["scope_key"]),
     )
 
 
-_SELECT_COLUMNS = "quirk_id, quirk_text, status, source, created_at, reviewed_at"
+def format_scope_label(quirk: Quirk) -> str:
+    """admin 可读的 scope 标注（/bot quirk list 展示用，审查 G-07）。
+
+    global 原样；user 带来源 sender（如 user:12345）；user 但缺来源标注为
+    「user:（无来源）」，提示审核者这条 approve 后也渲染不到任何人。
+    """
+    if quirk.scope_kind == SCOPE_USER:
+        key = quirk.scope_key.strip()
+        return f"user:{key}" if key else "user:（无来源）"
+    return "global"
+
+
+_SELECT_COLUMNS = (
+    "quirk_id, quirk_text, status, source, created_at, reviewed_at,"
+    " scope_kind, scope_key"
+)
 
 
 class QuirkStore:
@@ -129,10 +166,28 @@ class QuirkStore:
                         CHECK (status IN ('pending_review', 'active', 'retired')),
                     source TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
-                    reviewed_at TEXT
+                    reviewed_at TEXT,
+                    scope_kind TEXT NOT NULL DEFAULT 'global',
+                    scope_key TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
+            # 旧库只加列迁移（先例：affinity.py first_signals 列迁移）：
+            # 存量条目落默认 global scope，历史渲染语义不变（审查 G-07）。
+            columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(persona_quirks)"
+                ).fetchall()
+            }
+            for column, ddl in (
+                ("scope_kind", "TEXT NOT NULL DEFAULT 'global'"),
+                ("scope_key", "TEXT NOT NULL DEFAULT ''"),
+            ):
+                if column not in columns:
+                    connection.execute(
+                        f"ALTER TABLE persona_quirks ADD COLUMN {column} {ddl}"
+                    )
 
     def _now_text(self) -> str:
         return _format_utc(self._clock())
@@ -144,17 +199,33 @@ class QuirkStore:
                 self._connection.close()
                 self._connection = None
 
-    def propose(self, text: str, source: str = "") -> Quirk:
+    def propose(
+        self,
+        text: str,
+        source: str = "",
+        *,
+        scope_kind: str = SCOPE_GLOBAL,
+        scope_key: str = "",
+    ) -> Quirk:
         """提交一条候选小习惯（只进 pending_review，对 prompt 零影响）。
 
-        - 空白折叠 + casefold 去重：同文本已有 active/pending 行 → 原样返回；
+        - 空白折叠 + casefold 去重：同文本已有 active/pending 行 → 原样返回
+          （文本主键全局唯一：同文本被他 scope 占用时同样原样返回，不换主）；
         - 同文本已 retired：再次被提出视为新证据，原地复活回 pending_review
-          （主键唯一，只能覆写旧行；重新走评审）；
+          （主键唯一，只能覆写旧行；重新走评审，scope 以本次提案为准）；
         - pending 队列封顶 max_pending：满时先逐出最旧（DELETE），再插入新行。
+        - scope（审查 G-07）：反思回路投喂的 per-user 自述必须带
+          scope_kind="user" + scope_key=来源 sender；未显式给 scope 的调用
+          （兼容旧签名）落 global。user 条目缺 scope_key 时照常入库但永远
+          渲染不到任何人（render 对空 sender 一律只给 global，fail-closed）。
         """
         normalized = normalize_quirk_text(text)
         if not normalized:
             raise ValueError("quirk text 不能为空")
+        kind = (scope_kind or SCOPE_GLOBAL).strip()
+        if kind not in _SCOPE_KINDS:
+            raise ValueError(f"未知 scope_kind：{scope_kind}")
+        key = " ".join((scope_key or "").split())
         display_text = " ".join((text or "").split())
         quirk_id = _quirk_id_for(normalized)
         now_text = self._now_text()
@@ -168,8 +239,9 @@ class QuirkStore:
                     return _row_to_quirk(existing)
                 connection.execute(
                     "UPDATE persona_quirks SET status = 'pending_review', source = ?,"
-                    " created_at = ?, reviewed_at = NULL WHERE quirk_id = ?",
-                    (source, now_text, quirk_id),
+                    " created_at = ?, reviewed_at = NULL, scope_kind = ?, scope_key = ?"
+                    " WHERE quirk_id = ?",
+                    (source, now_text, kind, key, quirk_id),
                 )
                 return Quirk(
                     quirk_id=quirk_id,
@@ -178,6 +250,8 @@ class QuirkStore:
                     source=source,
                     created_at=now_text,
                     reviewed_at=None,
+                    scope_kind=kind,
+                    scope_key=key,
                 )
             pending_count = int(
                 connection.execute(
@@ -199,9 +273,10 @@ class QuirkStore:
                     )
             connection.execute(
                 "INSERT INTO persona_quirks"
-                " (quirk_id, quirk_text, status, source, created_at, reviewed_at)"
-                " VALUES (?, ?, 'pending_review', ?, ?, NULL)",
-                (quirk_id, display_text, source, now_text),
+                " (quirk_id, quirk_text, status, source, created_at, reviewed_at,"
+                "  scope_kind, scope_key)"
+                " VALUES (?, ?, 'pending_review', ?, ?, NULL, ?, ?)",
+                (quirk_id, display_text, source, now_text, kind, key),
             )
             return Quirk(
                 quirk_id=quirk_id,
@@ -210,6 +285,8 @@ class QuirkStore:
                 source=source,
                 created_at=now_text,
                 reviewed_at=None,
+                scope_kind=kind,
+                scope_key=key,
             )
 
     def approve(self, quirk_id: str) -> bool:
@@ -233,9 +310,14 @@ class QuirkStore:
         return cursor.rowcount > 0
 
     def add_direct(self, text: str, source: str = "admin") -> Quirk:
-        """管理员手动录入：跳过评审直接 active（去重规则与 propose 一致）。
+        """管理员手动录入：跳过评审直接 active，新录入 scope 固定 global。
 
-        命中已有行时保留原行的 source/created_at（提案来源不撒谎），只改状态。
+        去重规则与 propose 一致；命中已有行时保留原行的 source/created_at
+        （提案来源不撒谎）。scope 语义（审查 G-07）：
+        - 命中 active：原样返回，scope 不动；
+        - 命中 pending：视为当场转正（=approve），按 G-07 保持原行 scope
+          （user 提案不因管理员重打一遍文本就升格为全员）；
+        - 命中 retired：按管理员本次直添意图复活为 global。
         """
         normalized = normalize_quirk_text(text)
         if not normalized:
@@ -251,11 +333,25 @@ class QuirkStore:
             if existing is not None:
                 if str(existing["status"]) == STATUS_ACTIVE:
                     return _row_to_quirk(existing)
-                connection.execute(
-                    "UPDATE persona_quirks SET status = 'active', reviewed_at = ?"
-                    " WHERE quirk_id = ?",
-                    (now_text, quirk_id),
-                )
+                hit_pending = str(existing["status"]) == STATUS_PENDING
+                if hit_pending:
+                    # pending 转正保持原 scope（approve 语义，审查 G-07）。
+                    connection.execute(
+                        "UPDATE persona_quirks SET status = 'active', reviewed_at = ?"
+                        " WHERE quirk_id = ?",
+                        (now_text, quirk_id),
+                    )
+                    scope_kind = str(existing["scope_kind"])
+                    scope_key = str(existing["scope_key"])
+                else:
+                    # retired 复活按管理员直添意图落 global（审查 G-07）。
+                    connection.execute(
+                        "UPDATE persona_quirks SET status = 'active', reviewed_at = ?,"
+                        " scope_kind = 'global', scope_key = '' WHERE quirk_id = ?",
+                        (now_text, quirk_id),
+                    )
+                    scope_kind = SCOPE_GLOBAL
+                    scope_key = ""
                 return Quirk(
                     quirk_id=quirk_id,
                     quirk_text=str(existing["quirk_text"]),
@@ -263,11 +359,14 @@ class QuirkStore:
                     source=str(existing["source"]),
                     created_at=str(existing["created_at"]),
                     reviewed_at=now_text,
+                    scope_kind=scope_kind,
+                    scope_key=scope_key,
                 )
             connection.execute(
                 "INSERT INTO persona_quirks"
-                " (quirk_id, quirk_text, status, source, created_at, reviewed_at)"
-                " VALUES (?, ?, 'active', ?, ?, ?)",
+                " (quirk_id, quirk_text, status, source, created_at, reviewed_at,"
+                "  scope_kind, scope_key)"
+                " VALUES (?, ?, 'active', ?, ?, ?, 'global', '')",
                 (quirk_id, display_text, source, now_text, now_text),
             )
             return Quirk(
@@ -277,6 +376,8 @@ class QuirkStore:
                 source=source,
                 created_at=now_text,
                 reviewed_at=now_text,
+                scope_kind=SCOPE_GLOBAL,
+                scope_key="",
             )
 
     def list(self, status: str | None = None, limit: int = 50) -> builtins.list[Quirk]:
@@ -305,14 +406,38 @@ class QuirkStore:
             ).fetchall()
         return [_row_to_quirk(row) for row in rows]
 
-    def render_prompt_section(self, max_active: int = 6) -> str:
-        """渲染注入 prompt 的小习惯区块；无 active 时返回空串。
+    def render_prompt_section(
+        self, max_active: int = 6, sender_id: str | None = None
+    ) -> str:
+        """渲染注入 prompt 的小习惯区块；无可用 active 时返回空串。
 
-        只输出自然语言：引导语 + 逐行「- 文本」，不外泄 id/状态/时间/来源。
+        scope 过滤（审查 G-07 跨用户泄漏防线）：只取 global，或 scope_key 与
+        sender_id 完全相等的 user 条目；sender_id 缺省/为空时 fail-closed
+        只渲染 global——绝不让 user 怪癖外溢到未知会话。
+        只输出自然语言：引导语 + 逐行「- 文本」，不外泄 id/状态/时间/来源/scope。
         """
         if int(max_active) <= 0:
             return ""
-        quirks = self.list_active(limit=int(max_active))
+        sender = (sender_id or "").strip()
+        limit = max(1, int(max_active))
+        with self._lock, self._connect() as connection:
+            if sender:
+                rows = connection.execute(
+                    f"SELECT {_SELECT_COLUMNS} FROM persona_quirks"
+                    " WHERE status = 'active'"
+                    " AND (scope_kind = 'global'"
+                    "      OR (scope_kind = 'user' AND scope_key = ?))"
+                    " ORDER BY reviewed_at DESC, rowid DESC LIMIT ?",
+                    (sender, limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    f"SELECT {_SELECT_COLUMNS} FROM persona_quirks"
+                    " WHERE status = 'active' AND scope_kind = 'global'"
+                    " ORDER BY reviewed_at DESC, rowid DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        quirks = [_row_to_quirk(row) for row in rows]
         if not quirks:
             return ""
         lines = [_PROMPT_HEADER]

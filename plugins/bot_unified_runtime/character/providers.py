@@ -161,7 +161,7 @@ class FileCharacterContextProvider:
         affinity_store: DynamicAffinityStore | None = None,
         addressing_preferences: AddressingPreferenceStore | None = None,
         mood_describe: Callable[[], str] | None = None,
-        quirks_describe: Callable[[], str] | None = None,
+        quirks_describe: Callable[..., str] | None = None,
         identity_describe: Callable[[str], str] | None = None,
         reactions_describe: Callable[[str], str] | None = None,
         shared_group_provider: SharedGroupContextProvider | None = None,
@@ -307,7 +307,11 @@ class FileCharacterContextProvider:
         quirks_section = ""
         if callable(self.quirks_describe):
             try:
-                quirks_section = str(self.quirks_describe() or "")
+                # G-07：带 sender 供 user scope 过滤（兼容无参旧闭包）。
+                try:
+                    quirks_section = str(self.quirks_describe(sender_id) or "")
+                except TypeError:
+                    quirks_section = str(self.quirks_describe() or "")
             except Exception:  # noqa: BLE001 - quirk 层失败不影响主链路。
                 quirks_section = ""
         session_identity_note = ""
@@ -572,7 +576,7 @@ def build_character_context_provider(
     runtime_settings: Any | None = None,
     shared_group_llm_provider: object | None = None,
     mood_describe: Callable[[], str] | None = None,
-    quirks_describe: Callable[[], str] | None = None,
+    quirks_describe: Callable[..., str] | None = None,
     identity_describe: Callable[[str], str] | None = None,
     reactions_describe: Callable[[str], str] | None = None,
 ) -> CharacterContextProvider:

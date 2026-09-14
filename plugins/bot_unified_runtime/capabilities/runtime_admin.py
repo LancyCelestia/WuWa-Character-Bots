@@ -1738,8 +1738,12 @@ def build_quirk_admin_result(
         if not quirks:
             return _ok_result(request_id, "（对应状态下暂无 quirk。）")
         label = {"pending_review": "待审", "active": "生效", "retired": "退役"}
+        # G-07：范围标注让审核者看得见这条怪癖会渲染给谁（global/用户名）。
+        from plugins.bot_unified_runtime.character.quirks import format_scope_label
+
         lines = [
-            f"- {q.quirk_id[:8]} [{label.get(q.status, q.status)}] {q.quirk_text}（来源 {q.source or '未知'}）"
+            f"- {q.quirk_id[:8]} [{label.get(q.status, q.status)}] {q.quirk_text}"
+            f"（来源 {q.source or '未知'}；范围 {format_scope_label(q)}）"
             for q in quirks
         ]
         return _ok_result(request_id, "\n".join(lines), capability_id="bot.quirk")
