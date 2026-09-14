@@ -113,7 +113,7 @@ def test_tile_surface_shadow_is_token_only(name: str) -> None:
     css = re.search(
         r"<style>(.*?)</style>", _strip_comments(_tpl(name)), re.DOTALL
     ).group(1)
-    for value in re.findall(r"box-shadow\s*:\s*([^;]+);", css):
+    for value in re.findall(r"box-shadow\s*:\s*([^;]+)(?:;|$)", css):
         normalized = re.sub(r"\s+", " ", value).strip()
         assert normalized in allowed, f"{name} 出现非 token 阴影: {normalized!r}"
 

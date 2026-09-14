@@ -152,7 +152,7 @@ def test_shadow_tokens_within_family(name: str) -> None:
     assert {"--mica-shadow", "--mica-shadow-soft"} <= set(defined)
 
     for _selector, body in _css_rules(css):
-        for value in re.findall(r"box-shadow\s*:\s*([^;]+);", body):
+        for value in re.findall(r"box-shadow\s*:\s*([^;]+)(?:;|$)", body):
             normalized = _norm_css(value)
             assert (
                 normalized in _BOX_SHADOW_ALLOWED
@@ -162,8 +162,8 @@ def test_shadow_tokens_within_family(name: str) -> None:
 @pytest.mark.parametrize("name", CARD_TEMPLATES)
 def test_shadow_token_values_single_source(name: str) -> None:
     css = _css_of(name)
-    mica = re.search(r"--mica-shadow:\s*([^;]+);", css)
-    soft = re.search(r"--mica-shadow-soft:\s*([^;]+);", css)
+    mica = re.search(r"--mica-shadow:\s*([^;]+)(?:;|$)", css)
+    soft = re.search(r"--mica-shadow-soft:\s*([^;]+)(?:;|$)", css)
     assert mica and soft, f"{name} 缺阴影 token 定义"
     assert _norm_css(mica.group(1)) == _norm_css(SHADOW_PRIMARY), (
         f"{name} --mica-shadow 与 theme_tokens.SHADOW_PRIMARY 不一致"
@@ -171,11 +171,19 @@ def test_shadow_token_values_single_source(name: str) -> None:
     assert _norm_css(soft.group(1)) == _norm_css(SHADOW_SECONDARY), (
         f"{name} --mica-shadow-soft 与 theme_tokens.SHADOW_SECONDARY 不一致"
     )
-    # 登记表内其余档位（如 panel）：字面量须与登记值一致，或引用 bridge 注入
-    # 的同名上下文键（值同源，见 bridge._vis4_context）。
-    context_keys = {"--mica-shadow-panel": "shadow_elev_panel"}
+    # 登记表内其余档位：字面量须与登记值一致，或引用 bridge 注入的同名上下文
+    # 键（值同源，见 bridge._vis4_context）。档位→ctx 键映射从 SHADOW_CSS_VARS
+    # 登记表反查派生（P3-12：手工拷贝清单换真值源，新增档位自动入检，禁止
+    # 手抄遗漏）；派生出的 ctx 键必须已在 bridge._VIS4_KEYS 注入登记，否则先红。
+    context_keys = {
+        var: "shadow_elev_" + var.removeprefix("--mica-shadow-")
+        for var in SHADOW_CSS_VARS
+        if var not in ("--mica-shadow", "--mica-shadow-soft")
+    }
+    unregistered = sorted(set(context_keys.values()) - set(bridge._VIS4_KEYS))
+    assert not unregistered, f"bridge._VIS4_KEYS 未注入阴影档位 ctx 键: {unregistered}"
     for var, ctx_key in context_keys.items():
-        m = re.search(re.escape(var) + r":\s*([^;]+);", css)
+        m = re.search(re.escape(var) + r":\s*([^;]+)(?:;|$)", css)
         if not m:
             continue
         raw = _norm_css(m.group(1))
@@ -192,7 +200,7 @@ def test_shell_radius_tokens(name: str) -> None:
     expected = {"--r-shell": "30px", "--r-panel": "18px", "--r-tile": "14px"}
     found = False
     for token, value in expected.items():
-        match = re.search(re.escape(token) + r":\s*([^;]+);", css)
+        match = re.search(re.escape(token) + r":\s*([^;]+)(?:;|$)", css)
         if match:
             found = True
             assert _norm_css(match.group(1)) == value, f"{name} {token} 违规"
@@ -248,9 +256,11 @@ def test_default_wash_tokens_shape() -> None:
 @pytest.mark.parametrize("name", CARD_TEMPLATES)
 def test_brand_wash_tokens_injected(name: str) -> None:
     css = _css_of(name)
-    for token in ("wash_1", "wash_2", "wash_3", "wash_mist"):
+    # 档位清单从 DEFAULT_WASH_TOKENS 登记表反查（P3-12）：新增本命 wash 档位
+    # 自动逐模板校验注入点与兜底字面量，不依赖手工拷贝的元组。
+    for token in DEFAULT_WASH_TOKENS:
         css_token = "--wash-" + token.split("_")[1]
-        match = re.search(re.escape(css_token) + r":\s*([^;]+);", css)
+        match = re.search(re.escape(css_token) + r":\s*([^;]+)(?:;|$)", css)
         assert match, f"{name} 缺 {css_token} 注入点"
         declared = re.search(r"default\('([^']*)'\)", match.group(1))
         assert declared, f"{name} {css_token} 缺 default 兜底字面量"
