@@ -5,13 +5,20 @@
 - 无法判定（VLM 异常/bad JSON → None）→ 保守保留（行与文件原样）；
 - is_food=True → 保留；
 另锁 DRY-RUN 缺省不动库不挪文件。
+
+P3-14 三缺陷回归（2026-09-15）：
+- 缺陷① is_food 为 JSON 字符串 "false" 时 bool("false")=True 污染图反被保留；
+- 缺陷② os.environ["TEMP"] 缺失直接 KeyError 炸脚本；
+- 缺陷③ 删行失败与移文件的顺序无一致性保障（孤儿行/孤儿文件）。
 """
 
 from __future__ import annotations
 
 import base64
+import shutil
 import sqlite3
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -141,3 +148,206 @@ def test_dry_run_touches_nothing(
     assert _db_names(db) == {"bad"}  # 不动库
     assert (root / "bad.jpg").is_file()  # 不挪文件
     assert not (_quarantine(tmp_path) / "gallery").exists()
+
+
+# ---------- P3-14 缺陷①：is_food 字符串严格解析 ----------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (True, True),
+        (False, False),
+        ("true", True),
+        ("True", True),
+        ("1", True),
+        (" yes ", True),
+        ("false", False),
+        ("False", False),
+        ("0", False),
+        ("", False),
+        ("no", False),
+        ("garbage", False),
+        # 缺键/数字/列表等无法识别 → None 保守保留（宁留勿删红线）
+        (None, None),
+        (1, None),
+        ([True], None),
+    ],
+)
+def test_parse_is_food_strict(
+    value: object, expected: bool | None
+) -> None:
+    payload: dict = {"is_food": value}
+    assert cleaner._parse_is_food(payload) is expected
+
+
+def test_parse_is_food_missing_key_is_none() -> None:
+    assert cleaner._parse_is_food({"reason": "x"}) is None
+    assert cleaner._parse_is_food("not-a-dict") is None
+
+
+def test_string_false_pollution_is_moved_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VLM 回 JSON 字符串 "false"：污染图必须判假移出，不再被 bool() 反转保留。"""
+    bad = b"\xff\xd8\xff\xe0string-false-polluted"
+    provider = _FakeProvider({bad: '{"is_food": "false", "reason": "饮料广告"}'})
+    root = _patch_cleaner(monkeypatch, tmp_path, provider)
+    db = _seed_db(root, [("bad", bad, "https://ad.example.com/x.jpg")])
+
+    assert cleaner.main(["--execute"]) == 0
+
+    assert _db_names(db) == set()
+    assert not (root / "bad.jpg").is_file()
+    assert (_quarantine(tmp_path) / "gallery" / "bad.jpg").read_bytes() == bad
+
+
+# ---------- P3-14 缺陷②：TEMP 环境变量缺失不炸 ----------
+
+
+def test_quarantine_dir_without_temp_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for var in ("TEMP", "TMP", "TMPDIR"):
+        monkeypatch.delenv(var, raising=False)
+    # 强制落到可控兜底目录（同时绕开 gettempdir 的进程内缓存）。
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "fallback"))
+
+    q = cleaner._quarantine_dir()
+
+    assert q == tmp_path / "fallback" / (
+        f"food_quarantine_{datetime.now().astimezone():%Y%m%d}"
+    )
+
+
+def test_quarantine_dir_env_wins_over_cached_tempdir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "unused-cache"))
+    monkeypatch.setenv("TEMP", str(tmp_path))
+
+    assert cleaner._quarantine_dir().parent == tmp_path
+
+
+def test_main_survives_missing_temp_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """清空 TEMP/TMP/TMPDIR 后 main 全链不炸，文件落 gettempdir 兜底目录。"""
+    bad = b"\xff\xd8\xff\xe0no-temp-env"
+    provider = _FakeProvider({bad: '{"is_food": false, "reason": "证书"}'})
+    root = _patch_cleaner(monkeypatch, tmp_path, provider)
+    for var in ("TEMP", "TMP", "TMPDIR"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "fallback"))
+    db = _seed_db(root, [("bad", bad, "https://cert.example.com/c.jpg")])
+
+    assert cleaner.main(["--execute"]) == 0  # 不再 KeyError
+
+    assert _db_names(db) == set()
+    assert not (root / "bad.jpg").is_file()
+    fallback_q = tmp_path / "fallback" / _quarantine(tmp_path).name
+    assert (fallback_q / "gallery" / "bad.jpg").is_file()
+
+
+# ---------- P3-14 缺陷③：删除序一致性（先移文件再删行，失败回捞） ----------
+
+
+class _FailDeleteConn:
+    """DELETE 一律失败的 sqlite3 连接壳（其余语句透传）。"""
+
+    def __init__(self, real: sqlite3.Connection) -> None:
+        self._real = real
+
+    def execute(self, sql: str, *params: object):
+        if "DELETE" in sql.upper():
+            raise sqlite3.OperationalError("simulated delete failure")
+        return self._real.execute(sql, *params)
+
+    def commit(self) -> None:
+        self._real.commit()
+
+    def close(self) -> None:
+        self._real.close()
+
+
+def test_execute_removal_moves_files_then_deletes_row(tmp_path: Path) -> None:
+    image = tmp_path / "sub" / "a.jpg"
+    image.parent.mkdir()
+    image.write_bytes(b"img")
+    sidecar = image.with_suffix(".source.txt")
+    sidecar.write_text("url\n", encoding="utf-8")
+    conn = sqlite3.connect(str(tmp_path / "library.sqlite"))
+    conn.execute(
+        "CREATE TABLE food_images (name TEXT PRIMARY KEY, path TEXT, source_url TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO food_images VALUES ('a.jpg', ?, 'u')", (str(image),)
+    )
+    conn.commit()
+
+    status = cleaner._execute_removal(conn, "a.jpg", image, tmp_path / "q")
+
+    conn.close()
+    assert status == "removed"
+    assert not image.exists() and not sidecar.exists()
+    quarantined = {p.name for p in (tmp_path / "q").rglob("*") if p.is_file()}
+    assert quarantined == {"a.jpg", "a.source.txt"}
+
+
+def test_execute_removal_db_delete_failure_restores_no_orphan(
+    tmp_path: Path,
+) -> None:
+    """删行失败：文件回捞回原位、DB 行仍在——不产生孤儿行/孤儿文件。"""
+    image = tmp_path / "a.jpg"
+    image.write_bytes(b"img")
+    sidecar = image.with_suffix(".source.txt")
+    sidecar.write_text("url\n", encoding="utf-8")
+    real = sqlite3.connect(str(tmp_path / "library.sqlite"))
+    real.execute(
+        "CREATE TABLE food_images (name TEXT PRIMARY KEY, path TEXT, source_url TEXT)"
+    )
+    real.execute("INSERT INTO food_images VALUES ('a.jpg', ?, 'u')", (str(image),))
+    real.commit()
+
+    status = cleaner._execute_removal(
+        _FailDeleteConn(real), "a.jpg", image, tmp_path / "q"
+    )
+
+    assert status == "restored"
+    assert image.read_bytes() == b"img"  # 文件已回捞
+    assert sidecar.is_file()
+    assert not (tmp_path / "q").exists() or not any(
+        (tmp_path / "q").rglob("a.jpg")
+    )  # 隔离区无残留
+    row = real.execute("SELECT name FROM food_images").fetchall()
+    real.close()
+    assert row == [("a.jpg",)]  # 行仍在
+
+
+def test_main_rollback_failure_exits_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """回捞不彻底：main 如实报错退出非零，行保留待人工核查，不静默吞掉。"""
+    bad = b"\xff\xd8\xff\xe0rollback-fail"
+    provider = _FakeProvider({bad: '{"is_food": false, "reason": "海报"}'})
+    root = _patch_cleaner(monkeypatch, tmp_path, provider)
+    db = _seed_db(root, [("bad", bad, "https://poster.example.com/p.jpg")])
+    real_connect = sqlite3.connect
+    monkeypatch.setattr(
+        cleaner.sqlite3,
+        "connect",
+        lambda path: _FailDeleteConn(real_connect(path)),
+    )
+    real_move = shutil.move
+
+    def _flaky_move(src: object, dst: object, *args: object, **kwargs: object):
+        if Path(str(dst)) == root / "bad.jpg":  # 回捞（目标=原位）时模拟失败
+            raise OSError("simulated rollback failure")
+        return real_move(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "move", _flaky_move)
+
+    assert cleaner.main(["--execute"]) == 1
+
+    assert _db_names(db) == {"bad"}  # 行保留（未删成）
+    assert not (root / "bad.jpg").is_file()  # 文件滞留隔离区，等人工回捞
