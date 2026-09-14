@@ -196,16 +196,19 @@ class HangingOneBot:
 
 @pytest.mark.asyncio
 async def test_onebot_send_timeout_returns_result_unknown_without_retry() -> None:
+    # 审查 A-03：零内容送达的超时不再终态化——count==0 改判可重试交回队列，
+    # 不做进程内重试；public_message 仍为空（群聊失败静默是产品裁定）。
     receipt = await send_onebot_v11(
         HangingOneBot(),
         _send_request(adapter="onebot", bot_id="qq"),
         timeout_seconds=0.01,
     )
 
-    assert receipt.state is ReceiptState.FAILED_FINAL
+    assert receipt.state is ReceiptState.FAILED_RETRYABLE
     assert receipt.public_message == ""
     assert receipt.operational_issue is not None
-    assert receipt.operational_issue.kind == "result_unknown"
+    assert receipt.operational_issue.kind == "timeout_zero_part_delivered"
+    assert receipt.operational_issue.retryable is True
 
 
 @pytest.mark.asyncio

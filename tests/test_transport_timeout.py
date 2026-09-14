@@ -129,8 +129,12 @@ def test_onebot_sender_applies_configured_timeout() -> None:
     receipt = asyncio.run(_run())
     elapsed = time.monotonic() - started
 
-    assert receipt.state is ReceiptState.FAILED_FINAL
+    # 审查 A-03：零内容送达的超时不再终态化——count==0 时整发重试无重复
+    # 投递风险，改为可重试失败交回队列；public_message 仍为空（群聊失败
+    # 静默是产品裁定）。
+    assert receipt.state is ReceiptState.FAILED_RETRYABLE
     assert receipt.public_message == ""
     assert receipt.operational_issue is not None
-    assert receipt.operational_issue.kind == "result_unknown"
+    assert receipt.operational_issue.kind == "timeout_zero_part_delivered"
+    assert receipt.operational_issue.retryable is True
     assert elapsed < 2.5

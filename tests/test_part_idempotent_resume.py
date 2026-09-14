@@ -15,6 +15,10 @@
 - FAILED_FINAL 前已有 part 送达 → 转 PARTIAL 断点，绝不整封盲重发。
 - 重复投递同一请求不产生重复 part。
 - send_onebot_v11 part_sink 的 chunk 级观测与 result_unknown 语义。
+
+审查 A-03（2026-09-14）：part 级零送达超时改判可重试（回 PENDING 续发），
+不再产生新 UNKNOWN part；UNKNOWN 确认协议对本文件的播种式用例（历史行/
+存储兜底路径产生的 UNKNOWN）继续生效。
 """
 
 from __future__ import annotations
@@ -173,26 +177,23 @@ async def test_part_progress_persisted_per_part(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_restart_resume_never_resends_delivered_parts(tmp_path) -> None:
-    """第 1 part 成功、第 2 结果未知、第 3 未开始 → 重启后：不重发第 1，
-    第 2 确认已送达即跳过，第 3 续发。"""
+    """第 1 part 已送达、第 2 UNKNOWN、第 3 未开始 → 重启后：不重发第 1，
+    第 2 确认已送达即跳过，第 3 续发。
+
+    审查 A-03 后：part 级零送达超时归为可重试（回 PENDING 续发），不再落
+    UNKNOWN；UNKNOWN 态仍可能来自历史行与存储兜底路径，确认协议对这类
+    状态必须继续生效——故直接经队列 part 存储 API 播种该状态（与运行时
+    写入同一条路径），再验证重启恢复。
+    """
     name = "restart.sqlite3"
     queue = _build_queue(tmp_path, name)
     base = _utc_now()
     queue.submit(_chunk_request("req-restart", CHUNKS), now=base)
-    bot1 = ScriptedOneBot({"分片二": "timeout"})
-
-    first = await drain_send_queue_once(
-        queue, _transport(bot1), now=base + timedelta(seconds=120)
+    queue.ensure_parts_planned(
+        "req-restart", [worker_module._payload_digest(c) for c in CHUNKS], now=base
     )
-    # bot.sent 记录的是「尝试」：分片二尝试后超时（结果未知），分片三未被触达。
-    assert bot1.sent == ["分片一", "分片二"]
-    assert "分片三" not in bot1.sent
-    assert first.partial_deferred == 1
-    assert first.parts_delivered == 1
-    assert first.parts_unknown == 1
-    fields = _row_fields(tmp_path, name, "req-restart")
-    assert fields["state"] == PARTIAL_ROW_STATE
-    assert fields["parts_delivered"] == 1
+    assert queue.mark_part_sent("req-restart", 0, provider_message_id="mid-1", now=base)
+    assert queue.mark_part_unknown("req-restart", 1, now=base)
 
     # 重启：新队列实例 + 新 bot；确认器证实分片二已送达。
     queue2 = _build_queue(tmp_path, name)
@@ -221,13 +222,20 @@ async def test_restart_resume_never_resends_delivered_parts(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_unknown_without_confirmer_never_blind_resent(tmp_path) -> None:
-    """无法确认的 UNKNOWN part：不盲发，行保持 PARTIAL；零进展后休眠。"""
+    """无法确认的 UNKNOWN part：不盲发，行保持 PARTIAL；零进展后休眠。
+
+    UNKNOWN 态经队列 part 存储 API 播种（审查 A-03 后零送达超时归可重试，
+    不再产生新 UNKNOWN；确认协议仍须覆盖历史行/兜底路径产生的 UNKNOWN）。
+    """
     name = "unknown-hold.sqlite3"
     queue = _build_queue(tmp_path, name)
     base = _utc_now()
     queue.submit(_chunk_request("req-hold", CHUNKS), now=base)
-    bot1 = ScriptedOneBot({"分片二": "timeout"})
-    await drain_send_queue_once(queue, _transport(bot1), now=base + timedelta(seconds=120))
+    queue.ensure_parts_planned(
+        "req-hold", [worker_module._payload_digest(c) for c in CHUNKS], now=base
+    )
+    assert queue.mark_part_sent("req-hold", 0, provider_message_id="mid-1", now=base)
+    assert queue.mark_part_unknown("req-hold", 1, now=base)
 
     queue2 = _build_queue(tmp_path, name)
     bot2 = ScriptedOneBot()
@@ -263,13 +271,20 @@ async def test_unknown_without_confirmer_never_blind_resent(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_unknown_confirmed_not_delivered_is_resent_once(tmp_path) -> None:
-    """确认「未送达」→ 该 part 回 PENDING 并只重发一次，其余不重发。"""
+    """确认「未送达」→ 该 part 回 PENDING 并只重发一次，其余不重发。
+
+    UNKNOWN 态经队列 part 存储 API 播种（同 test_unknown_without_confirmer
+    的 A-03 说明）。
+    """
     name = "unknown-resend.sqlite3"
     queue = _build_queue(tmp_path, name)
     base = _utc_now()
     queue.submit(_chunk_request("req-resend", CHUNKS), now=base)
-    bot1 = ScriptedOneBot({"分片二": "timeout"})
-    await drain_send_queue_once(queue, _transport(bot1), now=base + timedelta(seconds=120))
+    queue.ensure_parts_planned(
+        "req-resend", [worker_module._payload_digest(c) for c in CHUNKS], now=base
+    )
+    assert queue.mark_part_sent("req-resend", 0, provider_message_id="mid-1", now=base)
+    assert queue.mark_part_unknown("req-resend", 1, now=base)
 
     queue2 = _build_queue(tmp_path, name)
     bot2 = ScriptedOneBot()

@@ -686,21 +686,51 @@ async def send_onebot_v11(
                 ),
             )
         except asyncio.TimeoutError:
+            # 审查 A-03：超时不再一刀切终态化。progress.count 是本次尝试
+            # 已确认送达的 chunk/文件数——count==0 表示零内容送达，整发重试
+            # 无重复投递风险，交回队列按既有重试/断点续发机制走（与下方
+            # except Exception 分支的 count==0 语义对齐）；count>0 表示部分
+            # 已送达，从头重发会重复投递，维持 result_unknown 终态不变。
+            # public_message 保持为空：群聊失败静默是产品裁定，不随重试语义
+            # 改变；运维可见性走 operational_issue → 队列 alerts 链
+            # （runtime/alerts.notify_operational_issue，300s 抑制键含
+            # stage/kind）。
+            if progress.count > 0:
+                debug_id = new_debug_id()
+                logger.warning(
+                    "onebot send timed out after partial delivery side_effects=%d request_id=%s debug_id=%s",
+                    progress.count,
+                    send_request.request_id,
+                    debug_id,
+                )
+                return DeliveryReceipt(
+                    request_id=send_request.request_id,
+                    state=ReceiptState.FAILED_FINAL,
+                    transport=ONEBOT_V11_TRANSPORT,
+                    public_message="",
+                    debug_id=debug_id,
+                    operational_issue=_onebot_issue(
+                        "result_unknown",
+                        retryable=False,
+                        debug_id=debug_id,
+                        attempts=attempt + 1,
+                    ),
+                )
             debug_id = new_debug_id()
             logger.warning(
-                "onebot send timed out request_id=%s debug_id=%s",
+                "onebot send timed out zero_part_delivered=true will_retry=true request_id=%s debug_id=%s",
                 send_request.request_id,
                 debug_id,
             )
             return DeliveryReceipt(
                 request_id=send_request.request_id,
-                state=ReceiptState.FAILED_FINAL,
+                state=ReceiptState.FAILED_RETRYABLE,
                 transport=ONEBOT_V11_TRANSPORT,
                 public_message="",
                 debug_id=debug_id,
                 operational_issue=_onebot_issue(
-                    "result_unknown",
-                    retryable=False,
+                    "timeout_zero_part_delivered",
+                    retryable=True,
                     debug_id=debug_id,
                     attempts=attempt + 1,
                 ),
