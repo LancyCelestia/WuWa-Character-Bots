@@ -8,6 +8,159 @@ import nonebot
 from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter
 from nonebot.adapters.telegram import Adapter as TelegramAdapter
 
+# =========================================================================
+# 进程守护 supervisor（审查 A-21，默认关闭）
+# =========================================================================
+# 背景（A 方审计 A-21）：原先 bot.py 只有 nonebot.run()，进程因未捕获异常/
+# OOM/误杀崩溃后无人拉起，bot 停机直到人工介入。这里补一个最小守护循环：
+# 环境变量 BOT_SUPERVISE=1 时，本进程在 nonebot.init 之前分叉、只当
+# supervisor（不加载 500+ 字段配置、不加载插件、不占端口，保持轻薄），
+# 子进程原样重跑 ``python bot.py`` 走现有完整启动路径；子进程非零退出按
+# 退避重启（5s/15s/60s 封顶），10 分钟滑窗内连续崩溃达阈值则熔断停拉并写
+# 崩溃摘要，防 crash-loop 烧日志。未设 BOT_SUPERVISE 时只多一次环境变量
+# 读取，后续行为与原先完全一致（生产是否启用留 .env 裁定）。
+#
+# 可测试性约束：_supervise_loop / _run_supervised 只在函数体内导入模块级
+# 没有的依赖（subprocess/time/deque/runtime_paths），不新增模块级状态——
+# tests/test_bot_supervisor.py 用 AST 把顶层 import + 这几个函数摘到独立
+# 命名空间执行（不能直接 import bot：模块级会触发 nonebot.init 与全插件
+# 加载，重且带生产副作用）。
+
+
+def _supervision_requested() -> bool:
+    """BOT_SUPERVISE 显式为 1/true/on/yes（大小写不敏感）才启用守护。
+
+    未设置或其余任何值一律视为关闭，行为与无此模块时完全一致。
+    """
+    return os.environ.get("BOT_SUPERVISE", "").strip().lower() in {"1", "true", "on", "yes"}
+
+
+def _supervise_loop(
+    child_command: list[str],
+    *,
+    child_env: dict[str, str] | None = None,
+    backoff_schedule: tuple[float, ...] = (5.0, 15.0, 60.0),
+    crash_window_seconds: float = 600.0,
+    crash_threshold: int = 5,
+    log_path: Path | None = None,
+) -> int:
+    """守护主循环（审查 A-21）。返回 supervisor 自身退出码。
+
+    语义：
+    - 子进程退出码 0 = 人工停止/优雅退出 → 不再拉起，supervisor 以 0 退出；
+    - 非零退出视为崩溃 → 记入 ``crash_window_seconds`` 滑窗，窗口内达到
+      ``crash_threshold`` 次即熔断（写摘要、以非零码退出），否则按
+      ``backoff_schedule`` 退避后重启（超出档位取末档封顶）；
+    - 每次拉起写一行（时间 + 第 N 次 + 上次退出码）进既有运行数据日志通道。
+
+    Windows 信号取舍（为何这里没有信号处理器、也不开新进程组/job object）：
+    - 子进程默认共享父进程控制台，控制台事件（CTRL_C_EVENT）由操作系统广播
+      给控制台内所有进程 → 按下 Ctrl+C 时 nonebot 子进程照常优雅停机，
+      supervisor 同时收到 KeyboardInterrupt，退出重启循环、等子进程退出后
+      随同结束。「信号传递」由控制台广播天然完成，零转发代码——这是
+      Windows 上最简可靠方案。
+    - 不用 CREATE_NEW_PROCESS_GROUP：新进程组里的子进程默认忽略 Ctrl+C
+      （需自行 SetConsoleCtrlHandler 重新启用），与「把 Ctrl+C 传给子进程
+      正常退出」的目标相悖，故不采用。
+    - 不引 job object：只多覆盖「父死子活」一种情形，属额外复杂度。停止
+      整组用控制台 Ctrl+C 或 ``taskkill /T /PID <supervisor pid>``；单独杀
+      supervisor 不会连带子进程（Windows 无 POSIX 进程组语义），运维须知。
+    - 直接关闭控制台窗口（CTRL_CLOSE_EVENT）时操作系统同时终结两者，平台
+      只给约 5 秒收尾，守护不覆盖该情形。
+    """
+    import subprocess
+    import time
+    from collections import deque
+
+    def _log(line: str) -> None:
+        # 既有日志通道 = 运行数据目录（与 faulthandler.log/crash.log 同处）；
+        # supervisor 阶段还没有 nonebot logger，控制台同步回显一份。
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[supervisor] {stamp} {line}", flush=True)
+        if log_path is None:
+            return
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(f"{stamp} {line}\n")
+        except OSError:
+            pass  # 日志写不进去绝不影响守护本身
+
+    crash_times: deque[float] = deque()
+    restarts = 0
+    last_returncode: int | None = None
+    last_delay = 0.0
+    while True:
+        if restarts == 0:
+            _log(f"第 1 次拉起子进程：{' '.join(child_command)}")
+        else:
+            _log(
+                f"第 {restarts + 1} 次拉起"
+                f"（上次退出码 {last_returncode}，退避 {last_delay:g}s 后重启）"
+            )
+        proc = subprocess.Popen(child_command, env=child_env)
+        try:
+            returncode = proc.wait()
+        except KeyboardInterrupt:
+            # 控制台事件已由 OS 同时送达子进程，让它走优雅停机；supervisor
+            # 不吞信号也不抢跑：退出重启循环，等子进程退出后随同结束。
+            _log("收到 Ctrl+C，停止拉起，等待子进程退出")
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                _log("子进程 30s 未随 Ctrl+C 退出，强制终止（TerminateProcess 兜底）")
+                proc.terminate()
+            return 0
+        if returncode == 0:
+            _log("子进程退出码 0（正常停止），守护结束")
+            return 0
+        now = time.monotonic()
+        crash_times.append(now)
+        while crash_times and now - crash_times[0] > crash_window_seconds:
+            crash_times.popleft()  # 窗口外的旧崩溃不累计（长期稳定运行后不算旧账）
+        restarts += 1
+        if len(crash_times) >= crash_threshold:
+            _log(
+                f"崩溃熔断：{crash_window_seconds:g}s 内连续崩溃 {len(crash_times)} 次"
+                f"（阈值 {crash_threshold}），停止拉起防 crash-loop；最后退出码 {returncode}"
+            )
+            return 1
+        last_returncode = returncode
+        last_delay = backoff_schedule[min(restarts - 1, len(backoff_schedule) - 1)]
+        try:
+            time.sleep(last_delay)
+        except KeyboardInterrupt:
+            _log("重启等待期间收到 Ctrl+C，停止拉起")
+            return 0
+
+
+def _run_supervised() -> int:
+    """守护模式入口：本进程只当 supervisor，子进程原样重跑 ``python bot.py``。
+
+    子进程命令就是「同一解释器 + 本文件」（剥离 BOT_SUPERVISE 后），与人工
+    启动完全同路径——守护拉起等价于一次人工重启，不引入第二套启动逻辑。
+    日志落运行数据目录 supervisor.log（经 scripts.runtime_paths 解析，与
+    faulthandler.log/crash.log 同处；源码树 data/ 不会被写，符合 G1 守卫）。
+    """
+    from scripts.runtime_paths import runtime_data_dir
+
+    bot_path = Path(__file__).resolve()
+    child_env = dict(os.environ)
+    # 关键：子进程必须摘掉开关，否则子进程也会进入守护分支，无限套娃。
+    child_env.pop("BOT_SUPERVISE", None)
+    return _supervise_loop(
+        [sys.executable, str(bot_path)],
+        child_env=child_env,
+        log_path=runtime_data_dir() / "supervisor.log",
+    )
+
+
+if __name__ == "__main__" and _supervision_requested():
+    # 守护模式必须在 nonebot.init 之前分叉（父进程保持轻薄、不与子进程抢
+    # 端口/日志）；未启用守护时这里只是一次布尔短路，后面的模块级初始化
+    # 与原先逐行一致。
+    raise SystemExit(_run_supervised())
+
 
 def _install_crash_guards(runtime_data_dir: str | Path | None = None) -> None:
     """把致命错误落盘，便于事后定位（无痕退出时也能留下证据）。
