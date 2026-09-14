@@ -259,6 +259,11 @@ class _PreparedRuntime:
     message: IncomingMessage
     decision: BotDecision
     policy: PolicyEvaluation
+    # 审查 A-18：能力异常回滚限流记账所需的最小现场——reason 决定回滚哪些
+    # 桶（bypass/拦截类零记账，回滚自会空转），amount 与 check_and_record
+    # 收到的 safe_amount 一致（budget 0=不限 在限流器内按 1 记账）。
+    rate_limit_reason: str = "allowed"
+    rate_limit_amount: int = 1
 
 
 def _resolve_persona_profile_id(
@@ -588,6 +593,21 @@ class RuntimePipeline:
                 )
             )
             return self._record_receipt_safely(receipt, message)
+        # 审查 A-18：幂等 claim 移到全部门禁（黑白名单/安静时间/限流）判定
+        # 之后——旧序 handle 先 claim 再 _prepare，被拦事件也消耗幂等键，
+        # 同一条被拦消息的重发（用户重试）会被当 duplicate 吞掉，永远得不到
+        # 回复；现在只有全门禁放行者才占键。claim 失败（重复投递）时立即
+        # 回滚上面刚记的限流账：重复事件与旧 claim-first 行为一致，不消耗
+        # 任何额度。A-04 修复不受影响：限流器调用点与入参保持原样（R3 最小
+        # 间隔在限流器内部先于 interactive 早退的次序不动）。
+        if not self._claim_event(message, capability_id):
+            self._rollback_rate_limit_record(
+                message,
+                capability_id,
+                amount=max(1, int(reply_budget.max_messages)),
+                reason=rate_limit.reason,
+            )
+            return self._duplicate_receipt(message, capability_id)
         decision = BotDecision(
             request_id=message.request_id,
             should_respond=True,
@@ -609,7 +629,13 @@ class RuntimePipeline:
                 *rate_limit.audit_tags,
             ],
         )
-        return _PreparedRuntime(message=message, decision=decision, policy=policy)
+        return _PreparedRuntime(
+            message=message,
+            decision=decision,
+            policy=policy,
+            rate_limit_reason=rate_limit.reason,
+            rate_limit_amount=max(1, int(reply_budget.max_messages)),
+        )
 
     def _complete(
         self,
@@ -866,6 +892,37 @@ class RuntimePipeline:
         except Exception:  # noqa: BLE001 - 幂等表异常时放行，不阻断主链路。
             return True
 
+    def _rollback_rate_limit_record(
+        self,
+        message: IncomingMessage,
+        capability_id: str,
+        *,
+        amount: int,
+        reason: str,
+    ) -> None:
+        """审查 A-18：回滚一次 check_and_record 的限流记账（best-effort）。
+
+        rollback 是限流器的可选能力（Protocol 未强制——测试桩与第三方实现
+        只有 check_and_record）：getattr 探测，缺失即跳过；回滚自身失败也
+        只留调试日志。额度补偿绝不能让回执路径变形（fail-open）。
+        """
+        rollback_fn = getattr(self.rate_limiter, "rollback", None)
+        if not callable(rollback_fn):
+            return
+        try:
+            rollback_fn(message, capability_id, amount=amount, reason=reason)
+        except Exception:  # fail-open：回滚失败不影响回执。
+            logger.debug("rate limit rollback failed", exc_info=True)
+
+    def _rollback_rate_limit(self, prepared: _PreparedRuntime) -> None:
+        """能力异常路径的额度回滚（现场取自 _PreparedRuntime，见上）。"""
+        self._rollback_rate_limit_record(
+            prepared.message,
+            prepared.decision.capability_id,
+            amount=prepared.rate_limit_amount,
+            reason=prepared.rate_limit_reason,
+        )
+
     def handle(
         self,
         message: IncomingMessage,
@@ -874,15 +931,19 @@ class RuntimePipeline:
     ) -> DeliveryReceipt:
         _observe_decision_shadow(message, capability_id)
         try:
-            if not self._claim_event(message, capability_id):
-                return self._duplicate_receipt(message, capability_id)
+            # 审查 A-18：幂等 claim 已并入 _prepare（全部门禁+限流判定之后），
+            # 这里不再先行 claim。
             prepared = self._prepare(message, capability_id)
             if isinstance(prepared, DeliveryReceipt):
                 return prepared
-            return self._complete(
-                prepared,
-                capability(prepared.message, prepared.decision),
-            )
+            try:
+                result = capability(prepared.message, prepared.decision)
+            except Exception as exc:  # noqa: BLE001 - 能力异常统一转内部错误回执并回滚额度。
+                # 审查 A-18：能力异常（非用户内容问题）→ 回滚本次限流记账，
+                # 同会话紧跟的下一条消息不受上一条失败的影响。
+                self._rollback_rate_limit(prepared)
+                return self._internal_error(message, capability_id, exc)
+            return self._complete(prepared, result)
         except Exception as exc:  # pragma: no cover - integration fallback.  # noqa: BLE001 - 能力调用异常统一转为内部错误回执。
             return self._internal_error(message, capability_id, exc)
 
@@ -894,12 +955,15 @@ class RuntimePipeline:
     ) -> DeliveryReceipt:
         _observe_decision_shadow(message, capability_id)
         try:
-            if not self._claim_event(message, capability_id):
-                return self._duplicate_receipt(message, capability_id)
             prepared = self._prepare(message, capability_id)
             if isinstance(prepared, DeliveryReceipt):
                 return prepared
-            result = await capability(prepared.message, prepared.decision)
+            try:
+                result = await capability(prepared.message, prepared.decision)
+            except Exception as exc:  # noqa: BLE001 - 能力异常统一转内部错误回执并回滚额度。
+                # 审查 A-18：能力异常回滚限流记账（与 handle 同语义）。
+                self._rollback_rate_limit(prepared)
+                return self._internal_error(message, capability_id, exc)
             return self._complete(prepared, result)
         except Exception as exc:  # pragma: no cover - integration fallback.  # noqa: BLE001 - 能力调用异常统一转为内部错误回执。
             return self._internal_error(message, capability_id, exc)

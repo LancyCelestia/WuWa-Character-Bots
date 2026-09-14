@@ -107,6 +107,59 @@ class RateLimiter(Protocol):
     ) -> RateLimitDecision:
         raise NotImplementedError
 
+    # 审查 A-18：rollback 是**可选能力**，故意不进 Protocol——测试桩与
+    # 第三方实现只保证 check_and_record；调用方（pipeline）用 getattr 探测，
+    # 缺失即跳过回滚（fail-open）。InMemory/SQLite 两实现均已提供。
+
+
+# R3 记账可能携带的放行型 reason（allowed 之外）。审查 A-04 序下 R3 记账
+# 先于 interactive/role_bypass/emotion_exempt 各早退执行，这些路径返回时
+# sender_interval 桶已 +1——rollback 必须同样覆盖，否则能力失败后管理员的
+# 下一次点名/情绪豁免消息会被残留记账误拦。其余 reason（disabled/
+# non_chat_capability/各拦截）在 R3 门之前或 R3 门未命中，零记账。
+_R3_RECORD_CARRYING_REASONS = frozenset(
+    {"interactive_bypass", "role_bypass", "emotion_exempt"}
+)
+
+
+def _sender_interval_record_applies(
+    settings: RateLimitSettings,
+    message: IncomingMessage,
+    capability_id: str,
+) -> bool:
+    """R3 同人点名最小间隔「放行即记账」的生效条件（check/rollback 共用）。
+
+    审查 A-04 序：该检查先于 interactive_bypass 早退执行，命中且放行时
+    sender_interval 桶已 +1——所以 reason=interactive_bypass 的 decision
+    也携带这条记账，rollback 必须覆盖。InMemory 与 SQLite 的 check 侧把
+    条件拆在两处（外层门 + 函数内），但「已记账」的生效集相同，即本函数。
+    """
+    return bool(
+        settings.enabled
+        and capability_id in CHAT_CAPABILITY_IDS
+        and settings.chat_sender_min_interval_seconds > 0
+        and message.mentions_bot
+        and message.session_type.value == "group"
+    )
+
+
+def _group_windows_record_applies(
+    settings: RateLimitSettings,
+    message: IncomingMessage,
+) -> bool:
+    """群句数帽在 allowed 路径「已记账」的条件（rollback 用）。
+
+    情绪豁免命中时 check_and_record 直接以 reason=emotion_exempt 返回且
+    零记账，走不到 allowed，故此处无需复判豁免。
+    """
+    return bool(
+        is_group_session(message)
+        and (
+            settings.group_hourly_max_requests > 0
+            or settings.group_minute_max_requests > 0
+        )
+    )
+
 
 # 情绪低落标签集合：命中即豁免群句数帽（"要紧的事不受限制"）。
 _DISTRESS_LABELS = frozenset({"support_needed", "lonely", "low_energy", "frustrated"})
@@ -339,6 +392,88 @@ class InMemoryRateLimiter:
             reason="allowed",
             audit_tags=["rate_limit:ok"],
         )
+
+    def rollback(
+        self,
+        message: IncomingMessage,
+        capability_id: str,
+        *,
+        amount: int = 1,
+        reason: str = "allowed",
+    ) -> None:
+        """审查 A-18 额度回滚：撤销一次 check_and_record 的真实记账。
+
+        只处理确实写过桶的 reason（与 check_and_record 返回值一一对应）：
+        - allowed：global/session/sender 各 amount + target 1（若启用）
+          + 群窗口各 amount（若启用且群聊且非情绪豁免）+ R3 sender_interval 1
+          （若命中点名条件）；
+        - interactive_bypass / role_bypass / emotion_exempt：仅 R3
+          sender_interval 1——A-04 序下 R3 记账先于这三个早退/分流（见
+          _R3_RECORD_CARRYING_REASONS）；
+        - proactive_allowed：proactive_group 桶 1。
+        其余 reason（各拦截/禁用/非 chat）本就零记账，直接返回。
+        从桶尾移除最近记账：回滚紧跟能力失败/重复拒绝发生，本调用写入的
+        时间戳通常就是桶尾；并发同刻碰撞至多多退一条，方向是放宽而非误拦，
+        随窗口滚动自愈。
+        """
+        safe_amount = max(1, int(amount))
+        if reason == "proactive_allowed":
+            self._pop_recent(
+                self._buckets.get(
+                    self._bucket_key(
+                        capability_id,
+                        "proactive_group",
+                        message.group_id or message.session_id,
+                    )
+                ),
+                1,
+            )
+            return
+        if reason != "allowed" and reason not in _R3_RECORD_CARRYING_REASONS:
+            return
+        if _sender_interval_record_applies(self.settings, message, capability_id):
+            self._pop_recent(
+                self._buckets.get(self._sender_interval_key(capability_id, message)),
+                1,
+            )
+        if reason != "allowed":
+            return
+        if _group_windows_record_applies(self.settings, message):
+            group_key = str(message.group_id or message.session_id)
+            for scope in ("group_hour", "group_minute"):
+                # 镜像 _check_group_windows 的 active 判定：帽 <=0 的窗口没记账。
+                if scope == "group_hour" and self.settings.group_hourly_max_requests <= 0:
+                    continue
+                if scope == "group_minute" and self.settings.group_minute_max_requests <= 0:
+                    continue
+                self._pop_recent(
+                    self._buckets.get(self._bucket_key(capability_id, scope, group_key)),
+                    safe_amount,
+                )
+        if self.settings.target_min_interval_seconds > 0:
+            self._pop_recent(
+                self._buckets.get(self._target_bucket_key(capability_id, message)),
+                1,
+            )
+        for scope, value in (
+            ("global", "all"),
+            ("session", message.session_id),
+            ("sender", message.sender_id),
+        ):
+            self._pop_recent(
+                self._buckets.get(self._bucket_key(capability_id, scope, value)),
+                safe_amount,
+            )
+
+    @staticmethod
+    def _pop_recent(bucket: deque[datetime] | None, count: int) -> None:
+        """从桶尾移除至多 count 条记账；.get 取桶不触发 defaultdict 建桶。"""
+        if not bucket:
+            return
+        for _ in range(max(0, int(count))):
+            if not bucket:
+                return
+            bucket.pop()
 
     def _sender_interval_key(self, capability_id: str, message: IncomingMessage) -> str:
         return self._bucket_key(capability_id, "sender_interval", message.sender_id)
@@ -716,6 +851,104 @@ class SQLiteRateLimiter:
             allowed=True,
             reason="allowed",
             audit_tags=["rate_limit:ok"],
+        )
+
+    def rollback(
+        self,
+        message: IncomingMessage,
+        capability_id: str,
+        *,
+        amount: int = 1,
+        reason: str = "allowed",
+    ) -> None:
+        """审查 A-18 额度回滚（SQLite 版，桶集判定与 InMemory 版同语）。
+
+        镜像 check_and_record 的写路径：只删「确实写入过」的桶，每桶按
+        created_at DESC, id DESC 删最近记账。allowed 携带全桶记账；
+        interactive_bypass / role_bypass / emotion_exempt 仅携带 R3
+        sender_interval 记账（A-04 序，见 _R3_RECORD_CARRYING_REASONS）；
+        其余 reason 零记账直接返回。
+        """
+        safe_amount = max(1, int(amount))
+        deletes: list[tuple[str, int]] = []
+        if reason == "proactive_allowed":
+            deletes.append(
+                (
+                    self._bucket_key(
+                        capability_id,
+                        "proactive_group",
+                        message.group_id or message.session_id,
+                    ),
+                    1,
+                )
+            )
+        else:
+            if reason != "allowed" and reason not in _R3_RECORD_CARRYING_REASONS:
+                return
+            if _sender_interval_record_applies(self.settings, message, capability_id):
+                deletes.append(
+                    (
+                        self._bucket_key(
+                            capability_id, "sender_interval", message.sender_id
+                        ),
+                        1,
+                    )
+                )
+            if reason != "allowed":
+                # 仅 R3 记账：group/target/scoped 桶在这些早退路径未写过。
+                if deletes:
+                    self._apply_deletes(deletes)
+                return
+            if _group_windows_record_applies(self.settings, message):
+                group_key = str(message.group_id or message.session_id)
+                if self.settings.group_hourly_max_requests > 0:
+                    deletes.append(
+                        (self._bucket_key(capability_id, "group_hour", group_key), safe_amount)
+                    )
+                if self.settings.group_minute_max_requests > 0:
+                    deletes.append(
+                        (self._bucket_key(capability_id, "group_minute", group_key), safe_amount)
+                    )
+            if self.settings.target_min_interval_seconds > 0:
+                deletes.append(
+                    (self._target_bucket_key(capability_id, message), 1)
+                )
+            for scope, value in (
+                ("global", "all"),
+                ("session", message.session_id),
+                ("sender", message.sender_id),
+            ):
+                deletes.append(
+                    (self._bucket_key(capability_id, scope, value), safe_amount)
+                )
+        if not deletes:
+            return
+        self._apply_deletes(deletes)
+
+    def _apply_deletes(self, deletes: list[tuple[str, int]]) -> None:
+        with self._lock:
+            self._ensure_schema()
+            with closing(self._connect()) as connection, connection:
+                for bucket_key, count in deletes:
+                    self._delete_latest(connection, bucket_key, count)
+
+    @staticmethod
+    def _delete_latest(
+        connection: sqlite3.Connection,
+        bucket_key: str,
+        count: int,
+    ) -> None:
+        """删除桶内最近 count 条记账（created_at 降序，同刻按 id 降序）。"""
+        connection.execute(
+            """
+            DELETE FROM rate_limit_events WHERE rowid IN (
+                SELECT rowid FROM rate_limit_events
+                WHERE bucket_key = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+            )
+            """,
+            (bucket_key, max(0, int(count))),
         )
 
     def _check_proactive(self, message: IncomingMessage, capability_id: str) -> RateLimitDecision:
