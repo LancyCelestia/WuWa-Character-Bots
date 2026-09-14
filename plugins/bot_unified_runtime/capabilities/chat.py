@@ -1265,6 +1265,7 @@ def build_chat_prompt_with_diagnostics(
     context: ContextBundle,
     admin_roster_text: str = "",
     time_window_section: str = "",
+    group_id: str = "",
 ) -> tuple[list[dict[str, str]], ChatPromptDiagnostics]:
     persona = context.persona
     requested_context_budget = context.context_budget
@@ -1386,6 +1387,13 @@ def build_chat_prompt_with_diagnostics(
     creator_note = creator_context_note().strip()
     if creator_note:
         dynamic_parts += ["", "【创造者】", creator_note]
+    # 审查 B-03：group_id 已传入 build_context 却从未渲染成文本——bot 不知道
+    # 自己在哪个群。群聊会话注入客观一行【当前群聊】群号；私聊整块不出现。
+    # 富信息（群名称等）等 B-01 群上下文能力接线后再扩，此处不做 API 调用；
+    # 空白群号按未知处理（宁缺毋滥，不注入半行占位）。
+    current_group_id = str(group_id or "").strip()
+    if current_group_id:
+        dynamic_parts += ["", "【当前群聊】", f"群号 {current_group_id}"]
     if admin_roster_text.strip():
         dynamic_parts += ["", "【管理团队】", admin_roster_text]
     if (
@@ -1796,6 +1804,9 @@ def build_chat_result(
         context,
         admin_roster_text=admin_roster_text,
         time_window_section=time_window_section,
+        # 审查 B-03：生产链路把摄取层的 group_id 透传进提示词构建，
+        # 与 capabilities/chat.py build_context 调用点同源（getattr 容缺省）。
+        group_id=str(getattr(message, "group_id", "") or ""),
     )
     if safety.action != "allow":
         messages.append({"role": "system", "content": (
