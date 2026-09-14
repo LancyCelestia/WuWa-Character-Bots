@@ -7,6 +7,9 @@
   每分钟调度任务构造 SendRequest 走统一发送队列（语气由人格文案承担）。
 - 绝不打扰失控：单会话待办上限、过期治理（迟到 >30 分钟顺延、
   >24h 作废）、取消可用。
+- 治理不静默（A-05，2026-09-15）：顺延/作废各按会话折成至多一句守岸人
+  短句回执，随 ``due()`` 的既有投递路径主动送达（见
+  ``_build_governance_receipts``）。
 - 时区口径（2026-09-13 修复）：全链路统一**进程本地时区**（naive 视为
   本地，aware 一律转本地再比较/落库）。到点判定用 aware datetime 的
   时刻比较，**禁止 ISO 字符串字典序比较**——旧实现拿 ``+08:00`` 存储
@@ -19,7 +22,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from hashlib import sha1
 from pathlib import Path
@@ -93,6 +96,129 @@ def _next_occurrence(remind_at: datetime, current: datetime) -> datetime:
     if candidate <= base:
         candidate += timedelta(days=1)
     return candidate
+
+
+# ---------------------------------------------------------------------------
+# 治理回执（A-05，2026-09-15）：顺延/作废不再静默——due() 把本轮被治理的
+# 提醒按会话折成至多一句守岸人短句，合成带 ``gov-`` 前缀 id 的回执
+# Reminder 搭既有投递路径主动送达（调度器内联投递，不改 __init__ 契约）。
+# 节流哲学：同会话一次治理扫描至多一条（群聊多条错过也不刷屏）；每条被
+# 治理提醒只进一次归集，回执天然不重复。送达侧照常 mark_done，对回执 id
+# 是无害空操作，绝不动真提醒的待办状态。模板池形态对齐
+# capabilities/user_copy.py 的池惯例；选句走本模块 A-13 的确定性散列
+# （零随机）。
+# ---------------------------------------------------------------------------
+_GOVERNANCE_RECEIPT_ID_PREFIX = "gov-"
+
+# {items}=顺延/作废事项串；mixed 另有 {dropped}=作废事项串。
+_GOVERNANCE_RECEIPT_TEMPLATES: dict[str, tuple[str, ...]] = {
+    "postponed": (
+        (
+            "（潮声轻轻）你不在的时候，「{items}」到了时间，"
+            "我没能在对的一刻叫你。\n"
+            "我把它挪到了明天同一个时刻——到点我会再提醒你一次。"
+        ),
+        (
+            "……「{items}」到点的时候你不在。\n"
+            "迟到的催促太生硬了，先把它放到明天同一个时间。"
+            "我记着，到点再来叫你。"
+        ),
+    ),
+    "expired": (
+        (
+            "（翻了翻清单）「{items}」隔得太久了，大概已经不需要我催。\n"
+            "我先替你放下——要是还想续上，再跟我说一声就好。"
+        ),
+        (
+            "「{items}」等了一天也没等到人，我想它多半已经过去了。\n"
+            "替你从待办里放下；要是其实还没有，再告诉我一遍时间就好。"
+        ),
+    ),
+    "mixed": (
+        (
+            "（潮声很轻）你不在的时候，「{items}」错过了时间，"
+            "我把它挪到了明天同一个时刻。\n"
+            "另有「{dropped}」隔得太久，我猜已经不用我催，先替你放下。"
+        ),
+    ),
+}
+
+_RECEIPT_ITEM_MAX_CHARS = 30
+_RECEIPT_MAX_ITEMS = 3
+
+
+def _receipt_items_label(texts: list[str]) -> str:
+    """回执里的事项串：「A」「B」……超 3 件折叠为「等 N 件」，单件截断。"""
+    labels: list[str] = []
+    for text in texts[:_RECEIPT_MAX_ITEMS]:
+        clipped = str(text or "").strip()[:_RECEIPT_ITEM_MAX_CHARS]
+        if len(clipped) < len(str(text or "").strip()):
+            clipped += "…"
+        labels.append(f"「{clipped}」")
+    if len(texts) > _RECEIPT_MAX_ITEMS:
+        labels.append(f"等 {len(texts)} 件")
+    return "".join(labels)
+
+
+@dataclass
+class _GovernedSession:
+    """一次 due() 轮次里某会话被治理提醒的归集（回执的路由与成句素材）。"""
+
+    reminder: Reminder  # 任一条被治理提醒（回执沿用其路由字段）
+    postponed: list[str] = field(default_factory=list)
+    expired: list[str] = field(default_factory=list)
+
+
+def _build_governance_receipts(
+    governed: dict[str, _GovernedSession], *, current: datetime
+) -> list[Reminder]:
+    """把本轮治理结果折成每会话至多一条回执提醒（守岸人语气短句）。
+
+    回执是合成的 ``Reminder``：id 带 ``gov-`` 前缀（真 id 是 sha1 十六进
+    制，永不撞前缀），``build_reminder_text`` 对它原样放行。投递失败时
+    回执不重发（治理动作本身已在库内落定，回执只是告知，best-effort）。
+    """
+    receipts: list[Reminder] = []
+    for session_key, info in governed.items():
+        if info.postponed and info.expired:
+            kind = "mixed"
+            body = _pick_template_variant(
+                _GOVERNANCE_RECEIPT_TEMPLATES["mixed"], "", seed=session_key
+            ).format(
+                items=_receipt_items_label(info.postponed),
+                dropped=_receipt_items_label(info.expired),
+            )
+        elif info.postponed:
+            kind = "postponed"
+            body = _pick_template_variant(
+                _GOVERNANCE_RECEIPT_TEMPLATES["postponed"], "", seed=session_key
+            ).format(items=_receipt_items_label(info.postponed))
+        else:
+            kind = "expired"
+            body = _pick_template_variant(
+                _GOVERNANCE_RECEIPT_TEMPLATES["expired"], "", seed=session_key
+            ).format(items=_receipt_items_label(info.expired))
+        created = datetime.now(UTC).isoformat()
+        digest = sha1(
+            f"{session_key}:{kind}:{body}:{created}".encode()
+        ).hexdigest()[:12]
+        source = info.reminder
+        receipts.append(
+            Reminder(
+                reminder_id=f"{_GOVERNANCE_RECEIPT_ID_PREFIX}{digest}",
+                session_key=session_key,
+                sender_id=source.sender_id,
+                target_scope=source.target_scope,
+                target_id=source.target_id,
+                adapter=source.adapter,
+                bot_id=source.bot_id,
+                remind_at=_as_local(current).isoformat(),
+                text=body,
+                status="receipt",
+                created_at=created,
+            )
+        )
+    return receipts
 
 
 @dataclass(frozen=True)
@@ -288,6 +414,9 @@ class ReminderStore:
           已过），用户需要的也不是迟到的催促——顺延到下一个同一时刻再
           温柔提醒，宁可晚一天也不在错误的时间点打扰。
         - 迟到超 ``grace_hours``（默认 24h）→ 标记 expired 作废。
+        - 治理回执（A-05）：顺延/作废各按会话折成至多一句守岸人短句，
+          以 ``gov-`` 前缀合成 Reminder 附在返回值尾部，搭既有投递路径
+          主动告知；真提醒与回执按 id 前缀即可区分。
         """
         current = _as_local(now) if now is not None else _local_now()
         grace = timedelta(hours=max(1, int(grace_hours)))
@@ -301,6 +430,7 @@ class ReminderStore:
         delivered: list[Reminder] = []
         postponed: list[tuple[str, str]] = []
         expired: list[str] = []
+        governed: dict[str, _GovernedSession] = {}
         for row in rows:
             reminder = Reminder(
                 reminder_id=str(row[0]), session_key=str(row[1]), sender_id=str(row[2]),
@@ -312,6 +442,9 @@ class ReminderStore:
             if remind_at is None:
                 # 历史脏数据（解析不出时刻）无法判定到点，按过期治理。
                 expired.append(reminder.reminder_id)
+                governed.setdefault(
+                    reminder.session_key, _GovernedSession(reminder)
+                ).expired.append(reminder.text)
                 continue
             late = current - remind_at
             if late <= timedelta(0):
@@ -322,8 +455,14 @@ class ReminderStore:
                 postponed.append(
                     (reminder.reminder_id, _next_occurrence(remind_at, current).isoformat())
                 )
+                governed.setdefault(
+                    reminder.session_key, _GovernedSession(reminder)
+                ).postponed.append(reminder.text)
             else:
                 expired.append(reminder.reminder_id)
+                governed.setdefault(
+                    reminder.session_key, _GovernedSession(reminder)
+                ).expired.append(reminder.text)
         if postponed or expired:
             with self._lock, self._conn:
                 for reminder_id, next_at in postponed:
@@ -338,7 +477,7 @@ class ReminderStore:
                         " WHERE reminder_id = ? AND status = 'pending'",
                         (reminder_id,),
                     )
-        return delivered
+        return delivered + _build_governance_receipts(governed, current=current)
 
     def mark_done(self, reminder_id: str) -> None:
         with self._lock, self._conn:
@@ -512,6 +651,10 @@ def build_reminder_text(reminder: Reminder, *, persona_profile_id: str = "") -> 
     透传、未参与文案分型）：同型多变体时参与稳定散列选变体；缺省空串
     退化为「恒取首个变体」，文案字面与既有完全一致。
     """
+    if reminder.reminder_id.startswith(_GOVERNANCE_RECEIPT_ID_PREFIX):
+        # A-05 治理回执：文案在 due() 里已按池成句，原样放行——绝不套
+        # 分型模板（回执事项里带「吃药」等关键词也不许被误包装）。
+        return reminder.text
     text = str(reminder.text or "")
     kind = classify_reminder_kind(text)
     variants = _REMINDER_TEXT_TEMPLATES.get(kind) or _REMINDER_TEXT_TEMPLATES["custom"]

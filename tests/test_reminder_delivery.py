@@ -159,6 +159,54 @@ async def test_worker_already_sent_marks_done_without_redispatch(
     assert store.due() == []
 
 
+@pytest.mark.asyncio
+async def test_governance_receipt_rides_delivery_path(tmp_path, monkeypatch) -> None:
+    """A-05：顺延/作废回执搭既有投递路径主动送达；真提醒保持 pending。
+
+    错过（迟到 >30min ≤24h）的提醒被顺延不补投，但 ``due()`` 会附一句
+    ``gov-`` 前缀的回执 Reminder——调度器照常内联投递它，文案原样放行
+    （不被分型模板误包装），送达后的 mark_done 对回执 id 是空操作。
+    """
+    monkeypatch.setattr(reminders_mod, "_STORES", {})
+    config = SimpleNamespace(
+        bot_reminder_db_path=str(tmp_path / "r.sqlite3"),
+        bot_persona_profile_id="default",
+    )
+    store = reminders_mod.build_reminder_store(config)
+    missed = datetime.now(timezone.utc) - timedelta(hours=2)  # 迟到 2h → 顺延
+    reminder = store.add(
+        session_key="group:1",
+        sender_id="u1",
+        target_scope="group",
+        target_id="1",
+        adapter="nonebot",
+        bot_id="bot",
+        remind_at=missed,
+        text="写作业",
+    )
+    queue = _FakeQueue()
+    calls: list[str] = []
+
+    async def _fake_deliver(bot, event, request, *args, **kwargs):
+        calls.append(request.request_id)
+        return _receipt(ReceiptState.SENT)
+
+    monkeypatch.setattr(pkg, "_deliver_transport_send_request", _fake_deliver)
+    monkeypatch.setattr(pkg, "_select_queue_bot", lambda provider, request: object())
+
+    delivered = await _deliver_due_reminders(config, queue, None, None, dict)
+
+    assert delivered == 1, "本轮只送达治理回执，错过的提醒不原样补投"
+    assert len(calls) == 1 and calls[0].startswith("reminder-gov-")
+    receipt_request = queue.requests[calls[0]]
+    fallback = receipt_request.content.text_fallback
+    assert "写作业" in fallback and "你之前说过的" not in fallback
+    pending = store.list_pending("group:1")
+    assert [item.reminder_id for item in pending] == [reminder.reminder_id], (
+        "顺延中的真提醒不得被回执销账"
+    )
+
+
 def test_register_scheduler_installs_async_job_with_receipt_repo(
     tmp_path, monkeypatch
 ) -> None:

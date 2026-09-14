@@ -239,7 +239,11 @@ def test_store_late_over_30min_postpones_instead_of_delivering(tmp_path) -> None
         remind_at=datetime(2026, 9, 12, 23, 0, tzinfo=_TZ), text="收衣服",
     )
     now = datetime(2026, 9, 13, 13, 51, tzinfo=_TZ)  # 迟到 ~14.9 小时
-    assert store.due(now=now) == []  # 过期不原样投递
+    governed = store.due(now=now)
+    # 过期不原样投递；顺延出一句回执（A-05 治理不静默）。
+    assert [item for item in governed if not item.reminder_id.startswith("gov-")] == []
+    receipts = [item for item in governed if item.reminder_id.startswith("gov-")]
+    assert len(receipts) == 1 and "收衣服" in receipts[0].text
     pending = store.list_pending("group:1")
     assert [item.reminder_id for item in pending] == [reminder.reminder_id]  # 仍是待办
     # 顺延到 09-13 23:00（下一个同一时刻；相对原定时刻即"明天同一时刻"）。
@@ -261,7 +265,11 @@ def test_store_late_beyond_grace_expires(tmp_path) -> None:
         remind_at=datetime(2026, 9, 12, 8, 0, tzinfo=_TZ), text="过期件",
     )
     now = datetime(2026, 9, 13, 13, 51, tzinfo=_TZ)  # 迟到 ~29.9 小时
-    assert store.due(now=now) == []
+    governed = store.due(now=now)
+    # 作废也出一句回执（A-05），真提醒不再投递。
+    assert [item for item in governed if not item.reminder_id.startswith("gov-")] == []
+    receipts = [item for item in governed if item.reminder_id.startswith("gov-")]
+    assert len(receipts) == 1 and "过期件" in receipts[0].text
     assert store.list_pending("group:1") == []
 
 
