@@ -994,6 +994,210 @@ def compute_kdj(
     )
 
 
+# ==================== 技术指标 II：MACD / RSI / WR / CCI（审查 H-08） ====================
+# 审查 H-08（2026-09-15）：个股行情此前只有 KDJ，缺 MACD/RSI/WR/CCI。
+# 本段全部纯本地计算（标准公式、零第三方依赖——本模块未导入 pandas，
+# 故纯 Python 实现并与手算基准对拍，见 tests/test_stock_technical_indicators.py）。
+# 入参与 compute_kdj 同形态（OHLCV 序列）；窗口不足一律返回 None——
+# 宁缺毋滥，绝不造数。快照类型暂驻本模块（contracts/finance.py 属并行
+# 会话文件域不可触碰）；字段形态与 KDJSnapshot 对齐（trade_date + 数值
+# + 周期），后续若收编入 contracts 只需平移类型定义，计算零改动。
+
+
+@dataclass(frozen=True)
+class MACDSnapshot:
+    """MACD 快照（审查 H-08）；柱线用中国行情软件口径 hist = 2×(DIF−DEA)。"""
+
+    dif: float
+    dea: float
+    hist: float
+    trade_date: date | None = None
+    fast_period: int = 12
+    slow_period: int = 26
+    signal_period: int = 9
+
+
+@dataclass(frozen=True)
+class RSISnapshot:
+    """RSI（Wilder 平滑）快照（审查 H-08）。"""
+
+    value: float
+    trade_date: date | None = None
+    period: int = 14
+
+
+@dataclass(frozen=True)
+class WRSnapshot:
+    """威廉指标快照（审查 H-08）；0~100 展示口径（越低越贴近超买）。"""
+
+    value: float
+    trade_date: date | None = None
+    period: int = 14
+
+
+@dataclass(frozen=True)
+class CCISnapshot:
+    """CCI 顺势指标快照（审查 H-08）。"""
+
+    value: float
+    trade_date: date | None = None
+    period: int = 20
+
+
+def _ema_sma_seeded(values: Sequence[float], period: int) -> list[float]:
+    """SMA 种子的 EMA 序列（自第 period 个点起，首值 = 前 period 点算术均值）。
+
+    东财/通达信等中国行情软件与教科书一致的口径：EMA 首值取 SMA 种子，
+    之后 EMA_t = EMA_{t-1} + (2/(period+1))·(x_t − EMA_{t-1})。
+    长度不足 period 时返回空列表（由调用方走 None 门）。
+    """
+    if period < 1 or len(values) < period:
+        return []
+    alpha = 2.0 / (period + 1.0)
+    ema = sum(values[:period]) / period
+    out = [ema]
+    for value in values[period:]:
+        ema += alpha * (value - ema)
+        out.append(ema)
+    return out
+
+
+def compute_macd(
+    bars: list[OHLCVBar] | tuple[OHLCVBar, ...],
+    fast: int = 12,
+    slow: int = 26,
+    signal: int = 9,
+) -> MACDSnapshot | None:
+    """MACD（12/26/9 标准 EMA 口径；窗口不足返回 None，审查 H-08）。
+
+    DIF = EMA_fast − EMA_slow；DEA = DIF 的 EMA(signal)（同 SMA 种子）；
+    柱 hist = 2×(DIF−DEA)（中国行情软件口径，与东财/通达信展示对齐）。
+    最少需要 slow + signal − 1 根 K 线（默认 26+9−1=34）：EMA_slow 首个
+    有效值在第 slow 根，DIF 从此起算，DEA 再需 signal 个 DIF 值。
+    """
+    closes = [bar.close for bar in bars]
+    if fast < 1 or slow <= fast or signal < 1 or len(closes) < slow + signal - 1:
+        return None
+    ema_fast = _ema_sma_seeded(closes, fast)
+    ema_slow = _ema_sma_seeded(closes, slow)
+    # 长度门已保证 ema_slow 非空；两序列按尾部对齐（DIF 自第 slow 根起有效）。
+    dif_tail = [f - s for f, s in zip(ema_fast[-len(ema_slow) :], ema_slow)]
+    dea_tail = _ema_sma_seeded(dif_tail, signal)
+    if not dea_tail:
+        return None  # pragma: no cover - 长度门已排除，防御分支
+    dif = dif_tail[-1]
+    dea = dea_tail[-1]
+    return MACDSnapshot(
+        dif=dif,
+        dea=dea,
+        hist=2.0 * (dif - dea),
+        trade_date=bars[-1].trade_date,
+        fast_period=fast,
+        slow_period=slow,
+        signal_period=signal,
+    )
+
+
+def compute_rsi(
+    bars: list[OHLCVBar] | tuple[OHLCVBar, ...], period: int = 14
+) -> RSISnapshot | None:
+    """RSI（Wilder 1978 平滑口径；窗口不足返回 None，审查 H-08）。
+
+    首个均值 = 前 period 个涨/跌幅的简单平均；之后
+    avgGain_t = (avgGain_{t-1}×(period−1) + gain_t) / period（avgLoss 同理）。
+    RSI = 100 − 100/(1 + avgGain/avgLoss)；avgLoss=0 且 avgGain>0 → 100；
+    全平（两者皆 0）→ 50 中性（与 KDJ 一字板 RSV=50 同纪律，不造极值）。
+    需要 period+1 根 K 线（差分出 period 个逐日涨跌）。
+    """
+    closes = [bar.close for bar in bars]
+    if period < 1 or len(closes) < period + 1:
+        return None
+    deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    gains = [max(delta, 0.0) for delta in deltas]
+    losses = [max(-delta, 0.0) for delta in deltas]
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    for i in range(period, len(deltas)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    if avg_loss == 0.0:
+        value = 100.0 if avg_gain > 0.0 else 50.0
+    else:
+        value = 100.0 - 100.0 / (1.0 + avg_gain / avg_loss)
+    return RSISnapshot(
+        value=value, trade_date=bars[-1].trade_date, period=period
+    )
+
+
+def compute_wr(
+    bars: list[OHLCVBar] | tuple[OHLCVBar, ...], period: int = 14
+) -> WRSnapshot | None:
+    """威廉指标 WR（中国行情软件 0~100 口径；窗口不足返回 None，审查 H-08）。
+
+    WR = (H_n − C) / (H_n − L_n) × 100：值越低收盘越贴近窗口高点（偏超买），
+    越高越贴近低点（偏超卖）。与拉里·威廉斯原始 −0~−100 口径差一个符号，
+    此处跟随东财/通达信展示习惯（与 KDJ/RSI 同属 0~100 语义族）。
+    窗口高低相等（一字板）→ 50 中性，不造极值。
+    """
+    rows = list(bars)
+    if period < 1 or len(rows) < period:
+        return None
+    window = rows[-period:]
+    high_n = max(bar.high for bar in window)
+    low_n = min(bar.low for bar in window)
+    close = window[-1].close
+    value = (
+        50.0
+        if high_n == low_n
+        else (high_n - close) / (high_n - low_n) * 100.0
+    )
+    return WRSnapshot(
+        value=value, trade_date=rows[-1].trade_date, period=period
+    )
+
+
+def compute_cci(
+    bars: list[OHLCVBar] | tuple[OHLCVBar, ...], period: int = 20
+) -> CCISnapshot | None:
+    """CCI 顺势指标（Donald Lambert 标准口径；窗口不足返回 None，审查 H-08）。
+
+    TP = (H+L+C)/3；CCI = (TP − MA(TP, n)) / (0.015 × MD)，
+    MD = 窗口内 |TP − MA| 的均值。MD=0（全窗口 TP 恒定，一字板族）→ 0
+    （分母为零不可除，取中性 0，不造 ±∞）。
+    """
+    rows = list(bars)
+    if period < 1 or len(rows) < period:
+        return None
+    window = rows[-period:]
+    tps = [(bar.high + bar.low + bar.close) / 3.0 for bar in window]
+    ma_tp = sum(tps) / period
+    md = sum(abs(tp - ma_tp) for tp in tps) / period
+    value = 0.0 if md == 0.0 else (tps[-1] - ma_tp) / (0.015 * md)
+    return CCISnapshot(
+        value=value, trade_date=rows[-1].trade_date, period=period
+    )
+
+
+def compute_all_technical_indicators(
+    bars: list[OHLCVBar] | tuple[OHLCVBar, ...],
+) -> tuple[
+    MACDSnapshot | None,
+    RSISnapshot | None,
+    WRSnapshot | None,
+    CCISnapshot | None,
+]:
+    """一次算齐 MACD/RSI/WR/CCI（审查 H-08）；每个独立判窗口，不足各自 None。
+
+    卡面/brief 接线统一走本函数，保证四指标口径单一事实来源。
+    """
+    return (
+        compute_macd(bars),
+        compute_rsi(bars),
+        compute_wr(bars),
+        compute_cci(bars),
+    )
+
+
 # 箱形图最少样本：多日分布才有意义；单日 OHLC 不是分布。
 MIN_BOXPLOT_SAMPLES = 5
 
@@ -1126,6 +1330,24 @@ def format_stock_brief(
         )
     else:
         lines.append("KDJ 暂缺（交易日不足 9 天，不算）")
+    # 审查 H-08：MACD/RSI/WR/CCI 纯本地补齐——非空才展示（宁缺毋滥）。
+    # 与 KDJ「暂缺也报状态」不同：新指标窗口不足时 None 静默跳过，
+    # 不占版面也不给半截数字；单股链路默认拉 90 根（截 60），四指标
+    # 常态齐全，只有极端缺数时才整体消失。
+    if series is not None and series.bars:
+        macd, rsi, wr, cci = compute_all_technical_indicators(series.bars)
+        if macd is not None:
+            lines.append(
+                f"MACD({macd.fast_period},{macd.slow_period},"
+                f"{macd.signal_period})：DIF {macd.dif:+.4f} / "
+                f"DEA {macd.dea:+.4f} / 柱 {macd.hist:+.4f}"
+            )
+        if rsi is not None:
+            lines.append(f"RSI({rsi.period})：{rsi.value:.2f}")
+        if wr is not None:
+            lines.append(f"WR({wr.period})：{wr.value:.2f}")
+        if cci is not None:
+            lines.append(f"CCI({cci.period})：{cci.value:+.2f}")
     if cap is not None and cap.value is not None:
         value_yi = cap.value / 1e8
         unit = _cap_unit(cap.currency)
