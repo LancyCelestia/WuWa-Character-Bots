@@ -31,6 +31,10 @@ from .capabilities.eat import build_eat_capability
 from .capabilities.epic import build_epic_capability
 from .capabilities.fx import build_fx_capability
 from .capabilities.group_files import DirtyGuard, GroupFileStore
+from .capabilities.group_info import (
+    build_group_info_capability,
+    build_onebot_api_bridge,
+)
 from .capabilities.market import (
     build_bond_capability,
     build_commodities_capability,
@@ -119,6 +123,7 @@ from .runtime.disconnect_notice import (
     disconnect_notice_options_from,
 )
 from .runtime.event_idempotency import build_event_idempotency_table
+from .runtime.group_cache import GroupInfoCache
 from .runtime.intent_telemetry import build_intent_telemetry
 from .runtime.parrot import ParrotDetector
 from .runtime.reactions import (
@@ -3174,6 +3179,7 @@ def _register_nonebot_handlers() -> None:
     )
 
     group_file_store = GroupFileStore(_runtime_scripts_path("data/group_files.sqlite3"))
+    group_info_cache = GroupInfoCache()
     dirty_guard = DirtyGuard(
         delete_enabled=bool(getattr(config, "bot_dirty_guard_delete", False))
     )
@@ -6615,6 +6621,60 @@ def _register_nonebot_handlers() -> None:
                 receipt.public_message or "（处理完成，没有需要展示的内容。）"
             )
 
+
+    async def _is_group_info_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.GROUP_INFO
+        )
+
+    group_info_matcher = on_message(rule=_is_group_info_event, priority=41, block=True)
+
+    @group_info_matcher.handle()
+    async def _handle_group_info(bot: Bot, event: Event) -> None:
+        message = _incoming_from_nonebot_event(
+            event, bot_id=str(getattr(bot, "self_id", "unknown"))
+        )
+        # B-01：OneBot API 桥（offload 线程池同步执行，主会话装配期注入循环）。
+        api = build_onebot_api_bridge(bot, asyncio.get_running_loop())
+        receipt = await pipeline.handle_async(
+            message,
+            offload_capability(
+                build_group_info_capability(config, api=api, cache=group_info_cache)
+            ),
+            capability_id="bot.group_info",
+        )
+        await _notify_operational_receipt(message, receipt)
+        sent_request = _find_sent_request(send_queue, message.request_id)
+        if sent_request is not None:
+            transport_receipt = await _deliver_transport_send_request(
+                bot,
+                event,
+                sent_request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+            _record_runtime_diagnostic(
+                config=config,
+                diagnostics_store=diagnostics_store,
+                message=message,
+                capability_id="bot.group_info",
+                receipt=transport_receipt,
+                send_queue=send_queue,
+                audit_logger=audit_logger,
+            )
+            await _notify_operational_receipt(message, transport_receipt)
+            if transport_receipt.state.value == "sent":
+                return
+            if should_finish_nonebot_matcher(transport_receipt):
+                await group_info_matcher.finish(
+                    transport_receipt.public_message or "（处理完成，没有需要展示的内容。）"
+                )
+        if should_finish_nonebot_matcher(receipt):
+            await group_info_matcher.finish(
+                receipt.public_message or "（处理完成，没有需要展示的内容。）"
+            )
 
     async def _is_media_archive_event(state: T_State, event: Event) -> bool:
         return (

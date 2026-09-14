@@ -42,6 +42,7 @@ from plugins.bot_unified_runtime.capabilities.eat import (
 )
 from plugins.bot_unified_runtime.capabilities.epic import is_epic_command
 from plugins.bot_unified_runtime.capabilities.fx import is_fx_command
+from plugins.bot_unified_runtime.capabilities.group_info import is_group_info_command
 from plugins.bot_unified_runtime.capabilities.market import (
     is_bond_command,
     is_commodity_command,
@@ -105,6 +106,7 @@ class RouteKind(str, Enum):
     RANDPIC = "randpic"
     REMINDER = "reminder"
     MEDIA_ARCHIVE = "media_archive"
+    GROUP_INFO = "group_info"
     EAT = "eat"
     AFFINITY = "affinity"
     DIVINATION = "divination"
@@ -488,6 +490,19 @@ def build_route_rules() -> list[RouteRule]:
             ("base_route:media_archive",),
         )
 
+    def group_info_match(text, config, _alias):
+        # 群资料/群主/人数/公告/精华（审查 B-01/B-04）：CJK 复合触发词，词界
+        # 天然安全；能力侧仅群聊生效（私聊回守岸人提示）并做管理员分级。
+        if not is_group_info_command(text):
+            return None
+        return RouteDecision(
+            RouteKind.GROUP_INFO,
+            "bot.group_info",
+            41,
+            "群信息（群主/人数/公告/精华）",
+            ("base_route:group_info",),
+        )
+
     return [
         RouteRule(RouteKind.ALIAS, "bot.alias", 10, "昵称命令", "昵称命令（/岸宝… /守岸人…）", ("base_route:alias",), alias_match),
         RouteRule(RouteKind.ADMIN, "bot.status", 11, "管理员命令", "管理员命令（/bot …）", ("base_route:admin",), admin_match),
@@ -518,6 +533,7 @@ def build_route_rules() -> list[RouteRule]:
         RouteRule(RouteKind.RANDPIC, "bot.randpic", 41, "随机图片", "随机图片（随机图/来张图）", ("base_route:randpic",), randpic_match),
         RouteRule(RouteKind.REMINDER, "bot.reminder", 41, "提醒", "提醒（12点提醒我写作业/提醒列表/取消提醒）", ("base_route:reminder",), reminder_match),
         RouteRule(RouteKind.MEDIA_ARCHIVE, "bot.media_archive", 43, "媒体归档", "媒体归档（收藏/归档/存图+媒体；存聊天记录）", ("base_route:media_archive",), media_archive_match),
+        RouteRule(RouteKind.GROUP_INFO, "bot.group_info", 41, "群信息", "群信息（群信息/群主是谁/群人数/群公告/群精华/本群多大了）", ("base_route:group_info",), group_info_match),
         RouteRule(RouteKind.MOEGIRL_QUESTION, "bot.moegirl", 46, "二次元问句", "二次元问句（萌娘百科自动查询，未命中降级聊天）", ("base_route:moegirl_question",), moegirl_question_match),
         RouteRule(RouteKind.NATURAL_COMMAND, "bot.natural_command", 45, "自然语言命令", "自然语言命令归一化", ("base_route:natural_command",), natural_match),
         RouteRule(RouteKind.CONTENT, "bot.content", 46, "链接解析", "链接解析（视频/图片/社交媒体/商品等）", ("base_route:content",), content_match),
@@ -546,6 +562,7 @@ def build_interface_manifest() -> list[InterfaceEntry]:
         InterfaceEntry("capability.auto_send", "自动发送/定时任务", "active", "auto_send", 13, "报存 给 A 发… 草稿/预览/发送", help_topic="草稿"),
         InterfaceEntry("capability.game_live", "游戏直播状态", "reserved", "game_live", None, "预留：游戏内直播/活动事件接入", internal_note="预留：游戏直播事件接入，尚未实现"),
         InterfaceEntry("capability.meme_absorb", "吸收表情包", "active", "meme_absorb", None, "监听群图片异步下载、MD5 去重、权重筛选、VLM 打标与 NSFW 过滤", help_topic="表情收库"),
+        InterfaceEntry("capability.group_info", "群信息", "active", "group_info", 41, "OneBot V11 群 API（get_group_info/成员列表/公告/精华）：群资料/人数全员，公告与精华仅管理员；诚实降级清单见 capabilities/group_info.py", help_topic="群信息"),
         InterfaceEntry("capability.emotion", "情绪状态注入", "active", "context", None, "作为上下文能力注入，不单独占用文本路由", internal_note="内部：心情引擎，经上下文注入，不占文本路由"),
         InterfaceEntry("capability.gscore", "GsCore 上行命令", "reserved", "gscore", None, "预留：GsCore 侧指令统一进入基层路由", internal_note="预留：GsCore 侧指令统一进入基层路由，尚未实现"),
     ]
@@ -591,6 +608,7 @@ COMMAND_ROUTE_KINDS = frozenset(
         RouteKind.RANDPIC,
         RouteKind.REMINDER,
         RouteKind.MEDIA_ARCHIVE,
+        RouteKind.GROUP_INFO,
         RouteKind.NATURAL_COMMAND,
     }
 )

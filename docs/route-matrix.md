@@ -47,6 +47,7 @@ QQ/NapCat 消息
 | `随机图`、`来张图`、繁體 `隨機圖/來張圖`、英文 `randpic` +拼音触发（见 catalog） | randpic | 41 | `_is_randpic_event` | bot.randpic（只读 BOT_RANDPIC_DIRS 自定义文件夹，绝不自建目录） |
 | `12点提醒我写作业`、`提醒列表`、`取消提醒 <id前缀>`、`笔记 记 <内容>`、`笔记列表`、`笔记 看 N`/`看笔记 N`、`做完 N`（`完成 N`/`办完 N` 同）、`删笔记 N`（笔记指令面复用本路由）、英文 `reminder`/`reminders`/`my reminders`/`reminder list`/`list reminders`（仅列表查询面） +拼音触发（见 catalog） | reminder | 41 | `_is_reminder_event` | bot.reminder（自然语言时间点→会话待办→每分钟投递；含笔记/待办与自然语言勾选；进阶轨 LLM 抽取默认关） |
 | `收藏 [图片]`、`归档`、`收藏 分类=cosplay IP=鸣潮`、`存聊天记录`（回复合并转发）、英文 `archive` +拼音触发（见 catalog） | media_archive | 43 | `_is_media_archive_event` -> `_handle_media_archive` | bot.media_archive（VLM 判 类别×作品 双层目录归档：cosplay/二次元插图等；SSRF+magic bytes+sha256 去重+限额；默认仅超管） |
+| `群信息`、`本群信息/群资料`、`群主是谁/谁是群主/群主`、`群人数/本群人数/本群多少人`、`本群多大了/群多大`、`群公告`、`群精华/精华消息`（词尾只容标点/语气助词，防包含词误触） | group_info | 41 | `group_info_match` | bot.group_info（OneBot V11 群 API：群资料/群主/人数全员，公告与精华仅管理员；成员名单不整列；群链接/群等级/群相册协议无标准 API 不做不假装；matcher 装配在 __init__.py 由主会话接线，词形判定见 capabilities/group_info.py 的 is_group_info_command） |
 | `好感度`、`好感度 算法`、`好感/亲密度/親密度`、英文 `affinity` +拼音触发（见 catalog） | affinity | 41 | `_is_affinity_event` | bot.affinity（v5 多因素线性步长：-100~+100、基准 10=档0友善、8 档温和态度连续过渡，算法说明定性、不展示固定加减数值；双向卡/群榜/算法卡） |
 | `吃什么`、`今天吃什么`、`菜谱/怎么做 <菜名>`、英文 `eat`/`food`/`recipe <菜名>` +拼音触发（见 catalog） | eat | 41 | `_is_eat_event` | bot.eat（60 道本地库+LLM 约束推荐+Mica 卡） |
 | `汇率`、`美元兑人民币`、`100日元换多少人民币`、繁體 `匯率/兌換/換匯`、英文 `fx`/`forex`/`exchange rate` +拼音触发（见 catalog） | fx | 41 | `fx_match` | bot.fx（多语言触发：汇率/兑换/换汇/匯率等；与 stocks 重叠时 fx 优先 41<42） |

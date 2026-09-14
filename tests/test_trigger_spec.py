@@ -85,7 +85,13 @@ def _probe_hits_all(probe: str) -> list[str]:
 # music mode/song mode）裸词由 music._COMMAND_RE 加 mode 负前瞻整体让渡，
 # 裸词唯一命中 music_mode；带歌名/参数后继形态保持双命中让路对（既有形态）。
 # 详见 .superpowers/sdd/2026-09-12-shorekeeper-global-audit/fix-rf-report.md。
-KNOWN_CONFLICT_WORDS: frozenset[tuple[str, str]] = frozenset()
+# 2026-09-14 群信息能力（B-01/B-04）：「群主是谁」是任务书点名的口语触发词，
+# 词形天然撞 moegirl 实体问句（剥「是谁」剩「群主」过 _ENTITY_MIN_LEN=2）——
+# 运行时由路由优先级兜底（group_info 41 < moegirl_question 46，群信息稳定先接），
+# 词表层双命中让路对登记于此（与 music_mode/music 让路对同形态）。
+KNOWN_CONFLICT_WORDS: frozenset[tuple[str, str]] = frozenset(
+    {("bot.group_info", "群主是谁")}
+)
 
 # ASCII 词边界违规：胶合探针命中自身能力（_alias_hit 纪律：ASCII 词须词边界）。
 # 已全部清账（2026-09-13，两波）：
