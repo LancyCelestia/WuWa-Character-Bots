@@ -10,7 +10,10 @@
    等价于 geturl 落点）。全离线，无真实网络；
 4. 审查 F-04（解析失败=拒绝）：整型 IP（十进制/十六进制/八进制，
    2130706433=127.0.0.1）归一化后拒绝、DNS 解析失败拒绝（旧版放行
-   已改判）、无 host/畸形 URL 拒绝、护栏崩溃才允许 fail-open+WARNING。
+   已改判）、无 host/畸形 URL 拒绝、护栏崩溃才允许 fail-open+WARNING；
+5. P2-12（2026-09-15）：非 og 深解析二次抓取（xhs INITIAL_STATE /
+   douyin _ROUTER_DATA / 用户主页 / 搜索页）同款落点复查——302 落
+   内网保留段在解析/回显前拒绝，拒绝直通全链不 og 复抓。
 """
 
 from __future__ import annotations
@@ -396,3 +399,179 @@ def test_entry_guard_rejects_decimal_ip_chain() -> None:
     assert calls == []
     assert "ssrf_guard_rejected" in result.audit_tags
     assert result.send_policy == SendPolicy.SILENT_AUDIT
+
+
+# ---------- 5. P2-12：非 og 深解析二次抓取的落点复查（xhs/douyin） ----------
+#
+# 台账实证：短链逐跳 SSRF 已修（_GuardedShortLinkRedirectHandler 每跳过
+# 护栏），og 兜底抓取有落点复查；但 xhs INITIAL_STATE / douyin _ROUTER_DATA
+# 的深解析二次抓取此前无落点复查——盲 SSRF 一跳侧信道（重定向落到内网后
+# 页面内容会经深解析上卡回显）。以下用例 mock http_get_text / playwright
+# 后端的「最终 URL」等价于 response.geturl() 落点，全离线、无真实网络。
+
+# 深解析假响应内容本身「可回显」：若不拦，深解析会把它发上卡——用于证明
+# 拒绝发生在解析/回显之前。
+_XHS_STATE_HTML = (
+    '<html><script>window.__INITIAL_STATE__={"note":{"noteDetailMap":{"n1":'
+    '{"note":{"noteId":"n1","title":"深解析标题","desc":"深解析正文",'
+    '"user":{},"imageList":[]}}}}}</script></html>'
+)
+_DOUYIN_ROUTER_HTML = (
+    '<html><script>window._ROUTER_DATA={"loaderData":{"video/(1)/page":'
+    '{"videoInfoRes":{"item_list":[{"aweme_id":"1","desc":"深解析正文",'
+    '"author":{"nickname":"深解析作者"},"video":{"cover":{"url_list":[]}},'
+    '"statistics":{}}]}}}}</script></html>'
+)
+# 保留段落点各一：回环 / 内网 10.x / 链路本地 169.254.x / 内网 192.168.x。
+_INTRANET_LANDINGS = [
+    "http://127.0.0.1:3001/",
+    "http://10.8.0.7/nas/admin",
+    "http://169.254.169.254/latest/meta-data/",
+    "http://192.168.1.1/router",
+]
+
+
+@pytest.mark.parametrize("landing_url", _INTRANET_LANDINGS)
+def test_xhs_deep_parse_rejects_intranet_landing(monkeypatch, landing_url: str) -> None:
+    """xhs INITIAL_STATE 深解析抓取：入口公网、302 落内网 → 解析前拒绝。"""
+
+    def fake_get_text(url: str, **kwargs):
+        return landing_url, _XHS_STATE_HTML
+
+    monkeypatch.setattr(platforms_generic, "http_get_text", fake_get_text)
+    with pytest.raises(ParseHttpError, match="SSRF guard"):
+        platforms_generic._xhs_note_deep_parse(
+            "https://www.xiaohongshu.com/explore/n1", cookie_header="web_session=x"
+        )
+
+
+@pytest.mark.parametrize("landing_url", _INTRANET_LANDINGS)
+def test_xhs_full_chain_rejects_and_never_refetches(
+    monkeypatch, landing_url: str
+) -> None:
+    """链路级：深解析落点被拒 → ParseHttpError 直通全链，不 og 复抓、
+    不走 playwright 通道（内网请求零追加）。"""
+    calls: list[str] = []
+
+    def fake_get_text(url: str, **kwargs):
+        calls.append(url)
+        return landing_url, _XHS_STATE_HTML
+
+    class _ForbiddenPlaywright:
+        def fetch_html(self, *args, **kwargs):
+            raise AssertionError("落点被拒后不得再走 playwright 通道")
+
+    monkeypatch.setattr(platforms_generic, "http_get_text", fake_get_text)
+    with pytest.raises(ParseHttpError, match="SSRF guard"):
+        platforms_generic.parse_xiaohongshu(
+            "https://www.xiaohongshu.com/explore/n1",
+            cookie_header="web_session=x",
+            playwright_backend=_ForbiddenPlaywright(),
+        )
+    assert calls == ["https://www.xiaohongshu.com/explore/n1"]
+
+
+def test_xhs_deep_parse_playwright_channel_rejects_intranet_landing(monkeypatch) -> None:
+    """直连无 INITIAL_STATE → playwright 通道 page.url 落内网 → 同样拒绝。"""
+
+    def fake_get_text(url: str, **kwargs):
+        return "https://www.xiaohongshu.com/explore/n1", "<html>no state</html>"
+
+    class _Backend:
+        def fetch_html(self, url: str, *, cookies=None):
+            return "http://10.1.2.3/inner", _XHS_STATE_HTML
+
+    monkeypatch.setattr(platforms_generic, "http_get_text", fake_get_text)
+    with pytest.raises(ParseHttpError, match="SSRF guard"):
+        platforms_generic._xhs_note_deep_parse(
+            "https://www.xiaohongshu.com/explore/n1",
+            cookie_header="web_session=x",
+            playwright_backend=_Backend(),
+        )
+
+
+def test_xhs_user_profile_fetch_html_rejects_intranet_landing(monkeypatch) -> None:
+    """用户主页 INITIAL_STATE 二次抓取：落内网 → 拒绝直通，不回退 og。"""
+
+    class _Backend:
+        def capture_json(self, url: str, *, cookies=None, json_filter=None):
+            return []
+
+        def fetch_html(self, url: str, *, cookies=None):
+            return "http://169.254.169.254/latest/meta-data/", "<html>内网页面</html>"
+
+    def forbidden_get_text(url: str, **kwargs):
+        raise AssertionError("落点被拒后不得回退 og 再抓取")
+
+    monkeypatch.setattr(platforms_generic, "http_get_text", forbidden_get_text)
+    with pytest.raises(ParseHttpError, match="SSRF guard"):
+        platforms_generic._xhs_user_profile_card(
+            "https://www.xiaohongshu.com/user/profile/u1",
+            _Backend(),
+            "web_session=x",
+        )
+
+
+def test_xhs_search_state_fetch_landing_reject_without_echo(monkeypatch) -> None:
+    """搜索页状态抓取：落内网 → 拒绝后走既有入口卡兜底，内网内容零回显。"""
+
+    def fake_get_text(url: str, **kwargs):
+        return "http://127.0.0.1:9200/", _XHS_STATE_HTML
+
+    monkeypatch.setattr(platforms_generic, "http_get_text", fake_get_text)
+    item = platforms_generic._xhs_search_result_card(
+        "https://www.xiaohongshu.com/search_result/xyz", cookie_header="web_session=x"
+    )
+    assert item.content is not None
+    assert "深解析" not in item.content.title
+    assert "深解析" not in (item.content.summary or "")
+
+
+def test_xhs_deep_parse_allows_public_landing(monkeypatch) -> None:
+    """公网落点放行：深解析照常出卡（不误伤）。"""
+    _patch_dns(monkeypatch, _PUBLIC_IP)
+
+    def fake_get_text(url: str, **kwargs):
+        return "https://www.xiaohongshu.com/explore/n1", _XHS_STATE_HTML
+
+    monkeypatch.setattr(platforms_generic, "http_get_text", fake_get_text)
+    item = platforms_generic._xhs_note_deep_parse(
+        "https://www.xiaohongshu.com/explore/n1", cookie_header="web_session=x"
+    )
+    assert item is not None and item.content is not None
+    assert item.content.title == "深解析标题"
+
+
+@pytest.mark.parametrize("landing_url", _INTRANET_LANDINGS)
+def test_douyin_full_chain_rejects_and_never_refetches(
+    monkeypatch, landing_url: str
+) -> None:
+    """douyin _ROUTER_DATA 深解析抓取：入口公网、302 落内网 → 拒绝直通，
+    不回退 og 复抓同一落点（修前该内容会整卡回显）。"""
+    calls: list[str] = []
+
+    def fake_get_text(url: str, **kwargs):
+        calls.append(url)
+        return landing_url, _DOUYIN_ROUTER_HTML
+
+    monkeypatch.setattr(platforms_generic, "http_get_text", fake_get_text)
+    with pytest.raises(ParseHttpError, match="SSRF guard"):
+        platforms_generic.parse_douyin(
+            "https://www.douyin.com/video/1", cookie_header="sessionid=x"
+        )
+    assert calls == ["https://www.douyin.com/video/1"]
+
+
+def test_douyin_deep_parse_allows_public_landing(monkeypatch) -> None:
+    """公网落点放行：_ROUTER_DATA 深解析照常出卡（不误伤）。"""
+    _patch_dns(monkeypatch, _PUBLIC_IP)
+
+    def fake_get_text(url: str, **kwargs):
+        return "https://www.douyin.com/video/1", _DOUYIN_ROUTER_HTML
+
+    monkeypatch.setattr(platforms_generic, "http_get_text", fake_get_text)
+    item = platforms_generic.parse_douyin(
+        "https://www.douyin.com/video/1", cookie_header="sessionid=x"
+    )
+    assert item.content is not None
+    assert item.content.title == "深解析正文"

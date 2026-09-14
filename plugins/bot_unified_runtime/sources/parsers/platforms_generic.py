@@ -124,7 +124,7 @@ def _xhs_note_deep_parse(
     """
     html = ""
     try:
-        _, html = http_get_text(
+        landing, html = http_get_text(
             url,
             timeout=10,
             referer="https://www.xiaohongshu.com/",
@@ -132,14 +132,22 @@ def _xhs_note_deep_parse(
         )
     except ParseHttpError:
         html = ""
+    else:
+        # SSRF 落点复查（P2-12）：INITIAL_STATE 深解析二次抓取与 _og_scrape
+        # 同款——拿到最终 URL 后、解析/回显内容之前拒绝；拒绝抛 ParseHttpError
+        # 直通全链（不试 playwright、不回退 og 复抓同一落点）。
+        check_fetch_landing(landing, url)
     if "INITIAL_STATE" not in html and playwright_backend is not None:
         try:
-            _, html = playwright_backend.fetch_html(
+            landing, html = playwright_backend.fetch_html(
                 url,
                 cookies=_xhs_cookie_pairs(cookie_header),
             )
         except Exception:  # noqa: BLE001 - 真浏览器通道也失败才放弃深解析。
             html = ""
+        else:
+            # SSRF 落点复查（P2-12）：真浏览器通道以 page.url 为落点复查同款。
+            check_fetch_landing(landing, url)
     if not html:
         return None
     return _xhs_from_initial_state(html, url)
@@ -262,12 +270,15 @@ def _xhs_search_result_card(url: str, *, cookie_header: str = "") -> ParsedConte
     keyword = ""
     if cookie_header:
         try:
-            _, text = http_get_text(
+            landing, text = http_get_text(
                 url,
                 timeout=10,
                 referer="https://www.xiaohongshu.com/",
                 cookie=cookie_header,
             )
+            # SSRF 落点复查（P2-12）：搜索页状态抓取同款；本分支既有
+            # except Exception 兜底=回退无内容入口卡，拒绝语义不变。
+            check_fetch_landing(landing, url)
             payload = _xhs_initial_state_payload(text) or {}
             search = payload.get("search") or {}
             hint = search.get("hintWord") or {}
@@ -761,13 +772,22 @@ def _xhs_user_profile_card(
     nickname = _xhs_user_nickname_from_capture(payloads)
     if notes:
         return _xhs_user_profile_result(user_id, url, nickname, notes)
+    landing, html = "", ""
     try:
-        _, html = backend.fetch_html(url, cookies=cookies)  # type: ignore[attr-defined]
-        item = _xhs_user_profile_from_initial_state(html, url, user_id)
-        if item is not None:
-            return item
-    except Exception:  # noqa: BLE001, S110 - 页面状态解析失败回退 og。
+        landing, html = backend.fetch_html(url, cookies=cookies)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001, S110 - 页面抓取失败回退 og（原语义）。
         pass
+    else:
+        # SSRF 落点复查（P2-12）：用户主页 INITIAL_STATE 二次抓取同款；拒绝
+        # 抛 ParseHttpError 直通——不回退 og 复抓同一落点。
+        check_fetch_landing(landing, url)
+    if html:
+        try:
+            item = _xhs_user_profile_from_initial_state(html, url, user_id)
+            if item is not None:
+                return item
+        except Exception:  # noqa: BLE001, S110 - 页面状态解析失败回退 og。
+            pass
     return _xhs_user_profile_shallow(url, cookie_header)
 
 
@@ -787,21 +807,30 @@ def parse_douyin(url: str, *, cookie_header: str = "", proxy: str = "") -> Parse
     if match:
         video_id = match.group(1)
     if cookie_header:
+        landing = ""
         try:
-            _, text = http_get_text(
+            landing, text = http_get_text(
                 final_url,
                 timeout=10,
                 referer="https://www.douyin.com/",
                 cookie=cookie_header,
             )
-            item = _douyin_from_router_data(text, final_url)
-            if item is not None:
-                return item
-            if len(text) < 2000:
-                # 极小页面通常是反爬验证页，直接降级，不再走 og。
-                raise ParseHttpError("douyin: anti-bot challenge page")
-        except Exception:  # noqa: BLE001, S110 - 深解析失败回退浅解析。
-            pass
+        except Exception:  # noqa: BLE001 - 抓取失败回退 og 浅解析（原语义）。
+            text = ""
+        else:
+            # SSRF 落点复查（P2-12）：_ROUTER_DATA 深解析二次抓取与 _og_scrape
+            # 同款；拒绝抛 ParseHttpError 直通全链——不回退 og 复抓同一落点。
+            check_fetch_landing(landing, final_url)
+        if text:
+            try:
+                item = _douyin_from_router_data(text, final_url)
+                if item is not None:
+                    return item
+                if len(text) < 2000:
+                    # 极小页面通常是反爬验证页，直接降级，不再走 og。
+                    raise ParseHttpError("douyin: anti-bot challenge page")
+            except Exception:  # noqa: BLE001, S110 - 深解析失败回退浅解析。
+                pass
     og_item = None
     try:
         og_item = _og_scrape(
