@@ -146,3 +146,16 @@ def test_debug_denied_body_renders_expected_copy() -> None:
         variant.format(action="看运行时排障记录")
         for variant in user_copy.ADMIN_GATE_TEMPLATES
     }
+
+
+def test_a19_group_failure_ack_pool_shape() -> None:
+    """A-19 群聊能力失败降级池形态：3-5 条、固定句无槽位、无重复、守岸人语气。"""
+    pool = user_copy.GROUP_FAILURE_ACK_TEMPLATES
+    assert 3 <= len(pool) <= 5
+    assert len(set(pool)) == len(pool)
+    # 固定短句：不携带 {reason}/{action} 等槽位（错误细节绝不回群）。
+    assert all("{reason}" not in variant and "{action}" not in variant for variant in pool)
+    for variant in pool:
+        # 守岸人语气底线：温和短句，不出现机器腔/客套话术组合，不拖尾「～」。
+        assert "为您" not in variant and "作为一个" not in variant
+        assert not variant.rstrip().endswith("～")

@@ -7,12 +7,20 @@ logger = logging.getLogger(__name__)
 import asyncio
 import atexit
 import os
+import random
 import threading
+import time
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from plugins.bot_unified_runtime.audit import AuditRepository, redact_private_debug
+
+# 审查 A-19：群聊能力失败降级文案走统一池（user_copy 零依赖常量模块，跨层
+# 引用无装配环，先例见该模块头纪律说明）。
+from plugins.bot_unified_runtime.capabilities.user_copy import (
+    GROUP_FAILURE_ACK_TEMPLATES,
+)
 from plugins.bot_unified_runtime.contracts import (
     AuditRecord,
     BotDecision,
@@ -23,6 +31,7 @@ from plugins.bot_unified_runtime.contracts import (
     PolicyEvaluation,
     PrivacyLevel,
     ReceiptState,
+    RenderedOutput,
     ReviewResult,
     RiskLevel,
     SendPolicy,
@@ -75,6 +84,20 @@ _CHAT_POOL_WORKERS_DEFAULT = 8
 _CHAT_POOL_WORKERS_MIN = 1
 _CHAT_POOL_WORKERS_MAX = 64
 _CHAT_POOL_WORKERS_ENV = "BOT_PIPELINE_MAX_WORKERS"
+
+
+# ==================== 群聊能力失败降级通知（审查 A-19） ====================
+# 语义分界（09-12 实弹裁定，不可回退）：限流拦截/安静时间拦截/超载快败
+# （pipeline_busy）的静默是故意的降频设计，一律保持不变。本节只处理
+# 「能力执行失败」（CapabilityResult 错误态）这一分支——此前群聊失败被压成
+# 空正文 + SILENT_AUDIT（审查 A-19 锚点：能力失败群聊路径零反馈），群成员
+# @ 了 bot 却得不到任何回应。现改为补一句池内降级文案（user_copy 池轮换），
+# 同会话进程内节流防刷屏；私聊不经此路径（chat 私聊失败已有人格话术池）。
+# 错误细节绝不回群（脱敏红线）：失败结果本身仍压成空正文静默审计，细节走
+# 既有管理员告警链/统一错误报告卡。
+_GROUP_FAILURE_NOTICE_WINDOW_SECONDS = 300.0
+# 节流表容量上限：写满时先清过期项，仍满则整表重置——会话数有界防内存缓涨。
+_GROUP_FAILURE_NOTICE_TRACK_CAP = 512
 
 
 class _BoundedSubmissionGate:
@@ -413,6 +436,10 @@ class RuntimePipeline:
         self.idempotency_table: EventIdempotencyTable | SqliteEventIdempotencyTable | None = (
             idempotency_table
         )
+        # 审查 A-19：群聊能力失败降级通知的会话级节流表（session_id → 最近一次
+        # 通知的 time.monotonic() 时间戳）。管线能力跑在线程池，读写必须持锁。
+        self._group_failure_notice_at: dict[str, float] = {}
+        self._group_failure_notice_lock = threading.Lock()
 
     def _append_audit_safely(self, record: AuditRecord) -> None:
         try:
@@ -648,6 +675,12 @@ class RuntimePipeline:
             result.operational_issue is not None
             and message.session_type in {SessionType.GROUP, SessionType.CHANNEL}
         ):
+            # 审查 A-19：失败结果本身仍压成空正文 + SILENT_AUDIT（错误细节
+            # 不回群，细节走管理员告警链），但群聊不再零反馈——节流窗内补
+            # 一句池内降级文案。超载快败（pipeline_busy）在通知方法内部豁免。
+            self._maybe_submit_group_failure_notice(
+                message, result.operational_issue
+            )
             result = result.model_copy(
                 update={"body": "", "send_policy": SendPolicy.SILENT_AUDIT}
             )
@@ -778,6 +811,113 @@ class RuntimePipeline:
             operational_issue=result.operational_issue,
         )
         return self._record_receipt_safely(self.send_queue.submit(send_request), message)
+
+    def _maybe_submit_group_failure_notice(
+        self,
+        message: IncomingMessage,
+        issue: OperationalIssue,
+    ) -> None:
+        """群聊能力失败降级通知（审查 A-19）：一句池内文案 + 会话级节流。
+
+        - 语义分界：pipeline_busy（超载快败）与限流/安静时间拦截同属故意的
+          降频设计（超载时不放大流量），保持静默不走本方法；仅能力执行失败
+          （错误态）回。私聊不经过本方法（chat 私聊失败已有人格话术池）。
+        - 通知正文只来自固定文案池（GROUP_FAILURE_ACK_TEMPLATES 轮换），错误
+          细节一律不回群（脱敏红线），细节走既有管理员告警链/错误报告卡。
+        - fail-open：节流表异常或提交异常绝不影响主回执路径。
+        """
+        if issue.kind == "pipeline_busy":
+            return
+        now = time.monotonic()
+        try:
+            with self._group_failure_notice_lock:
+                last = self._group_failure_notice_at.get(message.session_id)
+                if (
+                    last is not None
+                    and now - last < _GROUP_FAILURE_NOTICE_WINDOW_SECONDS
+                ):
+                    return
+                if (
+                    len(self._group_failure_notice_at)
+                    >= _GROUP_FAILURE_NOTICE_TRACK_CAP
+                ):
+                    expired = [
+                        key
+                        for key, at in self._group_failure_notice_at.items()
+                        if now - at >= _GROUP_FAILURE_NOTICE_WINDOW_SECONDS
+                    ]
+                    for key in expired:
+                        self._group_failure_notice_at.pop(key, None)
+                    if (
+                        len(self._group_failure_notice_at)
+                        >= _GROUP_FAILURE_NOTICE_TRACK_CAP
+                    ):
+                        self._group_failure_notice_at.clear()
+                self._group_failure_notice_at[message.session_id] = now
+        except Exception:
+            logger.debug("group failure notice throttle check failed", exc_info=True)
+        phrase = random.choice(GROUP_FAILURE_ACK_TEMPLATES)
+        request_id = message.request_id
+        try:
+            self.send_queue.submit(
+                SendRequest(
+                    request_id=request_id,
+                    session_id=message.session_id,
+                    target_scope=message.session_type,
+                    target_id=message.group_id or message.sender_id,
+                    origin_message_id=message.message_id,
+                    capability_id="bot.group_failure_notice",
+                    content=RenderedOutput(
+                        request_id=request_id,
+                        content_type="text",
+                        content_ref={"text": phrase},
+                        text_fallback=phrase,
+                        risk_level=RiskLevel.LOW,
+                        privacy_level=(
+                            PrivacyLevel.GROUP
+                            if message.session_type is SessionType.GROUP
+                            else PrivacyLevel.PERSONAL
+                        ),
+                    ),
+                    send_policy=SendPolicy.IMMEDIATE,
+                    priority="normal",
+                    max_messages=1,
+                    dedupe_key=f"group_failure_notice:{request_id}",
+                    cooldown_key=f"group_failure_notice:{message.session_id}",
+                    expires_at=None,
+                    privacy_level=(
+                        PrivacyLevel.GROUP
+                        if message.session_type is SessionType.GROUP
+                        else PrivacyLevel.PERSONAL
+                    ),
+                    allow_split=False,
+                    allow_forward=False,
+                    persona_profile_id="default",
+                    adapter=message.adapter,
+                    bot_id=message.bot_id,
+                    audit_tags=[
+                        "group_failure_notice:v1",
+                        f"issue_kind:{issue.kind}",
+                    ],
+                )
+            )
+        except Exception:
+            logger.debug("group failure notice submit failed", exc_info=True)
+            return
+        # 观测痕：能力失败有降级回应这件事本身留审计（正文不入审计，防池外
+        # 文案漂移被误当真相源）。
+        self._append_audit_safely(
+            AuditRecord(
+                request_id=request_id,
+                session_id=message.session_id,
+                capability_id="bot.group_failure_notice",
+                stage="runtime",
+                event="group_failure_notice",
+                severity=RiskLevel.LOW,
+                public_message="",
+                private_debug=f"issue_kind={issue.kind}",
+            )
+        )
 
     def _internal_error(
         self,

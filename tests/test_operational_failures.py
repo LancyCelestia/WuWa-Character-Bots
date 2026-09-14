@@ -380,9 +380,16 @@ def test_operational_matcher_receipt_never_finishes_but_policy_block_still_does(
     )
 
 
-def test_pipeline_silences_operational_failure_and_does_not_submit_group_request() -> None:
+def test_pipeline_group_operational_failure_replies_throttled_pool_notice() -> None:
+    # 审查 A-19（2026-09-15）：群聊能力失败不再零反馈——失败结果本身仍压成
+    # 空正文静默（错误细节不回群，细节走管理员告警链），但补一句池内降级
+    # 文案（capabilities/user_copy.py GROUP_FAILURE_ACK_TEMPLATES），同会话
+    # 300s 节流防刷屏。旧契约「完全不 submit 群请求」随之废止。
     message = _message(SessionType.GROUP)
     audit = InMemoryAuditLogger()
+    from plugins.bot_unified_runtime.capabilities.user_copy import (
+        GROUP_FAILURE_ACK_TEMPLATES,
+    )
     from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue
 
     queue = InMemorySendQueue(audit)
@@ -403,7 +410,16 @@ def test_pipeline_silences_operational_failure_and_does_not_submit_group_request
     assert receipt.public_message == ""
     assert receipt.operational_issue is not None
     assert receipt.state is ReceiptState.SKIPPED
-    assert queue.sent_requests == []
+    # 降级通知恰好一条、正文属池；同会话节流窗内第二次失败不再追加。
+    assert len(queue.sent_requests) == 1
+    notice = queue.sent_requests[0]
+    assert notice.capability_id == "bot.group_failure_notice"
+    assert notice.content.text_fallback in GROUP_FAILURE_ACK_TEMPLATES
+    # 换发送者构造第二次失败（同人点名 45s 限流属拦截族会先行静默吞掉，
+    # 遮蔽节流断言）——此时同会话节流窗内不得追加第二条通知。
+    second = _message(SessionType.GROUP).model_copy(update={"sender_id": "user-2"})
+    pipeline.handle(second, capability, capability_id="bot.chat")
+    assert len(queue.sent_requests) == 1
 
 
 def test_private_operational_result_creates_one_typed_send_request() -> None:
