@@ -19,6 +19,10 @@ from plugins.bot_unified_runtime.contracts import (
 )
 from plugins.bot_unified_runtime.sources.subscription_store_v2 import (
     SubscriptionStoreV2,
+    subscription_platform_enabled,
+)
+from plugins.bot_unified_runtime.sources.subscriptions.target_notice import (
+    SubscriptionTargetNotice,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,6 +129,9 @@ def build_subscribe_capability_v2(
                 )
             target: SubscriptionTarget | None = None
             last_error: Exception | None = None
+            # J-01/J-06 接线：平台「认得但不可用」的显式提示（已摘除平台/
+            # 缺凭证）优先于「无法识别」泛化提示出面。
+            target_notice: SubscriptionTargetNotice | None = None
             runtime_error: Exception | None = None
             for adapter in adapters:
                 try:
@@ -133,6 +140,10 @@ def build_subscribe_capability_v2(
                     )
                     break
                 except (ValueError, TypeError) as exc:
+                    if target_notice is None and isinstance(
+                        exc, SubscriptionTargetNotice
+                    ):
+                        target_notice = exc
                     last_error = exc
                 except RuntimeError as exc:
                     # 审计 P3#26：事件循环类错误与普通解析失败分开呈现，
@@ -149,6 +160,12 @@ def build_subscribe_capability_v2(
                         "这个订阅目标暂时解析不出来（内部调度冲突，已记日志）。稍后再试，或换个目标链接。",
                         ["subscribe_target_invalid"],
                     )
+                if target_notice is not None:
+                    return result(
+                        message,
+                        f"订阅目标解析失败：{target_notice}",
+                        ["subscribe_target_invalid"],
+                    )
                 if last_error is not None:
                     return result(
                         message,
@@ -159,6 +176,17 @@ def build_subscribe_capability_v2(
                     message,
                     f"无法识别订阅平台或链接格式：{raw_target}",
                     ["subscribe_target_invalid"],
+                )
+            # 审查 J-02：per-platform 开关——resolve 之后判定（此时
+            # target.platform 是注册表权威标识，music 以 netease 落库），
+            # 关闭平台 add 显式人话拒绝；既有订阅行不动（轮询侧跳过，
+            # 重开自动恢复）。与 bot_subscribe_enabled 总开关叠加：总开关
+            # 已在路由层拦下，到这里时总开关必然为开。
+            if not subscription_platform_enabled(config, target.platform):
+                return result(
+                    message,
+                    f"该平台订阅暂未开放（{target.platform}）。",
+                    ["subscribe_platform_disabled"],
                 )
             existing = store.get_target(target.id)
             if existing is not None:

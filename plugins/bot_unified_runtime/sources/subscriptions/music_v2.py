@@ -39,6 +39,9 @@ from plugins.bot_unified_runtime.sources.parsers.http_util import (
 from plugins.bot_unified_runtime.sources.subscriptions.social_v2 import (
     _reached_cursor,
 )
+from plugins.bot_unified_runtime.sources.subscriptions.target_notice import (
+    SubscriptionTargetNotice,
+)
 
 # 审查 J-06：摘除平台保留名字映射，resolve 时给出指名道姓的「暂不支持」提示。
 _REMOVED_PLATFORM_LABELS = {
@@ -94,7 +97,7 @@ class MusicSubscriptionAdapterV2:
             provider, kind, key = (raw.split(":", 2) + [""])[:3]
             # 审查 J-06：摘除平台在冒号形态下显式报「暂不支持」，不再注册成功。
             if provider in _REMOVED_PLATFORM_LABELS and kind in self.target_kinds and key:
-                raise ValueError(
+                raise SubscriptionTargetNotice(
                     _removed_platform_message(_REMOVED_PLATFORM_LABELS[provider])
                 )
             if provider in self.supported_platforms and kind in self.target_kinds and key:
@@ -102,7 +105,7 @@ class MusicSubscriptionAdapterV2:
         # 审查 J-06：摘除平台的链接形态给出人话提示而非「无法识别」。
         for pattern, provider in _REMOVED_URL_PATTERNS:
             if re.search(pattern, raw, re.IGNORECASE):
-                raise ValueError(
+                raise SubscriptionTargetNotice(
                     _removed_platform_message(_REMOVED_PLATFORM_LABELS[provider])
                 )
         patterns = (

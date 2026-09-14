@@ -28,10 +28,16 @@ from plugins.bot_unified_runtime.contracts.subscription import (
     SubscriptionSpec,
     SubscriptionTarget,
 )
+from plugins.bot_unified_runtime.sources.parsers.cookies import (
+    build_platform_cookie_provider,
+)
 from plugins.bot_unified_runtime.sources.parsers.http_util import (
     ParseHttpError,
     http_get_json,
     http_get_text,
+)
+from plugins.bot_unified_runtime.sources.subscriptions.target_notice import (
+    SubscriptionTargetNotice,
 )
 
 _NOW = lambda: datetime.now(timezone.utc)
@@ -944,7 +950,63 @@ class YouTubeSubscriptionAdapterV2(_BaseAdapter):
         return SubscriptionFetchResult(items=items, cursors=[cursor])
 
 
+def _twitter_cookie_notice() -> str:
+    # 审查 J-01：无 X cookie 时 /订阅 add 的显式人话拒绝（守岸人语气，
+    # 范式对齐 J-06 音乐订阅诚实化）。只讲平台名与恢复条件，不出现
+    # 内部术语，也不回显任何凭证值。恢复条件全文见本类 docstring。
+    return (
+        "推特的订阅还没接通：拉取 X/Twitter 时间线需要 bot 配有 X 的登录"
+        "凭证（cookies 里的 auth_token 与 ct0 两项），现在还没有，订了也"
+        "一直收不到更新，就先不开放了。等管理员用 /bot cookie import "
+        "twitter 配好凭证后，再来订就可以了。"
+    )
+
+
+def _x_cookie_available(ctx: dict[str, Any] | None) -> bool:
+    """审查 J-01：与 fetch 门同判据检查 X cookie（auth_token+ct0）是否可用。
+
+    凭据来源与轮询侧 context_factory、/bot cookie import 完全同源：
+    ``config.bot_cookies_file`` 指向的 cookies.txt 的 twitter 段（x.com
+    域）。ctx 显式携带 cookie_header 时直接采用（内部调用/测试防御），
+    与 fetch_incremental 的字符串判据保持一字不差，保证「add 时放行」
+    与「轮询时可用」永远一致。
+    """
+    header = str((ctx or {}).get("cookie_header", "") or "")
+    if not header:
+        config = (ctx or {}).get("config")
+        cookie_file = str(getattr(config, "bot_cookies_file", "") or "").strip()
+        if not cookie_file:
+            return False
+        header = build_platform_cookie_provider(cookie_file).cookie_header("twitter")
+    return "auth_token=" in header and "ct0=" in header
+
+
 class TwitterSubscriptionAdapterV2(_BaseAdapter):
+    """X/Twitter 创作者订阅适配器（审查 J-01 注册面诚实化）。
+
+    约束：时间线走授权 GraphQL（TwitterGraphQLClient），永不匿名回退；
+    fetch 需要 context.cookie_header 带 X 登录凭证（auth_token+ct0），
+    缺凭证时轮询恒 auth_required。此前 /订阅 add 在无凭证时也照常落库，
+    用户订阅成功却永远收不到推送、也没有任何提示（诚实性缺陷，A 方审计
+    J-01）。
+
+    现行为（范式对齐 J-06 音乐订阅诚实化）：无 X cookie 时 resolve_target
+    显式拒绝并给出人话提示，零落库不静默；识别不出的目标仍报「无法识别」。
+    注册面保留本 adapter 并置于本模块 ADAPTERS 末位（提示必须靠后才能在
+    /订阅 add 的解析循环中成为用户可见的 last_error）。已知出面受限（待
+    域外接线）：生产合成列表是 subscriptions/__init__.py 的
+    ``[*social_ADAPTers, *music_ADAPTers]``，music(J-06) 收尾会把本提示
+    覆盖成其「无法识别的音乐订阅目标」——零落库与拒绝语义不受影响，让
+    推特提示出面需在合成列表把 twitter 挪到末位（一行，域外文件，登记
+    于 tests/test_twitter_subscription_registration_j01_v2.py 的 xfail）。
+
+    恢复条件：给 bot 配置 X cookie 后即自动恢复订阅与拉取（无需改码）——
+    管理员 `/bot cookie import twitter <Cookie头>`（写入 BOT_COOKIES_FILE
+    的 twitter 段，需含 auth_token 与 ct0），或在 cookies.txt 手工补 x.com
+    域同名行。存量推特订阅不删用户数据：无凭证期间轮询按现状 record_failure
+    退避（不静默成功），凭证到位后自然恢复推送。
+    """
+
     platform = "twitter"
     target_kinds = frozenset({"creator"})
 
@@ -960,6 +1022,12 @@ class TwitterSubscriptionAdapterV2(_BaseAdapter):
             key = match.group(1) if match else ""
         if not key:
             raise ValueError("无法识别的 X/Twitter 创作者")
+        # 审查 J-01：目标识别通过后先验 X cookie——没有凭证时订阅成功也
+        # 永远收不到推送（轮询恒 auth_required）。这里显式拒绝并说明恢复
+        # 条件，不再静默落库（范式对齐 J-06 音乐订阅诚实化）。
+        if not _x_cookie_available(ctx):
+            raise SubscriptionTargetNotice(
+                _twitter_cookie_notice())
         return _target(self.platform, "creator", key, raw)
 
     @staticmethod
@@ -1402,8 +1470,13 @@ ADAPTERS = [
     BilibiliSubscriptionAdapterV2(),
     XiaohongshuSubscriptionAdapterV2(),
     YouTubeSubscriptionAdapterV2(),
-    TwitterSubscriptionAdapterV2(),
     TelegramSubscriptionAdapterV2(),
     PixivSubscriptionAdapterV2(),
     WeiboSubscriptionAdapterV2(),
+    # 审查 J-01：twitter 置于末位——/订阅 add 的解析循环以「最后一个
+    # adapter 的 ValueError」作为用户提示（J-06 音乐 adapter 同款位置
+    # 语义），保证推特的无凭证显式提示不被后续平台的「无法识别」覆盖。
+    # 其余平台的 URL/冒号模式与 x.com/twitter.com 零重叠，调序不影响
+    # 既有解析；调度按 platform 建字典索引，与顺序无关。
+    TwitterSubscriptionAdapterV2(),
 ]

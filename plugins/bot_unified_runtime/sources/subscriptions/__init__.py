@@ -93,4 +93,7 @@ def build_subscription_registry_v2() -> list[Any]:
         ADAPTERS as SOCIAL_ADAPTERS,
     )
 
-    return [*SOCIAL_ADAPTERS, *MUSIC_ADAPTERS]
+    # J-01：social 在后——推特的无凭证显式 ValueError 靠最后抛出来出面
+    # （音乐 adapter 的泛化提示在前不再覆盖它；见
+    # test_subscribe_add_twitter_explicit_notice_surfacing）。
+    return [*MUSIC_ADAPTERS, *SOCIAL_ADAPTERS]

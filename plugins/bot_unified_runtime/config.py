@@ -762,6 +762,23 @@ class Config(BaseModel):
     bot_subscribe_retry_base_seconds: int = 60
     bot_subscribe_retry_cap_seconds: int = 1800
     bot_subscribe_outbox_interval_seconds: int = 15
+    # 审查 J-02（用户「所有子模块可开关」硬要求）：订阅 per-platform 开关。
+    # 键名与 sources/subscriptions V2 注册表 resolve 出的 target.platform
+    # 标识逐字对齐（xiaohongshu 即小红书/xhs；music 平台的实际标识是
+    # netease——MusicSubscriptionAdapterV2 以 provider 名落 platform 字段）。
+    # twitter 已在 J-01 摘除（add 即无凭证人话拒绝），不设键。
+    # 叠加语义：bot_subscribe_enabled 总开关（路由层拦截整个订阅系统）关=
+    # 一切订阅不可用；平台开关关=仅该平台 add 显式拒绝、轮询跳过，既有
+    # 订阅行保留（重开自动恢复），其余平台不受影响。默认全开=现状零变化。
+    # config 实例进程启动时固定（调度器装配期快照，同台账 #3 口径），
+    # 改键需重启生效，不做热改。
+    bot_subscribe_platform_bilibili: bool = True
+    bot_subscribe_platform_xiaohongshu: bool = True
+    bot_subscribe_platform_youtube: bool = True
+    bot_subscribe_platform_telegram: bool = True
+    bot_subscribe_platform_pixiv: bool = True
+    bot_subscribe_platform_weibo: bool = True
+    bot_subscribe_platform_netease: bool = True
     # 订阅即时推送附带解析卡片图（kind="mixed"），渲染失败自动回退纯文本。
     bot_subscribe_card_enabled: bool = True
     bot_fetch_playwright_enabled: bool = True

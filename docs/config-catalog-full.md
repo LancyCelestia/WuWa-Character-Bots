@@ -670,7 +670,7 @@
 | `BOT_MUSIC_ANALYTICS_RETENTION_DAYS` | int | `365` | ≥0（.env 缺） | | 分析数据保留天数 | |
 | `BOT_MUSIC_MODE` * | str | （无默认；回退 `BOT_MUSIC_DEFAULT_MODE`=`card+voice+link`） | `audio`/`voice`/`link`/`card`（中文别名：音频/语音/链接/卡片；default→card） | ✅热更 | **config.py 无此字段**，纯运行时覆盖键：点歌返回形态；未设置时回退 `BOT_MUSIC_DEFAULT_MODE` | 仅存于 settings 覆盖层（`__init__.py` 点歌出口消费） |
 
-### A21 订阅系统 bot.subscribe（13 键）
+### A21 订阅系统 bot.subscribe（20 键）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -687,6 +687,13 @@
 | `BOT_SUBSCRIBE_RETRY_CAP_SECONDS` | int | `1800` | ≥base（.env 缺） | | 重试间隔上限 | |
 | `BOT_SUBSCRIBE_OUTBOX_INTERVAL_SECONDS` | int | `15` | ≥0（.env 缺） | | 发件箱扫描间隔 | |
 | `BOT_SUBSCRIBE_CARD_ENABLED` | bool | `True` | | | 即时推送附带解析卡片图（kind=mixed）；渲染失败自动回退纯文本 | 依赖卡片渲染 |
+| `BOT_SUBSCRIBE_PLATFORM_BILIBILI` | bool | `True` | | | 审查 J-02：B站订阅平台开关（审查 J-02，用户「所有子模块可开关」硬要求）。关=该平台 add 显式拒绝（「该平台订阅暂未开放」）、轮询跳过，既有订阅行保留（重开自动恢复）；与 `BOT_SUBSCRIBE_ENABLED` 总开关叠加（总开关关=整个订阅系统路由层拦截）；键名与 V2 注册表 target.platform 标识逐字对齐；config 实例启动期固定，改后需重启（非热更） | 与订阅 add/轮询共用 `subscription_platform_enabled` 判定 |
+| `BOT_SUBSCRIBE_PLATFORM_XIAOHONGSHU` | bool | `True` | | | 小红书（xhs）订阅平台开关，语义同上 | 同上 |
+| `BOT_SUBSCRIBE_PLATFORM_YOUTUBE` | bool | `True` | | | YouTube 订阅平台开关，语义同上 | 同上 |
+| `BOT_SUBSCRIBE_PLATFORM_TELEGRAM` | bool | `True` | | | Telegram 订阅平台开关，语义同上 | 同上 |
+| `BOT_SUBSCRIBE_PLATFORM_PIXIV` | bool | `True` | | | Pixiv 订阅平台开关，语义同上 | 同上 |
+| `BOT_SUBSCRIBE_PLATFORM_WEIBO` | bool | `True` | | | 微博订阅平台开关，语义同上 | 同上 |
+| `BOT_SUBSCRIBE_PLATFORM_NETEASE` | bool | `True` | | | 网易云音乐订阅平台开关，语义同上。注意：music adapter 以 provider 名 `netease` 落 target.platform，故键名为 NETEASE 而非 MUSIC | 同上 |
 
 ### A22 凭据检查（6 键）
 

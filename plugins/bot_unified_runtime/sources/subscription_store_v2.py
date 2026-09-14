@@ -51,6 +51,24 @@ _PRUNE_INTERVAL_SECONDS = 3600.0
 _DEAD_ALERT_STAGE = "subscription_outbox_dead"
 
 
+def subscription_platform_enabled(config: Any, platform: str) -> bool:
+    """审查 J-02：订阅 per-platform 开关的唯一切换实现。
+
+    订阅 add 拒绝（capabilities/subscribe_v2）与轮询跳过
+    （subscription_scheduler）两处共用本函数，防两处语义漂移。
+    键名 = ``bot_subscribe_platform_<platform>``，与 V2 注册表 resolve 出的
+    target.platform 标识逐字对齐（music 平台以 provider 名 netease 落库）；
+    未登记的平台（已摘除的 twitter、未来新平台）一律视为开放——开关只做
+    「关闸」，不隐式扩大管控面。与 bot_subscribe_enabled 总开关叠加：总
+    开关在路由层（base_router subscribe_match）拦整个订阅系统，平台开关
+    只影响本平台。config 实例进程启动时固定，改键需重启生效。
+    """
+    name = str(platform or "").strip().lower()
+    if not name:
+        return True
+    return bool(getattr(config, f"bot_subscribe_platform_{name}", True))
+
+
 def _iso(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)

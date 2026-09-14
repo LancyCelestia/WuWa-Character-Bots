@@ -75,6 +75,9 @@ class SubscriptionScheduler:
         throttle: PlatformThrottle | None = None,
         delivery_fn: Callable[[SubscriptionOutboxEvent], Awaitable[bool]] | None = None,
         context_factory: Callable[[str], dict[str, Any]] | None = None,
+        # 审查 J-02：per-platform 开关（platform → bool）。None=全开放
+        # （现状零变化）；装配层传 subscription_platform_enabled 偏函数。
+        platform_enabled: Callable[[str], bool] | None = None,
     ) -> None:
         self.store = store
         self._adapters: dict[str, SubscriptionAdapter] = {}
@@ -91,6 +94,7 @@ class SubscriptionScheduler:
         self._throttle = throttle or PlatformThrottle()
         self._delivery_fn = delivery_fn
         self._context_factory = context_factory or (lambda _platform: {})
+        self._platform_enabled = platform_enabled
 
     def next_poll_at(
         self,
@@ -131,6 +135,15 @@ class SubscriptionScheduler:
         # P2-1：store 全部经 *_async 门面（asyncio.to_thread）访问，同步
         # SQLite 不再阻塞 event loop；语义与直调同步方法完全一致。
         for target in await self.store.list_targets_async(due_before=current):
+            # 审查 J-02：per-platform 开关关闭的平台直接跳过轮询——在
+            # claim 之前判定，不占租约、不计失败（已有订阅行保留，
+            # 平台重开后下一轮自动恢复轮询）。与 add 侧拒绝共用
+            # subscription_platform_enabled 的判定语义。
+            if (
+                self._platform_enabled is not None
+                and not self._platform_enabled(target.platform)
+            ):
+                continue
             if not await self.store.claim_due_target_async(
                 target.id, current, self._lease_seconds
             ):

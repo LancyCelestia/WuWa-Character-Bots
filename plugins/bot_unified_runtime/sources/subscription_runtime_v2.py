@@ -9,6 +9,7 @@ from plugins.bot_unified_runtime.sources.subscription_scheduler import (
 )
 from plugins.bot_unified_runtime.sources.subscription_store_v2 import (
     SubscriptionStoreV2,
+    subscription_platform_enabled,
 )
 from plugins.bot_unified_runtime.sources.subscriptions import (
     build_subscription_registry_v2,
@@ -108,5 +109,11 @@ def build_subscription_runtime_v2(
         throttle=throttle,
         delivery_fn=delivery_fn,
         context_factory=context_factory,
+        # 审查 J-02：per-platform 开关注入轮询侧（add 侧在 capability 内
+        # 直接调同一 helper）。gate 每轮评估时读 config 属性，但 config
+        # 实例进程启动时固定——改键需重启生效，与全库 config 口径一致。
+        platform_enabled=lambda platform: subscription_platform_enabled(
+            config, platform
+        ),
     )
     return {"store": store, "adapters": adapters, "scheduler": scheduler}
