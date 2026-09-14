@@ -867,30 +867,39 @@ def _stable_report_digest(report: dict[str, Any]) -> str:
 # 卡片渲染；不复用 chat-pool（避免错误风暴时挤占能力执行位）。
 _RENDER_POOL: ThreadPoolExecutor | None = None
 _RENDER_POOL_LOCK = threading.Lock()
+# 审查 L-12：atexit 注册只许一次（模块级布尔防 shutdown 后重建池导致的重复
+# 注册堆积；钩子读全局，一次注册覆盖此后所有池实例）。
+_RENDER_POOL_ATEXIT_REGISTERED = False
 _PENDING_CARD_FUTURES: set[Future[None]] = set()
 _PENDING_CARD_LOCK = threading.Lock()
 
 
 def _get_render_pool() -> ThreadPoolExecutor:
-    global _RENDER_POOL
+    global _RENDER_POOL, _RENDER_POOL_ATEXIT_REGISTERED
     with _RENDER_POOL_LOCK:
         if _RENDER_POOL is None:
             _RENDER_POOL = ThreadPoolExecutor(
                 max_workers=1,
                 thread_name_prefix="error-card-render",
             )
-            atexit.register(_shutdown_render_pool)
+            if not _RENDER_POOL_ATEXIT_REGISTERED:
+                atexit.register(_shutdown_render_pool)
+                _RENDER_POOL_ATEXIT_REGISTERED = True
         return _RENDER_POOL
 
 
 def _shutdown_render_pool() -> None:
-    """模块级关闭钩子（与 pipeline._shutdown_chat_pool 同模式）：不等待不取消，
-    已在跑的渲染随进程退出丢弃——文本回执已先行，丢卡可接受（A-rec 取舍）。"""
+    """模块级关闭钩子（与 pipeline._shutdown_chat_pool 同模式）。
+
+    审查 L-12：wait=True 且不取消排队任务（cancel_futures=False），已提交的
+    诊断卡渲染在进程退出前渲染完再收线程——worker 非守护态本就会被解释器
+    隐式 join，显式回收只是把时序摆上台面。文本回执仍永远先行（ack 路径
+    不等本钩子），A-rec 取舍不受影响。"""
     global _RENDER_POOL
     with _RENDER_POOL_LOCK:
         pool, _RENDER_POOL = _RENDER_POOL, None
     if pool is not None:
-        pool.shutdown(wait=False)
+        pool.shutdown(wait=True, cancel_futures=False)
 
 
 def flush_pending_card_renders(timeout: float = 10.0) -> None:

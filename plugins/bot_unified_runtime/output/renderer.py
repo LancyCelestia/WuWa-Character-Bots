@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import base64
 import re
 import threading
@@ -32,18 +33,37 @@ _MERMAID_TOTAL_BUDGET_S = 22.0
 
 _mermaid_executor: ThreadPoolExecutor | None = None
 _mermaid_executor_lock = threading.Lock()
+# 审查 L-12：atexit 注册只许一次（模块级布尔防 shutdown 后重建池导致的重复
+# 注册堆积；钩子读全局，一次注册覆盖此后所有池实例）。
+_mermaid_shutdown_hook_registered = False
+
+
+def _shutdown_mermaid_executor() -> None:
+    """模块级关闭钩子（审查 L-12，与 pipeline._shutdown_chat_pool /
+    error_report._shutdown_render_pool 同模式）：wait=True 且不取消排队任务
+    （cancel_futures=False）——已提交的 mermaid 渲染在进程退出前跑完再收
+    线程（worker 非守护态本就会被解释器隐式 join，显式回收把时序摆上台面；
+    渲染自带超时预算，不会无限挂住）。"""
+    global _mermaid_executor
+    with _mermaid_executor_lock:
+        pool, _mermaid_executor = _mermaid_executor, None
+    if pool is not None:
+        pool.shutdown(wait=True, cancel_futures=False)
 
 
 def _get_mermaid_executor() -> ThreadPoolExecutor:
     """mermaid 渲染专用单线程池：playwright sync API 与事件循环互斥，
     且其浏览器实例线程绑定，固定 worker 才能跨渲染复用常驻浏览器。"""
-    global _mermaid_executor
+    global _mermaid_executor, _mermaid_shutdown_hook_registered
     with _mermaid_executor_lock:
         if _mermaid_executor is None:
             _mermaid_executor = ThreadPoolExecutor(
                 max_workers=1,
                 thread_name_prefix="mermaid-render",
             )
+            if not _mermaid_shutdown_hook_registered:
+                atexit.register(_shutdown_mermaid_executor)
+                _mermaid_shutdown_hook_registered = True
         return _mermaid_executor
 
 
