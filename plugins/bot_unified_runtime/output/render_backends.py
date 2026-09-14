@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 import time
 import urllib.request
 from collections.abc import Callable
@@ -598,6 +599,36 @@ class PlaywrightRenderBackend:
         self._close_thread_browser()
 
 
+# ---- 进程级共享渲染后端登记（审查 L-04，2026-09-14）----
+# 背景：bridge._get_mermaid_backend 历史上经 build_render_backend("auto")
+# 自建第二个 PlaywrightRenderBackend 常驻实例，与 __init__.py 装配态的主
+# 渲染后端并存。主实例存于装配闭包、无既有单例可供 bridge 引用，故以本
+# 工厂为会合点：每次产出**可用** playwright 后端时按「先到先得」登记为
+# 进程级共享实例——插件装配先于任何渲染调用，先到者即主后端；bridge 侧
+# 优先取用，同一进程至多一个后端实例同时承载主卡渲染与 mermaid 渲染。
+# 线程安全语义不变：后端浏览器仍按线程 thread-local 存放（mermaid 专用
+# 线程在共享实例上懒启动自己的常驻浏览器，互不越线程），渲染互斥仍由
+# 实例内信号量承担；生命周期归属首个装配方，bridge 只借用引用、从不
+# close。登记是被动记录：既有调用方（__init__.py / console_chat）不经
+# get_shared_render_backend 取用，行为零变化。
+_SHARED_RENDER_BACKEND: Any = None
+_SHARED_RENDER_BACKEND_LOCK = threading.Lock()
+
+
+def get_shared_render_backend() -> Any:
+    """返回进程级共享 playwright 渲染后端；未登记时返回 None（不惰性创建）。"""
+    with _SHARED_RENDER_BACKEND_LOCK:
+        return _SHARED_RENDER_BACKEND
+
+
+def _register_shared_render_backend(backend: Any) -> None:
+    """按「先到先得」登记共享后端；已有登记时不覆盖（装配态先于渲染调用）。"""
+    global _SHARED_RENDER_BACKEND
+    with _SHARED_RENDER_BACKEND_LOCK:
+        if _SHARED_RENDER_BACKEND is None:
+            _SHARED_RENDER_BACKEND = backend
+
+
 def build_render_backend(name: str = "") -> RenderBackend:
     normalized = (name or "").strip().lower()
     if normalized not in {"playwright", "htmlkit", "auto"}:
@@ -613,6 +644,9 @@ def build_render_backend(name: str = "") -> RenderBackend:
             max_concurrency=resolve_render_max_concurrency()
         )
         if backend.available:
+            # 审查 L-04：登记为进程级共享实例（先到先得，注释见登记段），
+            # 供 bridge._get_mermaid_backend 复用，消灭第二个常驻后端实例。
+            _register_shared_render_backend(backend)
             return backend
         if normalized == "htmlkit":
             return HtmlKitRenderBackend()

@@ -31,7 +31,7 @@ from typing import Any
 
 import jinja2
 
-from ..render_backends import build_render_backend
+from ..render_backends import build_render_backend, get_shared_render_backend
 from .models import ForwardPayload, RenderPayload
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -1691,30 +1691,60 @@ _MERMAID_BACKEND_LOCK = threading.Lock()
 _MERMAID_RETRY_MAX_FIRST_ATTEMPT_S = 5.5
 
 
+def _resolve_mermaid_backend() -> Any:
+    """mermaid 后端解析序（审查 L-04）：共享登记优先，自建兜底。
+
+    优先取进程级共享 playwright 后端——__init__.py 装配的主渲染后端经
+    build_render_backend 工厂按「先到先得」登记（见 render_backends 登记
+    段），此处只借用引用、从不 close（生命周期归属主后端）。复用后
+    thread-local 浏览器模型不变：mermaid 专用线程在共享实例上懒启动自己
+    的常驻浏览器，与主卡渲染各线程互不越线程，语义与自持实例一致，只是
+    进程内不再并存第二个常驻后端实例（审查 L-04 的内存翻倍来源）。
+    登记为空（bot_card_render_enabled=False 未装配主后端 / 单测隔离环境）
+    才回退自建，保持既有行为兜底。共享实例不打自愈钩子：不得改写他方
+    持有对象的方法，且 render_backends 已于 2026-09-12/09-13 根治关闭
+    路径，钩子在共享路径上本就冗余。
+    """
+    shared = get_shared_render_backend()
+    if (
+        shared is not None
+        and getattr(shared, "available", False)
+        and getattr(shared, "name", "") == "playwright"
+    ):
+        return shared
+    backend = build_render_backend("auto")
+    if (
+        getattr(backend, "available", False)
+        and getattr(backend, "name", "") == "playwright"
+    ):
+        _install_ctx_exit_on_self_heal(backend)
+        return backend
+    return None
+
+
 def _get_mermaid_backend() -> Any:
     """懒初始化 mermaid 专用截图后端；仅接受 playwright（需要 wait_js）。
 
-    装配时给后端实例补一个自愈前置钩子（_install_ctx_exit_on_self_heal）：
-    历史 bug 是 render_backends._close_thread_browser 对 playwright ctx 调
-    .close()（该对象并无 close 方法，AttributeError 被静默吞掉），ctx 退出
-    全靠 browser.close() 隐式掐断传输；浏览器「僵死但管道未断」时传输掐
-    不断，线程常驻停车中的 asyncio loop，之后同线程每次 start() 都报
-    "Sync API inside the asyncio loop"（实弹复现）。render_backends 已于
-    2026-09-12 根治（_close_thread_browser 改走 __exit__，launch 重试路径
-    同步堵漏）；本钩子按幂等语义保留为双保险，待评审 M-4 清理时整体移除。
+    解析序见 _resolve_mermaid_backend（审查 L-04：优先复用进程级共享的
+    主渲染后端实例，不再自建第二个常驻实例）；已缓存结果优先于登记——
+    缓存语义不变：None=未初始化，False=已探测到不可用（不重复探测），
+    显式注入（单测桩）不被登记覆盖。
+
+    自愈前置钩子（_install_ctx_exit_on_self_heal）的历史背景，仅施加于
+    自建兜底实例：历史 bug 是 render_backends._close_thread_browser 对
+    playwright ctx 调 .close()（该对象并无 close 方法，AttributeError 被
+    静默吞掉），ctx 退出全靠 browser.close() 隐式掐断传输；浏览器「僵死
+    但管道未断」时传输掐不断，线程常驻停车中的 asyncio loop，之后同线程
+    每次 start() 都报 "Sync API inside the asyncio loop"（实弹复现）。
+    render_backends 已于 2026-09-12 根治（_close_thread_browser 改走
+    __exit__，launch 重试路径同步堵漏）；本钩子按幂等语义保留为双保险，
+    待评审 M-4 清理时整体移除。
     """
     global _MERMAID_BACKEND
     with _MERMAID_BACKEND_LOCK:
         if _MERMAID_BACKEND is None:
-            backend = build_render_backend("auto")
-            if (
-                getattr(backend, "available", False)
-                and getattr(backend, "name", "") == "playwright"
-            ):
-                _install_ctx_exit_on_self_heal(backend)
-                _MERMAID_BACKEND = backend
-            else:
-                _MERMAID_BACKEND = False
+            backend = _resolve_mermaid_backend()
+            _MERMAID_BACKEND = backend if backend is not None else False
         return _MERMAID_BACKEND or None
 
 
