@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
+
+import pytest
 
 from plugins.bot_unified_runtime.character.memory import NullMemoryProvider
 from plugins.bot_unified_runtime.character.reflection import (
@@ -408,3 +411,101 @@ def test_retrieve_passes_session_gate_to_store(tmp_path: Path) -> None:
     )
     assert len(hit.facts) == 1
     assert miss.facts == []
+
+
+# ---------- LLM 事实 per-line 发言人贯通（审查 G-06） ----------
+
+
+def _group_two_sender_turns() -> list[Turn]:
+    """群聊双 sender：alice 2 轮（主 sender）、bob 1 轮，另有 bot 轮。"""
+    return [
+        _turn("user", "我最喜欢的颜色是蓝色", "2026-09-10T08:00:00Z", "alice"),
+        _turn("assistant", "好的呢", "2026-09-10T08:00:10Z"),
+        _turn("user", "我最近在学钢琴", "2026-09-10T08:00:30Z", "alice"),
+        _turn("user", "我最喜欢的颜色是红色", "2026-09-10T08:01:00Z", "bob"),
+    ]
+
+
+def test_llm_transcript_carries_speaker_map_and_prompt_requests_tags() -> None:
+    """转写须带「说话人N ↔ 昵称/轮次」映射，系统提示词须要求逐条标注来源。"""
+    stub = _StubLLM("无")
+    LLMSummarizer(stub).summarize("qq:group:1", _group_two_sender_turns())
+    system = stub.calls[0][0]["content"]
+    transcript = stub.calls[0][1]["content"]
+    assert "说话人" in system
+    # 编号按 sender 首次出现序；assistant 轮不带编号。
+    assert "user(说话人1): 我最喜欢的颜色是蓝色" in transcript
+    assert "user(说话人1): 我最近在学钢琴" in transcript
+    assert "user(说话人2): 我最喜欢的颜色是红色" in transcript
+    assert "assistant: 好的呢" in transcript
+
+
+def test_llm_facts_tagged_lines_attribute_per_speaker(tmp_path: Path) -> None:
+    """群聊双 sender 各自自述归到各自名下（G-06 主断言，端到端入库）。"""
+    stub = _StubLLM("说话人1: 我最喜欢蓝色\n说话人1: 我最近在学钢琴\n说话人2: 我最喜欢红色")
+    store = ReflectionStore(tmp_path / "reflection.sqlite3", clock=_FakeClock())
+    report = run_reflection(
+        store,
+        {"qq:group:1": _group_two_sender_turns()},
+        summarizer=LLMSummarizer(stub),
+        scope_date="2026-09-10",
+    )
+    assert report.facts_saved == 3
+    alice = " ".join(fact.fact_text for fact in store.facts_for("alice"))
+    bob = " ".join(fact.fact_text for fact in store.facts_for("bob"))
+    assert "蓝色" in alice and "钢琴" in alice
+    assert "红色" not in alice
+    assert "红色" in bob
+    assert "蓝色" not in bob and "钢琴" not in bob
+
+
+def test_llm_facts_bare_and_unknown_speaker_tags() -> None:
+    """裸「N: 」宽容形态映射成功；越界编号剥标签但归属留空（回退兜底）。"""
+    stub = _StubLLM("1: 我最喜欢蓝色\n说话人9: 我最喜欢红色")
+    reflection = LLMSummarizer(stub).summarize("qq:group:1", _group_two_sender_turns())
+    assert [(draft.sender_id, draft.text) for draft in reflection.facts] == [
+        ("alice", "我最喜欢蓝色"),
+        ("", "我最喜欢红色"),
+    ]
+
+
+def test_llm_facts_untagged_lines_fall_back_to_primary_with_debug_log(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """模型完全没按格式标注：文本照收、归属留空（现状语义锁死），
+
+    run_reflection 回退主 sender（alice 最活跃），debug 日志留痕。
+    """
+    stub = _StubLLM("1. 我最喜欢蓝色\n- 我最近在学钢琴")
+    with caplog.at_level(
+        logging.DEBUG, logger="plugins.bot_unified_runtime.character.reflection"
+    ):
+        reflection = LLMSummarizer(stub).summarize("qq:group:1", _group_two_sender_turns())
+    assert [draft.text for draft in reflection.facts] == ["我最喜欢蓝色", "我最近在学钢琴"]
+    assert all(draft.sender_id == "" for draft in reflection.facts)
+    assert any("speaker tag" in record.getMessage() for record in caplog.records)
+
+    store = ReflectionStore(tmp_path / "reflection.sqlite3", clock=_FakeClock())
+    run_reflection(
+        store,
+        {"qq:group:1": _group_two_sender_turns()},
+        summarizer=LLMSummarizer(stub),
+        scope_date="2026-09-10",
+    )
+    alice = " ".join(fact.fact_text for fact in store.facts_for("alice"))
+    assert "蓝色" in alice and "钢琴" in alice
+    assert store.facts_for("bob") == []
+
+
+def test_heuristic_drafts_carry_precise_turn_sender() -> None:
+    """启发式路径按发言轮次精确归属，不依赖主 sender 回退（G-06 ③）。"""
+    reflection = HeuristicSummarizer().summarize("qq:group:1", _group_two_sender_turns())
+    assert reflection.facts
+    by_sender: dict[str, set[str]] = {}
+    for draft in reflection.facts:
+        assert draft.sender_id, "启发式草稿必须携带发言轮次 sender"
+        by_sender.setdefault(draft.sender_id, set()).add(draft.text)
+    assert any("蓝色" in text for text in by_sender.get("alice", set()))
+    assert any("钢琴" in text for text in by_sender.get("alice", set()))
+    assert any("红色" in text for text in by_sender.get("bob", set()))
+    assert all("红色" not in text for text in by_sender.get("alice", set()))

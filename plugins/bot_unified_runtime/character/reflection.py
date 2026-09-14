@@ -47,6 +47,13 @@ _LLM_CONFIDENCE = 0.6
 _FACT_LINE_PREFIX = re.compile(r"^[\s\-—•·*>)）\]】\d+ [.、)）]*\s*")
 _NO_FACT_MARKERS = {"无", "没有", "没有。", "无。", "none", "n/a"}
 
+# 审查 G-06：LLM 事实的 per-line 发言人贯通。提示词要求模型按
+# 「说话人N: 内容」标注来源；裸「N: 内容」（冒号后必须有空白）作为宽容
+# 形态兼容。其余行首编号（如「1. 」）仍由 _FACT_LINE_PREFIX 剥离、不当
+# 编号解读，避免误吃「3:2 赢了」这类以数字开头的正文。
+_SPEAKER_TAG_RE = re.compile(r"^(?:说话人|speaker)\s*(\d{1,3})\s*[:：]\s*", re.IGNORECASE)
+_BARE_SPEAKER_TAG_RE = re.compile(r"^(\d{1,3})\s*[:：]\s")
+
 # 用户自述句式（参考 affinity.py _PROFILE_PATTERNS 的写法，本模块独立维护）：
 # 「我(很/最)喜欢X」「我(最近)在Y」「我要Z」「我是/住在W」，取到标点/空白为止。
 _SELF_STATEMENT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -60,6 +67,8 @@ _REFLECT_SYSTEM_PROMPT = (
     "你是聊天反思器。从一天的会话记录里提炼关于用户本人的高层事实："
     "身份、偏好、约定、重要经历、近况、稳定的情感倾向。\n"
     "规则：只输出事实条目，每行一条，每条不超过60字，最多3条；"
+    "转写里 user 发言带「说话人N」编号时，每条事实行首要标明来源发言人，"
+    "格式如「说话人1: 内容」，无法确定来源时不要加编号；"
     "只记稳定信息，不记寒暄和一次性话题；"
     "没有值得记住的内容时只输出一个字：无"
 )
@@ -86,10 +95,12 @@ class Turn:
 
 @dataclass(frozen=True)
 class FactDraft:
-    """待入库的事实草稿：正文 + 类别 + 置信度。
+    """待入库的事实草稿：正文 + 类别 + 置信度 + 发言人归属。
 
-    ``sender_id``：该事实归属的用户（启发式抽取按发言轮次带出，群聊场景
-    精确到人）；LLM 归纳拿不到逐条归属时留空，由主流程回退主 sender。
+    ``sender_id``：该事实归属的用户。启发式抽取按发言轮次带出（审查
+    SDD7-N5）；LLM 归纳按模型标注的说话人编号回填（审查 G-06：转写编号
+    ↔ sender 映射由 _speaker_map 构建，解析失败的条目留空）。留空时由
+    主流程回退会话主 sender——群聊里这是最活跃者而非说话人本人，仅作兜底。
     """
 
     text: str
@@ -182,7 +193,8 @@ def _primary_sender(turns: Sequence[Turn]) -> str:
     """会话内发言最多的 user 角色 sender（并列取字典序最小，确定性）。
 
     私聊会话即本人。现在仅作兜底：启发式事实已按发言轮次携带精确
-    sender（见 _heuristic_facts）；只有 LLM 归纳事实与无 sender 信息的
+    sender（见 _heuristic_facts），LLM 归纳事实按说话人编号带归属
+    （审查 G-06）；只有解析不出编号的 LLM 条目与无 sender 信息的
     历史轮次才回退到最活跃者。
     """
     counts: Counter[str] = Counter(
@@ -508,12 +520,32 @@ class HeuristicSummarizer:
         )
 
 
+def _speaker_map(turns: Sequence[Turn]) -> dict[int, str]:
+    """user 轮 distinct sender_id → 说话人编号（按首次出现序，确定性）。
+
+    审查 G-06：LLM 转写必须携带「编号 ↔ 发言人」的对应关系，模型才可能
+    在每条事实前标注来源；无 sender 的历史轮次不参与编号（其事实只能走
+    主 sender 回退）。编号只在本会话本次归纳内有意义，不跨会话持久。
+    """
+    numbered: dict[str, int] = {}
+    for turn in turns:
+        if turn.role != "user":
+            continue
+        sender = turn.sender_id.strip()
+        if sender and sender not in numbered:
+            numbered[sender] = len(numbered) + 1
+    return {index: sender for sender, index in numbered.items()}
+
+
 class LLMSummarizer:
     """可选 LLM 归纳；客户端未注入或调用失败时回退 HeuristicSummarizer。
 
     注入风格与 memory_extract.py 一致：客户端暴露
     ``generate(messages, **options)``，回复对象带 ``.text`` 属性。
     摘要句仍用确定性抽取式构造（摘要只做原文投影，LLM 只负责事实归纳）。
+    事实归属（审查 G-06）：转写把 user 发言人编为「说话人N」并在系统
+    提示词里要求模型逐条标注来源；解析出的编号映射回 sender_id 填入
+    FactDraft，解析不出编号的条目留空、由 run_reflection 回退主 sender。
     """
 
     def __init__(self, client: Any = None, *, fallback: HeuristicSummarizer | None = None) -> None:
@@ -524,7 +556,7 @@ class LLMSummarizer:
         if self._client is None:
             return self._fallback.summarize(session_key, turns)
         try:
-            facts = tuple(self._llm_facts(turns))
+            facts = tuple(self._llm_facts(turns, session_key))
         except Exception as exc:  # noqa: BLE001 - 夜间反思的 LLM 失败不阻断，回退启发式。
             logger.warning(
                 "reflection llm summarize failed type=%s session=%s",
@@ -542,10 +574,17 @@ class LLMSummarizer:
             facts=facts,
         )
 
-    def _llm_facts(self, turns: Sequence[Turn]) -> list[FactDraft]:
-        transcript_lines = [
-            f"{turn.role}: {_clip(turn.text, 200)}" for turn in turns[:80]
-        ]
+    def _llm_facts(self, turns: Sequence[Turn], session_key: str) -> list[FactDraft]:
+        speakers = _speaker_map(turns)
+        sender_index = {sender: index for index, sender in speakers.items()}
+        transcript_lines: list[str] = []
+        for turn in turns[:80]:
+            label = turn.role
+            if turn.role == "user":
+                index = sender_index.get(turn.sender_id.strip())
+                if index is not None:
+                    label = f"user(说话人{index})"
+            transcript_lines.append(f"{label}: {_clip(turn.text, 200)}")
         messages = [
             {"role": "system", "content": _REFLECT_SYSTEM_PROMPT},
             {"role": "user", "content": "\n".join(transcript_lines)},
@@ -554,17 +593,46 @@ class LLMSummarizer:
         reply = self._client.generate(messages, **options)
         text = str(getattr(reply, "text", "") or "")
         facts: list[FactDraft] = []
-        seen: set[str] = set()
+        # 去重键含 sender：群聊里 A、B 说了同一句话是两个人的事实，
+        # 落库本就按 (sender, 归一化文本) 分行（与 save_facts 同口径）。
+        seen: set[tuple[str, str]] = set()
         for raw_line in text.splitlines():
-            line = _FACT_LINE_PREFIX.sub("", raw_line.strip())
+            line = raw_line.strip()
+            speaker_id = ""
+            tag = _SPEAKER_TAG_RE.match(line)
+            if tag is not None:
+                line = line[tag.end() :]
+                speaker_id = speakers.get(int(tag.group(1)), "")
+            else:
+                bare = _BARE_SPEAKER_TAG_RE.match(line)
+                # 裸「N:」只在 N 确实在编号表内时才当编号吃掉，防止误伤正文。
+                if bare is not None and int(bare.group(1)) in speakers:
+                    line = line[bare.end() :]
+                    speaker_id = speakers[int(bare.group(1))]
+            line = _FACT_LINE_PREFIX.sub("", line).strip()
             if not line or line.lower() in _NO_FACT_MARKERS:
                 continue
+            if not speaker_id and speakers:
+                # 审查 G-06：模型没标/标错编号的条目拿不到归属，留空交由
+                # run_reflection 回退会话主 sender；debug 留痕便于排查
+                # 提示词遵从率（归属错比归属粗更危险，宁可回退不猜）。
+                logger.debug(
+                    "reflection llm fact lacks speaker tag session=%s",
+                    session_key,
+                )
             line = _clip(line, _MAX_FACT_CHARS)
-            key = _normalize_fact_text(line)
+            key = (speaker_id, _normalize_fact_text(line))
             if key in seen:
                 continue
             seen.add(key)
-            facts.append(FactDraft(text=line, category="", confidence=_LLM_CONFIDENCE))
+            facts.append(
+                FactDraft(
+                    text=line,
+                    category="",
+                    confidence=_LLM_CONFIDENCE,
+                    sender_id=speaker_id,
+                )
+            )
             if len(facts) >= _MAX_SESSION_FACTS:
                 break
         return facts
@@ -724,8 +792,9 @@ def run_reflection(
         digests_saved += 1
         processed += 1
         if reflection.facts:
-            # 群聊归属：启发式事实自带精确 sender（按发言轮次）；LLM 事实与
-            # 无 sender 的历史轮次回退到会话主 sender（最活跃者）。
+            # 群聊归属：启发式事实自带精确 sender（按发言轮次）；LLM 事实按
+            # 模型标注的说话人编号带归属（审查 G-06），只有解析不出编号的
+            # 条目与无 sender 的历史轮次回退到会话主 sender（最活跃者）。
             primary = _primary_sender(turns)
             facts_by_sender: dict[str, list[FactDraft]] = {}
             for draft in reflection.facts:
