@@ -41,6 +41,11 @@ from plugins.bot_unified_runtime.llm import (
     LLMReply,
     safe_llm_finish_reason,
 )
+
+# 审查 F-13：内部标记消毒正则全项目唯一一份，统一从 message_context 导入。
+# 本模块禁止再 re.compile 第二份同用途正则——三处各自维护曾导致 chat 侧
+# 漏收引用族标记（[引用回复]/[引用内容]/[转发/聊天记录] 及其变体）。
+from plugins.bot_unified_runtime.message_context import INTERNAL_MARKER_PATTERN
 from plugins.bot_unified_runtime.output.plain_text import (
     naturalize_chat_text,
     redact_local_secrets,
@@ -546,10 +551,10 @@ _CONTEXT_ERROR_KINDS = frozenset(
         "persona_file_empty",
     }
 )
-_INTERNAL_MARKER_PATTERN = re.compile(
-    r"\[(/?)(UNTRUSTED_USER_TEXT|TRUSTED_SYSTEM)\]",
-    re.IGNORECASE,
-)
+# 审查 F-13：原本地 _INTERNAL_MARKER_PATTERN（只收 UNTRUSTED/TRUSTED、不
+# 容忍标记名尾巴）已删，改用 message_context.INTERNAL_MARKER_PATTERN——
+# 检索/记忆/引用块里的伪造引用族标记（如被引用正文里的 [/引用回复 层级1]）
+# 现在同样被全角化，块闭合无法被越界伪造。
 _UNTRUSTED_USER_PREFIX = "[UNTRUSTED_USER_TEXT]\n"
 _UNTRUSTED_USER_SUFFIX = "\n[/UNTRUSTED_USER_TEXT]"
 # 检索块不可信标记（反注入，最小可信版）：知识库/联网/梗检索块与用户消息
@@ -709,7 +714,10 @@ def _bullet_lines(values: list[str], max_chars: int | None = None) -> str:
 
 def _sanitize_untrusted_context_text(value: object) -> str:
     sanitized = str(value)
-    return _INTERNAL_MARKER_PATTERN.sub(_replace_internal_marker, sanitized)
+    # 审查 F-13：统一正则（message_context.INTERNAL_MARKER_PATTERN）。
+    # group(1)=可选闭合斜杠、group(2)=标记名，与 _replace_internal_marker
+    # 的分组约定一致，替换函数无需改动。
+    return INTERNAL_MARKER_PATTERN.sub(_replace_internal_marker, sanitized)
 
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?\.])\s*")
