@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 import time
@@ -298,14 +299,31 @@ def test_get_ledger_service_reuses_same_db(tmp_path) -> None:
         monkeypatch.undo()
 
 
-def test_emit_call_record_swallows_sink_errors() -> None:
+def test_emit_call_record_swallows_sink_errors(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     class ExplodingSink:
         def submit(self, draft: LLMCallDraft) -> None:
             raise RuntimeError("ledger down")
 
     draft = build_call_draft(status="success")
-    # 不抛出即通过：计费故障绝不阻塞聊天（§4.1.2）。
-    emit_call_record(sink=ExplodingSink(), config=None, draft=draft)
+    with caplog.at_level(
+        logging.DEBUG, logger="plugins.bot_unified_runtime.llm.ledger"
+    ):
+        # 不抛出即通过：计费故障绝不阻塞聊天（§4.1.2）。
+        emit_call_record(sink=ExplodingSink(), config=None, draft=draft)
+    # 吞掉 ≠ 静默：debug 留痕且保留完整栈——计费挂了必须可观测，否则
+    # 账本悄悄归零无人察觉（docstring「吞掉一切异常只打日志」的可测形态）。
+    records = [
+        r for r in caplog.records
+        if r.name == "plugins.bot_unified_runtime.llm.ledger"
+    ]
+    assert len(records) == 1, f"应恰好留痕一条，实得 {len(records)}"
+    record = records[0]
+    assert record.levelno == logging.DEBUG
+    assert record.getMessage() == "llm call record emit failed"
+    assert record.exc_info is not None, "必须带 exc_info（完整栈）"
+    assert record.exc_info[0] is RuntimeError, "留痕的应是 sink 抛的那个异常"
 
 
 def test_emit_call_record_noop_when_disabled() -> None:

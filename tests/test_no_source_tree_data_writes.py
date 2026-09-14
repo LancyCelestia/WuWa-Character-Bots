@@ -57,8 +57,14 @@ def test_enforce_noop_without_new_files(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     guard._REPO_DATA = data_dir  # type: ignore[attr-defined]
-    # Must not raise when nothing new appeared.
-    guard._enforce("node::id", "call", guard._snapshot(), None)
+    (data_dir / "preexisting.sqlite").write_bytes(b"x")  # 既有残留不属新增
+    log = tmp_path / "guard.log"
+    guard._LOG = log  # type: ignore[attr-defined]
+    before = guard._snapshot()
+    assert before == {"preexisting.sqlite"}, "_snapshot 应把目录内既有文件全量入集"
+    # Must not raise when nothing new appeared (pre-existing files don't count).
+    guard._enforce("node::id", "call", before, None)
+    assert not log.exists(), "无违规时不得写守卫日志——_enforce noop 须零副作用"
 
 
 def test_enforce_does_not_mask_existing_failure(tmp_path: Path) -> None:

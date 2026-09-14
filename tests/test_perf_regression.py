@@ -7,7 +7,7 @@
 
 常驻门清单（2026-09-14 起 3 条；规矩：只许新增/收紧，禁放宽任何阈值）：
 1. test_route_classify_throughput_no_collapse——5000 次路由判定 < 3s（基线 ~0.3s，10x 余量）
-2. test_route_classify_single_call_p99_sane——单次路由判定最慢 < 20ms
+2. test_route_classify_single_call_max_sane——单次判定 100 样本 max（P99 保守上界）< 20ms
 3. test_package_import_duration_no_collapse——子进程整包导入 3 次中位 < 10s
    （基线 1.9~2.1s，5x 余量；补齐本 docstring 曾声称却缺失的 import 门，
    草案源：.superpowers/sdd/2026-09-13-six-domain-batch/perf-report.md §五）
@@ -54,8 +54,14 @@ def test_route_classify_throughput_no_order_collapse() -> None:
     assert elapsed < 3.0, f"路由判定 5000 次耗时 {elapsed:.2f}s（阈值 3s）——疑似判定序退化"
 
 
-def test_route_classify_single_call_p99_sane() -> None:
-    """单次判定 P99 < 20ms：单条消息被路由拖垮会直接反映在回复延迟上。"""
+def test_route_classify_single_call_max_sane() -> None:
+    """单次判定 100 样本取 max（P99 的保守上界）< 20ms：最慢一条直接进回复延迟。
+
+    2026-09-14 牙齿复核改名（M-12）：原名单写 P99、实算 max——如实声明取
+    max。n=100 下真 P99（第 99 序统量）与 max 几乎重合，显式分位估计器在
+    该样本量只添方差徒增 CI 抖红；max ≥ P99 为保守上界，阈值 20ms 语义
+    不变（不松不紧，「只许新增/收紧」铁律不受影响）。
+    """
     classify_message_route("预热", config=object(), alias_resolver=None)
     worst = 0.0
     for text in _SAMPLES:

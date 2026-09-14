@@ -64,7 +64,19 @@ def test_autosync_disabled_leaves_drift_for_resident_gate(monkeypatch: pytest.Mo
 
 
 def test_autosync_smoke() -> None:
-    """端到端用例的子进程落点：本体恒真，钩子行为由 mini 会话的 fixture 完成。"""
+    """端到端用例的子进程落点；锁 session-start 时序：钩子修复先于任何测试体。
+
+    e2e 父用例（test_autosync_end_to_end_mini_session）篡改尾字节后按 nodeid
+    拉起本用例作为子会话唯一载体；session 级 fixture 在测试体运行前已跑
+    run_autosync——此处断言文件恢复 LF 结尾（篡改后是 0x2A），即证「修复
+    先于测试体」而非 session 结束才补。父会话常态（无篡改）下 auto-facts.md
+    恒以 LF 结尾（_flip_last_byte 的既有前提），断言同样成立。
+    """
+    assert AUTO_FACTS.is_file() and AUTO_FACTS.stat().st_size > 0
+    assert AUTO_FACTS.read_bytes().endswith(b"\n"), (
+        "session 开始时 autosync 未完成（auto-facts.md 尾字节非 LF）——"
+        "钩子修复未先于测试体运行"
+    )
 
 
 def test_autosync_end_to_end_mini_session(tmp_path: Path) -> None:
