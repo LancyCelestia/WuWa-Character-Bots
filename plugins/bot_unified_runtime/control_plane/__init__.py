@@ -20,6 +20,8 @@
     BOT_CONTROL_PLANE_HOST=127.0.0.1         # 非 loopback 需确认文件（§9.7）
     BOT_CONTROL_PLANE_PORT=8742
     BOT_CONTROL_PLANE_TOKEN_SHA256=          # 空 = API 面一律 503
+    BOT_CONTROL_PLANE_HOST_ALLOWLIST=        # 额外 Host 白名单（逗号分隔），
+                                             # 防DNS rebinding（审查 P-01，§8.2）
 """
 
 from __future__ import annotations
@@ -60,6 +62,20 @@ class ControlPlaneSettings:
     host: str = _DEFAULT_HOST
     port: int = _DEFAULT_PORT
     token_sha256: str = ""
+    # 额外 Host 白名单条目（host 或 host:port，省端口继承控制面端口）；
+    # 默认白名单（127.0.0.1/localhost + 端口）在 _app 侧始终叠加，不可关。
+    host_allowlist: tuple[str, ...] = ()
+
+
+def _allowlist_value(raw: object) -> tuple[str, ...]:
+    """归一白名单配置：str 按逗号拆分，list/tuple 逐项收；空项剔除。"""
+    if raw is None:
+        return ()
+    if isinstance(raw, (list, tuple)):
+        pieces = [str(item) for item in raw]
+    else:
+        pieces = str(raw).split(",")
+    return tuple(piece.strip() for piece in pieces if piece.strip())
 
 
 def control_plane_settings(config: object | None = None) -> ControlPlaneSettings:
@@ -101,11 +117,21 @@ def control_plane_settings(config: object | None = None) -> ControlPlaneSettings
         or os.environ.get("BOT_CONTROL_PLANE_TOKEN_SHA256")
         or ""
     ).strip()
+    host_allowlist: tuple[str, ...] = ()
+    for raw in (
+        getattr(config, "bot_control_plane_host_allowlist", None),
+        os.environ.get("BOT_CONTROL_PLANE_HOST_ALLOWLIST"),
+    ):
+        entries = _allowlist_value(raw)
+        if entries:
+            host_allowlist = entries
+            break
     return ControlPlaneSettings(
         enabled=enabled,
         host=host or _DEFAULT_HOST,
         port=port,
         token_sha256=token_sha256,
+        host_allowlist=host_allowlist,
     )
 
 

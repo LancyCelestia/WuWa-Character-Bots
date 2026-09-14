@@ -77,7 +77,8 @@ def _client(
         audit_store=ControlPlaneAuditStore(str(tmp_path / "cp.sqlite3")),
         started_at=started_at or datetime.now().astimezone(),
     )
-    return TestClient(app)
+    # base_url 定到白名单 Host（P-01 Host 守卫：默认 testserver 会被拒）。
+    return TestClient(app, base_url="http://127.0.0.1:8742")
 
 
 # ==================== 开关与设置（默认关） ====================
@@ -273,7 +274,7 @@ def test_audit_rows_written_and_query_redacted(tmp_path) -> None:
         audit_store=store,
         started_at=datetime.now().astimezone(),
     )
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1:8742") as client:
         client.get(
             "/admin/api/v1/health?token=topsecret&limit=5",
             headers={"Authorization": f"Bearer {TOKEN}"},
@@ -295,6 +296,18 @@ def test_audit_rows_written_and_query_redacted(tmp_path) -> None:
     assert "limit=5" in ok_row["query"]
     assert denied_row["subject"] == "anonymous"
     assert denied_row["status_code"] == 401
+
+
+def test_host_guard_rejects_testserver_default_host(tmp_path) -> None:
+    """P-01：默认 testserver Host 必须被守卫拒绝（反向锁定 base_url 修改）。"""
+    app = create_control_plane_app(
+        _config(hash_token(TOKEN)),
+        channel_health_store=FakeChannelHealthStore(),
+        audit_store=ControlPlaneAuditStore(str(tmp_path / "cp.sqlite3")),
+        started_at=datetime.now().astimezone(),
+    )
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 400
 
 
 # ==================== serve 入口守卫 ====================
