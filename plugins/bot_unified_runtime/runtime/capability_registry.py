@@ -22,7 +22,13 @@ base_router 的字面四表（机器册/命令目录/文档门禁不 import 插�
 INTERNAL_CAPABILITY_NOTES 的字面形态必须留在 base_router.py；
 本表为权威声明，字面表为运行时+静态解析投影，两方向逐字段一致性由
 ``tests/test_capability_registry.py`` 常驻锁定——改动任何一表而不同步
-另一表即测试红。echo.py 帮助注册表（_HELP_ENTRIES）的对齐计划见该文件头部。
+另一表即测试红。
+
+二期（2026-09-14）：帮助注册表同哲学对齐——``HELP_TOPIC_DECLARATIONS``
+以每主题一行的 (topic, admin_only, capability) 权威三元组登记 echo.py
+全部帮助主题；echo 的 ``_HELP_ENTRIES``/``_HELP_ENTRY_META`` 因
+command_catalog.py 与 doc_sync.py 的 AST/正则静态提取而保持字面形态
+（不改为运行时构建），逐 topic 强一致性由同一测试文件常驻锁定。
 """
 
 from __future__ import annotations
@@ -66,6 +72,23 @@ class InterfaceDecl:
     description: str
     help_topic: str = ""
     internal_note: str = ""
+
+
+@dataclass(frozen=True)
+class HelpTopicDecl:
+    """单个帮助主题的登记属性（每主题一行，审查 C-06 二期）。
+
+    (topic, admin_only, capability) 三元组是帮助注册表的权威声明：
+    topic = ``/bot help`` 主题名；admin_only = 可见性（False = 普通用户
+    可见，等价 echo._PUBLIC_HELP_TOPICS 成员资格）；capability = 能力入口
+    登记文（echo._HELP_ENTRY_META 的 capability 列：bot.* 能力 id、/bot
+    子命令或非命令登记说明）。条目正文/别名/分类/教程文案等表现层仍以
+    echo.py 字面为准（两份静态解析器依赖），不进本表。
+    """
+
+    topic: str
+    admin_only: bool
+    capability: str = ""
 
 
 # 书写序 = RouteKind 枚举成员序（与 base_router.RouteKind 逐行对照审计）。
@@ -387,4 +410,92 @@ INTERFACE_DECLARATIONS: tuple[InterfaceDecl, ...] = (
 # base_router.COMMAND_ROUTE_KINDS 在 import 时从本名单派生（成员单一声明源）。
 COMMAND_ROUTE_KIND_NAMES: frozenset[str] = frozenset(
     decl.kind for decl in ROUTE_CAPABILITY_DECLARATIONS if decl.command
+)
+
+# ---------------------------------------------------------------------------
+# 帮助注册表权威声明（审查 C-06 二期，2026-09-14 批）
+# ---------------------------------------------------------------------------
+# echo._HELP_ENTRIES 是 /bot help、/bot commands 与 docs/command-catalog.md 的
+# 数据体；scripts/command_catalog.py（AST 提取三表）与 scripts/doc_sync.py
+# （正则数 topic 行）按源码文本静态解析、不 import 插件包，故该表必须保持
+# 字面形态、不改为运行时构建。作为对价：每主题的 (topic, admin_only,
+# capability) 权威三元组登记于下表，与 echo 字面表的逐 topic 强一致性由
+# tests/test_capability_registry.py 常驻锁定——增删主题、翻转可见性、
+# 改能力入口而不同步本表即测试红（漏登不可见从此消灭，与第一期同哲学）。
+#
+# 书写序 = echo._HELP_ENTRIES 字面书写序（帮助总览/命令目录渲染序）。
+HELP_TOPIC_DECLARATIONS: tuple[HelpTopicDecl, ...] = (
+    HelpTopicDecl(topic="状态", admin_only=True, capability="bot.status"),
+    HelpTopicDecl(topic="记忆", admin_only=False, capability="bot.memory"),
+    HelpTopicDecl(topic="为什么", admin_only=True, capability="bot.why"),
+    HelpTopicDecl(topic="回执", admin_only=True, capability="/bot receipt"),
+    HelpTopicDecl(topic="审计", admin_only=True, capability="/bot audit"),
+    HelpTopicDecl(topic="最近", admin_only=True, capability="/bot recent"),
+    HelpTopicDecl(topic="队列", admin_only=True, capability="/bot queue"),
+    HelpTopicDecl(topic="上下文", admin_only=True, capability="/bot context"),
+    HelpTopicDecl(topic="对话", admin_only=True, capability="bot.dialogue"),
+    HelpTopicDecl(topic="接入", admin_only=True, capability="/bot setup llm"),
+    HelpTopicDecl(topic="配置", admin_only=True, capability="bot.config"),
+    HelpTopicDecl(topic="就绪", admin_only=True, capability="bot.readiness"),
+    HelpTopicDecl(topic="角色", admin_only=True, capability="bot.roles"),
+    HelpTopicDecl(topic="人格", admin_only=True, capability="bot.persona"),
+    HelpTopicDecl(topic="路由", admin_only=False, capability="/bot route"),
+    HelpTopicDecl(topic="历史", admin_only=True, capability="bot.history"),
+    HelpTopicDecl(topic="暂停", admin_only=True, capability="bot.control"),
+    HelpTopicDecl(topic="回复", admin_only=True, capability="/bot reply"),
+    HelpTopicDecl(topic="模型", admin_only=True, capability="/bot model"),
+    HelpTopicDecl(topic="用量", admin_only=True, capability="/bot model usage"),
+    HelpTopicDecl(topic="设置", admin_only=True, capability="/bot runtime"),
+    HelpTopicDecl(topic="搜索", admin_only=True, capability="/bot search"),
+    HelpTopicDecl(topic="解析", admin_only=True, capability="/bot parse"),
+    HelpTopicDecl(topic="凭据", admin_only=True, capability="/bot cookie"),
+    HelpTopicDecl(topic="群策略", admin_only=True, capability="/bot group"),
+    HelpTopicDecl(topic="群文件", admin_only=True, capability="/bot 群文件"),
+    HelpTopicDecl(topic="日志", admin_only=True, capability="bot.logs"),
+    HelpTopicDecl(topic="文件", admin_only=True, capability="matcher:admin_file_export（文件导出）"),
+    HelpTopicDecl(topic="身份", admin_only=True, capability="/bot identity"),
+    HelpTopicDecl(topic="怪癖", admin_only=True, capability="/bot quirk"),
+    HelpTopicDecl(topic="限流", admin_only=True, capability="/bot runtime set（配置型模块，无独立命令）"),
+    HelpTopicDecl(topic="合并转发", admin_only=True, capability="/bot runtime set（配置型模块，无独立命令）"),
+    HelpTopicDecl(topic="群摘要", admin_only=True, capability="/bot runtime set（配置型模块，无独立命令）"),
+    HelpTopicDecl(topic="视频理解", admin_only=True, capability="/bot runtime set（配置型模块，无独立命令）"),
+    HelpTopicDecl(topic="运行开关", admin_only=True, capability=".env（持久化开关，改后重启生效，无运行时命令）"),
+    HelpTopicDecl(topic="邮件", admin_only=True, capability="on_command:mail"),
+    HelpTopicDecl(topic="Telegram", admin_only=True, capability=".env（Telegram 适配器配置）"),
+    HelpTopicDecl(topic="供应商", admin_only=True, capability=".env（模型注册表；/bot model 亦可视图）"),
+    HelpTopicDecl(topic="订阅", admin_only=False, capability="bot.subscribe"),
+    HelpTopicDecl(topic="点歌", admin_only=False, capability="bot.music / bot.music_mode"),
+    HelpTopicDecl(topic="表情", admin_only=False, capability="bot.meme"),
+    HelpTopicDecl(topic="偷表情", admin_only=False, capability="bot.meme_library"),
+    HelpTopicDecl(topic="搜图", admin_only=False, capability="on_message:搜图"),
+    HelpTopicDecl(topic="天气", admin_only=False, capability="bot.weather"),
+    HelpTopicDecl(topic="行情", admin_only=False, capability="bot.market"),
+    HelpTopicDecl(topic="个股行情", admin_only=False, capability="bot.stocks"),
+    HelpTopicDecl(topic="商品行情", admin_only=False, capability="bot.commodities"),
+    HelpTopicDecl(topic="国债收益率", admin_only=False, capability="bot.bond"),
+    HelpTopicDecl(topic="北向资金", admin_only=False, capability="bot.northbound"),
+    HelpTopicDecl(topic="汇率", admin_only=False, capability="bot.fx"),
+    HelpTopicDecl(topic="占卜", admin_only=False, capability="bot.divination"),
+    HelpTopicDecl(topic="快报", admin_only=False, capability="bot.news"),
+    HelpTopicDecl(topic="维基", admin_only=False, capability="bot.wiki"),
+    HelpTopicDecl(topic="萌娘百科", admin_only=False, capability="bot.moegirl（二次元问句路由同归此能力）"),
+    HelpTopicDecl(topic="历史上的今天", admin_only=False, capability="bot.today_history"),
+    HelpTopicDecl(topic="下载", admin_only=False, capability="/bot download"),
+    HelpTopicDecl(topic="昵称", admin_only=False, capability="bot.alias"),
+    HelpTopicDecl(topic="链接", admin_only=False, capability="bot.content"),
+    HelpTopicDecl(topic="草稿", admin_only=False, capability="bot.auto_send"),
+    HelpTopicDecl(topic="吃什么", admin_only=False, capability="bot.eat"),
+    HelpTopicDecl(topic="媒体归档", admin_only=True, capability="bot.media_archive"),
+    HelpTopicDecl(topic="群信息", admin_only=False, capability="bot.group_info"),
+    HelpTopicDecl(topic="好感度", admin_only=False, capability="bot.affinity"),
+    HelpTopicDecl(topic="Epic", admin_only=False, capability="bot.epic"),
+    HelpTopicDecl(topic="随机图", admin_only=False, capability="bot.randpic"),
+    HelpTopicDecl(topic="提醒", admin_only=False, capability="bot.reminder"),
+    HelpTopicDecl(topic="笔记", admin_only=False, capability="bot.reminder"),
+    HelpTopicDecl(topic="帮助", admin_only=False, capability="bot.help"),
+    HelpTopicDecl(topic="聊天", admin_only=False, capability="bot.chat"),
+    HelpTopicDecl(topic="戳一戳", admin_only=False, capability="on_notice:戳一戳"),
+    HelpTopicDecl(topic="表情收库", admin_only=False, capability="meme_absorb（群图自动收库，无命令）"),
+    HelpTopicDecl(topic="自然语言", admin_only=False, capability="bot.natural_command"),
+    HelpTopicDecl(topic="忽略", admin_only=True, capability="matcher:IGNORE（空消息兜底，不回复）"),
 )

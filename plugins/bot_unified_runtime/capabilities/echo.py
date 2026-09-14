@@ -208,12 +208,14 @@ def _help_unknown_body(query: str) -> str:
     )
 
 
-# Keystone 对齐计划（审查 C-06，2026-09-14 批）：能力单一声明源已落在
-# runtime/capability_registry.py（路由/接口/内部说明等手写清单收拢为每能力
-# 一行）。本帮助注册表（含 _HELP_ENTRY_META/_HELP_EXTRA_LINES）是最后一份
-# 未对齐清单：scripts/command_catalog.py 与 scripts/doc_sync.py 以 AST/正则
-# 静态提取本文件字面形态（不 import 插件包），搬移须连机器册生成器一起改，
-# 本批 echo 本体不动、留待下批；注册表继续从这里出（73 topics 口径不变）。
+# Keystone 对齐（审查 C-06 二期，2026-09-14 批）：能力单一声明源在
+# runtime/capability_registry.py。本帮助注册表（含 _HELP_ENTRY_META/
+# _HELP_EXTRA_LINES）保持字面形态——scripts/command_catalog.py 与
+# scripts/doc_sync.py 以 AST/正则静态提取本文件文本（不 import 插件包），
+# 不改为运行时构建；作为对价，每主题的 (topic, admin_only, capability)
+# 权威三元组已登记进声明源 HELP_TOPIC_DECLARATIONS，逐 topic 强一致性由
+# tests/test_capability_registry.py 常驻锁定——两份数据漂移即红。
+# 增删主题 / 翻转可见性 / 改能力入口，必须同步声明源（73 topics 口径不变）。
 
 _HELP_ENTRIES: list[HelpEntry] = [
         {

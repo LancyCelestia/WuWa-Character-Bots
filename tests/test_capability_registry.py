@@ -20,6 +20,14 @@ tests/test_doc_sync_gates.py、scripts/extract_trigger_words.py）按源码文�
 6. classify_message_route 的 IGNORE 兜底 RouteDecision 字面量与声明兜底席
    一致（AST 提取）。
 
+二期（2026-09-14）：帮助注册表同哲学对齐——
+7. 声明源 HELP_TOPIC_DECLARATIONS（每主题一行 topic/admin_only/capability
+   权威三元组）与 echo._HELP_ENTRIES 逐 topic 强一致（缺失/多出/字段不符
+   即红）；普通用户可见集与分类表引用面、接口清单 help_topic 引用、路由
+   能力 → 帮助归属可解析性一并锁死。echo 字面表因 command_catalog.py 与
+   doc_sync.py 的静态解析而保持原位（与第一期「声明源=权威数据+字面=投影」
+   同哲学）。
+
 改动前快照来源：本批动手前以运行时 introspection 导出（五表全量 JSON），
 逐值转录于此，作为「纯重构零行为变化」的回归锚。
 """
@@ -27,8 +35,14 @@ tests/test_doc_sync_gates.py、scripts/extract_trigger_words.py）按源码文�
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
+from plugins.bot_unified_runtime.capabilities.echo import (
+    _HELP_CATEGORIES,
+    _PUBLIC_HELP_TOPICS,
+    HELP_ENTRIES,
+)
 from plugins.bot_unified_runtime.runtime import base_router as br
 from plugins.bot_unified_runtime.runtime import capability_registry as cr
 
@@ -363,3 +377,83 @@ def test_ignore_fallback_literals_match_registry_decl() -> None:
     assert decision.kind is br.RouteKind.IGNORE
     assert decision.capability_id == ignore_decl.capability_id
     assert decision.priority == ignore_decl.priority
+
+
+# ---------------------------------------------------------------------------
+# ⑦ echo 帮助注册表（_HELP_ENTRIES）：声明 help 维度 ↔ 字面表（C-06 二期）
+# ---------------------------------------------------------------------------
+
+_HELP_DECLARED_TOPICS = [decl.topic for decl in cr.HELP_TOPIC_DECLARATIONS]
+
+
+def test_help_topics_equal_registry_book_order() -> None:
+    """声明 help 维度与 echo 帮助注册表逐 topic 书序相等；缺失/多出/重复即红。
+
+    73 = doc_sync 机器册「帮助 topic 数」同口径（该册由 echo 字面行数出，
+    本断言把声明源钉在同一口径上，两侧各自漂移都过不了这道门）。
+    """
+    live_topics = [str(entry["topic"]) for entry in HELP_ENTRIES]
+    assert _HELP_DECLARED_TOPICS == live_topics
+    assert len(_HELP_DECLARED_TOPICS) == len(set(_HELP_DECLARED_TOPICS)) == 73
+
+
+def test_help_visibility_and_capability_equal_registry() -> None:
+    """每主题的 admin_only / capability 字段与声明行逐字段相等（字段不符即红）。
+
+    比对口径 = echo 运行时合并视图（HELP_ENTRIES，经 _HELP_ENTRY_META
+    setdefault 合并后）——与 /bot help、/bot commands 实际消费的数据同源。
+    """
+    assert len(cr.HELP_TOPIC_DECLARATIONS) == len(HELP_ENTRIES)
+    for decl, entry in zip(cr.HELP_TOPIC_DECLARATIONS, HELP_ENTRIES):
+        assert str(entry["topic"]) == decl.topic
+        assert bool(entry.get("admin_only", False)) == decl.admin_only, decl.topic
+        assert str(entry.get("capability", "")) == decl.capability, decl.topic
+
+
+def test_help_public_visibility_derived_from_declaration() -> None:
+    """普通用户可见集 = 声明 admin_only=False 全体；管理员面与公开面零交集。
+
+    治理的真实漏洞类：新公开能力漏登 _PUBLIC_HELP_TOPICS 时对普通用户
+    完全隐形（有命令却看不见）——两侧集合必须恒等，漂移即红。
+    """
+    declared_public = {d.topic for d in cr.HELP_TOPIC_DECLARATIONS if not d.admin_only}
+    declared_admin = {d.topic for d in cr.HELP_TOPIC_DECLARATIONS if d.admin_only}
+    assert declared_public == set(_PUBLIC_HELP_TOPICS)
+    assert declared_admin.isdisjoint(_PUBLIC_HELP_TOPICS)
+    assert len(declared_public) == 35 and len(declared_admin) == 38
+
+
+def test_help_categories_reference_declared_topics() -> None:
+    """分类表引用的主题必须全部在册（陈旧分类行不得静默失效）。"""
+    declared = set(_HELP_DECLARED_TOPICS)
+    for _, topics in _HELP_CATEGORIES:
+        unknown = topics - declared
+        assert not unknown, f"分类表引用了不在册的主题：{sorted(unknown)}"
+
+
+def test_interface_help_topics_resolve_to_help_registry() -> None:
+    """接口清单 help_topic 列引用的主题必须落在声明 help 维度内（跨表链接）。"""
+    declared = set(_HELP_DECLARED_TOPICS)
+    for idecl in cr.INTERFACE_DECLARATIONS:
+        if idecl.help_topic:
+            assert idecl.help_topic in declared, idecl.interface_id
+
+
+def test_every_routed_capability_resolves_to_help_owner() -> None:
+    """路由能力 → 帮助归属必须可解析（与命令目录渲染规则同口径）。
+
+    command_catalog 的路由覆盖段按「条目 capability 文正则提 bot.* → 归属
+    主题，否则内部说明，否则（未登记）」渲染；本断言锁死 has_rule 声明行
+    全部可归属——新增路由能力漏登帮助主题/内部说明即红。
+    """
+    topic_by_capability: dict[str, str] = {}
+    for entry in HELP_ENTRIES:
+        for cid in re.findall(r"bot\.[a-z_]+", str(entry.get("capability", ""))):
+            topic_by_capability.setdefault(cid, str(entry["topic"]))
+    internal_notes = set(br.INTERNAL_CAPABILITY_NOTES)
+    for decl in cr.ROUTE_CAPABILITY_DECLARATIONS:
+        if not decl.has_rule:
+            continue
+        assert (
+            decl.capability_id in topic_by_capability or decl.capability_id in internal_notes
+        ), f"路由能力 {decl.capability_id}（{decl.kind}）无帮助主题归属"
