@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 from pathlib import Path
 
@@ -190,16 +191,15 @@ def test_stage_url_with_injected_downloader_stages_content(tmp_path: Path) -> No
     assert ticket.sha256 == hashlib.sha256(b"downloaded").hexdigest()
 
 
-def test_stage_url_declare_only_skips_staging(tmp_path: Path) -> None:
-    ticket = get_default_file_gateway().stage(
-        FileSource(
-            source_kind="url", url="https://example.com/direct.png", declare_only=True
-        ),
-        request_id="r",
-    )
-    assert ticket.local_path is None
-    assert ticket.sha256 == ""
-    assert ticket.source == "url:declare_only"
+def test_declare_only_param_is_removed_entirely() -> None:
+    # 审查 J-14：declare_only（FileSource 字段 + _stage_url 分支）全仓零生产
+    # 调用点，判定死代码整体移除（FileSource→Ticket→deliver 主链语义零变化）。
+    # 本测试锁死「参数不复存在」：字段一回归即在此失败，防静默回潮。
+    assert "declare_only" not in [f.name for f in dataclasses.fields(FileSource)]
+    # 字段既删，任何 _stage_url 里的 src.declare_only 引用都会 AttributeError——
+    # 用 getattr 探测真实实例做双保险。
+    probe = FileSource(source_kind="path", path="x.txt")
+    assert not hasattr(probe, "declare_only")
 
 
 def test_file_dedupe_key_format() -> None:

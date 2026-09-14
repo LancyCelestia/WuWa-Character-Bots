@@ -148,8 +148,6 @@ class FileSource:
     data: bytes | None = None
     name: str = ""
     sha256: str = ""
-    # True=允许平台侧自行拉取（TG 直链 photo），不做 staging。
-    declare_only: bool = False
 
     def __post_init__(self) -> None:
         if self.source_kind == "path" and not self.path:
@@ -273,16 +271,6 @@ class FileTransferGateway:
         if not url:
             raise FileTransferError("invalid_source")
         fallback_name = url.rsplit("/", 1)[-1].split("?", 1)[0] or "download"
-        if src.declare_only:
-            # 平台侧自行拉取：不 staging，sha256 留空（平台落盘后再算，规格 §2.2）。
-            return FileTicket(
-                ticket_id=f"ft_{uuid.uuid4().hex[:12]}",
-                local_path=None,
-                name=src.name or fallback_name,
-                size=0,
-                sha256="",
-                source="url:declare_only",
-            )
         # SSRF 固定闸门（规格 §2.6.1）：复用 sources.downloader 的既有护栏。
         from plugins.bot_unified_runtime.sources.downloader import (
             RejectedUrlError,
