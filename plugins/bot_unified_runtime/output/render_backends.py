@@ -25,6 +25,7 @@ import re
 import threading
 import time
 import urllib.request
+from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
@@ -59,15 +60,56 @@ def _html_mentions_orb_prone_image(html: str) -> bool:
     return any(_orb_prone_url(url) for url in _HTML_URL_RE.findall(html or ""))
 
 
+# ---- 封面图进程内 LRU 缓存（审查 L-07）----
+# 卡片封面/ORB 图每次渲染都经 _fetch_image_bytes 回源 urlopen——同一封面
+# URL（重发/重渲染/历史卡片重截）反复重复下载。加进程内 LRU：
+# URL → (bytes, content_type)，对齐项目 LRU 惯例（reactions.py OrderedDict
+# + move_to_end + 插入序淘汰）。
+# 约束：
+# - 容量封顶 _IMG_CACHE_MAX_ENTRIES 条；单条超 _IMG_CACHE_MAX_BYTES 的图
+#   不缓存只直读（防单张大图挤占整池），返回值契约不变。
+# - 只缓存成功结果，不缓存负结果：封面多为内容寻址 CDN URL（sinaimg/
+#   weibocdn 图链含内容哈希，同 URL 即同图，故正缓存不设 TTL 也不会陈旧）；
+#   短 TTL 负缓存会把瞬时网络故障放大成持续灰图，不如让每次失败都重新
+#   走 route.abort → 模板 onerror 兜底一次机会。
+# - 线程安全：渲染虽持后端实例锁，但 _fetch_image_bytes 是模块级函数
+#   （多后端/测试可能并发进入），OrderedDict 非线程安全，配互斥锁。
+_IMG_CACHE_MAX_ENTRIES = 64
+_IMG_CACHE_MAX_BYTES = 8 * 1024 * 1024
+_IMAGE_BYTES_CACHE: OrderedDict[str, tuple[bytes, str]] = OrderedDict()
+_IMAGE_BYTES_CACHE_LOCK = threading.Lock()
+
+
+def _image_bytes_cache_clear() -> None:
+    """测试隔离用：清空封面图 LRU（模块级进程内状态）。"""
+    with _IMAGE_BYTES_CACHE_LOCK:
+        _IMAGE_BYTES_CACHE.clear()
+
+
 def _fetch_image_bytes(url: str) -> tuple[bytes, str] | None:
+    # 审查 L-07：先查进程内 LRU，命中免回源（同 URL 重渲染直接复用字节）。
+    with _IMAGE_BYTES_CACHE_LOCK:
+        cached = _IMAGE_BYTES_CACHE.get(url)
+        if cached is not None:
+            _IMAGE_BYTES_CACHE.move_to_end(url)
+            return cached
     request = urllib.request.Request(url, headers=_ORB_FETCH_HEADERS)
     try:
         with _ORB_FETCH_OPENER.open(request, timeout=10) as response:
             data = response.read(16 * 1024 * 1024)
             content_type = str(response.headers.get("Content-Type") or "image/jpeg")
-            return data, content_type.split(";")[0].strip()
+            result = (data, content_type.split(";")[0].strip())
     except Exception:  # noqa: BLE001 - 取回失败交给 route.abort，模板 onerror 兜底。
+        # 失败不缓存负结果（约束见上方 L-07 注释）：返回契约与失败路径零变化。
         return None
+    # 单条超限不缓存只直读：返回值照常交给 route.fulfill，只是不占缓存池。
+    if len(data) <= _IMG_CACHE_MAX_BYTES:
+        with _IMAGE_BYTES_CACHE_LOCK:
+            _IMAGE_BYTES_CACHE[url] = result
+            _IMAGE_BYTES_CACHE.move_to_end(url)
+            while len(_IMAGE_BYTES_CACHE) > _IMG_CACHE_MAX_ENTRIES:
+                _IMAGE_BYTES_CACHE.popitem(last=False)
+    return result
 
 
 # ---- mermaid.min.js 本地供给（素材本地化 F1，2026-09-14）----
@@ -375,7 +417,7 @@ class PlaywrightRenderBackend:
         ctx = getattr(self._local, "playwright_ctx", None)
         return browser, ctx
 
-    def _get_browser(self) -> Any:
+    def _get_browser(self, *, backoff: Callable[[], None] | None = None) -> Any:
         """懒启动并复用本线程的常驻 Chromium；空闲超限或已死则重建。
 
         launch 失败重试一次（资源瞬时紧张常见），仍失败才向上抛。
@@ -384,7 +426,13 @@ class PlaywrightRenderBackend:
         playwright 的 running-loop 守卫，报 "Sync API inside the asyncio
         loop"，且 thread-local 只在成功后写入、``_close_thread_browser``
         对泄漏实例不可达——该线程渲染永久中毒至进程重启。
+
+        审查 L-13：``backoff`` 是两次 launch attempt 之间的退避动作。
+        持槽调用方（render_card）必须注入 ``_release_slot_backoff``，
+        把 0.5s 退避 sleep 移出渲染槽位临界区；缺省（无槽位上下文的
+        直接调用，如测试）退化为原地 sleep，等待时长与旧实现一致。
         """
+        on_backoff = backoff if backoff is not None else self._plain_launch_backoff
         browser, _ctx = self._thread_browser()
         if browser is not None and browser.is_connected():
             last_used = float(getattr(self._local, "last_used", 0.0) or 0.0)
@@ -409,12 +457,48 @@ class PlaywrightRenderBackend:
                 except Exception:  # noqa: BLE001, S110 - 清理失败不阻断重试。
                     pass
                 last_launch_error = exc
-                time.sleep(0.5)
+                # 审查 L-13：退避只发生在两次 attempt 之间——末次失败后无
+                # 重试可服务，不再空睡（旧实现循环结构导致末次失败也睡 0.5s，
+                # 纯属浪费；失败仍如实上抛，纯文本兜底契约零变化）。
+                if _attempt + 1 < 2:
+                    on_backoff()
                 continue
             self._local.browser = browser
             self._local.playwright_ctx = playwright_ctx
             return browser
         raise last_launch_error  # type: ignore[misc]
+
+    def _plain_launch_backoff(self) -> None:
+        """审查 L-13：无槽位上下文（测试直接调 _get_browser）的退避——原地睡。"""
+        time.sleep(0.5)
+
+    def _release_slot_backoff(self) -> None:
+        """审查 L-13：launch 退避 sleep 移出渲染槽位临界区（先放槽位再睡）。
+
+        render_card 持 self._lock（BoundedSemaphore 并发槽位）调用
+        _get_browser；旧实现在槽位内 time.sleep(0.5)，并发渲染下其它线程
+        被这段纯等待无谓阻塞（max_concurrency=1 时整条渲染串行冻结）。
+        此处先释放槽位、睡完重新取回：
+        - 槽位守恒：release/acquire 严格成对（finally 保证异常路径也取回），
+          render_card ``with self._lock:`` 退出时的单次 release 依然配平；
+          槽位计数失衡会当场被 BoundedSemaphore 抛 ValueError 暴露。
+        - 重查语义：浏览器为 thread-local（_local 仅属主线程读写），睡眠
+          窗口内不存在他人可改的共享渲染态；取回槽位后循环从
+          sync_playwright()→start()→launch() 全新重试，即对「资源是否仍
+          紧张」的复查——仍失败如实上抛，render_card 返回 None 走纯文本
+          兜底，契约零变化。
+        - 不需代际计数防惊群：各线程只重启自己的 thread-local 浏览器，
+          不存在共享单例重启点；且每次 launch() 本身持槽位执行，同时
+          发起的 launch 数仍被信号量钳制（只有纯 sleep 窗口让位）。
+        - 公平性：信号量唤醒顺序不保证本线程先取回；被其它渲染线程抢先
+          仅表现为本线程多等一段，不产生错误。
+        """
+        lock = self._lock
+        lock.release()
+        try:
+            time.sleep(0.5)
+        finally:
+            lock.acquire()
 
     def _close_thread_browser(self) -> None:
         browser, ctx = self._thread_browser()
@@ -467,14 +551,16 @@ class PlaywrightRenderBackend:
         with self._lock:
             page = None
             try:
-                browser = self._get_browser()
+                # 审查 L-13：持槽调用必须注入 _release_slot_backoff，
+                # launch 重试的退避 sleep 才会在槽位临界区外执行。
+                browser = self._get_browser(backoff=self._release_slot_backoff)
                 try:
                     page = browser.new_page(
                         viewport={"width": width, "height": height},
                         device_scale_factor=device_scale_factor,
                     )
                 except Exception:  # noqa: BLE001 - 浏览器崩溃时重启一次再试。
-                    browser = self._get_browser()
+                    browser = self._get_browser(backoff=self._release_slot_backoff)
                     page = browser.new_page(
                         viewport={"width": width, "height": height},
                         device_scale_factor=device_scale_factor,

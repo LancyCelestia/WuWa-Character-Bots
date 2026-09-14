@@ -311,7 +311,11 @@ def _make_backend(monkeypatch: pytest.MonkeyPatch, page: _FakePage):
     backend = PlaywrightRenderBackend()
     if not backend.available:
         pytest.skip("playwright 未安装，跳过 wait_js 码路径验证")
-    monkeypatch.setattr(backend, "_get_browser", lambda: _FakeBrowser(page))
+    # 审查 L-13：render_card 以 backoff= 关键字调用 _get_browser，替身
+    # 签名跟随（launch 恒成功，退避不触发，忽略参数即可）。
+    monkeypatch.setattr(
+        backend, "_get_browser", lambda **kwargs: _FakeBrowser(page)
+    )
     return backend
 
 

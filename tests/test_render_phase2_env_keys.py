@@ -106,7 +106,11 @@ def _make_backend(
     backend.available = True
     if backend._sync_playwright is None:
         backend._sync_playwright = object()  # 不会被真正调用
-    monkeypatch.setattr(backend, "_get_browser", lambda: _SinglePageBrowser(page))
+    # 审查 L-13：render_card 以 backoff= 关键字调用 _get_browser，替身
+    # 签名跟随（launch 恒成功，退避不触发，忽略参数即可）。
+    monkeypatch.setattr(
+        backend, "_get_browser", lambda **kwargs: _SinglePageBrowser(page)
+    )
     return backend
 
 
