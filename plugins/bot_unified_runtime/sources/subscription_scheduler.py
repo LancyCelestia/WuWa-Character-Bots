@@ -229,6 +229,17 @@ class SubscriptionScheduler:
                         )
         return events
 
+    async def _enabled_destination_keys(self, target_id: str) -> list[str]:
+        """事件的当前启用目的地键（subscription_destinations 行 id）。
+
+        仅供 J-04 幂等查重使用；真实投递仍完全由 delivery_fn 决定
+        （生产实现在 __init__._deliver_v2_event，自行读取目的地列表）。
+        """
+        if self.store is None:
+            return []
+        destinations = await self.store.list_destinations_async(target_id)
+        return [d.id for d in destinations if d.enabled and str(d.id)]
+
     async def deliver_outbox_once(self, *, limit: int = 20) -> int:
         if self.store is None:
             return 0
@@ -244,14 +255,62 @@ class SubscriptionScheduler:
         settled: set[str] = set()
         try:
             for event in events:
+                # 审查 J-04：目的地级幂等——投递前查 (destination, outbox_id)
+                # 是否已有成功台账。claim 回收的 sending>300s 陈旧行（进程在
+                # 「投递成功之后、标记 sent 之前」崩溃/超时）重投前同样走本
+                # 查重，命中即补标记、绝不二次调用 delivery_fn。
+                try:
+                    destination_keys = await self._enabled_destination_keys(
+                        event.target_id
+                    )
+                    fully_covered = bool(destination_keys) and not (
+                        await self.store.outbox_undelivered_destinations_async(
+                            event.event_id, destination_keys
+                        )
+                    )
+                except Exception:
+                    # 查重链路故障按未覆盖处理（fail-open）：宁可在极端情况
+                    # 下退化为旧行为的重复，不可静默丢推送。
+                    _LOGGER.warning(
+                        "outbox delivery dedup check failed for %s",
+                        event.event_id,
+                        exc_info=True,
+                    )
+                    destination_keys = []
+                    fully_covered = False
+                if fully_covered:
+                    _LOGGER.debug(
+                        "outbox event %s already delivered to all destinations, marking sent",
+                        event.event_id,
+                    )
+                    await self.store.mark_outbox_sent_async(
+                        event.event_id, self._clock()
+                    )
+                    delivered += 1
+                    settled.add(event.event_id)
+                    continue
                 try:
                     success = await self._delivery_fn(event)
                 except Exception:  # noqa: BLE001 - 单事件投递失败转重试，不弃队。
                     success = False
                 if success:
-                    await self.store.mark_outbox_sent_async(
-                        event.event_id, self._clock()
-                    )
+                    sent_at = self._clock()
+                    if destination_keys:
+                        # 审查 J-04：成功台账必须先于 sent 标记落库——两写
+                        # 之间崩溃/超时时，sent 未落但台账已落，重启回收重投
+                        # 前查重命中，不重复推送。台账写失败只记日志（退化
+                        # 为旧的 at-least-once 行为），不回滚已成功的投递。
+                        try:
+                            await self.store.record_outbox_deliveries_async(
+                                event.event_id, destination_keys, sent_at=sent_at
+                            )
+                        except Exception:  # 台账失败不阻断标记，退化为旧 at-least-once 行为。
+                            _LOGGER.warning(
+                                "outbox delivery ledger write failed for %s",
+                                event.event_id,
+                                exc_info=True,
+                            )
+                    await self.store.mark_outbox_sent_async(event.event_id, sent_at)
                     delivered += 1
                 else:
                     await self.store.mark_outbox_retry_async(

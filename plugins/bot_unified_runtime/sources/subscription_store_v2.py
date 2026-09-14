@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sqlite3
 import threading
 import time
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from plugins.bot_unified_runtime.contracts import OperationalIssue, RiskLevel
 from plugins.bot_unified_runtime.contracts.subscription import (
     ContentReference,
     SubscriptionCursorV2,
@@ -21,6 +24,8 @@ from plugins.bot_unified_runtime.contracts.subscription import (
 from plugins.bot_unified_runtime.sources.subscription_migration import (
     prepare_subscription_database,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 # ---- 有界化常量（审计 P2#10：outbox/seen 表随推送量线性增长） ----
 # subscription_outbox 中 state='sent' 的行只保留近期：已推送事件仅剩排障
@@ -40,6 +45,10 @@ _OUTBOX_SENDING_STALE_SECONDS = 300.0
 _SEEN_RETENTION_DAYS = 90
 # 清理节流：默认每小时至多执行一次，避免高频写路径反复跑 DELETE。
 _PRUNE_INTERVAL_SECONDS = 3600.0
+# 审查 J-03：死信告警 stage 固定前缀。kind 内含订阅 id 与目的地列表，
+# 抑制键 = (stage, 订阅 id, 目的地)——与 runtime/alerts 队列告警的
+# (stage, kind) 成键风格一致，300s 窗口内同一订阅同一目的地只报一次。
+_DEAD_ALERT_STAGE = "subscription_outbox_dead"
 
 
 def _iso(value: datetime) -> str:
@@ -65,6 +74,7 @@ class SubscriptionStoreV2:
         seen_retention_days: int | None = None,
         outbox_max_attempts: int | None = None,
         outbox_sending_stale_seconds: float | None = None,
+        dead_letter_sink: Callable[[OperationalIssue], None] | None = None,
     ) -> None:
         self._db_path = prepare_subscription_database(db_path)
         self._connection: sqlite3.Connection | None = None
@@ -92,6 +102,18 @@ class SubscriptionStoreV2:
             or _OUTBOX_SENDING_STALE_SECONDS
         )
         self._last_prune_monotonic = 0.0
+        # 审查 J-03：死信（state='dead'）转移时的告警出口。sink 为同步回调
+        # （mark_outbox_retry 在工作线程执行，禁止注入 async 回调），缺省
+        # None 时降级为 WARNING 日志；管理员通道接线属装配层职责
+        # （subscription_runtime_v2 构造 store 处后续传入）。
+        self._dead_letter_sink = dead_letter_sink
+        # 延迟导入：runtime 包 __init__ 会级联拉起 pipeline 等装配层模块，
+        # 本 store 是底层组件，顶层导入有成环与导入成本风险（同
+        # sources/downloader.py 的函数内导入先例）。抑制窗口 300s 与项目
+        # 告警族（queue/result_unknown）口径一致。
+        from plugins.bot_unified_runtime.runtime.alerts import AdminAlertSuppression
+
+        self._dead_alert_suppression = AdminAlertSuppression()
 
     @property
     def db_path(self) -> str:
@@ -204,6 +226,13 @@ class SubscriptionStoreV2:
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (target_id, key),
                 FOREIGN KEY(target_id) REFERENCES subscription_targets(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS subscription_outbox_deliveries (
+                event_id TEXT NOT NULL,
+                destination_key TEXT NOT NULL,
+                sent_at TEXT NOT NULL,
+                PRIMARY KEY (event_id, destination_key),
+                FOREIGN KEY(event_id) REFERENCES subscription_outbox(event_id) ON DELETE CASCADE
             );
             """
         )
@@ -636,23 +665,142 @@ class SubscriptionStoreV2:
         self.prune_stale_rows(now=sent_at)
 
     def mark_outbox_retry(self, event_id: str, next_attempt_at: datetime) -> None:
-        with self._lock, self._get_connection() as connection:
-            row = connection.execute(
-                "SELECT attempts FROM subscription_outbox WHERE event_id = ?",
-                (event_id,),
-            ).fetchone()
-            if row is not None and int(row["attempts"]) >= self._outbox_max_attempts:
-                # 审计 P2#10：重试无上限会永久占住队列；超限转死信，
-                # state='dead' 不会被 claim_outbox 再捞起。
-                connection.execute(
-                    "UPDATE subscription_outbox SET state='dead' WHERE event_id=?",
+        dead_info: tuple[str, int] | None = None
+        with self._lock:
+            connection = self._get_connection()
+            with connection:
+                row = connection.execute(
+                    "SELECT attempts, target_id FROM subscription_outbox WHERE event_id = ?",
                     (event_id,),
-                )
-                return
-            connection.execute(
-                "UPDATE subscription_outbox SET state='retry', next_attempt_at=? WHERE event_id=?",
-                (_iso(next_attempt_at), event_id),
+                ).fetchone()
+                if row is not None and int(row["attempts"]) >= self._outbox_max_attempts:
+                    # 审计 P2#10：重试无上限会永久占住队列；超限转死信，
+                    # state='dead' 不会被 claim_outbox 再捞起。
+                    connection.execute(
+                        "UPDATE subscription_outbox SET state='dead' WHERE event_id=?",
+                        (event_id,),
+                    )
+                    dead_info = (str(row["target_id"]), int(row["attempts"]))
+                else:
+                    connection.execute(
+                        "UPDATE subscription_outbox SET state='retry', next_attempt_at=? WHERE event_id=?",
+                        (_iso(next_attempt_at), event_id),
+                    )
+        if dead_info is not None:
+            # 审查 J-03：告警必须在事务提交之后发——这里的 list_destinations
+            # 查询与 sink 回调都不得处于未提交事务内，且告警故障只记日志，
+            # 不回滚、不影响重试记账主链路。
+            target_id, attempts = dead_info
+            self._emit_dead_letter_alert(event_id, target_id, attempts)
+
+    def _emit_dead_letter_alert(self, event_id: str, target_id: str, attempts: int) -> None:
+        """审查 J-03：死信（state='dead'）此前全仓无告警无重投入口——5 次重试
+        后静默丢弃。转移时产生一条 runtime/alerts 告警：内容复用
+        OperationalIssue 契约（kind 含订阅 id 与目的地），抑制复用
+        AdminAlertSuppression（300s 窗口，键 = stage+订阅+目的地，风格对齐
+        队列告警）。sink 缺省 None 时降级 WARNING 日志。任何异常只记日志。
+        """
+        try:
+            destinations = self.list_destinations(target_id)
+            dest_token = (
+                ",".join(f"{d.scope}:{d.destination_id}" for d in destinations)
+                or "none"
             )
+            allowed, _suppressed_count = self._dead_alert_suppression.allow(
+                (_DEAD_ALERT_STAGE, target_id, dest_token)
+            )
+            if not allowed:
+                return
+            issue = OperationalIssue(
+                stage=_DEAD_ALERT_STAGE,
+                kind=f"subscription:{target_id}|dest:{dest_token}",
+                retryable=False,
+                severity=RiskLevel.MEDIUM,
+                safe_summary=(
+                    f"订阅推送重试 {max(1, attempts)} 次仍失败，事件转死信暂停推送"
+                    f"（目的地 {dest_token}）；可调 requeue_dead({event_id!r}) 重投"
+                ),
+                attempts=max(1, attempts),
+                debug_id=event_id,
+            )
+            if self._dead_letter_sink is not None:
+                self._dead_letter_sink(issue)
+            else:
+                _LOGGER.warning(
+                    "subscription dead letter: %s", issue.model_dump_json()
+                )
+        except Exception:
+            _LOGGER.warning(
+                "dead letter alert emission failed for %s", event_id, exc_info=True
+            )
+
+    def requeue_dead(self, event_id: str, *, now: datetime | None = None) -> bool:
+        """审查 J-03：死信重投入口（仅 store 方法，无 UI，供未来管理员命令接线）。
+
+        幂等：单条 UPDATE 带 ``state='dead'`` 谓词，重复调用第二次匹配不到
+        行、无副作用，返回 False。重投语义：state 回 ``'pending'``（本表
+        “待发队列”状态——claim_outbox 只捞 pending/retry，无 queued 字面量），
+        attempts 清零（重获完整重试预算），next_attempt_at 置为 now 让
+        claim 立即可捞。返回是否真的发生了重投。
+        """
+        moment = _iso(now or datetime.now(timezone.utc))
+        with self._lock, self._get_connection() as connection:
+            updated = connection.execute(
+                "UPDATE subscription_outbox SET state='pending', attempts=0, "
+                "next_attempt_at=? WHERE event_id=? AND state='dead'",
+                (moment, event_id),
+            ).rowcount
+        return bool(updated)
+
+    def record_outbox_deliveries(
+        self,
+        event_id: str,
+        destination_keys: Sequence[str],
+        *,
+        sent_at: datetime | None = None,
+    ) -> int:
+        """审查 J-04：目的地级投递成功台账。
+
+        (event_id, destination_key) 主键即最小唯一约束。调度器在「投递成功」
+        与「标记 sent」两写之间先落本台账：两写之间崩溃/超时后，重投前查重
+        命中即可跳过整事件，杜绝重复推送。destination_key 取
+        subscription_destinations 行 id（稳定自增主键）；外键级联跟随 outbox
+        行清理（sent 保留期裁剪/目标删除），台账不堆积。返回新增行数。
+        """
+        keys = [str(key) for key in destination_keys if str(key)]
+        if not keys:
+            return 0
+        moment = _iso(sent_at or datetime.now(timezone.utc))
+        with self._lock, self._get_connection() as connection:
+            cursor = connection.executemany(
+                "INSERT OR IGNORE INTO subscription_outbox_deliveries "
+                "(event_id, destination_key, sent_at) VALUES (?, ?, ?)",
+                [(event_id, key, moment) for key in keys],
+            )
+            return int(cursor.rowcount)
+
+    def outbox_undelivered_destinations(
+        self,
+        event_id: str,
+        destination_keys: Sequence[str],
+    ) -> list[str]:
+        """审查 J-04：返回给定目的地中尚无投递成功记录的子集（投递前查重）。
+
+        空列表直接返回空（调用方对「无目的地」必须维持既有投递语义，
+        不得凭空判为已覆盖）。
+        """
+        keys = [str(key) for key in destination_keys if str(key)]
+        if not keys:
+            return []
+        placeholders = ",".join("?" * len(keys))
+        with self._lock:
+            rows = self._get_connection().execute(
+                "SELECT destination_key FROM subscription_outbox_deliveries "
+                f"WHERE event_id = ? AND destination_key IN ({placeholders})",
+                (event_id, *keys),
+            ).fetchall()
+        covered = {str(row["destination_key"]) for row in rows}
+        return [key for key in keys if key not in covered]
 
     def outbox_state(self, event_id: str) -> str | None:
         with self._lock:
@@ -741,6 +889,38 @@ class SubscriptionStoreV2:
 
     async def outbox_state_async(self, event_id: str) -> str | None:
         return await asyncio.to_thread(self.outbox_state, event_id)
+
+    # ---- 审查 J-04/J-03 新增门面：调度器投递前查重 / 成功台账 / 死信重投
+    # 与调度器其余存储访问一样，只经 *_async 门面（P2-1 离环约定）。----
+
+    async def list_destinations_async(self, target_id: str) -> list[SubscriptionDestinationV2]:
+        return await asyncio.to_thread(self.list_destinations, target_id)
+
+    async def record_outbox_deliveries_async(
+        self,
+        event_id: str,
+        destination_keys: Sequence[str],
+        *,
+        sent_at: datetime | None = None,
+    ) -> int:
+        return await asyncio.to_thread(
+            self.record_outbox_deliveries,
+            event_id,
+            destination_keys,
+            sent_at=sent_at,
+        )
+
+    async def outbox_undelivered_destinations_async(
+        self,
+        event_id: str,
+        destination_keys: Sequence[str],
+    ) -> list[str]:
+        return await asyncio.to_thread(
+            self.outbox_undelivered_destinations, event_id, destination_keys
+        )
+
+    async def requeue_dead_async(self, event_id: str, *, now: datetime | None = None) -> bool:
+        return await asyncio.to_thread(self.requeue_dead, event_id, now=now)
 
     async def add_destination_async(self, destination: SubscriptionDestinationV2) -> None:
         return await asyncio.to_thread(self.add_destination, destination)
