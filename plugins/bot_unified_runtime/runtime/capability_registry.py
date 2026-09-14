@@ -497,5 +497,5 @@ HELP_TOPIC_DECLARATIONS: tuple[HelpTopicDecl, ...] = (
     HelpTopicDecl(topic="戳一戳", admin_only=False, capability="on_notice:戳一戳"),
     HelpTopicDecl(topic="表情收库", admin_only=False, capability="meme_absorb（群图自动收库，无命令）"),
     HelpTopicDecl(topic="自然语言", admin_only=False, capability="bot.natural_command"),
-    HelpTopicDecl(topic="忽略", admin_only=True, capability="matcher:IGNORE（空消息兜底，不回复）"),
+    HelpTopicDecl(topic="忽略", admin_only=True, capability="matcher:IGNORE（空消息静默；未知命令形态回引导）"),
 )
