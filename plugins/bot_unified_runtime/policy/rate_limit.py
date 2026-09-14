@@ -223,6 +223,25 @@ class InMemoryRateLimiter:
     ) -> RateLimitDecision:
         if proactive:
             return self._check_proactive(message, capability_id)
+        # R3 同人点名最小间隔：必须先于 interactive 早退（审查 A-04：原顺序
+        # interactive_bypass 早退在前，旧 226-233 行）——pipeline 把「群聊 @bot」
+        # 标记为 interactive，bypass 在前时 45s 冷却对最该防刷屏的群点名永不
+        # 生效，私聊（interactive=False）反被误拦，防护方向打反。会话门只认
+        # 群聊：私聊连续对话是正常形态，点名冷却不适用。enabled=False 或非
+        # chat 能力不检查，与下方短路语义一致；先于 role bypass 的例外语义
+        # （刷屏保护人人平等）不变。
+        if (
+            self.settings.enabled
+            and capability_id in CHAT_CAPABILITY_IDS
+            and self.settings.chat_sender_min_interval_seconds > 0
+            and message.mentions_bot
+            and message.session_type.value == "group"
+        ):
+            decision = self._check_sender_min_interval(
+                message, capability_id, self.clock()
+            )
+            if decision is not None:
+                return decision
         if interactive:
             return RateLimitDecision(
                 allowed=True,
@@ -242,14 +261,6 @@ class InMemoryRateLimiter:
                 reason="non_chat_capability",
                 audit_tags=["rate_limit:non_chat"],
             )
-        # R3 同人点名最小间隔：先于 role bypass（刷屏保护人人平等）。
-        if (
-            self.settings.chat_sender_min_interval_seconds > 0
-            and message.mentions_bot
-        ):
-            decision = self._check_sender_min_interval(message, capability_id, self.clock())
-            if decision is not None:
-                return decision
         if self._has_bypass_role(message):
             return RateLimitDecision(
                 allowed=True,
@@ -525,6 +536,22 @@ class SQLiteRateLimiter:
     ) -> RateLimitDecision:
         if proactive:
             return self._check_proactive(message, capability_id)
+        # R3 同人点名最小间隔：先于 interactive 早退与 role bypass（审查 A-04：
+        # 旧顺序 interactive_bypass 早退在前、旧 528-533 行，而 pipeline 把
+        # 「群聊 @bot」标记为 interactive，45s 冷却对最该防刷屏的群点名永不
+        # 生效，私聊（interactive=False）反被误拦）。会话门只认群聊——私聊
+        # 连续对话是正常形态，点名冷却不适用；enabled=False 或非 chat 能力
+        # 不检查，对齐下方短路语义；与 InMemory 实现同序同语义。
+        if (
+            self.settings.enabled
+            and capability_id in CHAT_CAPABILITY_IDS
+            and message.session_type.value == "group"
+        ):
+            min_interval_decision = self._check_sender_min_interval(
+                message, capability_id
+            )
+            if min_interval_decision is not None:
+                return min_interval_decision
         if interactive:
             return RateLimitDecision(
                 allowed=True,
@@ -544,13 +571,6 @@ class SQLiteRateLimiter:
                 reason="non_chat_capability",
                 audit_tags=["rate_limit:non_chat"],
             )
-        # R3 同人点名最小间隔：先于 role bypass（与 InMemory 同语义——
-        # 刷屏保护人人平等，管理员连喊同样冷却）。
-        min_interval_decision = self._check_sender_min_interval(
-            message, capability_id
-        )
-        if min_interval_decision is not None:
-            return min_interval_decision
         if self._has_bypass_role(message):
             return RateLimitDecision(
                 allowed=True,
