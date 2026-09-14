@@ -76,7 +76,10 @@ from plugins.bot_unified_runtime.capabilities.divination import (
 from plugins.bot_unified_runtime.capabilities.echo import (
     _HELP_ENTRIES as _HELP_REGISTRY,
 )
-from plugins.bot_unified_runtime.capabilities.echo import build_help_result
+from plugins.bot_unified_runtime.capabilities.echo import (
+    build_decision_query_result,
+    build_help_result,
+)
 from plugins.bot_unified_runtime.capabilities.fx import build_fx_capability
 from plugins.bot_unified_runtime.capabilities.market import (
     build_market_capability,
@@ -95,6 +98,9 @@ from plugins.bot_unified_runtime.capabilities.stocks import (
     build_stocks_capability,
     is_stocks_command,
 )
+from plugins.bot_unified_runtime.capabilities.user_copy import (
+    GROUP_FAILURE_ACK_TEMPLATES,
+)
 from plugins.bot_unified_runtime.capabilities.weather import build_weather_capability
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import (
@@ -102,8 +108,13 @@ from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     DeliveryReceipt,
     IncomingMessage,
+    OperationalIssue,
+    SendPolicy,
     SendRequest,
     SessionType,
+)
+from plugins.bot_unified_runtime.decision.trace import (
+    InMemoryDecisionTraceSink,
 )
 from plugins.bot_unified_runtime.output.render_backends import build_render_backend
 from plugins.bot_unified_runtime.policy import (
@@ -523,6 +534,78 @@ def _router_gated_capability(
     return capability
 
 
+def _decision_query_capability(
+    runtime: E2eRuntime, *, actor_roles: list[str]
+) -> Callable[[IncomingMessage, BotDecision], CapabilityResult]:
+    """镜像 __init__ `/bot decision` 出口（生产 elif 接线待 §26.10 登记的
+    campus 席释放后补贴）：显式注入 actor_roles——矩阵绕过路由层，拿不到
+    从 sender_id 解析的角色，故管理员/普通成员两态各建一个闭包。sink 走
+    缺省（decision/trace 默认 sink：recent() 只读 URI 查询，绝不创建库，
+    缺库回落热缓冲 → 「暂无记录」同为合法回执）。"""
+
+    def capability(message: IncomingMessage, _decision: BotDecision) -> CapabilityResult:
+        return build_decision_query_result(
+            request_id=message.request_id,
+            actor_roles=actor_roles,
+        )
+
+    return capability
+
+
+def _group_failure_capability(
+    runtime: E2eRuntime,
+) -> Callable[[IncomingMessage, BotDecision], CapabilityResult]:
+    """A-19 正向观察：合成「能力执行失败错误态」结果（与生产失败能力同形：
+    operational_issue 非 pipeline_busy + SILENT_AUDIT 空正文），管线在群聊/
+    频道补一句 GROUP_FAILURE_ACK_TEMPLATES 池内短句。零外呼、零落盘。"""
+
+    def capability(message: IncomingMessage, _decision: BotDecision) -> CapabilityResult:
+        return CapabilityResult(
+            request_id=message.request_id,
+            capability_id="bot.selftest-fail",
+            kind="error",
+            body="",
+            send_policy=SendPolicy.SILENT_AUDIT,
+            operational_issue=OperationalIssue(
+                stage="capability",
+                kind="capability_failure",
+                retryable=False,
+                debug_id=message.debug_id,
+                safe_summary="e2e A-19 capability failure",
+            ),
+            audit_tags=["e2e_acceptance", "a19_group_failure_ack"],
+        )
+
+    return capability
+
+
+def _pipeline_busy_capability(
+    runtime: E2eRuntime,
+) -> Callable[[IncomingMessage, BotDecision], CapabilityResult]:
+    """A-19 负样本：超载快败（pipeline_busy）按设计静默——镜像
+    pipeline._pipeline_busy_result 的形态，验证「限流/安静/超载拦截族
+    零反馈」的降频设计语义未被降级池破坏。"""
+
+    def capability(message: IncomingMessage, _decision: BotDecision) -> CapabilityResult:
+        return CapabilityResult(
+            request_id=message.request_id,
+            capability_id="bot.selftest-busy",
+            kind="error",
+            body="",
+            send_policy=SendPolicy.SILENT_AUDIT,
+            operational_issue=OperationalIssue(
+                stage="runtime",
+                kind="pipeline_busy",
+                retryable=True,
+                debug_id=message.debug_id,
+                safe_summary="pipeline_busy",
+            ),
+            audit_tags=["pipeline_busy:v1"],
+        )
+
+    return capability
+
+
 # --------------------------------------------------------------------------
 # 回执断言（2026-09-13 批次：作用于入队 SendRequest 层，DRY-RUN/--execute 同语义；
 # 渲染形态对照 renderer：能力 images 非空 ⇔ content_type=mixed + 图片部件）
@@ -707,10 +790,92 @@ def expect_meme_library_pick(outcome: ItemOutcome) -> str:
     )
 
 
+def expect_decision_query_admin(outcome: ItemOutcome) -> str:
+    """⑥§26.2 /bot decision（管理员）→ 期望「决策影子痕迹」文本回执
+    （「暂无记录」与逐条列表二态皆算达成：影子模式 legacy_only 下无痕迹属预期）。"""
+    request, reason = _expect_preamble(outcome)
+    if reason:
+        return reason
+    if request is None:
+        return "无入队请求（能力可能被静默/拦截，回执状态见上）"
+    text = request.content.text_fallback
+    if "决策影子痕迹" in text:
+        return ""
+    return f"期望决策影子痕迹摘要（暂无记录/逐条列表），实际：{_flatten(text)[:120]!r}"
+
+
+def expect_admin_gate_refusal(outcome: ItemOutcome) -> str:
+    """⑥§26.2 同命令普通成员 → 期望 ADMIN_GATE_TEMPLATES 池温和拒绝，
+    且不得泄漏任何查询结果形态（拒绝与查询是两条互斥路径）。"""
+    request, reason = _expect_preamble(outcome)
+    if reason:
+        return reason
+    if request is None:
+        return "无入队请求（能力可能被静默/拦截，回执状态见上）"
+    text = request.content.text_fallback
+    if "管理员" not in text:
+        return f"期望管理员门温和拒绝话术（ADMIN_GATE_TEMPLATES 池），实际：{_flatten(text)[:120]!r}"
+    leaks = [
+        token
+        for token in ("决策影子痕迹：", "暂无记录", "（新→旧）")
+        if token in text
+    ]
+    if leaks:
+        return f"拒绝话术泄漏了查询结果形态 {leaks}"
+    return ""
+
+
+def expect_group_failure_ack(outcome: ItemOutcome) -> str:
+    """⑰A-19 正向：群聊会话能力失败应补一句池内降级短句（入队能力
+    bot.group_failure_notice）。私聊按设计不覆盖（chat 私聊失败另有守岸人
+    话术池）→ 私聊会话无断言语义直接 PASS。"""
+    if outcome.session_type == SessionType.PRIVATE.value:
+        return ""
+    request, reason = _expect_preamble(outcome)
+    if reason:
+        return (
+            reason
+            + "（群聊应补一句池内降级短句；300s 会话节流窗内重跑会静默——"
+            "等窗口过期或换 white1 群冷启动重跑观察）"
+        )
+    if request is None:
+        return "无入队请求（能力可能被静默/拦截，回执状态见上）"
+    if request.capability_id != "bot.group_failure_notice":
+        return (
+            "期望 bot.group_failure_notice 降级件，实际 capability_id="
+            f"{request.capability_id}"
+        )
+    if request.content.text_fallback in GROUP_FAILURE_ACK_TEMPLATES:
+        return ""
+    return (
+        "降级短句不在 GROUP_FAILURE_ACK_TEMPLATES 池内："
+        f"{_flatten(request.content.text_fallback)[:120]!r}"
+    )
+
+
+def expect_pipeline_busy_silent(outcome: ItemOutcome) -> str:
+    """⑰A-19 负样本：超载快败必须零反馈——无任何入队请求（拦截族静默
+    语义不变）；回执应为 skipped/blocked 静默态。群/私聊两会话同语义。"""
+    if outcome.error:
+        return outcome.error
+    if outcome.send_request is not None:
+        return (
+            "超载快败应保持静默（零入队请求），实际入队："
+            f"{_flatten(outcome.send_request.content.text_fallback)[:120]!r}"
+        )
+    if outcome.receipt is not None and outcome.receipt.state.value not in (
+        "skipped",
+        "blocked",
+    ):
+        return f"期望 skipped/blocked 静默回执，实际 state={outcome.receipt.state.value}"
+    return ""
+
+
 def build_matrix(runtime: E2eRuntime) -> list[MatrixItem]:
     """验收矩阵（①文本/长文本/多段 ②解析卡 ③点歌候选 ④全球股指 ⑤财经/科技快报
     ⑥天气+预警 ⑦随机图 ⑧占卜 ⑨help ⑩好感度 ⑪提醒查询
-    ⑫个股行情+非上市守卫 ⑬汇率面板/定向换算 ⑭占卜金钱卦 ⑮称谓自助）。"""
+    ⑫个股行情+非上市守卫 ⑬汇率面板/定向换算 ⑭占卜金钱卦 ⑮称谓自助
+    ⑯决策影子查询双态 ⑰A-19 群失败降级正/负样本）。"""
     return [
         MatrixItem(
             key="text-short",
@@ -1065,6 +1230,59 @@ def build_matrix(runtime: E2eRuntime) -> list[MatrixItem]:
                 domain_label="全球股指",
             ),
         ),
+        # ---- 三期扩展（2026-09-15 夜批 §26）：决策影子查询 + A-19 群失败降级 ----
+        MatrixItem(
+            key="decision-query-admin",
+            label="⑯决策影子查询（管理员）",
+            capability_id="bot.decision",
+            build=lambda rt: _decision_query_capability(
+                rt, actor_roles=["super_admin", "admin"]
+            ),
+            text="/bot decision",
+            note=(
+                "§26.2 P-03：/bot decision [N] 缺省 20（1-100）；读真实 "
+                "decision_trace.sqlite3（只读，缺库回落热缓冲→「暂无记录」同达成）；"
+                "影子模式 legacy_only 下无痕迹属预期；生产 __init__ elif 接线待 "
+                "§26.10 登记的补贴，本项验收能力出口本体"
+            ),
+            expect=expect_decision_query_admin,
+        ),
+        MatrixItem(
+            key="decision-query-member",
+            label="⑯决策影子查询（普通成员温和拒绝）",
+            capability_id="bot.decision",
+            build=lambda rt: _decision_query_capability(rt, actor_roles=[]),
+            text="/bot decision",
+            note=(
+                "同命令非管理员 → ADMIN_GATE_TEMPLATES 池温和拒绝"
+                "（audit: decision_denied），不得泄漏任何查询结果形态"
+            ),
+            expect=expect_admin_gate_refusal,
+        ),
+        MatrixItem(
+            key="group-failure-ack",
+            label="⑰A-19 群失败降级短句（正向）",
+            capability_id="bot.selftest-fail",
+            build=_group_failure_capability,
+            text="E2E 验收 · A-19 群失败降级观察",
+            note=(
+                "§26.4 A-19：群聊能力失败错误态 → 池内温和短句（300s 会话节流）；"
+                "私聊不覆盖（另有守岸人话术池）；拦截族静默见 group-busy-silent 负样本"
+            ),
+            expect=expect_group_failure_ack,
+        ),
+        MatrixItem(
+            key="group-busy-silent",
+            label="⑰A-19 负样本：超载快败保持静默",
+            capability_id="bot.selftest-busy",
+            build=_pipeline_busy_capability,
+            text="E2E 验收 · A-19 超载快败静默观察",
+            note=(
+                "pipeline_busy 与限流/安静时间同属故意降频设计 → 必须零反馈"
+                "（零入队请求）；本项在群/私聊两会话下同语义"
+            ),
+            expect=expect_pipeline_busy_silent,
+        ),
     ]
 
 
@@ -1083,6 +1301,9 @@ class ItemOutcome:
     trigger_text: str = ""
     # expect 断言结果：空串=PASS / 未断言；非空=失败原因（断言自身异常也折算进来）。
     expect_fail_reason: str = ""
+    # 本项执行时的会话类型（SessionType.value；自测/离线构造可留空）。
+    # 供会话敏感的 expect 区分群/私聊语义（如 A-19 只覆盖群聊）。
+    session_type: str = ""
 
 
 def _flatten(text: str) -> str:
@@ -1129,7 +1350,10 @@ def execute_item(
         seq=seq,
     )
     outcome = ItemOutcome(
-        item=item, request_id=message.request_id, trigger_text=trigger
+        item=item,
+        request_id=message.request_id,
+        trigger_text=trigger,
+        session_type=session_type.value,
     )
     try:
         capability = item.build(runtime)
@@ -1698,6 +1922,7 @@ def _selftest_config() -> Config:
 _SELFTEST_TRIGGER_EXPECTATIONS = {
     "状态": "/bot status",
     "为什么": "/bot why",
+    "决策": "/bot decision",
     "记忆": "/bot memory add",
     "历史": "/bot history clear",
     "怪癖": "/bot quirk list",
@@ -1905,6 +2130,96 @@ def run_selftest() -> tuple[int, list[str]]:
         and summary["pass_rate"] == 50.0
         and document["summary"] == summary
         and len(document["outcomes"]) == len(sample),
+    )
+
+    # 12. 2026-09-15 夜批 §26 新增矩阵项：结构完整 + 决策查询双路径离线语义
+    #     （注入内存 sink，零磁盘；管理员出痕迹摘要、普通成员温和拒绝）。
+    fake_rt = E2eRuntime(
+        config=config,
+        runtime_settings={},
+        render_backend=None,
+        execute=False,
+        city="",
+        bot_id="selftest-bot",
+        sender_id="10000",
+    )
+    matrix = build_matrix(fake_rt)
+    matrix_keys = [item.key for item in matrix]
+    nightly_keys = {
+        "decision-query-admin",
+        "decision-query-member",
+        "group-failure-ack",
+        "group-busy-silent",
+    }
+    check(
+        "nightly_matrix_structure",
+        len(matrix_keys) == len(set(matrix_keys)) and nightly_keys <= set(matrix_keys),
+        f"items={len(matrix_keys)}",
+    )
+    admin_body = str(
+        build_decision_query_result(
+            request_id="st-admin",
+            actor_roles=["super_admin", "admin"],
+            sink=InMemoryDecisionTraceSink(),
+        ).body
+    )
+    member_body = str(
+        build_decision_query_result(
+            request_id="st-member", actor_roles=[], sink=InMemoryDecisionTraceSink()
+        ).body
+    )
+    check(
+        "decision_query_paths",
+        "决策影子痕迹" in admin_body
+        and "管理员" in member_body
+        and "决策影子痕迹：" not in member_body,
+        f"admin={admin_body.splitlines()[0][:48]!r} member={member_body[:48]!r}",
+    )
+
+    # 13. A-19 群失败降级：正向补池内短句 + 负样本（超载快败）零反馈
+    #     （离线真实管线执行：策略→能力→A-19 通知→队列回查→expect 全链）。
+    a19_queue = InMemorySendQueue(audit_logger=InMemoryAuditLogger())
+    a19_pipeline = RuntimePipeline(
+        send_queue=a19_queue,
+        audit_logger=InMemoryAuditLogger(),
+        rate_limiter=build_rate_limiter(config),
+        quiet_hours_checker=build_quiet_hours_checker(config),
+    )
+    by_key = {item.key: item for item in matrix}
+    a19_failures: dict[str, str] = {}
+    for key, seq in (("group-failure-ack", 1), ("group-busy-silent", 2)):
+        item = by_key[key]
+        message = synthesize_message(
+            text=item.trigger_text(fake_rt),
+            session_type=SessionType.GROUP,
+            target_id="555",
+            sender_id="10000",
+            bot_id="selftest-bot",
+            seq=seq,
+        )
+        outcome = ItemOutcome(
+            item=item,
+            request_id=message.request_id,
+            trigger_text=item.trigger_text(fake_rt),
+            session_type=SessionType.GROUP.value,
+        )
+        try:
+            outcome.receipt = a19_pipeline.handle(
+                message, item.build(fake_rt), capability_id=item.capability_id
+            )
+            try:
+                outcome.send_request = a19_queue.find_request(message.request_id)
+            except Exception:  # noqa: BLE001 - 队列回查失败按无回执处理。
+                outcome.send_request = None
+            a19_failures[key] = item.expect(outcome) if item.expect else ""
+        except Exception as exc:  # noqa: BLE001 - 自检内异常按 FAIL 折算。
+            a19_failures[key] = f"{type(exc).__name__}: {exc}"
+    check(
+        "a19_group_failure",
+        not a19_failures["group-failure-ack"]
+        and not a19_failures["group-busy-silent"],
+        f"ack={a19_failures['group-failure-ack'] or 'PASS'} "
+        f"busy={a19_failures['group-busy-silent'] or 'PASS'}",
     )
 
     lines.insert(0, f"===== E2E selftest：{len(lines) - failures}/{len(lines)} 项通过 =====")
