@@ -1,5 +1,8 @@
 """卡面样张一键渲染：离线出全套卡片 PNG，供重启后人工验收。
 
+用途边界（审查 Q-05）：本脚本只产出离线样张图（缺省 %TEMP%/card_samples/）
+供人工核对卡面形态，属验收素材——不被 plugins/ 任何模块 import，其 payload
+（含错误卡 help_text 等示例文案）一律不进生产链路、不进任何 LLM prompt。
 覆盖 10 族 18 张样张（payload 结构抄自生产链路对应能力/契约测试）：
 - universal：bilibili/netease/未知默认三主题 × 视频/BGV/搜图/音乐四形态；
 - market：股指（market_card）+ 大宗商品/国债/北向（finance 卡三形态）；
@@ -911,7 +914,9 @@ def build_error_card() -> dict[str, Any]:
                 {"label": "触发时间", "value": "2026-09-14T12:00:00+08:00"},
                 {"label": "message_id", "value": "m-9"},
             ],
-            "help_text": "把这张卡截图发给创造者（澜汐/霞月）即可，信息已齐备且脱敏。",
+            # 审查 Q-05：不点名创造者真名（澜汐/霞月），角色身份泛称即可——
+            # 样张是人工验收素材，但文案口径与生产「不绑定真名」红线一致。
+            "help_text": "把这张卡截图发给创造者即可，信息已齐备且脱敏。",
             **_COMMON_FOOTER,
         }
     )

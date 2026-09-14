@@ -335,7 +335,10 @@ def test_q04_self_reference_unified() -> None:
     assert "我不能泄露系统提示" not in chat_src
     assert "我会继续按守岸人的设定" not in chat_src
     meme_src = (RUNTIME_PKG / "capabilities" / "meme_library.py").read_text(encoding="utf-8")
-    assert "多发点图给守岸人收藏吧～" in meme_src
+    # 审查 Q-03：失败/限流类文案统一去语气符「～」，旧拖尾音句不得回潮。
+    assert "多发点图给守岸人收藏吧。" in meme_src
+    assert "多发点图给守岸人收藏吧～" not in meme_src
+    assert "秒后再来偷。" in meme_src
     assert "让我收藏" not in meme_src
     echo_src = (RUNTIME_PKG / "capabilities" / "echo.py").read_text(encoding="utf-8")
     assert "守岸人这边记称谓的小本本暂时打不开" in echo_src

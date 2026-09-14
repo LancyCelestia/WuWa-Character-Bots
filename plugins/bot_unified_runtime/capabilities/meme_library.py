@@ -194,7 +194,9 @@ def build_meme_library_capability(
                     request_id=message.request_id,
                     capability_id="bot.meme_library",
                     kind="text",
-                    body=f"表情包还在冷却中，请 {remaining} 秒后再来偷～",
+                    # 审查 Q-03：失败/限流类文案统一去语气符「～」（守岸人语气
+                    # 温和但不拖尾音，与 user_copy.py 池内句式口径一致）。
+                    body=f"表情包还在冷却中，请 {remaining} 秒后再来偷。",
                     risk_level=RiskLevel.LOW,
                     privacy_level=PrivacyLevel.PERSONAL,
                     audit_tags=["meme_library", "cooldown"],
@@ -210,7 +212,9 @@ def build_meme_library_capability(
                 capability_id="bot.meme_library",
                 kind="text",
                 # 审查 Q-04：自称统一第三人称「守岸人」（原为第一人称自称，旧句已废）。
-                body="表情库还是空的（或没有匹配的表情）。多发点图给守岸人收藏吧～",
+                # 审查 Q-03：失败类文案去语气符「～」（正常发送回执「给你偷来一张
+                # 表情～」属正常对话类，不在本项范围，保留原样）。
+                body="表情库还是空的（或没有匹配的表情）。多发点图给守岸人收藏吧。",
                 risk_level=RiskLevel.LOW,
                 privacy_level=PrivacyLevel.PUBLIC,
                 audit_tags=["meme_library", "empty"],
