@@ -160,7 +160,7 @@ def _runtime_scripts_path(value: str):
 
     return runtime_path(value)
 from .runtime.mentions import detect_name_mention
-from .runtime.natural_language import detect_natural_command
+from .runtime.natural_language import detect_natural_command, runtime_set_command_text
 from .runtime.question_intent import looks_like_question_text
 from .runtime.settings import (
     build_instance_settings_manager,
@@ -6720,7 +6720,36 @@ def _register_nonebot_handlers() -> None:
         capability_id = resolution.capability_id
         normalized_text = resolution.normalized_text
 
-        if capability_id == "bot.weather":
+        if capability_id == "bot.runtime_settings":
+            # C-01/C-02：自然语言设置——映射层只识别，这里经既有管理员门执行
+            # （build_runtime_admin_result 内建 admin 角色门，非管理员拿到统一
+            # 的仅管理员提示，与 /bot runtime 同一口径）。ambiguous 时回落
+            # 守岸人口语请用户说得更具体。
+            if getattr(resolution, "ambiguous", False):
+                await natural.finish(
+                    "这句话能对上好几个功能开关，跟我说得再具体一点，好吗？"
+                )
+                return
+            setting_key = getattr(resolution, "setting_key", None)
+            setting_value = getattr(resolution, "setting_value", None)
+            if not setting_key or not setting_value:
+                await natural.finish("无法识别的自然语言命令。")
+                return
+            runtime_command = runtime_set_command_text(setting_key, setting_value)
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_runtime_admin_result(
+                    settings_manager,
+                    effective_instance(config),
+                    config,
+                    request_id=message.request_id,
+                    actor_roles=_decision.actor_roles,
+                    command_text=runtime_command,
+                    diagnostics_store=diagnostics_store,
+                    usage_store=runtime_event_log,
+                )
+
+        elif capability_id == "bot.weather":
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 synthetic = message.model_copy(update={"plain_text": normalized_text})

@@ -7,6 +7,16 @@
 
 该层位于基层路由优先级 45：昵称命令 / 管理员命令 / 标准命令 / 表情包
 之前都不会被它抢占；含 http 链接时由基层先行让位给链接解析。
+
+设置分支（审查 C-01）：“把识图关掉 / 开启安静时间”这类口语改设置说法
+被归一化成 ``/bot runtime set <KEY> <VALUE>`` 结构化意图（capability_id
+= ``bot.runtime_settings``，载荷携带 setting_key/setting_value/原话）。
+权限红线：设置是管理员操作——本层只识别、不授权、不执行；派发层必须
+把该意图送入 build_runtime_admin_result（capabilities/runtime_admin.py）
+的既有管理员门，非 admin 角色一律拒绝。功能词 → 运行时键的映射表为
+FUNCTION_KEY_MAP，其目标键必须在 runtime.settings.SETTABLE_KEYS 内
+（tests 有防漂移遍历断言），映射不到真实键的功能（提醒/笔记/群摘要等）
+一律不命中、落回 chat，绝不静默假映射。
 """
 
 from __future__ import annotations
@@ -24,6 +34,16 @@ class NaturalResolution:
     capability_id: str
     normalized_text: str
     intent_label: str
+    # ---- 审查 C-01 设置意图载荷（旧 7 支不带，缺省即零破坏）----
+    # setting_key 必须是 runtime.settings.SETTABLE_KEYS 的真实键；
+    # setting_value 是转换器可解析的字符串（布尔开关为 "true"/"false"）。
+    # admin_required=True 表示该意图属管理员操作：映射层只识别不授权，
+    # 派发层必须走 build_runtime_admin_result 既有管理员门。
+    setting_key: str | None = None
+    setting_value: str | None = None
+    source_text: str | None = None
+    ambiguous: bool = False
+    admin_required: bool = False
 
 
 # 禮貌前綴（TRA 草稿 幫我 词条）：繁體形与简体逐一成对（影响全部 NL 问句入口）。
@@ -192,6 +212,207 @@ def _clean_city(raw: str | None) -> str | None:
     return city
 
 
+# ============================================================================
+# 审查 C-01：自然语言改设置（映射层：话 → 结构化意图）。
+# 权限红线：设置是管理员操作。本层只识别、绝不授权、绝不执行；派发层
+# 必须把 bot.runtime_settings 意图送入 build_runtime_admin_result
+# （capabilities/runtime_admin.py，内建 "admin" 角色门）执行。
+# 防漂移契约：FUNCTION_KEY_MAP 的目标键必须是 runtime.settings.SETTABLE_KEYS
+# 的真实键（tests/test_natural_settings_nl.py 遍历断言）；真实键不存在的
+# 功能（提醒/笔记/表情回应/天气/快报/群摘要/搜图等）刻意不映射——命中
+# 与否以映射表为准，映射表外功能词一律落回 chat，绝不假映射。
+# ============================================================================
+
+# 开关动词：繁体形与简体同口径（TRA 词条惯例）。关/停 族先于开 族匹配。
+_SETTING_ON_VERBS = ("打开", "打開", "開啓", "開啟", "开启", "開启", "开起来", "開起來",
+                     "开着", "開著", "启用", "啓用", "啟用", "开", "開")
+_SETTING_OFF_VERBS = ("关掉", "關掉", "关闭", "關閉", "关上", "關上", "停用",
+                      "禁用", "关了", "關了", "关", "關")
+_SETTING_ON_SET = frozenset(_SETTING_ON_VERBS)
+_SETTING_OFF_SET = frozenset(_SETTING_OFF_VERBS)
+# 正则交替必须长词在前，否则单字「开/关」会抢先吃掉「打开/关掉」。
+_SETTING_TOGGLE_VERBS = "|".join(
+    sorted(_SETTING_ON_SET | _SETTING_OFF_SET, key=len, reverse=True)
+)
+
+# 功能名词槽后缀与语气助词：让「识图功能/安静时间吧」这类口语尾巴可剥。
+_SETTING_FUNC_SUFFIX = r"(?:的)?(?:功能|功能模块|模塊|模块|開關|开关|設置|设置)?"
+_SETTING_PARTICLE = r"(?:一下|掉)?(?:吧|呗|嘛|啦)?"
+_FUNC_CHAR = r"[\u4e00-\u9fffa-zA-Z0-9]"
+
+# 把字句：[礼貌前缀]把/将 X [功能] 关掉/打开…（动词收尾，锚定极强）。
+_SETTING_NL_BA_RE = re.compile(
+    rf"^{_POLITE_OPT}[把將将]\s*(?P<func>{_FUNC_CHAR}{{1,12}}?)"
+    rf"{_SETTING_FUNC_SUFFIX}(?:都|先|给|給)?(?P<verb>{_SETTING_TOGGLE_VERBS})"
+    rf"{_SETTING_PARTICLE}[?？!！。]?$"
+)
+# 动词前置句：[礼貌前缀]打开/关闭/启用 X [功能]。
+_SETTING_NL_VF_RE = re.compile(
+    rf"^{_POLITE_OPT}(?P<verb>{_SETTING_TOGGLE_VERBS}){_SETTING_PARTICLE}"
+    rf"\s*(?P<func>{_FUNC_CHAR}{{1,12}}?){_SETTING_FUNC_SUFFIX}"
+    rf"{_SETTING_PARTICLE}[?？!！。]?$"
+)
+
+# 功能词槽内允许的填充字：剥掉命中功能词后，槽内剩余必须全为填充字，
+# 否则视为未知实体（「识图结果」「有关的东西」）→ 不算设置意图落回 chat。
+# 刻意不含 开/关/打/停/启 等动词字，防动词残渣被当成填充吞掉。
+_SETTING_FILLER_CHARS = frozenset(
+    "的功能模块模塊設置设置都先和跟与及給给請请帮幫我並并一并起全全部所有順顺便利"
+)
+
+# 功能词 → (SETTABLE_KEY, 功能中文名)。值只取布尔开关键：口语开/关的
+# 方向由句中动词决定（开→"true"，关→"false"，交给 _bool_converter）。
+# tuple[1] 是给人看的功能名（歧义提示/日志用），不是开关值。
+FUNCTION_KEY_MAP: dict[str, tuple[str, str]] = {
+    # 识图（VLM 看图）
+    "识图": ("BOT_VISION_ENABLED", "识图"),
+    "識圖": ("BOT_VISION_ENABLED", "识图"),
+    "看图": ("BOT_VISION_ENABLED", "识图"),
+    "看圖": ("BOT_VISION_ENABLED", "识图"),
+    # 视频理解（含深度档）
+    "视频理解": ("BOT_VIDEO_UNDERSTANDING_ENABLED", "视频理解"),
+    "視頻理解": ("BOT_VIDEO_UNDERSTANDING_ENABLED", "视频理解"),
+    "视频深度理解": ("BOT_VIDEO_DEEP_ENABLED", "视频深度理解"),
+    "視頻深度理解": ("BOT_VIDEO_DEEP_ENABLED", "视频深度理解"),
+    # 语音识别（ASR）
+    "语音识别": ("BOT_ASR_ENABLED", "语音识别"),
+    "語音識別": ("BOT_ASR_ENABLED", "语音识别"),
+    "语音转文字": ("BOT_ASR_ENABLED", "语音识别"),
+    "語音轉文字": ("BOT_ASR_ENABLED", "语音识别"),
+    # 戳一戳三件（互不包含歧义由长词覆盖短词消解）
+    "戳一戳": ("BOT_POKE_ENABLED", "戳一戳"),
+    "戳一戳回话": ("BOT_POKE_REPLY_ENABLED", "戳一戳回话"),
+    "戳一戳回覆": ("BOT_POKE_REPLY_ENABLED", "戳一戳回话"),
+    "戳一戳回复": ("BOT_POKE_REPLY_ENABLED", "戳一戳回话"),
+    "戳一戳回戳": ("BOT_POKE_POKE_BACK", "戳一戳回戳"),
+    "回戳": ("BOT_POKE_POKE_BACK", "戳一戳回戳"),
+    # 群聊自动接话
+    "自动接话": ("BOT_GROUP_CHAT_AUTO_REPLY_ENABLED", "群聊自动接话"),
+    "自動接話": ("BOT_GROUP_CHAT_AUTO_REPLY_ENABLED", "群聊自动接话"),
+    "自动回复": ("BOT_GROUP_CHAT_AUTO_REPLY_ENABLED", "群聊自动接话"),
+    "自動回復": ("BOT_GROUP_CHAT_AUTO_REPLY_ENABLED", "群聊自动接话"),
+    "群聊自动回复": ("BOT_GROUP_CHAT_AUTO_REPLY_ENABLED", "群聊自动接话"),
+    # 安静时间（免打扰）
+    "安静时间": ("BOT_QUIET_HOURS_ENABLED", "安静时间"),
+    "安靜時間": ("BOT_QUIET_HOURS_ENABLED", "安静时间"),
+    "安静时段": ("BOT_QUIET_HOURS_ENABLED", "安静时间"),
+    "免打扰": ("BOT_QUIET_HOURS_ENABLED", "安静时间"),
+    "免打擾": ("BOT_QUIET_HOURS_ENABLED", "安静时间"),
+    # 快速回复模式
+    "快速模式": ("BOT_CHAT_FAST_MODE", "快速回复模式"),
+    "快速回复": ("BOT_CHAT_FAST_MODE", "快速回复模式"),
+    # 记忆抽取（夜间反思喂料）
+    "记忆抽取": ("BOT_MEMORY_EXTRACT_ENABLED", "记忆抽取"),
+    "記憶抽取": ("BOT_MEMORY_EXTRACT_ENABLED", "记忆抽取"),
+    "记忆提取": ("BOT_MEMORY_EXTRACT_ENABLED", "记忆抽取"),
+    # 联网搜索
+    "联网搜索": ("BOT_WEB_SEARCH_ENABLED", "联网搜索"),
+    "聯網搜索": ("BOT_WEB_SEARCH_ENABLED", "联网搜索"),
+    "网页搜索": ("BOT_WEB_SEARCH_ENABLED", "联网搜索"),
+    "網頁搜索": ("BOT_WEB_SEARCH_ENABLED", "联网搜索"),
+    "网络搜索": ("BOT_WEB_SEARCH_ENABLED", "联网搜索"),
+    "網絡搜索": ("BOT_WEB_SEARCH_ENABLED", "联网搜索"),
+    # 梗/表情搜索（二次元平台白名单）
+    "表情搜索": ("BOT_MEME_SEARCH_ENABLED", "梗搜索"),
+    "表情搜尋": ("BOT_MEME_SEARCH_ENABLED", "梗搜索"),
+    "梗搜索": ("BOT_MEME_SEARCH_ENABLED", "梗搜索"),
+    "梗搜尋": ("BOT_MEME_SEARCH_ENABLED", "梗搜索"),
+    # 人格动作括号
+    "动作括号": ("BOT_PERSONA_ACTION_BRACKETS", "动作括号"),
+    "動作括號": ("BOT_PERSONA_ACTION_BRACKETS", "动作括号"),
+}
+
+# 长词优先清单：命中扫描用，保证「群聊自动回复」不被「自动回复」拆双。
+_FUNCTION_WORDS_BY_LEN = sorted(FUNCTION_KEY_MAP, key=len, reverse=True)
+
+# 设置意图的 capability_id：派发层（__init__.py 消费侧，审查 C-02 接线）
+# 按此 id 分发到 build_runtime_admin_result。
+SETTING_CAPABILITY_ID = "bot.runtime_settings"
+
+
+def runtime_set_command_text(setting_key: str, setting_value: str) -> str:
+    """C-02 派发层用：把映射结果拼成 /bot runtime 的 ``runtime set`` 子命令体。
+
+    单独成函数便于测试锁定格式（派发层把 build_runtime_admin_result 的
+    ``command_text`` 直接喂它）。
+    """
+    return f"runtime set {setting_key.strip()} {setting_value.strip()}"
+
+
+def _prune_covered_spans(
+    spans: list[tuple[int, int, str]],
+) -> list[tuple[int, int, str]]:
+    """去掉被更长命中完全覆盖的短命中（长词覆盖短词，同位置同词不受影响）。"""
+    return [
+        s
+        for s in spans
+        if not any(
+            o is not s and o[0] <= s[0] and s[1] <= o[1] and (o[1] - o[0]) > (s[1] - s[0])
+            for o in spans
+        )
+    ]
+
+
+def _extract_func_targets(func_text: str) -> list[str] | None:
+    """从功能名词槽提取命中功能词（按出现位置排序、去重）。
+
+    返回 None 表示槽内有非填充残留（未知实体）或零命中——两种情况都
+    不算设置意图，调用方必须返回 None 落回 chat。
+    """
+    spans: list[tuple[int, int, str]] = []
+    for word in _FUNCTION_WORDS_BY_LEN:
+        start = 0
+        while (idx := func_text.find(word, start)) != -1:
+            spans.append((idx, idx + len(word), word))
+            start = idx + 1
+    hits = sorted(_prune_covered_spans(spans))
+    if not hits:
+        return None
+    leftover: list[str] = []
+    cursor = 0
+    for begin, end, _word in hits:
+        leftover.extend(func_text[cursor:begin])
+        cursor = end
+    leftover.extend(func_text[cursor:])
+    if any(ch not in _SETTING_FILLER_CHARS for ch in leftover):
+        return None
+    words = [word for _b, _e, word in hits]
+    return list(dict.fromkeys(words))
+
+
+def _match_setting_intent(stripped: str) -> NaturalResolution | None:
+    """把设置类口语句映射成结构化意图；不像设置句/功能词不可映射则 None。"""
+    for pattern in (_SETTING_NL_BA_RE, _SETTING_NL_VF_RE):
+        match = pattern.match(stripped)
+        if match is None:
+            continue
+        groups = match.groupdict()
+        func_text = str(groups.get("func") or "")
+        verb = str(groups.get("verb") or "")
+        words = _extract_func_targets(func_text)
+        if not words:
+            # 消歧规则：功能词不在映射表（或槽内夹带未知实体）→ 不命中，
+            # 落回 chat；绝不猜测用户想改哪个键。
+            return None
+        ambiguous = len(words) > 1
+        target_word = words[0]
+        key, _label = FUNCTION_KEY_MAP[target_word]
+        value = "false" if verb in _SETTING_OFF_SET else "true"
+        return NaturalResolution(
+            SETTING_CAPABILITY_ID,
+            f"/bot runtime set {key} {value}",
+            "设置功能开关",
+            setting_key=key,
+            setting_value=value,
+            source_text=stripped,
+            ambiguous=ambiguous,
+            # 权限红线写进载荷：派发层见 True 必须走
+            # build_runtime_admin_result 管理员门，映射层不授权。
+            admin_required=True,
+        )
+    return None
+
+
 def detect_natural_command(text: str, config: Config | None = None) -> NaturalResolution | None:
     """把自然语言意图归一化成标准命令；没有强信号时返回 None。"""
     stripped = (text or "").strip().strip("/!！")
@@ -199,6 +420,13 @@ def detect_natural_command(text: str, config: Config | None = None) -> NaturalRe
         return None
     if "http://" in stripped or "https://" in stripped:
         return None
+
+    # 审查 C-01：设置分支放最前——句形以开关动词收尾、锚定极强，不允许
+    # 被下方宽松问句抢占；映射层只识别不授权（权限红线见模块 docstring
+    # 与 NaturalResolution.admin_required，派发层必须走管理员门）。
+    setting = _match_setting_intent(stripped)
+    if setting is not None:
+        return setting
 
     if getattr(config, "bot_music_enabled", True):
         mode_match = _MUSIC_MODE_NL_RE.match(stripped) or _MUSIC_MODE_EN_RE.match(stripped)
