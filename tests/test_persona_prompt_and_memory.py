@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
+from plugins.bot_unified_runtime.character.affinity import (
+    AFFINITY_BASE,
+    DynamicAffinityStore,
+)
 from plugins.bot_unified_runtime.character.memory import SQLiteMemoryRepository
 from plugins.bot_unified_runtime.character.memory_extract import (
     extract_memory_texts,
     store_extracted_memories,
+)
+from plugins.bot_unified_runtime.character.providers import (
+    FileCharacterContextProvider,
 )
 from plugins.bot_unified_runtime.contracts import (
     ContextBundle,
@@ -263,3 +273,71 @@ def test_store_extracted_memories_writes_sqlite(tmp_path: object) -> None:
     )
     assert result.facts and result.facts[0]["text"] == "用户喜欢蝴蝶"
     assert result.facts[0]["source"] == "llm_extract"
+
+
+# ---------------------------------------------------------------------------
+# G-13：好感度态度分区的消失边界（只测「分区是否注入」，不测具体措辞）。
+# 注入判据 = 库中存在该用户记录（按当前档位渲染）；硬约束：不改任何
+# 数值/档位/步长/文案（docs/affinity-design.md 为权威）。
+# ---------------------------------------------------------------------------
+
+
+def _affinity_provider(
+    store: DynamicAffinityStore | None, tmp_path: Path
+) -> FileCharacterContextProvider:
+    persona_file = tmp_path / "persona.md"
+    persona_file.write_text(PERSONA_TEXT, encoding="utf-8")
+    return FileCharacterContextProvider(
+        persona_profile_id="shorekeeper",
+        persona_display_name="守岸人",
+        persona_version="1",
+        persona_files=[persona_file],
+        knowledge_files=[],
+        affinity_store=store,
+    )
+
+
+def _build_bundle(provider: FileCharacterContextProvider, sender_id: str):  # type: ignore[no-untyped-def]
+    return provider.build_context(
+        request_id="req-1",
+        sender_id=sender_id,
+        session_id=f"private:{sender_id}",
+        query_text="你好",
+    )
+
+
+def test_affinity_section_injected_for_record_at_baseline(tmp_path: Path) -> None:
+    """G-13①：库中存在交互记录、分值停在基准、无标签 ⇒ 分区仍按当前档位注入。"""
+    store = DynamicAffinityStore(tmp_path / "affinity.sqlite3")
+    store.observe("user-1", "neutral")  # 中性行为建档：分值停在基准、无标签
+    snapshot = store.snapshot("user-1")
+    # 前置：确为「有记录 + 基准分」形态。
+    assert float(snapshot["affinity"]) == pytest.approx(AFFINITY_BASE)
+    assert not snapshot.get("tags")
+    bundle = _build_bundle(_affinity_provider(store, tmp_path), "user-1")
+    # 分区存在 = 动态好感档位已注入 relationship（而非静态档案默认值）。
+    assert bundle.relationship_context.affinity == pytest.approx(
+        float(snapshot["affinity"])
+    )
+
+
+def test_affinity_section_absent_without_record(tmp_path: Path) -> None:
+    """G-13②：库中无该用户记录 ⇒ 不注入（分区消失，现状不变）。"""
+    store = DynamicAffinityStore(tmp_path / "affinity.sqlite3")
+    bundle = _build_bundle(_affinity_provider(store, tmp_path), "user-1")
+    control = _build_bundle(_affinity_provider(None, tmp_path), "user-1")
+    # 与无好感库的静态兜底完全一致 = 动态好感分区不存在。
+    assert bundle.relationship_context == control.relationship_context
+
+
+def test_affinity_section_injected_for_tagged_user(tmp_path: Path) -> None:
+    """G-13③：有标签用户 ⇒ 照旧注入（现状不变）。"""
+    store = DynamicAffinityStore(tmp_path / "affinity.sqlite3")
+    for _ in range(3):
+        store.observe("user-1", "positive")  # positive×3 达印象标签阈值
+    snapshot = store.snapshot("user-1")
+    assert snapshot.get("tags")  # 前置：确已形成印象标签
+    bundle = _build_bundle(_affinity_provider(store, tmp_path), "user-1")
+    assert bundle.relationship_context.affinity == pytest.approx(
+        float(snapshot["affinity"])
+    )

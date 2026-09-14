@@ -20,7 +20,6 @@ from plugins.bot_unified_runtime.contracts.character import (
 
 from .addressing import AddressingPreferenceStore, build_addressing_context
 from .affinity import (
-    AFFINITY_BASE,
     DynamicAffinityStore,
     linear_transition_for_affinity,
     tier_for_affinity,
@@ -357,7 +356,28 @@ class FileCharacterContextProvider:
         # 跟随动态档位；档案的其他字段（称呼/偏好/备注）保留。
         if self.affinity_store is not None and sender_id:
             dynamic = self.affinity_store.snapshot(sender_id)
-            if dynamic.get("affinity") is not None and (dynamic["affinity"] != AFFINITY_BASE or dynamic.get("tags")):
+            # G-13（注入判据收口）：好感度分区的注入判据从「分值偏离基准 或 有标签」
+            # 放宽为「库中存在该用户记录即注入」（按当前档位渲染）。库里有交互记录
+            # 就意味着这段关系存在：惰性回归把分值拉回基准、且用户无标签时，分区
+            # 不得整体消失——哪怕档位文本就是基准档的温和表述。
+            # 硬约束：本判据只决定「注入与否」，不改任何数值/档位/步长/文案
+            # （数值规范以 docs/affinity-design.md 为权威）。
+            # snapshot() 对无记录用户返回中性默认且不带存在标记，故存在性按两层判定：
+            # ①画像载荷（标签/小名/画像备注）非空 ⇒ 必有记录；②载荷为空时按
+            # interaction_count>0 探查（observe() 写入的行 interaction_count 恒 ≥1，
+            # 该探查为主键单点读，仅载荷无法证明存在时才触发）。
+            has_affinity_record = False
+            if dynamic.get("affinity") is not None:
+                if (
+                    dynamic.get("tags")
+                    or dynamic.get("nickname")
+                    or dynamic.get("profile_notes")
+                ):
+                    has_affinity_record = True
+                else:
+                    factor = self.affinity_store.factor_profile(sender_id)
+                    has_affinity_record = int(factor.get("interaction_count") or 0) > 0
+            if has_affinity_record:
                 tags_text = "、".join(str(t) for t in dynamic.get("tags") or [])
                 notes_text = "；".join(str(n) for n in dynamic.get("profile_notes") or [])
                 nickname_text = str(dynamic.get("nickname") or "")
