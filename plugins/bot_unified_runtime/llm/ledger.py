@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import atexit
+import datetime
 import json
 import logging
 import os
@@ -605,6 +606,7 @@ CREATE INDEX IF NOT EXISTS idx_llm_call_started ON llm_call_records (started_at)
 CREATE INDEX IF NOT EXISTS idx_llm_call_model   ON llm_call_records (model_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_llm_call_session ON llm_call_records (session_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_llm_call_request ON llm_call_records (request_id);
+CREATE INDEX IF NOT EXISTS idx_llm_call_completed ON llm_call_records (completed_at);
 
 CREATE TABLE IF NOT EXISTS llm_usage_daily (
     day TEXT NOT NULL,
@@ -642,6 +644,47 @@ CREATE INDEX IF NOT EXISTS idx_balance_provider ON balance_snapshots (provider_i
 
 # ==================== 渠道维度只读聚合（报告侧渠道子行） ====================
 
+# 窗口日期过滤用 completed_at 范围比较（P3-9）：completed_at 由
+# ``datetime.now(zone).isoformat(timespec="milliseconds")`` 写入（同进程
+# 单一时区偏移），ISO 文本字典序即时序；旧 ``substr(completed_at,1,10)
+# BETWEEN`` 对每行做函数计算，无法走索引（全表扫），改为
+# ``completed_at >= start_day AND completed_at < 结束日次日``（上界开区间）
+# 走 idx_llm_call_completed，与旧实现的按本地日闭区间语义逐行等价。
+# 不能用 ``date()``：它会把带时区偏移的时间戳换算成 UTC，本地日会被整体
+# 错移 8 小时（+08:00 写 09-14 00:10 会被算进 09-13）。
+# 评审 A13-M4：完整 SQL 二选一，禁运行期字符串替换拼 SQL 片段。
+_CHANNEL_AGGREGATE_SQL = """
+                SELECT actual_model, model_id,
+                       COUNT(*)                     AS calls,
+                       SUM(status != 'success')     AS failed_calls,
+                       SUM(COALESCE(prompt_tokens, 0))          AS prompt_tokens,
+                       SUM(COALESCE(cache_creation_tokens, 0))  AS cache_creation_tokens,
+                       SUM(COALESCE(cache_read_tokens, 0))      AS cache_read_tokens,
+                       SUM(COALESCE(completion_tokens, 0))      AS completion_tokens,
+                       SUM(COALESCE(total_tokens, 0))           AS total_tokens,
+                       SUM(COALESCE(total_cost_milli, 0))       AS total_cost_milli,
+                       SUM(unpriced)                AS unpriced_calls
+                FROM llm_call_records
+                WHERE completed_at >= ? AND completed_at < ?
+                GROUP BY actual_model, model_id
+"""
+_CHANNEL_AGGREGATE_SINCE_SQL = """
+                SELECT actual_model, model_id,
+                       COUNT(*)                     AS calls,
+                       SUM(status != 'success')     AS failed_calls,
+                       SUM(COALESCE(prompt_tokens, 0))          AS prompt_tokens,
+                       SUM(COALESCE(cache_creation_tokens, 0))  AS cache_creation_tokens,
+                       SUM(COALESCE(cache_read_tokens, 0))      AS cache_read_tokens,
+                       SUM(COALESCE(completion_tokens, 0))      AS completion_tokens,
+                       SUM(COALESCE(total_tokens, 0))           AS total_tokens,
+                       SUM(COALESCE(total_cost_milli, 0))       AS total_cost_milli,
+                       SUM(unpriced)                AS unpriced_calls
+                FROM llm_call_records
+                WHERE completed_at >= ? AND completed_at < ?
+                AND completed_at >= ?
+                GROUP BY actual_model, model_id
+"""
+
 
 def aggregate_channel_usage(
     db_path: str,
@@ -659,18 +702,25 @@ def aggregate_channel_usage(
 
     - 只读连接（URI mode=ro），失败/库不存在返回 {}——报告注记缺渠道
       明细好过报错；WAL 下与写线程并发安全。
-    - 日期过滤用 ``substr(completed_at, 1, 10)``（completed_at 由
-      ``datetime.now(zone).isoformat()`` 写入，前缀即本地日）。不能用
-      ``date()``：它会把带时区偏移的时间戳换算成 UTC，本地日会被整体
-      错移 8 小时（+08:00 写 09-14 00:10 会被算进 09-13）。
-      ``since_iso`` 给定时附加 ``completed_at >= since_iso`` 文本比较
-      （同构造器 ISO 文本，字典序即时序；恰好等于边界的行按 ``.000``
-      毫秒尾缀大于 ``+08:00`` 偏移尾缀被包含，与事件日志 since 语义一致）。
+    - 日期过滤用 completed_at 范围比较（``>= start_day`` 且
+      ``< 结束日次日``，上界开区间；completed_at 由
+      ``datetime.now(zone).isoformat()`` 写入，前缀即本地日，ISO 文本
+      字典序即时序）。不能用 ``date()``：它会把带时区偏移的时间戳换算
+      成 UTC，本地日会被整体错移 8 小时（+08:00 写 09-14 00:10 会被算进
+      09-13）。``since_iso`` 给定时附加 ``completed_at >= since_iso``
+      文本比较（同构造器 ISO 文本，字典序即时序；恰好等于边界的行按
+      ``.000`` 毫秒尾缀大于 ``+08:00`` 偏移尾缀被包含，与事件日志
+      since 语义一致）。
     """
     results: dict[tuple[str, str], dict[str, int]] = {}
     try:
         if not str(db_path):
             return {}
+        # 上界 = 结束日 + 1 天（开区间）；end_day 非法时 ValueError
+        # 落入下方 except → 返回 {}（与旧实现空窗口结果一致）。
+        end_exclusive = (
+            datetime.date.fromisoformat(str(end_day)) + datetime.timedelta(days=1)
+        ).isoformat()
         import pathlib
 
         connection = sqlite3.connect(
@@ -680,40 +730,10 @@ def aggregate_channel_usage(
         )
         connection.row_factory = sqlite3.Row
         try:
-            sql = """
-                SELECT actual_model, model_id,
-                       COUNT(*)                     AS calls,
-                       SUM(status != 'success')     AS failed_calls,
-                       SUM(COALESCE(prompt_tokens, 0))          AS prompt_tokens,
-                       SUM(COALESCE(cache_creation_tokens, 0))  AS cache_creation_tokens,
-                       SUM(COALESCE(cache_read_tokens, 0))      AS cache_read_tokens,
-                       SUM(COALESCE(completion_tokens, 0))      AS completion_tokens,
-                       SUM(COALESCE(total_tokens, 0))           AS total_tokens,
-                       SUM(COALESCE(total_cost_milli, 0))       AS total_cost_milli,
-                       SUM(unpriced)                AS unpriced_calls
-                FROM llm_call_records
-                WHERE substr(completed_at, 1, 10) BETWEEN ? AND ?
-                GROUP BY actual_model, model_id
-            """
-            # 评审 A13-M4：完整 SQL 二选一，禁运行期字符串替换拼 SQL 片段。
-            params: list[str] = [str(start_day), str(end_day)]
+            params: list[str] = [str(start_day), end_exclusive]
+            sql = _CHANNEL_AGGREGATE_SQL
             if since_iso:
-                sql = """
-                SELECT actual_model, model_id,
-                       COUNT(*)                     AS calls,
-                       SUM(status != 'success')     AS failed_calls,
-                       SUM(COALESCE(prompt_tokens, 0))          AS prompt_tokens,
-                       SUM(COALESCE(cache_creation_tokens, 0))  AS cache_creation_tokens,
-                       SUM(COALESCE(cache_read_tokens, 0))      AS cache_read_tokens,
-                       SUM(COALESCE(completion_tokens, 0))      AS completion_tokens,
-                       SUM(COALESCE(total_tokens, 0))           AS total_tokens,
-                       SUM(COALESCE(total_cost_milli, 0))       AS total_cost_milli,
-                       SUM(unpriced)                AS unpriced_calls
-                FROM llm_call_records
-                WHERE substr(completed_at, 1, 10) BETWEEN ? AND ?
-                AND completed_at >= ?
-                GROUP BY actual_model, model_id
-            """
+                sql = _CHANNEL_AGGREGATE_SINCE_SQL
                 params.append(str(since_iso))
             rows = connection.execute(sql, params).fetchall()
         finally:
