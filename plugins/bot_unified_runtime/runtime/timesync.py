@@ -10,6 +10,11 @@
 - **偏移可信度**：``|offset|`` 超过 ``BOT_TIME_SYNC_MAX_DRIFT_MS`` 的服务器
   应答视为不可信（拒收该台，试下一台）；全部不可信同回退。RTT > 10s 的
   应答也拒收（链路质量差到偏移已无意义）。
+- **应答完整性（P3-15 收口）**：请求 transmit timestamp 填本地当前时刻
+  （t0），应答 originate timestamp 必须与之**逐字节一致**（RFC 4330
+  客户端义务）——不匹配＝伪造/重放/串线应答，丢弃走轮转/回退链；另核
+  来源端口（必须 123）、stratum（0=KOD 既有，>15=未同步新增拒收）、
+  LI=3（告警态新增拒收）。mode=4-only 与 1970 解包门等既有回归锚点原样。
 - **进程内缓存**：校准成功后 ``resync_seconds``（默认 10 分钟）内不再联网；
   失败后 ``retry_seconds``（默认 5 分钟）冷却，不逐消息重试打爆日志。
   缓存过期后重校失败 → 按"全失败"处理：丢弃旧偏移、回退系统钟并告警
@@ -41,6 +46,8 @@ _CLIENT_PACKET = bytes([0x23]) + bytes(_PACKET_SIZE - 1)
 # 应答头：模式字段在首字节低 3 位，server = 4。
 _SERVER_MODE = 4
 _MAX_RTT_SECONDS = 10.0
+# 合法服务器 stratum 上限（RFC 5905：1-15；0=KOD，16+=未同步态）。
+_MAX_VALID_STRATUM = 15
 
 DEFAULT_SERVERS_RAW = "ntp.aliyun.com,cn.ntp.org.cn,pool.ntp.org"
 DEFAULT_MAX_DRIFT_MS = 1500
@@ -60,6 +67,20 @@ def _unpack_ntp_timestamp(raw: bytes) -> float | None:
     if unix <= 0:  # 恰好 1970 整编码（unix=0）同样不算可信时刻。
         return None
     return unix
+
+
+def _pack_ntp_timestamp(unix_seconds: float) -> bytes | None:
+    """Unix 秒 → NTP 64 位时间戳（秒+小数）；编码不出可信时刻返回 None。
+
+    与解包门同口径：≤1970（含 NaN/负钟）的本地时刻不配当请求 transmit
+    timestamp——此时按单台失败处理，轮转/回退链兜底（fail-open 不变）。
+    """
+    total = unix_seconds + _NTP_DELTA_SECONDS
+    if not total > _NTP_DELTA_SECONDS:  # NaN 也一并落网。
+        return None
+    seconds = int(total)
+    fraction = int((total - seconds) * 2**32)
+    return struct.pack("!II", seconds, fraction)
 
 
 class TimeSync:
@@ -183,14 +204,25 @@ class TimeSync:
 
         偏移 θ = ((t1 - t0) + (t2 - t3)) / 2，其中 t0=请求发出、t1=服务器
         收到、t2=服务器应答、t3=客户端收到（均为 Unix 秒）。
+
+        应答完整性（P3-15）：请求 transmit timestamp 填 t0，合规服务器会
+        把它原样拷回应答 originate（RFC 4330 §4/§5 客户端义务），逐字节
+        不匹配即伪造/重放/串线应答，丢弃；来源端口非 123、stratum 0（KOD）
+        或 >15（未同步）、LI=3（告警态）同样拒收，均走轮转/回退链。
         """
         sock = None
         try:
             t0 = self._clock()
+            transmit = _pack_ntp_timestamp(t0)
+            if transmit is None:
+                logger.debug("timesync: 本地钟 %r 编码不出可信 NTP 时刻，跳过", t0)
+                return None
+            request = bytearray(_CLIENT_PACKET)
+            request[40:48] = transmit
             sock = self._socket_factory()
             sock.settimeout(self._timeout)
-            sock.sendto(_CLIENT_PACKET, (server, _NTP_PORT))
-            payload, _addr = sock.recvfrom(_PACKET_SIZE * 2)
+            sock.sendto(bytes(request), (server, _NTP_PORT))
+            payload, addr = sock.recvfrom(_PACKET_SIZE * 2)
             t3 = self._clock()
         except OSError as exc:
             logger.debug("timesync: %s 请求失败：%s", server, exc)
@@ -207,13 +239,32 @@ class TimeSync:
         if len(payload) < _PACKET_SIZE:
             logger.debug("timesync: %s 应答过短（%d 字节）", server, len(payload))
             return None
+        if addr is None or addr[1] != _NTP_PORT:
+            logger.debug("timesync: %s 应答来源不可核实（%r），丢弃", server, addr)
+            return None
         mode = payload[0] & 0x07
         stratum = payload[1]
         if stratum == 0:
             logger.debug("timesync: %s 返回 kiss-of-death（stratum=0）", server)
             return None
+        if stratum > _MAX_VALID_STRATUM:
+            logger.debug(
+                "timesync: %s 应答 stratum=%d 异常（>15 未同步态），拒收（来源 %s）",
+                server, stratum, addr,
+            )
+            return None
+        if payload[0] >> 6 == 3:  # LI=3：服务器自报闰秒告警/未同步。
+            logger.debug("timesync: %s 应答 LI=3（告警未同步态），拒收", server)
+            return None
         if mode not in self._allowed_modes:  # 默认仅 server(4)；5 需显式开关。
             logger.debug("timesync: %s 应答模式异常（mode=%d）", server, mode)
+            return None
+        if payload[24:32] != request[40:48]:
+            logger.debug(
+                "timesync: %s 应答 originate 与请求 transmit 不匹配（来源 %s），"
+                "按伪造/重放/串线丢弃",
+                server, addr,
+            )
             return None
         server_received = _unpack_ntp_timestamp(payload[32:40])
         server_transmitted = _unpack_ntp_timestamp(payload[40:48])

@@ -10,6 +10,10 @@
 - M-3 畸形包 fuzz：1970 前编码/全零串时间戳拒收（挡在钳制之前）；
 - M-4 max_drift_ms=0 = 取默认钳制，不是关掉不设防；
 - M-8 mode=5 broadcast 默认拒收，测试替身须显式 allow_broadcast_mode。
+P3-15 应答完整性回归（2026-09-14）：
+- originate 不匹配的伪造/重放/串线应答拒收（全伪造=回退系统钟）；
+- 合规 originate 回显照常接受 + 请求 transmit 已盖非零时刻（零变化锚点）；
+- stratum 0（KOD，既有语义补锁）/stratum>15/LI=3/非 123 源端口拒收轮转。
 """
 
 from __future__ import annotations
@@ -36,13 +40,24 @@ class FakeClock:
         self.value += seconds
 
 
+class Forged(bytes):
+    """标记类：该应答跳过 FakeSocket 的合规 originate 回显（伪造剧本用）。"""
+
+
 class FakeSocket:
-    """按剧本逐台演：Exception=该台失败；bytes=该台应答。"""
+    """按剧本逐台演：Exception=该台失败；bytes=该台应答。
+
+    默认模拟合规服务器（RFC 4330）：把客户端请求的 transmit timestamp
+    原样拷进应答 originate（P3-15 后这是被接受的前提）。伪造路径测试用
+    ``Forged`` 标记的应答跳过回显、由剧本自造不匹配 originate。剧本动作
+    亦可为 ``(payload, addr)`` 二元组，全操控应答（如测来源端口）。
+    """
 
     def __init__(self, script: list, log: list, clock: FakeClock) -> None:
         self._script = script
         self._log = log
         self._clock = clock
+        self.last_request: bytes | None = None
         self.addr: tuple[str, int] | None = None
 
     def settimeout(self, value: float) -> None:
@@ -52,16 +67,27 @@ class FakeSocket:
         self._log.append(("send", addr[0]))
         assert len(data) == 48, "SNTP 请求必须是 48 字节"
         assert addr[1] == 123
+        self.last_request = bytes(data)
         self.addr = addr
 
     def recvfrom(self, size: int) -> tuple[bytes, tuple]:
         action = self._script.pop(0)
         self._clock.advance(0.05)  # 网络往返 50ms。
+        addr = self.addr or ("203.0.113.7", 123)
         if isinstance(action, Exception):
             raise action
         if callable(action):
-            return action(self.addr), self.addr or ("203.0.113.7", 123)
-        return action, self.addr or ("203.0.113.7", 123)
+            payload = action(self.addr)
+        else:
+            payload = action
+        spoofed = isinstance(payload, Forged)
+        if isinstance(payload, tuple):  # (payload, addr) 全操控剧本。
+            payload, addr = payload
+        if not spoofed and self.last_request is not None and len(payload) >= 48:
+            patched = bytearray(payload)
+            patched[24:32] = self.last_request[40:48]  # 合规回显。
+            payload = bytes(patched)
+        return payload, addr
 
     def close(self) -> None:
         self._log.append(("close",))
@@ -323,3 +349,156 @@ def test_zero_max_drift_means_default_clamp_not_off() -> None:
     assert abs((corrected - expected).total_seconds()) < 0.2
     sent_servers = [item[1] for item in log if item[0] == "send"]
     assert sent_servers == ["a.example", "b.example"], "0 必须落回默认钳制"
+
+
+# ---------- P3-15 应答完整性回归（originate 校验 + 源标识） ----------
+
+
+def _forged_response(server_time: float, *, originate: bytes) -> Forged:
+    """伪造应答：时间戳看似合规，但 originate 由攻击者指定且不回显请求。"""
+    packet = bytearray(ntp_response(server_time))
+    packet[24:32] = originate
+    return Forged(bytes(packet))
+
+
+def test_forged_originate_mismatch_rejected_and_rotates() -> None:
+    """伪造应答①：originate 与请求 transmit 不匹配（伪造/重放/串线）拒收。
+
+    两枚 Forged 应答（错值 originate / 全零 originate）都不得产生偏移，
+    必须轮转到第三台取真应答（合规回显）。
+    """
+    clock = FakeClock(10_000_000.0)
+
+    def forged_offset_shift(_addr):
+        # 攻击意图：谎报本地钟慢 30 秒（offset 注入尝试）。
+        return _forged_response(
+            clock.value - 0.025 + 30.0, originate=b"\xde\xad\xbe\xef" * 2
+        )
+
+    def forged_zero_originate(_addr):
+        # 旧式不合规服务器/陈旧重放：originate 全零。
+        return _forged_response(clock.value - 0.025 + 30.0, originate=bytes(8))
+
+    def good_response(_addr):
+        return ntp_response(clock.value - 0.025 + 1.0)
+
+    script: list = [forged_offset_shift, forged_zero_originate, good_response]
+    sync, log = _build(script, clock, max_drift_ms=60_000)
+    corrected = sync.now()
+    expected = datetime.fromtimestamp(clock.value + 1.0).astimezone()
+    assert abs((corrected - expected).total_seconds()) < 0.2
+    sent_servers = [item[1] for item in log if item[0] == "send"]
+    assert sent_servers == ["a.example", "b.example", "c.example"], (
+        "两枚伪造应答应被逐台拒收并轮转到第三台"
+    )
+    assert sync.offset_seconds is not None and abs(sync.offset_seconds - 1.0) < 0.2
+
+
+def test_all_forged_originate_responses_fall_back_to_system_clock() -> None:
+    """伪造应答②：三台全伪造（带漂移注入 + 不匹配 originate）= 全失败回退。"""
+    clock = FakeClock(10_500_000.0)
+
+    def forged(_addr):
+        return _forged_response(
+            clock.value + 3600.0, originate=b"\x01\x02\x03\x04\x05\x06\x07\x08"
+        )
+
+    sync, log = _build([forged, forged, forged], clock, retry_seconds=300.0)
+    result = sync.now()
+    assert sync.offset_seconds is None, "全伪造应答不得产生任何偏移"
+    expected = datetime.fromtimestamp(clock.value).astimezone()
+    assert abs((result - expected).total_seconds()) < 0.05
+    sent_servers = [item[1] for item in log if item[0] == "send"]
+    assert sent_servers == ["a.example", "b.example", "c.example"]
+
+
+def test_compliant_originate_echo_accepted_and_request_stamped() -> None:
+    """合规应答锚点（行为零变化）：originate=请求 transmit 回显 → 照常接受。
+
+    同时锁请求报文新语义：transmit 字段（40:48）必须已填非零 NTP 时刻——
+    这是 originate 校验能成立的前提（固定全零请求无法与伪造应答区分）。
+    """
+    clock = FakeClock(11_000_000.0)
+    log: list = []
+    script: list = [lambda _addr: ntp_response(clock.value - 0.025 + 1.0)]
+    fake = FakeSocket(script, log, clock)  # 默认 echo_originate=True = 合规服务器。
+    sync = timesync.TimeSync(
+        ["a.example"],
+        clock=clock,
+        monotonic=clock,
+        socket_factory=lambda: fake,
+        max_drift_ms=60_000,
+    )
+    corrected = sync.now()
+    expected = datetime.fromtimestamp(clock.value + 1.0).astimezone()
+    assert abs((corrected - expected).total_seconds()) < 0.2
+    assert sync.offset_seconds is not None and abs(sync.offset_seconds - 1.0) < 0.2
+    request = fake.last_request
+    assert request is not None, "请求确实发出过"
+    assert request[40:48] != bytes(8), "请求 transmit 必须已填非零时刻（校验锚点）"
+
+
+def test_kiss_of_death_stratum0_rejected_and_rotates() -> None:
+    """stratum=0（KOD）拒收：既有语义（timesync 侧原有分支），补回归锁。"""
+    clock = FakeClock(11_500_000.0)
+    kod = _raw_packet(_NTP_DELTA + int(clock.value) + 1, 0, stratum=0)
+
+    def good_response(_addr):
+        return ntp_response(clock.value - 0.025 + 1.0)
+
+    sync, log = _build([kod, good_response], clock, max_drift_ms=60_000)
+    corrected = sync.now()
+    expected = datetime.fromtimestamp(clock.value + 1.0).astimezone()
+    assert abs((corrected - expected).total_seconds()) < 0.2
+    sent_servers = [item[1] for item in log if item[0] == "send"]
+    assert sent_servers == ["a.example", "b.example"], "KOD 应答应在 stratum 门拒收并轮转"
+
+
+def test_stratum16_unsynchronized_rejected_and_rotates() -> None:
+    """stratum=16+（RFC 5905 未同步态）拒收：P3-15 新增分支。"""
+    clock = FakeClock(12_000_000.0)
+    bad = _raw_packet(_NTP_DELTA + int(clock.value) + 1, 0, stratum=16)
+
+    def good_response(_addr):
+        return ntp_response(clock.value - 0.025 + 1.0)
+
+    sync, log = _build([bad, good_response], clock, max_drift_ms=60_000)
+    corrected = sync.now()
+    expected = datetime.fromtimestamp(clock.value + 1.0).astimezone()
+    assert abs((corrected - expected).total_seconds()) < 0.2
+    sent_servers = [item[1] for item in log if item[0] == "send"]
+    assert sent_servers == ["a.example", "b.example"], "stratum>15 应答必须拒收并轮转"
+
+
+def test_leap_alarm_li3_rejected_and_rotates() -> None:
+    """LI=3（服务器自报闰秒告警/未同步态）拒收：其余字段合规也不收。"""
+    clock = FakeClock(12_500_000.0)
+
+    def li3_response(_addr):
+        packet = bytearray(ntp_response(clock.value - 0.025 + 1.0))
+        packet[0] = packet[0] | 0xC0  # LI=3。
+        return bytes(packet)
+
+    def good_response(_addr):
+        return ntp_response(clock.value - 0.025 + 1.0)
+
+    sync, log = _build([li3_response, good_response], clock, max_drift_ms=60_000)
+    corrected = sync.now()
+    expected = datetime.fromtimestamp(clock.value + 1.0).astimezone()
+    assert abs((corrected - expected).total_seconds()) < 0.2
+    sent_servers = [item[1] for item in log if item[0] == "send"]
+    assert sent_servers == ["a.example", "b.example"], "LI=3 应答应在告警门拒收并轮转"
+
+
+def test_response_from_wrong_source_port_rejected() -> None:
+    """来源端口非 123 的应答拒收：源标识核验（伪造/串线常见特征）。"""
+    clock = FakeClock(13_000_000.0)
+    good_packet = ntp_response(clock.value - 0.025 + 1.0)
+    # 应答内容合规，但"来自"非常规端口 45123 → 不可信来源。
+    script: list = [(good_packet, ("198.51.100.9", 45123)), good_packet]
+    sync, log = _build(script, clock, max_drift_ms=60_000)
+    corrected = sync.now()
+    expected = datetime.fromtimestamp(clock.value + 1.0).astimezone()
+    assert abs((corrected - expected).total_seconds()) < 0.2
+    sent_servers = [item[1] for item in log if item[0] == "send"]
+    assert sent_servers == ["a.example", "b.example"], "非 123 源端口应答应拒收并轮转"
