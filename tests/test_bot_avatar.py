@@ -25,9 +25,11 @@ _PNG = b"\x89PNG\r\n\x1a\n" + b"avatar-payload"
 
 @pytest.fixture()
 def _isolated(monkeypatch: pytest.MonkeyPatch):
-    """隔离两处进程级全局：bot_avatar 内存 URI 与 600s 远端 URL 缓存。"""
+    """隔离三处进程级全局：bot_avatar 内存 URI、600s 远端 URL 缓存、
+    磁盘兜底负结果 TTL 缓存（审查 L-14）。"""
     monkeypatch.setattr(bot_avatar, "_LOCAL_AVATAR_URI", "")
     monkeypatch.setattr(runtime_pkg, "_BOT_AVATAR_URL_CACHE", {})
+    monkeypatch.setattr(bot_avatar, "_DISCOVER_MISS_TS", {})
 
 
 def _remote_recorder(url: str = "https://remote.example/a.png"):
@@ -140,3 +142,92 @@ def test_bot_avatar_uri_no_config_no_file_returns_empty(
         bot_persona_avatar_url="", bot_runtime_data_dir=str(tmp_path)  # 空目录
     )
     assert bot_avatar.bot_avatar_uri(config) == ""  # 调用方回落「守」字圆点
+
+
+# ---------------------------------------------------------------------------
+# 审查 L-14：磁盘兜底缺失探测的负结果 TTL 缓存（全离线注入时钟）。
+# ---------------------------------------------------------------------------
+
+
+class _Clock:
+    """可推进的单调钟替身：monkeypatch 进 bot_avatar._MONOTONIC。"""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _count_globs(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """给 Path.glob 套计数壳（委托真 glob，探测真实发生与否可断言）。"""
+    calls: list[str] = []
+    real_glob = Path.glob
+
+    def counting_glob(self: Path, pattern: str):
+        calls.append(pattern)
+        return real_glob(self, pattern)
+
+    monkeypatch.setattr(Path, "glob", counting_glob)
+    return calls
+
+
+def test_miss_probes_once_within_ttl(_isolated, monkeypatch, tmp_path) -> None:
+    clock = _Clock()
+    monkeypatch.setattr(bot_avatar, "_MONOTONIC", clock)
+    globs = _count_globs(monkeypatch)
+    config = SimpleNamespace(
+        bot_persona_avatar_url="", bot_runtime_data_dir=str(tmp_path)  # 无 avatar 目录
+    )
+
+    assert bot_avatar.bot_avatar_uri(config) == ""  # 首次：真探测，确认缺失
+    assert len(globs) == 1
+    assert bot_avatar.bot_avatar_uri(config) == ""  # TTL 内：负缓存回空
+    assert bot_avatar.bot_avatar_uri(config) == ""
+    assert len(globs) == 1  # 计数不变 → glob+stat 探测未重复（审查 L-14）
+
+
+def test_miss_reprobes_after_ttl_expiry(_isolated, monkeypatch, tmp_path) -> None:
+    clock = _Clock()
+    monkeypatch.setattr(bot_avatar, "_MONOTONIC", clock)
+    globs = _count_globs(monkeypatch)
+    config = SimpleNamespace(
+        bot_persona_avatar_url="", bot_runtime_data_dir=str(tmp_path)
+    )
+
+    assert bot_avatar.bot_avatar_uri(config) == ""
+    assert len(globs) == 1
+    clock.advance(300.0)  # 恰到 TTL 边界：仍算新鲜（<= 语义，对齐 randpic）
+    assert bot_avatar.bot_avatar_uri(config) == ""
+    assert len(globs) == 1
+    clock.advance(0.5)  # 越过 TTL：过期重探
+    assert bot_avatar.bot_avatar_uri(config) == ""
+    assert len(globs) == 2
+
+
+def test_file_appears_after_ttl_returns_uri_then_memory_shortcut(
+    _isolated, monkeypatch, tmp_path
+) -> None:
+    clock = _Clock()
+    monkeypatch.setattr(bot_avatar, "_MONOTONIC", clock)
+    globs = _count_globs(monkeypatch)
+    config = SimpleNamespace(
+        bot_persona_avatar_url="", bot_runtime_data_dir=str(tmp_path)
+    )
+
+    assert bot_avatar.bot_avatar_uri(config) == ""  # 先记负结果
+    avatar_file = tmp_path / "avatar" / "bot_10000.png"
+    avatar_file.parent.mkdir()
+    avatar_file.write_bytes(_PNG)  # 期间头像文件落盘
+
+    clock.advance(301.0)  # TTL 过期 → 重探发现
+    assert bot_avatar.bot_avatar_uri(config) == avatar_file.as_uri()
+    assert len(globs) == 2
+
+    # 正结果登记内存后：内存短路，再推进时间也不探测（既有语义不变）。
+    clock.advance(10_000.0)
+    assert bot_avatar.bot_avatar_uri(config) == avatar_file.as_uri()
+    assert len(globs) == 2
