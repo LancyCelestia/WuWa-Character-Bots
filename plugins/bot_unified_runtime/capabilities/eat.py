@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import random
 import re
 import threading
 from datetime import datetime
@@ -16,6 +17,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -691,7 +693,10 @@ def build_eat_capability(
                 request_id=message.request_id,
                 capability_id="bot.eat",
                 kind="text",
-                body="菜品库暂时抽不出菜了，稍后再试。",
+                # 审查 Q-01：入 user_copy 数据源失败池（原「……稍后再试。」）。
+                body=random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(
+                    reason="菜品库暂时抽不出菜了"
+                ),
                 audit_tags=["eat", "empty"],
             )
         with _RECENT_LOCK:

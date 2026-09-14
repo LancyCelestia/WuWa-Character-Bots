@@ -15,6 +15,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.sources import commodities_data
 from plugins.bot_unified_runtime.sources.commodities_data import (
     commodity_availability,
@@ -100,7 +101,11 @@ def test_format_line_and_groups_and_brief(_clean_caches) -> None:
     brief = format_commodities_brief(quotes)
     assert "大宗商品速览" in brief and "COMEX" in brief
     assert "LME 无稳定免费公开源" in brief  # 替代口径显式说明
-    assert format_commodities_brief([]) == "大宗商品行情暂时拉不到，晚点再试试？"
+    # 审查 Q-01：降级文案入 user_copy 池轮换，断言 ∈ 池渲染集合（原固定「……晚点再试试？」）。
+    assert format_commodities_brief([]) in {
+        template.format(reason="大宗商品行情暂时拉不到")
+        for template in user_copy.DATASOURCE_FAILURE_TEMPLATES
+    }
 
 
 def test_availability_honest_lme_and_brent(_clean_caches) -> None:

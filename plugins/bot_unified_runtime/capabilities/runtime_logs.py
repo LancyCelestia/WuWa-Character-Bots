@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from typing import Any
 
 from plugins.bot_unified_runtime.capabilities import user_copy
@@ -34,7 +35,8 @@ def build_logs_query_result(
             capability_id="bot.logs",
             kind="text",
             title="运行时日志",
-            body=user_copy.ADMIN_GATE_REQUIRED.format(action="查运行时日志"),
+            # 审查 Q-02：权限拒绝入 user_copy 池（守岸人语气轮换）。
+            body=random.choice(user_copy.ADMIN_GATE_TEMPLATES).format(action="查运行时日志"),
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PERSONAL,
             send_policy=SendPolicy.IMMEDIATE,

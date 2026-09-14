@@ -52,6 +52,7 @@
 from __future__ import annotations
 
 import math
+import random
 import re
 import time
 import urllib.parse
@@ -60,6 +61,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
+# 审查 Q-01：user_copy 为零依赖纯常量池，sources 跨层引用不构成装配环。
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts.finance import (
     BoxPlotStats,
     EquityQuote,
@@ -1170,7 +1173,9 @@ _MARK_UP = "🔴"
 _MARK_DOWN = "🟢"
 _MARK_FLAT = "⚪"
 
-_EMPTY_STOCKS_TEXT = "美股行情暂时拉不到，晚点再试试？"
+# 审查 Q-01：数据源失败文案统一入 user_copy 池（守岸人语气轮换），不再硬编码。
+def _empty_stocks_text() -> str:
+    return random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(reason="美股行情暂时拉不到")
 
 # OpenAI 非上市静态记录（快查链路；provenance 链路见 NON_PUBLIC_EQUITIES）。
 # 主代理裁定（2026-09-13）：两条链路共用同一权威口径——官方融资公告
@@ -1464,7 +1469,7 @@ def format_stock_line(quote: StockQuote) -> str:
 def format_stocks_brief(quotes: Sequence[StockQuote]) -> str:
     """科技巨头速览纯文本；空结果给降级文案。"""
     if not quotes:
-        return _EMPTY_STOCKS_TEXT
+        return _empty_stocks_text()
     lines = ["美股科技巨头速览"]
     lines.extend(format_stock_line(quote) for quote in quotes)
     return "\n".join(lines)

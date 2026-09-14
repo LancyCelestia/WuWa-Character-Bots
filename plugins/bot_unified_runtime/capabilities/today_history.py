@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 import shutil
 import threading
@@ -260,7 +261,8 @@ def build_today_history_capability(
                         request_id=message.request_id,
                         capability_id="bot.today_history",
                         kind="text",
-                        body=user_copy.ADMIN_GATE_REQUIRED.format(action="取消群推送时间"),
+                        # 审查 Q-02：权限拒绝入 user_copy 池（守岸人语气轮换）。
+                        body=random.choice(user_copy.ADMIN_GATE_TEMPLATES).format(action="取消群推送时间"),
                         audit_tags=["today_history", "push_cancelled", "denied"],
                     )
                 if not load_ok:
@@ -317,7 +319,8 @@ def build_today_history_capability(
                         request_id=message.request_id,
                         capability_id="bot.today_history",
                         kind="text",
-                        body=user_copy.ADMIN_GATE_REQUIRED.format(action="设置群推送时间"),
+                        # 审查 Q-02：权限拒绝入 user_copy 池（守岸人语气轮换）。
+                        body=random.choice(user_copy.ADMIN_GATE_TEMPLATES).format(action="设置群推送时间"),
                         audit_tags=["today_history", "push_subscribed", "denied"],
                     )
                 if not load_ok:
@@ -364,7 +367,10 @@ def build_today_history_capability(
                 request_id=message.request_id,
                 capability_id="bot.today_history",
                 kind="text",
-                body="历史上的今天数据拉取失败，稍后再试。",
+                # 审查 Q-01：入 user_copy 数据源失败池（原「……稍后再试。」）。
+                body=random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(
+                    reason="历史上的今天数据拉取失败"
+                ),
                 audit_tags=["today_history", "fetch_failed"],
             )
         body = format_history_text(events)

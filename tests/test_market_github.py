@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.capabilities.market import (
     build_market_capability,
     is_market_command,
@@ -280,7 +281,11 @@ def test_format_quote_line_without_abs() -> None:
 
 
 def test_format_market_brief_empty_degrades() -> None:
-    assert format_market_brief([]) == "行情数据暂时拉不到，晚点再试试？"
+    # 审查 Q-01：入 user_copy 池轮换（原固定「行情数据暂时拉不到，晚点再试试？」）。
+    assert format_market_brief([]) in {
+        template.format(reason="行情数据暂时拉不到")
+        for template in user_copy.DATASOURCE_FAILURE_TEMPLATES
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -446,7 +451,11 @@ def test_market_capability_fetch_failure_degrades(monkeypatch) -> None:
     )
     capability = build_market_capability(config=None)
     result = capability(_make_message("行情"), _make_decision())
-    assert result.body == "行情数据暂时拉不到，晚点再试试？"
+    # 审查 Q-01：入 user_copy 池轮换（原固定「行情数据暂时拉不到，晚点再试试？」）。
+    assert result.body in {
+        template.format(reason="行情数据暂时拉不到")
+        for template in user_copy.DATASOURCE_FAILURE_TEMPLATES
+    }
     assert "market:fetch_failed" in result.audit_tags
 
 

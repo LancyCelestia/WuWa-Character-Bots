@@ -17,9 +17,11 @@
 
 from __future__ import annotations
 
+import random
 import re
 from typing import Any
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -61,7 +63,9 @@ _AI_HINT_RE = re.compile(
     r"((?:ai|人工智能)\s*(?:新闻|快报|news)|人工智能|aixinwen|aikuaibao)", re.IGNORECASE
 )
 
-_EMPTY_DEGRADED_TEXT = "快报暂时拉不到，稍后再试试？"
+# 审查 Q-01：数据源失败文案统一入 user_copy 池（守岸人语气轮换），不再硬编码。
+def _empty_degraded_text() -> str:
+    return random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(reason="快报暂时拉不到")
 
 
 def extract_news_category(text: str) -> str:
@@ -114,7 +118,7 @@ def build_news_capability(config: Any | None = None) -> Any:
                 request_id=message.request_id,
                 capability_id="bot.news",
                 kind="text",
-                body=_EMPTY_DEGRADED_TEXT,
+                body=_empty_degraded_text(),
                 audit_tags=["capability:news", "news:fetch_failed"],
             )
         return CapabilityResult(

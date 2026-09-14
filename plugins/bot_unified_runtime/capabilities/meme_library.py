@@ -209,7 +209,8 @@ def build_meme_library_capability(
                 request_id=message.request_id,
                 capability_id="bot.meme_library",
                 kind="text",
-                body="表情库还是空的（或没有匹配的表情）。多发点图让我收藏吧～",
+                # 审查 Q-04：自称统一第三人称「守岸人」（原为第一人称自称，旧句已废）。
+                body="表情库还是空的（或没有匹配的表情）。多发点图给守岸人收藏吧～",
                 risk_level=RiskLevel.LOW,
                 privacy_level=PrivacyLevel.PUBLIC,
                 audit_tags=["meme_library", "empty"],

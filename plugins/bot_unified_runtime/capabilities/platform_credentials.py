@@ -17,6 +17,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# 审查 Q-01：B站登录/查询失败文案入 user_copy 数据源失败池（守岸人语气轮换）。
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.sources.parsers.cookies import (
     PLATFORM_COOKIE_DOMAINS,
     _resolve_relative_cookie_path,
@@ -283,7 +285,10 @@ def cookie_login_start(config: object, platform: str) -> tuple[str, str, str]:
     qr_url = str(data.get("url") or "")
     qrcode_key = str(data.get("qrcode_key") or "")
     if not qr_url or not qrcode_key:
-        return "", "", "B站登录接口响应异常，稍后再试。"
+        # 审查 Q-01：入 user_copy 数据源失败池（原「……稍后再试。」）。
+        return "", "", random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(
+            reason="B站登录接口响应异常"
+        )
     session_key = f"{random.randint(0, 9999):04d}"
     while session_key in _QR_SESSIONS:
         session_key = f"{random.randint(0, 9999):04d}"
@@ -369,7 +374,8 @@ def cookie_login_check(config: object, platform: str) -> str:
             payload = json.loads(response.read().decode("utf-8", "replace"))
             set_cookies = response.headers.get_all("Set-Cookie") or []
     except Exception:  # noqa: BLE001 - 轮询失败按未确认处理。
-        return "查询失败，稍后再试。"
+        # 审查 Q-01：入 user_copy 数据源失败池（原「查询失败，稍后再试。」）。
+        return random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(reason="查询失败")
     state_code = (payload or {}).get("data", {}).get("code")
     if state_code == 86038:
         return "二维码已过期，请重新发送 /bot cookie login " + platform + "。"

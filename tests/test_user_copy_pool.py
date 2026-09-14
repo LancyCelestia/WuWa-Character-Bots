@@ -26,7 +26,7 @@ def _assert_site(filename: str, expression: str) -> None:
 
 
 def test_u12_datasource_temp_failure_snapshot() -> None:
-    """U12 数据源临时失败：原因短语 +「稍后再试。」（fx / moegirl 两处）。"""
+    """U12+Q-01 数据源临时失败：原模板快照 + fx/moegirl 引用点已升级为变体池轮换。"""
     assert (
         user_copy.DATASOURCE_TEMP_FAILURE.format(reason="汇率数据暂时拉不到")
         == "汇率数据暂时拉不到，稍后再试。"
@@ -35,18 +35,30 @@ def test_u12_datasource_temp_failure_snapshot() -> None:
         user_copy.DATASOURCE_TEMP_FAILURE.format(reason="萌娘百科暂时连不上")
         == "萌娘百科暂时连不上，稍后再试。"
     )
-    _assert_site(
-        "fx.py",
-        'body=user_copy.DATASOURCE_TEMP_FAILURE.format(reason="汇率数据暂时拉不到")',
-    )
-    _assert_site(
-        "moegirl.py",
-        'body=user_copy.DATASOURCE_TEMP_FAILURE.format(reason="萌娘百科暂时连不上")',
-    )
+    # Q-01（2026-09-15）：两处引用点从固定单句升级为 DATASOURCE_FAILURE_TEMPLATES
+    # 轮换取句（池首条即原模板，语气零漂移）；锁定「池引用 + reason 实参」表达式。
+    _assert_site("fx.py", "user_copy.DATASOURCE_FAILURE_TEMPLATES")
+    _assert_site("fx.py", 'reason="汇率数据暂时拉不到"')
+    _assert_site("moegirl.py", "user_copy.DATASOURCE_FAILURE_TEMPLATES")
+    _assert_site("moegirl.py", 'reason="萌娘百科暂时连不上"')
+
+
+def test_q01_datasource_pool_shape() -> None:
+    """Q-01 池形态：3-5 条、首条=U12 原模板、{reason} 槽位齐全、无重复、可渲染。"""
+    pool = user_copy.DATASOURCE_FAILURE_TEMPLATES
+    assert 3 <= len(pool) <= 5
+    assert pool[0] == user_copy.DATASOURCE_TEMP_FAILURE
+    assert len(set(pool)) == len(pool)
+    assert all("{reason}" in variant for variant in pool)
+    for variant in pool:
+        rendered = variant.format(reason="样例数据暂时拉不到")
+        assert rendered.startswith("样例数据暂时拉不到，")
+        # 守岸人语气底线：不出现机器腔/客套话术组合。
+        assert "为您" not in rendered and "作为一个" not in rendered
 
 
 def test_u11_admin_gate_snapshot() -> None:
-    """U11 管理员门禁统一模板：「要<动作>，找管理员来操作。」（9 处/7 文件）。"""
+    """U11+Q-02 管理员门禁：原模板快照（订阅族禁碰文件沿用）+ 域内 5 文件变体化。"""
     expected = {
         "看运行时排障记录": "要看运行时排障记录，找管理员来操作。",  # debug.py
         "看运行时状态": "要看运行时状态，找管理员来操作。",  # echo.py
@@ -60,19 +72,46 @@ def test_u11_admin_gate_snapshot() -> None:
     for action, full in expected.items():
         assert user_copy.ADMIN_GATE_REQUIRED.format(action=action) == full
 
+    # 禁碰域（subscribe.py / subscribe_v2.py）保持 ADMIN_GATE_REQUIRED 原引用零改动。
     sites = [
-        ("debug.py", 'user_copy.ADMIN_GATE_REQUIRED.format(action="看运行时排障记录")'),
-        ("echo.py", 'user_copy.ADMIN_GATE_REQUIRED.format(action="看运行时状态")'),
-        ("music.py", 'user_copy.ADMIN_GATE_REQUIRED.format(action="改点歌输出模式")'),
-        ("runtime_logs.py", 'user_copy.ADMIN_GATE_REQUIRED.format(action="查运行时日志")'),
         ("subscribe.py", 'user_copy.ADMIN_GATE_REQUIRED.format(action="把订阅推送到本群")'),
         ("subscribe.py", 'user_copy.ADMIN_GATE_REQUIRED.format(action="看本群订阅")'),
         ("subscribe_v2.py", 'user_copy.ADMIN_GATE_REQUIRED.format(action="看本群订阅")'),
-        ("today_history.py", 'user_copy.ADMIN_GATE_REQUIRED.format(action="取消群推送时间")'),
-        ("today_history.py", 'user_copy.ADMIN_GATE_REQUIRED.format(action="设置群推送时间")'),
     ]
     for filename, expression in sites:
         _assert_site(filename, expression)
+
+    # Q-02（2026-09-15）：域内引用点升级为 ADMIN_GATE_TEMPLATES 轮换取句；
+    # 锁定「池引用 + action 实参」表达式。
+    variant_sites = [
+        ("debug.py", "看运行时排障记录"),
+        ("echo.py", "看运行时状态"),
+        ("music.py", "改点歌输出模式"),
+        ("runtime_logs.py", "查运行时日志"),
+        ("today_history.py", "取消群推送时间"),
+        ("today_history.py", "设置群推送时间"),
+    ]
+    for filename, action in variant_sites:
+        source = (_CAP_DIR / filename).read_text(encoding="utf-8")
+        assert "random.choice(user_copy.ADMIN_GATE_TEMPLATES)" in source, (
+            f"{filename} 未引用权限拒绝变体池"
+        )
+        assert f'action="{action}"' in source, f"{filename} 缺 action 实参：{action}"
+
+
+def test_q02_admin_gate_pool_shape() -> None:
+    """Q-02 池形态：3-5 条、首条=U11 原模板、{action} 槽位齐全、无重复、可渲染。"""
+    pool = user_copy.ADMIN_GATE_TEMPLATES
+    assert 3 <= len(pool) <= 5
+    assert pool[0] == user_copy.ADMIN_GATE_REQUIRED
+    assert len(set(pool)) == len(pool)
+    assert all("{action}" in variant for variant in pool)
+    for variant in pool:
+        rendered = variant.format(action="样例操作")
+        assert "样例操作" in rendered
+        assert "管理员" in rendered  # 拒绝语义必须指明出路
+        # 守岸人语气底线：不出现机器腔/客套话术组合。
+        assert "为您" not in rendered and "作为一个" not in rendered
 
 
 def test_u9_push_save_failed_snapshot() -> None:
@@ -100,7 +139,10 @@ def test_u6_run_env_failure_advice_snapshot() -> None:
 
 
 def test_debug_denied_body_renders_expected_copy() -> None:
-    """行为级抽查：debug 模块常量渲染结果与迁移前逐字节一致。"""
+    """行为级抽查：debug 拒绝句随 Q-02 变体池轮换，输出必属池渲染集合。"""
     from plugins.bot_unified_runtime.capabilities import debug as debug_cap
 
-    assert debug_cap._DENIED_BODY == "要看运行时排障记录，找管理员来操作。"
+    assert debug_cap._denied_body() in {
+        variant.format(action="看运行时排障记录")
+        for variant in user_copy.ADMIN_GATE_TEMPLATES
+    }

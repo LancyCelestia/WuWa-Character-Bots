@@ -15,6 +15,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.sources import market_data
 from plugins.bot_unified_runtime.sources.market_data import (
     NorthboundFlow,
@@ -219,4 +220,8 @@ def test_brief_reports_disclosed_only_and_honest_note(_clean_cache) -> None:
     assert "沪股通 当日成交总额 1,422.56 亿元（7,114,374 笔）" in brief
     assert "北向资金速览" in brief
     assert "不再披露北向当日净买入" in brief  # 口径诚实说明
-    assert format_northbound_brief([]) == "北向资金数据暂时拉不到，晚点再试试？"
+    # 审查 Q-01：入 user_copy 池轮换（原固定「北向资金数据暂时拉不到，晚点再试试？」）。
+    assert format_northbound_brief([]) in {
+        template.format(reason="北向资金数据暂时拉不到")
+        for template in user_copy.DATASOURCE_FAILURE_TEMPLATES
+    }

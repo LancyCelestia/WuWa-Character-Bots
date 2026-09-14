@@ -73,7 +73,9 @@ _DATE_COLUMN = "SOLAR_DATE"
 _CACHE_TTL_DEFAULT_SECONDS = 300.0
 _CACHE: tuple[float, BondYieldSnapshot] | None = None
 
-_EMPTY_DEGRADED_TEXT = "国债收益率数据暂时拉不到，晚点再试试？"
+# 审查 Q-01：原 _EMPTY_DEGRADED_TEXT（「国债收益率数据暂时拉不到，晚点再试试？」）
+# 为无引用死常量，随文案统一批删除；bond 降级文案若将来需要，走 user_copy
+# 数据源失败池（DATASOURCE_FAILURE_TEMPLATES），不得回退硬编码。
 
 
 @dataclass(frozen=True)

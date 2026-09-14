@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import random
 import re
 from pathlib import Path
 from typing import Any, TypedDict
@@ -62,7 +63,8 @@ def build_status_result(
             capability_id="bot.status",
             kind="text",
             title="状态",
-            body=user_copy.ADMIN_GATE_REQUIRED.format(action="看运行时状态"),
+            # 审查 Q-02：权限拒绝入 user_copy 池（守岸人语气轮换）。
+            body=random.choice(user_copy.ADMIN_GATE_TEMPLATES).format(action="看运行时状态"),
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PUBLIC,
             send_policy=SendPolicy.IMMEDIATE,
@@ -205,6 +207,13 @@ def _help_unknown_body(query: str) -> str:
         "试试 /bot 帮助 查看总览（/岸宝帮助 同样可用）；示例：/bot help 点歌、/bot help 订阅。"
     )
 
+
+# Keystone 对齐计划（审查 C-06，2026-09-14 批）：能力单一声明源已落在
+# runtime/capability_registry.py（路由/接口/内部说明等手写清单收拢为每能力
+# 一行）。本帮助注册表（含 _HELP_ENTRY_META/_HELP_EXTRA_LINES）是最后一份
+# 未对齐清单：scripts/command_catalog.py 与 scripts/doc_sync.py 以 AST/正则
+# 静态提取本文件字面形态（不 import 插件包），搬移须连机器册生成器一起改，
+# 本批 echo 本体不动、留待下批；注册表继续从这里出（73 topics 口径不变）。
 
 _HELP_ENTRIES: list[HelpEntry] = [
         {
@@ -3329,7 +3338,9 @@ def build_identity_preference_result(
     if store is None:
         return _identity_preference_result(
             request_id,
-            "我这边记称谓的小本本暂时打不开，是我这边要修的。你可以稍后再发一次 set-name，还不行就找管理员。",
+            # 审查 Q-04：自称统一第三人称「守岸人」（原两处第一人称自称，旧句已废；
+            # 回潮由 test_user_copy_unification_gate 拦截）。
+            "守岸人这边记称谓的小本本暂时打不开，是守岸人自己要修的。你可以稍后再发一次 set-name，还不行就找管理员。",
             risk_level=RiskLevel.MEDIUM,
         )
     # 键位必须与读取端 providers.build_context 完全一致：群=group_id，私聊=空。

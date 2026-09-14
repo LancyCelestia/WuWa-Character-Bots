@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import email.utils
 import html as _html
+import random
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -36,6 +37,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 
+# 审查 Q-01：user_copy 为零依赖纯常量池，sources 跨层引用不构成装配环。
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.sources.parsers.http_util import http_get_text
 
 # 响应体上限：单源 RSS 实测最大约 260KB（华尔街见闻），1MB 已是数倍冗余，
@@ -89,7 +92,9 @@ CATEGORY_LABELS: dict[str, str] = {
     "mix": "综合",
 }
 
-_EMPTY_DEGRADED_TEXT = "快报暂时拉不到，稍后再试试？"
+# 审查 Q-01：数据源失败文案统一入 user_copy 池（守岸人语气轮换），不再硬编码。
+def _empty_degraded_text() -> str:
+    return random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(reason="快报暂时拉不到")
 
 # 进程内缓存：按类目分桶，缓存最后一次成功抓取（monotonic 时间戳, 快照）。
 _CACHE: dict[str, tuple[float, tuple[NewsItem, ...]]] = {}
@@ -336,7 +341,7 @@ def format_news_brief(items: Sequence[NewsItem], category_label: str) -> str:
     内容写在里面）；无摘要的只上标题。
     """
     if not items:
-        return _EMPTY_DEGRADED_TEXT
+        return _empty_degraded_text()
     # 本地时区日期（astimezone 使 aware，规避 DTZ005）。
     date_text = datetime.now().astimezone().strftime("%Y-%m-%d")
     lines = [f"今日快报 · {date_text} · {category_label}"]

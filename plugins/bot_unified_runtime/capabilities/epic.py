@@ -6,9 +6,11 @@ Mica 信息卡图（复用解析卡的 render_card_png 管线），文本作 cap
 
 from __future__ import annotations
 
+import random
 import re
 from typing import Any
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -105,7 +107,10 @@ def build_epic_capability(
                 request_id=message.request_id,
                 capability_id="bot.epic",
                 kind="text",
-                body="免费游戏信息拉取失败，稍后再试。",
+                # 审查 Q-01：入 user_copy 数据源失败池（原「……稍后再试。」）。
+                body=random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(
+                    reason="免费游戏信息拉取失败"
+                ),
                 audit_tags=["epic", "fetch_failed"],
             )
         body = _format_games(games)

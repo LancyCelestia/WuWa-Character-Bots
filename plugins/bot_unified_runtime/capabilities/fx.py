@@ -16,6 +16,7 @@ matcher/RouteKind 注册属 base_router 与命令域（B 方向文件），接�
 from __future__ import annotations
 
 import hashlib
+import random
 import re
 from pathlib import Path
 from typing import Any
@@ -201,7 +202,10 @@ def build_fx_capability(
                 request_id=message.request_id,
                 capability_id="bot.fx",
                 kind="text",
-                body=user_copy.DATASOURCE_TEMP_FAILURE.format(reason="汇率数据暂时拉不到"),
+                # 审查 Q-01：数据源失败池轮换取句（原固定 U12 单句）。
+                body=random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(
+                    reason="汇率数据暂时拉不到"
+                ),
                 audit_tags=["capability:fx", "fx:fetch_failed"],
             )
 

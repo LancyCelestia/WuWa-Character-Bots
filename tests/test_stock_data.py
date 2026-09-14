@@ -13,6 +13,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts.finance import PricePoint, StockQuote
 from plugins.bot_unified_runtime.sources import stock_data
 from plugins.bot_unified_runtime.sources.stock_data import (
@@ -607,4 +608,8 @@ def test_format_stocks_brief_and_empty_degrades() -> None:
     text = format_stocks_brief([_nvda_quote()])
     assert text.splitlines()[0] == "美股科技巨头速览"
     assert "🟢 英伟达 218.29 -0.03%（-0.07）· 市值 5.26万亿美元" in text
-    assert format_stocks_brief([]) == "美股行情暂时拉不到，晚点再试试？"
+    # 审查 Q-01：入 user_copy 池轮换（原固定「美股行情暂时拉不到，晚点再试试？」）。
+    assert format_stocks_brief([]) in {
+        template.format(reason="美股行情暂时拉不到")
+        for template in user_copy.DATASOURCE_FAILURE_TEMPLATES
+    }

@@ -10,9 +10,11 @@
 
 from __future__ import annotations
 
+import random
 import re
 from typing import Any
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -63,7 +65,9 @@ _STOCK_HINT_RE = re.compile(r"(股|大盘|大盤|指数)")
 _URL_HINT_RE = re.compile(r"https?://", re.IGNORECASE)
 _MAX_TRIGGER_LEN = 32
 
-_EMPTY_DEGRADED_TEXT = "行情数据暂时拉不到，晚点再试试？"
+# 审查 Q-01：数据源失败文案统一入 user_copy 池（守岸人语气轮换），不再硬编码。
+def _empty_degraded_text() -> str:
+    return random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(reason="行情数据暂时拉不到")
 
 # 明确市场词 → 指数 secid（多个词命中取并集；空 = 全部指数）。
 # H-07（2026-09-14 同步裁定）：迪拜/阿联酋/澳门为「确实无源」市场
@@ -314,7 +318,10 @@ def build_commodities_capability(
                 request_id=message.request_id,
                 capability_id="bot.commodities",
                 kind="text",
-                body="大宗商品行情暂时拉不到，晚点再试试？",
+                # 审查 Q-01：入 user_copy 数据源失败池（原「……晚点再试试？」）。
+                body=random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(
+                    reason="大宗商品行情暂时拉不到"
+                ),
                 audit_tags=["capability:commodities", "commodities:fetch_failed"],
             )
         # 走势折线（10min TTL 在数据侧）；并行拉取，失败静默缺席。
@@ -507,7 +514,10 @@ def build_northbound_capability(
                 request_id=message.request_id,
                 capability_id="bot.northbound",
                 kind="text",
-                body="北向资金数据暂时拉不到，晚点再试试？",
+                # 审查 Q-01：入 user_copy 数据源失败池（原「……晚点再试试？」）。
+                body=random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(
+                    reason="北向资金数据暂时拉不到"
+                ),
                 audit_tags=["capability:northbound", "northbound:fetch_failed"],
             )
         main_rows: list[dict[str, Any]] = []
@@ -767,7 +777,7 @@ def build_market_capability(
                 request_id=message.request_id,
                 capability_id="bot.market",
                 kind="text",
-                body=_EMPTY_DEGRADED_TEXT,
+                body=_empty_degraded_text(),
                 audit_tags=["capability:market", "market:fetch_failed"],
             )
         wanted = market_filter_secids(message.plain_text)

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import random
 import re
 from typing import Any
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -72,7 +74,10 @@ def build_image_search_capability(config: Any | None = None):
                 request_id=message.request_id,
                 capability_id="bot.image_search",
                 kind="text",
-                body="反搜服务暂时连不上（SauceNAO 超时/拒绝），稍后再试一次。",
+                # 审查 Q-01：入 user_copy 数据源失败池（原「……稍后再试一次。」）。
+                body=random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(
+                    reason="反搜服务暂时连不上（SauceNAO 超时/拒绝）"
+                ),
                 audit_tags=["image_search", "service_error"],
             )
         if not hits:

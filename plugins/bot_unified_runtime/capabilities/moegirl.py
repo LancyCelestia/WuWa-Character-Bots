@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import random
 import re
 import time
 from collections.abc import Callable
@@ -421,7 +422,10 @@ def build_moegirl_capability(config: Any | None = None) -> Any:
                 request_id=message.request_id,
                 capability_id="bot.moegirl",
                 kind="text",
-                body=user_copy.DATASOURCE_TEMP_FAILURE.format(reason="萌娘百科暂时连不上"),
+                # 审查 Q-01：数据源失败池轮换取句（原固定 U12 单句）。
+                body=random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(
+                    reason="萌娘百科暂时连不上"
+                ),
                 audit_tags=["moegirl", "network_error"],
             )
         if not hits:

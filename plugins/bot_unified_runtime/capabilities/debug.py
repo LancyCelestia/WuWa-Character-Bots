@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import random
 from collections.abc import Callable
 from typing import Any
 
@@ -58,7 +59,11 @@ from plugins.bot_unified_runtime.security import (
 )
 from plugins.bot_unified_runtime.sender import ReceiptRepository, SendQueue
 
-_DENIED_BODY = user_copy.ADMIN_GATE_REQUIRED.format(action="看运行时排障记录")
+
+# 审查 Q-02：权限拒绝入 user_copy 池（守岸人语气轮换）；改为延迟取句，
+# 防 import 期把随机变体冻结成单值。
+def _denied_body() -> str:
+    return random.choice(user_copy.ADMIN_GATE_TEMPLATES).format(action="看运行时排障记录")
 
 
 def build_receipt_query_result(
@@ -73,7 +78,7 @@ def build_receipt_query_result(
         return _debug_result(
             capability_id="bot.receipt",
             title="发送回执",
-            body=_DENIED_BODY,
+            body=_denied_body(),
             request_id=request_id,
             audit_tags=["debug_query", "receipt_query", "debug_denied"],
         )
@@ -115,7 +120,7 @@ def build_audit_query_result(
         return _debug_result(
             capability_id="bot.audit",
             title="审计事件",
-            body=_DENIED_BODY,
+            body=_denied_body(),
             request_id=request_id,
             audit_tags=["debug_query", "audit_query", "debug_denied"],
         )
@@ -158,7 +163,7 @@ def build_recent_query_result(
         return _debug_result(
             capability_id="bot.recent",
             title="最近排障",
-            body=_DENIED_BODY,
+            body=_denied_body(),
             request_id=request_id,
             audit_tags=["debug_query", "recent_query", "debug_denied"],
         )
@@ -194,7 +199,7 @@ def build_queue_query_result(
         return _debug_result(
             capability_id="bot.queue",
             title="发送队列",
-            body=_DENIED_BODY,
+            body=_denied_body(),
             request_id=request_id,
             audit_tags=["debug_query", "queue_query", "debug_denied"],
         )
@@ -218,7 +223,7 @@ def build_roles_query_result(
         return _debug_result(
             capability_id="bot.roles",
             title="权限规则",
-            body=_DENIED_BODY,
+            body=_denied_body(),
             request_id=request_id,
             audit_tags=["debug_query", "roles_query", "debug_denied"],
         )
@@ -242,7 +247,7 @@ def build_persona_query_result(
         return _debug_result(
             capability_id="bot.persona",
             title="人格自检",
-            body=_DENIED_BODY,
+            body=_denied_body(),
             request_id=request_id,
             audit_tags=["debug_query", "persona_query", "debug_denied"],
         )
@@ -275,7 +280,7 @@ def build_runtime_control_result(
         return _debug_result(
             capability_id="bot.control",
             title="运行时控制",
-            body=_DENIED_BODY,
+            body=_denied_body(),
             request_id=request_id,
             audit_tags=["debug_query", "runtime_control", "debug_denied"],
         )
@@ -330,7 +335,7 @@ def build_history_clear_result(
         return _debug_result(
             capability_id="bot.history",
             title="最近对话历史",
-            body=_DENIED_BODY,
+            body=_denied_body(),
             request_id=request_id,
             audit_tags=["debug_query", "history_clear", "debug_denied"],
         )
@@ -387,7 +392,7 @@ def build_context_query_result(
         return _debug_result(
             capability_id="bot.context",
             title="上下文诊断",
-            body=_DENIED_BODY,
+            body=_denied_body(),
             request_id=request_id,
             audit_tags=["debug_query", "context_query", "debug_denied"],
         )
@@ -486,7 +491,7 @@ def build_config_query_result(
         return _debug_result(
             capability_id="bot.config",
             title="配置体检",
-            body=_DENIED_BODY,
+            body=_denied_body(),
             request_id=request_id,
             audit_tags=["debug_query", "config_query", "debug_denied"],
         )
@@ -518,7 +523,7 @@ def build_readiness_query_result(
         return _debug_result(
             capability_id="bot.readiness",
             title="统一就绪度",
-            body=_DENIED_BODY,
+            body=_denied_body(),
             request_id=request_id,
             audit_tags=["debug_query", "readiness_query", "debug_denied"],
         )
@@ -559,7 +564,7 @@ def build_dialogue_query_result(
         return _debug_result(
             capability_id="bot.dialogue",
             title="对话验收",
-            body=_DENIED_BODY,
+            body=_denied_body(),
             request_id=request_id,
             audit_tags=["debug_query", "dialogue_query", "debug_denied"],
         )
@@ -595,7 +600,7 @@ def build_llm_query_result(
         return _debug_result(
             capability_id="bot.llm",
             title="LLM 诊断",
-            body=_DENIED_BODY,
+            body=_denied_body(),
             request_id=request_id,
             audit_tags=["debug_query", "llm_query", "debug_denied"],
         )
@@ -893,7 +898,7 @@ def build_llm_setup_query_result(
         return _debug_result(
             capability_id="bot.setup.llm",
             title="LLM 接入检查",
-            body=_DENIED_BODY,
+            body=_denied_body(),
             request_id=request_id,
             audit_tags=["debug_query", "llm_setup_query", "debug_denied"],
         )

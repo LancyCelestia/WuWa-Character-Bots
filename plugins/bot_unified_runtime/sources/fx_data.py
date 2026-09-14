@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import random
 import re
 import time
 import urllib.parse
@@ -34,6 +35,8 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
 
+# 审查 Q-01：user_copy 为零依赖纯常量池，sources 跨层引用不构成装配环。
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts.finance import (
     CurrencyQuote,
     FinanceDataStatus,
@@ -292,7 +295,9 @@ _FX_EASTMONEY_SOURCE = "eastmoney"
 _FX_CACHE_TTL_DEFAULT_SECONDS = 60.0
 _FX_RATE_CACHE: tuple[float, tuple[FxRate, ...]] | None = None
 
-_EMPTY_FX_TEXT = "汇率数据暂时拉不到，晚点再试试？"
+# 审查 Q-01：数据源失败文案统一入 user_copy 池（守岸人语气轮换），不再硬编码。
+def _empty_fx_text() -> str:
+    return random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(reason="汇率数据暂时拉不到")
 
 
 def reset_fx_cache() -> None:
@@ -577,7 +582,7 @@ def format_fx_brief(rates: Sequence[FxRate]) -> str:
     """主要货币汇率速览（快查批量链路）；按 unit_base 折算展示；
     空结果给降级文案。provenance 快照链路见 ``format_fx_snapshot_brief``。"""
     if not rates:
-        return _EMPTY_FX_TEXT
+        return _empty_fx_text()
     lines = ["主要货币汇率速览"]
     for rate in rates:
         lines.append(format_fx_rate_line(rate, amount=rate.unit_base))

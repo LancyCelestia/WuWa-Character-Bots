@@ -27,6 +27,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.capabilities.market import market_filter_secids
 from plugins.bot_unified_runtime.contracts.finance import FinanceDataStatus as Status
 from plugins.bot_unified_runtime.sources import market_data, stock_data
@@ -141,7 +142,11 @@ class TestH01IndexUnavailable:
 
     def test_brief_empty_still_degrades_without_note(self) -> None:
         # 全失败走既有降级文案（没有行情就没有注记区，不空转）。
-        assert format_market_brief([]) == "行情数据暂时拉不到，晚点再试试？"
+        # 审查 Q-01：入 user_copy 池轮换（原固定「行情数据暂时拉不到，晚点再试试？」）。
+        assert format_market_brief([]) in {
+            template.format(reason="行情数据暂时拉不到")
+            for template in user_copy.DATASOURCE_FAILURE_TEMPLATES
+        }
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.capabilities.news import (
     build_news_capability,
     extract_news_category,
@@ -433,7 +434,11 @@ def test_format_news_brief_header_and_numbering() -> None:
 
 
 def test_format_news_brief_empty_degrades() -> None:
-    assert format_news_brief([], "综合") == "快报暂时拉不到，稍后再试试？"
+    # 审查 Q-01：入 user_copy 池轮换（原固定「快报暂时拉不到，稍后再试试？」）。
+    assert format_news_brief([], "综合") in {
+        template.format(reason="快报暂时拉不到")
+        for template in user_copy.DATASOURCE_FAILURE_TEMPLATES
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -580,7 +585,11 @@ def test_news_capability_empty_degrades(monkeypatch) -> None:
     )
     capability = build_news_capability(config=None)
     result = capability(_make_message("快报"), _make_decision())
-    assert result.body == "快报暂时拉不到，稍后再试试？"
+    # 审查 Q-01：入 user_copy 池轮换（原固定「快报暂时拉不到，稍后再试试？」）。
+    assert result.body in {
+        template.format(reason="快报暂时拉不到")
+        for template in user_copy.DATASOURCE_FAILURE_TEMPLATES
+    }
     assert result.title == ""
     assert "news:fetch_failed" in result.audit_tags
 

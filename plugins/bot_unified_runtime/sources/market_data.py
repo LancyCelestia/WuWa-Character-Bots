@@ -27,12 +27,16 @@ MOEX ISS 备选源（2026-09-12 实测本机直连可达，免 key，无需代�
 from __future__ import annotations
 
 import os
+import random
 import time
 import urllib.parse
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+# 审查 Q-01：user_copy 为零依赖纯常量池（模块纪律禁 import），sources 跨层
+# 引用不构成装配环（包 __init__ 仅 docstring），与 contracts 同为低层共享面。
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.sources.parsers.http_util import (
     ParseHttpError,
     http_get_json,
@@ -144,7 +148,9 @@ _MARK_FLAT = "⚪"
 _CACHE_TTL_DEFAULT_SECONDS = 60.0
 _CACHE: tuple[float, tuple[IndexQuote, ...]] | None = None
 
-_EMPTY_DEGRADED_TEXT = "行情数据暂时拉不到，晚点再试试？"
+# 审查 Q-01：数据源失败文案统一入 user_copy 池（守岸人语气轮换），不再硬编码。
+def _empty_degraded_text() -> str:
+    return random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(reason="行情数据暂时拉不到")
 
 
 # ==================== 东财空响应受控重试（G2，2026-09-13） ====================
@@ -393,7 +399,7 @@ def format_market_brief(quotes: Sequence[IndexQuote]) -> str:
     都有明确交代，绝不静默消失、更不造数。
     """
     if not quotes:
-        return _EMPTY_DEGRADED_TEXT
+        return _empty_degraded_text()
     grouped: dict[str, list[IndexQuote]] = {group: [] for group in _GROUP_ORDER}
     grouped.setdefault(_OTHER_GROUP, [])
     for quote in quotes:
@@ -712,7 +718,10 @@ def fetch_northbound_flows(
 def format_northbound_brief(flows: Sequence[NorthboundFlow]) -> str:
     """北向资金纯文本快报：只报仍在披露的口径（成交总额等），空给降级文案。"""
     if not flows:
-        return "北向资金数据暂时拉不到，晚点再试试？"
+        # 审查 Q-01：入 user_copy 数据源失败池（原「……晚点再试试？」）。
+        return random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(
+            reason="北向资金数据暂时拉不到"
+        )
     lines = ["北向资金速览（沪深股通）"]
     trade_dates = sorted({flow.trade_date for flow in flows})
     if trade_dates:

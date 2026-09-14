@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import random
 import re
 import time
 from collections.abc import Callable
@@ -422,7 +423,8 @@ def build_music_mode_result(
             capability_id="bot.music_mode",
             kind="text",
             title="点歌模式",
-            body=user_copy.ADMIN_GATE_REQUIRED.format(action="改点歌输出模式"),
+            # 审查 Q-02：权限拒绝入 user_copy 池（守岸人语气轮换）。
+            body=random.choice(user_copy.ADMIN_GATE_TEMPLATES).format(action="改点歌输出模式"),
             risk_level=RiskLevel.LOW,
             privacy_level=PrivacyLevel.PERSONAL,
             send_policy=SendPolicy.IMMEDIATE,

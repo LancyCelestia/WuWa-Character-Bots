@@ -28,12 +28,15 @@ push2his 会瞬断）；全失败返回空元组，卡上展示「暂无历史�
 
 from __future__ import annotations
 
+import random
 import time
 import urllib.parse
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+# 审查 Q-01：user_copy 为零依赖纯常量池，sources 跨层引用不构成装配环。
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.sources.market_data import (
     _MAX_PAYLOAD_BYTES,
     empty_backoff_sleep,
@@ -66,7 +69,9 @@ _SOURCE = "eastmoney"
 _CACHE_TTL_DEFAULT_SECONDS = 60.0
 _CACHE: tuple[float, tuple[CommodityQuote, ...]] | None = None
 
-_EMPTY_DEGRADED_TEXT = "大宗商品行情暂时拉不到，晚点再试试？"
+# 审查 Q-01：数据源失败文案统一入 user_copy 池（守岸人语气轮换），不再硬编码。
+def _empty_degraded_text() -> str:
+    return random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(reason="大宗商品行情暂时拉不到")
 
 # ==================== 走势（30 日收盘，push2his kline） ====================
 _KLINE_URL = (
@@ -340,7 +345,7 @@ def format_commodity_line(quote: CommodityQuote) -> str:
 def format_commodities_brief(quotes: Sequence[CommodityQuote]) -> str:
     """按组分组的纯文本商品快报；空结果给降级文案。"""
     if not quotes:
-        return _EMPTY_DEGRADED_TEXT
+        return _empty_degraded_text()
     grouped = group_commodity_quotes(quotes)
     lines = ["大宗商品速览"]
     for group in (*_GROUP_ORDER, "其他"):

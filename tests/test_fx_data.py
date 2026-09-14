@@ -13,6 +13,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts.finance import FxRate
 from plugins.bot_unified_runtime.sources import fx_data
 from plugins.bot_unified_runtime.sources.fx_data import (
@@ -433,4 +434,8 @@ def test_format_fx_brief_and_empty_degrades(monkeypatch) -> None:
     assert text.splitlines()[0] == "主要货币汇率速览"
     assert "1美元 ≈ 6.71 人民币" in text
     assert "100日元 ≈ 4.36 人民币" in text  # brief 按 unit_base 折算展示
-    assert format_fx_brief([]) == "汇率数据暂时拉不到，晚点再试试？"
+    # 审查 Q-01：入 user_copy 池轮换（原固定「汇率数据暂时拉不到，晚点再试试？」）。
+    assert format_fx_brief([]) in {
+        template.format(reason="汇率数据暂时拉不到")
+        for template in user_copy.DATASOURCE_FAILURE_TEMPLATES
+    }

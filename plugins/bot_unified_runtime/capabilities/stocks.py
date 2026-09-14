@@ -19,10 +19,12 @@ sections/rows 契约；趋势折线走 ``finance_chart.line_chart_svg``（多日
 from __future__ import annotations
 
 import hashlib
+import random
 import re
 from pathlib import Path
 from typing import Any
 
+from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -82,7 +84,9 @@ _NON_PUBLIC_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 
-_EMPTY_PANEL_TEXT = "美股行情暂时拉不到，晚点再试试？"
+# 审查 Q-01：数据源失败文案统一入 user_copy 池（守岸人语气轮换），不再硬编码。
+def _empty_panel_text() -> str:
+    return random.choice(user_copy.DATASOURCE_FAILURE_TEMPLATES).format(reason="美股行情暂时拉不到")
 
 
 # ==================== logo 本地缓存（金融 Phase-1，2026-09-13） ====================
@@ -530,7 +534,7 @@ def build_stocks_capability(config: Any | None = None, *, render_backend: Any | 
                 request_id=message.request_id,
                 capability_id="bot.stocks",
                 kind="text",
-                body=_EMPTY_PANEL_TEXT,
+                body=_empty_panel_text(),
                 audit_tags=["capability:stocks", "stocks:fetch_failed"],
             )
         wanted = resolve_stock_symbols(message.plain_text)
