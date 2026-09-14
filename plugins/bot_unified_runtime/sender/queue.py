@@ -382,9 +382,10 @@ class SQLiteSendRequestQueue:
                     next_retry_at,
                     last_public_message,
                     created_at,
-                    updated_at
+                    updated_at,
+                    session_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(dedupe_key) DO NOTHING
                 """,
                 (
@@ -397,6 +398,7 @@ class SQLiteSendRequestQueue:
                     "" if send_request.operational_issue is not None else "queued",
                     current_time.isoformat(),
                     current_time.isoformat(),
+                    send_request.session_id,
                 ),
             )
             if cursor.rowcount == 0:
@@ -442,23 +444,42 @@ class SQLiteSendRequestQueue:
         lease_expires_at = current_time + timedelta(seconds=safe_lease_seconds)
         self._ensure_schema_once()
         with self._transaction_immediate() as connection:
+            # 审查 A-20（worker 侧）per-session 串行化：同会话已有在途认领
+            # （state='processing' 且租约未过期）时，该会话的其余到期行不得
+            # 进入本批候选——投递顺序只能在认领口保证，投递侧锁无法约束
+            # 并发认领者。租约已过期的 processing 行视为死认领，不阻塞同
+            # 会话（崩溃恢复场景顺序本已不可保，但队列不得因此停摆）；
+            # rowid<>self 排除自身，让本行的租约过期重认领照常进行。
+            # session_id IS NULL 的存量行（迁移前/毒行）不参与互斥，行为与
+            # 既有语义一致。
             rows = connection.execute(
                 """
                 SELECT *
                 FROM send_requests
                 WHERE (
-                    state IN (?, ?)
-                    AND (next_retry_at IS NULL OR next_retry_at <= ?)
+                    (state IN (?, ?) AND (next_retry_at IS NULL OR next_retry_at <= ?))
+                    OR (
+                        state = ?
+                        AND lease_expires_at IS NOT NULL
+                        AND lease_expires_at <= ?
+                    )
+                    OR (
+                        state = ?
+                        AND next_retry_at IS NOT NULL
+                        AND next_retry_at <= ?
+                    )
                 )
-                OR (
-                    state = ?
-                    AND lease_expires_at IS NOT NULL
-                    AND lease_expires_at <= ?
-                )
-                OR (
-                    state = ?
-                    AND next_retry_at IS NOT NULL
-                    AND next_retry_at <= ?
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM send_requests AS in_flight
+                    WHERE in_flight.session_id IS NOT NULL
+                      AND in_flight.session_id = send_requests.session_id
+                      AND in_flight.state = ?
+                      AND in_flight.rowid <> send_requests.rowid
+                      AND (
+                          in_flight.lease_expires_at IS NULL
+                          OR in_flight.lease_expires_at > ?
+                      )
                 )
                 ORDER BY created_at ASC, rowid ASC
                 LIMIT ?
@@ -470,6 +491,8 @@ class SQLiteSendRequestQueue:
                     PROCESSING_STATE,
                     current_time.isoformat(),
                     PARTIAL_ROW_STATE,
+                    current_time.isoformat(),
+                    PROCESSING_STATE,
                     current_time.isoformat(),
                     safe_limit,
                 ),
@@ -500,6 +523,11 @@ class SQLiteSendRequestQueue:
                                 connection, row, retry_count, current_time
                             )
                             continue
+                # 审查 A-20：本批内的同会话多行照常一并认领——单 pass 内
+                # worker 按 created_at 顺序逐条投递，批内天然有序；拆散反而
+                # 会把错误报告「ack+卡片」这类同批逻辑对拆到两个 pass（30s 错
+                # 位）。跨请求会话内顺序由上方 NOT EXISTS 保证：并发认领者
+                # 在同会话已有在途（租约未过期）行时拿不到新候选。
                 connection.execute(
                     """
                     UPDATE send_requests
@@ -1363,8 +1391,25 @@ class SQLiteSendRequestQueue:
                     lease_expires_at TEXT,
                     last_public_message TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    session_id TEXT
                 )
+                """
+            )
+            # 审查 A-20（worker 侧）：per-session 串行化需要 SQL 层可比较的
+            # session_id 列（session_id 在 request_json 里，纯 SQL 无法用
+            # JSON1 之外的廉价手段取值；落列后 claim 的同会话互斥才可索引）。
+            self._ensure_column(
+                connection,
+                "send_requests",
+                "session_id",
+                "TEXT",
+            )
+            self._backfill_session_id(connection)
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_send_requests_session_state
+                ON send_requests (session_id, state)
                 """
             )
             self._ensure_column(
@@ -1440,6 +1485,26 @@ class SQLiteSendRequestQueue:
                 ON send_requests (state, lease_expires_at)
                 """
             )
+
+    def _backfill_session_id(self, connection: sqlite3.Connection) -> None:
+        """审查 A-20：存量行回填 session_id（迁移前行没有该列）。
+
+        从 request_json 提取（JSON1，SQLite>=3.38 默认内置）；request_json
+        损坏的行由 json_valid 过滤，绝不因回填扩大毒行影响面。SQLite 无
+        JSON1 时静默跳过——旧行退回既有行为（不参与同会话互斥），不致命。
+        """
+        try:
+            connection.execute(
+                """
+                UPDATE send_requests
+                SET session_id = json_extract(request_json, '$.session_id')
+                WHERE session_id IS NULL
+                  AND json_valid(request_json)
+                  AND json_extract(request_json, '$.session_id') IS NOT NULL
+                """
+            )
+        except sqlite3.Error:
+            return
 
     def _connect(self) -> sqlite3.Connection:
         # timeout：写锁被占时最多等 5s 再报 busy，避免默认语义下偶发立即失败。

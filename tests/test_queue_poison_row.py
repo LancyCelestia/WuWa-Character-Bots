@@ -36,7 +36,12 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _send_request(request_id: str, dedupe_key: str) -> SendRequest:
+def _send_request(
+    request_id: str,
+    dedupe_key: str,
+    *,
+    session_id: str = "private:user-1",
+) -> SendRequest:
     rendered = RenderedOutput(
         request_id=request_id,
         content_type="text",
@@ -46,7 +51,7 @@ def _send_request(request_id: str, dedupe_key: str) -> SendRequest:
     )
     return SendRequest(
         request_id=request_id,
-        session_id="private:user-1",
+        session_id=session_id,
         target_scope=SessionType.PRIVATE,
         target_id="user-1",
         capability_id="bot.chat",
@@ -176,14 +181,25 @@ def test_find_request_survives_poison_row(tmp_path) -> None:
 
 
 def test_poison_row_only_blocks_itself(tmp_path) -> None:
-    """多条坏行 + 多条健康行同批：坏行全终态化，健康行全数返回。"""
+    """多条坏行 + 多条健康行同批：坏行全终态化，健康行全数返回。
+
+    审查 A-20 起认领口按会话互斥（同会话每批至多认领最旧一行），本用例
+    的健康行改用互不相同的会话——毒行隔离意图不变：坏行不得拖累任何
+    健康行的正常认领。
+    """
     queue = _build_queue(tmp_path)
     _insert_poison_row(queue, dedupe_key="poison-1", request_id="req-p1")
     _insert_poison_row(
         queue, dedupe_key="poison-2", request_id="req-p2", request_json="[]"
     )
     for index in range(3):
-        queue.submit(_send_request(f"req-ok-{index}", f"healthy-{index}"))
+        queue.submit(
+            _send_request(
+                f"req-ok-{index}",
+                f"healthy-{index}",
+                session_id=f"private:user-{index}",
+            )
+        )
 
     future = _utc_now() + timedelta(seconds=queue.retry_base_seconds * 10)
     claimed = queue.claim_due(now=future, limit=20)

@@ -22,6 +22,7 @@ from plugins.bot_unified_runtime.contracts import (
     SessionType,
     new_debug_id,
 )
+from plugins.bot_unified_runtime.runtime.alerts import AdminAlertSuppression
 from plugins.bot_unified_runtime.sender.queue import (
     PartProgress,
     QueuedSendRequest,
@@ -30,6 +31,14 @@ from plugins.bot_unified_runtime.sender.receipts import ReceiptRepository
 
 SEND_QUEUE_WORKER_TRANSPORT = "send_queue_worker"
 SendTransport = Callable[[SendRequest], Awaitable[DeliveryReceipt]]
+# 审查 A-20（worker 侧）busy 可见：在途上限（单 pass 认领批量）满且确认
+# 仍有到期余量时，写审计 WARN + operational 告警。告警只进管理员通道
+# （生产经 operational_notifier → runtime/alerts），绝不向原会话补发任何
+# 提示——群聊刷屏是产品红线。抑制复用 runtime/alerts.AdminAlertSuppression
+# 的键风格（stage+kind，300s 窗口），持续饱和期不重复骚扰。
+_INFLIGHT_SATURATED_KIND = "send_queue_inflight_saturated"
+_INFLIGHT_SATURATED_EVENT = "queue_worker_inflight_saturated"
+_BUSY_ALERT_SUPPRESSION = AdminAlertSuppression(window_seconds=300.0)
 # §9.3 UNKNOWN 确认协议：确认器注入点（生产默认 None → 无法确认的 UNKNOWN
 # part 永不盲发，停在 PARTIAL 待人工/平台确认）。语义：
 #   True  = 平台确认已送达（如 get_msg 命中）→ part 标 SENT，跳过；
@@ -187,6 +196,9 @@ class SendQueueWorkerResult(BaseModel):
     parts_unknown: int = 0
     partial_deferred: int = 0
     partials_resumed: int = 0
+    # 审查 A-20 busy 可见：本次 pass 内在途上限饱和告警的实发次数
+    # （300s 抑制窗口内重复饱和不再计数，防告警刷屏）。
+    inflight_saturated_alerts: int = 0
     operational_issues: tuple[OperationalIssue, ...] = ()
 
 
@@ -202,7 +214,8 @@ async def drain_send_queue_once(
     unknown_part_confirmer: UnknownPartConfirmer | None = None,
 ) -> SendQueueWorkerResult:
     current_time = now or _utc_now()
-    entries = _claim_or_list_due(send_queue, now=current_time, limit=limit)
+    safe_limit = max(1, int(limit))
+    entries = _claim_or_list_due(send_queue, now=current_time, limit=safe_limit)
     counters = {
         "checked": len(entries),
         "delivered": 0,
@@ -214,8 +227,20 @@ async def drain_send_queue_once(
         "parts_unknown": 0,
         "partial_deferred": 0,
         "partials_resumed": 0,
+        "inflight_saturated_alerts": 0,
     }
     operational_issues: list[OperationalIssue] = []
+
+    # 审查 A-20 busy 可见：认领批满员（在途上限打满）且确认队列仍有到期
+    # 余量 ⇒ 静默滞留不再无告知。审计 WARN + operational 告警各发一次
+    # （300s 抑制），不向会话补发提示（群聊刷屏红线）。判定用只读
+    # list_due 探测，零副作用；无该视图的队列（内存版）不做判定。
+    if len(entries) >= safe_limit and _has_more_due(send_queue, now=current_time):
+        counters["inflight_saturated_alerts"] = await _emit_inflight_saturated_alert(
+            entries[-1].send_request,
+            audit_logger=audit_logger,
+            operational_notifier=operational_notifier,
+        )
 
     for entry in entries:
         part_outcome = await _try_deliver_by_parts(
@@ -384,6 +409,81 @@ def _claim_or_list_due(
     if callable(claim_due):
         return claim_due(now=now, limit=limit)
     return send_queue.list_due(now=now, limit=limit)
+
+
+def _has_more_due(send_queue: DrainableSendQueue, *, now: datetime) -> bool:
+    """审查 A-20 饱和判定：认领批满员后确认队列仍有到期余量。
+
+    只读探测（limit=1），零副作用；无 list_due 视图的队列（如内存版）
+    或探测失败时按「未饱和」处理，绝不因判定问题阻断投递主链路。
+    """
+    list_due = getattr(send_queue, "list_due", None)
+    if not callable(list_due):
+        return False
+    try:
+        return bool(list_due(now=now, limit=1))
+    except Exception:  # noqa: BLE001 - 判定是旁路，失败按未饱和处理。
+        return False
+
+
+async def _emit_inflight_saturated_alert(
+    carrier_request: SendRequest,
+    *,
+    audit_logger: AuditRepository | None,
+    operational_notifier: Callable[[DeliveryReceipt], object] | None,
+) -> int:
+    """在途上限饱和告警：审计 WARN + operational 告警（300s 抑制）。
+
+    抑制键 = (stage, kind)，复用 runtime/alerts 的抑制键风格；被抑制的
+    重复饱和零落笔（审计与告警都不刷）。审计载体用本批最新认领条目
+    （饱和边界行），private_debug 只含 kind/抑制计数，无正文无路径。
+    operational 告警走 notifier → 管理员通道；本函数绝不构造任何发往
+    原会话的请求（群聊刷屏红线）。
+    """
+    allowed, suppressed_count = _BUSY_ALERT_SUPPRESSION.allow(
+        ("queue", _INFLIGHT_SATURATED_KIND)
+    )
+    if not allowed:
+        return 0
+    issue = OperationalIssue(
+        stage="queue",
+        kind=_INFLIGHT_SATURATED_KIND,
+        retryable=True,
+        safe_summary=_INFLIGHT_SATURATED_KIND,
+    )
+    if audit_logger is not None:
+        try:
+            audit_logger.append(
+                AuditRecord(
+                    request_id=carrier_request.request_id,
+                    session_id=carrier_request.session_id,
+                    capability_id=carrier_request.capability_id,
+                    stage="sender",
+                    event=_INFLIGHT_SATURATED_EVENT,
+                    severity=RiskLevel.MEDIUM,
+                    public_message="",
+                    private_debug=(
+                        f"kind={_INFLIGHT_SATURATED_KIND} "
+                        f"claim_limit_reached=true "
+                        f"suppressed_before={suppressed_count}"
+                    ),
+                )
+            )
+        except Exception:  # 审计失败不阻断投递主链路（debug 留痕）。
+            logging.getLogger(__name__).debug(
+                "inflight-saturated audit append failed", exc_info=True
+            )
+    receipt = DeliveryReceipt(
+        request_id=carrier_request.request_id,
+        state=ReceiptState.QUEUED,
+        transport=SEND_QUEUE_WORKER_TRANSPORT,
+        public_message="",
+        operational_issue=issue,
+    )
+    await _notify_operational_issue_safely(
+        operational_notifier, carrier_request, receipt
+    )
+    return 1
 
 
 async def _call_transport_safely(
