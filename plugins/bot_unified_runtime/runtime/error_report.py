@@ -537,6 +537,15 @@ def _os_label() -> str:
         return "unknown"
 
 
+_ADAPTER_DISTS_CACHE: str | None = None
+
+
+def _adapter_dists_cache_clear() -> None:
+    """测试与环境钩子：强制下一次调用重新扫描发行版（生产进程内无需调用）。"""
+    global _ADAPTER_DISTS_CACHE
+    _ADAPTER_DISTS_CACHE = None
+
+
 def _adapter_dists_label() -> str:
     """E-03：已安装 nonebot-adapter* 发行版全景「名字 版本」（顿号合并）。
 
@@ -544,7 +553,15 @@ def _adapter_dists_label() -> str:
     协议实现）；单个损坏发行版跳过，枚举整体失败或一个都没有 → unknown
     （fail-open：清单缺席绝不让诊断卡构建抛错）。键名白名单脱敏机制不涉及
     此段（发行名/版本号无密钥形态）。
+
+    进程级缓存（2026-09-15 ack 阻塞根因修复）：``metadata.distributions()``
+    全盘扫描在本机实测 ~0.9s/次（326 个发行版 METADATA 全量 email 解析），
+    出现在同步回执路径会把「毫秒级回执」契约打穿；环境盘点进程内不变
+    （装/卸适配器本就要求重启），unknown 也一并缓存。
     """
+    global _ADAPTER_DISTS_CACHE
+    if _ADAPTER_DISTS_CACHE is not None:
+        return _ADAPTER_DISTS_CACHE
     entries: list[str] = []
     try:
         for dist in metadata.distributions():
@@ -556,8 +573,10 @@ def _adapter_dists_label() -> str:
             if name.lower().startswith("nonebot-adapter"):
                 entries.append(f"{name} {version or 'unknown'}")
     except Exception:  # noqa: BLE001 - 枚举本身失败整体降级 unknown。
-        return "unknown"
-    return "、".join(sorted(entries)) or "unknown"
+        _ADAPTER_DISTS_CACHE = "unknown"
+        return _ADAPTER_DISTS_CACHE
+    _ADAPTER_DISTS_CACHE = "、".join(sorted(entries)) or "unknown"
+    return _ADAPTER_DISTS_CACHE
 
 
 def format_uptime(now_monotonic: float | None = None) -> str:
@@ -646,8 +665,16 @@ def build_error_report(
     *,
     stack_frames: int = 8,
     config_getter: Callable[[str], object] | None = None,
+    include_env: bool = True,
 ) -> dict[str, Any]:
-    """汇总诊断卡 payload（全字段脱敏；任何子块失败降级空块，不抛异常）。"""
+    """汇总诊断卡 payload（全字段脱敏；任何子块失败降级空块，不抛异常）。
+
+    ``include_env=False`` 为轻量模式（2026-09-15 ack 阻塞根因修复）：跳过
+    version_pairs 环境盘点（适配器全景/构建/git subprocess），供同步回执
+    路径（文本回执先行）使用——回执只需要 human_text/exc_type/触发回显，
+    毫秒级契约不能被秒级环境扫描阻塞；全量报告由渲染线程重建（两段式
+    设计的本意）。轻量与全量在这些共用字段上字节级一致。
+    """
     getter = config_getter or _default_config_getter
     exc_type = type(exc).__name__ or "Exception"
     exc_message = redact_local_secrets(str(exc)[:300])
@@ -680,22 +707,26 @@ def build_error_report(
             {"label": "路由", "value": _route_kind_label(capability_id)},
         ],
         "config_pairs": _config_snapshot(capability_id, getter),
-        "version_pairs": [
-            {"label": "NoneBot", "value": _dist_version(("nonebot2", "nonebot"))},
-            {
-                "label": "OneBot 适配器",
-                "value": _dist_version(
-                    ("nonebot-adapter-onebot", "nonebot_adapter_onebot")
-                ),
-            },
-            # E-03：补运行时事实三件——解释器版本/操作系统/适配器实现全景。
-            {"label": "Python", "value": _python_version()},
-            {"label": "系统", "value": _os_label()},
-            {"label": "适配器", "value": _adapter_dists_label()},
-            {"label": "插件包", "value": _plugin_version()},
-            {"label": "构建", "value": _git_build_info()},
-            {"label": "运行时长", "value": format_uptime()},
-        ],
+        "version_pairs": (
+            [
+                {"label": "NoneBot", "value": _dist_version(("nonebot2", "nonebot"))},
+                {
+                    "label": "OneBot 适配器",
+                    "value": _dist_version(
+                        ("nonebot-adapter-onebot", "nonebot_adapter_onebot")
+                    ),
+                },
+                # E-03：补运行时事实三件——解释器版本/操作系统/适配器实现全景。
+                {"label": "Python", "value": _python_version()},
+                {"label": "系统", "value": _os_label()},
+                {"label": "适配器", "value": _adapter_dists_label()},
+                {"label": "插件包", "value": _plugin_version()},
+                {"label": "构建", "value": _git_build_info()},
+                {"label": "运行时长", "value": format_uptime()},
+            ]
+            if include_env
+            else []
+        ),
         "env_pairs": [
             {"label": "平台", "value": message.platform or "unknown"},
             {"label": "协议", "value": _protocol_label(message.adapter)},
@@ -1029,12 +1060,24 @@ def maybe_submit_error_card(
         if not resolved.enabled:
             return
         session_gate = gate or _module_gate(resolved.cooldown_seconds)
+        # 轻量报告（毫秒级）：同步路径只回执，不碰秒级环境盘点——全量报告
+        # 由渲染线程经 report_builder 重建（两段式契约：回执零阻塞）。
         report = build_error_report(
             message,
             capability_id,
             exc,
             stack_frames=resolved.stack_frames,
+            include_env=False,
         )
+
+        def _full_report_builder() -> dict[str, Any]:
+            return build_error_report(
+                message,
+                capability_id,
+                exc,
+                stack_frames=resolved.stack_frames,
+            )
+
         exc_type = str(report.get("exc_type") or "Exception")
         base_dedupe = (
             f"error_report:{capability_id}:{message.session_id}:"
@@ -1087,6 +1130,7 @@ def maybe_submit_error_card(
             backend=backend,
             card_dir=card_dir,
             pool=render_pool,
+            report_builder=_full_report_builder,
         )
     except Exception:
         logger.warning("error report card submission failed", exc_info=True)
@@ -1102,6 +1146,7 @@ def _schedule_card_render(
     backend: Any,
     card_dir: str | None,
     pool: ThreadPoolExecutor | None,
+    report_builder: Callable[[], dict[str, Any]] | None = None,
 ) -> None:
     """把渲染+补发排入专用单线程通道；排程失败只 log（文本回执已先行）。"""
     try:
@@ -1115,6 +1160,7 @@ def _schedule_card_render(
             base_tags=base_tags,
             backend=backend,
             card_dir=card_dir,
+            report_builder=report_builder,
         )
     except Exception:
         logger.warning("error card render scheduling failed", exc_info=True)
@@ -1135,12 +1181,25 @@ def _render_and_submit_card(
     base_tags: list[str],
     backend: Any,
     card_dir: str | None,
+    report_builder: Callable[[], dict[str, Any]] | None = None,
 ) -> None:
     """渲染线程任务：成功→图片卡补发；失败→全量诊断文本补发；异常只 log。
 
     A-plus：补发请求带 ``deliver_after=now+3s``（覆盖队列内联宽限），投递
     等待从 60–92s 压到 ≈3–33s；两分支（卡/降级文本）同延迟同语义。
+    2026-09-15 ack 阻塞根因修复：入参 ``report`` 是同步路径的轻量报告；
+    环境盘点（version_pairs）在渲染线程经 ``report_builder`` 重建全量，
+    秒级扫描不再占用回执线程；builder 缺席或失败回退轻量报告（fail-open，
+    卡面少环境段但照常出卡）。
     """
+    if report_builder is not None:
+        try:
+            report = report_builder()
+        except Exception:
+            logger.warning(
+                "error card full report build failed; using light report",
+                exc_info=True,
+            )
     try:
         png_path = render_error_card_png(
             report, backend=backend, card_dir=card_dir

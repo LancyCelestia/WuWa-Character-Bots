@@ -676,7 +676,12 @@ def test_adapter_dist_label_fail_open(monkeypatch: pytest.MonkeyPatch) -> None:
         raise RuntimeError("scan failed")
 
     monkeypatch.setattr(error_report.metadata, "distributions", boom)
-    assert error_report._adapter_dists_label() == "unknown"
+    error_report._adapter_dists_cache_clear()
+    try:
+        assert error_report._adapter_dists_label() == "unknown"
+    finally:
+        # 缓存是进程级契约：测完复位，避免把 unknown 留给同进程后续用例。
+        error_report._adapter_dists_cache_clear()
 
 
 def test_protocol_and_connection_use_explicit_mapping() -> None:
