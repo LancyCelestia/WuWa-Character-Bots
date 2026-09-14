@@ -392,6 +392,27 @@ def test_build_text_fallback_contains_stack_and_ids() -> None:
     assert "supersecretvalue" not in fallback
 
 
+def test_help_text_wording_honest_card_not_screenshot() -> None:
+    """E-11：指引句如实口径——卡图为自动生成诊断卡（非控制台截图），完整栈
+    指向 runtime 事件日志；今日已入库字段族（版本/系统/配置快照/IDs）在句中
+    点名自洽。纯文本兜底用文字版口径（明示「没带图」），不复用卡片「这张图」。
+    """
+    report = _full_report()
+    help_text = str(report["help_text"])
+    # 旧指引句「把这张卡截图发给创造者」废除；如实写明「不是控制台截图」。
+    assert "把这张卡截图" not in help_text
+    assert "不是控制台截图" in help_text
+    assert "自动生成的诊断卡" in help_text
+    assert "runtime 事件日志" in help_text
+    for token in ("版本", "系统", "配置快照", "IDs"):
+        assert token in help_text
+    fallback = build_text_fallback(report)
+    assert "截图" not in fallback
+    assert "这张图" not in fallback  # 无图场景不复用卡片口径。
+    assert "没带图" in fallback
+    assert "runtime 事件日志" in fallback
+
+
 def test_submit_falls_back_to_text_when_render_fails() -> None:
     inline_pool = _InlinePool()
     pipeline = _PipelineStub()

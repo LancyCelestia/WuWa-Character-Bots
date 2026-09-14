@@ -88,7 +88,21 @@ _COOLDOWN_LINE = (
     "又有一条指令出了岔子（{exc}），刚才那张卡已经发过啦——细节还在上面，先看那张。"
 )
 
-_HELP_TEXT = "把这张卡截图发给创造者即可，信息已齐备且脱敏；控制台日志另有完整栈。"
+# E-11（2026-09-14）：求助指引如实口径——卡上的图是自动生成的诊断卡（非控制台
+# 截图；playwright 不可用时甚至无图退纯文本），完整栈不在卡上，管理员查
+# runtime 事件日志。同时点名今日已入库字段族（版本/系统/配置快照/IDs），
+# 守岸人口吻。仅用于卡片页脚；纯文本形态用 _FALLBACK_HELP_TEXT（无图场景
+# 「这张图」会悬空，两处分开表述）。
+_HELP_TEXT = (
+    "这张图是我自动生成的诊断卡（不是控制台截图），版本、系统、配置快照和"
+    " IDs 都在卡上且已脱敏，转给创造者就好；完整栈在 runtime 事件日志里，"
+    "管理员可以查到。"
+)
+_FALLBACK_HELP_TEXT = (
+    "这条是自动生成的文字版诊断（本次没带图），版本、系统、配置快照和 IDs "
+    "都在上面、同样脱敏，转给创造者就好；完整栈在 runtime 事件日志里，"
+    "管理员可以查到。"
+)
 
 # 文本回执尾注：告知诊断卡随后补发（两段式，2026-09-14 P0 修复）。
 _ACK_FOLLOWUP_HINT = "详细诊断卡随后补发。"
@@ -688,13 +702,18 @@ def build_error_report(
         ],
         "id_pairs": id_pairs,
         "help_text": _HELP_TEXT,
+        "fallback_help_text": _FALLBACK_HELP_TEXT,
         "bot_name": "守岸人",
         "bot_avatar_url": "",
     }
 
 
 def build_text_fallback(report: dict[str, Any]) -> str:
-    """纯文本兜底（渲染失败/冷却降级共用文本口径）：栈摘录 + IDs。"""
+    """纯文本兜底（渲染失败/冷却降级共用文本口径）：栈摘录 + IDs。
+
+    E-11：结尾口径说明用 `_FALLBACK_HELP_TEXT`（文字版如实说明「本次没带图」），
+    不复用卡片 `_HELP_TEXT` 的「这张图」口径——纯文本场景无图可指。
+    """
     lines = [
         "[运行异常] {exc_type}: {exc_message}".format(
             exc_type=report.get("exc_type") or "Exception",
@@ -721,7 +740,7 @@ def build_text_fallback(report: dict[str, Any]) -> str:
                     if isinstance(row, dict)
                 )
             )
-    lines.append(str(report.get("help_text") or _HELP_TEXT))
+    lines.append(str(report.get("fallback_help_text") or _FALLBACK_HELP_TEXT))
     return "\n".join(line for line in lines if line)
 
 
