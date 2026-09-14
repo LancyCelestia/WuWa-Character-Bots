@@ -526,6 +526,7 @@ class Config(BaseModel):
     # 抽签回复（确定性哈希，不是随机数）；默认关闭，点名/命令不受影响。
     bot_group_chat_auto_reply_enabled: bool = False
     bot_group_chat_auto_reply_probability: float = 0.004  # 2026-09-12 实弹反馈调低：5%/条 会频繁主动接话并自我触发限流
+    bot_group_welcome_enabled: bool = True  # 审查 B-05：入群欢迎语（退群/管理变更只记事件不发言）
     bot_group_proactive_max_replies_per_hour: int = 6
     bot_group_proactive_cooldown_seconds: int = 90
     # N4：主动搭话亲和门——群聊抽签主动接话只对好感档 ≥ 亲近（close）的用户

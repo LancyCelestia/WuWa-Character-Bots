@@ -990,6 +990,18 @@ async def _transcode_record_segments(bot: Any, raw_segments: list[dict[str, Any]
             data["transcoded_path"] = transcoded
 
 
+def _group_welcome_text(nickname: str = "") -> str:
+    """入群欢迎语（审查 B-05）：守岸人语气一行；昵称拿不到退通用称呼。
+
+    不点破 QQ 号、不写「新成员」机器腔；括号动作用中文括号（identity.md 口径）。
+    """
+    who = f"{nickname}，" if nickname.strip() else ""
+    return (
+        "（回头，朝门口轻轻点头）"
+        f"{who}欢迎来到这片海岸。海风正好，不必拘束，随意坐吧。"
+    )
+
+
 def _log_runtime_event(
     runtime_event_log: Any,
     level: str,
@@ -4136,6 +4148,79 @@ def _register_nonebot_handlers() -> None:
                 _REACTION_BUFFER.record(reaction_event)
         except Exception:  # noqa: BLE001, S110 - 回应识别失败不影响主链路。
             pass
+
+    async def _is_group_increase_notice(event: Event) -> bool:
+        return str(getattr(event, "notice_type", "")) == "group_increase"
+
+    async def _is_group_decrease_notice(event: Event) -> bool:
+        return str(getattr(event, "notice_type", "")) == "group_decrease"
+
+    async def _is_group_admin_notice(event: Event) -> bool:
+        return str(getattr(event, "notice_type", "")) == "group_admin"
+
+    group_increase_notice = on_notice(rule=_is_group_increase_notice, priority=6, block=False)
+    group_decrease_notice = on_notice(rule=_is_group_decrease_notice, priority=6, block=False)
+    group_admin_notice = on_notice(rule=_is_group_admin_notice, priority=6, block=False)
+
+    @group_increase_notice.handle()
+    async def _handle_group_increase(bot: Bot, event: Event) -> None:
+        # 审查 B-05：入群欢迎（协议 group_increase 此前无人消费）。欢迎独立
+        # 开关；昵称富集失败退通用称呼。退群/管理变更只记事件不发言——公开
+        # 点名离开者与权限变动在社交上都是减分项。
+        if not getattr(config, "bot_group_welcome_enabled", True):
+            return
+        group_id = str(getattr(event, "group_id", "") or "").strip()
+        if not group_id:
+            return
+        user_id = str(getattr(event, "user_id", "") or "").strip()
+        nickname = ""
+        if user_id:
+            try:
+                member_info = await asyncio.wait_for(
+                    bot.call_api(
+                        "get_group_member_info",
+                        group_id=int(group_id),
+                        user_id=int(user_id),
+                    ),
+                    timeout=5.0,
+                )
+                nickname = str(
+                    getattr(member_info, "card", "")
+                    or getattr(member_info, "nickname", "")
+                    or ""
+                ).strip()
+            except Exception:  # noqa: BLE001 - 昵称富集失败退通用称呼。
+                nickname = ""
+        try:
+            await bot.call_api(
+                "send_group_msg",
+                group_id=int(group_id),
+                message=[{"type": "text", "data": {"text": _group_welcome_text(nickname)}}],
+            )
+            _log_runtime_event(runtime_event_log, "INFO", "group_welcome_sent", group_id=group_id)
+        except Exception:  # noqa: BLE001, S110 - 欢迎失败不影响主链路。
+            pass
+
+    @group_decrease_notice.handle()
+    async def _handle_group_decrease(bot: Bot, event: Event) -> None:
+        # 只记事件：离开是个人决定，公开送别/点名都是打扰。
+        _log_runtime_event(
+            runtime_event_log,
+            "INFO",
+            "group_member_left",
+            group_id=str(getattr(event, "group_id", "") or ""),
+            user_id=str(getattr(event, "user_id", "") or ""),
+        )
+
+    @group_admin_notice.handle()
+    async def _handle_group_admin_change(bot: Bot, event: Event) -> None:
+        _log_runtime_event(
+            runtime_event_log,
+            "INFO",
+            "group_admin_changed",
+            group_id=str(getattr(event, "group_id", "") or ""),
+            user_id=str(getattr(event, "user_id", "") or ""),
+        )
 
     @file_notice.handle()
     async def _handle_admin_file_notice(bot: Bot, event: Event) -> None:
