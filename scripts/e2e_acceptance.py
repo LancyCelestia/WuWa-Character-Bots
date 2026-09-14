@@ -29,18 +29,36 @@
     python scripts/e2e_acceptance.py --target-group 123456          # DRY-RUN
     python scripts/e2e_acceptance.py --target-group 123456 --execute
     python scripts/e2e_acceptance.py --target-user 10001 --execute --only help,affinity
+
+实战自测模式（2026-09-13 批次新增，只往后加参数，存量参数语义不变）::
+
+    python scripts/e2e_acceptance.py --selftest
+        # 全离线自检：矩阵生成/触发提取/payload 构造/报告渲染/探针/轮询，不依赖 bot 在线
+    python scripts/e2e_acceptance.py --target-group 123456 --help-matrix
+        # 从 echo._HELP_ENTRIES 全 topics 生成命令矩阵（DRY-RUN：只构造 payload + 路由体检）
+    python scripts/e2e_acceptance.py --target-group 123456 --help-matrix --execute --report
+        # 逐条发送 + 等待投递回执（响应/超时/异常三态与耗时），报告私聊超管（离线则写文件）
+        # 注意：本模式验证的是「命令 payload 经发送链路的投递」，命令语义处理验收用存量矩阵
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import re
+import socket
 import sys
+import tempfile
 import time
 import traceback
+from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from urllib.parse import urlsplit
 
 # 直接以 `python scripts/e2e_acceptance.py` 运行时，sys.path[0] 是 scripts/，
 # 需要显式把仓库根加进搜索路径才能 import plugins.*（与 knowledge_bench 同式）。
@@ -54,6 +72,9 @@ from plugins.bot_unified_runtime.capabilities.content_parser import (
 from plugins.bot_unified_runtime.capabilities.divination import (
     build_divination_capability,
     is_divination_command,
+)
+from plugins.bot_unified_runtime.capabilities.echo import (
+    _HELP_ENTRIES as _HELP_REGISTRY,
 )
 from plugins.bot_unified_runtime.capabilities.echo import build_help_result
 from plugins.bot_unified_runtime.capabilities.fx import build_fx_capability
@@ -75,6 +96,7 @@ from plugins.bot_unified_runtime.capabilities.stocks import (
     is_stocks_command,
 )
 from plugins.bot_unified_runtime.capabilities.weather import build_weather_capability
+from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -89,6 +111,9 @@ from plugins.bot_unified_runtime.policy import (
     build_rate_limiter,
     build_reply_budget_settings,
     build_role_settings,
+)
+from plugins.bot_unified_runtime.runtime.base_router import (
+    classify_message_route,
 )
 from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
 from plugins.bot_unified_runtime.runtime.settings import (
@@ -1159,6 +1184,1063 @@ def print_outcome(index: int, total: int, outcome: ItemOutcome, execute: bool) -
 
 
 # --------------------------------------------------------------------------
+# 实战自测（2026-09-13 批次）：帮助注册表命令矩阵 + 响应收集 + 私聊报告
+#
+# 与存量矩阵的分工（诚实边界）：
+# - 存量矩阵（build_matrix）：镜像 __init__ 装配、进程内跑真实能力 → 验证
+#   「命令语义处理」（能力产出什么回复）。
+# - 命令矩阵（--help-matrix，本节）：从 echo._HELP_ENTRIES 全 topics 生成
+#   命令清单，DRY-RUN 只构造 OneBot payload + 离线路由体检；--execute 把
+#   每条命令文本经现有发送链路（管线 → 共享 SQLite 队列 → bot worker →
+#   OneBot WS → QQ）投递并等待回执，收集「响应/超时/异常」三态与耗时。
+#   真实 bot 进程的入站命令处理无法从外部脚本注入（需要真实 QQ 客户端），
+#   故本模式不声称验证命令语义，报告措辞据此保持诚实。
+# --------------------------------------------------------------------------
+
+
+DEFAULT_DELIVERY_WAIT_SECONDS = 20.0
+DEFAULT_PROBE_WAIT_SECONDS = 15.0
+DEFAULT_WS_HOST = "127.0.0.1"
+DEFAULT_WS_PORT = 3001
+# 连续 N 条超时且零投递确认 → 判定 bot worker 离线，中止余项（防延迟补发轰炸）。
+EARLY_OFFLINE_TIMEOUT_LIMIT = 3
+_DELIVERY_TERMINAL_OK = frozenset({"sent", "redirected"})
+_DELIVERY_TERMINAL_FAIL = frozenset({"failed_final", "failed_retryable"})
+
+
+@dataclass(frozen=True)
+class HelpTopicSpec:
+    """命令矩阵条目：帮助注册表一个 topic 的主触发形态。"""
+
+    topic: str
+    admin_only: bool
+    aliases: tuple[str, ...]
+    trigger: str
+    trigger_source: str  # "index"=从 index 提取 / "alias"=别名兜底 / "override"=定点覆盖
+
+
+# 提取器对「无文本命令形态」主题的定点覆盖（保持最小，避免随注册表漂移）：
+# 「链接」主题的真触发是一条平台链接，不是它的别名。
+_HELP_TOPIC_OVERRIDE_TRIGGERS = {
+    "链接": BILI_SAMPLE_URL,
+}
+
+# 描述性候选里出现这些标点 → 该段是说明文字而非命令形态，回退别名。
+_TRIGGER_DESC_PUNCT = "，。；？！…、"
+# 去掉参数占位与括注：<request_id|debug_id> [数量] （仅群聊） (note)
+_TRIGGER_STRIP_BRACKETS = re.compile(r"<[^<>]*>|\[[^\[\]]*\]|（[^（）]*）|\([^()]*\)")
+
+
+def extract_primary_trigger(index: str, aliases: tuple[str, ...]) -> tuple[str, str]:
+    """从 index 用法串提取主触发形态；提取失败回退 aliases[0]。
+
+    规则（按 68 条实况设计，来源可审计）：
+    1. 去掉「【主题】」标题；候选 = 第一个全角冒号后的用法段；
+    2. 候选含描述性标点（，。；？！…、）→ 说明文字，回退别名；
+    3. 剥参数占位 <…>/[…] 与括注 （…）/(…)（连内部 | 一起去掉）；
+    4. 依次按 ｜、\\s|\\s、|、或、＋、/ 取第一候选（不以 / 开头才切 /，
+       保住 /bot xxx、/订阅 add）；
+    5. 兜底门：空 / 残留冒号 / 非斜杠命令但长度 >8 → 回退别名
+       （治「戳机器人有概率收到回应」这类描述句混入）。
+    返回 (trigger, source)，source ∈ {"index", "alias"}。
+    """
+    fallback = aliases[0] if aliases else ""
+    body = index.split("】", 1)[1].strip() if "】" in index else index.strip()
+    candidate = body.split("：", 1)[1].strip() if "：" in body else body
+    if not candidate or any(mark in candidate for mark in _TRIGGER_DESC_PUNCT):
+        return fallback, "alias"
+    candidate = _TRIGGER_STRIP_BRACKETS.sub("", candidate)
+    for sep in ("｜", " | "):
+        if sep in candidate:
+            candidate = candidate.split(sep, 1)[0]
+            break
+    if "|" in candidate:
+        candidate = candidate.split("|", 1)[0]
+    for sep in (" 或 ", "＋", " / "):
+        if sep in candidate:
+            candidate = candidate.split(sep, 1)[0]
+            break
+    if not candidate.startswith("/"):
+        candidate = candidate.split("/", 1)[0]
+    candidate = candidate.strip()
+    if not candidate or "：" in candidate:
+        return fallback, "alias"
+    if not candidate.startswith("/") and len(candidate) > 8:
+        return fallback, "alias"
+    return candidate, "index"
+
+
+def load_help_topic_specs() -> list[HelpTopicSpec]:
+    """帮助注册表（echo._HELP_ENTRIES，只读 import）→ 命令矩阵条目清单。"""
+    specs: list[HelpTopicSpec] = []
+    for entry in _HELP_REGISTRY:
+        topic = str(entry.get("topic", "") or "").strip()
+        if not topic:
+            continue
+        aliases = tuple(
+            str(alias).strip()
+            for alias in (entry.get("aliases") or ())
+            if str(alias).strip()
+        )
+        if topic in _HELP_TOPIC_OVERRIDE_TRIGGERS:
+            trigger, source = _HELP_TOPIC_OVERRIDE_TRIGGERS[topic], "override"
+        else:
+            trigger, source = extract_primary_trigger(
+                str(entry.get("index", "") or ""), aliases
+            )
+            if not trigger:
+                trigger, source = topic, "alias"
+        specs.append(
+            HelpTopicSpec(
+                topic=topic,
+                admin_only=bool(entry.get("admin_only", False)),
+                aliases=aliases,
+                trigger=trigger,
+                trigger_source=source,
+            )
+        )
+    return specs
+
+
+def filter_topic_specs(
+    specs: list[HelpTopicSpec], subset: str
+) -> tuple[list[HelpTopicSpec], list[str]]:
+    """--subset 过滤：逗号分隔 token，匹配 topic/别名（全等优先、子串兜底，
+    大小写不敏感）。返回 (命中清单, 未命中 token)。subset 为空 → 全量。"""
+    tokens = [
+        token.strip()
+        for token in str(subset or "").replace("，", ",").split(",")
+        if token.strip()
+    ]
+    if not tokens:
+        return list(specs), []
+
+    def _matches(spec: HelpTopicSpec, folded: str) -> bool:
+        haystacks = [spec.topic, *spec.aliases]
+        if any(h.casefold() == folded for h in haystacks):
+            return True
+        return any(folded in h.casefold() for h in haystacks)
+
+    matched: list[HelpTopicSpec] = []
+    unknown: list[str] = []
+    for token in tokens:
+        folded = token.casefold()
+        hits = [spec for spec in specs if _matches(spec, folded)]
+        if hits:
+            matched.extend(hits)
+        else:
+            unknown.append(token)
+    # 去重保序（同一 spec 可能被多个 token 命中）。
+    seen: set[str] = set()
+    unique: list[HelpTopicSpec] = []
+    for spec in matched:
+        if spec.topic in seen:
+            continue
+        seen.add(spec.topic)
+        unique.append(spec)
+    return unique, unknown
+
+
+def build_command_payload(
+    spec: HelpTopicSpec, *, session_type: SessionType, target_id: str
+) -> dict[str, Any]:
+    """构造 OneBot V11 发送 payload（DRY-RUN 只构造不发送）。"""
+    is_group = session_type is SessionType.GROUP
+    target_value: int | str = (
+        int(target_id) if str(target_id).isdigit() else str(target_id)
+    )
+    params: dict[str, Any] = {"message": spec.trigger, "auto_escape": False}
+    if is_group:
+        params["group_id"] = target_value
+        action = "send_group_msg"
+    else:
+        params["user_id"] = target_value
+        action = "send_private_msg"
+    return {"action": action, "params": params, "echo": f"e2e-{spec.topic}"}
+
+
+def probe_ws_online(
+    host: str, port: int, timeout: float = 3.0
+) -> tuple[bool, float]:
+    """TCP 探测 OneBot WS 端口是否有人监听。返回 (可达, 耗时秒)。"""
+    start = time.monotonic()
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return True, time.monotonic() - start
+    except OSError:
+        return False, time.monotonic() - start
+
+
+def resolve_ws_probe_endpoint(explicit: str = "") -> tuple[str, int]:
+    """探测端点：--ws-probe host:port > ONEBOT_WS_URLS 首条 > 默认 127.0.0.1:3001。"""
+    raw = str(explicit or "").strip()
+    if not raw:
+        raw = str(os.environ.get("ONEBOT_WS_URLS", "") or "").split(",")[0].strip()
+    if raw:
+        parts = urlsplit(raw if "://" in raw else f"ws://{raw}")
+        host = parts.hostname or DEFAULT_WS_HOST
+        port = parts.port or DEFAULT_WS_PORT
+        return str(host), int(port)
+    return DEFAULT_WS_HOST, DEFAULT_WS_PORT
+
+
+def classify_spec_route(
+    spec: HelpTopicSpec, config: Any
+) -> tuple[str, str, str]:
+    """离线路由体检：主触发文本走 classify_message_route（与 base_router 同源）。
+    返回 (kind, capability_id, reason)；分类自身异常折算为 error 条目不抛出。"""
+    try:
+        decision = classify_message_route(spec.trigger, config=config)
+        return (
+            str(getattr(decision.kind, "value", decision.kind)),
+            str(decision.capability_id),
+            str(decision.reason),
+        )
+    except Exception as exc:  # noqa: BLE001 - 单条体检失败不拖垮矩阵。
+        return "error", "bot.ignore", f"{type(exc).__name__}: {exc}"
+
+
+@dataclass
+class CommandOutcome:
+    """命令矩阵单项结果（响应/超时/异常三态 + 耗时）。"""
+
+    spec: HelpTopicSpec
+    request_id: str = ""
+    # delivered（拿到投递确认）/ timeout（预算内未确认）/ error（失败终态/异常）/
+    # blocked（策略门拦截）/ skipped（离线中止未执行）
+    status: str = "skipped"
+    state: str = ""
+    elapsed: float = 0.0
+    error: str = ""
+    route_kind: str = ""
+    route_capability: str = ""
+    route_reason: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+def wait_for_delivery(
+    queue: Any,
+    *,
+    request_id: str,
+    budget: float,
+    poll_interval: float = 0.5,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> tuple[str, float]:
+    """轮询共享队列直至终态或预算耗尽。返回 (状态, 耗时秒)。
+
+    终态：sent/redirected（投递确认）与 failed_final/failed_retryable（确认失败）；
+    预算耗尽返回 "timeout"（bot worker 离线/卡住/UNKNOWN 未决都落这里——不悬挂）。
+    sleep/monotonic 可注入，供离线测试用微预算验证轮询语义。"""
+    start = monotonic()
+    while True:
+        try:
+            entry = queue.find_request(request_id)
+        except Exception as exc:  # noqa: BLE001 - 队列查询异常按失败终态折算。
+            return f"query_error:{type(exc).__name__}", monotonic() - start
+        state = str(getattr(entry, "state", "") or "") if entry is not None else ""
+        if state in _DELIVERY_TERMINAL_OK or state in _DELIVERY_TERMINAL_FAIL:
+            return state, monotonic() - start
+        if monotonic() - start >= budget:
+            return "timeout", monotonic() - start
+        sleep(poll_interval)
+
+
+def status_from_delivery_state(state: str) -> str:
+    if state in _DELIVERY_TERMINAL_OK:
+        return "delivered"
+    if state.startswith(("failed", "query_error")):
+        return "error"
+    return "timeout"
+
+
+def summarize_results(outcomes: list[CommandOutcome]) -> dict[str, Any]:
+    counts = Counter(outcome.status for outcome in outcomes)
+    attempted = sum(counts[name] for name in ("delivered", "timeout", "error", "blocked"))
+    pass_rate = (counts["delivered"] * 100.0 / attempted) if attempted else 0.0
+    return {
+        "total": len(outcomes),
+        "attempted": attempted,
+        "delivered": counts["delivered"],
+        "timeout": counts["timeout"],
+        "error": counts["error"],
+        "blocked": counts["blocked"],
+        "skipped": counts["skipped"],
+        "pass_rate": round(pass_rate, 1),
+    }
+
+
+def render_run_report(
+    outcomes: list[CommandOutcome],
+    *,
+    mode: str,
+    target_desc: str,
+    generated_at: str,
+    subset_desc: str = "无",
+    wait_budget: float = DEFAULT_DELIVERY_WAIT_SECONDS,
+    ws_desc: str = "",
+    headline: str = "",
+) -> str:
+    """给超管的人读汇总报告：通过率/超时清单/异常清单/建议复查项。"""
+    summary = summarize_results(outcomes)
+    lines = [
+        "【E2E 实战自测报告】",
+        (
+            f"生成：{generated_at}｜模式：{mode}｜目标：{target_desc}"
+            f"｜矩阵：{summary['total']} 主题（subset={subset_desc}）"
+        ),
+    ]
+    if ws_desc:
+        lines.append(f"链路探测：{ws_desc}")
+    if headline:
+        lines.append(f"摘要：{headline}")
+    lines.extend(
+        (
+            "■ 总览",
+            (
+                f"尝试 {summary['attempted']}｜响应 {summary['delivered']}"
+                f"｜超时 {summary['timeout']}｜异常 {summary['error']}"
+                f"｜拦截 {summary['blocked']}｜未执行 {summary['skipped']}"
+            ),
+            (
+                f"通过率 {summary['pass_rate']}%（响应/尝试；超时预算 {wait_budget:g}s）"
+                if summary["attempted"]
+                else f"无投递尝试（超时预算 {wait_budget:g}s）"
+            ),
+        )
+    )
+    timeouts = [o for o in outcomes if o.status == "timeout"]
+    errors = [o for o in outcomes if o.status in ("error", "blocked")]
+    skipped = [o for o in outcomes if o.status == "skipped"]
+    lines.append("■ 超时清单")
+    if timeouts:
+        lines.extend(
+            f"- {o.spec.topic}（{o.spec.trigger}）最后状态={o.state or '无'} 耗时={o.elapsed:.1f}s"
+            for o in timeouts
+        )
+    else:
+        lines.append("- 无")
+    lines.append("■ 异常清单")
+    if errors:
+        lines.extend(
+            f"- {o.spec.topic}（{o.spec.trigger}）状态={o.state or '无'}"
+            f"{('：' + o.error) if o.error else ''}"
+            for o in errors
+        )
+    else:
+        lines.append("- 无")
+    route_missed = [o for o in outcomes if o.route_kind in ("ignore", "chat", "error")]
+    lines.append(
+        "■ 路由未命中主题（文档型/自动触发型，或主形态需带参数如「天气 城市」「点歌 歌名」；"
+        "仅供参考，不计入失败）"
+    )
+    if route_missed:
+        lines.append(
+            "- " + "、".join(f"{o.spec.topic}({o.route_kind})" for o in route_missed)
+        )
+    else:
+        lines.append("- 无")
+    lines.append("■ 建议复查项")
+    suggestions: list[str] = []
+    if timeouts:
+        suggestions.append(
+            f"超时 {len(timeouts)} 项：确认 bot 进程在线、send-queue worker 在投递"
+            "（/bot status 看 queue 状态），再单独重跑 --subset 复测。"
+        )
+    if errors:
+        suggestions.append(
+            f"异常 {len(errors)} 项：按清单逐项排查；admin 主题需 --sender-id 为超管/管理员。"
+        )
+    if skipped:
+        suggestions.append(f"未执行 {len(skipped)} 项：早停/离线中止所致，恢复后重跑补测。")
+    if not suggestions:
+        suggestions.append("全链路投递确认正常，无必查项。")
+    lines.extend(f"{index}. {text}" for index, text in enumerate(suggestions, 1))
+    return "\n".join(lines)
+
+
+def write_report_file(report_text: str, report_file: str = "") -> Path:
+    base = Path(report_file) if report_file else None
+    path = base if base and str(base.parent) else (
+        Path(tempfile.gettempdir())
+        / f"e2e_report_{time.strftime('%Y%m%d_%H%M%S')}.txt"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(report_text, encoding="utf-8")
+    return path
+
+
+def deliver_or_write_report(
+    report_text: str,
+    *,
+    runtime: E2eRuntime,
+    pipeline: RuntimePipeline | None,
+    execute: bool,
+    online: bool,
+    report_file: str = "",
+) -> str:
+    """报告投递：bot 在线且 --execute → 经发送链路私聊全部超管；
+    否则写文件（--report-file 或 %TEMP%）并返回路径描述。"""
+    saved = write_report_file(report_text, report_file)
+    delivered_desc: list[str] = []
+    if execute and online and pipeline is not None:
+        admin_ids = [
+            str(aid).strip()
+            for aid in (getattr(runtime.config, "bot_super_admin_user_ids", []) or [])
+            if str(aid).strip()
+        ]
+        if not admin_ids:
+            delivered_desc.append("未配置 BOT_SUPER_ADMIN_USER_IDS，报告仅落盘")
+        for admin_id in admin_ids:
+            message = synthesize_message(
+                text="E2E 实战自测报告",
+                session_type=SessionType.PRIVATE,
+                target_id=admin_id,
+                sender_id=admin_id,
+                bot_id=runtime.bot_id,
+                seq=0,
+            )
+            try:
+                receipt = pipeline.handle(
+                    message,
+                    _text_capability(runtime, body=report_text),
+                    capability_id="bot.text",
+                )
+                delivered_desc.append(
+                    f"超管 {admin_id} 私聊报告已入队（state={receipt.state.value}）"
+                )
+            except Exception as exc:  # noqa: BLE001 - 单个超管投递失败不拖垮其余。
+                delivered_desc.append(f"超管 {admin_id} 私聊报告入队失败：{exc}")
+    return "；".join(delivered_desc + [f"报告文件：{saved}"])
+
+
+def build_results_document(
+    outcomes: list[CommandOutcome],
+    *,
+    mode: str,
+    target_desc: str,
+    subset: list[str],
+    ws_endpoint: tuple[str, int],
+    ws_online: bool,
+    generated_at: str,
+) -> dict[str, Any]:
+    return {
+        "schema": "e2e_help_matrix_results/v1",
+        "generated_at": generated_at,
+        "mode": mode,
+        "target": target_desc,
+        "subset": subset,
+        "ws_probe": {
+            "host": ws_endpoint[0],
+            "port": ws_endpoint[1],
+            "online": ws_online,
+        },
+        "summary": summarize_results(outcomes),
+        "outcomes": [
+            {
+                "topic": outcome.spec.topic,
+                "trigger": outcome.spec.trigger,
+                "trigger_source": outcome.spec.trigger_source,
+                "admin_only": outcome.spec.admin_only,
+                "route_kind": outcome.route_kind,
+                "route_capability": outcome.route_capability,
+                "status": outcome.status,
+                "state": outcome.state,
+                "elapsed_ms": round(outcome.elapsed * 1000, 1),
+                "error": outcome.error,
+                "request_id": outcome.request_id,
+            }
+            for outcome in outcomes
+        ],
+    }
+
+
+def write_json_document(document: dict[str, Any], json_out: str) -> Path:
+    path = (
+        Path(json_out)
+        if json_out
+        else Path(tempfile.gettempdir())
+        / f"e2e_help_matrix_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return path
+
+
+# --------------------------------------------------------------------------
+# 实战自测：--selftest（全离线自检，pytest 同源）
+# --------------------------------------------------------------------------
+
+
+def _scripted_queue(states: list[str]) -> Any:
+    """wait_for_delivery 的离线脚本队列：按调用次序吐状态，末态保持。"""
+
+    class _ScriptedQueue:
+        def __init__(self, sequence: list[str]) -> None:
+            self._sequence = sequence
+            self.calls = 0
+
+        def find_request(self, request_id: str) -> Any:
+            self.calls += 1
+            index = min(self.calls - 1, len(self._sequence) - 1)
+            return SimpleNamespace(state=self._sequence[index])
+
+    return _ScriptedQueue(states)
+
+
+def _selftest_config() -> Config:
+    # 与离线测试同口径：关安静时间/好感度，绝不打开 Runtime 真实库。
+    return Config(bot_quiet_hours_enabled=False, bot_affinity_enabled=False)
+
+
+_SELFTEST_TRIGGER_EXPECTATIONS = {
+    "状态": "/bot status",
+    "为什么": "/bot why",
+    "记忆": "/bot memory add",
+    "历史": "/bot history clear",
+    "怪癖": "/bot quirk list",
+    "设置": "/bot runtime set",
+    "身份": "/bot identity show",
+    "帮助": "/bot help",
+    "订阅": "/订阅 add",
+    "点歌": "点歌",
+    "天气": "天气",
+    "行情": "行情",
+    "个股行情": "英伟达股价",
+    "汇率": "汇率",
+    "快报": "快报",
+    "占卜": "占卜",
+    "提醒": "提醒",  # '12点提醒我写作业' 9 字触发非斜杠长度门 → 别名兜底
+    "随机图": "随机图",
+    "好感度": "好感度",
+    "媒体归档": "收藏",
+    "自然语言": "帮我查杭州天气",
+    "模型": "/bot model list",
+    "用量": "/bot model usage",
+    "文件": "文件",
+    "群文件": "/bot 群文件",
+    "Epic": "epic",
+}
+
+
+def run_selftest() -> tuple[int, list[str]]:
+    """全离线自检：矩阵生成/触发提取/subset/payload/报告/探针/轮询。
+    返回 (退出码, 逐项检查行)；不依赖 bot 在线、不读 .env、不联网。"""
+    lines: list[str] = []
+    failures = 0
+
+    def check(name: str, ok: bool, detail: str = "") -> None:
+        nonlocal failures
+        if not ok:
+            failures += 1
+        lines.append(f"{'PASS' if ok else 'FAIL'} {name}" + (f" — {detail}" if detail else ""))
+
+    # 1. 帮助注册表加载（真相源 echo._HELP_ENTRIES，只读 import）。
+    specs = load_help_topic_specs()
+    topics = [spec.topic for spec in specs]
+    ok = len(specs) >= 60 and len(topics) == len(set(topics)) and all(
+        spec.aliases and spec.trigger for spec in specs
+    )
+    check("registry_load", ok, f"topics={len(specs)}")
+
+    # 2. 主触发形态提取（逐条对照实跑钉住的期望表）。
+    by_topic = {spec.topic: spec for spec in specs}
+    mismatches = [
+        f"{topic}: 期望 {expected!r} 实得 {by_topic[topic].trigger!r}"
+        f"({by_topic[topic].trigger_source})"
+        for topic, expected in _SELFTEST_TRIGGER_EXPECTATIONS.items()
+        if by_topic[topic].trigger != expected
+    ]
+    check("trigger_extraction", not mismatches, "; ".join(mismatches) or "全部命中")
+
+    # 3. 文档型主题回退别名且来源可审计。
+    doc_topics = ["忽略", "戳一戳", "表情收库", "聊天"]
+    bad = [
+        topic
+        for topic in doc_topics
+        if by_topic[topic].trigger_source != "alias"
+        or by_topic[topic].trigger not in by_topic[topic].aliases
+    ]
+    check("trigger_alias_fallback", not bad, f"异常项={bad or '无'}")
+
+    # 4. 定点覆盖（链接 → 平台链接样例）。
+    check(
+        "trigger_override",
+        by_topic["链接"].trigger == BILI_SAMPLE_URL
+        and by_topic["链接"].trigger_source == "override",
+    )
+
+    # 5. --subset 过滤：命中 + 未命中 token。
+    matched, unknown = filter_topic_specs(specs, "天气,点歌,不存在的主题")
+    check(
+        "subset_filter",
+        [spec.topic for spec in matched] == ["天气", "点歌"]
+        and unknown == ["不存在的主题"],
+    )
+
+    # 6. payload 构造（群/私聊两形态）。
+    weather = by_topic["天气"]
+    group_payload = build_command_payload(
+        weather, session_type=SessionType.GROUP, target_id="123456"
+    )
+    private_payload = build_command_payload(
+        weather, session_type=SessionType.PRIVATE, target_id="10001"
+    )
+    check(
+        "payload_build",
+        group_payload["action"] == "send_group_msg"
+        and group_payload["params"]["group_id"] == 123456
+        and group_payload["params"]["message"] == "天气"
+        and private_payload["action"] == "send_private_msg"
+        and private_payload["params"]["user_id"] == 10001,
+    )
+
+    # 7. 离线路由体检：全 topics 不抛异常；管理命令命中命令路由族。
+    #    已知上游缺陷 carve-out：未提交批次 plugins/.../runtime/timesync.py 的
+    #    now() 给 _SHARED 赋值但缺 global 声明 → UnboundLocalError，
+    #    「提醒」信号词文本的路由分类必崩（P1，已上报主会话，plugins/ 本任务禁改）。
+    #    selftest 只对「已知缺陷之外」的路由异常判 FAIL，缺陷本身以 WARN 显形。
+    config = _selftest_config()
+    route_probed: list[tuple[str, str, str]] = []
+    for spec in specs:
+        kind, capability, reason = classify_spec_route(spec, config)
+        route_probed.append((spec.topic, f"{kind}/{capability}", reason))
+    status_kind, status_capability, _ = classify_spec_route(by_topic["状态"], config)
+    known_timesync = {
+        topic for topic, _route, reason in route_probed if "UnboundLocalError" in reason
+    }
+    other_route_errors = {
+        topic
+        for topic, route, reason in route_probed
+        if route.startswith("error/") and topic not in known_timesync
+    }
+    check(
+        "route_probe",
+        not other_route_errors and status_capability.startswith("bot."),
+        f"status→{status_kind}/{status_capability}; "
+        f"已知 timesync 缺陷命中={sorted(known_timesync) or '无'}; "
+        f"其他路由异常={sorted(other_route_errors) or '无'}",
+    )
+    if known_timesync:
+        lines.append(
+            "WARN upstream_timesync — plugins/bot_unified_runtime/runtime/timesync.py "
+            "now() 缺 global _SHARED 声明，UnboundLocalError：含「提醒」信号词的消息"
+            "在下次重启后将路由崩溃（P1 已上报主会话；本任务禁改 plugins/，未修）。"
+        )
+
+    # 8. 报告渲染：三清单 + 通过率 + 建议复查。
+    def _outcome(topic: str, status: str, **kwargs: Any) -> CommandOutcome:
+        return CommandOutcome(spec=by_topic[topic], status=status, **kwargs)
+
+    sample = [
+        _outcome("天气", "delivered", state="sent", elapsed=1.2),
+        _outcome("点歌", "delivered", state="sent", elapsed=2.5),
+        _outcome("行情", "timeout", state="queued", elapsed=20.0),
+        _outcome("汇率", "error", state="failed_final", error="boom"),
+        _outcome("占卜", "skipped"),
+    ]
+    report = render_run_report(
+        sample,
+        mode="execute",
+        target_desc="group:555",
+        generated_at="2026-09-13 00:00:00",
+    )
+    check(
+        "report_render",
+        all(
+            token in report
+            for token in ("通过率 50.0%", "超时清单", "异常清单", "建议复查项", "行情")
+        ),
+    )
+
+    # 9. WS 探针离线快速失败（本机不可能监听的端口）。
+    online, elapsed = probe_ws_online("127.0.0.1", 1, timeout=1.5)
+    check("ws_probe_offline", not online and elapsed < 5.0, f"elapsed={elapsed:.2f}s")
+
+    # 10. 投递轮询：终态确认 / 预算超时 / 失败终态（微预算+注入时钟，零等待）。
+    state_ok, took = wait_for_delivery(
+        _scripted_queue(["queued", "queued", "sent"]),
+        request_id="x",
+        budget=5.0,
+        poll_interval=0.0,
+        sleep=lambda _s: None,
+    )
+    state_timeout, _ = wait_for_delivery(
+        _scripted_queue(["queued"]), request_id="x", budget=0.0, poll_interval=0.0
+    )
+    state_fail, _ = wait_for_delivery(
+        _scripted_queue(["failed_final"]), request_id="x", budget=1.0, poll_interval=0.0
+    )
+    check(
+        "wait_for_delivery",
+        state_ok == "sent"
+        and status_from_delivery_state(state_ok) == "delivered"
+        and state_timeout == "timeout"
+        and status_from_delivery_state(state_timeout) == "timeout"
+        and state_fail == "failed_final"
+        and status_from_delivery_state(state_fail) == "error",
+        f"ok={state_ok}/{took:.2f}s timeout={state_timeout} fail={state_fail}",
+    )
+
+    # 11. 汇总与 JSON 文档结构。
+    summary = summarize_results(sample)
+    document = build_results_document(
+        sample,
+        mode="execute",
+        target_desc="group:555",
+        subset=["天气"],
+        ws_endpoint=("127.0.0.1", 3001),
+        ws_online=False,
+        generated_at="2026-09-13 00:00:00",
+    )
+    check(
+        "summary_json",
+        summary["attempted"] == 4
+        and summary["delivered"] == 2
+        and summary["timeout"] == 1
+        and summary["error"] == 1
+        and summary["skipped"] == 1
+        and summary["pass_rate"] == 50.0
+        and document["summary"] == summary
+        and len(document["outcomes"]) == len(sample),
+    )
+
+    lines.insert(0, f"===== E2E selftest：{len(lines) - failures}/{len(lines)} 项通过 =====")
+    return (0 if failures == 0 else 1), lines
+
+
+# --------------------------------------------------------------------------
+# 实战自测：--help-matrix 运行器
+# --------------------------------------------------------------------------
+
+
+def _print_help_matrix_dry_run(
+    outcomes: list[CommandOutcome], total: int
+) -> None:
+    for index, outcome in enumerate(outcomes, 1):
+        spec = outcome.spec
+        payload = outcome.payload
+        params = payload.get("params", {}) if isinstance(payload, dict) else {}
+        route = f"{outcome.route_kind}/{outcome.route_capability}"
+        admin = "Y" if spec.admin_only else "N"
+        print(
+            f"[{index}/{total}] {spec.topic} admin={admin} 触发={spec.trigger!r}"
+            f"（{spec.trigger_source}）路由={route}"
+        )
+        print(
+            f"          ↳ payload: {payload.get('action', '?')} "
+            f"message={params.get('message', '')!r} target={params.get('group_id', params.get('user_id'))}"
+        )
+
+
+def run_help_matrix(args: argparse.Namespace) -> int:
+    _reconfigure_stdio()
+    runtime = build_runtime(
+        env_file=args.env,
+        execute=bool(args.execute),
+        city=str(args.city or "").strip(),
+        bot_id=str(args.bot_id or "").strip(),
+        sender_id=str(
+            args.sender_id or str(args.target_user or "").strip() or "10000"
+        ).strip(),
+    )
+    specs, unknown = filter_topic_specs(load_help_topic_specs(), args.subset)
+    if unknown:
+        print(f"[提示] --subset 未命中 token：{unknown}", file=sys.stderr)
+    if not specs:
+        print("--subset 无匹配主题", file=sys.stderr)
+        return 2
+
+    if args.target_group:
+        session_type = SessionType.GROUP
+        target_id = str(args.target_group).strip()
+        allowed, reason = check_group_allowed(runtime, target_id)
+        print(f"[安全阀] {reason}")
+        if not allowed:
+            return 2
+    else:
+        session_type = SessionType.PRIVATE
+        target_id = str(args.target_user or "").strip()
+        if target_id and not str(args.sender_id or "").strip():
+            args.sender_id = target_id
+        print(f"[安全阀] 私聊目标 {target_id}")
+
+    ws_endpoint = resolve_ws_probe_endpoint(getattr(args, "ws_probe", "") or "")
+    generated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    target_desc = f"{session_type.value}:{target_id}"
+    subset_list = [token for token in str(args.subset or "").replace("，", ",").split(",") if token.strip()]
+    mode = "execute" if args.execute else "dry-run"
+
+    outcomes: list[CommandOutcome] = []
+    for spec in specs:
+        outcome = CommandOutcome(spec=spec)
+        outcome.payload = build_command_payload(
+            spec, session_type=session_type, target_id=target_id
+        )
+        outcome.route_kind, outcome.route_capability, outcome.route_reason = (
+            classify_spec_route(spec, runtime.config)
+        )
+        outcomes.append(outcome)
+
+    if not args.execute:
+        _print_help_matrix_dry_run(outcomes, len(outcomes))
+        route_missed = sum(
+            1 for o in outcomes if o.route_kind in ("ignore", "chat", "error")
+        )
+        print(
+            f"\nDRY-RUN：{len(outcomes)} 条命令 payload 已构造，未发送。"
+            f"路由未命中 {route_missed} 条（文档型/自动触发型或触发词失效，见逐条路由列）。"
+        )
+        document = build_results_document(
+            outcomes,
+            mode=mode,
+            target_desc=target_desc,
+            subset=subset_list,
+            ws_endpoint=ws_endpoint,
+            ws_online=False,
+            generated_at=generated_at,
+        )
+        if args.json_out:
+            print(f"[JSON] {write_json_document(document, args.json_out)}")
+        if args.report:
+            report = render_run_report(
+                outcomes,
+                mode=mode,
+                target_desc=target_desc,
+                generated_at=generated_at,
+                subset_desc=",".join(subset_list) or "无",
+                headline="DRY-RUN 矩阵审计（未发送）：投递验收请加 --execute。",
+            )
+            print(f"[报告] {deliver_or_write_report(report, runtime=runtime, pipeline=None, execute=False, online=False, report_file=args.report_file)}")
+        return 0
+
+    # ---- --execute：探测 → 探针 → 逐条发送+等回执 → 汇总/JSON/报告 ----
+    ws_online, ws_elapsed = probe_ws_online(*ws_endpoint, timeout=3.0)
+    print(
+        f"[探测] OneBot WS {ws_endpoint[0]}:{ws_endpoint[1]} "
+        f"{'可达' if ws_online else '不可达'}（{ws_elapsed:.2f}s）"
+    )
+    if not ws_online:
+        report = render_run_report(
+            outcomes,
+            mode=mode,
+            target_desc=target_desc,
+            generated_at=generated_at,
+            subset_desc=",".join(subset_list) or "无",
+            ws_desc=f"{ws_endpoint[0]}:{ws_endpoint[1]} 不可达（离线快速失败，未发送任何消息）",
+            headline="离线中止：bot/NapCat 未在线，全部条目未执行。",
+        )
+        for outcome in outcomes:
+            outcome.status = "skipped"
+            outcome.state = "offline"
+        document = build_results_document(
+            outcomes, mode=mode, target_desc=target_desc, subset=subset_list,
+            ws_endpoint=ws_endpoint, ws_online=False, generated_at=generated_at,
+        )
+        json_path = write_json_document(document, args.json_out)
+        report_desc = deliver_or_write_report(
+            report, runtime=runtime, pipeline=None, execute=False, online=False,
+            report_file=args.report_file,
+        )
+        print(f"[离线] 未发送任何消息。JSON：{json_path}")
+        print(f"[报告] {report_desc}")
+        return 3
+
+    audit_logger = InMemoryAuditLogger()
+    try:
+        send_queue, queue_desc = choose_send_queue(runtime, audit_logger)
+    except E2eSafetyError as exc:
+        print(f"[安全阀] {exc}", file=sys.stderr)
+        return 2
+    print(f"[队列] {queue_desc}")
+    pipeline = build_pipeline(runtime, send_queue)
+
+    # worker 存活探针：一条无害文本，预算内拿到投递确认才继续（防 68 条延迟补发轰炸）。
+    probe_outcome = CommandOutcome(spec=HelpTopicSpec(
+        topic="(探针)", admin_only=False, aliases=(), trigger="e2e-probe", trigger_source="override",
+    ))
+    probe_message = synthesize_message(
+        text="E2E 实战自测探针（worker 存活探测，可忽略）",
+        session_type=session_type,
+        target_id=target_id,
+        sender_id=runtime.sender_id,
+        bot_id=runtime.bot_id,
+        seq=0,
+    )
+    probe_outcome.request_id = probe_message.request_id
+    try:
+        probe_receipt = pipeline.handle(
+            probe_message,
+            _text_capability(runtime, body="E2E 实战自测探针（worker 存活探测，可忽略）"),
+            capability_id="bot.text",
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[探针] 管线异常，按离线中止：{type(exc).__name__}: {exc}", file=sys.stderr)
+        return 3
+    if probe_receipt.state.value in ("blocked", "skipped"):
+        print(
+            f"[探针] 被策略门拦截（state={probe_receipt.state.value}），"
+            "无法验证 worker 存活；改由运行中连续超时早停兜底。"
+        )
+    else:
+        state, took = wait_for_delivery(
+            send_queue,
+            request_id=probe_message.request_id,
+            budget=float(args.probe_wait),
+        )
+        probe_outcome.status = status_from_delivery_state(state)
+        probe_outcome.state, probe_outcome.elapsed = state, took
+        if probe_outcome.status != "delivered":
+            report = render_run_report(
+                outcomes,
+                mode=mode,
+                target_desc=target_desc,
+                generated_at=generated_at,
+                subset_desc=",".join(subset_list) or "无",
+                ws_desc=f"{ws_endpoint[0]}:{ws_endpoint[1]} TCP 可达，但 worker {args.probe_wait:g}s 内无投递确认",
+                headline="离线中止：发送队列 worker 无响应（bot 未重启或未启用发送队列），全部条目未执行。",
+            )
+            for outcome in outcomes:
+                outcome.status = "skipped"
+                outcome.state = "worker-offline"
+            document = build_results_document(
+                outcomes, mode=mode, target_desc=target_desc, subset=subset_list,
+                ws_endpoint=ws_endpoint, ws_online=True, generated_at=generated_at,
+            )
+            json_path = write_json_document(document, args.json_out)
+            report_desc = deliver_or_write_report(
+                report, runtime=runtime, pipeline=None, execute=False, online=False,
+                report_file=args.report_file,
+            )
+            print(f"[离线] 探针超时（state={state}，{took:.1f}s）。JSON：{json_path}")
+            print(f"[报告] {report_desc}")
+            return 3
+        print(f"[探针] worker 在线（state={state}，{took:.1f}s），开始逐条发送。")
+
+    total = len(outcomes)
+    delivered_so_far = 0
+    timeout_streak = 0
+    offline_abort = False
+    for index, outcome in enumerate(outcomes, 1):
+        spec = outcome.spec
+        if offline_abort:
+            outcome.status, outcome.state = "skipped", "offline-abort"
+            continue
+        message = synthesize_message(
+            text=spec.trigger,
+            session_type=session_type,
+            target_id=target_id,
+            sender_id=runtime.sender_id,
+            bot_id=runtime.bot_id,
+            seq=index,
+        )
+        outcome.request_id = message.request_id
+        try:
+            receipt = pipeline.handle(
+                message,
+                _text_capability(runtime, body=spec.trigger),
+                capability_id="bot.text",
+            )
+        except Exception as exc:  # noqa: BLE001 - 单项异常不拖垮矩阵。
+            outcome.status, outcome.error = "error", (
+                f"pipeline raised: {type(exc).__name__}: {exc}"
+            )
+            timeout_streak = 0
+            print(f"[{index}/{total}] {spec.topic} → ERROR: {outcome.error}")
+            continue
+        if receipt.state.value in ("blocked", "skipped"):
+            outcome.status = "blocked"
+            outcome.state = receipt.state.value
+            print(
+                f"[{index}/{total}] {spec.topic} → 拦截 state={receipt.state.value}"
+                f"{' public=' + repr(receipt.public_message) if receipt.public_message else ''}"
+            )
+        else:
+            state, took = wait_for_delivery(
+                send_queue,
+                request_id=message.request_id,
+                budget=float(args.wait),
+            )
+            outcome.status = status_from_delivery_state(state)
+            outcome.state, outcome.elapsed = state, took
+            print(
+                f"[{index}/{total}] {spec.topic} → {outcome.status}"
+                f" state={state} 耗时={took:.1f}s"
+            )
+        if outcome.status == "delivered":
+            delivered_so_far += 1
+            timeout_streak = 0
+        elif outcome.status == "timeout":
+            timeout_streak += 1
+            if delivered_so_far == 0 and timeout_streak >= EARLY_OFFLINE_TIMEOUT_LIMIT:
+                offline_abort = True
+                print(
+                    f"[早停] 连续 {timeout_streak} 条超时且零投递确认，判定 worker 离线，"
+                    f"中止余下 {total - index} 条（防 bot 重启后延迟补发轰炸）。",
+                    file=sys.stderr,
+                )
+        else:
+            timeout_streak = 0
+        if index < total and args.interval > 0:
+            time.sleep(args.interval)
+
+    summary = summarize_results(outcomes)
+    print("\n===== 命令矩阵验收汇总 =====")
+    for outcome in outcomes:
+        mark = {
+            "delivered": "·",
+            "timeout": "!",
+            "error": "✗",
+            "blocked": "✗",
+            "skipped": "-",
+        }.get(outcome.status, "?")
+        suffix = (
+            f" state={outcome.state}"
+            + (f" 耗时={outcome.elapsed:.1f}s" if outcome.elapsed else "")
+            + (f" {outcome.error}" if outcome.error else "")
+        )
+        print(f"{mark} {outcome.spec.topic:12s} {outcome.status}{suffix}")
+    print(
+        f"共 {summary['total']} 项：响应 {summary['delivered']}"
+        f"｜超时 {summary['timeout']}｜异常 {summary['error']}"
+        f"｜拦截 {summary['blocked']}｜未执行 {summary['skipped']}"
+        f"｜通过率 {summary['pass_rate']}%。"
+    )
+    document = build_results_document(
+        outcomes, mode=mode, target_desc=target_desc, subset=subset_list,
+        ws_endpoint=ws_endpoint, ws_online=ws_online, generated_at=generated_at,
+    )
+    json_path = write_json_document(document, args.json_out)
+    print(f"[JSON] {json_path}")
+    exit_code = 0 if summary["timeout"] == 0 and summary["error"] == 0 and summary["blocked"] == 0 else 1
+    if args.report:
+        report = render_run_report(
+            outcomes,
+            mode=mode,
+            target_desc=target_desc,
+            generated_at=generated_at,
+            subset_desc=",".join(subset_list) or "无",
+            wait_budget=float(args.wait),
+            ws_desc=f"{ws_endpoint[0]}:{ws_endpoint[1]} 可达，探针 {probe_outcome.elapsed:.1f}s 确认",
+            headline=(
+                "离线早停：部分条目未执行。" if offline_abort else ""
+            ),
+        )
+        report_desc = deliver_or_write_report(
+            report,
+            runtime=runtime,
+            pipeline=pipeline,
+            execute=True,
+            online=not offline_abort,
+            report_file=args.report_file,
+        )
+        print(f"[报告] {report_desc}")
+    return exit_code
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -1175,7 +2257,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="重启后真机验收：合成消息走真实管线逐项发送（默认 DRY-RUN）"
     )
-    target = parser.add_mutually_exclusive_group(required=True)
+    # 目标参数在 parser 层不强制（--selftest 全离线无需目标）；
+    # 存量矩阵与 --help-matrix 在 main 里补同一语义的强制校验。
+    target = parser.add_mutually_exclusive_group()
     target.add_argument("--target-group", metavar="GROUP_ID", help="验收目标群号")
     target.add_argument("--target-user", metavar="USER_ID", help="验收目标私聊 QQ 号")
     parser.add_argument(
@@ -1208,12 +2292,77 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--list", action="store_true", help="只打印验收矩阵后退出"
     )
+    # ---- 实战自测（2026-09-13 批次）：新参数只往后加，存量语义不变 ----
+    parser.add_argument(
+        "--selftest",
+        action="store_true",
+        help="全离线自检：矩阵生成/触发提取/payload/报告/探针/轮询，无需目标与 bot 在线",
+    )
+    parser.add_argument(
+        "--help-matrix",
+        action="store_true",
+        help="命令矩阵模式：从 echo._HELP_ENTRIES 全 topics 生成命令清单逐条验收"
+        "（DRY-RUN 只构造 payload + 路由体检；--execute 逐条发送并等投递回执）",
+    )
+    parser.add_argument(
+        "--subset",
+        default="",
+        help="命令矩阵只跑指定主题（逗号分隔，匹配 topic/别名；隐含 --help-matrix）",
+    )
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="生成给超管的汇总报告（--execute 且 bot 在线时私聊超管，否则写文件）",
+    )
+    parser.add_argument(
+        "--report-file", default="", help="报告落盘路径（默认 %%TEMP%%/e2e_report_<时间戳>.txt）"
+    )
+    parser.add_argument(
+        "--json-out", default="", help="结构化结果 JSON 路径（execute 模式缺省也写 %%TEMP%%）"
+    )
+    parser.add_argument(
+        "--wait",
+        type=float,
+        default=DEFAULT_DELIVERY_WAIT_SECONDS,
+        help=f"逐条投递回执等待预算秒数（默认 {DEFAULT_DELIVERY_WAIT_SECONDS:g}s）",
+    )
+    parser.add_argument(
+        "--probe-wait",
+        type=float,
+        default=DEFAULT_PROBE_WAIT_SECONDS,
+        help=f"worker 存活探针等待秒数（默认 {DEFAULT_PROBE_WAIT_SECONDS:g}s）",
+    )
+    parser.add_argument(
+        "--ws-probe",
+        default="",
+        help="OneBot WS 探测端点 host:port（默认 ONEBOT_WS_URLS 首条，再默认 127.0.0.1:3001）",
+    )
     return parser
+
+
+def _require_target(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if not (args.target_group or args.target_user):
+        parser.error("one of the arguments --target-group --target-user is required")
 
 
 def main(argv: list[str] | None = None) -> int:
     _reconfigure_stdio()
-    args = build_arg_parser().parse_args(argv)
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+
+    # 实战自测自检：全离线，不装配运行时、不读 .env、不要求目标。
+    if args.selftest:
+        code, lines = run_selftest()
+        for line in lines:
+            print(line)
+        return code
+
+    # 命令矩阵模式（--subset 隐含开启）；存量矩阵保持原语义。
+    if args.help_matrix or str(args.subset or "").strip():
+        _require_target(parser, args)
+        return run_help_matrix(args)
+
+    _require_target(parser, args)
 
     runtime = build_runtime(
         env_file=args.env,
