@@ -31,12 +31,9 @@ def test_message_segments_read_quote_forward_mixed_media_and_emoji() -> None:
     assert any(item["type"] == "sticker" for item in segments.segments)
 
 
-def test_file_reader_extracts_text_and_rejects_binary_unknown() -> None:
-    from pathlib import Path
-
+def test_file_reader_extracts_text_and_rejects_binary_unknown(tmp_path) -> None:
     from plugins.bot_unified_runtime.sources.file_reader import read_supported_file
-    tmp_path = Path(".phase03_tmp")
-    tmp_path.mkdir(exist_ok=True)
+
     source = tmp_path / "example.py"
     source.write_text("print('hello')\n", encoding="utf-8")
     result = read_supported_file(source)
@@ -45,16 +42,11 @@ def test_file_reader_extracts_text_and_rejects_binary_unknown() -> None:
     unknown = tmp_path / "payload.bin"
     unknown.write_bytes(b"\\x00\\x01")
     assert read_supported_file(unknown).text == ""
-    for item in tmp_path.iterdir(): item.unlink()
-    tmp_path.rmdir()
 
 
-def test_generated_code_or_long_text_has_file_attachment() -> None:
-    from pathlib import Path
-
+def test_generated_code_or_long_text_has_file_attachment(tmp_path) -> None:
     from plugins.bot_unified_runtime.sources.file_reader import build_generated_file
-    tmp_path = Path(".phase03_generated_tmp")
-    tmp_path.mkdir(exist_ok=True)
+
     result = build_generated_file(
         user_text="请生成一个 Python 文件",
         reply_text="```python\nprint('hello')\n```",
@@ -156,9 +148,7 @@ def _real_chat(tmp_path, question, answer, captured=None):
     return cap(msg,d)
 
 
-def test_code_survives_chat_pipeline_before_natural_language_cleanup():
-    tmp_path = Path(".phase45_code")
-    tmp_path.mkdir(exist_ok=True)
+def test_code_survives_chat_pipeline_before_natural_language_cleanup(tmp_path):
     import ast
     code = 'import json\nfrom pathlib import Path\n\ndef analyze(file_path):\n    data = json.loads(Path(file_path).read_text(encoding="utf-8"))\n    print("记录数：", len(data))\n\nif __name__ == "__main__":\n    analyze("data.json")\n'
     r = _real_chat(tmp_path, '请生成一个 Python 文件，实现读取 JSON 并输出统计结果', '为你准备好了：\n```python\n'+code+'```')
@@ -167,37 +157,27 @@ def test_code_survives_chat_pipeline_before_natural_language_cleanup():
     assert body == code
     ast.parse(body)
     assert 'print' not in r.body
-    for item in tmp_path.iterdir(): item.unlink()
-    tmp_path.rmdir()
 
 
-def test_short_txt_is_written_and_names_do_not_collide():
-    tmp_path = Path(".phase45_txt")
-    tmp_path.mkdir(exist_ok=True)
+def test_short_txt_is_written_and_names_do_not_collide(tmp_path):
     a = _real_chat(tmp_path,'生成一个txt文档，记录你的感受','海风很安静，我记得你回来的脚步。')
     b = _real_chat(tmp_path,'生成一个txt文档，记录你的感受','潮水漫过岸边。')
     assert a.files and b.files
     pa,pb = Path(a.files[0]['file']),Path(b.files[0]['file'])
     assert pa.suffix == '.txt' and pa != pb
     assert pa.read_text(encoding='utf-8') == '海风很安静，我记得你回来的脚步。\n'
-    for item in tmp_path.iterdir(): item.unlink()
-    tmp_path.rmdir()
 
 
-def test_boundary_calls_persona_model_instead_of_sending_policy_text():
-    tmp_path = Path(".phase45_boundary")
-    tmp_path.mkdir(exist_ok=True)
+def test_boundary_calls_persona_model_instead_of_sending_policy_text(tmp_path):
     seen=[]
     r=_real_chat(tmp_path,'和我结婚','你的心意，我听见了。只是这份承诺不能轻易许下；我会在岸边，认真听你说完。',seen)
     assert seen and '你的心意' in r.body
     assert 'response_guidance' not in r.body and '保持既定人格' not in r.body
     assert 'public_safety' in ' '.join(r.audit_tags)
     assert not r.files
-    for item in tmp_path.iterdir(): item.unlink()
-    tmp_path.rmdir()
 
 
-def test_onebot_upload_api_not_fake_file_segment():
+def test_onebot_upload_api_not_fake_file_segment(tmp_path):
     import asyncio
 
     from plugins.bot_unified_runtime.contracts import (
@@ -210,8 +190,6 @@ def test_onebot_upload_api_not_fake_file_segment():
     )
     from plugins.bot_unified_runtime.output.renderer import render_reviewed_output
     from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
-    tmp_path = Path(".phase45_upload")
-    tmp_path.mkdir(exist_ok=True)
     file_path = tmp_path / "generated.txt"
     file_path.write_text("潮水平静。\n", encoding="utf-8")
     result = CapabilityResult(request_id="upload", capability_id="bot.chat", kind="text", body="我已经整理成附件。", files=[{"file": str(file_path.resolve()), "name": file_path.name}])
@@ -225,8 +203,6 @@ def test_onebot_upload_api_not_fake_file_segment():
     assert receipt.state.value == "sent", (receipt, calls)
     assert calls[0][0] == "upload_group_file"
     assert not any(x["type"] == "file" for x in calls[-1][1]["message"])
-    file_path.unlink()
-    tmp_path.rmdir()
 
 def test_wiki_structured_game_brief_uses_story_not_release_chronology():
     from plugins.bot_unified_runtime.sources.mediawiki import build_wiki_brief

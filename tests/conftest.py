@@ -1,9 +1,11 @@
 """Session-level guards for the whole test tree.
 
 1. Autosync hook (top section): with ``BOT_AUTOSYNC=1`` (set by
-   ``scripts/dev.ps1 -Task test``), silently regenerate the machine-owned
-   files at session start so drift never reaches the resident gates; a
-   one-line summary is printed when the session finishes.
+   ``scripts/dev.ps1 -Task test``), regenerate the machine-owned files at
+   session start so drift never reaches the resident gates; a summary is
+   printed when the session finishes.  When the hash manifest is re-recorded
+   the affected deliverables are named in a warning -- auto-fix stays silent
+   for humans, but the change itself always leaves a trace.
 2. Source-tree ``data/`` guard: fail any test that creates new files under
    the source-tree ``data/``.
 
@@ -18,6 +20,7 @@ list of offending paths.  Diagnostics are also appended to
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -46,11 +49,30 @@ _AUTOSYNC_STEPS: tuple[tuple[str, str], ...] = (
     ("tests/verify_hashes.py", "tests/render_hashes.json"),
 )
 
+_HASH_MANIFEST = "tests/render_hashes.json"
+
 _autosync_changed: list[str] = []
+_hash_baseline_changed: list[str] = []
+
+
+def _manifest_keys(raw: bytes | None) -> dict[str, str]:
+    """把哈希清单字节解析成 {交付物: sha256}；解析失败返回空 dict。"""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def run_autosync(root: Path | None = None) -> list[str]:
-    """静默重生成机器管文件；返回被实际改动的文件（仓库相对路径）列表。"""
+    """静默重生成机器管文件；返回被实际改动的文件（仓库相对路径）列表。
+
+    哈希清单（``tests/render_hashes.json``）被重录时，额外记录**哪些交付物**
+    的基线变了并发出 warning——自动修正保留「人无感」，但改动必须留痕，
+    否则一次非有意的模板改动会被静默吸收成新的「正确基线」。
+    """
     if os.environ.get("BOT_AUTOSYNC") != "1":
         return []
     root = REPO_ROOT if root is None else root
@@ -89,6 +111,18 @@ def run_autosync(root: Path | None = None) -> list[str]:
             continue
         if after != before:
             changed.append(output)
+            if output == _HASH_MANIFEST:
+                before_keys = _manifest_keys(before)
+                after_keys = _manifest_keys(after)
+                for name in sorted(set(before_keys) | set(after_keys)):
+                    if before_keys.get(name) != after_keys.get(name):
+                        _hash_baseline_changed.append(name)
+    if _hash_baseline_changed:
+        warnings.warn(
+            "[autosync] 哈希基线被自动重录（非有意改动请复核）："
+            + ", ".join(_hash_baseline_changed),
+            stacklevel=2,
+        )
     return changed
 
 
@@ -107,6 +141,11 @@ def _autosync_session_gate():
 
 
 def pytest_terminal_summary(terminalreporter) -> None:
+    if _hash_baseline_changed:
+        terminalreporter.write_line(
+            "[autosync] 哈希基线已自动重录（非有意改动请复核）："
+            + ", ".join(_hash_baseline_changed)
+        )
     if _autosync_changed:
         terminalreporter.write_line(
             "[autosync] 自动同步：" + ", ".join(_autosync_changed)

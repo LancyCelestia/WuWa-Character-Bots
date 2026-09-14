@@ -635,7 +635,9 @@ def _make_decision(capability_id: str):
 
 
 class TestStocksCapability:
-    def test_stock_query_full_numbers_visible(self, monkeypatch) -> None:
+    def test_stock_query_full_numbers_visible(self, monkeypatch, tmp_path) -> None:
+        # 运行数据根隔离：缺省会回退源码树 data/（AGENTS.md 规则 2/6），显式指到 tmp。
+        monkeypatch.setenv("BOT_RUNTIME_DATA_DIR", str(tmp_path))
         from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
 
         monkeypatch.setattr(stocks_cap, "fetch_stock_quote", lambda ticker: _quote())
@@ -766,6 +768,8 @@ class TestStocksCapability:
 
     def test_render_backend_wiring_produces_png(self, monkeypatch, tmp_path) -> None:
         """渲染链路冒烟：fake 后端 + 真 render_finance_card_html（离线 jinja）。"""
+        # 运行数据根隔离：缺省会回退源码树 data/（AGENTS.md 规则 2/6），显式指到 tmp。
+        monkeypatch.setenv("BOT_RUNTIME_DATA_DIR", str(tmp_path))
         from types import SimpleNamespace
 
         from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap

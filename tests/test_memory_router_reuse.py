@@ -38,7 +38,9 @@ def test_memory_writer_uses_supplied_model_router(monkeypatch):
 
     assert captured["provider"] is sentinel
 
-def test_memory_uses_runtime_selection_and_multiple_keys_without_mutating_chat(monkeypatch):
+def test_memory_uses_runtime_selection_and_multiple_keys_without_mutating_chat(monkeypatch, tmp_path):
+    # 运行数据根隔离：缺省会回退源码树 data/（AGENTS.md 规则 2/6），显式指到 tmp。
+    monkeypatch.setenv("BOT_RUNTIME_DATA_DIR", str(tmp_path))
     from plugins.bot_unified_runtime.config import Config
     from plugins.bot_unified_runtime.llm import LLMProviderError
     from plugins.bot_unified_runtime.llm.model_router import build_model_router

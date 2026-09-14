@@ -68,7 +68,9 @@ def test_import_rejects_unknown_platform_and_bad_header(tmp_path: Path) -> None:
     assert "解析失败" in bad
 
 
-def test_status_text_lists_platforms_without_values(tmp_path: Path) -> None:
+def test_status_text_lists_platforms_without_values(tmp_path: Path, monkeypatch) -> None:
+    # 运行数据根隔离：缺省会回退源码树 data/（AGENTS.md 规则 2/6），显式指到 tmp。
+    monkeypatch.setenv("BOT_RUNTIME_DATA_DIR", str(tmp_path))
     config = _config(tmp_path)
     import_cookie_header(config, "bilibili", "SESSDATA=secret-value")
 

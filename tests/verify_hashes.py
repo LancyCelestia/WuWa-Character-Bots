@@ -6,11 +6,16 @@
     python tests/verify_hashes.py           # 缺省 = --check
 
 pytest 常驻门：tests/test_cross_validation_gates.py 以 subprocess --check
-方式守门——清单内任何文件出现未记录的字节变更，全量测试直接红，
+方式守门——清单内任何文件出现未记录的**内容**变更，全量测试直接红，
 强制走一次「有意识 --write」，改了 A 忘了 B 的事在门禁处现形。
 
+哈希口径：换行统一为 LF 后再算（见 ``sha256_of``），因此哈希锚定的是
+「提交内容」而非「工作区行尾状态」——主仓、linked worktree、CI 干净克隆
+三种检出环境必须得出一致结果。
+
 清单范围（视觉与规范交付物，对齐 DESIGN-SPEC.md §三）：
-6 张 Jinja 模板 + theme_tokens.py + docs/rendering-contract.md + DESIGN-SPEC.md。
+7 张 Jinja 模板 + theme_tokens.py + docs/rendering-contract.md + DESIGN-SPEC.md
++ docs/design/ 三份规格，共 13 项。
 """
 
 from __future__ import annotations
@@ -42,11 +47,15 @@ TRACKED_FILES: tuple[str, ...] = (
 
 
 def sha256_of(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    """交付物内容哈希：换行统一为 LF 后再算。
+
+    哈希必须锚定「提交内容」，不能锚定「工作区行尾状态」——Windows 上
+    ``core.autocrlf`` 会把检出转成 CRLF，而 ``.gitattributes`` 又要求
+    ``*.md/*.py/*.json`` 为 LF。若直接哈希原始字节，同一个 commit 在主仓、
+    linked worktree、CI 干净克隆上会得出不同结果，哈希门随之失真
+    （2026-09-14 审查实证：干净检出误报 4 项漂移）。
+    """
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def build_manifest() -> dict[str, str]:
@@ -88,6 +97,7 @@ def write() -> None:
         json.dumps(build_manifest(), ensure_ascii=False, indent=2, sort_keys=True)
         + "\n",
         encoding="utf-8",
+        newline="\n",
     )
     print(f"verify_hashes: 已记录 {len(TRACKED_FILES)} 个交付物 -> {MANIFEST.name}")
 

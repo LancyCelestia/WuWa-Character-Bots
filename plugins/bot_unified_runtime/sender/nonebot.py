@@ -10,6 +10,7 @@ import tempfile
 from collections.abc import Callable
 from email.message import EmailMessage
 from email.utils import formataddr
+from html import escape as _html_escape
 from pathlib import Path
 from typing import Any
 
@@ -282,6 +283,25 @@ def _provider_message_id(result: Any) -> str | None:
     return str(value) if value is not None else None
 
 
+def _mail_html_body(text: str) -> str:
+    """把回复正文包装成邮件 HTML 正文（守岸人配色，内联样式）。
+
+    邮件客户端会剥离 ``<style>`` 块与外链资源，所以这里只用手写内联样式
+    与系统字体栈；正文转义后按行转 ``<br>``，保留原排版。纯文本版本由
+    ``set_content`` 一并保留，形成 ``multipart/alternative``——不支持 HTML
+    的客户端仍能正常阅读。
+    """
+    body = _html_escape(text).replace("\n", "<br>")
+    return (
+        "<div style=\"margin:0;padding:18px 20px;"
+        "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+        "'Microsoft YaHei',sans-serif;"
+        "font-size:15px;line-height:1.75;color:#2b2f38;"
+        "background:#f4f5f6;border:1px solid #d9e0e7;border-radius:14px;\">"
+        f"{body}</div>"
+    )
+
+
 def _build_mail_reply_message(bot: Any, event: Any, text: str) -> EmailMessage:
     bot_info = getattr(bot, "bot_info", None)
     sender_id = str(getattr(bot_info, "id", "") or getattr(bot, "self_id", "")).strip()
@@ -299,6 +319,7 @@ def _build_mail_reply_message(bot: Any, event: Any, text: str) -> EmailMessage:
         message["In-Reply-To"] = message_id
         message["References"] = message_id
     message.set_content(text)
+    message.add_alternative(_mail_html_body(text), subtype="html")
     return message
 
 

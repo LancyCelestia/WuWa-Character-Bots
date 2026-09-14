@@ -379,7 +379,7 @@ def main() -> int:
     merged = merged_entries()
     expected = render(merged)
     if "--write" in sys.argv[1:]:
-        DOC.write_text(expected, encoding="utf-8")
+        DOC.write_text(expected, encoding="utf-8", newline="\n")
         print(f"wrote {DOC} ({len(expected)} bytes)")
         return 0
     actual = DOC.read_text(encoding="utf-8") if DOC.exists() else ""

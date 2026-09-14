@@ -104,7 +104,7 @@ def check() -> bool:
 
 def write() -> None:
     TARGET.parent.mkdir(parents=True, exist_ok=True)
-    TARGET.write_text(build_document(), encoding="utf-8")
+    TARGET.write_text(build_document(), encoding="utf-8", newline="\n")
     print(f"doc_sync: 已重生成 {TARGET.relative_to(ROOT)}")
 
 

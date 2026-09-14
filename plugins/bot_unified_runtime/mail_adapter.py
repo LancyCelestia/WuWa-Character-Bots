@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import traceback
 from typing import Any
 
 import aioimaplib
@@ -9,6 +10,7 @@ from nonebot.adapters.mail.bot import Bot as MailBot
 from nonebot.adapters.mail.config import BotInfo
 from nonebot.adapters.mail.event import NewMailMessageEvent
 from nonebot.adapters.mail.log import log as mail_log
+from nonebot.adapters.mail.utils import parse_byte_mail
 from nonebot.compat import model_dump
 from nonebot.utils import escape_tag
 
@@ -21,11 +23,50 @@ def mail_retry_delay(attempt: int) -> float:
     return _RETRY_DELAYS[min(index, len(_RETRY_DELAYS) - 1)]
 
 
+def describe_mail_error(exc: BaseException, limit: int = 160) -> str:
+    """One-line, human-readable summary of an IMAP failure.
+
+    只记 ``type(exc).__name__`` 会让线上故障无法定位——2026-09-14 实测的
+    「worker error: Abort」就是一例：类名之外没有任何信息，既看不出是
+    状态机非法命令、还是取信/标已读失败。摘要取首行并截断，避免把整封
+    邮件内容带进日志。
+    """
+    text = str(exc).strip()
+    if not text:
+        return type(exc).__name__
+    first = text.splitlines()[0].strip()
+    return f"{type(exc).__name__}: {first[:limit]}"
+
+
 async def mark_mail_seen(imap_client: Any, uid: str) -> None:
-    """Mark one fetched IMAP UID as seen without exposing adapter internals."""
-    response = await imap_client.store(str(uid), "+FLAGS", r"\Seen")
+    """Mark one fetched IMAP UID as seen without exposing adapter internals.
+
+    必须走 ``UID STORE``：``aioimaplib`` 的 ``store()`` 默认 ``by_uid=False``
+    （``aioimaplib.py:540`` 与 ``:749``），会把 UID 当**序号**发给服务器——
+    既可能标错邮件，也会在 UID 超出当前邮件数时报 "IMAP STORE Seen failed"。
+    UID 命令要求连接处于 SELECTED 状态（``aioimaplib.py:93``）。
+    """
+    response = await imap_client.uid("STORE", str(uid), "+FLAGS", r"\Seen")
     if str(getattr(response, "result", "OK")).upper() != "OK":
-        raise RuntimeError("IMAP STORE Seen failed")
+        raise RuntimeError("IMAP UID STORE Seen failed")
+
+
+async def fetch_mail_by_uid(imap_client: Any, uid: str) -> Any | None:
+    """Fetch one mail strictly by UID (``UID FETCH``).
+
+    适配器的 ``Bot.fetch_mail_of_uid`` 走 ``imap_client.fetch(uid, "(RFC822)")``，
+    而 ``aioimaplib.IMAP4.fetch`` 默认 ``by_uid=False``
+    （``nonebot/adapters/mail/bot.py:411`` + ``aioimaplib.py:758``）→ 实际发出的是
+    普通 ``FETCH <uid>``，把 UID 当序号用。UID 与序号一旦错位（删信、移动、
+    服务器重排后必然错位），就会取错信或整封取不到。这里改用 UID 变体。
+    """
+    response = await imap_client.uid("FETCH", str(uid), "(RFC822)")
+    if str(getattr(response, "result", "")).upper() != "OK":
+        raise RuntimeError("IMAP UID FETCH failed")
+    lines = getattr(response, "lines", None) or []
+    if len(lines) < 2:
+        return None
+    return parse_byte_mail(lines[1])
 
 
 class QuietMailMessageEvent(NewMailMessageEvent):
@@ -123,6 +164,15 @@ class ResilientMailAdapter(MailAdapter):
                 bot.imap_client = self._new_imap_client(bot_info)
                 if not await bot.login():
                     raise RuntimeError("IMAP authentication rejected")
+                # 适配器 select_mailbox 带跨连接早退缓存（venv nonebot/adapters/mail/
+                # bot.py:363）：self.mailbox 与 readonly 均未变就直接返回 True、不发
+                # SELECT。mailbox 在 __init__ 置 None（bot.py:65），真选箱成功后才写
+                # "INBOX"（bot.py:392）。本循环每轮重连都新建 IMAP 连接但复用同一
+                # MailBot，残留缓存会让新连接跳过 SELECT 停在 AUTH 态，SEARCH 即报
+                # "Abort: command SEARCH illegal in state AUTH"（2026-09-14 线上实测，
+                # 每 3s 死循环）。清缓存强制每次新连接真发一次 SELECT。
+                bot.mailbox = None
+                bot.readonly = False
                 if not await bot.select_mailbox():
                     raise RuntimeError("IMAP mailbox selection failed")
                 self.bot_connect(bot)
@@ -135,17 +185,26 @@ class ResilientMailAdapter(MailAdapter):
                 raise
             except Exception as exc:  # noqa: BLE001 - keep worker alive and logs concise.
                 delay = mail_retry_delay(attempt)
+                detail = describe_mail_error(exc)
                 # 断网期重试可能持续数十次：日志按 1,2,4,8... 稀疏化，其余 DEBUG，
                 # 避免每次退避都刷一条 ERROR（状态并未变化）。
-                if attempt <= 1 or (attempt & (attempt - 1)) == 0:
+                # 首次失败额外附完整栈——只记异常类名的日志无法定位，2026-09-14
+                # 线上「worker error: Abort」就是这么卡住的。
+                if attempt == 0:
                     mail_log(
                         "ERROR",
-                        f"Mail {bot.self_id} worker error: {type(exc).__name__}; retry_in={delay:g}s",
+                        f"Mail {bot.self_id} worker error: {detail}; retry_in={delay:g}s\n"
+                        + traceback.format_exc(),
+                    )
+                elif attempt <= 1 or (attempt & (attempt - 1)) == 0:
+                    mail_log(
+                        "ERROR",
+                        f"Mail {bot.self_id} worker error: {detail}; retry_in={delay:g}s",
                     )
                 else:
                     mail_log(
                         "DEBUG",
-                        f"Mail {bot.self_id} retry x{attempt + 1}: {type(exc).__name__}; retry_in={delay:g}s",
+                        f"Mail {bot.self_id} retry x{attempt + 1}: {detail}; retry_in={delay:g}s",
                     )
                 attempt += 1
             finally:
@@ -168,9 +227,20 @@ class ResilientMailAdapter(MailAdapter):
             return
         uids = response.lines[0].decode().split()
         for uid in uids:
-            mail = await bot.fetch_mail_of_uid(uid)
-            if mail is None:
+            try:
+                # 必须走 UID FETCH：适配器 fetch_mail_of_uid 是按序号寻址的普通
+                # FETCH，错位即取错信/取不到（详见 fetch_mail_by_uid 文档）。
+                mail = await fetch_mail_by_uid(bot.imap_client, uid)
+                if mail is None:
+                    continue
+                await mark_mail_seen(bot.imap_client, uid)
+                event = QuietMailMessageEvent(**model_dump(mail))
+                self._track_task(bot.handle_event(event), label=f"{bot.self_id} event")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - one bad mail must not kill the connection.
+                mail_log(
+                    "WARNING",
+                    f"Mail {bot.self_id} skip uid={uid}: {describe_mail_error(exc)}",
+                )
                 continue
-            await mark_mail_seen(bot.imap_client, uid)
-            event = QuietMailMessageEvent(**model_dump(mail))
-            self._track_task(bot.handle_event(event), label=f"{bot.self_id} event")

@@ -1,15 +1,15 @@
 {
-  "DESIGN-SPEC.md": "f41d7c27bf78dcf00237715b39c9fb527acfa9c726451dfcc7d3d90fc6c71a24",
+  "DESIGN-SPEC.md": "5d9ddb89619962d2958dc48c687973a2e888642ce2a3272fc864c48f6219c017",
   "docs/design/fstring-card-dom-spec.md": "67e6f711e2f068a2a4bb413c7aff63c0701c548ac12459a23c7ffcc2d0609bf4",
   "docs/design/render-pipeline-optimization-spec.md": "e904e119cc08ea3756eb314367700e095f066a27879365fa7fc6f8c039dfddd4",
   "docs/design/visual-effects-catalog.md": "84541fbd07dfd65e1a7cf359a74eebda73336507edcde80ff2782d3a6597d7cf",
-  "docs/rendering-contract.md": "fd9a47c7328d16118f09af92329e51ebfaed2288db4b9c3a02a840eab0ac79c1",
-  "plugins/bot_unified_runtime/output/card_render/templates/affinity_card.html": "273c3821e63f8f9346257308d316af40d09b05bef0699a9305ce7a484a2dbced",
+  "docs/rendering-contract.md": "b4c58858be3a2ef23c1bddea3ebbe21e3a52916a1bac0da485113cb8a2bc8ea8",
+  "plugins/bot_unified_runtime/output/card_render/templates/affinity_card.html": "00dc4a7ec983d875a6f58291ed2451c0e0e4fb718cf451b78716463bf76f248c",
   "plugins/bot_unified_runtime/output/card_render/templates/error_card.html": "7d5d98e443ad637f324f9631eaabe222d1a2bc5eb6302308ef4b0b144a1e3e3c",
-  "plugins/bot_unified_runtime/output/card_render/templates/finance_card.html": "ed4e8eee31c0ef9df8284d5979cf8b64d0ef6c73af71f1f9431d1882e059b374",
-  "plugins/bot_unified_runtime/output/card_render/templates/market_card.html": "ab8306347526fe43112719d9f8bbacdd279276ee38e04a6280e5a1bf91f89a0d",
-  "plugins/bot_unified_runtime/output/card_render/templates/mermaid_card.html": "cc2460a76b6a51c1cdb83ee7ea5c0ed799324fe8a3f32ecfb97a9b241a2e98da",
-  "plugins/bot_unified_runtime/output/card_render/templates/song_candidates.html": "b9b1ebd784c6dbaead14861676efcbd19797c93151316b5b14ea67665661480a",
-  "plugins/bot_unified_runtime/output/card_render/templates/universal_card.html": "5ace0428ab3dac973c9f126d06c522fe51e3eb55908004a4aa36dd57ded76026",
-  "plugins/bot_unified_runtime/output/card_render/theme_tokens.py": "0e862f1ca67beff9d88864ed018ea8da58219f26c3232ca5ad546cece53af71b"
+  "plugins/bot_unified_runtime/output/card_render/templates/finance_card.html": "dfa3016d96762d91b39e9fc52ba607ec67859246072e62df8731b0ac6fce9354",
+  "plugins/bot_unified_runtime/output/card_render/templates/market_card.html": "12b403e49185ee6f5e68425c2e3da195afda5940436e4572aecaa7cdd5337b43",
+  "plugins/bot_unified_runtime/output/card_render/templates/mermaid_card.html": "5eb9b4f34d426bca6a55b4d5a571406b5bbce0d4a37ecf4410552591d7b4c6ee",
+  "plugins/bot_unified_runtime/output/card_render/templates/song_candidates.html": "60647f62a3ef062c5a247ce31f214d01dde05bd60ae56b47fe2fd236eaa2eeb3",
+  "plugins/bot_unified_runtime/output/card_render/templates/universal_card.html": "89ed6d00b9ac831f4d4ffd9a7bebe08c094bee2316c9cdc5c1947a8a65e15afa",
+  "plugins/bot_unified_runtime/output/card_render/theme_tokens.py": "85099836484ea8eb4f19408d63e86c773caab20e977794473123854152d44442"
 }

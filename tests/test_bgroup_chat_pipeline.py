@@ -53,7 +53,11 @@ def test_video_deadline_floor_keeps_minimum_analysis_window() -> None:
 
 def test_analyze_and_store_passes_deadline_to_brief_builder(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
+    # 运行数据根隔离：BOT_RUNTIME_DATA_DIR 缺省会回退到源码树 data/
+    # （AGENTS.md 规则 2/6 明令源码树不得出现 data/），显式指到 tmp。
+    monkeypatch.setenv("BOT_RUNTIME_DATA_DIR", str(tmp_path))
     captured: dict[str, object] = {}
 
     def fake_build_video_brief(_config: object, **kwargs: object) -> SimpleNamespace:
