@@ -5,7 +5,13 @@
 本文件锁新契约：
 - store 层 mark_item_done：按稳定条目号改写单行 [x]；全勾完才整篇 done；
   幂等无写入；越界返回 None；并发勾两条不死锁不互吞。
+- store 层 mark_item_undone（审查 A-14）：对称撤销——按同一定位口径把
+  已勾行回写 [ ]；整篇 done 后撤销回 open + done_at 清空；幂等；越界
+  契约与 mark_item_done 一致；勾↔撤往返不错位。
 - 能力层「做完 N」：一次勾掉第一个未勾条目，有剩报「还剩几件」。
+- 能力层自然语言撤销：「<事项>还没做」「取消勾选 <事项>」在已勾条目里
+  模糊匹配（与勾选同一套歧义语义，多候选问人零写入）；与删除类指令
+  互不抢路由；自然形态无候选时让位。
 全离线：SQLite 走 tmp_path，不触网。
 """
 
@@ -15,7 +21,10 @@ import threading
 from types import SimpleNamespace
 
 import plugins.bot_unified_runtime.capabilities.notes as notes_mod
-from plugins.bot_unified_runtime.capabilities.notes import build_notes_capability
+from plugins.bot_unified_runtime.capabilities.notes import (
+    build_notes_capability,
+    is_notes_command,
+)
 from plugins.bot_unified_runtime.character import notes_store as notes_store_mod
 from plugins.bot_unified_runtime.character.notes_store import (
     NotesStore,
@@ -203,3 +212,171 @@ def test_capability_done_n_single_item_matches_old_shape(tmp_path, monkeypatch) 
     note = store.get(1, "group:1")
     assert note.todo_state == "done"
     assert "- [x] 写周报" in note.content_md, "勾选痕迹要留在正文里"
+
+
+# ---------- store 层：mark_item_undone（审查 A-14 对称撤销） ----------
+
+def test_store_item_undone_rewrites_only_target_line(tmp_path) -> None:
+    store = NotesStore(tmp_path / "n.sqlite3")
+    note = store.add(user_id="u", chat_id="c", content_md=MULTI_MD)
+    store.mark_item_done(note.note_id, "c", 0)
+    store.mark_item_done(note.note_id, "c", 1)
+    # 撤销第 0 条：只有它回 [ ]；第 1 条的 [x] 与缩进第三条原样。
+    updated = store.mark_item_undone(note.note_id, "c", 0)
+    assert updated is not None
+    assert updated.content_md == (
+        "# 采购\n- [ ] 买牛奶\n- [x] 买面包\n  - [ ] 顺手拿鸡蛋"
+    )
+    assert updated.todo_state == "open"
+
+
+def test_store_item_undone_reopens_done_note(tmp_path) -> None:
+    """整篇 done（最后一条勾完触发）后撤销任意一条 → 回 open、done_at 清空。"""
+    store = NotesStore(tmp_path / "n.sqlite3")
+    note = store.add(user_id="u", chat_id="c", content_md=MULTI_MD)
+    for index in range(3):
+        store.mark_item_done(note.note_id, "c", index)
+    done = store.get(note.note_id, "c")
+    assert done.todo_state == "done" and done.done_at
+    # 撤的是缩进第三条（非「最后勾的那条」也一样）：整篇一律回 open。
+    undone = store.mark_item_undone(note.note_id, "c", 2)
+    assert undone.todo_state == "open" and undone.done_at == ""
+    assert "  - [ ] 顺手拿鸡蛋" in undone.content_md, "缩进原样保留"
+    assert "- [x] 买牛奶" in undone.content_md
+    assert "- [x] 买面包" in undone.content_md
+    # 回 open 后重新出现在未勾清单里，能再走一遍勾选。
+    assert [index for index, _text in undone.todo_open_items()] == [2]
+
+
+def test_store_item_undone_idempotent_no_write_on_open(tmp_path) -> None:
+    store = NotesStore(tmp_path / "n.sqlite3")
+    note = store.add(user_id="u", chat_id="c", content_md=MULTI_MD)
+    checked = store.mark_item_done(note.note_id, "c", 0)
+    # 未勾行重复撤销：幂等——无写入（updated_at 不动），返回当前记录。
+    again = store.mark_item_undone(note.note_id, "c", 1)
+    assert again is not None
+    assert again.content_md == checked.content_md
+    assert again.updated_at == checked.updated_at
+    assert again.todo_state == "open"
+
+
+def test_store_item_undone_out_of_range_returns_none(tmp_path) -> None:
+    store = NotesStore(tmp_path / "n.sqlite3")
+    note = store.add(user_id="u", chat_id="c", content_md=MULTI_MD)
+    assert store.mark_item_undone(note.note_id, "c", -1) is None
+    assert store.mark_item_undone(note.note_id, "c", 3) is None
+    assert store.mark_item_undone(note.note_id, "c", 999) is None
+    # 越界零写入：内容与状态原样。
+    unchanged = store.get(note.note_id, "c")
+    assert unchanged.content_md == MULTI_MD and unchanged.todo_state == "open"
+    # 非待办笔记与不存在的笔记：同 mark_item_done 的越界契约。
+    plain = store.add(user_id="u", chat_id="c", content_md="随手记")
+    assert store.mark_item_undone(plain.note_id, "c", 0) is None
+    assert store.mark_item_undone(4242, "c", 0) is None
+
+
+def test_store_item_roundtrip_done_then_undone(tmp_path) -> None:
+    """勾↔撤销往返：同一稳定编号口径，来回切换不错位、不丢缩进。"""
+    store = NotesStore(tmp_path / "n.sqlite3")
+    note = store.add(user_id="u", chat_id="c", content_md=MULTI_MD)
+    store.mark_item_done(note.note_id, "c", 2)
+    store.mark_item_undone(note.note_id, "c", 2)
+    restored = store.get(note.note_id, "c")
+    assert restored.content_md == MULTI_MD, "勾了再撤=逐字节回到原文"
+    # 撤销不扰动稳定编号：再勾 2 号仍指第三行（缩进原样）。
+    again = store.mark_item_done(note.note_id, "c", 2)
+    assert "  - [x] 顺手拿鸡蛋" in again.content_md
+
+
+# ---------- 能力层：自然语言撤销（审查 A-14） ----------
+
+def test_capability_undo_reopens_done_note(tmp_path, monkeypatch) -> None:
+    """「<事项>还没做」：整篇 done 的撤销 → 回 open，顺带报剩几件。"""
+    _setup(tmp_path, monkeypatch)
+    capability = build_notes_capability(_config(tmp_path))
+    capability(_message("笔记 记 采购单\n- [ ] 买牛奶\n- [ ] 买面包"), object())
+    capability(_message("做完1"), object())
+    capability(_message("做完1"), object())
+    store = notes_store_mod.build_notes_store(_config(tmp_path))
+    assert store.get(1, "group:1").todo_state == "done"
+    undone = capability(_message("买牛奶还没做"), object())
+    assert "买牛奶" in undone.body and "重新打开" in undone.body
+    assert "还剩 1 件" in undone.body, "撤销后顺带报剩几件"
+    note = store.get(1, "group:1")
+    assert note.todo_state == "open" and note.done_at == ""
+    assert "- [ ] 买牛奶" in note.content_md
+    assert "- [x] 买面包" in note.content_md
+    # 回 open 后同一编号还能再勾回去（往返可用）。
+    redo = capability(_message("做完1"), object())
+    assert "完成了" in redo.body
+
+
+def test_capability_undo_via_quxiao_gouxuan_on_partial(tmp_path, monkeypatch) -> None:
+    """「取消勾选 <事项>」：开着的待办里撤掉已勾的那条。"""
+    _setup(tmp_path, monkeypatch)
+    capability = build_notes_capability(_config(tmp_path))
+    capability(_message("笔记 记 采购单\n- [ ] 买牛奶\n- [ ] 买面包"), object())
+    capability(_message("做完1"), object())
+    undone = capability(_message("取消勾选 买牛奶"), object())
+    assert "买牛奶" in undone.body and "还剩 2 件" in undone.body
+    store = notes_store_mod.build_notes_store(_config(tmp_path))
+    note = store.get(1, "group:1")
+    assert "- [ ] 买牛奶" in note.content_md
+    assert "- [ ] 买面包" in note.content_md
+    assert note.todo_state == "open"
+
+
+def test_capability_undo_ambiguous_asks_without_writing(
+    tmp_path, monkeypatch
+) -> None:
+    """两条同文已勾条目：多候选问「有几件事都对得上」，零写入不猜。"""
+    _setup(tmp_path, monkeypatch)
+    capability = build_notes_capability(_config(tmp_path))
+    capability(_message("笔记 记 双份牛奶\n- [ ] 买牛奶\n- [ ] 买牛奶"), object())
+    store = notes_store_mod.build_notes_store(_config(tmp_path))
+    store.mark_item_done(1, "group:1", 0)
+    store.mark_item_done(1, "group:1", 1)
+    before = store.get(1, "group:1")
+    undone = capability(_message("买牛奶还没做"), object())
+    assert "有几件事都对得上" in undone.body
+    after = store.get(1, "group:1")
+    assert after.content_md == before.content_md, "歧义面零写入"
+    assert after.todo_state == "done"
+
+
+def test_capability_undo_and_delete_do_not_steal_each_other(
+    tmp_path, monkeypatch
+) -> None:
+    """撤销词形入指令面；删除/取消笔记词形不被撤销抢，删除语义原样。"""
+    _setup(tmp_path, monkeypatch)
+    capability = build_notes_capability(_config(tmp_path))
+    capability(_message("笔记 记 采购单\n- [ ] 买牛奶"), object())
+    # 指令面：两形态入面；「取消笔记」与裸信号词不入面（让位）。
+    assert is_notes_command("取消勾选 买牛奶")
+    assert is_notes_command("撤销勾选 买牛奶")
+    assert is_notes_command("买牛奶没做完")
+    assert not is_notes_command("取消笔记 1"), "「取消笔记」不是撤销勾选"
+    assert not is_notes_command("还没做"), "裸信号词让位，不抢聊天"
+    assert is_notes_command("做完3"), "既有编号勾选不受影响"
+    # 「删笔记 N」语义原样：勾过的笔记照删，撤销面不拦。
+    capability(_message("做完1"), object())
+    deleted = capability(_message("删笔记 1"), object())
+    assert "放下了" in deleted.body
+    store = notes_store_mod.build_notes_store(_config(tmp_path))
+    assert store.get(1, "group:1") is None
+
+
+def test_capability_undo_natural_yields_when_no_candidates(
+    tmp_path, monkeypatch
+) -> None:
+    """自然形态 + 本会话无任何已勾条目 → 让位；显式形态永不落空。"""
+    _setup(tmp_path, monkeypatch)
+    capability = build_notes_capability(_config(tmp_path))
+    fallback = capability(_message("作业还没做"), object())
+    assert not any(tag.startswith("undo") for tag in fallback.audit_tags), (
+        "无可撤销对象时自然形态让位，不回撤销话术"
+    )
+    # 显式「取消勾选」是用户明确在谈勾选：给个交代而非沉默。
+    capability(_message("笔记 记 清单\n- [ ] 只记不勾"), object())
+    explicit = capability(_message("取消勾选 天上的事"), object())
+    assert "还没有勾上过" in explicit.body

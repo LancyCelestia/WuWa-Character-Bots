@@ -7,10 +7,18 @@ RouteKind——笔记词形已并入 route-matrix §2 reminder 行，A34 终审�
 - 「笔记列表」/「bijiliebiao / bjlb」：本会话清单；
 - 「笔记 看 N」/「看笔记 N」：看第 N 条（纯文本化展示，图片补发）；
 - 「做完 N」：勾选第 N 条待办；「删笔记 N」：删除。
+- 撤销勾选（审查 A-14）：「取消勾选 <事项>」「<事项>还没做」「<事项>
+  没做完」→ 在已勾条目里模糊匹配后回写 ``[ ]``（与勾选同一套条目匹配
+  与歧义语义；无候选让位，不抢删除/普通聊天）。
 - 内容含 ``- [ ]`` 勾选框 → 自动判为待办（kind=todo）。
 
 存储经 character/notes_store（SQLite，runtime_paths 解析，会话隔离）。
 文案守岸人语气：温柔、简短、不机器腔。
+
+路由接线现状（审查 A-14）：撤销正则已并入 is_notes_command；生产路由
+判定 reminder.is_reminder_command/_is_notes_surface 按正则清单显式引用
+本模块（域外文件），撤销两组正则待其一行收编后自然语言撤销才在整链
+生效——此前能力层单测可离线验证完整行为。
 """
 
 from __future__ import annotations
@@ -61,6 +69,26 @@ _NOTES_VIEW_RE = re.compile(
 )
 # 完成：做完 N / 完成 N / 办完 N（显式编号勾选；自然语言勾选走 reminder 侧）。
 _NOTES_DONE_RE = re.compile(r"^(?:做完|完成|办完)\s*(\d+)\s*$")
+# 撤销勾选（审查 A-14，mark_item_done 的对称逆操作）：
+# - 显式形态：「取消勾选 X」「撤销勾选/勾掉 X」（含繁體）——用户明确在
+#   谈勾选，一律承接；
+# - 自然形态：「X 还没做」「X 没做完」「X 还没弄完」等尾缀信号——门槛对齐
+#   reminder.extract_checkoff_query（短句、非疑问、剥掉信号词后还剩得出
+#   事项名）；能力层再设「无候选让位」护栏（见 capability 内撤销分支），
+#   防普通聊天被抢。
+# 刻意不收「取消笔记/删笔记/取消提醒」词形：删除/取消提醒是另一个决定，
+# 与勾选撤销互不抢路由（_NOTES_DELETE_RE 的 删/删除/刪 与 取消/撤销 无交）。
+# 交替项按最长优先排布，防「还没做完」被「还没做」截胡留下尾巴。
+_NOTES_UNDO_EXPLICIT_RE = re.compile(
+    r"^(?:取消|撤销|撤銷)\s*(?:勾选|勾選|勾掉|勾)\s*[，,：:]?\s*(.+)$"
+)
+_NOTES_UNDO_NATURAL_RE = re.compile(
+    r"^(.+?)\s*(?:还没做完|還沒做完|还没弄完|還沒弄完|还没搞好|還沒搞好"
+    r"|还没弄好|還沒弄好|还没做|還沒做|没做完|沒做完)\s*[了吧呢啊]?\s*$"
+)
+# 与 reminder 侧勾选面同量级的门槛：整句短、事项名短、非疑问。
+_NOTES_UNDO_MAX_CHARS = 32
+_NOTES_UNDO_QUERY_MAX_CHARS = 20
 # 新增：笔记 [记] <内容>（内容必填；bare 触发走 usage 提示）。CJK 分支维持
 # 「笔记[记]内容」紧贴形态；ASCII 分支（biji/note）后必须跟分隔（空白/
 # 标点/记|ji），防 bijiqq/noteqq 粘连词被 (.+) 吞成命令（T-Spec ASCII
@@ -84,6 +112,28 @@ _MAX_IMAGE_BYTES = 20 * 1024 * 1024
 _IMAGE_UA = "Mozilla/5.0 (compatible; shorekeeper-notes/1.0)"
 
 
+def _extract_undo_query(text: str) -> str | None:
+    """「X 还没做」「取消勾选 X」→ 事项名；不是撤销形态返回 None。
+
+    门槛与 reminder.extract_checkoff_query 同构：短句、非疑问、剥掉信号
+    词后还剩得出事项名（裸信号词「取消勾选/还没做」本身不算）。
+    """
+    stripped = (text or "").strip()
+    if not stripped or len(stripped) > _NOTES_UNDO_MAX_CHARS:
+        return None
+    if any(ch in stripped for ch in "？?"):
+        return None
+    match = _NOTES_UNDO_EXPLICIT_RE.match(
+        stripped
+    ) or _NOTES_UNDO_NATURAL_RE.match(stripped)
+    if match is None:
+        return None
+    query = match.group(1).strip().strip("，,。．.！!：:、；; ")
+    if not query or len(query) > _NOTES_UNDO_QUERY_MAX_CHARS:
+        return None
+    return query
+
+
 def is_notes_command(text: str, *, config: Any | None = None) -> bool:
     """笔记指令面判定（含 bare 触发词；bot_notes_enabled 可关整组）。"""
     if config is not None and not getattr(config, "bot_notes_enabled", True):
@@ -96,6 +146,8 @@ def is_notes_command(text: str, *, config: Any | None = None) -> bool:
         or _NOTES_DELETE_RE.search(stripped)
         or _NOTES_VIEW_RE.search(stripped)
         or _NOTES_DONE_RE.search(stripped)
+        or _NOTES_UNDO_EXPLICIT_RE.search(stripped)
+        or _NOTES_UNDO_NATURAL_RE.search(stripped)
         or _NOTES_ADD_RE.search(stripped)
         or _NOTES_BARE_RE.match(stripped)
     )
@@ -282,6 +334,7 @@ _USAGE_TEXT = (
     "- 「笔记列表」：看看都记了什么\n"
     "- 「笔记 看 N」：翻开第 N 条（配图会一起补发）\n"
     "- 「做完 N」：把第 N 条里头一件没做的事勾掉（有几件就说几次）\n"
+    "- 「取消勾选 <事项>」或「<事项>还没做」：勾错了就说一声，我把勾拿回来\n"
     "- 「删笔记 N」：放下第 N 条\n"
     "内容里写「- [ ] 待办」的行，会被我当作待办来看。"
 )
@@ -306,6 +359,88 @@ def build_notes_capability(config: Any | None = None) -> Any:
             send_policy=SendPolicy.SILENT_AUDIT,
             images=[{"file": str(item)} for item in (images or [])],
             audit_tags=["notes", *tags],
+        )
+
+    def _handle_undo(
+        message: IncomingMessage,
+        query: str,
+        *,
+        store: Any,
+        explicit: bool,
+    ) -> CapabilityResult | None:
+        """自然语言撤销勾选：在已勾条目里模糊匹配后回写 [ ]。
+
+        匹配与歧义语义与 reminder 侧勾选完全同一套（resolve_todo_match：
+        唯一高分=hit、并列=ambiguous 问人、未命中给最接近候选）。返回
+        None 表示不承接（自然形态且本会话没有任何已勾条目——让位给后面
+        分支/普通聊天；显式「取消勾选」形态则永不落空，给个交代）。
+        """
+        from plugins.bot_unified_runtime.character.reminders import (
+            NEAR_MISS_FLOOR,
+            match_todo_candidates,
+            resolve_todo_match,
+        )
+
+        chat_id = message.session_id  # 会话隔离：只在本会话的笔记里找。
+        # 撤销对象=已勾条目：开着的待办（勾了一部分）与整篇已完成的历史
+        # 都要扫——「最后一件被勾完」的撤销恰恰发生在 done 笔记里。
+        owners: list[tuple[int, int]] = []  # (note_id, 稳定条目号) 与 names 对齐
+        names: list[str] = []
+        for todo in store.list_notes(chat_id, limit=50):
+            if not todo.is_todo:
+                continue
+            for item_index, item_text in todo.todo_checked_items():
+                owners.append((todo.note_id, item_index))
+                names.append(item_text)
+        if not names:
+            if not explicit:
+                return None  # 没有可撤销对象：让位，不抢普通聊天。
+            return _result(
+                message,
+                "这个会话里还没有勾上过的事，先「做完 N」勾起来再说？",
+                tags=["undo_no_candidates"],
+            )
+        outcome, indexes = resolve_todo_match(query, names)
+        if outcome == "hit":
+            note_id, item_index = owners[indexes[0]]
+            before = store.get(note_id, chat_id)
+            was_done = bool(before and before.todo_state == "done")
+            updated = store.mark_item_undone(note_id, chat_id, item_index)
+            if updated is None:
+                # 并发窗口内笔记被删/改写：按未命中回话，不编造成功。
+                return _result(
+                    message,
+                    f"这个会话里没有第 {note_id} 条笔记。「笔记列表」里看看？",
+                    tags=["undo_miss"],
+                )
+            body = f"好，「{names[indexes[0]][:24]}」先放回来，不算它完成了。"
+            if was_done:
+                body += "这一篇也重新打开了。"
+            remaining = len(updated.todo_open_items())
+            if remaining:
+                body += f"\n这篇还剩 {remaining} 件待办，不急，一件一件来。"
+            return _result(message, body, tags=["undo_item"])
+        if outcome == "ambiguous":
+            lines = [f"- {names[index][:24]}" for index in indexes]
+            return _result(
+                message,
+                "有几件事都对得上，要把哪一件改回没做？\n" + "\n".join(lines),
+                tags=["undo_ambiguous"],
+            )
+        # 未命中：给最接近的已勾候选问一句（低于 NEAR_MISS_FLOOR 不打扰）。
+        near = match_todo_candidates(query, names, min_score=NEAR_MISS_FLOOR)
+        if near:
+            best = names[near[0][0]][:24]
+            return _result(
+                message,
+                f"这个会话里勾着的待办，没有能对上「{query}」的。你是指「{best}」吗？\n"
+                "是的话再告诉我一声，我把那个勾拿掉。",
+                tags=["undo_nearest"],
+            )
+        return _result(
+            message,
+            f"现在没有勾着能对上「{query}」的待办——也许还没勾过，或者已经放下了。",
+            tags=["undo_no_match"],
         )
 
     def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
@@ -335,6 +470,18 @@ def build_notes_capability(config: Any | None = None) -> Any:
                 f"第 {note_id} 条笔记已经放下了。需要的时候，再记下来就好。",
                 tags=["deleted"],
             )
+
+        # 撤销勾选（审查 A-14）：排在删除之后（删除词形优先级更高，且与
+        # 撤销正则零交集），自然形态在本会话没有任何已勾条目时让位（返回
+        # None 继续走后面分支），对齐 reminder 勾选面「无候选不抢话」的设计。
+        undo_query = _extract_undo_query(text)
+        if undo_query is not None:
+            undo_explicit = _NOTES_UNDO_EXPLICIT_RE.search(text) is not None
+            undo_result = _handle_undo(
+                message, undo_query, store=store, explicit=undo_explicit
+            )
+            if undo_result is not None:
+                return undo_result
 
         view_match = _NOTES_VIEW_RE.search(text)
         if view_match:

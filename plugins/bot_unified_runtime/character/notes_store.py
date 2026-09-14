@@ -41,6 +41,15 @@ _BOX_ANY_LINE_RE = re.compile(r"^\s*[-*]?\s*\[[ xX]?\]\s")
 # 同一族，多两组括号。``\g<1>``/``\g<2>`` 防组号与字面 x 粘连歧义。
 _BOX_OPEN_INLINE_RE = re.compile(r"^(\s*[-*]?\s*\[)\s?(\]\s)")
 
+# 已勾行（未勾与已勾的行级判定分家）：撤销勾选（审查 A-14）用它把已勾行
+# 从全部勾选框行里挑出来；大小写 [x]/[X] 都认，与 _BOX_ANY_LINE_RE 同口径。
+_BOX_DONE_LINE_RE = re.compile(r"^\s*[-*]?\s*\[[xX]\]\s")
+
+# 已勾框的行内形态（分组捕获便于回写为 [ ]）：与 _BOX_OPEN_INLINE_RE 同一
+# 族；回写统一落规范形态 ``[ ] ``（方括号内补一个空格），缩进与行内其余
+# 文本由捕获组原样保留。
+_BOX_DONE_INLINE_RE = re.compile(r"^(\s*[-*]?\s*\[)[xX](\]\s)")
+
 
 def detect_note_kind(content_md: str) -> tuple[str, str]:
     """内容 → (kind, todo_state)：含未勾选框 = 待办；否则普通笔记。"""
@@ -116,6 +125,27 @@ class Note:
             stable_index += 1
             if not _TODO_OPEN_LINE_RE.match(raw_line):
                 continue  # 已勾行：占号不进候选。
+            text = _TODO_BOX_PREFIX_RE.sub("", raw_line.strip()).strip()
+            if text:
+                items.append((stable_index, text))
+        return items
+
+    def todo_checked_items(self) -> list[tuple[int, str]]:
+        """已勾条目清单：``[(稳定条目号, 剥壳文本)]``（审查 A-14 撤销入口）。
+
+        todo_open_items 的镜像：条目号 = content_md 里**全部勾选框行**（含
+        未勾）的文档行序（0 基），可直接交给 ``mark_item_undone`` 回写；
+        未勾行占号不进候选。自然语言撤销（「<事项>还没做」）在已勾条目里
+        找匹配对象，匹配文本与本方法返回的剥壳文本同口径。
+        """
+        items: list[tuple[int, str]] = []
+        stable_index = -1
+        for raw_line in str(self.content_md or "").splitlines():
+            if not _BOX_ANY_LINE_RE.match(raw_line):
+                continue
+            stable_index += 1
+            if not _BOX_DONE_LINE_RE.match(raw_line):
+                continue  # 未勾行：占号不进候选。
             text = _TODO_BOX_PREFIX_RE.sub("", raw_line.strip()).strip()
             if text:
                 items.append((stable_index, text))
@@ -282,6 +312,75 @@ class NotesStore:
                         now,
                         "done" if all_done else str(note.todo_state),
                         now if all_done else str(note.done_at),
+                        note_id,
+                        str(chat_id),
+                        str(note.content_md),
+                    ),
+                )
+                changed = int(cursor.rowcount or 0)
+            if changed:
+                # 锁纪律：get() 在持锁段之外单独取锁。
+                return self.get(note_id, chat_id)
+            # 守护失败：并发改写了同一篇，重读重算；重试耗尽则返回最新态。
+        return self.get(note_id, chat_id)
+
+    def mark_item_undone(
+        self, note_id: int, chat_id: str, item_index: int
+    ) -> Note | None:
+        """按条目撤销勾选（审查 A-14：mark_item_done 的对称逆操作）。
+
+        契约（与 mark_item_done 完全同口径，只是改写方向相反）：
+        - ``item_index`` 为 **0 基**，按 content_md 中**全部勾选框行**（含
+          未勾 ``[ ]``）的文档行序编号——与 ``todo_checked_items``/
+          ``mark_item_done`` 同一稳定编号，勾/撤销来回切换不错位。
+        - 目标行已勾（``[x]``/``[X]``）：回写为规范形态 ``[ ]``，缩进与
+          行内其余文本原样；回写后该篇必有未勾行 → ``todo_state='open'``
+          且 ``done_at=''``（整篇 done 是「最后一条被勾完」触发的，撤销
+          任意一条都意味着不再全勾完，无论撤销的是不是最后那条）。
+        - 幂等：目标行未勾 → **完全无写入**（updated_at 也不动），返回
+          当前记录。
+        - 越界（笔记不存在 / 非待办 / item_index 不落在任何勾选框行，含
+          负数）→ 返回 None，零写入。
+        - 并发：UPDATE 带 ``content_md`` 守护条件，守护失败重读重算
+          （有限次），不吞别人的勾选/撤销。
+
+        锁纪律（同 mark_done）：``threading.Lock`` 不可重入，UPDATE 与
+        ``self.get()`` 必须分两段取锁，持锁调 ``self.get()`` 会死锁。
+        """
+        note_id = int(note_id)
+        item_index = int(item_index)
+        # 有限重试：并发改写同一篇时 content_md 守护失败 → 重读重算。
+        for _attempt in range(5):
+            note = self.get(note_id, chat_id)
+            if note is None or not note.is_todo:
+                return None
+            lines = str(note.content_md or "").splitlines(keepends=True)
+            box_positions = [
+                position for position, line in enumerate(lines)
+                if _BOX_ANY_LINE_RE.match(line)
+            ]
+            if not 0 <= item_index < len(box_positions):
+                return None
+            target = lines[box_positions[item_index]]
+            if not _BOX_DONE_LINE_RE.match(target):
+                # 未勾行再撤销：幂等无写入，返回当前记录。
+                return note
+            new_lines = list(lines)
+            new_lines[box_positions[item_index]] = _BOX_DONE_INLINE_RE.sub(
+                r"\g<1> \g<2>", target, count=1
+            )
+            new_content = "".join(new_lines)
+            # 撤销后必有未勾行：整篇一律回 open、done_at 清空（不做条件
+            # 分支——「撤销的恰是最后一条」与「撤销的是中间一条」结论相同）。
+            now = _utc_now_iso()
+            with self._lock, self._conn:
+                cursor = self._conn.execute(
+                    "UPDATE notes SET content_md = ?, updated_at = ?,"
+                    " todo_state = 'open', done_at = ''"
+                    " WHERE note_id = ? AND chat_id = ? AND content_md = ?",
+                    (
+                        new_content,
+                        now,
                         note_id,
                         str(chat_id),
                         str(note.content_md),
