@@ -3,10 +3,15 @@
 NapCat 的 record 段常带本机 nt_data 路径或过期 http URL；本文件锁定
 extract_audio_source 的来源优先级、DynamicASRProvider 的故障转移语义
 （失败返回空串、绝不阻断聊天）与 _prepare_audio 的 ffmpeg 转码行为。
+
+E-13 口径：transcribe_audio 编排用例为 mock 路径（_prepare_audio 打桩，
+docstring 逐例声明）；真实 ffmpeg 转码烟测在文件尾，由 BOT_ASR_SMOKE=1
+门控（默认跳过，仅在有真实引擎环境跑极小样本，不联网）。
 """
 from __future__ import annotations
 
 import math
+import os
 import struct
 import wave
 from pathlib import Path
@@ -107,6 +112,8 @@ class _RecordingProvider:
 def test_transcribe_audio_success_clips_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Mock 路径行为（E-13 声明）：_prepare_audio 打桩为假 mp3 字节，只验证
+    transcribe_audio 编排语义（截断/临时目录清理）；真转码烟测见文件尾。"""
     seen_dirs: list[str] = []
 
     def fake_prepare(source: str, work_dir: str, *, timeout_seconds: float):
@@ -126,6 +133,8 @@ def test_transcribe_audio_success_clips_and_cleans_up(
 def test_transcribe_audio_prepare_failure_skips_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Mock 路径行为（E-13 声明）：打桩 _prepare_audio 返回 None，验证预处理
+    失败时不触发 provider；真转码烟测见文件尾。"""
     monkeypatch.setattr(transcribe, "_prepare_audio", lambda *a, **k: None)
     provider = _RecordingProvider()
     assert transcribe_audio(provider, audio_source="x.silk") == ""
@@ -135,6 +144,8 @@ def test_transcribe_audio_prepare_failure_skips_provider(
 def test_transcribe_audio_provider_error_returns_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Mock 路径行为（E-13 声明）：_prepare_audio 与 provider 均为桩，验证
+    LLMProviderError 被吞掉并返回空串。"""
     monkeypatch.setattr(
         transcribe,
         "_prepare_audio",
@@ -150,6 +161,8 @@ def test_transcribe_audio_provider_error_returns_empty(
 def test_transcribe_audio_unexpected_error_returns_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Mock 路径行为（E-13 声明）：_prepare_audio 打桩，验证意外异常同样
+    返回空串、不阻断聊天。"""
     monkeypatch.setattr(
         transcribe,
         "_prepare_audio",
@@ -354,3 +367,43 @@ def test_transcode_record_segments_skips_convertible_and_failures(
     bad = [{"type": "record", "data": {"file": "abc.slk", "file_id": "fid"}}]
     asyncio.run(_transcode_record_segments(_Bad(), bad))
     assert "transcoded_path" not in bad[0]["data"]
+
+
+# ==================== E-13 真转码烟测（默认跳过，BOT_ASR_SMOKE=1 启用） ====================
+@pytest.mark.skipif(
+    os.environ.get("BOT_ASR_SMOKE", "") != "1",
+    reason="真转码烟测默认跳过（BOT_ASR_SMOKE=1 启用）",
+)
+@pytest.mark.skipif(
+    not transcribe._find_ffmpeg_locate(), reason="ffmpeg not installed"
+)
+def test_transcribe_audio_real_transcode_smoke(tmp_path: Path) -> None:
+    """E-13 真链路烟测：不打桩 _prepare_audio——1 秒静音 wav 经真实 ffmpeg
+    转码流过 transcribe_audio 全链（provider 用离线桩，不联网），补上
+    mock 用例覆盖不到的真实预处理段。"""
+    wav = tmp_path / "smoke.wav"
+    with wave.open(str(wav), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x00" * 16000)  # 恰 1 秒静音。
+
+    seen: list[tuple[bytes, str]] = []
+
+    class _StubProvider:
+        def generate(self, audio_bytes: bytes, filename: str, **kwargs: object) -> str:
+            seen.append((audio_bytes, filename))
+            return "字" * 400
+
+    text = transcribe_audio(
+        _StubProvider(), audio_source=str(wav), timeout_seconds=60.0
+    )
+    # 编排语义与 mock 用例同口径：文本截断到 300 字、省略号收尾。
+    assert len(text) == 300
+    assert text.endswith("…")
+    # 真实 ffmpeg 产物：mp3 头（ID3 或 MPEG 帧同步），绝非打桩假字节。
+    assert seen, "provider 未收到音频：真转码链路未走通"
+    audio_bytes, filename = seen[0]
+    assert filename == "audio.mp3"
+    assert audio_bytes[:3] == b"ID3" or audio_bytes[:2] == b"\xff\xfb"
+    assert 100 < len(audio_bytes) < 20_000_000

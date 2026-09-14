@@ -10,10 +10,13 @@
 - pipeline 集成：能力异常 catch 点自动带卡，回执语义不变。
 
 全离线：fake backend + tmp 注入，无 playwright、无网络、无源码树 data/ 写入。
+例外（E-13）：文件尾真渲染烟测默认跳过，BOT_ERRCARD_SMOKE=1 才用真
+playwright 出极小样本 PNG（仍不联网）。
 """
 
 from __future__ import annotations
 
+import os
 import platform
 import re
 from concurrent.futures import Future
@@ -440,6 +443,9 @@ def test_submit_falls_back_to_text_when_render_fails() -> None:
 def test_pipeline_exception_submits_error_card(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Mock 路径行为（E-13 声明）：render_error_card_png 打桩返回假 PNG 路径，
+    只锁 pipeline 集成/两段式下发语义；真实出图烟测见文件尾
+    （BOT_ERRCARD_SMOKE=1）。"""
     monkeypatch.setattr(
         error_report,
         "_resolve_settings",
@@ -487,6 +493,8 @@ def test_pipeline_exception_submits_error_card(
 def test_pipeline_group_failure_receipt_silent_and_card_sent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Mock 路径行为（E-13 声明）：render_error_card_png 打桩返回假 PNG 路径，
+    只锁群聊静默回执+诊断卡照发语义；真实出图烟测见文件尾。"""
     monkeypatch.setattr(
         error_report,
         "_resolve_settings",
@@ -847,3 +855,33 @@ def test_queue_accepts_ack_and_card_sharing_request_id(tmp_path: Path) -> None:
     found = queue.find_request("req-orig")
     assert found is not None
     assert found.dedupe_key == f"{base_dedupe}:card"
+
+
+# ==================== E-13 真渲染烟测（默认跳过，BOT_ERRCARD_SMOKE=1 启用） ====================
+def test_error_card_real_render_smoke(tmp_path: Path) -> None:
+    """E-13 真链路烟测：真实 error_card HTML + 真实 Playwright 出 PNG 落盘，
+    补上 pipeline mock 用例（打桩 render_error_card_png）覆盖不到的真实出图段。
+
+    门控先例与 BOT_RENDER_NET_TESTS 一致：默认跳过；设 BOT_ERRCARD_SMOKE=1
+    才跑（需本机 playwright+chromium）。全离线：卡图为本地渲染产物，不联网。
+    """
+    if os.environ.get("BOT_ERRCARD_SMOKE", "") != "1":
+        pytest.skip("真实渲染烟测默认跳过（BOT_ERRCARD_SMOKE=1 启用）")
+    from plugins.bot_unified_runtime.output.render_backends import (
+        PlaywrightRenderBackend,
+    )
+
+    backend = PlaywrightRenderBackend()
+    if not backend.available:
+        pytest.skip("playwright 未安装")
+    try:
+        path = render_error_card_png(
+            _full_report(), backend=backend, card_dir=str(tmp_path)
+        )
+    finally:
+        backend.close()
+    assert path, "真实渲染失败：render_error_card_png 返回空串（兜底契约触发）"
+    png = Path(path).read_bytes()
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"  # 真实 PNG 魔数，非打桩假字节。
+    assert len(png) > 1_000  # 1160x1800@2x 诊断卡不可能是几十字节。
+    assert Path(path).name.startswith("error_")
