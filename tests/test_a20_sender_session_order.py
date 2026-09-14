@@ -103,10 +103,18 @@ async def test_a20_same_session_delivery_order_under_concurrent_claim(
     """①同会话 A/B 并发认领：A 在途时 B 不可认领，投递顺序 A→B。"""
     queue = _build_queue(tmp_path)
     base = _utc_now() - timedelta(hours=1)  # 宽限期外，立即可认领
-    queue.submit(_send_request("req-a", session_id="private:user-1"), now=base)
+    # 审查 A-22 契约：本用例模拟纯 worker 行（无内联首投），以 deliver_after
+    # 显式声明——否则测试任务 submit 会登记内联认领，跨任务 drain（子任务）
+    # 被 A-22 台账否决（生产里这正是「handler 内联在途」的正确保护形态）。
+    queue.submit(
+        _send_request("req-a", session_id="private:user-1"),
+        now=base,
+        deliver_after=base,
+    )
     queue.submit(
         _send_request("req-b", session_id="private:user-1"),
         now=base + timedelta(seconds=1),
+        deliver_after=base + timedelta(seconds=1),
     )
 
     release_a = asyncio.Event()
@@ -179,10 +187,17 @@ async def test_a20_different_sessions_stay_parallel(tmp_path: Path) -> None:
     """②不同会话仍可并行：S1 在途不阻塞 S2 的认领与投递。"""
     queue = _build_queue(tmp_path)
     base = _utc_now() - timedelta(hours=1)
-    queue.submit(_send_request("req-s1", session_id="private:user-1"), now=base)
+    # 审查 A-22 契约：跨会话并行用例同为纯 worker 行，deliver_after 声明
+    # 无内联首投（原因同 test_a20_same_session_delivery_order 下注释）。
+    queue.submit(
+        _send_request("req-s1", session_id="private:user-1"),
+        now=base,
+        deliver_after=base,
+    )
     queue.submit(
         _send_request("req-s2", session_id="private:user-2"),
         now=base + timedelta(seconds=1),
+        deliver_after=base + timedelta(seconds=1),
     )
 
     release_s1 = asyncio.Event()

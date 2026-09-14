@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
@@ -41,6 +42,11 @@ _PARTIAL_RESUME_BACKOFF_SECONDS = 90.0
 # worker 的 claim_due 不得认领该行——入队后的首次投递由 handler 内联
 # 负责（不走租约协议），避免 worker 与内联投递竞态重复发送同一消息。
 # 宽限期过后该行仍在 QUEUED 态（例如进程重启丢了内联投递），由 worker 接管。
+# 审查 A-22：纯时间错开不可论证正确——内联耗时超过宽限期（多分片×传输
+# 超时、事件循环停顿）时 worker 仍会认领在途行 → 双发。故时间宽限只保留
+# 「跨重启丢失内联投递」的兜底职责；同进程内的硬互斥由进程内联认领台账
+# （_inline_claims，见 SQLiteSendRequestQueue）承担：内联在途期间 worker
+# 不得认领，与宽限期长短无关。
 _INLINE_DELIVERY_GRACE_SECONDS = 60
 
 
@@ -259,6 +265,20 @@ class SQLiteSendRequestQueue:
         # 锁串行化，消除每操作建连开销与 mark_* 跨连接两事务的非原子读改写。
         self._connection: sqlite3.Connection | None = None
         self._connection_lock = threading.RLock()
+        # 审查 A-22：进程内联认领台账（request_id → 提交任务）。
+        # 生产内联首投是「同一协程内 submit → transport → mark_*」的同任务
+        # 序列，worker 是跨任务认领者——台账把「内联在途」从时间推断
+        # （宽限期）升级为任务存活推断：提交任务未终结且认领者非本人时，
+        # claim_due 否决该行，内联耗时再长也不会被重复投递。生命周期：
+        #   登记 = submit 成功插入且未声明 deliver_after（事件循环内才登记，
+        #          线程提交退回纯时间宽限=既有语义）；
+        #   释放 = mark_sent / mark_retryable_failure / mark_final_failure /
+        #          mark_partial（内联已终结，无论成败）+ claim_due 遇死认领
+        #          （提交任务已终结仍未 mark_*，取消/异常路径）惰性清簿；
+        #   重启 = 台账随进程消亡，磁盘 next_retry_at 宽限兜底（现状语义）。
+        # 台账只活在内联窗口内，条目数与在途消息数同阶；任务永久悬挂属进程
+        # 级病态，对应行保持不认领（防重复投递优先于防漏发，与 §9.3 一致）。
+        self._inline_claims: dict[str, asyncio.Task[None]] = {}
 
     def _ensure_schema_once(self) -> None:
         if self._schema_ready:
@@ -345,6 +365,51 @@ class SQLiteSendRequestQueue:
         with self._connection_lock:
             yield self._shared_connection()
 
+    # ---- 审查 A-22：内联首投认领台账 ----------------------------------------
+    # 竞态窗口论证：内联首投（handler 协程）与 worker 投递（调度任务）是两个
+    # 无共享同步原语的并发投递者，原先只靠 next_retry_at 时间错开——内联耗时
+    # 超过宽限期（多分片×传输超时、事件循环停顿）即双发。台账以「提交任务
+    # 是否终结」为在途信号：任务存活=内联仍持行；任务终结（正常路径必经
+    # mark_* 四口之一，异常/取消路径由死认领清簿兜底）=行可被 worker 接管。
+    # 所有读写都在 _connection_lock（RLock）临界区内，与既有锁序一致。
+
+    def _register_inline_claim(self, request_id: str) -> None:
+        """登记内联首投认领；仅事件循环内调用生效（须在连接锁临界区内）。
+
+        线程提交（无运行中事件循环）不登记：退回纯时间宽限=既有语义。
+        """
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:  # 无事件循环（如后台渲染线程提交）
+            return
+        if task is None:
+            return
+        self._inline_claims[request_id] = task
+
+    def _release_inline_claim(self, request_id: str) -> None:
+        """释放内联认领（mark_* 终结口调用；须在连接锁临界区内）。"""
+        self._inline_claims.pop(request_id, None)
+
+    def _inline_claim_blocks(
+        self, request_id: str, claimer: asyncio.Task[None] | None
+    ) -> bool:
+        """该行的内联认领是否否决本次认领（须在连接锁临界区内）。
+
+        - 无台账条目：不否决（正常 worker 认领/跨重启恢复路径）。
+        - 条目任务已终结：死认领（取消/异常未及 mark_*）→ 清簿放行，保住
+          「内联丢失后 worker 接管」的恢复语义。
+        - 条目任务存活且认领者就是提交任务本人（同一协程 submit 后自行
+          drain，如测试/顺序管线）：不否决——单协程内天然串行，不存在
+          跨任务竞态；跨任务认领者（生产 worker）被否决，这正是 A-22 目标。
+        """
+        entry = self._inline_claims.get(request_id)
+        if entry is None:
+            return False
+        if entry.done():
+            self._inline_claims.pop(request_id, None)
+            return False
+        return entry is not claimer
+
     def submit(
         self,
         send_request: SendRequest,
@@ -408,6 +473,11 @@ class SQLiteSendRequestQueue:
                 self._prune(connection)
                 receipt = _queued_receipt(send_request)
                 event = "queued"
+                # 审查 A-22：缺省入队（无 deliver_after）= 声明本行有内联首投，
+                # 登记认领台账堵 worker 抢跑双发窗口；deliver_after 入队（如
+                # 错误卡补发）声明无内联首投，绝不登记（worker 到点照常认领）。
+                if deliver_after is None:
+                    self._register_inline_claim(send_request.request_id)
 
         self._append_sender_audit(send_request, receipt, event)
         return receipt
@@ -443,6 +513,12 @@ class SQLiteSendRequestQueue:
         safe_lease_seconds = max(1, int(lease_seconds))
         lease_expires_at = current_time + timedelta(seconds=safe_lease_seconds)
         self._ensure_schema_once()
+        # 审查 A-22：认领者身份（无事件循环的线程认领 → None，视作跨任务
+        # 认领者，内联在途否决照常生效）。
+        try:
+            claimer_task: asyncio.Task[None] | None = asyncio.current_task()
+        except RuntimeError:
+            claimer_task = None
         with self._transaction_immediate() as connection:
             # 审查 A-20（worker 侧）per-session 串行化：同会话已有在途认领
             # （state='processing' 且租约未过期）时，该会话的其余到期行不得
@@ -499,6 +575,12 @@ class SQLiteSendRequestQueue:
             ).fetchall()
             claimed_keys: list[str] = []
             for row in rows:
+                # 审查 A-22：内联首投在途（提交任务存活且认领者非本人）的行
+                # 一律否决认领——不区分 QUEUED 到期 / 租约过期 / PARTIAL 续发
+                # 入口，内联耗时超过宽限期也不会被 worker 重复投递。被否决行
+                # 本 pass 跳过，下轮 claim 重查（任务终结后自动放行）。
+                if self._inline_claim_blocks(str(row["request_id"]), claimer_task):
+                    continue
                 if row["state"] == PARTIAL_ROW_STATE:
                     # §9.3 补偿扫描：PARTIAL 行续发。claimed_from_state 只能取
                     # 合法 ReceiptState 值（'partial' 会让 _entry_from_row 误判
@@ -775,6 +857,9 @@ class SQLiteSendRequestQueue:
         current_time = now or _utc_now()
         self._ensure_schema_once()
         with self._transaction() as connection:
+            # 审查 A-22：内联首投已走到终结口（无论成败）即释放认领台账，
+            # 行交还既有重试/接管语义；「not found」分支也先释放防台账泄漏。
+            self._release_inline_claim(request_id)
             entry = self._find_entry_in(connection, request_id)
             if entry is None:
                 return DeliveryReceipt(
@@ -851,6 +936,9 @@ class SQLiteSendRequestQueue:
         current_time = now or _utc_now()
         self._ensure_schema_once()
         with self._transaction() as connection:
+            # 审查 A-22：内联首投成功即释放认领台账（行置 SENT 后 worker
+            # 本就不可认领，释放只为台账生命周期与行状态一致）。
+            self._release_inline_claim(request_id)
             entry = self._find_entry_in(connection, request_id)
             if entry is None:
                 return DeliveryReceipt(
@@ -886,6 +974,9 @@ class SQLiteSendRequestQueue:
         current_time = now or _utc_now()
         self._ensure_schema_once()
         with self._transaction() as connection:
+            # 审查 A-22：内联首投终败即释放认领台账（有已送达 part 时由
+            # 下方断点守卫改置 PARTIAL，台账同样终结——内联已结束）。
+            self._release_inline_claim(request_id)
             entry = self._find_entry_in(connection, request_id)
             if entry is None:
                 return DeliveryReceipt(
@@ -1262,6 +1353,9 @@ class SQLiteSendRequestQueue:
         current_time = now or _utc_now()
         self._ensure_schema_once()
         with self._transaction() as connection:
+            # 审查 A-22：PARTIAL 收敛属于 worker 投递侧终结口，顺手释放
+            # 认领台账（内联路径不会产生 PARTIAL，防御性对齐生命周期）。
+            self._release_inline_claim(request_id)
             entry = self._find_entry_in(connection, request_id)
             if entry is None:
                 return DeliveryReceipt(
