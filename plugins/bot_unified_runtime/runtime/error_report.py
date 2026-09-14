@@ -24,8 +24,10 @@ IDs 与时间 / 求助指引。控制台完整栈仍走既有 runtime/alerts 告
   阻塞；诊断卡渲染转本模块专用单线程渲染通道（渲染线程上无事件循环，
   Playwright 同步 API 的 Sync-inside-asyncio 守卫不再触发——错误卡渲染
   禁止在事件循环线程直接调 Playwright）。
-- 渲染成功 → 后台提交图片卡（request_id=原 id + "-card"，dedupe_key ":card"
-  后缀），经 send_queue worker 补发；渲染失败 → 补发全量诊断文本（诊断
+- 渲染成功 → 后台提交图片卡（E-12：request_id 复用原 id——与文本回执同一
+  回执寻址路径，``find_request(原 id)`` 可寻；dedupe_key 保留 ":card" 后缀
+  防撞既有去重，队列 dedupe 只认 dedupe_key，复用 id 不会被拒收），经
+  send_queue worker 补发；渲染失败 → 补发全量诊断文本（诊断
   完整性不因渲染失败丢失）。fail-open：后台任务任何异常只 log，文本回执
   已先行，卡静默放弃。
 - 门禁语义（by design）：错误卡只会在已通过 quiet_hours/限流门禁的同一
@@ -1140,13 +1142,24 @@ def _render_and_submit_card(
         deliver_after = datetime.now(timezone.utc) + timedelta(
             seconds=_CARD_DELIVER_DELAY_SECONDS
         )
-        card_request_id = f"{message.request_id}-card"
+        # 审查 E-12（2026-09-14）：卡请求复用原 request_id，不再派生
+        # ``原 id + "-card"``。机制依据（sender/queue.py 实读）：
+        # - 队列 dedupe 只认 dedupe_key（InMemory `_dedupe_keys` 集合 /
+        #   SQLite `ON CONFLICT(dedupe_key) DO NOTHING`），request_id 不参与
+        #   去重 → 复用不会被拒收；
+        # - dedupe_key 保留 ":card" 后缀：与文本回执的 ":ack"、冷却降级文本
+        #   （无后缀）三态互斥，同一回合三条请求互不吞并；
+        # - 复用后卡与文本回执走同一回执寻址路径（find_request(原 id) 可寻，
+        #   SQLite 取同 id 最新行），独立派生 id 则任何回执查询都够不到卡。
+        # 投递本身：默认配置 worker 关闭时行留在队列（与派生 id 时代一致）；
+        # worker 开启（生产 .env 已启用）按 deliver_after=+3s 认领补发，
+        # A-plus 顺序保证（卡排在文本回执之后）不变。
         if png_path:
             _submit_error_request(
                 pipeline,
                 _build_error_send_request(
                     message,
-                    card_request_id,
+                    message.request_id,
                     content_type="mixed",
                     content_ref={
                         "parts": [
@@ -1168,7 +1181,7 @@ def _render_and_submit_card(
                 pipeline,
                 _build_error_send_request(
                     message,
-                    card_request_id,
+                    message.request_id,
                     content_type="text",
                     content_ref={"text": build_text_fallback(report)},
                     text_fallback=build_text_fallback(report),

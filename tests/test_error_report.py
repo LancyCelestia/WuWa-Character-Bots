@@ -342,7 +342,8 @@ def test_submit_degrades_to_text_within_cooldown(
     assert "随后补发" in ack.content.content_ref["text"]
     assert ack.dedupe_key.endswith(":ack")
     card = first.send_queue.requests[1]
-    assert card.request_id == f"{ack.request_id}-card"
+    # 审查 E-12：卡复用原 request_id（不再派生 "-card"），dedupe 靠 ":card" 后缀。
+    assert card.request_id == ack.request_id
     assert card.capability_id == "bot.error_report"
     assert card.content.content_type == "mixed"
     assert card.content.content_ref["parts"][0]["type"] == "image"
@@ -478,7 +479,9 @@ def test_pipeline_exception_submits_error_card(
     assert card_request.capability_id == "bot.error_report"
     assert card_request.content.content_type == "mixed"
     assert card_request.target_id == "u1"
-    assert card_request.request_id == f"{ack_request.request_id}-card"
+    # 审查 E-12：卡与文本回执同 request_id（同一回执寻址路径），互不吞并靠
+    # dedupe_key 后缀（:ack / :card）区分。
+    assert card_request.request_id == ack_request.request_id
 
 
 def test_pipeline_group_failure_receipt_silent_and_card_sent(
@@ -774,3 +777,73 @@ def test_config_snapshot_global_fallback_when_prefix_sparse() -> None:
         ),
     )
     assert "C:/Users" not in repr(leaky["config_pairs"])
+
+
+# ==================== 审查 E-12（2026-09-14）：卡复用原 request_id ====================
+def test_card_followup_reuses_original_request_id_with_unique_dedupe(
+    tmp_path: Path,
+) -> None:
+    """E-12 ①：卡/降级文本两分支都复用原 request_id（不再派生 "-card"）；
+    去重靠 dedupe_key 的 ":card" 后缀——与文本回执 ":ack" 三态互斥不撞车。"""
+    settings = ErrorCardSettings(enabled=True, cooldown_seconds=60, stack_frames=8)
+    message = _message()
+    # 渲染成功分支（mixed 卡）。
+    success = _PipelineStub()
+    maybe_submit_error_card(
+        success, message, "bot.market", _captured_exc(),
+        settings=settings, gate=_ManualGate([True]),
+        backend=_FakeBackend(), card_dir=str(tmp_path),
+        render_pool=_InlinePool(),
+    )
+    assert len(success.send_queue.requests) == 2
+    ack, card = success.send_queue.requests
+    assert ack.request_id == message.request_id  # 文本回执沿原 id（既有契约）。
+    assert card.request_id == message.request_id  # E-12：卡复用同一 id。
+    assert card.dedupe_key.endswith(":card")
+    assert ack.dedupe_key.endswith(":ack")
+    assert card.dedupe_key != ack.dedupe_key  # 后缀互斥：去重互不吞并。
+    # 渲染失败分支（text_only 兜底补发）同样复用原 id。
+    fallback = _PipelineStub()
+    maybe_submit_error_card(
+        fallback, message, "bot.market", _captured_exc(),
+        settings=settings, gate=_ManualGate([True]),
+        backend=_FakeBackend(png=None), card_dir=str(tmp_path),
+        render_pool=_InlinePool(),
+    )
+    assert len(fallback.send_queue.requests) == 2
+    assert fallback.send_queue.requests[1].request_id == message.request_id
+    assert fallback.send_queue.requests[1].dedupe_key.endswith(":card")
+
+
+def test_queue_accepts_ack_and_card_sharing_request_id(tmp_path: Path) -> None:
+    """E-12 ②：文本回执与卡同 request_id 时，队列去重只认 dedupe_key
+    （SQLite ON CONFLICT(dedupe_key) / InMemory dedupe_key 集合）——两条行
+    都入队、都可被 worker 认领投递，互不吞并；复用后回执路径
+    find_request(原 id) 也能寻到卡（SQLite 取同 id 最新行）。"""
+    queue = SQLiteSendRequestQueue(tmp_path / "q.sqlite3", _NullAuditLogger())
+    base = datetime.now(timezone.utc)
+    base_dedupe = "error_report:bot.market:private:u1:m-1"
+    queue.submit(
+        _queue_request("req-orig", f"{base_dedupe}:ack"),
+        now=base,
+    )
+    queue.submit(
+        _queue_request("req-orig", f"{base_dedupe}:card"),
+        now=base,
+        deliver_after=base + timedelta(seconds=3),
+    )
+    # 到点后 worker 认领：两条都在（同 id 不同 dedupe_key），顺序 ack→card。
+    claimed = queue.claim_due(now=base + timedelta(seconds=120))
+    assert [entry.send_request.request_id for entry in claimed] == [
+        "req-orig",
+        "req-orig",
+    ]
+    assert [entry.send_request.dedupe_key for entry in claimed] == [
+        f"{base_dedupe}:ack",
+        f"{base_dedupe}:card",
+    ]
+    # 回执寻址：find_request(原 id) 命中同 id 最新行（=卡），独立派生 id 时代
+    # 任何回执查询都够不到卡——这是复用的机制收益。
+    found = queue.find_request("req-orig")
+    assert found is not None
+    assert found.dedupe_key == f"{base_dedupe}:card"

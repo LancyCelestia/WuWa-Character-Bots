@@ -193,8 +193,8 @@ def test_card_followup_success_paths_and_ids(tmp_path: Path) -> None:
     assert not ack.request_id.endswith("-card")
     assert ack.dedupe_key.endswith(":ack")
     assert ack.content.content_type == "text"
-    # 卡：派生 request_id + :card 去重 + mixed 内容。
-    assert card.request_id == f"{ack.request_id}-card"
+    # 卡：审查 E-12 复用原 request_id（同一回执寻址路径）+ :card 去重 + mixed 内容。
+    assert card.request_id == ack.request_id
     assert card.dedupe_key == f"{ack.dedupe_key[:-4]}:card"
     assert card.content.content_type == "mixed"
     parts = card.content.content_ref["parts"]
