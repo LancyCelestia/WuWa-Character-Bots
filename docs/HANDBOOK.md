@@ -213,7 +213,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 
 - 模型注册表：`BOT_MODEL_REGISTRY`（45 条目单行 JSON，结构 `{"<id>": {"model","base_url","api_key":"env:XXX","group","tags","priority","price_in","price_out"}}`）；`BOT_MODEL_PRIORITY_GROUPS`（两组时段分组 JSON，`days` ISO 周编号、`windows`、`order`）。
 - 路由开关：`BOT_CHANNEL_HEALTH_ENABLED=true`、`BOT_CHANNEL_HEALTH_LATENCY_FIRST=1`（延迟择优，默认开）、`BOT_CHANNEL_PROBE_THREADS/MANUAL_THREADS/JITTER_SECONDS`（3/8/0.4，钳位 1..16 / 0..5s）、`BOT_CHANNEL_HEALTH_LATENCY_FIRST`、慢渠道阈值 `bot_channel_slow_ema_ms=15000`。
-- 影子并发：`bot_chat_hedged_requests_enabled`（Config 默认 True=开）、`bot_chat_hedge_delay_seconds=6.0`、`bot_chat_hedge_max_candidates=2`；自适应超时 `bot_channel_adaptive_timeout=True`。
+- 影子并发：`bot_chat_hedged_requests_enabled`（Config 默认 True=开）、`bot_chat_hedge_delay_seconds=2.0`（首字延迟治理批由 6.0 下调）、`bot_chat_hedge_max_candidates=2`；自适应超时 `bot_channel_adaptive_timeout=True`。
 - 密钥槽位（全部 `env:` 引用，Config 需有同名小写字段——09-09 事故根因）：`BOT_API_KEY_QIANQIANYE`（**已失效 401**）、`_QIANQIANYE_NIGHT`、`_AIPRC`、`_AIPRC_GEMINI`、`_AIPRC_GROK`、`_UMI_GROUP1/2/3`（**GROUP3 三渠道余额 0**）、`_UMI_CLAUDE`、`_TOOLCODE_GPT/GEMINI/GROK`、`_DEEPSEEK_QIAN`、`_DEEPSEEK_OFFICIAL`（**no_api_key**）、`_ZHIPU`、`_HCN`、`_STARAPI`。
 - 其他：`BOT_CHAT_*`（provider/model/max_tokens 65538）、`BOT_SEARCH_TAVILY/YOU_API_KEY`、`TELEGRAM_BOTS`、`TELEGRAM_PROXY=http://127.0.0.1:7890`、`BOT_DOWNLOAD_PROXY`、`BOT_MUSIC_CANDIDATES_ENABLED=true`、`BOT_MUSIC_CANDIDATES_LIMIT`（已全平台透传）、`BOT_PARSE_SUBTITLE_SUMMARY=true`、`BOT_EVENT_IDEMPOTENCY_ENABLED`（默认 false）、`BOT_DISCONNECT_NOTICE_*`、`BOT_VIDEO_*`（视频理解，在途）、`BOT_PIPELINE_MAX_WORKERS`（聊天专用池，默认 8，钳 1..64，改后需重启）。
 
