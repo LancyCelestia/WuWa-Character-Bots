@@ -623,6 +623,7 @@
 | `BOT_GROUP_WHITE2` | list[str] | `[]` | 数字群号 | ✅热更 | white2=只回「@它」或显式命令 | |
 | `BOT_GROUP_CHAT_AUTO_REPLY_ENABLED` | bool | `False` | | ✅热更 | 群聊自动接话总开关（点名/命令不受影响） | |
 | `BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY` | float | `0.004` | 0.0~1.0 | ✅热更 | 未点名群消息抽签概率（**确定性哈希**，非随机数；2026-09-12 实弹反馈调低：5%/条 会频繁主动接话并自我触发限流） | |
+| `BOT_GROUP_WELCOME_ENABLED` | bool | `True` | | ✅热更 | 入群欢迎语开关（审查 B-05；守岸人语气一行，昵称富集失败退通用称呼） | 退群/管理变更只记 runtime 事件不发言（公开点名离开者是打扰） |
 | `BOT_GROUP_PROACTIVE_MAX_REPLIES_PER_HOUR` | int | `6` | ≥0 | ✅热更 | 每小时主动回复上限 | |
 | `BOT_GROUP_PROACTIVE_COOLDOWN_SECONDS` | int | `90` | ≥0 | ✅热更 | 主动回复冷却 | |
 | `BOT_NATURAL_COMMAND_ENABLED` | bool | `True` | | | 自然语言命令层（基层路由优先级 45）：「帮我查天气」等归一化执行 | |

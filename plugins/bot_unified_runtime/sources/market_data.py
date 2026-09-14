@@ -33,7 +33,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from plugins.bot_unified_runtime.sources.parsers.http_util import http_get_json
+from plugins.bot_unified_runtime.sources.parsers.http_util import (
+    ParseHttpError,
+    http_get_json,
+)
 
 _EASTMONEY_URL = (
     "https://push2.eastmoney.com/api/qt/ulist.np/get"
@@ -98,6 +101,39 @@ _INDEX_UNIVERSE: tuple[tuple[str, str, str], ...] = (
 
 _GROUP_ORDER: tuple[str, ...] = ("中国区", "亚太", "欧美")
 _OTHER_GROUP = "其他"
+
+# ==================== H-01（2026-09-14 市场扩容审查）：无源市场显式登记 ==========
+# 诚实铁律：无源品种显式登记「无源」如实标注，绝不造数（先例：北向净买入
+# 2024-08 停披露、LME 无源→COMEX 铜显式替代）。澳门/迪拜/阿联酋三市场
+# 2026-09-14 真机实证（证据链，均本机实跑非臆测）：
+# - push2 ulist 实测：100.DFMGI / 100.DFM / 100.DSI / 100.ADI / 100.ADXGI
+#   全部无效（secid 无效不报错、只会从 data.diff 里消失，实测无一返回）；
+# - searchapi suggest 实测：「迪拜」「阿布扎比」「Dubai」「DFMGI」零报价结果；
+# - 「阿联酋」仅命中 105.UAE = iShares MSCI UAE ETF（纳斯达克上市基金，
+#   语义 ≠ 国家综合股指，直接当指数展示会误导）；
+# - 「澳门」仅命中港股个股（永利澳门 116.01128 等）与 MOP 中间价——澳门
+#   无活跃证券交易所，结构性无综合股指可引。
+# 三者定性「确实无源」→ INDEX_UNAVAILABLE 显式登记并出现在行情卡「暂无」
+# 注记区；触发词（H-07）无源不补。是否接受 ETF（105.UAE）作为阿联酋代理
+# 属语义裁决，留给用户——见 PENDING_INDEX_CANDIDATES。
+INDEX_UNAVAILABLE: tuple[tuple[str, str], ...] = (
+    ("迪拜", "东财未收录迪拜DFM综合股指"),
+    ("阿联酋", "东财仅有在美ETF（语义≠国家股指），未上卡"),
+    ("澳门", "澳门无证券交易所，结构性无综合股指"),
+)
+
+# 待真机验证候选清单（H-01 常量，纪律：只登记、不上卡）。
+# 105.UAE 已实探存在（suggest QuoteID 实证），但它是 ETF 而非股指——
+# 上卡需用户先裁决「ETF 代理是否可接受」；其余候选离线/真机均无实据。
+PENDING_INDEX_CANDIDATES: tuple[tuple[str, str, str], ...] = (
+    # (secid, 名称, 不直接上卡的原因)
+    ("105.UAE", "阿联酋ETF(iShares MSCI UAE)", "ETF 语义≠国家综合股指，待用户裁决"),
+)
+
+
+def index_unavailable_entries() -> tuple[tuple[str, str], ...]:
+    """无源市场登记（卡面「暂无」注记与测试消费；单一事实来源本常量）。"""
+    return INDEX_UNAVAILABLE
 
 # 红涨绿跌（与 A 股配色习惯一致），横盘用白点。
 _MARK_UP = "🔴"
@@ -350,7 +386,12 @@ def format_quote_line(quote: IndexQuote) -> str:
 
 
 def format_market_brief(quotes: Sequence[IndexQuote]) -> str:
-    """按 中国区/亚太/欧美 分组的纯文本行情快报；空结果给降级文案。"""
+    """按 中国区/亚太/欧美 分组的纯文本行情快报；空结果给降级文案。
+
+    H-01（2026-09-14）：末尾追加「暂无数据源」注记区——无源市场显式登记
+    （见 INDEX_UNAVAILABLE），用户问「迪拜/阿联酋/澳门股指」时卡面与文本
+    都有明确交代，绝不静默消失、更不造数。
+    """
     if not quotes:
         return _EMPTY_DEGRADED_TEXT
     grouped: dict[str, list[IndexQuote]] = {group: [] for group in _GROUP_ORDER}
@@ -364,6 +405,11 @@ def format_market_brief(quotes: Sequence[IndexQuote]) -> str:
             continue
         lines.append(f"—— {group} ——")
         lines.extend(format_quote_line(quote) for quote in group_quotes)
+    entries = index_unavailable_entries()
+    if entries:
+        lines.append(
+            "暂无数据源：" + "；".join(f"{name}（{reason}）" for name, reason in entries)
+        )
     return "\n".join(lines)
 
 
@@ -392,6 +438,28 @@ _MOEX_TREND_POINTS = 30
 def reset_market_trend_cache() -> None:
     """清空走势缓存（测试用）。"""
     _TREND_CACHE.clear()
+
+
+def _retry_transient(fetch, *, attempts: int = 3):
+    """push2his 瞬断退避重试（H-04，2026-09-14）。
+
+    语义与 ``commodities_data._retry_transient`` / ``stock_data._network_retry``
+    逐字对齐：ParseHttpError / ConnectionError / TimeoutError 视为瞬断，
+    退避后至多重试 3 次；其他异常原样抛（真异常不重试的纪律不变）。
+    背景：2026-09-13 vis3 实测 push2his 会 RemoteDisconnected，且本席
+    2026-09-14 真机探测时同样多次复现——指数走势此前是三大取数点中唯一
+    未接瞬断重试的一个。
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            return fetch()
+        except (ParseHttpError, ConnectionError, TimeoutError) as exc:
+            last_exc = exc
+            if attempt + 1 >= attempts:
+                raise
+            empty_backoff_sleep()
+    raise last_exc if last_exc is not None else RuntimeError("unreachable")  # pragma: no cover
 
 
 def _fetch_moex_trend(timeout_seconds: float) -> tuple[float, ...]:
@@ -454,18 +522,24 @@ def fetch_index_trend(
         if closes:
             _TREND_CACHE[secid] = (now, closes)
         return closes
-    # G2：东财 kline 空响应（空 JSON/缺行）退避后至多重试 1 次；真异常不
-    # 重试；仍空照旧不缓存（「空结果不缓存」纪律不变）。
+
+    def _get() -> Any:
+        return http_get_json(
+            _KLINE_URL.format(
+                secid=urllib.parse.quote(secid), days=_TREND_MAX_POINTS
+            ),
+            timeout=max(1.0, float(timeout_seconds)),
+            max_bytes=_MAX_PAYLOAD_BYTES,
+        )
+
+    # G2：东财 kline 空响应（空 JSON/缺行）退避后至多重试 1 次；瞬断
+    # （ParseHttpError/ConnectionError/TimeoutError，H-04）走 _retry_transient
+    # （至多 3 次退避，与 commodities_data 同款）；其他真异常不重试；
+    # 仍空照旧不缓存（「空结果不缓存」纪律不变）。
     attempts = 2 if retry_on_empty_enabled() else 1
     for attempt in range(attempts):
         try:
-            payload = http_get_json(
-                _KLINE_URL.format(
-                    secid=urllib.parse.quote(secid), days=_TREND_MAX_POINTS
-                ),
-                timeout=max(1.0, float(timeout_seconds)),
-                max_bytes=_MAX_PAYLOAD_BYTES,
-            )
+            payload = _retry_transient(_get)
             data = payload.get("data") if isinstance(payload, dict) else None
             klines = data.get("klines") if isinstance(data, dict) else None
             if isinstance(klines, list):

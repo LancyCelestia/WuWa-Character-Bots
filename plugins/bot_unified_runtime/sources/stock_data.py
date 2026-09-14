@@ -22,6 +22,25 @@
 估值来源：OpenAI 官方融资公告（2026-03，投后 8520 亿美元，1220 亿承诺资金），
 见 https://openai.com/index/accelerating-the-next-phase-ai/ 。
 
+**H-02/H-03 扩容批（2026-09-14 市场与个股覆盖审查）**：
+
+- 注册表扩容：新增 A 股 9 家（secid 前缀 1=沪 / 0=深）+ 港股 8 家
+  （前缀 116=港）。证据分级：push2 ulist **实测返回真实行情行**（茅台/
+  招行/宁德/比亚迪/腾讯/阿里/美团/小米/港交所）；其余为 searchapi
+  suggest **QuoteID 实证**（东财搜索报价库 canonical 键）+ 同前缀家族
+  格式自证。A+H 双重上市公司只注册 A 股一侧（防同别名双 ticker 抢注）。
+  A股/港股走单股 provenance 链路；快查批量面板（``_STOCK_UNIVERSE``）
+  维持 9 家美股不变（面板文案「美股科技巨头」语义不动）。
+- 币种：CompanyRef 新增 ``currency``（USD/CNY/HKD），现价/K 线/市值
+  快照的 currency 跟随上市币种；纯文本快报（``format_stock_brief``）
+  币种文案自适应（美元/元/港元）。**非美元市值的卡面展示暂缺**：市值行
+  币种标注能力在能力层硬编码「亿美元」，非美元市值直接上卡会错标币种
+  （7-8 倍失真）——按「不能如实标注的字段不上卡」置 None（见
+  ``fetch_market_cap``），待能力层支持后回填。
+- H-03 裁定：f47/f48/f84/f85（成交量/成交额/流通股/总股本）从未真机
+  实测、单位口径可能差 100 倍（手↔股）——**置 None 不上卡**，代码留
+  「待实测回填」标记（见 ``_parse_quote``）。
+
 **图表语义**：折线（趋势）只吃 ``OHLCVSeries``（多日收盘序列）；箱形图
 （分布）只吃 ≥``min_samples`` 天的多日数值——单日 OHLC 不是分布，
 ``boxplot_stats`` 样本不足时返回 ``(None, "insufficient_data")``。
@@ -85,7 +104,11 @@ def _network_retry(fetch, *, attempts: int = 3):
 
 @dataclass(frozen=True)
 class CompanyRef:
-    """一家上市公司的注册信息（ticker 显式，secid 可在实测后修正）。"""
+    """一家上市公司的注册信息（ticker 显式，secid 可在实测后修正）。
+
+    H-02（2026-09-14）：新增 ``currency``——上市币种（USD/CNY/HKD），
+    现价/K 线/市值快照与文本快报的币种口径单一事实来源。
+    """
 
     ticker: str
     name: str
@@ -97,6 +120,7 @@ class CompanyRef:
     # logo 走 logo.clearbit.com/<domain>（keyless 稳定直链），失败回退首字母徽章。
     brand_color: str = ""
     logo_domain: str = ""
+    currency: str = "USD"  # 上市币种；非美元字段见 fetch_market_cap 诚实门
 
 
 _LISTED_COMPANIES: tuple[CompanyRef, ...] = (
@@ -192,6 +216,231 @@ _LISTED_COMPANIES: tuple[CompanyRef, ...] = (
     ),
 )
 
+# ==================== H-02（2026-09-14 审查）：A股/港股个股注册表 ==========
+# 证据分级（诚实铁律：无实据不上卡）：
+# - 【push2 实测】= 2026-09-14 本机真机 curl/venv 实探，ulist.np 返回真实
+#   行情行（f12/f14/f2 与注册信息逐一比对）：600519/600036/300750/002594、
+#   00700/09988/03690/01810/00388；
+# - 【suggest 实证】= searchapi suggest 返回 QuoteID（东财搜索报价库的
+#   canonical 报价键）与本表 secid 逐一相符：601318/601939/000858/601899/
+#   688981、09618/09999/01299。
+# 快查批量面板（_STOCK_UNIVERSE）不扩：面板文案「美股科技巨头」语义不动，
+# A股/港股一律走单股 provenance 链路（resolve → quote/ohlcv/cap）。
+#
+# A+H 双重上市公司只注册 A 股一侧（防同别名双 ticker 在 _BY_ALIAS 里静默
+# 互相覆盖=数据事故）：中国平安(02318)/紫金矿业(02899)/中芯国际(00981)/
+# 建设银行(00939)/比亚迪股份(01211) 的 H 侧刻意不注册，进
+# ``_PENDING_STOCK_CANDIDATES`` 留档。
+#
+# 别名劫持审计（T-Spec T1.7 同款纪律）：不带「平安」（平安银行 000001 是
+# 另一家公司、平安夜是日常词）；「宁德」不带（是地名）；「招商」「建行」
+# 仅在全称无歧义时收录缩写（招行/建行为无歧义惯用缩写）。
+_CN_HK_LISTED_COMPANIES: tuple[CompanyRef, ...] = (
+    # ---- A 股（CNY；secid 前缀 1=上交所 / 0=深交所）----
+    CompanyRef(
+        ticker="600519",
+        name="Kweichow Moutai",
+        display="贵州茅台",
+        secid="1.600519",  # push2 实测：f12=600519 f14=贵州茅台
+        exchange="SSE",
+        aliases=("贵州茅台", "茅台", "600519"),
+        brand_color="#b01f24",
+        logo_domain="moutai.com.cn",
+        currency="CNY",
+    ),
+    CompanyRef(
+        ticker="300750",
+        name="CATL",
+        display="宁德时代",
+        secid="0.300750",  # push2 实测：f12=300750 f14=宁德时代
+        exchange="SZSE",
+        aliases=("宁德时代", "300750"),
+        brand_color="#003c7d",
+        logo_domain="catl.com",
+        currency="CNY",
+    ),
+    CompanyRef(
+        ticker="002594",
+        name="BYD",
+        display="比亚迪",
+        secid="0.002594",  # push2 实测：f12=002594 f14=比亚迪
+        exchange="SZSE",
+        aliases=("比亚迪", "002594"),
+        brand_color="#c7000b",
+        logo_domain="byd.com",
+        currency="CNY",
+    ),
+    CompanyRef(
+        ticker="600036",
+        name="China Merchants Bank",
+        display="招商银行",
+        secid="1.600036",  # push2 实测：f12=600036 f14=招商银行
+        exchange="SSE",
+        aliases=("招商银行", "招行", "600036"),
+        brand_color="#d22630",
+        logo_domain="cmbchina.com",
+        currency="CNY",
+    ),
+    CompanyRef(
+        ticker="601318",
+        name="Ping An Insurance",
+        display="中国平安",
+        secid="1.601318",  # suggest 实证：QuoteID=1.601318
+        exchange="SSE",
+        aliases=("中国平安", "601318"),
+        brand_color="#f08300",
+        logo_domain="pingan.com",
+        currency="CNY",
+    ),
+    CompanyRef(
+        ticker="601939",
+        name="China Construction Bank",
+        display="建设银行",
+        secid="1.601939",  # suggest 实证：QuoteID=1.601939
+        exchange="SSE",
+        aliases=("建设银行", "建行", "601939"),
+        brand_color="#0066b3",
+        logo_domain="ccb.com",
+        currency="CNY",
+    ),
+    CompanyRef(
+        ticker="000858",
+        name="Wuliangye",
+        display="五粮液",
+        secid="0.000858",  # suggest 实证：QuoteID=0.000858
+        exchange="SZSE",
+        aliases=("五粮液", "000858"),
+        brand_color="#8b1a1a",
+        logo_domain="wuliangye.com.cn",
+        currency="CNY",
+    ),
+    CompanyRef(
+        ticker="601899",
+        name="Zijin Mining",
+        display="紫金矿业",
+        secid="1.601899",  # suggest 实证：QuoteID=1.601899
+        exchange="SSE",
+        aliases=("紫金矿业", "紫金", "601899"),
+        brand_color="#a6192e",
+        logo_domain="zjky.cn",
+        currency="CNY",
+    ),
+    CompanyRef(
+        ticker="688981",
+        name="SMIC",
+        display="中芯国际",
+        secid="1.688981",  # suggest 实证：QuoteID=1.688981（科创板）
+        exchange="SSE",
+        aliases=("中芯国际", "中芯", "688981"),
+        brand_color="#005e7d",
+        logo_domain="smics.com",
+        currency="CNY",
+    ),
+    # ---- 港股（HKD；secid 前缀 116=港交所）----
+    CompanyRef(
+        ticker="00700",
+        name="Tencent",
+        display="腾讯控股",
+        secid="116.00700",  # push2 实测：f12=00700 f14=腾讯控股；kline 亦实测
+        exchange="HKEX",
+        aliases=("腾讯控股", "腾讯", "00700"),
+        brand_color="#0052d9",
+        logo_domain="tencent.com",
+        currency="HKD",
+    ),
+    CompanyRef(
+        ticker="09988",
+        name="Alibaba Group",
+        display="阿里巴巴",
+        secid="116.09988",  # push2 实测：f12=09988 f14=阿里巴巴-W
+        exchange="HKEX",
+        aliases=("阿里巴巴", "阿里", "09988"),
+        brand_color="#ff6a00",
+        logo_domain="alibaba.com",
+        currency="HKD",
+    ),
+    CompanyRef(
+        ticker="03690",
+        name="Meituan",
+        display="美团",
+        secid="116.03690",  # push2 实测：f12=03690 f14=美团-W
+        exchange="HKEX",
+        aliases=("美团", "03690"),
+        brand_color="#ffc300",
+        logo_domain="meituan.com",
+        currency="HKD",
+    ),
+    CompanyRef(
+        ticker="01810",
+        name="Xiaomi Group",
+        display="小米集团",
+        secid="116.01810",  # push2 实测：f12=01810 f14=小米集团-W
+        exchange="HKEX",
+        aliases=("小米集团", "小米", "01810"),
+        brand_color="#ff6900",
+        logo_domain="mi.com",
+        currency="HKD",
+    ),
+    CompanyRef(
+        ticker="00388",
+        name="HKEX",
+        display="香港交易所",
+        secid="116.00388",  # push2 实测：f12=00388 f14=香港交易所
+        exchange="HKEX",
+        aliases=("香港交易所", "港交所", "00388"),
+        brand_color="#1c3f94",
+        logo_domain="hkex.com.hk",
+        currency="HKD",
+    ),
+    CompanyRef(
+        ticker="09618",
+        name="JD.com",
+        display="京东集团",
+        secid="116.09618",  # suggest 实证：QuoteID=116.09618（京东集团-SW）
+        exchange="HKEX",
+        aliases=("京东集团", "京东", "09618"),
+        brand_color="#e1251b",
+        logo_domain="jd.com",
+        currency="HKD",
+    ),
+    CompanyRef(
+        ticker="09999",
+        name="NetEase",
+        display="网易",
+        secid="116.09999",  # suggest 实证：QuoteID=116.09999
+        exchange="HKEX",
+        aliases=("网易", "09999"),
+        brand_color="#d43c33",
+        logo_domain="163.com",
+        currency="HKD",
+    ),
+    CompanyRef(
+        ticker="01299",
+        name="AIA Group",
+        display="友邦保险",
+        secid="116.01299",  # suggest 实证：QuoteID=116.01299
+        exchange="HKEX",
+        aliases=("友邦保险", "友邦", "01299"),
+        brand_color="#d31145",
+        logo_domain="aia.com",
+        currency="HKD",
+    ),
+)
+
+# 待上卡候选清单（H-02 纪律：只登记、不注册、不外呼）。
+# - 已探明 secid 本轮未纳入（控制单批审计面）；
+# - A+H 双重上市的 H 侧（同公司已注册 A 股，注册会造成别名抢注）。
+# (secid, 名称, 不注册的原因)
+_PENDING_STOCK_CANDIDATES: tuple[tuple[str, str, str], ...] = (
+    ("1.600900", "长江电力", "已探明 secid，本轮未纳入（扩容候选）"),
+    ("0.300059", "东方财富", "已探明 secid，本轮未纳入（别名与数据源名易混，待评估）"),
+    ("116.02318", "中国平安(H)", "A+H 双重上市：已注册 A 股 601318"),
+    ("116.02899", "紫金矿业(H)", "A+H 双重上市：已注册 A 股 601899"),
+    ("116.00981", "中芯国际(H)", "A+H 双重上市：已注册 A 股 688981"),
+    ("116.00939", "建设银行(H)", "A+H 双重上市：已注册 A 股 601939"),
+    ("116.01211", "比亚迪股份(H)", "A+H 双重上市：已注册 A 股 002594"),
+)
+
 # 非上市公司：只登记有公开来源的估值说明，绝不接入行情链路。
 # 口径说明（2026-09-13 用户裁定「AI/科技未上市企业用官方披露代表金融数据」）：
 # 未上市公司无公开财报义务，登记值按来源分级标注——官方公告 > 公开报道；
@@ -243,7 +492,10 @@ NON_PUBLIC_EQUITIES: dict[str, NonPublicEquityNote] = {
 }
 
 _BY_ALIAS: dict[str, str] = {}
-for _ref in _LISTED_COMPANIES:
+_ALL_LISTED_COMPANIES: tuple[CompanyRef, ...] = (
+    _LISTED_COMPANIES + _CN_HK_LISTED_COMPANIES
+)
+for _ref in _ALL_LISTED_COMPANIES:
     _BY_ALIAS[_ref.ticker.lower()] = _ref.ticker
     for _alias in _ref.aliases:
         _BY_ALIAS[_alias.lower()] = _ref.ticker
@@ -261,13 +513,18 @@ _BY_ALIAS.update(
 )
 
 _COMPANY_BY_TICKER: dict[str, CompanyRef] = {
-    ref.ticker: ref for ref in _LISTED_COMPANIES
+    ref.ticker: ref for ref in _ALL_LISTED_COMPANIES
 }
 
 
 def list_listed_companies() -> tuple[CompanyRef, ...]:
-    """当前注册的上市公司（显式 ticker + secid）。"""
-    return _LISTED_COMPANIES
+    """当前注册的全部上市公司（美股 9 + A股/港股 17，H-02 扩容后）。"""
+    return _ALL_LISTED_COMPANIES
+
+
+def list_cn_hk_companies() -> tuple[CompanyRef, ...]:
+    """A股/港股注册切片（H-02；快查批量面板不含这些公司）。"""
+    return _CN_HK_LISTED_COMPANIES
 
 
 def find_company_ref(ticker: str) -> CompanyRef | None:
@@ -376,6 +633,8 @@ def _parse_quote(
     ticker: str, ref: CompanyRef | None, payload: Any
 ) -> EquityQuote:
     """解析现价行；name/价格缺失走 UNAVAILABLE + note，绝不造 0。"""
+    # 币种跟随上市币种（H-02）：美股 USD / A股 CNY / 港股 HKD。
+    currency = ref.currency if ref is not None else "USD"
     row = _first_diff_row(payload) or {}
     price = _as_float(row.get("f2")) if row else None
     change_pct = _as_float(row.get("f3")) if row else None
@@ -384,7 +643,7 @@ def _parse_quote(
             ticker=ticker,
             name=ref.display if ref else "",
             exchange=ref.exchange if ref else "",
-            currency="USD",
+            currency=currency,
             price=None,
             change_pct=change_pct,
             change_abs=None,
@@ -394,21 +653,22 @@ def _parse_quote(
             delayed=True,
             note="上游未返回可用现价（字段缺失或停牌）",
         )
-    # vis3 指标完善：f47 成交量（手→股 ×100）/ f48 成交额（美元）/ f85 流通股 /
-    # f84 总股本；上游 "-" 或缺失一律 None，绝不造 0。
-    volume_hand = _as_float(row.get("f47"))
+    # H-03（2026-09-14 审查裁定）：f47/f48/f84/f85（成交量/成交额/流通股/
+    # 总股本）从未真机实测、单位口径可能差 100 倍（f47 疑似「手」需 ×100，
+    # f84/f85 疑似「股」）——**未实测字段不上卡，一律置 None**。待实测回填
+    # 标记：真机核验 push2 字段单位后在此恢复映射（诚实优先于功能保持）。
     return EquityQuote(
         ticker=ticker,
         name=str(row.get("f14") or (ref.display if ref else "") or ""),
         exchange=ref.exchange if ref else "",
-        currency="USD",
+        currency=currency,
         price=price,
         change_pct=change_pct,
         change_abs=_as_float(row.get("f4")),
-        volume=volume_hand * 100 if volume_hand is not None else None,
-        amount=_as_float(row.get("f48")),
-        float_shares=_as_float(row.get("f85")),
-        total_shares=_as_float(row.get("f84")),
+        volume=None,  # TODO(H-03 待实测回填): f47 成交量（手→股 ×100 未核验）
+        amount=None,  # TODO(H-03 待实测回填): f48 成交额（币种/单位未核验）
+        float_shares=None,  # TODO(H-03 待实测回填): f85 流通股
+        total_shares=None,  # TODO(H-03 待实测回填): f84 总股本
         source=_SOURCE_QUOTE,
         as_of=_now_utc(),
         status=FinanceDataStatus.OK,
@@ -462,7 +722,7 @@ def _parse_klines(payload: Any, ref: CompanyRef | None) -> OHLCVSeries:
         return OHLCVSeries(
             ticker=ticker,
             name=display,
-            currency="USD",
+            currency=ref.currency if ref is not None else "USD",
             bars=[],
             source=_SOURCE_KLINE,
             as_of=_now_utc(),
@@ -478,7 +738,7 @@ def _parse_klines(payload: Any, ref: CompanyRef | None) -> OHLCVSeries:
     return OHLCVSeries(
         ticker=ticker,
         name=display,
-        currency="USD",
+        currency=ref.currency if ref is not None else "USD",
         bars=bars,
         source=_SOURCE_KLINE,
         as_of=_now_utc(),
@@ -544,7 +804,7 @@ def fetch_stock_quote(ticker: str, timeout_seconds: float = 6.0) -> EquityQuote:
                 ticker=normalized,
                 name=ref.display,
                 exchange=ref.exchange,
-                currency="USD",
+                currency=ref.currency,
                 price=None,
                 source=_SOURCE_QUOTE,
                 as_of=_now_utc(),
@@ -621,6 +881,25 @@ def fetch_market_cap(ticker: str, timeout_seconds: float = 6.0) -> MarketCap:
             status=FinanceDataStatus.UNAVAILABLE,
             note="未注册的公司",
         )
+    # H-02 诚实门（2026-09-14）：非美元上市（A股 CNY / 港股 HKD）的 f20
+    # 市值跟随上市币种，而卡面/文本的市值行币种标注能力硬编码「亿美元」
+    # （能力层属并行代理域，本席不可触碰）——直接放行会把人民币/港元市值
+    # 错标成美元（7-8 倍失真）。按「不能如实标注的字段不上卡」（H-03 同款
+    # 纪律）：置 None + DEGRADED + 待回填标记；能力层支持币种标注后删除
+    # 本分支即恢复。
+    if ref.currency != "USD":
+        return MarketCap(
+            ticker=normalized,
+            value=None,
+            currency=ref.currency,
+            source=_SOURCE_QUOTE,
+            as_of=_now_utc(),
+            status=FinanceDataStatus.DEGRADED,
+            note=(
+                f"市值为上市币种（{ref.currency}）口径，币种标注能力未就绪，"
+                "先不上卡（待回填）"
+            ),
+        )
     # G2：缺行=限流空响应签名 → 退避重试一次；行在但 f20 缺失不重试；
     # 真异常不重试。
     attempts = 2 if retry_on_empty_enabled() else 1
@@ -664,6 +943,23 @@ def fetch_market_cap(ticker: str, timeout_seconds: float = 6.0) -> MarketCap:
 
 
 # ==================== 指标计算（纯函数，离线可验证） ====================
+
+# 币种展示口径（H-02）：现价单位与市值单位分开——现价 CNY 惯用「元」，
+# 市值 CNY 惯用「亿/万亿人民币」；未知币种原样展示（绝不默认成美元）。
+_CURRENCY_PRICE_UNITS: dict[str, str] = {"USD": "美元", "CNY": "元", "HKD": "港元"}
+_CURRENCY_CAP_UNITS: dict[str, str] = {"USD": "美元", "CNY": "人民币", "HKD": "港元"}
+
+
+def _price_unit(currency: str) -> str:
+    """现价单位词；未登记币种用 ISO 代码本身（不冒充美元）。"""
+    code = (currency or "").strip().upper()
+    return _CURRENCY_PRICE_UNITS.get(code, code or "USD")
+
+
+def _cap_unit(currency: str) -> str:
+    """市值单位词；未登记币种用 ISO 代码本身（不冒充美元）。"""
+    code = (currency or "").strip().upper()
+    return _CURRENCY_CAP_UNITS.get(code, code or "USD")
 
 
 def compute_kdj(
@@ -807,7 +1103,8 @@ def format_stock_brief(
     pct_text = (
         f"{quote.change_pct:+.2f}%" if quote.change_pct is not None else "涨跌幅未知"
     )
-    line = f"现价 {quote.price:.2f} 美元 {pct_text}"
+    # H-02：币种文案自适应（美元/元/港元），跟随上市币种，不再硬编码美元。
+    line = f"现价 {quote.price:.2f} {_price_unit(quote.currency)} {pct_text}"
     if quote.change_abs is not None:
         line += f"（{quote.change_abs:+.2f}）"
     lines.append(line)
@@ -828,12 +1125,15 @@ def format_stock_brief(
         lines.append("KDJ 暂缺（交易日不足 9 天，不算）")
     if cap is not None and cap.value is not None:
         value_yi = cap.value / 1e8
+        unit = _cap_unit(cap.currency)
         if value_yi >= 10_000:
-            lines.append(f"总市值 ≈ {value_yi / 10_000:.2f} 万亿美元")
+            lines.append(f"总市值 ≈ {value_yi / 10_000:.2f} 万亿{unit}")
         else:
-            lines.append(f"总市值 ≈ {value_yi:,.0f} 亿美元")
+            lines.append(f"总市值 ≈ {value_yi:,.0f} 亿{unit}")
     else:
-        lines.append("总市值暂缺（上游字段缺失）")
+        # H-02：市值缺失原因如实透出（含非美元市值「待回填」诚实门）。
+        reason = (cap.note if cap is not None else "") or "上游字段缺失"
+        lines.append(f"总市值暂缺（{reason}）")
     stamp = quote.as_of.strftime("%Y-%m-%d %H:%M UTC") if quote.as_of else "时间未知"
     lines.append(f"数据源 东财行情（延迟行情）· {stamp} · 状态 {status_or_unknown(quote.status).value}")
     return "\n".join(lines)
@@ -843,6 +1143,8 @@ def format_stock_brief(
 
 # 宇宙表 (secid, symbol, 中文名, market, 货币)，顺序即展示顺序；secid 与
 # 注册表 _LISTED_COMPANIES 同源（2026-09-12 实测 105=NASDAQ / 106=NYSE）。
+# H-02（2026-09-14）：面板宇宙刻意维持 9 家美股不变——面板文案「美股科技
+# 巨头」语义不动；A股/港股（_CN_HK_LISTED_COMPANIES）只走单股链路。
 _STOCK_UNIVERSE: tuple[tuple[str, str, str, str, str], ...] = tuple(
     (ref.secid, ref.ticker, ref.display, ref.exchange, "USD")
     for ref in _LISTED_COMPANIES

@@ -27,6 +27,7 @@ from plugins.bot_unified_runtime.sources.market_data import (
     fetch_index_trend,
     format_market_brief,
     group_quotes,
+    index_unavailable_entries,
 )
 
 # 触发词：全球股市 > 股指/大盘/股市/行情（行情放最后避免误伤面过大时漏判）。
@@ -34,8 +35,12 @@ from plugins.bot_unified_runtime.sources.market_data import (
 # 同步收录（评审 P1-2，繁体非股市守卫才不失效）。
 # 英文 market/markets/stock market（词边界，T-Spec T1.2）同表触发；
 # 「stock market」与 stocks 让路对由 base_router 优先级裁定（market 41 先于 42）。
+# H-02（2026-09-14）：「股市」加 (?<!控) 负向后顾——「腾讯控股市值」这类
+# 「X控股+市值」查询里 控股|市值 相邻拼出伪「股市」子串，会把个股查询劫持到
+# 股指面板（H-02 新增 控股 系公司名后才成为可达路径）；其余「股市」语境
+# （股市股价/A股市场…）不受影响。
 _MARKET_TRIGGER_RE = re.compile(
-    r"(全球股市|股指|大盘|大盤|股市|行情"
+    r"(全球股市|股指|大盘|大盤|(?<!控)股市|行情"
     # 全拼/缩写（T-Spec T1.5/T1.6）：全拼同覆盖繁体同音（大盤/股價类）；
     # 缩写 hq/dp/gs 查重无跨能力冲突（gz 与 affinity「规则」冲突故不上）。
     # 本正则无 IGNORECASE，按 RF 波先例用 [A-Za-z0-9] 全字母数字区间边界。
@@ -61,6 +66,11 @@ _MAX_TRIGGER_LEN = 32
 _EMPTY_DEGRADED_TEXT = "行情数据暂时拉不到，晚点再试试？"
 
 # 明确市场词 → 指数 secid（多个词命中取并集；空 = 全部指数）。
+# H-07（2026-09-14 同步裁定）：迪拜/阿联酋/澳门为「确实无源」市场
+# （见 sources/market_data.INDEX_UNAVAILABLE 与其证据链注释），触发词
+# 「有源才补」——三者一律不加过滤词、不加触发词，绝不给无源市场造入口。
+# A股/港股个股扩容（H-02）走个股能力别名解析（resolve_company_query），
+# 不占股指过滤面。
 _MARKET_FILTERS: tuple[tuple[str, frozenset[str]], ...] = (
     ("A股", frozenset({"1.000001", "0.399001", "0.399006"})),
     ("B股", frozenset({"1.000003", "0.399003"})),
@@ -688,7 +698,18 @@ def build_market_capability(
                 ],
                 "source_note": "数据源：东方财富 · MOEX ISS（俄罗斯）",
                 "updated_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
-                "delayed_note": "部分海外指数行情可能有延迟",
+                # H-01（2026-09-14）：卡面「暂无」注记区——无源市场显式登记
+                # （单一事实来源 = market_data.INDEX_UNAVAILABLE，纯文本字段
+                # 注入，模板零改动、渲染契约零风险）。
+                "delayed_note": (
+                    "部分海外指数行情可能有延迟"
+                    + (
+                        " · 暂无数据源："
+                        + "、".join(name for name, _reason in index_unavailable_entries())
+                        if index_unavailable_entries()
+                        else ""
+                    )
+                ),
                 # 多源交叉查验声明（腾讯 qt.gtimg.cn；通道不可用为空串=不声明）。
                 "crosscheck_note": crosscheck_note,
                 # Task 4 增量：机器可读状态与数据时点（unix 秒，取各行最新；
