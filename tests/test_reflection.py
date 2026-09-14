@@ -359,3 +359,52 @@ def _create_turns_db(path: Path) -> None:
         connection.commit()
     finally:
         connection.close()
+
+
+# ---------- 记忆串群修复（审查 G-04）：跨会话召回必须被会话闸拦住 ----------
+
+def test_facts_for_session_filter_blocks_cross_session_recall(tmp_path: Path) -> None:
+    """A 群说的私事不得在 B 群被召回：同会话+全局两级可见，异会话零召回。"""
+    store = ReflectionStore(tmp_path / "reflection.sqlite3", clock=_FakeClock())
+    d1 = store.save_digest(session_key="group:a", scope_date="2026-09-10", summary="a", turn_count=1)
+    d2 = store.save_digest(session_key="group:b", scope_date="2026-09-10", summary="b", turn_count=1)
+    store.save_facts(d1, "u1", [FactDraft("我对芒果过敏")])
+    store.save_facts(d2, "u1", [FactDraft("我在学 RUST")])
+
+    # 不传 session_id：兼容旧语义，全会话可见。
+    assert len(store.facts_for("u1")) == 2
+    # 传 session_id：只见同会话事实。
+    in_a = store.facts_for("u1", session_id="group:a")
+    assert [f.fact_text for f in in_a] == ["我对芒果过敏"]
+    in_b = store.facts_for("u1", session_id="group:b")
+    assert [f.fact_text for f in in_b] == ["我在学 RUST"]
+    # 全局事实（session_key 为空的历史行）在任何会话都可见。
+    with store._lock, store._connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO reflection_facts
+              (fact_id, sender_id, session_key, fact_text, category,
+               confidence, source_digest_id, created_at, superseded)
+            VALUES ('fact_global', 'u1', '', '我喜欢蓝色', 'preference', 0.9, '', '', 0)
+            """
+        )
+    assert len(store.facts_for("u1", session_id="group:a")) == 2
+
+
+def test_retrieve_passes_session_gate_to_store(tmp_path: Path) -> None:
+    """retrieve 层：session_id 必须真正下推到 facts_for（旧行为是丢弃）。"""
+    store = ReflectionStore(tmp_path / "reflection.sqlite3", clock=_FakeClock())
+    d1 = store.save_digest(session_key="group:a", scope_date="2026-09-10", summary="a", turn_count=1)
+    store.save_facts(d1, "u1", [FactDraft("我对芒果过敏")])
+    repo = ReflectionMemoryProvider(store=store)
+
+    hit = repo.retrieve(
+        request_id="req-1", requester_id="u1", subject_user_id="u1",
+        session_id="group:a", query_text="过敏", max_items=6, max_chars=900,
+    )
+    miss = repo.retrieve(
+        request_id="req-2", requester_id="u1", subject_user_id="u1",
+        session_id="group:b", query_text="过敏", max_items=6, max_chars=900,
+    )
+    assert len(hit.facts) == 1
+    assert miss.facts == []

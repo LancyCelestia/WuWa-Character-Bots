@@ -2630,64 +2630,143 @@ def _should_catch_up_reflection(config: Any) -> bool:
         return False
 
 
-def _register_reminder_scheduler(scheduler: Any, config: Any, send_queue: Any) -> dict:
-    """提醒投递：每分钟检查到点提醒，构造 SendRequest 走统一发送队列。
+async def _deliver_due_reminders(
+    config: Any,
+    send_queue: Any,
+    audit_logger: Any = None,
+    receipt_repository: Any = None,
+    all_online_bots: Any = None,
+) -> int:
+    """到点提醒一次性投递：submit 后**内联投递**，送达才销账。返回送达数。
 
-    到点文案由 character/reminders.build_reminder_text 提供（守岸人语气）；
-    投递失败只记日志，绝不阻塞主链路。
+    默认配置是内存发送队列——``InMemorySendQueue.submit`` 只入列并回假
+    sent 回执、没有任何网络调用（sender/queue.py），只 submit 不投递等于
+    提醒永不送达（2026-09-14 审查 A-01）。这里与订阅推送同范式就地投递；
+    失败不销账留待下一轮重投，重投前先查回执仓——SQLite 队列的 worker
+    在 60s 内联宽限期后可能已送出，此时直接销账不再重发（防双发）；
+    长期投不出由 store 的顺延/作废策略兜底。
     """
+    from .character.reminders import build_reminder_store, build_reminder_text
+    from .contracts import (
+        PrivacyLevel,
+        RenderedOutput,
+        SendPolicy,
+        SendRequest,
+        SessionType,
+    )
 
-    def _reminder_job() -> None:
-        try:
-            from .character.reminders import build_reminder_store, build_reminder_text
-            from .contracts import (
-                PrivacyLevel,
-                RenderedOutput,
-                SendPolicy,
-                SendRequest,
-                SessionType,
-            )
-
-            store = build_reminder_store(config)
-            for reminder in store.due():
-                request_id = f"reminder-{reminder.reminder_id}"
-                scope = SessionType(reminder.target_scope)
-                privacy = (
-                    PrivacyLevel.GROUP
-                    if scope is SessionType.GROUP
-                    else PrivacyLevel.PERSONAL
+    store = build_reminder_store(config)
+    delivered = 0
+    for reminder in store.due():
+        request_id = f"reminder-{reminder.reminder_id}"
+        scope = SessionType(reminder.target_scope)
+        privacy = (
+            PrivacyLevel.GROUP if scope is SessionType.GROUP else PrivacyLevel.PERSONAL
+        )
+        prior = None
+        if receipt_repository is not None:
+            try:
+                prior = receipt_repository.latest(request_id)
+            except Exception:  # noqa: BLE001 - 回执查询失败按无回执处理。
+                prior = None
+        if prior is not None and prior.state in {
+            ReceiptState.SENT,
+            ReceiptState.REDIRECTED,
+        }:
+            store.mark_done(reminder.reminder_id)
+            delivered += 1
+            continue
+        request = SendRequest(
+            request_id=request_id,
+            session_id=reminder.session_key,
+            target_scope=scope,
+            target_id=reminder.target_id,
+            capability_id="bot.reminder",
+            content=RenderedOutput(
+                request_id=request_id,
+                content_type="text",
+                content_ref={},
+                text_fallback=build_reminder_text(reminder),
+                privacy_level=privacy,
+            ),
+            send_policy=SendPolicy.QUEUED,
+            priority="normal",
+            max_messages=1,
+            dedupe_key=f"reminder:{reminder.reminder_id}",
+            cooldown_key=f"reminder:{reminder.session_key}",
+            privacy_level=privacy,
+            persona_profile_id=str(
+                getattr(config, "bot_persona_profile_id", "default")
+            ),
+            adapter=reminder.adapter,
+            bot_id=reminder.bot_id,
+            audit_tags=["reminder", "due"],
+        )
+        send_queue.submit(request)
+        sent_request = _find_sent_request(send_queue, request_id) or request
+        bot = (
+            _select_queue_bot(all_online_bots, sent_request)
+            if all_online_bots is not None
+            else None
+        )
+        receipt = None
+        if bot is not None:
+            try:
+                receipt = await _deliver_transport_send_request(
+                    bot,
+                    None,
+                    sent_request,
+                    audit_logger,
+                    receipt_repository,
+                    send_queue,
                 )
-                request = SendRequest(
-                    request_id=request_id,
-                    session_id=reminder.session_key,
-                    target_scope=scope,
-                    target_id=reminder.target_id,
-                    capability_id="bot.reminder",
-                    content=RenderedOutput(
-                        request_id=request_id,
-                        content_type="text",
-                        content_ref={},
-                        text_fallback=build_reminder_text(reminder),
-                        privacy_level=privacy,
-                    ),
-                    send_policy=SendPolicy.QUEUED,
-                    priority="normal",
-                    max_messages=1,
-                    dedupe_key=f"reminder:{reminder.reminder_id}",
-                    cooldown_key=f"reminder:{reminder.session_key}",
-                    privacy_level=privacy,
-                    persona_profile_id=str(
-                        getattr(config, "bot_persona_profile_id", "default")
-                    ),
-                    adapter=reminder.adapter,
-                    bot_id=reminder.bot_id,
-                    audit_tags=["reminder", "due"],
-                )
-                send_queue.submit(request)
-                store.mark_done(reminder.reminder_id)
-        except Exception as exc:  # noqa: BLE001 - 提醒投递失败不影响主链路。
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - 单条投递失败不影响其余提醒。
+                receipt = None
+        if receipt is not None and receipt.state in {
+            ReceiptState.SENT,
+            ReceiptState.REDIRECTED,
+        }:
+            store.mark_done(reminder.reminder_id)
+            delivered += 1
+        else:
             from nonebot.log import logger
 
+            logger.warning(
+                "reminder {} not delivered (state={}); kept for retry",
+                request_id,
+                getattr(receipt, "state", "no-online-bot"),
+            )
+    return delivered
+
+
+def _register_reminder_scheduler(
+    scheduler: Any,
+    config: Any,
+    send_queue: Any,
+    audit_logger: Any | None = None,
+    receipt_repository: Any | None = None,
+    all_online_bots: Any | None = None,
+) -> dict:
+    """提醒投递：每分钟检查到点提醒，submit 后**内联投递**、送达才销账。
+
+    到点文案由 character/reminders.build_reminder_text 提供（守岸人语气）；
+    投递失败只记日志、不销账、下一轮重投，绝不阻塞主链路。
+    """
+
+    async def _reminder_job() -> None:
+        from nonebot.log import logger
+
+        try:
+            await _deliver_due_reminders(
+                config,
+                send_queue,
+                audit_logger,
+                receipt_repository,
+                all_online_bots,
+            )
+        except Exception as exc:  # noqa: BLE001 - 提醒投递失败不影响主链路。
             logger.warning("reminder delivery failed: {}", type(exc).__name__)
 
     scheduler.add_job(
@@ -3440,7 +3519,14 @@ def _register_nonebot_handlers() -> None:
             _register_reflection_scheduler(scheduler, config)
 
         if getattr(config, "bot_reminder_enabled", True):
-            _register_reminder_scheduler(scheduler, config, send_queue)
+            _register_reminder_scheduler(
+                scheduler,
+                config,
+                send_queue,
+                audit_logger,
+                receipt_repository,
+                _all_online_bots,
+            )
 
         # 夜间每日群通讯总结推送：推送开关开启且共享群摘要能力开启才注册。
         if (

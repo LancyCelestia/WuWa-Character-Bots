@@ -364,8 +364,14 @@ class ReflectionStore:
         *,
         limit: int = 6,
         max_chars: int = 900,
+        session_id: str | None = None,
     ) -> list[ReflectionFact]:
-        """召回某用户的有效事实：superseded=0、置信度达标、新者在前。"""
+        """召回某用户的有效事实：superseded=0、置信度达标、新者在前。
+
+        ``session_id`` 给定时只召回**同会话 + 全局**两级事实（与
+        memory.py 的隐私闸同语义）：A 群里说的私事不得在 B 群被召回；
+        缺省 None 保持旧的全会话语义仅供既有调用方兼容。
+        """
         sender = sender_id.strip()
         if not sender or limit <= 0 or max_chars <= 0:
             return []
@@ -378,10 +384,17 @@ class ReflectionStore:
                 WHERE sender_id = ?
                   AND superseded = 0
                   AND confidence >= ?
+                  AND (? IS NULL OR session_key = ? OR session_key IN ('', '*', 'global'))
                 ORDER BY created_at DESC, rowid DESC
                 LIMIT ?
                 """,
-                (sender, _MIN_FACT_CONFIDENCE, max(1, int(limit))),
+                (
+                    sender,
+                    _MIN_FACT_CONFIDENCE,
+                    session_id,
+                    session_id,
+                    max(1, int(limit)),
+                ),
             ).fetchall()
         selected: list[ReflectionFact] = []
         chars_used = 0
@@ -791,7 +804,10 @@ class ReflectionMemoryProvider:
         if requester_id != subject_user_id:
             return MemoryRetrievalResult(request_id=request_id)
         facts = self._store.facts_for(
-            subject_user_id, limit=max_items, max_chars=max_chars
+            subject_user_id,
+            limit=max_items,
+            max_chars=max_chars,
+            session_id=session_id,
         )
         payload = [
             {

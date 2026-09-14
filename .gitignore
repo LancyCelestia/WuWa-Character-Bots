@@ -80,3 +80,4 @@ config/
 .claude/
 .codex/
 .grok/
+third_party/

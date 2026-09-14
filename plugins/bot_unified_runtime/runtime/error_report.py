@@ -441,6 +441,26 @@ def _dist_version(dist_names: tuple[str, ...]) -> str:
     return "unknown"
 
 
+def _plugin_version() -> str:
+    """插件包版本：本项目以源码形态运行、从不 pip 安装——``metadata.version``
+    对任何发行名都查不到（venv 实证），唯一事实源是仓库 pyproject.toml 的
+    ``[project].version``；读不到再退 metadata，最终 unknown（fail-open）。
+    """
+    version = _dist_version(("bot-character-bots", "bot_character_bots"))
+    if version != "unknown":
+        return version
+    try:
+        import tomllib
+
+        repo_root = Path(__file__).resolve().parents[3]
+        with (repo_root / "pyproject.toml").open("rb") as handle:
+            data = tomllib.load(handle)
+        value = str(data.get("project", {}).get("version", "") or "").strip()
+        return value or "unknown"
+    except Exception:  # noqa: BLE001 - 版本信息缺失不阻塞诊断卡。
+        return "unknown"
+
+
 def format_uptime(now_monotonic: float | None = None) -> str:
     """进程运行时长：「X 小时 Y 分」/「Y 分钟」。"""
     now = time.monotonic() if now_monotonic is None else now_monotonic
@@ -526,12 +546,7 @@ def build_error_report(
                     ("nonebot-adapter-onebot", "nonebot_adapter_onebot")
                 ),
             },
-            {
-                "label": "插件包",
-                "value": _dist_version(
-                    ("bot-unified-runtime", "bot_unified_runtime")
-                ),
-            },
+            {"label": "插件包", "value": _plugin_version()},
             {"label": "构建", "value": _git_build_info()},
             {"label": "运行时长", "value": format_uptime()},
         ],
@@ -575,6 +590,7 @@ def build_text_fallback(report: dict[str, Any]) -> str:
     for section, title in (
         ("method_pairs", "触发方法"),
         ("version_pairs", "版本与构建"),
+        ("config_pairs", "配置快照"),
         ("env_pairs", "平台与协议"),
         ("id_pairs", "IDs 与时间"),
     ):

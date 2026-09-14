@@ -601,3 +601,17 @@ def test_error_card_resubmit_passes_deliver_after(
     assert deliver_after.tzinfo is timezone.utc
     delay = (deliver_after - datetime.now(timezone.utc)).total_seconds()
     assert 0 <= delay <= 5
+
+
+def test_plugin_version_resolves_from_pyproject() -> None:
+    """E-01 回归：插件源码运行、无 pip 元数据，版本必须能从 pyproject 取到。"""
+    from pathlib import Path
+
+    import tomllib
+
+    from plugins.bot_unified_runtime.runtime.error_report import _plugin_version
+
+    expected = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text("utf-8")
+    )["project"]["version"]
+    assert _plugin_version() == expected != "unknown"
