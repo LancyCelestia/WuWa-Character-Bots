@@ -270,6 +270,15 @@ def build_reminder_capability(config: Any | None = None) -> Any:
             remind_at=intent.remind_at,
             text=intent.text,
         )
+        if reminder is None:
+            # 审查 A-07：清单满不再挤掉最旧一条（用户以为都记着，其实被静默
+            # 删了）——如实告诉用户先做取舍，再记新的。
+            return _result(
+                message,
+                "这个会话的提醒已经排满 20 条了。"
+                "先看看「提醒列表」，把不要的那条取消掉，我再帮你记新的，好吗？",
+                tags=["reminder_full"],
+            )
         return _result(
             message,
             f"记下了。{intent.label}，我会来提醒你：{reminder.text}。"

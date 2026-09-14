@@ -39,7 +39,7 @@ _DAY_OFFSETS = {"今天": 0, "今晚": 0, "今早": 0, "明天": 1, "明晚": 1,
 
 _ABS_TIME_RE = re.compile(
     r"(今天|明天|后天|今晚|今早|明晚)?\s*(凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*"
-    r"(\d{1,2})\s*[点點時时:：]\s*(\d{1,2})?\s*分?"
+    r"(\d{1,2})\s*[点點時时:：]\s*(?:(\d{1,2})\s*分?|(半))?"
 )
 _PERIOD_ONLY_RE = re.compile(r"(今天|明天|后天|今晚|今早|明晚)?\s*(凌晨|早上|上午|中午|下午|傍晚|晚上)(?![点點時时:：\d])")
 _REL_MINUTES_RE = re.compile(r"(\d{1,3})\s*分钟后")
@@ -149,9 +149,10 @@ def parse_reminder_intent(text: str, *, now: datetime | None = None) -> Reminder
     if target is None:
         match = _ABS_TIME_RE.search(raw)
         if match:
-            day_word, period, hour_text, minute_text = match.groups()
+            day_word, period, hour_text, minute_text, half = match.groups()
             hour = int(hour_text)
-            minute = int(minute_text) if minute_text else 0
+            # 「7点半」= 7:30（审查 A-09：旧正则没有「半」分支，会落到 7:00）。
+            minute = 30 if half else (int(minute_text) if minute_text else 0)
             if period in {"下午", "傍晚", "晚上"} and hour < 12:
                 hour += 12
             if period == "凌晨" and hour == 12:
@@ -205,6 +206,11 @@ class ReminderStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._ensure_schema()
 
+    @property
+    def max_pending(self) -> int:
+        """单会话待办上限（公开只读，供能力层文案与测试引用）。"""
+        return self._max_pending
+
     def _ensure_schema(self) -> None:
         with self._lock, self._conn:
             self._conn.execute(
@@ -239,7 +245,7 @@ class ReminderStore:
         bot_id: str,
         remind_at: datetime,
         text: str,
-    ) -> Reminder:
+    ) -> Reminder | None:
         created = datetime.now(UTC).isoformat()
         # 落库统一本地时区口径（naive 视为本地），后续到点判定做时刻比较。
         stored_at = _as_local(remind_at)
@@ -252,12 +258,9 @@ class ReminderStore:
                 (session_key,),
             ).fetchone()[0]
             if int(pending or 0) >= self._max_pending:
-                self._conn.execute(
-                    "DELETE FROM reminders WHERE reminder_id = ("
-                    " SELECT reminder_id FROM reminders WHERE session_key = ?"
-                    " AND status = 'pending' ORDER BY remind_at ASC LIMIT 1)",
-                    (session_key,),
-                )
+                # 审查 A-07：超限不再静默删最旧的一条（用户以为都记着，其实
+                # 丢了）——改为拒绝新增并返回 None，由能力层提示用户先取消。
+                return None
             self._conn.execute(
                 "INSERT INTO reminders (reminder_id, session_key, sender_id, target_scope,"
                 " target_id, adapter, bot_id, remind_at, text, status, created_at)"

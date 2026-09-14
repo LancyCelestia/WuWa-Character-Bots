@@ -94,18 +94,43 @@ def test_store_add_due_done_and_cancel(tmp_path) -> None:
     assert store.list_pending("group:1") == []
 
 
-def test_store_pending_cap_evicts_oldest(tmp_path) -> None:
-    store = ReminderStore(tmp_path / "r.sqlite3", max_pending_per_session=2)
+def test_store_pending_cap_rejects_instead_of_evicting(tmp_path) -> None:
+    """审查 A-07：清单满（默认 20）拒绝新增返回 None，绝不静默删最旧一条。"""
+    store = ReminderStore(tmp_path / "r.sqlite3")
+    assert store.max_pending == 20
     base = datetime.now(timezone.utc)
-    for index in range(3):
-        store.add(
+    for index in range(store.max_pending):
+        assert store.add(
             session_key="group:1", sender_id="u1", target_scope="group", target_id="1",
             adapter="nonebot", bot_id="bot",
             remind_at=base + timedelta(hours=index + 1), text=f"事{index}",
-        )
-    pending = store.list_pending("group:1", limit=10)
-    assert len(pending) == 2
-    assert all("事0" not in item.text for item in pending)
+        ) is not None
+    pending = store.list_pending("group:1", limit=50)
+    assert len(pending) == store.max_pending
+    # 满：新增被拒（None），且最早一条原封不动。
+    assert store.add(
+        session_key="group:1", sender_id="u1", target_scope="group", target_id="1",
+        adapter="nonebot", bot_id="bot",
+        remind_at=base + timedelta(hours=99), text="挤不进的一条",
+    ) is None
+    still = store.list_pending("group:1", limit=50)
+    assert len(still) == store.max_pending
+    assert all("挤不进" not in item.text for item in still)
+    assert any("事0" in item.text for item in still), "最旧一条不得被挤掉"
+
+
+def test_parse_half_hour_suffix() -> None:
+    """审查 A-09：「7点半」= 7:30（旧正则无「半」分支会落到 7:00）。"""
+    intent = parse_reminder_intent(
+        "7点半提醒我吃饭", now=datetime(2026, 9, 14, 6, 0, tzinfo=_TZ)
+    )
+    assert intent is not None
+    assert intent.remind_at == datetime(2026, 9, 14, 7, 30, tzinfo=_TZ)
+    late = parse_reminder_intent(
+        "明天早上7点半叫我起床", now=datetime(2026, 9, 14, 23, 30, tzinfo=_TZ)
+    )
+    assert late is not None
+    assert late.remind_at == datetime(2026, 9, 15, 7, 30, tzinfo=_TZ)
 
 
 # ---------- 能力 ----------
@@ -279,3 +304,26 @@ def test_cancel_ambiguous_copy_is_human(tmp_path, monkeypatch) -> None:
     result = capability(_message("取消提醒 deadbeef"), object())
     assert "需要唯一" not in result.body and "命中" not in result.body
     assert "deadbeef" in result.body and "提醒列表" in result.body
+
+
+def test_capability_full_list_replies_instead_of_silent_evict(tmp_path, monkeypatch) -> None:
+    """审查 A-07 能力层：清单满时如实回复先取消，不再假装「记下了」。"""
+    import plugins.bot_unified_runtime.character.reminders as reminders_mod
+
+    monkeypatch.setattr(reminders_mod, "_STORES", {})
+    config = SimpleNamespace(
+        bot_reminder_db_path=str(tmp_path / "r.sqlite3"),
+        bot_notes_enabled=False,
+    )
+    capability = build_reminder_capability(config)
+    store = reminders_mod.build_reminder_store(config)
+    base = datetime.now(timezone.utc)
+    for index in range(store.max_pending):
+        store.add(
+            session_key="group:1", sender_id="u1", target_scope="group", target_id="1",
+            adapter="nonebot", bot_id="bot",
+            remind_at=base + timedelta(hours=index + 1), text=f"事{index}",
+        )
+    result = capability(_message("12点提醒我写作业"), object())
+    assert "排满" in result.body and "提醒列表" in result.body
+    assert "记下了" not in result.body
