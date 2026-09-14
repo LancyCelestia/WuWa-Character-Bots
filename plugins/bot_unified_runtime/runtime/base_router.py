@@ -76,11 +76,22 @@ from plugins.bot_unified_runtime.capabilities.today_history import (
 )
 from plugins.bot_unified_runtime.capabilities.weather import is_weather_command
 from plugins.bot_unified_runtime.capabilities.wiki import is_wiki_command
+from plugins.bot_unified_runtime.runtime.capability_registry import (
+    COMMAND_ROUTE_KIND_NAMES,
+)
 from plugins.bot_unified_runtime.runtime.natural_language import (
     detect_natural_command,
 )
 
 
+# Keystone（C-06 能力单一声明源）：成员清单的权威声明在
+# runtime/capability_registry.py 的 ROUTE_CAPABILITY_DECLARATIONS（每能力
+# 一行：kind/capability_id/priority/label/reason/tags/command/matcher/note）。
+# 本枚举与下方 RouteRule 注册表、接口清单、INTERNAL_CAPABILITY_NOTES 保持
+# 字面形态，是四处离线静态解析器（scripts/doc_sync.py、
+# scripts/command_catalog.py、tests/test_doc_sync_gates.py、
+# scripts/extract_trigger_words.py）的机器可读投影；两方向逐字段一致性由
+# tests/test_capability_registry.py 常驻锁定，增删成员必须两处同步。
 class RouteKind(str, Enum):
     ALIAS = "alias"
     ADMIN = "admin"
@@ -190,6 +201,11 @@ def build_route_rules() -> list[RouteRule]:
 
     书写序=声明登记序（审计/文档生成依赖，不做物理重排）；真实判定序由
     判定循环按 (priority, 书写序) 稳定排序得出（见 classify_message_route）。
+
+    Keystone（C-06）：本表每行的数据列（kind/capability_id/priority/label/
+    reason/tags/matcher 名）以 capability_registry.ROUTE_CAPABILITY_DECLARATIONS
+    为权威声明源，逐行逐字段由 tests/test_capability_registry.py 锁定——
+    新增/修改能力先改声明表，再同步本表与枚举，漏一处即测试红。
     """
 
     def subscribe_match(text, config, _alias):
@@ -545,7 +561,12 @@ ROUTE_RULES: list[RouteRule] = build_route_rules()
 
 
 def build_interface_manifest() -> list[InterfaceEntry]:
-    """把所有可能接口（含未来预留）登记成审计清单。"""
+    """把所有可能接口（含未来预留）登记成审计清单。
+
+    Keystone（C-06）：行数据以 capability_registry.INTERFACE_DECLARATIONS
+    为权威声明源（书写序一致），逐行逐字段由 tests/test_capability_registry.py
+    锁定；字面形态为静态解析器（scripts/command_catalog.py）所需投影。
+    """
     return [
         InterfaceEntry("transport.onebot", "NapCat / OneBot V11 传输", "active", "transport", None, "入站 QQ 消息与出站发送统一走 OneBot V11（NapCat），由发送队列收口", internal_note="内部：传输层，无用户命令"),
         InterfaceEntry("core.gscore", "GsCore / 早柚核心桥", "active", "bridge", None, "ws://HOST:PORT/BOT_ID?token=TOKEN 桥接，接收游戏侧消息，配置 BOT_GSCORE_*", internal_note="内部：桥接层，接收游戏侧消息，无用户命令"),
@@ -572,6 +593,9 @@ def build_interface_manifest() -> list[InterfaceEntry]:
 # 已主题化的能力不在此登记；此表仅收 stocks/fx 等仍有独立说明价值的内部条目，
 # 供命令目录（scripts/command_catalog.py，帮助主题优先、此表兜底展示）
 # 与 tests/test_finance_routing.py 的 stocks/fx 防脱册断言消费。
+# Keystone（C-06）：条目内容以 capability_registry 声明行的 note 列为权威
+# 声明源（键值集一致由 tests/test_capability_registry.py 锁定）；字面 dict
+# 形态为 scripts/command_catalog.py 的 literal_assign 静态提取所需。
 INTERNAL_CAPABILITY_NOTES: dict[str, str] = {
     "bot.stocks": "个股行情（英伟达/AMD/英特尔股价兜底，触发词见 capabilities/stocks.py；帮助页 topic=个股行情）",
     "bot.fx": "汇率查询（美元兑人民币/汇率面板，触发词见 capabilities/fx.py；帮助页 topic=汇率）",
@@ -581,36 +605,12 @@ INTERNAL_CAPABILITY_NOTES: dict[str, str] = {
 }
 
 
+# Keystone（C-06）：命令路由成员清单的单一声明源是
+# capability_registry.ROUTE_CAPABILITY_DECLARATIONS 的 command 列，
+# 在此 import 时派生（禁在本文件手写增删成员；漏登/多登即测试红）。
+# 群门禁 looks_like_command_text 与 /bot commands 目录取本集合判定。
 COMMAND_ROUTE_KINDS = frozenset(
-    {
-        RouteKind.ALIAS,
-        RouteKind.ADMIN,
-        RouteKind.SUBSCRIBE,
-        RouteKind.AUTO_SEND,
-        RouteKind.MEME,
-        RouteKind.MEME_LIBRARY,
-        RouteKind.MUSIC_MODE,
-        RouteKind.MUSIC,
-        RouteKind.TODAY_HISTORY,
-        RouteKind.WIKI,
-        RouteKind.MOEGIRL,
-        RouteKind.EPIC,
-        RouteKind.WEATHER,
-        RouteKind.MARKET,
-        RouteKind.STOCKS,
-        RouteKind.COMMODITIES,
-        RouteKind.BOND,
-        RouteKind.NORTHBOUND,
-        RouteKind.FX,
-        RouteKind.EAT,
-        RouteKind.DIVINATION,
-        RouteKind.NEWS,
-        RouteKind.RANDPIC,
-        RouteKind.REMINDER,
-        RouteKind.MEDIA_ARCHIVE,
-        RouteKind.GROUP_INFO,
-        RouteKind.NATURAL_COMMAND,
-    }
+    RouteKind[name] for name in COMMAND_ROUTE_KIND_NAMES
 )
 
 
