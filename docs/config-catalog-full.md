@@ -648,6 +648,17 @@
 | `BOT_REMINDER_ENABLED` | bool | `True` | | | 时间点提醒：记住「几点要做什么」，到点主动督促 | |
 | `BOT_REMINDER_DB_PATH` | str | `data/reminders.sqlite3` | 路径 | | 提醒库 | data/ 重映射收口 |
 
+**日常助理 bot.daily_assist（6 键，character/daily_assist.py + capabilities/daily_assist.py）**
+
+| 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
+|---|---|---|---|---|---|---|
+| `BOT_DAILY_ASSIST_ENABLED` | bool | `True` | | ✅热更 | 日常助理总开关（收件箱命令面 + 定时推送） | 推送另受名单门约束 |
+| `BOT_DAILY_ASSIST_DIR` | str | `data/daily_assist` | 路径 | | 收件箱/菜单/任务清单纯文本目录（inbox.md/food.md/tasks.md + daily/ 归档与 meal_history.jsonl） | data/ 重映射收口；可指向工作区外共享目录 |
+| `BOT_DAILY_ASSIST_PUSH_USER_IDS` | ID 列表 | `[]` | JSON 数组或 ,; 分隔 | ✅热更 | 早晚简报与吃什么推荐的私聊推送名单 | 名单为空=只记不推（绝不猜人） |
+| `BOT_DAILY_ASSIST_MEAL_TIMES` | 字符串列表 | `["11:15", "17:15"]` | HH:MM 列表 | | 到点吃什么推荐时刻表 | 非法时刻跳过；cron 装配期快照，改后需重启 |
+| `BOT_DAILY_ASSIST_MORNING_TIME` | str | `"09:00"` | HH:MM | | 早报时刻（读收件箱+任务清单，读后归档） | 非法回退 09:00；装配期快照 |
+| `BOT_DAILY_ASSIST_EVENING_TIME` | str | `"21:00"` | HH:MM | | 晚报时刻（当日对账+主动琐事建议） | 非法回退 21:00；装配期快照 |
+
 **逆天发言自动撤回 dirty_guard（2 键，防御强化，默认关）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
@@ -779,6 +790,7 @@
 | `_rate_limit_emotion_exempt` | `true` | 情绪低落豁免群句数帽；✅热更（SETTABLE_KEYS） |
 | `_shared_group_context_enabled` | **`false`** | 群摘要**真总开关**（原 `BOT_GROUP_DIGEST_ENABLED` 为死字段已删，勿再配置）；✅热更（SETTABLE_KEYS）。⚠️本表此前误写默认 `true`，以 config.py `False` 为准 |
 | `_rate_limit_group_hourly...` 之外的新限流键 | — | 见 A24 与 policy/rate_limit.py `RateLimitSettings`（SQLite 版群帽/豁免已对齐 InMemory，热改不支持=架构取舍） |
+| `_campus_enabled` / `_campus_self_ids` / `_campus_group_whitelist` / `_campus_notify_qq` / `_campus_push_bot_id` / `_campus_db_path` | **`false`** / `[]` / `[]` / 空 / 空 / `data/campus.sqlite3` | 校园自动转发（campus v1，2026-09-15 批）：监听学校号（NapCat-school 第二实例 WS 3002）所在群文本消息→私聊实时转发主人号；三重来源门（enabled ∧ self_ids ∧ whitelist 任一空=关闭，绝不猜账号/猜群；whitelist 支持 `*` 显式放行全部群）；纯监听绝不向学校群发消息；db_path 走 runtime 重映射；设计权威=`MyWorkspace\CampusInfoButler\docs\specs\2026-09-15-campus-info-butler-design.md` |
 
 **非 Config 键（getattr 防御式读取，未入本表字段域）**：`BOT_LLM_BILLING_ENABLED`（计费账本，默认关）、
 `BOT_CONTROL_PLANE_ENABLED/HOST/PORT/TOKEN_SHA256`（控制面，默认关）——见 docs/design/llm-billing-ledger.md 与 control-plane-api.md。

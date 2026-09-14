@@ -267,7 +267,7 @@ _PUBLIC_HELP_TOPICS = frozenset(
     {
         "订阅", "点歌", "表情", "天气", "行情", "个股行情", "商品行情", "国债收益率", "北向资金", "汇率", "占卜", "快报", "维基", "萌娘百科",
         "历史上的今天", "下载", "昵称", "链接", "Epic", "好感度", "吃什么", "偷表情",
-        "随机图", "提醒", "笔记", "搜图", "记忆", "路由", "草稿",
+        "随机图", "提醒", "笔记", "收件箱", "搜图", "记忆", "路由", "草稿",
         "帮助", "聊天", "戳一戳", "表情收库", "自然语言", "群信息",
     }
 )
@@ -296,7 +296,7 @@ _HELP_CATEGORIES = (
         {
             "订阅", "点歌", "表情", "偷表情", "搜图", "Epic", "历史上的今天",
             "天气", "行情", "个股行情", "商品行情", "国债收益率", "北向资金", "汇率", "占卜", "快报", "维基", "萌娘百科", "下载",
-            "昵称", "链接", "吃什么", "好感度", "随机图", "提醒", "笔记", "记忆", "路由",
+            "昵称", "链接", "吃什么", "好感度", "随机图", "提醒", "笔记", "收件箱", "记忆", "路由",
             "草稿", "帮助", "聊天", "戳一戳", "表情收库", "自然语言", "群信息",
         },
     ),
@@ -2995,6 +2995,24 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "config_vars": ("BOT_NOTES_ENABLED", "BOT_NOTES_DB_PATH", "BOT_NOTES_MAX_PER_CHAT"),
         "examples": ("笔记 记 周三要交总结｜笔记列表｜笔记 看 1｜做完 1｜完成 1｜删笔记 1",),
         "tests": ("tests/test_notes.py", "tests/test_todo_checkoff.py", "tests/test_reminder_tone.py"),
+    },
+    "收件箱": {
+        "capability": "bot.daily_assist",
+        "network": False,
+        "chat_scope": "收件箱是全局一份纯文本文件（bot_daily_assist_dir），不分会话；定时简报仅私聊推送名单",
+        "outputs": ("文本",),
+        "triggers_nl": ("收件箱 <内容>", "收件箱"),
+        "triggers_nickname": ("收件箱", "inbox", "shoujianxiang"),
+        "config_vars": (
+            "BOT_DAILY_ASSIST_ENABLED",
+            "BOT_DAILY_ASSIST_DIR",
+            "BOT_DAILY_ASSIST_PUSH_USER_IDS",
+            "BOT_DAILY_ASSIST_MEAL_TIMES",
+            "BOT_DAILY_ASSIST_MORNING_TIME",
+            "BOT_DAILY_ASSIST_EVENING_TIME",
+        ),
+        "examples": ("收件箱 周五前还信用卡｜收件箱 买猫粮｜收件箱",),
+        "tests": ("tests/test_daily_assist.py",),
     },
     "帮助": {
         "capability": "bot.help",

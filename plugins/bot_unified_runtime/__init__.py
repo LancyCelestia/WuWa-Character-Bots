@@ -21,10 +21,12 @@ from pydantic import BaseModel
 from .audit import AuditRepository, build_audit_repository
 from .audit.file_logger import build_audit_with_file_log
 from .capabilities.affinity import build_affinity_capability
+from .capabilities.campus import build_campus_source
 from .capabilities.chat import (
     build_admin_roster_text as _build_admin_roster_text_for_chat,
 )
 from .capabilities.content_parser import build_content_capability
+from .capabilities.daily_assist import build_daily_assist_capability
 from .capabilities.divination import build_divination_capability
 from .capabilities.download import build_download_capability
 from .capabilities.eat import build_eat_capability
@@ -697,6 +699,13 @@ _RUNTIME_HOT_OVERRIDE_FIELDS: tuple[tuple[str, str], ...] = (
     # 夜间每日群通讯总结主动推送（G-DIGEST；消费点 _register_digest_push_scheduler）
     ("BOT_GROUP_DIGEST_PUSH_ENABLED", "bot_group_digest_push_enabled"),
     ("BOT_GROUP_DIGEST_PUSH_TIME", "bot_group_digest_push_time"),
+    # 日常助理（收件箱速记/早晚简报/吃什么推荐；消费点 character/daily_assist.py）
+    ("BOT_DAILY_ASSIST_ENABLED", "bot_daily_assist_enabled"),
+    ("BOT_DAILY_ASSIST_DIR", "bot_daily_assist_dir"),
+    ("BOT_DAILY_ASSIST_PUSH_USER_IDS", "bot_daily_assist_push_user_ids"),
+    ("BOT_DAILY_ASSIST_MEAL_TIMES", "bot_daily_assist_meal_times"),
+    ("BOT_DAILY_ASSIST_MORNING_TIME", "bot_daily_assist_morning_time"),
+    ("BOT_DAILY_ASSIST_EVENING_TIME", "bot_daily_assist_evening_time"),
 )
 
 
@@ -2941,6 +2950,276 @@ def _register_digest_push_scheduler(
     return {"hour": hour, "minute": minute}
 
 
+def _parse_daily_assist_clock(value: Any) -> tuple[int, int] | None:
+    """解析 HH:MM；非法返回 None（调用方决定跳过还是回退默认）。"""
+    parts = str(value or "").strip().split(":")
+    if len(parts) != 2:
+        return None
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if 0 <= hour <= 23 and 0 <= minute <= 59:
+        return hour, minute
+    return None
+
+
+def _daily_assist_targets(config: Any) -> list[str]:
+    """推送目标只取显式名单；名单为空=只记不推（绝不猜人）。"""
+    return [
+        str(user).strip()
+        for user in (getattr(config, "bot_daily_assist_push_user_ids", None) or [])
+        if str(user).strip()
+    ]
+
+
+def _build_meal_push_text(item: str) -> str:
+    """到点吃什么推送正文（守岸人语气，一句克制引子，不堆辞藻）。"""
+    from .character.daily_assist import meal_display_name
+
+    name = meal_display_name(item)
+    suffix = item[len(name):].strip()
+    return f"到饭点啦，今天吃这个：{name}{suffix}"
+
+
+def _push_daily_assist_private(
+    config: Any,
+    send_queue: Any,
+    *,
+    capability_id: str,
+    text: str,
+    tag: str,
+    now: Any = None,
+) -> int:
+    """日常助理简报逐个私聊投递 send_queue（纯 submit，SQLite 队列 worker 送达）。"""
+    from datetime import datetime
+
+    from .contracts import (
+        PrivacyLevel,
+        RenderedOutput,
+        SendPolicy,
+        SendRequest,
+        SessionType,
+    )
+
+    targets = _daily_assist_targets(config)
+    moment = now or datetime.now().astimezone()
+    today = moment.date().isoformat()
+    persona_profile_id = str(
+        getattr(config, "bot_persona_profile_id", "default")
+    )
+    pushed = 0
+    for user_id in targets:
+        request_id = f"daily-assist-{tag}-{user_id}-{today}"
+        request = SendRequest(
+            request_id=request_id,
+            session_id=f"private:{user_id}",
+            target_scope=SessionType.PRIVATE,
+            target_id=user_id,
+            capability_id=capability_id,
+            content=RenderedOutput(
+                request_id=request_id,
+                content_type="text",
+                content_ref={},
+                text_fallback=text,
+                privacy_level=PrivacyLevel.PERSONAL,
+            ),
+            send_policy=SendPolicy.QUEUED,
+            priority="normal",
+            max_messages=1,
+            dedupe_key=f"daily_assist:{tag}:{user_id}:{today}",
+            cooldown_key=f"daily_assist:{tag}:{user_id}",
+            privacy_level=PrivacyLevel.PERSONAL,
+            persona_profile_id=persona_profile_id,
+            audit_tags=["daily_assist", tag],
+        )
+        send_queue.submit(request)
+        pushed += 1
+    return pushed
+
+
+def _run_daily_assist_meal_push(config: Any, send_queue: Any, slot: str) -> None:
+    from nonebot.log import logger
+
+    try:
+        from .character.daily_assist import choose_meal
+
+        item = choose_meal(config)
+        if not item:
+            return
+        _push_daily_assist_private(
+            config,
+            send_queue,
+            capability_id="bot.daily_assist",
+            text=_build_meal_push_text(item),
+            tag=f"meal-{slot.replace(':', '')}",
+        )
+    except Exception as exc:  # noqa: BLE001 - 到点推荐失败不影响主链路。
+        logger.warning("daily assist meal push failed: {}", type(exc).__name__)
+
+
+def _run_daily_assist_morning_push(config: Any, send_queue: Any) -> None:
+    from nonebot.log import logger
+
+    try:
+        from .character.daily_assist import (
+            archive_inbox,
+            build_morning_brief,
+            daily_archive_dir,
+            inbox_path,
+            read_pending_inbox,
+            read_task_sections,
+            summarize_with_llm,
+            tasks_path,
+        )
+
+        pending = read_pending_inbox(inbox_path(config))
+        sections = read_task_sections(tasks_path(config))
+        summary = ""
+        if pending:
+            summary = summarize_with_llm(
+                config,
+                "\n".join(pending),
+                instruction=(
+                    "以下是收件箱里的随手记。用中文挑出今天值得先办的事，"
+                    "一两句话点到为止，不要客套和开场白："
+                ),
+            )
+        text = build_morning_brief(pending, sections, summary)
+        if pending:
+            archive_inbox(inbox_path(config), daily_archive_dir(config))
+        _push_daily_assist_private(
+            config,
+            send_queue,
+            capability_id="bot.daily_assist",
+            text=text,
+            tag="morning",
+        )
+    except Exception as exc:  # noqa: BLE001 - 早报失败不影响主链路。
+        logger.warning("daily assist morning push failed: {}", type(exc).__name__)
+
+
+def _run_daily_assist_evening_push(config: Any, send_queue: Any) -> None:
+    from nonebot.log import logger
+
+    try:
+        from .character.daily_assist import (
+            build_evening_brief,
+            daily_archive_dir,
+            load_daily_archive,
+            read_task_sections,
+            summarize_with_llm,
+            tasks_path,
+        )
+
+        sections = read_task_sections(tasks_path(config))
+        archived = load_daily_archive(daily_archive_dir(config))
+        suggestion = ""
+        if sections or archived:
+            material = "\n".join(
+                [
+                    *(f"进行中：{item}" for item in sections.get("进行中", [])),
+                    *(f"已计划：{item}" for item in sections.get("已计划", [])),
+                    *(f"想法池：{item}" for item in sections.get("想法池", [])),
+                    *(f"今日收件箱：{item}" for item in archived),
+                ]
+            )
+            suggestion = summarize_with_llm(
+                config,
+                material,
+                instruction=(
+                    "根据这份清单，主动想到 1-3 件对方可能忘了办、"
+                    "或值得提前安排的事，各一句话，不要空话："
+                ),
+            )
+        text = build_evening_brief(sections, archived, suggestion)
+        _push_daily_assist_private(
+            config,
+            send_queue,
+            capability_id="bot.daily_assist",
+            text=text,
+            tag="evening",
+        )
+    except Exception as exc:  # noqa: BLE001 - 晚报失败不影响主链路。
+        logger.warning("daily assist evening push failed: {}", type(exc).__name__)
+
+
+def _register_daily_assist_scheduler(
+    scheduler: Any, config: Any, send_queue: Any
+) -> dict:
+    """日常助理定时推送：到点吃什么推荐 + 收件箱早晚简报。
+
+    推送目标名单为空时整体不注册（只记不推，绝不猜人）。同步 job 跑在
+    APScheduler 线程池（与 reminder/reflection 同款，不阻塞事件循环），
+    失败只记日志；cron 时刻为装配期快照（与 G-DIGEST 同款已知取舍）。
+    """
+    if not _daily_assist_targets(config):
+        return {"skipped": "no_targets"}
+    registered: dict[str, Any] = {"meals": []}
+    for raw in getattr(config, "bot_daily_assist_meal_times", None) or []:
+        clock = _parse_daily_assist_clock(raw)
+        if clock is None:
+            continue
+        hour, minute = clock
+        slot = f"{hour:02d}:{minute:02d}"
+
+        def _meal_job(_config: Any = config, _queue: Any = send_queue, _slot: str = slot) -> None:
+            _run_daily_assist_meal_push(_config, _queue, _slot)
+
+        scheduler.add_job(
+            _meal_job,
+            "cron",
+            id=f"bot_daily_assist_meal_{hour:02d}{minute:02d}",
+            replace_existing=True,
+            hour=hour,
+            minute=minute,
+            misfire_grace_time=3600,
+            max_instances=1,
+            coalesce=True,
+        )
+        registered["meals"].append(slot)
+
+    morning = _parse_daily_assist_clock(
+        getattr(config, "bot_daily_assist_morning_time", "09:00")
+    ) or (9, 0)
+
+    def _morning_job(_config: Any = config, _queue: Any = send_queue) -> None:
+        _run_daily_assist_morning_push(_config, _queue)
+
+    scheduler.add_job(
+        _morning_job,
+        "cron",
+        id="bot_daily_assist_morning",
+        replace_existing=True,
+        hour=morning[0],
+        minute=morning[1],
+        misfire_grace_time=3600,
+        max_instances=1,
+        coalesce=True,
+    )
+    evening = _parse_daily_assist_clock(
+        getattr(config, "bot_daily_assist_evening_time", "21:00")
+    ) or (21, 0)
+
+    def _evening_job(_config: Any = config, _queue: Any = send_queue) -> None:
+        _run_daily_assist_evening_push(_config, _queue)
+
+    scheduler.add_job(
+        _evening_job,
+        "cron",
+        id="bot_daily_assist_evening",
+        replace_existing=True,
+        hour=evening[0],
+        minute=evening[1],
+        misfire_grace_time=3600,
+        max_instances=1,
+        coalesce=True,
+    )
+    registered["morning"] = list(morning)
+    registered["evening"] = list(evening)
+    return registered
+
+
 def _register_nonebot_handlers() -> None:
     try:
         from nonebot import (
@@ -3035,6 +3314,24 @@ def _register_nonebot_handlers() -> None:
     runtime_settings = settings_manager.get(effective_instance(config))
     # 管理员热改设置（群名单/开关/昵称等）时立即失效路由分类缓存，不必等 10s TTL。
     runtime_settings.register_change_listener(clear_route_decision_cache)
+    # 校园自动转发（campus v1）：学校账号群消息监听 → 主人私聊实时转发。
+    # 三重门任一为空则不装配（绝不猜账号/猜群/猜目标）；装配后 matcher
+    # 只落库与转发，绝不向学校群发送任何消息。
+    campus_service = None
+    campus_source = build_campus_source(config)
+    if (
+        campus_source.enabled
+        and campus_source.self_ids
+        and campus_source.whitelist
+        and campus_source.notify_qq
+    ):
+        from .capabilities.campus import CampusForwardService
+        from .sources.campus_store import CampusStore
+
+        campus_service = CampusForwardService(
+            store=CampusStore(str(config.bot_campus_db_path)),
+            source=campus_source,
+        )
     # 发送层硬超时：每次发送时读 runtime 覆盖（mtime 热重载），未覆盖时回落 .env 配置。
     set_transport_timeout_provider(
         lambda: float(runtime_settings.get("BOT_TRANSPORT_TIMEOUT_SECONDS", config) or 15.0)
@@ -3569,6 +3866,12 @@ def _register_nonebot_handlers() -> None:
             and getattr(config, "bot_shared_group_context_enabled", False)
         ):
             _register_digest_push_scheduler(scheduler, config, send_queue)
+
+        # 日常助理定时推送：到点吃什么 + 收件箱早晚简报；名单为空不注册（只记不推）。
+        if getattr(config, "bot_daily_assist_enabled", True) and (
+            getattr(config, "bot_daily_assist_push_user_ids", [])
+        ):
+            _register_daily_assist_scheduler(scheduler, config, send_queue)
 
         from .sources.subscription_runtime_v2 import register_subscription_runtime_v2
 
@@ -4107,6 +4410,48 @@ def _register_nonebot_handlers() -> None:
                 await bot.call_api("delete_msg", message_id=message_id)
         except Exception:  # noqa: BLE001, S110 - 撤回失败静默（多半无管理员权限）。
             pass
+
+    # 校园自动转发：学校账号（NapCat 第二实例）所在群消息被动监听。
+    # block=False 绝不阻断其他 matcher；来源门外零开销返回；命中才落库
+    # 并私聊转发，绝不向学校群发送任何消息。
+    if campus_service is not None:
+
+        async def _is_campus_group_message(event: Event) -> bool:
+            return isinstance(event, GroupMessageEvent)
+
+        campus_record_matcher = on_message(
+            rule=_is_campus_group_message, priority=8, block=False
+        )
+
+        @campus_record_matcher.handle()
+        async def _handle_campus_record(bot: Bot, event: Event) -> None:
+            if not isinstance(event, GroupMessageEvent):
+                return
+            bot_id = str(getattr(bot, "self_id", "") or "")
+            group_id = str(getattr(event, "group_id", "") or "")
+            if not campus_service.matches(bot_id, group_id):
+                return
+            sender = getattr(event, "sender", None)
+            sender_name = ""
+            if sender is not None:
+                sender_name = str(
+                    getattr(sender, "card", "") or getattr(sender, "nickname", "") or ""
+                )
+            try:
+                plain_text = event.get_plaintext().strip()
+            except Exception:  # noqa: BLE001 - 适配器实现差异兜底。
+                plain_text = ""
+            request = await asyncio.to_thread(
+                campus_service.record,
+                bot_id=bot_id,
+                group_id=group_id,
+                sender_id=str(event.get_user_id() or ""),
+                sender_name=sender_name,
+                text=plain_text,
+                message_id=str(getattr(event, "message_id", "") or ""),
+            )
+            if request is not None:
+                send_queue.submit(request)
 
     file_notice = on_notice(rule=_is_admin_file_notice, priority=8, block=False)
 
@@ -4852,6 +5197,12 @@ def _register_nonebot_handlers() -> None:
             is RouteKind.REMINDER
         )
 
+    async def _is_daily_assist_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.DAILY_ASSIST
+        )
+
     content = on_message(rule=_is_content_parse_event, priority=46, block=True)
     music_mode = on_message(rule=_is_music_mode_event, priority=40, block=True)
     music = on_message(rule=_is_music_event, priority=41, block=True)
@@ -4875,6 +5226,7 @@ def _register_nonebot_handlers() -> None:
     news = on_message(rule=_is_news_event, priority=41, block=True)
     randpic = on_message(rule=_is_randpic_event, priority=41, block=True)
     reminder = on_message(rule=_is_reminder_event, priority=41, block=True)
+    daily_assist = on_message(rule=_is_daily_assist_event, priority=42, block=True)
     eat = on_message(rule=_is_eat_event, priority=41, block=True)
     subscribe_cmd = on_message(rule=_is_standalone_subscribe_event, priority=12, block=True)
 
@@ -7131,6 +7483,12 @@ def _register_nonebot_handlers() -> None:
     async def _handle_reminder(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
             bot, event, build_reminder_capability, "bot.reminder", reminder
+        )
+
+    @daily_assist.handle()
+    async def _handle_daily_assist(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, build_daily_assist_capability, "bot.daily_assist", daily_assist
         )
 
     @affinity.handle()

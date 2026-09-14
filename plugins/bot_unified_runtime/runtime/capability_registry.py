@@ -249,7 +249,6 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         label="收件箱速记", reason="收件箱（收件箱 买牛奶/收件箱）",
         tags=("base_route:daily_assist",), command=True, has_rule=True,
         matcher_name="daily_assist_match",
-        note="收件箱速记（收件箱 <内容>/收件箱；纯文本收件箱+早晚简报+吃什么定时推送，帮助页 topic=收件箱）",
     ),
     RouteCapabilityDecl(
         kind="GROUP_INFO", value="group_info", capability_id="bot.group_info", priority=41,

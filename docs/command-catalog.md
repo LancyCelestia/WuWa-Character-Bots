@@ -5,10 +5,10 @@
 > 修改帮助页数据后运行 `python scripts/command_catalog.py --write`。
 > `/bot help`、`/bot help <模块>` 与本目录共享同一数据源。
 
-- 模块数：73
-- 别名数：489
-- 普通用户可用模块：35；仅管理员模块：38
-- 路由规则数：31；其中登记为内部能力：5
+- 模块数：75
+- 别名数：495
+- 普通用户可用模块：36；仅管理员模块：39
+- 路由规则数：32；其中登记为内部能力：5
 
 ## 使用入口
 
@@ -21,8 +21,8 @@
 
 ### 这个机器人能做什么
 
-- 全部 73 个模块都列在本文件「模块详情」里；普通用户可直接使用其中 35 个公开模块，其余 38 个为管理员诊断与配置模块。
-- 能力横跨人格闲聊、链接解析、点歌、天气、行情、占卜、提醒、订阅推送、表情包、下载与一整套管理员运维命令；全部 73 个模块逐个列在下方「模块详情」，公开模块名单以 /bot help 为准。
+- 全部 75 个模块都列在本文件「模块详情」里；普通用户可直接使用其中 36 个公开模块，其余 39 个为管理员诊断与配置模块。
+- 能力横跨人格闲聊、链接解析、点歌、天气、行情、占卜、提醒、订阅推送、表情包、下载与一整套管理员运维命令；全部 75 个模块逐个列在下方「模块详情」，公开模块名单以 /bot help 为准。
 
 ### 怎么开始聊天
 
@@ -46,7 +46,7 @@
 
 ### 哪些命令只有管理员能用
 
-- 仅管理员模块共 38 个，全部走 `/bot` 前缀（例如 `/bot status`、`/bot runtime`、`/bot model`），普通成员发送会收到拒绝提示；权限由六级角色体系（user/trusted/enterprise/admin/super_admin/blocked）判定。
+- 仅管理员模块共 39 个，全部走 `/bot` 前缀（例如 `/bot status`、`/bot runtime`、`/bot model`），普通成员发送会收到拒绝提示；权限由六级角色体系（user/trusted/enterprise/admin/super_admin/blocked）判定。
 - 排障第一入口是 `/bot status`，追问原因用 `/bot why`。
 
 ### 群聊和私聊有什么差别
@@ -64,7 +64,7 @@
 ### 哪些功能依赖网络？
 
 - 需要联网的模块：上下文、对话、模型、搜索、凭据、文件、群摘要、视频理解、邮件、Telegram、订阅、点歌、搜图、天气、行情、个股行情、商品行情、国债收益率、北向资金、汇率、快报、维基、萌娘百科、历史上的今天、下载、链接、媒体归档、群信息、Epic、聊天、表情收库。
-- 纯本地模块：记忆、接入、配置、就绪、角色、人格、路由、历史、暂停、回复、用量、解析、群文件、日志、身份、怪癖、合并转发、运行开关、供应商、表情、占卜、随机图、笔记、帮助、戳一戳。
+- 纯本地模块：记忆、接入、配置、就绪、角色、人格、路由、历史、暂停、回复、用量、解析、群文件、日志、身份、怪癖、合并转发、运行开关、供应商、表情、占卜、随机图、笔记、收件箱、帮助、戳一戳、决策。
 - 联网模块自带重试与兜底（各模块的「失败兜底」行写明具体行为）；外部源不可用时给可读失败原因。
 
 ### 高频入口速查
@@ -2211,6 +2211,38 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 
 - 本模块的实时帮助以 `/bot help 笔记` 为准。
 
+## 收件箱
+
+- 权限：普通用户可用
+- 触发别名：收件箱；inbox；shoujianxiang
+- 能力入口：bot.daily_assist
+- 自然语言触发：收件箱 <内容>；收件箱
+- 群聊/私聊差异：收件箱是全局一份纯文本文件（bot_daily_assist_dir），不分会话；定时简报仅私聊推送名单
+- 网络依赖：纯本地
+- 输出形式：文本
+- 配置变量：BOT_DAILY_ASSIST_ENABLED；BOT_DAILY_ASSIST_DIR；BOT_DAILY_ASSIST_PUSH_USER_IDS；BOT_DAILY_ASSIST_MEAL_TIMES；BOT_DAILY_ASSIST_MORNING_TIME；BOT_DAILY_ASSIST_EVENING_TIME
+- 可复制示例：收件箱 周五前还信用卡｜收件箱 买猫粮｜收件箱
+- 关联回归测试：tests/test_daily_assist.py
+- 总览：【收件箱】随手把事情丢进来：收件箱 <内容>｜收件箱
+- 标题：【收件箱】随手速记与早晚简报
+
+### 教程
+
+【板块介绍】
+  收件箱是一份纯文本文件（bot_daily_assist_dir 下 inbox.md），
+  手机/电脑都能直接编辑；早报读取后归档到 daily/ 按日期存放。
+【指令与参数】
+收件箱 <内容>（inbox/shoujianxiang）：作用=速记一条；参数=内容；内容=收录确认；意义=捕捉一闪而过的琐事。
+收件箱：作用=看待处理清单；参数=无；内容=编号清单；意义=盘点。
+【权限与效果】
+  权限=全员（bot_daily_assist_enabled 可关）。定时推送目标只取
+  BOT_DAILY_ASSIST_PUSH_USER_IDS 名单，名单为空则只记不推。
+【示例】收件箱 周五前还信用卡｜收件箱 买猫粮｜收件箱
+
+### 帮助页一致性要求
+
+- 本模块的实时帮助以 `/bot help 收件箱` 为准。
+
 ## 帮助
 
 - 权限：普通用户可用
@@ -2372,6 +2404,37 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 
 - 本模块的实时帮助以 `/bot help 忽略` 为准。
 
+## 决策
+
+- 权限：仅管理员
+- 触发别名：决策；决策引擎；decision
+- 能力入口：/bot decision
+- 网络依赖：纯本地
+- 输出形式：文本
+- 可复制示例：/bot decision；/bot decision 50
+- 关联回归测试：tests/test_decision_trace_persistence.py
+- 总览：【决策】影子决策引擎痕迹查询：/bot decision [N]
+- 标题：【决策】查看影子决策引擎的路由分歧痕迹
+
+### 教程
+
+【板块介绍】
+  影子决策引擎（BOT_DECISION_ENGINE_MODE=shadow）对每条经过管线
+  的事件只算不发，与现行 matcher 的裁决做比对。本页把比对痕迹
+  读出来给管理员看：分歧集中在哪类路由、引擎与现行差在哪，是
+  接管评估（阶段 1+）的核心依据。痕迹经 SQLite 落盘，热缓冲只
+  是短程补充，重启后仍可查询历史。
+【指令与参数】
+/bot decision [N]：作用=查看最近 N 条影子痕迹；参数=N，缺省 20，范围 1-100；内容=时间/路由类别/引擎判定(动作)/现行判定/一致·分歧·不可比/耗时，备注与异常字段经脱敏截断；意义=量化分歧率、定位分歧模式。
+【权限与效果】
+  权限=仅管理员（普通成员发送会收到拒绝提示）。
+  影子模式默认关闭（legacy_only）：模式下无痕迹属预期，不是故障。
+【示例】/bot decision ｜ /bot decision 50
+
+### 帮助页一致性要求
+
+- 本模块的实时帮助以 `/bot help 决策` 为准。
+
 ## 路由覆盖与内部接口
 
 ### 路由规则 → 帮助模块
@@ -2408,6 +2471,7 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   - content | bot.content | 链接
   - chat | bot.chat | 聊天
   - media_archive | bot.media_archive | 媒体归档
+  - daily_assist | bot.daily_assist | 收件箱
   - group_info | bot.group_info | 群信息
 
 ### 接口清单（manifest）
@@ -2430,6 +2494,7 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   - capability.game_live | reserved | 预留：游戏直播事件接入，尚未实现
   - capability.meme_absorb | active | 表情收库
   - capability.group_info | active | 群信息
+  - capability.daily_assist | active | 收件箱
   - capability.emotion | active | 内部：心情引擎，经上下文注入，不占文本路由
   - capability.gscore | reserved | 预留：GsCore 侧指令统一进入基层路由，尚未实现
 

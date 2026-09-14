@@ -303,6 +303,26 @@ class Config(BaseModel):
     # 白名单群各推一遍；list_mode 非 whitelist 时不推送任何群（绝不猜群）。
     bot_group_digest_push_enabled: bool = True
     bot_group_digest_push_time: str = "21:30"
+    # 日常助理（bot.daily_assist）：收件箱速记 + 定时吃什么推荐 + 早晚简报。
+    # 收件箱/菜单/任务清单都是 bot_daily_assist_dir 下的纯文本文件
+    # （inbox.md/food.md/tasks.md，手机或 ZCode 可直接编辑）；定时推送目标
+    # 只取 push_user_ids 显式名单，名单为空则只记不推（绝不猜人）。
+    bot_daily_assist_enabled: bool = True
+    bot_daily_assist_dir: str = "data/daily_assist"
+    bot_daily_assist_push_user_ids: list[str] = []
+    bot_daily_assist_meal_times: list[str] = ["11:15", "17:15"]
+    bot_daily_assist_morning_time: str = "09:00"
+    bot_daily_assist_evening_time: str = "21:00"
+    # 校园自动转发（campus v1）：监听学校 QQ 账号（NapCat 第二实例）所在
+    # 群的文本消息，实时私聊转发给主人。纯监听，绝不向学校群发送任何消息。
+    # 三重门：enabled ∧ self_ids ∧ group_whitelist 任一为空即整链路关闭
+    # （绝不猜账号/猜群）；白名单支持 "*" 显式放行学校号全部群。
+    bot_campus_enabled: bool = False
+    bot_campus_self_ids: list[str] = []
+    bot_campus_group_whitelist: list[str] = []
+    bot_campus_notify_qq: str = ""
+    bot_campus_push_bot_id: str = ""
+    bot_campus_db_path: str = "data/campus.sqlite3"
     # 群聊回复策略（群号列表）：
     # black1=完全静默只接收不发送；black2=只回“@它且带指令”的消息；
     # white1=正常回复并可按主动接话开关抽签；white2=只回“@它”或显式命令。
@@ -920,6 +940,7 @@ class Config(BaseModel):
             "bot_media_archive_dir",
             "bot_media_archive_db_path",
             "bot_notes_db_path",
+            "bot_campus_db_path",
         )
         for name in path_fields:
             setattr(self, name, resolve(getattr(self, name)))
@@ -977,6 +998,8 @@ class Config(BaseModel):
         "bot_group_digest_blacklist",
         "bot_randpic_dirs",
         "bot_randpic_trigger_words",
+        "bot_campus_self_ids",
+        "bot_campus_group_whitelist",
         mode="before",
     )
     @classmethod
