@@ -294,10 +294,12 @@ def humanize_reply(text: str) -> str:
     return value or (text or "").strip()
 
 
-# --- 本机信息外泄红线（输出侧，最小可信版） -----------------------------------
-# 模型被诱导复述 .env / 本机文件路径时，在发送前做确定性打码。只覆盖三种
-# 高置信形态（Windows 盘符绝对路径 / BOT_XXX= 赋值 / sk- 类 key），避免
-# 误伤正常对话；函数幂等，替换产物不会被二次匹配。
+# --- 本机信息外泄红线（输出侧） -----------------------------------------------
+# 模型被诱导复述 .env / 本机文件路径 / 凭据时，在发送前做确定性打码。
+# 审查 F-01（2026-09-14）：原版只覆盖三种高置信形态（BOT_XXX= 赋值 / sk- 类
+# key / Windows 盘符绝对路径），URL userinfo、Bearer token、JWT 三段式、
+# 裸键值对（sendkey=x / token=x / key=值）全部漏网，以下逐形态补齐；
+# 每条都带防误伤边界，函数幂等，替换产物不会被二次匹配。
 _BOT_ENV_ASSIGN_RE = re.compile(
     r"\b(BOT_[A-Z0-9_]{1,64})\s*=\s*[^\s，。；！？、）】」”\"'<>]{1,200}"
 )
@@ -307,16 +309,56 @@ _LOCAL_PATH_RE = re.compile(
 )
 _LOCAL_PATH_PLACEHOLDER = "<本机路径已隐藏>"
 _SECRET_VALUE_PLACEHOLDER = "<已隐藏>"
+# F-01 ①URL userinfo：必须 scheme:// 打头且「user:pass@」两段齐全（无密码的
+# user@host 不动，普通 URL 无 @ 更不动）；只打码凭据段，保留 host:port/路径，
+# 人类仍能看出泄漏发生在哪个服务。
+_URL_USERINFO_RE = re.compile(
+    r"\b(https?://)"
+    r"([^\s/@，。；！？、）】」”\"'<>:]{1,64})"
+    r":([^\s/@，。；！？、）】」”\"'<>:]{1,200})@"
+)
+# F-01 ②JWT 三段式：eyJ 是 base64('{"') 的固定开头（JWT header 必是 JSON），
+# 加上三段 base64url 特征足够特异；整体打码——三段任何一段都可参与重放，
+# 只打 signature 治标不治本。
+_JWT_RE = re.compile(
+    r"\beyJ[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}"
+)
+# F-01 ③Bearer token：保留「Bearer」前缀（大小写不敏感，RFC 7235 scheme 本就
+# 不区分大小写），只打码 token 本体；token 少于 8 字符视为示例/占位不打。
+_BEARER_TOKEN_RE = re.compile(r"\b(?i:Bearer)([ \t]+)([A-Za-z0-9._\-]{8,})")
+# F-01 ④裸键值对：键名限定密钥词干；词干左侧禁邻字母（monkey= 不命中）、
+# 右侧禁邻字母数字下划线（keyword= / tokens= 不命中，access_token= 借
+# 「_ 前缀」仍命中）；值 ≥8 字符才打（短值多为示例），分隔符含全角冒号。
+_BARE_KEY_VALUE_RE = re.compile(
+    r"(?<![A-Za-z])"
+    r"(sendkey|api_?key|secret|passw(?:or)?d|token|key)"
+    r"(?![A-Za-z0-9_])\s*[:=：]\s*"
+    r"([^\s，。；！？、）】」”\"'<>]{8,200})"
+)
 
 
 def redact_local_secrets(text: str) -> str:
     """打码回复文本中的本机敏感形态；无命中时原样返回（热路径零成本）。"""
     value = text or ""
-    if "BOT_" not in value and "sk-" not in value and ":\\" not in value and ":/" not in value:
+    # 快路径哨兵与新正则一一对应，宁可多扫一遍也不能漏（漏=泄漏）：
+    # 原三条：BOT_ / sk- / 盘符（:\ 与 :/）；F-01 四条：@（userinfo）、
+    # eyJ（JWT，base64 大小写敏感固定前缀）、bearer/key/token/secret/passw
+    # （Bearer 与裸键值对的词干，lowered 后扫描）。
+    lowered = value.lower()
+    if ("BOT_" not in value and "sk-" not in value and ":\\" not in value
+            and ":/" not in value and "@" not in value and "eyJ" not in value
+            and "bearer" not in lowered and "key" not in lowered
+            and "token" not in lowered and "secret" not in lowered
+            and "passw" not in lowered):
         return value
     # 顺序：先整段打掉 BOT_XXX=赋值（值里可能含路径/key），再打独立 key，
-    # 最后打剩余的盘符绝对路径。
+    # 然后 F-01 四形态（userinfo → JWT → Bearer → 裸键值对；JWT 先于 Bearer，
+    # 整条 JWT 一次打掉），最后打剩余的盘符绝对路径。
     value = _BOT_ENV_ASSIGN_RE.sub(r"\1=" + _SECRET_VALUE_PLACEHOLDER, value)
     value = _API_KEY_RE.sub("sk-" + _SECRET_VALUE_PLACEHOLDER, value)
+    value = _URL_USERINFO_RE.sub(r"\1" + _SECRET_VALUE_PLACEHOLDER + "@", value)
+    value = _JWT_RE.sub(_SECRET_VALUE_PLACEHOLDER, value)
+    value = _BEARER_TOKEN_RE.sub("Bearer" + r"\1" + _SECRET_VALUE_PLACEHOLDER, value)
+    value = _BARE_KEY_VALUE_RE.sub(r"\1=" + _SECRET_VALUE_PLACEHOLDER, value)
     value = _LOCAL_PATH_RE.sub(_LOCAL_PATH_PLACEHOLDER, value)
     return value

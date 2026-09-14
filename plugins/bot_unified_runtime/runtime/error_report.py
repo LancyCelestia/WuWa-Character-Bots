@@ -109,7 +109,18 @@ _FRAME_LINE_MAX_CHARS = 160
 
 # 配置快照：键名白名单 = 与能力同前缀（bot_<模块>_）的 Config 字段；
 # 命中密钥类命名的一律 ***（值不看内容直接掩码，双保险）。
-_SECRET_KEY_RE = re.compile(r"(token|secret|api_key|apikey|password|passwd|cookie)", re.IGNORECASE)
+# 审查 F-02（2026-09-14）：词表补 sendkey/credential/proxy/webhook/auth——
+# bot_disconnect_notice_serverchan_sendkey、bot_download_proxy、
+# bot_credentials_file 等真实字段此前能进白名单但值打不掉。auth 用字母级
+# 环视当"词边界"（不能用 \b：snake_case 里 auth 前面是 _，\b 永不成立）：
+# author/authorization 等**字母延展**词干不掩码（作者类字段、Authorization
+# 头字段名不误杀，后者的值仍由出站脱敏管线兜底），裸 auth / auth_xxx
+# （下划线续接）仍掩码（测试锁死双向）。
+_SECRET_KEY_RE = re.compile(
+    r"(token|secret|api_key|apikey|password|passwd|cookie|sendkey"
+    r"|credential|proxy|webhook|(?<![A-Za-z])auth(?![A-Za-z]))",
+    re.IGNORECASE,
+)
 _CONFIG_SNAPSHOT_MAX_ROWS = 12
 # E-10：能力同前缀字段不足时补的全局兜底键（横切运行相关的布尔与阈值，
 # 非密钥命名；bot.status 等无同前缀字段的能力配置区不再恒空）。值仍走既有
