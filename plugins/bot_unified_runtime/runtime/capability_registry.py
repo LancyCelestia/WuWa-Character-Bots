@@ -245,6 +245,13 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         matcher_name="media_archive_match",
     ),
     RouteCapabilityDecl(
+        kind="DAILY_ASSIST", value="daily_assist", capability_id="bot.daily_assist", priority=42,
+        label="收件箱速记", reason="收件箱（收件箱 买牛奶/收件箱）",
+        tags=("base_route:daily_assist",), command=True, has_rule=True,
+        matcher_name="daily_assist_match",
+        note="收件箱速记（收件箱 <内容>/收件箱；纯文本收件箱+早晚简报+吃什么定时推送，帮助页 topic=收件箱）",
+    ),
+    RouteCapabilityDecl(
         kind="GROUP_INFO", value="group_info", capability_id="bot.group_info", priority=41,
         label="群信息", reason="群信息（群信息/群主是谁/群人数/群公告/群精华/本群多大了）",
         tags=("base_route:group_info",), command=True, has_rule=True,
@@ -394,6 +401,12 @@ INTERFACE_DECLARATIONS: tuple[InterfaceDecl, ...] = (
         help_topic="群信息",
     ),
     InterfaceDecl(
+        interface_id="capability.daily_assist", label="收件箱速记/早晚简报", status="active",
+        route_kind="daily_assist", priority=42,
+        description="收件箱随手记 + 定时吃什么推荐与早晚简报（BOT_DAILY_ASSIST_*，纯文本文件驱动）",
+        help_topic="收件箱",
+    ),
+    InterfaceDecl(
         interface_id="capability.emotion", label="情绪状态注入", status="active",
         route_kind="context", priority=None,
         description="作为上下文能力注入，不单独占用文本路由",
@@ -492,10 +505,12 @@ HELP_TOPIC_DECLARATIONS: tuple[HelpTopicDecl, ...] = (
     HelpTopicDecl(topic="随机图", admin_only=False, capability="bot.randpic"),
     HelpTopicDecl(topic="提醒", admin_only=False, capability="bot.reminder"),
     HelpTopicDecl(topic="笔记", admin_only=False, capability="bot.reminder"),
+    HelpTopicDecl(topic="收件箱", admin_only=False, capability="bot.daily_assist"),
     HelpTopicDecl(topic="帮助", admin_only=False, capability="bot.help"),
     HelpTopicDecl(topic="聊天", admin_only=False, capability="bot.chat"),
     HelpTopicDecl(topic="戳一戳", admin_only=False, capability="on_notice:戳一戳"),
     HelpTopicDecl(topic="表情收库", admin_only=False, capability="meme_absorb（群图自动收库，无命令）"),
     HelpTopicDecl(topic="自然语言", admin_only=False, capability="bot.natural_command"),
     HelpTopicDecl(topic="忽略", admin_only=True, capability="matcher:IGNORE（空消息静默；未知命令形态回引导）"),
+    HelpTopicDecl(topic="决策", admin_only=True, capability="/bot decision"),
 )

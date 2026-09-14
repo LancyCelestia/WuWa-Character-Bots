@@ -389,12 +389,13 @@ _HELP_DECLARED_TOPICS = [decl.topic for decl in cr.HELP_TOPIC_DECLARATIONS]
 def test_help_topics_equal_registry_book_order() -> None:
     """声明 help 维度与 echo 帮助注册表逐 topic 书序相等；缺失/多出/重复即红。
 
-    73 = doc_sync 机器册「帮助 topic 数」同口径（该册由 echo 字面行数出，
+    74 = doc_sync 机器册「帮助 topic 数」同口径（该册由 echo 字面行数出，
     本断言把声明源钉在同一口径上，两侧各自漂移都过不了这道门）。
+    73→74：审查 P-03 新增「决策」topic（/bot decision 查询，2026-09-15）。
     """
     live_topics = [str(entry["topic"]) for entry in HELP_ENTRIES]
     assert _HELP_DECLARED_TOPICS == live_topics
-    assert len(_HELP_DECLARED_TOPICS) == len(set(_HELP_DECLARED_TOPICS)) == 73
+    assert len(_HELP_DECLARED_TOPICS) == len(set(_HELP_DECLARED_TOPICS)) == 74
 
 
 def test_help_visibility_and_capability_equal_registry() -> None:
@@ -420,7 +421,7 @@ def test_help_public_visibility_derived_from_declaration() -> None:
     declared_admin = {d.topic for d in cr.HELP_TOPIC_DECLARATIONS if d.admin_only}
     assert declared_public == set(_PUBLIC_HELP_TOPICS)
     assert declared_admin.isdisjoint(_PUBLIC_HELP_TOPICS)
-    assert len(declared_public) == 35 and len(declared_admin) == 38
+    assert len(declared_public) == 35 and len(declared_admin) == 39
 
 
 def test_help_categories_reference_declared_topics() -> None:

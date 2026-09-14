@@ -10,6 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypedDict
 
+from plugins.bot_unified_runtime.audit import redact_private_debug
 from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.config_readiness import run_config_smoke
@@ -85,6 +86,140 @@ def build_status_result(
     )
 
 
+# ==================== 决策影子痕迹查询（审查 P-03 消费侧） ====================
+# 背景（A 方审计 P-03）：影子决策引擎的 trace sink 原本只有进程内 deque——
+# 分歧记录无落库、无命令读取，是数据黑洞。落盘侧见 decision/trace.py
+# （SqliteDecisionTraceSink：热缓冲+SQLite 异步落盘）；本节是查询消费的唯一
+# 命令入口：/bot decision [N]（管理员），读最近 N 条输出路由分歧摘要。
+# 脱敏红线：DecisionTrace 从设计上就不含任何消息原文，本命令只输出结构
+# 字段（时间/路由/双方判定/耗时），自由文本字段（备注/错误）经
+# redact_private_debug 打码 + 截断，双保险。
+
+_DECISION_QUERY_DEFAULT_LIMIT = 20
+_DECISION_QUERY_MAX_LIMIT = 100
+_DECISION_NOTE_MAX_CHARS = 80
+
+
+def _parse_decision_limit(query: str) -> int:
+    """N 参数解析：缺省 20，钳制 1-100；垃圾输入回缺省（不报错不打脸）。"""
+    try:
+        return min(
+            _DECISION_QUERY_MAX_LIMIT,
+            max(1, int(query.strip() or _DECISION_QUERY_DEFAULT_LIMIT)),
+        )
+    except ValueError:
+        return _DECISION_QUERY_DEFAULT_LIMIT
+
+
+def _decision_note(value: str) -> str:
+    """自由文本字段单行化 + 打码 + 截断（防串行刷屏与意外内容出卡）。"""
+    text = redact_private_debug(str(value or "")).replace("\r", " ").replace("\n", " ").strip()
+    if len(text) > _DECISION_NOTE_MAX_CHARS:
+        return text[:_DECISION_NOTE_MAX_CHARS] + "…"
+    return text
+
+
+def _format_decision_row(index: int, trace: Any) -> str:
+    """单条痕迹 → 结构化摘要行（不回显任何用户原文）。"""
+    created_at: Any = getattr(trace, "created_at", None)
+    try:
+        # UTC 落库，出卡转本地时区（运维读起来不烧脑）。
+        stamp = created_at.astimezone().strftime("%m-%d %H:%M:%S")
+    except (AttributeError, ValueError, OSError):
+        stamp = "--"
+    raw_agree: Any = getattr(trace, "agree", None)
+    agree: bool | None = None if raw_agree is None else bool(raw_agree)
+    if agree is True:
+        verdict = "一致"
+    elif agree is False:
+        verdict = "分歧"
+    else:
+        verdict = "不可比"
+    plan_cap = str(getattr(trace, "plan_capability_id", "") or "(引擎未判定)")
+    plan_action = str(getattr(trace, "plan_action", "") or "")
+    legacy_cap = str(getattr(trace, "legacy_capability_id", "") or "(无)")
+    route_kind = str(getattr(trace, "route_kind", "") or "-")
+    elapsed = float(getattr(trace, "elapsed_ms", 0.0) or 0.0)
+    line = (
+        f"{index}. {stamp} ｜ 路由 {route_kind} ｜ 引擎 {plan_cap}"
+        f"{'(' + plan_action + ')' if plan_action else ''}"
+        f" ｜ 现行 {legacy_cap} ｜ {verdict} ｜ {elapsed:.1f}ms"
+    )
+    notes: list[str] = []
+    note = _decision_note(str(getattr(trace, "compare_note", "") or ""))
+    if note:
+        notes.append(f"   备注: {note}")
+    error = _decision_note(str(getattr(trace, "error", "") or ""))
+    if error:
+        notes.append(f"   异常: {error}")
+    return "\n".join([line, *notes])
+
+
+def build_decision_query_result(
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str] | None,
+    query: str = "",
+    sink: Any = None,
+) -> CapabilityResult:
+    """``/bot decision [N]``：影子决策痕迹查询（管理员专属，审查 P-03）。
+
+    读最近 N 条（默认 20，1-100）；优先读 SQLite 落盘（跨重启可查），
+    库缺失/为空回落热缓冲。sink 可注入（测试隔离），缺省取进程默认 sink。
+    """
+    if not _is_admin_actor(actor_roles):
+        return CapabilityResult(
+            request_id=request_id or new_request_id("decision"),
+            capability_id="bot.decision",
+            kind="text",
+            title="决策影子",
+            body=random.choice(user_copy.ADMIN_GATE_TEMPLATES).format(
+                action="查决策影子痕迹"
+            ),
+            risk_level=RiskLevel.LOW,
+            privacy_level=PrivacyLevel.PERSONAL,
+            send_policy=SendPolicy.IMMEDIATE,
+            audit_tags=["decision_query", "p03", "decision_denied"],
+        )
+    if sink is None:
+        # 函数内惰性导入：echo 是高频导入模块，决策包保持按需拉起。
+        from plugins.bot_unified_runtime.decision.trace import (
+            get_decision_trace_sink,
+        )
+
+        sink = get_decision_trace_sink()
+    limit = _parse_decision_limit(query)
+    recent = getattr(sink, "recent", None)
+    traces: list[Any]
+    if callable(recent):
+        traces = list(recent(limit))  # SQLite 侧（新→旧）
+    else:
+        # 兜底：只有 InMemory 语义的 sink（如测试注入）取快照尾部，同口径新→旧。
+        traces = list(reversed(sink.snapshot()))[:limit]
+    if not traces:
+        body = (
+            "决策影子痕迹：暂无记录。\n"
+            "影子模式（BOT_DECISION_ENGINE_MODE=shadow）才会产生痕迹；"
+            "参数 /bot decision N 可调条数（1-100）。"
+        )
+    else:
+        lines = [f"决策影子痕迹：最近 {len(traces)} 条（新→旧）"]
+        lines.extend(_format_decision_row(i, t) for i, t in enumerate(traces, 1))
+        lines.append("（只含结构字段，不回显消息原文）")
+        body = "\n".join(lines)
+    return CapabilityResult(
+        request_id=request_id or new_request_id("decision"),
+        capability_id="bot.decision",
+        kind="text",
+        title="决策影子",
+        body=body,
+        risk_level=RiskLevel.LOW,
+        privacy_level=PrivacyLevel.PERSONAL,
+        send_policy=SendPolicy.IMMEDIATE,
+        audit_tags=["decision_query", "p03"],
+    )
+
+
 def normalize_help_topic(query: str) -> str | None:
     return _HELP_ALIAS_MAP.get((query or "").strip().lower())
 
@@ -152,7 +287,7 @@ _HELP_CATEGORIES = (
             "对话", "历史", "人格", "角色", "队列", "配置", "就绪", "接入",
             "暂停", "回复", "设置", "凭据", "群策略", "群文件", "文件",
             "身份", "怪癖", "限流", "合并转发", "群摘要", "视频理解", "运行开关",
-            "邮件", "Telegram", "供应商", "忽略", "媒体归档",
+            "邮件", "Telegram", "供应商", "忽略", "媒体归档", "决策",
         },
     ),
     ("大模型相关", {"模型", "用量", "搜索"}),
@@ -2072,6 +2207,30 @@ _HELP_ENTRIES: list[HelpEntry] = [
             ),
         },
         {
+            "topic": '收件箱',
+            "admin_only": False,
+            "aliases": ('收件箱', 'inbox', 'shoujianxiang'),
+            "index": '【收件箱】随手把事情丢进来：收件箱 <内容>｜收件箱',
+            "title_line": '【收件箱】随手速记与早晚简报',
+            "lines": [
+                '收件箱 <内容>：作用=把待办/杂事记进收件箱文件；参数=内容（必填，≤2000 字）；内容=收录确认；意义=想到就丢，不用惦记。',
+                '收件箱：作用=看当前攒着的事；参数=无；内容=编号清单；意义=盘点。',
+                '定时：每天 09:00 早报整理收件箱并归档，21:00 晚报对账；到饭点还会随机推荐吃什么（BOT_DAILY_ASSIST_* 可调）。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  收件箱是一份纯文本文件（bot_daily_assist_dir 下 inbox.md），\n'
+                '  手机/电脑都能直接编辑；早报读取后归档到 daily/ 按日期存放。\n'
+                '【指令与参数】\n'
+                '收件箱 <内容>（inbox/shoujianxiang）：作用=速记一条；参数=内容；内容=收录确认；意义=捕捉一闪而过的琐事。\n'
+                '收件箱：作用=看待处理清单；参数=无；内容=编号清单；意义=盘点。\n'
+                '【权限与效果】\n'
+                '  权限=全员（bot_daily_assist_enabled 可关）。定时推送目标只取\n'
+                '  BOT_DAILY_ASSIST_PUSH_USER_IDS 名单，名单为空则只记不推。\n'
+                '【示例】收件箱 周五前还信用卡｜收件箱 买猫粮｜收件箱'
+            ),
+        },
+        {
             "topic": '帮助',
             "admin_only": False,
             "aliases": ('帮助', 'help', '菜单'),
@@ -2211,6 +2370,31 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '【权限与效果】\n'
                 '  权限=仅管理员（排障语义）。\n'
                 '【示例】/bot route 今天天气不错 → 显示 chat 路由（正常回复场景）'
+            ),
+        },
+        {
+            # 审查 P-03：决策影子痕迹查询的命令入口与帮助页（消费侧闭环）。
+            "topic": '决策',
+            "admin_only": True,
+            "aliases": ('决策', '决策引擎', 'decision'),
+            "index": '【决策】影子决策引擎痕迹查询：/bot decision [N]',
+            "title_line": '【决策】查看影子决策引擎的路由分歧痕迹',
+            "lines": [
+                '/bot decision [N]：作用=查看影子决策引擎最近 N 条痕迹；参数=N（缺省 20，范围 1-100）；内容=时间/路由类别/引擎判定与现行判定/一致或分歧/耗时，自由文本字段打码截断，不含消息原文；意义=评估中央决策引擎接管前的分歧率（痕迹已落盘，重启可查历史）。',
+            ],
+            "detail": (
+                '【板块介绍】\n'
+                '  影子决策引擎（BOT_DECISION_ENGINE_MODE=shadow）对每条经过管线\n'
+                '  的事件只算不发，与现行 matcher 的裁决做比对。本页把比对痕迹\n'
+                '  读出来给管理员看：分歧集中在哪类路由、引擎与现行差在哪，是\n'
+                '  接管评估（阶段 1+）的核心依据。痕迹经 SQLite 落盘，热缓冲只\n'
+                '  是短程补充，重启后仍可查询历史。\n'
+                '【指令与参数】\n'
+                '/bot decision [N]：作用=查看最近 N 条影子痕迹；参数=N，缺省 20，范围 1-100；内容=时间/路由类别/引擎判定(动作)/现行判定/一致·分歧·不可比/耗时，备注与异常字段经脱敏截断；意义=量化分歧率、定位分歧模式。\n'
+                '【权限与效果】\n'
+                '  权限=仅管理员（普通成员发送会收到拒绝提示）。\n'
+                '  影子模式默认关闭（legacy_only）：模式下无痕迹属预期，不是故障。\n'
+                '【示例】/bot decision ｜ /bot decision 50'
             ),
         },
     ]
@@ -2848,6 +3032,14 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     "忽略": {
         "capability": "matcher:IGNORE（空消息静默；未知命令形态回引导）",
         "outputs": ("按设计静默；未知命令形态回一句 /bot help 引导（60 秒/会话节流）",),
+    },
+    "决策": {
+        "capability": "/bot decision",
+        "network": False,
+        "outputs": ("文本",),
+        "triggers_nickname": ("决策", "decision"),
+        "examples": ("/bot decision", "/bot decision 50"),
+        "tests": ("tests/test_decision_trace_persistence.py",),
     },
 }
 
