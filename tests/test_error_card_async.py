@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -137,16 +138,31 @@ def test_render_never_runs_on_event_loop_thread(tmp_path: Path) -> None:
     backend = _FakeBackend()
     pipeline = _PipelineStub()
     caller_loop_at_submit: bool | None = None
+    # 隔离约束（2026-09-15 两文件组合实证）：``error_report._RENDER_POOL``
+    # 是进程级单例，域外 pipeline 真链用例会以生产形态（backend=None、
+    # card_dir=None）向同一单例池排程真渲染；真渲染的 playwright sync API
+    # 在池线程留下常驻事件循环（ctx 常驻不 close 则 loop 不退出），同线程
+    # 后续任务的 ``asyncio.get_running_loop()`` 会命中残留 loop，把本锁
+    # 污染成假阳性。故经 ``render_pool=`` 参数自建专用池（同前缀、同
+    # max_workers=1 语义），渲染几何测在全新线程上；全局单例不碰，
+    # 其余用例（含依赖共享池排队时序的 ack 零阻塞用例）行为零变化。
+    render_pool = ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="error-card-render"
+    )
+    try:
 
-    async def scenario() -> None:
-        nonlocal caller_loop_at_submit
-        # 生产几何：handle_async 直接 await 在 loop 线程上（QQ 主链路）。
-        asyncio.get_running_loop()
-        caller_loop_at_submit = True
-        _run(pipeline, backend, tmp_path)
+        async def scenario() -> None:
+            nonlocal caller_loop_at_submit
+            # 生产几何：handle_async 直接 await 在 loop 线程上（QQ 主链路）。
+            asyncio.get_running_loop()
+            caller_loop_at_submit = True
+            _run(pipeline, backend, tmp_path, render_pool=render_pool)
 
-    asyncio.run(scenario())
-    error_report.flush_pending_card_renders(timeout=10.0)
+        asyncio.run(scenario())
+        error_report.flush_pending_card_renders(timeout=10.0)
+    finally:
+        # 渲染已在 flush 中完成，shutdown 不等待与生产 atexit 同语义。
+        render_pool.shutdown(wait=False)
     assert caller_loop_at_submit is True  # 几何对照：调用线程确在 loop 上
     assert backend.loop_running is False  # 渲染线程上无运行 loop
     assert backend.thread_name.startswith("error-card-render")
@@ -162,7 +178,9 @@ def test_ack_returns_immediately_while_render_in_flight(tmp_path: Path) -> None:
     elapsed = time.monotonic() - started
     # 调用不等渲染（warm 渲染 ~2s 量级；这里 0.8s 假渲染，必须先返回）。
     assert elapsed < 0.5, f"回执路径被渲染阻塞 {elapsed:.2f}s"
-    assert backend.calls == []  # 返回时渲染尚未执行
+    # 注意：不断言 backend.calls == []——渲染在池线程异步起跑，与断言存在
+    # 良性竞态（机器负载决定瞬时先后），属实现细节非契约；「回执不等渲染」
+    # 的 P0 契约由上面的 elapsed 硬锁，恰一次渲染由 flush 后的 len==2 锁。
     # 文本回执已先行入队。
     assert len(pipeline.send_queue.requests) == 1
     ack = pipeline.send_queue.requests[0]
