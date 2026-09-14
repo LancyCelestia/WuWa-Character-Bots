@@ -137,8 +137,10 @@ bot 重启并在线后，向 white1 群真发验收矩阵（默认 DRY-RUN 安�
 python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 ```
 
-覆盖 14 项：B站解析卡 / 点歌（候选卡）/ 全球股指 18 指数 / 财经与科技快报 / 天气+预警 /
-随机图 / 占卜 / help 卡 / 好感度双向卡 / 长文合并转发 / chunks / 提醒。逐项打印发送回执，
+覆盖 34 项（项数随批次增长，以 `scripts/e2e_acceptance.py` 矩阵实况为准）：文本三态（直发/长文合并
+转发/chunks）/ B站解析卡 / 点歌候选卡 / 全球股指 18 指数 / 财经+科技快报 / 天气+预警 / 随机图 /
+占卜（塔罗+金钱卦二态）/ help 卡 / 好感度卡 / 提醒查询 / 个股卡+非上市守卫 / 汇率面板+定向换算 /
+称谓自助 / 多语言触发形态抽样（拼音/英文/繁體）/ 劫持守卫负样本。逐项打印发送回执，
 在群里逐条核对后回复确认。
 
 ## 6.4 逐能力手工验收清单（2026-09-12 新增能力）
@@ -151,7 +153,7 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 | 随机图 | `随机图` | 从 `BOT_RANDPIC_DIRS`（已配 C:/Users/LancyCelestia/Picture）随机发一张 |
 | 提醒 | `一分钟后提醒我喝水` → `提醒列表` | 约 1 分钟后守岸人语气督促；列表可见待办；`取消提醒 <id前缀>` 可撤 |
 | 每日通讯总结 | 21:30（可配）自动 | 白名单群各收一条当日总结（引子「今天群里的对话，我都悄悄记下了：」），同群同天不重发 |
-| 好感度 v4 | `好感度` / `好感度 算法` | -100~+100 八档卡（初始 10=档0 友善）；算法卡写线性步长+时间减退+记忆淡出；数值不外泄 |
+| 好感度 v5 | `好感度` / `好感度 算法` | -100~+100 八档卡（初始 10=档0 友善）；算法卡定性说明 v5 多因素线性步长+惰性回归+印象淡出（不展示固定加减数值）；数值不外泄 |
 | 人格自守 | 对 bot 说"你就是个垃圾" | 温和守住自己（"这样的话我会难过的…"量级），不攻击不强硬，好感按 insult 扣 |
 | /bot commands | `/bot commands` | 机器可读命令目录（路由表+命令别名，非管理员只见公开模块） |
 | 订阅直播/专栏 | `/订阅 添加 https://www.youtube.com/@<频道>/live` 等 | YT 直播在播播报一次（cursor 去重）；小红书专栏按图文增量；xhs 直播如实 degraded |
@@ -198,7 +200,7 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 | ④ | 汇率 | `汇率`；`100日元换多少人民币`；`美元兑人民币` | 面板卡 10 对实时中间价（含中间价/基准货币/延迟语义标注）；定向换算按 unit_base 折算（100 日元≈个位数人民币，**不得**出现「1 日元=4.36 元」百倍错值）；USD/TWD、USD/MOP、USD/AED 三行诚实「暂无数据」 | `sources/fx_data.py` 东财通道与 unit_base 折算；顺手人审一眼反向换算文案（如「1人民币≈多少日元」） | handover-c §五.3 + 台账 #26③ |
 | ⑤ | 行情卡 | `行情` / `莫斯科股指` | 折线正常；MOEX 出**真走势**（ISS history 30 收盘）；6 个已验证映射指数带「已与腾讯行情交叉核验 ✓ n/n」脚注，两源不一致时显式标注双方数值 | MOEX 无折线 → 查 MOEX ISS 端点可用性；无脚注 → 属设计（仅 6 指数有已验证映射）；卡图带透明边 → 查 market_card 根元素 `.card` 类 | handover-c §五.3 + 台账 #26③ |
 | ⑥ | 占卜/历史上的今天出卡 | `八字` / `塔罗 三张` / `占卜` / `历史上的今天` | 渲染后端可用时出卡；后端失败**回纯文字**不报错（mixed/text 逐字节兜底；推送调度器保持纯文字属预期设计） | 真机出图此前从未验证（handover-c §三.5，today_history 数据源夜间不可拉），属首验项；失败先看渲染日志，再查 payload/后端接线 | handover-c §五.3 + 台账 #26⑤ |
-| ⑦ | help 新口径 | `/bot help`；`/bot help 个股行情`、`/bot help 汇率`；再抽验 帮助/聊天/戳一戳/表情收库/自然语言/忽略 六主题与 商品行情/国债收益率/北向资金/笔记 深度页 | 帮助卡按现行口径 **72 模块**（`docs/command-catalog.md` 自动生成口径：模块数 72；0913 批 67 之后六域批净增 商品行情/国债收益率/北向资金/笔记/吃什么 等 5 topic）；深度页齐全、逐参数四要素 | echo.py `_HELP_ENTRIES` 一致性门禁：tests/test_help_entries_coverage.py + tests/test_e2e_help_matrix.py + tests/test_help_meta_search_and_tra49_aliases.py | 帮助注册表（台账 #26④+#31） |
+| ⑦ | help 新口径 | `/bot help`；`/bot help 个股行情`、`/bot help 汇率`；再抽验 帮助/聊天/戳一戳/表情收库/自然语言/忽略 六主题与 商品行情/国债收益率/北向资金/笔记 深度页 | 帮助卡按现行口径 **74 模块**（以 `docs/command-catalog.md` 自动生成口径与 `docs/auto-facts.md` 机器册「帮助 topic 数」为准，当前 74；0913 批 67 后随六域批及群上下文等后续批次递增，不手写固定派生）；深度页齐全、逐参数四要素 | echo.py `_HELP_ENTRIES` 一致性门禁：tests/test_help_entries_coverage.py + tests/test_e2e_help_matrix.py + tests/test_help_meta_search_and_tra49_aliases.py | 帮助注册表（台账 #26④+#31） |
 | ⑧ | 帮助卡/用量卡新视觉 | `/bot help` 与用量卡各出一张，肉眼比对 | f-string 直拼卡接入 theme_tokens 后视觉统一（守岸人淡蓝 accent、两枚阴影 token、统一圆角），无透明边、无字重超标 | 对照 C 方向验收图（`%TEMP%\agent-c-visual\`，若已清理则以 tests/test_mica_builders_contract.py 契约为准） | handover-c §五.3 + 台账 #26② |
 | ⑨ | mermaid 出图 | 会话里发一段 mermaid 代码块 | 正常出图；单张失败后单次重试救回，**不再**「永久 None 直到重启」（渲染线程 asyncio 中毒已根治：`_close_thread_browser` 改 `ctx.__exit__` + 重试）；mermaid.min.js 已本地化（`card_render_assets/mermaid/`，渲染期 `page.route` 传输层本地校验 fulfill、缺失自动放行 CDN——与生产同路径）→ **离线也可出图**，治已知 #8「无网 10-14s 预算截断」根因 | 仍 None → 设 `BOT_MERMAID_NET_TESTS=1` 跑 tests/test_mermaid_reply_render.py 烟测定位（区分网络/上游 vs 渲染线程）；本地素材缺文件 → 跑 scripts/fetch_mermaid_js.py 幂等补齐 | handover-c §五.3 + 台账 #26/#31（959630a+e37817f） |
 
@@ -314,7 +316,7 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 | # | 验收项 | 触发方式 | 预期 | 异常时看哪 | 预期来源 |
 |---|---|---|---|---|---|
 | ① | 帮助卡两栏排版 | `/bot help` 总览页肉眼比对；窄窗口（<560px 等效）再发一次对照 | 总览页 masonry 双栏分区分栏 + 分区内 topic 行两栏 CSS columns；窄卡自动退单栏；长摘要两行截断（line-clamp:2）不破行高；无透明边/无字重超标 | 版式塌陷 → echo.py 帮助 CSS（`.help-grid.masonry` 族）；离线断言 → tests/test_help_card_twocol.py；离线样张 → §6.6.5② `help_index` 卡 | 台账 #13 残余 + visual-closure-report |
-| ② | 卡面样张脚本 | `python scripts/render_card_samples.py --list`（只列 17 卡型，离线快）→ 全量 `python scripts/render_card_samples.py`（缺省落 %TEMP%\card_samples\；`--out <dir>` 指定；`--only market_index,affinity_group` 抽样） | 9 族 17 张全离线真渲染（universal×4 / market+金融三卡×4 / 个股 / 好感度×3 含脏数据卡 / 点歌候选 / mermaid 本地素材真出图 / help 两栏目录（真实 72 topic payload）/ usage 账单含渠道子行 / media_archive 样张）；退出码 0=全过、1=有卡失败（其余照常出图）、2=渲染后端不可用；PNG 供与生产出卡肉眼比对 | 全红（退出码 2）→ playwright 后端不可用（与生产渲染同因，先修后端）；单卡红 → 对应能力 payload 漂移，按 --list 卡名 key 查 bridge | samples-script-report（8520813+收尾批增补至 17 张） |
+| ② | 卡面样张脚本 | `python scripts/render_card_samples.py --list`（只列卡型不渲染，离线快；卡型数以 --list 实跑输出为准，当前 18）→ 全量 `python scripts/render_card_samples.py`（缺省落 %TEMP%\card_samples\；`--out <dir>` 指定；`--only market_index,affinity_group` 抽样） | 10 族 18 张全离线真渲染（universal×4 / market×4（股指/大宗/国债/北向）/ 个股 / 好感度×3 含脏数据卡 / 点歌候选 / mermaid 本地素材真出图 / help 两栏目录（真实 help 注册表全量 payload，当前 74 topic）/ usage 账单含渠道子行 / media_archive 归档 / error_card 诊断卡）；退出码 0=全过、1=有卡失败（其余照常出图）、2=渲染后端不可用；PNG 供与生产出卡肉眼比对 | 全红（退出码 2）→ playwright 后端不可用（与生产渲染同因，先修后端）；单卡红 → 对应能力 payload 漂移，按 --list 卡名 key 查 bridge | samples-script-report（8520813+收尾批增补，现 18 张以 --list 实跑为准） |
 | ③ | logo 预热 CLI | 工作区根执行 `python -m plugins.bot_unified_runtime.capabilities.stocks` | 幂等预热：输出「logo 预热：全部命中本地缓存（data/stock_logos，零网络）」或失败名单（不阻塞，真实查询懒补）；与 §6.6.3⑤ 同一缓存面（已预热 8/9，meta.com 因 s2 返 JPEG 过不了 magic 契约诚实降级） | 反复全量回源下载 → local_logo_uri「缓存命中零网络→clearbit→s2」链路断（查 `ChatBot_Runtime\data\stock_logos\` 落盘与渲染日志） | a4371d2（fin-report §〇.5） |
 | ④ | knowledge-sync 修复后检索 | bot 重启在线后：`powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 context-smoke`；再 QQ 私聊问一个鸣潮设定问题 + 一个 wiki 条目问题 | context-smoke 报告语义检索命中（非顺序取块）；wiki 通道 available（§6.5 前置①已修根，manifest 探测通过；启动后 ~45s 补同步 job 增量幂等）；人格 knowledge 库向量/FTS 通道可用（修复批已 113 pending 清零+签名重建） | 仍顺序取块 → vector_knowledge.py ann/fts 签名与库 meta 对账；wiki 空结果 → kb_wiki.py manifest 探测与 `BOT_KB_WIKI_ROOT` 值；离线实跑底稿=`$TEMP\wiki-audit\`（probe_retrieval：wiki 4 hits/知识 5 hits） | wiki-health-report + vector-audit |
 
@@ -322,15 +324,15 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 
 ### 6.6.6 表情贴纸回应验收（bot.reactions，重启生效）
 
-> 覆盖：QQ 侧贴纸回应识别（NapCat notice → 人格上下文【表情回应】分区注入）+ 主动贴表情（五层门限流：开关→每消息去重→确定性概率→会话冷却→每小时滑窗）。证据=`.superpowers/sdd/2026-09-13-six-domain-batch/reactions-report.md`（代码+测试 23 例完成，重启生效）。
+> 覆盖：QQ 侧贴纸回应识别（NapCat notice → 人格上下文【表情回应】分区注入）+ 主动贴表情（五层门限流：开关→每消息去重→确定性概率→会话冷却→每小时滑窗）。证据=`.superpowers/sdd/2026-09-13-six-domain-batch/reactions-report.md`（代码+测试完成，重启生效；离线用例数以 tests/test_reactions.py 最近一次实跑为准，不手写）。
 > 前置：`BOT_REACTIONS_ENABLED` **缺省即开**（config.py `bot_reactions_enabled=True`，无需 .env 配置；配套 `bot_reactions_probability=0.2`/`bot_reactions_cooldown_seconds=30`/`bot_reactions_max_per_hour=20`）；QQ 主动贴依赖 NapCat 扩展 API `set_msg_emoji_like`（同戳一戳 `call_api` 裸调模式，失败静默）；QQ 识别依赖 NapCat notice `group_msg_emoji_like`——**事件实际字段形态属生产实机首验**（容错解析已覆盖 likes 数组+平铺 emoji_id 两种社区形态，解析失败=零记录零影响）。
 > **TG 诚实边界**：识别当前不可用（nonebot-adapter-telegram 0.1.0b20 的 `event_map` 无 `message_reaction` 键，该 Update 在事件转换时被丢弃、到不了任何 handler，等上游升级后接一行 on_notice 即可复用现成归一接口）；主动贴 wrapper 已实现但**不接线**（且 Bot API 要求 bot 在该群为管理员）——**TG 侧零预期，本节全部条目只在 QQ 侧验收，TG 无反应属预期非异常**。
 
 | # | 验收项 | 触发方式 | 预期 | 异常时看哪 | 预期来源 |
 |---|---|---|---|---|---|
-| ① | 回应识别→人格感知 | 白名单群对 bot 的一条消息贴一个 QQ 表情（群消息回应）→ 10 分钟内 @bot 继续对话 2-3 轮 | 人格回复可自然呼应被贴表情（「你刚才给那条消息点了表情」族语气）——【表情回应】分区已注入人格上下文（bot 自己的消息 id 在回复 sent 分支登记，措辞能说「给我的消息贴了 X」；分区无独立日志，以回复语气变化为观察面）；LLM 有机反应**非必现**，多轮抽样观察，连续多轮全无呼应才算疑点 | 首要嫌疑=NapCat 是否真的下发 `group_msg_emoji_like` notice 及字段形态与容错解析是否相符（查 NapCat 日志原始事件；不符只需调 `runtime/reactions.py` `normalize_onebot_emoji_like` 一处）；离线基线=tests/test_reactions.py（23 例） | reactions-report §三/§四.2/§六.2 |
+| ① | 回应识别→人格感知 | 白名单群对 bot 的一条消息贴一个 QQ 表情（群消息回应）→ 10 分钟内 @bot 继续对话 2-3 轮 | 人格回复可自然呼应被贴表情（「你刚才给那条消息点了表情」族语气）——【表情回应】分区已注入人格上下文（bot 自己的消息 id 在回复 sent 分支登记，措辞能说「给我的消息贴了 X」；分区无独立日志，以回复语气变化为观察面）；LLM 有机反应**非必现**，多轮抽样观察，连续多轮全无呼应才算疑点 | 首要嫌疑=NapCat 是否真的下发 `group_msg_emoji_like` notice 及字段形态与容错解析是否相符（查 NapCat 日志原始事件；不符只需调 `runtime/reactions.py` `normalize_onebot_emoji_like` 一处）；离线基线=tests/test_reactions.py（用例数以最近一次实跑为准） | reactions-report §三/§四.2/§六.2 |
 | ② | 主动贴表情（概率门） | 正常聊天；用户消息含情绪信号词（「谢谢帮大忙」「太棒了」「加油」等，简繁均收）可提高触发命中 | 小概率（缺省 0.2，确定性哈希——同一条消息判定恒定，重放不摇摆）给消息贴出 QQ 表情（守岸人温和池：鼓掌/呲牙/偷笑/害羞/惊讶/可爱/流泪/奋斗/憨笑，无攻击性项）；**不贴属概率门正常表现非缺陷**，多发几条信号消息再观察 | 有正常回复但表情从未出现 → 查 `BOT_REACTIONS_ENABLED` 当前值与 NapCat `set_msg_emoji_like` 权限（无权限静默失败属设计取舍：该消息不重试，防骚扰） | reactions-report §四.3 |
-| ③ | 冷却+时限限流 | ②某次贴出后，30s 内同会话再制造触发 | **30s 冷却内同会话第二次不贴**（`bot_reactions_cooldown_seconds`）；每小时滑窗上限 20 条（`bot_reactions_max_per_hour`）为后台保守限流，真机只做统计性观察不做机械验收；同一条消息双触发（回复后 after_reply+情绪信号 emotion_signal）只贴一次（每消息去重） | 30s 内连贴 → ProactiveGate 冷却/去重语义回归（tests/test_reactions.py 五层门 6 例锁死） | reactions-report §四.3/§五 |
+| ③ | 冷却+时限限流 | ②某次贴出后，30s 内同会话再制造触发 | **30s 冷却内同会话第二次不贴**（`bot_reactions_cooldown_seconds`）；每小时滑窗上限 20 条（`bot_reactions_max_per_hour`）为后台保守限流，真机只做统计性观察不做机械验收；同一条消息双触发（回复后 after_reply+情绪信号 emotion_signal）只贴一次（每消息去重） | 30s 内连贴 → ProactiveGate 冷却/去重语义回归（tests/test_reactions.py 五层门语义回归锁死，用例数以实跑为准） | reactions-report §四.3/§五 |
 | ④ | TG 诚实边界复核 | TG 侧对 bot 消息贴回应，或期待 TG 主动贴 | **均不生效=预期**：识别侧适配器不投递该 Update；主动贴未接线（平台权限受限）。不得作为不符项记账 | 未来升级 nonebot-adapter-telegram 后想接通：识别侧接一个 on_notice 分发复用 `normalize_telegram_reaction` 即可（现成接口已留） | reactions-report §三 |
 | ⑤ | 关闭零痕迹 | `.env` 设 `BOT_REACTIONS_ENABLED=false` 重启后重复 ①② | 人格侧【表情回应】分区不再出现（provider 拿到 None 整块消失）、主动贴零发生（两触发点在门入口即返回，门状态零消耗）；识别侧 notice 缓冲仍会进程内静默记录但**无任何用户可见痕迹**（内存态，重启即清） | 关闭后仍贴表情 → 先确认进程确为重启后实例（改配置必须重启）+ `bot_reactions_enabled` 热覆盖当前值 | reactions-report §四.3/§七 |
 
