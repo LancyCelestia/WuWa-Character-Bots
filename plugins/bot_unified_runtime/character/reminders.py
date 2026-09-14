@@ -452,39 +452,70 @@ def classify_reminder_kind(text: str) -> str:
 
 # 到点投递文案：按型切换（守岸人语气；结构与既有默认保持同族——
 # 到点信号 + 事项复述 + 温柔的收尾）。custom 沿用历史默认文案。
-_KIND_DELIVERY_TEXTS: dict[str, str] = {
+# 审查 A-13（2026-09-14 收口）：字面收进模块级模板常量表
+# （分型 → 变体元组），只挪位置不改任何文案字面（分型批测试已逐字锁定）；
+# 同型多变体时按 persona 口径稳定选一，单变体行为与历史完全一致。
+_REMINDER_TEXT_TEMPLATES: dict[str, tuple[str, ...]] = {
     "medicine": (
-        "……到时间了，该吃药了。\n"
-        "你之前说过的：{text}。\n"
-        "喝口水，慢慢来。身体的事，不能总交给以后。我陪着你。"
+        (
+            "……到时间了，该吃药了。\n"
+            "你之前说过的：{text}。\n"
+            "喝口水，慢慢来。身体的事，不能总交给以后。我陪着你。"
+        ),
     ),
     "appointment": (
-        "（频率轻轻响了一声，像钟摆）时间到了。\n"
-        "你之前说过的：{text}。\n"
-        "这一件有时间在前面等着，别让它等太久。去吧，我守在这里。"
+        (
+            "（频率轻轻响了一声，像钟摆）时间到了。\n"
+            "你之前说过的：{text}。\n"
+            "这一件有时间在前面等着，别让它等太久。去吧，我守在这里。"
+        ),
     ),
     "shopping": (
-        "到点了。\n"
-        "你之前说过的：{text}。\n"
-        "要带走的东西，别落在世界的另一头。回来的时候，海还在这边。"
+        (
+            "到点了。\n"
+            "你之前说过的：{text}。\n"
+            "要带走的东西，别落在世界的另一头。回来的时候，海还在这边。"
+        ),
     ),
     "todo": (
-        "（潮声很轻）到时间了。\n"
-        "你之前说过的：{text}。\n"
-        "一步一步来就好，不着急。我守在这里。"
+        (
+            "（潮声很轻）到时间了。\n"
+            "你之前说过的：{text}。\n"
+            "一步一步来就好，不着急。我守在这里。"
+        ),
+    ),
+    "custom": (
+        (
+            "（远处的海浪声）……到时间了。\n"
+            "你之前说过的：{text}。\n"
+            "我就守在这里。慢一点也没关系，记得去做。"
+        ),
     ),
 }
 
 
-def build_reminder_text(reminder: Reminder) -> str:
-    """到点督促的文案（守岸人语气，温柔不啰嗦；按用途分型切换）。"""
+def _pick_template_variant(
+    variants: tuple[str, ...], persona_profile_id: str, seed: str
+) -> str:
+    """多变体时按 (persona, seed) 稳定散列取模选一（确定性、零随机）；
+    单变体恒取首个——当前各型均为单变体，persona 缺省时行为不变。"""
+    if len(variants) == 1:
+        return variants[0]
+    digest = sha1(f"{persona_profile_id}\x00{seed}".encode()).digest()
+    return variants[digest[0] % len(variants)]
+
+
+def build_reminder_text(reminder: Reminder, *, persona_profile_id: str = "") -> str:
+    """到点督促的文案（守岸人语气，温柔不啰嗦；按用途分型选模板）。
+
+    persona_profile_id 为可选选型键（A-13 收口：此前它只在 SendRequest
+    透传、未参与文案分型）：同型多变体时参与稳定散列选变体；缺省空串
+    退化为「恒取首个变体」，文案字面与既有完全一致。
+    """
     text = str(reminder.text or "")
-    template = _KIND_DELIVERY_TEXTS.get(
-        classify_reminder_kind(text),
-        "（远处的海浪声）……到时间了。\n"
-        "你之前说过的：{text}。\n"
-        "我就守在这里。慢一点也没关系，记得去做。",
-    )
+    kind = classify_reminder_kind(text)
+    variants = _REMINDER_TEXT_TEMPLATES.get(kind) or _REMINDER_TEXT_TEMPLATES["custom"]
+    template = _pick_template_variant(variants, persona_profile_id, seed=text)
     return template.format(text=text)
 
 

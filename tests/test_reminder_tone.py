@@ -142,6 +142,58 @@ def test_checkoff_confirmation_copy_keeps_shorekeeper_voice(tmp_path, monkeypatc
         assert banned not in body, f"确认文案不得出现机器腔：{banned}"
 
 
+# ---------- 审查 A-13：文案模板池收口（只挪位置，不改任何字面） ----------
+
+def test_delivery_template_table_covers_all_kinds() -> None:
+    """A-13：到点文案模板表必须覆盖全部分型，每条模板都带 {text} 占位。"""
+    from plugins.bot_unified_runtime.character.reminders import (
+        _REMINDER_TEXT_TEMPLATES,
+        REMINDER_KINDS,
+    )
+
+    assert set(_REMINDER_TEXT_TEMPLATES) == set(REMINDER_KINDS)
+    for variants in _REMINDER_TEXT_TEMPLATES.values():
+        assert variants, "每个分型至少保留一条模板"
+        for template in variants:
+            assert "{text}" in template
+
+
+def test_delivery_text_persona_variant_selection_is_deterministic() -> None:
+    """A-13：persona_profile_id 参与选变体——同参确定性；缺省退化恒取
+    首个变体，与既有单变体字面逐字一致（行为不变的收口）。"""
+    reminder = _reminder("写作业")
+    assert build_reminder_text(
+        reminder, persona_profile_id="default"
+    ) == build_reminder_text(reminder, persona_profile_id="default")
+    assert build_reminder_text(reminder) == build_reminder_text(
+        reminder, persona_profile_id="anything-else"
+    )
+
+
+def test_checkoff_copy_pool_is_module_level() -> None:
+    """A-13：勾选四类回执文案（确认/歧义/序号/过期，附 gone 兜底）收进
+    模块级常量池，函数体不再内联字面；关键句面与 A-10/A-11 批锁定一致。"""
+    import plugins.bot_unified_runtime.capabilities.reminder as reminder_mod
+
+    pool_names = (
+        "_CHECKOFF_DONE_TEMPLATE",
+        "_CHECKOFF_CONFIRM_TEMPLATE",
+        "_CHECKOFF_AMBIGUOUS_TEMPLATE",
+        "_CHECKOFF_NEED_NUMBER_TEMPLATE",
+        "_CHECKOFF_CONFIRM_ONLY_TEMPLATE",
+        "_CHECKOFF_OUT_OF_RANGE_TEMPLATE",
+        "_CHECKOFF_EXPIRED_TEMPLATE",
+        "_CHECKOFF_GONE_TEMPLATE",
+    )
+    for const_name in pool_names:
+        value = getattr(reminder_mod, const_name, None)
+        assert isinstance(value, str) and value, f"{const_name} 应为模块级常量"
+    assert "做主" in reminder_mod._CHECKOFF_CONFIRM_TEMPLATE
+    assert "有几件事都对得上" in reminder_mod._CHECKOFF_AMBIGUOUS_TEMPLATE
+    assert "不在刚才的清单里" in reminder_mod._CHECKOFF_OUT_OF_RANGE_TEMPLATE
+    assert "过了时效" in reminder_mod._CHECKOFF_EXPIRED_TEMPLATE
+
+
 def test_checkoff_ambiguous_numbered_copy_invites_ordinal(tmp_path, monkeypatch) -> None:
     """审查 A-11：歧义清单带编号并邀请序号回复，编号与序号回收对应。"""
     capability, _store, add, message = _disambig_setup(tmp_path, monkeypatch)

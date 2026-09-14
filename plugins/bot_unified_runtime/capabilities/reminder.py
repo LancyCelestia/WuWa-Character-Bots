@@ -106,6 +106,42 @@ def extract_checkoff_query(text: str) -> str | None:
 _CHECKOFF_PENDING_TTL_SECONDS = 300.0
 _CHECKOFF_PENDING_MAX_SESSIONS = 256
 
+# ---------------------------------------------------------------------------
+# 勾选消歧回执文案池（审查 A-13 收口，2026-09-14）：四类回执——勾选确认
+# /歧义追问/序号提示/过期提示——外加 gone 兜底（原两处逐字重复，收口归一）
+# 的字面收进模块级常量、引用改池。只挪位置不改任何文案字面（A-10/A-11 批
+# 测试已锁定句面）；占位符一律 str.format 填参，函数体内禁 f-string 直拼。
+# ---------------------------------------------------------------------------
+_CHECKOFF_DONE_TEMPLATE = (
+    "（轻轻点头）嗯，「{name}」——已经替你放下了。\n"
+    "剩下的事不着急，一件一件来。我都在。"
+)
+_CHECKOFF_CONFIRM_TEMPLATE = (
+    "嗯……你说的是「{label}」这件吗？"
+    "只对上了一半，我不敢替你做主。\n"
+    "是的话回个「是」，我替你放下；不是就算了。"
+)
+_CHECKOFF_AMBIGUOUS_TEMPLATE = (
+    "有几件事都对得上，是哪一件完成了？\n{lines}"
+    "\n回个编号（比如「1」）就行，我替你放下。"
+)
+_CHECKOFF_NEED_NUMBER_TEMPLATE = "嗯，是哪一件呢？回个编号就行：\n{lines}"
+_CHECKOFF_CONFIRM_ONLY_TEMPLATE = (
+    "这里只挂着一件——「{label}」。是的话回个「是」，我替你放下。"
+)
+_CHECKOFF_OUT_OF_RANGE_TEMPLATE = (
+    "这个编号不在刚才的清单里——回 1 到 {max_index} 就行。"
+    "过了太久的话，再说说「{query}做完了」也可以。"
+)
+_CHECKOFF_EXPIRED_TEMPLATE = (
+    "刚才那件「{query}」的确认过了时效——"
+    "再说一遍「{query}做完了」，我重新帮你对一对。"
+)
+_CHECKOFF_GONE_TEMPLATE = (
+    "（翻了翻清单）「{label}」"
+    "刚刚已经不在待办里了——也许已经替你放下，或者提醒过你了。"
+)
+
 
 @dataclass(frozen=True)
 class _PendingOption:
@@ -323,13 +359,13 @@ def build_reminder_capability(config: Any | None = None) -> Any:
             # 审查 A-10 ③：确认过了时效不勾，请用户重新说一遍。
             return _checkoff_result(
                 message,
-                f"刚才那件「{state.query}」的确认过了时效——"
-                f"再说一遍「{state.query}做完了」，我重新帮你对一对。",
+                _CHECKOFF_EXPIRED_TEMPLATE.format(query=state.query),
                 tags=["followup", "expired"],
             )
-        gone_body = (
-            f"（翻了翻清单）「{_candidate_label(state.options[0].label if state.options else state.query)}」"
-            "刚刚已经不在待办里了——也许已经替你放下，或者提醒过你了。"
+        gone_body = _CHECKOFF_GONE_TEMPLATE.format(
+            label=_candidate_label(
+                state.options[0].label if state.options else state.query
+            )
         )
         if state.kind == "confirm":
             # A-10：唯一候选的确认。肯定词（或序号 1）→ 勾；其他序号拉回确认。
@@ -344,8 +380,9 @@ def build_reminder_capability(config: Any | None = None) -> Any:
             _CHECKOFF_PENDING[session_key] = (expires, state)  # 保留追问可重试
             return _checkoff_result(
                 message,
-                f"这里只挂着一件——「{_candidate_label(state.options[0].label)}」。"
-                "是的话回个「是」，我替你放下。",
+                _CHECKOFF_CONFIRM_ONLY_TEMPLATE.format(
+                    label=_candidate_label(state.options[0].label)
+                ),
                 tags=["followup", "out_of_range"],
             )
         # kind == "ordinal"（A-11）：歧义清单按编号择一。
@@ -355,7 +392,7 @@ def build_reminder_capability(config: Any | None = None) -> Any:
             lines = _ordinal_option_lines(state.options)
             return _checkoff_result(
                 message,
-                "嗯，是哪一件呢？回个编号就行：\n" + "\n".join(lines),
+                _CHECKOFF_NEED_NUMBER_TEMPLATE.format(lines="\n".join(lines)),
                 tags=["followup", "need_number"],
             )
         if ordinal is None:  # 形态闸已保证二者居其一；防御性让位。
@@ -365,8 +402,9 @@ def build_reminder_capability(config: Any | None = None) -> Any:
             _CHECKOFF_PENDING[session_key] = (expires, state)
             return _checkoff_result(
                 message,
-                f"这个编号不在刚才的清单里——回 1 到 {len(state.options)} 就行。"
-                f"过了太久的话，再说说「{state.query}做完了」也可以。",
+                _CHECKOFF_OUT_OF_RANGE_TEMPLATE.format(
+                    max_index=len(state.options), query=state.query
+                ),
                 tags=["followup", "out_of_range"],
             )
         option = state.options[ordinal - 1]
@@ -374,8 +412,7 @@ def build_reminder_capability(config: Any | None = None) -> Any:
         if name is None:
             return _checkoff_result(
                 message,
-                f"（翻了翻清单）「{_candidate_label(option.label)}」"
-                "刚刚已经不在待办里了——也许已经替你放下，或者提醒过你了。",
+                _CHECKOFF_GONE_TEMPLATE.format(label=_candidate_label(option.label)),
                 tags=["followup", "gone"],
             )
         return _checkoff_result(
@@ -453,9 +490,9 @@ def build_reminder_capability(config: Any | None = None) -> Any:
             )
             return _checkoff_result(
                 message,
-                f"嗯……你说的是「{_candidate_label(option.label)}」这件吗？"
-                "只对上了一半，我不敢替你做主。\n"
-                "是的话回个「是」，我替你放下；不是就算了。",
+                _CHECKOFF_CONFIRM_TEMPLATE.format(
+                    label=_candidate_label(option.label)
+                ),
                 tags=["confirm"],
             )
         if outcome == "ambiguous":
@@ -470,8 +507,7 @@ def build_reminder_capability(config: Any | None = None) -> Any:
             lines = _ordinal_option_lines(options)
             return _checkoff_result(
                 message,
-                "有几件事都对得上，是哪一件完成了？\n" + "\n".join(lines)
-                + "\n回个编号（比如「1」）就行，我替你放下。",
+                _CHECKOFF_AMBIGUOUS_TEMPLATE.format(lines="\n".join(lines)),
                 tags=["ambiguous"],
             )
         # 未命中：给最接近的候选问一句（低于 NEAR_MISS_FLOOR 的不打扰）。
@@ -606,11 +642,8 @@ def _candidate_label(name: str) -> str:
 
 
 def _checkoff_done_body(name: str) -> str:
-    """勾掉后的守岸人回执（A-10 直接勾与追问回收共用一份口径）。"""
-    return (
-        f"（轻轻点头）嗯，「{name}」——已经替你放下了。\n"
-        "剩下的事不着急，一件一件来。我都在。"
-    )
+    """勾掉后的守岸人回执（A-10 直接勾与追问回收共用一份口径；A-13 起引用文案池）。"""
+    return _CHECKOFF_DONE_TEMPLATE.format(name=name)
 
 
 def _ordinal_option_lines(options: tuple[_PendingOption, ...]) -> list[str]:
