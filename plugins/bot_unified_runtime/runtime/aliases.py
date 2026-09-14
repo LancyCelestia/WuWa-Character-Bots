@@ -182,6 +182,9 @@ DEFAULT_VERB_MAP: dict[str, str] = {
     "免費遊戲": "bot.epic",
     "遊戲免費": "bot.epic",
     "steam免費": "bot.epic",
+    # P-03（2026-09-15）：决策影子痕迹查询触发词（admin_only，/bot decision）。
+    "决策": "bot.decision",
+    "decision": "bot.decision",
 }
 
 
