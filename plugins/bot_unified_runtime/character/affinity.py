@@ -162,6 +162,23 @@ _IDLE_REGRESSION_START_DAYS = 7
 _IDLE_REGRESSION_PER_DAY = 0.01
 # §3 印象淡出（记忆减弱）半衰期（天）：辱骂 15、其余负面/正面 30；全部淡出回基准 10。
 _SENTIMENT_HALF_LIFE_DAYS = {"positive": 30.0, "negative": 30.0, "insult": 15.0}
+# G-11 印象标签年龄淡出（审查 G-11，2026-09-15）：标签此前一次性打标永久保留、
+# 无淡出，数月前的陈旧标签会永久污染画像。修法对齐 §3 半衰惯例——沿用半衰期
+# 常量 ×2 作为标签注入有效龄（半衰一次记忆减半，两次后视为「印象已淡」）：
+# 口无遮拦（insult）30 天，其余（正面/抱怨/戏弄）60 天；tease 无独立半衰档，
+# 归入「其余负面」口径。超龄标签不再注入（snapshot() 出口过滤），但保留在库
+# 可溯、不物理删；标签时间戳 = 最近一次同类行为时间（observe 滚动刷新），
+# 持续被同类行为强化的印象不超龄，长期不复现的印象自然淡出。
+# 数值规范零触碰（docs/affinity-design.md 为唯一权威）：本段只新增「标签注入
+# 判据」，不改任何好感度数值/步长/回归/半衰常量。
+_TAG_EXPIRY_HALF_LIVES = 2.0
+_TAG_EXPIRY_DAYS: dict[str, float] = {
+    tag: _SENTIMENT_HALF_LIFE_DAYS.get(watch, _SENTIMENT_HALF_LIFE_DAYS["negative"])
+    * _TAG_EXPIRY_HALF_LIVES
+    for watch, _threshold, tag in _IMPRESSION_RULES
+}
+# 规则表之外的未知标签（防御）：按「其余负面」档淡出，宁可淡出不永久滞留。
+_DEFAULT_TAG_EXPIRY_DAYS = _SENTIMENT_HALF_LIFE_DAYS["negative"] * _TAG_EXPIRY_HALF_LIVES
 # 榜卡展示折算：闲置分数向基数衰减的半衰期（天），只影响展示，不落库。
 _LEADERBOARD_DECAY_HALF_LIFE_DAYS = 30.0
 
@@ -373,6 +390,35 @@ def _parse_utc(text: str | None) -> float | None:
         return None
 
 
+def _filter_fresh_impression_tags(
+    tags: list[Any],
+    tag_times: dict[Any, Any],
+    *,
+    now: float,
+    anchor: float | None,
+) -> list[str]:
+    """G-11：过滤超龄印象标签——超龄者不再注入，库内保留可溯（不物理删）。
+
+    标签年龄锚点：``tag_times`` 显式打标时间优先；存量行缺失条目时回退行级
+    ``updated_at``（最后互动时间）——活跃用户的既有标签不因迁移误伤，长期
+    沉寂行的陈旧标签按最后互动龄淡出。两个锚点都缺失/解析失败时视同当日
+    （不超龄），与 §3 惰性回归「updated_at 解析失败视为同日不衰减」的容错
+    口径一致。
+    """
+    fresh: list[str] = []
+    for raw in tags:
+        tag = str(raw)
+        explicit = _parse_utc(str(tag_times.get(tag) or ""))
+        earned_at = explicit if explicit is not None else anchor
+        if earned_at is None:
+            fresh.append(tag)
+            continue
+        age_days = max(0.0, now - earned_at) / _DAY_SECONDS
+        if age_days <= _TAG_EXPIRY_DAYS.get(tag, _DEFAULT_TAG_EXPIRY_DAYS):
+            fresh.append(tag)
+    return fresh
+
+
 _PROFILE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"我(?:来自|是|住在)(?:[^，。！!\s]{2,12})"),
     re.compile(r"我今年\s*\d{1,3}\s*岁"),
@@ -423,6 +469,7 @@ class DynamicAffinityStore:
                     insult_count INTEGER NOT NULL DEFAULT 0,
                     nickname TEXT NOT NULL DEFAULT '',
                     impression_tags TEXT NOT NULL DEFAULT '[]',
+                    impression_tag_times TEXT NOT NULL DEFAULT '{}',
                     profile_notes TEXT NOT NULL DEFAULT '[]',
                     counter_day_index INTEGER NOT NULL DEFAULT -1,
                     day_counters TEXT NOT NULL DEFAULT '{}',
@@ -446,6 +493,10 @@ class DynamicAffinityStore:
                 ("first_signals", "TEXT NOT NULL DEFAULT '[]'"),
                 ("first_impression", "REAL"),
                 ("created_at", "TEXT"),
+                # G-11 印象标签年龄淡出：标签名→最近打标时间（ISO8601 JSON 对象）。
+                # impression_tags 本体保持纯标签名列表不变（库内全量保留可溯）；
+                # 存量行缺时间戳条目时快照侧回退行级 updated_at 锚点，无需数据迁移。
+                ("impression_tag_times", "TEXT NOT NULL DEFAULT '{}'"),
             ):
                 if column not in columns:
                     connection.execute(f"ALTER TABLE user_affinity ADD COLUMN {column} {ddl}")
@@ -505,7 +556,8 @@ class DynamicAffinityStore:
         with self._lock, self._connect() as connection:
             row = connection.execute(
                 "SELECT affinity, interaction_count, positive_count, negative_count, tease_count, insult_count,"
-                " nickname, impression_tags, profile_notes, counter_day_index, day_counters, updated_at,"
+                " nickname, impression_tags, impression_tag_times, profile_notes,"
+                " counter_day_index, day_counters, updated_at,"
                 " last_positive_at, last_negative_at, last_insult_at,"
                 " first_signals, first_impression, created_at"
                 " FROM user_affinity WHERE sender_id = ?",
@@ -515,6 +567,7 @@ class DynamicAffinityStore:
                 affinity = _AFFINITY_BASE
                 counters = {"positive": 0, "negative": 0, "tease": 0, "insult": 0}
                 tags: list[str] = []
+                tag_times: dict[Any, Any] = {}
                 nickname = ""
                 notes: list[str] = []
                 day_counters: dict[str, int] = {}
@@ -532,6 +585,8 @@ class DynamicAffinityStore:
                     "insult": int(row["insult_count"]),
                 }
                 tags = json.loads(str(row["impression_tags"] or "[]"))
+                # G-11：标签打标时间（存量行可能缺条目，快照侧回退 updated_at 锚点）
+                tag_times = json.loads(str(row["impression_tag_times"] or "{}"))
                 nickname = str(row["nickname"] or "")
                 notes = json.loads(str(row["profile_notes"] or "[]"))
                 interactions = int(row["interaction_count"])
@@ -604,15 +659,22 @@ class DynamicAffinityStore:
             for watch, threshold, tag in _IMPRESSION_RULES:
                 if watch in counters and counters[watch] >= threshold and tag not in tags:
                     tags.append(tag)
+                # G-11 滚动强化打标：现行为命中该标签类别且计数达标时刷新打标
+                # 时间——标签年龄 = 最近一次同类行为时间，持续强化的印象不超龄，
+                # 不再复现的印象按 §3 半衰口径 ×2 超龄淡出（snapshot 出口过滤，
+                # 库内保留可溯）。中性消息不得给其它标签续命（behavior 精确匹配）。
+                # 数值规范零触碰：只加时间戳判据，不改计数/阈值/步长。
+                if behavior == watch and watch in counters and counters[watch] >= threshold:
+                    tag_times[tag] = now_text
             connection.execute(
                 """
                 INSERT OR REPLACE INTO user_affinity
                     (sender_id, affinity, interaction_count, positive_count, negative_count,
-                     tease_count, insult_count, nickname, impression_tags, profile_notes,
-                     counter_day_index, day_counters, updated_at,
+                     tease_count, insult_count, nickname, impression_tags, impression_tag_times,
+                     profile_notes, counter_day_index, day_counters, updated_at,
                      last_positive_at, last_negative_at, last_insult_at,
                      first_signals, first_impression, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sender_id,
@@ -624,6 +686,7 @@ class DynamicAffinityStore:
                     counters["insult"],
                     nickname,
                     json.dumps(tags, ensure_ascii=False),
+                    json.dumps(tag_times, ensure_ascii=False),
                     json.dumps(notes, ensure_ascii=False),
                     day_index,
                     json.dumps(day_counters, ensure_ascii=False),
@@ -764,7 +827,8 @@ class DynamicAffinityStore:
             }
         with self._lock, self._connect() as connection:
             row = connection.execute(
-                "SELECT affinity, nickname, impression_tags, profile_notes FROM user_affinity WHERE sender_id = ?",
+                "SELECT affinity, nickname, impression_tags, impression_tag_times, profile_notes, updated_at"
+                " FROM user_affinity WHERE sender_id = ?",
                 (sender_id,),
             ).fetchone()
         if row is None:
@@ -777,10 +841,19 @@ class DynamicAffinityStore:
                 "attitude": attitude_for_affinity(_AFFINITY_BASE),
             }
         affinity = float(row["affinity"])
+        # G-11 注入判据（审查 G-11，2026-09-15）：超龄标签不再注入，库内保留可溯。
+        # providers（prompt 注入）、好感度卡、指令回显等全部消费 snapshot()，
+        # 过滤在本出口一次闭环；数值规范零触碰（docs/affinity-design.md 为权威）。
+        fresh_tags = _filter_fresh_impression_tags(
+            [str(t) for t in json.loads(str(row["impression_tags"] or "[]"))],
+            json.loads(str(row["impression_tag_times"] or "{}")),
+            now=float(self._clock()),
+            anchor=_parse_utc(str(row["updated_at"])),
+        )
         return {
             "affinity": affinity,
             "nickname": str(row["nickname"] or ""),
-            "tags": json.loads(str(row["impression_tags"] or "[]")),
+            "tags": fresh_tags,
             "profile_notes": json.loads(str(row["profile_notes"] or "[]")),
             "tier": tier_for_affinity(affinity),
             "attitude": attitude_for_affinity(affinity),
