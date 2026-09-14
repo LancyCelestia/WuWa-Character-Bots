@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import logging
 
-import pytest
-
 from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue
 
 
