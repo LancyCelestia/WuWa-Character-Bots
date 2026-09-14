@@ -79,7 +79,9 @@ GROUP_INFO_TRIGGER_WORDS: tuple[str, ...] = tuple(_INTENT_OF_WORD)
 _BOUNDARY_CHARS = "，,。！？!?：:、 的了呢吗呀啊哈～~哦嘛咯哇"
 
 _NOTICE_SNIPPET_CHARS = 100
-_PRIVATE_HINT = "群信息要在群里问才行哦，去群里喊我一声，我帮你看本群的资料～"
+# 审查 Q-03 扩展：拒绝/指路类提示（私聊查群信息不受理）去拖尾语气符「～」，
+# 句号收尾——温和但不拖尾音（同 meme_library 64efadf 口径）。
+_PRIVATE_HINT = "群信息要在群里问才行哦，去群里喊我一声，我帮你看本群的资料。"
 _UNAVAILABLE_LINE = "群资料接口这会儿没回应，这部分先不答啦——不瞎猜，过会儿再问一次试试？"
 
 

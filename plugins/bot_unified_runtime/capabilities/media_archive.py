@@ -450,9 +450,12 @@ def build_media_archive_capability(
                 capability_id="bot.media_archive",
                 kind="text",
                 title="媒体归档",
+                # 审查 Q-03 扩展：失败类文案（no_media 分支）统一去拖尾语气符
+                # 「～」，句号收尾——守岸人语气温和但不拖尾音（同 meme_library
+                # 64efadf 口径；相邻额度用尽分支本就句号收尾）。
                 body=(
                     "把要归档的图片/动图/视频和「收藏」放在同一条消息发给我，"
-                    "或者回复那条媒体说「收藏」就行。聊天记录就回复它说「存聊天记录」～"
+                    "或者回复那条媒体说「收藏」就行。聊天记录就回复它说「存聊天记录」。"
                 ),
                 send_policy=SendPolicy.IMMEDIATE,
                 audit_tags=[*audit, "no_media"],

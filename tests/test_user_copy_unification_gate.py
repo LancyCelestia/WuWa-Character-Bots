@@ -24,6 +24,15 @@ character + runtime + llm 等；sources 层零依赖池跨层引用已随 Q-01 �
   command-catalog 同步门（域外），按引用原文保留；豁免语义 = 命中单元含
   「{marker}」括注引用形态（help 引用带直角引号，输出本体不带），精确区分
   「引用示例」与「输出本体」，不整文件放行。
+
+Q-03 扩展（2026-09-15 语气符统一批）：失败/权限/拒绝类用户可见文案禁拖尾
+语气符「～」——守岸人语气 = 温和但不拖尾音，句号收尾（先例 meme_library
+64efadf；对齐 user_copy.py 池内句式）。成功回执/正常对话类按令保留，须在
+Q03_UNIT_WHITELIST 精确登记。Q-03 走独立作用域（Q03_SCOPE_FILES：6 能力
+文件 + meme_library 防回潮），不受 Q01/Q02 文件级白名单影响（group_info
+卖萌体残留另案，仅豁免 Q01/Q02，Q-03 照扫）。检测面 = 单元 strip 后以
+「～/〜」结尾的拖尾形态；字符类/清洗集逻辑字面量（「～」居串中，如
+_BOUNDARY_CHARS、regex 模式串）天然不命中，无需豁免。
 """
 
 from __future__ import annotations
@@ -61,6 +70,37 @@ Q02_PATTERNS: tuple[str, ...] = (
     "只有管理员才能",
     "只有管理员能看",
 )
+
+# ---------------------------------------------------------------------------
+# Q-03 语气符门（2026-09-15 扩展批）：失败/权限/拒绝类文案禁拖尾「～」，
+# 成功保留处按单元子串精确豁免（机制说明见模块 docstring Q-03 段）。
+# ---------------------------------------------------------------------------
+
+# Q-03 作用域（仓库相对路径）：语气符收口涉及的 6 能力文件 + meme_library
+# （64efadf 已收口，纳入扫描防回潮、并保护其成功保留句的保留裁定）。
+# 独立于 Q01/Q02 的 FILE_WHITELIST——group_info 的卖萌体残留豁免只限
+# Q01/Q02 模式，Q-03 照扫不豁免。
+Q03_SCOPE_FILES: frozenset[str] = frozenset(
+    f"plugins/bot_unified_runtime/capabilities/{name}.py"
+    for name in (
+        "media_archive",
+        "reminder",
+        "weather",
+        "group_info",
+        "moegirl",
+        "randpic",
+        "meme_library",
+    )
+)
+
+# Q-03 成功回执/正常对话类保留处（文件 → [(单元须含的子串, 理由)]；子串含
+# 「～」本体、精确到句）。本批 6 文件零保留处；现网唯一保留 = meme_library
+# 成功发送回执（正常对话类，64efadf 裁定保留）。
+Q03_UNIT_WHITELIST: dict[str, list[tuple[str, str]]] = {
+    "plugins/bot_unified_runtime/capabilities/meme_library.py": [
+        ("给你偷来一张表情～", "成功发送回执（正常对话类），64efadf 裁定保留"),
+    ],
+}
 
 # 文件级豁免（仓库相对路径 → 理由）。理由非空由门测试校验。
 FILE_WHITELIST: dict[str, str] = {
@@ -210,6 +250,41 @@ def scan_package() -> list[Finding]:
     return findings
 
 
+def scan_q03_file(path: Path, *, rel_path: str | None = None) -> list[Finding]:
+    """Q-03 门：作用域文件内，拖尾语气符「～」的用户可见单元即命中。
+
+    只认「strip 后以『～/〜』结尾」的拖尾形态（失败/权限/拒绝类文案的确诊
+    形态）；字符类/清洗集等逻辑字面量「～」居串中，天然不命中，无需豁免。
+    保留处按单元子串精确豁免（Q03_UNIT_WHITELIST），不做文件级放行；本扫描
+    不受 Q01/Q02 的 FILE_WHITELIST 影响（group_info 照扫）。
+    """
+    if rel_path is None:
+        rel_path = path.resolve().relative_to(REPO_ROOT).as_posix()
+    if rel_path not in Q03_SCOPE_FILES:
+        return []
+    markers = [marker for marker, _reason in Q03_UNIT_WHITELIST.get(rel_path, [])]
+    findings: list[Finding] = []
+    for text, lineno in _user_visible_units(path):
+        stripped = text.rstrip()
+        if not stripped.endswith(("～", "〜")):
+            continue
+        if any(marker in text for marker in markers):
+            continue
+        excerpt = " ".join(text.split())[:48]
+        findings.append(
+            Finding("Q03", "拖尾语气符「～」（失败/权限/拒绝类）", rel_path, lineno, excerpt)
+        )
+    return findings
+
+
+def scan_q03_scope() -> list[Finding]:
+    """扫全部 Q-03 作用域文件（meme_library 含内，防回潮）。"""
+    findings: list[Finding] = []
+    for rel in sorted(Q03_SCOPE_FILES):
+        findings.extend(scan_q03_file(REPO_ROOT / rel, rel_path=rel))
+    return findings
+
+
 # ---------------------------------------------------------------------------
 # 门测试：现网必须全绿
 # ---------------------------------------------------------------------------
@@ -289,6 +364,62 @@ def test_gate_excludes_docstring_and_logging(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert not scan_file(clean, rel_path="plugins/bot_unified_runtime/capabilities/fake_clean.py")
+
+
+def test_q03_scope_no_trailing_tilde_in_failure_copy() -> None:
+    """Q-03 扩展主门：作用域内失败/权限/拒绝类文案禁拖尾语气符「～」。"""
+    findings = scan_q03_scope()
+    assert not findings, (
+        "失败/权限/拒绝类文案拖尾语气符「～」命中（真违例去「～」句号收尾 / "
+        "成功保留处登记 Q03_UNIT_WHITELIST 并写明理由）：\n"
+        + "\n".join(f.render() for f in findings)
+    )
+
+
+def test_q03_whitelist_integrity() -> None:
+    """Q-03 白名单不腐化：作用域文件存在；保留登记须含「～」子串且理由非空。"""
+    for rel in Q03_SCOPE_FILES:
+        assert (REPO_ROOT / rel).exists(), f"Q-03 作用域指向不存在的文件：{rel}"
+    for rel, entries in Q03_UNIT_WHITELIST.items():
+        assert rel in Q03_SCOPE_FILES, f"Q-03 白名单文件不在作用域内：{rel}"
+        for marker, reason in entries:
+            assert ("～" in marker) or ("〜" in marker), f"Q-03 保留登记子串缺语气符本体：{rel}"
+            assert str(reason).strip(), f"Q-03 白名单缺豁免理由：{rel}"
+
+
+def test_q03_gate_detects_regression_and_spares_logic_literals(tmp_path: Path) -> None:
+    """Q-03 真红/真绿：拖尾「～」失败句必红；成功保留处豁免；字符类逻辑字面量不误报。"""
+    dirty = tmp_path / "dirty_q03.py"
+    dirty.write_text('MSG = "额度用完啦，明天再来吧～"\n', encoding="utf-8")
+    findings = scan_q03_file(
+        dirty, rel_path="plugins/bot_unified_runtime/capabilities/media_archive.py"
+    )
+    assert len(findings) == 1
+    assert findings[0].pattern_class == "Q03"
+    assert findings[0].lineno == 1
+
+    # 作用域外文件不扫（并行在飞域零打扰）。
+    assert not scan_q03_file(
+        dirty, rel_path="plugins/bot_unified_runtime/capabilities/chat.py"
+    )
+
+    # 成功回执保留处：单元含登记子串即豁免转绿。
+    keep = tmp_path / "keep_q03.py"
+    keep.write_text('OK = "给你偷来一张表情～"\n', encoding="utf-8")
+    assert not scan_q03_file(
+        keep, rel_path="plugins/bot_unified_runtime/capabilities/meme_library.py"
+    )
+
+    # 字符类/清洗集逻辑字面量（「～」居串中）非用户文案，天然不命中、无需豁免。
+    logic = tmp_path / "logic_q03.py"
+    logic.write_text(
+        'BOUNDARY = "，,。！？!?：:、 的了呢吗呀啊哈～~哦嘛咯哇"\n'
+        'PATTERN = r"^[，,。．.!！?？~～、\\s]+|[，,。．.!！?？~～、\\s]+$"\n',
+        encoding="utf-8",
+    )
+    assert not scan_q03_file(
+        logic, rel_path="plugins/bot_unified_runtime/capabilities/group_info.py"
+    )
 
 
 # ---------------------------------------------------------------------------
