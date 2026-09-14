@@ -21,6 +21,7 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     new_debug_id,
 )
+from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
 from plugins.bot_unified_runtime.runtime.deadline import (
     DeadlineExceeded,
     apply_request_deadline,
@@ -537,6 +538,11 @@ async def send_nonebot_message(
         )
     except _FinalSendError as exc:
         debug_id = new_debug_id()
+        # 审查 F-03（收窄口径）：_FinalSendError 文本（源自 file_gateway 的
+        # FileTransferError 串等）会进 OperationalIssue 的 kind/safe_summary，
+        # 随后内插进管理员告警等系统通知文本，出站前统一打码（可能夹带内网
+        # URL/键值形态）；聊天回复链不经此分支，零改动。本地日志保留原文供诊断。
+        final_detail = redact_local_secrets(str(exc)[:48]) or "send_failed_final"
         logger.warning(
             "nonebot send not retryable kind=%s request_id=%s transport=%s",
             str(exc),
@@ -553,9 +559,9 @@ async def send_nonebot_message(
                 stage=transport.split(".", 1)[0]
                 if transport.split(".", 1)[0] in {"telegram", "mail"}
                 else "runtime",
-                kind=str(exc)[:48] or "send_failed_final",
+                kind=final_detail,
                 retryable=False,
-                safe_summary=str(exc)[:48] or "send_failed_final",
+                safe_summary=final_detail,
                 debug_id=debug_id,
             ),
         )

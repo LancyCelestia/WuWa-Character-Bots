@@ -36,6 +36,7 @@ from plugins.bot_unified_runtime.contracts import (
     SessionType,
     new_request_id,
 )
+from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
 
 
 @dataclass(frozen=True)
@@ -199,6 +200,10 @@ def build_admin_alert_send_request(
     *,
     request_id: str | None = None,
 ) -> SendRequest:
+    # 审查 F-03（收窄口径）：此处是所有管理员告警出站内容的唯一收口（调用方
+    # 传入的 text 可能内插原始异常串，夹带内网 URL/键值形态），系统生成的
+    # 通知文本出站前统一打码；聊天回复链不经此函数，零改动。
+    text = redact_local_secrets(str(text))
     request_id = request_id or new_request_id("admin_alert")
     return SendRequest(
         request_id=request_id,
@@ -241,7 +246,10 @@ def build_operational_alert_text(
         if str(issue.safe_summary).strip()
         else ""
     )
-    return (
+    # 审查 F-03（收窄口径）：告警 public 文本内插 issue.kind/safe_summary 等
+    # 摘要字段（源自 str(exc) 截断，可能夹带内网 URL/键值形态），出站前统一
+    # 过脱敏；告警是系统生成的通知文本，脱敏零误伤，聊天回复链不经此函数。
+    return redact_local_secrets(
         f"[运行时告警] stage={issue.stage} kind={issue.kind}{detail} "
         f"retryable={str(issue.retryable).lower()} attempts={issue.attempts}{elapsed} "
         f"debug_id={issue.debug_id} source_adapter={str(source_adapter).strip()[:40]} "

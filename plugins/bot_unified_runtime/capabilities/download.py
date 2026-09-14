@@ -19,6 +19,7 @@ from plugins.bot_unified_runtime.contracts import (
     PrivacyLevel,
     RiskLevel,
 )
+from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
 from plugins.bot_unified_runtime.sources.downloader import MediaDownloader
 from plugins.bot_unified_runtime.sources.parsers import extract_http_urls
 
@@ -126,11 +127,14 @@ def build_download_capability(
         if outcome.error:
             # 原始错误串（常为英文/内部细节）只进日志；用户侧只给分类后的中文原因。
             logger.warning("download failed: %s (url=%s)", outcome.error, url)
+            # 审查 F-03（收窄口径）：失败文案回显「原链接」，可能带 URL userinfo
+            # 凭据形态，出站前统一打码；此处是系统生成的失败通知文本，聊天回复
+            # 链不经此处，零改动。
             return CapabilityResult(
                 request_id=message.request_id,
                 capability_id="bot.download",
                 kind="text",
-                body=(
+                body=redact_local_secrets(
                     f"这次没下载成功：{_download_failure_reason(outcome.error)}。"
                     "可以稍后重发，或换个链接。\n"
                     f"原链接：{url}"
