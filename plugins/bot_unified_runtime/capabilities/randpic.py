@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import random
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,13 @@ _IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 _SCAN_CACHE_TTL_SECONDS = 30.0
 _MAX_FILE_BYTES = 20 * 1024 * 1024
 
-_SCAN_CACHE: dict[str, tuple[float, list[Path]]] = {}
+# 审查 L-10：_SCAN_CACHE 原本只有 30s TTL，过期键不删、键数无上限——
+# 长跑进程按目录键无界增长。对齐项目 LRU 惯例（先例：runtime/reactions.py
+# 的 _REACTION_LRU_CAP 批次）：键数封顶 _SCAN_CACHE_LRU_CAP、触达即
+# move_to_end、超界淘汰最久未用键；过期键在读取路径惰性清除后重扫回填。
+# 扫描结果本身的语义（键→清单映射、TTL 内复用）零变化。
+_SCAN_CACHE_LRU_CAP = 512
+_SCAN_CACHE: OrderedDict[str, tuple[float, list[Path]]] = OrderedDict()
 
 
 def is_randpic_command(text: str, trigger_words: list[str] | tuple[str, ...] | None = None) -> bool:
@@ -83,10 +90,18 @@ def list_gallery_images(
         key = str(root)
         cached = _SCAN_CACHE.get(key)
         if cached is not None and now - cached[0] <= _SCAN_CACHE_TTL_SECONDS:
+            # 审查 L-10：命中即触达，维持 LRU 新近序。
+            _SCAN_CACHE.move_to_end(key)
             images.extend(cached[1])
             continue
+        # 审查 L-10：过期键读取时惰性清除（覆盖写入无法收缩字典占位，
+        # 显式 pop 保证键数有界），随后走重扫路径自然回填。
+        _SCAN_CACHE.pop(key, None)
         found = _scan_dir(root, max_bytes) if root.is_dir() else []
         _SCAN_CACHE[key] = (now, found)
+        # 审查 L-10：键数封顶，超界淘汰最久未用键（popitem(last=False)）。
+        while len(_SCAN_CACHE) > _SCAN_CACHE_LRU_CAP:
+            _SCAN_CACHE.popitem(last=False)
         images.extend(found)
     return images
 

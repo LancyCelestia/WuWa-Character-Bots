@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -40,7 +41,7 @@ def test_pick_random_image_reads_custom_dirs_only(
 ) -> None:
     from plugins.bot_unified_runtime.capabilities import randpic
 
-    monkeypatch.setattr(randpic, "_SCAN_CACHE", {})
+    monkeypatch.setattr(randpic, "_SCAN_CACHE", OrderedDict())
     folder = tmp_path / "我的图库" / "子目录"
     _make_image(folder, "a.png")
     _make_image(folder, "b.jpg")
@@ -53,7 +54,7 @@ def test_pick_random_image_missing_dir_returns_none(
 ) -> None:
     from plugins.bot_unified_runtime.capabilities import randpic
 
-    monkeypatch.setattr(randpic, "_SCAN_CACHE", {})
+    monkeypatch.setattr(randpic, "_SCAN_CACHE", OrderedDict())
     assert pick_random_image([str(tmp_path / "不存在的目录")]) is None
 
 
@@ -62,7 +63,7 @@ def test_randpic_capability_does_not_create_folders(
 ) -> None:
     from plugins.bot_unified_runtime.capabilities import randpic
 
-    monkeypatch.setattr(randpic, "_SCAN_CACHE", {})
+    monkeypatch.setattr(randpic, "_SCAN_CACHE", OrderedDict())
     gallery = tmp_path / "图库"
     _make_image(gallery, "x.png")
     before = sorted(p.name for p in tmp_path.rglob("*"))
@@ -94,7 +95,7 @@ def test_randpic_capability_empty_gallery_degrades(
 ) -> None:
     from plugins.bot_unified_runtime.capabilities import randpic
 
-    monkeypatch.setattr(randpic, "_SCAN_CACHE", {})
+    monkeypatch.setattr(randpic, "_SCAN_CACHE", OrderedDict())
     config = SimpleNamespace(bot_randpic_dirs=[str(tmp_path / "空图库")])
     capability = build_randpic_capability(config)
     message = IncomingMessage(
