@@ -6,6 +6,19 @@
             带登录 Cookie 的环境可用，取不到时返回零条目不伪造）
 - artist:   GET /api/artist/{id}（路径形态；?id= 404）
 - public_user: GET /api/user/playlist?uid=…（参数名 uid；传 id 返回 400）
+
+注册面摘除登记（审查 J-06，2026-09-14）：
+- 摘除平台：qqmusic / kuwo / kugou / apple_music / spotify（仅保留 netease）。
+- 摘除原因：这五个平台此前注册在 supported_platforms 与 resolve_target 里，
+  ``/订阅 add`` 能成功落库，但 fetch_incremental 无实现、恒返回 unsupported
+  ——用户订了却永远收不到推送也无任何提示（诚实性缺陷）。生产装配为
+  ``MusicSubscriptionAdapterV2()``（不注入 clients），仅 netease 有内置 fetch；
+  其中 kuwo/kugou/apple_music 无 URL 模式、仅冒号形态可达，同样恒 unsupported，
+  属同款缺陷一并摘除。
+- 现行为：摘除平台的链接/冒号形态仍保留识别，resolve 时抛「暂不支持」人话
+  提示（说明仍可订的网易云），不再静默注册成功。
+- 恢复条件：为对应平台补齐 fetch 实现后，把平台加回 supported_platforms、
+  resolve_target 的 provider 集合与 URL 模式，并同步本登记与回归测试。
 """
 from __future__ import annotations
 
@@ -27,12 +40,35 @@ from plugins.bot_unified_runtime.sources.subscriptions.social_v2 import (
     _reached_cursor,
 )
 
+# 审查 J-06：摘除平台保留名字映射，resolve 时给出指名道姓的「暂不支持」提示。
+_REMOVED_PLATFORM_LABELS = {
+    "qqmusic": "QQ音乐",
+    "kuwo": "酷我音乐",
+    "kugou": "酷狗音乐",
+    "apple_music": "Apple Music",
+    "spotify": "Spotify",
+}
+# 摘除平台的链接形态仍保留识别（判断先于 netease 模式之前无冲突：
+# 两类模式互不重叠），让 /订阅 add 拿到显式提示而不是「无法识别」。
+_REMOVED_URL_PATTERNS = (
+    (r"y\.qq\.com/.*/playlist/\w+", "qqmusic"),
+    (r"open\.spotify\.com/(?:artist|album|playlist)/[0-9A-Za-z]+", "spotify"),
+)
+
+
+def _removed_platform_message(label: str) -> str:
+    return (
+        f"{label}的音乐订阅还没接上拉取，订了也一直收不到更新，就先不开放了。"
+        "现在能订的是网易云（netease）：歌单、专辑、歌手、用户歌单链接都可以，"
+        "换条网易云的链接再来一次吧。"
+    )
+
 
 class MusicSubscriptionAdapterV2:
     platform = "music"
-    supported_platforms = frozenset(
-        {"netease", "qqmusic", "kuwo", "kugou", "apple_music", "spotify"}
-    )
+    # 审查 J-06：注册面只保留有真实 fetch 实现的平台（netease），
+    # 杜绝「订阅成功但永远无推送」的恒不可用注册。
+    supported_platforms = frozenset({"netease"})
     target_kinds = frozenset({"artist", "album", "playlist", "public_user"})
 
     def __init__(self, clients: dict[str, Any] | None = None) -> None:
@@ -56,23 +92,28 @@ class MusicSubscriptionAdapterV2:
         raw = str(raw_target or "").strip()
         if ":" in raw and not raw.startswith("http"):
             provider, kind, key = (raw.split(":", 2) + [""])[:3]
-            if provider in {"netease", "qqmusic", "kuwo", "kugou", "apple_music", "spotify"} and kind in self.target_kinds and key:
+            # 审查 J-06：摘除平台在冒号形态下显式报「暂不支持」，不再注册成功。
+            if provider in _REMOVED_PLATFORM_LABELS and kind in self.target_kinds and key:
+                raise ValueError(
+                    _removed_platform_message(_REMOVED_PLATFORM_LABELS[provider])
+                )
+            if provider in self.supported_platforms and kind in self.target_kinds and key:
                 return self._make_target(provider, kind, key, raw)
+        # 审查 J-06：摘除平台的链接形态给出人话提示而非「无法识别」。
+        for pattern, provider in _REMOVED_URL_PATTERNS:
+            if re.search(pattern, raw, re.IGNORECASE):
+                raise ValueError(
+                    _removed_platform_message(_REMOVED_PLATFORM_LABELS[provider])
+                )
         patterns = (
             (r"music\.163\.com/(?:#/)?playlist\?[^\s]*id=(\d+)", "netease", "playlist"),
             (r"music\.163\.com/(?:#/)?artist\?[^\s]*id=(\d+)", "netease", "artist"),
-            (r"y\.qq\.com/.*/playlist/(\w+)", "qqmusic", "playlist"),
-            (r"open\.spotify\.com/(artist|album|playlist)/([0-9A-Za-z]+)", "spotify", "path"),
         )
         for pattern, provider, kind in patterns:
             match = re.search(pattern, raw, re.IGNORECASE)
             if not match:
                 continue
-            if kind == "path":
-                resolved_kind, key = match.group(1), match.group(2)
-            else:
-                resolved_kind, key = kind, match.group(1)
-            return self._make_target(provider, resolved_kind, key, raw)
+            return self._make_target(provider, kind, match.group(1), raw)
         raise ValueError("无法识别的音乐订阅目标")
 
     @staticmethod
@@ -186,6 +227,8 @@ class MusicSubscriptionAdapterV2:
                     updated_at=datetime.now(timezone.utc),
                 )],
             )
+        # 审查 J-06：注册面对齐后正常路径不会走到这里——保留兜底为防御
+        # 路径（误注册/直构目标仍返回结构化 unsupported，不允许静默空结果）。
         return SubscriptionFetchResult(
             health_state="unsupported",
             error_code="unsupported",
