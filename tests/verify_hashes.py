@@ -15,7 +15,9 @@ pytest 常驻门：tests/test_cross_validation_gates.py 以 subprocess --check
 
 清单范围（视觉与规范交付物，对齐 DESIGN-SPEC.md §三）：
 7 张 Jinja 模板 + theme_tokens.py + docs/rendering-contract.md + DESIGN-SPEC.md
-+ docs/design/ 三份规格，共 13 项。
++ docs/design/ 三份规格 + 6 个卡片 builder 源文件（审查 K-06 扩面，2026-09-14：
+bridge/renderer/templates + echo/debug/usage_cards——模板只是壳，改 builder 的
+f-string 文案同样改变出卡内容，不进清单就绕过了哈希门），共 19 项。
 """
 
 from __future__ import annotations
@@ -43,6 +45,16 @@ TRACKED_FILES: tuple[str, ...] = (
     "docs/design/fstring-card-dom-spec.md",
     "docs/design/render-pipeline-optimization-spec.md",
     "docs/design/visual-effects-catalog.md",
+    # --- 卡片 builder 源文件（审查 K-06 扩面，2026-09-14）---
+    # 约束：这 6 个文件产出/装配模板 HTML（4 处 f-string 直拼卡见
+    # tests/test_mica_builders_contract.py 的统一对象清单），改文案不改模板
+    # 也必须过哈希门，否则「改 builder 绕过 --write」成为系统性漏洞。
+    "plugins/bot_unified_runtime/output/card_render/bridge.py",
+    "plugins/bot_unified_runtime/capabilities/debug.py",
+    "plugins/bot_unified_runtime/capabilities/echo.py",
+    "plugins/bot_unified_runtime/output/card_render/usage_cards.py",
+    "plugins/bot_unified_runtime/output/renderer.py",
+    "plugins/bot_unified_runtime/output/templates.py",
 )
 
 

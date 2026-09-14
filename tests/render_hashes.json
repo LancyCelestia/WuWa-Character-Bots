@@ -4,6 +4,9 @@
   "docs/design/render-pipeline-optimization-spec.md": "e904e119cc08ea3756eb314367700e095f066a27879365fa7fc6f8c039dfddd4",
   "docs/design/visual-effects-catalog.md": "84541fbd07dfd65e1a7cf359a74eebda73336507edcde80ff2782d3a6597d7cf",
   "docs/rendering-contract.md": "b4c58858be3a2ef23c1bddea3ebbe21e3a52916a1bac0da485113cb8a2bc8ea8",
+  "plugins/bot_unified_runtime/capabilities/debug.py": "53df3eace050af916a62260bbe34b7886a5cd01330f70485cc25b76badca13c7",
+  "plugins/bot_unified_runtime/capabilities/echo.py": "64df5cf72ddee65d9f402d18565303e44d34b21344d13af2088563bf07ca7760",
+  "plugins/bot_unified_runtime/output/card_render/bridge.py": "3a194aa95c56f37f692585adad4469d848d7597ffaa690829533ea3416c03ada",
   "plugins/bot_unified_runtime/output/card_render/templates/affinity_card.html": "00dc4a7ec983d875a6f58291ed2451c0e0e4fb718cf451b78716463bf76f248c",
   "plugins/bot_unified_runtime/output/card_render/templates/error_card.html": "7d5d98e443ad637f324f9631eaabe222d1a2bc5eb6302308ef4b0b144a1e3e3c",
   "plugins/bot_unified_runtime/output/card_render/templates/finance_card.html": "dfa3016d96762d91b39e9fc52ba607ec67859246072e62df8731b0ac6fce9354",
@@ -11,5 +14,8 @@
   "plugins/bot_unified_runtime/output/card_render/templates/mermaid_card.html": "5eb9b4f34d426bca6a55b4d5a571406b5bbce0d4a37ecf4410552591d7b4c6ee",
   "plugins/bot_unified_runtime/output/card_render/templates/song_candidates.html": "60647f62a3ef062c5a247ce31f214d01dde05bd60ae56b47fe2fd236eaa2eeb3",
   "plugins/bot_unified_runtime/output/card_render/templates/universal_card.html": "89ed6d00b9ac831f4d4ffd9a7bebe08c094bee2316c9cdc5c1947a8a65e15afa",
-  "plugins/bot_unified_runtime/output/card_render/theme_tokens.py": "85099836484ea8eb4f19408d63e86c773caab20e977794473123854152d44442"
+  "plugins/bot_unified_runtime/output/card_render/theme_tokens.py": "85099836484ea8eb4f19408d63e86c773caab20e977794473123854152d44442",
+  "plugins/bot_unified_runtime/output/card_render/usage_cards.py": "81d554f27c04e56df018ca5f9ea525703f45b65c0af41fdf044e5e7e5da9ffcd",
+  "plugins/bot_unified_runtime/output/renderer.py": "846ba8dfce30806248e43923822bd81b917e3118ba716834d813894875f2f65b",
+  "plugins/bot_unified_runtime/output/templates.py": "fa5d2fd81622fa28dbb04c8a91ad02d3d93ef962e73c5300eb632d6fa75c232f"
 }
