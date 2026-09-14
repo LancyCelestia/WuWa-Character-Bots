@@ -132,6 +132,9 @@ class IncomingMessage(StrictBaseModel):
     sender_card: str | None = None
     sender_nickname: str | None = None
     sender_title: str | None = None
+    # 审查 B-07：QQ 群等级（OneBot v11 sender.level）是用户画像维度；只作上下文
+    # 与画像展示，不影响权限。Optional 容缺，非 OneBot 事件保持 None（零破坏）。
+    sender_level: str | None = None
     group_title: str | None = None
     group_id: str | None = None
     raw_segments: list[dict[str, Any]] = Field(default_factory=list)

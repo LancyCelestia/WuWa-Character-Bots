@@ -1261,6 +1261,10 @@ def _incoming_from_nonebot_event(
     sender_nickname = str(getattr(onebot_sender, "nickname", None) or "").strip()
     sender_platform_role = str(getattr(onebot_sender, "role", None) or "").strip() or None
     sender_title = str(getattr(onebot_sender, "title", None) or "").strip() or None
+    # 审查 B-07：OneBot v11 sender.level（QQ 群等级）是用户画像维度，摄取层此前
+    # 未读取。容缺省空 str 化（照 group_title 先例；`or ""` 让 None/0/空串统一落
+    # None——等级 0 无展示意义，宁缺毋滥）；TG/Mail 事件无该形态自然落 None。
+    sender_level = str(getattr(onebot_sender, "level", None) or "").strip() or None
     group_title = str(getattr(event, "group_title", None) or "").strip() or None
     sender_display_name = sender_card or sender_nickname or None
     if group_id is not None:
@@ -1294,6 +1298,7 @@ def _incoming_from_nonebot_event(
         sender_card=sender_card or None,
         sender_nickname=sender_nickname or None,
         sender_title=sender_title,
+        sender_level=sender_level,
         group_title=group_title,
     )
 

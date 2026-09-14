@@ -2575,6 +2575,11 @@ def build_chat_capability(
                             f"群名片={getattr(message, 'sender_card', '')}",
                             f"群昵称={getattr(message, 'sender_nickname', '')}",
                             f"群头衔={getattr(message, 'sender_title', '')}",
+                            # 审查 B-07：QQ 群等级并入画像分区；`or ''` 把 None 归空
+                            # 后由 join 的非空过滤剔除——等级缺失不渲染该行
+                            # （宁缺毋滥；既有维度为 None 时渲染字面 "None" 属既有
+                            # 行为，不在本项扩改范围）。
+                            f"等级={getattr(message, 'sender_level', '') or ''}",
                             f"群名称={getattr(message, 'group_title', '')}",
                         )
                         if item.split("=", 1)[1].strip()
