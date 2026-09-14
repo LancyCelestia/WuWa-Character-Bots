@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import time
 from typing import Any
 from urllib import parse as urlparse
 from urllib import request as urlrequest
@@ -112,6 +113,27 @@ def _http_error_to_parse_error(action: str, url: str, exc: HTTPError) -> ParseHt
     )
 
 
+# 429 有界重试（移植自实战油猴脚本算法：x-download-helper.user-v1.4.0.js
+# L615-695 pickRetryDelay / 4xx 快速失败）：429 优先遵循 Retry-After 响应头
+# （60s 封顶），无头按退避基数指数退避；其余 4xx 是永久性失败（实测 X CDN
+# 对 format 不匹配的转换请求一律 404），立即放弃不重试；5xx/网络错误维持
+# 原语义直接抛 ParseHttpError。总尝试 = 首次 + 最多 2 次重试；线程内同步
+# 热路径，简单有界，不引入新依赖。
+HTTP_GET_MAX_ATTEMPTS = 3
+_HTTP_RETRY_AFTER_CAP_SECONDS = 60
+_HTTP_RETRY_BACKOFF_BASE_SECONDS = 1.0
+
+# 测试注入点：monkeypatch 本符号避免真实 sleep。
+_sleep = time.sleep
+
+
+def _retry_delay_seconds(attempt: int, retry_after_seconds: int | None) -> float:
+    """429 等待时长：Retry-After 优先（60s 封顶），无头按基数指数退避。"""
+    if retry_after_seconds is not None and retry_after_seconds > 0:
+        return float(min(retry_after_seconds, _HTTP_RETRY_AFTER_CAP_SECONDS))
+    return _HTTP_RETRY_BACKOFF_BASE_SECONDS * (2**attempt)
+
+
 def _read_capped(response: Any, url: str, max_bytes: int) -> bytes:
     """读取响应体并施加大小上限；超限抛 ParseHttpError。
 
@@ -153,35 +175,43 @@ def http_get(
     """GET 并返回 (最终 URL, 响应体)；短链重定向后 final_url 是落点。
 
     max_bytes 默认取 ``DEFAULT_MAX_BYTES``（默认生效，无需调用方关心）；
-    传 0/负数表示不限制。
+    传 0/负数表示不限制。429 按 Retry-After 有界重试（最多 2 次），
+    其余 4xx 立即失败不重试（出处见 ``_retry_delay_seconds`` 注释）。
     """
     effective_max = DEFAULT_MAX_BYTES if max_bytes is None else int(max_bytes)
-    try:
-        with _build_opener(proxy, verify_ssl=verify_ssl).open(
-            _build_request(
-                url,
-                referer=referer,
-                user_agent=user_agent,
-                accept=accept,
-                cookie=cookie,
-                extra_headers=extra_headers,
-            ),
-            timeout=timeout,
-        ) as response:
-            if effective_max > 0:
-                # 限幅读法（含 gzip 限幅解压），响应体已就绪。
-                payload = _read_capped(response, url, effective_max)
-            else:
-                payload = response.read()
-                if response.headers.get("Content-Encoding", "").lower() == "gzip":
-                    payload = gzip.decompress(payload)
-            return response.geturl(), payload
-    except ParseHttpError:
-        raise
-    except HTTPError as exc:
-        raise _http_error_to_parse_error("GET", url, exc) from exc
-    except Exception as exc:
-        raise ParseHttpError(f"GET {url} failed: {type(exc).__name__}") from exc
+    for attempt in range(HTTP_GET_MAX_ATTEMPTS):
+        try:
+            with _build_opener(proxy, verify_ssl=verify_ssl).open(
+                _build_request(
+                    url,
+                    referer=referer,
+                    user_agent=user_agent,
+                    accept=accept,
+                    cookie=cookie,
+                    extra_headers=extra_headers,
+                ),
+                timeout=timeout,
+            ) as response:
+                if effective_max > 0:
+                    # 限幅读法（含 gzip 限幅解压），响应体已就绪。
+                    payload = _read_capped(response, url, effective_max)
+                else:
+                    payload = response.read()
+                    if response.headers.get("Content-Encoding", "").lower() == "gzip":
+                        payload = gzip.decompress(payload)
+                return response.geturl(), payload
+        except ParseHttpError:
+            raise
+        except HTTPError as exc:
+            error = _http_error_to_parse_error("GET", url, exc)
+            # 仅 429 在预算内等待重试；其余 4xx 永久性失败立即抛出。
+            if error.status_code != 429 or attempt + 1 >= HTTP_GET_MAX_ATTEMPTS:
+                raise error from exc
+            _sleep(_retry_delay_seconds(attempt, error.retry_after_seconds))
+        except Exception as exc:
+            raise ParseHttpError(f"GET {url} failed: {type(exc).__name__}") from exc
+    # 每轮循环必经 return 或 raise，此处不可达（收口 mypy 缺 return）。
+    raise ParseHttpError(f"GET {url} failed: retries exhausted")
 
 
 def http_get_text(

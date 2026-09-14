@@ -334,6 +334,45 @@ def _parse_cn_count(value: object) -> int:
         return 0
 
 
+def _xhs_best_stream_url(stream: object) -> str:
+    """media.stream 全键扫描取最高档直链（移植自实战油猴脚本算法）。
+
+    xhs-download-helper.user-v1.5.1.js L252-278 getBestVideoUrl /
+    L293-308 pickBestStreamUrl：新版接口 media.stream 的键是编码枚举
+    （EF4-EF7），旧版是 h264/h265——固定键序（av1→h264→hls）取首个
+    非空会拿 720p 顶替 1080p，必须遍历全部键，收集
+    url=masterUrl||backupUrls[0]、height、videoBitrate，按
+    (height 降序, videoBitrate 降序) 取最优；取不到返回 ""。
+    """
+    if not isinstance(stream, dict):
+        return ""
+    candidates: list[tuple[int, int, str]] = []
+    for entries in stream.values():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            backups = entry.get("backupUrls")
+            backup_first = backups[0] if isinstance(backups, list) and backups else ""
+            url = str(entry.get("masterUrl") or backup_first or "").strip()
+            if not url:
+                continue
+            height = entry.get("height")
+            bitrate = entry.get("videoBitrate")
+            candidates.append(
+                (
+                    int(height) if isinstance(height, (int, float)) else 0,
+                    int(bitrate) if isinstance(bitrate, (int, float)) else 0,
+                    url,
+                )
+            )
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return candidates[0][2]
+
+
 def _xhs_from_initial_state(html: str, url: str) -> ParsedContent | None:
     payload = _xhs_initial_state_payload(html)
     if payload is None:
@@ -412,14 +451,9 @@ def _xhs_from_initial_state(html: str, url: str) -> ParsedContent | None:
             sources.append(image_list[0].get("video") or {})
         for source in sources:
             media = (source or {}).get("media") or {}
-            stream = (media or {}).get("stream") or {}
-            if not isinstance(stream, dict):
-                continue
-            for kind in ("av1", "h264", "hls"):
-                entries = stream.get(kind) or []
-                for candidate in entries if isinstance(entries, list) else []:
-                    if isinstance(candidate, dict) and candidate.get("url"):
-                        return str(candidate["url"])
+            stream_url = _xhs_best_stream_url((media or {}).get("stream"))
+            if stream_url:
+                return stream_url
         return ""
 
     detail: dict = {"author": author_detail} if author_detail else {}
@@ -1428,14 +1462,43 @@ def _youtube_playlist(url: str, *, cookie_header: str = "", proxy: str = "") -> 
         )
 
 
+# pbs.twimg.com 合法图片格式集合（jpeg 归一 jpg；出处同 _twitter_large_url）
+_TWIMG_IMAGE_FORMATS = frozenset({"jpg", "jpeg", "png", "webp", "gif", "avif"})
+
+
 def _twitter_large_url(url: str) -> str:
-    """pbs.twimg.com 直链补 ``name=large``（原图级质量；已有参数则归一化）。"""
+    """pbs.twimg.com 直链归一为「原格式 + name=orig」。
+
+    移植自实战油猴脚本算法（x-download-helper.user-v1.4.0.js L170-194
+    getImageFormatFromUrl/buildPhotoCandidates）：X 的 CDN 图片在线转换
+    已下线，format 与存储格式（=路径扩展名）不一致的请求一律 404；
+    name=orig 是 CDN 上现存最高画质版本。故 format 必须与路径扩展名
+    一致（jpeg 归一 jpg；无路径后缀时信任 format=，再兜底 jpg），
+    name 一律归一为 orig。
+    """
     clean = str(url or "").strip()
     if not clean:
         return ""
-    if "name=" in clean:
-        return re.sub(r"name=[^&]+", "name=large", clean)
-    return clean + ("&name=large" if "?" in clean else "?name=large")
+    ext = ""
+    path_match = re.search(r"\.(\w{3,5})$", clean.split("?", 1)[0])
+    if path_match and path_match.group(1).lower() in _TWIMG_IMAGE_FORMATS:
+        raw = path_match.group(1).lower()
+        ext = "jpg" if raw == "jpeg" else raw
+    if not ext:
+        format_match = re.search(r"[?&]format=([^&]+)", clean)
+        if format_match and format_match.group(1).lower() in _TWIMG_IMAGE_FORMATS:
+            raw = format_match.group(1).lower()
+            ext = "jpg" if raw == "jpeg" else raw
+        else:
+            ext = "jpg"
+    if re.search(r"[?&]format=", clean):
+        # format 与存储格式不一致的转换请求一律 404 → 强制改写为与扩展名一致
+        result = re.sub(r"([?&])format=[^&]*", r"\g<1>format=" + ext, clean)
+    else:
+        result = clean + ("&" if "?" in clean else "?") + f"format={ext}"
+    if re.search(r"[?&]name=", result):
+        return re.sub(r"([?&])name=[^&]*", r"\g<1>name=orig", result)
+    return result + ("&name=orig" if "?" in result else "?name=orig")
 
 
 def parse_twitter_x(url: str, *, cookie_header: str = "", proxy: str = "") -> ParsedContent:
