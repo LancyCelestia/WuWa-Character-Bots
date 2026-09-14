@@ -10,6 +10,8 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from plugins.bot_unified_runtime.runtime.reactions import (
+    QSID_FACE_NAMES,
+    REACTION_INTENT_EMOJIS,
     ProactiveGate,
     ReactionBuffer,
     ReactionEvent,
@@ -202,7 +204,7 @@ def test_buffer_capacity_drops_oldest():
     buffer.record(_evt("s", "19", "c"))
     text = buffer.describe("s")
     assert "「呲牙」" not in text  # 最旧被挤掉
-    assert "「惊讶」" in text and "「偷笑」" in text
+    assert "「微笑」" in text and "「吐」" in text  # QSid：14=微笑、19=吐
 
 
 def test_buffer_bot_message_phrasing():
@@ -560,3 +562,89 @@ def test_normal_scenes_unaffected():
         bot_related=True,
     )) is True
     assert len(bot2.calls) == 1
+
+
+# ------------------------------------------------- QSid 锚点（faceid-verify-report）
+
+
+def test_qsid_intent_mapping_anchors():
+    """表 A 五处改值锚点：防回退到经典表错位 id（41 发抖/19 吐/14 微笑/29 悠闲/27 流汗）。"""
+    assert REACTION_INTENT_EMOJIS["赞同"] == 76  # 赞（保守备选 13 呲牙未采用）
+    assert REACTION_INTENT_EMOJIS["有趣"] == 20  # 偷笑
+    assert REACTION_INTENT_EMOJIS["惊讶"] == 0  # QSid 0=惊讶（与经典 0=微笑 互换）
+    assert REACTION_INTENT_EMOJIS["加油"] == 30  # 奋斗
+    assert REACTION_INTENT_EMOJIS["憨笑"] == 28  # 憨笑
+
+
+def test_qsid_intent_values_no_unintended_collision():
+    """改后无撞车：除 安慰/感动 有意同 id（流泪 5，语义随上下文）外各占一脸。"""
+    values = list(REACTION_INTENT_EMOJIS.values())
+    dupes = {v for v in values if values.count(v) > 1}
+    assert dupes == {5}
+
+
+def test_qsid_face_name_anchors():
+    """表 B 名称锚点：QSid 重写后 0=惊讶/14=微笑/16 起错位段/41-43 换血/76=赞。"""
+    assert QSID_FACE_NAMES[0] == "惊讶"
+    assert QSID_FACE_NAMES[14] == "微笑"
+    assert QSID_FACE_NAMES[16] == "酷"
+    assert QSID_FACE_NAMES[27] == "流汗" and QSID_FACE_NAMES[28] == "憨笑"
+    assert QSID_FACE_NAMES[29] == "悠闲" and QSID_FACE_NAMES[30] == "奋斗"
+    assert QSID_FACE_NAMES[41] == "发抖"
+    assert QSID_FACE_NAMES[42] == "爱情"
+    assert QSID_FACE_NAMES[43] == "跳跳"
+    assert 17 not in QSID_FACE_NAMES and 40 not in QSID_FACE_NAMES  # QSid 缺号
+    assert QSID_FACE_NAMES.get(76) == "赞"
+    # 展示闭环：贴 QSid 0 出「惊讶」不串「微笑」；缺号诚实兜底
+    assert emoji_display("0") == "「惊讶」"
+    assert emoji_display("14") == "「微笑」"
+    assert emoji_display("17") == "QQ表情#17"
+
+
+def test_qsid_intent_face_semantics_closed_loop():
+    """意图→id→QSid 名称闭环：除有意同悲的 感动→流泪 外，名实相符。"""
+    expect = {
+        "赞同": "赞", "开心": "呲牙", "有趣": "偷笑", "害羞": "害羞",
+        "惊讶": "惊讶", "感动": "流泪", "加油": "奋斗", "憨笑": "憨笑",
+    }
+    for intent, name in expect.items():
+        assert QSID_FACE_NAMES.get(REACTION_INTENT_EMOJIS[intent]) == name, intent
+
+
+def test_qsid_after_reply_pool_mild_faces_and_c1_intact():
+    """兜底池=中性温和三脸（赞76/惊讶0/害羞6，tone-audit M2 的 QSid 平移）；
+    C1 悲伤门换池后不回退。"""
+    from plugins.bot_unified_runtime.runtime.reactions import (
+        _REACTION_FALLBACK_INTENTS,
+        is_sad_message,
+    )
+
+    pool_ids = {REACTION_INTENT_EMOJIS[n] for n in _REACTION_FALLBACK_INTENTS}
+    assert pool_ids == {76, 0, 6}
+    assert is_sad_message("我心好累") is True
+    bot = FakeBot()
+    assert asyncio.run(maybe_react_on_message(
+        bot, session_key="group_5_6", user_message_id=401, text="好累，撑不住了",
+        config=_Cfg(), trigger="after_reply", gate=ProactiveGate(),
+    )) is False
+    assert bot.calls == []
+
+
+def test_qsid_signal_posts_correct_face_end_to_end():
+    """端到端：信号词 → 意图 → QSid 正形出 API（76 赞 / 0 惊讶 / 30 奋斗）。"""
+    cases = (
+        ("太厉害了，说得好", "76"),
+        ("不会吧，真的假的？", "0"),
+        ("加油，冲鸭！", "30"),
+    )
+    for idx, (text, emoji_id) in enumerate(cases):
+        bot = FakeBot()
+        assert asyncio.run(maybe_react_on_message(
+            bot, session_key=f"group_8_{idx}", user_message_id=600 + idx,
+            text=text, config=_Cfg(), trigger="emotion_signal",
+            gate=ProactiveGate(), bot_related=True,
+        )) is True
+        assert bot.calls == [(
+            "set_msg_emoji_like",
+            {"message_id": 600 + idx, "emoji_id": emoji_id},
+        )]
