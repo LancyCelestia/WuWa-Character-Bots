@@ -322,19 +322,33 @@ _SUBSCRIPTION_PAGE_TYPES = {
 # （runtime/cache_policy.py 未动，仅改这里的触发频率）。
 # 时钟可注入（对齐 bot_avatar.py 审查 L-14 的先例）：测试 monkeypatch
 # _quota_clock 推进时间，全离线不真睡。
+# 键控裁定（审查 L-08 续作）：有意不做「按目录键控」，保持单一全局窗——
+# 经此路径真正依赖配额的目录只有共享的 bot_card_render_dir（epic/music/
+# weather/eat 全传它）；divination/today_history 虽传每抽/每日唯一子目录，
+# 但各自另有 _prune_card_dirs(keep=120) 自管。按目录键控会让 divination
+# 的「每抽新键」把扫盘频率打回限频前（每抽一扫）且时间戳字典键无限增长
+# （内存泄漏）；全局窗把总扫盘频率钳在 1/60s，正是 L-08 的性能目标，
+# 子目录漏巡检无实害（单文件目录 + 自管 prune）。
 _QUOTA_SWEEP_MIN_INTERVAL = 60.0
 _quota_last_sweep = 0.0
 _quota_clock = time.monotonic
+# 检查+记账入锁（临界区不含扫盘本身）：无锁 check-then-set 在并发渲染同时
+# 过窗时可双双扫盘——enforce_quota 有 unlink(missing_ok=True)+OSError 护栏
+# 故只是良性冗余而非正确性缺陷，但锁内检查后「同窗只扫一次」语义严格成立。
+# 扫盘在锁外：不同目录的长扫盘互不串行。
+_quota_sweep_lock = threading.Lock()
 
 
 def _sweep_quota(target_dir: Any, max_bytes: int) -> None:
     """渲染落盘后的缓存配额巡检入口（60s 限频版，审查 L-08）。"""
     global _quota_last_sweep
-    now = _quota_clock()
-    if now - _quota_last_sweep < _QUOTA_SWEEP_MIN_INTERVAL:
-        return
-    # 先记账再扫：并发渲染落在同一窗口内时只让最先到的线程真正扫盘。
-    _quota_last_sweep = now
+    with _quota_sweep_lock:
+        # 时钟在锁内读：保证记账的 now 与判断同一时刻，无陈值回灌。
+        now = _quota_clock()
+        if now - _quota_last_sweep < _QUOTA_SWEEP_MIN_INTERVAL:
+            return
+        # 先记账再扫：同窗后到者读到新时间戳即跳过，只最先到的线程扫盘。
+        _quota_last_sweep = now
     from plugins.bot_unified_runtime.runtime.cache_policy import (
         enforce_quota,
     )

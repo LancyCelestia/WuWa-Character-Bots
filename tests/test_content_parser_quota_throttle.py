@@ -1,15 +1,18 @@
 """审查 L-08 回归：渲染配额巡检 60s 限频（全离线，不触网不真睡）。
 
-锁定四件事：
+锁定六件事：
 - 60s 窗内多次渲染只触发 1 次真实 enforce_quota 扫描（注入时钟+计数 spy）；
 - 窗口过后下一次渲染恢复巡检；恰好 60s 边界即触发（语义=「间隔 <60s 跳过」）；
 - enforce_quota 本身超限淘汰语义零变化（真实函数直测：最旧先删、配额内不动）；
-- 巡检被跳过不影响渲染产物落盘（卡 PNG 照常写出）。
+- 巡检被跳过不影响渲染产物落盘（卡 PNG 照常写出）；
+- 多目录共享同一全局窗（键控裁定=不做按目录键控，审查 L-08 续作）；
+- 并发渲染同窗竞态：锁内检查+记账保证恰好 1 次扫盘（审查 L-08 续作）。
 """
 
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -17,9 +20,8 @@ from typing import Any
 import pytest
 
 import plugins.bot_unified_runtime.capabilities.content_parser as cp
-import plugins.bot_unified_runtime.runtime.cache_policy as cache_policy
 from plugins.bot_unified_runtime.contracts.media import build_parsed_content
-
+from plugins.bot_unified_runtime.runtime import cache_policy
 
 # ---------------------------------------------------------------------------
 # 打桩：注入时钟 / enforce_quota 计数 spy / 假渲染后端。
@@ -145,6 +147,61 @@ def test_render_artifact_written_even_when_sweep_skipped(
     assert second is not None
     assert Path(first["file"]).exists()
     assert Path(second["file"]) == Path(first["file"])
+    assert sweep_spy["n"] == 1
+
+
+def test_global_window_spans_multiple_card_dirs(
+    tmp_path: Path, fake_clock: _FakeClock, sweep_spy: dict[str, int]
+) -> None:
+    """多目录共享同一全局窗（审查 L-08 续作键控裁定）。
+
+    窗内换目录渲染不触发第二次扫盘；窗后恢复。依据：经此路径真正依赖
+    配额的目录只有共享的 bot_card_render_dir；divination/today_history
+    的每抽/每日子目录另有 _prune_card_dirs 自管，漏巡检无实害——
+    按目录键控反而会让「每抽新键」恢复每抽一扫且字典键无限增长。
+    """
+    assert _render(tmp_path / "cards_a") is not None
+    assert sweep_spy["n"] == 1
+
+    fake_clock.advance(1.0)
+    assert _render(tmp_path / "cards_b") is not None
+    assert sweep_spy["n"] == 1  # 全局窗：换目录也在窗内，跳过
+
+    fake_clock.advance(60.0)  # 距上次巡检恰好 60.0s：边界即触发
+    assert _render(tmp_path / "cards_b") is not None
+    assert sweep_spy["n"] == 2
+
+
+def test_concurrent_sweeps_within_window_sweep_once(
+    tmp_path: Path, fake_clock: _FakeClock, sweep_spy: dict[str, int]
+) -> None:
+    """并发渲染同窗竞态：锁内检查+记账保证恰好 1 次扫盘（审查 L-08 续作）。
+
+    固定时钟下所有线程读到同一 now：无锁 check-then-set 可多个线程同时
+    过窗（enforce_quota 有 missing_ok 护栏，属良性冗余但语义失实）；
+    检查+记账在锁内后「同窗只扫一次」严格成立。扫盘在锁外，不因本测试
+    产生跨线程串行死锁面。
+    """
+    card_dir = tmp_path / "cards"
+    card_dir.mkdir()
+    n_threads = 8
+    barrier = threading.Barrier(n_threads)
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            barrier.wait()
+            cp._sweep_quota(card_dir, max_bytes=0)
+        except BaseException as exc:  # noqa: BLE001 - 汇集到主线程统一断言
+            errors.append(exc)
+
+    workers = [threading.Thread(target=worker) for _ in range(n_threads)]
+    for thread in workers:
+        thread.start()
+    for thread in workers:
+        thread.join(timeout=10)
+    assert all(not thread.is_alive() for thread in workers)
+    assert not errors
     assert sweep_spy["n"] == 1
 
 
