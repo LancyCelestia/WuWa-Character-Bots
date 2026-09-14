@@ -7,9 +7,14 @@
 
 扫描范围（gate_scope()）：capabilities/*.py + capabilities/auto_send/ 子目录
 （2026-09-14 主会话批准扩面；扩面前对 auto_send/ 预扫 0 命中）+
-character/*.py + runtime/usage_monitor.py。
+character/*.py + runtime/usage_monitor.py + runtime/error_report.py
+（2026-09-14 二次扩面，A69-I1）+ personas/**/*.md + personas/**/*.txt +
+生产人格副本 ChatBot_Runtime/data/persona/守岸人_核心人格.md
+（2026-09-14 三次扩面，人格矛盾修复批 G-08；扩面纪律=先修人格文本
+G-01/G-02/G-03 再扩门，门绿为验收；副本缺失时优雅跳过并注明）。
 
-扫描器：纯 AST + 字符串字面量，零 import 被扫模块。用户可见字符串单元 =
+扫描器：Python 文件走纯 AST + 字符串字面量（零 import 被扫模块）；人格资产
+md/txt 无 AST，按「非空行 = 一个用户可见单元」逐行过同一套规则。用户可见字符串单元 =
 普通串（解析器已合并相邻隐式拼接）+ f-string 字面量块（合并为单元）+ 纯常量
 ``+`` 链（合并为单元）。排除：注释（AST 天然排除）、日志调用（logger/log/
 logging 及 getLogger 链的常见级别方法）、``audit_tags=`` 关键字、URL 串、
@@ -48,6 +53,14 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_PKG = REPO_ROOT / "plugins" / "bot_unified_runtime"
 ALLOWLIST_PATH = Path(__file__).resolve().parent / "_redline_allowlist.py"
+# 生产人格副本（仓库树外运行数据）：与 scripts/sync_persona_source.py 的
+# DEFAULT_COPY_FALLBACK 同一口径——相对仓库上一级的确定性路径，不读 .env，
+# 保证门在 CI（无 Runtime）下行为可预测：存在则入扫描面，缺失优雅跳过。
+RUNTIME_COPY_PATH = (
+    REPO_ROOT.parent / "ChatBot_Runtime" / "data" / "persona" / "守岸人_核心人格.md"
+)
+# 人格资产是 md/txt（无 AST），走按行扫描的文本路径。
+_TEXT_SUFFIXES = frozenset({".md", ".txt"})
 
 # ---------------------------------------------------------------------------
 # 规则常量
@@ -292,6 +305,20 @@ def _user_visible_units(path: Path) -> list[_Unit]:
     return [u for u in collector.units if not u.text.lstrip().lower().startswith(_URL_PREFIXES)]
 
 
+def _persona_text_units(path: Path) -> list[_Unit]:
+    """人格资产（md/txt）无 AST：一行 = 一个用户可见单元，逐行过同一套规则。
+
+    行号必须对齐原文（违例定位依赖它）；坏字节按 replace 容错——门只做
+    红线检测，不承担人格资产的编码校验。
+    """
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    return [
+        _Unit(text=line, lineno=idx)
+        for idx, line in enumerate(lines, 1)
+        if line.strip() and not line.lstrip().lower().startswith(_URL_PREFIXES)
+    ]
+
+
 def _excerpt(text: str) -> str:
     collapsed = " ".join(text.split())
     return collapsed[:48] + ("…" if len(collapsed) > 48 else "")
@@ -317,7 +344,12 @@ def scan_file(path: Path, *, rel_path: str | None = None) -> tuple[list[Finding]
             level=level,
         )
 
-    for unit in _user_visible_units(path):
+    units = (
+        _persona_text_units(path)
+        if path.suffix.lower() in _TEXT_SUFFIXES
+        else _user_visible_units(path)
+    )
+    for unit in units:
         text, lineno = unit.text, unit.lineno
         for rule, terms in BANNED_TERMS.items():
             if any(term in text for term in terms):
@@ -353,6 +385,17 @@ def _apply_allowlist(findings: list[Finding], allowlist: dict[str, dict[str, str
     return kept
 
 
+def _scope_rel_paths(paths: list[Path]) -> set[str]:
+    """扫描面的仓库相对路径集；仓库外文件（生产副本）不在白名单键域，跳过。"""
+    rel: set[str] = set()
+    for p in paths:
+        try:
+            rel.add(p.resolve().relative_to(REPO_ROOT).as_posix())
+        except ValueError:
+            continue
+    return rel
+
+
 def allowlist_problems(allowlist: dict[str, dict[str, str]], scope_rel_paths: set[str]) -> list[str]:
     """白名单腐化校验：未知规则 / 文件不存在 / 不在扫描范围 / 理由为空。"""
     problems: list[str] = []
@@ -375,7 +418,9 @@ def allowlist_problems(allowlist: dict[str, dict[str, str]], scope_rel_paths: se
 def gate_scope() -> list[Path]:
     """任务口径扫描面：capabilities/*.py（含 capabilities/auto_send/ 子目录，
     2026-09-14 扩面）+ character/*.py + runtime/usage_monitor.py +
-    runtime/error_report.py（2026-09-14 二次扩面，A69-I1）。"""
+    runtime/error_report.py（2026-09-14 二次扩面，A69-I1）+
+    personas/**/*.md + personas/**/*.txt + 生产人格副本（2026-09-14 三次扩面，
+    G-08；扩面前已完成 G-01/G-02/G-03 人格文本修复；副本缺失优雅跳过）。"""
     files = (
         sorted(RUNTIME_PKG.glob("capabilities/*.py"))
         + sorted(RUNTIME_PKG.glob("capabilities/auto_send/**/*.py"))
@@ -383,6 +428,10 @@ def gate_scope() -> list[Path]:
     )
     files.append(RUNTIME_PKG / "runtime" / "usage_monitor.py")
     files.append(RUNTIME_PKG / "runtime" / "error_report.py")
+    # 人格资产入扫描面：仓库内源（personas/**）+ 仓库外生产副本（存在才扫）。
+    files.extend(sorted(REPO_ROOT.glob("personas/**/*.md")))
+    files.extend(sorted(REPO_ROOT.glob("personas/**/*.txt")))
+    files.append(RUNTIME_COPY_PATH)
     return [f for f in files if f.exists()]
 
 
@@ -415,6 +464,18 @@ def test_gate_scope_sanity() -> None:
     # 2026-09-14 扩面：capabilities/auto_send/ 子目录入扫描面。
     assert (RUNTIME_PKG / "capabilities" / "auto_send" / "__init__.py") in scope
     assert (RUNTIME_PKG / "capabilities" / "auto_send" / "parser.py") in scope
+    # 2026-09-14 三次扩面（G-08）：人格资产入扫描面。
+    assert (REPO_ROOT / "personas" / "shorekeeper" / "identity.md") in scope
+    assert (
+        REPO_ROOT / "personas" / "shorekeeper" / "knowledge" / "守岸人_核心知识.md"
+    ) in scope
+    if RUNTIME_COPY_PATH.exists():
+        assert RUNTIME_COPY_PATH in scope
+    else:
+        warnings.warn(
+            "生产人格副本不存在（CI 无 Runtime），副本扫描面优雅跳过并注明",
+            stacklevel=1,
+        )
 
 
 def test_current_tree_no_critical_redline() -> None:
@@ -428,8 +489,7 @@ def test_current_tree_no_critical_redline() -> None:
 
 def test_allowlist_integrity() -> None:
     """白名单不腐化：规则 ID 存在、文件存在且在扫描范围、理由非空。"""
-    scope_rel = {p.resolve().relative_to(REPO_ROOT).as_posix() for p in gate_scope()}
-    problems = allowlist_problems(_load_allowlist(), scope_rel)
+    problems = allowlist_problems(_load_allowlist(), _scope_rel_paths(gate_scope()))
     assert not problems, "白名单腐化（失效豁免要清，不得留假豁免）：\n" + "\n".join(problems)
 
 
@@ -573,9 +633,9 @@ def test_allowlist_suppression_and_stale_entry(tmp_path: Path) -> None:
     raw, _ = scan_scope([file], {})
     assert [f.rule for f in raw] == ["creator_name"]
     # 白名单腐化：指向不存在文件必须红（与 test_allowlist_integrity 同源逻辑）。
-    scope_rel = {p.resolve().relative_to(REPO_ROOT).as_posix() for p in gate_scope()}
     problems = allowlist_problems(
-        {"creator_name": {"plugins/bot_unified_runtime/no_such_file.py": "过期豁免"}}, scope_rel
+        {"creator_name": {"plugins/bot_unified_runtime/no_such_file.py": "过期豁免"}},
+        _scope_rel_paths(gate_scope()),
     )
     assert len(problems) == 1 and "不存在" in problems[0]
 
@@ -626,6 +686,78 @@ def test_auto_send_clean_sample_zero_findings(tmp_path: Path) -> None:
     criticals, warns = scan_file(file, rel_path=_AUTO_SEND_REL)
     assert not criticals, "\n".join(f.render() for f in criticals)
     assert not warns
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-14 三次扩面（G-08）：人格资产（personas/** + 生产副本）入扫描面。
+# 人格文件是 md/txt（无 AST），按行扫描的文本路径需独立真红/真绿验证；
+# 扩面纪律=先修人格文本（G-01/G-02/G-03）再扩门，门绿为验收。
+# ---------------------------------------------------------------------------
+
+_PERSONA_MD_REL = "personas/shorekeeper/identity.md"
+
+
+def test_persona_text_dirty_lines_flagged(tmp_path: Path) -> None:
+    """真红：人格 md 里的违例行按行命中（文本路径与 AST 路径同一套规则）。"""
+    banned = _write(tmp_path, "# 守岸人\n\n作为一个AI助手，我来帮你。", name="persona.md")
+    criticals, _ = scan_file(banned)
+    assert "banned_self_intro" in {f.rule for f in criticals}
+    combo = _write(tmp_path, "很抱歉，为您添麻烦了。", name="combo.md")
+    assert "apology_combo" in {f.rule for f in scan_file(combo)[0]}
+    r18 = _write(tmp_path, "这段内容包含内射描写。", name="r18.md")
+    assert "r18_terms" in {f.rule for f in scan_file(r18)[0]}
+
+
+def test_persona_text_dirty_hit_reports_source_lineno(tmp_path: Path) -> None:
+    """行号必须对齐原文：人格违例定位靠它，错行号=门不可用。"""
+    file = _write(tmp_path, "第一行\n第二行\n作为一个AI助手，不该出现。\n", name="lineno.md")
+    criticals, _ = scan_file(file)
+    assert len(criticals) == 1 and criticals[0].lineno == 3
+
+
+def test_persona_text_clean_lines_zero_findings(tmp_path: Path) -> None:
+    """真绿：人格 md 正常话术（含边界说明例句）零命中，不误伤守岸人语气。"""
+    file = _write(
+        tmp_path,
+        "# 守岸人\n\n海潮正平稳。这句先不继续了，我们说点别的，好吗？\n",
+        name="clean.md",
+    )
+    criticals, warns = scan_file(file)
+    assert not criticals
+    assert not warns
+
+
+def test_persona_semantic_path_dirty_sample_flagged(tmp_path: Path) -> None:
+    """真红：违例藏在人格语义路径下同样命中，不因扩面产生新豁免区。"""
+    banned = _write(tmp_path, "作为一个AI助手，给您带来不便，敬请谅解。", name="dirty.md")
+    rules = {f.rule for f in scan_file(banned, rel_path=_PERSONA_MD_REL)[0]}
+    assert {"banned_self_intro", "banned_inconvenience"} <= rules
+
+
+def test_persona_scope_expanded_current_tree_green() -> None:
+    """真绿：扩面后 personas/** 全量 Critical 零命中（白名单豁免后）。
+
+    创造者双名（澜汐/霞月）是 identity.md §1.3 稳定世界观事实，属人格档案
+    本体而非用户可见文案泄漏，按白名单登记豁免（理由见 _redline_allowlist.py）。
+    """
+    persona_files = sorted(REPO_ROOT.glob("personas/**/*.md")) + sorted(
+        REPO_ROOT.glob("personas/**/*.txt")
+    )
+    assert len(persona_files) >= 4, "personas/ 扫描面异常收缩"
+    criticals, _ = scan_scope(persona_files, _load_allowlist())
+    assert not criticals, "人格源 Critical 红线命中：\n" + "\n".join(
+        f.render() for f in criticals
+    )
+
+
+def test_runtime_copy_scanned_when_present() -> None:
+    """真绿 + 跳过语义：副本存在则必扫且零 Critical；缺失（CI 无 Runtime）跳过并注明。"""
+    if not RUNTIME_COPY_PATH.exists():
+        pytest.skip("生产人格副本不存在（CI 无 Runtime），优雅跳过并注明")
+    criticals, _ = scan_scope([RUNTIME_COPY_PATH], _load_allowlist())
+    assert not criticals, "生产人格副本 Critical 红线命中：\n" + "\n".join(
+        f.render() for f in criticals
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover
