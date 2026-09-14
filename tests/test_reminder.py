@@ -5,8 +5,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
+from plugins.bot_unified_runtime.capabilities import reminder as reminder_cap_mod
 from plugins.bot_unified_runtime.capabilities.reminder import (
     build_reminder_capability,
+    clear_checkoff_pending_for_tests,
     is_reminder_command,
 )
 from plugins.bot_unified_runtime.character.reminders import (
@@ -14,10 +18,20 @@ from plugins.bot_unified_runtime.character.reminders import (
     build_reminder_store,
     build_reminder_text,
     parse_reminder_intent,
+    resolve_todo_match,
 )
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 
 _TZ = timezone(timedelta(hours=8))
+
+
+@pytest.fixture(autouse=True)
+def _isolated_checkoff_pending_state():
+    """勾选消歧追问状态是模块级单例：每例前后清零，防跨用例/跨文件泄漏
+    （残留追问会让别的用例里 is_reminder_command("是") 意外放行）。"""
+    clear_checkoff_pending_for_tests()
+    yield
+    clear_checkoff_pending_for_tests()
 
 
 def _now() -> datetime:
@@ -327,3 +341,199 @@ def test_capability_full_list_replies_instead_of_silent_evict(tmp_path, monkeypa
     result = capability(_message("12点提醒我写作业"), object())
     assert "排满" in result.body and "提醒列表" in result.body
     assert "记下了" not in result.body
+
+
+# ---------- 勾选消歧追问（审查 A-10/A-11，2026-09-14） ----------
+
+
+def _add_pending_reminder(store: ReminderStore, text: str) -> None:
+    store.add(
+        session_key="group:1", sender_id="u1", target_scope="group", target_id="1",
+        adapter="nonebot", bot_id="bot",
+        remind_at=datetime.now(timezone.utc) + timedelta(hours=1), text=text,
+    )
+
+
+def _disambig_capability(tmp_path, monkeypatch):
+    """消歧追问回归专用：清提醒 store 缓存 + 清追问状态（模块级单例）。"""
+    import plugins.bot_unified_runtime.character.reminders as reminders_mod
+
+    monkeypatch.setattr(reminders_mod, "_STORES", {})
+    clear_checkoff_pending_for_tests()
+    return build_reminder_capability(_tone_config(tmp_path))
+
+
+def test_resolve_todo_match_single_low_similarity_is_uncertain() -> None:
+    """审查 A-10：唯一候选只是「有点像」（0.667）不再判 hit 直接勾。
+
+    新旧行为对照：旧实现返回 ("hit", [0])——「买牛奶做完了」会把唯一
+    候选「买酸奶」直接勾掉；现返回 ("uncertain", [0]) 交能力层追问。
+    """
+    outcome, indexes = resolve_todo_match("买牛奶", ["买酸奶"])
+    assert outcome == "uncertain" and indexes == [0]
+    # 达到 0.8 线的包含关系照旧直接勾：「作业」vs「写作业」= 0.85。
+    outcome, indexes = resolve_todo_match("作业", ["写作业"])
+    assert outcome == "hit" and indexes == [0]
+    # 精确一致 / 明显唯一的最高分照旧 hit，日常用法不受影响。
+    outcome, indexes = resolve_todo_match("买牛奶", ["买牛奶", "买酸奶"])
+    assert outcome == "hit" and indexes == [0]
+
+
+def test_checkoff_single_low_similarity_asks_then_confirms(tmp_path, monkeypatch) -> None:
+    """审查 A-10 ①②：低相似单候选先出确认、回「是」才勾。"""
+    capability = _disambig_capability(tmp_path, monkeypatch)
+    store = ReminderStore(tmp_path / "r.sqlite3")
+    _add_pending_reminder(store, "买酸奶")
+    prompt = capability(_message("买牛奶做完了"), object())
+    assert "买酸奶" in prompt.body, "确认文案要复述候选事项"
+    assert "「是」" in prompt.body, "确认文案要给肯定词回收口"
+    assert len(store.list_pending("group:1")) == 1, "确认前绝不勾"
+    confirm = capability(_message("是"), object())
+    assert "买酸奶" in confirm.body and "放下" in confirm.body
+    assert store.list_pending("group:1") == [], "回「是」之后应把候选勾掉"
+
+
+def test_checkoff_confirmation_other_reply_does_not_check(tmp_path, monkeypatch) -> None:
+    """审查 A-10 ②：确认态回「不是」等其他内容绝不勾。"""
+    capability = _disambig_capability(tmp_path, monkeypatch)
+    store = ReminderStore(tmp_path / "r.sqlite3")
+    _add_pending_reminder(store, "买酸奶")
+    capability(_message("买牛奶做完了"), object())
+    capability(_message("不是"), object())
+    assert len(store.list_pending("group:1")) == 1, "非肯定回复不勾"
+
+
+def test_checkoff_confirmation_ttl_expired_asks_restated(tmp_path, monkeypatch) -> None:
+    """审查 A-10 ③：确认过时效（TTL 300s）后回「是」不勾，提示重新说。"""
+    capability = _disambig_capability(tmp_path, monkeypatch)
+    store = ReminderStore(tmp_path / "r.sqlite3")
+    _add_pending_reminder(store, "买酸奶")
+    capability(_message("买牛奶做完了"), object())
+    # 把追问时钟拨过 TTL，模拟 5 分钟后才回「是」。
+    monkeypatch.setattr(
+        reminder_cap_mod, "_monotonic", lambda: reminder_cap_mod.time.monotonic() + 301.0
+    )
+    reply = capability(_message("是"), object())
+    assert "再说" in reply.body or "重新" in reply.body, "过期确认要请用户重新说"
+    assert len(store.list_pending("group:1")) == 1, "过期确认绝不勾"
+
+
+def test_checkoff_ambiguous_ordinal_reply_checks_chosen(tmp_path, monkeypatch) -> None:
+    """审查 A-11 ①：歧义编号清单后回「2」/「第一件」勾对应项。
+
+    新旧行为对照：旧实现只列候选清单，序号回复坠到提醒用法提示。
+    """
+    capability = _disambig_capability(tmp_path, monkeypatch)
+    store = ReminderStore(tmp_path / "r.sqlite3")
+    _add_pending_reminder(store, "写数学作业")
+    _add_pending_reminder(store, "写语文作业")
+    _add_pending_reminder(store, "写英语作业")
+    prompt = capability(_message("作业做完了"), object())
+    assert "1." in prompt.body and "写数学作业" in prompt.body, "清单要带编号"
+    assert "2." in prompt.body and "写语文作业" in prompt.body
+    pick = capability(_message("2"), object())
+    assert "写语文作业" in pick.body and "放下" in pick.body
+    assert [item.text for item in store.list_pending("group:1")] == [
+        "写数学作业",
+        "写英语作业",
+    ], "只勾编号对应的那一件"
+    # 第二轮：中文序数词同样能对上编号清单。
+    capability(_message("作业做完了"), object())
+    pick_cn = capability(_message("第一件"), object())
+    assert "写数学作业" in pick_cn.body
+    assert [item.text for item in store.list_pending("group:1")] == ["写英语作业"]
+
+
+def test_checkoff_ambiguous_ordinal_out_of_bounds_hints(tmp_path, monkeypatch) -> None:
+    """审查 A-11 ②：越界序号不勾、给有效范围提示，追问保留可重试。"""
+    capability = _disambig_capability(tmp_path, monkeypatch)
+    store = ReminderStore(tmp_path / "r.sqlite3")
+    _add_pending_reminder(store, "写数学作业")
+    _add_pending_reminder(store, "写语文作业")
+    capability(_message("作业做完了"), object())
+    bad = capability(_message("9"), object())
+    assert "1 到 2" in bad.body, "越界要提示有效编号范围"
+    assert len(store.list_pending("group:1")) == 2, "越界序号绝不勾"
+    retry = capability(_message("1"), object())
+    assert "写数学作业" in retry.body, "追问保留，重试仍可勾"
+
+
+def test_ordinal_and_affirmative_parser_matrix() -> None:
+    """序号/肯定词形态解析矩阵（A-11 序号词面 + A-10 肯定词白名单）。"""
+    ordinal = reminder_cap_mod._match_ordinal
+    assert ordinal("1") == 1 and ordinal("12") == 12
+    assert ordinal("第一件") == 1
+    assert ordinal("第2件") == 2
+    assert ordinal("第 2 个") == 2
+    assert ordinal("第三条") == 3
+    assert ordinal("第十二件") == 12
+    assert ordinal("第二十三件") == 23
+    assert ordinal("0") is None and ordinal("第0件") is None
+    assert ordinal("第一名") is None and ordinal("第一百") is None
+    assert ordinal("作业") is None
+    affirmative = reminder_cap_mod._match_affirmative
+    assert affirmative("是") and affirmative("是的") and affirmative("嗯嗯")
+    assert affirmative("对的对的。")  # 尾标点剥掉后仍是肯定词。
+    assert not affirmative("不是") and not affirmative("好吧我去") and not affirmative("1")
+
+
+def test_is_reminder_command_followup_shapes_gated_by_pending(
+    tmp_path, monkeypatch
+) -> None:
+    """审查 A-10/A-11 路由闸：只有追问窗口内光杆肯定词/序号才放行。"""
+    clear_checkoff_pending_for_tests()
+    assert not is_reminder_command("是")
+    assert not is_reminder_command("1")
+    assert not is_reminder_command("第一件")
+    capability = _disambig_capability(tmp_path, monkeypatch)
+    store = ReminderStore(tmp_path / "r.sqlite3")
+    _add_pending_reminder(store, "买酸奶")
+    capability(_message("买牛奶做完了"), object())  # 产生追问状态
+    assert is_reminder_command("是")
+    assert is_reminder_command("嗯嗯")
+    assert is_reminder_command("第一件")
+    assert is_reminder_command("12点提醒我写作业"), "常规提醒语义不受追问闸影响"
+    # 追问过时效后，光杆短句回到「绝不进提醒路由」的常态。
+    monkeypatch.setattr(
+        reminder_cap_mod, "_monotonic", lambda: reminder_cap_mod.time.monotonic() + 301.0
+    )
+    assert not is_reminder_command("是")
+
+
+def test_checkoff_ambiguous_ordinal_covers_note_todo(tmp_path, monkeypatch) -> None:
+    """审查 A-11：歧义候选来自提醒+笔记待办混合时，序号也能勾笔记条目。"""
+    import plugins.bot_unified_runtime.character.reminders as reminders_mod
+    from plugins.bot_unified_runtime.character import notes_store as notes_store_mod
+    from plugins.bot_unified_runtime.character.notes_store import reset_stores_for_tests
+
+    monkeypatch.setattr(reminders_mod, "_STORES", {})
+    reset_stores_for_tests()
+    clear_checkoff_pending_for_tests()
+    notes_store_mod.NotesStore(tmp_path / "n.sqlite3").add(
+        user_id="u1", chat_id="group:1", content_md="学习清单\n- [ ] 写语文作业",
+    )
+    store = ReminderStore(tmp_path / "r.sqlite3")
+    _add_pending_reminder(store, "写数学作业")
+    config = SimpleNamespace(
+        bot_reminder_db_path=str(tmp_path / "r.sqlite3"),
+        bot_notes_db_path=str(tmp_path / "n.sqlite3"),
+    )
+    capability = build_reminder_capability(config)
+    prompt = capability(_message("作业做完了"), object())
+    assert "1." in prompt.body and "2." in prompt.body
+    pick = capability(_message("2"), object())
+    assert "写语文作业" in pick.body
+    assert notes_store_mod.NotesStore(tmp_path / "n.sqlite3").list_open_todos("group:1") == [], (
+        "序号应能勾掉笔记待办"
+    )
+    assert [item.text for item in store.list_pending("group:1")] == ["写数学作业"]
+
+
+def test_undo_phrases_route_into_reminder_surface() -> None:
+    """A-14 接线收编：「取消勾选 X」/「X 还没做」要能进提醒/笔记路由面。"""
+    from plugins.bot_unified_runtime.capabilities.reminder import is_reminder_command
+
+    assert is_reminder_command("取消勾选 买牛奶")
+    assert is_reminder_command("买牛奶还没做")
+    # 与删除类指令不互抢：「取消笔记」不因撤销词误进提醒路由。
+    assert not is_reminder_command("取消笔记")

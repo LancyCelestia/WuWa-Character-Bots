@@ -552,6 +552,11 @@ def match_similarity(query: str, name: str) -> float:
 MATCH_MIN_SCORE = 0.45
 AMBIGUITY_MARGIN = 0.05
 NEAR_MISS_FLOOR = 0.3
+# 审查 A-10：唯一候选也要"够像"才许直接勾。0.667（「买牛奶」vs「买酸奶」
+# 编辑距离 1）这类"有点像"过去会被当成命中直接勾掉——用户说牛奶我们勾了
+# 酸奶。低于此线的唯一候选改判 ``uncertain``，由能力层追问一句「是这件吗」。
+# 包含关系日常短词不受影响：「作业」vs「写作业」= 0.7+0.3×(2/4) = 0.85 ≥ 0.8。
+SINGLE_CONFIRM_SCORE = 0.8
 
 
 def match_todo_candidates(
@@ -575,10 +580,15 @@ def resolve_todo_match(
     *,
     min_score: float = MATCH_MIN_SCORE,
     ambiguity_margin: float = AMBIGUITY_MARGIN,
+    single_confirm_score: float = SINGLE_CONFIRM_SCORE,
 ) -> tuple[str, list[int]]:
     """勾选裁决：返回 (outcome, 索引列表)。
 
-    - ``"hit"``：唯一最高分（或与次高分差距 ≥ ambiguity_margin）；
+    - ``"hit"``：唯一最高分（或与次高分差距 ≥ ambiguity_margin）且分数
+      达到 ``single_confirm_score``——够像，直接勾；
+    - ``"uncertain"``：唯一过线候选但分数低于 ``single_confirm_score``
+      （审查 A-10：唯一候选只是"有点像"时不算数，索引给该候选，能力层
+      追问「是这件吗」，回肯定词才勾）；
     - ``"ambiguous"``：并列高分（差距 < margin），索引给前 3 个；
     - ``"miss"``：无人过线。
     """
@@ -588,5 +598,7 @@ def resolve_todo_match(
     best_score = ranked[0][1]
     tied = [index for index, score in ranked if best_score - score <= ambiguity_margin]
     if len(tied) == 1:
+        if best_score < single_confirm_score:
+            return "uncertain", tied
         return "hit", tied
     return "ambiguous", tied[:3]

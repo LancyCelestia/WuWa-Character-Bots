@@ -5,11 +5,30 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
+import pytest
+
+from plugins.bot_unified_runtime.capabilities.reminder import (
+    build_reminder_capability,
+    clear_checkoff_pending_for_tests,
+)
 from plugins.bot_unified_runtime.character.reminders import (
     Reminder,
+    ReminderStore,
     build_reminder_text,
     classify_reminder_kind,
 )
+from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+
+
+@pytest.fixture(autouse=True)
+def _isolated_checkoff_pending_state():
+    """勾选消歧追问状态是模块级单例：每例前后清零，防跨用例/跨文件泄漏。"""
+    clear_checkoff_pending_for_tests()
+    yield
+    clear_checkoff_pending_for_tests()
 
 
 def _reminder(text: str) -> Reminder:
@@ -77,3 +96,58 @@ def test_custom_kind_keeps_legacy_default_text() -> None:
         "你之前说过的：给花拍照。\n"
         "我就守在这里。慢一点也没关系，记得去做。"
     )
+
+
+# ---------- 勾选消歧追问文案（审查 A-10/A-11，2026-09-14） ----------
+
+def _disambig_setup(tmp_path, monkeypatch):
+    """追问文案回归：提醒 store 隔离 + 追问状态清零 + 笔记面关闭。"""
+    import plugins.bot_unified_runtime.character.reminders as reminders_mod
+
+    monkeypatch.setattr(reminders_mod, "_STORES", {})
+    clear_checkoff_pending_for_tests()
+    config = SimpleNamespace(
+        bot_reminder_db_path=str(tmp_path / "r.sqlite3"),
+        bot_notes_enabled=False,
+    )
+    store = ReminderStore(tmp_path / "r.sqlite3")
+
+    def _add(text: str) -> None:
+        store.add(
+            session_key="group:1", sender_id="u1", target_scope="group", target_id="1",
+            adapter="nonebot", bot_id="bot",
+            remind_at=datetime.now(timezone.utc) + timedelta(hours=1), text=text,
+        )
+
+    def _message(text: str) -> IncomingMessage:
+        return IncomingMessage(
+            platform="qq", adapter="nonebot", bot_id="bot-1",
+            session_id="group:1", session_type=SessionType.GROUP, sender_id="u1",
+            group_id="1", plain_text=text, message_id="m1",
+        )
+
+    return build_reminder_capability(config), store, _add, _message
+
+
+def test_checkoff_confirmation_copy_keeps_shorekeeper_voice(tmp_path, monkeypatch) -> None:
+    """审查 A-10：单候选确认文案要守岸人语气——复述候选、给肯定词回收口、
+    不出现机器腔；且先确认后勾，不替用户做主。"""
+    capability, _store, add, message = _disambig_setup(tmp_path, monkeypatch)
+    add("买酸奶")
+    prompt = capability(message("买牛奶做完了"), object())
+    body = prompt.body
+    assert "买酸奶" in body and "「是」" in body, "要复述候选并给明确回收口"
+    assert "做主" in body or "不敢" in body, "低相似要承认不确定，守岸人不武断"
+    for banned in ("相似度", "候选 ", "请确认", "您的选择", "系统检测"):
+        assert banned not in body, f"确认文案不得出现机器腔：{banned}"
+
+
+def test_checkoff_ambiguous_numbered_copy_invites_ordinal(tmp_path, monkeypatch) -> None:
+    """审查 A-11：歧义清单带编号并邀请序号回复，编号与序号回收对应。"""
+    capability, _store, add, message = _disambig_setup(tmp_path, monkeypatch)
+    add("写数学作业")
+    add("写语文作业")
+    body = capability(message("作业做完了"), object()).body
+    assert "1." in body and "2." in body, "清单要带编号（与序号回复对应）"
+    assert "编号" in body, "要邀请用户回编号"
+    assert "有几件事" in body, "沿用既有守岸人歧义开头，不点数"
