@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import re
 import shutil
 import urllib.request
@@ -29,6 +30,7 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SendPolicy,
 )
+from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
 from plugins.bot_unified_runtime.sources.downloader import (
     RejectedUrlError,
     check_download_url,
@@ -87,6 +89,8 @@ _ARG_RE = re.compile(
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ShoreKeeperBot/1.0"
+
+logger = logging.getLogger(__name__)
 
 
 def is_media_archive_command(
@@ -192,7 +196,18 @@ class _GuardedRedirectHandler(urllib.request.HTTPRedirectHandler):
     重定向目标若指向内网/元数据地址必须就地拒绝。"""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        check_download_url(str(newurl))
+        try:
+            check_download_url(str(newurl))
+        except RejectedUrlError as exc:
+            # 审查 F-06：拒绝信号在抛出点留痕（重定向目标才是真实攻击面，
+            # 原始 URL 看不出这一跳）；URL 形态过既有脱敏再进日志。
+            # 异常继续上抛，由 _fetch_url_media 的捕获点收口为跳过该条。
+            logger.warning(
+                "media archive SSRF guard rejected redirect: %s (url=%s)",
+                exc,
+                redact_local_secrets(str(newurl)),
+            )
+            raise
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -203,13 +218,24 @@ def _fetch_url_media(url: str, max_bytes: int) -> bytes | None:
     """bot 侧下载媒体字节：SSRF 护栏（含重定向逐跳）+ 流式大小上限（超限即断）。"""
     try:
         check_download_url(url)
-    except RejectedUrlError:
+    except RejectedUrlError as exc:
+        # 审查 F-06：入口拒绝同样 WARNING 留痕（脱敏后 URL 形态），
+        # 随后按「取不到内容」处理，不中断同批其余条目。
+        logger.warning(
+            "media archive SSRF guard rejected url: %s (url=%s)",
+            exc,
+            redact_local_secrets(url),
+        )
         return None
     request = urllib.request.Request(url, headers={"User-Agent": _UA})
     try:
         with _OPENER.open(request, timeout=20.0) as response:
             return response.read(max_bytes + 1)[:max_bytes] if response.readable() else None
-    except (OSError, ValueError, http.client.HTTPException):
+    except (OSError, ValueError, http.client.HTTPException, RejectedUrlError):
+        # 审查 F-06：重定向逐跳复查抛出的 RejectedUrlError 继承 Exception
+        # 而非 OSError，不补进元组就会从 open() 逃逸本函数、炸掉调用方的
+        # 整批循环——一票坏重定向拖垮全部待归档条目。此处的拒绝已在
+        # _GuardedRedirectHandler 抛出点记过 WARNING，不再重复留痕。
         return None
 
 
@@ -349,7 +375,9 @@ def build_media_archive_capability(
                 capability_id="bot.media_archive",
                 kind="text",
                 title="媒体归档",
-                body="这个归档功能暂时只对超管开放哦，先收好这份心意啦。",
+                # 审查 Q-02：去卖萌语气、自称统一第三人称；超管门槛语义特殊
+                # （写「管理员」会失实），豁免不入管理员门禁池（登记见 user_copy.py）。
+                body="这个归档功能暂时只对超管开放，这份心意守岸人先记下了。",
                 send_policy=SendPolicy.IMMEDIATE,
                 audit_tags=["media_archive", "denied_role"],
             )

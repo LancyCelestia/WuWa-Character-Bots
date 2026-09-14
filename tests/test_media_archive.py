@@ -2,17 +2,22 @@
 
 覆盖：触发判定（含胶合拒绝）、路由判定、角色门（默认仅超管）、本地媒体归档
 （VLM 判 类别×IP）、指令覆盖参数、VLM 失败降级、sha256 去重、路径穿越消毒、
-聊天记录 Markdown 归档、每日额度、data/ 路径重映射。
+聊天记录 Markdown 归档、每日额度、data/ 路径重映射、SSRF 拒绝不中断整批
+（审查 F-06）。
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from plugins.bot_unified_runtime.capabilities import (
+    media_archive as media_archive_module,
+)
 from plugins.bot_unified_runtime.capabilities.media_archive import (
     build_media_archive_capability,
     is_media_archive_command,
@@ -29,6 +34,7 @@ from plugins.bot_unified_runtime.runtime.base_router import (
     classify_message_route,
     clear_route_decision_cache,
 )
+from plugins.bot_unified_runtime.sources.downloader import RejectedUrlError
 from plugins.bot_unified_runtime.sources.media_archive import (
     UNKNOWN_IP,
     MediaArchiveStore,
@@ -358,3 +364,74 @@ def test_reserved_windows_names_prefixed() -> None:
     """M-4：CON/NUL 等保留设备名加下划线前缀，mkdir 不再抛 OSError。"""
     assert sanitize_dirname("CON") == "_CON"
     assert sanitize_dirname("nul") == "_nul"
+
+
+# ---------------------------------------------------------------------------
+# 审查 F-06 回归锁：SSRF 拒绝信号（RejectedUrlError）不得逃逸中断整批
+# ---------------------------------------------------------------------------
+
+# 公网字面量 IP（example.com 历史 A 记录）：check_download_url 对字面量
+# IP 不做 DNS，离线确定性放行；随后由假 opener 模拟重定向逐跳护栏
+# （_GuardedRedirectHandler 在 open() 内部）抛 RejectedUrlError。
+_PUBLIC_LITERAL_URL = "http://93.184.216.34/pic.png"
+
+_ARCHIVE_LOGGER = "plugins.bot_unified_runtime.capabilities.media_archive"
+
+
+class _RedirectGuardFakeOpener:
+    """模拟真实传播形态：_GuardedRedirectHandler 先 WARNING 留痕再抛出，
+    open() 内部冒出 RejectedUrlError（字面 IP 127.0.0.1 命中内网网段分支）。"""
+
+    def open(self, request, timeout=20.0):
+        logging.getLogger(_ARCHIVE_LOGGER).warning(
+            "media archive SSRF guard rejected redirect: 该地址属于内网/保留网段，已拒绝"
+            " (url=http://127.0.0.1:9/evil.png)"
+        )
+        raise RejectedUrlError("该地址属于内网/保留网段，已拒绝")
+
+
+def test_rejected_url_does_not_abort_batch(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """F-06：一件坏 URL 被拒后记 WARNING 并跳过，后续正常条目照常归档。"""
+    capability = _capability(tmp_path, provider=_FakeProvider())
+    image = _image_file(tmp_path)
+    with (
+        caplog.at_level(logging.WARNING, logger=_ARCHIVE_LOGGER),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        mp.setattr(media_archive_module, "_OPENER", _RedirectGuardFakeOpener())
+        result = capability(_message(raw_segments=[
+            {"type": "image", "data": {"url": _PUBLIC_LITERAL_URL}},
+            {"type": "image", "data": {"path": image}},
+        ]), None)
+    assert "✔" in result.body, "坏 URL 之后的好条目必须照常归档（F-06 主断言）"
+    assert "skip_image" in result.audit_tags
+    saved = list((tmp_path / "archive").rglob("*.png"))
+    assert len(saved) == 1
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("SSRF guard rejected" in r.getMessage() for r in warnings), "拒绝必须 WARNING 留痕"
+
+
+def test_entry_rejection_logged_with_redacted_url(caplog: pytest.LogCaptureFixture) -> None:
+    """F-06：入口拒绝 WARNING 留痕，URL 形态过既有脱敏（userinfo 打码）。"""
+    with caplog.at_level(logging.WARNING, logger=_ARCHIVE_LOGGER):
+        assert media_archive_module._fetch_url_media(
+            "http://user:supersecret@127.0.0.1:9/pic.png", 1000
+        ) is None
+    assert not any(r.levelno == logging.ERROR for r in caplog.records)
+    text = "\n".join(r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+    assert "该地址属于内网/保留网段" in text, "字面 IP 命中内网网段分支，拒绝原因必须留痕"
+    assert "supersecret" not in text, "脱敏后的 URL 才允许进日志"
+    assert "已隐藏" in text
+
+
+def test_redirect_rejection_raises_after_logging(caplog: pytest.LogCaptureFixture) -> None:
+    """F-06：重定向护栏拒绝时先 WARNING 留痕再上抛，由捕获点收口跳过。"""
+    handler = media_archive_module._GuardedRedirectHandler()
+    with (
+        caplog.at_level(logging.WARNING, logger=_ARCHIVE_LOGGER),
+        pytest.raises(RejectedUrlError),
+    ):
+        handler.redirect_request(None, None, 302, "Found", {}, "http://127.0.0.1:9/x")
+    text = "\n".join(r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+    assert "rejected redirect" in text
+    assert "该地址属于内网/保留网段" in text
