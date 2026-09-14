@@ -640,10 +640,13 @@ def build_stocks_capability(config: Any | None = None, *, render_backend: Any | 
                 capability_id="bot.stocks",
                 kind="text",
                 body=(
-                    "想看哪家公司？目前支持：英伟达（NVDA）、AMD、英特尔（INTC）、"
+                    "想看哪家公司？美股支持：英伟达（NVDA）、AMD、英特尔（INTC）、"
                     "苹果（AAPL）、微软（MSFT）、谷歌（GOOGL）、亚马逊（AMZN）、"
-                    "Meta（META）、台积电（TSM）；OpenAI/Anthropic/字节跳动未上市，"
-                    "可以问它们的估值。或发「美股股价」看九家面板。"
+                    "Meta（META）、台积电（TSM）；A股：贵州茅台、宁德时代、比亚迪、"
+                    "招商银行、中国平安、建设银行、五粮液、紫金矿业、中芯国际；"
+                    "港股：腾讯控股、阿里巴巴、美团、小米集团、香港交易所、京东集团、"
+                    "网易、友邦保险；OpenAI/Anthropic/字节跳动未上市，可以问它们的"
+                    "估值。或发「美股股价」看九家面板。"
                 ),
                 audit_tags=["capability:stocks", "stocks:no_ticker"],
             )
