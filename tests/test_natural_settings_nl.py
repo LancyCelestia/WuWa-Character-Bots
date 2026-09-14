@@ -4,7 +4,8 @@
 ① 口语矩阵 ≥12 句 → 正确 SETTABLE_KEY + 目标值；
 ② 映射表外功能词（提醒/笔记/群摘要等真实键不存在的功能）不命中、落回 chat；
 ③ 一句多功能词 → 取第一个 + ambiguous 标记；
-④ FUNCTION_KEY_MAP 目标键全量遍历断言存在于 SETTABLE_KEYS（防漂移）；
+④ FUNCTION_KEY_MAP 目标键全量遍历断言存在于设置注册表（SETTABLE_KEYS ∪
+   RESTART_REQUIRED_KEYS，审查 C-09 后防漂移）；
 ⑤ 旧 7 支（weather/music/wiki/epic/today_history/meme_library/music_mode）零变化。
 
 权限红线（与被测模块 docstring 同口径）：映射层只识别不授权，
@@ -116,23 +117,39 @@ def test_multiple_feature_words_verb_first_order() -> None:
     assert resolution.setting_key == "BOT_VISION_ENABLED"
 
 
-# ---- ④ 防漂移：映射表目标键必须全量存在于 SETTABLE_KEYS ----
+# ---- ④ 防漂移：映射表目标键必须全量存在于设置注册表 ----
 
-def test_function_key_map_keys_all_exist_in_settable_keys() -> None:
+def test_function_key_map_keys_all_exist_in_settings_registry() -> None:
+    """映射目标键必须真实存在：热改白名单键或审查 C-09 重启键皆可。
+
+    审查 C-09 后 BOT_GROUP_CHAT_AUTO_REPLY_ENABLED 属装配期冻结键（消费点
+    在装配期把值冻进策略设置，热改不生效），已移出 SETTABLE_KEYS、由
+    RESTART_REQUIRED_KEYS 单独登记。映射层保留识别（口语 → 具体键），
+    派发层 set_override 会明确拒绝并提示「改 .env + 重启」——这比写入
+    成功却行为不变的死开关诚实。
+    """
+    from plugins.bot_unified_runtime.runtime.settings import RESTART_REQUIRED_KEYS
+
     assert FUNCTION_KEY_MAP, "映射表不应为空"
     for word, (key, label) in FUNCTION_KEY_MAP.items():
-        assert key in SETTABLE_KEYS, (
-            f"功能词 {word!r} 映射到 SETTABLE_KEYS 之外的键 {key!r}（防漂移红线）"
+        assert key in SETTABLE_KEYS or key in RESTART_REQUIRED_KEYS, (
+            f"功能词 {word!r} 映射到设置注册表之外的键 {key!r}（防漂移红线）"
         )
-        assert SETTABLE_KEYS[key] is not None
         assert label, f"功能词 {word!r} 缺少展示名"
 
 
 def test_function_key_map_values_are_boolean_toggle_keys() -> None:
     # 映射层只收布尔开关键：口语开/关方向必须能被 _bool_converter 解析。
-    from plugins.bot_unified_runtime.runtime.settings import _bool_converter
+    # 审查 C-09：重启键不在 SETTABLE_KEYS（set 在转换前就拒绝），跳过
+    # 转换器断言——其 config.py 对应字段本身即 bool。
+    from plugins.bot_unified_runtime.runtime.settings import (
+        RESTART_REQUIRED_KEYS,
+        _bool_converter,
+    )
 
     for word, (key, _label) in FUNCTION_KEY_MAP.items():
+        if key in RESTART_REQUIRED_KEYS:
+            continue
         assert SETTABLE_KEYS[key] is _bool_converter, (
             f"功能词 {word!r} 映射到非布尔开关键 {key!r}"
         )

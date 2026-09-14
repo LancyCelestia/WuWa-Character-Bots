@@ -22,7 +22,6 @@ ADMIN_KEYS_GROUP_LIMITS = (
     "BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR",
     "BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE",
     "BOT_RATE_LIMIT_EMOTION_EXEMPT",
-    "BOT_GROUP_CHAT_AUTO_REPLY_ENABLED",
     "BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY",
 )
 ADMIN_KEYS_FORWARD = (
@@ -44,10 +43,16 @@ ADMIN_KEYS_VISION_VIDEO = (
     "BOT_VIDEO_UNDERSTANDING_ENABLED",
 )
 ADMIN_KEYS_DIGEST = (
-    "BOT_SHARED_GROUP_CONTEXT_ENABLED",
     "BOT_GROUP_DIGEST_LIST_MODE",
     "BOT_GROUP_DIGEST_WHITELIST",
     "BOT_GROUP_DIGEST_BLACKLIST",
+)
+# 审查 C-09（死开关治理）：这两键的消费点在装配期冻结（写入成功但行为不变），
+# 已移出 SETTABLE_KEYS；帮助仍要写明键名，但口径是「.env+重启」，
+# runtime set 会明确拒绝——不得宣称可热改。
+ADMIN_KEYS_ENV_ONLY_RESTART = (
+    "BOT_GROUP_CHAT_AUTO_REPLY_ENABLED",
+    "BOT_SHARED_GROUP_CONTEXT_ENABLED",
 )
 
 
@@ -107,6 +112,11 @@ def test_new_config_keys_documented_and_settable() -> None:
     for key in ADMIN_KEYS_SWITCHES:
         assert key in blob, f"{key} 未写进帮助"
         assert key not in SETTABLE_KEYS, f"{key} 实为 .env 键，不应宣称可热改"
+    for key in ADMIN_KEYS_ENV_ONLY_RESTART:
+        assert key in blob, f"{key} 未写进帮助"
+        assert key not in SETTABLE_KEYS, (
+            f"{key} 实为 .env+重启键（审查 C-09 装配期冻结），不应宣称可热改"
+        )
     # 真实校验边界入文，防止"0=关闭"语义回退。
     assert "0=该帽不生效" in blob
     assert "whitelist|blacklist|off|all" in blob

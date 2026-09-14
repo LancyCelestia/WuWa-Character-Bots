@@ -2,6 +2,9 @@
 
 - 覆盖项只支持白名单键（防止任意配置注入），存 ``data/runtime_settings.json``
   （git 忽略），重启后保留。
+- 装配期冻结的键（``RESTART_REQUIRED_KEYS``，审查 C-09）不在白名单内：
+  ``set`` 对它们明确拒绝并提示「改 .env + 重启」——绝不允许「写入成功但
+  行为不变」的死开关骗人；消费点接入合并层实时求值后才可回白名单。
 - 昵称列表（多昵称）同样存这里，供命令别名解析器读取。
 - 互动计数按 sender_id 累计，供关系层级自动升级使用。
 - 线程安全（锁）；文件损坏时安全降级为空存储。
@@ -335,6 +338,24 @@ def _digest_list_mode_converter(value: str) -> str:
     return raw
 
 
+# 审查 C-09（死开关治理）：以下键曾列入 SETTABLE_KEYS，/bot runtime set 写入
+# 成功并持久化——但消费点在进程装配期把值冻结，运行时写入行为零变化：
+# - BOT_GROUP_CHAT_AUTO_REPLY_ENABLED：__init__.py 装配 RuntimePipeline 时把
+#   布尔值冻进 PolicySettings（policy/gate.py 抽签时读的是快照字段）。
+# - BOT_SHARED_GROUP_CONTEXT_ENABLED：装配期烘进 character/shared_group.py
+#   的群摘要 provider 实例，进程内不再回读 config。
+# 「死开关不许骗人」：这类键必须移出白名单，set 时单独拒绝并提示需重启；
+# 等消费点接入合并层（_config_with_runtime_overrides 同款实时求值）后才可回白名单。
+RESTART_REQUIRED_KEYS: dict[str, str] = {
+    "BOT_GROUP_CHAT_AUTO_REPLY_ENABLED": (
+        "消费点在装配期把开关冻进策略设置（pipeline→policy gate 抽签快照）"
+    ),
+    "BOT_SHARED_GROUP_CONTEXT_ENABLED": (
+        "消费点在装配期把开关烘进群摘要 provider（character/shared_group.py）"
+    ),
+}
+
+
 # 白名单键 -> 转换函数；转换失败抛 ValueError，不会写入。
 SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_CHAT_TEMPERATURE": _temperature_converter,
@@ -389,7 +410,8 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     # 实际生效值漂移（用户实测反馈：.env 写 gpt-5.6-terra、实际跑的是
     # qian-night-gemini；群名单两处不一致）。纳入运行时 store 后，
     # /bot runtime set 即可热改，且只有一处真相。
-    "BOT_GROUP_CHAT_AUTO_REPLY_ENABLED": _bool_converter,
+    # BOT_GROUP_CHAT_AUTO_REPLY_ENABLED 不在白名单：装配期冻结的死开关，
+    # 审查 C-09 治理——set 会明确拒绝，见上方 RESTART_REQUIRED_KEYS。
     "BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY": _probability_converter,
     "BOT_QUIET_HOURS_ENABLED": _bool_converter,
     "BOT_QUIET_HOURS_START": _clock_converter,
@@ -397,7 +419,8 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_QUIET_HOURS_TIMEZONE": _timezone_converter,
     "BOT_QUIET_HOURS_SESSION_TYPES": _session_types_converter,
     "BOT_QUIET_HOURS_BYPASS_ROLES": _role_list_converter,
-    "BOT_SHARED_GROUP_CONTEXT_ENABLED": _bool_converter,
+    # BOT_SHARED_GROUP_CONTEXT_ENABLED 不在白名单：装配期烘进群摘要 provider
+    # 的死开关，审查 C-09 治理——set 会明确拒绝，见上方 RESTART_REQUIRED_KEYS。
     "BOT_GROUP_DIGEST_LIST_MODE": _digest_list_mode_converter,
     "BOT_GROUP_DIGEST_WHITELIST": _group_list_converter,
     "BOT_GROUP_DIGEST_BLACKLIST": _group_list_converter,
@@ -604,6 +627,14 @@ class RuntimeSettingsStore:
 
     def set_override(self, key: str, value: str) -> Any:
         normalized_key = key.strip().upper()
+        # 审查 C-09（死开关不许骗人）：装配期冻结键在进白名单校验之前单独
+        # 拒绝并提示重启，绝不写入覆盖——宁可拒绝，不可假成功。
+        if normalized_key in RESTART_REQUIRED_KEYS:
+            raise ValueError(
+                f"不支持运行时热改的键：{normalized_key}"
+                f"（{RESTART_REQUIRED_KEYS[normalized_key]}）。"
+                "请修改 .env 配置并重启 bot 生效。"
+            )
         if normalized_key not in SETTABLE_KEYS:
             raise ValueError(
                 f"不支持运行时修改的键：{normalized_key}。"
