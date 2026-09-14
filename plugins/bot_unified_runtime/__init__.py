@@ -3056,6 +3056,16 @@ def _register_nonebot_handlers() -> None:
     )
     receipt_repository = build_receipt_repository(config)
     send_queue = build_send_queue(config, audit_logger=audit_logger)
+    # 审查 A-02：默认内存队列零持久化+零网络投递（重启丢在途消息；提醒等
+    # submit 型链路靠内联投递兜底）。启动即如实告警一次，把「可靠投递」的
+    # 开关位置告诉管理员，而不是让丢消息无声发生。
+    from .sender.queue import InMemorySendQueue
+
+    if isinstance(send_queue, InMemorySendQueue):
+        logging.getLogger(__name__).warning(
+            "发送队列当前为内存版（BOT_SEND_QUEUE_ENABLED 未开启）：进程重启将丢失在途消息；"
+            "如需可靠投递与断点续发，请在 .env 设 BOT_SEND_QUEUE_ENABLED=true 后重启。"
+        )
     diagnostics_store = build_diagnostics_store(config)
     mail_bridge_state = MailBridgeState(config.bot_mail_bridge_state_file)
     runtime_control = RuntimeControlState()
