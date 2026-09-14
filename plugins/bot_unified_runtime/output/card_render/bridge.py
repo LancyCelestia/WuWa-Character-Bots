@@ -15,6 +15,7 @@ Copyright (c) 2024 Les Freire）。
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
 import html
 import io
@@ -375,12 +376,27 @@ def _clean_card_summary(summary: str) -> str:
 
 
 
+# 审查 L-09：SVG 指标图标×7（_METRIC_ICON_FILES）与平台 logo×12 键
+# （_PLATFORM_LOGO_FILES）每次渲染都经 _load_icon_asset 走 read_text 读盘
+# +strip——内容进程内不变，重复读盘纯浪费 → 进程内 lru 缓存（容量 64，
+# 覆盖 19 个注册键仍有余量）。契约零变化：
+# - 返回值与未加缓存前逐位一致；
+# - 失败路径不变：lru_cache 不缓存异常，文件缺失/解码失败时每次调用照旧
+#   重试读盘再回退 ""（不做负缓存，文件随后出现的场景语义不变）。
+# 取舍：键=相对路径，不做 mtime 失效——_ICON_ASSET_ROOT 在 import 期解析
+# 后进程内恒定，图标属随包资产（换图=发版行为）；若需热更图标需重启进程。
+@functools.lru_cache(maxsize=64)
+def _read_icon_asset_cached(relative_path: str) -> str:
+    """读盘+去首尾空白；仅成功读取进缓存，异常上抛交调用方回退。"""
+    return (_ICON_ASSET_ROOT / relative_path).read_text(encoding="utf-8").strip()
+
+
 def _load_icon_asset(relative_path: str) -> str:
-    """Load an Iconfont SVG for inline rendering."""
+    """Load an Iconfont SVG for inline rendering（L-09：读盘结果进程内缓存）。"""
     if not relative_path:
         return ""
     try:
-        return (_ICON_ASSET_ROOT / relative_path).read_text(encoding="utf-8").strip()
+        return _read_icon_asset_cached(relative_path)
     except (OSError, UnicodeError):
         return ""
 
