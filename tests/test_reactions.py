@@ -648,3 +648,45 @@ def test_qsid_signal_posts_correct_face_end_to_end():
             "set_msg_emoji_like",
             {"message_id": 600 + idx, "emoji_id": emoji_id},
         )]
+
+
+# ------------------------------------------------- 审查 L-02：_window LRU 上界
+
+
+def test_l02_window_keys_capped_at_4096():
+    """L-02 回归①：_window 键数封顶 _REACTION_LRU_CAP=4096（对齐 _last/
+    _reacted/_rolled 惯例），长跑不再随会话键无界增长。"""
+    from plugins.bot_unified_runtime.runtime.reactions import _REACTION_LRU_CAP
+
+    gate = ProactiveGate()
+    kwargs = {
+        "enabled": True, "probability": 1.0,
+        "cooldown_seconds": 0.0, "max_per_hour": 20,
+    }
+    # 超量会话键涌入：每个新键都会在 allow() 里触达 _window 并登记。
+    for i in range(_REACTION_LRU_CAP + 1000):
+        assert gate.allow(f"sess_{i}", "m", **kwargs) is True
+    assert len(gate._window) == _REACTION_LRU_CAP  # 恰好封顶，不增不减
+
+
+def test_l02_evicted_session_window_fresh_empty_bucket():
+    """L-02 回归②：被淘汰的会话键再进来按全新空桶处理，不复活旧滑窗数据。"""
+    clock = FakeClock()
+    gate = ProactiveGate(clock=clock)
+    kwargs = {
+        "enabled": True, "probability": 1.0,
+        "cooldown_seconds": 0.0, "max_per_hour": 2,
+    }
+    # s_old 滑窗填满（2/2；m3 被时限拦下）
+    assert gate.allow("s_old", "m1", **kwargs) is True
+    assert gate.allow("s_old", "m2", **kwargs) is True
+    assert gate.allow("s_old", "m3", **kwargs) is False
+    # 4096 个新键按插入序把 s_old 挤出 LRU（淘汰最旧触达键）
+    for i in range(4096):
+        assert gate.allow(f"flood_{i}", "m", **kwargs) is True
+    assert "s_old" not in gate._window  # 已被淘汰
+    # 再进来：滑窗从零重新计数——旧 2 条不复活（若复活 m4 会被拦）
+    assert gate.allow("s_old", "m4", **kwargs) is True
+    assert list(gate._window["s_old"]) == [clock.now]  # 全新桶仅含本次登记
+    assert gate.allow("s_old", "m5", **kwargs) is True
+    assert gate.allow("s_old", "m6", **kwargs) is False  # 新桶按 max_per_hour=2 封顶

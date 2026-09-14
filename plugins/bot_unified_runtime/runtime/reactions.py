@@ -426,7 +426,11 @@ class ProactiveGate:
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self.clock = clock
         self._last: OrderedDict[str, float] = OrderedDict()
-        self._window: dict[str, deque[float]] = {}
+        # 审查 L-02：_window 原为无上界 dict——消费端只对桶内 popleft、从不
+        # 淘汰键，长跑按会话键无界增长。改 OrderedDict 并对齐同文件 _last/
+        # _reacted/_rolled 的 LRU 惯例：封顶 _REACTION_LRU_CAP、插入序淘汰
+        # 最旧键（淘汰动作在 allow() 的触达点，见下）。
+        self._window: OrderedDict[str, deque[float]] = OrderedDict()
         self._reacted: OrderedDict[tuple[str, str], None] = OrderedDict()
         # 「本消息已骰」登记（双骰漏洞修复）：同一消息无论 salt/触发（B 败
         # 后 A 换 salt 重掷）只掷一次概率骰，登记发生在实际掷骰前。
@@ -459,7 +463,13 @@ class ProactiveGate:
         last = self._last.get(key, -1e9)
         if current - last < max(0.0, float(cooldown_seconds)):
             return False
+        # 审查 L-02：触达即 move_to_end + 超界淘汰最旧键（与 _last/_reacted/
+        # _rolled 同款三连）；被淘汰的会话键再进来按全新空桶处理，不复活旧
+        # 滑窗。键数未达上界时五层门判定与旧实现逐字节一致——纯内存治理。
         window = self._window.setdefault(key, deque())
+        self._window.move_to_end(key)
+        while len(self._window) > _REACTION_LRU_CAP:
+            self._window.popitem(last=False)
         while window and current - window[0] > 3600.0:
             window.popleft()
         if len(window) >= max(1, int(max_per_hour)):
