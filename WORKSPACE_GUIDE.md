@@ -21,7 +21,7 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\
 
 | 目录 | AI 是否扫描 | 说明 |
 |---|---:|---|
-| `ChatBot\` | 是 | 生产源码、`tests/` 回归树（~1760 用例）、现行 docs、`personas/`、脚本 |
+| `ChatBot\` | 是 | 生产源码、`tests/` 回归树（用例数以最近一次实跑为准，规模口径见 `docs/auto-facts.md`）、现行 docs、`personas/`、脚本 |
 | `ChatBot_Runtime\data\` | 否 | 向量嵌入、聊天记忆、cookie、订阅状态、日志、下载与运行状态 |
 | `ChatBot_Runtime\venv\` | 否 | Python 依赖；不要复制回源码目录 |
 | `ChatBot_Runtime\cache\` | 否 | Ruff/mypy/pytest 等可再生缓存 |
@@ -36,7 +36,7 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\
 
 ```powershell
 Set-Location 'C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot'
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Task help"            # 全部 40 个任务
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Task help"            # 全部任务清单（以 help 实时输出为准）
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Task readiness-smoke"
 ```
 
@@ -63,7 +63,7 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Archive\YYYY-MM-DD\
 
 ## 测试树
 
-`tests\` 是完整回归树（~1760 用例，全离线 mock），**常驻源码区**，是质量护栏而非运行依赖。
+`tests\` 是完整回归树（全离线 mock；测试文件数见 `docs/auto-facts.md`，用例数以最近一次实跑为准），**常驻源码区**，是质量护栏而非运行依赖。
 测试若以默认路径写源码树 `data/` 属已知残留（AGENTS.md 问题台账 #1，Wave-6 tmp_path 化），
 发现即备份 `%TEMP%` 后清除并复跑 `runtime-layout`。
 
