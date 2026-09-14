@@ -355,7 +355,11 @@ def _xhs_best_stream_url(stream: object) -> str:
                 continue
             backups = entry.get("backupUrls")
             backup_first = backups[0] if isinstance(backups, list) and backups else ""
-            url = str(entry.get("masterUrl") or backup_first or "").strip()
+            # 兼容旧本地形态：历史夹具/旧接口的流条目只有 "url" 键（无
+            # masterUrl/backupUrls）——作为末位兜底，保证老数据不空转。
+            url = str(
+                entry.get("masterUrl") or backup_first or entry.get("url") or ""
+            ).strip()
             if not url:
                 continue
             height = entry.get("height")

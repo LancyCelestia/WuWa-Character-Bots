@@ -249,3 +249,22 @@ def test_http_get_5xx_keeps_legacy_no_retry_semantics(monkeypatch):
     assert exc_info.value.status_code == 503
     assert opener.calls == 1
     assert sleeps == []
+
+
+def test_xhs_best_stream_url_legacy_url_key_fallback() -> None:
+    """旧本地流形态（仅 "url" 键，无 masterUrl/backupUrls）不空转（回归）。"""
+    from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
+        _xhs_best_stream_url,
+    )
+
+    assert (
+        _xhs_best_stream_url({"h264": [{"url": "https://sns-video-hw.xhscdn.com/v.mp4"}]})
+        == "https://sns-video-hw.xhscdn.com/v.mp4"
+    )
+    # 新旧混合：masterUrl 优先于 url。
+    assert (
+        _xhs_best_stream_url(
+            {"EF7": [{"url": "https://legacy/v.mp4", "masterUrl": "https://new/v.mp4"}]}
+        )
+        == "https://new/v.mp4"
+    )
