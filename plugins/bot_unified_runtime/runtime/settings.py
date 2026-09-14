@@ -62,12 +62,6 @@ def _transport_timeout_converter(value: str) -> float:
 
 
 
-def _probability_converter(value: str) -> float:
-    number = float(value)
-    if not math.isfinite(number) or not 0 <= number <= 1:
-        raise ValueError("概率必须在 0..1 之间")
-    return number
-
 def _model_converter(value: str) -> str:
     cleaned = value.strip()
     if not cleaned or len(cleaned) > 64:
@@ -257,22 +251,6 @@ def _group_list_converter(value: str) -> list[str]:
     return cleaned
 
 
-def _model_schedule_converter(value: str) -> str:
-    """分时段模型切换表：接受 JSON 对象字符串或空值；原样存字符串，调度器负责解析。"""
-    raw = (value or "").strip()
-    if not raw:
-        return ""
-    try:
-        parsed = json.loads(raw)
-    except ValueError as exc:
-        raise ValueError(
-            'BOT_MODEL_SCHEDULE 必须是 JSON 对象，如 {"23:00-07:00":"luna"}'
-        ) from exc
-    if not isinstance(parsed, dict):
-        raise TypeError("BOT_MODEL_SCHEDULE 必须是 JSON 对象")
-    return raw
-
-
 def _memory_duration_converter(value: str) -> float:
     number = float(value)
     if not math.isfinite(number) or not 0 < number <= 3600:
@@ -331,13 +309,6 @@ def _role_list_converter(value: str) -> list[str]:
     return [item.strip().lower() for item in re.split(r"[,\s;]+", str(value)) if item.strip()]
 
 
-def _digest_list_mode_converter(value: str) -> str:
-    raw = str(value).strip().lower()
-    if raw not in {"whitelist", "blacklist", "off", "all"}:
-        raise ValueError("群摘要名单模式只能是 whitelist|blacklist|off|all")
-    return raw
-
-
 # 审查 C-09（死开关治理）：以下键曾列入 SETTABLE_KEYS，/bot runtime set 写入
 # 成功并持久化——但消费点在进程装配期把值冻结，运行时写入行为零变化：
 # - BOT_GROUP_CHAT_AUTO_REPLY_ENABLED：__init__.py 装配 RuntimePipeline 时把
@@ -346,12 +317,129 @@ def _digest_list_mode_converter(value: str) -> str:
 #   的群摘要 provider 实例，进程内不再回读 config。
 # 「死开关不许骗人」：这类键必须移出白名单，set 时单独拒绝并提示需重启；
 # 等消费点接入合并层（_config_with_runtime_overrides 同款实时求值）后才可回白名单。
+#
+# 2026-09-15 热改面全量审计（SETTABLE 回标）：把白名单逐键按消费点复核了一遍
+# （判据=键值在每次消费时现读 store/合并层 config → 可热改；装配期快照进
+# 调度器/工厂/线程池闭包/PolicySettings → 写了不生效，归入本清单）。实跑实证：
+# 合并层 _config_with_runtime_overrides 对 poke 覆盖零传播、对 quiet 覆盖正常
+# 传播——据此把 28 个「写成功但行为不变」的残项从 SETTABLE_KEYS 移入本清单。
+# 消费点接入合并层实时求值后，对应键即可回白名单（拒绝文案里已点名消费点）。
 RESTART_REQUIRED_KEYS: dict[str, str] = {
+    # ---- C-09 首批 ----
     "BOT_GROUP_CHAT_AUTO_REPLY_ENABLED": (
         "消费点在装配期把开关冻进策略设置（pipeline→policy gate 抽签快照）"
     ),
     "BOT_SHARED_GROUP_CONTEXT_ENABLED": (
         "消费点在装配期把开关烘进群摘要 provider（character/shared_group.py）"
+    ),
+    # ---- 2026-09-15 审计移入：群策略族 ----
+    "BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY": (
+        "抽签概率在装配期闭包捕获裸 config（pipeline→gate 抽签快照）；"
+        "合并层条目无消费方，覆盖写入了也不被读取"
+    ),
+    "BOT_GROUP_PROACTIVE_COOLDOWN_SECONDS": (
+        "经装配期 settings_provider 读 config（policy/rate_limit.py），"
+        "合并层未登记该键，覆盖不可达"
+    ),
+    "BOT_GROUP_PROACTIVE_MAX_REPLIES_PER_HOUR": (
+        "经装配期 settings_provider 读 config（policy/rate_limit.py），"
+        "合并层未登记该键，覆盖不可达"
+    ),
+    # ---- 合并转发阈值：RuntimePipeline 装配期快照 int，发送期读 self.forward_* ----
+    "BOT_RENDER_FORWARD_MIN_NODES": (
+        "装配期冻进 pipeline 快照字段（runtime/pipeline.py forward_*，发送期不再回读）"
+    ),
+    "BOT_RENDER_FORWARD_MIN_CHARS": (
+        "装配期冻进 pipeline 快照字段（runtime/pipeline.py forward_*，发送期不再回读）"
+    ),
+    "BOT_RENDER_FORWARD_MAX_NODES": (
+        "装配期冻进 pipeline 快照字段（runtime/pipeline.py forward_*，发送期不再回读）"
+    ),
+    "BOT_RENDER_FORWARD_NODE_CHARS": (
+        "装配期冻进 pipeline 快照字段（runtime/pipeline.py forward_*，发送期不再回读）"
+    ),
+    # ---- 群摘要名单：装配期烘进 ListFilteredSharedGroupContextProvider ----
+    "BOT_GROUP_DIGEST_LIST_MODE": (
+        "名单在装配期烘进摘要过滤器（character/shared_group.py 装配期快照）"
+    ),
+    "BOT_GROUP_DIGEST_WHITELIST": (
+        "名单在装配期烘进摘要过滤器（character/shared_group.py 装配期快照）"
+    ),
+    "BOT_GROUP_DIGEST_BLACKLIST": (
+        "名单在装配期烘进摘要过滤器（character/shared_group.py 装配期快照）"
+    ),
+    # ---- 模型分时段表：30 秒切换任务闭包读装配期裸 config ----
+    "BOT_MODEL_SCHEDULE": (
+        "切换任务闭包读装配期裸 config（runtime/model_schedule.py）；"
+        "改 BOT_CHAT_MODEL 仍可热改"
+    ),
+    # ---- 联网检索供应商链：build_web_search_provider(装配期 config) 构建 ----
+    "BOT_WEB_SEARCH_PROVIDER": (
+        "检索供应商链由装配期 config 构建（sources/web_search.py），工厂闭包不回读覆盖"
+    ),
+    "BOT_WEB_SEARCH_FALLBACK_PROVIDERS": (
+        "检索供应商链由装配期 config 构建（sources/web_search.py），工厂闭包不回读覆盖"
+    ),
+    # ---- 视频理解族：经 media_config=装配期裸 config 读取 ----
+    "BOT_VIDEO_MAX_FRAMES": (
+        "视频编排经装配期 media_config 读取（sources/video_understanding.py），覆盖不可达"
+    ),
+    "BOT_VIDEO_SKIP_ASR_WITH_SUBTITLE": (
+        "视频编排经装配期 media_config 读取（sources/video_understanding.py），覆盖不可达"
+    ),
+    "BOT_VIDEO_PROGRESS_ACK_ENABLED": (
+        "进度提示读装配期 config（runtime/video_pipeline.py），覆盖不可达"
+    ),
+    "BOT_VIDEO_FUZZY_FOLLOWUP": (
+        "读装配期 media_config（capabilities/chat.py），覆盖不可达"
+    ),
+    "BOT_VIDEO_DEEP_ENABLED": (
+        "读装配期 media_config（capabilities/chat.py），覆盖不可达"
+    ),
+    "BOT_VIDEO_NATIVE_INPUT": (
+        "视频编排经装配期 media_config 读取（sources/video_understanding.py），覆盖不可达"
+    ),
+    "BOT_CONTENT_VIDEO_AUTO_SEND": (
+        "解析能力持装配期 config 每消息读取（capabilities/content_parser.py），覆盖不可达"
+    ),
+    # ---- 戳一戳族：PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* ----
+    "BOT_POKE_ENABLED": (
+        "PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* "
+        "（capabilities/poke.py），覆盖不可达；接线后可回白名单"
+    ),
+    "BOT_POKE_PRIVATE_COOLDOWN_SECONDS": (
+        "PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* "
+        "（capabilities/poke.py），覆盖不可达；接线后可回白名单"
+    ),
+    "BOT_POKE_GROUP_COOLDOWN_SECONDS": (
+        "PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* "
+        "（capabilities/poke.py），覆盖不可达；接线后可回白名单"
+    ),
+    "BOT_POKE_PROBABILITY": (
+        "PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* "
+        "（capabilities/poke.py），覆盖不可达；接线后可回白名单"
+    ),
+    "BOT_POKE_REPLY_ENABLED": (
+        "PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* "
+        "（capabilities/poke.py），覆盖不可达；接线后可回白名单"
+    ),
+    "BOT_POKE_POKE_BACK": (
+        "PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* "
+        "（capabilities/poke.py），覆盖不可达；接线后可回白名单"
+    ),
+    "BOT_POKE_GROUP_TEXT": (
+        "PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* "
+        "（capabilities/poke.py），覆盖不可达；接线后可回白名单"
+    ),
+    "BOT_POKE_PRIVATE_TEXT": (
+        "PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* "
+        "（capabilities/poke.py），覆盖不可达；接线后可回白名单"
+    ),
+    # ---- 半接线（诚实拒绝优于半生效）----
+    "BOT_DOWNLOAD_PROXY": (
+        "下载代理 getter 每次现读 store，但 Telegram 媒体路径直读 env 不经 store"
+        "（sources/telegram_media.py）——半接线，热改仅部分通道生效；"
+        "补齐后可回白名单"
     ),
 }
 
@@ -362,6 +450,13 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_CHAT_MAX_TOKENS": _max_tokens_converter,
     "BOT_CHAT_FAST_MODE": _bool_converter,
     "BOT_CHAT_FAST_MAX_TOKENS": _max_tokens_converter,
+    # 2026-09-15 审计新增：chat 能力每消息经 get_or 现读（capabilities/chat.py
+    # BOT_CHAT_FAST_MAX_CANDIDATES/CONTEXT_BUDGET/WEB_MAX_QUERIES/SKIP_WEB_PAGES），
+    # 白名单此前漏登——补上后 /bot runtime set 即时生效。
+    "BOT_CHAT_FAST_MAX_CANDIDATES": _non_negative_int_converter,
+    "BOT_CHAT_FAST_CONTEXT_BUDGET": _non_negative_int_converter,
+    "BOT_CHAT_FAST_WEB_MAX_QUERIES": _non_negative_int_converter,
+    "BOT_CHAT_FAST_SKIP_WEB_PAGES": _bool_converter,
     "BOT_MEMORY_EXTRACT_ENABLED": _bool_converter,
     "BOT_MEMORY_EXTRACT_TIMEOUT_SECONDS": _memory_duration_converter,
     "BOT_MEMORY_EXTRACT_MAX_TOKENS": _memory_tokens_converter,
@@ -369,15 +464,14 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_CHAT_MODEL": _model_converter,
     "BOT_CHAT_REASONING_EFFORT": _reasoning_effort_converter,
     "BOT_TRANSPORT_TIMEOUT_SECONDS": _transport_timeout_converter,
-    "BOT_MODEL_SCHEDULE": _model_schedule_converter,
     "BOT_MODEL_PRIORITY_GROUPS": _model_priority_groups_converter,
     "BOT_MODEL_PRICES": _model_prices_converter,
     "BOT_REPLY_MAX_CHARS_PER_MESSAGE": _reply_chars_converter,
     "BOT_MEME_SEARCH_ENABLED": _bool_converter,
     "BOT_WEB_SEARCH_ENABLED": _bool_converter,
-    "BOT_WEB_SEARCH_PROVIDER": lambda value: str(value).strip().lower(),
-    "BOT_WEB_SEARCH_FALLBACK_PROVIDERS": lambda value: [item.strip().lower() for item in str(value).replace(";", ",").split(",") if item.strip()],
-
+    # BOT_WEB_SEARCH_PROVIDER / BOT_WEB_SEARCH_FALLBACK_PROVIDERS 不在白名单：
+    # 2026-09-15 审计——检索供应商链由装配期 config 构建，覆盖不生效，
+    # 见 RESTART_REQUIRED_KEYS。
     "BOT_WEB_SEARCH_ADMIN_NOTICE": _bool_converter,
     "BOT_PERSONA_ACTION_BRACKETS": _bool_converter,
     "BOT_MUSIC_MODE": _music_mode_converter,
@@ -386,22 +480,14 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_VISION_MODE": _vision_mode_converter,
     "BOT_ASR_ENABLED": _bool_converter,
     "BOT_VIDEO_UNDERSTANDING_ENABLED": _bool_converter,
-    "BOT_VIDEO_MAX_FRAMES": lambda value: max(1, int(str(value).strip() or "1")),
-    "BOT_VIDEO_SKIP_ASR_WITH_SUBTITLE": _bool_converter,
-    "BOT_VIDEO_PROGRESS_ACK_ENABLED": _bool_converter,
-    "BOT_VIDEO_FUZZY_FOLLOWUP": _bool_converter,
-    "BOT_VIDEO_DEEP_ENABLED": _bool_converter,
-    "BOT_VIDEO_NATIVE_INPUT": _bool_converter,
-    "BOT_CONTENT_VIDEO_AUTO_SEND": _bool_converter,
-    "BOT_POKE_ENABLED": _bool_converter,
-    "BOT_POKE_PRIVATE_COOLDOWN_SECONDS": _memory_duration_converter,
-    "BOT_POKE_GROUP_COOLDOWN_SECONDS": _memory_duration_converter,
-    "BOT_POKE_PROBABILITY": _probability_converter,
-    # B10 统一戳一戳分发：回戳/话术开关与文案（消费点 capabilities.poke.PokeDispatcher）。
-    "BOT_POKE_REPLY_ENABLED": _bool_converter,
-    "BOT_POKE_POKE_BACK": _bool_converter,
-    "BOT_POKE_GROUP_TEXT": lambda value: str(value),
-    "BOT_POKE_PRIVATE_TEXT": lambda value: str(value),
+    # BOT_VIDEO_MAX_FRAMES / SKIP_ASR_WITH_SUBTITLE / PROGRESS_ACK_ENABLED /
+    # FUZZY_FOLLOWUP / DEEP_ENABLED / NATIVE_INPUT / BOT_CONTENT_VIDEO_AUTO_SEND
+    # 不在白名单：2026-09-15 审计——视频族经装配期 media_config 裸 config 读取，
+    # 覆盖不生效，见 RESTART_REQUIRED_KEYS。
+    # BOT_POKE_*（8 键）不在白名单：PokeDispatcher 读合并层 config，但合并表
+    # 未登记 bot_poke_* 字段（__init__._RUNTIME_HOT_OVERRIDE_FIELDS），覆盖不可达，
+    # 见 RESTART_REQUIRED_KEYS；__init__.py 戳一戳 handler 处「立即生效」注释
+    # 与此不符，待主会话接线合并层后回白名单并修正注释。
     "BOT_GROUP_BLACK1": _group_list_converter,
     "BOT_GROUP_BLACK2": _group_list_converter,
     "BOT_GROUP_WHITE1": _group_list_converter,
@@ -410,9 +496,10 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     # 实际生效值漂移（用户实测反馈：.env 写 gpt-5.6-terra、实际跑的是
     # qian-night-gemini；群名单两处不一致）。纳入运行时 store 后，
     # /bot runtime set 即可热改，且只有一处真相。
-    # BOT_GROUP_CHAT_AUTO_REPLY_ENABLED 不在白名单：装配期冻结的死开关，
-    # 审查 C-09 治理——set 会明确拒绝，见上方 RESTART_REQUIRED_KEYS。
-    "BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY": _probability_converter,
+    # BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY 不在白名单：抽签闭包捕获裸 config，
+    # 覆盖不被读取；BOT_GROUP_DIGEST_LIST_MODE/WHITELIST/BLACKLIST 不在白名单：
+    # 名单装配期烘进摘要过滤器；BOT_GROUP_PROACTIVE_* 与 BOT_RENDER_FORWARD_*
+    # 同为装配期快照——2026-09-15 审计统一移入 RESTART_REQUIRED_KEYS。
     "BOT_QUIET_HOURS_ENABLED": _bool_converter,
     "BOT_QUIET_HOURS_START": _clock_converter,
     "BOT_QUIET_HOURS_END": _clock_converter,
@@ -421,17 +508,8 @@ SETTABLE_KEYS: dict[str, Callable[[str], Any]] = {
     "BOT_QUIET_HOURS_BYPASS_ROLES": _role_list_converter,
     # BOT_SHARED_GROUP_CONTEXT_ENABLED 不在白名单：装配期烘进群摘要 provider
     # 的死开关，审查 C-09 治理——set 会明确拒绝，见上方 RESTART_REQUIRED_KEYS。
-    "BOT_GROUP_DIGEST_LIST_MODE": _digest_list_mode_converter,
-    "BOT_GROUP_DIGEST_WHITELIST": _group_list_converter,
-    "BOT_GROUP_DIGEST_BLACKLIST": _group_list_converter,
-    "BOT_GROUP_PROACTIVE_COOLDOWN_SECONDS": _memory_duration_converter,
-    "BOT_GROUP_PROACTIVE_MAX_REPLIES_PER_HOUR": lambda value: max(
-        0, int(str(value).strip() or "0")
-    ),
-    "BOT_RENDER_FORWARD_MIN_NODES": lambda value: max(0, int(str(value).strip() or "0")),
-    "BOT_RENDER_FORWARD_MIN_CHARS": lambda value: max(0, int(str(value).strip() or "0")),
-    "BOT_RENDER_FORWARD_MAX_NODES": lambda value: max(0, int(str(value).strip() or "0")),
-    "BOT_RENDER_FORWARD_NODE_CHARS": lambda value: max(200, int(str(value).strip() or "900")),
+    # BOT_GROUP_DIGEST_LIST_MODE/WHITELIST/BLACKLIST 同理（名单装配期烘进
+    # ListFilteredSharedGroupContextProvider），2026-09-15 审计移入重启键清单。
     "BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR": _non_negative_int_converter,
     "BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE": _non_negative_int_converter,
     "BOT_RATE_LIMIT_EMOTION_EXEMPT": _bool_converter,

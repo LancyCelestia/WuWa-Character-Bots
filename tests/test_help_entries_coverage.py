@@ -22,7 +22,6 @@ ADMIN_KEYS_GROUP_LIMITS = (
     "BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR",
     "BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE",
     "BOT_RATE_LIMIT_EMOTION_EXEMPT",
-    "BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY",
 )
 ADMIN_KEYS_FORWARD = (
     "BOT_RENDER_FORWARD_MIN_NODES",
@@ -47,12 +46,20 @@ ADMIN_KEYS_DIGEST = (
     "BOT_GROUP_DIGEST_WHITELIST",
     "BOT_GROUP_DIGEST_BLACKLIST",
 )
-# 审查 C-09（死开关治理）：这两键的消费点在装配期冻结（写入成功但行为不变），
-# 已移出 SETTABLE_KEYS；帮助仍要写明键名，但口径是「.env+重启」，
-# runtime set 会明确拒绝——不得宣称可热改。
+# 审查 C-09（死开关治理）+ 2026-09-15 热改面全量审计：以下键的消费点在装配期
+# 冻结（写入成功但行为不变），已移出 SETTABLE_KEYS；帮助仍要写明键名，但口径
+# 是「.env+重启」，runtime set 会明确拒绝——不得宣称可热改。
 ADMIN_KEYS_ENV_ONLY_RESTART = (
     "BOT_GROUP_CHAT_AUTO_REPLY_ENABLED",
     "BOT_SHARED_GROUP_CONTEXT_ENABLED",
+    "BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY",
+    "BOT_GROUP_DIGEST_LIST_MODE",
+    "BOT_GROUP_DIGEST_WHITELIST",
+    "BOT_GROUP_DIGEST_BLACKLIST",
+    "BOT_RENDER_FORWARD_MIN_NODES",
+    "BOT_RENDER_FORWARD_MIN_CHARS",
+    "BOT_RENDER_FORWARD_MAX_NODES",
+    "BOT_RENDER_FORWARD_NODE_CHARS",
 )
 
 
@@ -95,20 +102,18 @@ def test_new_config_keys_documented_and_settable() -> None:
     hot_keys = (
         ADMIN_KEYS_QUIET_HOURS
         + ADMIN_KEYS_GROUP_LIMITS
-        + ADMIN_KEYS_FORWARD
         + ADMIN_KEYS_VISION_VIDEO
-        + ADMIN_KEYS_DIGEST
     )
-    for key in hot_keys:
+    # 帮助必须写键名（可发现性），但只有真热改键才允许宣称可 set；
+    # FORWARD/DIGEST 族经 2026-09-15 审计证实为装配期快照死开关，归入重启键。
+    for key in hot_keys + ADMIN_KEYS_FORWARD + ADMIN_KEYS_DIGEST:
         assert key in blob, f"{key} 未写进帮助"
-    for key in (
-        ADMIN_KEYS_QUIET_HOURS
-        + ADMIN_KEYS_GROUP_LIMITS
-        + ADMIN_KEYS_FORWARD
-        + ADMIN_KEYS_VISION_VIDEO
-        + ADMIN_KEYS_DIGEST
-    ):
+    for key in hot_keys:
         assert key in SETTABLE_KEYS, f"{key} 应可经 /bot runtime set 修改"
+    for key in ADMIN_KEYS_FORWARD + ADMIN_KEYS_DIGEST:
+        assert key not in SETTABLE_KEYS, (
+            f"{key} 实为装配期冻结键（2026-09-15 审计），不应宣称可热改"
+        )
     for key in ADMIN_KEYS_SWITCHES:
         assert key in blob, f"{key} 未写进帮助"
         assert key not in SETTABLE_KEYS, f"{key} 实为 .env 键，不应宣称可热改"

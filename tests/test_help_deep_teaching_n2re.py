@@ -118,25 +118,26 @@ def test_documented_hot_keys_match_settable_keys() -> None:
         "BOT_QUIET_HOURS_TIMEZONE", "BOT_QUIET_HOURS_SESSION_TYPES", "BOT_QUIET_HOURS_BYPASS_ROLES",
         "BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR", "BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE",
         "BOT_RATE_LIMIT_EMOTION_EXEMPT",
+        "BOT_VISION_ENABLED", "BOT_VISION_MODE", "BOT_VIDEO_UNDERSTANDING_ENABLED",
+    ):
+        assert key in blob, f"{key} 未写进帮助"
+        assert key in SETTABLE_KEYS, f"{key} 应可 /bot runtime set"
+    # .env-only / 装配期冻结键：文档要写，但绝不能宣称可热改。每日推送两键与
+    # AUTO_REPLY_ENABLED / SHARED_GROUP_CONTEXT_ENABLED 是审查 C-09 治理；抽签
+    # 概率、合并转发阈值、群摘要名单三族是 2026-09-15 热改面审计新实锤的装配期
+    # 快照死开关（写入成功但行为不变），已移出 SETTABLE_KEYS，runtime set 明确
+    # 拒绝并提示重启。
+    for key in (
+        "BOT_GROUP_DIGEST_PUSH_ENABLED", "BOT_GROUP_DIGEST_PUSH_TIME",
+        "BOT_GROUP_CHAT_AUTO_REPLY_ENABLED", "BOT_SHARED_GROUP_CONTEXT_ENABLED",
         "BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY",
         "BOT_RENDER_FORWARD_MIN_NODES", "BOT_RENDER_FORWARD_MIN_CHARS",
         "BOT_RENDER_FORWARD_MAX_NODES", "BOT_RENDER_FORWARD_NODE_CHARS",
-        "BOT_VISION_ENABLED", "BOT_VISION_MODE", "BOT_VIDEO_UNDERSTANDING_ENABLED",
         "BOT_GROUP_DIGEST_LIST_MODE",
         "BOT_GROUP_DIGEST_WHITELIST", "BOT_GROUP_DIGEST_BLACKLIST",
     ):
         assert key in blob, f"{key} 未写进帮助"
-        assert key in SETTABLE_KEYS, f"{key} 应可 /bot runtime set"
-    # .env-only 键：文档要写，但绝不能宣称可热改。每日推送两键本来就是装配期
-    # 快照；AUTO_REPLY_ENABLED / SHARED_GROUP_CONTEXT_ENABLED 是审查 C-09 治理：
-    # 消费点在装配期冻结（原写入成功但行为不变=死开关），已移出 SETTABLE_KEYS，
-    # runtime set 明确拒绝并提示重启。
-    for key in (
-        "BOT_GROUP_DIGEST_PUSH_ENABLED", "BOT_GROUP_DIGEST_PUSH_TIME",
-        "BOT_GROUP_CHAT_AUTO_REPLY_ENABLED", "BOT_SHARED_GROUP_CONTEXT_ENABLED",
-    ):
-        assert key in blob, f"{key} 未写进帮助"
-        assert key not in SETTABLE_KEYS, f"{key} 实为 .env+重启键（审查 C-09），不得宣称可热改"
+        assert key not in SETTABLE_KEYS, f"{key} 实为 .env+重启键（装配期冻结），不得宣称可热改"
 
 
 def test_documented_ranges_match_code_clamps() -> None:
