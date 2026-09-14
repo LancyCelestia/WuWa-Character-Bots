@@ -116,9 +116,19 @@ REPLY_CHAIN_TOTAL_CHARS = 2000
 # 链条在"真实需要时"才展开：层数上限虽为 5，但只有确实存在更深引用时才会去取，
 # 避免为了凑层数而做多余的反查请求或注入空层。
 _ELLIPSIS = "…"
-_INTERNAL_MARKER_RE = re.compile(
-    r"\[/?(?:引用回复|引用内容|转发/聊天记录|UNTRUSTED_USER_TEXT|TRUSTED_SYSTEM)"
-    r"(?: 层级\d+)?\]",
+# 内部标记统一正则（审查 F-13 同族收口：全项目唯一一份）。
+# security/injection.py 与 capabilities/chat.py 的同用途正则一律从本模块导入，
+# 禁止再复制第二份——三处各自维护曾导致 chat 侧漏收引用族标记。
+# 覆盖运行时真实产出/易被伪造的全部包裹标记：
+#   [引用回复 层级N(+发送者名)] / [引用内容] / [转发/聊天记录]
+#   [UNTRUSTED_USER_TEXT] / [TRUSTED_SYSTEM]
+# 及同族变体（引用消息/转发消息/转发的消息）。标记名到闭括号之间的任意尾巴
+# （如 `` 层级1 澜汐``）一并命中：format_reply_chain 产出的开标记就带发送者名，
+# 旧正则 ``(?: 层级\d+)?\]`` 漏掉该形态，被引用正文可伪造真实开标记提前闭合。
+# 刻意不收录裸「引用」「转发」（无后缀复合词）：正常文本含「引用」二字不误剥。
+INTERNAL_MARKER_PATTERN = re.compile(
+    r"\[(/?)(引用回复|引用内容|引用消息|转发消息|转发的消息|转发/聊天记录"
+    r"|UNTRUSTED_USER_TEXT|TRUSTED_SYSTEM)[^\]]*\]",
     re.IGNORECASE,
 )
 
@@ -145,7 +155,7 @@ def _neutralize_markers(value: str) -> str:
     只命中内部关键字，不碰用户正常书写的方括号（早期版本整段全角化 `[`/`]`，
     会篡改被引用正文里的代码、数组、`[图片]` 之类正常文本）。
     """
-    return _INTERNAL_MARKER_RE.sub(
+    return INTERNAL_MARKER_PATTERN.sub(
         lambda match: match.group(0).replace("[", "［").replace("]", "］"),
         value,
     )
