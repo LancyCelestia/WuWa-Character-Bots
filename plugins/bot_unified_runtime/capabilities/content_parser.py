@@ -9,6 +9,7 @@ from __future__ import annotations
 import io as _io
 import os
 import threading
+import time
 from typing import Any
 
 from plugins.bot_unified_runtime.capabilities.music import (
@@ -313,6 +314,34 @@ _SUBSCRIPTION_PAGE_TYPES = {
 }
 
 
+# 审查 L-08：原实现每次渲染落盘后都调 enforce_quota——对配额目录全量
+# rglob+stat 扫盘，高流量下每张卡一次全目录遍历。改为模块级最小巡检
+# 间隔：距上次巡检不足 60s 直接跳过。取舍：极端情况下配额可能短暂
+# 超限至下次巡检（至多 ~60s + 一张卡的量），与「每卡全量扫盘」的代价
+# 相比是正确取舍；enforce_quota 本身的满/淘汰语义零变化
+# （runtime/cache_policy.py 未动，仅改这里的触发频率）。
+# 时钟可注入（对齐 bot_avatar.py 审查 L-14 的先例）：测试 monkeypatch
+# _quota_clock 推进时间，全离线不真睡。
+_QUOTA_SWEEP_MIN_INTERVAL = 60.0
+_quota_last_sweep = 0.0
+_quota_clock = time.monotonic
+
+
+def _sweep_quota(target_dir: Any, max_bytes: int) -> None:
+    """渲染落盘后的缓存配额巡检入口（60s 限频版，审查 L-08）。"""
+    global _quota_last_sweep
+    now = _quota_clock()
+    if now - _quota_last_sweep < _QUOTA_SWEEP_MIN_INTERVAL:
+        return
+    # 先记账再扫：并发渲染落在同一窗口内时只让最先到的线程真正扫盘。
+    _quota_last_sweep = now
+    from plugins.bot_unified_runtime.runtime.cache_policy import (
+        enforce_quota,
+    )
+
+    enforce_quota(target_dir, max_bytes=max_bytes)
+
+
 def render_card_png(
     render_backend: Any,
     item: Any,
@@ -450,11 +479,7 @@ def render_card_png(
             tmp_path.unlink(missing_ok=True)
             raise
         try:
-            from plugins.bot_unified_runtime.runtime.cache_policy import (
-                enforce_quota,
-            )
-
-            enforce_quota(
+            _sweep_quota(
                 target_dir,
                 max_bytes=int(getattr(config, "bot_card_cache_max_bytes", 0) or 0),
             )
