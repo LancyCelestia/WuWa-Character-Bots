@@ -60,7 +60,12 @@ def build_request_headers(context: Any) -> dict[str, str]:
     return headers
 
 
-def _build_opener(proxy: str = "", *, verify_ssl: bool = True) -> urlrequest.OpenerDirector:
+def _build_opener(
+    proxy: str = "",
+    *,
+    verify_ssl: bool = True,
+    extra_handlers: list[Any] | None = None,
+) -> urlrequest.OpenerDirector:
     effective = (proxy or "").strip() or _DEFAULT_PROXY
     handlers: list[Any] = []
     if effective:
@@ -71,6 +76,8 @@ def _build_opener(proxy: str = "", *, verify_ssl: bool = True) -> urlrequest.Ope
         import ssl
 
         handlers.append(urlrequest.HTTPSHandler(context=ssl._create_unverified_context()))
+    if extra_handlers:
+        handlers.extend(extra_handlers)
     return urlrequest.build_opener(*handlers)
 
 
@@ -320,27 +327,59 @@ def http_post_json(
         raise ParseHttpError(f"POST {url} failed: {type(exc).__name__}") from exc
 
 
-class _ShortLinkResolved(Exception):
-    """控制流异常：重定向落点已拿到（不下载响应体即中止）。"""
+class _GuardedShortLinkRedirectHandler(urlrequest.HTTPRedirectHandler):
+    """短链 30x 重定向逐跳 SSRF 校验（安全审查 F-05，Critical）。
 
-    def __init__(self, url: str) -> None:
-        super().__init__(url)
-        self.url = url
+    urllib 默认 opener 自动跟随 30x，逐跳落点不再过任何校验——短链
+    （b23.tv / xhslink.com / v.douyin.com / 163cn.tv 等）30x 指向内网或
+    云元数据地址时，请求已发进内网才返回。参照
+    ``capabilities/media_archive.py`` 的 ``_GuardedRedirectHandler`` 先例
+    （下载链逐跳校验），这里在每一跳落点先过 ssrf_guard 判定：
+    ``check_fetch_landing`` 采用 F-04 新语义「解析失败=拒绝」——命中
+    私网/黑名单/整型 IP/畸形 URL/DNS 解析失败一律就地抛 ParseHttpError
+    中止，请求绝不发向内网；仅确定性公网落点（及护栏自身崩溃的
+    fail-open）照旧跟随。
+
+    跳数上限：urllib 默认 ``max_redirections=10``，审查 F-05 要求显式
+    ≤5，收紧为 5；超限后 urllib 抛 HTTPError，经 ``resolve_short_link``
+    既有 HTTPError→ParseHttpError 错误路径降级，不新增调用方分支。
+
+    局部导入防环：ssrf_guard 顶层 import 了本模块的 ParseHttpError，
+    不能在本模块顶层反向导入；函数内导入每次都解析模块属性，测试
+    monkeypatch ssrf_guard.check_fetch_landing 即可生效。
+    """
+
+    # 审查 F-05：显式跳数上限（urllib 默认 10 → 收紧到 5）。
+    max_redirections = 5
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        from plugins.bot_unified_runtime.sources.parsers.ssrf_guard import (
+            check_fetch_landing,
+        )
+
+        check_fetch_landing(str(newurl), req.full_url)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def resolve_short_link(url: str, *, timeout: float = 10.0) -> str:
     """跟随重定向拿最终落点 URL（B 站 b23.tv、小红书 xhslink 等）。
 
-    只关心落点：30x 在记录 Location 后立即中止（不读响应体）；无重定向
-    时同样只取 geturl()，不再为拿落点全量下载 body。
+    只关心落点：不读响应体，拿到最终 geturl() 即返回。重定向走
+    ``_GuardedShortLinkRedirectHandler`` 逐跳 SSRF 校验（审查 F-05）：
+    每一跳 30x 落点先过 ssrf_guard 判定（F-04 语义「解析失败=拒绝」），
+    命中内网/黑名单/整型 IP 时抛 ParseHttpError，消息带「SSRF guard」
+    可判别标记，调用方按既有解析失败路径降级——返回契约
+    ``(落点 URL 字符串 / 抛 ParseHttpError)`` 与修复前零变化。
     """
     try:
-        with _build_opener().open(
-            _build_request(url), timeout=timeout
-        ) as response:
+        with _build_opener(
+            extra_handlers=[_GuardedShortLinkRedirectHandler()]
+        ).open(_build_request(url), timeout=timeout) as response:
             return response.geturl()
-    except _ShortLinkResolved as resolved:
-        return resolved.url
+    except ParseHttpError:
+        # SSRF 护栏拒绝（F-05 逐跳校验）已带可判别标记，原样上抛，
+        # 不被下方通用 except 重新包装丢失语义。
+        raise
     except HTTPError as exc:
         raise _http_error_to_parse_error("GET", url, exc) from exc
     except Exception as exc:

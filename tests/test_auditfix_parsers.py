@@ -252,8 +252,18 @@ def test_post_http_error_keeps_status_and_retry_after(monkeypatch):
     assert exc_info.value.retry_after_seconds == 7
 
 
-def test_resolve_short_link_via_local_redirect_server():
-    """本地 302 服务验证 resolve_short_link 返回落点且不整读 body。"""
+def test_resolve_short_link_via_local_redirect_server(monkeypatch):
+    """本地 302 服务验证 resolve_short_link 返回落点且不整读 body。
+
+    审查 F-05 后逐跳 SSRF 校验已挂进 resolve_short_link；本用例的
+    127.0.0.1 本地服务按护栏语义会被正确拒绝（回环=内网），故这里仅对
+    本用例 stub ssrf_guard.check_fetch_landing，专注验证「跟随 30x、
+    返回落点」的机械行为；护栏逐跳拦截语义由 test_short_link_hop_guard.py
+    全量覆盖。
+    """
+    from plugins.bot_unified_runtime.sources.parsers import ssrf_guard as ssrf_guard_mod
+
+    monkeypatch.setattr(ssrf_guard_mod, "check_fetch_landing", lambda target, src: None)
 
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self):
