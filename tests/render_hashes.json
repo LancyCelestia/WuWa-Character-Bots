@@ -5,7 +5,7 @@
   "docs/design/visual-effects-catalog.md": "84541fbd07dfd65e1a7cf359a74eebda73336507edcde80ff2782d3a6597d7cf",
   "docs/rendering-contract.md": "b4c58858be3a2ef23c1bddea3ebbe21e3a52916a1bac0da485113cb8a2bc8ea8",
   "plugins/bot_unified_runtime/capabilities/debug.py": "53df3eace050af916a62260bbe34b7886a5cd01330f70485cc25b76badca13c7",
-  "plugins/bot_unified_runtime/capabilities/echo.py": "64df5cf72ddee65d9f402d18565303e44d34b21344d13af2088563bf07ca7760",
+  "plugins/bot_unified_runtime/capabilities/echo.py": "6f1c7165db53a0e294f039ea3aee703faa2d36a29d34c84bf27af71f18615a96",
   "plugins/bot_unified_runtime/output/card_render/bridge.py": "3a194aa95c56f37f692585adad4469d848d7597ffaa690829533ea3416c03ada",
   "plugins/bot_unified_runtime/output/card_render/templates/affinity_card.html": "00dc4a7ec983d875a6f58291ed2451c0e0e4fb718cf451b78716463bf76f248c",
   "plugins/bot_unified_runtime/output/card_render/templates/error_card.html": "7d5d98e443ad637f324f9631eaabe222d1a2bc5eb6302308ef4b0b144a1e3e3c",
