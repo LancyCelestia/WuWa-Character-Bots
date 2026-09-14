@@ -4,6 +4,9 @@ import hashlib
 import html
 import random
 import re
+import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -205,6 +208,94 @@ def _help_unknown_body(query: str) -> str:
     return (
         f"没有找到「{display}」的帮助主题。\n"
         "试试 /bot 帮助 查看总览（/岸宝帮助 同样可用）；示例：/bot help 点歌、/bot help 订阅。"
+    )
+
+
+# ==================== IGNORE 命令形态引导（审查 C-07） ====================
+# 背景（A 方审计 C-07）：RouteKind.IGNORE 兜底全项目原无消费点——/help、
+# /帮助 等命令形态落 IGNORE 后完全静默。本节是消费侧唯一产出点：只对
+# 「命令形态但未命中任何能力」（base_router.is_command_form_text，且路由
+# 已判 kind=IGNORE）的输入回一句守岸人语气引导。
+# 静默语义红线（审查 C-07 裁定不波及）：普通闲聊走 CHAT、空文本/纯媒体
+# 走「空消息兜底不回复」、限流与安静时间拦截的静默（09-12 实弹裁定）
+# 都不经过本节。接线由主模块按既有 matcher 模式完成：rule 判
+# kind=IGNORE ∧ is_command_form_text ∧ IgnoreGuideGate 节流，handler 经
+# 统一管线发送——引导与其他回复同受群门禁/安静时间/限流约束，绝不绕过。
+
+_IGNORE_GUIDE_LINES: tuple[str, ...] = (
+    "没认出这个指令。发 /bot help 看看我会什么，好吗？",
+    "这个指令我没对上号……发 /bot help 的话，我把会的一起给你看。",
+    "咦，这个指令有点陌生。先看 /bot help，好吗？",
+)
+
+_ignore_guide_cursor = 0
+_IGNORE_GUIDE_CURSOR_LOCK = threading.Lock()
+
+
+def build_ignore_command_guidance() -> str:
+    """守岸人语气引导语（进程内轮换取句，确定性；静态文案，不回显用户输入）。"""
+    global _ignore_guide_cursor
+    with _IGNORE_GUIDE_CURSOR_LOCK:
+        line = _IGNORE_GUIDE_LINES[_ignore_guide_cursor % len(_IGNORE_GUIDE_LINES)]
+        _ignore_guide_cursor += 1
+    return line
+
+
+class IgnoreGuideGate:
+    """同会话引导节流（审查 C-07 防刷屏；进程内即可，默认 60 秒窗口）。
+
+    同一会话（session_key）窗口内只放行一次引导，其余静默放过；时钟可
+    注入（time.monotonic 兼容）保证测试确定性；容量有界（超限整体清空，
+    与 base_router 路由缓存同策略），长期运行不无界增长。
+    """
+
+    def __init__(
+        self,
+        window_seconds: float = 60.0,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        max_entries: int = 4096,
+    ) -> None:
+        self._window = float(window_seconds)
+        self._clock = clock
+        self._max_entries = max(1, int(max_entries))
+        self._last_allowed: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def check_and_mark(self, session_key: str) -> bool:
+        """放行并占用本会话窗口名额；窗口内重复调用返回 False（不再回）。"""
+        now = self._clock()
+        with self._lock:
+            last = self._last_allowed.get(session_key)
+            if last is not None and now - last < self._window:
+                return False
+            if len(self._last_allowed) >= self._max_entries:
+                self._last_allowed.clear()
+            self._last_allowed[session_key] = now
+            return True
+
+    def reset(self) -> None:
+        """清空节流状态（测试用）。"""
+        with self._lock:
+            self._last_allowed.clear()
+
+
+def build_ignore_guide_result(
+    request_id: str,
+    *,
+    guidance: str | None = None,
+) -> CapabilityResult:
+    """IGNORE 命令形态引导的 CapabilityResult。
+
+    capability_id 沿用路由兜底席的 ``bot.ignore``（审计可归因，不新增
+    能力目录项）；kind=text 走统一管线发送，群门禁/安静时间照常约束。
+    """
+    return CapabilityResult(
+        request_id=request_id or new_request_id(),
+        capability_id="bot.ignore",
+        kind="text",
+        body=guidance or build_ignore_command_guidance(),
+        audit_tags=["ignore_guide", "c07"],
     )
 
 

@@ -633,6 +633,26 @@ def looks_like_command_text(
     return decision.kind in COMMAND_ROUTE_KINDS
 
 
+def is_command_form_text(text: str) -> bool:
+    """「命令形态」判定（审查 C-07 消费侧判据）。
+
+    与 ``chat.looks_like_chat_text`` 同源反义：/、!、！开头即命令形态。
+    前置条件：仅应在 :func:`classify_message_route` 判定 ``kind=IGNORE``
+    之后调用——此时命令形态即「未命中任何能力」（/bot …、/mail … 等已有
+    专属 matcher 的形态有自己的判定/消费路径，到不了这里）。
+
+    刻意收窄的两类（静默语义红线，审查 C-07 裁定不波及）：
+    - 空文本/纯媒体消息（plain_text 为空落 IGNORE 兜底）恒 False——
+      「空消息兜底，不回复」语义不变；
+    - chat 关闭时普通闲聊文本也落 IGNORE，但其非命令形态，同样 False，
+      不会用引导语打扰。
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    return not looks_like_chat_text(stripped)
+
+
 def classify_message_route(
     text: str,
     *,
@@ -674,6 +694,12 @@ def classify_message_route(
         if decision is not None:
             _route_cache_put(cache_key, now, config, decision)
             return decision
+    # 审查 C-07：此兜底曾是无消费静默点（全项目原无任何 matcher 消费 IGNORE，
+    # /help、/帮助 等命令形态坠此即无声）。消费侧收敛在 echo.py
+    # （build_ignore_guide_result + IgnoreGuideGate 60s 会话节流），由主模块
+    # 的 help_guide matcher 按既有 matcher 模式接线；仅 is_command_form_text
+    # 为真的输入回守岸人语气引导，普通闲聊/空消息/限流与安静时间拦截的
+    # 静默语义不受影响。字面量保持原样（capability_registry 兜底席测试锁定）。
     fallback = RouteDecision(
         RouteKind.IGNORE, "bot.ignore", 999, "无匹配路由（命令被禁用或文本不满足任何规则）"
     )
