@@ -159,6 +159,13 @@ def test_render_never_runs_on_event_loop_thread(tmp_path: Path) -> None:
             _run(pipeline, backend, tmp_path, render_pool=render_pool)
 
         asyncio.run(scenario())
+        # 确定性同步点：直接等本用例渲染到达 loop 检查点（_FakeBackend 在
+        # loop 检查后才算执行完）。全局 flush 的等待序是 set 无序的，域外
+        # 滞留的真渲染（playwright 冷启动秒级）会吃掉其超时预算，不能作为
+        # 本用例的同步点；只作事后排空（用例间不欠债）。
+        deadline = time.monotonic() + 10.0
+        while backend.loop_running is None and time.monotonic() < deadline:
+            time.sleep(0.05)
         error_report.flush_pending_card_renders(timeout=10.0)
     finally:
         # 渲染已在 flush 中完成，shutdown 不等待与生产 atexit 同语义。
