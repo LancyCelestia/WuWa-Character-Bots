@@ -24,6 +24,12 @@ T-Spec（七格触发矩阵：英文/简体/繁體/全拼/缩写/昵称/自然�
 - ASCII 词边界违规：_alias_hit 模式（ASCII 词边界、中文子串）——verified
   ASCII 词以 ``qq<word>`` / ``<word>qq`` 胶合探针命中自身能力即违规。
 
+另含触发词双向机械门（P2-9，``gate_route_to_help`` /
+``gate_help_to_route``）：路由侧（verified_triggers ∪ 动词表）与 help 侧
+（aliases ∪ META 触发词，按 capability 字段聚合）各自机械提取后词级
+diff，治「路由有、help 无」（求籤先例）与「help 有、路由坠兜底」两类
+复发缺口；现状缺口由 tests/test_trigger_bidirectional_gate.py 台账制管理。
+
 用法：
     python scripts/extract_trigger_words.py           # 摘要（stdout JSON）
     python scripts/extract_trigger_words.py --full    # 全量清单（stdout JSON）
@@ -403,6 +409,208 @@ def topics_missing_trigger_records(topics: dict[str, dict[str, Any]]) -> list[st
 
 
 # ---------------------------------------------------------------------------
+# 4) 触发词双向机械门（P2-9）：路由侧 ↔ help 侧词级全量 diff
+# ---------------------------------------------------------------------------
+
+
+def normalize_trigger_key(word: str) -> str:
+    """双向比对归一键：剥 ``<占位符>``/省略号 + 去空白 + casefold。
+
+    help 侧 triggers 常写「<时间>提醒我…」这类模式文档；剥掉占位骨架后
+    剩「提醒我」才是可与路由面比对的实体词。路由侧 verified 词全部经过
+    行为验证、不含占位符，此规则对其零影响（两侧同口径）。
+    """
+    text = re.sub(r"<[^>]*>", "", str(word or ""))
+    text = re.sub(r"(…|\.{3,})$", "", text)
+    return re.sub(r"\s+", "", text).casefold()
+
+
+def _lookup_keys(word: str) -> list[str]:
+    """动词表/探针查找键变体：原形、casefold、去空白、去空白+casefold。
+
+    'music mode' / 'steam free' 这类带空格触发词在 help 侧原样书写、在
+    DEFAULT_VERB_MAP 里也带空格，而归一键两侧都已去空白——路由面命中
+    判定把几种形态都试到，宁可放行也不误报。
+    """
+    raw = str(word or "").strip()
+    keys = {raw, raw.casefold(), re.sub(r"\s+", "", raw), re.sub(r"\s+", "", raw).casefold()}
+    return sorted(key for key in keys if key)
+
+
+def classify_help_topics(topics: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """按 capability 字段机械分类 help topic（零手工清单）。
+
+    每项含：caps（字段引用的 bot.* 能力 id 集）、admin_path（字段整体恰为
+    裸 ``/bot …`` 命令声明，带「（…）」注记的不算）、admin_caps（由命令头
+    派生的 ``bot.<名>``，仅当与真实能力 id 同名才可能在动词表命中）、
+    words（归一触发词全集）、doc_only（无能力 id 也无命令声明——纯文档
+    检索词，设计上不可路由，方向2 豁免）。
+    """
+    classified: dict[str, dict[str, Any]] = {}
+    for topic, info in topics.items():
+        field = str(info.get("capability", "")).strip()
+        core = re.split(r"[（(]", field)[0].strip()
+        admin_path = core if core.startswith("/bot ") and core == field else ""
+        parsed: dict[str, Any] = {
+            "caps": set(re.findall(r"bot\.[a-z_]+", field)),
+            "admin_path": admin_path,
+            "words": {
+                key
+                for field_name in ("aliases", "triggers_nl", "triggers_nickname")
+                for word in info.get(field_name) or ()
+                if (key := normalize_trigger_key(word))
+            },
+        }
+        parsed["admin_caps"] = {f"bot.{admin_path[5:].strip().split()[0]}"} if admin_path else set()
+        parsed["doc_only"] = not parsed["caps"] and not admin_path
+        classified[topic] = parsed
+    return classified
+
+
+def build_help_trigger_side(topics: dict[str, dict[str, Any]]) -> dict[str, set[str]]:
+    """help 侧词表：按能力 id 聚合触发词（含 '/bot <名>' 派生落点）。"""
+    side: dict[str, set[str]] = {}
+    for parsed in classify_help_topics(topics).values():
+        for capability_id in parsed["caps"] | parsed["admin_caps"]:
+            side.setdefault(capability_id, set()).update(parsed["words"])
+    return side
+
+
+def build_route_trigger_side(inventory: dict[str, Any]) -> dict[str, set[str]]:
+    """路由侧词表：行为验证 verified_triggers ∪ DEFAULT_VERB_MAP 动词。"""
+    side = {
+        capability_id: {
+            key
+            for word in item["verified_triggers"]
+            if (key := normalize_trigger_key(word))
+        }
+        for capability_id, item in inventory["capabilities"].items()
+    }
+    for capability_id, verbs in inventory["verb_map_groups"].items():
+        side.setdefault(capability_id, set()).update(
+            key for verb in verbs if (key := normalize_trigger_key(verb))
+        )
+    return side
+
+
+def gate_route_to_help(
+    route_side: dict[str, set[str]],
+    help_side: dict[str, set[str]],
+) -> list[tuple[str, str]]:
+    """方向1（路由→帮助）：路由侧每个触发词必须在同能力 help 词表有落点。
+
+    缺口即求籤先例形态：路由正则收得下、``/bot help <词>`` 搜不到。
+    """
+    return sorted(
+        (capability_id, word)
+        for capability_id, words in sorted(route_side.items())
+        for word in sorted(words)
+        if word not in help_side.get(capability_id, set())
+    )
+
+
+def live_detectors_by_capability(
+    inventory: dict[str, Any] | None = None,
+) -> dict[str, list[Any]]:
+    """行为检测器实跑表：capability_id → [callable]（排序保证确定性）。"""
+    inventory = inventory if inventory is not None else build_inventory()
+    detectors: dict[str, list[Any]] = {}
+    for capability_id, item in sorted(inventory["capabilities"].items()):
+        for report in sorted(item["detectors"], key=lambda entry: entry["name"]):
+            if not report.get("callable") or not report["name"].startswith("is_"):
+                continue
+            func = getattr(importlib.import_module(report["module"]), report["name"])
+            if callable(func):
+                detectors.setdefault(capability_id, []).append(func)
+    return detectors
+
+
+def flat_verb_map(inventory: dict[str, Any]) -> dict[str, str]:
+    """DEFAULT_VERB_MAP 平铺（动词原样 → capability_id），方向2 路由面之一。"""
+    return {
+        verb: capability_id
+        for capability_id, verbs in inventory["verb_map_groups"].items()
+        for verb in verbs
+    }
+
+
+def _route_face_hit(
+    word: str,
+    detector_caps: set[str],
+    reachable_caps: set[str],
+    verb_map: dict[str, str],
+    detectors: dict[str, list[Any]],
+    nl_detect: Any = None,
+) -> bool:
+    """单词路由面命中：动词映射 / 行为检测器探针 / 自然语言归一，三选一。"""
+    keys = _lookup_keys(word)
+    alias_path = "bot.alias" in reachable_caps  # 昵称命令主题：任一动词经别名路径可达。
+    for key in keys:
+        capability_id = verb_map.get(key)
+        if capability_id is not None and (
+            capability_id in reachable_caps or alias_path
+        ):
+            return True
+    for key in keys:
+        for suffix in _PROBE_SUFFIXES:
+            probe = key + suffix
+            for capability_id in sorted(detector_caps):
+                for func in detectors.get(capability_id, ()):
+                    if _probe_hits(func, probe):
+                        return True
+            if nl_detect is not None:
+                resolution = _probe_nl(nl_detect, probe)
+                if resolution is not None and getattr(
+                    resolution, "capability_id", ""
+                ) in reachable_caps:
+                    return True
+    return False
+
+
+def _probe_nl(nl_detect: Any, probe: str) -> Any:
+    """自然语言归一探针：任何异常按未命中记账，不阻塞门检。"""
+    try:
+        return nl_detect(probe)
+    except Exception:  # noqa: BLE001 - 同 _probe_hits 口径。
+        return None
+
+
+def gate_help_to_route(
+    topics: dict[str, dict[str, Any]],
+    verb_map: dict[str, str],
+    detectors: dict[str, list[Any]] | None = None,
+    nl_detect: Any | None = None,
+) -> list[dict[str, Any]]:
+    """方向2（帮助→路由）：help 每条触发词必须能被路由面命中。
+
+    路由面三选一：动词映射（昵称命令，「守岸人 决策」不坠 help 兜底）、
+    行为检测器探针（裸词/中性后缀，同 verified 口径）、自然语言归一
+    （``detect_natural_command`` 返回的 capability_id 必须落在本 topic
+    声明的能力内）。纯文档 topic（doc_only）豁免——capability 字段自己
+    声明了无命令入口。返回缺口清单（topic/word/caps），排序保证确定性。
+    """
+    if nl_detect is None:
+        from plugins.bot_unified_runtime.runtime.natural_language import (
+            detect_natural_command,
+        )
+
+        nl_detect = detect_natural_command
+    detectors = detectors if detectors is not None else live_detectors_by_capability()
+    violations: list[dict[str, Any]] = []
+    for topic, parsed in sorted(classify_help_topics(topics).items()):
+        if parsed["doc_only"]:
+            continue
+        reachable = parsed["caps"] | parsed["admin_caps"]
+        for word in sorted(parsed["words"]):
+            if _route_face_hit(
+                word, parsed["caps"], reachable, verb_map, detectors, nl_detect
+            ):
+                continue
+            violations.append({"topic": topic, "word": word, "caps": sorted(reachable)})
+    return violations
+
+
+# ---------------------------------------------------------------------------
 # 汇总
 # ---------------------------------------------------------------------------
 
@@ -443,6 +651,9 @@ def summarize(inventory: dict[str, Any]) -> dict[str, Any]:
         for capability_id, item in capabilities.items()
         if not item["verified_triggers"]
     )
+    route_side = build_route_trigger_side(inventory)
+    help_side = build_help_trigger_side(inventory["help_topics"])
+    gate_detectors = live_detectors_by_capability(inventory)
     return {
         "route_rule_count": len(inventory["route_rules"]),
         "capability_count": len(capabilities),
@@ -456,6 +667,10 @@ def summarize(inventory: dict[str, Any]) -> dict[str, Any]:
         "help_topics_missing_trigger_records": inventory["help_topics_missing_trigger_records"],
         "verb_map_group_count": len(inventory["verb_map_groups"]),
         "verb_map_verb_total": sum(len(v) for v in inventory["verb_map_groups"].values()),
+        "gate_route_to_help_gaps": gate_route_to_help(route_side, help_side),
+        "gate_help_to_route_violations": gate_help_to_route(
+            inventory["help_topics"], flat_verb_map(inventory), gate_detectors
+        ),
     }
 
 
