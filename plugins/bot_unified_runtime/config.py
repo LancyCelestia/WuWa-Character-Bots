@@ -1022,6 +1022,25 @@ class Config(BaseModel):
         raise TypeError("id list must be a list, JSON array string, or delimiter string")
 
     @field_validator(
+        "bot_campus_notify_qq",
+        "bot_campus_push_bot_id",
+        "bot_gscore_bot_self_id",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_scalar_id_to_str(cls, value: Any) -> Any:
+        """QQ 号标量键宽容装载：nonebot dotenv 会把不带引号的 3865067623
+        解析成 int（生产 .env 实弹 2026-09-15 启动崩溃实锤），strict str
+        校验直接拒收整插件。标量 id 语义无歧义，int→str 收编（bool 显式
+        排除防 True→"True"）；其余类型原样交既有校验保持报错口径。
+        """
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return str(value)
+        return value
+
+    @field_validator(
         "bot_admin_profiles",
         "bot_disconnect_notice_mail_recipients",
         "bot_disconnect_notice_telegram_chat_ids",
