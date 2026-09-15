@@ -2308,6 +2308,48 @@ def _injection_audit_tags(check_result: InjectionCheckResult) -> list[str]:
     return tags
 
 
+# P2-4 用户裁定（2026-09-15 二改，不泄露>威慑 + 守岸人语气 ≥10 变体）：
+# 拦截回复只表达「不聊」，防御细节一律不出口（四类禁词由 Q-04 门池级
+# 锁定），不指摘用户；守岸人语气（潮汐意象克制使用、无 AI 腔、
+# 无拖尾音、无颜文字）；自称一律第三人称（Q-04）。
+_INJECTION_GUARD_TEMPLATES: tuple[str, ...] = (
+    "嗯……这个我不接。换个别的聊吧。",
+    "这个话题到这里。挑个别的，我接着陪你聊。",
+    "这条我不能答。问点别的，我都会好好说。",
+    "这条我就当没看见啦。你还想说点什么？",
+    "……这条路走不通。换个方向吧。",
+    "这个不行哦。不过别的问题，我都在。",
+    "这里潮水托不住。聊点别的吧。",
+    "这个话题，不聊。换一个，我还在。",
+    "这条就停在这儿吧。换个说法，我们重新开始。",
+    "这个答不了。你别的疑问，我不会让它们落空。",
+    "嗯，这个聊不了。想点别的可能更好。",
+    "这个不能说。别的你想问什么，我都听着。",
+)
+
+_INJECTION_GUARD_CURSOR: dict[str, int] = {}
+_INJECTION_GUARD_LOCK = threading.Lock()
+
+
+def injection_guard_message(session_id: str = "") -> str:
+    """拦截回复取句：同会话游标轮换（连发不重复），无会话退回随机。
+
+    轮换模式与 ``persona_failure_message`` 同构（审计#15 修 D9 的结论：
+    纯游标序轮换才成立「连发不重复」，random 叠加会破坏它）。
+    """
+    count = len(_INJECTION_GUARD_TEMPLATES)
+    if not session_id:
+        import random
+
+        return _INJECTION_GUARD_TEMPLATES[random.randrange(count)]
+    with _INJECTION_GUARD_LOCK:
+        offset = _INJECTION_GUARD_CURSOR.get(session_id, 0)
+        _INJECTION_GUARD_CURSOR[session_id] = (offset + 1) % count
+        while len(_INJECTION_GUARD_CURSOR) > 512:
+            _INJECTION_GUARD_CURSOR.pop(next(iter(_INJECTION_GUARD_CURSOR)), None)
+    return _INJECTION_GUARD_TEMPLATES[offset % count]
+
+
 def _blocked_injection_result(
     message: IncomingMessage,
     decision: BotDecision,
@@ -2318,9 +2360,9 @@ def _blocked_injection_result(
         capability_id=decision.capability_id,
         kind="text",
         title="输入被安全拦截",
-        # 审查 Q-04：自称统一第三人称「守岸人」（原「我……我会……按守岸人的设定」
-        # 第一/第三人称同句混用，旧句已废；回潮由 test_user_copy_unification_gate 拦截）。
-        body="我不能聊这些，换个话题吧。",
+        # P2-4 二改：极简单句太僵硬（用户 2026-09-15 反馈），改 12 变体
+        # 守岸人语气池+同会话轮换；零防御焦点泄露红线不变（Q-04 门）。
+        body=injection_guard_message(message.session_id),
         confidence=1.0,
         risk_level=check_result.risk_level,
         privacy_level=decision.privacy_level,

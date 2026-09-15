@@ -527,7 +527,12 @@ def test_pipeline_group_failure_receipt_silent_and_card_sent(
     assert ack_request.target_id == "g1"
     assert card_request.target_id == "g1"
     assert card_request.content.content_type == "mixed"
-    assert cooldown_line("ValueError").startswith("又有一条指令出了岔子")
+    from plugins.bot_unified_runtime.runtime import error_report as _er
+
+    assert cooldown_line("ValueError") in {
+        variant.format(exc="ValueError") for variant in _er._COOLDOWN_LINES
+    }
+    assert len(_er._COOLDOWN_LINES) >= 10
 
 
 # ==================== 钩子自身 fail-open ====================

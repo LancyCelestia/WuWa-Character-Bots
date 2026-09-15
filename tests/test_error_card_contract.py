@@ -145,9 +145,15 @@ def test_error_card_shell_width_registered() -> None:
 
 
 def test_cooldown_line_tone_and_content() -> None:
+    """P2-4 同规则：冷却句池化（≥10），每句带 exc、指回卡、无未填槽。"""
+    from plugins.bot_unified_runtime.runtime import error_report as er
     from plugins.bot_unified_runtime.runtime.error_report import cooldown_line
 
+    assert len(er._COOLDOWN_LINES) >= 10
+    assert len(set(er._COOLDOWN_LINES)) == len(er._COOLDOWN_LINES)
     text = cooldown_line("TimeoutError")
-    assert "TimeoutError" in text
+    assert text in {variant.format(exc="TimeoutError") for variant in er._COOLDOWN_LINES}
     assert "{" not in text and "}" not in text
     assert "卡" in text
+    for variant in er._COOLDOWN_LINES:
+        assert "卡" in variant  # 语义红线：每句都指回刚才那张诊断卡。

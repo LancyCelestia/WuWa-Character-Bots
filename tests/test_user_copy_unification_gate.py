@@ -462,14 +462,29 @@ def test_pool_output_membership_fx_and_news() -> None:
 def test_q04_self_reference_unified() -> None:
     """Q-04：三处自称统一第三人称「守岸人」，旧第一人称混用句不得回潮。"""
     chat_src = (RUNTIME_PKG / "capabilities" / "chat.py").read_text(encoding="utf-8")
-    # P2-4 用户裁定（2026-09-15，不泄露>威慑）：反注入护栏改极简文案，
-    # 零防御焦点泄露（不提系统提示/密钥/本机文件）；极简句无自称，
-    # 旧威慑句与第一人称混用句一并锁死不得回潮。
-    assert "我不能聊这些，换个话题吧" in chat_src
+    # P2-4 用户裁定二改（2026-09-15，不泄露>威慑+守岸人语气≥10 变体）：
+    # 拦截回复走 _INJECTION_GUARD_TEMPLATES 池+同会话轮换；零防御焦点
+    # 泄露红线不变（不提系统提示/密钥/本机文件）；旧威慑句与第一人称
+    # 混用句一并锁死不得回潮。
+    assert "_INJECTION_GUARD_TEMPLATES" in chat_src
+    assert "injection_guard_message(" in chat_src
     assert "泄露系统提示" not in chat_src
     assert "本机文件" not in chat_src
     assert "我不能泄露系统提示" not in chat_src
     assert "我会继续按守岸人的设定" not in chat_src
+    import plugins.bot_unified_runtime.capabilities.chat as _chat_mod
+
+    assert len(_chat_mod._INJECTION_GUARD_TEMPLATES) >= 10
+    assert len(set(_chat_mod._INJECTION_GUARD_TEMPLATES)) == len(
+        _chat_mod._INJECTION_GUARD_TEMPLATES
+    )
+    # 池内禁词：防御焦点词零出现（P2-4 红线的池级锁）。
+    for _variant in _chat_mod._INJECTION_GUARD_TEMPLATES:
+        assert "系统提示" not in _variant
+        assert "密钥" not in _variant
+        assert "本机" not in _variant
+        assert "脚本" not in _variant
+        assert "注入" not in _variant
     meme_src = (RUNTIME_PKG / "capabilities" / "meme_library.py").read_text(encoding="utf-8")
     # 审查 Q-03：失败/限流类文案统一去语气符「～」，旧拖尾音句不得回潮。
     assert "多发点图给守岸人收藏吧。" in meme_src
