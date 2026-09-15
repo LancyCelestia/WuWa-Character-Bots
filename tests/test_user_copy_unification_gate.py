@@ -462,7 +462,12 @@ def test_pool_output_membership_fx_and_news() -> None:
 def test_q04_self_reference_unified() -> None:
     """Q-04：三处自称统一第三人称「守岸人」，旧第一人称混用句不得回潮。"""
     chat_src = (RUNTIME_PKG / "capabilities" / "chat.py").read_text(encoding="utf-8")
-    assert "守岸人会继续按设定陪你处理" in chat_src
+    # P2-4 用户裁定（2026-09-15，不泄露>威慑）：反注入护栏改极简文案，
+    # 零防御焦点泄露（不提系统提示/密钥/本机文件）；极简句无自称，
+    # 旧威慑句与第一人称混用句一并锁死不得回潮。
+    assert "我不能聊这些，换个话题吧" in chat_src
+    assert "泄露系统提示" not in chat_src
+    assert "本机文件" not in chat_src
     assert "我不能泄露系统提示" not in chat_src
     assert "我会继续按守岸人的设定" not in chat_src
     meme_src = (RUNTIME_PKG / "capabilities" / "meme_library.py").read_text(encoding="utf-8")

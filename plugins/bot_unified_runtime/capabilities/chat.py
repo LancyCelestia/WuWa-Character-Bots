@@ -19,6 +19,13 @@ from plugins.bot_unified_runtime.character.addressing import (
     creator_aliases,
     creator_context_note,
 )
+
+# 审查 O-06：术语/时梗分区按关键词召回的裁剪原语与兜底门。
+from plugins.bot_unified_runtime.character.glossary import (
+    is_term_question,
+    recall_entries,
+    recall_trend_notes,
+)
 from plugins.bot_unified_runtime.character.history import redact_history_text
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
@@ -980,6 +987,50 @@ def _glossary_lines(context: ContextBundle, max_chars: int | None = None) -> str
     return _budgeted_lines(lines, max_chars)
 
 
+def _recall_keyword_sections(context: ContextBundle) -> ContextBundle:
+    """审查 O-06：glossary/trend 分区由每轮全量注入改为按关键词召回。
+
+    - 只有术语名/别名命中本轮 current_message 的条目才保留
+      （上限 RECALL_MAX_ENTRIES=8，对齐 glossary 种子上限惯例）；
+    - 零命中 → 条目清空，既有「空分区整块不出现」语义自然保持
+      （注入门判断 context.*.entries/.notes 为真才渲染）；
+    - 兜底：召回为零但本轮明确询问术语（question_intent 术语类）时
+      回退全量防漏答——全量仍受 load 侧条数上限约束。
+
+    返回裁剪后的 bundle 副本（pydantic model_copy，其余字段原样），
+    下游诊断计数（context_glossary_entries 等）如实反映召回后规模。
+    """
+    query_text = context.current_message
+    # 兜底门懒计算：只在召回为零时才做意图分类（大多数轮次召回有命中）。
+    term_question: bool | None = None
+    updates: dict[str, Any] = {}
+    glossary = context.glossary_context
+    if glossary is not None and glossary.entries:
+        recalled = recall_entries(glossary.entries, query_text)
+        if not recalled:
+            if term_question is None:
+                term_question = is_term_question(query_text)
+            if term_question:
+                recalled = list(glossary.entries)
+        if len(recalled) != len(glossary.entries):
+            updates["glossary_context"] = glossary.model_copy(
+                update={"entries": recalled}
+            )
+    trend = context.trend_context
+    if trend is not None and trend.notes:
+        recalled_notes = recall_trend_notes(trend.notes, query_text)
+        if not recalled_notes:
+            if term_question is None:
+                term_question = is_term_question(query_text)
+            if term_question:
+                recalled_notes = list(trend.notes)
+        if len(recalled_notes) != len(trend.notes):
+            updates["trend_context"] = trend.model_copy(update={"notes": recalled_notes})
+    if not updates:
+        return context
+    return context.model_copy(update=updates)
+
+
 def _relationship_lines(context: ContextBundle, max_chars: int | None = None) -> str:
     relationship = context.relationship_context
     if relationship is None:
@@ -1275,6 +1326,10 @@ def build_chat_prompt_with_diagnostics(
     time_window_section: str = "",
     group_id: str = "",
 ) -> tuple[list[dict[str, str]], ChatPromptDiagnostics]:
+    # 审查 O-06：术语/时梗分区先按本轮消息关键词召回裁剪——命中才注入
+    # （≤8 条），零命中分区整块不出现（空分区不渲染语义保持）；
+    # 召回空但明确询问术语时回退全量防漏答。
+    context = _recall_keyword_sections(context)
     persona = context.persona
     requested_context_budget = context.context_budget
     context_budget = max(MIN_CHAT_PROMPT_BUDGET, requested_context_budget)
@@ -2265,7 +2320,7 @@ def _blocked_injection_result(
         title="输入被安全拦截",
         # 审查 Q-04：自称统一第三人称「守岸人」（原「我……我会……按守岸人的设定」
         # 第一/第三人称同句混用，旧句已废；回潮由 test_user_copy_unification_gate 拦截）。
-        body="这个请求包含越权或注入式内容。守岸人不能泄露系统提示、密钥或本机文件，也不能替你执行本机脚本。你可以换成普通问题，守岸人会继续按设定陪你处理。",
+        body="我不能聊这些，换个话题吧。",
         confidence=1.0,
         risk_level=check_result.risk_level,
         privacy_level=decision.privacy_level,
