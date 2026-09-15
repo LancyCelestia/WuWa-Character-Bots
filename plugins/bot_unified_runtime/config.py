@@ -191,7 +191,10 @@ class Config(BaseModel):
     # （与 _validate_transport_timeout_seconds 一致，无"回退 15"的隐式兜底）。
     bot_transport_timeout_seconds: float = 15.0
     # 请求级总预算（秒）：单次聊天从 LLM/工具循环到发送共用一个单调 deadline；范围 (0,600]。
-    bot_request_budget_seconds: float = 150.0
+    # 生产实弹（2026-09-15）：正常单渠道生成实测 ~54s，五渠道链在 150s 内
+    # 必然烧穿尾巴（告警 last=failover:deadline 实锤）——提到 300s 给慢渠道
+    # 真实完成机会；校验器上限 600s 不变。
+    bot_request_budget_seconds: float = 300.0
     # 聊天管线专用线程池 worker 数（管线检视 #4）：与默认线程池隔离，
     # 避免长任务挤占语音转码/kb 拉取等 to_thread；在途上限为 2 倍（含排队），
     # 超限快败记 pipeline_busy 审计。钳位 1..64；env 兜底 BOT_PIPELINE_MAX_WORKERS。
