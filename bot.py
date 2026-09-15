@@ -264,25 +264,42 @@ _original_tg_poll = TelegramAdapter.poll
 
 
 async def _resilient_tg_poll(self, bot):
+    # 生产实弹（2026-09-15）：代理/网络中断时适配器每次 poll 都打一条
+    # ERROR+完整 traceback（我们调几次它刷几次），控制台被刷屏。改为三段
+    # 退避：3→60s 指数（前 5 次，快速试恢复），之后 300s 平顶（降噪 5 倍，
+    # 恢复盲区 ≤5 分钟可接受——TG 是次要适配器）。我方日志只在退避档位
+    # 变化时打一条，附加累计失败数。
     delay = 3.0
-    had_failure = False
+    consecutive = 0
+    last_tier = 0
     while True:
         try:
             result = await _original_tg_poll(self, bot)
-            if had_failure:
-                had_failure = False
-                nonebot.logger.info("Telegram poll recovered; updates flowing again")
+            if consecutive:
+                nonebot.logger.info(
+                    "Telegram poll recovered after {} failed attempt(s)", consecutive
+                )
+            consecutive = 0
+            last_tier = 0
+            delay = 3.0
             return result
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - 轮询退出一律重试，退避已封顶。
-            delay = min(delay * 2.0, 60.0)
-            had_failure = True
-            nonebot.logger.warning(
-                "Telegram poll task exited ({}); retrying in {:.0f}s",
-                type(exc).__name__,
-                delay,
-            )
+            consecutive += 1
+            if consecutive <= 5:
+                delay = min(delay * 2.0, 60.0)
+            else:
+                delay = 300.0
+            tier = 1 if consecutive <= 5 else 2
+            if tier != last_tier or consecutive == 1:
+                nonebot.logger.warning(
+                    "Telegram poll failed x{} ({}); retrying in {:.0f}s",
+                    consecutive,
+                    type(exc).__name__,
+                    delay,
+                )
+            last_tier = tier
             await asyncio.sleep(delay)
 
 

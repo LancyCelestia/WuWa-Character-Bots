@@ -186,7 +186,9 @@ def _shared_http_client(proxy: str = "") -> httpx.Client:
             return cached
         client = httpx.Client(
             proxy=key or None,
-            timeout=httpx.Timeout(30.0),
+            # 生产实弹（2026-09-15 LLM 超时告警排查）：连接与读取拆分——
+            # 网络断时 connect 5s 快败，不再 30s×5 渠道干等 150s 才反馈。
+            timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0),
             limits=httpx.Limits(max_connections=32, max_keepalive_connections=8),
         )
         _HTTP_CLIENTS[key] = client
@@ -600,8 +602,21 @@ class OpenAICompatibleLLMProvider:
         except LLMProviderError:
             raise
         except httpx.TimeoutException as exc:
+            # 连接类超时（含 ConnectTimeout）与读取超时分类分离：前者=网络/
+            # 代理/网关不可达（告警归 network，运营者先查本机出口），后者=
+            # 上游慢（归 timeout，查供应商）。detail 由调用方携带轨迹。
+            if isinstance(exc, httpx.ConnectTimeout):
+                raise LLMProviderError(
+                    "LLM gateway/upstream unreachable (connect timeout)",
+                    error_kind="network",
+                ) from exc
             raise LLMProviderError("LLM request timed out", error_kind="timeout") from exc
         except httpx.HTTPError as exc:
+            if isinstance(exc, httpx.ConnectError):
+                raise LLMProviderError(
+                    "LLM gateway/upstream unreachable (connect failed)",
+                    error_kind="network",
+                ) from exc
             raise LLMProviderError("LLM network error", error_kind="network") from exc
         except Exception as exc:
             raise LLMProviderError(

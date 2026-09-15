@@ -1966,6 +1966,7 @@ def build_chat_result(
             diagnostic_tags=[*diagnostic_tags, *route_tags],
             error_kind=exc.error_kind,
             attempts=max(1, len(route_attempts)),
+            route_trace=route_attempts,
         )
     except Exception:  # noqa: BLE001 - LLM 未分类异常统一降级为 provider_error，不阻断主链路。
         return _llm_error_result(
@@ -2166,14 +2167,23 @@ def _llm_error_result(
     diagnostic_tags: list[str],
     error_kind: str,
     attempts: int = 1,
+    route_trace: list[str] | None = None,
 ) -> CapabilityResult:
     normalized_kind = str(error_kind or "provider_error").strip().lower()
     if normalized_kind not in _SAFE_LLM_ERROR_KINDS:
         normalized_kind = "provider_error"
+    # 生产实弹（2026-09-15）：告警 detail 此前恒为 kind 字面（"timeout"），
+    # 排障无从下手。safe_summary 带路由轨迹末站+链宽，让「timeout」能回答
+    # 「卡在哪个渠道、试了几跳」。末站串可能含模型名（非密钥），截断防长。
+    trace = [str(item) for item in (route_trace or []) if str(item).strip()]
+    summary_parts = [normalized_kind, f"chain={max(1, int(attempts))}"]
+    if trace:
+        summary_parts.append(f"last={trace[-1][:80]}")
     issue = _operational_issue(
         stage="llm",
         kind=normalized_kind,
         retryable=normalized_kind in _LLM_RETRYABLE_KINDS,
+        safe_summary=" ".join(summary_parts)[:60],
         attempts=max(1, int(attempts)),
     )
     is_group_or_channel = message.session_type in {SessionType.GROUP, SessionType.CHANNEL}

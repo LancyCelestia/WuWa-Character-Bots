@@ -204,7 +204,7 @@ def test_per_request_timeout_maps_to_httpx_timeout(
 @pytest.mark.parametrize(
     ("exc", "expected_kind"),
     [
-        (httpx.ConnectTimeout("boom"), "timeout"),
+        (httpx.ConnectTimeout("boom"), "network"),
         (httpx.ReadTimeout("boom"), "timeout"),
         (httpx.ConnectError("boom"), "network"),
     ],

@@ -182,6 +182,8 @@ def test_httpx_transport_response_size_cap(monkeypatch: pytest.MonkeyPatch) -> N
 def test_httpx_transport_timeout_maps_to_timeout_kind(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """生产实弹 2026-09-15 分类拆分：ConnectTimeout=连接类→network（网络/
+    代理/网关不可达），与 ReadTimeout（上游慢→timeout）分道，告警可分诊。"""
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("boom")
 
@@ -190,7 +192,7 @@ def test_httpx_transport_timeout_maps_to_timeout_kind(
     with pytest.raises(LLMProviderError) as raised:
         provider.generate([{"role": "user", "content": "hi"}])
 
-    assert raised.value.error_kind == "timeout"
+    assert raised.value.error_kind == "network"
 
 
 # ==================== B-14：路由侧旧快照自动迁移 ====================
