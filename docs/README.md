@@ -8,7 +8,8 @@
 
 | 文档 | 说明 |
 |---|---|
-| [HANDBOOK.md](HANDBOOK.md) | 单一活文档：Part 0（族谱终裁 / 现行事实 / 未完成总账 §三）+ Part II（权威正文 §1-§17 + §18-§24 批次全账）；**§24 最新：2026-09-14 六域并发批次总账（金融扩容/账单渠道/视觉收官/图库清污）** |
+| [HANDBOOK.md](HANDBOOK.md) | 单一活文档：Part 0（族谱终裁 / 现行事实 / 未完成总账 §三）+ Part II（权威正文 §1-§17 + §18-§27 批次全账）；**§27 最新：2026-09-15 日常助理批（此前 §24 六域批 / §25-§26 夜间审计批）** |
+| [HANDOVER-2026-09-15.md](HANDOVER-2026-09-15.md) | **交接总报告（2026-09-15 用户 mandate 全量更正版，维护规矩的用户裁定例外件）**：统一架构文档 / 处理流程与流程图 / 九个统一（触发·自动回复·LLM 话术·参数·术语·权威链·门禁…）/ WebUI 需求与三阶段规格全量 / 当前真实状态快照。旧口径（26 渠道链/「17 条网关」/509 字段/72 topics）以此为准作废 |
 | [handover-c-20260913.md](handover-c-20260913.md) | C 方向批次交接件（统一 UI/卡片主题 token/金融数据与图表/占卜历史卡适配）；本批 SDD 台账与评审报告存 `.superpowers/sdd/2026-09-12-shorekeeper-global-audit/`（git-ignored 工作台，不入库） |
 | [issue-ledger-p2-p3.md](issue-ledger-p2-p3.md) | P2/P3 问题台账（2026-09-13 实战审计批）：AGENTS.md 第六部分是索引，本文件是逐条可执行详情（现象/位置/根因/修法/验收） |
 | [perf-optimization-plan.md](perf-optimization-plan.md) | 性能优化全量档案：Phase 1 终态 + Phase 2 执行清单 + 五链路实测基线（渲染并发/等待预算等 Phase 2 的唯一执行依据） |
@@ -20,7 +21,7 @@
 | 文档 | 说明 |
 |---|---|
 | [../AGENTS.md](../AGENTS.md) | 工作区规则 + 项目全貌（架构图 / 功能×子模块清单 / 已知问题台账），LLM 接手自动加载的唯一入口 |
-| [../HANDOFF-NEXT.md](../HANDOFF-NEXT.md) | 交接提示词（2026-09-14 凌晨六域批次后）：新接手 AI 唯一入口（一句话现状/硬规矩/在飞与未提交件/开工三步） |
+| [../HANDOFF-NEXT.md](../HANDOFF-NEXT.md) | 交接提示词（2026-09-15 午后全量更正版）：新接手 AI 唯一入口（一句话现状/硬规矩/自动同步铁律/在飞与未提交件/开工三步） |
 | [../DESIGN-SPEC.md](../DESIGN-SPEC.md) | 设计/执行/验证三规范根部钉死版 v2（vis4 层次化升级；被 `tests/verify_hashes.py` SHA-256 清单钉住，改动须 `--write` 重录） |
 | [../COMMANDS.md](../COMMANDS.md) | 命令手册人读版（逐参数，与 `/bot help` 同口径；模块/别名总数以自动目录实时统计为准，不手写） |
 | [../REVIEW-WORKFLOW.md](../REVIEW-WORKFLOW.md) | 代码评审规范（固化增量评审流程；产出物统一存 `review/` 目录） |
