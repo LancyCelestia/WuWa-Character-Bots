@@ -1,0 +1,18 @@
+{
+  "_meta": {
+    "purpose": "M-12 bot 侧音色守望基线（防丢失基线）：tts_infer.yaml 字节锚 + 守岸人权重路径白名单。消费者=scripts/pre_restart_check.py 第 10 项 tts_voice。",
+    "seat": "T60 (Wave G · M-12 bot 侧守望半)",
+    "created_at": "2026-09-20 00:59 +0800",
+    "yaml_mtime": "2026-09-17 22:58:09 +0800",
+    "engine_root": "C:/Software/GPT-SoVITS-V2Pro",
+    "notes": [
+      "yaml 由引擎 save_configs 独占写回（T53 §4.3 六处调用点：TTS.py :307/:371/:590/:597/:705/:737），device/is_half 合法变更也会改字节——哈希漂移先人工复核音色再重录，勿盲目 --write。",
+      "两权重路径为引擎根相对路径，与 yaml custom 段原样一致（引擎按 CWD=引擎根解析，T53 §4.4 相对路径+只 print 即 M-12 毒源）。",
+      "引擎目录整体不存在时预检判 SKIP（沿 pre_restart_check 惯例），本基线不作假红。"
+    ]
+  },
+  "yaml_relative_path": "GPT_SoVITS/configs/tts_infer.yaml",
+  "yaml_sha256": "3d023b93b6dbdab6ebba95d54f5f8017720e4e6354fa753a7d226375c275091b",
+  "gpt_weights_path": "GPT_weights_v2ProPlus/shorekeeper_e15.ckpt",
+  "sovits_weights_path": "SoVITS_weights_v2ProPlus/shorekeeper_e8_s1144.pth"
+}

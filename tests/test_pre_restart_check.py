@@ -39,7 +39,7 @@ def make_project(tmp_path: Path, *, with_qx: bool = True) -> Path:
     persona_file = persona / "守岸人_核心人格.md"
     persona_file.write_text("人格正文", encoding="utf-8")
     if with_qx:
-        qx_dir = root / "plugins" / "bot_unified_runtime" / "sources" / "data"
+        qx_dir = root / "plugins" / "bot_unified_runtime" / "domains" / "weather" / "assets"
         qx_dir.mkdir(parents=True)
         (qx_dir / "qx.json").write_text("{}", encoding="utf-8")
     (root / ".env").write_text(
@@ -266,6 +266,7 @@ def test_main_exit_code_and_json_structure(monkeypatch: pytest.MonkeyPatch, tmp_
     assert payload["exit_code"] == 0
     assert [r["id"] for r in payload["results"]] == [
         "env_paths", "persona_sync", "hash_ledger", "doc_sync", "kb_drift", "ruff", "napcat",
+        "webui", "control_plane", "tts_voice",
     ]
     assert all(r["status"] in (PASS, SKIP, FAIL) for r in payload["results"])
 
@@ -287,3 +288,177 @@ def test_main_exit_code_and_json_structure(monkeypatch: pytest.MonkeyPatch, tmp_
     assert prc.main(["--project-root", str(root)]) == 1
     table = capsys.readouterr().out
     assert "FAIL 修复指引" in table and "汇总: " in table
+
+
+# ---------------------------------------------------------------------------
+# 8. webui：单文件壳资产（缺失=SKIP / 空·超限·外链=FAIL / 合格=PASS）
+# ---------------------------------------------------------------------------
+
+SINGLE_FILE_HTML = (
+    "<!doctype html><html><head>"
+    '<meta charset="utf-8">'
+    "<title>守岸人控制台</title>"
+    "<style>body{margin:0}</style>"
+    "</head><body>"
+    '<div id="app"></div>'
+    '<svg xmlns="http://www.w3.org/2000/svg"></svg>'
+    # W3C 命名空间等正文 URL 字符串不算外链；script 正文中出现的 https 字符串同样不算
+    '<script type="module">const u="https://example.com/not-a-tag";</script>'
+    '<link rel="icon" href="data:image/svg+xml,%3Csvg%3E">'
+    "</body></html>"
+)
+
+
+def write_webui(root: Path, content: bytes | str) -> Path:
+    dist = root / "webui" / "dist"
+    dist.mkdir(parents=True, exist_ok=True)
+    index = dist / "index.html"
+    index.write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
+    return index
+
+
+def test_webui_missing_is_skip_with_build_hint(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    result = prc.check_webui(root)
+    assert result.status == SKIP
+    assert "npm run build" in result.fix_hint
+    assert "webui/dist/index.html" in result.message
+
+
+def test_webui_valid_single_file_pass(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    index = write_webui(root, SINGLE_FILE_HTML)
+    result = prc.check_webui(root)
+    assert result.status == PASS
+    assert "单文件" in result.message
+    assert str(index.stat().st_size) in result.message  # 体积信息可见
+
+
+def test_webui_empty_file_fail(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    write_webui(root, "")
+    result = prc.check_webui(root)
+    assert result.status == FAIL
+    assert "空" in result.message
+
+
+def test_webui_oversize_fail(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    write_webui(root, b"x" * (prc.WEBUI_MAX_BYTES + 1))
+    result = prc.check_webui(root)
+    assert result.status == FAIL
+    assert "10MB" in result.fix_hint or "10 MB" in result.fix_hint or "10MB" in result.message
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        '<script src="https://cdn.example.com/app.js"></script>',
+        "<script src='/assets/index-abc123.js'></script>",
+        '<link rel="stylesheet" href="https://fonts.example.com/css">',
+        "<link rel='stylesheet' href='/assets/index.css'>",
+    ],
+)
+def test_webui_external_ref_fail(tmp_path: Path, fragment: str) -> None:
+    root = make_project(tmp_path)
+    write_webui(root, "<html><head>" + fragment + "</head><body>hi</body></html>")
+    result = prc.check_webui(root)
+    assert result.status == FAIL
+    assert "外链" in result.message
+
+
+def test_webui_relative_src_not_flagged_per_spec(tmp_path: Path) -> None:
+    """规格只把 http(s) 与绝对路径算外链；相对路径 src 不误伤（PASS）."""
+    root = make_project(tmp_path)
+    write_webui(root, '<html><head><script src="./assets/x.js"></script></head><body></body></html>')
+    assert prc.check_webui(root).status == PASS
+
+
+def test_webui_non_stylesheet_link_ignored(tmp_path: Path) -> None:
+    """只有 rel=stylesheet 的 <link> 计外链；icon/preload 等不判."""
+    root = make_project(tmp_path)
+    write_webui(root, '<html><head><link rel="preload" href="https://x/y"></head><body></body></html>')
+    assert prc.check_webui(root).status == PASS
+
+
+# ---------------------------------------------------------------------------
+# 9. control_plane：控制面配置三键（只报已配置/缺失，哈希值绝不回显）
+# ---------------------------------------------------------------------------
+
+def _env_append(root: Path, *lines: str) -> None:
+    env_path = root / ".env"
+    env_path.write_text(env_path.read_text(encoding="utf-8") + "\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_control_plane_all_missing_skip_with_enable_hint(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    result = prc.check_control_plane(prc.load_env(root))
+    assert result.status == SKIP
+    for key in (
+        "BOT_CONTROL_PLANE_ENABLED",
+        "BOT_CONTROL_PLANE_TOKEN_SHA256",
+        "BOT_CONTROL_PLANE_SUPER_ADMIN_TOKEN_SHA256",
+    ):
+        assert key in result.fix_hint
+    assert "重启" in result.fix_hint  # 启用指引含重启提醒
+
+
+def test_control_plane_all_set_pass_and_never_echo_hash(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    token = "deadbeef" * 8
+    _env_append(
+        root,
+        "BOT_CONTROL_PLANE_ENABLED=true",
+        f"BOT_CONTROL_PLANE_TOKEN_SHA256={token}",
+        "BOT_CONTROL_PLANE_SUPER_ADMIN_TOKEN_SHA256=cafebabe",
+    )
+    result = prc.check_control_plane(prc.load_env(root))
+    assert result.status == PASS
+    assert result.message.count("已配置") == 3
+    assert token not in result.message  # 哈希键只查非空，绝不回显值
+    assert "cafebabe" not in result.message
+    assert "缺失" not in result.message
+
+
+def test_control_plane_partial_pass_with_missing_hint(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    _env_append(root, "BOT_CONTROL_PLANE_TOKEN_SHA256=abc123")
+    result = prc.check_control_plane(prc.load_env(root))
+    assert result.status == PASS
+    assert "BOT_CONTROL_PLANE_TOKEN_SHA256" in result.message
+    assert "已配置" in result.message
+    assert "BOT_CONTROL_PLANE_SUPER_ADMIN_TOKEN_SHA256" in result.message
+    assert "BOT_CONTROL_PLANE_ENABLED" in result.message
+    assert "缺失" in result.message and "部分缺失 x2" in result.message  # 逐键点名缺失项
+
+
+def test_control_plane_enabled_false_value_visible_and_noted(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    _env_append(root, "BOT_CONTROL_PLANE_ENABLED=false")
+    result = prc.check_control_plane(prc.load_env(root))
+    assert result.status == PASS  # 非空=已配置（false 非缺失）
+    assert "false" in result.message  # 开关键值非敏感，可见
+    assert "关闭" in result.message  # 但要提示控制面处于关闭状态
+
+
+# ---------------------------------------------------------------------------
+# 汇总（10 项）：run_all 顺序、缺资产/缺配置=SKIP 不致 fail（向后兼容）
+# ---------------------------------------------------------------------------
+
+def test_run_all_ten_checks_and_new_items_skip_keeps_exit_zero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = make_project(tmp_path)  # 无 webui/dist、无控制面三键、无 TTS 配置
+    all_subproc_ok(monkeypatch)
+    monkeypatch.setattr(prc, "probe_tcp", lambda host, port, timeout=2.0: True)
+    results = prc.run_all(root)
+    ids = [r.id for r in results]
+    assert ids == [
+        "env_paths", "persona_sync", "hash_ledger", "doc_sync", "kb_drift", "ruff", "napcat",
+        "webui", "control_plane", "tts_voice",
+    ]
+    assert next(r for r in results if r.id == "webui").status == SKIP
+    assert next(r for r in results if r.id == "control_plane").status == SKIP
+    assert next(r for r in results if r.id == "tts_voice").status == SKIP
+    # 既有 9 项行为不变：SKIP 不致 fail，exit 仍为 0
+    assert prc.main(["--json", "--project-root", str(root)]) == 0
