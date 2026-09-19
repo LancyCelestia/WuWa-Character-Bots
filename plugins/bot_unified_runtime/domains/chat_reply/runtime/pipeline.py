@@ -394,8 +394,17 @@ class RuntimePipeline:
         group_lists_provider: Callable[[], dict[str, frozenset[str]]] | None = None,
         idempotency_table: EventIdempotencyTable | SqliteEventIdempotencyTable | None = None,
         feature_gate: Callable[[IncomingMessage, str], FeatureAccess] | None = None,
+        # G-3（M-10/M-13）：配音出站 post-review hook（T54 规格 §4.2 冻结接口）。
+        # 缺省 None=零调用（键关部署逐字节现状）；键开由根装配注入
+        # domains/media/voice_enricher 产物，在 _complete 的 review 批准后、
+        # render 前恰调一次（阻塞 HTTP 合成经 handle_async 线程池化，不占事件循环）。
+        outbound_voice_enricher: Callable[
+            [IncomingMessage, BotDecision, CapabilityResult], CapabilityResult
+        ]
+        | None = None,
     ) -> None:
         self.feature_gate = feature_gate
+        self.outbound_voice_enricher = outbound_voice_enricher
         self.send_queue = send_queue
         self.audit_logger = audit_logger
         self.receipt_repository = receipt_repository or InMemoryReceiptRepository()
@@ -751,6 +760,14 @@ class RuntimePipeline:
                 )
             )
             return self._record_receipt_safely(receipt, message)
+
+        # G-3（T54 规格 §4.2 冻结插入点）：配音出站 hook 在 review 批准后、
+        # render 前恰调一次——取文口径=review 批准后的 body（M-10 三害根修），
+        # 失败挂 OperationalIssue（M-13 自动半）。hook 期挂 issue 在本分支之后，
+        # 故不触发上方 A-19「压空正文」分支：群内正文照发，降级文案仍归中央
+        # A-19（R-16②，本域不自拼）。
+        if self.outbound_voice_enricher is not None:
+            result = self.outbound_voice_enricher(message, decision, result)
 
         rendered = render_reviewed_output(result, review)
         use_forward = False
@@ -1142,7 +1159,13 @@ class RuntimePipeline:
                 self._rollback_rate_limit(prepared)
                 return self._internal_error(message, capability_id, exc)
             try:
-                return self._complete(prepared, result)
+                if self.outbound_voice_enricher is None:
+                    return self._complete(prepared, result)
+                # G-3：hook 在 _complete 内同步做阻塞 HTTP 合成（最坏 3×60s），
+                # 而本协程跑在事件循环上——enricher 已接时整段完成路径放线程池
+                # 执行，绝不阻塞循环（与旧配音包装的 asyncio.to_thread 同语义；
+                # 键关部署仍走上面的原路，逐字节现状）。
+                return await asyncio.to_thread(self._complete, prepared, result)
             except Exception as exc:  # noqa: BLE001 - 出站阶段异常同样回滚额度。
                 # 2026-09-18：与同步 handle 同语义（出站失败=未投递=不该占配额）。
                 self._rollback_rate_limit(prepared)

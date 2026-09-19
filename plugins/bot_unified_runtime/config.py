@@ -369,6 +369,11 @@ class Config(BaseModel):
     # 供调试/真机验收时逐条听音。
     bot_tts_auto_reply_probability: float = Field(default=0.05, ge=0.0, le=1.0)
     bot_tts_auto_reply_always: bool = False
+    # G-3 配音出站路径开关（M-10/M-13 根修，T54 规格 §4.2）：true=自动配音走
+    # pipeline post-review hook（review 批准后的正文才合成；合成失败挂
+    # OperationalIssue 走中央告警链）；false=旧能力包装路径（字节级现状）。
+    # 双态互斥；装配期冻结（/bot runtime set 不可热改），改后需重启生效。
+    bot_tts_voice_hook_enabled: bool = False
     # 时间点提醒（bot.reminder）：记住"几点要做什么"，到点主动督促。
     bot_reminder_enabled: bool = True
     bot_reminder_db_path: str = "data/reminders.sqlite3"

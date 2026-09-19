@@ -19,61 +19,7 @@ from nonebot.typing import T_State
 from pydantic import BaseModel
 
 from .audit import AuditRepository, build_audit_repository
-from .audit.file_logger import build_audit_with_file_log
-from .capabilities.affinity import build_affinity_capability
-from .capabilities.campus import build_campus_source
-from .capabilities.chat import (
-    build_admin_roster_text as _build_admin_roster_text_for_chat,
-)
-from .capabilities.content_parser import build_content_capability
-from .capabilities.daily_assist import build_daily_assist_capability
-from .capabilities.divination import build_divination_capability
-from .capabilities.download import build_download_capability
-from .capabilities.eat import build_eat_capability
-from .capabilities.epic import build_epic_capability
-from .capabilities.fx import build_fx_capability
-from .capabilities.group_files import DirtyGuard, GroupFileStore
-from .capabilities.group_info import (
-    build_group_info_capability,
-    build_onebot_api_bridge,
-)
-from .capabilities.market import (
-    build_bond_capability,
-    build_commodities_capability,
-    build_market_capability,
-    build_northbound_capability,
-)
-from .capabilities.media_archive import build_media_archive_capability
-from .capabilities.meme import build_meme_capability
-from .capabilities.meme_library import build_meme_library_capability
-from .capabilities.moegirl import (
-    build_moegirl_capability,
-    local_kb_answer,
-    question_lookup,
-)
-from .capabilities.music import build_music_capability
-from .capabilities.news import build_news_capability
-from .capabilities.platform_credentials import (
-    cookie_expiry_report,
-    cookie_login_check,
-    cookie_login_start,
-    cookie_status_text,
-    import_cookie_header,
-    is_cookie_command,
-    parse_cookie_command,
-)
-from .capabilities.randpic import build_randpic_capability
-from .capabilities.reminder import build_reminder_capability
-from .capabilities.stocks import build_stocks_capability
-from .capabilities.today_history import build_today_history_capability
-from .capabilities.weather import build_weather_capability
-from .capabilities.wiki import build_wiki_capability
-from .character import ConversationHistoryRecorder
 from .config import Config, translate_env_keys
-from .config_readiness import (
-    llm_generation_parameter_errors,
-    persona_context_preflight_errors,
-)
 from .contracts import (
     AuditRecord,
     CapabilityResult,
@@ -87,32 +33,31 @@ from .contracts import (
     SendRequest,
     SessionType,
 )
-from .diagnostics import (
-    DiagnosticsStore,
-    RuntimeDiagnostic,
-    build_diagnostics_store,
-    build_runtime_diagnostic,
-    build_why_result,
+from .domains.assistant.campus.campus import build_campus_source
+from .domains.assistant.daily.capabilities.daily_assist import (
+    build_daily_assist_capability,
 )
-from .llm import LLMProvider, OpenAICompatibleLLMProvider, StaticLLMProvider
-from .llm.model_router import build_model_router
-from .message_context import (
+from .domains.chat_reply.capabilities.affinity import build_affinity_capability
+from .domains.chat_reply.capabilities.chat import (
+    build_admin_roster_text as _build_admin_roster_text_for_chat,
+)
+from .domains.chat_reply.capabilities.group_info import (
+    build_group_info_capability,
+    build_onebot_api_bridge,
+)
+from .domains.chat_reply.character.history import ConversationHistoryRecorder
+from .domains.chat_reply.ingest.message_context import (
     collect_reply_chain,
     collect_reply_chain_async,
     format_reply_chain,
     normalize_message_segments,
 )
-from .output.render_backends import build_render_backend
-from .runtime.alerts import (
-    AdminAlertSuppression,
-    AdminTarget,
-    AlertContent,
-    build_typed_admin_targets,
-    notify_operational_issue,
-    send_admin_alert_requests,
+from .domains.chat_reply.llm_engine.model_router import build_model_router
+from .domains.chat_reply.runtime.aliases import (
+    build_command_alias_resolver,
+    normalize_command_text,
 )
-from .runtime.aliases import build_command_alias_resolver, normalize_command_text
-from .runtime.base_router import (
+from .domains.chat_reply.runtime.base_router import (
     RouteDecision,
     RouteKind,
     classify_message_route,
@@ -121,85 +66,172 @@ from .runtime.base_router import (
     list_route_rules_for_audit,
     looks_like_command_text,
 )
-from .runtime.disconnect_notice import (
+from .domains.chat_reply.runtime.content_route import (
+    SHARED_CONTENT_ROUTE_ENGINE as _SHARED_CONTENT_ROUTE_ENGINE,
+)
+from .domains.chat_reply.runtime.content_route import (
+    build_router_cb as _build_content_route_router_cb,
+)
+from .domains.chat_reply.runtime.event_idempotency import build_event_idempotency_table
+from .domains.chat_reply.runtime.group_cache import GroupInfoCache
+from .domains.chat_reply.runtime.parrot import ParrotDetector
+from .domains.core.config.config_readiness import (
+    llm_generation_parameter_errors,
+    persona_context_preflight_errors,
+)
+from .domains.core.credentials.platform_credentials import (
+    cookie_expiry_report,
+    cookie_login_check,
+    cookie_login_start,
+    cookie_status_text,
+    import_cookie_header,
+    is_cookie_command,
+    parse_cookie_command,
+)
+from .domains.divination.capabilities.divination import build_divination_capability
+from .domains.files.capabilities.download import build_download_capability
+from .domains.files.capabilities.group_files import DirtyGuard, GroupFileStore
+from .domains.finance.capabilities.fx import build_fx_capability
+from .domains.finance.capabilities.market import (
+    build_bond_capability,
+    build_commodities_capability,
+    build_market_capability,
+    build_northbound_capability,
+)
+from .domains.finance.capabilities.stocks import build_stocks_capability
+from .domains.food.capabilities.eat import build_eat_capability
+from .domains.link_parse.capabilities.content_parser import build_content_capability
+from .domains.location.capabilities.moegirl import (
+    build_moegirl_capability,
+    local_kb_answer,
+    question_lookup,
+)
+from .domains.location.capabilities.wiki import build_wiki_capability
+from .domains.media.capabilities.media_archive import build_media_archive_capability
+from .domains.media.capabilities.tts import (
+    build_tts_capability,
+    maybe_attach_voice,
+    should_voice_reply,
+)
+from .domains.media.video.video_pipeline import (
+    _MEDIA_RUNTIME_SINGLETON as _MEDIA_RUNTIME_SINGLETON,
+)
+from .domains.media.video.video_pipeline import _VIDEO_ACK_TEXT as _VIDEO_ACK_TEXT
+from .domains.media.video.video_pipeline import (
+    _VIDEO_ACK_THROTTLE as _VIDEO_ACK_THROTTLE,
+)
+from .domains.media.video.video_pipeline import (
+    _fetch_reply_video_file as _fetch_reply_video_file,
+)
+from .domains.media.video.video_pipeline import (
+    _get_media_registry as _get_media_registry,
+)
+from .domains.media.video.video_pipeline import _local_file_usable as _local_file_usable
+from .domains.media.video.video_pipeline import (
+    _prepare_video_understanding_message as _prepare_video_understanding_message,
+)
+from .domains.media.video.video_pipeline import _provider_enabled as _provider_enabled
+from .domains.media.video.video_pipeline import (
+    _register_bot_sent_video_assets as _register_bot_sent_video_assets,
+)
+from .domains.media.video.video_pipeline import (
+    _video_understanding_enabled_now as _video_understanding_enabled_now,
+)
+from .domains.meme.capabilities.meme import build_meme_capability
+from .domains.meme.capabilities.meme_library import build_meme_library_capability
+from .domains.meme.capabilities.randpic import build_randpic_capability
+from .domains.meme.reactions.engine import (
+    SHARED_PROACTIVE_GATE as _REACTION_PROACTIVE_GATE,
+)
+from .domains.meme.reactions.engine import SHARED_REACTION_BUFFER as _REACTION_BUFFER
+from .domains.meme.reactions.engine import ProactiveGate as _ReactionProactiveGateClass
+from .domains.meme.reactions.engine import (
+    describe_chat_reactions as _describe_chat_reactions,
+)
+from .domains.meme.reactions.engine import (
+    infer_signal_intent as _infer_reaction_signal_intent,
+)
+from .domains.meme.reactions.engine import is_sad_message as _is_sad_reaction_message
+from .domains.meme.reactions.engine import (
+    maybe_react_on_message as _maybe_react_on_message,
+)
+from .domains.meme.reactions.engine import (
+    normalize_onebot_emoji_like as _normalize_onebot_emoji_like,
+)
+from .domains.meme.reactions.engine import pick_reaction_meme as _pick_reaction_meme
+from .domains.music.capabilities.music import build_music_capability
+from .domains.ops.audit.file_logger import build_audit_with_file_log
+from .domains.ops.monitor.alerts import (
+    AdminAlertSuppression,
+    AdminTarget,
+    AlertContent,
+    build_typed_admin_targets,
+    notify_operational_issue,
+    send_admin_alert_requests,
+)
+from .domains.ops.monitor.disconnect_notice import (
     DisconnectNotifier,
     disconnect_notice_options_from,
 )
-from .runtime.event_idempotency import build_event_idempotency_table
-from .runtime.group_cache import GroupInfoCache
-from .runtime.intent_telemetry import build_intent_telemetry
-from .runtime.parrot import ParrotDetector
-from .runtime.reactions import (
-    SHARED_PROACTIVE_GATE as _REACTION_PROACTIVE_GATE,
+from .domains.ops.monitor.intent_telemetry import build_intent_telemetry
+from .domains.ops.monitor.result_unknown import ResultUnknownLedger
+from .domains.ops.smoke.diagnostics import (
+    DiagnosticsStore,
+    RuntimeDiagnostic,
+    build_diagnostics_store,
+    build_runtime_diagnostic,
+    build_why_result,
 )
-from .runtime.reactions import (
-    SHARED_REACTION_BUFFER as _REACTION_BUFFER,
-)
-from .runtime.reactions import (
-    describe_chat_reactions as _describe_chat_reactions,
-)
-from .runtime.reactions import (
-    maybe_react_on_message as _maybe_react_on_message,
-)
-from .runtime.reactions import (
-    normalize_onebot_emoji_like as _normalize_onebot_emoji_like,
-)
-from .runtime.result_unknown import ResultUnknownLedger
-from .runtime.video_pipeline import _MEDIA_RUNTIME_SINGLETON as _MEDIA_RUNTIME_SINGLETON
-from .runtime.video_pipeline import _VIDEO_ACK_TEXT as _VIDEO_ACK_TEXT
-from .runtime.video_pipeline import _VIDEO_ACK_THROTTLE as _VIDEO_ACK_THROTTLE
-from .runtime.video_pipeline import _fetch_reply_video_file as _fetch_reply_video_file
-from .runtime.video_pipeline import _get_media_registry as _get_media_registry
-from .runtime.video_pipeline import _local_file_usable as _local_file_usable
-from .runtime.video_pipeline import (
-    _prepare_video_understanding_message as _prepare_video_understanding_message,
-)
-from .runtime.video_pipeline import _provider_enabled as _provider_enabled
-from .runtime.video_pipeline import (
-    _register_bot_sent_video_assets as _register_bot_sent_video_assets,
-)
-from .runtime.video_pipeline import (
-    _video_understanding_enabled_now as _video_understanding_enabled_now,
-)
+from .domains.render.render_backends import build_render_backend
+from .domains.schedule.capabilities.reminder import build_reminder_capability
+from .domains.subscribe.capabilities.epic import build_epic_capability
+from .domains.subscribe.capabilities.news import build_news_capability
+from .domains.subscribe.capabilities.today_history import build_today_history_capability
+from .domains.weather.capabilities.weather import build_weather_capability
+from .llm import LLMProvider, OpenAICompatibleLLMProvider, StaticLLMProvider
 
 
 def _runtime_scripts_path(value: str):
     from scripts.runtime_paths import runtime_path
 
     return runtime_path(value)
-from .runtime.mentions import detect_name_mention
-from .runtime.natural_language import detect_natural_command, runtime_set_command_text
-from .runtime.question_intent import looks_like_question_text
-from .runtime.settings import (
+from .domains.chat_reply.runtime.mentions import detect_name_mention
+from .domains.chat_reply.runtime.natural_language import (
+    detect_natural_command,
+    runtime_set_command_text,
+)
+from .domains.chat_reply.runtime.question_intent import looks_like_question_text
+from .domains.chat_reply.runtime.settings import (
     build_instance_settings_manager,
     effective_instance,
     normalize_group_policy_mode,
 )
-from .sender import (
+from .domains.core.credentials.credential_health import check_credentials_and_report
+from .domains.core.search.web_search import build_web_search_provider
+from .domains.files.sources.downloader import MediaDownloader
+from .domains.link_parse.parsers import (
+    build_cookie_provider,
+    extract_http_urls,
+    music_candidate_providers,
+)
+from .domains.link_parse.support.parse_history import (
+    build_parse_history_result,
+    build_parse_history_store,
+)
+from .domains.media.ingest.telegram_media import enrich_telegram_file_segments
+from .domains.meme.sources.meme_library import MemeLibraryStore
+from .domains.meme.sources.meme_library_listener import absorb_event_images
+from .domains.meme.sources.meme_search import build_meme_search_provider
+from .domains.meme.sources.reaction_store import ReactionStore
+from .domains.music.data.music_request_store import MusicRequestStore
+from .domains.transport.sender import (
     OneBotV11Bot,
     ReceiptRepository,
     build_receipt_repository,
     drain_send_queue_once,
     send_onebot_v11,
 )
-from .sender.timeout import set_transport_timeout_provider
-from .sources.credential_health import check_credentials_and_report
-from .sources.downloader import MediaDownloader
-from .sources.meme_library import MemeLibraryStore
-from .sources.meme_library_listener import absorb_event_images
-from .sources.meme_search import build_meme_search_provider
-from .sources.music_request_store import MusicRequestStore
-from .sources.parse_history import (
-    build_parse_history_result,
-    build_parse_history_store,
-)
-from .sources.parsers import (
-    build_cookie_provider,
-    extract_http_urls,
-    music_candidate_providers,
-)
-from .sources.telegram_media import enrich_telegram_file_segments
-from .sources.web_search import build_web_search_provider
+from .domains.transport.sender.timeout import set_transport_timeout_provider
 
 try:
     from nonebot.plugin import PluginMetadata
@@ -306,6 +338,30 @@ OFFLOADED_CAPABILITY_IDS = frozenset(
 )
 
 
+def _attach_voice_reply(inner: Any, *, config: Config) -> Any:
+    """给 chat 能力附加语音（bot.tts 的对话自动配音）。
+
+    包装而非改 chat 内部：人格回复本身零改动，配音只是出站前的增益。合成是
+    阻塞 HTTP，故放线程池执行，不占事件循环；任一环节失败都原样返回原结果
+    （maybe_attach_voice 内部已 fail-open）。
+
+    短路用**完整门链谓词** ``should_voice_reply``（开关 / 未带音频 / 出自
+    bot.chat / 会话范围 / 概率门）：谓词判否时连线程调度都不付。谓词是确定性
+    纯函数，``maybe_attach_voice`` 内部会再判一次且结论必然相同——所以这只是
+    省掉一次线程投递，出站结果与改动前逐字节一致。
+    """
+
+    async def capability(message: Any, decision: Any) -> Any:
+        result = await inner(message, decision)
+        if not should_voice_reply(config, message, result):
+            return result
+        return await asyncio.to_thread(
+            maybe_attach_voice, message, result, config=config
+        )
+
+    return capability
+
+
 def _build_chat_llm_provider(config: Config) -> LLMProvider:
     if config.bot_chat_provider == "openai_compatible":
         return OpenAICompatibleLLMProvider(
@@ -331,8 +387,8 @@ def _build_memory_writer(
     import logging
     import threading
 
-    from plugins.bot_unified_runtime.character.memory import SQLiteMemoryRepository
-    from plugins.bot_unified_runtime.character.memory_extract import (
+    from .domains.chat_reply.character.memory import SQLiteMemoryRepository
+    from .domains.chat_reply.character.memory_extract import (
         extract_memory_texts,
         store_extracted_memories,
     )
@@ -389,13 +445,11 @@ def _build_memory_writer(
                     store_extracted_memories(repository, subject_user_id=sender_id,
                                              session_id=session_id, texts=texts)
             if reminder_extract_on:
-                from plugins.bot_unified_runtime.character.memory_extract import (
+                from .domains.chat_reply.character.memory_extract import (
                     extract_reminder_drafts,
                     store_extracted_reminders,
                 )
-                from plugins.bot_unified_runtime.character.reminders import (
-                    build_reminder_store,
-                )
+                from .domains.schedule.store.reminders import build_reminder_store
 
                 # session_id 形如 "group:<id>" / "private:<id>"（ingress 约定）。
                 scope, _, target = session_id.partition(":")
@@ -426,8 +480,8 @@ def _build_memory_writer(
 
 
 def _is_plain_chat_text(text: str) -> bool:
-    from .capabilities.auto_send import is_auto_send_command_text
-    from .capabilities.chat import looks_like_chat_text
+    from .domains.chat_reply.capabilities.chat import looks_like_chat_text
+    from .domains.schedule.auto_send import is_auto_send_command_text
 
     stripped = text.strip()
     return looks_like_chat_text(stripped) and not is_auto_send_command_text(stripped)
@@ -822,6 +876,17 @@ OneBotV11Adapter.add_custom_model(PrivateFileNoticeEvent)
 # 默认回退值；实际由配置 bot_forward_fetch_timeout_seconds 注入。
 _FORWARD_MESSAGE_API_TIMEOUT_SECONDS = 10.0
 
+# 子转发递归展开闸（2026-09-18 核心链路排查）：旧实现 `nested_ids[:4]`
+# 只展开**一层**且不递归——"转发里再转发"的聊天记录整段丢失，表现为
+# 提示词里只剩 `[合并转发:L3]` 占位符（用户实测「递归子记录读不了」）。
+# 现按深度递归展开，同时设三道闸防递归爆炸与超时叠加：
+#   ① 深度上限 _FORWARD_NESTED_MAX_DEPTH；
+#   ② 单条消息的子转发总节点上限 _FORWARD_NESTED_MAX_TOTAL；
+#   ③ 主转发 + 全部子转发共享的总超时预算（见 _forward_message_text）。
+# 环引用（A→B→A）由 seen 集合去重拦住，必然终止。
+_FORWARD_NESTED_MAX_DEPTH = 3
+_FORWARD_NESTED_MAX_TOTAL = 12
+
 
 def _forward_segment_id(event: Any) -> str:
     """提取消息中的合并转发（forward）元素 id；非合并转发返回空串。"""
@@ -838,7 +903,7 @@ def _forward_message_text_sync(result: Any) -> str:
     """把 get_forward_msg 的回执解析成正文（容忍多种形态）。
 
     历史实现只认 ``result["messages"][*]["message"][*]`` 的 dict 嵌套，且**任何**
-    异常都被静默吞掉；只要 NapCat 换成对象形态 / 改字段名 / 带 shell 包装，
+    异常都被静默吞掉；只要 SnowLuma 换成对象形态 / 改字段名 / 带 shell 包装，
     整条转发就表现为"bot 毫无回应且日志无痕"。这里做归一 + 带发送者前缀。
     """
     if result is None:
@@ -899,10 +964,57 @@ def _forward_message_text_sync(result: Any) -> str:
                     parts.append("[语音]")
                 elif seg_type == "video":
                     parts.append("[视频]")
+                elif seg_type in FORWARD_SEGMENT_TYPES:
+                    # 递归子转发：此处只插占位标记，正文由 _forward_message_text
+                    # 按 data.id 二次反查展开（sync 函数不能 await）。
+                    nested_id = str((data or {}).get("id") or "").strip() if isinstance(data, dict) else ""
+                    parts.append(f"[合并转发:{nested_id}]" if nested_id else "[合并转发]")
+                elif seg_type == "json" or seg_type == "xml":
+                    value = str(data.get("data", "")).strip() if isinstance(data, dict) else ""
+                    if value:
+                        parts.append("[卡片消息]")
             text = " ".join(parts).strip()
         if text:
             lines.append(f"{nickname}：{text}" if nickname else text)
     return "\n".join(lines)
+
+
+def _collect_nested_forward_ids(result: Any) -> list[str]:
+    """从 get_forward_msg 回执里收集嵌套子转发的 id（保序去重，最多 8 个）。"""
+    payload = result
+    if isinstance(payload, dict) and "messages" not in payload and "data" in payload:
+        inner = payload.get("data")
+        if isinstance(inner, dict):
+            payload = inner
+    if hasattr(payload, "messages"):
+        payload = payload.messages
+    if isinstance(payload, dict):
+        messages = payload.get("messages") or payload.get("message")
+    else:
+        messages = getattr(payload, "messages", None) or getattr(payload, "message", None)
+    if not isinstance(messages, list):
+        return []
+    ids: list[str] = []
+    for item in messages:
+        segments = None
+        if isinstance(item, dict):
+            segments = item.get("message") or item.get("segments") or item.get("content")
+        else:
+            segments = getattr(item, "message", None) or getattr(item, "segments", None)
+        for segment in segments or []:
+            if isinstance(segment, dict):
+                seg_type = str(segment.get("type", ""))
+                data = segment.get("data") or {}
+            else:
+                seg_type = str(getattr(segment, "type", ""))
+                data = getattr(segment, "data", {}) or {}
+            if seg_type in FORWARD_SEGMENT_TYPES and isinstance(data, dict):
+                nested_id = str(data.get("id") or "").strip()
+                if nested_id and nested_id not in ids:
+                    ids.append(nested_id)
+            if len(ids) >= 8:
+                return ids
+    return ids
 
 
 async def _forward_message_text(
@@ -910,12 +1022,17 @@ async def _forward_message_text(
 ) -> str:
     """读取合并转发（forward）消息正文；失败返回空串并留 warning。
 
-    只在消息确实包含 forward 段时才调用 NapCat 的 get_forward_msg。
-    普通消息 id 不是合并转发 id，NapCat 会拒绝为"消息已过期或者为
+    只在消息确实包含 forward 段时才调用 SnowLuma 的 get_forward_msg。
+    普通消息 id 不是合并转发 id，NapCat 时期会拒绝为"消息已过期或者为
     内层消息"；带上限超时是为了防止上游回执异常时卡住消息处理。
 
     失败必须**可观测**：早期版本把异常全吞掉，导致"转发无回应"现场没有任何
     线索（本次排查即因此耗时）。现在失败路径固定打一条 warning。
+
+    嵌套展开（2026-09-18）：子转发按 ``_FORWARD_NESTED_MAX_DEPTH`` 递归展开
+    （旧实现只展开一层，更深层只剩 ``[合并转发:id]`` 占位符），子节点总数封顶
+    ``_FORWARD_NESTED_MAX_TOTAL``，主/子反查共享一个总超时预算；同 id 只取一次，
+    环引用必然终止。
     """
     forward_id = _forward_segment_id(event)
     if not forward_id:
@@ -924,14 +1041,52 @@ async def _forward_message_text(
     if not callable(call_api):
         logging.getLogger(__name__).warning("forward message fetch skipped: bot has no call_api")
         return ""
-    timeout = float(timeout_seconds or _FORWARD_MESSAGE_API_TIMEOUT_SECONDS)
-    try:
-        result = await asyncio.wait_for(
-            call_api("get_forward_msg", message_id=forward_id),
-            timeout=timeout,
+    per_call_timeout = float(timeout_seconds or _FORWARD_MESSAGE_API_TIMEOUT_SECONDS)
+    # 总预算：主转发 + 全部子转发反查共享，防深链把单条消息处理拖到分钟级。
+    deadline = time.monotonic() + per_call_timeout * (_FORWARD_NESTED_MAX_DEPTH + 1)
+    seen: set[str] = {forward_id}
+    expanded_count = 0
+
+    async def _fetch(one_id: str) -> Any:
+        """单次反查：单次上限与剩余总预算取小（至少 0.5s，避免负超时）。"""
+        remaining = deadline - time.monotonic()
+        return await asyncio.wait_for(
+            call_api("get_forward_msg", message_id=one_id),
+            timeout=max(0.5, min(per_call_timeout, remaining)),
         )
+
+    async def _expand(one_id: str, payload: Any, depth: int) -> str:
+        """深度优先展开：返回本层正文（含其后代子转发正文）。"""
+        nonlocal expanded_count
+        body = _forward_message_text_sync(payload)
+        if depth >= _FORWARD_NESTED_MAX_DEPTH:
+            return body
+        for nested_id in _collect_nested_forward_ids(payload):
+            if expanded_count >= _FORWARD_NESTED_MAX_TOTAL or time.monotonic() >= deadline:
+                break
+            if nested_id in seen:
+                continue  # 环引用/重复引用：同 id 只取一次。
+            seen.add(nested_id)
+            expanded_count += 1
+            try:
+                nested_result = await _fetch(nested_id)
+            except Exception as exc:  # noqa: BLE001 - 子转发失败不阻断主正文。
+                logging.getLogger(__name__).warning(
+                    "nested forward fetch failed id=%s type=%s detail=%s",
+                    nested_id,
+                    type(exc).__name__,
+                    str(exc)[:120],
+                )
+                continue
+            nested_text = await _expand(nested_id, nested_result, depth + 1)
+            if nested_text:
+                body = (body + "\n" if body else "") + f"—— 子转发 {nested_id[:8]} ——\n{nested_text}"
+        return body
+
+    try:
+        result = await _fetch(forward_id)
     except asyncio.TimeoutError:
-        logging.getLogger(__name__).warning("forward message fetch timed out after %.1fs id=%s", timeout, forward_id)
+        logging.getLogger(__name__).warning("forward message fetch timed out after %.1fs id=%s", per_call_timeout, forward_id)
         return ""
     except Exception as exc:  # noqa: BLE001 - 上游回执异常不阻断消息处理。
         logging.getLogger(__name__).warning(
@@ -941,7 +1096,7 @@ async def _forward_message_text(
             str(exc)[:160],
         )
         return ""
-    text = _forward_message_text_sync(result)
+    text = await _expand(forward_id, result, 0)
     if not text:
         logging.getLogger(__name__).warning(
             "forward message fetch returned no text id=%s result_type=%s",
@@ -970,7 +1125,7 @@ _RECORD_CONVERTIBLE_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg",
 async def _transcode_record_segments(bot: Any, raw_segments: list[dict[str, Any]]) -> None:
     """把 ffmpeg 解不了的语音段经 OneBot get_record 预转码成 mp3。
 
-    NapCat 收到的 QQ 语音落盘是 SILK 裸流（.slk），ffmpeg 无法解码，
+    NapCat 时期收到的 QQ 语音落盘是 SILK 裸流（.slk），ffmpeg 无法解码，
     转写链路会静默降级；get_record(out_format=mp3) 让适配器自行转码
     后把新路径写入段 data.transcoded_path。任何失败静默跳过，段保持原样。
     """
@@ -990,7 +1145,7 @@ async def _transcode_record_segments(bot: Any, raw_segments: list[dict[str, Any]
         if not file_id:
             continue
         try:
-            # NapCat 偶发挂起不返回：无超时会把这个用户的后续消息永久卡死。
+            # NapCat 时期偶发挂起不返回：无超时会把这个用户的后续消息永久卡死。
             result = await asyncio.wait_for(
                 bot.call_api("get_record", file_id=file_id, out_format="mp3"),
                 timeout=20.0,
@@ -1045,6 +1200,34 @@ def _log_runtime_event(
         return
 
 
+def _assemble_model_prices(config: object, settings_store: object | None) -> dict[str, dict[str, float]]:
+    """装配期价表：模型注册表（基准）→ BOT_MODEL_PRICES（手工覆盖）。
+
+    2026-09-18 价格单源化：注册表是价目表导入脚本（scripts/import_model_prices.py）
+    的落点，此前只喂 V2.1 计费链路；遗留记账链路（chat 侧 cost_milli 审计标签）
+    只读 ``config.bot_model_prices``（默认空 dict），于是"导入了价目表，账单还是
+    未计价"。这里把注册表投影进同一口径，让导入一次即全链路生效；读不到价表
+    只影响成本注记，绝不阻塞装配。
+    """
+    try:
+        from .domains.chat_reply.llm_engine.pricing import (
+            merge_model_prices,
+            registry_model_prices,
+        )
+
+        registry: object = {}
+        list_model_registry = getattr(settings_store, "list_model_registry", None)
+        if callable(list_model_registry):
+            registry = list_model_registry() or {}
+        override: object = getattr(config, "bot_model_prices", {}) or {}
+        get_or = getattr(settings_store, "get_or", None)
+        if callable(get_or):
+            override = get_or("BOT_MODEL_PRICES", override)
+        return merge_model_prices(registry_model_prices(registry), override)
+    except Exception:  # noqa: BLE001 - 价表异常不阻塞装配（退化为未计价）。
+        return {}
+
+
 def _runtime_tag_values(send_request: SendRequest | None) -> dict[str, object]:
     """从已脱敏的发送审计标签中提取路由诊断字段。"""
     if send_request is None:
@@ -1094,8 +1277,14 @@ def _incoming_from_nonebot_event(
     adapter_name: str = "",
     segments: list[dict[str, Any]] | None = None,
     reply_chain: list[Any] | None = None,
+    feature_enabled: Callable[[str], bool] | None = None,
 ) -> IncomingMessage:
-    text = event.get_plaintext()
+    try:
+        text = event.get_plaintext()
+    except ValueError:
+        # NoticeEvent 族（戳一戳等）没有 message 字段；摄取按空文本降级，
+        # 话术文案由 handler 侧入参提供，不依赖事件正文。
+        text = ""
     session_id = event.get_session_id()
     module_name = type(event).__module__.lower()
     normalized_adapter = adapter_name.strip().lower()
@@ -1167,8 +1356,9 @@ def _incoming_from_nonebot_event(
         text = normalized_message.plain_text
     file_context: list[str] = []
     try:
-        from plugins.bot_unified_runtime.sources.file_reader import read_supported_file
-        for segment in raw_segments:
+        from .domains.files.sources.file_reader import read_supported_file
+        file_segments = raw_segments if feature_enabled is None or feature_enabled("bot.ingress.file_read") else []
+        for segment in file_segments:
             if str(segment.get("type", "")).lower() != "file":
                 continue
             data = segment.get("data") or {}
@@ -1452,9 +1642,21 @@ def _register_send_queue_scheduler(
             adapter_name = _bot_adapter_name(bot)
             if adapter_name == "onebot":
                 return await send_onebot_v11(bot, send_request)
-            from .sender.nonebot import send_nonebot_message
+            from .domains.transport.sender.nonebot import send_nonebot_message
 
             return await send_nonebot_message(bot, None, send_request)
+
+        # B4b Tier2-b 接线骨架（缺省关=现状逐字节）：核验键未落地（键归属
+        # B4a，getattr 缺省 False）或显式关闭时传 None，与不传该形参等价；
+        # 「不存在→False」重发判定另受 onebot._ONEBOT_GET_MSG_NOT_FOUND_PROVEN
+        # 真机取证锁，取证前本确认器只会 True/None（保持 UNKNOWN，绝不盲发）。
+        unknown_part_confirmer = None
+        if getattr(config, "bot_outbound_verify_enabled", False):
+            from .domains.transport.sender.onebot import build_unknown_part_confirmer
+
+            unknown_part_confirmer = build_unknown_part_confirmer(
+                lambda send_request: _select_queue_bot(bot_provider, send_request)
+            )
 
         await drain_send_queue_once(
             send_queue,
@@ -1463,6 +1665,7 @@ def _register_send_queue_scheduler(
             audit_logger=audit_logger,
             limit=batch_size,
             operational_notifier=operational_notifier,
+            unknown_part_confirmer=unknown_part_confirmer,
         )
 
     scheduler.add_job(
@@ -1473,6 +1676,7 @@ def _register_send_queue_scheduler(
         replace_existing=True,
         max_instances=1,
         coalesce=True,
+        misfire_grace_time=30,
     )
     return {
         "registered": True,
@@ -1607,11 +1811,11 @@ def _register_today_history_scheduler(
     render_backend: Any = None,
 ) -> dict[str, object]:
     """「历史上的今天」每日推送：按订阅表注册 cron 任务，走统一流水线发送。"""
-    from .capabilities.today_history import (
+    from .domains.subscribe.capabilities.today_history import (
         _load_push_table,
         build_today_history_capability,
     )
-    from .sources.today_history import TodayHistoryProvider
+    from .domains.subscribe.feeds.today_history import TodayHistoryProvider
 
     push_file = str(
         getattr(config, "bot_today_history_push_file", "data/today_history_push.json")
@@ -1653,7 +1857,7 @@ def _register_today_history_scheduler(
             raw_segments=[{"type": "text", "data": {"text": "历史上的今天"}}],
             mentions_bot=False,
         )
-        from .runtime import offload_capability
+        from .domains.chat_reply.runtime.pipeline import offload_capability
 
         await pipeline.handle_async(
             message,
@@ -1746,7 +1950,10 @@ def _register_kb_wiki_sync_scheduler(scheduler: Any, config: Any) -> dict:
         try:
             from nonebot.log import logger
 
-            from .character.kb_wiki import _get_shared_store, run_kb_sync_task
+            from .domains.location.knowledge.kb_wiki import (
+                _get_shared_store,
+                run_kb_sync_task,
+            )
 
             summary = run_kb_sync_task(
                 config,
@@ -1759,6 +1966,12 @@ def _register_kb_wiki_sync_scheduler(scheduler: Any, config: Any) -> dict:
                 summary.get("public_message")
                 or f"error_kind={summary.get('error_kind')}",
             )
+        except asyncio.CancelledError:
+            # 停机竞态兜底（R2b 备用坐标落地）：bot.py 早停钩子已先于插件
+            # 钩子 cancel job；若取消落在线程体内，这里安静优雅退出，
+            # 绝不向停机日志刷 CancelledError 栈（CancelledError 不被下方
+            # except Exception 捕获，缺这层会逃到 apscheduler 执行器刷屏）。
+            return
         except Exception as exc:  # noqa: BLE001 - 同步失败不影响 Bot 主链路。
             try:
                 from nonebot.log import logger
@@ -1971,7 +2184,7 @@ _BOT_AVATAR_URL_TTL_SECONDS = 600.0
 
 def _refresh_local_bot_avatar(bot_id: str, config: Config) -> str:
     """连接钩子的同步下载体：qlogo → Runtime data/avatar/ 本地缓存。"""
-    from .output.bot_avatar import refresh_from_qq
+    from .domains.render.bot_avatar import refresh_from_qq
 
     data_dir = str(getattr(config, "bot_runtime_data_dir", "data") or "data")
     root = Path(data_dir)
@@ -1985,14 +2198,14 @@ async def _resolve_bot_avatar_url(bot: Any, config: Config) -> str:
 
     F3（2026-09-14 素材本地化）：本地头像文件存在即直接用 file URI（经
     output.bot_avatar.bot_avatar_uri 统一入口，含内存登记与磁盘兜底发现），
-    不再进入 NapCat RPC / qlogo 远端链——消灭 600s TTL 周期性 Chromium
+    不再进入协议端 RPC / qlogo 远端链——消灭 600s TTL 周期性 Chromium
     回源。本地缺失才走既有远端链，其语义原样保留（RPC/qlogo 回退、600s
     缓存、最终空串由卡片回落「守」字圆点）。
     """
     configured = str(getattr(config, "bot_persona_avatar_url", "") or "").strip()
     if configured:
         return configured
-    from .output.bot_avatar import bot_avatar_uri
+    from .domains.render.bot_avatar import bot_avatar_uri
 
     local_uri = bot_avatar_uri(config)
     if local_uri:
@@ -2047,7 +2260,7 @@ _CONTENT_REGISTRY_CACHE: dict[str, tuple[tuple[Any, ...], Any]] = {}
 
 def _cached_content_parser_registry(config: Config, playwright_backend: Any) -> Any:
     """按 cookies 文件 mtime 缓存 build_content_parser_registry 结果。"""
-    from plugins.bot_unified_runtime.sources.parsers import (
+    from .domains.link_parse.parsers import (
         build_content_parser_registry,
         build_cookie_provider,
     )
@@ -2252,8 +2465,8 @@ async def _deliver_transport_send_request(
     receipt_repository: ReceiptRepository | None = None,
     send_queue: Any | None = None,
 ) -> DeliveryReceipt:
-    from .sender.gateway import UnifiedDeliveryGateway
-    from .sender.nonebot import send_nonebot_message
+    from .domains.transport.sender.gateway import UnifiedDeliveryGateway
+    from .domains.transport.sender.nonebot import send_nonebot_message
 
     async def _record(receipt: DeliveryReceipt, request: SendRequest) -> DeliveryReceipt:
         return _record_transport_receipt(
@@ -2327,13 +2540,13 @@ async def _run_capability_through_pipeline(
     history_kind: str = "command",
     operational_notifier: Any | None = None,
 ) -> DeliveryReceipt:
-    from .runtime.ingress import IngressGateway
+    from .domains.chat_reply.runtime.ingress import IngressGateway
     message = IngressGateway(_incoming_from_nonebot_event).from_event(
         event,
         bot_id=str(getattr(bot, "self_id", "unknown")),
     )
     if offload_sync_capability:
-        from .runtime import offload_capability
+        from .domains.chat_reply.runtime.pipeline import offload_capability
 
         receipt = await pipeline.handle_async(
             message,
@@ -2411,8 +2624,8 @@ def _reset_affinity_store_cache() -> None:
 
 
 def build_character_affinity_store(config: object):
-    from .character.affinity import DynamicAffinityStore
-    from .character.providers import build_runtime_data_path
+    from .domains.chat_reply.character.affinity import DynamicAffinityStore
+    from .domains.chat_reply.character.providers import build_runtime_data_path
 
     if not getattr(config, "bot_affinity_enabled", True):
         return None
@@ -2435,8 +2648,8 @@ _MOOD_STORES_LOCK = threading.Lock()
 
 
 def build_character_mood_store(config: object):
-    from .character.mood import BotMoodStore
-    from .character.providers import build_runtime_data_path
+    from .domains.chat_reply.character.mood import BotMoodStore
+    from .domains.chat_reply.character.providers import build_runtime_data_path
 
     if not getattr(config, "bot_mood_enabled", True):
         return None
@@ -2514,8 +2727,8 @@ _QUIRK_STORES_LOCK = threading.Lock()
 
 
 def build_character_quirk_store(config: object):
-    from .character.providers import build_runtime_data_path
-    from .character.quirks import QuirkStore
+    from .domains.chat_reply.character.providers import build_runtime_data_path
+    from .domains.chat_reply.character.quirks import QuirkStore
 
     if not getattr(config, "bot_quirks_enabled", True):
         return None
@@ -2552,8 +2765,8 @@ _IDENTITY_STORES_LOCK = threading.Lock()
 
 
 def build_session_identity_store(config: object):
-    from .character.providers import build_runtime_data_path
-    from .character.session_identity import SessionIdentityStore
+    from .domains.chat_reply.character.providers import build_runtime_data_path
+    from .domains.chat_reply.character.session_identity import SessionIdentityStore
 
     db_path = build_runtime_data_path(
         config,
@@ -2594,11 +2807,11 @@ def _register_reflection_scheduler(scheduler: Any, config: Any) -> dict:
         try:
             from nonebot.log import logger
 
-            from .character.reflection import run_nightly_reflection
+            from .domains.chat_reply.character.reflection import run_nightly_reflection
 
             summarizer = None
             if bool(getattr(config, "bot_reflection_llm_enabled", False)):
-                from .character.reflection import LLMSummarizer
+                from .domains.chat_reply.character.reflection import LLMSummarizer
 
                 summarizer = LLMSummarizer(build_model_router(config))
             logger.info(
@@ -2679,13 +2892,16 @@ async def _deliver_due_reminders(
     在 60s 内联宽限期后可能已送出，此时直接销账不再重发（防双发）；
     长期投不出由 store 的顺延/作废策略兜底。
     """
-    from .character.reminders import build_reminder_store, build_reminder_text
     from .contracts import (
         PrivacyLevel,
         RenderedOutput,
         SendPolicy,
         SendRequest,
         SessionType,
+    )
+    from .domains.schedule.store.reminders import (
+        build_reminder_store,
+        build_reminder_text,
     )
 
     store = build_reminder_store(config)
@@ -2774,6 +2990,106 @@ async def _deliver_due_reminders(
     return delivered
 
 
+async def _deliver_cookie_expiry_report_via_queue(
+    config: Any,
+    send_queue: Any,
+    audit_logger: Any,
+    receipt_repository: Any,
+    bot: Any,
+    report: str,
+    admins: list[str],
+    deliver_fn: Any = None,
+) -> bool:
+    """cookie 到期提醒统一路径投递（S0 收编①，v21r4-b2-direct-collect-plan §3.1）。
+
+    形态 B=``_deliver_due_reminders`` 提醒范式：SendRequest→``send_queue.submit``
+    →``_find_sent_request``→内联 deliver（默认 ``_deliver_transport_send_request``），
+    SENT/REDIRECTED 才算送达；首个管理员未送达才换下一个（与旧直连
+    break/continue 等价）。dedupe_key/request_id 带本地日期=当日幂等：回执仓
+    已有当日 SENT/REDIRECTED 回执时直接视为已送达（治同日重复触发的重复
+    打扰面）。全部失败静默返回 False，绝不抛出影响主链路。
+    """
+    from datetime import datetime as _datetime
+
+    from .contracts import (
+        PrivacyLevel,
+        RenderedOutput,
+        SendPolicy,
+        SendRequest,
+        SessionType,
+    )
+
+    deliver = deliver_fn if deliver_fn is not None else _deliver_transport_send_request
+    today = _datetime.now().astimezone().date().isoformat()
+    adapter = _bot_adapter_name(bot)
+    bot_id = str(getattr(bot, "self_id", "") or "")
+    persona_profile_id = str(getattr(config, "bot_persona_profile_id", "default"))
+    cleaned = [str(item).strip() for item in admins if str(item).strip()]
+    for admin_id in cleaned[:3]:
+        request_id = f"cookie-expiry-{admin_id}-{today}"
+        if receipt_repository is not None:
+            try:
+                prior = receipt_repository.latest(request_id)
+            except Exception:  # noqa: BLE001 - 回执查询失败按无回执处理。
+                prior = None
+            if prior is not None and getattr(prior, "state", None) in {
+                ReceiptState.SENT,
+                ReceiptState.REDIRECTED,
+            }:
+                return True
+        request = SendRequest(
+            request_id=request_id,
+            session_id=f"private:{admin_id}",
+            target_scope=SessionType.PRIVATE,
+            target_id=str(int(admin_id)),
+            capability_id="bot.cookie_expiry_notice",
+            content=RenderedOutput(
+                request_id=request_id,
+                content_type="text",
+                content_ref={},
+                text_fallback=report,
+                privacy_level=PrivacyLevel.PERSONAL,
+            ),
+            send_policy=SendPolicy.QUEUED,
+            priority="normal",
+            max_messages=1,
+            dedupe_key=f"cookie-expiry:{admin_id}:{today}",
+            cooldown_key=f"cookie-expiry:{admin_id}",
+            privacy_level=PrivacyLevel.PERSONAL,
+            persona_profile_id=persona_profile_id,
+            adapter=adapter,
+            bot_id=bot_id,
+            audit_tags=["cookie_expiry", "daily_notice"],
+        )
+        try:
+            send_queue.submit(request)
+        except Exception:  # 入列失败换下一个管理员。
+            logging.getLogger(__name__).debug(
+                "cookie expiry notice submit failed for %s", admin_id, exc_info=True
+            )
+            continue
+        sent_request = _find_sent_request(send_queue, request_id) or request
+        try:
+            receipt = deliver(
+                bot, None, sent_request, audit_logger, receipt_repository, send_queue
+            )
+            if inspect.isawaitable(receipt):
+                receipt = await receipt
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - 单管理员投递失败换下一个。
+            receipt = None
+        if receipt is not None and getattr(receipt, "state", None) in {
+            ReceiptState.SENT,
+            ReceiptState.REDIRECTED,
+        }:
+            return True
+        logging.getLogger(__name__).debug(
+            "cookie expiry notice to %s not delivered via queue", admin_id
+        )
+    return False
+
+
 def _register_reminder_scheduler(
     scheduler: Any,
     config: Any,
@@ -2855,7 +3171,6 @@ def _push_daily_group_digests(
     """
     from datetime import datetime
 
-    from .character.shared_group import GroupDigestListFilter
     from .contracts import (
         PrivacyLevel,
         RenderedOutput,
@@ -2863,6 +3178,7 @@ def _push_daily_group_digests(
         SendRequest,
         SessionType,
     )
+    from .domains.chat_reply.character.shared_group import GroupDigestListFilter
 
     digest_list = GroupDigestListFilter(
         mode=str(getattr(config, "bot_group_digest_list_mode", "") or ""),
@@ -2921,12 +3237,16 @@ def _register_digest_push_scheduler(
 
     def _digest_push_job() -> None:
         try:
-            from .character.shared_group import build_shared_group_context_provider
+            from .domains.chat_reply.character.shared_group import (
+                build_shared_group_context_provider,
+            )
 
             _push_daily_group_digests(
                 config,
                 send_queue,
-                build_shared_group_context_provider(config),
+                build_shared_group_context_provider(
+                    config, llm_provider=_build_chat_llm_provider(config)
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - 夜间推送失败不影响主链路。
             from nonebot.log import logger
@@ -2973,13 +3293,29 @@ def _daily_assist_targets(config: Any) -> list[str]:
     ]
 
 
+# 到点吃什么开场池（R6 席草案落地，v21r2-r6-copy-log.md §六）：单句无变体
+# → 6 变体确定性轮换，与 character/daily_assist 文案池同构（同 key 游标
+# 循环、连发不重复）；文案只动措辞，推送调度/dedupe 行为面零改动。
+_MEAL_OPENERS: tuple[str, ...] = (
+    "到饭点啦，守岸人替你挑了这个：{name}{suffix}",
+    "饭点到了。今天就吃它吧：{name}{suffix}",
+    "到点了，守岸人翻了很久，选了这个：{name}{suffix}",
+    "开饭啦。今天的答案是：{name}{suffix}",
+    "饭点准时到。守岸人把这个端上来：{name}{suffix}",
+    "到吃饭的点了，今天轮到它：{name}{suffix}",
+)
+
+
 def _build_meal_push_text(item: str) -> str:
-    """到点吃什么推送正文（守岸人语气，一句克制引子，不堆辞藻）。"""
-    from .character.daily_assist import meal_display_name
+    """到点吃什么推送正文（守岸人语气开场池，一句克制引子，不堆辞藻）。"""
+    from .domains.assistant.daily.store.daily_assist import (
+        meal_display_name,
+        pick_variant,
+    )
 
     name = meal_display_name(item)
     suffix = item[len(name):].strip()
-    return f"到饭点啦，今天吃这个：{name}{suffix}"
+    return pick_variant("meal_open", _MEAL_OPENERS, name=name, suffix=suffix)
 
 
 def _push_daily_assist_private(
@@ -3042,7 +3378,7 @@ def _run_daily_assist_meal_push(config: Any, send_queue: Any, slot: str) -> None
     from nonebot.log import logger
 
     try:
-        from .character.daily_assist import choose_meal
+        from .domains.assistant.daily.store.daily_assist import choose_meal
 
         item = choose_meal(config)
         if not item:
@@ -3062,7 +3398,7 @@ def _run_daily_assist_morning_push(config: Any, send_queue: Any) -> None:
     from nonebot.log import logger
 
     try:
-        from .character.daily_assist import (
+        from plugins.bot_unified_runtime.domains.assistant.daily.store.daily_assist import (
             archive_inbox,
             build_morning_brief,
             daily_archive_dir,
@@ -3103,7 +3439,7 @@ def _run_daily_assist_evening_push(config: Any, send_queue: Any) -> None:
     from nonebot.log import logger
 
     try:
-        from .character.daily_assist import (
+        from plugins.bot_unified_runtime.domains.assistant.daily.store.daily_assist import (
             build_evening_brief,
             daily_archive_dir,
             load_daily_archive,
@@ -3233,9 +3569,25 @@ def _register_nonebot_handlers() -> None:
     except Exception:  # noqa: BLE001 - 无 NoneBot 环境时自然跳过注册。
         return
 
-    from .capabilities.auto_send import build_auto_send_preview_result
-    from .capabilities.chat import build_chat_capability
-    from .capabilities.debug import (
+    from .domains.chat_reply.capabilities.chat import build_chat_capability
+    from .domains.chat_reply.capabilities.echo import (
+        build_status_result,
+        resolve_help_query,
+    )
+    from .domains.chat_reply.capabilities.memory import (
+        is_memory_command_text,
+        route_memory_command,
+    )
+    from .domains.chat_reply.character.history import (
+        build_conversation_history_provider,
+    )
+    from .domains.chat_reply.character.providers import build_character_context_provider
+    from .domains.chat_reply.runtime.pipeline import (
+        RuntimeControlState,
+        RuntimePipeline,
+        offload_capability,
+    )
+    from .domains.ops.admin.debug import (
         build_audit_query_result,
         build_config_query_result,
         build_context_query_result,
@@ -3251,20 +3603,15 @@ def _register_nonebot_handlers() -> None:
         build_roles_query_result,
         build_runtime_control_result,
     )
-    from .capabilities.echo import build_status_result, resolve_help_query
-    from .capabilities.memory import is_memory_command_text, route_memory_command
-    from .capabilities.runtime_admin import (
+    from .domains.ops.admin.runtime_admin import (
         build_alert_check_result,
         build_quirk_admin_result,
         build_runtime_admin_result,
         build_session_identity_admin_result,
     )
-    from .capabilities.runtime_logs import build_logs_query_result
-    from .character import (
-        build_character_context_provider,
-        build_conversation_history_provider,
-    )
-    from .mail_bridge import (
+    from .domains.ops.admin.runtime_logs import build_logs_query_result
+    from .domains.schedule.auto_send import build_auto_send_preview_result
+    from .domains.transport.mail.mail_bridge import (
         MailBridgeState,
         build_mail_notification,
         execute_mail_command,
@@ -3274,6 +3621,7 @@ def _register_nonebot_handlers() -> None:
         parse_mail_command,
         unresolved_mail_aliases,
     )
+    from .domains.transport.sender import build_send_queue
     from .policy import (
         build_quiet_hours_checker,
         build_quiet_hours_settings,
@@ -3282,8 +3630,6 @@ def _register_nonebot_handlers() -> None:
         build_reply_budget_settings,
         build_role_settings,
     )
-    from .runtime import RuntimeControlState, RuntimePipeline, offload_capability
-    from .sender import build_send_queue
 
     try:
         driver_config = get_driver().config.model_dump()
@@ -3291,6 +3637,27 @@ def _register_nonebot_handlers() -> None:
         if "not been initialized" not in str(exc):
             raise
         return
+
+    # R3 停摆批（INT 席代挂，坐标见 docs/design/v21r2-r3-stall-log.md §三）：
+    # 事件循环看门狗（loop 心跳滞后 + 聊天管线池饱和，只观测不自愈）。必须
+    # 在 on_startup（running loop 存在后）启动——装配在 import 期执行，彼时
+    # 无 loop；任何失败仅降级观测，不阻塞启动（fail-open）。
+    try:
+        from .runtime.loop_watchdog import start_loop_watchdog
+
+        @get_driver().on_startup
+        async def _start_loop_watchdog_on_startup() -> None:
+            try:
+                start_loop_watchdog()
+            except Exception:  # 观测件失败不阻塞启动（fail-open）。
+                logging.getLogger(__name__).warning(
+                    "loop-watchdog: 启动失败，停摆观测降级停用（不影响消息链路）",
+                    exc_info=True,
+                )
+    except Exception:  # 挂接失败同样不阻塞装配。
+        logging.getLogger(__name__).warning(
+            "loop-watchdog: on_startup 挂接失败，停摆观测降级停用", exc_info=True
+        )
 
     config = Config.model_validate(translate_env_keys(driver_config))
     music_request_store = (
@@ -3325,8 +3692,8 @@ def _register_nonebot_handlers() -> None:
         and campus_source.whitelist
         and campus_source.notify_qq
     ):
-        from .capabilities.campus import CampusForwardService
-        from .sources.campus_store import CampusStore
+        from .domains.assistant.campus.campus import CampusForwardService
+        from .domains.assistant.campus.campus_store import CampusStore
 
         campus_service = CampusForwardService(
             store=CampusStore(str(config.bot_campus_db_path)),
@@ -3338,7 +3705,7 @@ def _register_nonebot_handlers() -> None:
     )
     # 语音下载代理（B-12）：同模式注入 getter，sender 层优先读运行时/插件
     # Config，取不到再退回 driver config/env 探测链。
-    from .sender.nonebot import set_download_proxy_provider
+    from .domains.transport.sender.nonebot import set_download_proxy_provider
 
     set_download_proxy_provider(
         lambda: str(
@@ -3362,7 +3729,7 @@ def _register_nonebot_handlers() -> None:
     # 审查 A-02：默认内存队列零持久化+零网络投递（重启丢在途消息；提醒等
     # submit 型链路靠内联投递兜底）。启动即如实告警一次，把「可靠投递」的
     # 开关位置告诉管理员，而不是让丢消息无声发生。
-    from .sender.queue import InMemorySendQueue
+    from .domains.transport.sender.queue import InMemorySendQueue
 
     if isinstance(send_queue, InMemorySendQueue):
         logging.getLogger(__name__).warning(
@@ -3372,7 +3739,24 @@ def _register_nonebot_handlers() -> None:
     diagnostics_store = build_diagnostics_store(config)
     mail_bridge_state = MailBridgeState(config.bot_mail_bridge_state_file)
     runtime_control = RuntimeControlState()
+    from .control_plane.factory import build_feature_service
+    from .domains.ops.features.feature_gate import ProductFeatureGate
+
+    feature_service = build_feature_service(config)
+    product_feature_gate = ProductFeatureGate(feature_service)
+    # 语音出站路径双态（G-3 · M-10/M-13 根修）：键开=构建 post-review enricher
+    # 交给 pipeline（取文口径=review 批准后的 body；合成失败挂 OperationalIssue
+    # 走中央告警链）；键关=None 且对话能力仍走下方旧 _attach_voice_reply 包装
+    # （逐字节现状）。惰性导入：键关部署永不触新符号。双态互斥由
+    # tests/test_voice_hook_assembly.py 结构锁把守。
+    pipeline_voice_enricher = None
+    if bool(getattr(config, "bot_tts_voice_hook_enabled", False)):
+        from .domains.media.voice_enricher import build_voice_enricher
+
+        pipeline_voice_enricher = build_voice_enricher(config)
     pipeline = RuntimePipeline(
+        feature_gate=product_feature_gate,
+        outbound_voice_enricher=pipeline_voice_enricher,
         send_queue=send_queue,
         audit_logger=audit_logger,
         reply_budget_settings=build_reply_budget_settings(config),
@@ -3462,7 +3846,7 @@ def _register_nonebot_handlers() -> None:
     # N4 主动搭话亲和门：群聊抽签主动接话只对好感档 ≥ 亲近（close）的用户。
     # 冷却/频控由 rate_limit 层 proactive 分桶承担（bot_group_proactive_*）。
     if bool(getattr(config, "bot_proactive_affinity_gate_enabled", True)):
-        from .character.affinity import tier_for_affinity
+        from .domains.chat_reply.character.affinity import tier_for_affinity
         from .policy.gate import configure_proactive_affinity_gate
 
         def _proactive_affinity_check(sender_id: str) -> bool:
@@ -3484,6 +3868,22 @@ def _register_nonebot_handlers() -> None:
         # 历史上的今天等系统推送要发 OneBot 请求：注册表首个 bot 可能是
         # Telegram/Mail 账号，跨适配器调用必然失败；只取 onebot 适配器账号。
         return cast(Any, _select_credential_bot(_all_online_bots()))
+
+    from .control_plane.lifecycle import register_control_plane_lifecycle
+
+    def make_control_plane_app():
+        from .control_plane import create_control_plane_app
+        return create_control_plane_app(
+            config, feature_service=feature_service, settings_store=runtime_settings,
+            runtime_attached=True,
+            # V21-risk-4：队列与实时连接态经参数注入（禁全局单例直连）。
+            send_queue=send_queue,
+            runtime_state_probe=lambda: _select_credential_bot(
+                _all_online_bots()
+            ) is not None,
+        )
+
+    register_control_plane_lifecycle(get_driver(), config, make_control_plane_app)
 
     operational_alert_suppression = AdminAlertSuppression()
 
@@ -3525,7 +3925,7 @@ def _register_nonebot_handlers() -> None:
     ) -> DeliveryReceipt:
         if target.adapter == "onebot":
             return await send_onebot_v11(bot, request)
-        from .sender.nonebot import send_nonebot_message
+        from .domains.transport.sender.nonebot import send_nonebot_message
 
         return await send_nonebot_message(bot, None, request)
 
@@ -3600,7 +4000,7 @@ def _register_nonebot_handlers() -> None:
     runtime_event_log = None
     if getattr(config, "bot_runtime_log_file", ""):
         try:
-            from .sources.runtime_event_log import RuntimeEventLog
+            from .domains.ops.monitor.runtime_event_log import RuntimeEventLog
 
             runtime_event_log = RuntimeEventLog(
                 str(config.bot_runtime_log_file),
@@ -3644,7 +4044,7 @@ def _register_nonebot_handlers() -> None:
                 # 允许被发）：描述为空的图逐张过 VLM；每轮限 20 张防打爆。
                 if bool(getattr(config, "bot_meme_library_enabled", False)):
                     try:
-                        from .sources.meme_library_listener import (
+                        from .domains.meme.sources.meme_library_listener import (
                             backfill_meme_tags_loop,
                         )
 
@@ -3788,7 +4188,7 @@ def _register_nonebot_handlers() -> None:
                 receipt_repository=receipt_repository,
                 send_queue=send_queue,
             )
-        from plugins.bot_unified_runtime.runtime.model_schedule import (
+        from .domains.chat_reply.llm_engine.model_schedule import (
             _register_model_schedule_scheduler,
         )
 
@@ -3798,7 +4198,7 @@ def _register_nonebot_handlers() -> None:
             settings_store=runtime_settings,
         )
         if runtime_event_log is not None:
-            from plugins.bot_unified_runtime.runtime.usage_monitor import (
+            from .domains.ops.monitor.usage_monitor import (
                 register_usage_monitor_scheduler,
             )
 
@@ -3873,7 +4273,31 @@ def _register_nonebot_handlers() -> None:
         ):
             _register_daily_assist_scheduler(scheduler, config, send_queue)
 
-        from .sources.subscription_runtime_v2 import register_subscription_runtime_v2
+        # V2.1 B2① 服务装配组（WIRE-SVC）：WORLD/KB/DB/TEACH 装配+注册表；
+        # 主门缺省关=零装配零副作用（不改现网行为），细节归 runtime/service_wiring.py。
+        if getattr(config, "bot_v21_service_wiring_enabled", False):
+            try:
+                from plugins.bot_unified_runtime.runtime.service_wiring import (
+                    register_v21_services,
+                )
+
+                wired = register_v21_services(config)
+                if wired:
+                    from nonebot.log import logger
+
+                    logger.info(
+                        "v21 services wired: {}", ",".join(sorted(wired))
+                    )
+            except Exception as exc:  # noqa: BLE001 - 装配失败不崩主链路。
+                from nonebot.log import logger
+
+                logger.warning(
+                    "v21 service wiring failed: {}", type(exc).__name__
+                )
+
+        from .domains.subscribe.store.subscription_runtime_v2 import (
+            register_subscription_runtime_v2,
+        )
 
         async def _deliver_v2_event(event: Any) -> bool:
             store = subscription_ctx.get("store")
@@ -3896,7 +4320,9 @@ def _register_nonebot_handlers() -> None:
                 text += f"\n{body[:500]}"
             elif bool(getattr(config, "bot_vision_enabled", False)):
                 # 纯图/无文本订阅条目：用 vision 补一行描述，失败静默不阻断推送。
-                from .sources.vision_describe import describe_subscription_item
+                from .domains.media.ingest.vision_describe import (
+                    describe_subscription_item,
+                )
 
                 # 同步 HTTP 描述调用必须下放线程池，否则每条无文本订阅条目
                 # 都会在事件循环上阻塞数秒（审计重发现 P2）。
@@ -3905,7 +4331,9 @@ def _register_nonebot_handlers() -> None:
                 )
                 if described:
                     text += f"\n图：{described}"
-            from .capabilities.content_parser import build_subscription_push_capability
+            from .domains.link_parse.capabilities.content_parser import (
+                build_subscription_push_capability,
+            )
 
             sent_any = False
             all_success = True
@@ -3963,13 +4391,11 @@ def _register_nonebot_handlers() -> None:
         if getattr(config, "bot_channel_health_enabled", True):
             def _channel_health_job() -> None:
                 try:
-                    from plugins.bot_unified_runtime.capabilities.runtime_admin import (
-                        _probe_specs,
-                    )
-                    from plugins.bot_unified_runtime.llm.channel_health import (
+                    from .domains.chat_reply.llm_engine.channel_health import (
                         get_channel_health_store,
                         probe_all,
                     )
+                    from .domains.ops.admin.runtime_admin import _probe_specs
 
                     probe_all(
                         config,
@@ -4004,7 +4430,7 @@ def _register_nonebot_handlers() -> None:
 
             async def _cookie_expiry_reminder_job() -> None:
                 try:
-                    from plugins.bot_unified_runtime.capabilities.platform_credentials import (
+                    from .domains.core.credentials.platform_credentials import (
                         cookie_expiry_report,
                     )
 
@@ -4021,6 +4447,26 @@ def _register_nonebot_handlers() -> None:
                     for item in (getattr(config, "bot_admin_user_ids", []) or [])
                     if str(item).strip()
                 ]
+                if getattr(config, "bot_cookie_expiry_reminder_via_queue", False):
+                    # S0 收编①（v21r4-b2-direct-collect-plan §3.1）：形态 B 提醒
+                    # 范式统一投递（SendRequest→SendQueue→内联投递，SENT 才算
+                    # 送达）；dedupe/request_id 带本地日期=当日幂等，管理员换人
+                    # 重试语义与旧直连等价，全部失败静默。
+                    try:
+                        await _deliver_cookie_expiry_report_via_queue(
+                            config,
+                            send_queue,
+                            audit_logger,
+                            receipt_repository,
+                            bot,
+                            report,
+                            admins,
+                        )
+                    except Exception:  # 统一路径失败不影响主链路。
+                        logging.getLogger(__name__).debug(
+                            "cookie expiry notice via queue failed", exc_info=True
+                        )
+                    return
                 for admin_id in admins[:3]:
                     try:
                         await bot.call_api(
@@ -4080,10 +4526,75 @@ def _register_nonebot_handlers() -> None:
         if getattr(config, "bot_meme_library_enabled", False)
         else None
     )
+    # 贴纸回应持久化（B 线 2026-09-16「把所有表情贴纸存下来」）：识别事件
+    # 双写（缓冲+落库）；启动期按保留期裁剪一次。
+    _reaction_store = ReactionStore(
+        str(getattr(config, "bot_reactions_db_path", "data/reactions.sqlite3") or "")
+    )
+    _reaction_store.prune(keep_days=int(getattr(config, "bot_reactions_store_days", 90) or 90))
+    # 双层表情·第二层（情绪时刻发表情包）：独立五门（开关/每消息去重/
+    # 确定性概率/会话冷却/每小时时限）+ 每会话每日上限 + C1 悲伤门；
+    # 与第一层贴小表情互斥（第一层贴过则本层整条让路）。
+    _REACTION_MEME_GATE = _ReactionProactiveGateClass()
+    _reaction_meme_daily: dict[str, tuple[int, int]] = {}
+
+    async def _maybe_send_reaction_meme(
+        bot: Bot,
+        event: Event,
+        *,
+        session_key: str,
+        text: str,
+        meme_config: Any,
+    ) -> None:
+        if meme_library_store is None or not bool(
+            getattr(meme_config, "bot_reactions_meme_enabled", True)
+        ):
+            return
+        if _is_sad_reaction_message(text):
+            return  # C1：悲伤消息绝不发表情包（红线级，与第一层同口径）。
+        intent = _infer_reaction_signal_intent(text)
+        if intent is None:
+            return
+        message_id = str(getattr(event, "message_id", "") or "")
+        if not message_id or not _REACTION_MEME_GATE.allow(
+            session_key,
+            f"meme:{message_id}",
+            enabled=True,
+            probability=float(getattr(meme_config, "bot_reactions_meme_probability", 0.15) or 0.15),
+            cooldown_seconds=float(
+                getattr(meme_config, "bot_reactions_meme_cooldown_seconds", 120) or 120
+            ),
+            max_per_hour=int(getattr(meme_config, "bot_reactions_max_per_hour", 20) or 20),
+            salt="reaction-meme",
+        ):
+            return
+        day = int(time.strftime("%Y%m%d", time.localtime()))
+        used_day, used = _reaction_meme_daily.get(session_key, (day, 0))
+        if used_day != day:
+            used = 0
+        daily_max = int(getattr(meme_config, "bot_reactions_meme_daily_max", 6) or 6)
+        if daily_max > 0 and used >= daily_max:
+            return
+        meme_path = await asyncio.to_thread(
+            _pick_reaction_meme,
+            meme_library_store,
+            intent=intent,
+            nsfw_max=float(getattr(meme_config, "bot_meme_library_nsfw_max", 0.2) or 0.2),
+        )
+        if not meme_path:
+            return
+        _reaction_meme_daily[session_key] = (day, used + 1)
+        await _send_parts_through_unified_pipeline(
+            bot, event,
+            text="",
+            image=meme_path,
+            audit_tags=["reaction_meme", f"intent:{intent}"],
+            capability_id="bot.chat",
+        )
     playwright_fetch_backend = None
     if getattr(config, "bot_fetch_playwright_enabled", True):
         try:
-            from .sources.fetchers import PlaywrightFetchBackend
+            from .domains.link_parse.fetchers import PlaywrightFetchBackend
 
             playwright_fetch_backend = PlaywrightFetchBackend()
         except Exception:  # noqa: BLE001 - 抓取兜底失败不影响主链路。
@@ -4103,9 +4614,7 @@ def _register_nonebot_handlers() -> None:
         db_path=config.bot_web_intent_telemetry_db_path,
         max_items=config.bot_web_intent_telemetry_max_items,
     )
-    from plugins.bot_unified_runtime.sources.vision_describe import (
-        build_vision_provider,
-    )
+    from .domains.media.ingest.vision_describe import build_vision_provider
 
     vision_provider = build_vision_provider(
         config,
@@ -4114,7 +4623,7 @@ def _register_nonebot_handlers() -> None:
     )
     # 媒体归档存储：注册期单例（评审 I-4）——每消息重建实例会让实例级锁与
     # sha256 去重的 check-then-act 全部失效。关闭时不建（零开销）。
-    from plugins.bot_unified_runtime.sources.media_archive import MediaArchiveStore
+    from .domains.media.archive.media_archive import MediaArchiveStore
 
     media_archive_store = (
         MediaArchiveStore(
@@ -4124,17 +4633,13 @@ def _register_nonebot_handlers() -> None:
         if getattr(config, "bot_media_archive_enabled", True)
         else None
     )
-    from plugins.bot_unified_runtime.sources.transcribe import (
-        build_asr_provider,
-    )
+    from .domains.media.ingest.transcribe import build_asr_provider
 
     asr_provider = build_asr_provider(
         config,
         settings_store=runtime_settings,
     )
-    from plugins.bot_unified_runtime.character.media_registry import (
-        build_media_registry,
-    )
+    from .domains.media.registry.media_registry import build_media_registry
 
     media_registry = build_media_registry(
         config,
@@ -4150,6 +4655,12 @@ def _register_nonebot_handlers() -> None:
         priority_groups=lambda: runtime_settings.get_or(
             "BOT_MODEL_PRIORITY_GROUPS",
             getattr(config, "bot_model_priority_groups", []) or [],
+        ),
+        # R-18 内容感知路由：verdict=INTIMATE 时自动候选序把 grok→gemini 提到
+        # 最前（runtime/content_route.py；管理员显式 override 分支不受影响）。
+        content_route_cb=_build_content_route_router_cb(
+            _SHARED_CONTENT_ROUTE_ENGINE,
+            lambda: _config_with_runtime_overrides(config, runtime_settings),
         ),
     )
     memory_writer = _build_memory_writer(config, model_router=model_router, runtime_settings=runtime_settings)
@@ -4183,6 +4694,7 @@ def _register_nonebot_handlers() -> None:
                 getattr(config, "bot_web_search_fetch_max_chars", 3000) or 3000
             ),
             runtime_settings=runtime_settings,
+            content_route_config=_config_with_runtime_overrides(config, runtime_settings),
             interaction_counter=runtime_settings.interaction_increment,
             # NoneBot 自己按 BOT_MODEL_REGISTRY 的 priority 做直连故障转移。
             model_router=model_router,
@@ -4217,7 +4729,7 @@ def _register_nonebot_handlers() -> None:
             ),
             temperature=config.bot_chat_temperature,
             reasoning_effort=config.bot_chat_reasoning_effort,
-            model_prices=dict(getattr(config, "bot_model_prices", {}) or {}),
+            model_prices=_assemble_model_prices(config, runtime_settings),
             max_tokens=config.bot_chat_max_tokens,
             model=config.bot_chat_model,
             context_preflight_errors=persona_context_preflight_errors(config),
@@ -4226,6 +4738,14 @@ def _register_nonebot_handlers() -> None:
             generated_files_dir=str(getattr(config, "bot_generated_files_dir", "data/generated_files") or "data/generated_files"),
         )
     )
+    # 语音自动配音（bot.tts）：把人格回复正文一并合成语音随消息发出。
+    # 完整门链谓词判否（未启用 / 已在范围外 / 概率门落空）时 _attach_voice_reply
+    # 直接短路，连线程调度都不付；未启用语音的部署与改动前逐字节一致。
+    # G-3 双态：hook 键开=配音走 pipeline post-review enricher（上方已装配），
+    # 此处不再包装；键关=旧包装路径原样。退役两步走的第二步（摘除本包装与
+    # maybe_attach_voice/should_voice_reply 导入）等真机浸泡窗，见 report-T73。
+    if pipeline_voice_enricher is None:
+        chat_capability = _attach_voice_reply(chat_capability, config=config)
 
     async def _is_auto_send_plain_text(state: T_State, event: Event) -> bool:
         return (
@@ -4345,6 +4865,91 @@ def _register_nonebot_handlers() -> None:
             operational_notifier=_notify_operational_receipt,
         )
 
+    async def _send_parts_through_unified_pipeline(
+        bot: Bot,
+        event: Event,
+        *,
+        text: str,
+        image: str | None = None,
+        prefix_parts: list[dict[str, Any]] | None = None,
+        audit_tags: list[str] | None = None,
+        capability_id: str = "bot.poke",
+    ) -> DeliveryReceipt:
+        """带 @ 前置段/图片的统一管线发送（poke v2 群聊 @+表情包）。
+
+        走 mixed 渲染（prefix_parts 前置）；transport 不支持时按
+        text_fallback 诚实降级（丢 @/图，不丢正文）。
+        """
+
+        def _capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id=capability_id,
+                kind="mixed" if (image or prefix_parts) else "text",
+                body=str(text or ""),
+                images=[{"file": image}] if image else [],
+                prefix_parts=list(prefix_parts or []),
+                audit_tags=list(audit_tags or ["unified_parts_reply"]),
+            )
+
+        return await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            diagnostics_store=diagnostics_store,
+            capability=_capability,
+            capability_id=capability_id,
+            receipt_repository=receipt_repository,
+            history_recorder=None,
+            history_kind="system",
+            operational_notifier=_notify_operational_receipt,
+        )
+
+    async def _send_files_through_unified_pipeline(
+        bot: Bot,
+        event: Event,
+        *,
+        text: str = "",
+        files: list[dict[str, Any]] | None = None,
+        audit_tags: list[str] | None = None,
+        capability_id: str = "bot.file",
+    ) -> DeliveryReceipt:
+        """文件件统一管线发送（S0 收编④，v21r4-b2-direct-collect-plan §3.4）。
+
+        CapabilityResult.files → render media_parts → transport file 部件 →
+        ``FileTransferGateway.stage/deliver``（B3 阶段 1 既有链；群=
+        upload_group_file / 私聊=upload_private_file，平台方法面与旧直连一致）。
+        """
+
+        def _capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id=capability_id,
+                kind="mixed" if files else "text",
+                body=str(text or ""),
+                files=[dict(item) for item in (files or []) if isinstance(item, dict)],
+                audit_tags=list(audit_tags or ["unified_files_reply"]),
+            )
+
+        return await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            diagnostics_store=diagnostics_store,
+            capability=_capability,
+            capability_id=capability_id,
+            receipt_repository=receipt_repository,
+            history_recorder=None,
+            history_kind="system",
+            operational_notifier=_notify_operational_receipt,
+        )
+
     # --- 文件收发（管理员）：接收代码/文档调试 + 导出多格式文档上传 ---
     from pathlib import Path as _Path
 
@@ -4353,7 +4958,7 @@ def _register_nonebot_handlers() -> None:
         GroupUploadNoticeEvent,
     )
 
-    from .capabilities.file_exchange import (
+    from .domains.files.capabilities.file_exchange import (
         export_document,
         is_file_export_command,
         parse_file_export_command,
@@ -4411,7 +5016,7 @@ def _register_nonebot_handlers() -> None:
         except Exception:  # noqa: BLE001, S110 - 撤回失败静默（多半无管理员权限）。
             pass
 
-    # 校园自动转发：学校账号（NapCat 第二实例）所在群消息被动监听。
+    # 校园自动转发：学校账号（SnowLuma 第二实例）所在群消息被动监听。
     # block=False 绝不阻断其他 matcher；来源门外零开销返回；命中才落库
     # 并私聊转发，绝不向学校群发送任何消息。
     if campus_service is not None:
@@ -4457,8 +5062,186 @@ def _register_nonebot_handlers() -> None:
 
     # 统一戳一戳分发：OneBot 适配器只做事件归一与执行，门控/话术/回戳
     # 意图全部收敛在 capabilities.poke.PokeDispatcher（未来其他适配器同构复用）。
-    from .capabilities.poke import PokeDispatcher
+    from .domains.chat_reply.capabilities.poke import PokeDispatcher, resolve_poke_reply
     _poke_dispatcher = PokeDispatcher(clock=time.monotonic)
+    # V21-DISPATCH-001（风险 5 收口）：回戳等平台副作用改走统一出站面——
+    # OutboundIntent（严格 DTO）→ 准入复验 → 许可租约线性化 → Transport 固定
+    # 映射（绝不拼 API 名）→ bot.call_api 通道本体（与 SendQueue worker 同
+    # 通道，非第二出站通道）。平台不支持/同键在途时诚实回执、静默降级，
+    # 与旧直连行为等价（失败不影响话术回复）。
+    from .control_plane.dispatcher import (
+        OutboundSideEffectExecutor,
+        PokeInteractionService,
+        build_interaction_dispatcher,
+    )
+    from .domains.core.decision.outbound import (
+        OutboundIntent,
+        OutboundOperation,
+        OutboundPart,
+        OutboundTarget,
+        build_default_transport_registry,
+        derive_dedupe_key,
+    )
+
+    _poke_side_effect_executor = OutboundSideEffectExecutor(
+        transport_registry=build_default_transport_registry(),
+    )
+
+    def _build_poke_back_intent(payload: dict[str, Any]) -> OutboundIntent:
+        """poke 载荷 → 回戳 OutboundIntent（参数 coercion 与旧直连一致）。"""
+        group = bool(payload.get("group"))
+        group_id = int(payload.get("group_id") or 0)
+        user_id = int(payload.get("user_id") or 0)
+        api_params = (
+            {"group_id": group_id, "user_id": user_id}
+            if group
+            else {"user_id": user_id}
+        )
+        dedupe_key = derive_dedupe_key(
+            "qq",
+            f"pokeback.{'group' if group else 'private'}.{group_id}.{user_id}",
+            "direct",
+        )
+        return OutboundIntent(
+            operation=OutboundOperation.POKE,
+            target=OutboundTarget(
+                platform="qq",
+                session_type="group" if group else "private",
+                target_id=str(group_id if group else user_id),
+                bot_id=str(payload.get("bot_id") or ""),
+                adapter="onebot",
+            ),
+            parts=[
+                OutboundPart(
+                    part_id=f"poke-back:{dedupe_key}",
+                    kind="poke",
+                    content_ref={"api_params": api_params},
+                )
+            ],
+            feature_id="bot.plugin.poke.poke_back",
+            policy_revision="legacy-poke-v2",
+            dedupe_key=dedupe_key,
+            trace_id=f"pokeback-{time.time_ns()}",
+        )
+
+    _poke_interaction_service = PokeInteractionService(
+        dispatch=build_interaction_dispatcher(
+            _poke_side_effect_executor,
+            route_intent=_build_poke_back_intent,
+        )
+    )
+
+    async def _dispatch_poke_back(bot: Bot, event: Event, *, group: bool) -> None:
+        """回戳经中央门面派发（route→review→send 真实周期）；结果静默丢弃。"""
+        await _poke_interaction_service.handle(
+            {
+                "bot": bot,
+                "bot_id": str(getattr(bot, "self_id", "") or ""),
+                "group": group,
+                "group_id": getattr(event, "group_id", 0),
+                "user_id": getattr(event, "user_id", 0),
+            }
+        )
+    # poke v2 好感度防刷：每 (会话, 戳者) 每日累计记账——进程内字典仅作快路径
+    # （按申请额保守记账），持久防刷以 affinity_delta_log（source="poke" 的
+    # 24h 滚动和 + 全局预算）为准：重启后字典清零，但 store 侧仍受 24h 上限约束。
+    _poke_affinity_daily: dict[tuple[str, str], tuple[int, float]] = {}
+
+    def _pick_poke_meme(store: Any, poke_config: Any) -> str | None:
+        """表情包形态选图：无关键词加权抽一张（NSFW 阈值沿用表情库配置）。"""
+        try:
+            picked = store.weighted_pick(
+                keyword="",
+                nsfw_max=float(getattr(poke_config, "bot_meme_library_nsfw_max", 0.2) or 0.2),
+            )
+        except Exception:  # noqa: BLE001 - 选图失败回退固定话术。
+            return None
+        if not picked:
+            return None
+        path = str(picked.get("path") or "").strip()
+        return path or None
+
+    def _record_poke_affinity(
+        poke_config: Any, poker_id: str, group_id: str
+    ) -> str:
+        """好感度小额正向记账；返回定性态度文本（LLM 提示词用），不显数值。
+
+        V2.1 §2.2/§2.3：配置值语义=展示「分」，经 observe_points 唯一适配器
+        ÷100 转内部值（治旧缺陷：0.5 分被当内部值直传 → 一戳 +50 分）；
+        过全局滚动预算 + poke 来源专项 24h 预算（source_cap_24h_points=
+        daily_max），持久防刷不依赖进程内字典。
+        """
+        try:
+            if not bool(getattr(poke_config, "bot_poke_affinity_enabled", True)):
+                return ""
+            points = float(getattr(poke_config, "bot_poke_affinity_delta", 0.5) or 0.5)
+            daily_max = float(
+                getattr(poke_config, "bot_poke_affinity_daily_max", 5.0) or 5.0
+            )
+            if points <= 0 or daily_max <= 0:
+                return ""
+            day = int(time.strftime("%Y%m%d", time.localtime()))
+            key = (str(group_id or "private"), poker_id)
+            used_day, used = _poke_affinity_daily.get(key, (day, 0.0))
+            if used_day != day:
+                used = 0.0
+            if used >= daily_max:
+                return ""
+            grant = min(points, daily_max - used)
+            # 快路径按申请额记账（store 侧若因全局预算少放，字典只会更早拦，
+            # 保守方向不放大增益）。
+            _poke_affinity_daily[key] = (day, used + grant)
+            store = build_character_affinity_store(poke_config)
+            store.observe_points(
+                poker_id,
+                points=grant,
+                behavior="positive",
+                source="poke",
+                source_cap_24h_points=daily_max,
+                group_id=group_id or None,
+            )
+            snapshot = store.snapshot(poker_id)
+            if isinstance(snapshot, dict):
+                return str(snapshot.get("attitude") or "")
+            return ""
+        except Exception:  # noqa: BLE001 - 好感度记账失败绝不影响回复。
+            return ""
+
+    async def _poke_llm_reply(
+        poke_config: Any,
+        *,
+        is_group: bool,
+        attitude_hint: str,
+    ) -> str:
+        """LLM 话术：紧凑提示词（守岸人语气+戳一戳语境+好感档定性），12s 超时。"""
+        if model_router is None:
+            return ""
+        system_prompt = (
+            "你是守岸人。有人刚刚在QQ上戳了你一下。用一句不超过40字的中文回应："
+            "温和、亲近、带一点被戳到的真实反应；不要长篇大论，不要用emoji符号，"
+            "不要提及任何系统、规则或这段要求本身。"
+        )
+        user_prompt = f"{'群聊' if is_group else '私聊'}里有人戳了你一下。"
+        if attitude_hint.strip():
+            user_prompt += f"你们当前的关系氛围：{attitude_hint.strip()}。"
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        try:
+            reply = await asyncio.wait_for(
+                asyncio.to_thread(
+                    model_router.generate,
+                    messages,
+                    message_text="poke",
+                    fast_mode=True,
+                    max_tokens=80,
+                ),
+                timeout=12.0,
+            )
+            return str(getattr(reply, "text", "") or "").strip()
+        except Exception:  # noqa: BLE001 - LLM 话术失败回退固定话术。
+            return ""
 
     async def _is_poke_event(event: Event) -> bool:
         return str(getattr(event, "notice_type", "")) == "notify" and str(getattr(event, "sub_type", "")) == "poke"
@@ -4467,35 +5250,73 @@ def _register_nonebot_handlers() -> None:
 
     @poke_notice.handle()
     async def _handle_poke_notice(bot: Bot, event: Event) -> None:
+        switches = await product_feature_gate.snapshot_async()
+        if not switches.enabled("bot.plugin.poke"):
+            return
+        merged_poke_config = _config_with_runtime_overrides(config, runtime_settings)
         reaction = _poke_dispatcher.build_poke_reaction(
             event,
             bot_id=str(getattr(bot, "self_id", "")),
-            # 运行时热覆盖合并：/bot runtime set BOT_POKE_* 立即生效。
-            config=_config_with_runtime_overrides(config, runtime_settings),
+            config=merged_poke_config,
         )
         if reaction is None or not reaction.active:
             return
-        if reaction.poke_back:
-            # 回戳：NapCat/OneBot V11 扩展 API，平台不支持时静默降级。
+        poker_id = str(getattr(event, "user_id", "") or "").strip()
+        if reaction.poke_back and switches.enabled("bot.plugin.poke.poke_back"):
+            # 回戳：统一出站面（V21-DISPATCH-001：OutboundIntent→准入→租约→
+            # 固定映射→通道本体）；平台不支持/同键在途时诚实回执静默降级
+            # （与旧 call_api 直连行为等价：失败不影响话术回复）。
             try:
-                if reaction.group:
-                    await bot.call_api(
-                        "group_poke",
-                        group_id=int(getattr(event, "group_id", 0) or 0),
-                        user_id=int(getattr(event, "user_id", 0) or 0),
-                    )
-                else:
-                    await bot.call_api("friend_poke", user_id=int(getattr(event, "user_id", 0) or 0))
+                await _dispatch_poke_back(bot, event, group=bool(reaction.group))
             except Exception:  # noqa: BLE001, S110 - 回戳失败不影响话术回复。
                 pass
-        if reaction.reply:
-            await _send_text_through_unified_pipeline(
-                bot, event,
-                reaction.reply,
-                "bot.poke",
-            )
+        if not (reaction.reply and switches.enabled("bot.plugin.poke.reply")):
+            return
+        # poke v2：按形态组装单一回复（llm 失败/meme 库空 → 固定话术回退）；
+        # 群聊回复自动 @ 戳者；好感度小额正向记账（定性信息喂 LLM 提示词）。
+        attitude_hint = ""
+        if poker_id:
+            def _affinity_job() -> str:
+                return _record_poke_affinity(
+                    merged_poke_config,
+                    poker_id,
+                    str(getattr(event, "group_id", "") or ""),
+                )
 
-    # 表情贴纸回应识别（bot.reactions）：NapCat 贴纸回应 notice 只做归一与
+            attitude_hint = await asyncio.to_thread(_affinity_job)
+        llm_text = ""
+        meme_path = None
+        if reaction.mode == "llm":
+            llm_text = await _poke_llm_reply(
+                merged_poke_config,
+                is_group=reaction.group,
+                attitude_hint=attitude_hint,
+            )
+        elif reaction.mode == "meme":
+            meme_path = await asyncio.to_thread(
+                _pick_poke_meme, meme_library_store, merged_poke_config
+            )
+        reply_text, image = resolve_poke_reply(
+            reaction.mode,
+            fixed_text=reaction.reply,
+            llm_text=llm_text or None,
+            meme_path=meme_path,
+        )
+        prefix_parts = (
+            [{"type": "at", "qq": poker_id}]
+            if reaction.group and poker_id
+            else []
+        )
+        await _send_parts_through_unified_pipeline(
+            bot, event,
+            text=reply_text,
+            image=image,
+            prefix_parts=prefix_parts,
+            audit_tags=list(reaction.audit_tags),
+            capability_id="bot.poke",
+        )
+
+    # 表情贴纸回应识别（bot.reactions）：SnowLuma 贴纸回应 notice 只做归一与
     # 会话缓冲登记（供 chat 注入【表情回应】分区），本 handler 不回话、不贴表
     # 情——主动贴表情在 chat 链路的情绪信号/回复后触发点完成。私聊等价形态
     # 按容错解析，生产实机待验证；失败静默不影响任何主链路。
@@ -4510,9 +5331,23 @@ def _register_nonebot_handlers() -> None:
 
     @emoji_like_notice.handle()
     async def _handle_msg_emoji_like_notice(bot: Bot, event: Event) -> None:
+        if not (await product_feature_gate.snapshot_async()).enabled("bot.plugin.chat.reactions.receive"):
+            return
         try:
             for reaction_event in _normalize_onebot_emoji_like(event):
                 _REACTION_BUFFER.record(reaction_event)
+                # B 线双写：缓冲管当前语境注入，落库管长期记忆与统计
+                # （幂等合并；失败静默不碰识别链路）。
+                _reaction_store.record_event(
+                    session_key=reaction_event.session_key,
+                    user_id=reaction_event.user_id,
+                    message_id=reaction_event.message_id,
+                    emoji_id=reaction_event.emoji_id,
+                    emoji_text=reaction_event.emoji_text,
+                    count=reaction_event.count,
+                    platform=reaction_event.platform,
+                    occurred_at=reaction_event.ts,
+                )
         except Exception:  # noqa: BLE001, S110 - 回应识别失败不影响主链路。
             pass
 
@@ -4558,6 +5393,24 @@ def _register_nonebot_handlers() -> None:
                 ).strip()
             except Exception:  # noqa: BLE001 - 昵称富集失败退通用称呼。
                 nickname = ""
+        if getattr(config, "bot_group_welcome_via_queue", False):
+            # S0 收编②（v21r4-b2-direct-collect-plan §3.2）：欢迎语走统一管线
+            # （notice 事件摄取对 NoticeEvent 族空文本降级，_incoming_from_nonebot_event）；
+            # 失败静默不影响主链路，SENT/REDIRECTED 才记 group_welcome_sent（不假成功）。
+            try:
+                receipt = await _send_text_through_unified_pipeline(
+                    bot,
+                    event,
+                    _group_welcome_text(nickname),
+                    capability_id="bot.group_welcome",
+                )
+            except Exception:  # noqa: BLE001 - 欢迎失败不影响主链路。
+                return
+            if receipt.state in {ReceiptState.SENT, ReceiptState.REDIRECTED}:
+                _log_runtime_event(
+                    runtime_event_log, "INFO", "group_welcome_sent", group_id=group_id
+                )
+            return
         try:
             await bot.call_api(
                 "send_group_msg",
@@ -4646,7 +5499,7 @@ def _register_nonebot_handlers() -> None:
         if parsed is None:
             return
         fmt, topic = parsed
-        from .capabilities.file_exchange import _DOCUMENT_PROMPT
+        from .domains.files.capabilities.file_exchange import _DOCUMENT_PROMPT
 
         try:
             # LLM 生成（秒级~几十秒）与文档转换必须下放线程池，
@@ -4675,6 +5528,35 @@ def _register_nonebot_handlers() -> None:
         )
         if error:
             await _send_text_through_unified_pipeline(bot, event, f"导出失败：{error}")
+            return
+        if getattr(config, "bot_file_export_via_queue", False):
+            # S0 收编④（v21r4-b2-direct-collect-plan §3.4）：上传走统一管线
+            # files 件 → FileTransferGateway 既有链（平台方法面与直连一致：
+            # 群 upload_group_file / 私聊 upload_private_file）；成功/失败文案
+            # 由回执态驱动，失败不抛出（旧直连语义保持）。
+            try:
+                receipt = await _send_files_through_unified_pipeline(
+                    bot,
+                    event,
+                    files=[{"file": str(path), "name": path.name}],
+                    capability_id="bot.file",
+                )
+            except Exception:  # noqa: BLE001 - 统一路径异常与旧直连失败同语义。
+                receipt = None
+            if receipt is not None and receipt.state in {
+                ReceiptState.SENT,
+                ReceiptState.REDIRECTED,
+            }:
+                await _send_text_through_unified_pipeline(
+                    bot,
+                    event,
+                    f"已生成并上传 {fmt.upper()}：{path.name}（{max(1, path.stat().st_size // 1024)}KB）",
+                    capability_id="bot.file",
+                )
+            else:
+                await _send_text_through_unified_pipeline(
+                    bot, event, f"文件已生成但上传失败：{path.name}"
+                )
             return
         try:
             if isinstance(event, GroupMessageEvent):
@@ -4713,6 +5595,7 @@ def _register_nonebot_handlers() -> None:
     async def _handle_image_search(bot: Bot, event: Event) -> None:
         message = _incoming_from_nonebot_event(
             bot_id=str(getattr(bot, "self_id", "unknown")), event=event
+        , feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
         if message is None:
             return
@@ -4744,7 +5627,7 @@ def _register_nonebot_handlers() -> None:
                         for segment in replied_segments
                         if str(segment.get("type", "")).lower() == "image"
                     )
-        from .capabilities.image_search import (
+        from .domains.media.capabilities.image_search import (
             build_image_search_capability,
         )
 
@@ -4849,10 +5732,36 @@ def _register_nonebot_handlers() -> None:
             _session_key, png_path, login_text = cookie_login_start(config, platform)
             await _send_text_through_unified_pipeline(bot, event, login_text)
             if png_path:
+                qr_file_ref = "file:///" + png_path.replace("\\", "/")
                 image_segment = {
                     "type": "image",
-                    "data": {"file": "file:///" + png_path.replace("\\", "/")},
+                    "data": {"file": qr_file_ref},
                 }
+                if getattr(config, "bot_cookie_qr_via_queue", False):
+                    # S0 收编③（v21r4-b2-direct-collect-plan §3.3）：图片走统一
+                    # 管线 mixed 件（text=""+image，同款在树先例=表情回应 meme
+                    # 抽图）；file:/// 引用与直连段逐字节同构
+                    # （onebot._resolve_local_file_ref 本地路径显式解析）。
+                    try:
+                        receipt = await _send_parts_through_unified_pipeline(
+                            bot,
+                            event,
+                            text="",
+                            image=qr_file_ref,
+                            audit_tags=["cookie_login_qr"],
+                            capability_id="bot.cookie_login",
+                        )
+                        if receipt.state not in {
+                            ReceiptState.SENT,
+                            ReceiptState.REDIRECTED,
+                        }:
+                            logging.getLogger(__name__).debug(
+                                "qr image send failed: receipt state=%s",
+                                receipt.state,
+                            )
+                    except Exception as exc:  # noqa: BLE001 - 图片发送失败时文本兜底已给出链接。
+                        logging.getLogger(__name__).debug("qr image send failed: %s", exc)
+                    return
                 try:
                     if isinstance(event, GroupMessageEvent):
                         await bot.call_api(
@@ -4917,6 +5826,7 @@ def _register_nonebot_handlers() -> None:
             event,
             bot_id=account,
             adapter_name="Mail",
+            feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
         mail_id, mail_id_is_fallback = mail_event_dedupe_id(event)
         if not mail_id:
@@ -5061,6 +5971,8 @@ def _register_nonebot_handlers() -> None:
     async def _handle_meme_absorb(bot: Bot, event: Event) -> None:
         if meme_library_store is None:
             return
+        if not (await product_feature_gate.snapshot_async()).enabled("bot.plugin.meme_library.auto_absorb"):
+            return
         try:
             await absorb_event_images(bot, event, config, meme_library_store)
         except Exception:  # noqa: BLE001 - 收藏失败不影响消息流。
@@ -5191,6 +6103,12 @@ def _register_nonebot_handlers() -> None:
             is RouteKind.RANDPIC
         )
 
+    async def _is_tts_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.TTS
+        )
+
     async def _is_reminder_event(state: T_State, event: Event) -> bool:
         return (
             _cached_route_decision(state, event, config=config).kind
@@ -5225,6 +6143,7 @@ def _register_nonebot_handlers() -> None:
     divination = on_message(rule=_is_divination_event, priority=41, block=True)
     news = on_message(rule=_is_news_event, priority=41, block=True)
     randpic = on_message(rule=_is_randpic_event, priority=41, block=True)
+    tts = on_message(rule=_is_tts_event, priority=41, block=True)
     reminder = on_message(rule=_is_reminder_event, priority=41, block=True)
     daily_assist = on_message(rule=_is_daily_assist_event, priority=42, block=True)
     eat = on_message(rule=_is_eat_event, priority=41, block=True)
@@ -5264,7 +6183,7 @@ def _register_nonebot_handlers() -> None:
             capability_id = "bot.help"
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                from .capabilities.echo import build_help_result
+                from .domains.chat_reply.capabilities.echo import build_help_result
 
                 return build_help_result(
                     request_id=message.request_id,
@@ -5347,7 +6266,10 @@ def _register_nonebot_handlers() -> None:
                 return build_epic_capability(config, render_backend=render_backend)(message, _decision)
 
         elif resolution.capability_id == "bot.music_mode":
-            from .capabilities.music import build_music_mode_result, extract_music_mode
+            from .domains.music.capabilities.music import (
+                build_music_mode_result,
+                extract_music_mode,
+            )
 
             mode_value = extract_music_mode(f"点歌模式 {resolution.rest_text}".strip())
 
@@ -5381,8 +6303,12 @@ def _register_nonebot_handlers() -> None:
         elif resolution.capability_id == "bot.subscribe":
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                from .capabilities.subscribe import normalize_subscribe_text
-                from .capabilities.subscribe_v2 import build_subscribe_capability_v2
+                from .domains.subscribe.capabilities.subscribe import (
+                    normalize_subscribe_text,
+                )
+                from .domains.subscribe.capabilities.subscribe_v2 import (
+                    build_subscribe_capability_v2,
+                )
 
                 sub_ctx = subscription_ctx if isinstance(subscription_ctx, dict) else {}
                 store = sub_ctx.get("store")
@@ -5408,7 +6334,9 @@ def _register_nonebot_handlers() -> None:
                 )(synthetic, _decision)
 
         elif resolution.capability_id == "bot.meme_library":
-            from .capabilities.meme_library import build_meme_library_capability
+            from .domains.meme.capabilities.meme_library import (
+                build_meme_library_capability,
+            )
 
             arg = resolution.rest_text.strip()
 
@@ -5501,7 +6429,10 @@ def _register_nonebot_handlers() -> None:
 
     @music_mode.handle()
     async def _handle_music_mode(bot: Bot, event: Event) -> None:
-        from .capabilities.music import build_music_mode_result, extract_music_mode
+        from .domains.music.capabilities.music import (
+            build_music_mode_result,
+            extract_music_mode,
+        )
 
         mode = extract_music_mode(event.get_plaintext())
 
@@ -5535,8 +6466,10 @@ def _register_nonebot_handlers() -> None:
 
     @subscribe_cmd.handle()
     async def _handle_standalone_subscribe(bot: Bot, event: Event) -> None:
-        from .capabilities.subscribe import normalize_subscribe_text
-        from .capabilities.subscribe_v2 import build_subscribe_capability_v2
+        from .domains.subscribe.capabilities.subscribe import normalize_subscribe_text
+        from .domains.subscribe.capabilities.subscribe_v2 import (
+            build_subscribe_capability_v2,
+        )
 
         sub_ctx = subscription_ctx if isinstance(subscription_ctx, dict) else {}
         _sub_store = sub_ctx.get("store")
@@ -5804,6 +6737,21 @@ def _register_nonebot_handlers() -> None:
                     actor_id=message.sender_id,
                 )
 
+        elif command_text == "feature" or command_text.startswith("feature "):
+            from .domains.ops.features.feature_control import (
+                build_feature_control_result,
+            )
+
+            capability_id = "bot.runtime"
+            feature_command = command_text.removeprefix("feature").strip()
+
+            def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
+                return build_feature_control_result(
+                    feature_service, request_id=message.request_id,
+                    actor_id=message.sender_id, actor_roles=list(_decision.actor_roles),
+                    command_text=feature_command,
+                )
+
         elif command_text == "runtime" or command_text.startswith("runtime "):
             capability_id = "bot.runtime"
             runtime_command = command_text.removeprefix("runtime").strip()
@@ -5814,6 +6762,7 @@ def _register_nonebot_handlers() -> None:
                     effective_instance(config),
                     config,
                     request_id=message.request_id,
+                    actor_id=message.sender_id,
                     actor_roles=_decision.actor_roles,
                     command_text=runtime_command,
                     diagnostics_store=diagnostics_store,
@@ -5831,6 +6780,7 @@ def _register_nonebot_handlers() -> None:
                     effective_instance(config),
                     config,
                     request_id=message.request_id,
+                    actor_id=message.sender_id,
                     actor_roles=_decision.actor_roles,
                     command_text=model_command,
                     diagnostics_store=diagnostics_store,
@@ -6074,7 +7024,9 @@ def _register_nonebot_handlers() -> None:
             capability_id = "bot.subscribe"
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                from .capabilities.subscribe_v2 import build_subscribe_capability_v2
+                from .domains.subscribe.capabilities.subscribe_v2 import (
+                    build_subscribe_capability_v2,
+                )
 
                 sub_ctx = subscription_ctx if isinstance(subscription_ctx, dict) else {}
                 store = sub_ctx.get("store")
@@ -6098,7 +7050,7 @@ def _register_nonebot_handlers() -> None:
             capability_id = "bot.logs"
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                from .capabilities.runtime_logs import build_logs_query_result
+                from .domains.ops.admin.runtime_logs import build_logs_query_result
 
                 arg_parts = command_text[len("logs"):].strip().split()
                 level = (
@@ -6240,7 +7192,7 @@ def _register_nonebot_handlers() -> None:
             help_query = resolve_help_query(command_text)
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                from .capabilities.echo import build_help_result
+                from .domains.chat_reply.capabilities.echo import build_help_result
 
                 return build_help_result(
                     request_id=message.request_id,
@@ -6353,28 +7305,35 @@ def _register_nonebot_handlers() -> None:
             event_type=type(event).__name__,
         )
         # 语音段预转码：SILK 裸流 ffmpeg 解不了，先请适配器 get_record 转 mp3。
+        switches = await product_feature_gate.snapshot_async()
         event_segments = _extract_onebot_raw_segments(event)
-        if any(str(s.get("type", "")).lower() == "record" for s in event_segments):
+        if switches.enabled("bot.ingress.audio_transcode") and any(str(s.get("type", "")).lower() == "record" for s in event_segments):
             await _transcode_record_segments(bot, event_segments)
         # TG 媒体段富化：file_id → 字节落临时文件写回 data.file，vision/ASR 的
         # 既有本机路径链路即可直接消费；模块内部自判 TG 事件且绝不抛异常，
         # 非 TG 事件零成本直通，失败保持段原样（标签降级行为不变）。
-        await enrich_telegram_file_segments(bot, event, event_segments)
+        if switches.enabled("bot.ingress.telegram_media"):
+            await enrich_telegram_file_segments(bot, event, event_segments)
         # 引用链：QQ 的"引用的引用"不随事件下发，需按 id 反查（get_msg）。
         # 只在确有更深 reply 段时才发请求；失败/超时按链条结束，不阻断消息。
-        resolved_chain = await collect_reply_chain_async(
-            event, lookup=_make_onebot_reply_lookup(bot)
-        )
+        if switches.enabled("bot.ingress.reply_lookup"):
+            resolved_chain = await collect_reply_chain_async(
+                event, lookup=_make_onebot_reply_lookup(bot)
+            )
+        else:
+            resolved_chain = collect_reply_chain(event)
         message = _incoming_from_nonebot_event(
             bot_id=bot_id,
             event=event,
             segments=event_segments or None,
             reply_chain=resolved_chain,
+            feature_enabled=switches.enabled,
         )
         # 群聊最近图片上下文（vis3 2026-09-13）：无自带图 + 看图意图 →
         # 注入群里 TTL 内最新一张；模型视角即"总结这张图"。
         if (
-            message.group_id
+            switches.enabled("bot.plugin.chat.recent_image")
+            and message.group_id
             and message.plain_text
             and _VISION_HINT_RE.search(message.plain_text)
             and not any(
@@ -6397,7 +7356,7 @@ def _register_nonebot_handlers() -> None:
         # 表情贴纸回应·触发 B（bot.reactions）：用户消息命中情绪信号时，
         # 小概率给这条消息贴一个表情表达态度。五层门（开关/每消息去重/
         # 确定性概率/会话冷却/每小时时限）全在 reactions 模块内，失败静默。
-        if ".mail" not in event_module:
+        if switches.enabled("bot.plugin.chat.reactions.emotion") and ".mail" not in event_module:
             try:
                 await _maybe_react_on_message(
                     bot,
@@ -6415,18 +7374,34 @@ def _register_nonebot_handlers() -> None:
         # 不依赖 @/白名单触发；只影响后续态度与称呼，不改变本轮是否回复。
         # observe/learn_profile 是多次 SQLite 事务并与 offload 线程争锁，
         # 必须下放线程池执行，否则每条消息都在事件循环内同步写库。
-        if message.sender_id and message.plain_text.strip():
+        if switches.enabled("bot.plugin.affinity.passive") and message.sender_id and message.plain_text.strip():
             def _passive_affinity_perception() -> None:
                 try:
                     _store = build_character_affinity_store(config)
-                    from .character.affinity import classify_behavior
-                    from .character.affinity import extract_profile_facts as _epf
+                    from .domains.chat_reply.character.affinity import classify_behavior
+                    from .domains.chat_reply.character.affinity import (
+                        extract_profile_facts as _epf,
+                    )
+                    from .domains.chat_reply.runtime.content_route import (
+                        explicit_allowed_for_session,
+                    )
                     from .security.content_safety import assess_public_content
 
                     # 安全评估喂给行为分类：persona_degradation/harassment 等类别
                     # 才能映射到 insult/tease 路径（docs/affinity-design.md §6）。
                     assessment = assess_public_content(
                         message.plain_text,
+                        # 2026-09-17：session_type 必填（此前默认 private，
+                        # 群消息也被按私聊口径评估——行为分类信号静默漂移）。
+                        session_type=str(getattr(message.session_type, "value", "")),
+                        explicit_allowed=explicit_allowed_for_session(
+                            str(getattr(message.session_type, "value", "")),
+                            str(getattr(message, "group_id", "") or ""),
+                            config,
+                            # v21r5：传 sender_id 使私聊名单门对被动感知同源生效
+                            #（黑名单永远赢）；群分支不受此参数影响。
+                            sender_id=str(getattr(message, "sender_id", "") or ""),
+                        ),
                         admin="admin" in {
                             str(role).strip().lower() for role in message.sender_roles
                         },
@@ -6449,7 +7424,9 @@ def _register_nonebot_handlers() -> None:
                         facts = _epf(message.plain_text)
                         if facts:
                             _store.learn_profile(message.sender_id, message.plain_text)
-                        from .character.affinity import extract_learned_nickname
+                        from .domains.chat_reply.character.affinity import (
+                            extract_learned_nickname,
+                        )
 
                         learned = extract_learned_nickname(message.plain_text)
                         if (
@@ -6464,7 +7441,9 @@ def _register_nonebot_handlers() -> None:
                     # 机器人心情（L1）：同一行为+情绪信号驱动 bot 自身心情。
                     _mood = build_character_mood_store(config)
                     if _mood is not None:
-                        from .character.emotion import build_emotion_provider
+                        from .domains.chat_reply.character.emotion import (
+                            build_emotion_provider,
+                        )
 
                         _mood.observe_interaction(
                             behavior,
@@ -6487,7 +7466,8 @@ def _register_nonebot_handlers() -> None:
             _refresh_affinity_nicknames(_affinity_store_runtime(config))
         # 群聊复读检测（批次 C）：≥N 个不同用户在窗口内发同一文本 → 吐槽一次。
         if (
-            message.session_type.value == "group"
+            switches.enabled("bot.plugin.chat.parrot")
+            and message.session_type.value == "group"
             and message.plain_text.strip()
             and not message.plain_text.strip().startswith("/")
         ):
@@ -6577,13 +7557,15 @@ def _register_nonebot_handlers() -> None:
             capability_id="bot.chat",
         )
         try:
-            forward_text = await _forward_message_text(
-                bot,
-                event,
-                timeout_seconds=float(
-                    getattr(config, "bot_forward_fetch_timeout_seconds", 5.0) or 5.0
-                ),
-            )
+            forward_text = ""
+            if switches.enabled("bot.plugin.chat.forward_lookup"):
+                forward_text = await _forward_message_text(
+                    bot,
+                    event,
+                    timeout_seconds=float(
+                        getattr(config, "bot_forward_fetch_timeout_seconds", 5.0) or 5.0
+                    ),
+                )
         except Exception:
             release_mail_reply_claim()
             raise
@@ -6597,18 +7579,19 @@ def _register_nonebot_handlers() -> None:
             )
         # 视频理解预处理：回复引用的视频反查落盘文件；确认要现场分析时发进度提示。
         try:
-            message = await _prepare_video_understanding_message(
-                bot,
-                message,
-                chat.send,
-                config=config,
-                runtime_settings=runtime_settings,
-                media_registry=media_registry,
-                media_providers_ready=bool(
-                    (vision_provider and _provider_enabled(vision_provider))
-                    or (asr_provider and _provider_enabled(asr_provider))
-                ),
-            )
+            if switches.enabled("bot.plugin.chat.video_preprocess"):
+                message = await _prepare_video_understanding_message(
+                    bot,
+                    message,
+                    chat.send,
+                    config=config,
+                    runtime_settings=runtime_settings,
+                    media_registry=media_registry,
+                    media_providers_ready=bool(
+                        (vision_provider and _provider_enabled(vision_provider))
+                        or (asr_provider and _provider_enabled(asr_provider))
+                    ),
+                )
         except Exception as exc:  # noqa: BLE001 - 预处理失败不影响正常聊天链路，仅留调试痕迹。
             logging.getLogger(__name__).debug(
                 "video understanding preprocess skipped type=%s",
@@ -6698,27 +7681,46 @@ def _register_nonebot_handlers() -> None:
                 # 表情贴纸回应·触发 A（bot.reactions）：回复发出后小概率给
                 # 用户这条消息贴表情表达态度；同时登记 bot 自己的消息 id，
                 # 让后续【表情回应】分区能说出"给我的消息贴了"。
-                if ".mail" not in event_module:
+                reaction_meme_config = _config_with_runtime_overrides(
+                    config, runtime_settings
+                )
+                reacted_with_emoji = False
+                if switches.enabled("bot.plugin.chat.reactions.after_reply") and ".mail" not in event_module:
                     try:
                         bot_sent_id = transport_receipt.provider_message_id
                         if bot_sent_id:
                             _REACTION_BUFFER.register_bot_message(
                                 message.session_id, bot_sent_id
                             )
-                        await _maybe_react_on_message(
+                        reacted_with_emoji = await _maybe_react_on_message(
                             bot,
                             session_key=message.session_id,
                             user_message_id=str(
                                 getattr(event, "message_id", "") or ""
                             ),
                             text=message.plain_text,
-                            config=_config_with_runtime_overrides(
-                                config, runtime_settings
-                            ),
+                            config=reaction_meme_config,
                             trigger="after_reply",
                             gate=_REACTION_PROACTIVE_GATE,
                         )
-                    except Exception:  # noqa: BLE001, S110 - 贴表情失败绝不影响投递结果。
+                    except Exception:  # noqa: BLE001 - 贴表情失败绝不影响投递结果。
+                        reacted_with_emoji = False
+                # 第二层：情绪信号命中且第一层未贴 → 小概率发一张表情包
+                # （意图匹配 VLM 情绪标签加权；独立冷却/每日上限/悲伤门）。
+                if (
+                    not reacted_with_emoji
+                    and switches.enabled("bot.plugin.chat.reactions.meme")
+                    and ".mail" not in event_module
+                ):
+                    try:
+                        await _maybe_send_reaction_meme(
+                            bot,
+                            event,
+                            session_key=message.session_id,
+                            text=message.plain_text,
+                            meme_config=reaction_meme_config,
+                        )
+                    except Exception:  # noqa: BLE001, S110 - 表情包层失败绝不影响投递结果。
                         pass
                 if history_should_record:
                     _record_chat_history_turn(
@@ -6776,6 +7778,7 @@ def _register_nonebot_handlers() -> None:
         message = _incoming_from_nonebot_event(
             event,
             bot_id=str(getattr(bot, "self_id", "unknown")),
+            feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
         segment_urls = _urls_from_message_segments(_extract_onebot_raw_segments(event))
         if segment_urls:
@@ -6843,6 +7846,7 @@ def _register_nonebot_handlers() -> None:
         message = _incoming_from_nonebot_event(
             event,
             bot_id=str(getattr(bot, "self_id", "unknown")),
+            feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
         receipt = await pipeline.handle_async(
             message,
@@ -6899,6 +7903,7 @@ def _register_nonebot_handlers() -> None:
         message = _incoming_from_nonebot_event(
             event,
             bot_id=str(getattr(bot, "self_id", "unknown")),
+            feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
         # 评审C1：交互走注入渲染后端的独立实例；today_ctx["capability"] 按产品裁定
         # 仅供定时推送（纯文字），二者在 _register_today_history_scheduler 内分流。
@@ -6949,6 +7954,7 @@ def _register_nonebot_handlers() -> None:
         message = _incoming_from_nonebot_event(
             event,
             bot_id=str(getattr(bot, "self_id", "unknown")),
+            feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
         receipt = await pipeline.handle_async(
             message,
@@ -6979,7 +7985,7 @@ def _register_nonebot_handlers() -> None:
             if transport_receipt.state.value == "sent":
                 return
             if should_finish_nonebot_matcher(transport_receipt):
-                # 空文本 finish 会被 NapCat 报「该消息类型暂不支持查看」。
+                # NapCat 时期：空文本 finish 会被报「该消息类型暂不支持查看」。
                 await matcher.finish(
                     transport_receipt.public_message or "（处理完成，没有需要展示的内容。）"
                 )
@@ -7001,7 +8007,8 @@ def _register_nonebot_handlers() -> None:
     @group_info_matcher.handle()
     async def _handle_group_info(bot: Bot, event: Event) -> None:
         message = _incoming_from_nonebot_event(
-            event, bot_id=str(getattr(bot, "self_id", "unknown"))
+            event, bot_id=str(getattr(bot, "self_id", "unknown")),
+            feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
         # B-01：OneBot API 桥（offload 线程池同步执行，主会话装配期注入循环）。
         api = build_onebot_api_bridge(bot, asyncio.get_running_loop())
@@ -7047,7 +8054,10 @@ def _register_nonebot_handlers() -> None:
     # 审查 C-07：IGNORE 命令形态引导闭环——「/help」类命令形态落 IGNORE
     # 时回一句守岸人引导（60s/会话节流），普通闲聊零波及；限流/安静时间
     # 拦截的静默语义（09-12 实弹裁定）不经过本 matcher。
-    from .capabilities.echo import IgnoreGuideGate, build_ignore_guide_result
+    from .domains.chat_reply.capabilities.echo import (
+        IgnoreGuideGate,
+        build_ignore_guide_result,
+    )
 
     _ignore_guide_gate = IgnoreGuideGate()
 
@@ -7084,7 +8094,7 @@ def _register_nonebot_handlers() -> None:
     media_archive = on_message(rule=_is_media_archive_event, priority=43, block=True)
 
     async def _enrich_media_archive_message(bot: Bot, event: Event, message: Any) -> None:
-        """媒体归档的反查注入（ NapCat get_msg / get_forward_msg）。
+        """媒体归档的反查注入（ SnowLuma get_msg / get_forward_msg）。
 
         - 同条消息带合并转发 → get_forward_msg 展开逐条正文注入 chat_record_text；
         - 回复的是合并转发 → 反查被引用消息拿 forward id 后同上；
@@ -7153,7 +8163,8 @@ def _register_nonebot_handlers() -> None:
     @media_archive.handle()
     async def _handle_media_archive(bot: Bot, event: Event) -> None:
         message = _incoming_from_nonebot_event(
-            event, bot_id=str(getattr(bot, "self_id", "unknown"))
+            event, bot_id=str(getattr(bot, "self_id", "unknown")),
+            feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
         await _enrich_media_archive_message(bot, event, message)
         receipt = await pipeline.handle_async(
@@ -7213,6 +8224,7 @@ def _register_nonebot_handlers() -> None:
         message = _incoming_from_nonebot_event(
             event,
             bot_id=str(getattr(bot, "self_id", "unknown")),
+            feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
         arg = ""
         match = re.match(
@@ -7287,6 +8299,7 @@ def _register_nonebot_handlers() -> None:
                     effective_instance(config),
                     config,
                     request_id=message.request_id,
+                    actor_id=message.sender_id,
                     actor_roles=_decision.actor_roles,
                     command_text=runtime_command,
                     diagnostics_store=diagnostics_store,
@@ -7345,7 +8358,9 @@ def _register_nonebot_handlers() -> None:
                 return build_epic_capability(config, render_backend=render_backend)(message, _decision)
 
         elif capability_id == "bot.meme_library":
-            from .capabilities.meme_library import build_meme_library_capability
+            from .domains.meme.capabilities.meme_library import (
+                build_meme_library_capability,
+            )
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 synthetic = message.model_copy(update={"plain_text": normalized_text})
@@ -7365,7 +8380,10 @@ def _register_nonebot_handlers() -> None:
                 )
 
         elif capability_id == "bot.music_mode":
-            from .capabilities.music import build_music_mode_result, extract_music_mode
+            from .domains.music.capabilities.music import (
+                build_music_mode_result,
+                extract_music_mode,
+            )
 
             mode_value = extract_music_mode(normalized_text)
 
@@ -7479,6 +8497,12 @@ def _register_nonebot_handlers() -> None:
             bot, event, build_randpic_capability, "bot.randpic", randpic
         )
 
+    @tts.handle()
+    async def _handle_tts(bot: Bot, event: Event) -> None:
+        await _run_simple_capability(
+            bot, event, build_tts_capability, "bot.tts", tts
+        )
+
     @reminder.handle()
     async def _handle_reminder(bot: Bot, event: Event) -> None:
         await _run_simple_capability(
@@ -7514,6 +8538,7 @@ def _register_nonebot_handlers() -> None:
         message = _incoming_from_nonebot_event(
             event,
             bot_id=str(getattr(bot, "self_id", "unknown")),
+            feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
         started_at = time.perf_counter()
         # 本地知识库优先：鸣潮/方舟/原神等本地语料命中时直接回答，
