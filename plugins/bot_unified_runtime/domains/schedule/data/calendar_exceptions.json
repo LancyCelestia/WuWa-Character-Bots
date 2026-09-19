@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "description": "调休/节假日例外表（V2.1 §4 全场景日程）。数据条目为空：本表只提供 schema 模板，未经官方核实的日期一律不预填（未知年份=unknown，不猜）。管理员可复制本文件到 BOT_SCHEDULE_EXCEPTIONS_PATH 指向的位置后按年份补录。",
+  "source": "",
+  "exceptions": {
+    "2026": {
+      "holidays": {},
+      "workdays": {}
+    }
+  },
+  "field_notes": {
+    "holidays": "YYYY-MM-DD -> 说明（该日放假：follow_calendar 标签的实例顺延到下一个常规日）",
+    "workdays": "YYYY-MM-DD -> 说明（该日调休上班：follow_calendar 标签的实例照常投递）",
+    "missing_year": "年份键不存在或日期键缺失 => resolve 返回 unknown（绝不当作常规日宣称）"
+  }
+}
