@@ -4,7 +4,7 @@ import { PageHeader, SectionCard, DataGrid, DataGridRow, DataGridCell, CategoryC
 import { SemanticState } from '@/components/semantic/semantic-state';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import { controlApi, type LatencyData, type LatencyItem } from '@/lib/api-client';
-import { formatDateTime, formatMs, formatInt } from '@/lib/format';
+import { formatDateTime, formatMs, formatInt, UNKNOWN_VALUE } from '@/lib/format';
 
 // 渠道延迟面板：/api/v1/stats/latency（channel_health store 当前值投影）。
 // 状态 tone：fail*/dead/error*=bad、degrade*/timeout*=warn、其余=good；EWMA/最近延迟/样本/连败。
@@ -22,15 +22,15 @@ function ChannelRow({ item }: { item: LatencyItem }) {
   const { t } = useTranslation();
   return (
     <DataGridRow>
-      <DataGridCell className='w-56 shrink-0 font-mono fs-caption font-medium'>{item.channel || '—'}</DataGridCell>
+      <DataGridCell className='w-56 shrink-0 font-mono fs-caption font-medium'>{item.channel || UNKNOWN_VALUE}</DataGridCell>
       <DataGridCell className='w-24 shrink-0'>
         <CategoryChip label={item.state || 'unknown'} tone={stateTone(item.state, item.consecutive_fails)} />
       </DataGridCell>
       <DataGridCell className='w-20 shrink-0 text-right tabular-nums'>
-        {item.ema_ms === null ? '—' : formatMs(item.ema_ms)}
+        {formatMs(item.ema_ms)}
       </DataGridCell>
       <DataGridCell className='w-20 shrink-0 text-right tabular-nums text-muted-foreground'>
-        {item.latency_ms === null ? '—' : formatMs(item.latency_ms)}
+        {formatMs(item.latency_ms)}
       </DataGridCell>
       <DataGridCell className='w-20 shrink-0 text-right tabular-nums text-muted-foreground'>
         {t('latency.samplesCount', { count: formatInt(item.samples) })}

@@ -1,41 +1,17 @@
 // 统一数据态呈现：loading 骨架 / 暂无数据（source_unavailable 语义态，如实降级非报错）/
 // 未配置令牌（503 control_plane_not_provisioned → 引导设置）/ 令牌无效（401/403）/ 加载失败。
+// reason 码的人话**不在本文件判定**：白名单与取词收口于 `@/lib/semantics` 的 describeReason。
 import { useTranslation } from 'react-i18next';
 import { DatabaseZap, KeyRound, RotateCcw, ServerOff, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { DataState } from '@/hooks/use-semantic-query';
+import { describeReason } from '@/lib/semantics';
 
 /** 打开设置面板（AppShell 挂载的 SettingsDialog 监听同事件）。 */
 export function openSettings(): void {
   window.dispatchEvent(new CustomEvent('webui:open-settings'));
-}
-
-/** source_unavailable reason 码 → 人话（未知码回退原码，绝不编语义）。 */
-export function reasonKey(reason: string): string {
-  const known = [
-    'audit_source_not_configured',
-    'affinity_source_not_configured',
-    'missing_source',
-    'missing_table',
-    'incomplete_schema',
-    'query_budget_exceeded',
-    'read_failed',
-    'not_connected',
-    'not_persisted',
-    // PAGES2 增补（真相源=webui_knowledge/webui_plugins/webui_memory_graph 失败面）
-    'collection_not_available',
-    'all_sources_missing',
-    'glossary_source_unavailable',
-    'disabled_by_config',
-    'features_store_unavailable',
-    'static_config_unavailable',
-    'cross_process_introspection_unavailable',
-    'domains_dir_unavailable',
-    'unreadable',
-  ];
-  return known.includes(reason) ? `reason.${reason}` : '';
 }
 
 export function SemanticState({ state, onRetry }: { state: DataState<unknown>; onRetry?: () => void }) {
@@ -86,13 +62,12 @@ export function SemanticState({ state, onRetry }: { state: DataState<unknown>; o
   }
 
   if (state.phase === 'unavailable') {
-    const key = reasonKey(state.reason);
     return (
       <Card>
         <CardContent className='flex flex-col items-center gap-2 py-6 text-center'>
           <DatabaseZap className='size-8 text-muted-foreground' />
           <div className='fs-card'>{t('state.noData')}</div>
-          <p className='fs-caption text-muted-foreground'>{key ? t(key) : state.reason}</p>
+          <p className='fs-caption text-muted-foreground'>{describeReason(state.reason, t)}</p>
         </CardContent>
       </Card>
     );

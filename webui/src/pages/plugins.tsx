@@ -3,7 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader, SectionCard } from '@/components/patterns/patterns';
 import { SemanticState } from '@/components/semantic/semantic-state';
-import { isNotFound } from '@/lib/semantics';
+import { describeReason, isNotFound } from '@/lib/semantics';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import { controlApi, type PluginGroup, type PluginItem, type PluginsCatalogData } from '@/lib/api-client';
 
@@ -16,14 +16,6 @@ import { controlApi, type PluginGroup, type PluginItem, type PluginsCatalogData 
 // 提示（只读文本不放假按钮，§2.4）；三者缺省/null 一律不渲染（旧控制面兼容，不猜）。
 
 const GROUP_ORDER = ['builtins', 'adapters', 'event_matchers', 'migrated_modules'];
-
-/** 组级 reason → 人话（已知码走 i18n，未知码回退原码，绝不编语义）。 */
-function reasonText(reason: string | null, t: (key: string) => string): string {
-  if (!reason) return '';
-  const key = `reason.${reason}`;
-  const translated = t(key);
-  return translated === key ? `：${reason}` : `：${translated}`;
-}
 
 function HotReloadBadge({ value }: { value: boolean | null | undefined }) {
   const { t } = useTranslation();
@@ -108,13 +100,19 @@ function GroupSkeleton() {
 
 function GroupBlock({ group }: { group: PluginGroup }) {
   const { t } = useTranslation();
+  // 组级 reason 的后缀：取词与未知码回退一律走 `@/lib/semantics` 的 describeReason，
+  // 本页只拼「：」外壳（曾在此另写一套直查 i18n 的实现，与白名单两套口径分叉）。
+  const reasonSuffix = (reason: string | null): string => {
+    const text = describeReason(reason, t);
+    return text ? `：${text}` : '';
+  };
   // 组级不可用（event_matchers 恒定如此；其余组单源故障降级同形）→ 整组一张诚实空态卡，不渲染空网格。
   if (!group.enabled) {
     return (
       <SectionCard title={group.name} description={group.description}>
         <p className='py-4 text-center fs-body text-muted-foreground'>
           {t('plugins.unavailable')}
-          {reasonText(group.reason, t)}
+          {reasonSuffix(group.reason)}
         </p>
       </SectionCard>
     );

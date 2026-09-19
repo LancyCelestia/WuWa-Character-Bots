@@ -16,17 +16,27 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { SemanticState } from '@/components/semantic/semantic-state';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
-import { controlApi, type CallsData, type StatsWindow } from '@/lib/api-client';
-import { formatBucket, formatInt } from '@/lib/format';
+import { controlApi, type CallsData } from '@/lib/api-client';
+import {
+  bucketLabel,
+  DEFAULT_BUCKET,
+  DEFAULT_WINDOW,
+  nextBucket,
+  STATS_WINDOWS,
+  windowLabel,
+  type BucketCode,
+  type StatsWindowCode,
+} from '@/lib/labels';
+import { formatBucket, formatInt, UNKNOWN_VALUE } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
-const WINDOWS: StatsWindow[] = ['24h', '7d', '30d'];
+// 窗口枚举/标签键一律取 @/lib/labels（收口前三份 WINDOWS 手抄 + 四份标签真值表）。
 
-function WindowSwitch({ value, onChange }: { value: StatsWindow; onChange: (value: StatsWindow) => void }) {
+function WindowSwitch({ value, onChange }: { value: StatsWindowCode; onChange: (value: StatsWindowCode) => void }) {
   const { t } = useTranslation();
   return (
     <div className='flex gap-1 rounded-lg border p-1'>
-      {WINDOWS.map((item) => (
+      {STATS_WINDOWS.map((item) => (
         <button
           key={item}
           type='button'
@@ -36,7 +46,7 @@ function WindowSwitch({ value, onChange }: { value: StatsWindow; onChange: (valu
             value === item ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'
           )}
         >
-          {t(`calls.window.${item}`)}
+          {windowLabel(t, item)}
         </button>
       ))}
     </div>
@@ -62,7 +72,9 @@ function TopList({
         <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent className='flex flex-col gap-2'>
-        {entries.length === 0 && <p className='py-6 text-center fs-caption text-muted-foreground'>—</p>}
+        {/* 空列表在此显「未知符号」而非「暂无数据」= 已登记的语义混用（UNI1 台账 §四-2）：
+            改文案属用户可见变更，本席不改，只把符号收进单一真值 UNKNOWN_VALUE。 */}
+        {entries.length === 0 && <p className='py-6 text-center fs-caption text-muted-foreground'>{UNKNOWN_VALUE}</p>}
         {entries.map((entry) => (
           <div key={entry.key ?? '(none)'} className='flex flex-col gap-1'>
             <div className='flex items-baseline justify-between gap-2 fs-caption'>
@@ -86,8 +98,8 @@ function TopList({
 
 export function CallsPage() {
   const { t } = useTranslation();
-  const [window, setWindow] = useState<StatsWindow>('24h');
-  const [bucket, setBucket] = useState<'hour' | 'day'>('hour');
+  const [window, setWindow] = useState<StatsWindowCode>(DEFAULT_WINDOW);
+  const [bucket, setBucket] = useState<BucketCode>(DEFAULT_BUCKET);
 
   const query = useSemanticQuery<CallsData>(
     ['stats-calls', window, bucket, 'page'],
@@ -105,10 +117,10 @@ export function CallsPage() {
           <WindowSwitch value={window} onChange={setWindow} />
           <button
             type='button'
-            onClick={() => setBucket(bucket === 'hour' ? 'day' : 'hour')}
+            onClick={() => setBucket(nextBucket(bucket))}
             className='rounded-md border px-3 py-1 fs-caption font-medium text-muted-foreground hover:bg-accent'
           >
-            {bucket === 'hour' ? t('calls.bucket.hour') : t('calls.bucket.day')}
+            {bucketLabel(t, bucket)}
           </button>
         </div>
         {data && (
@@ -196,7 +208,7 @@ function CallsBody({ data }: { data: CallsData }) {
           title={t('calls.byUser')}
           description={t(`calls.attribution.${data.user_attribution === 'derived_from_session_id_onebot_convention' ? 'onebot' : 'other'}`)}
           entries={data.by_user.map((entry) => ({ key: entry.user, calls: entry.calls }))}
-          labelFor={(key) => key ?? '—'}
+          labelFor={(key) => key ?? UNKNOWN_VALUE}
         />
       </div>
     </>

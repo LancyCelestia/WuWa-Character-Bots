@@ -12,33 +12,35 @@ import {
   SectionCard,
   StatCard,
 } from '@/components/patterns/patterns';
-import { SemanticState, openSettings, reasonKey } from '@/components/semantic/semantic-state';
+import { SemanticState, openSettings } from '@/components/semantic/semantic-state';
 import { useSemanticQuery, type DataState } from '@/hooks/use-semantic-query';
 import { controlApi, type CallsData, type HealthData, type BotStatusData, type LatencyData, type TokensData } from '@/lib/api-client';
+import { DEFAULT_WINDOW, windowLabel, type StatsWindowCode, type Translate } from '@/lib/labels';
 import { formatDateTime, formatInt, formatUptime } from '@/lib/format';
+import { describeReason } from '@/lib/semantics';
 
 // 总览页（Phase A 真数据）：全部由现有只读端点拼装——
 // /admin/api/v1/health + /status/bot + /api/v1/stats/calls|tokens|latency。
 // 发送队列/活动告警 Phase A 无只读端点 → 诚实标「未接入」，不造数。
-// BACKEND3 消费（2026-09-18 FE3，§7 A4/A5）：「消息调用键值明细」卡——今日(24h)/近7天
-// 两个窗口各取一次 stats/calls（跨窗不合并、不造全表 max），取 total_calls +
+// BACKEND3 消费（2026-09-18 FE3，§7 A4/A5）：「消息调用键值明细」卡——近 24 小时/近 7 天
+// 两个**滚动**窗口各取一次 stats/calls（跨窗不合并、不造全表 max），取 total_calls +
 // active_users + last_message_at 做 label 左/value 右键值行（DataGrid 分隔线）；
-// 字段缺省（旧控制面）如实显示 —，窗口无记录 last_message_at=null → —（不造时间）。
+// 字段缺省（旧控制面）如实显示 UNKNOWN_VALUE，窗口无记录 last_message_at=null → 同（不造时间）。
+
+/**
+ * 明细卡的两档**滚动**窗（枚举与标签键的真相源在 `@/lib/labels`）：取数参数与卡标题
+ * 各引同一变量，标签绝不与取数窗口脱钩；queryKey 用的也是这两个值（值不变，缓存键不变）。
+ */
+const DETAIL_WINDOW_24H: StatsWindowCode = DEFAULT_WINDOW;
+const DETAIL_WINDOW_7D: StatsWindowCode = '7d';
 
 function withFallback(state: DataState<unknown>, node: React.ReactNode): React.ReactNode {
   return state.phase === 'ok' ? node : <SemanticState state={state} />;
 }
 
 /** 非 ok 语义态 → 一行人话（known reason 走 i18n，未知码/错误消息原样，绝不编语义）。 */
-function fallbackLine(state: DataState<CallsData>, t: (key: string) => string): string {
-  if (state.phase === 'unavailable') {
-    const key = reasonKey(state.reason);
-    if (key) {
-      const translated = t(key);
-      if (translated !== key) return `${t('state.noData')}：${translated}`;
-    }
-    return `${t('state.noData')}：${state.reason}`;
-  }
+function fallbackLine(state: DataState<CallsData>, t: Translate): string {
+  if (state.phase === 'unavailable') return `${t('state.noData')}：${describeReason(state.reason, t)}`;
   if (state.phase === 'error') return `${t('state.loadFailed')}：${state.message}`;
   return t('state.noData');
 }
@@ -67,11 +69,11 @@ function CallsDetailGroup({ label, state, data }: { label: string; state: DataSt
           <KvRow
             label={t('dashboard.overview.rowActiveUsers')}
             hint={t('dashboard.overview.activeUsersHint')}
-            value={data.active_users != null ? formatInt(data.active_users) : '—'}
+            value={formatInt(data.active_users)}
           />
           <KvRow
             label={t('dashboard.overview.rowLastMessage')}
-            value={data.last_message_at ? formatDateTime(data.last_message_at) : '—'}
+            value={formatDateTime(data.last_message_at)}
           />
         </DataGrid>
       ) : state.phase === 'loading' ? (
@@ -92,10 +94,10 @@ export function DashboardPage() {
 
   const health = useSemanticQuery<HealthData>(['health'], () => controlApi.health(), { refetchInterval: 30_000 });
   const botStatus = useSemanticQuery<BotStatusData>(['status-bot'], () => controlApi.statusBot(), { refetchInterval: 30_000 });
-  const calls = useSemanticQuery<CallsData>(['stats-calls', '24h', 'overview'], () => controlApi.statsCalls({ window: '24h', bucket: 'hour', limit: 5 }), { refetchInterval: 60_000 });
+  const calls = useSemanticQuery<CallsData>(['stats-calls', DETAIL_WINDOW_24H, 'overview'], () => controlApi.statsCalls({ window: DETAIL_WINDOW_24H, bucket: 'hour', limit: 5 }), { refetchInterval: 60_000 });
   // §7 A4/A5：近 7 天窗口独立取数（与 24h 各一次，不跨窗合并）；limit=1 最小化趋势/TopN 载荷。
-  const calls7d = useSemanticQuery<CallsData>(['stats-calls', '7d', 'overview'], () => controlApi.statsCalls({ window: '7d', bucket: 'day', limit: 1 }), { refetchInterval: 60_000 });
-  const tokens = useSemanticQuery<TokensData>(['stats-tokens', '24h', 'overview'], () => controlApi.statsTokens({ window: '24h', limit: 5 }), { refetchInterval: 60_000 });
+  const calls7d = useSemanticQuery<CallsData>(['stats-calls', DETAIL_WINDOW_7D, 'overview'], () => controlApi.statsCalls({ window: DETAIL_WINDOW_7D, bucket: 'day', limit: 1 }), { refetchInterval: 60_000 });
+  const tokens = useSemanticQuery<TokensData>(['stats-tokens', DEFAULT_WINDOW, 'overview'], () => controlApi.statsTokens({ window: DEFAULT_WINDOW, limit: 5 }), { refetchInterval: 60_000 });
   const latency = useSemanticQuery<LatencyData>(['stats-latency', 'overview'], () => controlApi.statsLatency(), { refetchInterval: 60_000 });
 
   const queries = [health, botStatus, calls, calls7d, tokens, latency];
@@ -219,8 +221,8 @@ export function DashboardPage() {
         description={t('dashboard.overview.callsDetailDesc')}
       >
         <div className='flex flex-col gap-6'>
-          <CallsDetailGroup label={t('dashboard.overview.windowToday')} state={calls.state} data={callsData} />
-          <CallsDetailGroup label={t('dashboard.overview.window7d')} state={calls7d.state} data={calls7dData} />
+          <CallsDetailGroup label={windowLabel(t, DETAIL_WINDOW_24H)} state={calls.state} data={callsData} />
+          <CallsDetailGroup label={windowLabel(t, DETAIL_WINDOW_7D)} state={calls7d.state} data={calls7dData} />
         </div>
       </SectionCard>
 

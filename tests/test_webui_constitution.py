@@ -111,7 +111,7 @@ def test_pure_function_tests() -> None:
     assert match is not None, f"TAP 摘要行缺失（reporter 形态变了？Node 版本漂移？）：\n{stdout}"
     passed = int(match.group(1))
     # 下限而非定值：加用例不砸门，删到基线以下才红。
-    assert passed >= 14, f"pass 数 {passed} < 14（2026-09-19 基线 graph-layout 7 + semantics 7，不应回退）"
+    assert passed >= 29, f"pass 数 {passed} < 29（2026-09-19 UNI1 基线 graph-layout 7 + semantics 14 + labels 8，不应回退）"
 
 
 def test_package_json_entries_match_gates() -> None:

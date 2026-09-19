@@ -69,6 +69,12 @@
     "domains_dir_unavailable": "domains 目录不可用",
     "unreadable": "数据源存在但读取失败（表结构不符）"
   },
+  "window": {
+    "24h": "近 24 小时",
+    "7d": "近 7 天",
+    "30d": "近 30 天",
+    "all": "全部时间"
+  },
   "dashboard": {
     "overview": {
       "health": "控制面健康",
@@ -89,8 +95,6 @@
       "aboutBody": "统计口径：调用=audit_records、LLM=llm_call_records 账本、渠道=channel_health 内存健康库；好感度=user_affinity 只读库。",
       "callsDetailTitle": "消息调用键值明细",
       "callsDetailDesc": "近 24 小时与近 7 天两个滚动窗口各取一次独立统计（跨窗不合并，非自然日）；「最后消息」为窗口内最新审计时间，无记录如实显示 —",
-      "windowToday": "近 24 小时",
-      "window7d": "近 7 天",
       "rowCalls": "调用数",
       "rowActiveUsers": "活跃用户",
       "rowLastMessage": "最后消息",
@@ -100,9 +104,9 @@
   "calls": {
     "title": "调用统计",
     "window": {
-      "24h": "24 小时",
-      "7d": "7 天",
-      "30d": "30 天"
+      "24h": "近 24 小时",
+      "7d": "近 7 天",
+      "30d": "近 30 天"
     },
     "bucket": {
       "hour": "按小时桶",

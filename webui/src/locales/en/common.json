@@ -69,6 +69,12 @@
     "domains_dir_unavailable": "domains directory unavailable",
     "unreadable": "Source exists but read failed (schema mismatch)"
   },
+  "window": {
+    "24h": "Last 24 hours",
+    "7d": "Last 7 days",
+    "30d": "Last 30 days",
+    "all": "All time"
+  },
   "dashboard": {
     "overview": {
       "health": "Control-plane health",
@@ -89,8 +95,6 @@
       "aboutBody": "Sources: calls=audit_records, LLM=llm_call_records ledger, channels=channel_health in-memory store, affinity=user_affinity read-only DB.",
       "callsDetailTitle": "Message calls key-value detail",
       "callsDetailDesc": "The 24h and 7d windows are fetched independently (never merged across windows); “last message” is the newest audit time within the window — shown as — when there is no record",
-      "windowToday": "Last 24 hours",
-      "window7d": "Last 7 days",
       "rowCalls": "Calls",
       "rowActiveUsers": "Active users",
       "rowLastMessage": "Last message",
@@ -100,9 +104,9 @@
   "calls": {
     "title": "Call Stats",
     "window": {
-      "24h": "24 hours",
-      "7d": "7 days",
-      "30d": "30 days"
+      "24h": "Last 24 hours",
+      "7d": "Last 7 days",
+      "30d": "Last 30 days"
     },
     "bucket": {
       "hour": "Hourly buckets",
