@@ -20,6 +20,24 @@
 //      修饰符链不同的类（如 [&.active]:font-medium 对 fs-body）按特异性裁决、安全，不算双写
 //      （F16 §1.2 裁定）。font-weight×fs-* 双写走「只减不增」棘轮白名单（16 处存量登记，
 //      快照口径 2026-09-19 17:5x，逐条清单见 F19 台账 §5；施工期间并发席新增 1 处已收编）。
+// —— R5 补牙两族（2026-09-19，台账 docs/design/unify-audit-20260919/R5-impl.md）——
+//   ⑧ 任意值方括号（arb 族）：F19 §5-C 登记的「下一枚脱栅任意值不得静默入库」收口。
+//      管盒子尺寸与定位（size/w/h/min-w/min-h/max-w/max-h/inset/top/right/bottom/left/
+//      basis 及其 -x/-y）、焦点环（ring）、色影类（bg/border/
+//      fill/stroke/shadow/outline 及 divide）的 `-[…]` 形态；三条放行通道——
+//      a) var(--) 通道（与 margin/radius 同口径）；
+//      b) 视口单位白名单：盒子值全量为纯视口数值（{vh,svh,lvh,dvh,vw,svw,lvw,dvw,vi,vb}）——
+//         栅格是定像素装置，视口相对限高/限宽无从 4px 量化，属「合法脱栅」而非事故
+//         （现树命中：logs.tsx max-h-[60vh]、settings-dialog max-h-[90svh]）；
+//      c) 规范焦点环白名单：仅 ring-[3px]（shadcn 上游规范值 6 处同构，几何描边语义非
+//         间距语义；现树 badge/button/settings-dialog/knowledge/memory-graph，见 R5 §2）。
+//      其余任意值 → OFFGRID_RATCHET 棘轮（快照 2 枚 size-[1.2rem] 在册待修，只减不增）。
+//      不管：p/gap/m/rounded 的括号（③⑤⑥已管，不双开）、变体选择器（[&>svg] 等）、
+//      轨道/属性清单（grid-cols-[1fr_auto] / transition-[color,box-shadow]，非尺寸字面量）。
+//   ⑨ canvas 字体字面量（canvas-font 族）：`.font = '…Npx…'` 直写绕过五档阶梯单一事实源
+//      （index.css 宪法注释「统一由这里钉死」同款语义），必须走 readToken/CSS 变量或
+//      行级豁免+基线登记。动态拼接（`${n}px`）无静态数字可审 = 原理性管不到，如实记账。
+//      现树 1 处 memory-canvas.tsx:179（readToken 取色已在、取字号未做）→ 棘轮在册待修。
 // 行级豁免：命中行行尾 `// layout-allow: <理由≥4字>` —— 认领必须命中本文件
 //   EXEMPTION_BASELINE（快照口径 2026-09-19 为空集）：新增豁免=红（棘轮只减不增，
 //   扩编须用户裁定后由门维护席登记）；空/短理由=红（防旁路后门）。
@@ -102,6 +120,44 @@ function marginViolation(base) {
   return `margin 脱档形态 ${base}（许可 {0,1,2,3,4,6}/auto/var）`;
 }
 
+// —— ⑧ 任意值方括号（arb 族，R5）：token 级（splitChain 后的 base），三条放行通道见文件头。
+//    盒子/焦点环/色影三张工具清单刻意不含 p/gap/m/rounded/text（③⑤⑥②已管，防一族两红）。——
+const ARB_BOX = /^(?:size|[wh]|(?:min|max)-(?:w|h)|(?:inset|top|right|bottom|left|basis)(?:-[xy])?)-\[(.*)\]$/;
+const ARB_RING = /^ring-\[(.*)\]$/;
+const ARB_COLOR = /^(?:bg|border(?:-[trblxyse])?|outline|fill|stroke|shadow|divide(?:-[trblxy])?)-\[(.*)\]$/;
+// 视口单位白名单（宪法注记：栅格=定像素装置，视口相对值无栅格语义可审，族级白名单收编）。
+const VIEWPORT_VALUE = /^\d+(?:\.\d+)?(?:vh|svh|lvh|dvh|vw|svw|lvw|dvw|vi|vb)$/;
+// 规范焦点环白名单（族定义见 R5 台账 §2；扩编=宪法修改须用户裁定，收窄=随时可行）。
+const CANONICAL_RING = new Set(['3px']);
+function arbViolation(base) {
+  let m = ARB_BOX.exec(base);
+  if (m) {
+    const v = m[1];
+    if (/var\(|--/.test(v) || VIEWPORT_VALUE.test(v)) return null;
+    return { family: 'arb-box', msg: `任意值盒子尺寸 ${base}（视口单位/ var token 之外禁直写，改栅格刻度或登记 OFFGRID_RATCHET）` };
+  }
+  m = ARB_RING.exec(base);
+  if (m) {
+    const v = m[1];
+    if (/var\(|--/.test(v) || CANONICAL_RING.has(v)) return null;
+    return { family: 'arb-ring', msg: `任意值焦点环宽 ${base}（规范环仅 ring-[3px]，其余走 var(--ring-width) 或登记棘轮）` };
+  }
+  m = ARB_COLOR.exec(base);
+  if (m) {
+    const v = m[1];
+    if (/var\(|--/.test(v)) return null;
+    return { family: 'arb-color', msg: `任意值色/描边/阴影字面量 ${base}（用 index.css 语义 token / var 通道，确需即登记棘轮）` };
+  }
+  return null;
+}
+
+// —— ⑨ canvas 字体字面量（canvas-font 族，R5）：`.font = '…<N>px…'` 行级判定。
+//    动态拼接（`${n}px` 无静态数字）原理性管不到，如实记账（R5 台账 §3）。——
+const CANVAS_FONT_LITERAL = /\.font\s*=\s*[^;\n]*?(\d+(?:\.\d+)?)px/;
+// 五档阶梯 px 值册（index.css @utility fs-* 同源，快照 2026-09-19）——只用于消息提示，
+// 判据本身是「字面量即旁路单一事实源」，与值是否在档无关。
+const LADDER_PX = new Set(['18', '14', '13', '12', '30']);
+
 // —— ⑦ 同元素排版双写（F16 规则 F1）——
 // fs-* 三属性合一；内建类按 F16 §1.5 口径归属属性。font-mono/font-sans 属 font-family，
 // 与权重族名不同集，天然不误伤（权重名单精确到九个具名档）。
@@ -130,6 +186,15 @@ function splitChain(tok) {
 // （自测锁与真实扫描共用同一实现——杜绝「自测过、真扫空转」两张皮）。
 function lineRuleHits(lineText) {
   const hits = [];
+  const cf = CANVAS_FONT_LITERAL.exec(lineText);
+  if (cf) {
+    const px = cf[1];
+    hits.push({
+      family: 'canvas-font',
+      token: `canvas-font-${px}px`,
+      msg: `canvas 字体字号字面量 ${px}px（旁路五档阶梯单一事实源，用 readToken/CSS 变量或行级豁免+基线登记；${LADDER_PX.has(px) ? `值恰在档（fs 阶梯 ${px}px）仍禁副本` : '值亦脱五档'}）`,
+    });
+  }
   const seenRadius = new Map(); // chain -> [tokens]
   const writers = new Map();    // prop#chain -> [tokens]
   const fsTokens = new Set();
@@ -138,6 +203,8 @@ function lineRuleHits(lineText) {
     const [chain, base] = splitChain(raw);
     const mv = marginViolation(base);
     if (mv) hits.push({ family: 'margin', token: base, msg: mv });
+    const av = arbViolation(base);
+    if (av) hits.push({ family: av.family, token: base, msg: av.msg });
     if (/^(-)?rounded/.test(base)) {
       const rv = radiusViolation(base.replace(/^-/, ''));
       if (rv) hits.push({ family: 'radius', token: base, msg: rv });
@@ -188,12 +255,19 @@ const WEIGHT_RATCHET = new Map([
   ['pages/memory-graph.tsx|font-medium+fs-caption', 2],
   ['pages/tokens.tsx|font-medium+fs-caption', 3],
 ]);
+// 脱栅任意值/canvas 字面量棘轮（R5；键=文件相对路径|命中 token，快照口径 2026-09-19 19:1x，
+// 只减不增）。修一处删一行——size-[1.2rem] 的处置=改 size-5（栅格 20px，视觉差 0.8px，
+// R5 台账 §4 一条改法）；canvas-font 的处置=字号走 readToken（同文件取色已走，R5 台账 §4）。
+const OFFGRID_RATCHET = new Map([
+  ['components/graph/memory-canvas.tsx|canvas-font-12px', 1],
+]);
 // 行级豁免基线（layout-allow: 认领登记表）。快照口径 2026-09-19：现树 0 条标记 → 空集。
 const EXEMPTION_BASELINE = new Map();
 
 const ALLOW_MARK = /\/\/\s*layout-allow:\s*(.+?)\s*$/;
 const weightClaims = new Map(); // key -> [{at}]
 const exemptClaims = new Map(); // key -> [{at}]
+const offgridClaims = new Map(); // key -> [{at, msg}]（R5 ⑧⑨ 族）
 const NOTICES = [];
 
 function report(rel, lineNo, lineText, family, token, msg) {
@@ -245,6 +319,15 @@ function check(path) {
         weightClaims.set(key, list);
         continue;
       }
+      if ((hit.family === 'canvas-font' || hit.family.startsWith('arb-')) && !ALLOW_MARK.test(lineText)) {
+        // R5 ⑧⑨：脱栅任意值/canvas 字面量 → OFFGRID_RATCHET 账（带行级 layout-allow 标记时
+        // 不静默吞进棘轮，优先走豁免账——与权重双写同款两账不串纪律）。
+        const key = `${rel}|${hit.token}`;
+        const list = offgridClaims.get(key) || [];
+        list.push({ at: `${rel}:${i + 1}`, msg: hit.msg });
+        offgridClaims.set(key, list);
+        continue;
+      }
       report(rel, i + 1, lineText, hit.family, hit.token, hit.msg);
     }
   });
@@ -278,6 +361,14 @@ function settleRatchets() {
   for (const [key, n] of EXEMPTION_BASELINE) {
     const got = exemptClaims.get(key)?.length || 0;
     if (got < n) NOTICES.push(`豁免基线条目富余：${key} 登记 ${n} 认领 ${got} —— 请同步收窄 EXEMPTION_BASELINE（棘轮只减不增）`);
+  }
+  // 脱栅任意值/canvas 字面量棘轮（R5）
+  for (const [key, extra, allowed] of excessEntries(offgridClaims, OFFGRID_RATCHET)) {
+    for (const e of extra) VIOLATIONS.push(`${e.at}  [脱栅] 未登记的任意值/canvas 字面量（OFFGRID_RATCHET 基线 ${allowed}）：改回栅格刻度/var token/白名单通道，确需脱栅须登记棘轮并在台账写明理由（只减不增）：${e.msg}`);
+  }
+  for (const [key, n] of OFFGRID_RATCHET) {
+    const got = offgridClaims.get(key)?.length || 0;
+    if (got < n) NOTICES.push(`脱栅棘轮条目富余：${key} 登记 ${n} 实见 ${got} —— 已清理请同步收窄 OFFGRID_RATCHET（棘轮只减不增）`);
   }
 }
 
@@ -329,6 +420,31 @@ const SELFTEST = [
   ['<span className=\'fs-num tabular-nums\' />', null],
   // 登记表字面量（≥3 枚 fs-* 同行为注册清单，非元素双写）必须放行
   ['const TYPE_LADDER = [\'fs-page\', \'fs-card\', \'fs-body\', \'fs-caption\', \'fs-num\'];', null],
+  // ⑧ 任意值方括号：负样本（必须命中）
+  ['<span className=\'size-[1.2rem]\' />', 'arb-box'],
+  ['<div className=\'w-[37px]\' />', 'arb-box'],
+  ['<div className=\'max-h-[400px]\' />', 'arb-box'],
+  ['<div className=\'h-[10rem]\' />', 'arb-box'],
+  ['<div className=\'min-w-[52ch]\' />', 'arb-box'],
+  ['<div className=\'left-[7px]\' />', 'arb-box'],
+  ['<div className=\'basis-[33.3%]\' />', 'arb-box'],
+  ['<button className=\'focus-visible:ring-[2px]\' />', 'arb-ring'],
+  ['<button className=\'ring-[0.5rem]\' />', 'arb-ring'],
+  ['<div className=\'bg-[rgba(31,35,41,0.04)]\' />', 'arb-color'],
+  ['<div className=\'border-[2px]\' />', 'arb-color'],
+  // ⑧ 任意值方括号：正样本（白名单通道与不管形态，near-miss 不得误伤）
+  ['<div className=\'flex max-h-[90svh] overflow-y-auto\' />', null],
+  ['<div className=\'max-h-[60vh] min-h-svh\' />', null],
+  ['<button className=\'focus-visible:ring-[3px] rounded-md\' />', null],
+  ['<div className=\'w-[var(--content-max)] ring-[color:var(--ring)]\' />', null],
+  ['<div className=\'grid grid-cols-[1fr_auto] transition-[color,box-shadow]\' />', null],
+  ['<a className=\'[&>svg]:size-4 has-[>svg]:px-3\' />', null],
+  // ⑨ canvas 字体字面量：负样本
+  ['context.font = \'12px "Segoe UI", sans-serif\';', 'canvas-font'],
+  ['ctx.font = `13px ui-sans-serif`;', 'canvas-font'],
+  // ⑨ canvas 字体字面量：正样本（间接引用无静态数字=放行；px 字面量不沾 .font= 不误伤）
+  ['context.font = CANVAS_LABEL_FONT;', null],
+  ['const labelSpec = \'12px sans-serif\';', null],
 ];
 
 function selftest() {
@@ -371,4 +487,5 @@ if (VIOLATIONS.length > 0) {
 }
 const exemptN = [...exemptClaims.values()].reduce((s, l) => s + l.length, 0);
 const weightN = [...WEIGHT_RATCHET.values()].reduce((a, b) => a + b, 0);
-console.log(`版式宪法机器门：全部通过（自测 ${SELFTEST.length + 2}/${SELFTEST.length + 2}；hex=0 / 字号五档 / 间距 4px 栅格 / 调色板类=0 / margin 同栅格 / 圆角三档+full 白名单 / 同元素双写=0；行级豁免 ${exemptN}/${EXEMPTION_BASELINE.size} 基线，棘轮只减不增；权重双写白名单 ${weightN} 处存量在册）`);
+const offgridN = [...OFFGRID_RATCHET.values()].reduce((a, b) => a + b, 0);
+console.log(`版式宪法机器门：全部通过（自测 ${SELFTEST.length + 2}/${SELFTEST.length + 2}；hex=0 / 字号五档 / 间距 4px 栅格 / 调色板类=0 / margin 同栅格 / 圆角三档+full 白名单 / 同元素双写=0 / 任意值方括号（盒子/环/色影，var+视口+规范环 3px 白名单）/ canvas 字体字面量；行级豁免 ${exemptN}/${EXEMPTION_BASELINE.size} 基线，棘轮只减不增；权重双写白名单 ${weightN} 处存量在册；脱栅棘轮 ${offgridN} 处存量在册（只减不增））`);
