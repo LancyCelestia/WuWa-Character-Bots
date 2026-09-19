@@ -234,3 +234,33 @@ Tier2（`get_msg` 回查）以 `_ONEBOT_GET_MSG_NOT_FOUND_PROVEN=False` 取证�
 ① `service/dedupe.py build_emergency_dedupe_key` **校验用 strip 值、拼键用原参** ⇒ 带空白入参过校验却拼出非法键，
 进闸被 `skip, reason="dedupe_key_shape"` ⇒ **静默丢投递**（同 §13-1 属漏报族，D1-FIX 修）；
 ② B4a 报告里的接线片段形参名写作 `settings=`，真身是 `settings_provider=` ⇒ 注册席照抄即 `TypeError`。
+
+## 十四、终态三席（CARD-MAP / D1-FIX / LOCK-AUDIT，03:30—03:50）
+
+**D1-FIX 更正了 §13-4 我对 dedupe 缺陷后果的判定（我错了，方向反）**：
+脏键（带空格段）实测**能过闸**——闸侧谓词 `outbound_gate.py:259-273 dedupe_key_shape_ok` **不查段字符集**，
+所以并不会 `skip, reason="dedupe_key_shape"`；真实后果是**队列 `ON CONFLICT` 幂等失效 ⇒ 重复发送**。
+「skip＝漏报」只在调用方真按 `domains/emergency_info/service/dedupe.py:9-10` 注释使用域内谓词时成立，
+而该注释与实现不符（已由 LOCK-FIX 席同源化）。⇒ **同一个 bug 的两个可能后果里我报错了那一个**，
+教训：讲后果链必须逐段实测到出口，不能从"注释说的语义"外推。
+D1 已修 `dedupe.py:39-77`（归一一次并复用，签名/异常面不变）+19 条往返与负向锁，变异自证两侧都做出红；
+计数 core 79→**101P+2x**、sources 57→**58P+1x**、简报口径合跑 195→**218 passed + 3 xfailed**，mypy `Success 12 files`。
+**它拒绝为凑绿造实现**：锁 C/D + `to_payload()` 接缝锁写成 `xfail(strict=True)`（`--runxfail` 实证红因=前提 0 命中）。
+
+**LOCK-AUDIT 独立体检 59 条锁（78 次注毒含 17 次负控制，全部还原、末态逐字节相同）**：
+**A 真锁 39 / B 方向锁 15 / C 恒真·空真 1 / D 弱锁 4，可红率 91.5%**。四处零覆盖已开 LOCK-FIX 席补：
+① dedupe 命名空间与段字符集（＝上文重发风险）；② 生产 import 白名单空集恒真 + `startswith` 让
+`domains/transport_legacy`/`transporter` 现在照样放行；③ 日志锁被 `exc_info` traceback 喂饱 + 六个观测面值无锁；
+④ 双谓词同源化。**一条跨席撞车预警待裁**：现役根 `__init__.py` 直调 `*queue*.submit` 实数**恰=5、门槛余量 0**
+⇒ 并行 S0-ROOT-c 收编或本波把闸引进根 init，当天必红 `test_existing_families_still_submit_directly`。
+LOCK-AUDIT 还自曝三处自犯并复原（文本通道还原致 CRLF→LF 32271→31497、一次 sha 自校验拿内存串自比=恒真、
+一次漏设 `PYTHONDONTWRITEBYTECODE` 落 349 个 `.pyc`）⇒ 已升成本波纪律：**注毒还原必须二进制通道、还原校验必须比对磁盘字节**。
+
+**CARD-MAP（render 面零改动）**：施工图 `docs/design/emergency-info-card-spec-20260920.md`（332 行，diff 全不 apply）。
+**推荐路线乙**＝复用 `finance_card` 的 sections/rows（正例：商品/国债/北向三卡零模板改动），
+理由量化：扰动面 **乙 2 件 vs 甲 14 件**（甲含 S-D 双向硬门 + 6 枚举面 + 清单 19→20 + 三处「11 面」口径 + 样张基线换代）；
+换甲触发条件已钉死（若裁「要真时效条」即切）。四级色抄 `ERROR_ACCENT/ERROR_THEME`（`theme_tokens.py:424-425`→`bridge.py:1824-1869`），
+**不进 `PLATFORM_THEMES`** ⇒ 17 平台/别名族零连带。样张（眼睛裁料，`%TEMP%\emergency-card-mock\emergency_P{0,1,2,3}.png`）
+自带一条目测结论：**P3 蓝与本命底最接近、级别感最弱**。
+它还修正了我给它的判据：`verify_hashes --check` 03:31 实测 **EXIT=0**（我简报里那 2 项漂移已被他席 `863fee6` 化解）
+⇒ 出卡开工现在只差两件：12 件 render `M` 未入库 + mtime 未静默（`templates.py` 03:38 又被改）。
