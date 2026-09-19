@@ -20,7 +20,11 @@
    （防双斑叠印），decor_css 保留=keyframes mica-drift-a/b 单源供给。
    vis4（2026-09-13）：外壳与页脚迁社交卡标准——页脚胶囊叠 --glow-accent
    辉光背景层 + L2 面板级阴影（mermaid 不在 vis2 瓦片审计门清单内）；
-   SVG 图形内部零触碰。 #}
+   SVG 图形内部零触碰。
+   VIS1（2026-09-20 用户裁定）：本条「SVG 内部零触碰」对**节点圆角**开例——
+   矩形走 CSS rx（消费 --r-inner-lg），菱形/平行四边形/六边形等 polygon
+   由页尾脚本在渲染后同坐标替换为圆角 path（复制全部属性含 transform）；
+   连线/箭头/文字零改动。 #}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -73,16 +77,9 @@ body {
     padding: 26px 30px;
     border-radius: var(--r-shell);
     border: 1px solid transparent;
-    background:
-        linear-gradient(145deg,
-            var(--wash-mist) 0%,
-            color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
-            color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%,
-            color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%) padding-box,
-        linear-gradient(150deg,
-            rgba(255, 255, 255, 0.95) 0%,
-            rgba(255, 255, 255, 0.35) 55%,
-            rgba(255, 255, 255, 0.72) 100%) border-box;
+    {# VIS1（2026-09-20）：壳渐变/描边手抄退役，改 var(--mica-shell-wash)+
+       var(--mica-glass-edge) 消费（值册单源，见 market_card 同段注释）。#}
+    background: var(--mica-shell-wash) padding-box, var(--mica-glass-edge);
     box-shadow: var(--mica-shadow);
 }
 /* 渐变漂移色斑（mermaid 特例：.card::before/::after 伪元素两斑）。
@@ -97,24 +94,27 @@ body {
     position: absolute;
     z-index: 0;
     display: block;
-    border-radius: 50%;
+    border-radius: var(--r-circle);
     pointer-events: none;
 }
 .card::before {
     width: 58%; aspect-ratio: 1; left: -14%; top: -22%;
+    /* VIS1（2026-09-20）：与生成器 _BLOB_SPECS drift-a 同步上浮 60/38/10
+       （E-2 登记特例的「同构」语义保持）。 */
     background: radial-gradient(closest-side,
-        color-mix(in srgb, var(--wash-blob-1) 50%, transparent) 0%,
-        color-mix(in srgb, var(--wash-blob-1) 28%, transparent) 46%,
-        color-mix(in srgb, var(--wash-blob-1) 6%, transparent) 70%, transparent 100%);
+        color-mix(in srgb, var(--wash-blob-1) 60%, transparent) 0%,
+        color-mix(in srgb, var(--wash-blob-1) 38%, transparent) 46%,
+        color-mix(in srgb, var(--wash-blob-1) 10%, transparent) 70%, transparent 100%);
     animation: mica-drift-a 46s ease-in-out infinite alternate;
     animation-delay: calc(var(--phase, 0.2) * -46s);
 }
 .card::after {
     width: 52%; aspect-ratio: 1; right: -16%; bottom: -24%;
+    /* 与生成器 drift-b 同步上浮 38/22/8。 */
     background: radial-gradient(closest-side,
-        color-mix(in srgb, var(--wash-2) 30%, transparent) 0%,
-        color-mix(in srgb, var(--wash-2) 16%, transparent) 48%,
-        color-mix(in srgb, var(--wash-2) 5%, transparent) 72%, transparent 100%);
+        color-mix(in srgb, var(--wash-2) 38%, transparent) 0%,
+        color-mix(in srgb, var(--wash-2) 22%, transparent) 48%,
+        color-mix(in srgb, var(--wash-2) 8%, transparent) 72%, transparent 100%);
     animation: mica-drift-b 58s ease-in-out infinite alternate;
     animation-delay: calc(var(--phase, 0.2) * -58s - 9s);
 }
@@ -136,6 +136,19 @@ body {
     /* E03：节点文本内数字经继承吃到等宽数字（SVG text 未被 mermaid 覆写的可继承属性）。 */
     font-variant-numeric: tabular-nums;
 }
+/* VIS1（2026-09-20 用户裁定「矩形、菱形全部改圆角」）：
+   矩形节点=mermaid 输出的 <rect class="basic label-container">，Chromium 支持
+   SVG2 几何属性 rx/ry 走 CSS——直接消费内径档 var(--r-inner-lg)=12px（不新造
+   档位、不用魔法数）。取证（%TEMP%/vis1b mermaid 探针四变体）：
+   - mermaid@11 默认主题 DOM：矩形=<rect>（无 rx 属性，rx 走 CSS 有效）；
+     菱形/平行四边形/六边形=<polygon class="label-container" transform=…>；
+     圆端/圆=<path>/<ellipse>（本就圆滑）；箭头 marker 也在 <polygon>——
+     故多边形圆角只准命中 `.node polygon`，禁扫 defs；
+   - themeVariables.borderRadius 对以上形状**零作用**（实测 v1 与 v0 逐字节同
+     DOM），classDef 亦无圆角落点——最小改动通道=CSS rx（矩形）+ 渲染后
+     polygon→圆角 path 的同坐标替换（下方脚本，复制全部属性含 transform，
+     漏拷 transform 会致形状平移——探针实测踩坑已锁进实现）。 */
+.card .mermaid .node rect { rx: var(--r-inner-lg); ry: var(--r-inner-lg); }
 .card svg { max-width: 100%; height: auto; }
 /* CAP1 品牌胶囊（头像+中文名+英文名+功能名）：组件 CSS/DOM 由 mica_shell 单一
    产出、bridge 注入；此前本面 .bot-foot 手抄副本退役（本卡头像位首次补齐——
@@ -155,5 +168,64 @@ body {
 {# CAP1：胶囊 DOM 由 bridge 从 mica_shell.brand_capsule_html 注入，模板零手写。 #}
 <div class="capsule-foot">{{ capsule_html | safe }}</div>
 </div>
+<script>
+    /* VIS1（2026-09-20）：mermaid 多边形节点（菱形/平行四边形/六边形）圆角——
+       polygon 无 rx 几何属性、themeVariables.borderRadius 实测零作用（探针取证
+       见上方 CSS 注释），最小通道=渲染完成后把 .node polygon 以**同一坐标系**
+       替换为圆角 path：每角按 min(--r-inner-lg, 0.3×邻边) 收角、二次贝塞尔过
+       顶点；全部属性原样复制（transform 漏拷=形状平移，探针实锤）。
+       只命中 .node polygon，defs 内箭头 marker 零触碰；startOnLoad 异步出图，
+       故 svg 未在场时用 MutationObserver 等首帧（回调微任务先于截图轮询，
+       render_backends wait_js 语义兼容）。整段 fail-open：异常不拦渲染。 */
+    (function () {
+        function roundPolygonNodes() {
+            var svg = document.querySelector(".mermaid svg");
+            if (!svg) return;
+            svg.querySelectorAll(".node polygon").forEach(function (poly) {
+                var pts = (poly.getAttribute("points") || "").trim().split(/\s+/)
+                    .map(function (pair) {
+                        var xy = pair.split(",");
+                        return [parseFloat(xy[0]), parseFloat(xy[1])];
+                    });
+                if (pts.length < 3) return;
+                var radius = parseFloat(getComputedStyle(document.documentElement)
+                    .getPropertyValue("--r-inner-lg")) || 12;
+                var d = "";
+                for (var i = 0; i < pts.length; i++) {
+                    var prev = pts[(i + pts.length - 1) % pts.length];
+                    var cur = pts[i];
+                    var next = pts[(i + 1) % pts.length];
+                    var inLen = Math.hypot(cur[0] - prev[0], cur[1] - prev[1]);
+                    var outLen = Math.hypot(next[0] - cur[0], next[1] - cur[1]);
+                    if (!inLen || !outLen) return;
+                    var cut = Math.min(radius, inLen * 0.3, outLen * 0.3);
+                    var p1x = cur[0] + (prev[0] - cur[0]) * cut / inLen;
+                    var p1y = cur[1] + (prev[1] - cur[1]) * cut / inLen;
+                    var p2x = cur[0] + (next[0] - cur[0]) * cut / outLen;
+                    var p2y = cur[1] + (next[1] - cur[1]) * cut / outLen;
+                    d += (i === 0 ? "M" : "L") + p1x.toFixed(2) + "," + p1y.toFixed(2);
+                    d += "Q" + cur[0].toFixed(2) + "," + cur[1].toFixed(2)
+                        + " " + p2x.toFixed(2) + "," + p2y.toFixed(2);
+                }
+                var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                path.setAttribute("d", d + "Z");
+                for (var a = 0; a < poly.attributes.length; a++) {
+                    var attr = poly.attributes[a];
+                    if (attr.name !== "points") path.setAttribute(attr.name, attr.value);
+                }
+                poly.replaceWith(path);
+            });
+        }
+        /* 常驻 MutationObserver + 幂等转换（样张竞态实锤：svg 在场但节点后补，
+           「转换成功即断开」会漏掉后到的 polygon；已转换形状是 path 不再命中
+           .node polygon，重复调用零副作用；渲染页一次性存活，观察器成本可忽略）。 */
+        try {
+            roundPolygonNodes();
+            new MutationObserver(function () {
+                try { roundPolygonNodes(); } catch (err) { /* fail-open */ }
+            }).observe(document.body, { childList: true, subtree: true });
+        } catch (err) { /* fail-open：圆角增强失败保原图，铁律 7 降级语义不变 */ }
+    })();
+</script>
 </body>
 </html>

@@ -170,6 +170,32 @@ def derive_wash_tokens(hex_color: str) -> dict[str, str]:
 # 模板 --wash-* 注入点的 default 字面量必须与本表逐键一致（契约测试锁定）。
 DEFAULT_WASH_TOKENS = derive_wash_tokens(UNKNOWN_PLATFORM_COLOR)
 
+# ==================== 壳层釉瑚渐变（VIS1 多色交织波 2026-09-20） ====================
+# 用户裁定：背景釉瑚渐变色「颜色太单一，需多色交织；不透明度全部调高」；
+# 不透明度设计以 06_market_commodities 为基准=「wash 色与雾底按混入比互调」
+# 的既有语言（06 原档 55/48/40），本值在该锚点上整体上浮 ~1.2–1.3×（55→72 /
+# 48→62 / 40→55）并把色标 4→7、色相 3→4（新增 --wash-blob-1 平台混色斑做
+# 回绕交织）。硬约束三条：
+# ①首色标保持 `linear-gradient(145deg, var(--wash-mist) 0%` 形态——
+#   test_pc_never_paints_brand_base（雾底打底锁）与 test_mica_shell
+#   （shell_base_css 字面锁）都按该前缀取相；
+# ②只用 --wash-* 四键与 --wash-blob-1（平台色唯一受控背景通道，定义内
+#   accent ≤35% 数值锁不动；本表把它当色标消费，等效 accent 覆盖
+#   0.35×0.62≈21.7% ≤35%，--accent 本体仍永不作底色）；
+# ③全 11 面唯一来源——mica_shell.render_root_tokens 公共段注入
+#   --mica-shell-wash、shell_base_css 内插本常量、7 张模板改 var() 消费，
+#   模板/直拼卡侧手抄 145deg 副本退役（DESIGN-SPEC §一.11「手抄副本=0」
+#   目标态的壳层收口，本席落地）。
+SHELL_WASH_GRADIENT = (
+    "linear-gradient(145deg, var(--wash-mist) 0%, "
+    "color-mix(in srgb, var(--wash-blob-1) 62%, var(--wash-mist)) 16%, "
+    "color-mix(in srgb, var(--wash-1) 72%, var(--wash-mist)) 34%, "
+    "color-mix(in srgb, var(--wash-2) 62%, var(--wash-mist)) 52%, "
+    "color-mix(in srgb, var(--wash-3) 55%, var(--wash-mist)) 70%, "
+    "color-mix(in srgb, var(--wash-2) 60%, var(--wash-mist)) 86%, "
+    "color-mix(in srgb, var(--wash-1) 70%, var(--wash-mist)) 100%)"
+)
+
 # ==================== 层次化阴影 + 辉光 + 表面/分隔线/字号（vis4）====================
 # 用户裁定升级：所有元素都要有层次阴影区分 + 辉光 + 清晰区分线；相邻色块
 # 颜色不得过于相似。全部 token 化钉在本模块——模板只允许 var()/常量引用，
@@ -452,6 +478,9 @@ def theme_to_css_vars(theme: ThemeTokens) -> dict[str, str]:
         "--wash-2": theme.wash_2,
         "--wash-3": theme.wash_3,
         "--wash-mist": theme.wash_mist,
+        # VIS1（2026-09-20）：壳层釉瑚渐变单源（与 render_root_tokens 公共段
+        # 同值；theme_to_css_vars 是「新模板直消费」旁路，两路同源不手抄）。
+        "--mica-shell-wash": SHELL_WASH_GRADIENT,
         "--r-shell": f"{theme.shell_radius}px",
         "--r-panel": f"{theme.panel_radius}px",
         "--r-tile": f"{theme.tile_radius}px",
@@ -529,6 +558,7 @@ __all__ = [
     "SEMANTIC_DANGER",
     "SEMANTIC_SUCCESS",
     "SEMANTIC_WARNING",
+    "SHELL_WASH_GRADIENT",
     "SHADOW_PRIMARY",
     "SHADOW_SECONDARY",
     "SURFACE_TINTS",

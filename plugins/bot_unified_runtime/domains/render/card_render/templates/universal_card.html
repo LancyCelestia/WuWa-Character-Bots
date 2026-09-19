@@ -82,13 +82,10 @@ body {
 .card {
     width: {{ card_width }};
     max-width: 100%;
-    /* mica-glass：釉瑚云母底——雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底
-       （不透明基础层，对齐官方 Mica「opaque base + 低不透明内容层」分层）。 */
-    background: linear-gradient(145deg,
-        var(--wash-mist) 0%,
-        color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
-        color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%,
-        color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%);
+    /* mica-glass：釉瑚云母底——VIS1（2026-09-20）手抄 145deg 渐变色标退役，
+       改消费 var(--mica-shell-wash)（值册 theme_tokens.SHELL_WASH_GRADIENT
+       单源：雾底打底 + 四色回绕交织、混入比按 06 基准上浮）。 */
+    background: var(--mica-shell-wash);
     border: 1px solid color-mix(in srgb, var(--accent) 14%, #e4e6eb);
     border-radius: var(--r-shell);
     box-shadow: var(--mica-shadow);
@@ -110,29 +107,31 @@ body > .card:not(.mica-stage)::after {
     position: absolute;
     z-index: 0;
     display: block;
-    border-radius: 50%;
+    border-radius: var(--r-circle);
     pointer-events: none;
 }
 body > .card:not(.mica-stage)::before {
     width: 62%; aspect-ratio: 1; left: -16%; top: -24%;
+    /* VIS1（2026-09-20）：色斑混入比与生成器 _BLOB_SPECS 同步上浮
+       （E-3 登记特例的「同构」语义保持：a 系 60/38/10、wash-3 副斑 34/20/8）。 */
     background:
         radial-gradient(closest-side at 32% 32%,
-            color-mix(in srgb, var(--wash-blob-1) 50%, transparent) 0%,
-            color-mix(in srgb, var(--wash-blob-1) 28%, transparent) 46%,
-            color-mix(in srgb, var(--wash-blob-1) 6%, transparent) 70%, transparent 100%),
+            color-mix(in srgb, var(--wash-blob-1) 60%, transparent) 0%,
+            color-mix(in srgb, var(--wash-blob-1) 38%, transparent) 46%,
+            color-mix(in srgb, var(--wash-blob-1) 10%, transparent) 70%, transparent 100%),
         radial-gradient(closest-side at 72% 78%,
-            color-mix(in srgb, var(--wash-3) 30%, transparent) 0%,
-            color-mix(in srgb, var(--wash-3) 16%, transparent) 48%,
-            color-mix(in srgb, var(--wash-3) 5%, transparent) 72%, transparent 100%);
+            color-mix(in srgb, var(--wash-3) 34%, transparent) 0%,
+            color-mix(in srgb, var(--wash-3) 20%, transparent) 48%,
+            color-mix(in srgb, var(--wash-3) 8%, transparent) 72%, transparent 100%);
     animation: mica-drift-a 46s ease-in-out infinite alternate;
     animation-delay: calc(var(--phase, 0.2) * -46s);
 }
 body > .card:not(.mica-stage)::after {
     width: 56%; aspect-ratio: 1; right: -16%; bottom: -24%;
     background: radial-gradient(closest-side,
-        color-mix(in srgb, var(--wash-2) 30%, transparent) 0%,
-        color-mix(in srgb, var(--wash-2) 16%, transparent) 48%,
-        color-mix(in srgb, var(--wash-2) 5%, transparent) 72%, transparent 100%);
+        color-mix(in srgb, var(--wash-2) 38%, transparent) 0%,
+        color-mix(in srgb, var(--wash-2) 22%, transparent) 48%,
+        color-mix(in srgb, var(--wash-2) 8%, transparent) 72%, transparent 100%);
     animation: mica-drift-b 58s ease-in-out infinite alternate;
     animation-delay: calc(var(--phase, 0.2) * -58s - 9s);
 }
@@ -185,14 +184,14 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     font-size: 12px;
     font-weight: 700;
     padding: 3px 9px;
-    border-radius: 8px;
+    border-radius: var(--r-inner-md);
     letter-spacing: 0.02em;
 }
 
 /* ===== Header ===== */
 .header {
     /* mica-glass：半透明白玻璃层，透出釉瑚云母底（对齐官方「透出材质的层必须透明」）。 */
-    background: linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.44) 100%);
+    background: var(--mica-glass-main);
     padding: 20px 24px 14px;
     display: flex;
     justify-content: space-between;
@@ -217,7 +216,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .avatar-img {
     width: 100%;
     height: 100%;
-    border-radius: 50%;
+    border-radius: var(--r-circle);
     border: 2px solid #fff;
     box-shadow: var(--mica-shadow-soft);
     object-fit: cover;
@@ -250,7 +249,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     bottom: -2px;
     width: 22px;
     height: 22px;
-    border-radius: 50%;
+    border-radius: var(--r-circle);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -318,7 +317,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     background: color-mix(in srgb, var(--accent) 14%, #ffffff);
     color: var(--accent-dark);
     border: 1px solid color-mix(in srgb, var(--accent) 30%, #ffffff);
-    border-radius: 6px;
+    border-radius: var(--r-inner-sm);
     padding: 2px 10px;
     white-space: nowrap;
     flex-shrink: 0;
@@ -342,7 +341,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     color: var(--accent-dark);
     background: var(--accent-light);
     border: 1px solid var(--accent-mid);
-    border-radius: 12px;
+    border-radius: var(--r-pill);
     padding: 1px 8px;
     white-space: nowrap;
 }
@@ -352,7 +351,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     color: var(--accent-dark);
     background: var(--accent-light);
     border: 1px solid var(--accent-mid);
-    border-radius: 12px;
+    border-radius: var(--r-pill);
     padding: 1px 8px;
     white-space: nowrap;
 }
@@ -362,7 +361,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     color: var(--accent-dark);
     background: var(--accent-light);
     border: 1px solid var(--accent-mid);
-    border-radius: 12px;
+    border-radius: var(--r-pill);
     padding: 1px 8px;
     white-space: nowrap;
 }
@@ -408,7 +407,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .qrcode-container {
     background: #fff;
     padding: 2px;
-    border-radius: 8px;
+    border-radius: var(--r-inner-md);
     box-shadow: var(--mica-shadow-soft);
     flex-shrink: 0;
 }
@@ -442,7 +441,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     padding: 0 24px 16px;
     /* mica-glass：半透明白玻璃，透出釉瑚渐变与漂移色斑（v2 验收反馈 2）；
        wave-2 收口：散值 0.55 并入主档渐变（0.66→0.44，均值不变）。 */
-    background: linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.44) 100%);
+    background: var(--mica-glass-main);
 }
 
 .text-body {
@@ -462,7 +461,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .text-body a {
     color: var(--blue);
     background: rgba(35, 173, 229, 0.08);
-    border-radius: 4px;
+    border-radius: var(--r-inner-xs);
     text-decoration: none;
 }
 
@@ -503,7 +502,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 
 .image-gallery .img-box {
     width: 100%;
-    border-radius: 12px;
+    border-radius: var(--r-inner-lg);
     overflow: hidden;
     border: none;
     box-shadow: none;
@@ -554,7 +553,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .pinned-comment .pc-avatar {
     width: 18px;
     height: 18px;
-    border-radius: 50%;
+    border-radius: var(--r-circle);
     flex-shrink: 0;
 }
 
@@ -579,7 +578,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     display: inline-block;
     font-size: 12px;
     padding: 1px 5px;
-    border-radius: 4px;
+    border-radius: var(--r-inner-xs);
     background: var(--amber-strong);
     color: #fff;
     font-weight: 600;
@@ -594,11 +593,8 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
        P3-20 收口：平值 0.55 并入主档渐变（GLASS_MAIN 0.66→0.44）+ 规范描边，与
        .glass 双背景写法逐结构一致。 */
     background:
-        linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.44) 100%) padding-box,
-        linear-gradient(150deg,
-            rgba(255, 255, 255, 0.95) 0%,
-            rgba(255, 255, 255, 0.35) 55%,
-            rgba(255, 255, 255, 0.72) 100%) border-box;
+        var(--mica-glass-main),
+        var(--mica-glass-edge);
     border: 1px solid transparent;
     border-left: 3px solid var(--accent);
     border-radius: var(--r-panel);
@@ -618,7 +614,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .hot-comment .pc-avatar {
     width: 18px;
     height: 18px;
-    border-radius: 50%;
+    border-radius: var(--r-circle);
     flex-shrink: 0;
 }
 
@@ -626,7 +622,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     display: inline-block;
     font-size: 12px;
     padding: 1px 5px;
-    border-radius: 4px;
+    border-radius: var(--r-inner-xs);
     background: var(--accent);
     color: #fff;
     font-weight: 600;
@@ -642,10 +638,10 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 /* ===== 会员购参展嘉宾 ===== */
 .show-guests { display:flex; flex-direction:column; gap:10px; margin:0 var(--video-inset) var(--video-inset); }
 .sg-title { font-size:15px; font-weight:700; color:var(--text-main); display:flex; align-items:baseline; gap:8px; }
-.sg-count { font-size:12px; font-weight:600; color:var(--accent); background:color-mix(in srgb, var(--accent) 12%, #fff); border-radius:999px; padding:1px 9px; }
+.sg-count { font-size:12px; font-weight:600; color:var(--accent); background:color-mix(in srgb, var(--accent) 12%, #fff); border-radius:var(--r-pill); padding:1px 9px; }
 .sg-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(104px, 1fr)); gap:10px; }
 .sg-tile { min-width:0; padding:12px 10px 11px; border-radius:var(--r-tile); display:flex; flex-direction:column; align-items:center; text-align:center; gap:6px; }
-.sg-avatar { width:60px; height:60px; border-radius:50%; object-fit:cover; border:1px solid rgba(255,255,255,.9); box-shadow:var(--mica-shadow-soft); }
+.sg-avatar { width:60px; height:60px; border-radius:var(--r-circle); object-fit:cover; border:1px solid rgba(255,255,255,.9); box-shadow:var(--mica-shadow-soft); }
 .sg-avatar-ph { display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:700; color:var(--accent); background:color-mix(in srgb, var(--accent) 12%, #fff); }
 .sg-name { font-size:13px; font-weight:600; color:var(--text-main); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sg-desc { font-size:12px; color:var(--text-secondary); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:break-all; }
@@ -679,7 +675,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .comment-avatar {
     width: 28px;
     height: 28px;
-    border-radius: 50%;
+    border-radius: var(--r-circle);
     flex-shrink: 0;
     background: rgba(255, 255, 255, 0.72);
     overflow: hidden;
@@ -736,13 +732,10 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
        0.55 并入主档渐变（GLASS_MAIN 0.66→0.44）+ 规范描边，与 .glass 双背景
        写法逐结构一致。 */
     background:
-        linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.44) 100%) padding-box,
-        linear-gradient(150deg,
-            rgba(255, 255, 255, 0.95) 0%,
-            rgba(255, 255, 255, 0.35) 55%,
-            rgba(255, 255, 255, 0.72) 100%) border-box;
+        var(--mica-glass-main),
+        var(--mica-glass-edge);
     border: 1px solid transparent;
-    border-radius: 12px;
+    border-radius: var(--r-inner-lg);
     padding: 16px 20px;
     margin: 8px 0;
     border-left: 5px solid var(--accent-mid);
@@ -758,7 +751,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .forward-avatar {
     width: 24px;
     height: 24px;
-    border-radius: 50%;
+    border-radius: var(--r-circle);
     border: 1px solid #fff;
 }
 
@@ -794,7 +787,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     background: var(--accent-light);
     color: var(--accent);
     padding: 2px 10px;
-    border-radius: 6px;
+    border-radius: var(--r-inner-sm);
     font-weight: 600;
     font-size: 12px;
 }
@@ -837,13 +830,13 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 }
 .live-cover-wrap {
     margin-bottom: 12px;
-    border-radius: 12px;
+    border-radius: var(--r-inner-lg);
     overflow: hidden;
 }
 .live-cover-img {
     width: 100%;
     display: block;
-    border-radius: 12px;
+    border-radius: var(--r-inner-lg);
     object-fit: cover;
     max-height: 360px;
 }
@@ -852,7 +845,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     font-size: 12px;
     color: #fff;
     background: var(--accent);
-    border-radius: 4px;
+    border-radius: var(--r-inner-xs);
     padding: 1px 6px;
     margin-right: 6px;
     vertical-align: middle;
@@ -881,7 +874,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 }
 
 .footer {
-    background: linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.46) 100%);
+    background: var(--mica-glass-foot);
     border-top: 1px solid color-mix(in srgb, var(--accent) 12%, #e4e6eb);
     padding: 8px 20px 6px;
     position: relative;
@@ -897,7 +890,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     background: color-mix(in srgb, var(--accent) 26%, #ffffff);
     border: 1px solid color-mix(in srgb, var(--accent) 40%, #ffffff);
     padding: 3px 12px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     text-transform: uppercase;
 }
 .footer-bottom {
@@ -918,7 +911,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     font-size: 13px;
     color: var(--text-secondary);
     background: var(--accent-light);
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     padding: 5px 16px 5px 6px;
     box-shadow: var(--mica-shadow-soft);
     display: inline-flex;
@@ -968,15 +961,12 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     overflow: hidden;
     border-radius: var(--r-shell);
     background: var(--wash-mist);
-    /* mica-glass：釉瑚云母底——雾底打底、wash-1/2 对角透色、wash-3 只作第三色透底；
-       末层不透明托底（vis2r 修复①）：半透明 wash 直接叠在深色聊天窗上会透黑，
-       先铺一层近白实底再透 wash，保住云母质感又不透窗。 */
+    /* mica-glass：釉瑚云母底——VIS1（2026-09-20）145deg 色标手抄退役，改
+       var(--mica-shell-wash) 单源；末层不透明托底（vis2r 修复①）保留：半透明
+       wash 直接叠在深色聊天窗上会透黑，先铺一层近白实底再透 wash，
+       保住云母质感又不透窗。 */
     background:
-        linear-gradient(145deg,
-        var(--wash-mist) 0%,
-        color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
-        color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%,
-        color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%),
+        var(--mica-shell-wash),
         linear-gradient(145deg, #f7f4fa 0%, #eef0f9 100%);
     border: 1px solid var(--mica-border);
     box-shadow: var(--mica-shadow);
@@ -1003,7 +993,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
           color-mix(in srgb, var(--accent) 10%, rgba(255,255,255,.82)) 0%,
           color-mix(in srgb, var(--wash-2) 9%, rgba(255,255,255,.64)) 52%,
           color-mix(in srgb, var(--accent) 7%, rgba(255,255,255,.84)) 100%) padding-box,
-        linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
+        var(--mica-glass-edge);
     border: 1px solid transparent;
     box-shadow: var(--mica-shadow-soft);
 }
@@ -1026,7 +1016,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
    三通道：wash-2 星空紫 / 白 / --accent-light；alpha 0.06–0.35、粒径 2–5px、≤24 枚；
    只走 background 径向渐变，不触两枚阴影 token 铁律。 */
 .star-motes { position: absolute; inset: 0; z-index: 2; overflow: hidden; pointer-events: none; border-radius: inherit; }
-.star-mote { position: absolute; display: block; border-radius: 50%; }
+.star-mote { position: absolute; display: block; border-radius: var(--r-circle); }
 .star-mote.sm-v { background: radial-gradient(circle, var(--wash-2) 45%, transparent 100%); }
 .star-mote.sm-w { background: radial-gradient(circle, #ffffff 50%, transparent 100%); }
 .star-mote.sm-l { background: radial-gradient(circle, var(--accent-light) 50%, transparent 100%); }
@@ -1034,7 +1024,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .video-author-layout { display: grid; grid-template-columns: 116px minmax(0, 1fr) 174px; column-gap: 12px; min-height: 110px; }
 .author-avatar-rail { grid-row: 1 / span 5; width: 116px; min-height: 110px; display: flex; align-items:center; justify-content:center; }
 .author-avatar-rail img, .author-avatar-fallback {
-    width: 104px; height: 104px; margin:0; border-radius:50%; object-fit:cover; display:flex; align-items:center; justify-content:center;
+    width: 104px; height: 104px; margin:0; border-radius:var(--r-circle); object-fit:cover; display:flex; align-items:center; justify-content:center;
     background:color-mix(in srgb,var(--accent) 20%,#fff); color:var(--accent-dark); font-size:20px; font-weight:650;
     border:2px solid rgba(255,255,255,.95); box-shadow:var(--mica-shadow-soft);
 }
@@ -1042,10 +1032,10 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .author-row { min-width:0; display:flex; align-items:center; flex-wrap:wrap; gap:4px; color:var(--text-secondary); font-size:14px; line-height:1.4; }
 .author-row-primary { align-items:baseline; color:var(--text-main); font-size:26px; font-weight:700; line-height:1.15; gap:4px; }
 .author-row-primary .author-name-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.author-badge { align-self:flex-end; margin:0 0 1px 0; padding:2px 7px; border-radius:999px; color:var(--accent-dark); background:color-mix(in srgb,var(--accent) 18%,#fff); border:1px solid rgba(255,255,255,.90); font-size:12px; font-weight:600; }
+.author-badge { align-self:flex-end; margin:0 0 1px 0; padding:2px 7px; border-radius:var(--r-pill); color:var(--accent-dark); background:color-mix(in srgb,var(--accent) 18%,#fff); border:1px solid rgba(255,255,255,.90); font-size:12px; font-weight:600; }
 .author-badge-vip,.author-name-vip { color:var(--accent-dark); } .author-badge-vip { background:color-mix(in srgb,var(--accent) 14%,#fff); } .author-badge-verified { margin-left:-3px; }
 .author-row-identifiers { flex-wrap:wrap; gap:4px; }
-.author-id { padding:2px 8px; border-radius:999px; color:var(--accent-dark); background:color-mix(in srgb,var(--accent) 12%,#fff); border:1px solid rgba(255,255,255,.90); font-variant-numeric:tabular-nums; font-size:14px; }
+.author-id { padding:2px 8px; border-radius:var(--r-pill); color:var(--accent-dark); background:color-mix(in srgb,var(--accent) 12%,#fff); border:1px solid rgba(255,255,255,.90); font-variant-numeric:tabular-nums; font-size:14px; }
 .author-row-signature { overflow:hidden; color:var(--text-sub); text-overflow:ellipsis; white-space:nowrap; font-size:14px; }
 .author-row-stat { flex-wrap:wrap; gap:3px 12px; }
 .author-stat { color:var(--text-secondary); font-size:14px; font-variant-numeric:tabular-nums; }
@@ -1055,21 +1045,21 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .platform-accent-block { display:flex; align-items:center; justify-content:center; background:none; border:0; box-shadow:none; color:var(--accent); }
 .platform-accent-block svg { width:96px; height:30px; fill:currentColor; }
 .footer-platform-logo svg { width:80px; height:26px; display:block; fill:var(--accent); }
-.platform-top-right .qrcode-container { margin:0; padding:5px; border-radius:16px; background:color-mix(in srgb,var(--accent) 4%,#fff); border:1px solid rgba(255,255,255,.96); box-shadow:var(--mica-shadow-soft); }
-.platform-top-right .qrcode-img { width: 112px; height: 112px; display: block; border-radius: 12px; }
+.platform-top-right .qrcode-container { margin:0; padding:5px; border-radius:var(--r-inner-xl); background:color-mix(in srgb,var(--accent) 4%,#fff); border:1px solid rgba(255,255,255,.96); box-shadow:var(--mica-shadow-soft); }
+.platform-top-right .qrcode-img { width: 112px; height: 112px; display: block; border-radius: var(--r-inner-lg); }
 .video-title { margin:0 var(--video-inset) 12px; padding:0; }
 .video-title-quote { position:relative; display:inline-flex; align-items:center; width:fit-content; max-width:100%; min-height:54px; padding:12px 17px 13px 24px; border-radius:var(--r-panel); overflow:hidden; color:var(--text-main); background:color-mix(in srgb, var(--accent) 7%, #fff); box-shadow:var(--mica-shadow-soft); font-size:23px; line-height:1.4; font-weight:700; }
 .video-title-marker { position:absolute; left:0; top:0; bottom:0; width:9px; border-radius:var(--r-panel) 0 0 var(--r-panel); background:var(--accent); }
 .video-title-text { min-width:0; text-wrap:balance; }
-.video-badge { display:inline-block; margin-left:7px; padding:2px 7px; border-radius:999px; background:color-mix(in srgb,var(--accent) 15%,#fff); color:var(--accent-dark); font-size:12px; font-weight:600; vertical-align:middle; }
+.video-badge { display:inline-block; margin-left:7px; padding:2px 7px; border-radius:var(--r-pill); background:color-mix(in srgb,var(--accent) 15%,#fff); color:var(--accent-dark); font-size:12px; font-weight:600; vertical-align:middle; }
 .video-cover-inset { position:relative; margin: 0 var(--video-inset) var(--video-inset); border-radius:var(--r-panel); overflow:hidden; background:color-mix(in srgb, var(--accent) 10%, #fff); aspect-ratio:16 / 9; border:1px solid rgba(255,255,255,.90); box-shadow:var(--mica-shadow-soft); }
 .video-cover-inset .cover-fill { position:absolute; inset:-24px; background-size:cover; background-position:center; filter:blur(22px) saturate(1.08); transform:scale(1.12); }
 .video-cover-inset img.cover-contain { position:relative; width:100%; height:100%; object-fit:contain; display:block; }
 .video-cover-inset img.cover-fill-hidden { display:none; }
-.video-cover-inset .duration-pill { left:auto; right:12px; bottom:12px; border-radius:12px; font-size:15px; padding:5px 13px; box-shadow:var(--mica-shadow-soft); }
+.video-cover-inset .duration-pill { left:auto; right:12px; bottom:12px; border-radius:var(--r-inner-lg); font-size:15px; padding:5px 13px; box-shadow:var(--mica-shadow-soft); }
 /* 媒体右下角标（清晰度/分辨率）：时长移右后角标让位左下（vis2r 修复②排版）。 */
 .video-cover-inset .quality-pill { left:12px; right:auto; }
-.quality-pill { position:absolute; left:12px; right:auto; bottom:12px; z-index:2; background:var(--mica-scrim-badge); color:#ffffff; font-size:12px; font-weight:700; padding:3px 9px; border-radius:12px; letter-spacing:0.02em; box-shadow:var(--mica-shadow-soft); }
+.quality-pill { position:absolute; left:12px; right:auto; bottom:12px; z-index:2; background:var(--mica-scrim-badge); color:#ffffff; font-size:12px; font-weight:700; padding:3px 9px; border-radius:var(--r-inner-lg); letter-spacing:0.02em; box-shadow:var(--mica-shadow-soft); }
 .video-metric-columns { display:grid; grid-template-columns:repeat(auto-fit, minmax(96px, 1fr)); gap:8px; margin: 0 var(--video-inset) var(--video-inset); }
 .video-metric-card { min-width:0; min-height:86px; padding:12px 8px 11px; border-radius:var(--r-tile); display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--text-main); box-shadow:var(--mica-shadow-panel); }
 /* vis4 相邻色块高区分度：指标瓦片 zebra 交替三档表面（inline 覆盖 surface）。 */
@@ -1083,7 +1073,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 .summary-tag { display:block; margin-bottom:6px; padding-bottom:4px; border-bottom:var(--divider-line); font-size:12px; font-weight:600; color:var(--accent-dark); letter-spacing:0.06em; }
 /* 话题标签 chip（vis1r H3）：payload.topics 由 bridge 从 content.tags 投影；无数据整块隐藏。 */
 .topic-row { display:block; margin:0 0 4px; }
-.topic-chip { display:inline-block; margin:0 6px 4px 0; padding:1px 8px; border-radius:999px; background:color-mix(in srgb, var(--accent) 10%, #fff); color:var(--accent-dark); font-size:12px; font-weight:600; }
+.topic-chip { display:inline-block; margin:0 6px 4px 0; padding:1px 8px; border-radius:var(--r-pill); background:color-mix(in srgb, var(--accent) 10%, #fff); color:var(--accent-dark); font-size:12px; font-weight:600; }
 /* 音乐署名行（vis1r H2）：payload.music_name/music_author 由 bridge 从 MusicTrack 投影；玻璃条复用 mica-surface，无新增阴影。 */
 .music-credit { display:flex; align-items:center; gap:8px; margin:0 var(--video-inset) var(--video-inset); padding:10px 15px; border-radius:var(--r-tile); font-size:13px; }
 .music-credit .music-note { color:var(--accent); font-weight:700; }
@@ -1174,7 +1164,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     </div>
     {% if title %}<div class="video-title"><div class="video-title-quote mica-surface"><span class="video-title-marker"></span><span class="video-title-text">{{ title }}</span></div></div>{% endif %}
     {% if banner or cover_url %}<div class="video-cover-inset"><div class="cover-fill" style="background-image:url('{{ banner or cover_url }}')"></div><img class="cover-contain" src="{{ banner or cover_url }}" alt="cover" onerror="if(this.src.indexOf('maxresdefault')>-1){this.onerror=null;this.src=this.src.replace('maxresdefault','hqdefault');}else{this.style.display='none';var fill=this.parentElement.querySelector('.cover-fill');if(fill){fill.style.display='none';};}">{% if video_duration %}<span class="duration-pill">{{ video_duration }}</span>{% endif %}{% if video_quality %}<span class="quality-pill">{{ video_quality }}</span>{% endif %}</div>{% endif %}
-    {% if stats_bar_items %}<div class="video-metric-columns">{% for item in stats_bar_items %}<div class="video-metric-card mica-surface" aria-label="{{ item.label }}"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% else %} style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% endif %}>{% if item.icon_svg %}<span class="metric-icon metric-{{ item.key }}" data-icon-source="{{ item.source | default('iconfont', true) }}">{{ item.icon_svg | safe }}</span>{% endif %}<span class="metric-value">{{ fmt_count(item.value) }}</span><span class="metric-label">{{ item.label }}</span></div>{% endfor %}</div>{% endif %}
+    {% if stats_bar_items %}<div class="video-metric-columns">{% for item in stats_bar_items %}<div class="video-metric-card mica-surface" aria-label="{{ item.label }}"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, var(--mica-glass-edge)"{% else %} style="background:var(--surface-b) padding-box, var(--mica-glass-edge)"{% endif %}>{% if item.icon_svg %}<span class="metric-icon metric-{{ item.key }}" data-icon-source="{{ item.source | default('iconfont', true) }}">{{ item.icon_svg | safe }}</span>{% endif %}<span class="metric-value">{{ fmt_count(item.value) }}</span><span class="metric-label">{{ item.label }}</span></div>{% endfor %}</div>{% endif %}
     {% if video_desc or summary or text or topics %}<div class="video-card-summary mica-surface"><span class="summary-tag">内容摘要</span>{% if topics %}<span class="topic-row">{% for tag in topics %}<span class="topic-chip">#{{ tag }}</span>{% endfor %}</span>{% endif %}{{ video_desc or summary | safe or text | safe }}</div>{% endif %}
     {% if music_name %}<div class="music-credit mica-surface"><span class="music-note">♪</span><span class="music-name">{{ music_name }}</span>{% if music_author %}<span class="music-author">{{ music_author }}</span>{% endif %}</div>{% endif %}
     {% if hot_comment or hot_comments %}<div style="display:flex;flex-direction:column;gap:8px;margin:0 var(--video-inset) var(--video-inset);">{% for comment in ((hot_comments or [])[:3] if hot_comments else ([hot_comment])) %}<div class="hot-comment mica-surface"><div class="pc-header"><span class="pc-badge">热评</span>{% if comment.avatar %}<img class="pc-avatar" src="{{ comment.avatar }}" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ comment.author }}</span>{% if comment.time %}<span> · {{ comment.time }}</span>{% endif %}</div><div class="pc-content">{{ comment.content }}</div>{% if comment.likes %}<div class="pc-likes">{{ comment.likes }} 赞</div>{% endif %}</div>{% endfor %}</div>{% endif %}
@@ -1331,7 +1321,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
         <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:8px;">分P列表 (共{{ video_pages|length }}P)</div>
         {% for page in video_pages %}
         <div style="display:flex;align-items:center;gap:10px;padding:6px 0;{% if not loop.last %}border-bottom:1px solid rgba(31,35,41,.05);{% endif %}">
-            {% if page.cover %}<img src="{{ page.cover }}" style="width:80px;height:45px;border-radius:6px;object-fit:cover;flex-shrink:0;" onerror="this.style.display='none'">{% endif %}
+            {% if page.cover %}<img src="{{ page.cover }}" style="width:80px;height:45px;border-radius:var(--r-inner-sm);object-fit:cover;flex-shrink:0;" onerror="this.style.display='none'">{% endif %}
             <div style="flex:1;min-width:0;">
                 <div style="font-size:13px;color:var(--text-main);line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ page.title }}</div>
                 {% if page.duration %}<div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">{{ (page.duration / 60) | int }}:{{ '%02d' % (page.duration % 60) }}</div>{% endif %}
@@ -1379,7 +1369,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
             {% if pinned_comment.images %}
             <div style="display:flex;gap:4px;margin-top:6px;">
             {% for img_url in pinned_comment.images %}
-            <img src="{{ img_url }}" style="max-width:80px;max-height:80px;border-radius:6px;" onerror="this.remove()">
+            <img src="{{ img_url }}" style="max-width:80px;max-height:80px;border-radius:var(--r-inner-sm);" onerror="this.remove()">
             {% endfor %}
             </div>
             {% endif %}
@@ -1494,14 +1484,14 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
             {% endif %}
             {% if forward.pinned_comment %}
             <div class="pinned-comment" style="margin-top: 8px;">
-                <div class="pc-header"><span class="pc-badge">置顶</span>{% if forward.pinned_comment.avatar %}<img src="{{ forward.pinned_comment.avatar }}" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.pinned_comment.author }}</span>{% if forward.pinned_comment.time %}<span> · {{ forward.pinned_comment.time }}</span>{% endif %}{% if forward.pinned_comment.level %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ forward.pinned_comment.level }}</span>{% endif %}{% if forward.pinned_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ forward.pinned_comment.title_badge }}</span>{% endif %}{% if forward.pinned_comment.dress %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">{{ forward.pinned_comment.dress }}</span>{% endif %}{% if forward.pinned_comment.handle %}<span style="font-size:12px;color:var(--text-secondary);">{{ forward.pinned_comment.handle }}</span>{% endif %}</div>
+                <div class="pc-header"><span class="pc-badge">置顶</span>{% if forward.pinned_comment.avatar %}<img src="{{ forward.pinned_comment.avatar }}" style="width:18px;height:18px;border-radius:var(--r-circle);vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.pinned_comment.author }}</span>{% if forward.pinned_comment.time %}<span> · {{ forward.pinned_comment.time }}</span>{% endif %}{% if forward.pinned_comment.level %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ forward.pinned_comment.level }}</span>{% endif %}{% if forward.pinned_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ forward.pinned_comment.title_badge }}</span>{% endif %}{% if forward.pinned_comment.dress %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">{{ forward.pinned_comment.dress }}</span>{% endif %}{% if forward.pinned_comment.handle %}<span style="font-size:12px;color:var(--text-secondary);">{{ forward.pinned_comment.handle }}</span>{% endif %}</div>
                 <div class="pc-content">{{ forward.pinned_comment.content }}</div>
                 {% if forward.pinned_comment.likes %}<div class="pc-likes">{{ forward.pinned_comment.likes }} 赞{% if forward.pinned_comment.replies_count %} · {{ forward.pinned_comment.replies_count }} 回复{% endif %}</div>{% endif %}
             </div>
             {% endif %}
             {% if forward.hot_comment %}
             <div class="pinned-comment" style="margin-top: 8px;">
-                <div class="pc-header"><span class="pc-badge">热评</span>{% if forward.hot_comment.avatar %}<img src="{{ forward.hot_comment.avatar }}" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.hot_comment.author }}</span>{% if forward.hot_comment.time %}<span> · {{ forward.hot_comment.time }}</span>{% endif %}{% if forward.hot_comment.level %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ forward.hot_comment.level }}</span>{% endif %}{% if forward.hot_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ forward.hot_comment.title_badge }}</span>{% endif %}{% if forward.hot_comment.dress %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">{{ forward.hot_comment.dress }}</span>{% endif %}{% if forward.hot_comment.handle %}<span style="font-size:12px;color:var(--text-secondary);">{{ forward.hot_comment.handle }}</span>{% endif %}</div>
+                <div class="pc-header"><span class="pc-badge">热评</span>{% if forward.hot_comment.avatar %}<img src="{{ forward.hot_comment.avatar }}" style="width:18px;height:18px;border-radius:var(--r-circle);vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.hot_comment.author }}</span>{% if forward.hot_comment.time %}<span> · {{ forward.hot_comment.time }}</span>{% endif %}{% if forward.hot_comment.level %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ forward.hot_comment.level }}</span>{% endif %}{% if forward.hot_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ forward.hot_comment.title_badge }}</span>{% endif %}{% if forward.hot_comment.dress %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">{{ forward.hot_comment.dress }}</span>{% endif %}{% if forward.hot_comment.handle %}<span style="font-size:12px;color:var(--text-secondary);">{{ forward.hot_comment.handle }}</span>{% endif %}</div>
                 <div class="pc-content">{{ forward.hot_comment.content }}</div>
                 {% if forward.hot_comment.likes %}<div class="pc-likes">{{ forward.hot_comment.likes }} 赞{% if forward.hot_comment.replies_count %} · {{ forward.hot_comment.replies_count }} 回复{% endif %}</div>{% endif %}
             </div>
@@ -1638,20 +1628,20 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
         {% endif %}
         {% if profile_tags %}
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
-            {% for tag in profile_tags %}<span style="font-size:12px;background:var(--accent-light);color:var(--accent);padding:2px 10px;border-radius:var(--r-panel);">{{ tag }}</span>{% endfor %}
+            {% for tag in profile_tags %}<span style="font-size:12px;background:var(--accent-light);color:var(--accent);padding:2px 10px;border-radius:var(--r-pill);">{{ tag }}</span>{% endfor %}
         </div>
         {% endif %}
         {% if recent_posts %}
         <div style="margin-top:12px;">
             <div style="font-size:14px;font-weight:600;color:var(--text-main);margin-bottom:8px;">{% if page_type in ["generic", "article"] %}页面内容{% else %}最近动态{% endif %}</div>
             {% for post in recent_posts[:5] %}
-            <div style="background:rgba(255,255,255,.55);border-radius:8px;padding:12px;margin-bottom:8px;">
-                {% if post.sender %}<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">{% if post.sender_avatar %}<img src="{{ post.sender_avatar }}" style="width:20px;height:20px;border-radius:50%;" onerror="this.style.display='none'">{% endif %}<span style="font-size:12px;font-weight:600;color:var(--text-main);">{{ post.sender }}</span>{% if post.sender_time %}<span style="font-size:12px;color:var(--text-secondary);">{{ post.sender_time }}</span>{% endif %}</div>{% endif %}
+            <div style="background:rgba(255,255,255,.55);border-radius:var(--r-inner-md);padding:12px;margin-bottom:8px;">
+                {% if post.sender %}<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">{% if post.sender_avatar %}<img src="{{ post.sender_avatar }}" style="width:20px;height:20px;border-radius:var(--r-circle);" onerror="this.style.display='none'">{% endif %}<span style="font-size:12px;font-weight:600;color:var(--text-main);">{{ post.sender }}</span>{% if post.sender_time %}<span style="font-size:12px;color:var(--text-secondary);">{{ post.sender_time }}</span>{% endif %}</div>{% endif %}
                 {% if post.title %}<div style="font-size:14px;font-weight:600;color:var(--text-main);margin-bottom:4px;">{{ post.title }}</div>{% endif %}
-                {% if post.video_duration %}<span style="font-size:12px;background:var(--accent-light);color:var(--accent);padding:2px 8px;border-radius:6px;font-weight:600;">{{ post.video_duration }}</span>{% endif %}
+                {% if post.video_duration %}<span style="font-size:12px;background:var(--accent-light);color:var(--accent);padding:2px 8px;border-radius:var(--r-inner-sm);font-weight:600;">{{ post.video_duration }}</span>{% endif %}
                 {% if post.text %}<div style="font-size:13px;color:var(--text-sub);line-height:1.5;">{{ post.text }}</div>{% endif %}
                 {% if post.video_desc %}<div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">{{ post.video_desc }}</div>{% endif %}
-                {% if post.cover %}<img src="{{ post.cover }}" alt="" style="width:100%;border-radius:6px;margin-top:6px;" onerror="this.style.display='none'">{% endif %}
+                {% if post.cover %}<img src="{{ post.cover }}" alt="" style="width:100%;border-radius:var(--r-inner-sm);margin-top:6px;" onerror="this.style.display='none'">{% endif %}
                 {% if post.timestamp %}<div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">{{ post.timestamp }}</div>{% endif %}
             </div>
             {% endfor %}

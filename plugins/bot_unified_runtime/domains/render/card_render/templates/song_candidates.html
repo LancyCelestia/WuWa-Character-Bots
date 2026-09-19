@@ -69,16 +69,9 @@ body {
     overflow: hidden;
     border-radius: var(--r-shell);
     border: 1px solid transparent;
-    background:
-        linear-gradient(145deg,
-            var(--wash-mist) 0%,
-            color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
-            color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%,
-            color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%) padding-box,
-        linear-gradient(150deg,
-            rgba(255, 255, 255, 0.95) 0%,
-            rgba(255, 255, 255, 0.35) 55%,
-            rgba(255, 255, 255, 0.72) 100%) border-box;
+    {# VIS1（2026-09-20）：壳渐变/描边手抄退役，改 var(--mica-shell-wash)+
+       var(--mica-glass-edge) 消费（值册单源，见 market_card 同段注释）。#}
+    background: var(--mica-shell-wash) padding-box, var(--mica-glass-edge);
     box-shadow: var(--mica-shadow);
 }
 .panel > :not(.drift-blobs) { position: relative; z-index: 1; }
@@ -138,7 +131,7 @@ body {
         linear-gradient(150deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.35)) border-box;
     border: 1px solid transparent;
     padding: 4px 12px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     white-space: nowrap;
 }
 
@@ -160,7 +153,7 @@ body {
     flex-shrink: 0;
     width: 46px;
     height: 46px;
-    border-radius: 12px;
+    border-radius: var(--r-inner-lg);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -185,7 +178,7 @@ body {
     background: color-mix(in srgb, var(--accent) 14%, rgba(255, 255, 255, 0.78));
     border: 1px solid color-mix(in srgb, var(--accent) 24%, rgba(255, 255, 255, 0.88));
     padding: 2px 9px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
 }
 .info { flex: 1; min-width: 0; }
 .name {
@@ -245,7 +238,7 @@ body {
     </div>
     <div class="list">
         {% for cand in candidates %}
-        <div class="row{{ ' top' if cand.is_top else '' }} glass"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% else %} style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% endif %}>
+        <div class="row{{ ' top' if cand.is_top else '' }} glass"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, var(--mica-glass-edge)"{% else %} style="background:var(--surface-b) padding-box, var(--mica-glass-edge)"{% endif %}>
             <div class="num">{{ cand.index_label }}</div>
             {% if cand.is_top %}<span class="top-chip">Top</span>{% endif %}
             <div class="info">

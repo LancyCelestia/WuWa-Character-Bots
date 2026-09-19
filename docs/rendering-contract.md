@@ -30,7 +30,7 @@
 | `--wash-3` | 深蓝 228°（固定） | 第三色透底 |
 | `--wash-mist` | 雾底淡蓝 214°（固定，明度 ≥94%） | 打底 |
 
-- 外壳底色**只能**是 `linear-gradient(145deg, var(--wash-mist) 0%, ...)` 这条 wash 渐变；`--accent` 永远不做底色。
+- 外壳底色**只能**是 `theme_tokens.SHELL_WASH_GRADIENT` 这一条 145deg 多色交织渐变（VIS1 2026-09-20 用户裁定改版：色标 4→7、色相 3→4——wash-1/2/3 回绕交织 + `--wash-blob-1` 平台混入色作第 4 交织色相，混入比自 06 基准档 55/48/40 上浮至 55–72 区间=「不透明度全部调高」；首色标仍 `var(--wash-mist) 0%` 打底，`test_pc_never_paints_brand_base` 取相锁保持）；供给=渲染器 `--mica-shell-wash` 公共段注入（`mica_shell.render_root_tokens`/`theme_to_css_vars` 双路同源），7 张模板与 `shell_base_css` 直拼卡一律消费该单源，**模板侧 145deg 色标手抄副本=0**（原 10 份已收编；universal `.video-card-shell` 末层不透明托底与 `.mica-surface` 染色层非壳底、另计）。`--accent` 永远不做底色。
 - 平台色只允许两层受控出场：accent（徽章/高亮/链接）与 `--wash-blob-1`（≤35% 混入主色斑）。
 - 灰阶 / 未知平台推力归零 → 纯本命洗。公共段（含 `--wash-*` 四键）自 v21r3 步 5 起由 `mica_shell.render_root_tokens` **单一注入**，模板文件不再书写兜底字面量（现势 7 模板 `default('#…')` 实例数=0，2026-09-20 复核）。历史形态注：早期模板内联 `default('#d9e0e7')` 等兜底字面量须与 `DEFAULT_WASH_TOKENS = derive_wash_tokens('#607080')` 逐键一致——**如任何面重新出现该形态，契约测试仍按等值锁判红**（`test_rendering_contract.py` 退化断言在位；值随派生算法单一来源，勿手改）。
 
@@ -60,7 +60,8 @@
 | zebra 表面 | `SURFACE_TINTS` 三档 | vis5 数值门：onstage 相邻 ΔE(a,b)≥3.0、对 neutral ≥2.5；text_sub 对每档 ≥4.5:1 |
 | 间距 | `GAP_SCALE_PX = {3,4,6,7,8,10,12,14,16}` | 模板 `gap` 只允许取刻度内值，禁止发明新间距 |
 | 行高 | `{1.0, 1.1, 1.15, 1.2, 1.4, 1.5, 1.6}` | 契约铁律 9；v21r3 C7 收敛后直拼卡纳入枚举 |
-| 色斑 | `BLOB_COUNT=3`、时长 `{46,52,58}s`（a/b/c） | 契约铁律 8（v21r3 C2）；装饰层单源 `mica_shell`；`WASH_BLOB_MIX` 默认 35、error 卡 24 豁免登记 |
+| 色斑 | `BLOB_COUNT=3`、时长 `{46,52,58}s`（a/b/c） | 契约铁律 8（v21r3 C2）；装饰层单源 `mica_shell`；`WASH_BLOB_MIX` 默认 35、error 卡 24 豁免登记；**stop 混入比（VIS1 2026-09-20 用户裁定「背景不透明度调高」上浮）**：a 60/38/10、b 38/22/8、c 34/20/8（全 ≥5% 光晕下限），universal/mermaid 伪元素手抄斑同步等值（E-2/E-3「同构」语义保持） |
+| 壳底渐变 | `SHELL_WASH_GRADIENT`（`--mica-shell-wash`，VIS1 2026-09-20 新增登记） | 145deg 七色标多色交织（mist 打底 + w1/w2/w3/blob-1 回绕），全 11 面壳底唯一来源；改版动因与数值依据=本册 §二 与 `docs/design/unify-audit-20260919/VIS1-impl.md` §1 对照表 |
 | 宽度 | `CARD_SHELL_WIDTHS` | 宽度按内容族登记：universal 1440（payload `card_width` 驱动）/ affinity 1180 / market·finance 1080 / song_panel 980 / mermaid_max 840（fit-content 上限）/ error 1080；**v21r3 C10 增补直拼卡四键：help 940 / usage 900 / debug 880 / media 640**；新模板宽度必须先进本表；**执法现状**：4 张直拼卡宽度虽已入表，调用点现以字面量传 `width_px=`（echo 940/debug 880/usage 900/media 640，**不经查表、改表不跟随**，2026-09-20 复核在位），`mica_shell._DEFAULT_SHELL_WIDTH_PX=880` 为未登记第 12 缺省档——收口=实参改 `CARD_SHELL_WIDTHS[...]` + 缺省并表（§八 D-6）；universal 走 payload `card_width`+zoom 第三机制（F14-6.1） |
 
 ## 五、新增模板接入步骤（checklist）
@@ -104,7 +105,7 @@
 | E-4 | amber 装饰族 6-7 枚（#ff9800/#e65100/#f5b83b/#f0b429/#b77900/#fff7d6 系）+ `--blue:#23ade5` + 认证徽 `#1d9bf0` + 中性对 #e4e6eb/#f1f2f3 族 | universal_card.html | 契约 §四「amber 装饰族豁免」在案；--blue/认证蓝为上游平台语义色复刻非品牌色 | gate08 不红（黑名单外）；**如执行 §四语义色行补白名单门（F5-1/S8-01），本行值必须先迁入本册或值册** | 0912-0918 散点（本表首次集中收编） | 色族收编进 theme_tokens 后并入「登记即放行」，本行删 |
 | E-5 | `.footer-colored` 描边白 0.98/0.88（+accent 28% 染色中段） | universal `.footer-colored` 区段 | GLASS3 席 0919 主会话裁定=sanctioned 变体，现仅活在门 docstring | gate09 染色层整层放行；本行落地后 docstring 裁定指针化 | 0919 GLASS3 | 描边层如改 `var(--mica-glass-edge)` 消费则删 |
 | E-6 | 两档描边变体 `.ttl`（song）/`.pill`（affinity）（.95/.35 无 .72） | 2 模板 | 「成员判定」语义天然放行；裁定为合法档位了事（S8 E-5 二选一，推荐此） | gate09 现口径绿即合规；如改「EDGE 全模式匹配」门则本行失效并需改面 | 0919 F5/S8 发现→本表登记 | 全模式匹配门落地时收编或删 |
-| E-7 | affinity :root 内联 `style="background:…linear-gradient(150deg,…)"` 描边副本 7 处 | affinity_card.html zebra 区段 | 行内 zebra 叠层需要 per-row 覆写；手抄副本暂无法参数化 | 份数不增（新增内联描边=红，先改本行或收编）；视觉与 canonical 等值 | 0913 vis4 存量 | `--mica-glass-edge` 可被 inline 消费的机制落地时收编 |
+| E-7 | ~~affinity :root 内联 `style="background:…linear-gradient(150deg,…)"` 描边副本 7 处~~ **已收编失效（VIS1 2026-09-20）**：affinity/song/universal/market/finance 全部行内 zebra 描边副本改 `var(--mica-glass-edge)` 消费（失效条件「可被 inline 消费的机制落地」达成——公共段早已注入该变量，本波完成消费迁移）；份数=0 | —（行删，按「失效条件到点的豁免应删行并执行收口」规矩保留此划线注） | 0913 vis4 存量→0920 收编 | 已失效 |
 | E-8 | recharts 图元字号 12px CSS 钉死 | webui/index.css 图元段 | SVG tick/legend 不吃 Tailwind 类；与 fs-caption 同值有意为之 | 定义处集中（选择器表内命中=1 处）；宪法门禁 tsx `fontSize:` 互补成立 | 0919 WEBUIFE | WebUI 字号定义层如被扩门收编则并册 |
 | E-9 | canvas 字体字面量 `context.font='12px "Segoe UI", …'` | webui memory-canvas.tsx | canvas 2D 不吃 CSS 变量（需 getComputedStyle 读 token，未做）；现游离于一切门与登记之外——**本行即 P1-3④ 的补登记** | 补门前：字体栈与 FONT_FAMILY_STACK 一致目验；补门后（F4 N4 方案 `context.font` 扫描）改判红为合法登记态 | 0918 审计发现→本表收编 | 读 token 版实施时行删 |
 | E-10 | 内联 `style={{height:480}}` 「内联白名单 #1」 | webui memory-graph.tsx（注：非 memory-canvas.tsx，旧审计坐标错） | pages2-spec 两处白名单之一（画布高度）；道德约束非机器约束（门本不扫尺寸内联） | 白名单实例=2 处（高度+侧栏宽）不得增 | 0918 PAGES2 | 内联尺寸扩门落地时程序化 |
@@ -122,3 +123,5 @@
 - **D-6** 宽度查表收口：四处 `width_px=` 字面量改 `CARD_SHELL_WIDTHS[...]` + `_DEFAULT_SHELL_WIDTH_PX=880` 并表。
 - **D-7** 卡骨架契约（区段清单/顺序/字段名最小册，F14-12 建议集；立「铁律 10」与否随 v21r4 裁决）。
 - **D-8** 样张基线入库 + 钉帧成功率观测（基线 sha256 旁车入库、`pinned==0` 告警、浏览器指纹字段；治 %TEMP% 一清判据即灭，S8-05/F5-5/6）。
+- **D-9** 瓦片白玻璃双背景的字面量收口被 `test_template_visual_audit.py::test_list_tiles_keep_glass_surface` 阻挡（VIS1 2026-09-20 实碰回滚）：该门按规则体**字面含 padding-box+border-box** 取相，market `.index`/finance `.row`/affinity `.glass`/song `.glass`/error `.row(.alt)` 六处改 var() 消费必红；本席禁改该测试（非可写面），已还原等值字面。收口=先把该门取相改为「字面或 var(--mica-glass-main/edge) 消费皆合法」再做迁移（改门属断言语义变更，待裁）。
+- **D-10** mermaid 节点圆角例外（VIS1 2026-09-20 用户裁定落地）：mermaid_card.html 页尾新增渲染后 polygon→圆角 path 替换脚本 + `.node rect` CSS rx——打破 vis4「SVG 图形内部零触碰」旧例（动因=用户明裁「矩形、菱形全部改圆角」，themeVariables/classDef 实测无落点）；范围锁 `.node` 子树，连线/箭头/文字零触碰；如后续 mermaid 升级致 DOM 形态变化，此脚本与探针结论（VIS1-impl §3.3）为回归基线。

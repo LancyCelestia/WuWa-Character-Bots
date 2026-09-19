@@ -60,16 +60,9 @@ body {
     border-radius: var(--r-shell);
     overflow: hidden;
     border: 1px solid transparent;
-    background:
-        linear-gradient(145deg,
-            var(--wash-mist) 0%,
-            color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
-            color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%,
-            color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%) padding-box,
-        linear-gradient(150deg,
-            rgba(255, 255, 255, 0.95) 0%,
-            rgba(255, 255, 255, 0.35) 55%,
-            rgba(255, 255, 255, 0.72) 100%) border-box;
+    {# VIS1（2026-09-20）：壳渐变/描边手抄退役，改 var(--mica-shell-wash)+
+       var(--mica-glass-edge) 消费（值册单源，见 market_card 同段注释）。#}
+    background: var(--mica-shell-wash) padding-box, var(--mica-glass-edge);
     box-shadow: var(--mica-shadow);
 }
 .shell > :not(.drift-blobs):not(.star-motes) { position: relative; z-index: 1; }
@@ -82,7 +75,7 @@ body {
    三通道：wash-2 星空紫 / 白 / --accent-light；alpha 0.06–0.35、粒径 2–5px、≤24 枚、
    总覆盖 ≤ 卡面 8%；只走 background 径向渐变，不触两枚阴影 token 铁律。 */
 .star-motes { position: absolute; inset: 0; z-index: 2; overflow: hidden; pointer-events: none; border-radius: inherit; }
-.star-mote { position: absolute; display: block; border-radius: 50%; }
+.star-mote { position: absolute; display: block; border-radius: var(--r-circle); }
 .star-mote.sm-v { background: radial-gradient(circle, var(--wash-2) 45%, transparent 100%); }
 .star-mote.sm-w { background: radial-gradient(circle, #ffffff 50%, transparent 100%); }
 .star-mote.sm-l { background: radial-gradient(circle, var(--accent-light) 50%, transparent 100%); }
@@ -109,7 +102,7 @@ body {
 .title { font-size: 30px; font-weight: 700; color: var(--text-main); line-height: 1.2; }
 .subtitle { font-size: 14px; color: var(--text-sub); margin-top: 4px; }
 .pill {
-    flex: none; padding: 9px 20px; border-radius: 999px;
+    flex: none; padding: 9px 20px; border-radius: var(--r-pill);
     background:
         linear-gradient(color-mix(in srgb, var(--accent) 14%, rgba(255, 255, 255, 0.72)), color-mix(in srgb, var(--accent) 14%, rgba(255, 255, 255, 0.72))) padding-box,
         linear-gradient(150deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.35)) border-box;
@@ -152,14 +145,14 @@ body {
 .dscore.hot { color: var(--score-hot); }
 .dscore.cold { color: var(--score-cold); }
 .dtier {
-    display: inline-block; margin-top: 10px; padding: 4px 14px; border-radius: 999px;
+    display: inline-block; margin-top: 10px; padding: 4px 14px; border-radius: var(--r-pill);
     background: color-mix(in srgb, var(--accent) 14%, rgba(255, 255, 255, 0.72));
     border: 1px solid color-mix(in srgb, var(--accent) 24%, rgba(255, 255, 255, 0.88));
     font-size: 13px; font-weight: 600; color: color-mix(in srgb, var(--accent) 80%, #18191c);
 }
-.bar { margin-top: 14px; height: 10px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 9%, rgba(255, 255, 255, 0.55)); overflow: hidden; }
+.bar { margin-top: 14px; height: 10px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 9%, rgba(255, 255, 255, 0.55)); overflow: hidden; }
 .bar .fill {
-    height: 100%; border-radius: 999px;
+    height: 100%; border-radius: var(--r-pill);
     background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 55%, #fff), var(--accent));
 }
 .dnote { margin-top: 10px; font-size: 12px; color: var(--text-secondary); }
@@ -237,7 +230,7 @@ body {
     {% if mode == 'group' %}
     <div class="grid">
         {% for row in rows %}
-        <div class="tile{{ ' me' if row.sender_id == me_id else '' }} glass"{% if row.sender_id != me_id %}{% if loop.index is odd %} style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% else %} style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% endif %}{% endif %}>
+        <div class="tile{{ ' me' if row.sender_id == me_id else '' }} glass"{% if row.sender_id != me_id %}{% if loop.index is odd %} style="background:var(--surface-a) padding-box, var(--mica-glass-edge)"{% else %} style="background:var(--surface-b) padding-box, var(--mica-glass-edge)"{% endif %}{% endif %}>
             <div class="who">
                 <div class="name">{{ (row.display_name or row.sender_id) }}</div>
                 <div class="sid">{{ row.sender_id }}</div>
@@ -248,14 +241,14 @@ body {
     </div>
     {% elif mode == 'algorithm' %}
     <div class="duel">
-        <div class="panel glass" style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box">
+        <div class="panel glass" style="background:var(--surface-a) padding-box, var(--mica-glass-edge)">
             <div class="dlabel">你与我之间的氛围（印象好感 {{ bot_score }}）</div>
             {% for s in steps %}
             <div class="step-row"><span>{{ s.label }}</span><b class="{{ s.cls }}">{{ s.value }}</b></div>
             {% endfor %}
             <div class="dnote">好感随言行连续累积：说话温度 × 相处时长 × 第一印象 × 我当天的状态，平滑变化、没有固定加几减几；久不联系慢慢回归基准，难听的记忆会随时间淡去</div>
         </div>
-        <div class="panel glass" style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box">
+        <div class="panel glass" style="background:var(--surface-b) padding-box, var(--mica-glass-edge)">
             <div class="dlabel">档位 → 回应方式（同一句话）</div>
             {% for t in tiers %}
             <div class="tier-row"><b>{{ t.label }}　{{ t.range }}</b><span>{{ t.attitude }}</span></div>
@@ -263,18 +256,18 @@ body {
         </div>
     </div>
     <div class="rules">
-        {% for rule in rules %}<div class="rule glass"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% else %} style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% endif %}><b class="{{ rule.cls }}">{{ rule.label }}</b>　{{ rule.text }}</div>{% endfor %}
+        {% for rule in rules %}<div class="rule glass"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, var(--mica-glass-edge)"{% else %} style="background:var(--surface-b) padding-box, var(--mica-glass-edge)"{% endif %}><b class="{{ rule.cls }}">{{ rule.label }}</b>　{{ rule.text }}</div>{% endfor %}
     </div>
     {% else %}
     <div class="duel">
-        <div class="panel glass" style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box">
+        <div class="panel glass" style="background:var(--surface-a) padding-box, var(--mica-glass-edge)">
             <div class="dlabel">{{ bot_name | default('守岸人') }}对你</div>
             <div class="dscore{{ ' hot' if bot_to_user.score >= 75 else (' cold' if bot_to_user.score < 25 else '') }}">{{ '%.1f' | format(bot_to_user.score) }}</div>
             <div class="dtier">{{ bot_to_user.tier }}</div>
             <div class="bar"><div class="fill" style="width: {{ bot_to_user.bar }}%"></div></div>
             <div class="dnote">印象好感度：由你的言行长期累积，只影响语气，不外显为标签</div>
         </div>
-        <div class="panel glass" style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box">
+        <div class="panel glass" style="background:var(--surface-b) padding-box, var(--mica-glass-edge)">
             <div class="dlabel">你对{{ bot_name | default('守岸人') }}</div>
             <div class="dscore{{ ' hot' if user_to_bot.score >= 75 else (' cold' if user_to_bot.score < 25 else '') }}">{{ '%.1f' | format(user_to_bot.score) }}</div>
             <div class="dtier">{{ user_to_bot.tier }}</div>
@@ -283,7 +276,7 @@ body {
         </div>
     </div>
     <div class="rules">
-        {% for rule in rules %}<div class="rule glass"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% else %} style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% endif %}><b class="{{ rule.cls }}">{{ rule.label }}</b>　{{ rule.text }}</div>{% endfor %}
+        {% for rule in rules %}<div class="rule glass"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, var(--mica-glass-edge)"{% else %} style="background:var(--surface-b) padding-box, var(--mica-glass-edge)"{% endif %}><b class="{{ rule.cls }}">{{ rule.label }}</b>　{{ rule.text }}</div>{% endfor %}
     </div>
     {% endif %}
     <div class="foot">好感区间 -100~+100 · 档0 友善（基准 10）· 任何档位都保持人格与体面</div>

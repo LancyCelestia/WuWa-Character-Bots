@@ -41,6 +41,7 @@ from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import 
     SEMANTIC_DANGER,
     SEMANTIC_SUCCESS,
     SEMANTIC_WARNING,
+    SHELL_WASH_GRADIENT,
     SHADOW_PRIMARY,
     SHADOW_SECONDARY,
 )
@@ -81,6 +82,12 @@ _PUBLIC_TOKEN_ORDER: tuple[str, ...] = (
     "--semantic-warning",
     "--score-hot",
     "--score-cold",
+    # VIS1（2026-09-20 背景多色交织波）：壳层釉瑚渐变单源——值册
+    # theme_tokens.SHELL_WASH_GRADIENT，全 11 面 :root 注入 --mica-shell-wash，
+    # 模板侧 145deg 手抄副本退役（改背景只改值册一处）。追加在表尾，
+    # 公共段既有声明顺序逐字节不变（test_public_token_subset_and_order_unified
+    # 从本表动态取序，天然一致）。
+    "--mica-shell-wash",
 )
 
 # 卡片默认外壳宽度：与 theme_tokens.CARD_SHELL_WIDTHS 同源，未登记时用兜底值。
@@ -101,12 +108,16 @@ _TOKENS_COMMENT = (
 # 逐斑登记表（C2：BLOB_COUNT=3 + BLOB_DURATIONS=(46,52,58) 升序登记）：
 # (key, 几何行, 渐变变量, 渐变 stop 百分比对, BLOB_DURATIONS 位次, 交错延迟秒)。
 # 位次索引把升序登记值映射回历史交错顺序：drift-a=46s / drift-b=58s / drift-c=52s。
+# VIS1（2026-09-20 用户裁定「背景不透明度全部调高+多色交织」）：stop 混入比
+# 整体上浮（a 50/28/6→60/38/10、b 30/16/5→38/22/8、c 26/14/5→34/20/8），
+# 全部仍 ≥5%（光晕下限门）；universal/mermaid 两张伪元素手抄斑（契约 §八
+# E-2/E-3 登记特例）与本表同步等值。
 _BLOB_SPECS: tuple[tuple[str, str, str, tuple[tuple[int, int], ...], int, int], ...] = (
     (
         "a",
         "width:58%; aspect-ratio:1; left:-14%; top:-22%;",
         "--wash-blob-1",
-        ((0, 50), (46, 28), (70, 6)),
+        ((0, 60), (46, 38), (70, 10)),
         0,
         0,
     ),
@@ -114,7 +125,7 @@ _BLOB_SPECS: tuple[tuple[str, str, str, tuple[tuple[int, int], ...], int, int], 
         "b",
         "width:52%; aspect-ratio:1; right:-16%; bottom:-24%;",
         "--wash-2",
-        ((0, 30), (48, 16), (72, 5)),
+        ((0, 38), (48, 22), (72, 8)),
         2,
         9,
     ),
@@ -122,7 +133,7 @@ _BLOB_SPECS: tuple[tuple[str, str, str, tuple[tuple[int, int], ...], int, int], 
         "c",
         "width:64%; aspect-ratio:1; left:22%; top:34%;",
         "--wash-3",
-        ((0, 26), (48, 14), (72, 5)),
+        ((0, 34), (48, 20), (72, 8)),
         1,
         21,
     ),
@@ -460,6 +471,7 @@ def render_root_tokens(
         "--semantic-warning": SEMANTIC_WARNING,
         "--score-hot": SCORE_HOT,
         "--score-cold": SCORE_COLD,
+        "--mica-shell-wash": SHELL_WASH_GRADIENT,
     }
     for token in _PUBLIC_TOKEN_ORDER:
         parts.append(f"{token}:{public_values[token]}")
@@ -486,11 +498,13 @@ def shell_base_css(
     """
     if not shell_class:
         return ""
+    # VIS1（2026-09-20）：145deg 壳渐变与 150deg 描边不再手写——分别内插
+    # theme_tokens.SHELL_WASH_GRADIENT / GLASS_EDGE 登记常量（GLASS_EDGE 自带
+    # border-box 后缀）；改背景只改值册一处，11 面同动。
     rules = f""".{shell_class} {{ position:relative; width:{int(width_px)}px; overflow:hidden;
   border-radius:var(--r-shell); border:1px solid transparent;
-  background:linear-gradient(145deg, var(--wash-mist) 0%, color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
-    color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%, color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%) padding-box,
-    linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
+  background:{SHELL_WASH_GRADIENT} padding-box,
+    {GLASS_EDGE};
   box-shadow:var(--mica-shadow); }}
 .{shell_class} > :not(.drift-blobs) {{ position:relative; z-index:1; }}"""
     if glass:
