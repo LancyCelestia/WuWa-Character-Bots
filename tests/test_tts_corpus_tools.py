@@ -56,6 +56,14 @@ MODULE_SAFE = ("scan_durations.py", "transcribe_refs.py")
 # 顶层执行脚本：import 即按硬编码绝对路径写引擎 refs/，禁 import
 TOPLEVEL = ("pick_refs.py", "make_listening_checklist.py")
 
+# T148 修复分叉登记（2026-09-20）：transcribe_refs.py 已修 T24 P1-4 反向毒化缺陷
+# （竖线/分号拒绝 + 【听写失败】拦截 + traceback 残迹过滤 + 守恒断言 + 有拦截退出码 1），
+# 尾部自引擎原件分叉。引擎原件不动（仍带缺陷，sha 锚维持 ANCHORS 原值）；
+# 分叉后尾部新锚=FORKED 值（防仓内手改漂移照拦）。分叉依据登记在副本溯源块与 report-T148.md。
+FORKED: dict[str, str] = {
+    "transcribe_refs.py": "9dbc150b24220bb84f20724222f02a19ac7f87a528959c6a392f928ccc116de8",
+}
+
 
 def _header(name: str) -> str:
     raw = (CORPUS_DIR / name).read_bytes()
@@ -95,7 +103,8 @@ def test_provenance_block_fields(name: str) -> None:
 
 @pytest.mark.parametrize("name", sorted(ANCHORS))
 def test_copy_tail_matches_anchored_sha(name: str) -> None:
-    assert _tail_sha(name) == ANCHORS[name][1]
+    # T148 分叉件锚定「分叉后新锚」，未分叉件维持原件 sha 锚
+    assert _tail_sha(name) == FORKED.get(name, ANCHORS[name][1])
 
 
 @pytest.mark.parametrize("name", sorted(ANCHORS))
@@ -106,7 +115,11 @@ def test_engine_original_no_drift(name: str) -> None:
         pytest.skip(f"引擎原件缺失（引擎目录不可达或已迁移）：{orig}")
     orig_sha = hashlib.sha256(orig.read_bytes()).hexdigest()
     assert orig_sha == sha, "引擎原件已改动：以仓内锚定值为准，回填 ANCHORS 并重录溯源块"
-    assert _tail_sha(name) == orig_sha, "收编副本尾部与引擎原件漂移"
+    if name in FORKED:
+        # T148 已修复分叉：原件保持不动（仍带缺陷），副本尾部=分叉新锚（双向各自防漂移）
+        assert _tail_sha(name) == FORKED[name], "分叉副本尾部与 FORKED 锚漂移"
+    else:
+        assert _tail_sha(name) == orig_sha, "收编副本尾部与引擎原件漂移"
 
 
 @pytest.mark.parametrize("name", MODULE_SAFE)
@@ -156,3 +169,80 @@ def test_transcribe_refs_help_subprocess() -> None:
     assert "离线听写" in out
     for flag in ("-i", "-o", "--language", "--no-list"):
         assert flag in out
+
+
+# ---------------------------------------------------------------------------
+# T148 防毒化行为锁（repo 副本修复分叉；离线合成行，零模型/零音频/零写盘）
+# ---------------------------------------------------------------------------
+
+def _load_transcribe_module():
+    saved = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True  # import 不落 __pycache__（树卫生）
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "tts_corpus_transcribe_t148", CORPUS_DIR / "transcribe_refs.py"
+        )
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        sys.dont_write_bytecode = saved
+    return mod
+
+
+def test_t148_transcribe_fork_registered_in_provenance() -> None:
+    """分叉登记锁：溯源块必须带 T148 已修复分叉说明与日期，防分叉件被当成原件。"""
+    head = _header("transcribe_refs.py")
+    assert "T148" in head
+    assert "已修复" in head and "分叉" in head
+    assert "2026-09-20" in head
+    assert "reject_reason" in head or "拒绝" in head  # 竖线选拒绝的登记
+
+
+def test_t148_reject_reason_covers_poison_shapes() -> None:
+    mod = _load_transcribe_module()
+    assert mod.reject_reason("前半句|后半句") is not None  # T24 ③ 同款竖线毒形
+    assert mod.reject_reason("文本;含分号") is not None  # 原件注释警告面
+    assert mod.reject_reason("今天的潮汐很安静") is None  # 干净文本放行
+    # traceback 残迹（压平形态，无【听写失败】前缀也要拦）
+    assert (
+        mod.reject_reason("Traceback (most recent call last): File \"m.py\" RuntimeError: boom")
+        is not None
+    )
+
+
+def test_t148_failed_text_never_passes() -> None:
+    mod = _load_transcribe_module()
+    flat = ("【听写失败】" + "Traceback (most recent call last): File \"m.py\", line 1 "
+            "RuntimeError: boom")[:120]
+    multi = "【听写失败】Traceback (most recent call last):\n  File \"m.py\", line 1\nRuntimeError: boom"
+    for poisoned in (flat, multi):
+        assert mod.is_failed_text(poisoned)
+        assert mod.reject_reason(poisoned) is not None
+
+
+def test_t148_classify_conservation_and_paste_shape() -> None:
+    """守恒锁：放行+拦截==输入清单条数；粘贴块只含放行条目且字段数恒为 3。"""
+    mod = _load_transcribe_module()
+    rows = [
+        (Path("x/ref_ok.flac"), 5.0, 16000, 1, "今天的潮汐很安静"),
+        (Path("x/ref_pipe.flac"), 5.0, 16000, 1, "前半句|后半句"),
+        (Path("x/ref_fail.flac"), 5.0, 16000, 1,
+         "【听写失败】Traceback (most recent call last): File \"m.py\""),
+    ]
+    ok, excluded = mod.classify_rows(rows)
+    assert len(ok) + len(excluded) == len(rows)  # 守恒：输出两桶之和==输入条数
+    assert [(p.name, text) for p, text in ok] == [("ref_ok.flac", "今天的潮汐很安静")]
+    assert {p.name for p, _t, _r in excluded} == {"ref_pipe.flac", "ref_fail.flac"}
+    assert all(reason for _p, _t, reason in excluded)  # 拦截必带原因
+    paste = [f"{p.as_posix()}|{text}|zh" for p, text in ok]
+    assert all(line.count("|") == 2 for line in paste)  # 字段数恒 3（无竖线混入）
+
+
+def test_t148_full_pipe_poison_shape_rejected() -> None:
+    """T24 ③ 全链毒形：粘贴块行内文本携带竖线会把 lang 字段顶成碎片——必须拦。"""
+    mod = _load_transcribe_module()
+    poisoned_line_text = "前半句|后半句"
+    reason = mod.reject_reason(poisoned_line_text)
+    assert reason is not None
+    assert "竖线" in reason
