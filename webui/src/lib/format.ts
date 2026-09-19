@@ -35,9 +35,16 @@ export function formatUptime(seconds: number | null | undefined): string {
 
 // zh-CN 时间/日期时间两枚常驻 formatter（现场构造 Intl formatter 是本库最大的单项开销：
 // PERF1 席实测单枚 29.6µs → 复用 0.80µs；等值性由 PERF1-fix1 席在本机全量样本自造复跑核清，
-// 见 docs/design/unify-audit-20260919/PERF1-fix1.md §三——含 DST 时区补验，原台账未覆盖面已闭合）。
+// 见 docs/design/unify-audit-20260919/PERF1-fix1.md §三——含 DST 时区补验，原台账未覆盖面已闭合；
+// 证据已由 %TEMP% 脚本升为仓内常驻等值锁 lib/format.test.ts，PERF1-fix2/评审 I-2 收口）。
 // 注：本库口径写死 zh-CN（与 i18next 语言无关），故 formatter 无需按 locale 建 key；
 //     若将来改成跟随 UI 语言，必须换 Map<locale, formatter>，否则会串语言。
+// 注2（评审 review-PERF1-fix1 M-3，下个跨时区核验的席必读）：**缓存 formatter 在构造期
+//     绑定系统时区**，不随之后的 process.env.TZ / 系统时区改动而改口——跨时区核验脚本必须
+//     在**构造之前**设好 TZ（本仓库 Node 侧的做法=设 TZ 后带查询串重新求值本模块），
+//     否则 100% 假 DRIFT（评审席首轮亲测全红即栽在此）。运行期 OS 改时区后已加载页面
+//     不重载则不跟随——旧逐次构造口径会跟随，该差异正是缓存优化本意，浏览器场景判可接受；
+//     性质常驻锁见 format.test.ts「构造期绑定时区」条。
 const ZH_TIME = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 const ZH_DATE_TIME = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric', month: 'numeric', day: 'numeric',

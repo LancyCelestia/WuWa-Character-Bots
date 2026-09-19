@@ -5,10 +5,16 @@
 // 裁剪、丢弃计数、暂停积压封顶、恢复折叠、清空。页面侧只剩 React 接线（定时器、
 // 快照 state、sessionStorage），行为与 PERF1 波（commit 9f139b2）逐语义保持。
 //
-// 本文件刻意**零 React 依赖**（纯类 + 纯常量），所以能被 node --test 直接加载——
-// 判据住在 .tsx 里就等于没有判据（同 search-params.ts 头注的口径：Node 的类型
+// 本文件刻意**零 React 依赖**（纯类 + 纯函数 + 纯常量），所以能被 node --test 直接
+// 加载——判据住在 .tsx 里就等于没有判据（同 search-params.ts 头注的口径：Node 的类型
 // 剥离不吃 JSX，logs.tsx 的不变量在上一波只能靠 %TEMP% 一次性脚本作证，评审
 // review-PERF1 I-1 判「证据会腐烂」，本文件即其整改）。
+//
+// PERF1-fix2（评审 review-PERF1-fix1 I-1 整改）：合并窗的**调度缝**也提纯到此文件
+// （createFlushController + 可注入 FlushScheduler）。「一窗一次提交」的行为本体原先住在
+// logs.tsx 的 flushTimerRef 闸门里，11 条常驻锁全不 import 页面——破坏它一行且门路全绿。
+// 现在页面只剩 `flush.request(buffer.append(...))` 一行接线，闸门语义有假时钟锁实证覆盖
+// （零墙钟断言，M-1 教训）；页面侧「不得再自设定时器冲刷」由源码文本锁看守。
 //
 // 三条常驻不变量（锁在 log-stream.test.ts，改坏任何一条测试必红）：
 //   (a) 判重与登记同在到达瞬间；被裁出视图/积压的行其判重位同步释放（Set 有界，
@@ -102,6 +108,14 @@ export class LogsBuffer<T extends CursorBearing> {
    * 合并窗到点：把待冲刷缓冲一次性并入视图。返回是否有实际变化（false=空缓冲，
    * 页面可据此跳过快照回写）。溢出时最旧行就地裁掉并当场释放判重位（不变量 (a)），
    * 裁掉枚数记入 dropped（不变量 (b)）。
+   *
+   * **判重位释放时点（M-2 披露，review-PERF1-fix1）**：提纯前 `seen.delete` 嵌在
+   * setRows updater 里，实际执行于 React flush 时；现在随 commit() **同步**释放——
+   * 时点前移。语义差窗口=「commit() 返回后、旧版 updater 执行前」，期间一条已裁
+   * cursor 的重复投递旧版静默拒收、新版接受入库；新版方向恰更贴本文件自述不变量
+   * (a)「被裁出视图的行其判重位同步释放」，不漏日志、无数据破坏。
+   * **何时可再判同一游标 = commit() 返回 true 且该行确被裁出的那一瞬**（锁见
+   * log-stream.test.ts「再判时点」条，反向断言「仍在窗内不得放行」同条看守）。
    */
   commit(): boolean {
     if (this.pending.length === 0) return false;
@@ -163,4 +177,76 @@ export class LogsBuffer<T extends CursorBearing> {
   discardPending(): void {
     this.pending = [];
   }
+}
+
+// ----------------------------------------------------------------------------
+// 合并窗调度缝（PERF1-fix2，review-PERF1-fix1 I-1 整改）
+//
+// 「一窗一次提交」的行为本体=下面的 request() 闸门：窗内已有在飞定时器时后来的
+// 到达被合批吸收（不再另起），到点触发恰好一次 commit 并当场开闸迎接下一窗。
+// 提纯前这段住在 logs.tsx（flushTimerRef 三行闸门），页面 .tsx 不可被 node --test
+// 加载 → 行为零锁。现在生产注入 defaultFlushScheduler（与提纯前逐字等价的
+// setTimeout/clearTimeout），测试注入假时钟手工 tick——判据零墙钟（M-1 教训：
+// 计时断言跨机必抖，同一条测量出现过 1.2×/0.8× 双向漂移）。
+// ----------------------------------------------------------------------------
+
+/** 可注入定时器缝：handle 对实现不透明（生产=Timeout 对象，假时钟=自增 id）。 */
+export interface FlushScheduler {
+  schedule(task: () => void, delayMs: number): unknown;
+  cancel(handle: unknown): void;
+}
+
+/** 生产实现：与提纯前 logs.tsx 直接调用 setTimeout/clearTimeout 的形态逐字等价。 */
+export const defaultFlushScheduler: FlushScheduler = {
+  schedule: (task, delayMs) => setTimeout(task, delayMs),
+  cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+
+export interface FlushController {
+  /**
+   * 到达入口：仅当本次有新鲜行入缓冲（buffered>0，页面上屏即 buffer.append 的返回值）
+   * 且当前无在飞窗口时武装定时器——「一窗一次提交」由此闸门保证；全重复批
+   * （buffered=0）不起定时器（提纯前页面 `append()===0 即 return` 的形态，现在升为
+   * 被锁行为）。
+   */
+  request(buffered: number): void;
+  /**
+   * 卸载清理入口：只取消在飞定时器（防卸载后回写），**不永久封口**——下一次
+   * request 可重新武装。与提纯前 cleanup「clearTimeout + flushTimerRef 置 null」逐字
+   * 一致，StrictMode 模拟重挂载后必须还能起新窗口（封口会把 dev 页面冻死）。
+   */
+  dispose(): void;
+  /** 是否有已武装未触发的窗口（观测/测试用）。 */
+  readonly isArmed: boolean;
+}
+
+export function createFlushController(input: {
+  /** 到点提交的正文（页面注入=「buffer.commit() 变化则回写快照」，即原 commitPending）。 */
+  commit: () => void;
+  scheduler?: FlushScheduler;
+  windowMs?: number;
+}): FlushController {
+  const scheduler = input.scheduler ?? defaultFlushScheduler;
+  const windowMs = input.windowMs ?? FLUSH_WINDOW_MS;
+  let handle: unknown = null;
+  return {
+    request(buffered: number): void {
+      if (buffered <= 0 || handle !== null) return;
+      handle = scheduler.schedule(() => {
+        // 先开闸再提交：提交正文内若再到达（同 tick 连发），走下一窗——与提纯前
+        // 定时器回调「flushTimerRef.current = null; commitPending();」的次序逐字一致。
+        handle = null;
+        input.commit();
+      }, windowMs);
+    },
+    dispose(): void {
+      if (handle !== null) {
+        scheduler.cancel(handle);
+        handle = null;
+      }
+    },
+    get isArmed(): boolean {
+      return handle !== null;
+    },
+  };
 }

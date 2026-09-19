@@ -7,8 +7,10 @@
 // - 渲染口径（PERF1 2026-09-19，F8-L1/L2/L3）：秒表只在自渲染子件里跑（父页不再每秒整体重渲染）、
 //   行渲染 memo 化（每帧/每秒不再重排 500 行、不再每行重算 Intl/JSON）、
 //   同一刷新窗口内到达的行合并为一次 state 更新、暂停积压与视图同界（≤MAX_ROWS）。
-// - 缓冲状态机（判重集/合并窗/上限裁剪/丢弃计数/暂停积压/清空）住在零 React 依赖的
-//   lib/log-stream.ts（PERF1-fix1 提纯，不变量常驻锁 lib/log-stream.test.ts），本页只剩接线。
+// - 缓冲状态机（判重集/合并窗/上限裁剪/丢弃计数/暂停积压/清空）与合并窗调度闸门
+//   （createFlushController，「一窗一次提交」的行为本体）都住在零 React 依赖的
+//   lib/log-stream.ts（PERF1-fix1 提纯 + PERF1-fix2 调度缝，常驻锁 lib/log-stream.test.ts），
+//   本页只剩接线——页面**不得再自设定时器冲刷**（源码文本锁看守，review-PERF1-fix1 I-1）。
 import { memo, useEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CirclePause, CirclePlay, Eraser, Link2Off, RotateCcw, ArrowDownToLine } from 'lucide-react';
@@ -16,7 +18,7 @@ import { Button } from '@/components/ui/button';
 import { PageHeader, SectionCard, CategoryChip, type Tone } from '@/components/patterns/patterns';
 import { LogsStreamClient, type StreamStatus } from '@/lib/sse';
 import { controlApi, type LogEventRow, type LogsSourcesData } from '@/lib/api-client';
-import { FLUSH_WINDOW_MS, LogsBuffer } from '@/lib/log-stream';
+import { createFlushController, LogsBuffer, type FlushController } from '@/lib/log-stream';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import { formatTime } from '@/lib/format';
 
@@ -157,7 +159,6 @@ export function LogsPage() {
 
   // 缓冲状态机：判重集/待冲刷缓冲/上限裁剪/丢弃计数/暂停积压都在 LogsBuffer 内（常驻锁见 log-stream.test.ts）。
   const bufferRef = useRef(new LogsBuffer<LogEventRow>());
-  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 合并窗口到点：把缓冲行一次性并入视图（一帧一次，而非一条一次）。
   const commitPending = () => {
@@ -166,19 +167,21 @@ export function LogsPage() {
     setView({ rows: buffer.rows, dropped: buffer.dropped });
   };
 
+  // 合并窗调度闸门住在 lib/log-stream.ts 的 createFlushController（行为本体+假时钟常驻锁），
+  // 本页只接线；commitPending 只引用稳定量（bufferRef/setView），捕获首帧闭包与逐帧等价。
+  const flushControllerRef = useRef<FlushController | null>(null);
+  if (!flushControllerRef.current) {
+    flushControllerRef.current = createFlushController({ commit: commitPending });
+  }
+  const flush = flushControllerRef.current;
+
   const appendRows = (incoming: LogEventRow[]) => {
     // 按 cursor 去重：重放（无游标订阅）与实时尾包会送来同一批事件，不去重即界面重复行 + React key 撞车。
     // 判重与登记必须同步完成——若延后到 effect 再重建集合，集合恒为「可见行子集」，
     // 未渲染的那批就漏判（F17 复核 2026-09-19 实测：延迟重建形态同批帧出 2 组重复 key）。
     const buffer = bufferRef.current;
-    if (buffer.append(incoming) === 0) return;
-    // 一帧合并窗口（F8-L3）：窗口内已有待入库行时不再另起定时器。
-    if (flushTimerRef.current === null) {
-      flushTimerRef.current = setTimeout(() => {
-        flushTimerRef.current = null;
-        commitPending();
-      }, FLUSH_WINDOW_MS);
-    }
+    // 一帧合并窗口（F8-L3）：闸门语义=「新鲜行>0 且窗内无在飞定时器才武装」，提纯入 lib。
+    flush.request(buffer.append(incoming));
   };
 
   const startStream = (after: string | null) => {
@@ -214,10 +217,7 @@ export function LogsPage() {
     startStream(stored);
     return () => {
       clientRef.current?.stop();
-      if (flushTimerRef.current !== null) {
-        clearTimeout(flushTimerRef.current);
-        flushTimerRef.current = null;
-      }
+      flush.dispose(); // 取消在飞合并窗定时器（不封口，StrictMode 重挂载后可再武装——与提纯前 clearTimeout+置 null 形态逐字一致）
       bufferRef.current.discardPending();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
