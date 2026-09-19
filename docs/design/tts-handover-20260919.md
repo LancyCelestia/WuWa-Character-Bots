@@ -195,7 +195,7 @@ CapabilityResult.audio
 - 自动配音路径任何失败 → **原样返回 result**（配音是增益，文字回复绝不能受影响）
 - `maybe_attach_voice` 整个函数体包在 `try/except Exception` 里兜底
 
-> 2026-09-20 勘误：上两条「fail-open/文字绝不能受影响」只对 **bot 侧合成阶段** 成立（合成失败→降级文案/原样返回，至今未变），**对投递阶段为假**——传输件换 SnowLuma 后已复判决（report-T46/T55）：`record` 段任一环节失败 ⇒ **text+record 整条混排消息一字不发**、API 明确回 failed（SnowLuma `buildSendElems` 循环零 try/catch，无平台侧「降级只发文字」路径）；NapCat 时代「段被静默摘除、文字独活、谎报 SENT」机制不复存在，但毒语音场景**文字同沉**。用户已裁 **U-29=A 案**：保 mixed 一条消息+段级记账防盲重投，不拆条。兜底与施工：W1 兜底基座=worker `_send_media_text_fallback_once`（`worker.py:622-665` 已存在，当前仅第 3 轮烧完才触发）；A 案最小改造面+T46-N1 retcode 白名单扩面（1400 先行）归 **Wave H**（已授权未开工，T65 先遣件备料中；**后记（T102 微同步 2026-09-20）**：Wave H 段级记账/退码白名单/W1 兜底已落库（194a2ca，T78），本句「未开工」状态语已被超越）；`result_unknown`（超时/断连）**绝不**触发文本补发（`worker.py:581-588` 安全前提）。缺陷编号 M-04/M-63。
+> 2026-09-20 勘误：上两条「fail-open/文字绝不能受影响」只对 **bot 侧合成阶段** 成立（合成失败→降级文案/原样返回，至今未变），**对投递阶段为假**——传输件换 SnowLuma 后已复判决（report-T46/T55）：`record` 段任一环节失败 ⇒ **text+record 整条混排消息一字不发**、API 明确回 failed（SnowLuma `buildSendElems` 循环零 try/catch，无平台侧「降级只发文字」路径）；NapCat 时代「段被静默摘除、文字独活、谎报 SENT」机制不复存在，但毒语音场景**文字同沉**。用户已裁 **U-29=A 案**：保 mixed 一条消息+段级记账防盲重投，不拆条。兜底与施工：W1 兜底基座=worker `_send_media_text_fallback_once`（`worker.py:622-665` 已存在，当前仅第 3 轮烧完才触发）；A 案最小改造面+T46-N1 retcode 白名单扩面（1400 先行）归 **Wave H**（已授权未开工，T65 先遣件备料中；**后记（T102 微同步 2026-09-20）**：Wave H 段级记账/退码白名单/W1 兜底已落库（194a2ca，T78），本句「未开工」状态语已被超越）【**2026-09-20 CATALOG-FIX 就地更正为四态口径**：①T46-N1 retcode 白名单扩面＝**已入库**（真身 `plugins/bot_unified_runtime/domains/transport/sender/onebot.py:162 _is_final_failure_retcode`、判定式 `:176`，含 `100` 与 `1400`；`git status --porcelain` 该件干净＝HEAD 即此内容）；②**生效待重启**——本仓铁律「改代码必须重启 bot 才生效」，在岗进程是否已吃进本笔**不写死在文档里**，判据＝比对进程创建时刻与该笔提交时刻（复跑 `Get-CimInstance Win32_Process -Filter "Name='python.exe'"`）；③Wave H 段级记账/W1 兜底＝**已落库 194a2ca**、同样待重启核对；④A 案剩余改造面＝**未落码**（在飞）。旧「已授权未开工」四字自本行起作废，只按「已落码／已入库／生效待重启／未落码」四态书写。】；`result_unknown`（超时/断连）**绝不**触发文本补发（`worker.py:581-588` 安全前提）。缺陷编号 M-04/M-63。
 
 ### 3.3 域归属裁决（重要，别搬错地方）
 
@@ -850,6 +850,8 @@ BT="C:/Users/LancyCelestia/.workbuddy-ai/tmp/pytest/handover"; mkdir -p "$BT"
 
 位置：`C:\Software\GPT-SoVITS-V2Pro\tools\verify_chatbot_env.py`（与其余工具同放，**不进 ChatBot 源码树**）。
 
+> 2026-09-20 勘误（T124 同步）：上行「不进 ChatBot 源码树」与本节下方案令里的外部路径均已过时——`verify_chatbot_env.py` 已入仓为 `scripts/verify_chatbot_env.py`（T87，`7e2fe36` M-67 裁决 A：重建为配置面真验证，判据走生产 Config 真身），现行跑校验优先用仓内路径；引擎目录原件保留只读。
+
 ```bash
 cd "C:/Users/LancyCelestia/Documents/MyWorkspace/ChatBot/ChatBot"
 PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1 \
@@ -972,6 +974,8 @@ parsed = parse_ref_audios(config.bot_tts_ref_audios, base_dir=config.bot_tts_gpt
 | `docs/design/tts-handover-20260919.md`                                | 本文档                                                                                                                                            |
 | `C:\Software\GPT-SoVITS-V2Pro\refs\`                                  | 参考音频 + 扫描 CSV + 听辨清单 + ASR TSV                                                                                                                 |
 | `C:\Software\GPT-SoVITS-V2Pro\tools\`                                 | 5 个工具脚本（**刻意不进源码树**）：`scan_durations.py` / `make_listening_checklist.py` / `pick_refs.py` / `asr/transcribe_refs.py` / `verify_chatbot_env.py` |
+
+> 2026-09-20 勘误（T124 同步）：上行「刻意不进源码树」已被 M-61 推翻——语料工具链四脚本（`scan_durations` / `pick_refs` / `make_listening_checklist` / `transcribe_refs`）已收编入仓 `scripts/tts_corpus/`（`c78951f`，T106：溯源块+引擎原件 sha256 双向防漂移锚，缺失=SKIP；引擎目录原件只读零写入，仍在上表路径）；`verify_chatbot_env.py` 更早入仓 `scripts/verify_chatbot_env.py`（T87，`7e2fe36`）。随收编的防护面：18 例冒烟门 `tests/test_tts_corpus_tools.py`（c78951f 内）+反向毒化防护门 `tests/test_tts_corpus_gate.py`（T96 三源对齐门，「按 tsv 覆盖 .env」在门上必红；`097b2e9` 补录入库）。
 
 ---
 
