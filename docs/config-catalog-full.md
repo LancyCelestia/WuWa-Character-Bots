@@ -811,7 +811,7 @@
 | `_tts_output_dir` | `data/tts_output` | 合成 wav 落盘目录（走 runtime 重映射，DATAFIX 收口）；同参数命中 sha256 缓存则复用 |
 | `_time_sync_http_enabled` / `_time_sync_http_url` | `true` / 空（内置 `https://www.baidu.com,https://www.taobao.com,https://www.qq.com`） | HTTPS 授时兜底（R3 停摆批 2026-09-17）：UDP 123 被墙、NTP 全败后 HEAD 取 RFC 7231 `Date` 头估偏移（1s 粒度 +0.5s 量化居中，θ=server−(t0+t3)/2）；失败链 NTP→HTTPS→系统钟每级一行日志；复用 `_time_sync_max_drift_ms` 钳制与 RTT 上限；仅收 `https://` 端点，url 逗号分隔可换 |
 | `_tts_preset` | `shorekeeper` | 语音预设选择（G-2 契约层 2026-09-20，**合成参数唯一缺省源**=`domains/media/tts_presets.py` 中央预设表：带每参数 rationale/引擎域值/seed_policy/读法词典占位/八硬编码收编，其中 `split_bucket=False`=M-76 死意图显式化）；枚举成员=TTS_PRESET_IDS（装载期即拒未知值，与注册表键集一致性由 `tests/test_tts_presets.py` 锁）；下方 `BOT_TTS_*` 数值键降级为管理员覆盖（env 显式值 > preset；v1 预设值=本表缺省值，零行为变更；U-13 周期后收敛） |
-| `_tts_max_chars` | `200` | 单次合成文本上限（超出按句末截断并提示）；**`0`=不限（不按字数截断，M-35 语义反转修死，全仓 `*_MAX_CHARS=0 表不限` 惯例自此在 TTS 域成立）**；「不限≠无界」——必过 `_tts_hard_max_chars` 中央硬顶 |
+| `_tts_max_chars` | `200` | 单次合成文本上限（超出按句末截断，静默无用户面提示——audit_tags `truncated=true` 留痕）；**`0`=不限（不按字数截断，M-35 语义反转修死，全仓 `*_MAX_CHARS=0 表不限` 惯例自此在 TTS 域成立）**；「不限≠无界」——必过 `_tts_hard_max_chars` 中央硬顶 |
 | `_tts_hard_max_chars` | `2000` | 文本中央硬顶（G2-R3）：超顶=拒绝合成+OperationalIssue 留痕（`tts_service_rejected`+audit `over_hard_cap`）+引导文案，**不静默不拆条**（拆条归 H 波 M-63 修后）；`0`=禁配无界（取内置常量 2000）；自动配音路超顶=静默放弃增益 |
 | `_tts_max_audio_bytes` | `8388608`（8 MiB） | 产物字节硬顶（G2-R3）：v2ProPlus=32000Hz/16bit/单声道 ⇒ 64,000 B/s 恒定，8 MiB≈131s（覆盖现行 200 字档 ≈82s≈5.3MB 留 50% 余量）；超顶=体检闸拒（`tts_bad_audio` 族）不入缓存不落盘不出站；`0`=禁配无界（取内置 8 MiB）；**换 media_type/采样率须重裁**（字节顶≈时长顶的换算前提） |
 | `_chat_strict_priority` / `_chat_channel_cooldown_seconds` / `_chat_failover_min_hop_seconds` | `true` / `90` / `3` | v21r2 R1 故障转移链完善（2026-09-17 用户裁定「永远按注册表优先级处理」）：同名模型渠道聚合排序严格按注册表 priority（价格/EWMA 只作同级 tiebreak，false=旧行为）；真实调用失败的渠道 90s 冷却降级到候选队尾（不剔除、全冷却原序放行，落 SQLite 重启不丢）；链预算止损=除首跳外剩余预算 <3s 不再发起新跳（0=关）。owner：`llm/model_router.py` + `llm/channel_health.py` |
@@ -824,7 +824,7 @@
 | `_tts_cache_enabled` | `true` | sha256 结果缓存开关（键=canonical_json(identity_version+引擎地址+参考指纹+预设身份+生效参数+清洗后文本)；LRU 上限 512）；seed 由键派生（同句恒同音色，G2-R3 报备项） |
 | `_tts_cache_max_bytes` / `_tts_cache_max_age_days` | `0` / `0` | 产物目录磁盘配额（U-04：`data/tts_output` 定性=**缓存**，接中央 `cache_policy.enforce_quota` 最旧先删+保鲜期；**缺省 0/0=不限制，字节级行为不变**）；换缓存键空间（identity_version 换代）产生的旧 wav 孤儿靠它回收。owner：`domains/media/capabilities/tts.py synthesize` |
 | `_tts_auto_reply_enabled` | **`false`** | 对话自动配音：LLM 回复生成后追加语音条（在能力包装层附加 `CapabilityResult.audio`，不侵入 chat.py/pipeline.py） |
-| `_tts_auto_reply_scope` | `private` | 自动配音适用会话：`private`=仅私聊 / `group`=仅群聊 / `all`=双向（**三值枚举装载期校验**；M-51 漏登 `group` 已补）；群聊默认不配音以免刷屏 |
+| `_tts_auto_reply_scope` | `private` | 自动配音适用会话：`private`=仅私聊 / `group`=仅群聊 / `all`=双向（**三值枚举装载期校验**；M-51 漏登 `group` 已补）；群聊默认不配音以免刷屏；**scope=礼仪维度**，群面另受内容群白名单安全门约束（`bot_content_route_group_whitelist`，黑名单永远赢；白名单空=群面不配音绝不猜群，M-17） |
 | `_tts_auto_reply_max_chars` | `120` | 自动配音文本上限（比命令式合成更短；**`0`=不限**，超硬顶=放弃增益纯文本发出） |
 | `_tts_auto_reply_probability` | `0.05` | 自动配音概率门（2026-09-19 批）：符合条件的回复按此概率配音，**确定性哈希实现**（`should_voice_reply`，seed=`session_id:message_id`，与 `policy/gate.py` 的 `deterministic_group_reply_lottery` 同款）——同一条消息结果恒定，可复现可审计，不用 `random` 以免测试 flaky。`0`=永不配音、`1.0`=全量配音 |
 | `_tts_auto_reply_always` | **`false`** | 跳过概率门的调试/验收旁路：置真则凡过前五道门的回复一律配音（逐条听音用）。日常勿开——等于把概率当 100% |
