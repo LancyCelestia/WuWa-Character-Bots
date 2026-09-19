@@ -324,6 +324,47 @@ def test_clean_for_speech_empty_and_whitespace() -> None:
 
 
 # ---------------------------------------------------------------------------
+# M-73 括号动作段（T104）：动作描写不进语音。
+# 识别规则共用文字侧真相源 domains/render/roleplay（语音侧只消费，零第二正则）：
+# 括号内含汉字或嵌套=动作段摘除；括号内无汉字=颜文字保留；未闭合=普通文字。
+# ---------------------------------------------------------------------------
+
+
+def test_clean_for_speech_removes_full_line_action_segment() -> None:
+    # T25-P1-3 实弹样本：纯括号动作段整段摘除（修复前原样入声被念出）。
+    assert clean_for_speech("（轻轻握住你的手）") == ""
+
+
+def test_clean_for_speech_removes_leading_action_segment() -> None:
+    # T25-P1-3 实弹样本：RP 典型形态「（动作）台词」只念台词。
+    assert clean_for_speech("（微微一笑）今天的海风很温柔，你想我了么？") == (
+        "今天的海风很温柔，你想我了么？"
+    )
+
+
+def test_clean_for_speech_removes_inline_action_span() -> None:
+    # T25-P1-3 实弹样本：行内动作 span 剥除，前后台词直接相接。
+    assert clean_for_speech("我听见了……（顿了顿，声音低下去）别怕，我在。") == (
+        "我听见了……别怕，我在。"
+    )
+
+
+def test_clean_for_speech_half_width_brackets_same_semantics() -> None:
+    # 半角括号同语义（识别器 _ACTION_CLOSING_BRACKETS 双族同源）。
+    assert clean_for_speech("(叹了口气)好吧，我在。") == "好吧，我在。"
+
+
+def test_clean_for_speech_preserves_kaomoji_brackets() -> None:
+    # 括号内无汉字=颜文字不是动作：与文字侧同一真相源，保留不删。
+    assert clean_for_speech("好耶！(≧▽≦)") == "好耶！(≧▽≦)"
+
+
+def test_clean_for_speech_unclosed_bracket_is_plain_text() -> None:
+    # 未闭合括号按普通文字安全忽略（识别器既有语义，不臆造闭合）。
+    assert clean_for_speech("（还没写完这句") == "（还没写完这句"
+
+
+# ---------------------------------------------------------------------------
 # 缓存
 # ---------------------------------------------------------------------------
 

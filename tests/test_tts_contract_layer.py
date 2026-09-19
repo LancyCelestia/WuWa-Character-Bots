@@ -572,7 +572,7 @@ def test_failure_kind_table_every_entry_has_mapping() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 读法词典机制（M-77 占位，v1 空表零行为变更）
+# 读法词典机制（M-77，T104 转正：最小集 + 条级关断 + 应用点在清洗管线内）
 # ---------------------------------------------------------------------------
 
 
@@ -580,3 +580,41 @@ def test_lexicon_mechanism_applies_substitution() -> None:
     # T75：_apply_lexicon 返回 (文本, 命中数)——命中数进 M-14 机读审计。
     assert tts_mod._apply_lexicon("守岸人真棒", {"守岸人": "守 岸 人"}) == ("守 岸 人真棒", 1)
     assert tts_mod._apply_lexicon("普通文本", {}) == ("普通文本", 0)
+
+
+def test_lexicon_applied_inside_clean_pipeline_before_truncation() -> None:
+    """M-77 应用点（T104）：打码后、截断前——替换读法计入截断账。
+
+    反例锁定：若词典在截断**之后**应用，替换会顶破 max_chars
+    （「气温25℃今」7 字 →「气温25摄氏度今」8 字出门）。
+    """
+    audit: dict[str, object] = {}
+    speech, _reason = resolve_speech_text(
+        _config(), _msg("说 x"), "气温25℃今天，体感舒适。", max_chars=7, audit=audit
+    )
+    assert "摄氏度" in speech
+    assert len(speech) <= 7
+    assert audit["lexicon_replaced"] == 1
+
+
+def test_lexicon_disabled_entry_not_applied_in_pipeline() -> None:
+    """M-77 条级关断（T104）：关断条目（%）在真实管线不替换。
+
+    「50%」保持原样出门（引擎侧怎么念挂 U-02 听辨）——bot 侧绝不后缀出
+    「50百分之」这类乱语序。
+    """
+    speech, _reason = resolve_speech_text(_config(), _msg("说 x"), "成功率50%达标", max_chars=0)
+    assert "50%" in speech
+    assert "百分之" not in speech
+
+
+def test_audit_reports_action_bracket_removal() -> None:
+    """M-73 行为变更的机读事实（T104）：动作段摘除写 audit 并渲染 audit_tags。"""
+    audit: dict[str, object] = {}
+    speech, _reason = resolve_speech_text(
+        _config(), _msg("说 x"), "（微微点头）晚安。", max_chars=0, audit=audit
+    )
+    assert speech == "晚安。"
+    assert audit["actions_removed"] is True
+    assert "actions_removed=true" in tts_mod.lossy_transform_tags(audit)
+

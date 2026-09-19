@@ -90,8 +90,10 @@ from plugins.bot_unified_runtime.domains.media.tts_presets import (
     PRESET_REGISTRY,
     SEED_RULE_VERSION,
     TtsPreset,
+    effective_lexicon,
 )
 from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
+from plugins.bot_unified_runtime.domains.render.roleplay import strip_action_brackets
 
 logger = logging.getLogger(__name__)
 
@@ -292,14 +294,16 @@ def pick_ref_audio(
 
 
 def _clean_for_speech_tracked(
-    text: str, *, max_chars: int = 0
+    text: str, *, max_chars: int = 0, lexicon: dict[str, str] | None = None
 ) -> tuple[str, dict[str, Any]]:
     """``clean_for_speech`` 的带审计内里（M-14）：同一次变换顺带产出机读事实。
 
     返回 ``(清洗结果, 审计 dict)``。清洗操作与顺序和公开 pure 函数**逐字一致**
-    （``clean_for_speech`` 就是本函数的取首元薄壳）——审计只读不写，零行为变更。
-    审计键：``raw_len``/``kept_len``/``stripped``（markdown/代码/链接/列表剥除
-    是否真删了东西）/``truncated``（是否按 ``max_chars`` 截断）。
+    （``clean_for_speech`` 就是本函数的取首元薄壳；词典只随 ``lexicon`` 出参
+    进入，pure 形态不收词典）——审计只读不写。审计键：``raw_len``/``kept_len``/
+    ``stripped``（剥除族是否真删了东西）/``truncated``（是否按 ``max_chars``
+    截断）/``actions_removed``（M-73：括号动作段是否真摘除了）/``lexicon_replaced``
+    （M-77：词典替换命中数，仅随 ``lexicon`` 出参出现）。
     """
     value = str(text or "")
     audit: dict[str, Any] = {"raw_len": len(value), "stripped": False, "truncated": False}
@@ -309,12 +313,29 @@ def _clean_for_speech_tracked(
     value = _FENCE_RE.sub(" ", value)
     value = _INLINE_CODE_RE.sub(" ", value)
     value = _URL_RE.sub(" ", value)
+    # M-73（T104）：括号动作段不进语音——**消费**文字侧同一识别真相源
+    # ``domains/render/roleplay.strip_action_brackets``（括号内含汉字或嵌套
+    # 括号=动作段：独立行整段摘除、行内 span 剥除；括号内无汉字=颜文字保留；
+    # 未闭合括号按普通文字安全忽略；半角全角同语义）。语音侧**零第二括号
+    # 正则**（S-07 概率门四副本的教训、T25-Q3 明文禁令）。摆位：在围栏/行内
+    # 代码/链接之后——代码体内的全角括号不误判成动作；在 markdown 记号剥除
+    # 之前——动作段连同段内记号一起消失。
+    if "（" in value or "(" in value:
+        pre_bracket = value
+        value = strip_action_brackets(value)
+        audit["actions_removed"] = value != pre_bracket
     value = _MARKDOWN_MARKS_RE.sub("", value)
     value = _LIST_PREFIX_RE.sub("", value)
     audit["stripped"] = value != pre_strip
     value = _BLANK_LINES_RE.sub("\n", value)
     value = _SPACES_RE.sub(" ", value)
     value = value.replace("\n", " ").strip()
+    # M-77（T104）：读法词典应用点=打码后、截断前——替换读法计入截断账，
+    # 出门文本不会因词典替换顶破 max_chars。条级关断由
+    # ``tts_presets.effective_lexicon`` 在上游裁决，本函数收到什么替换什么。
+    if lexicon:
+        value, lexicon_hits = _apply_lexicon(value, lexicon)
+        audit["lexicon_replaced"] = lexicon_hits
     if max_chars > 0 and len(value) > max_chars:
         value = _truncate_at_sentence(value, max_chars)
         audit["truncated"] = True
@@ -326,9 +347,18 @@ def clean_for_speech(text: str, *, max_chars: int = 0) -> str:
     """把回复正文清洗成适合朗读的纯文本。
 
     去掉代码块/行内代码/链接/markdown 标记与列表前缀——这些东西念出来只会
-    变成一串噪音。``max_chars > 0`` 时在句子边界截断；**0（函数缺省）=不限**
-    （不按字数截断）——纯函数不做隐藏截断，限制由调用方按配置显式传入
-    （M-35：配置面 0=不限 语义统一，「不限≠无界」由中央硬顶另行把守）。
+    变成一串噪音。**括号动作段整段/行内剥除（M-73，T104）**：识别规则消费
+    文字侧同一真相源 ``domains/render/roleplay.strip_action_brackets``——
+    括号内含汉字或嵌套括号=动作描写（独立行整段摘除、行内 span 剥除，半角
+    全角同语义）；括号内无汉字（``(≧▽≦)`` 类颜文字）保留；未闭合括号按
+    普通文字安全忽略。**行为变更披露**：动作描写不再被念出——修复前
+    ``（微微一笑）`` 会被整段合成进人声（T25-P1-3/T26-S-3 双实跑，11/11
+    括号样本 100% 入声；本 docstring 曾宣称删「颜文字括号」实无该规则，
+    T25-P3-2，自 T104 起宣称与实现一致）。``max_chars > 0`` 时在句子边界
+    截断；**0（函数缺省）=不限**（不按字数截断）——纯函数不做隐藏截断，
+    限制由调用方按配置显式传入（M-35：配置面 0=不限 语义统一，「不限≠无界」
+    由中央硬顶另行把守）。本 pure 形态不做读法词典替换（词典随
+    ``resolve_speech_text`` 按预设配置进入管线，M-77）。
 
     本函数是 ``_clean_for_speech_tracked`` 的取首元薄壳：行为零差异；
     需要有损变换机读结论的调用方走 ``resolve_speech_text(…, audit=…)``。
@@ -1085,11 +1115,13 @@ def speech_block_reason(config: Any, message: IncomingMessage, text: str) -> str
 
 
 def _apply_lexicon(text: str, lexicon: dict[str, str]) -> tuple[str, int]:
-    """读法词典应用（M-77 机制）：键=原文精确串，值=替换读法。
+    """读法词典应用（M-77）：键=原文精确串，值=替换读法。
 
-    应用点=清洗侧末端（占位符替换之后、内容门之前）。v1 预设词典为空表
-    （零行为变更）；条目待 U-02 听辨后逐条入册 tts_presets。禁在此为 RP 括号
-    另造第二正则（S-07 教训）——括号段处理收 domains/core 共用件。
+    应用点=清洗管线内（打码后、截断前，T104）：替换读法计入截断账，出门
+    文本不因替换顶破 ``max_chars``。传入的词典应是 ``tts_presets.effective_lexicon``
+    的出参（条级关断已在上游裁决）。禁在此为 RP 括号另造第二正则（S-07
+    教训）——括号段处理消费 ``domains/render/roleplay`` 共用件。不做全量读音
+    规范：人名/专名/多音字读法挂 U-02 听辨另波。
 
     返回 ``(替换后文本, 替换命中次数)``（M-14：命中数进机读审计；替换语义
     与顺序零变化）。
@@ -1110,7 +1142,8 @@ def resolve_speech_text(
     max_chars: int | None = None,
     audit: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
-    """合成前**唯一**的取文口：打码 → 清洗 → 占位符 → 词典 → 内容门。
+    """合成前**唯一**的取文口：打码 → 清洗（括号动作摘除/记号剥除/词典替换/
+    截断）→ 占位符 → 内容门。
 
     返回 ``(可朗读正文, 拒绝理由)``。
 
@@ -1124,8 +1157,9 @@ def resolve_speech_text(
 
     ``audit``（M-14）：可选出参 dict——有损变换的机读事实写回这里
     （``redacted``/``stripped``/``truncated``/``placeholders_replaced``/
-    ``lexicon_replaced``/``raw_len``/``kept_len``/``kept_ratio``），文本处理
-    结果零变化；渲染成 audit_tags 用 ``lossy_transform_tags``。
+    ``lexicon_replaced``/``actions_removed``/``raw_len``/``kept_len``/
+    ``kept_ratio``），文本处理结果零变化；渲染成 audit_tags 用
+    ``lossy_transform_tags``。
     """
     raw = str(raw_text or "")
     value = redact_local_secrets(raw)
@@ -1133,11 +1167,14 @@ def resolve_speech_text(
     if limit is None:
         # 未显式给限=读配置（0=不限原样生效，无 or-反转）。
         limit = int(getattr(config, "bot_tts_max_chars", 0) or 0)
-    speech, clean_audit = _clean_for_speech_tracked(value, max_chars=int(limit))
+    speech, clean_audit = _clean_for_speech_tracked(
+        value,
+        max_chars=int(limit),
+        lexicon=effective_lexicon(_resolve_preset(config).lexicon),
+    )
     # 打码占位符（`<已隐藏>` / `<本机路径已隐藏>`）的尖括号会被清洗吃掉，剩个
     # 残缺形态念出来只会变成一串怪音；换成可读出的词（占位符本身仍不外泄原值）。
     speech, placeholder_hits = _REDACTION_PLACEHOLDER_RE.subn("已隐去", speech)
-    speech, lexicon_hits = _apply_lexicon(speech, _resolve_preset(config).lexicon)
     if audit is not None:
         kept_ratio = round(len(speech) / len(raw), 2) if raw else 1.0
         audit.update(
@@ -1149,7 +1186,8 @@ def resolve_speech_text(
                 "stripped": bool(clean_audit.get("stripped")),
                 "truncated": bool(clean_audit.get("truncated")),
                 "placeholders_replaced": int(placeholder_hits),
-                "lexicon_replaced": int(lexicon_hits),
+                "lexicon_replaced": int(clean_audit.get("lexicon_replaced", 0)),
+                "actions_removed": bool(clean_audit.get("actions_removed")),
             }
         )
     if not speech:
@@ -1182,6 +1220,10 @@ def lossy_transform_tags(audit: dict[str, Any] | None) -> list[str]:
     placeholders = audit.get("placeholders_replaced")
     if placeholders:
         tags.append(f"placeholders_replaced={placeholders}")
+    if audit.get("actions_removed"):
+        # M-73（T104）：括号动作段摘除的机读事实——「念出的和文字看到的不一样」
+        # 从此可从 audit_tags 直接看出来。
+        tags.append("actions_removed=true")
     lexicon_hits = audit.get("lexicon_replaced")
     if lexicon_hits:
         tags.append(f"lexicon_replaced={lexicon_hits}")

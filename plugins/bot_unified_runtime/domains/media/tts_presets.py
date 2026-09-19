@@ -11,7 +11,8 @@ config 缺省值与 v1 预设值相等（现状收编），故 v1 零行为变�
   无条件自动关闭并打日志（引擎 TTS.py:1097-1099，转引 T53），生产恒 0.85，
   旧硬编码 ``True`` 每次都被否决；预设显式 False 与实况对齐（出门行为字节级不变）；
 - ``seed`` 不直配：由 ``seed_policy`` 列派生（G2-R3/U-25 裁定=cache_key 派生）；
-- ``lexicon``：读法词典占位（M-77 机制，应用点=清洗侧末端；v1 空表零行为变更）；
+- ``lexicon``：读法词典（M-77，T104 转正=常见符号/单位最小集，条级可关断；
+  应用点=清洗侧管线内打码后截断前；人名/专名读法挂 U-02 另波）；
 - ``rationale``：参数出处链载体（M-75——谁定/凭什么/何时听过，落盘可考）。
 
 纯数据模块：只依赖标准库，不 import 包内任何模块（config.py 的枚举白名单
@@ -105,6 +106,43 @@ _SHOREKEEPER_RATIONALE: dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# 读法词典（M-77 转正，T104）：常见符号/单位最小集
+# ---------------------------------------------------------------------------
+
+# 最小集口径：只收**替换后语序天然正确**的高频符号/单位（键=原文精确串，
+# 值=替换读法）；不做全量读音规范——人名/专名/多音字读法挂 U-02 听辨另波。
+# 每条读法都按「数字+符号」典型形态推敲过语序（25℃→25摄氏度、3×4→3乘4、
+# 6÷2→6除以2、±5→正负5、45°→45度、A＆B→A和B）。
+SHOREKEEPER_LEXICON: dict[str, str] = {
+    "℃": "摄氏度",
+    "℉": "华氏度",
+    "＆": "和",
+    "&": "和",
+    "±": "正负",
+    "×": "乘",
+    "÷": "除以",
+    "°": "度",
+    # —— 以下两条**在表内但默认关断**（LEXICON_DISABLED）——
+    # 「%」：汉语语序「百分之」前置（50%→百分之五十），精确串替换只能后缀
+    # （→「50百分之」乱语序），反成回归 ⇒ 关断待正则级规则（应用机制不动）。
+    "%": "百分之",
+    # 「～」：双语义（「3～5天」范围 vs「好呀～」语气尾），精确串替换分不了
+    # 语境 ⇒ 关断（引擎当前怎么念挂 U-02 听辨）。
+    "～": "到",
+}
+
+# 条级关断表（M-77 逐条可关断）：键=词典条目原文，命中即不进生效词典。
+# 收录于此 = 该条目的读法暂不启用，但读法本身留在 SHOREKEEPER_LEXICON 备查，
+# 取消关断只需从本集合移除键（不动词典本体）。
+LEXICON_DISABLED: frozenset[str] = frozenset({"%", "～"})
+
+
+def effective_lexicon(lexicon: dict[str, str] | None) -> dict[str, str]:
+    """应用条级关断后的**生效词典**（语音侧应用点只消费本函数出参）。"""
+    return {key: reading for key, reading in (lexicon or {}).items() if key not in LEXICON_DISABLED}
+
+
 SHOREKEEPER_PRESET = TtsPreset(
     preset_id="shorekeeper",
     params={
@@ -124,7 +162,7 @@ SHOREKEEPER_PRESET = TtsPreset(
         "parallel_infer": True,
     },
     seed_policy="derived",
-    lexicon={},
+    lexicon=SHOREKEEPER_LEXICON,
     rationale=_SHOREKEEPER_RATIONALE,
 )
 

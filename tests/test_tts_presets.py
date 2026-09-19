@@ -62,11 +62,38 @@ def test_split_bucket_explicit_false_is_dead_intent_elimination() -> None:
     assert PRESET_REGISTRY["shorekeeper"].params["split_bucket"] is False
 
 
-def test_seed_policy_and_lexicon_placeholder() -> None:
-    """G2-R3/U-25：seed=cache_key 派生（derived 唯一入册值）；M-77 词典 v1 空表占位。"""
+def test_seed_policy_derived_and_lexicon_minimal_set() -> None:
+    """G2-R3/U-25：seed=cache_key 派生；M-77 词典占位转正=常见符号/单位最小集（T104）。
+
+    最小集口径（不做全量读音规范，人名/专名另波）：只收**替换后语序天然正确**
+    的符号；「%」「～」在表内但默认关断（见 test_lexicon_disabled_entries_kill_switch）。
+    """
     preset = PRESET_REGISTRY["shorekeeper"]
     assert preset.seed_policy == "derived"
-    assert preset.lexicon == {}
+    assert preset.lexicon["℃"] == "摄氏度"
+    assert preset.lexicon["℉"] == "华氏度"
+    assert preset.lexicon["＆"] == "和"
+    assert preset.lexicon["&"] == "和"
+    assert preset.lexicon["±"] == "正负"
+    assert preset.lexicon["×"] == "乘"
+    assert preset.lexicon["÷"] == "除以"
+    assert preset.lexicon["°"] == "度"
+
+
+def test_lexicon_disabled_entries_kill_switch() -> None:
+    """M-77 条级关断（T104）：词典条目可逐条关断，关断条目不进生效词典。
+
+    - 「%」：汉语语序是「百分之」**前**置（50%→百分之五十），精确串替换只能
+      后缀（50%→「50百分之」= 乱语序），反成回归 ⇒ 默认关断待正则级规则；
+    - 「～」：双语义（「3～5天」范围 vs「好呀～」语气尾），精确串替换无法
+      分语境 ⇒ 默认关断。
+    """
+    assert "%" in tts_presets.LEXICON_DISABLED
+    assert "～" in tts_presets.LEXICON_DISABLED
+    effective = tts_presets.effective_lexicon(PRESET_REGISTRY["shorekeeper"].lexicon)
+    assert "%" not in effective
+    assert "～" not in effective
+    assert "℃" in effective
 
 
 def test_rationale_records_provenance() -> None:
