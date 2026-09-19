@@ -86,3 +86,46 @@ python scripts/webui_acceptance.py                     → PASS 9 / SKIP 0 / FAI
 - 源码树内本会话零缓存产物；根目录既存 `.mypy_cache`/`.ruff_cache`/`.pytest_cache`/`.tmp-test/`（约 8100 件，制造 44 条 ruff 噪声）**非本波所造**，按规矩只登记不删。
 - 禁触清单（`personas/`、`ChatBot_Runtime/`、`ChatBot_Archive/`、`.env`、`domains/weather/assets/qx.json`、台账外文件）全程未动；`.env` 未读明文。
 - 席位产物：F2/F2-b/F3/F4/F4-b/F5/F7/F8/F9/F10/F11/F11-b/F12/F13/F14/F15/F16/F17/F18/F19/F20/F21/F22-b/F23/F24/F25/S8 共 27 份在同目录。
+
+## 八、波次二（2026-09-19 晚，5 并发席）：已落定的追加项
+
+> §一/§二 是「一次性串行修复」的账；本节是**用户 mandate 转并行席后**的增量。逐席对账单同目录
+> （`K1-knowledge-paths.md` / `R5-impl.md` / `UNI1-impl.md`），进度与裁定以
+> `.superpowers/sdd/FRONTEND-AUDIT/progress.md` 台账为准。
+
+### 已入库（哈希为证）
+
+| # | 事项 | 落点 | 提交 |
+|---|---|---|---|
+| B-1 | 主题切换图标脱栅（`size-[1.2rem]`×2）还债 | `components/theme-switch.tsx` → `size-5`；脱栅棘轮 3→1 | `97eccbc` |
+| B-2 | **任意值字面量补牙**：规则⑧任意值方括号、⑨canvas 字体字面量；门自测 37→58 | `webui/scripts/layout-constitution.mjs` | `97eccbc` |
+| B-3 | **三族判据/文案单源化**：`reason` 话术 4 套、窗口枚举 3 套、空值记号 11 处 | 新增 `lib/labels.ts`；`node --test` 14→29；locale zh=en 零漂移 | `f4f4572` |
+| B-4 | 窄屏导航抽屉（复用同一份 nav 数组，换路由即关、Escape 归还焦点、aria-* 齐） | `components/layout/app-shell.tsx` | `1a134e3` |
+| B-5 | **深链参数全站单点归一**：`SEARCH_SPECS` 声明表 → 生成 `validateSearch` → 唯一回写点 `replace` | `webui/src/router.tsx` | `1a134e3` |
+
+### 运行数据修复（用户 19:05 显式授权动 `.env`）
+
+台账外发现 **runtime-layout 两条红**：`BOT_KNOWLEDGE_FILES` 17 条中 2 条路径断。K1 查明**不是删除而是搬家**
+（整目录 09-18 迁至 `Documents\Documents\AI提示词与人格\AI智能体有关材料\`，21 个同级文件全在）。
+最小化改写两行前缀，改前整份备份 `%TEMP%\env-backup-20260919-192938`（23,848 B），替换数≠2 即拒写，全程不回显内容。
+**复跑证据**：`python scripts/runtime_layout_smoke.py` → **exit 0**（此前 2 FAIL）。
+遗留代价：`chunk_id` 含全路径 ⇒ 下次加载重嵌约 47.5 MB 并留旧路径残行，与待裁的 B5 `kb_drift` 重建同源。
+
+### 评审抓出的两处「已交付件里的新缺陷」（不是席位交付不足，是并行树本身在漂）
+
+| # | 缺陷 | 为什么严重 | 裁定 |
+|---|---|---|---|
+| CR-1 | **版式宪法门规则②的括号臂自始空转**：`OFF_LADDER_TEXT` 以 `\b` 收尾，而 `]` 之后永不构成词边界 | 实测 `text-xs` 红、`text-[13px]` / `text-[0.8rem]` **全绿** ⇒ B-2 号称收口的「五档字号阶梯」仍可静默入库，且席位台账已背书其安全；另发现 4 类绕行（负号前缀 / 透明度后缀 / 任意属性形 / 未列属性族） | 派 R5-FIX（轮 1/5）：每关一条绕行必须交**双向自测**（正样本变红 + 近似合法样本不变绿），否则视为未修。已核 `webui/src` 无 `text-[` 存量 ⇒ 纯门侧收口不新增违规 |
+| CR-2 | **`labels.test.ts` 直读三份未跟踪后端 `.py`**（`control_plane/{metrics,webui_memory_graph,webui_stats}.py`） | 干净克隆必 ENOENT ⇒ `node --test` 失败 ⇒ B-3 刚立的 `test_pure_function_tests`（断言 `# fail 0`）把**整道 pytest 门**为非前端原因变红 | Ruling：`node --test` 套件一律**自闭包**（只读 `webui/`）；跨界对账迁新建 `tests/test_webui_labels_backend_parity.py`，控制面缺席即 `pytest.skip`——skip 是 pytest 一等概念，node 原生测试无等价物。派 UNI1-FIX（轮 1/5） |
+
+### 移交下一位接手者的暗坑（B-5 的代价，务必读）
+
+`SEARCH_SPECS` 是**声明式白名单**：任何页面把状态搬进 URL 后，**必须往表里加一行**，
+否则该参数在深链回写时被归一洗掉——表现为「分享出去的链接打开后筛选条件丢了」，
+且不报错、不留日志。这条约束目前只在代码注释与本台账里，尚未成为机器门。
+
+### 在飞（本节写入时点）
+
+DOC1（文档订正，等 `verify_hashes --write` 授权范围）· PERF1（`logs.tsx` + `graph/memory-canvas.tsx` 性能族）·
+F12-REVIEW · R5-FIX · UNI1-FIX。**最终 `npm run build` 与全量套件由主会话在五席落地后单点执行**
+（新鲜度门实测 `dist 落后 src 3302s`，并发构建会互相覆盖产物）。
