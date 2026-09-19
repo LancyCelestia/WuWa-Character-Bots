@@ -28,7 +28,7 @@
     "baseUrlPlaceholder": "留空 = 同源（挂在 /ui 时零配置）",
     "baseUrlHint": "开发模式可填 http://127.0.0.1:8742；保存后页面刷新生效。",
     "adminToken": "主令牌（读写）",
-    "adminTokenHint": "BOT_CONTROL_PLANE_TOKEN 对应的明文令牌；数据端点均可读。",
+    "adminTokenHint": "管理员侧只登记该令牌的 SHA-256（BOT_CONTROL_PLANE_TOKEN_SHA256），这里粘的是明文原值；数据端点均可读。",
     "roToken": "只读令牌",
     "roTokenHint": "可选备用；主令牌缺席时自动回退到只读令牌。",
     "tokenPlaceholder": "粘贴令牌（仅存本机浏览器）",

@@ -28,7 +28,7 @@
     "baseUrlPlaceholder": "Empty = same origin (zero-config when served at /ui)",
     "baseUrlHint": "For development use http://127.0.0.1:8742; the page reloads after saving.",
     "adminToken": "Primary token (read/write)",
-    "adminTokenHint": "Plaintext token of BOT_CONTROL_PLANE_TOKEN; grants read access to data endpoints.",
+    "adminTokenHint": "The admin side stores only this token's SHA-256 (BOT_CONTROL_PLANE_TOKEN_SHA256); paste the plaintext value here. Data endpoints are readable.",
     "roToken": "Read-only token",
     "roTokenHint": "Optional fallback; used when the primary token is absent.",
     "tokenPlaceholder": "Paste token (stored locally in this browser only)",
