@@ -1,0 +1,1814 @@
+from __future__ import annotations
+
+import math
+import random
+from collections.abc import Callable
+from typing import Any
+
+from plugins.bot_unified_runtime.capabilities import user_copy
+from plugins.bot_unified_runtime.capabilities.chat import (
+    ChatPromptDiagnostics,
+    build_chat_prompt_with_diagnostics,
+)
+from plugins.bot_unified_runtime.character import (
+    ConversationHistoryStore,
+    build_character_context_provider,
+)
+from plugins.bot_unified_runtime.character.source_summary import (
+    build_safe_context_source_summary,
+)
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.domains.chat_reply.policy import (
+    build_reply_budget_settings,
+    decide_reply_budget,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+    ROLE_ORDER,
+    build_role_settings,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.security import (
+    InjectionCheckInput,
+    check_prompt_injection,
+)
+from plugins.bot_unified_runtime.domains.core.config.config_readiness import (
+    diagnostic_llm_max_tokens,
+    diagnostic_llm_temperature,
+    has_real_api_key,
+    openai_compatible_preflight_errors,
+    run_config_smoke,
+    safe_openai_endpoint_url,
+)
+from plugins.bot_unified_runtime.domains.core.contracts import (
+    AuditRecord,
+    CapabilityResult,
+    ContextBundle,
+    DeliveryReceipt,
+    IncomingMessage,
+    PrivacyLevel,
+    RiskLevel,
+    SendPolicy,
+    SessionType,
+    new_request_id,
+)
+from plugins.bot_unified_runtime.domains.ops.audit import (
+    AuditRepository,
+    redact_private_debug,
+)
+from plugins.bot_unified_runtime.domains.ops.smoke.diagnostics import (
+    DiagnosticsStore,
+    RuntimeDiagnostic,
+)
+from plugins.bot_unified_runtime.llm import (
+    LLMProvider,
+    LLMProviderError,
+    OpenAICompatibleLLMProvider,
+    public_llm_error_message,
+    safe_llm_finish_reason,
+)
+from plugins.bot_unified_runtime.runtime import RuntimeControlState
+from plugins.bot_unified_runtime.sender import ReceiptRepository, SendQueue
+
+
+# 审查 Q-02：权限拒绝入 user_copy 池（守岸人语气轮换）；改为延迟取句，
+# 防 import 期把随机变体冻结成单值。
+def _denied_body() -> str:
+    return random.choice(user_copy.ADMIN_GATE_TEMPLATES).format(action="看运行时排障记录")
+
+
+def build_receipt_query_result(
+    receipt_repository: ReceiptRepository,
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str],
+    query: str,
+) -> CapabilityResult:
+    normalized_query = query.strip()
+    if not _is_admin(actor_roles):
+        return _debug_result(
+            capability_id="bot.receipt",
+            title="发送回执",
+            body=_denied_body(),
+            request_id=request_id,
+            audit_tags=["debug_query", "receipt_query", "debug_denied"],
+        )
+    if not normalized_query:
+        return _debug_result(
+            capability_id="bot.receipt",
+            title="发送回执",
+            body="用法：/bot receipt <request_id|debug_id>",
+            request_id=request_id,
+            audit_tags=["debug_query", "receipt_query", "debug_usage"],
+        )
+    receipt = receipt_repository.find(normalized_query)
+    if receipt is None:
+        return _debug_result(
+            capability_id="bot.receipt",
+            title="发送回执",
+            body=f"未找到发送回执：{_safe_token(normalized_query)}",
+            request_id=request_id,
+            audit_tags=["debug_query", "receipt_query", "debug_not_found"],
+        )
+    return _debug_result(
+        capability_id="bot.receipt",
+        title="发送回执",
+        body=_format_receipt(receipt),
+        request_id=request_id,
+        audit_tags=["debug_query", "receipt_query"],
+    )
+
+
+def build_audit_query_result(
+    audit_repository: AuditRepository,
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str],
+    query: str,
+) -> CapabilityResult:
+    normalized_query = query.strip()
+    if not _is_admin(actor_roles):
+        return _debug_result(
+            capability_id="bot.audit",
+            title="审计事件",
+            body=_denied_body(),
+            request_id=request_id,
+            audit_tags=["debug_query", "audit_query", "debug_denied"],
+        )
+    if not normalized_query:
+        return _debug_result(
+            capability_id="bot.audit",
+            title="审计事件",
+            body="用法：/bot audit <request_id>",
+            request_id=request_id,
+            audit_tags=["debug_query", "audit_query", "debug_usage"],
+        )
+    records = audit_repository.list_records(normalized_query)
+    if not records:
+        return _debug_result(
+            capability_id="bot.audit",
+            title="审计事件",
+            body=f"未找到审计事件：{_safe_token(normalized_query)}",
+            request_id=request_id,
+            audit_tags=["debug_query", "audit_query", "debug_not_found"],
+        )
+    return _debug_result(
+        capability_id="bot.audit",
+        title="审计事件",
+        body=_format_audit_records(normalized_query, records),
+        request_id=request_id,
+        audit_tags=["debug_query", "audit_query"],
+    )
+
+
+def build_recent_query_result(
+    diagnostics_store: DiagnosticsStore,
+    receipt_repository: ReceiptRepository,
+    audit_repository: AuditRepository,
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str],
+    query: str,
+) -> CapabilityResult:
+    if not _is_admin(actor_roles):
+        return _debug_result(
+            capability_id="bot.recent",
+            title="最近排障",
+            body=_denied_body(),
+            request_id=request_id,
+            audit_tags=["debug_query", "recent_query", "debug_denied"],
+        )
+    limit = _parse_limit(query)
+    diagnostics = diagnostics_store.list_recent(limit)
+    receipts = list(reversed(receipt_repository.list_receipts()))[:limit]
+    audits = list(reversed(audit_repository.list_records()))[:limit]
+    body = "\n".join(
+        [
+            f"最近排障摘要：limit={limit}",
+            _format_recent_diagnostics(diagnostics),
+            _format_recent_receipts(receipts),
+            _format_recent_audits(audits),
+        ]
+    )
+    return _debug_result(
+        capability_id="bot.recent",
+        title="最近排障",
+        body=body,
+        request_id=request_id,
+        audit_tags=["debug_query", "recent_query"],
+    )
+
+
+def build_queue_query_result(
+    send_queue: SendQueue,
+    config: Config,
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str],
+) -> CapabilityResult:
+    if not _is_admin(actor_roles):
+        return _debug_result(
+            capability_id="bot.queue",
+            title="发送队列",
+            body=_denied_body(),
+            request_id=request_id,
+            audit_tags=["debug_query", "queue_query", "debug_denied"],
+        )
+
+    return _debug_result(
+        capability_id="bot.queue",
+        title="发送队列",
+        body=_format_queue_diagnostic(send_queue.safe_summary(), config),
+        request_id=request_id,
+        audit_tags=["debug_query", "queue_query"],
+    )
+
+
+def build_roles_query_result(
+    config: Config,
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str],
+) -> CapabilityResult:
+    if not _is_admin(actor_roles):
+        return _debug_result(
+            capability_id="bot.roles",
+            title="权限规则",
+            body=_denied_body(),
+            request_id=request_id,
+            audit_tags=["debug_query", "roles_query", "debug_denied"],
+        )
+
+    return _debug_result(
+        capability_id="bot.roles",
+        title="权限规则",
+        body=_format_roles_diagnostic(config),
+        request_id=request_id,
+        audit_tags=["debug_query", "roles_query"],
+    )
+
+
+def build_persona_query_result(
+    config: Config,
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str],
+) -> CapabilityResult:
+    if not _is_admin(actor_roles):
+        return _debug_result(
+            capability_id="bot.persona",
+            title="人格自检",
+            body=_denied_body(),
+            request_id=request_id,
+            audit_tags=["debug_query", "persona_query", "debug_denied"],
+        )
+
+    from plugins.bot_unified_runtime.domains.ops.smoke.smoke import run_persona_smoke
+
+    result = run_persona_smoke(config)
+    return _debug_result(
+        capability_id="bot.persona",
+        title="人格自检",
+        body=_format_persona_diagnostic(result),
+        request_id=request_id,
+        audit_tags=[
+            "debug_query",
+            "persona_query",
+            "persona_ok" if result["ok"] else "persona_error",
+        ],
+    )
+
+
+def build_runtime_control_result(
+    runtime_control: RuntimeControlState,
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str],
+    command: str,
+    actor_id: str,
+) -> CapabilityResult:
+    if not _is_admin(actor_roles):
+        return _debug_result(
+            capability_id="bot.control",
+            title="运行时控制",
+            body=_denied_body(),
+            request_id=request_id,
+            audit_tags=["debug_query", "runtime_control", "debug_denied"],
+        )
+
+    normalized_command = command.strip().lower()
+    if normalized_command == "pause":
+        runtime_control.pause(actor_id=actor_id)
+        return _debug_result(
+            capability_id="bot.control",
+            title="运行时控制",
+            body=_format_runtime_control_state(
+                runtime_control,
+                headline="运行时已暂停。",
+            ),
+            request_id=request_id,
+            audit_tags=["debug_query", "runtime_control", "runtime_pause"],
+        )
+    if normalized_command == "resume":
+        runtime_control.resume(actor_id=actor_id)
+        return _debug_result(
+            capability_id="bot.control",
+            title="运行时控制",
+            body=_format_runtime_control_state(
+                runtime_control,
+                headline="运行时已恢复。",
+            ),
+            request_id=request_id,
+            audit_tags=["debug_query", "runtime_control", "runtime_resume"],
+        )
+
+    return _debug_result(
+        capability_id="bot.control",
+        title="运行时控制",
+        body="用法：/bot pause 或 /bot resume",
+        request_id=request_id,
+        audit_tags=["debug_query", "runtime_control", "debug_usage"],
+    )
+
+
+def build_history_clear_result(
+    history_store: ConversationHistoryStore,
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str],
+    platform: str,
+    adapter: str,
+    bot_id: str,
+    session_id: str,
+    sender_id: str,
+) -> CapabilityResult:
+    if not _is_admin(actor_roles):
+        return _debug_result(
+            capability_id="bot.history",
+            title="最近对话历史",
+            body=_denied_body(),
+            request_id=request_id,
+            audit_tags=["debug_query", "history_clear", "debug_denied"],
+        )
+
+    try:
+        cleared_turns = history_store.clear_scope(
+            platform=platform,
+            adapter=adapter,
+            bot_id=bot_id,
+            session_id=session_id,
+            sender_id=sender_id,
+        )
+    except Exception:  # noqa: BLE001 - keep diagnostics safe and actionable.
+        return _debug_result(
+            capability_id="bot.history",
+            title="最近对话历史",
+            body=(
+                "最近对话历史清理失败：请检查历史库配置是否可写。\n"
+                "说明：不会展示数据库路径、会话 ID、用户 ID 或历史正文。"
+            ),
+            request_id=request_id,
+            audit_tags=["debug_query", "history_clear", "debug_error"],
+        )
+
+    return _debug_result(
+        capability_id="bot.history",
+        title="最近对话历史",
+        body="\n".join(
+            [
+                "最近对话历史已清理。",
+                "说明：只清理当前会话、当前发送者、当前机器人实例的最近对话；不影响长期记忆。",
+                f"cleared_turns={_safe_int(cleared_turns)}",
+            ]
+        ),
+        request_id=request_id,
+        audit_tags=["debug_query", "history_clear"],
+    )
+
+
+def build_context_query_result(
+    config: Config,
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str],
+    sender_id: str,
+    session_id: str,
+    query: str,
+    session_type: SessionType = SessionType.PRIVATE,
+    platform: str = "unknown",
+    adapter: str = "unknown",
+    bot_id: str = "unknown",
+) -> CapabilityResult:
+    if not _is_admin(actor_roles):
+        return _debug_result(
+            capability_id="bot.context",
+            title="上下文诊断",
+            body=_denied_body(),
+            request_id=request_id,
+            audit_tags=["debug_query", "context_query", "debug_denied"],
+        )
+
+    normalized_query = query.strip() or "你好，守岸人。"
+    message = IncomingMessage(
+        request_id=request_id or new_request_id("context"),
+        platform=platform,
+        adapter=adapter,
+        bot_id=bot_id,
+        session_id=session_id,
+        session_type=session_type,
+        sender_id=sender_id,
+        plain_text=normalized_query,
+        raw_segments=[{"type": "text", "data": {"text": normalized_query}}],
+        mentions_bot=True,
+    )
+    try:
+        injection_check = check_prompt_injection(
+            InjectionCheckInput(
+                request_id=message.request_id,
+                source_type="user_message",
+                plain_text=message.plain_text,
+                target_stage="context_diagnostic",
+                risk_level=message.risk_level,
+                privacy_level=message.privacy_level or PrivacyLevel.PERSONAL,
+            )
+        )
+        budget_message = message.model_copy(
+            update={
+                "plain_text": injection_check.sanitized_text,
+                "risk_level": injection_check.risk_level,
+            }
+        )
+        reply_budget = decide_reply_budget(
+            budget_message,
+            "bot.chat",
+            build_reply_budget_settings(config),
+        )
+        context = build_character_context_provider(config).build_context(
+            request_id=message.request_id,
+            sender_id=message.sender_id,
+            session_id=message.session_id,
+            query_text=injection_check.sanitized_text,
+            platform=message.platform,
+            adapter=message.adapter,
+            bot_id=message.bot_id,
+        )
+        context = context.model_copy(
+            update={
+                "context_budget": reply_budget.context_budget,
+                "current_message": injection_check.sanitized_text,
+                "risk_level": injection_check.risk_level,
+                "tone": context.tone.model_copy(
+                    update={"message_count_limit": reply_budget.max_messages}
+                ),
+            }
+        )
+        prompt_messages, prompt_diagnostics = build_chat_prompt_with_diagnostics(context)
+    except Exception as exc:  # noqa: BLE001 - diagnostics must return actionable text.
+        return _debug_result(
+            capability_id="bot.context",
+            title="上下文诊断",
+            body=(
+                "上下文诊断失败：人格、知识、记忆、最近对话或 prompt 构造出现错误。\n"
+                f"error={_safe_message(type(exc).__name__)}"
+            ),
+            request_id=message.request_id,
+            audit_tags=["debug_query", "context_query", "debug_error"],
+        )
+
+    body = _format_context_summary(
+        config=config,
+        context=context,
+        prompt_messages=prompt_messages,
+        prompt_diagnostics=prompt_diagnostics,
+        reply_budget_reason=reply_budget.reason,
+        risk_level=injection_check.risk_level,
+    )
+    return _debug_result(
+        capability_id="bot.context",
+        title="上下文诊断",
+        body=body,
+        request_id=message.request_id,
+        audit_tags=["debug_query", "context_query"],
+    )
+
+
+def build_config_query_result(
+    config: Config,
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str],
+) -> CapabilityResult:
+    if not _is_admin(actor_roles):
+        return _debug_result(
+            capability_id="bot.config",
+            title="配置体检",
+            body=_denied_body(),
+            request_id=request_id,
+            audit_tags=["debug_query", "config_query", "debug_denied"],
+        )
+
+    result = run_config_smoke(config)
+    return _debug_result(
+        capability_id="bot.config",
+        title="配置体检",
+        body=_format_config_diagnostic(result),
+        request_id=request_id,
+        audit_tags=[
+            "debug_query",
+            "config_query",
+            "config_ok" if result["ok"] else "config_error",
+        ],
+    )
+
+
+def build_readiness_query_result(
+    config: Config,
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str],
+    importer: Callable[[str], Any] | None = None,
+    command_resolver: Callable[[str], str | None] | None = None,
+    runtime_control: RuntimeControlState | None = None,
+) -> CapabilityResult:
+    if not _is_admin(actor_roles):
+        return _debug_result(
+            capability_id="bot.readiness",
+            title="统一就绪度",
+            body=_denied_body(),
+            request_id=request_id,
+            audit_tags=["debug_query", "readiness_query", "debug_denied"],
+        )
+
+    from plugins.bot_unified_runtime.domains.ops.smoke.smoke import run_readiness_smoke
+
+    result = run_readiness_smoke(
+        config,
+        importer=importer,
+        command_resolver=command_resolver,
+    )
+    result = {
+        **result,
+        "runtime_control": runtime_control or RuntimeControlState(),
+    }
+    return _debug_result(
+        capability_id="bot.readiness",
+        title="统一就绪度",
+        body=_format_readiness_diagnostic(result),
+        request_id=request_id,
+        audit_tags=[
+            "debug_query",
+            "readiness_query",
+            "readiness_ok" if result["ok"] else "readiness_error",
+        ],
+    )
+
+
+def build_dialogue_query_result(
+    config: Config,
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str],
+    query: str,
+    llm_provider: LLMProvider | None = None,
+) -> CapabilityResult:
+    if not _is_admin(actor_roles):
+        return _debug_result(
+            capability_id="bot.dialogue",
+            title="对话验收",
+            body=_denied_body(),
+            request_id=request_id,
+            audit_tags=["debug_query", "dialogue_query", "debug_denied"],
+        )
+
+    from plugins.bot_unified_runtime.domains.ops.smoke.smoke import run_dialogue_smoke
+
+    result = run_dialogue_smoke(
+        config,
+        message_text=query.strip() or "你好，守岸人。",
+        llm_provider=llm_provider,
+    )
+    return _debug_result(
+        capability_id="bot.dialogue",
+        title="对话验收",
+        body=_format_dialogue_diagnostic(result),
+        request_id=request_id,
+        audit_tags=[
+            "debug_query",
+            "dialogue_query",
+            "dialogue_ok" if result["ok"] else "dialogue_error",
+        ],
+    )
+
+
+def build_llm_query_result(
+    config: Config,
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str],
+    llm_provider: LLMProvider | None = None,
+) -> CapabilityResult:
+    if not _is_admin(actor_roles):
+        return _debug_result(
+            capability_id="bot.llm",
+            title="LLM 诊断",
+            body=_denied_body(),
+            request_id=request_id,
+            audit_tags=["debug_query", "llm_query", "debug_denied"],
+        )
+
+    result = _run_llm_diagnostic(config, llm_provider=llm_provider)
+    return _debug_result(
+        capability_id="bot.llm",
+        title="LLM 诊断",
+        body=_format_llm_diagnostic(result),
+        request_id=request_id,
+        audit_tags=["debug_query", "llm_query", f"llm_diag:{result['error_kind']}"],
+    )
+
+
+_LLM_SETUP_STATUS_LABELS = {
+    "ready_for_probe": ("配置就绪，可以实测", "ok"),
+    "blocked": ("配置受阻", "blocked"),
+    "needs_env_edit": ("需要修改 .env", "warn"),
+}
+_LLM_SETUP_NEXT_ACTIONS = {
+    "fix_config": "先修复上方标红的配置项；编辑 .env 保存后重启 Bot 生效。",
+    "llm_smoke": "配置已具备。运行 /bot llm 可做一次真实连接诊断（会调用一次模型）。",
+    "configure_real_llm": "本地链路可用；接入真实模型只需补齐上方标红项。",
+}
+
+
+def _llm_setup_rows(config: Config) -> list[dict[str, str]]:
+    """七个必配键的中文说明、取值范围与当前值（密钥永不展示）。"""
+    from plugins.bot_unified_runtime.domains.core.config.config_readiness import (
+        base_url_error,
+    )
+
+    provider = str(config.bot_chat_provider or "").strip()
+    model = str(config.bot_chat_model or "").strip()
+    temperature = float(config.bot_chat_temperature)
+    max_tokens = int(config.bot_chat_max_tokens)
+    timeout = float(config.bot_chat_timeout_seconds)
+    endpoint = safe_openai_endpoint_url(config.bot_chat_base_url)
+    key_ok = has_real_api_key(config.bot_chat_api_key)
+    return [
+        {
+            "key": "BOT_CHAT_PROVIDER",
+            "desc": "供应商类型",
+            "range": "openai_compatible（真实模型）或 static（本地占位）",
+            "value": provider or "（空）",
+            "ok": "1" if provider == "openai_compatible" else "0",
+        },
+        {
+            "key": "BOT_CHAT_MODEL",
+            "desc": "对话使用的模型名",
+            "range": "供应商提供的模型字符串，不能用占位符",
+            "value": model or "（空）",
+            "ok": "1" if model and model.lower() not in {"<model_name>", "your-model-name", "replace-me"} else "0",
+        },
+        {
+            "key": "BOT_CHAT_API_KEY",
+            "desc": "API 密钥（永不展示）",
+            "range": "真实密钥，或 env:变量名 引用",
+            "value": "已设置" if key_ok else "缺失或占位符",
+            "ok": "1" if key_ok else "0",
+        },
+        {
+            "key": "BOT_CHAT_BASE_URL",
+            "desc": "OpenAI 兼容接口地址",
+            "range": "http(s):// 开头，一般以 /v1 结尾，不含账号密码",
+            "value": (endpoint.removesuffix("/chat/completions") or "（空）"),
+            "ok": "1" if not base_url_error(config.bot_chat_base_url) else "0",
+        },
+        {
+            "key": "BOT_CHAT_TEMPERATURE",
+            "desc": "采样温度（越高越随机）",
+            "range": "0.0 – 2.0",
+            "value": str(temperature),
+            "ok": "1" if math.isfinite(temperature) and 0.0 <= temperature <= 2.0 else "0",
+        },
+        {
+            "key": "BOT_CHAT_MAX_TOKENS",
+            "desc": "单次回复的输出上限",
+            "range": "≥0 的整数（0 = 不设上限）",
+            "value": str(max_tokens),
+            "ok": "1" if max_tokens >= 0 else "0",
+        },
+        {
+            "key": "BOT_CHAT_TIMEOUT_SECONDS",
+            "desc": "单次请求超时时间",
+            "range": "> 0 的数字（秒）",
+            "value": str(timeout),
+            "ok": "1" if math.isfinite(timeout) and timeout > 0 else "0",
+        },
+    ]
+
+
+def _llm_setup_accent(config: Config) -> tuple[str, str]:
+    """主色来自 bot_help_card_color（无平台语境）；留空回退中性灰。"""
+    from plugins.bot_unified_runtime.output.card_render.bridge import (
+        _darken,
+        _hex_to_rgb,
+        _rgb_to_hex,
+    )
+
+    rgb = _hex_to_rgb(str(getattr(config, "bot_help_card_color", "") or ""))
+    return _rgb_to_hex(rgb), _rgb_to_hex(_darken(rgb))
+
+
+def _llm_setup_mica_html(payload: dict[str, Any]) -> str:
+    """LLM 接入检查卡：中文说明 + 参数取值范围 + 当前值。
+
+    mica-glass v1 2026-09-12：釉瑚云母底（bridge 按 accent 派生 --wash-* 注入；
+    工艺出处=用户裁定）+ 液态玻璃面板 + 三枚柔光色斑漂移（E01 二批：相位由
+    payload digest 钉帧，bridge.payload_phase 单一事实源，页面零 JS）；
+    语义状态色（红绿黄）置于玻璃层之上。
+    """
+    import html as _html
+
+    from plugins.bot_unified_runtime.domains.render.card_render.mica_shell import (
+        drift_blobs_html,
+        mica_decor_css,
+        render_root_tokens,
+        shell_base_css,
+    )
+    from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
+        SEMANTIC_DANGER,
+        SEMANTIC_SUCCESS,
+    )
+    from plugins.bot_unified_runtime.output.card_render.bridge import (
+        _derive_wash_tokens,
+        payload_phase,
+    )
+
+    accent, accent_dark = _llm_setup_accent(payload["config"])
+    wash = _derive_wash_tokens(accent)
+    status_label = str(payload["status_label"])
+    status_kind = str(payload["status_kind"])
+    rows_html = "".join(
+        "<div class=\"row glass\">"
+        f"<span class=\"dot {'ok' if row['ok'] == '1' else 'bad'}\"></span>"
+        "<div class=\"row-main\">"
+        f"<div class=\"row-key\">{_html.escape(row['key'])}"
+        f"<span class=\"row-desc\">{_html.escape(row['desc'])}</span></div>"
+        f"<div class=\"row-range\">取值范围：{_html.escape(row['range'])}</div>"
+        "</div>"
+        f"<span class=\"row-value\">{_html.escape(row['value'])}</span>"
+        "</div>"
+        for row in payload["rows"]
+    )
+    # E01 二批：漂移相位 = 内容 digest 钉帧；config 是运行时对象（非卡面语义，
+    # repr 含内存地址不稳定），排除在 digest 之外，只取卡面展示字段。
+    phase = payload_phase(
+        {key: value for key, value in payload.items() if key != "config"}
+    )
+    # :root 单一产出（v21r3 渲染统一步 3）：本卡语义状态色（红绿）经 extras 追加，
+    # 值消费 theme_tokens.SEMANTIC_SUCCESS/SEMANTIC_DANGER（G9 门禁：旧 #1a9e6c/
+    # #d64545 散值退役——绿 #2e9e6b / 红 #d54941，与 usage 卡状态色同源）。
+    root_tokens = render_root_tokens(
+        accent=accent,
+        accent_dark=accent_dark,
+        phase=phase,
+        wash=wash,
+        extras={"--good": SEMANTIC_SUCCESS, "--bad": SEMANTIC_DANGER},
+    )
+    # 通水切换（v21r3 统一收尾波 C2/C3）：壳层+玻璃两档+色斑层由 mica_shell
+    # 生成器单一产出拼入（宽度 880=CARD_SHELL_WIDTHS["debug"]；DOM 同源），
+    # 手抄副本退役；缺省输出与历史 CSS 逐字节等价（CORE 席实弹断言）。
+    shell_css = shell_base_css("setup-shell", width_px=880)
+    decor_css = mica_decor_css()
+    blobs_html = drift_blobs_html()
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><style>
+:root {{ {root_tokens} }}
+* {{ box-sizing:border-box; }}
+body {{ margin:0; font-family:var(--font-family); background:transparent; color:var(--ink); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }}
+.setup-stage {{ padding:0; width:fit-content; background:transparent; }}
+/* 釉瑚云母外壳+玻璃两档+漂移色斑层：mica_shell 生成器单一产出（v21r3 通水
+   切换，2026-09-19）：shell_base_css("setup-shell", width_px=880) + glass 两档
+   + mica_decor_css()（三枚 46/52/58s 交错漂移；reduced-motion 关停内建）；
+   色斑垫底、内容抬升；阴影只经两枚 token。 */
+{shell_css}
+{decor_css}
+.setup-head {{ padding:20px 26px 16px; border-bottom:1px solid rgba(255,255,255,.78); }}
+.setup-kicker {{ color:var(--accent-dark); font-size:12px; font-weight:700; letter-spacing:0.06em; }}
+.setup-title {{ margin-top:8px; font-size:28px; font-weight:700; }}
+/* 语义状态色（红绿黄）置于玻璃层之上，不随釉瑚洗派生。 */
+.setup-status {{ display:inline-flex; align-items:center; gap:8px; margin-top:12px; padding:6px 14px; border-radius:999px; font-size:14px; font-weight:700; border:1px solid #fff; }}
+.setup-status.ok {{ color:var(--good); background:color-mix(in srgb, var(--good) 8%, #fff); }}
+.setup-status.blocked {{ color:var(--bad); background:color-mix(in srgb, var(--bad) 8%, #fff); }}
+.setup-status.warn {{ color:#b07d1a; background:color-mix(in srgb, #b07d1a 10%, #fff); }}
+.setup-message {{ margin-top:10px; color:var(--muted); font-size:13px; line-height:1.5; }}
+.setup-body {{ padding:12px; display:grid; gap:6px; }}
+.row {{ display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:12px; }}
+.dot {{ width:9px; height:9px; border-radius:50%; flex:none; }}
+.dot.ok {{ background:var(--good); box-shadow:var(--mica-shadow-soft); }}
+.dot.bad {{ background:var(--bad); box-shadow:var(--mica-shadow-soft); }}
+.row-main {{ flex:1; min-width:0; }}
+.row-key {{ font-size:14px; font-weight:700; font-family:"Cascadia Mono",Consolas,"JetBrains Mono","Courier New",monospace; }}
+.row-desc {{ margin-left:10px; font-size:12px; color:var(--muted); font-weight:400; font-family:var(--font-family); }}
+.row-range {{ margin-top:3px; font-size:12px; color:var(--muted); }}
+.row-value {{ font-size:13px; font-weight:650; color:var(--accent-dark); max-width:300px; overflow-wrap:anywhere; text-align:right; }}
+.setup-foot {{ padding:12px 26px 16px; border-top:1px solid rgba(255,255,255,.80); background:rgba(255,255,255,.42); }}
+.setup-next {{ font-size:13px; color:var(--ink); line-height:1.6; }}
+.setup-next b {{ color:var(--accent-dark); }}
+</style></head><body><div class="setup-stage card"><section class="setup-shell">
+{blobs_html}
+<header class="setup-head glass"><div class="setup-kicker">管理员诊断 · 只读，不改动 .env</div><div class="setup-title">LLM 接入检查</div><div class="setup-status {status_kind}">{_html.escape(status_label)}</div><div class="setup-message">{_html.escape(str(payload["message"]))}</div></header><main class="setup-body">{rows_html}</main><footer class="setup-foot"><div class="setup-next"><b>下一步：</b>{_html.escape(str(payload["next_step"]))}</div></footer></section></div>
+</body></html>"""
+
+
+def _try_render_llm_setup_image(
+    config: Config,
+    result: dict[str, object],
+    *,
+    render_backend: Any | None,
+    card_dir: str,
+    request_id: str,
+) -> str:
+    """渲染 LLM 接入检查卡片；任何失败返回空串（回退精简文本）。"""
+    if render_backend is None or not getattr(render_backend, "available", False):
+        return ""
+    try:
+        status_key = str(result.get("llm_setup_status", ""))
+        status_label, status_kind = _LLM_SETUP_STATUS_LABELS.get(
+            status_key, (status_key or "未知状态", "warn")
+        )
+        next_action = str(result.get("llm_next_action", ""))
+        payload = {
+            "config": config,
+            "status_label": status_label,
+            "status_kind": status_kind,
+            "message": str(result.get("public_message", "")),
+            "rows": _llm_setup_rows(config),
+            "next_step": _LLM_SETUP_NEXT_ACTIONS.get(next_action, next_action),
+        }
+        png = render_backend.render_card(
+            {
+                "html": _llm_setup_mica_html(payload),
+                "viewport": {"width": 940, "height": 1000},
+                "device_scale_factor": 2,
+                "wait_ms": 0,
+            }
+        )
+        if not isinstance(png, bytes) or not png:
+            return ""
+        import hashlib
+        from pathlib import Path
+
+        target = Path(card_dir or "data/cards")
+        target.mkdir(parents=True, exist_ok=True)
+        # 摘要只按内容（不含 request_id）：同一状态重复出卡复用同一文件，
+        # 配合配额清理，不再每次调用都新增一张 PNG（与 echo 帮助卡同法）。
+        digest = hashlib.sha1(
+            f"{payload['status_label']}:{payload['rows']}".encode()
+        ).hexdigest()[:12]
+        path = target / f"llm_setup_{digest}.png"
+        path.write_bytes(png)
+        try:
+            from plugins.bot_unified_runtime.runtime.cache_policy import prune_prefixed
+
+            prune_prefixed(target, "llm_setup", keep=50)
+        except Exception:  # noqa: S110, BLE001 - 配额清理失败不影响本次出图。
+            pass
+        return str(path)
+    except Exception:  # noqa: BLE001 - 卡片失败回退精简文本。
+        return ""
+
+
+def _llm_setup_fallback_body(config: Config, result: dict[str, object]) -> str:
+    """渲染失败时的精简文本回退：一句话结论 + 标红项，不再输出键值墙。"""
+    lines = [str(result.get("public_message", ""))]
+    problems = [row["key"] for row in _llm_setup_rows(config) if row["ok"] != "1"]
+    if problems:
+        lines.append("需要修复的配置项：" + "、".join(problems))
+    lines.append("各项参数的中文说明与取值范围：编辑 .env 后重启即可生效。")
+    return "\n".join(lines)
+
+
+def build_llm_setup_query_result(
+    config: Config,
+    *,
+    request_id: str | None = None,
+    actor_roles: list[str],
+    render_backend: Any | None = None,
+    card_dir: str = "data/cards",
+) -> CapabilityResult:
+    if not _is_admin(actor_roles):
+        return _debug_result(
+            capability_id="bot.setup.llm",
+            title="LLM 接入检查",
+            body=_denied_body(),
+            request_id=request_id,
+            audit_tags=["debug_query", "llm_setup_query", "debug_denied"],
+        )
+
+    from plugins.bot_unified_runtime.domains.ops.smoke.smoke import run_llm_setup
+
+    result = run_llm_setup(config)
+    actual_request_id = request_id or new_request_id("debug")
+    image_path = _try_render_llm_setup_image(
+        config,
+        result,
+        render_backend=render_backend,
+        card_dir=card_dir,
+        request_id=actual_request_id,
+    )
+    audit_tags = [
+        "debug_query",
+        "llm_setup_query",
+        "llm_setup_ok" if result["ok"] else "llm_setup_error",
+    ]
+    if image_path:
+        return CapabilityResult(
+            request_id=actual_request_id,
+            capability_id="bot.setup.llm",
+            kind="image",
+            title="",
+            body="",
+            images=[{"type": "image", "file": image_path}],
+            risk_level=RiskLevel.LOW,
+            privacy_level=PrivacyLevel.PERSONAL,
+            send_policy=SendPolicy.IMMEDIATE,
+            audit_tags=audit_tags,
+        )
+    return _debug_result(
+        capability_id="bot.setup.llm",
+        title="LLM 接入检查",
+        body=_llm_setup_fallback_body(config, result),
+        request_id=actual_request_id,
+        audit_tags=audit_tags,
+    )
+
+
+def _debug_result(
+    *,
+    capability_id: str,
+    title: str,
+    body: str,
+    request_id: str | None,
+    audit_tags: list[str],
+) -> CapabilityResult:
+    return CapabilityResult(
+        request_id=request_id or new_request_id("debug"),
+        capability_id=capability_id,
+        kind="text",
+        title=title,
+        body=body,
+        risk_level=RiskLevel.LOW,
+        privacy_level=PrivacyLevel.PERSONAL,
+        send_policy=SendPolicy.IMMEDIATE,
+        audit_tags=audit_tags,
+    )
+
+
+def _run_llm_diagnostic(
+    config: Config,
+    *,
+    llm_provider: LLMProvider | None = None,
+) -> dict[str, object]:
+    readiness = run_config_smoke(config)
+    provider_name = config.bot_chat_provider
+    endpoint_url = safe_openai_endpoint_url(config.bot_chat_base_url)
+    has_real_api_key_value = has_real_api_key(config.bot_chat_api_key)
+    base_result: dict[str, object] = {
+        "ok": False,
+        "provider": provider_name,
+        "model": config.bot_chat_model,
+        "endpoint_url": endpoint_url,
+        "api_key": "set" if has_real_api_key_value else "missing",
+        "diagnostic_temperature": diagnostic_llm_temperature(config),
+        "diagnostic_max_tokens": diagnostic_llm_max_tokens(config),
+        "timeout_seconds": config.bot_chat_timeout_seconds,
+        "ready_for_real_llm": readiness["ready_for_real_llm"],
+        "llm_readiness_status": readiness["llm_readiness_status"],
+        "llm_next_action": readiness["llm_next_action"],
+        "llm_readiness_reasons": readiness["llm_readiness_reasons"],
+        "llm_fix_hints": readiness["llm_fix_hints"],
+        "error_kind": "none",
+        "reply_preview_chars": 0,
+        "usage_total_tokens": 0,
+        "llm_finish_reason": "",
+        "public_message": "",
+    }
+
+    if provider_name != "openai_compatible":
+        return {
+            **base_result,
+            "error_kind": "provider_not_configured",
+            "public_message": "当前 provider 不是真实模型连接。",
+        }
+
+    provider_config_errors = openai_compatible_preflight_errors(config)
+    if provider_config_errors:
+        return {
+            **base_result,
+            "error_kind": "config_missing",
+            "public_message": _format_llm_preflight_missing_message(
+                provider_config_errors
+            ),
+        }
+
+    provider = llm_provider or OpenAICompatibleLLMProvider(
+        api_key=config.bot_chat_api_key,
+        model=config.bot_chat_model,
+        base_url=config.bot_chat_base_url,
+        timeout_seconds=config.bot_chat_timeout_seconds,
+        proxy=config.bot_download_proxy,
+    )
+    messages = [
+        {
+            "role": "system",
+            "content": "你是本地 LLM 连接诊断请求。只需要用一句中文回复连接正常，不要请求工具，不要输出密钥。",
+        },
+        {"role": "user", "content": "请回复：诊断连接正常。"},
+    ]
+    try:
+        reply = provider.generate(
+            messages,
+            model=config.bot_chat_model,
+            temperature=diagnostic_llm_temperature(config),
+            max_tokens=diagnostic_llm_max_tokens(config),
+        )
+    except LLMProviderError as exc:
+        error_kind = exc.error_kind
+        return {
+            **base_result,
+            "error_kind": error_kind,
+            "public_message": public_llm_error_message(error_kind),
+        }
+    except Exception:  # noqa: BLE001 - LLM 诊断未知异常统一映射为 provider_error。
+        return {
+            **base_result,
+            "error_kind": "provider_error",
+            "public_message": public_llm_error_message("provider_error"),
+        }
+
+    usage_total_tokens = 0
+    raw_total_tokens = reply.raw_usage.get("total_tokens")
+    if isinstance(raw_total_tokens, int):
+        usage_total_tokens = raw_total_tokens
+    finish_reason = safe_llm_finish_reason(reply.raw_usage.get("finish_reason"))
+    return {
+        **base_result,
+        "ok": True,
+        "error_kind": "none",
+        "reply_preview_chars": len(reply.text[:120]),
+        "usage_total_tokens": usage_total_tokens,
+        "llm_finish_reason": finish_reason,
+        "public_message": "LLM 诊断通过。",
+    }
+
+
+def _format_llm_preflight_missing_message(errors: list[str]) -> str:
+    label_map = {
+        "openai_api_key_missing": "API key",
+        "openai_model_missing": "model",
+        "openai_base_url_missing": "base_url",
+        "openai_base_url_invalid": "base_url",
+        "openai_base_url_unsafe": "base_url",
+        "openai_temperature_invalid": "temperature",
+        "openai_max_tokens_invalid": "max_tokens",
+        "openai_timeout_seconds_invalid": "timeout_seconds",
+    }
+    labels = [label_map[error] for error in errors if error in label_map]
+    joined = "、".join(labels) if labels else "必要参数"
+    return f"openai_compatible provider 配置不完整，缺少 {joined}。"
+
+
+def _format_readiness_diagnostic(result: dict[str, Any]) -> str:
+    runtime_control = result.get("runtime_control")
+    if not isinstance(runtime_control, RuntimeControlState):
+        runtime_control = RuntimeControlState()
+    return "\n".join(
+        [
+            "统一就绪度：",
+            "说明：仅管理员可用；不调用真实 LLM，不连接 NapCat，不发送 QQ，只展示安全摘要。",
+            f"ok={str(bool(result['ok'])).lower()}",
+            f"readiness_status={_safe_token(str(result['readiness_status']))}",
+            f"next_action={_safe_token(str(result['next_action']))}",
+            f"recommended_commands={_safe_csv(str(result['recommended_commands']))}",
+            f"runtime_soft_paused={str(runtime_control.paused).lower()}",
+            f"runtime_soft_pause_reason={_safe_token(runtime_control.reason)}",
+            (
+                "runtime_soft_pause_updated_by="
+                f"{_safe_token(runtime_control.updated_by_state)}"
+            ),
+            (
+                "ready_for_local_dialogue="
+                f"{str(bool(result['ready_for_local_dialogue'])).lower()}"
+            ),
+            f"ready_for_real_llm={str(bool(result['ready_for_real_llm'])).lower()}",
+            (
+                "real_llm_probe_performed="
+                f"{str(bool(result['real_llm_probe_performed'])).lower()}"
+            ),
+            f"doctor_ok={str(bool(result['doctor_ok'])).lower()}",
+            (
+                "ready_for_local_llm_smoke="
+                f"{str(bool(result['ready_for_local_llm_smoke'])).lower()}"
+            ),
+            (
+                "ready_for_nonebot_run="
+                f"{str(bool(result['ready_for_nonebot_run'])).lower()}"
+            ),
+            f"nonebot_ok={str(bool(result['nonebot_ok'])).lower()}",
+            f"transport_ok={str(bool(result['transport_ok'])).lower()}",
+            f"config_ok={str(bool(result['config_ok'])).lower()}",
+            f"config_errors={_format_list_field(result.get('config_errors', []))}",
+            f"config_warnings={_format_list_field(result.get('config_warnings', []))}",
+            f"context_ok={str(bool(result['context_ok'])).lower()}",
+            f"context_error_kind={_safe_token(str(result['context_error_kind']))}",
+            f"context_chars={_safe_int(result['context_prompt_total_chars'])}",
+            (
+                "context_clipped="
+                f"{str(bool(result['context_prompt_clipped'])).lower()}"
+            ),
+            f"chat_pipeline_ok={str(bool(result['chat_pipeline_ok'])).lower()}",
+            f"chat_pipeline_mode={_safe_token(str(result['chat_pipeline_mode']))}",
+            f"chat_receipt_state={_safe_token(str(result['chat_receipt_state']))}",
+            f"chat_reply_preview_chars={_safe_int(result['chat_reply_preview_chars'])}",
+            f"llm_finish_reason={_safe_token(str(result.get('llm_finish_reason') or '-'))}",
+            f"llm_readiness_status={_safe_token(str(result['llm_readiness_status']))}",
+            f"llm_next_action={_safe_token(str(result['llm_next_action']))}",
+            (
+                "llm_readiness_reasons="
+                f"{_format_list_field(result.get('llm_readiness_reasons', []))}"
+            ),
+            f"llm_fix_hints={_format_list_field(result.get('llm_fix_hints', []))}",
+            f"persona_strength_status={_safe_token(str(result['persona_strength_status']))}",
+            f"knowledge_readable={_safe_int(result['knowledge_readable'])}",
+            f"provider={_safe_token(str(result['provider']))}",
+            f"model={_safe_token(str(result['model']))}",
+            f"chat_api_key={_safe_token(str(result['chat_api_key']))}",
+            f"public_message={_safe_message(str(result['public_message']))}",
+        ]
+    )
+
+
+def _format_dialogue_diagnostic(result: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "对话验收：",
+            (
+                "说明：仅管理员可用；执行一轮本地对话 pipeline，可能短调用已配置的真实 LLM；"
+                "不连接新的 NapCat，不发送业务对话正文，不展示完整回复、prompt、用户原文或知识原文。"
+            ),
+            f"ok={str(bool(result['ok'])).lower()}",
+            f"dialogue_status={_safe_token(str(result['dialogue_status']))}",
+            f"next_action={_safe_token(str(result['next_action']))}",
+            f"context_ok={str(bool(result['context_ok'])).lower()}",
+            f"context_error_kind={_safe_token(str(result['context_error_kind']))}",
+            f"chat_pipeline_ok={str(bool(result['chat_pipeline_ok'])).lower()}",
+            f"receipt_state={_safe_token(str(result['receipt_state']))}",
+            f"capability_id={_safe_token(str(result['capability_id']))}",
+            f"persona_profile_id={_safe_token(str(result['persona_profile_id']))}",
+            f"persona_display_name={_safe_token(str(result['persona_display_name']))}",
+            f"persona_source_refs={_safe_csv(str(result['persona_source_refs']))}",
+            f"knowledge_source_refs={_safe_csv(str(result['knowledge_source_refs']))}",
+            f"knowledge_chunks={_safe_int(result['knowledge_chunks'])}",
+            f"memory_facts={_safe_int(result['memory_facts'])}",
+            f"history_turns={_safe_int(result['history_turns'])}",
+            f"emotion_signals={_safe_int(result['emotion_signals'])}",
+            f"emotion_labels={_safe_token(str(result['emotion_labels']))}",
+            f"prompt_messages={_safe_int(result['prompt_messages'])}",
+            f"prompt_total_chars={_safe_int(result['prompt_total_chars'])}",
+            f"prompt_budget_remaining={_safe_int(result['prompt_budget_remaining'])}",
+            f"prompt_clipped={str(bool(result['prompt_clipped'])).lower()}",
+            f"prompt_truncated_sections={_safe_token(str(result['prompt_truncated_sections']))}",
+            f"context_budget={_safe_int(result['context_budget'])}",
+            f"max_messages={_safe_int(result['max_messages'])}",
+            f"risk_level={_safe_token(str(result['risk_level']))}",
+            f"llm_status={_safe_token(str(result['llm_status']))}",
+            f"llm_error_kind={_safe_token(str(result.get('llm_error_kind') or '-'))}",
+            f"llm_finish_reason={_safe_token(str(result.get('llm_finish_reason') or '-'))}",
+            f"llm_provider={_safe_token(str(result['llm_provider']))}",
+            f"llm_model={_safe_token(str(result['llm_model']))}",
+            f"ready_for_real_llm={str(bool(result['ready_for_real_llm'])).lower()}",
+            f"llm_readiness_status={_safe_token(str(result['llm_readiness_status']))}",
+            f"llm_next_action={_safe_token(str(result['llm_next_action']))}",
+            (
+                "llm_readiness_reasons="
+                f"{_format_list_field(result.get('llm_readiness_reasons', []))}"
+            ),
+            f"llm_fix_hints={_format_list_field(result.get('llm_fix_hints', []))}",
+            f"reply_preview_chars={_safe_int(result['reply_preview_chars'])}",
+            f"reply_text_hidden={str(bool(result['reply_text_hidden'])).lower()}",
+            f"real_transport_used={str(bool(result['real_transport_used'])).lower()}",
+            f"napcat_connected={str(bool(result['napcat_connected'])).lower()}",
+            f"public_message={_safe_message(str(result['public_message']))}",
+        ]
+    )
+
+
+def _format_llm_diagnostic(result: dict[str, object]) -> str:
+    return "\n".join(
+        [
+            "LLM 诊断：",
+            "说明：仅管理员可用；短调用只用于连接诊断，不发送外部聊天消息，不展示密钥。",
+            f"ok={str(bool(result['ok'])).lower()}",
+            f"ready_for_real_llm={str(bool(result['ready_for_real_llm'])).lower()}",
+            f"llm_readiness_status={_safe_token(str(result['llm_readiness_status']))}",
+            f"llm_next_action={_safe_token(str(result['llm_next_action']))}",
+            (
+                "llm_readiness_reasons="
+                f"{_format_list_field(result.get('llm_readiness_reasons', []))}"
+            ),
+            f"llm_fix_hints={_format_list_field(result.get('llm_fix_hints', []))}",
+            f"provider={_safe_token(str(result['provider']))}",
+            f"model={_safe_token(str(result['model']))}",
+            f"endpoint_url={_safe_token(str(result['endpoint_url']))}",
+            f"api_key={_safe_token(str(result['api_key']))}",
+            f"error_kind={_safe_token(str(result['error_kind']))}",
+            f"diagnostic_temperature={_safe_number(result['diagnostic_temperature'])}",
+            f"diagnostic_max_tokens={_safe_int(result['diagnostic_max_tokens'])}",
+            f"timeout_seconds={_safe_number(result['timeout_seconds'])}",
+            f"reply_preview_chars={_safe_int(result['reply_preview_chars'])}",
+            f"usage_total_tokens={_safe_int(result['usage_total_tokens'])}",
+            f"llm_finish_reason={_safe_token(str(result['llm_finish_reason']))}",
+            f"public_message={_safe_message(str(result['public_message']))}",
+        ]
+    )
+
+
+def _format_semicolon_list(value: object) -> str:
+    if not isinstance(value, list):
+        return "-"
+    cleaned = [_safe_token(str(item)) for item in value if str(item).strip()]
+    return ";".join(cleaned) if cleaned else "-"
+
+
+def _format_persona_diagnostic(result: dict[str, object]) -> str:
+    return "\n".join(
+        [
+            "人格自检：",
+            (
+                "说明：仅管理员可用；不调用 LLM，不连接 NapCat，不发送外部业务消息，"
+                "不展示人格正文、知识正文、本机路径或密钥。"
+            ),
+            f"ok={str(bool(result['ok'])).lower()}",
+            f"persona_status={_safe_token(str(result['persona_status']))}",
+            f"persona_next_action={_safe_token(str(result['persona_next_action']))}",
+            f"persona_profile_id={_safe_token(str(result['persona_profile_id']))}",
+            f"persona_display_name={_safe_token(str(result['persona_display_name']))}",
+            f"persona_version={_safe_token(str(result['persona_version']))}",
+            f"persona_files={_safe_int(result['persona_files'])}",
+            f"persona_missing={_safe_int(result['persona_missing'])}",
+            f"persona_unsupported={_safe_int(result['persona_unsupported'])}",
+            f"persona_readable={_safe_int(result['persona_readable'])}",
+            f"persona_empty={_safe_int(result['persona_empty'])}",
+            f"persona_unreadable={_safe_int(result['persona_unreadable'])}",
+            f"persona_total_chars={_safe_int(result['persona_total_chars'])}",
+            f"persona_meaningful_lines={_safe_int(result['persona_meaningful_lines'])}",
+            (
+                "persona_strength_status="
+                f"{_safe_token(str(result['persona_strength_status']))}"
+            ),
+            f"persona_source_refs={_safe_csv(str(result['persona_source_refs']))}",
+            f"knowledge_source_refs={_safe_csv(str(result['knowledge_source_refs']))}",
+            f"knowledge_files={_safe_int(result['knowledge_files'])}",
+            f"knowledge_readable={_safe_int(result['knowledge_readable'])}",
+            f"knowledge_chunks={_safe_int(result['knowledge_chunks'])}",
+            f"style_rules={_safe_int(result['style_rules'])}",
+            f"role_boundaries={_safe_int(result['role_boundaries'])}",
+            f"forbidden_behaviors={_safe_int(result['forbidden_behaviors'])}",
+            f"tone_mode={_safe_token(str(result['tone_mode']))}",
+            f"tone_voice={_safe_token(str(result['tone_voice']))}",
+            f"tone_warmth={_safe_number(result['tone_warmth'])}",
+            f"tone_directness={_safe_number(result['tone_directness'])}",
+            f"tone_message_count_limit={_safe_int(result['tone_message_count_limit'])}",
+            f"memory_enabled={str(bool(result['memory_enabled'])).lower()}",
+            f"history_enabled={str(bool(result['history_enabled'])).lower()}",
+            f"emotion_enabled={str(bool(result['emotion_enabled'])).lower()}",
+            f"errors={_format_list_field(result.get('errors', []))}",
+            f"warnings={_format_list_field(result.get('warnings', []))}",
+            (
+                "llm_readiness_status="
+                f"{_safe_token(str(result['llm_readiness_status']))}"
+            ),
+            f"llm_next_action={_safe_token(str(result['llm_next_action']))}",
+            (
+                "llm_readiness_reasons="
+                f"{_format_list_field(result.get('llm_readiness_reasons', []))}"
+            ),
+            f"llm_fix_hints={_format_list_field(result.get('llm_fix_hints', []))}",
+            (
+                "real_llm_probe_performed="
+                f"{str(bool(result['real_llm_probe_performed'])).lower()}"
+            ),
+            f"real_transport_used={str(bool(result['real_transport_used'])).lower()}",
+            f"napcat_connected={str(bool(result['napcat_connected'])).lower()}",
+            f"error_kind={_safe_token(str(result['error_kind']))}",
+            f"public_message={_safe_message(str(result['public_message']))}",
+        ]
+    )
+
+
+def _format_config_diagnostic(result: dict[str, object]) -> str:
+    errors = _format_list_field(result.get("errors", []))
+    warnings = _format_list_field(result.get("warnings", []))
+    return "\n".join(
+        [
+            "配置体检：",
+            "说明：仅管理员可用；不调用 LLM，不启动 NapCat，不发送外部消息，只展示安全摘要。",
+            f"ok={str(bool(result['ok'])).lower()}",
+            f"ready_for_real_llm={str(bool(result['ready_for_real_llm'])).lower()}",
+            f"llm_readiness_status={_safe_token(str(result['llm_readiness_status']))}",
+            f"llm_next_action={_safe_token(str(result['llm_next_action']))}",
+            (
+                "llm_readiness_reasons="
+                f"{_format_list_field(result.get('llm_readiness_reasons', []))}"
+            ),
+            f"llm_fix_hints={_format_list_field(result.get('llm_fix_hints', []))}",
+            f"errors={errors}",
+            f"warnings={warnings}",
+            f"error_count={_safe_int(result['error_count'])}",
+            f"warning_count={_safe_int(result['warning_count'])}",
+            f"runtime_enabled={str(bool(result['runtime_enabled'])).lower()}",
+            f"chat_enabled={str(bool(result['chat_enabled'])).lower()}",
+            f"persona_profile_id={_safe_token(str(result['persona_profile_id']))}",
+            f"persona_display_name={_safe_token(str(result['persona_display_name']))}",
+            f"persona_files={_safe_int(result['persona_files'])}",
+            f"persona_missing={_safe_int(result['persona_missing'])}",
+            f"persona_unsupported={_safe_int(result['persona_unsupported'])}",
+            f"persona_readable={_safe_int(result['persona_readable'])}",
+            f"persona_empty={_safe_int(result['persona_empty'])}",
+            f"persona_unreadable={_safe_int(result['persona_unreadable'])}",
+            f"persona_total_chars={_safe_int(result['persona_total_chars'])}",
+            f"persona_meaningful_lines={_safe_int(result['persona_meaningful_lines'])}",
+            f"persona_strength_status={_safe_token(str(result['persona_strength_status']))}",
+            f"knowledge_files={_safe_int(result['knowledge_files'])}",
+            f"knowledge_missing={_safe_int(result['knowledge_missing'])}",
+            f"knowledge_unsupported={_safe_int(result['knowledge_unsupported'])}",
+            f"knowledge_readable={_safe_int(result['knowledge_readable'])}",
+            f"knowledge_empty={_safe_int(result['knowledge_empty'])}",
+            f"knowledge_unreadable={_safe_int(result['knowledge_unreadable'])}",
+            f"knowledge_total_chars={_safe_int(result['knowledge_total_chars'])}",
+            f"knowledge_meaningful_lines={_safe_int(result['knowledge_meaningful_lines'])}",
+            f"memory_enabled={str(bool(result['memory_enabled'])).lower()}",
+            f"history_enabled={str(bool(result['history_enabled'])).lower()}",
+            f"history_max_items={_safe_int(result['history_max_items'])}",
+            f"emotion_enabled={str(bool(result['emotion_enabled'])).lower()}",
+            f"rate_limit_enabled={str(bool(result['rate_limit_enabled'])).lower()}",
+            f"rate_limit_store={_safe_token(str(result['rate_limit_store']))}",
+            f"rate_limit_db={_safe_token(str(result['rate_limit_db']))}",
+            f"rate_limit_window_seconds={_safe_int(result['rate_limit_window_seconds'])}",
+            (
+                "rate_limit_chat_global_max_requests="
+                f"{_safe_int(result['rate_limit_chat_global_max_requests'])}"
+            ),
+            (
+                "rate_limit_chat_session_max_requests="
+                f"{_safe_int(result['rate_limit_chat_session_max_requests'])}"
+            ),
+            (
+                "rate_limit_chat_sender_max_requests="
+                f"{_safe_int(result['rate_limit_chat_sender_max_requests'])}"
+            ),
+            (
+                "rate_limit_target_min_interval_seconds="
+                f"{_safe_int(result['rate_limit_target_min_interval_seconds'])}"
+            ),
+            f"rate_limit_bypass_roles={_safe_csv(str(result['rate_limit_bypass_roles']))}",
+            f"quiet_hours_enabled={str(bool(result['quiet_hours_enabled'])).lower()}",
+            f"quiet_hours_start={_safe_token(str(result['quiet_hours_start']))}",
+            f"quiet_hours_end={_safe_token(str(result['quiet_hours_end']))}",
+            f"quiet_hours_timezone={_safe_token(str(result['quiet_hours_timezone']))}",
+            f"quiet_hours_session_types={_safe_csv(str(result['quiet_hours_session_types']))}",
+            f"quiet_hours_bypass_roles={_safe_csv(str(result['quiet_hours_bypass_roles']))}",
+            f"diagnostics_enabled={str(bool(result['diagnostics_enabled'])).lower()}",
+            f"audit_enabled={str(bool(result['audit_enabled'])).lower()}",
+            f"receipts_enabled={str(bool(result['receipts_enabled'])).lower()}",
+            f"send_queue_enabled={str(bool(result['send_queue_enabled'])).lower()}",
+            f"send_queue_store={_safe_token(str(result['send_queue_store']))}",
+            f"send_queue_db={_safe_token(str(result['send_queue_db']))}",
+            f"send_queue_max_items={_safe_int(result['send_queue_max_items'])}",
+            f"send_queue_max_attempts={_safe_int(result['send_queue_max_attempts'])}",
+            (
+                "send_queue_retry_base_seconds="
+                f"{_safe_int(result['send_queue_retry_base_seconds'])}"
+            ),
+            (
+                "send_queue_retry_max_seconds="
+                f"{_safe_int(result['send_queue_retry_max_seconds'])}"
+            ),
+            (
+                "send_queue_worker_enabled="
+                f"{str(bool(result['send_queue_worker_enabled'])).lower()}"
+            ),
+            (
+                "send_queue_worker_interval_seconds="
+                f"{_safe_int(result['send_queue_worker_interval_seconds'])}"
+            ),
+            (
+                "send_queue_worker_batch_size="
+                f"{_safe_int(result['send_queue_worker_batch_size'])}"
+            ),
+            f"chat_provider={_safe_token(str(result['chat_provider']))}",
+            f"chat_model={_safe_token(str(result['chat_model']))}",
+            f"chat_api_key={_safe_token(str(result['chat_api_key']))}",
+            f"endpoint_url={_safe_token(str(result['endpoint_url']))}",
+            f"chat_temperature={_safe_number(result['chat_temperature'])}",
+            f"chat_max_tokens={_safe_int(result['chat_max_tokens'])}",
+            f"timeout_seconds={_safe_number(result['timeout_seconds'])}",
+            f"public_message={_safe_message(str(result['public_message']))}",
+        ]
+    )
+
+
+def _format_context_summary(
+    *,
+    config: Config,
+    context: ContextBundle,
+    prompt_messages: list[dict[str, str]],
+    prompt_diagnostics: ChatPromptDiagnostics,
+    reply_budget_reason: str,
+    risk_level: RiskLevel,
+) -> str:
+    persona = context.persona
+    knowledge_chunks = context.knowledge_results.chunks
+    knowledge_sources = {chunk.source_id for chunk in knowledge_chunks}
+    source_summary = build_safe_context_source_summary(config, context)
+    emotion_labels = ",".join(
+        signal.emotion_label for signal in context.emotion_signals
+    ) or "-"
+    system_prompt = prompt_messages[0]["content"] if prompt_messages else ""
+    # 历史对话已改为独立 messages：index 1 可能是历史 user 行，当前消息恒为
+    # 最后一条 user（2026-09-18 提示词结构重构，与 smoke 侧同口径）。
+    user_prompt = next(
+        (
+            str(item.get("content") or "")
+            for item in reversed(prompt_messages)
+            if item.get("role") == "user"
+        ),
+        "",
+    )
+    lines = [
+        "上下文诊断：",
+        "说明：不调用 LLM，不发送外部消息；只展示安全摘要。",
+        f"persona_profile_id={_safe_token(persona.profile_id)}",
+        f"persona_display_name={_safe_token(persona.display_name)}",
+        f"persona_version={_safe_token(persona.version)}",
+        f"persona_source_refs={_safe_csv(source_summary['persona_source_refs'])}",
+        f"knowledge_source_refs={_safe_csv(source_summary['knowledge_source_refs'])}",
+        f"style_rules={len(persona.style_rules)}",
+        f"role_boundaries={len(persona.role_boundaries)}",
+        f"forbidden_behaviors={len(persona.forbidden_behaviors)}",
+        f"knowledge_chunks={len(knowledge_chunks)}",
+        f"knowledge_sources={len(knowledge_sources)}",
+        f"memory_facts={len(context.memory_results.facts)}",
+        f"history_turns={len(context.conversation_history.turns)}",
+        f"emotion_signals={len(context.emotion_signals)}",
+        f"emotion_labels={_safe_token(emotion_labels)}",
+        f"reply_budget_reason={_safe_token(reply_budget_reason)}",
+        f"max_messages={context.tone.message_count_limit}",
+        f"context_budget={context.context_budget}",
+        f"risk_level={risk_level.value}",
+        f"prompt_messages={len(prompt_messages)}",
+        f"system_prompt_chars={len(system_prompt)}",
+        f"prompt_original_user_chars={prompt_diagnostics.original_user_prompt_chars}",
+        f"prompt_user_budget={prompt_diagnostics.user_prompt_budget}",
+        f"user_prompt_chars={len(user_prompt)}",
+        f"prompt_total_chars={prompt_diagnostics.total_prompt_chars}",
+        f"prompt_budget_remaining={prompt_diagnostics.budget_remaining}",
+        f"prompt_clipped={str(prompt_diagnostics.clipped_to_context_budget).lower()}",
+        f"prompt_user_clipped={str(prompt_diagnostics.user_message_clipped).lower()}",
+        f"prompt_truncated_sections={_safe_section_list(prompt_diagnostics.truncated_sections)}",
+        f"prompt_section_budgets={_format_section_numbers(prompt_diagnostics.section_budgets)}",
+        f"prompt_section_chars={_format_section_numbers(prompt_diagnostics.section_chars)}",
+        f"chat_provider={_safe_token(config.bot_chat_provider)}",
+        f"chat_model={_safe_token(config.bot_chat_model)}",
+    ]
+    return "\n".join(lines)
+
+
+def _format_queue_diagnostic(summary: dict[str, int], config: Config) -> str:
+    enabled = bool(config.bot_send_queue_enabled)
+    store = "sqlite" if enabled and config.bot_send_queue_db_path else "memory"
+    db_state = "set" if config.bot_send_queue_db_path else "missing"
+    return "\n".join(
+        [
+            "发送队列：",
+            "说明：仅管理员可用；只展示安全计数，不展示目标、正文、dedupe_key 或数据库真实路径。",
+            f"enabled={str(enabled).lower()}",
+            f"store={store}",
+            f"db={db_state}",
+            f"queued={_safe_int(summary.get('queued', 0))}",
+            f"failed_retryable={_safe_int(summary.get('failed_retryable', 0))}",
+            f"failed_final={_safe_int(summary.get('failed_final', 0))}",
+            f"sent={_safe_int(summary.get('sent', 0))}",
+            f"skipped={_safe_int(summary.get('skipped', 0))}",
+            f"processing={_safe_int(summary.get('processing', 0))}",
+            f"max_items={_safe_int(config.bot_send_queue_max_items)}",
+            f"max_attempts={_safe_int(config.bot_send_queue_max_attempts)}",
+            f"retry_base_seconds={_safe_int(config.bot_send_queue_retry_base_seconds)}",
+            f"retry_max_seconds={_safe_int(config.bot_send_queue_retry_max_seconds)}",
+        ]
+    )
+
+
+def _format_roles_diagnostic(config: Config) -> str:
+    role_counts = build_role_settings(config).counts()
+    admin_commands = (
+        "/bot why,"
+        "/bot receipt,"
+        "/bot audit,"
+        "/bot recent,"
+        "/bot queue,"
+        "/bot context,"
+        "/bot llm,"
+        "/bot setup llm,"
+        "/bot config,"
+        "/bot readiness,"
+        "/bot dialogue,"
+        "/bot roles,"
+        "/bot persona,"
+        "/bot history clear,"
+        "/bot pause,"
+        "/bot resume"
+    )
+    return "\n".join(
+        [
+            "权限规则：",
+            "说明：仅管理员可用；不调用 LLM，不连接 NapCat，不发送外部业务消息，只展示规则和计数。",
+            f"role_order={_safe_csv(','.join(ROLE_ORDER))}",
+            f"admin_users={_safe_int(role_counts.get('admin', 0))}",
+            f"enterprise_users={_safe_int(role_counts.get('enterprise', 0))}",
+            f"trusted_users={_safe_int(role_counts.get('trusted', 0))}",
+            f"blocked_users={_safe_int(role_counts.get('blocked', 0))}",
+            "blocked_policy=policy_stage_block_before_llm",
+            "user_role=default_role_for_all_senders",
+            "admin_role=can_run_admin_diagnostics_and_bypass_default_rate_quiet_rules",
+            "enterprise_role=reserved_for_future_high_trust_business_rules",
+            "trusted_role=reserved_for_future_low_risk_bypass_or_feature_rules",
+            f"rate_limit_bypass_roles={_safe_csv(','.join(config.bot_rate_limit_bypass_roles))}",
+            f"quiet_hours_bypass_roles={_safe_csv(','.join(config.bot_quiet_hours_bypass_roles))}",
+            f"group_command_prefix={_safe_token(config.bot_runtime_group_command_prefix)}",
+            "id_input_formats=json_array,comma,semicolon",
+            "role_source=BOT_ADMIN_USER_IDS,BOT_ENTERPRISE_USER_IDS,BOT_TRUSTED_USER_IDS,BOT_BLOCKED_USER_IDS",
+            f"admin_commands={_safe_csv(admin_commands)}",
+            "ids_hidden=true",
+        ]
+    )
+
+
+def _format_runtime_control_state(
+    runtime_control: RuntimeControlState,
+    *,
+    headline: str,
+) -> str:
+    return "\n".join(
+        [
+            headline,
+            "说明：普通聊天、自动发送预览和非排障能力会被暂停；管理员诊断、status 和 resume 仍可用。",
+            f"runtime_paused={str(runtime_control.paused).lower()}",
+            f"reason={_safe_token(runtime_control.reason)}",
+            f"updated_by={_safe_token(runtime_control.updated_by_state)}",
+        ]
+    )
+
+
+def _format_receipt(receipt: DeliveryReceipt) -> str:
+    lines = [
+        "发送回执：",
+        f"request_id={_safe_token(receipt.request_id)}",
+        f"debug_id={_safe_token(receipt.debug_id)}",
+        f"state={receipt.state.value}",
+        f"transport={_safe_token(receipt.transport)}",
+        f"retry_count={receipt.retry_count}",
+        f"next_retry_at={receipt.next_retry_at.isoformat() if receipt.next_retry_at else 'none'}",
+        f"public_message={_safe_message(receipt.public_message)}",
+    ]
+    return "\n".join(lines)
+
+
+def _format_audit_records(query: str, records: list[AuditRecord]) -> str:
+    lines = [f"审计事件：request_id={_safe_token(query)}"]
+    for index, record in enumerate(records[:20], start=1):
+        lines.append(
+            "；".join(
+                [
+                    f"{index}. request_id={_safe_token(record.request_id)}",
+                    f"stage={_safe_token(record.stage)}",
+                    f"event={_safe_token(record.event)}",
+                    f"severity={record.severity.value}",
+                    f"public_message={_safe_message(record.public_message)}",
+                ]
+            )
+        )
+    if len(records) > 20:
+        lines.append(f"还有 {len(records) - 20} 条未展示。")
+    return "\n".join(lines)
+
+
+def _format_recent_diagnostics(items: list[RuntimeDiagnostic]) -> str:
+    if not items:
+        return "最近运行诊断：无"
+    lines = ["最近运行诊断："]
+    for index, item in enumerate(items, start=1):
+        lines.append(
+            "；".join(
+                [
+                    f"{index}. request_id={_safe_token(item.request_id)}",
+                    f"debug_id={_safe_token(item.debug_id)}",
+                    f"capability={_safe_token(item.capability_id)}",
+                    f"policy={_safe_token(item.policy_reason)}",
+                    f"budget={_safe_token(item.reply_budget_reason or '-')}",
+                    f"llm={_safe_token(item.llm_status)}",
+                    f"llm_readiness={_safe_token(item.llm_readiness_status or '-')}",
+                    (
+                        "ready_for_real_llm="
+                        f"{str(bool(item.ready_for_real_llm)).lower()}"
+                    ),
+                    (
+                        "llm_reasons="
+                        f"{_format_reason_codes(item.llm_readiness_reasons)}"
+                    ),
+                    f"diagnostic_tags={_format_diagnostic_tags(item.audit_tags)}",
+                    f"receipt={_safe_token(item.receipt_state)}",
+                ]
+            )
+        )
+    return "\n".join(lines)
+
+
+def _format_recent_receipts(items: list[DeliveryReceipt]) -> str:
+    if not items:
+        return "最近发送回执：无"
+    lines = ["最近发送回执："]
+    for index, item in enumerate(items, start=1):
+        lines.append(
+            "；".join(
+                [
+                    f"{index}. request_id={_safe_token(item.request_id)}",
+                    f"debug_id={_safe_token(item.debug_id)}",
+                    f"state={item.state.value}",
+                    f"transport={_safe_token(item.transport)}",
+                    f"retry_count={item.retry_count}",
+                ]
+            )
+        )
+    return "\n".join(lines)
+
+
+def _format_recent_audits(items: list[AuditRecord]) -> str:
+    if not items:
+        return "最近审计事件：无"
+    lines = ["最近审计事件："]
+    for index, item in enumerate(items, start=1):
+        lines.append(
+            "；".join(
+                [
+                    f"{index}. request_id={_safe_token(item.request_id)}",
+                    f"stage={_safe_token(item.stage)}",
+                    f"event={_safe_token(item.event)}",
+                    f"severity={item.severity.value}",
+                    f"public_message={_safe_message(item.public_message, max_chars=120)}",
+                ]
+            )
+        )
+    return "\n".join(lines)
+
+
+def _is_admin(actor_roles: list[str]) -> bool:
+    return "admin" in {role.strip() for role in actor_roles}
+
+
+def _safe_token(value: str) -> str:
+    return _safe_message(value, max_chars=120)
+
+
+def _safe_message(value: str, max_chars: int = 240) -> str:
+    text = redact_private_debug(value).replace("\r", " ").replace("\n", " ").strip()
+    for marker in (
+        "provider_message_id",
+        "target_id",
+        "session_id",
+        "private_debug",
+    ):
+        text = text.replace(marker, "[redacted_field]")
+    if len(text) <= max_chars:
+        return text
+    return f"{text[: max_chars - 3]}..."
+
+
+def _safe_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return 0
+
+
+def _safe_number(value: object) -> str:
+    if isinstance(value, bool):
+        return str(int(value))
+    if isinstance(value, int):
+        return str(max(0, value))
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return "0"
+        bounded = max(0.0, value)
+        return str(int(bounded)) if bounded.is_integer() else str(bounded)
+    if isinstance(value, str):
+        stripped = value.strip()
+        try:
+            parsed = float(stripped)
+        except ValueError:
+            return "0"
+        if not math.isfinite(parsed):
+            return "0"
+        bounded = max(0.0, parsed)
+        return str(int(bounded)) if bounded.is_integer() else str(bounded)
+    return "0"
+
+
+def _format_list_field(value: object) -> str:
+    if not isinstance(value, list):
+        return "-"
+    cleaned = [_safe_token(str(item)) for item in value if str(item).strip()]
+    return ",".join(cleaned) if cleaned else "-"
+
+
+def _format_reason_codes(value: object) -> str:
+    if not isinstance(value, list):
+        return "-"
+    sensitive_literals = {
+        "authorization",
+        "bearer",
+        "token",
+        "cookie",
+        "secret",
+        "password",
+    }
+    cleaned: list[str] = []
+    for item in value:
+        token = str(item).strip().lower()
+        if not token:
+            continue
+        if token in sensitive_literals:
+            continue
+        if not all(char.isascii() and (char.isalnum() or char == "_") for char in token):
+            continue
+        cleaned.append(_safe_token(token))
+    return ",".join(cleaned) if cleaned else "-"
+
+
+def _format_diagnostic_tags(value: object) -> str:
+    if not isinstance(value, list):
+        return "-"
+    cleaned: list[str] = []
+    for item in value:
+        tag = str(item).strip().lower()
+        if not _is_safe_diagnostic_tag(tag):
+            continue
+        cleaned.append(_safe_token(tag))
+    return ",".join(cleaned) if cleaned else "-"
+
+
+def _is_safe_diagnostic_tag(value: str) -> bool:
+    if not value or len(value) > 120:
+        return False
+    if not all(
+        char.isascii() and (char.isalnum() or char in {"_", ":", "-", "."})
+        for char in value
+    ):
+        return False
+    sensitive_segments = {"authorization", "bearer", "token", "cookie", "secret"}
+    segments = [
+        segment
+        for chunk in value.replace("-", "_").replace(".", "_").split(":")
+        for segment in chunk.split("_")
+        if segment
+    ]
+    return not any(segment in sensitive_segments for segment in segments)
+
+
+def _safe_csv(value: str) -> str:
+    cleaned = [
+        _safe_token(item.strip())
+        for item in value.split(",")
+        if item.strip()
+    ]
+    return ",".join(cleaned) if cleaned else "-"
+
+
+def _safe_section_list(values: tuple[str, ...]) -> str:
+    cleaned = [_safe_token(value) for value in values if value.strip()]
+    return ",".join(cleaned) if cleaned else "-"
+
+
+def _format_section_numbers(values: dict[str, int]) -> str:
+    safe_items = [
+        f"{_safe_token(str(key))}:{_safe_int(value)}"
+        for key, value in sorted(values.items())
+    ]
+    return ",".join(safe_items) if safe_items else "-"
+
+
+def _parse_limit(query: str) -> int:
+    try:
+        return min(20, max(1, int(query.strip() or "5")))
+    except ValueError:
+        return 5
+

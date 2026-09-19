@@ -1,0 +1,166 @@
+{# Mermaid 流程图卡（G-MERMAID）：无平台语境，主色固定中性灰 #607080，
+   走 --accent 派生 token；Mica 铁律 —— 无 <meta viewport>、.card 用 fit-content、
+   body 透明（截图 omit_background 依赖）、分级阴影族 token、字重≤700。
+   mermaid.min.js 的 src 保持 jsDelivr CDN URL 不变（模板零分叉），传输层由
+   render_backends 渲染期 page.route() 拦截换血为本地素材
+   （card_render_assets/mermaid/mermaid.min.js，scripts/fetch_mermaid_js.py
+   落盘；素材缺失即放行网络），startOnLoad 自动把 code 渲成 SVG。
+   mica-glass v1 2026-09-12：釉瑚云母底（bridge 按中性灰派生的 --wash-* 注入；
+   工艺出处=用户裁定）+ 1px 内高光渐变描边 + 三枚 wash 柔光色斑缓慢漂移
+   （--phase 由 root tokens 钉帧）。
+   v21r3（2026-09-18 misc 席）：色斑由双伪元素改三枚 DOM 斑（C2 恒 3 枚
+   46/52/58s；动画仍在 .card 子树内，fit-content 壳零版面影响）。
+   v21r3 通水（2026-09-19 misc2 席）：decor_css 换血生成器单源——
+   bridge._vis4_context 注入 decor_css（mica_shell 缺省实例）。
+   v21r3 回归（2026-09-19 misc3 席）：本卡色斑复位 .card::before/::after
+   伪元素两斑——契约钉死 mermaid 是伪元素特例（test_rendering_contract
+   test_animations_render_inside_card expect_dom_blobs=False +
+   test_phase_determinism_2 伪元素守卫两回归锁：默认观感动画必须真跑、
+   prefers-reduced-motion 必须真关停）；blobs_html DOM 斑不再入卡
+   （防双斑叠印），decor_css 保留=keyframes mica-drift-a/b 单源供给。
+   vis4（2026-09-13）：外壳与页脚迁社交卡标准——页脚胶囊叠 --glow-accent
+   辉光背景层 + L2 面板级阴影（mermaid 不在 vis2 瓦片审计门清单内）；
+   SVG 图形内部零触碰。 #}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+    {# C9（v21r3）：JS 上下文不消费 CSS var；fontFamily=theme_tokens
+       FONT_FAMILY_STACK 全栈逐字字面量（GATES 门 8 白名单按归一化逐字比对）。
+       通水后可换血为 bridge 注入的模板变量（INTG 裁决）。 #}
+    mermaid.initialize({
+        startOnLoad: true,
+        securityLevel: "strict",
+        theme: "default",
+        fontFamily: '"Segoe UI", "Microsoft YaHei", "PingFang SC", -apple-system, BlinkMacSystemFont, Roboto, sans-serif'
+    });
+</script>
+<style>
+:root {
+    {# | safe 必需：token 块含 --font-family 的双引号，autoescape 会转成 &#34;，
+       而 <style> 内的实体不会被解码 → 字体族静默失效。#}
+    {{ root_tokens | safe }}
+    --accent-soft: color-mix(in srgb, var(--accent) 7%, #fff);
+    --accent-line: color-mix(in srgb, var(--accent) 14%, #fff);
+    /* vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源经 bridge 注入）：
+       L2 面板级阴影给页脚胶囊等大件；辉光只作背景层；三档表面 zebra 备用；
+       区分线=平台色 22% 清晰细线。 */
+    --mica-shadow-panel: {{ shadow_elev_panel }};
+    --glow-accent: {{ glow_accent }};
+    --divider-line: {{ divider_line }};
+    --surface-a: {{ surface_a }};
+    --surface-b: {{ surface_b }};
+    --surface-neutral: {{ surface_neutral }};
+    --text-secondary: #576272;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: var(--font-family);
+    background: transparent;
+    display: flex;
+    justify-content: center;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+/* ===== 釉瑚云母外壳 + 1px 内高光渐变描边（mica-glass v1 2026-09-12）===== */
+.card {
+    width: fit-content;
+    max-width: 840px;
+    position: relative;
+    overflow: hidden;
+    padding: 26px 30px;
+    border-radius: var(--r-shell);
+    border: 1px solid transparent;
+    background:
+        linear-gradient(145deg,
+            var(--wash-mist) 0%,
+            color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
+            color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%,
+            color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%) padding-box,
+        linear-gradient(150deg,
+            rgba(255, 255, 255, 0.95) 0%,
+            rgba(255, 255, 255, 0.35) 55%,
+            rgba(255, 255, 255, 0.72) 100%) border-box;
+    box-shadow: var(--mica-shadow);
+}
+/* 渐变漂移色斑（mermaid 特例：.card::before/::after 伪元素两斑）。
+   几何/渐变/时长/相位延迟与 mica_shell 生成器 drift-a/drift-b 同构；
+   keyframes 单源消费下方 decor_css 产出（mica-drift-a/b）。
+   reduced-motion 守卫与基线同特异性 (0,1,1) 且源序靠后（同特异性靠
+   源序取胜，防 finance/market 型死 CSS）；本守卫必须先于 decor_css
+   的 DOM 斑守卫出现（test_phase_determinism_2 取首个 media 块断言）。 */
+.card::before,
+.card::after {
+    content: "";
+    position: absolute;
+    z-index: 0;
+    display: block;
+    border-radius: 50%;
+    pointer-events: none;
+}
+.card::before {
+    width: 58%; aspect-ratio: 1; left: -14%; top: -22%;
+    background: radial-gradient(closest-side,
+        color-mix(in srgb, var(--wash-blob-1) 50%, transparent) 0%,
+        color-mix(in srgb, var(--wash-blob-1) 28%, transparent) 46%,
+        color-mix(in srgb, var(--wash-blob-1) 6%, transparent) 70%, transparent 100%);
+    animation: mica-drift-a 46s ease-in-out infinite alternate;
+    animation-delay: calc(var(--phase, 0.2) * -46s);
+}
+.card::after {
+    width: 52%; aspect-ratio: 1; right: -16%; bottom: -24%;
+    background: radial-gradient(closest-side,
+        color-mix(in srgb, var(--wash-2) 30%, transparent) 0%,
+        color-mix(in srgb, var(--wash-2) 16%, transparent) 48%,
+        color-mix(in srgb, var(--wash-2) 5%, transparent) 72%, transparent 100%);
+    animation: mica-drift-b 58s ease-in-out infinite alternate;
+    animation-delay: calc(var(--phase, 0.2) * -58s - 9s);
+}
+@media (prefers-reduced-motion: reduce) {
+    .card::before, .card::after { animation: none; }
+}
+/* 渐变漂移 keyframes 单源=mica_shell.mica_decor_css（bridge._vis4_context
+   注入 decor_css；@keyframes mica-drift-a/b 供上方伪元素消费；其 DOM 斑
+   规则/守卫在本卡无 DOM 命中，属生成器整层供给的惰性面，零视觉影响）。 */
+{{ decor_css | safe }}
+.card .mermaid {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    justify-content: center;
+    color: var(--text-main);
+    font-weight: 400;
+    white-space: normal;
+    /* E03：节点文本内数字经继承吃到等宽数字（SVG text 未被 mermaid 覆写的可继承属性）。 */
+    font-variant-numeric: tabular-nums;
+}
+.card svg { max-width: 100%; height: auto; }
+/* F11 bot 页脚：头像 + 机器人名 + 功能名（vis4 胶囊化：玻璃底 + 辉光背景层
+   + L2 面板级阴影——mermaid 页脚胶囊是本卡唯一大件容器）。 */
+.bot-foot { position: relative; z-index: 1; margin-top: 14px; padding: 9px 14px;
+    display: flex; align-items: center; gap: 7px;
+    border-radius: var(--r-tile);
+    background:
+        var(--glow-accent) right center / 62% 190% no-repeat,
+        var(--mica-glass-foot),
+        var(--mica-glass-edge);
+    border: 1px solid transparent;
+    box-shadow: var(--mica-shadow-panel);
+    font-size: 12px; color: var(--text-secondary); }
+.bot-foot .bf-dot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 650; color: var(--accent); background: var(--accent-soft); }
+.bot-foot .bf-name { font-weight: 650; color: var(--text-sub); }
+</style>
+</head>
+<body>
+<div class="card">
+<pre class="mermaid">
+{{ code }}
+</pre>
+<div class="bot-foot"><span class="bf-dot">守</span><span class="bf-name">{{ bot_name | default('守岸人', true) }}</span><span>· {{ feature_label | default('流程图', true) }}</span></div>
+</div>
+</body>
+</html>

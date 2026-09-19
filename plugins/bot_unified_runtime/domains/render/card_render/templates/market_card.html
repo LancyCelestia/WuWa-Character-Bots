@@ -1,0 +1,154 @@
+{# 全球股指卡（F19 2026-09-12）：釉瑚云母 + 液态玻璃 + 渐变漂移底
+   （--wash-* 由 bridge._derive_wash_tokens 注入，守岸人本命基底）；
+   分组网格 + 每指数行（名称/点位/涨跌额/涨跌徽章/30 日收盘折线 SVG）；
+   折线由 Python 侧预生成 polyline points，模板零逻辑；任何区块缺数据
+   静默隐藏；无 <meta viewport>（UI 铁律）、body 透明（omit_background 依赖）、
+   字重 ≤700、动画仅在 .card 内、两枚阴影 token。
+   C 方向统一（2026-09-12）：根元素带 .card（render_backends 元素截图
+   选择器契约）；无历史走势的指数展示
+   trend_note（MOEX「暂无历史走势数据」），不伪造折线；脚注展示数据源/
+   数据时间/延迟提示。
+   vis4（2026-09-13）：指数瓦片三档表面 zebra（--surface-a/b 本命淡蓝/星空紫）；
+   分隔线统一 --divider-line；页脚胶囊叠 --glow-accent 辉光背景层。 #}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+:root {
+    {# | safe 必需：token 块含 --font-family 的双引号，autoescape 会转成 &#34;，
+       而 <style> 内的实体不会被解码 → 字体族静默失效。#}
+    {{ root_tokens | safe }}
+    {# C4 语义色单源：var() 消费 :root 公共段语义 token（mica_shell.render_root_tokens
+       产出 --semantic-danger/--semantic-success，值册 theme_tokens.SEMANTIC_*）；
+       A 股红涨绿跌语义不变，只换值的来源。 #}
+    --up: var(--semantic-danger);
+    --down: var(--semantic-success);
+    /* vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源经 bridge 注入）：
+       L2 面板级阴影入册（box-shadow 档位受 vis2 瓦片审计门锁定，瓦片维持 soft 档）；
+       辉光只作背景层；相邻色块三档表面 zebra 交替保证区分度；
+       区分线=平台色 22% 清晰细线。 */
+    --mica-shadow-panel: {{ shadow_elev_panel }};
+    --glow-accent: {{ glow_accent }};
+    --divider-line: {{ divider_line }};
+    --surface-a: {{ surface_a }};
+    --surface-b: {{ surface_b }};
+    --surface-neutral: {{ surface_neutral }};
+    /* vis5 次级灰单源（theme_tokens.TEXT_SECONDARY，对三档表面 ≥4.5:1）。 */
+    --text-secondary: #576272;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: var(--font-family); background: transparent; display: flex; justify-content: center;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+.shell {
+    position: relative; width: 1080px; overflow: hidden;
+    padding: 28px 30px 22px; border-radius: var(--r-shell); border: 1px solid transparent;
+    background:
+        linear-gradient(145deg, var(--wash-mist) 0%,
+            color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
+            color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%,
+            color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%) padding-box,
+        linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%,
+            rgba(255,255,255,.72) 100%) border-box;
+    box-shadow: var(--mica-shadow);
+}
+.shell > :not(.drift-blobs) { position: relative; z-index: 1; }
+{# C2/C13 通水切换（2026-09-19 SWITCH 席）：色斑层整块消费 bridge 注入的
+   decor_css 键（mica_shell.mica_decor_css() 单一产出：三枚 46/52/58s 交错
+   漂移+呼吸；手抄副本退役）。C13/G9 reduced-motion 关停语义由生成器内建
+   （选择器与动画声明同构、源序其后必胜）。DOM 侧 blobs_html 同法（三枚
+   .drift-blob span 的容器，原 DRIFT_BLOBS_HTML 字面）。 #}
+{{ decor_css | safe }}
+.head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    padding-bottom: 14px; border-bottom: var(--divider-line); }
+.title { font-size: 21px; font-weight: 700; color: var(--text-main); }
+.subtitle { font-size: 12px; color: var(--text-sub); margin-top: 4px; }
+.group { margin-top: 16px; }
+.group-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; color: var(--accent-dark); letter-spacing: 0.06em; }
+.group-title::after { content: ""; flex: 1; border-bottom: var(--divider-line); }
+.grid { margin-top: 10px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+/* 指数瓦片带液态玻璃表面（vis2 审计 2026-09-12：此前行体悬空无瓦片感，
+   与 affinity/song 的 .glass 同配方：半透明白 + 1px 内高光渐变描边）。 */
+.index {
+    display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--r-tile);
+    background:
+        linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.44) 100%) padding-box,
+        linear-gradient(150deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.35) 55%, rgba(255, 255, 255, 0.72) 100%) border-box;
+    border: 1px solid transparent;
+    box-shadow: var(--mica-shadow-panel);
+}
+.index .info { flex: 1; min-width: 0; }
+.index .name { font-size: 14px; font-weight: 650; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.index .price-row { display: flex; align-items: baseline; gap: 8px; margin-top: 3px; flex-wrap: wrap; }
+.index .price { font-size: 17px; font-weight: 700; color: var(--text-main); font-variant-numeric: tabular-nums; }
+.index .chg { font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.index .chg.up { color: var(--up); }
+.index .chg.down { color: var(--down); }
+.index .chg.flat { color: var(--text-sub); }
+.index .pct { font-size: 12px; font-weight: 650; padding: 1px 8px; border-radius: 999px; font-variant-numeric: tabular-nums; }
+.index .pct.up { color: #fff; background: var(--up); }
+.index .pct.down { color: #fff; background: var(--down); }
+.index .pct.flat { color: var(--text-sub); background: color-mix(in srgb, var(--accent) 10%, #fff); }
+.index svg.spark { width: 128px; height: 40px; flex-shrink: 0; }
+.index .trend-note { font-size: 12px; color: var(--text-sub); flex-shrink: 0; align-self: center; }
+.data-foot { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-sub); font-variant-numeric: tabular-nums; }
+/* vis4 页脚胶囊：玻璃底 + 辉光背景层（glow 只作背景层，alpha≥0.05）。 */
+.bot-foot { margin-top: 14px; padding: 9px 14px; border-radius: var(--r-tile); display: flex; align-items: center; gap: 7px;
+    background:
+        var(--glow-accent) right center / 62% 190% no-repeat,
+        linear-gradient(150deg, rgba(255,255,255,.66) 0%, rgba(255,255,255,.46) 100%) padding-box,
+        linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
+    border: 1px solid transparent;
+    box-shadow: var(--mica-shadow-panel);
+    font-size: 12px; color: var(--text-secondary); }
+.bot-foot .bf-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
+    border: 1px solid #fff; box-shadow: var(--mica-shadow-soft); }
+.bot-foot .bf-dot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 650; color: var(--accent-dark); background: color-mix(in srgb, var(--accent) 12%, #fff); }
+.bot-foot .bf-name { font-weight: 650; color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<div class="shell card">
+    {{ blobs_html | safe }}
+    <div class="head">
+        <div>
+            <div class="title">全球股指速览</div>
+            {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+        </div>
+    </div>
+    {% for group in groups %}
+    <div class="group">
+        <div class="group-title">{{ group.name }}</div>
+        <div class="grid">
+            {% for item in group.rows %}
+            <div class="index glass-fallback"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% else %} style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% endif %}>
+                <div class="info">
+                    <div class="name">{{ item.name }}</div>
+                    <div class="price-row">
+                        <span class="price">{{ item.price }}</span>
+                        <span class="pct {{ item.cls }}">{{ item.pct }}</span>
+                        {% if item.change %}<span class="chg {{ item.cls }}">{{ item.change }}</span>{% endif %}
+                    </div>
+                </div>
+                {% if item.spark_points %}<svg class="spark" viewBox="0 0 128 40" preserveAspectRatio="none">
+                    <polyline points="{{ item.spark_points }}" fill="none"
+                        stroke="{{ item.spark_color }}" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>{% elif item.trend_note %}<span class="trend-note">{{ item.trend_note }}</span>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+    {% if source_note or updated_at or delayed_note or crosscheck_note %}<div class="data-foot">
+        {% if source_note %}<span>{{ source_note }}</span>{% endif %}
+        {% if updated_at %}<span>数据时间 {{ updated_at }}</span>{% endif %}
+        {% if delayed_note %}<span>{{ delayed_note }}</span>{% endif %}
+        {% if crosscheck_note %}<span>{{ crosscheck_note }}</span>{% endif %}
+    </div>{% endif %}
+    <div class="bot-foot">{% if bot_avatar_url %}<img class="bf-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="bf-dot">{{ (bot_name | default('守岸人', true))[:1] }}</span>{% endif %}<span class="bf-name">{{ bot_name | default('守岸人', true) }}</span><span>· {{ feature_label | default('全球股指', true) }}</span></div>
+</div>
+</body>
+</html>

@@ -1,0 +1,148 @@
+{# 股票/汇率金融卡（C 方向 UI 统一 2026-09-12）：stocks/fx 共用壳。
+   釉瑚云母 + 液态玻璃 + 渐变漂移底（--wash-* 由 bridge 按 --accent 派生注入，
+   金融卡无平台语境 → 守岸人品牌 accent → 纯本命洗）；分节列表 + 每行
+   （名称/数值/涨跌徽章/走势 SVG 或「暂无历史走势数据」文案）；走势 SVG 由
+   sources.finance_chart 预生成（bridge 只放行 <svg>…</svg> 整体），模板零逻辑；
+   任何区块缺数据静默隐藏；无 <meta viewport>（全仓截图契约铁律）、body 透明
+   （omit_background 依赖）、字重 ≤700、动画仅在 .card 内、分级阴影 token；
+   根元素带 .card（元素截图契约）。
+   vis4（2026-09-13）：行瓦片三档表面 zebra（--surface-a/b 本命淡蓝/星空紫）；
+   分隔线统一 --divider-line；页脚胶囊叠 --glow-accent 辉光背景层。 #}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+:root {
+    {# | safe 必需：token 块含 --font-family 的双引号，autoescape 会转成 &#34;，
+       而 <style> 内的实体不会被解码 → 字体族静默失效。#}
+    {{ root_tokens | safe }}
+    {# C4 语义色单源：var() 消费 :root 公共段语义 token（mica_shell.render_root_tokens
+       产出 --semantic-danger/--semantic-success，值册 theme_tokens.SEMANTIC_*）；
+       A 股红涨绿跌语义不变，只换值的来源。 #}
+    --up: var(--semantic-danger);
+    --down: var(--semantic-success);
+    /* vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源经 bridge 注入）：
+       L2 面板级阴影入册（box-shadow 档位受 vis2 瓦片审计门锁定，瓦片维持 soft 档）；
+       辉光只作背景层；相邻色块三档表面 zebra 交替保证区分度；
+       区分线=平台色 22% 清晰细线。 */
+    --mica-shadow-panel: {{ shadow_elev_panel }};
+    --glow-accent: {{ glow_accent }};
+    --divider-line: {{ divider_line }};
+    --surface-a: {{ surface_a }};
+    --surface-b: {{ surface_b }};
+    --surface-neutral: {{ surface_neutral }};
+    /* vis5 次级灰单源（theme_tokens.TEXT_SECONDARY，对三档表面 ≥4.5:1）。 */
+    --text-secondary: #576272;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: var(--font-family); background: transparent; display: flex; justify-content: center;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+.shell {
+    position: relative; width: 1080px; overflow: hidden;
+    padding: 28px 30px 22px; border-radius: var(--r-shell); border: 1px solid transparent;
+    background:
+        linear-gradient(145deg, var(--wash-mist) 0%,
+            color-mix(in srgb, var(--wash-1) 55%, var(--wash-mist)) 30%,
+            color-mix(in srgb, var(--wash-2) 48%, var(--wash-mist)) 64%,
+            color-mix(in srgb, var(--wash-3) 40%, var(--wash-mist)) 100%) padding-box,
+        linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%,
+            rgba(255,255,255,.72) 100%) border-box;
+    box-shadow: var(--mica-shadow);
+}
+.shell > :not(.drift-blobs) { position: relative; z-index: 1; }
+{# C2/C13 通水切换（2026-09-19 SWITCH 席）：色斑层整块消费 bridge 注入的
+   decor_css 键（mica_shell.mica_decor_css() 单一产出：三枚 46/52/58s 交错
+   漂移+呼吸；手抄副本退役）。C13/G9 reduced-motion 关停语义由生成器内建
+   （选择器与动画声明同构、源序其后必胜）。DOM 侧 blobs_html 同法（三枚
+   .drift-blob span 的容器，原 DRIFT_BLOBS_HTML 字面）。 #}
+{{ decor_css | safe }}
+.head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    padding-bottom: 14px; border-bottom: var(--divider-line); }
+.title { font-size: 21px; font-weight: 700; color: var(--text-main); }
+.subtitle { font-size: 12px; color: var(--text-sub); margin-top: 4px; }
+.head-badge { font-size: 12px; font-weight: 650; color: var(--accent-dark);
+    padding: 2px 10px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, #fff); }
+.section { margin-top: 16px; }
+.section-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; color: var(--accent-dark); letter-spacing: 0.06em; }
+.section-title::after { content: ""; flex: 1; border-bottom: var(--divider-line); }
+.grid { margin-top: 10px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+/* 行瓦片带液态玻璃表面（vis2 审计 2026-09-12：此前行体悬空无瓦片感，
+   与 affinity/song 的 .glass 同配方：半透明白 + 1px 内高光渐变描边）。 */
+.row {
+    display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--r-tile);
+    background:
+        linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.44) 100%) padding-box,
+        linear-gradient(150deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.35) 55%, rgba(255, 255, 255, 0.72) 100%) border-box;
+    border: 1px solid transparent;
+    box-shadow: var(--mica-shadow-panel);
+}
+.row .info { flex: 1; min-width: 0; }
+.row .label { font-size: 14px; font-weight: 650; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .sub { font-size: 12px; color: var(--text-sub); margin-top: 2px; }
+.row .value-row { display: flex; align-items: baseline; gap: 8px; margin-top: 3px; flex-wrap: wrap; }
+.row .value { font-size: 17px; font-weight: 700; color: var(--text-main); font-variant-numeric: tabular-nums; }
+.row .delta { font-size: 12px; font-weight: 650; padding: 1px 8px; border-radius: 999px; font-variant-numeric: tabular-nums; }
+.row .delta.up { color: #fff; background: var(--up); }
+.row .delta.down { color: #fff; background: var(--down); }
+.row .delta.flat { color: var(--text-sub); background: color-mix(in srgb, var(--accent) 10%, #fff); }
+.row svg.trend { width: 128px; height: 40px; flex-shrink: 0; }
+.row .trend-note { font-size: 12px; color: var(--text-sub); flex-shrink: 0; align-self: center; }
+.data-foot { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-sub); font-variant-numeric: tabular-nums; }
+/* vis4 页脚胶囊：玻璃底 + 辉光背景层（glow 只作背景层，alpha≥0.05）。 */
+.bot-foot { margin-top: 12px; padding: 9px 14px; border-radius: var(--r-tile); display: flex; align-items: center; gap: 7px;
+    background:
+        var(--glow-accent) right center / 62% 190% no-repeat,
+        linear-gradient(150deg, rgba(255,255,255,.66) 0%, rgba(255,255,255,.46) 100%) padding-box,
+        linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
+    border: 1px solid transparent;
+    box-shadow: var(--mica-shadow-panel);
+    font-size: 12px; color: var(--text-secondary); }
+.bot-foot .bf-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
+    border: 1px solid #fff; box-shadow: var(--mica-shadow-soft); }
+.bot-foot .bf-dot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 650; color: var(--accent-dark); background: color-mix(in srgb, var(--accent) 12%, #fff); }
+.bot-foot .bf-name { font-weight: 650; color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<div class="shell card">
+    {{ blobs_html | safe }}
+    <div class="head">
+        <div>
+            <div class="title">{{ title }}</div>
+            {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+        </div>
+        {% if badge %}<div class="head-badge">{{ badge }}</div>{% endif %}
+    </div>
+    {% for section in sections %}
+    <div class="section">
+        <div class="section-title">{{ section.name }}</div>
+        <div class="grid">
+            {% for item in section.rows %}
+            <div class="row glass-fallback"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% else %} style="background:var(--surface-b) padding-box, linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box"{% endif %}>
+                <div class="info">
+                    <div class="label">{{ item.label }}</div>
+                    {% if item.sub %}<div class="sub">{{ item.sub }}</div>{% endif %}
+                    <div class="value-row">
+                        <span class="value">{{ item.value }}</span>
+                        {% if item.delta %}<span class="delta {{ item.cls }}">{{ item.delta }}</span>{% endif %}
+                    </div>
+                </div>
+                {% if item.trend_svg %}{{ item.trend_svg | safe }}
+                {% elif item.trend_note %}<span class="trend-note">{{ item.trend_note }}</span>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+    {% if source_note or updated_at or delayed_note %}<div class="data-foot">
+        {% if source_note %}<span>{{ source_note }}</span>{% endif %}
+        {% if updated_at %}<span>数据时间 {{ updated_at }}</span>{% endif %}
+        {% if delayed_note %}<span>{{ delayed_note }}</span>{% endif %}
+    </div>{% endif %}
+    <div class="bot-foot">{% if bot_avatar_url %}<img class="bf-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="bf-dot">{{ (bot_name | default('守岸人', true))[:1] }}</span>{% endif %}<span class="bf-name">{{ bot_name | default('守岸人', true) }}</span><span>· {{ feature_label | default('金融', true) }}</span></div>
+</div>
+</body>
+</html>
