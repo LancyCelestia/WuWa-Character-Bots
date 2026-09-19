@@ -33,19 +33,30 @@ export function formatUptime(seconds: number | null | undefined): string {
   return `${minutes}分${total % 60}秒`;
 }
 
+// zh-CN 时间/日期时间两枚常驻 formatter（现场构造 Intl formatter 是本库最大的单项开销：
+// PERF1 席实测单枚 29.6µs → 复用 0.80µs；等值性由 PERF1-fix1 席在本机全量样本自造复跑核清，
+// 见 docs/design/unify-audit-20260919/PERF1-fix1.md §三——含 DST 时区补验，原台账未覆盖面已闭合）。
+// 注：本库口径写死 zh-CN（与 i18next 语言无关），故 formatter 无需按 locale 建 key；
+//     若将来改成跟随 UI 语言，必须换 Map<locale, formatter>，否则会串语言。
+const ZH_TIME = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+const ZH_DATE_TIME = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric', month: 'numeric', day: 'numeric',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+});
+
 /** ISO → 本地展示；空值返回 UNKNOWN_VALUE，畸形文本原样透出不猜。 */
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return UNKNOWN_VALUE;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso; // 畸形文本原样透出，不猜。
-  return date.toLocaleString('zh-CN', { hour12: false });
+  return ZH_DATE_TIME.format(date);
 }
 
 export function formatTime(iso: string | null | undefined): string {
   if (!iso) return UNKNOWN_VALUE;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleTimeString('zh-CN', { hour12: false });
+  return ZH_TIME.format(date);
 }
 
 /** 趋势桶起点 → 坐标轴短标签。 */

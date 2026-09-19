@@ -7,6 +7,8 @@
 // - 渲染口径（PERF1 2026-09-19，F8-L1/L2/L3）：秒表只在自渲染子件里跑（父页不再每秒整体重渲染）、
 //   行渲染 memo 化（每帧/每秒不再重排 500 行、不再每行重算 Intl/JSON）、
 //   同一刷新窗口内到达的行合并为一次 state 更新、暂停积压与视图同界（≤MAX_ROWS）。
+// - 缓冲状态机（判重集/合并窗/上限裁剪/丢弃计数/暂停积压/清空）住在零 React 依赖的
+//   lib/log-stream.ts（PERF1-fix1 提纯，不变量常驻锁 lib/log-stream.test.ts），本页只剩接线。
 import { memo, useEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CirclePause, CirclePlay, Eraser, Link2Off, RotateCcw, ArrowDownToLine } from 'lucide-react';
@@ -14,16 +16,12 @@ import { Button } from '@/components/ui/button';
 import { PageHeader, SectionCard, CategoryChip, type Tone } from '@/components/patterns/patterns';
 import { LogsStreamClient, type StreamStatus } from '@/lib/sse';
 import { controlApi, type LogEventRow, type LogsSourcesData } from '@/lib/api-client';
+import { FLUSH_WINDOW_MS, LogsBuffer } from '@/lib/log-stream';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import { formatTime } from '@/lib/format';
 
 const CURSOR_KEY = 'webui:logsCursor';
-const MAX_ROWS = 500;
 const HEARTBEAT_STALE_MS = 45_000;
-// 视图合并窗口（F8-L3）：窗口内到达的行只做一次 state 更新（数组重建 + 游标落盘 + 滚底各一次）。
-// 取 16ms ≈ 一帧：稳态单条事件的可见延迟不超过一帧；后台标签页定时器被节流到 ≥1s 也照常触发，
-// 故合并窗口本身不会像 rAF 那样在不可见时停摆（那条路会让缓冲无限堆积）。
-const FLUSH_WINDOW_MS = 16;
 
 const CATEGORY_TONE: Record<string, Tone> = {
   debug: 'flat',
@@ -125,21 +123,23 @@ const LogRow = memo(function LogRow({ row }: { row: LogEventRow }) {
 export function LogsPage() {
   const { t } = useTranslation();
 
-  const [rows, setRows] = useState<LogEventRow[]>([]);
+  // 视图快照：rows/dropped 的唯一 React state 镜像，真身在 bufferRef（lib/log-stream.ts）。
+  // M-2（review-PERF1）收口：dropped 增量不再嵌在 setRows updater 内做外溢副作用，
+  // 而是 buffer.commit() 的原子状态变换之一——快照为普通赋值，StrictMode 下无失真。
+  const [view, setView] = useState<{ rows: readonly LogEventRow[]; dropped: number }>({ rows: [], dropped: 0 });
+  const rows = view.rows;
+  const droppedCount = view.dropped;
   const [status, setStatus] = useState<StreamStatus>('idle');
   const [statusInfo, setStatusInfo] = useState<{ attempt?: number; code?: string; message?: string }>({});
   const [gapMessage, setGapMessage] = useState<string | null>(null);
   const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | null>(null);
   const [paused, setPaused] = useState(false);
   const [autoscroll, setAutoscroll] = useState(true);
-  const [droppedCount, setDroppedCount] = useState(0);
   const [sourceFilter, setSourceFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
 
   const clientRef = useRef<LogsStreamClient | null>(null);
   const pausedRef = useRef(false);
-  const backlogRef = useRef<LogEventRow[]>([]);
-  const backlogDroppedRef = useRef(0);
   const autoscrollRef = useRef(true);
   const listEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -155,42 +155,23 @@ export function LogsPage() {
     return clientRef.current;
   };
 
-  const seenRef = useRef<Set<number>>(new Set());
-  const pendingRef = useRef<LogEventRow[]>([]);
+  // 缓冲状态机：判重集/待冲刷缓冲/上限裁剪/丢弃计数/暂停积压都在 LogsBuffer 内（常驻锁见 log-stream.test.ts）。
+  const bufferRef = useRef(new LogsBuffer<LogEventRow>());
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 合并窗口到点：把缓冲行一次性并入视图（一帧一次，而非一条一次）。
   const commitPending = () => {
-    const pending = pendingRef.current;
-    if (pending.length === 0) return;
-    pendingRef.current = [];
-    setRows((current) => {
-      const merged = [...current, ...pending];
-      const overflow = merged.length - MAX_ROWS;
-      if (overflow > 0) {
-        // 与视图同步收缩：被裁出行立即释放判重位，Set 上限恒 ≤ MAX_ROWS（外加一个合并窗口内
-        // 尚未入库的缓冲量）。delete 幂等，StrictMode 下 updater 双跑不会失真。
-        for (let i = 0; i < overflow; i++) seenRef.current.delete(merged[i].cursor);
-        setDroppedCount((count) => count + overflow);
-        return merged.slice(overflow);
-      }
-      return merged;
-    });
+    const buffer = bufferRef.current;
+    if (!buffer.commit()) return;
+    setView({ rows: buffer.rows, dropped: buffer.dropped });
   };
 
   const appendRows = (incoming: LogEventRow[]) => {
     // 按 cursor 去重：重放（无游标订阅）与实时尾包会送来同一批事件，不去重即界面重复行 + React key 撞车。
     // 判重与登记必须同步完成——若延后到 effect 再重建集合，集合恒为「可见行子集」，
     // 未渲染的那批就漏判（F17 复核 2026-09-19 实测：延迟重建形态同批帧出 2 组重复 key）。
-    const seen = seenRef.current;
-    let buffered = 0;
-    for (const row of incoming) {
-      if (seen.has(row.cursor)) continue;
-      seen.add(row.cursor);
-      pendingRef.current.push(row);
-      buffered += 1;
-    }
-    if (buffered === 0) return;
+    const buffer = bufferRef.current;
+    if (buffer.append(incoming) === 0) return;
     // 一帧合并窗口（F8-L3）：窗口内已有待入库行时不再另起定时器。
     if (flushTimerRef.current === null) {
       flushTimerRef.current = setTimeout(() => {
@@ -214,15 +195,9 @@ export function LogsPage() {
         onEvent: (row) => {
           if (pausedRef.current) {
             // 暂停积压与视图同界（F8-L1）：超界的最旧行注定在恢复时被 MAX_ROWS 裁掉，
-            // 这里提前裁并把枚数暂存进 backlogDroppedRef，恢复时并入 droppedCount——
+            // 这里提前裁并把枚数暂存进积压丢弃计数，恢复时并入 droppedCount——
             // 可见行集合与 dropped 总量都与改造前逐枚相同，只是不再无界堆积。
-            const backlog = backlogRef.current;
-            backlog.push(row);
-            const overflow = backlog.length - MAX_ROWS;
-            if (overflow > 0) {
-              backlog.splice(0, overflow);
-              backlogDroppedRef.current += overflow;
-            }
+            bufferRef.current.bufferWhilePaused(row);
             return;
           }
           appendRows([row]);
@@ -243,7 +218,7 @@ export function LogsPage() {
         clearTimeout(flushTimerRef.current);
         flushTimerRef.current = null;
       }
-      pendingRef.current = [];
+      bufferRef.current.discardPending();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -257,12 +232,10 @@ export function LogsPage() {
 
   // 恢复暂停时冲积压。
   useEffect(() => {
-    if (paused || backlogRef.current.length === 0) return;
-    const backlog = backlogRef.current;
-    const droppedFromBacklog = backlogDroppedRef.current;
-    backlogRef.current = [];
-    backlogDroppedRef.current = 0;
-    if (droppedFromBacklog > 0) setDroppedCount((count) => count + droppedFromBacklog);
+    const buffer = bufferRef.current;
+    if (paused || buffer.backlogSize === 0) return;
+    const { backlog, droppedApplied } = buffer.takeBacklog();
+    if (droppedApplied > 0) setView({ rows: buffer.rows, dropped: buffer.dropped });
     appendRows(backlog);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paused]);
@@ -279,10 +252,9 @@ export function LogsPage() {
   };
 
   const clearView = () => {
-    seenRef.current.clear();
-    pendingRef.current = []; // 与判重集同帧作废：已判重但未入库的行不得越过「清空」重新现身。
-    setRows([]);
-    setDroppedCount(0);
+    const buffer = bufferRef.current;
+    buffer.clear(); // 四态同帧归零（常驻锁）：已判重但未入库的行不得越过「清空」重新现身；暂停积压有意不清（语义原样）。
+    setView({ rows: buffer.rows, dropped: buffer.dropped });
   };
 
   const resubscribe = () => {
