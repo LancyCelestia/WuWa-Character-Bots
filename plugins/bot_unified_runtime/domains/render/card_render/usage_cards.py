@@ -21,12 +21,15 @@ from pathlib import Path
 from typing import Any
 
 from plugins.bot_unified_runtime.domains.render.card_render.mica_shell import (
+    BRAND_CAPSULE_CSS,
+    brand_capsule_html,
     drift_blobs_html,
     mica_decor_css,
     render_root_tokens,
     shell_base_css,
 )
 from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
+    BRAND_THEME,
     DIVIDER,
     GLOW_ACCENT,
     SURFACE_TINTS,
@@ -80,7 +83,7 @@ def usage_report_mica_html(
     totals: dict[str, Any],
     model_rows: list[dict[str, Any]],
     note: str = "",
-    bot_name: str = "守岸人",
+    bot_name: str = "",
     bot_avatar_url: str = "",
     feature_label: str = "模型用量",
 ) -> str:
@@ -93,6 +96,10 @@ def usage_report_mica_html(
     vis5（2026-09-13）：补齐 vis4 键（辉光/分隔线/三档表面）+ F11 bot 页脚胶囊
     （此前本卡是唯一无署名卡）。
     2026-09-18：--pc 家族退役，主色 token 统一为 --accent（原别名双写已删）。
+    2026-09-20 CAP2：页脚署名改为 **全站统一品牌胶囊**（mica_shell 单一产出，
+    本卡手抄 DOM/CSS 退役）；``bot_name`` 空回落 ``BRAND_THEME.display_name``、
+    ``bot_avatar_url`` 空回落 ``bot_avatar_uri(config)`` 既有头像口径、英文名取
+    ``theme_tokens.BRAND_NAME_EN``（由组件生成器内部取值，本模块零字面量）。
     """
     import html as _html
 
@@ -200,17 +207,27 @@ def usage_report_mica_html(
     unpriced_html = (
         f"<div class=\"unote\">{unpriced_note}</div>" if unpriced_note else ""
     )
-    # F11 bot 页脚胶囊（与 templates.py card-footer-bot 同构；avatar 失败隐藏）。
-    avatar_html = (
-        f'<img class="bf-avatar" src="{_html.escape(bot_avatar_url)}" alt="" '
-        'onerror="this.style.display=\'none\'"/>'
-        if bot_avatar_url
-        else f'<span class="bf-dot">{_html.escape((bot_name or "守")[:1])}</span>'
-    )
+    # CAP2 统一品牌胶囊（2026-09-20 用户裁定「所有图片加胶囊」）：组件 DOM 与
+    # CSS 一律取 mica_shell 单一产出，本卡自写的 .bot-foot 玻璃底 + .bf-avatar/
+    # .bf-dot/.bf-name 手抄副本全部退役。三枚输入走既有单一口径：中文名=入参
+    # 空则 BRAND_THEME.display_name（与 bridge._capsule_context 同法）、
+    # 头像=入参空则 bot_avatar_uri(config)（显式配置 > 进程内登记 > 磁盘兜底，
+    # 与 mermaid 卡同源直调，本卡不新建第二份头像逻辑）、英文名由组件内部读
+    # theme_tokens.BRAND_NAME_EN（本模块零英文字面量）。
+    # 外层 <footer class="bot-foot"> 仅作**摆位宿主**（类名是既有契约锁的
+    # 取材锚点，同 universal_card 保留 footer-bot-pill 的手法），
+    # 内部不含任何手写署名 DOM/文案。
+    from plugins.bot_unified_runtime.domains.render.bot_avatar import bot_avatar_uri
+
+    avatar_url = (bot_avatar_url or "").strip() or str(bot_avatar_uri(config) or "")
     bot_footer_html = (
-        f'<footer class="bot-foot">{avatar_html}'
-        f'<span class="bf-name">{_html.escape(bot_name or "守岸人")}</span>'
-        f'<span>· {_html.escape(feature_label)}</span></footer>'
+        '<footer class="bot-foot">'
+        + brand_capsule_html(
+            bot_name=(bot_name or BRAND_THEME.display_name),
+            avatar_url=avatar_url,
+            feature_label=feature_label,
+        )
+        + "</footer>"
     )
     # :root 单一产出（v21r3 渲染统一步 4）；本卡特有 vis4 六键经 extras 追加，
     # 取值来源（theme_tokens 单一源）不变。
@@ -276,21 +293,11 @@ body {{ margin:0; font-family:var(--font-family); background:transparent; color:
 .unote {{ padding:2px 12px 8px; color:var(--muted); font-size:12px; }}
 .foot {{ padding:12px 26px 16px; border-top:var(--divider-line);
   background:rgba(255,255,255,.46); font-size:12px; color:var(--muted); }}
-/* F11 bot 页脚胶囊（vis5 补齐：此前本卡是唯一无署名卡）。 */
-.bot-foot {{ margin:0 14px 14px; padding:9px 14px; border-radius:var(--r-tile);
-  display:flex; align-items:center; gap:7px; font-size:12px; color:var(--muted);
-  background:
-    var(--glow-accent) right center / 62% 190% no-repeat,
-    linear-gradient(150deg, rgba(255,255,255,.66) 0%, rgba(255,255,255,.46) 100%) padding-box,
-    linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
-  border:1px solid transparent; box-shadow:var(--mica-shadow-soft); }}
-.bot-foot .bf-dot {{ width:22px; height:22px; border-radius:50%; flex-shrink:0;
-  display:inline-flex; align-items:center; justify-content:center;
-  font-size:12px; font-weight:650; color:var(--accent-dark);
-  background:color-mix(in srgb, var(--accent) 14%, #fff); }}
-.bot-foot .bf-avatar {{ width:22px; height:22px; border-radius:50%; object-fit:cover;
-  border:1px solid #fff; box-shadow:var(--mica-shadow-soft); }}
-.bot-foot .bf-name {{ font-weight:650; color:var(--text-main); }}
+/* CAP2（2026-09-20）：.bot-foot 只留**摆位**（外边距宿主），署名件本体见下方
+   mica_shell 单一产出的品牌胶囊样式；旧 .bot-foot 玻璃底与 .bf-avatar/.bf-dot/
+   .bf-name 手抄副本（含 rgba 字面量）随本次收口退役。 */
+.bot-foot {{ margin:0 14px 14px; }}
+{BRAND_CAPSULE_CSS}
 {channel_css}</style></head><body><div class="stage card"><section class="shell">
 {blobs_html}
 <header class="head glass">
