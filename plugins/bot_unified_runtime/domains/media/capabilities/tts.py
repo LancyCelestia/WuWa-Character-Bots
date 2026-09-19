@@ -40,6 +40,9 @@
   截断/占位符替换/词典替换每一步都产出机读结论（``audit`` 出参 + audit_tags
   ``truncated=true``/``kept_ratio=0.42`` 等），零文本行为变更——「语音只念了
   42% 字」这类事实（T26-表3）从此可从机读面直接看出来。
+- **出站内容摘要（M-64/S2）**：audio 部件随件携带落盘字节 sha256
+  （``content_sha256``，中央件 ``domains/media/digest.py`` 单一入口）；
+  算不出即部件不带键（诚实降级，与渲染收口缺省退化咬合），零行为变更面。
 """
 
 from __future__ import annotations
@@ -82,6 +85,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety impo
 from plugins.bot_unified_runtime.domains.core.text_boundary import (
     match_trigger,
 )
+from plugins.bot_unified_runtime.domains.media.digest import media_digest_file
 from plugins.bot_unified_runtime.domains.media.tts_presets import (
     DEFAULT_PRESET_ID,
     HARD_MAX_CHARS_FALLBACK,
@@ -907,6 +911,24 @@ def _no_ref_audio_issue(message: IncomingMessage, config: Any) -> OperationalIss
     return _issue(message, kind="tts_no_ref_audio", retryable=False, detail=detail)
 
 
+def _content_digest_for(path: Any) -> str | None:
+    """出站 audio 部件的内容摘要（M-64/S2，蓝图 ``docs/design/media-digest-layer.md`` §3.3）。
+
+    摘要=**落盘字节真值**（sha256 全长 64 hex 小写，经中央件 ``media_digest_file``，
+    单一入口禁手抄）——缓存命中路（bytes 不在内存）与新鲜合成路同一语义，答案
+    恒为「发出去的字节是什么」（蓝图 §4 出站侧职责）。读不到/形态异常 →
+    ``None``：部件不带键（诚实降级，与渲染收口 ``canonicalize_audio_parts``
+    缺省退化咬合），禁静默造假值；digest 是增益件，任何失败绝不阻断出站。
+    """
+    if not isinstance(path, (str, Path)):
+        return None
+    try:
+        return media_digest_file(path)
+    except Exception:  # noqa: BLE001 - digest 增益件 fail-open（同 synth fail-open 哲学）。
+        logger.info("tts content digest unavailable: path=%r", path)
+        return None
+
+
 def build_tts_capability(config: Any | None = None) -> Any:
     """构建语音合成能力：返回 ``(message, decision) -> CapabilityResult``。
 
@@ -1058,13 +1080,19 @@ def build_tts_capability(config: Any | None = None) -> Any:
         # 否则 renderer 的 body→summary→title 兜底链会把标题当文案一起发出去。
         # audit_tags 记 preset/seed（G2-R3：确定性可审计，波末向用户报备
         # 「同句恒同音色」语义变更）与有损变换事实（M-14）。
+        # M-64/S2（蓝图 §3.3）：出站部件随件携带落盘字节摘要（content_sha256），
+        # 渲染收口第三冻结键随段级键自动下行；算不出即缺省（诚实降级）。
+        audio_part: dict[str, Any] = {"file": str(path), "review_text": speech}
+        content_digest = _content_digest_for(path)
+        if content_digest is not None:
+            audio_part["content_sha256"] = content_digest
         return CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.tts",
             kind="text",
             title="",
             body="",
-            audio=[{"file": str(path), "review_text": speech}],
+            audio=[audio_part],
             audit_tags=[
                 "tts",
                 "sent",
@@ -1421,9 +1449,14 @@ def maybe_attach_voice(
         if path is None:
             logger.info("tts auto reply skipped: %s", reason)
             return _skip_voice_with_tags(result, _failure_kind_tag(reason))
+        # M-64/S2：与命令路同一摘要语义（落盘字节真值；算不出即缺省）。
+        audio_part: dict[str, Any] = {"file": str(path), "review_text": speech}
+        content_digest = _content_digest_for(path)
+        if content_digest is not None:
+            audio_part["content_sha256"] = content_digest
         return result.model_copy(
             update={
-                "audio": [{"file": str(path), "review_text": speech}],
+                "audio": [audio_part],
                 "audit_tags": [
                     *result.audit_tags,
                     "tts",

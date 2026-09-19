@@ -48,6 +48,7 @@ from plugins.bot_unified_runtime.domains.media.capabilities.tts import (
     should_voice_reply,
     synthesize,
 )
+from plugins.bot_unified_runtime.domains.media.digest import media_digest
 
 # G-2 契约层：八硬编码项收编自中央预设表（请求体断言的预期值源）。
 _PRESET_PARAMS = tts_presets.PRESET_REGISTRY["shorekeeper"].params
@@ -786,7 +787,14 @@ def test_capability_success_emits_audio_only(
     result = capability(_msg("说 今天的潮汐很安静"), None)
     # `review_text` 是给中央审核看的（媒体能力 title/body 必须留空，否则 renderer
     # 的兜底链会把朗读文本再发成一条文字消息）；`record` 段只把 `file` 交给平台。
-    assert result.audio == [{"file": str(wav), "review_text": "今天的潮汐很安静"}]
+    # T120 S2 棘轮翻转（M-64，蓝图 §3.3）：部件随件携带落盘字节摘要（恰三键）。
+    assert result.audio == [
+        {
+            "file": str(wav),
+            "review_text": "今天的潮汐很安静",
+            "content_sha256": media_digest(wav.read_bytes()),
+        }
+    ]
     # 与 randpic 同口径：只发媒体本体，避免 renderer 兜底链把标题当文案发出。
     assert result.title == ""
     assert result.body == ""
@@ -892,7 +900,14 @@ def test_maybe_attach_voice_attaches_audio(
         ),
     )
     assert patched is not original
-    assert patched.audio == [{"file": str(wav), "review_text": original.body}]
+    # T120 S2 棘轮翻转：自动配音路同语义，部件恰三键（含落盘字节摘要）。
+    assert patched.audio == [
+        {
+            "file": str(wav),
+            "review_text": original.body,
+            "content_sha256": media_digest(wav.read_bytes()),
+        }
+    ]
     assert "auto_reply" in patched.audit_tags
     assert not original.audio, "原结果不应被就地修改"
 
