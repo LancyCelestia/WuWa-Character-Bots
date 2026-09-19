@@ -41,6 +41,7 @@ from typing import Any
 from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     IncomingMessage,
+    OperationalIssue,
     SendPolicy,
 )
 
@@ -439,6 +440,64 @@ def _no_ref_audio_hint(config: Any) -> str:
     )
 
 
+_ISSUE_STAGE = "tts"
+
+_ISSUE_SUMMARY_MAX_CHARS = 200
+
+# 失败原因前缀 → (kind, retryable)：`_request_tts`/`synthesize` 的原因串是本域
+# 自己拼的固定前缀，故按前缀分类即可，不看引擎原文（原文只进 safe_summary）。
+_FAILURE_KINDS: tuple[tuple[str, str, bool], ...] = (
+    ("服务不可达", "tts_service_unreachable", True),
+    ("httpx", "tts_service_unreachable", True),
+    ("服务返回空音频", "tts_empty_audio", True),
+    ("服务返回", "tts_service_rejected", False),
+    ("音频落盘失败", "tts_write_failed", False),
+)
+
+
+def _issue(
+    message: IncomingMessage,
+    *,
+    kind: str,
+    retryable: bool,
+    detail: str = "",
+) -> OperationalIssue:
+    """语音失败的结构化证据（审计 M-13）。
+
+    本域 logger 不在 nonebot 日志树上，`logger.info` 在生产直接丢失；只有挂上
+    ``operational_issue``，中央回执链才会告警、错误报告卡才会挂——否则引擎整夜
+    不跑而管理员毫不知情。
+
+    ``safe_summary`` 必过 ``redact_local_secrets``：issue 会进诊断卡与管理员私聊，
+    而引擎错误体常带本机绝对路径（AGENTS 铁律 3：打码不得绕过）。
+    """
+    raw = f"{kind}: {detail}" if detail else kind
+    return OperationalIssue(
+        stage=_ISSUE_STAGE,
+        kind=kind,
+        retryable=retryable,
+        debug_id=message.debug_id,
+        safe_summary=redact_local_secrets(raw)[:_ISSUE_SUMMARY_MAX_CHARS].strip(),
+    )
+
+
+def _failure_issue(message: IncomingMessage, reason: str) -> OperationalIssue:
+    for prefix, kind, retryable in _FAILURE_KINDS:
+        if reason.startswith(prefix):
+            return _issue(message, kind=kind, retryable=retryable, detail=reason)
+    return _issue(message, kind="tts_synthesize_failed", retryable=False, detail=reason)
+
+
+def _no_ref_audio_issue(message: IncomingMessage, config: Any) -> OperationalIssue:
+    configured = list(getattr(config, "bot_tts_ref_audios", []) or [])
+    detail = (
+        "BOT_TTS_REF_AUDIOS 未配置"
+        if not configured
+        else "BOT_TTS_REF_AUDIOS 中的音频文件全部读不到（路径或基准目录不对）"
+    )
+    return _issue(message, kind="tts_no_ref_audio", retryable=False, detail=detail)
+
+
 def build_tts_capability(config: Any | None = None) -> Any:
     """构建语音合成能力：返回 ``(message, decision) -> CapabilityResult``。
 
@@ -500,6 +559,7 @@ def build_tts_capability(config: Any | None = None) -> Any:
                 kind="text",
                 body=_no_ref_audio_hint(config),
                 audit_tags=["tts", "no_ref_audio"],
+                operational_issue=_no_ref_audio_issue(message, config),
             )
 
         path, reason = synthesize(
@@ -520,6 +580,7 @@ def build_tts_capability(config: Any | None = None) -> Any:
                 kind="text",
                 body=_degrade(reason),
                 audit_tags=["tts", "synthesize_failed"],
+                operational_issue=_failure_issue(message, reason),
             )
         # 与 randpic 同口径：title/body 留空，只发媒体本体，
         # 否则 renderer 的 body→summary→title 兜底链会把标题当文案一起发出去。
