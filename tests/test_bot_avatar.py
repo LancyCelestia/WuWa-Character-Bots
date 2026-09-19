@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,7 +19,7 @@ import pytest
 
 import plugins.bot_unified_runtime as runtime_pkg
 from plugins.bot_unified_runtime import _resolve_bot_avatar_url
-from plugins.bot_unified_runtime.output import bot_avatar
+from plugins.bot_unified_runtime.domains.render import bot_avatar
 
 _PNG = b"\x89PNG\r\n\x1a\n" + b"avatar-payload"
 
@@ -231,3 +232,255 @@ def test_file_appears_after_ttl_returns_uri_then_memory_shortcut(
     clock.advance(10_000.0)
     assert bot_avatar.bot_avatar_uri(config) == avatar_file.as_uri()
     assert len(globs) == 2
+
+
+# ---------------------------------------------------------------------------
+# AVT1（2026-09-20 用户裁定「做成多 bot 身份自动取」）：bot_identity /
+# register_identity / set_identity_resolver 四级名字链与逐实例头像。
+# 回归底线：``bot_id`` 为空的读取行为与旧版逐字节一致——旧版的全部可观察
+# 行为就是 ``bot_avatar_uri`` 链（显式配置 > 内存登记 > 磁盘兜底 > 空），
+# 本节的锁 ① 逐字面对它；其余用例锁新增面，不触碰、不削弱上方旧锁。
+# ---------------------------------------------------------------------------
+
+_PERSONA = "报存"  # 与 config.py:150 bot_persona_display_name 缺省同值
+
+
+def _cfg(tmp_path: Path, *, avatar_url: str = "", persona: str | None = _PERSONA):
+    """构造读取面用到的最小 config 替身（persona=None 时模拟字段缺席）。"""
+    fields: dict[str, str] = {
+        "bot_persona_avatar_url": avatar_url,
+        "bot_runtime_data_dir": str(tmp_path),
+    }
+    if persona is not None:
+        fields["bot_persona_display_name"] = persona
+    return SimpleNamespace(**fields)
+
+
+@pytest.fixture()
+def _avt1(_isolated, monkeypatch: pytest.MonkeyPatch):
+    """在三个旧全局之外，再隔离 AVT1 的两个新进程级槽位（注册表+解析器）。"""
+    monkeypatch.setattr(bot_avatar, "_IDENTITY_REGISTRY", {})
+    monkeypatch.setattr(bot_avatar, "_IDENTITY_RESOLVER", None)
+
+
+# ① 回归锁：bot_id 为空 → 头像链与旧版 bot_avatar_uri 逐字节一致，
+#    且新槽位（注册表/解析器/逐实例磁盘）一律不经过。
+
+
+def test_empty_bot_id_matches_legacy_chain_byte_identical(_avt1, tmp_path) -> None:
+    # 场景 A：显式配置优先（旧第一级）。
+    cfg = _cfg(tmp_path, avatar_url="https://cfg.example/a.png")
+    bot_avatar.register_identity("10000", name="注册名", avatar_uri="file:///x.png")
+    seen: list[str] = []
+    bot_avatar.set_identity_resolver(
+        lambda bot_id, config: seen.append(bot_id) or "解析名"
+    )
+    assert bot_avatar.bot_identity("", cfg).avatar_uri == "https://cfg.example/a.png"
+    assert bot_avatar.bot_avatar_uri(cfg) == "https://cfg.example/a.png"
+
+    # 场景 B：无配置 → 磁盘兜底发现（旧第三级，含正结果登记副作用）。
+    cfg2 = _cfg(tmp_path / "b")
+    avatar_file = Path(cfg2.bot_runtime_data_dir)
+    (avatar_file / "avatar").mkdir(parents=True)
+    legacy = avatar_file / "avatar" / "bot_10000.png"
+    legacy.write_bytes(_PNG)
+    assert bot_avatar.bot_identity("", cfg2).avatar_uri == legacy.as_uri()
+    assert bot_avatar.bot_avatar_uri(cfg2) == legacy.as_uri()
+
+    # 新槽位零经过：空 bot_id 不查注册表（注册键 10000 不命中）不叫解析器。
+    assert seen == []
+    assert bot_avatar.bot_identity("   ", cfg2).avatar_uri == legacy.as_uri()  # 纯空白=空
+    assert seen == []
+
+
+def test_empty_bot_id_name_is_persona_and_skips_instance_slots(_avt1, tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    bot_avatar.register_identity("10000", name="注册名")
+    called: list[str] = []
+    bot_avatar.set_identity_resolver(lambda bot_id, config: called.append(bot_id) or "解析名")
+    assert bot_avatar.bot_identity("", cfg).name == _PERSONA
+    assert called == []
+
+
+# ② 逐实例头像按 avatar/bot_<qq>.png 命名隔离命中。
+
+
+def test_per_instance_avatar_isolated_by_filename(_avt1, tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    adir = Path(cfg.bot_runtime_data_dir) / "avatar"
+    adir.mkdir(parents=True)
+    main = adir / "bot_10000.png"
+    campus = adir / "bot_2300230562.png"
+    main.write_bytes(_PNG)
+    campus.write_bytes(_PNG)
+    # 主号更新（旧「取最新」口径会先选中它）；逐实例口径必须按名命中。
+    os.utime(main, (2_000_000_000, 2_000_000_000))
+    os.utime(campus, (1_000_000_000, 1_000_000_000))
+    assert bot_avatar.bot_identity("2300230562", cfg).avatar_uri == campus.as_uri()
+    assert bot_avatar.bot_identity("10000", cfg).avatar_uri == main.as_uri()
+
+
+def test_per_instance_zero_size_file_skipped_then_global(_avt1, tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    adir = Path(cfg.bot_runtime_data_dir) / "avatar"
+    adir.mkdir(parents=True)
+    (adir / "bot_10000.png").write_bytes(b"")  # 0 字节视同缺失（对齐旧发现口径）
+    assert bot_avatar.bot_identity("10000", cfg).avatar_uri == ""
+
+
+def test_per_instance_missing_falls_back_to_legacy_chain(_avt1, tmp_path) -> None:
+    # 逐实例无文件（校园/推送号接入前实况）→ 回落到今天全局链，零退化。
+    cfg = _cfg(tmp_path, avatar_url="https://cfg.example/a.png")
+    assert bot_avatar.bot_identity("999999", cfg).avatar_uri == "https://cfg.example/a.png"
+
+
+def test_non_numeric_bot_id_skips_disk_lookup(_avt1, tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    adir = Path(cfg.bot_runtime_data_dir) / "avatar"
+    adir.mkdir(parents=True)
+    (adir / "bot_10000.png").write_bytes(_PNG)
+    # 非 QQ 号形态（如 TG 侧键）不做 bot_<id>.png 拼接，直接全局回落。
+    assert bot_avatar.bot_identity("tg:42", cfg).avatar_uri == (
+        adir / "bot_10000.png"
+    ).as_uri()  # 磁盘兜底发现（旧链）而非 tg 专属文件
+
+
+# ③ 名字四级链：显式登记 > 装配层解析器 > 人格配置名 > 空。
+
+
+def test_name_chain_registry_wins_over_resolver_and_persona(_avt1, tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    bot_avatar.set_identity_resolver(lambda bot_id, config: "解析名")
+    bot_avatar.register_identity("10000", name="登记名")
+    assert bot_avatar.bot_identity("10000", cfg).name == "登记名"
+
+
+def test_name_chain_resolver_when_unregistered(_avt1, tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    bot_avatar.set_identity_resolver(lambda bot_id, config: f"装配:{bot_id}")
+    assert bot_avatar.bot_identity("2300230562", cfg).name == "装配:2300230562"
+
+
+def test_name_chain_resolver_blank_answer_falls_to_persona(_avt1, tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    bot_avatar.set_identity_resolver(lambda bot_id, config: "")
+    assert bot_avatar.bot_identity("2300230562", cfg).name == _PERSONA
+    bot_avatar.set_identity_resolver(lambda bot_id, config: None)  # 允许回 None
+    assert bot_avatar.bot_identity("2300230562", cfg).name == _PERSONA
+
+
+def test_name_chain_persona_absent_config_field_yields_empty(_avt1, tmp_path) -> None:
+    cfg = _cfg(tmp_path, persona=None)  # 模拟人格名字段整体缺席
+    assert bot_avatar.bot_identity("10000", cfg).name == ""  # 第四级：空=胶囊回落品牌名
+    assert bot_avatar.bot_identity("", cfg).name == ""
+
+
+def test_name_chain_resolver_cleared_by_none(_avt1, tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    bot_avatar.set_identity_resolver(lambda bot_id, config: "解析名")
+    bot_avatar.set_identity_resolver(None)
+    assert bot_avatar.bot_identity("10000", cfg).name == _PERSONA
+
+
+# ④ 解析器抛异常不塌面：fail-safe 落到下一级。
+
+
+def test_resolver_exception_fails_safe_to_next_tier(_avt1, tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+
+    def _boom(bot_id: str, config: object) -> str:
+        raise RuntimeError("装配层炸了")
+
+    bot_avatar.set_identity_resolver(_boom)
+    identity = bot_avatar.bot_identity("10000", cfg)  # 绝不外抛
+    assert identity.name == _PERSONA  # 落到第三级
+
+
+def test_resolver_failure_does_not_mask_registered_name(_avt1, tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+
+    def _boom(bot_id: str, config: object) -> str:
+        raise ValueError
+
+    bot_avatar.set_identity_resolver(_boom)
+    bot_avatar.register_identity("2300230562", name="登记名")
+    assert bot_avatar.bot_identity("2300230562", cfg).name == "登记名"  # 第一级本就不叫解析器
+
+
+# ⑤ 注册表与单实例槽位互不污染。
+
+
+def test_registry_and_single_slot_isolation(_avt1, tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    main_file = tmp_path / "main.png"
+    main_file.write_bytes(_PNG)
+    bot_avatar.set_local_path(main_file)  # 单实例内存槽位=主号
+    bot_avatar.register_identity(
+        "2300230562", name="校园守", avatar_uri="file:///campus.png"
+    )
+    # 登记不碰全局槽位：旧链逐字节不变。
+    assert bot_avatar.bot_avatar_uri(cfg) == main_file.as_uri()
+    assert bot_avatar._LOCAL_AVATAR_URI == main_file.as_uri()
+    # 全局槽位不碰注册结果：注册头像优先于回落链。
+    campus = bot_avatar.bot_identity("2300230562", cfg)
+    assert campus.name == "校园守"
+    assert campus.avatar_uri == "file:///campus.png"
+    # 空 bot_id 走全局槽位，不串注册表。
+    legacy = bot_avatar.bot_identity("", cfg)
+    assert legacy.avatar_uri == main_file.as_uri()
+    assert legacy.name == _PERSONA
+
+
+def test_register_blank_bot_id_is_noop(_avt1) -> None:
+    bot_avatar.register_identity("", name="幽灵名")
+    bot_avatar.register_identity("   ", avatar_uri="file:///g.png")
+    assert bot_avatar._IDENTITY_REGISTRY == {}
+
+
+def test_register_replaces_previous_entry_wholesale(_avt1, tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    bot_avatar.register_identity("10000", name="一版", avatar_uri="file:///a.png")
+    bot_avatar.register_identity("10000", name="二版")  # 不再带头像
+    identity = bot_avatar.bot_identity("10000", cfg)
+    assert identity.name == "二版"
+    assert identity.avatar_uri == ""  # 一版头像不被隐式继承（整条替换语义）
+
+
+# 附加锁：锁纪律与极端入参不塌面。
+
+
+def test_resolver_may_read_module_state_without_deadlock(_avt1, tmp_path) -> None:
+    # 解析器运行期允许反读本模块读取面（bot_avatar_uri 要拿 _LOCK）：
+    # 实现若持锁回调，本用例挂死 → 线程超时判定，绝不拖垮套件（daemon）。
+    import threading
+
+    cfg = _cfg(tmp_path)
+    result: dict[str, str] = {}
+
+    def _resolver(bot_id: str, config: object) -> str:
+        config and bot_avatar.bot_avatar_uri(config)  # 拿锁调用，不得嵌套死锁
+        return "装配名"
+
+    bot_avatar.set_identity_resolver(_resolver)
+    worker = threading.Thread(
+        target=lambda: result.update(
+            name=bot_avatar.bot_identity("10000", cfg).name
+        ),
+        daemon=True,
+    )
+    worker.start()
+    worker.join(timeout=5.0)
+    assert not worker.is_alive(), "解析器持锁回调导致死锁"
+    assert result.get("name") == "装配名"
+
+
+def test_bot_identity_never_raises_on_none_config(_avt1) -> None:
+    identity = bot_avatar.bot_identity("12345", None)
+    assert identity.name == ""
+    assert identity.avatar_uri == ""
+
+
+def test_bot_identity_is_frozen_value_object(_avt1) -> None:
+    identity = bot_avatar.bot_identity()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        identity.name = "改不动"  # type: ignore[misc]
