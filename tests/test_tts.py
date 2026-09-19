@@ -641,7 +641,9 @@ def test_capability_success_emits_audio_only(
         )
     )
     result = capability(_msg("说 今天的潮汐很安静"), None)
-    assert result.audio == [{"file": str(wav)}]
+    # `review_text` 是给中央审核看的（媒体能力 title/body 必须留空，否则 renderer
+    # 的兜底链会把朗读文本再发成一条文字消息）；`record` 段只把 `file` 交给平台。
+    assert result.audio == [{"file": str(wav), "review_text": "今天的潮汐很安静"}]
     # 与 randpic 同口径：只发媒体本体，避免 renderer 兜底链把标题当文案发出。
     assert result.title == ""
     assert result.body == ""
@@ -747,7 +749,7 @@ def test_maybe_attach_voice_attaches_audio(
         ),
     )
     assert patched is not original
-    assert patched.audio == [{"file": str(wav)}]
+    assert patched.audio == [{"file": str(wav), "review_text": original.body}]
     assert "auto_reply" in patched.audit_tags
     assert not original.audio, "原结果不应被就地修改"
 

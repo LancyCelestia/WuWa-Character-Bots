@@ -185,6 +185,44 @@ def test_auto_reply_path_never_synthesizes_refused_body(monkeypatch, tmp_path: P
     assert out.body == _HARMLESS, "文字回复必须原样保留"
 
 
+def test_command_result_carries_review_text_for_central_review(monkeypatch, tmp_path: Path) -> None:
+    """M-02 中央半的接线锁：语音正文必须以 `review_text` 随 audio 部件出门，
+    否则 `reviewer` 依旧看不见（媒体能力 title/body 留空是出站契约，不能改）。"""
+    wav = tmp_path / "voice.wav"
+    wav.write_bytes(b"RIFF....WAVEfmt ")
+    monkeypatch.setattr(
+        tts_mod,
+        "pick_ref_audio",
+        lambda *_a, **_k: tts_mod.RefAudio(path=str(tmp_path / "ref.flac"), text="", lang="zh"),
+    )
+    monkeypatch.setattr(tts_mod, "synthesize", lambda **_kw: (wav, ""))
+    cfg = _config(bot_tts_ref_audios=[f"{tmp_path}/ref.flac||zh"])
+    result = tts_mod.build_tts_capability(cfg)(_msg("说 " + _HARMLESS), None)
+    assert result.audio, "成功路径应带语音部件"
+    assert result.audio[0]["review_text"] == _HARMLESS
+    assert result.body == "", "出站正文仍须留空（防兜底链把朗读文本再发一条）"
+
+
+def test_auto_reply_carries_review_text(monkeypatch, tmp_path: Path) -> None:
+    wav = tmp_path / "voice.wav"
+    wav.write_bytes(b"RIFF....WAVEfmt ")
+    monkeypatch.setattr(tts_mod, "synthesize", lambda **_kw: (wav, ""))
+    monkeypatch.setattr(
+        tts_mod,
+        "pick_ref_audio",
+        lambda *_a, **_k: tts_mod.RefAudio(path=str(tmp_path / "ref.flac"), text="", lang="zh"),
+    )
+    original = CapabilityResult(
+        request_id="req-gate-2", capability_id="bot.chat", kind="text", body=_HARMLESS
+    )
+    out = tts_mod.maybe_attach_voice(
+        _msg(),
+        original,
+        config=_config(bot_tts_auto_reply_enabled=True, bot_tts_auto_reply_always=True),
+    )
+    assert out.audio and out.audio[0]["review_text"] == _HARMLESS
+
+
 def test_command_capability_returns_hint_instead_of_audio(monkeypatch, tmp_path: Path) -> None:
     _refuse(monkeypatch)
     monkeypatch.setattr(

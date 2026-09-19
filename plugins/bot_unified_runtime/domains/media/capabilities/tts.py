@@ -304,7 +304,7 @@ def _request_tts(
     global _last_failure_at, _last_failure_reason
     try:
         import httpx
-    except Exception:
+    except Exception:  # noqa: BLE001 - 缺依赖按服务不可用处理。
         _last_failure_reason = "httpx 不可用"
         return None
 
@@ -333,7 +333,7 @@ def _request_tts(
     try:
         with httpx.Client(timeout=max(1.0, float(timeout_seconds))) as client:
             response = client.post(endpoint, json=payload)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 连接/超时统一按失败降级。
         _last_failure_at = time.monotonic()
         _last_failure_reason = f"服务不可达：{type(exc).__name__}"
         logger.info("tts request failed: %s", exc)
@@ -346,7 +346,7 @@ def _request_tts(
         # 下游 _degrade 的「参考音频」分支永远命不中。
         try:
             error_body: Any = response.json()
-        except Exception:
+        except Exception:  # noqa: BLE001 - 错误体非 JSON 时退回纯文本。
             error_body = None
         if isinstance(error_body, dict):
             detail = str(error_body.get("Exception") or error_body.get("message") or "")
@@ -529,7 +529,7 @@ def build_tts_capability(config: Any | None = None) -> Any:
             kind="text",
             title="",
             body="",
-            audio=[{"file": str(path)}],
+            audio=[{"file": str(path), "review_text": speech}],
             audit_tags=["tts", "sent"],
         )
 
@@ -563,7 +563,7 @@ def speech_block_reason(config: Any, message: IncomingMessage, text: str) -> str
             session_type=kind,
             explicit_allowed=bool(explicit),
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 政策件异常按不放行处理。
         logger.warning("tts speech policy unavailable, refusing synthesis: %s", exc)
         return "policy_unavailable"
     if str(getattr(verdict, "action", "allow")) != "allow":
@@ -631,7 +631,7 @@ def _resolve_probability(value: Any) -> float:
     if callable(value):
         try:
             return float(value())
-        except Exception:
+        except Exception:  # noqa: BLE001 - 求值失败按不配音处理。
             return 0.0
     try:
         return float(value)
@@ -731,10 +731,10 @@ def maybe_attach_voice(
             return result
         return result.model_copy(
             update={
-                "audio": [{"file": str(path)}],
+                "audio": [{"file": str(path), "review_text": speech}],
                 "audit_tags": [*result.audit_tags, "tts", "auto_reply"],
             }
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 配音增益绝不阻断文字回复。
         logger.info("tts auto reply failed: %s", exc)
         return result
