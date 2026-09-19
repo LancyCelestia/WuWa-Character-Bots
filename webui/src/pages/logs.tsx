@@ -4,7 +4,10 @@
 // - 410 cursor_expired：后端明文约定「客户端不得静默重置游标，须由用户选择重新订阅」→
 //   停止自动重连 + 顶部缺口横幅 + 显式「重新订阅」按钮（清游标回放保留窗口）。
 // - 心跳保活：`: heartbeat` 注释帧 → 45s 内有心跳视为存活（服务端默认 15s 一拍）。
-import { useEffect, useRef, useState } from 'react';
+// - 渲染口径（PERF1 2026-09-19，F8-L1/L2/L3）：秒表只在自渲染子件里跑（父页不再每秒整体重渲染）、
+//   行渲染 memo 化（每帧/每秒不再重排 500 行、不再每行重算 Intl/JSON）、
+//   同一刷新窗口内到达的行合并为一次 state 更新、暂停积压与视图同界（≤MAX_ROWS）。
+import { memo, useEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CirclePause, CirclePlay, Eraser, Link2Off, RotateCcw, ArrowDownToLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -17,6 +20,10 @@ import { formatTime } from '@/lib/format';
 const CURSOR_KEY = 'webui:logsCursor';
 const MAX_ROWS = 500;
 const HEARTBEAT_STALE_MS = 45_000;
+// 视图合并窗口（F8-L3）：窗口内到达的行只做一次 state 更新（数组重建 + 游标落盘 + 滚底各一次）。
+// 取 16ms ≈ 一帧：稳态单条事件的可见延迟不超过一帧；后台标签页定时器被节流到 ≥1s 也照常触发，
+// 故合并窗口本身不会像 rAF 那样在不可见时停摆（那条路会让缓冲无限堆积）。
+const FLUSH_WINDOW_MS = 16;
 
 const CATEGORY_TONE: Record<string, Tone> = {
   debug: 'flat',
@@ -41,6 +48,80 @@ function detailsOneLine(details: unknown): string {
   return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 }
 
+/**
+ * 秒表（F8-L2）：距今秒数只在需要它的子件内自转。
+ * 挂在父页时每秒都会重排整张日志表（500 行 × Intl/JSON 全量重算）；这里把它关进叶子节点。
+ * 节奏与相位与改造前一致（1000ms 无条件 setInterval，挂载即起）。
+ */
+function useSecondTick(): number {
+  const [tickAt, setTickAt] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setTickAt(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return tickAt;
+}
+
+/** 状态 + 心跳距今秒数 chip：自带秒表，父页不为它每秒重渲染。 */
+function StatusChip({ status, attempt, lastHeartbeatAt }: { status: StreamStatus; attempt: number; lastHeartbeatAt: number | null }) {
+  const { t } = useTranslation();
+  const nowTick = useSecondTick();
+  const heartbeatAge = lastHeartbeatAt === null ? null : nowTick - lastHeartbeatAt;
+  const heartbeatAlive = status === 'open' && heartbeatAge !== null && heartbeatAge < HEARTBEAT_STALE_MS;
+  return (
+    <CategoryChip
+      label={
+        <>
+          {t(`logs.status.${status}`, { attempt })}
+          {status === 'open' && heartbeatAge !== null && (
+            <span className='ml-1 font-normal opacity-80'>
+              {heartbeatAlive ? t('logs.heartbeatAlive', { seconds: Math.floor(heartbeatAge / 1000) }) : t('logs.heartbeatStale')}
+            </span>
+          )}
+        </>
+      }
+      tone={statusTone(status)}
+    />
+  );
+}
+
+/**
+ * 游标行：值来自客户端实例（读 ref，非 state）。自带秒表，语义与改造前逐字对齐——
+ * 改造前它随父页每秒/每行渲染刷新；父页不再每秒重渲染后，「暂停期间游标仍在推进」这一路
+ * 由本件自己的秒表兜住（每帧推进的实时路则随父页渲染刷新）。
+ */
+function CursorLine({ clientRef }: { clientRef: RefObject<LogsStreamClient | null> }) {
+  const { t } = useTranslation();
+  useSecondTick();
+  return (
+    <>
+      {`${t('logs.cursorLabel', { cursor: clientRef.current?.lastCursor ?? '—' })} · ${t('logs.playbackHint')}`}
+    </>
+  );
+}
+
+/**
+ * 单行日志（F8-L2）：memo 后只有「新入库的行」才渲染，存量行按引用直接跳过。
+ * 行对象引用在裁切/追加中保持稳定（appendRows 只做数组拼接），故浅比较即可判定。
+ */
+const LogRow = memo(function LogRow({ row }: { row: LogEventRow }) {
+  return (
+    <div className='flex items-start gap-2 border-b py-2 last:border-b-0'>
+      <span className='shrink-0 tabular-nums text-muted-foreground'>{formatTime(row.created_at)}</span>
+      <CategoryChip label={row.category} tone={CATEGORY_TONE[row.category] ?? 'flat'} className='font-mono' />
+      <span className='w-24 shrink-0 truncate text-muted-foreground' title={row.source}>
+        {row.source}
+      </span>
+      <span className='min-w-0 flex-1 break-words'>
+        {row.message}
+        {row.details !== null && row.details !== undefined && (
+          <span className='text-muted-foreground'> {detailsOneLine(row.details)}</span>
+        )}
+      </span>
+    </div>
+  );
+});
+
 export function LogsPage() {
   const { t } = useTranslation();
 
@@ -49,7 +130,6 @@ export function LogsPage() {
   const [statusInfo, setStatusInfo] = useState<{ attempt?: number; code?: string; message?: string }>({});
   const [gapMessage, setGapMessage] = useState<string | null>(null);
   const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | null>(null);
-  const [nowTick, setNowTick] = useState(Date.now());
   const [paused, setPaused] = useState(false);
   const [autoscroll, setAutoscroll] = useState(true);
   const [droppedCount, setDroppedCount] = useState(0);
@@ -59,6 +139,7 @@ export function LogsPage() {
   const clientRef = useRef<LogsStreamClient | null>(null);
   const pausedRef = useRef(false);
   const backlogRef = useRef<LogEventRow[]>([]);
+  const backlogDroppedRef = useRef(0);
   const autoscrollRef = useRef(true);
   const listEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -75,26 +156,48 @@ export function LogsPage() {
   };
 
   const seenRef = useRef<Set<number>>(new Set());
+  const pendingRef = useRef<LogEventRow[]>([]);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const appendRows = (incoming: LogEventRow[]) => {
-    // 按 cursor 去重：重放（无游标订阅）与实时尾包会送来同一批事件，不去重即界面重复行 + React key 撞车。
-    // 判重与登记必须同步完成——若延后到 effect 再重建集合，集合恒为「可见行子集」，
-    // 未渲染的那批就漏判（F17 复核 2026-09-19 实测：延迟重建形态同批帧出 2 组重复 key）。
-    const fresh = incoming.filter((row) => !seenRef.current.has(row.cursor));
-    if (fresh.length === 0) return;
-    for (const row of fresh) seenRef.current.add(row.cursor);
+  // 合并窗口到点：把缓冲行一次性并入视图（一帧一次，而非一条一次）。
+  const commitPending = () => {
+    const pending = pendingRef.current;
+    if (pending.length === 0) return;
+    pendingRef.current = [];
     setRows((current) => {
-      const merged = [...current, ...fresh];
+      const merged = [...current, ...pending];
       const overflow = merged.length - MAX_ROWS;
       if (overflow > 0) {
-        // 与视图同步收缩：被裁出行立即释放判重位，Set 上限恒 ≤ MAX_ROWS。delete 幂等，
-        // StrictMode 下 updater 双跑不会失真。
+        // 与视图同步收缩：被裁出行立即释放判重位，Set 上限恒 ≤ MAX_ROWS（外加一个合并窗口内
+        // 尚未入库的缓冲量）。delete 幂等，StrictMode 下 updater 双跑不会失真。
         for (let i = 0; i < overflow; i++) seenRef.current.delete(merged[i].cursor);
         setDroppedCount((count) => count + overflow);
         return merged.slice(overflow);
       }
       return merged;
     });
+  };
+
+  const appendRows = (incoming: LogEventRow[]) => {
+    // 按 cursor 去重：重放（无游标订阅）与实时尾包会送来同一批事件，不去重即界面重复行 + React key 撞车。
+    // 判重与登记必须同步完成——若延后到 effect 再重建集合，集合恒为「可见行子集」，
+    // 未渲染的那批就漏判（F17 复核 2026-09-19 实测：延迟重建形态同批帧出 2 组重复 key）。
+    const seen = seenRef.current;
+    let buffered = 0;
+    for (const row of incoming) {
+      if (seen.has(row.cursor)) continue;
+      seen.add(row.cursor);
+      pendingRef.current.push(row);
+      buffered += 1;
+    }
+    if (buffered === 0) return;
+    // 一帧合并窗口（F8-L3）：窗口内已有待入库行时不再另起定时器。
+    if (flushTimerRef.current === null) {
+      flushTimerRef.current = setTimeout(() => {
+        flushTimerRef.current = null;
+        commitPending();
+      }, FLUSH_WINDOW_MS);
+    }
   };
 
   const startStream = (after: string | null) => {
@@ -110,7 +213,16 @@ export function LogsPage() {
         },
         onEvent: (row) => {
           if (pausedRef.current) {
-            backlogRef.current.push(row);
+            // 暂停积压与视图同界（F8-L1）：超界的最旧行注定在恢复时被 MAX_ROWS 裁掉，
+            // 这里提前裁并把枚数暂存进 backlogDroppedRef，恢复时并入 droppedCount——
+            // 可见行集合与 dropped 总量都与改造前逐枚相同，只是不再无界堆积。
+            const backlog = backlogRef.current;
+            backlog.push(row);
+            const overflow = backlog.length - MAX_ROWS;
+            if (overflow > 0) {
+              backlog.splice(0, overflow);
+              backlogDroppedRef.current += overflow;
+            }
             return;
           }
           appendRows([row]);
@@ -127,14 +239,13 @@ export function LogsPage() {
     startStream(stored);
     return () => {
       clientRef.current?.stop();
+      if (flushTimerRef.current !== null) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+      pendingRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // 心跳存活指示的秒表。
-  useEffect(() => {
-    const timer = setInterval(() => setNowTick(Date.now()), 1000);
-    return () => clearInterval(timer);
   }, []);
 
   // 游标持久化（每行都带 cursor；写 sessionStorage 高频但轻量）。
@@ -146,11 +257,13 @@ export function LogsPage() {
 
   // 恢复暂停时冲积压。
   useEffect(() => {
-    if (!paused && backlogRef.current.length > 0) {
-      const backlog = backlogRef.current;
-      backlogRef.current = [];
-      appendRows(backlog);
-    }
+    if (paused || backlogRef.current.length === 0) return;
+    const backlog = backlogRef.current;
+    const droppedFromBacklog = backlogDroppedRef.current;
+    backlogRef.current = [];
+    backlogDroppedRef.current = 0;
+    if (droppedFromBacklog > 0) setDroppedCount((count) => count + droppedFromBacklog);
+    appendRows(backlog);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paused]);
 
@@ -159,8 +272,6 @@ export function LogsPage() {
     if (autoscroll) listEndRef.current?.scrollIntoView({ block: 'end' });
   }, [rows, autoscroll]);
 
-  const heartbeatAge = lastHeartbeatAt === null ? null : nowTick - lastHeartbeatAt;
-  const heartbeatAlive = status === 'open' && heartbeatAge !== null && heartbeatAge < HEARTBEAT_STALE_MS;
   const connected = status === 'open' || status === 'connecting' || status === 'reconnecting';
 
   const stopStream = () => {
@@ -169,6 +280,7 @@ export function LogsPage() {
 
   const clearView = () => {
     seenRef.current.clear();
+    pendingRef.current = []; // 与判重集同帧作废：已判重但未入库的行不得越过「清空」重新现身。
     setRows([]);
     setDroppedCount(0);
   };
@@ -194,21 +306,7 @@ export function LogsPage() {
         title={t('logs.title')}
         actions={
           <>
-            <CategoryChip
-              label={
-                <>
-                  {t(`logs.status.${status}`, { attempt: statusInfo.attempt ?? 0 })}
-                  {status === 'open' && heartbeatAge !== null && (
-                    <span className='ml-1 font-normal opacity-80'>
-                      {heartbeatAlive
-                        ? t('logs.heartbeatAlive', { seconds: Math.floor(heartbeatAge / 1000) })
-                        : t('logs.heartbeatStale')}
-                    </span>
-                  )}
-                </>
-              }
-              tone={statusTone(status)}
-            />
+            <StatusChip status={status} attempt={statusInfo.attempt ?? 0} lastHeartbeatAt={lastHeartbeatAt} />
             {connected ? (
               <Button size='sm' variant='outline' onClick={stopStream}>
                 <Link2Off className='size-4' />
@@ -288,10 +386,7 @@ export function LogsPage() {
         </span>
       </div>
 
-      <SectionCard
-        title={t('logs.streamTitle')}
-        description={`${t('logs.cursorLabel', { cursor: clientRef.current?.lastCursor ?? '—' })} · ${t('logs.playbackHint')}`}
-      >
+      <SectionCard title={t('logs.streamTitle')} description={<CursorLine clientRef={clientRef} />}>
         {rows.length === 0 ? (
           <p className='py-6 text-center fs-caption text-muted-foreground'>
             {connected ? t('logs.waiting') : t('logs.idle')}
@@ -299,19 +394,7 @@ export function LogsPage() {
         ) : (
           <div className='flex max-h-[60vh] flex-col overflow-y-auto font-mono fs-caption' aria-live='polite'>
             {rows.map((row) => (
-              <div key={row.cursor} className='flex items-start gap-2 border-b py-2 last:border-b-0'>
-                <span className='shrink-0 tabular-nums text-muted-foreground'>{formatTime(row.created_at)}</span>
-                <CategoryChip label={row.category} tone={CATEGORY_TONE[row.category] ?? 'flat'} className='font-mono' />
-                <span className='w-24 shrink-0 truncate text-muted-foreground' title={row.source}>
-                  {row.source}
-                </span>
-                <span className='min-w-0 flex-1 break-words'>
-                  {row.message}
-                  {row.details !== null && row.details !== undefined && (
-                    <span className='text-muted-foreground'> {detailsOneLine(row.details)}</span>
-                  )}
-                </span>
-              </div>
+              <LogRow key={row.cursor} row={row} />
             ))}
             <div ref={listEndRef} />
           </div>
