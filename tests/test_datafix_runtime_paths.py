@@ -36,6 +36,9 @@ LEAKED_RELATIVE_PATHS = (
 
 # config 校验器必须覆盖的字段（含 DATAFIX 前遗漏的）。
 RESOLVED_CONFIG_FIELDS = (
+    "bot_control_plane_config_db",
+    "bot_control_plane_events_db",
+    "bot_control_plane_features_db",
     "bot_usage_report_state_file",
     "bot_media_registry_path",
     "bot_music_dir",
@@ -124,7 +127,7 @@ def test_platform_credentials_write_target_never_source_tree(
     """/bot cookie 写入路径与读取路径同源，env 设置时绝不指向源码树。"""
     from types import SimpleNamespace
 
-    from plugins.bot_unified_runtime.capabilities.platform_credentials import (
+    from plugins.bot_unified_runtime.domains.core.credentials.platform_credentials import (
         _resolve_cookie_file,
     )
 
@@ -145,7 +148,7 @@ def test_epic_steam_cookie_candidates_prefer_runtime_root(
     monkeypatch.setenv("BOT_RUNTIME_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("BOT_COOKIES_FILE", raising=False)
     module = __import__(
-        f"plugins.bot_unified_runtime.sources.parsers.{module_name}",
+        f"plugins.bot_unified_runtime.domains.link_parse.parsers.{module_name}",
         fromlist=["_cookie_file_candidates"],
     )
     candidates = module._cookie_file_candidates()
@@ -165,3 +168,33 @@ def test_music_default_dir_routes_to_runtime_root(tmp_path: Path, monkeypatch) -
 
     _isolate_dotenv(monkeypatch, str(tmp_path))
     assert _resolve_music_data_dir("data/music") == (tmp_path / "music").resolve()
+
+
+def test_tts_gptsovits_dir_remap_semantics(tmp_path: Path, monkeypatch) -> None:
+    """M-52（T125）：gptsovits_dir 引擎目录键入 path_fields 的三态语义锁。
+
+    绝对值（GPT-SoVITS 引擎目录，C:/Software 语义）必须原样透传=生产零行为
+    变化；data/ 相对误配必须重定向 Runtime 数据根（铁律 6，防 CWD join 落
+    源码树）；缺省空串（功能未配语义）必须保持空。
+    """
+    from plugins.bot_unified_runtime.config import Config
+
+    monkeypatch.delenv("BOT_RUNTIME_DATA_DIR", raising=False)
+
+    engine_dir = tmp_path / "GPT-SoVITS"
+    config = Config(
+        bot_runtime_data_dir=str(tmp_path),
+        bot_tts_gptsovits_dir=str(engine_dir),
+    )
+    assert Path(config.bot_tts_gptsovits_dir) == engine_dir.resolve()
+
+    config = Config(
+        bot_runtime_data_dir=str(tmp_path),
+        bot_tts_gptsovits_dir="data/gptsovits",
+    )
+    resolved = Path(config.bot_tts_gptsovits_dir)
+    assert resolved == (tmp_path / "gptsovits").resolve()
+    assert PROJECT_ROOT / "data" not in resolved.parents
+
+    config = Config(bot_runtime_data_dir=str(tmp_path))
+    assert config.bot_tts_gptsovits_dir == ""

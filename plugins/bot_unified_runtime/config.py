@@ -1293,6 +1293,11 @@ class Config(BaseModel):
             "bot_tts_output_dir",
             "bot_schedule_db_path",
             "bot_schedule_exceptions_path",
+            # M-52（T125）：TTS 引擎目录键收口。语义=GPT-SoVITS 程序目录
+            # （生产为 C:/Software 绝对路径）；本解析器对非 data/ 值（含绝对
+            # 路径与空串）原样透传=既有行为零变化，入册仅防未来误配 data/
+            # 相对值时被 tts._resolve_ref_path 按 CWD join 落源码树（铁律 6）。
+            "bot_tts_gptsovits_dir",
         )
         for name in path_fields:
             setattr(self, name, resolve(getattr(self, name)))
