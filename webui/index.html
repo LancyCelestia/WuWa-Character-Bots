@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- CSP（SECWEB Minor-1）：压缩 localStorage token 的 XSS 爆炸半径。
+         script-src 须带 'unsafe-inline'：dist 为 vite-plugin-singlefile 全内联单文件（'self' 只够 dev 外链）；
+         connect-src 放行本机回环任意端口：设置面板可改 baseURL 指向其他本机端口。 -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:"
+    />
+    <link rel="icon" href="data:," />
+    <title>守岸人控制台</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

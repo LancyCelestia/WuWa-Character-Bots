@@ -1,0 +1,322 @@
+/*
+ * 守岸人 WebUI 主题 token —— 数值来自卡片值册（domains/render/card_render/theme_tokens.py）
+ * 经 Ottosson OKLab 精确换算（换算表与来源见 docs/design/webui-axonhub-adoption.md §三）。
+ * 结构组织采纳自 AxonHub frontend/src/index.css（Apache-2.0，已注明修改）。
+ */
+@import 'tailwindcss';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 14px;
+
+  /* 卡片值册圆角三档直传：壳 30 / 面板 18 / 瓦片 14 */
+  --r-shell: 30px;
+  --r-panel: 18px;
+  --r-tile: 14px;
+
+  /* 守岸人洗色四 token（derive_wash_tokens('#318ce7') 同源换算） */
+  --wash-1: oklch(0.903 0.0122 248);   /* 洗淡蓝  #d9e0e7 */
+  --wash-2: oklch(0.896 0.0183 303.4); /* 洗星空紫 #dfdae7 */
+  --wash-3: oklch(0.905 0.0153 273.8); /* 洗深蓝  #dcdfea */
+  --wash-mist: oklch(0.970 0.0017 247.8); /* 雾底 #f4f5f6 */
+
+  /* 可用级次色（非 pastel） */
+  --sk-purple: oklch(0.544 0.1875 299.5); /* 星空紫 #824dcb */
+  --sk-deep: oklch(0.466 0.1494 269.3);   /* 深蓝   #3950ac */
+
+  --background: var(--wash-mist);
+  --foreground: oklch(0.291 0.0448 272.6);
+  --card: oklch(0.988 0.0017 247.8);
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.991 0.0013 286.4);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.632 0.1608 252); /* 品牌 #318ce7 */
+  --primary-foreground: oklch(1 0 0);
+  --secondary: var(--wash-1);
+  --secondary-foreground: var(--sk-deep);
+  --muted: var(--wash-3);
+  --muted-foreground: oklch(0.497 0.0441 273.4);
+  --accent: var(--wash-2);
+  --accent-foreground: oklch(0.464 0.1571 299.9); /* 星空紫 darken #683da2 */
+  --destructive: oklch(0.62 0.22 25.5);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.624 0.1264 159.1); /* 值册 SEMANTIC_SUCCESS #2e9e6b 投影（OKLab 精确换算，换算矩阵已实跑复现品牌值） */
+  --success-foreground: oklch(0.985 0 0);
+  --scrim: oklch(0 0 0 / 0.5); /* 弹层遮罩（语义 token，替代调色板直引 bg-black/50） */
+  --border: oklch(0.889 0.0099 252.8);
+  --input: oklch(0.889 0.0099 252.8);
+  --ring: oklch(0.632 0.1608 252);
+  --chart-1: oklch(0.632 0.1608 252); /* 品牌淡蓝 */
+  --chart-2: oklch(0.544 0.1875 299.5); /* 星空紫 */
+  --chart-3: oklch(0.466 0.1494 269.3); /* 深蓝 */
+  --chart-4: oklch(0.683 0.0969 249.4); /* 淡蓝中段 #699ed3 */
+  --chart-5: oklch(0.685 0.1095 302.5); /* 紫中段 #a789d2 */
+  --chart-6: oklch(0.608 0.1145 272.2); /* 深蓝中段 #6b7dc7 */
+
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+
+  /* 值册两枚阴影 token 同构映射（wash-2 染色深投影 + 元素柔光） */
+  --shadow-2xs: 0 1px 3px 0 rgba(31, 35, 41, 0.04);
+  --shadow-xs: 0 1px 3px 0 rgba(31, 35, 41, 0.05);
+  --shadow-sm: 0 3px 10px rgba(31, 35, 41, 0.06);
+  --shadow:
+    0 12px 32px color-mix(in srgb, var(--wash-2) 26%, transparent),
+    0 3px 10px rgba(31, 35, 41, 0.05);
+  --shadow-md:
+    0 12px 32px color-mix(in srgb, var(--wash-2) 26%, transparent),
+    0 3px 10px rgba(31, 35, 41, 0.05);
+  --shadow-lg:
+    0 12px 32px color-mix(in srgb, var(--wash-2) 30%, transparent),
+    0 4px 14px rgba(31, 35, 41, 0.08);
+  --shadow-xl:
+    0 16px 40px color-mix(in srgb, var(--wash-2) 34%, transparent),
+    0 6px 18px rgba(31, 35, 41, 0.1);
+  --shadow-2xl: 0 20px 48px rgba(31, 35, 41, 0.16);
+}
+
+.dark {
+  --background: oklch(0.248 0.0329 273.6); /* #1c2031 深蓝夜 */
+  --foreground: oklch(0.946 0.0017 247.8);
+  --card: oklch(0.286 0.0375 273); /* #24293d */
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.305 0.039 271.7);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.669 0.1427 250.8); /* 品牌 lighten #4999e9 */
+  --primary-foreground: oklch(0.254 0.0383 274.7);
+  --secondary: oklch(0.322 0.0343 275.1); /* #2e3245 */
+  --secondary-foreground: oklch(0.946 0.0017 247.8);
+  --muted: oklch(0.308 0.0255 275.4); /* #2c2f3d */
+  --muted-foreground: oklch(0.778 0.0084 253.9);
+  --accent: oklch(0.367 0.0389 303.2); /* #433a50 星空紫面 */
+  --accent-foreground: oklch(0.946 0.0017 247.8);
+  --destructive: oklch(0.68 0.2 22.5);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.661 0.1123 159.1); /* 成功绿 lighten（品牌色暗档同款处理：L+0.037 / C×0.888） */
+  --success-foreground: oklch(0.985 0 0);
+  --scrim: oklch(0 0 0 / 0.5);
+  --border: oklch(0.4 0.0258 273.4);
+  --input: oklch(0.4 0.0258 273.4);
+  --ring: oklch(0.669 0.1427 250.8);
+  --chart-1: oklch(0.715 0.1229 250.2); /* 亮品牌 #64a8ed */
+  --chart-2: oklch(0.731 0.0922 303.4); /* 紫中段亮 #b49ad8 */
+  --chart-3: oklch(0.678 0.0921 273.1); /* 深蓝中段亮 #8594d1 */
+  --chart-4: oklch(0.729 0.0817 249);   /* 淡蓝中段亮 #7facd9 */
+  --chart-5: oklch(0.544 0.1875 299.5); /* 星空紫 */
+  --chart-6: oklch(0.466 0.1494 269.3); /* 深蓝 */
+
+  --sidebar: oklch(0.268 0.034 273.4);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+
+  --shadow-2xs: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
+  --shadow-xs: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 3px 10px rgba(0, 0, 0, 0.35);
+  --shadow: 0 8px 24px 0 rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 8px 24px 0 rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 12px 32px 0 rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 16px 40px 0 rgba(0, 0, 0, 0.55);
+  --shadow-2xl: 0 20px 48px 0 rgba(0, 0, 0, 0.6);
+}
+
+@theme inline {
+  /* Color System（shadcn 语义面，兼容上游组件生态） */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-scrim: var(--scrim);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Data Visualization */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+
+  /* 守岸人可用级次色 */
+  --color-sk-purple: var(--sk-purple);
+  --color-sk-deep: var(--sk-deep);
+
+  /* Navigation */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Typography（值册 FONT_FAMILY_STACK 同源） */
+  --font-sans:
+    'Segoe UI', 'Microsoft YaHei', 'PingFang SC', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Border Radius：显式钉卡片值册三档，覆盖上游派生式 */
+  --radius-sm: 8px;
+  --radius-md: var(--r-tile);  /* 14px 瓦片 */
+  --radius-lg: var(--r-panel); /* 18px 面板 */
+  --radius-xl: var(--r-shell); /* 30px 卡壳 */
+
+  /* Elevation */
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  html {
+    @apply overflow-x-hidden;
+  }
+  body {
+    @apply bg-background text-foreground min-h-svh w-full font-sans antialiased;
+  }
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@utility no-scrollbar {
+  &::-webkit-scrollbar {
+    display: none;
+  }
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/*
+ * 版式宪法（2026-09-18 用户裁定，全站强制）：
+ * ① 字号五档阶梯（全站只有这五档，机器门 scripts/layout-constitution.mjs 锁定）：
+ *    fs-page    页面标题  18px/28px w600
+ *    fs-card    卡片标题  14px/22px w600
+ *    fs-body    正文      13px/20px w400
+ *    fs-caption 说明文字  12px/18px w400
+ *    fs-num     数字大字  30px/38px w600 tabular
+ * ② padding/gap 只用 4px 栅格刻度 {4,8,12,16,24}（Tailwind 1/2/3/4/6）。
+ * ③ 颜色只用语义 token / tone 语义色（下组 --tone-*），禁裸 hex。
+ * ④ 圆角 30/18/14 = rounded-xl/lg/md（上方显式钉值）。
+ */
+@utility fs-page {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+  font-weight: 600;
+}
+@utility fs-card {
+  font-size: 0.875rem;
+  line-height: 1.375rem;
+  font-weight: 600;
+}
+@utility fs-body {
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  font-weight: 400;
+}
+@utility fs-caption {
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+  font-weight: 400;
+}
+@utility fs-num {
+  font-size: 1.875rem;
+  line-height: 2.375rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* tone 语义色：文字色一枚 + 底色由 color-mix 派生（亮暗各一组，禁调色板直引）。 */
+:root {
+  --tone-good: oklch(0.596 0.145 163);  /* emerald-600 系 */
+  --tone-warn: oklch(0.666 0.179 58);   /* amber-600 系 */
+  --tone-bad: oklch(0.577 0.245 27.3);  /* red-600 系 */
+  --tone-info: oklch(0.5 0.134 242.7);  /* sky-700 系 */
+  --tone-purple: var(--sk-purple);      /* 星空紫（tier 挚友） */
+  --tone-magenta: oklch(0.591 0.262 320.4); /* fuchsia-600 系（tier 独一份） */
+}
+.dark {
+  --tone-good: oklch(0.765 0.177 163.2);   /* emerald-400 系 */
+  --tone-warn: oklch(0.828 0.113 84.5);    /* amber-300 系 */
+  --tone-bad: oklch(0.808 0.114 19.4);     /* red-300 系 */
+  --tone-info: oklch(0.828 0.111 230.3);   /* sky-300 系 */
+  --tone-purple: oklch(0.731 0.0922 303.4); /* 紫中段亮（与 chart-2 暗色同值） */
+  --tone-magenta: oklch(0.862 0.18 318.3);  /* fuchsia-300 系 */
+}
+
+@theme inline {
+  --color-tone-good: var(--tone-good);
+  --color-tone-warn: var(--tone-warn);
+  --color-tone-bad: var(--tone-bad);
+  --color-tone-info: var(--tone-info);
+  --color-tone-purple: var(--tone-purple);
+  --color-tone-magenta: var(--tone-magenta);
+}
+
+@utility tone-face {
+  background: color-mix(in srgb, var(--tone) 14%, transparent);
+}
+@utility tone-face-good {
+  background: color-mix(in srgb, var(--tone-good) 14%, transparent);
+}
+@utility tone-face-warn {
+  background: color-mix(in srgb, var(--tone-warn) 14%, transparent);
+}
+@utility tone-face-bad {
+  background: color-mix(in srgb, var(--tone-bad) 14%, transparent);
+}
+@utility tone-face-info {
+  background: color-mix(in srgb, var(--tone-info) 12%, transparent);
+}
+@utility tone-face-purple {
+  background: color-mix(in srgb, var(--tone-purple) 14%, transparent);
+}
+@utility tone-face-magenta {
+  background: color-mix(in srgb, var(--tone-magenta) 14%, transparent);
+}
+@utility tone-face-flat {
+  background: color-mix(in srgb, var(--muted-foreground) 12%, transparent);
+}
+
+/* 图表图形元素字号（recharts SVG tick/legend/tooltip）：12px 与 fs-caption 同值，
+   统一由这里钉死——tsx 内禁写 fontSize（机器门拦截）。 */
+.recharts-cartesian-axis-tick text,
+.recharts-legend-wrapper,
+.recharts-default-tooltip {
+  font-size: 12px;
+}
