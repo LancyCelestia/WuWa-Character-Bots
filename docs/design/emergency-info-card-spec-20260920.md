@@ -330,3 +330,56 @@ PNG 落同目录。**截图绝对路径清单与目验要点见 `reports/CARDMAP
 
 **生效边界**：本文与样张是**图纸产出**，不改生产行为；render 面在本席收工时点仍为「12 件 M 未入库、
 出卡零实施」。收工 HEAD 与 render 面状态以 report 心跳为准。
+
+---
+
+# §9 V2 视觉返工记录（CARD-V2 席，2026-09-21，用户 04:0x 肉眼裁定六条）
+
+用户看过 §V 样张 `emergency_P0.png` 后给出六条裁定（V-1…V-6），本席按裁定重做 `%TEMP%/
+emergency-card-mock/` 独立 mock（`make_mock_v2.py`，仓库 render 面零写入），产出四级新样张
+`emergency_P{0..3}_v2.png` + 逐条对照图 `compare_V1..V6.png`。**他的眼睛优先于指标**，六条一律照做；
+本节只记录「改了什么、落在哪个契约层」，真落地仍等 render 面冷却后按本节施工。
+
+## 9.1 六条裁定 → 处置
+
+| # | 裁定 | V2 处置（mock 内 CSS/DOM 层） | 契约归属 |
+|---|---|---|---|
+| V-1 | 矩形色块不透明度不足 | 级别 chip 与头部等级块改**实心等级色底 + 白字 700**（弃淡 wash/半透明）；行瓦加 4px 实心等级色左边线 | accent 层「徽章/高亮」（§二受控两层之一），先例=本样张 V1 的 `.head-badge` 与 error 卡 `.sigil`（实心 accent） |
+| V-2 | 背景要读成「警报等级色」而非装饰底 | 等级色以**警示标识身份**四处出场：壳顶 8px 实心色带 + 官方图标瓦（2px accent 描边）+ 实心等级徽标块 + 标题色；**壳底 wash-mist 渐变与 wash-blob ≤35% 一像素未动** | 同左；见 9.4 边界解释待裁 |
+| V-3 | 网上找真实气象预警图标 | 取**中央气象台官方图标** `image.nmc.cn/assets/img/alarm/p000200{1,2,3,4}.png`（暴雨红/橙/黄/蓝，125×94）；URL 非猜测=官方 `/rest/findAlarm` 接口实返 `pic` 字段逐条印证；四级卡主条目同步改「暴雨X色预警」，杜绝图标-条目语义错配；出处登记 `icons/PROVENANCE.md`（URL+时刻+sha256+许可） | 新资产入仓需过 §五 checklist 第 8 步同类登记（`bridge._PLATFORM_LOGO_FILES` 先例）；THIRD_PARTY_NOTICES 落地请求见 9.3 |
+| V-4 | bot 头像/豹子太小 | 先量既有模板实际口径：胶囊默认 `.mc-avatar` **22px**（mica_shell.brand_capsule_css）、universal 页脚加大档 **32px**（universal_card.html:1092-1095）、error `.sigil` **40px**、affinity `.icon` **58px**。V2 页脚胶囊升 **32px 档**（宿主侧摆位微调，同 universal footer-bot-pill 先例数值），头像传 runtime 在案文件 `data/avatar/bot_8887340775.png` 副本（生产=豹子头像时同尺寸口径直接生效） | 组件本体样式仍=mica_shell 单一产出，宿主只调尺寸档，不复制组件（CAP1 合规） |
+| V-5 | 标题字色=等级色 | `.title { color: var(--accent); font-size: 24px; font-weight: 700 }`；对比度自检（对 wash-mist）：红 #d54941≈4.0:1、暗橙 #c05a12≈5.1:1、黄 #b07d1a≈3.8:1、蓝 #318ce7≈3.2:1——24px/700 属 WCAG 大字（≥3:1 全过）；若裁定要正文级 4.5:1，蓝/黄改 `--accent-dark` 即回同色系深档 | TYPE_SCALE display=26/title=20 为选用阶梯（E-13 不追溯），24px 新卡选值在册阶梯外——落地时建议取 26（display）或 20（title）并先入值册讨论 |
+| V-6 | 记录提示要特别标注 | 原脚注第一句升 `.record-flag` **独立标注块**：白玻璃底 + 2px 实心 accent 描边 + 24px 实心圆「记」图标 + 700 加粗，脱离 data-foot | 底色用登记玻璃档 GLASS_MAIN + 描边 accent；无新阴影/新色值 |
+
+## 9.2 契约核对（V2 mock 全项自检）
+
+无 meta viewport ✓；body 透明 ✓；字重 ≤700 ✓（650/700）；动画仅生成器单源色斑（3 枚 46/52/58s）✓；
+阴影仅 `var(--mica-shadow/-panel/-soft)` 登记族 ✓；半径仅 r-shell/panel/tile + pill/circle + 内径 6/8 ✓；
+gap ∈ {3,4,6,7,8,10,12,14,16} ✓；行高 ∈ {1.2,1.4,1.5} ✓；字号 ≥12px ✓；壳底 wash-mist 渐变不变、
+wash-blob 35% 不变 ✓。
+
+## 9.3 图标出处与 THIRD_PARTY_NOTICES 落地请求（该文件热，本席未改）
+
+四张图标：`https://image.nmc.cn/assets/img/alarm/p0002001..004.png`，2026-09-21 抓取，
+sha256 与逐条印证记录见 `%TEMP%/emergency-card-mock/icons/PROVENANCE.md`；性质=政府公开发布之
+气象灾害预警信号图形，本处原样展示不改绘。**请求**在 `docs/THIRD_PARTY_NOTICES.md` 追加一条：
+「气象预警信号图形 ×4（暴雨 红/橙/黄/蓝）— 出处：中央气象台/国家预警信息发布中心
+（image.nmc.cn，经 /rest/findAlarm 实返印证，2026-09-21 抓取，sha256 见 PROVENANCE 记录）；
+用途：紧急预警卡等级徽标位原样展示。」
+
+## 9.4 边界解释待裁（不自行选边）
+
+§二「`--accent` 永远不做底色」按本仓既成执法与先例读作**壳底大底禁 accent**（徽章/色带/描边/高亮属
+accent 受控出场，V1 样张 `.head-badge` 与 error `.sigil` 实心 accent 均在岗）。若裁定采更严读法
+（禁任何实心 accent 填充矩形），则 V-1/V-2 的实心等级块须改「深描边 + 斜纹警示条」形态——两解法
+皆备，视觉强弱差异留用户肉眼裁决。
+
+## 9.5 交付清单（全绝对路径）
+
+- 四级新样张：`C:\Users\LancyCelestia\AppData\Local\Temp\emergency-card-mock\emergency_P0_v2.png`（红）/
+  `emergency_P1_v2.png`（橙）/ `emergency_P2_v2.png`（黄）/ `emergency_P3_v2.png`（蓝）
+- 逐条对照：同目录 `compare_V1.png` … `compare_V6.png`；旧样张 `emergency_P{0..3}.png` 原位保留作 before
+- 图标与出处：同目录 `icons\baoyu_00{1..4}.png` + `icons\PROVENANCE.md`
+- 生成器：同目录 `make_mock_v2.py` / `make_compare.py`（可复跑）
+- 席报告：`.superpowers/sdd/2026-09-19-emergency-info-unify/reports/CARDV2-report.md`
+
