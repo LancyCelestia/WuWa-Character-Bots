@@ -35,6 +35,35 @@ def translate_env_keys(values: dict[str, Any]) -> dict[str, Any]:
 TTS_PRESET_IDS: frozenset[str] = frozenset({"shorekeeper"})
 
 
+# bot_tts_api_url 装载期 SSRF 闸的 loopback 白名单字面量（M-32 / T94）。
+_TTS_API_URL_LOOPBACK_NAMES: frozenset[str] = frozenset({"localhost"})
+
+
+def _tts_api_url_host_is_loopback(host: str) -> bool:
+    """host 能否在装载期**无歧义证明**指向本机 loopback（fail-closed 白名单）。
+
+    只认两类形态：①``localhost`` 字面量（大小写/结尾点归一后）；②
+    ``ipaddress`` 可解析的 IP 字面量且落在 loopback（127.0.0.0/8、::1；
+    IPv4-mapped 的 ::ffff:127.0.0.1 解包后判定，映射到内网/元数据的不算）。
+    其余一律 False：十进制/十六进制/八进制整型 IP（2130706433/0x7f000001/
+    017700000001）、缩写点分（127.1）、任何需要 DNS 的域名——装载期不做
+    DNS，无法无歧义证明=拒绝（对齐 link_parse/parsers/ssrf_guard F-04
+    「解析失败=拒绝」口径，黑名单网段参照 domains/files downloader）。
+    """
+    import ipaddress
+
+    normalized = host.strip().casefold().rstrip(".")
+    if normalized in _TTS_API_URL_LOOPBACK_NAMES:
+        return True
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return address.is_loopback
+
+
 class Config(BaseModel):
     # 运行数据与源码工作区分离：生产环境可把 data/ 放到工作区外，
     # 其余配置仍可继续使用 data/... 的相对写法，由下方校验器统一解析。
@@ -1102,6 +1131,39 @@ class Config(BaseModel):
         if normalized not in {"private", "group", "all"}:
             raise ValueError("bot_tts_auto_reply_scope must be private/group/all")
         return normalized
+
+    @field_validator("bot_tts_api_url")
+    @classmethod
+    def _validate_tts_api_url(cls, value: str) -> str:
+        # M-32 / T94：装载期 SSRF 闸（U-17=C 宪条：语音引擎必须本机）。
+        # fail-closed 白名单：scheme 必须 http/https，host 必须可无歧义证明为
+        # loopback（127.0.0.1 / ::1 / localhost）；生产缺省 127.0.0.1:9880 原样
+        # 通过（零影响）。空值=未配置，回落缺省不触发闸。畸形端口/整型 IP/
+        # 内网段/云元数据/任意域名一律装载期即拒——远程引擎需显式改闸
+        # （见 .superpowers/sdd/2026-09-19-unify-audit/report-T94.md 披露）。
+        from urllib.parse import urlsplit
+
+        text = str(value or "").strip()
+        if not text:
+            return "http://127.0.0.1:9880"
+        try:
+            parts = urlsplit(text)
+            _port_probe = parts.port  # 访问即校验：非法端口抛 ValueError（F-04 同款）
+        except ValueError as exc:
+            raise ValueError(f"bot_tts_api_url 无法解析（端口或 URL 形态非法）：{exc}") from exc
+        scheme = (parts.scheme or "").casefold()
+        if scheme not in {"http", "https"}:
+            raise ValueError(
+                f"bot_tts_api_url 只支持 http/https 协议（收到 {scheme or '空协议'}）"
+            )
+        host = (parts.hostname or "").strip()
+        if not host or not _tts_api_url_host_is_loopback(host):
+            raise ValueError(
+                "bot_tts_api_url 必须指向本机（http(s)://127.0.0.1 或 ::1 或 "
+                "localhost）——语音引擎必须本机部署，不接受远程/内网地址"
+                f"（收到 host={host!r}）"
+            )
+        return text
 
 
     @field_validator("bot_memory_extract_max_tokens")
