@@ -187,6 +187,32 @@ def test_custom_trigger_words_extend_defaults() -> None:
     assert extract_tts_text("来段语音 你好", ("来段语音",)) == "你好"
     # 未命中的自定义词不误触发。
     assert not is_tts_command("讲个故事", ("来段语音",))
+    # M-15：三处文档（catalog:809 / .env.example:626 / help 条目）都承诺「与内置合并」，
+    # 而旧实码是**整表替换**——管理员加一个词，内置 11 词全体静默失效、`说 …` 落回 chat。
+    # 用例名里的 "extend" 从此才是真被断言，而不只是名字。
+    assert extract_tts_text("说 今天的潮汐很安静", ("来段语音",)) == "今天的潮汐很安静"
+    assert is_tts_command("tts hello", ("来段语音",))
+    assert extract_tts_text("朗读 一段话", ("来段语音",)) == "一段话"
+    # 合并必须去重，且自定义词优先于内置（长词优先另有排序，这里只保证不丢）。
+    merged = tts_mod.effective_trigger_words(("来段语音", "说", "说"))
+    assert merged.count("说") == 1
+    assert "来段语音" in merged and "语音合成" in merged
+    # 空配置 = 完全用内置；None 与 [] 同义。
+    assert tts_mod.effective_trigger_words(None) == DEFAULT_TRIGGER_WORDS
+    assert tts_mod.effective_trigger_words([]) == DEFAULT_TRIGGER_WORDS
+
+
+def test_english_triggers_are_case_insensitive() -> None:
+    """M-16：`SAY hello` / `TTS 你好` 曾是假阴性（英文族口径=大小写不敏感）。"""
+    assert extract_tts_text("SAY hello") == "hello"
+    assert extract_tts_text("TTS 你好") == "你好"
+    assert extract_tts_text("tTs：你好") == "你好"
+    assert is_tts_command("Say 你好")
+    # 大小写不敏感**不得**放大误触发面：包含关系词依旧不触发。
+    assert not is_tts_command("SAYONARA")
+    assert not is_tts_command("说法")
+    # 裸触发词（任何大小写）依旧不占路由。
+    assert not is_tts_command("TTS")
 
 
 def test_longest_trigger_word_wins() -> None:

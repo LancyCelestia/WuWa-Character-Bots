@@ -155,24 +155,48 @@ def is_tts_command(
     return bool(extract_tts_text(text, trigger_words))
 
 
+def effective_trigger_words(
+    trigger_words: list[str] | tuple[str, ...] | None = None,
+) -> tuple[str, ...]:
+    """内置词表 ∪ 管理员追加词（去重；追加词在前，内置词在后）。
+
+    旧实码是「传了非空表就整表替换」，而 catalog:809 / `.env.example` / help 条目
+    三处文档承诺的是「与内置合并」：管理员加一个词即把内置 11 词全数静默关掉，
+    `说 …` 当场落回人格对话（M-15）。合并语义收在这**唯一入口**，路由谓词与取文共用。
+    """
+    extra = tuple(str(word).strip() for word in (trigger_words or ()) if str(word).strip())
+    merged: list[str] = []
+    for word in (*extra, *DEFAULT_TRIGGER_WORDS):
+        if word not in merged:
+            merged.append(word)
+    return tuple(merged)
+
+
 def extract_tts_text(
     text: str, trigger_words: list[str] | tuple[str, ...] | None = None
 ) -> str:
     """取出触发句里要合成的正文；不命中触发词返回空串。
 
     最长触发词优先匹配，避免短词截断长词（``tts`` 之于 ``tts`` 前缀词）。
+    英文词**大小写不敏感**（``SAY``/``TTS`` 是真命令，M-16），正文一律取原串切片，
+    绝不返回折叠后的大小写。
     """
-    triggers = tuple(trigger_words) if trigger_words else DEFAULT_TRIGGER_WORDS
     stripped = (text or "").strip()
     if not stripped:
         return ""
-    for word in sorted({w.strip() for w in triggers if w.strip()}, key=len, reverse=True):
-        if stripped == word:
+    folded = stripped.casefold()
+    # casefold 会改变长度的极端字符（如 ß→ss）会让「折叠串偏移」与「原串偏移」错位，
+    # 那种输入退回逐字精确匹配——宁可不触发，也不切错正文或误触发。
+    foldable = len(folded) == len(stripped)
+    target = folded if foldable else stripped
+    for word in sorted(set(effective_trigger_words(trigger_words)), key=len, reverse=True):
+        needle = word.casefold() if foldable else word
+        if target == needle or stripped == word:
             # 只发了触发词、没带正文：由调用方给引导文案。
             return ""
-        if not stripped.startswith(word):
+        if not target.startswith(needle):
             continue
-        tail = stripped[len(word):]
+        tail = stripped[len(needle):]
         if not tail or tail[0] not in _TEXT_BOUNDARY_CHARS:
             continue
         return tail.lstrip(_TEXT_BOUNDARY_CHARS).strip()
