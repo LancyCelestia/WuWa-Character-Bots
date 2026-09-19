@@ -2279,7 +2279,7 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 - 群聊/私聊差异：全员可用；对话自动配音范围由 BOT_TTS_AUTO_REPLY_SCOPE 决定（private/group/all）
 - 网络依赖：纯本地
 - 输出形式：语音
-- 配置变量：BOT_TTS_ENABLED；BOT_TTS_API_URL；BOT_TTS_GPTSOVITS_DIR；BOT_TTS_REF_AUDIOS；BOT_TTS_TRIGGER_WORDS；BOT_TTS_OUTPUT_DIR；BOT_TTS_MAX_CHARS；BOT_TTS_TIMEOUT_SECONDS；BOT_TTS_SPEED_FACTOR；BOT_TTS_TEMPERATURE；BOT_TTS_TOP_K；BOT_TTS_TOP_P；BOT_TTS_TEXT_LANG；BOT_TTS_TEXT_SPLIT_METHOD；BOT_TTS_CACHE_ENABLED；BOT_TTS_AUTO_REPLY_ENABLED；BOT_TTS_AUTO_REPLY_SCOPE；BOT_TTS_AUTO_REPLY_MAX_CHARS；BOT_TTS_AUTO_REPLY_PROBABILITY；BOT_TTS_AUTO_REPLY_ALWAYS
+- 配置变量：BOT_TTS_ENABLED；BOT_TTS_API_URL；BOT_TTS_GPTSOVITS_DIR；BOT_TTS_REF_AUDIOS；BOT_TTS_TRIGGER_WORDS；BOT_TTS_OUTPUT_DIR；BOT_TTS_PRESET；BOT_TTS_MAX_CHARS；BOT_TTS_HARD_MAX_CHARS；BOT_TTS_MAX_AUDIO_BYTES；BOT_TTS_TIMEOUT_SECONDS；BOT_TTS_SPEED_FACTOR；BOT_TTS_TEMPERATURE；BOT_TTS_TOP_K；BOT_TTS_TOP_P；BOT_TTS_TEXT_LANG；BOT_TTS_TEXT_SPLIT_METHOD；BOT_TTS_CACHE_ENABLED；BOT_TTS_CACHE_MAX_BYTES；BOT_TTS_CACHE_MAX_AGE_DAYS；BOT_TTS_AUTO_REPLY_ENABLED；BOT_TTS_AUTO_REPLY_SCOPE；BOT_TTS_AUTO_REPLY_MAX_CHARS；BOT_TTS_AUTO_REPLY_PROBABILITY；BOT_TTS_AUTO_REPLY_ALWAYS；BOT_TTS_VOICE_HOOK_ENABLED
 - 可复制示例：说 今天的潮汐很安静｜语音 我在这里｜tts hello
 - 关联回归测试：tests/test_tts.py；tests/test_tts_outbound_chain.py；tests/test_tts_hijack_guard.py；tests/test_tts_speech_gate.py；tests/test_tts_failure_visibility.py；tests/test_tts_audio_gate.py
 - 总览：【语音】让我用声音念一段话：说 <文本>
@@ -2294,8 +2294,9 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 说 <文本>（语音/念/朗读/tts/say 等价）：作用=合成语音；参数=文本；内容=语音消息；意义=让守岸人开口。
 【权限与效果】
   权限=全员，前提是 BOT_TTS_ENABLED=true 且 9880 服务在跑。参考音频未配置、
-  服务未启动或超时，都会得到一句可读的降级文案而不是报错；合成结果按
-  文本+参考音频+采样参数缓存，同一句话不重复合成。
+  服务未启动或超时，都会得到一句可读的降级文案而不是报错；引擎不可达时
+  会进入短暂退避冷却快速失败，不挂起消息。合成结果按内容+引擎身份缓存，
+  同一句话不重复合成（同句恒同音色）。
   对话自动配音按概率触发（默认 5%），判定用确定性哈希——同一条消息结果
   恒定，不会一会儿配一会儿不配。
 【示例】说 今天的潮汐很安静｜语音 我在这里｜tts hello

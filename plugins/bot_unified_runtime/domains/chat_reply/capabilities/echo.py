@@ -24,6 +24,9 @@ from plugins.bot_unified_runtime.contracts import (
 from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
     build_role_settings,
 )
+from plugins.bot_unified_runtime.domains.media.voice_health_probe import (
+    voice_status_line,
+)
 from plugins.bot_unified_runtime.runtime import RuntimeControlState
 
 
@@ -2261,10 +2264,11 @@ _HELP_ENTRIES: list[HelpEntry] = [
             "index": '【语音】让我用声音念一段话：说 <文本>',
             "title_line": '【语音】用守岸人的声音念出来',
             "lines": [
-                '说 <文本>：作用=把文本合成为守岸人音色的语音消息；参数=文本（必填，默认上限 200 字）；内容=一条语音；意义=让回复带上声音。',
+                '说 <文本>：作用=把文本合成为守岸人音色的语音消息；参数=文本（必填，默认上限 200 字，BOT_TTS_MAX_CHARS=0 为不限）；内容=一条语音；意义=让回复带上声音。',
                 '语音 <文本>｜念 <文本>｜朗读 <文本>｜tts <文本>：触发词等价，BOT_TTS_TRIGGER_WORDS 可自定义。',
                 '对话自动配音：BOT_TTS_AUTO_REPLY_ENABLED 开启后，人格回复会连同语音一起发出，范围由 BOT_TTS_AUTO_REPLY_SCOPE 决定（private/group/all）。',
                 '配音概率：默认只有 5% 的回复会带语音（BOT_TTS_AUTO_REPLY_PROBABILITY）；BOT_TTS_AUTO_REPLY_ALWAYS=true 可临时改成条条都配，方便验收听音。',
+                '预设与硬顶：合成参数以中央预设表为唯一缺省源（BOT_TTS_PRESET，其余数值键=管理员覆盖）；单次文本硬顶 2000 字、产物 8 MiB（BOT_TTS_HARD_MAX_CHARS / BOT_TTS_MAX_AUDIO_BYTES，超限拒绝并留痕）；群聊自动配音另受内容群白名单安全门约束（黑名单永远赢，白名单空=群面不配音绝不猜群）。',
             ],
             "detail": (
                 '【板块介绍】\n'
@@ -2274,8 +2278,9 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '说 <文本>（语音/念/朗读/tts/say 等价）：作用=合成语音；参数=文本；内容=语音消息；意义=让守岸人开口。\n'
                 '【权限与效果】\n'
                 '  权限=全员，前提是 BOT_TTS_ENABLED=true 且 9880 服务在跑。参考音频未配置、\n'
-                '  服务未启动或超时，都会得到一句可读的降级文案而不是报错；合成结果按\n'
-                '  文本+参考音频+采样参数缓存，同一句话不重复合成。\n'
+                '  服务未启动或超时，都会得到一句可读的降级文案而不是报错；引擎不可达时\n'
+                '  会进入短暂退避冷却快速失败，不挂起消息。合成结果按内容+引擎身份缓存，\n'
+                '  同一句话不重复合成（同句恒同音色）。\n'
                 '  对话自动配音按概率触发（默认 5%），判定用确定性哈希——同一条消息结果\n'
                 '  恒定，不会一会儿配一会儿不配。\n'
                 '【示例】说 今天的潮汐很安静｜语音 我在这里｜tts hello'
@@ -3085,7 +3090,10 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
             "BOT_TTS_REF_AUDIOS",
             "BOT_TTS_TRIGGER_WORDS",
             "BOT_TTS_OUTPUT_DIR",
+            "BOT_TTS_PRESET",
             "BOT_TTS_MAX_CHARS",
+            "BOT_TTS_HARD_MAX_CHARS",
+            "BOT_TTS_MAX_AUDIO_BYTES",
             "BOT_TTS_TIMEOUT_SECONDS",
             "BOT_TTS_SPEED_FACTOR",
             "BOT_TTS_TEMPERATURE",
@@ -3094,11 +3102,14 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
             "BOT_TTS_TEXT_LANG",
             "BOT_TTS_TEXT_SPLIT_METHOD",
             "BOT_TTS_CACHE_ENABLED",
+            "BOT_TTS_CACHE_MAX_BYTES",
+            "BOT_TTS_CACHE_MAX_AGE_DAYS",
             "BOT_TTS_AUTO_REPLY_ENABLED",
             "BOT_TTS_AUTO_REPLY_SCOPE",
             "BOT_TTS_AUTO_REPLY_MAX_CHARS",
             "BOT_TTS_AUTO_REPLY_PROBABILITY",
             "BOT_TTS_AUTO_REPLY_ALWAYS",
+            "BOT_TTS_VOICE_HOOK_ENABLED",
         ),
         "examples": ("说 今天的潮汐很安静｜语音 我在这里｜tts hello",),
         "tests": (
@@ -3911,6 +3922,14 @@ def _build_status_body(config: Config, runtime_control: RuntimeControlState) -> 
             ),
             f"LLM下一步：{llm_readiness['llm_next_action']}",
             f"LLM原因：{llm_reasons}",
+            # U-17=C 语音健康探针接线（T79 清单，触发点 1=status 查询）：
+            # health 缺省=惰性探测（开关关时绝不真探）；≤2s 超时钳制、fail-open。
+            # 管理门已在本能力上游，健康态不出普通成员面。注意：探针构造的
+            # tts_service_unreachable issue **不**贴附到本 CapabilityResult——
+            # 带 issue 的结果会触发 pipeline A-19 群聊吞体（status 本身没失败），
+            # 且探针模块 `_last_issue` 不随读/恢复清空，贴附=陈旧 issue 永久
+            # 误报；投喂中央告警链的正确落点是触发点 2（tts.py 退避窗进入沿）。
+            voice_status_line(config),
         ]
     )
 
