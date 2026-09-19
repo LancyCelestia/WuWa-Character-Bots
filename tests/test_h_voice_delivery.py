@@ -468,3 +468,140 @@ async def test_r9_snowluma_failed_dict_1400_fatal_with_fallback(
         rid="r9",
         record=_RECORD,
     )
+
+
+# ==================== W1｜降级 happy-path 独立正锁（T85 §四.2 交接，T93 补锁） ====
+
+
+@pytest.mark.asyncio
+async def test_w1_text_fallback_happy_path_delivered_round_one(
+    tmp_path, monkeypatch
+) -> None:
+    """W1｜降级 happy-path 独立正锁：文字部件第 1 轮真送达（T85 §四.2 交接）。
+
+    R3/R4/R6/R9 骨架是 behavior 均匀拒绝形态——降级尝试同被拒，只锁
+    attempt 台账；本例按 T85 给定形态 `script=[拒绝, "ok"]`：第 1 调用
+    （原子 mixed）被 1400 确定拒绝、第 2 调用（W1 纯文字降级）成功回执
+    ⇒ 补上「文字真送达一次」的 delivered 侧正锁。
+
+    断言四 面（简报指定）：
+    ① dispatch 序列——恰 2 条且都发生在第 1 轮：calls[0]=原子 mixed
+      （text+record 两段一次上送），calls[1]=纯文字降级（单 text 段，
+      onebot 对 content_type="text" 只产一个 text 段）；
+    ② 文字内容——降级段正文 == 混排消息自有文字部件原文（零改写）；
+    ③ 语音 part FAILED_FINAL——降级成功**不**翻转行终态（worker
+      `_send_media_text_fallback_once`「best effort、不改原行终态」），
+      两个 part 终态 failed_final、行 failed_final、零重试预算；
+    ④ 无重复投递——record 全程只出现 1 次（降级不带 record），续 2 轮
+      dispatch 零增长（终态行不再认领 ⇒ 降级每请求生命周期恰一次）。
+    另锁审计侧 delivered 语义：`queue.audit_logger` 是
+    SQLiteSendRequestQueue 公有属性（build_sqlite_queue 把
+    InMemoryAuditLogger 存在队列对象上，T85「不外露」指构造参数不透出，
+    读面无需改 tests/helpers）——经 drain_send_queue_once 的 audit_logger
+    形参（run_queue_rounds **drain_kwargs 透传，worker 缺省 None 不落
+    worker 级审计）注入同一 logger 后，`queue_worker_text_fallback_sent`
+    恰 1 条、`..._failed` 零条，即降级文本**确实**走完 SENT 回执。
+    烘焙耦合点：C1（拒绝分支不内联重试）、C4（显式 now）。
+    """
+    freeze_inline_retries(monkeypatch)
+    queue = build_sqlite_queue(tmp_path)
+    bot = SimulatedOneBotBot(script=[("action_failed", 1400), "ok"])
+    transport = make_transport(bot)
+    _submit_mixed(queue, "w1-happy", record=_RECORD)
+
+    results = await run_queue_rounds(
+        queue,
+        transport,
+        rounds=1,
+        base_now=_BASE,
+        audit_logger=queue.audit_logger,
+    )
+    round1_dispatch = dispatch_count(bot)
+    row1 = queue_row(queue, "w1-happy")
+
+    await run_queue_rounds(queue, transport, rounds=2, base_now=_BASE)
+
+    # ① dispatch 序列：第 1 轮内恰 2 条（原子 mixed + W1 降级），续轮零增长。
+    assert any(
+        issue.kind == "retcode_failure" for issue in results[0].operational_issues
+    )  # W1 触发前提=平台明确拒绝（媒体确定未送达，降级零重复风险）
+    assert round1_dispatch == 2
+    assert dispatch_count(bot) == 2
+    assert [seg["type"] for seg in bot.calls[0].segments] == ["text", "record"]
+    assert len(bot.calls[1].segments) == 1
+    fallback_segment = bot.calls[1].segments[0]
+    assert fallback_segment["type"] == "text"
+    # ② 文字内容 == 混排消息自有文字部件原文（零改写、零自拼）。
+    assert fallback_segment["data"]["text"] == _TEXT
+    # ③ 语音 part 与行均终态：降级成功不翻转原行终态、零重试预算。
+    assert record_files(bot) == [_RECORD]  # ④ 降级不带 record，语音零重发
+    assert part_states(queue, "w1-happy") == {
+        0: PART_STATE_FAILED_FINAL,
+        1: PART_STATE_FAILED_FINAL,
+    }
+    assert row1["state"] == "failed_final"
+    assert row1["retry_count"] == 0
+    assert queue_row(queue, "w1-happy")["state"] == "failed_final"
+    # 审计侧 delivered 语义：降级文本拿到 SENT 回执，恰一次、零失败。
+    fallback_events = [
+        record.event
+        for record in queue.audit_logger.list_records(request_id="w1-happy")
+    ]
+    assert fallback_events.count("queue_worker_text_fallback_sent") == 1
+    assert fallback_events.count("queue_worker_text_fallback_failed") == 0
+
+
+@pytest.mark.asyncio
+async def test_w1_fallback_text_is_own_parts_only_r16_2(
+    tmp_path, monkeypatch
+) -> None:
+    """W1 反向锁（R-16②）：降级发送内容 ⊆ 原消息自有文字部件，零自拼文案。
+
+    R-16②（T55 §三共性边界①/T65 §三 R7）：失败告知归中央 A-19，传输层
+    禁止自拼文案。R7 锁的是「无文字 ⇒ 零降级零反馈」；本例补正向构形：
+    多文字部件混排（text A + record + text B）下，W1 降级内容必须**恰好
+    等于**自有文字部件按原序的 "\\n" 连接（worker `_fallback_text_for_media`
+    的规范推导），精确等值锁死任何前缀/后缀/润色/拼装——等值成立即 ⊆
+    成立（每个字符都来自消息自身文字部件），任何自拼文案必破坏等值。
+
+    形态：script=[1400 拒绝, "ok"]——断言对象是**实际发出**的内容而非
+    仅 attempt（比均匀拒绝形态更严）；且与 R7（说 X 无文字）合起来构成
+    R-16② 双向覆盖：无文字⇒不发，有文字⇒只发原文连接。
+    烘焙耦合点：C1、C4。
+    """
+    text_a = "第一段文字。"
+    text_b = "第二段文字。"
+    freeze_inline_retries(monkeypatch)
+    queue = build_sqlite_queue(tmp_path)
+    bot = SimulatedOneBotBot(script=[("action_failed", 1400), "ok"])
+    transport = make_transport(bot)
+    request = build_mixed_request(
+        "w1-own-parts",
+        parts=[
+            {"type": "text", "text": text_a},
+            {"type": "record", "file": _RECORD},
+            {"type": "text", "text": text_b},
+        ],
+    )
+    queue.submit(request, now=_BASE)
+
+    await run_queue_rounds(queue, transport, rounds=1, base_now=_BASE)
+
+    # 恰 2 条 dispatch：原子 mixed（被拒）+ 恰一次 W1 降级（成功）。
+    assert dispatch_count(bot) == 2
+    # 降级调用是单 text 段，内容 == 自有文字部件原序 "\n" 连接（精确等值）。
+    assert len(bot.calls[1].segments) == 1
+    fallback_segment = bot.calls[1].segments[0]
+    assert fallback_segment["type"] == "text"
+    assert fallback_segment["data"]["text"] == f"{text_a}\n{text_b}"
+    # 全生命周期发出的全部文字 ⊆ {自有部件原文} ∪ {规范连接}：原子尝试
+    # 贡献 A、B 两段原文，降级贡献连接串——没有第五种内容出现过。
+    assert set(sent_texts(bot)) <= {text_a, text_b, f"{text_a}\n{text_b}"}
+    assert record_files(bot) == [_RECORD]  # 语音零重发
+    # 三 part（含 record）原子同进退全体终态；降级成功不改行终态。
+    assert part_states(queue, "w1-own-parts") == {
+        0: PART_STATE_FAILED_FINAL,
+        1: PART_STATE_FAILED_FINAL,
+        2: PART_STATE_FAILED_FINAL,
+    }
+    assert queue_row(queue, "w1-own-parts")["state"] == "failed_final"
