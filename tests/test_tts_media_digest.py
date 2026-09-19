@@ -11,7 +11,10 @@
    ``media_digest`` 全等（禁造假值——摘要必须来自真实产物字节）；
 2. digest 计算失败（读不到/OSError/异常注入）→ 部件**不带键**、出站链不炸
    （诚实降级，与渲染收口 S3 缺省退化咬合）；
-3. 形态=64 hex 小写全长（``media_digest_file`` 真值，非截短）。
+3. 形态=64 hex 小写全长（``media_digest_file`` 真值，非截短）；
+4. **观测面（U-107-C，T144）**：digest 可得时两构造点 ``audit_tags`` 挂
+   ``audio_sha256=<[:16]>``（键内截短口径=U-107-A 已裁）；算不出=不带此 tag
+   （诚实降级，与部件缺键同口径）。纯元数据零行为变更面。
 
 施工位（T109 §五）：``tts.py`` 两处 audio 构造（锚 :1067/:1426 一带）+
 digest 获取缝；本文件零触碰 digest.py/renderer.py/transport。
@@ -251,3 +254,80 @@ def test_digest_exception_omits_key_without_bubbling(
 
     assert result.audio, "digest 异常不阻断出站（fail-open，宁缺勿假）"
     assert "content_sha256" not in result.audio[0]
+
+
+# ---------------------------------------------------------------------------
+# 3. 观测面（U-107-C，T144）：audit_tags 记 audio_sha256=<[:16]>
+# ---------------------------------------------------------------------------
+
+
+def test_command_path_audit_tags_record_audio_sha256(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """命令路：audit_tags 挂 ``audio_sha256=<digest[:16]>``（键内截短=U-107-A 口径）。"""
+    audio = _wav_bytes()
+    monkeypatch.setattr(tts_mod, "_request_tts", _fake_engine(audio))
+    capability = tts_mod.build_tts_capability(_ref_config(tmp_path))
+
+    result = capability(_msg("说 观测面"), None)  # type: ignore[operator]
+
+    assert result.audio, "正常合成应带语音部件"
+    files = sorted((tmp_path / "out").glob("tts-*.wav"))
+    assert len(files) == 1
+    expected = media_digest(files[0].read_bytes())[:16]
+    assert f"audio_sha256={expected}" in result.audit_tags, (
+        "audit_tags 应记键内截短 [:16] 的内容摘要（U-107-C 观测面）"
+    )
+    tags = [tag for tag in result.audit_tags if tag.startswith("audio_sha256=")]
+    assert len(tags) == 1, "观测 tag 恰一条"
+    assert re.fullmatch(r"audio_sha256=[0-9a-f]{16}", tags[0]), (
+        "键内截短口径=16 hex 小写（part 随行全长 content_sha256）"
+    )
+    assert result.audio[0]["content_sha256"] == media_digest(files[0].read_bytes()), (
+        "part 恒随行全长（截短只在 tag 键内）"
+    )
+
+
+def test_auto_reply_path_audit_tags_record_audio_sha256(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """自动配音路：与命令路同一观测语义（seed= 锚后同位）。"""
+    audio = _wav_bytes()
+    monkeypatch.setattr(tts_mod, "_request_tts", _fake_engine(audio))
+    original = CapabilityResult(
+        request_id="req-obs",
+        capability_id="bot.chat",
+        kind="text",
+        body="今天的潮汐很安静。",
+    )
+
+    patched = tts_mod.maybe_attach_voice(
+        _msg("在吗"),  # type: ignore[arg-type]
+        original,
+        config=_ref_config(tmp_path, bot_tts_auto_reply_enabled=True, bot_tts_auto_reply_always=True),
+    )
+
+    assert patched.audio, "自动配音应带上语音部件"
+    files = sorted((tmp_path / "out").glob("tts-*.wav"))
+    assert len(files) == 1
+    expected = media_digest(files[0].read_bytes())[:16]
+    assert f"audio_sha256={expected}" in patched.audit_tags
+    assert "auto_reply" in patched.audit_tags, "既有观测语义不回退"
+
+
+def test_digest_unavailable_omits_audio_sha256_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """digest 算不出 → 部件无键且 audit_tags 不带 audio_sha256=（诚实降级，禁造假）。"""
+    monkeypatch.setattr(tts_mod, "_request_tts", _fake_engine(_wav_bytes()))
+    monkeypatch.setattr(tts_mod, "media_digest_file", lambda *_a, **_k: None, raising=False)
+    capability = tts_mod.build_tts_capability(_ref_config(tmp_path))
+
+    result = capability(_msg("说 正文"), None)  # type: ignore[operator]
+
+    assert result.audio, "音频部件保命"
+    assert "content_sha256" not in result.audio[0]
+    assert not any(tag.startswith("audio_sha256=") for tag in result.audit_tags), (
+        "tag 与部件同口径：算不出就不带，绝不发空/假值"
+    )
+    assert "sent" in result.audit_tags, "出站主语义零回退"

@@ -43,6 +43,8 @@
 - **出站内容摘要（M-64/S2）**：audio 部件随件携带落盘字节 sha256
   （``content_sha256``，中央件 ``domains/media/digest.py`` 单一入口）；
   算不出即部件不带键（诚实降级，与渲染收口缺省退化咬合），零行为变更面。
+  观测面（U-107-C/T144）：``audit_tags`` 同步记 ``audio_sha256=<[:16]>``
+  （键内截短=U-107-A 已裁；part 随行全长；纯元数据零行为变更）。
 """
 
 from __future__ import annotations
@@ -1104,6 +1106,8 @@ def build_tts_capability(config: Any | None = None) -> Any:
         # 「同句恒同音色」语义变更）与有损变换事实（M-14）。
         # M-64/S2（蓝图 §3.3）：出站部件随件携带落盘字节摘要（content_sha256），
         # 渲染收口第三冻结键随段级键自动下行；算不出即缺省（诚实降级）。
+        # U-107-C/T144 观测面：audit_tags 同步记 ``audio_sha256=<[:16]>``
+        # （键内截短=U-107-A 已裁口径；part 随行全长，纯元数据零行为变更）。
         audio_part: dict[str, Any] = {"file": str(path), "review_text": speech}
         content_digest = _content_digest_for(path)
         if content_digest is not None:
@@ -1120,6 +1124,11 @@ def build_tts_capability(config: Any | None = None) -> Any:
                 "sent",
                 f"preset={preset.preset_id}",
                 f"seed={speech_seed}",
+                *(
+                    [f"audio_sha256={content_digest[:16]}"]
+                    if content_digest is not None
+                    else []
+                ),
                 *lossy_transform_tags(lossy_audit),
             ],
         )
@@ -1472,6 +1481,8 @@ def maybe_attach_voice(
             logger.info("tts auto reply skipped: %s", reason)
             return _skip_voice_with_tags(result, _failure_kind_tag(reason))
         # M-64/S2：与命令路同一摘要语义（落盘字节真值；算不出即缺省）。
+        # U-107-C/T144：audit_tags 同步记 audio_sha256=<[:16]>（观测面，与
+        # 命令路同位——seed= 锚后；算不出即不带 tag，诚实降级同口径）。
         audio_part: dict[str, Any] = {"file": str(path), "review_text": speech}
         content_digest = _content_digest_for(path)
         if content_digest is not None:
@@ -1485,6 +1496,11 @@ def maybe_attach_voice(
                     "auto_reply",
                     f"preset={preset.preset_id}",
                     f"seed={speech_seed}",
+                    *(
+                        [f"audio_sha256={content_digest[:16]}"]
+                        if content_digest is not None
+                        else []
+                    ),
                     *lossy_transform_tags(lossy_audit),
                 ],
             }
