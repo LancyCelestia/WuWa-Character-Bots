@@ -239,6 +239,11 @@ def test_digest_exception_omits_key_without_bubbling(
     def _boom(*_a: object, **_k: object) -> str:
         raise RuntimeError("digest boom")
 
+    # T127 起 media_digest_file 有第二消费点（_ref_fingerprint 收编）；
+    # 本测试主语=落盘点 digest，指纹口打桩隔离全局 patch 波及。
+    monkeypatch.setattr(
+        tts_mod, "_ref_fingerprint", lambda *_a: "stub-fp", raising=False
+    )
     monkeypatch.setattr(tts_mod, "media_digest_file", _boom, raising=False)
     capability = tts_mod.build_tts_capability(_ref_config(tmp_path))
 

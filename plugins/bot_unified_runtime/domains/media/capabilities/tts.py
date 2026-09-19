@@ -85,7 +85,10 @@ from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety impo
 from plugins.bot_unified_runtime.domains.core.text_boundary import (
     match_trigger,
 )
-from plugins.bot_unified_runtime.domains.media.digest import media_digest_file
+from plugins.bot_unified_runtime.domains.media.digest import (
+    media_digest,
+    media_digest_file,
+)
 from plugins.bot_unified_runtime.domains.media.tts_presets import (
     DEFAULT_PRESET_ID,
     HARD_MAX_CHARS_FALLBACK,
@@ -223,9 +226,10 @@ def effective_trigger_words(
 ) -> tuple[str, ...]:
     """内置词表 ∪ 管理员追加词（去重；追加词在前，内置词在后）。
 
-    旧实码是「传了非空表就整表替换」，而 catalog:809 / `.env.example` / help 条目
-    三处文档承诺的是「与内置合并」：管理员加一个词即把内置 11 词全数静默关掉，
-    `说 …` 当场落回人格对话（M-15）。合并语义收在这**唯一入口**，路由谓词与取文共用。
+    追加词与内置词表**合并生效**（M-15，b13913d 落地）：对齐 catalog /
+    `.env.example` / help 条目三处「与内置合并」的既有承诺——管理员追加词
+    只增不减，内置词永不因追加而失配。合并语义收在这**唯一入口**，
+    路由谓词与取文共用。
     """
     extra = tuple(str(word).strip() for word in (trigger_words or ()) if str(word).strip())
     merged: list[str] = []
@@ -387,12 +391,16 @@ def _ref_fingerprint(ref_path: str) -> str:
     实测 stat-only 全绿（零正向钉死），且哈希成本相对秒级合成可忽略（注释见
     模块头）。读不到的路径返回 ``"missing"``（确定性占位；不同路径另有 ``ref``
     段区分）。
+
+    T127 起哈希收编中央件 ``media_digest_file``（S-08 单一入口；1MB chunk
+    流式，O(1) 内存）：ref 音频可达 MB 级，全量 ``read_bytes`` 入内存不再
+    必要。成功路径逐字节等价（同 sha256，``[:16]`` 截短=消费侧决定）；
+    OSError→None→``"missing"`` 与旧 OSError 分支同义（U-107-B 缺即缺）。
     """
-    path = Path(ref_path)
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
-    except OSError:
+    digest = media_digest_file(ref_path)
+    if digest is None:
         return "missing"
+    return digest[:16]
 
 
 def _cache_identity(
@@ -446,10 +454,12 @@ def _cache_identity(
         "text": text,
     }
     preimage = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-    seed = int(hashlib.sha256(preimage.encode("utf-8")).hexdigest()[:8], 16)
-    cache_key = hashlib.sha256(
+    # 键派生再哈希收编中央件 media_digest（T127，T121 移交项）：表达式恒等
+    # （即 sha256().hexdigest()），键空间零变化，温缓存不失效。
+    seed = int(media_digest(preimage.encode("utf-8"))[:8], 16)
+    cache_key = media_digest(
         (preimage + "|" + SEED_RULE_VERSION).encode("utf-8")
-    ).hexdigest()[:20]
+    )[:20]
     return cache_key, seed
 
 
@@ -809,8 +819,20 @@ def _build_params(config: Any) -> TtsParams:
 
 
 def _output_dir(config: Any) -> Path:
-    raw = str(getattr(config, "bot_tts_output_dir", "") or "data/tts_output")
-    return Path(raw)
+    """语音产物落盘目录（M-52 第二半，T127 收口）。
+
+    三态语义与 config path_fields（T125 已入 ``bot_tts_output_dir``）对齐：
+    绝对/已解析配置值原样透传；空串（含纯空白）缺省兜底 ``data/tts_output``
+    经 ``scripts.runtime_paths.runtime_path`` 落 Runtime 数据根——兜底不再按
+    CWD 解析，源码树 ``data/`` 污染面就此断根（台账 #1 同族）。
+    """
+    # 惰性 import（chat.py:195 先例）：scripts/ 非包依赖，模块期引入拖加载面。
+    from scripts.runtime_paths import runtime_path
+
+    raw = str(getattr(config, "bot_tts_output_dir", "") or "").strip()
+    if raw:
+        return Path(raw)
+    return runtime_path("data/tts_output")
 
 
 def _degrade(reason: str) -> str:
