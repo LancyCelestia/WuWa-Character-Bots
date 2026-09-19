@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import sqlite3
@@ -21,6 +20,8 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+from ..digest import media_digest
 
 # 内容类别固定集（VLM 从中选；降级路径按媒体类型映射到这里）。
 CATEGORIES: tuple[str, ...] = (
@@ -200,7 +201,8 @@ class MediaArchiveStore:
         目录 = root/类别/IP[/管理员子路径]；文件名 = yyyymmdd_HHMMSS_<sha8>.<ext>；
         同名 .json 旁车携带全部元数据。写盘与入库全程持锁（并发归档防交错）。
         """
-        sha256 = hashlib.sha256(data).hexdigest()
+        # 归档去重哈希唯一真身=中央媒体摘要件（S5 收编，蓝图 §3.1 单一入口）。
+        sha256 = media_digest(data)
         with self._lock:
             hit, existing_rel = self.exists(sha256)
             if hit:
@@ -286,7 +288,7 @@ class MediaArchiveStore:
         """聊天记录归档：Markdown 文本直落（无 magic bytes，走 sha256 去重）。"""
         now = clock or datetime.now().astimezone()
         payload = text.encode("utf-8")
-        sha256 = hashlib.sha256(payload).hexdigest()
+        sha256 = media_digest(payload)
         with self._lock:
             hit, existing_rel = self.exists(sha256)
             if hit:
