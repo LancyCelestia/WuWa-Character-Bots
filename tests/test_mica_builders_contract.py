@@ -430,3 +430,44 @@ def test_media_card_gained_missing_public_tokens() -> None:
     block = _root_block(_media_html())
     for token in ("--accent-dark:", "--ink:", "--muted:"):
         assert token in block, f"media 卡仍缺 {token}"
+
+
+# ==================== 11. 胶囊转义层一致（CAPFIX-B 修 I-1，2026-09-21） ====================
+# 评审实锤（review-CAP1-report I-1）：CAP1 把 media 直拼卡改为复用
+# ``mica_shell.brand_capsule_html``（组件内部对四入参 ``html.escape`` 一次）时，
+# 本卡沿用了旧「调用方先 ``_esc``」写法 → 双重转义：带 `&` 的头像直链变
+# `&amp;amp;` → 请求 404 → 被 onerror 静默吞图；名字含 `'`/`&` 卡面露
+# `&#x27;`/`&amp;`。bridge/Jinja 路（market/error 等）传原值=正确一层。
+# 修复后两条路同构：**胶囊输入一律传原值，转义层收敛到组件内一处**。
+# 反向锁：任何人再把 _esc/html.escape 预转义喂进胶囊，本节必红。
+
+_CAPSULE_ESCAPE_CASE: dict[str, str] = {
+    "bot_name": "O'Neil & Co",
+    "bot_avatar_url": "https://cdn.example.invalid/a.png?t=1&v=2",
+    "feature_label": "天气&预警",
+}
+
+
+def test_media_capsule_escapes_exactly_once() -> None:
+    """media 卡胶囊三输入各只转义一次（无二重 `&amp;amp;`/`&amp;#x27;`）。"""
+    html_text = render_media_card_html({"title": "T", **_CAPSULE_ESCAPE_CASE})
+    assert "&amp;amp;" not in html_text, "胶囊输入被双重转义（回归 I-1）"
+    assert "&amp;#x27;" not in html_text, "胶囊输入被双重转义（回归 I-1）"
+    assert 'src="https://cdn.example.invalid/a.png?t=1&amp;v=2"' in html_text
+    assert "<span class=\"mc-name\">O&#x27;Neil &amp; Co</span>" in html_text
+    assert "<span class=\"mc-feature\">· 天气&amp;预警</span>" in html_text
+
+
+def test_capsule_dom_identical_across_two_render_routes() -> None:
+    """同一输入下，直拼卡与 bridge 模板卡的胶囊 DOM 逐字节同构（转义层数一致）。"""
+    from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
+        render_market_card_html,
+    )
+
+    pattern = re.compile(r'<div class="mica-capsule".*?</div>', re.DOTALL)
+    media = pattern.search(render_media_card_html(dict(_CAPSULE_ESCAPE_CASE)))
+    market = pattern.search(render_market_card_html(dict(_CAPSULE_ESCAPE_CASE)))
+    assert media and market, "两路产物均未找到品牌胶囊"
+    assert media.group(0) == market.group(0), (
+        "两条渲染路的胶囊 DOM 分叉（转义/取值层数不一致）"
+    )

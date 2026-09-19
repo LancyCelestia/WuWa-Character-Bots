@@ -556,6 +556,121 @@ def test_renderers_never_raise_on_empty_payload(
     assert "守岸人" in html_text
 
 
+# ==================== 10a. 品牌中文名单一来源（CAPFIX-B 修 I-3，2026-09-21） ====================
+# 评审实锤（review-CAP1-report I-3）：models.RenderPayload.bot_name 默认值曾
+# 硬编码「守岸人」，经 bridge._DEFAULT_CONTEXT 喂 universal 卡 → 胶囊回落分支
+# 恒不生效，中文名出现**第二处真相**（改 BRAND_THEME 后 universal 不跟随、
+# market/error 跟随）。修复=默认值置空，渲染期由 BRAND_THEME.display_name
+# 单点回落。反向锁：任何人把字面量写回默认值/新增第二处缺省，本测试必红。
+
+def test_brand_display_name_single_source_across_faces() -> None:
+    """空 payload 下全数卡面品牌中文名恒跟随 BRAND_THEME.display_name（渲染期）。"""
+    theme = bridge.BRAND_THEME
+    original = theme.display_name
+    object.__setattr__(theme, "display_name", "ZZTEST-CAPSULE")
+    try:
+        # dataclass 默认值本体不得再写第二处字面量。
+        assert bridge.RenderPayload().bot_name == "", (
+            "RenderPayload.bot_name 默认值携带品牌名第二处字面量（回归 I-3）"
+        )
+        outputs = {
+            "universal": bridge.render_universal_card_html({}),
+            "market": bridge.render_market_card_html({}),
+            "error": bridge.render_error_card_html({}),
+            "mermaid": bridge.render_mermaid_html("graph TD;A-->B;"),
+        }
+        for face, html_text in outputs.items():
+            assert '<span class="mc-name">ZZTEST-CAPSULE</span>' in html_text, (
+                f"{face} 卡胶囊中文名未跟随单一来源（回归 I-3）"
+            )
+            assert '<span class="mc-name">守岸人</span>' not in html_text, (
+                f"{face} 卡胶囊中文名仍出硬编码缺省（回归 I-3）"
+            )
+    finally:
+        object.__setattr__(theme, "display_name", original)
+    # 恢复默认后回落值即品牌登记值（default-path 契约不破）。
+    assert '<span class="mc-name">守岸人</span>' in bridge.render_universal_card_html({})
+
+
+# ==================== 10c. 功能名单一来源（CAPFIX-B 修 I-4，2026-09-21） ====================
+# 评审实锤（review-CAP1-report I-4）：bridge 六处把功能名硬编码成缺省回落
+# （「全球股指/金融/点歌/好感度/诊断/流程图」），其中「诊断」是 CAP1 新增、
+# 调用方（runtime.error_report 载荷只有 card_title）零出处的卡面文案。
+# 契约=功能名只认调用方传入，缺省整段省略（mc-feature 不产）。
+# 反向锁：任一回落字面量回潮 → 本节必红；传入即显通道被写死成省略 → 亦红。
+
+def test_feature_label_omitted_without_caller_source() -> None:
+    """空 payload 全数卡面功能名段整体省略，桥内不再存第二处字面量。"""
+    outputs = {
+        "universal": bridge.render_universal_card_html({}),
+        "market": bridge.render_market_card_html({}),
+        "finance": bridge.render_finance_card_html({}),
+        "song": bridge.render_song_candidates_html({}),
+        "affinity": bridge.render_affinity_card_html({}),
+        "error": bridge.render_error_card_html({}),
+        "mermaid": bridge.render_mermaid_html("graph TD;A-->B;"),
+    }
+    for face, html_text in outputs.items():
+        assert 'class="mc-feature"' not in html_text, (
+            f"{face} 卡功能名段未随缺省省略（桥内回落字面量回潮，回归 I-4）"
+        )
+
+
+def test_feature_label_rendered_when_supplied_by_caller() -> None:
+    """调用方传入即显（单一来源通道活体，非死代码）。"""
+    assert (
+        "<span class=\"mc-feature\">· 测试功能</span>"
+        in bridge.render_market_card_html({"feature_label": "测试功能"})
+    )
+    assert (
+        "<span class=\"mc-feature\">· 流程图</span>"
+        in bridge.render_mermaid_html(
+            "graph TD;A-->B;", feature_label="流程图"
+        )
+    )
+
+
+# ==================== 10d. mermaid 头像优先级链（CAPFIX-B 修 I-7，2026-09-21） ====================
+# 评审实锤（review-CAP1-report I-7）：render_mermaid_html 曾裸调
+# bot_avatar_uri()，把优先级链最高级「显式配置 bot_persona_avatar_url」丢掉
+# （_discover_local_uri(None) 亦恒空）。修复=带 config 走同一入口
+# （usage_cards/能力侧共五处的同口径直调），renderer 侧接线待合流波。
+
+class _AvatarStubConfig:
+    bot_persona_avatar_url = "https://explicit.invalid/avatar.png"
+    bot_runtime_data_dir = ""
+
+
+def test_mermaid_html_forwards_config_to_avatar_entry() -> None:
+    """显式配置级可达：传 config 后 mermaid 卡胶囊用 bot_persona_avatar_url。"""
+    html_text = bridge.render_mermaid_html(
+        "graph TD;A-->B;", config=_AvatarStubConfig()
+    )
+    assert 'src="https://explicit.invalid/avatar.png"' in html_text
+
+
+def test_mermaid_png_forwards_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """render_mermaid_png 把 config/feature_label 原样透传给 html 装配。"""
+    captured: dict[str, str] = {}
+
+    class _StubBackend:
+        def render_card(self, payload: dict[str, Any]) -> bytes:
+            captured["html"] = str(payload["html"])
+            return b"PNG"
+
+    monkeypatch.setattr(bridge, "_get_mermaid_backend", lambda: _StubBackend())
+    assert (
+        bridge.render_mermaid_png(
+            "graph TD;A-->B;",
+            config=_AvatarStubConfig(),
+            feature_label="流程图",
+        )
+        == b"PNG"
+    )
+    assert 'src="https://explicit.invalid/avatar.png"' in captured["html"]
+    assert "<span class=\"mc-feature\">· 流程图</span>" in captured["html"]
+
+
 # ==================== 10b. vis5 边界加固：好感度卡脏数据不抛异常 ====================
 # 审计实锤（vis5 前）：rows.score=None/"80"/缺键 → 模板 `%.1f` 格式化抛
 # TypeError/UndefinedError；bar 越界直出 250%。桥层归一是契约铁律 7 的前置。

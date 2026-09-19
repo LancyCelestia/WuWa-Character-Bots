@@ -64,6 +64,14 @@
 ### 5.1 建议新增/调整的契约断言（tests/ 不在本席可写面）
 - `tests/test_rendering_contract.py`：①新增「七模板渲染产物各含且仅含一处 `class="mica-capsule"`、含 `Shorekeeper`、模板源文件不含 `bf-avatar|cfb-|footer-bot-`」；②英文名单源锁 `BRAND_NAME_EN=="Shorekeeper"` 且模板/桥层零字面量（grep "Shorekeeper" 只许命中 theme_tokens 与注释）；③功能名省略锁（feature 空 → 产物无 `mc-feature`）。
 - `tests/test_mica_builders_contract.py`：media_card builder 产物含 `mica-capsule`+`Shorekeeper`；其余三面（help/debug/usage）待 §六 接入后同锁。
+  > **【2026-09-21 CAPFIX 席按实相改写本条——原文保留不删】** 上面这句当时被写成「已含」，实为**本波未立任何锁**：
+  > `git show 0765292:tests/test_mica_builders_contract.py`、HEAD 版、工作树版三处 grep `mica-capsule` / `Shorekeeper` / `BRAND_NAME_EN`
+  > 计数全为 **0**（评审 `review-CAP1-report.md` C-2 判定成立，本席复核复现）。按铁律 5，该条当时记**未完成**。
+  > 现行真相：品牌胶囊四态锁 + 7 张卡面「恰好一枚胶囊/英文名只出现一次/降级圆点与品牌名同源/CSS 恰注入一次」
+  > 由 **`tests/test_brand_capsule_contract.py` 于 2026-09-21 补上**（88 例全离线；变异杀伤力实证 M1 组件返回空=62 红 /
+  > M2 丢英文名腿=25 红 / M3 丢头像腿=10 红 / M4a 组件写死名=2 红、M4b 桥层写死名=8 红 / M5 评审 sabotage2 复刻=44 红，
+  > 逐条清单与复跑件=`CAPFIX-impl.md` §3）。
+  > media 直拼卡一面（`test_mica_builders_contract.py` 主场）因 I-1 双重转义待修，仍归 FIX-CAP-B 席按 §六 同锁。
 - 既有门两处**以模板源码为取材面**（`test_gaps_use_audited_scale`、`test_font_size_floor_12px`），组件 CSS 运行时注入后 mermaid 源码一度零声明——本席以 `.capsule-foot` 保留真实摆位声明（gap:7px/font-size:12px）过门；建议主会话后续把这两门改以**渲染产物**取材（与 `_root_blocks_of` 同法），否则「组件单源化」与「源码级门」长期互相别扭。
 - `test_universal_card_visual.py:146` 的 `footer-bot-pill` 分界锁：本席保留该 wrapper 类名（内容换成胶囊），锁不红。
 - `test_mica_builders_contract.py:362` usage 卡 `bot-foot` 断言：usage 未接入（§六），锁不红；接入当日该锁需随 §六 一并改。
@@ -108,3 +116,18 @@ dev.ps1 -Task runtime-layout → PASS
 样张：python scripts/render_card_samples.py --out %TEMP%/cap1-shot/{before,after_noavatar}
      + %TEMP%/cap1-shot/cap1_shot_extra.py（有头像集+明暗复合，脚本在 %TEMP% 不入树）
 ```
+
+## 九、评审发现的其余缺陷登记（2026-09-21 CAPFIX 席代登；**责任席=FIX-CAP-B，本席未修**）
+
+来源=`.superpowers/sdd/FRONTEND-AUDIT/review-CAP1-report.md`。本席（CAPFIX）只补测试锁，
+不改任何实现；下列四条属实现面缺陷，逐条注明归属与本锁的现状关系：
+
+| # | 缺陷（评审原编号） | 坐标 | 本锁现状 | 责任席 |
+|---|---|---|---|---|
+| I-1 | media 直拼卡**双重 HTML 转义**：`domains/render/templates.py` 调用方先 `_esc` 再把已转义串喂 `brand_capsule_html`，组件内又 escape 一遍→头像 URL 含 `&` 变 `&amp;` 致 404、名字含 `'`/`&` 露 `&#x27;`（CAP1 造成的严格回归，改前是对的） | `templates.py:130-132 + :187` → `mica_shell.brand_capsule_html` | **未锁**（本席可写面不含 media 卡；修好后需补「`&` 不双转」回归锁） | FIX-CAP-B |
+| I-3 | 中文名单一来源**漏第二处默认值**：`card_render/models.py:150 bot_name="守岸人"` 经 `bridge._DEFAULT_CONTEXT` 恒注入→universal 卡胶囊名不读 `BRAND_THEME.display_name` | `models.py:150`→`bridge.py:125/:1409` | **已锁**：`test_face_names_follow_single_source_tokens[universal]`（正锁）。本席在飞期间 FIX-CAP-B/CAPFIX-B 已在工作树把默认值改为 `""` 回落（HEAD 仍旧值）；若回退该锁即红 | FIX-CAP-B（实现）/CAPFIX（锁） |
+| I-4 | **功能名无中央来源**：`bridge.py` 六处硬编码（全球股指 / 金融 / 点歌 / 好感度 / 诊断 / 流程图，「诊断」为 CAP1 新增），与 `_HELP_ENTRIES`/command-catalog 零一致性门→改名后卡面写旧名 | `bridge.py` 六处（2026-09-21 复核见 §九附注） | **不锁缺省字符串**（本席写锁期间 FIX-CAP-B 正在摘这六处硬编码，锁字面量必与他席假冲突）；本锁只锁版本无关不变式：空载荷出卡时功能名段要么不存在、要么必为「· 非空文本」（`test_face_feature_segment_omitted_or_wellformed`×7 + universal 整段省略锁 + 显式功能名必落产物锁×6）。**接真单源 + catalog 一致性门仍待 FIX-CAP-B** | FIX-CAP-B |
+| I-7 | mermaid 卡裸调 `bot_avatar_uri()` **不传 config**→「显式配置 `bot_persona_avatar_url`」与「磁盘兜底发现」两级全失效，同环境下别的卡有头像、mermaid 只有圆点 | `bridge.py:1988-1993`→`bot_avatar.py:133-150` | 本锁只锁「消费 `bot_avatar_uri` 返回值切换 img/dot 两腿」（`test_face_avatar_leg_when_url_present[mermaid]`）；**config 优先级缺失属实现缺陷未锁** | FIX-CAP-B |
+
+另：评审 C-1（零契约覆盖）由本文件 §五 改写所指 `tests/test_brand_capsule_contract.py` 关闭；
+C-2（本文件 :66 虚报）已按实相改写；C-3/I-2/I-5/I-6 与 Minor 族不属胶囊锁面，见评审原报告与 `CAPFIX-impl.md` §4。

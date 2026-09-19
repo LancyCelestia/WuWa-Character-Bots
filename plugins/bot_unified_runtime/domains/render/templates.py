@@ -40,7 +40,6 @@ from plugins.bot_unified_runtime.domains.render.card_render.mica_shell import (
     shell_base_css,
 )
 from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
-    BRAND_THEME,
     DIVIDER,
     GLOW_ACCENT,
     SURFACE_TINTS,
@@ -126,10 +125,15 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
     footer = _esc(payload.get("footer")) or ""
     if footer == "about:blank":
         footer = ""
-    # 中文名缺省=BRAND_THEME.display_name（CAP1 单一来源，值不变「守岸人」）。
-    bot_name = _esc(payload.get("bot_name")) or BRAND_THEME.display_name
-    bot_avatar = _esc(payload.get("bot_avatar_url"))
-    feature_label = _esc(payload.get("feature_label"))
+    # 胶囊三输入传**原值**（CAPFIX-B 修 I-1 2026-09-21）：转义层收敛到组件内
+    # 一处 = ``mica_shell.brand_capsule_html`` 的 ``html.escape``（与 bridge/
+    # Jinja 路同构，全卡都只转义一次）。此前本行先 ``_esc`` 再喂组件、组件又
+    # escape 一遍 → 双重转义回归（& 变 &amp;amp;：带 & 的头像直链 404、名字
+    # 含 ' 卡面露 &#x27;）。中文名缺省=BRAND_THEME.display_name（CAP1 单一
+    # 来源）由组件内部回落，此处不再兜第二处字面量。
+    bot_name = str(payload.get("bot_name") or "")
+    bot_avatar = str(payload.get("bot_avatar_url") or "")
+    feature_label = str(payload.get("feature_label") or "")
     pc = _esc(payload.get("platform_color")) or "#607080"
     pc_dark = _esc(payload.get("platform_color_dark")) or "#4a5866"
     pc_rgb = _esc(payload.get("platform_color_rgb")) or "96,112,128"
@@ -159,7 +163,9 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
     cover_block = ""
     if cover:
         # 徽章显功能名（F10：裸平台键如 "eat" 无意义），缺省回平台名。
-        badge_text = feature_label or platform
+        # feature_label 现为原值（胶囊输入不预转义，见上），徽章走手写 f-string
+        # HTML 故在**用处**转义一次；platform 已在上方 _esc（转义层不变）。
+        badge_text = _esc(feature_label) if feature_label else platform
         cover_block = (
             f'<div class="cover-wrap">'
             f'<img src="{cover}" '

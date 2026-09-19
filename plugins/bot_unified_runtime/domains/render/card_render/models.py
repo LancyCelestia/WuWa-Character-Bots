@@ -147,7 +147,12 @@ class RenderPayload:
     platform_logo_svg: str = ""
     platform_mark: str = ""
     platform_mark_style: str = ""
-    bot_name: str = "守岸人"
+    # 中文名缺省**留空**（CAPFIX-B 修 I-3 2026-09-21，评审实锤：旧默认值
+    # "守岸人" 经 bridge._DEFAULT_CONTEXT 喂 universal 卡，胶囊回落分支恒不
+    # 生效=品牌中文名第二处真相）。单一来源=theme_tokens.BRAND_THEME.
+    # display_name：空值在渲染期由 bridge._capsule_context /
+    # mica_shell.brand_capsule_html 回落（改 BRAND_THEME 一处，全卡同步跟随）。
+    bot_name: str = ""
     bot_avatar_url: str = ""
     feature_label: str = ""  # 页脚功能名（F11：头像+名字+功能名），空回退通用文案
     card_width: str = "1440px"

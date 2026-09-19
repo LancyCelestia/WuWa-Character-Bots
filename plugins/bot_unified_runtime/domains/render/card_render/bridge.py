@@ -1535,7 +1535,9 @@ def render_market_card_html(payload_dict: dict[str, Any] | None = None) -> str:
             groups_out.append({"name": _as_str(group.get("name")), "rows": rows_out})
     bot_name = _as_str(data.get("bot_name")) or BRAND_THEME.display_name
     bot_avatar_url = _as_str(data.get("bot_avatar_url"))
-    feature_label = _as_str(data.get("feature_label")) or "全球股指"
+    # 功能名单一来源（CAPFIX-B 修 I-4）：只认调用方传入（能力侧自带语义），
+    # 缺省整段省略——桥内「全球股指」回落字面量是第二处真相，退役。
+    feature_label = _as_str(data.get("feature_label"))
     return _MARKET_CARD_TEMPLATE.render(
         platform_color=color,
         platform_color_dark=_rgb_to_hex(_darken(rgb)),
@@ -1616,7 +1618,9 @@ def render_finance_card_html(payload_dict: dict[str, Any] | None = None) -> str:
             )
     bot_name = _as_str(data.get("bot_name")) or BRAND_THEME.display_name
     bot_avatar_url = _as_str(data.get("bot_avatar_url"))
-    feature_label = _as_str(data.get("feature_label")) or "金融"
+    # 功能名单一来源（CAPFIX-B 修 I-4）：只认调用方传入（stocks/fx 能力侧
+    # 各自给「个股行情/股价/汇率」），缺省整段省略，桥内「金融」退役。
+    feature_label = _as_str(data.get("feature_label"))
     return _FINANCE_CARD_TEMPLATE.render(
         platform_color=color,
         platform_color_dark=_rgb_to_hex(_darken(rgb)),
@@ -1676,7 +1680,9 @@ def render_song_candidates_html(payload_dict: dict[str, Any] | None = None) -> s
     template = _ENV.get_template("song_candidates.html")
     bot_name = _as_str(data.get("bot_name")) or BRAND_THEME.display_name
     bot_avatar_url = _as_str(data.get("bot_avatar_url"))
-    feature_label = _as_str(data.get("feature_label")) or "点歌"
+    # 功能名单一来源（CAPFIX-B 修 I-4）：只认调用方传入（music 能力侧给
+    # 「点歌」），缺省整段省略，桥内「点歌」回落退役。
+    feature_label = _as_str(data.get("feature_label"))
     return template.render(
         query=_as_str(data.get("query")) or "未知关键词",
         platform=platform,
@@ -1770,7 +1776,9 @@ def render_affinity_card_html(payload_dict: dict[str, Any] | None = None) -> str
     ]
     bot_name = _as_str(data.get("bot_name")) or BRAND_THEME.display_name
     bot_avatar_url = _as_str(data.get("bot_avatar_url"))
-    feature_label = _as_str(data.get("feature_label")) or "好感度"
+    # 功能名单一来源（CAPFIX-B 修 I-4）：只认调用方传入（affinity 能力侧给
+    # 「好感度」），缺省整段省略，桥内「好感度」回落退役。
+    feature_label = _as_str(data.get("feature_label"))
     return template.render(
         pc=pc,
         # 釉瑚云母洗：与 --accent 同点注入（mica-glass v1 2026-09-12）。
@@ -1854,8 +1862,11 @@ def render_error_card_html(payload_dict: dict[str, Any] | None = None) -> str:
         help_text=_as_str(data.get("help_text")),
         bot_name=bot_name,
         bot_avatar_url=bot_avatar_url,
-        # 品牌胶囊（CAP1）：诊断卡功能名「诊断」；help_text 由模板摆在胶囊旁。
-        **_capsule_context(bot_name, bot_avatar_url, _as_str(data.get("feature_label")) or "诊断"),
+        # 品牌胶囊（CAP1）：功能名单一来源（CAPFIX-B 修 I-4）——「诊断」是
+        # CAP1 新增、无调用方出处的卡面文案，回落退役；error_report 载荷未带
+        # feature_label 时整段省略（卡面「运行异常」语义自有 card_title 承载）。
+        # help_text 由模板摆在胶囊旁。
+        **_capsule_context(bot_name, bot_avatar_url, _as_str(data.get("feature_label"))),
         # 漂移相位按 payload digest 确定注入（E01 同源语义）。
         phase=payload_phase(data),
         # 釉瑚云母洗：与 --accent 同点注入（红 accent 派生，mist 保持本命打底）。
@@ -1972,22 +1983,35 @@ def _install_ctx_exit_on_self_heal(backend: Any) -> None:
     backend._close_thread_browser = _close_with_ctx_exit
 
 
-def render_mermaid_html(code: str) -> str:
+def render_mermaid_html(
+    code: str,
+    *,
+    config: object | None = None,
+    feature_label: str = "",
+) -> str:
     """渲染 mermaid 流程图卡 HTML（Mica 规范）。
 
     code 经 Jinja2 autoescape 转义后注入 <pre class="mermaid">，页面内
     从 jsDelivr CDN 加载 mermaid.min.js 并 startOnLoad 自动出图。
     纯字符串组装，不访问网络，不抛异常；釉瑚云母洗按中性灰派生注入
     （mica-glass v1 2026-09-12）。
+
+    ``config``（CAPFIX-B 修 I-7 2026-09-21）：透传给 ``bot_avatar_uri(config)``
+    ——本模块其余头像直调点（usage_cards 及能力侧共五处）都是带 config 的
+    同一口径，此前裸调把优先级链最高级「显式配置 bot_persona_avatar_url」
+    与「磁盘兜底发现」两级丢掉。调用方拿到 config 就传；缺省 None 行为与
+    既有一致（进程内登记 > 空）。生产 renderer 侧 config 接线登记待合流
+    （renderer.py 非本席可写面）。
+    ``feature_label``（CAPFIX-B 修 I-4）：功能名由调用方传入，缺省整段
+    省略——旧「流程图」为桥内硬编码第二处真相，退役。
     """
-    # CAP1 胶囊头像：mermaid 卡无 payload 通道传头像，复用 bot_avatar_uri
-    # 既有单一入口（显式配置 > 进程内登记；本函数够不到 config，磁盘兜底
-    # 分支自然落空回「守」字圆点——生产 on_bot_connect 后内存即有，无感）。
+    # CAP1 胶囊头像 → CAPFIX-B：头像仍走 bot_avatar_uri 单一入口，但带
+    # config（见 docstring），不在渲染层复制优先级逻辑。
     from plugins.bot_unified_runtime.domains.render.bot_avatar import bot_avatar_uri
 
     bot_name = BRAND_THEME.display_name
-    bot_avatar_url = str(bot_avatar_uri())
-    feature_label = "流程图"
+    bot_avatar_url = str(bot_avatar_uri(config))
+    feature_label = _as_str(feature_label)
     return _MERMAID_TEMPLATE.render(
         code=code or "",
         bot_name=bot_name,
@@ -2008,7 +2032,12 @@ def render_mermaid_html(code: str) -> str:
     )
 
 
-def render_mermaid_png(code: str) -> bytes | None:
+def render_mermaid_png(
+    code: str,
+    *,
+    config: object | None = None,
+    feature_label: str = "",
+) -> bytes | None:
     """mermaid 源码 → PNG 字节；任何失败（无网/超时/后端缺失/异常）返回 None。
 
     走 render_backends 既有截图入口（PlaywrightRenderBackend.render_card），
@@ -2020,6 +2049,9 @@ def render_mermaid_png(code: str) -> bytes | None:
     （该超时只钳调用方等待，不能取消 worker 上在跑的渲染，弃渲染仍占住
     mermaid 专用单 worker，断网期后续消息逐条排队超时；评审 I-1）。
     重试仍失败（如无网）保持 None 降级。
+
+    ``config``/``feature_label``（CAPFIX-B I-7/I-4）：原样透传
+    ``render_mermaid_html``（头像优先级链与功能名单一来源，见该函数）。
     """
     if not (code or "").strip():
         return None
@@ -2028,7 +2060,9 @@ def render_mermaid_png(code: str) -> bytes | None:
         if backend is None:
             return None
         payload = {
-            "html": render_mermaid_html(code),
+            "html": render_mermaid_html(
+                code, config=config, feature_label=feature_label
+            ),
             "viewport": {"width": 840, "height": 640},
             "wait_ms": 120,
             "wait_js": _MERMAID_READY_JS,
