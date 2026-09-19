@@ -78,7 +78,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Tas
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Task run"
 ```
 
-请注意上面的 `runtime-layout` 是最关键的外部边界检查；它只读目录和配置，不打开数据库内容，不调用 LLM，不连接 QQ/NapCat。受限终端优先使用上面的 `-Command "& .\scripts\dev.ps1 -Task ..."` 写法；如果独立 PowerShell 环境支持 `-File`，也可以使用旧的等价写法。
+请注意上面的 `runtime-layout` 是最关键的外部边界检查；它只读目录和配置，不打开数据库内容，不调用 LLM，不连接 QQ/SnowLuma。受限终端优先使用上面的 `-Command "& .\scripts\dev.ps1 -Task ..."` 写法；如果独立 PowerShell 环境支持 `-File`，也可以使用旧的等价写法。
 
 如果检查失败，优先修正 `.env`/`.env.prod`，不要把 Runtime 目录复制回源码工作区。
 
@@ -91,6 +91,45 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Tas
 - `scripts\import_meme_packs.py`
 
 表情包导入脚本写入数据库的文件路径也使用绝对路径，避免数据库位于 Runtime 时，后续清理操作错误地把相对路径解释到源码目录。
+
+## 语音工具链（语料与自检）
+
+TTS 语料工具链的代码真身与产物真身都在引擎目录 `C:\Software\GPT-SoVITS-V2Pro`（仓外，不属本工作区）。本仓库只保存版本保护副本与登记台账；执行永远发生在引擎侧，仓内副本零业务引用。
+
+### 四支工具的收编副本
+
+引擎 `tools\` 下四支语料工具已逐字节收编入 `scripts\tts_corpus\`。每支头部带溯源块（原路径/原件 sha256/收编日期/已知缺陷指针），原件仍是唯一执行真身，副本只用于版本保护与取证；已知缺陷原样保留不修，修 bug 另波。
+
+| 副本（scripts\tts_corpus\） | 原路径（引擎 tools\） | 原件 sha256 |
+|---|---|---|
+| scan_durations.py | scan_durations.py | d1ea0870b054aea4769ad30897c7e1dcd57996d6e25c2ca793980ed273e6bf8b |
+| pick_refs.py | pick_refs.py | 0ed14796c763e2c0236b5e2a9b1e95cb9c3da2a836a67ccb8a876358128e5e9f |
+| make_listening_checklist.py | make_listening_checklist.py | 076c5c64eda4da160f5449dc7d7b43d8a022ff6acd8ba6aa63e7515773b402f8 |
+| transcribe_refs.py | asr\transcribe_refs.py | 7d2e8962483ed6f7adcc58519d20856612ba878e5d5a6cd709540bed1d944306 |
+
+副本与原件的一致性由冒烟门 `tests\test_tts_corpus_tools.py` 锚定（2026-09-20 实跑 18 passed）：副本尾部与引擎原件各自对溯源块登记的 sha256 做逐字节断言，任何一侧改动都会被漂移门拦下；引擎目录缺失时按 SKIP 语义跳过，不假红。注意 `pick_refs.py` 与 `make_listening_checklist.py` 是顶层执行脚本（import 即按硬编码绝对路径写引擎 refs\），结构上禁止在本工作区 import。
+
+### 引擎侧产物登记（只登记不收编）
+
+以下 13 件产物真身在引擎 `refs\` 目录，仓库不保存副本，仅登记 sha256 供换机或重录语料后对表。**这些哈希不在 CI 内**（`verify_hashes.py` 结构上锚不了仓外文件），**换机或重录语料后本表需要重录**。
+
+| 产物（GPT-SoVITS-V2Pro\refs\） | sha256 前 16 | 大小 | 备注 |
+|---|---|---|---|
+| corpus_durations.csv | 05362a75a3e1c71f | 86716B | 490 行含 2 簇重复，291/118 虚增（真实 289/117） |
+| listening_checklist.md | 20e94300aa5016bb | 3168B | 生成物内嵌手写矛盾数字 |
+| shorekeeper_refs_asr.tsv | 5970949be196be5d | 2345B | 粘贴块 9 条含 32kHz 杂散件 |
+| honami_lines_asr.tsv | d99be28d5290bd3c | 4237B | 无粘贴块=非同版本产出，不可归因 |
+| shorekeeper_ref_01.wav | 783c66eb1fb541ee | 463404B | 32kHz 杂散件，勿扩进选片池 |
+| shorekeeper_ref_01.flac | 1c8617dc464abd3d | 385420B | 手工第一条，源=剧情/main_honami_2_8_2_43_9.flac（哈希可溯） |
+| shorekeeper_ref_02..08.flac（7 件） | 7ad26b5c/bdda2432/21dde323/307ff5ab/cb1dc751/cedc24d8/3fda0f1d | 195586~394815B | pick_refs 产出，7/7 与宣称源逐字节相同 |
+
+### 与自检工具的分工
+
+- `scripts\verify_chatbot_env.py`（已入仓，T87 重建）：手动快查工具——改完 `.env` 后秒级离线核对 bot 侧配置面（生产 pydantic Config 装载语义 + TTS 段深查），不是重启门。
+- `scripts\pre_restart_check.py`（重启前置预检 10 项）：第 10 项「音色守望」守引擎面（tts_infer.yaml/权重/sha256 身份对表，基线册 `scripts\tts_voice_baseline.json`）。
+- `tests\test_tts_corpus_tools.py`（冒烟门）：只守语料工具收编副本与引擎原件的逐字节一致，随全量测试（`dev.ps1 -Task test`）运行。
+
+三者零重叠：配置面归 verify_chatbot_env，引擎面归 pre_restart_check，语料工具版本面归冒烟门。
 
 ## 归档与恢复
 
@@ -126,4 +165,4 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 readiness-smoke
 powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 startup-smoke
 ```
 
-这些检查不等同于真实平台联调；真实 NapCat/QQ 连接仍需在用户明确要求时单独验证。
+这些检查不等同于真实平台联调；真实 SnowLuma/QQ 连接仍需在用户明确要求时单独验证。
