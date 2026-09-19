@@ -15,6 +15,7 @@ docs/rendering-contract.md（本测试的软文档镜像）。
 
 from __future__ import annotations
 
+import functools
 import re
 from html.parser import HTMLParser
 from pathlib import Path
@@ -22,16 +23,33 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.output.card_render import bridge
-from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
+from plugins.bot_unified_runtime.domains.render.card_render import bridge
+from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
+    BLOB_COUNT,
+    BLOB_DURATIONS,
     CARD_SHELL_WIDTHS,
     DEFAULT_THEME,
     DEFAULT_WASH_TOKENS,
     FONT_WEIGHT_MAX,
     GAP_SCALE_PX,
+    GLASS_EDGE,
+    GLASS_FOOT,
+    GLASS_MAIN,
     META_VIEWPORT_POLICY,
+    MONO_FONT_STACK,
+    OVERLAY_SCRIMS,
     PLATFORM_FOOTER_LABELS,
     PLATFORM_THEMES,
+    RADIUS_CIRCLE,
+    RADIUS_INNER_CSS_VARS,
+    RADIUS_INNER_PX,
+    RADIUS_PILL,
+    SCORE_COLD,
+    SCORE_HOT,
+    SEMANTIC_COLORS,
+    SEMANTIC_DANGER,
+    SEMANTIC_SUCCESS,
+    SEMANTIC_WARNING,
     SHADOW_CSS_VARS,
     SHADOW_PRIMARY,
     SHADOW_SECONDARY,
@@ -40,7 +58,10 @@ from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
     derive_wash_tokens,
     get_platform_theme,
 )
-from plugins.bot_unified_runtime.output.render_backends import NullRenderBackend
+from plugins.bot_unified_runtime.output.render_backends import (
+    NullRenderBackend,
+    PlaywrightRenderBackend,
+)
 
 # 显式枚举全部既有模板（禁止 glob：新增模板入列时逐个登记）。
 CARD_TEMPLATES: tuple[str, ...] = (
@@ -79,10 +100,51 @@ def _strip_comments(text: str) -> str:
     return text
 
 
+# 模板名 → 渲染入口（默认空载荷）。步 5 后 :root 的公共段由
+# mica_shell.render_root_tokens 单一产出、不再写在模板里，故契约测试必须把
+# **渲染产物**一并纳入取材，否则会误报「模板缺 --mica-shadow / --r-shell / --wash-*」。
+_RENDER_ENTRIES: dict[str, Any] = {
+    "universal_card.html": lambda: bridge.render_universal_card_html({}),
+    "market_card.html": lambda: bridge.render_market_card_html({}),
+    "affinity_card.html": lambda: bridge.render_affinity_card_html({}),
+    "mermaid_card.html": lambda: bridge.render_mermaid_html("graph TD;A-->B;"),
+    "song_candidates.html": lambda: bridge.render_song_candidates_html({}),
+    "finance_card.html": lambda: bridge.render_finance_card_html({}),
+    "error_card.html": lambda: bridge.render_error_card_html({}),
+}
+
+
+@functools.cache
+def _root_blocks_of(name: str) -> str:
+    """该模板渲染产物里全部 ``:root`` 块的拼接（公共段来源，步 5 起）。
+
+    默认空载荷 → 平台色回落到 ``UNKNOWN_PLATFORM_COLOR``（``error_card`` 例外，
+    它固定用 ``ERROR_THEME.accent``）。
+    """
+    html = _RENDER_ENTRIES[name]()
+    return "\n".join(re.findall(r":root\s*\{([^}]*)\}", html))
+
+
+def _card_accent(name: str) -> str:
+    """该卡渲染产物里实际生效的主色（从 ``--accent`` 反读，避免测试硬编码各卡主色）。"""
+    match = re.search(r"--accent:([^;]+);", _root_blocks_of(name))
+    assert match, f"{name} 渲染产物缺 --accent"
+    return match.group(1)
+
+
 def _css_of(name: str) -> str:
     match = re.search(r"<style>(.*?)</style>", _strip_comments(_tpl(name)), re.DOTALL)
     assert match, f"{name} 缺少 <style> 块"
-    return match.group(1)
+    source = match.group(1)
+    # 模板源码里的 :root 块整体剔除——渲染产物版本已含其全部内容（且变量已求值），
+    # 两者并存会让「同一 token 至多定义一次」的断言误报。
+    # 注意必须先把 Jinja 表达式换成占位符：块内的 `{{ ... }}` 自带 `}`，
+    # 会让 `[^}]*` 提前收尾、只删掉半个块（实测残留 --mica-shadow-panel）。
+    masked = re.sub(r"\{\{.*?\}\}", "JINJA", source, flags=re.DOTALL)
+    spans = [m.span() for m in re.finditer(r":root\s*\{[^}]*\}", masked)]
+    for start, end in reversed(spans):
+        source = source[:start] + source[end:]
+    return source + "\n" + _root_blocks_of(name)
 
 
 def _css_rules(css: str) -> list[tuple[str, str]]:
@@ -258,25 +320,39 @@ def test_brand_wash_tokens_injected(name: str) -> None:
     css = _css_of(name)
     # 档位清单从 DEFAULT_WASH_TOKENS 登记表反查（P3-12）：新增本命 wash 档位
     # 自动逐模板校验注入点与兜底字面量，不依赖手工拷贝的元组。
+    #
+    # 步 5 起取值有两种合法形态：①模板内联 default('...') 兜底（历史形态，
+    # 现仅剩模板自有 token）；②bridge 派生直出（公共段由 render_root_tokens
+    # 产出，默认载荷下正是本命档位）。两者都必须与本命值一致。
     for token in DEFAULT_WASH_TOKENS:
         css_token = "--wash-" + token.split("_")[1]
         match = re.search(re.escape(css_token) + r":\s*([^;]+)(?:;|$)", css)
         assert match, f"{name} 缺 {css_token} 注入点"
-        declared = re.search(r"default\('([^']*)'\)", match.group(1))
-        assert declared, f"{name} {css_token} 缺 default 兜底字面量"
-        assert declared.group(1) == DEFAULT_WASH_TOKENS[token], (
-            f"{name} {css_token} 兜底值与本命 token 不一致"
-        )
+        value = _norm_css(match.group(1))
+        declared = re.search(r"default\('([^']*)'\)", value)
+        if declared:
+            assert declared.group(1) == DEFAULT_WASH_TOKENS[token], (
+                f"{name} {css_token} 兜底值与本命 token 不一致"
+            )
+        else:
+            # 步 5 形态：值由 bridge 按该卡主色派生（一定有值，缺 payload 不会崩）。
+            # 期望值现算——各卡主色不同（error 卡固定 ERROR_THEME.accent），
+            # 从渲染产物的 --accent 反读，避免在测试里硬编码第二份主色表。
+            expected = derive_wash_tokens(_card_accent(name))
+            assert value == expected[token], (
+                f"{name} {css_token} 与按主色派生的本命档位不一致: "
+                f"{value!r} != {expected[token]!r}"
+            )
 
 
 def test_pc_never_paints_brand_base() -> None:
-    """本命底色只来自 wash 渐变；--pc 只允许进 accent/色斑混色。"""
+    """本命底色只来自 wash 渐变；--accent 只允许进 accent/色斑混色。"""
     for name in CARD_TEMPLATES:
         css = _css_of(name)
         assert re.search(r"linear-gradient\(145deg,\s*var\(--wash-mist\)", css), (
             f"{name} 外壳渐变底未以 --wash-mist 打底"
         )
-        blob = re.search(r"--wash-blob-1:\s*color-mix\(in srgb, var\(--pc\) (\d+)%", css)
+        blob = re.search(r"--wash-blob-1:\s*color-mix\(in srgb, var\(--accent\) (\d+)%", css)
         assert blob, f"{name} 缺 --wash-blob-1 定义"
         assert int(blob.group(1)) <= 35, f"{name} 平台色斑混入超过 35% 上限"
 
@@ -543,7 +619,9 @@ def test_song_card_platform_color_behavior_unchanged() -> None:
 
 def test_rendered_cards_inject_shell_tokens() -> None:
     html_text = bridge.render_market_card_html({})
-    assert "--r-shell: 30px" in html_text
+    # v21r3 步 5：7 张模板的 :root 公共段改由 mica_shell.render_root_tokens 单一产出，
+    # 书写风格统一为「冒号后无空格」（此前模板侧是带空格）。
+    assert "--r-shell:30px" in html_text
     assert "--mica-shadow:" in html_text
     universal = bridge.render_universal_card_html({})
     for value in derive_wash_tokens(bridge.UNKNOWN_PLATFORM_COLOR).values():
@@ -557,3 +635,191 @@ def test_rendering_contract_doc_exists() -> None:
     text = doc.read_text(encoding="utf-8")
     for keyword in ("PLATFORM_THEMES", "viewport", "兜底", "wash", "阴影", "新增模板"):
         assert keyword in text, f"渲染契约文档缺关键词: {keyword}"
+
+
+# ==================== 13. CORE 值册（2026-09-18 统一收尾波 C1-C13） ====================
+# 裁决基线登记值逐字符锁（值册真身 theme_tokens.py）+ 桥接注入面 + 截图兜底口径。
+
+
+def test_core_registry_semantic_colors_exact() -> None:
+    """C4 语义色五枚：值照裁决基线逐字符锁。"""
+    assert SEMANTIC_DANGER == "#d54941"
+    assert SEMANTIC_SUCCESS == "#2e9e6b"
+    assert SEMANTIC_WARNING == "#b07d1a"
+    assert SCORE_HOT == "#157347"
+    assert SCORE_COLD == "#b42334"
+    assert SEMANTIC_COLORS == {
+        "danger": SEMANTIC_DANGER,
+        "success": SEMANTIC_SUCCESS,
+        "warning": SEMANTIC_WARNING,
+        "score_hot": SCORE_HOT,
+        "score_cold": SCORE_COLD,
+    }
+
+
+def test_core_registry_glass_tiers_exact() -> None:
+    """C3 玻璃两档 + 描边三 alpha：padding-box/border-box 形态逐字符锁。"""
+    assert GLASS_MAIN == (
+        "linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, "
+        "rgba(255, 255, 255, 0.44) 100%) padding-box"
+    )
+    assert GLASS_FOOT == (
+        "linear-gradient(150deg, rgba(255, 255, 255, 0.66) 0%, "
+        "rgba(255, 255, 255, 0.46) 100%) padding-box"
+    )
+    assert GLASS_EDGE == (
+        "linear-gradient(150deg, rgba(255, 255, 255, 0.95) 0%, "
+        "rgba(255, 255, 255, 0.35) 55%, rgba(255, 255, 255, 0.72) 100%) border-box"
+    )
+
+
+def test_core_registry_overlay_scrims_exact() -> None:
+    """C5 深色遮罩四员：语义分键、值逐字符锁。"""
+    assert OVERLAY_SCRIMS == {
+        "scrim_badge": "rgba(10, 12, 16, 0.72)",
+        "scrim_banner": "rgba(15, 18, 24, 0.10)",
+        "scrim_code": "rgba(28, 30, 38, 0.94)",
+        "scrim_media": "rgba(38, 46, 56, 0.75)",
+    }
+
+
+def test_core_registry_mono_font_and_radii_exact() -> None:
+    """C9 等宽字体栈 + C1 内径合法表/pill/圆特例逐字符锁。"""
+    assert MONO_FONT_STACK == (
+        '"Cascadia Mono",Consolas,"JetBrains Mono","Courier New",monospace'
+    )
+    assert RADIUS_INNER_PX == frozenset({4, 6, 8, 12, 16})
+    assert RADIUS_PILL == "999px"
+    assert RADIUS_CIRCLE == "50%"
+    assert RADIUS_INNER_CSS_VARS == {
+        "--r-inner-xs": "4px",
+        "--r-inner-sm": "6px",
+        "--r-inner-md": "8px",
+        "--r-inner-lg": "12px",
+        "--r-inner-xl": "16px",
+        "--r-pill": RADIUS_PILL,
+        "--r-circle": RADIUS_CIRCLE,
+    }
+
+
+def test_core_registry_blob_constants_exact() -> None:
+    """C2 色斑常量：数量 3 + 升序时长 (46, 52, 58)。"""
+    assert BLOB_COUNT == 3
+    assert BLOB_DURATIONS == (46, 52, 58)
+
+
+def test_core_registry_shell_widths_direct_cards() -> None:
+    """C10 直拼卡宽度入册（键名风格与既有 7 键一致的小写蛇形）。"""
+    assert CARD_SHELL_WIDTHS["help"] == 940
+    assert CARD_SHELL_WIDTHS["usage"] == 900
+    assert CARD_SHELL_WIDTHS["debug"] == 880
+    assert CARD_SHELL_WIDTHS["media"] == 640
+    # 既有 7 键不许被收编波顺手改动。
+    assert CARD_SHELL_WIDTHS["universal"] == 1440
+    assert CARD_SHELL_WIDTHS["affinity"] == 1180
+    assert CARD_SHELL_WIDTHS["market"] == 1080
+    assert CARD_SHELL_WIDTHS["finance"] == 1080
+    assert CARD_SHELL_WIDTHS["song_panel"] == 980
+    assert CARD_SHELL_WIDTHS["mermaid_max"] == 840
+    assert CARD_SHELL_WIDTHS["error"] == 1080
+
+
+def test_bridge_all_exports_error_card_renderer() -> None:
+    """C11：bridge.__all__ 必须显式导出 render_error_card_html。"""
+    assert "render_error_card_html" in bridge.__all__
+    assert callable(bridge.render_error_card_html)
+
+
+def test_bridge_context_injects_core_tokens() -> None:
+    """各 render_* 上下文注入 CORE token 键（模板 Jinja 键 + :root CSS 变量双通道）。"""
+    context = bridge._vis4_context()
+    assert context["glass_main"] == GLASS_MAIN
+    assert context["glass_foot"] == GLASS_FOOT
+    assert context["glass_edge"] == GLASS_EDGE
+    for key, value in OVERLAY_SCRIMS.items():
+        assert context[key] == value
+    assert context["semantic_danger"] == SEMANTIC_DANGER
+    assert context["semantic_success"] == SEMANTIC_SUCCESS
+    assert context["semantic_warning"] == SEMANTIC_WARNING
+    assert context["score_hot"] == SCORE_HOT
+    assert context["score_cold"] == SCORE_COLD
+    assert context["mono_font_family"] == MONO_FONT_STACK
+    assert context["radius_inner_xs"] == "4px"
+    assert context["radius_pill"] == "999px"
+    assert context["radius_circle"] == "50%"
+    # 渲染产物经 :root 公共段携带同名 CSS 变量（模板 var() 可直接消费）。
+    html_text = bridge.render_market_card_html({})
+    assert "--mica-glass-main:linear-gradient(150deg, rgba(255, 255, 255, 0.66)" in html_text
+    assert f"--mica-scrim-banner:{OVERLAY_SCRIMS['scrim_banner']};" in html_text
+    assert "--semantic-danger:#d54941;" in html_text
+    assert "--r-pill:999px;" in html_text
+    assert f"--font-mono:{MONO_FONT_STACK};" in html_text
+
+
+class _FullPageFakePage:
+    """只暴露 render_card 主路径所需面的页面替身（.card 恒缺失 → 兜底路径）。"""
+
+    def __init__(self) -> None:
+        self.screenshot_kwargs: dict[str, Any] | None = None
+        self.closed = False
+
+    def set_content(self, html: str, wait_until: str = "load") -> None:
+        assert html
+
+    def wait_for_function(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def wait_for_timeout(self, ms: int) -> None:
+        return None
+
+    def query_selector(self, selector: str) -> None:
+        return None
+
+    def screenshot(self, **kwargs: Any) -> bytes:
+        self.screenshot_kwargs = kwargs
+        return b"full-page-bytes"
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_full_page_fallback_screenshot_omits_background() -> None:
+    """C12：.card 缺失的 full_page 兜底截图必须 omit_background=True。
+
+    body 透明契约（§2）是 omit_background 的前提；兜底路径与元素截图路径
+    （既有 omit_background=True）必须同口径，否则兜底图带白底。
+    """
+    import threading
+    from types import SimpleNamespace
+
+    backend = PlaywrightRenderBackend.__new__(PlaywrightRenderBackend)
+    backend.name = "playwright"
+    backend.available = True
+    backend._lock = threading.Lock()
+    backend._local = threading.local()
+    backend._max_concurrency = 1
+
+    page = _FullPageFakePage()
+    browser = SimpleNamespace(
+        is_connected=lambda: True,
+        new_page=lambda **kwargs: page,
+        close=lambda: None,
+    )
+    handle = SimpleNamespace(
+        start=lambda: SimpleNamespace(
+            chromium=SimpleNamespace(launch=lambda: browser)
+        ),
+        close=lambda: None,
+    )
+    backend._sync_playwright = lambda: handle
+
+    result = backend.render_card(
+        {"html": "<div>x</div>", "viewport": {"width": 10, "height": 10}, "wait_ms": 0}
+    )
+    assert result == b"full-page-bytes"
+    assert page.screenshot_kwargs == {
+        "type": "png",
+        "full_page": True,
+        "omit_background": True,
+    }
+    assert page.closed

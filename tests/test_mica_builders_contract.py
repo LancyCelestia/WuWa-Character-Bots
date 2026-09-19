@@ -25,14 +25,17 @@ import pytest
 
 from plugins.bot_unified_runtime.capabilities.debug import _llm_setup_mica_html
 from plugins.bot_unified_runtime.capabilities.echo import _help_mica_html
-from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
+from plugins.bot_unified_runtime.domains.render.card_render.mica_shell import (
+    _PUBLIC_TOKEN_ORDER,
+)
+from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
     BRAND_THEME,
     FONT_FAMILY_STACK,
     FONT_WEIGHT_MAX,
     SHADOW_PRIMARY,
     SHADOW_SECONDARY,
 )
-from plugins.bot_unified_runtime.output.card_render.usage_cards import (
+from plugins.bot_unified_runtime.domains.render.card_render.usage_cards import (
     usage_report_mica_html,
 )
 from plugins.bot_unified_runtime.output.templates import render_media_card_html
@@ -306,11 +309,14 @@ def test_glow_alpha_floor(mica_html: str) -> None:
 # 范围说明：字号下限/字距刻度/gap 刻度三门锁 usage_report / media_card /
 # debug_llm_setup（debug 卡 2026-09-13 视觉收口补丁并入：kicker 11px→12px、
 # 字距 .14em→0.06em 刻度值；阴影本就全 var() 引用，gap 8/6/12 原在刻度内）。
-# echo_help 载体在 capabilities/echo.py（他席在飞），收口后再并入本门。
+# 2026-09-18 v21r3 渲染统一：+= echo_help（原注释「载体在他席在飞」待收口
+# 项正式入管：echo 11px/11.5px 字号、.01em/.14em 字距、9px gap 为已知漂移，
+# RED 即 wave-2 锚点，禁放水）。
 _VIS5_GATE_BUILDERS: tuple[tuple[str, Callable[[], str]], ...] = (
     ("usage_report", _usage_html),
     ("media_card", _media_html),
     ("debug_llm_setup", _llm_setup_html),
+    ("echo_help", _help_html),
 )
 
 
@@ -337,7 +343,7 @@ def test_letter_spacing_on_e03_scale_output_domain() -> None:
 
 
 def test_gaps_on_audited_scale_output_domain() -> None:
-    from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
+    from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
         GAP_SCALE_PX,
     )
 
@@ -356,3 +362,71 @@ def test_usage_card_carries_vis4_keys_and_bot_footer() -> None:
     assert 'class="bot-foot"' in html_text
     assert "守岸人" in html_text.split('class="bot-foot"', 1)[1]
     assert "· 模型用量" in html_text
+
+
+# ==================== 10. token 块统一（v21r3 步 2-4，2026-09-18） ====================
+# 四张直拼卡的 :root 此前各写一份、子集与书写风格都不同（media 卡甚至缺
+# --accent-dark / --ink / --muted 三项）。接入 mica_shell.render_root_tokens 后，
+# 公共段由单一生成器产出——本节把「子集齐、顺序固定、跨卡一致」锁成契约。
+_PUBLIC_TOKEN_PREFIX: tuple[str, ...] = (
+    "--phase",
+    "--accent",
+    "--accent-dark",
+    "--wash-1",
+    "--wash-2",
+    "--wash-3",
+    "--wash-mist",
+    "--wash-blob-1",
+)
+_UNIFIED_PUBLIC_TOKENS: tuple[str, ...] = (*_PUBLIC_TOKEN_PREFIX, *_PUBLIC_TOKEN_ORDER)
+
+
+def _root_block(html_text: str) -> str:
+    match = re.search(r":root\s*\{(.*?)\}", html_text, re.DOTALL)
+    assert match, "builder 产出缺 :root 块"
+    return match.group(1)
+
+
+def _public_token_keys(block: str) -> list[str]:
+    keys = re.findall(r"(--[a-z0-9-]+)\s*:", block)
+    return [key for key in keys if key in _UNIFIED_PUBLIC_TOKENS]
+
+
+def test_root_block_has_no_unreplaced_placeholder(mica_html: str) -> None:
+    """:root 里不得残留 ``__X__`` 占位符（接入生成器后应全部替换完毕）。"""
+    assert "__" not in _root_block(mica_html)
+
+
+def test_public_token_subset_and_order_unified(mica_html: str) -> None:
+    """公共 token 子集齐、声明顺序与统一基准逐项一致（卡特有项经 extras 追加）。"""
+    keys = _public_token_keys(_root_block(mica_html))
+    assert keys == list(_UNIFIED_PUBLIC_TOKENS), (
+        f"公共 token 子集/顺序偏离统一基准:\n  got={keys}\n  exp={list(_UNIFIED_PUBLIC_TOKENS)}"
+    )
+
+
+def test_all_builders_share_identical_public_segment() -> None:
+    """跨卡对比：四张卡产出的公共 token 键序列必须完全相同。
+
+    这是「共用一套 token 块」的直接断言——任一张卡私自增删或调序都会在此报红。
+    （取值本身由 test_shadow_token_values_single_source / test_radius_tokens_from_theme /
+    test_text_tokens_from_theme / test_font_family_token_from_theme 四门锁到 theme_tokens。）
+    """
+    blocks = {name: _root_block(build()) for name, build in _BUILDERS.items()}
+    reference_name = next(iter(blocks))
+    reference = _public_token_keys(blocks[reference_name])
+    for name, block in blocks.items():
+        assert _public_token_keys(block) == reference, (
+            f"{name} 的公共 token 段与 {reference_name} 不一致"
+        )
+
+
+def test_media_card_gained_missing_public_tokens() -> None:
+    """media 卡接入前**没有** --accent-dark / --ink / --muted，接入后补齐。
+
+    三项均未被本卡 CSS 引用，故视觉零变化；补齐的意义是消除「四张卡公共子集
+    各不相同」这一分叉（改一处全卡生效）。
+    """
+    block = _root_block(_media_html())
+    for token in ("--accent-dark:", "--ink:", "--muted:"):
+        assert token in block, f"media 卡仍缺 {token}"
