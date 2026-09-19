@@ -21,7 +21,6 @@ API 字样从此只允许出现在 ``sender/`` 目录内。
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import tempfile
 import threading
@@ -41,6 +40,10 @@ from plugins.bot_unified_runtime.contracts import (
     new_debug_id,
 )
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import StrictBaseModel
+from plugins.bot_unified_runtime.domains.media.digest import (
+    media_digest,
+    media_digest_file,
+)
 
 # 文件维度回执 transport 标记（与消息级 transport 命名区分）。
 ONEBOT_FILE_TRANSPORT = "onebot.file"
@@ -205,11 +208,15 @@ def build_file_dedupe_key(
 
 
 def _sha256_of_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    # 算法/流式实现收编中央件（媒体摘要层 S5，T121）：1MB chunk 同构，
+    # 成功路径逐字节等价。中央件契约 OSError→None；本网关既有语义不吞错
+    # （ticket.sha256 契约为 str），读不到时照旧向上抛 OSError——仅可达于
+    # is_file()/stat() 已过后的竞态或权限窗口（:249 path stage 与 :303 url
+    # stage 两调用点均有前置存在性检查）。
+    digest = media_digest_file(path)
+    if digest is None:
+        raise OSError(f"sha256: unreadable file: {path}")
+    return digest
 
 
 class FileTransferGateway:
@@ -252,7 +259,7 @@ class FileTransferGateway:
 
     def _stage_bytes(self, src: FileSource) -> FileTicket:
         data = src.data if src.data is not None else b""
-        digest = hashlib.sha256(data).hexdigest()
+        digest = media_digest(data)  # 中央件收编（S5，T121）：算法恒等。
         ticket_id = f"ft_{uuid.uuid4().hex[:12]}"
         name = src.name or f"{ticket_id}.bin"
         target = self._ensure_staging_dir() / f"{ticket_id}_{name}"

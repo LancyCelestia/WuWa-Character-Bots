@@ -24,7 +24,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import re
 import threading
 from collections.abc import Callable
@@ -38,6 +37,7 @@ from plugins.bot_unified_runtime.contracts import (
     PrivacyLevel,
     RiskLevel,
 )
+from plugins.bot_unified_runtime.domains.media.digest import media_digest
 
 _COMMAND_RE = re.compile(
     r"^[/!！]?(?:表情|表情包|表情生成|表情包生成|表情制作|表情包制作|"
@@ -345,7 +345,8 @@ def build_meme_capability(
             return _service_down_result(message, requester, base_url, key=key)
         try:
             out_dir.mkdir(parents=True, exist_ok=True)
-            digest = hashlib.sha256(bytes(content)).hexdigest()[:12]
+            # [:12] 截短是消费侧缓存文件名决定（蓝图 §3.1：算法不截短）。
+            digest = media_digest(bytes(content))[:12]
             # petpet 等表情产物是 GIF 动图；按魔数定扩展名，避免 QQ 端按
             # 扩展名渲染失败。
             suffix = ".gif" if bytes(content)[:3] == b"GIF" else ".png"
