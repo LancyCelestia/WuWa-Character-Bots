@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Search } from 'lucide-react';
+import { Search, TriangleAlert } from 'lucide-react';
 import { CategoryChip, DataGrid, DataGridCell, DataGridRow, PageHeader, SectionCard, StatCard } from '@/components/patterns/patterns';
 import { MemoryCanvas } from '@/components/graph/memory-canvas';
 import { SemanticState } from '@/components/semantic/semantic-state';
+import { isNotFound } from '@/lib/semantics';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import {
@@ -19,7 +20,8 @@ import { cn } from '@/lib/utils';
 // 记忆图谱页（spec webui-pages2 §3 + §7 B 系增补）：六枚 StatCard + 工具行（时间窗 chip 组/
 // 五类型多选复色/label 本地过滤）+ d3-force 静态画布（300 tick 确定性布局）+ 图例 + 点击节点
 // 详情侧栏（含「数据范围」静态说明，§7 B10b）。max_nodes 取后端上限 200。
-// 全不选类型=自动回全选（不给空图死局）；truncated=画布顶部 info 条；连线只读（§7 B9 提示吸收进 canvasHint）。
+// 全不选类型=自动回全选（不给空图死局）；truncated=画布顶部 info 条（如实带截断前总量 nodes_total）；
+// sources 部分降级=页面级 warn 条（F2-02：降级来源绝不与全健康同相）；连线只读（§7 B9 提示吸收进 canvasHint）。
 
 const WINDOWS: GraphWindow[] = ['24h', '7d', '30d', 'all'];
 const TYPES: MemoryGraphNodeType[] = ['person', 'group', 'conversation', 'memory', 'rule'];
@@ -31,8 +33,17 @@ const TYPE_DOT: Record<MemoryGraphNodeType, string> = {
   rule: 'bg-chart-5',
 };
 
-function isNotFound(message: string): boolean {
-  return /HTTP 404/.test(message);
+// 数据源名/态人话（真相源=webui_memory_graph：sources 键 history/memory/quirks/affinity，
+// 值 ok/missing/unreadable）。表外取值回退裸码原文——绝不编语义，也绝不静默隐藏降级。
+const SOURCE_NAMES = ['history', 'memory', 'quirks', 'affinity'];
+const SOURCE_STATES = ['missing', 'unreadable'];
+
+function sourceName(t: (key: string) => string, name: string): string {
+  return SOURCE_NAMES.includes(name) ? t(`memoryGraph.sourceName.${name}`) : name;
+}
+
+function sourceState(t: (key: string) => string, state: string): string {
+  return SOURCE_STATES.includes(state) ? t(`memoryGraph.sourceState.${state}`) : state;
 }
 
 export function MemoryGraphPage() {
@@ -147,11 +158,27 @@ export function MemoryGraphPage() {
         </div>
       </div>
 
+      {/* F2-02 修复：ok 包内部分源缺失/不可读 = 页面级警示条（此前只藏在选中节点侧栏，
+          不点节点的操作员看到的是与全源健康一模一样的图）。数据照常渲染，不遮挡不降级误报。 */}
+      {data && degradedSources.length > 0 && (
+        <div role='status' className='flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2'>
+          <TriangleAlert className='size-4 shrink-0 text-tone-warn' />
+          <span className='fs-caption font-medium text-tone-warn'>{t('memoryGraph.partialTitle')}</span>
+          {degradedSources.map(([name, state]) => (
+            <CategoryChip
+              key={name}
+              label={t('memoryGraph.sourceChip', { name: sourceName(t, name), state: sourceState(t, state) })}
+              tone='warn'
+            />
+          ))}
+        </div>
+      )}
+
       {/* 主体状态 */}
       {graph.state.phase === 'loading' ? (
         <Skeleton className='h-96' />
       ) : graph.state.phase === 'error' ? (
-        isNotFound(graph.state.message) ? (
+        isNotFound(graph.state) ? (
           <SectionCard title={t('memoryGraph.notDeployed')}>
             <p className='fs-body text-muted-foreground'>{t('memoryGraph.notDeployedHint')}</p>
           </SectionCard>
@@ -172,7 +199,10 @@ export function MemoryGraphPage() {
               action={
                 data.truncated ? (
                   <CategoryChip
-                    label={t('memoryGraph.truncated', { count: formatInt(data.nodes.length) })}
+                    label={t('memoryGraph.truncated', {
+                      count: formatInt(data.nodes.length),
+                      total: formatInt(data.nodes_total),
+                    })}
                     tone='info'
                   />
                 ) : undefined
@@ -249,7 +279,10 @@ export function MemoryGraphPage() {
                     </p>
                     {degradedSources.map(([name, state]) => (
                       <p key={name} className='mt-1 fs-caption text-tone-warn'>
-                        {t('memoryGraph.sourceUnavailable', { name, state })}
+                        {t('memoryGraph.sourceUnavailable', {
+                          name: sourceName(t, name),
+                          state: sourceState(t, state),
+                        })}
                       </p>
                     ))}
                   </div>

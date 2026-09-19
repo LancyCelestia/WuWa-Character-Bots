@@ -10,7 +10,9 @@ export type DataState<T> =
   | { phase: 'unavailable'; reason: string; source?: string }
   | { phase: 'not_provisioned' }
   | { phase: 'auth' }
-  | { phase: 'error'; message: string }
+  // status/code 是可选补充：控制面把 HTTP 错误统一包成同一条 message，
+  // 「这一页到底为什么红」（404=端点不在当前构建 / 422=参数被拒）只能靠结构化字段区分。
+  | { phase: 'error'; message: string; status?: number; code?: string }
   | { phase: 'ok'; data: T; source?: string };
 
 export interface SemanticQueryResult<T> {
@@ -46,7 +48,10 @@ export function useSemanticQuery<T>(
       if (error.status === 401 || error.status === 403) {
         return { state: { phase: 'auth' }, refetch: () => void query.refetch() };
       }
-      return { state: { phase: 'error', message: error.message }, refetch: () => void query.refetch() };
+      return {
+        state: { phase: 'error', message: error.message, status: error.status, code: error.code ?? undefined },
+        refetch: () => void query.refetch(),
+      };
     }
     return { state: { phase: 'error', message: String(error) }, refetch: () => void query.refetch() };
   }

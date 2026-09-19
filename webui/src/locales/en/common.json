@@ -32,8 +32,9 @@
     "roToken": "Read-only token",
     "roTokenHint": "Optional fallback; used when the primary token is absent.",
     "tokenPlaceholder": "Paste token (stored locally in this browser only)",
-    "tokenSavedPlaceholder": "Saved (type to replace)",
+    "tokenSavedPlaceholder": "Saved (leave blank to keep, type to replace)",
     "toggleShow": "Show/hide",
+    "clearToken": "Clear stored token",
     "note": "The control plane has no login endpoint: paste the admin-issued token here; it is kept only in this browser's localStorage and sent exclusively via the Authorization header, never in URLs. Without a token, data endpoints answer 503 control_plane_not_provisioned.",
     "savedReloading": "Saved, reloading…",
     "cancel": "Cancel",
@@ -88,7 +89,7 @@
       "aboutBody": "Sources: calls=audit_records, LLM=llm_call_records ledger, channels=channel_health in-memory store, affinity=user_affinity read-only DB.",
       "callsDetailTitle": "Message calls key-value detail",
       "callsDetailDesc": "The 24h and 7d windows are fetched independently (never merged across windows); “last message” is the newest audit time within the window — shown as — when there is no record",
-      "windowToday": "Today (24 hours)",
+      "windowToday": "Last 24 hours",
       "window7d": "Last 7 days",
       "rowCalls": "Calls",
       "rowActiveUsers": "Active users",
@@ -129,7 +130,7 @@
   "tokens": {
     "title": "Token Panel",
     "stackTitle": "Stacked by model family (top 20)",
-    "stackDesc": "Four series = input / output / cache read / cache creation; horizontal stack, largest family at the bottom",
+    "stackDesc": "Stack = uncached input / cache read / cache creation / output (cache tokens are a subset of input, so they are split out rather than added)",
     "qualityHint": "?N = N rows in the family reported nothing for this series; ~N = partial. Only attested values are counted — never estimated",
     "totals": "Window totals",
     "totalsDesc": "All families (including unnamed rows)",
@@ -138,6 +139,7 @@
     "calls": "{{count}} calls",
     "callsLabel": "Calls",
     "input": "Input",
+    "uncachedInput": "Input (uncached)",
     "output": "Output",
     "cache_read": "Cache read",
     "cache_creation": "Cache creation",
@@ -226,7 +228,14 @@
     "notDeployedHint": "The running control-plane instance does not provide /api/v1/knowledge/* (older process); available after the control plane restarts with the new routes.",
     "aliases": "Aliases: {{list}}",
     "allDisabled": "No knowledge source enabled",
-    "allDisabledHint": "Enable any knowledge source in the bot configuration (glossary / vector KB / meme library / ACG search) and restart; collections will appear here."
+    "allDisabledHint": "Enable any knowledge source in the bot configuration (glossary / vector KB / meme library / ACG search) and restart; collections will appear here.",
+    "disabledReason": {
+      "noDedicatedStore": "no dedicated store",
+      "sourceUnavailable": "source unavailable",
+      "schemaIncomplete": "incomplete schema",
+      "offByConfig": "off by config"
+    },
+    "disabledWithCode": "disabled ({{code}})"
   },
   "plugins": {
     "title": "Plugins",
@@ -269,7 +278,7 @@
     "windowLabel": "Window",
     "typesLabel": "Node types",
     "filterPlaceholder": "Filter nodes by label",
-    "truncated": "Showing only the {{count}} most connected nodes",
+    "truncated": "Node set truncated: showing the {{count}} most connected of {{total}} nodes",
     "empty": "No memory associations in this window",
     "emptyHint": "Try a larger time window",
     "canvasHint": "Drag to pan · Scroll to zoom · Click a node for details; edges are a read-only identity map and never modify memory",
@@ -280,6 +289,18 @@
     "dataScope": "Data scope",
     "dataScopeBody": "Window {{window}}. Conversation/speaking edges come from the chat-history DB; memory edges from the long-term memory DB (person attribution); rules from active quirks and learned nicknames; affinity weights are current-state and do not vary with the window.",
     "sourceUnavailable": "Source {{name}} unavailable ({{state}})",
+    "partialTitle": "Some data sources are not counted; this graph and its stats are partial",
+    "sourceChip": "{{name}}: {{state}}",
+    "sourceName": {
+      "history": "Chat history",
+      "memory": "Long-term memory",
+      "quirks": "Quirk rules",
+      "affinity": "Affinity & nicknames"
+    },
+    "sourceState": {
+      "missing": "store missing",
+      "unreadable": "unreadable"
+    },
     "notDeployed": "Memory graph not deployed",
     "notDeployedHint": "The running control-plane instance does not provide /api/v1/memory/graph (older process); available after the control plane restarts with the new routes.",
     "canvas": "Association graph",

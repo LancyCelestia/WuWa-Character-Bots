@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { CategoryChip, PageHeader, Pager, SectionCard } from '@/components/patterns/patterns';
 import { SemanticState } from '@/components/semantic/semantic-state';
+import { isNotFound } from '@/lib/semantics';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import {
   controlApi,
@@ -18,16 +19,25 @@ import {
 import { formatInt } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
-// 知识库页（spec webui-pages2 §1 + §7 C 系增补）：collections chips 行（not_available=灰态
-// disabled）+ 居中宽搜索（右侧 total 计数，terms 端点实有 total）+ 等宽 3 列词条卡
+// 知识库页（spec webui-pages2 §1 + §7 C 系增补）：collections chips 行（禁用集合按 reason 码
+// 分标签：数据源不可用/表结构不完整/配置未启用/无独立存储，F2-02 不再一律「未启用」）
+// + 居中宽搜索（右侧 total 计数，terms 端点实有 total）+ 等宽 3 列词条卡
 // （术语/别名/line-clamp-4 释义/来源 Badge+scope meta）+ Pager（置于网格下方，§7 C9b 差异记录）。
 // 搜索 300ms 防抖；切集合/改搜索词重置 page=1；q 变化不重置集合。
 
 const SCOPE_KEYS = ['general', 'kb_doc', 'acg_source', 'emotion_tags', 'scene_tags'];
 
-function isNotFound(message: string): boolean {
-  return /HTTP 404/.test(message);
-}
+// 禁用集合的 reason 码短标签（真相源=webui_knowledge collections 失败面：
+// glossary_source_unavailable / missing_source / incomplete_schema / disabled_by_config /
+// no_dedicated_store）。F2-02：四种性质不同的状态不得再抹平成一个「未启用」；
+// 未知码回退裸码原文如实展示，绝不编语义。
+const DISABLED_REASON_LABEL_KEYS: Record<string, string> = {
+  no_dedicated_store: 'knowledge.disabledReason.noDedicatedStore',
+  glossary_source_unavailable: 'knowledge.disabledReason.sourceUnavailable',
+  missing_source: 'knowledge.disabledReason.sourceUnavailable',
+  incomplete_schema: 'knowledge.disabledReason.schemaIncomplete',
+  disabled_by_config: 'knowledge.disabledReason.offByConfig',
+};
 
 function scopeLabel(scope: string, t: (key: string) => string): string {
   return SCOPE_KEYS.includes(scope) ? t(`knowledge.scope.${scope}`) : scope;
@@ -124,6 +134,14 @@ export function KnowledgePage() {
     void navigate({ to: '/knowledge', search: { collection: id } });
   };
 
+  // 禁用集合的后缀标签：按 reason 码分说人话（见 DISABLED_REASON_LABEL_KEYS 注释）。
+  const disabledSuffix = (item: KnowledgeCollection): string => {
+    if (item.enabled) return '';
+    const labelKey = item.reason === null ? undefined : DISABLED_REASON_LABEL_KEYS[item.reason];
+    if (labelKey) return t(labelKey);
+    return item.reason === null ? t('knowledge.notEnabled') : t('knowledge.disabledWithCode', { code: item.reason });
+  };
+
   // ---- 集合目录层状态（页面级诚实态优先） ----
   if (collections.state.phase === 'loading') {
     return (
@@ -150,7 +168,7 @@ export function KnowledgePage() {
     return (
       <div className='mx-auto flex w-full max-w-6xl flex-col gap-4'>
         <PageHeader title={t('knowledge.title')} subtitle={t('knowledge.subtitle')} />
-        {isNotFound(collections.state.message) ? (
+        {isNotFound(collections.state) ? (
           <SectionCard title={t('knowledge.notDeployed')}>
             <p className='fs-body text-muted-foreground'>{t('knowledge.notDeployedHint')}</p>
           </SectionCard>
@@ -179,7 +197,7 @@ export function KnowledgePage() {
           <div className='flex flex-wrap gap-2'>
             {collections.state.data.items.map((item: KnowledgeCollection) => (
               <span key={item.id} className='inline-flex'>
-                <CategoryChip label={`${item.name} · ${t('knowledge.notEnabled')}`} tone='flat' className='opacity-60' />
+                <CategoryChip label={`${item.name} · ${disabledSuffix(item)}`} tone='flat' className='opacity-60' />
               </span>
             ))}
           </div>
@@ -224,7 +242,7 @@ export function KnowledgePage() {
             className='rounded-full disabled:pointer-events-none disabled:opacity-50'
           >
             <CategoryChip
-              label={item.enabled ? item.name : `${item.name} · ${t('knowledge.notEnabled')}`}
+              label={item.enabled ? item.name : `${item.name} · ${disabledSuffix(item)}`}
               tone={item.id === selected ? 'brand' : 'flat'}
             />
           </button>
@@ -239,7 +257,7 @@ export function KnowledgePage() {
           ))}
         </div>
       ) : terms.state.phase === 'error' ? (
-        isNotFound(terms.state.message) ? (
+        isNotFound(terms.state) ? (
           <SectionCard title={t('knowledge.notDeployed')}>
             <p className='fs-body text-muted-foreground'>{t('knowledge.notDeployedHint')}</p>
           </SectionCard>

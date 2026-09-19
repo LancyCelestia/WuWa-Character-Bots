@@ -1,6 +1,7 @@
-// Token 四项堆叠图页：/api/v1/stats/tokens（账本 llm_call_records 按模型族聚合）。
-// 四项 = input / output / cache_read / cache_creation；每项带 quality（complete/partial/unknown）
+// Token 面板页：/api/v1/stats/tokens（账本 llm_call_records 按模型族聚合）。
+// 明细四项 = input / output / cache_read / cache_creation，每项带 quality（complete/partial/unknown）
 // 与 unknown_rows —— 模型未上报该 token 项的行数，如实提示不冒充全量。
+// 堆叠图不直接用这四项（会双计缓存），见 toStackRows。
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -19,11 +20,23 @@ import { SemanticState } from '@/components/semantic/semantic-state';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import { controlApi, type StatsWindow, type TokenBlock, type TokenFamilyRow, type TokensData } from '@/lib/api-client';
 import { formatInt } from '@/lib/format';
+import { toStackRows, type TokenStackRow } from '@/lib/semantics';
 
 const WINDOWS: StatsWindow[] = ['24h', '7d', '30d'];
 
 const TOKEN_KEYS = ['input', 'output', 'cache_read', 'cache_creation'] as const;
-type TokenKey = (typeof TOKEN_KEYS)[number];
+
+/**
+ * 堆叠段（顺序=从基线向外）：非缓存输入 + 读缓存 + 建缓存 = 输入，再加输出。
+ * 配色沿用 index.css chart token（暗色自适应）：非缓存输入=品牌淡蓝（与原「输入」同色，
+ * 因为它就是输入去掉缓存的余下部分）、输出=星空紫、读缓存=深蓝、建缓存=淡蓝中段。
+ */
+const STACK_KEYS: { key: keyof Omit<TokenStackRow, 'family'>; labelKey: string; color: string }[] = [
+  { key: 'uncached', labelKey: 'tokens.uncachedInput', color: 'chart-1' },
+  { key: 'cache_read', labelKey: 'tokens.cache_read', color: 'chart-3' },
+  { key: 'cache_creation', labelKey: 'tokens.cache_creation', color: 'chart-4' },
+  { key: 'output', labelKey: 'tokens.output', color: 'chart-2' },
+];
 
 /** 族行四项是否存在未上报行（unknown_rows>0），决定是否挂 quality 提示。 */
 function qualityBadge(block: TokenBlock) {
@@ -117,7 +130,8 @@ export function TokensPage() {
 
 function TokensBody({ data, anyUnknown }: { data: TokensData; anyUnknown: boolean }) {
   const { t } = useTranslation();
-  const families = [...data.families].reverse(); // API calls 倒序 → 图表底部为最大族。
+  // API calls 倒序 → 图表底部为最大族；堆叠段经 toStackRows 去双计。
+  const stackRows = toStackRows([...data.families].reverse());
   const totals = data.totals;
 
   return (
@@ -131,12 +145,12 @@ function TokensBody({ data, anyUnknown }: { data: TokensData; anyUnknown: boolea
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {families.length === 0 ? (
+          {stackRows.length === 0 ? (
             <p className='py-6 text-center fs-caption text-muted-foreground'>{t('state.noData')}</p>
           ) : (
             <div className='h-72'>
               <ResponsiveContainer width='100%' height='100%'>
-                <BarChart data={families} layout='vertical' margin={{ top: 4, right: 16, bottom: 0, left: 8 }} barSize={14}>
+                <BarChart data={stackRows} layout='vertical' margin={{ top: 4, right: 16, bottom: 0, left: 8 }} barSize={14}>
                   <CartesianGrid strokeDasharray='3 3' stroke='var(--border)' horizontal={false} />
                   <XAxis
                     type='number'
@@ -157,8 +171,14 @@ function TokensBody({ data, anyUnknown }: { data: TokensData; anyUnknown: boolea
                     formatter={(value, name) => [formatInt(typeof value === 'number' ? value : null), String(name)] as [string, string]}
                   />
                   <Legend />
-                  {TOKEN_KEYS.map((key) => (
-                    <Bar key={key} dataKey={`tokens.${key}.value`} stackId='tokens' name={t(`tokens.${key}`)} fill={`var(--${TOKEN_COLORS[key]})`} />
+                  {STACK_KEYS.map((segment) => (
+                    <Bar
+                      key={segment.key}
+                      dataKey={segment.key}
+                      stackId='tokens'
+                      name={t(segment.labelKey)}
+                      fill={`var(--${segment.color})`}
+                    />
                   ))}
                 </BarChart>
               </ResponsiveContainer>
@@ -213,10 +233,3 @@ function TokensBody({ data, anyUnknown }: { data: TokensData; anyUnknown: boolea
   );
 }
 
-// 四项配色（index.css chart token，暗色自适应）：input=品牌淡蓝、output=星空紫、cache_read=深蓝、cache_creation=淡蓝中段。
-const TOKEN_COLORS: Record<TokenKey, string> = {
-  input: 'chart-1',
-  output: 'chart-2',
-  cache_read: 'chart-3',
-  cache_creation: 'chart-4',
-};

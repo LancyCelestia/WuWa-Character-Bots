@@ -32,8 +32,9 @@
     "roToken": "只读令牌",
     "roTokenHint": "可选备用；主令牌缺席时自动回退到只读令牌。",
     "tokenPlaceholder": "粘贴令牌（仅存本机浏览器）",
-    "tokenSavedPlaceholder": "已保存（输入新值可覆盖）",
+    "tokenSavedPlaceholder": "已保存（留空保持不变，输入新值可覆盖）",
     "toggleShow": "显示/隐藏",
+    "clearToken": "清除已存令牌",
     "note": "控制面没有登录端点：令牌由管理员生成后自行粘贴到本机，仅保存在浏览器 localStorage，请求时只通过 Authorization 头发送、绝不出现在 URL。未配置令牌时数据端点返回 503 control_plane_not_provisioned。",
     "savedReloading": "已保存，正在刷新…",
     "cancel": "取消",
@@ -87,8 +88,8 @@
       "aboutDesc": "全部卡片由现有只读端点拼装，数据源缺失时如实显示「暂无数据」",
       "aboutBody": "统计口径：调用=audit_records、LLM=llm_call_records 账本、渠道=channel_health 内存健康库；好感度=user_affinity 只读库。",
       "callsDetailTitle": "消息调用键值明细",
-      "callsDetailDesc": "今日与近 7 天两个窗口各取一次独立统计（跨窗不合并）；「最后消息」为窗口内最新审计时间，无记录如实显示 —",
-      "windowToday": "今日（24 小时）",
+      "callsDetailDesc": "近 24 小时与近 7 天两个滚动窗口各取一次独立统计（跨窗不合并，非自然日）；「最后消息」为窗口内最新审计时间，无记录如实显示 —",
+      "windowToday": "近 24 小时",
       "window7d": "近 7 天",
       "rowCalls": "调用数",
       "rowActiveUsers": "活跃用户",
@@ -129,7 +130,7 @@
   "tokens": {
     "title": "Token 面板",
     "stackTitle": "按模型族堆叠（前 20 族）",
-    "stackDesc": "四项 = 输入 / 输出 / 缓存读 / 缓存建；横向堆叠，底部为最大族",
+    "stackDesc": "堆叠段 = 非缓存输入 / 缓存读 / 缓存建 / 输出（缓存本是输入的子集，拆开计数不再叠加）；底部为最大族",
     "qualityHint": "标记 ?N=该族 N 行完全未上报此项；~N=部分行未上报（后端只计有据值，绝不估数）",
     "totals": "窗口总量",
     "totalsDesc": "全部族（含无名行）合计",
@@ -138,6 +139,7 @@
     "calls": "{{count}} 次调用",
     "callsLabel": "调用",
     "input": "输入",
+    "uncachedInput": "输入（非缓存）",
     "output": "输出",
     "cache_read": "缓存读",
     "cache_creation": "缓存建",
@@ -226,7 +228,14 @@
     "notDeployedHint": "当前控制面实例未提供 /api/v1/knowledge/* 端点（旧版进程）；重启控制面加载新路由后可用。",
     "aliases": "别名：{{list}}",
     "allDisabled": "知识库数据源均未启用",
-    "allDisabledHint": "在 bot 配置中启用任一知识源（术语表 / 向量库 / 表情库 / ACG 检索）并重启后，这里会出现对应集合。"
+    "allDisabledHint": "在 bot 配置中启用任一知识源（术语表 / 向量库 / 表情库 / ACG 检索）并重启后，这里会出现对应集合。",
+    "disabledReason": {
+      "noDedicatedStore": "无独立存储",
+      "sourceUnavailable": "数据源不可用",
+      "schemaIncomplete": "表结构不完整",
+      "offByConfig": "配置未启用"
+    },
+    "disabledWithCode": "未启用（{{code}}）"
   },
   "plugins": {
     "title": "插件",
@@ -269,7 +278,7 @@
     "windowLabel": "时间窗",
     "typesLabel": "节点类型",
     "filterPlaceholder": "按标签过滤节点",
-    "truncated": "仅显示关联最多的 {{count}} 个节点",
+    "truncated": "节点集已截断：共 {{total}} 个，仅显示关联最多的 {{count}} 个",
     "empty": "该时间窗内无记忆关联数据",
     "emptyHint": "可切换更大时间窗后重试",
     "canvasHint": "拖拽平移 · 滚轮缩放 · 点击节点看详情；连线为只读标识图，不会改动记忆",
@@ -280,6 +289,18 @@
     "dataScope": "数据范围",
     "dataScopeBody": "时间窗 {{window}}。对话与发言边来自对话史库；记忆边来自长期记忆库（人物归属）；规则来自已生效小习惯与已学昵称；好感权重为当前态，不随时间窗变化。",
     "sourceUnavailable": "数据源 {{name}} 不可用（{{state}}）",
+    "partialTitle": "部分数据源未计入，图谱与统计不完整",
+    "sourceChip": "{{name}}：{{state}}",
+    "sourceName": {
+      "history": "对话史",
+      "memory": "长期记忆",
+      "quirks": "小习惯规则",
+      "affinity": "好感与昵称"
+    },
+    "sourceState": {
+      "missing": "库缺失",
+      "unreadable": "读取失败"
+    },
     "notDeployed": "记忆图谱未部署",
     "notDeployedHint": "当前控制面实例未提供 /api/v1/memory/graph 端点（旧版进程）；重启控制面加载新路由后可用。",
     "canvas": "关联图谱",

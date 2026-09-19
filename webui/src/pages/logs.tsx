@@ -318,7 +318,7 @@ export function LogsPage() {
         )}
       </SectionCard>
 
-      <p className='fs-caption leading-relaxed text-muted-foreground'>{t('logs.transportNote')}</p>
+      <p className='fs-caption text-muted-foreground'>{t('logs.transportNote')}</p>
     </div>
   );
 }

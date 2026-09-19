@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader, SectionCard } from '@/components/patterns/patterns';
 import { SemanticState } from '@/components/semantic/semantic-state';
+import { isNotFound } from '@/lib/semantics';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import { controlApi, type PluginGroup, type PluginItem, type PluginsCatalogData } from '@/lib/api-client';
 
@@ -15,10 +16,6 @@ import { controlApi, type PluginGroup, type PluginItem, type PluginsCatalogData 
 // 提示（只读文本不放假按钮，§2.4）；三者缺省/null 一律不渲染（旧控制面兼容，不猜）。
 
 const GROUP_ORDER = ['builtins', 'adapters', 'event_matchers', 'migrated_modules'];
-
-function isNotFound(message: string): boolean {
-  return /HTTP 404/.test(message);
-}
 
 /** 组级 reason → 人话（已知码走 i18n，未知码回退原码，绝不编语义）。 */
 function reasonText(reason: string | null, t: (key: string) => string): string {
@@ -168,7 +165,7 @@ export function PluginsPage() {
           ))}
         </>
       ) : query.state.phase === 'error' ? (
-        isNotFound(query.state.message) ? (
+        isNotFound(query.state) ? (
           <SectionCard title={t('plugins.notDeployed')}>
             <p className='fs-body text-muted-foreground'>{t('plugins.notDeployedHint')}</p>
           </SectionCard>

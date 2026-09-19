@@ -7,6 +7,7 @@ import { SettingsDialog } from '@/components/settings/settings-dialog';
 import { Button } from '@/components/ui/button';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
 import { controlApi, type KnowledgeCollectionsData } from '@/lib/api-client';
+import { pickEnabledCollections } from '@/lib/semantics';
 import { cn } from '@/lib/utils';
 
 // 布局壳：侧边栏 + 顶栏 + 内容区。模式保留自 AxonHub authenticated-layout（精简：
@@ -61,7 +62,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
   const enabledCollections =
     collectionsQuery.state.phase === 'ok'
-      ? collectionsQuery.state.data.items.filter((item) => item.enabled)
+      ? pickEnabledCollections(collectionsQuery.state.data.items)
       : [];
   const subCollections = enabledCollections.slice(0, 8);
   const hasMoreCollections = enabledCollections.length > 8;

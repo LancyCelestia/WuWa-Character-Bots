@@ -264,7 +264,7 @@
 /* tone 语义色：文字色一枚 + 底色由 color-mix 派生（亮暗各一组，禁调色板直引）。 */
 :root {
   --tone-good: oklch(0.596 0.145 163);  /* emerald-600 系 */
-  --tone-warn: oklch(0.666 0.179 58);   /* amber-600 系 */
+  --tone-warn: oklch(0.516 0.1009 64.8); /* ≈#8f5a1e：原 amber-600 系 L0.666 在亮色下 5 处文本 AA 不达标（实测最低 2.65:1，F11-b 色值册），暗色不动 */
   --tone-bad: oklch(0.577 0.245 27.3);  /* red-600 系 */
   --tone-info: oklch(0.5 0.134 242.7);  /* sky-700 系 */
   --tone-purple: var(--sk-purple);      /* 星空紫（tier 挚友） */

@@ -3,7 +3,7 @@
 // 令牌由管理员生成后自行粘贴进本机 localStorage；明文不回显（保存后输入框清空占位「已保存」）。
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Eye, EyeOff, KeyRound, Settings, X } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, Settings, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getApiToken, getBaseUrl, setApiToken, setBaseUrl, validateBaseUrl } from '@/lib/api-client';
 
@@ -28,6 +28,9 @@ export function SettingsDialog() {
   const [showTokens, setShowTokens] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [baseUrlError, setBaseUrlError] = useState<string | null>(null);
+  // 本机已存令牌的「有没有」快照：驱动占位符与清除按钮。读 localStorage 不是可观察状态，
+  // 不进 state 的话清除后界面不会重绘（按钮还在、提示还写「已保存」）。
+  const [hasStored, setHasStored] = useState({ admin: false, ro: false });
 
   useEffect(() => {
     const handler = () => setOpen(true);
@@ -41,6 +44,7 @@ export function SettingsDialog() {
       setAdminToken('');
       setRoToken('');
       setBaseUrlError(null);
+      setHasStored({ admin: Boolean(getApiToken('admin')), ro: Boolean(getApiToken('ro')) });
     }
   }, [open]);
 
@@ -66,6 +70,14 @@ export function SettingsDialog() {
     if (roToken.trim()) setApiToken(roToken.trim(), 'ro');
     setSavedFlash(true);
     setTimeout(() => window.location.reload(), 600); // baseURL/令牌生效最干净的方式：整页刷新。
+  };
+
+  // 保存时留空=保持原值（防静默清空凭据）；清除走显式按钮——两者不能混在一条路径上。
+  const clearStoredToken = (kind: 'admin' | 'ro') => {
+    setApiToken(null, kind);
+    setHasStored((current) => ({ ...current, [kind]: false }));
+    if (kind === 'admin') setAdminToken('');
+    else setRoToken('');
   };
 
   const fields = [
@@ -124,7 +136,7 @@ export function SettingsDialog() {
                   onChange={(event) =>
                     field.kind === 'admin' ? setAdminToken(event.target.value) : setRoToken(event.target.value)
                   }
-                  placeholder={getApiToken(field.kind) ? t('settings.tokenSavedPlaceholder') : t('settings.tokenPlaceholder')}
+                  placeholder={hasStored[field.kind] ? t('settings.tokenSavedPlaceholder') : t('settings.tokenPlaceholder')}
                   className='h-9 flex-1 rounded-md border bg-transparent px-3 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]'
                   spellCheck={false}
                   autoComplete='off'
@@ -132,12 +144,17 @@ export function SettingsDialog() {
                 <Button variant='outline' size='icon' onClick={() => setShowTokens((value) => !value)} aria-label={t('settings.toggleShow')}>
                   {showTokens ? <EyeOff className='size-4' /> : <Eye className='size-4' />}
                 </Button>
+                {hasStored[field.kind] && (
+                  <Button variant='outline' size='icon' onClick={() => clearStoredToken(field.kind)} aria-label={t('settings.clearToken')}>
+                    <Trash2 className='size-4' />
+                  </Button>
+                )}
               </div>
               <p className='fs-caption text-muted-foreground'>{field.savedHint}</p>
             </div>
           ))}
 
-          <p className='rounded-md border bg-muted/40 p-3 fs-caption leading-relaxed text-muted-foreground'>
+          <p className='rounded-md border bg-muted/40 p-3 fs-caption text-muted-foreground'>
             {t('settings.note')}
           </p>
 

@@ -1,6 +1,6 @@
 import { createHashHistory, createRootRoute, createRoute, createRouter, Outlet, useRouterState } from '@tanstack/react-router';
 import { AppShell } from '@/components/layout/app-shell';
-import { RouteErrorBoundary } from '@/components/layout/error-boundary';
+import { RootErrorComponent, RouteErrorBoundary } from '@/components/layout/error-boundary';
 import { DashboardPage } from '@/pages/dashboard';
 import { CallsPage } from '@/pages/calls';
 import { TokensPage } from '@/pages/tokens';
@@ -25,7 +25,13 @@ function RootLayout() {
   );
 }
 
-const rootRoute = createRootRoute({ component: RootLayout });
+const rootRoute = createRootRoute({
+  component: RootLayout,
+  // 根级兜底只接「RouteErrorBoundary 之上」的抛错（布局壳自身、根路由框架）——
+  // 页面内抛错先被边界拦下并保住侧栏。用 defaultErrorComponent 会被每个子路由继承，
+  // 语义变成「替换子路由出口」，与边界的分工混淆，故不用。
+  errorComponent: RootErrorComponent,
+});
 
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: DashboardPage });
 

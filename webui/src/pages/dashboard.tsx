@@ -169,8 +169,8 @@ export function DashboardPage() {
           sub={
             callsData
               ? t('dashboard.overview.callsFootnote', {
-                  unknown: callsData.unknown_timestamp_calls,
-                  unattributed: callsData.unattributed_calls,
+                  unknown: formatInt(callsData.unknown_timestamp_calls),
+                  unattributed: formatInt(callsData.unattributed_calls),
                 })
               : undefined
           }
