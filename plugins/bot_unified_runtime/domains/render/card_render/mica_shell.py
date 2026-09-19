@@ -21,11 +21,13 @@
 
 from __future__ import annotations
 
+import html as _html
 from collections.abc import Mapping
 
 from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
     BLOB_COUNT,
     BLOB_DURATIONS,
+    BRAND_NAME_EN,
     BRAND_THEME,
     FONT_FAMILY_STACK,
     GLASS_EDGE,
@@ -274,6 +276,104 @@ def drift_blobs_html(
 DRIFT_BLOBS_HTML = drift_blobs_html()
 
 
+# ==================== 品牌胶囊组件（CAP1 2026-09-20，用户裁定） ====================
+# 「所有图片都需要加上 bot头像、bot名字、bot英文名（可选：功能名）组起来的
+# 胶囊功能组件」——本段是该组件的唯一实现：CSS 一份、HTML 片段生成器一份，
+# 7 张 Jinja 模板经 bridge 注入的 ``capsule_css`` / ``capsule_html`` 消费，
+# f-string 直拼卡（templates.py 媒体卡，及 echo/debug/usage 接入时）直接
+# import ``brand_capsule_html`` / ``brand_capsule_css``。各面禁止手抄第二份
+# 胶囊 DOM/文案（此前 universal/market/finance/affinity/song/mermaid/error/
+# media 各写一份 .bot-foot/.cfb-*/.footer-bot-* 即本次收口的对象）。
+#
+# 三枚输入的单一来源：
+# - 头像 = ``domains/render/bot_avatar.py::bot_avatar_uri`` 既有口径（能力侧
+#   经 payload ``bot_avatar_url`` 传入），缺失时胶囊内头像位降级为「守」字
+#   圆点（沿用全仓 11 面既有兜底形态，不整段消失、无布局跳变，见台账
+#   #21「未配头像 → 页脚守字圆点」）；
+# - 中文名 = 调用方传入 ``bot_name``（缺省 ``BRAND_THEME.display_name``）；
+# - 英文名 = ``theme_tokens.BRAND_NAME_EN``（新增品牌身份 token）；
+# - 功能名 = 可选参数，空串时**整段省略**（不渲染空胶囊段、不显示占位文案）。
+#
+# 版式全部消费既有 token（无新造字面量）：圆角 var(--r-pill)/var(--r-circle)、
+# 玻璃 var(--mica-glass-foot)+var(--mica-glass-edge)、阴影仅
+# var(--mica-shadow-soft)（两枚 token 白名单内）、辉光 var(--glow-accent)
+# 只作背景层（其色值 alpha≥0.05 由 GLOW_ACCENT 登记值保证）、gap 7px 与
+# padding 取既有刻度、字号 12px 下限、字重 ≤700、line-height 1.2 在刻度内。
+# 无动画（胶囊是静态署名件，动画元素禁令与其无涉）；文字只压白玻璃面，
+# 中文名/圆点字用 --text-main、英文名/功能名用 --text-sub——两者对
+# SURFACE_TINTS 三档表面的 ≥4.5:1 对比由既有 vis5 数值门背书。
+
+
+def brand_capsule_css() -> str:
+    """品牌胶囊组件 CSS（单一产出；经 bridge 注入或直拼卡拼入 ``<style>``）。"""
+    return (
+        "/* 品牌胶囊（CAP1 单一来源=mica_shell）：头像+中文名+英文名+可选功能名。 */\n"
+        ".mica-capsule { display:inline-flex; align-items:center; gap:7px;\n"
+        "  padding:7px 12px; border-radius:var(--r-pill); border:1px solid transparent;\n"
+        "  background:\n"
+        "    var(--glow-accent) right center / 62% 190% no-repeat,\n"
+        f"    {GLASS_FOOT},\n"
+        f"    {GLASS_EDGE};\n"
+        "  box-shadow:var(--mica-shadow-soft);\n"
+        "  font-size:12px; line-height:1.2; color:var(--text-sub); }\n"
+        ".mica-capsule .mc-avatar { width:22px; height:22px; flex-shrink:0;\n"
+        "  border-radius:var(--r-circle); object-fit:cover;\n"
+        "  border:1px solid #fff; box-shadow:var(--mica-shadow-soft); }\n"
+        ".mica-capsule .mc-dot { width:22px; height:22px; flex-shrink:0;\n"
+        "  border-radius:var(--r-circle); display:inline-flex; align-items:center;\n"
+        "  justify-content:center; font-size:12px; font-weight:650;\n"
+        "  color:var(--text-main); background:color-mix(in srgb, var(--accent) 14%, #fff); }\n"
+        ".mica-capsule .mc-name { font-size:13px; font-weight:700;\n"
+        "  color:var(--text-main); white-space:nowrap; }\n"
+        ".mica-capsule .mc-en { color:var(--text-sub); white-space:nowrap;\n"
+        "  letter-spacing:0.02em; }\n"
+        ".mica-capsule .mc-feature { color:var(--text-sub); white-space:nowrap; }"
+    )
+
+
+def brand_capsule_html(
+    *,
+    bot_name: str = "",
+    bot_name_en: str = "",
+    avatar_url: str = "",
+    feature_label: str = "",
+    extra_class: str = "",
+) -> str:
+    """品牌胶囊 DOM 片段（头像 → 中文名 → 英文名 → 可选「· 功能名」）。
+
+    - 全部动态文本 ``html.escape``（quotes=True，属性位与文本位同一把锁）；
+      ``avatar_url`` 既有卡面直进 ``src=""`` 属性（能力侧给 file/data URI），
+      此处同样 escape 防属性逃逸。
+    - 头像缺失 → ``mc-dot`` 首字圆点（中文名首字；中文名为空回落品牌名
+      首字「守」），整枚胶囊照常在场，不塌陷。
+    - ``feature_label`` 为空 → 功能名段整段省略（铁律：无能力语境不渲染
+      空胶囊段、不显示「未命名」占位）。
+    - ``extra_class`` 仅供卡面**摆位**微调类（如直拼卡内联 margin 宿主），
+      不得用于复制组件样式本体。
+    """
+    name = (bot_name or BRAND_THEME.display_name).strip() or BRAND_THEME.display_name
+    name_en = (bot_name_en or BRAND_NAME_EN).strip() or BRAND_NAME_EN
+    avatar = (avatar_url or "").strip()
+    feature = (feature_label or "").strip()
+    head = (
+        f'<img class="mc-avatar" src="{_html.escape(avatar)}" alt="" '
+        "onerror=\"this.style.display='none'\"/>"
+        if avatar
+        else f'<span class="mc-dot">{_html.escape(name[:1] or name_en[:1])}</span>'
+    )
+    parts = [head, f'<span class="mc-name">{_html.escape(name)}</span>']
+    if name_en:
+        parts.append(f'<span class="mc-en">{_html.escape(name_en)}</span>')
+    if feature:
+        parts.append(f'<span class="mc-feature">· {_html.escape(feature)}</span>')
+    cls = "mica-capsule" + (f" {extra_class}" if extra_class else "")
+    return f'<div class="{cls}">' + "".join(parts) + "</div>"
+
+
+# 缺省实例：CSS 单份（内容只依赖登记 token，全卡同文共享）。
+BRAND_CAPSULE_CSS = brand_capsule_css()
+
+
 def render_root_tokens(
     *,
     accent: str,
@@ -408,6 +508,7 @@ def render_shell(
     shell_class: str = "",
     shell_width_px: int = _DEFAULT_SHELL_WIDTH_PX,
     decor: bool = True,
+    capsule_html: str = "",
 ) -> str:
     """产出完整卡片文档：``<!doctype html>`` + 透明 body + 外层纯容器 + 可选视觉外壳。
 
@@ -420,12 +521,19 @@ def render_shell(
     阴影只经 ``--mica-shadow`` / ``--mica-shadow-soft`` 两枚 token；
     ``decor=True`` 时注入统一的漂移装饰层与 ``.glass`` 规则。
     ``title`` 仅用于 ``<title>`` 与可访问性，不参与视觉。
+
+    ``capsule_html``（CAP1 接入点）：非空时把 ``brand_capsule_html`` 产出的
+    品牌胶囊拼进视觉外壳尾部，并自动附带 ``BRAND_CAPSULE_CSS``——新直拼卡
+    接胶囊只传片段，不再手写第二份样式。
     """
     classes = f"card {stage_class}".strip()
     # 玻璃规则随 decor 段携带（decor=False 时整卡无玻璃，铁律开关语义不变）；
     # shell_base_css 的 glass 段在此关闭，避免同一规则定义两次。
     shell_css = shell_base_css(shell_class, width_px=shell_width_px, glass=False)
     decor_css = _MICA_DECOR_CSS + _GLASS_RULES_CSS if decor else ""
+    if capsule_html:
+        # 胶囊样式与装饰层同段携带（CAP1）：调用方零样式改动即得统一胶囊。
+        decor_css = f"{decor_css}\n{BRAND_CAPSULE_CSS}" if decor_css else BRAND_CAPSULE_CSS
     shell_open = f'<section class="{shell_class}">' if shell_class else ""
     shell_close = "</section>" if shell_class else ""
     return (
@@ -443,12 +551,15 @@ def render_shell(
         f"{decor_css}\n"
         f"{css}\n"
         "</style></head>\n"
-        f'<body><div class="{classes}">{shell_open}{body_html}{shell_close}</div></body></html>'
+        f'<body><div class="{classes}">{shell_open}{body_html}{capsule_html}{shell_close}</div></body></html>'
     )
 
 
 __all__ = [
+    "BRAND_CAPSULE_CSS",
     "DRIFT_BLOBS_HTML",
+    "brand_capsule_css",
+    "brand_capsule_html",
     "drift_blobs_html",
     "glass_rules_css",
     "mica_decor_css",

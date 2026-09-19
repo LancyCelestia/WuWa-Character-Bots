@@ -109,23 +109,12 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
     color: var(--text-secondary); letter-spacing: 0.06em; }
 .row .value { flex: 1; min-width: 0; font-size: 13px; color: var(--text-main);
     font-family: var(--mono-family); font-variant-numeric: tabular-nums; word-break: break-all; }
-.bot-foot { margin-top: 14px; padding: 10px 14px; border-radius: var(--r-tile);
-    display: flex; align-items: center; gap: 7px;
-    background:
-        var(--glow-accent) right center / 62% 190% no-repeat,
-        var(--mica-glass-foot),
-        var(--mica-glass-edge);
-    border: 1px solid transparent;
-    box-shadow: var(--mica-shadow-panel);
-    font-size: 12px; color: var(--text-secondary); }
-.bot-foot .bf-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
-    border: 1px solid #fff; box-shadow: var(--mica-shadow-soft); }
-.bot-foot .bf-dot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 650; color: var(--accent-dark);
-    background: color-mix(in srgb, var(--accent) 12%, #fff); }
-.bot-foot .bf-name { font-weight: 650; color: var(--text-secondary); }
-.bot-foot .help-text { flex: 1; min-width: 0; }
+/* CAP1 品牌胶囊（头像+中文名+英文名+功能名）：组件 CSS/DOM 由 mica_shell 单一
+   产出、bridge 注入；本卡额外留求助文案（在胶囊右侧）。此前 .bot-foot 手抄
+   副本（bf-avatar/bf-dot/bf-name/help-text 合体）退役。 */
+.bot-foot { margin-top: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bot-foot .help-text { font-size: 12px; color: var(--text-secondary); line-height: 1.4; }
+{{ capsule_css | safe }}
 </style>
 </head>
 <body>
@@ -205,7 +194,8 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
         </div>
     </div>
     {% endif %}
-    <div class="bot-foot">{% if bot_avatar_url %}<img class="bf-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="bf-dot">{{ (bot_name | default('守岸人', true))[:1] }}</span>{% endif %}<span class="bf-name">{{ bot_name | default('守岸人', true) }}</span><span class="help-text">{{ help_text | default('把这张卡截图发给创造者即可，信息已齐备且脱敏。', true) }}</span></div>
+    {# CAP1：胶囊 DOM 由 bridge 注入（单一产出=mica_shell），求助文案摆在胶囊右侧。 #}
+    <div class="bot-foot">{{ capsule_html | safe }}<span class="help-text">{{ help_text | default('把这张卡截图发给创造者即可，信息已齐备且脱敏。', true) }}</span></div>
 </div>
 </body>
 </html>

@@ -32,12 +32,15 @@ from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
     render_universal_card_html as _render_universal_card_html,
 )
 from plugins.bot_unified_runtime.domains.render.card_render.mica_shell import (
+    brand_capsule_css,
+    brand_capsule_html,
     drift_blobs_html,
     mica_decor_css,
     render_root_tokens,
     shell_base_css,
 )
 from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
+    BRAND_THEME,
     DIVIDER,
     GLOW_ACCENT,
     SURFACE_TINTS,
@@ -94,25 +97,11 @@ _CARD_CSS = (
   line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 .footer { margin-top: 10px; font-size: 12px; color: var(--text-sub);
   border-top: var(--divider-line); padding-top: 8px; }
-/* F11 页脚：头像 + 机器人名 + 功能名（weather/eat 等媒体卡路径同样强制带）。
-   vis4 胶囊化：玻璃底 + 辉光背景层（glow 只作背景层，alpha≥0.05）。 */
-.card-footer-bot { margin-top: 10px; display: flex; align-items: center; gap: 7px;
-  padding: 8px 12px; border-radius: var(--r-tile);
-  background:
-    var(--glow-accent) right center / 62% 190% no-repeat,
-    linear-gradient(150deg, rgba(255,255,255,.66) 0%, rgba(255,255,255,.46) 100%) padding-box,
-    linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
-  border: 1px solid transparent;
-  box-shadow: var(--mica-shadow-soft); }
-.cfb-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
-  border: 1px solid #fff; box-shadow: var(--mica-shadow-soft); }
-.cfb-dot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
-  background: color-mix(in srgb, var(--accent) 18%, #fff); color: var(--accent-dark);
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 600; }
-.cfb-name { font-size: 12px; font-weight: 650; color: var(--accent-dark); white-space: nowrap; }
-.cfb-label { font-size: 12px; color: var(--text-sub); }
 """
+    # CAP1 品牌胶囊（头像+中文名+英文名+功能名）：组件 CSS 由 mica_shell 单一
+    # 产出注入（本卡 .card-footer-bot/.cfb-* 手抄副本退役，DOM 见函数尾部）。
+    + "\n"
+    + brand_capsule_css()
 )
 
 
@@ -137,7 +126,8 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
     footer = _esc(payload.get("footer")) or ""
     if footer == "about:blank":
         footer = ""
-    bot_name = _esc(payload.get("bot_name")) or "守岸人"
+    # 中文名缺省=BRAND_THEME.display_name（CAP1 单一来源，值不变「守岸人」）。
+    bot_name = _esc(payload.get("bot_name")) or BRAND_THEME.display_name
     bot_avatar = _esc(payload.get("bot_avatar_url"))
     feature_label = _esc(payload.get("feature_label"))
     pc = _esc(payload.get("platform_color")) or "#607080"
@@ -192,16 +182,12 @@ def render_media_card_html(payload: dict[str, Any]) -> str:
         )
         for index, (label, value) in enumerate(stat_items)
     )
-    avatar_block = (
-        f'<img class="cfb-avatar" src="{bot_avatar}" alt="" '
-        'onerror="this.style.display=\'none\'"/>'
-        if bot_avatar
-        else f'<span class="cfb-dot">{bot_name[:1]}</span>'
-    )
-    bot_footer = (
-        f'<div class="card-footer-bot">{avatar_block}'
-        f'<span class="cfb-name">{bot_name}</span>'
-        f'<span class="cfb-label">· {feature_label or "Shorekeeper"}</span></div>'
+    # CAP1：统一品牌胶囊（mica_shell 单一产出；.cfb-* 手抄 DOM 退役）。
+    # 旧「feature 空则显 Shorekeeper」占位语义作废——英文名常驻胶囊。
+    bot_footer = brand_capsule_html(
+        bot_name=bot_name,
+        avatar_url=bot_avatar,
+        feature_label=feature_label,
     )
     return (
         "<html><head><meta charset=\"utf-8\"><style>"

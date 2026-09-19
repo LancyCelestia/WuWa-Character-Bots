@@ -33,6 +33,8 @@ from typing import Any
 import jinja2
 
 from plugins.bot_unified_runtime.domains.render.card_render.mica_shell import (
+    BRAND_CAPSULE_CSS,
+    brand_capsule_html,
     drift_blobs_html,
     mica_decor_css,
     render_root_tokens,
@@ -188,6 +190,32 @@ def _vis4_context() -> dict[str, str]:
     context["decor_css"] = _DECOR_CSS
     context["blobs_html"] = _BLOBS_HTML
     return context
+
+
+def _capsule_context(
+    bot_name: str,
+    bot_avatar_url: str,
+    feature_label: str,
+) -> dict[str, str]:
+    """品牌胶囊上下文（CAP1 2026-09-20，用户裁定「所有图片加胶囊」）。
+
+    组件 CSS/DOM 由 ``mica_shell.brand_capsule_*`` 单一产出，模板以
+    ``{{ capsule_css | safe }}``（放进 ``<style>``）与
+    ``{{ capsule_html | safe }}``（页脚摆位）消费；摆位 margin 留在各模板
+    本地（只属布局，组件样式零手抄）。纯字符串组装，任何输入都不抛
+    （铁律 7：渲染面永不因署名件炸整卡）。
+
+    ``bot_name`` 空回落 ``BRAND_THEME.display_name``（中文名单一来源）；
+    英文名 ``BRAND_NAME_EN`` 由生成器内部取值，此处不传字面量。
+    """
+    return {
+        "capsule_css": BRAND_CAPSULE_CSS,
+        "capsule_html": brand_capsule_html(
+            bot_name=(bot_name or BRAND_THEME.display_name),
+            avatar_url=bot_avatar_url,
+            feature_label=feature_label,
+        ),
+    }
 
 
 def _card_root_tokens(
@@ -1405,6 +1433,15 @@ def render_universal_card_html(payload_dict: dict[str, Any] | None = None) -> st
     context["root_tokens"] = _card_root_tokens(
         payload.platform_color, phase=context["phase"]
     )
+    # 品牌胶囊（CAP1）：单一产出经 mica_shell；功能名无能力语境时整段省略
+    # （旧模板「feature 空则显 Shorekeeper」的占位语义作废——英文名常驻）。
+    context.update(
+        _capsule_context(
+            _as_str(context.get("bot_name")),
+            _as_str(context.get("bot_avatar_url")),
+            _as_str(context.get("feature_label")),
+        )
+    )
     return _TEMPLATE.render(**context)
 
 
@@ -1496,6 +1533,9 @@ def render_market_card_html(payload_dict: dict[str, Any] | None = None) -> str:
             )
         if rows_out:
             groups_out.append({"name": _as_str(group.get("name")), "rows": rows_out})
+    bot_name = _as_str(data.get("bot_name")) or BRAND_THEME.display_name
+    bot_avatar_url = _as_str(data.get("bot_avatar_url"))
+    feature_label = _as_str(data.get("feature_label")) or "全球股指"
     return _MARKET_CARD_TEMPLATE.render(
         platform_color=color,
         platform_color_dark=_rgb_to_hex(_darken(rgb)),
@@ -1506,9 +1546,11 @@ def render_market_card_html(payload_dict: dict[str, Any] | None = None) -> str:
         delayed_note=_as_str(data.get("delayed_note")),
         # 多源交叉查验声明（腾讯；通道不可用为空串=区块隐藏）。
         crosscheck_note=_as_str(data.get("crosscheck_note")),
-        bot_name=_as_str(data.get("bot_name")) or "守岸人",
-        bot_avatar_url=_as_str(data.get("bot_avatar_url")),
-        feature_label=_as_str(data.get("feature_label")) or "全球股指",
+        bot_name=bot_name,
+        bot_avatar_url=bot_avatar_url,
+        feature_label=feature_label,
+        # 品牌胶囊（CAP1）：CSS/DOM 单一产出经 mica_shell，模板摆位本地化。
+        **_capsule_context(bot_name, bot_avatar_url, feature_label),
         # 漂移相位按 payload digest 确定注入（E01，D2→D1）。
         phase=payload_phase(data),
         # 釉瑚云母洗：与 --accent 同点注入（mica-glass v2 本命基底）。
@@ -1572,6 +1614,9 @@ def render_finance_card_html(payload_dict: dict[str, Any] | None = None) -> str:
             sections_out.append(
                 {"name": _as_str(section.get("name")), "rows": rows_out}
             )
+    bot_name = _as_str(data.get("bot_name")) or BRAND_THEME.display_name
+    bot_avatar_url = _as_str(data.get("bot_avatar_url"))
+    feature_label = _as_str(data.get("feature_label")) or "金融"
     return _FINANCE_CARD_TEMPLATE.render(
         platform_color=color,
         platform_color_dark=_rgb_to_hex(_darken(rgb)),
@@ -1582,9 +1627,11 @@ def render_finance_card_html(payload_dict: dict[str, Any] | None = None) -> str:
         source_note=_as_str(data.get("source_note")),
         updated_at=_as_str(data.get("updated_at")),
         delayed_note=_as_str(data.get("delayed_note")),
-        bot_name=_as_str(data.get("bot_name")) or "守岸人",
-        bot_avatar_url=_as_str(data.get("bot_avatar_url")),
-        feature_label=_as_str(data.get("feature_label")) or "金融",
+        bot_name=bot_name,
+        bot_avatar_url=bot_avatar_url,
+        feature_label=feature_label,
+        # 品牌胶囊（CAP1）：单一产出经 mica_shell（见 render_market_card_html 注）。
+        **_capsule_context(bot_name, bot_avatar_url, feature_label),
         # 漂移相位按 payload digest 确定注入（E01，D2→D1）。
         phase=payload_phase(data),
         # 釉瑚云母洗：与 --accent 同点注入（品牌 accent → 纯本命基底）。
@@ -1627,6 +1674,9 @@ def render_song_candidates_html(payload_dict: dict[str, Any] | None = None) -> s
         )
 
     template = _ENV.get_template("song_candidates.html")
+    bot_name = _as_str(data.get("bot_name")) or BRAND_THEME.display_name
+    bot_avatar_url = _as_str(data.get("bot_avatar_url"))
+    feature_label = _as_str(data.get("feature_label")) or "点歌"
     return template.render(
         query=_as_str(data.get("query")) or "未知关键词",
         platform=platform,
@@ -1639,9 +1689,11 @@ def render_song_candidates_html(payload_dict: dict[str, Any] | None = None) -> s
         platform_color_light=_rgb_to_hex(_lighten(rgb)),
         ttl_seconds=_as_int(data.get("ttl_seconds"), 300),
         candidates=candidates,
-        bot_name=_as_str(data.get("bot_name")) or "守岸人",
-        bot_avatar_url=_as_str(data.get("bot_avatar_url")),
-        feature_label=_as_str(data.get("feature_label")) or "点歌",
+        bot_name=bot_name,
+        bot_avatar_url=bot_avatar_url,
+        feature_label=feature_label,
+        # 品牌胶囊（CAP1）：单一产出经 mica_shell（见 render_market_card_html 注）。
+        **_capsule_context(bot_name, bot_avatar_url, feature_label),
         # 漂移相位按 payload digest 确定注入（E01，D2→D1）。
         phase=payload_phase(data),
         # 釉瑚云母洗：与 --accent 同点注入（mica-glass v1 2026-09-12）。
@@ -1716,6 +1768,9 @@ def render_affinity_card_html(payload_dict: dict[str, Any] | None = None) -> str
         for t in _as_list(data.get("tiers"))
         if isinstance(t, dict)
     ]
+    bot_name = _as_str(data.get("bot_name")) or BRAND_THEME.display_name
+    bot_avatar_url = _as_str(data.get("bot_avatar_url"))
+    feature_label = _as_str(data.get("feature_label")) or "好感度"
     return template.render(
         pc=pc,
         # 釉瑚云母洗：与 --accent 同点注入（mica-glass v1 2026-09-12）。
@@ -1724,9 +1779,11 @@ def render_affinity_card_html(payload_dict: dict[str, Any] | None = None) -> str
         subtitle=_as_str(data.get("subtitle")),
         mode=_as_str(data.get("mode")) or "private",
         me_id=_as_str(data.get("me_id")),
-        bot_name=_as_str(data.get("bot_name")) or "守岸人",
-        bot_avatar_url=_as_str(data.get("bot_avatar_url")),
-        feature_label=_as_str(data.get("feature_label")) or "好感度",
+        bot_name=bot_name,
+        bot_avatar_url=bot_avatar_url,
+        feature_label=feature_label,
+        # 品牌胶囊（CAP1）：单一产出经 mica_shell（见 render_market_card_html 注）。
+        **_capsule_context(bot_name, bot_avatar_url, feature_label),
         bot_score=_as_str(data.get("bot_score")) or "10.0",
         rows=rows_out,
         steps=steps_out,
@@ -1775,6 +1832,8 @@ def render_error_card_html(payload_dict: dict[str, Any] | None = None) -> str:
     """
     data = dict(payload_dict or {})
     rgb = _hex_to_rgb(ERROR_THEME.accent)
+    bot_name = _as_str(data.get("bot_name")) or BRAND_THEME.display_name
+    bot_avatar_url = _as_str(data.get("bot_avatar_url"))
     return _ERROR_CARD_TEMPLATE.render(
         platform_color=ERROR_THEME.accent,
         platform_color_dark=_rgb_to_hex(_darken(rgb)),
@@ -1793,8 +1852,10 @@ def render_error_card_html(payload_dict: dict[str, Any] | None = None) -> str:
         env_pairs=_error_kv_rows(data.get("env_pairs")),
         id_pairs=_error_kv_rows(data.get("id_pairs")),
         help_text=_as_str(data.get("help_text")),
-        bot_name=_as_str(data.get("bot_name")) or "守岸人",
-        bot_avatar_url=_as_str(data.get("bot_avatar_url")),
+        bot_name=bot_name,
+        bot_avatar_url=bot_avatar_url,
+        # 品牌胶囊（CAP1）：诊断卡功能名「诊断」；help_text 由模板摆在胶囊旁。
+        **_capsule_context(bot_name, bot_avatar_url, _as_str(data.get("feature_label")) or "诊断"),
         # 漂移相位按 payload digest 确定注入（E01 同源语义）。
         phase=payload_phase(data),
         # 釉瑚云母洗：与 --accent 同点注入（红 accent 派生，mist 保持本命打底）。
@@ -1919,10 +1980,21 @@ def render_mermaid_html(code: str) -> str:
     纯字符串组装，不访问网络，不抛异常；釉瑚云母洗按中性灰派生注入
     （mica-glass v1 2026-09-12）。
     """
+    # CAP1 胶囊头像：mermaid 卡无 payload 通道传头像，复用 bot_avatar_uri
+    # 既有单一入口（显式配置 > 进程内登记；本函数够不到 config，磁盘兜底
+    # 分支自然落空回「守」字圆点——生产 on_bot_connect 后内存即有，无感）。
+    from plugins.bot_unified_runtime.domains.render.bot_avatar import bot_avatar_uri
+
+    bot_name = BRAND_THEME.display_name
+    bot_avatar_url = str(bot_avatar_uri())
+    feature_label = "流程图"
     return _MERMAID_TEMPLATE.render(
         code=code or "",
-        bot_name="守岸人",
-        feature_label="流程图",
+        bot_name=bot_name,
+        bot_avatar_url=bot_avatar_url,
+        feature_label=feature_label,
+        # 品牌胶囊（CAP1）：单一产出经 mica_shell（见 render_market_card_html 注）。
+        **_capsule_context(bot_name, bot_avatar_url, feature_label),
         # 漂移相位按 mermaid 源码 digest 确定注入（E01，D2→D1）。
         phase=payload_phase(code or ""),
         **_derive_wash_tokens(UNKNOWN_PLATFORM_COLOR),

@@ -101,7 +101,15 @@ python scripts/webui_acceptance.py                     → PASS 9 / SKIP 0 / FAI
 | B-2 | **任意值字面量补牙**：规则⑧任意值方括号、⑨canvas 字体字面量；门自测 37→58 | `webui/scripts/layout-constitution.mjs` | `97eccbc` |
 | B-3 | **三族判据/文案单源化**：`reason` 话术 4 套、窗口枚举 3 套、空值记号 11 处 | 新增 `lib/labels.ts`；`node --test` 14→29；locale zh=en 零漂移 | `f4f4572` |
 | B-4 | 窄屏导航抽屉（复用同一份 nav 数组，换路由即关、Escape 归还焦点、aria-* 齐） | `components/layout/app-shell.tsx` | `1a134e3` |
-| B-5 | **深链参数全站单点归一**：`SEARCH_SPECS` 声明表 → 生成 `validateSearch` → 唯一回写点 `replace` | `webui/src/router.tsx` | `1a134e3` |
+| B-5 | **深链参数全站单点归一**：`SEARCH_SPECS` 声明表 → 生成 `validateSearch` → 地址栏改写点唯一（`router.tsx:108`） | `webui/src/router.tsx` | `1a134e3` |
+
+> **措辞订正（评审员抓到，原写「唯一回写点」不实）**：`app-shell.tsx:126-138` 是**第二处**改写，
+> 但它做的是「类型层归一之后」的**数据侧可见性校正**（`?collection=<id>` 是否存在且启用，
+> 只有拿到集合目录才判得出来）——职责不同，不是重复口径。真正的隐患不是"两处写"，
+> 而是 `router.tsx:86` 用 `encodeURIComponent`（空格→`%20`）而 router 自身的 `searchStr`
+> 由 `router-core/qss.js encode()` 经 `URLSearchParams().toString()` 产生（空格→`+`），
+> `:107` 的幂等闸却是**字符串相等** ⇒ 含空格/`!'()~` 的参数值两侧永不相等。
+> 已派 F12-FIX 先定性（活死循环 or 侥幸收敛）再修（要求同一序列化 primitive + 纯口径函数补测）。
 
 ### 运行数据修复（用户 19:05 显式授权动 `.env`）
 

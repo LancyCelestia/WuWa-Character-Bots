@@ -28,6 +28,19 @@ from dataclasses import dataclass, field
 BRAND_ACCENT = "#318ce7"
 UNKNOWN_PLATFORM_COLOR = "#607080"
 
+# 品牌英文名（CAP1 胶囊组件 2026-09-20）：卡片品牌胶囊
+# 「头像 + 中文名 + 英文名（可选功能名）」的英文名唯一来源。
+# 事实出处 = personas/shorekeeper/identity.md 硬档案「外文名：英 The Shorekeeper」
+# （人格语料只读，渲染层不在运行期解析人格文件——耦合 IO 且措辞会变）；
+# 卡面沿用既有口径省 "The" 前缀（historical: templates.py/ universal_card.html
+# 页脚已有 "Shorekeeper" 用法，本次收敛为单一常量，各面不再各写字面量）。
+# 中文名同源 = BRAND_THEME.display_name（「守岸人」，见下方品牌主题节）。
+# 为什么住 theme_tokens 而不是 config.py：bot_persona_display_name 是实例
+# 可配的面貌字段（缺省 "报存"，语义=中文名）；英文名是当前品牌的固定
+# 身份 token，与 BRAND_ACCENT/BRAND_THEME 同区登记，由 mica_shell/bridge/
+# templates 三条消费链共同 import，天然满足「单一事实来源」。
+BRAND_NAME_EN = "Shorekeeper"
+
 _WASH_HUE_SHIFT = 30 / 360      # 平台色相对本命相的最大推幅
 _WASH_HUE_PULL = 0.5            # 平台色相 → 推幅的比例（本命相权重 3:1）
 _WASH_SAT_RATIO = 0.55          # pastel 化：输入饱和度保留比例
@@ -352,6 +365,9 @@ def _make_theme(
 
 
 # ==================== 守岸人品牌主题 ====================
+# BRAND_THEME.display_name（「守岸人」）= 卡片品牌中文名的单一来源
+# （CAP1 2026-09-20：bridge 各渲染函数的 bot_name 缺省值改读此处，
+# 不再各写「"守岸人"」字面量；能力侧显式传入的实例名优先，语义不变）。
 BRAND_THEME = _make_theme("brand", "守岸人", BRAND_ACCENT)
 
 # ==================== 未知平台安全兜底 ====================
@@ -484,6 +500,7 @@ __all__ = [
     "BLOB_COUNT",
     "BLOB_DURATIONS",
     "BRAND_ACCENT",
+    "BRAND_NAME_EN",
     "BRAND_THEME",
     "CARD_SHELL_WIDTHS",
     "DEFAULT_THEME",

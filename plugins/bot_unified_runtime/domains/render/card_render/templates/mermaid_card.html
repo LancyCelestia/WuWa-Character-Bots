@@ -137,22 +137,14 @@ body {
     font-variant-numeric: tabular-nums;
 }
 .card svg { max-width: 100%; height: auto; }
-/* F11 bot 页脚：头像 + 机器人名 + 功能名（vis4 胶囊化：玻璃底 + 辉光背景层
-   + L2 面板级阴影——mermaid 页脚胶囊是本卡唯一大件容器）。 */
-.bot-foot { position: relative; z-index: 1; margin-top: 14px; padding: 9px 14px;
-    display: flex; align-items: center; gap: 7px;
-    border-radius: var(--r-tile);
-    background:
-        var(--glow-accent) right center / 62% 190% no-repeat,
-        var(--mica-glass-foot),
-        var(--mica-glass-edge);
-    border: 1px solid transparent;
-    box-shadow: var(--mica-shadow-panel);
-    font-size: 12px; color: var(--text-secondary); }
-.bot-foot .bf-dot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 650; color: var(--accent); background: var(--accent-soft); }
-.bot-foot .bf-name { font-weight: 650; color: var(--text-sub); }
+/* CAP1 品牌胶囊（头像+中文名+英文名+功能名）：组件 CSS/DOM 由 mica_shell 单一
+   产出、bridge 注入；此前本面 .bot-foot 手抄副本退役（本卡头像位首次补齐——
+   bridge 经 bot_avatar_uri 单一入口取图，缺失自动回「守」字圆点）。 */
+/* 摆位行：字号 12px 为本行基准（行内若加胶囊之外的附属文字按此走，
+   同时满足模板源码级字号下限门的取材需要——组件本体样式在 capsule_css）。 */
+.capsule-foot { position: relative; z-index: 1; margin-top: 14px; font-size: 12px;
+    display: flex; align-items: center; gap: 7px; }
+{{ capsule_css | safe }}
 </style>
 </head>
 <body>
@@ -160,7 +152,8 @@ body {
 <pre class="mermaid">
 {{ code }}
 </pre>
-<div class="bot-foot"><span class="bf-dot">守</span><span class="bf-name">{{ bot_name | default('守岸人', true) }}</span><span>· {{ feature_label | default('流程图', true) }}</span></div>
+{# CAP1：胶囊 DOM 由 bridge 从 mica_shell.brand_capsule_html 注入，模板零手写。 #}
+<div class="capsule-foot">{{ capsule_html | safe }}</div>
 </div>
 </body>
 </html>

@@ -92,21 +92,11 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
 .index svg.spark { width: 128px; height: 40px; flex-shrink: 0; }
 .index .trend-note { font-size: 12px; color: var(--text-sub); flex-shrink: 0; align-self: center; }
 .data-foot { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-sub); font-variant-numeric: tabular-nums; }
-/* vis4 页脚胶囊：玻璃底 + 辉光背景层（glow 只作背景层，alpha≥0.05）。 */
-.bot-foot { margin-top: 14px; padding: 9px 14px; border-radius: var(--r-tile); display: flex; align-items: center; gap: 7px;
-    background:
-        var(--glow-accent) right center / 62% 190% no-repeat,
-        linear-gradient(150deg, rgba(255,255,255,.66) 0%, rgba(255,255,255,.46) 100%) padding-box,
-        linear-gradient(150deg, rgba(255,255,255,.95) 0%, rgba(255,255,255,.35) 55%, rgba(255,255,255,.72) 100%) border-box;
-    border: 1px solid transparent;
-    box-shadow: var(--mica-shadow-panel);
-    font-size: 12px; color: var(--text-secondary); }
-.bot-foot .bf-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
-    border: 1px solid #fff; box-shadow: var(--mica-shadow-soft); }
-.bot-foot .bf-dot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 650; color: var(--accent-dark); background: color-mix(in srgb, var(--accent) 12%, #fff); }
-.bot-foot .bf-name { font-weight: 650; color: var(--text-secondary); }
+/* CAP1 品牌胶囊（头像+中文名+英文名+功能名）：组件 CSS/DOM 由 mica_shell
+   单一产出、bridge 注入（辉光背景层+玻璃页脚档+pill 圆角全部 var() 消费
+   root tokens）；此处只留摆位。此前本面 .bot-foot 手抄副本退役。 */
+.capsule-foot { margin-top: 14px; }
+{{ capsule_css | safe }}
 </style>
 </head>
 <body>
@@ -148,7 +138,8 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
         {% if delayed_note %}<span>{{ delayed_note }}</span>{% endif %}
         {% if crosscheck_note %}<span>{{ crosscheck_note }}</span>{% endif %}
     </div>{% endif %}
-    <div class="bot-foot">{% if bot_avatar_url %}<img class="bf-avatar" src="{{ bot_avatar_url }}" alt="" onerror="this.style.display='none'">{% else %}<span class="bf-dot">{{ (bot_name | default('守岸人', true))[:1] }}</span>{% endif %}<span class="bf-name">{{ bot_name | default('守岸人', true) }}</span><span>· {{ feature_label | default('全球股指', true) }}</span></div>
+    {# CAP1：胶囊 DOM 由 bridge 从 mica_shell.brand_capsule_html 注入，模板零手写。 #}
+    <div class="capsule-foot">{{ capsule_html | safe }}</div>
 </div>
 </body>
 </html>
