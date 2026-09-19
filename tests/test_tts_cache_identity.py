@@ -9,11 +9,11 @@
 本席修法（按现状实现；契约层规格席 T54/G-2 可能产出更好的键算法，收编点见
 report-T57.md）：
 - 键补 ``api_url`` 段（``rstrip('/')`` 归一：尾斜杠不算换引擎）；
-- 键补 ``ref_fp`` 段：ref 文件内容指纹——**首次读取做 sha256**，之后只 stat 比
-  ``(size, mtime)``，一致即沿用指纹（避免每次合成全文件哈希），stat 变了才重算
-  （真实现场「原地换文件」必然更新 mtime）；
-- **已知边界（写死进用例）**：内容变而 size+mtime 都不变（如 touch 回写旧时间戳）
-  检测不到——为它每次全文件哈希不划算，按设计接受；
+- 键补 ``ref_fp`` 段：ref 文件内容指纹——T75 起（T62 反审 P2-2）为**每次全量
+  sha256 取前 16 hex**（指纹=内容的纯函数）。原「首次哈希、之后 stat 比
+  (size, mtime)」快路径已删：stat-only 变异全绿证明指纹语义零正向钉死，
+  且 touch 回写旧时间戳/备份还原会永久命中旧音色；哈希成本相对秒级合成可忽略；
+- 原「同 stat 换内容检测不到」边界已按 T62 规格翻转（见对应用例 docstring）；
 - 键空间换代副作用：旧键生成的 wav 文件名全部失配成为孤儿（落盘目录回收归
   M-27 配额闸，不在本席）。
 
@@ -67,8 +67,8 @@ def _params() -> TtsParams:
 def _isolate_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     """每条用例干净 LRU 索引。
 
-    指纹缓存（``_REF_FINGERPRINTS``）按路径键控、pytest tmp_path 每用例唯一，
-    不存在跨用例同路径串味，无需重置；同 stat 换内容的边界用例各自独占路径。
+    指纹（T75 起）=内容的纯函数（每次全量哈希），无进程级缓存可串味；
+    pytest tmp_path 每用例唯一，同 stat 换内容的规格用例各自独占路径。
     """
     monkeypatch.setattr(tts_mod, "_CACHE", OrderedDict())
 
@@ -82,16 +82,16 @@ def _ref(tmp_path: Path, name: str = "ref.wav", content: bytes = b"RIFF....WAVEf
 def test_cache_key_differs_by_api_url(tmp_path: Path) -> None:
     """换引擎地址 = 换身份：同句同素材同参数也不得共用同一份旧音色缓存。"""
     ref = _ref(tmp_path)
-    key_a = tts_mod._cache_key("正文", ref, _params(), api_url=_API_A)
-    key_b = tts_mod._cache_key("正文", ref, _params(), api_url=_API_B)
+    key_a = tts_mod._cache_key("正文", ref, _params(), api_url=_API_A, preset_id="shorekeeper")
+    key_b = tts_mod._cache_key("正文", ref, _params(), api_url=_API_B, preset_id="shorekeeper")
     assert key_a != key_b
 
 
 def test_trailing_slash_api_url_is_same_engine(tmp_path: Path) -> None:
     """尾斜杠不是换引擎：``http://h:9880`` 与 ``http://h:9880/`` 必须同键。"""
     ref = _ref(tmp_path)
-    key_a = tts_mod._cache_key("正文", ref, _params(), api_url=_API_A)
-    key_b = tts_mod._cache_key("正文", ref, _params(), api_url=f"{_API_A}/")
+    key_a = tts_mod._cache_key("正文", ref, _params(), api_url=_API_A, preset_id="shorekeeper")
+    key_b = tts_mod._cache_key("正文", ref, _params(), api_url=f"{_API_A}/", preset_id="shorekeeper")
     assert key_a == key_b
 
 
@@ -100,13 +100,13 @@ def test_cache_key_differs_when_ref_content_changes(tmp_path: Path) -> None:
     path = tmp_path / "ref.wav"
     path.write_bytes(b"RIFF-first-take-bytes")
     ref = RefAudio(path=str(path), text="你好", lang="zh")
-    first = tts_mod._cache_key("正文", ref, _params(), api_url=_API_A)
+    first = tts_mod._cache_key("正文", ref, _params(), api_url=_API_A, preset_id="shorekeeper")
 
     stat_before = path.stat()
     path.write_bytes(b"RIFF-second-take-voice!")
     # 显式把 mtime 拨到原值之后，杜绝同秒写入 mtime 撞车的偶现假绿。
     os.utime(path, (stat_before.st_atime, stat_before.st_mtime + 5.0))
-    second = tts_mod._cache_key("正文", ref, _params(), api_url=_API_A)
+    second = tts_mod._cache_key("正文", ref, _params(), api_url=_API_A, preset_id="shorekeeper")
     assert first != second, "ref 内容变了键却没变 = 永久命中旧音色（M-11 本体）"
 
 
@@ -114,27 +114,29 @@ def test_cache_key_still_differs_by_ref_path(tmp_path: Path) -> None:
     """回归守卫：路径与内容指纹都参与键——两份不同素材不得互撞。"""
     ref_a = _ref(tmp_path, "a.wav", b"RIFF-voice-take-A")
     ref_b = _ref(tmp_path, "b.wav", b"RIFF-voice-take-B")
-    key_a = tts_mod._cache_key("正文", ref_a, _params(), api_url=_API_A)
-    key_b = tts_mod._cache_key("正文", ref_b, _params(), api_url=_API_A)
+    key_a = tts_mod._cache_key("正文", ref_a, _params(), api_url=_API_A, preset_id="shorekeeper")
+    key_b = tts_mod._cache_key("正文", ref_b, _params(), api_url=_API_A, preset_id="shorekeeper")
     assert key_a != key_b
 
 
 def test_same_stat_content_change_is_documented_boundary(tmp_path: Path) -> None:
-    """边界锁：内容变而 size+mtime 都不变时，按设计沿用旧指纹（键不变）。
+    """规格翻转（T62 P2-2）：内容变而 size+mtime 都不变时，**键必须变**。
 
-    stat 快路径是 M-11 修法里「避免每次合成全文件哈希」的承重结构：真实现场
-    原地换文件必然更新 mtime，只有 touch 回写旧时间戳这类刻意构造才探测不到。
-    若未来改成每次全文件哈希，本用例会转红——那是有意为之的规格变更信号。
+    本用例曾反向锁定 stat 快路径（T57：内容变+stat 不变=检测不到，按设计
+    接受）——用例自留的「规格变更信号」条款被 T62 反审兑现：stat-only 变异
+    全绿证明指纹语义零正向钉死，且 touch 回写旧时间戳/备份还原在真实运维中
+    并非刻意构造，会永久命中旧音色。T75 起 `_ref_fingerprint` 改为每次全量
+    sha256（指纹=内容的纯函数），本用例按新规格锁「同 stat 换内容 ⇒ 键变」。
     """
     path = tmp_path / "ref.wav"
     path.write_bytes(b"RIFF-AAAA-take-one")
     stat_before = path.stat()
-    first = tts_mod._cache_key("正文", RefAudio(path=str(path), text="你好"), _params(), api_url=_API_A)
+    first = tts_mod._cache_key("正文", RefAudio(path=str(path), text="你好"), _params(), api_url=_API_A, preset_id="shorekeeper")
 
     path.write_bytes(b"RIFF-BBBB-take-two")  # 同长度换内容
     os.utime(path, ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns))  # 还原 stat
-    second = tts_mod._cache_key("正文", RefAudio(path=str(path), text="你好"), _params(), api_url=_API_A)
-    assert first == second, "size+mtime 未变时必须走指纹快路径（性能约束的锁）"
+    second = tts_mod._cache_key("正文", RefAudio(path=str(path), text="你好"), _params(), api_url=_API_A, preset_id="shorekeeper")
+    assert first != second, "内容变了键没变 = touch/备份还原场景永久命中旧音色"
 
 
 def test_synthesize_engine_and_ref_identity_end_to_end(
@@ -143,10 +145,10 @@ def test_synthesize_engine_and_ref_identity_end_to_end(
     """端到端：换引擎地址 / 原地换 ref 内容都要真重合成，且新键缓存照常工作。"""
     seen_urls: list[str] = []
 
-    def _fake_request(**kwargs: object) -> bytes:
+    def _fake_request(**kwargs: object) -> tuple[bytes, str]:
         url = str(kwargs.get("api_url", ""))
         seen_urls.append(url)
-        return _wav_bytes(rate=44100 if url.endswith("9880") else 8000)
+        return (_wav_bytes(rate=44100 if url.endswith("9880") else 8000), "")
 
     monkeypatch.setattr(tts_mod, "_request_tts", _fake_request)
     ref_path = tmp_path / "ref.wav"

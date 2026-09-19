@@ -378,9 +378,9 @@ def test_synthesize_writes_file_then_hits_cache(
     calls: list[str] = []
     audio = _wav_bytes()
 
-    def _fake_request(**_kwargs: object) -> bytes:
+    def _fake_request(**_kwargs: object) -> tuple[bytes, str]:
         calls.append("hit")
-        return audio
+        return audio, ""
 
     monkeypatch.setattr(tts_mod, "_request_tts", _fake_request)
     ref = RefAudio(path=str(_ref_file(tmp_path)), text="你好", lang="zh")
@@ -415,9 +415,9 @@ def test_synthesize_cache_disabled_always_calls_service(
 ) -> None:
     calls: list[str] = []
 
-    def _fake_request(**_kwargs: object) -> bytes:
+    def _fake_request(**_kwargs: object) -> tuple[bytes, str]:
         calls.append("hit")
-        return _wav_bytes()
+        return _wav_bytes(), ""
 
     monkeypatch.setattr(tts_mod, "_request_tts", _fake_request)
     ref = RefAudio(path=str(_ref_file(tmp_path)), text="你好", lang="zh")
@@ -437,8 +437,9 @@ def test_synthesize_cache_disabled_always_calls_service(
 def test_synthesize_returns_reason_on_service_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(tts_mod, "_request_tts", lambda **_kwargs: None)
-    monkeypatch.setattr(tts_mod, "_last_failure_reason", "服务不可达：ConnectError")
+    monkeypatch.setattr(
+        tts_mod, "_request_tts", lambda **_kwargs: (None, "服务不可达：ConnectError")
+    )
     ref = RefAudio(path=str(_ref_file(tmp_path)), text="你好", lang="zh")
     path, reason = synthesize(
         api_url="http://127.0.0.1:9880",
@@ -455,7 +456,7 @@ def test_synthesize_reports_write_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        tts_mod, "_request_tts", lambda **_kwargs: _wav_bytes()
+        tts_mod, "_request_tts", lambda **_kwargs: (_wav_bytes(), "")
     )
     ref = RefAudio(path=str(_ref_file(tmp_path)), text="你好", lang="zh")
     blocked = tmp_path / "blocked"
@@ -504,7 +505,7 @@ def test_request_payload_matches_api_v2_contract(
     monkeypatch.setitem(__import__("sys").modules, "httpx", fake_httpx)
 
     ref = RefAudio(path=str(_ref_file(tmp_path)), text="你好", lang="zh")
-    payload_bytes = tts_mod._request_tts(
+    payload_bytes, payload_failure = tts_mod._request_tts(
         api_url="http://127.0.0.1:9880/",
         text="正文",
         ref=ref,
@@ -514,6 +515,7 @@ def test_request_payload_matches_api_v2_contract(
         seed=123456789,
     )
     assert payload_bytes == b"RIFFfake"
+    assert payload_failure == ""
     assert captured["url"] == "http://127.0.0.1:9880/tts"
     body = captured["json"]
     assert isinstance(body, dict)
@@ -597,7 +599,7 @@ def test_request_tts_error_body_prefers_exception_over_message(
         content=b'{"message": "tts failed", "Exception": "..."}',
         json_payload={"message": "tts failed", "Exception": reason},
     )
-    out = tts_mod._request_tts(
+    audio, failure = tts_mod._request_tts(
         api_url="http://127.0.0.1:9880",
         text="正文",
         ref=RefAudio(path=str(_ref_file(tmp_path)), text="你好", lang="zh"),
@@ -606,10 +608,12 @@ def test_request_tts_error_body_prefers_exception_over_message(
         engine_params=dict(_PRESET_PARAMS),
         seed=123456789,
     )
-    assert out is None
-    assert "3~10秒" in tts_mod._last_failure_reason
-    assert "tts failed" not in tts_mod._last_failure_reason
-    assert "参考音频" in tts_mod._degrade(tts_mod._last_failure_reason)
+    assert audio is None
+    # T75（T62 P2-1）：4xx=确定性请求类拒绝——原因随请求返回，不进退避窗。
+    assert "3~10秒" in failure
+    assert "tts failed" not in failure
+    assert "参考音频" in tts_mod._degrade(failure)
+    assert tts_mod._last_failure_at == 0.0, "确定性 4xx 拒绝不得武装 30s 退避窗"
 
 
 def test_request_tts_error_body_tolerates_non_json_and_bare_string(
@@ -621,36 +625,35 @@ def test_request_tts_error_body_tolerates_non_json_and_bare_string(
     _install_fake_httpx(
         monkeypatch, status_code=502, content=b"<html>Bad Gateway</html>", json_raises=True
     )
-    assert (
-        tts_mod._request_tts(
-            api_url="http://127.0.0.1:9880",
-            text="正文",
-            ref=ref,
-            params=_params(),
-            timeout_seconds=5.0,
-            engine_params=dict(_PRESET_PARAMS),
-            seed=123456789,
-        )
-        is None
+    audio_502, failure_502 = tts_mod._request_tts(
+        api_url="http://127.0.0.1:9880",
+        text="正文",
+        ref=ref,
+        params=_params(),
+        timeout_seconds=5.0,
+        engine_params=dict(_PRESET_PARAMS),
+        seed=123456789,
     )
+    assert audio_502 is None
+    assert "502" in failure_502
+    assert "Bad Gateway" in failure_502
+    assert tts_mod._last_failure_at > 0.0, "5xx=部署类失败必须进退避窗"
     assert "502" in tts_mod._last_failure_reason
-    assert "Bad Gateway" in tts_mod._last_failure_reason
 
     _install_fake_httpx(
         monkeypatch, status_code=500, content=b'"boom"', json_payload="boom"
     )
-    assert (
-        tts_mod._request_tts(
-            api_url="http://127.0.0.1:9880",
-            text="正文",
-            ref=ref,
-            params=_params(),
-            timeout_seconds=5.0,
-            engine_params=dict(_PRESET_PARAMS),
-            seed=123456789,
-        )
-        is None
+    audio_500, failure_500 = tts_mod._request_tts(
+        api_url="http://127.0.0.1:9880",
+        text="正文",
+        ref=ref,
+        params=_params(),
+        timeout_seconds=5.0,
+        engine_params=dict(_PRESET_PARAMS),
+        seed=123456789,
     )
+    assert audio_500 is None
+    assert "boom" in failure_500
     assert "boom" in tts_mod._last_failure_reason
 
 
@@ -830,7 +833,7 @@ def test_maybe_attach_voice_survives_failure(
 ) -> None:
     monkeypatch.setattr(tts_mod, "synthesize", lambda **_kwargs: (None, "服务不可达：ConnectError"))
     original = _chat_result()
-    assert maybe_attach_voice(
+    patched = maybe_attach_voice(
         _msg("在吗"),
         original,
         config=_config(
@@ -838,7 +841,12 @@ def test_maybe_attach_voice_survives_failure(
             bot_tts_auto_reply_always=True,
             bot_tts_ref_audios=[f"{_ref_file(tmp_path)}|你好|zh"],
         ),
-    ) is original
+    )
+    # 合成失败=只丢增益：文字回复原样；放弃原因挂机读留痕（M-14）。
+    assert patched.audio == []
+    assert patched.body == original.body
+    assert "auto_reply_skipped" in patched.audit_tags
+    assert "tts_service_unreachable" in patched.audit_tags
 
 
 def test_maybe_attach_voice_swallows_unexpected_exception(
@@ -861,11 +869,15 @@ def test_maybe_attach_voice_swallows_unexpected_exception(
 
 def test_maybe_attach_voice_skips_empty_speech() -> None:
     original = _chat_result(body="```code```")
-    assert maybe_attach_voice(
+    patched = maybe_attach_voice(
         _msg("在吗"),
         original,
         config=_config(bot_tts_auto_reply_enabled=True, bot_tts_auto_reply_always=True),
-    ) is original
+    )
+    # 清洗后无可念内容=只丢增益（M-14：放弃原因机读留痕）。
+    assert patched.audio == []
+    assert patched.body == original.body
+    assert "auto_reply_skipped" in patched.audit_tags
 
 
 # ---------------------------------------------------------------------------

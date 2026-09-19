@@ -31,9 +31,15 @@
   ``maybe_attach_voice()`` 把人格回复正文一并合成为语音随消息发出，
   由 ``__init__`` 的 chat 能力包装层调用。是否真的配音由
   ``should_voice_reply()`` 统一裁决：总开关 / 自动配音开关 / 未带音频 /
-  出自 ``bot.chat`` / 会话范围（``BOT_TTS_AUTO_REPLY_SCOPE``）/ 概率门
-  （``BOT_TTS_AUTO_REPLY_PROBABILITY``，默认 5%，确定性哈希实现，
-  同一条消息结果恒定可复现）。
+  出自 ``bot.chat`` / 会话范围（``BOT_TTS_AUTO_REPLY_SCOPE``，**礼仪维度**）/
+  群面中央名单门（M-17：群聊必须过 ``explicit_allowed_for_session``——
+  黑名单永远赢、群白名单空=群面关闭绝不猜群，**安全维度**，与 chat 主链
+  同一事实源）/ 概率门（``BOT_TTS_AUTO_REPLY_PROBABILITY``，默认 5%，
+  确定性哈希实现，同一条消息结果恒定可复现）。
+- **有损变换可观测（M-14）**：``resolve_speech_text`` 的打码/markdown 剥除/
+  截断/占位符替换/词典替换每一步都产出机读结论（``audit`` 出参 + audit_tags
+  ``truncated=true``/``kept_ratio=0.42`` 等），零文本行为变更——「语音只念了
+  42% 字」这类事实（T26-表3）从此可从机读面直接看出来。
 """
 
 from __future__ import annotations
@@ -124,14 +130,11 @@ _SILENCE_PEAK_AMPLITUDE = 2
 _CACHE_LRU_CAP = 512
 _CACHE: OrderedDict[str, tuple[Path, float]] = OrderedDict()
 
-# 参考音频内容指纹缓存（M-11）：路径 → ((size, mtime), sha256 前 16 位)。
-# 首次读取做全文件 sha256，之后只 stat 比 (size, mtime)：一致即沿用指纹，
-# 避免每次合成全文件哈希；stat 变了（真实现场原地换文件必然更新 mtime）才重算。
-# **已知边界**：内容变而 size+mtime 都不变（如 touch 回写旧时间戳）检测不到，
-# 按设计接受——规格锁在 tests/test_tts_cache_identity.py。
-# 并发口径：GIL 下 dict 单键读写原子；竞态最坏结果是两个线程对同一新 stat
-# 重复算一次哈希（幂等同值），故不加锁。
-_REF_FINGERPRINTS: dict[str, tuple[tuple[int, float], str]] = {}
+# 参考音频内容指纹（M-11 + T62 P2-2）：**每次全量 sha256，取前 16 hex**。
+# 曾经是「首次哈希、之后 stat 比 (size,mtime)」快路径——T62 变异实测 stat-only
+# 全绿（指纹语义零正向钉死），且「touch 回写旧时间戳 / 备份还原」这类真实场景
+# 会永久命中旧音色。改常哈希的代价≈每次合成多算一次几百 KB 的 sha256（<1ms），
+# 相对秒级 HTTP 合成可忽略；正确性收益=指纹恒为内容的纯函数。
 
 # 服务健康退避闸（M-09 接线，U-20 裁定=接线不删净）：真失败（不可达/被拒/
 # 空音频/httpx 缺失）进入冷却窗，窗内后续合成**不发 HTTP** 直接快速失败
@@ -289,6 +292,37 @@ def pick_ref_audio(
     return (rng or random).choice(candidates)
 
 
+def _clean_for_speech_tracked(
+    text: str, *, max_chars: int = 0
+) -> tuple[str, dict[str, Any]]:
+    """``clean_for_speech`` 的带审计内里（M-14）：同一次变换顺带产出机读事实。
+
+    返回 ``(清洗结果, 审计 dict)``。清洗操作与顺序和公开 pure 函数**逐字一致**
+    （``clean_for_speech`` 就是本函数的取首元薄壳）——审计只读不写，零行为变更。
+    审计键：``raw_len``/``kept_len``/``stripped``（markdown/代码/链接/列表剥除
+    是否真删了东西）/``truncated``（是否按 ``max_chars`` 截断）。
+    """
+    value = str(text or "")
+    audit: dict[str, Any] = {"raw_len": len(value), "stripped": False, "truncated": False}
+    if not value.strip():
+        return "", audit
+    pre_strip = value
+    value = _FENCE_RE.sub(" ", value)
+    value = _INLINE_CODE_RE.sub(" ", value)
+    value = _URL_RE.sub(" ", value)
+    value = _MARKDOWN_MARKS_RE.sub("", value)
+    value = _LIST_PREFIX_RE.sub("", value)
+    audit["stripped"] = value != pre_strip
+    value = _BLANK_LINES_RE.sub("\n", value)
+    value = _SPACES_RE.sub(" ", value)
+    value = value.replace("\n", " ").strip()
+    if max_chars > 0 and len(value) > max_chars:
+        value = _truncate_at_sentence(value, max_chars)
+        audit["truncated"] = True
+    audit["kept_len"] = len(value)
+    return value, audit
+
+
 def clean_for_speech(text: str, *, max_chars: int = 0) -> str:
     """把回复正文清洗成适合朗读的纯文本。
 
@@ -296,21 +330,11 @@ def clean_for_speech(text: str, *, max_chars: int = 0) -> str:
     变成一串噪音。``max_chars > 0`` 时在句子边界截断；**0（函数缺省）=不限**
     （不按字数截断）——纯函数不做隐藏截断，限制由调用方按配置显式传入
     （M-35：配置面 0=不限 语义统一，「不限≠无界」由中央硬顶另行把守）。
+
+    本函数是 ``_clean_for_speech_tracked`` 的取首元薄壳：行为零差异；
+    需要有损变换机读结论的调用方走 ``resolve_speech_text(…, audit=…)``。
     """
-    value = str(text or "")
-    if not value.strip():
-        return ""
-    value = _FENCE_RE.sub(" ", value)
-    value = _INLINE_CODE_RE.sub(" ", value)
-    value = _URL_RE.sub(" ", value)
-    value = _MARKDOWN_MARKS_RE.sub("", value)
-    value = _LIST_PREFIX_RE.sub("", value)
-    value = _BLANK_LINES_RE.sub("\n", value)
-    value = _SPACES_RE.sub(" ", value)
-    value = value.replace("\n", " ").strip()
-    if max_chars > 0 and len(value) > max_chars:
-        value = _truncate_at_sentence(value, max_chars)
-    return value
+    return _clean_for_speech_tracked(text, max_chars=max_chars)[0]
 
 
 def _truncate_at_sentence(text: str, limit: int) -> str:
@@ -323,25 +347,19 @@ def _truncate_at_sentence(text: str, limit: int) -> str:
 
 
 def _ref_fingerprint(ref_path: str) -> str:
-    """参考音频内容指纹（M-11）：stat 快路径 + 首次全文件 sha256。
+    """参考音频内容指纹（M-11 + T62 P2-2）：内容 sha256 前 16 hex。
 
-    读不到的路径返回 ``"missing"``（确定性占位；不同路径另有 ``ref`` 段区分）。
+    指纹是**内容的纯函数**（每次全量哈希）：「内容变而 size+mtime 被还原」
+    （touch 回写/备份还原）不再永久命中旧音色。原 stat 快路径已删——T62 变异
+    实测 stat-only 全绿（零正向钉死），且哈希成本相对秒级合成可忽略（注释见
+    模块头）。读不到的路径返回 ``"missing"``（确定性占位；不同路径另有 ``ref``
+    段区分）。
     """
     path = Path(ref_path)
     try:
-        stat = path.stat()
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
     except OSError:
         return "missing"
-    stamp = (stat.st_size, stat.st_mtime)
-    cached = _REF_FINGERPRINTS.get(ref_path)
-    if cached is not None and cached[0] == stamp:
-        return cached[1]
-    try:
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
-    except OSError:
-        return "missing"
-    _REF_FINGERPRINTS[ref_path] = (stamp, digest)
-    return digest
 
 
 def _cache_identity(
@@ -529,18 +547,26 @@ def _request_tts(
     timeout_seconds: float,
     engine_params: dict[str, object],
     seed: int,
-) -> bytes | None:
-    """调用 api_v2.py 的 ``POST /tts``，返回 wav 字节；失败返回 None。
+) -> tuple[bytes | None, str]:
+    """调用 api_v2.py 的 ``POST /tts``，返回 ``(wav 字节, 失败原因)``。
 
-    异常一律吞掉并记账（fail-open）——调用方据此给降级文案。
-    每条真实失败经 ``_record_failure`` 进入健康退避冷却窗（M-09）。
+    成功时原因为空串；失败返回 ``(None, 原因)``——**原因随请求返回**（T62
+    P1-1）：旧实现把原因放模块全局再由 ``synthesize`` 回读，并发下会读到
+    别的请求的原因，``_FAILURE_KINDS`` 错挂 kind 污染 M-13 告警分类。
+
+    异常一律吞掉（fail-open）——调用方据此给降级文案。**失败分类学**
+    （T62 P2-1）：只有部署类失败进 30s 健康退避窗（``_record_failure``）——
+    不可达/超时、5xx、空音频、httpx 缺失；确定性请求类拒绝（4xx，如参考
+    音频 3~10s 越界、参数错）**不进窗**：坏 ref 是持续性的，进窗只会让全员
+    周期性吃「服务没在跑」的失真文案。体检失败（``tts_bad_audio``）同口径
+    不入窗（retryable=False → 不设窗，存疑-1 裁定）。
     """
     try:
         import httpx
     except Exception:  # noqa: BLE001 - 缺依赖按服务不可用处理。
         # 与其余失败同口径记账（M-46 指认的「httpx 分支不更新时刻」在此收口）。
         _record_failure("httpx 不可用")
-        return None
+        return None, "httpx 不可用"
 
     endpoint = f"{api_url.rstrip('/')}/tts"
     payload = _build_request_payload(text, ref, params, engine_params=engine_params, seed=seed)
@@ -548,11 +574,11 @@ def _request_tts(
         with httpx.Client(timeout=max(1.0, float(timeout_seconds))) as client:
             response = client.post(endpoint, json=payload)
     except Exception as exc:  # noqa: BLE001 - 连接/超时统一按失败降级。
-        _record_failure(f"服务不可达：{type(exc).__name__}")
+        reason = f"服务不可达：{type(exc).__name__}"
+        _record_failure(reason)
         logger.info("tts request failed: %s", exc)
-        return None
+        return None, reason
     if response.status_code != 200:
-        _last_failure_at = time.monotonic()
         # 错误体形如 {"message": "tts failed", "Exception": "<真原因>"}
         # （api_v2.py 的兜底包装）：真原因在 Exception 里，message 只是固定摘要，
         # 故必须先取 Exception，否则 3~10 秒越界这类可读原因会被吞成 "tts failed"，
@@ -567,14 +593,18 @@ def _request_tts(
             detail = error_body[:200]
         else:
             detail = (response.text or "")[:200]
-        _record_failure(f"服务返回 {response.status_code}：{detail[:160]}")
+        reason = f"服务返回 {response.status_code}：{detail[:160]}"
+        if response.status_code >= 500:
+            # 部署类失败（网关/引擎内部故障）→ 进退避窗；4xx=确定性请求类拒绝
+            # → 只随请求返回原因，不进窗（T62 P2-1，分类学见 docstring）。
+            _record_failure(reason)
         logger.info("tts request rejected: %s %s", response.status_code, detail)
-        return None
+        return None, reason
     if not response.content:
         _record_failure("服务返回空音频")
-        return None
+        return None, "服务返回空音频"
     _clear_failure()
-    return response.content
+    return response.content, ""
 
 
 def _inspect_wav_bytes(data: bytes) -> str:
@@ -665,7 +695,7 @@ def synthesize(
     backoff = _backoff_reason()
     if backoff:
         return None, backoff
-    audio = _request_tts(
+    audio, fail_reason = _request_tts(
         api_url=api_url,
         text=text,
         ref=ref,
@@ -675,7 +705,8 @@ def synthesize(
         seed=effective_seed,
     )
     if audio is None:
-        return None, _last_failure_reason or "合成失败"
+        # 原因随请求返回（T62 P1-1）：不回读全局——并发下那是别的请求的原因。
+        return None, fail_reason or "合成失败"
     bad = _inspect_wav_bytes(audio)
     if not bad:
         byte_cap = int(max_audio_bytes or 0) or MAX_AUDIO_BYTES_FALLBACK
@@ -805,11 +836,28 @@ def _issue(
     )
 
 
-def _failure_issue(message: IncomingMessage, reason: str) -> OperationalIssue:
-    for prefix, kind, retryable in _FAILURE_KINDS:
+def _failure_kind_tag(reason: str) -> str:
+    """失败原因 → kind 标签（``_FAILURE_KINDS`` 前缀表的唯一分类口）。"""
+    for prefix, kind, _retryable in _FAILURE_KINDS:
         if reason.startswith(prefix):
-            return _issue(message, kind=kind, retryable=retryable, detail=reason)
-    return _issue(message, kind="tts_synthesize_failed", retryable=False, detail=reason)
+            return kind
+    return "tts_synthesize_failed"
+
+
+def _failure_issue(message: IncomingMessage, reason: str) -> OperationalIssue:
+    return _issue(
+        message,
+        kind=_failure_kind_tag(reason),
+        retryable=_failure_retryable(reason),
+        detail=reason,
+    )
+
+
+def _failure_retryable(reason: str) -> bool:
+    for prefix, _kind, retryable in _FAILURE_KINDS:
+        if reason.startswith(prefix):
+            return retryable
+    return False
 
 
 def _no_ref_audio_issue(message: IncomingMessage, config: Any) -> OperationalIssue:
@@ -853,8 +901,9 @@ def build_tts_capability(config: Any | None = None) -> Any:
 
         # 0=不限（不按字数截断）；「不限≠无界」，下方必过中央硬顶（G2-R3）。
         max_chars = int(getattr(config, "bot_tts_max_chars", 0) or 0)
+        lossy_audit: dict[str, Any] = {}
         speech, blocked = resolve_speech_text(
-            config, message, body, max_chars=max_chars
+            config, message, body, max_chars=max_chars, audit=lossy_audit
         )
         if blocked:
             # P1-1（T56 反审转发）：政策件异常/配置坏（policy_unavailable）≠ 有意
@@ -879,12 +928,17 @@ def build_tts_capability(config: Any | None = None) -> Any:
                 operational_issue=issue,
             )
         if not speech:
+            # 空结果也带上有损变换事实（M-14）：「为什么没的念」从机读面可查。
             return CapabilityResult(
                 request_id=message.request_id,
                 capability_id="bot.tts",
                 kind="text",
                 body="这段话里没有能念出来的内容——换一句试试？",
-                audit_tags=["tts", "empty_after_clean"],
+                audit_tags=[
+                    "tts",
+                    "empty_after_clean",
+                    *lossy_transform_tags(lossy_audit),
+                ],
             )
         # 文本硬顶（G2-R3）：超顶=拒绝合成+留痕，不静默、**不拆条**（拆多条语音=
         # 多个 record 段的新投递语义，H 波 M-63 修好前拆条=翻倍无保护语音）。
@@ -899,7 +953,13 @@ def build_tts_capability(config: Any | None = None) -> Any:
                 body=(
                     "这段话太长了，我一口气念不完——拆成几句再说给我听好不好？"
                 ),
-                audit_tags=["tts", "over_hard_cap", f"len={len(speech)}", f"cap={hard_cap}"],
+                audit_tags=[
+                    "tts",
+                    "over_hard_cap",
+                    f"len={len(speech)}",
+                    f"cap={hard_cap}",
+                    *lossy_transform_tags(lossy_audit),
+                ],
                 operational_issue=_issue(
                     message,
                     kind="tts_service_rejected",
@@ -960,7 +1020,7 @@ def build_tts_capability(config: Any | None = None) -> Any:
         # 与 randpic 同口径：title/body 留空，只发媒体本体，
         # 否则 renderer 的 body→summary→title 兜底链会把标题当文案一起发出去。
         # audit_tags 记 preset/seed（G2-R3：确定性可审计，波末向用户报备
-        # 「同句恒同音色」语义变更）。
+        # 「同句恒同音色」语义变更）与有损变换事实（M-14）。
         return CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.tts",
@@ -973,6 +1033,7 @@ def build_tts_capability(config: Any | None = None) -> Any:
                 "sent",
                 f"preset={preset.preset_id}",
                 f"seed={speech_seed}",
+                *lossy_transform_tags(lossy_audit),
             ],
         )
 
@@ -1016,17 +1077,22 @@ def speech_block_reason(config: Any, message: IncomingMessage, text: str) -> str
     return ""
 
 
-def _apply_lexicon(text: str, lexicon: dict[str, str]) -> str:
+def _apply_lexicon(text: str, lexicon: dict[str, str]) -> tuple[str, int]:
     """读法词典应用（M-77 机制）：键=原文精确串，值=替换读法。
 
     应用点=清洗侧末端（占位符替换之后、内容门之前）。v1 预设词典为空表
     （零行为变更）；条目待 U-02 听辨后逐条入册 tts_presets。禁在此为 RP 括号
     另造第二正则（S-07 教训）——括号段处理收 domains/core 共用件。
+
+    返回 ``(替换后文本, 替换命中次数)``（M-14：命中数进机读审计；替换语义
+    与顺序零变化）。
     """
+    hits = 0
     for original, reading in lexicon.items():
         if original:
+            hits += text.count(original)
             text = text.replace(original, reading)
-    return text
+    return text, hits
 
 
 def resolve_speech_text(
@@ -1035,6 +1101,7 @@ def resolve_speech_text(
     raw_text: str,
     *,
     max_chars: int | None = None,
+    audit: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     """合成前**唯一**的取文口：打码 → 清洗 → 占位符 → 词典 → 内容门。
 
@@ -1047,17 +1114,37 @@ def resolve_speech_text(
 
     ``max_chars``：调用方按配置显式传入；**0=不限**（不按字数截断，M-35 语义
     统一——本函数不再把 0 悄悄抬回任何缺省值，硬顶由能力层另行把守）。
+
+    ``audit``（M-14）：可选出参 dict——有损变换的机读事实写回这里
+    （``redacted``/``stripped``/``truncated``/``placeholders_replaced``/
+    ``lexicon_replaced``/``raw_len``/``kept_len``/``kept_ratio``），文本处理
+    结果零变化；渲染成 audit_tags 用 ``lossy_transform_tags``。
     """
-    value = redact_local_secrets(str(raw_text or ""))
+    raw = str(raw_text or "")
+    value = redact_local_secrets(raw)
     limit = max_chars
     if limit is None:
         # 未显式给限=读配置（0=不限原样生效，无 or-反转）。
         limit = int(getattr(config, "bot_tts_max_chars", 0) or 0)
-    speech = clean_for_speech(value, max_chars=int(limit))
+    speech, clean_audit = _clean_for_speech_tracked(value, max_chars=int(limit))
     # 打码占位符（`<已隐藏>` / `<本机路径已隐藏>`）的尖括号会被清洗吃掉，剩个
     # 残缺形态念出来只会变成一串怪音；换成可读出的词（占位符本身仍不外泄原值）。
-    speech = _REDACTION_PLACEHOLDER_RE.sub("已隐去", speech)
-    speech = _apply_lexicon(speech, _resolve_preset(config).lexicon)
+    speech, placeholder_hits = _REDACTION_PLACEHOLDER_RE.subn("已隐去", speech)
+    speech, lexicon_hits = _apply_lexicon(speech, _resolve_preset(config).lexicon)
+    if audit is not None:
+        kept_ratio = round(len(speech) / len(raw), 2) if raw else 1.0
+        audit.update(
+            {
+                "raw_len": len(raw),
+                "kept_len": len(speech),
+                "kept_ratio": kept_ratio,
+                "redacted": value != raw,
+                "stripped": bool(clean_audit.get("stripped")),
+                "truncated": bool(clean_audit.get("truncated")),
+                "placeholders_replaced": int(placeholder_hits),
+                "lexicon_replaced": int(lexicon_hits),
+            }
+        )
     if not speech:
         return "", ""
     reason = speech_block_reason(config, message, speech)
@@ -1066,13 +1153,46 @@ def resolve_speech_text(
     return speech, ""
 
 
+def lossy_transform_tags(audit: dict[str, Any] | None) -> list[str]:
+    """M-14：把 ``resolve_speech_text`` 的审计 dict 渲染成机读 audit_tags。
+
+    稀疏-真值口径（与 ``over_hard_cap``/``skip_disabled`` 同惯例）：事实为真
+    才出现，键值形如 ``truncated=true``/``kept_ratio=0.42``。硬顶触发的机读
+    结论由能力层既有 ``over_hard_cap``+``len=``+``cap=`` 承担，此处不重复。
+    """
+    if not audit:
+        return []
+    tags: list[str] = []
+    if audit.get("redacted"):
+        tags.append("redacted=true")
+    if audit.get("stripped"):
+        tags.append("stripped=true")
+    if audit.get("truncated"):
+        tags.append("truncated=true")
+    ratio = audit.get("kept_ratio")
+    if isinstance(ratio, (int, float)) and ratio < 1.0:
+        tags.append(f"kept_ratio={ratio}")
+    placeholders = audit.get("placeholders_replaced")
+    if placeholders:
+        tags.append(f"placeholders_replaced={placeholders}")
+    lexicon_hits = audit.get("lexicon_replaced")
+    if lexicon_hits:
+        tags.append(f"lexicon_replaced={lexicon_hits}")
+    return tags
+
+
 def _speech_refusal_hint() -> str:
     """被内容门拦下时的守岸人口吻回执（不复述政策类别、不泄露被拦原文）。"""
     return "这段话我不念出声——留在文字里就好。想让我说点什么，换个说法试试？"
 
 
 def auto_reply_scope_allows(config: Any, message: IncomingMessage) -> bool:
-    """对话自动配音的会话范围判定：private / group / all。"""
+    """对话自动配音的会话范围判定：private / group / all（**礼仪维度**）。
+
+    本谓词只答「用户想在哪些会话面听配音」；「哪里允许说」的安全维度由
+    ``should_voice_reply`` 里的中央名单门（``explicit_allowed_for_session``，
+    M-17）承担——两门串联，互不取代。
+    """
     scope = str(getattr(config, "bot_tts_auto_reply_scope", "private") or "private").strip().lower()
     if scope == "all":
         return True
@@ -1110,7 +1230,16 @@ def should_voice_reply(
     """对话自动配音的完整门链判定（纯谓词，无副作用，可直测）。
 
     依次判定：总开关 → 自动配音开关 → 结果尚未带音频 → 结果出自 ``bot.chat``
-    → 会话范围匹配 → 概率门。
+    → 会话范围匹配（**礼仪维度**，``BOT_TTS_AUTO_REPLY_SCOPE``）→ 群面中央
+    名单门（**安全维度**，M-17）→ 概率门。
+
+    M-17 中央同源：scope 放行的**群聊**必须再过
+    ``explicit_allowed_for_session("group", …)``——与 chat 主链/被动好感共用
+    的单一事实源，v21r5 四名单语义（黑名单永远赢；群白名单空=群面关闭，
+    绝不猜群）。分层保持：scope 仍是礼仪开关（private/group/all 决定「想不
+    想在哪说」），名单是安全门（决定「哪里允许说」），两门串联、互不取代；
+    ``bot_tts_auto_reply_always``（跳概率门）压不过安全门。私聊面不吃群名单
+    （M-17 只收群面）。
 
     概率门用**确定性哈希**（与 ``policy/gate.py`` 的
     ``deterministic_group_reply_lottery`` 同款，media 域内自带一份以保持域边界）：
@@ -1127,6 +1256,10 @@ def should_voice_reply(
     if str(getattr(result, "capability_id", "")) != "bot.chat":
         return False
     if not auto_reply_scope_allows(config, message):
+        return False
+    # M-17 安全维度：群面接入中央四名单（黑名单永远赢；白名单空=群面关闭）。
+    group_id = str(getattr(message, "group_id", "") or "").strip()
+    if group_id and not explicit_allowed_for_session("group", group_id, config):
         return False
     if bool(getattr(config, "bot_tts_auto_reply_always", False)):
         return True
@@ -1145,6 +1278,18 @@ def should_voice_reply(
     return bucket < probability * 10000
 
 
+def _skip_voice_with_tags(result: CapabilityResult, *extra: str) -> CapabilityResult:
+    """配音增益放弃时的机读留痕（M-14）：文字回复零变化，只追加 audit_tags。
+
+    本域 logger 不在生产日志树上（``_issue`` docstring 同因），放弃原因只写
+    logger.info 等于丢失；挂到 audit_tags 后中央审计面可直接查「为什么这句
+    没配音」。
+    """
+    return result.model_copy(
+        update={"audit_tags": [*result.audit_tags, "tts", "auto_reply_skipped", *extra]}
+    )
+
+
 def maybe_attach_voice(
     message: IncomingMessage,
     result: CapabilityResult,
@@ -1154,25 +1299,30 @@ def maybe_attach_voice(
     """给 chat 结果附加语音（供 ``__init__`` 的 chat 能力包装层调用）。
 
     门链见 ``should_voice_reply``：总开关 / 自动配音开关 / 未带音频 /
-    出自 bot.chat / 会话范围 / 概率门。任何失败都原样返回 result——
-    配音是增益，绝不能影响文字回复。
+    出自 bot.chat / 会话范围（礼仪维度）/ 群面中央名单（安全维度，M-17）/
+    概率门。任何失败都原样放弃配音——配音是增益，绝不能影响文字回复；
+    放弃路径一律挂机读留痕（``auto_reply_skipped`` + 原因标签，M-14）。
     """
     if not should_voice_reply(config, message, result):
         return result
     try:
         # 0=不限（M-35 语义统一：不再 or-抬回 120）；「不限≠无界」，下方过硬顶。
         max_chars = int(getattr(config, "bot_tts_auto_reply_max_chars", 0) or 0)
+        lossy_audit: dict[str, Any] = {}
         speech, blocked = resolve_speech_text(
-            config, message, result.body or result.summary or "", max_chars=max_chars
+            config, message, result.body or result.summary or "", max_chars=max_chars,
+            audit=lossy_audit,
         )
         if blocked:
             # 配音是增益：被内容门拦下就只丢增益，文字回复原样出站。
             logger.info("tts auto reply blocked by policy: category=%s", blocked)
-            return result
+            return _skip_voice_with_tags(result, "blocked_by_policy")
         if not speech:
-            return result
+            return _skip_voice_with_tags(
+                result, "empty_after_clean", *lossy_transform_tags(lossy_audit)
+            )
         # 文本硬顶（G2-R3）：自动路超顶=静默放弃增益（文字回复原样出站），
-        # 同样不拆条；留痕走日志（配音增益面不挂 issue 防刷屏）。
+        # 同样不拆条；留痕挂 audit_tags（配音增益面不挂 issue 防刷屏）。
         hard_cap = (
             int(getattr(config, "bot_tts_hard_max_chars", 0) or 0) or HARD_MAX_CHARS_FALLBACK
         )
@@ -1180,7 +1330,13 @@ def maybe_attach_voice(
             logger.info(
                 "tts auto reply skipped: over_hard_cap len=%d cap=%d", len(speech), hard_cap
             )
-            return result
+            return _skip_voice_with_tags(
+                result,
+                "over_hard_cap",
+                f"len={len(speech)}",
+                f"cap={hard_cap}",
+                *lossy_transform_tags(lossy_audit),
+            )
         preset = _resolve_preset(config)
         params = _build_params(config)
         ref = pick_ref_audio(
@@ -1188,7 +1344,7 @@ def maybe_attach_voice(
             base_dir=str(getattr(config, "bot_tts_gptsovits_dir", "") or ""),
         )
         if ref is None:
-            return result
+            return _skip_voice_with_tags(result, "no_ref_audio")
         speech_seed = derive_seed(
             speech,
             ref,
@@ -1215,7 +1371,7 @@ def maybe_attach_voice(
         )
         if path is None:
             logger.info("tts auto reply skipped: %s", reason)
-            return result
+            return _skip_voice_with_tags(result, _failure_kind_tag(reason))
         return result.model_copy(
             update={
                 "audio": [{"file": str(path), "review_text": speech}],
@@ -1225,6 +1381,7 @@ def maybe_attach_voice(
                     "auto_reply",
                     f"preset={preset.preset_id}",
                     f"seed={speech_seed}",
+                    *lossy_transform_tags(lossy_audit),
                 ],
             }
         )

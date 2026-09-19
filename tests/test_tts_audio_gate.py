@@ -65,7 +65,7 @@ def _isolate_cache(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: bytes):
-    monkeypatch.setattr(tts_mod, "_request_tts", lambda **_kw: payload)
+    monkeypatch.setattr(tts_mod, "_request_tts", lambda **_kw: (payload, ""))
     ref = RefAudio(path=str(tmp_path / "ref.wav"), text="你好", lang="zh")
     out = tmp_path / "out"
     return synthesize(
@@ -108,9 +108,9 @@ def test_poison_artifact_never_enters_cache(
     """毒件被拒后不得入内存缓存：下一句同文本仍会真打引擎（不留复放捷径）。"""
     calls: list[str] = []
 
-    def _fake_request(**_kw: object) -> bytes:
+    def _fake_request(**_kw: object) -> tuple[bytes, str]:
         calls.append("hit")
-        return b"garbage-not-audio"
+        return b"garbage-not-audio", ""
 
     monkeypatch.setattr(tts_mod, "_request_tts", _fake_request)
     ref = RefAudio(path=str(tmp_path / "ref.wav"), text="你好", lang="zh")

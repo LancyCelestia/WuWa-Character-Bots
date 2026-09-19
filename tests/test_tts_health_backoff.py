@@ -233,7 +233,7 @@ def test_backoff_never_blocks_cache_hits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """退避闸只省注定失败的 HTTP：已合成的缓存命中照常复用（闸在缓存查找之后）。"""
-    monkeypatch.setattr(tts_mod, "_request_tts", lambda **_kw: _wav_bytes())
+    monkeypatch.setattr(tts_mod, "_request_tts", lambda **_kw: (_wav_bytes(), ""))
     ref = _ref(tmp_path)
     path1, reason1 = _call(tmp_path, ref, cache_enabled=True)
     assert path1 is not None and reason1 == ""

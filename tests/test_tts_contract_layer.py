@@ -132,7 +132,6 @@ def _wav_bytes(*, seconds: float = 0.2, rate: int = 32000, amplitude: int = 0) -
 @pytest.fixture(autouse=True)
 def _isolate_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tts_mod, "_CACHE", OrderedDict())
-    monkeypatch.setattr(tts_mod, "_REF_FINGERPRINTS", {})
     monkeypatch.setattr(tts_mod, "_last_failure_at", 0.0)
     monkeypatch.setattr(tts_mod, "_last_failure_reason", "")
 
@@ -218,7 +217,7 @@ def test_hard_cap_zero_config_uses_builtin_constant(
 
 def test_synthesize_rejects_audio_over_byte_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """产物侧超字节顶 → 体检闸拒（tts_bad_audio 族），不入缓存不落盘。"""
-    monkeypatch.setattr(tts_mod, "_request_tts", lambda **_k: _wav_bytes(seconds=0.3))
+    monkeypatch.setattr(tts_mod, "_request_tts", lambda **_k: (_wav_bytes(seconds=0.3), ""))
     config_cap = 1024  # 1 KiB：必然超顶
     path, reason = synthesize(
         api_url=_API,
@@ -237,7 +236,7 @@ def test_synthesize_rejects_audio_over_byte_cap(tmp_path: Path, monkeypatch: pyt
 
 def test_byte_cap_zero_uses_builtin_constant(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """字节顶 0=禁配无界：回退 8 MiB 内置常量（小产物照常通过）。"""
-    monkeypatch.setattr(tts_mod, "_request_tts", lambda **_k: _wav_bytes(seconds=0.2))
+    monkeypatch.setattr(tts_mod, "_request_tts", lambda **_k: (_wav_bytes(seconds=0.2), ""))
     path, reason = synthesize(
         api_url=_API,
         text="正文",
@@ -274,9 +273,9 @@ def test_silence_trap_synthesis_fails_without_disk_or_cache(
 ) -> None:
     calls: list[int] = []
 
-    def _fake(**_kwargs: object) -> bytes:
+    def _fake(**_kwargs: object) -> tuple[bytes, str]:
         calls.append(1)
-        return _wav_bytes(seconds=1.0, rate=16000)
+        return _wav_bytes(seconds=1.0, rate=16000), ""
 
     monkeypatch.setattr(tts_mod, "_request_tts", _fake)
     out = tmp_path / "out"
@@ -370,9 +369,9 @@ def test_payload_seed_defaults_to_cache_derivation(tmp_path: Path, monkeypatch: 
     """端到端：synthesize 内部派生 seed 并进请求体（旧硬编码 -1 死亡）。"""
     seen: dict[str, object] = {}
 
-    def _fake_request(**kwargs: object) -> bytes:
+    def _fake_request(**kwargs: object) -> tuple[bytes, str]:
         seen.update(kwargs)
-        return _wav_bytes(seconds=0.2)
+        return _wav_bytes(seconds=0.2), ""
 
     monkeypatch.setattr(tts_mod, "_request_tts", _fake_request)
     path, reason = synthesize(
@@ -488,7 +487,7 @@ def test_quota_enforced_after_write_when_configured(
         return {"files_removed": 0, "bytes_removed": 0}
 
     monkeypatch.setattr(tts_mod, "enforce_quota", _fake_quota)
-    monkeypatch.setattr(tts_mod, "_request_tts", lambda **_k: _wav_bytes(seconds=0.2))
+    monkeypatch.setattr(tts_mod, "_request_tts", lambda **_k: (_wav_bytes(seconds=0.2), ""))
     path, reason = synthesize(
         api_url=_API, text="正文", ref=_ref(tmp_path), params=_params(),
         output_dir=tmp_path / "out", quota_max_bytes=1024, quota_max_age_days=7,
@@ -502,7 +501,7 @@ def test_quota_off_by_default_is_no_call(tmp_path: Path, monkeypatch: pytest.Mon
         raise AssertionError("配额缺省关（0/0）不得触达 enforce_quota")
 
     monkeypatch.setattr(tts_mod, "enforce_quota", _fail_quota)
-    monkeypatch.setattr(tts_mod, "_request_tts", lambda **_k: _wav_bytes(seconds=0.2))
+    monkeypatch.setattr(tts_mod, "_request_tts", lambda **_k: (_wav_bytes(seconds=0.2), ""))
     path, reason = synthesize(
         api_url=_API, text="正文", ref=_ref(tmp_path), params=_params(),
         output_dir=tmp_path / "out",
@@ -574,5 +573,6 @@ def test_failure_kind_table_every_entry_has_mapping() -> None:
 
 
 def test_lexicon_mechanism_applies_substitution() -> None:
-    assert tts_mod._apply_lexicon("守岸人真棒", {"守岸人": "守 岸 人"}) == "守 岸 人真棒"
-    assert tts_mod._apply_lexicon("普通文本", {}) == "普通文本"
+    # T75：_apply_lexicon 返回 (文本, 命中数)——命中数进 M-14 机读审计。
+    assert tts_mod._apply_lexicon("守岸人真棒", {"守岸人": "守 岸 人"}) == ("守 岸 人真棒", 1)
+    assert tts_mod._apply_lexicon("普通文本", {}) == ("普通文本", 0)
