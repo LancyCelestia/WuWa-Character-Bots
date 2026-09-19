@@ -78,6 +78,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import
 from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
     assess_public_content,
 )
+from plugins.bot_unified_runtime.domains.core.text_boundary import (
+    match_trigger,
+)
 from plugins.bot_unified_runtime.domains.media.tts_presets import (
     DEFAULT_PRESET_ID,
     HARD_MAX_CHARS_FALLBACK,
@@ -100,13 +103,15 @@ DEFAULT_TRIGGER_WORDS: tuple[str, ...] = (
     "语音合成", "朗读", "语音", "念", "说",
     "tts", "say", "shuo", "yuyin", "nian", "langdu",
 )
-# 触发词与正文之间的分隔字符（取正文时剥掉）。
-# ⚠️ 这里**只能放真分隔符**（标点与空白），一个词字符都不能进：曾经收录过
-# 「了/的/呢/吗/呀/啊/哈」，于是「说了再见」「说的对」「语音哈喽」这类日常聊天
-# 被整句吞进 bot.tts（priority 41 + block=True ⇒ 消息不再进人格对话），并把
-# 「再见」「对」「喽」这种残片念出去。实测 312 句日常中文劫持率 68.1%。
-# 回归锁见 tests/test_tts_hijack_guard.py（含"边界集合不得出现汉字"的棘轮断言）。
-_TEXT_BOUNDARY_CHARS = "，,。！？!?：:、 　\t～~"
+# 触发词与正文之间的分隔字符**不再本地持有**：S-07 六副本收编最后一副本（T83）
+# 换线中央件 ``domains/core/text_boundary``，权威取值=
+# ``text_boundary.TRIGGER_BOUNDARY_CHARS``（本文件 d3a53ea 收紧集逐字上收，
+# T77 值漂移硬锁曾钉两侧逐字一致）。⚠️ 那里**只能放真分隔符**（标点与空白），
+# 一个词字符都不能进：曾经收录过「了/的/呢/吗/呀/啊/哈」，于是「说了再见」
+# 「说的对」「语音哈喽」这类日常聊天被整句吞进 bot.tts（priority 41 + block=True
+# ⇒ 消息不再进人格对话），并把「再见」「对」「喽」这种残片念出去。实测 312 句
+# 日常中文劫持率 68.1%。回归锁见 tests/test_tts_hijack_guard.py（含"边界集合
+# 不得出现汉字"的棘轮断言，换线后直锁权威值）。
 
 # 参考音频时长合规区间（3~10 秒）由服务端硬卡（TTS.py 的 _set_prompt_semantic），
 # 本地不做重复预检：ChatBot 运行环境没有 soundfile/mutagen，读不了时长；
@@ -221,30 +226,16 @@ def extract_tts_text(
 ) -> str:
     """取出触发句里要合成的正文；不命中触发词返回空串。
 
-    最长触发词优先匹配，避免短词截断长词（``tts`` 之于 ``tts`` 前缀词）。
-    英文词**大小写不敏感**（``SAY``/``TTS`` 是真命令，M-16），正文一律取原串切片，
-    绝不返回折叠后的大小写。
+    判定体已收编中央件 ``domains/core/text_boundary.match_trigger``（S-07
+    六副本收编最后一副本，T83 换线）：最长触发词优先匹配（``语音合成`` 之于
+    ``语音``）、英文大小写不敏感（``SAY``/``TTS`` 是真命令，M-16）、正文一律
+    取原串切片绝不返回折叠后的大小写、casefold 改变长度的极端字符（ß→ss）
+    回退逐字精确匹配、权威边界集（d3a53ea 收紧集）——语义与字符集均自本文件
+    逐字上收（T59 建件蓝本）。本函数保留为**取文入口薄别名**（L-C04：词表
+    提取器 harvest 依赖 ``extract_tts_text``/``DEFAULT_TRIGGER_WORDS`` 名与
+    词表留在本模块 globals，提取器递归委托追踪已支持转发形态）。
     """
-    stripped = (text or "").strip()
-    if not stripped:
-        return ""
-    folded = stripped.casefold()
-    # casefold 会改变长度的极端字符（如 ß→ss）会让「折叠串偏移」与「原串偏移」错位，
-    # 那种输入退回逐字精确匹配——宁可不触发，也不切错正文或误触发。
-    foldable = len(folded) == len(stripped)
-    target = folded if foldable else stripped
-    for word in sorted(set(effective_trigger_words(trigger_words)), key=len, reverse=True):
-        needle = word.casefold() if foldable else word
-        if target == needle or stripped == word:
-            # 只发了触发词、没带正文：由调用方给引导文案。
-            return ""
-        if not target.startswith(needle):
-            continue
-        tail = stripped[len(needle):]
-        if not tail or tail[0] not in _TEXT_BOUNDARY_CHARS:
-            continue
-        return tail.lstrip(_TEXT_BOUNDARY_CHARS).strip()
-    return ""
+    return match_trigger(text, effective_trigger_words(trigger_words))
 
 
 def parse_ref_audios(

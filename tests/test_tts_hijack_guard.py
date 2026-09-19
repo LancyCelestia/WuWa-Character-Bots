@@ -20,7 +20,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.domains.media.capabilities import tts as tts_mod
+from plugins.bot_unified_runtime.domains.core.text_boundary import (
+    TRIGGER_BOUNDARY_CHARS,
+)
 from plugins.bot_unified_runtime.domains.media.capabilities.tts import (
     extract_tts_text,
     is_tts_command,
@@ -91,19 +93,23 @@ def test_bare_trigger_still_returns_empty_for_guidance(text: str = "说") -> Non
 
 
 def test_boundary_chars_contain_no_word_characters() -> None:
-    """棘轮：分隔符集合里不得出现任何汉字——出现即回到本条劫持的根因。"""
+    """棘轮：分隔符集合里不得出现任何汉字——出现即回到本条劫持的根因。
+
+    T83 换线后 tts 不再本地持有字符集，棘轮直锁唯一权威
+    ``text_boundary.TRIGGER_BOUNDARY_CHARS``（tts 经 match_trigger 缺省消费）。
+    """
 
     def _is_cjk(char: str) -> bool:
         return "㐀" <= char <= "鿿" or "぀" <= char <= "ヿ"
 
-    offenders = [c for c in tts_mod._TEXT_BOUNDARY_CHARS if _is_cjk(c)]
+    offenders = [c for c in TRIGGER_BOUNDARY_CHARS if _is_cjk(c)]
     assert offenders == [], f"边界集合混入词字符：{offenders}"
 
 
 def test_boundary_chars_are_punctuation_and_space_only() -> None:
     """棘轮：分隔符只能是空白或 ASCII/中文标点。"""
     allowed = set("，,。！？!?：:、 　\t～~-.…—\"'“”‘'()（）[]【】;；")
-    offenders = [c for c in tts_mod._TEXT_BOUNDARY_CHARS if c not in allowed]
+    offenders = [c for c in TRIGGER_BOUNDARY_CHARS if c not in allowed]
     assert offenders == [], f"边界集合出现非分隔字符：{offenders}"
 
 

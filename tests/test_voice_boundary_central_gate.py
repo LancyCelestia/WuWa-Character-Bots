@@ -329,12 +329,6 @@ def test_gate2_tts_local_charset_matches_central() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="tts.py 换线 text_boundary 归 T75（tts.py 在飞独占席；briefing 的"
-    "「T61 已收编 tts」与 report-T61 交付清单及工作树实况不符）。换线落树后"
-    "本例 XPASS→strict 全量红→请摘除 xfail 转正为硬门（棘轮，沿 T71 先例）。",
-)
 def test_gate2_tts_central_import_ratchet() -> None:
     """tts.py 棘轮：目标态 = 与五处已收编消费同口径过全部 B1-B4。"""
     consumer = _consumer_by_key("tts")
