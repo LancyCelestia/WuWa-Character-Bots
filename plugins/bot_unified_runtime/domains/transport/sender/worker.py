@@ -5,6 +5,7 @@ import hashlib
 import inspect
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -679,6 +680,33 @@ def _is_definitive_media_rejection(receipt: DeliveryReceipt) -> bool:
     return issue is not None and str(issue.kind) == _DEFINITIVE_REJECTION_KIND
 
 
+# 摘要层 S4：content_sha256 形态门（与 renderer canonicalize 同一口径：
+# 64 hex 小写；digest 唯一算法真身=domains/media/digest.py media_digest）。
+_CONTENT_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _record_content_digests(send_request: SendRequest) -> list[str]:
+    """原行 record 部件 content_sha256 列表（全长 64 hex；无/坏=不计入）。
+
+    摘要层 S4（T107 蓝图 §5）：``-textfb`` 台账归位用。digest 真相由渲染收口
+    （renderer canonicalize_audio_parts 冻结键）与能力侧（tts 落盘字节摘要）
+    保证，此处只做防御性读取；缺 digest 一律诚实缺席，绝不伪造占位值。
+    """
+    parts = send_request.content.content_ref.get("parts")
+    if not isinstance(parts, list):
+        return []
+    digests: list[str] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        if str(part.get("type") or "record").strip().lower() != "record":
+            continue
+        value = part.get("content_sha256")
+        if isinstance(value, str) and _CONTENT_DIGEST_RE.fullmatch(value):
+            digests.append(value)
+    return digests
+
+
 async def _send_media_text_fallback_once(
     entry: QueuedSendRequest,
     transport: SendTransport,
@@ -689,15 +717,28 @@ async def _send_media_text_fallback_once(
 
     终败行已 terminal、永不再被认领 → 本函数在每个请求生命周期内天然只
     执行一次；发送结果（含失败）只记审计。
+
+    摘要层 S4（T107 蓝图 §5，T123 施工）键语义升级：dedupe_key 由
+    ``{原key}:textfb`` 升为 ``{原key}:textfb:{_payload_digest(text)}``——
+    「同父+同降级文本」内容寻址，重放同文本天然幂等；audit_tags 追加
+    ``textfb_parent=<原行 record digest 截短[:16] 或 "-">``，子请求与原行
+    经摘要链可互查，游离面闭合。「恰好一次」从「终态行不被认领」间接性质
+    升格为键语义；原行终态判定逻辑零改动。
     """
     text = _fallback_text_for_media(entry.send_request)
     if not text:
         return
     request_id = f"{entry.send_request.request_id}-textfb"
+    parent_tag = ",".join(
+        digest[:16] for digest in _record_content_digests(entry.send_request)
+    ) or "-"
     fallback_request = entry.send_request.model_copy(
         update={
             "request_id": request_id,
-            "dedupe_key": f"{entry.send_request.dedupe_key}:textfb",
+            "dedupe_key": (
+                f"{entry.send_request.dedupe_key}"
+                f":textfb:{_payload_digest(text)}"
+            ),
             "content": RenderedOutput(
                 request_id=request_id,
                 content_type="text",
@@ -706,6 +747,10 @@ async def _send_media_text_fallback_once(
                 risk_level=entry.send_request.content.risk_level,
                 privacy_level=entry.send_request.content.privacy_level,
             ),
+            "audit_tags": [
+                *entry.send_request.audit_tags,
+                f"textfb_parent={parent_tag}",
+            ],
         }
     )
     receipt = await _call_transport_safely(fallback_request, transport)

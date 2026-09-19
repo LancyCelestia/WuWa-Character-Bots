@@ -6,8 +6,10 @@ logger = logging.getLogger(__name__)
 
 import asyncio
 import atexit
+import hashlib
 import os
 import random
+import re
 import threading
 import time
 from collections.abc import Awaitable, Callable
@@ -311,6 +313,43 @@ def _dedupe_tags(tags: list[str]) -> list[str]:
         seen.add(tag)
         result.append(tag)
     return result
+
+
+# S-08/Wave H 摘要层 S4（T107 蓝图 §3.2/§3.3，T123 施工）：出站键内容维度。
+# 规约=dedupe_key=消息身份 ∧ 段类型 ∧ content_sha256：d 段只由 mixed parts 里
+# 的 record 部件参与，对「部件 digest 截短[:16] 有序拼接」再 sha256[:16]
+# （多部件防拼接歧义）；digest 全长 64 hex 由渲染收口（renderer
+# canonicalize_audio_parts）冻结，此处只做防御性复核。
+_CONTENT_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _content_dedupe_suffix(rendered: RenderedOutput) -> str:
+    """出站键 d 段（摘要层 S4）：``:d=<16hex>`` 或空串（缺省退化）。
+
+    兼容性根（蓝图 §3.2 明文）：无 record 部件、或任一 record 部件缺/坏
+    ``content_sha256`` 的请求 → 返回空串，dedupe_key 与旧三元组**逐字节一致**。
+    缺 digest 一律整段缺省、绝不伪造（空串/占位均禁）——「无 digest 的键不变」
+    与「有 digest 的键含 d 段」构成互斥双锁。music/file 族无 digest 是设计事实
+    （无本地字节），非「缺 digest」，不参与也不阻断 d 段。
+    """
+    parts = rendered.content_ref.get("parts")
+    if not isinstance(parts, list):
+        return ""
+    digests: list[str] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        if str(part.get("type") or "record").strip().lower() != "record":
+            continue
+        value = part.get("content_sha256")
+        if not (isinstance(value, str) and _CONTENT_DIGEST_RE.fullmatch(value)):
+            return ""
+        digests.append(value)
+    if not digests:
+        return ""
+    joined = "".join(digest[:16] for digest in digests)
+    short = hashlib.sha256(joined.encode("utf-8")).hexdigest()[:16]
+    return f":d={short}"
 
 
 def _looks_like_review_reason(review: ReviewResult, marker: str) -> bool:
@@ -835,6 +874,9 @@ class RuntimePipeline:
             dedupe_key=(
                 f"{decision.capability_id}:{message.session_id}:"
                 f"{message.message_id or message.request_id}"
+                # 摘要层 S4（T123）：内容维度 d 段；缺 digest 退化=旧三元组
+                # 逐字节不变（兼容硬锁，规约见 _content_dedupe_suffix）。
+                + _content_dedupe_suffix(rendered)
             ),
             cooldown_key=prepared.policy.cooldown_key,
             expires_at=None,
