@@ -21,6 +21,7 @@ data 白名单恰 ``{"file"}``（与 test_reviewer_media_visibility.py:126 同�
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 
@@ -258,6 +259,96 @@ def test_e2e_renderer_to_onebot_record_data_whitelist(tmp_path: Path) -> None:
     rendered = _render(audio=[{"file": str(wav), "review_text": _FAKE_SECRET}])
     segments = _mixed_segments(
         rendered.content_ref, text_fallback=rendered.text_fallback, request_id="req-t80"
+    )
+    assert segments == [{"type": "record", "data": {"file": str(wav.resolve())}}]
+    assert all(set(segment["data"]) == {"file"} for segment in segments)
+
+
+# ---------------------------------------------------------------------------
+# content_sha256 第三冻结键（S-08 / Wave H T109，蓝图 §3.2-§3.3）
+#
+# 棘轮扩展（T80 恰两键锁不翻红，因其输入无 digest）：
+# - absent-digest 逐字节退化 ⇒ part 恰两键，与 T80 现状完全一致（兼容性根）；
+# - 合法 digest（中央件 media_digest 产物，64 hex 小写）⇒ record 族恰三键，
+#   随行流经 worker 段级键（canonical JSON 自动纳入）、onebot data 白名单
+#   天然忽略（传输层零改动）；
+# - 非法 digest ⇒ 剥离+留痕、部件保命（与 duration/bytes 同待遇）；
+# - U-107-B 裁定：渲染入口不兜底补算（零同步 IO），缺即缺不读盘。
+# ---------------------------------------------------------------------------
+
+_DIGEST = hashlib.sha256(b"t109-probe-bytes").hexdigest()
+
+
+def test_content_sha256_valid_digest_becomes_third_frozen_key(tmp_path: Path) -> None:
+    """合法 digest ⇒ record 部件恰三键（type/file/content_sha256）。"""
+    wav = _wav(tmp_path)
+    rendered = _render(
+        audio=[{"file": str(wav), "content_sha256": _DIGEST}]
+    )
+    assert rendered.content_ref["parts"] == [
+        {"type": "record", "file": str(wav), "content_sha256": _DIGEST}
+    ]
+
+
+def test_content_sha256_absent_degrades_to_exactly_two_keys(tmp_path: Path) -> None:
+    """absent-digest 逐字节退化：无 digest 的 audio 部件与 T80 现状完全一致。"""
+    wav = _wav(tmp_path)
+    rendered = _render(audio=[{"file": str(wav), "review_text": "审查文本"}])
+    assert rendered.content_ref["parts"] == [{"type": "record", "file": str(wav)}]
+
+
+def test_content_sha256_invalid_stripped_with_trace(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """非法 digest（大写/短长/非 str）：剥离+留痕，部件保命恰两键。"""
+    wav = _wav(tmp_path)
+    for bad in (_DIGEST.upper(), _DIGEST[:16], 12345):
+        with caplog.at_level(logging.WARNING, logger=_RENDERER_LOGGER):
+            rendered = _render(audio=[{"file": str(wav), "content_sha256": bad}])
+        assert rendered.content_ref["parts"] == [{"type": "record", "file": str(wav)}]
+        assert any(
+            "content_sha256" in record.getMessage() for record in caplog.records
+        )
+
+
+def test_content_sha256_carried_through_voice_alias(tmp_path: Path) -> None:
+    """voice→record 归一后 digest 照挂（归一与冻结键正交）。"""
+    wav = _wav(tmp_path)
+    rendered = _render(
+        audio=[{"type": "voice", "file": str(wav), "content_sha256": _DIGEST}]
+    )
+    assert rendered.content_ref["parts"] == [
+        {"type": "record", "file": str(wav), "content_sha256": _DIGEST}
+    ]
+
+
+def test_music_part_treats_digest_as_stray(caplog: pytest.LogCaptureFixture) -> None:
+    """music/file 族两键不变（无本地字节）：digest 按杂键剥离+留痕。"""
+    with caplog.at_level(logging.WARNING, logger=_RENDERER_LOGGER):
+        rendered = _render(
+            audio=[
+                {
+                    "type": "music",
+                    "music_type": "qq",
+                    "music_id": "30019675",
+                    "content_sha256": _DIGEST,
+                }
+            ]
+        )
+    assert rendered.content_ref["parts"] == [
+        {"type": "music", "music_type": "qq", "music_id": "30019675"}
+    ]
+    assert any("content_sha256" in r.getMessage() for r in caplog.records)
+
+
+def test_e2e_digest_part_onebot_data_whitelist_unchanged(tmp_path: Path) -> None:
+    """三键 part 流经传输层：record data 白名单仍恰 {file}（传输零改动锁）。"""
+    wav = _wav(tmp_path)
+    rendered = _render(
+        audio=[{"file": str(wav), "content_sha256": _DIGEST}]
+    )
+    segments = _mixed_segments(
+        rendered.content_ref, text_fallback=rendered.text_fallback, request_id="req-t109"
     )
     assert segments == [{"type": "record", "data": {"file": str(wav.resolve())}}]
     assert all(set(segment["data"]) == {"file"} for segment in segments)

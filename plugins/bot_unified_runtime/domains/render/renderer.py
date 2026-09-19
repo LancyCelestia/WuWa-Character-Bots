@@ -33,6 +33,16 @@ logger = logging.getLogger(__name__)
 _AUDIO_VOICE_ALIASES = frozenset({"record", "voice"})
 _AUDIO_REVIEW_KEYS = frozenset({"review_text", "text", "content", "caption", "alt"})
 _AUDIO_PLAYABILITY_KEYS = frozenset({"duration", "bytes"})
+# record 族第三冻结键（S-08 / Wave H T109，蓝图 docs/design/media-digest-layer.md
+# §3.2-§3.3）：能力侧合成落盘点挂的字节内容摘要——中央件
+# domains/media/digest.py ``media_digest`` 产物，sha256 全长 64 hex 小写。
+# 合法 → 上 part（恰三键），随行流经 worker 段级键（canonical JSON 自动纳入）、
+# onebot record data 白名单={file} 天然忽略（传输层零改动）；非法 → 剥离+留痕、
+# 部件保命（与 duration/bytes 同待遇）；缺省 → absent-digest 逐字节退化（恰两
+# 键，T80 现状=兼容性根）。U-107-B 裁定：渲染入口不做兜底补算（零同步 IO）——
+# 缺即缺，不读盘。music/file 族两键不变（无本地字节，digest 按杂键剥离）。
+_AUDIO_CONTENT_DIGEST_KEY = "content_sha256"
+_AUDIO_CONTENT_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 
 
 def _audio_ref(value: Any) -> str:
@@ -62,6 +72,10 @@ def canonicalize_audio_parts(
     - 其余类型=显式拒绝+留痕（传输层本就会丢弃，蒸发面收口到渲染入口）。
     - 散键（含审查通道键与冗余 url）一律剥离；可播性键 duration/bytes 类型
       非法时剥离并留痕，部件本体不受影响。
+    - ``content_sha256``（S-08/Wave H）：合法（64 hex 小写，中央件
+      ``media_digest`` 产物）上 record part 第三冻结键（内容身份随行）；
+      非法剥离留痕、部件保命；缺省=absent-digest 逐字节退化（恰两键）。
+      渲染入口不兜底读盘补算（U-107-B，零同步 IO）。
     """
     parts: list[dict[str, Any]] = []
     anomalies: list[str] = []
@@ -79,6 +93,20 @@ def canonicalize_audio_parts(
                     anomalies.append(f"audio[{index}] type=voice normalized to record")
                 part = {"type": "record", "file": file_ref}
                 redundant = redundant | _AUDIO_PLAYABILITY_KEYS
+                if _AUDIO_CONTENT_DIGEST_KEY in item:
+                    content_digest = item.get(_AUDIO_CONTENT_DIGEST_KEY)
+                    digest_ok = isinstance(content_digest, str) and (
+                        _AUDIO_CONTENT_DIGEST_RE.fullmatch(content_digest) is not None
+                    )
+                    if digest_ok:
+                        part[_AUDIO_CONTENT_DIGEST_KEY] = content_digest
+                    else:
+                        anomalies.append(
+                            f"audio[{index}] "
+                            f"{_AUDIO_CONTENT_DIGEST_KEY} invalid value stripped"
+                        )
+                        # 已留痕即不再计 stray（单次留痕，禁双记）。
+                        redundant = redundant | {_AUDIO_CONTENT_DIGEST_KEY}
             else:
                 anomalies.append(f"audio[{index}] {part_type} part without file dropped")
         elif part_type == "music":
