@@ -635,10 +635,11 @@ def test_request_tts_error_body_tolerates_non_json_and_bare_string(
         seed=123456789,
     )
     assert audio_502 is None
-    assert "502" in failure_502
-    assert "Bad Gateway" in failure_502
+    # T90 补锁（T81 洞③）：裸文本回退路断言升全等——子串 `in` 分辨不出「真原因被
+    # JSON 引号包裹」一类的回归。
+    assert failure_502 == "服务返回 502：<html>Bad Gateway</html>"
     assert tts_mod._last_failure_at > 0.0, "5xx=部署类失败必须进退避窗"
-    assert "502" in tts_mod._last_failure_reason
+    assert tts_mod._last_failure_reason == "服务返回 502：<html>Bad Gateway</html>"
 
     _install_fake_httpx(
         monkeypatch, status_code=500, content=b'"boom"', json_payload="boom"
@@ -653,8 +654,35 @@ def test_request_tts_error_body_tolerates_non_json_and_bare_string(
         seed=123456789,
     )
     assert audio_500 is None
-    assert "boom" in failure_500
-    assert "boom" in tts_mod._last_failure_reason
+    # T90 补锁（T81 洞③）：裸 JSON 字符串必须走 elif str 分支（值不带引号）——
+    # 分支被删会落 response.text='"boom"' 带引号回退，子串断言测不出，全等才杀得死。
+    assert failure_500 == "服务返回 500：boom"
+    assert tts_mod._last_failure_reason == "服务返回 500：boom"
+
+
+def test_request_tts_empty_body_records_backoff_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T90 补锁（T81 m1 残余，P3）：200+空体=部署类失败，记账必须进退避窗。
+
+    此前 200 空体分支可整段删除而全套测试仍绿（下游 ``_inspect_wav_bytes`` 兜底
+    掩掉分支本身）——空体记账副作用无人承重，此用例钉死分支存在与入窗口径。
+    """
+    ref = RefAudio(path=str(_ref_file(tmp_path)), text="你好", lang="zh")
+    _install_fake_httpx(monkeypatch, status_code=200, content=b"")
+    audio, failure = tts_mod._request_tts(
+        api_url="http://127.0.0.1:9880",
+        text="正文",
+        ref=ref,
+        params=_params(),
+        timeout_seconds=5.0,
+        engine_params=dict(_PRESET_PARAMS),
+        seed=123456789,
+    )
+    assert audio is None
+    assert failure == "服务返回空音频"
+    assert tts_mod._last_failure_at > 0.0, "空音频体=部署类失败必须进退避窗"
+    assert tts_mod._last_failure_reason == "服务返回空音频"
 
 
 def test_degrade_copy_maps_reason_to_shorekeeper_voice() -> None:
@@ -889,8 +917,16 @@ def test_should_voice_reply_gates_before_probability() -> None:
     """概率门之前的三道门仍必须短路——always 也不能绕过它们。"""
     always = _config(bot_tts_auto_reply_enabled=True, bot_tts_auto_reply_always=True)
     chat = _chat_result()
+    # T90 补锁（T81 洞②）：总闸必须显式带 auto=True ∧ always=True——旧第一断言漏设
+    # auto_reply_enabled（缺省 False），第二门掩掉第一门，删总闸也测不出（共变）。
     assert not should_voice_reply(
-        _config(bot_tts_enabled=False, bot_tts_auto_reply_always=True), _msg("在吗"), chat
+        _config(
+            bot_tts_enabled=False,
+            bot_tts_auto_reply_enabled=True,
+            bot_tts_auto_reply_always=True,
+        ),
+        _msg("在吗"),
+        chat,
     )
     assert not should_voice_reply(
         _config(bot_tts_auto_reply_enabled=False, bot_tts_auto_reply_always=True),

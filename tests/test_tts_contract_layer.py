@@ -266,6 +266,10 @@ def test_silence_gate_spares_normal_audio_shapes() -> None:
     assert tts_mod._inspect_wav_bytes(_wav_bytes(seconds=0.2, rate=32000)) == ""
     assert tts_mod._inspect_wav_bytes(_wav_bytes(seconds=1.0, rate=16000, amplitude=3000)) == ""
     assert tts_mod._inspect_wav_bytes(_wav_bytes(seconds=0.2, rate=16000)) == ""
+    # T90 补锁（T81 m5a）：32000Hz+恰 1s+全零——与上方 16000Hz 正例（
+    # test_engine_silence_trap_detected_by_inspector）对表，单列钉死指纹①的
+    # 采样率维度：rate 合取被删时，本行与正例一组必红。
+    assert tts_mod._inspect_wav_bytes(_wav_bytes(seconds=1.0, rate=32000)) == ""
 
 
 def test_silence_trap_synthesis_fails_without_disk_or_cache(
