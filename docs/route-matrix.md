@@ -3,20 +3,20 @@
 > 所有入站文本先进入基层路由器 `plugins/bot_unified_runtime/runtime/base_router.py`，
 > 判定后由 NoneBot 匹配器把消息交给对应处理程序，子能力执行完把
 > `CapabilityResult` 交回 `RuntimePipeline`（基层）统一审查/渲染，最后经
-> NapCat(OneBot V11) 发回 QQ。**任何子能力都不直接发消息。**
+> SnowLuma(OneBot V11) 发回 QQ。**任何子能力都不直接发消息。**
 
 离线演示：`scripts/dev.ps1 route-demo`；真实接口烟测：`scripts/dev.ps1 route-smoke`。
 
 ## 1. 从问法到回复的完整链路
 
 ```
-QQ/NapCat 消息
+QQ/SnowLuma 消息
   -> base_router.classify_message_route(text)      # 确定性路由（kind/优先级/归一化命令/理由）
   -> NoneBot matcher（rule 复用同一路由表）          # alias/admin/subscribe/.../natural/chat
   -> 处理程序 handler（如 _handle_natural / _handle_alias / _handle_meme）
   -> 对应能力 capability（天气/点歌/维基/Epic/历史/订阅/表情包/链接解析/人格 LLM）
   -> CapabilityResult 交回 RuntimePipeline          # 安全审查 -> 渲染（文本/卡片/合并转发）
-  -> SendQueue -> NapCat -> QQ
+  -> SendQueue -> SnowLuma -> QQ
 ```
 
 群聊门禁（`policy/gate.py`）在进入能力前执行：私聊放行；群聊只有
@@ -44,6 +44,7 @@ QQ/NapCat 消息
 | `行情`、`股指/大盘/股市`、`B股行情`、`莫斯科股指`、英文 `market`/`markets`/`stock market` +拼音触发（见 catalog） | market | 41 | `_is_market_event` -> `_handle_market` | bot.market（东财 push2 17 指数 + MOEX ISS 备选源；市场词过滤） |
 | `快报`、`今日快报 科技`、`早报/晚报/今日热点/科技新闻/AI新闻/AI快报/财经新闻/财经快报/国际新闻`、繁體同族 10 词（`快報/早報/晚報/今日熱點/科技新聞/AI新聞/AI快報/財經新聞/財經快報/國際新聞`）、英文 `news`/`tech news`/`ai news` +拼音触发（见 catalog） | news | 41 | `_is_news_event` | bot.news（V2EX 真 Atom + IT之家/少数派/华尔街见闻/BBC中文；自动过滤营销条目，默认 20 条） |
 | `八字`、`塔罗 三张`、`占卜`、`排盘/四柱/金钱卦/摇卦`、英文 `bazi`/`tarot`/`iching`/`hexagram`/`divination` +拼音触发（见 catalog） | divination | 41 | `_is_divination_event` | bot.divination（Meeus 节气八字含藏干权重/塔罗 78/金钱卦） |
+| `说 <文本>`、`语音 <文本>`、`念 <文本>`、`朗读 <文本>`、`语音合成 <文本>`、英文 `tts`/`say`（大小写不敏感）、拼音 `shuo`/`yuyin`/`nian`/`langdu`；繁體触发词未登记（說/語音/朗讀/唸 待 `docs/design/tts-contract-layer.md` §6 登记窗补，如实缺口）；`BOT_TTS_TRIGGER_WORDS` 为**追加**语义（与内置 11 词合并去重，非整表替换；判定唯一入口 `tts.py::effective_trigger_words`）。裸触发词（只发「说」不带正文）不占路由，交回人格对话自然回应 | tts | 41 | `_is_tts_event`（`__init__.py` 装配，词面判定 `tts_match`） | bot.tts（对接本机 GPT-SoVITS v2ProPlus HTTP API：文本合成守岸人音色语音；参考音频与开关见 BOT_TTS_*） |
 | `随机图`、`来张图`、繁體 `隨機圖/來張圖`、英文 `randpic` +拼音触发（见 catalog） | randpic | 41 | `_is_randpic_event` | bot.randpic（只读 BOT_RANDPIC_DIRS 自定义文件夹，绝不自建目录） |
 | `12点提醒我写作业`、`提醒列表`、`取消提醒 <id前缀>`、`笔记 记 <内容>`、`笔记列表`、`笔记 看 N`/`看笔记 N`、`做完 N`（`完成 N`/`办完 N` 同）、`删笔记 N`（笔记指令面复用本路由）、英文 `reminder`/`reminders`/`my reminders`/`reminder list`/`list reminders`（仅列表查询面） +拼音触发（见 catalog） | reminder | 41 | `_is_reminder_event` | bot.reminder（自然语言时间点→会话待办→每分钟投递；含笔记/待办与自然语言勾选；进阶轨 LLM 抽取默认关） |
 | `收件箱 <内容>`、`收件箱`（看待处理）、英文 `inbox`、拼音 `shoujianxiang` | daily_assist | 42 | `_is_daily_assist_event` | bot.daily_assist（收件箱速记落纯文本文件；另有定时面：到点吃什么推荐 + 早晚简报私聊推送，名单 BOT_DAILY_ASSIST_PUSH_USER_IDS 为空只记不推） |

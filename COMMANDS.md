@@ -5,7 +5,7 @@
 完整自动同步教程目录：[docs/command-catalog.md](docs/command-catalog.md)。修改 `_HELP_ENTRIES` 后运行 `python scripts/command_catalog.py --write`，一致性测试会拒绝过期文档。
 - 参数标注：`<x>` 必填、`[x]` 可选；「默认」指省略参数时的行为。
 - 权限标注以代码内 actor_roles 判定为准（`仅管理员` / `全员`）。
-- 数据真相源：`plugins/bot_unified_runtime/capabilities/echo.py` 的 `_HELP_ENTRIES`；模块/别名总数以 [docs/command-catalog.md](docs/command-catalog.md) 的自动统计为准，不在此手写。
+- 数据真相源：`plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py`（RWC3 迁移后真身）的 `_HELP_ENTRIES`；模块/别名总数以 [docs/command-catalog.md](docs/command-catalog.md) 的自动统计为准，不在此手写。
 - 开发/运维任务（dev.ps1、测试、smoke）见本文末尾「开发命令速查」。
 
 ## 总览
@@ -91,6 +91,7 @@
 | 好感度 | `好感度`/`好感查看`/`查询好感`/`好感`/`好感值`/`亲密度`/`affinity`；`好感度 算法` | 双向好感（-100~+100 八档，v5 多因素线性步长） | `好感` 仅独立成词时触发（防「好感消失了」误触）；群聊出榜，`我` 只看自己，`算法` 输出 v5 定性说明（多因素：说话温度×相处时长×第一印象×当日心情，不展示固定加减数值） |
 | Epic | `epic`/`免费游戏`/`steam免费` | Epic+Steam 每周限免 | 无参数 |
 | 随机图 | `随机图`/`来张图` | 自建图库随机发图（仅发原图本体，不附带「随机图片」等文字标注） | 目录 `BOT_RANDPIC_DIRS`；触发词 `BOT_RANDPIC_TRIGGER_WORDS` |
+| 语音 | `说 <文本>`、`语音 <文本>`、`念 <文本>`、`朗读 <文本>`、`语音合成 <文本>`；英文 `tts`/`say`（大小写不敏感）；拼音 `shuo`/`yuyin`/`nian`/`langdu` | 文本合成守岸人音色语音（本机 GPT-SoVITS v2ProPlus，深度帮助 `/bot help 语音`） | 触发词后必须跟正文，只发「说」等裸触发词不占路由、交回人格对话；正文默认上限 200 字（`BOT_TTS_MAX_CHARS`，硬顶 `BOT_TTS_HARD_MAX_CHARS`）；追加词 `BOT_TTS_TRIGGER_WORDS` 与内置 11 词合并非替换；繁體触发词未登记（诚实缺口）；失败降级：私聊守岸人口吻文案（如「嗓子还没接上——语音服务好像没在跑」），群内走中央 A-19 降级池；总开关 `BOT_TTS_ENABLED`、参考音频 `BOT_TTS_REF_AUDIOS`、自动配音 `BOT_TTS_AUTO_REPLY_*`（默认关） |
 | 提醒 | `<时间>提醒我 <事项>`、`提醒列表`、`取消提醒 <id前缀>` | 到点主动督促 | id 前缀 4-12 位唯一命中；事项 ≤120 字 |
 | 记忆 | `/bot memory add\|list\|delete` | 个人长期记忆（全员，仅本人） | add 支持 `--sensitivity=personal\|group\|public\|credentialed`（默认 personal）；群聊 list 只见 public/group |
 | 路由 | `/bot route <文本>`、`/bot routes` | 路由判定/路由表（全员只读） | 文本必填 |
@@ -116,3 +117,34 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 backend-smoke -Message 
 ```
 
 完整任务表（smoke/queue/transport/credential/knowledge-sync 等约 40 项）执行 `dev.ps1 help` 查看；测试策略、路径与安全规则见 `AGENTS.md`、`WORKSPACE_GUIDE.md` 与 `docs/ai-setup-knowledge-pack.md`。运行数据统一在 `ChatBot_Runtime\data\`；`.env`、Cookie、Token、数据库内容不进入聊天、日志或文档。
+
+
+## 功能控制（控制面服务同源）
+
+| 指令 | 权限与效果 |
+|---|---|
+| `/bot feature list` / `/bot feature get <ID>` | 管理员只读，返回稳定ID、有效状态及版本。 |
+| `/bot feature enable\|disable\|reset <ID>` | 仅超管；CAS写入状态与审计。主Pipeline的新任务受门禁控制，已运行任务不强杀。 |
+| `/bot feature preview <ID> on\|off\|reset` | 仅超管；返回影响节点，不修改状态。 |
+
+示例：`/bot feature disable bot.plugin.weather`。详细帮助：`/bot help 功能管理`。
+
+`/bot runtime set`、`reset` 、模型写操作和核心人格 switch/probability 仅超管可修改。参数API与命令共用ConfigControlService及按实例隔离SQLite，资源重载尚未完成的键明确拒绝热改，不假称更新成功。当前仅覆盖已登记主能力，入站媒体/自动副作用的细分门禁仍在迁移。
+
+功能管理同义入口：`/bot 功能管理 ...` 归一到 `/bot feature ...`；`/bot help feature` 与 `/bot help 功能管理` 返回同一帮助。昵称形式只给管理指令引导，不绕过 `/bot` 直接执行写操作。
+
+
+## 细分功能管理（本批接线）
+
+既有 `/bot feature` 服务现在可控制 `bot.ingress.file_read`、`bot.ingress.audio_transcode`、`bot.ingress.telegram_media`、`bot.ingress.reply_lookup`、`bot.plugin.poke.reply`、`bot.plugin.poke.poke_back` 等细分 ID。完整目录以 `/bot feature list` 和 API 能力树为准，详见 `docs/design/control-plane-registry.md`。
+
+- 查询：`/bot feature get bot.ingress.file_read`（管理员）。
+- 预览：`/bot feature preview bot.ingress.file_read off`（超管）。
+- 关闭：`/bot feature disable bot.ingress.file_read`（超管）。
+- 恢复继承：`/bot feature reset bot.ingress.file_read`（超管）。
+
+父级关闭不能被子级 enable 突破；修改影响后续事件，不强杀运行中处理。树开关不会绕过原有配置、概率、冷却或安全权限。没有新增绕过 SendQueue 的调试指令。
+
+## 工作区和动作后端说明
+
+工作区REST及动作REST已分别提供服务适配，详见 `docs/design/control-plane-workspaces.md`、`docs/design/control-plane-services.md`。本批没有新增 `/bot workspace` 或 `/bot action` 指令，不要把API路径当聊天命令。真实生产发送端口和默认生产运维动作尚未装配，不能用接口存在来判断生产功能可用。
