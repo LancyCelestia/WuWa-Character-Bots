@@ -544,6 +544,8 @@ _REF_MAX_SECONDS = 10.0
 
 **工具链**（全部在 `C:\Software\GPT-SoVITS-V2Pro\tools\`，**刻意不进 ChatBot 源码树**，避免污染）：
 
+> 2026-09-20 勘误（T160 同步）：上行「刻意不进 ChatBot 源码树」已被 M-61 推翻——本节所列语料工具链四脚本（`scan_durations` / `make_listening_checklist` / `pick_refs` / `transcribe_refs`）已收编入仓 `scripts/tts_corpus/`（`c78951f`，T106：溯源块+引擎原件 sha256 双向防漂移锚，缺失=SKIP；引擎目录原件只读零写入）；`verify_chatbot_env.py` 更早入仓 `scripts/verify_chatbot_env.py`（T87，`7e2fe36`）。收编防护面（冒烟门/毒化防护门）与完整口径见 §10 关键文件索引处的 T124 勘误块。
+
 - `scan_durations.py` — 全库时长扫描（6 线程 ffprobe）→ `refs/corpus_durations.csv`
 - `make_listening_checklist.py` — 生成听辨清单 → `refs/listening_checklist.md`
 - `pick_refs.py` — 按语气多样性从 `main_honami` 合规池复制 7 条 → `refs/shorekeeper_ref_02..08.flac`

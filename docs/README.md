@@ -50,6 +50,8 @@
 | [../webui/](../webui/) | AxonHub 衍生前端（Vite+React+Tailwind4+singlefile）：源码骨架 + Apache-2.0 合规件（`THIRD_PARTY/`），构建产物 `dist/index.html` 单文件挂控制面 `/ui` |
 | [../scripts/webui_mock_server.py](../scripts/webui_mock_server.py) | WebUI 离线确定性夹具后端（2026-09-18）：端点形状一一对照真实契约、固定假时刻输出逐字节一致，仅供前端开发/目验/截图对比；不读真实数据、不写文件、绝不接入生产链路 |
 | [../scripts/webui_acceptance.py](../scripts/webui_acceptance.py) | WebUI 真机端到端目验脚本（playwright 无头，file:// 直开 dist+localStorage 预置；9 页 data/graceful 自动归类+逐页截图+--json；验收口径=acceptance-manual §6.6.9/§6.6.10） |
+| [../scripts/tts_retcode_collect.py](../scripts/tts_retcode_collect.py) | SnowLuma `send_msg` 回执 retcode 分布采集（T55 §七 open 项的采集手段）：对真机验收窗（§6.6.11）后 nonebot 日志离线扫描，按码计数+首末时间+样例，与读码预判集对表；全离线零网络，证据采集器非门 |
+| [../scripts/tts_offline_selfcheck.py](../scripts/tts_offline_selfcheck.py) | TTS 真机验收前置三步一键自检编排（零业务断言，SKIP 不假红）：pre_restart_check 10 项 → verify_chatbot_env → 语料门 `test_tts_corpus_gate.py`；判定透传子工具，任一 FAIL 退出码 1，`--dry-run` 桩化演练 |
 
 ## 搭建与运维
 
