@@ -15,7 +15,9 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import random
+import wave
 from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
@@ -110,6 +112,22 @@ def _ref_file(tmp_path: Path, name: str = "ref.wav") -> Path:
     path = tmp_path / name
     path.write_bytes(b"RIFF....WAVEfmt ")
     return path
+
+
+def _wav_bytes(*, seconds: float = 0.2, rate: int = 32000) -> bytes:
+    """真 PCM16 单声道 wav 字节。
+
+    曾经的夹具是 ``b"RIFFfake"``（8 字节假魔数）——引擎产物体检闸（M-06，`report-T8.md`
+    指认的「夹具 16B 假 RIFF」）落地后它会被判不可播，故换成能真过 `wave` 解析的字节：
+    假夹具让「落盘/缓存」这类用例只证明了字典读写，没证明产物可播。
+    """
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(b"\x00\x00" * int(rate * seconds))
+    return buf.getvalue()
 
 
 @pytest.fixture(autouse=True)
@@ -321,10 +339,11 @@ def test_synthesize_writes_file_then_hits_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[str] = []
+    audio = _wav_bytes()
 
     def _fake_request(**_kwargs: object) -> bytes:
         calls.append("hit")
-        return b"RIFFfake"
+        return audio
 
     monkeypatch.setattr(tts_mod, "_request_tts", _fake_request)
     ref = RefAudio(path=str(_ref_file(tmp_path)), text="你好", lang="zh")
@@ -340,7 +359,7 @@ def test_synthesize_writes_file_then_hits_cache(
     assert first is not None
     assert reason == ""
     assert first.is_file()
-    assert first.read_bytes() == b"RIFFfake"
+    assert first.read_bytes() == audio
 
     second, reason2 = synthesize(
         api_url="http://127.0.0.1:9880",
@@ -361,7 +380,7 @@ def test_synthesize_cache_disabled_always_calls_service(
 
     def _fake_request(**_kwargs: object) -> bytes:
         calls.append("hit")
-        return b"RIFFfake"
+        return _wav_bytes()
 
     monkeypatch.setattr(tts_mod, "_request_tts", _fake_request)
     ref = RefAudio(path=str(_ref_file(tmp_path)), text="你好", lang="zh")
@@ -398,7 +417,9 @@ def test_synthesize_returns_reason_on_service_failure(
 def test_synthesize_reports_write_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(tts_mod, "_request_tts", lambda **_kwargs: b"RIFFfake")
+    monkeypatch.setattr(
+        tts_mod, "_request_tts", lambda **_kwargs: _wav_bytes()
+    )
     ref = RefAudio(path=str(_ref_file(tmp_path)), text="你好", lang="zh")
     blocked = tmp_path / "blocked"
     blocked.write_text("我是文件不是目录", encoding="utf-8")

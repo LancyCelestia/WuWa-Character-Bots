@@ -15,7 +15,11 @@
 - **缓存**：文本 + 参考音频 + 采样参数 → sha256 命名，命中直接复用已有
   wav（``BOT_TTS_CACHE_ENABLED`` 默认开），同一句话不重复合成。
 - **fail-open**：服务未启动 / 超时 / 非 200 → 返回守岸人口吻的降级文案，
-  绝不抛异常、绝不阻断出站管线（与 randpic 同哲学）。
+  绝不抛异常、绝不阻断出站管线（与 randpic 同哲学）。但 **fail-open ≠ 发出去**：
+  引擎产物先过结构体检（``_inspect_wav_bytes``：RIFF/WAVE 魔数 + 头可解析 + 帧数>0），
+  不可播字节**绝不落盘、绝不入缓存、绝不再交给 QQ**——2026-09-19 起 QQ 端换件为
+  SnowLuma，坏 record 段是 fatal（整条消息一字不发），不再是旧实现「丢段留文字」。
+  每条运营性失败另挂 ``OperationalIssue``（``_failure_issue``）走中央告警链。
 - **对话自动配音**（可选）：``BOT_TTS_AUTO_REPLY_ENABLED`` 开启后，
   ``maybe_attach_voice()`` 把人格回复正文一并合成为语音随消息发出，
   由 ``__init__`` 的 chat 能力包装层调用。是否真的配音由
@@ -28,11 +32,13 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import random
 import re
 import time
+import wave
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -366,6 +372,26 @@ def _request_tts(
     return response.content
 
 
+def _inspect_wav_bytes(data: bytes) -> str:
+    """结构体检：不可播返回原因短语，可播返回空串。
+
+    只判**结构**（RIFF/WAVE 魔数 + 头可解析 + 帧数>0），**不判时长上限**：
+    QQ 语音条的时长红线是未做真机判定的悬案（U-02），拿估出来的秒数硬拦会把
+    正常长回复误杀——时长维度仍留在 M-37 未结面里，不在本闸偷偷收口。
+    """
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return "非 RIFF/WAVE 字节"
+    try:
+        with wave.open(io.BytesIO(data)) as handle:
+            frames = handle.getnframes()
+            rate = handle.getframerate()
+    except Exception:  # noqa: BLE001 - 头读不出来即不可播，宁不发。
+        return "wav 头不可解析"
+    if frames <= 0 or rate <= 0:
+        return "零帧 wav"
+    return ""
+
+
 def synthesize(
     *,
     api_url: str,
@@ -387,6 +413,12 @@ def synthesize(
     )
     if audio is None:
         return None, _last_failure_reason or "合成失败"
+    bad = _inspect_wav_bytes(audio)
+    if bad:
+        # 不可播字节**绝不落盘、绝不入缓存**：SnowLuma 换件后坏 record 段是 fatal
+        # （整条消息一字不发，见 report-T46.md），毒件入缓存还会在进程存活期复放。
+        logger.info("tts audio rejected by sanity gate: %s (%d bytes)", bad, len(audio))
+        return None, f"音频体检失败：{bad}（{len(audio)} 字节）"
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         target = output_dir / f"{key}.wav"
@@ -450,6 +482,7 @@ _FAILURE_KINDS: tuple[tuple[str, str, bool], ...] = (
     ("服务不可达", "tts_service_unreachable", True),
     ("httpx", "tts_service_unreachable", True),
     ("服务返回空音频", "tts_empty_audio", True),
+    ("音频体检失败", "tts_bad_audio", False),
     ("服务返回", "tts_service_rejected", False),
     ("音频落盘失败", "tts_write_failed", False),
 )
