@@ -407,8 +407,12 @@ def main() -> int:
     parser.add_argument("--dist", default="webui/dist/index.html", help="dist 单文件路径")
     parser.add_argument("--api", default="http://127.0.0.1:8743",
                         help="控制面/mock API 基址（写入 localStorage webui:baseUrl；空串=同源）")
-    parser.add_argument("--token", default=None, help="Bearer 主令牌（可选，写 webui:bearer）")
+    parser.add_argument("--token", default=None, help="Bearer 主令牌（可选，写 webui:bearer）；"
+                                                     "会进命令行与终端历史，本机以外别用——优先 --token-env")
     parser.add_argument("--ro-token", default=None, help="Bearer 只读令牌（可选，写 webui:bearer:ro）")
+    parser.add_argument("--token-env", default=None,
+                        help="从指定环境变量读取主令牌（如 UACC），明文不进 argv/历史/聊天记录")
+    parser.add_argument("--ro-token-env", default=None, help="同上，读只读令牌")
     parser.add_argument("--pages", default="all",
                         help="all 或逗号列表: dashboard,calls,tokens,latency,affinity,logs,knowledge,plugins,memory-graph")
     parser.add_argument("--shot-dir", default=os.path.join(tempfile.gettempdir(), "webui-acceptance"),
@@ -423,6 +427,14 @@ def main() -> int:
                         help="放行 dist 落后 src（默认拒跑：绿单会证明已不存在的代码）")
     parser.add_argument("--json", action="store_true", help="额外输出 JSON 摘要到 stdout")
     args = parser.parse_args()
+    if args.token_env:
+        args.token = os.environ.get(args.token_env) or None
+        if not args.token:
+            raise SystemExit(f"[uiacc] --token-env={args.token_env} 已指定，但该环境变量为空")
+    if args.ro_token_env:
+        args.ro_token = os.environ.get(args.ro_token_env) or None
+        if not args.ro_token:
+            raise SystemExit(f"[uiacc] --ro-token-env={args.ro_token_env} 已指定，但该环境变量为空")
 
     if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
         sys.stdout.reconfigure(encoding="utf-8")  # Windows 控制台中文表
