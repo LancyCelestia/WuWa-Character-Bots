@@ -7,6 +7,11 @@
 > 运行时 venv：`C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv`（**不是**仓库内的 `.venv`，仓库内没有）  
 > GPT-SoVITS 引擎根：`C:\Software\GPT-SoVITS-V2Pro`
 
+> **⚠️ 2026-09-20 勘误·现行权威指针（T63 席）**：本文件是 **2026-09-19 的历史交接快照**，不随施工波更新；下文宣称以下列现行权威为准——
+> 现行规格=`docs/design/tts-contract-layer.md`；缺陷编号唯一源=`.superpowers/sdd/2026-09-19-unify-audit/report-T29.md`（M-xx/S-xx/U-xx）；波次施工台账=`.superpowers/sdd/2026-09-19-unify-audit/progress.md`；传输层换件（NapCat→SnowLuma）复判决=`report-T46.md`/`report-T55.md`。
+> 凡「> 2026-09-20 勘误：」引用块处**以勘误块为准**，原文保留作诚实史痕。
+> 关键行为变更速览（防旧口径误用）：①M-09「健康退避」已由死代码接成真闸（T57：30s 常量、窗内快速失败挂 `tts_service_unreachable`、真成功清零；acceptance-manual ⑤ 的旧排障指引等收口席更新）；②M-15 触发词已改「内置∪追加」合并（`b13913d`，`effective_trigger_words()` 唯一入口）；③M-06 产物结构体检闸已落地（`7c566f7`）；④出站侧 SnowLuma 混排原子失败语义见 §3.2 勘误。
+
 
 
 ---
@@ -87,6 +92,8 @@
 | 错误体格式      | `{"message": "tts failed", "Exception": "<真原因>"}`                                                                                                                                      | `api_v2.py:445`                                                         |
 | 启动命令       | `cd C:\Software\GPT-SoVITS-V2Pro && runtime\python.exe api_v2.py -a 127.0.0.1 -p 9880`                                                                                                 | `.env` 注释                                                               |
 
+> 2026-09-20 勘误：上行「启动命令」是历史快照，**勿照此裸敲**——错误 CWD 裸跑会触发 M-12（权重静默回退底模 + 引擎 `save_configs` 把底模路径写回 yaml 永久化：此后永远「能出声但音色不是守岸人」，日志零异常）。现行运维口径=安全脚本唯一化（U-17=C：引擎生命周期=人工脚本+只读探针+告警，不代启动）：引擎根 `start-shorekeeper.ps1`（钉 CWD，T12 实证挡坑）或 `启动守岸人.bat`；bot 侧守护=T60「音色守望者」（在建：yaml 语义断言+sha256 基线 json+`scripts/pre_restart_check.py` 第 10 项挂点）。详见 §5.5 勘误。
+
 **关键**：错误体里 `message` 是**固定摘要**（恒为 `tts failed`），**真原因在 `Exception` 里**。这是 §4.1 那个 bug 的根源。
 
 ### 2.2 参考音频硬约束（3~10 秒，无配置可放宽）
@@ -99,6 +106,8 @@
   → 即 **48000 ≤ 采样点数 ≤ 160000**（16kHz 下 = 3.0s ~ 10.0s）
 - `TTS.py:1132-1138` → **无条件**调用该校验，没有任何配置能绕过。
 - 结论：**>10 秒一律被拒**。本地预检**不必要**（引擎已经拦，且修完 bug 后错误信息能透传），见 §4.3。
+
+> 2026-09-20 勘误：上句「本地预检不必要/服务端透传足够」只对 **3~10s 越界** 这一维成立，推不出「bot 侧零质检安全」。缺陷台账（report-T29）后来记了两维：**M-06**（引擎 200+非音频字节零质检即写盘入缓存=毒缓存，进程存活期复放）——已落地产物结构体检闸（`7c566f7`：`_inspect_wav_bytes` 在 `synthesize` 落盘前唯一写入口判 RIFF/头/帧数结构，不过=`tts_bad_audio` 不可重试失败降级**且不入缓存**；只判结构不判时长，M-37 时长/体积维度仍留真机未结面 U-02）；**M-07**（引擎推理期异常回 200+≈1 秒静音 wav，bot 当成功落盘发出）——bot 侧静音能量闸归 T61 施工（**在飞未落地**）。现行权威规格=`docs/design/tts-contract-layer.md`。
 
 ### 2.3 权重加载的隐性失效点
 
@@ -184,6 +193,8 @@ CapabilityResult.audio
 - 服务未启动 / 超时 / 非 200 / 空音频 / 落盘失败 → 一律返回**守岸人口吻的降级文案**
 - 自动配音路径任何失败 → **原样返回 result**（配音是增益，文字回复绝不能受影响）
 - `maybe_attach_voice` 整个函数体包在 `try/except Exception` 里兜底
+
+> 2026-09-20 勘误：上两条「fail-open/文字绝不能受影响」只对 **bot 侧合成阶段** 成立（合成失败→降级文案/原样返回，至今未变），**对投递阶段为假**——传输件换 SnowLuma 后已复判决（report-T46/T55）：`record` 段任一环节失败 ⇒ **text+record 整条混排消息一字不发**、API 明确回 failed（SnowLuma `buildSendElems` 循环零 try/catch，无平台侧「降级只发文字」路径）；NapCat 时代「段被静默摘除、文字独活、谎报 SENT」机制不复存在，但毒语音场景**文字同沉**。用户已裁 **U-29=A 案**：保 mixed 一条消息+段级记账防盲重投，不拆条。兜底与施工：W1 兜底基座=worker `_send_media_text_fallback_once`（`worker.py:622-665` 已存在，当前仅第 3 轮烧完才触发）；A 案最小改造面+T46-N1 retcode 白名单扩面（1400 先行）归 **Wave H**（已授权未开工，T65 先遣件备料中）；`result_unknown`（超时/断连）**绝不**触发文本补发（`worker.py:581-588` 安全前提）。缺陷编号 M-04/M-63。
 
 ### 3.3 域归属裁决（重要，别搬错地方）
 
@@ -459,6 +470,8 @@ _REF_MAX_SECONDS = 10.0
 3. 想实现也做不到：运行环境**没有 `soundfile`/`mutagen`/`audioread`**，纯标准库读时长需要手写 FLAC STREAMINFO / WAV `wave` 解析，成本高
 4. **修完 §4.1 的 bug 后，引擎的错误信息已能正确透传**，本地预检纯属冗余
 
+> 2026-09-20 勘误：本节「删本地预检」对 3~10s 维度的理据仍成立，但第 4 条「服务端透传已足够」的结论被 M-06/M-07 推翻了一半（200+毒字节/200+静音 wav 都是「成功形态」，错误体透传帮不上忙）——bot 侧体检闸现状见 §2.2 勘误。
+
 ---
 
 ### 4.4 【阶段 D】`echo.py` 帮助条目同步
@@ -552,6 +565,8 @@ _REF_MAX_SECONDS = 10.0
 **文件**：`plugins/bot_unified_runtime/__init__.py`（359288 字节）  
 **当前状态**：该文件**仍被别的 AI 席位（S0-ROOT 席）独占写**。本席**全程未触碰**。  
 **该文件 mtime 停在 2026-09-19 02:08**，此后未再变动。
+
+> 2026-09-20 勘误：以上两行是写作时点的过期快照（M-25 族）——本节下方「已落地的两处改动」与 §0 表为真态：第二批**已落地**（谓词短路+import 补 `should_voice_reply`+4 例测试）。占域/批次状态唯一真相源=协调台账（`.superpowers/sdd/2026-09-19-unify-audit/progress.md`），本文件不再自抄「禁动/未做」；据此重做或误判独占都是踩 M-25 的坑。
 
 **释放信号已出现**：`docs/design/v21r2-COORDINATION.md` 有独立一条「**根 `__init__.py` 已释放（S0-ROOT-c 交付）**」——该席四处直连收编全部落地、新测试 27 例全绿、家族合跑 195 passed，并明写「**TTS 席第二批可开工**」。本席随即开工（该文件当时 mtime 已更新到 13:09:58）。
 
@@ -701,12 +716,16 @@ ImportError: cannot import name 'web_search' from 'plugins.bot_unified_runtime.s
    ```
 3. 重启 bot 主进程（TTS 链路在主进程内）
 
+> 2026-09-20 勘误（M-53）：上面第 2 步的裸命令**别照抄**——M-12 的触发姿势恰是「手敲裸命令跑引擎」（错误 CWD 即把底模权重写回 yaml 永久固化）。安全姿势=引擎根 `start-shorekeeper.ps1`（钉 CWD，T12 实证挡坑）或 `启动守岸人.bat` 唯一入口；bot 侧=T60「音色守望者」**在建**（yaml 语义断言+sha256 基线 json+`scripts/pre_restart_check.py` 第 10 项挂点，落地前重启后必须人工听音辨音色——§2.3 隐性失效点）。「文档禁贴可复制裸命令」的运维口径修正归 U-21。
+
 **重点验收项**（其余见 §6.6.11）：
 
 - **⑥ 参考音频越界错误透传** ← 本批修复点，**必须验**：临时指向一条 >10s 音频，应回「还差一段合适的参考音频：3 到 10 秒的干声…」；若只回最泛化的「这次没能发出声音…」= **§4.1 的 bug 回归了**
 - **⑨ 概率门** ← 本批新功能，**必须验**：`ALWAYS=false` + `PROBABILITY=0.05` 时连发 30~40 条，应只有**少数几条**带语音，**绝不是条条都带**
 - **⑩ 概率门确定性**：同一条消息结果恒定
 - ⚠️ **听音色**：注意 §2.3 的隐性失效点——权重路径不存在会**静默回退预训练底模**，"能出声"不等于"音色对"
+
+> 2026-09-20 勘误：验收清单 §6.6.11 第 **⑤** 项的排障指引当时指向「健康退避」——交接时点那是**死代码**（M-09：`_HEALTH_BACKOFF_SECONDS/_last_failure_at` 写 3 读 0，宣称的「连续失败节流」不存在，验收⑤排障指引指向幻影）。现已由 T57 接成**真闸**（`d6801ab`：30s 常量退避、窗内快速失败挂 `tts_service_unreachable`、真成功清零、快速失败不刷新窗防永久拉黑；闸在 `synthesize` 唯一 HTTP 入口前，缓存命中不受影响）。按旧指引排查「退避不存在」会误判；验收手册文本更新归收口席（本席禁碰 acceptance-manual）。
 
 ---
 
@@ -741,6 +760,8 @@ ImportError: cannot import name 'web_search' from 'plugins.bot_unified_runtime.s
 
 - 本席**占域**：`tts.py` 真身 / `config.py` 的 `bot_tts_*` 键块 / `echo.py` 的「语音」条目 / `tests/test_tts.py` / 三份文档 TTS 段 / `pyproject.toml` / `.env`
 - 本席**零触碰**：`domains/creation/**` + 根 `__init__.py` 全部 + `echo.py`「语音」条目以外全部 + 其余 19 域 + `personas/**` + `bot.py` + `control_plane/**`
+
+> 2026-09-20 勘误（M-25 族）：上条「零触碰根 `__init__.py` 全部」已被第二批落地推翻（见 §5.1 勘误）；本节其余边界是 2026-09-19 写作时点的历史约定。现行占域与施工状态唯一真相源=progress.md 台账，别按本节判定谁可改什么。
 - 对方**已确认让出** `command_catalog --write` 与 `render_hashes.json` 写（他们全线禁）
 - 对方**全程不碰** `.env`
 
@@ -925,6 +946,8 @@ parsed = parse_ref_audios(config.bot_tts_ref_audios, base_dir=config.bot_tts_gpt
 **触发词**（内置，`DEFAULT_TRIGGER_WORDS`，`tts.py:50-53`）：  
 `语音合成` / `朗读` / `语音` / `念` / `说` / `tts` / `say` / `shuo` / `yuyin` / `nian` / `langdu`  
 边界判定：**整句等于触发词**，或**触发词后紧跟标点/空白**——避免「说话」「念书」「语音消息」这类包含关系词误触发。
+
+> 2026-09-20 勘误：上表「追加触发词」在交接时点与实码不符（M-15：实码非空即**整表替换**，管理员追加一词→内置 11 词全体静默失效、`说 …` 被中央改派 bot.chat）。已修：`b13913d` 改为「内置 ∪ 追加」合并，唯一入口 `effective_trigger_words()`（与 `base_router.py:436` 共用），本节表述自此为真。同笔顺带：M-16 英文触发 casefold 不敏感已修；**繁體触发词缺口仍未收**（S10 如实记账）。另注：裸触发词是否占路由是 M-22/U-15 的独立未结面（倾向改验收③文案），与本节边界判定无关。
 
 ---
 
