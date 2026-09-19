@@ -1,6 +1,6 @@
 """§9.3 分片发送幂等恢复与部分成功续发（B1）回归。
 
-离线运行（SQLite 用 tmp_path，无网络、无 NapCat）：
+离线运行（SQLite 用 tmp_path，无网络、无 SnowLuma）：
 
     PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/test_part_idempotent_resume.py -q
 
@@ -40,8 +40,8 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.sender import onebot as onebot_sender
-from plugins.bot_unified_runtime.sender import worker as worker_module
+from plugins.bot_unified_runtime.domains.transport.sender import onebot as onebot_sender
+from plugins.bot_unified_runtime.domains.transport.sender import worker as worker_module
 from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
 from plugins.bot_unified_runtime.sender.queue import (
     PARTIAL_ROW_STATE,
@@ -96,7 +96,10 @@ class ScriptedOneBot:
             await asyncio.sleep(0.5)
             return {"status": "async", "retcode": 1}
         if behavior == "retcode_fail":
-            return {"status": "failed", "retcode": 100}
+            # 2026-09-20 T46-N1：retcode=100 已入 SnowLuma final 白名单
+            # （onebot._is_final_failure_retcode），可重试拒绝代表码换 500
+            # （通用服务端错，白名单外语义不变）。
+            return {"status": "failed", "retcode": 500}
         if behavior == "final_fail":
             return {"status": "failed", "retcode": 403}
         if behavior == "raise":

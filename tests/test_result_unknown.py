@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from plugins.bot_unified_runtime.runtime.result_unknown import ResultUnknownLedger
+from plugins.bot_unified_runtime.domains.ops.monitor.result_unknown import (
+    ResultUnknownLedger,
+)
 
 
 class _FakeClock:

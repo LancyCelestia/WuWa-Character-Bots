@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -355,7 +356,7 @@ async def _notify_operational_issue_safely(
         return
     # R2（2026-09-17 实弹）：kind=bot_unavailable 是「适配器未就绪/断线窗口」
     # 的挂起语义（队列审计已有 send_deferred_bot_unavailable 行承载可见性），
-    # 属环境暂态而非运维事故。启动期 NapCat 未连接时成批挂起若逐条打管理
+    # 属环境暂态而非运维事故。启动期 SnowLuma 未连接时成批挂起若逐条打管理
     # 员告警即刷屏三连（此前 retcode=1200 终态化的告警形态），这里静默跳过
     # 管理员通知，仅留 DEBUG；其余 issue 通知路径零改动。
     if str(getattr(receipt.operational_issue, "kind", "")) == "bot_unavailable":
@@ -556,21 +557,80 @@ class _PartDeliveryOutcome:
 
 
 def _chunk_part_plan(send_request: SendRequest) -> list[str] | None:
-    """提取分片计划；非 chunks 内容返回 None（走既有整发语义）。"""
+    """提取段级记账计划；不支持的内容返回 None（走既有整发语义）。
+
+    U-29=A 案（progress.md G2-R1，2026-09-20）：mixed 语音混排也进 part 级
+    记账——这是 M-63（P0）的根修：mixed 此前永不产生 part 行，超时/断连
+    被「count==0 ⇒ 零副作用」恒真式判成可整发重投，语音条最坏真实投出
+    9 遍（report-T55 §一）。
+
+    C6 键粒度裁决（T78 席钉明，代码+报告双落）：**段级键**——
+    content_ref["parts"] 每 part 一枚 digest 键（键位=原始 parts 位置，
+    与 onebot._mixed_part_indexes 的回报索引对齐）。选段级不选整条单键：
+    观测面（parts_total/parts_progress/UNKNOWN 确认协议）与 chunks 同构，
+    未来投递形态若从原子拆为分段无需迁移键位；代价是记账粒度与 SnowLuma
+    原子投递不对齐——段级键只回答「这条消息发没发过」，答不了「哪段单独
+    发了」（report-T55 §4.4 原文）。投递形态由 _is_atomic_part_delivery
+    钉死：mixed 恒为一次原子整发，绝不拆段调用。
+
+    mixed 门三条件（缺一走既有整发语义）：①目标为私聊/群聊（与 chunks
+    既有 scope 门对齐）；②parts 为非空列表；③不含 file 部件（file 走
+    FileTransferGateway 多调用路径，原子假设不成立，维持既有 M10 语义）。
+    """
     content = send_request.content
-    if str(content.content_type).strip().lower() != "chunks":
-        return None
-    if send_request.target_scope not in (SessionType.PRIVATE, SessionType.GROUP):
-        return None
-    raw_chunks = content.content_ref.get("chunks")
-    chunks = (
-        [str(item).strip() for item in raw_chunks if str(item).strip()]
-        if isinstance(raw_chunks, list)
-        else []
-    )
-    if not chunks:
-        chunks = [content.text_fallback]
-    return chunks or None
+    normalized_type = str(content.content_type).strip().lower()
+    if normalized_type == "chunks":
+        if send_request.target_scope not in (SessionType.PRIVATE, SessionType.GROUP):
+            return None
+        raw_chunks = content.content_ref.get("chunks")
+        chunks = (
+            [str(item).strip() for item in raw_chunks if str(item).strip()]
+            if isinstance(raw_chunks, list)
+            else []
+        )
+        if not chunks:
+            chunks = [content.text_fallback]
+        return chunks or None
+    if normalized_type == "mixed":
+        if send_request.target_scope not in (SessionType.PRIVATE, SessionType.GROUP):
+            return None
+        raw_parts = content.content_ref.get("parts")
+        if not isinstance(raw_parts, list) or not raw_parts:
+            return None
+        if any(
+            isinstance(part, dict)
+            and str(part.get("type")).strip().lower() == "file"
+            for part in raw_parts
+        ):
+            # file 混排走 _send_file_parts 多调用路径（M10 语义域），
+            # 不满足「一次原子调用」假设，退出段级记账。
+            return None
+        return [_mixed_part_identity(part) for part in raw_parts]
+    return None
+
+
+def _mixed_part_identity(part: object) -> str:
+    """mixed part 的稳定身份串（调用点再经 _payload_digest 落库）。
+
+    dict 用 canonical JSON（排序键、保 Unicode、不可序列化值退化 str）；
+    非 dict 项用 repr。同一请求重复计划必须产出同一身份（幂等键前提）。
+    """
+    if isinstance(part, dict):
+        try:
+            return json.dumps(part, ensure_ascii=False, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            return repr(part)
+    return repr(part)
+
+
+def _is_atomic_part_delivery(send_request: SendRequest) -> bool:
+    """mixed 计划=原子整发：worker 不拆段调用，一次 transport 投整条。
+
+    依据：SnowLuma buildSendElems 任一段抛即整条不发（report-T46 §2.6），
+    且 U-29 裁定保 mixed 一条消息（不拆条）；part 行只承载记账/观测与
+    UNKNOWN 防盲重投，投递恒为单次原子调用。
+    """
+    return str(send_request.content.content_type).strip().lower() == "mixed"
 
 
 def _payload_digest(chunk: str) -> str:
@@ -579,7 +639,7 @@ def _payload_digest(chunk: str) -> str:
 
 
 # ---- 媒体终败文本降级（2026-09-15 实弹修复）--------------------------------
-# 事故：账单报告 mixed [image, text] 经 NapCat 单条 API 调用发送，image 段
+# 事故：账单报告 mixed [image, text] 经 NapCat 时期单条 API 调用发送，image 段
 # ``retcode=-1 rich media transfer failed`` 使整条调用被拒——文本部件一并
 # 未送达，且队列终败后无任何降级 → 管理员零反馈。修法：请求终败
 # （FAILED_FINAL 且非 PARTIAL 断点）且末次失败为平台**明确拒绝**
@@ -797,6 +857,23 @@ async def _try_deliver_by_parts(
         # 2) 顺序续发 PENDING part（attempts 达上限的 part 跳过，靠请求级
         #    退避循环最终收敛到终态）。
         progress = store.part_progress(request_id) or progress
+        # M-63 A 案：mixed 走原子整发分支（一次调用投整条，段级键只记账）。
+        if _is_atomic_part_delivery(request):
+            return await _deliver_atomic_mixed_parts(
+                send_queue,
+                store,
+                request,
+                transport,
+                progress,
+                parts_delivered=parts_delivered,
+                parts_unknown=parts_unknown,
+                progress_made=progress_made,
+                resumed=resumed,
+                last_receipt=last_receipt,
+                receipt_repository=receipt_repository,
+                audit_logger=audit_logger,
+                now=now,
+            )
         attempts_cap = max(1, int(store.max_attempts))
         for part_index in progress.pending_indexes():
             record = progress.records.get(part_index)
@@ -911,6 +988,206 @@ async def _try_deliver_by_parts(
             parts_unknown=parts_unknown,
             resumed=resumed,
         )
+
+
+async def _deliver_atomic_mixed_parts(
+    send_queue: DrainableSendQueue,
+    store: PartStoreQueue,
+    request: SendRequest,
+    transport: SendTransport,
+    progress: PartProgress,
+    *,
+    parts_delivered: int,
+    parts_unknown: int,
+    progress_made: bool,
+    resumed: bool,
+    last_receipt: DeliveryReceipt | None,
+    receipt_repository: ReceiptRepository | None,
+    audit_logger: AuditRepository | None,
+    now: datetime,
+) -> _PartDeliveryOutcome:
+    """mixed 原子整发投递（M-63 A 案核心，U-29/G2-R1 已裁）。
+
+    与 chunks 的逐段循环不同：mixed 只发**一次**——整条原请求原样投递
+    （保 QQ 混排一条消息，绝不拆段），段级 part 行只承载记账与防盲重投：
+
+    - SENT → 全部 PENDING part 记 SENT（原子同进退），请求置 SENT；
+    - FAILED_RETRYABLE 且 kind ∈ {retcode_failure, bot_unavailable} →
+      平台明确拒绝（SnowLuma 原子拒绝=零投递，重发安全）或环境挂起：
+      part 保持 PENDING，请求级按既有退避/挂起语义走（issue 原样透传，
+      退避烧尽终态时 W1 文本降级判定仍可见 retcode_failure）；
+    - 其余 FAILED_RETRYABLE（超时/断连/传输异常=**结果未知**：回执缺失
+      ≠未送达）→ 全部 PENDING part 记 UNKNOWN → 请求置 PARTIAL 断点，
+      绝不自动重投（M-63「9 发零台账」的根修点；UNKNOWN 确认协议与
+      chunks 同一套，生产 confirmer=None 时停 PARTIAL 待人工）；
+    - FAILED_FINAL（白名单退码/deadline）→ part 记 FAILED_FINAL，请求
+      终态；issue 透传使主循环的 W1 文本降级（_is_definitive_media_
+      rejection 判 retcode_failure）在第 1 轮即接住混排文字部件。
+
+    result_unknown 形态绝不触发文本降级（worker.py 既有安全前提：
+    可能已送达，补发=重复投递）。调用方外层 try 兜底：本函数内任何
+    存储异常按 result_unknown 终态化，绝不回落整发（已送达会被重发）。
+    """
+    request_id = request.request_id
+    pending = progress.pending_indexes()
+    if pending:
+        attempts_cap = max(1, int(store.max_attempts))
+        pending_records = [progress.records.get(index) for index in pending]
+        at_cap = all(
+            record is not None and record.attempts >= attempts_cap
+            for record in pending_records
+        )
+        if not at_cap:
+            for part_index in pending:
+                store.mark_part_attempt(request_id, part_index, now=now)
+            receipt = await _call_transport_safely(request, transport)
+            last_receipt = receipt
+            _record_part_receipt_safely(
+                receipt_repository, receipt, request, audit_logger
+            )
+            issue = receipt.operational_issue
+            kind = str(issue.kind) if issue is not None else ""
+            if receipt.state is ReceiptState.SENT:
+                for part_index in pending:
+                    store.mark_part_sent(
+                        request_id,
+                        part_index,
+                        provider_message_id=receipt.provider_message_id,
+                        now=now,
+                    )
+                parts_delivered += len(pending)
+                progress_made = True
+            elif (
+                receipt.state is ReceiptState.FAILED_RETRYABLE
+                and kind in {"retcode_failure", "bot_unavailable"}
+            ):
+                # 明确拒绝（零投递，重发安全）/ 环境挂起：part 不动，
+                # 请求级语义由收敛段按 receipt 承载。
+                pass
+            elif (
+                receipt.state is ReceiptState.FAILED_FINAL
+                and kind == "result_unknown"
+            ):
+                # 防御面：结果未知被上游终态化（部分副作用形态）——part
+                # 记 UNKNOWN 而非 FAILED_FINAL（未判定不能写死终态）。
+                for part_index in pending:
+                    store.mark_part_unknown(
+                        request_id, part_index, error_kind=kind, now=now
+                    )
+                parts_unknown += len(pending)
+                progress_made = True
+            elif receipt.state is ReceiptState.FAILED_FINAL:
+                for part_index in pending:
+                    store.mark_part_failed_final(
+                        request_id, part_index, error_kind=kind or None, now=now
+                    )
+            else:
+                # 超时/断连/传输异常=结果未知：全部记 UNKNOWN 停 PARTIAL。
+                for part_index in pending:
+                    store.mark_part_unknown(
+                        request_id,
+                        part_index,
+                        error_kind=kind or "result_unknown",
+                        now=now,
+                    )
+                parts_unknown += len(pending)
+                progress_made = True
+            progress = store.part_progress(request_id) or progress
+
+    # ---- 收敛（读回退已在调用方兜底；此处不再抛存储异常到主链路之外）----
+    if progress.total > 0 and progress.delivered == progress.total:
+        queue_receipt = _call_queue_state_method(
+            send_queue,
+            "mark_sent",
+            request_id,
+            "sent",
+            now=now,
+            operational_issue=None,
+        )
+        receipt = last_receipt or DeliveryReceipt(
+            request_id=request_id,
+            state=ReceiptState.SENT,
+            transport=SEND_QUEUE_WORKER_TRANSPORT,
+            public_message="sent",
+        )
+        return _PartDeliveryOutcome(
+            receipt=receipt,
+            queue_receipt=queue_receipt,
+            parts_delivered=parts_delivered,
+            parts_unknown=parts_unknown,
+            resumed=resumed,
+        )
+    if progress.unknown_indexes():
+        # 断点挂起：观测 issue 保留末次真实失败 kind（timeout_zero_part_
+        # delivered / send_exception / transport_exception），不再笼统
+        # result_unknown——运维面可直接读出停摆原因。resumable 跟随本轮
+        # 是否有进展（零进展休眠防 90s 空转重扫，与 chunks 收敛同语义）。
+        last_kind = (
+            str(last_receipt.operational_issue.kind)
+            if last_receipt is not None and last_receipt.operational_issue is not None
+            else "result_unknown"
+        )
+        issue = _part_issue(last_kind)
+        queue_receipt = store.mark_partial(
+            request_id,
+            resumable=progress_made,
+            now=now,
+            operational_issue=issue,
+        )
+        return _PartDeliveryOutcome(
+            receipt=DeliveryReceipt(
+                request_id=request_id,
+                state=ReceiptState.FAILED_FINAL,
+                transport=SEND_QUEUE_WORKER_TRANSPORT,
+                public_message="",
+                debug_id=issue.debug_id,
+                operational_issue=issue,
+            ),
+            queue_receipt=queue_receipt,
+            ended_partial=True,
+            parts_delivered=parts_delivered,
+            parts_unknown=parts_unknown,
+            resumed=resumed,
+        )
+    # 剩余 PENDING（明确拒绝重试 / 挂起重探）或全 FINAL：按末次回执状态
+    # 收敛，issue 原样透传（retcode_failure 烧尽终态时 W1 判定仍可见）。
+    state = (
+        last_receipt.state
+        if last_receipt is not None
+        else ReceiptState.FAILED_RETRYABLE
+    )
+    issue = last_receipt.operational_issue if last_receipt is not None else None
+    if state is ReceiptState.FAILED_RETRYABLE:
+        queue_receipt = _call_queue_state_method(
+            send_queue,
+            "mark_retryable_failure",
+            request_id,
+            "failed_retryable",
+            now=now,
+            operational_issue=issue,
+        )
+    else:
+        queue_receipt = _call_queue_state_method(
+            send_queue,
+            "mark_final_failure",
+            request_id,
+            "failed_final",
+            now=now,
+            operational_issue=issue,
+        )
+    return _PartDeliveryOutcome(
+        receipt=last_receipt
+        or DeliveryReceipt(
+            request_id=request_id,
+            state=state,
+            transport=SEND_QUEUE_WORKER_TRANSPORT,
+            public_message="",
+        ),
+        queue_receipt=queue_receipt,
+        parts_delivered=parts_delivered,
+        parts_unknown=parts_unknown,
+        resumed=resumed,
+    )
 
 
 def _converge_part_end_state(

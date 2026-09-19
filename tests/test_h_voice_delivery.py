@@ -1,4 +1,4 @@
-"""T71 Wave H 棘轮：语音投递验收 R1-R9（xfail(strict) 棘轮，现期预期红）。
+"""T71 Wave H 棘轮：语音投递验收 R1-R9（xfail(strict) 棘轮）。
 
 把 report-T65.md §三 的 R1-R8 配方（判据源=report-T55.md §五/§4.4、
 report-T46.md §3.5）落成 8 例 xfail(strict) 棘轮 + 1 例正锁（R5）：
@@ -7,6 +7,17 @@ report-T46.md §3.5）落成 8 例 xfail(strict) 棘轮 + 1 例正锁（R5）：
   progress.md G2-R1 已裁）落地后 xpass 触发 strict 失败 ⇒ 强制摘标记翻转；
 - R5（retcode 1200）语义等用户裁决，现状即绿、不可 xfail（会立即 xpass），
   故落为**正锁**：H 波改动 1200 语义时本例必红，强制翻议（见其 docstring）。
+
+翻转状态（2026-09-20，T78 席，施工=Wave H 传输层）：
+- 已摘标记转绿：R1（断连）、R2（超时）、R7（说 X 计划门）——断言体零改动；
+- 已按自带协议改写：R5（1200 终态化裁决，见其 docstring 与回滚点）；
+- **保留 xfail（判据冲突，待主代理/T71 裁，详见 report-T78 §冲突）**：
+  R3/R4/R6/R9（`sent_texts == [_TEXT]` 在仿真器 attempt 台账语义下不可
+  满足：原子 mixed 调用与 -textfb 降级各贡献一次 text 段 ⇒ 实况
+  `[_TEXT, _TEXT]`；若改 delivered-only 语义则 behavior 均匀注入使降级
+  尝试也失败 ⇒ `[]`，两端都不等于恰一次）；
+  R8（CHANNEL 负样本在 sender 层被 unsupported_target BLOCKED，零 API
+  调用 ⇒ 其 record 永不入台账，`record_files` 恰两项不可满足）。
 
 pytest 无全局 xfail_strict（pyproject.toml [tool.pytest.ini_options] 实查），
 strict 必须逐标记显式声明。
@@ -57,9 +68,10 @@ def _submit_mixed(queue, rid: str, *, record: str, text: str | None = _TEXT) -> 
 
 
 # ==================== R1｜断连形态负锁（M-63，P0） ====================
+# 翻转记录（T78，2026-09-20）：xfail 标记已摘——A 案（worker mixed 段级计划门
+# + 原子整发分支 UNKNOWN 喂入）落地后本例转绿，断言体零改动。
 
 
-@pytest.mark.xfail(strict=True, reason="Wave H 未施工：mixed 无段级记账，断连盲重投")
 @pytest.mark.asyncio
 async def test_r1_disconnect_no_redispatch_after_parts_booked(
     tmp_path, monkeypatch
@@ -100,9 +112,9 @@ async def test_r1_disconnect_no_redispatch_after_parts_booked(
 
 
 # ==================== R2｜纯超时形态（1×3=3 发） ====================
+# 翻转记录（T78，2026-09-20）：xfail 标记已摘，断言体零改动（同 R1）。
 
 
-@pytest.mark.xfail(strict=True, reason="Wave H 未施工：超时形态零 UNKNOWN 记账，盲重投")
 @pytest.mark.asyncio
 async def test_r2_pure_timeout_single_dispatch_then_partial(tmp_path, monkeypatch) -> None:
     """R2｜纯超时 3 发分形态（判据：T55 §一.2 表/§五 R2；T65 §三 R2）。
@@ -214,28 +226,28 @@ async def test_r4_retcode_100_ruling_lock_whitelist_form(tmp_path, monkeypatch) 
     )
 
 
-# ==================== R5｜retcode 1200 挂起语义正锁（非 xfail） ====================
+# ==================== R5｜retcode 1200 语义正锁（T78 终态化裁决后改写） ====================
 
 
 @pytest.mark.asyncio
-async def test_r5_retcode_1200_hold_semantics_positive_lock(tmp_path, monkeypatch) -> None:
-    """R5｜retcode 1200 挂起语义**正锁**（判据：T55 §二.1 表行 3/§六.2；T46 §3.5；
-    T65 §三 R5；queue.py:802-851 _defer_for_bot_unavailable）。
+async def test_r5_retcode_1200_terminalized_positive_lock(tmp_path, monkeypatch) -> None:
+    """R5｜retcode 1200 **终态化**语义正锁（原名
+    test_r5_retcode_1200_hold_semantics_positive_lock；按本例原 docstring
+    「H 波按裁决改 1200 语义时必红 ⇒ 强制翻议后随裁决改写断言」的翻转协议，
+    随 T78 席 2026-09-20 终态化裁决改写）。
 
-    现状语义：1200 → bot_unavailable 挂起（不烧 retry_count 预算、零降级
-    零重投），入队年龄超上限才终态。本例把现状锁成**正锁**而非 xfail：
-    1200 处置语义等用户裁决（T55 §4.4.4 ②「1200 语义处置须与 A 案同波
-    裁决」），现状即绿，标 xfail(strict) 会立即 xpass 炸套件——与
-    「8 xfail/0 xpass」硬目标冲突。翻转方式：H 波按裁决改 1200 语义时本例
-    必红 ⇒ 强制翻议后随裁决改写断言（它就是裁决的绊线，不是待绿项）。
+    裁决（T46-N1 连带，选型记录见 report-T78）：SnowLuma 的 1200 只在
+    「stream action dispatched without a sink」发射（INTERNAL_ERROR，
+    config-GJCFWjtq.js:1440，report-T46 §3.5 / report-T55 §二.1 实复核），
+    与「适配器无连接」旧 NapCat 语义已漂移（常量历史由来=unknown，T55
+    §二.2）；真断线走 NoneBot 异常（无 .info.retcode）路径。故废除 R2
+    （2026-09-17）的 bot_unavailable 挂起 30 分钟语义，1200 经白名单第 1 轮
+    FAILED_FINAL + W1 文本降级。**回滚点**：恢复
+    `_ONEBOT_API_UNAVAILABLE_RETCODE=1200` 拦截分支 + `_bot_unavailable_receipt`
+    （onebot.py，本裁决前 git 历史）+ 本例改回挂起判据。
 
-    诚实注记：1200 在 SnowLuma 下只在「stream action dispatched without a
-    sink」发射（INTERNAL_ERROR，config-GJCFWjtq.js:1440），与「适配器无连接」
-    旧语义已漂移；其常量历史由来=unknown（T55 §二.2，零 git 历史可溯）。
-
-    烘焙耦合点：C1（动作拒绝分支不内联重试）、C4（显式 now 跨年龄上限）、
-    C5（bot_unavailable_max_age_seconds 透传收小到 10s；首轮 now 已在
-    认领宽限外，年龄即刻超限 ⇒ 挂起形态以「零预算消耗 + 零降级」判据锁定）。
+    烘焙耦合点：C1（动作拒绝分支不内联重试）、C4（显式 now）。behavior 均匀
+    注入使 W1 降级尝试同样被拒（attempt 台账仍记账），与 R3 骨架同形态。
     """
     freeze_inline_retries(monkeypatch)
     queue = build_sqlite_queue(tmp_path, bot_unavailable_max_age_seconds=10.0)
@@ -246,16 +258,21 @@ async def test_r5_retcode_1200_hold_semantics_positive_lock(tmp_path, monkeypatc
     results = await run_queue_rounds(queue, transport, rounds=3, base_now=_BASE)
 
     row = queue_row(queue, "r5")
+    # 终态化判据：白名单 retcode_failure 第 1 轮终态；bot_unavailable kind
+    # 在 sender 侧已无生产者（queue._defer_for_bot_unavailable 保留为防御
+    # 基建，但不再由 1200 触发）。
     assert any(
+        issue.kind == "retcode_failure" for issue in results[0].operational_issues
+    )
+    assert not any(
         issue.kind == "bot_unavailable" for issue in results[0].operational_issues
     )
-    assert row["state"] == "failed_final"  # 年龄超限的挂起到期终态
-    assert row["retry_count"] == 0  # 挂起不烧重试预算（与 1400 盲烧的本质区别）
-    assert dispatch_count(bot) == 1  # 拒绝分支不内联重试、终态前不再认领
-    # 恰 1 条 dispatch ⇒ 零 W1 降级补发（bot_unavailable 非明确拒绝，不触发
-    # worker.py:303-311 降级门）；文字段来自该 mixed 整发本身（text+record）。
-    assert sent_texts(bot) == [_TEXT]
-    assert record_files(bot) == [_RECORD]
+    assert row["state"] == "failed_final"  # 第 1 轮即终态：无挂起等待窗
+    assert row["retry_count"] == 0  # 终态不经重试预算（零烧判据保留）
+    # 恰 2 条 dispatch：1 条 fatal 整发 + 1 条 W1 文本降级尝试（-textfb；
+    # behavior 均匀注入使其同样被拒，attempt 台账仍记账）。
+    assert dispatch_count(bot) == 2
+    assert record_files(bot) == [_RECORD]  # 零盲重投
 
 
 # ==================== R6｜毒语音文字保全（SnowLuma fatal + W1） ====================
@@ -285,9 +302,10 @@ async def test_r6_poison_record_text_preserved_in_round_one(tmp_path, monkeypatc
 
 
 # ==================== R7｜说 X 单 record 回归锁（R-16②） ====================
+# 翻转记录（T78，2026-09-20）：xfail 标记已摘，断言体零改动——单 record mixed
+# 已进段级计划（计划门覆盖全体 mixed），R-16② 零自拼文案转为永久正锁。
 
 
-@pytest.mark.xfail(strict=True, reason="Wave H 未施工：说 X mixed 不进 part 计划（现状无 part 行）")
 @pytest.mark.asyncio
 async def test_r7_say_x_no_text_negative_lock(tmp_path, monkeypatch) -> None:
     """R7｜`说 X` 单 record 回归锁（判据：T55 §三共性边界①/§六.4/§五 R7；
