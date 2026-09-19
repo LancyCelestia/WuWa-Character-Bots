@@ -30,6 +30,7 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SendPolicy,
 )
+from plugins.bot_unified_runtime.domains.core.text_boundary import is_trigger
 from plugins.bot_unified_runtime.domains.media.archive.media_archive import (
     CATEGORIES,
     FALLBACK_CATEGORY_BY_TYPE,
@@ -93,6 +94,14 @@ _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ShoreKeeperBot/1.0"
 logger = logging.getLogger(__name__)
 
 
+# 词尾边界字（Wave G T66 收编）：判定循环上收 domains/core/text_boundary.py
+# 的 is_trigger，本文件只剩取值登记。逐字节=现行手抄串（比 TRIGGER 少 　\t、
+# 比 PARTICLE 少 哦嘛咯哇；「=」参数边界经 extra_boundary_chars 显式组合——
+# 统一加宽属行为变更，本波不做，diff 见
+# .superpowers/sdd/2026-09-19-unify-audit/report-T66.md 披露表）。
+_BOUNDARY_CHARS = "，,。！？!?：:、 的了呢吗呀啊哈～~"
+
+
 def is_media_archive_command(
     text: str, trigger_words: list[str] | tuple[str, ...] | None = None
 ) -> bool:
@@ -100,20 +109,19 @@ def is_media_archive_command(
 
     与 randpic 同哲学的保守边界：避免「收藏夹」「归档表」类包含词误触发；
     触发词后允许直接跟 分类=/IP= 参数。换行先归一为空格——「收藏\\n分类=x」
-    是最自然的多行输入形态（评审 I-3）。
+    是最自然的多行输入形态（评审 I-3）。判定逻辑收编中央件（Wave G T66）：
+    换行归一/裸词/现行字符集经显式传参逐字节保持。
     """
     triggers = tuple(trigger_words) if trigger_words else DEFAULT_TRIGGER_WORDS
-    stripped = (text or "").strip().replace("\r", " ").replace("\n", " ")
-    if not stripped:
-        return False
-    for word in sorted({w.strip() for w in triggers if w.strip()}, key=len, reverse=True):
-        if stripped == word:
-            return True
-        if stripped.startswith(word):
-            tail = stripped[len(word):]
-            if not tail or tail[0] in "，,。！？!?：:、 的了呢吗呀啊哈～~" or tail[0] == "=":
-                return True
-    return False
+    return is_trigger(
+        text,
+        triggers,
+        case_insensitive=False,
+        bare_word=True,
+        newline_as_space=True,
+        boundary_chars=_BOUNDARY_CHARS,
+        extra_boundary_chars="=",
+    )
 
 
 def parse_archive_args(text: str) -> dict[str, str]:
@@ -179,7 +187,7 @@ def _extract_archive_items(
 
 def _read_local_media(path_text: str, max_bytes: int) -> bytes | None:
     path = Path(path_text)
-    # 防御纵深（评审 M-3）：段内路径只收绝对路径（NapCat 供给形态），
+    # 防御纵深（评审 M-3）：段内路径只收绝对路径（SnowLuma 供给形态），
     # 相对路径会相对进程 CWD 解析，一律拒收。
     if not path.is_absolute() or not path.is_file():
         return None

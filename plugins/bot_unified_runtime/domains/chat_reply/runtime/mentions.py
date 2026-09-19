@@ -17,8 +17,17 @@ from __future__ import annotations
 import functools
 import re
 
+from plugins.bot_unified_runtime.domains.core.text_boundary import (
+    ADDRESS_BOUNDARY_CHARS,
+)
+
 # 称呼后允许跟的边界字符（单字符集合，含常见时间/请求词的首字）。
-_ADDRESS_BOUNDARY_CHARS = set("，,。！？!?：:、 的了呢吗呀啊哈今明天现在请帮我你请问呼")
+# Wave G T66 取值收编：核心段（标点+空白+虚词七）保持现行字面量逐字节不变
+# （比中央权威集少 　\t～~、比 PARTICLE 少 哦嘛咯哇——diff 见
+# .superpowers/sdd/2026-09-19-unify-audit/report-T66.md 披露表）；称呼/时间/
+# 请求词扩展段改引中央登记 ``ADDRESS_BOUNDARY_CHARS``，不再手抄。
+_MENTION_CORE_BOUNDARY_CHARS = "，,。！？!?：:、 的了呢吗呀啊哈"
+_ADDRESS_BOUNDARY_CHARS = frozenset(_MENTION_CORE_BOUNDARY_CHARS + ADDRESS_BOUNDARY_CHARS)
 _CALL_PATTERN = re.compile(r"(?:呼叫|召唤|在吗|@|＠)\s*([^\s，。！？!?：:、@＠]+)")
 
 

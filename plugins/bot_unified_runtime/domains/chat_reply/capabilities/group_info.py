@@ -1,7 +1,7 @@
 """群信息能力（bot.group_info）：群资料/群主/人数/公告/精华，一问直答。
 
 来源：审查 B-01/B-04——用户实测问「群主是谁/群人数/群公告」答不上，根因是
-OneBot V11/NapCat 明明支持群 API（get_group_info / get_group_member_list /
+OneBot V11/SnowLuma 明明支持群 API（get_group_info / get_group_member_list /
 get_group_notice / get_essence_msg_list）而全仓零调用。本能力补齐这条链路。
 
 权限分级（复用媒体归档的 _role_atLeast 同款角色秩模式）：
@@ -36,6 +36,11 @@ from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     IncomingMessage,
     SendPolicy,
+)
+from plugins.bot_unified_runtime.domains.core.text_boundary import (
+    PARTICLE_BOUNDARY_CHARS,
+    is_trigger,
+    matched_trigger_word,
 )
 from plugins.bot_unified_runtime.runtime.group_cache import (
     KIND_ESSENCE,
@@ -76,7 +81,12 @@ GROUP_INFO_TRIGGER_WORDS: tuple[str, ...] = tuple(_INTENT_OF_WORD)
 
 # 词尾边界字（与 media_archive 同哲学的保守边界：触发词后只能跟标点/语气
 # 助词/空白，防「群主管」「群信息表」类包含词误触发）。
-_BOUNDARY_CHARS = "，,。！？!?：:、 的了呢吗呀啊哈～~哦嘛咯哇"
+# Wave G T66 收编：判定循环上收 domains/core/text_boundary.py，取值改由
+# 「基段（标点+空白，= 权威集去 　\t）+ 中央 PARTICLE 登记全量」组合——
+# 组合集与本文件原手抄串「，,。！？!?：:、 的了呢吗呀啊哈～~哦嘛咯哇」
+# 逐字节等价；虚词集今后在中央登记处演化时本域自动跟随（加宽属行为变更，
+# 另行评审）。
+_BOUNDARY_BASE_CHARS = "，,。！？!?：:、 ～~"
 
 _NOTICE_SNIPPET_CHARS = 100
 # 审查 Q-03 扩展：拒绝/指路类提示（私聊查群信息不受理）去拖尾语气符「～」，
@@ -86,34 +96,42 @@ _UNAVAILABLE_LINE = "群资料接口这会儿没回应，这部分先不答啦�
 
 
 def is_group_info_command(text: str) -> bool:
-    """触发词判定：整句等于触发词，或触发词后跟标点/语气边界（同媒体归档）。"""
-    stripped = (text or "").strip().replace("\r", " ").replace("\n", " ")
-    if not stripped:
-        return False
-    for word in sorted(GROUP_INFO_TRIGGER_WORDS, key=len, reverse=True):
-        if stripped == word:
-            return True
-        if stripped.startswith(word):
-            tail = stripped[len(word):]
-            if not tail or tail[0] in _BOUNDARY_CHARS:
-                return True
-    return False
+    """触发词判定：整句等于触发词，或触发词后跟标点/语气边界（同媒体归档）。
+
+    判定逻辑收编中央件（Wave G T66）：换行归一/裸词/最长词优先由
+    ``is_trigger`` 承担；触发体检的字面提取面（词表 ``GROUP_INFO_TRIGGER_WORDS``）
+    保持在本模块不变。
+    """
+    return is_trigger(
+        text,
+        GROUP_INFO_TRIGGER_WORDS,
+        case_insensitive=False,
+        bare_word=True,
+        newline_as_space=True,
+        boundary_chars=_BOUNDARY_BASE_CHARS,
+        extra_boundary_chars=PARTICLE_BOUNDARY_CHARS,
+    )
 
 
 def detect_group_info_intents(text: str) -> frozenset[str]:
     """把触发文本解析成意图集（profile/owner/count/age/notice/essence）。
 
     命中多个词形时按最长词优先取其一（词形互斥设计，实际至多一个）；
-    空集 = 未识别（调用方按全量档案处理或忽略）。
+    空集 = 未识别（调用方按全量档案处理或忽略）。命中判定收编中央件
+    ``matched_trigger_word``（Wave G T66，返回命中的触发词本身）。
     """
-    stripped = (text or "").strip().replace("\r", " ").replace("\n", " ")
-    for word in sorted(GROUP_INFO_TRIGGER_WORDS, key=len, reverse=True):
-        if stripped == word or (
-            stripped.startswith(word)
-            and (len(stripped) == len(word) or stripped[len(word)] in _BOUNDARY_CHARS)
-        ):
-            return frozenset({_INTENT_OF_WORD[word]})
-    return frozenset()
+    word = matched_trigger_word(
+        text,
+        GROUP_INFO_TRIGGER_WORDS,
+        case_insensitive=False,
+        newline_as_space=True,
+        boundary_chars=_BOUNDARY_BASE_CHARS,
+        extra_boundary_chars=PARTICLE_BOUNDARY_CHARS,
+    )
+    intent = _INTENT_OF_WORD.get(word)
+    if not word or intent is None:
+        return frozenset()
+    return frozenset({intent})
 
 
 def _role_at_least(sender_roles: list[str], min_role: str) -> bool:

@@ -21,6 +21,7 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SendPolicy,
 )
+from plugins.bot_unified_runtime.domains.core.text_boundary import is_trigger
 
 # 拼音全拼/缩写（T-Spec T1.5/T1.6）：suijitu/laizhangtu 同覆盖繁体同音
 # （隨機圖/來張圖）；sjt/lzt 查重无冲突。前缀+标点边界逻辑天然防
@@ -42,23 +43,31 @@ _SCAN_CACHE_LRU_CAP = 512
 _SCAN_CACHE: OrderedDict[str, tuple[float, list[Path]]] = OrderedDict()
 
 
+# 词尾边界字（Wave G T66 收编）：判定循环上收 domains/core/text_boundary.py
+# 的 is_trigger，本文件只剩取值登记。逐字节=现行手抄串（比中央权威集
+# TRIGGER_BOUNDARY_CHARS 少 　\t、比 PARTICLE_BOUNDARY_CHARS 少 哦嘛咯哇——
+# 统一加宽属行为变更，本波不做，diff 见
+# .superpowers/sdd/2026-09-19-unify-audit/report-T66.md 披露表）。
+_BOUNDARY_CHARS = "，,。！？!?：:、 的了呢吗呀啊哈～~"
+
+
 def is_randpic_command(text: str, trigger_words: list[str] | tuple[str, ...] | None = None) -> bool:
     """触发词判定：整句等于触发词，或触发词后跟标点/空白边界。
 
     保守边界与 mentions 同哲学：避免「随机图片库」这类包含关系词误触发。
+    判定逻辑收编中央件（Wave G T66）；大小写敏感/裸词命中/现行字符集经
+    显式传参逐字节保持。
     """
     triggers = tuple(trigger_words) if trigger_words else DEFAULT_TRIGGER_WORDS
-    stripped = (text or "").strip()
-    if not stripped:
-        return False
-    for word in sorted({w.strip() for w in triggers if w.strip()}, key=len, reverse=True):
-        if stripped == word:
-            return True
-        if stripped.startswith(word):
-            tail = stripped[len(word):]
-            if not tail or tail[0] in "，,。！？!?：:、 的了呢吗呀啊哈～~":
-                return True
-    return False
+    return is_trigger(
+        text,
+        triggers,
+        case_insensitive=False,
+        bare_word=True,
+        newline_as_space=False,
+        boundary_chars=_BOUNDARY_CHARS,
+        extra_boundary_chars="",
+    )
 
 
 def _scan_dir(root: Path, max_bytes: int) -> list[Path]:

@@ -10,11 +10,11 @@
 - 链接解析：文本含 http(s) 链接时优先走解析器。
 
 子能力执行完后把 ``CapabilityResult`` 交回 ``RuntimePipeline``（基层），
-基层统一做安全审查、渲染（文本/卡片/合并转发）并交给 NapCat 发送。
+基层统一做安全审查、渲染（文本/卡片/合并转发）并交给 SnowLuma 发送。
 这里只做判断，不直接执行、不直接发消息。
 
 同时维护 ``INTERFACE_MANIFEST``：把目前和未来所有可想象的接口
-（GsCore/早柚核心桥、NapCat 传输、解析插件、人格、天气、游戏直播、
+（GsCore/早柚核心桥、SnowLuma 传输、解析插件、人格、天气、游戏直播、
 订阅、表情包吸收/生成等）提前登记成一张可审计的清单，已接入的标
 ``active``，尚未接线的标 ``reserved``。新增能力只需在注册表加一行，
 不改变判定主循环。
@@ -85,6 +85,10 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.capability_registry 
 )
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.natural_language import (
     detect_natural_command,
+)
+from plugins.bot_unified_runtime.domains.core.text_boundary import (
+    is_boundary_char,
+    strip_boundary,
 )
 
 
@@ -200,6 +204,15 @@ def _resolve_alias(text: str, alias_resolver: Any) -> Any | None:
     if alias_resolver is None:
         return None
     return alias_resolver.resolve(text)
+
+
+# 自然语言命令的昵称前缀剥离（Wave G T66：查界/剥尾两步收编
+# domains/core/text_boundary 的 is_boundary_char/strip_boundary；取值=
+# 本处现行子集逐字节不变。strip_boundary 尾部多一次 .strip()，与
+# detect_natural_command 入口 strip 同构，行为无差）。
+_NICKNAME_BOUNDARY_CHARS = "，,。！？!?：: 的"
+_NICKNAME_BOUNDARY_SET = frozenset(_NICKNAME_BOUNDARY_CHARS)
+_NICKNAME_STRIP_CHARS = "，,。！？!?：: "
 
 
 def build_route_rules() -> list[RouteRule]:
@@ -471,9 +484,13 @@ def build_route_rules() -> list[RouteRule]:
             for nickname in nicknames:
                 if candidate.startswith(nickname) and (
                     candidate == nickname
-                    or candidate[len(nickname)] in "，,。！？!?：: 的"
+                    or is_boundary_char(
+                        candidate[len(nickname)], charset=_NICKNAME_BOUNDARY_SET
+                    )
                 ):
-                    candidate = candidate[len(nickname):].lstrip("，,。！？!?：: ")
+                    candidate = strip_boundary(
+                        candidate[len(nickname):], charset=_NICKNAME_STRIP_CHARS
+                    )
                     break
         resolution = detect_natural_command(candidate, config)
         if resolution is None:
