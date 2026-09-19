@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import {
   BUCKETS,
@@ -18,6 +18,15 @@ import {
 
 // 时间窗/桶的语义与标签单源锁（UNI1 收口：三份枚举手抄 + 四份标签真值表 → labels.ts + window.*）。
 // 运行方式：node --test src/lib/labels.test.ts（Node ≥23 原生类型剥离，零新依赖）。
+//
+// 密封纪律（UNI1 fix1 · 评审 C-1 裁定）：本文件**只读 webui/ 以内**（labels / locale / 页面源码），
+// 「前端声明 == 后端源码」的跨语言同值**不再由 node --test 锁定**——control_plane 三件 .py
+// （metrics / webui_stats / webui_memory_graph）本波未入库，干净克隆上缺文件是 ENOENT **失败**
+// 而非 skip，会经 tests/test_webui_constitution.py::test_pure_function_tests 把整个前端门拖红，
+// 且失败消息对改后端的 Python 作者零可达（他跑 pytest，不跑 npm test）。
+// 该职责移交 `tests/test_webui_labels_backend_parity.py`（pytest 侧：后端模块缺失即显式 skip 并
+// 点名路径、失败落在改动的一方，并兼锁 M-3/I-1「后端产出 reason 码 ⊆ 前端白名单」）。
+// node 侧保留 labels ↔ 枚举 ↔ 标签 的纯前端三向自洽锁，任何克隆上都恒可跑。
 
 type Table = Record<string, unknown>;
 
@@ -27,9 +36,6 @@ function readText(url: URL): string {
 
 const zhLocale = JSON.parse(readText(new URL('../locales/zh-CN/common.json', import.meta.url))) as Table;
 const enLocale = JSON.parse(readText(new URL('../locales/en/common.json', import.meta.url))) as Table;
-
-// 后端真相源（前端跨语言的“同值”不许靠人眼盯，此处直读源码字面量对账）。
-const CONTROL_PLANE = '../../../plugins/bot_unified_runtime/control_plane/';
 
 function lookup(table: Table, key: string): string | undefined {
   let cursor: unknown = table;
@@ -47,25 +53,6 @@ function makeT(table: Table): (key: string) => string {
 const tZh = makeT(zhLocale);
 const tEn = makeT(enLocale);
 
-/** 解析 Python 闭集字典字面量（`{"24h": 86_400, "7d": 7 * 86_400, "all": None}`）。 */
-function pyWindowLiterals(source: string, name: string): Map<string, number | null> {
-  const match = new RegExp(`${name}\\s*=\\s*\\{([^}]*)\\}`).exec(source);
-  assert.ok(match, `后端源码里找不到 ${name}——改名/挪文件必须同步 labels.ts 的真相源锚点`);
-  const entries = [...match[1].matchAll(/"([^"]+)"\s*:\s*([^,}]+?)\s*(?:,|$)/g)];
-  assert.ok(entries.length > 0, `${name} 字面量解析为空（正则与后端写法不匹配？）`);
-  return new Map(
-    entries.map(([, code, raw]) => {
-      if (raw === 'None') return [code, null] as const;
-      const factors = raw.split('*').map((part) => part.trim().replace(/_/g, ''));
-      assert.ok(
-        factors.every((part) => /^\d+$/.test(part)),
-        `无法解析后端跨度字面量 ${name} 的 ${raw}（后端改成表达式请同步本解析器）`
-      );
-      return [code, factors.reduce((acc, part) => acc * Number(part), 1)] as const;
-    })
-  );
-}
-
 test('枚举与次序：stats 三档、graph = stats + all、桶两档（顺序即界面顺序，重排需改本锁）', () => {
   assert.deepEqual([...STATS_WINDOWS], ['24h', '7d', '30d']);
   assert.deepEqual([...GRAPH_WINDOWS], ['24h', '7d', '30d', 'all']);
@@ -74,26 +61,20 @@ test('枚举与次序：stats 三档、graph = stats + all、桶两档（顺序�
   assert.equal(DEFAULT_BUCKET, 'hour');
 });
 
-test('窗口跨度与后端逐项同值（直读 metrics.py 的 _WINDOW_SECONDS 与 memory_graph 的 _WINDOWS）', () => {
-  const stats = pyWindowLiterals(readText(new URL(`${CONTROL_PLANE}metrics.py`, import.meta.url)), '_WINDOW_SECONDS');
-  const graph = pyWindowLiterals(readText(new URL(`${CONTROL_PLANE}webui_memory_graph.py`, import.meta.url)), '_WINDOWS');
-  for (const code of STATS_WINDOWS) {
-    assert.ok(stats.has(code), `后端 stats 侧不再接受 ${code}——前端枚举该收缩，别把 422 送上生产`);
-    assert.equal(WINDOW_SECONDS[code], stats.get(code), `${code} 跨度与后端 stats 不等`);
-  }
-  for (const code of GRAPH_WINDOWS) {
-    assert.ok(graph.has(code), `后端图谱侧不再接受 ${code}`);
-    assert.equal(WINDOW_SECONDS[code], graph.get(code), `${code} 跨度与后端图谱不等`);
-  }
+test('窗口跨度内部自洽：键集=图谱枚举、all 无界、有限档=1/7/30 天整（跨语言同值改由 pytest 锁定）', () => {
+  assert.deepEqual(
+    Object.keys(WINDOW_SECONDS).sort(),
+    [...GRAPH_WINDOWS].sort(),
+    '跨度表与图谱枚举键集分叉'
+  );
   assert.equal(WINDOW_SECONDS.all, null, 'all 无界：不得造上界秒数');
-});
-
-test('桶闭集与后端同值（webui_stats.py _BUCKETS，表外值后端 422 invalid_bucket）', () => {
-  const source = readText(new URL(`${CONTROL_PLANE}webui_stats.py`, import.meta.url));
-  const match = /_BUCKETS\s*=\s*\(([^)]*)\)/.exec(source);
-  assert.ok(match, '后端 _BUCKETS 字面量形态变了——同步本解析器与 labels.ts 锚点注释');
-  const backend = [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
-  assert.deepEqual([...BUCKETS], backend);
+  assert.deepEqual(
+    STATS_WINDOWS.map((code) => WINDOW_SECONDS[code]),
+    [86_400, 7 * 86_400, 30 * 86_400],
+    '有限窗跨度应恰为 1/7/30 天（此处钉死即防漂，后端同值验证在 pytest 侧 parity 门）'
+  );
+  // 后端 metrics.py / webui_stats.py / webui_memory_graph.py 的字面量同值与桶闭集对账：
+  // tests/test_webui_labels_backend_parity.py（文件缺失→显式 skip，绝不 ENOENT 红）。
 });
 
 test('名实：有限窗全为滚动窗（后端 now - timedelta 口径），标签不得出现自然日用语', () => {
@@ -133,13 +114,14 @@ test('标签键覆盖枚举且双语在位（含桶标签；windowLabel/bucketLa
   }
 });
 
-test('第三/四份标签真值表已删除；两份遗留表（tokens/memory-graph 占用）值不得与单源分叉', () => {
+test('第三/四份标签真值表已删除；两份遗留镜像表（calls.window/memoryGraph.window）值不得与单源分叉', () => {
   // 本席收口：dashboard.overview.windowToday / window7d 退役（只有 dashboard 消费，已改走 window.*）。
   assert.equal(lookup(zhLocale, 'dashboard.overview.windowToday'), undefined, 'windowToday 未删除（第 3 份表还在）');
   assert.equal(lookup(zhLocale, 'dashboard.overview.window7d'), undefined, 'window7d 未删除（第 4 份表还在）');
   assert.equal(lookup(enLocale, 'dashboard.overview.windowToday'), undefined);
-  // 遗留表由只读页消费（tokens.tsx:117 借 calls.window.*；memory-graph.tsx:128/278 用 memoryGraph.window.*）。
-  // 迁移前按值对账锁死：三处同一码必须同一说法，谁改一处即刻红。
+  // 遗留镜像表的消费者（fix1 更新）：memoryGraph.window.* 仍被 memory-graph.tsx:128/278 消费（只读面，
+  // 台账 §四-2）；calls.window.* 自 fix1 迁走 tokens 后已**零生产消费者**——locale 对本波只读，
+  // 删表另行批（台账 §四-11），删前由本锁钉住值与单源相等，漂一字即红。
   const legacyNamespaces = ['calls.window', 'memoryGraph.window'];
   for (const namespace of legacyNamespaces) {
     for (const code of GRAPH_WINDOWS) {
@@ -160,13 +142,14 @@ test('nextBucket：hour/day 两态闭环，表外值回缺省桶不猜（后端�
   for (const code of BUCKETS) assert.ok(BUCKETS.includes(nextBucket(code)), `${code} 的后继出表`);
 });
 
-test('负断言棘轮：本席所辖页面不再手抄枚举、不再写死未知符号字面量', () => {
+test('负断言：已收口页面（含 fix1 迁完的 tokens）不再手抄枚举、不再写死未知符号字面量', () => {
   const owned = [
     '../pages/calls.tsx',
     '../pages/dashboard.tsx',
     '../pages/latency.tsx',
     '../pages/affinity.tsx',
     '../pages/plugins.tsx',
+    '../pages/tokens.tsx',
     '../components/semantic/semantic-state.tsx',
   ];
   for (const path of owned) {
@@ -176,9 +159,29 @@ test('负断言棘轮：本席所辖页面不再手抄枚举、不再写死未�
     assert.ok(!/>—</.test(text), `${path} 又内联了未知符号（真相源=format.ts UNKNOWN_VALUE）`);
     assert.ok(!/t\(`calls\.window\./.test(text), `${path} 又绕过 windowLabel 直取窗口标签`);
   }
-  // 未迁移的注册残余（只读面，见 UNI1 台账 §四）：数量只减不增，清零后请删掉本断言的白名单。
-  const stillEnumerating = ['../pages/tokens.tsx', '../pages/memory-graph.tsx'].filter((path) =>
+});
+
+test('残余棘轮（shrink-only 下限）：枚举手抄面只许减少，还债不得砸门（评审 I-2）', () => {
+  // 在册未迁残余（UNI1 台账 §四-2；tokens 已于 fix1 迁完并升级进上例严检）。
+  // 深比较「精确等值」会在后续席完成迁移时反而红（进度=砸门），故这里只断：
+  //   ①数量 ≤ 在册基线（只减不增）；②每个命中页必须仍在册（新抄一枚即红）。
+  // memory-graph 迁完后命中数归 0，本例依旧绿；届时请把清单清空并保留本框架防新页手抄。
+  const trackedUnmigrated = ['../pages/memory-graph.tsx'];
+  const pagePaths = readdirSync(new URL('../pages/', import.meta.url))
+    .filter((name) => name.endsWith('.tsx'))
+    .sort()
+    .map((name) => `../pages/${name}`);
+  const stillEnumerating = pagePaths.filter((path) =>
     /const\s+WINDOWS\b/.test(readText(new URL(path, import.meta.url)))
   );
-  assert.deepEqual(stillEnumerating, ['../pages/tokens.tsx', '../pages/memory-graph.tsx'], '枚举残余清单变化：同步 UNI1 台账 §四');
+  assert.ok(
+    stillEnumerating.length <= trackedUnmigrated.length,
+    `枚举残余 ${stillEnumerating.length} 处超过下限 ${trackedUnmigrated.length}（棘轮只减不增）：${stillEnumerating.join(', ')}`
+  );
+  for (const path of stillEnumerating) {
+    assert.ok(
+      trackedUnmigrated.includes(path),
+      `新的未登记枚举手抄面 ${path}——迁 labels.ts，或先登记 UNI1 台账 §四 再入本清单`
+    );
+  }
 });

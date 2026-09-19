@@ -63,7 +63,13 @@ export function reasonKey(reason: string): string {
   return KNOWN_REASON_SET.has(reason) ? `reason.${reason}` : '';
 }
 
-/** 某 reason 码是否已登记（供「后端产出 ⊆ 白名单」「白名单 == locale 键集」两类断言引用）。 */
+/**
+ * 某 reason 码是否已登记（运行面由 `reasonKey`/`describeReason` 引用做白名单判定）。
+ * 两条例外锁的位置（fix1 收口评审 I-1/M-3 的「断言只写在 docstring」）：
+ * 「后端产出 ⊆ 本名单」= `tests/test_webui_labels_backend_parity.py`（pytest 直读本名单字面量
+ * 与 control_plane 五件失败面，后端模块缺失显式 skip）；「本名单 == 双语 locale 键集」（无死条目）
+ * = `semantics.test.ts` 三向对账。
+ */
 export function isKnownReason(reason: string): boolean {
   return KNOWN_REASON_SET.has(reason);
 }

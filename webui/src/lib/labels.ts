@@ -10,7 +10,8 @@
 //
 // 名实纪律：后端窗口是**从此刻回溯的滚动窗**（`metrics.py:89 _WINDOW_SECONDS` 配
 // `now - timedelta(seconds=…)`），与自然日无关——标签里出现「今日/当天/Today」即名实不符。
-// 该纪律由 `labels.test.ts` 直读后端源码 + 双语标签文案双向钉死。
+// 该纪律双向钉死：双语标签文案门在 `labels.test.ts`（密封，只读 webui/），后端源码字面量
+// 对账在 `tests/test_webui_labels_backend_parity.py`（pytest，缺模块显式 skip——C-1 裁定）。
 //
 // 纪律：零运行时依赖（只 `import type`）、无 enum/参数属性/namespace，故 `node --test` 直跑。
 
@@ -34,8 +35,9 @@ export const DEFAULT_BUCKET: BucketCode = 'hour';
 
 /**
  * 窗口跨度（秒）；`all` 为无界（null，不造上界）。
- * 逐字对齐后端两份 closed-set（`labels.test.ts` 解析后端源码对账，改一侧必红）：
- * `control_plane/metrics.py:89`、`control_plane/webui_memory_graph.py:43`。
+ * 逐字对齐后端闭集，跨语言同值由 `tests/test_webui_labels_backend_parity.py` 解析后端源码对账
+ * （改一侧必红；node 侧只锁 labels ↔ 枚举 ↔ 标签，见该文件 docstring 的 C-1 裁定）：
+ * `control_plane/metrics.py:89`、`webui_stats.py:46`、`control_plane/webui_memory_graph.py:43`。
  */
 export const WINDOW_SECONDS: Record<GraphWindowCode, number | null> = {
   '24h': 86_400,

@@ -18,11 +18,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { SemanticState } from '@/components/semantic/semantic-state';
 import { useSemanticQuery } from '@/hooks/use-semantic-query';
-import { controlApi, type StatsWindow, type TokenBlock, type TokenFamilyRow, type TokensData } from '@/lib/api-client';
+import { controlApi, type TokenBlock, type TokenFamilyRow, type TokensData } from '@/lib/api-client';
 import { formatInt } from '@/lib/format';
+import { DEFAULT_WINDOW, STATS_WINDOWS, windowLabel, type StatsWindowCode } from '@/lib/labels';
 import { toStackRows, type TokenStackRow } from '@/lib/semantics';
 
-const WINDOWS: StatsWindow[] = ['24h', '7d', '30d'];
+// 窗口枚举/缺省/取词一律走 @/lib/labels（UNI1 fix1 迁本页：本文件的 WINDOWS 枚举手抄与
+// 借 calls.window.* 表取词已退役）。文案逐字不变：迁移时点 calls.window.* 与 window.* 的
+// 值双语全等（等值由 labels.test.ts 镜像锁钉死，取证见 docs/design/unify-audit-20260919/UNI1-fix1.md）。
 
 const TOKEN_KEYS = ['input', 'output', 'cache_read', 'cache_creation'] as const;
 
@@ -71,7 +74,7 @@ function FamilyRow({ row }: { row: TokenFamilyRow }) {
           return (
             <div key={key} className='flex items-center gap-2 fs-caption'>
               <span className='text-muted-foreground'>{t(`tokens.${key}`)}</span>
-              <span className='tabular-nums'>{block.value === null ? '—' : formatInt(block.value)}</span>
+              <span className='tabular-nums'>{formatInt(block.value)}</span>
               {qualityBadge(block)}
             </div>
           );
@@ -83,7 +86,7 @@ function FamilyRow({ row }: { row: TokenFamilyRow }) {
 
 export function TokensPage() {
   const { t } = useTranslation();
-  const [window, setWindow] = useState<StatsWindow>('24h');
+  const [window, setWindow] = useState<StatsWindowCode>(DEFAULT_WINDOW);
 
   const query = useSemanticQuery<TokensData>(
     ['stats-tokens', window, 'page'],
@@ -102,7 +105,7 @@ export function TokensPage() {
       <div className='flex flex-wrap items-center justify-between gap-3'>
         <h1 className='fs-page'>{t('tokens.title')}</h1>
         <div className='flex gap-1 rounded-lg border p-1'>
-          {WINDOWS.map((item) => (
+          {STATS_WINDOWS.map((item) => (
             <button
               key={item}
               type='button'
@@ -113,7 +116,7 @@ export function TokensPage() {
                   : 'rounded-md px-3 py-1 fs-caption font-medium text-muted-foreground hover:bg-accent'
               }
             >
-              {t(`calls.window.${item}`)}
+              {windowLabel(t, item)}
             </button>
           ))}
         </div>
@@ -207,7 +210,7 @@ function TokensBody({ data, anyUnknown }: { data: TokensData; anyUnknown: boolea
                     {qualityBadge(block)}
                   </div>
                   <div className='fs-num'>
-                    {block.value === null ? '—' : formatInt(block.value)}
+                    {formatInt(block.value)}
                   </div>
                 </div>
               );
