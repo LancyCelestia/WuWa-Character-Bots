@@ -27,6 +27,9 @@ dependencies = [
     "mcp>=1.0.0,<2.0.0",
     # 视频下载/媒体分析（sources.downloader）实际依赖 yt-dlp；显式声明避免漏装。
     "yt-dlp>=2024.03.10",
+    # bot.tts 直接用 httpx 打本机 GPT-SoVITS 的 /tts；此前只在 venv 里存在、
+    # 未声明，换环境会静默降级成「httpx 不可用」。
+    "httpx>=0.28.1",
 ]
 
 [build-system]
