@@ -52,6 +52,7 @@ import random
 import re
 import threading
 import time
+import uuid
 import wave
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -383,8 +384,10 @@ def _cache_identity(
 
     - ``seed = int(sha256(preimage)[:8], 16)``（U-25/G2-R3 裁定：产物=参数的纯函数，
       「同一句话不重复合成」承诺整链兑现；M-72 的 ``seed=-1`` 静默随机就此死亡）；
-    - ``cache_key = sha256(preimage + seed 规则版本)[:20]``（保持 20 hex 文件名形态；
-      规则版本入键，防跨派生规则键撞）。
+    - ``cache_key = sha256(preimage + seed 规则版本)[:20]``（20 hex 形态不变；
+      规则版本入键，防跨派生规则键撞）。**注意（M-39，T101）**：键只作内存
+      缓存身份，不再是落盘文件名——盘上名已随机化（见 ``synthesize``），键与
+      文件名的确定映射已切断。
     """
     payload = {
         "identity_version": identity_version,
@@ -717,7 +720,13 @@ def synthesize(
         return None, f"音频体检失败：{bad}（{len(audio)} 字节）"
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
-        target = output_dir / f"{key}.wav"
+        # M-39（Wave H T101）：落盘名随机化——文件名不再是内容指纹。历史形态
+        # ``f"{key}.wav"``（key=sha256(preimage+规则版本)[:20]，preimage 明文含
+        # text 全文+ref.text）让「哪句话被合成过」可离线字典反推。缓存身份
+        # **零改动**：内存键仍内容寻址（同键命中同一路径=单文件语义）；随机名
+        # 后每键一文件、缓存未命中即换名，孤儿文件由中央配额回收（M-27/T61，
+        # ``enforce_quota``）。uuid4 冲突概率可忽略，不做重试。
+        target = output_dir / f"tts-{uuid.uuid4().hex}.wav"
         target.write_bytes(audio)
     except (OSError, ValueError) as exc:
         # ValueError 同捕（M-50：非法路径形态抛 ValueError 不该炸成未分类异常）。
