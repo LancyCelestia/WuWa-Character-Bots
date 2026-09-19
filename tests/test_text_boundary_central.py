@@ -343,3 +343,71 @@ def test_tts_shape_is_the_canonical_default() -> None:
     """tts 形态=缺省形态：casefold 开、裸词空串、权威字符集、不归一换行。"""
     assert match_trigger("说\n你好", WORDS) == ""  # 换行不是权威边界（与 media_archive 差异保持）
     assert match_trigger("说 你好", WORDS) == "你好"
+
+
+# --- 10. 繁體词表登记（M-16 后半收口，T92）：登记态全表经中央件的行为锁----------
+#
+# tts.py 的 DEFAULT_TRIGGER_WORDS 自 T92 起为 16 词（11 简中/英文/拼音 + 5 繁體）。
+# 本文件独立成件不 import tts.py（文件头约定），此处内联镜像登记后全表，钉
+# 「繁體词经中央件 match_trigger 的登记态行为」；上方 11 词内联副本 WORDS 保持
+# 原样不动（历史锁与 RED 语义都靠它）。口径=§6 明文：登记解决、不做 s2t、
+# casefold 不做繁→简映射。
+
+TRADITIONAL_WORDS: tuple[str, ...] = ("語音合成", "朗讀", "語音", "唸", "說")
+REGISTERED_WORDS: tuple[str, ...] = (*WORDS, *TRADITIONAL_WORDS)
+
+# 繁體真命令（正文保持繁體原样——match_trigger 取原串切片，不改写用户用字）。
+_REGISTERED_TRADITIONAL_REAL_COMMANDS: list[tuple[str, str]] = [
+    ("說 你好", "你好"),
+    ("說，今天的潮汐很安靜", "今天的潮汐很安靜"),
+    ("語音 你好呀", "你好呀"),
+    ("語音：今天很安靜", "今天很安靜"),
+    ("唸 一段靜夜思", "一段靜夜思"),
+    ("朗讀  海風很温柔", "海風很温柔"),
+    ("語音合成，今天天氣不錯", "今天天氣不錯"),
+]
+
+# 繁體日常句（登记态也不得劫持——繁體「的/了」与简中同规格，不是边界）。
+_REGISTERED_TRADITIONAL_HIJACK_SAMPLES: list[str] = [
+    "說的是",
+    "說了再見",
+    "說真的，我有點擔心你",
+    "語音消息我沒聽到",
+    "唸書的時候我喜歡靠窗",
+    "朗讀的話其實不必",
+]
+
+
+@pytest.mark.parametrize("text,expected", _REGISTERED_TRADITIONAL_REAL_COMMANDS)
+def test_registered_traditional_commands_match(text: str, expected: str) -> None:
+    """繁體命令在登记态全表下真命中并取得正文（tts 形态：casefold 开、取正文）。"""
+    assert match_trigger(text, REGISTERED_WORDS) == expected
+    assert matched_trigger_word(text, REGISTERED_WORDS) in {w for w in TRADITIONAL_WORDS}
+
+
+def test_registered_traditional_longest_word_wins() -> None:
+    """最长触发词优先在繁體面同样成立：語音合成 不得被 語音 截断。"""
+    assert matched_trigger_word("語音合成，今天天氣不錯", REGISTERED_WORDS) == "語音合成"
+
+
+def test_registered_traditional_bare_and_hijack_stay_negative() -> None:
+    """登记态：繁體裸触发词空串、繁體日常句零劫持（与简中同规格）。"""
+    assert match_trigger("說", REGISTERED_WORDS) == ""
+    assert match_trigger("朗讀，。！", REGISTERED_WORDS) == ""
+    for text in _REGISTERED_TRADITIONAL_HIJACK_SAMPLES:
+        assert match_trigger(text, REGISTERED_WORDS) == "", f"{text} 不该被当成合成命令"
+        assert not is_trigger(text, REGISTERED_WORDS, bare_word=False)
+
+
+def test_registered_table_keeps_simplified_english_behavior() -> None:
+    """并表零回归：简中词/英文 casefold/包含词反样本在 16 词全表下逐字不变。"""
+    assert match_trigger("说 你好", REGISTERED_WORDS) == "你好"
+    assert match_trigger("SAY hello", REGISTERED_WORDS) == "hello"
+    for text in _SUBSTRING_SAMPLES:
+        assert match_trigger(text, REGISTERED_WORDS) == ""
+
+
+def test_traditional_hits_come_from_registration_not_folding() -> None:
+    """繁體命中唯一来源=登记：从 16 词表删掉繁體条目，繁體文本立即失配。"""
+    assert match_trigger("說 你好", WORDS) == ""
+    assert match_trigger("說 你好", REGISTERED_WORDS) == "你好"

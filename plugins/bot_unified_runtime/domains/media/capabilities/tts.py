@@ -94,14 +94,21 @@ from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_s
 
 logger = logging.getLogger(__name__)
 
-# 触发词（T-Spec 口径）：中文 + 英文 + 拼音全拼/缩写。
+# 触发词（T-Spec 口径）：中文 + 英文 + 拼音全拼/缩写 + 繁體（M-16 后半，T92）。
 # 边界判定沿用 randpic 的保守哲学——整句等于触发词，或触发词后紧跟
 # 标点/空白，避免「说话」「念书」「语音消息」这类包含关系词误触发。
 # 「语音合成」与 help 主题别名同源：帮助里列出的词，路由面必须真能命中
 # （tests/test_trigger_bidirectional_gate.py 的词级双向门锁定这件事）。
+# 繁體口径（tts-contract-layer §6 明文）：**词表登记解决，不做 s2t 转换器**——
+# 繁體命中只靠下方繁體条目登记，casefold 不做繁→简映射；正文取原串切片，
+# 用户的繁體用字原样合成。英文/拼音 6 词（tts/say/shuo/yuyin/nian/langdu）
+# 为罗马字，无繁體形态，如实不造。
 DEFAULT_TRIGGER_WORDS: tuple[str, ...] = (
     "语音合成", "朗读", "语音", "念", "说",
     "tts", "say", "shuo", "yuyin", "nian", "langdu",
+    # 繁體登记（与上方简中词逐词对应；tests/test_text_boundary_central.py
+    # 繁體口径节 + tests/test_tts_hijack_guard.py 繁體样本双锁）。
+    "語音合成", "朗讀", "語音", "唸", "說",
 )
 # 触发词与正文之间的分隔字符**不再本地持有**：S-07 六副本收编最后一副本（T83）
 # 换线中央件 ``domains/core/text_boundary``，权威取值=

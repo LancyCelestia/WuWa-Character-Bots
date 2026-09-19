@@ -142,3 +142,68 @@ def test_route_layer_respects_master_switch() -> None:
     """总闸关：路由必须不再产出 TTS（关总闸止血这条路要锁住）。"""
     off = SimpleNamespace(bot_tts_enabled=False, bot_tts_trigger_words=[])
     assert _tts_rule().matcher("说 今天的潮汐很安静", off, None) is None
+
+
+# --- 繁體词表登记（M-16 后半收口，T92）-----------------------------------------
+#
+# 口径（tts-contract-layer §6 明文）：**词表登记解决，不做 s2t 转换器**——繁體
+# 命中靠把繁體条目（說/語音/朗讀/唸/語音合成）登记进 DEFAULT_TRIGGER_WORDS；
+# casefold 只做大小写折叠，不做繁→简映射。英文/拼音 6 词（tts/say/shuo/yuyin/
+# nian/langdu）为罗马字，无繁體形态，如实不造。
+# RED 先行：正样本先落盘跑红（登记前繁體不识别），登记后转绿。
+
+# 繁體真命令（标点/空白分隔）：登记后必须原样取得正文，正文保持繁體原样
+# （取的是原串切片，绝不改写用户用字）。
+_TRADITIONAL_REAL_COMMANDS: list[tuple[str, str]] = [
+    ("說 你好", "你好"),
+    ("說，今天的潮汐很安靜", "今天的潮汐很安靜"),
+    ("語音 你好呀", "你好呀"),
+    ("語音：今天很安靜", "今天很安靜"),
+    ("唸 一段靜夜思", "一段靜夜思"),
+    ("朗讀  海風很温柔", "海風很温柔"),
+    ("語音合成，今天天氣不錯", "今天天氣不錯"),
+]
+
+# 繁體日常句（与上方简中劫持/包含样本同族的繁體形态）：登记后也不得劫持——
+# 触发词后必须紧跟标点/空白边界，繁體「的/了」与简中同规格，都不是边界。
+_TRADITIONAL_HIJACK_SAMPLES: list[str] = [
+    "說的是",
+    "說了再見",
+    "說真的，我有點擔心你",
+    "語音消息我沒聽到",
+    "唸書的時候我喜歡靠窗",
+    "朗讀的話其實不必",
+]
+
+
+@pytest.mark.parametrize("text,expected", _TRADITIONAL_REAL_COMMANDS)
+def test_traditional_commands_extract(text: str, expected: str) -> None:
+    """繁體命令与简中同权：說/語音/唸/朗讀/語音合成 登记后真触发并取得正文。"""
+    assert extract_tts_text(text) == expected
+    assert is_tts_command(text)
+
+
+def test_traditional_bare_trigger_returns_empty_for_guidance() -> None:
+    """繁體裸触发词（只发「說」）与简中同口径：空串交回，由调用方给引导文案。"""
+    assert extract_tts_text("說") == ""
+    assert not is_tts_command("說")
+
+
+@pytest.mark.parametrize("text", _TRADITIONAL_HIJACK_SAMPLES)
+def test_traditional_chat_text_not_hijacked(text: str) -> None:
+    """繁體日常聊天不得因繁體词登记而被吞进 bot.tts（M-01 同族的繁體面）。"""
+    assert extract_tts_text(text) == "", f"{text} 不该被当成合成命令"
+    assert not is_tts_command(text), f"{text} 不该占 TTS 路由"
+
+
+@pytest.mark.parametrize("text,_expected", _TRADITIONAL_REAL_COMMANDS)
+def test_route_layer_claims_traditional_commands(text: str, _expected: str) -> None:
+    """路由层：繁體命令必须真能产出 RouteKind.TTS（登记后与简中同权）。"""
+    decision = _tts_rule().matcher(text, _TTS_ROUTE_CONFIG, None)
+    assert decision is not None and decision.capability_id == "bot.tts"
+
+
+@pytest.mark.parametrize("text", _TRADITIONAL_HIJACK_SAMPLES)
+def test_route_layer_does_not_claim_traditional_chat(text: str) -> None:
+    """路由层：繁體日常聊天不产出 RouteKind.TTS（block=True 会整条吞掉对话）。"""
+    assert _tts_rule().matcher(text, _TTS_ROUTE_CONFIG, None) is None
