@@ -58,9 +58,17 @@ from plugins.bot_unified_runtime.domains.transport.sender.queue import (
 
 @pytest.mark.asyncio
 async def test_bot_ledger_records_mixed_dispatch_snapshot(tmp_path) -> None:
-    """mixed 成功路径：单次 dispatch、段序与 file 引用入台账、快照防改。"""
+    """mixed 成功路径：单次 dispatch、段序与 file 引用入台账、快照防改。
+
+    T100 翻正注（M-38 闭合）：原用例以不存在的绝对路径当 record 引用、
+    依赖旧「死路径原样透传」契约；闭合后死引用不出站，故改落**真 wav
+    字节**（存活绝对路径→resolve 出站）——用例意图（台账快照）不变，
+    且与生产形态一致（TTS 产物恒为刚写好的真实文件）。
+    """
     bot = SimulatedOneBotBot()
-    voice = str(tmp_path / "voice.wav")  # 不存在的路径：生产原样返回不解析
+    wav = tmp_path / "voice.wav"
+    wav.write_bytes(b"RIFF....WAVEfmt ")
+    voice = str(wav.resolve())
     request = build_mixed_request(
         "sim-ledger", text="早上好", record_file=voice
     )
@@ -88,9 +96,17 @@ async def test_bot_ledger_records_mixed_dispatch_snapshot(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_record_only_builder_models_say_command_shape(tmp_path) -> None:
-    """「说 X」形态（单 record、无 text part）：构造器出段正确、成功单发。"""
+    """「说 X」形态（单 record、无 text part）：构造器出段正确、成功单发。
+
+    T100 翻正注（M-38 闭合）：同上改落真 wav 字节——死引用单 record 的
+    「诚实终败」新契约由 tests/test_tts_outbound_chain.py::
+    test_say_x_dead_record_fails_final_without_dispatch 锁定，本例专守
+    存活语音的正常单发形态。
+    """
     bot = SimulatedOneBotBot()
-    voice = str(tmp_path / "say.wav")
+    wav = tmp_path / "say.wav"
+    wav.write_bytes(b"RIFF....WAVEfmt ")
+    voice = str(wav.resolve())
     request = build_mixed_request("sim-say", record_file=voice)
     receipt = await send_onebot_v11(bot, request, timeout_seconds=1.0)
 

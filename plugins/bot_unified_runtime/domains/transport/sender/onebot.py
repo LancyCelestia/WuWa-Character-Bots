@@ -363,14 +363,19 @@ def _segment_from_mixed_part(part: dict[str, Any]) -> OneBotMessageSegment | Non
         file_ref = _string_value(part.get("file")) or _string_value(part.get("url"))
         if not file_ref:
             return None
-        file_ref = _resolve_local_file_ref(file_ref)
-        return {"type": "record", "data": {"file": file_ref}}
+        resolved = _resolve_local_file_ref(file_ref)
+        if resolved is None:
+            # M-38 闭合：死引用不出站（构段期跳过，进 dropped_types 观测）。
+            return None
+        return {"type": "record", "data": {"file": resolved}}
     if part_type == "video":
         file_ref = _string_value(part.get("file")) or _string_value(part.get("url"))
         if not file_ref:
             return None
-        file_ref = _resolve_local_file_ref(file_ref)
-        data: dict[str, Any] = {"file": file_ref}
+        resolved = _resolve_local_file_ref(file_ref)
+        if resolved is None:
+            return None
+        data: dict[str, Any] = {"file": resolved}
         for key in ("cover", "thumb"):
             if part.get(key):
                 data[key] = _string_value(part.get(key))
@@ -379,8 +384,10 @@ def _segment_from_mixed_part(part: dict[str, Any]) -> OneBotMessageSegment | Non
         file_ref = _string_value(part.get("file")) or _string_value(part.get("url"))
         if not file_ref:
             return None
-        file_ref = _resolve_local_file_ref(file_ref)
-        return {"type": "file", "data": {"file": file_ref}}
+        resolved = _resolve_local_file_ref(file_ref)
+        if resolved is None:
+            return None
+        return {"type": "file", "data": {"file": resolved}}
     if part_type == "music":
         # CQ:music 卡片：{"type":"qq","id":"..."} 或 {"type":"163","id":"..."}
         music_type = _string_value(part.get("music_type"))
@@ -395,12 +402,43 @@ def _text_segment(text: str) -> OneBotMessageSegment:
     return {"type": "text", "data": {"text": text}}
 
 
-def _resolve_local_file_ref(file_ref: str) -> str:
+# ---- M-38 闭合（T100，2026-09-20）：本地文件引用死活判定 ----
+# 非本地文件引用前缀：协议端自取或内联载荷，本地存在性判定不适用。
+_NON_LOCAL_REF_PREFIXES = ("http://", "https://", "file://", "base64://", "data:")
+
+
+def _local_path_alive(path: Path) -> bool:
+    """绝对路径死活判定：存在、是常规文件、非空（M-38 存在性+非空双门）。"""
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _resolve_local_file_ref(file_ref: str) -> str | None:
+    """本地文件引用解析；死引用返回 None（调用方跳过该部件，绝不出站）。
+
+    M-38 闭合（T100）：不存在的绝对路径（含 0 字节空文件）原样透传会把
+    死路径送上协议端——NapCat 时期静默摘段谎报 SENT、SnowLuma 整条拒发
+    拖垮同消息文字部件（report-T97 M-38 残半判定）。现契约：
+    - 方案前缀引用（http/https/file:// 等）→ 原样透传（协议端自取）；
+    - 绝对路径：存活（存在 ∧ 是文件 ∧ 非空）→ resolve()；死 → None；
+    - 相对路径：保持既有透传（CWD 依赖的不完整引用交平台侧裁决；T85
+      冻结棘轮 R6 毒件机制依赖此口，范围边界见 report-T100 §偏差）；
+    - 空串：原样返回（调用方门前已拦）。
+    消费方：record/video/file 部件 None=构段期跳过；image 维持既有透传
+    （09-15 W1 事故回归件以不存在的绝对路径构造「媒体在、平台拒」前提，
+    闭合面不含 image，``_image_segment`` 内显式回退，见该处注释）。
+    """
     if not file_ref:
         return file_ref
-    if file_ref.startswith(("http://", "https://", "file://", "base64://", "data:")):
+    if file_ref.startswith(_NON_LOCAL_REF_PREFIXES):
         return file_ref
     path = Path(file_ref)
+    if path.is_absolute():
+        if not _local_path_alive(path):
+            return None
+        return str(path.resolve())
     if path.exists():
         return str(path.resolve())
     return file_ref
@@ -414,8 +452,14 @@ def _image_segment(content_ref: dict[str, Any]) -> OneBotMessageSegment | None:
     )
     if not file_ref:
         return None
-    file_ref = _resolve_local_file_ref(file_ref)
-    data: dict[str, Any] = {"file": file_ref}
+    resolved = _resolve_local_file_ref(file_ref)
+    if resolved is None:
+        # M-38 闭合面=record/video/file 媒体附件族；image 维持既有透传：
+        # 09-15 W1 事故回归件（test_media_rejection_retry_and_fallback）
+        # 以不存在的绝对路径构造「媒体在、平台拒」前提，image 死引用闭合
+        # 需连带重构该回归件前提，留待专席（report-T100 §偏差登记）。
+        resolved = file_ref
+    data: dict[str, Any] = {"file": resolved}
     for key in ("cache", "proxy", "timeout"):
         if key in content_ref and isinstance(content_ref[key], (bool, int, str)):
             data[key] = content_ref[key]
@@ -698,17 +742,7 @@ async def _dispatch_onebot_send(
         forward_result = await _try_send_forward_message(bot, send_request)
         if forward_result is not _FORWARD_API_UNAVAILABLE:
             result = forward_result
-        elif send_request.target_scope is SessionType.PRIVATE:
-            result = await bot.send_private_msg(
-                user_id=_coerce_onebot_id(send_request.target_id),
-                message=build_onebot_message_segments(send_request),
-            )
-        elif send_request.target_scope is SessionType.GROUP:
-            result = await bot.send_group_msg(
-                group_id=_coerce_onebot_id(send_request.target_id),
-                message=build_onebot_message_segments(send_request),
-            )
-        else:
+        elif send_request.target_scope not in (SessionType.PRIVATE, SessionType.GROUP):
             debug_id = new_debug_id()
             return DeliveryReceipt(
                 request_id=send_request.request_id,
@@ -722,6 +756,50 @@ async def _dispatch_onebot_send(
                     debug_id=debug_id,
                 ),
             )
+        else:
+            segments = build_onebot_message_segments(send_request)
+            # M-38 闭合（T100）：死引用部件已在构段期跳过。这里只处理两种
+            # 残留形态：①死件是唯一内容（纯语音 `说 X` 无文字可保）→ 零
+            # 派发直接终态失败，不靠平台退码、不凑空消息假成功（诚实边界，
+            # R-16② 零自拼文案）；②混排尚有存活部件 → 照发，SENT 回执由
+            # send_onebot_v11 挂 missing_file 留痕。
+            dead_types = _mixed_dead_local_file_types(send_request)
+            if dead_types and _segments_all_empty_text(segments):
+                debug_id = new_debug_id()
+                logger.warning(
+                    "onebot send skipped dead local file only content types=%s request_id=%s debug_id=%s",
+                    dead_types,
+                    send_request.request_id,
+                    debug_id,
+                )
+                return DeliveryReceipt(
+                    request_id=send_request.request_id,
+                    state=ReceiptState.FAILED_FINAL,
+                    transport=ONEBOT_V11_TRANSPORT,
+                    public_message="",
+                    debug_id=debug_id,
+                    operational_issue=_onebot_issue(
+                        "missing_file",
+                        retryable=False,
+                        debug_id=debug_id,
+                    ),
+                )
+            if dead_types:
+                logger.warning(
+                    "onebot mixed dead local file part skipped types=%s request_id=%s",
+                    dead_types,
+                    send_request.request_id,
+                )
+            if send_request.target_scope is SessionType.PRIVATE:
+                result = await bot.send_private_msg(
+                    user_id=_coerce_onebot_id(send_request.target_id),
+                    message=segments,
+                )
+            else:
+                result = await bot.send_group_msg(
+                    group_id=_coerce_onebot_id(send_request.target_id),
+                    message=segments,
+                )
         # M-63 A 案（G2-R1，2026-09-20）：mixed 整发分支补真副作用计数与
         # part 观测回报。mixed 语音此前零 count 零回报 ⇒「count==0 ⇒ 零副
         # 作用 ⇒ 可安全整发重投」恒真式 → 超时/断连盲重投（P0 根因，T55
@@ -759,6 +837,53 @@ def _mixed_part_indexes(send_request: SendRequest) -> list[int]:
     if not isinstance(parts, list):
         return []
     return list(range(len(parts)))
+
+
+def _mixed_dead_local_file_types(send_request: SendRequest) -> list[str]:
+    """mixed 部件中「绝对路径死引用」的类型名列表（M-38 观测/终败判定面）。
+
+    与 ``_resolve_local_file_ref`` 同一判定（``_local_path_alive``），仅
+    覆盖闭合面 record/video/file（image 维持既有透传，见
+    ``_image_segment`` 注释）；非 mixed 恒空。用途：① 混排死件跳过后
+    SENT 回执的 missing_file 留痕；② 「死件唯一内容、无文字可保」终败
+    门。与构段判定同源，不会两说。
+    """
+    if send_request.content.content_type.strip().lower() != "mixed":
+        return []
+    parts = send_request.content.content_ref.get("parts")
+    if not isinstance(parts, list):
+        return []
+    dead: list[str] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        part_type = _string_value(part.get("type")).strip().lower()
+        if part_type not in {"record", "video", "file"}:
+            continue
+        file_ref = _string_value(part.get("file")) or _string_value(part.get("url"))
+        if not file_ref or file_ref.startswith(_NON_LOCAL_REF_PREFIXES):
+            continue
+        path = Path(file_ref)
+        if path.is_absolute() and not _local_path_alive(path):
+            dead.append(part_type)
+    return dead
+
+
+def _segments_all_empty_text(segments: list[OneBotMessageSegment]) -> bool:
+    """「死件跳过后已无任何可发内容」：空集或全为空文本段。
+
+    纯语音 `说 X`（无 text part、text_fallback 空）死件形态下
+    ``_mixed_segments`` 的空段文本兜底产出 [text ""]——按既有
+    「segments or 文本兜底」契约不产空集，本判定把该形态拦成终态失败
+    而非空消息假成功（诚实边界；R-16② 零自拼文案）。
+    """
+    if not segments:
+        return True
+    return all(
+        str(segment.get("type")) == "text"
+        and not str((segment.get("data") or {}).get("text") or "").strip()
+        for segment in segments
+    )
 
 
 async def send_onebot_v11(
@@ -1058,6 +1183,27 @@ async def send_onebot_v11(
                 retryable=state is ReceiptState.FAILED_RETRYABLE,
                 debug_id=debug_id,
             ),
+        )
+
+    # M-38 闭合（T100）：混排死引用部件已在构段期跳过、其余部件随本次
+    # 派发送达——SENT 但挂 missing_file 留痕（复用 file_gateway 既有 kind
+    # 族），运维面可见「语音缺席」而非无痕假全量。纯语音终败形态在
+    # dispatch 门已零派发直接 FAILED_FINAL，不进本分支。
+    dead_types = _mixed_dead_local_file_types(send_request)
+    if dead_types:
+        issue = _onebot_issue(
+            "missing_file",
+            retryable=False,
+            debug_id=new_debug_id(),
+        )
+        return DeliveryReceipt(
+            request_id=send_request.request_id,
+            state=ReceiptState.SENT,
+            transport=ONEBOT_V11_TRANSPORT,
+            provider_message_id=_extract_message_id(result),
+            public_message="sent",
+            debug_id=issue.debug_id,
+            operational_issue=issue,
         )
 
     # B4b Tier1-b（核验开关开 + mixed 本地丢段时）：SENT 回执追加观测性注记。
