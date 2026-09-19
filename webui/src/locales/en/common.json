@@ -14,7 +14,8 @@
     "knowledge": "Knowledge",
     "plugins": "Plugins",
     "memoryGraph": "Memory Graph",
-    "moreCollections": "More collections…"
+    "moreCollections": "More collections…",
+    "menu": "Pages"
   },
   "theme": {
     "toDark": "Switch to dark",

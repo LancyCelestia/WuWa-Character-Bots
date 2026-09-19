@@ -14,7 +14,8 @@
     "knowledge": "知识库",
     "plugins": "插件",
     "memoryGraph": "记忆图谱",
-    "moreCollections": "更多集合…"
+    "moreCollections": "更多集合…",
+    "menu": "页面导航"
   },
   "theme": {
     "toDark": "切换暗色",
