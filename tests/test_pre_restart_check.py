@@ -251,6 +251,47 @@ def test_napcat_probe_and_non_blocking(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert next(r for r in results if r.id == "napcat").status == PASS
 
 
+def test_onebot_endpoints_come_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """多账号 = 多端口：探测集合由 ONEBOT_WS_URLS 决定，且令牌不外泄."""
+    env = {
+        "ONEBOT_WS_URLS": (
+            '["ws://127.0.0.1:3001/?access_token=SECRET_ABC","ws://127.0.0.1:3002/?access_token=SECRET_XYZ"]'
+        )
+    }
+    assert prc.onebot_endpoints(env) == [("127.0.0.1", 3001), ("127.0.0.1", 3002)]
+
+    probed: list[tuple[str, int]] = []
+    monkeypatch.setattr(prc, "probe_tcp", lambda host, port, timeout=2.0: probed.append((host, port)) or True)
+    result = prc.check_napcat(prc.onebot_endpoints(env))
+    assert probed == [("127.0.0.1", 3001), ("127.0.0.1", 3002)]
+    assert result.status == PASS
+    assert "SECRET_ABC" not in f"{result.name}{result.message}{result.fix_hint}"
+
+
+def test_onebot_endpoints_fallback_and_separators() -> None:
+    assert prc.onebot_endpoints({}) == [(prc.NAPCAT_HOST, prc.NAPCAT_PORT)]
+    assert prc.onebot_endpoints({"ONEBOT_WS_URLS": ""}) == [(prc.NAPCAT_HOST, prc.NAPCAT_PORT)]
+    assert prc.onebot_endpoints({"ONEBOT_WS_URLS": "bad json ["}) == [(prc.NAPCAT_HOST, 3001)]
+    # 分号裸串写法等效；重复端点去重；非 ws 协议与坏端口跳过
+    assert prc.onebot_endpoints(
+        {
+            "ONEBOT_WS_URLS": "ws://127.0.0.1:3002;ws://127.0.0.1:3002;"
+            "http://127.0.0.1:9999;ws://127.0.0.1:notaport"
+        }
+    ) == [("127.0.0.1", 3002)]
+
+
+def test_napcat_partial_down_reports_missing_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    """学校号节点掉了必须点名，不能因为主号可达就全绿过去."""
+    monkeypatch.setattr(prc, "probe_tcp", lambda host, port, timeout=2.0: port == 3001)
+    env = {"ONEBOT_WS_URLS": '["ws://127.0.0.1:3001","ws://127.0.0.1:3002"]'}
+    result = prc.check_napcat(prc.onebot_endpoints(env))
+    assert result.status == SKIP  # 仍不阻断
+    assert "127.0.0.1:3002" in result.message
+    assert "127.0.0.1:3001" not in result.message  # 详情只点名掉线的那个
+    assert "127.0.0.1:3001" in result.name  # 说明里列全部探测端点
+
+
 # ---------------------------------------------------------------------------
 # 汇总：exit code 与 --json 结构
 # ---------------------------------------------------------------------------

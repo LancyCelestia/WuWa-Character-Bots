@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.smoke import (
+from plugins.bot_unified_runtime.domains.ops.smoke.smoke import (
     _json_decode_env_values,
     load_smoke_config,
 )

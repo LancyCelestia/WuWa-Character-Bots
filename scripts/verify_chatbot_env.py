@@ -40,7 +40,6 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,62 +67,49 @@ class Finding:
 
 
 # ---------------------------------------------------------------------------
-# 装载器（与 scripts/pre_restart_check.load_env 同语义——T24 P1-5 认定的
-# 最接近生产范式：.env → .env.prod 后者覆盖、行内注释引号感知、os.environ
-# 优先。刻意不 import 它：本工具必须位置自证（F1），被搬出 scripts/ 后要
-# 大声 FAIL 而不是 ImportError 崩。
+# 装载器（M-68 收口：语义移交唯一入口 scripts/load_runtime_config.py——
+# 生产同构 python-dotenv 值层 + nonebot extras JSON 解码层；dotenv 为
+# nonebot 既有依赖，零新依赖。位置自证（F1）不变：被搬出仓库时下面
+# best-effort 导入失败退化为 None，主流程 code_root 检查会大声 FAIL，
+# 且该场景下 load_env/config 路径不可达（root_check FAIL 即短路）。
 # ---------------------------------------------------------------------------
 
-def _strip_inline_comment(raw_value: str) -> str:
-    quote = ""
-    for index, char in enumerate(raw_value):
-        if quote:
-            if char == quote:
-                quote = ""
-        elif char in "\"'":
-            quote = char
-        elif char == "#" and index > 0 and raw_value[index - 1] in " \t":
-            return raw_value[:index].rstrip()
-    return raw_value
+try:
+    from scripts.load_runtime_config import (
+        json_decode_env_values,
+        load_runtime_env_values,
+    )
+except ImportError:  # 直跑/子进程态 sys.path[0]=scripts/：补仓库根后重试
+    if str(CODE_ROOT) not in sys.path:
+        sys.path.insert(0, str(CODE_ROOT))
+    try:
+        from scripts.load_runtime_config import (
+            json_decode_env_values,
+            load_runtime_env_values,
+        )
+    except ImportError:  # pragma: no cover - F1 被搬出仓库（scripts 包不可达）
+        load_runtime_env_values = None  # type: ignore[assignment,misc]
+        json_decode_env_values = None  # type: ignore[assignment,misc]
+
+
+def _decode_env_values(values: dict[str, str]) -> dict[str, Any]:
+    """JSON 解码层（唯一入口委托；None 态仅存在于 F1 残废场景，主流程不可达）."""
+    if json_decode_env_values is None:  # pragma: no cover
+        return dict(values)
+    return json_decode_env_values(values)
 
 
 def load_env(env_root: Path) -> tuple[dict[str, str], list[str]]:
-    """读 env_root 下 .env / .env.prod（后者覆盖），os.environ 优先."""
-    values: dict[str, str] = {}
-    found: list[str] = []
-    for filename in (".env", ".env.prod"):
-        path = env_root / filename
-        if not path.is_file():
-            continue
-        found.append(filename)
-        for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            name, raw_value = line.split("=", 1)
-            values[name.strip()] = _strip_inline_comment(raw_value).strip().strip('"').strip("'")
-    for key in list(values):
-        env_val = os.environ.get(key)
-        if env_val is not None:
-            values[key] = env_val.strip()
-    return values, found
+    """读 env_root 下 .env / .env.prod（后者覆盖），os.environ 优先.
 
-
-def _json_decode_env_values(values: dict[str, str]) -> dict[str, Any]:
-    # 与 domains/ops/smoke/smoke.py _json_decode_env_values 同语义（nonebot
-    # dotenv 用户键 JSON 解码）；不 import smoke：其 import 链拖整包能力面，
-    # 快查工具保持秒级。漂移风险由「生产 nonebot 同行为」背书。
-    decoded: dict[str, Any] = {}
-    for key, value in values.items():
-        text = value.strip()
-        if text[:1] in {"{", "["}:
-            try:
-                decoded[key] = json.loads(text)
-                continue
-            except ValueError:
-                pass
-        decoded[key] = value
-    return decoded
+    M-68 收口：解析语义移交唯一入口 scripts/load_runtime_config.py
+    （与生产 bot.py:255 同构），本函数只适配既有返回契约
+    （原始字符串值 + 参与文件名清单，供装载指纹回显）。
+    """
+    if load_runtime_env_values is None:  # pragma: no cover - F1 残废态
+        return {}, []
+    loaded = load_runtime_env_values((".env", ".env.prod"), root=env_root)
+    return dict(loaded.values), [path.name for path in loaded.files]
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +158,7 @@ def check_config(env: dict[str, str]) -> tuple[Finding, Any, list[str]]:
 
     known_tts = sorted(f.upper() for f in Config.model_fields if f.startswith("bot_tts_"))
     try:
-        cfg = Config.model_validate(translate_env_keys(_json_decode_env_values(dict(env))))
+        cfg = Config.model_validate(translate_env_keys(_decode_env_values(dict(env))))
     except ValidationError as exc:
         errors = exc.errors()
         shown = []

@@ -111,6 +111,7 @@ from plugins.bot_unified_runtime.sender.onebot import (
     build_onebot_message_segments,
     send_onebot_v11,
 )
+from scripts.load_runtime_config import json_decode_env_values, load_runtime_env_values
 
 _STARTUP_SMOKE_PREFIX = "__BOT_STARTUP_SMOKE__"
 _STARTUP_SMOKE_CHILD_CODE = r"""
@@ -206,39 +207,32 @@ raise SystemExit(0 if result["ok"] else 1)
 
 
 def _json_decode_env_values(values: dict[str, str]) -> dict[str, Any]:
-    """与 NoneBot dotenv 用户键解析同语义：env 值若以 ``{``/``[`` 开头且是合法
-    JSON 就解码为对象，失败保持原字符串（nonebot/config.py 对 env_file 用户
-    自定义键即此行为）。Config 的 list/dict 字段里仍有少数没有
-    before-validator（含 BOT_ADMIN_PROFILES），裸 JSON 字符串会在
-    ``Config.model_validate`` 直接 ``list_type`` 崩溃，故 smoke 装载必须补齐
-    这步解码，才能与生产 ``driver_config`` 路径同构。"""
-    decoded: dict[str, Any] = {}
-    for key, value in values.items():
-        text = value.strip()
-        if text[:1] in {"{", "["}:
-            try:
-                decoded[key] = json.loads(text)
-                continue
-            except ValueError:
-                pass
-        decoded[key] = value
-    return decoded
+    """M-68 收口：语义移交唯一入口 ``scripts/load_runtime_config.
+
+    json_decode_env_values``（nonebot extras 同构：非空值即尝试
+    ``json.loads``，含裸标量 ``true``/``0.4``——生产即此装载；失败/空
+    回退原串）。保留本名：tests/test_smoke_config.py 锁此符号与六条
+    语义断言。Config 的 list/dict 字段裸 JSON 字符串会在
+    ``Config.model_validate`` 直接 ``list_type`` 崩溃，故 smoke 装载
+    必须经此解码，才能与生产 ``driver_config`` 路径同构。"""
+    return json_decode_env_values(values)
 
 
 def load_smoke_config(env_file: str | Path | None = None) -> Config:
+    """M-68 收口：解析移交唯一入口（生产同构 python-dotenv：行内注释剥离、
+    os.environ 键大小写不敏感优先、JSON 解码 extras 语义）——治 T24 P1-5
+    旧手搓解析「单文件/不剥行内注释/键强转小写」与生产不同构三分歧。
+
+    required=False 对齐既有行为：缺文件回退全默认（.env.example 兜底链
+    见 _resolve_smoke_env_file）。smoke 特有副作用保留：向 os.environ
+    setdefault 注入原始字符串值（不覆盖已存在变量），使模型注册表里的
+    ``env:BOT_API_KEY_*`` 引用在 smoke/控制台路径与 NoneBot dotenv 行为
+    一致；JSON 解码只作用于下面的 Config 校验入参。
+    """
     path = _resolve_smoke_env_file(env_file)
-    values: dict[str, str] = {}
-    if path.exists():
-        for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            values[key.strip().lower()] = value.strip().strip('"').strip("'")
-    # 注入进程环境（不覆盖已存在的变量），使模型注册表里的
-    # env:BOT_API_KEY_* 引用在 smoke/控制台路径与 NoneBot dotenv 行为一致。
-    # 这里保持原始字符串（env var 本就是字符串形态），JSON 解码只作用于
-    # 下面的 Config 校验入参。
+    values = dict(
+        load_runtime_env_values((path,), root=path.parent, required=False).values
+    )
     import os
 
     for key, value in values.items():
@@ -1204,7 +1198,7 @@ def run_queue_smoke(
         "real_transport_used": False,
         "public_message": (
             "发送队列本地 worker 诊断通过：已使用临时 SQLite 队列和 fake transport，"
-            "未连接 NapCat，也未发送真实 QQ 消息。"
+            "未连接 SnowLuma，也未发送真实 QQ 消息。"
         ),
     }
 
@@ -1464,11 +1458,11 @@ def run_transport_smoke(config: Config) -> dict[str, Any]:
         "napcat_connected": False,
         "real_transport_used": False,
         "public_message": (
-            "OneBot/NapCat transport 本地诊断通过：已验证 text/image/json/mixed/"
+            "OneBot/SnowLuma transport 本地诊断通过：已验证 text/image/json/mixed/"
             "fallback 消息段、合并转发扩展 API、fake bot 投递边界和 retcode 失败分类；"
-            "未连接 NapCat，也未发送真实 QQ 消息。"
+            "未连接 SnowLuma，也未发送真实 QQ 消息。"
             if ok
-            else "OneBot/NapCat transport 本地诊断未通过：请检查依赖或消息段构建边界。"
+            else "OneBot/SnowLuma transport 本地诊断未通过：请检查依赖或消息段构建边界。"
         ),
         "private_debug": private_debug,
     }
@@ -1533,7 +1527,7 @@ def run_online_transport_smoke(
     elif bot_provider_state == "nonebot_not_initialized":
         public_message = (
             "在线 transport 只读诊断完成：当前命令未处在已初始化的 NoneBot 运行态，"
-            "所以没有在线 bot 可检查；本诊断没有连接 NapCat，也没有发送 QQ 消息。"
+            "所以没有在线 bot 可检查；本诊断没有连接 SnowLuma，也没有发送 QQ 消息。"
         )
     elif provider_ok:
         public_message = (
@@ -2415,7 +2409,7 @@ def run_nonebot_startup_smoke(
         "error_kind": "none" if ok else error_kind,
         "public_message": (
             "NoneBot 启动干跑通过：已初始化、加载统一运行时插件并注册 handler；"
-            "未启动长驻服务，未连接 NapCat，也未发送真实消息。"
+            "未启动长驻服务，未连接 SnowLuma，也未发送真实消息。"
             if ok
             else "NoneBot 启动干跑未通过：插件初始化或 handler 注册失败。"
         ),

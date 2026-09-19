@@ -14,7 +14,10 @@ vector-audit 结论 / 2026-09-18 WebUI 能力面批 / T29 M-12 音色守望）�
   5. kb_drift      知识库三漂移只读复核：ANN 行数 == chunks 行数
                    （sqlite 只读连接 + backup API 拷到 %TEMP% 查，不锁库）
   6. ruff          静态门：ruff check . 全绿
-  7. napcat        协议端 SnowLuma WS 127.0.0.1:3001 可达性探测（只提示不阻断）
+  7. napcat        协议端 SnowLuma WS 可达性探测：端点集合取自 .env 的
+                   ONEBOT_WS_URLS（多账号=多端口，逐个探；只取 host:port，
+                   令牌不进输出），解析不出时回落 127.0.0.1:3001
+                   （只提示不阻断）
   8. webui         WebUI 单文件壳资产 webui/dist/index.html：存在、体积
                    0<size<10MB、单文件特征（正文无外链 <script src= /
                    <link rel=stylesheet href=> 到 http(s) 与绝对路径；
@@ -44,7 +47,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import socket
 import sqlite3
@@ -53,10 +55,11 @@ import sys
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 NAPCAT_HOST = "127.0.0.1"
-NAPCAT_PORT = 3001
+NAPCAT_PORT = 3001  # 仅回落值：现行端点集合由 ONEBOT_WS_URLS 决定（多账号=多端口）
 
 PASS = "PASS"
 SKIP = "SKIP"
@@ -102,41 +105,28 @@ class CheckResult:
 
 
 # ---------------------------------------------------------------------------
-# .env 解析（对齐 scripts/runtime_paths.py 语义：.env → .env.prod 后者覆盖，
-# 行内注释引号感知，os.environ 覆盖文件值；只取路径类键，不打印值）
+# .env 解析（M-68 收口：语义移交唯一入口 scripts/load_runtime_config.py——
+# 生产同构 python-dotenv：行内注释剥离 + os.environ 优先 + 缺文件跳过。
+# 本文件只保留 load_env 既有签名，作为值层消费方）
 # ---------------------------------------------------------------------------
 
-def _strip_inline_comment(raw_value: str) -> str:
-    quote = ""
-    for index, char in enumerate(raw_value):
-        if quote:
-            if char == quote:
-                quote = ""
-        elif char in "\"'":
-            quote = char
-        elif char == "#" and index > 0 and raw_value[index - 1] in " \t":
-            return raw_value[:index].rstrip()
-    return raw_value
+try:
+    from scripts.load_runtime_config import load_runtime_env_values
+except ImportError:  # 直跑态 sys.path[0]=scripts/：补仓库根后重试
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from scripts.load_runtime_config import load_runtime_env_values
 
 
 def load_env(project_root: Path) -> dict[str, str]:
-    """读 .env / .env.prod 键值对（含 BOT_ 前缀配置），os.environ 优先."""
-    values: dict[str, str] = {}
-    for filename in (".env", ".env.prod"):
-        path = project_root / filename
-        if not path.is_file():
-            continue
-        for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            name, raw_value = line.split("=", 1)
-            values[name.strip()] = _strip_inline_comment(raw_value).strip().strip('"').strip("'")
-    for key in list(values):
-        env_val = os.environ.get(key)
-        if env_val is not None:
-            values[key] = env_val.strip()
-    return values
+    """读 .env / .env.prod 键值对（含 BOT_ 前缀配置），os.environ 优先.
+
+    M-68 收口：解析语义移交唯一入口 scripts/load_runtime_config.py
+    （与生产 bot.py:255 同构），本函数只适配既有签名（值层消费方：
+    路径类键 / ONEBOT_WS_URLS / TTS 开关等原始字符串取值）。
+    """
+    return dict(
+        load_runtime_env_values((".env", ".env.prod"), root=project_root).values
+    )
 
 
 def resolve_data_path(raw: str, project_root: Path, data_root: Path) -> Path:
@@ -160,6 +150,38 @@ def runtime_data_dir(env: dict[str, str], project_root: Path) -> Path:
     if not path.is_absolute():
         path = project_root / path
     return path.resolve()
+
+
+def onebot_endpoints(env: dict[str, str]) -> list[tuple[str, int]]:
+    """从 ONEBOT_WS_URLS 解析协议端点 host:port 全集（SnowLuma 多账号=多端口）.
+
+    只取 host 与端口，access_token 一律不进结果与日志；解析不出任何端点时
+    回落 (127.0.0.1, 3001)，保证单账号旧配置与新配置同口径。
+    """
+    raw = env.get("ONEBOT_WS_URLS", "").strip()
+    items: list[str] = []
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            items = [str(x) for x in parsed]
+        else:
+            items = [s.strip() for s in re.split(r"[;,]", raw) if s.strip()]
+    endpoints: list[tuple[str, int]] = []
+    for url in items:
+        try:
+            parts = urlparse(url)
+            if parts.scheme not in {"ws", "wss"} or not parts.hostname:
+                continue
+            port = parts.port or (443 if parts.scheme == "wss" else 80)
+        except ValueError:
+            continue
+        item = (parts.hostname, int(port))
+        if item not in endpoints:
+            endpoints.append(item)
+    return endpoints or [(NAPCAT_HOST, NAPCAT_PORT)]
 
 
 # ---------------------------------------------------------------------------
@@ -405,18 +427,24 @@ def check_ruff(project_root: Path) -> CheckResult:
     )
 
 
-def check_napcat(host: str = NAPCAT_HOST, port: int = NAPCAT_PORT) -> CheckResult:
+def check_napcat(endpoints: list[tuple[str, int]] | None = None) -> CheckResult:
     # 检查 id 仍叫 "napcat"（对外契约：文档/台账/前端按此 id 寻址），实体已是 SnowLuma。
-    cid, name = "napcat", f"协议端 SnowLuma WS {host}:{port} 可达性（提示不阻断）"
-    if probe_tcp(host, port):
-        return CheckResult(cid, name, PASS, "端口可达（SnowLuma 在线）")
+    points = list(endpoints) if endpoints else [(NAPCAT_HOST, NAPCAT_PORT)]
+    cid = "napcat"
+    all_text = "、".join(f"{h}:{p}" for h, p in points)
+    name = f"协议端 SnowLuma WS {all_text} 可达性（提示不阻断）"
+    down = [f"{h}:{p}" for h, p in points if not probe_tcp(h, p)]
+    if not down:
+        return CheckResult(cid, name, PASS, f"{len(points)} 个端点全部可达（SnowLuma 在线）")
     return CheckResult(
         cid,
         name,
         SKIP,
-        "端口不可达——若尚未启动 SnowLuma（或未在「进程注入」页点加载）属预期"
+        f"不可达: {'、'.join(down)}（共 {len(points)} 个端点）"
+        "——若尚未启动 SnowLuma（或未在「进程注入」页点加载）属预期"
         "（bot 自带重连）；重启顺序：先 SnowLuma 后 bot.py",
-        "装配指引见 docs/snowluma-setup.md（旧端回滚见 docs/napcat-setup.md）。",
+        "装配指引见 docs/snowluma-setup.md（多账号每号一个 WS 端口，"
+        "端口冲突处理见同文；旧端回滚见 docs/napcat-setup.md）。",
     )
 
 
@@ -705,7 +733,7 @@ def run_all(project_root: Path) -> list[CheckResult]:
         check_doc_sync(project_root),
         check_kb_drift(env, project_root),
         check_ruff(project_root),
-        check_napcat(),
+        check_napcat(onebot_endpoints(env)),
         check_webui(project_root),
         check_control_plane(env),
         check_tts_voice_identity(env, project_root),
