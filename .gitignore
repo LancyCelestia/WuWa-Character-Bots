@@ -81,3 +81,36 @@ config/
 .codex/
 .grok/
 third_party/
+
+webui/node_modules/
+webui/dist/
+
+# ---- Wave G / G-0 基线入库补丁（T52 席，2026-09-19，配方=report-T31.md 表 F）----
+
+# 席间测试垃圾（注意用 /* 而非 /，否则 git 不 descend、否定失效；证据件例外）
+.tmp-test/*
+!.tmp-test/full-suite.log
+
+# 席位脚本与工具记忆（.claude/.codex/.grok 的同族补齐，消除规则不对称）
+/%TEMP%/
+.zcode/
+.workbuddy-ai/
+
+# 根散料（会话规划件与截图）
+/findings.md
+/progress.md
+/task_plan.md
+/COORDINATION.md
+/.cp-test-output.txt
+/*-page.png
+
+# N1：v21r2 域重组后 data/ 与 config/ 成了【源码子包名】，与运行时状态规则撞车
+# （否定组放行目录本身，git 才会 descend；先例=本文件 sources/data/qx.json 否定组。
+#  目录内 *.sqlite3/*.log 等仍被上方各自规则忽略，不受此处影响。）
+!plugins/bot_unified_runtime/domains/core/config/
+!plugins/bot_unified_runtime/domains/*/data/
+
+# qx.json 新家显式解挡（NMC 2527 区县码表随包资产，铁律 6；当前无规则命中，
+# 此两行为防未来 assets//json 规则误伤的保险，勿删）
+!plugins/bot_unified_runtime/domains/weather/assets/
+!plugins/bot_unified_runtime/domains/weather/assets/qx.json
