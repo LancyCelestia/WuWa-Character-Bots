@@ -12,15 +12,21 @@
   多项时随机轮换，贴合不同语气；路径可为绝对路径，也可相对
   ``BOT_TTS_GPTSOVITS_DIR``（GPT-SoVITS 程序目录）。
   参考音频硬性要求 3~10 秒干声，超出会被服务端直接拒绝。
-- **缓存**：文本 + 引擎地址 + 参考音频（含**内容指纹**）+ 采样参数 → sha256
+- **缓存**：文本 + 引擎地址 + 参考音频（含**内容指纹**）+ 预设身份 → sha256
   命名，命中直接复用已有 wav（``BOT_TTS_CACHE_ENABLED`` 默认开），同一句话
-  不重复合成；换引擎地址 / 原地重录参考音频后旧键自动失配（M-11）。
+  不重复合成；换引擎地址 / 原地重录参考音频 / 换预设后旧键自动失配（M-11/G-2）。
+- **契约层（Wave G G-2）**：合成参数缺省源=中央预设表
+  ``domains/media/tts_presets.py``（``BOT_TTS_*`` 数值键保留为管理员覆盖；
+  M-43 第二缺省族已删）；``seed`` 不再硬编码 -1，由缓存键派生确定性值
+  （M-72/U-25，同句恒同音色）；引擎「200+恰 1s 静音」伪装成功被静音指纹闸
+  拒绝（M-07）；文本/产物双硬顶（G2-R3：2000 字 / 8 MiB，超顶拒绝留痕不拆条）；
+  产物目录顺接中央磁盘配额（U-04，缺省关）。
 - **fail-open**：服务未启动 / 超时 / 非 200 → 返回守岸人口吻的降级文案，
   绝不抛异常、绝不阻断出站管线（与 randpic 同哲学）。但 **fail-open ≠ 发出去**：
-  引擎产物先过结构体检（``_inspect_wav_bytes``：RIFF/WAVE 魔数 + 头可解析 + 帧数>0），
-  不可播字节**绝不落盘、绝不入缓存、绝不再交给 QQ**——2026-09-19 起 QQ 端换件为
-  SnowLuma，坏 record 段是 fatal（整条消息一字不发），不再是旧实现「丢段留文字」。
-  每条运营性失败另挂 ``OperationalIssue``（``_failure_issue``）走中央告警链。
+  引擎产物先过结构体检（``_inspect_wav_bytes``：RIFF/WAVE 魔数 + 头可解析 + 帧数>0
+  + 静音指纹），不可播字节**绝不落盘、绝不入缓存、绝不再交给 QQ**——2026-09-19 起
+  QQ 端换件为 SnowLuma，坏 record 段是 fatal（整条消息一字不发），不再是旧实现
+  「丢段留文字」。每条运营性失败另挂 ``OperationalIssue``（``_failure_issue``）走中央告警链。
 - **对话自动配音**（可选）：``BOT_TTS_AUTO_REPLY_ENABLED`` 开启后，
   ``maybe_attach_voice()`` 把人格回复正文一并合成为语音随消息发出，
   由 ``__init__`` 的 chat 能力包装层调用。是否真的配音由
@@ -52,6 +58,9 @@ from plugins.bot_unified_runtime.contracts import (
     OperationalIssue,
     SendPolicy,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
+    enforce_quota,
+)
 
 # 合成前的内容门与打码：复用中央单一事实源，**绝不在本域抄一份**。
 # 抄一份就等于再造一条「文字面拦、语音面放」的红线漂移面（审计 M-02 根因）。
@@ -62,6 +71,15 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import
 )
 from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
     assess_public_content,
+)
+from plugins.bot_unified_runtime.domains.media.tts_presets import (
+    DEFAULT_PRESET_ID,
+    HARD_MAX_CHARS_FALLBACK,
+    IDENTITY_VERSION,
+    MAX_AUDIO_BYTES_FALLBACK,
+    PRESET_REGISTRY,
+    SEED_RULE_VERSION,
+    TtsPreset,
 )
 from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 
@@ -88,19 +106,18 @@ _TEXT_BOUNDARY_CHARS = "，,。！？!?：:、 　\t～~"
 # 本地不做重复预检：ChatBot 运行环境没有 soundfile/mutagen，读不了时长；
 # 越界时服务端会在错误体 Exception 里给出可读原因，经 _request_tts 透传到
 # _degrade 的「参考音频」分支，用户侧提示已经足够。
-# 单次合成文本上限兜底（配置未给时生效）。
-_DEFAULT_MAX_CHARS = 200
-# 采样参数默认值（与守岸人预设卡一致）。
-_DEFAULT_SPEED_FACTOR = 0.85
-_DEFAULT_TEMPERATURE = 0.9
-_DEFAULT_TOP_K = 15
-_DEFAULT_TOP_P = 1.0
+# M-43 注记：合成参数的第二缺省常量族（max_chars/speed/temperature/top_k/
+# top_p/text_lang/split_method 七项）已整体删除——缺省唯一来源=中央预设表
+# （domains/media/tts_presets.py），config 缺省值与其相等（现状收编）。
+# 键缺失（鸭子配置）回预设表，不再有第二份代码内真值。
+# 单请求超时的函数级缺省保留（库函数工效；生产路径恒由 config 传入）。
 _DEFAULT_TIMEOUT_SECONDS = 60.0
-_DEFAULT_TEXT_LANG = "zh"
-_DEFAULT_SPLIT_METHOD = "cut5"
-# 对话自动配音的默认触发概率（5%）：常态下只有二十分之一的回复会带语音，
-# 避免刷屏与合成排队；BOT_TTS_AUTO_REPLY_ALWAYS=true 可跳过概率门。
-_DEFAULT_AUTO_REPLY_PROBABILITY = 0.05
+# 静音指纹闸域值（M-07，引擎陷阱实测值=T53 §3 verified：16000Hz + 恰 1s +
+# 全零 int16，≈32044 字节）。域值出处锁定 T53，禁自造。
+_SILENCE_RATE = 16000
+_SILENCE_MIN_SECONDS = 0.9
+_SILENCE_MAX_SECONDS = 1.1
+_SILENCE_PEAK_AMPLITUDE = 2
 
 # 合成结果缓存（进程内 LRU 索引）：key → (落盘路径, 写入时刻)。
 # 键数封顶，避免长跑进程按文本无界增长（对齐 runtime/reactions.py 惯例）。
@@ -137,9 +154,10 @@ _INLINE_CODE_RE = re.compile(r"`[^`]*`")
 _URL_RE = re.compile(r"https?://\S+")
 _MARKDOWN_MARKS_RE = re.compile(r"[*_#>~|]+")
 _LIST_PREFIX_RE = re.compile(r"^\s*(?:[-+•]|\d+[.)])\s*", re.MULTILINE)
-# 中央打码占位符（`plain_text._SECRET_VALUE_PLACEHOLDER`）的残缺形态：清洗会吃掉
-# 它的尖括号，朗读前替换成能念的词。
-_REDACTION_PLACEHOLDER_RE = re.compile(r"<已隐藏[^<>]*>?")
+# 中央打码占位符（`plain_text._SECRET_VALUE_PLACEHOLDER`="<已隐藏>" 与
+# `_LOCAL_PATH_PLACEHOLDER`="<本机路径已隐藏>"）的残缺形态：清洗会吃掉它们的
+# 尖括号，朗读前替换成能念的词（T56 P2-②：两形都要接住）。
+_REDACTION_PLACEHOLDER_RE = re.compile(r"<(?:本机路径已隐藏|已隐藏)[^<>]*>?")
 _BLANK_LINES_RE = re.compile(r"\n{2,}")
 _SPACES_RE = re.compile(r"[ \t]{2,}")
 _SENTENCE_END = "。！？…!?；;"
@@ -150,11 +168,13 @@ class RefAudio:
     """一条参考音频及其逐字文本（prompt_text）。
 
     ``text`` 为空表示走「无参考文本模式」——服务端自行从音频推断内容。
+    ``lang`` 缺省 ``"zh"``（与 shorekeeper 预设 text_lang 同值，一致性由
+    tests/test_tts_presets.py 锁；引擎空 prompt_lang 会 400，故不能缺省空串）。
     """
 
     path: str
     text: str = ""
-    lang: str = _DEFAULT_TEXT_LANG
+    lang: str = "zh"
 
 
 @dataclass(frozen=True)
@@ -238,7 +258,7 @@ def parse_ref_audios(
         if not path:
             continue
         text = parts[1].strip() if len(parts) > 1 else ""
-        lang = parts[2].strip() if len(parts) > 2 and parts[2].strip() else _DEFAULT_TEXT_LANG
+        lang = parts[2].strip() if len(parts) > 2 and parts[2].strip() else "zh"
         resolved = _resolve_ref_path(path, base_dir)
         parsed.append(RefAudio(path=str(resolved), text=text, lang=lang))
     return parsed
@@ -269,11 +289,13 @@ def pick_ref_audio(
     return (rng or random).choice(candidates)
 
 
-def clean_for_speech(text: str, *, max_chars: int = _DEFAULT_MAX_CHARS) -> str:
+def clean_for_speech(text: str, *, max_chars: int = 0) -> str:
     """把回复正文清洗成适合朗读的纯文本。
 
     去掉代码块/行内代码/链接/markdown 标记与列表前缀——这些东西念出来只会
-    变成一串噪音。超长文本在句子边界截断，避免读到一半断气。
+    变成一串噪音。``max_chars > 0`` 时在句子边界截断；**0（函数缺省）=不限**
+    （不按字数截断）——纯函数不做隐藏截断，限制由调用方按配置显式传入
+    （M-35：配置面 0=不限 语义统一，「不限≠无界」由中央硬顶另行把守）。
     """
     value = str(text or "")
     if not value.strip():
@@ -322,21 +344,43 @@ def _ref_fingerprint(ref_path: str) -> str:
     return digest
 
 
-def _cache_key(text: str, ref: RefAudio, params: TtsParams, *, api_url: str) -> str:
-    """缓存键（M-11）：请求参数快照 + **引擎身份** + **素材身份** 三段合一。
+def _cache_identity(
+    text: str,
+    ref: RefAudio,
+    params: TtsParams,
+    *,
+    api_url: str,
+    preset_id: str,
+    identity_version: int = IDENTITY_VERSION,
+) -> tuple[str, int]:
+    """缓存键身份唯一算法 + 确定性 seed（G-2 契约，T54 规格 §5）。
 
-    旧键只按参数快照建模，换引擎地址 / 原地重录参考音频后同句永久命中旧音色
-    wav——身份变了键空间必须换代。``api_url`` 做 ``rstrip('/')`` 归一：尾斜杠
-    不算换引擎。
+    preimage = canonical_json({identity_version, engine, ref, preset, text})：
+
+    - ``engine``：``api_url``（``rstrip('/')`` 归一，尾斜杠不算换引擎，T57 基线）；
+    - ``ref``：路径 + **内容指纹**（``_ref_fingerprint``，T57 基线）+ 参考文本 + 语种；
+    - ``preset``：预设 id + 生效参数快照（G-2 收编段——换预设=换键空间）；
+    - ``identity_version``：键空间代号（tts_presets.IDENTITY_VERSION，换代自增，
+      旧键整体变冷）。
+
+    返回 ``(cache_key, seed)``：
+
+    - ``seed = int(sha256(preimage)[:8], 16)``（U-25/G2-R3 裁定：产物=参数的纯函数，
+      「同一句话不重复合成」承诺整链兑现；M-72 的 ``seed=-1`` 静默随机就此死亡）；
+    - ``cache_key = sha256(preimage + seed 规则版本)[:20]``（保持 20 hex 文件名形态；
+      规则版本入键，防跨派生规则键撞）。
     """
-    payload = json.dumps(
-        {
-            "text": text,
-            "api_url": str(api_url or "").rstrip("/"),
-            "ref": ref.path,
-            "ref_fp": _ref_fingerprint(ref.path),
-            "ref_text": ref.text,
-            "ref_lang": ref.lang,
+    payload = {
+        "identity_version": identity_version,
+        "engine": {"api_url": str(api_url or "").rstrip("/")},
+        "ref": {
+            "path": ref.path,
+            "fp": _ref_fingerprint(ref.path),
+            "text": ref.text,
+            "lang": ref.lang,
+        },
+        "preset": {
+            "preset_id": preset_id,
             "params": {
                 "text_lang": params.text_lang,
                 "speed_factor": params.speed_factor,
@@ -346,10 +390,43 @@ def _cache_key(text: str, ref: RefAudio, params: TtsParams, *, api_url: str) -> 
                 "text_split_method": params.text_split_method,
             },
         },
-        ensure_ascii=False,
-        sort_keys=True,
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:20]
+        "text": text,
+    }
+    preimage = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    seed = int(hashlib.sha256(preimage.encode("utf-8")).hexdigest()[:8], 16)
+    cache_key = hashlib.sha256(
+        (preimage + "|" + SEED_RULE_VERSION).encode("utf-8")
+    ).hexdigest()[:20]
+    return cache_key, seed
+
+
+def derive_seed(
+    text: str,
+    ref: RefAudio,
+    params: TtsParams,
+    *,
+    api_url: str,
+    preset_id: str,
+) -> int:
+    """确定性 seed 的唯一派生口（audit_tags 与请求体共用同一函数，恒一致）。"""
+    return _cache_identity(
+        text, ref, params, api_url=api_url, preset_id=preset_id
+    )[1]
+
+
+def _cache_key(
+    text: str,
+    ref: RefAudio,
+    params: TtsParams,
+    *,
+    api_url: str,
+    preset_id: str,
+    identity_version: int = IDENTITY_VERSION,
+) -> str:
+    """缓存键（键算法见 ``_cache_identity``；便捷口只返回键本身）。"""
+    return _cache_identity(
+        text, ref, params, api_url=api_url, preset_id=preset_id, identity_version=identity_version
+    )[0]
 
 
 def _lookup_cache(key: str) -> Path | None:
@@ -404,6 +481,45 @@ def _backoff_reason() -> str:
     return f"服务不可达：退避冷却中（剩 {remaining:.0f} 秒）｜上次失败：{last}"
 
 
+def _build_request_payload(
+    text: str,
+    ref: RefAudio,
+    params: TtsParams,
+    *,
+    engine_params: dict[str, object],
+    seed: int,
+) -> dict[str, Any]:
+    """组 api_v2 ``POST /tts`` 请求体（T53 §1 19 实发键）。
+
+    - 采样六项来自 ``params``（config 覆盖 > 预设缺省，``_build_params``）；
+    - 八个原硬编码项（M-76）全部收编自预设表 ``engine_params``，不再有代码内
+      真值；``split_bucket`` 显式 False（引擎 speed≠1 时无条件忽略，死意图消除）；
+    - ``seed`` 由缓存键派生（M-72/U-25）；``text_lang`` 出门前 casefold
+      （POST 入口引擎用原值断言，"ZH" 必 400）。
+    """
+    return {
+        "text": text,
+        "text_lang": str(params.text_lang).strip().casefold(),
+        "ref_audio_path": ref.path,
+        "prompt_text": ref.text,
+        "prompt_lang": ref.lang,
+        "top_k": params.top_k,
+        "top_p": params.top_p,
+        "temperature": params.temperature,
+        "text_split_method": params.text_split_method,
+        "batch_size": engine_params["batch_size"],
+        "batch_threshold": engine_params["batch_threshold"],
+        "split_bucket": engine_params["split_bucket"],
+        "speed_factor": params.speed_factor,
+        "fragment_interval": engine_params["fragment_interval"],
+        "seed": int(seed),
+        "media_type": engine_params["media_type"],
+        "streaming_mode": False,
+        "parallel_infer": engine_params["parallel_infer"],
+        "repetition_penalty": engine_params["repetition_penalty"],
+    }
+
+
 def _request_tts(
     *,
     api_url: str,
@@ -411,6 +527,8 @@ def _request_tts(
     ref: RefAudio,
     params: TtsParams,
     timeout_seconds: float,
+    engine_params: dict[str, object],
+    seed: int,
 ) -> bytes | None:
     """调用 api_v2.py 的 ``POST /tts``，返回 wav 字节；失败返回 None。
 
@@ -425,27 +543,7 @@ def _request_tts(
         return None
 
     endpoint = f"{api_url.rstrip('/')}/tts"
-    payload: dict[str, Any] = {
-        "text": text,
-        "text_lang": params.text_lang,
-        "ref_audio_path": ref.path,
-        "prompt_text": ref.text,
-        "prompt_lang": ref.lang,
-        "top_k": params.top_k,
-        "top_p": params.top_p,
-        "temperature": params.temperature,
-        "text_split_method": params.text_split_method,
-        "batch_size": 1,
-        "batch_threshold": 0.75,
-        "split_bucket": True,
-        "speed_factor": params.speed_factor,
-        "fragment_interval": 0.3,
-        "seed": -1,
-        "media_type": "wav",
-        "streaming_mode": False,
-        "parallel_infer": True,
-        "repetition_penalty": 1.35,
-    }
+    payload = _build_request_payload(text, ref, params, engine_params=engine_params, seed=seed)
     try:
         with httpx.Client(timeout=max(1.0, float(timeout_seconds))) as client:
             response = client.post(endpoint, json=payload)
@@ -480,11 +578,18 @@ def _request_tts(
 
 
 def _inspect_wav_bytes(data: bytes) -> str:
-    """结构体检：不可播返回原因短语，可播返回空串。
+    """结构体检 + 静音指纹闸：不可播返回原因短语，可播返回空串。
 
-    只判**结构**（RIFF/WAVE 魔数 + 头可解析 + 帧数>0），**不判时长上限**：
-    QQ 语音条的时长红线是未做真机判定的悬案（U-02），拿估出来的秒数硬拦会把
-    正常长回复误杀——时长维度仍留在 M-37 未结面里，不在本闸偷偷收口。
+    只判**结构**（RIFF/WAVE 魔数 + 头可解析 + 帧数>0）与**静音陷阱**，
+    **不判时长上限**：QQ 语音条的时长红线是未做真机判定的悬案（U-02），拿估
+    出来的秒数硬拦会把正常长回复误杀——时长维度由 G2-R3 字节顶另行把守
+    （wav/PCM 下字节顶≈时长顶），本闸不重复。
+
+    静音指纹（M-07，域值=T53 §3 verified）：引擎推理期异常会先 yield
+    ``16000Hz + 16000 个全零 int16``（恰 1s、≈32044 字节）再 raise，而非流式
+    只消费一次 ⇒ 200+1 秒静音伪装成功。三条指纹同时命中才判静音（采样率
+    ≠产物标称 32000 + 恰 1s 量级 + 全零/近全零），正常产物零误杀；命中即
+    失败——不落盘、不入缓存、不出站。
     """
     if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
         return "非 RIFF/WAVE 字节"
@@ -496,7 +601,28 @@ def _inspect_wav_bytes(data: bytes) -> str:
         return "wav 头不可解析"
     if frames <= 0 or rate <= 0:
         return "零帧 wav"
+    if (
+        rate == _SILENCE_RATE
+        and _SILENCE_MIN_SECONDS <= frames / rate <= _SILENCE_MAX_SECONDS
+        and _is_near_silent(data, frames)
+    ):
+        return f"{frames / rate:.1f} 秒静音（引擎推理异常伪装成功）"
     return ""
+
+
+def _is_near_silent(data: bytes, frames: int) -> bool:
+    """近全零判据：样本峰值 ≤ ``_SILENCE_PEAK_AMPLITUDE``（int16）。"""
+    with wave.open(io.BytesIO(data)) as handle:
+        raw = handle.readframes(frames)
+    peak = 0
+    for offset in range(0, len(raw) - 1, 2):
+        sample = int.from_bytes(raw[offset : offset + 2], "little", signed=True)
+        magnitude = -sample if sample < 0 else sample
+        if magnitude > peak:
+            peak = magnitude
+            if peak > _SILENCE_PEAK_AMPLITUDE:
+                return False
+    return True
 
 
 def synthesize(
@@ -508,9 +634,28 @@ def synthesize(
     output_dir: Path,
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
     cache_enabled: bool = True,
+    preset_id: str = DEFAULT_PRESET_ID,
+    engine_params: dict[str, object] | None = None,
+    seed: int | None = None,
+    max_audio_bytes: int = MAX_AUDIO_BYTES_FALLBACK,
+    quota_max_bytes: int = 0,
+    quota_max_age_days: int = 0,
 ) -> tuple[Path | None, str]:
-    """合成一段语音并落盘，返回 ``(wav 路径, 失败原因)``；成功时原因为空串。"""
-    key = _cache_key(text, ref, params, api_url=api_url)
+    """合成一段语音并落盘，返回 ``(wav 路径, 失败原因)``；成功时原因为空串。
+
+    G-2 契约参数：
+
+    - ``preset_id``/``engine_params``：预设身份进缓存键；八硬编码项随预设出门；
+    - ``seed``：None=按缓存键派生（M-72/U-25 确定性）；
+    - ``max_audio_bytes``：产物字节硬顶（0=禁配无界，取内置 8 MiB；G2-R3）；
+    - ``quota_max_bytes``/``quota_max_age_days``：落盘后顺接中央配额
+      （U-04；0/0=不限制，缺省字节级不变）。
+    """
+    resolved_engine = engine_params if engine_params is not None else dict(
+        PRESET_REGISTRY[DEFAULT_PRESET_ID].params
+    )
+    key, derived_seed = _cache_identity(text, ref, params, api_url=api_url, preset_id=preset_id)
+    effective_seed = derived_seed if seed is None else int(seed)
     if cache_enabled:
         hit = _lookup_cache(key)
         if hit is not None:
@@ -521,11 +666,21 @@ def synthesize(
     if backoff:
         return None, backoff
     audio = _request_tts(
-        api_url=api_url, text=text, ref=ref, params=params, timeout_seconds=timeout_seconds
+        api_url=api_url,
+        text=text,
+        ref=ref,
+        params=params,
+        timeout_seconds=timeout_seconds,
+        engine_params=resolved_engine,
+        seed=effective_seed,
     )
     if audio is None:
         return None, _last_failure_reason or "合成失败"
     bad = _inspect_wav_bytes(audio)
+    if not bad:
+        byte_cap = int(max_audio_bytes or 0) or MAX_AUDIO_BYTES_FALLBACK
+        if len(audio) > byte_cap:
+            bad = f"产物 {len(audio)} 字节超字节顶 {byte_cap}"
     if bad:
         # 不可播字节**绝不落盘、绝不入缓存**：SnowLuma 换件后坏 record 段是 fatal
         # （整条消息一字不发，见 report-T46.md），毒件入缓存还会在进程存活期复放。
@@ -535,25 +690,49 @@ def synthesize(
         output_dir.mkdir(parents=True, exist_ok=True)
         target = output_dir / f"{key}.wav"
         target.write_bytes(audio)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
+        # ValueError 同捕（M-50：非法路径形态抛 ValueError 不该炸成未分类异常）。
         logger.info("tts write failed: %s", exc)
         return None, f"音频落盘失败：{type(exc).__name__}"
     if cache_enabled:
         _store_cache(key, target)
+    if quota_max_bytes > 0 or quota_max_age_days > 0:
+        # U-04：data/tts_output=缓存语义，接中央「最旧先删」配额；缺省关。
+        try:
+            enforce_quota(
+                output_dir, max_bytes=int(quota_max_bytes), max_age_days=int(quota_max_age_days)
+            )
+        except Exception:  # noqa: BLE001 - 配额清理失败不影响主链路。
+            logger.info("tts quota enforcement failed: output_dir=%s", output_dir)
     return target, ""
 
 
+def _resolve_preset(config: Any) -> TtsPreset:
+    """取当前生效预设：config 选择键 > 缺省；未知 id 回缺省（装载期已枚举校验）。"""
+    selected = str(getattr(config, "bot_tts_preset", "") or "").strip().casefold()
+    if selected in PRESET_REGISTRY:
+        return PRESET_REGISTRY[selected]
+    return PRESET_REGISTRY[DEFAULT_PRESET_ID]
+
+
 def _build_params(config: Any) -> TtsParams:
+    """采样参数装配（M-43/M-35）：config 单点直读，缺键回预设表，无第二真值。
+
+    ``text_lang`` 出门前 casefold（POST 入口引擎用原值断言，"ZH" 必 400）。
+    """
+    preset_params = _resolve_preset(config).params
+
+    def _value(field: str, preset_key: str) -> Any:
+        raw: Any = getattr(config, field, None)
+        return preset_params[preset_key] if raw is None or raw == "" else raw
+
     return TtsParams(
-        text_lang=str(getattr(config, "bot_tts_text_lang", _DEFAULT_TEXT_LANG) or _DEFAULT_TEXT_LANG),
-        speed_factor=float(getattr(config, "bot_tts_speed_factor", _DEFAULT_SPEED_FACTOR)),
-        temperature=float(getattr(config, "bot_tts_temperature", _DEFAULT_TEMPERATURE)),
-        top_k=int(getattr(config, "bot_tts_top_k", _DEFAULT_TOP_K)),
-        top_p=float(getattr(config, "bot_tts_top_p", _DEFAULT_TOP_P)),
-        text_split_method=str(
-            getattr(config, "bot_tts_text_split_method", _DEFAULT_SPLIT_METHOD)
-            or _DEFAULT_SPLIT_METHOD
-        ),
+        text_lang=str(_value("bot_tts_text_lang", "text_lang")).strip().casefold(),
+        speed_factor=float(_value("bot_tts_speed_factor", "speed_factor")),
+        temperature=float(_value("bot_tts_temperature", "temperature")),
+        top_k=int(_value("bot_tts_top_k", "top_k")),
+        top_p=float(_value("bot_tts_top_p", "top_p")),
+        text_split_method=str(_value("bot_tts_text_split_method", "text_split_method")),
     )
 
 
@@ -672,17 +851,32 @@ def build_tts_capability(config: Any | None = None) -> Any:
                 audit_tags=["tts", "missing_text"],
             )
 
-        max_chars = int(getattr(config, "bot_tts_max_chars", _DEFAULT_MAX_CHARS) or _DEFAULT_MAX_CHARS)
+        # 0=不限（不按字数截断）；「不限≠无界」，下方必过中央硬顶（G2-R3）。
+        max_chars = int(getattr(config, "bot_tts_max_chars", 0) or 0)
         speech, blocked = resolve_speech_text(
             config, message, body, max_chars=max_chars
         )
         if blocked:
+            # P1-1（T56 反审转发）：政策件异常/配置坏（policy_unavailable）≠ 有意
+            # 拦截——异常必须挂 issue 走中央 300s 抑制告警（静默=管理员永远不知
+            # 道名单库坏了）；有意拦截（政策拒绝）不挂 issue 防刷屏。
+            issue = (
+                _issue(
+                    message,
+                    kind="tts_synthesize_failed",
+                    retryable=False,
+                    detail=f"policy gate unavailable: {blocked}",
+                )
+                if blocked == "policy_unavailable"
+                else None
+            )
             return CapabilityResult(
                 request_id=message.request_id,
                 capability_id="bot.tts",
                 kind="text",
                 body=_speech_refusal_hint(),
                 audit_tags=["tts", "blocked_by_policy"],
+                operational_issue=issue,
             )
         if not speech:
             return CapabilityResult(
@@ -692,7 +886,31 @@ def build_tts_capability(config: Any | None = None) -> Any:
                 body="这段话里没有能念出来的内容——换一句试试？",
                 audit_tags=["tts", "empty_after_clean"],
             )
+        # 文本硬顶（G2-R3）：超顶=拒绝合成+留痕，不静默、**不拆条**（拆多条语音=
+        # 多个 record 段的新投递语义，H 波 M-63 修好前拆条=翻倍无保护语音）。
+        hard_cap = (
+            int(getattr(config, "bot_tts_hard_max_chars", 0) or 0) or HARD_MAX_CHARS_FALLBACK
+        )
+        if len(speech) > hard_cap:
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.tts",
+                kind="text",
+                body=(
+                    "这段话太长了，我一口气念不完——拆成几句再说给我听好不好？"
+                ),
+                audit_tags=["tts", "over_hard_cap", f"len={len(speech)}", f"cap={hard_cap}"],
+                operational_issue=_issue(
+                    message,
+                    kind="tts_service_rejected",
+                    retryable=False,
+                    detail=f"over_hard_cap：文本 {len(speech)} 字超硬顶 {hard_cap}"
+                    "（bot_tts_hard_max_chars，0=取内置常量），拒绝合成不拆条",
+                ),
+            )
 
+        preset = _resolve_preset(config)
+        params = _build_params(config)
         ref = pick_ref_audio(
             getattr(config, "bot_tts_ref_audios", []) or [],
             base_dir=str(getattr(config, "bot_tts_gptsovits_dir", "") or ""),
@@ -706,17 +924,29 @@ def build_tts_capability(config: Any | None = None) -> Any:
                 audit_tags=["tts", "no_ref_audio"],
                 operational_issue=_no_ref_audio_issue(message, config),
             )
-
+        speech_seed = derive_seed(
+            speech,
+            ref,
+            params,
+            api_url=str(getattr(config, "bot_tts_api_url", "") or ""),
+            preset_id=preset.preset_id,
+        )
         path, reason = synthesize(
-            api_url=str(getattr(config, "bot_tts_api_url", "") or "http://127.0.0.1:9880"),
+            api_url=str(getattr(config, "bot_tts_api_url", "") or ""),
             text=speech,
             ref=ref,
-            params=_build_params(config),
+            params=params,
             output_dir=_output_dir(config),
             timeout_seconds=float(
                 getattr(config, "bot_tts_timeout_seconds", _DEFAULT_TIMEOUT_SECONDS)
             ),
             cache_enabled=bool(getattr(config, "bot_tts_cache_enabled", True)),
+            preset_id=preset.preset_id,
+            engine_params=dict(preset.params),
+            seed=speech_seed,
+            max_audio_bytes=int(getattr(config, "bot_tts_max_audio_bytes", 0) or 0),
+            quota_max_bytes=int(getattr(config, "bot_tts_cache_max_bytes", 0) or 0),
+            quota_max_age_days=int(getattr(config, "bot_tts_cache_max_age_days", 0) or 0),
         )
         if path is None:
             return CapabilityResult(
@@ -729,6 +959,8 @@ def build_tts_capability(config: Any | None = None) -> Any:
             )
         # 与 randpic 同口径：title/body 留空，只发媒体本体，
         # 否则 renderer 的 body→summary→title 兜底链会把标题当文案一起发出去。
+        # audit_tags 记 preset/seed（G2-R3：确定性可审计，波末向用户报备
+        # 「同句恒同音色」语义变更）。
         return CapabilityResult(
             request_id=message.request_id,
             capability_id="bot.tts",
@@ -736,7 +968,12 @@ def build_tts_capability(config: Any | None = None) -> Any:
             title="",
             body="",
             audio=[{"file": str(path), "review_text": speech}],
-            audit_tags=["tts", "sent"],
+            audit_tags=[
+                "tts",
+                "sent",
+                f"preset={preset.preset_id}",
+                f"seed={speech_seed}",
+            ],
         )
 
     return capability
@@ -779,6 +1016,19 @@ def speech_block_reason(config: Any, message: IncomingMessage, text: str) -> str
     return ""
 
 
+def _apply_lexicon(text: str, lexicon: dict[str, str]) -> str:
+    """读法词典应用（M-77 机制）：键=原文精确串，值=替换读法。
+
+    应用点=清洗侧末端（占位符替换之后、内容门之前）。v1 预设词典为空表
+    （零行为变更）；条目待 U-02 听辨后逐条入册 tts_presets。禁在此为 RP 括号
+    另造第二正则（S-07 教训）——括号段处理收 domains/core 共用件。
+    """
+    for original, reading in lexicon.items():
+        if original:
+            text = text.replace(original, reading)
+    return text
+
+
 def resolve_speech_text(
     config: Any,
     message: IncomingMessage,
@@ -786,21 +1036,28 @@ def resolve_speech_text(
     *,
     max_chars: int | None = None,
 ) -> tuple[str, str]:
-    """合成前**唯一**的取文口：打码 → 清洗 → 内容门。返回 ``(可朗读正文, 拒绝理由)``。
+    """合成前**唯一**的取文口：打码 → 清洗 → 占位符 → 词典 → 内容门。
+
+    返回 ``(可朗读正文, 拒绝理由)``。
 
     打码必须在最前面：`clean_for_speech` 会吃掉 `_` 与 `>`，先把
     ``BOT_SUPER_ADMIN_API_KEY=x`` 洗成 ``BOTSUPERADMINAPIKEY=x`` 之后，
     中央两条打码正则（`_BOT_ENV_ASSIGN_RE` / `_BARE_KEY_VALUE_RE`）双双失配，
     密钥就跟着音频出门了（M-03 的根修）。
+
+    ``max_chars``：调用方按配置显式传入；**0=不限**（不按字数截断，M-35 语义
+    统一——本函数不再把 0 悄悄抬回任何缺省值，硬顶由能力层另行把守）。
     """
     value = redact_local_secrets(str(raw_text or ""))
     limit = max_chars
     if limit is None:
-        limit = int(getattr(config, "bot_tts_max_chars", _DEFAULT_MAX_CHARS) or _DEFAULT_MAX_CHARS)
+        # 未显式给限=读配置（0=不限原样生效，无 or-反转）。
+        limit = int(getattr(config, "bot_tts_max_chars", 0) or 0)
     speech = clean_for_speech(value, max_chars=int(limit))
-    # 打码占位符 `<已隐藏>` 的尖括号会被清洗吃掉，剩个残缺的 `<已隐藏` 念出来
-    # 只会变成一串怪音；换成可读出的词（占位符本身仍不外泄原值）。
+    # 打码占位符（`<已隐藏>` / `<本机路径已隐藏>`）的尖括号会被清洗吃掉，剩个
+    # 残缺形态念出来只会变成一串怪音；换成可读出的词（占位符本身仍不外泄原值）。
     speech = _REDACTION_PLACEHOLDER_RE.sub("已隐去", speech)
+    speech = _apply_lexicon(speech, _resolve_preset(config).lexicon)
     if not speech:
         return "", ""
     reason = speech_block_reason(config, message, speech)
@@ -874,7 +1131,7 @@ def should_voice_reply(
     if bool(getattr(config, "bot_tts_auto_reply_always", False)):
         return True
     probability = _resolve_probability(
-        getattr(config, "bot_tts_auto_reply_probability", _DEFAULT_AUTO_REPLY_PROBABILITY)
+        getattr(config, "bot_tts_auto_reply_probability", 0.0)
     )
     if probability <= 0:
         return False
@@ -903,9 +1160,8 @@ def maybe_attach_voice(
     if not should_voice_reply(config, message, result):
         return result
     try:
-        max_chars = int(
-            getattr(config, "bot_tts_auto_reply_max_chars", 120) or 120
-        )
+        # 0=不限（M-35 语义统一：不再 or-抬回 120）；「不限≠无界」，下方过硬顶。
+        max_chars = int(getattr(config, "bot_tts_auto_reply_max_chars", 0) or 0)
         speech, blocked = resolve_speech_text(
             config, message, result.body or result.summary or "", max_chars=max_chars
         )
@@ -915,22 +1171,47 @@ def maybe_attach_voice(
             return result
         if not speech:
             return result
+        # 文本硬顶（G2-R3）：自动路超顶=静默放弃增益（文字回复原样出站），
+        # 同样不拆条；留痕走日志（配音增益面不挂 issue 防刷屏）。
+        hard_cap = (
+            int(getattr(config, "bot_tts_hard_max_chars", 0) or 0) or HARD_MAX_CHARS_FALLBACK
+        )
+        if len(speech) > hard_cap:
+            logger.info(
+                "tts auto reply skipped: over_hard_cap len=%d cap=%d", len(speech), hard_cap
+            )
+            return result
+        preset = _resolve_preset(config)
+        params = _build_params(config)
         ref = pick_ref_audio(
             getattr(config, "bot_tts_ref_audios", []) or [],
             base_dir=str(getattr(config, "bot_tts_gptsovits_dir", "") or ""),
         )
         if ref is None:
             return result
+        speech_seed = derive_seed(
+            speech,
+            ref,
+            params,
+            api_url=str(getattr(config, "bot_tts_api_url", "") or ""),
+            preset_id=preset.preset_id,
+        )
         path, reason = synthesize(
-            api_url=str(getattr(config, "bot_tts_api_url", "") or "http://127.0.0.1:9880"),
+            api_url=str(getattr(config, "bot_tts_api_url", "") or ""),
             text=speech,
             ref=ref,
-            params=_build_params(config),
+            params=params,
             output_dir=_output_dir(config),
             timeout_seconds=float(
                 getattr(config, "bot_tts_timeout_seconds", _DEFAULT_TIMEOUT_SECONDS)
             ),
             cache_enabled=bool(getattr(config, "bot_tts_cache_enabled", True)),
+            preset_id=preset.preset_id,
+            engine_params=dict(preset.params),
+            seed=speech_seed,
+            max_audio_bytes=int(getattr(config, "bot_tts_max_audio_bytes", 0) or 0),
+            quota_max_bytes=int(getattr(config, "bot_tts_cache_max_bytes", 0) or 0),
+            quota_max_age_days=int(getattr(config, "bot_tts_cache_max_age_days", 0) or 0),
         )
         if path is None:
             logger.info("tts auto reply skipped: %s", reason)
@@ -938,7 +1219,13 @@ def maybe_attach_voice(
         return result.model_copy(
             update={
                 "audio": [{"file": str(path), "review_text": speech}],
-                "audit_tags": [*result.audit_tags, "tts", "auto_reply"],
+                "audit_tags": [
+                    *result.audit_tags,
+                    "tts",
+                    "auto_reply",
+                    f"preset={preset.preset_id}",
+                    f"seed={speech_seed}",
+                ],
             }
         )
     except Exception as exc:  # noqa: BLE001 - 配音增益绝不阻断文字回复。

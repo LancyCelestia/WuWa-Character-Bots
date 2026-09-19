@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 _logger = logging.getLogger(__name__)
 
@@ -28,13 +28,20 @@ def translate_env_keys(values: dict[str, Any]) -> dict[str, Any]:
     return translated
 
 
+# 语音预设白名单（G-2 契约层）：=domains/media/tts_presets.py 的
+# PRESET_REGISTRY 键集。此处用字面量而非 import，保持 config.py 零包内依赖
+# （根 __init__ → config 装载顺序下 import domains 有初始化环风险）；
+# 一致性漂移由 tests/test_tts_presets.py::test_config_preset_ids_stay_in_sync_with_registry 锁死。
+TTS_PRESET_IDS: frozenset[str] = frozenset({"shorekeeper"})
+
+
 class Config(BaseModel):
     # 运行数据与源码工作区分离：生产环境可把 data/ 放到工作区外，
     # 其余配置仍可继续使用 data/... 的相对写法，由下方校验器统一解析。
     bot_runtime_data_dir: str = "data"
     bot_runtime_enabled: bool = True
     # 入站事件幂等表（P0.4）：重连重放的同事件对同一能力只处理一次；默认关闭，
-    # 建议真实 NapCat 验收期间保持关闭，验收通过后再启用。
+    # 建议真实 SnowLuma 验收期间保持关闭，验收通过后再启用。
     bot_event_idempotency_enabled: bool = False
     bot_event_idempotency_ttl_seconds: float = 3600.0
     bot_event_idempotency_max_entries: int = 4096
@@ -53,6 +60,19 @@ class Config(BaseModel):
     bot_runtime_alias_enabled: bool = True
     bot_runtime_settings_file: str = "data/runtime_settings.json"
     bot_runtime_settings_dir: str = "data/settings"
+    bot_control_plane_enabled: bool = False
+    bot_control_plane_host: str = "127.0.0.1"
+    bot_control_plane_port: int = Field(default=8742, ge=1, le=65535)
+    bot_control_plane_token_sha256: str = ""
+    bot_control_plane_host_allowlist: list[str] | str = ""
+    bot_control_plane_config_db: str = "data/control_plane_config.sqlite3"
+    bot_control_plane_events_db: str = "data/control_plane_events.sqlite3"
+    bot_control_plane_workspaces_db: str = "data/control_plane_workspaces.sqlite3"
+    bot_control_plane_features_db: str = "data/control_plane_features.sqlite3"
+    bot_control_plane_platform_db: str = "data/control_plane_platform.sqlite3"
+    bot_control_plane_actions_db: str = "data/control_plane_actions.sqlite3"
+    bot_control_plane_features_file: str = "data/control_plane_features.json"
+    bot_control_plane_super_admin_token_sha256: str = ""
     bot_shared_export_enabled: bool = False
     bot_shared_export_include_private: bool = False
     bot_shared_export_max_chars: int = 200
@@ -145,6 +165,24 @@ class Config(BaseModel):
     bot_kb_wiki_sync_hour: int = 23
     bot_kb_wiki_sync_minute: int = 40
     bot_kb_wiki_sync_on_startup: bool = True
+    # —— V2.1 S8：教导知识库与数据库安全查询代理（V21-TEACH-001 /
+    # V21-DB-001；装配见 runtime/service_wiring.py，受下方主门缺省关约束）——
+    # 教导知识库：用户提议→管理员审核→生效为「背景知识」注入（仅供理解、
+    # 禁止复述；结构上不可达人格/权限/路由面）。
+    bot_teaching_enabled: bool = True
+    bot_teaching_db_path: str = "data/teaching_knowledge.sqlite3"
+    # 数据库安全查询代理：仅注册 query_id 的参数化只读查询（白名单
+    # registry + 参数 schema + 2s 超时 + 200 行限额；禁任意表/排序/SQL）。
+    bot_database_broker_enabled: bool = True
+    # —— V2.1 B2① 服务装配组主门（V21-WORLD-001/V21-KB-001/V21-DB-001/
+    # V21-TEACH-001；runtime/service_wiring.py 装配+注册表）——缺省关=零装配
+    # 零副作用，不改变现网行为；开启后仍受各分门（上方 teaching/broker 既有
+    # 键与下方 worldbook/knowledge 两键）约束。L41 memory 待用户裁决不接。
+    bot_v21_service_wiring_enabled: bool = False
+    # 世界书服务分门（worldbook_service.py：悬空/循环引用+Token 预算+草稿隔离）。
+    bot_worldbook_enabled: bool = False
+    # 知识检索服务分门（knowledge_service.py：FTS/向量/RRF 三通道+原子重建）。
+    bot_knowledge_service_enabled: bool = False
     bot_tone_mode: str = "private_chat"
     bot_tone_voice: str = "soft"
     bot_tone_warmth: float = 0.7
@@ -183,9 +221,27 @@ class Config(BaseModel):
     bot_send_queue_worker_interval_seconds: int = 30
     bot_send_queue_worker_batch_size: int = 20
     # B-4：bot_unavailable 挂起的绝对年龄上限（秒）——入队超过该时长仍因
-    # NapCat 断线不可投才置 FAILED_FINAL（防非终态行无限堆积）；缺字段 =
+    # SnowLuma 断线不可投才置 FAILED_FINAL（防非终态行无限堆积）；缺字段 =
     # env 键被 pydantic 丢弃、旋钮恒默认（§14.4.2：env 键须有同名小写字段）。
     bot_send_bot_unavailable_max_age_seconds: float = 1800.0
+    # 中央出站防风暴闸（B4-spec §1；真身
+    # domains/transport/sender/outbound_gate.py）：聚合域（紧急信息等）**一切主动投递**
+    # 触达 SendQueue.submit 的唯一入口，按序过三道门——静默顺延 / 每主体 60s·3600s
+    # 双滑窗限流 / dedupe 键规范核验。缺省=关闭：闸的唯一入口直通裸 submit，
+    # 现役 6 族与消息流回复零改动（规格 §1.5 唯一硬约束=enabled 缺省 False）。
+    # 窗上限 0=该窗不生效（与 bot_rate_limit_group_max_per_* 同口径，缺省绝不拦死投递）。
+    # db_path 必须进 path_fields 重映射（铁律 6：源码树零 data/，先例 bot_campus_db_path）。
+    bot_outbound_gate_enabled: bool = False
+    bot_outbound_gate_quiet_defer_enabled: bool = True
+    bot_outbound_gate_urgent_severities: list[str] = ["P0", "P1"]
+    bot_outbound_gate_max_per_target_per_minute: int = 2
+    bot_outbound_gate_max_per_target_per_hour: int = 6
+    bot_outbound_gate_db_path: str = "data/outbound_gate.sqlite3"
+    # 送达核验总开关（B4-spec §3.2 Tier1-a）：开启时 OneBot 本地摘段会给回执挂
+    # OperationalIssue(kind=segment_dropped_local)——治「谎报送达」。消费方在
+    # domains/transport/sender/onebot.py（B4b 席独占面），SnowLuma 侧未取证前生产不开；
+    # 缺省 False=现状字节级不动。config.py 本波唯一登记人=B4a，故该键在此落账。
+    bot_outbound_verify_enabled: bool = False
     # 发送层单次请求硬超时（秒）：OneBot/Telegram/Mail 发送共用；
     # 合法范围 (0, 600]，0/负数/NaN/Infinity/超大值在启动校验时直接报错
     # （与 _validate_transport_timeout_seconds 一致，无"回退 15"的隐式兜底）。
@@ -258,7 +314,61 @@ class Config(BaseModel):
     bot_randpic_enabled: bool = True
     bot_randpic_dirs: list[str] = []
     bot_randpic_trigger_words: list[str] = []
-    bot_randpic_max_file_mb: int = 20
+    bot_randpic_max_file_mb: int = 25
+    # 语音合成（bot.tts）：对接本机 GPT-SoVITS v2ProPlus 的 api_v2.py HTTP 接口，
+    # 把文本合成为守岸人音色的语音消息。缺省全关——语音服务需先单独启动，
+    # 未启动时开了也只会得到一句降级文案，故不默认占用。
+    # G-2 契约层：合成参数缺省源=中央预设表（domains/media/tts_presets.py），
+    # 本节数值键保留为管理员覆盖（env 显式值 > preset；v1 预设值=此处缺省值，
+    # 零行为变更）。域值=引擎 WebUI 滑杆（report-T53.md），越界值装载期即拒（M-35）。
+    bot_tts_enabled: bool = False
+    bot_tts_api_url: str = "http://127.0.0.1:9880"
+    # 参考音频基准目录（GPT-SoVITS 程序目录）；BOT_TTS_REF_AUDIOS 里的相对
+    # 路径以它为基准解析。
+    bot_tts_gptsovits_dir: str = ""
+    # 参考音频列表：每项 "路径|参考文本|语种"（后两段可省；文本留空=无参考
+    # 文本模式）。硬性要求 3~10 秒干声，多项时随机轮换以贴合不同语气。
+    bot_tts_ref_audios: list[str] = []
+    bot_tts_trigger_words: list[str] = []
+    bot_tts_output_dir: str = "data/tts_output"
+    # 语音预设选择（G-2 唯一新选择键）：枚举成员=TTS_PRESET_IDS 白名单
+    # （=tts_presets.PRESET_REGISTRY 键集，一致性由 tests/test_tts_presets.py 锁）。
+    bot_tts_preset: str = "shorekeeper"
+    # 单次合成文本上限；**0=不限（不按字数截断）**——「不限≠无界」，必过
+    # bot_tts_hard_max_chars 中央硬顶（M-35 语义反转修死 + G2-R3 硬顶）。
+    bot_tts_max_chars: int = Field(default=200, ge=0)
+    # 文本硬顶（字）：超顶=拒绝合成+OperationalIssue 留痕，不静默不拆条；
+    # 0=禁配无界（取内置常量 2000）。
+    bot_tts_hard_max_chars: int = Field(default=2000, ge=0)
+    # 产物字节硬顶：v2ProPlus=32000Hz/16bit/单声道 ⇒ 64,000 B/s 恒定，
+    # 8 MiB≈131s（G2-R3）；超顶=体检闸拒（tts_bad_audio 族）不入缓存不出站；
+    # 0=禁配无界（取内置常量 8 MiB）。换 media_type/采样率须重裁此值。
+    bot_tts_max_audio_bytes: int = Field(default=8 * 1024 * 1024, ge=0)
+    bot_tts_timeout_seconds: float = Field(default=60.0, ge=1.0)
+    bot_tts_speed_factor: float = Field(default=0.85, ge=0.6, le=1.65)
+    bot_tts_temperature: float = Field(default=0.9, ge=0.0, le=1.0)
+    bot_tts_top_k: int = Field(default=15, ge=1, le=100)
+    bot_tts_top_p: float = Field(default=1.0, ge=0.0, le=1.0)
+    bot_tts_text_lang: str = "zh"
+    bot_tts_text_split_method: str = "cut5"
+    bot_tts_cache_enabled: bool = True
+    # 产物目录磁盘配额（U-04：data/tts_output 定性=缓存，接中央
+    # cache_policy.enforce_quota「最旧先删」）；**缺省 0/0=不限制（字节级行为
+    # 不变）**。换缓存键空间产生的旧 wav 孤儿靠它回收（M-27 顺接）。
+    bot_tts_cache_max_bytes: int = Field(default=0, ge=0)
+    bot_tts_cache_max_age_days: int = Field(default=0, ge=0)
+    # 对话自动配音（默认关）：人格回复正文一并合成为语音随消息发出。
+    # scope 取 private（仅私聊）/ group（仅群聊）/ all。
+    bot_tts_auto_reply_enabled: bool = False
+    bot_tts_auto_reply_scope: str = "private"
+    # 自动配音文本上限；**0=不限**（同 max_chars 语义，过硬顶）。
+    bot_tts_auto_reply_max_chars: int = Field(default=120, ge=0)
+    # 配音概率门：每条符合条件的回复按此概率决定是否配音（默认 5%）。
+    # 用确定性哈希实现（seed = session_id:message_id），同一条消息结果恒定，
+    # 可复现可审计；置 1.0 等价于全量配音。always 置真则直接跳过概率门，
+    # 供调试/真机验收时逐条听音。
+    bot_tts_auto_reply_probability: float = Field(default=0.05, ge=0.0, le=1.0)
+    bot_tts_auto_reply_always: bool = False
     # 时间点提醒（bot.reminder）：记住"几点要做什么"，到点主动督促。
     bot_reminder_enabled: bool = True
     bot_reminder_db_path: str = "data/reminders.sqlite3"
@@ -275,6 +385,10 @@ class Config(BaseModel):
     bot_download_aria2_enabled: bool = True
     bot_holidays_file: str = ""
     bot_persona_action_brackets: bool = True
+    # V21-PERSONA-001：人格核心注入走版本库（draft→publish→activate，带
+    # version+sha256 溯源；任何故障 fail-open 回退文件直读路径）。默认 False
+    # 保守灰度=旧路径逐字节不变；True 才启用。库=data/persona_versions.sqlite3。
+    bot_persona_versioned_injection: bool = False
     bot_credentials_file: str = ""
     bot_credential_warn_days: int = 7
     bot_credential_probe_urls: dict[str, str] = {}
@@ -316,7 +430,7 @@ class Config(BaseModel):
     bot_daily_assist_meal_times: list[str] = ["11:15", "17:15"]
     bot_daily_assist_morning_time: str = "09:00"
     bot_daily_assist_evening_time: str = "21:00"
-    # 校园自动转发（campus v1）：监听学校 QQ 账号（NapCat 第二实例）所在
+    # 校园自动转发（campus v1）：监听学校 QQ 账号（SnowLuma 第二实例）所在
     # 群的文本消息，实时私聊转发给主人。纯监听，绝不向学校群发送任何消息。
     # 三重门：enabled ∧ self_ids ∧ group_whitelist 任一为空即整链路关闭
     # （绝不猜账号/猜群）；白名单支持 "*" 显式放行学校号全部群。
@@ -326,6 +440,17 @@ class Config(BaseModel):
     bot_campus_notify_qq: str = ""
     bot_campus_push_bot_id: str = ""
     bot_campus_db_path: str = "data/campus.sqlite3"
+    # 全场景日程（V2.1 §4，domains/schedule 服务面）：LLM 草稿解析/课表识别/
+    # 到点投递三服务与既有 schedule 引擎（schedule_service 族）共库。未接线前
+    # 各开关缺省关（不装配=零开销）；投递只到 SendQueue 提交面，真实出站端口
+    # 未授权前 request_builder 不注入（诚实不伪装发送）。
+    bot_schedule_enabled: bool = False
+    bot_schedule_db_path: str = "data/schedules_v21.sqlite3"
+    bot_schedule_llm_draft_enabled: bool = False
+    bot_schedule_timetable_enabled: bool = False
+    bot_schedule_delivery_enabled: bool = False
+    bot_schedule_delivery_max_retries: int = 3
+    bot_schedule_exceptions_path: str = "data/schedule_exceptions.json"
     # 群聊回复策略（群号列表）：
     # black1=完全静默只接收不发送；black2=只回“@它且带指令”的消息；
     # white1=正常回复并可按主动接话开关抽签；white2=只回“@它”或显式命令。
@@ -370,6 +495,17 @@ class Config(BaseModel):
     bot_web_search_fetch_max_chars: int = 3000
     # 管理员私聊可选显示联网检索提示；仅有真实结果链接时才追加。
     bot_web_search_admin_notice: bool = False
+    # ACG 专项竖源检索（v21r2 SEARCH 席）：Bangumi(bgm.tv 无 key)/萌娘百科/B站公开搜索。
+    # 总开关默认关（对齐 bot_web_search_enabled 保守缺省）；开启后仅当查询命中二次元意图
+    # （番剧/漫画/B站梗/二次元游戏）且未触发安全红线（显式不联网/闲聊/创作等）时并发查竖源，
+    # 结果按意图时效档（latest=带日期加权 / background=权威度优先）加权后并入【联网检索】；
+    # 单源失败诚实降级为空，不阻断主链路。
+    bot_search_acg_enabled: bool = False
+    bot_search_acg_bangumi_enabled: bool = True
+    bot_search_acg_moegirl_enabled: bool = True
+    bot_search_acg_bilibili_enabled: bool = True
+    bot_search_acg_timeout_seconds: float = 4.0
+    bot_search_acg_max_per_source: int = 3
     # 联网分类遥测：只记录查询哈希、决策、置信度和命中统计，不记录原文。
     bot_web_intent_telemetry_enabled: bool = False
     bot_web_intent_telemetry_db_path: str = "data/web_intent_telemetry.sqlite3"
@@ -524,6 +660,11 @@ class Config(BaseModel):
     bot_time_sync_enabled: bool = True
     bot_time_sync_servers: str = "ntp.aliyun.com,cn.ntp.org.cn,pool.ntp.org"
     bot_time_sync_max_drift_ms: int = 1500
+    # HTTPS 授时兜底（R3 停摆批 2026-09-17）：UDP 123 被墙时 NTP 全败转
+    # HTTPS Date 头（RFC 7231）估偏移；失败链 NTP→HTTPS→系统钟，复用
+    # ±1.5s 钳制；仅收 https:// 端点，url 留空=内置 baidu/taobao/qq。
+    bot_time_sync_http_enabled: bool = True
+    bot_time_sync_http_url: str = ""
     # 统一错误报告卡（bot.error_card）：能力异常时向触发者回云母诊断卡
     # （方法名/栈摘录/脱敏配置/版本/平台协议/IDs/运行时长+求助指引）。
     bot_error_card_enabled: bool = True
@@ -533,12 +674,22 @@ class Config(BaseModel):
     # 缺省=字节级现状（并发 1/预算 0=不生效）；解锁值经 .env 或 driver config。
     bot_render_max_concurrency: int = 1
     bot_render_wait_budget_ms: int = 0
-    # 表情回应（bot.reactions）：识别 QQ(NapCat)/TG 消息贴纸回应并注入人格
-    # 上下文；bot 按心情/好感/概率主动给消息贴表情（NapCat set_msg_emoji_like）。
+    # 表情回应（bot.reactions）：识别 QQ(SnowLuma)/TG 消息贴纸回应并注入人格
+    # 上下文；bot 按心情/好感/概率主动给消息贴表情（SnowLuma set_msg_emoji_like）。
     bot_reactions_enabled: bool = True
     bot_reactions_probability: float = 0.2
     bot_reactions_cooldown_seconds: int = 30
     bot_reactions_max_per_hour: int = 20
+    # 贴纸回应持久化（B 线 2026-09-16：把所有表情贴纸存下来）：识别事件双写
+    # 落库 + 按 emoji 聚合统计；保留期裁剪防无界增长。
+    bot_reactions_db_path: str = "data/reactions.sqlite3"
+    bot_reactions_store_days: int = 90
+    # 双层表情·第二层（情绪时刻发表情包）：从表情库按 VLM 情绪标签加权抽图
+    # 发送；与第一层贴小表情互斥（同消息先贴后包）；C1 悲伤词族整条不贴。
+    bot_reactions_meme_enabled: bool = True
+    bot_reactions_meme_probability: float = 0.15
+    bot_reactions_meme_cooldown_seconds: int = 120
+    bot_reactions_meme_daily_max: int = 6
     # NSFW 直接删除阈值（淫秽色情不存储）：>= 该分数删除文件与记录。
     bot_meme_library_nsfw_delete: float = 0.8
     # 群图下载代理（默认直连 QQ 多媒体源；外网源可走 7890）。
@@ -550,6 +701,7 @@ class Config(BaseModel):
     bot_group_chat_auto_reply_enabled: bool = False
     bot_group_chat_auto_reply_probability: float = 0.004  # 2026-09-12 实弹反馈调低：5%/条 会频繁主动接话并自我触发限流
     bot_group_welcome_enabled: bool = True  # 审查 B-05：入群欢迎语（退群/管理变更只记事件不发言）
+    bot_group_welcome_via_queue: bool = False  # S0 收编②：True=欢迎语走统一管线（缺省 False=旧直连）
     bot_group_proactive_max_replies_per_hour: int = 6
     bot_group_proactive_cooldown_seconds: int = 90
     # N4：主动搭话亲和门——群聊抽签主动接话只对好感档 ≥ 亲近（close）的用户
@@ -562,9 +714,68 @@ class Config(BaseModel):
     bot_poke_admin_bypass: bool = False
     # 统一戳一戳分发（capabilities.poke.PokeDispatcher）：回戳与话术可配。
     bot_poke_reply_enabled: bool = True
-    bot_poke_poke_back: bool = False
+    # 用户裁定（2026-09-16）：回戳进五件套，缺省开（NapCat 时期不支持时静默）。
+    bot_poke_poke_back: bool = True
     bot_poke_group_text: str = ""
     bot_poke_private_text: str = ""
+    # 戳一戳回复形态（poke v2）：mix=固定话术/LLM 话术/表情包 三选一确定性
+    # 轮换；fixed=固定话术；llm=LLM 话术（失败回退固定）；meme=表情包
+    # （库空回退固定）。群聊回复自动 @戳者。
+    bot_poke_reply_mode: str = "mix"
+    # 戳一戳好感度：门控放行后记一笔小额正向互动（V2.1 §2.2 经 observe_points
+    # 唯一适配器按「分」口径入账）；poke_gain_points=0.1 分/戳、
+    # poke_gain_24h=0.5 分（来源专项 24h 滚动预算，全局增益预算另兜底）；
+    # daily_max=0 表示不记好感。
+    bot_poke_affinity_enabled: bool = True
+    bot_poke_affinity_delta: float = 0.1
+    bot_poke_affinity_daily_max: float = 0.5
+    # R-18 内容感知路由（runtime/content_route.py）：本地信号 L1 强词表 +
+    # L2 上下文累积 + L4「亲密模式 开/关」手动钉死（2026-09-17：模型自评
+    # 标签层移除——gemini/grok 都把它当注入攻击整轮拒答）；INTIMATE 时自动
+    # 候选序=order 配置（grok-4.6 → gemini-3.8-flash，用户裁定 gemini 第二位）
+    # 并跳过影子并发。
+    bot_content_route_enabled: bool = True
+    bot_content_route_model: str = "grok-4.6"
+    # INTIMATE 态候选头顺序（逗号分隔模型名；首位=主目标，其余跟后）。
+    bot_content_route_order: str = "grok-4.6,gemini-3.8-flash"
+    # 追加强词表（逗号/顿号/空白分隔，并入内置表）。
+    bot_content_route_words: str = ""
+    # 滞回阈值：分数 ≥ intimate → 切 grok；≤ normal → 回默认链；中间保持前态。
+    bot_content_route_intimate_threshold: float = 60.0
+    bot_content_route_normal_threshold: float = 25.0
+    # L2 上下文扫描轮数（本次请求 messages 尾部；0=关）。
+    bot_content_route_context_turns: int = 4
+    # 会话状态硬上限与空闲归零（分钟）：防长跑会话钉死在 INTIMATE。
+    bot_content_route_max_ttl_minutes: int = 120
+    bot_content_route_idle_reset_minutes: int = 10
+    # 上下文钳制全局缺省（2026-09-17 用户裁定：输入 128K / 输出 64K，日常对话
+    # 足够）：输出=请求 max_tokens 封顶；输入=估算超限时从最旧非 system 丢起。
+    bot_chat_max_input_tokens: int = 131072
+    bot_chat_max_output_tokens: int = 65536
+    # 群聊亲密面黑白名单（2026-09-17 用户裁定）：白名单命中且不在黑名单的群
+    # 才允许亲密模式/露骨内容（群内手动开关仅管理员可拨）；黑名单优先；
+    # 白名单为空=群聊亲密面整体关闭，绝不猜群（campus 白名单同款纪律）。
+    bot_content_route_group_whitelist: list[str] = []
+    bot_content_route_group_blacklist: list[str] = []
+    # v21r5 四名单之私聊两面（2026-09-19 用户裁定）：黑名单最高优先（Master
+    # Love 压不过黑名单）；白名单【空=私聊亲密面默认放开】（沿用既有私聊放开
+    # 裁定）、非空=仅名单内 QQ——与群白名单「空=关闭」语义刻意不对称，登记处
+    # 必须写明。console 为运营者本地面，不参与私聊名单门。
+    bot_content_route_private_whitelist: list[str] = []
+    bot_content_route_private_blacklist: list[str] = []
+    # v21r5 双开关 TTL（两个开关同一时长）：亲密模式（手动钉死，群级/个人级
+    # 同一 TTL）默认 60 分钟自动退出——按激活时刻起算、会话活跃不续期、重新
+    # 开启即重置；既有 max_ttl（120）保留为全状态硬上限。
+    bot_content_route_intimate_ttl_minutes: int = 60
+    # v21r5 个人级开关总闸：群成员能否对自己拨「亲密模式 开」（开关一）。
+    # False=群聊仅管理员全群开关（开关二）有效，成员指令不受理。
+    bot_content_route_group_per_user_enabled: bool = True
+    # Master Love（2026-09-17 用户裁定）：master 恋人语境——名单内用户的会话
+    # 自动进入亲密档（无需手动拨「亲密模式」），并注入恋人语气指令；群聊同样
+    # 受亲密面准入门约束（普通群不生效）。条目格式："qq"=全域 / "群号:qq"=仅该群
+    # （AstrBot 风格「指定群聊里的指定用户」）。名单用户同时拥有群聊亲密开关权限。
+    bot_master_love_enabled: bool = True
+    bot_master_love_admins: list[str] = []
     # 链接解析能力（bot.content）：识别消息里的平台链接 → 解析 → 信息卡。
     bot_content_parse_enabled: bool = True
     # 平台白名单（空=全部）：bilibili, douyin, xiaohongshu, youtube,
@@ -590,6 +801,10 @@ class Config(BaseModel):
     # 平台 Cookie 文件（Netscape 格式，浏览器导出）：给 B站/小红书/抖音/
     # QQ音乐/网易云/推特等解析与点歌加登录态。留空 = 匿名解析。
     bot_cookies_file: str = ""
+    # S0 直连收编配置门（v21r4-b2-direct-collect-plan §3.1/§3.3）：缺省 False=
+    # 旧直连路径逐字节等价；True=走统一出站路径。
+    bot_cookie_expiry_reminder_via_queue: bool = False
+    bot_cookie_qr_via_queue: bool = False
     # 链接解析历史：默认开启并落盘（data/ 已被 git 忽略）。
     bot_parse_history_enabled: bool = True
     bot_parse_history_db_path: str = "data/parse_history.sqlite3"
@@ -601,6 +816,7 @@ class Config(BaseModel):
     # 自动下载并以视频段随卡片发送；失败/超限静默降级为「下载：」提示。
     bot_content_video_auto_send: bool = True
     bot_download_dir: str = "data/downloads"
+    bot_file_export_via_queue: bool = False  # S0 收编④：True=文档导出上传走统一管线 files 件（缺省 False=旧直连）
     bot_download_max_bytes: int = 1073741824
     bot_download_max_height: int = 0
     bot_download_timeout_seconds: int = 600
@@ -710,6 +926,16 @@ class Config(BaseModel):
     bot_chat_fast_web_max_queries: int = 3
     # 故障转移总时限（秒）：候选模型连续失败时的整体预算，防止响应被拖到分钟级；0=不限。
     bot_chat_failover_max_seconds: float = 120.0
+    # 严格注册表优先级（v21r2 R1，2026-09-17 用户裁定「永远按注册表优先级处理」）：
+    # 同名模型渠道聚合排序以注册表 priority 为主键，价格/EWMA 只作同级 tiebreak；
+    # false=旧行为（价格均值优先；latency_first 开时 EWMA 整体重排）。
+    bot_chat_strict_priority: bool = True
+    # 渠道失败冷却（秒，v21r2 R1）：真实调用失败的渠道在候选队列降级到队尾的
+    # 时长（不剔除；全部冷却时原序放行）；与 channel_health 的 30 分钟重探互补。
+    bot_chat_channel_cooldown_seconds: float = 90.0
+    # 链预算止损（秒，v21r2 R1）：故障转移链上除首个真实尝试外，剩余预算低于
+    # 该值时不再发起新跳（残秒尝试注定超时）；0=关闭止损。
+    bot_chat_failover_min_hop_seconds: float = 3.0
     bot_chat_fast_embedding_timeout_seconds: float = 3.0
     bot_chat_fast_skip_web_pages: bool = True
     bot_chat_fast_disable_vector_knowledge: bool = False
@@ -832,6 +1058,47 @@ class Config(BaseModel):
             raise ValueError("chat output token limit must be between 0 and 65538")
         return value
 
+    # ---- bot.tts（G-2 契约层，M-35：枚举族装载期即拒，越界值不再出门）----
+
+    @field_validator("bot_tts_preset")
+    @classmethod
+    def _validate_tts_preset(cls, value: str) -> str:
+        normalized = str(value or "").strip().casefold()
+        if normalized not in TTS_PRESET_IDS:
+            raise ValueError(f"bot_tts_preset must be one of {sorted(TTS_PRESET_IDS)}")
+        return normalized
+
+    @field_validator("bot_tts_text_lang")
+    @classmethod
+    def _validate_tts_text_lang(cls, value: str) -> str:
+        # 引擎合法域 11 值（T53 §6）；bot 出门前一律 casefold——POST 入口引擎
+        # 用原值断言，"ZH" 必 400，故装载期即归一。
+        from plugins.bot_unified_runtime.domains.media.tts_presets import (
+            TEXT_LANG_VALUES,
+        )
+
+        normalized = str(value or "").strip().casefold()
+        if normalized not in TEXT_LANG_VALUES:
+            raise ValueError(f"bot_tts_text_lang must be one of {sorted(TEXT_LANG_VALUES)}")
+        return normalized
+
+    @field_validator("bot_tts_text_split_method")
+    @classmethod
+    def _validate_tts_text_split_method(cls, value: str) -> str:
+        normalized = str(value or "").strip().casefold()
+        if normalized not in {"cut0", "cut1", "cut2", "cut3", "cut4", "cut5"}:
+            raise ValueError("bot_tts_text_split_method must be cut0..cut5")
+        return normalized
+
+    @field_validator("bot_tts_auto_reply_scope")
+    @classmethod
+    def _validate_tts_auto_reply_scope(cls, value: str) -> str:
+        normalized = str(value or "").strip().casefold()
+        if normalized not in {"private", "group", "all"}:
+            raise ValueError("bot_tts_auto_reply_scope must be private/group/all")
+        return normalized
+
+
     @field_validator("bot_memory_extract_max_tokens")
     @classmethod
     def _memory_token_limit(cls, value: int) -> int:
@@ -896,6 +1163,13 @@ class Config(BaseModel):
             return value
 
         path_fields = (
+            "bot_control_plane_config_db",
+            "bot_control_plane_events_db",
+            "bot_control_plane_workspaces_db",
+            "bot_control_plane_features_db",
+            "bot_control_plane_platform_db",
+            "bot_control_plane_actions_db",
+            "bot_control_plane_features_file",
             "bot_runtime_settings_file",
             "bot_runtime_settings_dir",
             "bot_mail_bridge_state_file",
@@ -909,6 +1183,9 @@ class Config(BaseModel):
             "bot_audit_db_path",
             "bot_receipts_db_path",
             "bot_send_queue_db_path",
+            # 中央出站闸计数库（B4-spec §1.5）：缺 data/ 相对路径，必须经
+            # runtime_paths 重映射到 ChatBot_Runtime（铁律 6）。
+            "bot_outbound_gate_db_path",
             "bot_web_intent_telemetry_db_path",
             "bot_meme_api_output_dir",
             "bot_meme_library_dir",
@@ -944,6 +1221,11 @@ class Config(BaseModel):
             "bot_media_archive_db_path",
             "bot_notes_db_path",
             "bot_campus_db_path",
+            "bot_reactions_db_path",
+            "bot_teaching_db_path",
+            "bot_tts_output_dir",
+            "bot_schedule_db_path",
+            "bot_schedule_exceptions_path",
         )
         for name in path_fields:
             setattr(self, name, resolve(getattr(self, name)))
@@ -964,6 +1246,9 @@ class Config(BaseModel):
         "bot_glossary_files",
         "bot_runtime_persona_nicknames",
         "bot_persona_nicknames",
+        # 参考音频项含 "|" 与可能的中文逗号，故走 file_list 解析（只按 ";" 与
+        # JSON 数组切分），不能走 id_list（那边会 replace 逗号导致正文被切断）。
+        "bot_tts_ref_audios",
         mode="before",
     )
     @classmethod
@@ -1001,8 +1286,14 @@ class Config(BaseModel):
         "bot_group_digest_blacklist",
         "bot_randpic_dirs",
         "bot_randpic_trigger_words",
+        "bot_tts_trigger_words",
         "bot_campus_self_ids",
         "bot_campus_group_whitelist",
+        "bot_content_route_group_whitelist",
+        "bot_content_route_group_blacklist",
+        "bot_content_route_private_whitelist",
+        "bot_content_route_private_blacklist",
+        "bot_master_love_admins",
         mode="before",
     )
     @classmethod

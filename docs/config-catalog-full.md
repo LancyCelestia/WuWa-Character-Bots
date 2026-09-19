@@ -410,6 +410,12 @@
 | `BOT_WEB_SEARCH_TAVILY_TIME_RANGE` | str | `""` | 留空=不发送 | | Tavily 一级参数 time_range | 同上 |
 | `BOT_WEB_SEARCH_TAVILY_EXTRACT_ENABLED` | bool | `False` | | | 正文抓取回退的 Tavily extract 兜底开关（默认关，避免额外额度消耗；TinyFish 抓取优先） | |
 | `BOT_WEB_SEARCH_TAVILY_EXTRACT_ENDPOINT` | str | `https://api.tavily.com/extract` | URL | | Tavily extract 端点 | |
+| `BOT_SEARCH_ACG_ENABLED` | bool | `False` | | | ACG 专项竖源检索总开关（v21r2）：命中二次元意图（番剧/漫画/B站梗/二次元游戏）且未触发安全红线时并发查竖源，按意图时效档加权并入【联网检索】；单源失败诚实降级 | 依赖意图识别（sources/search_intent.py）；不改变 bot_web_search_enabled 语义 |
+| `BOT_SEARCH_ACG_BANGUMI_ENABLED` | bool | `True` | | | Bangumi (bgm.tv) 竖源（无 key，条目元数据+放送日期；v0 API 需自定义 UA，超限 429） | 依赖 `BOT_SEARCH_ACG_ENABLED` |
+| `BOT_SEARCH_ACG_MOEGIRL_ENABLED` | bool | `True` | | | 萌娘百科竖源（复用 sources/moegirl 缓存+镜像回退；主站 WAF 拦截时降级为空） | 依赖 `BOT_SEARCH_ACG_ENABLED` |
+| `BOT_SEARCH_ACG_BILIBILI_ENABLED` | bool | `True` | | | B站公开搜索竖源（视频 pubdate 时效信号；无 cookie 常见 -412 风控，诚实降级为空；wbi 收紧风险） | 依赖 `BOT_SEARCH_ACG_ENABLED` |
+| `BOT_SEARCH_ACG_TIMEOUT_SECONDS` | float | `4.0` | >0 | | 单竖源请求超时 | |
+| `BOT_SEARCH_ACG_MAX_PER_SOURCE` | int | `3` | ≥1 | | 单竖源结果条数上限 | |
 | `BOT_WEB_SEARCH_YOU_ENDPOINT` | str | `https://api.you.com/v1/search` | URL | | You.com 检索端点 | |
 | `BOT_WEB_SEARCH_TINYFISH_ENDPOINT` | str | `https://api.search.tinyfish.ai/search` | URL | | TinyFish 检索端点 | |
 | `BOT_WEB_SEARCH_TINYFISH_FETCH_ENDPOINT` | str | `https://api.fetch.tinyfish.ai` | URL | | TinyFish 正文抓取端点 | |
@@ -778,12 +784,17 @@
 | `_time_sync_enabled` / `_time_sync_servers` / `_time_sync_max_drift_ms` | `true` / `ntp.aliyun.com,cn.ntp.org.cn,pool.ntp.org` / `1500` | 联网授时（bot.timesync）：NTP 校准提醒/调度时间基准（不改系统钟，全服务器超时回退系统钟+告警） |
 | `_error_card_enabled` / `_error_card_cooldown_seconds` / `_error_card_stack_frames` | `true` / `60` / `8` | 统一错误报告卡（bot.error_card）：能力异常回云母诊断卡（方法/栈摘录/脱敏配置/版本/协议/IDs/运行时长+求助指引）；同会话冷却防刷屏 |
 | `_render_max_concurrency` / `_render_wait_budget_ms` | `1` / `0` | 渲染 Phase 2：后端并发信号量上限 / 单卡等待预算（超预算纯文本兜底）；0=预算不生效；解锁建议 2 / 1500（性能席实测 warm P50 −64%） |
-| `_reactions_enabled` / `_reactions_probability` / `_reactions_cooldown_seconds` / `_reactions_max_per_hour` | `true` / `0.2` / `30` / `20` | 表情回应（bot.reactions）：识别 QQ(NapCat)/TG 贴纸回应注入上下文+主动贴表情；概率/冷却/时限三重防刷屏门 |
+| `_reactions_enabled` / `_reactions_probability` / `_reactions_cooldown_seconds` / `_reactions_max_per_hour` | `true` / `0.2` / `30` / `20` | 表情回应（bot.reactions）：识别 QQ(SnowLuma)/TG 贴纸回应注入上下文+主动贴表情；概率/冷却/时限三重防刷屏门。**主动贴表情只支持群消息，私聊一律不派发**——QQ 侧本就没有私聊表情回应通道（**非迁移退化**），SnowLuma 对非群消息直接拒（详见 snowluma-setup.md §1 能力边界） |
+| `_reactions_db_path` / `_reactions_store_days` | `data/reactions.sqlite3` / `90` | 贴纸回应持久化（B 线 2026-09-16「把所有表情贴纸存下来」）：识别事件双写（缓冲+SQLite 幂等合并）、按 emoji/按用户聚合统计、保留期裁剪（启动期 prune）；db_path 走 runtime 重映射。owner：`sources/reaction_store.py ReactionStore` |
+| `_reactions_meme_enabled` / `_reactions_meme_probability` / `_reactions_meme_cooldown_seconds` / `_reactions_meme_daily_max` | `true` / `0.15` / `120` / `6` | 双层表情·第二层（B 线 2026-09-16）：情绪信号命中且第一层未贴 → 意图匹配表情库 VLM 情绪标签加权抽图小概率发送；独立冷却/每日上限/每小时帽（沿用 `_reactions_max_per_hour`）/C1 悲伤门；互斥=同消息先贴后包 |
 | `_market_enabled` / `_market_timeout_seconds` / `_market_cache_seconds` | `true` / `6.0` / `60.0` | 全球股指能力（东财 17+MOEX ISS，18 指数） |
 | `_stocks_enabled` / `_fx_enabled` | `true` / `true` | 个股行情/汇率路由开关（已落 config.py `bot_stocks_enabled`/`bot_fx_enabled`，.env `BOT_STOCKS_ENABLED`/`BOT_FX_ENABLED` 可关；base_router getattr 读取） |
 | `_market_retry_on_empty` | `true` | 东财空响应受控重试（限流返回空 JSON 时单次重试+0.6s 退避；真异常不重试；仍空→诚实降级不缓存） |
 | `_randpic_enabled` / `_randpic_dirs` / `_randpic_trigger_words` / `_randpic_max_file_mb` | `true` / `[]` / `[]` / `20` | 随机图：只读用户自定义文件夹（**必须配 `_randpic_dirs`**，JSON 字符串数组），绝不自建目录 |
-| `_poke_enabled` / `_poke_private_cooldown_seconds` / `_poke_group_cooldown_seconds` / `_poke_probability` / `_poke_admin_bypass` / `_poke_reply_enabled` / `_poke_poke_back` / `_poke_group_text` / `_poke_private_text` | 见 config.py:474-483 | 戳一戳统一分发：回戳（NapCat 扩展 API，失败静默）/话术/冷却/概率；除 `_poke_admin_bypass` 外 8 键均可热更 ✅ |
+| `_poke_enabled` / `_poke_private_cooldown_seconds` / `_poke_group_cooldown_seconds` / `_poke_probability` / `_poke_admin_bypass` / `_poke_reply_enabled` / `_poke_poke_back` / `_poke_group_text` / `_poke_private_text` | 见 config.py | 戳一戳统一分发：回戳（NapCat 扩展 API，失败静默）/话术/冷却/概率；除 `_poke_admin_bypass` 外 8 键均可热更 ✅。**2026-09-16 用户裁定：`_poke_poke_back` 缺省 false→true（回戳进五件套）** |
+| `_poke_reply_mode` / `_poke_affinity_enabled` / `_poke_affinity_delta` / `_poke_affinity_daily_max` | `mix` / `true` / `0.5` / `5.0` | 戳一戳 v2（2026-09-16 批）：回复形态 mix=固定话术/LLM 话术/表情包三选一确定性轮换（llm 失败→固定、库空→固定；群聊回复自动 @戳者）；好感度=门控放行后 observe 小额正向（delta_override），每会话每日上限防刷（0=不记） |
+| `_content_route_enabled` / `_content_route_model` / `_content_route_order` / `_content_route_words` / `_content_route_intimate_threshold` / `_content_route_normal_threshold` / `_content_route_context_turns` / `_content_route_max_ttl_minutes` / `_content_route_intimate_ttl_minutes`（v21r5：两开关同一 TTL） / `_content_route_idle_reset_minutes` / `_content_route_group_per_user_enabled`（v21r5） / `_content_route_group_whitelist` / `_content_route_group_blacklist`（生产已填 1108838060/631785829/662948429） / `_content_route_private_whitelist` / `_content_route_private_blacklist`（v21r5 私聊两面：白名单**空=放开**、非空=仅名单内；黑名单最高优先） / `_master_love_enabled` / `_master_love_admins`（条目 "qq"=全域 / "群号:qq"=仅该群；生产=[3865067623, 1722380002]） | `true` / `grok-4.6` / `grok-4.6,gemini-3.8-flash` / 空 / `60` / `25` / `4` / `120` / `60`（v21r5） / `10` / `true`（v21r5） | R-18 内容感知路由（runtime/content_route.py，2026-09-16 批；**2026-09-17 v2 修订**）：模型自评标签层与升级重试已删（gemini/grok 把标签元指令当注入攻击整轮拒答——生产拒答原文点名 routing tags）；检测改纯本地信号 L1 强词表（+70/次）+ L2 上下文强词累积（+35/次；擦边词不记分——普通模式可以擦边，留在默认链）+ L4「亲密模式 开/关」（含倒装句式）；滞回（≥60 切、≤25 回、中间保持前态）；INTIMATE 时自动候选序=order 配置（**用户裁定 gemini 第二位**）并跳过影子并发；会话准入门=私聊/控制台常开、群聊黑白名单制（`_group_whitelist` 命中且不在 `_group_blacklist`；白名单空=群聊亲密面关闭；群内手动开关仅管理员或 Master Love 名单可拨）；Master Love=名单内 master 会话自动亲密档+恋人语气指令注入（显式「亲密模式 关」的 normal 钉不被覆盖）；拒绝模板句只记日志不重试；fail-open；管理员 override 分支不受影响。**v21r5 双开关+四名单（2026-09-19）**：群聊两级状态——管理员拨群键=全群（开关二，既有语义保留）、成员拨成员派生键=仅本人（开关一，键=群键`||u:`用户号；`_group_per_user_enabled` 总闸，False=成员指令不受理；群级 OFF 不压制个人档）；亲密档 TTL=`_intimate_ttl_minutes`（默认 60 分钟）按激活时刻惰性过期（活跃不续期、重新开启即重置；MAX_TTL=120 仍为全状态硬上限）；私聊两面名单入 explicit_allowed_for_session（黑名单永远赢——Master Love 压不过黑名单；console 不参与私聊名单门）；注入与路由双门同源（resolve_intimate_context 按发送者逐消息合成，L1/L2 群内按成员键隔离不互相污染） |
+| `_chat_max_input_tokens` / `_chat_max_output_tokens` | `131072` / `65536` | 上下文钳制全局缺省（2026-09-17 用户裁定：输入 128K/输出 64K）：输出=请求 max_tokens 封顶；输入=粗估（CJK≈1 token/字）超限从最旧非 system 消息丢起。router 层强制，不可绕过 |
 | `_music_dir` | `data/music` | 点歌音频缓存目录（经 runtime_paths 重映射；DATAFIX 收口） |
 | `_addressing_preferences_db_path` | `data/addressing_preferences.sqlite3` | 用户称谓/性别偏好持久化（用户显式设置或纠正；优先于一切推断；经 runtime_paths 重映射，DATAFIX 收口。owner：`character/addressing.py AddressingPreferenceStore`） |
 | `_rate_limit_group_max_per_hour` / `_rate_limit_group_max_per_minute` | `0` / `0` | 群聊专属句数帽（用户口径：每小时 60 句、每分钟 3 句；**代码默认 0=该帽不生效**）；InMemory 与 SQLite 限流器双实现均生效；两键均已入 SETTABLE_KEYS 可热更 |
@@ -791,9 +802,65 @@
 | `_shared_group_context_enabled` | **`false`** | 群摘要**真总开关**（原 `BOT_GROUP_DIGEST_ENABLED` 为死字段已删，勿再配置）；✅热更（SETTABLE_KEYS）。⚠️本表此前误写默认 `true`，以 config.py `False` 为准 |
 | `_rate_limit_group_hourly...` 之外的新限流键 | — | 见 A24 与 policy/rate_limit.py `RateLimitSettings`（SQLite 版群帽/豁免已对齐 InMemory，热改不支持=架构取舍） |
 | `_campus_enabled` / `_campus_self_ids` / `_campus_group_whitelist` / `_campus_notify_qq` / `_campus_push_bot_id` / `_campus_db_path` | **`false`** / `[]` / `[]` / 空 / 空 / `data/campus.sqlite3` | 校园自动转发（campus v1，2026-09-15 批）：监听学校号（NapCat-school 第二实例 WS 3002）所在群文本消息→私聊实时转发主人号；三重来源门（enabled ∧ self_ids ∧ whitelist 任一空=关闭，绝不猜账号/猜群；whitelist 支持 `*` 显式放行全部群）；纯监听绝不向学校群发消息；db_path 走 runtime 重映射；设计权威=`MyWorkspace\CampusInfoButler\docs\specs\2026-09-15-campus-info-butler-design.md` |
+| `_tts_enabled` | **`false`** | 语音合成（bot.tts，2026-09-17 批）总开关：对接本机 GPT-SoVITS v2ProPlus HTTP API（`api_v2.py` 的 `/tts`）；关=路由不占位、对话不配音 |
+| `_tts_api_url` | `http://127.0.0.1:9880` | GPT-SoVITS API 服务地址；需与 `api_v2.py` 启动参数一致（只连 loopback，不上传文本到外部） |
+| `_tts_gptsovits_dir` | 空 | GPT-SoVITS 安装目录（如 `C:\Software\GPT-SoVITS-V2Pro`）；仅用于把相对参考音频路径解析成绝对路径 |
+| `_tts_ref_audios` | `[]` | 参考音频清单，元素格式 `"路径\|参考文本\|语种"`（如 `"ref/shorekeeper_01.wav\|……\|zh"`）；**必须配**，空=能力返回"缺参考音频"降级文案。约束：3~10 秒干声、单人单情绪、参考文本与音频逐字一致。走 `_parse_file_list` 校验器（不可走 id_list，含 `\|` 与中文逗号） |
+| `_tts_trigger_words` | `[]` | 追加触发词（与内置 `说/语音/念/朗读/tts/say`+拼音词合并）；触发词后须跟正文才命中，裸触发词交回人格对话 |
+| `_tts_output_dir` | `data/tts_output` | 合成 wav 落盘目录（走 runtime 重映射，DATAFIX 收口）；同参数命中 sha256 缓存则复用 |
+| `_time_sync_http_enabled` / `_time_sync_http_url` | `true` / 空（内置 `https://www.baidu.com,https://www.taobao.com,https://www.qq.com`） | HTTPS 授时兜底（R3 停摆批 2026-09-17）：UDP 123 被墙、NTP 全败后 HEAD 取 RFC 7231 `Date` 头估偏移（1s 粒度 +0.5s 量化居中，θ=server−(t0+t3)/2）；失败链 NTP→HTTPS→系统钟每级一行日志；复用 `_time_sync_max_drift_ms` 钳制与 RTT 上限；仅收 `https://` 端点，url 逗号分隔可换 |
+| `_tts_preset` | `shorekeeper` | 语音预设选择（G-2 契约层 2026-09-20，**合成参数唯一缺省源**=`domains/media/tts_presets.py` 中央预设表：带每参数 rationale/引擎域值/seed_policy/读法词典占位/八硬编码收编，其中 `split_bucket=False`=M-76 死意图显式化）；枚举成员=TTS_PRESET_IDS（装载期即拒未知值，与注册表键集一致性由 `tests/test_tts_presets.py` 锁）；下方 `BOT_TTS_*` 数值键降级为管理员覆盖（env 显式值 > preset；v1 预设值=本表缺省值，零行为变更；U-13 周期后收敛） |
+| `_tts_max_chars` | `200` | 单次合成文本上限（超出按句末截断并提示）；**`0`=不限（不按字数截断，M-35 语义反转修死，全仓 `*_MAX_CHARS=0 表不限` 惯例自此在 TTS 域成立）**；「不限≠无界」——必过 `_tts_hard_max_chars` 中央硬顶 |
+| `_tts_hard_max_chars` | `2000` | 文本中央硬顶（G2-R3）：超顶=拒绝合成+OperationalIssue 留痕（`tts_service_rejected`+audit `over_hard_cap`）+引导文案，**不静默不拆条**（拆条归 H 波 M-63 修后）；`0`=禁配无界（取内置常量 2000）；自动配音路超顶=静默放弃增益 |
+| `_tts_max_audio_bytes` | `8388608`（8 MiB） | 产物字节硬顶（G2-R3）：v2ProPlus=32000Hz/16bit/单声道 ⇒ 64,000 B/s 恒定，8 MiB≈131s（覆盖现行 200 字档 ≈82s≈5.3MB 留 50% 余量）；超顶=体检闸拒（`tts_bad_audio` 族）不入缓存不落盘不出站；`0`=禁配无界（取内置 8 MiB）；**换 media_type/采样率须重裁**（字节顶≈时长顶的换算前提） |
+| `_chat_strict_priority` / `_chat_channel_cooldown_seconds` / `_chat_failover_min_hop_seconds` | `true` / `90` / `3` | v21r2 R1 故障转移链完善（2026-09-17 用户裁定「永远按注册表优先级处理」）：同名模型渠道聚合排序严格按注册表 priority（价格/EWMA 只作同级 tiebreak，false=旧行为）；真实调用失败的渠道 90s 冷却降级到候选队尾（不剔除、全冷却原序放行，落 SQLite 重启不丢）；链预算止损=除首跳外剩余预算 <3s 不再发起新跳（0=关）。owner：`llm/model_router.py` + `llm/channel_health.py` |
+| `_tts_timeout_seconds` | `60.0` | 单次 `/tts` 请求超时（≥1.0，装载期即拒越界值）；超时返回守岸人口吻降级文案，绝不阻断出站 |
+| `_tts_speed_factor` | `0.85` | 语速倍率；**域=[0.6,1.65]**（引擎 WebUI 滑杆，report-T53.md；越界装载期即拒，M-35）；中文建议 0.8~0.9，过快会有电音感；≠1 时引擎自动关 split_bucket 并走逐段串行（性能语义，T53 §4.6） |
+| `_tts_temperature` | `0.9` | 采样温度（语气起伏，越高越活但越不稳）；**域=[0,1]**（T53，越界装载期即拒） |
+| `_tts_top_k` / `_tts_top_p` | `15` / `1.0` | 采样参数；**域=top_k [1,100]、top_p [0,1]**（T53 WebUI 滑杆，越界装载期即拒） |
+| `_tts_text_lang` | `zh` | 合成文本语种；合法域 11 值 `auto/auto_yue/en/zh/ja/yue/ko/all_zh/all_ja/all_yue/all_ko`（装载期枚举校验+出门一律 casefold——POST 入口引擎用原值断言，"ZH" 必 400） |
+| `_tts_text_split_method` | `cut5` | 切句方式 `cut0..cut5` 六值枚举（装载期校验；长文本按句切分后逐段合成再拼接） |
+| `_tts_cache_enabled` | `true` | sha256 结果缓存开关（键=canonical_json(identity_version+引擎地址+参考指纹+预设身份+生效参数+清洗后文本)；LRU 上限 512）；seed 由键派生（同句恒同音色，G2-R3 报备项） |
+| `_tts_cache_max_bytes` / `_tts_cache_max_age_days` | `0` / `0` | 产物目录磁盘配额（U-04：`data/tts_output` 定性=**缓存**，接中央 `cache_policy.enforce_quota` 最旧先删+保鲜期；**缺省 0/0=不限制，字节级行为不变**）；换缓存键空间（identity_version 换代）产生的旧 wav 孤儿靠它回收。owner：`domains/media/capabilities/tts.py synthesize` |
+| `_tts_auto_reply_enabled` | **`false`** | 对话自动配音：LLM 回复生成后追加语音条（在能力包装层附加 `CapabilityResult.audio`，不侵入 chat.py/pipeline.py） |
+| `_tts_auto_reply_scope` | `private` | 自动配音适用会话：`private`=仅私聊 / `group`=仅群聊 / `all`=双向（**三值枚举装载期校验**；M-51 漏登 `group` 已补）；群聊默认不配音以免刷屏 |
+| `_tts_auto_reply_max_chars` | `120` | 自动配音文本上限（比命令式合成更短；**`0`=不限**，超硬顶=放弃增益纯文本发出） |
+| `_tts_auto_reply_probability` | `0.05` | 自动配音概率门（2026-09-19 批）：符合条件的回复按此概率配音，**确定性哈希实现**（`should_voice_reply`，seed=`session_id:message_id`，与 `policy/gate.py` 的 `deterministic_group_reply_lottery` 同款）——同一条消息结果恒定，可复现可审计，不用 `random` 以免测试 flaky。`0`=永不配音、`1.0`=全量配音 |
+| `_tts_auto_reply_always` | **`false`** | 跳过概率门的调试/验收旁路：置真则凡过前五道门的回复一律配音（逐条听音用）。日常勿开——等于把概率当 100% |
+| `_teaching_enabled` / `_teaching_db_path` | `true` / `data/teaching_knowledge.sqlite3` | V2.1 S8 教导知识库（V21-TEACH-001，`character/teaching_service.py`；装配已落盘 `runtime/service_wiring.py`（B2①），受 `_v21_service_wiring_enabled` 主门（缺省关）约束，待重启生效）：用户提议→管理员审核→生效为「背景知识」注入（仅供理解、禁止复述；封闭三值类目 preference/fact/correction+内容红线扫描+注入面结构隔离=不可达人格/权限/路由）；撤销+版本回滚（回滚=新增一版）；db_path 走 runtime 重映射。owner：`character/teaching_service.py TeachingService` |
+| `_database_broker_enabled` | `true` | V2.1 S8 数据库安全查询代理（V21-DB-001，`runtime/database_broker.py`；装配已落盘 `runtime/service_wiring.py`（B2①），受 `_v21_service_wiring_enabled` 主门（缺省关）约束，待重启生效）：仅注册 query_id 的参数化只读查询——白名单 registry（SQL 模板静态校验+参数 schema+排序列注册枚举）+ 只读 URI 连接 + 2s 语句超时 + 200 行限额（截断如实置 truncated）；预注册 5 查询指向 db-owners 在册库（发送队列/好感度/账本/审计/订阅）。owner：`runtime/database_broker.py DatabaseBroker` |
+| `_v21_service_wiring_enabled` | **`false`** | V2.1 B2① 服务装配组主门（WIRE-SVC 席；`runtime/service_wiring.py` 装配+进程内注册表）：缺省关=零装配零副作用（不改现网行为）；开启后按分门装配 WORLD/KB/DB/TEACH 四服务（worldbook/knowledge/teaching/database_broker）供消费方 `get_v21_service(id)` 取用；单服务装配失败 fail-open 记 warning 跳过。L41 memory 待用户裁决（独立新库 vs 同源同库）不接。owner：`runtime/service_wiring.py` |
+| `_worldbook_enabled` | **`false`** | 世界书服务分门（V21-WORLD-001，`character/worldbook_service.py`）：主门 ∧ 本门=装配 `build_worldbook_service`（悬空/循环引用+Token 预算+草稿隔离；库 `data/worldbook_versions.sqlite3` 走 runtime 重映射） |
+| `_knowledge_service_enabled` | **`false`** | 知识检索服务分门（V21-KB-001，`character/knowledge_service.py`）：主门 ∧ 本门=装配 `build_knowledge_service`（FTS/向量/RRF 三通道+原子重建；persona/kb_wiki 两源，kb_wiki 另受 `_kb_wiki_enabled` 约束） |
+| `_schedule_enabled` | **`false`** | 全场景日程服务面总开关（V2.1 §4，`domains/schedule/{llm_draft,timetable,delivery}.py`；**未接线，装配属后续席位**）：LLM 草稿解析（自然语言→结构草稿，缺信息只澄清禁猜）+课表截图识别（缺学期/节次表不发布）+到点投递（occurrence→SendQueue 提交面；真实出站端口未授权前不注入出站构造器）。与既有 schedule 引擎（`schedule_service` 族）共库 |
+| `_schedule_db_path` | `data/schedules_v21.sqlite3` | 日程引擎 SQLite 库（`build_schedule_service` 消费；getattr 兜底值与之一致）；走 runtime 重映射 |
+| `_schedule_llm_draft_enabled` / `_schedule_timetable_enabled` / `_schedule_delivery_enabled` | `false` / `false` / `false` | 三子服务开关：LLM 草稿解析（走主路由，费 token 默认关）/课表识别（走识图 registry，还受 `_vision_enabled` 与 registry 非空双门）/到点投递 tick |
+| `_schedule_delivery_max_retries` | `3` | 投递失败退避重试上限（指数退避 1/2/… 分钟起；超限置 `delivery_failed` 终态；计数进程内存记账，重启归零随 reconcile 重分流） |
+| `_schedule_exceptions_path` | `data/schedule_exceptions.json` | 调休/节假日例外表 overlay（JSON；随包模板 `domains/schedule/data/calendar_exceptions.json` 先载、本文件同键覆盖）。**年份不在表=unknown 不猜**：只有显式登记的 holiday/workday 才改变 `follow_calendar` 标签实例的投递，unknown 照常投递但回执如实标注 |
+| `_persona_versioned_injection` | **`false`** | 人格核心注入走版本库（V21-PERSONA-001 装配接线，`character/persona_service.py`）：True=chat 链人格核心从 `data/persona_versions.sqlite3` 取（幂等 baseline 灌入→`build_core_injection` 唯一出口，带 version+sha256 溯源；托管 active 指针在场不抢）；False（默认保守灰度）=文件直读路径逐字节不变；任何故障（灌入失败/库空/损坏隔离/全损）fail-open 回退文件路径+一行告警，绝不阻塞消息链。owner：`domains/chat_reply/character/persona_injection.py` |
+| `_file_export_via_queue` | **`false`** | S0 直连收编④（v21r4-b2-direct-collect-plan §3.4，实施席 S0-ROOT-c）：文档导出上传改走统一管线 `CapabilityResult.files` 件→`FileTransferGateway`（群 upload_group_file/私聊 upload_private_file，平台方法面与直连一致）；成功/失败文案由回执态驱动。缺省 False=旧直连逐字节等价，重启生效 |
+| `_group_welcome_via_queue` | **`false`** | S0 直连收编②（§3.2）：入群欢迎语改走统一管线文本件（capability=bot.group_welcome，SENT/REDIRECTED 才记 group_welcome_sent）；与 `_group_welcome_enabled` 双门串联，任一关即不发。缺省 False=旧直连逐字节等价，重启生效 |
+| `_cookie_qr_via_queue` | **`false`** | S0 直连收编③（§3.3）：cookie 登录二维码图片改走统一管线 mixed 件（text=""+image，file:/// 引用与直连段同构；失败静默，文本兜底先行不变）。缺省 False=旧直连逐字节等价，重启生效 |
+| `_cookie_expiry_reminder_via_queue` | **`false`** | S0 直连收编①（§3.1）：cookie 到期每日提醒改走 `_deliver_due_reminders` 提醒范式（SendRequest→SendQueue→内联投递，SENT 才算送达）；dedupe_key/request_id 带本地日期=当日幂等（治同日重复触发重复打扰）；管理员换人重试语义与直连等价。缺省 False=旧直连逐字节等价，重启生效 |
 
-**非 Config 键（getattr 防御式读取，未入本表字段域）**：`BOT_LLM_BILLING_ENABLED`（计费账本，默认关）、
-`BOT_CONTROL_PLANE_ENABLED/HOST/PORT/TOKEN_SHA256`（控制面，默认关）——见 docs/design/llm-billing-ledger.md 与 control-plane-api.md。
+### 控制面 v1 已登记 Config 字段（后端第一切片）
+
+| 字段 | 默认值 | 说明 |
+|---|---|---|
+| `bot_control_plane_enabled` | `false` | 控制面监听总开关，默认不启用；随 Bot startup/shutdown 装配独立 uvicorn，不共用 webhook。 |
+| `bot_control_plane_host` / `bot_control_plane_port` | `127.0.0.1` / `8742` | 嵌入入口只允许 loopback；端口1..65535，拒绝webhook默认端口。监听参数当前需重启。 |
+| `bot_control_plane_token_sha256` | 空 | 只读 Bearer 摘要；不可与超管摘要相同。 |
+| `bot_control_plane_host_allowlist` | 空 | 可附加 Host 白名单（字符串或列表），不改变监听边界。 |
+| `bot_control_plane_features_db` | `data/control_plane_features.sqlite3` | 功能状态、单调图修订和长期变更审计；SQLite CAS事务，已接主Pipeline执行前门禁。 |
+| `bot_control_plane_config_db` | `data/control_plane_config.sqlite3` | 按实例隔离配置覆盖/版本/审计；API与RuntimeSettingsStore消费同源；旧JSON昵称/人格/模型等非参数数据仍保留原路径。 |
+| `bot_control_plane_events_db` | `data/control_plane_events.sqlite3` | 结构化诊断事件与SSE；不等于已接通NapCat/NoneBot原始控制台。 |
+| `bot_control_plane_workspaces_db` | `data/control_plane_workspaces.sqlite3` | 独立短期工作区；24小时原文保留、每分钟清理；不写生产记忆或发送队列。存储路径变更需重启。 |
+| `bot_control_plane_platform_db` | `data/control_plane_platform.sqlite3` | 控制面平台注册/连接态存储（并行控制面批次工作树键，按收敛流程补录；经 runtime_paths 重映射）。 |
+| `bot_control_plane_actions_db` | `data/control_plane_actions.sqlite3` | 控制面动作审计/待执行存储（并行控制面批次工作树键，按收敛流程补录；经 runtime_paths 重映射）。 |
+| `bot_control_plane_features_file` | `data/control_plane_features.json` | 旧功能状态 JSON 的单次导入源；SQLite 已有状态时不覆盖，原 JSON 保留。显式旧工具配置仍可使用 JSON 兼容存储。 |
+| `bot_control_plane_super_admin_token_sha256` | 空 | 独立超管 Bearer 的 SHA-256 摘要；空值禁用写操作；与只读摘要相同也禁用写操作。不通过配置 API 返回或修改。 |
+
+**非 Config 键（getattr 防御式读取，未入本表字段域）**：`BOT_LLM_BILLING_ENABLED`（计费账本，默认关）。控制面监听键已进入上表 Config 字段域。
 
 ## B. 「LLM 引擎七必配键」专节
 

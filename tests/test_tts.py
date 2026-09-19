@@ -31,6 +31,7 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.media import tts_presets
 from plugins.bot_unified_runtime.domains.media.capabilities import tts as tts_mod
 from plugins.bot_unified_runtime.domains.media.capabilities.tts import (
     DEFAULT_TRIGGER_WORDS,
@@ -47,6 +48,9 @@ from plugins.bot_unified_runtime.domains.media.capabilities.tts import (
     should_voice_reply,
     synthesize,
 )
+
+# G-2 契约层：八硬编码项收编自中央预设表（请求体断言的预期值源）。
+_PRESET_PARAMS = tts_presets.PRESET_REGISTRY["shorekeeper"].params
 
 # ---------------------------------------------------------------------------
 # 夹具
@@ -327,17 +331,17 @@ def test_clean_for_speech_empty_and_whitespace() -> None:
 def test_cache_key_is_stable_and_param_sensitive(tmp_path: Path) -> None:
     ref = RefAudio(path=str(_ref_file(tmp_path)), text="你好", lang="zh")
     url = "http://127.0.0.1:9880"
-    base = tts_mod._cache_key("正文", ref, _params(), api_url=url)
-    assert base == tts_mod._cache_key("正文", ref, _params(), api_url=url)
-    assert base != tts_mod._cache_key("正文", ref, _params(temperature=1.1), api_url=url)
-    assert base != tts_mod._cache_key("正文", ref, _params(speed_factor=1.0), api_url=url)
-    assert base != tts_mod._cache_key("换一句", ref, _params(), api_url=url)
+    base = tts_mod._cache_key("正文", ref, _params(), api_url=url, preset_id="shorekeeper")
+    assert base == tts_mod._cache_key("正文", ref, _params(), api_url=url, preset_id="shorekeeper")
+    assert base != tts_mod._cache_key("正文", ref, _params(temperature=1.1), api_url=url, preset_id="shorekeeper")
+    assert base != tts_mod._cache_key("正文", ref, _params(speed_factor=1.0), api_url=url, preset_id="shorekeeper")
+    assert base != tts_mod._cache_key("换一句", ref, _params(), api_url=url, preset_id="shorekeeper")
 
 
 def test_cache_key_ref_text_participates(tmp_path: Path) -> None:
     audio = _ref_file(tmp_path)
-    left = tts_mod._cache_key("正文", RefAudio(path=str(audio), text="甲"), _params(), api_url="http://127.0.0.1:9880")
-    right = tts_mod._cache_key("正文", RefAudio(path=str(audio), text="乙"), _params(), api_url="http://127.0.0.1:9880")
+    left = tts_mod._cache_key("正文", RefAudio(path=str(audio), text="甲"), _params(), api_url="http://127.0.0.1:9880", preset_id="shorekeeper")
+    right = tts_mod._cache_key("正文", RefAudio(path=str(audio), text="乙"), _params(), api_url="http://127.0.0.1:9880", preset_id="shorekeeper")
     assert left != right
 
 
@@ -506,6 +510,8 @@ def test_request_payload_matches_api_v2_contract(
         ref=ref,
         params=_params(),
         timeout_seconds=5.0,
+        engine_params=dict(_PRESET_PARAMS),
+        seed=123456789,
     )
     assert payload_bytes == b"RIFFfake"
     assert captured["url"] == "http://127.0.0.1:9880/tts"
@@ -529,6 +535,11 @@ def test_request_payload_matches_api_v2_contract(
     assert body["ref_audio_path"] == ref.path
     assert body["prompt_text"] == "你好"
     assert body["media_type"] == "wav"
+    # G-2 契约层：八硬编码项=预设表值（split_bucket 死意图显式 False，M-76），
+    # seed=确定性派生值非 -1（M-72/U-25）。
+    for key, expected in _PRESET_PARAMS.items():
+        assert body[key] == expected, f"请求体 {key} 必须等于预设表值 {expected}"
+    assert body["seed"] == 123456789
 
 
 def _install_fake_httpx(
@@ -592,6 +603,8 @@ def test_request_tts_error_body_prefers_exception_over_message(
         ref=RefAudio(path=str(_ref_file(tmp_path)), text="你好", lang="zh"),
         params=_params(),
         timeout_seconds=5.0,
+        engine_params=dict(_PRESET_PARAMS),
+        seed=123456789,
     )
     assert out is None
     assert "3~10秒" in tts_mod._last_failure_reason
@@ -615,6 +628,8 @@ def test_request_tts_error_body_tolerates_non_json_and_bare_string(
             ref=ref,
             params=_params(),
             timeout_seconds=5.0,
+            engine_params=dict(_PRESET_PARAMS),
+            seed=123456789,
         )
         is None
     )
@@ -631,6 +646,8 @@ def test_request_tts_error_body_tolerates_non_json_and_bare_string(
             ref=ref,
             params=_params(),
             timeout_seconds=5.0,
+            engine_params=dict(_PRESET_PARAMS),
+            seed=123456789,
         )
         is None
     )
