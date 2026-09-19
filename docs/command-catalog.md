@@ -1,14 +1,14 @@
 # 守岸人命令与教程目录
 
-> 本文件由 `scripts/command_catalog.py` 从 `capabilities/echo.py` 的帮助注册表与
+> 本文件由 `scripts/command_catalog.py` 从 `domains/chat_reply/capabilities/echo.py` 的帮助注册表与
 > `runtime/base_router.py` 的路由/接口清单自动生成。不要手工修改；
 > 修改帮助页数据后运行 `python scripts/command_catalog.py --write`。
 > `/bot help`、`/bot help <模块>` 与本目录共享同一数据源。
 
-- 模块数：75
-- 别名数：495
-- 普通用户可用模块：36；仅管理员模块：39
-- 路由规则数：32；其中登记为内部能力：5
+- 模块数：77
+- 别名数：501
+- 普通用户可用模块：37；仅管理员模块：40
+- 路由规则数：33；其中登记为内部能力：5
 
 ## 使用入口
 
@@ -21,8 +21,8 @@
 
 ### 这个机器人能做什么
 
-- 全部 75 个模块都列在本文件「模块详情」里；普通用户可直接使用其中 36 个公开模块，其余 39 个为管理员诊断与配置模块。
-- 能力横跨人格闲聊、链接解析、点歌、天气、行情、占卜、提醒、订阅推送、表情包、下载与一整套管理员运维命令；全部 75 个模块逐个列在下方「模块详情」，公开模块名单以 /bot help 为准。
+- 全部 77 个模块都列在本文件「模块详情」里；普通用户可直接使用其中 37 个公开模块，其余 40 个为管理员诊断与配置模块。
+- 能力横跨人格闲聊、链接解析、点歌、天气、行情、占卜、提醒、订阅推送、表情包、下载与一整套管理员运维命令；全部 77 个模块逐个列在下方「模块详情」，公开模块名单以 /bot help 为准。
 
 ### 怎么开始聊天
 
@@ -46,7 +46,7 @@
 
 ### 哪些命令只有管理员能用
 
-- 仅管理员模块共 39 个，全部走 `/bot` 前缀（例如 `/bot status`、`/bot runtime`、`/bot model`），普通成员发送会收到拒绝提示；权限由六级角色体系（user/trusted/enterprise/admin/super_admin/blocked）判定。
+- 仅管理员模块共 40 个，全部走 `/bot` 前缀（例如 `/bot status`、`/bot runtime`、`/bot model`），普通成员发送会收到拒绝提示；权限由六级角色体系（user/trusted/enterprise/admin/super_admin/blocked）判定。
 - 排障第一入口是 `/bot status`，追问原因用 `/bot why`。
 
 ### 群聊和私聊有什么差别
@@ -64,7 +64,7 @@
 ### 哪些功能依赖网络？
 
 - 需要联网的模块：上下文、对话、模型、搜索、凭据、文件、群摘要、视频理解、邮件、Telegram、订阅、点歌、搜图、天气、行情、个股行情、商品行情、国债收益率、北向资金、汇率、快报、维基、萌娘百科、历史上的今天、下载、链接、媒体归档、群信息、Epic、聊天、表情收库。
-- 纯本地模块：记忆、接入、配置、就绪、角色、人格、路由、历史、暂停、回复、用量、解析、群文件、日志、身份、怪癖、合并转发、运行开关、供应商、表情、占卜、随机图、笔记、收件箱、帮助、戳一戳、决策。
+- 纯本地模块：功能管理、记忆、接入、配置、就绪、角色、人格、路由、历史、暂停、回复、用量、解析、群文件、日志、身份、怪癖、合并转发、运行开关、供应商、表情、占卜、随机图、笔记、收件箱、语音、帮助、戳一戳、决策。
 - 联网模块自带重试与兜底（各模块的「失败兜底」行写明具体行为）；外部源不可用时给可读失败原因。
 
 ### 高频入口速查
@@ -76,6 +76,33 @@
 - 昵称触发：`守岸人 天气 上海`、`/岸宝点歌 晴天`（昵称清单可用 `/bot runtime nickname list` 查看）。
 
 ## 模块详情
+
+## 功能管理
+
+- 权限：仅管理员
+- 触发别名：功能管理；feature
+- 能力入口：bot.runtime（/bot feature）
+- 网络依赖：纯本地
+- 输出形式：文本
+- 配置变量：BOT_CONTROL_PLANE_FEATURES_DB
+- 可复制示例：/bot feature get bot.plugin.weather
+- 关联回归测试：tests/test_runtime_feature_gate.py
+- 总览：【功能管理】查询和控制能力树：/bot feature
+- 标题：【功能管理】能力树状态与版本
+
+### 教程
+
+【指令与参数】
+/bot feature list：作用=列出能力节点；参数=无；内容=稳定ID和有效状态；意义=定位待管理功能。
+/bot feature get <ID>：作用=查询状态；参数=稳定ID；内容=有效状态、版本和图修订；意义=确认父级与依赖影响。
+/bot feature enable|disable|reset <ID>：作用=启用、禁用或恢复默认；参数=稳定ID；内容=新版本和审计ID；意义=受控调整功能，已运行任务不强杀。
+/bot feature preview <ID> on|off|reset：作用=预览变更；参数=稳定ID与目标状态；内容=影响节点；意义=写入前核对，不修改数据。
+【权限与效果】
+权限=仅管理员（含超管）；管理员只读，修改仅限超管，预览仅限超管；受保护核心能力不可关闭。命令与控制面共用服务。当前仅覆盖已登记并接入主Pipeline的能力，入站媒体和直接平台副作用仍在迁移。
+
+### 帮助页一致性要求
+
+- 本模块的实时帮助以 `/bot help 功能管理` 为准。
 
 ## 状态
 
@@ -479,7 +506,7 @@
 【板块介绍】
   基层路由是确定性注册表：昵称命令(10)→管理员命令(11)→订阅(12)→自动发送(13)→
   表情(20)→偷表情(22)→点歌模式(40)→点歌/历史上的今天/维基/萌百/Epic/天气/行情/吃什么/
-  好感度/占卜/快报/随机图/提醒(41)→二次元问句(44)→自然语言命令(45)→链接解析(46)→聊天(50)。
+  好感度/占卜/快报/随机图/提醒(41)→自然语言命令(45)→二次元问句(46)→链接解析(46)→聊天(50)。
   数字越小越先命中。
 【指令与参数】
 /bot route <文本>：作用=单句路由判定；参数=文本（必填，任意文本）；内容=命中的 kind/capability_id/优先级/理由（含归一化结果）；意义=解释路由行为、验证触发词写法。
@@ -614,8 +641,8 @@ BOT_CHAT_MAX_TOKENS=65538 是最大上限，不是每次强制生成 64K。
 /bot model priority <id> <n>：作用=调转移顺序；参数=n 整数，1..N 唯一槽位（移动一个其余顺移，0 兼容为移到首位）；内容=新顺序；意义=控成本（贵的放后）。
 /bot model effort <id> <档位>：作用=单模型强度；参数=off|low|medium|high|xhigh|max|default（default/默认/reset=清除覆盖回家族基线）；内容=确认信息；意义=单点微调。
 /bot model think <档位>：作用=全局强度；参数=off|low|medium|high|xhigh|max 或留空（留空=清空覆盖）；内容=确认信息；意义=全局控制推理开销；复杂任务会临时升档。
-/bot model price <模型名> [input= output=]：作用=维护价格；参数=模型名必填；input/output=元/每百万 token，数字≥0；不带价格参数=清除；内容=设置/清除确认；意义=账单准确性；调价只影响之后的调用。
-/bot model usage [today|YYYY-MM-DD]：作用=日账单；参数=日期可选；内容=Token/费用/按模型分组/未计价次数；意义=成本可见。
+/bot model price <模型名> [input= output= cache_read= cache_creation= per_call=]：作用=维护价格；参数=模型名必填；各价键=元/每百万 token（per_call=元/请求），数字≥0；不带价格参数=清除；内容=设置/清除确认；意义=账单准确性；调价只影响之后的调用。
+/bot model usage [today|YYYY-MM-DD]：作用=日账单；参数=日期可选；内容=Token/缓存命中率/按模型分组（含缓存读与缓存建）/费用/未计价次数；意义=成本可见。
 /bot model search <on|off>：作用=联网搜索开关；参数=on|off 必填；内容=开关确认；意义=热控 web_search。
 /bot model vision list|add|update|priority|remove：作用=识图模型管理；参数=同模型条目；内容=注册表变化；意义=识图选型。
 /bot model vision mode <relay|direct>：作用=识图模式；参数=relay（视觉模型转文字）|direct（图片直传主模型）；内容=模式确认；意义=多模态质量与成本取舍。
@@ -2243,6 +2270,40 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 
 - 本模块的实时帮助以 `/bot help 收件箱` 为准。
 
+## 语音
+
+- 权限：普通用户可用
+- 触发别名：语音；tts；yuyin；语音合成
+- 能力入口：bot.tts
+- 自然语言触发：说 <文本>；语音 <文本>；念 <文本>；朗读 <文本>；语音合成 <文本>；tts <文本>；say <文本>
+- 群聊/私聊差异：全员可用；对话自动配音范围由 BOT_TTS_AUTO_REPLY_SCOPE 决定（private/group/all）
+- 网络依赖：纯本地
+- 输出形式：语音
+- 配置变量：BOT_TTS_ENABLED；BOT_TTS_API_URL；BOT_TTS_GPTSOVITS_DIR；BOT_TTS_REF_AUDIOS；BOT_TTS_TRIGGER_WORDS；BOT_TTS_OUTPUT_DIR；BOT_TTS_MAX_CHARS；BOT_TTS_TIMEOUT_SECONDS；BOT_TTS_SPEED_FACTOR；BOT_TTS_TEMPERATURE；BOT_TTS_TOP_K；BOT_TTS_TOP_P；BOT_TTS_TEXT_LANG；BOT_TTS_TEXT_SPLIT_METHOD；BOT_TTS_CACHE_ENABLED；BOT_TTS_AUTO_REPLY_ENABLED；BOT_TTS_AUTO_REPLY_SCOPE；BOT_TTS_AUTO_REPLY_MAX_CHARS；BOT_TTS_AUTO_REPLY_PROBABILITY；BOT_TTS_AUTO_REPLY_ALWAYS
+- 可复制示例：说 今天的潮汐很安静｜语音 我在这里｜tts hello
+- 关联回归测试：tests/test_tts.py；tests/test_tts_outbound_chain.py；tests/test_tts_hijack_guard.py；tests/test_tts_speech_gate.py；tests/test_tts_failure_visibility.py；tests/test_tts_audio_gate.py
+- 总览：【语音】让我用声音念一段话：说 <文本>
+- 标题：【语音】用守岸人的声音念出来
+
+### 教程
+
+【板块介绍】
+  语音能力对接本机 GPT-SoVITS v2ProPlus 的 HTTP 接口（api_v2.py，默认 9880），
+  用你训练好的守岸人权重合成；文本不出本机，合成结果落运行时目录。
+【指令与参数】
+说 <文本>（语音/念/朗读/tts/say 等价）：作用=合成语音；参数=文本；内容=语音消息；意义=让守岸人开口。
+【权限与效果】
+  权限=全员，前提是 BOT_TTS_ENABLED=true 且 9880 服务在跑。参考音频未配置、
+  服务未启动或超时，都会得到一句可读的降级文案而不是报错；合成结果按
+  文本+参考音频+采样参数缓存，同一句话不重复合成。
+  对话自动配音按概率触发（默认 5%），判定用确定性哈希——同一条消息结果
+  恒定，不会一会儿配一会儿不配。
+【示例】说 今天的潮汐很安静｜语音 我在这里｜tts hello
+
+### 帮助页一致性要求
+
+- 本模块的实时帮助以 `/bot help 语音` 为准。
+
 ## 帮助
 
 - 权限：普通用户可用
@@ -2466,6 +2527,7 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   - randpic | bot.randpic | 随机图
   - reminder | bot.reminder | 提醒
   - affinity | bot.affinity | 好感度
+  - tts | bot.tts | 语音
   - moegirl_question | bot.moegirl | 萌娘百科
   - natural_command | bot.natural_command | 自然语言
   - content | bot.content | 链接
@@ -2495,6 +2557,7 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   - capability.meme_absorb | active | 表情收库
   - capability.group_info | active | 群信息
   - capability.daily_assist | active | 收件箱
+  - capability.tts | active | 语音
   - capability.emotion | active | 内部：心情引擎，经上下文注入，不占文本路由
   - capability.gscore | reserved | 预留：GsCore 侧指令统一进入基层路由，尚未实现
 
