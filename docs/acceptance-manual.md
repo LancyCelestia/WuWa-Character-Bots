@@ -1,6 +1,7 @@
 # 验收与接入手册（Acceptance Manual）
+> **术语说明（2026-09-20）**：本文中的 **NapCat** 指 2026-09-18 之前的 QQ 协议端（当时实况记录，保留原文不改写）；现役协议端为 **SnowLuma**，见 [snowluma-setup.md](snowluma-setup.md)。
 
-目标：先让你把「对话/人格」跑起来并确认符合需求，再接 NapCat、GsCore 与其他插件。
+目标：先让你把「对话/人格」跑起来并确认符合需求，再接 SnowLuma、GsCore 与其他插件。
 全程在本机完成，不碰第三方框架账号。任何命令都从项目根目录执行：
 
     cd C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot
@@ -51,22 +52,29 @@ chat-smoke 输出 llm_status=ok 且
  receipt_state=sent 即为对话链路正常。
 （控制台中文偶发乱码是 PowerShell 编码显示问题，不影响 QQ 端输出。）
 
-## 2. NapCat 接入 QQ（对话通过后再做）
+## 2. SnowLuma 接入 QQ（对话通过后再做）
 
-详细步骤见 docs/napcat-setup.md，要点：
+详细步骤见 docs/snowluma-setup.md（旧协议端 NapCat 的说明已降级为回滚路径，见
+docs/napcat-setup.md，新接入不要再照它操作），要点：
 
-1. 下载 NapCat（https://napneko.github.io/ ，推荐 NapCat.Win 一键包），用 QQ 小号扫码登录。
-2. NapCat WebUI（http://127.0.0.1:6099）→ 网络配置 → 新建「WebSocket 服务器」，Host 127.0.0.1、端口 3001，Access Token 填 <你的token>（需与 .env.prod 中的 access_token 完全一致）。
-3. .env.prod 配置：DRIVER=~fastapi+~httpx+~websockets、ONEBOT_WS_URLS=["ws://127.0.0.1:3001/?access_token=<你的token>"]、LOCALSTORE_USE_CWD=false；真实 token 只存在本地 .env.prod，不写进文档或日志。
-4. 初始化数据库并启动机器人：
+1. 启动协议端：双击 `C:\Software\SnowLuma\launcher.bat`（内部 `node ./index.mjs`，自带 node.exe），
+   WebUI 起在 http://127.0.0.1:5099 ，用普通快捷方式启动 QQ 小号并登录。
+2. SnowLuma 是**运行期手动注入**：WebUI「进程注入」页找到该 QQ 主进程（状态「可加载」）点
+   「加载」，等状态走到「已在线」；默认 `hookAutoLoad=false`，不会自动注入，QQ 每次重启都要重点一次。
+3. 「节点配置」页给该号建 WebSocket 服务器：Host 127.0.0.1、端口 3001、消息格式 array、
+   **上报自身消息=开**、Access Token 填 <你的token>（需与 .env.prod 中的 access_token 完全一致；
+   SnowLuma 强制令牌长度 ≥16 且 zxcvbn 评分 ≥3，不满足会拒绝保存）。多号同挂一个实例时，
+   每个号的端口必须错开（学校号用 3002），否则新号自动生成的默认节点会与主号抢 3000/3001 而 EADDRINUSE。
+4. .env.prod 配置：DRIVER=~fastapi+~httpx+~websockets、ONEBOT_WS_URLS=["ws://127.0.0.1:3001/?access_token=<你的token>"]、LOCALSTORE_USE_CWD=false；真实 token 只存在本地 .env.prod，不写进文档或日志。
+5. 初始化数据库并启动机器人：
 
        C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\nb orm upgrade      # PostgreSQL 已迁移可跳过；首次部署才需要执行
        C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\nb orm check        # 应提示：没有检测到新的升级操作
        C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\nb run
 
    或 C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv\Scripts\python.exe bot.py（先设好 DRIVER / ONEBOT_WS_URLS 环境变量）。
-5. 验收：QQ 小号给机器人发 /bot status、/bot logs info 10、/岸宝帮助、岸宝 你好；/bot status 返回健康状态且 /bot logs 可查询即接入成功。
-6. 排障：powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 nonebot-smoke、startup-smoke、transport-smoke、online-transport-smoke 均只读，不发送 QQ 消息。
+6. 验收：QQ 小号给机器人发 /bot status、/bot logs info 10、/岸宝帮助、岸宝 你好；/bot status 返回健康状态且 /bot logs 可查询即接入成功。
+7. 排障：powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 nonebot-smoke、startup-smoke、transport-smoke、online-transport-smoke 均只读，不发送 QQ 消息。
 
 ## 3. GsCore 接入（游戏查询核心，可选）
 
@@ -97,7 +105,7 @@ chat-smoke 输出 llm_status=ok 且
 
 - [ ] 控制台真实模型对话：语气/动作括号/世界观符合需求（不达标则停下修人格，不进订阅/解析验收）
 - [ ] llm-smoke ok=true；chat-smoke llm_status=ok、receipt_state=sent
-- [ ] nb orm check 无待升级迁移（PostgreSQL/asyncpg）；NapCat 反向 WS 连接成功，QQ 收到 /bot status、/bot logs 回复
+- [ ] nb orm check 无待升级迁移（PostgreSQL/asyncpg）；SnowLuma 正向 WS（3001）连接成功，QQ 收到 /bot status、/bot logs 回复
 - [ ] （可选）gscore-smoke 只读通过
 - [ ] powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 verify 通过
 - [ ] QQ 发一个 B站 链接（视频/动态/番剧/直播/商品）→ 收到卡片 PNG 或可读文本卡（不报“解析失败”）
@@ -107,7 +115,7 @@ chat-smoke 输出 llm_status=ok 且
 
 - 文件：data/runtime_events.log（一行一条：2026-08-22 20:54:44.639 [INFO] event=... 字段=值）。
 - 等级：INFO / WARNING / ERROR（BOT_RUNTIME_LOG_LEVEL 可设 DEBUG/INFO/WARNING/ERROR）。
-- 自动记录：启动、机器人连接/断开（含 NapCat 反向 WS）、NoneBot 适配器日志、订阅推送成功/失败、订阅轮询异常等。
+- 自动记录：启动、机器人连接/断开（含 SnowLuma 正向 WS）、NoneBot 适配器日志、订阅推送成功/失败、订阅轮询异常等。
 - 管理员需先在 .env 配置 `BOT_ADMIN_USER_IDS=["你的QQ号", ...]` 并重启机器人，才能使用下面的日志查询。
 - QQ 内查询（仅管理员）：/bot logs（最近 50 条 INFO+）、/bot logs warning 20、/bot logs error。
 - 本地查询：Get-Content data\runtime_events.log -Tail 50。
@@ -168,7 +176,7 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 - **2026-09-14 六域批重启前置（已就绪，重启前逐项核对）**：
   ① `.env` 的 `BOT_KB_WIKI_ROOT` 已修至 `D:/Coding/01_Projects/Crawl Wiki`（wiki-health-report 实核 manifest 探测 400/400 全命中），且 knowledge-sync 修复已跑（人格 knowledge 库 113 pending 清零 + FTS/ANN 签名重建；离线探针实跑 wiki 检索 4 hits、知识检索「守岸人是谁」5 hits）——重启后按 §6.6.5④ 验证检索；
   ② 渲染预算键已解锁：`.env` `BOT_RENDER_MAX_CONCURRENCY=2` + `BOT_RENDER_WAIT_BUDGET_MS=1500`（13fcd30 机制层接线 `resolve_render_max_concurrency`/`resolve_render_wait_budget_ms`，缺省=字节级现状，删行即回滚）。
-  ③ **重启前一键预检（A56，051261d 已入库）**：工作区根跑 `python scripts/pre_restart_check.py`（venv python 等价；`--json` 结构化输出）——7 项（env 路径/人格锚定/哈希台账/事实册/KB 漂移/静态门/NapCat 探针）**无 FAIL（EXIT=0）再动手重启**；napcat 项在重启前未启动=SKIP 不阻断（bot 自带重连），kb_drift 首跑拷库到 %TEMP% 需数秒～数十秒属预期非卡死；FAIL 项消息自带修复指引，先修后复跑至全绿。
+  ③ **重启前一键预检（A56，051261d 已入库）**：工作区根跑 `python scripts/pre_restart_check.py`（venv python 等价；`--json` 结构化输出）——7 项（env 路径/人格锚定/哈希台账/事实册/KB 漂移/静态门/协议端探针）**无 FAIL（EXIT=0）再动手重启**；napcat 项（id 沿用，探的是 SnowLuma 3001）未启动=SKIP 不阻断（bot 自带重连），kb_drift 首跑拷库到 %TEMP% 需数秒～数十秒属预期非卡死；FAIL 项消息自带修复指引，先修后复跑至全绿。
 
 ## 6.2 向量知识库（本地 Ollama bge-m3 优先，百炼兜底）
 
@@ -190,7 +198,7 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 > 覆盖 2026-09-13 全域审计批次：称谓体系 / 渲染契约 / 金融能力（个股+汇率）/ 占卜历史卡卡片化 / 帮助注册表 / mermaid 修复（AGENTS.md 台账 #26，同批含 #10/#22 重启生效项）。
 > 这些项离线测试已绿，但**生产真机多未验证**（handover-c §三 诚实声明：重启后 Playwright 线程浏览器首启、占卜/历史卡出图、C5 启动接线均属首验）——首验不符不等于回归，先取证。
 
-**前置**：管理员权限重启 bot（改代码必须重启才生效；生产进程常驻且管理员权限启动，杀它需要提权——台账 #10）。重启后先发 `/bot status` 确认 NapCat WS 重连正常，再逐项验收。
+**前置**：管理员权限重启 bot（改代码必须重启才生效；生产进程常驻且管理员权限启动，杀它需要提权——台账 #10）。重启后先发 `/bot status` 确认 SnowLuma WS 重连正常，再逐项验收。
 
 | # | 验收项 | 触发方式 | 预期 | 异常时看哪 | 预期来源 |
 |---|---|---|---|---|---|
@@ -324,16 +332,250 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 
 ### 6.6.6 表情贴纸回应验收（bot.reactions，重启生效）
 
-> 覆盖：QQ 侧贴纸回应识别（NapCat notice → 人格上下文【表情回应】分区注入）+ 主动贴表情（五层门限流：开关→每消息去重→确定性概率→会话冷却→每小时滑窗）。证据=`.superpowers/sdd/2026-09-13-six-domain-batch/reactions-report.md`（代码+测试完成，重启生效；离线用例数以 tests/test_reactions.py 最近一次实跑为准，不手写）。
-> 前置：`BOT_REACTIONS_ENABLED` **缺省即开**（config.py `bot_reactions_enabled=True`，无需 .env 配置；配套 `bot_reactions_probability=0.2`/`bot_reactions_cooldown_seconds=30`/`bot_reactions_max_per_hour=20`）；QQ 主动贴依赖 NapCat 扩展 API `set_msg_emoji_like`（同戳一戳 `call_api` 裸调模式，失败静默）；QQ 识别依赖 NapCat notice `group_msg_emoji_like`——**事件实际字段形态属生产实机首验**（容错解析已覆盖 likes 数组+平铺 emoji_id 两种社区形态，解析失败=零记录零影响）。
+> 覆盖：QQ 侧贴纸回应识别（SnowLuma notice → 人格上下文【表情回应】分区注入）+ 主动贴表情（五层门限流：开关→每消息去重→确定性概率→会话冷却→每小时滑窗）。证据=`.superpowers/sdd/2026-09-13-six-domain-batch/reactions-report.md`（代码+测试完成，重启生效；离线用例数以 tests/test_reactions.py 最近一次实跑为准，不手写）。
+> 前置：`BOT_REACTIONS_ENABLED` **缺省即开**（config.py `bot_reactions_enabled=True`，无需 .env 配置；配套 `bot_reactions_probability=0.2`/`bot_reactions_cooldown_seconds=30`/`bot_reactions_max_per_hour=20`）；QQ 主动贴依赖 SnowLuma 扩展 API `set_msg_emoji_like`（同戳一戳 `call_api` 裸调模式，失败静默）；QQ 识别依赖 SnowLuma notice `group_msg_emoji_like`——**事件实际字段形态属生产实机首验**（容错解析已覆盖 likes 数组+平铺 emoji_id 两种社区形态，解析失败=零记录零影响）。
 > **TG 诚实边界**：识别当前不可用（nonebot-adapter-telegram 0.1.0b20 的 `event_map` 无 `message_reaction` 键，该 Update 在事件转换时被丢弃、到不了任何 handler，等上游升级后接一行 on_notice 即可复用现成归一接口）；主动贴 wrapper 已实现但**不接线**（且 Bot API 要求 bot 在该群为管理员）——**TG 侧零预期，本节全部条目只在 QQ 侧验收，TG 无反应属预期非异常**。
 
 | # | 验收项 | 触发方式 | 预期 | 异常时看哪 | 预期来源 |
 |---|---|---|---|---|---|
-| ① | 回应识别→人格感知 | 白名单群对 bot 的一条消息贴一个 QQ 表情（群消息回应）→ 10 分钟内 @bot 继续对话 2-3 轮 | 人格回复可自然呼应被贴表情（「你刚才给那条消息点了表情」族语气）——【表情回应】分区已注入人格上下文（bot 自己的消息 id 在回复 sent 分支登记，措辞能说「给我的消息贴了 X」；分区无独立日志，以回复语气变化为观察面）；LLM 有机反应**非必现**，多轮抽样观察，连续多轮全无呼应才算疑点 | 首要嫌疑=NapCat 是否真的下发 `group_msg_emoji_like` notice 及字段形态与容错解析是否相符（查 NapCat 日志原始事件；不符只需调 `runtime/reactions.py` `normalize_onebot_emoji_like` 一处）；离线基线=tests/test_reactions.py（用例数以最近一次实跑为准） | reactions-report §三/§四.2/§六.2 |
-| ② | 主动贴表情（概率门） | 正常聊天；用户消息含情绪信号词（「谢谢帮大忙」「太棒了」「加油」等，简繁均收）可提高触发命中 | 小概率（缺省 0.2，确定性哈希——同一条消息判定恒定，重放不摇摆）给消息贴出 QQ 表情（守岸人温和池：鼓掌/呲牙/偷笑/害羞/惊讶/可爱/流泪/奋斗/憨笑，无攻击性项）；**不贴属概率门正常表现非缺陷**，多发几条信号消息再观察 | 有正常回复但表情从未出现 → 查 `BOT_REACTIONS_ENABLED` 当前值与 NapCat `set_msg_emoji_like` 权限（无权限静默失败属设计取舍：该消息不重试，防骚扰） | reactions-report §四.3 |
+| ① | 回应识别→人格感知 | 白名单群对 bot 的一条消息贴一个 QQ 表情（群消息回应）→ 10 分钟内 @bot 继续对话 2-3 轮 | 人格回复可自然呼应被贴表情（「你刚才给那条消息点了表情」族语气）——【表情回应】分区已注入人格上下文（bot 自己的消息 id 在回复 sent 分支登记，措辞能说「给我的消息贴了 X」；分区无独立日志，以回复语气变化为观察面）；LLM 有机反应**非必现**，多轮抽样观察，连续多轮全无呼应才算疑点 | 首要嫌疑=SnowLuma 是否真的下发 `group_msg_emoji_like` notice 及字段形态与容错解析是否相符（查 SnowLuma 日志原始事件；不符只需调 `runtime/reactions.py` `normalize_onebot_emoji_like` 一处）；离线基线=tests/test_reactions.py（用例数以最近一次实跑为准） | reactions-report §三/§四.2/§六.2 |
+| ② | 主动贴表情（概率门） | 正常聊天；用户消息含情绪信号词（「谢谢帮大忙」「太棒了」「加油」等，简繁均收）可提高触发命中 | 小概率（缺省 0.2，确定性哈希——同一条消息判定恒定，重放不摇摆）给消息贴出 QQ 表情（守岸人温和池：鼓掌/呲牙/偷笑/害羞/惊讶/可爱/流泪/奋斗/憨笑，无攻击性项）；**不贴属概率门正常表现非缺陷**，多发几条信号消息再观察 | 有正常回复但表情从未出现 → 查 `BOT_REACTIONS_ENABLED` 当前值与 SnowLuma `set_msg_emoji_like` 权限（无权限静默失败属设计取舍：该消息不重试，防骚扰） | reactions-report §四.3 |
 | ③ | 冷却+时限限流 | ②某次贴出后，30s 内同会话再制造触发 | **30s 冷却内同会话第二次不贴**（`bot_reactions_cooldown_seconds`）；每小时滑窗上限 20 条（`bot_reactions_max_per_hour`）为后台保守限流，真机只做统计性观察不做机械验收；同一条消息双触发（回复后 after_reply+情绪信号 emotion_signal）只贴一次（每消息去重） | 30s 内连贴 → ProactiveGate 冷却/去重语义回归（tests/test_reactions.py 五层门语义回归锁死，用例数以实跑为准） | reactions-report §四.3/§五 |
 | ④ | TG 诚实边界复核 | TG 侧对 bot 消息贴回应，或期待 TG 主动贴 | **均不生效=预期**：识别侧适配器不投递该 Update；主动贴未接线（平台权限受限）。不得作为不符项记账 | 未来升级 nonebot-adapter-telegram 后想接通：识别侧接一个 on_notice 分发复用 `normalize_telegram_reaction` 即可（现成接口已留） | reactions-report §三 |
 | ⑤ | 关闭零痕迹 | `.env` 设 `BOT_REACTIONS_ENABLED=false` 重启后重复 ①② | 人格侧【表情回应】分区不再出现（provider 拿到 None 整块消失）、主动贴零发生（两触发点在门入口即返回，门状态零消耗）；识别侧 notice 缓冲仍会进程内静默记录但**无任何用户可见痕迹**（内存态，重启即清） | 关闭后仍贴表情 → 先确认进程确为重启后实例（改配置必须重启）+ `bot_reactions_enabled` 热覆盖当前值 | reactions-report §四.3/§七 |
 
-**收尾纪律**：全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 记重启生效（reactions 批与 0913 各批次同车）；任一项不符按 §6.6 收尾纪律走 systematic-debugging——QQ 识别侧属「事件形态待验证」首验项，首验不符先取证 NapCat notice 原始字段再定位，不等于回归。
+**收尾纪律**：全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 记重启生效（reactions 批与 0913 各批次同车）；任一项不符按 §6.6 收尾纪律走 systematic-debugging——QQ 识别侧属「事件形态待验证」首验项，首验不符先取证 SnowLuma notice 原始字段再定位，不等于回归。
+
+### 6.6.7 戳一戳 v2 + 贴纸 v2 + R-18 内容感知路由验收（2026-09-16 批，重启生效）
+
+**戳一戳 v2（五件套：回戳/固定话术/LLM 话术/表情包/@戳者）**
+
+1. 群聊戳 bot：应回戳一次（`bot_poke_poke_back` 缺省已开；SnowLuma 不支持时静默），且回复带 @戳者。
+2. 回复形态三选一（`BOT_POKE_REPLY_MODE=mix` 确定性轮换）：观察多次戳得到不同形态——固定话术 / LLM 一句话术（≤12s，失败自动回退固定话术）/ 表情包图（库空自动回退固定话术）。
+3. 好感度：戳后 `好感度` 查询应有小额正向变化痕迹；同一人同日刷戳不叠加超过 `BOT_POKE_AFFINITY_DAILY_MAX`（默认 5）。
+
+**贴纸回应 v2**
+
+4. 给 bot 的消息贴 QQ 超级表情（如超级赞）：【表情回应】分区应能读出「超级赞」等实名（扩展名表 287 条；有名才实名，无名落「QQ表情#N」）。
+5. 取消贴表情（is_add=False）不应被记为正向回应（真机核对 SnowLuma 是否携带 is_add 字段）。
+6. `data/reactions.sqlite3` 生成且有行；`表情库统计`（或库文件）应见 mface/sticker 形态表情入库（商城表情走 VLM 打标）。
+7. 情绪消息（如「太厉害了」）在 bot 回复后，小概率收到表情包图（第二层；与贴表情互斥；冷却 120s/每日 6 张；悲伤消息绝不发）。
+
+**R-18 内容感知路由（runtime/content_route.py）**
+
+8. 显式 R-18 词命中：当轮即切 grok-4.6（审计日志 `content_route` 层记号；不记原文）。
+9. 模型自评标签：正常对话抽查回复无 `<intimacy:...>` 泄漏（出站剥离）；亲密语境下下一轮起路由到 grok。
+10. 「亲密模式 开」私聊命令：确认话术 + 后续会话固定走 grok；「亲密模式 关」解除。
+11. 退场：几轮干净对话后自动回默认链（分数衰减）；管理员 `/bot` 显式模型 override 不受内容路由影响。
+
+
+
+### 6.6.8 内容政策 v2 批（2026-09-17，需重启后逐条验收）
+
+1. **无英文拒答**：亲密模式开启后连续 ≥10 轮含亲密/情色内容，出站零英文模板句；控制台/日志可见
+   `content_route: ... mode=intimate served_by=grok-4.6`。
+2. **路由生效**：「亲密模式 开」（及倒装「开启亲密模式」）收到守岸人确认；本轮起 served_by=grok-4.6；
+   「亲密模式 关」回默认链。
+3. **人格配合**：揉胸/亲嘴/性爱类 RP 得到角色内温柔配合（非说教、非边界复读）；「叫我老公」不再触发
+   边界替换文案。
+4. **红线仍在**：群聊（未加白名单）发「色情」仍被温和拦；「未成年+性」同句任何会话都拦；
+   「你就是个废物」仍温和自守。
+5. **群黑白名单**：白名单空时群内「亲密模式 开」无效果；填入群号+重启后，群管理员可开、普通群员拨动无效。
+6. **成本**：`/bot model usage` 对比批前——影子并发不再双发；INTIMATE 会话账单 effort 维持基线档
+   （不出现 xhigh 计价跳升）。
+7. **回滚**：本批未 commit，回滚=按台账 #36 文件清单手工逆编辑（chat.py/content_route.py/content_safety.py/
+   affinity.py/memory_sanitize.py/model_router.py/config.py/四个 persona 文件/.env/.env.example）。
+
+### 6.6.9 WebUI 仪表盘验收（2026-09-18/19 统一收尾大波次，控制面独立进程）
+
+> 覆盖：控制面四只读统计端点（stats/calls、stats/tokens、stats/latency、affinity/board）+ GET /ui 单文件壳 + SSE 日志尾流对接。事实源=`.superpowers/sdd/2026-09-18-unify-wave/`（progress-BACKEND.md / progress-WEBUI.md）+ `docs/design/webui-dashboard-spec.md` + `docs/design/webui-axonhub-adoption.md`；离线证据=tests/test_webui_stats.py（53 例）+ tests/test_webui_http.py（6 例）+ control_plane 全族回归 290 passed。
+> **前置（先配再验）**：
+> ① `.env`：`BOT_CONTROL_PLANE_ENABLED=true`（缺省 false=整面关闭）；`BOT_CONTROL_PLANE_TOKEN_SHA256`（管理令牌）+ `BOT_CONTROL_PLANE_SUPER_ADMIN_TOKEN_SHA256`（超管令牌）双 token——**未配置管理令牌时除 /healthz 外一律 503 `control_plane_not_provisioned`（防裸奔，属预期非缺陷）**；
+> ② 控制面是**独立进程，不随 bot 主进程重启生效**：单独（重）启 `ChatBot_Runtime\venv\Scripts\python.exe -m plugins.bot_unified_runtime.control_plane`，默认 loopback `http://127.0.0.1:8742`；
+> ③ WebUI 壳=`webui/dist/index.html`（vite-plugin-singlefile 单文件构建，离线零外部 CDN；壳内零数据，**不挂 Bearer，同 /healthz 语义**）；数据面全部走 Bearer 端点（页面侧 localStorage 键 `webui:bearer` 管理 / `webui:bearer:ro` 只读）。
+
+| # | 验收项 | 触发方式 | 预期 | 异常时看哪 |
+|---|---|---|---|---|
+| ① | /healthz 存活探针 | `curl http://127.0.0.1:8742/healthz` | 200 `{"ok": true}`，无鉴权无信息量 | 连接拒绝 → 控制面进程未启动/端口非 8742，看启动日志「控制面启动：http://127.0.0.1:8742（/healthz 探针…）」 |
+| ② | /api/v1/protocol 功能树 | 带 `Authorization: Bearer <管理token>` 请求 `/api/v1/protocol` | 200 信封，功能树可见（webui stats/ui 新路由已注册面） | 401 → token 哈希与 .env 不匹配；503 → 管理令牌未配置（前置①）；语义对表见⑦ |
+| ③ | stats/calls | `GET /api/v1/stats/calls?window=24h`（Bearer） | 200 信封：总调用数 / by_session（HMAC 假名）/ by_user（`private_<uid>`/`group_<gid>_<uid>` 派生 + unattributed_calls + user_attribution 口径码）/ by_capability / trend（UTC hour\|day 桶）；窗口 24h\|7d\|30d | 422 `stats_invalid_query` → 参数非法（窗口拼错等）；信封内 `source_unavailable`/`audit_source_not_configured` → **空态预期**：生产 `bot_audit_db_path` 默认空=内存实现无数据（诚实降级，不假装修好）；配了库仍空 → 核对 .env 审计库路径与真实落盘；派生口径细节 → progress-BACKEND.md 诚实缺口 1 |
+| ④ | stats/tokens | `GET /api/v1/stats/tokens?window=7d` | 200 信封：四项 token（input/output/cache_read/cache_creation）按模型族聚合；空 actual_model 只入 totals 不冒充族 | `source_unavailable` → ledger 记录面无数据（`BOT_LLM_BILLING_ENABLED` 关或库空=空态预期非缺陷）；跨时区历史行窗口边界偏移属既有 P3-9 单时区取舍（progress-BACKEND.md 诚实缺口 3） |
+| ⑤ | stats/latency | `GET /api/v1/stats/latency` | 200 信封：渠道 EWMA 当前值 + last_error（已经 redact 脱敏）；`history` 恒 `{status:"unavailable", reason:"not_persisted"}`——**历史曲线无存储不造数，页面历史曲线区无数据=预期**；store 缺失=`not_connected` | 渠道全空 → channel_health store 未装配/无调用记录；last_error 出现敏感串 → 脱敏链失效（登记缺陷）；口径 → progress-BACKEND.md 诚实缺口 2 |
+| ⑥ | affinity/board 榜 | `GET /api/v1/affinity/board?limit=10&order=desc` | 200 信封：昵称 + `affinity` 内部值 + `score`（×100 **显数值**，2026-09-15 用户裁定 WebUI 直显；聊天内侧定性口径不变）+ tier/tier_name 档位（复用聊天侧档位表）；limit≤200、order=desc\|asc | `source_unavailable` → 好感库路径未配/空库；数值与 QQ 端 `好感度` 卡对不上 → 核对两处是否同库（bot_affinity_db_path 经 runtime_paths 重映射） |
+| ⑦ | 空态/鉴权语义矩阵 | 同一端点分别用：未配令牌 / 错 token / 合法 token+空库 / 非法参数 | 未配管理令牌=503 `control_plane_not_provisioned`；错 token=401；空库=**200 信封内** `source_unavailable`（不是 404/500）；参数非法=422 `stats_invalid_query`；429 限速走既有 v1 读依赖 | 语义错位 → tests/test_webui_http.py（401/503/422/信封/降级/ui 404+200 六例）+ tests/test_webui_stats.py（53 例）逐条对表，再查 progress-BACKEND.md |
+| ⑧ | /ui 单文件壳 | 浏览器开 `http://127.0.0.1:8742/ui`（不带 Bearer） | 200 text/html 出单文件页（Cache-Control: no-store）；侧边栏六项导航（总览/调用统计/Token/延迟/好感度/日志）+ hash 路由（如 #/affinity）；暗色切换生效；断网刷新仍可开（零外部 CDN） | 404 `ui_not_built` → webui/dist/index.html 未构建，按 progress-WEBUI.md Stage E 补 `npm run build`；白屏 → 浏览器控制台查 color-mix() 兼容（现代浏览器要求，adoption §六 风险③） |
+| ⑨ | 页面五块+日志页【待真机】 | 登录态（页面填双 token）逐页走：总览 / 调用统计 / Token / 延迟 / 好感度榜 / 日志尾流 | 有数据页渲染真数据、空态优雅降级（source_unavailable 如实标注、不放假数据）；好感度榜显数值+档位色阶（负值红阶）；总览三统计卡若仍带 mock 徽章=wave-2 真接口接线未完成的如实演示（非缺陷） | mock 徽章长期不消 → 查 WEBUI-feature/接线席 progress（progress-WEBUIFE.md 落盘状态）；页面字段与端点对不上 → adoption §四 envelope 宽容解包只动 lib/api-client.ts 一处 |
+| ⑩ | SSE 日志尾流【待真机】 | 日志页开启尾流，另在 QQ 侧触发一条可观测事件（如 /bot status） | EventSource 流式追加滚动；断线自动重连后续流不丢段（Bearer 传递与重连语义以控制面 events 实现为准） | 不滚动 → 先 `curl -N` 直连 `/api/v1/logs/stream` 分层定位前端/后端；握手 401/503 → 同⑦矩阵 |
+
+> **诚实边界**（progress-BACKEND §诚实缺口）：stats/calls 用户维度是**派生值**（audit_records 无 user 列，OneBot session 约定外行进 unattributed_calls，响应带 user_attribution 口径码，页面应如实标注）；stats/latency 历史曲线无存储（要真历史需先落时序表，未立项）；/ui 不挂 Bearer 属设计（壳零数据），如要求壳也鉴权是加一行依赖的事。
+> **收尾纪律**：全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 记重启生效（控制面=独立进程重启）；任一项不符按 §6.6 收尾纪律走 systematic-debugging——浏览器视觉面属生产首验，首验不符先取证（截图+控制台+响应原文）再定位，不等于回归。
+
+**二期三页（知识库/插件/记忆图谱）验收**（2026-09-18/19 波次增补，编号自⑪顺延）
+
+> 事实源=`docs/design/webui-pages2-spec.md`（§1-§7，含 §7 参照图逐项判定）+ `.superpowers/sdd/2026-09-18-unify-wave/progress-BACKEND2.md`（三组只读端点实作与诚实降级；三新文件 55 passed+控制面族回归 406 passed 实跑记录）。
+> **数据源（二选一）**：①离线=`python scripts/webui_mock_server.py`（默认 `http://127.0.0.1:8743`，`--port` 可换；`--bearer any` 开 Bearer 存在性校验；确定性夹具固定假时刻 2026-09-18T12:00:00Z，两次启动同请求响应逐字节一致可做目验基线；不模拟 503 未配令牌语义）；②真实=控制面独立进程 `http://127.0.0.1:8742` + 双 token Bearer（前置同本节①②，页面侧 localStorage `webui:bearer`）。**正式验收以真实控制面+重启后为准**（mock 仅离线开发/目验/截图对比用，与生产链路零关联）。
+
+| # | 验收项 | 触发方式 | 预期 | 异常时看哪 |
+|---|---|---|---|---|
+| ⑪ | 知识库页·collections 全载与 not_available 灰态 | 打开 `#/knowledge`（mock 或真实 Bearer） | collections 全量渲染：页头下居中宽搜索框（占位「搜索术语 / 别名」）+顶部 CategoryChip 集合行；可用集合=可点 chip（选中=品牌色），默认选中=第一个可用集合；not_available 项（真实与 mock 均含「B站网络热门梗」「战双」）=灰态 disabled chip 不可点、附「未启用」标，响应内 reason（`no_dedicated_store`）在页面如实可见，不给假详情 | collections 401/503 → 同⑦矩阵；灰 chip 可点=违规格 §1.2 裁决；端点不可用 → 页面级诚实态卡（说明未启用与启用方式一句话，非白屏） |
+| ⑫ | 知识库页·terms 搜索 | 选中可用集合，搜索框输入中文词（mock 夹具 46 词条含中文术语/别名）；再输入必然无结果的串 | 输入 300ms 防抖后出结果，中文词命中（术语名/别名任一匹配）；无结果=诚实空态+「清空搜索」按钮（非白屏非报错）；改搜索词重置 page=1 | 对 not_available 集合请求=信封 `source_unavailable/collection_not_available` 诚实降级（非报错）；命中为空仍显旧数据 → 查 Query key `[knowledge, collection, q, page]`；无效参数 → 信封 `invalid_request`（校验先于 IO） |
+| ⑬ | 知识库页·分页 total 一致 | terms 列表翻页（mock 46 条；真实 `page_size≤100`） | Pager 渲染；响应含 `total`（真实端点返回全量条数），页码/「第 x / y 页」与 total÷page_size 一致、翻页不重不漏；切集合/改搜索词重置 page=1 | 页码不符 → 比对响应 total 与 items 实长；total 缺失时退化上一页/下一页二态属规格预案（以返回为准，现返回含 total） |
+| ⑭ | 知识库页·词条卡四行结构 | 任一可用集合的词条卡网格（等宽 3 列 `md:2/xl:3`） | 卡内固定四行：术语名（text-lg）→别名行（text-sm muted，无别名整行省略）→释义（text-sm line-clamp-4，卡尾「展开」toggle 可选）→meta 行（text-xs：来源 Badge muted 态+适用范围文本）；后端缺字段省略对应项，不造占位文案 | 出现空行/占位假文案=违 §1.3「缺字段就省略」 |
+| ⑮ | 插件页·四组齐全+event_matchers 诚实空态 | 打开 `#/plugins` | 四组固定顺序：内置 builtins→适配器 adapters→事件匹配器 event_matchers→迁移插件 migrated_modules，组头 text-lg+数量徽章；event_matchers=诚实空态组（后端组级 not_available+reason `cross_process_introspection_unavailable`，不从路由表反推假清单）→整组一张「事件匹配器清单暂不可用」空态卡，不渲染空网格；某组空数组=组头+「暂无条目」不藏组 | 事件匹配器组出现条目列表=假数据（违诚实纪律）；组序错乱/藏组=违 §2.2 |
+| ⑯ | 插件页·徽章三态+无假按钮 | 逐组看条目卡徽章；全页扫一遍按钮 | 徽章三态严格：`hot_reload===true`→品牌（default）态「热更新即可」；`===false`→secondary 灰态「要重启」（adapters/migrated 真实值即 false）；`null`/缺字段→不渲染徽章（builtins 依 descriptor.hot_toggle，无值不猜）；本页纯只读：无启停/重载/配置/详情任何按钮（后端无操作端点，参照图「配置」钮已判不适配 §7-D5） | null 也渲染徽章=违三态；出现操作按钮=放假功能，对照 §2.3/§2.4 |
+| ⑰ | 记忆图谱页·六统计卡窗口联动 | 打开 `#/memory-graph`，切 24h/7d/30d/all | 六枚 StatCard 顺序固定（人物/群聊/对话/长期记忆/已学规则/发言条数），数值随窗口切换联动；stats 恒为截断前总量（不因 max_nodes 截断缩水）；全源缺失=200 信封 `source_unavailable/all_sources_missing`+stats 全 0（诚实空态非报错） | 数值不随窗口变 → 查 Query key 是否含 window；stats 小于画布节点数=截断撒谎（缺陷） |
+| ⑱ | 记忆图谱页·画布出图+图例+truncated+只读提示 | 选节点多的窗口（如 all；`max_nodes≤200` 缺省 120） | 画布出静态力导向一帧（d3-force 固定 300 tick，无动画循环）；画布下方图例五类型（人物/群聊/对话/长期记忆/已学规则）色点与节点色一一对应（chart-1..5 token，canvas 经 getComputedStyle 取色不造色）；`truncated:true`→画布顶部 info 条「仅显示关联最多的 N 个节点」（N=实际 nodes.length，响应带 nodes_total）；画布角落常驻「拖拽平移 · 滚轮缩放 · 点击节点看详情」+连线只读提示（§7-B9「连线只读、不会改动记忆」语义吸收入文案） | 不出图 → 浏览器控制台+该窗口 nodes 是否为空（空=空态卡「该时间窗内无记忆关联数据」提示换更大窗口，非缺陷）；图例/节点色不对应 → 查 token 读取链 |
+| ⑲ | 记忆图谱页·节点详情侧栏+重排确定性 | 点击任一节点；同窗口反复切换视图/重开页；换窗口再换回 | 点击节点→右侧详情侧栏（名称/类型/关联度/后端返回节点字段逐项展示，未知字段不编造）；确定性：同窗口同数据两次渲染布局坐标全等（布局纯函数=固定初始化+固定 tick，确定性断言入 tests 容差 0）；数据未变时切换视图/重开页不重排；五类型全不选=自动回全选（不给空图死局） | 同数据布局漂移 → 跑确定性单测+查是否混入随机初始化/动画循环；侧栏造数=违诚实纪律 |
+| ⑳ | 通用·版式宪法机器门+零硬编码 | 跑硬编码扫描机器门（脚本由 WEBUI-FE 席交付，脚本名以其 progress 落盘为准），范围=三页+专属子组件目录 | 机器门退出码 GATE_EXIT=0（色值字面量/任意值字号/刻度外间距/圆角档外值命中=0）；零硬编码色值与字号（颜色只走语义 token 与 --chart-1..6；字号五档 12/14/16/18/20px；间距 4px 刻度；圆角 30/18/14）；新写 CSS 类=0、新增 .css 文件=0；内联 style 仅画布容器两处白名单（画布高度/侧栏宽度）且在 progress 登记文件+行号 | 门非 0 → §5 等价快查 `rg -n "#[0-9a-fA-F]{6}\|rgba?\(\|oklch\(\|text-\[\|\[\d+px\]" src` 定位；白名单外内联 style=违组件复用率门 |
+| ㉑ | 通用·三页优雅态（无后端非白屏） | 三页分别在 后端未启（连接拒绝）/端点 404/200 信封 source_unavailable 三种形态下打开 | 三页均有优雅态：页面级诚实态卡或组级空态（说明未启用/不可用+一句话指引），骨架屏/错误卡收尾，绝不白屏、绝不放假数据；请求失败错误卡展示 code/message | 白屏 → 浏览器控制台（color-mix() 兼容同⑧）+该页错误边界；出现 mock 数据 → 全站纪律禁止（dashboard 既有 mock 徽章演示卡为唯一例外） |
+
+> **诚实边界**（progress-BACKEND2）：event_matchers 组=跨进程无内省通道的如实 not_available（绝不反推假清单）；memory graph 截断如实 truncated+nodes_total（stats 不缩水）；knowledge kb_docs 的 updated_at 无存储=诚实 null；全源缺失一律 200 信封内降级码（非 404/500）。回归锚点=tests/test_webui_knowledge.py+test_webui_plugins.py+test_webui_memory_graph.py（55 passed）+控制面族回归 406 passed（progress-BACKEND2 实跑记录）。
+> **收尾纪律**：同本节上方既有纪律；三页首验不符先取证（截图+控制台+响应原文）再定位，前端交付状态以 `.superpowers/sdd/2026-09-18-unify-wave/progress-PAGES2.md` 落盘为准，不等于回归。
+
+### 6.6.10 渲染统一收口批观察点（11 面，2026-09-18/19 波次，重启生效）
+
+> 覆盖：渲染统一收口批 11 个渲染面数值收口（`docs/design/v21r3-render-closing-spec.md` 裁决 C1-C13：字号≥12px / 三枚色斑 46/52/58s / 玻璃两档 / 语义色单源 / 行高刻度 / mono 栈等）。事实源=同规格 §0.2/§一/§二 + `.superpowers/sdd/2026-09-18-unify-wave/`（progress-DIRECT / progress-FINMKT / progress-UNIVERSAL / progress-CORE / progress-SAMPLES / progress-MISC2 / progress-PRECHECK3）。
+> **前置**：bot 提权重启（渲染链路在主进程，改代码必须重启生效）。
+> **落地状态（终态，判定前先读）**：11 面数值收口**全部落地**——直拼四卡（echo/debug/usage/media，progress-DIRECT）+ finance/market（progress-FINMKT）+ universal（progress-UNIVERSAL）+ misc 四模板 mermaid/song/affinity/error（MISC2 切换 + MISC3 验证收尾：bridge 通水、mermaid 伪元素特例复位、error wash_blob_mix=24 豁免闭环，progress-MISC2）；「通水」（壳层/装饰层切 mica_shell 生成器消费，C13）**已完成**；渲染全域门禁 **588 passed / 0 failed**（progress-PRECHECK3），样张判据=`baseline-20260919-paused` PNG 字节等值。**唯一待执行项=INTG verify_hashes 哈希重录**（各席守纪未 --write，15 项 DRIFT 收尾一次重录；重录前不影响本节真机观察）。
+
+**通用观察点（11 面逐卡过一遍）**
+
+| # | 观察点 | 预期 | 异常时看哪 |
+|---|---|---|---|
+| ① | 字号下限 | 无 <12px 观感（11/11.5/12.5px 全收敛 12px，脱阶 13.5/14.5px 收敛 14px）；**echo 帮助卡无小字** | 样张复核 `python scripts/render_card_samples.py --only <卡key>`；源面 grep 12.5px/11.5px/11px（规格 §0.2-E 清单：12.5px 实测 5 处） |
+| ② | 三枚漂移色斑 46/52/58s | 每卡三枚色斑（drift-a/b/c，46s/58s/52s）交错漂移——全 11 面已落地：finance/market（DOM 补 drift-c）+ universal 非视频分支 + echo 帮助卡通水补齐（gate02 全 11 面绿实证，PRECHECK3）；mermaid 为伪元素特例（.card::before/::after 两斑，MISC3 复位）；error 卡 wash_blob_mix=24 豁免保持（MISC3 闭环实证） | 逐卡数 DOM `<span class="drift-blob drift-[abc]">`（mermaid 例外查 .card::before/::after）；时长不符查 mica_shell 生成器 BLOB_DURATIONS 与手抄层残留（通水已完成，不符按回归定性） |
+| ③ | reduced-motion 关停 | 系统开「减少动态效果」后色斑静止；finance/market 已修特异性缺陷（关停规则 `.drift-blob.drift-a/.b/.c` 与动画声明同构、源序其后=结构性可靠，progress-FINMKT #3） | 仍漂移 → 查该卡手写 `@media` 残留（规格 §0.2-G9 特异性竞争形态）；离线=test_phase_determinism + 生成器 reduced-motion 断言 |
+| ④ | 语义红绿一致 | 红系一律 #d54941（危险/涨）、绿系一律 #2e9e6b（成功/跌）、琥珀 #b07d1a（警告）——usage ok/bad、debug good/bad 已换值（progress-DIRECT）；finance/market --up/--down 经 var(--semantic-danger/success) 消费（progress-FINMKT #1，实现名以 --semantic-* 为准）；**A股红涨绿跌语义不变**；好感度评分色 #157347/#b42334 是刻度色、非语义红绿混淆项 | 同一「涨/跌/成功/失败」在不同卡颜色不同 → 查该面是否残留 #d64545/#1a9e6c 旧字面（门4 黑名单）；bridge._spark_points 直出 SVG 折线色为已登记遗留（progress-FINMKT 遗留1，归 CORE/INTG） |
+| ⑤ | 渲染失败纯文本兜底 | 任一卡渲染后端失败回纯文本不报错不刷屏（兜底契约零破坏，最坏=外观回退） | 兜底白底方块/报错 → render_backends 兜底分支 omit_background（C12）+ 渲染日志 |
+| ⑥ | 玻璃两档观感 | 面板档 0.66→0.44、页脚档 0.66→0.46、描边 0.95/0.35/0.72；无 0.68/0.55/0.60/0.62/0.50 散值观感（字面归档与 token 消费均已落地） | 分层不可辨/疑漂 → 规格 §一 C3 归一映射表逐行对 |
+
+**逐卡触发清单**（每卡触发一次，通用观察点①-⑥逐卡过）
+
+| 卡 | 触发方式 | 本卡重点 |
+|---|---|---|
+| 帮助（echo 直拼） | `/bot help` | 无小字；两栏排版不崩；色斑三枚已通水补齐 |
+| 账单（usage 直拼） | `/bot model usage`（账本开时） | 状态胶囊绿 #2e9e6b / 红 #d54941；渠道子行正常 |
+| 解析（universal） | 发一条 B站链接 | 视频/非视频分支壳 30px 圆角观感；非视频分支第三枚色斑垫底不越层 |
+| 媒体（media 直拼） | 触发一次媒体归档出卡 | 行高/徽章遮罩观感正常 |
+| 好感度（affinity 模板） | `好感度` | 档位色阶不回归（score hot/cold 刻度色） |
+| 点歌（song 模板） | `点歌 晴天` | 12px 收敛；玻璃 0.68→0.66（misc 席已落地） |
+| 行情（market 模板） | `行情` | 三枚色斑；红涨绿跌 #d54941/#2e9e6b；.index .pct 无小字 |
+| 金融（finance 模板） | `黄金` / `英伟达股价` | 同上（.row .delta 无小字） |
+| mermaid（mermaid 模板） | 会话发一段 mermaid 代码块 | 正常出图；字体栈统一观感 |
+| 错误卡（error 模板） | 断网发 `行情`（两段式形态参照 §6.6.4⑥） | 第三枚色斑（misc 席已落地，wash_blob_mix=24 豁免保持）；冷却降级纯文本不破 |
+| debug 检查卡（debug 直拼） | 管理员触发 LLM 检查出卡（样张 key=debug_llm_setup） | 等宽字体统一（Cascadia Mono 栈）；warn 琥珀 #b07d1a |
+
+> **离线复核手段**（真机存疑时）：样张基线比对=`python scripts/render_card_samples.py --out <目录>` 后与 `%TEMP%/shorekeeper-samples/baseline-20260919-paused/` 逐面比 PNG 字节等值（主判据，WAAPI 钉帧后双渲逐字节确定；html_sha256 做旁证）；机器门=tests/test_v21r3_visual_gates.py 九门 + 五族既有契约（rendering_contract/mica_builders/visual_audit/e03/phase_determinism）；INTG 收尾状态以 master-plan Wave 3 与其 progress 为准。
+> **收尾纪律**：全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 记重启生效；任一项不符按 §6.6 收尾纪律走 systematic-debugging——misc 席四模板与通水项**均已落地**（progress-MISC2/PRECHECK3），首验不符先对照该席终态证据再定性；当前唯一待执行项=INTG verify_hashes 哈希重录（见顶部终态声明）。
+
+### 6.6.11 语音合成（bot.tts）验收（Wave G 契约波定版 30 项，2026-09-20；重启生效）
+
+> **本节为整节替换版**：旧 14 项经 T36 取证**无一完整可跑通**（生产可证成功合成 0 次=T21；③⑩⑫根本验不了、③⑤⑨⑫⑬预期与实码相反或过强=T7 §3），已整体作废，按 `.superpowers/sdd/2026-09-19-unify-audit/report-T36.md` 换成 **30 项**（离线 O1-O8｜只启引擎 E1-E6｜真机 R1-R16；「只启引擎、不重启 bot」可走完 O+E 全部 14 项）。旧 14 项→新 30 项映射见节末表。
+> 事实源=`report-T36.md`（蓝本+探针）＋已落行为刷新：`report-T57.md`（M-09 退避真闸 30s/M-11 缓存身份）、`report-T61.md`（预设表/Field 域闸/硬顶 2000 字·8MiB/静音三指纹闸/seed 确定性/配额缺省关）、`report-T70.md`（触发词 11 词∪追加口径）、`closeout-manifest.md` §五。**标注约定**：〔播声依赖 T32〕=QQ 语音条播不播得出待 T32 结论（NapCat 吃不吃 wav、silk 谁转），先判到「落盘/出站」层；〔T73 在建，默认关〕=voice hook 装配在飞、缺省关不影响本节判据；〔T75 待落〕=M-14 截断可观测化+M-17 名单同源在飞，行为变化待其披露表，本节不写死。
+> **取证留痕纪律（全节适用，T36 §4）**：证据落 `%TEMP%/t76-evidence/<日期>/`（不落源码树）；每项最小留痕=输入原文截图→回执截图→产物 `ffprobe` 整行输出→命令+末行输出；每项只准写 **过/不过/未能取证**（后者必附原因），禁止「预期会过」代替实跑；`.env` 改动类先备份 `.env.bak-<日期>-<用途>`（不记密钥值）、测后恢复+二次重启也留痕；不合格样本 wav **复制**留证、不动 Runtime 原件；汇总「N 项全过」前逐项比对过判据原文，统计类必须给样本量与原始计数。
+
+> **前置（先配再验）**：
+> **P-1（配置面）** `.env`：`BOT_TTS_ENABLED=true`；`BOT_TTS_GPTSOVITS_DIR=C:/Software/GPT-SoVITS-V2Pro`；`BOT_TTS_REF_AUDIOS` ≥1 条，格式 `路径|参考文本|语种`；预设表选择键 `bot_tts_preset`（缺省 `shorekeeper`=v1 现状收编，枚举白名单 `TTS_PRESET_IDS`，T61）；9 数值键已上 Field 域闸（speed 0.6–1.65/top_k 1–100/top_p 0–1/temp 0–1 等，域值逐字=T53 真值表）、`0=不限` 语义已修死（T61 M-35）。⚠️ `BOT_TTS_*` 键族=RESTART_REQUIRED 诚实登记（能力持装配期 config，热改假生效——改键必重启，T61 登记矩阵）。自动化体检：`python scripts/pre_restart_check.py` 第 10 项=tts_voice 音色守望者（T60 `1b2860c`，SKIP 不假红/FAIL 五类人话）；`C:\Software\GPT-SoVITS-V2Pro\tools\verify_chatbot_env.py` 现状必崩（T24 P1-1，T36 复核 bug 在位）**不引用**；.env 人工核对=`grep '^BOT_TTS_' .env` 逐键对 `docs/config-catalog-full.md`。
+> **P-2（引擎拉起）** 一律用 `C:\Software\GPT-SoVITS-V2Pro\启动守岸人.bat`（bot 在跑会自动只起引擎）；**禁止从其它目录裸敲 `api_v2.py`**——权重相对路径按进程 CWD 判定，错 CWD **静默回退底模且 `save_configs` 写回 yaml 永久化**（T2 P1-2）。就绪判定：模型加载先于端口 bind，**9880 通=模型就绪**；首启 20~60s 为脚本自述非实测，预算 180s（本清单最长一步）。
+> **P-3（绑定红线）** 起后核 `netstat -ano | findstr :9880` **只允许** `127.0.0.1:9880 LISTENING`；见 `0.0.0.0`/`[::]` 立即停。
+> **P-4（参考音频）** 3~10 秒干声为引擎服务端硬卡（转 16kHz 后 48000~160000 采样点，无配置可放宽=T2）；bot 本地不预检（无 soundfile），越界=多付一次 HTTP 往返后收降级文案（命令式有文案、自动配音路径静默零提示=T7 P2-5）。
+> **P-5（重启窗）** bot 面验收前需提权重启：父 `venv\Scripts\python.exe bot.py` + 子 `python.exe bot.py` **两个都停**，重启命令走 `scripts/dev.ps1 -Task run`；重启窗=全工作树大合流，窗口由用户裁决。
+> **P-6（stdout 重定向）** `ChatBot_Runtime/logs/nonebot.out.log` 自 09-17 23:28 起 0 字节（T21）；重启时**必须**把 stdout 重定向落盘，否则本节所有「看日志」项（R1 计数、R13 日志核对）全部不可证。
+> **P-7（观测面事实）** `runtime_events.log` **不记 bot.tts**（命令路 `_run_simple_capability` 零事件=T14/T21）；只作负对照（其中不应出现任何用户正文，出现即另立案）。语音主证据面=`ChatBot_Runtime/data/tts_output/` 产物 + nonebot stdout + QQ 截图。
+> **P-8（T32 悬案）** 「QQ 语音条播不播得出来」待 T32 结论；凡判据含「听到声音」的项标〔播声依赖 T32〕——「发出去了吗」与「播得出来吗」分两栏记账，勿混判。
+
+**阶段 O · 离线可验（不启引擎、不重启 bot、不发真实消息；8 项）**
+
+复跑环境（每个 shell）：
+```bash
+cd "C:/Users/LancyCelestia/Documents/MyWorkspace/ChatBot/ChatBot"
+export PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1
+PY="../ChatBot_Runtime/venv/Scripts/python.exe"
+```
+
+| # | 验收项 | 怎么触发（可粘贴） | 预期（过/不过判据） | 不过时看哪里 |
+|---|---|---|---|---|
+| O1 | 虚词负样本路由守卫·M-01【离线可验】 | 附录 A1 探针（10 句负样本逐句过 `classify_message_route`）；快捷=`"$PY" -m pytest tests/test_tts_hijack_guard.py -q -p no:cacheprovider --basetemp="$TEMP/t76/pt"` | **过**=探针 10/10 句 `kind=CHAT capability_id=bot.chat` 且回归锁全绿（本席 T76 2026-09-20 实跑 62 例 passed）；**不过**=任一句 `kind=TTS`。**修前（≤09-19 16:57 态）此组全红属预期**（T15 实锤 201/295）；18:33 边界集已去虚词，修复完整性以 T15 全量语料复跑定 | 边界真相源=`tts.py` `_TEXT_BOUNDARY_CHARS`（:103，纯标点空白+「不得出现汉字」棘轮断言；中央件 `domains/core/text_boundary.py` 权威取值即源于此=T59，randpic/media_archive/group_info/mentions/base_router 五副本已换线 `cf7ec29`）；`tts_match`（`domains/chat_reply/runtime/base_router.py:444`）；`extract_trigger_words` 盲区已修（`767f2b5`，bot.tts words 0→11） |
+| O2 | 裸触发词不占路由（旧③离线锚）【离线可验】 | `"$PY" -m pytest tests/test_tts.py::test_tts_match_ignores_bare_trigger tests/test_tts.py::test_bare_trigger_word_yields_empty_body -q -p no:cacheprovider --basetemp="$TEMP/t76/pt"` | **过**=两例绿（只发「说」不路由、取正文为空）；**不过**=任一例红 | 根因链 `extract_tts_text` `stripped == word → ""`；能力层 `missing_text` 引导分支为**生产死分支**，勿按其存在反推真机出引导（T7 P1-2）；真机面=R3 |
+| O3 | 概率门确定性+稀疏性（旧⑨⑩迁入）【离线可验】 | `"$PY" -m pytest "tests/test_tts.py::test_should_voice_reply_is_deterministic_and_sparse_by_default" "tests/test_tts.py::test_maybe_attach_voice_probability_gate_skips_synthesis" -q -p no:cacheprovider --basetemp="$TEMP/t76/pt"` | **过**=两例绿：同 seed 源（session_id:message_id）重复判定恒定、默认 0.05 下命中率≈5%（非全中）、「概率未命中→不付合成调用」；**不过**=任一例红或被人改成 `random`（铁律：概率门必须哈希，`tts.py` 内 `random` 只准出现在 `pick_ref_audio`） | 判定式 `should_voice_reply`（seed 哈希 bucket<p*10000，与 `gate.py` 确定性群抽签同构=T7 正面记录）；真机面=R10 |
+| O4 | 门链先于概率·不叠加已有音频（旧⑫迁入）【离线可验】 | `"$PY" -m pytest "tests/test_tts.py::test_should_voice_reply_gates_before_probability" -q -p no:cacheprovider --basetemp="$TEMP/t76/pt"` | **过**=绿（`result.audio` 非空、非 bot.chat、总闸关等门逐一先短路）；**不过**=红。旧⑫真机场景不可构造（`_attach_voice_reply` 全仓唯一挂点只包 chat、chat 零 audio 产出=T7 P2-2），真机半=「R1 只见一条语音不双发」 | 门链锚点 `should_voice_reply`（`__init__.py:341/:356` 现值，行号以重启时代码为准——T73 hook 化在飞会移位〔T73 在建〕） |
+| O5 | 错误体解析顺序（旧⑥离线锚）【离线可验】 | `"$PY" -m pytest "tests/test_tts.py::test_request_tts_error_body_prefers_exception_over_message" -q -p no:cacheprovider --basetemp="$TEMP/t76/pt"` | **过**=绿（引擎 400 体先读 `Exception` 后读 `message`）；**不过**=红=修复回归（真机面由 R6 判） | `_request_tts` 错误体分支；失败记账现收编 `_record_failure`（T57）；引擎实况 `api_v2.py` 错误体（只读） |
+| O6 | 出站形状契约（旧⑭离线半）【离线可验】 | `"$PY" -m pytest tests/test_tts_outbound_chain.py -q -p no:cacheprovider --basetemp="$TEMP/t76/pt"` | **过**=全绿（`CapabilityResult.audio → {"type":"record"} → SendQueue → onebot record 段`；用例数以实跑末行为准）；**不过**=红。**证明力边界**：该套测的是 dict 形状与键，对「QQ 播得出来」零证明力（T32 悬案），绿≠可播 | renderer audio 循环 + `domains/transport/sender/onebot.py` record 分支（⚠️ 必须写 domains 真身；旧径 `sender/onebot.py` 为 12 行垫片=T7 P3-1） |
+| O7 | 打码旁路取证·M-03【离线可验】 | 附录 A2 探针：`clean_for_speech` 吃自造假值句 + grep tts 源零打码引用（T36 18:36 实跑三判据全中） | **修前预期=红（如实登记，不伪装成绿项）**：`sk-TESTFAKE…` 原样残留=True、盘符路径残留=True、`BOT_` 形态被清洗吃成打码器认不出的串=三条全中即 M-03 在位。**修后过判据**=探针断言反转：清洗产物不含 `sk-TESTFAKE`/`FakeTest` 且打码发生在 `clean_for_speech` **之前**（「先清洗后打码」对 BOT_ 形态必失效=T9 P0-3）。真机面→R13 | 打码器 `domains/render/plain_text.py:340 redact_local_secrets`（`_BOT_ENV_ASSIGN_RE`；占位符第二形态 `<本机路径已隐藏` 已补=T61）；语音入口 `tts.py` `clean_for_speech`；`domains/media/` grep `redact` 命中 0（T36 实跑） |
+| O8 | 红线拦截缺席取证·M-02【离线可验】 | 附录 A3 探针：同一红线探针句分别过 `assess_public_content`（文字侧）与 `build_tts_capability`（语音侧，monkeypatch `_request_tts` 零网络） | **修前预期=红**：文字侧 `action=refuse`（minors/minor_ambiguity 硬线），语音侧照常产出 audio dict+落盘 wav=零拦截实锤（T9 P0-1 已实跑同款）。**修后过判据**=语音侧对同句**不合成**、回边界话术、无新 wav。⚠️ 探针句用无害构造（年龄词即可，勿写露骨文本）。真机面→R14（修前**不建议**真机跑，离线红即足以立案） | 文字侧闸 `domains/chat_reply/security/content_safety.py:383 assess_public_content`（minors fail-closed，任何参数不绕）；语音侧缺口=`tts.py` 全文零内容政策导入（T36 grep=0）；审核旁路根因=reviewer 对 audio 无文本可审（T9 P0-2）；群门不同源=`explicit_allowed_for_session` 零语音引用——M-17 中央同源施工中〔T75 待落〕 |
+
+**阶段 E · 须引擎在跑（不重启 bot、不发真实 QQ 消息；6 项——前置 P-2/P-3；引擎目录零改动，U-21/U-22 引擎侧动作待用户授权=manifest §五.4）**
+
+| # | 验收项 | 怎么触发（可粘贴） | 预期（过/不过判据） | 不过时看哪里 |
+|---|---|---|---|---|
+| E1 | 引擎拉起与监听面【须引擎在跑】 | 起前体检：`powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Software\GPT-SoVITS-V2Pro\start-shorekeeper.ps1" -CheckOnly`；再双击 `启动守岸人.bat`（或同 ps1 `-NoBot`）；起后 `netstat -ano \| findstr :9880` | **过**=netstat 仅 `127.0.0.1:9880 LISTENING` 一行；**不过**=`0.0.0.0`/`[::]` 出现（立即关窗=P-3 红线）、或 180s 预算内端口不通（引擎窗口看 traceback） | 引擎控制台窗口尾部输出（ps1 现版不落盘 stdout——引擎侧落盘=U-22 待授权）；20~60s 自述非实测；⚠️ 别按 ps1 注释敲「启动守岸人.ps1」（不存在，入口=bat，T20 卫生条） |
+| E2 | 音色身份静态核对【须引擎在跑】 | `grep -E "t2s_weights_path\|vits_weights_path" "C:/Software/GPT-SoVITS-V2Pro/GPT_SoVITS/configs/tts_infer.yaml"` + 引擎窗口扫 `fall back to default` + `python scripts/pre_restart_check.py`（第 10 项 tts_voice） | **过**=custom 段两行含 `shorekeeper`（`GPT_weights_v2ProPlus/shorekeeper_e15.ckpt` + `SoVITS_weights_v2ProPlus/shorekeeper_e8_s1144.pth`）且窗口无回退行、守望者项 PASS/SKIP（SKIP 不假红=T60）；**不过**=底模名（`s1v3.ckpt`/`v2Pro/s2Gv2ProPlus.pth`）⇒ **能出声但音色必不是守岸人**（静默回退+写回永久化，T2 P1-2），立即停引擎并从基线恢复 yaml（改前备份到 %TEMP%；权重路径改绝对=U-21 待用户授权） | yaml mtime≈本次启动时刻属正常（`save_configs` 每次启动回写=T2/T20）；守望者 FAIL 五类人话输出=T60 判定序（基线→yaml→解析→语义→实存→sha256） |
+| E3 | 浏览器试听=引擎契约直锤+音色第一耳【须引擎在跑】 | 附录 A4 curl 命令（`text_lang=zh` 与 `prompt_lang=zh` **必带**，漏传 AttributeError=引擎坑）落盘 `%TEMP%/t76-evidence/e3.wav` 后 ffprobe+听 | **过**=HTTP 200、ffprobe `pcm_s16le/32000Hz/mono`（产物率=权重自带，bot 侧不可控=T25）、听到中文女声；**不过**=400/500（读错误体 `Exception` 原文归因）、**1 秒左右静音**（引擎推理期异常返 200+静音 wav=T2 P1-1——bot 侧捕手见 R15 三指纹闸）；**音色是否守岸人只能靠耳朵**（E2 静态过≠音色对） | 首页 `http://127.0.0.1:9880/` 返回 `Not Found` 属设计非故障、`/docs` 能开=活着；错误体形态全集=T2 §T2.2 |
+| E4 | 参考音频越界引擎拒收（旧⑥引擎面，隔离 bot 变量）【须引擎在跑】 | 从 `C:\Software\GPT-SoVITS-V2Pro\refs\corpus_durations.csv` 挑一条 `duration_s>10` 的语料路径，代入附录 A4 的 `ref_audio_path`（正文用短合规句） | **过**=HTTP 400、JSON 体 `message="tts failed"` 且 `Exception` 含 `3~10秒`（本机 locale 实况为**繁体**「參考音頻」，简中四字**永不出现**=T2 P2-2，判据只钉 `3~10秒` 子串）；**不过**=200 出声（服务端硬卡被绕过=重大变更，核对引擎版本） | 引擎 `TTS.py` 硬卡（只读）；bot 侧文案面同判→R6 |
+| E5 | 括号动作引擎念法试听（听感首验）【须引擎在跑】 | 附录 A4 变体：`text=（微微一笑）今天的海风很温柔，你想我了么？`（=T25 实跑过清洗的出门形态原样喂引擎） | **修前预期=不合格**：动作文字（「微微一笑」等）**被完整念出**（全角括号大概率吞符号但内容字逐字念，cut5 把动作段切独立段+段尾 0.3s 静音，T25 P1-3）→录音存档即 M-04 听感缺陷立案证据；**修后过判据**=只念台词、动作处无字声或明示停顿。另听 `……` 截断处的「假完整」 | bot 清洗零括号规则（`clean_for_speech` 现状，T36 复跑残留=True）；文字侧真相源 `output/roleplay.py`（修复应同源复用=T25 Q3） |
+| E6 | 8 条参考池逐条试听（音色一致性+语气库建账）【须引擎在跑】 | 对 8 条 `refs/shorekeeper_ref_01..08.flac` 各发一条固定文本（`ref_audio_path` 轮换、其余参数同），每条落盘试听 | **过**=8 条听起来**同一个人**（守岸人）；**不过**=①两条间「两人格感」→扩池作废回 T3/§5.4 裁；②某条明显底模感→E2 复跑。逐条记「语气标签×听感」表（建池宣称=陈述/关切/歉意/承诺/解释/疑问/警告/陈述，handover §4.6）——随机消费下语气会无差别套在任何正文上（T25 P1-4 ≥3/8 错配），本项=让用户「听到错配是什么」的建账项，不判 pass/fail | 消费端 `pick_ref_audio`（`random.choice` 无内容入参=T25）；ASR 参考文本与音频不齐会污染音色（`.tsv` 是校对前错文本**勿照抄**=T24 #10） |
+
+**阶段 R · 须真机 QQ + 须提权重启（16 项；凡「听到声音」判据〔播声依赖 T32〕；改 .env 项标〔动 .env〕〔二次重启〕）**
+
+通用取证基座：stdout 重定向落 `ChatBot_Runtime/logs/nonebot.out.log`（P-6）；TTS 匹配器命中计数=`grep -c "lineno=<注册行>" nonebot.out.log`（NoneBot 自打 `handled by Matcher(... lineno=…)`，判据=T21 §3；注册行以重启时代码为准：T36 快照=6116→T76 2026-09-20 复核=`__init__.py:6131`，T73 hook 化在飞会再漂——重启后 `grep -n "tts = on_message" plugins/bot_unified_runtime/__init__.py` 取现值）。
+
+须用户本人做的动作（AI 一律不代做，T36 §6）：起引擎/关窗停引擎（E1-E6）；netstat 绑定核对（E1）；提权重启+stdout 重定向（R1-R16）；`.env` 改动与还原（R6/R7/R9/R10）；**耳朵终审**（音色/括号动作/清晰度）；QQ 发消息与截图；提供 black/white 群号实况（R16）；M-02/M-03 修复立项裁决（O7/O8→R13/R14）；T32 结论回收（9 个播声项）。
+
+| # | 验收项 | 怎么触发（可粘贴） | 预期（过/不过判据） | 不过时看哪里 |
+|---|---|---|---|---|
+| R1 | 命令式合成成功（旧①）【须真机 QQ】【须提权重启】〔播声依赖 T32〕 | 私聊发：`说 今天的潮汐很安静` | **过**=①只收到**一条语音条**（无文字无标题）；②`data/tts_output/` 新增 wav 且 ffprobe `32000Hz mono`、时长≈3.7~4.3s（9 字×0.411s/字+0.3s 段尾，T25 实推）；③stdout lineno 计数 +1；④（若可播）内容=原句；**不过**=回文字（→R5/R6/R7 归因）、无回执（计数 +0=路由没进；+1 无出站=出站断）、语音条纯静音（→R15）、双语音（判不过=旧⑫真机半） | 主判据=文案本身+产物+lineno 计数；`tts request failed/rejected` 类 stdout 行**仅 P-6 重定向后存在**（tts logger 不在 nonebot 树、INFO 级，生产必丢=T14 P1-1）；`_last_failure_reason` 无状态查询口（仅降级文案瞬间可见）；**不要查 runtime_events.log（结构性无 bot.tts，P-7）** |
+| R2 | 触发词 11 词等价（旧②扩面=T70）【须真机 QQ】【须提权重启】〔播声依赖 T32〕 | 依次私聊发：`语音合成 你好` / `语音 我在这里` / `念 我在这里` / `朗读 我在这里` / `tts hello` / `say hello` / `shuo 你好` / `yuyin 你好` / `nian 你好` / `langdu 你好`（「说」已由 R1/R3 覆盖） | **过**=各条行为同 R1（正文=触发词后剥边界字符的剩余；英文大小写不敏感）；**不过**=某条走 chat→该词不在 `DEFAULT_TRIGGER_WORDS`（11 词=语音合成/朗读/语音/念/说+tts/say+shuo/yuyin/nian/langdu，T76 2026-09-20 复核在位）或第二字符非标点/空白；`BOT_TTS_TRIGGER_WORDS` 为**追加合并**语义（与内置 11 词合并去重、非整表替换，唯一入口 `effective_trigger_words`=T70）。**已知边界（不判不过）**：繁體触发词未登记（說/語音/朗讀/唸=诚实缺口，待 tts-contract-layer §6 登记窗）；边界集=纯标点空白后 `说你好`（无空格）**不触发**属现行设计 | `extract_tts_text`（最长优先+边界集）；口径同源=`docs/route-matrix.md` §2 tts 行与 `COMMANDS.md`「语音」行（T70 已同步版） |
+| R3 | 裸触发词人格回应（旧③**预期反转**）【须真机 QQ】【须提权重启】 | 只私聊发一个字：`说` | **过**=收到守岸人的**人格聊天文字回复**（正常聊天，无引导话术、无语音）；**不过**=收到「在「说」后面接上…」引导（该分支生产不可达，出现=路由语义变更须另立评审）或收到语音 | 路由门 `tts_match`→`is_tts_command`（等价 `extract_tts_text` 非空）；口径同源=config-catalog「裸触发词交回人格对话」+COMMANDS.md「裸触发词不占路由」（U-15 a 案=T70） |
+| R4 | 负样本句组真机抽查·M-01（**新增**）【须真机 QQ】【须提权重启】 | 私聊逐句发（每句独立一条）：`说了再见`、`说了一半就停了`、`说的对`、`语音哈喽`、`说了多少遍了`；群聊（非黑名单群）**@守岸人** 发：`@守岸人 说了再见`、`@守岸人 念了一遍还是记不住` | **过**=每一句都收到**正常人格聊天文字回复**，无私了语音、无「嗓子还没接上」故障文案、**无单字残片语音（「对」「喽」「吧」=T15 四单字形态，听到任一即不合格）**；**不过**=任一句被吞聊天（私聊收到残片语音或故障文案；群里没人 @ 它插话）。**修前预期=全红（T15 201/278 实锤）**；离线预检 O1 已绿（T76 实跑），真机半在重启窗口执行 | 离线先行判据 O1；分母=`grep -c "event=incoming_event" runtime_events.log`、分子=stdout lineno 计数（劫持句不该进）；根因修复归属=T15 中央化修复点（六处副本收编状态见 O1 锚点行） |
+| R5 | 引擎未启动降级+退避真闸（旧⑤改写=T57 落地）【须真机 QQ】【须提权重启】（**本项恰在引擎没起时做**） | 确认 9880 无监听（`netstat -ano \| findstr :9880` 空）→ 私聊发 `说 测试一下`；**30 秒内**再发同一句；隔 >30s（窗满）再发一次 | **过**=①首发**即时（秒级）**收到「嗓子还没接上——语音服务好像没在跑，稍后再叫我一次吧。」且聊天链一切正常（fail-open）；②窗内第二发**不真打引擎**（引擎侧无新请求痕迹）、秒级返回降级文案——退避 reason 固定以「服务不可达」开头（`服务不可达：退避冷却中（剩 N 秒）｜上次失败：…`）经 `_FAILURE_KINDS` 前缀映射挂 `tts_service_unreachable`（可重试）、`_degrade` 按含「不可达」选 unreachable 分支文案（T57 承重契约）；③窗满第三发恢复真打（再收降级文案=窗自动放行，非永久拉黑）；**不过**=首发卡 ~60s 才回（loopback 拒绝本应即时，卡满=引擎在监听但挂起，按「引擎活着但慢」排障）、窗内每发都等完整 HTTP 超时（=退避闸未接线回归）、或文字链同时被打断（违反 fail-open） | 闸=`tts.py` `_record_failure/_clear_failure/_backoff_reason`，常量 `_HEALTH_BACKOFF_SECONDS=30.0`（T57 落地；闸在 synthesize 唯一 HTTP 入口前、**缓存查找之后**=命中不受影响）；真成功 `_clear_failure()` 清零、快速失败**不刷新**窗（防永久拉黑）；查闸与打请求之间不原子（窗沿并发前几请求可能真打=T57 已声明取舍）；离线锁 `tests/test_tts_health_backoff.py`（4 例，T76 实跑绿）。**旧指引「查 `_HEALTH_BACKOFF_SECONDS` 死变量」作废——该常量现为真闸**。诚实注记：引擎完全没起时首尾两发都秒级（loopback 拒绝即时），闸的分辨力在「引擎监听但挂起」形态下最明显；群聊失败降级=中央 A-19 降级池非私聊文案（S8 裁定=T70） |
+| R6 | 参考音频越界降级文案 bot 面（旧⑥改写）【须真机 QQ】【须提权重启】【动 .env】【二次重启】 | `.env` 备份后，把 `BOT_TTS_REF_AUDIOS` **整表替换**为仅一条 >10s 越界条目（格式仍 `路径|文本|zh`；勿「追加」——随机池下只有 1/N 概率命中坏条）→ 重启 → 私聊发 `说 测试` | **过**=收到「还差一段合适的参考音频：3 到 10 秒的干声，我才能借到自己的音色。」（`_degrade` 参考音频分支命中；判据串靠 `3~10秒` 简繁同形侥幸命中=已知脆弱 T2 P2-2）。⚠️ **本次 400 计入 30s 退避窗（T57：`_request_tts` 失败写点收编 `_record_failure`）——窗内重发只会收到 unreachable 分支文案（「嗓子还没接上」），这不是回归；判据取窗内第一发，重测前等窗满或重启**；**不过**=首发即泛化「这次没能发出声音…」=错误体顺序回归（先跑 O5 区分层）；自动配音路径同错**静默无提示**属现状（T7 P2-5），如实记不判 fail | 引擎面先行隔离变量→E4；`_degrade` 三分支（:747-750 一带）；测完恢复 .env 备份再重启 |
+| R7 | 缺参考音频降级（旧④）【须真机 QQ】【须提权重启】【动 .env】【二次重启】 | `.env` 置 `BOT_TTS_REF_AUDIOS=[]` → 重启 → `说 测试`；再把某条路径改错（池非空但文件缺）→ 重启 → 再发 | **过**=空池收到可读引导「还没有给我配参考音频。请在 BOT_TTS_REF_AUDIOS 里填一条…」；路径错收到「配置里的参考音频文件都找不到——检查…」——**两文案分支都要见到**（`_no_ref_audio_hint` 双分支；空池分支不发 HTTP、不进退避窗）；**不过**=抛异常/无响应 | `_no_ref_audio_hint`（:753-762 一带）；离线两例在 `tests/test_tts.py`；⚠️ 本项与 R6 各烧一次重启窗口，**排最后**；R6/R7 已过可裁决豁免（用户） |
+| R8 | 缓存身份 v2+同句恒同音色（旧⑦改写）【须真机 QQ】【须提权重启】 | 同一进程存活期内连发两次 `说 今天的潮汐很安静`；再（别的重启窗口）发同一句，对新旧产物各存副本+md5、ffprobe+耳朵比对音色 | **过**=①同进程第二次**主观更快**、`tts_output/` **文件名不变不新增**（缓存命中；M-09 闸在缓存查找之后=命中不受退避影响）；②重启后同句：**再付一次完整合成属预期**（缓存仅进程内存不落盘）；缓存键=身份 v2（identity_version=2+api_url rstrip 归一+ref 指纹 sha256[:16]+stat 快路径+preset 身份+参数快照=T57/T61）⇒ **文件名与升级前存量不同（旧键 wav 全成孤儿，磁盘不清理；回收靠 `bot_tts_cache_max_bytes/max_age_days` 配额键，缺省 0/0=关=T61 U-04）**；③重启后同句再合成=**音色与之前相同**（seed 确定性派生，「同句恒同音色」=G2-R3 已裁语义变更、波末报备在案=manifest §五.1）；**不过**=同进程第二次落**新**文件（查 `BOT_TTS_CACHE_ENABLED`）；重启后同句音色变了=seed 确定性回归 | 命中/未命中无观测口（T14 债），本项只判文件面+耳朵；「同音色」以耳朵终审为准（T61 承诺同音色、不承诺字节恒等——md5 仅旁证） |
+| R9 | 自动配音总闸+ALWAYS（旧⑧）【须真机 QQ】【须提权重启】【动 .env】【二次重启】 | `.env`：`BOT_TTS_AUTO_REPLY_ENABLED=true` + `BOT_TTS_AUTO_REPLY_ALWAYS=true` → 重启 → 私聊随便聊两句 | **过**=每条人格回复**同时**带一条语音条+文字并存；**不过**=完全不带（查 SCOPE 是否 private 而你在群里测/`BOT_TTS_ENABLED` 关）；**ALWAYS 是调试旁路绝不留过夜**（catalog 自警），测完改回 false+ENABLED=false 再重启（第 2 次） | 挂点链=`__init__.py:341/:356` `should_voice_reply` 短路→`maybe_attach_voice`（行号以重启代码为准，T73 hook 化在飞〔T73 在建，默认关=现链不变〕）；自动路径失败**用户侧零提示**、只 stdout（且要 P-6）；文字面零污染是既有契约（T7 正面 5） |
+| R10 | 概率门真机统计（旧⑨改写）【须真机 QQ】【须提权重启】【动 .env】 | 同 R9 重启基础上 `ALWAYS=false`、`PROBABILITY=0.05` 私聊连发 30~40 条 | **过**=**0~3 条带语音都属正常**（30 条零命中概率≈21.5%=T7 P3-2.3；旧「一条都不带→查 PROBABILITY=0」指引**作废**）；**不过**=≥6 条带语音（查 `always` 误开/门短路——离线半先跑 O3）；「重发同一条结果恒定」半句已删（QQ 无重投同一 message_id 手段=T7 P2-3） | 概率=哈希门 `should_voice_reply`；「为什么这条没配」**无观测口**（门判否零留痕=T14 P1-3），只能统计不能归因 |
+| R11 | 会话范围最小面（旧⑪改写）【须真机 QQ】【须提权重启】 | 生产缺省（SCOPE=private+自动配音开=R9 态）时**在群里聊天** | **过**=群聊一律不配音（private 拒群）；私聊全配=R9 已证 private 面；**不过**=群里冒出配音 | `auto_reply_scope_allows`；六格矩阵离线锁 `tests/test_tts.py:754 test_auto_reply_scope_allows_matrix` 在位——全形态跑完要 2-3 次重启，性价比判：离线锁+本 1 格真机即够，group/all 两面=裁决豁免候选 |
+| R12 | 长度截断+硬顶+时长预算（旧⑬改写）〔播声依赖 T32〕〔T75 增量待落〕【须真机 QQ】【须提权重启】 | ①发 `说 <250 字带句末标点的话>`；②再发 `说 <230 字全程无任何标点和空格的话>`；③发 `说 <一段 >2000 字的话>` | **过**=①有标点→回看窗内句末标点处收尾（听感完整句止）；②无标点→硬切 200 字（`_truncate_at_sentence` 40 字回看窗内无标点即硬切——旧「按句末截断」是过强承诺）；③超硬顶 `bot_tts_hard_max_chars=2000` → **拒绝合成+可读引导文案、不拆条**，audit 记 `over_hard_cap`（T61/G2-R3）；产物字节超 `bot_tts_max_audio_bytes=8MiB` 同拒（8MiB≈131s 覆盖现 200 字档≈82s 留 50% 余量=manifest G2-R3）；时长预算：200 字≈80~90s 量级（T25 外推±15%）；清洗后为空（纯链接/代码）→纯文字发出不合成；`BOT_TTS_MAX_CHARS=0` 语义=**不限字数**（反转已修死=T61 M-35），但硬顶 2000 仍拦（0=不限≠无界=G-R-M1）；**不过**=念出超 200 字的全部内容、超顶仍合成出货、清洗空仍硬合成报错；截断可观测化增量〔T75 待落〕不写死 | `clean_for_speech`+`max_chars`（命令式 200/自动 120 **两阈值并存**=T25 P2-3，先认清发的哪条路）；⚠️ QQ 语音条时长上限与超限表现=**T32 判**，本项只量 wav 落盘时长 |
+| R13 | 打码真机·M-03（**新增**）〔播声依赖 T32〕【须真机 QQ】【须提权重启】 | 私聊发：`说 我的密钥是 sk-TESTFAKE0123456 本机路径 C:\FakeTest\secrets.env 配置写着 BOT_SUPER_ADMIN_API_KEY=FAKEVAL123`（**全假值**，纪律：勿碰真凭据） | **修前预期=不合格（如实登记）**：语音里**听到** sk 串字母/盘符念出、`tts_output/` 新 wav 内容含该段、文字面反而不出（对照：同句走 chat 会被打码）——三者任一即红，录音+ffprobe+stdout 全量 grep `sk-TESTFAKE` 留证；**修后过判据**=①语音不含该类内容（拒合成或念打码占位）②stdout/事件日志零明文。**别写成一个永远绿的项** | 修前根因链=`clean_for_speech` 前无 `redact_local_secrets`（T9 P0-3+O7 实跑）；文字侧对照行为=chat.py 打码（`plain_text.py:340`）；顺序陷阱：先清洗会把 `BOT_` 形态吃坏→修后必核 O7 判据 |
+| R14 | 红线真机·M-02（**新增**；修前不建议真机触发）〔T75 待落〕【须真机 QQ】【须提权重启】 | **修后**在私聊对含未成年红线信号的句子发 `说 <该句>`；群内（非白名单群）同做一例 | **修前**：真机**预期=能播出违规语音且 wav 常驻**（危险立案项，QQ 主动触发不建议；以 O8 离线红为证据载体）；**修后过判据**=语音不合成、收到与文字侧一致的边界话术、`tts_output/` 无新增文件；**不过**=任一环节出声/落盘。⚠️ 旧违规产物清理归 T9 P2-1（「运行数据不可删」规程叠加，用户裁），验收只登记不处置 | 修前可达链=matcher priority 41 block=True→门禁对命令句放行（gate.py 无内容判定）→`tts.py` 零内容闸；群侧现状按 **T27 矩阵**（非黑名单群未 @ 也开火；黑名单群全静默属设计）；语音群门与 `explicit_allowed_for_session` 不同源——M-17 中央同源〔T75 待落〕，落地后本项判据以其披露表为准 |
+| R15 | 静音毒语音闸（**新增**=T61 M-07 已落）〔播声依赖 T32〕【须真机 QQ】【须提权重启】 | 引擎在跑时执行 R1；对收到的语音条：听+对当次新增产物 `ffprobe -show_entries format=duration`；若引擎窗口出现推理异常，对齐观察 bot 侧行为 | **过**=①正常形态：时长与字数折算相称（R1 量级）、正常出声**零误杀**（三指纹闸对有声/短夹具/非 1s 全过=T61 用例锁）；②毒形态：引擎返 200+**恰 1s 静音 wav**（16000Hz + 0.9~1.1s + 峰值≤2 近全零，三指纹**同中**才判）→ bot 判**失败**：不落盘、不入缓存、不出站（走降级面）——**旧「静音被当成功发送并毒化缓存」形态被闸住**；**不过**=毒形态仍收到语音条/落盘=闸未接线回归；⚠️ 已知边界（如实记不判 fail）：不满足三指纹的静音形态（如 32000Hz 静音、非 1s 静音）仍会通过——域值=T53 引擎陷阱实测值，扩域属规格变更 | 闸=`tts.py` `_inspect_wav_bytes` 静音指纹（`_SILENCE_RATE=16000` 等常量，T61 M-07）；引擎兜底=`TTS.py` yield 静音段；`/bot status` 与事件日志**都看不见**毒形态（T14 全绿假象链），只能靠耳朵+ffprobe |
+| R16 | 出站现状记录：群命令/黑名单/安静时间（旧⑭真机半+**新增现状观察**）〔播声依赖 T32〕【须真机 QQ】【须提权重启】 | 三连观察，逐项记录（现状登记≠政策裁定）：①非黑名单群**未 @** 发 `说 测试`；②若用户可提供 black1/black2 群：同句发一条；③安静时间窗内私聊发 `说 测试` | **过（=记录与 T27 矩阵一致）**：①收到语音或降级文案（命令逃逸：门禁把 TTS 句当确定性命令，未 @ 也回——现状）；②black 群**完全静默**（回执被 `_record_receipt_safely` 抹空）；③安静时间照回（`direct_request_bypass`：capability_id 不在 {bot.chat,bot.content} 集合）；失败降级面：私聊=守岸人文案、**群内=中央 A-19 降级池**（S8 裁定，T70/COMMANDS 同口径）；**不过**=同一动作出现矩阵外第四形态（黑名单群出声/安静时间被拦=代码变了，先核坐标再归因）。**任何格不得引用 `BOT_GROUP_MESSAGE_POLICY`（幽灵键：全仓零消费=T27 P3-27b）** | 群终态权威=T27 二十格矩阵；black/white 名单实值自查 `bot_group_black1/black2/white1/2`；真身路径=`domains/chat_reply/policy/gate.py`（命令判定 :252-257 一带）与 `domains/chat_reply/policy/quiet_hours.py`（:120-124 一带）——旧径 `policy/*.py` 均为垫片；R4 修复合入后重跑本项，「未 @ 日常句开火」格应随劫持修复自然收窄 |
+
+**旧 14 项 → 新 30 项映射**（保留 5｜改写 9（含 2 项迁离线）｜整体删除 0——被删的是失效信号引用｜新增 13）：
+
+| 旧项 | 处置 | 去向 |
+|---|---|---|
+| ① 命令式成功 | 保留（排障列换血） | R1（+R15 静音闸） |
+| ② 触发词等价 | 保留扩面 | R2（11 词∪追加=T70） |
+| ③ 裸触发词引导 | 改写（预期反转+拆离线锚） | O2 + R3 |
+| ④ 缺参考音频 | 保留 | R7 |
+| ⑤ 服务未启动 | 改写（T57 退避真闸判据） | R5 |
+| ⑥ 越界错误透传 | 改写拆三层 | O5 + E4 + R6 |
+| ⑦ 结果缓存 | 改写（身份 v2+seed 确定性） | R8 |
+| ⑧ 自动配音总闸 | 保留 | R9 |
+| ⑨ 概率门 | 改写（0~3 条正常） | O3 + R10 |
+| ⑩ 概率门确定性 | 迁离线 | O3 |
+| ⑪ 会话范围 | 保留最小面 | R11 |
+| ⑫ 已有音频不叠加 | 迁离线（真机半=单条语音） | O4 + R1 |
+| ⑬ 长度上限 | 改写（硬顶/0=不限/两形态） | R12 |
+| ⑭ 出站链路 | 改写拆形状锁/真机记录（可播性归 T32） | O6 + R16 |
+| —— | **新增 ×13** | O1·O7/O8·E1-E6·R4·R13/R14·R15 |
+
+**无效信号处置**（旧判据为什么不能再引用）：
+- 旧①⑥异常列「日志 `tts request rejected`」——tts logger 不在 nonebot 树+INFO 级，生产必丢（T14 P1-1）：**删**；主判据=文案+产物+lineno 计数，stdout 行仅 P-6 重定向后可查。
+- 旧⑤异常列「查 `_HEALTH_BACKOFF_SECONDS`（死变量）」——T57 已接成真闸：指引改为 R5 新行为（30s 窗/快速失败/真成功清零）。
+- 旧前置②「裸敲 `api_v2.py`+空测」——错 CWD 静默回退底模+yaml 写回永久化（T2 P1-2）：改为 P-2/P-3。
+- 「离线复核手段 67 例全绿」旧口径——期望值过期+被读成「配置也被复核过」=假安心（T24 #11）：改为不写固定用例数+显式声明离线不覆盖面（见下）。
+- `verify_chatbot_env.py` 不引用（import 即崩=T24 P1-1）；配置/音色体检改走 pre_restart_check（含 T60 第 10 项）。
+- 群侧任何对 `BOT_GROUP_MESSAGE_POLICY/_ALLOW_MODE` 的依赖——幽灵键全仓零消费（T27 P3-27b）：R16 明文禁用。
+
+> **探针附录**（全文可粘贴，均落 `%TEMP%/t76/`，不落源码树；A1-A4 源=T36 §7）：
+> **A1=O1 负样本探针**：`sys.path.insert(0,".")` 后 `Config.model_validate({"bot_tts_enabled": True})` + `classify_message_route`，负样本 10 句=`说了再见/说了一半就停了/说的对/语音哈喽/念了一遍还是记不住/朗读了三遍/说了多少遍了/语音了半天没接通/说了吧/说的我脸都红了`，过=全 `RouteKind.CHAT`。扩充语料回灌源=T15 报告 §逐条误伤表（201 句）。
+> **A2=O7 打码探针**：`clean_for_speech(r"我的密钥是 sk-TESTFAKE0123456 本机路径 C:\FakeTest\secrets.env 配置写着 BOT_SUPER_ADMIN_API_KEY=FAKEVAL123 请念")`（raw 串）→ 修前三判据全中=红在位；`tts.py` 源 grep `redact`=0。
+> **A3=O8 红线探针**：同一含未成年信号（无害构造）句子分别 `assess_public_content(text, session_type="private")`（期望 refuse）与 `build_tts_capability(cfg)+monkeypatch(_request_tts)+capability(msg)`（修前期望：audio dict+临时 wav 存在；修后期望：不合成+边界话术）。判据以 T9 报告文本为准。
+> **A4=E3/E4/E5 试听生成器**：
+> `curl -G "http://127.0.0.1:9880/tts" --data-urlencode "text=今天的潮汐很安静" --data-urlencode "text_lang=zh" --data-urlencode "ref_audio_path=C:/Software/GPT-SoVITS-V2Pro/refs/shorekeeper_ref_01.flac" --data-urlencode "prompt_text=<该条参考文本逐字>" --data-urlencode "prompt_lang=zh" -o "$TEMP/t76-evidence/e3.wav" && ffprobe -hide_banner "$TEMP/t76-evidence/e3.wav" 2>&1 | tail -3`
+> 过判据：200 + `pcm_s16le 32000 Hz mono`；E4 把 `ref_audio_path` 换 `corpus_durations.csv` 里 `duration_s>10` 条目→期望 400 含 `3~10秒`；E5 把 `text` 换 `（微微一笑）今天的海风很温柔，你想我了么？`。`text_lang/prompt_lang` 必带。
+
+> **离线复核手段**（真机存疑时；用例数一律以实跑末行为准，不在文档手写）：`"$PY" -m pytest tests/test_tts.py tests/test_tts_audio_gate.py tests/test_tts_outbound_chain.py tests/test_tts_health_backoff.py tests/test_tts_cache_identity.py tests/test_tts_presets.py tests/test_tts_contract_layer.py tests/test_tts_hijack_guard.py tests/test_tts_failure_visibility.py tests/test_tts_speech_gate.py tests/test_text_boundary_central.py -q -p no:cacheprovider --basetemp="$TEMP/t76/pt"`。本席（T76）2026-09-20 实跑抽检两批 **216 passed / 0 failed**（O 相引用节点 93 + 四件 123）。**证明力边界（显式声明）**：离线手段**不覆盖** `.env` 实值、引擎行为、音频时长/音色/可播性（T32）、QQ 出站——这些只能走 E/R 相。
+> **参考音频池**：已落盘 8 条（`C:\Software\GPT-SoVITS-V2Pro\refs\shorekeeper_ref_01..08.flac`，48000Hz 单声道——这是**参考音频**率，合成产物是 32000Hz，两率勿混读=T25 §5）。扩池合规面按 T24 修正口径（全库合规 289 条/甜点区 117 条，旧 291/118 为虚增）。
+> **收尾纪律**：全部通过后在本节打勾回写，并按台账规矩在 AGENTS.md 记重启生效（tts 链路在主进程）；任一项不符按 §6.6 收尾纪律走 systematic-debugging；「修前预期=红」项（O7/O8/R13/R14 修前半）在修复立项施工前**保持红态登记**，不得粉饰。
