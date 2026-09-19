@@ -1,4 +1,19 @@
 # 守岸人 Bot 交接总手册（HANDBOOK · 单一活文档）
+> **术语说明（2026-09-20）**：本文中的 **NapCat** 指 2026-09-18 之前的 QQ 协议端（当时实况记录，保留原文不改写）；现役协议端为 **SnowLuma**，见 [snowluma-setup.md](snowluma-setup.md)。
+
+## 当前交接记录：后端 V2.1（2026-09-17，仅文档）
+
+当前任务与目标以[HANDOFF-NEXT顶部](../HANDOFF-NEXT.md)为入口；[完整规范](design/backend-v2-implementation-guide.md)、[产品扩展](design/backend-v2-product-extensions.md)、[验收矩阵](design/backend-v2-acceptance-matrix.md)共同替代旧实施计划。下方历史测试/完成状态不继承为本版通过证据。
+
+本轮补齐：强隔离与资源管理、统一后端服务/协议/出站，LLM/TTS/绘图缓存与多单位计费，运行自愈/待审代码修复，好感度拒答误扣与单位重放方案，运势与塔罗，全场景日程，戳/Emoji/Sticker/Meme，九平台搜索，admin结构化故障与真实媒体验收，函数/参数/help/README的确定性投影。
+
+好感度源码风险已登记，用户一晚下降四十多点的实际因果仍unknown，未读取生产DB或补偿分数。没有生产代码/配置/部署改动；新增API与命令尚非可用功能。实施能用子代理就用子代理、时刻保持并行满载（限流为唯一上限，撞墙落盘保进度、结束即补派、前台派完即收不卡输出），阶段不停工、已授权不重复问；代码自修补丁不自动部署。文档文件清单与实际检查证据见[progress](../progress.md)，实施状态只在验收矩阵绑定新鲜证据维护。
+
+> **最新续接：动作API路由/错误码已修正，隔离工作区CRUD/预览/确认/模拟发送与默认生成装配已落地；真实会话生产发送、完整后端仍未完成。最新实跑及runtime-layout阻断见 `docs/design/COMPACT-CHECKPOINT.md` 顶部。**
+
+
+> **最新串行增量：15个细分执行开关、Bot/NoneBot日志摘要采集、Telegram getUpdates网络韧性修复。详情与实跑结果见 `docs/design/COMPACT-CHECKPOINT.md` 顶部；协议见 `control-plane-registry.md`、`control-plane-events.md`。能用子代理就用子代理、并行满载（限流为唯一上限，撞墙落盘保进度、结束即补派、前台派完即收不卡输出）；未部署、完整后端未完成。**
+
 
 > **定位：全部交接文档合并后的单一活文档。** Part 0 = 入口/族谱/总账/现行事实（本部分）；Part II = 权威正文（原 handoff-2026-09-10-full 全文，含 4 处 2026-09-12 勘误，已就地生效）。接手者读完 Part 0 按 §三 总账领任务，细节按 Part II 对应节查阅。
 > **来源（2026-09-12 整理）**：本文由 `handoff-MASTER-2026-09-11.md`（入口+总账）与 `handoff-2026-09-10-full.md`（权威正文）合并而成；其余 26 份过时交接/期报/计划文档已压缩归档至 `ChatBot_Archive\2026-09-12\docs-archive-2026-09-12.zip`（zip 内含 manifest.md 逐份缘由清单），git 历史亦全量可溯。**收口批（同日）折算删除 5 份**（full/MASTER 原件之外含三份会话增量，final 全账→本文 §18），原件同 zip+git 可溯（明细见 §四 增补）。
@@ -69,7 +84,7 @@
 
 | 项 | 来源 | 备注 |
 |---|---|---|
-| NapCat/生产 bot 提权重启 | full §9 | **最高优先**；~~重启前先提交 bot.py 修复~~ 已入库（f4e29a2），前置全部满足，仅剩提权动作 |
+| SnowLuma/生产 bot 提权重启 | full §9 | **最高优先**；~~重启前先提交 bot.py 修复~~ 已入库（f4e29a2），前置全部满足，仅剩提权动作 |
 | B站/X/知乎/linux.do cookie、微博重灌 | full §9/§15 | `/bot cookie import`，灌后触发 A-3/A-4/A-5 回归 |
 | umi 充值、QIANQIANYE 换 key、ds-official key、toolcode-gemini 下架 | full §9 | 渠道运维 |
 | 21 平台真实分享链接、QQ 订阅推送目标 | full §15 | 供 A-5/C-6 实测 |
@@ -130,7 +145,7 @@
 
 ## 1. 系统现状快照（2026-09-10 05:30）
 
-- **产品形态**：NoneBot2 + OneBot V11（NapCat）QQ 聊天机器人，人格「守岸人」（泰提斯系统），附带 Telegram / Mail / Console 适配器。功能完整、持续迭代的 alpha，不是完成态生产版。
+- **产品形态**：NoneBot2 + OneBot V11（SnowLuma，2026-09-18 起现役；此前为 NapCat）QQ 聊天机器人，人格「守岸人」（泰提斯系统），附带 Telegram / Mail / Console 适配器。功能完整、持续迭代的 alpha，不是完成态生产版。
 - **已上线能力**：统一消息管线、57 个平台注册条目的链接解析（37+ 平台，Mica 卡图渲染）、5 供应商音乐点歌（卡图+语音+候选选择卡）、四家搜索 API、45 条目模型路由（渠道化+健康巡检+延迟择优 v2+影子并发）、记忆/人格/好感度 v3/知识库、安全防线、订阅推送（含权限模型）、运维告警、视频理解（在途）、吃什么、天气、免费游戏、搜图。
 - **测试基线**：865 passed / 0 failed（0910 05:00 快照，`dev.ps1 -Task test`，31s）。lint/typecheck 的残余红项全部位于并行会话在途文件（见 §11.3 归属表），**历史经验：这些红会随对应会话交付自愈**。
 - **进程现状**：生产 bot = PID 44708（09-09 23:17 启动，管理员权限），持有 8080 LISTENING + 3001 ESTABLISHED。**它运行的是 09-09 的代码与 .env**——09-10 全天交付（含 Gemini 置顶、算法 v2、审计 17 项修复）**全部待重启生效**。重启被管理员权限阻塞（详见 §4.3）。
@@ -150,14 +165,14 @@
 ## 3. 架构与消息主链路（六段）
 
 ```text
-NapCat(OneBot V11 WS 服务端 127.0.0.1:3001, token ShoreKeeper)
-  → [段6入口] NoneBot Adapter（forward-WS 客户端，.env.prod ONEBOT_WS_URLS；NapCat 起来后自动重连）
+SnowLuma(OneBot V11 WS 服务端，主号 3958874605→127.0.0.1:3001 / 学校号 2300230562→127.0.0.1:3002，同一实例挂两号；令牌见 .env.prod ONEBOT_WS_URLS)
+  → [段6入口] NoneBot Adapter（forward-WS 客户端，.env.prod ONEBOT_WS_URLS；SnowLuma 起来后自动重连）
   → _incoming_from_nonebot_event() → IngressGateway → IncomingMessage
   → 路由/权限/限流/安静时间/群策略（幂等表可选，默认关）
   → RuntimePipeline（offload 到线程池；09-10 起为聊天专用有界池，见 §7.9）→ CapabilityResult
   → Review/文本整理/媒体投影 → RenderedOutput → SendRequest
   → SendQueue(SQLite) → UnifiedDeliveryGateway
-  → sender.onebot（QQ 富消息）→ NapCat
+  → sender.onebot（QQ 富消息）→ SnowLuma
 ```
 
 LLM 子链路（段 1-5，09-10 检视后的现状）：
@@ -168,7 +183,7 @@ LLM 子链路（段 1-5，09-10 检视后的现状）：
 [段3] messages 组装：人格 Prompt（预算 人设>知识库>短时>长时）+ [UNTRUSTED_USER_TEXT] 包裹 + vision direct data URL
 [段4] 回复接收：reasoning_effort 不支持自动去参重试 → failover（受 150s 总预算钳制）
 [段5] 输出整理：plain_text 去噪 + 说人话层 + budget 切分 + 失败话术池（私聊）
-[段6] sender.onebot CQ 组装 → NapCat（musicSignUrl 规避、媒体顺序、分片超时）
+[段6] sender.onebot CQ 组装 → SnowLuma（musicSignUrl 规避、媒体顺序、分片超时）
 ```
 
 关键文件：`bot.py`（启动+崩溃守卫）；`plugins/bot_unified_runtime/__init__.py`（handler 装配与能力分发，约 4700 行，**多会话热区**）；`runtime/pipeline.py`、`runtime/ingress.py`；`llm/model_router.py`、`llm/channel_health.py`、`llm/providers.py`；`capabilities/chat.py`（约 2400 行，**多会话热区**）；`sender/onebot.py`、`sender/queue.py`、`sender/gateway.py`、`sender/receipts.py`。
@@ -191,7 +206,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 
 - `dev.ps1` 启动（run/run-watch）把输出重定向到 `ChatBot_Runtime/logs/nonebot.out.log`；手动控制台启动不落盘。分离式启动参考（09-10 实用）：
   `Start-Process -FilePath <venv>\python.exe -ArgumentList 'bot.py' -WorkingDirectory <仓库根> -WindowStyle Hidden -RedirectStandardOutput <Runtime>\logs\nonebot.out.log -RedirectStandardError ...\nonebot.err.log`
-- NapCat：`C:\Software\NapCat\login-bot.bat`（快速登录守岸人 3958874605）。验证：`netstat -ano | findstr 3001` 出 LISTENING（NapCat）+ bot 进程 ESTABLISHED。
+- SnowLuma（现役协议端）：双击 `C:\Software\SnowLuma\launcher.bat`（自带 node.exe，内部 `node ./index.mjs`）启动；QQ 正常登录后，在 WebUI `http://127.0.0.1:5099`「进程注入」页对目标 `QQ.exe` 主进程点「加载」，状态到「已在线」才算接上（运行期手动注入，默认 `hookAutoLoad=false` 不自动注入）。验证：`netstat -ano | findstr "3001 3002"` 出 LISTENING（SnowLuma）+ bot 进程 ESTABLISHED。日志：`C:\Software\SnowLuma\logs\snowluma-YYYY-MM-DD.log`（按日期分文件；旧 NapCat 的 `logs\` 为空，其日志指引已失效）。
 
 ### 4.3 重启的权限陷阱（09-10 实踩）
 
@@ -240,11 +255,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 - 解析层其他要点：B站直播主通道 Room/get_info（getInfoByRoom 匿名常态 -352）；专栏 -509/-352 瞬态风控短停重试一次；小红书笔记页 playwright 兜底（裸 http 间歇 403/461）；**剥 `!` 后缀已撤回**（2026 版 xhscdn 签名路径内含 `!nd_dft_*`，剥掉 200→403），高质量档走 info_list WB_DFT；naive 时间一律按北京时间解释（contracts 契约层根治）；ORB 拦 sinaimg 灰图由 render_backends route 兑子解决。
 
 ### 6.3 卡片渲染（Mica 规范）
-管线：`capabilities/content_parser.py:render_card_png`（ParsedContent → payload → HTML → playwright 常驻浏览器截图）→ `output/card_render/`（bridge + `templates/`）。规范铁律：底色唯一来源 `PLATFORM_COLORS`（bridge.py）经 `--pc` 变量 `color-mix` 掺白派生（外壳 5-11%、面板 4-8%），**禁写死品牌色**；单柔光阴影；字重 ≤700；body 透明（omit_background 依赖）；`.card` 根元素承载截图。已接卡：链接解析（universal_card）、点歌成功卡、**点歌候选选择卡**（`song_candidates.html`+`bridge.render_song_candidates_html`，渲染失败逐字回退纯文本零回归）、帮助、天气、免费游戏、好感度（`affinity_card.html`）、会员购（嘉宾独立卡区）。
+管线：`capabilities/content_parser.py:render_card_png`（ParsedContent → payload → HTML → playwright 常驻浏览器截图）→ `output/card_render/`（bridge + `templates/`）。规范铁律：底色唯一来源 `PLATFORM_COLORS`（bridge.py）经 `--accent` 变量 `color-mix` 掺白派生（外壳 5-11%、面板 4-8%），**禁写死品牌色**；单柔光阴影；字重 ≤700；body 透明（omit_background 依赖）；`.card` 根元素承载截图。已接卡：链接解析（universal_card）、点歌成功卡、**点歌候选选择卡**（`song_candidates.html`+`bridge.render_song_candidates_html`，渲染失败逐字回退纯文本零回归）、帮助、天气、免费游戏、好感度（`affinity_card.html`）、会员购（嘉宾独立卡区）。
 **渲染技术要点（09-10 淀淀）**：新模板**不要加 `<meta viewport>`**（触发 Chromium 移动模式缩放怪癖，整页被缩一半）；`.card` 用 `width: fit-content` 让元素截图收紧；viewport 要容住壳宽（候选卡 1028 壳 → viewport 1040）；验证手法=像素采样（柔光阴影 alpha<4% 合格，查看器把半透明红合成到黑底会误判成「实色环」）。改卡后必跑三门禁+样例截图核对（临时脚本放 %TEMP%）。死模板已清理（Compact 音乐版式七块+写死色违规源）。
 
 ### 6.4 音乐点歌
-5 供应商（网易云/QQ/酷狗/酷我/Apple Music+Spotify 解析）；模式 `card+voice+link` 可组合（`点歌模式`）；多候选编号选歌（TTL 300s，按 session+sender 隔离）：歧义候选出 Mica 候选选择卡；QQ 端成功卡替代 CQ:music（NapCat 无 musicSignUrl 拒签会中断整条消息）。09-10 加固：裸歌名精确命中才跳过候选列表（旧 exact_hits 一票否决导致「后来 钢琴版」直接放同名翻唱）；编号无会话明确提示；`limit` 全平台透传（`BOT_MUSIC_CANDIDATES_LIMIT` 不再被硬编码 5 截断）；酷狗详情复用 parse_kugou 富化（封面/标题）；QQ 搜索迁移 musicu.fcg（旧端点恒 500）；酷我 r.s 搜索服务端劣化返回非 JSON（已知边界，候选链可用）。
+5 供应商（网易云/QQ/酷狗/酷我/Apple Music+Spotify 解析）；模式 `card+voice+link` 可组合（`点歌模式`）；多候选编号选歌（TTL 300s，按 session+sender 隔离）：歧义候选出 Mica 候选选择卡；QQ 端成功卡替代 CQ:music（NapCat 时期无 musicSignUrl、拒签会中断整条消息，该规避沿用至 SnowLuma）。09-10 加固：裸歌名精确命中才跳过候选列表（旧 exact_hits 一票否决导致「后来 钢琴版」直接放同名翻唱）；编号无会话明确提示；`limit` 全平台透传（`BOT_MUSIC_CANDIDATES_LIMIT` 不再被硬编码 5 截断）；酷狗详情复用 parse_kugou 富化（封面/标题）；QQ 搜索迁移 musicu.fcg（旧端点恒 500）；酷我 r.s 搜索服务端劣化返回非 JSON（已知边界，候选链可用）。
 
 ### 6.5 搜索 API
 Tavily 主、You.com 备、LangSearch 备、TinyFish 搜索+抓取；不接 Bing；链式回退+瞬时重试。验收 `dev.ps1 -Task search-smoke`。已知性能点（管线检视 #5）：非 fast 模式多 query 串行检索最坏 30-40s（fast_mode 默认开掩盖），待并发化。
@@ -275,8 +290,8 @@ Tavily 主、You.com 备、LangSearch 备、TinyFish 搜索+抓取；不接 Bing
 - 视频理解（**并行会话在途**）：`sources/video_understanding.py`/`transcribe.py`/`runtime/video_pipeline.py` 未跟踪+`chat.py` 接线未提交，深挖预算协调（管线检视 #1 High）在该批落地时一并处理。
 - 吃什么：60 道本地库+LLM 约束推荐+Mica 卡；`_RECENT` 有界+锁（C组修）。
 
-### 6.14 发送层（NapCat）
-CQ 组装规避 musicSignUrl 拒签；分片发送超时按段钳下限；队列 SQLite 重试/裁剪；回执对账闭环（部分送达即停，无重复投递）；租约协议单 worker。已知残留（管线检视 #6/#13，热区待其会话）：NapCat 断线 >2 分钟排队回复被丢弃（bot_unavailable 计 attempts）；queue/receipts 每操作新开连接。
+### 6.14 发送层（SnowLuma）
+CQ 组装规避 musicSignUrl 拒签；分片发送超时按段钳下限；队列 SQLite 重试/裁剪；回执对账闭环（部分送达即停，无重复投递）；租约协议单 worker。已知残留（管线检视 #6/#13，热区待其会话）：协议端（SnowLuma）断线 >2 分钟排队回复被丢弃（bot_unavailable 计 attempts）；queue/receipts 每操作新开连接。
 
 ## 7. 排障手册（09-10 增补版）
 
@@ -284,7 +299,7 @@ CQ 组装规避 musicSignUrl 拒签；分片发送超时按段钳下限；队列
 |---|---|---|
 | 「改动没生效」 | 进程启动时间 vs 提交时间（`Get-Process python`） | 重启 bot；确认无第二实例 |
 | 杀不掉旧 bot | 管理员权限进程（拒绝访问） | 用户提权杀；勿在其存活时启新实例 |
-| NapCat 登录冲突/3001 不监听 | QQ 多代际并存 | 提权清场→`login-bot.bat`；bot 自动重连 |
+| SnowLuma 3001/3002 不监听/未接上 | SnowLuma 是否已启动；WebUI「进程注入」页有无目标 QQ.exe、状态是否「已在线」 | 先双击 `launcher.bat` 起 SnowLuma、再起 QQ，然后在 WebUI 点「加载」至「已在线」；QQ 多代际并存时提权清场只留主进程；bot 自动重连 |
 | B站直播/专栏 -352/-509 | 匿名风控（cookie 缺失） | 灌 B站 cookie；专栏已有短停重试 |
 | 知乎/微博/linux.do 403/432 | 凭据缺失或过期 | `/bot cookie import` 重灌 |
 | 音乐搜索 UnicodeEncodeError | URL 裸中文（酷狗 tagtype 类） | percent-encode（酷狗已修，警惕同型） |
@@ -341,13 +356,13 @@ CQ 组装规避 musicSignUrl 拒签；分片发送超时按段钳下限；队列
 | `BOT_API_KEY_QIANQIANYE` | 浅夜主 key 401×3 | 后台换新 key |
 | ds-official key | no_api_key×3 | 配 `BOT_API_KEY_DEEPSEEK_OFFICIAL` |
 | toolcode-gemini | 404 已下架 | `/bot model remove` 或换模型 |
-| NapCat 提权重启 | 全部新代码/.env 未生效 | 管理员 shell 杀 44708/11936 后重启 |
+| SnowLuma 提权重启 | 全部新代码/.env 未生效 | 管理员 shell 结束旧协议端进程（09-10 快照 PID 44708/11936，NapCat 时期）后按 SnowLuma 流程重启 |
 | 21 平台真实分享链接 | 无固定样例未实测 | 提供链接后逐个补测 |
 
 ## 10. 待办清单（下一波认领参考）
 
 **用户动作**（上表）之外，代码侧已知待办：
-1. **管线检视余 10 条**（`pipeline-review-report.md`，全带 file:line 与修法；**#9 知识文件 mtime 缓存已由 C组 09-10 晚完成销项**）：#1 媒体预算与 150s 请求预算协调（视频会话落地时一并）；#2 providers.py HTTP 400 分类（可转移/去参重试）；#7 urllib→httpx.Client 单例+read 限长；#5 多 query 并发检索；#6 NapCat 断线 bot_unavailable 不计 attempts；#8 MCP 负缓存 TTL；#10 分片超时下限；#11 工具循环空文本收尾轮；#12 失效审计标签；#13 queue/receipts 长连接。
+1. **管线检视余 10 条**（`pipeline-review-report.md`，全带 file:line 与修法；**#9 知识文件 mtime 缓存已由 C组 09-10 晚完成销项**）：#1 媒体预算与 150s 请求预算协调（视频会话落地时一并）；#2 providers.py HTTP 400 分类（可转移/去参重试）；#7 urllib→httpx.Client 单例+read 限长；#5 多 query 并发检索；#6 协议端断线 bot_unavailable 不计 attempts（任务立项于 NapCat 时期，即 B-4）；#8 MCP 负缓存 TTL；#10 分片超时下限；#11 工具循环空文本收尾轮；#12 失效审计标签；#13 queue/receipts 长连接。
 2. **chat.py 三项延后**（C组登记）：MCP 缓存中毒、输出预算装箱、记忆抽取线程池——同因待视频会话落地。
 3. **`__init__.py` 好感度 dispatch 接线**已在工作树，随视频会话提交落地。
 4. **测试树清理**：~~`tests/test_perf_*.py`（5 个）评估归档~~ **已评估（C组 09-10 晚）：全部保留**——实为性能改造批次的离线行为契约回归（30 用例，无计时断言），非重复职责、且是若干契约的唯一覆盖点，详见 §15 C-4。untracked 的 `-b` 垃圾文件已清（如再生是某会话命令 typo）。
@@ -400,7 +415,7 @@ git write-tree && git commit-tree <tree> -p <parent> -m "msg"
 | 管线检视报告（13 条，file:line+修法） | 同目录 `pipeline-review-report.md` |
 | C组审计报告（36 项） | `docs/capability-audit-2026-09-10.md` |
 | 好感度设计文档（v3） | `docs/affinity-design.md` |
-| 用户手册层命令 | `COMMANDS.md`；验收手册 `docs/acceptance-manual.md`；NapCat `docs/napcat-setup.md` |
+| 用户手册层命令 | `COMMANDS.md`；验收手册 `docs/acceptance-manual.md`；SnowLuma `docs/snowluma-setup.md`（NapCat 回滚件操作归 `docs/napcat-setup.md`） |
 | .env 备份（09-10 两次） | `%TEMP%/bot_bgroup_backup/env.bak-20260910`、`env.bak2-20260910` |
 | 源码树 data/ 清理备份 | `%TEMP%/bot_bgroup_backup/data_src_backup/`（497MB） |
 | 实测脚本（可复跑） | `%TEMP%/bot_bgroup/`：`platform_matrix.py`、`probe_umi.py`、`test_subscribe_fetch.py`、`render_candidates_sample.py` |
@@ -470,7 +485,7 @@ git write-tree && git commit-tree <tree> -p <parent> -m "msg"
 | C4 | `__init__.py` | 凭据健康巡检 `check_credentials_and_report`（同步 urllib 串行）to_thread 下放 |
 | C5 | `__init__.py` | `run_code_debug`（同步 subprocess 15s）与大文件 write_bytes to_thread 下放 |
 | C6 | `__init__.py` | 每消息被动好感度感知块（observe/classify/learn/小名自学，多次同步 SQLite）包 `_passive_affinity_perception()` 后 to_thread 下放 |
-| C7 | `__init__.py` | `get_record` 预转码加 `asyncio.wait_for(20s)`，超时保留原段（NapCat 挂起不再永久卡住该用户） |
+| C7 | `__init__.py` | `get_record` 预转码加 `asyncio.wait_for(20s)`，超时保留原段（NapCat 时期挂起前科，该防护对现协议端 SnowLuma 同样有效） |
 | C8 | `__init__.py` | 订阅推送两处 f-string 字面 `\n` 改真实换行 |
 | C9 | `__init__.py` | 三处 `sub_ctx["store"]` 改 `.get` 判空→「订阅运行时未启动」文本结果（不再 KeyError 静默吞命令） |
 | C10 | `__init__.py` | (a) 小名学习正则加 `(?<!别)(?<!不要)(?<!不许)(?<!不准)` 否定排除；(b) 小名软点名只记 `name_mention_only` 不再置 `mentions_bot`——white1/未名单群不再因常用词小名全群触发 LLM（white2 判定不变；@硬点名/私聊不变） |
@@ -612,10 +627,10 @@ PYTHONDONTWRITEBYTECODE=1 "ChatBot_Runtime\venv\Scripts\python.exe" -m pytest te
 
 ### 14.0. 三分钟速览
 
-- **是什么**：QQ（NapCat/OneBot V11）为主的多人设聊天机器人，附带 Telegram / Mail / Console 适配器。核心能力：37+ 平台链接解析（Mica 卡图渲染）、多供应商点歌（候选选歌卡+歌曲卡+语音）、模型路由与渠道健康巡检、记忆/人格/好感度/向量知识库、订阅推送、搜索 API、内容安全防线。
+- **是什么**：QQ（SnowLuma/OneBot V11，2026-09-18 前为 NapCat）为主的多人设聊天机器人，附带 Telegram / Mail / Console 适配器。核心能力：37+ 平台链接解析（Mica 卡图渲染）、多供应商点歌（候选选歌卡+歌曲卡+语音）、模型路由与渠道健康巡检、记忆/人格/好感度/向量知识库、订阅推送、搜索 API、内容安全防线。
 - **代码规模**：插件主包 `plugins/bot_unified_runtime/`；`__init__.py` 约 5280 行（handler 装配/能力分发）；`config.py` **509 个配置字段**（bot_* 口径）；解析器 34 个文件；测试文件数以 `docs/auto-facts.md` 机器册为准（随批重录），用例数以实跑输出为准。
 - **验证基线**：`dev.ps1` 三门禁 = 全量 passed（**以最近一次实跑输出为准，勿引用历史数字**；下述 865 passed 为 2026-09-10 时点快照）/ ruff 全过 / mypy 零错（树内常有并行会话在途文件的少量 mypy 残留，见 §14.19）。
-- **一句话架构**：NapCat(WS 服务端 127.0.0.1:3001) ← bot(forward-WS 客户端) → IngressGateway → 路由/风控 → RuntimePipeline → CapabilityResult → 渲染(HTML→PNG 卡图) → SendQueue(SQLite) → 各适配器 sender。
+- **一句话架构**：SnowLuma(WS 服务端 127.0.0.1:3001/3002，同一实例两号) ← bot(forward-WS 客户端) → IngressGateway → 路由/风控 → RuntimePipeline → CapabilityResult → 渲染(HTML→PNG 卡图) → SendQueue(SQLite) → 各适配器 sender。
 - **最重要的三条纪律**（踩过实坑）：
   1. **密钥永不入库不入聊天**：真实 key 只在 `.env`（gitignored），配置里用 `env:变量名` 间接引用，且对应的 `bot_api_key_*` Config 字段**必须存在**（缺字段=env: 解析失败=整渠道失效，09-09 事故根因）。
   2. **commit 禁用 `git add -A`**：本仓库常有 2~3 个 AI 会话并行工作，`-A` 会裹挟别人未提交的半成品；只 `git add <明确路径>`。同理**共享 index 陷阱**：别的会话可能已把文件 `git add` 进暂存区，`git commit`（不带路径参数）会连他们的暂存一起提交——提交前 `git diff --cached --stat` 检查，或事后在 handoff 存证（f96d1a1 即实例）。
@@ -668,7 +683,7 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\
 │   ├── logs\nonebot.out.log     ← dev.ps1 启动重定向日志
 │   └── git\                     ← git 元数据外置目录（见 §14.18 git 陷阱）
 ├── ChatBot_Archive\             ← 归档区（历史/旧工作树，压缩后移入）
-└── C:\Software\NapCat\          ← NapCat 本体 + login-bot.bat（快速登录脚本）
+└── C:\Software\SnowLuma\        ← SnowLuma 本体（launcher.bat 启动、WebUI 5099，详见 docs/snowluma-setup.md；C:\Software\NapCat\ 保留作回滚路径）
 ```
 
 **路径重映射规则**（`scripts/runtime_paths.py` + `config.py` + `cookies.py` 各有一份等价实现）：
@@ -679,8 +694,8 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\
 ### 14.2. 消息主链路（逐跳）
 
 ```text
-QQ 客户端 ⇄ NapCat（OneBot V11 正向 WS 服务端，127.0.0.1:3001，token=ShoreKeeper）
-   ↑↓ forward-WS（.env.prod ONEBOT_WS_URLS；NapCat 重启后 bot 自动重连）
+QQ 客户端 ⇄ SnowLuma（OneBot V11 正向 WS 服务端，主号 127.0.0.1:3001 / 学校号 127.0.0.1:3002，同一实例；令牌见 .env.prod ONEBOT_WS_URLS）
+   ↑↓ forward-WS（.env.prod ONEBOT_WS_URLS；SnowLuma 重启后 bot 自动重连）
 bot.py（NoneBot 初始化 + 崩溃守卫：主循环异常自动重启；TG 轮询过滤器在此）
    → plugins/bot_unified_runtime/__init__.py
       ① _incoming_from_nonebot_event() → IngressGateway → IncomingMessage（严格 pydantic 模型）
@@ -730,10 +745,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 ```
 
 **启动顺序**：
-1. NapCat：`C:\Software\NapCat\login-bot.bat`（UAC 确认，快速登录守岸人 3958874605）。
-   验证：`netstat -ano | findstr 3001` 出 LISTENING。
-2. bot：`ChatBot_Runtime\venv\Scripts\python.exe bot.py`（或 dev.ps1 -Task run）。
-   确认**只有一个实例**（先查进程启动时间再查代码！）。bot 起来后自动连 NapCat。
+1. SnowLuma：双击 `C:\Software\SnowLuma\launcher.bat`（自带 node.exe，内部 `node ./index.mjs`）。
+   WebUI `http://127.0.0.1:5099`；验证：`netstat -ano | findstr "3001 3002"` 出 LISTENING。
+2. QQ 客户端：正常启动 `C:\Software\Tencent\QQNT\QQ.exe`，登录主号 3958874605 / 学校号 2300230562。
+3. 注入：SnowLuma 为**运行期手动注入**（默认 `hookAutoLoad=false`，不会自动注入）——QQ 起来后，
+   在 WebUI「进程注入」页对目标 `QQ.exe` 主进程点「加载」，状态走到「已在线」才算接上。
+4. bot：`ChatBot_Runtime\venv\Scripts\python.exe bot.py`（或 dev.ps1 -Task run）。
+   确认**只有一个实例**（先查进程启动时间再查代码！）。bot 起来后自动连 SnowLuma。
 
 **绕开 dev.ps1 直接跑 python/pytest 的铁律**：必须 `PYTHONDONTWRITEBYTECODE=1` + pytest 加 `--basetemp=<源码树外目录>`，否则源码树会出现 `__pycache__`/.pytest_cache（runtime-layout 会报，且违反工作区规范）。
 
@@ -878,7 +896,7 @@ CapabilityResult → content_parser.render_card_png(backend, item, config, card_
 
 #### 14.6.2 Mica 规范（AGENTS.md 硬规则）
 
-- 底色渐变唯一来源：`PLATFORM_COLORS`（bridge.py:40，bilibili #fb7299 / xhs #ff2442 / weibo #e6162d / youtube #f00 / twitter #1d9bf0 / netease #c20c0c / qqmusic #00c853 / kugou / kuwo / apple_music / spotify / douyin / pixiv / lofter / allcpp / facebook / instagram），经模板 `--pc` 变量 `color-mix(in srgb, var(--pc) N%, #fff)` 掺白派生。**禁止写死品牌色**（含岸宝粉）——历史上大会员徽章写死 #fb7299 曾把全平台染成B站粉（已修为 --pc 派生）。语义状态色（认证金/错误红）不算品牌色。
+- 底色渐变唯一来源：`PLATFORM_COLORS`（bridge.py:40，bilibili #fb7299 / xhs #ff2442 / weibo #e6162d / youtube #f00 / twitter #1d9bf0 / netease #c20c0c / qqmusic #00c853 / kugou / kuwo / apple_music / spotify / douyin / pixiv / lofter / allcpp / facebook / instagram），经模板 `--accent` 变量 `color-mix(in srgb, var(--accent) N%, #fff)` 掺白派生。**禁止写死品牌色**（含岸宝粉）——历史上大会员徽章写死 #fb7299 曾把全平台染成B站粉（已修为 --accent 派生）。语义状态色（认证金/错误红）不算品牌色。
 - 阴影只允许 `--mica-shadow` + `--mica-shadow-soft` 两枚 token；圆角 `--r-shell/--r-panel/--r-tile`；字重≤700；`body` 透明背景+antialiased。
 - `song_candidates.html`/`affinity_card.html` 为独立模板（B组/C组产），同样遵守派生规范。
 
@@ -926,7 +944,7 @@ bridge 对 `payload.text/summary/forward.text/repost.text` **预 html.escape**�
 
 #### 14.7.2 成功卡与发送（_render_hit）
 
-优先级：**Mica 歌曲卡 PNG**（`_render_music_card_png` → render_card_png，失败 warning 日志）> **封面直链** > CQ:music 签名卡（最后——NapCat 缺 musicSignUrl 会拒签并中断整条消息）。语音：`mode` 含 voice 时音频下载（ffmpeg 转 OGG/OPUS，失败降级）。实测真实数据：网易云《晴天》搜索→候选卡→编号选择→成功卡（封面/歌手/专辑/平台色全对）+语音。
+优先级：**Mica 歌曲卡 PNG**（`_render_music_card_png` → render_card_png，失败 warning 日志）> **封面直链** > CQ:music 签名卡（最后——NapCat 时期缺 musicSignUrl 会拒签并中断整条消息，该规避沿用至 SnowLuma）。语音：`mode` 含 voice 时音频下载（ffmpeg 转 OGG/OPUS，失败降级）。实测真实数据：网易云《晴天》搜索→候选卡→编号选择→成功卡（封面/歌手/专辑/平台色全对）+语音。
 
 #### 14.7.3 供应商现状（实测 2026-09-10）
 
@@ -984,7 +1002,7 @@ bridge 对 `payload.text/summary/forward.text/repost.text` **预 html.escape**�
 | 搜图 | image_search.py | SauceNAO |
 | 萌娘 | moegirl.py + sources/moegirl.py | KB 优先 |
 | 历史/回忆 | today_history.py | 本地 365 天库 |
-| 戳一戳 | poke.py | NapCat poke/反戳（真实事件验收仍待） |
+| 戳一戳 | poke.py | QQ poke/反戳（NapCat 时期登记，真实事件验收仍待，现需在 SnowLuma 上验收） |
 | 运维 | runtime_admin.py / debug.py / runtime_logs.py | `/bot model` 族、注册表 source=env 语义（.env 实时为准，明文永不落盘） |
 | 文件 | file_exchange.py / group_files.py / download.py | 群文件/下载 |
 | 表情包 | meme.py / meme_library.py | httpx Client 单例（修过连接池泄漏） |
@@ -1014,8 +1032,8 @@ bridge 对 `payload.text/summary/forward.text/repost.text` **预 html.escape**�
 | 症状 | 第一步诊断 | 处置 |
 |---|---|---|
 | 改动"没生效" | 进程启动时间 vs 最后提交时间（Get-Process python） | 重启 bot；确认无第二实例 |
-| NapCat 3001 不监听/重复登录 | `Get-Process QQ \| Select Id,StartTime` 查多代际并存 | 提权清场（先杀看门狗父进程再杀 QQ/QQEX/NapCatWinBootMain）→ login-bot.bat；bot 自动重连 |
-| NapCat 二维码不刷新 | 日志「未找到对应版本的偏移数据」 | QQ 构建号超出 NapCat 支持表——上游问题；启动后 2 分钟内扫首码 |
+| SnowLuma 3001/3002 不监听/未接上 | `launcher.bat` 是否已启动；`Get-Process QQ \| Select Id,StartTime` 查多代际并存 | 进程注入页看不到 QQ 就确认 QQ 是否真在跑、权限是否与 SnowLuma 一致；QQ 多代际并存时提权清场只留主进程，再对主进程点「加载」至「已在线」；bot 自动重连 |
+| QQ 登录二维码不刷新/注入到不了「已在线」 | 查 `C:\Software\SnowLuma\logs\snowluma-YYYY-MM-DD.log`（按日期分文件） | QQ 构建号超出协议端支持表——上游问题；启动后 2 分钟内扫首码；旧 NapCat「偏移数据」报错仅适用回滚场景（`docs/napcat-setup.md`） |
 | 点歌没有候选卡 | 1) 配置开关 2) 裸歌名精确命中（设计如此）3) 渲染失败日志 | 带限定词查询必出；查 `music candidates card render failed` 日志 |
 | 点歌候选/歌曲卡全灰 | 图床 WAF/ORB | 见 §14.6.4；sinaimg 已兜，新图床照方抓药（直连+curl 极简头） |
 | 发布时间差 8 小时 | 该解析器是否产 naive 串 | 契约层已按 +08 解释（media.py _CN_TZ）；新解析器直接给 epoch 或带时区 ISO 最稳 |
@@ -1052,9 +1070,9 @@ bridge 对 `payload.text/summary/forward.text/repost.text` **预 html.escape**�
 ### 14.19. 当前已知边界与非缺陷清单
 
 - **mypy 树级残留**：视频理解会话（chat.py:248 MediaAssetRecord、__init__ queue 联合类型）与 B组在途（worker/disconnect_notice/settings）共 7~12 个报错流动中——归属会话收尾，A 组文件零错。
-- **平台边界（非缺陷）**：YouTube 无频道总获赞/Tab 数未抓；小红书依赖登录态+风控（图片签名分钟级过期属正常）；B站 AI 总结仅部分视频有；AI 字幕需登录 cookie；NapCat 二维码刷新受 QQ 版本漂移影响（等上游）；浅夜渠道 gemini 套壳嫌疑（实锤，.env 已降权）；酷我搜索接口劣化（候选不可用，单结果走第三方 suyanw）；Spotify 搜索恒 None 占位；B站漫画 twirp TLS 风控不可破；Spotify/Apple 边界见 platforms_music docstring。
+- **平台边界（非缺陷）**：YouTube 无频道总获赞/Tab 数未抓；小红书依赖登录态+风控（图片签名分钟级过期属正常）；B站 AI 总结仅部分视频有；AI 字幕需登录 cookie；协议端二维码刷新受 QQ 版本漂移影响（NapCat 时期实测，等上游）；浅夜渠道 gemini 套壳嫌疑（实锤，.env 已降权）；酷我搜索接口劣化（候选不可用，单结果走第三方 suyanw）；Spotify 搜索恒 None 占位；B站漫画 twirp TLS 风控不可破；Spotify/Apple 边界见 platforms_music docstring。
 - **架构级尾巴（P0/P1）**：FileTransferGateway 统一（仍有 handler 直连 call_api）；订阅/文档导出出站收敛；PersonaContract/WorldEntity/Claim/EvidenceLedger/AnswerPlan 结构化知识架构；claim-based RAG；记忆写入 propose→approve；群聊公共状态；TrustLevel 反注入；ToolCatalog。
-- **验收级（P2）**：真实 NapCat poke/反戳；TG 评论树与文件出站；Mail 真机；LangSearch 验收；视觉模型命令全对齐；LLMCallRecord 可观测；生成文件安全扫描；老 Office 转换链。
+- **验收级（P2）**：真实 poke/反戳（NapCat 时期立项，现需在 SnowLuma 上验收）；TG 评论树与文件出站；Mail 真机；LangSearch 验收；视觉模型命令全对齐；LLMCallRecord 可观测；生成文件安全扫描；老 Office 转换链。
 - **低优先改进点（audit 存量）**：kugou 明文 http 搜索端点；kuwo suyanw 第三方依赖；`点歌模式` 词与路由的边界 UX；universal_card 内少量语义状态色写死（认证金/错误红——语义色不属品牌色违规）。
 
 ### 14.20. 修复史全索引（2026-09-07 → 09-10）
@@ -1191,7 +1209,7 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 | B-1 | 媒体/视频预算与 150s 请求预算协调 | ✅ `chat.py:_video_deadline_seconds`（剩余−60s LLM 保留、下限 30s）经 `_resolve_media_context` 三处调用点传入 `build_video_brief(deadline_seconds=…)`——被调方参数本就就绪，纯调用侧接线，未动视频会话文件。主体随 b2de652 合批入库 |
 | B-2 | providers.py HTTP 400 分类 | ✅ c95f9db：其余 4xx 兜底归新 kind `bad_request`；`_FAILOVER_ERROR_KINDS` 扩容 bad_request/invalid_request/unsupported_parameter/http——中文 400 文案/措辞漂移不再把多候选路由打成单点；去参重试失败后自然转移 |
 | B-3 | web_search 多 query 并发检索 | ✅ `chat.py:_search_queries_concurrently`（submit+逐 future、≤4 线程、顺序确定性、单查询失败隔离；收尾改进 cancel_futures）。主体随 b2de652 入库 |
-| B-4 | NapCat 断线 bot_unavailable 不计 attempts | ✅ 19e5d76：`_defer_for_bot_unavailable` 挂起不递增 retry_count，入队超年龄上限（默认 30min，旋钮 `bot_send_bot_unavailable_max_age_seconds`）置终态；**并行会话在本会话实现上追加了旋钮与参数改写（90s/30min），语义互补已吸收（diff 稳定性 12s×2 校验）** |
+| B-4 | 协议端断线 bot_unavailable 不计 attempts（立项于 NapCat 时期） | ✅ 19e5d76：`_defer_for_bot_unavailable` 挂起不递增 retry_count，入队超年龄上限（默认 30min，旋钮 `bot_send_bot_unavailable_max_age_seconds`）置终态；**并行会话在本会话实现上追加了旋钮与参数改写（90s/30min），语义互补已吸收（diff 稳定性 12s×2 校验）** |
 | B-5 | urllib→httpx.Client 单例+read 限长 | ✅ c95f9db：`_shared_http_client`（按 proxy 键缓存+双检锁）+ 8MB/8KB 限长；`urlopen=` 注入缝保留 |
 | B-6 | MCP 负缓存 TTL | ✅ 负缓存 TTL 60s（结构性缺失仍永久缓存），clear 同步清计时器。随 b2de652 入库 |
 | B-7 | 分片超时下限 | ✅ 19e5d76：`slice_for` 每段下限钳 10s，外层 wait_for 不变兜总预算 |
@@ -1514,7 +1532,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 
 | 项 | 交付 | 证据 |
 |---|---|---|
-| UI-1 全卡片釉瑚改版 | bridge 新增 _derive_wash_tokens（--pc→HSL 邻近±30°→wash 四 token 注入，PLATFORM_COLORS 契约零改动）；雾底+三枚漂移色斑（keyframes 40-60s+随机相位）+液态玻璃（150° 内高光描边）；覆盖 8 个 UI 面；铁律保持（动画全在 .card 内/光晕 alpha≥0.05/失败→纯文本契约零改动） | `a1ab78f`，9 样例像素抽检+渲染 82 测 |
+| UI-1 全卡片釉瑚改版 | bridge 新增 _derive_wash_tokens（--accent→HSL 邻近±30°→wash 四 token 注入，PLATFORM_COLORS 契约零改动）；雾底+三枚漂移色斑（keyframes 40-60s+随机相位）+液态玻璃（150° 内高光描边）；覆盖 8 个 UI 面；铁律保持（动画全在 .card 内/光晕 alpha≥0.05/失败→纯文本契约零改动） | `a1ab78f`，9 样例像素抽检+渲染 82 测 |
 | UI-1 v2 验收整改四连 | 画布收紧零留白（10/10 张 alpha bbox==画布）；universal 内部面板全面玻璃化；平台区分度（wash 饱和 0.35→0.55 等，B站 vs 小红书像素核验肉眼可辨）；else 分支 mica-glass 重构 | `dc65f7f`，复拍 10 样例+渲染 72 测 |
 | 守岸人框架 字眼全项目清除（用户明令） | 用户可见面改「守岸人」（models.py 默认 bot_name）；出处单点收敛 `docs/THIRD_PARTY_NOTICES.md`（MIT 许可义务唯一保留地，**勿删**） | `7985d93`，全项目 grep 残留 0 |
 
@@ -1563,7 +1581,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 |---|---|---|
 | F1/F17 | 好感度指令黑洞 | **根因**：base_router 一直有 `RouteKind.AFFINITY` 判定，但 `__init__.py` 从未注册对应 NoneBot matcher/handler——「好感度」系消息在分发层静默坠地（为何维基/天气正常而好感度全灭）。修复：补 `_is_affinity_event` matcher + `affinity` on_message(41) + handler；`/bot 好感度` 在 status 链补显式分支（此前坠入 help 兜底）；触发词扩 好感/好感值/亲密度/affinity |
 | F4 | 好感度 v5 多因素算法 | 用户裁定废除「一次加几减几」：实际步长=基准因子 × f1 说话温度 × f2 相处时长 × f3 第一印象(建档±30%、随互动指数衰减，**只影响速度永不影响态度档位**——反歧视护栏) × f4 当日心情 × m(uid)；SQLite 自动迁移 first_signals/first_impression/created_at；算法说明/规则卡/卡片全量定性化，测试锁死不再出现 +2/-5 数值 |
-| F3 | 解析/能力卡全灰 | **根因**：weather/eat/help 等无平台语境卡走 media 卡路径，`--pc` 回退 `#607080` 灰 → wash 全灰。修复：`_derive_wash_tokens` 基底重锚守岸人本命色（淡蓝210°/星空紫265°/深蓝228°/近白蓝雾底），平台色仅 ±30° 内轻推 wash-1 + accent/色斑 ≤35% 透色 |
+| F3 | 解析/能力卡全灰 | **根因**：weather/eat/help 等无平台语境卡走 media 卡路径，`--accent` 回退 `#607080` 灰 → wash 全灰。修复：`_derive_wash_tokens` 基底重锚守岸人本命色（淡蓝210°/星空紫265°/深蓝228°/近白蓝雾底），平台色仅 ±30° 内轻推 wash-1 + accent/色斑 ≤35% 透色 |
 | F2 | B站热评圆角 | `.hot-comment/.pinned-comment` radius-sm(8px)→radius-md(16px) |
 | F10 | eat 卡 about:blank+占位图 | **根因**：`contracts/media.py` build_parsed_content 默认 canonical_url="about:blank" 直接上卡。修复：媒体卡对占位值抑制；无封面时封面区整体折叠（🖼 占位废除）；eat 真实封面四级来源（本地图包→SQLite 图库索引→抓取缓存→空），复用 `check_download_url` SSRF 护栏+魔数校验+落盘缓存 |
 | F11 | 页脚 头像+名字+功能名 | 贯通 5 模板（universal 两处/media/song/affinity/mermaid）+ RenderPayload.feature_label + render_card_png 双分支；weather/eat 传「天气」/「美食推荐」 |
@@ -1707,7 +1725,7 @@ flowchart TD
 
 ### 23.1 产品四裁定
 
-1. **双指令形态**：媒体+指令同条消息直发；或回复媒体消息发指令（handler 经 NapCat get_msg 反查注入媒体段，摄取契约新增 reply_media_segments/chat_record_text 字段）；回复对象为合并转发时说「存聊天记录」→ get_forward_msg 展开为 Markdown 归档（chats 目录）。
+1. **双指令形态**：媒体+指令同条消息直发；或回复媒体消息发指令（handler 经协议端 get_msg 反查注入媒体段，NapCat 时期设计，摄取契约新增 reply_media_segments/chat_record_text 字段）；回复对象为合并转发时说「存聊天记录」→ get_forward_msg 展开为 Markdown 归档（chats 目录）。
 2. **类别×IP 双层目录**：VLM（复用识图 registry）判 类别（cosplay/二次元插图/表情包/截图/照片/风景/人物/动图）× 作品来源 IP，判不出落「未识别」；落盘 `data/media_archive/<类别>/<IP>/`，sha256 去重+JSON 旁车；用户可带 分类=/IP=/角色= 参数覆写，管理员另可 子路径=。
 3. **视频轻抽帧**：ffmpeg 轻抽帧 5 帧（BOT_MEDIA_ARCHIVE_VIDEO_FRAMES）拼给 VLM 一次判类，不做 ASR。
 4. **权限默认超管**：BOT_MEDIA_ARCHIVE_MIN_ROLE 默认 super_admin（归档落本机磁盘），后续可改 user 开放全员，限额照常（单文件 100MB/每日 50 件/单条 4 件）。
@@ -1861,8 +1879,8 @@ flowchart TD
 2. **A47 互证预检+A50 红例排查+A60 修复（`72cdb57`）**：A47（crossval-precheck，只读）实锤全量双引擎互证 **224s**（每引擎 105-118s，总 3.5-4.5 分钟，docstring 5-6 分钟口径偏保守）、双引擎 exit-code 级一致；预检时点树基线 110-111 红——不先修绿则互证只证明「一致地红」不构成绿灯门。A50（red50-triage，零改码）判定 ≈**93% 假红**（测试间全局状态污染；订阅域 27 文件/LLM 域 6 文件独占跑全绿实证），毒源坐实=`tests/test_render_card_samples.py::test_main_only_filter_and_unknown_key` 真开 Playwright 致 sync API 在主线程遗留 running loop 常驻（自写探针插件 LEAKED-BY 实录；泄漏者自身 59 passed 全绿——毒全给后面文件吃），次簇=channel_health 全局单例跨测试写脏 ~13 红。A60 修复=照同文件兄弟测试先例给该用例注入假后端，76 红一次消解（59+72 绿复跑实证）。
 3. **A43 全量预跑+主会话修复（`bae69d4`）**：A43（fullrun-preview，只跑+归因零写入）107 红逐簇归因全闭环 **76+20+5+2+1+3**——76 环中毒（同上毒源）/20 生产 `.env` 泄入测试进程（`eat.py` 能力运行时 `load_dotenv()` 把 `BOT_CHANNEL_HEALTH_ENABLED=true` 写进 pytest 进程激活生产 channel_health 库过滤，库内假渠道行跨 run/跨进程自增强）/5 渲染预算泄漏（Phase-2 两键经同一 dotenv 泄漏激活 legacy payload 预算模式，撞「缺省=字节级现状」契约）/6 真缺陷（D 簇 todo_checkoff 2+账单合并 3+usage_card 1）；主会话修复两刀=`tests/conftest.py` autouse 隔离渲染 Phase 2 解锁键（.env 泄漏根因双保险）+`eat.py` `load_dotenv` 移 CLI 入口（20 红根因——能力运行时热路径不该有 dotenv 写 env 副作用）。
 4. **错误卡两件：A48 P0 两段式异步化（`de6ba91`）+A52 补发加速（`84b3915`）**：A48 把错误卡渲染从 loop 线程挪专用单线程池（原形态撞 Playwright Sync 守卫必败+0.5s 全站阻塞），两段式=毫秒级文本回执先行+渲染后补发卡图（33+199+83 例绿+真渲染冒烟 1714KB 出图+打码正确）；A52 `queue.submit` 增 keyword-only `deliver_after`（None=现状字节级），卡图补发 **60-92s→≈3-33s**（3s 下限防倒挂 ack；36+124 例绿）；全链模板/bridge/契约三件随 `1651544` 收尾入库（error-card-report §A-plus）。
-5. **A51 表情回应能力（`6724782`，config 四键三件套随 `eaa8fd9` 补录）**：新 `runtime/reactions.py`——NapCat `group_msg_emoji_like` 贴纸回应识别归一入会话环形缓冲（TTL 600s/每会话 8 条/256 会话 LRU）注入【表情回应】分区+五层防刷屏门主动贴表情（开关→每消息去重→确定性 sha256 概率→30s 会话冷却→20/h 滑窗；`set_msg_emoji_like` 失败静默）；**TG 识别留接口诚实降级**（adapter event_map 无 reaction 键实锤）；23 例新测+摄取/chat 回归 121 绿；QQ 识别的事件字段形态=生产实机首验项（离线不可证，代码与报告双处标注）。
-6. **A56 重启预检+文档四件+A53 拟稿索引**：`051261d`（A56）`scripts/pre_restart_check.py` 一键预检 **7 项**（env 路径/人格锚定/哈希台账/事实册/KB 漂移/静态门/NapCat 探针）PASS/SKIP/FAIL+exit code+`--json`，FAIL 自带修复指引，12 例离线；`7b6ac37`（A49 验收终稿核对：§6.6 系 2 实错修正+5 过时更新+§6.6.5 新增 4 条+AGENTS topics 67→72 漂移修正）；A58 HANDOFF 十断点打磨随 `bae69d4`（同族 `85571d3` 为 A37 回填件：金融接线行划掉/timesync P1 撤销/Phase 2 钉死/收尾清单按实测重写）；`919276a`（A59 根 README 人类访客视角终稿重写：能力七分类/快速上手/极简架构图/三区导览，与 AGENTS.md 全量对账零冲突）；`d8ec5eb`（A62 验收补全：§6.6.6 表情回应验收五条+§6.5③ 预检条目+§6.6.4⑥ 错误卡时序对齐 3-33s）。**A53 人格蒸馏拟稿+索引未入库（如实标注）**：`persona-distill-draft.md`（09-13 三段人格规则——称谓边界/创造者身份/黄腔回应柔化——→运行时副本蒸馏拟稿，**拟稿不落地**，采纳=用户说「准」→主会话套用+`sync_persona_source.py --adopt` 复绿同步门）与 `sdd-INDEX.md` 均为 `.superpowers/` 工作区件（.gitignore:42，git 不追踪）；INDEX 收录止于 `84b3915` 时点，其后批次以本节为准。
+5. **A51 表情回应能力（`6724782`，config 四键三件套随 `eaa8fd9` 补录）**：新 `runtime/reactions.py`——NapCat 时期 `group_msg_emoji_like` 贴纸回应识别归一入会话环形缓冲（TTL 600s/每会话 8 条/256 会话 LRU）注入【表情回应】分区+五层防刷屏门主动贴表情（开关→每消息去重→确定性 sha256 概率→30s 会话冷却→20/h 滑窗；`set_msg_emoji_like` 失败静默）；**TG 识别留接口诚实降级**（adapter event_map 无 reaction 键实锤）；23 例新测+摄取/chat 回归 121 绿；QQ 识别的事件字段形态=生产实机首验项（离线不可证，代码与报告双处标注）。
+6. **A56 重启预检+文档四件+A53 拟稿索引**：`051261d`（A56）`scripts/pre_restart_check.py` 一键预检 **7 项**（env 路径/人格锚定/哈希台账/事实册/KB 漂移/静态门/NapCat 时期协议端探针，迁移后指向 SnowLuma）PASS/SKIP/FAIL+exit code+`--json`，FAIL 自带修复指引，12 例离线；`7b6ac37`（A49 验收终稿核对：§6.6 系 2 实错修正+5 过时更新+§6.6.5 新增 4 条+AGENTS topics 67→72 漂移修正）；A58 HANDOFF 十断点打磨随 `bae69d4`（同族 `85571d3` 为 A37 回填件：金融接线行划掉/timesync P1 撤销/Phase 2 钉死/收尾清单按实测重写）；`919276a`（A59 根 README 人类访客视角终稿重写：能力七分类/快速上手/极简架构图/三区导览，与 AGENTS.md 全量对账零冲突）；`d8ec5eb`（A62 验收补全：§6.6.6 表情回应验收五条+§6.5③ 预检条目+§6.6.4⑥ 错误卡时序对齐 3-33s）。**A53 人格蒸馏拟稿+索引未入库（如实标注）**：`persona-distill-draft.md`（09-13 三段人格规则——称谓边界/创造者身份/黄腔回应柔化——→运行时副本蒸馏拟稿，**拟稿不落地**，采纳=用户说「准」→主会话套用+`sync_persona_source.py --adopt` 复绿同步门）与 `sdd-INDEX.md` 均为 `.superpowers/` 工作区件（.gitignore:42，git 不追踪）；INDEX 收录止于 `84b3915` 时点，其后批次以本节为准。
 7. **A45 knowledge-sync 实修+wiki 根修复+向量栈立账**：wiki-health-report 实跑 `smoke knowledge-sync` 一次修复（bot 离线窗口，任务授权的唯一写动作），人格 knowledge 库**三重漂移全部清零**（pending 113→0/fts_signature MISSING→已写/vector_dim 激活 1024/ANN ntotal 30,946→35,341，Ollama bge-m3 约 2 分钟；修复前若直接重启=向量 4,282 行静默不可召回+关键词通道静默禁用，最难察觉的静默质量塌方）；`.env` 的 `BOT_KB_WIKI_ROOT` 已由用户修至 `D:/Coding/01_Projects/Crawl Wiki`（wiki 库本身零漂移，实跑探针 4 hits）；`vector-audit.md` 立账（只读副本分析，Runtime 原库零改动）：kb_wiki 库 5.27GiB 账目自洽，唯一膨胀根因=**vector_json 与 blob 同数据 JSON 文本双存（3.057GiB/58%，热路径只读 blob——纯占地）**，推荐路线 L3-1 废除双存一次回收 ≈3.5GiB（需代码+迁移同批，等用户裁决）。
 8. **在飞席位现状（2026-09-14 07:0x 实查，如实记录）**：e2e（A4）仍收尾中（工作树 `e2e_acceptance.py` 改+`test_e2e_help_matrix.py` 未跟踪）；红线扩面（A44）已落 `4f5de7e`；互证预检（A47）纯报告已交（窗口判定可行，红基线已被本批修复消解）；**六红修复已入库 `16e9201`（A61）**——D 簇 2 真缺陷（Levenshtein DP 系统性纠偏+勾选候选取待办条目行 `todo_match_texts`）+F/E 簇 4 例收口（A42/A52 落地自愈后的 I6 断言漏网四处），58 例回归绿，brief 拟稿时在飞、本节落笔时刚落地；**XHS 修复无独立落盘件**（git log/工作树/报告三处零命中）：`XiaohongshuAdapter.fetch_latest` unawaited RuntimeWarning 定性=loop 泄漏下游症状（创建点 `subscribe.py:479-481` asyncio.run 参数协程被弃），随 A60 中毒源修复消解、全量终跑观察；README（A59）已落 `919276a`。channel_health 单例 ~13 假红的 fixture 隔离修复已入库 `10ef40f`（A64：failover 两文件 autouse 三重隔离——tmp 库+开关钉 0+单例重实例，顺序敏感 13 假红根除；生产库 md5 跑前跑后一致）。现工作树在飞（**以 git status 实况为准**）：e2e 两件（A4 收尾中）；XHS 泄漏桥接收尾移交席已落库 `8cbd4b6`（A71：subscribe.py:479 构造点换 `_run_legacy_coroutine` 桥接+样张后端 finally close+test_subscribe_capability_bridge 四新例）；`docs/auto-facts.md` 漂移已随批重录入库（本节落笔时点的快照，后续在飞件不再逐条回改本节）。
 
@@ -1906,7 +1924,7 @@ flowchart TD
 ### 25.5 错误卡补全与出站脱敏（E 组+F-01/F-02）
 
 - `7a40fa5`（同笔）：E-01/E-02——插件版本改读 pyproject（源码运行无 pip 元数据，venv 实证）+纯文本兜底补配置快照。
-- `085b292`：**E-03~E-10 求助信息补全**——版本区补 Python/系统/nonebot-adapter 全景；协议实现标注（NapCat/IMAP-SMTP/BotAPI/本地）+判定改显式查表根治子串巧合；id_pairs 补 sender/bot/group；触发时刻优先 message.timestamp；配置快照前缀不足补全局横切键（走既有脱敏）。E-01/E-02 保留不回退。
+- `085b292`：**E-03~E-10 求助信息补全**——版本区补 Python/系统/nonebot-adapter 全景；协议实现标注（NapCat/IMAP-SMTP/BotAPI/本地——NapCat 时期取值，现协议端为 SnowLuma）+判定改显式查表根治子串巧合；id_pairs 补 sender/bot/group；触发时刻优先 message.timestamp；配置快照前缀不足补全局横切键（走既有脱敏）。E-01/E-02 保留不回退。
 - `db37834`：E-11「截图」口径对齐——页脚如实声明自动生成诊断卡（非控制台截图）+纯文本兜底独立 `_FALLBACK_HELP_TEXT`（无图场景「这张图」指代不再悬空）。
 - `477be8c`：E-12 渲染卡复用原 request_id——废除「原 id-card」派生（:card/:ack/无后缀三态互斥），卡从此可被回执路径寻址；卡实际投递仍走 worker，3-33s 补发语义不变。
 - `e39ac0b`：**E-13 烟测名实相符**——两处「patch 真实路径」用例 docstring 如实声明 mock 路径；新增 env 门控真烟测（`BOT_ASR_SMOKE=1` 真 ffmpeg 转码 1s 静音 wav/`BOT_ERRCARD_SMOKE=1` 真 playwright 渲染诊断卡→PNG 魔数断言），默认环境 skip 不碍门。
@@ -2077,3 +2095,318 @@ flowchart TD
 - **配置 6 键**：enabled/dir/push_user_ids/meal_times/morning_time/evening_time（config.py+config-catalog「日常助理」小节+SETTABLE+.env.example）；生产 `.env` 已置 dir=`C:/Users/LancyCelestia/Assistant`、名单=主人 QQ——收件箱/菜单/任务清单与 ZCode 共享同一份文件。
 - **验证**：`tests/test_daily_assist.py` 18 例全离线（择菜/收件箱往返/文案/命令面/调度注册/SendRequest 形状/runner 打桩）；ruff 零红；mypy 与全量套件结果见批次提交说明。
 - **并发事故记录**：echo.py 与 capability_registry.py 的本批改动被并行批 `cb73ae8`（05:54，P-03 决策痕迹）卷入提交；其余文件由本批后续提交补齐，HEAD 一致性以两提交合流为准。HANDBOOK 本节与 AGENTS.md 台账 #32 因共享文件并发编辑暂不随批提交，按收敛流程并入。
+
+## §28 控制面后端第一切片（2026-09-15）
+
+本节记录控制面/WebUI 后端实现的真实阶段状态，详细接手说明见根目录 `HANDOFF-NEXT.md` §8。
+
+- 新增 `control_plane/features.py`：FeatureDescriptor、FeatureState、FeatureRegistry、FeatureStateStore，支持树状状态继承、依赖阻断、版本冲突、原子 JSON 保存和审计。
+- 新增 `control_plane/api/v1.py`：未来 WebUI 可消费的 `/api/v1` envelope、功能树、功能开关、配置 preview/set/reset、日志初步投影、资源初步投影、轨迹占位和工作区占位。
+- 控制面接入独立 super-admin Bearer 写令牌：`BOT_CONTROL_PLANE_SUPER_ADMIN_TOKEN_SHA256`；增加 `BOT_CONTROL_PLANE_FEATURES_FILE` / `bot_control_plane_features_file`。
+- 实际验证：新增控制面契约测试 `3 passed in 1.37s`；目标文件 Ruff `All checks passed`；`git diff --check` 通过。
+- 尚未完成：全量注册表、FeatureControlService、实时日志/SSE、真实 metrics/trace、WebUI 对话工作区、人格/知识/记忆/模型控制 API、ControlActionRegistry、CentralDecisionEngine 接管、全量文档和真机验收。
+- 不得将本节误读为整份 WebUI 计划完成或可发布证明；当前没有 commit，且工作树有既有 WIP。
+
+## §29 控制面核心服务与协议修正（续 §28）
+
+本轮真实状态、可用协议、源码审查定位与复跑命令集中在 `docs/design/control-plane-core-status.md`，接手优先看该页与 `HANDOFF-NEXT.md` §9。
+
+实跑：控制面＋文档门禁120 passed in 6.46s；全plugins Mypy 272文件通过。完整离线快照6203 passed/3 failed/9 skipped/3 xfailed，配置目录缺2键已修并复跑通过；预算默认断言漂移、源码data目录卫生及全树Ruff校园WIP仍阻塞发布。
+
+本轮仅建立FeatureControlService/严格版本写入/安全preview/失败回滚/请求关联/认证OpenAPI；生产Runtime门禁、全量注册与SQLite、SSE、工作区等后续服务仍未完成。不得用管理状态变化充当真实功能关闭证据。
+
+
+## §30 Compact检查点
+
+本段为压缩前历史；当时的代码、测试证据、5项全量失败与恢复顺序保留在 `design/COMPACT-CHECKPOINT.md` 下半部。最新以该页顶部和下节§31为准。当前SQL功能门/配置消费/事件SSE/账本统计/生命周期已有实现，但完整后端仍未完成；6548 passed、5 failed，不能发布。用户要求继续同一AI完成，仅本次暂作上下文压缩。
+
+## §31 控制面续接：路径、生成物隔离与资源服务
+
+本节补充 §30 历史检查点。最新完整验证结果以 `design/COMPACT-CHECKPOINT.md` 顶部续接增量为准，不能再按旧 §28/§29 判断 SQL、Pipeline 或 SSE 尚未实现。
+
+- 新增 `ResourceMetricsService`，REST resources/overview 共用一份当前进程采样服务；公开 `ResourceMeasurement`/`ResourceSnapshot` OpenAPI DTO。CPU 初次/失败返回 unknown，内存/线程/运行时长按数据源分别降级。按需采样，无资源历史/SSE。协议见 `design/control-plane-metrics.md`。
+- Config 统一重映射补齐控制面三库与 legacy features JSON；离线 E2E 白名单用例隔离数据根。
+- 功能管理帮助、中文/英文 alias、能力注册元数据三方对齐，保留超管写权限与已有豁免边界。
+- autosync 测试迁入真实 TEMP 镜像；三种生成器、子 pytest 会话、关闭时漂移测试与主仓字节/mtime 防污染断言全部保留。
+- 错误卡渲染改用 runtime_paths；冷却回复正文与 fallback 只抽样一次。旧固定句测试改为完整 12 句逐字参数化回归；A18 测试使用隔离后端和路径并排空异步任务。
+- 工作树 WIP 未回退，无 commit/push/生产重启/真实出站。两名存量子代理均已关闭，用户禁止新增子代理，后续只串行。
+
+已有实跑：路径/E2E 23 passed；资源/API/生命周期/注册 69 passed；错误卡/幂等 89 passed、1 skipped；Mypy 284 个源码文件通过；Ruff 与三项机器文档门禁通过。完整后端、细分门禁、热重载、工作区、Trace、人格版本等仍未完成，不能发布。
+
+§31 最终复验（verified）：全量 `6603 passed, 9 skipped, 3 xfailed, 1 warning in 242.11s`；Ruff All checks passed；Mypy 284 source files；runtime-layout PASS；doc_sync/command_catalog/verify_hashes 检查通过。全量日志 `%TEMP%/cp-resume-full2.log`。唯一 warning 为上游 Mail 适配器弃用提示。仍未执行真机 e2e，不以离线全绿宣称完整后端交付。
+
+
+## 2026-09-15 后端协议扩展增量
+
+新增 `control_plane/platform.py` 与 `control_plane/api/platform.py`：统一 PlatformStore（SQLite 资源、Trace、Usage、ModelCall）以及 WebUI `/api/v1` 资源协议。已提供人格、世界观、世界书、参考资料、知识库、记忆库、数据库、媒体能力、文件能力、搜索提供方的列表/详情/受控更新接口；Trace 查询与分段接口；Usage/ModelCall 写入与查询接口；日志级别受控写接口；能力协议目录。
+
+已接入 `create_control_plane_app`，控制面实例自动装配 PlatformStore；新增配置 `bot_control_plane_platform_db`。资源更新使用版本字段，冲突返回统一 409；未知资源统一 404。
+
+验证：Ruff（新增文件及控制面）通过；Mypy（控制面 29 files）通过；doc_sync 写入并检查通过。
+
+注意：该增量是协议与基础数据层切片，不等同于全部专项能力已经接管生产链路。中央 Dispatcher、真实出站统一收编、协议端实时控制台（立项于 NapCat 时期，现对应 SnowLuma）、Persona 发布回滚业务策略、媒体处理器和安全文件网关仍需接入现有生产服务。
+
+
+## §30 戳一戳 v2 + 贴纸回应 v2 + R-18 内容感知路由（2026-09-16，ZCode 会话，未提交——工作树多会话共享，提交裁决权在用户）
+
+三线增量批（用户裁定驱动，全程增量式、零破坏性改动：新文件 + 可选参数缺省=现状 + 新配置键；功能关闭即完全回到旧行为）：
+
+**A. 戳一戳 v2（五件套）**：`BOT_POKE_POKE_BACK` 缺省 false→true（回戳进五件套）；`BOT_POKE_REPLY_MODE`（mix|fixed|llm|meme，默认 mix）单一回复形态——mix=确定性哈希三选一轮换（同戳同果，群冷却窗为桶）；llm 失败→固定话术、meme 库空→固定话术（回退链=`capabilities/poke.py resolve_poke_reply`）；LLM 话术=`__init__` handler 内紧凑提示词（守岸人语气+好感档定性 attitude，只定性不显数值红线）+12s 超时；好感度=放行后 `observe(delta_override≈+0.5)`+每会话每日上限 5 分防刷；群聊回复自动 @戳者——`contracts/runtime.py CapabilityResult.prefix_parts`（新字段）+`output/renderer.py`（prefix 前置走 mixed）+`sender/onebot.py`（`at` part 类型）三件套支撑。
+
+**B. 贴纸回应 v2**：①持久化=新 `sources/reaction_store.py ReactionStore`（`data/reactions.sqlite3`，`BOT_REACTIONS_DB_PATH` 入 path_fields 重映射；event_id=(session,message,emoji) 幂等合并计数；按 emoji/按用户聚合统计；`BOT_REACTIONS_STORE_DAYS` 90 天启动期 prune；入 db-owners.md）——emoji_like notice 双写（缓冲+落库）；②is_add 清账（faceid 报告 §五 unknown）：`is_add=False` 撤销不记正向，字段缺失照旧记；③扩展脸名表=NapCat 时期 face_config.json sysface 全量实名子集 287 条内嵌（数据源为旧协议端；锚点 49=拥抱/76=赞/364=超级赞 实核），`_QSID_FACE_ID_MAX` 400→484（face_config QSid 上限；NapCat len>3 才是 unicode 码点形态）；④meme 监听器 `_segment_urls` 扩收 `mface`/`sticker` 段（商城表情入库走 VLM 打标）；⑤双层表情第二层：情绪信号命中且第一层未贴 → `pick_reaction_meme`（意图→VLM 标签检索词加权）小概率发图；独立门=开关/概率 0.15/冷却 120s/每小时帽沿用/每日 6 张/C1 悲伤门整条不贴；与第一层互斥（先贴后包）。
+
+**C. R-18 内容感知路由**（`runtime/content_route.py` 新模块）：核心=模型自评标签 `<intimacy:high|low>`（chat 链系统提示词尾注入元指令 `INTIMACY_TAG_INSTRUCTION`；评用户请求性质而非自己的回答；出站前剥离、纯标记回复保守保原文）；信号融合=自评标签（high→S=100/low→×0.4）+L1 强词表（+70，内置简繁词表+`BOT_CONTENT_ROUTE_WORDS` 追加）+L2 上下文窗口扫描（messages 尾部 K 轮，+35）；L4「亲密模式 开/关」私聊命令钉死；滞回（S≥60 切/≤25 回/中间保持前态防抖）+空闲 10 分钟归零+120 分钟硬上限。路由=ModelRouter 增 `content_route_cb`（工厂 `build_model_router` 同名透传）：INTIMATE 时自动候选序按 `BOT_CONTENT_ROUTE_ORDER`（grok-4.6→gemini-3.8-flash，用户裁定 gemini 第二位）头插+跳过影子并发；管理员显式 override 分支零接触（override tail 显式传空 session_key）。升级重试=chat.py `_apply_content_route_reply`：tag=high 且首选非 grok 时预算内以 route_model 追加一轮（会话级软化自愈）。`generate`/`route_ids`/`_auto_route_ids` 增可选 `session_key`/`session_id`（账本 session_id 字段复用，旧调用方零感知）；fail-open 全覆盖（分类/分数/标签/路由任何异常→默认链）。
+
+**设计要点（用户多轮裁定）**：检测核心弃「词表单层」与「拒答转移」（Gemini 对 R-18 是委婉软化非硬拒答，无外部可检测信号），改「模型自评标签+多信号状态机」；影子=grok 预发换道方案简化为顺序升级重试（不动 hedge 竞速核心——非破坏性约束优先）。
+
+**配置**：新增 17 键入 config.py+config-catalog-full.md+.env.example（poke 4/reactions 6/content_route 8，缺省=全功能默认开）；`bot_control_plane_platform_db`/`bot_control_plane_actions_db` 两键（并行控制面批次工作树键）按 #33 收编先例补录 catalog。
+
+**测试（全离线实跑）**：test_content_route.py 21 例+test_poke_v2.py 13 例+test_reaction_store.py 10 例；router failover/channel/admin回归、reactions 存量 38 例、meme 三件、渲染契约 171 例、chat 链 44 例、doc_sync 门禁全绿。
+
+
+### §30.1 重启实弹修复（2026-09-16 晚，systematic-debugging 四问题归因）
+
+①**浅夜の梦抢恒星纪元（Bug 3，我引入）**：内容路由头插误用 `channels_for_model`（EWMA 延迟择优）——渠道健康库实证浅夜 grok 5.9s 快于 axon 11.5s → R-18 会话被重排成浅夜优先，违反用户「永远按故障转移优先级」裁定。修复=头插改为注册表 (priority, model_id) 序，语义：head_models 顺序=模型组先后（grok 组整体在 gemini 组前），组内按优先级；回归锁 test_intimate_head_follows_registry_priority_not_latency。附注：恒星纪元=starapi-gemini 其 token 已 403 死亡（66 连败，09-10 起），渠道健康层照常摘除——**需用户换 token**，代码无法救活死渠道。②**无法触发 grok（Bug 4）**：axonhub 实测 grok-4.6 正常（9.1s）、axon-grok-46 健康 ok——用户其实一直在收 grok 回复（经浅夜），无可观测手段而已；补日志 `content_route: has_session/tag/served_by/route_model`（每轮）+ escalation 日志。③**吞消息（Bug 2）**：TG setup 异常逃逸 retry（`__cause__` 链丢失→is_transient 误判 False→raise）沿启动链炸到 nonebot.run，TG bot 未注册即死+进程受累；修复=telegram_resilience poll 阶段 catch_all 永不逃逸（指数退避封顶 60s，日志只记异常类型名不记 message——保留 secret 不入日志守卫）。叠加因素：INTIMATE 轮 grok 渠道 5-12s 慢响应×failover 链拉长体感等待。④**只贴惊讶脸（Bug 1）**：react_to_message 全静默无法归因，插桩 `reaction select/posted/failed` 日志（emoji_id+trigger+失败异常类型），待用户复现一次即可定位（主嫌疑=NapCat 时期对 76/6 等表情在该消息上拒绝、0 恰好可用，次嫌疑=触发词恰好多落「惊讶」组）。验证：119 相关测试+TG 12 例全绿，全量 6667 passed（残留 32F+28E 仍全数控制面批次）。
+
+
+## §31 内容政策 v2 批（2026-09-17）：英文拒答根治 + 亲密全面放开 + 群黑白名单
+
+### §31.1 根因（生产实锤）
+1. **英文模板拒答**（"I cannot fulfill… adopt hidden tracking protocols"）：内容路由的模型自评标签元指令
+   （`<intimacy:high|low>`，chat 链每轮注入）被 gemini 与 grok 一致判为注入攻击/隐藏追踪协议而**整轮拒答**，
+   无辜消息（「你爱我呀我爱你」）也拒。→ 注入层整体删除（content_route 常量+chat 注入点+升级重试），
+   `consume_reply` 降级为防御性剥离。
+2. **角色内拒绝**：knowledge 两文件（生产直读）+ identity.md §1.2 + affinity.py §4 红线的「不生成露骨/绝不 R-18」
+   条款。→ 按用户 2026-09-17 内容政策改写四处，Runtime 人格副本新增「亲密边界」节（sync --adopt 已重录锚定）。
+3. **代码硬闸**：content_safety sexual 规则对私聊生效 + 回复层二次替换 + `session_type` 参数从未被读。
+   → sexual 仅在未获准露骨会话（普通群聊）生效；excessive_intimacy 整类移除（群聊调戏放开）；
+   minors（未成年×性双向共现）为全场景绝对红线；session_type 改必填。
+
+### §31.2 新政策要点（用户裁定原文归纳）
+- 私聊成年自愿：亲密/情色全面放开，守岸人可主动推进；普通模式擦边线（擦边词不参与路由记分）。
+- 非自愿/催眠/轻 SM 允许但执行必须温柔；强奸轮奸情节可存在但不得暴力强暴；禁血腥重口 SM、人机改造、
+  真人色情、血亲兽类、侮辱人格（母狗类）、涉政、注入/人格篡改、现实危害教程与人肉。
+- 学生/萝莉**体态**允许，前提一切角色均为有自主意识的成年人。
+
+### §31.3 机制变更
+- 路由信号：L1 强词表(+70) + L2 上下文强词(+35) + L4「亲密模式 开/关」（含倒装「开启亲密模式」）。
+- 会话准入门（chat.py）：私聊/控制台常开；群聊=白名单∧¬黑名单（两键 `bot_content_route_group_whitelist/_blacklist`，
+  白名单空=群聊亲密面关闭；群内手动开关仅管理员）。
+- 成本：`.env` BOT_CHAT_HEDGED_REQUESTS_ENABLED=false（关影子并发）；model_router 两处
+  `_intimate_mode_for_session` 抑制 INTIMATE 会话的 effort 复杂升档；英文拒绝模板句只记日志（不重试）。
+- day-0 实测：axonhub 直连 grok-4.6 显色 RP 完全配合（363 字），供应商层无罪。
+
+### §31.4 证据
+全量 7357 passed（13 failed 均控制面在飞批残留）；ruff/mypy 本域零错误；doc_sync 门含新键全绿；
+锚定 sha=d13a7ada…；台账 AGENTS.md #36；验收 §6.6.8。
+
+
+## §32 统一收尾大波次总账（2026-09-18/19，渲染统一收口+AxonHub WebUI，ZCode 会话，未提交——提交裁决权在用户）
+
+> **范围**：渲染统一收口（C1-C13 值册→11 面数值收口→通水→玻璃收口→WAAPI 钉帧→机器门三层）+ WebUI AxonHub 路线 B（一期六页真数据+二期三页+控制面端点群+安全审计）+ 测试稳定性与安全加固 + 收尾网与双 INTG 终验。
+> **自动体运行概况**：46 席次全部收口；1302 限流三起均落盘退避后续跑，零丢失；断点锚=`.superpowers/sdd/2026-09-18-unify-wave/master-plan.md` 与同目录 45+ 份 progress-*.md（逐席台账，数字为席位自报实跑）。全批未 commit，逐文件显式 add 清单=同目录 commit-checklist.md §1-§10。
+
+### §32.1 渲染统一收口终态
+- **C1-C13 值册闭环**：SPECS 成文 `docs/design/v21r3-render-closing-spec.md`（渲染改动唯一施工依据）→ CORE 值册+生成器参数化+bridge 双通道 → UNIVERSAL/FINMKT/DIRECT/MISC 11 面数值收口 → SWITCH 通水（`decor_css`/`blobs_html` 双键注入 6 上下文，7 自由面 24 段手抄副本消灭；八门 88 实例全 GREEN）→ MISC2/MISC3 四模板 decor 换血+mermaid 伪元素特例复位+reduced-motion 守卫根修（C13，phase_det_2 全绿+全量两轮实证）→ 玻璃收口 GLASS2（P3-20/21 修复+门 9 白玻璃档位门补设）+GLASS3（usage_cards :284 归一 GLASS_FOOT，footer-colored sanctioned 变体裁定登记）。
+- **通水终表（INTG-R 裁决 GO）**：mica_shell 11 面手写 keyframes=0+3 登记特例（mermaid 伪元素/error wash_blob_mix=24/universal 孤枚+伪元素段）；渲染域 14 文件 **540 passed/0 failed**。
+- **机器门三层**：①v21r3 九门 gate01-09×11 面（GATES 八门 88 实例+4 扩展，GLASS2 补门 9，含 G7 字体逐字门）；②供给链六门（SUPPLY，23 passed 全绿：77 键并集/11 面 54 变量）；③WebUI 版式宪法扫描门（WEBUIFE 建、PAGES2 修正后空转，GATE_EXIT=0）。
+- **WAAPI 钉帧字节确定性**：ANIM 取证否决 `animations="disabled"` 与注入三路，采纳 render_backends `_pin_card_animations` WAAPI 钉时（伪元素 `pause(); currentTime=0`，fail-open）；基线 `baseline-20260919-paused` **19/19 STABLE**（11 面字节等值+8 面差异全部归因登记收口项，登记外 0）；自此 PNG 字节等值=全部 19 面验收判据（html_sha256 主判据口径作废）。
+
+### §32.2 WebUI（AxonHub 路线 B）
+- **一期**：合规+采纳规格+骨架（WEBUI，453.53kB 单文件）→ 六页真数据+SSE+recharts+DTO 对表（WEBUIFE，916.85kB/gzip 278.88）→ 一期四端点+`/ui` 挂载（BACKEND，154+290 passed）。
+- **二期三页**（知识库/插件/记忆图谱）：pages2-spec 工单+adoption §八版式宪法（WEBSPEC2）+§7 参照对照 45 项（UIREF）→ PAGES2 三页收口 100% 真数据+确定性单测 7/7+967.53kB/gzip 294.83 → FE3 四字段消费（version 徽章 null 不猜/trigger_hints 全页「别名」/config_actions 只读无假按钮/dashboard 双窗键值明细卡）971.64kB/gzip 295.78（预算内）。
+- **控制面端点群**：stats×3/affinity/knowledge×2/plugins/memory-graph（BACKEND2 55+406 passed；BACKEND3 §7 ②类收敛 active_users/last_message_at/version/trigger_hints/config_actions，130+507 passed）+legacy 三端点（health/status/models）mock 化（MOCKUI 离线确定性夹具后端 14 端点跨重启字节一致→MOCKUI2 逐字段对照 legacy 裸体直出补 3 端点）；UIACC `webui_acceptance.py` 9 页 9 PASS 双轮+全 data（支持 mock/真控制面双源）。
+- **版式宪法与安全**：版式宪法机器门常驻；SECWEB 六面审计（XSS/凭据/外呼/脚本 CORS/依赖/dist 敏感串）总裁决**可发布 0 Critical/0 Important**；HARDEN 3 Minor 落地（CSP meta `script-src 'self' 'unsafe-inline'` 并存=singlefile 全内联形态、baseUrl 白名单 validateBaseUrl 端到端 9 用例 9 PASS 含 userinfo 欺骗拒、mock CORS 边界注释）并 9/9 复跑背书。
+
+### §32.3 终版门禁数字段（INTG-F 03:48+INTG-R 03:30，全部实跑）
+
+| 门禁/终验 | 终态 |
+|---|---|
+| test（全量） | 二轮 **8532 passed / 12 skipped / 3 xfailed / 0 failed**（414.45s；首轮 8529P/3F——三红=v21r2 域重组×conftest 既有交互伤，机械修复后复跑归零，与生成器/P3-19/在飞席零交集） |
+| lint | **All checks passed**（首跑 1 红 PIE810=MOCKUI 新落盘文件，一行机械修） |
+| typecheck | **Success: no issues found in 621 source files**（0 错） |
+| runtime-layout | 终态仅 **2 项既有环境缺失**（BOT_KNOWLEDGE_FILES 两用户盘外文档，工单预声明非本批）；452 缓存路径已清扫 |
+| 双生成器 | doc_sync：RouteKind 33→**34**（新增 TTS）/topics 75→**77**/测试文件 326→**422**/config 529→**610**/模板路径切 domains 真身/哈希清单 19 项全切真身；command_catalog：二次元问句(46) 与实注册一致——两者 --write 后 **--check EXIT=0** |
+| verify_hashes | **双侧独立复核归零**（INTG-F 全部编辑完成后 EXIT=0+INTG-R GO no-op；时序账目=首轮全量期间套件 autosync 会话门自动重录 15 项被吸收，双侧口径在其时点均真、终态一致） |
+| 渲染域（INTG-R） | 14 文件 **540 passed / 0 failed**；样张 **19/19 STABLE**（11 面字节等值+8 面差异全部归因登记收口项，登记外差异 0）；通水终表 11 面手写 keyframes=0 |
+| WebUI | 版式机器门 GATE_EXIT=0；tsc 0 错；locale zh 238=en 238；UIACC 9/9 双轮+MOCKUI2 后 9/9 全 data；SECWEB 可发布 0C/0I；HARDEN 3 Minor 落地+9/9 复跑；dist 单文件 971.64kB/gzip 295.78kB（spec 预算 <150KB gzip 达标）零 CDN |
+
+### §32.4 配套交付
+- **四规格**：`docs/design/v21r3-render-closing-spec.md`（渲染统一收口）/`webui-dashboard-spec.md`（一期骨架）/`webui-axonhub-adoption.md`（路线 B 采纳+版式宪法 §八）/`webui-pages2-spec.md`（二期三页工单+§7 参照对照）。
+- **验收手册**：§6.6.9 一期十条+二期⑪-㉑、§6.6.10 渲染收口批终态（判据=0919-paused PNG 字节等值/九门；ACCEPT×3）。
+- **台账与索引**：issue-ledger P3-16~22 落账（P3-19 终态注记+P3-20/21 已修注记）；docs/README+根 README 索引两轮（DOCSIDX×2）+webui_acceptance.py 补行（本席 DOCFINAL）；AGENTS.md 三处口径修正（AGFIX）+#41 行（本席）；COMPACT-CHECKPOINT 置顶续接锚（CKPT）。
+- **预检**：pre_restart_check 7→9 项（webui 壳 PASS/control_plane 三键 SKIP；27 passed，RESTPRE）；三轮全树预检（PRECHECK×3：ruff 24→6→2、mypy 3→1→0）；性能零回归（PERF：+0.3%/-9.0%，常驻门 3/3）。
+- **垫片退役预研=本波次不执行**（SHIMRET：15 垫片三档+六步工单，留独立批次）。
+
+### §32.5 诚实缺口与遗留
+- **P3-16~22 终态**：P3-16（stats/latency 历史无持久化）/P3-17（calls 会话键派生口径）/P3-18（audit db 待用户配置）/P3-22（mermaid 字体栈字面量，G7 门锁）维持登记；P3-19 已落账终态注记（`_GLASS_MARKERS` 维持现状、var() 切换延后、通道键已可用）；P3-20/21 已修（注记已同步台账正文）。
+- **SECWEB 记录性 2**：token localStorage=已声明取舍（升级路径 HttpOnly cookie+CSRF，CSP 先行兜底）、acceptance token 可 env 注入；HARDEN 已知偏离 2（CSP 形态调整已披露、白名单错误文案未 i18n）。
+- **FE3 禁造口径 2**：「菲比发言」第四数字无数据源（stats/calls 无 bot 维度）禁造未实现；群级卡取全局口径（无群级聚合）；旧控制面三字段（active_users/last_message_at/version）待重启后真值生效。
+- **MOCKUI 夹具纪律 4**（health 恒 ok 不模拟故障等四项；仅离线目验/截图用，绝不接生产）。
+- **维持不接线**：垫片退役（独立批次）、玻璃 var() 消费切换（P3-19 延后）、TYPE_SCALE_PX 声明不接线；runtime-layout 系统性观察=dev.ps1 test 未带 -B 每轮染缓存（建议注入，转主会话/DEVPS1）。
+
+### §32.6 待用户事项
+1. **逐文件显式 add**：按 `commit-checklist.md` §1-§10 执行（415M/110D/312??；§7 勿 add 5 类先读）；**禁 `git add -A`/`git add .`**（工作区铁律 4）。
+2. **两要害件置顶**：①`plugins/bot_unified_runtime/domains/weather/assets/`（qx.json 真身，362,774B/2527 条，sha256=e8285e77…）显式 add+旧路径 D 登记，否则第四次消失隐患复现 NMC 塌方；②usage_cards.py 真身（domains/render/card_render/ 362 行 ??）+垫片（output/card_render/ 32 行 M）同批显式 add，漏真身=构建历史断链。
+3. **真机验收**：重启后跑 acceptance-manual §6.6.9（WebUI 一期+二期 21 条）+§6.6.10（渲染收口批观察点+11 卡触发清单）；mermaid 真机出图观察（台账 #8 口径）。
+4. **重启前置**：`python scripts/pre_restart_check.py`（9 项）——webui 壳/control_plane 三键逐键报态；`.env` 配 BOT_CONTROL_PLANE 三键+BOT_AUDIT_DB_PATH 后相应项自动转 PASS。
+5. **push 待指示**：完整 refspec `refs/heads/v0.0.1-alpha.2:refs/heads/v0.0.1-alpha.2`，仅按用户明确指示（工作区铁律 4）。
+6. **裁决件**：commit-checklist §5 跨批耦合 A/B 两案（echo/debug 真身半迁移树）；垫片退役批次立项与否（SHIMRET 工单在案）；render_hashes.json M 态随批提交。
+7. **落盘终核**：AGENTS.md #41 行、issue-ledger P3-20/21 注记、docs/README webui_acceptance.py 行=本席 DOCFINAL 已落；遗留=DEVPS1 结果落盘后补记（已补，见 §32.7 末）。
+
+### §32.7 证据指针
+- 逐席台账与断点锚：`.superpowers/sdd/2026-09-18-unify-wave/`（master-plan.md+45+ 份 progress-*.md+commit-checklist.md §1-§10）。
+- 规格：`docs/design/` 四规格（见 §32.4）；机器册 `docs/auto-facts.md`（RouteKind 34/topics 77/测试 422/config 610）。
+- 验收与台账：`docs/acceptance-manual.md` §6.6.9/§6.6.10；`docs/issue-ledger-p2-p3.md` P3-16~22；`docs/design/COMPACT-CHECKPOINT.md` 置顶锚。
+- 常驻门：`tests/test_v21r3_visual_gates.py`（九门）+供给链六门+WebUI 版式宪法扫描门+verify_hashes/doc_sync/command_catalog（--check EXIT=0）。
+- 补记（DEVPS1 席，2026-09-19）：`scripts/dev.ps1` 自 `683ea06`（09-07）起已全局注入 `PYTHONDONTWRITEBYTECODE=1`（58-61 行，勿动），本席零改动；INTG-F 首轮「~452 条缓存」归因修正为并行窗口外来直跑污染（PRECHECK/CAPEXEC 检查点旁证），DEVPS1 全量复跑 8532P/0F 缓存零新增佐证。
+
+## §33 v21r4-B 后端并发波总账（2026-09-18—09-19，未提交——工作树多会话共享，提交裁决权在用户）
+
+> 权威细节：交付总表/裁决清单/口径差异=docs/design/v21r4-b-wave-snapshot.md；回归时点=docs/design/v21r4-b-qa-probe-report.md；各席终态=docs/design/v21r4-b-*-log.md。本节为精简转写（HANDBOOK-SYNC 席按 v21r4-b-doc-sync-draft.md §②/§五 套用；任务书拟 §31、草案拟 §32 均已被占用，实落 §33）。
+
+### §33.1 承接与定位
+- 时序上承接 §32 统一收尾大波次（2026-09-18/19 渲染统一收口+WebUI AxonHub）之后的 v21r4-B 后端协议波（B1-B6）；v21r2 批台账草案=#37-#40（docs/design/v21r2-agents-ledger-draft.md，未合入）。与 §30/§31/§32 同一工作树口径：**未 commit、共享工作树、提交裁决权在用户**；「重启后才生效」清单在本波继续累积（本波新增：提醒双修、WIRE-SVC 装配链——主门缺省 False 故缺省零行为差）。
+- 与前端波（v21r4-F）零交叉：本波唯一红灯域=前端（视觉门禁 23 红/ruff 11 错/verify_hashes 8 漂移，QA-PROBE 时点证据），合流后由前端归属席收口；渲染红线文件（theme_tokens.py/render_hashes.json/domains/render/**）后端各席零触碰（wave-snapshot §四.6）。
+
+### §33.2 交付清单（逐包一句账，计数为各席日志实跑时点）
+1. **B1 矩阵回填**（MAT）：验收矩阵 65 行四列程序化核验 65/65；not_wired=17（与交接书 18 行口径差留档）；生效类禁语零命中。
+2. **B2① 服务装配组**（WIRE-SVC）：runtime/service_wiring.py 新件+根 __init__.py:4124-4143 主门门控+config 三新键（bot_v21_service_wiring_enabled/bot_worldbook_enabled/bot_knowledge_service_enabled 缺省 False）；12/96/105 passed；L39/L40/L42/L43 装配落盘、矩阵四行未动（升 wired 须重启后 live 证据）；L41 blocked=「独立新库 vs 同源同库」未裁决；事故一笔（stub 笔误一过性教导库文件，备份 %TEMP% 后清除）。
+3. **B2② 端口组方案材料**（PORT-PLAN）：v21r4-b2-port-wiring-plan.md，不构成实施授权；real_session 503 根因=factory.py:105-106 real_adapter 从未注入；15 项前置条件待用户逐项勾选。
+4. **B2③ 四行改判**（WIRE-DIRECT）：L56/L57/L58/L65 均无绕统一出站路径的直连点——L56/L57/L58 改判 blocked（装配+授权双阻塞），L65=端口组性质维持 503 not_wired；结构锁测试 4 例+合跑 149 passed。
+5. **B3 三立项书**（CHARTER/CHARTER-b）：L60 好感误扣补偿（5 条待裁，48h 证据窗时效注记）/L71 自修复（6 条）/L74 验收产物（7 条）；三测试件合跑 61 passed。
+6. **B4/B5/B6**（DOCS/LEDGER-b）：命令格式评审材料（77 topics 现状未动，14 领域 vs 20 域最大裁决点）+kb_drift 三问说明（35341 vs 4611，AI 不代改运行数据）+五项调研 memo（搜索时效三方案/合并转发 25MB 闭环待重启/提醒残余五项/LLM 故障转移九项 live 清单/亲密话术指针）。
+7. **提醒双修=本波唯一生产代码面**（REM-DAWN+REM-EVE）：「明早」入三词表（RED→GREEN 64 passed）；「明晚8点」修为次日 20:00（34 passed，族 125 passed）；冲突裁决：REM-EVE 改写 REM-DAWN「明晚=08:00」既有锁，回滚点在 v21r4-b-REM-EVE-log.md §③。
+8. **RK5 控制面三小债**：xfail 转正（_sanitize_action_details）+OpenAPI OpID 清零+platform.py mypy 清零；scoped 50 passed/扩面 436 passed。
+9. **S0 直连收编方案**（DIRECT-PLAN）：5 处直连点核实（cookie 提醒/入群欢迎/二维码/文档导出+登记表陈旧），统一路径 A/B/D 三形态缺省关收编设计，根 __init__ 四点 pending-on-RWC5-b。
+10. **波末补位交付**：L41 裁决 memo（MEM-DEC，推荐 A 独立新库）+L41 执行预案（L41-PLAN，A 案 12 步施工坐标+测试计划；预案≠授权≠裁决，L41 仍 not_wired）+LIVE-TOOL live 取证采集脚本（scripts/collect_v21r4_live_evidence.py，20 例 20 passed 全离线；160 万行历史日志九项全 0 诚实结果，重启后见真值）+重启验收清单（ACCEPT-PREP）。
+
+### §33.3 六席终态与在飞空位（SYNC-FINAL/-b 核验，转写自各席日志）
+- **RET3**：46 张垫片退役（批1-4：11+13+10+12；域回归 148/204/585+12/331 passed 零回归）；AST 零残余；备份 %TEMP%/v21r4-ret3-backup。
+- **RET2B-PREP**：44 退役（40 本席+4 前席记账）+挂起 7（移交清单=其日志 §三）+包垫片 supervisor/__init__ 同退；AST 零残余；整树 collect 8531/0err；域回归 1756 passed/0 failed；dev.ps1 旧路径 30 处修复。
+- **RWC6-b**：policy/security 迁 domains/chat_reply 8 真身+2 包 __init__，10 垫片保旧路径；AST 残余 0；域测试 394 passed/2 xfailed。
+- **RWC5-b**：根 __init__ 惰性导入续切收尾，旧路径消费边 0 残余；22 点真身未迁保留集；test_v21 全族 38 文件+提醒族 781 passed/1 skipped。
+- **S0-COLLECT**：outbound_registry 直发登记 3 条坐标刷新+1 条文档导出补登+file_gateway 条目改判 PENDING_RULING→CHANNEL_BODY；RED 4 failed→GREEN 64 passed。
+- **在飞空位**：S0-ROOT-c（根 init 四处直连收编执行，接替阵亡 S0-ROOT/S0-ROOT-b，按 direct-collect-plan 执行序④②③①）+RET2b 剩余 4 张垫片（contracts.runtime/decision.outbound/sources.web_search/contracts.media，主代理席接管 RET2b-R2 断点）——终态以其日志为准，本节不预填。
+
+### §33.4 两时点全量基线（SYNC-FINAL/-b 实跑，含在飞中间态，非合流结论）
+- 第一时点（2026-09-19 午间）：**1 failed / 8531 passed / 12 skipped / 3 xfailed**（444.89s）——唯一失败 test_webui_http（前端在飞面）。
+- 第二时点（2026-09-19 午后）：**4 failed / 8528 passed / 12 skipped / 3 xfailed**（291.77s）——新增 3 失败全为门禁常驻门形态：doc_sync 自动事实漂移（多席并发改树）/config catalog 覆盖门（TTS 席 bot_tts_* 未登记）/verify_hashes echo.py 漂移（他席在飞未重录）；与后端交付面零交集，只记录一律不修。
+- 终验四件残余（只 --check 只归属不代修）：ruff 1 错（tests/test_tts.py F401，TTS 占域）/verify_hashes 1 项漂移（echo.py）/doc_sync --check exit=1/command_catalog --check stale（TTS+echo 在飞域）——移交收尾合流统一收敛。
+- 全量测试计数以收尾实跑为准；波中参照=QA-PROBE 三族 1063 passed/23 failed（全前端域）。
+
+### §33.5 状态口径（诚实红线）
+全波未 commit/未重启/未部署；全部证据离线，离线绿不升 live passed、不升 wired；零真实对外动作（零真实发送/LLM 调用/子代理，各席自查）；50+ 项用户裁定点=docs/design/v21r4-b-wave-snapshot.md §二（10 组可勾选）；重启前置=scripts/pre_restart_check.py（含 kb_drift 体检）+验收清单=docs/design/v21r4-b-restart-acceptance-checklist.md。
+
+### §33.6 剩余待办终表（移交）
+| 项 | 内容 | 归属/依据 |
+|---|---|---|
+| 根 init 四处直连收编 | cookie 到期提醒/入群欢迎/二维码图片/文档导出（形态 B/A/A/D，配置门缺省关）——S0-ROOT-c 在飞执行 | S0-ROOT-c；docs/design/v21r4-b2-direct-collect-plan.md §三/§四 |
+| 挂起垫片 | 前端域 3 张（config_readiness/decision.trace/capabilities.debug）前端收口后退役；RET2b 剩余 4 张主代理席在飞；RET2B-PREP 挂起 7 张全量移交清单见其日志 §三 | 前端波/主代理席；docs/design/v21r4-b-RET2B-PREP-log.md §三 |
+| 用户裁决项 | 50+ 项收齐于 wave-snapshot §二（10 组可勾选：PORT-PLAN 15 项前置/L41 三案/搜索时效三方案/「一会儿」默认值/DOCS B4 八项/L60 五条/L71 六条/L74 七条/kb_drift 一项/散落授权收口备查） | docs/design/v21r4-b-wave-snapshot.md §二 |
+
+## §34 v21r5 三任务批总账（2026-09-20，未提交——工作树多会话共享，提交裁决权在用户）
+
+> 权威细节：时间线全录+席位文件域+关键缝=docs/design/v21r5-coordination.md；各席终态=docs/design/v21r5-TIMEOUT-log.md / v21r5-INTIMACY-log.md / v21r5-POLICY-log.md；C 席终版简报=v21r5-C-brief-final.md；裁定材料=r18-taxonomy-20260920.md。本节为精简转写（DOCS 席按 §33 同族体例套用；AGENTS.md 台账=#43）。
+
+### §34.1 承接与定位
+- 用户指令三件：①修复回复超时 ②群聊亲密模式双开关+四名单 ③R-18 政策再放宽（硬线保留）+成人内容裁定清单。时序承接 §33 v21r4-B 后端并发波；同工作树口径：**未 commit、共享工作树、提交裁决权在用户**；「重启后才生效」清单继续累积（本波全部生产码面均待重启）。
+- 执行波折：首轮三席全灭于平台故障（并发上限/captcha），零改动落盘，按 5 分钟固定退避重派后 A/B/C 三席全部交付；campus/VERIF/RESTART-PREP/REVIEW 补派在飞（campus 三派起步即 1302=平台容量满，回队列）。
+
+### §34.2 席位表
+| 席 | 任务 | 所有权域 | 终态 |
+|---|---|---|---|
+| A-TIMEOUT | 链级 fail-fast + config_missing 重复冷却 | domains/chat_reply/llm_engine/**、tests/test_llm_failfast.py、test_model_router* | 完成（A-SEAT DONE） |
+| B-INTIMACY | 亲密模式 v3：双开关+TTL 60min+四名单 | runtime/content_route.py、capabilities/chat.py（亲密缝）、config.py、catalog、.env.example、test_content_route* | 完成（B-SEAT DONE） |
+| C-POLICY→C-CONT | 政策放宽：六硬线+放开面+memory_sanitize+人格四处 | security/content_safety.py、memory_sanitize.py、character/affinity.py §4、personas/**+Runtime 副本、test_content_safety* | 完成（C-SEAT DONE） |
+| 主会话 | r18-taxonomy memo、测试分诊、跨席收口、合流 | docs/design/r18-taxonomy-20260920.md、root __init__.py:7367、test_affinity.py:97 | 交付（合流终跑待 VERIF） |
+| CAMPUS-FIX | campus 测试债 14 例（v21r2 重组遗留） | domains/assistant/campus/**、test_campus_digest.py 等 | 在飞（log 开场） |
+| VERIF | 合流终跑+门禁预检 | 只读+记录 | 在飞（二派），终态以其 log 为准 |
+| REVIEW-ADVERSARY | 恶毒自攻评审（8 攻击面） | 只读席，唯一写面=其报告 | 在飞 |
+| RESTART-PREP | 重启验收清单（唯一交付物=v21r5-restart-acceptance-checklist.md） | 单文档 | 在飞 |
+| DOCS | 本节+AGENTS #43+README 索引+HANDOFF-V21R4 指针 | 四文档零代码 | 完成（DOCS-SEAT DONE） |
+
+### §34.3 交付清单（逐席一句账，计数为各席日志实跑时点）
+1. **A 席超时根治**：model_router.py 常量区四常量（`_FAILFAST_CONSECUTIVE_NETWORK=5` / `_NETWORK_FAILFAST_KINDS={"network","timeout"}` / `_CONFIG_MISSING_COOLDOWN_THRESHOLD=3` / `_CONFIG_MISSING_COOLDOWN_MULTIPLIER=10`）+`_generate_impl` 连续 5 跳网络类失败中止（attempts 记 `failover:failfast_network` 记号，计费归因零影响——`failover:` 前缀被 `_last_channel_id` 跳过）+新 helper `_health_record_config_missing`（channel_health.py 内存计数=进程生命周期，≥3 次→10×bot_chat_channel_cooldown_seconds≈900s 冷却降级队尾不剔除）；auth/4xx/server/rate_limited/provider_error 重置计数、config_missing 中性；改后全网故障 ~100s 出降级回复（原遍历全链烧满 300s）；hedged 影子路径只补 config_missing 计数不入 fail-fast（生产影子缺省关，改动面最小）；tests/test_llm_failfast.py 8 例新建+failover 家族 204 passed+相邻 LLM 面 89 passed，ruff/mypy 净；.env 实查 `grep -c "BOT_POTCCV_API_KEY" .env`=1 已配置——14:06 config_missing 告警=生产进程早于 POTCCV 渠道上车（09-17 晚五段）未重启所致，重启即消。
+2. **B 席亲密模式 v3**：content_route.py 410→614 行——成员派生键 `member_session_key`（`群键||u:用户号`）承载个人级状态（L1/L2 滞回/个人钉/ML 钉全落成员键=天然 (群,用户) 隔离，附带收口旧版群共享键一名成员强词整群切 grok 的行为收窄）+`activated_at` TTL 60min 惰性过期（激活起算不随活动滑动、重新开启即重置；max_ttl 120 硬上限保留）+route_verdict/pinned_mode 成员键感知（群钉 intimate→全员 intimate；群钉 normal **不压制**成员个人档/ML=个人自主设计裁定）+`explicit_allowed_for_session` 增可选 `sender_id`（私聊黑名单最高优先、私聊白名单空=放开/非空=仅名单内，与群白名单"空=关闭"刻意不对称；缺省=旧行为逐字节一致；console 不参与名单门）+`resolve_intimate_context()` 合成函数（eligible+route_key+mode 单点=chat.py 注入缝与路由 cb 双门同源）；chat.py 只动亲密缝（`_manual_command_scope_key` 分流：管理员→群键/成员→成员键/per_user 关且非管理员拒绝）；config 四新键+catalog L796+.env.example；tests/test_content_route_v3.py 28 例（698 行）新建+相关 24 文件 298 passed，ruff/mypy 净。简报两处错漏按最小偏差修正：`explicit_allowed_for_session` 真身在 content_route.py 非 security/（放合成函数做则黑名单私聊用户仍得 explicit_allowed=True 漏门）；TTL 需独立 activated_at（沿用 updated 每轮滑动会变"活跃永不过期"违背裁定 3）。
+3. **C 席政策放宽（C-CONT 收口，前任幸存件全保留）**：content_safety.py 六硬线 scope=all（graphic_violence 扩中英/asphyxiation/system_degradation/minor_ambiguity fail-closed/violent_sm/livestock_treatment）+explicit 会话拦截面收敛为六硬线+minors（sexual/harassment/political_sensitive/persona_breaking/persona_degradation/insult_nickname 六类转 public-only 词面逐字节不动）；C-CONT 本席补完②⑤词面缺口（掐**住她的**喉咙/烫出疤/烙出疤/whip **her** until 漏检）+`_SEXUAL_CONTEXT` re.compile 收编（copy_redline_gate 豁免面，pattern 逐字节不变零行为）；memory_sanitize 清洗面收窄=六硬线+minors（共享 content_safety 词表单一来源，insult/forced_persona/独立 graphic_violence 删除）；affinity.py §4 第 3 条红线定稿措辞（「明确无歧义的自主意识成年人，儿童化信号即使声称成年也拒绝」）；人格四处（identity.md/核心知识.md/表达规范.md「亲密边界政策 2026-09-20 版」/Runtime 副本核心人格.md L81-87 整节）+sync 门 sha=f3de6189… 绿（R18 十词四处零命中）；tests/test_content_safety_v3.py 18 例（含三参数组合不可绕过结构锁）+受影响 8 文件 109 passed+广义 31 文件 418 passed。
+4. **主会话收口**：r18-taxonomy-20260920.md memo（§六=用户二轮裁定全量回写，见 §34.5）；root __init__.py:7367 被动好感感知补传 sender_id（私聊名单门同源生效，content_route+affinity 家族 78 passed）；test_affinity.py:97 文本锁对齐 C 定稿措辞（1 处字符串替换）；test_webui_http 时间炸弹夹具修复 6/6 绿。
+5. **campus 测试债（在飞）**：14 例全=v21r2 域重组遗留（①纯格式化函数 build_campus_forward_text 丢失恢复②outbound_registry campus 条目坐标漂移刷新③capability id 注册集 bot.campus_forward 断言）；campus 生产链路完好，专席修复终态以其 log 为准，本节不预填。
+6. **全量基线**：首轮 dev.ps1 实跑 **8708 passed / 14 failed**（14F 全=campus 债非本波损伤，三席域全绿）；合流终跑与门禁预检终态以 VERIF log 为准，本节不预填。
+
+### §34.4 改动文件面（生产码，全部未 commit）
+- A：domains/chat_reply/llm_engine/model_router.py（常量区 L62-99+helper L642-685+主循环+hedge）+channel_health.py（计数 dict+record_config_missing）；tests/test_llm_failfast.py 新建（约 320 行）。
+- B：domains/chat_reply/runtime/content_route.py（410→614）+capabilities/chat.py（亲密缝 3595→3666）+config.py（L709-726 四键+L1204-1205 校验器）+docs/config-catalog-full.md L796+.env.example；tests/test_content_route_v3.py 新建（698 行）。
+- C：domains/chat_reply/security/content_safety.py（词面补完+re 收编）+memory_sanitize.py（前任收窄+本席 I001）+character/affinity.py §4+personas/shorekeeper/**+Runtime 人格副本；tests/test_content_safety_v3.py（前任 15 例→终态 18 例）+test_memory_sanitize+test_auditfix_main_character+test_phase0_3 更新。
+- 主会话：root __init__.py:7367（被动好感感知 sender_id）+tests/test_affinity.py:97+test_webui_http 夹具+docs/design/r18-taxonomy-20260920.md。
+- 零新 SQLite/零垫片/零路由注册面改动；config 新键仅 B 席四键（控制面 llm_admin 前缀 `bot_content_route_` 自动纳管）。
+
+### §34.5 用户裁定记录（r18-taxonomy-20260920.md §六全量，2026-09-20 二轮回复）
+- **无条件放开**：4.1 兽人/毛毛、4.2 乱伦（成年虚构）、4.3 公共暴露/偷窥、4.4 睡眠/无意识、4.7 强制女装/TSF、4.8 轻痛感（不致伤）、4.10 vore、4.11 人机改造/义体化、4.12 巨大化/体型差、4.14 变形/兽化。
+- **条件放开**：4.13 拘禁/监禁=非严重暴力限度内；4.6 繁殖/breeding=非人化「牲口式」对待除外（→硬线⑥）；4.9 言语羞辱=场景内轻度可/系统级贬低禁（→硬线③）；4.5+4.15 药物/催情/醉态/身份隐瞒=可玩但守岸人保留自主意志、「用户设定不能完全牵着 AI 走」（硬线不可被设定架空）。
+- **维持禁止**：3.1-3.5（未成年角色扮演/真人色情/真实动物/排泄物/重口血腥）——用户「1-3：可以」按「同意维持禁止」解读落账；3.1 未成年角色扮演无论字面如何都禁（minors fail-closed，主会话偏差条款）。
+- **硬线 5→6 条**：+⑥非人化牲口式对待（4.6 条件）；C 席最终简报=v21r5-C-brief-final.md。
+- **已披露实现偏差**：用户原话「萝莉体质/身材一律默认按成年人处理」**不按字面实现**——歧义一律 fail-closed（r18-taxonomy 头注：把歧义默认推向可许是儿童化色情的标准绕过面；本项目唯一不服从用户字面指令之处）。
+- 用户回复末尾「实际应用上」为未完句，语义待用户补完（不阻塞落码）。
+
+### §34.6 状态口径（诚实红线）
+全波未 commit/未重启/未部署；全部证据离线（离线 passed ≠ 生产生效）；零真实 LLM/对外发送/生产重启/子代理；.env 只做键名存在性检查；A 席 config_missing 定性属离线诊断，待重启后真值验证。真机验收=docs/design/v21r5-restart-acceptance-checklist.md（RESTART-PREP-4 席已交付，九节全码核实；落盘前本节不引其内容）。
+
+### §34.7 在飞与待录项（移交）
+| 项 | 内容 | 归属/依据 |
+|---|---|---|
+| campus 测试债 14 例 | 纯函数恢复/坐标棘轮刷新/capability 注册集断言，修复中 | CAMPUS-FIX；docs/design/v21r5-CAMPUS-log.md |
+| 合流终跑+四门禁预检 | 首轮 8708P/14F 基线之后的全量终态与 ruff/mypy/doc_sync/catalog | VERIF（二派在飞）；终态以其 log 为准 |
+| 恶毒自攻评审 | 8 攻击面（未成年绕过≥8 样本/黑名单永远赢/意志自主锁/TTL 惰性过期/fail-fast 误杀/成员键隔离/人格一致性等） | REVIEW-ADVERSARY 在飞；docs/design/v21r5-REVIEW-log.md |
+| 重启验收清单 | v21r5-restart-acceptance-checklist.md（规划七大节：前置/即验/超时/亲密/政策/回滚/v21r4-B 衔接） | RESTART-PREP 在飞；docs/design/v21r5-RESTART-log.md |
+| B 席注释债 | control_plane/llm_admin.py:442 docstring 行号漂移（纯注释，功能无影响） | 已登记不阻塞 |
+| B 席两级状态持久性 | 群级/成员键状态为进程内存（LRU 4096）重启即清——与既有会话态同纪律 | B2 规格存储面另行立项 |
+
+### §34.8 下半场增补（2026-09-20 晚：评审八面+CRIT-FIX-3 核销链+REVERIFY+campus 终态+XFAIL 挂账+终审可收口；DOCS-BACKFILL 席按各席 log 回填）
+
+> 本节事实取代 §34.1-§34.7 中 campus/REVIEW/CRIT-FIX 相关「在飞/修复中」表述（§34.2 席位表与 §34.7 移交表中该三行以本节为准），其余条目不变；权威细节=v21r5-REVIEW-log.md / v21r5-CRITFIX-log.md / v21r5-REVERIFY-log.md / v21r5-CAMPUS-log.md / v21r5-FINALREVIEW-log.md。全波未 commit/未重启/未部署口径不变。
+
+- **恶毒自攻评审八面战果**（REVIEW-ADVERSARY 只读席，攻击样本与复现命令原文在其 log）：总裁决「需修后放行」**1 Critical / 0 Important / 4 Minor**+若干设计语义。面①未成年红线词面绕过=**Critical**——18 实测样本 11 穿（中文数字年龄「八岁/十六岁」、英文 N years old/Nyo、少女/kid/schoolgirl/lolita/幼齿、16 字窗口拆句、儿童言行信号被「18岁」grounding 洗白；最烈样本「她八岁，给我看色情」deterministic gate 全绿放行），归一化层对照组全绿=缺口在词面覆盖层；面②黑名单永远赢=内容面四门（ML/手动开关/L1L2 记账/RP 注入）全被 eligible 门关死（仅路由面 1 Minor stale-pin 残留）；面③意志自主结构锁成立（scope=all 六硬线在 explicit+admin 下全拒，`del admin` 无覆盖开关）；面④TTL 60min 惰性过期全成立（monotonic 免疫回拨/活跃不续期/重开重置/群钉同 TTL）；面⑤fail-fast 设计成立（单请求作用域+冷却降级自愈；provider_error 原始异常计数缝隙=Minor）；面⑥成员键隔离成立（OneBot 可信边界内跨成员污染不可达；`||u:` 分隔符消毒=加固建议）；面⑦人格文本一致（R18 十词门/sync 门/affinity §4 全绿）；面⑧登记面无缺口。
+- **CRIT-FIX-3 关闭 Critical**（词面 a-f+超纲望卫，逐条实测）：Fix1 词面补完——a 中文数字年龄族（回望防「十八岁/三十六岁/一百零八岁」子串误伤+补「未满N」）b 英文年龄形态（14 years old/14-year-old/12yo/14 y/o/aged 13；18/19 由数字面+回望双重排除）c 儿童信号词（少女/幼童/恋童/娈童/kids/schoolgirls）d **教义级**——「像小孩/像孩子/孩子气」自可 grounding 的 `_BODY_TYPE_PATTERN` 移入不可 grounding 的 `_CHILD_SIGNAL_PATTERN`（性语境共现窗 24，「她18岁，说话像小孩一样，我们做爱」必拒）e 共现窗口 16→24（_MINORS/_BODY_AMBIGUITY/_CHILD 三处；S15 拆句距实测 17 字）+性侧补「上床」变体与 fuck*，f `_ADULT_GROUNDING_PATTERN` 同构扩中文成年面（十八/十九/二十~九十九岁/已满年满）与英文 20+（防「她二十五岁，身材娇小」过拦）；**超纲加固（本席自发现）**：CJK 邻接 `\b` 失效族——中文直连英文词面（我想玩golden shower/她是child/她12yo/穿lolita裙）因 CJK 属 \w 无词界漏检，新增英文词面全部改 `(?<![A-Za-z])…(?![A-Za-z])` 望卫（对拉丁邻接与 \b 等价、对 CJK 严格更宽只扩不缩）；Fix2 memory_sanitize 经 HARD_LINE_SANITIZE_PATTERNS+minor_ambiguity_hit 单一来源自动继承（零逻辑改动）；Fix3 **B-Important-1 关闭**——ML 自动钉死在群聊且 per_user=False 时改落成员键 `_ml_pin_key=member_session_key(群键, sender_id)`（群键 verdict=intimate→normal，修复前后断言可判别）；Fix4 fail-fast 通用 except 分支补 `consecutive_network_failures=0` 一行（4×timeout+1×RAW 后第 6 渠道恢复拨号）；Fix5 stale-pin——not-eligible 会话（黑名单/出白名单 60min TTL 内）路由传 `session_id=""`（单行，content_route.py 零改动 git diff 实证）；Fix6 **3.4 排泄物硬线补全**（第⓻族双式：直排性癖复合词+泛词×性语境双向 12 字共现窗防医疗/日常误伤；7 例性癖全拒含 explicit+admin 不可绕过锁+5 例医疗/日常全 allow；**3.2 真人色情/3.3 兽奸登记不实施**——词面化必误伤正常讨论，人格层软防线兜底）。**测试**：新建 test_content_safety_v4.py **58 passed**（11 穿样本参数化锁+对照组防过拦 10 例+CJK 探针+排泄物+ML 成员键×2+stale-pin×2+fail-fast×2）+受影响族 171 passed+failfast/failover/ledger 族 123 passed；ruff 全绿+mypy 4 文件净。登记未修：verify_hashes --check 11 DRIFT=render 域在飞面非本席（本席 4 改动文件不在哈希登记表）；环境性失败 1 例（cookie_recovery 真网 DNS 依赖）；Minor⑥分隔符消毒/Minor⑧L1+L2 双记按评审建议登记不实施。
+- **REVERIFY 独立核销=核销中**（v21r5-REVERIFY-log.md，总裁决未出）：已过四项——①11 穿样本独立复测 **11/11 全拒**（类别与 CRITFIX 声称一致）②过拦对照 **10/10 全放行**（「她十八岁生日庆祝」「她二十五岁，身材娇小」/「she is 19 years old, petite」/「喉咙卡了鱼刺」双变体/尿常规/猫屎咖啡等零误拦）③教义级归属实证（像小孩在 _CHILD_SIGNAL_PATTERN 不在 _BODY_TYPE_PATTERN；成年声明不可洗白孩子气）④CJK 望卫主向量双向成立（childhood friend/kidcore/Scat singing 不误伤）；**已上报 N-1·Important·残留穿透**——`yo\b|y/o\b|aged…\b` 三处 `\b` 尾未按望卫约定改造，CJK 字母直连英文年龄后缀漏检（「她12yo就做爱了」allow；修复席断言用逗号邻接恰好掩盖=断言盲区），修复方向=三处 `\b` 尾改 `(?![A-Za-z])`+成年面镜像同步防过拦；⑤B-Important-1 场景⑥fail-fast P2⑦回归族核销与总裁决在飞，以其 log 终稿为准。
+- **campus 终态（前提证伪+3 绿+XFAIL 挂账）**（CAMPUS-FIX-9+CAMPUS-XFAIL）：**前提证伪**——§34.3 第 5 条「14 例=v21r2 重组测试债」波次口径**不成立**：决定性证据=audit-20260920-unify-U17-campus-wire.md（U17-CAMPUS-WIRE 席只完成 §0 取证+§1.0 基线 RED，§2 改动清单/§3 GREEN 全空、§4 自标「必须用户过目」），build_campus_forward_text/message/capability 三函数 HEAD 与工作树皆零存在、root `__init__.py:5044` handler 仍 `send_queue.submit` 旁路、注册面零 campus 登记——11 例=U17 未实施规约（验收测试先行），非重组债。CAMPUS-FIX-9 修复三绿（全部零生产行为改动+所有权内）：①纯函数 `build_campus_forward_text` 恢复+`_build_forward_request` 单一事实源（计划外最小补件=`CampusForwardRequest(SendRequest)` 仅追加 body 只读 property，零新字段零序列化差异；用例 c4 夹具缺陷修正）②outbound_registry campus 坐标 4581→5012/priority None→8/`MatcherEntry` 补 note 字段（status 保持 LEGACY=如实，旁路仍在岗）③`CONTROLLED_INTERNAL_CAPABILITIES` 补登 `bot.campus_forward`（绑定+descriptor 自动派生，零碰 feature_catalog）——**14F→11F**，五套件合跑 **116 passed/11 failed**；ruff 四文件全绿（测试文件 10 处既有 lint 债顺带清零）+mypy 630 文件 Success。**XFAIL 席 11 例诚实挂账**：逐例 `@pytest.mark.xfail(reason="U17-CAMPUS-WIRE 生产收编未实施…", strict=False)`（11 处 reason 逐字节一致，sort -u 实证唯一形态），全文件 **18 passed+11 xfailed+0 failed**（棘轮合跑 77 passed+11xf；18 绿例零触碰）；挂账定性如实=编码的是从未实施的收编规约，非已实现功能的遮羞布；摘牌指引=全文件搜 U17-CAMPUS-WIRE。U17 实施移交清单已落盘（builder×2+root handler 改 pipeline 分发——**与在飞席 S0-ROOT-c 同文件，需主会话协调先后**）；**audit §4 两裁定点待用户裁决**：①review 门新风险面（源群文本含密钥/路径形态被拦）②截断满额 1501 字边缘消息在 min_chars=1500 时转合并转发。
+- **FINAL-REVIEW-3 终审=可收口（0 Critical/1 Important/6 Minor）**：六维度全过（规格符合/代码质量/接缝/测试卫生/边界错误态/文档一致）；接缝实证=双门同源（同一 SHARED_CONTENT_ROUTE_ENGINE 单例+同一 route_verdict+同一 route_key）+explicit_allowed_for_session 全树恰 3+1 消费点全部传 sender_id 零旁路+四张活垫片 PEP 562 转发完整+渲染契约 mtime 实证零触碰；终审独立复跑 **126 passed**。1I=**B-Important-1 已由 CRIT-FIX-3 修复关闭**（见上 Fix3）；6 Minor 处置=A-Minor-1 工厂异常 provider_error 计数缝隙（Fix4 已修）/A-Minor-2 白盒读私有态（登记备查）/B-Minor-3 _extra_patterns 退役槽死重（登记）/C-Minor-4 3.2·3.3·3.4 无词面落点（3.4 已由 Fix6 补全，3.2/3.3 登记不实施）/C-Minor-5 乱伦未在人格放开面显式点名（R18 十词门措辞约束）/C-Minor-6 窒息词面「卡」常语义误伤（宁拦勿漏备查）。
+- **终跑数字：终跑进行中，终态以 dev.ps1 实跑为准**（首轮基线 8708P/14F 中的 campus 14F 已按本节定稿转为 18P+11xf；其余面终态待 VERIF 合流终跑，本节不预填）。
+
+## §35 Wave G · TTS 统一契约波总账（2026-09-19/20，收口席=T84 回填；分批 commit——共享工作树多会话，共享件提交信息含他批在飞件披露）
+
+### §35.1 承接与定位
+
+承接 §34 后审计波（report-T29 缺陷编号源）全部未收口项；用户四道裁定 G-R1..G-R4（契约层优先/中央预设表/M-35·M-07 双 P0+0=不限/git 四授权全开）+G2-R1..R3（U-29=A 段级记账/U-17=C 人工脚本+只读探针/硬顶 2000 字·8MiB+seed 确定性）；G-R1 代价声明：M-63 语音重投风险本波不修（后由 T78 段级记账桥接收口），BOT_TTS_AUTO_REPLY_ENABLED=false 前提下不现形。计划件=`.superpowers/sdd/2026-09-19-unify-audit/plan-G-contract.md`，逐席报告=同目录，收口预备件=closeout-manifest.md（T67）。
+
+### §35.2 席位表
+
+T52(G-0)→DONE | T53(引擎真值表)→DONE | T54(规格)→DONE（tts-contract-layer.md 仍 untracked〔H 收尾占位〕） | T55(传输层取证)→DONE | T56(五笔反审+P1-1/P2 转发)→DONE | T57(tts.py M-09/M-11)→DONE(d6801ab) | T58(G-3 前置取证，report 文件缺盘，以 ledger 行为准)→DONE | T59(中央谓词件)→DONE(ce85074) | T60(音色守望)→DONE(1b2860c) | T61(契约层实施)→DONE(9a9e099) | T62(施工反审)→DONE（三条经 T75 b77b7f4 落库） | T63(勘误)→DONE(4f3d1e8) | T65(队列仿真器)→DONE(aaee13b) | T66(五副本收编)→DONE(cf7ec29) | T68(extractor 盲区)→DONE(767f2b5) | T71(Wave H 棘轮 xfail)→DONE(902d955) | T73(G-3 hook)→DONE(9f1e81a) | T75(M-14/M-17/T62 三修)→DONE(b77b7f4) | T76(验收手册 §6.6.11)→DONE(04c8c9a) | T77(G-4 机器门)→DONE(0487156) | T78(Wave H 传输 M-63)→DONE(194a2ca) | T79(只读探针)→DONE(dce396b) | T80(M-19 renderer 收口)→DONE(6c34858) | T83(tts.py 第六副本换线)→DONE(8524811) | T85(Wave H 棘轮转正)→DONE(8b372c0) | T84(收口)→DONE(本节同笔)。
+
+### §35.3 交付清单（逐席一句账+哈希）
+
+①G-0 基线八笔（607472e+c40c8e1/de7ef71/ea41da1/07786f4/13d2f7d+60453a3+9cf310d）domains 416 件全跟踪了结 M-05；②T53 真值表（TTS_Request 24 键 verified/漏发 5 死键/硬编码 9 键/G-R3 钳制域/32000Hz int16 单声道//control 无鉴权/异常静音重建+yaml 回写）；③T54 规格 v1；④T55 传输层取证（M-63 根因链/「9」=断连形态限定/T46-N1 白名单 8 码/W1 基座 worker.py:622-665/U-29=A 案三处）；⑤T57 M-09 退避真闸+M-11 缓存身份（d6801ab，RED 9F→族 179 passed）；⑥T59 text_boundary.py 权威字符集+70 例锁（ce85074）；⑦T60 音色守望者入 pre_restart_check 第 10 项+tts_voice_baseline.json（1b2860c）；⑧T63 交接件勘误 9 处（4f3d1e8）；⑨T61 契约层：中央预设表 bot_tts_preset+9 键域闸+0=不限+硬顶 2000 字·8MiB+M-07 静音三指纹闸+M-43 第二缺省清零+seed=cache_key 派生+缓存身份 v2+U-04 配额顺接（9a9e099）；⑩T66 五副本字节现状收编（cf7ec29）+T83 tts.py 第六副本换线+棘轮转硬门（8524811，S-07 六副本全收编）；⑪T65 离线队列仿真器 helper+14 自测（aaee13b）；⑫T68 提取器盲区根修 L-C04 委托陷阱递归追踪（767f2b5，bot.tts 0→11 词）；⑬T75 M-14 有损变换审计化+M-17 中央名单同源+锁外裸读写根修（b77b7f4）；⑭T79 引擎只读健康探针：惰性 TCP+300s 抑制衔接+voice_status_line 接口（dce396b）；⑮T73 G-3 配音 hook：voice_enricher 新件+pipeline 冻结插入点+根 init 双态装配+bot_tts_voice_hook_enabled 缺省 False（9f1e81a）；⑯T80 M-19 renderer 出站契约收口（6c34858）；⑰T77 G-4 统一性机器门 A1-A5/B1-B4（0487156）；⑱T71/T85 Wave H 棘轮 xfail→转正（902d955+8b372c0）；⑲T78 Wave H 传输层 M-63 段级记账原子投递+退码白名单终态化（194a2ca）；⑳T76 acceptance-manual §6.6.11 换装 T36 30 项版（04c8c9a）；㉑T84 收口（见 §35.7）。
+
+### §35.4 裁定与事故
+
+G-R1..R4/G2-R1..R3 全录（G-R1 契约层优先/G-R2 U-17=C 宪条「绝不代启动引擎」/G-R3 硬顶 2000 字·8MiB+seed 确定性/G-R4 git 四授权；G2-R1 U-29=A 段级记账/G2-R2 引擎生命周期人工脚本唯一入口/G2-R3 0=不限+同句恒同音色）。**8e47ed0→ece7b43 历史改写事故**：另一会话在共享仓 amend/rebase 已共享提交，P2a 三件一度从历史消失，经 verify_hashes EXIT=0 复验后以 e0b0722 显式重演落库，无内容损伤——**多会话共用仓期间禁止 amend/rebase 已共享提交（波末向用户正式提示立规）**；T52 两次并发卷入事故注记（提交信息已注明）。
+
+### §35.5 遗留与移交 Wave H
+
+- **已桥接收口**：M-63（P0）由 T78 194a2ca 段级记账原子投递落库（Wave G-H 桥）；M-17 群白名单中央同源由 T75 b77b7f4 落库；S-07 六副本收编由 T66+T83 闭合。
+- **移交 Wave H 施工面**：T46-N1 白名单消费、SnowLuma 1200 挂起语义、M-04、拆条=A 案施工（依 M-63 修后）、T46 retryable 消费者；U-29 段级键 vs 整条单键裁决点；unknown_part_confirmer=None 语音停 PARTIAL 产品披露。
+- **待用户授权（引擎侧，bot 零触碰）**：U-21=tts_infer.yaml custom 两权重路径改绝对路径；U-22=引擎 stdout 落盘；控制面 GET /control 删除或 token 门+/set_* 封禁。
+- **波末报备六项**（closeout-manifest §五）：U-25 seed 确定性语义变更（同句恒同音色）；PARTICLE 边界两形态差异表（T66 采逐字节现状=不加宽，并集形态待用户裁）；M-05 收口+8e47ed0 事故提示；U-21/U-22/控制面三项待授权；真机窗口=report-T36 §2 新 30 项+SnowLuma retcode 判据；T63 勘误 #6「在建」→「已落库（1b2860c）」一处两词修正。
+- **未接线点（零行为影响，如实登记）**：探针触发点 2（tts.py 退避窗进入沿探一次）未接线；G-2 identity_snapshot 恢复沿（recovered=True）消费点未接线；U-13 preset/数值键 deprecation 周期翻正待用户裁。
+- **收尾占位**：tts-contract-layer.md untracked〔H 收尾合流波入库〕；G-5 终验 runbook（四门禁+生成物 --check 归零+反审必查+期望 ≈8700±40P，禁止手写计数入档）随合流波执行。
+
+### §35.6 验收指针
+
+acceptance-manual §6.6.11（T76 换装 T36 30 项版）+report-T36 §2 重写版 30 项+§5 新旧映射；SnowLuma 判据=T55 §七（真机带 retcode 采集，verified={100,1200,1400,1404}）；真机窗口判据见 closeout-manifest.md §五⑤。
+
+### §35.7 T84 收口（本节同笔落库）
+
+- **echo.py /bot status 语音行接线**（T79 清单触发点 1）：`_build_status_body` 末尾追加 `voice_status_line(config)`（health 缺省=惰性探测，disabled 时绝不真探；≤2s 超时钳制+fail-open；管理门在能力上游，健康态不出普通成员面）。**披露项：探针 issue 未贴附 CapabilityResult**——T79 清单的 `await notify_operational_issue` 落点不可达（echo 全同步且 dispatch 所需 targets/online_bots/delivery 皆根 init 闭包私有），且经读码实证贴附有三重副作用：pipeline A-19 会把带 issue 的群聊 status 结果整体吞体换失败通知（status 本身没失败）、`_record_transport_receipt` 对带 issue 回执清 public_message、探针 `_last_issue` 不随读/恢复清空=恢复后仍贴附陈旧 issue 永久误报；告警投喂正确落点=触发点 2（tts.py 退避窗进入沿），移交 H 波。
+- **语音帮助条目刷新**（T61 移交+T75 §六.3）：四要素行补「0=不限」口径+新增「预设与硬顶」行（中央预设表唯一缺省源/硬顶 2000 字·8MiB 超限拒绝留痕/群面内容群白名单安全门黑名单永远赢）；detail 补退避真闸快速失败不挂起+缓存口径改「内容+引擎身份」+「同句恒同音色」；structured config_vars 补 6 键（PRESET/HARD_MAX_CHARS/MAX_AUDIO_BYTES/CACHE_MAX_BYTES/CACHE_MAX_AGE_DAYS/VOICE_HOOK_ENABLED，26 键全量对齐 config.py）。
+- **config-catalog-full.md 两处修正**（T75 §六）：:814「并提示」失实→「静默无用户面提示——audit_tags `truncated=true` 留痕」；:827 `_tts_auto_reply_scope` 补 M-17 语义（scope=礼仪维度；群面另受内容群白名单安全门）。.env.example 同款注记（T75 §六.4）。
+- **生成物重录**：漂移面预检=renderer.py 1 项（T80 后主代理一行）+echo.py 本席改动；`command_catalog.py --write`（77 topics 校验 current）+`verify_hashes.py --write/--check` EXIT=0（19 交付物）。门禁：test_doc_sync_gates+test_documentation_consistency+test_help_entries_coverage+test_e2e_help_matrix+test_bot_commands_catalog_b10+test_help_meta_search_and_tra49_aliases+test_traditional_help_aliases+test_reaudit_20260911+test_voice_health_probe 合跑 247 passed+1 failed（NameError 笔误即修复）→复跑全绿；ruff echo.py 净；mypy echo.py Success。
