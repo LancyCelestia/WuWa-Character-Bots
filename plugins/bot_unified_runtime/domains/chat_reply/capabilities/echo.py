@@ -2260,12 +2260,12 @@ _HELP_ENTRIES: list[HelpEntry] = [
         {
             "topic": '语音',
             "admin_only": False,
-            "aliases": ('语音', 'tts', 'yuyin', '语音合成'),
+            "aliases": ('语音', 'tts', 'yuyin', '语音合成', '說', '語音', '唸', '朗讀', '語音合成'),
             "index": '【语音】让我用声音念一段话：说 <文本>',
             "title_line": '【语音】用守岸人的声音念出来',
             "lines": [
                 '说 <文本>：作用=把文本合成为守岸人音色的语音消息；参数=文本（必填，默认上限 200 字，BOT_TTS_MAX_CHARS=0 为不限）；内容=一条语音；意义=让回复带上声音。',
-                '语音 <文本>｜念 <文本>｜朗读 <文本>｜tts <文本>：触发词等价，BOT_TTS_TRIGGER_WORDS 可自定义。',
+                '语音 <文本>｜念 <文本>｜朗读 <文本>｜tts <文本>：触发词等价，繁體 說/語音/唸/朗讀/語音合成 同（正文保留繁體用字）；BOT_TTS_TRIGGER_WORDS 可自定义。',
                 '对话自动配音：BOT_TTS_AUTO_REPLY_ENABLED 开启后，人格回复会连同语音一起发出，范围由 BOT_TTS_AUTO_REPLY_SCOPE 决定（private/group/all）。',
                 '配音概率：默认只有 5% 的回复会带语音（BOT_TTS_AUTO_REPLY_PROBABILITY）；BOT_TTS_AUTO_REPLY_ALWAYS=true 可临时改成条条都配，方便验收听音。',
                 '预设与硬顶：合成参数以中央预设表为唯一缺省源（BOT_TTS_PRESET，其余数值键=管理员覆盖）；单次文本硬顶 2000 字、产物 8 MiB（BOT_TTS_HARD_MAX_CHARS / BOT_TTS_MAX_AUDIO_BYTES，超限拒绝并留痕）；群聊自动配音另受内容群白名单安全门约束（黑名单永远赢，白名单空=群面不配音绝不猜群）。',
@@ -2275,7 +2275,7 @@ _HELP_ENTRIES: list[HelpEntry] = [
                 '  语音能力对接本机 GPT-SoVITS v2ProPlus 的 HTTP 接口（api_v2.py，默认 9880），\n'
                 '  用你训练好的守岸人权重合成；文本不出本机，合成结果落运行时目录。\n'
                 '【指令与参数】\n'
-                '说 <文本>（语音/念/朗读/tts/say 等价）：作用=合成语音；参数=文本；内容=语音消息；意义=让守岸人开口。\n'
+                '说 <文本>（语音/念/朗读/tts/say 等价；繁體 說/語音/唸/朗讀/語音合成 同）：作用=合成语音；参数=文本；内容=语音消息；意义=让守岸人开口。\n'
                 '【权限与效果】\n'
                 '  权限=全员，前提是 BOT_TTS_ENABLED=true 且 9880 服务在跑。参考音频未配置、\n'
                 '  服务未启动或超时，都会得到一句可读的降级文案而不是报错；引擎不可达时\n'
@@ -3081,8 +3081,8 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "network": False,
         "outputs": ("语音",),
         "chat_scope": "全员可用；对话自动配音范围由 BOT_TTS_AUTO_REPLY_SCOPE 决定（private/group/all）",
-        "triggers_nl": ("说 <文本>", "语音 <文本>", "念 <文本>", "朗读 <文本>", "语音合成 <文本>", "tts <文本>", "say <文本>"),
-        "triggers_nickname": ("语音", "tts", "yuyin", "shuo", "nian", "语音合成", "朗读", "langdu", "say"),
+        "triggers_nl": ("说 <文本>", "语音 <文本>", "念 <文本>", "朗读 <文本>", "语音合成 <文本>", "tts <文本>", "say <文本>", "說 <文本>", "語音 <文本>", "唸 <文本>", "朗讀 <文本>", "語音合成 <文本>"),
+        "triggers_nickname": ("语音", "tts", "yuyin", "shuo", "nian", "语音合成", "朗读", "langdu", "say", "說", "語音", "唸", "朗讀", "語音合成"),
         "config_vars": (
             "BOT_TTS_ENABLED",
             "BOT_TTS_API_URL",

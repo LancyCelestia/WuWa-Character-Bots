@@ -91,7 +91,7 @@
 | 好感度 | `好感度`/`好感查看`/`查询好感`/`好感`/`好感值`/`亲密度`/`affinity`；`好感度 算法` | 双向好感（-100~+100 八档，v5 多因素线性步长） | `好感` 仅独立成词时触发（防「好感消失了」误触）；群聊出榜，`我` 只看自己，`算法` 输出 v5 定性说明（多因素：说话温度×相处时长×第一印象×当日心情，不展示固定加减数值） |
 | Epic | `epic`/`免费游戏`/`steam免费` | Epic+Steam 每周限免 | 无参数 |
 | 随机图 | `随机图`/`来张图` | 自建图库随机发图（仅发原图本体，不附带「随机图片」等文字标注） | 目录 `BOT_RANDPIC_DIRS`；触发词 `BOT_RANDPIC_TRIGGER_WORDS` |
-| 语音 | `说 <文本>`、`语音 <文本>`、`念 <文本>`、`朗读 <文本>`、`语音合成 <文本>`；英文 `tts`/`say`（大小写不敏感）；拼音 `shuo`/`yuyin`/`nian`/`langdu` | 文本合成守岸人音色语音（本机 GPT-SoVITS v2ProPlus，深度帮助 `/bot help 语音`） | 触发词后必须跟正文，只发「说」等裸触发词不占路由、交回人格对话；正文默认上限 200 字（`BOT_TTS_MAX_CHARS`，硬顶 `BOT_TTS_HARD_MAX_CHARS`）；追加词 `BOT_TTS_TRIGGER_WORDS` 与内置 11 词合并非替换；繁體触发词未登记（诚实缺口）；失败降级：私聊守岸人口吻文案（如「嗓子还没接上——语音服务好像没在跑」），群内走中央 A-19 降级池；总开关 `BOT_TTS_ENABLED`、参考音频 `BOT_TTS_REF_AUDIOS`、自动配音 `BOT_TTS_AUTO_REPLY_*`（默认关） |
+| 语音 | `说 <文本>`、`语音 <文本>`、`念 <文本>`、`朗读 <文本>`、`语音合成 <文本>`；繁體 `說`/`語音`/`唸`/`朗讀`/`語音合成`；英文 `tts`/`say`（大小写不敏感）；拼音 `shuo`/`yuyin`/`nian`/`langdu` | 文本合成守岸人音色语音（本机 GPT-SoVITS v2ProPlus，深度帮助 `/bot help 语音`） | 触发词后必须跟正文，只发「说」等裸触发词不占路由、交回人格对话；正文默认上限 200 字（`BOT_TTS_MAX_CHARS`，硬顶 `BOT_TTS_HARD_MAX_CHARS`）；追加词 `BOT_TTS_TRIGGER_WORDS` 与内置 16 词合并非替换；繁體正文保留繁體用字不转简；失败降级：私聊守岸人口吻文案（如「嗓子还没接上——语音服务好像没在跑」），群内走中央 A-19 降级池；总开关 `BOT_TTS_ENABLED`、参考音频 `BOT_TTS_REF_AUDIOS`、自动配音 `BOT_TTS_AUTO_REPLY_*`（默认关） |
 | 提醒 | `<时间>提醒我 <事项>`、`提醒列表`、`取消提醒 <id前缀>` | 到点主动督促 | id 前缀 4-12 位唯一命中；事项 ≤120 字 |
 | 记忆 | `/bot memory add\|list\|delete` | 个人长期记忆（全员，仅本人） | add 支持 `--sensitivity=personal\|group\|public\|credentialed`（默认 personal）；群聊 list 只见 public/group |
 | 路由 | `/bot route <文本>`、`/bot routes` | 路由判定/路由表（全员只读） | 文本必填 |
