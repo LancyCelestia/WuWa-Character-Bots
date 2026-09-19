@@ -181,7 +181,8 @@ Tier2（`get_msg` 回查）以 `_ONEBOT_GET_MSG_NOT_FOUND_PROVEN=False` 取证�
 - **正确判据（已回写长期记忆）**：席位活性只能看**席位 transcript 的 mtime** 与目标文件 mtime，**不能看心跳文件大小**；未收到 result 前若要补派，必须补派**互斥面**，不得补派同面。
 - **两席终账合并**：B4a（config 七键 + 闸测试 **42 passed**，起点 RED=38 failed/3 passed + §落地请求 L-1…L-7 + 裁决点 C1…C5；相邻发送队列族合跑 247 passed；`typecheck` 全树 Success 629 文件）+ B4a-R2（`outbound_gate.py` 实现 + 测试）= 中央闸**代码/配置键/文档登记三件齐备**。
 - **诚实边界**：**闸当前零消费者**（`grep` `domains/emergency_info` 内 submit 触点 = 0），不得宣称生产生效；`lint` 全树 46 错全在他席面（本波三面 0 错）。
-- **本波不做、待热面冷却后落地**：`scripts/doc_sync.py --write` 重录机器册（620→627，`docs/auto-facts.md` 正被她席写）、`SETTABLE_KEYS`、装配接线 `issue_sink`→alerts；以及 **L-6 方向性风险**：紧急域若不以 `priority=str(level.value)` 落 `RouteRule`，**P0 会被静默顺延=漏报**（B 波注册席必读）。
+- **本波不做、待热面冷却后落地**：`scripts/doc_sync.py --write` 重录机器册（620→627，`docs/auto-facts.md` 正被她席写）、`SETTABLE_KEYS`、装配接线 `issue_sink`→alerts；以及 **L-6 方向性风险**：~~紧急域若不以 `priority=str(level.value)` 落 `RouteRule`，P0 会被静默顺延=漏报~~
+**（此句载体写错，§十三-1 已更正：载体是 `SendRequest.priority`，不是 `RouteRule.priority`）**（B 波注册席必读）。
 
 ### ④ 执行补记：实际入库三笔（02:20—02:25，路径式提交，未 push）
 
@@ -201,3 +202,35 @@ Tier2（`get_msg` 回查）以 `_ONEBOT_GET_MSG_NOT_FOUND_PROVEN=False` 取证�
 **T6 双结构锁实证现役 6 族仍直调、`domains/emergency_info/` 尚未引用闸** ⇒ 闸零生产接线（接线原文在报告 §R2-4-L1/L2）。
 本席另钉死两处规格缺口待评审：severity 载体=`SendRequest.priority`、新增仅关键字参 `dedupe_family="once|daily"`。
 它同时纠正了本报告早前一行的口径：「原席零代码落盘」不成立——原席已写完 1285 行 RED 与 config 七键，双作者结构已在报告 §0/§R2 写清。
+
+## 十三、B11 规格席抓出的两条，本会话复核后更正（03:05）
+
+### 13-1 我的第六条口径错：P0 漏报的**载体写错了对象**
+- 我在 §十二（以及转给 B11/WIRE-MAP/INTG-1 的任务书里）写的是「紧急域须以 `priority=str(level.value)` **落 `RouteRule`**，否则 P0 被静默顺延」。
+- **错在把两个不同维度混成一个**：`RouteRule.priority` 是**路由匹配序**（谁先命中），与静默窗无关；
+  中央闸读的是 **`SendRequest.priority`**——真身 `domains/transport/sender/outbound_gate.py:248-249`
+  `_severity_of(send_request) = str(send_request.priority or "").strip().upper()`。
+- 正确表述：**紧急域的每一次主动投递必须把等级写进 `SendRequest.priority`（`P0..P3`）**，
+  否则 `_is_urgent` 拿空串 ⇒ 静默窗内一律 `defer`。
+- **为什么这条值得单独更正而不是顺手改掉**：生产静默门**默认是开的**（`config.py:1000-1005`：
+  `bot_quiet_hours_enabled=True`，`00:00–06:00`，`Asia/Hong_Kong`，`session_types=["group"]`，仅 `admin` 旁路）
+  ⇒ 若照我原句去"修 RouteRule"，**修完仍然漏报且没有任何告警**。按 B11 原话：「修错地方等于没修」。
+
+### 13-2 两处过期陈述（已自愈但文档没跟上）
+- §十一末「`grep -c bot_outbound config.py` = 0 ⇒ 生产没有旋钮可开」**在 HEAD `6ffdef3` 之后已不成立**：
+  B11 02:5x 实跑 **8 命中**，且 catalog 已登记（`53e8e7f`）、`.env.example` 已登记、七键已归 `RESTART_REQUIRED_KEYS`。
+  ⇒ 现状是「**旋钮存在、缺省关闭、改后要重启**」，不再是「无旋钮」。
+- §九起一直沿用的「B2 三处 ruff 错」在 B11 取证时点已被 B2 自修完（`http_get.py` 02:30:14、`nmc_alarm.py` 02:31:39 mtime 为证）；
+  全树 `ruff check .` 仍有 13 错，**全在非本域面**。
+
+### 13-3 B11 的本波最大发现（不是我的错，但比我的错更要紧）
+`tests/test_emergency_info_sources.py::test_sources_do_not_import_the_domain_model_of_the_parallel_seat`
+用文本断言把「采集器不 import 内核」**钉成了机器锁** ⇒ **今天被保护的是"接缝缺失"这件事本身**：
+将来真缝合时，**没有任何一条测试**会因为「绕过 `build_emergency_item`（D-1 收口）或绕过 `ReviewGate.submit`（D-8 审核门）」而变红。
+规格 §8.1 已给出锁 A–E（含断言原文与落点文件），实现交 **D1-FIX 席**（任务书 `briefs/D1-FIX-brief.md`，已明令
+「不许为凑绿造实现、依赖未落地代码的锁一律 `xfail(strict=True)` 并登记转正条件」）。
+
+### 13-4 顺手登记：闸侧还有两处会咬人的口径差
+① `service/dedupe.py build_emergency_dedupe_key` **校验用 strip 值、拼键用原参** ⇒ 带空白入参过校验却拼出非法键，
+进闸被 `skip, reason="dedupe_key_shape"` ⇒ **静默丢投递**（同 §13-1 属漏报族，D1-FIX 修）；
+② B4a 报告里的接线片段形参名写作 `settings=`，真身是 `settings_provider=` ⇒ 注册席照抄即 `TypeError`。
