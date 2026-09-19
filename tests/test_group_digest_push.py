@@ -259,3 +259,35 @@ def test_config_rejects_invalid_time(bad: str) -> None:
     """HH:MM 严格校验（与安静时间键同款风格）：越界/非数字/缺段全拒绝。"""
     with pytest.raises(ValidationError):
         Config(bot_group_digest_push_time=bad)
+
+
+def test_digest_push_job_passes_llm_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """台账 #33 缺陷②回归：夜间推送侧必须把 LLM provider 传给群摘要 provider。
+
+    ``bot_group_digest_llm_enabled`` 只在 ``llm_provider`` 非 None 时才生效
+    （shared_group.py:419-426 的与门），漏传会让推送侧的 LLM 压缩恒不生效。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.character import shared_group
+
+    captured: dict[str, object] = {}
+
+    def _spy(config, *, llm_provider=None):  # 测试替身，签名跟随被测工厂
+        captured["llm_provider"] = llm_provider
+        return _FakeProvider({})
+
+    monkeypatch.setattr(shared_group, "build_shared_group_context_provider", _spy)
+    # 钉住「走中央 LLM 入口」这条接线本身，不依赖 Config 内部字段。
+    import plugins.bot_unified_runtime as runtime_pkg
+
+    monkeypatch.setattr(
+        runtime_pkg, "_build_chat_llm_provider", lambda cfg: object(), raising=True
+    )
+    scheduler = _FakeScheduler()
+    _register_digest_push_scheduler(
+        scheduler, SimpleNamespace(bot_group_digest_push_time="21:30"), _FakeQueue()
+    )
+
+    func, _trigger, _kwargs = scheduler.jobs[0]
+    func()
+
+    assert captured.get("llm_provider") is not None, "推送侧漏传 llm_provider → LLM 压缩恒不生效"
