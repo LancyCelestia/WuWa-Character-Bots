@@ -1,0 +1,183 @@
+{
+    "@context": [
+        "https://geojson.org/geojson-ld/geojson-context.jsonld",
+        {
+            "@version": "1.1",
+            "wx": "https://api.weather.gov/ontology#",
+            "@vocab": "https://api.weather.gov/ontology#"
+        }
+    ],
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.a9895fe777ef8aee26b3f6e21e3fd5f23efdeaeb.001.1",
+            "type": "Feature",
+            "geometry": null,
+            "properties": {
+                "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.a9895fe777ef8aee26b3f6e21e3fd5f23efdeaeb.001.1",
+                "@type": "wx:Alert",
+                "id": "urn:oid:2.49.0.1.840.0.a9895fe777ef8aee26b3f6e21e3fd5f23efdeaeb.001.1",
+                "areaDesc": "Sheboygan; Ozaukee; Milwaukee; Racine; Kenosha",
+                "geocode": {
+                    "SAME": [
+                        "055117",
+                        "055089",
+                        "055079",
+                        "055101",
+                        "055059"
+                    ],
+                    "UGC": [
+                        "WIZ052",
+                        "WIZ060",
+                        "WIZ066",
+                        "WIZ071",
+                        "WIZ072"
+                    ]
+                },
+                "affectedZones": [
+                    "https://api.weather.gov/zones/forecast/WIZ052",
+                    "https://api.weather.gov/zones/forecast/WIZ060",
+                    "https://api.weather.gov/zones/forecast/WIZ066",
+                    "https://api.weather.gov/zones/forecast/WIZ071",
+                    "https://api.weather.gov/zones/forecast/WIZ072"
+                ],
+                "references": [
+                    {
+                        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.7de006560706d2dd37b0c60f6f38d552440bd90c.001.1",
+                        "identifier": "urn:oid:2.49.0.1.840.0.7de006560706d2dd37b0c60f6f38d552440bd90c.001.1",
+                        "sender": "w-nws.webmaster@noaa.gov",
+                        "sent": "2026-09-19T04:04:00-05:00"
+                    }
+                ],
+                "sent": "2026-09-19T11:47:00-05:00",
+                "effective": "2026-09-19T11:47:00-05:00",
+                "onset": "2026-09-19T11:47:00-05:00",
+                "expires": "2026-09-19T20:00:00-05:00",
+                "ends": "2026-09-22T19:00:00-05:00",
+                "status": "Actual",
+                "messageType": "Update",
+                "category": "Met",
+                "severity": "Moderate",
+                "certainty": "Likely",
+                "urgency": "Expected",
+                "event": "Beach Hazards Statement",
+                "sender": "w-nws.webmaster@noaa.gov",
+                "senderName": "NWS Milwaukee/Sullivan WI",
+                "headline": "Beach Hazards Statement issued September 19 at 11:47AM CDT until September 22 at 7:00PM CDT by NWS Milwaukee/Sullivan WI",
+                "description": "* WHAT...Life threatening waves of 4 to 8 feet and dangerous\ncurrents are expected.\n\n* WHERE...Sheboygan, Ozaukee, Milwaukee, Racine and Kenosha\nCounties.\n\n* WHEN...Through Tuesday evening.\n\n* IMPACTS...Dangerous swimming conditions are expected due to\nhigh waves and onshore winds.",
+                "instruction": "Stay out of the water and away from dangerous areas like piers\nand breakwalls.  Strong structural and longshore currents are\nexpected.  Rip currents are possible.",
+                "response": "Avoid",
+                "note": null,
+                "parameters": {
+                    "AWIPSidentifier": [
+                        "CFWMKX"
+                    ],
+                    "WMOidentifier": [
+                        "WHUS43 KMKX 191647"
+                    ],
+                    "NWSheadline": [
+                        "BEACH HAZARDS STATEMENT REMAINS IN EFFECT THROUGH TUESDAY EVENING"
+                    ],
+                    "BLOCKCHANNEL": [
+                        "EAS",
+                        "NWEM",
+                        "CMAS"
+                    ],
+                    "VTEC": [
+                        "/O.CON.KMKX.BH.S.0022.000000T0000Z-260923T0000Z/"
+                    ],
+                    "eventEndingTime": [
+                        "2026-09-22T19:00:00-05:00"
+                    ],
+                    "expiredReferences": [
+                        "w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.c8399996e50eb7575bb7ae62a7e6d94ccec7f8c6.001.1,2026-09-18T21:53:00-05:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.c40a2d29537d89671267ac424860e1eb7fff62ec.001.1,2026-09-18T18:13:00-05:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.a3e6c52c1e96b5e6c6a44510ca831aa9c7726037.002.1,2026-09-18T14:03:00-05:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.a3e6c52c1e96b5e6c6a44510ca831aa9c7726037.001.2,2026-09-18T14:03:00-05:00"
+                    ]
+                },
+                "scope": "Public",
+                "code": "IPAWSv1.0",
+                "language": "en-US",
+                "web": "http://www.weather.gov",
+                "eventCode": {
+                    "SAME": [
+                        "NWS"
+                    ],
+                    "NationalWeatherService": [
+                        "BHS"
+                    ]
+                }
+            }
+        },
+        {
+            "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0-KEEPALIVE-55571",
+            "type": "Feature",
+            "geometry": null,
+            "properties": {
+                "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0-KEEPALIVE-55571",
+                "@type": "wx:Alert",
+                "id": "urn:oid:2.49.0.1.840.0-KEEPALIVE-55571",
+                "areaDesc": "Montgomery",
+                "geocode": {
+                    "SAME": [
+                        "024031"
+                    ],
+                    "UGC": [
+                        "MDC031"
+                    ]
+                },
+                "affectedZones": [
+                    "https://api.weather.gov/zones/county/MDC031"
+                ],
+                "references": [],
+                "sent": "2026-09-19T16:43:09+00:00",
+                "effective": "2026-09-19T16:43:09+00:00",
+                "onset": null,
+                "expires": "2026-09-19T16:53:09+00:00",
+                "ends": null,
+                "status": "Test",
+                "messageType": "Alert",
+                "category": "Met",
+                "severity": "Unknown",
+                "certainty": "Unknown",
+                "urgency": "Unknown",
+                "event": "Test Message",
+                "sender": "w-nws.webmaster@noaa.gov",
+                "senderName": "NWS",
+                "headline": null,
+                "description": "Monitoring message only. Please disregard.",
+                "instruction": "Monitoring message only. Please disregard.",
+                "response": "None",
+                "note": "This is only a test for monitoring of vital dissemination systems.",
+                "parameters": {
+                    "AWIPSidentifier": [
+                        "KEPWBC"
+                    ],
+                    "WMOidentifier": [
+                        "NZUS91 KWBC 191643"
+                    ],
+                    "BLOCKCHANNEL": [
+                        "CMAS",
+                        "EAS",
+                        "NWEM"
+                    ]
+                },
+                "scope": "Public",
+                "code": "IPAWSv1.0",
+                "language": "en-US",
+                "web": "http://www.weather.gov",
+                "eventCode": {
+                    "SAME": [
+                        "NWS"
+                    ],
+                    "NationalWeatherService": [
+                        "TST"
+                    ]
+                }
+            }
+        }
+    ],
+    "title": "Watches, warnings, and advisories",
+    "updated": "2026-09-19T16:48:16+00:00",
+    "pagination": {
+        "next": "https://api.weather.gov/alerts?limit=2&cursor=eyJ0IjoxNzg5ODM2MTg5LCJpIjoidXJuOm9pZDoyLjQ5LjAuMS44NDAuMC1LRUVQQUxJVkUtNTU1NzEifQ%3D%3D"
+    }
+}
