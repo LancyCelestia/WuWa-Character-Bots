@@ -59,6 +59,8 @@ def _params() -> TtsParams:
 @pytest.fixture(autouse=True)
 def _isolate_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tts_mod, "_CACHE", __import__("collections").OrderedDict())
+    # 退避时刻一并隔离：M-09 接线后它被 synthesize 的健康闸真实读取。
+    monkeypatch.setattr(tts_mod, "_last_failure_at", 0.0)
     monkeypatch.setattr(tts_mod, "_last_failure_reason", "")
 
 

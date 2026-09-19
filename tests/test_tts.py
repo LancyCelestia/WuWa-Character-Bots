@@ -132,8 +132,14 @@ def _wav_bytes(*, seconds: float = 0.2, rate: int = 32000) -> bytes:
 
 @pytest.fixture(autouse=True)
 def _isolate_cache(monkeypatch: pytest.MonkeyPatch) -> None:
-    """每条用例一份干净缓存，避免进程级 LRU 串味。"""
+    """每条用例一份干净缓存，避免进程级 LRU 串味。
+
+    退避状态（``_last_failure_at``）同样必须隔离：它是进程级全局，且自 M-09
+    接线起被 ``synthesize`` 的健康闸真实读取——上一条用例留下的失败记账会把
+    下一条用例的合成直接闸成快速失败。
+    """
     monkeypatch.setattr(tts_mod, "_CACHE", OrderedDict())
+    monkeypatch.setattr(tts_mod, "_last_failure_at", 0.0)
     monkeypatch.setattr(tts_mod, "_last_failure_reason", "")
 
 
@@ -320,17 +326,18 @@ def test_clean_for_speech_empty_and_whitespace() -> None:
 
 def test_cache_key_is_stable_and_param_sensitive(tmp_path: Path) -> None:
     ref = RefAudio(path=str(_ref_file(tmp_path)), text="你好", lang="zh")
-    base = tts_mod._cache_key("正文", ref, _params())
-    assert base == tts_mod._cache_key("正文", ref, _params())
-    assert base != tts_mod._cache_key("正文", ref, _params(temperature=1.1))
-    assert base != tts_mod._cache_key("正文", ref, _params(speed_factor=1.0))
-    assert base != tts_mod._cache_key("换一句", ref, _params())
+    url = "http://127.0.0.1:9880"
+    base = tts_mod._cache_key("正文", ref, _params(), api_url=url)
+    assert base == tts_mod._cache_key("正文", ref, _params(), api_url=url)
+    assert base != tts_mod._cache_key("正文", ref, _params(temperature=1.1), api_url=url)
+    assert base != tts_mod._cache_key("正文", ref, _params(speed_factor=1.0), api_url=url)
+    assert base != tts_mod._cache_key("换一句", ref, _params(), api_url=url)
 
 
 def test_cache_key_ref_text_participates(tmp_path: Path) -> None:
     audio = _ref_file(tmp_path)
-    left = tts_mod._cache_key("正文", RefAudio(path=str(audio), text="甲"), _params())
-    right = tts_mod._cache_key("正文", RefAudio(path=str(audio), text="乙"), _params())
+    left = tts_mod._cache_key("正文", RefAudio(path=str(audio), text="甲"), _params(), api_url="http://127.0.0.1:9880")
+    right = tts_mod._cache_key("正文", RefAudio(path=str(audio), text="乙"), _params(), api_url="http://127.0.0.1:9880")
     assert left != right
 
 

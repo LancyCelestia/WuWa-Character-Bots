@@ -12,8 +12,9 @@
   多项时随机轮换，贴合不同语气；路径可为绝对路径，也可相对
   ``BOT_TTS_GPTSOVITS_DIR``（GPT-SoVITS 程序目录）。
   参考音频硬性要求 3~10 秒干声，超出会被服务端直接拒绝。
-- **缓存**：文本 + 参考音频 + 采样参数 → sha256 命名，命中直接复用已有
-  wav（``BOT_TTS_CACHE_ENABLED`` 默认开），同一句话不重复合成。
+- **缓存**：文本 + 引擎地址 + 参考音频（含**内容指纹**）+ 采样参数 → sha256
+  命名，命中直接复用已有 wav（``BOT_TTS_CACHE_ENABLED`` 默认开），同一句话
+  不重复合成；换引擎地址 / 原地重录参考音频后旧键自动失配（M-11）。
 - **fail-open**：服务未启动 / 超时 / 非 200 → 返回守岸人口吻的降级文案，
   绝不抛异常、绝不阻断出站管线（与 randpic 同哲学）。但 **fail-open ≠ 发出去**：
   引擎产物先过结构体检（``_inspect_wav_bytes``：RIFF/WAVE 魔数 + 头可解析 + 帧数>0），
@@ -37,6 +38,7 @@ import json
 import logging
 import random
 import re
+import threading
 import time
 import wave
 from collections import OrderedDict
@@ -105,10 +107,29 @@ _DEFAULT_AUTO_REPLY_PROBABILITY = 0.05
 _CACHE_LRU_CAP = 512
 _CACHE: OrderedDict[str, tuple[Path, float]] = OrderedDict()
 
-# 服务健康探测节流：连续失败后短时间内不再重复打服务，避免刷日志。
+# 参考音频内容指纹缓存（M-11）：路径 → ((size, mtime), sha256 前 16 位)。
+# 首次读取做全文件 sha256，之后只 stat 比 (size, mtime)：一致即沿用指纹，
+# 避免每次合成全文件哈希；stat 变了（真实现场原地换文件必然更新 mtime）才重算。
+# **已知边界**：内容变而 size+mtime 都不变（如 touch 回写旧时间戳）检测不到，
+# 按设计接受——规格锁在 tests/test_tts_cache_identity.py。
+# 并发口径：GIL 下 dict 单键读写原子；竞态最坏结果是两个线程对同一新 stat
+# 重复算一次哈希（幂等同值），故不加锁。
+_REF_FINGERPRINTS: dict[str, tuple[tuple[int, float], str]] = {}
+
+# 服务健康退避闸（M-09 接线，U-20 裁定=接线不删净）：真失败（不可达/被拒/
+# 空音频/httpx 缺失）进入冷却窗，窗内后续合成**不发 HTTP** 直接快速失败
+# （原因以「服务不可达」开头 → 挂 ``tts_service_unreachable`` 可重试 issue），
+# 窗满自动放行（非永久拉黑），真成功清零；快速失败不刷新窗口。
+# 阈值=模块常量，不加新 config 键。
+# 线程安全：能力跑在 offload 线程池，「失败时刻+原因」必须成对读写——GIL 只
+# 保证单条赋值原子，保证不了配对一致，故模块级锁包住全部状态读写；临界区只有
+# 内存操作，HTTP 绝不持锁（否则全部合成串行化）。已知取舍：「先查闸、后打
+# 请求」不是原子语义，窗沿上并发的前几个请求都可能真打引擎——本闸是成本
+# 节流不是硬信号量，为此把锁横跨 HTTP 不可接受。
 _HEALTH_BACKOFF_SECONDS = 30.0
 _last_failure_at: float = 0.0
 _last_failure_reason: str = ""
+_HEALTH_LOCK = threading.Lock()
 
 # 朗读前清洗用正则：代码围栏 / 行内代码 / markdown 强调符 / 链接 / 颜文字括号。
 _FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
@@ -279,11 +300,41 @@ def _truncate_at_sentence(text: str, limit: int) -> str:
     return window
 
 
-def _cache_key(text: str, ref: RefAudio, params: TtsParams) -> str:
+def _ref_fingerprint(ref_path: str) -> str:
+    """参考音频内容指纹（M-11）：stat 快路径 + 首次全文件 sha256。
+
+    读不到的路径返回 ``"missing"``（确定性占位；不同路径另有 ``ref`` 段区分）。
+    """
+    path = Path(ref_path)
+    try:
+        stat = path.stat()
+    except OSError:
+        return "missing"
+    stamp = (stat.st_size, stat.st_mtime)
+    cached = _REF_FINGERPRINTS.get(ref_path)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    except OSError:
+        return "missing"
+    _REF_FINGERPRINTS[ref_path] = (stamp, digest)
+    return digest
+
+
+def _cache_key(text: str, ref: RefAudio, params: TtsParams, *, api_url: str) -> str:
+    """缓存键（M-11）：请求参数快照 + **引擎身份** + **素材身份** 三段合一。
+
+    旧键只按参数快照建模，换引擎地址 / 原地重录参考音频后同句永久命中旧音色
+    wav——身份变了键空间必须换代。``api_url`` 做 ``rstrip('/')`` 归一：尾斜杠
+    不算换引擎。
+    """
     payload = json.dumps(
         {
             "text": text,
+            "api_url": str(api_url or "").rstrip("/"),
             "ref": ref.path,
+            "ref_fp": _ref_fingerprint(ref.path),
             "ref_text": ref.text,
             "ref_lang": ref.lang,
             "params": {
@@ -320,6 +371,39 @@ def _store_cache(key: str, path: Path) -> None:
         _CACHE.popitem(last=False)
 
 
+def _record_failure(reason: str) -> None:
+    """记一次真实失败（进入退避冷却窗）——M-09 退避状态的唯一写入口。"""
+    global _last_failure_at, _last_failure_reason
+    with _HEALTH_LOCK:
+        _last_failure_at = time.monotonic()
+        _last_failure_reason = reason
+
+
+def _clear_failure() -> None:
+    """真成功清零退避状态：下一轮失败从零起算（非累积性拉黑）。"""
+    global _last_failure_at, _last_failure_reason
+    with _HEALTH_LOCK:
+        _last_failure_at = 0.0
+        _last_failure_reason = ""
+
+
+def _backoff_reason() -> str:
+    """健康退避闸（M-09）：冷却窗内返回快速失败原因，窗满/无失败返回空串。
+
+    原因固定以「服务不可达」开头——走 ``_FAILURE_KINDS`` 既有前缀映射，挂
+    ``tts_service_unreachable``（可重试）；窗满即放行，绝不永久拉黑。
+    """
+    with _HEALTH_LOCK:
+        if _last_failure_at <= 0.0:
+            return ""
+        elapsed = time.monotonic() - _last_failure_at
+        if elapsed >= _HEALTH_BACKOFF_SECONDS:
+            return ""
+        remaining = _HEALTH_BACKOFF_SECONDS - elapsed
+        last = _last_failure_reason or "上次合成失败"
+    return f"服务不可达：退避冷却中（剩 {remaining:.0f} 秒）｜上次失败：{last}"
+
+
 def _request_tts(
     *,
     api_url: str,
@@ -331,12 +415,13 @@ def _request_tts(
     """调用 api_v2.py 的 ``POST /tts``，返回 wav 字节；失败返回 None。
 
     异常一律吞掉并记账（fail-open）——调用方据此给降级文案。
+    每条真实失败经 ``_record_failure`` 进入健康退避冷却窗（M-09）。
     """
-    global _last_failure_at, _last_failure_reason
     try:
         import httpx
     except Exception:  # noqa: BLE001 - 缺依赖按服务不可用处理。
-        _last_failure_reason = "httpx 不可用"
+        # 与其余失败同口径记账（M-46 指认的「httpx 分支不更新时刻」在此收口）。
+        _record_failure("httpx 不可用")
         return None
 
     endpoint = f"{api_url.rstrip('/')}/tts"
@@ -365,8 +450,7 @@ def _request_tts(
         with httpx.Client(timeout=max(1.0, float(timeout_seconds))) as client:
             response = client.post(endpoint, json=payload)
     except Exception as exc:  # noqa: BLE001 - 连接/超时统一按失败降级。
-        _last_failure_at = time.monotonic()
-        _last_failure_reason = f"服务不可达：{type(exc).__name__}"
+        _record_failure(f"服务不可达：{type(exc).__name__}")
         logger.info("tts request failed: %s", exc)
         return None
     if response.status_code != 200:
@@ -385,14 +469,13 @@ def _request_tts(
             detail = error_body[:200]
         else:
             detail = (response.text or "")[:200]
-        _last_failure_reason = f"服务返回 {response.status_code}：{detail[:160]}"
+        _record_failure(f"服务返回 {response.status_code}：{detail[:160]}")
         logger.info("tts request rejected: %s %s", response.status_code, detail)
         return None
     if not response.content:
-        _last_failure_at = time.monotonic()
-        _last_failure_reason = "服务返回空音频"
+        _record_failure("服务返回空音频")
         return None
-    _last_failure_reason = ""
+    _clear_failure()
     return response.content
 
 
@@ -427,11 +510,16 @@ def synthesize(
     cache_enabled: bool = True,
 ) -> tuple[Path | None, str]:
     """合成一段语音并落盘，返回 ``(wav 路径, 失败原因)``；成功时原因为空串。"""
-    key = _cache_key(text, ref, params)
+    key = _cache_key(text, ref, params, api_url=api_url)
     if cache_enabled:
         hit = _lookup_cache(key)
         if hit is not None:
             return hit, ""
+    # 健康退避闸（M-09）：放在唯一 HTTP 入口之前、缓存查找之后——已合成的
+    # 音频照常复用，冷却窗内只省掉注定失败的那次真请求（不再白打服务）。
+    backoff = _backoff_reason()
+    if backoff:
+        return None, backoff
     audio = _request_tts(
         api_url=api_url, text=text, ref=ref, params=params, timeout_seconds=timeout_seconds
     )
