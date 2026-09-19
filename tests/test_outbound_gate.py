@@ -32,6 +32,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -50,6 +51,7 @@ from plugins.bot_unified_runtime.domains.core.contracts import (
     PrivacyLevel,
     ReceiptState,
     RenderedOutput,
+    RiskLevel,
     SendPolicy,
     SendRequest,
     SessionType,
@@ -75,6 +77,16 @@ def _utc(hour: int, minute: int, *, day: int = 14) -> datetime:
     return datetime(2026, 9, day, hour, minute, tzinfo=timezone.utc)
 
 
+def _expected_subject_hash(target_scope: SessionType, target_id: str) -> str:
+    """日志/审计里该出现的主体标识：`sha256("{scope.value}:{target_id}")[:12]`。
+
+    刻意在测试里用 hashlib 独立算一遍，而不是 import 闸的 `_subject_hash`——拿被测
+    实现算期望值再和被测实现输出比＝同源自比，判 C 类恒真（LOCK-AUDIT 纪律）。
+    """
+    subject = f"{target_scope.value}:{target_id}"
+    return hashlib.sha256(subject.encode("utf-8")).hexdigest()[:12]
+
+
 def _request(
     *,
     request_id: str = "req-emg-1",
@@ -83,6 +95,7 @@ def _request(
     target_scope: SessionType = SessionType.GROUP,
     target_id: str = "g-1",
     capability_id: str = "bot.emergency",
+    risk_level: RiskLevel = RiskLevel.LOW,
 ) -> SendRequest:
     text = "暴雨红色预警，请就近避雨。"
     return SendRequest(
@@ -97,6 +110,7 @@ def _request(
             content_ref={"text": text},
             text_fallback=text,
             privacy_level=PrivacyLevel.PUBLIC,
+            risk_level=risk_level,
         ),
         send_policy=SendPolicy.QUEUED,
         priority=priority,
@@ -723,8 +737,273 @@ def test_record_failure_still_allows_and_reports(
     assert outcome.verdict.action == "allow"
     assert queue.calls == [("req-emg-1", {})]
     assert [issue.kind for issue in issues] == ["outbound_gate_degraded"]
-    assert "outbound_gate" in caplog.text
+    # 钉**这条日志本身**（LOCK-AUDIT GAP-7：旧断言 `assert "outbound_gate" in
+    # caplog.text` 会被 exc_info=True 回溯里的模块文件路径喂饱 ⇒ 把消息文本改成
+    # 「gate counting broke (see traceback)」59 条全绿，只有整块删掉才红）。
+    # 收窄到短语 + 结构化字段名与取值，文本漂移与字段涂值都必红。
+    # LOCK-FIX-2 变异检验（C1）实证：只钉 `startswith("outbound_gate record_failure")`
+    # 时，把消息改成「record_failure BROKEN subject_key_hash=…」测不到（短语前缀与
+    # 字段子串都还在）——中间插词正是「文本漂移」的一种，短语+子串的组合拦不住它。
+    # 故对这条 WARNING 取**整行等值**：格式串与取值一起钉，任何增删改词都红。
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING"
+    ]
+    assert (
+        "outbound_gate record_failure subject_key_hash="
+        f"{_expected_subject_hash(SessionType.GROUP, 'g-1')}"
+    ) in messages, messages
     assert "暴雨红色预警" not in caplog.text
+    assert "group:g-1" not in caplog.text
+
+
+# --------------------------------- T7 观测面值（LOCK-FIX F-3：GAP-5 六面零锁补齐）
+def test_log_line_carries_spec_fields_and_no_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """中央日志行的每个字段都钉**取值**，不钉「整条 text 里出现过某个词」。"""
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+
+    now = _utc(3, 0)
+    store = FakeStore()
+    # 预置一笔窗内已投：window_count 必须是**真数**（0 会让「涂成常数 0」这种病检不出）。
+    store.rows.append(("group:g-1", now - timedelta(seconds=30)))
+    gate = _gate(
+        settings=OutboundGateSettings(enabled=True, max_per_target_per_minute=5),
+        quiet=_quiet(),
+        store=store,
+        now=now,
+    )
+    with caplog.at_level("INFO"):
+        _push(
+            RecordingQueue(),
+            _request(dedupe_key="emg:qq:lg:g-1", priority="P0"),
+            gate,
+            now=now,
+        )
+    line = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("outbound_gate action=")
+    )
+    subject_hash = _expected_subject_hash(SessionType.GROUP, "g-1")
+    assert "action=allow" in line
+    assert "reason=allowed" in line
+    assert "request_id=req-emg-1" in line
+    assert "capability_id=bot.emergency" in line
+    assert f"subject_key_hash={subject_hash}" in line
+    assert "window_count=1" in line  # 不含本次（判定时刻的窗内已投数）
+    assert "deliver_after=none" in line  # 放行无顺延
+    assert "暴雨红色预警" not in line
+    assert "group:g-1" not in line  # 主体只以 sha256[:12] 出现
+    assert subject_hash not in {"", "none"}
+
+
+def test_audit_private_debug_carries_window_count_and_deliver_after() -> None:
+    """审计 `private_debug` 四面：action / reason / subject 哈希 / window_count /
+    deliver_after。GAP-5 的原始证据是「G23 G24 G25 三涂字段值 59 全绿」，本条起牙。
+    """
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+
+    now = _utc(12, 0)
+    audit = InMemoryAuditLogger()
+    store = FakeStore()
+    store.rows.append(("group:g-1", now - timedelta(seconds=20)))
+    gate = _gate(
+        settings=OutboundGateSettings(enabled=True, max_per_target_per_minute=5),
+        quiet=_quiet(enabled=False),
+        store=store,
+        audit=audit,
+        now=now,
+    )
+    _push(
+        RecordingQueue(),
+        _request(request_id="req-dbg", dedupe_key="emg:qq:dbg:g-1"),
+        gate,
+        now=now,
+    )
+    records = audit.list_records("req-dbg")
+    assert [record.event for record in records] == ["outbound_gate_allow"]
+    debug = records[0].private_debug
+    subject_hash = _expected_subject_hash(SessionType.GROUP, "g-1")
+    assert f"action=allow reason=allowed subject={subject_hash}" in debug
+    assert "window_count=1" in debug
+    assert "deliver_after=none" in debug
+    joined = f"{records[0].public_message} {debug}"
+    assert "暴雨红色预警" not in joined and "group:g-1" not in joined
+
+
+def test_deferred_audit_and_log_carry_the_real_defer_moment(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """顺延时刻是「什么时候会发」的唯一可观测线索：钉到秒级 ISO 串。"""
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+
+    now = _utc(12, 0)
+    audit = InMemoryAuditLogger()
+    store = FakeStore()
+    store.rows.append(("group:g-1", now - timedelta(seconds=10)))
+    gate = _gate(
+        settings=OutboundGateSettings(enabled=True, max_per_target_per_minute=1),
+        quiet=_quiet(enabled=False),
+        store=store,
+        audit=audit,
+        now=now,
+    )
+    with caplog.at_level("INFO"):
+        outcome = _push(
+            RecordingQueue(),
+            _request(request_id="req-defer", dedupe_key="emg:qq:def:g-1"),
+            gate,
+            now=now,
+        )
+    assert outcome.verdict.action == "defer"
+    assert outcome.verdict.deliver_after == now + timedelta(seconds=60)
+    moment = "2026-09-14T12:01:00+00:00"
+    debug = audit.list_records("req-defer")[0].private_debug
+    assert f"deliver_after={moment}" in debug
+    assert "action=defer" in debug and "reason=rate_limit_per_minute" in debug
+    assert f"deliver_after={moment}" in caplog.text
+    assert "window_count=1" in caplog.text
+
+
+def test_skip_receipt_is_shaped_by_the_gate_and_never_invents_a_handle() -> None:
+    """skip 回执三字段：`transport` 是闸自造口、`public_message` 带机读原因、
+    `provider_message_id` 绝不臆造（闸没碰协议，就没有把手）。
+
+    GAP-5 原证：G49 把 transport 改名、G50 把 public_message 恒置空 ⇒ 59 全绿。
+    两条各有一侧正/负样本，所以「恒空」与「恒非空」都会红。
+    """
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+
+    now = _utc(12, 0)
+    gate = _gate(
+        settings=OutboundGateSettings(enabled=True),
+        quiet=_quiet(enabled=False),
+        store=FakeStore(),
+        now=now,
+    )
+    outcome = _push(
+        RecordingQueue(),
+        _request(dedupe_key="emg:qq:a:b:c:d", priority="P0"),  # 六段超限
+        gate,
+        now=now,
+    )
+    receipt = outcome.receipt
+    assert receipt is not None
+    assert receipt.state is ReceiptState.SKIPPED
+    assert receipt.transport == "outbound_gate"
+    assert receipt.provider_message_id is None
+    assert receipt.public_message == "dedupe_key_shape"  # 机读原因短语，非空也非正文
+    assert "暴雨红色预警" not in receipt.public_message
+
+    # 另一侧：请求自带 issue 时，public_message 让位为空串（issue 才是事实载体）。
+    issue = OperationalIssue(stage="sender", kind="pre_existing", retryable=False)
+    with_issue = _request(request_id="req-issue", dedupe_key="emg:qq:a:b:c:d")
+    with_issue = with_issue.model_copy(update={"operational_issue": issue})
+    second = _push(RecordingQueue(), with_issue, gate, now=now)
+    assert second.receipt is not None
+    assert second.receipt.public_message == ""
+    assert second.receipt.operational_issue is not None
+    assert second.receipt.operational_issue.kind == "pre_existing"
+
+
+def test_audit_severity_comes_from_the_request_content_risk_level() -> None:
+    """审计 severity 取值：来自 `send_request.content.risk_level`，不是常数也不是 issue 默认。
+
+    GAP-5 原证：G47b 换源之所以「红」是因为 append 抛异常（`RiskLevel` 无该常量），
+    不是断言在查值。本用例喂一个**合法但不同**的枚举值（HIGH），且请求缺省是 LOW，
+    所以「写死 LOW / 写死 issue.severity(MEDIUM)」这类换源都会在这里红。
+    """
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+
+    now = _utc(3, 0)
+    audit = InMemoryAuditLogger()
+    gate = _gate(
+        settings=OutboundGateSettings(enabled=True),
+        quiet=_quiet(),
+        store=FakeStore(),
+        audit=audit,
+        now=now,
+    )
+    _push(
+        RecordingQueue(),
+        _request(request_id="req-s1", priority="P0", risk_level=RiskLevel.HIGH),
+        gate,
+        now=now,
+    )
+    _push(
+        RecordingQueue(),
+        _request(
+            request_id="req-s2",
+            dedupe_key="emg:qq:s2:g-1",
+            priority="P2",
+            risk_level=RiskLevel.CRITICAL,
+        ),
+        gate,
+        now=now,
+    )
+    _push(
+        RecordingQueue(),
+        _request(
+            request_id="req-s3",
+            dedupe_key="bad",
+            priority="P0",
+            risk_level=RiskLevel.MEDIUM,
+        ),
+        gate,
+        now=now,
+        dedupe_family="daily",
+    )
+    assert [record.event for record in audit.list_records()] == [
+        "outbound_gate_allow",
+        "outbound_gate_defer",
+        "outbound_gate_skip",
+    ]
+    assert [record.severity for record in audit.list_records()] == [
+        RiskLevel.HIGH,
+        RiskLevel.CRITICAL,
+        RiskLevel.MEDIUM,
+    ]
+
+
+def test_severity_normalisation_and_blank_severity_is_never_urgent() -> None:
+    """`_severity_of` 归一（strip + upper + 空值→""）与「空串白名单不穿窗」。
+
+    取值归一在 GAP-5/GAP-9 里都是零锁：GAP-9 的注毒（删掉 `if str(value).strip()`
+    过滤）不红 ⇒ `urgent_severities=[""]` 配上 priority 为空的请求，会被当成紧急
+    **穿静默窗**——保守性反了（该顺延的反而深夜抢发）。本条把两件事一起钉住。
+    """
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        _is_urgent,
+        _severity_of,
+    )
+
+    assert _severity_of(_request(priority=" p2 ")) == "P2"
+    assert _severity_of(_request(priority="P0")) == "P0"
+    assert _severity_of(_request(priority="")) == ""
+    # priority 的载体是 str（contracts 必填）：None 进不了契约，归一只服务空串/空白。
+    with pytest.raises(ValidationError):
+        _request(priority=None)
+
+    assert _is_urgent(_request(priority="p1"), ["P0", "P1"]) is True
+    assert _is_urgent(_request(priority="P2"), ["P0", "P1"]) is False
+    assert _is_urgent(_request(priority="  "), ["P0", "P1"]) is False
+    # 空串白名单 + 空 priority：过滤一删就被判紧急 ⇒ 必须 False（保守顺延方向）。
+    assert _is_urgent(_request(priority=""), ["", " "]) is False
+    assert _is_urgent(_request(priority=""), [""]) is False
+    assert _is_urgent(_request(priority="P0"), []) is False
 
 
 # ------------------------------------------------------------------ T5 dedupe 键规范
@@ -780,7 +1059,10 @@ def test_dedupe_key_shape_enforced() -> None:
 @pytest.mark.parametrize(
     ("bad_key", "why"),
     [
-        ("digest_push:g-1:2026-09-14", "非 emg 命名空间（存量族键不得混入）"),
+        # 原实例写的是 `digest_push:g-1:2026-09-14`——只有三段，实际拦它的是**段数**
+        # 规则，命名空间规则对它零判别（LOCK-AUDIT G10 删前缀校验 59 全绿）。
+        # 改挂真身键形（四段、各段非空），让「非 emg 命名空间」这条规则单独受审。
+        ("digest_push:g-1:u-2:2026-09-14", "非 emg 命名空间（存量族键不得混入）"),
         ("emg:qq::target", "空段"),
         ("emg:qq:only-three", "段数不足"),
         ("emg:qq:a:b:c:d", "段数超限"),
@@ -807,6 +1089,211 @@ def test_malformed_dedupe_keys_are_skipped(bad_key: str, why: str) -> None:
     assert outcome.verdict.action == "skip", why
     assert outcome.verdict.reason == "dedupe_key_shape"
     assert queue.calls == []
+
+
+# ------------------------------------- T5b 键命名空间与段字符集（LOCK-FIX F-1 补锁）
+# 原缺口（LOCK-AUDIT GAP-1）：闸侧谓词既不查段字符集，命名空间规则也**零覆盖**
+# （G10 删掉 `emg` 前缀校验 ⇒ 59 条全绿）。真实后果不是漏报而是**重发**：队列
+# `ON CONFLICT(dedupe_key) DO NOTHING`（queue.py:443-475）是幂等唯一执行点，脏键
+# 与现役族键各存一行＝同一推送发两遍。下面三条把「命名空间 / 段字符集 / 现役合法
+# 键仍放行」三面各自钉死，且每条都带「只有这一关可红」的前置断言。
+_NAMESPACE_ONLY_KEYS: tuple[tuple[str, str], ...] = (
+    ("daily_assist:morning:3865067623:2026-09-19", "日常助理按日键（四段真形）"),
+    ("campus_fwd:1108838060:12345:2026-09-19", "校园转发键（四段真形）"),
+    ("emergency:qq:item-1:g-1", "近亲前缀 `emergency` 不等同 `emg`（D-6 唯一前缀）"),
+    ("emg_push:qq:item-1:g-1", "第二前缀形态：禁各推送族再造一套"),
+)
+
+
+@pytest.mark.parametrize(("bad_key", "why"), list(_NAMESPACE_ONLY_KEYS))
+def test_namespace_only_violations_are_skipped(bad_key: str, why: str) -> None:
+    """四段、各段非空、字符合规——唯一不合规的只有命名空间这一关。"""
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+        dedupe_key_shape_ok,
+    )
+
+    # 防空转：段数与空段两条规则都必须放过它，才证明本用例考的是前缀规则本身。
+    segments = bad_key.split(":")
+    assert len(segments) == 4, why
+    assert all(segment.strip() for segment in segments), why
+
+    assert dedupe_key_shape_ok(bad_key) is False, why
+
+    queue = RecordingQueue()
+    outcome = _push(
+        queue,
+        _request(dedupe_key=bad_key),
+        _gate(
+            settings=OutboundGateSettings(enabled=True),
+            quiet=_quiet(enabled=False),
+            store=FakeStore(),
+            now=_utc(12, 0),
+        ),
+        now=_utc(12, 0),
+    )
+    assert outcome.verdict.action == "skip", why
+    assert outcome.verdict.reason == "dedupe_key_shape"
+    assert queue.calls == []
+
+
+@pytest.mark.parametrize(
+    ("bad_key", "why"),
+    [
+        ("emg:qq:has space:g-1", "段内空白：配置串按逗号切开不 strip 的直达形态"),
+        ("emg:  qq:item-1:g-1", "段前空白：`strip()` 判空拦不住（段非空）"),
+        ("emg:qq:item-1:g-1 ", "尾段尾随空白：与干净键是两条队列行＝重发"),
+        ("emg:qq:预警:g-1", "段字符集只认 [A-Za-z0-9_.-]：条目号必须先消毒"),
+        ("emg:qq:item-1:private:3865067623", "目标未消毒带冒号：伪装成五段且日期段非法"),
+        ("emg:qq:item-1:g-1:2026-9-14", "日期段未补零：与 B4 规格 §1.3-3 形态不符"),
+        ("emg:qq:item-1:g-1:20260914", "日期段缺分隔符"),
+    ],
+)
+def test_segment_charset_and_date_key_shape_are_enforced(bad_key: str, why: str) -> None:
+    """段字符集与日期段形态：脏键过闸＝幂等失效，故闸侧必须逐段查字符。"""
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+        dedupe_key_shape_ok,
+    )
+
+    # 防空转：这些键今天都「过」得了段数与空段两关，缺的只有逐段字符集这一关。
+    assert len(bad_key.split(":")) in (4, 5), why
+    assert all(segment.strip() for segment in bad_key.split(":")), why
+    assert bad_key.split(":")[0] == "emg", why
+
+    assert dedupe_key_shape_ok(bad_key) is False, why
+    assert dedupe_key_shape_ok(bad_key, family="daily") is False, why
+
+    queue = RecordingQueue()
+    outcome = _push(
+        queue,
+        _request(dedupe_key=bad_key),
+        _gate(
+            settings=OutboundGateSettings(enabled=True),
+            quiet=_quiet(enabled=False),
+            store=FakeStore(),
+            now=_utc(12, 0),
+        ),
+        now=_utc(12, 0),
+    )
+    assert outcome.verdict.action == "skip", why
+    assert queue.calls == []
+
+
+def test_canonical_emg_keys_still_pass_after_charset_tightening() -> None:
+    """收紧的另一侧：现役合法键（含 `.`/`_`/`-` 段）必须照旧放行，不许过拦。"""
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        dedupe_key_shape_ok,
+    )
+
+    once_ok = (
+        "emg:qq:item-1:g-1",
+        "emg:qq:alarm-001:1108838060",
+        "emg:telegram:gov_9.2:chat.123",  # `.`/`_`/`-` 都在段字符集内
+    )
+    for key in once_ok:
+        assert dedupe_key_shape_ok(key) is True, key
+        assert dedupe_key_shape_ok(key, family="daily") is False, key
+    daily_ok = (
+        "emg:qq:item-1:g-1:2026-09-14",
+        "emg:telegram:gov_9.2:chat.123:2026-09-19",
+    )
+    for key in daily_ok:
+        assert dedupe_key_shape_ok(key) is True, key
+        assert dedupe_key_shape_ok(key, family="daily") is True, key
+
+
+def test_dedupe_predicates_share_one_implementation() -> None:
+    """F-1/F-4 同源锁：闸侧 `dedupe_key_shape_ok` 必须是紧急域谓词的**委托口**。
+
+    刻意用结构锁而不是「取值互比」：两侧同源之后取值互比就是恒真子句（LOCK-AUDIT
+    判例 C 类，本席不许再犯）。只有「谁 import 谁、谁调用谁、第二套正则在不在」
+    能在有人重新分叉的那一刻变红。方向也钉死：域内核不得反向 import 闸
+    （`test_emergency_info_core.py::test_kernel_never_imports_network_or_llm` 禁
+    `transport` 令牌，反向即成 import 环）。
+    """
+    gate_path = REPO_ROOT / GATE_MODULE
+    tree = ast.parse(gate_path.read_text(encoding="utf-8"))
+    dedupe_module = (
+        "plugins.bot_unified_runtime.domains.emergency_info.service.dedupe"
+    )
+    imported: dict[str, set[str]] = {}
+    shape_fn: ast.FunctionDef | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported.setdefault(node.module, set()).update(
+                alias.name for alias in node.names
+            )
+        elif isinstance(node, ast.FunctionDef) and node.name == "dedupe_key_shape_ok":
+            shape_fn = node
+    assert dedupe_module in imported, (
+        f"闸侧不再引用紧急域的唯一键规范实现（闸实有 import：{sorted(imported)}）"
+        "⇒ 键规范又变成两套，闸侧漏查的段字符集/日期段形态会在这里复活"
+    )
+    assert "is_emergency_dedupe_key" in imported[dedupe_module]
+    assert shape_fn is not None, "闸侧键规范函数被搬走，须同步本锁与规格 §1.3-3"
+    called = {
+        call.func.id
+        for call in ast.walk(shape_fn)
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+    }
+    assert "is_emergency_dedupe_key" in called, (
+        "`dedupe_key_shape_ok` 已不再委托域侧实现＝函数壳还在、规则已分叉"
+    )
+    gate_source = gate_path.read_text(encoding="utf-8")
+    assert "re.compile" not in gate_source, (
+        "闸侧自己写了正则＝造出第二套（第三套）键规范；段字符集与日期段形态的唯一"
+        "出处是 `domains/emergency_info/service/dedupe.py`"
+    )
+    namespace_literals = [
+        node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "DEDUPE_NAMESPACE"
+            for target in node.targets
+        )
+    ]
+    assert namespace_literals and not any(
+        isinstance(value, ast.Constant) for value in namespace_literals
+    ), (
+        "DEDUPE_NAMESPACE 又落成字面量：前缀必须引用域侧 EMERGENCY_DEDUPE_PREFIX，"
+        "否则改一处漏一处（近亲前缀 `emg_push` 就是这么穿过去的）"
+    )
+    # 反向防环：域内核只准被引用，不准引用 transport 闸。
+    dedupe_source = (
+        PLUGIN_ROOT / "domains" / "emergency_info" / "service" / "dedupe.py"
+    ).read_text(encoding="utf-8")
+    assert "outbound_gate" not in dedupe_source.split('"""')[2], (
+        "紧急域 `dedupe.py` 的**代码段**出现 outbound_gate＝方向倒转 + import 环风险"
+        "（键规范归域侧，闸侧只做委托）"
+    )
+
+
+def test_whitespace_padded_dedupe_key_is_rejected() -> None:
+    """整串带空白的键：核验口不替你洗，两侧同源后一律判不合规。
+
+    旧态：域侧先 `strip()` 整串再判 ⇒ True，闸侧严格 ⇒ False——同一个键两侧结论
+    相反。队列 `ON CONFLICT` 按整串相等做幂等 ⇒ 干净键与脏键各存一行＝重发。
+    """
+    from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
+        is_emergency_dedupe_key,
+    )
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        dedupe_key_shape_ok,
+    )
+
+    padded = "  emg:qq:item-1:g-1  "
+    assert all(segment.strip() for segment in padded.split(":"))  # 防空转
+    assert dedupe_key_shape_ok(padded) is False
+    assert is_emergency_dedupe_key(padded) is False
+    # 要清洗就走构造函数：它逐段 strip 后拼键，产出的一定过同一个谓词。
+    from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
+        build_emergency_dedupe_key,
+    )
+
+    clean = build_emergency_dedupe_key(" qq ", " item-1 ", " g-1 ")
+    assert dedupe_key_shape_ok(clean) is True
 
 
 def test_gate_does_not_build_second_dedupe_ledger(tmp_path: Path) -> None:
@@ -1038,36 +1525,6 @@ def test_allow_defer_skip_each_append_one_gate_audit() -> None:
     assert "subject=" in joined
 
 
-def test_log_line_carries_spec_fields_and_no_content(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
-        OutboundGateSettings,
-    )
-
-    now = _utc(3, 0)
-    gate = _gate(
-        settings=OutboundGateSettings(enabled=True),
-        quiet=_quiet(),
-        store=FakeStore(),
-        now=now,
-    )
-    with caplog.at_level("INFO"):
-        _push(
-            RecordingQueue(),
-            _request(dedupe_key="emg:qq:lg:g-1", priority="P0"),
-            gate,
-            now=now,
-        )
-    text = caplog.text
-    assert "outbound_gate" in text
-    assert "action=allow" in text
-    assert "request_id=req-emg-1" in text
-    assert "capability_id=bot.emergency" in text
-    assert "暴雨红色预警" not in text
-    assert "group:g-1" not in text
-
-
 # --------------------------------------------------------- 无 deliver_after 的队列
 def test_legacy_queue_without_deliver_after_fails_open() -> None:
     """队列不认 deliver_after（InMemorySendQueue 形态）→ 不吞消息，但必须报 degraded。"""
@@ -1158,30 +1615,108 @@ def _direct_submit_calls(path: Path) -> list[int]:
 
 
 def test_existing_families_still_submit_directly() -> None:
-    """T6：现役 6 族仍直调 `send_queue.submit`（本波只登记不迁移）。"""
+    """T6：现役 4 族仍直调 `send_queue.submit`。
+
+    校园族已改道中央管线（`pipeline.handle_async`），从直调清单除名 ⇒ 下限 5→4。
+    依据是**并行审计席的设计件** `docs/design/audit-20260920-unify-U17-campus-wire.md`
+    （§0.2 现状坐标 / §0.3 取形态 A=合成目标会话消息交中央管线 / §0.4 门语义实测），
+    **不是用户裁决**——改此门槛者须引该件路径与结构断言，不得引不存在的裁决编号。
+    实测锚点：`git show HEAD:plugins/bot_unified_runtime/__init__.py` 直调数=5（含 5059 校园），
+    收编落地后=4；因此本锁以 `bot.campus_forward` 仍在根分发段 + 直调数 ≥4 双条件成立。
+    """
     assert ROOT_INIT.is_file(), ROOT_INIT
     source = ROOT_INIT.read_text(encoding="utf-8")
     assert "submit_active_push" not in source, (
-        "根 __init__.py 一旦出现 submit_active_push，说明实施席顺手迁移了存量 6 族；"
-        "B4-spec §1.5 裁定=只登记不迁移。"
+        "根 __init__.py 一旦出现 submit_active_push，说明实施席顺手迁移了存量族；"
+        "B4-spec §1.5 裁定=只登记不迁移（校园族经 U17 设计件除外）。"
     )
-    assert len(_direct_submit_calls(ROOT_INIT)) >= 5, (
-        "现役主动推送直调 send_queue.submit 五处（提醒/cookie 到期/群摘要/日常助理/校园）"
-        "必须仍在；少于 5 处=已被绕开或改道"
+    assert len(_direct_submit_calls(ROOT_INIT)) >= 4, (
+        "现役主动推送直调 send_queue.submit 四处（提醒/cookie 到期/群摘要/日常助理）"
+        "必须仍在；少于 4 处=已被绕开或改道（校园族已按 U17 设计件收编管线，不在其列）"
     )
     for anchor in INIT_DEDUPE_ANCHORS:
         assert anchor in source, f"存量族 dedupe 锚点 {anchor} 消失，需复核是否被顺手迁移"
-    assert CAMPUS_DEDUPE_ANCHOR in CAMPUS_FILE.read_text(encoding="utf-8")
+    assert "bot.campus_forward" in source, (
+        "campus 已按 U17 设计件收编中央管线（dedupe 由管线 _complete 公式承接），"
+        "capability_id 必须仍在 root 分发段在位"
+    )
+
+
+def _under_directory(path: Path, roots: tuple[Path, ...]) -> bool:
+    """文件是否落在 `roots` 这批**目录**之下——按目录段等值判定，不按字符串前缀。
+
+    为什么不能用 `str(path).startswith(str(root))`（LOCK-AUDIT PROBE-2 实证）：那样
+    `domains/transport_legacy`、`domains/transporter` 都被判进 `domains/transport`，
+    「唯一入口只服务紧急域」这条边界同名实存。取 `domains/` 下第一段目录名等值比较，
+    兄弟目录当场出局，域内任意深度照常算数。
+    """
+    try:
+        relative = path.relative_to(PLUGIN_ROOT / "domains")
+    except ValueError:
+        return False
+    directory_parts = relative.parts[:-1]  # 去掉文件名本身
+    if not directory_parts:
+        return False
+    directory_names = {root.name for root in roots}
+    return directory_parts[0] in directory_names
+
+
+def _production_uses_of_central_entry() -> list[str]:
+    """生产面**真的**用上 `submit_active_push` 的文件（import 该符号或调用它）。
+
+    只按文本命中算的话，一句注释就能造假；这里走 AST：`ImportFrom` 里出现该符号，
+    或存在 `submit_active_push(...)` 调用点。闸自身（定义处）排除。
+    """
+    gate_name = "outbound_gate.py"
+    found: list[str] = []
+    for path in sorted(PLUGIN_ROOT.rglob("*.py")):
+        if "__pycache__" in path.parts or path.name == gate_name:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "submit_active_push" not in text:
+            continue
+        tree = ast.parse(text)
+        imported = any(
+            isinstance(node, ast.ImportFrom)
+            and any(alias.name == "submit_active_push" for alias in node.names)
+            for node in ast.walk(tree)
+        )
+        called = any(
+            isinstance(node, ast.Call)
+            and (
+                (isinstance(node.func, ast.Name) and node.func.id == "submit_active_push")
+                or (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "submit_active_push"
+                )
+            )
+            for node in ast.walk(tree)
+        )
+        if imported or called:
+            found.append(path.relative_to(PLUGIN_ROOT).as_posix())
+    return found
 
 
 def test_submit_active_push_production_importers_are_allowlisted() -> None:
     """T6：`submit_active_push` 的生产引用只允许出现在 transport 本体与紧急域。"""
     # 前缀必须是真身目录名 `emergency_info`：写成 `domains/emergency` 会同时放行任何
     # `domains/emergency*` 兄弟目录（过松）。另注：本锁在零消费者期是"空真"通过，
-    # 接线落地后须由接线席补一条正向断言（生产 import 数 ≥ 1）才算闭合。
-    allowed_prefixes = (
-        (PLUGIN_ROOT / "domains" / "transport",),
-        (PLUGIN_ROOT / "domains" / "emergency_info",),
+    # 接线落地后须由接线席补一条正向断言（生产 import 数 ≥ 1）才算闭合——那条正向
+    # 断言在本文件 `test_submit_active_push_has_at_least_one_production_caller`
+    # （xfail strict=True），不是等接线席想起来。
+    #
+    # 形制纪律（两侧对齐锚，别随手改）：`test_emergency_info_core.py::
+    # _gate_t6_allowed_roots` 用 AST 从**本函数体内**抓第一个名字含 `allowed` 的赋值，
+    # 按字符串常量顺序拼回 `PLUGIN_ROOT.joinpath(*segments)`。所以：①本赋值必须留在
+    # 函数体内（挪去模块级＝那侧提取失败当场红）；②必须写全
+    # `PLUGIN_ROOT / "domains" / "<目录名>"` 三段字面量（写成裸目录名会让那侧的
+    # `covered` 判定失效）。原形是 `((...,), (...,))` 嵌套元组——那是个真缺陷：
+    # `str(root)` 得到的是 "(WindowsPath('...'),)" 这种 repr，任何真实路径都
+    # 不可能 startswith 它 ⇒ 白名单其实**谁都拦在外面**，接线当天紧急域自己的合法
+    # import 会被误判越界（假红），而今天它只是叠加在空集上没人发现。已摊平。
+    allowed_roots = (
+        PLUGIN_ROOT / "domains" / "transport",
+        PLUGIN_ROOT / "domains" / "emergency_info",
     )
     offenders: list[str] = []
     for path in PLUGIN_ROOT.rglob("*.py"):
@@ -1191,11 +1726,89 @@ def test_submit_active_push_production_importers_are_allowlisted() -> None:
             continue
         if "submit_active_push" not in path.read_text(encoding="utf-8"):
             continue
-        if not any(str(path).startswith(str(root)) for root in allowed_prefixes):
+        if not _under_directory(path, allowed_roots):
             offenders.append(path.relative_to(PLUGIN_ROOT).as_posix())
     assert offenders == [], (
         f"中央闸的唯一入口只允许紧急域（与 transport 本体）引用，越界：{offenders}"
     )
+    # 收紧只做一半的反证（LOCK-AUDIT PROBE-2 实测：`domains/transport_legacy`、
+    # `domains/transporter` 用 startswith 判 **allowed=True**）：兄弟目录必须出局，
+    # 同时白名单目录本身必须仍在内（只有负样本时本锁会因「全判 False」假绿）。
+    for sibling in (
+        "transport_legacy/old.py",
+        "transporter/evil.py",
+        "emergency_other/x.py",
+        "emergencyinfo/x.py",
+    ):
+        path = PLUGIN_ROOT / "domains" / Path(sibling)
+        assert not _under_directory(path, allowed_roots), (
+            f"兄弟目录 {sibling} 被判进白名单＝`transport*` 前缀仍松"
+        )
+    # 不在任何域目录之下的散文件同样出局（`domains/stray.py`：域段为空）。
+    assert not _under_directory(PLUGIN_ROOT / "domains" / "stray.py", allowed_roots)
+    for insider in (
+        "transport/sender/outbound_gate.py",
+        "transport/sender/sub/queue.py",
+        "emergency_info/service/dedupe.py",
+    ):
+        assert _under_directory(PLUGIN_ROOT / "domains" / insider, allowed_roots), insider
+
+
+# ------------------------------------------------------------------ T6b 白名单活性
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "转正条件（LOCK-FIX F-2，按纪律不许拿假 importer 蒙）：生产面出现 ≥1 个"
+        "`submit_active_push` 的**真实使用**（AST 判 import 该符号或直接调用它）。"
+        "LOCK-AUDIT PROBE-3 实证今日全 plugins/ 树含该符号的文件只有闸自身 ⇒ 上一条"
+        "白名单锁是空集上的恒真。接线席落地当天本用例会 XPASS，strict=True 立刻把它"
+        "变成红——**删掉本标记即转正**，不许改成 assert True 或 skip 让它闭嘴。"
+    ),
+)
+def test_submit_active_push_has_at_least_one_production_caller() -> None:
+    """正向断言：唯一入口不是「没人用所以没人越界」的空中楼阁。
+
+    与 `test_submit_active_push_production_importers_are_allowlisted` 构成双侧：
+    那条钉「越界者为零」（白名单侧），本条钉「引用者不为零」（活性侧）。两条同时
+    为真，才叫「生产投递确实只从这一个口子走」。
+    """
+    users = _production_uses_of_central_entry()
+    assert len(users) >= 1, (
+        f"生产面对 `submit_active_push` 的真实使用数={len(users)}（{users}）："
+        "白名单仍是空集恒真，中央闸的『唯一入口』尚未被任何生产件走通"
+    )
+    # 活性一旦成立，越界面必须同时为零（本文件另一条锁的口径），此处只报不断言：
+    # 判定归 allowlisted 那条，避免同一条事实两把尺子。
+
+
+def test_allowlist_helper_itself_is_not_vacuous() -> None:
+    """防「白名单收紧把合法侧也收死」：判定函数两侧的取值都必须真出现过。
+
+    这条不依赖接线（不像 T6b 那样恒 xfail），现在就能跑：目录段匹配既要把兄弟目录
+    判出去，也要把 `domains/transport/sender/**` 与 `domains/emergency_info/**`
+    判进来。任何一侧失灵（例如 `relative_to` 抛错被吞成 False）都会在这里红，
+    而不是等到接线当天用假红去撞。
+    """
+    roots = (
+        PLUGIN_ROOT / "domains" / "transport",
+        PLUGIN_ROOT / "domains" / "emergency_info",
+    )
+    inside = [
+        "transport/sender/outbound_gate.py",
+        "transport/sender/deep/nested.py",
+        "emergency_info/service/dedupe.py",
+        "emergency_info/sources/nmc_alarm.py",
+    ]
+    outside = [
+        "transport_legacy/old.py",
+        "transporter/evil.py",
+        "chat_reply/capabilities/echo.py",
+        "assistant/campus/campus.py",
+    ]
+    assert all(_under_directory(PLUGIN_ROOT / "domains" / rel, roots) for rel in inside)
+    assert not any(_under_directory(PLUGIN_ROOT / "domains" / rel, roots) for rel in outside)
+    # domains 之外的任何文件一律出局（根 `__init__.py` 是未来最容易长出旁路的地方）。
+    assert not _under_directory(PLUGIN_ROOT / "__init__.py", roots)
 
 
 # --------------------------------------------------------------------- T12 契约锁

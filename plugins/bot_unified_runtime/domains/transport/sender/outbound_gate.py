@@ -18,6 +18,9 @@
   delay 表；队列实现不认该形参（InMemory 形态）时退化为裸 submit 并挂
   `outbound_gate_degraded`——宁可早发也不丢。
 - **不另建去重账**：幂等在队列 `ON CONFLICT(dedupe_key)` 侧，本件只强制键规范。
+  键规范（前缀 + 段数 + 逐段字符集 + 日期段形态）的**唯一实现**在
+  `domains/emergency_info/service/dedupe.py:is_emergency_dedupe_key`，本文件的
+  `dedupe_key_shape_ok` 是委托口——两侧一套规则，改键形只改那一处。
 - **静默窗唯一事实源**：窗设置与 HH:MM 解析全部复用
   `domains/chat_reply/policy/quiet_hours.py`（本文件不写任何时刻字符串解析、
   不造第二套窗判定语义）。
@@ -56,6 +59,10 @@ from plugins.bot_unified_runtime.domains.core.contracts import (
     SendRequest,
 )
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import StrictBaseModel
+from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
+    EMERGENCY_DEDUPE_PREFIX,
+    is_emergency_dedupe_key,
+)
 
 __all__ = [
     "ActivePushOutcome",
@@ -87,8 +94,14 @@ KIND_STORM = "outbound_gate_storm"
 GATE_STAGE = "outbound_gate"
 AUDIT_STAGE = "sender"  # 与 queue._append_sender_audit 同族口
 AUDIT_TRANSPORT = "outbound_gate"
-DEDUPE_NAMESPACE = "emg"
+DEDUPE_NAMESPACE = EMERGENCY_DEDUPE_PREFIX
 KEY_SEPARATOR = ":"
+# 键规范的字面量与正则**只在** `domains/emergency_info/service/dedupe.py` 写一次
+# （LOCK-AUDIT GAP-1 收口：闸侧原先自带一套只查前缀、段数与空段的宽松谓词——
+# HEAD 实证旧谓词亦查 `segments[0] != DEDUPE_NAMESPACE`，缺的是逐段字符集与日期段
+# 形态——与紧急域两套规则并存 ⇒ 脏键一边判合规一边判违规，过闸后队列按整串存两行
+# ＝重复发送）。
+# 本处只留词汇别名，`dedupe_key_shape_ok` 委托过去；禁止在这里重新定义规则。
 DEDUPE_FAMILY_ONCE = "once"
 DEDUPE_FAMILY_DAILY = "daily"
 # 同一主体连续顺延到这条即视为「上游在轰闸」（只报一次，放行清账）。
@@ -262,15 +275,21 @@ def dedupe_key_shape_ok(
     """E5 §4.3 键规范：`emg:{channel}:{item_id}:{target_id}[:{date_key}]`。
 
     `family="daily"`（按日重投族）必须带 date_key 段，即恰好五段；一次性族四段
-    或五段皆可。段数与空段在闸侧拦，重复投递的幂等仍归队列 `ON CONFLICT`。
+    或五段皆可。段数、命名空间、逐段字符集、日期段形态四条都在闸侧拦，重复投递的
+    幂等仍归队列 `ON CONFLICT`。
+
+    **本函数是委托口，不是实现**：规则本体唯一出处 =
+    `domains/emergency_info/service/dedupe.py:is_emergency_dedupe_key`（B4 规格
+    §1.3-3 的键形在那里定义）。此前两侧各写一套、闸侧漏查段字符集与前缀之外的
+    形态（LOCK-AUDIT GAP-1 注毒 G10：删掉前缀校验 59 条全绿），真实后果不是漏报而是
+    **重发**——脏键与干净键在队列里各存一行。改规则只改那一处，别在这里加分支；
+    `tests/test_outbound_gate.py::test_dedupe_predicates_share_one_implementation`
+    用 AST 拦「闸侧重新长出第二套正则/前缀字面量」。
     """
-    segments = dedupe_key.split(KEY_SEPARATOR)
-    if any(not segment.strip() for segment in segments):
-        return False
-    if segments[0] != DEDUPE_NAMESPACE:
-        return False
-    allowed_counts = (5,) if family == DEDUPE_FAMILY_DAILY else (4, 5)
-    return len(segments) in allowed_counts
+    return is_emergency_dedupe_key(
+        dedupe_key,
+        require_date_key=family == DEDUPE_FAMILY_DAILY,
+    )
 
 
 def _issue(kind: str, *, reason: str, subject_key: str) -> OperationalIssue:
