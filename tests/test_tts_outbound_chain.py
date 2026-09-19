@@ -84,7 +84,9 @@ def test_audio_part_type_defaults_to_record_and_is_overridable(tmp_path: Path) -
             audio=[{"type": "voice", "file": str(wav)}],
         )
     )
-    assert explicit.content_ref["parts"][0]["type"] == "voice"
+    # M-19 收口（T80）：type="voice" 归一为 record——OneBot V11 语音段标准类型，
+    # SnowLuma 对未知段类型整条拒发（report-T46 §2.2）。
+    assert explicit.content_ref["parts"][0]["type"] == "record"
 
 
 def test_audio_part_without_file_or_url_is_dropped(tmp_path: Path) -> None:

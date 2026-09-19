@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import atexit
 import base64
+import logging
 import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
@@ -15,6 +17,105 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
 )
 from plugins.bot_unified_runtime.domains.render.plain_text import naturalize_chat_text
+
+logger = logging.getLogger(__name__)
+
+# ==================== 出站语音部件中央契约（M-19①③，Wave G/T80） ====================
+# 裂缝①：type="voice" 曾在渲染层放行、在传输层被丢（OneBot record 分支只认
+# record；换装 SnowLuma 后未知段类型更是整条拒发，report-T46 §2.2）⇒ 音频
+# 蒸发。归一在渲染入口完成：OneBot V11 语音段标准类型就是 record，voice 是
+# 能力层口误别名而非第三种语义，故规范化（而非拒绝）+warning 留痕。
+# 裂缝③：audio 曾是自由袋（**audio 全键透传进 mixed 部件），可播性无表达。
+# 字段冻结：file 必填（非空 str），duration/bytes 为可选可播性元数据（渲染
+# 期校验类型、不上段——线上表达归传输层 record data 白名单={file}，T78）。
+# 审查通道键（review_text/text 等）归 reviewer 在 CapabilityResult.audio 上
+# 消费，绝不进出站段（test_reviewer_media_visibility.py 的前提由此夯实）。
+_AUDIO_VOICE_ALIASES = frozenset({"record", "voice"})
+_AUDIO_REVIEW_KEYS = frozenset({"review_text", "text", "content", "caption", "alt"})
+_AUDIO_PLAYABILITY_KEYS = frozenset({"duration", "bytes"})
+
+
+def _audio_ref(value: Any) -> str:
+    """部件引用字段只收非空 str（Path/None/数字一律视为缺省，防自由袋复辟）。"""
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
+
+def _is_playability_value(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def canonicalize_audio_parts(
+    audio_items: list[dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """把 ``CapabilityResult.audio`` 收口为出站 mixed 部件唯一形态。
+
+    返回 ``(parts, anomalies)``；anomalies 非空时由调用方 warning 留痕
+    （禁静默吞）。类型白名单与归一规则：
+
+    - 缺省/``record``/``voice`` → ``{"type":"record","file":<非空str>}``；
+      file 缺失=拒绝该部件（旧自由袋会造出没有 file 的空 record 段）。
+    - ``music`` → ``{"type":"music","music_type":…,"music_id":…}``（点歌
+      CQ:music 卡片，music.py 现行出站形态，保持不回归）。
+    - ``file`` → ``{"type":"file","file":<非空str>}``（点歌 file 模式同上）。
+    - 其余类型=显式拒绝+留痕（传输层本就会丢弃，蒸发面收口到渲染入口）。
+    - 散键（含审查通道键与冗余 url）一律剥离；可播性键 duration/bytes 类型
+      非法时剥离并留痕，部件本体不受影响。
+    """
+    parts: list[dict[str, Any]] = []
+    anomalies: list[str] = []
+    for index, item in enumerate(audio_items or []):
+        if not isinstance(item, dict):
+            anomalies.append(f"audio[{index}] non-dict item dropped")
+            continue
+        part_type = str(item.get("type") or "record").strip().lower()
+        part: dict[str, Any] | None = None
+        redundant = _AUDIO_REVIEW_KEYS | {"url"}
+        if part_type in _AUDIO_VOICE_ALIASES:
+            file_ref = _audio_ref(item.get("file"))
+            if file_ref:
+                if part_type != "record":
+                    anomalies.append(f"audio[{index}] type=voice normalized to record")
+                part = {"type": "record", "file": file_ref}
+                redundant = redundant | _AUDIO_PLAYABILITY_KEYS
+            else:
+                anomalies.append(f"audio[{index}] {part_type} part without file dropped")
+        elif part_type == "music":
+            music_type = _audio_ref(item.get("music_type"))
+            music_id = _audio_ref(item.get("music_id"))
+            if music_type and music_id:
+                part = {
+                    "type": "music",
+                    "music_type": music_type,
+                    "music_id": music_id,
+                }
+            else:
+                anomalies.append(
+                    f"audio[{index}] music part without music_type/music_id dropped"
+                )
+        elif part_type == "file":
+            file_ref = _audio_ref(item.get("file")) or _audio_ref(item.get("url"))
+            if file_ref:
+                part = {"type": "file", "file": file_ref}
+            else:
+                anomalies.append(f"audio[{index}] file part without file/url dropped")
+        else:
+            anomalies.append(f"audio[{index}] unsupported type={part_type} dropped")
+        if part is None:
+            continue
+        for key in _AUDIO_PLAYABILITY_KEYS:
+            if key in item and not _is_playability_value(item.get(key)):
+                anomalies.append(f"audio[{index}] {key} invalid value stripped")
+        stray = sorted(
+            key
+            for key in item
+            if key not in part and key not in redundant and key not in _AUDIO_PLAYABILITY_KEYS
+        )
+        if stray:
+            anomalies.append(f"audio[{index}] stray keys stripped: {','.join(stray)}")
+        parts.append(part)
+    return parts, anomalies
 
 # ==================== Mermaid 流程图（G-MERMAID） ====================
 # bot 回复文本里的 ```mermaid 围栏块 → PNG 随消息发出。检测必须在
@@ -207,12 +308,15 @@ def render_reviewed_output(
     for image in result.images or []:
         if isinstance(image, dict) and (image.get("file") or image.get("url")):
             media_parts.append({"type": "image", **image})
-    for audio in result.audio or []:
-        if isinstance(audio, dict) and (
-            audio.get("file") or (audio.get("music_type") and audio.get("music_id"))
-        ):
-            part_type = str(audio.get("type") or "record")
-            media_parts.append({"type": part_type, **audio})
+    # M-19①③：audio 出站唯一形态收口（voice→record 归一/散键剥离/拒绝留痕）。
+    audio_parts, audio_anomalies = canonicalize_audio_parts(result.audio)
+    if audio_anomalies:
+        logger.warning(
+            "renderer audio contract applied request_id=%s anomalies=%s",
+            result.request_id,
+            audio_anomalies,
+        )
+    media_parts.extend(audio_parts)
     for video in result.video or []:
         if isinstance(video, dict) and (video.get("file") or video.get("url")):
             media_parts.append({"type": "video", **video})
