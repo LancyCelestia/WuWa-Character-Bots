@@ -51,8 +51,8 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-BASE_ROUTER_MODULE = "plugins.bot_unified_runtime.runtime.base_router"
-BASE_ROUTER_REL = Path("plugins/bot_unified_runtime/runtime/base_router.py")
+BASE_ROUTER_MODULE = "plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router"
+BASE_ROUTER_REL = Path("plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py")
 
 # matcher 体内不算检测器的调用名（内建 / 路由构造辅助）。
 _NON_DETECTOR_CALLS = frozenset(
@@ -80,6 +80,9 @@ _ASCII_WORD_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z ]*[0-9A-Za-z]")
 _PROBE_SUFFIXES = ("", " 测试", "？")
 _MAX_CONTAINER_ITEMS = 512
 _MAX_RESOLVE_DEPTH = 3
+# L-C04 单行委托追踪深度（is_tts_command→extract_tts_text→
+# effective_trigger_words→DEFAULT_TRIGGER_WORDS 需两跳，留一跳余量）。
+_MAX_DELEGATION_DEPTH = 3
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +128,10 @@ def extract_base_router_map() -> tuple[list[dict[str, Any]], dict[str, str]]:
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "RouteRule"):
             continue
         args = node.args
-        kind = args[0].attr if isinstance(args[0], ast.Attribute) else ast.unparse(args[0])
+        head = args[0]
+        kind = head.attr if isinstance(head, ast.Attribute) else ast.unparse(head)
+        capability_id = args[1].value if isinstance(args[1], ast.Constant) else ""
+        priority = args[2].value if isinstance(args[2], ast.Constant) else 0
         matcher_name = ""
         if len(args) >= 7 and isinstance(args[6], ast.Name):
             matcher_name = args[6].id
@@ -135,8 +141,8 @@ def extract_base_router_map() -> tuple[list[dict[str, Any]], dict[str, str]]:
         rules.append(
             {
                 "kind": kind,
-                "capability_id": args[1].value,
-                "priority": args[2].value,
+                "capability_id": capability_id,
+                "priority": priority,
                 "matcher": matcher_name,
                 "detectors": matcher_detectors.get(matcher_name, []),
             }
@@ -183,8 +189,22 @@ def _collect_from_value(value: Any, depth: int) -> tuple[set[str], set[str]]:
     return words, raws
 
 
-def harvest_function_material(func: Any) -> dict[str, list[str]]:
-    """摘取检测函数体内的字面素材：函数内字符串字面量 + 引用的模块级常量。"""
+def harvest_function_material(
+    func: Any,
+    *,
+    _trace: bool = False,
+    _depth: int = 0,
+    _seen: frozenset[int] = frozenset(),
+) -> dict[str, list[str]]:
+    """摘取检测函数体内的字面素材：函数内字符串字面量 + 引用的模块级常量。
+
+    L-C04 单行委托陷阱：检测函数体可能是 ``bool(extract_xxx(...))`` 这类
+    零字面量委托（bot.tts 的 ``is_tts_command`` 先例），真词表住被委托
+    实现函数的 globals。缺省（``_trace=False``）行为与历史版本逐字节一致；
+    ``_trace=True`` 时沿体内调用名向**同模块**可调用对象递归追踪（深度
+    受限 + 防环，中间跳不设素材门），跨模块委托追不动（不在本机制覆盖
+    面），须按 L-C04 修法手动登记 harvest 源。
+    """
     source = textwrap.dedent(inspect.getsource(func))
     tree = ast.parse(source)
     fn_def = next(
@@ -204,16 +224,35 @@ def harvest_function_material(func: Any) -> dict[str, list[str]]:
         and isinstance(fn_def.body[0].value.value, str)
     ):
         skip_nodes.add(id(fn_def.body[0].value))
+    delegated_calls: list[str] = []
     for node in ast.walk(fn_def):
         if id(node) in skip_nodes:
             continue
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             raws.add(node.value)
             words.update(_harvest_words(node.value))
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            delegated_calls.append(node.func.id)
         elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
             child_words, child_raws = _collect_from_value(func.__globals__.get(node.id), 1)
             words |= child_words
             raws |= child_raws
+    if _trace and _depth < _MAX_DELEGATION_DEPTH:
+        seen = _seen | {id(func)}
+        for name in delegated_calls:
+            target = func.__globals__.get(name)
+            if target is None or id(target) in seen:
+                continue
+            if not (inspect.isfunction(target) or inspect.ismethod(target)):
+                continue
+            try:
+                child = harvest_function_material(
+                    target, _trace=True, _depth=_depth + 1, _seen=seen
+                )
+            except (OSError, TypeError, StopIteration, SyntaxError):
+                continue  # 源码不可得/非常规函数体：按未追踪记账，体检不红。
+            words.update(child["words"])
+            raws.update(child["raw_literals"])
     return {"words": sorted(words), "raw_literals": sorted(raws)}
 
 
@@ -288,6 +327,37 @@ def build_capability_inventory(
                     else:
                         verified[word] = {"probe": probe, "detector": func_name}
             detector_reports.append(report)
+        # L-C04 补收（能力级门）：能力零 verified 且某检测器本体零素材时，
+        # 才对其开委托追踪（``_trace=True``）。门设在能力级——本体暗体但
+        # 能力已有其他检测器供词的（bot.moegirl 先例）保持逐字节不变；
+        # 只有 bot.tts 这类「整能力皆暗」的盲区被点亮（空→非空单向）。
+        if not verified:
+            for report in detector_reports:
+                if not (report.get("callable") and "words" in report):
+                    continue
+                if report["words"] or report["raw_literals"]:
+                    continue  # 本体有素材仍验证失败：非委托断链，保持现状。
+                func = getattr(
+                    importlib.import_module(report["module"]), report["name"], None
+                )
+                if not callable(func):
+                    continue
+                try:
+                    traced = harvest_function_material(func, _trace=True)
+                except (OSError, TypeError, StopIteration, SyntaxError):
+                    continue
+                if not traced["words"]:
+                    continue
+                report["words"] = traced["words"]
+                report["raw_literals"] = traced["raw_literals"]
+                for word in traced["words"]:
+                    if not word.strip() or word in verified:
+                        continue
+                    probe = verify_word(func, word)
+                    if probe is None:
+                        passive.append(word)
+                    else:
+                        verified[word] = {"probe": probe, "detector": report["name"]}
         inventory[capability_id] = {
             "kinds": sorted(entry["kinds"]),
             "detectors": detector_reports,
@@ -373,7 +443,7 @@ def run_ascii_boundary_violations(
 
 def extract_help_topics() -> dict[str, dict[str, Any]]:
     """capabilities/echo.py 的 _HELP_ENTRIES × _HELP_ENTRY_META 结构化提取。"""
-    from plugins.bot_unified_runtime.capabilities import echo
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import echo
 
     topics: dict[str, dict[str, Any]] = {}
     for entry in echo._HELP_ENTRIES:
@@ -391,7 +461,9 @@ def extract_help_topics() -> dict[str, dict[str, Any]]:
 
 def extract_default_verb_map() -> dict[str, list[str]]:
     """runtime/aliases.py DEFAULT_VERB_MAP 按能力分组。"""
-    from plugins.bot_unified_runtime.runtime.aliases import DEFAULT_VERB_MAP
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.aliases import (
+        DEFAULT_VERB_MAP,
+    )
 
     grouped: dict[str, list[str]] = {}
     for verb, capability_id in DEFAULT_VERB_MAP.items():
@@ -590,7 +662,7 @@ def gate_help_to_route(
     声明了无命令入口。返回缺口清单（topic/word/caps），排序保证确定性。
     """
     if nl_detect is None:
-        from plugins.bot_unified_runtime.runtime.natural_language import (
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime.natural_language import (
             detect_natural_command,
         )
 
@@ -678,10 +750,9 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     inventory = build_inventory()
     payload = inventory if "--full" in argv else summarize(inventory)
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")
-    except (AttributeError, OSError):  # pragma: no cover - 老终端兜底。
-        pass
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if callable(reconfigure):  # pragma: no cover - 老终端兜底。
+        reconfigure(encoding="utf-8")
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
