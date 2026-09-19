@@ -176,7 +176,7 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 - **2026-09-14 六域批重启前置（已就绪，重启前逐项核对）**：
   ① `.env` 的 `BOT_KB_WIKI_ROOT` 已修至 `D:/Coding/01_Projects/Crawl Wiki`（wiki-health-report 实核 manifest 探测 400/400 全命中），且 knowledge-sync 修复已跑（人格 knowledge 库 113 pending 清零 + FTS/ANN 签名重建；离线探针实跑 wiki 检索 4 hits、知识检索「守岸人是谁」5 hits）——重启后按 §6.6.5④ 验证检索；
   ② 渲染预算键已解锁：`.env` `BOT_RENDER_MAX_CONCURRENCY=2` + `BOT_RENDER_WAIT_BUDGET_MS=1500`（13fcd30 机制层接线 `resolve_render_max_concurrency`/`resolve_render_wait_budget_ms`，缺省=字节级现状，删行即回滚）。
-  ③ **重启前一键预检（A56，051261d 已入库）**：工作区根跑 `python scripts/pre_restart_check.py`（venv python 等价；`--json` 结构化输出）——7 项（env 路径/人格锚定/哈希台账/事实册/KB 漂移/静态门/协议端探针）**无 FAIL（EXIT=0）再动手重启**；napcat 项（id 沿用，探的是 SnowLuma 3001）未启动=SKIP 不阻断（bot 自带重连），kb_drift 首跑拷库到 %TEMP% 需数秒～数十秒属预期非卡死；FAIL 项消息自带修复指引，先修后复跑至全绿。
+  ③ **重启前一键预检（A56，051261d 已入库）**：工作区根跑 `python scripts/pre_restart_check.py`（venv python 等价；`--json` 结构化输出）——7 项（env 路径/人格锚定/哈希台账/事实册/KB 漂移/静态门/协议端探针）**无 FAIL（EXIT=0）再动手重启**；napcat 项（id 沿用，实体是 SnowLuma；探测端点取自 `.env` 的 `ONEBOT_WS_URLS`，两号即 3001+3002 逐个探，只取 host:port 不落令牌）未启动=SKIP 不阻断（bot 自带重连），kb_drift 首跑拷库到 %TEMP% 需数秒～数十秒属预期非卡死；FAIL 项消息自带修复指引，先修后复跑至全绿。
 
 ## 6.2 向量知识库（本地 Ollama bge-m3 优先，百炼兜底）
 
@@ -471,11 +471,11 @@ python scripts/e2e_acceptance.py --target-group <white1群ID> --execute
 ### 6.6.11 语音合成（bot.tts）验收（Wave G 契约波定版 30 项，2026-09-20；重启生效）
 
 > **本节为整节替换版**：旧 14 项经 T36 取证**无一完整可跑通**（生产可证成功合成 0 次=T21；③⑩⑫根本验不了、③⑤⑨⑫⑬预期与实码相反或过强=T7 §3），已整体作废，按 `.superpowers/sdd/2026-09-19-unify-audit/report-T36.md` 换成 **30 项**（离线 O1-O8｜只启引擎 E1-E6｜真机 R1-R16；「只启引擎、不重启 bot」可走完 O+E 全部 14 项）。旧 14 项→新 30 项映射见节末表。
-> 事实源=`report-T36.md`（蓝本+探针）＋已落行为刷新：`report-T57.md`（M-09 退避真闸 30s/M-11 缓存身份）、`report-T61.md`（预设表/Field 域闸/硬顶 2000 字·8MiB/静音三指纹闸/seed 确定性/配额缺省关）、`report-T70.md`（触发词 11 词∪追加口径）、`closeout-manifest.md` §五。**标注约定**：〔播声依赖 T32〕=QQ 语音条播不播得出待 T32 结论（NapCat 吃不吃 wav、silk 谁转），先判到「落盘/出站」层；〔T73 在建，默认关〕=voice hook 装配在飞、缺省关不影响本节判据；〔T75 待落〕=M-14 截断可观测化+M-17 名单同源在飞，行为变化待其披露表，本节不写死。
+> 事实源=`report-T36.md`（蓝本+探针）＋已落行为刷新：`report-T57.md`（M-09 退避真闸 30s/M-11 缓存身份）、`report-T61.md`（预设表/Field 域闸/硬顶 2000 字·8MiB/静音三指纹闸/seed 确定性/配额缺省关）、`report-T70.md`（触发词∪追加口径，T70 时点 11 词）、`report-T92.md`（繁體收口 11→16：說/語音/唸/朗讀/語音合成，ff091dc）、`closeout-manifest.md` §五。**标注约定**：〔播声依赖 T32〕=QQ 语音条播不播得出待 T32 结论（NapCat 吃不吃 wav、silk 谁转），先判到「落盘/出站」层；〔T73 在建，默认关〕=voice hook 装配在飞、缺省关不影响本节判据；〔T75 待落〕=M-14 截断可观测化+M-17 名单同源在飞，行为变化待其披露表，本节不写死。
 > **取证留痕纪律（全节适用，T36 §4）**：证据落 `%TEMP%/t76-evidence/<日期>/`（不落源码树）；每项最小留痕=输入原文截图→回执截图→产物 `ffprobe` 整行输出→命令+末行输出；每项只准写 **过/不过/未能取证**（后者必附原因），禁止「预期会过」代替实跑；`.env` 改动类先备份 `.env.bak-<日期>-<用途>`（不记密钥值）、测后恢复+二次重启也留痕；不合格样本 wav **复制**留证、不动 Runtime 原件；汇总「N 项全过」前逐项比对过判据原文，统计类必须给样本量与原始计数。
 
 > **前置（先配再验）**：
-> **P-1（配置面）** `.env`：`BOT_TTS_ENABLED=true`；`BOT_TTS_GPTSOVITS_DIR=C:/Software/GPT-SoVITS-V2Pro`；`BOT_TTS_REF_AUDIOS` ≥1 条，格式 `路径|参考文本|语种`；预设表选择键 `bot_tts_preset`（缺省 `shorekeeper`=v1 现状收编，枚举白名单 `TTS_PRESET_IDS`，T61）；9 数值键已上 Field 域闸（speed 0.6–1.65/top_k 1–100/top_p 0–1/temp 0–1 等，域值逐字=T53 真值表）、`0=不限` 语义已修死（T61 M-35）。⚠️ `BOT_TTS_*` 键族=RESTART_REQUIRED 诚实登记（能力持装配期 config，热改假生效——改键必重启，T61 登记矩阵）。自动化体检：`python scripts/pre_restart_check.py` 第 10 项=tts_voice 音色守望者（T60 `1b2860c`，SKIP 不假红/FAIL 五类人话）；`C:\Software\GPT-SoVITS-V2Pro\tools\verify_chatbot_env.py` 现状必崩（T24 P1-1，T36 复核 bug 在位）**不引用**；.env 人工核对=`grep '^BOT_TTS_' .env` 逐键对 `docs/config-catalog-full.md`。
+> **P-1（配置面）** `.env`：`BOT_TTS_ENABLED=true`；`BOT_TTS_GPTSOVITS_DIR=C:/Software/GPT-SoVITS-V2Pro`；`BOT_TTS_REF_AUDIOS` ≥1 条，格式 `路径|参考文本|语种`；预设表选择键 `bot_tts_preset`（缺省 `shorekeeper`=v1 现状收编，枚举白名单 `TTS_PRESET_IDS`，T61）；9 数值键已上 Field 域闸（speed 0.6–1.65/top_k 1–100/top_p 0–1/temp 0–1 等，域值逐字=T53 真值表）、`0=不限` 语义已修死（T61 M-35）。⚠️ `BOT_TTS_*` 键族=RESTART_REQUIRED 诚实登记（能力持装配期 config，热改假生效——改键必重启，T61 登记矩阵）。自动化体检：`python scripts/pre_restart_check.py` 第 10 项=tts_voice 音色守望者（T60 `1b2860c`，SKIP 不假红/FAIL 五类人话）；.env 配置面体检=仓内 `scripts/verify_chatbot_env.py`（T87 重建 `7e2fe36`：判据走生产 Config 真身、治 T24 F1-F5 假安心；分工=本工具**手动快查** bot 侧配置面非重启门，重启前置体检=pre_restart_check 10 项、其第 10 项守**引擎面**音色身份，两者零重叠）；旧仓外件 `C:\Software\GPT-SoVITS-V2Pro\tools\verify_chatbot_env.py` 现状必崩（T24 P1-1）维持**不引用**；.env 人工核对=`grep '^BOT_TTS_' .env` 逐键对 `docs/config-catalog-full.md`。
 > **P-2（引擎拉起）** 一律用 `C:\Software\GPT-SoVITS-V2Pro\启动守岸人.bat`（bot 在跑会自动只起引擎）；**禁止从其它目录裸敲 `api_v2.py`**——权重相对路径按进程 CWD 判定，错 CWD **静默回退底模且 `save_configs` 写回 yaml 永久化**（T2 P1-2）。就绪判定：模型加载先于端口 bind，**9880 通=模型就绪**；首启 20~60s 为脚本自述非实测，预算 180s（本清单最长一步）。
 > **P-3（绑定红线）** 起后核 `netstat -ano | findstr :9880` **只允许** `127.0.0.1:9880 LISTENING`；见 `0.0.0.0`/`[::]` 立即停。
 > **P-4（参考音频）** 3~10 秒干声为引擎服务端硬卡（转 16kHz 后 48000~160000 采样点，无配置可放宽=T2）；bot 本地不预检（无 soundfile），越界=多付一次 HTTP 往返后收降级文案（命令式有文案、自动配音路径静默零提示=T7 P2-5）。
@@ -524,7 +524,7 @@ PY="../ChatBot_Runtime/venv/Scripts/python.exe"
 | # | 验收项 | 怎么触发（可粘贴） | 预期（过/不过判据） | 不过时看哪里 |
 |---|---|---|---|---|
 | R1 | 命令式合成成功（旧①）【须真机 QQ】【须提权重启】〔播声依赖 T32〕 | 私聊发：`说 今天的潮汐很安静` | **过**=①只收到**一条语音条**（无文字无标题）；②`data/tts_output/` 新增 wav 且 ffprobe `32000Hz mono`、时长≈3.7~4.3s（9 字×0.411s/字+0.3s 段尾，T25 实推）；③stdout lineno 计数 +1；④（若可播）内容=原句；**不过**=回文字（→R5/R6/R7 归因）、无回执（计数 +0=路由没进；+1 无出站=出站断）、语音条纯静音（→R15）、双语音（判不过=旧⑫真机半） | 主判据=文案本身+产物+lineno 计数；`tts request failed/rejected` 类 stdout 行**仅 P-6 重定向后存在**（tts logger 不在 nonebot 树、INFO 级，生产必丢=T14 P1-1）；`_last_failure_reason` 无状态查询口（仅降级文案瞬间可见）；**不要查 runtime_events.log（结构性无 bot.tts，P-7）** |
-| R2 | 触发词 11 词等价（旧②扩面=T70）【须真机 QQ】【须提权重启】〔播声依赖 T32〕 | 依次私聊发：`语音合成 你好` / `语音 我在这里` / `念 我在这里` / `朗读 我在这里` / `tts hello` / `say hello` / `shuo 你好` / `yuyin 你好` / `nian 你好` / `langdu 你好`（「说」已由 R1/R3 覆盖） | **过**=各条行为同 R1（正文=触发词后剥边界字符的剩余；英文大小写不敏感）；**不过**=某条走 chat→该词不在 `DEFAULT_TRIGGER_WORDS`（11 词=语音合成/朗读/语音/念/说+tts/say+shuo/yuyin/nian/langdu，T76 2026-09-20 复核在位）或第二字符非标点/空白；`BOT_TTS_TRIGGER_WORDS` 为**追加合并**语义（与内置 11 词合并去重、非整表替换，唯一入口 `effective_trigger_words`=T70）。**已知边界（不判不过）**：繁體触发词未登记（說/語音/朗讀/唸=诚实缺口，待 tts-contract-layer §6 登记窗）；边界集=纯标点空白后 `说你好`（无空格）**不触发**属现行设计 | `extract_tts_text`（最长优先+边界集）；口径同源=`docs/route-matrix.md` §2 tts 行与 `COMMANDS.md`「语音」行（T70 已同步版） |
+| R2 | 触发词 16 词等价（旧②扩面=T70+T92 繁體收口 ff091dc）【须真机 QQ】【须提权重启】〔播声依赖 T32〕 | 依次私聊发：`语音合成 你好` / `语音 我在这里` / `念 我在这里` / `朗读 我在这里` / `tts hello` / `say hello` / `shuo 你好` / `yuyin 你好` / `nian 你好` / `langdu 你好`（「说」已由 R1/R3 覆盖） | **过**=各条行为同 R1（正文=触发词后剥边界字符的剩余；英文大小写不敏感）；**不过**=某条走 chat→该词不在 `DEFAULT_TRIGGER_WORDS`（16 词=语音合成/朗读/语音/念/说+tts/say/shuo/yuyin/nian/langdu+繁體 說/語音/唸/朗讀/語音合成；T76 2026-09-20 复核+T92 ff091dc 繁體登记在位）或第二字符非标点/空白；`BOT_TTS_TRIGGER_WORDS` 为**追加合并**语义（与内置 16 词合并去重、非整表替换，唯一入口 `effective_trigger_words`=T70）。**已知边界（不判不过）**：繁體触发词已登记（說/語音/唸/朗讀/語音合成 5 词=ff091dc/T92 §一：繁體正文原样合成不简转、繁體日常句负样本零劫持）；边界集=纯标点空白后 `说你好`（无空格）**不触发**属现行设计 | `extract_tts_text`（最长优先+边界集）；口径同源=`docs/route-matrix.md` §2 tts 行与 `COMMANDS.md`「语音」行（T70 已同步版；16 词口径以 tts.py `DEFAULT_TRIGGER_WORDS` 为准——含繁體 5 词=ff091dc，route-matrix/COMMANDS 繁體面同步在飞） |
 | R3 | 裸触发词人格回应（旧③**预期反转**）【须真机 QQ】【须提权重启】 | 只私聊发一个字：`说` | **过**=收到守岸人的**人格聊天文字回复**（正常聊天，无引导话术、无语音）；**不过**=收到「在「说」后面接上…」引导（该分支生产不可达，出现=路由语义变更须另立评审）或收到语音 | 路由门 `tts_match`→`is_tts_command`（等价 `extract_tts_text` 非空）；口径同源=config-catalog「裸触发词交回人格对话」+COMMANDS.md「裸触发词不占路由」（U-15 a 案=T70） |
 | R4 | 负样本句组真机抽查·M-01（**新增**）【须真机 QQ】【须提权重启】 | 私聊逐句发（每句独立一条）：`说了再见`、`说了一半就停了`、`说的对`、`语音哈喽`、`说了多少遍了`；群聊（非黑名单群）**@守岸人** 发：`@守岸人 说了再见`、`@守岸人 念了一遍还是记不住` | **过**=每一句都收到**正常人格聊天文字回复**，无私了语音、无「嗓子还没接上」故障文案、**无单字残片语音（「对」「喽」「吧」=T15 四单字形态，听到任一即不合格）**；**不过**=任一句被吞聊天（私聊收到残片语音或故障文案；群里没人 @ 它插话）。**修前预期=全红（T15 201/278 实锤）**；离线预检 O1 已绿（T76 实跑），真机半在重启窗口执行 | 离线先行判据 O1；分母=`grep -c "event=incoming_event" runtime_events.log`、分子=stdout lineno 计数（劫持句不该进）；根因修复归属=T15 中央化修复点（六处副本收编状态见 O1 锚点行） |
 | R5 | 引擎未启动降级+退避真闸（旧⑤改写=T57 落地）【须真机 QQ】【须提权重启】（**本项恰在引擎没起时做**） | 确认 9880 无监听（`netstat -ano \| findstr :9880` 空）→ 私聊发 `说 测试一下`；**30 秒内**再发同一句；隔 >30s（窗满）再发一次 | **过**=①首发**即时（秒级）**收到「嗓子还没接上——语音服务好像没在跑，稍后再叫我一次吧。」且聊天链一切正常（fail-open）；②窗内第二发**不真打引擎**（引擎侧无新请求痕迹）、秒级返回降级文案——退避 reason 固定以「服务不可达」开头（`服务不可达：退避冷却中（剩 N 秒）｜上次失败：…`）经 `_FAILURE_KINDS` 前缀映射挂 `tts_service_unreachable`（可重试）、`_degrade` 按含「不可达」选 unreachable 分支文案（T57 承重契约）；③窗满第三发恢复真打（再收降级文案=窗自动放行，非永久拉黑）；**不过**=首发卡 ~60s 才回（loopback 拒绝本应即时，卡满=引擎在监听但挂起，按「引擎活着但慢」排障）、窗内每发都等完整 HTTP 超时（=退避闸未接线回归）、或文字链同时被打断（违反 fail-open） | 闸=`tts.py` `_record_failure/_clear_failure/_backoff_reason`，常量 `_HEALTH_BACKOFF_SECONDS=30.0`（T57 落地；闸在 synthesize 唯一 HTTP 入口前、**缓存查找之后**=命中不受影响）；真成功 `_clear_failure()` 清零、快速失败**不刷新**窗（防永久拉黑）；查闸与打请求之间不原子（窗沿并发前几请求可能真打=T57 已声明取舍）；离线锁 `tests/test_tts_health_backoff.py`（4 例，T76 实跑绿）。**旧指引「查 `_HEALTH_BACKOFF_SECONDS` 死变量」作废——该常量现为真闸**。诚实注记：引擎完全没起时首尾两发都秒级（loopback 拒绝即时），闸的分辨力在「引擎监听但挂起」形态下最明显；群聊失败降级=中央 A-19 降级池非私聊文案（S8 裁定=T70） |
@@ -545,7 +545,7 @@ PY="../ChatBot_Runtime/venv/Scripts/python.exe"
 | 旧项 | 处置 | 去向 |
 |---|---|---|
 | ① 命令式成功 | 保留（排障列换血） | R1（+R15 静音闸） |
-| ② 触发词等价 | 保留扩面 | R2（11 词∪追加=T70） |
+| ② 触发词等价 | 保留扩面 | R2（16 词∪追加=T70+T92/ff091dc） |
 | ③ 裸触发词引导 | 改写（预期反转+拆离线锚） | O2 + R3 |
 | ④ 缺参考音频 | 保留 | R7 |
 | ⑤ 服务未启动 | 改写（T57 退避真闸判据） | R5 |
@@ -565,7 +565,7 @@ PY="../ChatBot_Runtime/venv/Scripts/python.exe"
 - 旧⑤异常列「查 `_HEALTH_BACKOFF_SECONDS`（死变量）」——T57 已接成真闸：指引改为 R5 新行为（30s 窗/快速失败/真成功清零）。
 - 旧前置②「裸敲 `api_v2.py`+空测」——错 CWD 静默回退底模+yaml 写回永久化（T2 P1-2）：改为 P-2/P-3。
 - 「离线复核手段 67 例全绿」旧口径——期望值过期+被读成「配置也被复核过」=假安心（T24 #11）：改为不写固定用例数+显式声明离线不覆盖面（见下）。
-- `verify_chatbot_env.py` 不引用（import 即崩=T24 P1-1）；配置/音色体检改走 pre_restart_check（含 T60 第 10 项）。
+- `verify_chatbot_env.py`：旧判据指仓外件（`C:\Software\...\tools\`，import 即崩=T24 P1-1）**维持不引用**；配置面体检改走仓内重建版 `scripts/verify_chatbot_env.py`（`7e2fe36`=T87，生产 Config 真身判据、零裸 assert）；引擎面音色体检仍=pre_restart_check 第 10 项（T60）——两者分工零重叠（工具头注自述）。
 - 群侧任何对 `BOT_GROUP_MESSAGE_POLICY/_ALLOW_MODE` 的依赖——幽灵键全仓零消费（T27 P3-27b）：R16 明文禁用。
 
 > **探针附录**（全文可粘贴，均落 `%TEMP%/t76/`，不落源码树；A1-A4 源=T36 §7）：

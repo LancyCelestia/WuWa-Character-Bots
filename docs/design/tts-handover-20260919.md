@@ -1,4 +1,5 @@
 # 守岸人 Bot · GPT-SoVITS 语音适配 —— 完整交接文档
+> **术语说明（2026-09-20）**：本文中的 **NapCat** 指 2026-09-18 之前的 QQ 协议端（当时实况记录，保留原文不改写）；现役协议端为 **SnowLuma**，见 [../snowluma-setup.md](../snowluma-setup.md)。
 
 > 交接时间：2026-09-19 12:5x（GMT+8）  
 > 交接方：TTS 席（守岸人会话）  
@@ -194,7 +195,7 @@ CapabilityResult.audio
 - 自动配音路径任何失败 → **原样返回 result**（配音是增益，文字回复绝不能受影响）
 - `maybe_attach_voice` 整个函数体包在 `try/except Exception` 里兜底
 
-> 2026-09-20 勘误：上两条「fail-open/文字绝不能受影响」只对 **bot 侧合成阶段** 成立（合成失败→降级文案/原样返回，至今未变），**对投递阶段为假**——传输件换 SnowLuma 后已复判决（report-T46/T55）：`record` 段任一环节失败 ⇒ **text+record 整条混排消息一字不发**、API 明确回 failed（SnowLuma `buildSendElems` 循环零 try/catch，无平台侧「降级只发文字」路径）；NapCat 时代「段被静默摘除、文字独活、谎报 SENT」机制不复存在，但毒语音场景**文字同沉**。用户已裁 **U-29=A 案**：保 mixed 一条消息+段级记账防盲重投，不拆条。兜底与施工：W1 兜底基座=worker `_send_media_text_fallback_once`（`worker.py:622-665` 已存在，当前仅第 3 轮烧完才触发）；A 案最小改造面+T46-N1 retcode 白名单扩面（1400 先行）归 **Wave H**（已授权未开工，T65 先遣件备料中）；`result_unknown`（超时/断连）**绝不**触发文本补发（`worker.py:581-588` 安全前提）。缺陷编号 M-04/M-63。
+> 2026-09-20 勘误：上两条「fail-open/文字绝不能受影响」只对 **bot 侧合成阶段** 成立（合成失败→降级文案/原样返回，至今未变），**对投递阶段为假**——传输件换 SnowLuma 后已复判决（report-T46/T55）：`record` 段任一环节失败 ⇒ **text+record 整条混排消息一字不发**、API 明确回 failed（SnowLuma `buildSendElems` 循环零 try/catch，无平台侧「降级只发文字」路径）；NapCat 时代「段被静默摘除、文字独活、谎报 SENT」机制不复存在，但毒语音场景**文字同沉**。用户已裁 **U-29=A 案**：保 mixed 一条消息+段级记账防盲重投，不拆条。兜底与施工：W1 兜底基座=worker `_send_media_text_fallback_once`（`worker.py:622-665` 已存在，当前仅第 3 轮烧完才触发）；A 案最小改造面+T46-N1 retcode 白名单扩面（1400 先行）归 **Wave H**（已授权未开工，T65 先遣件备料中；**后记（T102 微同步 2026-09-20）**：Wave H 段级记账/退码白名单/W1 兜底已落库（194a2ca，T78），本句「未开工」状态语已被超越）；`result_unknown`（超时/断连）**绝不**触发文本补发（`worker.py:581-588` 安全前提）。缺陷编号 M-04/M-63。
 
 ### 3.3 域归属裁决（重要，别搬错地方）
 
