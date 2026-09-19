@@ -1,8 +1,8 @@
 # 视觉特效目录（Track 2 · Q3：HTML 渲染视觉效果增强）
 
-> **状态：设计目录，未实施；首批实施需用户裁决。** 日期：2026-09-13。
-> 事实来源：`docs/rendering-contract.md`（七条铁律）、`docs/design/render-pipeline-optimization-spec.md`（性能基线/等待分档/缓存语义，下称「管线规格」）、
-> `plugins/bot_unified_runtime/output/card_render/templates/*.html`（6 模板现状：mica-drift 色斑 + 玻璃面板 + 渐变描边 + 随机相位内联脚本）、
+> **状态：特效目录（2026-09-19 起逐 E 号记分实施态：E01 相位 digest 已实施（`tests/test_phase_determinism*.py`）、E03 排印族已实施（`test_e03_typography`）、E10 一票否决维持；其余逐号待复核），首批实施仍待用户裁决。** 日期：2026-09-13（状态行更新 2026-09-20，F24/DOC1-b 落稿）。
+> 事实来源：`docs/rendering-contract.md`（**九条铁律**，本目录成文时为七条）、`docs/design/render-pipeline-optimization-spec.md`（性能基线/等待分档/缓存语义，下称「管线规格」）、
+> `plugins/bot_unified_runtime/domains/render/card_render/templates/*.html`（**现 7 模板**；成文时快照为 6 模板+mica-drift 色斑+玻璃面板+渐变描边+随机相位内联脚本，相位机制现已被 E01 换代，见 §0.2 D2 行注）、
 > `.superpowers/sdd/2026-09-12-shorekeeper-global-audit/vis1-report.md` 与 `%TEMP%\vis1\*.png`（视觉基准，本目录撰写时已复核 `bili.png` 现状出图）。
 > **所有渲染成本数字均为估算**（已证实的基线事实仅：单卡中位 2.28–3.10s、成本 99% 在 Chromium 侧、HTML 构建 <5ms，见管线规格 §1.1 F1）。
 > 落地前后必须用 baseline §8 同源 bench 脚本实测对账，杜绝想象中的收益与成本。
@@ -27,7 +27,7 @@ QQ 侧收到的是 playwright 对 `.card` 元素的截图 PNG（`omit_background
 |---|---|---|
 | **D0 静态确定** | 无动画无随机，同环境两次截图逐像素稳定 | 本目录多数静态候选可达 |
 | **D1 相位确定** | 有循环动画，但相位由 payload digest 钉住 | 动版候选（E07 动版）依赖 E01 |
-| **D2 随机帧** | 现状 drift：`--phase` 由内联脚本 `Math.random()` 每次覆写（`universal_card.html:1688-1694`，六模板同构） | **现状全部卡片** |
+| **D2 随机帧** | （**历史现状=09-13 时点**）drift：`--phase` 由内联脚本 `Math.random()` 每次覆写（`universal_card.html:1688-1694`，六模板同构）。**今：Math.random 内联脚本已从全 7 模板移除（2026-09-20 grep 实测=0），相位由 payload digest 注入 + render_backends WAAPI 钉帧，锁测（test_phase_determinism*）在位** | 「现状全部卡片」为成文时点账，已被 E01 实施取代；现势相位态=上行 D1 |
 | **D3 时段相关** | 随渲染时刻变化 | E08 |
 
 两个**免费的确定性开关**（回归测试与生产各用其一）：
@@ -40,7 +40,7 @@ CSS 之外的残余不确定源（回归基线必须隔离，不归本目录解�
 ### 0.3 契约经济学
 
 - `@keyframes` 白名单仅 `mica-drift-a/b/c`（`tests/test_rendering_contract.py:332-334`）。**任何新动画名 = 契约修订（测试白名单扩展 + reduced-motion 关停补写）→ 需用户裁决**；纯静态特效零契约改动。
-- 其余硬约束：阴影永远两枚 token；光晕走渐变且 alpha ≥ 0.05；字重 ≤ 700；wash-mist 打底、`--pc` 只 accent、色斑 `--pc` ≤35%；动画元素 `.card` 子树内；gap 取刻度。
+- 其余硬约束：阴影永远两枚 token；光晕走渐变且 alpha ≥ 0.05；字重 ≤ 700；wash-mist 打底、`--accent` 只 accent、色斑 `--accent` ≤35%；动画元素 `.card` 子树内；gap 取刻度。
 - 因此本目录「CSS-only 优先」的真正含义是**静态 CSS 优先**：惊艳度来自构图与 token 运笔，而非动画；动版一律单独标注契约修订成本并默认靠后。
 
 ---
@@ -79,12 +79,12 @@ CSS 之外的残余不确定源（回归基线必须隔离，不归本目录解�
 
 ### E02 星尘上升定格（庆祝粒子·静版）——推荐首批
 
-- **视觉效果**：好感度升档/占卜大吉/成就时刻，卡面右侧至标题区升起一束「星尘」——12–24 枚 2–5px 圆点（wash-2 星空紫 / 白 / `--pc-light` 三通道），自下而上渐稀渐淡（alpha 0.06–0.35），如快门定格的星屑上升流。**静态构图本身即庆祝语义**，不需要动画表达。
+- **视觉效果**：好感度升档/占卜大吉/成就时刻，卡面右侧至标题区升起一束「星尘」——12–24 枚 2–5px 圆点（wash-2 星空紫 / 白 / `--accent-light` 三通道），自下而上渐稀渐淡（alpha 0.06–0.35），如快门定格的星屑上升流。**静态构图本身即庆祝语义**，不需要动画表达。
 - **实现思路**：bridge 用 payload digest 作种子伪随机预计算粒子表（x/y/粒径/alpha/色通道），Jinja `for` 循环渲染 `.star-mote` span；定位 `position:absolute` 于 `.card` 内专属容器（`.card` 子树内 ✓）；**零 animation**——不求动态，只求定格构图。密度护栏：≤24 枚、总覆盖面积 ≤ 卡面 8%。
 - **形态**：页面零 JS；CSS + Jinja + bridge 少量。
 - **成本增量**：+15–50ms（新增 ~24 个小 DOM 节点的布局与一次栅格化；radial-gradient 小圆点绘制廉价。估算）。
 - **确定性**：**D0**（摆位由 digest 种子决定，无动画无时间因素）。
-- **风险**：中低。①密度失控显脏 → 硬上限写进 bridge；②与 drift 色斑叠色过饱和 → 只用白/紫双通道 + `--pc-light`，禁 `--pc` 直涂；③QQ 图片压缩吃掉低 alpha 粒子 → alpha 下限 0.06（高于铁律 0.05）+ 最小粒径 2px；④人格红线：守岸人语气的庆祝是「星尘」不是「彩带礼花」，禁高饱和彩纸配色。
+- **风险**：中低。①密度失控显脏 → 硬上限写进 bridge；②与 drift 色斑叠色过饱和 → 只用白/紫双通道 + `--accent-light`，禁 `--accent` 直涂；③QQ 图片压缩吃掉低 alpha 粒子 → alpha 下限 0.06（高于铁律 0.05）+ 最小粒径 2px；④人格红线：守岸人语气的庆祝是「星尘」不是「彩带礼花」，禁高饱和彩纸配色。
 - **适用卡型**：`affinity_card.html`（升档时刻，模板直加）；占卜大吉/成就（走 universal 解析卡族，需 bridge 增 `celebrate` payload 键，缺省不渲染=其他卡零影响）。
 - **契约影响**：零（无动画即无 keyframes 扩展；无新增阴影；元素全在 `.card` 内）。
 

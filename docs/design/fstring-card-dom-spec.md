@@ -1,11 +1,11 @@
 # 设计规格：f-string 卡 DOM 层统一（共享 mica 卡壳 `mica_shell`）
 
-> **状态：设计规格（本规格未实施，实施前需用户裁决）。** 目标读者为下一实施会话。
+> **状态（2026-09-19 复核、2026-09-20 随 F24/DOC1-b 落稿）：部分实施。** 值层与 CSS 生成器层（`render_root_tokens`/`shell_base_css`/`mica_decor_css`/`drift_blobs_html`+宽度入册+`--pc` 退役）**已接入 4 卡**；**DOM/文档装配层（`render_shell`，生产消费者数=0，2026-09-20 全树 grep 复核）、根元素范式统一（规格 D5）、body/文档头统一（D7）、accent 解析三副本（D8）、宽度按表消费（D6 实质项，四处调用仍传字面量）五项未实施**，仍待用户裁决。剩余差异与结构锁缺口见 `unify-audit-20260919/F14-card-ia.md` §2.1/§7.1。目标读者为下一实施会话。
 > 上游：`docs/handover-c-20260913.md` 未完成项 #4——「usage_cards/echo/debug 三处 f-string 卡
 > 与 Jinja 模板的『布局结构层』统一（当前只统一了 token 值层，DOM 各自独立）｜低优先级重构」。
-> 契约基线：`docs/rendering-contract.md`（本规格是其向 **DOM 结构层** 的延伸，七条铁律全部
-> 原样继承，无冲突；对照见 §1.5）。token 值层单一来源 `output/card_render/theme_tokens.py`
-> 已统一且**不在本规格改动范围内**。
+> 契约基线：`docs/rendering-contract.md`（本规格是其向 **DOM 结构层** 的延伸，七条铁律（现为九条，
+> v21r3 增 8/9 两条）全部原样继承，无冲突；对照见 §1.5）。token 值层单一来源 `domains/render/card_render/theme_tokens.py`
+> （历史路径 `output/card_render/theme_tokens.py` 为 v21r2 兼容垫片）已统一且**不在本规格改动范围内**。
 > 日期：2026-09-13。现状断言均经源码核实（标注 `文件:行号`）；工作量数字均为**估算**。
 
 ---
@@ -20,15 +20,15 @@
 
 统一对象（即 `tests/test_mica_builders_contract.py` 的四个 builder，`tests/test_mica_builders_contract.py:151-156`）：
 
-| # | builder | 位置 | 卡片 |
+| # | builder | 位置（2026-09-20 随 v21r2 域重组+行号漂移复核；行数以当次 grep 函数体为准） | 卡片 |
 |---|---------|------|------|
-| 1 | `_help_mica_html` | `capabilities/echo.py:2622-2787` | `/bot help` 命令手册卡（总览/详情两形态） |
-| 2 | `_llm_setup_mica_html` | `capabilities/debug.py:700-806` | LLM 接入检查卡（管理员） |
-| 3 | `usage_report_mica_html` | `output/card_render/usage_cards.py:51-205` | 模型用量/账单报告卡 |
-| 4 | `render_media_card_html` | `output/templates.py:178-262`（CSS 源 `_CARD_CSS` :44-171） | 旧媒体解析卡（降级器，调用方 `capabilities/content_parser.py:398`） |
+| 1 | `_help_mica_html` | `domains/chat_reply/capabilities/echo.py:3268` 起函数体 | `/bot help` 命令手册卡（总览/详情两形态） |
+| 2 | `_llm_setup_mica_html` | `domains/ops/admin/debug.py:717` 起函数体 | LLM 接入检查卡（管理员） |
+| 3 | `usage_report_mica_html` | `domains/render/card_render/usage_cards.py:74` 起函数体 | 模型用量/账单报告卡 |
+| 4 | `render_media_card_html` | `domains/render/templates.py:112`（CSS 源 `_CARD_CSS` :74） | 旧媒体解析卡（降级器，调用方 `domains/link_parse/capabilities/content_parser.py`） |
 
-对照组（已统一的 Jinja 范本）：`output/card_render/templates/universal_card.html`（1665 行，
-`.card` 即壳）与 `templates/finance_card.html`（157 行，`<div class="shell card">`，最小完整样例）。
+对照组（已统一的 Jinja 范本）：`domains/render/card_render/templates/universal_card.html`（行数以当次 wc 为准，2026-09-20 实测 1675，
+`.card` 即壳）与 `templates/finance_card.html`（`<div class="shell card">`，上下文键消费法的新卡起点范例——见 `docs/rendering-contract.md` §五.1 2026-09-20 订正版）。
 
 ---
 
@@ -42,7 +42,7 @@
 | **壳选择器** | `.help-shell`（私有名） | `.setup-shell`（私有名） | `.shell`（通用名） | `.panel`（私有名） |
 | **壳宽** | 940px（echo.py:2729） | 880px（debug.py:751） | 900px（usage_cards.py:121） | 640px（templates.py:72） |
 | **宽度登记** | 无（`CARD_SHELL_WIDTHS` 无条目，theme_tokens.py:84-91） | 无 | 无 | 无 |
-| **accent 变量命名** | `--accent`/`--accent-ink`（f-string 直插） | 同左 + `--good`/`--bad`（debug.py:742） | 同左 | `--pc`/`--pc-dark`/`--pc-rgb`（`__占位符__`.replace 链，templates.py:202-219） |
+| **accent 变量命名** | `--accent`/`--accent-ink`（f-string 直插） | 同左 + `--good`/`--bad`（debug.py:742） | 同左 | `--accent`/`--accent-dark`/`--accent-rgb`（`__占位符__`.replace 链，templates.py:202-219） |
 | **别名 token** | `--ink`/`--muted`（echo.py:2720） | 有 | 有 | 无 |
 | **截图 viewport** | 1040×1200（echo.py:2842） | 940×1000（debug.py:837） | 950×1000（usage_cards.py:225） | 后端默认 + alpha 裁剪（content_parser.py:401,415-417） |
 | **头部** | `.help-head` flex：avatar-wrap 52px（图或「守」字兜底）+ kicker/title 27px/subtitle + 右侧 chip「发 /bot help 获取本图」（echo.py:2758-2766,2785） | `.setup-head` 块级：kicker「管理员诊断 · 只读」+ title 28px + status 药丸（ok/blocked/warn）+ message（debug.py:780-788,804） | `.head.glass` 块级：kicker + title 26px + status 药丸（ok/warn/bad）+ window 行「窗口 · 生成于」（usage_cards.py:150-159,180-185） | 无统一头部：可选 cover-wrap 240px + badge，title 19px/author 在 `.body` 内（templates.py:143-159,221-260） |
@@ -73,7 +73,7 @@
 | # | 漂移 | 证据 |
 |---|------|------|
 | D1 | `.glass` 第一层白 alpha：三卡 `.66` vs media `.68` | templates.py:137 vs echo.py:2755 |
-| D2 | accent 命名：`--accent` 系（三卡）vs `--pc` 系（media + Jinja 六模板契约口径） | §1.1 表 |
+| D2 | accent 命名：`--accent` 系（三卡）vs `--accent` 系（media + Jinja 六模板契约口径） | §1.1 表 |
 | D3 | 别名 `--ink`/`--muted` 仅三能力卡有 | echo.py:2720 |
 | D4 | usage 状态色字面 hex vs debug 的 `var(--good)/var(--bad)`（同值异写） | usage_cards.py:156-158 vs debug.py:785-786 |
 | D5 | 根元素两范式：`stage.card > shell` 双层 vs `card > panel`（`.panel` 不带 card） | §1.1 表 |
@@ -96,7 +96,7 @@
 ### 1.5 与 Jinja 对照组的差异本质
 
 finance_card.html 的壳 = 「`:root` 契约 token 块 + 同一 wash 渐变壳 + 色斑 + bot 页脚」，
-但 DOM 命名已规范（`shell card` 同元素、`--pc` 口径、宽度入 `CARD_SHELL_WIDTHS` 键 `finance:1080`）。
+但 DOM 命名已规范（`shell card` 同元素、`--accent` 口径、宽度入 `CARD_SHELL_WIDTHS` 键 `finance:1080`）。
 四处 f-string 卡缺的不是视觉（token 值层已统一），而是**这一层 DOM 命名与装配的规范化**。
 
 ---
@@ -212,10 +212,10 @@ def mica_shell_html(
 
 ### 3.3 `:root` 兼容别名策略（两步走，治 D2/D3）
 
-- **Phase 1-5（零卡身改动路径）**：壳输出契约口径 `--pc`/`--pc-dark` + 兼容别名
-  `--accent`/`--accent-ink`/`--ink`/`--muted`（media 的 `--pc-rgb` 经 `extra_tokens` 保留，
+- **Phase 1-5（零卡身改动路径）**：壳输出契约口径 `--accent`/`--accent-dark` + 兼容别名
+  `--accent`/`--accent-ink`/`--ink`/`--muted`（media 的 `--accent-rgb` 经 `extra_tokens` 保留，
   其规则本未消费该变量）。卡身 CSS 一字不改。
-- **终态（可选，独立裁决）**：卡身 CSS 改写为 `--pc` 口径后删除别名。
+- **终态（可选，独立裁决）**：卡身 CSS 改写为 `--accent` 口径后删除别名。
 
 `bridge._derive_wash_tokens` 历史别名不在本重构中删除（rendering-contract §三明令勿删）；
 四卡经壳函数直连 theme_tokens 后不再依赖它，但别名为其余调用面保留。
@@ -318,7 +318,7 @@ P1-P4 任一回滚 = revert 对应 commit 即恢复该卡 f-string 版本（git 
 1. **方案终裁**：b（本文推荐）vs a vs c。
 2. **glass alpha 终态**：统一 `.66`（三卡多数，建议）或 `.68`；P4 迁移期用 `glass_alpha` 参数保
    media 零像素变化，但终态必须二选一。
-3. **别名 token 终态**：保留 `--accent` 系别名，或一次性把卡身 CSS 改写为 `--pc` 口径后删别名
+3. **别名 token 终态**：保留 `--accent` 系别名，或一次性把卡身 CSS 改写为 `--accent` 口径后删别名
    （建议后者，独立 commit）。
 4. **状态语义色统一**：usage 的字面 hex 与 debug 的 `--good/--bad` 是否统一为壳级
    `--good/--bad/--warn` 三枚 token（建议统一，经 `extra_tokens` 注入）。

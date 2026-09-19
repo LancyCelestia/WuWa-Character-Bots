@@ -1,6 +1,6 @@
 # 设计规格：渲染管线性能优化（Track 2 — 等待策略 / 并发模型 / 渲染缓存 / 热点清理）
 
-> **状态：设计规格（本规格未实施，实施前需用户裁决）。** 目标读者为下一实施会话。
+> **状态：部分实施（2026-09-19 复核、2026-09-20 随 F24/DOC1-b 落稿）**——并发/等待预算两键已接线（`config.py` `bot_render_max_concurrency`/`bot_render_wait_budget_ms`，13fcd30/AGENTS #31；2026-09-20 复核实存）；信号驱动等待/渲染缓存/热点清理各子项实施态**待逐 § 对 `render_backends.py` 现码复核**，未复核子项不得沿用旧「未实施」或新「已实施」判词。目标读者为下一实施会话。
 > 事实来源：`.superpowers/sdd/2026-09-12-shorekeeper-global-audit/baseline-perf.md`（下称 baseline）、
 > `plugins/bot_unified_runtime/output/render_backends.py`（现实现全文）、
 > `docs/rendering-contract.md`（七条铁律，本规格零破坏为硬门）、
