@@ -31,7 +31,8 @@ from plugins.bot_unified_runtime.domains.core.text_boundary import (
     strip_boundary,
 )
 
-# tts.DEFAULT_TRIGGER_WORDS 的内联副本（11 词，独立成件不 import T57 独占面）。
+# tts.DEFAULT_TRIGGER_WORDS 的内联副本（T92 后 11→16 词含繁體；本件钉繁體前 11 词基线，
+# 独立成件不 import T57 独占面；繁體 5 词另见下方登记态样例）。
 WORDS: tuple[str, ...] = (
     "语音合成", "朗读", "语音", "念", "说",
     "tts", "say", "shuo", "yuyin", "nian", "langdu",
