@@ -25,6 +25,12 @@
 
 from __future__ import annotations
 
+import pytest
+
+from plugins.bot_unified_runtime.runtime.aliases import (
+    CommandAliasResolver,
+    normalize_command_text,
+)
 from scripts.extract_trigger_words import (
     build_help_trigger_side,
     build_inventory,
@@ -382,6 +388,40 @@ def test_gate_truth_sources_nonempty() -> None:
 
 
 # ---------------------------------------------------------------------------
+# L-C04 extractor 棘轮：bot.tts 触发词表必须持续可见（T68 修复锁）
+# ---------------------------------------------------------------------------
+
+
+def test_tts_verified_triggers_ratchet() -> None:
+    """bot.tts 行为验证词与内置词表等势且不坠盲区清单（L-C04 棘轮）。
+
+    根因史：domains 迁移后 ``is_tts_command`` 退化为单行委托
+    （``bool(extract_tts_text(...))``），harvest 只摘检测函数体内字面量 +
+    ``__globals__`` 直引常量，词表住委托实现函数的 globals —— 棘轮对 TTS
+    整体失明（M-01 劫持样本溜进去的哨兵盲区，T15/T39 实证）。修法=
+    能力级委托追踪；本锁钉「再断链必红」：词表再被藏进追不动的委托
+    （跨模块/动态构造），verified 掉空或与真值源漂移即失败。
+    """
+    from plugins.bot_unified_runtime.domains.media.capabilities.tts import (
+        DEFAULT_TRIGGER_WORDS,
+    )
+
+    entry = INV["capabilities"]["bot.tts"]
+    assert entry["verified_triggers"], "bot.tts verified_triggers 掉空（棘轮失明复发）"
+    missing = sorted(set(DEFAULT_TRIGGER_WORDS) - set(entry["verified_triggers"]))
+    extra = sorted(set(entry["verified_triggers"]) - set(DEFAULT_TRIGGER_WORDS))
+    assert not missing and not extra, (
+        f"bot.tts 行为验证词与内置词表漂移：missing={missing} extra={extra}"
+    )
+    blind = [
+        capability_id
+        for capability_id, item in INV["capabilities"].items()
+        if not item["verified_triggers"]
+    ]
+    assert "bot.tts" not in blind, "bot.tts 重新坠入无 verified 盲区清单"
+
+
+# ---------------------------------------------------------------------------
 # 可红性（变异测试）：测试内构造缺口 → 门必须红
 # ---------------------------------------------------------------------------
 
@@ -420,3 +460,27 @@ def test_help_to_route_gate_catches_dropped_verb() -> None:
     assert added == {("决策", "决策")}, (
         f"变异应恰好引入一条缺口，实际多出：{sorted(added - {('决策', '决策')})[:10]}"
     )
+
+
+@pytest.mark.parametrize("verb", ["功能管理", "feature"])
+@pytest.mark.parametrize("prefix", ["守岸人", "/岸宝"])
+def test_feature_trigger_resolves_to_real_runtime_capability(verb: str, prefix: str) -> None:
+    resolver = CommandAliasResolver(nicknames=["守岸人", "岸宝"])
+    resolution = resolver.resolve(f"{prefix}{verb} get bot.plugin.weather")
+    assert resolution is not None
+    assert resolution.capability_id == "bot.runtime"
+    assert resolution.rest_text == "get bot.plugin.weather"
+    # 管理昵称只引导到 /bot；中文引导也必须能进入现有 feature 分支。
+    assert normalize_command_text(f"{resolution.verb} {resolution.rest_text}") == (
+        "feature get bot.plugin.weather"
+    )
+    assert resolver.resolve(f"{verb} get bot.plugin.weather") is None
+    assert resolver.resolve(f"{prefix}{verb}说明") is None
+
+
+def test_feature_help_gate_catches_removed_route_without_exemption() -> None:
+    verbs = {key: value for key, value in VERB_MAP_FLAT.items() if key not in {"功能管理", "feature"}}
+    violations = gate_help_to_route({"功能管理": INV["help_topics"]["功能管理"]}, verbs, DETECTORS)
+    assert {(item["topic"], item["word"]) for item in violations} == {
+        ("功能管理", "功能管理"), ("功能管理", "feature"),
+    }

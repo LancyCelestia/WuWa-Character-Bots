@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.platform_credentials import (
+from plugins.bot_unified_runtime.domains.core.credentials.platform_credentials import (
     cookie_status_text,
     import_cookie_header,
     is_cookie_command,

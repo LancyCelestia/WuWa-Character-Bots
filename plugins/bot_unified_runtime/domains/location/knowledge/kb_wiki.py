@@ -16,6 +16,9 @@
   时间）两列元数据（列名契约，源自语料行的 ``updated_at``/``crawled_at``）；
   语料侧只加时间字段、正文一字未改时走 ``refresh_kb_metadata`` 做**零嵌入成本**
   的全表回填（只 UPDATE 台账，chunk 字节与 hash 不动，一次 Ollama 都不调）；
+  「要不要刷」这道闸由 ``probe_corpus_time_fields`` 的**有界窗口计数**判定
+  （流式读前 300 行，≥1 行且 ≥10% 带字段才刷；判据依据 probed/with_time 与
+  状态同行落库），不用首行一条样本给七万五千行语料背书；
 - 分块按 Markdown 标题分节，每块携带「词条标题｜节标题」前缀做嵌入上下文；
 - 嵌入复用 OpenAICompatibleEmbeddingProvider（本地 Ollama bge-m3 优先，
   远程付费链兜底）；向量库独立于人格知识库（``bot_kb_wiki_db_path``），
@@ -42,7 +45,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
 from datetime import UTC, datetime
-from itertools import chain
+from itertools import chain, islice
 from pathlib import Path
 from typing import Any
 
@@ -264,6 +267,9 @@ def _manifest_corpus_topics(manifest: dict, entries: dict[str, str]) -> set[str]
     """清单覆盖到的语料域集合（per-topic 统计优先，退回从 entries 推导）。
 
     对账删除只用它做「清单是否覆盖该域」的判据：不覆盖就绝不删该域的台账行。
+    注意这只是**清单侧**的覆盖集——本地 topics 收窄同步时，调用方还须把它
+    与授权域求交（见 reconcile_with_manifest），否则全量统计会让子集外的域
+    被误判「覆盖」而放行整域删除。
     """
     stats = manifest.get("topics")
     if isinstance(stats, dict) and stats:
@@ -281,9 +287,11 @@ def reconcile_with_manifest(
     - **待补**：清单有、台账没有，或两边 hash 不同（内容变了却没进本轮
       updates.jsonl——正是「一天两档导出、Bot 只读一档」时被覆盖掉的那部分）；
       全文由调用方从 documents.jsonl 补投。
-    - **待删**：台账有、清单没有，且清单确实覆盖了它所属的语料域。
-      清单没覆盖该域（爬虫按 topic 子集导出、或 entries 与 documents 数不等）
-      时挂起删除、只记 ``reconcile_status``，绝不拿残缺清单当删除依据。
+    - **待删**：台账有、清单没有，且清单确实覆盖了它所属的语料域、该域又在
+      本轮 ``topics`` 授权范围内（``topics`` 为空 = 全部）。
+      清单没覆盖该域（爬虫按 topic 子集导出、或 entries 与 documents 数不等）、
+      或本地把同步收窄到了子集白名单时，域外一律视为「本轮未覆盖」：挂起删除、
+      只记 ``reconcile_status``，绝不拿残缺清单当删除依据。
     """
     stats: dict[str, Any] = {
         "reconcile_status": "ok",
@@ -300,6 +308,14 @@ def reconcile_with_manifest(
         doc_id for doc_id, digest in entries.items() if ledger.get(doc_id) != digest
     }
     corpus_topics = _manifest_corpus_topics(manifest, entries)
+    # 护栏收紧（2026-09-20 整域误删修复）：删除判据必须与收窄 entries 的是
+    # **同一个** topics 集合——本地只授权子集域同步时，清单的全量 per-topic
+    # 统计对子集外的域不构成「覆盖」，其台账行一律挂起（进 held）。不收紧，
+    # 填一次子集白名单就会把其余整域连块带台账清空。topics 为空 = 全部，
+    # 此处交集为无操作，全量行为逐字段不变。
+    allowed = set(topics)
+    if allowed:
+        corpus_topics &= allowed
     orphans = {doc_id for doc_id in ledger if doc_id not in entries}
     removable = {doc_id for doc_id in orphans if _id_topic(doc_id) in corpus_topics}
     stats["reconcile_missing"] = len(missing)
@@ -402,28 +418,86 @@ def sync_kb_wiki(
     }
 
 
-def corpus_has_time_fields(kb_dir: Path) -> bool:
-    """documents.jsonl 首行是否带 ``crawled_at``（语料侧是否已增强）。
+# ------------------------------------------------ 元数据闸的有界窗口探针
+# 判据形态（2026-09-20 修复）：旧版只看 documents.jsonl **首行**有没有 crawled_at
+# 就给整个语料（实测 75,737 行）判「有没有时间字段」。一行样本不具代表性——行序
+# 一变（某个不带该字段的源排到最前）全库回填被一票否决，而记出的 skipped_* 看
+# 起来像「语料本来就没这字段」，没人会去查。现在读前 N 行做计数，判据依据
+# （probed/with_time）随状态一起透出。
+#
+# 窗口有界是真需求，不是偷懒：全表 240MB 顺序读每夜白付不值得（未增强语料怎么
+# 扫都扫不出东西）。N=300 既让「首行噪声」翻不了案（一行的影响力被摊薄到
+# ≤0.33%），又只是全扫的 0.4% 成本。
+_METADATA_PROBE_WINDOW_LINES = 300
+# 采样比例门槛：窗口里至少 10% 的行带时间字段才认定「语料已增强」。
+# 用百分数做整数比对（with_time*100 >= probed*10），不引入浮点边界毛刺。
+# 下限另设 1 行，保证微型语料（1-9 行且全带字段）照常刷，与旧行为向后一致。
+_METADATA_PROBE_MIN_RATIO_PCT = 10
+# 指定 topics 子集时的原始行扫描上限：凑不满窗口也不许退化成全表扫。
+_METADATA_PROBE_MAX_SCAN_LINES = _METADATA_PROBE_WINDOW_LINES * 20
 
-    存在性判据用首行一条、不做全表扫描：未增强的语料（爬虫侧升级前的旧导出）
-    里回填永远写不出任何东西，逐夜为此付一遍 240MB 顺序读不值得 —— 据此跳过并
-    把原因记进 summary，比「默默每小时白扫一遍」诚实。
+
+def probe_corpus_time_fields(
+    kb_dir: Path,
+    *,
+    topics: Iterable[str] = (),
+    window: int = _METADATA_PROBE_WINDOW_LINES,
+) -> dict[str, Any]:
+    """流式数 documents.jsonl 前 ``window`` 行里带 ``crawled_at`` 的比例。
+
+    返回 ``{"probed", "with_time", "has_fields"}``：
+
+    - ``probed`` = 窗口内**计入样本**的行数（空行、坏 JSON、非对象行既不进分子
+      也不进分母——它们不给任何样本背书）；
+    - ``has_fields`` = ``with_time >= 1`` 且命中数不低于窗口样本的 10%；
+    - 文件缺失/不可读 → 诚实的 ``{0, 0, False}``（读不到就是没证据，不猜）。
+
+    ``topics`` 非空时只统计这些语料域的行（与 ``refresh_kb_metadata`` 的过滤
+    口径同源：闸采的样必须是被闸管的总体），最多扫
+    ``_METADATA_PROBE_MAX_SCAN_LINES`` 原始行即止。
     """
     path = kb_dir / "documents.jsonl"
+    allowed = {str(topic) for topic in topics if str(topic)}
+    budget = max(1, int(window))
+    probed = 0
+    with_time = 0
     try:
         with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
+            # islice 把「原始行扫描量」钉死在上限：被 topics 滤掉的行也得计数，
+            # 否则窄域配置下这里会一路 continue 到文件尾，退化成每夜全表扫。
+            for line in islice(handle, _METADATA_PROBE_MAX_SCAN_LINES):
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     row = json.loads(line)
                 except ValueError:
-                    return False
-                return isinstance(row, dict) and "crawled_at" in row
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                if allowed and _id_topic(str(row.get("id") or "")) not in allowed:
+                    continue
+                probed += 1
+                if "crawled_at" in row:
+                    with_time += 1
+                # 窗口判定放循环体末尾：放开头会为下一行先付一次读（窗口外哪怕
+                # 是不可解码的脏字节也会被碰一下），"有界"就成了嘴上说说。
+                if probed >= budget:
+                    break
     except (OSError, UnicodeError):
-        return False
-    return False
+        # 打不开/读到一半坏了：把已经拿到的样本如实交出去（缺文件时即 0/0）。
+        pass
+    has_fields = with_time >= 1 and with_time * 100 >= probed * _METADATA_PROBE_MIN_RATIO_PCT
+    return {"probed": probed, "with_time": with_time, "has_fields": has_fields}
+
+
+def corpus_has_time_fields(kb_dir: Path) -> bool:
+    """语料侧是否已带时间字段（bool 视图，判据与 ``probe_corpus_time_fields`` 同源）。
+
+    保留这个签名只因为它是既有调用面/测试面；判据细节（有界窗口计数、比例门槛）
+    一律在探针里，别再在这里长第二套判法。
+    """
+    return bool(probe_corpus_time_fields(kb_dir)["has_fields"])
 
 
 def refresh_kb_metadata(
@@ -714,6 +788,8 @@ def _empty_kb_result(mode: str) -> dict[str, Any]:
         "reconcile_held": 0,
         "metadata_status": "not_attempted",
         "metadata_gaps": 0,
+        "metadata_probed": 0,
+        "metadata_with_time": 0,
         "mode": mode,
         "embed": False,
         "embed_done": 0,
@@ -861,6 +937,8 @@ def _sync_summary(result: dict[str, Any]) -> dict[str, Any]:
         "reconcile_held": int(result.get("reconcile_held") or 0),
         "metadata_status": str(result.get("metadata_status") or ""),
         "metadata_gaps": int(result.get("metadata_gaps") or 0),
+        "metadata_probed": int(result.get("metadata_probed") or 0),
+        "metadata_with_time": int(result.get("metadata_with_time") or 0),
         "metadata_refreshed": int(result.get("metadata_refreshed") or 0),
         "generated_at": str(result.get("generated_at") or ""),
         "documents_total": int(result.get("documents_total") or 0),
@@ -922,9 +1000,15 @@ def _refresh_kb_metadata_if_needed(
             result["metadata_status"] = "not_needed"
             return
         _root, kb_dir = kb_paths(config)
-        if not corpus_has_time_fields(kb_dir):
-            # 语料侧还没增强（旧导出无 crawled_at）：现在扫全表也扫不出东西，
-            # 记下原因，等下一轮导出带上时间字段再回填。
+        # 有界窗口计数判「语料侧到底带不带时间字段」：不再让首行一行样本给全库
+        # 背书。probed/with_time 与状态同行透出，下次读数的人看得到判据依据。
+        probe = probe_corpus_time_fields(kb_dir, topics=parse_topics(config))
+        result["metadata_probed"] = int(probe["probed"])
+        result["metadata_with_time"] = int(probe["with_time"])
+        if not probe["has_fields"]:
+            # 窗口内确实没有（或只有撑不过阈值的杂散噪声）：现在扫全表也扫不出
+            # 东西，记下原因与样本口径，等下一轮导出带上时间字段再回填。
+            # 绝不硬刷——刷出来的是一库假 NULL，比"没刷"更难被发现。
             result["metadata_status"] = "skipped_corpus_without_time_fields"
             return
         stats = refresh_kb_metadata(store, config)
@@ -1033,9 +1117,10 @@ def _run_kb_sync_task_locked(
             )
             result.update(sync)
             if embed:
-                # 本地 Ollama 实测批 128 吞吐最高（19 块/s vs 批 10 的 3 块/s）；
-                # 本地不可用退到远程链时远程单批限额(10)会拒绝大批 → 本次中止，
-                # 断点续跑，无数据损坏（见 BOT_KB_WIKI_EMBED_BATCH 注释）。
+                # 本地 Ollama 实测批 128 吞吐最高（19 块/s vs 批 10 的 3 块/s）。
+                # 批大小要和嵌入超时成配比看：128 块 ≈6.7s，而生产 .env 的本地超时
+                # 只有 5s ⇒ 每批必超时。嵌入侧按批折半自调（下限 10，恰好也是远程
+                # 单批上限），所以这里只传"想要的"批大小，不必为超时链路配平兜底。
                 batch = max(
                     1, int(getattr(config, "bot_kb_wiki_embed_batch", 128) or 128)
                 )
@@ -1104,7 +1189,18 @@ def _run_kb_sync_task_locked(
         if str(result.get("reconcile_status") or "") == _RECONCILE_REMOVE_SUSPENDED:
             observed.append(f"对账挂起删除 {result.get('reconcile_held')}")
         if int(result.get("metadata_refreshed") or 0):
-            observed.append(f"时间元数据回填 {result.get('metadata_refreshed')}")
+            observed.append(
+                f"时间元数据回填 {result.get('metadata_refreshed')}"
+                f"（探针 {result.get('metadata_probed')} 行、{result.get('metadata_with_time')} 行带字段）"
+            )
+        elif str(result.get("metadata_status") or "").startswith("skipped"):
+            # 跳过必须带依据：只写 skipped_* 读起来像"语料本来没这字段"，
+            # 把窗口样本量与命中数一起报出来，人才会去查是不是采样问题。
+            observed.append(
+                f"时间元数据未回填（探针 {result.get('metadata_probed')} 行仅 "
+                f"{result.get('metadata_with_time')} 行带时间字段，台账缺口 "
+                f"{result.get('metadata_gaps')}）"
+            )
         result["public_message"] = (
             f"kb-sync 完成（{result['mode']}）：台账 {result['documents_after']} 文档 / "
             f"{result['total_after']} 块（新增 {result['added']}、变更 {result['changed']}、"

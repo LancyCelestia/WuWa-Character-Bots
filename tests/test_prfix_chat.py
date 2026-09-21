@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import plugins.bot_unified_runtime.capabilities.chat as chat_module
+import plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat as chat_module
 from plugins.bot_unified_runtime.capabilities.chat import (
     _MCP_NEGATIVE_CACHE_TTL_SECONDS,
     _generate_with_tool_loop,

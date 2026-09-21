@@ -33,6 +33,13 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from plugins.bot_unified_runtime.contracts import MemoryRetrievalResult, PrivacyLevel
+from plugins.bot_unified_runtime.domains.chat_reply.character.memory_bus_v2 import (
+    PROVENANCE_REFLECTED,
+    MemoryBus,
+    canonical_fact_text,
+    derive_scope,
+    settings_from_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,12 +92,19 @@ class Turn:
 
     sender_id 由 gather_turns_by_date 落入；会话级归纳用它定位主用户
     （私聊即本人），无 sender 信息时为空串。
+
+    ``platform`` / ``ingress_session_id``（WP6 新增，均有缺省=旧构造点零改动）：
+    归纳产物要写进记忆总线就得知道「哪个平台、哪个裸会话键」。**不靠拆
+    ``platform:session`` 复合串**拿回来——那正是本波定罪的「用字符串形状猜键」，
+    复合键继续只服务于 digest 唯一性，平台与入口键在采集时就分列携带。
     """
 
     role: str
     text: str
     created_at: str
     sender_id: str = ""
+    platform: str = ""
+    ingress_session_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -175,8 +189,13 @@ def _clip(value: str, max_chars: int) -> str:
 
 
 def _normalize_fact_text(text: str) -> str:
-    """事实文本的归一化键：去全部空白 + 小写，供跨摘要去重。"""
-    return "".join((text or "").split()).lower()
+    """事实文本的归一化键（单一来源=总线 ``canonical_fact_text``，本函数是历史入口）。
+
+    口径差异如实报备：总线形 additionally 剥标点（``我喜欢柠檬茶。`` 与
+    ``我喜欢柠檬茶`` 现在同键），旧形只去空白。这一收严让 keep-newest 去重
+    更准，不改变任何「标点本就不在文本里」的既有输入的相对次序。
+    """
+    return canonical_fact_text(text)
 
 
 def build_digest_id(session_key: str, scope_date: str) -> str:
@@ -214,9 +233,21 @@ def _primary_sender(turns: Sequence[Turn]) -> str:
 class ReflectionStore:
     """SQLite 反思产物存储；线程安全，conventions 与 affinity.py 一致。"""
 
-    def __init__(self, db_path: str | Path, *, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        clock: Callable[[], float] = time.time,
+        bus: MemoryBus | None = None,
+        reflected_write_target: str = "legacy",
+    ) -> None:
         self.db_path = Path(db_path)
         self._clock = clock
+        # 归纳落点（WP6）：bus=投进单一事实总线并停止写 reflection_facts；
+        # 其它值（含缺省 legacy）=逐字节旧路径。装配点由 run_nightly_reflection
+        # 按配置现读，本件不自判开关（一处判据）。
+        self._bus = bus
+        self._reflected_write_target = str(reflected_write_target or "legacy").strip().lower()
         self._lock = threading.Lock()
         # 进程内复用单一连接：夜间任务与记忆召回可能跨线程并发访问，
         # 全部操作已在 self._lock 下串行，check_same_thread=False 允许共用。
@@ -311,15 +342,24 @@ class ReflectionStore:
         digest_id: str,
         sender_id: str,
         facts: Sequence[FactDraft],
+        *,
+        ingress_session_id: str = "",
     ) -> int:
         """把事实草稿挂到 digest 下并归属 sender；返回成功入库条数。
 
-        去重规则（keep-newest）：同一 sender 下归一化文本相同的旧行先置
-        superseded=1，新行以最新 created_at/置信度/来源覆盖插入。
+        落点两态（WP6）：
+        - ``reflected_write_target='bus'`` 且已注入总线 ⇒ 逐条 ``absorb`` 进单一事实
+          总线（确认/矛盾/直插由总线裁决），**本表不再新增行**；幂等键
+          ``refl:<digest_id>:<序号>`` 让同日重跑只算一次。缺裸会话键即整条拒收
+          （归纳侧不配获得「全会话可见」）。
+        - 其余（含缺省 legacy）⇒ keep-newest 旧规则逐字节不变：同一 sender 下
+          归一化文本相同的旧行先置 superseded=1，新行覆盖插入。
         """
         if not digest_id.strip():
             return 0
         sender = sender_id.strip()
+        if self._bus is not None and self._reflected_write_target == "bus":
+            return self._save_facts_to_bus(digest_id, sender, facts, ingress_session_id)
         now_text = _format_utc(float(self._clock()))
         saved = 0
         with self._lock, self._connect() as connection:
@@ -370,6 +410,43 @@ class ReflectionStore:
                 saved += 1
         return saved
 
+    def _save_facts_to_bus(
+        self,
+        digest_id: str,
+        sender: str,
+        facts: Sequence[FactDraft],
+        ingress_session_id: str,
+    ) -> int:
+        """归纳支路：把草稿投进总线，由总线判「又说起」还是「改了主意」。"""
+        bus = self._bus
+        scope = derive_scope(ingress_session_id)
+        if bus is None:
+            return 0
+        if not sender or not scope.key:
+            logger.info(
+                "reflection facts skipped: no usable session scope digest=%s", digest_id
+            )
+            return 0
+        saved = 0
+        for ordinal, draft in enumerate(facts):
+            text = _clip(draft.text, _MAX_FACT_CHARS)
+            if not text:
+                continue
+            outcome = bus.absorb(
+                owner_id=sender,
+                subject_user_id=sender,
+                text=text,
+                session_id=ingress_session_id,
+                category=draft.category.strip(),
+                confidence=max(0.0, min(1.0, float(draft.confidence))),
+                provenance=PROVENANCE_REFLECTED,
+                source="nightly_reflection",
+                source_event_id=f"refl:{digest_id}:{ordinal}",
+            )
+            if outcome.action in ("inserted", "confirmed", "contradicted"):
+                saved += 1
+        return saved
+
     def facts_for(
         self,
         sender_id: str,
@@ -393,20 +470,36 @@ class ReflectionStore:
                 SELECT fact_id, sender_id, session_key, fact_text, category,
                        confidence, source_digest_id, created_at
                 FROM reflection_facts
-                WHERE sender_id = ?
+                WHERE sender_id = :sender
                   AND superseded = 0
-                  AND confidence >= ?
-                  AND (? IS NULL OR session_key = ? OR session_key IN ('', '*', 'global'))
+                  AND confidence >= :min_confidence
+                  AND (
+                        :session IS NULL
+                        OR session_key = :session
+                        OR session_key IN ('', '*', 'global')
+                        -- 写侧历史形态是 ``platform:裸键``（gather_turns_by_date），
+                        -- 而召回方（providers）手里只有裸键 ⇒ 旧写法等值比较恒不成立、
+                        -- 反思链在 bot_reflection_enabled=True 时静默零召回（本波探针实证）。
+                        -- 修法=「尾部等于 + 前一位是平台分隔符」，两边都是**等值**：
+                        -- 不用 LIKE，因为键里的 `_` 是 LIKE 通配符，会让 group_1_2 与
+                        -- group_1X2 互串（同类事故已由 test_shared_export_key_shape 钉死）。
+                        OR (
+                                length(session_key) > length(:session)
+                            AND substr(session_key,
+                                       length(session_key) - length(:session) + 1) = :session
+                            AND substr(session_key,
+                                       length(session_key) - length(:session), 1) = ':'
+                        )
+                    )
                 ORDER BY created_at DESC, rowid DESC
-                LIMIT ?
+                LIMIT :limit
                 """,
-                (
-                    sender,
-                    _MIN_FACT_CONFIDENCE,
-                    session_id,
-                    session_id,
-                    max(1, int(limit)),
-                ),
+                {
+                    "sender": sender,
+                    "min_confidence": _MIN_FACT_CONFIDENCE,
+                    "session": session_id,
+                    "limit": max(1, int(limit)),
+                },
             ).fetchall()
         selected: list[ReflectionFact] = []
         chars_used = 0
@@ -803,12 +896,19 @@ def run_reflection(
             # 模型标注的说话人编号带归属（审查 G-06），只有解析不出编号的
             # 条目与无 sender 的历史轮次回退到会话主 sender（最活跃者）。
             primary = _primary_sender(turns)
+            # 采集侧携带的**裸**会话键（NoneBot get_session_id 形态），供总线落点做
+            # 作用域列；digest 那侧仍用 platform 复合键（历史 digest_id 逐字节不变）。
+            ingress_key = next(
+                (turn.ingress_session_id for turn in turns if turn.ingress_session_id), ""
+            )
             facts_by_sender: dict[str, list[FactDraft]] = {}
             for draft in reflection.facts:
                 sender = draft.sender_id.strip() or primary
                 facts_by_sender.setdefault(sender, []).append(draft)
             for sender, drafts in facts_by_sender.items():
-                facts_saved += store.save_facts(digest_id, sender, drafts)
+                facts_saved += store.save_facts(
+                    digest_id, sender, drafts, ingress_session_id=ingress_key
+                )
             if quirk_collector is not None:
                 # 审查 G-07：投喂 quirk 池前把无归属草稿补上主 sender（与
                 # save_facts 同一归属规则），投喂侧才能按人落 user scope；
@@ -875,6 +975,8 @@ def gather_turns_by_date(
                 text=str(row["text"]),
                 created_at=str(row["created_at"]),
                 sender_id=str(row["sender_id"]),
+                platform=str(row["platform"]),
+                ingress_session_id=str(row["session_id"]),
             )
         )
     return grouped
@@ -892,8 +994,13 @@ class ReflectionMemoryProvider:
     sensitivity/scope_key），可直接走 providers.py 的 LLM 安全过滤。
     """
 
-    def __init__(self, store: ReflectionStore | None = None) -> None:
+    def __init__(
+        self, store: ReflectionStore | None = None, *, bus_enabled: bool = False
+    ) -> None:
         self._store = store
+        # 单一真身闸（WP6）：总线开启且归纳确实落总线时，本 provider 必须让位，
+        # 否则同一条事实会以「旧表 + 总线」两个身份同时进 prompt。
+        self._bus_enabled = bus_enabled
 
     def retrieve(
         self,
@@ -906,7 +1013,12 @@ class ReflectionMemoryProvider:
         max_items: int,
         max_chars: int,
     ) -> MemoryRetrievalResult:
-        if self._store is None or max_items <= 0 or max_chars <= 0:
+        if (
+            self._store is None
+            or self._bus_enabled
+            or max_items <= 0
+            or max_chars <= 0
+        ):
             return MemoryRetrievalResult(request_id=request_id)
         # 与 SQLiteMemoryRepository.retrieve 相同的隐私闸：只向本人开放。
         if requester_id != subject_user_id:
@@ -944,7 +1056,13 @@ def build_reflection_memory_provider(config: object) -> ReflectionMemoryProvider
     db_path = str(getattr(config, "bot_reflection_db_path", "") or "").strip()
     if not enabled or not db_path:
         return ReflectionMemoryProvider(None)
-    return ReflectionMemoryProvider(ReflectionStore(db_path))
+    settings = settings_from_config(config)
+    # 让位条件是「总线**且**归纳已落总线」——只开总线、归纳仍写旧表、迁移还没跑时
+    # 就闭嘴，等于把还没搬家的记忆凭空变没（半开态陷阱，本席不留这个缝）。
+    return ReflectionMemoryProvider(
+        ReflectionStore(db_path),
+        bus_enabled=settings.enabled and settings.writes_to_bus,
+    )
 
 
 def run_nightly_reflection(
@@ -984,6 +1102,16 @@ def run_nightly_reflection(
                 or "data/reflection.sqlite3"
             ),
         )
+        settings = settings_from_config(config)
+        # 归纳落点：总线路径只在 bus_enabled ∧ target=bus 时构造（其余一律 None，
+        # 保持「关态不建新库、不开新连接」）。装配点本身未动——设计稿 §八.4。
+        bus: MemoryBus | None = None
+        if settings.enabled and settings.writes_to_bus:
+            from plugins.bot_unified_runtime.domains.chat_reply.character.memory import (
+                build_memory_bus_for_writer,
+            )
+
+            bus = build_memory_bus_for_writer(config)
         quirk_proposer = build_reflection_quirk_proposer(config)
         quirk_proposals = 0
 
@@ -993,7 +1121,9 @@ def run_nightly_reflection(
                 quirk_proposals += quirk_proposer(facts)
 
         report = run_reflection(
-            ReflectionStore(reflection_db),
+            ReflectionStore(
+                reflection_db, bus=bus, reflected_write_target=settings.reflected_write_target
+            ),
             turns_by_session,
             summarizer=summarizer or HeuristicSummarizer(),
             scope_date=scope_date,

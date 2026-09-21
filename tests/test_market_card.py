@@ -26,10 +26,10 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.finance.data.market_data import IndexQuote
 from plugins.bot_unified_runtime.output.card_render.bridge import (
     render_market_card_html,
 )
-from plugins.bot_unified_runtime.sources.market_data import IndexQuote
 
 _PAYLOAD: dict[str, Any] = {
     "subtitle": "红涨绿跌 · 折线为近 30 个交易日收盘",
@@ -198,11 +198,11 @@ def test_market_capability_card_payload_carries_change_and_gap_note(
     monkeypatch, tmp_path
 ) -> None:
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.market.fetch_index_quotes",
+        "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
         lambda timeout_seconds, cache_seconds: list(_QUOTES),
     )
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.market.fetch_index_trend",
+        "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_trend",
         lambda secid, timeout_seconds=6.0: (
             (3900.0, 3920.5, 3934.4) if secid == "1.000001" else ()
         ),
@@ -227,7 +227,7 @@ def test_market_capability_backend_failure_falls_back_to_text(
     monkeypatch, tmp_path
 ) -> None:
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.market.fetch_index_quotes",
+        "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
         lambda timeout_seconds, cache_seconds: list(_QUOTES),
     )
 
@@ -248,7 +248,7 @@ def test_market_capability_backend_failure_falls_back_to_text(
 
 def test_market_capability_without_backend_is_text(monkeypatch) -> None:
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.market.fetch_index_quotes",
+        "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
         lambda timeout_seconds, cache_seconds: list(_QUOTES),
     )
     capability = build_market_capability(config=None)
@@ -264,7 +264,9 @@ def test_market_capability_without_backend_is_text(monkeypatch) -> None:
 
 class TestMarketCrossCheck:
     def _quotes(self):
-        from plugins.bot_unified_runtime.sources.market_data import IndexQuote
+        from plugins.bot_unified_runtime.domains.finance.data.market_data import (
+            IndexQuote,
+        )
 
         return [
             IndexQuote("上证指数", "1.000001", 3888.11, -1.18, -46.29),
@@ -273,7 +275,9 @@ class TestMarketCrossCheck:
         ]
 
     def test_matched_declares_verification(self, monkeypatch):
-        from plugins.bot_unified_runtime.sources import market_crosscheck as mc
+        from plugins.bot_unified_runtime.domains.finance.data import (
+            market_crosscheck as mc,
+        )
 
         mc.reset_crosscheck_cache()
         monkeypatch.setattr(
@@ -290,7 +294,9 @@ class TestMarketCrossCheck:
         assert "已与腾讯行情交叉核验 ✓ 2/2" in note
 
     def test_mismatch_declares_divergence(self, monkeypatch):
-        from plugins.bot_unified_runtime.sources import market_crosscheck as mc
+        from plugins.bot_unified_runtime.domains.finance.data import (
+            market_crosscheck as mc,
+        )
 
         mc.reset_crosscheck_cache()
         monkeypatch.setattr(
@@ -304,7 +310,9 @@ class TestMarketCrossCheck:
         assert "⚠" in note and "3950.00" in note
 
     def test_unavailable_channel_stays_silent(self, monkeypatch):
-        from plugins.bot_unified_runtime.sources import market_crosscheck as mc
+        from plugins.bot_unified_runtime.domains.finance.data import (
+            market_crosscheck as mc,
+        )
 
         mc.reset_crosscheck_cache()
 
@@ -319,14 +327,16 @@ class TestMarketCrossCheck:
     def test_capability_card_carries_crosscheck_note(self, monkeypatch, tmp_path):
         quotes = self._quotes()
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.capabilities.market.fetch_index_quotes",
+            "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
             lambda timeout_seconds, cache_seconds: list(quotes),
         )
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.capabilities.market.fetch_index_trend",
+            "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_trend",
             lambda secid, timeout_seconds=6.0: (3900.0, 3888.11),
         )
-        from plugins.bot_unified_runtime.sources import market_crosscheck as mc
+        from plugins.bot_unified_runtime.domains.finance.data import (
+            market_crosscheck as mc,
+        )
 
         monkeypatch.setattr(
             mc,
@@ -378,7 +388,7 @@ def test_index_trend_url_carries_end_param(monkeypatch):
         captured["url"] = url
         return {"data": {"klines": ["2026-09-11,3888.11"]}}
 
-    from plugins.bot_unified_runtime.sources import market_data
+    from plugins.bot_unified_runtime.domains.finance.data import market_data
 
     monkeypatch.setattr(market_data, "http_get_json", _fake_http_get_json)
     market_data.reset_market_trend_cache()
@@ -389,7 +399,7 @@ def test_index_trend_url_carries_end_param(monkeypatch):
 
 def test_trend_empty_result_not_cached(monkeypatch):
     """失败/空序列不缓存（失败缓存会把缺口钉死 10 分钟）——回归锁。"""
-    from plugins.bot_unified_runtime.sources import market_data
+    from plugins.bot_unified_runtime.domains.finance.data import market_data
 
     calls: list[int] = []
 

@@ -11,12 +11,15 @@
 """
 from __future__ import annotations
 
+from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
+    PolicySettings,
+    _resolve_probability,
+)
 from plugins.bot_unified_runtime.output.renderer import (
     build_forward_output,
     should_forward_by_node_count,
     split_text_chunks,
 )
-from plugins.bot_unified_runtime.policy.gate import PolicySettings, _resolve_probability
 
 # ------------------------------------------------ 按条数触发合并转发（>3 条）
 

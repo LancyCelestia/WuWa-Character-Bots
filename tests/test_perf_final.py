@@ -1,8 +1,8 @@
 """路由分类 TTL-LRU 缓存与设置变更监听回归：缓存命中/失效、resolver 区分、TTL 过期、持久化监听触发。
 
 全部离线；被测实现在
-``plugins.bot_unified_runtime.runtime.base_router``（TTL 10s，键为 (有无 resolver, 文本)）
-与 ``plugins.bot_unified_runtime.runtime.settings.RuntimeSettingsStore``（_save 先通知监听再写盘）。
+``plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router``（TTL 10s，键为 (有无 resolver, 文本)）
+与 ``plugins.bot_unified_runtime.domains.chat_reply.runtime.settings.RuntimeSettingsStore``（_save 先通知监听再写盘）。
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.runtime import base_router
+from plugins.bot_unified_runtime.domains.chat_reply.runtime import base_router
 from plugins.bot_unified_runtime.runtime.base_router import (
     RouteDecision,
     RouteKind,

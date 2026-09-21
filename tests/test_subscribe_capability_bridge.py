@@ -27,7 +27,7 @@ from plugins.bot_unified_runtime.capabilities.subscribe import (
     build_subscribe_capability,
 )
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
-from plugins.bot_unified_runtime.contracts.subscription import (
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     NormalizedSubscriptionItem,
     SourceFetchResult,
     SubscriptionDestination,

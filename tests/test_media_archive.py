@@ -15,19 +15,24 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities import (
-    media_archive as media_archive_module,
-)
-from plugins.bot_unified_runtime.capabilities.media_archive import (
-    build_media_archive_capability,
-    is_media_archive_command,
-    parse_archive_args,
-)
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SendPolicy,
     SessionType,
+)
+from plugins.bot_unified_runtime.domains.media.archive.media_archive import (
+    UNKNOWN_IP,
+    MediaArchiveStore,
+    sanitize_dirname,
+)
+from plugins.bot_unified_runtime.domains.media.capabilities import (
+    media_archive as media_archive_module,
+)
+from plugins.bot_unified_runtime.domains.media.capabilities.media_archive import (
+    build_media_archive_capability,
+    is_media_archive_command,
+    parse_archive_args,
 )
 from plugins.bot_unified_runtime.runtime.base_router import (
     RouteKind,
@@ -35,11 +40,6 @@ from plugins.bot_unified_runtime.runtime.base_router import (
     clear_route_decision_cache,
 )
 from plugins.bot_unified_runtime.sources.downloader import RejectedUrlError
-from plugins.bot_unified_runtime.sources.media_archive import (
-    UNKNOWN_IP,
-    MediaArchiveStore,
-    sanitize_dirname,
-)
 
 # ---------------------------------------------------------------------------
 # 触发判定

@@ -27,13 +27,17 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.runtime.alerts import (
+from plugins.bot_unified_runtime.domains.ops.monitor.alerts import (
     AdminTarget,
     build_admin_alert_send_request,
     build_operational_alert_text,
 )
-from plugins.bot_unified_runtime.sender import file_gateway as file_gateway_module
-from plugins.bot_unified_runtime.sender.file_gateway import FinalTransferError
+from plugins.bot_unified_runtime.domains.transport.sender import (
+    file_gateway as file_gateway_module,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
+    FinalTransferError,
+)
 from plugins.bot_unified_runtime.sender.nonebot import send_nonebot_message
 from plugins.bot_unified_runtime.sources.downloader import DownloadOutcome
 

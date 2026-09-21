@@ -91,6 +91,15 @@ from plugins.bot_unified_runtime.domains.core.text_boundary import (
     strip_boundary,
 )
 
+# WIRE-B1（2026-09-21 紧急信息接线波）：触发正则唯一真身在域能力层
+# `domains/emergency_info/capabilities/emergency_info.py` 的 `_EMERGENCY_RE`
+# （施工图 §4-面0 原文的 `\b?` 在 Python 3.12 不可编译，见 B1-brief R-B1-1），
+# 路由侧只调用其谓词，禁第二份词表。域垫片未建 ⇒ 直连真身路径（两种形态并存已被仓内接受）。
+from plugins.bot_unified_runtime.domains.emergency_info.capabilities.emergency_info import (
+    build_emergency_info_source,
+    is_emergency_info_command,
+)
+
 
 # Keystone（C-06 能力单一声明源）：成员清单的权威声明在
 # runtime/capability_registry.py 的 ROUTE_CAPABILITY_DECLARATIONS（每能力
@@ -134,6 +143,7 @@ class RouteKind(str, Enum):
     NATURAL_COMMAND = "natural_command"
     CONTENT = "content"
     CHAT = "chat"
+    EMERGENCY_INFO = "emergency_info"
     IGNORE = "ignore"
 
 
@@ -334,6 +344,20 @@ def build_route_rules() -> list[RouteRule]:
     # 商品卡不抢、让位 market（与 market._NON_STOCK_RE/_STOCK_HINT_RE 守卫
     # 同源语义；market.py 本席只读，故正则在此地持有）。
     _FIN_STOCK_HINT_RE = re.compile(r"(股|大盘|大盤|指数|指數)")
+    # WP5（2026-09-21 路由优先级拆位）：让路谓词——消息以「天气」开头是查天气
+    # 意图（「天气 黄金」=查名为黄金的地方的天气，不是问金价），以「点歌/来首」
+    # 开头是点歌意图（「点歌 原油」=要一首叫《原油》的歌）；这两类前导命令动词
+    # 的会话由对应能力接住，金融特异卡不抢。缺省让路给既有前导谓词（weather/
+    # music 各自 is_* 判定），零正则副本、口径同源，与 commodities 遇股词让位
+    # market 同哲学。
+    _LEADING_FINANCE_YIELD_KINDS = (
+        ("weather", is_weather_command),
+        ("music", is_music_command),
+    )
+
+    def _yields_to_leading_command(text: str) -> bool:
+        """前导命令动词（天气/点歌）优先，金融特异卡让路（WP5 谓词层）。"""
+        return any(pred(text) for _label, pred in _LEADING_FINANCE_YIELD_KINDS)
 
     def commodities_match(text, config, _alias):
         # 商品行情：黄金/金价/白银/原油/铜价/大宗商品（+gold/silver/oil）。
@@ -343,8 +367,10 @@ def build_route_rules() -> list[RouteRule]:
             return None
         if _FIN_STOCK_HINT_RE.search(text):
             return None  # 股市语境让位 market（黄金股行情仍归股指面板）。
+        if _yields_to_leading_command(text):
+            return None  # 「天气 黄金」/「点歌 原油」由前导命令接住（WP5）。
         return RouteDecision(
-            RouteKind.COMMODITIES, "bot.commodities", 41, "商品行情", ("base_route:commodities",)
+            RouteKind.COMMODITIES, "bot.commodities", 37, "商品行情", ("base_route:commodities",)
         )
 
     def bond_match(text, config, _alias):
@@ -353,7 +379,9 @@ def build_route_rules() -> list[RouteRule]:
             return None
         if not is_bond_command(text):
             return None
-        return RouteDecision(RouteKind.BOND, "bot.bond", 41, "国债收益率", ("base_route:bond",))
+        if _yields_to_leading_command(text):
+            return None  # 「天气 国债」/「点歌 国债」由前导命令接住（WP5）。
+        return RouteDecision(RouteKind.BOND, "bot.bond", 38, "国债收益率", ("base_route:bond",))
 
     def northbound_match(text, config, _alias):
         # 北向资金：北向资金/沪股通/深股通（成交总额口径）。
@@ -361,8 +389,10 @@ def build_route_rules() -> list[RouteRule]:
             return None
         if not is_northbound_command(text):
             return None
+        if _yields_to_leading_command(text):
+            return None  # 「天气 北向资金」由前导命令接住（WP5）。
         return RouteDecision(
-            RouteKind.NORTHBOUND, "bot.northbound", 41, "北向资金", ("base_route:northbound",)
+            RouteKind.NORTHBOUND, "bot.northbound", 39, "北向资金", ("base_route:northbound",)
         )
 
     def market_match(text, config, _alias):
@@ -371,16 +401,20 @@ def build_route_rules() -> list[RouteRule]:
             return None
         if not is_market_command(text):
             return None
+        if _yields_to_leading_command(text):
+            return None  # 「天气 大盘」/「点歌 行情」由前导命令接住（WP5）。
         return RouteDecision(RouteKind.MARKET, "bot.market", 41, "全球股指行情", ("base_route:market",))
 
     def fx_match(text, config, _alias):
         # 汇率查询：fx 触发词「汇率」已被 market 非股市词表排除（天然互斥）；
-        # 与 stocks 触发面若重叠，fx 数值优先级更高（41 < 42）。
+        # 与 stocks 触发面若重叠，fx 数值优先级更高（36 < 42）。
         if not getattr(config, "bot_fx_enabled", True):
             return None
         if not is_fx_command(text):
             return None
-        return RouteDecision(RouteKind.FX, "bot.fx", 41, "汇率查询", ("base_route:fx",))
+        if _yields_to_leading_command(text):
+            return None  # 「天气 汇率」/「点歌 汇率」由前导命令接住（WP5）。
+        return RouteDecision(RouteKind.FX, "bot.fx", 36, "汇率查询", ("base_route:fx",))
 
     def stocks_match(text, config, _alias):
         # 个股行情：英伟达/AMD/英特尔股价兜底；裸「行情」归 market（互不抢路由），
@@ -552,6 +586,26 @@ def build_route_rules() -> list[RouteRule]:
             ("base_route:daily_assist",),
         )
 
+    def emergency_info_match(text, config, _alias):
+        # 外部紧急信息聚合（WIRE-B1）：总闸关=不路由；谓词复用域内唯一正则真身。
+        if not getattr(config, "bot_emergency_info_enabled", False):
+            return None
+        if not is_emergency_info_command(text):
+            return None
+        # 第三腿与根装配同源（评审 V2B1 I-1）：装配门是
+        # `enabled ∧ sources ∧ (群∨私聊)`，只查总闸会出现
+        # 「路由判给 EMERGENCY_INFO 而 matcher 未注册」的静默黑洞。
+        # 刻意放在谓词之后：快照构造只对命中触发的消息付费，不拖全消息热路径。
+        if not build_emergency_info_source(config).enabled:
+            return None
+        return RouteDecision(
+            RouteKind.EMERGENCY_INFO,
+            "bot.emergency_info",
+            44,
+            "紧急信息（外部预警与政务应急聚合：紧急信息｜紧急信息 待审）",
+            ("base_route:emergency_info",),
+        )
+
     def group_info_match(text, config, _alias):
         # 群资料/群主/人数/公告/精华（审查 B-01/B-04）：CJK 复合触发词，词界
         # 天然安全；能力侧仅群聊生效（私聊回守岸人提示）并做管理员分级。
@@ -579,14 +633,18 @@ def build_route_rules() -> list[RouteRule]:
         RouteRule(RouteKind.MOEGIRL, "bot.moegirl", 41, "萌娘百科", "萌娘百科查询", ("base_route:moegirl",), moegirl_match),
         RouteRule(RouteKind.EPIC, "bot.epic", 41, "Epic 免费游戏", "Epic 免费游戏查询", ("base_route:epic",), epic_match),
         RouteRule(RouteKind.WEATHER, "bot.weather", 41, "天气查询", "天气查询", ("base_route:weather",), weather_match),
-        # 金融三能力（2026-09-13 六域批）：排在 market 之前（同 41 先到先得）
-        # ——「黄金行情」这类商品语境由特异触发词先接住；股市语境经
-        # commodities_match 的股词让路仍归 market，互不劫持。
-        RouteRule(RouteKind.COMMODITIES, "bot.commodities", 41, "商品行情", "商品行情（黄金/金价/白银/原油/铜价/大宗商品）", ("base_route:commodities",), commodities_match),
-        RouteRule(RouteKind.BOND, "bot.bond", 41, "国债收益率", "国债收益率（国债/期限利差/收益率曲线）", ("base_route:bond",), bond_match),
-        RouteRule(RouteKind.NORTHBOUND, "bot.northbound", 41, "北向资金", "北向资金（北向资金/沪股通/深股通）", ("base_route:northbound",), northbound_match),
+        # 金融能力优先级拆位（WP5，2026-09-21）：此前 commodities/bond/northbound/
+        # market/fx 全挤在 41，谁赢只取决于书写序（fx 写在 market 之后 → 问汇率拿
+        # 到股指面板；国债「碰巧排对」才对）。改判据=「谁更专用谁更靠前」的数值序：
+        # fx(36)<commodities(37)<bond(38)<northbound(39)<market(41)，market 作最泛
+        # 的「行情」catch-all 落在金融族末尾；前导命令让路（天气/点歌）+ market 非
+        # 股市词收紧（见 market.py _NON_STOCK_RE）双保险，让任何一句「X行情」都不再
+        # 靠表序定胜负。书写序保持登记序不动（判定序由 priority 稳定排序得出）。
+        RouteRule(RouteKind.COMMODITIES, "bot.commodities", 37, "商品行情", "商品行情（黄金/金价/白银/原油/铜价/大宗商品）", ("base_route:commodities",), commodities_match),
+        RouteRule(RouteKind.BOND, "bot.bond", 38, "国债收益率", "国债收益率（国债/期限利差/收益率曲线）", ("base_route:bond",), bond_match),
+        RouteRule(RouteKind.NORTHBOUND, "bot.northbound", 39, "北向资金", "北向资金（北向资金/沪股通/深股通）", ("base_route:northbound",), northbound_match),
         RouteRule(RouteKind.MARKET, "bot.market", 41, "全球股指行情", "全球股指行情（行情/美股行情/大盘）", ("base_route:market",), market_match),
-        RouteRule(RouteKind.FX, "bot.fx", 41, "汇率查询", "汇率（美元兑人民币/汇率面板）", ("base_route:fx",), fx_match),
+        RouteRule(RouteKind.FX, "bot.fx", 36, "汇率查询", "汇率（美元兑人民币/汇率面板）", ("base_route:fx",), fx_match),
         RouteRule(RouteKind.STOCKS, "bot.stocks", 42, "个股行情", "个股行情（英伟达/AMD/英特尔股价）", ("base_route:stocks",), stocks_match),
         RouteRule(RouteKind.EAT, "bot.eat", 41, "吃什么推荐", "吃什么/菜谱推荐", ("base_route:eat",), eat_match),
         RouteRule(RouteKind.AFFINITY, "bot.affinity", 41, "好感度查询", "好感度/好感查看/查询好感", ("base_route:affinity",), affinity_match),
@@ -597,6 +655,7 @@ def build_route_rules() -> list[RouteRule]:
         RouteRule(RouteKind.REMINDER, "bot.reminder", 41, "提醒", "提醒（12点提醒我写作业/提醒列表/取消提醒）", ("base_route:reminder",), reminder_match),
         RouteRule(RouteKind.MEDIA_ARCHIVE, "bot.media_archive", 43, "媒体归档", "媒体归档（收藏/归档/存图+媒体；存聊天记录）", ("base_route:media_archive",), media_archive_match),
         RouteRule(RouteKind.DAILY_ASSIST, "bot.daily_assist", 42, "收件箱速记", "收件箱（收件箱 买牛奶/收件箱）", ("base_route:daily_assist",), daily_assist_match),
+        RouteRule(RouteKind.EMERGENCY_INFO, "bot.emergency_info", 44, "紧急信息", "紧急信息（外部预警与政务应急聚合：紧急信息｜紧急信息 待审）", ("base_route:emergency_info",), emergency_info_match),
         RouteRule(RouteKind.GROUP_INFO, "bot.group_info", 41, "群信息", "群信息（群信息/群主是谁/群人数/群公告/群精华/本群多大了）", ("base_route:group_info",), group_info_match),
         RouteRule(RouteKind.MOEGIRL_QUESTION, "bot.moegirl", 46, "二次元问句", "二次元问句（萌娘百科自动查询，未命中降级聊天）", ("base_route:moegirl_question",), moegirl_question_match),
         RouteRule(RouteKind.NATURAL_COMMAND, "bot.natural_command", 45, "自然语言命令", "自然语言命令归一化", ("base_route:natural_command",), natural_match),

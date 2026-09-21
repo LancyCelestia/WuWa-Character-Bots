@@ -12,12 +12,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from plugins.bot_unified_runtime.sources.parsers import (
+import plugins.bot_unified_runtime.sources.parsers  # noqa: F401  # v21r2 W1a: 旧路径聚合先行（垫片期顺序纪律）
+
+# v21r2 W1a: 真身已迁 domains/link_parse/parsers/，monkeypatch 需打在真身上
+from plugins.bot_unified_runtime.domains.link_parse.parsers import (
     platforms_generic,
     platforms_telegram,
     platforms_weibo,
 )
-from plugins.bot_unified_runtime.sources.subscriptions.xiaohongshu_adapter import (
+from plugins.bot_unified_runtime.domains.subscribe.adapters.xiaohongshu_adapter import (
     XiaohongshuAdapter,
 )
 
@@ -298,7 +301,9 @@ def test_weibo_pinned_and_card_group_keys_are_ignored(monkeypatch) -> None:
 
 
 def _xhs_spec() -> Any:
-    from plugins.bot_unified_runtime.contracts.subscription import SubscriptionSpec
+    from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
+        SubscriptionSpec,
+    )
 
     return SubscriptionSpec(
         id="xiaohongshu:creator:u1",

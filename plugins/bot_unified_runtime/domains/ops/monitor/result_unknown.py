@@ -5,10 +5,15 @@ OneBot 发送超时意味着消息可能已送达也可能没送达（result_unk
 
 - 统计仍在 pending 的历史未知结果，写 ``result_unknown_reconciled`` 事件并
   通知管理员（由调用方决定是否告警）；
-- 超过 TTL 的记录标记 ``expired``（OneBot 无按 request_id 查历史消息的 API，
-  无法自动确认送达，保留人工排查入口）；
-- OneBot 不提供"这条消息到底发没发出去"的查询接口，因此不做自动重发——
-  重复发送的风险大于漏发，宁可记录、提示、不盲发。
+- 超过 TTL 的记录标记 ``expired``（本账本按 request_id 记账，而 OneBot 没有
+  按 request_id 反查历史消息的接口，无法自动确认送达，保留人工排查入口）；
+- 送达查询接口本身**并非不存在**：OneBot V11 的 ``get_msg`` 可按 message_id 回读
+  （现役调用点：``domains/media/video/video_pipeline.py:72/74`` 回复引用视频反查、
+  ``domains/transport/sender/onebot.py`` 的 UNKNOWN 分片确认器）。真正的约束是
+  **时序**：发送超时恰恰意味着拿不到 message_id，而账本里没有 id 就没有可查的把手，
+  故本模块仍不做自动重发——重复发送的风险大于漏发，宁可记录、提示、不盲发。
+  （另注：``get_msg`` 的返回值 schema 与 not-found 形态在 SnowLuma 侧未经真机取证，
+  取证前确认器只可能给出 True/None，绝不判 False。）
 
 账本纯本地，不产生任何网络请求。
 """

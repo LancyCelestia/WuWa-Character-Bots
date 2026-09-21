@@ -68,10 +68,10 @@ BOT_WEB_SEARCH_PROVIDER_OPTIONS={"tavily":{"topic":"news","search_depth":"advanc
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task config-smoke"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task context-smoke"
 
-# 离线主链路，不连接 NapCat 或搜索 API
+# 离线主链路，不连接 SnowLuma 或搜索 API
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task backend-smoke -Message '测试后端主链路'"
 
-# NoneBot handler 注册，不连接 NapCat
+# NoneBot handler 注册，不连接 SnowLuma
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task startup-smoke"
 ```
 

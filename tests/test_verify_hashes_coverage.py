@@ -30,25 +30,32 @@ from verify_hashes import MANIFEST, TRACKED_FILES, build_manifest
 # 审查 K-06 扩面的 6 个 builder 源文件（与 TRACKED_FILES 尾部块一一对应；
 # 改动清单时必须同步这里，否则覆盖面测试先红）。
 BUILDER_SOURCES: tuple[str, ...] = (
-    "plugins/bot_unified_runtime/output/card_render/bridge.py",
-    "plugins/bot_unified_runtime/capabilities/debug.py",
-    "plugins/bot_unified_runtime/capabilities/echo.py",
-    "plugins/bot_unified_runtime/output/card_render/usage_cards.py",
-    "plugins/bot_unified_runtime/output/renderer.py",
-    "plugins/bot_unified_runtime/output/templates.py",
+    "plugins/bot_unified_runtime/domains/render/card_render/bridge.py",
+    # v21r2 RWOC：debug 真身迁 domains/ops/admin/。
+    "plugins/bot_unified_runtime/domains/ops/admin/debug.py",
+    # v21r2 RWC3：echo 真身迁 domains/chat_reply/capabilities/。
+    "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py",
+    "plugins/bot_unified_runtime/domains/render/card_render/usage_cards.py",
+    "plugins/bot_unified_runtime/domains/render/renderer.py",
+    "plugins/bot_unified_runtime/domains/render/templates.py",
 )
 
 # 漂移演练用受害者：旧媒体卡降级器（f-string 卡 builder 之一）。选它而非
 # echo.py/debug.py，是因为并行代理常在后者上作业，几毫秒的临时改写窗口
 # 可能撞车；templates.py 无在飞域。
-_DRILL_TARGET = ROOT / "plugins/bot_unified_runtime/output/templates.py"
+_DRILL_TARGET = ROOT / "plugins/bot_unified_runtime/domains/render/templates.py"
 
 
 def _run_check() -> subprocess.CompletedProcess[str]:
+    # `-X utf8` + 显式 encoding：子进程打印的是中文报告，父进程按 locale(GBK) 解码
+    # 会在 reader 线程抛 UnicodeDecodeError ⇒ stderr=None ⇒ 本门假红（跑测试时
+    # export PYTHONIOENCODING=utf-8 即复现，属本仓既定跑法）。编码两端都钉死才不看环境。
     return subprocess.run(
-        [sys.executable, str(ROOT / "tests" / "verify_hashes.py"), "--check"],
+        [sys.executable, "-X", "utf8", str(ROOT / "tests" / "verify_hashes.py"), "--check"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=120,
         cwd=str(ROOT),
         check=False,

@@ -101,7 +101,7 @@
 - **现象**：全部用户 URL 抓取护栏（downloader/notes/eat/parser 解析链）均为「响应已取回后」判定——入口+最终 URL 双查拦得住**内容回显**，拦不住**请求本身**（302→内网的盲 SSRF 一跳仍在）。
 - **位置**：`sources/parsers/http_util.py`（http_get* 全家，禁区文件）；已挂入口+落点双查的点位=`capabilities/notes.py:196-199`（geturl 双查先例）、`capabilities/eat.py`（93e8195 补落点复查）、解析链（`content_parser.py:654` guard_user_url 入口 + `platforms_generic._og_scrape` check_fetch_landing 落点，本批工作树未提交）；`sources/downloader.py:370-372` docstring 自认残余。
 - **根因**：urllib 默认自动跟随 30x 且逐跳不复查。同源窄攻击面残余：①DNS rebind 窗口——自控域首次查询 NXDOMAIN 过入口、抓取时解析到内网（og 兜底落点复查仍拦回显；深解析链 xhs/douyin 抓的是平台自有域短链，攻击者无法投毒重定向，实际风险低）；②非 og 深解析抓取（xhs INITIAL_STATE、douyin _ROUTER_DATA 等）无落点复查（入口护栏已拦字面量内网 URL）。
-- **影响**：盲 SSRF 一跳——借「候选是否被接受落盘」差异侧信道探测内网端口存活；个人 NAT 部署真实靶标=本机 NapCat 3001（无鉴权 WS）/webhook 8080/control plane 8742（有 Bearer）。
+- **影响**：盲 SSRF 一跳——借「候选是否被接受落盘」差异侧信道探测内网端口存活；个人 NAT 部署真实靶标=本机 SnowLuma 3001（无鉴权 WS）/webhook 8080/control plane 8742（有 Bearer）。
 - **修法**：http_util 出口统一挂连接级逐跳校验（自定义 no-redirect opener，逐跳过 `check_download_url`）——禁区文件，先评审再动；DNS rebind 可加「入口解析与真实抓取前二次解析比对」或接受现状（落点复查已拦回显）。
 - **验收**：构造 302→`127.0.0.1:8742` 候选 URL，断言连接层未发出请求（而非仅内容不入卡）；解析域既有回归（16 文件 163 例）全绿。
 - **出处**：security-report M-5/I-2 残余 + ssrf-guard-report §6（三条残余同源，收编一条防重复立条）。
@@ -161,3 +161,87 @@ python -m venv %TEMP%/pa-venv && %TEMP%/pa-venv/Scripts/python.exe -m pip instal
 %TEMP%/pa-venv/Scripts/python.exe -m pip_audit -r req-freeze.txt --progress-spinner off
 ```
 2026-09-13 实跑基线：curl-cffi 已清零；剩 cryptography ×3 + aiosmtplib ×2（均为上游阻塞，见 P2-1/P2-2）。
+
+---
+
+## 2026-09-18/19 统一收尾大波次缺口（unify-wave 批追加入档，2026-09-19）
+
+> **入档口径**：编号顺延既有最大 P3-15；本批七条编号项均为 P3 轻微/backlog（无 P2），另有裁定/取证结论两条与交叉引用一条不占编号。只追加，不改既有条目。
+> **来源**：`.superpowers/sdd/2026-09-18-unify-wave/` 各席 progress 检查点（2026-09-19 读取时点：BACKEND/FINMKT/MISC/UNIVERSAL/SPECS/CORE/GATES/ANIM/WEBUI/ACCEPT）。
+> **在飞快照**：SWITCH 席与 WEBUIFE 席检查点截至入档时点未落盘（master-plan Wave 2 在飞），无快照可录；ANIM 席已收口（其取证结论收编本节裁定段）；WEBUI 采纳席 A-F 终态无缺陷遗留（六页真数据接线/envelope 对表/SSE 鉴权对表=Wave 2 后续席工作项，见 progress-WEBUI.md §席位终态，不入台账）。
+
+### P3-16 stats/latency 历史曲线无持久化（history 恒 unavailable）
+- **现象**：`/api/v1/stats/latency` 的 `history` 字段恒为 `{status: unavailable, reason: not_persisted}`，仪表盘无真历史曲线。
+- **位置**：`plugins/bot_unified_runtime/control_plane/webui_stats.py`（`latency_view`）；数据源 channel_health store `report()` 仅存当前 EWMA/最近一次值。
+- **根因**：channel_health 从不落时序——要真历史须先立时序采样表（定时快照落 SQLite），未立项。
+- **影响**：延迟趋势不可回看；接口诚实返回 unavailable 不造数（数据面零风险）。
+- **修法**：立项时序采样表（采样频率/保留期/库 owner 入 `docs/db-owners.md`），`latency_view` 改读表；落地前维持 unavailable 诚实体。
+- **验收**：采样配置后 history 返回真序列（`tests/test_webui_stats.py` 扩例）；未配置时仍 unavailable 不报错；真机口径见 `docs/acceptance-manual.md` §6.6.9⑤。
+- **出处**：progress-BACKEND.md §诚实缺口 2。
+
+### P3-17 stats/calls 用户维度为会话键派生（audit_records 无 user 列）
+- **现象**：`/api/v1/stats/calls` 的 `by_user` 按 OneBot v11 `get_session_id()` 稳定约定派生（`private_<uid>`/`group_<gid>_<uid>`/裸 uid）；审计表 `audit_records` 本身无 user 列。
+- **位置**：`control_plane/webui_stats.py`（`AuditCallStatsService.calls` by_user 派生段）+ 审计库表结构。
+- **根因**：审计写入面未携带原生用户标识，用户维度只能从会话键反推；约定外行（runtime/digest 等非会话来源）进 `unattributed_calls`，响应带 `user_attribution` 口径码——绝不造用户。
+- **影响**：非会话来源调用无法归属用户（显式 unattributed，非错数）；前端需按口径码如实标注。
+- **修法**：若需真用户维度——`audit_records` 加 user 列 + 审计写入点填充（表迁移+写入面改动，待立项）；短期靠 `unattributed_calls`+口径码诚实呈现。
+- **验收**：加列后 by_user 直读列值、unattributed 归零或显式标注；`tests/test_webui_stats.py` 53 例回归绿。
+- **出处**：progress-BACKEND.md §诚实缺口 1。
+
+### P3-18 生产 `bot_audit_db_path` 默认空=内存实现，stats/calls 真数据等用户配置
+- **现象**：生产 `.env` 未配 `bot_audit_db_path` 时审计为内存实现，stats/calls 在生产无真数据（200 信封内如实 `audit_source_not_configured`）。
+- **位置**：config `bot_audit_db_path`（生产 `.env`，gitignored）→ `control_plane/webui_stats.py` `build_default_stats_service`。
+- **根因**：默认空=内存实现系有意保守缺省；BACKEND 席按纪律未触 `.env`。
+- **影响**：stats/calls 出真数据需用户先配路径；配置后控制面独立进程下次启动自带生效（无需重启 bot 主进程）。
+- **修法**：用户在 `.env` 配 `bot_audit_db_path` 指向 Runtime 内路径（经 runtime_paths 重映射）；零代码改动。
+- **验收**：配置后 `/api/v1/stats/calls` 返回真数据（by_session/by_capability 非空）；配置/未配置两态已被 `tests/test_webui_stats.py`+`tests/test_webui_http.py` 覆盖；真机步=`docs/acceptance-manual.md` §6.6.9③。
+- **出处**：progress-BACKEND.md §诚实缺口 4。
+
+### P3-19 玻璃 token 消费切换被 `_GLASS_MARKERS` raw 源断言阻塞（门演进待后续批次）
+- **现象**：规格 §2.2-5 要求 `.row`/`.index`/`.glass` 等玻璃面改 token 消费（`var(--mica-glass-*)`），但 `tests/test_template_visual_audit.py` `_GLASS_MARKERS`（:36）对**原始模板源文本**断言 `padding-box`/`border-box` 等标记——var() 化即红。FINMKT/MISC 各面均已按 canonical 字面收口（值合规、零视觉差），token 消费切换推迟。
+- **位置**：`tests/test_template_visual_audit.py:36`（`_GLASS_MARKERS`）；受影响面=finance/market `.row`/`.index`+两卡 `.bot-foot`/壳描边、affinity/song `.glass` 主规则（2026-09-19 grep 实证四模板现存 padding-box 字面 4/4/11/4 处）。
+- **根因**：审计门断言对象是 raw 模板源而非渲染产物；门语义（防玻璃值漂移）与 token 单源化（值外移）结构性冲突。
+- **影响**：维护单源性未达成；当前值已合规无视觉差，非线上缺陷。
+- **修法**：门演进二选一——①断言对象改生成器/渲染产物产出；②改语义标记（检查 var() 引用而非字面值）。演进落地后 FINMKT/MISC 各「待补」点统一切换 `{{ glass_main }}`/`{{ glass_edge }}` 通道（bridge 已注入可用）。
+- **验收**：门演进+切换后 test_template_visual_audit/test_rendering_contract/test_phase_determinism 全绿，样张 payload 数据段与基线逐字节一致。
+- **出处**：progress-FINMKT.md §规格×机器门冲突记录+§遗留登记；progress-MISC.md §冲突记录①。
+- **终态（2026-09-19 凌晨，主会话裁决·INTG-F 执行注记）**：`_GLASS_MARKERS` 原文断言**维持现状**；玻璃 token 消费切换**延后**（`{{ glass_main }}`/`{{ glass_edge }}` 通道键已可用，后续批次可直取）。理由：门演进风险>收益——审计门断言 raw 源防玻璃值漂移的语义与 token 单源化结构性冲突，演进需动机器门断言对象且收益仅维护单源性；当前各面字面已与 GLASS 常量逐字对齐、零视觉差，非线上缺陷。
+
+### P3-20 universal hot-comment/forward-box 平值玻璃未并入主档（Minor）
+- **现象**：`universal_card.html` :594（hot-comment）/:729（forward-box）仍为 `rgba(255,255,255,0.55)` 平值玻璃；裁决第 4 条只点名 header/content/footer 三处，两处无工单。
+- **位置**：`plugins/bot_unified_runtime/domains/render/card_render/templates/universal_card.html`:594/:729（2026-09-19 grep 复核现行行号）。
+- **根因**：平值不在玻璃档位登记表（GLASS_MAIN/FOOT/EDGE）内且裁决未点名，UNIVERSAL 席按边界保留。
+- **影响**：纯观感/维护单源性（Minor）。
+- **修法**：并入主档渐变（同 :445 content 先例，均值不变）或登记为合法档位；随 P3-19 门演进一并收口。
+- **验收**：切换后 v21r3 八门+visual_audit 绿、样张目验零视觉差。
+- **出处**：progress-UNIVERSAL.md §观察项。
+- **已修注记（2026-09-19 GLASS2 席）**：两处（:594/:729）已并入 GLASS_MAIN 主档（样张专项图 glass2-hotcomment-forward.png 验证）。
+
+### P3-21 song `.ttl`/affinity `.pill` 徽章两档描边（0.95/0.45）无工单项未动（Minor）
+- **现象**：song_candidates `.ttl` 与 affinity_card `.pill` 徽章描边为两档 `rgba(255,255,255,0.95)/rgba(255,255,255,0.45)`，不在 C3 玻璃映射表且无工单项，本批未动。
+- **位置**：`templates/song_candidates.html`:173 一带（`.ttl`）、`templates/affinity_card.html`:155 一带（`.pill`）（2026-09-19 实读复核）。
+- **根因**：0.95/0.45 两停与登记档 GLASS_EDGE（0.95/0.35/0.72 三停）不一致；归 GATES 基线第 3 条（玻璃两档）口径裁决——该门本批未设（rgba 语境扫描易误伤 glow/mist，归 token 席）。
+- **影响**：纯观感/维护单源性（Minor）；徽章 accent 着色 padding-box 层不受影响。
+- **修法**：等基线第 3 条门禁/口径裁决后归档（归 GLASS_EDGE 或新立徽章档）。
+- **验收**：裁决落地后门禁绿+样张目验描边无回归。
+- **出处**：progress-MISC.md §冲突记录②；progress-GATES.md §五「基线第 3 条玻璃两档未设门」。
+- **已修注记（2026-09-19 GLASS2 席）**：徽章描边 0.45→0.35 规范化（并排目验清晰可辨，未走登记制）；门 9 已锁两档（gate09[usage_report] 经 GLASS3 收口转绿）。
+
+### P3-22 mermaid JS 上下文字体栈为全栈字面量（结构性取舍，G7 门锁逐字）
+- **现象**：mermaid_card JS 初始化的 `fontFamily` 为 FONT_FAMILY_STACK 全栈逐字字面量，非 `var()` 消费——全卡唯一不走 CSS var 的字体面。
+- **位置**：`templates/mermaid_card.html`:24（Jinja 注释载明取舍）/:31（fontFamily 字面量；行号为 2026-09-19 复核值）。
+- **根因**：mermaid JS 配置上下文不可用 CSS var（结构性）；曾议走 bridge 注入模板变量，GATES 终版指示放弃——逐字门已锁，注入属多余复杂度。
+- **影响**：无运行时影响；字面与 theme_tokens.FONT_FAMILY_STACK 的漂移风险由 G7 字体逐字门（var() 消费放行、字面量 ⊆ 登记栈）拦截。
+- **修法**：无需动作（取舍成立）；未来 theme_tokens 改字体栈时 G7 门红即提示同步此字面量。
+- **验收**：G7 门常驻回归即验收（改栈不同步必红）；`tests/test_v21r3_visual_gates.py`。
+- **出处**：progress-MISC.md §mermaid 2；progress-SPECS.md §关键口径差（mono 四处/sans 脱钩两处）；progress-GATES.md §一 G7。
+
+### 本批裁定/取证结论（防重复考古，不立工单）
+- **TYPE_SCALE_PX 维持「声明不接线」**：字号阶梯仅作声明/参考不入消费链，全量接线列为收口规格 §六非目标边界（progress-SPECS：增补 `body_sm` 成员仅供 CORE 参考，接线非目标）。防后人把「有刻度表」误读为「模板必须查表取字号」；字号收敛实际走 C8 逐点判定（如 12.5px→12px）。
+- **截图动画冻结取证结论（ANIM 席终版，已完成落地）**：`animations="disabled"` **不采纳**——infinite 动画被取消到基底位，`--phase` 钉帧位尽失（CORE 实弹：disabled 截图==animation:none 基底位，≠paused 参照帧）；`page.add_init_script` 注入 paused 样式被 `set_content` 文档重建抹除、`add_style_tag` 后注入冻结在流逝位（非钉帧位、非确定）、html `<head>` 手术破坏 `test_render_wait_budget.py:145` 对 `set_content(html)` 原样的断言——三者均否决。**采纳=render_backends `_pin_card_animations` WAAPI 钉时**（`.card` 子树全部动画含 `::before/::after` 伪元素 `pause(); currentTime=0`，负 delay 补齐=钉帧位；显式设时与调用时刻无关→双渲字节确定；fail-open）。基线重录 `baseline-20260919-paused` 19/19 面 STABLE，**自此 PNG 字节等值为全部 19 面验收判据（html_sha256 主判据口径作废）**；生产生效待重启 bot（铁律）；verify_hashes 重录归 INTG。（底册原口径「animation-play-state:paused 首帧前注入采纳」已被 ANIM 终版实证修正为 WAAPI 钉时——机制等效、实现路径不同，以本条为准。）出处：progress-ANIM.md 全文+progress-CORE.md §SAMPLES 转达取证项。
+
+### 交叉引用（不新立条）
+- **tokens 窗口过滤时区取舍**：`LedgerMetricsService.token_families`（stats/tokens 数据源）窗口过滤复用 `aggregate_channel_usage`（**P3-9**）`completed_at` 文本字典序+同进程单一时区偏移取舍——跨时区偏移混写历史行的窗口边界可能偏移，系既有取舍非本批新引入；修法/验收随 P3-9 一并收敛。出处：progress-BACKEND.md §诚实缺口 3。
+- **批次内待办（非台账缺口，归 INTG 施工面）**：decor 通水（bridge 向模板上下文注入 `decor_css`/`blobs_html` 后，FINMKT/MISC/UNIVERSAL 各「通水待补」点整层换血）、`bridge._spark_points`（现行 bridge.py:1430；FINMKT 记 :1396 系并行编辑前行号）SVG 折线色第二份字面量 #d54941/#2e9e6b、verify_hashes 漂移统一 `--write` 重录——均已在其 progress §遗留登记与 master-plan Wave 3 跟踪，INTG 收口后若仍有残余再入本台账。
+
+**本批收口状态：批次进行中，INTG 收尾后可增补。**

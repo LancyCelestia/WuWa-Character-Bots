@@ -22,8 +22,8 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.output.card_render import bridge
-from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
+from plugins.bot_unified_runtime.domains.render.card_render import bridge
+from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
     SHADOW_CSS_VARS,
     SURFACE_TINTS,
     TEXT_SECONDARY,
@@ -131,7 +131,19 @@ _EDITABLE_TEMPLATES: tuple[str, ...] = (
     "error_card.html",
 )
 # 旧散灰（vis5 前各模板私有的次级文字色，全部收编 TEXT_SECONDARY）。
-_LEGACY_SECONDARY_GRAYS = ("#7a828c", "#8a919b", "#66727f", "#7a8699", "#57626f", "#4a5560")
+# 2026-09-18 v21r3 渲染统一：+= #555/#444/#999（universal 遗留 legacy 灰，
+# RED 即 wave-2 锚点：收编 --text-secondary 单一来源）。
+_LEGACY_SECONDARY_GRAYS = (
+    "#7a828c",
+    "#8a919b",
+    "#66727f",
+    "#7a8699",
+    "#57626f",
+    "#4a5560",
+    "#555",
+    "#444",
+    "#999",
+)
 
 
 def _blend_over(bg: tuple[float, ...], fg: tuple[float, ...], alpha: float) -> tuple[float, ...]:

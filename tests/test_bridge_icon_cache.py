@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.output.card_render import bridge
+from plugins.bot_unified_runtime.domains.render.card_render import bridge
 
 
 @pytest.fixture(autouse=True)

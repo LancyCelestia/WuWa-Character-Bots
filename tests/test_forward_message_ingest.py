@@ -139,7 +139,7 @@ def test_async_fetch_uses_get_forward_msg_with_segment_id() -> None:
 
 
 def test_async_fetch_no_segment_means_no_api_call() -> None:
-    """非转发消息不得触发 get_forward_msg（普通 id 会被 NapCat 拒绝）。"""
+    """非转发消息不得触发 get_forward_msg（NapCat 时期普通 id 会被拒绝）。"""
     bot = _FakeBot({})
     event = _Event([{"type": "text", "data": {"text": "普通消息"}}])
     assert asyncio.run(_forward_message_text(bot, event)) == ""
@@ -162,3 +162,59 @@ def test_async_fetch_reports_empty_payload(caplog) -> None:
     with caplog.at_level(logging.WARNING):
         assert asyncio.run(_forward_message_text(bot, event)) == ""
     assert any("no text" in record.message for record in caplog.records)
+
+
+# ------------------------------------------------- 多层嵌套转发递归展开
+# 2026-09-18 核心链路排查：旧实现 `nested_ids[:4]` 只展开**一层**，且对更深层
+# 不再递归——"转发里再转发"的聊天记录内容整段丢失（用户实测「递归子记录
+# 读不了」）。下列用例锁定新的递归语义：按深度展开 + 环引用终止。
+
+
+class _RoutedBot:
+    """按 message_id 返回不同回执的假 bot（多层嵌套场景专用）。"""
+
+    def __init__(self, routes: dict) -> None:
+        self.routes = routes
+        self.calls: list[tuple[str, dict]] = []
+
+    async def call_api(self, api: str, **payload):
+        self.calls.append((api, payload))
+        return self.routes.get(str(payload.get("message_id")), {})
+
+
+def _fwd_message(nested_id: str, text: str = "") -> list[dict]:
+    segments: list[dict] = []
+    if text:
+        segments.append({"type": "text", "data": {"text": text}})
+    if nested_id:
+        segments.append({"type": "forward", "data": {"id": nested_id}})
+    return segments
+
+
+def test_async_fetch_expands_deeply_nested_forwards() -> None:
+    """三层嵌套转发必须逐层展开（旧实现只到第一层，深层内容丢失）。"""
+    routes = {
+        "L1": {"messages": [{"sender": {"nickname": "甲"}, "message": _fwd_message("L2", "第一层")}]},
+        "L2": {"messages": [{"sender": {"nickname": "乙"}, "message": _fwd_message("L3", "第二层")}]},
+        "L3": {"messages": [{"sender": {"nickname": "丙"}, "message": _fwd_message("", "第三层")}]},
+    }
+    bot = _RoutedBot(routes)
+    event = _Event([{"type": "forward", "data": {"id": "L1"}}])
+    text = asyncio.run(_forward_message_text(bot, event))
+    assert "第一层" in text
+    assert "第二层" in text, "嵌套第二层必须展开"
+    assert "第三层" in text, "嵌套第三层必须展开（旧实现止于第一层）"
+    assert [call[1]["message_id"] for call in bot.calls] == ["L1", "L2", "L3"]
+
+
+def test_async_fetch_terminates_on_forward_cycle() -> None:
+    """A→B→A 互引必须被去重拦住，不得无限递归。"""
+    routes = {
+        "A": {"messages": [{"sender": {}, "message": _fwd_message("B")}]},
+        "B": {"messages": [{"sender": {}, "message": _fwd_message("A")}]},
+    }
+    bot = _RoutedBot(routes)
+    event = _Event([{"type": "forward", "data": {"id": "A"}}])
+    asyncio.run(_forward_message_text(bot, event))
+    # 起点 A + 子节点 B；B 指向的 A 已见，必须终止（不产生第 3 次调用）。
+    assert [call[1]["message_id"] for call in bot.calls] == ["A", "B"]

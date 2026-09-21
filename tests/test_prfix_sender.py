@@ -1,6 +1,6 @@
 """管线检视修复回归（PR-fix #6/#10/#13）：断线挂起 / 分段超时下限 / 单连接事务。
 
-离线运行（SQLite 用 tmp_path，无网络、无 NapCat）：
+离线运行（SQLite 用 tmp_path，无网络、无 SnowLuma）：
 
     PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/test_prfix_sender.py -q
 
@@ -32,11 +32,15 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.sender import onebot as onebot_sender
-from plugins.bot_unified_runtime.sender import queue as queue_module
-from plugins.bot_unified_runtime.sender import receipts as receipts_module
+from plugins.bot_unified_runtime.domains.transport.sender import onebot as onebot_sender
+from plugins.bot_unified_runtime.domains.transport.sender import queue as queue_module
+from plugins.bot_unified_runtime.domains.transport.sender import (
+    receipts as receipts_module,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.receipts import (
+    SQLiteReceiptRepository,
+)
 from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
-from plugins.bot_unified_runtime.sender.receipts import SQLiteReceiptRepository
 
 
 def _utc_now() -> datetime:

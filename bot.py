@@ -203,6 +203,55 @@ def _install_crash_guards(runtime_data_dir: str | Path | None = None) -> None:
 
 
 
+def _reap_background_threads(
+    grace_seconds: float = 10.0,
+    *,
+    _force_exit=os._exit,
+) -> None:
+    """优雅停机上限（R2，治 Ctrl+C 后 60s+ 才退出）。
+
+    实弹根因：nonebot 事件循环收尾后，进程内仍有**非 daemon 后台线程**
+    （LLM offload 池 / mermaid-playwright 渲染线程 / kb_wiki 爬取线程 /
+    ThreadPoolExecutor worker——这些线程在 Python 3.9+ 不可 daemon 化），
+    解释器退出前的 ``threading._shutdown`` 会无限 join 它们，某个在途
+    网络调用（LLM 预算最大 300s）不结束进程就不退出，期间再按 Ctrl+C
+    即得 ``Exception ignored in threading._shutdown`` + KeyboardInterrupt。
+
+    修法：nonebot.run() 正常返回后，给后台线程一个有限宽限（默认 10s）
+    逐个 join；超限仍有滞留者且当前无异常在途（异常路径保留真实退出码
+    给 crash guards / supervisor）则记一行并 ``os._exit(0)`` 强制收尾。
+    SQLite 全部走事务/WAL，进程强制退出不会写坏库。测试经 AST 摘取本
+    函数注入 ``_force_exit`` 桩执行（同 test_bot_supervisor 模式）。
+    """
+    import time
+
+    main_thread = threading.current_thread()
+    deadline = time.monotonic() + max(0.0, float(grace_seconds))
+    stuck: list[threading.Thread] = []
+    while True:
+        stuck = [
+            t
+            for t in threading.enumerate()
+            if t is not main_thread and t.is_alive() and not t.daemon
+        ]
+        if not stuck:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        for target in stuck:
+            target.join(timeout=max(0.0, deadline - time.monotonic()))
+    if stuck and sys.exc_info()[0] is None:
+        names = ", ".join(sorted({t.name for t in stuck}))
+        print(
+            f"[bot] 停机宽限 {grace_seconds:g}s 后仍有后台线程未退出"
+            f"（{names}），强制结束进程（在途任务放弃，数据面由事务/WAL 保证）。",
+            flush=True,
+        )
+        _force_exit(0)
+
+
+
 nonebot.init(_env_file=(".env", ".env.prod"))
 
 # nonebot.init loads .env/.env.prod into the driver config. Install crash guards
@@ -212,7 +261,7 @@ _install_crash_guards(getattr(_driver_config, "bot_runtime_data_dir", None))
 
 # Telegram 轮询在代理瞬断/网络抖动时每 30 秒打一条完整堆栈；限速为首次与
 # 每 5 分钟放行一条，其余丢弃。轮询失败由适配器自动重试并恢复，无需干预。
-# OneBot V11 适配器在 NapCat 未启动时同样每 5 秒重连并打完整堆栈，一并限速。
+# OneBot V11 适配器在协议端（SnowLuma）未启动时同样每 5 秒重连并打完整堆栈，一并限速。
 import time
 
 from nonebot.log import default_filter, default_format
@@ -229,7 +278,14 @@ def _rate_limited_log_filter(record) -> bool:
         marker in message for marker in ("Get updates for bot", "Setup for bot")
     ) and "failed" in message
     onebot_reconnect = "Error while setup websocket" in message
-    if tg_poll_failure or onebot_reconnect:
+    if tg_poll_failure:
+        # R2（2026-09-17）：TG 适配器在 poll/pre-setup 失败时打的 ERROR+完整
+        # 堆栈全量丢弃，不再按 5 分钟冷却放行。韧性层（scripts/
+        # telegram_resilience.py）已在同批失败上打简短一行告警（前 3 次 +
+        # 之后每 5 次 + 恢复一条），堆栈零增量信息且刷屏——降为「告警一行+继续」。
+        _POLL_FAILURE_STATE["suppressed"] += 1
+        return False
+    if onebot_reconnect:
         # 这类错误是代理/网络抖动的已知可恢复场景，韧性层会以简短行报告
         # 退避与恢复；完整堆栈对排障价值低且刷屏。按冷却限速放行：
         # 首条与每 5 分钟放行一条（运维必须能看见错误仍在发生），
@@ -255,55 +311,21 @@ nonebot.logger.add(
 )
 
 
-# Telegram 轮询韧性：上游 poll() 的 pre-setup 失败（如启动瞬间代理不通）会直接
-# 杀死轮询任务、Telegram 永久离线直到重启。这里在外层包无限重试（指数退避，
-# 封顶 60 秒），保证代理/网络恢复后自动上线。
+# Telegram 轮询韧性：通过子类覆盖启动与只读 getUpdates 网络重试；
+# 不修改上游类、不接管消息 offset、不重复发送写操作。网络故障不阻塞主事件循环。
 import asyncio
 
-_original_tg_poll = TelegramAdapter.poll
+from nonebot.adapters.telegram.exception import NetworkError as TelegramNetworkError
 
+from scripts.telegram_resilience import (
+    build_resilient_telegram_adapter,
+    is_transient_telegram_error,
+)
 
-async def _resilient_tg_poll(self, bot):
-    # 生产实弹（2026-09-15）：代理/网络中断时适配器每次 poll 都打一条
-    # ERROR+完整 traceback（我们调几次它刷几次），控制台被刷屏。改为三段
-    # 退避：3→60s 指数（前 5 次，快速试恢复），之后 300s 平顶（降噪 5 倍，
-    # 恢复盲区 ≤5 分钟可接受——TG 是次要适配器）。我方日志只在退避档位
-    # 变化时打一条，附加累计失败数。
-    delay = 3.0
-    consecutive = 0
-    last_tier = 0
-    while True:
-        try:
-            result = await _original_tg_poll(self, bot)
-            if consecutive:
-                nonebot.logger.info(
-                    "Telegram poll recovered after {} failed attempt(s)", consecutive
-                )
-            consecutive = 0
-            last_tier = 0
-            delay = 3.0
-            return result
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - 轮询退出一律重试，退避已封顶。
-            consecutive += 1
-            if consecutive <= 5:
-                delay = min(delay * 2.0, 60.0)
-            else:
-                delay = 300.0
-            tier = 1 if consecutive <= 5 else 2
-            if tier != last_tier or consecutive == 1:
-                nonebot.logger.warning(
-                    "Telegram poll failed x{} ({}); retrying in {:.0f}s",
-                    consecutive,
-                    type(exc).__name__,
-                    delay,
-                )
-            last_tier = tier
-            await asyncio.sleep(delay)
-
-
-TelegramAdapter.poll = _resilient_tg_poll
+ResilientTelegramAdapter = build_resilient_telegram_adapter(
+    TelegramAdapter, network_error=TelegramNetworkError, logger=nonebot.logger,
+    retryable=is_transient_telegram_error,
+)
 
 
 def _quiet_loop_exception_handler(loop, context):
@@ -343,15 +365,70 @@ async def _install_quiet_loop_exception_handler() -> None:
     asyncio.get_running_loop().set_exception_handler(_quiet_loop_exception_handler)
 
 
+@driver.on_shutdown
+async def _early_shutdown_scheduler_stop() -> None:
+    """停机序的第一拍（R2）：抢在 nonebot_plugin_apscheduler 自带的
+    ``_shutdown_scheduler`` 之前关调度器（本钩子在 load_from_toml 之前
+    注册，NoneBot on_shutdown 按 FIFO 执行）。
+
+    - ``shutdown(wait=False)`` 立即取消在跑/排队的 job 执行（AsyncIOExecutor
+      的 wait=True 本就无法等待协程 job，只做 cancel）——排队中的
+      kb_wiki_sync 等长任务不再拖住停机序列；
+    - 本钩子先关后，插件钩子看到的 ``scheduler.running`` 已为 False，自动
+      跳过，等价幂等；若钩子顺序未来被反转，两边行为也一致（都是 cancel
+      语义），不会双重关停。
+    """
+    try:
+        from nonebot_plugin_apscheduler import scheduler as _apscheduler
+
+        if _apscheduler.running:
+            _apscheduler.shutdown(wait=False)
+    except Exception:  # noqa: BLE001 - 停机清理绝不反噬停机本身。
+        return
+
+
+@driver.on_shutdown
+async def _cancel_kb_sync_on_shutdown() -> None:
+    """R3 停摆批（INT 席代挂）：停机即置 kb_wiki 同步协作取消位。
+
+    前一钩子的 ``shutdown(wait=False)`` 只能取消排队 job——已开跑的同步
+    线程（事件循环默认线程池）停不住；取消位让它在下一个批边界退出
+    （断点在库，重启续跑），数小时级同步不再拖住进程收尾（bot.py:376
+    既有注释口径：停机不等 kb 任务，本调用只加速收尾）。fail-open：
+    导入失败/任务未在跑都只记一行，绝不反噬停机本身。
+    """
+    try:
+        from plugins.bot_unified_runtime.character.kb_wiki import cancel_kb_sync_task
+
+        cancel_kb_sync_task(reason="shutdown")
+    except Exception:  # noqa: BLE001 - 停机清理绝不反噬停机本身。
+        nonebot.logger.debug("kb_wiki 同步停机取消位设置失败（忽略）", exc_info=True)
+
+
 driver.register_adapter(OneBotV11Adapter)
-driver.register_adapter(TelegramAdapter)
+driver.register_adapter(ResilientTelegramAdapter)
 
 # 从 pyproject.toml 的 [tool.nonebot] 加载插件与适配器配置。
 nonebot.load_from_toml("pyproject.toml")
 
+# R2（2026-09-17）：apscheduler misfire 降噪。插件默认 job_defaults 的
+# misfire_grace_time=1s——良性 1-2s 的调度延迟即刷「Run time of job ... was
+# missed by 0:00:01~2」。这里在**调度器已创建、尚未 start**（start 发生在
+# 插件 on_startup 钩子）的窗口补设默认 30s；各 job 显式传入的
+# misfire_grace_time（120/300/3600）不受影响，真超期仍照常告警。
+try:
+    from nonebot_plugin_apscheduler import scheduler as _apscheduler_for_defaults
+
+    if not _apscheduler_for_defaults.running:
+        _apscheduler_for_defaults.configure(job_defaults={"misfire_grace_time": 30})
+except Exception as _misfire_exc:  # noqa: BLE001 - 调度器不可用时维持缺省行为，不影响启动。
+    nonebot.logger.debug(
+        "apscheduler misfire_grace_time 预设跳过: {}", _misfire_exc
+    )
+
 
 def _probe_onebot_endpoints() -> None:
-    """启动预检：NapCat 未监听时给出人话告警（WinError 1225 高频现场）。
+    """启动预检：协议端未监听时给出人话告警（WinError 1225 高频现场）。
 
     OneBot V11 正向 WS 地址来自 driver 配置 ``onebot_ws_urls``（适配器
     adapter.py 的真实消费键）。探测失败绝不阻断启动——适配器韧性重连仍在，
@@ -374,9 +451,9 @@ def _probe_onebot_endpoints() -> None:
                 pass
         except ConnectionRefusedError:
             nonebot.logger.warning(
-                "NapCat 未在 {host}:{port} 监听（WinError 1225 连接被拒绝 = 该地址没有进程在听）。"
-                "请先启动 NapCat 并确认其『正向 WebSocket 服务』监听地址与 access_token "
-                "和 .env 一致；bot 会继续启动，NapCat 上线后自动连上。",
+                "SnowLuma 未在 {host}:{port} 监听（WinError 1225 连接被拒绝 = 该地址没有进程在听）。"
+                "请先启动 SnowLuma 并在其 WebUI「进程注入」页加载该号的 QQ，确认『正向 WebSocket 服务』"
+                "监听地址与 access_token 和 .env 一致；bot 会继续启动，SnowLuma 上线后自动连上。",
                 host=host,
                 port=port,
             )
@@ -417,4 +494,10 @@ if getattr(_driver_config, "bot_memes_plugin_enabled", False):
         print(f"[bot] nonebot_plugin_memes 加载失败（功能降级不影响其他能力）: {_memes_exc}", file=_sys.stderr)
 
 if __name__ == "__main__":
-    nonebot.run()
+    try:
+        nonebot.run()
+    except KeyboardInterrupt:
+        pass  # Ctrl+C 属正常停机：退出码 0，supervisor 视为人工停止不重启。
+    finally:
+        # R2：后台线程有限宽限 + 超限强制收尾（见 _reap_background_threads）。
+        _reap_background_threads()

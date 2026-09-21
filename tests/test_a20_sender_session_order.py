@@ -1,6 +1,6 @@
 """审查 A-20（worker 侧）回归：发送 worker 会话内有序 + busy 饱和可见。
 
-离线运行（SQLite 用 tmp_path，无网络、无 NapCat）：
+离线运行（SQLite 用 tmp_path，无网络、无 SnowLuma）：
 
     PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/test_a20_sender_session_order.py -q
 
@@ -33,8 +33,8 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.runtime.alerts import AdminAlertSuppression
-from plugins.bot_unified_runtime.sender import worker as worker_module
+from plugins.bot_unified_runtime.domains.ops.monitor.alerts import AdminAlertSuppression
+from plugins.bot_unified_runtime.domains.transport.sender import worker as worker_module
 from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
 from plugins.bot_unified_runtime.sender.worker import drain_send_queue_once
 

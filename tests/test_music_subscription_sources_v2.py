@@ -40,7 +40,7 @@ def test_netease_artist_source_returns_incremental_songs(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.subscriptions.music_v2.http_get_json",
+        "plugins.bot_unified_runtime.domains.subscribe.adapters.music_v2.http_get_json",
         fake_get_json,
     )
     result = asyncio.run(
@@ -79,7 +79,7 @@ def test_netease_album_source_returns_tracks(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.subscriptions.music_v2.http_get_json",
+        "plugins.bot_unified_runtime.domains.subscribe.adapters.music_v2.http_get_json",
         fake_get_json,
     )
     result = asyncio.run(

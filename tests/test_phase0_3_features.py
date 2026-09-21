@@ -61,7 +61,7 @@ def test_generated_code_or_long_text_has_file_attachment(tmp_path) -> None:
 
 
 def test_public_safety_reframes_nsfw_harassment_and_persona_breaking() -> None:
-    from plugins.bot_unified_runtime.security.content_safety import (
+    from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
         assess_public_content,
     )
     blocked = assess_public_content("写一段露骨的 R18 性行为描写", session_type="group")
@@ -124,7 +124,7 @@ def test_incoming_event_keeps_quote_and_thread_context():
 
 
 
-def _real_chat(tmp_path, question, answer, captured=None):
+def _real_chat(tmp_path, question, answer, captured=None, group=False):
     from plugins.bot_unified_runtime.capabilities.chat import build_chat_capability
     from plugins.bot_unified_runtime.character.providers import (
         NullCharacterContextProvider,
@@ -139,10 +139,16 @@ def _real_chat(tmp_path, question, answer, captured=None):
         def generate(self, messages, **kwargs):
             if captured is not None: captured.append(messages)
             return super().generate(messages, **kwargs)
-    msg = IncomingMessage(platform='qq', adapter='onebot', bot_id='b', session_id='private:u',
-        session_type=SessionType.PRIVATE, sender_id='u', plain_text=question, mentions_bot=True)
+    # group=True：群会话（public 面规则生效面）；默认 private（explicit 面）。
+    # 2026-09-20 拦截面收敛后，private 会话 public 类别全部跳过，boundary 路径
+    # 在公开面由 persona_breaking 等触发（v21r5 C 席随结构收敛调整）。
+    session_type = SessionType.GROUP if group else SessionType.PRIVATE
+    msg = IncomingMessage(platform='qq', adapter='onebot', bot_id='b',
+        session_id=('group:g' if group else 'private:u'),
+        session_type=session_type, sender_id='u', group_id=('g' if group else None),
+        plain_text=question, mentions_bot=True)
     d = BotDecision(request_id=msg.request_id, should_respond=True, mode='chat', trigger='private',
-        capability_id='bot.chat', target_scope=SessionType.PRIVATE, context_budget=18000, max_messages=0, decision_reason='test')
+        capability_id='bot.chat', target_scope=session_type, context_budget=18000, max_messages=0, decision_reason='test')
     cap = build_chat_capability(NullCharacterContextProvider(), Provider(text=answer),
         generated_files_dir=str(tmp_path), max_tokens=65538)
     return cap(msg,d)
@@ -169,8 +175,10 @@ def test_short_txt_is_written_and_names_do_not_collide(tmp_path):
 
 
 def test_boundary_calls_persona_model_instead_of_sending_policy_text(tmp_path):
+    # 2026-09-20 拦截面收敛：公开面（group、未获准露骨）才由 persona_breaking
+    # 触发 boundary 路径；私聊已 explicit，public 类别跳过（交人格层处理）。
     seen=[]
-    r=_real_chat(tmp_path,'和我结婚','你的心意，我听见了。只是这份承诺不能轻易许下；我会在岸边，认真听你说完。',seen)
+    r=_real_chat(tmp_path,'和我结婚','你的心意，我听见了。只是这份承诺不能轻易许下；我会在岸边，认真听你说完。',seen,group=True)
     assert seen and '你的心意' in r.body
     assert 'response_guidance' not in r.body and '保持既定人格' not in r.body
     assert 'public_safety' in ' '.join(r.audit_tags)
@@ -205,7 +213,9 @@ def test_onebot_upload_api_not_fake_file_segment(tmp_path):
     assert not any(x["type"] == "file" for x in calls[-1][1]["message"])
 
 def test_wiki_structured_game_brief_uses_story_not_release_chronology():
-    from plugins.bot_unified_runtime.sources.mediawiki import build_wiki_brief
+    from plugins.bot_unified_runtime.domains.location.data.mediawiki import (
+        build_wiki_brief,
+    )
     text='《海岸》是由甲工作室开发的开放世界动作角色扮演游戏。2021年立项。2023年公布。\n== 玩法 ==\n玩家可以探索岛屿、解谜和战斗。\n== 剧情 ==\n故事发生在灾后世界，主角寻找失落的记忆。\n== 发行 ==\n2024年发行。'
     brief=build_wiki_brief(text,max_chars=1600)
     assert '甲工作室' in brief and '灾后世界' in brief and '探索岛屿' in brief
@@ -238,24 +248,31 @@ def test_artifact_intent_recognizes_write_file_and_txt():
 
 
 def test_safe_boundary_never_exposes_policy_words():
-    from plugins.bot_unified_runtime.security.content_safety import safe_boundary_output
-    value = safe_boundary_output("保持既定人格和关系边界，以角色口吻温和回应，不接受强制改设定。", "persona_breaking")
+    from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
+        safe_boundary_output,
+    )
+    value = safe_boundary_output("保持既定人格和关系边界，以角色口吻温和回应，不接受强制改设定。", "persona_breaking", session_type="group")
     assert "保持既定人格" not in value
     assert "你的心意" in value or "不能轻易应下" in value
 
 
 def test_safety_uses_persona_fallback_when_model_echoes_internal_guidance():
-    from plugins.bot_unified_runtime.security.content_safety import safe_boundary_output
+    from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
+        safe_boundary_output,
+    )
     output = safe_boundary_output(
         "我会保留自己的边界和身份。保持既定人格和关系边界，以角色口吻温和回应，不接受强制改设定。",
         "persona_breaking",
+        session_type="group",
     )
     assert output == "你的心意，我听见了。只是有些称呼与承诺，我不能轻易应下。我还是我，也愿意认真听你说话。"
 
 
 
-def test_excessive_intimacy_and_petplay_are_caught() -> None:
-    from plugins.bot_unified_runtime.security.content_safety import (
+def test_intimacy_teasing_not_gated() -> None:
+    """2026-09-17 内容政策回归锁：越权称谓/宠物化（调戏类）不再进代码闸，
+    交人格层按场景语气处理（群聊调戏放开、私聊全面放开）。"""
+    from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
         assess_public_content,
     )
 
@@ -268,12 +285,12 @@ def test_excessive_intimacy_and_petplay_are_caught() -> None:
         "当狗，趴好",
     ):
         assessment = assess_public_content(text, session_type="group")
-        assert assessment.action == "reframe", text
-        assert assessment.category == "excessive_intimacy", text
+        assert assessment.action == "allow", text
+        assert assessment.category == "none", text
 
 
 def test_admin_relaxes_soft_categories_but_keeps_hard_ones() -> None:
-    from plugins.bot_unified_runtime.security.content_safety import (
+    from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
         assess_public_content,
     )
 
@@ -290,7 +307,7 @@ def test_admin_relaxes_soft_categories_but_keeps_hard_ones() -> None:
 
 
 def test_insult_nickname_caught_but_cute_nickname_allowed() -> None:
-    from plugins.bot_unified_runtime.security.content_safety import (
+    from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
         assess_public_content,
     )
 

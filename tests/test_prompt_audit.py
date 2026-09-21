@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from plugins.bot_unified_runtime.runtime.prompt_audit import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.prompt_audit import (
     PromptAuditStore,
     PromptExecutionGate,
     PromptExecutionMode,

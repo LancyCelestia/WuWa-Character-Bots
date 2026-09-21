@@ -1,6 +1,6 @@
 """审查 A-22 回归：内联首投与 worker 认领的竞态收口（单发保证）。
 
-离线运行（SQLite 用 tmp_path，无网络、无 NapCat）：
+离线运行（SQLite 用 tmp_path，无网络、无 SnowLuma）：
 
     PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/test_a22_inline_claim_race.py -q
 

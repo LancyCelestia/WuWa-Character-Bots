@@ -16,7 +16,7 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from plugins.bot_unified_runtime.character.temporal import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.temporal import (
     OpenMeteoWeatherProvider,
     _WeatherSnapshot,
 )

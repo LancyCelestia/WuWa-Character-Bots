@@ -184,7 +184,7 @@ def build_default_transport_registry() -> TransportRegistry:
             status=placeholder,
         )
 
-    # QQ（OneBot v11 / NapCat）
+    # QQ（OneBot v11 / SnowLuma）
     reg.register(entry(
         TransportPlatform.QQ, TransportChannel.SEND_MESSAGE,
         {"private": "send_private_msg", "group": "send_group_msg"},
@@ -198,7 +198,7 @@ def build_default_transport_registry() -> TransportRegistry:
         TransportPlatform.QQ, TransportChannel.SEND_FILE,
         {"private": "upload_private_file", "group": "upload_group_file"},
         "QQ 文件出站（file_gateway Phase-1 deliver 通道）",
-        "v21-s0-inventory §2.4（domains/transport/sender/file_gateway.py:349-391 "
+        "v21-s0-inventory §2.4（domains/transport/sender/file_gateway.py:356-412 "
         "_deliver_onebot=通道本体；reorg 前 shim 旧坐标的 PENDING_RULING 已依 "
         "DIRECT-PLAN §二④ 改判 CHANNEL_BODY；v21r4-b S0-COLLECT 2026-09-18）",
     ))
@@ -342,6 +342,7 @@ class MatcherEntry:
     route_kind_hint: str  # 功能名提示；精确 RouteKind 以 base_router ROUTE_RULES 为准
     status: MigrationStatus = MigrationStatus.LEGACY
     checklist: TakeoverChecklist = field(default_factory=TakeoverChecklist)
+    note: str = ""  # 接线席收编指定/坐标审计留痕（与 Scheduler/RouteGroup 条目同构）
 
 
 @dataclass(frozen=True)
@@ -429,7 +430,18 @@ def build_default_takeover_registry() -> TakeoverRegistry:
         MatcherEntry("meme_absorb", "__init__.py:4431", "on_message", 10, "meme_absorb"),
         MatcherEntry("group_upload_notice", "__init__.py:4537", "on_notice", 6, "group_upload"),
         MatcherEntry("dirty_guard_matcher", "__init__.py:4558", "on_message", 3, "dirty_guard"),
-        MatcherEntry("campus_record_matcher", "__init__.py:4581", "on_message", None, "campus"),
+        MatcherEntry(
+            "campus_record_matcher",
+            "__init__.py:5027",
+            "on_message",
+            8,
+            "campus",
+            note=(
+                "U17-CAMPUS-WIRE 收编中央管线（测试规约已立，生产接线待落地）；"
+                "坐标/priority 为 2026-09-20 同波审计实读刷新（matcher 真身 "
+                "on_message(priority=8, block=False)）"
+            ),
+        ),
         MatcherEntry("file_notice", "__init__.py:4615", "on_notice", 8, "file"),
         MatcherEntry("poke_notice", "__init__.py:4725", "on_notice", 7, "poke"),
         MatcherEntry("emoji_like_notice", "__init__.py:4811", "on_notice", 7, "emoji_like"),
@@ -685,7 +697,7 @@ def build_default_takeover_registry() -> TakeoverRegistry:
                 "shim 旧路径；REG-REFRESH 2026-09-19 实读 engine.py 真身）",
             ),
             DirectSendEntry(
-                "domains/transport/sender/file_gateway.py:349-391", "call_api",
+                "domains/transport/sender/file_gateway.py:356-412", "call_api",
                 DirectSendCategory.CHANNEL_BODY,
                 "统一文件出站路径通道本体（FileTransferGateway._deliver_onebot 上传内环："
                 "getattr(bot, api) 优先、退化 call_api、retcode 拒绝→upload_rejected）；"

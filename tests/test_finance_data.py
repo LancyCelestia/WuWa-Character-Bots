@@ -22,7 +22,7 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from plugins.bot_unified_runtime.contracts.finance import (
+from plugins.bot_unified_runtime.domains.core.contracts.finance import (
     BoxPlotStats,
     CurrencyQuote,
     EquityQuote,
@@ -34,8 +34,12 @@ from plugins.bot_unified_runtime.contracts.finance import (
     OHLCVBar,
     OHLCVSeries,
 )
-from plugins.bot_unified_runtime.sources import fx_data, market_data, stock_data
-from plugins.bot_unified_runtime.sources.stock_data import (
+from plugins.bot_unified_runtime.domains.finance.data import (
+    fx_data,
+    market_data,
+    stock_data,
+)
+from plugins.bot_unified_runtime.domains.finance.data.stock_data import (
     compute_kdj,
     fetch_market_cap,
     fetch_stock_ohlcv,
@@ -494,7 +498,7 @@ class TestStockData:
         assert stats is None
         assert status == "insufficient_data"
         # 多日 OHLC 序列按日收盘取分布：单根序列同样拒绝。
-        from plugins.bot_unified_runtime.sources.stock_data import (
+        from plugins.bot_unified_runtime.domains.finance.data.stock_data import (
             build_boxplot_from_ohlcv,
         )
 
@@ -638,7 +642,9 @@ class TestStocksCapability:
     def test_stock_query_full_numbers_visible(self, monkeypatch, tmp_path) -> None:
         # 运行数据根隔离：缺省会回退源码树 data/（AGENTS.md 规则 2/6），显式指到 tmp。
         monkeypatch.setenv("BOT_RUNTIME_DATA_DIR", str(tmp_path))
-        from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            stocks as stocks_cap,
+        )
 
         monkeypatch.setattr(stocks_cap, "fetch_stock_quote", lambda ticker: _quote())
         monkeypatch.setattr(stocks_cap, "fetch_stock_ohlcv", lambda ticker: _series())
@@ -656,10 +662,12 @@ class TestStocksCapability:
         assert "capability:stocks" in result.audit_tags
 
     def test_stock_query_data_unavailable_explains(self, monkeypatch) -> None:
-        from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
-        from plugins.bot_unified_runtime.contracts.finance import (
+        from plugins.bot_unified_runtime.domains.core.contracts.finance import (
             EquityQuote,
             FinanceDataStatus,
+        )
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            stocks as stocks_cap,
         )
 
         monkeypatch.setattr(
@@ -695,7 +703,9 @@ class TestStocksCapability:
         assert "184.95" not in result.body  # 不显示旧值/伪造数字
 
     def test_openai_query_returns_valuation_never_prices(self, monkeypatch) -> None:
-        from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            stocks as stocks_cap,
+        )
 
         def _must_not_call(*args: object, **kwargs: object) -> None:
             raise AssertionError("OpenAI 查询绝不允许触发行情外呼")
@@ -711,14 +721,18 @@ class TestStocksCapability:
         assert "stocks:non_public" in result.audit_tags
 
     def test_unrelated_text_not_triggered(self) -> None:
-        from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            stocks as stocks_cap,
+        )
 
         assert stocks_cap.is_stocks_command("英伟达股价") is True
         assert stocks_cap.is_stocks_command("今天天气如何") is False
         assert stocks_cap.is_stocks_command("") is False
 
     def test_card_payload_shape_matches_bridge_contract(self) -> None:
-        from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            stocks as stocks_cap,
+        )
 
         payload = stocks_cap.build_stocks_card_payload(_quote(), _series(), _kdj(), _cap())
         assert payload["title"] == "英伟达（NVDA · NASDAQ）行情速览"  # vis3：标题官方中文名
@@ -736,8 +750,12 @@ class TestStocksCapability:
         assert "开 123.50" in main["sub"]
 
     def test_card_payload_without_data_shows_status_not_zero(self) -> None:
-        from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
-        from plugins.bot_unified_runtime.contracts.finance import FinanceDataStatus
+        from plugins.bot_unified_runtime.domains.core.contracts.finance import (
+            FinanceDataStatus,
+        )
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            stocks as stocks_cap,
+        )
 
         empty_quote = EquityQuote(
             ticker="NVDA",
@@ -772,7 +790,9 @@ class TestStocksCapability:
         monkeypatch.setenv("BOT_RUNTIME_DATA_DIR", str(tmp_path))
         from types import SimpleNamespace
 
-        from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            stocks as stocks_cap,
+        )
 
         captured: dict[str, object] = {}
 
@@ -800,10 +820,12 @@ class TestStocksCapability:
 
 class TestFxCapability:
     def test_pair_query_shows_rate_and_delayed_note(self, monkeypatch) -> None:
-        from plugins.bot_unified_runtime.capabilities import fx as fx_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            fx as fx_cap,
+        )
 
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.sources.fx_data.fetch_fx_rates",
+            "plugins.bot_unified_runtime.domains.finance.data.fx_data.fetch_fx_rates",
             lambda timeout_seconds=6.0, cache_seconds=60.0: _fx_rates(),
         )
         capability = fx_cap.build_fx_capability()
@@ -814,10 +836,12 @@ class TestFxCapability:
         assert "fx:pair:USD/CNY" in result.audit_tags
 
     def test_fx_failure_degrades(self, monkeypatch) -> None:
-        from plugins.bot_unified_runtime.capabilities import fx as fx_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            fx as fx_cap,
+        )
 
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.sources.fx_data.fetch_fx_rates",
+            "plugins.bot_unified_runtime.domains.finance.data.fx_data.fetch_fx_rates",
             lambda timeout_seconds=6.0, cache_seconds=60.0: [],
         )
         capability = fx_cap.build_fx_capability()
@@ -826,7 +850,9 @@ class TestFxCapability:
         assert "fx:fetch_failed" in result.audit_tags
 
     def test_fx_trigger_matrix(self) -> None:
-        from plugins.bot_unified_runtime.capabilities import fx as fx_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            fx as fx_cap,
+        )
 
         assert fx_cap.is_fx_command("美元汇率") is True
         assert fx_cap.is_fx_command("人民币兑美元 汇率") is True
@@ -834,7 +860,9 @@ class TestFxCapability:
         assert fx_cap.is_fx_command("房价行情") is False
 
     def test_fx_card_payload_shape(self) -> None:
-        from plugins.bot_unified_runtime.capabilities import fx as fx_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            fx as fx_cap,
+        )
 
         payload = fx_cap.build_fx_card_payload(_fx_rates(), "")
         assert payload["title"] == "汇率速览"
@@ -852,7 +880,9 @@ class TestFxCapability:
         )
 
     def test_fx_card_payload_lists_missing(self) -> None:
-        from plugins.bot_unified_runtime.capabilities import fx as fx_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            fx as fx_cap,
+        )
 
         payload = fx_cap.build_fx_card_payload(
             _fx_rates(), "USD/TWD、USD/MOP、USD/AED"
@@ -1008,7 +1038,7 @@ def _fx_snapshot() -> FxRateSnapshot:
 
 
 def _fx_rates():
-    from plugins.bot_unified_runtime.contracts.finance import FxRate
+    from plugins.bot_unified_runtime.domains.core.contracts.finance import FxRate
 
     return [
         FxRate(
@@ -1031,10 +1061,12 @@ def _fx_rates():
 
 class TestFxCapabilitySurface:
     def test_pair_query_converts_with_source_note(self, monkeypatch) -> None:
-        from plugins.bot_unified_runtime.capabilities import fx as fx_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            fx as fx_cap,
+        )
 
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.sources.fx_data.fetch_fx_rates",
+            "plugins.bot_unified_runtime.domains.finance.data.fx_data.fetch_fx_rates",
             lambda timeout_seconds=6.0, cache_seconds=60.0: _fx_rates(),
         )
         assert fx_cap.is_fx_command("美元兑人民币")
@@ -1045,10 +1077,12 @@ class TestFxCapabilitySurface:
         assert "fx:pair:USD/CNY" in result.audit_tags
 
     def test_amount_conversion_uses_unit_base(self, monkeypatch) -> None:
-        from plugins.bot_unified_runtime.capabilities import fx as fx_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            fx as fx_cap,
+        )
 
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.sources.fx_data.fetch_fx_rates",
+            "plugins.bot_unified_runtime.domains.finance.data.fx_data.fetch_fx_rates",
             lambda timeout_seconds=6.0, cache_seconds=60.0: _fx_rates(),
         )
         assert fx_cap.is_fx_command("100日元换多少人民币")
@@ -1065,10 +1099,12 @@ class TestFxCapabilitySurface:
         assert "1 JPY = 4.3614" not in result.body
 
     def test_unavailable_pair_honest_no_fake_number(self, monkeypatch) -> None:
-        from plugins.bot_unified_runtime.capabilities import fx as fx_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            fx as fx_cap,
+        )
 
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.sources.fx_data.fetch_fx_rates",
+            "plugins.bot_unified_runtime.domains.finance.data.fx_data.fetch_fx_rates",
             lambda timeout_seconds=6.0, cache_seconds=60.0: _fx_rates(),
         )
         capability = fx_cap.build_fx_capability()
@@ -1077,10 +1113,12 @@ class TestFxCapabilitySurface:
         assert "fx:pair_unavailable" in result.audit_tags
 
     def test_panel_renders_card_with_gap_notes(self, monkeypatch, tmp_path) -> None:
-        from plugins.bot_unified_runtime.capabilities import fx as fx_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            fx as fx_cap,
+        )
 
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.sources.fx_data.fetch_fx_rates",
+            "plugins.bot_unified_runtime.domains.finance.data.fx_data.fetch_fx_rates",
             lambda timeout_seconds=6.0, cache_seconds=60.0: _fx_rates(),
         )
         captured: dict = {}
@@ -1106,10 +1144,12 @@ class TestFxCapabilitySurface:
         assert any(p.name.startswith("fx_") for p in tmp_path.iterdir())
 
     def test_fetch_failed_degrades_text(self, monkeypatch) -> None:
-        from plugins.bot_unified_runtime.capabilities import fx as fx_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            fx as fx_cap,
+        )
 
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.sources.fx_data.fetch_fx_rates",
+            "plugins.bot_unified_runtime.domains.finance.data.fx_data.fetch_fx_rates",
             lambda timeout_seconds=6.0, cache_seconds=60.0: [],
         )
         capability = fx_cap.build_fx_capability()
@@ -1119,8 +1159,12 @@ class TestFxCapabilitySurface:
         assert "拉不到" in result.body
 
     def test_trigger_guards(self) -> None:
-        from plugins.bot_unified_runtime.capabilities import fx as fx_cap
-        from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            fx as fx_cap,
+        )
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            stocks as stocks_cap,
+        )
 
         assert fx_cap.is_fx_command("USD/CNY")
         assert fx_cap.is_fx_command("日元汇率")
@@ -1164,7 +1208,7 @@ class TestMoexTrend:
         return [cursor, tail]
 
     def test_moex_trend_from_history_tail(self, monkeypatch):
-        from plugins.bot_unified_runtime.sources import market_data
+        from plugins.bot_unified_runtime.domains.finance.data import market_data
 
         payloads = self._moex_payloads()
         captured: list[str] = []
@@ -1182,7 +1226,7 @@ class TestMoexTrend:
         assert "start=7222" in captured[1]  # TOTAL-30 尾部窗口
 
     def test_moex_trend_failure_isolated(self, monkeypatch):
-        from plugins.bot_unified_runtime.sources import market_data
+        from plugins.bot_unified_runtime.domains.finance.data import market_data
 
         def _boom(url, **kwargs):
             raise OSError("down")
@@ -1194,7 +1238,7 @@ class TestMoexTrend:
 
 def test_stock_history_url_carries_end_param(monkeypatch):
     """个股 kline 同样必须带 end 参数（与指数侧同一上游行为变更）。"""
-    from plugins.bot_unified_runtime.sources import stock_data
+    from plugins.bot_unified_runtime.domains.finance.data import stock_data
 
     captured: dict = {}
 
@@ -1211,7 +1255,9 @@ def test_stock_history_url_carries_end_param(monkeypatch):
 
 class TestNonPublicRegistry:
     def test_ai_and_tech_unlisted_covered(self):
-        from plugins.bot_unified_runtime.sources.stock_data import NON_PUBLIC_EQUITIES
+        from plugins.bot_unified_runtime.domains.finance.data.stock_data import (
+            NON_PUBLIC_EQUITIES,
+        )
 
         for key in ("OPENAI", "ANTHROPIC", "BYTEDANCE"):
             note = NON_PUBLIC_EQUITIES[key]
@@ -1221,8 +1267,10 @@ class TestNonPublicRegistry:
             assert note.valuation_as_of is not None
 
     def test_alias_resolution_and_capability_text(self, monkeypatch):
-        from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
-        from plugins.bot_unified_runtime.sources.stock_data import (
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            stocks as stocks_cap,
+        )
+        from plugins.bot_unified_runtime.domains.finance.data.stock_data import (
             resolve_company_query,
         )
 
@@ -1239,7 +1287,10 @@ def _ohlcv_series(symbol: str, days: int = 30):
     """构造 N 根合成日 K（收盘 100+i），供箱形图/折线用。"""
     from datetime import date, timedelta
 
-    from plugins.bot_unified_runtime.contracts.finance import OHLCVBar, OHLCVSeries
+    from plugins.bot_unified_runtime.domains.core.contracts.finance import (
+        OHLCVBar,
+        OHLCVSeries,
+    )
 
     base = date(2026, 8, 1)
     bars = [
@@ -1266,7 +1317,9 @@ def _ohlcv_series(symbol: str, days: int = 30):
 
 class TestStocksPanelAndBox:
     def _panel_quotes(self):
-        from plugins.bot_unified_runtime.contracts.finance import StockQuote
+        from plugins.bot_unified_runtime.domains.core.contracts.finance import (
+            StockQuote,
+        )
 
         return [
             StockQuote(
@@ -1308,8 +1361,12 @@ class TestStocksPanelAndBox:
         ]
 
     def test_triggers_multilingual(self):
-        from plugins.bot_unified_runtime.capabilities import fx as fx_cap
-        from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            fx as fx_cap,
+        )
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            stocks as stocks_cap,
+        )
 
         # 繁体
         assert stocks_cap.is_stocks_command("台積電股價")
@@ -1325,16 +1382,20 @@ class TestStocksPanelAndBox:
         assert not fx_cap.is_fx_command("fix it please")
 
     def test_panel_card_with_box_plot(self, monkeypatch, tmp_path):
-        from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            stocks as stocks_cap,
+        )
 
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.sources.stock_data.fetch_stock_quotes",
+            "plugins.bot_unified_runtime.domains.finance.data.stock_data.fetch_stock_quotes",
             lambda symbols=None, timeout_seconds=6.0, cache_seconds=60.0: self._panel_quotes(),
         )
-        from plugins.bot_unified_runtime.contracts.finance import PricePoint
+        from plugins.bot_unified_runtime.domains.core.contracts.finance import (
+            PricePoint,
+        )
 
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.sources.stock_data.fetch_stock_history",
+            "plugins.bot_unified_runtime.domains.finance.data.stock_data.fetch_stock_history",
             lambda symbol, days=30, timeout_seconds=6.0: tuple(
                 PricePoint(
                     date=bar.trade_date,
@@ -1368,10 +1429,12 @@ class TestStocksPanelAndBox:
         assert "polyline" in html_text
 
     def test_single_stock_card_includes_distribution_box(self, monkeypatch):
-        from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
-        from plugins.bot_unified_runtime.contracts.finance import (
+        from plugins.bot_unified_runtime.domains.core.contracts.finance import (
             EquityQuote,
             FinanceDataStatus,
+        )
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            stocks as stocks_cap,
         )
 
         quote = EquityQuote(
@@ -1393,10 +1456,12 @@ class TestStocksPanelAndBox:
 
     def test_single_day_ohlcv_rejected_from_box(self):
         """语义门：单日 K 线（<5 根）不得画成箱形图。"""
-        from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
-        from plugins.bot_unified_runtime.contracts.finance import (
+        from plugins.bot_unified_runtime.domains.core.contracts.finance import (
             EquityQuote,
             FinanceDataStatus,
+        )
+        from plugins.bot_unified_runtime.domains.finance.capabilities import (
+            stocks as stocks_cap,
         )
 
         quote = EquityQuote(

@@ -15,8 +15,8 @@ import asyncio
 
 import pytest
 
-from plugins.bot_unified_runtime.contracts.music import MusicChartSnapshot
-from plugins.bot_unified_runtime.sources.music_charts import (
+from plugins.bot_unified_runtime.domains.core.contracts.music import MusicChartSnapshot
+from plugins.bot_unified_runtime.domains.music.data.music_charts import (
     ChartSourceUnavailableError,
     KugouChartSource,
     MusicChartRegistry,
@@ -140,7 +140,7 @@ def test_netease_chart_source_parses_real_fixture(monkeypatch) -> None:
         return _NETEASE_HOT_FIXTURE
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.music_charts.http_get_json", fake_get_json
+        "plugins.bot_unified_runtime.domains.music.data.music_charts.http_get_json", fake_get_json
     )
     source = NeteaseChartSource(source_id="netease-hot", category="热歌", chart_id="3778678")
     snapshot = asyncio.run(source.fetch_snapshot({"cookie_header": ""}))
@@ -179,7 +179,7 @@ def test_qqmusic_chart_source_parses_real_fixture(monkeypatch) -> None:
         return _QQMUSIC_HOT_FIXTURE
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.music_charts.http_post_json", fake_post_json
+        "plugins.bot_unified_runtime.domains.music.data.music_charts.http_post_json", fake_post_json
     )
     source = QQMusicChartSource(source_id="qqmusic-hot", category="热歌", chart_id="26")
     snapshot = asyncio.run(source.fetch_snapshot({}))
@@ -215,7 +215,7 @@ def test_kugou_chart_source_parses_real_fixture(monkeypatch) -> None:
         return _KUGOU_SOARING_FIXTURE
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.music_charts.http_get_json", fake_get_json
+        "plugins.bot_unified_runtime.domains.music.data.music_charts.http_get_json", fake_get_json
     )
     source = KugouChartSource(source_id="kugou-soaring", category="飙升", chart_id="6666")
     snapshot = asyncio.run(source.fetch_snapshot({}))
@@ -293,7 +293,7 @@ def test_registry_filters_categories_and_describe_by_category() -> None:
 def test_default_registry_refreshes_real_source_end_to_end(monkeypatch) -> None:
     """经默认注册表 refresh 拉真实源：类型校验 + 条目契约齐全。"""
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.music_charts.http_get_json",
+        "plugins.bot_unified_runtime.domains.music.data.music_charts.http_get_json",
         lambda url, **kwargs: _NETEASE_HOT_FIXTURE,
     )
     registry = build_default_music_chart_registry()

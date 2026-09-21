@@ -31,7 +31,7 @@ def _event_module(event: Any) -> str:
 
 
 class OneBotSource:
-    """OneBot V11（NapCat）来源：归一化委托既有实现，保持逐字节等价。"""
+    """OneBot V11（SnowLuma）来源：归一化委托既有实现，保持逐字节等价。"""
 
     def can_handle(self, event: Any) -> bool:
         module_name = _event_module(event)

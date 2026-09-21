@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import socket
 from pathlib import Path
 
 import pytest
 
+from plugins.bot_unified_runtime.domains.files.sources.downloader import MediaDownloader
+from plugins.bot_unified_runtime.domains.location.data import mediawiki
 from plugins.bot_unified_runtime.output.roleplay import strip_outer_speech_quotes
-from plugins.bot_unified_runtime.sources import mediawiki
-from plugins.bot_unified_runtime.sources.downloader import MediaDownloader
 from plugins.bot_unified_runtime.sources.meme_search import filter_meme_results
 
 
@@ -123,7 +124,7 @@ def test_group_chat_cleanup_is_in_actual_capability():
 
 
 def test_xhs_discovery_url_reaches_real_registry():
-    from plugins.bot_unified_runtime.contracts.media import SourceInput
+    from plugins.bot_unified_runtime.domains.core.contracts.media import SourceInput
     from plugins.bot_unified_runtime.sources.parsers import (
         build_content_parser_registry,
     )
@@ -135,7 +136,9 @@ def test_xhs_discovery_url_reaches_real_registry():
 
 def test_doctor_finds_cli_in_selected_python_environment():
     from plugins.bot_unified_runtime.config import Config
-    from plugins.bot_unified_runtime.smoke import run_environment_doctor
+    from plugins.bot_unified_runtime.domains.ops.smoke.smoke import (
+        run_environment_doctor,
+    )
     result = run_environment_doctor(Config(_env_file=None), importer=lambda _: object(), command_resolver=lambda _: None)
     assert result['nb_cli'] == 'ok'
     assert result['ready_for_nonebot_run'] is True
@@ -164,7 +167,7 @@ def test_wiki_character_list_extracts_matching_section(monkeypatch):
 def test_cookie_recovery_preserves_other_rows_and_never_writes_source(tmp_path, caplog, monkeypatch):
     import types
 
-    from plugins.bot_unified_runtime.sources import downloader as mod
+    from plugins.bot_unified_runtime.domains.files.sources import downloader as mod
     source = tmp_path/'cookies.txt'
     data = ('# Netscape HTTP Cookie File\n'
         'accounts.example.com\tTRUE\t/\tFALSE\t1999999999\tbrokenflag\tprivate-value\n'
@@ -183,6 +186,13 @@ def test_cookie_recovery_preserves_other_rows_and_never_writes_source(tmp_path, 
             jars.append(list(self.cookiejar))
             return {'title': 'ok'}
     monkeypatch.setattr(mod, 'yt_dlp', types.SimpleNamespace(YoutubeDL=FakeYDL))
+    # 离线钉定：`_url_rejection_reason` 对域名走真 ``socket.getaddrinfo``（downloader.py:406），
+    # 本机代理/hosts 把 youtube.com 解析进保留网段时，本用例会以「SSRF 闸误杀」的名义红——
+    # 与 test_file_gateway_phase1._patch_dns / test_parser_ssrf_guard 同款 pin，测试不再依赖网络。
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("142.250.1.1", int(port or 0)))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
     dl = mod.MediaDownloader(cookies_file=str(source), ffmpeg_path=str(source))
     dl.probe('https://www.youtube.com/watch?v=test')
     dl.probe('https://www.youtube.com/watch?v=test')
@@ -209,7 +219,9 @@ def test_find_sent_request_supports_queue_without_lookup():
 
 
 def test_xhs_parser_canonicalization_preserves_signed_query(monkeypatch):
-    from plugins.bot_unified_runtime.sources.parsers import platforms_generic as generic
+    from plugins.bot_unified_runtime.domains.link_parse.parsers import (
+        platforms_generic as generic,  # v21r2 W1a: 真身路径，monkeypatch 需打在真身上
+    )
     urls = []
     def scrape(url, **kwargs):
         urls.append(url)
@@ -221,7 +233,9 @@ def test_xhs_parser_canonicalization_preserves_signed_query(monkeypatch):
 
 
 def test_cookie_jar_actual_library_is_ephemeral(tmp_path):
-    from plugins.bot_unified_runtime.sources.downloader import MediaDownloader
+    from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+        MediaDownloader,
+    )
     source = tmp_path/'export.txt'
     text = '#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t1999999999\tSID\tfake-secret\n'
     source.write_text(text, encoding='utf-8')
@@ -237,7 +251,7 @@ def test_cookie_jar_actual_library_is_ephemeral(tmp_path):
 def test_media_errors_cannot_print_signed_url_or_cookie(tmp_path, monkeypatch, capsys):
     import pytest
 
-    from plugins.bot_unified_runtime.sources import downloader as mod
+    from plugins.bot_unified_runtime.domains.files.sources import downloader as mod
     class FailingYDL:
         def __init__(self, opts): self.logger = opts['logger']
         def __enter__(self): return self
@@ -263,7 +277,9 @@ def test_wiki_fragment_redirect_never_returns_parent_intro(monkeypatch):
 
 def test_empty_doctor_environment_is_still_reported_missing(tmp_path):
     from plugins.bot_unified_runtime.config import Config
-    from plugins.bot_unified_runtime.smoke import run_environment_doctor
+    from plugins.bot_unified_runtime.domains.ops.smoke.smoke import (
+        run_environment_doctor,
+    )
     result = run_environment_doctor(Config(_env_file=None), importer=lambda _: object(),
         command_resolver=lambda _: None, python_executable=str(tmp_path/'python.exe'))
     assert result['nb_cli'] == 'missing'

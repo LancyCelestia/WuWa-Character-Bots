@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from plugins.bot_unified_runtime.backend_unit import run_backend_unit
 from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.domains.chat_reply.pipeline.backend_unit import (
+    run_backend_unit,
+)
 
 
 def test_backend_unit_runs_offline_chat_pipeline(tmp_path: Path):

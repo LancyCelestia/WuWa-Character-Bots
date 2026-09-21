@@ -107,14 +107,19 @@
 
 ## 8. 报告索引
 
-| 报告 | 范围 | 要点 |
-|---|---|---|
-| [REVIEW-f6f749b..6c57fd9.md](REVIEW-f6f749b..6c57fd9.md) | f6f749b..6c57fd9 | — |
-| [REVIEW-be1fb07..6c57fd9.md](REVIEW-be1fb07..6c57fd9.md) | be1fb07..6c57fd9 | — |
-| [REVIEW-6c57fd9..e86fba0.md](REVIEW-6c57fd9..e86fba0.md) | 6c57fd9..e86fba0 | H1 沙箱配置注入逃逸（High）；M1 strip_symlinks 未调用；M3 SSRF 后缀匹配 |
-| [REVIEW-e86fba0..8cfbf6d.md](REVIEW-e86fba0..8cfbf6d.md) | e86fba0..8cfbf6d | H1' 沙箱守卫带点小节名绕过；H2/H3 脱敏穿透；H4 蒸馏水位线丢失；备份恢复四连（M3–M7） |
-| [REVIEW-8cfbf6d..a604023.md](REVIEW-8cfbf6d..a604023.md) | 8cfbf6d..a604023 | H1 已封死、H2/H3/H4 均部分修复（各留一条穿透路径）；新证：沙箱 curl 数字型 IP 绕过内网判定、蒸馏两条静默路径（截断丢尾/窗口停更）、检索结果未套围栏、restore 与镜像未接校验和；证伪子代理 H（save_fact 丢作用域）与「误杀 9/12」 |
-| [REVIEW-8482eb3..19aff9f.md](REVIEW-8482eb3..19aff9f.md) | 8482eb3..19aff9f | 功能评审（长回复分层投递 + 出站节流）：H1 越过窗口上限后最小间隔一并失效（实测 21 条瞬时突发）；H2 超时重试阶梯重复投递；H3 切分压平代码缩进；H4 降级时附发文件致内容双份；H5 三条测试假阳性（变异测试 17/31 未捕获）；证伪「文件失败外发未节流文本」与「降级日志缺失」；修复见 53d0f44 |
-| [REVIEW-19aff9f..436629d.md](REVIEW-19aff9f..436629d.md) | 19aff9f..436629d | 修复复核：H1/H2/H4/M1/M2/M3 已修；H3 残余 corner case（chunk 边界 `.strip()` 压平缩进）；`_reconstruct_content_from_memory` 死代码（H）；`AGENT_OUTBOUND_MAX_TARGETS` 与 `MAX_WAIT` 约束范围文档缺失（M1/M2）；全量 603 passed / 32 skipped，ruff 全绿 |
+> **链接有效性更正（2026-09-20，LINK-AUDIT）**：下表 7 份 `REVIEW-<range>.md` 原件**从未入库**
+> （`git log --all -- "REVIEW-f6f749b..6c57fd9.md"` 零命中）且工作区现已无这些文件（`ls REVIEW-*.md`
+> 仅命中本文件），故一律**降为纯文本条目、不再写成可点链接**——原先的 `[...](...)` 形式全是死链。
+> 要点列保留作史料。需复现任一份评审：按本文件 §2 的方法，用「范围」列给定的 commit 区间重跑即可。
 
-> 新报告归档后在此表追加一行。
+- `REVIEW-f6f749b..6c57fd9.md`（原件未入库） — 范围 f6f749b..6c57fd9 — 要点未记
+- `REVIEW-be1fb07..6c57fd9.md`（原件未入库） — 范围 be1fb07..6c57fd9 — 要点未记
+- `REVIEW-6c57fd9..e86fba0.md`（原件未入库） — 范围 6c57fd9..e86fba0 — H1 沙箱配置注入逃逸（High）；M1 strip_symlinks 未调用；M3 SSRF 后缀匹配
+- `REVIEW-e86fba0..8cfbf6d.md`（原件未入库） — 范围 e86fba0..8cfbf6d — H1' 沙箱守卫带点小节名绕过；H2/H3 脱敏穿透；H4 蒸馏水位线丢失；备份恢复四连（M3–M7）
+- `REVIEW-8cfbf6d..a604023.md`（原件未入库） — 范围 8cfbf6d..a604023 — H1 已封死、H2/H3/H4 均部分修复（各留一条穿透路径）；新证：沙箱 curl 数字型 IP 绕过内网判定、蒸馏两条静默路径（截断丢尾/窗口停更）、检索结果未套围栏、restore 与镜像未接校验和；证伪子代理 H（save_fact 丢作用域）与「误杀 9/12」
+- `REVIEW-8482eb3..19aff9f.md`（原件未入库） — 范围 8482eb3..19aff9f — 功能评审（长回复分层投递 + 出站节流）：H1 越过窗口上限后最小间隔一并失效（实测 21 条瞬时突发）；H2 超时重试阶梯重复投递；H3 切分压平代码缩进；H4 降级时附发文件致内容双份；H5 三条测试假阳性（变异测试 17/31 未捕获）；证伪「文件失败外发未节流文本」与「降级日志缺失」；修复见 53d0f44
+- `REVIEW-19aff9f..436629d.md`（原件未入库） — 范围 19aff9f..436629d — 修复复核：H1/H2/H4/M1/M2/M3 已修；H3 残余 corner case（chunk 边界 `.strip()` 压平缩进）；`_reconstruct_content_from_memory` 死代码（H）；`AGENT_OUTBOUND_MAX_TARGETS` 与 `MAX_WAIT` 约束范围文档缺失（M1/M2）；全量 603 passed / 32 skipped，ruff 全绿
+
+> 新报告归档后在此表追加一行。**归档时必须一并落一份可解析的路径**（随包入库，或写明绝对路径），
+> 否则按本节先例写成纯文本、不留死链。
+

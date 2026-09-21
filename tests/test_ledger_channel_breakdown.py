@@ -12,6 +12,11 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+from plugins.bot_unified_runtime.domains.ops.monitor.usage_monitor import (
+    build_model_rows,
+    build_report_alert,
+    build_report_text,
+)
 from plugins.bot_unified_runtime.llm.ledger import (
     LedgerService,
     aggregate_channel_usage,
@@ -21,11 +26,6 @@ from plugins.bot_unified_runtime.runtime.pricing import (
     lookup_model_price,
     model_family_key,
     parse_model_prices,
-)
-from plugins.bot_unified_runtime.runtime.usage_monitor import (
-    build_model_rows,
-    build_report_alert,
-    build_report_text,
 )
 
 # ==================== ① 账本按 (模型, 渠道) 聚合 ====================
@@ -223,7 +223,7 @@ def test_build_report_text_renders_channel_subrows() -> None:
         window_label="测试窗口",
         channel_stats=_channel_stats(),
     )
-    assert "- gemini-3.8-flash-high：入 3,000 / 出 600 / 费 5.73 元" in text
+    assert "- gemini-3.8-flash-high：入 3,000 / 缓存读 0 / 缓存建 0 / 出 600 / 费 5.73 元" in text
     assert "  └ 渠道 ch-a：1 次 / 费 4.50 元" in text
     assert "  └ 渠道 ch-b：2 次 / 费 1.23 元" in text
     # 未提供渠道统计：无子行（旧版形态）。
@@ -296,3 +296,33 @@ def test_parse_model_prices_rejects_bad_entries() -> None:
     assert prices["m3"] == {"input": 0.0, "output": 0.0}  # 真免费保留
     assert "m4" not in prices
     assert parse_model_prices("not-json") == {}
+
+
+def test_channel_subrows_carry_cache_when_ledger_reports_it() -> None:
+    """渠道子行补缓存（2026-09-18）：账本按渠道存了缓存量，折叠时不再丢。"""
+    stats = {
+        "gemini-3.8-flash": {
+            "ch-a": {
+                "calls": 1,
+                "cost_milli": 4_500,
+                "cache_read_tokens": 250_000,
+                "cache_creation_tokens": 40_000,
+            },
+            "ch-b": {"calls": 2, "cost_milli": 1_230},
+        }
+    }
+    rows = build_model_rows(_aggregate(), channel_stats=stats)
+    channels = rows[0]["channels"]
+    assert channels[0]["cache_read"] == 250_000
+    assert channels[0]["cache_write"] == 40_000
+    # 账本没报缓存的渠道按 0，不凭空造数。
+    assert channels[1]["cache_read"] == 0
+
+    text = build_report_text(
+        _aggregate(), window_label="测试窗口", channel_stats=stats
+    )
+    assert (
+        "  └ 渠道 ch-a：1 次 / 缓存读 250,000 / 缓存建 40,000 / 费 4.50 元" in text
+    )
+    # 缓存为 0 的渠道不挂空段（子行已密，恒显 0 只会变噪声）。
+    assert "  └ 渠道 ch-b：2 次 / 费 1.23 元" in text

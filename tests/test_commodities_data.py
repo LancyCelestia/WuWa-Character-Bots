@@ -16,8 +16,8 @@ from collections.abc import Iterator
 import pytest
 
 from plugins.bot_unified_runtime.capabilities import user_copy
-from plugins.bot_unified_runtime.sources import commodities_data
-from plugins.bot_unified_runtime.sources.commodities_data import (
+from plugins.bot_unified_runtime.domains.finance.data import commodities_data
+from plugins.bot_unified_runtime.domains.finance.data.commodities_data import (
     commodity_availability,
     fetch_commodity_quotes,
     fetch_commodity_trend,
@@ -138,7 +138,9 @@ def test_quotes_success_and_url_payload(_clean_caches, _sleeps, monkeypatch) -> 
 
 
 def test_quotes_empty_then_data_two_calls(_clean_caches, _sleeps, monkeypatch) -> None:
-    from plugins.bot_unified_runtime.sources.market_data import _RETRY_BACKOFF_SECONDS
+    from plugins.bot_unified_runtime.domains.finance.data.market_data import (
+        _RETRY_BACKOFF_SECONDS,
+    )
 
     payloads: list[dict] = [dict(_EMPTY), dict(_PAYLOAD)]
     calls: list[str] = []
@@ -207,7 +209,9 @@ def test_quotes_retry_disabled_single_call(
 def test_trend_transient_disconnect_retried_then_success(
     _clean_caches, _sleeps, monkeypatch
 ) -> None:
-    from plugins.bot_unified_runtime.sources.market_data import _RETRY_BACKOFF_SECONDS
+    from plugins.bot_unified_runtime.domains.finance.data.market_data import (
+        _RETRY_BACKOFF_SECONDS,
+    )
 
     outcomes: list = [ParseHttpError("GET failed: RemoteDisconnected"), dict(_TREND)]
     calls: list[str] = []

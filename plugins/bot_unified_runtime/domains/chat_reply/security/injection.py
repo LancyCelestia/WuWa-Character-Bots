@@ -8,7 +8,10 @@ from re import Pattern
 from pydantic import Field
 
 from plugins.bot_unified_runtime.contracts import PrivacyLevel, RiskLevel
-from plugins.bot_unified_runtime.domains.core.contracts.runtime import StrictBaseModel, new_debug_id
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
+    StrictBaseModel,
+    new_debug_id,
+)
 
 
 class InjectionAction(str, Enum):

@@ -1,10 +1,10 @@
 """语音消息转写（ASR）：record 段 → ffmpeg 转 mp3 → OpenAI 兼容转写接口。
 
-聊天链路在消息携带语音（record 段，NapCat 提供）且 BOT_ASR_ENABLED 时调用
+聊天链路在消息携带语音（record 段，SnowLuma 提供）且 BOT_ASR_ENABLED 时调用
 本模块，把语音转成文字作为不可信上下文注入当前消息，让人格模型"听懂"
 语音再回应。
 
-音频来源优先级：NapCat 落盘的本机路径（file:// 或绝对路径）→ http URL
+音频来源优先级：SnowLuma 落盘的本机路径（file:// 或绝对路径）→ http URL
 下载。QQ 语音原始格式多为 silk/amr，浏览器与转写接口都不认，统一经
 ffmpeg 转成 16kHz 单声道 mp3（体积小、兼容面最广）；ffmpeg 失败时若原
 文件本就是 mp3/wav 则直读原字节，否则放弃。
@@ -52,7 +52,7 @@ def _find_ffmpeg_locate() -> str:
 def extract_audio_source(raw_segments: list[dict[str, Any]] | None) -> str | None:
     """取第一个可解析的语音段来源：转码产物/本机路径优先，其次 http URL。
 
-    NapCat 的 record 段可能同时携带会过期的 url 与落盘 file 路径，
+    SnowLuma 的 record 段可能同时携带会过期的 url 与落盘 file 路径，
     落盘字节最可靠；handler 侧经 get_record 预转码的 mp3 存于
     transcoded_path（SILK 裸流 ffmpeg 解不了），作为最高优先级。
     """
@@ -315,6 +315,23 @@ def _download_audio(source: str, dest: Path, timeout_seconds: float) -> Path | N
         "follow_redirects": True,
         "headers": {"User-Agent": "Mozilla/5.0"},
     }
+    # WP1（背景点4）：语音远程取字节此前不过 SSRF 咽喉；入口先过
+    # check_download_url（内网/保留段/畸形拒绝→按取不到音频返回 None）。
+    # 落点复查经逐跳 event hook（video_pipeline 复用本函数，一并受护）。
+    from plugins.bot_unified_runtime.sources.downloader import (
+        RejectedUrlError,
+        check_download_url,
+    )
+
+    try:
+        check_download_url(source)
+    except RejectedUrlError:
+        return None
+
+    def _guard_hop(request: Any) -> None:
+        check_download_url(str(request.url))
+
+    client_kwargs["event_hooks"] = {"request": [_guard_hop]}
     try:
         with httpx.Client(**client_kwargs) as client, client.stream(
             "GET", source

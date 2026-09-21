@@ -295,8 +295,8 @@ def test_gate_same_message_never_twice():
 def test_maybe_react_signal_hit_calls_wrapper_and_miss_skips():
     bot = FakeBot()
     assert asyncio.run(maybe_react_on_message(
-        bot, session_key="g", user_message_id=9001, text="谢谢你呀，帮大忙了",
-        config=_Cfg(), trigger="emotion_signal",
+        bot, session_key="group_1_1", user_message_id=9001, text="谢谢你呀，帮大忙了",
+        config=_Cfg(), trigger="emotion_signal", bot_related=True,
     )) is True
     assert bot.calls == [(
         "set_msg_emoji_like",
@@ -304,8 +304,8 @@ def test_maybe_react_signal_hit_calls_wrapper_and_miss_skips():
     )]
     # 未命中情绪信号：不贴、零调用
     assert asyncio.run(maybe_react_on_message(
-        bot, session_key="g", user_message_id=9002, text="今天天气不错",
-        config=_Cfg(), trigger="emotion_signal",
+        bot, session_key="group_1_1", user_message_id=9002, text="今天天气不错",
+        config=_Cfg(), trigger="emotion_signal", bot_related=True,
     )) is False
     assert len(bot.calls) == 1
 
@@ -316,8 +316,8 @@ def test_maybe_react_disabled_is_zero_trace():
 
     bot = FakeBot()
     assert asyncio.run(maybe_react_on_message(
-        bot, session_key="g", user_message_id=1, text="谢谢你",
-        config=Off(), trigger="emotion_signal",
+        bot, session_key="group_1_1", user_message_id=1, text="谢谢你",
+        config=Off(), trigger="emotion_signal", bot_related=True,
     )) is False
     assert bot.calls == []
 
@@ -326,7 +326,7 @@ def test_maybe_react_after_reply_uses_warm_pool():
     bot = FakeBot()
     gate = ProactiveGate()
     assert asyncio.run(maybe_react_on_message(
-        bot, session_key="g", user_message_id=77, text="随便什么",
+        bot, session_key="group_1_1", user_message_id=77, text="随便什么",
         config=_Cfg(), trigger="after_reply", gate=gate,
     )) is True
     emoji_id = bot.calls[0][1]["emoji_id"]
@@ -468,22 +468,22 @@ def test_double_trigger_b_fail_blocks_a_reroll():
 
     # B：命中感动信号但概率败（骰值 0.219 ≠ 0）→ 已骰登记
     assert asyncio.run(maybe_react_on_message(
-        bot, session_key="priv", user_message_id=62, text="谢谢你呀",
-        config=P0(), trigger="emotion_signal", gate=gate,
+        bot, session_key="group_9_9", user_message_id=62, text="谢谢你呀",
+        config=P0(), trigger="emotion_signal", gate=gate, bot_related=True,
     )) is False
     # A：换 salt + 概率 1.0，仍被已骰登记挡下
     assert asyncio.run(maybe_react_on_message(
-        bot, session_key="priv", user_message_id=62, text="谢谢你呀",
+        bot, session_key="group_9_9", user_message_id=62, text="谢谢你呀",
         config=_Cfg(), trigger="after_reply", gate=gate,
     )) is False
     assert bot.calls == []
     # 对照：B 未命中信号词（没骰）→ A 正常可贴
     assert asyncio.run(maybe_react_on_message(
-        bot, session_key="priv", user_message_id=63, text="今天天气不错",
-        config=P0(), trigger="emotion_signal", gate=gate,
+        bot, session_key="group_9_9", user_message_id=63, text="今天天气不错",
+        config=P0(), trigger="emotion_signal", gate=gate, bot_related=True,
     )) is False
     assert asyncio.run(maybe_react_on_message(
-        bot, session_key="priv", user_message_id=63, text="今天天气不错",
+        bot, session_key="group_9_9", user_message_id=63, text="今天天气不错",
         config=_Cfg(), trigger="after_reply", gate=gate,
     )) is True
     assert len(bot.calls) == 1
@@ -521,19 +521,25 @@ def test_i2_group_signal_requires_bot_related():
     assert len(bot.calls) == 1
 
 
-def test_i2_private_signal_still_reacts_and_explicit_false_blocks():
-    """I2：私聊=与 bot 直接对话，缺省放行；显式 False 仍拦。"""
+def test_private_session_never_calls_set_msg_emoji_like():
+    """QQ 侧不存在私聊表情回应通道（不是迁移退化）：SnowLuma 对非群消息直接抛
+    ``emoji reactions are not supported on private messages``（实测 36 次）。
+    私聊一律在派发前拒掉——绝不出 set_msg_emoji_like、不占门、不刷失败日志。"""
     bot = FakeBot()
     base = {
-        "user_message_id": 82, "text": "谢谢你帮大忙", "config": _Cfg(),
-        "trigger": "emotion_signal",
+        "text": "谢谢你帮大忙", "config": _Cfg(), "trigger": "emotion_signal",
     }
+    # 私聊 session 键 = 裸 user_id（镜像 OneBot，见同文件归一化用例）
     assert asyncio.run(maybe_react_on_message(
-        bot, session_key="9900", gate=ProactiveGate(), **base)) is True
+        bot, session_key="9900", user_message_id=82, gate=ProactiveGate(), **base)) is False
     assert asyncio.run(maybe_react_on_message(
-        bot, session_key="9901", gate=ProactiveGate(),
-        bot_related=False, **base)) is False
-    assert len(bot.calls) == 1
+        bot, session_key="9901", user_message_id=83, gate=ProactiveGate(),
+        bot_related=True, **base)) is False
+    # 换 after_reply 触发形同样不派发
+    assert asyncio.run(maybe_react_on_message(
+        bot, session_key="9902", user_message_id=84, text="今天赢了比赛",
+        config=_Cfg(), trigger="after_reply", gate=ProactiveGate())) is False
+    assert bot.calls == []
 
 
 def test_i3_comfort_keywords_simplified_traditional():
@@ -548,10 +554,10 @@ def test_i3_comfort_keywords_simplified_traditional():
 
 
 def test_normal_scenes_unaffected():
-    """正常场景照常：非悲伤消息 after_reply 照贴、私聊信号照贴。"""
+    """正常场景照常：群聊非悲伤消息 after_reply 照贴、群聊信号命中照贴。"""
     bot = FakeBot()
     assert asyncio.run(maybe_react_on_message(
-        bot, session_key="g1", user_message_id=91, text="今天赢了比赛好开心",
+        bot, session_key="group_1_1", user_message_id=91, text="今天赢了比赛好开心",
         config=_Cfg(), trigger="after_reply", gate=ProactiveGate(),
     )) is True
     assert len(bot.calls) == 1

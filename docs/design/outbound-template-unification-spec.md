@@ -11,7 +11,7 @@
 1. **同一语义多份真相**（审核件 §十三 9 条实证）：统计标签 4 份、ID 标签 2 套命名、`or "守岸人"` 7 处、
    英文名兜底 3 处、页脚胶囊 DOM 4 份。改一处漏三处。
 2. **话术池住三个文件、取句机制四套并存**（实证）：
-   - `capabilities/user_copy.py`：`random.choice(池)`；
+   - `domains/chat_reply/capabilities/user_copy.py`：`random.choice(池)`；
    - `chat.py::persona_failure_message`：会话游标 `(offset) % n`（**修 D9 后才是真轮换**，无会话退随机）；
    - `reminders.py::_pick_template_variant`：按 `(persona, seed)` 稳定散列取模（确定性、零随机）；
    - `daily/store/daily_assist.py::pick_variant(key, variants, **fields)`：键控 + 字段填充。
@@ -20,7 +20,7 @@
    跨渠道不复用（同一条失败在 QQ 与 Telegram 上措辞不同、长度不同、能不能带图也不同）。
    已有半道墙：`tests/test_user_copy_unification_gate.py` 做**旧句式池外硬编码负向扫描**——
    它只拦"已知旧句"，不拦"新写的一次性句"，所以缺口在持续长。
-4. **邮件没有模板**：正文只有 `sender/nonebot.py::_mail_html_body`（转义 + `\n→<br>` + 一段内联样式），
+4. **邮件没有模板**：正文只有 `domains/transport/sender/nonebot.py::_mail_html_body`（转义 + `\n→<br>` + 一段内联样式），
    无主题/正文/署名/页脚分层，无独立 HTML 版式，**更没有把渲染卡片送进邮件的通路**。
 5. **Telegram 没有任何格式模板**（实证，非缺陷陈述）：正文纯文本直发，全仓不存在 Markdown/HTML 转换与链接预览开关；
    只有 caption ≤1024 与「超长则图先发、文字单独成条」两条策略。要"统一"就得先决定 TG 要不要吃到 HTML 投影——
@@ -36,7 +36,7 @@
 - G5 有机器门把"新写一次性文本"当场拦红（棘轮只减不增，参照本波版式门的写法）。
 
 **非目标（本轮明确不做）**
-- 不改人格/提示词（`personas/**`、`character/providers.py` 13 分区是发给 LLM 的，不是发给用户的）。
+- 不改人格/提示词（`personas/**`、`domains/chat_reply/character/providers.py` 13 分区是发给 LLM 的，不是发给用户的）。
 - 不改卡片 HTML 模板的**视觉**（那是渲染域既有契约与 CAP1 胶囊的地盘；本规格只规定它作为"图片产物"如何被三方消费）。
 - 不动 `describeReason` 的"未知码原样上屏"策略（用户挂起裁定项 R-2）。
 - 不引入新第三方模板引擎（Jinja2 已在依赖里且卡片侧在用；文本侧用它还是 `str.format` 见 §四-2，倾向 Jinja2 但要给结论）。
@@ -85,9 +85,9 @@
 | P0 | 规格定稿 + 全量清单收口（TPL1 产出） | 本文件 + 两份 md | 你逐条勾完触发条件 |
 | P1 | 中央渲染入口 + 取句/静默单一 API + **静态扫描门**（新写一次性中文句 ⇒ 红，棘轮基线=当前存量） | 新 `outbound/` + `tests/` 新门 | 门在存量下绿、构造样本必红；现网文案逐字节不变 |
 | P2 | 迁四族最重话术（`user_copy` 五池 / 错误卡族 / 提醒五型 / 日常助理七池）入模板文件 | 上列 4 个文件 + 各自调用点 | 快照测试**逐字节等值**（`test_user_copy_pool.py` 同法）+ 受影响能力定向回归 |
-| P3 | 邮件双版式 + 卡片图附件 | `transport/sender/nonebot.py`、`transport/mail/*` | 离线夹具出 HTML 与 .eml 样本给你看；限额与失败回落有锁 |
+| P3 | 邮件双版式 + 卡片图附件 | `domains/transport/sender/nonebot.py`、`transport/mail/*` | 离线夹具出 HTML 与 .eml 样本给你看；限额与失败回落有锁 |
 | P4 | 能力侧一次性文本分批收编（weather/finance/music/notes/media_archive/subscribe/echo 子命令族…每域一批） | `domains/*/capabilities/*.py` | 棘轮基线随批下降；每批 `git show --stat` 可核 |
-| P5 | TG 投影规则定稿（是否允许富文本、caption 预算落文件） | `transport/sender/nonebot.py` | 与 P4 同门覆盖 |
+| P5 | TG 投影规则定稿（是否允许富文本、caption 预算落文件） | `domains/transport/sender/nonebot.py` | 与 P4 同门覆盖 |
 
 **硬前置（P1 之前必须解决，否则不许动工）**
 - **回滚面**：`domains/**` 大量文件今日仍零 git 在册（本波台账 #41/#42 事实），

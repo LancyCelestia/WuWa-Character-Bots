@@ -1,84 +1,18 @@
-"""点名/昵称检测：判断一段 QQ 文本是否在叫本机器人。
+"""Compat shim: moved to plugins.bot_unified_runtime.domains.chat_reply.runtime.mentions (v21r2 reorg W15d (chat_reply sub-wave 4/5)).
 
-与 OneBot 的 @（CQ:at）互补：@ 由原始消息段识别，本模块负责
-“只写了名字/昵称”的情况，例如：
-
-- “岸宝，帮我查天气”
-- “守岸人 今天天气怎么样”
-- “@守岸人”或“呼叫守岸人”
-- 消息中间用标点隔开的称呼：“大家晚上好，守岸人，在吗？”
-
-规则刻意保守：昵称后面必须跟标点/空白/称呼词/时间词等边界，
-避免“岸宝贝”“守岸人设”这类包含关系词误触发。
+Live re-export (PEP 562 module __getattr__): attribute access resolves on
+the canonical module at access time, so monkeypatch on the canonical path
+stays consistent for legacy-path importers.
 """
+from importlib import import_module
+from typing import Any
 
-from __future__ import annotations
-
-import functools
-import re
-
-# 称呼后允许跟的边界字符（单字符集合，含常见时间/请求词的首字）。
-_ADDRESS_BOUNDARY_CHARS = set("，,。！？!?：:、 的了呢吗呀啊哈今明天现在请帮我你请问呼")
-_CALL_PATTERN = re.compile(r"(?:呼叫|召唤|在吗|@|＠)\s*([^\s，。！？!?：:、@＠]+)")
+_CANONICAL = "plugins.bot_unified_runtime.domains.chat_reply.runtime.mentions"
 
 
-def normalize_mention_text(text: str) -> str:
-    """去掉开头的 @/斜杠/感叹号/空白，便于做昵称前缀判定。"""
-    stripped = (text or "").strip()
-    return re.sub(r"^[@＠!！/\\\s]+", "", stripped)
+def __getattr__(name: str) -> Any:
+    return getattr(import_module(_CANONICAL), name)
 
 
-@functools.lru_cache(maxsize=256)
-def _sentence_mention_pattern(term: str) -> re.Pattern[str]:
-    """句中称呼 pattern 按 term 缓存（P1-2：消除每消息重复构造+查询）。"""
-    return re.compile(
-        rf"(?:^|[^\w\u4e00-\u9fff]){re.escape(term)}(?P<after>[\s，,。！？!?：:、]|$)"
-    )
-
-
-def detect_name_mention(text: str, terms: list[str] | tuple[str, ...]) -> bool:
-    """判断文本是否点名了 terms 中的任一昵称/名字。"""
-    stripped = normalize_mention_text(text)
-    if not stripped:
-        return False
-    ordered = sorted({str(t).strip() for t in terms if str(t).strip()}, key=len, reverse=True)
-
-    for term in ordered:
-        if stripped == term:
-            return True
-        # 开头称呼：昵称 + 标点/空白/称呼词/时间词/请求词。
-        if stripped.startswith(term):
-            tail = stripped[len(term):]
-            if not tail or tail[0] in _ADDRESS_BOUNDARY_CHARS:
-                return True
-        # 句中称呼：前面是非文字（行首/标点/空白/括号），后面是标点或结尾。
-        if _sentence_mention_pattern(term).search(stripped):
-            return True
-        # 呼叫/召唤/在吗 + 昵称。
-        call_match = _CALL_PATTERN.search(stripped)
-        if call_match and call_match.group(1) == term:
-            return True
-    return False
-
-def starts_with_name_mention(text: str, terms: list[str] | tuple[str, ...]) -> bool:
-    """昵称是否位于消息开头（开头称呼形态）——视为对机器人说话的强信号。"""
-    stripped = normalize_mention_text(text)
-    if not stripped:
-        return False
-    for term in sorted({str(t).strip() for t in terms if str(t).strip()}, key=len, reverse=True):
-        if not term:
-            continue
-        if stripped.startswith(term):
-            tail = stripped[len(term):]
-            if not tail or tail[0] in _ADDRESS_BOUNDARY_CHARS:
-                return True
-    return False
-
-
-_QUESTION_MARKERS = ("？", "?", "吗", "呢", "么", "怎么", "为什么", "如何", "帮我", "能不能", "可以吗")
-
-
-def looks_like_direct_question(text: str) -> bool:
-    """轻量问句意图判定（R4 长文软点名降级门用）：含问号或常见疑问词。"""
-    value = text or ""
-    return any(marker in value for marker in _QUESTION_MARKERS)
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(dir(import_module(_CANONICAL))))

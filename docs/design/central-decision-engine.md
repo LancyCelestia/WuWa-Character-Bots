@@ -51,7 +51,7 @@
 
 ```text
                        ┌──────────────────────── 适配器（bot.py:176/177/197 注册） ───────────────────────┐
-                       │  OneBot V11 (NapCat)      Telegram      ResilientMailAdapter                    │
+                       │  OneBot V11 (SnowLuma)      Telegram      ResilientMailAdapter                  │
                        └──────────────────────────────────┬──────────────────────────────────────────────┘
                                                           ▼
                     38 个 NoneBot matcher（_register_nonebot_handlers, __init__.py:2710）
@@ -72,16 +72,16 @@
    C. 直连 bot.call_api（不走发送队列，见 §1.4）：dirty_guard L3730、poke L3759-3766、
       file_export 上传 L3864-3877、cookie QR 图片 L4012-4023、cookie 到期提醒任务 L3360
                                                       ▼
-                     RuntimePipeline（runtime/pipeline.py:326）
+                     RuntimePipeline（domains/chat_reply/runtime/pipeline.py）
    _prepare（pipeline.py:431）：runtime_enabled → 角色解析 → runtime_control → evaluate_policy
-   （policy/gate.py:209，群黑白名单/触发门禁）→ quiet_hours → reply_budget → rate_limit → BotDecision
-   _claim_event（pipeline.py:810）：EventIdempotencyTable/Sqlite 幂等（runtime/event_idempotency.py）
+   （domains/chat_reply/policy/gate.py，群黑白名单/触发门禁）→ quiet_hours → reply_budget → rate_limit → BotDecision
+   _claim_event（pipeline.py:810）：EventIdempotencyTable/Sqlite 幂等（domains/chat_reply/runtime/event_idempotency.py）
    _complete：能力执行 → Review → 渲染 → SendRequest → SendQueue.submit
                                                       ▼
-   SendQueue（sender/queue.py:156 Protocol；InMemory/SQLite 双实现）
+   SendQueue（domains/transport/sender/queue.py Protocol；InMemory/SQLite 双实现）
       ↙ handler 内显式补投递（内存队列回执是"假 sent"）        ↘ 后台 worker（_register_send_queue_scheduler,
    _deliver_transport_send_request（L2053）→ UnifiedDeliveryGateway        L1335，drain SQLite 队列）
-   （sender/gateway.py:30）→ send_onebot_v11 / send_nonebot_message             （同一对 transport）
+   （domains/transport/sender/gateway.py）→ send_onebot_v11 / send_nonebot_message             （同一对 transport）
                                                       ▼
                      传输层 + 回执 + 审计 + 诊断
 ```
@@ -92,18 +92,18 @@
 - 队列 worker：`_register_send_queue_scheduler`（`__init__.py:1335`）→ `send_onebot_v11`/`send_nonebot_message`（`__init__.py:1360` 附近）。
 - 运维告警：`_deliver_admin_alert`（`__init__.py:2942`）→ `send_onebot_v11`/`send_nonebot_message`。
 - cookie 到期每日提醒：`bot.call_api("send_private_msg")` **直连**（`__init__.py:3360-3364`）。
-- Mail 出站：`send_mail_from_account`（`mail_bridge.py:312`，被 `mail_bridge.py:450` 与 `runtime/disconnect_notice.py:188` 调用）走 adapter 的 `send_mail`/`send_to`，**不经过 UnifiedDeliveryGateway**；普通邮件回复则在 `sender/nonebot.py:318/439`（经 gateway，text-only）。
-- GsCore 桥入站：`sources/gscore_bridge.py:147/265-267` 以回调 `on_message` 注入（非 NoneBot matcher），最终是否汇入 pipeline 由桥接调用方决定（本仓内未见接线点，`unknown`：GsCore 桥当前是否在生产启用）。
+- Mail 出站：`send_mail_from_account`（`domains/transport/mail/mail_bridge.py`，被 `domains/transport/mail/mail_bridge.py` 与 `domains/ops/monitor/disconnect_notice.py:188` 调用）走 adapter 的 `send_mail`/`send_to`，**不经过 UnifiedDeliveryGateway**；普通邮件回复则在 `domains/transport/sender/nonebot.py/439`（经 gateway，text-only）。
+- GsCore 桥入站：`domains/ops/integrations/gscore_bridge.py:147/265-267` 以回调 `on_message` 注入（非 NoneBot matcher），最终是否汇入 pipeline 由桥接调用方决定（本仓内未见接线点，`unknown`：GsCore 桥当前是否在生产启用）。
 
 ### 1.3 已具备的统一基础（可直接复用，不要重造）
 
-- `IncomingMessage`（`contracts/runtime.py:121`，含 reply_chain/mentions_bot/name_mention_only/隐私级/角色）。
-- `BotDecision`（`contracts/runtime.py:184`）、`PolicyEvaluation`（:170）。
-- `CapabilityResult`（`contracts/runtime.py:209`）。
-- `RuntimePipeline`（`runtime/pipeline.py:326`）：policy/quiet_hours/reply_budget/rate_limit/idempotency/BotDecision 已在 `_prepare` 收口。
-- `SendRequest`（`contracts/runtime.py:274`，含 dedupe_key/cooldown_key/expires_at/deadline_monotonic）、`DeliveryReceipt`（:323）、`AuditRecord`（:336）。
-- 路由注册表 `ROUTE_RULES`（`runtime/base_router.py:424`，24 条，声明式，带 TTL-LRU 分类缓存 :539-551）。
-- 幂等：`EventIdempotencyTable`/`SqliteEventIdempotencyTable`（`runtime/event_idempotency.py:35/84`），pipeline 内 `_claim_event`（`pipeline.py:810`）。
+- `IncomingMessage`（`domains/core/contracts/runtime.py:121`，含 reply_chain/mentions_bot/name_mention_only/隐私级/角色）。
+- `BotDecision`（`domains/core/contracts/runtime.py:184`）、`PolicyEvaluation`（:170）。
+- `CapabilityResult`（`domains/core/contracts/runtime.py:209`）。
+- `RuntimePipeline`（`domains/chat_reply/runtime/pipeline.py`）：policy/quiet_hours/reply_budget/rate_limit/idempotency/BotDecision 已在 `_prepare` 收口。
+- `SendRequest`（`domains/core/contracts/runtime.py:274`，含 dedupe_key/cooldown_key/expires_at/deadline_monotonic）、`DeliveryReceipt`（:323）、`AuditRecord`（:336）。
+- 路由注册表 `ROUTE_RULES`（`domains/chat_reply/runtime/base_router.py`，24 条，声明式，带 TTL-LRU 分类缓存 :539-551）。
+- 幂等：`EventIdempotencyTable`/`SqliteEventIdempotencyTable`（`domains/chat_reply/runtime/event_idempotency.py/84`），pipeline 内 `_claim_event`（`pipeline.py:810`）。
 - 接口清单 `INTERFACE_MANIFEST`（`base_router.py:427`，含 active/reserved 审计位）。
 
 ### 1.4 违反十条强制规则的现状点（逐条对照）
@@ -115,13 +115,13 @@
 | 1 | 所有事件必须经过中央决策层 | 38 个 matcher 平行入口（§1.1）；三类 handler 写法（§1.2 A/B/C） |
 | 2 | 新功能不得绕过决策层直发 | 无守门机制约束新 handler；C 类写法仍被复制 |
 | 3 | capability 不得直接调用平台发送 API | capability 层总体守约；违规在 handler/任务层：`__init__.py:3730/3759/3766/3864/3872/4012/4019/3360` |
-| 4 | 只有统一发送网关可发送 | `mail_bridge.py:312`（SMTP 直连）、`__init__.py:3360`（call_api 直发）绕过 gateway |
+| 4 | 只有统一发送网关可发送 | `domains/transport/mail/mail_bridge.py`（SMTP 直连）、`__init__.py:3360`（call_api 直发）绕过 gateway |
 | 5 | 一个事件只产生一个最终 ActionPlan | 双 matcher 可同时命中（如 p=8 admin 系与 p=11 status 分裂；`meme_absorb` p=10 block=False 与 p=20 meme 并存），依赖 NoneBot block 语义而非中央裁决 |
 | 6 | 旁路日志/诊断不产生第二条业务消息 | 基本满足（诊断只写 store）；`_notify_operational_receipt` 运维通知是第二条消息，属设计内豁免（unknown：是否需在 ActionPlan 中显式建模） |
-| 7 | 事件必须有 event_id/dedupe_key/截止时间/风险级/优先级 | `request_id`+`dedupe_key`+`deadline_monotonic`+`risk_level` 已有（`contracts/runtime.py:122/285/298/227`）；"决策优先级"目前散在 matcher priority + ROUTE_RULES.priority 两处 |
-| 8 | 重试只由发送层负责 | `sender/onebot.py:303-316` 副作用进度 + queue worker 重试已收口；但 handler 内"补投递"模式（B 类）意味着**业务层参与了一次投递编排**（形态上在 handler，实际调用的是发送层函数） |
+| 7 | 事件必须有 event_id/dedupe_key/截止时间/风险级/优先级 | `request_id`+`dedupe_key`+`deadline_monotonic`+`risk_level` 已有（`domains/core/contracts/runtime.py:122/285/298/227`）；"决策优先级"目前散在 matcher priority + ROUTE_RULES.priority 两处 |
+| 8 | 重试只由发送层负责 | `domains/transport/sender/onebot.py` 副作用进度 + queue worker 重试已收口；但 handler 内"补投递"模式（B 类）意味着**业务层参与了一次投递编排**（形态上在 handler，实际调用的是发送层函数） |
 | 9 | 冲突由中央层用优先级/互斥组/风险级/幂等键裁决 | 目前由 NoneBot matcher priority + block 承担；无互斥组概念 |
-| 10 | 所有决策必须可解释 | `RouteDecision.reason`（`base_router.py:107`）+ `BotDecision.decision_reason`（`contracts/runtime.py:195`）+ `/bot why`（build_why_result）已具雏形；无单一"决策记录"视图把"为什么静默/阻断"串起来 |
+| 10 | 所有决策必须可解释 | `RouteDecision.reason`（`base_router.py:107`）+ `BotDecision.decision_reason`（`domains/core/contracts/runtime.py:195`）+ `/bot why`（build_why_result）已具雏形；无单一"决策记录"视图把"为什么静默/阻断"串起来 |
 
 ---
 
@@ -245,7 +245,7 @@ async def _dispatch_capability(ctx, plan) -> DeliveryReceipt:
 ### 2.5 通知类事件的处理（戳一戳/群上传/离线文件/脏话守卫）
 
 - 归一为 `kind="notice"` 的 `DecisionContext`，走 NoticeGate → `NOTICE_ACTION`。
-- 副作用显式化：回戳改为经发送层的扩展 API 通道（现 `__init__.py:3759-3766` 的 `group_poke`/`friend_poke` 收进 `sender/onebot.py` 的 poke 通道函数，仍由 send 层持有 `call_api`，符合规则 4 的"统一网关"解释——网关允许按通道扩展）。
+- 副作用显式化：回戳改为经发送层的扩展 API 通道（现 `__init__.py:3759-3766` 的 `group_poke`/`friend_poke` 收进 `domains/transport/sender/onebot.py` 的 poke 通道函数，仍由 send 层持有 `call_api`，符合规则 4 的"统一网关"解释——网关允许按通道扩展）。
 - 撤回（`delete_msg`，`__init__.py:3730`）同理收进 send 层 `moderation` 通道。
 - 群文件登记（`_handle_group_upload` L3700）是纯本地副作用，保留为 NoticeExecutor 内部逻辑，不经发送层。
 
@@ -253,11 +253,11 @@ async def _dispatch_capability(ctx, plan) -> DeliveryReceipt:
 
 以下契约**不改字段、不改语义、不换名字**；实现只允许"新增可选字段/新类型"：
 
-- `CapabilityResult`（contracts/runtime.py:209）、`BotDecision`（:184）、`PolicyEvaluation`（:170）
+- `CapabilityResult`（domains/core/contracts/runtime.py:209）、`BotDecision`（:184）、`PolicyEvaluation`（:170）
 - `SendRequest`（:274）、`DeliveryReceipt`（:323）、`RenderedOutput`（:263）、`AuditRecord`（:336）
-- `SendQueue` Protocol（sender/queue.py:156）及 InMemory/SQLite 双实现
-- `UnifiedDeliveryGateway`（sender/gateway.py:11）——只允许新增通道，不允许改 `deliver()` 签名
-- `RuntimePipeline.handle/handle_async`（runtime/pipeline.py）签名不变
+- `SendQueue` Protocol（domains/transport/sender/queue.py）及 InMemory/SQLite 双实现
+- `UnifiedDeliveryGateway`（domains/transport/sender/gateway.py）——只允许新增通道，不允许改 `deliver()` 签名
+- `RuntimePipeline.handle/handle_async`（domains/chat_reply/runtime/pipeline.py）签名不变
 
 新增类型：`ActionPlan`、`DecisionTrace`、`AdapterSource`、`DecisionContext`（全部放 `decision/` 新模块，contracts 只在需要被 pipeline 消费时才增量挂接）。
 
@@ -281,7 +281,7 @@ async def _dispatch_capability(ctx, plan) -> DeliveryReceipt:
 - 内容：`meme_absorb`（L3635）、`dirty_guard_matcher`（L3719）、`group_upload_notice`（L3698）、`poke_notice`（L3744）→ 引擎 `PASSIVE_ABSORB`/`NOTICE_ACTION`。同时把 poke/撤回的 call_api 收进 send 层通道（§2.5）。
 - 验收标准：
   1. 群图片吸收成功率与 VLM 打标量与迁移前 7 日均值差 ≤10%；
-  2. 戳一戳回戳+话术双路径实测通过（NapCat 真机，验收法参照 acceptance-manual）；
+  2. 戳一戳回戳+话术双路径实测通过（SnowLuma 真机，验收法参照 acceptance-manual）；
   3. 脏话撤回在测试群实测撤回成功、无权限群静默；
   4. 这 4 个旧 matcher 删除后 grep 无残留引用。
 - 回滚：单能力粒度——`ActionResolver` 行带 `enabled` 开关（运行时热改，走 runtime_settings），关掉即回到"该能力由旧 matcher 接管"——**要求旧 matcher 删除推迟到阶段 3 复核后**（见阶段 3 内容注）。

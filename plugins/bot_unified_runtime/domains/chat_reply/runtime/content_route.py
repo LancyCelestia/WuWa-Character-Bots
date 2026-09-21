@@ -47,7 +47,9 @@ v21r5 双开关扩展（2026-09-19 用户裁定）：
 """
 from __future__ import annotations
 
+import functools
 import re
+import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -204,14 +206,47 @@ class _SessionState:
     activated_at: float = 0.0
 
 
+def _synchronized(method: Any) -> Any:
+    """把公开方法的「读态→改态→写回」整段钉在同一把可重入锁内（D1-7）。
+
+    用装饰器而非逐方法 ``with`` 包裹：零重排缩进＝diff 最小，且新增公开方法时
+    只需加一行标记，不会漏掉某条路径。可重入（``RLock``）是因为这些方法内部
+    会再调 ``_state``，而 ``_state`` 是唯一真正触碰 ``_sessions`` 结构的地方。
+    """
+
+    @functools.wraps(method)
+    def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    # 标记挂在 Any 别名上：给 functools 包出来的函数对象直接设属性，mypy 会按
+    # _Wrapped 的推断判「该类型无此属性」（attr-defined），而这里确实在设、也确实要它留着。
+    marked: Any = wrapped
+    marked.__content_route_locked__ = True  # 回归锁据此判定「是否真上了锁」
+    return wrapped
+
+
 class ContentRouteEngine:
     """会话亲密度分数机：observe_turn（L1/L2/衰减）→ route_verdict（滞回）
-    → consume_reply（标签解析/剥离）。所有方法 fail-open。"""
+    → consume_reply（标签解析/剥离）。所有方法 fail-open。
+
+    线程口径（2026-09-21 深读波 D1-7）：本类的进程级单例
+    ``SHARED_CONTENT_ROUTE_ENGINE`` 被 chat 能力在**线程池**里并发触碰
+    （``pipeline.offload_capability`` 用有界 ``ThreadPoolExecutor``，且同文件
+    pipeline 自陈「管线能力跑在线程池，读写必须持锁」）。``_state`` 会对同一
+    ``OrderedDict`` 做插入 / ``move_to_end`` / ``popitem`` 三类结构变更，公开方法
+    还要「取态→改分数→写回」，全部无锁即与同层三处共享态的既有纪律不一致
+    （``base_router._ROUTE_CACHE`` 带 ``_ROUTE_CACHE_LOCK``、group_cache、parrot
+    各持一把锁）。``fail_open`` 会把竞态炸出的 ``RuntimeError`` 吞成「静默漏判
+    亲密路由」，比崩溃更难发现 ⇒ 公开方法整段上同一把可重入锁。
+    """
 
     def __init__(self, clock: Any = None) -> None:
         self.clock = clock or time.monotonic
+        self._lock = threading.RLock()
         self._sessions: OrderedDict[str, _SessionState] = OrderedDict()
-        self._extra_words_cache: tuple[str, tuple[re.Pattern[str] | None, re.Pattern[str] | None]] | None = None
+        # v21r5 MINOR-SWEEP（终审 B-Minor-3）：擦边词槽位退役后缓存收为一元。
+        self._extra_words_cache: tuple[str, re.Pattern[str] | None] | None = None
 
     # ---- 配置读取（reaction_knobs 惯例：getattr 缺省，兼容热覆盖视图） ----
 
@@ -234,15 +269,17 @@ class ContentRouteEngine:
             "idle_reset_minutes": float(getattr(config, "bot_content_route_idle_reset_minutes", 10)),
         }
 
-    def _extra_patterns(self, config: Any) -> tuple[re.Pattern[str] | None, re.Pattern[str] | None]:
+    def _extra_patterns(self, config: Any) -> re.Pattern[str] | None:
+        """强词正则（L1 词表+配置追加词）。v21r5 MINOR-SWEEP（终审 B-Minor-3）：
+        擦边词槽位已退役（_borderline_retired 第二元恒 None），返回收为一元。"""
         raw = str(getattr(config, "bot_content_route_words", "") or "")
         key = raw
         if self._extra_words_cache is not None and self._extra_words_cache[0] == key:
             return self._extra_words_cache[1]
         extra = list(_parse_extra_words(raw))
-        patterns = (_compile_word_list(list(_STRONG_WORDS) + extra), None)
-        self._extra_words_cache = (key, patterns)
-        return patterns
+        strong_re = _compile_word_list(list(_STRONG_WORDS) + extra)
+        self._extra_words_cache = (key, strong_re)
+        return strong_re
 
     # ---- 状态存取 ----
 
@@ -283,6 +320,7 @@ class ContentRouteEngine:
 
     # ---- 转折点 1：每轮生成前（chat 链调用） ----
 
+    @_synchronized
     def observe_turn(
         self,
         session_key: str,
@@ -308,7 +346,7 @@ class ContentRouteEngine:
                 return  # 钉死态不吃自动信号（解除只走 L4）。
             if state.updated and now - state.updated > max(1.0, knobs["idle_reset_minutes"] * 60.0):
                 state.score = 0.0  # 会话间隔久=语境断裂，冷启动重评。
-            strong_re, _borderline_retired = self._extra_patterns(config)
+            strong_re = self._extra_patterns(config)
             text = str(message_text or "")
             delta = 0.0
             if strong_re is not None and strong_re.search(text):
@@ -345,6 +383,7 @@ class ContentRouteEngine:
                 head.append(name)
         return head
 
+    @_synchronized
     def route_verdict(self, session_key: str, config: Any = None) -> dict[str, Any]:
         """只读判定；返回 {"mode": "intimate"|"normal", "head_models": [...]}。
 
@@ -398,6 +437,7 @@ class ContentRouteEngine:
 
     # ---- 转折点 3：每轮生成后（chat 链调用） ----
 
+    @_synchronized
     def consume_reply(self, session_key: str, reply_text: str, config: Any = None) -> tuple[str, str]:
         """解析并剥离回复开头的 <intimacy:high|low> 标记；返回 (干净文本, tag)。
 
@@ -436,6 +476,7 @@ class ContentRouteEngine:
 
     # ---- L4 手动命令 ----
 
+    @_synchronized
     def pinned_mode(self, session_key: str, config: Any = None) -> str | None:
         """只读窥探会话钉死态（"intimate"/"normal"/None）；fail-open None。
 
@@ -469,6 +510,7 @@ class ContentRouteEngine:
         except Exception:  # noqa: BLE001 - fail-open。
             return None
 
+    @_synchronized
     def apply_manual(self, session_key: str, mode: str, config: Any = None) -> bool:
         """钉死/解除会话状态；返回是否生效（fail-open False）。
 

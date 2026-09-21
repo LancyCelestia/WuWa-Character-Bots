@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-import plugins.bot_unified_runtime.output.render_backends as render_backends_module
+import plugins.bot_unified_runtime.domains.render.render_backends as render_backends_module
 from plugins.bot_unified_runtime.output.render_backends import (
     PlaywrightRenderBackend,
 )

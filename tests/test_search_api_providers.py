@@ -6,12 +6,12 @@ from types import SimpleNamespace
 import httpx
 
 from plugins.bot_unified_runtime.config import Config, translate_env_keys
-from plugins.bot_unified_runtime.sources.search_api import (
+from plugins.bot_unified_runtime.domains.core.search.search_api import (
     CompositePageFetchProvider,
     TavilyExtractFetchProvider,
     build_api_search_provider,
 )
-from plugins.bot_unified_runtime.sources.web_search import (
+from plugins.bot_unified_runtime.domains.core.search.web_search import (
     LangSearchWebSearchProvider,
     TavilyWebSearchProvider,
     TinyFishFetchProvider,
@@ -306,7 +306,7 @@ def test_search_config_parses_json_and_env_key_references():
 
 def test_fetch_page_text_strips_comments_hidden_blocks_and_head(monkeypatch):
     """P2.5 抓取去噪：注释/隐藏块/<head> 不进 LLM 上下文，正文保留。"""
-    from plugins.bot_unified_runtime.sources import web_search
+    from plugins.bot_unified_runtime.domains.core.search import web_search
 
     html_fixture = (
         "<html><head><title>这个标题文本超过十二字符过滤线旧逻辑会保留</title></head><body>"
@@ -336,7 +336,7 @@ def test_fetch_page_text_strips_comments_hidden_blocks_and_head(monkeypatch):
 
 
 def test_fetch_page_text_keeps_plain_text_pages_intact(monkeypatch):
-    from plugins.bot_unified_runtime.sources import web_search
+    from plugins.bot_unified_runtime.domains.core.search import web_search
 
     monkeypatch.setattr(web_search, "_fetch", lambda url, **kwargs: None)
     assert web_search.fetch_page_text("https://example.test/empty", max_chars=800) == ""
@@ -344,7 +344,7 @@ def test_fetch_page_text_keeps_plain_text_pages_intact(monkeypatch):
 
 def test_fetch_page_text_strips_boilerplate_structural_blocks(monkeypatch):
     """P2.5 去广告增量：导航/页脚/侧栏/表单/弹窗样板块剔除；header 内标题保留。"""
-    from plugins.bot_unified_runtime.sources import web_search
+    from plugins.bot_unified_runtime.domains.core.search import web_search
 
     html_fixture = (
         "<html><body>"
@@ -372,7 +372,7 @@ def test_fetch_page_text_strips_boilerplate_structural_blocks(monkeypatch):
 
 
 def test_filter_search_hits_drops_low_quality_and_defers_short_snippets():
-    from plugins.bot_unified_runtime.sources.web_search import (
+    from plugins.bot_unified_runtime.domains.core.search.web_search import (
         WebSearchHit,
         filter_search_hits,
     )

@@ -11,7 +11,16 @@ v6 平滑层 2026-09-17 追加章节）：
 线性步长（v3 幂律阻尼废除）、闲置惰性回归与印象淡出、8 档态度表（档 id -4..+3）。
 v6 平滑层（用户裁定「涨跌太快」）：饱和响应曲线（外档 smoothstep 收窄）+
 同日同类信号边际递减（幂衰减带下限）+ 既有滚动预算即正负分开的日节奏帽。
-所有数值常量集中在文件顶部，注释指向该文档对应章节。
+v7 潜变量重写（用户裁定 2026-09-21「算法全部重写：一次加减太多、一下子就到顶、
+不够人性化不够智能」，规格唯一权威 docs/design/affinity-v7-design.md）：内部表示
+升级为无界潜变量 z ∈ ℝ，展示分 s = 100·tanh(z) —— 结构上永不触顶；计分单元从
+「关键词命中次数」升级为五子信号质量分 q（主动度/延展度/情绪词/尊重边界/回应性）；
+同类信号新鲜度 novelty 跨日按半衰回升（不再按自然日重置）；按人活跃度 rhythm 归一
+（话痨不占便宜）；道歉/和解走独立修复通道（repair_gain，不吃新鲜度计数）；负向单
+事件 |Δz| 上限 + 每人日位移上限 + 同类事件熔断三道护栏。存量分数经
+z = atanh(clamp(score/100, ±bound)) 惰性映射，绝不重置任何人（表示变换，非重算）。
+灰度开关 bot_affinity_v7_enabled 缺省 False ⇒ v5/v6 路径逐字节不变、可一键回退。
+所有数值常量集中在文件顶部，注释指向文档对应章节。
 """
 
 from __future__ import annotations
@@ -19,10 +28,13 @@ from __future__ import annotations
 import calendar
 import hashlib
 import json
+import math
+import os
 import re
 import sqlite3
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -34,8 +46,18 @@ _POSITIVE_RE = re.compile(
 # 负向（抱怨）：不收裸「傻/蠢/没用/无聊」单字（成语/叠词/求陪伴误捕，见 docs §2 注）。
 _NEGATIVE_RE = re.compile(r"(烦死了|别烦我|真差劲|太差劲|真没用)", re.IGNORECASE)
 # 辱骂级（与安全硬类别同档，扣分更重）：先于抱怨判定。
+# D3-6（v7 设计稿 §2.3 另修项）：旧「滚」支仅排 瓜/烂/烫 三字，「翻滚/滚动/
+# 打滚/滚雪球」等鸣潮核心动作词与第一人称「我先滚了」全部假阳性。新三支结构：
+# ①句读/串首锚定的裸「滚」（可带 快/赶紧/立刻/马上 前缀）——排除后缀加长
+# （动/雪球/烫/锅/筒/珠/轮/落/瓜/烂）；②第二人称紧邻（你/您/恁 + ≤3 间隔字）；
+# ③固定驱逐短语（给我滚/滚开/滚出去/滚远(点)/滚回去）。「都给我滚」照旧命中，
+# 「滚瓜烂熟」「一个翻滚」「打滚」「滚雪球」「我先滚了」一律不命中（回归锁：
+# tests/test_affinity_v7.py 变体族 + test_affinity.py:60/:69 存量锁）。
 _INSULT_RE = re.compile(
-    r"(傻瓜|傻逼|蠢货|蠢蛋|闭嘴|(?:^|[^\瓜烂])滚(?![烂瓜烫])"
+    r"(傻瓜|傻逼|蠢货|蠢蛋|闭嘴"
+    r"|(?:^|[\s，,。！!？?；;：:~～、])(?:快|赶紧|立刻|马上)?滚(?![动雪球烫锅筒珠轮落瓜烂])"
+    r"|(?:你|您|恁)[^，。！？!?,.!?;；:：\s]{0,3}滚(?![动雪球烫锅筒珠轮落瓜烂])"
+    r"|给我滚|滚(?:开|出去|远点?|回去)"
     r"|(?:真|好|太|那么|超)[蠢傻](?!萌))",
     re.IGNORECASE,
 )
@@ -396,6 +418,514 @@ def effective_delta(
     smoothing *= repeat_decay_factor(repeat_index)
     return raw * smoothing
 
+
+# ============================================================================
+# ---- v7 潜变量重写（规格唯一权威：docs/design/affinity-v7-design.md）----
+# 结构四变（设计 §一）：①饱和域换潜变量（z∈ℝ，s=100·tanh(z) 永不触顶）；
+# ②新鲜度跨日累积（EMA 计数按半衰回升，不再自然日重置）；③计分单元从次数变
+# 质量分 q（五子信号全来自会话内已有事实）；④按人活跃归一 rhythm + 独立修复通道。
+# 灰度：bot_affinity_v7_enabled 缺省 False ⇒ 上方 v5/v6 路径逐字节不变。
+# ============================================================================
+
+# §2.1 表示与映射：Z_HARD = atanh(z_hard_bound)，z_hard_bound 缺省 0.985
+# （对应 ±98.5 展示分——极端 legacy ±100 惰性映射时被钳到 ±98.5，是设计 §三.1
+#  写明 "atanh(clamp(score/100, −0.985, 0.985))" 的在册口径，不算重置：域变换的
+#  结构性上界，其余所有人的分数逐点守恒，回归锁 test_v7_legacy_rows_conserve_scores）。
+_V7_DEFAULT_BASE_STEP = 0.10            # Δz 单位步长
+_V7_DEFAULT_NOVELTY_RATIO = 0.90        # ρ：同类显著信号新鲜度比率
+_V7_DEFAULT_NOVELTY_HALO_DAYS = 21      # 新鲜度计数回升半衰（天）
+_V7_DEFAULT_RHYTHM_REFERENCE_TURNS = 8  # r_ref：日均互动轮次参考水位
+_V7_DEFAULT_NEGATIVE_EVENT_CAP_Z = 0.10  # 负向单事件 |Δz| 上限
+_V7_DEFAULT_DAILY_MOVE_CAP_Z = 0.12     # 每人每日总位移上限 |ΣΔz|
+_V7_DEFAULT_FUSE_DAILY_EVENTS = 25      # 同类信号每日熔断事件数（超出不再计分）
+_V7_DEFAULT_REPAIR_GAIN = 1.4           # 修复通道（道歉/和解）步长加成
+_V7_DEFAULT_Z_HARD_BOUND = 0.985        # tanh 饱和域硬边界（展示 ±98.5）
+# novelty 下限（席位修正量，设计稿 §二 数学不自洽的对账，见 WP7 日志 C-1）：
+# 0.90^n 在持续互动稳态（日均 10 句好话 n≈303）会指数归零、把关系永久冻结在
+# ~36 分，令设计自证的「要到 80 分需要以周为月的持续高质量互动」不成立。
+# 下限 0.02 使持续高质量互动以 ≈0.6 分/天 缓涨（数月达 80+），同时
+# 「每天 10 句好话 ×10 天 ≈ 30~40 分」的验收场景 1 逐字成立（实测模拟 34-37）。
+# 非第 13 枚配置键——护栏尺度仍以在册 12 键为唯一调节面。
+_V7_NOVELTY_FLOOR = 0.02
+# rhythm 活跃度 EMA 半衰（天）：设计 §2.2「近 28 天日均互动轮次」。
+_V7_RHYTHM_HALFLIFE_DAYS = 28.0
+# 中性消息的 q 缩放（§2.3 五子信号里 情绪词/尊重边界 两项对中性恒为 0，
+# 普通聊天只凭 主动度/延展度/回应性 缓慢回温——"陪伴有分量，但远低于真情实意"）。
+_V7_NEUTRAL_Q_SCALE = 0.2
+# §2.4 语义分级衰减档位 → 新鲜度半衰归属：正面/中性=seasonal（善意记得久），
+# 负面/辱骂/戏弄=episodic（难听忘得快，与 v6 sentiment「宽恕快」同向）；
+# stable=45 档在册备用（画像事实长期层，本波无 q 侧消费点——如实登记，见日志）。
+_V7_DECAY_TIER_FOR_BEHAVIOR = {
+    "positive": "seasonal",
+    "neutral": "seasonal",
+    "tease": "episodic",
+    "negative": "episodic",
+    "insult": "episodic",
+}
+# §2.3 质量分五子权重缺省（w1 主动度 / w2 延展度 / w3 情绪词 / w4 尊重边界 / w5 回应性）。
+_V7_DEFAULT_QUALITY_WEIGHTS: tuple[float, float, float, float, float] = (
+    0.15, 0.25, 0.35, 0.15, 0.10,
+)
+_V7_DEFAULT_DECAY_TAU_DAYS: dict[str, float] = {
+    "stable": 45.0, "seasonal": 21.0, "episodic": 7.0,
+}
+
+# §2.3 修复通道词表：明示道歉/求和/澄清（_TEASE_RE 家族由 behavior=tease 信号承担，
+# 判定见 _v7_is_repair）。守岸人语境里「对不起」必是修复尝试，不因词面误伤档位。
+_V7_REPAIR_RE = re.compile(
+    r"(对不起|抱歉|不好意思|我的错|是我不对|是我不好|我给你道歉|赔罪|原谅我?"
+    r"别生气|别气了|不生气|消消气|和解|拉钩|我错了|错了错了)",
+    re.IGNORECASE,
+)
+# 敷衍裸语气词（延展度/回应性双零判据）：整串只由这些token与语气标点构成。
+_V7_BARE_INTERJECTION_RE = re.compile(
+    r"^[嗯呃哦噢啊哈唔额唔嘻嘿嘿哈哈哈呵呵哦哟哇哦哦嗯嗯嗯?！!。.…~～、\s]*$"
+)
+# 追问/求索信号（延展度加成）：疑问与追问词。
+_V7_FOLLOWUP_RE = re.compile(r"(吗|呢|？|\?)\s*$|[？?]|怎么|为什么|什么样|能不能|可不可以")
+# 引用前文信号（延展度加成）：上下文衔接词，说明"在听我说话"。
+_V7_CONTEXT_REF_RE = re.compile(r"(上次|之前|你说的|你说过的|刚才|刚刚|前面说|那天|Earlier|earlier)", re.IGNORECASE)
+# 答案结构信号（回应性代理）：作答句式而非复读。
+_V7_ANSWER_MARKER_RE = re.compile(r"^(是|对|不是|不对|因为|其实|我觉得|我认为|我觉得|就是|还好|可以|不行)")
+
+
+def v7_z_to_display_fraction(z: float) -> float:
+    """v7 §2.1 映射：潜变量 z → 内部展示值 a=tanh(z)（×100 仍走 normalize_legacy_points）。"""
+    return math.tanh(float(z))
+
+
+def v7_display_fraction_to_z(affinity: float, bound: float = _V7_DEFAULT_Z_HARD_BOUND) -> float:
+    """v7 §三.1 惰性迁移映射：z = atanh(clamp(score/100 内部值, −bound, +bound))。
+
+    存量 ±1 极端值被钳到 ±atanh(bound)（±98.5 展示分）——设计写明的域上界，
+    其余值逐点守恒（atanh 单调），绝不重置任何人。
+    """
+    value = max(-bound, min(bound, float(affinity)))
+    return math.atanh(value)
+
+
+def v7_novelty_factor(prior_count: float, ratio: float = _V7_DEFAULT_NOVELTY_RATIO) -> float:
+    """§2.2 新鲜度：ρ^（衰减后累计计数），下限 _V7_NOVELTY_FLOOR（见日志 C-1）。"""
+    if prior_count <= 0.0:
+        return 1.0
+    return max(_V7_NOVELTY_FLOOR, ratio ** float(prior_count))
+
+
+def v7_rhythm_factor(daily_turns: float, reference: float = _V7_DEFAULT_RHYTHM_REFERENCE_TURNS) -> float:
+    """§2.2 按人活跃归一：1/(1+max(0,r−r_ref)/r_ref) ∈ (0,1]。
+
+    r ≤ r_ref 恒为 1（轻度/标准用户不吃亏）；超过参考水位后增速按超出倍数
+    稀释——话痨的每一句仍然有分量，但总量不再碾压安静的人。
+    """
+    ref = max(0.001, float(reference))
+    excess = max(0.0, float(daily_turns) - ref)
+    return 1.0 / (1.0 + excess / ref)
+
+
+def _v7_is_repair(text: str, behavior: str) -> bool:
+    """修复通道判定（§2.2 repair_gain 行）：明示道歉词表命中，或 _TEASE_RE 家族
+    （哈哈/逗你/骗你的…）以戏弄行为出现——即「吵架后的缓和动作」。辱骂/抱怨
+    本体不可能是修复（负向行为直接排除）。"""
+    value = text or ""
+    if behavior in {"insult", "negative"}:
+        return False
+    if _V7_REPAIR_RE.search(value):
+        return True
+    return behavior == "tease" and bool(_TEASE_RE.search(value))
+
+
+def v7_quality_score(
+    text: str,
+    *,
+    behavior: str = "neutral",
+    gap_seconds: float | None = None,
+    repeated_recently: bool = False,
+    responded_to_question: bool | None = None,
+    weights: tuple[float, float, float, float, float] = _V7_DEFAULT_QUALITY_WEIGHTS,
+) -> float:
+    """§2.3 互动质量分 q ∈ [−1,+1]（取代"命中一次 positive ⇒ 加 X 分"）。
+
+    五子信号全部来自会话内已有事实（不引新数据源、不打模型）：
+    - 主动度 a：距该人上次发言的间隔（log 尺度：1 小时≈0.14、1 天≈0.63、
+      一周+≈1）；长间隔后回归为正向信号。无历史（首条消息）取 0.35。
+    - 延展度 e ∈ [0,1]：本轮是否带来新信息——长度渐增（3~50 字），追问 +0.15，
+      引用前文 +0.15，封顶 1；**复读自己近期消息（repeated_recently）归零**。
+      裸语气词/≤2 字敷衍 = 0。
+    - 情绪词 s ∈ [−1,1]：沿用 _POSITIVE_RE/_NEGATIVE_RE/_INSULT_RE 族，但只作
+      子项——positive 按命中数 0.40 起步渐增至 0.9；negative −0.5 起步；insult −1；
+      tease −0.2；道歉/和解词按修复语义计正项（暖意本身，且吃 repair_gain）。
+    - 尊重边界 r ∈ [−1,1]：辱骂 −1、抱怨 −0.5、礼貌词（请/麻烦/辛苦族）+0.5。
+      （设计所述「被温和拒后仍追问」的跨轮负项需 bot 侧事实，现网不可得，
+      由 refuse≠insult 既有门兜底——见 WP7 日志「哪句不准」C-2。）
+    - 回应性 g ∈ [0,1]：可选真事实 responded_to_question（bot 上一轮提问而
+      用户作答=1.0、明确未作答=0.2）；缺省（None=现网全部）按会话内代理：
+      敷衍裸词=0、答案结构/疑问回抛/≥12 字=0.7、其余=0.4。
+    neutral/refusal 行为只取 a/e/g 三项并整体 ×_V7_NEUTRAL_Q_SCALE（普通聊天
+    缓温不冒进）；refusal/未知行为恒 0（与 V2.1 §2.2 零计分族同源）。
+    """
+    value = (text or "").strip()
+    if behavior in {"refusal"} or (
+        behavior not in {"positive", "neutral", "tease", "negative", "insult"}
+    ):
+        return 0.0
+    w1, w2, w3, w4, w5 = weights
+
+    # a 主动度：距上次发言间隔，log 尺度按「一周回归=满格」标定
+    # （1 小时≈0.14、1 天≈0.63、7 天+=1.0）；无历史（首条消息）取 0.35。
+    if gap_seconds is None:
+        initiative = 0.35
+    else:
+        hours = max(0.0, float(gap_seconds)) / 3600.0
+        initiative = min(1.0, math.log10(1.0 + hours) / math.log10(169.0))
+
+    # e 延展度：长度渐增（3~50 字 → 0.15~1.0），追问 +0.15，引用前文 +0.15；
+    # 裸语气词/≤2 字敷衍/复读自己近期消息 = 0。
+    length = len(value)
+    bare = length == 0 or length <= 2 or bool(_V7_BARE_INTERJECTION_RE.match(value))
+    if bare or repeated_recently:
+        depth = 0.0
+    else:
+        depth = min(1.0, 0.15 + 0.85 * max(0.0, length - 3) / 47.0)
+        if _V7_FOLLOWUP_RE.search(value):
+            depth += 0.15
+        if _V7_CONTEXT_REF_RE.search(value):
+            depth += 0.15
+        depth = min(1.0, depth)
+
+    # s 情绪词（子项，不再是全部）
+    repair_hit = bool(_V7_REPAIR_RE.search(value))
+    hits_positive = len(_POSITIVE_RE.findall(value))
+    if behavior == "positive":
+        sentiment = min(0.9, 0.40 + 0.15 * max(0, hits_positive - 1))
+        if repair_hit:
+            sentiment = min(1.0, sentiment + 0.2)
+    elif behavior == "negative":
+        hits_negative = max(1, len(_NEGATIVE_RE.findall(value)))
+        sentiment = -min(0.9, 0.5 + 0.15 * (hits_negative - 1))
+    elif behavior == "insult":
+        sentiment = -1.0
+    elif behavior == "tease":
+        sentiment = -0.2
+    else:
+        sentiment = 0.6 if repair_hit else 0.0
+
+    # r 尊重边界
+    if behavior == "insult":
+        respect = -1.0
+    elif behavior == "negative":
+        respect = -0.5
+    elif _POLITE_RE.search(value):
+        respect = 0.5
+    else:
+        respect = 0.0
+
+    # g 回应性
+    if responded_to_question is True:
+        responsiveness = 1.0
+    elif responded_to_question is False:
+        responsiveness = 0.2
+    elif bare:
+        responsiveness = 0.0
+    elif _V7_ANSWER_MARKER_RE.match(value) or length >= 12 or _V7_FOLLOWUP_RE.search(value):
+        responsiveness = 0.7
+    else:
+        responsiveness = 0.4
+
+    if behavior == "neutral":
+        # 普通聊天只取 主动/延展/回应 三项缓温；道歉/和解（修复语义）例外地计入
+        # 情绪词项（s=0.6 已在上方按 repair_hit 置位）——修复通道是设计 §2.2
+        # 的在册结构，不属于"日常陪伴冒进"。
+        q = (w1 * initiative + w2 * depth + w5 * responsiveness) * _V7_NEUTRAL_Q_SCALE
+        if repair_hit:
+            q += w3 * sentiment
+    else:
+        q = w1 * initiative + w2 * depth + w3 * sentiment + w4 * respect + w5 * responsiveness
+    return max(-1.0, min(1.0, q))
+
+
+@dataclass(frozen=True)
+class V7Settings:
+    """v7 生效参数的逐调用快照（12 枚配置键 → 冻结视图，缺省=代码单一事实源）。"""
+
+    enabled: bool = False
+    base_step: float = _V7_DEFAULT_BASE_STEP
+    novelty_ratio: float = _V7_DEFAULT_NOVELTY_RATIO
+    novelty_halo_days: float = _V7_DEFAULT_NOVELTY_HALO_DAYS
+    rhythm_reference_turns: float = _V7_DEFAULT_RHYTHM_REFERENCE_TURNS
+    negative_event_cap_z: float = _V7_DEFAULT_NEGATIVE_EVENT_CAP_Z
+    daily_move_cap_z: float = _V7_DEFAULT_DAILY_MOVE_CAP_Z
+    fuse_daily_events: int = _V7_DEFAULT_FUSE_DAILY_EVENTS
+    repair_gain: float = _V7_DEFAULT_REPAIR_GAIN
+    z_hard_bound: float = _V7_DEFAULT_Z_HARD_BOUND
+    quality_weights: tuple[float, float, float, float, float] = _V7_DEFAULT_QUALITY_WEIGHTS
+    decay_tau_days: dict[str, float] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.decay_tau_days is None:
+            object.__setattr__(self, "decay_tau_days", dict(_V7_DEFAULT_DECAY_TAU_DAYS))
+
+    @property
+    def z_hard(self) -> float:
+        """Z_HARD = atanh(z_hard_bound)：潜变量定义域护栏（永不实际触边）。"""
+        bound = min(0.999999, max(0.5, float(self.z_hard_bound)))
+        return math.atanh(bound)
+
+    def novelty_tau_days_for(self, behavior: str) -> float:
+        tier = _V7_DECAY_TIER_FOR_BEHAVIOR.get(behavior, "seasonal")
+        try:
+            value = float(self.decay_tau_days.get(tier, self.novelty_halo_days))
+        except (TypeError, ValueError, AttributeError):
+            value = float(self.novelty_halo_days)
+        return max(0.5, value)
+
+
+def _v7_coerce_bool(raw: Any, default: bool) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "on", "yes"}
+
+
+def _v7_parse_weights(raw: Any) -> tuple[float, float, float, float, float] | None:
+    """JSON 五权重：list/tuple 直取，dict 取 w1..w5；长度或数值非法 → None（缺省回退）。"""
+    try:
+        data = json.loads(str(raw)) if isinstance(raw, str) else raw
+        if isinstance(data, dict):
+            seq = [float(data[f"w{i}"]) for i in range(1, 6)]
+        elif isinstance(data, (list, tuple)) and len(data) == 5:
+            seq = [float(x) for x in data]
+        else:
+            return None
+        if any(x < 0.0 or x > 1.0 for x in seq):
+            return None
+        total = sum(seq)
+        if total <= 0.0:
+            return None
+        return tuple(round(x / total, 6) for x in seq)  # type: ignore[return-value]
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
+
+
+def _v7_parse_decay(raw: Any) -> dict[str, float] | None:
+    try:
+        data = json.loads(str(raw)) if isinstance(raw, str) else raw
+        if not isinstance(data, dict):
+            return None
+        out: dict[str, float] = {}
+        for tier in ("stable", "seasonal", "episodic"):
+            if tier in data:
+                value = float(data[tier])
+                if value < 0.5:
+                    return None
+                out[tier] = value
+        return out or None
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+_V7_CONFIG_FIELDS: tuple[tuple[str, Any], ...] = (
+    ("bot_affinity_v7_enabled", False),
+    ("bot_affinity_base_step", _V7_DEFAULT_BASE_STEP),
+    ("bot_affinity_novelty_ratio", _V7_DEFAULT_NOVELTY_RATIO),
+    ("bot_affinity_novelty_halo_days", _V7_DEFAULT_NOVELTY_HALO_DAYS),
+    ("bot_affinity_rhythm_reference_turns", _V7_DEFAULT_RHYTHM_REFERENCE_TURNS),
+    ("bot_affinity_negative_event_cap_z", _V7_DEFAULT_NEGATIVE_EVENT_CAP_Z),
+    ("bot_affinity_daily_move_cap_z", _V7_DEFAULT_DAILY_MOVE_CAP_Z),
+    ("bot_affinity_fuse_daily_events", _V7_DEFAULT_FUSE_DAILY_EVENTS),
+    ("bot_affinity_repair_gain", _V7_DEFAULT_REPAIR_GAIN),
+    ("bot_affinity_z_hard_bound", _V7_DEFAULT_Z_HARD_BOUND),
+    ("bot_affinity_quality_weights", ""),
+    ("bot_affinity_decay_tau_days", ""),
+)
+# 非法值"点名一次"台账（每进程每键至多一条 warning，不刷屏）。
+_V7_WARNED_KEYS: set[str] = set()
+_V7_WARNED_LOCK = threading.Lock()
+
+
+def _v7_warn_once(key: str, detail: str) -> None:
+    with _V7_WARNED_LOCK:
+        first = key not in _V7_WARNED_KEYS
+        if first:
+            _V7_WARNED_KEYS.add(key)
+    if first:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "好感度 v7 配置键 %s 非法（%s），按代码缺省执行", key, detail
+        )
+
+
+def _v7_env_value(field_name: str, default: Any) -> Any:
+    """无 config 句柄时的逐调用 env 现读（生产 .env 经 nonebot 装载进环境）。
+
+    字段名即 env 名大写（``bot_affinity_v7_enabled`` ⇄ ``BOT_AFFINITY_V7_ENABLED``，
+    与 translate_env_keys 的双向口径一致）。
+    """
+    raw = os.environ.get(field_name.upper())
+    if raw is None or not str(raw).strip():
+        return default
+    if isinstance(default, bool):
+        return _v7_coerce_bool(raw, default)
+    if isinstance(default, (int, float)) and not isinstance(default, bool):
+        try:
+            return type(default)(float(raw)) if not isinstance(default, int) else int(float(raw))
+        except ValueError:
+            _v7_warn_once(field_name, f"数值解析失败：{raw!r}")
+            return default
+    return str(raw)
+
+
+def resolve_v7_settings(config: Any) -> V7Settings:
+    """逐调用现读 12 枚键（brief 裁定：热改与否由收尾统一裁决，代码不缓存）。
+
+    config 可为 None（共享工厂未传句柄的现网缺省形态——回退 env 现读）、
+    Config 对象（逐字段 getattr）或零参可调用（返回上述之一）。任何非法值
+    回退代码缺省并点名一次；尺度类值再做域钳制。
+    """
+    source = config() if callable(config) else config
+
+    def value_of(field_name: str, default: Any) -> Any:
+        if source is None:
+            return _v7_env_value(field_name, default)
+        raw = getattr(source, field_name, None)
+        if raw is None:
+            return _v7_env_value(field_name, default)
+        return raw
+
+    weights_raw = value_of("bot_affinity_quality_weights", "")
+    weights = _v7_parse_weights(weights_raw) if str(weights_raw or "").strip() else None
+    if str(weights_raw or "").strip() and weights is None:
+        _v7_warn_once("bot_affinity_quality_weights", f"JSON 非法：{weights_raw!r}")
+        weights = None
+    decay_raw = value_of("bot_affinity_decay_tau_days", "")
+    decay = _v7_parse_decay(decay_raw) if str(decay_raw or "").strip() else None
+    if str(decay_raw or "").strip() and decay is None:
+        _v7_warn_once("bot_affinity_decay_tau_days", f"JSON 非法：{decay_raw!r}")
+        decay = None
+
+    def positive_float(field_name: str, default: float) -> float:
+        try:
+            value = float(value_of(field_name, default))
+        except (TypeError, ValueError):
+            _v7_warn_once(field_name, "非数值")
+            return default
+        if value <= 0.0:
+            return default
+        return value
+
+    def positive_int(field_name: str, default: int) -> int:
+        try:
+            value = int(float(value_of(field_name, default)))
+        except (TypeError, ValueError):
+            _v7_warn_once(field_name, "非整数")
+            return default
+        return value if value >= 1 else default
+
+    return V7Settings(
+        enabled=_v7_coerce_bool(value_of("bot_affinity_v7_enabled", False), False),
+        base_step=positive_float("bot_affinity_base_step", _V7_DEFAULT_BASE_STEP),
+        novelty_ratio=min(0.999, max(0.05, positive_float(
+            "bot_affinity_novelty_ratio", _V7_DEFAULT_NOVELTY_RATIO))),
+        novelty_halo_days=max(0.5, positive_float(
+            "bot_affinity_novelty_halo_days", float(_V7_DEFAULT_NOVELTY_HALO_DAYS))),
+        rhythm_reference_turns=max(0.5, positive_float(
+            "bot_affinity_rhythm_reference_turns", float(_V7_DEFAULT_RHYTHM_REFERENCE_TURNS))),
+        negative_event_cap_z=positive_float(
+            "bot_affinity_negative_event_cap_z", _V7_DEFAULT_NEGATIVE_EVENT_CAP_Z),
+        daily_move_cap_z=positive_float("bot_affinity_daily_move_cap_z", _V7_DEFAULT_DAILY_MOVE_CAP_Z),
+        fuse_daily_events=positive_int("bot_affinity_fuse_daily_events", _V7_DEFAULT_FUSE_DAILY_EVENTS),
+        repair_gain=positive_float("bot_affinity_repair_gain", _V7_DEFAULT_REPAIR_GAIN),
+        z_hard_bound=min(0.999999, max(0.5, positive_float(
+            "bot_affinity_z_hard_bound", _V7_DEFAULT_Z_HARD_BOUND))),
+        quality_weights=weights or _V7_DEFAULT_QUALITY_WEIGHTS,
+        decay_tau_days={**_V7_DEFAULT_DECAY_TAU_DAYS, **(decay or {})},
+    )
+
+
+def v7_raw_delta_z(
+    q: float,
+    *,
+    novelty: float,
+    rhythm: float,
+    mood: float,
+    impression: float,
+    repair: bool,
+    settings: V7Settings,
+) -> float:
+    """§2.2 更新式（护栏前）：Δz = base_step·q·novelty·rhythm·mood·impression，
+    修复通道对正向 ×repair_gain；负向单事件 |Δz| ≤ negative_event_cap_z。"""
+    delta = settings.base_step * q * novelty * rhythm * mood * impression
+    if repair and delta > 0.0:
+        delta *= settings.repair_gain
+    if delta < 0.0:
+        delta = max(delta, -settings.negative_event_cap_z)
+    return delta
+
+
+_V7_RECENT_WINDOW = 8  # 延展度复读检测的近期文本指纹数（有界，防状态无限增长）
+
+
+def _v7_load_state(raw: str | None) -> dict[str, Any]:
+    """解析 v7_state JSON（坏数据一律重置为空态，绝不抛——观测面 fail-open）。"""
+    try:
+        data = json.loads(str(raw or "{}"))
+    except (ValueError, TypeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    types: dict[str, list[float]] = {}
+    raw_types = data.get("types")
+    if isinstance(raw_types, dict):
+        for key, value in raw_types.items():
+            try:
+                count, at = float(value[0]), float(value[1])
+            except (ValueError, TypeError, IndexError):
+                continue
+            if count >= 0.0:
+                types[str(key)] = [count, at]
+    ema = [0.0, 0.0]
+    raw_ema = data.get("ema")
+    if isinstance(raw_ema, (list, tuple)) and len(raw_ema) == 2:
+        try:
+            ema = [max(0.0, float(raw_ema[0])), max(0.0, float(raw_ema[1]))]
+        except (ValueError, TypeError):
+            pass
+    day: dict[str, Any] = {"i": -1, "s": 0.0, "c": {}}
+    raw_day = data.get("day")
+    if isinstance(raw_day, dict):
+        try:
+            raw_counts = raw_day.get("c")
+            day = {
+                "i": int(raw_day.get("i", -1)),
+                "s": max(0.0, float(raw_day.get("s", 0.0))),
+                "c": (
+                    {str(k): max(0, int(v)) for k, v in raw_counts.items()}
+                    if isinstance(raw_counts, dict)
+                    else {}
+                ),
+            }
+        except (ValueError, TypeError):
+            pass
+    recent = [str(x) for x in data.get("recent", []) if isinstance(x, str)][-_V7_RECENT_WINDOW:]
+    return {"types": types, "ema": ema, "day": day, "recent": recent}
+
+
+def _v7_dump_state(state: dict[str, Any]) -> str:
+    return json.dumps(
+        {
+            "types": {k: [round(v[0], 6), v[1]] for k, v in state["types"].items()},
+            "ema": [round(state["ema"][0], 6), state["ema"][1]],
+            "day": {
+                "i": state["day"]["i"],
+                "s": round(float(state["day"]["s"]), 8),
+                "c": dict(state["day"]["c"]),
+            },
+            "recent": state["recent"][-_V7_RECENT_WINDOW:],
+        },
+        ensure_ascii=False,
+    )
+
 # ---- §4 档位表：线性 8 档，每档宽 25，档0=友善含基准 10；边界左闭右开（最高档含 +100）。
 # 展示区间 = internal × 100；档 id -4..+3（v3 曾返回具名 id close/friendly/polite/distant，
 # v4 改为整数档 id——向后兼容点，调用方以 providers.py 的 familiarity 映射为准）。
@@ -627,11 +1157,18 @@ def extract_profile_facts(text: str) -> list[str]:
 
 
 class DynamicAffinityStore:
-    """SQLite 动态好感度与印象标签；线程安全。"""
+    """SQLite 动态好感度与印象标签；线程安全。
 
-    def __init__(self, db_path: str | Path, *, clock: Any = time.time) -> None:
+    v7：``config`` 可选传入 Config/零参可调用（逐调用现读 12 枚 v7 键）；
+    缺省 None 时回退 env 现读（生产 .env 由 nonebot 装载进进程环境）。
+    共享工厂（根 ``__init__.build_character_affinity_store``）当前不传句柄，
+    走 env 回退——bot_affinity_v7_enabled 改 env+重启即生效，行为一致。
+    """
+
+    def __init__(self, db_path: str | Path, *, clock: Any = time.time, config: Any = None) -> None:
         self.db_path = Path(db_path)
         self._clock = clock
+        self._config_ref = config
         self._lock = threading.Lock()
         # 进程内复用单一连接：每条聊天消息 observe/snapshot 各一次，SQLite
         # 连接建立偏贵；全部操作已在 self._lock 下串行，check_same_thread=False
@@ -682,6 +1219,12 @@ class DynamicAffinityStore:
                 # impression_tags 本体保持纯标签名列表不变（库内全量保留可溯）；
                 # 存量行缺时间戳条目时快照侧回退行级 updated_at 锚点，无需数据迁移。
                 ("impression_tag_times", "TEXT NOT NULL DEFAULT '{}'"),
+                # v7 潜变量表示（规格 §三.1）：z_latent 惰性补齐（首次 v7 写入时由
+                # affinity 列经 atanh(clamp) 推导，绝不重置存量）；v7_state 为新鲜度
+                # 计数/活跃 EMA/当日位移/近期文本指纹的 JSON 载体。家规 ALTER-if-missing
+                # （先例：first_signals/first_impression/created_at 三列），禁 DROP 禁重建。
+                ("z_latent", "REAL"),
+                ("v7_state", "TEXT NOT NULL DEFAULT '{}'"),
             ):
                 if column not in columns:
                     connection.execute(f"ALTER TABLE user_affinity ADD COLUMN {column} {ddl}")
@@ -733,6 +1276,11 @@ class DynamicAffinityStore:
                     connection.execute(
                         f"ALTER TABLE affinity_delta_log ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
                     )
+            # v7 §三.3：delta 日志继续用于事后复盘，新增 z_after（v7 行落盘后的
+            # 潜变量值；v5 分口径行为 NULL）。source='v7' 行以 z 为单位记账，
+            # 被 v5 分口径滚动预算查询显式排除（单位不混用）。
+            if "z_after" not in delta_log_columns:
+                connection.execute("ALTER TABLE affinity_delta_log ADD COLUMN z_after REAL")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_affinity_delta_log_sender_time"
                 " ON affinity_delta_log (sender_id, applied_at)"
@@ -768,6 +1316,7 @@ class DynamicAffinityStore:
         mood_valence: float | None = None,
         bot_id: str = "",
         source_event_id: str | None = None,
+        responded_to_question: bool | None = None,
     ) -> float:
         """记录一次行为并更新好感度；返回更新后的 affinity。
 
@@ -776,6 +1325,9 @@ class DynamicAffinityStore:
         行为一律过持久化滚动预算（误扣/刷分双防线）；``bot_id`` 参与预算
         汇总维度（同 principal 跨 bot 隔离）；``source_event_id`` 提供时
         事务内幂等——重复事件只返回既有结果，不重复扣加、不重复计数。
+        v7：``responded_to_question`` 为可选真事实（bot 上一轮提问而用户是否
+        作答），None=现网缺省，q 的回应性子项按会话内代理计算（规格 §2.3，
+        接线见 WP7 日志「交接段」）。
         """
         return self._observe(
             sender_id,
@@ -787,6 +1339,7 @@ class DynamicAffinityStore:
             mood_valence=mood_valence,
             bot_id=bot_id,
             source_event_id=source_event_id,
+            responded_to_question=responded_to_question,
         )
 
     def observe_points(
@@ -853,7 +1406,8 @@ class DynamicAffinityStore:
         last_applied_at: float | None = None
         for row in connection.execute(
             "SELECT applied_at, delta, source FROM affinity_delta_log"
-            " WHERE sender_id = ? AND bot_id = ? AND applied_at >= ?",
+            " WHERE sender_id = ? AND bot_id = ? AND applied_at >= ?"
+            " AND COALESCE(source, '') <> 'v7'",
             (sender_id, bot_id, window_24h_start),
         ):
             applied = float(row["delta"])
@@ -904,6 +1458,159 @@ class DynamicAffinityStore:
             )
         return applied_delta
 
+    def _v7_delta(
+        self,
+        connection: sqlite3.Connection,
+        sender_id: str,
+        bot_id: str,
+        behavior: str,
+        z: float,
+        *,
+        v7: V7Settings,
+        state_json: str,
+        now: float,
+        day_index: int,
+        text: str,
+        gap_seconds: float | None,
+        delta_override: float | None,
+        mood_valence: float | None,
+        first_impression: float | None,
+        interaction_count: int,
+        day_counters: dict[str, int],
+        responded_to_question: bool | None,
+        source_event_id: str,
+    ) -> tuple[float, float, str]:
+        """v7 §2.2 更新体（同锁同事务内调用）。
+
+        返回 ``(applied_Δz, new_z, v7_state_json)``。护栏三道（在册 12 键）：
+        负向单事件 |Δz|≤negative_event_cap_z（在 v7_raw_delta_z 内）、
+        每人每日总位移 |ΣΔz|≤daily_move_cap_z（本地自然日、正负共享同额）、
+        同类信号日熔断 fuse_daily_events（超出不再计分、不喂新鲜度）。
+        冷却门沿用 _INTERACTION_COOLDOWN_SECONDS（去刷分语义不变）；
+        零增量不落日志不占冷却（v5 同律）。override 按 z 域直用（管理员/poke
+        权威信号语义不变，不喂新鲜度计数、不吃质量分），仍受日位移与硬界。
+        """
+        state = _v7_load_state(state_json)
+        # 活跃 EMA：所有抵达本体的事件都计入（rhythm 归一的"日均互动轮次"底数）。
+        ema_value, ema_at = state["ema"]
+        if now > ema_at:
+            ema_value *= 0.5 ** ((now - ema_at) / (_V7_RHYTHM_HALFLIFE_DAYS * _DAY_SECONDS))
+        ema_value += 1.0
+        daily_rate = ema_value * math.log(2.0) / _V7_RHYTHM_HALFLIFE_DAYS
+        # 当日结构（自然日，进程本地时区——与 v5 day_index 同口径）。
+        day = state["day"]
+        if int(day.get("i", -1)) != day_index:
+            day = {"i": day_index, "s": 0.0, "c": {}}
+            state["day"] = day
+
+        def done(applied: float, new_z: float) -> tuple[float, float, str]:
+            state["ema"] = [ema_value, now]
+            return applied, new_z, _v7_dump_state(state)
+
+        # 冷却门（v5 同语义：距上一次实际计分事件 <60s 记 0，不阻塞回复）。
+        last_row = connection.execute(
+            "SELECT MAX(applied_at) FROM affinity_delta_log WHERE sender_id = ? AND bot_id = ?",
+            (sender_id, bot_id),
+        ).fetchone()
+        last_applied_at = last_row[0] if last_row is not None else None
+        if (
+            last_applied_at is not None
+            and now - float(last_applied_at) < _INTERACTION_COOLDOWN_SECONDS
+        ):
+            return done(0.0, z)
+
+        digest = hashlib.sha1((text or "").strip().encode("utf-8")).hexdigest()[:12]
+        if delta_override is not None:
+            # 权威信号：z 域直用（负向同样受单事件上限），不占每日额度、
+            # 不喂新鲜度（v5 override "不占每日额度"语义保持）。
+            raw = float(delta_override)
+            if raw < 0.0:
+                raw = max(raw, -v7.negative_event_cap_z)
+            repair = False
+            n_prev: float | None = None
+        else:
+            cap = _DAILY_EFFECTIVE_CAPS.get(behavior)
+            used = int(day_counters.get(behavior, 0))
+            day_counters[behavior] = used + 1  # 与 v5 同步进日计数（兜底帽照常累计）
+            fuse_today = int(day["c"].get(behavior, 0))
+            if (cap is not None and used >= cap) or fuse_today >= v7.fuse_daily_events:
+                # 每日有效上限（v5 兜底）与 v7 熔断：超限不计分，也不喂新鲜度计数。
+                return done(0.0, z)
+            repeated = bool(digest) and digest in state["recent"]
+            q = v7_quality_score(
+                text,
+                behavior=behavior,
+                gap_seconds=gap_seconds,
+                repeated_recently=repeated,
+                responded_to_question=responded_to_question,
+                weights=v7.quality_weights,
+            )
+            repair = _v7_is_repair(text, behavior)
+            if q == 0.0:
+                if digest:
+                    state["recent"] = (state["recent"] + [digest])[-_V7_RECENT_WINDOW:]
+                return done(0.0, z)
+            types = state["types"]
+            prev_entry = types.get(behavior)
+            tau_days = v7.novelty_tau_days_for(behavior)
+            if prev_entry is None:
+                n_prev = 0.0
+            else:
+                stored_n, stored_at = prev_entry
+                n_prev = (
+                    stored_n * 0.5 ** ((now - stored_at) / (tau_days * _DAY_SECONDS))
+                    if now > stored_at
+                    else stored_n
+                )
+            novelty = v7_novelty_factor(n_prev, v7.novelty_ratio)
+            mood = (
+                1.0
+                if mood_valence is None
+                else max(0.85, min(1.15, state_factor_from_valence(mood_valence)))
+            )
+            impression = max(
+                0.80, min(1.25, first_impression_factor(first_impression, interaction_count))
+            )
+            raw = v7_raw_delta_z(
+                q,
+                novelty=novelty,
+                rhythm=v7_rhythm_factor(daily_rate, v7.rhythm_reference_turns),
+                mood=mood,
+                impression=impression,
+                repair=repair,
+                settings=v7,
+            )
+        # 日位移护栏：|ΣΔz| 当日累计（正负共享同额），余量不足按序截断。
+        remaining = max(0.0, v7.daily_move_cap_z - float(day.get("s", 0.0)))
+        if raw == 0.0 or remaining <= 0.0:
+            return done(0.0, z)
+        applied = min(raw, remaining) if raw > 0.0 else -min(-raw, remaining)
+        new_z = max(-v7.z_hard, min(v7.z_hard, z + applied))
+        applied = new_z - z
+        if applied == 0.0:
+            # 已贴硬界（理论上 ±98.5 外才可能到这里）：不占当日额度不落日志。
+            return done(0.0, z)
+        day["s"] = float(day.get("s", 0.0)) + abs(applied)
+        if delta_override is None:
+            day["c"][behavior] = int(day["c"].get(behavior, 0)) + 1
+            if n_prev is not None:
+                # 修复通道不喂新鲜度计数（§2.2 repair 行：和解不该被同类配额挡住）；
+                # 其余计分事件计数 +1（跨日不重置，按 τ 半衰回升）。
+                state["types"][behavior] = [n_prev if repair else n_prev + 1.0, now]
+            if digest:
+                state["recent"] = (state["recent"] + [digest])[-_V7_RECENT_WINDOW:]
+        connection.execute(
+            "DELETE FROM affinity_delta_log WHERE applied_at < ?",
+            (now - _BUDGET_LOG_RETENTION_SECONDS,),
+        )
+        connection.execute(
+            "INSERT INTO affinity_delta_log"
+            " (sender_id, bot_id, applied_at, delta, source, source_event_id, z_after)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (sender_id, bot_id, now, applied, "v7", source_event_id, new_z),
+        )
+        return done(applied, new_z)
+
     def _observe(
         self,
         sender_id: str,
@@ -918,6 +1625,7 @@ class DynamicAffinityStore:
         source_cap_24h_internal: float | None = None,
         bot_id: str = "",
         source_event_id: str | None = None,
+        responded_to_question: bool | None = None,
     ) -> float:
         if not sender_id:
             return _AFFINITY_BASE
@@ -945,10 +1653,12 @@ class DynamicAffinityStore:
                 " nickname, impression_tags, impression_tag_times, profile_notes,"
                 " counter_day_index, day_counters, updated_at,"
                 " last_positive_at, last_negative_at, last_insult_at,"
-                " first_signals, first_impression, created_at"
+                " first_signals, first_impression, created_at, z_latent, v7_state"
                 " FROM user_affinity WHERE sender_id = ?",
                 (sender_id,),
             ).fetchone()
+            z_keep: float | None = None
+            v7_state_keep = "{}"
             if row is None:
                 affinity = _AFFINITY_BASE
                 counters = {"positive": 0, "negative": 0, "tease": 0, "insult": 0}
@@ -993,6 +1703,9 @@ class DynamicAffinityStore:
                 day_counters = (
                     json.loads(str(row["day_counters"] or "{}")) if row_day == day_index else {}
                 )
+                # v7 列透传（v7-off 路径不得丢态：flag 来回切换可续跑）。
+                z_keep = float(row["z_latent"]) if row["z_latent"] is not None else None
+                v7_state_keep = str(row["v7_state"] or "{}")
             # 惰性回归：闲置 ≥7 天起每天向基数 0.1（10 分）回归 0.01，不超过剩余距离。
             # V2.1 §2.3 passive_decay_enabled=false（缺席不默认扣分）：旧 v5 §3 回归体
             # 保留、由政策门开关，缺省关闭（policy_revision=v21.1，冲突值迁移不并存）。
@@ -1010,33 +1723,75 @@ class DynamicAffinityStore:
             # v6 平滑层：repeat_index=当日此前同类型行为次数——同日同类信号
             # 边际递减（0.6^n 下限 0.2），叠加饱和响应（近 ±1 平滑收窄）。
             companion_days = max(0.0, now - (_parse_utc(created_at) or now)) / _DAY_SECONDS
-            if delta_override is not None:
-                delta = float(delta_override)
+            v7 = resolve_v7_settings(self._config_ref)
+            if v7.enabled:
+                # ---- v7 潜变量路径（规格 §二；v5/v6 分口径预算与饱和带不叠加）----
+                z_now = (
+                    z_keep
+                    if z_keep is not None
+                    else v7_display_fraction_to_z(affinity, v7.z_hard_bound)
+                )
+                if z_keep is not None and abs(affinity - v7_z_to_display_fraction(z_keep)) > 1e-9:
+                    # flag 切换期间 v5 路径移动过展示值而 z_latent 停更——以 affinity
+                    # 为权威显示事实重推 z（回退→再开不吞回退期变化）。
+                    z_now = v7_display_fraction_to_z(affinity, v7.z_hard_bound)
+                prev_updated = _parse_utc(str(row["updated_at"])) if row is not None else None
+                gap_seconds = max(0.0, now - prev_updated) if prev_updated is not None else None
+                delta, z_now, v7_state_keep = self._v7_delta(
+                    connection,
+                    sender_id,
+                    bot_id,
+                    behavior,
+                    z_now,
+                    v7=v7,
+                    state_json=v7_state_keep,
+                    now=now,
+                    day_index=day_index,
+                    text=text,
+                    gap_seconds=gap_seconds,
+                    delta_override=delta_override,
+                    mood_valence=mood_valence,
+                    first_impression=first_impression,
+                    interaction_count=interactions,
+                    day_counters=day_counters,
+                    responded_to_question=responded_to_question,
+                    source_event_id=source_event_id or "",
+                )
+                # 表示变换后回写展示口径：affinity = tanh(z)（|tanh|<1 恒成立，
+                # 结构上永不触顶——v5 的 ±1 硬 clamp 在本路径成为空操作，保留无害）。
+                # delta 置零防止下方共用行二次叠加（z_now 已含位移；落日志在
+                # _v7_delta 内以 applied 完成）。
+                z_keep = z_now
+                affinity = v7_z_to_display_fraction(z_now)
+                delta = 0.0
             else:
-                cap = _DAILY_EFFECTIVE_CAPS.get(behavior)
-                used = int(day_counters.get(behavior, 0))
-                if cap is not None and used >= cap:
-                    delta = 0.0
+                if delta_override is not None:
+                    delta = float(delta_override)
                 else:
-                    delta = effective_delta(
-                        sender_id,
-                        behavior,
-                        affinity,
-                        text=text,
-                        first_impression=first_impression,
-                        interaction_count=interactions,
-                        companion_days=companion_days,
-                        mood_valence=mood_valence,
-                        repeat_index=used,
-                    )
-                day_counters[behavior] = used + 1
-            # V2.1 §2.3：override 与普通行为一律过持久化滚动预算——同一锁+连接
-            # 事务内读 (principal, bot) 6h/24h 聚合与冷却门、钳出最终 delta 并落
-            # 日志行（重启/跨午夜不重置，切群不重置，跨 bot 隔离）。
-            delta = self._clamp_delta_to_rolling_budget(
-                connection, sender_id, bot_id, delta, now, source,
-                source_cap_24h_internal, source_event_id or "",
-            )
+                    cap = _DAILY_EFFECTIVE_CAPS.get(behavior)
+                    used = int(day_counters.get(behavior, 0))
+                    if cap is not None and used >= cap:
+                        delta = 0.0
+                    else:
+                        delta = effective_delta(
+                            sender_id,
+                            behavior,
+                            affinity,
+                            text=text,
+                            first_impression=first_impression,
+                            interaction_count=interactions,
+                            companion_days=companion_days,
+                            mood_valence=mood_valence,
+                            repeat_index=used,
+                        )
+                    day_counters[behavior] = used + 1
+                # V2.1 §2.3：override 与普通行为一律过持久化滚动预算——同一锁+连接
+                # 事务内读 (principal, bot) 6h/24h 聚合与冷却门、钳出最终 delta 并落
+                # 日志行（重启/跨午夜不重置，切群不重置，跨 bot 隔离）。
+                delta = self._clamp_delta_to_rolling_budget(
+                    connection, sender_id, bot_id, delta, now, source,
+                    source_cap_24h_internal, source_event_id or "",
+                )
             # §1 v4：写入路径全部 clamp 到 [-1, +1]（存量 [0,1] 旧值恒等沿用，无迁移）。
             affinity = max(-1.0, min(1.0, affinity + delta))
             if behavior in counters:
@@ -1071,8 +1826,8 @@ class DynamicAffinityStore:
                      tease_count, insult_count, nickname, impression_tags, impression_tag_times,
                      profile_notes, counter_day_index, day_counters, updated_at,
                      last_positive_at, last_negative_at, last_insult_at,
-                     first_signals, first_impression, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     first_signals, first_impression, created_at, z_latent, v7_state)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sender_id,
@@ -1095,6 +1850,8 @@ class DynamicAffinityStore:
                     json.dumps(first_signals if first_impression is None else [], ensure_ascii=False),
                     first_impression,
                     created_at,
+                    z_keep,
+                    v7_state_keep,
                 ),
             )
             # 群镜像：带 group_id 时写该群；不带时同步该用户已镜像的全部群，

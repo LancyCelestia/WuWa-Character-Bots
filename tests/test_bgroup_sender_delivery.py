@@ -1,6 +1,6 @@
 """B组 sender 域回归（管线检视 #6/#10/#13 + B-12 代理注入）。
 
-离线运行（SQLite 用 tmp_path，无网络、无 NapCat）：
+离线运行（SQLite 用 tmp_path，无网络、无 SnowLuma）：
 
     PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/test_bgroup_sender_delivery.py -q
 
@@ -31,9 +31,11 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.sender import nonebot as nonebot_sender
-from plugins.bot_unified_runtime.sender import onebot as onebot_sender
-from plugins.bot_unified_runtime.sender import queue as queue_module
+from plugins.bot_unified_runtime.domains.transport.sender import (
+    nonebot as nonebot_sender,
+)
+from plugins.bot_unified_runtime.domains.transport.sender import onebot as onebot_sender
+from plugins.bot_unified_runtime.domains.transport.sender import queue as queue_module
 from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
 
 

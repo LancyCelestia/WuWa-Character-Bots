@@ -1,9 +1,9 @@
 """universal_card.html 解析卡视觉对标升级（vis1 2026-09-12）结构断言。
 
 锁定对标落地后的结构契约（全离线 Jinja 渲染，无 playwright）：
-- 统计瓦片数字用平台 accent（--pc-dark），图标仍为 --pc；
+- 统计瓦片数字用平台 accent（--accent-dark），图标仍为 --accent；
 - fmt_count 宏：整型数量级格式化（亿/万，.0 尾数收敛，数字与单位间 U+2009 窄空格），非整型原样透传；
-- 摘要块「内容摘要」小标 + 左侧 --pc 竖条（::before）；
+- 摘要块「内容摘要」小标 + 左侧 --accent 竖条（::before）；
 - 媒体时长角标左下置位；清晰度角标 .quality-pill 仅为 bridge 字段预留钩子
   （video_quality 未入 RenderPayload 前元素永不渲染）；
 - 页脚左侧媒体 ID（bvid 优先，av_id 兜底）；
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.output.card_render import bridge
+from plugins.bot_unified_runtime.domains.render.card_render import bridge
 
 _TEMPLATES_DIR = Path(bridge.__file__).resolve().parent / "templates"
 _TEMPLATE_NAME = "universal_card.html"
@@ -53,11 +53,11 @@ def _render(payload: dict[str, object]) -> str:
 
 # ==================== 统计瓦片 ====================
 def test_metric_value_uses_platform_accent() -> None:
-    assert "color:var(--pc-dark)" in _css_rule(".metric-value")
+    assert "color:var(--accent-dark)" in _css_rule(".metric-value")
 
 
 def test_metric_icon_keeps_primary_accent() -> None:
-    assert "color:var(--pc)" in _css_rule(".metric-icon")
+    assert "color:var(--accent)" in _css_rule(".metric-icon")
 
 
 def test_fmt_count_macro_scales_wan_yi_and_passes_through() -> None:
@@ -111,7 +111,7 @@ def test_summary_block_has_tag_and_accent_bar() -> None:
     html_text = _render({**_VIDEO_BASE, "summary": "守岸人测试简介"})
     assert '<span class="summary-tag">内容摘要</span>' in html_text
     before = _css_rule(".video-card-summary::before")
-    assert "background:var(--pc)" in before
+    assert "background:var(--accent)" in before
     assert "content:&quot;&quot;" not in before  # 伪元素 content 正常声明
     assert 'content:""' in before
 

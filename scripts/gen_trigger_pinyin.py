@@ -30,7 +30,7 @@ from pypinyin import Style, lazy_pinyin, pinyin
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ECHO_PATH = REPO_ROOT / "plugins" / "bot_unified_runtime" / "capabilities" / "echo.py"
-BASE_ROUTER_PATH = REPO_ROOT / "plugins" / "bot_unified_runtime" / "runtime" / "base_router.py"
+BASE_ROUTER_PATH = REPO_ROOT / "plugins" / "bot_unified_runtime" / "domains" / "chat_reply" / "runtime" / "base_router.py"
 CAPABILITIES_DIR = REPO_ROOT / "plugins" / "bot_unified_runtime" / "capabilities"
 DEFAULT_OUT = (
     REPO_ROOT

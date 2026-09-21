@@ -15,21 +15,32 @@ from datetime import datetime, timezone
 
 import pytest
 
-from plugins.bot_unified_runtime.contracts.subscription import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine import (
+    model_router as router_module,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+    ModelRouter,
+    ModelSpec,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
+    LLMReply,
+)
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionFetchResult,
     SubscriptionSpec,
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.llm import model_router as router_module
-from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
-from plugins.bot_unified_runtime.llm.providers import LLMProviderError, LLMReply
-from plugins.bot_unified_runtime.output.plain_text import humanize_reply
-from plugins.bot_unified_runtime.sources import meme_search, web_search
-from plugins.bot_unified_runtime.sources.subscription_scheduler import PlatformThrottle
-from plugins.bot_unified_runtime.sources.subscriptions import (
+from plugins.bot_unified_runtime.domains.core.search import web_search
+from plugins.bot_unified_runtime.domains.subscribe.adapters import (
     bilibili_adapter,
     social_v2,
 )
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_scheduler import (
+    PlatformThrottle,
+)
+from plugins.bot_unified_runtime.output.plain_text import humanize_reply
+from plugins.bot_unified_runtime.sources import meme_search
 
 # ---------- DDG 重定向解码 ----------
 

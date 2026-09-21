@@ -18,13 +18,13 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities import fx as fx_cap
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     IncomingMessage,
     SessionType,
 )
-from plugins.bot_unified_runtime.contracts.finance import FxRate
+from plugins.bot_unified_runtime.domains.core.contracts.finance import FxRate
+from plugins.bot_unified_runtime.domains.finance.capabilities import fx as fx_cap
 
 _PANEL_SUBTITLE = "中间价/参考价 · 延迟行情"
 _PANEL_BODY = "主要货币汇率速览\n1美元 ≈ 6.71 人民币\n100日元 ≈ 4.36 人民币"
@@ -107,7 +107,7 @@ class _FakeBackend:
 @pytest.fixture()
 def _stub_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.fx_data.fetch_fx_rates",
+        "plugins.bot_unified_runtime.domains.finance.data.fx_data.fetch_fx_rates",
         lambda timeout_seconds=6.0, cache_seconds=60.0: _rates(),
     )
 
@@ -225,12 +225,12 @@ class TestCardFilenameSemantics:
         backend = _FakeBackend()
         capability = _capability(tmp_path, backend)
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.sources.fx_data.fetch_fx_rates",
+            "plugins.bot_unified_runtime.domains.finance.data.fx_data.fetch_fx_rates",
             lambda timeout_seconds=6.0, cache_seconds=60.0: _rates(),
         )
         r1 = capability(_make_message("汇率"), _make_decision())
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.sources.fx_data.fetch_fx_rates",
+            "plugins.bot_unified_runtime.domains.finance.data.fx_data.fetch_fx_rates",
             lambda timeout_seconds=6.0, cache_seconds=60.0: _rates_alt(),
         )
         r2 = capability(_make_message("汇率"), _make_decision())

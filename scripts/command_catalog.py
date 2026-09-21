@@ -2,11 +2,17 @@
 
 数据真相源（全部静态提取，绝不 import 插件包——包导入会触发 NoneBot 装配，
 脚本必须能脱离 bot 独立运行）：
-- capabilities/echo.py 的 ``_HELP_ENTRIES``（命令注册表）、
+- domains/chat_reply/capabilities/echo.py 的 ``_HELP_ENTRIES``（命令注册表）、
   ``_HELP_ENTRY_META``（结构化元数据）、``_HELP_EXTRA_LINES``（追加说明）；
 - runtime/base_router.py 的 ``build_interface_manifest``（接口清单）、
   ``RouteKind``（路由 kind）与 ``INTERNAL_CAPABILITY_NOTES``（无帮助主题的内部路由能力）；
 - runtime/aliases.py 的 ``DEFAULT_VERB_MAP``（昵称动词 → capability id）。
+
+单一事实源纪律（HELP-1/HELP-2，2026-09-20）：``detail`` 的【指令与参数】段在 echo.py
+里已不再手写，改由 ``_compose_help_detail()`` 从 ``lines[]`` 装配期派生。本脚本**绝不
+重写**那份派生逻辑（重写＝造第二事实源，正是归一在治的病），而是按 AST 取 echo.py
+中该定义的**源码片段**就地 exec——实现仍只有 echo.py 一份：它改这里自动跟随，它改名
+或删定义这里立刻抛错（宁红不静默漂移）。
 
 用法：``python scripts/command_catalog.py --write`` 写盘；无参数为校验模式
 （目录过期时打印提示并返回 1，供测试与 CI 拦截）。
@@ -17,12 +23,17 @@ from __future__ import annotations
 import ast
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 ROOT = Path(__file__).resolve().parents[1]
-ECHO_SOURCE = ROOT / "plugins" / "bot_unified_runtime" / "capabilities" / "echo.py"
-ROUTER_SOURCE = ROOT / "plugins" / "bot_unified_runtime" / "runtime" / "base_router.py"
-ALIASES_SOURCE = ROOT / "plugins" / "bot_unified_runtime" / "runtime" / "aliases.py"
+# v21r2 RWC3：echo 真身迁 domains/chat_reply/capabilities/（静态提取必指真身）。
+ECHO_SOURCE = (
+    ROOT / "plugins" / "bot_unified_runtime" / "domains" / "chat_reply" / "capabilities" / "echo.py"
+)
+ROUTER_SOURCE = ROOT / "plugins" / "bot_unified_runtime" / "domains" / "chat_reply" / "runtime" / "base_router.py"
+ALIASES_SOURCE = ROOT / "plugins" / "bot_unified_runtime" / "domains" / "chat_reply" / "runtime" / "aliases.py"
 DOC = ROOT / "docs" / "command-catalog.md"
 
 _MANIFEST_KEYS = (
@@ -162,18 +173,94 @@ def _alias_capability_ids() -> set[str]:
     return set(value.values())
 
 
+# echo.py 中「由 lines[] 派生 detail 的【指令与参数】段」这条链的**全部**模块级定义。
+# 少列一个 ⇒ 就地 exec 时 NameError（响亮失败）；多列一个而 echo 已删 ⇒ 下面的
+# missing 检查抛错。两种情况都逼人来同步，绝不静默退化成"生成器自己抹一份"。
+_HELP_DERIVATION_NAMES: tuple[str, ...] = (
+    "_HELP_COMMAND_SECTION_HEADER",
+    "_HELP_INTRO_HEADER",
+    "_HELP_NARRATIVE_HEADER_RE",
+    "_derive_help_command_section",
+    "_compose_help_detail",
+)
+
+_HELP_COMPOSER_CACHE: dict[str, Callable[[str, list[str]], str]] = {}
+
+
+def _echo_help_detail_composer() -> Callable[[str, list[str]], str]:
+    """返回 echo.py 的派生函数 ``_compose_help_detail`` 本体（同一份实现，零复制）。
+
+    为什么用「AST 取源码片段 + 隔离命名空间 exec」而不是 import：
+    import 插件包会触发 NoneBot 装配（本脚本的既有约束是能脱离 bot 独跑）；
+    而在本文件里另写一份拼接逻辑会造出第二个事实源——HELP-1 归一治的就是这个病。
+    exec 的是 echo.py 的原语句，因此真源仍只有一份：它改了这里自动跟随。
+    """
+    cached = _HELP_COMPOSER_CACHE.get("compose_help_detail")
+    if cached is not None:
+        return cached
+    source = ECHO_SOURCE.read_text(encoding="utf-8")
+    tree = _module_tree(ECHO_SOURCE)
+    namespace: dict[str, object] = {"__name__": "command_catalog_echo_derivation", "re": re}
+    defined: set[str] = set()
+    for node in tree.body:
+        names: set[str] = set()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            names.update(target.id for target in targets if isinstance(target, ast.Name))
+        hits = names.intersection(_HELP_DERIVATION_NAMES)
+        if not hits:
+            continue
+        segment = ast.get_source_segment(source, node)
+        if not segment:
+            raise RuntimeError(
+                f"{ECHO_SOURCE.name}：取不到 {sorted(hits)} 的源码片段，无法复用派生真源"
+            )
+        exec(  # noqa: S102 - 输入源固定为仓内 `ECHO_SOURCE`（帮助注册表真身，非任何外部/用户输入）：
+            # 这里执行的是从该文件按 AST 原样取出的**模块级定义语句**，目的正是复用而非重写
+            # echo.py 的派生实现。改成"在这里再拼一遍"才是本波在治的第二事实源缺陷。
+            compile(segment, f"{ECHO_SOURCE.name}::<help-derivation>", "exec"),
+            namespace,
+        )
+        defined.update(hits)
+    missing = [name for name in _HELP_DERIVATION_NAMES if name not in defined]
+    if missing:
+        raise RuntimeError(
+            f"{ECHO_SOURCE.name} 里找不到帮助文案派生真源 {missing}；"
+            "请同步本脚本的 _HELP_DERIVATION_NAMES——禁止在生成器里另抄一份派生逻辑"
+        )
+    composer = namespace["_compose_help_detail"]
+    if not callable(composer):
+        raise TypeError(f"{ECHO_SOURCE.name} 的 _compose_help_detail 不可调用（派生真源形状变了）")
+    fn = cast("Callable[[str, list[str]], str]", composer)
+    _HELP_COMPOSER_CACHE["compose_help_detail"] = fn
+    return fn
+
+
 def merged_entries() -> list[dict[str, object]]:
-    """把元数据与追加说明按 echo.py 运行时的同一套合并规则并回注册表。"""
+    """把元数据与追加说明按 echo.py 运行时的同一套合并规则并回注册表。
+
+    与 ``echo.py`` 的 ``_HELP_ENTRIES`` 装配循环逐语句同构（extras 并 lines →
+    META setdefault → detail 的【指令与参数】段按 lines 派生），派生调用
+    ``_echo_help_detail_composer()`` 拿到的 echo 原函数；
+    ``tests/test_documentation_consistency.py::test_runtime_help_entries_match_static_merge``
+    钉的就是这两条路径必须逐字段相等。
+    """
     extra = _extra_lines()
     meta = _entry_meta()
+    compose_detail = _echo_help_detail_composer()
     merged = [dict(entry) for entry in _entries()]
     for entry in merged:
         additions = extra.get(str(entry.get("topic")), ())
         if additions:
             entry["lines"] = [*entry.get("lines", []), *additions]
-            entry["detail"] = str(entry.get("detail", "")) + "\n" + "\n".join(additions)
         for key, value in meta.get(str(entry.get("topic")), {}).items():
             entry.setdefault(key, value)
+        entry["detail"] = compose_detail(
+            str(entry.get("detail") or ""),
+            [str(line) for line in entry.get("lines", [])],
+        )
     return merged
 
 
@@ -197,7 +284,7 @@ def render(entries: list[dict[str, object]]) -> str:
     lines = [
         "# 守岸人命令与教程目录",
         "",
-        "> 本文件由 `scripts/command_catalog.py` 从 `capabilities/echo.py` 的帮助注册表与",
+        "> 本文件由 `scripts/command_catalog.py` 从 `domains/chat_reply/capabilities/echo.py` 的帮助注册表与",
         "> `runtime/base_router.py` 的路由/接口清单自动生成。不要手工修改；",
         "> 修改帮助页数据后运行 `python scripts/command_catalog.py --write`。",
         "> `/bot help`、`/bot help <模块>` 与本目录共享同一数据源。",
@@ -327,9 +414,11 @@ def render(entries: list[dict[str, object]]) -> str:
             "### 教程",
             "",
         ])
-        detail = _text(entry.get("detail"))
-        if detail:
-            lines.extend(detail.splitlines())
+        # 教程块的取值口径＝**派生后的 detail**（叙述小节 + 由 lines 派生的【指令与参数】段），
+        # 与深页同源；else 只在 detail 被改空时兜底，正常永不走到（正常态下 detail 必含派生段）。
+        derived_detail = _text(entry.get("detail"))
+        if derived_detail:
+            lines.extend(derived_detail.splitlines())
         else:
             lines.extend(f"- {line}" for line in entry.get("lines", []))
         lines.extend(["", "### 帮助页一致性要求", "", "- 本模块的实时帮助以 `/bot help " + topic + "` 为准。", ""])

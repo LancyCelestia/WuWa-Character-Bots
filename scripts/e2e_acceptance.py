@@ -116,13 +116,14 @@ from plugins.bot_unified_runtime.contracts import (
 from plugins.bot_unified_runtime.decision.trace import (
     InMemoryDecisionTraceSink,
 )
-from plugins.bot_unified_runtime.output.render_backends import build_render_backend
-from plugins.bot_unified_runtime.policy import (
+from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     build_quiet_hours_checker,
     build_rate_limiter,
     build_reply_budget_settings,
     build_role_settings,
 )
+from plugins.bot_unified_runtime.domains.ops.smoke.smoke import load_smoke_config
+from plugins.bot_unified_runtime.output.render_backends import build_render_backend
 from plugins.bot_unified_runtime.runtime.base_router import (
     classify_message_route,
 )
@@ -133,7 +134,6 @@ from plugins.bot_unified_runtime.runtime.settings import (
 )
 from plugins.bot_unified_runtime.sender import InMemorySendQueue
 from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
-from plugins.bot_unified_runtime.smoke import load_smoke_config
 from plugins.bot_unified_runtime.sources.meme_library import MemeLibraryStore
 from plugins.bot_unified_runtime.sources.parsers import (
     build_cookie_provider,
@@ -2023,37 +2023,28 @@ def run_selftest() -> tuple[int, list[str]]:
     )
 
     # 7. 离线路由体检：全 topics 不抛异常；管理命令命中命令路由族。
-    #    已知上游缺陷 carve-out：未提交批次 plugins/.../runtime/timesync.py 的
-    #    now() 给 _SHARED 赋值但缺 global 声明 → UnboundLocalError，
-    #    「提醒」信号词文本的路由分类必崩（P1，已上报主会话，plugins/ 本任务禁改）。
-    #    selftest 只对「已知缺陷之外」的路由异常判 FAIL，缺陷本身以 WARN 显形。
+    #    2026-09-18 核心链路排查：原 carve-out（未提交批次 runtime/timesync.py 的
+    #    now() 缺 global _SHARED 声明 → UnboundLocalError，令「提醒」信号词路由
+    #    必崩）经实跑确认**已修复**——真身 domains/schedule/timesync/timesync.py
+    #    的 now() 已带 `global _SHARED, _SHARED_SIGNATURE`，直调返回正确时间。
+    #    据此移除该特判：路由异常一律判 FAIL，不再有被静默降级为 WARN 的盲区。
     config = _selftest_config()
     route_probed: list[tuple[str, str, str]] = []
     for spec in specs:
         kind, capability, reason = classify_spec_route(spec, config)
         route_probed.append((spec.topic, f"{kind}/{capability}", reason))
     status_kind, status_capability, _ = classify_spec_route(by_topic["状态"], config)
-    known_timesync = {
-        topic for topic, _route, reason in route_probed if "UnboundLocalError" in reason
-    }
-    other_route_errors = {
+    route_errors = {
         topic
-        for topic, route, reason in route_probed
-        if route.startswith("error/") and topic not in known_timesync
+        for topic, route, _reason in route_probed
+        if route.startswith("error/")
     }
     check(
         "route_probe",
-        not other_route_errors and status_capability.startswith("bot."),
+        not route_errors and status_capability.startswith("bot."),
         f"status→{status_kind}/{status_capability}; "
-        f"已知 timesync 缺陷命中={sorted(known_timesync) or '无'}; "
-        f"其他路由异常={sorted(other_route_errors) or '无'}",
+        f"路由异常={sorted(route_errors) or '无'}",
     )
-    if known_timesync:
-        lines.append(
-            "WARN upstream_timesync — plugins/bot_unified_runtime/runtime/timesync.py "
-            "now() 缺 global _SHARED 声明，UnboundLocalError：含「提醒」信号词的消息"
-            "在下次重启后将路由崩溃（P1 已上报主会话；本任务禁改 plugins/，未修）。"
-        )
 
     # 8. 报告渲染：三清单 + 通过率 + 建议复查。
     def _outcome(topic: str, status: str, **kwargs: Any) -> CommandOutcome:
@@ -2345,7 +2336,7 @@ def run_help_matrix(args: argparse.Namespace) -> int:
             generated_at=generated_at,
             subset_desc=",".join(subset_list) or "无",
             ws_desc=f"{ws_endpoint[0]}:{ws_endpoint[1]} 不可达（离线快速失败，未发送任何消息）",
-            headline="离线中止：bot/NapCat 未在线，全部条目未执行。",
+            headline="离线中止：bot/协议端（SnowLuma）未在线，全部条目未执行。",
         )
         for outcome in outcomes:
             outcome.status = "skipped"

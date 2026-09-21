@@ -27,6 +27,11 @@
   + 静音指纹），不可播字节**绝不落盘、绝不入缓存、绝不再交给 QQ**——2026-09-19 起
   QQ 端换件为 SnowLuma，坏 record 段是 fatal（整条消息一字不发），不再是旧实现
   「丢段留文字」。每条运营性失败另挂 ``OperationalIssue``（``_failure_issue``）走中央告警链。
+- **退避清零时机对齐（WP4/E1-1）**：健康退避闸（M-09）的「算成功=清零」判据与
+  产物校验严格对齐——只有 ``synthesize`` 通过全部校验（结构 + 静音指纹 + 字节顶）
+  且**落盘交付**后才 ``_clear_failure()``；引擎「200+恰 1s 静音」伪装成功不再被
+  抢跑清零、而是计入退避窗（窗内快速失败，不再白等 60s、不再占死线程池 worker）。
+  清零与进窗都只走 ``_record_failure``/``_clear_failure`` 单一状态机，无第二副本。
 - **对话自动配音**（可选）：``BOT_TTS_AUTO_REPLY_ENABLED`` 开启后，
   ``maybe_attach_voice()`` 把人格回复正文一并合成为语音随消息发出，
   由 ``__init__`` 的 chat 能力包装层调用。是否真的配音由
@@ -93,13 +98,14 @@ from plugins.bot_unified_runtime.domains.media.digest import (
 )
 from plugins.bot_unified_runtime.domains.media.tts_presets import (
     DEFAULT_PRESET_ID,
-    HARD_MAX_CHARS_FALLBACK,
     IDENTITY_VERSION,
     MAX_AUDIO_BYTES_FALLBACK,
     PRESET_REGISTRY,
     SEED_RULE_VERSION,
     TtsPreset,
     effective_lexicon,
+    resolve_hard_max_chars,
+    resolve_max_audio_bytes,
 )
 from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 from plugins.bot_unified_runtime.domains.render.roleplay import strip_action_brackets
@@ -148,6 +154,11 @@ _SILENCE_RATE = 16000
 _SILENCE_MIN_SECONDS = 0.9
 _SILENCE_MAX_SECONDS = 1.1
 _SILENCE_PEAK_AMPLITUDE = 2
+# 静音陷阱产物的机读签名（体检拒因的前缀，退避归类与结构类拒因的唯一分界）：
+# 引擎「HTTP 200 + 恰 1s 静音」伪装成功=部署类故障，须计退避窗（WP4/E1-1）；
+# 非 RIFF/头不可解析/零帧等结构类坏字节则不入窗（分类学既有，禁放宽）。
+# 该串只作前缀判据，不参与文案；改判据须同步 _inspect_wav_bytes 与 synthesize。
+_SILENCE_TRAP_MARK = "静音陷阱："
 
 # 合成结果缓存（进程内 LRU 索引）：key → (落盘路径, 写入时刻)。
 # 键数封顶，避免长跑进程按文本无界增长（对齐 runtime/reactions.py 惯例）。
@@ -161,9 +172,12 @@ _CACHE: OrderedDict[str, tuple[Path, float]] = OrderedDict()
 # 相对秒级 HTTP 合成可忽略；正确性收益=指纹恒为内容的纯函数。
 
 # 服务健康退避闸（M-09 接线，U-20 裁定=接线不删净）：真失败（不可达/被拒/
-# 空音频/httpx 缺失）进入冷却窗，窗内后续合成**不发 HTTP** 直接快速失败
-# （原因以「服务不可达」开头 → 挂 ``tts_service_unreachable`` 可重试 issue），
-# 窗满自动放行（非永久拉黑），真成功清零；快速失败不刷新窗口。
+# 空音频/httpx 缺失，以及 WP4 新增的「引擎 200+恰 1s 静音」伪装成功陷阱）进入
+# 冷却窗，窗内后续合成**不发 HTTP** 直接快速失败（原因以「服务不可达」开头 →
+# 挂 ``tts_service_unreachable`` 可重试 issue），窗满自动放行（非永久拉黑）；
+# 「真成功清零」的时机=产物过全部校验（结构+静音指纹+字节顶）且落盘交付之后
+# （synthesize 唯一成功提交点，WP4/E1-1：此前抢跑在 _request_tts 的 200 分支清零
+# 会让静音陷阱永不进窗）；快速失败不刷新窗口。结构类坏字节/字节顶超限不入窗。
 # 阈值=模块常量，不加新 config 键。
 # 线程安全：能力跑在 offload 线程池，「失败时刻+原因」必须成对读写——GIL 只
 # 保证单条赋值原子，保证不了配对一致，故模块级锁包住全部状态读写；临界区只有
@@ -602,11 +616,19 @@ def _request_tts(
     别的请求的原因，``_FAILURE_KINDS`` 错挂 kind 污染 M-13 告警分类。
 
     异常一律吞掉（fail-open）——调用方据此给降级文案。**失败分类学**
-    （T62 P2-1）：只有部署类失败进 30s 健康退避窗（``_record_failure``）——
+    （T62 P2-1 + WP4/E1-1）：只有部署类失败进 30s 健康退避窗（``_record_failure``）——
     不可达/超时、5xx、空音频、httpx 缺失；确定性请求类拒绝（4xx，如参考
     音频 3~10s 越界、参数错）**不进窗**：坏 ref 是持续性的，进窗只会让全员
-    周期性吃「服务没在跑」的失真文案。体检失败（``tts_bad_audio``）同口径
-    不入窗（retryable=False → 不设窗，存疑-1 裁定）。
+    周期性吃「服务没在跑」的失真文案。
+
+    **本函数不再清零退避状态**（WP4 根修）：旧实现在 HTTP 200 + 非空体分支抢跑
+    ``_clear_failure()``，而静音指纹闸在调用方 ``synthesize`` 的**更后面**才判 ⇒
+    引擎以「200 + 恰 1s 静音」伪装成功时每条请求都把上一轮失败清零、退避保护
+    永不启动，白等 60s 并占死一个线程池 worker。清零时机与「算成功」判据对齐：
+    唯一成功提交点在 ``synthesize``——产物过全部校验（结构 + 静音指纹 + 字节顶）
+    且落盘交付之后才 ``_clear_failure()``；静音陷阱产物由 ``synthesize`` 计入退避窗。
+    结构类坏字节（非 RIFF/头不可解析/零帧）与字节顶超限仍**不入窗**（既有分类学，
+    禁放宽——坏字节多是单次/瞬时，进窗只会周期性误伤全员）。
     """
     try:
         import httpx
@@ -650,7 +672,8 @@ def _request_tts(
     if not response.content:
         _record_failure("服务返回空音频")
         return None, "服务返回空音频"
-    _clear_failure()
+    # WP4/E1-1：此处**不清零**——200 + 非空体不代表「产物可用」，静音陷阱正长这样。
+    # 退避清零推迟到 synthesize 的产物校验 + 落盘交付之后（唯一成功提交点）。
     return response.content, ""
 
 
@@ -666,7 +689,8 @@ def _inspect_wav_bytes(data: bytes) -> str:
     ``16000Hz + 16000 个全零 int16``（恰 1s、≈32044 字节）再 raise，而非流式
     只消费一次 ⇒ 200+1 秒静音伪装成功。三条指纹同时命中才判静音（采样率
     ≠产物标称 32000 + 恰 1s 量级 + 全零/近全零），正常产物零误杀；命中即
-    失败——不落盘、不入缓存、不出站。
+    失败——不落盘、不入缓存、不出站，且**计入退避窗**（引擎以 200 伪装成功=
+    部署类故障，见 ``_SILENCE_TRAP_MARK`` 与 ``synthesize``；WP4/E1-1）。
     """
     if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
         return "非 RIFF/WAVE 字节"
@@ -678,13 +702,26 @@ def _inspect_wav_bytes(data: bytes) -> str:
         return "wav 头不可解析"
     if frames <= 0 or rate <= 0:
         return "零帧 wav"
+    trap_seconds = _silence_trap_seconds(rate, frames, data)
+    if trap_seconds > 0:
+        return f"{_SILENCE_TRAP_MARK}{trap_seconds:.1f} 秒静音（引擎推理异常伪装成功）"
+    return ""
+
+
+def _silence_trap_seconds(rate: int, frames: int, data: bytes) -> float:
+    """静音陷阱三指纹同中的**唯一判据**：命中返回时长（秒），否则 0.0。
+
+    单一事实源——结构体检（``_inspect_wav_bytes``）与退避归类（``synthesize``）
+    都据此，禁第二份副本。「非 RIFF/头不可解析/零帧」等结构类坏字节不走此路，
+    因而**不计退避窗**（分类学边界，禁放宽）。
+    """
     if (
         rate == _SILENCE_RATE
         and _SILENCE_MIN_SECONDS <= frames / rate <= _SILENCE_MAX_SECONDS
         and _is_near_silent(data, frames)
     ):
-        return f"{frames / rate:.1f} 秒静音（引擎推理异常伪装成功）"
-    return ""
+        return frames / rate
+    return 0.0
 
 
 def _is_near_silent(data: bytes, frames: int) -> bool:
@@ -762,6 +799,13 @@ def synthesize(
     if bad:
         # 不可播字节**绝不落盘、绝不入缓存**：SnowLuma 换件后坏 record 段是 fatal
         # （整条消息一字不发，见 report-T46.md），毒件入缓存还会在进程存活期复放。
+        # WP4/E1-1：引擎「200 + 恰 1s 静音」伪装成功=部署类故障，计入退避窗——
+        # 窗内后续合成快速失败，不再白等 60s、不再占死线程池 worker（此前
+        # _request_tts 的 200 分支抢跑 _clear_failure ⇒ 该故障永不进窗）。
+        # 结构类坏字节（非 RIFF/头不可解析/零帧）与字节顶超限**不入窗**（分类学，
+        # 禁放宽）：它们不是「引擎活着却持续生产垃圾」的形态，进窗只会误伤全员。
+        if bad.startswith(_SILENCE_TRAP_MARK):
+            _record_failure(f"服务不可达：引擎以 200 返回静音伪装产物（{bad}）")
         logger.info("tts audio rejected by sanity gate: %s (%d bytes)", bad, len(audio))
         return None, f"音频体检失败：{bad}（{len(audio)} 字节）"
     try:
@@ -778,6 +822,9 @@ def synthesize(
         # ValueError 同捕（M-50：非法路径形态抛 ValueError 不该炸成未分类异常）。
         logger.info("tts write failed: %s", exc)
         return None, f"音频落盘失败：{type(exc).__name__}"
+    # WP4/E1-1：唯一「成功提交点」——产物过全部校验（结构体检 + 静音指纹 + 字节顶）
+    # 且已落盘可交付，此刻才清零退避状态。落盘失败走上面 except 分支，绝不清零。
+    _clear_failure()
     if cache_enabled:
         _store_cache(key, target)
     if quota_max_bytes > 0 or quota_max_age_days > 0:
@@ -1025,9 +1072,7 @@ def build_tts_capability(config: Any | None = None) -> Any:
             )
         # 文本硬顶（G2-R3）：超顶=拒绝合成+留痕，不静默、**不拆条**（拆多条语音=
         # 多个 record 段的新投递语义，H 波 M-63 修好前拆条=翻倍无保护语音）。
-        hard_cap = (
-            int(getattr(config, "bot_tts_hard_max_chars", 0) or 0) or HARD_MAX_CHARS_FALLBACK
-        )
+        hard_cap = resolve_hard_max_chars(config)
         if len(speech) > hard_cap:
             return CapabilityResult(
                 request_id=message.request_id,
@@ -1087,7 +1132,7 @@ def build_tts_capability(config: Any | None = None) -> Any:
             preset_id=preset.preset_id,
             engine_params=dict(preset.params),
             seed=speech_seed,
-            max_audio_bytes=int(getattr(config, "bot_tts_max_audio_bytes", 0) or 0),
+            max_audio_bytes=resolve_max_audio_bytes(config),
             quota_max_bytes=int(getattr(config, "bot_tts_cache_max_bytes", 0) or 0),
             quota_max_age_days=int(getattr(config, "bot_tts_cache_max_age_days", 0) or 0),
         )
@@ -1431,9 +1476,7 @@ def maybe_attach_voice(
             )
         # 文本硬顶（G2-R3）：自动路超顶=静默放弃增益（文字回复原样出站），
         # 同样不拆条；留痕挂 audit_tags（配音增益面不挂 issue 防刷屏）。
-        hard_cap = (
-            int(getattr(config, "bot_tts_hard_max_chars", 0) or 0) or HARD_MAX_CHARS_FALLBACK
-        )
+        hard_cap = resolve_hard_max_chars(config)
         if len(speech) > hard_cap:
             logger.info(
                 "tts auto reply skipped: over_hard_cap len=%d cap=%d", len(speech), hard_cap
@@ -1473,7 +1516,7 @@ def maybe_attach_voice(
             preset_id=preset.preset_id,
             engine_params=dict(preset.params),
             seed=speech_seed,
-            max_audio_bytes=int(getattr(config, "bot_tts_max_audio_bytes", 0) or 0),
+            max_audio_bytes=resolve_max_audio_bytes(config),
             quota_max_bytes=int(getattr(config, "bot_tts_cache_max_bytes", 0) or 0),
             quota_max_age_days=int(getattr(config, "bot_tts_cache_max_age_days", 0) or 0),
         )

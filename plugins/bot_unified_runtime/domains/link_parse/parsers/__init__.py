@@ -608,6 +608,65 @@ _MUSIC_SEARCH_PROVIDERS: list[tuple[str, str, Callable[[str], ParsedContent | No
     ("spotify", "Spotify", search_spotify),
 ]
 
+# parser_id → 该规则候选 URL 必须归属的平台域集（后缀语义，子域自动归位）。
+# WP1 ③：registry 命中后校验候选真实 host 归属此域，不归属不认这条规则——
+# 根修「evil URL 的 query 里塞平台标识即冒充该平台解析、附票外泄」。含各平台
+# 合法短链/跳转域（b23.tv / xhslink / youtu.be / 163cn.tv …），避免误砍合法链路。
+_RULE_ALLOWED_HOSTS: dict[str, list[str]] = {
+    "bilibili": ["bilibili.com", "b23.tv", "bili2233.cn"],
+    "bilibili_goods": ["bilibili.com"],
+    "bilibili_show": ["bilibili.com"],
+    "biligame": ["biligame.com"],
+    "steam": ["steampowered.com", "steamcommunity.com"],
+    "epic": ["epicgames.com"],
+    "facebook": ["facebook.com", "fb.com", "fb.me", "fbcdn.net"],
+    "github": ["github.com", "githubusercontent.com"],
+    "moegirl": ["moegirl.org.cn"],
+    "weibo": ["weibo.com", "weibo.cn"],
+    "zhihu": ["zhihu.com"],
+    "douban": ["douban.com"],
+    "taptap": ["taptap.cn", "taptap.io"],
+    "linuxdo": ["linux.do"],
+    "zlb": ["zlb.ink"],
+    "coolapk": ["coolapk.com", "coolapk1s.com"],
+    "hupu": ["hupu.com"],
+    "wmpvp": ["wmpvp.com"],
+    "5eplay": ["5eplay.com"],
+    "ds163": ["ds.163.com"],
+    "qsmusic": ["qishui.douyin.com", "douyin.com"],
+    "doubao": ["doubao.com"],
+    "illu": ["illund.com"],
+    "buff": ["buff.163.com"],
+    "kuaishou": ["kuaishou.com"],
+    "acfun": ["acfun.cn"],
+    "douyin": ["douyin.com", "v.douyin.com"],
+    "xiaohongshu": ["xiaohongshu.com", "xhslink.com"],
+    "youtube": ["youtube.com", "youtu.be"],
+    "twitter": ["twitter.com", "x.com", "t.co"],
+    "xiaoheihe": ["xiaoheihe.cn"],
+    "miyoushe": ["miyoushe.com"],
+    "skland": ["skland.com"],
+    "kurobbs": ["kurobbs.com"],
+    "pixiv": ["pixiv.net", "pximg.net"],
+    "pixiv_novel": ["pixiv.net", "pximg.net"],
+    "pixiv_series": ["pixiv.net", "pximg.net"],
+    "pixiv_user": ["pixiv.net", "pximg.net"],
+    "pixiv_contest": ["pixiv.net", "pximg.net"],
+    "pixiv_ranking": ["pixiv.net", "pximg.net"],
+    "lofter": ["lofter.com"],
+    "allcpp": ["allcpp.cn"],
+    "mihuashi": ["mihuashi.com"],
+    "huajia": ["huajia.163.com"],
+    "telegram": ["t.me", "telegram.me", "telegram.org", "telegram.dog"],
+    "netease_music": ["music.163.com", "163cn.tv", "163.com", "mutecdn.net"],
+    "qqmusic": ["qq.com", "y.qq.com"],
+    "kuwo": ["kuwo.cn"],
+    "kugou": ["kugou.com"],
+    "kugou_mixsong": ["kugou.com"],
+    "apple_music": ["apple.com", "music.apple.com"],
+    "spotify": ["spotify.com", "spotify.link"],
+}
+
 # parser_id → Cookie 提供方的平台键（无 cookie 需求的平台不在此列）。
 _PARSER_COOKIE_PLATFORM: dict[str, str] = {
     "bilibili": "bilibili",
@@ -713,6 +772,7 @@ def build_content_parser_registry(
                 parser_id=parser_id,
                 source_id=display_name,
                 url_patterns=patterns,
+                allowed_hosts=list(_RULE_ALLOWED_HOSTS.get(parser_id, [])),
                 priority=priority,
             )
         )

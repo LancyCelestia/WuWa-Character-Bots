@@ -121,7 +121,8 @@ def test_send_request_validates_deadline() -> None:
 
 
 def test_config_validates_request_budget() -> None:
-    assert Config().bot_request_budget_seconds == 150.0
+    # 已裁定并落在Config中的总请求预算为300秒，仍保留以下非法边界测试。
+    assert Config().bot_request_budget_seconds == 300.0
     assert Config(bot_request_budget_seconds=120).bot_request_budget_seconds == 120
     for bad in (-1, 0, float("nan"), float("inf"), 601, "abc"):
         with pytest.raises(ValidationError):

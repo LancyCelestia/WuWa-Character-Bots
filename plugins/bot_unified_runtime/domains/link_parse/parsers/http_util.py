@@ -14,6 +14,10 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 from urllib.error import HTTPError
 
+from plugins.bot_unified_runtime.domains.link_parse.parsers.cookies import (
+    PLATFORM_COOKIE_DOMAINS,
+)
+
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -42,6 +46,83 @@ class ParseHttpError(Exception):
 
 
 _DEFAULT_PROXY = ""
+
+
+# ---------------------------------------------------------------------------
+# WP1：附凭证前的目标域校验（统一咽喉）
+#
+# 审计 D5-01 / E2-N14 / E1-2：无锚定子串匹配让「凭证随错误 host 出站」，
+# urllib 跨 host 重定向又不剥 Cookie。此处在唯一咽喉（本模块的初始请求
+# 构造 + 默认重定向 handler）根修，绝不在 12 个解析器各写一遍。
+#
+# 域集唯一真身 = cookies.PLATFORM_COOKIE_DOMAINS（扩表，非另建）：
+#   - PlatformCookie（provider 产出）携带本平台窄域 → 窄域校验；
+#   - 普通 str Cookie（steam/epic 自读兜底）→ 回退联合域校验。
+# 校验失败 = 剥 Cookie 后继续（降级未登录），绝不抛错、绝不拒解析。
+# ---------------------------------------------------------------------------
+
+_COOKIE_DOMAIN_UNION: tuple[str, ...] = tuple(
+    sorted({dom for domains, _keys in PLATFORM_COOKIE_DOMAINS.values() for dom in domains})
+)
+
+# 重定向跨 host 时必须剥除的凭证头（大小写不敏感）。
+_CREDENTIAL_HEADER_NAMES = ("cookie", "authorization", "proxy-authorization")
+
+
+def _host_matches_domain(host: str, domain: str) -> bool:
+    """后缀语义：www.bilibili.com 归入 .bilibili.com；裸域自配；不误伤 evilbilibili.com。"""
+    host = (host or "").strip().lower().rstrip(".")
+    dom = (domain or "").strip().lower().lstrip(".").rstrip(".")
+    if not host or not dom:
+        return False
+    return host == dom or host.endswith("." + dom)
+
+
+def _url_host(url: str) -> str:
+    try:
+        return (urlparse.urlsplit(url or "").hostname or "").strip().lower()
+    except ValueError:
+        return ""
+
+
+def credentials_allowed_for_target(cookie: Any, url: str) -> bool:
+    """判定 cookie 是否允许发往 url 的目标 host（窄域优先，普通 str 走联合域）。"""
+    if not cookie:
+        return True  # 无凭证：不涉及归属判定，放行（本就不带 Cookie 头）。
+    domains = getattr(cookie, "cookie_domains", None)
+    allowed = tuple(domains) if domains else _COOKIE_DOMAIN_UNION
+    host = _url_host(url)
+    if not host:
+        return False  # 无法确证目标 host：保守判定为不允许。
+    return any(_host_matches_domain(host, dom) for dom in allowed)
+
+
+def scrub_credentials_for_target(cookie: Any, url: str) -> str:
+    """① 咽喉核心：返回允许带出的 Cookie 头（明文 str）；不归属返回 ''。"""
+    if not cookie:
+        return ""
+    if credentials_allowed_for_target(cookie, url):
+        return str(cookie)
+    return ""
+
+
+def _apply_cookie_guard(headers: dict[str, str], url: str, cookie: Any) -> None:
+    """把（可能带归属的）cookie 经咽喉过滤后写入 headers；被剥则不写 Cookie 头。"""
+    allowed = scrub_credentials_for_target(cookie, url)
+    if allowed:
+        headers["Cookie"] = allowed
+
+
+def _strip_credential_headers(request: urlrequest.Request) -> None:
+    """跨 host 重定向后：从初始/未重定向两个头桶里删除凭证头（就地）。"""
+    for store in (
+        getattr(request, "headers", None),
+        getattr(request, "unredirected_hdrs", None),
+    ):
+        if not isinstance(store, dict):
+            continue
+        for key in [k for k in store if str(k).lower() in _CREDENTIAL_HEADER_NAMES]:
+            store.pop(key, None)
 
 
 def build_request_headers(context: Any) -> dict[str, str]:
@@ -76,6 +157,14 @@ def _build_opener(
         import ssl
 
         handlers.append(urlrequest.HTTPSHandler(context=ssl._create_unverified_context()))
+    # WP1 ②：默认装上跨 host 剥凭证 handler（覆盖所有走 http_get 的解析器）。
+    # 仅当调用方没自带 HTTPRedirectHandler 子类时补装，避免双 redirect handler；
+    # build_opener 以 isinstance 判定，本类是 HTTPRedirectHandler 子类即顶替默认。
+    has_redirect_handler = any(
+        isinstance(h, urlrequest.HTTPRedirectHandler) for h in (extra_handlers or [])
+    )
+    if not has_redirect_handler:
+        handlers.append(_CredentialScrubbingRedirectHandler())
     if extra_handlers:
         handlers.extend(extra_handlers)
     return urlrequest.build_opener(*handlers)
@@ -100,7 +189,7 @@ def _build_request(
     if accept:
         headers["Accept"] = accept
     if cookie:
-        headers["Cookie"] = cookie
+        _apply_cookie_guard(headers, url, cookie)
     if extra_headers:
         headers.update(extra_headers)
     return urlrequest.Request(url, headers=headers)
@@ -303,8 +392,7 @@ def http_post_json(
     }
     if referer:
         headers["Referer"] = referer
-    if cookie:
-        headers["Cookie"] = cookie
+    _apply_cookie_guard(headers, url, cookie)
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urlrequest.Request(url, data=body, headers=headers, method="POST")
     effective_max = DEFAULT_MAX_BYTES if max_bytes is None else int(max_bytes)
@@ -327,7 +415,33 @@ def http_post_json(
         raise ParseHttpError(f"POST {url} failed: {type(exc).__name__}") from exc
 
 
-class _GuardedShortLinkRedirectHandler(urlrequest.HTTPRedirectHandler):
+class _CredentialScrubbingRedirectHandler(urlrequest.HTTPRedirectHandler):
+    """WP1 ②：跨 host 30x 重定向剥除 Cookie/Authorization（urllib 语义缺口根修）。
+
+    实证：urllib 默认 ``redirect_request`` 只剥 content-length/content-type，
+    跨 host 跳转时把初始请求的 Cookie 原样带进下一跳（浏览器语义会剥、urllib
+    不剥）。故 30x 落点换 host 即成凭证外泄跳道。本 handler 在 super() 造出
+    重定向请求后，比较「初始请求 host」与「落点 host」：不同则就地删凭证头。
+    同 host（站内跳转）不动，误剥会毁掉正常登录态续跳。
+
+    经 ``_build_opener`` 默认装上（本类是 HTTPRedirectHandler 子类，
+    build_opener 以 isinstance 顶替默认，不产生双 handler）。
+    """
+
+    # 与短链护栏同口径的显式跳数上限（urllib 默认 10 → 收紧到 5）。
+    max_redirections = 5
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new_request = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_request is not None:
+            orig_host = _url_host(getattr(req, "full_url", "") or "")
+            dest_host = _url_host(getattr(new_request, "full_url", "") or str(newurl))
+            if orig_host != dest_host:
+                _strip_credential_headers(new_request)
+        return new_request
+
+
+class _GuardedShortLinkRedirectHandler(_CredentialScrubbingRedirectHandler):
     """短链 30x 重定向逐跳 SSRF 校验（安全审查 F-05，Critical）。
 
     urllib 默认 opener 自动跟随 30x，逐跳落点不再过任何校验——短链
@@ -407,8 +521,7 @@ def http_post_form(
     }
     if referer:
         headers["Referer"] = referer
-    if cookie:
-        headers["Cookie"] = cookie
+    _apply_cookie_guard(headers, url, cookie)
     request = urlrequest.Request(url, data=body.encode("utf-8"), headers=headers, method="POST")
     effective_max = DEFAULT_MAX_BYTES if max_bytes is None else int(max_bytes)
     try:

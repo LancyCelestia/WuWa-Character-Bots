@@ -16,8 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import plugins.bot_unified_runtime.llm.ledger as ledger_module
-from plugins.bot_unified_runtime.llm.ledger import (
+import plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger as ledger_module
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger import (
     LedgerService,
     LLMCallDraft,
     build_call_draft,
@@ -27,8 +27,14 @@ from plugins.bot_unified_runtime.llm.ledger import (
     redact_error_summary,
     resolve_call_record_sink,
 )
-from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
-from plugins.bot_unified_runtime.llm.providers import LLMProviderError, LLMReply
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+    ModelRouter,
+    ModelSpec,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
+    LLMReply,
+)
 
 EXPECTED_TABLES = {"llm_call_records", "llm_usage_daily", "balance_snapshots"}
 
@@ -308,7 +314,7 @@ def test_emit_call_record_swallows_sink_errors(
 
     draft = build_call_draft(status="success")
     with caplog.at_level(
-        logging.DEBUG, logger="plugins.bot_unified_runtime.llm.ledger"
+        logging.DEBUG, logger="plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger"
     ):
         # 不抛出即通过：计费故障绝不阻塞聊天（§4.1.2）。
         emit_call_record(sink=ExplodingSink(), config=None, draft=draft)
@@ -316,7 +322,7 @@ def test_emit_call_record_swallows_sink_errors(
     # 账本悄悄归零无人察觉（docstring「吞掉一切异常只打日志」的可测形态）。
     records = [
         r for r in caplog.records
-        if r.name == "plugins.bot_unified_runtime.llm.ledger"
+        if r.name == "plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger"
     ]
     assert len(records) == 1, f"应恰好留痕一条，实得 {len(records)}"
     record = records[0]

@@ -15,19 +15,19 @@ from plugins.bot_unified_runtime.capabilities.subscribe_v2 import (
     build_subscribe_capability_v2,
 )
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
-from plugins.bot_unified_runtime.contracts.subscription import (
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionFetchResult,
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.sources.subscription_runtime_v2 import (
-    build_subscription_runtime_v2,
-)
-from plugins.bot_unified_runtime.sources.subscription_scheduler import (
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_scheduler import (
     SubscriptionScheduler,
 )
-from plugins.bot_unified_runtime.sources.subscription_store_v2 import (
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
     subscription_platform_enabled,
+)
+from plugins.bot_unified_runtime.sources.subscription_runtime_v2 import (
+    build_subscription_runtime_v2,
 )
 
 _NOW = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)

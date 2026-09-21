@@ -20,8 +20,10 @@ from urllib.response import addinfourl
 
 import pytest
 
-from plugins.bot_unified_runtime.sources.parsers import http_util
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
+from plugins.bot_unified_runtime.domains.link_parse.parsers import http_util
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+)
 
 _SHORT_LINK = "http://s.example.com/abc123"
 # 字面量公网 IP（93.184.216.34）：护栏按字面量离线判定放行，零 DNS。
@@ -101,7 +103,7 @@ def test_short_link_chain_of_two_public_hops_resolves(monkeypatch):
 @pytest.mark.parametrize(
     "landing",
     [
-        "http://127.0.0.1:3001/status",  # 本机回环（NapCat 端口场景）
+        "http://127.0.0.1:3001/status",  # 本机回环（SnowLuma 端口场景）
         "http://169.254.169.254/latest/meta-data/",  # 云元数据凭据面
         "http://10.1.2.3/router",  # 私网段
         "http://192.168.1.1/admin",  # 局域网网关

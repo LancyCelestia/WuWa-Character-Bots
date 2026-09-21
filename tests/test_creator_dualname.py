@@ -19,7 +19,6 @@ from plugins.bot_unified_runtime.capabilities.chat import (
     build_admin_roster_text,
     build_chat_prompt,
 )
-from plugins.bot_unified_runtime.character import addressing
 from plugins.bot_unified_runtime.contracts import (
     ContextBundle,
     ConversationHistoryResult,
@@ -28,6 +27,7 @@ from plugins.bot_unified_runtime.contracts import (
     RetrievalResult,
     ToneProfile,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.character import addressing
 
 # ---------------------------------------------------------------------------
 # 1. 常量与取用函数非空

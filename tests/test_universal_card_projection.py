@@ -6,7 +6,7 @@
   显式 video_quality 入参优先）；
 - H2 音乐署名行：ParsedContent.music（MusicTrack）→ 模板玻璃署名条
   （♪ 歌名 · 作者；无 music 时整块隐藏）；
-- H3 话题着色：content.tags（契约已有字段）→ 摘要块话题 chip（--pc accent）；
+- H3 话题着色：content.tags（契约已有字段）→ 摘要块话题 chip（--accent accent）；
   正文中 #xx 的启发式抽取不属投影层，不做（无 tags 字段来源时无 chip）；
 - H4 抖音大数字：parse_douyin 已抽取的 点赞/评论/分享/播放/收藏 经契约
   engagement → stats_bar_items 瓦片（验证既有接入，无需投影增量）。
@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.contracts.media import build_parsed_content
-from plugins.bot_unified_runtime.contracts.music import MusicTrack
-from plugins.bot_unified_runtime.output.card_render import bridge
+from plugins.bot_unified_runtime.domains.core.contracts.media import (
+    build_parsed_content,
+)
+from plugins.bot_unified_runtime.domains.core.contracts.music import MusicTrack
+from plugins.bot_unified_runtime.domains.render.card_render import bridge
 from plugins.bot_unified_runtime.output.templates import (
     card_payload_from_parse,
     render_universal_card_html,
@@ -97,7 +99,9 @@ def test_explicit_video_quality_overrides_projection() -> None:
 # ==================== H2 音乐署名行 ====================
 def _parsed_music_item() -> object:
     """镜像 platforms_music.parse_netease_song 产物形状（music= 带贡献者）。"""
-    from plugins.bot_unified_runtime.contracts.music import MusicContributor
+    from plugins.bot_unified_runtime.domains.core.contracts.music import (
+        MusicContributor,
+    )
 
     return build_parsed_content(
         platform="netease",

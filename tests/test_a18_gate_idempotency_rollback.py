@@ -19,28 +19,45 @@ R3 sender_interval 记账（这些路径在 scoped 桶记账之前早退/分流�
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
 from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     SendPolicy,
 )
-from plugins.bot_unified_runtime.contracts.runtime import (
-    BotDecision,
-    IncomingMessage,
-    SessionType,
-)
-from plugins.bot_unified_runtime.policy.rate_limit import (
+from plugins.bot_unified_runtime.domains.chat_reply.policy.rate_limit import (
     InMemoryRateLimiter,
     RateLimitSettings,
     SQLiteRateLimiter,
 )
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
+    BotDecision,
+    IncomingMessage,
+    SessionType,
+)
 from plugins.bot_unified_runtime.runtime.event_idempotency import EventIdempotencyTable
 from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
 from plugins.bot_unified_runtime.sender import InMemorySendQueue
+
+
+@pytest.fixture(autouse=True)
+def _isolated_error_renderer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    # 本模块测限流/幂等回滚；错误卡仍走真实编排/写入，只替换昂贵渲染边界。
+    from plugins.bot_unified_runtime.domains.ops.monitor import error_report
+
+    render = error_report.render_error_card_png
+    backend = SimpleNamespace(render_card=lambda payload: b"isolated-test-png")
+    monkeypatch.setattr(error_report, "render_error_card_png",
+                        lambda report, **kwargs: render(report, backend=backend, card_dir=str(tmp_path)))
+    yield
+    # 禁止后台任务跨测试；必须在撤销路径/后端替身前排空。
+    error_report.flush_pending_card_renders(timeout=10.0)
 
 
 class _Clock:
@@ -166,7 +183,8 @@ def test_quiet_hours_blocked_event_does_not_consume_idempotency_key() -> None:
     first = pipeline.handle(message, _ok_capability(calls), "bot.chat")
     assert calls == []
     assert first.state.value == "blocked"
-    assert first.public_message == "当前处于安静时间，已暂停非必要回复。"
+    # 安静时间拦截一律静默（2026-09-16 起与限流同款），提示语不再进群。
+    assert first.public_message == ""
 
     quiet.blocked = False
     resent = pipeline.handle(message, _ok_capability(calls), "bot.chat")

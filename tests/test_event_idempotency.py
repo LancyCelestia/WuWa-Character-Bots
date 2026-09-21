@@ -8,7 +8,7 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     SessionType,
 )
-from plugins.bot_unified_runtime.contracts.runtime import IncomingMessage
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
 from plugins.bot_unified_runtime.runtime.event_idempotency import (
     EventIdempotencyTable,
     SqliteEventIdempotencyTable,

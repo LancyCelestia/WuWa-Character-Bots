@@ -18,8 +18,8 @@ from typing import Any
 import httpx
 import pytest
 
-import plugins.bot_unified_runtime.llm.providers as providers_module
-from plugins.bot_unified_runtime.llm.providers import (
+import plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers as providers_module
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
     _HTTP_CLIENTS,
     _MAX_ERROR_BODY_BYTES,
     _MAX_RESPONSE_BYTES,

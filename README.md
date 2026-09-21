@@ -1,8 +1,8 @@
 # 守岸人 Bot（WuWa Character Bot）
 
-以游戏《鸣潮》角色「守岸人」为人格的 QQ 聊天机器人：NoneBot2 + OneBot V11（NapCat）构建，
+以游戏《鸣潮》角色「守岸人」为人格的 QQ 聊天机器人：NoneBot2 + OneBot V11（SnowLuma）构建，
 角色扮演对话之外内置行情查询、链接解析、订阅推送、媒体归档等 29+ 项日常能力，
-回复统一渲染为「釉瑚云母」卡片样式；另附带 Telegram / Mail / Console 适配器。
+回复统一渲染为「釉瑚云母」卡片样式（视觉值册以 `theme_tokens` 为单一事实源）；另附带 Telegram / Mail / Console 适配器。
 
 > AI 协作者请从 [AGENTS.md](AGENTS.md) 进入（工作区规则 + 项目全貌，自动加载）；
 > 新接手 AI 读 [HANDOFF-NEXT.md](HANDOFF-NEXT.md)。
@@ -22,13 +22,17 @@
 命令全集见 [COMMANDS.md](COMMANDS.md)（与 `/bot help` 同口径）；逐问法路由见
 [docs/route-matrix.md](docs/route-matrix.md)；自动生成的逐参数教程见 [docs/command-catalog.md](docs/command-catalog.md)。
 
+管理后端 WebUI（**在制，未验收**）：AxonHub 设计系统衍生的单文件前端，挂控制面 127.0.0.1:8742 `/ui`（Bearer 认证）；
+Phase A=总览/调用统计/Token/延迟/好感度榜/日志尾流，知识库/插件/记忆图谱在二期规格。
+详见 [docs/design/webui-axonhub-adoption.md](docs/design/webui-axonhub-adoption.md)。
+
 ## 快速上手
 
 环境要求：Windows + Python 3.10+（`pyproject.toml` 锁定 `>=3.10, <4.0`）；venv 由
-`scripts\dev.ps1` 自动定位到 `ChatBot_Runtime\venv`，勿手工搬动。QQ 侧需先跑 NapCat
-（正向 WS 127.0.0.1:3001，配置见 [docs/napcat-setup.md](docs/napcat-setup.md)）。
+`scripts\dev.ps1` 自动定位到 `ChatBot_Runtime\venv`，勿手工搬动。QQ 侧需先跑 SnowLuma
+（正向 WS 127.0.0.1:3001，配置见 [docs/snowluma-setup.md](docs/snowluma-setup.md)）。
 
-启动顺序：**先 NapCat，后 bot.py（管理员权限）**。生产进程常驻且提权启动，只有用户能重启；
+启动顺序：**先 SnowLuma，后 bot.py（管理员权限）**。生产进程常驻且提权启动，只有用户能重启；
 改代码必须重启 bot 才生效（铁律）。
 
 ```powershell
@@ -63,7 +67,7 @@ python scripts/e2e_acceptance.py --target-group <白名单群ID> --execute
 
 ```mermaid
 flowchart LR
-    QQ["NapCat（WS 3001）"] <-- forward-WS --> bot["bot.py（崩溃守卫，webhook 8080）"]
+    QQ["SnowLuma（WS 3001）"] <-- forward-WS --> bot["bot.py（崩溃守卫，webhook 8080）"]
     bot --> ingest["摄取：段归一/引用反查/语音预转码"]
     ingest --> route["路由 base_router ‖ decision 影子"]
     route --> gate["门禁：黑白名单/安静时间/限流/幂等"]

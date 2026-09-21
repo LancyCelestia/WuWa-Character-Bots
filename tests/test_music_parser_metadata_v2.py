@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from plugins.bot_unified_runtime.sources.parsers import platforms_music
+import plugins.bot_unified_runtime.sources.parsers  # noqa: F401  # v21r2 W1a: 旧路径聚合先行（垫片期顺序纪律）
+
+# v21r2 W1a: platforms_music 真身已迁 domains/link_parse/parsers/，monkeypatch 需打在真身上
+from plugins.bot_unified_runtime.domains.link_parse.parsers import platforms_music
 
 
 def test_netease_detail_maps_aliases_duration_album_and_contributors(monkeypatch) -> None:

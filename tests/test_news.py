@@ -26,8 +26,8 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
 )
-from plugins.bot_unified_runtime.sources import news_feeds
-from plugins.bot_unified_runtime.sources.news_feeds import (
+from plugins.bot_unified_runtime.domains.subscribe.feeds import news_feeds
+from plugins.bot_unified_runtime.domains.subscribe.feeds.news_feeds import (
     NewsItem,
     fetch_headlines,
     format_news_brief,
@@ -537,7 +537,7 @@ def test_news_capability_full_result(monkeypatch) -> None:
         return _sample_items()
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.news.fetch_headlines",
+        "plugins.bot_unified_runtime.domains.subscribe.capabilities.news.fetch_headlines",
         _fake_fetch,
     )
     capability = build_news_capability(config=None)
@@ -563,7 +563,7 @@ def test_news_capability_config_overrides(monkeypatch) -> None:
         return _sample_items()
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.news.fetch_headlines",
+        "plugins.bot_unified_runtime.domains.subscribe.capabilities.news.fetch_headlines",
         _fake_fetch,
     )
     config = SimpleNamespace(
@@ -580,7 +580,7 @@ def test_news_capability_config_overrides(monkeypatch) -> None:
 
 def test_news_capability_empty_degrades(monkeypatch) -> None:
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.news.fetch_headlines",
+        "plugins.bot_unified_runtime.domains.subscribe.capabilities.news.fetch_headlines",
         lambda category, **kwargs: [],
     )
     capability = build_news_capability(config=None)

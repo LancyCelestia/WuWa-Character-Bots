@@ -1,0 +1,295 @@
+"""统一接入波 U3 常驻门：creation TTS 契约漂移收敛 + 预留通道诚实性。
+
+三件事各有一杀行为的判据（注毒即红，非存在性锁）：
+
+1. **漂移门**——creation/tts/contracts.py 的 TTS 数值必须逐组等于中央
+   `domains/media/tts_presets.py` 单一来源（改任一侧数字即红）；并锁死「旧值 3000/60s/
+   20MiB/0.75..1.25 已作废、不得回归」的游标。
+2. **诚实性**——未接线通道恒 unavailable（provider 探测缺省 False、原因串点名未接线）。
+3. **DTO-as-data**——创建任务 DTO 以 `InvocationResult.data[PRESENTATION_DATA_KEY]` 的
+   dict 形态流转，不新增第三种结果类型；unavailable 态不得携带呈现载荷。
+"""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+from types import SimpleNamespace
+
+import pydantic
+import pytest
+
+from plugins.bot_unified_runtime.domains.creation import reserved_provider as rprov
+from plugins.bot_unified_runtime.domains.creation.image import contracts as cimage
+from plugins.bot_unified_runtime.domains.creation.tts import contracts as ctts
+from plugins.bot_unified_runtime.domains.media import tts_presets as central
+
+
+def _cp():
+    """惰性取中央执行信封模块。
+
+    本席禁碰中央件，故只在用到描述符/信封的用例里惰性 import；当前它**可正常导入**
+    （表 119 条装配无异常——U3 首稿写的「会因 bot.moegirl route_kind 冲突抛 ValueError」
+    经复跑证伪，已按实况更正）。保留 try/skip 只为防他席在飞把装配改崩时**点名外因**，
+    绝不因此放宽任何判据。
+    """
+    try:
+        from plugins.bot_unified_runtime.runtime import capability_protocols as cp
+    except Exception as exc:  # noqa: BLE001 - 只拦中央在飞装配崩，转为诚实跳过
+        pytest.skip(f"中央 capability_protocols 当前不可导入（他席在飞，非 U3 面）: {exc}")
+    return cp
+
+# ---------------------------------------------------------------------------
+# 1) 漂移门：creation 值 ≡ 中央单一来源
+# ---------------------------------------------------------------------------
+
+
+def test_tts_text_cap_equals_central_single_source() -> None:
+    assert ctts.TTS_MAX_TEXT_CHARS == central.HARD_MAX_CHARS_FALLBACK
+
+
+def test_tts_asset_bytes_equals_central_single_source() -> None:
+    assert ctts.TTS_MAX_ASSET_BYTES == central.MAX_AUDIO_BYTES_FALLBACK
+
+
+def test_tts_speed_domain_equals_central_single_source() -> None:
+    assert (ctts.TTS_SPEED_MIN, ctts.TTS_SPEED_MAX) == central.ENGINE_PARAM_DOMAINS[
+        "speed_factor"
+    ]
+
+
+def test_tts_duration_is_derived_from_central_byte_cap() -> None:
+    # 中央不持有独立秒级时长顶，只以字节顶（8MiB≈131s）为准；creation 由同一天花板派生。
+    assert ctts.TTS_MAX_DURATION_SECONDS == pytest.approx(
+        central.MAX_AUDIO_BYTES_FALLBACK / 64000
+    )
+
+
+def test_retired_tts_literals_stayed_dead() -> None:
+    """游标：旧值一旦回归（被重新写死）本门即红。"""
+    assert ctts.TTS_MAX_TEXT_CHARS != 3000
+    assert ctts.TTS_MAX_ASSET_BYTES != 20 * 1024 * 1024
+
+
+def test_central_descriptor_table_holds_no_second_copy() -> None:
+    """漂移的**第二现场**＝中央描述符表自身。
+
+    第一轮收口把表里的写死数值改成引中央常量，评审仍判 Important：**表在装配期建、拿不到
+    config**，所以表里那个数永远是「未配口径的兜底值」，而真身按 `config.bot_tts_hard_max_chars`
+    现读——实测设 500 就得到「真身 500 / 表 2000」的分叉。故第二轮收口＝**表内不留 TTS 数值**，
+    生效顶的唯一家是 `tts_presets.resolve_*`。本锁从此钉死这个方向：谁再往表里抄数值，红。
+    """
+    cp = _cp()
+    row = next(
+        d for d in cp._creation_descriptors() if d.capability_id == "creation.tts.synthesize"
+    )
+    assert row.limits == {}, f"描述符表又开始了持有 TTS 数值的假尺子形态：{row.limits}"
+    # 表必须指向**规则**而不是数值：靠 config_keys 声明读哪两把键。
+    assert {"bot_tts_hard_max_chars", "bot_tts_max_audio_bytes"} <= set(row.config_keys)
+    assert "max_duration_seconds" not in row.limits  # 中央无独立秒级顶，抄进来=凭空造第二真源
+    # 游标：旧值回归即红（creation 侧与表侧同判据，才叫单一真源）
+    assert ctts.TTS_MAX_TEXT_CHARS != 3000
+    assert ctts.TTS_MAX_ASSET_BYTES != 20 * 1024 * 1024
+    assert ctts.TTS_MAX_DURATION_SECONDS != 60.0
+    assert (ctts.TTS_SPEED_MIN, ctts.TTS_SPEED_MAX) != (0.75, 1.25)
+
+
+def test_speed_default_still_inside_central_domain() -> None:
+    lo, hi = central.ENGINE_PARAM_DOMAINS["speed_factor"]
+    assert lo <= ctts.TTS_SPEED_DEFAULT <= hi
+
+
+# ---------------------------------------------------------------------------
+# 1b) 生效硬顶是**规则**、不是常量（R1/I-3：原漂移门结构性看不见 config 面）
+# ---------------------------------------------------------------------------
+
+_CAP_KEYS = ("bot_tts_hard_max_chars", "bot_tts_max_audio_bytes")
+_PKG_ROOT = Path(__file__).resolve().parents[1] / "plugins" / "bot_unified_runtime"
+#: 规则的唯一家：`config 显式值 → 0/未配 ⇒ 内置常量` 这条判定只准写在这里。
+_CAP_RULE_HOME = "domains/media/tts_presets.py"
+
+
+def _is_cap_key_read(node: ast.AST) -> bool:
+    if isinstance(node, ast.Attribute):
+        return node.attr in _CAP_KEYS
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) >= 2
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value in _CAP_KEYS
+    )
+
+
+def _cap_key_lines(src: str) -> list[int]:
+    """源码里**读**这两个 config 键的行号（属性式 `cfg.bot_tts_*` 或 `getattr(cfg, "bot_tts_*")`）。
+
+    刻意走 AST 而非文本匹配：help 元数据里的 `config_vars=("bot_tts_hard_max_chars",)` 只是
+    字符串清单、sync_drift 的 `_config_default(config, "…")` 是「文档 vs Config 缺省」权威对照，
+    两者都不重算生效顶 ⇒ 不该被这道门误伤。
+    """
+    return [node.lineno for node in ast.walk(ast.parse(src)) if _is_cap_key_read(node)]
+
+
+def _all_cap_key_reads() -> dict[str, list[int]]:
+    out: dict[str, list[int]] = {}
+    for path in _PKG_ROOT.rglob("*.py"):
+        try:
+            src = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        try:
+            found = _cap_key_lines(src)
+        except SyntaxError:  # 在飞的半写文件不归本门判
+            continue
+        if found:
+            out[path.relative_to(_PKG_ROOT).as_posix()] = found
+    return out
+
+
+def test_operative_tts_caps_follow_config_not_the_fallback_constant() -> None:
+    """杀伤力证明：改 `BOT_TTS_HARD_MAX_CHARS` 后生效顶必须跟随，只有 0 才落内置常量。
+
+    原门只比 `creation 值 ≡ HARD_MAX_CHARS_FALLBACK`——那是「兜底值」不是「天花板」，
+    配置一改就分叉而门全绿。本用例把规则本身纳入判据。
+    """
+    cfg = SimpleNamespace(bot_tts_hard_max_chars=5000, bot_tts_max_audio_bytes=11 * 1024 * 1024)
+    assert central.resolve_hard_max_chars(cfg) == 5000
+    assert central.resolve_max_audio_bytes(cfg) == 11 * 1024 * 1024
+    zero = SimpleNamespace(bot_tts_hard_max_chars=0, bot_tts_max_audio_bytes=0)
+    assert central.resolve_hard_max_chars(zero) == ctts.TTS_MAX_TEXT_CHARS
+    assert central.resolve_max_audio_bytes(zero) == ctts.TTS_MAX_ASSET_BYTES
+    # 键缺失（Config 未装载）与 0 同义，且绝不抛。
+    assert central.resolve_hard_max_chars(SimpleNamespace()) == central.HARD_MAX_CHARS_FALLBACK
+    assert central.resolve_hard_max_chars(None) == central.HARD_MAX_CHARS_FALLBACK
+
+
+def test_hard_cap_config_rule_has_exactly_one_home() -> None:
+    """除规则家之外，全树再有人重写这条判定 ⇒ 分叉，当场红。"""
+    strays = {rel: ln for rel, ln in _all_cap_key_reads().items() if rel != _CAP_RULE_HOME}
+    assert strays == {}, f"生效硬顶规则出现第二处读数点（改 config 只会有一处跟随）：{strays}"
+
+
+def test_rule_home_scanner_sees_its_own_reads() -> None:
+    """自证非空门：扫描器必须看得见规则家自身的命中，否则上一条恒绿。"""
+    assert _all_cap_key_reads().get(_CAP_RULE_HOME), "扫描器看不见规则家的 config 读点=假门"
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "def f(config):\n    return int(getattr(config, 'bot_tts_hard_max_chars', 0) or 0) or 2000\n",
+        "def f(config):\n    return config.bot_tts_max_audio_bytes\n",
+    ],
+)
+def test_scanner_detects_both_read_shapes(src: str) -> None:
+    """注毒：两种读数形态各必须被扫到（漏一种=门有豁免洞）。"""
+    assert _cap_key_lines(src), f"读数扫描漏判：{src}"
+
+
+def test_help_string_lists_are_not_misread_as_rule_sites() -> None:
+    """负样本：help 元数据只是字符串清单，不该被判成第二现场（否则本门会被误伤后被人调松）。"""
+    assert _cap_key_lines('META = ({"config_vars": ("bot_tts_hard_max_chars",)},)\n') == []
+
+
+# ---------------------------------------------------------------------------
+# 2) 诚实性：未接线恒 unavailable
+# ---------------------------------------------------------------------------
+
+
+def test_provider_configured_default_false_without_future_keys() -> None:
+    empty = SimpleNamespace()  # 无任何键 → 探测恒 False（绝不猜有 provider）
+    assert rprov.provider_configured(empty, "creation.tts") is False
+    assert rprov.provider_configured(empty, "creation.image") is False
+
+
+def test_provider_configured_requires_nonempty_future_key() -> None:
+    assert rprov.provider_configured(
+        SimpleNamespace(bot_creation_tts_provider="gpt-sovits"), "creation.tts"
+    ) is True
+    # 空串不算配置。
+    assert (
+        rprov.provider_configured(SimpleNamespace(bot_creation_tts_provider="   "), "creation.tts")
+        is False
+    )
+
+
+def test_reserved_reason_names_unwired_for_unconfigured() -> None:
+    reason = rprov.reserved_availability_reason(SimpleNamespace(), "creation.tts")
+    assert reason.strip()
+    assert "未接线" in reason
+    # 诚实性游标：若被改成宣称「已可用」，本行即红。
+    assert "可用" not in reason.replace("协议≠可用", "")
+
+
+# ---------------------------------------------------------------------------
+# 3) DTO-as-data：不新增第三种结果类型
+# ---------------------------------------------------------------------------
+
+
+def _tts_dto() -> ctts.TTSJobRequest:
+    return ctts.TTSJobRequest(
+        text="漂泊者，晚上好。",
+        provider="provider_a",
+        model="voice-model-1",
+        voice="alloy",
+        language="zh",
+        format="mp3",
+        workspace_id="ws_main",
+        target="session_1",
+        version="rev-1",
+    )
+
+
+def test_tts_dto_flows_as_presentation_data_payload() -> None:
+    cp = _cp()
+    dto = _tts_dto()
+    result = cp.InvocationResult(
+        capability_id="creation.tts.synthesize",
+        status=cp.InvocationStatus.OK,
+        data={cp.PRESENTATION_DATA_KEY: dto.model_dump(mode="json")},
+    )
+    payload = result.data[cp.PRESENTATION_DATA_KEY]
+    assert isinstance(payload, dict)  # 信封只承载 dict，不承载活模型对象
+    assert payload["text"] == "漂泊者，晚上好。"
+
+
+def test_image_dto_flows_as_presentation_data_payload() -> None:
+    cp = _cp()
+    dto = cimage.ImageJobRequest(
+        task="text_to_image",
+        prompt="釉瑚风格的云母卡片插画",
+        provider="provider_a",
+        model="image-model-1",
+        size="1024x1024",
+        workspace_id="ws_main",
+        version="rev-1",
+    )
+    result = cp.InvocationResult(
+        capability_id="creation.image.generate",
+        status=cp.InvocationStatus.OK,
+        data={cp.PRESENTATION_DATA_KEY: dto.model_dump(mode="json")},
+    )
+    assert result.data[cp.PRESENTATION_DATA_KEY]["prompt"].startswith("釉瑚")
+
+
+def test_unavailable_envelope_must_not_smuggle_success_payload() -> None:
+    """把 handler 从 unavailable 改成假成功=带呈现载荷的失败态 → 信封不变量当场崩。"""
+    cp = _cp()
+    with pytest.raises(pydantic.ValidationError):
+        cp.InvocationResult(
+            capability_id="creation.tts.synthesize",
+            status=cp.InvocationStatus.UNAVAILABLE,
+            data={cp.PRESENTATION_DATA_KEY: _tts_dto().model_dump(mode="json")},
+            detail="假装成功",
+        )
+    # 诚实 unavailable 的正确形态：带 detail、不带载荷。
+    honest = cp.InvocationResult(
+        capability_id="creation.tts.synthesize",
+        status=cp.InvocationStatus.UNAVAILABLE,
+        data={},
+        detail=rprov.reserved_availability_reason(SimpleNamespace(), "creation.tts"),
+    )
+    assert honest.status is cp.InvocationStatus.UNAVAILABLE
+    assert cp.PRESENTATION_DATA_KEY not in honest.data

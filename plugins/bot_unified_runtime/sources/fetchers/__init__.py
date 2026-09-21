@@ -1,8 +1,7 @@
-"""抓取后端包：重型/动态渲染抓取能力（如 Playwright）。"""
+"""Compat shim: moved to domains/link_parse/fetchers/__init__.py (v21r2 reorg W1b)."""
 
-from plugins.bot_unified_runtime.sources.fetchers.playwright_backend import (
+from plugins.bot_unified_runtime.domains.link_parse.fetchers import *
+from plugins.bot_unified_runtime.domains.link_parse.fetchers import (  # noqa: F401
     PlaywrightFetchBackend,
+    XhsSigner,
 )
-from plugins.bot_unified_runtime.sources.fetchers.xhs_sign import XhsSigner
-
-__all__ = ["PlaywrightFetchBackend", "XhsSigner"]

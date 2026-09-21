@@ -38,24 +38,23 @@ from plugins.bot_unified_runtime.domains.core.contracts.errors import new_trace_
 from plugins.bot_unified_runtime.domains.core.contracts.request import (
     IDEMPOTENCY_KEY_PATTERN,
 )
-from plugins.bot_unified_runtime.domains.divination.service.fortune import (
+from plugins.bot_unified_runtime.domains.divination.data.deck_math import (
+    DECK_REVISION,
     FORTUNE_ALGORITHM_REVISION,
     FORTUNE_GRADES_V1,
     FORTUNE_RULE_VERSION,
-    AuditPrng,
-    SystemPrng,
-    derive_fortune_seed,
-    draw_fortune_grade,
-    fortune_day_key,
-    local_date_for,
-)
-from plugins.bot_unified_runtime.domains.divination.service.tarot_draw import (
-    DECK_REVISION,
     POSITION_LABELS,
     TAROT_ALGORITHM_REVISION,
+    AuditPrng,
+    SystemPrng,
     build_card_index,
+    derive_fortune_seed,
+    draw_fortune_grade,
     draw_tarot_cards,
+    fortune_day_key,
+    local_date_for,
     validate_spread,
+    validated_tarot_cards,
 )
 from plugins.bot_unified_runtime.domains.divination.store.draw_store import (
     DEFAULT_TAROT_COOLDOWN_SECONDS,
@@ -94,7 +93,6 @@ _GRADE_LINES: dict[str, str] = {
 }
 
 _KNOWN_GRADES = frozenset(grade for grade, _ in FORTUNE_GRADES_V1)
-_KNOWN_ORIENTATIONS = frozenset({"upright", "reversed"})
 
 
 class DrawRequest(BaseModel):
@@ -360,9 +358,10 @@ def _new_draw_id() -> str:
 def build_interpretation_context(record: DrawRecord) -> InterpretationContext:
     """校验持久行并重建解读上下文（LLM 解释的唯一合法输入）。
 
-    - tarot：阵型/张数/位置序列/牌库存在性/朝向/牌库版本全部吻合才放行；
-      任何不符（含伪造第 79 张、牌库外 card_id、JSON 损坏）→
-      ``deck_integrity_mismatch``。
+    - tarot：牌面完整性走全域唯一的一道门 ``data.deck_math.validated_tarot_cards``
+      （阵型/张数/位置序列/牌库存在性/朝向/牌库版本全部吻合才放行；任何不符，
+      含伪造第 79 张、牌库外 card_id、spread_id 被篡改、cards_json 损坏 →
+      ``deck_integrity_mismatch``）。聊天渲染与控制面解读共用这一颗门。
     - fortune：等级必须在登记表内且 cards 为空，否则同码报错。
     """
     if record.kind == "fortune":
@@ -381,24 +380,12 @@ def build_interpretation_context(record: DrawRecord) -> InterpretationContext:
         )
     if record.kind != "tarot":  # pragma: no cover - 存储层写入面已约束
         raise DrawError("deck_integrity_mismatch", f"未知抽取类别：{record.kind!r}")
-    count, positions = validate_spread(record.spread_id)  # invalid_spread 不该发生
-    if record.deck_revision != DECK_REVISION:
-        raise DrawError("deck_integrity_mismatch", "牌库版本与持久行不符")
-    if len(record.cards) != count:
-        raise DrawError("deck_integrity_mismatch", "牌数与牌阵定义不符")
-    index = build_card_index()
-    for item, position_id in zip(record.cards, positions):
-        if item.get("position_id") != position_id:
-            raise DrawError("deck_integrity_mismatch", "位置序列不符")
-        if item.get("card_id") not in index:
-            raise DrawError("deck_integrity_mismatch", "牌面含牌库之外的牌")
-        if item.get("orientation") not in _KNOWN_ORIENTATIONS:
-            raise DrawError("deck_integrity_mismatch", "朝向字段非法")
+    spread_id, cards = validated_tarot_cards(record)
     return InterpretationContext(
         draw_id=record.draw_id,
         kind=record.kind,
-        spread_id=record.spread_id,
-        cards=tuple(dict(card) for card in record.cards),
+        spread_id=spread_id,
+        cards=tuple(dict(card) for card in cards),
         fortune_grade="",
     )
 

@@ -9,18 +9,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.moegirl import (
+from plugins.bot_unified_runtime.domains.location.capabilities.moegirl import (
     build_moegirl_capability,
     extract_moegirl_query,
     is_moegirl_command,
     normalize_entity_question,
     question_lookup,
 )
-from plugins.bot_unified_runtime.runtime.base_router import RouteKind
-from plugins.bot_unified_runtime.sources.moegirl import (
+from plugins.bot_unified_runtime.domains.location.data.moegirl import (
     MoegirlHit,
     parse_search_payload,
 )
+from plugins.bot_unified_runtime.runtime.base_router import RouteKind
 from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 
 # ---------------------------------------------------------------- 问句归一化
@@ -49,7 +49,7 @@ def test_normalize_entity_question_extracts_entity(raw, expected):
 
 def test_search_empty_on_primary_skips_mirror(monkeypatch):
     """主站可达但查无结果 = 权威回答：不追打镜像，未命中快速降级。"""
-    import plugins.bot_unified_runtime.sources.moegirl as src
+    import plugins.bot_unified_runtime.domains.location.data.moegirl as src
 
     calls: list[str] = []
 
@@ -65,7 +65,7 @@ def test_search_empty_on_primary_skips_mirror(monkeypatch):
 
 def test_search_mirror_used_on_primary_failure(monkeypatch):
     """主站网络失败才回退镜像域名。"""
-    import plugins.bot_unified_runtime.sources.moegirl as src
+    import plugins.bot_unified_runtime.domains.location.data.moegirl as src
 
     mirror_payload = {
         "query": {
@@ -234,7 +234,7 @@ def test_question_lookup_unique_candidate_hits_without_page():
 
 def test_question_lookup_ambiguous_degrades_to_chat():
     """多候选无精确命中 → 降级聊天（词条选择列表只留给 /萌娘 显式指令）。"""
-    from plugins.bot_unified_runtime.capabilities.moegirl import (
+    from plugins.bot_unified_runtime.domains.location.capabilities.moegirl import (
         MoegirlHit,
         question_lookup,
     )
@@ -394,7 +394,7 @@ def _decision():
 
 
 def test_capability_explicit_found(monkeypatch):
-    import plugins.bot_unified_runtime.capabilities.moegirl as cap
+    import plugins.bot_unified_runtime.domains.location.capabilities.moegirl as cap
 
     monkeypatch.setattr(
         cap,
@@ -415,7 +415,7 @@ def test_capability_explicit_found(monkeypatch):
 
 
 def test_capability_explicit_not_found(monkeypatch):
-    import plugins.bot_unified_runtime.capabilities.moegirl as cap
+    import plugins.bot_unified_runtime.domains.location.capabilities.moegirl as cap
 
     monkeypatch.setattr(cap, "moegirl_page_summary", lambda title, **kw: None)
     monkeypatch.setattr(cap, "moegirl_search", lambda query, **kw: [])
@@ -427,7 +427,7 @@ def test_capability_explicit_not_found(monkeypatch):
 
 
 def test_capability_usage_hint(monkeypatch):
-    import plugins.bot_unified_runtime.capabilities.moegirl as cap
+    import plugins.bot_unified_runtime.domains.location.capabilities.moegirl as cap
 
     monkeypatch.setattr(cap, "moegirl_page_summary", lambda title, **kw: None)
     monkeypatch.setattr(cap, "moegirl_search", lambda query, **kw: [])

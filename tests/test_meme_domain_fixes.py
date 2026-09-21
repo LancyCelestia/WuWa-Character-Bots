@@ -15,8 +15,6 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities import meme_library as meme_lib_mod
-from plugins.bot_unified_runtime.capabilities import poke as poke_mod
 from plugins.bot_unified_runtime.capabilities.meme import build_meme_capability
 from plugins.bot_unified_runtime.capabilities.meme_library import (
     build_meme_library_capability,
@@ -27,8 +25,14 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
 )
-from plugins.bot_unified_runtime.sources import meme_library as meme_store_mod
-from plugins.bot_unified_runtime.sources import meme_library_listener
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import poke as poke_mod
+from plugins.bot_unified_runtime.domains.meme.capabilities import (
+    meme_library as meme_lib_mod,
+)
+from plugins.bot_unified_runtime.domains.meme.sources import (
+    meme_library as meme_store_mod,
+)
+from plugins.bot_unified_runtime.domains.meme.sources import meme_library_listener
 from plugins.bot_unified_runtime.sources.meme_library import MemeLibraryStore
 
 

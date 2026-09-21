@@ -1,9 +1,11 @@
 """卡面样张一键渲染：离线出全套卡片 PNG，供重启后人工验收。
 
-用途边界（审查 Q-05）：本脚本只产出离线样张图（缺省 %TEMP%/card_samples/）
-供人工核对卡面形态，属验收素材——不被 plugins/ 任何模块 import，其 payload
-（含错误卡 help_text 等示例文案）一律不进生产链路、不进任何 LLM prompt。
-覆盖 10 族 18 张样张（payload 结构抄自生产链路对应能力/契约测试）：
+用途边界（审查 Q-05）：本脚本只产出离线样张图与基线素材（缺省
+%TEMP%/shorekeeper-samples/baseline-20260918/），不写源码树与 Runtime——
+不被 plugins/ 任何模块 import，其 payload（含错误卡 help_text 等示例文案）
+一律不进生产链路、不进任何 LLM prompt。
+覆盖 2026-09-18 渲染统一收口批 **11 面 19 张样张**（11 面 = 7 张 Jinja 模板
++ 4 张直拼卡；payload 结构抄自生产链路对应能力/契约测试）：
 - universal：bilibili/netease/未知默认三主题 × 视频/BGV/搜图/音乐四形态；
 - market：股指（market_card）+ 大宗商品/国债/北向（finance 卡三形态）；
 - finance：个股行情卡（sections + 折线 SVG）；
@@ -11,7 +13,9 @@
 - song_candidates：点歌候选卡；
 - mermaid：流程图卡（本地素材拦截在 render_backends 传输层自动生效，
   本地缺失时放行 jsDelivr CDN——与生产链路同一条路径）；
-- help：帮助目录卡（/bot help 总览，真实 72 topic payload）；
+- help：帮助目录卡（/bot help 总览，echo 直拼卡，真实 72 topic payload）；
+- debug：LLM 接入检查卡（管理员诊断直拼卡，domains/ops/admin/debug.py；
+  config 面为内置 stub——真实 Config 会读 .env，样张禁触）；
 - usage：模型用量账单卡（含渠道子行）；
 - media_archive：媒体归档结果卡（通用媒体卡壳；生产归档回执为纯文本，
   本样张为卡面验收供参考形态）；
@@ -22,9 +26,21 @@
 mermaid.min.js 走本地素材（ChatBot_Runtime/card_render_assets/mermaid/），
 因此整个流程可完全离线渲染。
 
+基线模式（2026-09-18 统一收口批，SAMPLES 席）：main() 走 render_baseline——
+每面落 payload.json + card PNG + .sha256 旁车；同 payload 渲染两次比对字节
+（双渲确定性自检）；汇总 manifest.json（面→html/png sha256→毫秒→确定性）。
+wave-2 改后用 --out 指向 after 目录重跑即可逐面对比。
+PNG 字节判据沿革：baseline-20260918 时生产 render_backends 截图路径不冻结
+CSS 循环动画（无 animations="disabled"/reduced_motion），漂移色斑随墙钟采样
+——相位 digest 只钉动画初相，不钉采样时刻——故当时双渲字节不稳、以
+html_sha256 为主判据。2026-09-19 ANIM 钉帧席起 render_backends 截图前对
+.card 子树动画 WAAPI 钉时（pause+currentTime=0，冻结在 --phase 负 delay
+相位位，探针证与「加载即 paused」参照帧逐字节一致），双渲 PNG 逐字节确定
+——**自 baseline-20260919-paused 起 PNG 字节等值为全部面的验收判据**。
+
 用法：
-    python scripts/render_card_samples.py                 # 缺省 %TEMP%/card_samples/
-    python scripts/render_card_samples.py --out <dir>     # 指定输出目录
+    python scripts/render_card_samples.py                 # 缺省 %TEMP%/shorekeeper-samples/baseline-20260918/
+    python scripts/render_card_samples.py --out <dir>     # 指定输出目录（after 对比同理）
     python scripts/render_card_samples.py --only market_index,affinity_group
     python scripts/render_card_samples.py --list          # 只列卡型不渲染（离线快）
 
@@ -35,28 +51,31 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import io
+import json
 import sys
 import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from plugins.bot_unified_runtime.output.card_render import bridge
+from plugins.bot_unified_runtime.domains.render.card_render import bridge
 
 # mermaid 截图就绪条件与生产同源（bridge 私有常量，避免脚本侧字符串漂移）。
-from plugins.bot_unified_runtime.output.card_render.bridge import (
+from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
     _MERMAID_READY_JS,
 )
-from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
+from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
     BRAND_THEME,
     get_platform_theme,
 )
-from plugins.bot_unified_runtime.output.card_render.usage_cards import (
+from plugins.bot_unified_runtime.domains.render.card_render.usage_cards import (
     usage_report_mica_html,
 )
 from plugins.bot_unified_runtime.output.render_backends import (
@@ -872,6 +891,63 @@ def build_help_index() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# debug：LLM 接入检查卡（f-string 直拼卡，domains/ops/admin/debug.py）
+# ---------------------------------------------------------------------------
+
+
+class _SampleLLMSetupConfig:
+    """debug LLM 接入检查卡配置面：只消费 _llm_setup_rows/_llm_setup_accent 读取的键。
+
+    样张不装载真实 Config（真实 Config 读 .env，样张禁触）：七个必配键全部
+    内置固定值；temperature=3.0 故意越界 → 恰一行标红 + warn 状态，
+    卡面语义状态色（红点/黄标）与达标绿点同屏，形态覆盖最全。
+    """
+
+    bot_help_card_color = BRAND_THEME.accent
+    bot_chat_provider = "openai_compatible"
+    bot_chat_model = "gemini-3.8-flash"
+    bot_chat_api_key = "env:BOT_AXONHUB_API_KEY"
+    bot_chat_base_url = "http://127.0.0.1:8090/v1"
+    bot_chat_temperature = 3.0
+    bot_chat_max_tokens = 65536
+    bot_chat_timeout_seconds = 30.0
+
+
+def build_debug_llm_setup() -> dict[str, Any]:
+    """debug · LLM 接入检查卡（走生产真函数 _llm_setup_rows + _llm_setup_mica_html）。
+
+    相位由 payload_phase digest 钉帧（bridge 单一事实源）；生产本就排除
+    config（repr 含内存地址不稳定）——stub 面字段全固定，HTML 逐字节确定。
+    视口/缩放/等待与生产 _try_render_llm_setup_image 完全一致。
+    """
+    from plugins.bot_unified_runtime.domains.ops.admin.debug import (
+        _LLM_SETUP_NEXT_ACTIONS,
+        _LLM_SETUP_STATUS_LABELS,
+        _llm_setup_mica_html,
+        _llm_setup_rows,
+    )
+
+    config = _SampleLLMSetupConfig()
+    status_label, status_kind = _LLM_SETUP_STATUS_LABELS["needs_env_edit"]
+    html_text = _llm_setup_mica_html(
+        {
+            "config": config,
+            "status_label": status_label,
+            "status_kind": status_kind,
+            "message": "守岸人对话链路样张：检测到 1 项超出取值范围（占位数据，非真实环境）。",
+            "rows": _llm_setup_rows(config),
+            "next_step": _LLM_SETUP_NEXT_ACTIONS["fix_config"],
+        }
+    )
+    return {
+        "html": html_text,
+        "viewport": {"width": 940, "height": 1000},
+        "device_scale_factor": 2,
+        "wait_ms": 0,
+    }
+
+
+# ---------------------------------------------------------------------------
 # error_card：运行异常诊断卡
 # ---------------------------------------------------------------------------
 
@@ -880,7 +956,7 @@ def build_error_card() -> dict[str, Any]:
     """运行异常诊断卡（payload 抄 tests/test_error_card_contract.py 全量构造）。
 
     分区齐全形态：触发回显/栈摘录/触发方法/配置快照/版本与构建/平台与协议/
-    IDs 与时间全量上卡；红强调由 ERROR_THEME 注入 --pc（非平台色）；
+    IDs 与时间全量上卡；红强调由 ERROR_THEME 注入 --accent（非平台色）；
     bot_name/bot_avatar_url 走 _COMMON_FOOTER（与契约构造同值）。
     """
     html_text = bridge.render_error_card_html(
@@ -957,6 +1033,7 @@ CARDS: tuple[SampleCard, ...] = (
     SampleCard("song_candidates", "song_candidates · 点歌候选", build_song_candidates),
     SampleCard("mermaid_flow", "mermaid · 流程图", build_mermaid),
     SampleCard("help_index", "help · 帮助目录（两栏）", build_help_index),
+    SampleCard("debug_llm_setup", "debug · LLM 接入检查", build_debug_llm_setup),
     SampleCard("usage_report", "usage · 模型账单(渠道子行)", build_usage_report),
     SampleCard("media_archive", "media_archive · 归档结果", build_media_archive),
     SampleCard("error_card", "error_card · 运行异常诊断", build_error_card),
@@ -977,7 +1054,134 @@ class SampleResult:
 
 
 def default_out_dir() -> Path:
-    return Path(tempfile.gettempdir()) / "card_samples"
+    return Path(tempfile.gettempdir()) / "shorekeeper-samples" / "baseline-20260918"
+
+
+def _json_default(obj: Any) -> dict[str, str]:
+    """payload.json 兜底：运行时对象（debug 卡 config 面）以类型名占位。"""
+    return {"__nonserializable__": type(obj).__name__}
+
+
+def _sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def render_baseline(
+    out_dir: Path,
+    *,
+    keys: list[str] | None = None,
+    backend: Any = None,
+) -> tuple[list[SampleResult], dict[str, Any]]:
+    """基线/对比取样：每面 payload.json + PNG + .sha256 旁车 + 双渲确定性自检。
+
+    与 render_samples 的差异：同 payload 渲染两次比对字节，汇总写
+    manifest.json（面→html/png sha256→毫秒→确定性）；PNG 字节不稳定如实
+    记录不判失败——归因见 manifest["note"]（2026-09-19 ANIM 钉帧席起生产
+    截图路径已 WAAPI 钉帧，双渲应全 STABLE，PNG 字节等值为验收判据）。
+    注入后端归调用方管理，不代关。
+    """
+    owns_backend = backend is None
+    if owns_backend:
+        backend = build_render_backend("auto")
+    if not getattr(backend, "available", False):
+        raise RuntimeError(f"渲染后端不可用（name={getattr(backend, 'name', '?')}），无法出样张")
+    selected = [card for card in CARDS if not keys or card.key in set(keys)]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    results: list[SampleResult] = []
+    entries: list[dict[str, Any]] = []
+    try:
+        for index, card in enumerate(selected, start=1):
+            result = SampleResult(key=card.key, ok=False)
+            entry: dict[str, Any] = {"index": index, "key": card.key, "label": card.label}
+            started = time.monotonic()
+            try:
+                payload = card.build()
+                html = str(payload.get("html", ""))
+                entry["html_sha256"] = _sha256_hex(html.encode("utf-8"))
+                entry["html_double_build_identical"] = card.build().get("html") == html
+                (out_dir / f"{index:02d}_{card.key}.payload.json").write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=1, default=_json_default),
+                    encoding="utf-8",
+                )
+                png_first = backend.render_card(payload)
+                entry["ms_first"] = int((time.monotonic() - started) * 1000)
+                if not isinstance(png_first, bytes) or not png_first:
+                    raise RuntimeError("后端返回空/None（首次渲染失败）")
+                png_name = f"{index:02d}_{card.key}.png"
+                target = out_dir / png_name
+                target.write_bytes(png_first)
+                (out_dir / f"{index:02d}_{card.key}.sha256").write_text(
+                    f"{_sha256_hex(png_first)}  {png_name}\n", encoding="ascii"
+                )
+                result.path = target
+                result.size_bytes = len(png_first)
+                result.dimensions = _png_dimensions(png_first)
+                entry["png_sha256"] = _sha256_hex(png_first)
+                entry["png_bytes"] = len(png_first)
+                entry["dimensions"] = result.dimensions
+                result.ok = True
+                # 双渲确定性：同 payload 第二次过生产后端，比对字节。
+                second_started = time.monotonic()
+                png_second = backend.render_card(payload)
+                entry["ms_second"] = int((time.monotonic() - second_started) * 1000)
+                if not isinstance(png_second, bytes) or not png_second:
+                    entry["deterministic"] = False
+                    entry["note"] = "第二次渲染返回空/None"
+                else:
+                    entry["png_sha256_second"] = _sha256_hex(png_second)
+                    entry["deterministic"] = png_second == png_first
+            except Exception as exc:  # noqa: BLE001 - 单面失败不中断其余面。
+                result.error = f"{type(exc).__name__}: {exc}"
+                entry["error"] = result.error
+                entry["deterministic"] = False
+            result.elapsed_ms = int((time.monotonic() - started) * 1000)
+            results.append(result)
+            entries.append(entry)
+    finally:
+        if owns_backend:
+            close = getattr(backend, "close", None)
+            if callable(close):
+                close()
+    manifest = {
+        "mode": "samples",
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "backend": str(getattr(backend, "name", "?")),
+        "cards": entries,
+        "note": (
+            "2026-09-19 ANIM 钉帧席起：render_backends 截图前对 .card 子树动画 "
+            "WAAPI 钉时（pause + currentTime=0，冻结在 --phase 负 delay 定义的"
+            "相位位；与「加载即 animation-play-state:paused」参照帧逐字节一致，"
+            "未用 animations=disabled——那会取消到基底位、丢钉帧姿态）。"
+            "同 payload 双渲 PNG 逐字节确定，PNG 字节等值自本基线"
+            "（baseline-20260919-paused）起为全部面的验收判据。"
+            "旧基线 baseline-20260918 不稳根因：生产截图路径不冻结 CSS 循环动画，"
+            "漂移色斑随墙钟采样（相位 digest 只钉动画初相不钉采样时刻），"
+            "当时被迫以 html_sha256 为主判据——该降级口径自本基线起作废。"
+        ),
+    }
+    (out_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    return results, manifest
+
+
+def print_determinism(manifest: dict[str, Any]) -> None:
+    """打印双渲确定性自检表（STABLE/UNSTABLE + 归因尾注）。"""
+    out = sys.stdout
+    out.write("\n双渲确定性自检（同 payload 两次过生产后端比对字节）：\n")
+    for entry in manifest["cards"]:
+        if "error" in entry:
+            out.write(f"  FAIL     {entry['key']:<34} 渲染失败未比对\n")
+            continue
+        mark = "STABLE  " if entry.get("deterministic") else "UNSTABLE"
+        sha1 = str(entry.get("png_sha256", "-"))[:8]
+        sha2 = str(entry.get("png_sha256_second", "-"))[:8]
+        out.write(f"  {mark} {entry['key']:<34} png1={sha1} png2={sha2}\n")
+    out.write(
+        "  判据（2026-09-19 ANIM 钉帧席起）：render_backends 截图前 WAAPI 钉时\n"
+        "  （pause+currentTime=0 冻结在 --phase 相位位），双渲 PNG 逐字节确定；\n"
+        "  PNG 字节等值为全部面验收判据。出现 UNSTABLE 即逐面归因、不许假造稳定。\n"
+    )
 
 
 def render_samples(
@@ -1094,11 +1298,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"未知卡型: {', '.join(unknown)}（用 --list 查看全部）", file=sys.stderr)
         return 2
     try:
-        results = render_samples(Path(args.out), keys=keys)
+        results, manifest = render_baseline(Path(args.out), keys=keys)
     except RuntimeError as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2
     all_ok = print_report(results, Path(args.out))
+    print_determinism(manifest)
     return 0 if all_ok else 1
 
 

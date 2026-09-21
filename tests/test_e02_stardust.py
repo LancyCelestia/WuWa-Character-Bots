@@ -18,7 +18,7 @@ import re
 from html.parser import HTMLParser
 from pathlib import Path
 
-from plugins.bot_unified_runtime.output.card_render import bridge
+from plugins.bot_unified_runtime.domains.render.card_render import bridge
 
 _TEMPLATES_DIR = Path(bridge.__file__).resolve().parent / "templates"
 
@@ -77,8 +77,8 @@ def _star_css(name: str) -> str:
 def test_affinity_template_has_static_stardust_layer() -> None:
     css = _star_css("affinity_card.html")
     assert ".star-motes" in css and ".star-mote" in css
-    # 三通道：wash-2 星空紫 / 白 / --pc-light。
-    for token in ("var(--wash-2)", "#ffffff", "var(--pc-light)"):
+    # 三通道：wash-2 星空紫 / 白 / --accent-light。
+    for token in ("var(--wash-2)", "#ffffff", "var(--accent-light)"):
         assert token in css, f"affinity 星尘缺色通道 {token}"
     # 纯静态：零 animation / 零 transition / 零 box-shadow / 零 keyframes。
     assert "animation" not in css
@@ -92,7 +92,7 @@ def test_affinity_template_has_static_stardust_layer() -> None:
 def test_universal_template_has_static_stardust_layer() -> None:
     css = _star_css("universal_card.html")
     assert ".star-motes" in css and ".star-mote" in css
-    for token in ("var(--wash-2)", "#ffffff", "var(--pc-light)"):
+    for token in ("var(--wash-2)", "#ffffff", "var(--accent-light)"):
         assert token in css, f"universal 星尘缺色通道 {token}"
     assert "animation" not in css
     assert "transition" not in css

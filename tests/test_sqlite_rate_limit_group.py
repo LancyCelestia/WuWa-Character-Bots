@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
-from plugins.bot_unified_runtime.policy.rate_limit import (
+from plugins.bot_unified_runtime.domains.chat_reply.policy.rate_limit import (
     RateLimitSettings,
     SQLiteRateLimiter,
 )

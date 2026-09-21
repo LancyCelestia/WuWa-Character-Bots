@@ -7,7 +7,7 @@
 > **状态口径**（2026-09-13）：Phase 1 已落地并全量测试绿；Phase 2 待 23:00 收尾批执行
 > （用户指令：性能优化内容全部入档，23:00 后全部完成）。本文档是 Phase 2 的唯一执行依据。
 > 底层规格：`docs/design/render-pipeline-optimization-spec.md`（等待预算/并发模型/缓存策略）。
-> 实现真值源：`plugins/bot_unified_runtime/output/render_backends.py` + `tests/test_render_wait_budget.py`。
+> 实现真值源：`domains/render/render_backends.py` + `tests/test_render_wait_budget.py`。
 
 ## 一、Phase 1 已落地（缺省行为字节级等价）
 
@@ -28,12 +28,12 @@
 |---|---|---|---|
 | ① 项目内部 | 摄取→路由→门禁→能力→审核→出站 | `measure_latency_chains.py route`（2000 样例热路径） | **P50 0.014ms / P95 0.054ms**（2026-09-13 实测，verified） |
 | ② HTML 渲染及发送 | 渲染后端截图 + chunks/合并转发 | `measure_latency_chains.py render` | **warm P50 2222ms / P95 2249ms，冷启动 2820ms**（2026-09-13 实测；≈2.2s 中约 1.5s 为固定 sleep 地板——Phase 2 预算等待的直接收益空间，verified） |
-| ③ NapCat | SendQueue→OneBot WS 往返 | 脚本 TCP 握手探活 | **unreachable**（2026-09-13：bot 离线，与台账 #10 一致；重启后重测） |
+| ③ SnowLuma | SendQueue→OneBot WS 往返 | 脚本 TCP 握手探活 | **unreachable**（2026-09-13：bot 离线，与台账 #10 一致；重启后重测） |
 | ④ Mail | SMTP 投递 | 脚本握手（需 BOT_SMTP_HOST 环境变量） | no-config（本机 shell 未导出，重启后随批补测） |
 | ⑤ Telegram | Bot API 往返 | getMe 计时（需 token 环境变量） | no-config（同上） |
 
 **测量脚本**：`scripts/measure_latency_chains.py`（本次随批交付）——离线段（①②）任何时刻可跑；
-在线段（③④⑤）探测 NapCat WS 127.0.0.1:3001 / SMTP / TG API，连不上则明确输出 `unreachable`，
+在线段（③④⑤）探测 SnowLuma WS 127.0.0.1:3001 / SMTP / TG API，连不上则明确输出 `unreachable`，
 绝不编造数值。23:00 批跑全量；若届时 bot 仍离线，在线段保持 unknown 并把「重启后补测」写进台账。
 
 ## 三、Phase 2 执行清单（23:00 收尾批照此逐步执行）

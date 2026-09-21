@@ -525,6 +525,11 @@ PLATFORM_OFFICIAL_NAMES: dict[str, str] = {
 }
 PLATFORM_OFFICIAL_NAMES.setdefault("generic", "Web")
 
+# FIX8（2026-09-21）：本表补齐 6 枚既有公开符号（DIVIDER / FONT_FAMILY_STACK /
+# GLOW_ACCENT / SHADOW_CSS_VARS / SHADOW_LEVELS / TYPE_SCALE_PX）。此前它们
+# 只在显式具名 import 与垫片显式重列两条通道上可用，星号导出与 __all__ 承重面
+# 不含它们——机器门 tests/test_fix8_render_gaps.py::test_all_covers_every_public_binding
+# 现把「模块级公开绑定 ⊆ __all__」钉死，新增公开符号不入册即红。
 __all__ = [
     "BLOB_COUNT",
     "BLOB_DURATIONS",
@@ -534,13 +539,16 @@ __all__ = [
     "CARD_SHELL_WIDTHS",
     "DEFAULT_THEME",
     "DEFAULT_WASH_TOKENS",
+    "DIVIDER",
     "ERROR_ACCENT",
     "ERROR_THEME",
+    "FONT_FAMILY_STACK",
     "FONT_WEIGHT_MAX",
     "GAP_SCALE_PX",
     "GLASS_EDGE",
     "GLASS_FOOT",
     "GLASS_MAIN",
+    "GLOW_ACCENT",
     "META_VIEWPORT_POLICY",
     "MONO_FONT_STACK",
     "OVERLAY_SCRIMS",
@@ -558,12 +566,15 @@ __all__ = [
     "SEMANTIC_DANGER",
     "SEMANTIC_SUCCESS",
     "SEMANTIC_WARNING",
-    "SHELL_WASH_GRADIENT",
+    "SHADOW_CSS_VARS",
+    "SHADOW_LEVELS",
     "SHADOW_PRIMARY",
     "SHADOW_SECONDARY",
+    "SHELL_WASH_GRADIENT",
     "SURFACE_TINTS",
     "TEXT_SECONDARY",
     "THEME_ALIASES",
+    "TYPE_SCALE_PX",
     "UNKNOWN_PLATFORM_COLOR",
     "UNKNOWN_THEME_KEYS",
     "ThemeTokens",

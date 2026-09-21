@@ -12,7 +12,7 @@ import pytest
 from nonebot.adapters.mail.bot import Bot as MailBot
 from nonebot.adapters.mail.config import BotInfo
 
-from plugins.bot_unified_runtime import mail_adapter
+from plugins.bot_unified_runtime.domains.transport.mail import mail_adapter
 from plugins.bot_unified_runtime.mail_adapter import (
     QuietMailMessageEvent,
     ResilientMailAdapter,

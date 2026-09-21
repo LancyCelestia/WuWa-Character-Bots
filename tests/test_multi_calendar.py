@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from plugins.bot_unified_runtime.sources.multi_calendar import (
+from plugins.bot_unified_runtime.domains.divination.data.multi_calendar import (
     byzantine_year,
     gregorian_to_jdn,
     hijri_from_gregorian,

@@ -138,6 +138,20 @@ class MemoryRecord(BaseModel):
     used_at: str | None = None
     reviewed_by: str | None = None
     reviewed_at: str | None = None
+    # ---- v2 总线列（WP6）：全部带缺省，旧行/旧写入路径读出来即缺省值 ----
+    # 这里必须同步扩字段：_record_from 走 `SELECT *`，表加列而 DTO 不加=老服务
+    # 直接 ValidationError（extra="forbid"）。加列不加语义，缺省=「一条都没见过」。
+    provenance: str = "explicit"
+    confirm_count: int = 1
+    contradict_count: int = 0
+    first_seen_at: str = ""
+    last_confirmed_at: str = ""
+    scope_kind: str = "global"
+    scope_key: str = ""
+    supersedes: str = ""
+    decay_class: str = "slow"
+    slot_key: str = ""
+    polarity: str = ""
 
 
 class MemoryTombstone(BaseModel):

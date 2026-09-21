@@ -156,10 +156,10 @@ class IncomingMessage(StrictBaseModel):
     thread_id: str | None = None
     timestamp: datetime = Field(default_factory=_utc_now)
     message_id: str | None = None
-    # 视频理解：回复引用的视频经适配器反查（NapCat get_msg）拿到的本地文件路径；
+    # 视频理解：回复引用的视频经适配器反查（SnowLuma get_msg）拿到的本地文件路径；
     # 空 = 未获取或不可用。由 handler 在异步上下文填充，能力层只读。
     reply_video_path: str = ""
-    # 媒体归档：回复的媒体经 handler 反查（NapCat get_msg）注入的 image/animation/
+    # 媒体归档：回复的媒体经 handler 反查（SnowLuma get_msg）注入的 image/animation/
     # video 段；空 = 无回复媒体或不可用。由 handler 在异步上下文填充，能力层只读。
     reply_media_segments: list[dict[str, Any]] = Field(default_factory=list)
     # 媒体归档：回复的合并转发被 get_forward_msg 展开后的逐条正文；空 = 非转发。

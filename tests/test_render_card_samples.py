@@ -181,7 +181,7 @@ def test_error_card_red_accent_and_full_sections() -> None:
     )
 
     html = rcs.build_error_card()["html"]
-    assert f"--pc: {ERROR_ACCENT}" in html  # 红强调（ERROR_THEME 注入，非平台色）。
+    assert f"--accent:{ERROR_ACCENT}" in html  # 红强调（ERROR_THEME 注入，非平台色）。
     for marker in (
         "运行异常",
         "RUNTIME DIAGNOSTIC",

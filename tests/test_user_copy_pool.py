@@ -12,16 +12,35 @@ from pathlib import Path
 
 from plugins.bot_unified_runtime.capabilities import user_copy
 
-_CAP_DIR = (
-    Path(__file__).resolve().parents[1]
-    / "plugins"
-    / "bot_unified_runtime"
-    / "capabilities"
-)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# v21r2 板块重组后各引用点真身路径（RWC3 波随真身同步：旧路径已是 re-export
+# 垫片，不含池引用表达式，「read_text+旧路径」静态文本锚必须指真身，否则
+# 门禁静默失效/假红；未迁域文件仍在 capabilities/ 原位）。
+_TRUE_SITES: dict[str, str] = {
+    "fx.py": "plugins/bot_unified_runtime/domains/finance/capabilities/fx.py",
+    "moegirl.py": "plugins/bot_unified_runtime/domains/location/capabilities/moegirl.py",
+    "music.py": "plugins/bot_unified_runtime/domains/music/capabilities/music.py",
+    "subscribe.py": "plugins/bot_unified_runtime/domains/subscribe/capabilities/subscribe.py",
+    "subscribe_v2.py": "plugins/bot_unified_runtime/domains/subscribe/capabilities/subscribe_v2.py",
+    "today_history.py": "plugins/bot_unified_runtime/domains/subscribe/capabilities/today_history.py",
+    "file_exchange.py": "plugins/bot_unified_runtime/domains/files/capabilities/file_exchange.py",
+    "echo.py": "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py",
+    # RWOC ops 波与 RWC3 同窗：debug/runtime_logs 真身迁 domains/ops/admin/，
+    # 解析表随后续真身就位即时更新（解析器职责=永远指真身）。
+    "debug.py": "plugins/bot_unified_runtime/domains/ops/admin/debug.py",
+    "runtime_logs.py": "plugins/bot_unified_runtime/domains/ops/admin/runtime_logs.py",
+}
+
+
+def _site_path(filename: str) -> Path:
+    return REPO_ROOT / _TRUE_SITES.get(
+        filename, f"plugins/bot_unified_runtime/capabilities/{filename}"
+    )
 
 
 def _assert_site(filename: str, expression: str) -> None:
-    source = (_CAP_DIR / filename).read_text(encoding="utf-8")
+    source = _site_path(filename).read_text(encoding="utf-8")
     assert expression in source, f"{filename} 缺少预期引用点表达式：{expression}"
 
 
@@ -92,7 +111,7 @@ def test_u11_admin_gate_snapshot() -> None:
         ("today_history.py", "设置群推送时间"),
     ]
     for filename, action in variant_sites:
-        source = (_CAP_DIR / filename).read_text(encoding="utf-8")
+        source = _site_path(filename).read_text(encoding="utf-8")
         assert "random.choice(user_copy.ADMIN_GATE_TEMPLATES)" in source, (
             f"{filename} 未引用权限拒绝变体池"
         )
@@ -121,14 +140,14 @@ def test_u9_push_save_failed_snapshot() -> None:
         "推送时间的改动没保存成功（写盘出错，我已记下原因）。"
         "稍后再发一次；还不行就找管理员看运行日志。"
     )
-    source = (_CAP_DIR / "today_history.py").read_text(encoding="utf-8")
+    source = _site_path("today_history.py").read_text(encoding="utf-8")
     assert source.count("body=user_copy.PUSH_SAVE_FAILED") == 2
 
 
 def test_u6_run_env_failure_advice_snapshot() -> None:
     """U6 运行环境异常共享尾段（file_exchange 两处）。"""
     assert user_copy.RUN_ENV_FAILURE_ADVICE == "稍后再试；还不行就找管理员看运行日志。"
-    source = (_CAP_DIR / "file_exchange.py").read_text(encoding="utf-8")
+    source = _site_path("file_exchange.py").read_text(encoding="utf-8")
     assert (
         'f"语法检查通过 ✓；本机没能启动 Python 跑这段代码，'
         '这次运行不了。{user_copy.RUN_ENV_FAILURE_ADVICE}"'

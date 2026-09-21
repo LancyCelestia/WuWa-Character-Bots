@@ -271,9 +271,9 @@ LLMCallRecord
 
 当前项目已有：
 
-- `runtime/usage_monitor.py`；
-- `runtime/pricing.py`；
-- `sources/runtime_event_log.py`。
+- `domains/ops/monitor/usage_monitor.py`；
+- `domains/chat_reply/llm_engine/pricing.py`；
+- `domains/ops/monitor/runtime_event_log.py`。
 
 后续应从日志文本聚合迁移到 `LLMCallRecord`，日志只作为审计和故障诊断来源。
 

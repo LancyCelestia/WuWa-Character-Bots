@@ -4,7 +4,7 @@
 （bot_unavailable 挂起重试）等处，没有统一的「分类→预算→动作→验证→
 稳定窗口→风暴熔断」链路。本模块把这条链路收拢成一个依赖可注入、
 全离线确定性可测的服务；**自身不做任何真实重连/回滚**——真实动作由
-executor 注入（装配席把 NapCat 重连、worker 恢复等真实执行体接进来）。
+executor 注入（装配席把 SnowLuma 重连、worker 恢复等真实执行体接进来）。
 
 合同锚点（backend-v2-implementation-guide.md §12 L260-262，逐条对齐）：
 

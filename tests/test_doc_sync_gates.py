@@ -23,7 +23,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE_ROUTER_PY = ROOT / "plugins" / "bot_unified_runtime" / "runtime" / "base_router.py"
+BASE_ROUTER_PY = ROOT / "plugins" / "bot_unified_runtime" / "domains" / "chat_reply" / "runtime" / "base_router.py"
 INIT_PY = ROOT / "plugins" / "bot_unified_runtime" / "__init__.py"
 CONFIG_PY = ROOT / "plugins" / "bot_unified_runtime" / "config.py"
 ROUTE_MATRIX_MD = ROOT / "docs" / "route-matrix.md"
@@ -339,3 +339,35 @@ def test_config_catalog_covers_config_fields() -> None:
         + "\n- ".join(missing)
     )
     assert not stale, f"KNOWN_MISSING 里已无对应代码字段的过期条目（请摘除）：{stale}"
+
+
+# --------------------------------------------------------------------------
+# G-5 增量（report-T86 §G-5.1，T89 席追加）：TTS 域 catalog 登记专项门。
+# 泛化全集门（test_config_catalog_covers_config_fields）之上点名 TTS 域，
+# 防域键整批漂移被泛化缺口淹没；负样本自检证判定力（内嵌伪键能抓红）。
+# --------------------------------------------------------------------------
+
+
+def test_config_catalog_registers_all_tts_keys() -> None:
+    """bot_tts_* 全键（config.py 现值集合）必须在 config-catalog-full.md 登记。
+
+    catalog 既有口径允许省略 ``BOT_`` 前缀（``_tts_*`` 形态），经
+    ``_normalize_catalog_key`` 归一后比对。负样本自检：内嵌伪键必须
+    「不在 config.py、不在 catalog、且会被本门缺失计算抓红」，防
+    「集合恒空/恒全」的空转门。
+    """
+    fields = _config_field_names()
+    tts_fields = {name for name in fields if name.startswith("bot_tts_")}
+    assert len(tts_fields) >= 20, f"bot_tts_* 字段提取异常：仅 {len(tts_fields)} 个"
+    registered = _catalog_registered_keys(CONFIG_CATALOG_MD.read_text(encoding="utf-8"))
+    missing = sorted(tts_fields - registered)
+    assert not missing, (
+        "TTS 域配置键未登记进 docs/config-catalog-full.md（G-5 专项门；"
+        "catalog 允许 _tts_* 省略 BOT_ 前缀的既有写法）：\n- " + "\n- ".join(missing)
+    )
+    # 负样本自检：伪键三重不在场 + 缺失计算对「在 config、不在 catalog」的键
+    # 必须抓红（若 catalog 解析器或字段提取器空转，此处先红）。
+    fake = "bot_tts_negative_probe_not_a_real_key"
+    assert fake not in tts_fields
+    assert fake not in registered
+    assert sorted(({fake} | tts_fields) - registered) == [fake]

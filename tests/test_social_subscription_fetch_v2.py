@@ -6,13 +6,15 @@ import threading
 import warnings
 from datetime import datetime, timezone
 
-from plugins.bot_unified_runtime.contracts.subscription import SubscriptionTarget
-from plugins.bot_unified_runtime.sources.subscriptions import (
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
+    SubscriptionTarget,
+)
+from plugins.bot_unified_runtime.domains.subscribe.adapters import (
     bilibili_adapter,
     social_v2,
     xiaohongshu_adapter,
 )
-from plugins.bot_unified_runtime.sources.subscriptions.social_v2 import (
+from plugins.bot_unified_runtime.domains.subscribe.adapters.social_v2 import (
     BilibiliSubscriptionAdapterV2,
     TelegramSubscriptionAdapterV2,
     XiaohongshuSubscriptionAdapterV2,

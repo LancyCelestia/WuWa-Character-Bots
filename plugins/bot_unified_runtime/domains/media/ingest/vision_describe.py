@@ -4,7 +4,7 @@
 时调用本模块，把媒体内容转成紧凑的文字描述注入当前消息上下文，让人格模型
 "看懂"媒体再回应。
 
-图片来源优先级：NapCat 落盘的本机路径（file:// 或绝对路径，直读字节转
+图片来源优先级：SnowLuma 落盘的本机路径（file:// 或绝对路径，直读字节转
 base64 data URL）→ http URL 原样透传。NTQQ 的签名 URL 对部分境外 VLM
 不可达且会过期，本机字节是最可靠来源。GIF 动图取首帧重编为 JPEG（主流
 OpenAI 兼容接口不收 image/gif）；超大图经 PIL 缩到 2048px JPEG，控制在
@@ -254,6 +254,19 @@ def _download_image_bytes(
     *,
     max_bytes: int = _MAX_REMOTE_IMAGE_BYTES,
 ) -> bytes | None:
+    # WP1（背景点4）：远程取字节此前完全不过 SSRF 咽喉——用户可控 URL 直连
+    # urlopen 可打内网/云元数据。入口先过 check_download_url（内网/保留段/畸形
+    # 一律拒），拒绝即按「取不到图」降级（返回 None，调用方保留原 URL），
+    # 与 media_archive._fetch_url_media 同口径。
+    from plugins.bot_unified_runtime.sources.downloader import (
+        RejectedUrlError,
+        check_download_url,
+    )
+
+    try:
+        check_download_url(url)
+    except RejectedUrlError:
+        return None
     request = urllib.request.Request(url, headers={"User-Agent": _DESKTOP_UA})
     host = urlparse(url).hostname or ""
     try:
@@ -341,7 +354,7 @@ def extract_image_urls(raw_segments: list[dict[str, Any]] | None) -> list[str]:
         ]
         if not any(candidates):
             # mface/表情商城段常见无 url 形态：图拿不到是"读不到图"类报障的
-            # 高频来源，留 debug 观测点（ NapCat 侧字段变化时此处最先显形）。
+            # 高频来源，留 debug 观测点（ SnowLuma 侧字段变化时此处最先显形）。
             logger.debug(
                 "vision: %s segment without url/file/path keys=%s",
                 segment.get("type"),

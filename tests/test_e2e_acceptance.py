@@ -225,17 +225,18 @@ def test_dry_run_always_uses_in_memory_queue() -> None:
     assert desc.startswith("dry-run:")
 
 
-def test_group_whitelist_gate_blocks_non_white1() -> None:
-    runtime = _runtime_stub(bot_group_white1=["111"])
+def test_group_whitelist_gate_blocks_non_white1(tmp_path) -> None:
+    runtime = _runtime_stub(bot_runtime_data_dir=str(tmp_path), bot_group_white1=["111"])
     allowed, reason = e2e.check_group_allowed(runtime, "111")
     assert allowed and "WHITE1" in reason
     allowed, reason = e2e.check_group_allowed(runtime, "999")
     assert not allowed and "WHITE1" in reason
 
 
-def test_group_whitelist_gate_rejects_blacklists() -> None:
+def test_group_whitelist_gate_rejects_blacklists(tmp_path) -> None:
     runtime = _runtime_stub(
         bot_group_white1=["111"],
+        bot_runtime_data_dir=str(tmp_path),
         bot_group_black1=["222"],
         bot_group_black2=["333"],
     )

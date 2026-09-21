@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from plugins.bot_unified_runtime.contracts.subscription import (
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SourceFetchResult,
     SubscriptionCursor,
     SubscriptionCursorV2,
@@ -17,15 +17,15 @@ from plugins.bot_unified_runtime.contracts.subscription import (
     SubscriptionSpec,
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
-from plugins.bot_unified_runtime.sources.subscriptions import (
+from plugins.bot_unified_runtime.domains.subscribe.adapters import (
     social_v2,
     xiaohongshu_adapter,
 )
-from plugins.bot_unified_runtime.sources.subscriptions.social_v2 import (
+from plugins.bot_unified_runtime.domains.subscribe.adapters.social_v2 import (
     XiaohongshuSubscriptionAdapterV2,
     YouTubeSubscriptionAdapterV2,
 )
+from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 
 _NOW = datetime.now(timezone.utc)
 

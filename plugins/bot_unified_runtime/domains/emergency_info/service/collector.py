@@ -49,6 +49,9 @@ from plugins.bot_unified_runtime.domains.emergency_info.contracts import (
     EmergencyStatus,
     build_emergency_item,
 )
+from plugins.bot_unified_runtime.domains.emergency_info.service import (
+    alert_taxonomy as taxonomy,
+)
 from plugins.bot_unified_runtime.domains.emergency_info.service.grading import grade
 from plugins.bot_unified_runtime.domains.emergency_info.service.snapshot_store import (
     DEFAULT_MAX_SNAPSHOT_AGE,
@@ -77,6 +80,18 @@ ISSUE_KIND = "collect_failed"
 DEFAULT_WALL_CLOCK_BUDGET_SECONDS = 60.0
 #: 超预算放弃剩余源时的显式失败原因（诚实标 FAILED，绝不当「无数据」）。
 BUDGET_EXCEEDED_REASON = "budget_exceeded"
+
+#: USGS 采集腿的震级门槛（E11 §4 用户裁定的 `min_magnitude=4.0`）。
+#:
+#: 审计 E6-N1 的直接根修点：装配腿此前绑的是 `fetch_usgs_recent_feed()`
+#: ——`all_hour` 全球通道、**零震级门槛**，配上「标题含『地震』即判红」的旧定级，
+#: 等于「南极 M0.6 也能在凌晨三点给全群推红色预警」。裁定的
+#: `fetch_usgs_quakes(min_magnitude=4.0)`（fdsnws + 中国矩形 + 滚动 24h）在生产零调用。
+#: 现在装配腿回到裁定通道；门槛写成模块常量而非 config 键，是因为根装配侧
+#: `build_emergency_collector_deps(...)` 的调用形态不传该参数（改根装配文件属另一工作包），
+#: 想按环境改数请由工厂形参 `usgs_min_magnitude` 注入——该形参与主会话待落键
+#: `bot_emergency_info_usgs_min_magnitude` 的接线写法见 WP3 交接段。
+USGS_PUSH_MIN_MAGNITUDE = 4.0
 
 
 # ---------------------------------------------------------------- 注入协议（依赖倒置，离线可测）
@@ -197,7 +212,11 @@ def _collect_ok_items(
     for payload in task.to_payloads(outcome, now):
         external_id = str(payload.get("external_id") or "").strip()
         source_id = str(payload.get("source_id") or task.source_id).strip()
-        item_id = f"{source_id}:{external_id}" if external_id else ""
+        # 连接符用 `-` 不用 `:`：`item_id` 会原样进投递幂等键的一段，而键段字符集
+        # （`dedupe._SEGMENT_RE`）显式排除 `:`——`:` 是段的分隔符。此前写 `:` 使
+        # **每一条真实条目**在 `deliver_emergency` 抛 ValueError，被 job 的兜底 except
+        # 吞成一行日志，紧急信息一条都投不出去（2026-09-20 端到端用例抓到）。
+        item_id = f"{source_id}-{external_id}" if external_id else ""
         enriched = dict(payload)
         enriched["item_id"] = item_id
         enriched["fetched_at"] = now
@@ -284,6 +303,33 @@ def get_latest(
 # ---------------------------------------------------------------- 源侧 payload 映射（纯函数）
 
 
+def _nmc_pic_signal_code(pic: object) -> str:
+    """NMC 图标文件名 → 四位类型码（`p0002003.png` → `0002`）；形态不符返回空串。
+
+    实测形态（真样例 `nmc_findAlarm.sample.json` 300 条逐条核过）：文件名恒为
+    `p` + 4 位类型码 + 3 位等级码 + `.png`。等级码刻意**不**在此解析——颜色词已从
+    标题解析（`nmc_alarm.split_alarm_title`），两条路各出一个色就会打架。
+    """
+    name = str(pic or "").rsplit("/", 1)[-1].strip()
+    if not name.lower().startswith("p"):
+        return ""
+    digits = "".join(char for char in name[1:] if char.isdigit())
+    return digits[:4] if len(digits) >= 5 else ""
+
+
+def _nmc_category(alert: object) -> str:
+    """一条 NMC 告警 → 注册表类别 id（图码优先，标题别名兜底，认不出留空）。"""
+    code = _nmc_pic_signal_code(getattr(alert, "pic", ""))
+    by_code = taxonomy.NMC_SIGNAL_TYPE_TO_CATEGORY.get(code, "")
+    if by_code:
+        return by_code
+    return taxonomy.resolve_category(
+        f"{getattr(alert, 'kind', '') or ''} {getattr(alert, 'title', '') or ''}",
+        source_id=nmc_alarm.SOURCE_ID,
+        source_kind="weather_alarm",
+    )
+
+
 def _nmc_payloads(outcome: SourceOutcome[Any], now: datetime) -> Payloads:
     """全国在报预警 → 契约 payload。发生时间缺失**不在此丢**：照原样交给
     `build_emergency_item`（唯一收口）判 None，由采集器计入 dropped（D-1 不造假时间）。"""
@@ -291,6 +337,9 @@ def _nmc_payloads(outcome: SourceOutcome[Any], now: datetime) -> Payloads:
     for alert in outcome.items:
         payloads.append(
             {
+                # 无 latitude/longitude：NMC 预警接口不给坐标、`qx.json` 码表也没有
+                # （2026-09-20 实测 keys=code/province/city/url），订阅的地点判定对
+                # 这一源只走标题地名文字匹配——留 None 是"没这个事实"，不是漏填。
                 "source_id": nmc_alarm.SOURCE_ID,
                 "source_kind": "weather_alarm",
                 "external_id": getattr(alert, "alertid", ""),
@@ -300,6 +349,7 @@ def _nmc_payloads(outcome: SourceOutcome[Any], now: datetime) -> Payloads:
                 "color_label": getattr(alert, "color_label", ""),
                 "occurred_at": getattr(alert, "issued_at", None),
                 "credibility": 0.90,
+                "category_id": _nmc_category(alert),
             }
         )
     return payloads
@@ -312,7 +362,12 @@ _QUAKE_CREDIBILITY: dict[str, float] = {
 
 
 def _quake_payloads(outcome: SourceOutcome[Any], now: datetime) -> Payloads:
-    """地震速报（ICL / USGS 共用形态）→ 契约 payload；无颜色词（定级由「地震」关键词命中 P0）。"""
+    """地震速报（ICL / USGS 共用形态）→ 契约 payload。
+
+    **没有 `color_label` 这一项**：ICL/USGS 都不给预警色，硬造一个色就是编数。
+    定级因此只吃 `magnitude`/`depth_km`/坐标三枚**源侧数值**（`grading.earthquake_level`），
+    再也不看标题里有没有「地震」二字——审计 E6-N1「M0.6 南极震判红穿静默窗」的根修点。
+    """
     payloads: Payloads = []
     for event in outcome.items:
         source_id = getattr(event, "source_id", "") or ""
@@ -326,6 +381,7 @@ def _quake_payloads(outcome: SourceOutcome[Any], now: datetime) -> Payloads:
             {
                 "source_id": source_id,
                 "source_kind": "earthquake",
+                "category_id": taxonomy.EARTHQUAKE_CATEGORY_ID,
                 "external_id": getattr(event, "event_id", ""),
                 "title": title,
                 "body": body,
@@ -333,6 +389,13 @@ def _quake_payloads(outcome: SourceOutcome[Any], now: datetime) -> Payloads:
                 "color_label": "",
                 "occurred_at": getattr(event, "origin_at", None),
                 "credibility": _QUAKE_CREDIBILITY.get(source_id, 0.60),
+                # 订阅侧的半径匹配唯一坐标来源（WIRE-SUB）；半个坐标会被契约层
+                # `check_coordinate_pair` 判不成立⇒整条 dropped，不留半个点去算距离。
+                "latitude": getattr(event, "latitude", None),
+                "longitude": getattr(event, "longitude", None),
+                # WP3 定级输入：震级/深度是源侧事实，拿不到就留 None（不猜）。
+                "magnitude": getattr(event, "magnitude", None),
+                "depth_km": depth,
             }
         )
     return payloads
@@ -340,7 +403,11 @@ def _quake_payloads(outcome: SourceOutcome[Any], now: datetime) -> Payloads:
 
 def _gdacs_payloads(outcome: SourceOutcome[Any], now: datetime) -> Payloads:
     """GDACS 事件 → 契约 payload（背景聚合）；Green/未知等级不映射颜色（D-1）。
-    发生时间缺失交 `build_emergency_item` 判 None（唯一收口），不在此丢。"""
+    发生时间缺失交 `build_emergency_item` 判 None（唯一收口），不在此丢。
+
+    类别按**事件中文名 + 事件名**在注册表里认（`WF`→野火、`EQ`→地震、`FL`→洪水、
+    `TC`→热带气旋都已实测）；认不出留空，不硬套一个"看起来像"的类别。
+    """
     payloads: Payloads = []
     for event in outcome.items:
         country = getattr(event, "country", "") or ""
@@ -355,6 +422,19 @@ def _gdacs_payloads(outcome: SourceOutcome[Any], now: datetime) -> Payloads:
                 "color_label": getattr(event, "color_label", "") or "",
                 "occurred_at": getattr(event, "from_at", None),
                 "credibility": 0.60,
+                "latitude": getattr(event, "latitude", None),
+                "longitude": getattr(event, "longitude", None),
+                "category_id": taxonomy.resolve_category(
+                    " ".join(
+                        str(value or "")
+                        for value in (
+                            getattr(event, "event_type_label", ""),
+                            getattr(event, "name", ""),
+                        )
+                    ),
+                    source_id=gdacs.SOURCE_ID,
+                    source_kind="global_disaster",
+                ),
             }
         )
     return payloads
@@ -376,11 +456,14 @@ def build_emergency_collector_deps(
     fetch_icl: FetchFn | None = None,
     fetch_usgs: FetchFn | None = None,
     fetch_gdacs: FetchFn | None = None,
+    usgs_min_magnitude: float = USGS_PUSH_MIN_MAGNITUDE,
 ) -> CollectorDeps:
     """装配一轮四源（全国预警清单 / ICL / USGS / GDACS）的依赖。
 
     工厂本身**不发任何网络请求**：只把 `sources/*` 的真实取数函数绑成注入闭包。
     `fetch_*` 形参允许注入替身（离线冒烟），缺省走真实常量 URL（先过常量白名单再过 SSRF 闸）。
+    USGS 腿缺省绑 E11 §4 裁定的 `fetch_usgs_quakes(min_magnitude=4.0)`——门槛理由写在
+    `USGS_PUSH_MIN_MAGNITUDE` 上方注释（审计 E6-N1），不再用无门槛的全球 `all_hour` feed。
     `persist` 应由装配期接 `service/review.py::ReviewGate.submit`（D-8 唯一写入点，本席不直调 store）。
     """
     tasks: tuple[SourceTask, ...] = (
@@ -399,7 +482,10 @@ def build_emergency_collector_deps(
         SourceTask(
             source_id=quakes.USGS_SOURCE_ID,
             source_kind="earthquake",
-            fetch=fetch_usgs or (lambda: quakes.fetch_usgs_recent_feed()),
+            fetch=(
+                fetch_usgs
+                or (lambda: quakes.fetch_usgs_quakes(min_magnitude=usgs_min_magnitude))
+            ),
             to_payloads=_quake_payloads,
         ),
         SourceTask(
@@ -425,6 +511,7 @@ __all__ = [
     "DEFAULT_WALL_CLOCK_BUDGET_SECONDS",
     "ISSUE_KIND",
     "ISSUE_STAGE",
+    "USGS_PUSH_MIN_MAGNITUDE",
     "AlertSuppression",
     "CollectionReport",
     "CollectorDeps",

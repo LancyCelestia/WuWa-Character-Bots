@@ -1,0 +1,210 @@
+"""会话键形态中央件（FIX5 收编，全仓唯一权威，2026-09-20 spec-audit）。
+
+病根（台账 #33 群摘要读零行、#29 同类，第三次咬人）：会话键在**同一棵代码树里
+有两种书写形态**，而判据各自只认一种——
+
+- 生产摄取层的会话键 = NoneBot ``event.get_session_id()``（根 ``__init__.py:1288``
+  → ``IncomingMessage.session_id``，pipeline 全程直传）。**OneBot V11 逐字实测**：
+  群事件 ``f"group_{group_id}_{user_id}"``、私聊 ``str(user_id)``；Telegram 群
+  ``group_{chat.id}_{from.id}``（含 thread 形 ``group_<cid>_thread<t>_<uid>``）、
+  私聊 ``private_<chat.id>``、频道 ``channel_<chat.id>``。
+- 冒号形 ``group:<gid>`` 只存在于**另一命名空间**（出站 ``SendRequest.session_id``）
+  与合成/开发态消息（历史上的今天推送 ``__init__.py:1838``、``ops/smoke/*``）。
+
+两处注释把冒号形写成「ingress 约定」（根 ``__init__.py:454``、
+``content_route.py:169``），是这一族 bug 的**误导源**：拿它当真相写的判据
+（旧 ``chat_reply/capabilities/memory.py``）落在真实群键上恒 False，静默零报错。
+
+本件是三件事的唯一入口：**键形态解析**（``parse_session_key``）、
+**是否群会话**（``is_group_session_key``）、**键构造**（``build_session_key`` /
+``private_session_key`` / ``group_session_prefix``）。构造侧的逐字形态与历史实现
+（``meme/reactions/engine.py:session_key_from_ids``、
+``chat_reply/character/shared_group.py:_group_prefix``）**字节等价**，
+读侧与写侧因此不可能再各说各话。
+
+判据口径（钉死，见 ``tests/test_session_keys_central.py``）：
+
+1. **下划线形**（权威）：``group_<gid>_<sender>`` —— 必须有群号**且**有发送者段，
+   两段都不含内部空白（缺发送者段的 ``group_123456``、夹换行的 ``group_\\n1_2``
+   都不判群，fail-closed：真实适配器不发这种形，宁可少判也不让半截/拼脏的键
+   获得群身份）。
+2. **冒号形**（历史/合成/出站）：``group:<gid>`` —— 该形按构造即「整群」语义，
+   判群、无发送者段。
+3. 前缀识别**大小写不敏感**、两端空白先剥。⚠️ 这是相对旧 engine 判据
+   （``startswith("group_")``，区分大小写、不剥空白）的**有意放宽**：没有任何
+   适配器产出大写或带空白的键，故对全部真实输入逐字节等价；放宽的价值是让两个
+   消费方共用同一份判据、从此无从分叉。
+4. **不覆盖的形态（诚实登记，勿当漏洞惊喜）**：官方 QQ 适配器 ``guild_<g>_channel_<c>_<u>``
+   与 ``friend_<openid>``、console 的 ``<channel>_<user>`` 不判群（与旧两处判据
+   行为一致）。手上有 ``IncomingMessage`` 时，**契约字段路**才是正解
+   （``message.session_type`` / ``message.group_id``，见
+   ``chat_reply/policy/rate_limit.py:is_group_session``）；本件只管「拿到的是
+   一个字符串键」的场景。
+
+全件零 I/O、零网络、零 config 依赖：纯函数，可被任意域离线复用。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Final
+
+# 权威群前缀（NoneBot ``get_session_id()`` 群事件形态）。
+GROUP_SESSION_PREFIX: Final[str] = "group_"
+# 历史/合成/出站形态前缀（SendRequest.session_id、推送与 smoke 合成消息）。
+LEGACY_GROUP_SCHEME: Final[str] = "group:"
+# 缺发送者段时的兜底值（与历史 session_key_from_ids 逐字一致）。
+UNKNOWN_SENDER: Final[str] = "unknown"
+
+# 形态标识（parse 结果字段，勿与「会话类型」SessionType 混淆）。
+FORM_UNDERSCORE: Final[str] = "group_underscore"
+FORM_COLON: Final[str] = "group_colon"
+FORM_PRIVATE_SCHEME: Final[str] = "private_scheme"
+FORM_BARE: Final[str] = "bare"
+FORM_EMPTY: Final[str] = "empty"
+FORM_OTHER: Final[str] = "other"
+
+# 会话种类标识。
+KIND_GROUP: Final[str] = "group"
+KIND_PRIVATE: Final[str] = "private"
+KIND_UNKNOWN: Final[str] = "unknown"
+
+_PRIVATE_SCHEMES: Final[tuple[str, ...]] = ("private_", "private:")
+
+
+def normalize_session_key(value: Any) -> str:
+    """键的归一形式：字符串化 + 两端去空白（None/空值 → ``""``）。"""
+    return str(value if value is not None else "").strip()
+
+
+def _has_internal_whitespace(segment: str) -> bool:
+    """段内是否夹换行/制表等空白（两端已在 ``normalize_session_key`` 去过）。"""
+    return any(char.isspace() for char in segment)
+
+
+@dataclass(frozen=True)
+class SessionKey:
+    """解析结果（不猜测、不改写：原始串留在 ``raw``，归一串在 ``normalized``）。"""
+
+    raw: str
+    normalized: str
+    kind: str  # KIND_GROUP / KIND_PRIVATE / KIND_UNKNOWN
+    form: str  # FORM_*
+    group_id: str  # 非群键为 ""
+    user_id: str  # 无发送者段时为 ""（如冒号形群键）
+
+    @property
+    def is_group(self) -> bool:
+        return self.kind == KIND_GROUP
+
+
+def parse_session_key(value: Any) -> SessionKey:
+    """会话键 → 结构化形态（唯一判据入口，其余函数都从这里派生）。"""
+    raw = "" if value is None else str(value)
+    normalized = normalize_session_key(value)
+    lowered = normalized.casefold()
+
+    def _result(
+        kind: str,
+        form: str,
+        *,
+        group_id: str = "",
+        user_id: str = "",
+    ) -> SessionKey:
+        return SessionKey(
+            raw=raw,
+            normalized=normalized,
+            kind=kind,
+            form=form,
+            group_id=group_id,
+            user_id=user_id,
+        )
+
+    if not normalized:
+        return _result(KIND_UNKNOWN, FORM_EMPTY)
+
+    if lowered.startswith(GROUP_SESSION_PREFIX):
+        remainder = normalized[len(GROUP_SESSION_PREFIX) :]
+        group_id, separator, sender = remainder.partition("_")
+        if not separator or not group_id:
+            # 半截键（"group_123456" / "group__111"）不配获得群身份。
+            return _result(KIND_UNKNOWN, FORM_OTHER)
+        if _has_internal_whitespace(group_id) or _has_internal_whitespace(sender):
+            # 段内夹换行/制表 = 拼出来的脏串，不给群身份（真实适配器键无内部空白）。
+            return _result(KIND_UNKNOWN, FORM_OTHER)
+        return _result(
+            KIND_GROUP,
+            FORM_UNDERSCORE,
+            group_id=group_id,
+            user_id=sender,
+        )
+
+    if lowered.startswith(LEGACY_GROUP_SCHEME):
+        group_id = normalized[len(LEGACY_GROUP_SCHEME) :].strip()
+        if not group_id:
+            return _result(KIND_UNKNOWN, FORM_OTHER)
+        return _result(KIND_GROUP, FORM_COLON, group_id=group_id)
+
+    for scheme in _PRIVATE_SCHEMES:
+        if lowered.startswith(scheme):
+            return _result(
+                KIND_PRIVATE,
+                FORM_PRIVATE_SCHEME,
+                user_id=normalized[len(scheme) :].strip(),
+            )
+
+    # 其余一律私聊裸键（OneBot 私聊 ``str(user_id)``、mail 发件人 id、
+    # console 频道键、channel_/guild_/friend_ 等非群形态）。
+    return _result(KIND_PRIVATE, FORM_BARE, user_id=normalized)
+
+
+def is_group_session_key(value: Any) -> bool:
+    """该会话键是否群聊形态（下划线权威形 ∪ 冒号历史/合成形，判据唯一在此）。"""
+    return parse_session_key(value).kind == KIND_GROUP
+
+
+def group_id_of_session_key(value: Any) -> str:
+    """群键的群号；非群键返回 ``""``（调用方据此判无数据，绝不退化成全表扫）。"""
+    parsed = parse_session_key(value)
+    return parsed.group_id if parsed.kind == KIND_GROUP else ""
+
+
+def _clean_identifier(value: Any) -> str:
+    """标识符（群号/用户号）规范形：字符串化去空白（int/str 混型历史实锤）。
+
+    falsy（``None`` / ``0`` / ``False`` / 空集合）一律视作「无该段」，与历史实现
+    ``session_key_from_ids`` 的 ``str(x or "")`` 逐字同构——群号 0 不是合法 QQ 群号，
+    该口径不改变任何真实输入的结果（见 ``tests/test_session_keys_central.py`` 的
+    falsy 钉死用例）。
+    """
+    return str(value or "").strip()
+
+
+def build_session_key(group_id: Any, user_id: Any) -> str:
+    """会话键唯一构造器，**逐字镜像** OneBot V11 ``get_session_id()``。
+
+    群=``group_<gid>_<uid>``（uid 空→ ``unknown``）；私聊=``<uid>``（空→ ``unknown``）。
+    与历史实现 ``meme/reactions/engine.py:session_key_from_ids`` 字节等价。
+    """
+    group = _clean_identifier(group_id)
+    user = _clean_identifier(user_id)
+    if group:
+        return f"{GROUP_SESSION_PREFIX}{group}_{user or UNKNOWN_SENDER}"
+    return user or UNKNOWN_SENDER
+
+
+def private_session_key(user_id: Any) -> str:
+    """私聊键构造（裸 uid，空值兜底 ``unknown``）。"""
+    return _clean_identifier(user_id) or UNKNOWN_SENDER
+
+
+def group_session_prefix(group_id: Any) -> str:
+    """群级聚合前缀 ``group_<gid>_``（读侧 LIKE 用，与构造器逐字同构）。
+
+    None/空群号返回 ``""``——``str(None)="None"`` 会造出假前缀 ``group_None_``，
+    故 None 单独拦。与历史实现 ``shared_group.py:_group_prefix`` 字节等价。
+    """
+    normalized = _clean_identifier(group_id)
+    if not normalized:
+        return ""
+    return f"{GROUP_SESSION_PREFIX}{normalized}_"

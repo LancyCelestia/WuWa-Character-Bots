@@ -10,9 +10,9 @@ from plugins.bot_unified_runtime.capabilities.music import (
     clear_music_candidate_sessions,
 )
 from plugins.bot_unified_runtime.contracts import SessionType, build_parsed_content
-from plugins.bot_unified_runtime.contracts.runtime import IncomingMessage
-from plugins.bot_unified_runtime.output import templates as card_templates
-from plugins.bot_unified_runtime.output.card_render.bridge import (
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
+from plugins.bot_unified_runtime.domains.render import templates as card_templates
+from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
     render_song_candidates_html,
 )
 

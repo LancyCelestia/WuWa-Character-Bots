@@ -28,9 +28,13 @@ from plugins.bot_unified_runtime.contracts import (
     SessionType,
     SubscriptionDestinationV2,
 )
-from plugins.bot_unified_runtime.contracts.subscription import SubscriptionTarget
-from plugins.bot_unified_runtime.security.content_safety import normalize_for_matching
-from plugins.bot_unified_runtime.sources.subscription_store_v2 import (
+from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
+    normalize_for_matching,
+)
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
+    SubscriptionTarget,
+)
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
 )
 

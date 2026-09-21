@@ -7,7 +7,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities import reminder as reminder_cap_mod
 from plugins.bot_unified_runtime.capabilities.reminder import (
     build_reminder_capability,
     clear_checkoff_pending_for_tests,
@@ -21,6 +20,9 @@ from plugins.bot_unified_runtime.character.reminders import (
     resolve_todo_match,
 )
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.schedule.capabilities import (
+    reminder as reminder_cap_mod,
+)
 
 _TZ = timezone(timedelta(hours=8))
 
@@ -32,6 +34,15 @@ def _isolated_checkoff_pending_state():
     clear_checkoff_pending_for_tests()
     yield
     clear_checkoff_pending_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_recent_bodies_state():
+    """粘贴体守卫的 24h 去重表是模块级单例：每例前后清零，防跨用例把
+    「12点提醒我写作业」这类标准样例误判成重复。"""
+    reminder_cap_mod._RECENT_BODIES.clear()
+    yield
+    reminder_cap_mod._RECENT_BODIES.clear()
 
 
 def _now() -> datetime:
@@ -64,6 +75,120 @@ def test_parse_tomorrow_morning_period() -> None:
     assert intent is not None
     assert intent.remind_at == datetime(2026, 9, 12, 8, 0, tzinfo=_TZ)
     assert "起床" in intent.text
+
+
+def test_parse_mingzao_day_word_tomorrow_morning() -> None:
+    """LEDGER-b 缺口修复：「明早」纳入日词表——明早8点=次日 08:00。
+
+    旧缺陷：「明早」不在 _DAY_OFFSETS 与两枚正则的日词备选串，「明早8点」
+    以裸「8点」解析（day_word=None），上午场景（now < 8:00）候选=今天
+    08:00 且不触发顺延 → 错记今天。夜间说则侥幸顺延，故缺陷呈上午选择性。
+    """
+    # 上午场景（错记核心复现）：06:30 说「明早8点」必须是明天 08:00。
+    intent = parse_reminder_intent(
+        "明早8点提醒我开会", now=datetime(2026, 9, 11, 6, 30, tzinfo=_TZ)
+    )
+    assert intent is not None
+    assert intent.remind_at == datetime(2026, 9, 12, 8, 0, tzinfo=_TZ)
+    assert intent.label == "明天 08:00"
+    # 夜间场景语义保持：23:30 说「明早8点」同为次日 08:00。
+    night = parse_reminder_intent(
+        "明早8点叫我起床", now=datetime(2026, 9, 11, 23, 30, tzinfo=_TZ)
+    )
+    assert night is not None
+    assert night.remind_at == datetime(2026, 9, 12, 8, 0, tzinfo=_TZ)
+
+
+def test_parse_mingwan_evening_semantics() -> None:
+    """REM-EVE 语义修正：「明晚」日词自带晚间档——「明晚8点」= 次日 20:00。
+
+    取代 REM-DAWN 步骤④的中间态锁定（旧断言「明晚8点=08:00，与明早
+    同构」）：「明晚」口语自带晚上语义，带 1-11 点显式时刻且无时段词时
+    应与「明天晚上8点」同解；08:00 旧解是日词与时段词组合路径漏了同一
+    +12 调整。保守边界：显式 ≥12 时辰不改字面（另例锁定）。
+    """
+    intent = parse_reminder_intent(
+        "明晚8点提醒我收衣服", now=datetime(2026, 9, 11, 6, 30, tzinfo=_TZ)
+    )
+    assert intent is not None
+    assert intent.remind_at == datetime(2026, 9, 12, 20, 0, tzinfo=_TZ)
+    assert intent.label == "明天 20:00"
+    # 带时段词的「明晚晚上8点」= 次日 20:00（晚上 +12 分支照常生效）。
+    evening = parse_reminder_intent(
+        "明晚晚上8点提醒我收衣服", now=datetime(2026, 9, 11, 6, 30, tzinfo=_TZ)
+    )
+    assert evening is not None
+    assert evening.remind_at == datetime(2026, 9, 12, 20, 0, tzinfo=_TZ)
+
+
+def test_parse_evening_day_word_consistency() -> None:
+    """一致性矩阵：「明晚8点」=「明天晚上8点」= 次日 20:00；
+    「今晚8点」=「今天晚上8点」= 今天 20:00。下午说「今晚8点」不再因
+    旧 08:00 解已过而静默返回 None。"""
+    mingwan = parse_reminder_intent(
+        "明晚8点提醒我收衣服", now=datetime(2026, 9, 11, 6, 30, tzinfo=_TZ)
+    )
+    mingtian = parse_reminder_intent(
+        "明天晚上8点提醒我收衣服", now=datetime(2026, 9, 11, 6, 30, tzinfo=_TZ)
+    )
+    assert mingwan is not None and mingtian is not None
+    assert mingwan.remind_at == mingtian.remind_at
+    assert mingwan.remind_at == datetime(2026, 9, 12, 20, 0, tzinfo=_TZ)
+    jinwan = parse_reminder_intent(
+        "今晚8点提醒我收衣服", now=datetime(2026, 9, 11, 6, 30, tzinfo=_TZ)
+    )
+    jintian = parse_reminder_intent(
+        "今天晚上8点提醒我收衣服", now=datetime(2026, 9, 11, 6, 30, tzinfo=_TZ)
+    )
+    assert jinwan is not None and jintian is not None
+    assert jinwan.remind_at == jintian.remind_at
+    assert jinwan.remind_at == datetime(2026, 9, 11, 20, 0, tzinfo=_TZ)
+    afternoon = parse_reminder_intent(
+        "今晚8点提醒我收衣服", now=datetime(2026, 9, 11, 15, 0, tzinfo=_TZ)
+    )
+    assert afternoon is not None
+    assert afternoon.remind_at == datetime(2026, 9, 11, 20, 0, tzinfo=_TZ)
+
+
+def test_parse_evening_boundary_explicit_ge12_unchanged() -> None:
+    """步骤④保守边界：晚间日词 + 显式 ≥12 时辰不改字面，只记日志。
+    「明晚20点」= 次日 20:00；「明晚12点」按字面 = 次日 12:00（不发明
+    半夜语义）；「明早8点」上午语义不受影响（REM-DAWN 两例保持）。"""
+    late = parse_reminder_intent(
+        "明晚20点提醒我收衣服", now=datetime(2026, 9, 11, 6, 30, tzinfo=_TZ)
+    )
+    assert late is not None
+    assert late.remind_at == datetime(2026, 9, 12, 20, 0, tzinfo=_TZ)
+    noon = parse_reminder_intent(
+        "明晚12点提醒我收衣服", now=datetime(2026, 9, 11, 6, 30, tzinfo=_TZ)
+    )
+    assert noon is not None
+    assert noon.remind_at == datetime(2026, 9, 12, 12, 0, tzinfo=_TZ)
+    mingzao = parse_reminder_intent(
+        "明早8点提醒我开会", now=datetime(2026, 9, 11, 6, 30, tzinfo=_TZ)
+    )
+    assert mingzao is not None
+    assert mingzao.remind_at == datetime(2026, 9, 12, 8, 0, tzinfo=_TZ)
+
+
+def test_parse_full_period_hour_matrix() -> None:
+    """全时段组合回归：各时段词 + 显式小时口径一次锁死（含明晚新语义）。"""
+    cases = [
+        ("明天上午8点", datetime(2026, 9, 12, 8, 0, tzinfo=_TZ)),
+        ("明天中午12点", datetime(2026, 9, 12, 12, 0, tzinfo=_TZ)),
+        ("明天下午3点半", datetime(2026, 9, 12, 15, 30, tzinfo=_TZ)),
+        ("明天傍晚6点", datetime(2026, 9, 12, 18, 0, tzinfo=_TZ)),
+        ("明天晚上8点", datetime(2026, 9, 12, 20, 0, tzinfo=_TZ)),
+        ("明天凌晨1点", datetime(2026, 9, 12, 1, 0, tzinfo=_TZ)),
+        ("明天凌晨12点", datetime(2026, 9, 12, 0, 0, tzinfo=_TZ)),
+        ("明晚8点", datetime(2026, 9, 12, 20, 0, tzinfo=_TZ)),
+    ]
+    for text, expected in cases:
+        intent = parse_reminder_intent(
+            f"{text}提醒我收衣服", now=datetime(2026, 9, 11, 6, 30, tzinfo=_TZ)
+        )
+        assert intent is not None, text
+        assert intent.remind_at == expected, text
 
 
 def test_parse_period_only_and_relative() -> None:
@@ -158,7 +283,7 @@ def _message(text: str) -> IncomingMessage:
 
 
 def test_capability_adds_and_confirms(tmp_path, monkeypatch) -> None:
-    import plugins.bot_unified_runtime.character.reminders as reminders_mod
+    import plugins.bot_unified_runtime.domains.schedule.store.reminders as reminders_mod
 
     monkeypatch.setattr(reminders_mod, "_STORES", {})
     config = SimpleNamespace(bot_reminder_db_path=str(tmp_path / "r.sqlite3"))
@@ -191,15 +316,23 @@ def test_parse_23_point_cross_midnight() -> None:
     assert late.label == "明天 23:00"
 
 
-def test_parse_utc_now_wall_clock_stays_in_now_frame() -> None:
-    """aware 注入的 now 沿用其时区做墙钟推算：UTC 05:51 说「23点」= 23:00Z。"""
+def test_parse_utc_now_wall_clock_follows_config_timezone() -> None:
+    """V2.1 风险 7 行为修正（2026-09-17）：aware 注入的 now 一律先换算到
+    **配置时区**（config.bot_timezone，缺省 Asia/Hong_Kong = UTC+8）再做
+    墙钟推算，不再沿用注入时刻所在时区。
+
+    断言更新理由：旧口径（"UTC 05:51 说「23点」= 23:00Z"）把墙钟锚在
+    注入时区，UTC 服务器上"明天9点"会推错一整天（取证报告风险 7）。
+    修复后 UTC 05:51 = 配置时区 13:51，说「23点」= 配置时区当天 23:00
+    （= 15:00Z，同 _TZ=UTC+8 帧）。"""
     intent = parse_reminder_intent(
         "23点提醒我收衣服", now=datetime(2026, 9, 13, 5, 51, tzinfo=timezone.utc)
     )
     assert intent is not None
     assert intent.remind_at.astimezone(timezone.utc) == datetime(
-        2026, 9, 13, 23, 0, tzinfo=timezone.utc
+        2026, 9, 13, 15, 0, tzinfo=timezone.utc
     )
+    assert intent.remind_at == datetime(2026, 9, 13, 23, 0, tzinfo=_TZ)
 
 
 def test_store_due_compares_instants_across_timezones(tmp_path) -> None:
@@ -277,7 +410,7 @@ def test_store_late_beyond_grace_expires(tmp_path) -> None:
 
 
 def _tone_capability(tmp_path, monkeypatch):
-    import plugins.bot_unified_runtime.character.reminders as reminders_mod
+    import plugins.bot_unified_runtime.domains.schedule.store.reminders as reminders_mod
 
     monkeypatch.setattr(reminders_mod, "_STORES", {})
     return build_reminder_capability(_tone_config(tmp_path))
@@ -330,7 +463,7 @@ def test_cancel_ambiguous_copy_is_human(tmp_path, monkeypatch) -> None:
 
 def test_capability_full_list_replies_instead_of_silent_evict(tmp_path, monkeypatch) -> None:
     """审查 A-07 能力层：清单满时如实回复先取消，不再假装「记下了」。"""
-    import plugins.bot_unified_runtime.character.reminders as reminders_mod
+    import plugins.bot_unified_runtime.domains.schedule.store.reminders as reminders_mod
 
     monkeypatch.setattr(reminders_mod, "_STORES", {})
     config = SimpleNamespace(
@@ -364,7 +497,7 @@ def _add_pending_reminder(store: ReminderStore, text: str) -> None:
 
 def _disambig_capability(tmp_path, monkeypatch):
     """消歧追问回归专用：清提醒 store 缓存 + 清追问状态（模块级单例）。"""
-    import plugins.bot_unified_runtime.character.reminders as reminders_mod
+    import plugins.bot_unified_runtime.domains.schedule.store.reminders as reminders_mod
 
     monkeypatch.setattr(reminders_mod, "_STORES", {})
     clear_checkoff_pending_for_tests()
@@ -510,7 +643,7 @@ def test_is_reminder_command_followup_shapes_gated_by_pending(
 
 def test_checkoff_ambiguous_ordinal_covers_note_todo(tmp_path, monkeypatch) -> None:
     """审查 A-11：歧义候选来自提醒+笔记待办混合时，序号也能勾笔记条目。"""
-    import plugins.bot_unified_runtime.character.reminders as reminders_mod
+    import plugins.bot_unified_runtime.domains.schedule.store.reminders as reminders_mod
     from plugins.bot_unified_runtime.character import notes_store as notes_store_mod
     from plugins.bot_unified_runtime.character.notes_store import reset_stores_for_tests
 

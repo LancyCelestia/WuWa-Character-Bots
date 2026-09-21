@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import io
 import json
+from types import SimpleNamespace
 from typing import Self
 from urllib.error import HTTPError
 
 import pytest
 
-from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
-from plugins.bot_unified_runtime.llm.providers import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+    ModelRouter,
+    ModelSpec,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
     LLMProviderError,
     LLMReply,
     OpenAICompatibleLLMProvider,
@@ -35,7 +39,7 @@ def _reset_channel_health_singleton(tmp_path, monkeypatch):
     3) 两个开关环境变量显式钉 0，锁死「本文件 = 健康层关闭」的语义前提；
        个别用例如需健康层，在用例内自行 monkeypatch 覆盖即可。
     """
-    import plugins.bot_unified_runtime.llm.channel_health as channel_health_module
+    import plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health as channel_health_module
 
     db_path = str(tmp_path / "channel_health.sqlite3")
     monkeypatch.setattr(
@@ -216,6 +220,9 @@ def test_router_passes_remaining_deadline_to_each_provider_attempt() -> None:
             spec.model_id, {"first": "timeout"}, calls, timeouts
         ),
         max_failover_seconds=0.05,
+        # v21r2 R1 链预算止损缺省 3s：本用例预算 0.05s 专测「剩余 deadline
+        # 逐跳透传」语义，须显式关闭止损（否则第二跳会在发起前被止损拦下）。
+        credential_config=SimpleNamespace(bot_chat_failover_min_hop_seconds=0.0),
     )
 
     reply = router.generate([{"role": "user", "content": "hello"}], message_text="hello")

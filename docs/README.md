@@ -22,6 +22,19 @@
 > 维护规矩：**不再新建带日期的交接文档**，一切增量直接更新 HANDBOOK.md；文档过时后按 [workspace-archive-policy.md](workspace-archive-policy.md)（压缩 → 验证 → 移出）处理。
 > 历史文档（旧交接 / 期报 / 已实施计划共 26 份 + 合并前 MASTER/full 原件）已归档至 `ChatBot_Archive\2026-09-12\docs-archive-2026-09-12.zip`（内含 manifest.md 逐份缘由清单）；git 历史亦可 `git log --follow -- docs/<文件名>` 回溯。**09-12 收口批再折算删除 5 份**（final 全账 → HANDBOOK §18，review-fixes/bgroup-verify 增量 → §三），原件同 zip+git 可溯。
 
+## 十板块功能树（2026-09-21 起为文档主结构）
+
+实现这个 bot 的全部知识按**一级板块 → 二级功能 → 三级入口**归档在 [boards/](boards/README.md)，
+共 10 个板块，逐板块/逐功能/逐入口一目录一页；板块树本体与三级清单由代码派生，**不手抄**。
+
+- [boards/README.md](boards/README.md)：十板块总览与派生事实（总览页整页机器所有）
+- [boards/_conventions.md](boards/_conventions.md)：统一规范本体——文件结构、命名、开发约束（先建模块与函数、只调用已登记件）、自动化变更契约、P0/P1/P2 分级、代码质量红线
+- 权威声明源：`plugins/bot_unified_runtime/domains/core/board_taxonomy.py`（板块/功能/认领关系）
+- 投影生成器：`python scripts/board_doc_sync.py --write`（体检 `--check`）
+- 常驻门：`tests/test_board_taxonomy_gate.py`（结构自洽 + 活性覆盖 + 实现路径可解析 + 生成物同步，含三发变异注毒自证）
+- 旧汇总文档退役依据：[boards/_meta/doc-classification-20260921.md](boards/_meta/doc-classification-20260921.md)（全量 md 分类账：现役性、归属板块、处置建议）
+- 代码质量缺陷台账：[boards/_meta/code-quality-findings-20260921.md](boards/_meta/code-quality-findings-20260921.md)（P0/P1/P2 分级与最小修法）
+
 ## 交接与总账
 
 | 文档 | 说明 |
@@ -49,9 +62,9 @@
 | [../REVIEW-WORKFLOW.md](../REVIEW-WORKFLOW.md) | 代码评审规范（固化增量评审流程；产出物统一存 `review/` 目录） |
 | [../webui/](../webui/) | AxonHub 衍生前端（Vite+React+Tailwind4+singlefile）：源码骨架 + Apache-2.0 合规件（`THIRD_PARTY/`），构建产物 `dist/index.html` 单文件挂控制面 `/ui` |
 | [../scripts/webui_mock_server.py](../scripts/webui_mock_server.py) | WebUI 离线确定性夹具后端（2026-09-18）：端点形状一一对照真实契约、固定假时刻输出逐字节一致，仅供前端开发/目验/截图对比；不读真实数据、不写文件、绝不接入生产链路 |
-| [../scripts/webui_acceptance.py](../scripts/webui_acceptance.py) | WebUI 真机端到端目验脚本（playwright 无头，file:// 直开 dist+localStorage 预置；9 页 data/graceful 自动归类+逐页截图+--json；验收口径=acceptance-manual §6.6.9/§6.6.10） |
-| [../scripts/tts_retcode_collect.py](../scripts/tts_retcode_collect.py) | SnowLuma `send_msg` 回执 retcode 分布采集（T55 §七 open 项的采集手段）：对真机验收窗（§6.6.11）后 nonebot 日志离线扫描，按码计数+首末时间+样例，与读码预判集对表；全离线零网络，证据采集器非门 |
-| [../scripts/tts_offline_selfcheck.py](../scripts/tts_offline_selfcheck.py) | TTS 真机验收前置三步一键自检编排（零业务断言，SKIP 不假红）：pre_restart_check 10 项 → verify_chatbot_env → 语料门 `test_tts_corpus_gate.py`；判定透传子工具，任一 FAIL 退出码 1，`--dry-run` 桩化演练 |
+| [scripts/webui_acceptance.py](../scripts/webui_acceptance.py) | WebUI 真机端到端目验脚本（playwright 无头，file:// 直开 dist+localStorage 预置；9 页 data/graceful 自动归类+逐页截图+--json；验收口径=acceptance-manual §6.6.9/§6.6.10） |
+| [scripts/tts_retcode_collect.py](../scripts/tts_retcode_collect.py) | SnowLuma `send_msg` 回执 retcode 分布采集（T55 §七 open 项的采集手段）：对真机验收窗（§6.6.11）后 nonebot 日志离线扫描，按码计数+首末时间+样例，与读码预判集对表；全离线零网络，证据采集器非门 |
+| [scripts/tts_offline_selfcheck.py](../scripts/tts_offline_selfcheck.py) | TTS 真机验收前置三步一键自检编排（零业务断言，SKIP 不假红）：pre_restart_check 10 项 → verify_chatbot_env → 语料门 `test_tts_corpus_gate.py`；判定透传子工具，任一 FAIL 退出码 1，`--dry-run` 桩化演练 |
 
 ## 搭建与运维
 
@@ -81,7 +94,7 @@
 | [affinity-design.md](affinity-design.md) | 好感度数值规范唯一权威描述（`affinity.py` 代码注释指向本文）；**注意**：正文停留在 v4 线性版（`572bfff`），代码已演进 v5 多因素线性步长（见 `affinity.py` §2 注释；v5 起算法说明一律定性、不展示固定加减数值） |
 | [rendering-contract.md](rendering-contract.md) | 渲染契约：主题 token 单一来源（`theme_tokens.py`）+ 模板铁律，改卡片模板前必读 |
 | [standard-parse-card-acceptance.md](standard-parse-card-acceptance.md) | 解析信息卡验收标准 |
-| [db-owners.md](db-owners.md) | 数据库 owner 清单（26 库文件 → owner → 建表迁移点 → 清理策略） |
+| [db-owners.md](db-owners.md) | 数据库 owner 清单（库条目以该文件自身为准，并由 `tests/test_db_owners_coverage.py` 与 `config.py` 的 `*_db_path` 双向锁；owner → 建表迁移点 → 清理策略） |
 | [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) | 第三方出处与 MIT 许可声明唯一保留地（**勿删**） |
 | [control-plane-provider-and-usage-requirements-2026-09-05.md](control-plane-provider-and-usage-requirements-2026-09-05.md) | Control Plane / Provider / 用量监控需求（HANDBOOK §三 B4/B5 未实现功能的需求源） |
 
@@ -121,7 +134,7 @@
 | [design/v21r4-L60-立项书.md](design/v21r4-L60-立项书.md) / [L71](design/v21r4-L71-立项书.md) / [L74](design/v21r4-L74-立项书.md) | 好感误扣补偿 / 自修复链 / 验收产物 三立项书（纯提案，5/6/7 条待裁） |
 | [design/v21r4-b2-port-wiring-plan.md](design/v21r4-b2-port-wiring-plan.md) | 真实发送端口组接线方案材料（15 项前置条件待用户勾选；不构成实施授权） |
 | [design/v21r4-b2-direct-collect-plan.md](design/v21r4-b2-direct-collect-plan.md) | S0 直连点收编方案（5 处坐标+三形态缺省关设计；根 init 四点在飞执行中） |
-| [design/v21r4-command-format-review.md](design/v21r4-command-format-review.md) | 命令格式评审材料（77 topics 现状未动；14 领域 vs 20 域坐标系裁决点） |
+| [design/v21r4-command-format-review.md](design/v21r4-command-format-review.md) | 命令格式评审材料（topic 数以机器册为准、评审当时为 77 topics 现状未动；14 领域 vs 20 域坐标系裁决点） |
 | [design/v21r4-kb-drift-explainer.md](design/v21r4-kb-drift-explainer.md) | 知识库漂移三问说明（35341 vs 4611；重建与否用户亲办） |
 | [design/v21r4-b6-ledger-memo.md](design/v21r4-b6-ledger-memo.md) | B6 五项调研 memo（搜索时效/合并转发/提醒残余/LLM 故障转移 live 清单/亲密话术指针） |
 | [design/v21r4-b-restart-acceptance-checklist.md](design/v21r4-b-restart-acceptance-checklist.md) | v21r4-B 重启验收清单（波后真机验收口径） |

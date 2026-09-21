@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from plugins.bot_unified_runtime.config import Config
-from plugins.bot_unified_runtime.runtime.prompt_preview import build_prompt_preview
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.prompt_preview import (
+    build_prompt_preview,
+)
 
 
 def test_prompt_preview_builds_without_calling_llm(tmp_path: Path):

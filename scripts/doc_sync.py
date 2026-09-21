@@ -32,13 +32,13 @@ _HEAD = (
 
 
 def _tpl_list() -> list[str]:
-    tpl_dir = ROOT / "plugins/bot_unified_runtime/output/card_render/templates"
+    tpl_dir = ROOT / "plugins/bot_unified_runtime/domains/render/card_render/templates"
     return sorted(p.name for p in tpl_dir.glob("*.html"))
 
 
 def _route_kinds() -> list[str]:
     text = (
-        ROOT / "plugins/bot_unified_runtime/runtime/base_router.py"
+        ROOT / "plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py"
     ).read_text(encoding="utf-8")
     block = re.search(r"class RouteKind\(str, Enum\):(.*?)\n\n", text, re.DOTALL)
     assert block, "RouteKind 枚举找不到"
@@ -47,7 +47,8 @@ def _route_kinds() -> list[str]:
 
 def _help_topics() -> list[str]:
     text = (
-        ROOT / "plugins/bot_unified_runtime/capabilities/echo.py"
+        # v21r2 RWC3：echo 真身迁 domains/chat_reply/capabilities/（静态提取必指真身）。
+        ROOT / "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py"
     ).read_text(encoding="utf-8")
     return re.findall(r'"topic":\s*[\'"]([^\'"]+)[\'"]', text)
 

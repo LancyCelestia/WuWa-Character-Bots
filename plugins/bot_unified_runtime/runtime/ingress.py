@@ -1,15 +1,18 @@
-"""Single boundary for adapter event normalization."""
-from __future__ import annotations
+"""Compat shim: moved to plugins.bot_unified_runtime.domains.chat_reply.runtime.ingress (v21r2 reorg W15d (chat_reply sub-wave 4/5)).
 
-from collections.abc import Callable
+Live re-export (PEP 562 module __getattr__): attribute access resolves on
+the canonical module at access time, so monkeypatch on the canonical path
+stays consistent for legacy-path importers.
+"""
+from importlib import import_module
 from typing import Any
 
+_CANONICAL = "plugins.bot_unified_runtime.domains.chat_reply.runtime.ingress"
 
-class IngressGateway:
-    """Normalize adapter events through one injected converter."""
 
-    def __init__(self, normalizer: Callable[..., Any]) -> None:
-        self._normalizer = normalizer
+def __getattr__(name: str) -> Any:
+    return getattr(import_module(_CANONICAL), name)
 
-    def from_event(self, event: Any, *, bot_id: str = "unknown") -> Any:
-        return self._normalizer(event, bot_id=bot_id)
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(dir(import_module(_CANONICAL))))

@@ -6,8 +6,11 @@
 拦住，中央契约层（docs/design/tts-contract-layer.md §4 管线十阶段）就退化成
 「恰好只有一条路时才成立」的君子协定。
 
-本门把「出站必经中央」写成 AST 静态断言，主对象 = domains/media/capabilities/
-tts.py 源码（检测器接受任意源码串，故可对注入的坏样本自证杀伤力）：
+本门把「出站必经中央」写成 AST 静态断言，主对象 = **登记在册的全部语音产出出站
+路径**（FIX8 2026-09-21 扩面：此前只读 tts.py 一个文件，G-3 落地的第二出站路
+``domains/media/voice_enricher.py``——:175 直连 ``synthesize``、:200 构造
+``update={"audio": …}``——一条不变量都不在射程内）。检测器接受任意源码串，故可对
+注入的坏样本自证杀伤力：
 
   A1 请求体唯一装配点：``_request_tts`` 内 httpx ``.post(json=…)`` 的请求体必须
      来自 ``_build_request_payload(...)``（直接调用或绑定其返回值的变量）；且
@@ -27,11 +30,23 @@ tts.py 源码（检测器接受任意源码串，故可对注入的坏样本自�
 
 负样本自检（plan-G §G-4 原文「负样本必须真能抓：只加正例的门等于没加」）：
 每条规则配「注入坏样本 → 门变红」用例；另配一份忠实迷你管线正例对照，
-防检测器过度开火（永远红的门同样等于没加）。
+防检测器过度开火（永远红的门同样等于没加）。FIX8 追加**逐在册路径**的变异自检：
+以真身 ``voice_enricher.py`` 源码为底本做单点文本变异（不碰生产文件），
+证明 A1-A4 对第二出站路真的承重，而不是「恰好也绿」。
+
+射程穷举锁（``test_gate1_scan_set_is_exhaustive_over_plugins_tree``）：在册集合不是手抄
+清单——每次运行都用本门自己的检测器重扫 ``plugins/**``，凡出现新的 ``synthesize(``
+调用点或新的 audio 出站构造点而未登记/未豁免，门直接红（治「加了第三条路没人知道」）。
 
 边界与已知残留（诚实登记）：capabilities/tts.py 兼容垫片（PEP 562 透传）按
 v21r2 契约原样保留，其运行时 getattr 透传面不在本门静态射程内；根 __init__.py
-的 hook 装配双态互斥归 G-3/T73 门（tests/test_voice_hook_assembly.py）。
+的 hook 装配双态互斥归 G-3/T73 门（tests/test_voice_hook_assembly.py）；
+点歌/链接解析/出站 sender 三处 ``audio=`` 构造的是**源媒体**而非合成产物，
+按 ``_NON_TTS_AUDIO_CONSTRUCTION_SITES`` 显式豁免（豁免=登记理由，不是静默放过）；
+A5 私有面清单只钉 7 枚管线件，``voice_enricher`` 依 G-3 设计复用的
+``_build_params``/``_resolve_preset``/``_output_dir``/``_failure_issue`` 等**不在**该清单内
+（规格 §4.2 明文允许「只消费其模块级构件」），扩钉这些名字会让门对现存生产码红，
+故登记为残留不修、交裁决。
 """
 
 from __future__ import annotations
@@ -40,8 +55,34 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent / "plugins" / "bot_unified_runtime"
 _TTS_SOURCE = _PLUGIN_ROOT / "domains" / "media" / "capabilities" / "tts.py"
+# FIX8 扩面：G-3 配音 hook 是**第二条**语音产出出站路（synthesize 直连 +
+# update={"audio": …} 构造），旧版门只读 tts.py，对它一条不变量都不承重。
+_VOICE_ENRICHER_SOURCE = _PLUGIN_ROOT / "domains" / "media" / "voice_enricher.py"
+
+# 在册语音产出出站路径全集（A1-A4 逐文件生效；新增路必须在这里登记，
+# 否则 test_gate1_scan_set_is_exhaustive_over_plugins_tree 直接红）。
+_VOICE_OUTBOUND_SOURCES: tuple[Path, ...] = (_TTS_SOURCE, _VOICE_ENRICHER_SOURCE)
+
+# 非合成音频构造面豁免表：posix 相对路径（相对 _PLUGIN_ROOT）→ 豁免理由。
+# 判据=该 audio 的来路是**上游源媒体/出站转换**，不是 TTS 合成产物，
+# 因此 A3（取文口先行）/A4（audio 绑定 synthesize）对其无意义；豁免是
+# **显式登记**（含理由），出现新构造点而未进本表 ⇒ 门红，不许静默放过。
+_NON_TTS_AUDIO_CONSTRUCTION_SITES: dict[str, str] = {
+    "domains/link_parse/capabilities/content_parser.py": (
+        "链接解析产物：audio 段来自平台侧已有音轨（点歌/视频音轨），非合成"
+    ),
+    "domains/music/capabilities/music.py": (
+        "点歌能力：audio 段=供应商返回的音频文件资产，非合成"
+    ),
+    "domains/transport/sender/nonebot.py": (
+        "出站 sender：把 CapabilityResult.audio 转成 OneBot 段的传输层构造，"
+        "产物身份由上游中央管线决定，本层不得再合成"
+    ),
+}
 
 # 私有管线件（下划线族）：只许在 tts.py 模块内出现，出借即旁支。
 _PRIVATE_PIPELINE_NAMES: frozenset[str] = frozenset(
@@ -389,40 +430,116 @@ def _rule_private_import_ban() -> list[str]:
     return problems
 
 
-# ==================== 正例门（对真身 tts.py） ====================
+# ==================== 正例门（对全部在册真身源码，逐文件） ====================
 
 
-def _scan_real() -> list[str]:
-    return _scan_tts_source(_TTS_SOURCE.read_text(encoding="utf-8"))
+def _scan_source(path: Path) -> list[str]:
+    """对单在册真身文件跑 A1-A4，违规清单带文件前缀（多路径下可定位）。"""
+    rel = path.relative_to(_PLUGIN_ROOT.parent.parent.parent).as_posix()
+    return [f"[{rel}] {problem}" for problem in _scan_tts_source(_read(path))]
 
 
-def test_gate1_real_tts_payload_assembly() -> None:
-    """A1 正例：真身 tts.py 的请求体装配点合规。"""
-    problems = [p for p in _scan_real() if p.startswith("A1")]
-    assert not problems, "TTS 出站入口门 A1（请求体唯一装配点）被触发：\n" + "\n".join(
-        problems
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _scan_registered() -> list[str]:
+    return [problem for source in _VOICE_OUTBOUND_SOURCES for problem in _scan_source(source)]
+
+
+def _synthesize_call_sites(path: Path) -> list[int]:
+    """该文件里所有 ``synthesize(`` 调用行号（A3/A4 的射程判据来源）。"""
+    tree = _parse(_read(path))
+    return [s.lineno for s in _module_sites(tree) if s.callee == "synthesize"]
+
+
+def _audio_construction_sites(path: Path) -> list[int]:
+    """该文件里所有 audio 出站构造行号（kwarg 直挂与 update={'audio': …} 两形态）。"""
+    tree = _parse(_read(path))
+    return [s.lineno for s in _module_sites(tree) if s.label]
+
+
+def _walk_plugin_py() -> list[Path]:
+    return sorted(p for p in _PLUGIN_ROOT.rglob("*.py") if p.is_file())
+
+
+def _rel_to_repo(path: Path) -> str:
+    return path.relative_to(_PLUGIN_ROOT.parent.parent.parent).as_posix()
+
+
+def test_gate1_scan_set_is_exhaustive_over_plugins_tree() -> None:
+    """射程穷举锁：全树重扫，新出现的合成调用点/音频构造点必须登记或显式豁免。
+
+    这条门是「扩面」本身的执法件——没有它，登记清单会随第三条路出现而静默失真，
+    门退回「恰好只有一条路时才成立」。
+    """
+    registered = {p.resolve() for p in _VOICE_OUTBOUND_SOURCES}
+    unregistered_synthesizers: list[str] = []
+    untagged_audio: list[str] = []
+    for path in _walk_plugin_py():
+        text = _read(path) if path.suffix == ".py" else ""
+        if "synthesize" not in text and "audio" not in text:
+            continue
+        try:
+            tree = _parse(text)
+        except SyntaxError:  # pragma: no cover - 生产树不允许语法错，出现即另有门拦
+            continue
+        sites = _module_sites(tree)
+        rel = path.relative_to(_PLUGIN_ROOT).as_posix()
+        if any(s.callee == "synthesize" for s in sites) and path.resolve() not in registered:
+            unregistered_synthesizers.append(rel)
+        if (
+            any(s.label for s in sites)
+            and rel not in _NON_TTS_AUDIO_CONSTRUCTION_SITES
+            and path.resolve() not in registered
+        ):
+            untagged_audio.append(rel)
+    assert not unregistered_synthesizers, (
+        "语音产出出站路径出现未登记的合成调用点："
+        f"{unregistered_synthesizers}——须加入 _VOICE_OUTBOUND_SOURCES 并过 A1-A4"
+    )
+    assert not untagged_audio, (
+        f"出现未归类的 audio 构造点：{untagged_audio}——要么登记为语音出站路径，"
+        "要么进 _NON_TTS_AUDIO_CONSTRUCTION_SITES 写明非合成理由"
+    )
+    # 反向锁：清单不得虚挂（登记的豁免文件若已无 audio 构造点，说明面已迁移，须清理）。
+    stale_exemptions = [
+        rel
+        for rel, _reason in _NON_TTS_AUDIO_CONSTRUCTION_SITES.items()
+        if not _audio_construction_sites(_PLUGIN_ROOT / rel)
+    ]
+    assert not stale_exemptions, f"豁免表虚挂（该文件已无 audio 构造点）：{stale_exemptions}"
+
+
+@pytest.mark.parametrize("rule_prefix", ["A1", "A2", "A3", "A4"])
+@pytest.mark.parametrize(
+    "source_name",
+    [p.relative_to(_PLUGIN_ROOT).as_posix() for p in _VOICE_OUTBOUND_SOURCES],
+)
+def test_gate1_real_sources_pass_rule(rule_prefix: str, source_name: str) -> None:
+    """A1-A4 正例：每一条在册语音产出出站路径逐规则过门（含第二出站路）。"""
+    path = _PLUGIN_ROOT / source_name
+    assert path in _VOICE_OUTBOUND_SOURCES, f"{source_name} 未在册"
+    problems = [p for p in _scan_source(path) if f"] {rule_prefix}：" in p]
+    assert not problems, (
+        f"TTS 出站入口门 {rule_prefix} 对 {source_name} 被触发：\n" + "\n".join(problems)
     )
 
 
-def test_gate1_real_tts_inspection_gate() -> None:
-    """A2 正例：落盘/缓存写绑死体检闸。"""
-    problems = [p for p in _scan_real() if p.startswith("A2")]
-    assert not problems, "TTS 出站入口门 A2（体检闸绑死落盘/缓存）被触发：\n" + "\n".join(
-        problems
+def test_gate1_real_sources_declare_synthesize_and_audio_sites() -> None:
+    """在册路径必须真的在射程内（防「登记了但没构造点」的假扩面）。"""
+    for path in _VOICE_OUTBOUND_SOURCES:
+        assert _synthesize_call_sites(path), f"{_rel_to_repo(path)} 无 synthesize 调用点"
+    assert _audio_construction_sites(_VOICE_ENRICHER_SOURCE), (
+        "voice_enricher 的 audio 构造点未被检测器识别——A4 对其形同虚设"
     )
 
 
-def test_gate1_real_tts_resolve_first() -> None:
-    """A3 正例：synthesize 调用方先过中央取文口。"""
-    problems = [p for p in _scan_real() if p.startswith("A3")]
-    assert not problems, "TTS 出站入口门 A3（取文口先行）被触发：\n" + "\n".join(problems)
-
-
-def test_gate1_real_tts_audio_bound() -> None:
-    """A4 正例：audio= 出站构造绑定 synthesize。"""
-    problems = [p for p in _scan_real() if p.startswith("A4")]
-    assert not problems, "TTS 出站入口门 A4（audio 出站绑定）被触发：\n" + "\n".join(
-        problems
+def test_gate1_all_registered_sources_fully_clean() -> None:
+    """全集正例：所有在册语音出站路径 A1-A4 零违规（一条红即整门红）。"""
+    problems = _scan_registered()
+    assert not problems, (
+        "TTS 出站入口门（单一入口契约）被触发：\n" + "\n".join(problems)
     )
 
 
@@ -637,3 +754,107 @@ def capability(message, _decision):
 '''
     problems = _scan_tts_source(faithful)
     assert not problems, "忠实迷你管线被误判（门过度开火）：" + repr(problems)
+
+
+# ==================== FIX8 变异自检：门对第二出站路（voice_enricher）真的承重 ====================
+# 底本=真身 voice_enricher.py 源码（**不改生产文件**，只在内存里做单点文本变异），
+# 每条变异都同时断言「原样不红 / 变异必红」——否则无法区分「门有效」与「门恰好没反应」。
+
+_ENRICHER_ANCHOR_MAX_CHARS = (
+    '        max_chars = int(getattr(config, "bot_tts_auto_reply_max_chars", 0) or 0)\n'
+)
+_ENRICHER_ANCHOR_RESOLVE = "        speech, blocked = resolve_speech_text("
+_ENRICHER_ANCHOR_SYNTH = "        path, reason = synthesize("
+
+
+def _enricher_mutated(*, old: str, new: str) -> str:
+    """单点文本变异（锚点必须唯一命中一次，否则变异本身不可信）。"""
+    source = _read(_VOICE_ENRICHER_SOURCE)
+    assert source.count(old) == 1, f"变异锚点命中 {source.count(old)} 次（应为 1）：{old!r}"
+    return source.replace(old, new)
+
+
+def _rules_of(problems: list[str], prefix: str) -> list[str]:
+    """按规则取违规：兼容「裸 _scan_tts_source 输出」与「带文件前缀的 _scan_source 输出」。"""
+    marker = f"{prefix}："
+    return [p for p in problems if marker in p]
+
+
+def test_mutate_enricher_pristine_source_is_clean() -> None:
+    """变异前正例：真身 voice_enricher A1-A4 零违规（本席扩面时实测=空清单）。"""
+    problems = _scan_source(_VOICE_ENRICHER_SOURCE)
+    assert not problems, "底本已红，变异自检失去对照基线：" + repr(problems)
+
+
+def test_mutate_enricher_bypasses_central_text_gate_caught_by_a3() -> None:
+    """A3 杀伤力：把中央取文口换成本地自取文（打码/清洗/词典/内容门全绕）。"""
+    mutated = _enricher_mutated(
+        old=_ENRICHER_ANCHOR_RESOLVE, new="        speech, blocked = _local_text_gate("
+    )
+    problems = _scan_tts_source(mutated)
+    assert _rules_of(problems, "A3"), (
+        "voice_enricher 绕过 resolve_speech_text 未被 A3 抓红——门对新路径不承重："
+        + repr(problems[:5])
+    )
+
+
+def test_mutate_enricher_synthesize_before_text_gate_caught_by_a3_order() -> None:
+    """A3 序杀伤力：取文口仍在、但合成发生在其之前（review 后正文未过门即出货）。"""
+    mutated = _enricher_mutated(
+        old=_ENRICHER_ANCHOR_MAX_CHARS,
+        new=(
+            "        _early_path, _early_reason = synthesize(\n"
+            "            api_url='', text=result.body or '', ref=None, params=None,\n"
+            "            output_dir=None,\n"
+            "        )\n"
+            + _ENRICHER_ANCHOR_MAX_CHARS
+        ),
+    )
+    problems = _rules_of(_scan_tts_source(mutated), "A3")
+    assert problems, "synthesize 早于取文口未被 A3 抓红（行序判据失效）"
+    assert any("先于" in p for p in problems), f"A3 未走序分支：{problems}"
+
+
+def test_mutate_enricher_audio_without_synthesize_caught_by_a4() -> None:
+    """A4 杀伤力：audio 构造仍在，但产物来路不再是中央 synthesize。"""
+    mutated = _enricher_mutated(
+        old=_ENRICHER_ANCHOR_SYNTH, new="        path, reason = _rogue_produce("
+    )
+    problems = _scan_tts_source(mutated)
+    assert _rules_of(problems, "A4"), (
+        "voice_enricher 音频来路不明未被 A4 抓红——门对新路径不承重："
+        + repr(problems[:5])
+    )
+
+
+def test_mutate_enricher_second_http_path_caught_by_a1() -> None:
+    """A1 杀伤力：新路径自己拼引擎 HTTP 请求（第二条出站请求）。"""
+    mutated = _enricher_mutated(
+        old=_ENRICHER_ANCHOR_MAX_CHARS,
+        new=(
+            "        import httpx as _httpx\n"
+            "        with _httpx.Client(timeout=1.0) as _client:\n"
+            "            _client.post('http://127.0.0.1:9880/tts', json={'text': 'x'})\n"
+            + _ENRICHER_ANCHOR_MAX_CHARS
+        ),
+    )
+    problems = _scan_tts_source(mutated)
+    assert _rules_of(problems, "A1"), (
+        "voice_enricher 自建 HTTP 请求未被 A1 抓红：" + repr(problems[:5])
+    )
+
+
+def test_mutate_enricher_write_bytes_outside_synthesize_caught_by_a2() -> None:
+    """A2 杀伤力：新路径不经体检直接落盘音频字节。"""
+    mutated = _enricher_mutated(
+        old=_ENRICHER_ANCHOR_MAX_CHARS,
+        new=(
+            "        _rogue_target = _output_dir(config) / 'rogue.wav'\n"
+            "        _rogue_target.write_bytes(b'RIFF')\n"
+            + _ENRICHER_ANCHOR_MAX_CHARS
+        ),
+    )
+    problems = _scan_tts_source(mutated)
+    assert _rules_of(problems, "A2"), (
+        "voice_enricher 绕体检落盘未被 A2 抓红：" + repr(problems[:5])
+    )

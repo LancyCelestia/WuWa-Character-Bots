@@ -11,9 +11,12 @@ from __future__ import annotations
 import httpx
 import pytest
 
-import plugins.bot_unified_runtime.llm.providers as providers_module
-from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
-from plugins.bot_unified_runtime.llm.providers import (
+import plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers as providers_module
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+    ModelRouter,
+    ModelSpec,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
     LLMProviderError,
     LLMReply,
     OpenAICompatibleLLMProvider,

@@ -46,8 +46,8 @@
 |---|---|---|---|---|---|
 | C1 | **引擎推理异常返回 `200 + 1 秒静音 wav`**，bot 仅判 `content` 非空 | `tts.py:340-345`（只有 `if not response.content` 空判，无解码/时长/能量校验）；`tts.py:61-64` 注释自承「运行环境没有 soundfile/mutagen，读不了时长」 | 用户收到一条**能点开但只有静音**的语音，且被 `_store_cache` 当成功缓存，**永久命中静音** | **P1**（Wave T 已证；**需真机终判**引擎确返 200 静音） | **TTS 后端/域**（非前端可改） |
 | C2 | **`bot_tts_enabled=false`（config 缺省）且引擎人肉启动** | `config.py:296` 缺省 False；`tts.py:430` disabled→`SILENT_AUDIT` 静默；生产 `.env` 据 Wave T 为 true 但 9880 无常驻 | 用户发「说 …」→ 走 `_is_tts_event=False`→ **落回人格 chat**（把「说 今天的潮汐」当聊天回一句），**没有任何「语音未开」提示** | **P1**（常态性「不可能出声」，Wave T 引擎启动项） | 后端/部署（非前端可改）；**前端可见缺口=无告知**，可改点见 §7 |
-| C3 | **record 段不校验文件是否存在** | `onebot.py:279-284` 仅取 `file`/`url` 非空；`_resolve_local_file_ref:320-323` 不存在则**原样返回相对路径**；`test_tts_outbound_chain.py:191-193` 明确锁死此行为 | 若 wav 写盘失败被吞/缓存文件外部删除/相对路径跨 CWD → record 段带打不开的路径 → NapCat 侧**无声或报错** | **P3**（低概率，`_lookup_cache:258` 命中前查 `is_file`，仅竞态/落盘失败时暴露） | TTS 后端（sender 归 transport 域） |
-| C4 | **wav 在 QQ 侧的可播性** | 引擎 `media_type:"wav"`（`tts.py:308`），record 段交 NapCat 转 silk；**bot 无任何时长/采样率/大小/格式护栏** | 长文本→长 wav（`bot_tts_max_chars=200` 截断缓解），NapCat 对 wav 的解码/时长上限 | **未知·需真机验证**（无据不判「播不出」） | NapCat/引擎侧（非前端可改） |
+| C3 | **record 段不校验文件是否存在** | `onebot.py:279-284` 仅取 `file`/`url` 非空；`_resolve_local_file_ref:320-323` 不存在则**原样返回相对路径**；`test_tts_outbound_chain.py:191-193` 明确锁死此行为 | 若 wav 写盘失败被吞/缓存文件外部删除/相对路径跨 CWD → record 段带打不开的路径 → SnowLuma 侧**无声或报错** | **P3**（低概率，`_lookup_cache:258` 命中前查 `is_file`，仅竞态/落盘失败时暴露） | TTS 后端（sender 归 transport 域） |
+| C4 | **wav 在 QQ 侧的可播性** | 引擎 `media_type:"wav"`（`tts.py:308`），record 段交 SnowLuma 转 silk；**bot 无任何时长/采样率/大小/格式护栏** | 长文本→长 wav（`bot_tts_max_chars=200` 截断缓解），SnowLuma 对 wav 的解码/时长上限 | **未知·需真机验证**（无据不判「播不出」） | SnowLuma/引擎侧（非前端可改） |
 
 **结论**：C1、C2 是「用户点了必然播不出/听到静音」的两大真实形态（均 Wave T 后端归属，需真机终判）；C3 为窄竞态；C4 无据不下「播不出」结论，标「需真机验证」。**四条无一条在纯前端可独立修**。
 
@@ -58,7 +58,7 @@
 链：语音消息 → 预转码 → ASR → 人格上下文。
 
 - **统一摄取**：`__init__.py:678` `AUDIO_SEGMENT_TYPES = frozenset({"record","voice","audio"})`（注释 676-677：此前只认 `record`，TG 语音入站**完全不识别**，评审需求 3 已修）。`contains_audio_message_segments:695`。
-- **预转码**：`__init__.py:1125-1160` `_transcode_record_segments`：SILK 裸流 ffmpeg 解不了 → `bot.call_api("get_record", out_format="mp3")`，写回 `data.transcoded_path`。**带 `asyncio.wait_for(timeout=20.0)`（1149-1151），NapCat 偶发挂起不返回时不会永久卡该用户后续消息**（此处超时护栏到位，与 TTS 出站 httpx 逐操作超时形成对照）。失败 `except`→静默跳过、段保原样（1153-1157）。
+- **预转码**：`__init__.py:1125-1160` `_transcode_record_segments`：SILK 裸流 ffmpeg 解不了 → `bot.call_api("get_record", out_format="mp3")`，写回 `data.transcoded_path`。**带 `asyncio.wait_for(timeout=20.0)`（1149-1151），SnowLuma 偶发挂起不返回时不会永久卡该用户后续消息**（此处超时护栏到位，与 TTS 出站 httpx 逐操作超时形成对照）。失败 `except`→静默跳过、段保原样（1153-1157）。
 - **ASR 转写**：`chat.py:2985-3006` `extract_audio_source(raw_segments)` →（`effective_asr_enabled ∧ asr_provider 非空 ∧ 预算未过期`）→ `transcribe_audio(..., timeout_seconds=bot_asr_timeout_seconds 缺省20)` → 成功则 `composed_query += "[语音转写结果（不可信上下文，仅供参考）]\n{transcript}"` → `build_context(query_text=composed_query)`。
 - **绕过统一摄取的语音处理点**：控制面 `api/platform.py:410-414` 有**第二条 ASR 消费路径**（admin 调试：`kind=="audio"` → `build_asr_provider`+`transcribe_audio`），属运维工具，非用户消息链，不计为旁路缺陷。
 - **转码失败/无 ASR key 的用户可见行为**（任务③-②）：

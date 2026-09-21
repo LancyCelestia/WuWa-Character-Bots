@@ -35,7 +35,7 @@ COMMANDS_MD = ROOT / "COMMANDS.md"
 README_MD = ROOT / "docs" / "README.md"
 ROUTE_MATRIX_MD = ROOT / "docs" / "route-matrix.md"
 CONFIG_PY = ROOT / "plugins" / "bot_unified_runtime" / "config.py"
-SETTINGS_PY = ROOT / "plugins" / "bot_unified_runtime" / "runtime" / "settings.py"
+SETTINGS_PY = ROOT / "plugins" / "bot_unified_runtime" / "domains" / "chat_reply" / "runtime" / "settings.py"
 
 # 结构化元数据字段（HelpEntry 扩展）；运行时与静态合并必须逐字段相等。
 _META_KEYS = (
@@ -175,8 +175,8 @@ _DISPATCH_SOURCES = "".join(
     (ROOT / rel).read_text(encoding="utf-8")
     for rel in (
         "plugins/bot_unified_runtime/__init__.py",
-        "plugins/bot_unified_runtime/runtime/base_router.py",
-        "plugins/bot_unified_runtime/runtime/aliases.py",
+        "plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py",
+        "plugins/bot_unified_runtime/domains/chat_reply/runtime/aliases.py",
     )
 )
 
@@ -360,9 +360,10 @@ def test_help_entry_points_findable_in_code() -> None:
         (ROOT / rel).read_text(encoding="utf-8")
         for rel in (
             "plugins/bot_unified_runtime/__init__.py",
-            "plugins/bot_unified_runtime/runtime/base_router.py",
-            "plugins/bot_unified_runtime/runtime/aliases.py",
-            "plugins/bot_unified_runtime/capabilities/echo.py",
+            "plugins/bot_unified_runtime/domains/chat_reply/runtime/base_router.py",
+            "plugins/bot_unified_runtime/domains/chat_reply/runtime/aliases.py",
+            # v21r2 RWC3：echo 真身迁 domains/chat_reply/capabilities/。
+            "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py",
         )
     )
     for entry in _merged():
@@ -461,8 +462,43 @@ def _detail_facet_section_lines(detail: str) -> list[str]:
     return picked
 
 
+# FIX-1（2026-09-20，spec-audit P1）：四要素豁免收口为单一事实源 _facet_exempt，
+# lines 与 detail 两条路径共用。根因不是文案写漏，是门设计缺陷——同一份数据两套
+# 标准：lines 环带两条豁免（「示例：」行、不含 BOT_ 配置键的指引行），detail 环
+# 对 _detail_facet_section_lines 的输出零豁免；HELP-1 单源重构（_compose_help_detail
+# 把 lines 注入 detail 的【指令与参数】小节）使 detail 行即 lines 行后，同一条行
+# 先被一环放过、再被另一环判红（确定性红：「修改方式：…」/「示例：…」/
+# 「识别模型管理：…」行）。防回归守卫见 test_facet_rule_paths_must_agree_on_same_line。
+_TONE4_EXEMPT_KEY_RE = re.compile(r"BOT_[A-Z0-9_]{4,}")
+
+
+def _facet_exempt(line: str) -> bool:
+    """四要素约束的唯一豁免源（lines 与 detail 两条路径共用）：
+    示例行与不含配置键的指引行不在此约束内（与合并转发/点歌同口径）。"""
+    return line.startswith("示例：") or _TONE4_EXEMPT_KEY_RE.search(line) is None
+
+
+def _lines_facet_missing(line: str) -> tuple[str, ...]:
+    """lines 路径（摘要行）对单行的四要素判定：缺失要素列表，豁免行恒为空。"""
+    if _facet_exempt(line):
+        return ()
+    return tuple(facet for facet in _TONE4_FACETS if facet not in line)
+
+
+def _detail_facet_missing(line: str) -> tuple[str, ...]:
+    """detail 路径（【指令与参数】顶层行）对单行的四要素判定：
+    与 lines 路径共用 _facet_exempt 单一豁免源，判据完全等价（不得再各持一套标准）。"""
+    if _facet_exempt(line):
+        return ()
+    return tuple(facet for facet in _TONE4_FACETS if facet not in line)
+
+
 def test_tone3_config_lines_carry_four_facets() -> None:
-    """限流/群摘要/视频理解：参数行必须四要素齐全，不得退回配置键说明式。"""
+    """限流/群摘要/视频理解：参数行必须四要素齐全，不得退回配置键说明式。
+
+    lines 与 detail 两条路径经 _facet_exempt 共享同一豁免（FIX-1）：
+    detail 的【指令与参数】小节由 lines 派生（HELP-1 单源），两套判据必须等价。
+    """
     failures: list[str] = []
     for entry in _merged():
         topic = str(entry["topic"])
@@ -470,20 +506,127 @@ def test_tone3_config_lines_carry_four_facets() -> None:
             continue
         missing: list[str] = []
         for line in entry["lines"]:
-            # 示例行与不含配置键的指引行不在此约束内（与合并转发/点歌同口径）。
-            if line.startswith("示例：") or not re.search(r"BOT_[A-Z0-9_]{4,}", line):
-                continue
             missing += [
                 f"lines 缺 {facet}：{line[:40]}…"
-                for facet in _TONE4_FACETS
-                if facet not in line
+                for facet in _lines_facet_missing(line)
             ]
         for line in _detail_facet_section_lines(str(entry["detail"])):
             missing += [
                 f"detail 缺 {facet}：{line[:40]}…"
-                for facet in _TONE4_FACETS
-                if facet not in line
+                for facet in _detail_facet_missing(line)
             ]
         if missing:
             failures.append(f"{topic} 四要素缺失：{missing}")
     assert not failures, "；".join(failures)
+
+
+def test_facet_rule_paths_must_agree_on_same_line() -> None:
+    """防回归守卫（FIX-1）：同一行经 lines 与 detail 两条路径必须得到相同判定。
+
+    三层钉死，任何一层破防都会红：
+    ① _facet_exempt 与豁免规格（「示例：」前缀行、无 BOT_ 配置键行两条规则）在
+       真实数据全集上逐行一致——守卫内独立内联重述规格，防止豁免源被单边改写；
+    ② 真实数据行全集（三 topic 的 lines ∪ detail【指令与参数】顶层行）上，
+       lines 路径判定与 detail 路径判定逐一相等——若再现「一环有豁免、一环零豁免」
+       的双标准结构（本缺陷的修复前形态），这里直接红；
+    ③ detail 由 lines 派生（HELP-1）：detail 每条顶层行必须能在 lines 全集找到
+       同文行，找不到即派生关系又变（加前缀/改写），等价性失去前提，同样红。
+    """
+    summary_lines: set[str] = set()
+    detail_lines: set[str] = set()
+    for entry in _merged():
+        if str(entry["topic"]) not in _TONE4_TOPICS:
+            continue
+        summary_lines.update(str(line) for line in entry["lines"])
+        detail_lines.update(_detail_facet_section_lines(str(entry["detail"])))
+    universe = sorted(summary_lines | detail_lines)
+    assert universe, "守卫数据为空=门在空转"
+    for line in universe:
+        spec_exempt = line.startswith("示例：") or re.search(r"BOT_[A-Z0-9_]{4,}", line) is None
+        assert _facet_exempt(line) == spec_exempt, f"豁免源与规格漂移：{line[:40]}…"
+        assert _lines_facet_missing(line) == _detail_facet_missing(line), (
+            f"lines/detail 判据再度分叉：{line[:40]}… → "
+            f"lines={_lines_facet_missing(line)} detail={_detail_facet_missing(line)}"
+        )
+    orphan_detail = sorted(detail_lines - summary_lines)
+    assert not orphan_detail, (
+        "detail【指令与参数】出现 lines 之外的孤行（HELP-1 派生关系已变，"
+        f"两路径等价性失去前提）：{[ln[:40] for ln in orphan_detail]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 叙述文档手写计数门（2026-09-21 全面统一性审计 V2-1 根修）
+# ---------------------------------------------------------------------------
+# 旧面只有两条（test_commands_md_defers_counts_to_generated_catalog /
+# test_readme_md_indexes_catalog_without_hardcoded_counts），各扫一个文件、
+# 词表只有「模块|别名」⇒ AGENTS/HANDBOOK/CODE-MAP/config-catalog/HANDOFF
+# 里的「529 字段 / 77 topics / 501 别名 / 6 模板 / 20 域 / 33 路由 / 库 26」
+# 一类"会随代码漂移的手写总数"**全无人管**（实测 14 处已漂移）。
+# 本门把「叙述文档不手写可过期计数」立法到全量叙述面：要么指向真身/机器册，
+# 要么显式标注为历史当时值；两者都没有即红。生成物（docs/auto-facts.md、
+# docs/command-catalog.md）是权威本体，不在扫描面内。
+
+_NARRATIVE_DOCS: tuple[str, ...] = (
+    "AGENTS.md",
+    "HANDOFF-NEXT.md",
+    "HANDOFF-V21R6-TESTING.md",
+    "docs/README.md",
+    "docs/HANDBOOK.md",
+    "docs/CODE-MAP.md",
+    "docs/config-catalog-full.md",
+    "docs/acceptance-manual.md",
+    "docs/design/backend-protocol-plan.md",
+)
+
+# 形如「633 个 bot_* 字段」「77 topics」「501 别名」「20 域」「26 库」的手写总数。
+_VOLATILE_COUNT_RE = re.compile(
+    r"(?<![\w./-])\d{1,5}\s*(?:个|条|枚|张|项|余)?\s*"
+    r"(?:bot_\*\s*)?(?:字段|topics?|主题数|别名|模板|域|路由|交付物|库)(?!\w)"
+)
+# 放行条件＝同行给了权威指针，或明说是历史/当时值。
+_AUTHORITY_MARKER_RE = re.compile(
+    r"auto-facts|机器册|为准|当时|历史|曾核|实测|以目录|不手写|勿手写|数量不在此|现值|真身"
+)
+
+
+def _volatile_count_findings(
+    root: Path, files: tuple[str, ...] = _NARRATIVE_DOCS
+) -> list[str]:
+    """叙述文档里「手写可过期计数且无权威指针/历史限定」的行，逐条 `文件:行号 片段`。"""
+    findings: list[str] = []
+    for rel in files:
+        path = root / rel
+        if not path.exists():
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if _VOLATILE_COUNT_RE.search(line) and not _AUTHORITY_MARKER_RE.search(line):
+                findings.append(f"{rel}:{number} -> {line.strip()[:90]}")
+    return findings
+
+
+def test_narrative_docs_defer_volatile_counts_to_machine_ledger() -> None:
+    """叙述文档不许手写会随代码漂移的总数；要写就得指向机器册/真身或标明是历史当时值。"""
+    findings = _volatile_count_findings(ROOT)
+    assert not findings, (
+        "以下叙述文档写了会过期的手写计数，且没有权威指针/历史限定"
+        "（改法：指向 docs/auto-facts.md 或真身定义处，或在同行标明「当时值」）：\n"
+        + "\n".join(findings)
+    )
+
+
+def test_volatile_count_gate_detects_planted_line(tmp_path: Path) -> None:
+    bad_file = tmp_path / "docs" / "CODE-MAP.md"
+    bad_file.parent.mkdir(parents=True)
+    bad_file.write_text("这里写了 529 字段 和 20 域。\n", encoding="utf-8")
+    planted = _volatile_count_findings(tmp_path, ("docs/CODE-MAP.md",))
+    assert planted, "注毒的裸计数未被抓到＝门没牙"
+
+    good_file = tmp_path / "docs" / "CODE-MAP.md"
+    good_file.write_text(
+        "字段数以机器册 docs/auto-facts.md 为准，此处不手写。\n"
+        "该席当时值为 529 字段（现值以机器册为准）。\n",
+        encoding="utf-8",
+    )
+    assert not _volatile_count_findings(tmp_path, ("docs/CODE-MAP.md",)), "带权威指针的行被误拦"
+

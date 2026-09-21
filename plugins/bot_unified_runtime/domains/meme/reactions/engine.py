@@ -2,7 +2,7 @@
 
 职责（2026-09-14 批次，用户裁定需求：识别 + 理解 + 主动回应）：
 
-1. 事件归一：QQ(NapCat) 的 ``group_msg_emoji_like`` 等贴纸回应 notice →
+1. 事件归一：QQ(SnowLuma) 的 ``group_msg_emoji_like`` 等贴纸回应 notice →
    :class:`ReactionEvent`；Telegram 侧留 :func:`normalize_telegram_reaction`
    接口（见下方平台能力实况）。
 2. 会话级环形缓冲：每会话最近回应（默认 TTL 10 分钟、每会话上限 8 条），
@@ -13,9 +13,10 @@
 
 平台能力实况（2026-09-14 实查 venv 依赖版本，诚实记录）：
 
-- QQ/NapCat：群聊贴纸回应以 notice 事件 ``group_msg_emoji_like`` 上报
+- QQ/NapCat 时期：群聊贴纸回应以 notice 事件 ``group_msg_emoji_like`` 上报
   （私聊等价形态按 OneBot notice 通用结构容错解析，生产实机待验证）；
-  主动贴 = NapCat 扩展 API ``set_msg_emoji_like(message_id, emoji_id)``。
+  主动贴 = NapCat 时期扩展 API ``set_msg_emoji_like(message_id, emoji_id)``
+  （现役同名 API 由 SnowLuma 提供，仅群消息可用；私聊派发前拒掉）。
 - Telegram：nonebot-adapter-telegram **0.1.0b20** 的 model 层有
   ``MessageReactionUpdated`` 与 ``Update.message_reaction``，但
   ``event.py`` 的 ``event_map`` 没有 ``message_reaction`` 键——该 Update
@@ -49,6 +50,10 @@ from plugins.bot_unified_runtime.domains.core.decision.outbound import (
     OutboundPart,
     OutboundTarget,
     derive_dedupe_key,
+)
+from plugins.bot_unified_runtime.domains.core.session_keys import (
+    build_session_key,
+    is_group_session_key,
 )
 
 # --------------------------------------------------------------- 常量与映射
@@ -151,7 +156,7 @@ QSID_EXTENDED_FACE_NAMES_RAW: dict[int, str] = {
 QSID_FACE_NAMES.update(QSID_EXTENDED_FACE_NAMES_RAW)
 
 # QQ 新版贴表情系统的 emoji_id 通常是 unicode 码点十进制串（如 128077=👍）。
-# 判定边界：<=484 视为 QSid 系统脸 id（face_config 的 QSid 上限=484；NapCat
+# 判定边界：<=484 视为 QSid 系统脸 id（face_config 的 QSid 上限=484；NapCat 时期
 # emojiType=len>3?'2':'1'，4 位以上十进制才是 unicode 码点形态）。
 _QSID_FACE_ID_MAX = 484
 
@@ -290,8 +295,14 @@ def pick_reaction_meme(store: Any, *, intent: str, nsfw_max: float = 0.2) -> str
 
 
 def _is_group_session(session_key: str) -> bool:
-    """会话键是否群聊形态（session_key_from_ids：群=f"group_<gid>_<uid>"）。"""
-    return str(session_key or "").startswith("group_")
+    """会话键是否群聊形态——判据单一事实源在 ``domains/core/session_keys.py``。
+
+    FIX5 收编：本函数与 ``chat_reply/capabilities/memory.py`` 曾各持一份**判据相反**
+    的同名本地谓词（这里认 ``group_`` 、那里认 ``group:``），键形与判据错配即静默
+    False。现两处统一消费中央件；对真实输入（摄取层 ``get_session_id()`` 的
+    ``group_<gid>_<uid>`` / 私聊裸 uid）行为**逐字节等价**。
+    """
+    return is_group_session_key(session_key)
 
 
 def select_reaction_emoji(intent: str, seed: str) -> int:
@@ -306,7 +317,7 @@ def select_reaction_emoji(intent: str, seed: str) -> int:
 
 # --------------------------------------------------------------- 事件归一
 
-# NapCat 已知形态 + 私聊等价形态 + 容错别名。
+# NapCat 时期已知形态 + 私聊等价形态 + 容错别名。
 _EMOJI_LIKE_NOTICE_TYPES = frozenset(
     {"group_msg_emoji_like", "private_msg_emoji_like", "msg_emoji_like"}
 )
@@ -327,16 +338,17 @@ class ReactionEvent:
 
 
 def session_key_from_ids(group_id: Any, user_id: Any) -> str:
-    """镜像 OneBot V11 ``get_session_id``：群=f"group_<gid>_<uid>"，私聊=<uid>。"""
-    group = str(group_id or "").strip()
-    user = str(user_id or "").strip()
-    if group:
-        return f"group_{group}_{user or 'unknown'}"
-    return user or "unknown"
+    """镜像 OneBot V11 ``get_session_id``：群=f"group_<gid>_<uid>"，私聊=<uid>。
+
+    FIX5 起构造逻辑单一事实源在 ``domains/core/session_keys.build_session_key``
+    （本函数保留原导出名与逐字返回值，读侧 ``shared_group._group_prefix`` 与
+    ``tests/test_shared_group_key_alignment.py`` 的跨件一致性锚不受影响）。
+    """
+    return build_session_key(group_id, user_id)
 
 
 def _likes_entries(event: Any) -> list[dict[str, Any]]:
-    """NapCat 形态优先（``likes`` 列表）；退化到平铺 emoji_id/count 字段。"""
+    """NapCat 时期形态优先（``likes`` 列表）；退化到平铺 emoji_id/count 字段。"""
     likes = getattr(event, "likes", None)
     if isinstance(likes, list) and likes:
         return [entry for entry in likes if isinstance(entry, dict)] or []
@@ -357,9 +369,9 @@ def normalize_onebot_emoji_like(
     bot_id: str = "",
     now: float | None = None,
 ) -> list[ReactionEvent]:
-    """OneBot/NapCat 贴纸回应 notice → ReactionEvent 列表（容错解析）。
+    """OneBot/SnowLuma 贴纸回应 notice → ReactionEvent 列表（容错解析）。
 
-    已知 NapCat 形态：``notice_type=group_msg_emoji_like``，字段
+    已知 NapCat 时期形态：``notice_type=group_msg_emoji_like``，字段
     ``group_id/user_id/message_id/likes:[{emoji_id, count}]``；私聊等价
     形态无实机样本，按同构字段容错（``private_msg_emoji_like`` /
     ``msg_emoji_like`` / 平铺 emoji_id）。字段缺失的条目跳过；非本类
@@ -368,7 +380,7 @@ def normalize_onebot_emoji_like(
     notice_type = str(getattr(event, "notice_type", "") or "").strip()
     if notice_type not in _EMOJI_LIKE_NOTICE_TYPES:
         return []
-    # is_add 处理（faceid 报告 §五 unknown 清账，B 线 2026-09-16）：NapCat
+    # is_add 处理（faceid 报告 §五 unknown 清账，B 线 2026-09-16）：NapCat 时期
     # 对「取消贴表情」也上报本事件；is_add=False 是撤销动作，不记正向回应。
     # 字段缺失（None/无属性）按旧语义照记——诚实容错，不赌协议端实现。
     is_add = getattr(event, "is_add", None)
@@ -752,7 +764,11 @@ _REACTION_OUTBOUND_SERVICE = ReactionService(
 
 
 async def react_to_message(bot: Any, *, message_id: Any, emoji_id: int) -> bool:
-    """NapCat 扩展 API：给消息贴表情（统一出站面）。失败记日志（诊断「总贴同一张脸」）。"""
+    """SnowLuma 扩展 API：给群消息贴表情（统一出站面）。
+
+    群消息专用——私聊会被协议端拒（见 ``maybe_react_on_message`` 的硬限制），
+    调用方须在派发前挡住。失败记日志（诊断「总贴同一张脸」）。
+    """
     mid = str(message_id or "").strip()
     if not mid:
         return False
@@ -839,11 +855,20 @@ async def maybe_react_on_message(
 ) -> bool:
     """主动贴表情编排：门控全过 → 给用户这条消息贴一个表情。
 
+    **主动贴表情只支持群消息**（实测报错 36 次），私聊一律不派发。QQ 侧本就不存在
+    私聊表情回应通道（OIDB ``0x9082`` 只有群消息形态），**不是换协议端造成的退化**；
+    SnowLuma 对非群消息直接抛 ``emoji reactions are not supported on private
+    messages``。修法=不发：私聊在进入五层门**之前**按 ``_is_group_session``
+    （委托 ``domains/core/session_keys.py``，真实摄取键为 ``group_<gid>_<uid>``）
+    拒掉，绝不出 ``set_msg_emoji_like``，也就不占每消息
+    去重登记、不刷失败日志。锁死用例：
+    ``tests/test_reactions.py::test_private_session_never_calls_set_msg_emoji_like``。
+
     trigger：
     - ``emotion_signal``：文本须命中情绪信号关键词（命中决定意图）；
-      仅在与 bot 相关的对话贴（审计 I2）：``bot_related=True`` 由调用方按
-      mentions_bot/回复 bot 消息/含 bot 昵称口径判定后传入；``None``
-      （旧调用方未判定）时私聊天然相关放行，群聊一律不介入第三方对话。
+      群聊内仅在与 bot 相关的对话贴（审计 I2）——``bot_related=True`` 由调用方按
+      mentions_bot/回复 bot 消息/含 bot 昵称口径判定后传入，未判定（``None``）
+      一律不介入第三方对话。
     - ``after_reply``：bot 刚回复完，意图按确定性哈希从温和池里挑；
       消息命中悲伤/低落词族时整条不贴（审计 C1：刚安慰完转头贴笑脸
       等同嘲讽），呲牙/偷笑/憨笑等笑脸族因此到不了悲伤场景。
@@ -854,10 +879,10 @@ async def maybe_react_on_message(
     mid = str(user_message_id or "").strip()
     if not knobs["enabled"] or not mid:
         return False
+    if not _is_group_session(session_key):
+        return False
     if trigger == "emotion_signal":
-        if bot_related is False or (
-            bot_related is None and _is_group_session(session_key)
-        ):
+        if bot_related is not True:
             return False
         intent = infer_signal_intent(text)
         if intent is None:

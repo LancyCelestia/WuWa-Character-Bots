@@ -5,15 +5,15 @@ from datetime import datetime, timezone
 
 import pytest
 
-from plugins.bot_unified_runtime.contracts.subscription import (
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     ContentReference,
     SubscriptionFetchResult,
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.sources.subscription_migration import (
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_migration import (
     prepare_subscription_database,
 )
-from plugins.bot_unified_runtime.sources.subscription_store_v2 import (
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
 )
 

@@ -186,7 +186,7 @@ LLM 子链路（段 1-5，09-10 检视后的现状）：
 [段6] sender.onebot CQ 组装 → SnowLuma（musicSignUrl 规避、媒体顺序、分片超时）
 ```
 
-关键文件：`bot.py`（启动+崩溃守卫）；`plugins/bot_unified_runtime/__init__.py`（handler 装配与能力分发，约 4700 行，**多会话热区**）；`runtime/pipeline.py`、`runtime/ingress.py`；`llm/model_router.py`、`llm/channel_health.py`、`llm/providers.py`；`capabilities/chat.py`（约 2400 行，**多会话热区**）；`sender/onebot.py`、`sender/queue.py`、`sender/gateway.py`、`sender/receipts.py`。
+关键文件：`bot.py`（启动+崩溃守卫）；`plugins/bot_unified_runtime/__init__.py`（handler 装配与能力分发，约 4700 行，**多会话热区**）；`domains/chat_reply/runtime/pipeline.py`、`domains/chat_reply/runtime/ingress.py`；`domains/chat_reply/llm_engine/model_router.py`、`domains/chat_reply/llm_engine/channel_health.py`、`domains/chat_reply/llm_engine/providers.py`；`domains/chat_reply/capabilities/chat.py`（约 2400 行，**多会话热区**）；`domains/transport/sender/onebot.py`、`domains/transport/sender/queue.py`、`domains/transport/sender/gateway.py`、`domains/transport/sender/receipts.py`。
 
 ## 4. 启动、验证与门禁
 
@@ -241,10 +241,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 ## 6. 子系统详解（当前状态）
 
 ### 6.1 命令与路由
-统一格式 `/bot <模块> <功能> [参数]`；别名表 `runtime/aliases.py`。`/bot help` 出 Mica 手册卡（双列网格+药丸）；`/bot help <模块>` 出说明书页；分类名直查。命令真相源：`COMMANDS.md` + `_HELP_ENTRIES`（capabilities/echo.py，13 模块已补全参数取值与示例）。注意：C组 好感度 dispatch 在 `__init__.py` 的接线已随并行会话在工作树完成，**随该会话提交落地**；已提交树上 `好感度` 走 alias 兜底提示（不崩）。
+统一格式 `/bot <模块> <功能> [参数]`；别名表 `domains/chat_reply/runtime/aliases.py`。`/bot help` 出 Mica 手册卡（双列网格+药丸）；`/bot help <模块>` 出说明书页；分类名直查。命令真相源：`COMMANDS.md` + `_HELP_ENTRIES`（domains/chat_reply/capabilities/echo.py，13 模块已补全参数取值与示例）。注意：C组 好感度 dispatch 在 `__init__.py` 的接线已随并行会话在工作树完成，**随该会话提交落地**；已提交树上 `好感度` 走 alias 兜底提示（不崩）。
 
 ### 6.2 链接解析器（57 注册条目 / 37+ 平台）
-入口 `sources/parsers/__init__.py`（`build_content_parser_registry` → `{"registry", "parsers"}`；平台路由表+Cookie 绑定+代理绑定；全默认参数时进程级缓存）。实现按平台拆 `platforms_*.py`；公共设施 `wbi.py`（B站签名 30 分钟缓存）、`http_util.py`（代理/UA/重试）、`cookies.py`、`image_stitch.py`（竖切横图拼接）。
+入口 `domains/link_parse/parsers/__init__.py`（`build_content_parser_registry` → `{"registry", "parsers"}`；平台路由表+Cookie 绑定+代理绑定；全默认参数时进程级缓存）。实现按平台拆 `platforms_*.py`；公共设施 `wbi.py`（B站签名 30 分钟缓存）、`http_util.py`（代理/UA/重试）、`cookies.py`、`image_stitch.py`（竖切横图拼接）。
 
 **09-10 全平台实测矩阵结果**（真实链接直驱解析器）：
 - ✅ PASS（20 链路）：B站视频（字段健全：标题/作者全提取）/专栏、油管（代理链路）、推特 x.com/jack/status/20、小红书（cookie 发现式取样成功）、Pixiv、Spotify、Steam 商店页、Telegram、萌娘百科、酷我/网易云/QQ音乐歌曲解析、四家音乐搜索（修复后）、音乐候选（netease/qq/kugou 各 5 条）、天气全字段、steam-free 端点。
@@ -255,7 +255,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 - 解析层其他要点：B站直播主通道 Room/get_info（getInfoByRoom 匿名常态 -352）；专栏 -509/-352 瞬态风控短停重试一次；小红书笔记页 playwright 兜底（裸 http 间歇 403/461）；**剥 `!` 后缀已撤回**（2026 版 xhscdn 签名路径内含 `!nd_dft_*`，剥掉 200→403），高质量档走 info_list WB_DFT；naive 时间一律按北京时间解释（contracts 契约层根治）；ORB 拦 sinaimg 灰图由 render_backends route 兑子解决。
 
 ### 6.3 卡片渲染（Mica 规范）
-管线：`capabilities/content_parser.py:render_card_png`（ParsedContent → payload → HTML → playwright 常驻浏览器截图）→ `output/card_render/`（bridge + `templates/`）。规范铁律：底色唯一来源 `PLATFORM_COLORS`（bridge.py）经 `--accent` 变量 `color-mix` 掺白派生（外壳 5-11%、面板 4-8%），**禁写死品牌色**；单柔光阴影；字重 ≤700；body 透明（omit_background 依赖）；`.card` 根元素承载截图。已接卡：链接解析（universal_card）、点歌成功卡、**点歌候选选择卡**（`song_candidates.html`+`bridge.render_song_candidates_html`，渲染失败逐字回退纯文本零回归）、帮助、天气、免费游戏、好感度（`affinity_card.html`）、会员购（嘉宾独立卡区）。
+管线：`domains/link_parse/capabilities/content_parser.py:render_card_png`（ParsedContent → payload → HTML → playwright 常驻浏览器截图）→ `output/card_render/`（bridge + `templates/`）。规范铁律：底色唯一来源 `PLATFORM_COLORS`（bridge.py）经 `--accent` 变量 `color-mix` 掺白派生（外壳 5-11%、面板 4-8%），**禁写死品牌色**；单柔光阴影；字重 ≤700；body 透明（omit_background 依赖）；`.card` 根元素承载截图。已接卡：链接解析（universal_card）、点歌成功卡、**点歌候选选择卡**（`song_candidates.html`+`bridge.render_song_candidates_html`，渲染失败逐字回退纯文本零回归）、帮助、天气、免费游戏、好感度（`affinity_card.html`）、会员购（嘉宾独立卡区）。
 **渲染技术要点（09-10 淀淀）**：新模板**不要加 `<meta viewport>`**（触发 Chromium 移动模式缩放怪癖，整页被缩一半）；`.card` 用 `width: fit-content` 让元素截图收紧；viewport 要容住壳宽（候选卡 1028 壳 → viewport 1040）；验证手法=像素采样（柔光阴影 alpha<4% 合格，查看器把半透明红合成到黑底会误判成「实色环」）。改卡后必跑三门禁+样例截图核对（临时脚本放 %TEMP%）。死模板已清理（Compact 音乐版式七块+写死色违规源）。
 
 ### 6.4 音乐点歌
@@ -275,19 +275,19 @@ Tavily 主、You.com 备、LangSearch 备、TinyFish 搜索+抓取；不接 Bing
 ### 6.7 记忆 / 人格 / 好感度（v3）
 - 好感度 v3 数值改版（用户裁定）：初始 10 分（内部 0.1，旧库不迁移由惰性回归收敛）；步长幂律非线性（距极值 <10 分按 (d/0.1)^γ 缩小）；因人而异（sha1 派生 ±15% 个人系数）；每日上限本地自然日；辱骂半衰期 15d/其余 30d，全淡出回默认 10。行为识别正则实测修正（「我不喜欢你」不再判 positive、成语误捕排除、辱骂独立 `_INSULT_RE`）。
 - bot.affinity 能力：私聊双向好感卡 + 群好感榜（`group_affinity` 镜像表）；`好感度 算法` 图文说明卡（个人精确步长+档位对照）。设计文档 `docs/affinity-design.md`。
-- 记忆清洗 `security/memory_sanitize.py`（隔离表）；知识库向量检索含 FTS；「历史上的今天」365 天库（推送表读失败拒绝改写+写失败回错——修过空表覆写丢订阅）。
+- 记忆清洗 `domains/chat_reply/security/memory_sanitize.py`（隔离表）；知识库向量检索含 FTS；「历史上的今天」365 天库（推送表读失败拒绝改写+写失败回错——修过空表覆写丢订阅）。
 
 ### 6.8 安全防线
-`security/content_safety.py` 硬类别（NSFW/血腥/政治/骚扰）+ 软类别（强加称谓/宠物化/人格破坏/侮辱外号）；管理员放宽软类别不放宽硬类别；输出侧 plain_text 去噪+说人话层；文件读取视为不可信数据。
+`domains/chat_reply/security/content_safety.py` 硬类别（NSFW/血腥/政治/骚扰）+ 软类别（强加称谓/宠物化/人格破坏/侮辱外号）；管理员放宽软类别不放宽硬类别；输出侧 plain_text 去噪+说人话层；文件读取视为不可信数据。
 
 ### 6.9 订阅（v2 + 权限模型）
-`sources/subscriptions/`（social_v2/bilibili/xhs/music/telegram 适配器）+ `capabilities/subscribe_v2.py`（**09-10 起有权限校验**：pause/resume/remove 需创建者或管理员，移植 v1 `_can_operate`；list 按目的地过滤；re-add 不再重启管理员暂停的订阅）+ v1 `subscribe.py`（remove/pause 按目的地粒度，最后目的地移除才删 spec；check 加权限；digest 可关）。推送走视觉渲染管线；outbox sent 行按时间裁剪、retry 有上限进死信、seen 有 TTL。**09-10 实测**：YT 频道拉取 healthy（15 条）；@handle 订阅缺陷已修（resolve 先网络解析 handle→真实 UC id）；推特需 X cookie；QQ 实际推送待用户指定目标验证。
+`sources/subscriptions/`（social_v2/bilibili/xhs/music/telegram 适配器）+ `domains/subscribe/capabilities/subscribe_v2.py`（**09-10 起有权限校验**：pause/resume/remove 需创建者或管理员，移植 v1 `_can_operate`；list 按目的地过滤；re-add 不再重启管理员暂停的订阅）+ v1 `subscribe.py`（remove/pause 按目的地粒度，最后目的地移除才删 spec；check 加权限；digest 可关）。推送走视觉渲染管线；outbox sent 行按时间裁剪、retry 有上限进死信、seen 有 TTL。**09-10 实测**：YT 频道拉取 healthy（15 条）；@handle 订阅缺陷已修（resolve 先网络解析 handle→真实 UC id）；推特需 X cookie；QQ 实际推送待用户指定目标验证。
 
 ### 6.10 多适配器 / 6.11 告警 / 6.12 视觉字幕 / 6.13 吃什么
-- 适配器：Telegram（轮询+韧性重连）、Mail（韧性适配器+bridge）、Console；掉线通知 `runtime/disconnect_notice.py`（默认关）。
-- 告警：`runtime/alerts.py` 按 (stage,kind,adapter,bot,target) 300s 抑制；result-unknown 账本重连对账不盲发。
+- 适配器：Telegram（轮询+韧性重连）、Mail（韧性适配器+bridge）、Console；掉线通知 `domains/ops/monitor/disconnect_notice.py`（默认关）。
+- 告警：`domains/ops/monitor/alerts.py` 按 (stage,kind,adapter,bot,target) 300s 抑制；result-unknown 账本重连对账不盲发。
 - 视觉：direct 直传默认（data URL 进主模型；`require_vision` 已与 `supports_vision` 统一为「仅 text-only 排除」——修掉了图片消息候选清空硬失败的根因）；relay 兜底；字幕总结开（B站 AI 字幕+油管 captionTracks →【AI字幕总结】）。
-- 视频理解（**并行会话在途**）：`sources/video_understanding.py`/`transcribe.py`/`runtime/video_pipeline.py` 未跟踪+`chat.py` 接线未提交，深挖预算协调（管线检视 #1 High）在该批落地时一并处理。
+- 视频理解（**并行会话在途**）：`domains/media/ingest/video_understanding.py`/`transcribe.py`/`domains/media/video/video_pipeline.py` 未跟踪+`chat.py` 接线未提交，深挖预算协调（管线检视 #1 High）在该批落地时一并处理。
 - 吃什么：60 道本地库+LLM 约束推荐+Mica 卡；`_RECENT` 有界+锁（C组修）。
 
 ### 6.14 发送层（SnowLuma）
@@ -651,7 +651,7 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\
 │   │   └── runtime_paths.py     ← BOT_RUNTIME_DATA_DIR 解析规则（data/ → Runtime 根）
 │   ├── plugins/bot_unified_runtime/
 │   │   ├── __init__.py          ← ~5280 行：plugin 装配、路由分发、各能力构建与接线
-│   │   ├── config.py            ← Config（509 字段 bot_* 口径，机器册 auto-facts 为准）+ translate_env_keys
+│   │   ├── config.py            ← Config（字段数以机器册为准（本文不手写），机器册 auto-facts 为准）+ translate_env_keys
 │   │   ├── runtime/             ← pipeline / ingress / base_router / aliases / settings /
 │   │   │                          alerts / disconnect_notice / result_unknown / runtime_event_log
 │   │   ├── capabilities/        ← 27 个能力模块（§14.8~§14.12 逐个说明）
@@ -666,12 +666,12 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\
 │   │   │                          media_registry / shared_group / temporal
 │   │   ├── security/            ← content_safety / memory_sanitize
 │   │   ├── output/              ← renderer / plain_text / templates / render_backends /
-│   │   │                          card_render/(bridge.py models.py templates/universal_card.html
-│   │   │                          templates/song_candidates.html templates/affinity_card.html)
+│   │   │                          card_render/(bridge.py models.py domains/render/card_render/templates/universal_card.html
+│   │   │                          domains/render/card_render/templates/song_candidates.html domains/render/card_render/templates/affinity_card.html)
 │   │   ├── llm/                 ← model_router / providers / channel_health
 │   │   ├── sender/              ← onebot / nonebot / gateway / queue / receipts / worker
-│   │   ├── policy/gate.py       ← 群门禁（URL 支持判定走注册表缓存）
-│   │   ├── audit/logger.py      ← 脱敏审计
+│   │   ├── domains/chat_reply/policy/gate.py       ← 群门禁（URL 支持判定走注册表缓存）
+│   │   ├── domains/ops/audit/logger.py      ← 脱敏审计
 │   │   └── contracts/           ← media.py(ParsedContent 全家桶) / runtime.py / character.py
 │   ├── tests/                   ← 111 个测试文件（865+ 用例）
 │   └── docs/                    ← 本文档、handoff-final-2026-09-07.md（旧过程档案）、
@@ -699,16 +699,16 @@ QQ 客户端 ⇄ SnowLuma（OneBot V11 正向 WS 服务端，主号 127.0.0.1:30
 bot.py（NoneBot 初始化 + 崩溃守卫：主循环异常自动重启；TG 轮询过滤器在此）
    → plugins/bot_unified_runtime/__init__.py
       ① _incoming_from_nonebot_event() → IngressGateway → IncomingMessage（严格 pydantic 模型）
-      ② 路由（runtime/base_router.py）：RouteDecision{capability_id, rest_text, priority}
-         - 命令：/bot <模块> <功能> [参数]（runtime/aliases.py 别名表归一）
+      ② 路由（domains/chat_reply/runtime/base_router.py）：RouteDecision{capability_id, rest_text, priority}
+         - 命令：/bot <模块> <功能> [参数]（domains/chat_reply/runtime/aliases.py 别名表归一）
          - 自然语言触发：chat / poke / 音乐 / 吃什么 / 天气 / wiki …（各 is_xxx_command）
          - URL → 解析管线（_has_supported_url 走注册表缓存单例）
-      ③ 门禁/风控（policy/gate.py + __init__ 内联）：
+      ③ 门禁/风控（domains/chat_reply/policy/gate.py + __init__ 内联）：
          群黑白名单 → 安静时间（BOT_QUIET_HOURS_*）→ 限流（BOT_RATE_LIMIT_*，SQLite 窗口）
          → 幂等表（BOT_EVENT_IDEMPOTENCY_ENABLED 默认 false，进程内+SQLite 双层）
-         → 内容安全（security/content_safety.py 硬/软类别）
+         → 内容安全（domains/chat_reply/security/content_safety.py 硬/软类别）
       ④ RuntimePipeline.run() → CapabilityResult{kind, title, body, images[], audio[], files[], audit_tags[]}
-      ⑤ Review（risk/privacy 评定）→ output/renderer.py → RenderedOutput
+      ⑤ Review（risk/privacy 评定）→ domains/render/renderer.py → RenderedOutput
          （text / chunks / forward / mixed 四种 content_type；媒体部件透传规则见 renderer.py）
       ⑥ SendQueue（SQLite 持久化）→ UnifiedDeliveryGateway → sender.onebot / sender.nonebot
       ⑦ 发送回执 receipts / result_unknown 账本（重连对账，不盲发）
@@ -716,8 +716,8 @@ bot.py（NoneBot 初始化 + 崩溃守卫：主循环异常自动重启；TG 轮
 
 关键设计取舍：
 - **发送层丢消息是 P0 事故**（09-09 实锤：LLM 慢烧完 90s 预算后发送层静默丢）。现在请求总预算 150s（`bot_request_budget_seconds`），**预算耗尽不丢已生成回复**，给足传输超时。
-- 群聊 LLM 失败**静默**；私聊失败回 `_PERSONA_FAILURE_MESSAGES` 12 条守岸人话术轮换（`capabilities/chat.py`）。
-- `bot.content` / `bot.music` 等长任务在 `to_thread` 里跑；playwright 渲染全大锁串行+线程本地常驻浏览器（`output/render_backends.py`）。
+- 群聊 LLM 失败**静默**；私聊失败回 `_PERSONA_FAILURE_MESSAGES` 12 条守岸人话术轮换（`domains/chat_reply/capabilities/chat.py`）。
+- `bot.content` / `bot.music` 等长任务在 `to_thread` 里跑；playwright 渲染全大锁串行+线程本地常驻浏览器（`domains/render/render_backends.py`）。
 
 ---
 
@@ -764,7 +764,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 ```
 .env / .env.prod（NoneBot dotenv）→ driver.config
 → translate_env_keys()（BOT_X → bot_x，幂等小写化，config.py:11）
-→ Config.model_validate(...)（pydantic，509 字段 bot_* 口径，config.py:28 起；以 docs/auto-facts.md 机器册为准）
+→ Config.model_validate(...)（pydantic，字段数以机器册为准（本文不手写），config.py:28 起；以 docs/auto-facts.md 机器册为准）
 ```
 字段分域（前缀即域）：`BOT_RUNTIME_*`（实例/管理前缀/别名）、`BOT_PERSONA_*`+`BOT_TONE_*`（人格语气）、`BOT_ADMIN/BLOCKED/TRUSTED_USER_IDS`、`BOT_GROUP_*`（黑白名单/摘要/主动回复）、`BOT_QUIET_HOURS_*`、`BOT_RATE_LIMIT_*`、`BOT_MUSIC_*`、`BOT_PARSE_*`、`BOT_CHANNEL_HEALTH_*`、`BOT_CARD_*`、`BOT_SEARCH_*`、`BOT_MODEL_REGISTRY`（整段 JSON）、`BOT_API_KEY_*`（密钥区，env: 引用的解析目标）等。
 
@@ -772,13 +772,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 
 - 真实 key 只存在于 `.env`（gitignored）。配置值写 `env:BOT_XXX_KEY` 形式。
 - `env:` 解析链 = `os.environ → Config 同名字段回退`。**对应 `bot_api_key_*` 字段不存在 → 解析结果 config_missing → 该模型全渠道失败**（09-09 五连发失败事故根因，当时补了 9 个字段）。
-- Cookie 与密钥值永不进日志/审计/消息（`audit/logger.py` 脱敏 + `cookies.py` 只暴露 cookie 名）。
+- Cookie 与密钥值永不进日志/审计/消息（`domains/ops/audit/logger.py` 脱敏 + `cookies.py` 只暴露 cookie 名）。
 
 #### 14.4.3 Cookie 文件
 
 - 路径：`ChatBot_Runtime/data/platform_cookies.txt`（Netscape 格式）。
 - 管理：管理员指令 `/bot cookie import <平台> <Cookie头>` 热写入；或直接编辑文件追加 Netscape 行。
-- 平台域名白名单与关键 cookie 名：`sources/parsers/cookies.py:PLATFORM_COOKIE_DOMAINS`（bilibili/xiaohongshu/douyin/qqmusic/netease/kuwo/kugou/twitter/youtube/kurobbs/weibo/kuaishou/acfun/moegirl/xiaoheihe/skland/miyoushe）。
+- 平台域名白名单与关键 cookie 名：`domains/link_parse/parsers/cookies.py:PLATFORM_COOKIE_DOMAINS`（bilibili/xiaohongshu/douyin/qqmusic/netease/kuwo/kugou/twitter/youtube/kurobbs/weibo/kuaishou/acfun/moegirl/xiaoheihe/skland/miyoushe）。
 - **当前实装状态**（2026-09-10）：小红书 ✓（web_session 有效）、微博 ✓（09-10 灌入登录态 SUB/ALF/SUBP）；**B站无登录态**（建议 `/bot cookie import bilibili`，可解锁 AI 字幕+降低 -352 面积）；X 无凭证（订阅推特前必须先 import）。
 - 微博解析有无登录态都能用：无登录态自动走 genvisitor 访客兑子（`platforms_weibo.py:_weibo_visitor_cookie`，进程内缓存 6h；genvisitor→incarnate 换 SUB/SUBP/tid）。
 
@@ -788,12 +788,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 
 #### 14.5.1 架构
 
-- 注册中心 `parsers/__init__.py`：`_PLATFORM_RULES`（平台→URL 正则→解析函数→优先级），`build_content_parser_registry(enabled_platforms, cookie_provider, proxy, playwright_backend)` 返回 `{registry, parsers}`。
+- 注册中心 `domains/link_parse/parsers/__init__.py`：`_PLATFORM_RULES`（平台→URL 正则→解析函数→优先级），`build_content_parser_registry(enabled_platforms, cookie_provider, proxy, playwright_backend)` 返回 `{registry, parsers}`。
   - **全默认参数调用有进程级单例缓存**（`_DEFAULT_REGISTRY_BUNDLE`）：群门禁每条消息全默认调一次，缓存后零重复构建。
   - 代理绑定 `_PARSER_PROXY_PLATFORM`：youtube/twitter/spotify/pixiv×5/facebook 走 `BOT_DOWNLOAD_PROXY`（127.0.0.1:7890）。
   - playwright 绑定：xiaohongshu、kurobbs。
 - 公共设施：`http_util.py`（http_get/text/json/post_json，代理/UA/重试/gzip）、`wbi.py`（B站 WBI 签名，键 30 分钟缓存）、`cookies.py`（§14.4.3）、`image_stitch.py`（竖切横图拼接，§14.5.9）。
-- 契约：`contracts/media.py` `ParsedContent`（纯嵌套：identity/content/creator/engagement/media/music/provenance）+ `build_parsed_content()` 归一化构造器。解析器产出平台形状字段（stats/detail），构造器负责映射；`detail` 键消费白名单 `_DETAIL_CONSUMED_KEYS`、作者键 `_AUTHOR_CONSUMED_KEYS`。
+- 契约：`domains/core/contracts/media.py` `ParsedContent`（纯嵌套：identity/content/creator/engagement/media/music/provenance）+ `build_parsed_content()` 归一化构造器。解析器产出平台形状字段（stats/detail），构造器负责映射；`detail` 键消费白名单 `_DETAIL_CONSUMED_KEYS`、作者键 `_AUTHOR_CONSUMED_KEYS`。
 - **时间契约（重要）**：`_optional_datetime` 对 naive 时间一律按**北京时间**解释（`_CN_TZ=+08:00`）。解析器不得产出 naive 字符串当 UTC；带时区 ISO 或 epoch 最稳。字符串发布时间经此归一，展示层 `astimezone()` 得到正确本地时间。（历史：误标 UTC 曾致微博/推特/专栏时间整体漂 8 小时，09-10 契约层根治。）
 
 #### 14.5.2 B站（platforms_bilibili.py，~2100 行，A组主战场）
@@ -916,7 +916,7 @@ bridge 对 `payload.text/summary/forward.text/repost.text` **预 html.escape**�
 
 ---
 
-### 14.7. 点歌子系统（capabilities/music.py，~795 行）
+### 14.7. 点歌子系统（domains/music/capabilities/music.py，~795 行）
 
 #### 14.7.1 搜索与候选决策树（完整版）
 
@@ -982,10 +982,10 @@ bridge 对 `payload.text/summary/forward.text/repost.text` **预 html.escape**�
 ### 14.10. 安全防线（security/）
 
 - `content_safety.py`：硬类别（NSFW/血腥/政治/骚扰）不可放宽；软类别（强加称谓/宠物化/人格破坏/侮辱外号/excessive_intimacy/insult_nickname）管理员可放宽。
-- 输出侧：`output/plain_text.py`（去引号/Markdown/LaTeX 噪声+TeX 命令转中文）+ 说人话层。
+- 输出侧：`domains/render/plain_text.py`（去引号/Markdown/LaTeX 噪声+TeX 命令转中文）+ 说人话层。
 - 文件读取视为不可信数据，不执行代码。
 
-### 14.11. 订阅（sources/subscriptions/ + capabilities/subscribe_v2.py）
+### 14.11. 订阅（sources/subscriptions/ + domains/subscribe/capabilities/subscribe_v2.py）
 
 - 适配器：Bilibili/Xiaohongshu/YouTube/Twitter/Telegram/Pixiv/Weibo（social_v2.py ADAPTERS）。
 - **YT 订阅实测通过**（@handle 解析已修：先解析 handle→真实 UC 频道 id，失败回退不阻塞）；**推特订阅需先 `/bot cookie import x`**（当前无 X 凭证）；QQ 端实际推送外发需指定真实目标再验。
@@ -997,10 +997,10 @@ bridge 对 `payload.text/summary/forward.text/repost.text` **预 html.escape**�
 |---|---|---|
 | 帮助 | echo.py | `/bot help` 双列网格手册卡；`/bot help <模块>`；分类名直查 |
 | 天气 | weather.py | Open-Meteo+全球兜底；天气误捕静默 |
-| 吃什么 | eat.py + sources/food_data.py | 随机/三选一/忌口；本地 60 道菜谱库；菜品图 Runtime data/food_images（本地图经 bridge 内联 data URL 后卡片可见） |
+| 吃什么 | eat.py + domains/food/data/food_data.py | 随机/三选一/忌口；本地 60 道菜谱库；菜品图 Runtime data/food_images（本地图经 bridge 内联 data URL 后卡片可见） |
 | 免费游戏 | epic.py + steamfree.py | Epic+Steam 双源 |
 | 搜图 | image_search.py | SauceNAO |
-| 萌娘 | moegirl.py + sources/moegirl.py | KB 优先 |
+| 萌娘 | moegirl.py + domains/location/data/moegirl.py | KB 优先 |
 | 历史/回忆 | today_history.py | 本地 365 天库 |
 | 戳一戳 | poke.py | QQ poke/反戳（NapCat 时期登记，真实事件验收仍待，现需在 SnowLuma 上验收） |
 | 运维 | runtime_admin.py / debug.py / runtime_logs.py | `/bot model` 族、注册表 source=env 语义（.env 实时为准，明文永不落盘） |
@@ -1009,16 +1009,16 @@ bridge 对 `payload.text/summary/forward.text/repost.text` **预 html.escape**�
 
 ### 14.13. 多适配器
 
-- **Telegram**（sender/nonebot.py）：图文（本地 PNG 可作 photo）、语音 ffmpeg→OGG/OPUS（失败降级 sendAudio，缓存 %TEMP%/bot_tg_voice）、空文本+有媒体不再 SKIPPED、TELEGRAM_PROXY=http://127.0.0.1:7890。
-- **Mail**：mail_adapter.py 韧性适配器+mail_bridge.py。
+- **Telegram**（domains/transport/sender/nonebot.py）：图文（本地 PNG 可作 photo）、语音 ffmpeg→OGG/OPUS（失败降级 sendAudio，缓存 %TEMP%/bot_tg_voice）、空文本+有媒体不再 SKIPPED、TELEGRAM_PROXY=http://127.0.0.1:7890。
+- **Mail**：domains/transport/mail/mail_adapter.py 韧性适配器+domains/transport/mail/mail_bridge.py。
 - **Console**：本地调试。
-- **掉线通知**：runtime/disconnect_notice.py（TG/邮件/Server酱/PushPlus，默认关）。
+- **掉线通知**：domains/ops/monitor/disconnect_notice.py（TG/邮件/Server酱/PushPlus，默认关）。
 
 ### 14.14. 运维告警与可观测
 
 - alerts.py：按 (stage,kind,adapter,bot,target) 300s 窗口抑制；`llm deadline_exceeded` 豁免（常态降级）。
 - result_unknown 账本：发送结果未知时记账，重连对账不盲发。
-- 审计：audit/logger.py 脱敏消息与上下文摘要；人格 Prompt 审计文件。
+- 审计：domains/ops/audit/logger.py 脱敏消息与上下文摘要；人格 Prompt 审计文件。
 - 渲染失败日志：歌曲卡/候选卡 warning；`build_render_backend` 未知名字/不可用 warning（曾经静默降级导致卡片功能整体消失且无诊断线索——P0-1 收尾）。
 
 ### 14.15. 测试
@@ -1267,7 +1267,7 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 - **本会话提交**：735ac00（test(prfix) 四域回归 51 用例 + meme_search 限长，5 文件，未推送——按 §2.4 等用户指示）。
 
 
-### C组（人格 / 知识 / 订阅 / 杂项能力 / 测试卫生域）——已由 C 组执行会话认领（2026-09-10 晚）；首轮执行完毕（C-1~C-5/C-7/C-8 完成，C-6 等用户前置）；**第二轮：全库重审计执行完毕（2026-09-11，报告 `docs/code-reaudit-2026-09-11.md`）**——8 域 58 findings（P1×5/P2×13/P3×40），域内修 19 条（R1-R20：向量库维护锁/缺文件降级链/订阅 add 管理员门+目的地粒度/status 管理员门/小名语气词缺陷等），出域 39 条已按域路由报告（sender 毒行 P1 已由 B组 90f590e 自修）；台账 `.superpowers/sdd/full-reaudit-20260911/progress.md`
+### C组（人格 / 知识 / 订阅 / 杂项能力 / 测试卫生域）——已由 C 组执行会话认领（2026-09-10 晚）；首轮执行完毕（C-1~C-5/C-7/C-8 完成，C-6 等用户前置）；**第二轮：全库重审计执行完毕（2026-09-11，报告 `docs/code-reaudit-2026-09-11.md`）**——8 域 58 findings（P1×5/P2×13/P3×40），域内修 19 条（R1-R20：向量库维护锁/缺文件降级链/订阅 add 管理员门+目的地粒度/status 管理员门/小名语气词缺陷等），出域 39 条已按域路由报告（sender 毒行 P1 已由 B组 90f590e 自修）；台账 `.superpowers/sdd/full-reaudit-20260911/progress.md`（**计数为该席当时值**，现役计数以机器册 `docs/auto-facts.md` 为准）
 
 > **共享文件编辑登记（销记）**：`echo.py`（C-8 帮助修正）已随本轮提交；`__init__.py` 的 C-1 接线 hunk
 > （:4416-4431 小名提取改调 `character.affinity.extract_learned_nickname`）**已完成编辑、随「`__init__.py` 域提交队列」落地**
@@ -1513,7 +1513,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 |---|---|---|
 | W4 六项+提醒进阶轨+文案对齐 8/8 | 表情包情绪档（valence 软重抽）/主动搭话亲和门（fail-closed）/反思→quirks.propose 待审/V2EX 真 Atom 新闻源/反思事实按 sender 归属/八字藏干加权；memory_extract 提醒抽取（默认关）；runtime_admin effort 展示改读 baseline_effort（销掉第二波 parked minor） | `6a278d3`，23 新例+217 回归 |
 | 好感度 v4 线性改版（**用户拍板**） | affinity-design.md 重写为 v4 权威规格：[-100,+100]、档0友善含10、**废除幂律阻尼 γ**、态度红线写死每档注入、人格自守 persona_degradation 软类别、旧库兼容；**原「9 档 γ=2.0」方案作废** | `572bfff`，52 专项+1545 全量 |
-| /bot help 深度教学化（**计划 D 销项**） | _HELP_ENTRIES 全量重写：59 模块 188 别名逐参数四要素+detail 深页五段式；权限逐条对 actor_roles 勘误；COMMANDS.md 同口径 | `a8ab45c`，13 用例+全量 1612 |
+| /bot help 深度教学化（**计划 D 销项**） | _HELP_ENTRIES 全量重写：59 模块 188 别名（**当时值**，现役计数以机器册 `docs/auto-facts.md` 为准）逐参数四要素+detail 深页五段式；权限逐条对 actor_roles 勘误；COMMANDS.md 同口径 | `a8ab45c`，13 用例+全量 1612 |
 | RAG 人格置顶+反注入+防外泄+延迟三项 | DOMAIN_TERMS 补鹰角/明日方舟（明确不含终末地）；_title_exact_hit 钉头部（对抗用例锁守岸人必第一）；知识/联网/梗块统一 [UNTRUSTED_USER_TEXT] 包裹+确定性指令剥离；redact_local_secrets（盘符路径/BOT_XXX/sk- key 打码）；SQLite 连接复用+FTS 快路径；**B15 顺带根治**（sync_source_sig 台账精确删除，清单过期不删清单外新块） | `f71b234`，16 新例+全量 1569 |
 | B13/B12/B8/B7 可落地批 | universal 6 枚写死橙收进语义 token（--amber-*）；3 条 parked minor 全修+result_unknown 台账 TTL；subscription_target_metadata 表+set/get API+调度器回灌/diff 落库（X rest_id 重启存活）；TG 嵌套 DOM/多反应/编辑删除、YT shorts、微博长文三路+置顶、xhs 时间互动（14 用例） | `b7bc3a4` |
 
@@ -1584,7 +1584,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 | F3 | 解析/能力卡全灰 | **根因**：weather/eat/help 等无平台语境卡走 media 卡路径，`--accent` 回退 `#607080` 灰 → wash 全灰。修复：`_derive_wash_tokens` 基底重锚守岸人本命色（淡蓝210°/星空紫265°/深蓝228°/近白蓝雾底），平台色仅 ±30° 内轻推 wash-1 + accent/色斑 ≤35% 透色 |
 | F2 | B站热评圆角 | `.hot-comment/.pinned-comment` radius-sm(8px)→radius-md(16px) |
 | F10 | eat 卡 about:blank+占位图 | **根因**：`contracts/media.py` build_parsed_content 默认 canonical_url="about:blank" 直接上卡。修复：媒体卡对占位值抑制；无封面时封面区整体折叠（🖼 占位废除）；eat 真实封面四级来源（本地图包→SQLite 图库索引→抓取缓存→空），复用 `check_download_url` SSRF 护栏+魔数校验+落盘缓存 |
-| F11 | 页脚 头像+名字+功能名 | 贯通 5 模板（universal 两处/media/song/affinity/mermaid）+ RenderPayload.feature_label + render_card_png 双分支；weather/eat 传「天气」/「美食推荐」 |
+| F11 | 页脚 头像+名字+功能名 | 贯通 5 模板（universal 两处/media/song/affinity/mermaid）+ RenderPayload.feature_label + render_card_png 双分支；weather/eat 传「天气」/「美食推荐」 |（**计数为该席当时值**，现役计数以机器册 `docs/auto-facts.md` 为准）
 | F18 | 天气定位 | **根因**：open-meteo geocoding `count=1` 使人口排序形同虚设（「东京」命中华东小镇）；zh 库缺「华沙」类城市无重试。修复：count=10+精确名/人口双键排序+60+ 中英城市别名+`_query_variants` 查询变体链（『湘潭-雨湖』逐级拆到行政区） |
 | 菜谱三连 | 「怎么做到的」误触发/「西红柿炒鸡蛋」打不中/带@消息推错菜 | 三根因：①`_RECIPE_RE` 捕「到的」类粒子菜名（补菜名合法性守卫）②库内叫「番茄炒蛋」同义词失配（补同义词归一+bigram 重叠模糊匹配，纯子串在鸡蛋/蛋断点失配）③**natural 链 bot.eat 分支没像 wiki 分支那样把 normalized_text 重写进 plain_text**，带@前缀原文本致 ^ 锚定正则全失配→掉进随机推荐当众推错菜（补 model_copy 重写+能力入口 strip_mentions+两类正则都不匹配时静默跳过，随机推荐永不当兜底） |
 
@@ -1828,7 +1828,7 @@ flowchart TD
 
 ### 24.10 A7-A26 逐席补记（A9 后续批次终稿，证据=`.superpowers/sdd/2026-09-13-six-domain-batch/` 各报告）
 
-- **A7 视觉收口席**（visual-closure-report；模板 Jinja 侧已随 `f3962f1` 入库，f-string 媒体卡/debug 卡件在工作树）：①market/finance 三处 11.5px→12px（market `.data-foot`+finance `.row .sub`/`.data-foot`），`:root` 补 `--text-secondary` 单源引用，`.bot-foot`/`.bf-name` 旧灰 `#7a8699`/`#57626f` 清零并入；`_EDITABLE_TEMPLATES` 并入两模板（+2 模板×2 门）。②媒体卡 stat 胶囊平台色退出底色→`var(--surface-neutral)`+zebra `var(--surface-a/b)` token 引用。③debug 卡 LLM 接入检查卡 `.setup-kicker` 11px→12px、字距 .14em→.06em（刻度内）；`test_mica_builders_contract` vis5 三门并入 `debug_llm_setup`（echo_help 待 echo 域收口后并入）。证据：契约族 209 passed；渲染依赖面 189 passed 2 skipped；哈希 `--write` 12 交付物；闭环 §24.9-5 前半。
+- **A7 视觉收口席**（visual-closure-report；模板 Jinja 侧已随 `f3962f1` 入库，f-string 媒体卡/debug 卡件在工作树）：①market/finance 三处 11.5px→12px（market `.data-foot`+finance `.row .sub`/`.data-foot`），`:root` 补 `--text-secondary` 单源引用，`.bot-foot`/`.bf-name` 旧灰 `#7a8699`/`#57626f` 清零并入；`_EDITABLE_TEMPLATES` 并入两模板（+2 模板×2 门）。②媒体卡 stat 胶囊平台色退出底色→`var(--surface-neutral)`+zebra `var(--surface-a/b)` token 引用。③debug 卡 LLM 接入检查卡 `.setup-kicker` 11px→12px、字距 .14em→.06em（刻度内）；`test_mica_builders_contract` vis5 三门并入 `debug_llm_setup`（echo_help 待 echo 域收口后并入）。证据：契约族 209 passed；渲染依赖面 189 passed 2 skipped；哈希 `--write` 12 交付物；闭环 §24.9-5 前半。（**计数为该席当时值**，现役计数以机器册 `docs/auto-facts.md` 为准）
 - **A8 账单交互卡渠道子行席**（usage-card-report；已随 `3592793` 入库——该提交主题为 A17 修复包，文件清单实含三件）：`usage_cards.py` 新增 `_CHANNEL_SUBROW_CSS`+每家族行后 `└ 渠道` 子行（CSS 条件注入，无渠道数据字节不变；payload 相位 digest 剔除空 `channels` 键归一）；`runtime_admin.py` 新增 `_usage_channel_stats`（账本开→只读聚合→家族键折叠；关/败/空返 None 只影响子行不阻塞账单）。新建 `tests/test_usage_card_channels.py` 18 例（三态锁定+渠道 id HTML 转义+契约红线+字节级 A/B：no-channel byte identical True）；验收合并 247 passed。闭环 §24.9-3。
 - **A9 文档预收尾席**（docs-report）：HANDBOOK §24 新章 82 行（本节前身）+issue-ledger P2-10/P2-11/P3-7/P3-8 入账+acceptance-manual §6.6.3+AGENTS.md 功能清单两行与台账 #31+章号枚举同步（+125/−2 行四文件）；另实查三事实（金融未接线/usage 交互卡未接/Tavily 图搜 git diff 取证入 24.7-7）——前两项后分别由 789700c/A8 闭环。
 - **A18 HANDOFF-NEXT 刷新席**（handoff-refresh-report）：§0 六域态+六哈希、§4 滚动清单、§6 完成三项划掉（时间窗总结 1b23622/图库闭合 53=13+11+29/vis4 迁移 77f56de+cfd7d83+f3962f1）+新增收尾提交与「等用户裁定」七条（25 条价目/账本千倍清洗/Apple Music accent/'Shorekeeper' 页脚/usage kicker/pagefile.sys/oopz）；§1/§2/§2.5 逐字节未动（diff 实证）。实查发现「HEAD 不自含」（commodities_data/bond_data 未跟踪惰性引用悬空）→ `3592793` 入库修复。
@@ -2275,7 +2275,7 @@ flowchart TD
 3. **B2② 端口组方案材料**（PORT-PLAN）：v21r4-b2-port-wiring-plan.md，不构成实施授权；real_session 503 根因=factory.py:105-106 real_adapter 从未注入；15 项前置条件待用户逐项勾选。
 4. **B2③ 四行改判**（WIRE-DIRECT）：L56/L57/L58/L65 均无绕统一出站路径的直连点——L56/L57/L58 改判 blocked（装配+授权双阻塞），L65=端口组性质维持 503 not_wired；结构锁测试 4 例+合跑 149 passed。
 5. **B3 三立项书**（CHARTER/CHARTER-b）：L60 好感误扣补偿（5 条待裁，48h 证据窗时效注记）/L71 自修复（6 条）/L74 验收产物（7 条）；三测试件合跑 61 passed。
-6. **B4/B5/B6**（DOCS/LEDGER-b）：命令格式评审材料（77 topics 现状未动，14 领域 vs 20 域最大裁决点）+kb_drift 三问说明（35341 vs 4611，AI 不代改运行数据）+五项调研 memo（搜索时效三方案/合并转发 25MB 闭环待重启/提醒残余五项/LLM 故障转移九项 live 清单/亲密话术指针）。
+6. **B4/B5/B6**（DOCS/LEDGER-b）：命令格式评审材料（77 topics、14 领域 vs 20 域最大裁决点——**均为该席当时值**，现役计数以机器册 `docs/auto-facts.md` 为准）+kb_drift 三问说明（35341 vs 4611，AI 不代改运行数据）+五项调研 memo（搜索时效三方案/合并转发 25MB 闭环待重启/提醒残余五项/LLM 故障转移九项 live 清单/亲密话术指针）。
 7. **提醒双修=本波唯一生产代码面**（REM-DAWN+REM-EVE）：「明早」入三词表（RED→GREEN 64 passed）；「明晚8点」修为次日 20:00（34 passed，族 125 passed）；冲突裁决：REM-EVE 改写 REM-DAWN「明晚=08:00」既有锁，回滚点在 v21r4-b-REM-EVE-log.md §③。
 8. **RK5 控制面三小债**：xfail 转正（_sanitize_action_details）+OpenAPI OpID 清零+platform.py mypy 清零；scoped 50 passed/扩面 436 passed。
 9. **S0 直连收编方案**（DIRECT-PLAN）：5 处直连点核实（cookie 提醒/入群欢迎/二维码/文档导出+登记表陈旧），统一路径 A/B/D 三形态缺省关收编设计，根 __init__ 四点 pending-on-RWC5-b。
@@ -2412,7 +2412,7 @@ acceptance-manual §6.6.11（T76 换装 T36 30 项版）+report-T36 §2 重写�
 - **echo.py /bot status 语音行接线**（T79 清单触发点 1）：`_build_status_body` 末尾追加 `voice_status_line(config)`（health 缺省=惰性探测，disabled 时绝不真探；≤2s 超时钳制+fail-open；管理门在能力上游，健康态不出普通成员面）。**披露项：探针 issue 未贴附 CapabilityResult**——T79 清单的 `await notify_operational_issue` 落点不可达（echo 全同步且 dispatch 所需 targets/online_bots/delivery 皆根 init 闭包私有），且经读码实证贴附有三重副作用：pipeline A-19 会把带 issue 的群聊 status 结果整体吞体换失败通知（status 本身没失败）、`_record_transport_receipt` 对带 issue 回执清 public_message、探针 `_last_issue` 不随读/恢复清空=恢复后仍贴附陈旧 issue 永久误报；告警投喂正确落点=触发点 2（tts.py 退避窗进入沿），移交 H 波。
 - **语音帮助条目刷新**（T61 移交+T75 §六.3）：四要素行补「0=不限」口径+新增「预设与硬顶」行（中央预设表唯一缺省源/硬顶 2000 字·8MiB 超限拒绝留痕/群面内容群白名单安全门黑名单永远赢）；detail 补退避真闸快速失败不挂起+缓存口径改「内容+引擎身份」+「同句恒同音色」；structured config_vars 补 6 键（PRESET/HARD_MAX_CHARS/MAX_AUDIO_BYTES/CACHE_MAX_BYTES/CACHE_MAX_AGE_DAYS/VOICE_HOOK_ENABLED，26 键全量对齐 config.py）。
 - **config-catalog-full.md 两处修正**（T75 §六）：:814「并提示」失实→「静默无用户面提示——audit_tags `truncated=true` 留痕」；:827 `_tts_auto_reply_scope` 补 M-17 语义（scope=礼仪维度；群面另受内容群白名单安全门）。.env.example 同款注记（T75 §六.4）。
-- **生成物重录**：漂移面预检=renderer.py 1 项（T80 后主代理一行）+echo.py 本席改动；`command_catalog.py --write`（77 topics 校验 current）+`verify_hashes.py --write/--check` EXIT=0（19 交付物）。门禁：test_doc_sync_gates+test_documentation_consistency+test_help_entries_coverage+test_e2e_help_matrix+test_bot_commands_catalog_b10+test_help_meta_search_and_tra49_aliases+test_traditional_help_aliases+test_reaudit_20260911+test_voice_health_probe 合跑 247 passed+1 failed（NameError 笔误即修复）→复跑全绿；ruff echo.py 净；mypy echo.py Success。
+- **生成物重录**：漂移面预检=renderer.py 1 项（T80 后主代理一行）+echo.py 本席改动；`command_catalog.py --write`（77 topics 为**当时值**，现役以机器册为准 current）+`verify_hashes.py --write/--check` EXIT=0（19 交付物）。门禁：test_doc_sync_gates+test_documentation_consistency+test_help_entries_coverage+test_e2e_help_matrix+test_bot_commands_catalog_b10+test_help_meta_search_and_tra49_aliases+test_traditional_help_aliases+test_reaudit_20260911+test_voice_health_probe 合跑 247 passed+1 failed（NameError 笔误即修复）→复跑全绿；ruff echo.py 净；mypy echo.py Success。
 
 ### §35.8 GO 后过渡终填（T91 裁决 GO → HEAD d823232；T118 回填，进度口径与 AGENTS §44 ⑫ 一致；哈希逐一 git log 实证）
 
@@ -2420,3 +2420,220 @@ acceptance-manual §6.6.11（T76 换装 T36 30 项版）+report-T36 §2 重写�
 - **GO 后落库逐席账（TTS 面 14 笔：034bcb8..d823232）**：T90 M-20 四条补锁（7d40d8f：总闸组合/裸 JSON 全等/16kHz 指纹负例/空体记账，四变异各恰 1F/86P）；T94 M-32 SSRF 闸（034bcb8：config.py 纯插入 62 行 `_tts_api_url_host_is_loopback`+field_validator 零新键，RED 26F→42P（元数据/内网段/公网/v6 变体/userinfo 现行全静默接受=M-32 零闸实锤），生产 .env 未设键走缺省 127.0.0.1:9880 零影响；远程引擎须显式改闸）；T93 W1 降级双正锁（3eff3dd：首轮恰 2 调用/文字=原文/语音 FAILED_FINAL/retry=0/零重复投递+审计恰 1+R-16② 反自拼锁；旧快照回退 194a2ca^ 杀伤力 2F 实证）；T92 M-16 繁體触发词 11→16（ff091dc：說/語音/唸/朗讀/語音合成经 effective_trigger_words+中央件 match_trigger 零新机制生效，RED 14F→170P 负样本双锁零劫持；繁體命令从交回对话变触发合成=行为变更报备）；T87 M-67 裁决 A=修复（7e2fe36：verify_chatbot_env 重建为配置面真验证——生产 Config 真身判据/零裸 assert/-O 双向锁/20 例 RED，pre_restart 族 64P 零回归）；T98 巡检披露 T75 回归锁 tests/test_tts_t75.py 漏 add→主代理补录（21b702c）；T99 繁體尾巴收口（3f8c234：红因果实证→LEDGER 追加→绿→echo 补齐→棘轮强制清账终态 20P；echo 语音条目 aliases 4→9/triggers_nickname 9→14/triggers_nl 7→12；route-matrix/COMMANDS 16 词口径；**tts-contract-layer.md 规格件首次入库（270 行）——§35.2/§35.5 的 untracked〔H 收尾占位〕就此闭合**；command-catalog 501→506 别名+render_hashes 归零）；T101 M-39 闭合（1a4200b：落盘名 `{key}.wav`→`tts-{uuid4}.wav` 缓存键/LRU 零改动+4 锁，孤儿回收归 enforce_quota；M-66 探针=ffmpegAddon 6.5MB/FFmpeg 7.1 实存，dlopen 待真机一条语音补证）；T103 M-66 文档收口（6d30c7f：snowluma-setup.md 新 §6 语音出站/转码节+report-T29 四行终态标注）；T102 微同步三处（0ad3c1e：验收手册 16 词口径 7 处+tts-handover Wave H 后记+verify_chatbot_env 指针改指仓内件）；T106 M-61 语料工具链收编（c78951f：scan_durations/pick_refs/make_listening_checklist/transcribe_refs 四脚本入 scripts/tts_corpus/+溯源块（原路径/原件 sha256/T24 缺陷指针）+双向防漂移实锚+18 例冒烟门，引擎目录只读零写入）；T107 S-08 蓝图（2f7469d：docs/design/media-digest-layer.md——**锐利新发现=T101 uuid 化切断「路径=cache_key」前提，字节摘要从补强升格唯一内容身份来源**；目标形态=domains/media/digest.py 唯一真身+canonicalize 第三冻结键 content_sha256+worker 段级键零改码自动纳入；开放 U-107-A/B/C）；T104 M-73+M-77（5ddf704：括号动作段剥除共用 domains/render/roleplay.py::strip_action_brackets 真相源（零第二正则、对方文件零改动）+audit actions_removed；读法词典最小集 8 条（℃℉＆&±×÷°）+%～条级关断，应用点=打码后截断前；RED 8F→族 344P/3x；动作不再被念出+稳定念法=行为变更两条报备）；T100 M-38 闭合·C 案（743505b：绝对路径死引用全闭（生产三 producer 恒发绝对路径=100% 覆盖即时生效）、相对路径透传保棘轮零红、`_resolve_local_file_ref`→str|None、构段期跳过+missing_file issue、纯语音零派发诚实 FAILED_FINAL；RED 6F→48P 棘轮 11 例零红；简报内部矛盾按最佳判断走 C 案主代理追认成立）；T109 M-64 摘要层 S1+S3（d823232：`domains/media/digest.py` media_digest 全长 sha256+media_digest_file 流式变体；canonicalize_audio_parts 转正 content_sha256 第三冻结键（record 族；absent-digest 逐字节退化=T80 现状兼容根；非法剥离留痕标 redundant）；新测试 8 例+outbound_contract 追加 6 例，prescribed 配方 39P，ruff/mypy 净；U-107-A 全长挂 part/B 不兜底读盘/C 最小面按蓝图推荐落）。
 - **只读/报告席**：T95 报告定稿（WAVE-GH-REPORT-DRAFT 两稿+「六A 终补」T87/T92/T93/T94 占位清零）；T96 语料对齐门 M-28/M-29/M-30（5 passed+3 xfail(strict) 钉现状病=tsv/粘贴块/honami 未回写校对；反向毒化探针（模拟按 tsv 覆盖 .env→门红）实证判定力；订正方向唯一=只许 tsv→权威，杂散 wav 归 M-58）；T97 剩余 M 项终态核验（M-38 半闭→T100 施工、M-39 未闭→T101 施工、M-64 半闭→S-08、M-66 半闭→T101 探针；无施工引入新洞）；T98 近终态巡检（波累计 ≈36 笔 ancestor 实证零丢失+三处台账 34 哈希 cat-file 核验零错+八件关键交付物全在位；三件收尾债：test_tts_t75.py 漏 add 已补录 21b702c、两册写账滞后=本节补齐、GO 后补验=T110）。
 - **在飞〔收尾占位〕**：S2 tts.py 挂 digest（落盘点 synthesize write_bytes 同点+出站构造两处增 content_sha256，T109 §五衔接清单）；T110 G-5 补充终验 phase1（GO 后落库件逐一核验，派遣时九笔、至本节回填时 TTS 面 14 笔，终态以其返回为准）；T116 S5 media_archive 摘要收编（T109 digest.py 已落解锁）；T117 SnowLuma retcode 采集脚本+一键自检编排。终态以其各自返回/落库为准，本节不预填。
+
+## §36 紧急信息域接线波总账（WIRE 波，2026-09-20，BASE `d210082`；未 commit——工作树多会话共享，提交裁决权在用户）
+
+### §36.1 承接与定位
+
+- 施工图唯一权威=`docs/design/emergency-info-registration-runbook-20260920.md`（WIRE-MAP 席交付，723 行）；波次全录=`.superpowers/sdd/emergency-info-registration-runbook-20260920/progress.md` + reports/ 十席 log。
+- 前置事实：紧急域 14 件代码已落盘已入库但**零接线**——生产没有一条消息经过它；本波把 A 段独占面做扎实 + B1 九面路由半边落地，B3 装配半边/C1 重录/V2a 评审在飞。
+- 06:47 用户八裁定 U-1…U-8 为硬约束（逐条见 AGENTS.md #45 行），席一律不得重开。
+- 14:00 改口（shared-brief §4.5，覆盖本文件与施工图所有旧冷热判断）：B 段面**解禁但带碰撞自卫**——`config.py`/`echo.py`/`capability_registry.py`/根 `__init__.py` 的 `M` 态实测七小时无人写=别席未提交残留而非在飞；写共享面前查 mtime、只许纯追加；施工图行号全部漂移一律符号锚点现读现定（campus 锚 :447→:476、`path_fields` :1228→:1301 实证）。
+- **P-1/P-2 硬门判死**（主会话独立实测）：本仓 ≈989 件未提交是常态（台账 #41—#44 一律"未 commit"），施工图 §6.2「四件无输出」假设干净树不可能成立 ⇒ 以 mtime 自卫+纯追加替代。代价若错：他席若打算整面重写，追加会成冲突或静默覆盖——故每面写前后各查一次 mtime。
+- 生成物三连（`command_catalog.py`/`doc_sync.py`/`verify_hashes.py`）**全波禁 `--write`**（R-S6：三件落盘文件全是别席脏态，重录会把别人漂移洗成我们的）⇒ 集中重录归 C1。
+
+### §36.2 A 段落地四件
+
+- **域能力层 421 行（WIRE-A1，DONE_WITH_CONCERNS，13.97M token/79 调用/29 分钟）**：新建 `domains/emergency_info/capabilities/{__init__.py,emergency_info.py}`——`is_emergency_info_command`（:170）/`build_emergency_info_capability`/`build_emergency_info_source` 三重装配门 frozen 快照（campus 同型，施工图钉死②，任一空=整链不装配）/`EmergencyInfoService`/`CAPABILITY_ID="bot.emergency_info"`；`tests/test_emergency_info_core.py` §H 追加 39 例、既有 102 基线零改动；本席 §H 39 passed、6/6 变异各杀各锁。
+- **唯一投递触点 `service/push.py` 284 行 + 三把门（WIRE-A2，DONE_WITH_CONCERNS，19.55M token/96 调用/41 分钟）**：钉死③落点——域内主动投递只经 `submit_active_push` 走 outbound_gate，禁直调 `send_queue.submit`；`submit_active_push` 字样只许出现在 `service/push.py` 与 `tests/test_outbound_gate.py`（R-S5/T6 门，根文件全文禁）。新增 `tests/test_emergency_info_push.py` 558 行 22 例 + `tests/test_outbound_gate.py` +11 例；U-6 三把门全立（双钉一致性/severity 载体/白名单整段化——施工图白名单坐标已漂且他席早改目录段等值，门 3 改做"补 `emergency_information`/`emergency_info_v2` 唯一缺口负样本+push.py 内侧正样本"，注毒 M5 实证退回 startswith 当场两红）；注毒 M3 抓出本席第一版一条**文本空锁**改 AST 判定=席位用变异检验杀自己的假锁，记功。
+- **D-8(a) 审核门（主会话 14:00 亲写）+ 17 锁（WIRE-A3-v2，9.98M token/59 调用）**：`service/review.py` 增 `auto_approve_sources` 形参（:86）+`AUTO_APPROVED_BY="auto:authoritative_source"`（:79），白名单命中钉 APPROVED、未命中逐字保持原行为（人工报料仍 PENDING）；缺省 `frozenset()` 真关死（V1b 注毒"恒 APPROVED"→10 例红）；定级唯一出口未动——`level` 无条件 None、仍必经 `publishable_level()`（**过审≠提前塞等级进投递面**）。亲写首版自坏实录：对 `frozenset` 调 `.discard("")` AttributeError→既有 11 例红，14:08 推导式内滤空修复→232 passed/4 xf——教训自用：**主会话亲写的码同样要跑门禁**。锁面：新建 `tests/test_emergency_info_review_gate.py` 17 例（385 行），review.py 一行未改（sha256[:16] `a8ef39f84ef30b04` 全程一致，A3-v2 授权边界守住）；`sources/store.py` 单行注释改正键名 `bot_emergency_info_db_path`（R-S3）。
+- **占位裁决四则**：R-S1 `contracts.py` 唯一写手=A3、余席只读缺口写 §落地请求；R-S2 白名单机制改显式入参、键名 `bot_emergency_info_auto_approve_sources` 随 B 段并入**十键**；R-S4 门 1 只读 AST+「紧急域尚无 matcher」诚实登记暂缺前置禁放宽凑绿；R-S5 禁字样限域内两文件。
+
+### §36.3 B1 九面路由半边（WIRE-B1，DONE_WITH_CONCERNS，5.55M token/59 调用）
+
+- 九面+第十面 9 件落盘：`config.py` **十键**（:482-491：`bot_emergency_info_enabled`(缺省 False)/`_sources`/`_auto_approve_sources`/`_poll_interval_seconds`(300)/`_min_level`("P2")/`_push_group_whitelist`/`_push_user_ids`/`_reviewer_ids`/`_keep_days`(90)/`_db_path`("data/emergency_info.sqlite3")）+`path_fields` 登记（:1317 复验值）+pydantic 标量 id 列表宽容装载（#34 先例）；`base_router.py` 四处（:99 import 域内 `is_emergency_info_command` 谓词直连、**零正则副本**）；`capability_registry.py` 三处（声明/HELP_TOPIC/CONTROLLED_INTERNAL）；`echo.py` 三处（topic=紧急信息 :2217、aliases :2219、admin_only=True 依 U-3、`_PUBLIC_HELP_TOPICS` 未动、"紧急信息"入管理员专属类目 :295）；第十面 `tests/test_capability_registry.py` 3 快照+5 写死数；`docs/route-matrix.md`+`docs/db-owners.md` 行；config-catalog 新节；`.env.example` 块。变异自检：注毒 44→47 精确打红 3 锁。
+- **主会话独立复验（不采信席报）**：十六件合跑 **1289 passed / 6 failed / 2 skipped / 2 xfailed**；实读盘面 config 十字段、:1317 path_fields、base_router :99、echo :2217 aliases 无拼音，逐项对码。
+- **六红逐条再归属**：#1 `test_route_matrix_matcher_names_exist_in_code`（根 matcher 两名字未落地=**B3 收**）；#2 `test_catalog_document_matches_registry`（生成物未重录=**C1 收**，禁 `--write` 是本波纪律）；#3 `test_config_catalog_covers_config_fields`（missing=`bot_potccv_api_key`=**他波**，反证本波十键登记正确）；#4/#5 verify_hashes/auto-facts（**基线既有**，渲染席/他席）；#6 `test_emergency_info_double_pin_is_registered_as_pending`（A2 写的半接线探测器，双钉任一出现即 fail=**设计如此，B3 装配时翻正向锁**）⇒ **本波真实净新增红=0**（B1 漏署 #6、未查 #3 记 Minor 不放行不影响）。
+
+### §36.4 口径更正：施工图正则 `\b?` 作废（席级必读）
+
+- 施工图 §4-面0 预生成正则的尾缀 `\b?` 在 **Python 3.12.10 编译期即 `re.error: nothing to repeat at position 39`**——14:30 主会话亲跑 `re.compile` 实证（非席位转述）。照抄进 `base_router` 会让整个插件**装配期崩、bot 起不来**；铁律场景=崩在用户提权重启那一刻。
+- **唯一真身已采定**=`domains/emergency_info/capabilities/emergency_info.py:52 _EMERGENCY_RE`（按意图删 `\b?`，词右界由尾部 lookahead 否定承担；实测 `emergencyxxx`→False、`紧急信息`→True；V1b 四探针现场复跑全中，另有形态锁钉死「`^` 锚 + lookahead 尾 + 禁 `\b?`」）。下游（B 段路由面）一律调用真身谓词，**禁第二份正则副本**；两名单全空实测 `enabled=False`（关闭非全开）。若错代价：词边界门 G23 判据与真身不符 ⇒ 门与码同时改。
+
+### §36.5 席位伤亡、裁决与方法论
+
+- 五轮派席伤亡账：首批 A1/A2/A3 三席 207—336s 服务中断集体阵亡（77 万—215 万 token，损伤核算=独占面 `git status --porcelain` 空输出、零代码落盘、report 全骨架、死后复跑 181P/2F 与基线同名 ⇒ **对外零损伤**）；二批三席 15—17s 猝死（网卡，用户 14:12 证实）；三批 A 段三席全部完成；V1a 672s/24 调用死 ⇒ 拆 V2a 窄范围低预算重派。**唯一可复用教训：每节即时落盘 + 大文件禁整读**（施工图 64 KB、根 `__init__.py` 等千行文件一律 Grep 定点+offset/limit；≈9.8 万 token/次调用是把上下文撑死的诱因）。
+- **R-A2-1（主会话亲写收口，交 V1 系复验）**：T6b/锁 C/锁 D 三处 `@pytest.mark.xfail(strict=True)` 摘牌转正，**转正理由原文全部保留为注释**（不用 `assert True`/skip，不丢契约文字），`test_emergency_info_core.py:979` 模块 docstring 同步改正；`_kernel_python_files()` 精确剔除 `push.py`（`if path.name != "push.py"`，真因=该函数 `service/*.py` 整目录 glob 与自身 docstring 矛盾，修文件集配得上文档**而非开后门**），剔除精确性用 exec 取集合自检（含 9 件、push 不在、`_module_imports(push.py)` 确含 outbound_gate）。收口后七件合跑 **329 passed / 1 xfailed / 0 failed**（收口前 327P/2F）。留下的诚实边界（已写进注释）：活性锁证"域内触点存在且只有它引用闸"，**不证"已有一条预警真的投出去"**——后者要 B3 装配+用户提权重启。
+- **两处指令证伪逐条认错**：①令 A2 保留的 T6b 牌，实读 reason 原文=转正条件域内即满足，不等根面——指令基于误读；②A2 称 push.py 与内核锁"规约互斥须豁免"——诊断方向对、定性错，按实读裁定。
+- **R-R1-1（本波方法论记账）**：A2 指认「base_router 两条 RouteRule 共用 `capability_id="bot.moegirl"`、`bot.moegirl_question` 无人认领、审计/账单互相掩盖」，WIRE-R1 纯只读取证裁决：字面成立（现读 :601/:624，简报行号 579/601 已漂）、**定性不成立**（registry :165 显式声明+help/COMMANDS/route-matrix/命令规格四层在册）、后果不成立（审计有 audit_tags 判别、ledger 无 capability_id 聚合维、WebUI 合并行属语义非掩盖）⇒ 本波不修，拆统计另登 P3。判据=信逐行取证不信一句转述，不因是本波席护短。
+
+### §36.6 在飞与欠账〔收尾占位〕
+
+- **WIRE-B3**（装配半边）：根 `__init__.py` 四处（5a import/5b 三重装配门/5c matcher 三件套+工厂薄壳/5d 轮询调度器）+ 把 #6 探测器翻正向双钉锁 + 结 B1 concern ⑤——终态以其 log 为准。
+- **WIRE-C1**：生成物三连集中重录 + 四门禁 + 全量终跑数（本波不预填）。
+- **WIRE-V2a**：命门一（摘三牌是否被存在性糊过+是否补装配可达性锁）/命门二（剔 push.py 是否开后门，注毒必红）——V1a 死致此二条**至今未经独立评审，不得当作已验**。
+- **D1 席落盘时复跑证据（2026-09-20 15:3x）**：`PYTHONDONTWRITEBYTECODE=1 ../ChatBot_Runtime/venv/Scripts/python.exe -m pytest tests/test_emergency_info_core.py tests/test_emergency_info_push.py tests/test_emergency_info_review_gate.py tests/test_emergency_info_sources.py -p no:cacheprovider --basetemp="$TEMP/D1-1" -q` = **237 passed / 1 failed / 1 xfailed / 7.82s**（唯一红=归属 #6，非损坏）。
+- 生效口径：**代码+测试完成，未 commit，重启生效**（铁律：改代码必须重启 bot；生产进程管理员权限启动）。真机验收=`docs/acceptance-manual.md` §6.6.12。
+
+## §37 紧急信息订阅波（WIRE-SUB，2026-09-20/21，单线程；未 commit，重启生效）
+
+**动机（用户原话）**：「不要这么写，我要能在群聊里就能把参数给搞好，在 `.env` 里改太僵硬了」——
+前一秒我给出的方案是 `BOT_EMERGENCY_INFO_PUSH_GROUP_RULES=群号:levels=...|area=...`，被当场否掉。
+本波把「哪个群收什么条件」这件事从配置面搬到会话面，要的是：**某个群只播报特定地点的特定等级/警情**。
+
+### 37.1 六条裁定与它们的落点
+
+| 裁定 | 内容 | 落点（真身） |
+|---|---|---|
+| 1.C | 语法=参数式主干 + 自然语序别名 | `domains/emergency_info/service/subscriptions.py::parse_subscription`（`_PARAMS` 认 `area=/levels=/kinds=/radius=/coord=`，剩余词按「档词>地名>类型词」归类） |
+| 2 | 能设/退＝超管 ∨ 管理员 ∨ **本群群主** | `domains/emergency_info/capabilities/emergency_info.py::allows_emergency_subscription`（群主腿读 `sender_platform_role`，填充真身 `__init__.py:1462`；**仅 scope=group 生效**） |
+| 3.B | 目标由订阅表**每轮现读**；`.env` 名单不再是装配门 | 装配门缩为 `enabled ∧ sources`（`build_emergency_info_source`）；目标 `_push_targets()`（根 `__init__.py`） |
+| 4.B | 地点＝文字命中 ∨ 半径命中，缺省 200km | `matches_subscription` + `DEFAULT_RADIUS_KM=200.0`（上下限 10/3000） |
+| 5.A | 永久直到退订，一群一条 | `emergency_subscriptions.target_key` 主键 + `save_subscription` 覆盖式 upsert + `prune` 只裁条目 |
+| 6 | 群聊与私聊同面可设 | `run_subscription_command(scope=...)`，目标 `subscription_target()` 只认事件自带事实 |
+
+**施工图 §5-钉死② 的第三腿就此作废**（AGENTS #45 该口径已加限定注）。作废理由不是嫌它麻烦，而是**死结**：
+第三腿要求先有 .env 名单才注册 matcher，而 matcher 不存在时群里第一句「紧急信息 订阅」永远没人应答，
+于是永远填不出名单。「绝不猜群/绝不猜人」一寸没松——落点从「配置名单非空」换成「表里有行」，
+而行只能由裁定 2 那三种人亲手写下；没有行＝零目标＝零投递（锁：`test_no_subscription_and_no_env_list_delivers_nothing`）。
+
+### 37.2 三条纪律（为什么长这样）
+
+1. **认不出就报错给候选，绝不静默收下**：`area=` 必须在 `qx.json`（2527 区县）里解析得到，否则整条规则不成立，
+   并把相近地名回给用户（`香潭`→含`湘潭`）。本域被「填了但不生效」烧过两次（`auto_approve_sources` 死键、`nmc_alarm` 写成模块名）。
+2. **不造第二载体**：等级走既有 `EmergencyLevel`（D-3），坐标走契约正经字段 `EmergencyItem.latitude/longitude`（不塞 body/audit_tags）。
+3. **命中数必须自己开口**：`match_count`/`last_matched_at` 落库，`订阅 看` 直说「这条至今一次都没命中过」。
+   刚设完的那次回显刻意不责备（`aged=False`）。
+
+### 37.3 本波根修的 Critical：闸建好了，一条都过不去
+
+`collector.py` 把 `item_id` 拼成 `f"{source_id}:{external_id}"`，而投递幂等键的段字符集
+`dedupe._SEGMENT_RE` **显式排除 `:`**（`:` 是段分隔符）⇒ 每一条真实条目在 `deliver_emergency` 抛
+`ValueError: dedupe key part item_id has illegal characters`，被调度 job 的兜底 `except Exception` 压成一行
+`emergency info collection failed: ValueError`（旧日志只有类名，连原因都没有）⇒ **采集入库全对、投递零条**。
+离线单测抓不到，是因为 A1/A2 的夹具 id 写作 `emg-ingest`（不含冒号）；而反向的负例锁
+（`test_emergency_info_push.py:411` 断言 `bad:id` 必抛）早已存在——**两半各自为真、合起来是死的**。
+
+修法三件：①连接符改 `-`，并锁「四真身源名都不含 `-`」防 id 歧义；②投递循环加 `is_legal_segment` 前置，
+坏 id **点名跳过而不带走整轮**；③兜底日志补 `str(exc)[:200]` 与 `exc_info`（台账 #29 ⑪「detail 必须自解释」同口径）。
+让它现形的是新建的**端到端 job 用例**（假调度器接住 job 函数 → 真 service → 真投递触点 → 关闸态直通 → 记账队列，
+采集支路 monkeypatch 摘网）——静态可达性锁 R1 全绿也照样漏，又一例「存在性糊过活性判据」，故 AGENTS #46 记账。
+
+### 37.4 顺手收掉的两处非订阅缺陷
+
+- `EmergencyStore._connect()` 原是裸 `sqlite3.connect`，`with conn` 只 commit 不 close ⇒ 句柄按调用数累积；
+  改为 `@contextmanager` 出口必关（轮询 + 每轮现读订阅会放大它；Windows 上直接表现为临时库删不掉）。
+- 存量库补列：`_SCHEMA` 全是 `CREATE ... IF NOT EXISTS`，旧库不会加列，而 `_SELECT_COLUMNS` 一旦点名 `latitude`
+  会让**每一次读**抛 `no such column`。加 `_ensure_item_coordinate_columns`（ALTER-if-missing，家规先例=affinity 三列）。
+
+### 37.5 验证账（全部实跑，非转述）
+
+- 新件 `tests/test_emergency_info_subscriptions.py` **51 例**；紧急域八件合跑 **374 passed / 0 failed / 1 xfailed（26.2s）**。
+- 全量 `dev.ps1 -Task test`：**10402 passed / 4 failed / 13 skipped / 8 xfailed（580.75s）**；
+  四红逐条归属=cookie 套接字环境 ×1、`test_doc_link_integrity` 旧路径棘轮 ×1、mermaid 他波在飞 ×1、model-help vision mode ×1 ⇒ **本波净新增红 0**。
+- 棘轮那条：现值 854 > 基线 837，本波所辖行只占 1 条，已改写为真身路径（855→854）；**其余 +17 存量属他波文本，不代改、不代降基线**（归该门 Owner）。
+- `runtime-layout` **PASS**（`python_bytecode=absent`）；三件生成物 `--check` 全 CLEAN（`command-catalog` 78 topics）。（**计数为该席当时值**，现役计数以机器册 `docs/auto-facts.md` 为准）
+  重录把**他波**在飞漂移一并写进 auto-facts：RouteKind 33→35、topics 75→78、测试文件 326→497、config 字段 529→644、卡片模板路径迁 `domains/render/`——如实报备。
+- 全树 mypy 8 错（`scripts/command_catalog.py`×6 / `domains/ops/sync_drift`×2）**本波 0**；全树 ruff 63 错，**紧急域与本波测试件 All checks passed**。
+- 变异注毒 **10 发全红**：等级维度失效/未定级也放行/现读退化为空/命中不记账/权限门恒开/群主腿泄进私聊/平台门放宽/裸订阅变订全量/地名校验作废/条目 id 回冒号；每笔 sha256 前 16 位核对还原。
+
+### 37.6 诚实缺口（下一步该谁做）
+
+1. **订阅只对 QQ 侧开放**。现役全部推送族（紧急/campus/群摘要/日常助理）的 `EmergencyTarget.channel` 都是 `"qq"`；
+   把 TG 用户号存进订阅表会拿去过 QQ 投递＝同号不同平台的**误投**而非失败，故命令面先拒并明说。多平台要目标带通道事实，另案。
+2. **地名→坐标未接**（`resolver` 只是注入缝）。`qx.json` 实测无经纬度列，唯一现成的 geocoding 在 `domains/weather/data/open_meteo.py::_geocode`——
+   跨域取数按项目隔离铁律只能在根装配层缝，本波未缝 ⇒ `area=湘潭` 目前只走地名文字匹配，半径要用户自己给 `coord=`。
+3. `deps.sources` 为空仍沿用既存「整轮 return」口径（未注册源现在会被点名，但仍不投已在库的条目）。
+4. 棘轮基线由该门 Owner 在生成物收敛后重录（A3 判定「该修再入库」）。
+5. 全部改动**未 commit、生产未重启** ⇒ 现网行为=总闸已开 + `SOURCES=nmc` 已配而订阅表为空 ⇒ 零投递；
+   `.env` 两枚 `PUSH_*` 本波注释停用（原值留在注释里，去掉 `#` 即恢复硬推腿）。
+
+## §38 十三项裁定全量修复波（2026-09-21，主会话 + 13 席；未 commit，重启由用户提权执行）
+
+> 逐席交付、四态表、未提交文件全量清单、禁碰面、复跑命令簿、收尾执行记录：
+> **`.superpowers/sdd/2026-09-21-fix-wave/master-plan.md`**（§捌是本波交接态正文，§8.8 是收尾执行记录）。
+> 本波起因=用户对 `docs/audit-20260921-decisions.md` 十三项逐条裁定 + 「现在就去完全修复这些问题」。
+> 汇总审计报告=`docs/audit-20260921.md`（§0–§9）。
+
+### 38.1 三条尺子对应落地的东西
+
+- **按功能归类**：新增件全部落在**所属域内**而非插件根（`memory_bus_v2.py`→`chat_reply/character/`、
+  `deck_math.py`→`divination/data/`、`alert_taxonomy.py`→`emergency_info/service/`），
+  并把 `data/draw_store.py` 从 641 行削到 121 行（算法归 `deck_math`、存储归 `store/`，各留一个真身）。
+- **内容自动同步**：`sync_drift` 七枚键**先落 `Config` 再接线**（原病=消费方读七个不存在的键 ⇒
+  `extra="ignore"` 吞掉 ⇒ 恒 False ⇒ 巡检器结构性永不注册）；叙述文档手写计数改指针 + 新机器门 +
+  **AGENTS 规则 10**（这是「同步」从口号变成可执法的那一步）。
+- **只调函数和模板产出**：中央能力调度层 Wave 0 落契约地基（同名 `CapabilityResult` 分层归并，
+  壳侧改名 `InvocationResult` 做执行信封，呈现契约 208 构造点零改动）；繁简折形、静音陷阱判据、
+  会话键、静默窗穿窗判据**全部收敛为单一真身 + 包装/再导出**，禁第二副本。
+
+### 38.2 本波新增的现役配置键（28 枚，全部主会话串行落四处）
+
+| 族 | 键 | 缺省语义 |
+|---|---|---|
+| 记忆 v2 | `bot_memory_bus_enabled` / `_reflected_write_target` / `_strength_k` / `_tau_{stable,seasonal,episodic}_days` / `_relevance_weights` / `_per_category_max` / `_semantic_recall_enabled` | **关=逐字节旧行为**（`legacy` 写旧表） |
+| 好感度 v7 | `bot_affinity_v7_enabled` / `_base_step` / `_novelty_ratio` / `_novelty_halo_days` / `_rhythm_reference_turns` / `_negative_event_cap_z` / `_daily_move_cap_z` / `_fuse_daily_events` / `_repair_gain` / `_z_hard_bound` / `_quality_weights` / `_decay_tau_days` | **关=v5/v6 现状**；JSON 类键空/非法=按代码缺省并**点名一次**，不静默猜 |
+| 漂移巡检 | `bot_sync_drift_alert_enabled` / `_surfaces` / `_interval_minutes` / `_startup_delay_seconds` / `_suppression_seconds` / `_qq_bot_id` / `_max_evidence_lines` | **关=连 job 都不注册**（零读盘零告警） |
+
+⚠ 三族**一律未登记** `SETTABLE_KEYS`：登记而不接 `_RUNTIME_HOT_OVERRIDE_FIELDS` 合并层=假热改
+（本仓已定罪形态，见 `docs/config-catalog-full.md` 本文 F 节）。实现席按「逐调用现读 config」写，
+热改面留待能证成读路径后再逐键裁（待裁项 P-3）。
+
+### 38.3 挂账（不许被当成已关闭）
+
+| 标记 | 内容 | 摘牌方式 |
+|---|---|---|
+| `WP3-TAXONOMY` | 紧急域注册表驱动定级 / 按震级深度位置定级 / `grading_candidates()` 审计面 / 缺省关键词表去种类词 | 全树搜该标记，10 用例 20 实例 `xfail(strict=False)`；其中 2 个参数化实例是 **xpass=巧合过**（关键词表恰好兜住），转正前先查它们是不是被旧词表蒙对 |
+| Wave 1–4 | 中央调度层全面接入（22 描述符通电 → 注册表升唯一真源 → 逐域 → 三硬骨头） | 断点与确切改法在 `.superpowers/sdd/2026-09-21-fix-wave/impl-WP8W0-log.md` §8 |
+| 坐标棘轮红 | `test_outbound_registry_campus_coordinate_is_live`（5027≠5032） | 归该门 owner；本波**未代改**（其间有外部编辑动过根文件，代改只会再漂一次） |
+| 编码假红源 | 全仓另有 10 处 `subprocess.run(text=True)` 未钉 `encoding` | 见 §8.8 B 表末段名单；症状=`stderr is None` + GBK `UnicodeDecodeError` |
+
+### 38.4 真值与门禁（主会话本人实跑，`BOT_AUTOSYNC=0`）
+
+全量 **1 failed / 10961 passed / 13 skipped / 27 xfailed / 2 xpassed / 613.41s**；
+`runtime-layout` PASS(RC=0)；生成物三件 `--check` 全 CLEAN（`verify_hashes` EXIT 0 —— **顺带纠正交接稿 §8.5
+「本轮哈希必红 2 项」的错判**，实际那两处早已随改动重录过）；`doc_sync --write` 复录后归零，
+机器册现值 测试文件 514 / config `bot_*` 字段 672 / RouteKind 35 / topic 78 / 模板 7；
+全树 ruff 21 错、mypy 7 错，**本波 0**（逐文件归属见 master-plan §8.8 C）。
+
+### 38.5 现网状态与重启后会发生什么（覆盖 §37 第 5 条的口径）
+
+§37 写的「订阅表为空 ⇒ 零投递」**仍然成立**；但阻断项修完后**紧急域采集调度器恢复注册**
+（回到 WIRE-B3 原设计语义）⇒ **重启后 NMC 轮询会真的开始跑**（外网读，不投递）。
+要继续维持「完全不跑」，把 `.env` 的 `BOT_EMERGENCY_INFO_ENABLED` 改回 false——这是用户裁量，本波没动 `.env`。
+其余全部行为（v7 好感度、记忆总线、漂移巡检、繁体折形的新华、TTS 退避、路由拆位）
+**都要等重启才生效**；真机验收=`docs/acceptance-manual.md` §6.6.12 + master-plan §捌 G 组。
+
+
+## §39 十板块文档体系波（2026-09-21，主会话 + 11 席；未 commit）
+
+### 39.1 裁定与产出
+用户要求把所有汇总类 Markdown 重整成「实现这个 bot 的 10 个大型板块」，按一级功能/二级功能/三级功能归类，
+并规定六条：一功能一目录、统一规范（模块/命名/架构/规格/流程/图示/说明文档）、新建东西先建模块与函数且只调用已登记件、
+一处变更处处跟随、P0/P1/P2 全处理、代码必须清爽。产出六件：声明源 `board_taxonomy.py`、投影器 `scripts/board_doc_sync.py`、
+生成物 `docs/boards/**`、规范本体 `docs/boards/_conventions.md`、常驻门 `tests/test_board_taxonomy_gate.py`、
+`dev.ps1 -Task sync` 纳入重算。接手入口 `HANDOFF-BOARDS-20260921.md`，台账 #48。
+
+### 39.2 为什么不做成第 N 份手抄清单（这条是设计核心）
+板块树不复制代码事实：二级功能只登记「我拥有哪些 RouteKind / capability_id / 帮助主题 / 实现路径 / 配置键前缀」，
+三级清单与一切计数在渲染期从 keystone 声明源与帮助注册表派生。新增能力 ⇒ 板块自动多一张卡；
+删能力而文档仍认领 ⇒ 门红；一个席位被两处抢 ⇒ 门红；实现路径写空 ⇒ 门红。人工正文与机器投影用
+`<!-- BOARD-AUTO -->` 分区，正文永不覆盖，失效骨架页自动清。上一波「三把静态可达性门全绿而生产零投递」的教训
+被写成 `_conventions.md` 第六节的判据纪律：存在性锁不算修好。
+
+### 39.3 顺手抓到的文档漂移（叙述口径与真身不符，两例）
+错误卡真身 `domains/ops/monitor/error_report.py`（AGENTS 旧写 `runtime/error_report.py`）；
+审核面真身 `domains/render/reviewer.py` 加 `output/` 垫片（旧写 `domains/chat_reply/review` 目录不存在）。
+两处已按真身改正并写进板块页；同类问题由板块树的 impl_paths 存在性门常驻兜住。
+
+### 39.4 验证账（实跑）
+`scripts/board_doc_sync.py --check` EXIT 0；`tests/test_board_taxonomy_gate.py` 全绿（含注毒三发）；
+`docs/README.md` 登记后 `test_doc_link_integrity.py` + `test_documentation_consistency.py` 42 passed；
+本波新 py 件 ruff 全绿。计数（板块/功能/入口/主题）以生成物 `docs/boards/README.md` 为准，本册不手写。
+
+### 39.5 收尾时的伤亡与真实进度（2026-09-21 本轮终止前）
+填正文的 11 席里 **9 席在 57–93 次工具调用、约 10–22M token 处被服务侧掐死**（result 为 `Sorry, something went wrong`），
+但**不是零产出**：正文落盘后才死，且无人误改 AUTO 段（`board_doc_sync.py --check` EXIT 0 为证）。
+当时实测：生成页 225（10 板块 / 57 功能 / 159 入口），正文已填 152、待填 73；B01 与 B07 已齐，
+缺口集中在 B02（3/20）、B04（5/14）、B09（11/25）、B08（10/16）——这些是**当时值**，续跑后以命令为准。
+最后一轮全量测试**拿到终局**：`2 failed / 10975 passed / 13 skipped / 27 xfailed / 2 xpassed / 498.67s`；两红逐条归因＝继承的 campus 坐标棘轮（他门 owner，不代改）＋本波一度把全量文档面缺陷顶到 181>167（席位写了残名路径，已逐条改回真身，改后该门单跑 17 passed，未降任何基线）。
+续跑规程、席日志位置、以及我量到的代码侧线索（25 个零引用垫片、3 组同名公开函数、2 个不可追溯能力文件）
+全在 `HANDOFF-BOARDS-20260921.md` **§柒**。另：按「只搬最没争议的过程件」这条实测下来一个都搬不动——
+候选件被引用 7–75 处不等，而死链棘轮基线只有 2 条 ⇒ 必须先批量改引用，那件独立活我没动。
+
+### 39.6 未做与挂账
+①板块正文按板块独占派 11 席填写，收尾以各席日志 `.superpowers/sdd/2026-09-21-boards/logs/` 与 `--check` 为准；
+②旧文档（HANDBOOK 历史章、`docs/design/` 大批件、根目录 `HANDOFF-*`）只出了退役依据未执行搬迁，
+移出源码树属不可逆动作须用户点头，且要先改钉住路径的门（哈希台账/链接棘轮/叙述清单）；
+③代码整理只出了缺陷台账，副本清零/命名 sweep/docstring 补齐须按 P0→P2 批量做，涉集中面的条目主会话串行；
+④`_meta` 台账判定的主板块与 `board_taxonomy.py` 认领表需回填对齐，冲突以代码真身为准。

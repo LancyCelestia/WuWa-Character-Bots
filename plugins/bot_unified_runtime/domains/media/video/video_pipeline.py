@@ -62,7 +62,7 @@ def _local_file_usable(path: str) -> bool:
 
 
 async def _fetch_reply_video_file(bot: Any, message_id: str, config: Any) -> str:
-    """按消息 id 向适配器反查视频文件（NapCat get_msg → video 段 file/url）。
+    """按消息 id 向适配器反查视频文件（SnowLuma get_msg → video 段 file/url）。
 
     仅在媒体档案未命中时调用；拿到落盘路径直接用，只有 url 时下载到下载缓存
     目录（fetched/ 子目录）。适配器不支持/失败一律返回空串，绝不阻断主链路。
@@ -72,7 +72,7 @@ async def _fetch_reply_video_file(bot: Any, message_id: str, config: Any) -> str
             payload = await bot.call_api("get_msg", message_id=int(message_id))
         else:
             payload = await bot.call_api("get_msg", message_id=message_id)
-    except Exception:  # noqa: BLE001 - 非 NapCat 实现或消息已失效：静默降级。
+    except Exception:  # noqa: BLE001 - 非 SnowLuma 实现或消息已失效：静默降级。
         return ""
     segments = payload.get("message") if isinstance(payload, dict) else None
     if not isinstance(segments, list):

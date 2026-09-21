@@ -15,6 +15,9 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     new_request_id,
 )
+from plugins.bot_unified_runtime.domains.core.session_keys import (
+    is_group_session_key,
+)
 
 
 def route_memory_command(
@@ -32,7 +35,7 @@ def route_memory_command(
             request_id=request_id,
         )
     if normalized == "memory list":
-        if _is_group_session(session_id):
+        if is_group_session_key(session_id):
             return _list_memory(
                 sender_id=sender_id,
                 session_id=session_id,
@@ -78,8 +81,10 @@ def is_memory_command_text(command_text: str) -> bool:
     return command_text.strip().startswith("memory")
 
 
-def _is_group_session(session_id: str) -> bool:
-    return session_id.strip().lower().startswith("group:")
+# 群/私聊判定曾有本地副本 ``_is_group_session``，判据是 ``startswith("group:")``——
+# 而真实摄取键是 NoneBot ``get_session_id()`` 的 ``group_<gid>_<uid>``（冒号形只活在
+# 出站 SendRequest 与合成/smoke 路径）。判据与键形错配 ⇒ 群聊恒判私聊 ⇒ 个人敏感度
+# 记忆被列进群聊。FIX5 起判据单一事实源 = domains/core/session_keys.py。
 
 
 def _add_memory(

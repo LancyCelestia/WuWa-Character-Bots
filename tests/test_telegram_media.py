@@ -15,8 +15,8 @@ from typing import Any
 import httpx
 import pytest
 
-from plugins.bot_unified_runtime.sources import telegram_media
-from plugins.bot_unified_runtime.sources.telegram_media import (
+from plugins.bot_unified_runtime.domains.media.ingest import telegram_media
+from plugins.bot_unified_runtime.domains.media.ingest.telegram_media import (
     DEFAULT_MAX_FILE_BYTES,
     enrich_telegram_file_segments,
     resolve_telegram_file_bytes,

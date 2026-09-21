@@ -4,7 +4,7 @@
 
 ## 一、机器人与权限体系
 
-机器人的人格是守岸人（昵称岸宝），基于 NoneBot2 框架，通过 NapCat 协议端接入 QQ，运行时插件为 plugins/bot_unified_runtime。发送者被划分为五种角色：user（普通）、trusted（受信任）、enterprise（企业）、admin（管理员）、blocked（黑名单）。角色由发送者 ID 决定，名单配置在 `.env` 中，多个角色可以叠加。
+机器人的人格是守岸人（昵称岸宝），基于 NoneBot2 框架，通过 SnowLuma 协议端接入 QQ，运行时插件为 plugins/bot_unified_runtime。发送者被划分为五种角色：user（普通）、trusted（受信任）、enterprise（企业）、admin（管理员）、blocked（黑名单）。角色由发送者 ID 决定，名单配置在 `.env` 中，多个角色可以叠加。
 
 管理员由 `.env` 中的 BOT_ADMIN_USER_IDS 决定（QQ 管理员）和 BOT_TELEGRAM_ADMIN_USER_IDS（Telegram 管理员）。取值可以是 JSON 数组（如 `["123","456"]`）或分号、逗号分隔的字符串（如 `123;456`）。把自己设为管理员的方法：编辑 `.env`，把你的 QQ 号加进 BOT_ADMIN_USER_IDS，然后重启机器人。注意：BOT_ADMIN_USER_IDS 不支持热更，不能用 `/bot runtime set` 在线修改；NoneBot 官方的 SUPERUSERS 配置在本插件中不生效，写了也没有用。设置是否成功，可以用 `/bot roles` 或 `/bot recent` 验证：能返回数据说明管理员身份已生效。
 
@@ -72,7 +72,7 @@ wiki 百科知识库（第二通道）：由外部 Crawl Wiki 项目（BOT_KB_WI
 
 ## 十一、凭据、Cookie 与密码安全
 
-平台 Cookie 以 Netscape 格式存放在运行时数据目录的 platform_cookies.txt（配置键 BOT_COOKIES_FILE），更换 Cookie 直接覆盖该文件并重启机器人；任何日志、审计和消息输出都不会打印 Cookie 内容。Cookie 健康用 `/bot alert check` 检查过期时间，加 `--probe` 在线探测，401 或 403 表示需要重新登录。NapCat 协议端首次扫码登录后应在 WebUI（默认 http://127.0.0.1:6099）修改一次 WebUI 密码；NapCat 与机器人之间的 WebSocket 访问令牌必须与 `.env.prod` 中 ONEBOT_WS_URLS 里的 token 完全一致；QQ 登录建议使用小号。所有密钥类配置（模型 API 密钥、邮箱授权码等）只存放在本地 `.env`，一律用 `env:变量名` 方式引用，不会回显，不进入文档和日志。邮箱功能（/mail 指令族）仅允许从 Telegram 管理端操作，QQ 端会收到"邮件控制命令仅允许从 Telegram 管理端执行。"。
+平台 Cookie 以 Netscape 格式存放在运行时数据目录的 platform_cookies.txt（配置键 BOT_COOKIES_FILE），更换 Cookie 直接覆盖该文件并重启机器人；任何日志、审计和消息输出都不会打印 Cookie 内容。Cookie 健康用 `/bot alert check` 检查过期时间，加 `--probe` 在线探测，401 或 403 表示需要重新登录。SnowLuma 协议端首次扫码登录后应在 WebUI（默认 http://127.0.0.1:5099）修改一次 WebUI 密码；SnowLuma 与机器人之间的 WebSocket 访问令牌必须与 `.env.prod` 中 ONEBOT_WS_URLS 里的 token 完全一致；QQ 登录建议使用小号。所有密钥类配置（模型 API 密钥、邮箱授权码等）只存放在本地 `.env`，一律用 `env:变量名` 方式引用，不会回显，不进入文档和日志。邮箱功能（/mail 指令族）仅允许从 Telegram 管理端操作，QQ 端会收到"邮件控制命令仅允许从 Telegram 管理端执行。"。
 
 ## 十二、常见问题排查
 

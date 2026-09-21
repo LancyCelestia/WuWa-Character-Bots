@@ -1,0 +1,30 @@
+# 模型路由与账本 · 调用记录与计价
+
+<!-- BOARD-AUTO:BEGIN -->
+<!-- 本节由 scripts/board_doc_sync.py 生成，请勿手改；正文写在标记外 -->
+
+## B09.model-control · 调用记录与计价
+
+- 层级：一级 B09 → 二级 model-control → 三级 `billing-ledger`
+- 实现落点：`plugins/bot_unified_runtime/llm`、`plugins/bot_unified_runtime/domains/chat_reply/llm_engine`
+<!-- BOARD-AUTO:END -->
+
+## 这个入口做什么
+
+（待写：一到五句，说清输入、产出、生效条件。）
+
+## 怎么调用
+
+（待写：入口函数签名与它依赖的中央件；只准列已登记的函数。）
+
+## 开关与参数
+
+（待写：配置键、缺省值、热更性、谁能改。）
+
+## 失败时看到什么
+
+（待写：失败面文案与降级路径。）
+
+## 测试与验收
+
+（待写：对应测试件与真机验收编号。）

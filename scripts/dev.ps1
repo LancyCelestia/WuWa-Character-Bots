@@ -166,7 +166,7 @@ function Invoke-PluginCheck {
     Assert-PathExists "plugins"
     Assert-FileContains "pyproject.toml" 'plugin_dirs = ["plugins"]'
     Assert-PathExists "plugins\bot_unified_runtime\__init__.py"
-    Assert-PathExists "plugins\bot_unified_runtime\contracts\runtime.py"
+    Assert-PathExists "plugins\bot_unified_runtime\domains\core\contracts\runtime.py"
 
     $pluginFiles = Get-ChildItem -LiteralPath (Join-Path $Root "plugins") -Recurse -File -Include "*.py" -ErrorAction SilentlyContinue
     if (-not $pluginFiles -or $pluginFiles.Count -eq 0) {
@@ -238,7 +238,12 @@ function Invoke-Test {
 
     # autosync（2026-09-13 用户裁定）：test 任务启用 conftest 常驻自动同步——
     # session 开始自动 --write 修正漂移，测试跑完文档/哈希已是同步态，人无感。
-    $env:BOT_AUTOSYNC = "1"
+    # V2.1 §13 门禁冲突修正（2026-09-17）：原实现无条件覆盖外层值，调用方设
+    # BOT_AUTOSYNC=0 会被这里改回 1，conftest 失败时自动 --write 重录预期
+    # （含 tests/render_hashes.json），把真实回归「洗绿」。现语义：
+    # 仅当调用方未显式设置 BOT_AUTOSYNC 时才默认 1（保留人无感体验）；
+    # 显式 0 = 禁自动重录（V2.1 验收模式，生成物基线必须逐字节不变）。
+    if (-not (Test-Path env:BOT_AUTOSYNC)) { $env:BOT_AUTOSYNC = "1" }
 
     $python = Get-ProjectPython
     $pytest = Get-ProjectCommand "pytest"
@@ -311,11 +316,14 @@ function Invoke-Sync {
         Invoke-External $python @("scripts/command_catalog.py", "--write")
         Write-Step "sync: regenerating auto-facts"
         Invoke-External $python @("scripts/doc_sync.py", "--write")
-        Write-Step "sync: re-recording render hashes"
+        Write-Step "sync: regenerating render hashes"
         Invoke-External $python @("tests/verify_hashes.py", "--write")
+        Write-Step "sync: regenerating ten-board doc tree"
+        Invoke-External $python @("scripts/board_doc_sync.py", "--write")
         Write-Step "sync: verifying all gates green"
         Invoke-External $python @("scripts/doc_sync.py", "--check")
         Invoke-External $python @("tests/verify_hashes.py", "--check")
+        Invoke-External $python @("scripts/board_doc_sync.py", "--check")
         Write-Step "sync complete - all generated docs & hashes up to date"
     }
     finally { Pop-Location }
@@ -392,7 +400,7 @@ function Invoke-Doctor {
     Push-Location $Root
     try {
         Write-Step "running local environment doctor"
-        & $python -m plugins.bot_unified_runtime.smoke doctor
+        & $python -m plugins.bot_unified_runtime.domains.ops.smoke.smoke doctor
         $exitCode = $LASTEXITCODE
     }
     finally { Pop-Location }
@@ -409,10 +417,10 @@ function Invoke-BackendBaseSmoke {
     Push-Location $Root
     try {
         Write-Step "running offline backend base smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "nonebot")
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "startup")
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "transport")
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.backend_unit", "--message", $(if ($Message) { $Message } else { "测试后端底座" }))
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "nonebot")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "startup")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "transport")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.chat_reply.pipeline.backend_unit", "--message", $(if ($Message) { $Message } else { "测试后端底座" }))
     }
     finally { Pop-Location }
 }
@@ -427,7 +435,7 @@ function Invoke-PromptPreview {
         Write-Step "building redacted prompt preview without calling LLM"
         Invoke-External $python @(
             "-m",
-            "plugins.bot_unified_runtime.runtime.prompt_preview",
+            "plugins.bot_unified_runtime.domains.chat_reply.runtime.prompt_preview",
             "--message",
             $Message,
             "--write"
@@ -441,7 +449,7 @@ function Invoke-BackendSmoke {
     Push-Location $Root
     try {
         Write-Step "running one-shot offline backend core execution unit"
-        $arguments = @("-m", "plugins.bot_unified_runtime.backend_unit", "--message", $(if ($Message) { $Message } else { "测试后端主链路" }))
+        $arguments = @("-m", "plugins.bot_unified_runtime.domains.chat_reply.pipeline.backend_unit", "--message", $(if ($Message) { $Message } else { "测试后端主链路" }))
         Invoke-External $python $arguments
     }
     finally { Pop-Location }
@@ -452,7 +460,7 @@ function Invoke-ChatSmoke {
     Push-Location $Root
     try {
         Write-Step "running local LLM chat smoke"
-        $arguments = @("-m", "plugins.bot_unified_runtime.smoke", "chat")
+        $arguments = @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "chat")
         if (-not [string]::IsNullOrWhiteSpace($Message)) {
             $arguments += @("--message", $Message)
         }
@@ -467,7 +475,7 @@ function Invoke-ReadinessSmoke {
     Push-Location $Root
     try {
         Write-Step "running unified local LLM dialogue readiness smoke"
-        $arguments = @("-m", "plugins.bot_unified_runtime.smoke", "readiness")
+        $arguments = @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "readiness")
         if (-not [string]::IsNullOrWhiteSpace($Message)) {
             $arguments += @("--message", $Message)
         }
@@ -482,7 +490,7 @@ function Invoke-DialogueSmoke {
     Push-Location $Root
     try {
         Write-Step "running local LLM dialogue acceptance smoke"
-        $arguments = @("-m", "plugins.bot_unified_runtime.smoke", "dialogue")
+        $arguments = @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "dialogue")
         if (-not [string]::IsNullOrWhiteSpace($Message)) {
             $arguments += @("--message", $Message)
         }
@@ -508,7 +516,7 @@ function Invoke-ConfigSmoke {
     Push-Location $Root
     try {
         Write-Step "running local configuration readiness smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "config")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "config")
     }
     finally { Pop-Location }
 }
@@ -519,7 +527,7 @@ function Invoke-PersonaSmoke {
     Push-Location $Root
     try {
         Write-Step "running local persona readiness smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "persona")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "persona")
     }
     finally { Pop-Location }
 }
@@ -530,7 +538,7 @@ function Invoke-ContextSmoke {
     Push-Location $Root
     try {
         Write-Step "running local LLM context smoke"
-        $arguments = @("-m", "plugins.bot_unified_runtime.smoke", "context")
+        $arguments = @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "context")
         if (-not [string]::IsNullOrWhiteSpace($Message)) {
             $arguments += @("--message", $Message)
         }
@@ -545,7 +553,7 @@ function Invoke-WhySmoke {
     Push-Location $Root
     try {
         Write-Step "running local LLM decision why smoke"
-        $arguments = @("-m", "plugins.bot_unified_runtime.smoke", "why")
+        $arguments = @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "why")
         if (-not [string]::IsNullOrWhiteSpace($Message)) {
             $arguments += @("--message", $Message)
         }
@@ -561,7 +569,7 @@ function Invoke-LlmSmoke {
     Push-Location $Root
     try {
         Write-Step "running OpenAI-compatible LLM connection smoke"
-        & $python -m plugins.bot_unified_runtime.smoke llm
+        & $python -m plugins.bot_unified_runtime.domains.ops.smoke.smoke llm
         $exitCode = $LASTEXITCODE
     }
     finally { Pop-Location }
@@ -578,7 +586,7 @@ function Invoke-LlmSetup {
     Push-Location $Root
     try {
         Write-Step "printing safe LLM setup checklist"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "llm-setup")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "llm-setup")
     }
     finally { Pop-Location }
 }
@@ -589,7 +597,7 @@ function Invoke-NoneBotSmoke {
     Push-Location $Root
     try {
         Write-Step "running NoneBot plugin load smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "nonebot")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "nonebot")
     }
     finally { Pop-Location }
 }
@@ -600,7 +608,7 @@ function Invoke-StartupSmoke {
     Push-Location $Root
     try {
         Write-Step "running NoneBot startup dry-run smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "startup")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "startup")
     }
     finally { Pop-Location }
 }
@@ -611,7 +619,7 @@ function Invoke-QueueSmoke {
     Push-Location $Root
     try {
         Write-Step "running local send queue worker smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "queue")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "queue")
     }
     finally { Pop-Location }
 }
@@ -621,8 +629,8 @@ function Invoke-TransportSmoke {
 
     Push-Location $Root
     try {
-        Write-Step "running local OneBot/NapCat transport smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "transport")
+        Write-Step "running local OneBot/SnowLuma transport smoke"
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "transport")
     }
     finally { Pop-Location }
 }
@@ -633,7 +641,7 @@ function Invoke-OnlineTransportSmoke {
     Push-Location $Root
     try {
         Write-Step "running read-only online transport smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.smoke", "online-transport")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "online-transport")
     }
     finally { Pop-Location }
 }
@@ -644,7 +652,7 @@ function Invoke-Console {
     Push-Location $Root
     try {
         Write-Step "starting console chat REPL"
-        $arguments = @("-m", "plugins.bot_unified_runtime.console_chat")
+        $arguments = @("-m", "plugins.bot_unified_runtime.domains.ops.smoke.console_chat")
         if (-not [string]::IsNullOrWhiteSpace($Message)) {
             $arguments += @("--message", $Message)
         }
@@ -661,7 +669,7 @@ function Invoke-CredentialSmoke {
         Write-Step "running credential health smoke"
         Invoke-External $python @(
             "-m",
-            "plugins.bot_unified_runtime.sources.credential_health"
+            "plugins.bot_unified_runtime.domains.core.credentials.credential_health"
         )
     }
     finally { Pop-Location }
@@ -674,7 +682,7 @@ function Invoke-EmbeddingSmoke {
     Push-Location $Root
     try {
         Write-Step "running OpenAI-compatible embeddings connection smoke"
-        & $python -m plugins.bot_unified_runtime.smoke embedding
+        & $python -m plugins.bot_unified_runtime.domains.ops.smoke.smoke embedding
         $exitCode = $LASTEXITCODE
     }
     finally { Pop-Location }
@@ -692,7 +700,7 @@ function Invoke-KnowledgeSync {
     Push-Location $Root
     try {
         Write-Step "pre-warming vector knowledge base from BOT_KNOWLEDGE_FILES"
-        & $python -m plugins.bot_unified_runtime.smoke knowledge-sync
+        & $python -m plugins.bot_unified_runtime.domains.ops.smoke.smoke knowledge-sync
         $exitCode = $LASTEXITCODE
     }
     finally { Pop-Location }
@@ -713,7 +721,7 @@ function Invoke-KbWikiSync {
     Push-Location $Root
     try {
         Write-Step "syncing Crawl Wiki knowledge base into dedicated vector store"
-        & $python -m plugins.bot_unified_runtime.smoke kb-sync @kbArgs
+        & $python -m plugins.bot_unified_runtime.domains.ops.smoke.smoke kb-sync @kbArgs
         $exitCode = $LASTEXITCODE
     }
     finally { Pop-Location }
@@ -732,7 +740,7 @@ function Invoke-GscoreSmoke {
         Write-Step "running GsCore bridge readiness smoke"
         Invoke-External $python @(
             "-m",
-            "plugins.bot_unified_runtime.sources.gscore_bridge"
+            "plugins.bot_unified_runtime.domains.ops.integrations.gscore_bridge"
         )
     }
     finally { Pop-Location }
@@ -794,10 +802,10 @@ function Show-Help {
         '  why-smoke     Explain policy, reply budget, LLM status, send request, receipt, and audit for one local chat input.'
         '  llm-setup     Print a safe .env checklist and next commands for real LLM onboarding; never writes secrets or calls the provider.'
         '  llm-smoke     Validate configured OpenAI-compatible LLM connection without sending chat messages.'
-        '  nonebot-smoke Validate local NoneBot/OneBot plugin import and config without connecting NapCat.'
-        '  startup-smoke Initialize NoneBot in a child process, load handlers, then exit without connecting NapCat.'
-        '  queue-smoke   Drain a temporary SQLite send queue with fake transport; never connects NapCat or sends QQ messages.'
-        '  transport-smoke Validate OneBot/NapCat message segments and fake transport; never connects NapCat or sends QQ messages.'
+        '  nonebot-smoke Validate local NoneBot/OneBot plugin import and config without connecting SnowLuma.'
+        '  startup-smoke Initialize NoneBot in a child process, load handlers, then exit without connecting SnowLuma.'
+        '  queue-smoke   Drain a temporary SQLite send queue with fake transport; never connects SnowLuma or sends QQ messages.'
+        '  transport-smoke Validate OneBot/SnowLuma message segments and fake transport; never connects SnowLuma or sends QQ messages.'
         '  online-transport-smoke Read current online bot state without calling send APIs; never sends QQ messages.'
         '  console       Interactive console chat through the real runtime pipeline (offline static LLM by default). Use -Message for one-shot non-interactive mode.'
         '  credential-smoke Check cookie/credential expiry and (with --probe) availability; warns when re-login is needed. Never prints secret values.'
@@ -822,7 +830,7 @@ function Invoke-RouteDemo {
     Push-Location $Root
     Write-Step "printing full phrasing routing matrix (offline)"
     try {
-        & $python -m plugins.bot_unified_runtime.route_demo
+        & $python -m plugins.bot_unified_runtime.domains.ops.smoke.route_demo
         if ($LASTEXITCODE -ne 0) { throw "route-demo failed" }
     }
     finally { Pop-Location }
@@ -835,7 +843,7 @@ function Invoke-RouteSmoke {
     Push-Location $Root
     Write-Step "running real API smoke for deterministic capabilities"
     try {
-        & $python -m plugins.bot_unified_runtime.route_demo --real
+        & $python -m plugins.bot_unified_runtime.domains.ops.smoke.route_demo --real
         if ($LASTEXITCODE -ne 0) { throw "route-smoke failed" }
     }
     finally { Pop-Location }
@@ -848,7 +856,7 @@ function Invoke-SearchSmoke {
     Push-Location $Root
     try {
         Write-Step "running read-only search API providers smoke"
-        Invoke-External $python @("-m", "plugins.bot_unified_runtime.sources.search_smoke")
+        Invoke-External $python @("-m", "plugins.bot_unified_runtime.domains.core.search.search_smoke")
     }
     finally { Pop-Location }
 }
@@ -859,8 +867,8 @@ function Invoke-MemorySanitize {
     Push-Location $Root
     try {
         Write-Step "memory sanitize (dry-run preview; add -Apply to delete)"
-        $arguments = @("-m", "plugins.bot_unified_runtime.security.memory_sanitize", "--dry-run")
-        if ($Apply) { $arguments = @("-m", "plugins.bot_unified_runtime.security.memory_sanitize", "--apply") }
+        $arguments = @("-m", "plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize", "--dry-run")
+        if ($Apply) { $arguments = @("-m", "plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize", "--apply") }
         Invoke-External $python $arguments
     }
     finally { Pop-Location }

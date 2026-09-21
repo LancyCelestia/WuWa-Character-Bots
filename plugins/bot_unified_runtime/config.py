@@ -186,9 +186,9 @@ class Config(BaseModel):
     bot_kb_wiki_topics: str = ""
     bot_kb_wiki_top_k: int = 4
     bot_kb_wiki_chunk_chars: int = 800
-    # 每批嵌入行数：本地 Ollama 实测 128 最快（约为批 10 的 6 倍吞吐）；
-    # 本地不可用回落远程链时，远程单批限额(≤10)会拒绝大批并中止同步
-    # （断点续跑、无损坏），恢复本地后重跑即可。
+    # 每批嵌入行数：本地 Ollama 实测 128 最快（约为批 10 的 6 倍吞吐）。
+    # 批大小与嵌入超时是配比：装不下时嵌入侧按批折半自调（下限 10，恰好也是
+    # 远程单批上限），所以超时偏短或回落远程链只降吞吐，不再整轮中止。
     bot_kb_wiki_embed_batch: int = 128
     # 每日增量同步时刻（Crawl Wiki 每日 23:00 导出之后）。
     bot_kb_wiki_sync_hour: int = 23
@@ -226,6 +226,41 @@ class Config(BaseModel):
     bot_memory_extract_timeout_seconds: float = 15.0
     bot_memory_extract_max_tokens: int = 200
     bot_memory_extract_error_cooldown_seconds: float = 300.0
+    # ---- 记忆/反思 v2 总线（WP6，规格 docs/design/memory-reflection-v2-design.md）----
+    # 九键缺省保守＝整体关闭：`bus_enabled=False` 时读写全走旧路径（灰度期可一键回退）。
+    # 热改面本轮**不登记** `SETTABLE_KEYS`：登记而不接 `_RUNTIME_HOT_OVERRIDE_FIELDS`
+    # 合并层=假热改（本仓已定罪的形态），收尾证明读路径逐调用现读后再裁。
+    bot_memory_bus_enabled: bool = False
+    # bus=反思结果写新总线；legacy=只写旧 reflection_facts（回退位）。
+    bot_memory_reflected_write_target: str = "legacy"
+    bot_memory_strength_k: float = 3.0
+    bot_memory_tau_stable_days: int = 180
+    bot_memory_tau_seasonal_days: int = 45
+    bot_memory_tau_episodic_days: int = 14
+    # 召回打分权重 JSON 文本（w_rel/w_str/w_rec/w_red）；空串或非法 JSON=按代码缺省，
+    # 并在首次解析失败时点名一次告警（不静默猜权重）。
+    bot_memory_relevance_weights: str = ""
+    bot_memory_per_category_max: int = 1
+    bot_memory_semantic_recall_enabled: bool = True
+    # ---- 好感度 v7（WP7，规格 docs/design/affinity-v7-design.md）----
+    # 关闭时逐字节保持 v5/v6 现行为；开启后分数由潜变量 z 经 tanh 映射（结构上不可触顶）。
+    bot_affinity_v7_enabled: bool = False
+    bot_affinity_base_step: float = 0.10
+    # 跨日新鲜度 EMA 比率与半衰光晕天数（治「连发敷衍短句也涨分」）。
+    bot_affinity_novelty_ratio: float = 0.90
+    bot_affinity_novelty_halo_days: int = 21
+    # 按人活跃归一的参考轮次（治「话痨增速碾压轻度用户」）。
+    bot_affinity_rhythm_reference_turns: int = 8
+    # 单次负向事件的 |Δz| 上限与单日总位移上限、熔断事件数（护栏，不可被设定架空）。
+    bot_affinity_negative_event_cap_z: float = 0.10
+    bot_affinity_daily_move_cap_z: float = 0.12
+    bot_affinity_fuse_daily_events: int = 25
+    bot_affinity_repair_gain: float = 1.4
+    # tanh 饱和域硬边界（score 永不触 ±100）。
+    bot_affinity_z_hard_bound: float = 0.985
+    # 质量分五子权重与衰减时间常数：JSON 文本，空/非法=按代码缺省并点名一次。
+    bot_affinity_quality_weights: str = ""
+    bot_affinity_decay_tau_days: str = ""
     bot_history_enabled: bool = False
     bot_history_db_path: str = ""
     bot_history_max_turns: int = 6
@@ -474,6 +509,52 @@ class Config(BaseModel):
     bot_campus_notify_qq: str = ""
     bot_campus_push_bot_id: str = ""
     bot_campus_db_path: str = "data/campus.sqlite3"
+    # 外部紧急信息聚合（bot.emergency_info）：采集→定级→去重→审核→经中央闸按订阅投递。
+    # 装配门两腿：总闸 ∧ 有源（2026-09-20 裁定 3.B 覆盖旧「三重来源门」的第三腿）——
+    # 投递条件改由群内「紧急信息 订阅 …」现场设立、每轮现读，不再要求 .env 预填群/人。
+    # 绝不猜群/绝不猜人一寸没松：订阅表里没有行=零目标=零投递，行只能由群主/管理员写下。
+    # 审核名单空=审核面关闭（缺省拒绝而非放行）。
+    # 热改口径（WIRE-R2 AST 自验，与 docs/config-catalog-full.md 同档）：**十键全部 ❌无热改面**——
+    # SETTABLE_KEYS=41 / RESTART_REQUIRED_KEYS=54 / 交集 ∅，本族十键两者皆不登记；
+    # _poll_interval 装配期钉进 APScheduler interval job（无 reschedule 面）、
+    # _min_level 注册期一次解算成闭包常量 ⇒ 改这两键同样要重启才生效（同台账 #3 口径）。
+    # min_level 值域=EmergencyLevel 字面（P0..P3），非法值按缺省（D-3 不建第二枚举）。
+    # auto_approve_sources=D-8(a) 裁定：名单内权威源入库自动过审，其余 pending 走人工审核；空名单=整机制关闭。
+    # ⚠ 名单值必须逐字等于源侧 SOURCE_ID 真身，本域现有四个：
+    #   `nmc`（sources/nmc_alarm.py:56）、`gdacs`（sources/gdacs.py:43）、
+    #   `icl` 与 `usgs`（sources/open_data_quakes.py:52-53）。
+    #   写成 `nmc_alarm` 之类模块名不会报错——它会静默不命中，等于该源没过审（fail-closed 的同义副作用）。
+    bot_emergency_info_enabled: bool = False
+    bot_emergency_info_sources: list[str] = []
+    bot_emergency_info_auto_approve_sources: list[str] = []
+    bot_emergency_info_poll_interval_seconds: int = 300
+    bot_emergency_info_min_level: str = "P2"
+    # 这两键自 2026-09-20 起是**可选硬推腿**（不参与装配门）：名单里的目标每轮收全部
+    # 已过 min_level 地板的条目，**不受订阅条件约束**。日常按群/按条件推送请用
+    # 「紧急信息 订阅 …」（群里设、当轮生效），不必动这里。缺省空=这条腿不存在。
+    bot_emergency_info_push_group_whitelist: list[str] = []
+    bot_emergency_info_push_user_ids: list[str] = []
+    bot_emergency_info_reviewer_ids: list[str] = []
+    bot_emergency_info_keep_days: int = 90
+    bot_emergency_info_db_path: str = "data/emergency_info.sqlite3"
+    # 一致性漂移巡检（domains/ops/sync_drift，S12 救活波）：定期复算「文档/配置/触发词
+    # 与代码真身是否还相等」，漂移则三通道报超管。⚠ `alert_enabled` 只在**装配期**读一次
+    # （闸不过=连 job 都不注册），改它必须重启；`surfaces`/`max_evidence_lines`/
+    # `suppression_seconds` 每轮巡检现读，热改当轮生效。缺省全关=零开销、零告警。
+    bot_sync_drift_alert_enabled: bool = False
+    # 面名必须逐字等于 registry 登记表里的 `surface` 真身（列表面由
+    # `sync_drift.registered_surfaces()` 给）；写错的名字不报错——它静默不在扫描集里。
+    # 空表 = 扫全部已登记面。
+    bot_sync_drift_surfaces: list[str] = []
+    bot_sync_drift_interval_minutes: int = 60
+    bot_sync_drift_startup_delay_seconds: int = 65
+    # 同（面, 严重度）在此窗口内只报一次，抑制计数如实带在结果里；默认 6 小时。
+    bot_sync_drift_suppression_seconds: int = 21600
+    # QQ 投递走既有 alerts 中央件的内容 sink；空串=sink 缺省 "queued-onebot"。
+    bot_sync_drift_qq_bot_id: str = ""
+    bot_sync_drift_max_evidence_lines: int = 12
+    # 本族七键与紧急信息十键同口径：既不登记 SETTABLE_KEYS 也不登记 RESTART_REQUIRED_KEYS
+    # （运维开关，走 .env；不开放 /bot runtime set，免得给出「热改」的假承诺）。
     # 全场景日程（V2.1 §4，domains/schedule 服务面）：LLM 草稿解析/课表识别/
     # 到点投递三服务与既有 schedule 引擎（schedule_service 族）共库。未接线前
     # 各开关缺省关（不装配=零开销）；投递只到 SendQueue 提交面，真实出站端口
@@ -946,6 +1027,17 @@ class Config(BaseModel):
     bot_api_key_starapi: str = ""
     bot_api_key_umi_group3: str = ""
     bot_api_key_umi_claude: str = ""
+    # POTCCV 渠道（gpt-56-luna / gpt-56-terra）的凭据槽。注册表里引用写作
+    # `env:BOT_POTCCV_API_KEY`（注意词序与上面 `BOT_API_KEY_*` 一族相反）。
+    # `_resolve_api_key`（model_router.py:503-513）用 `getattr(config, env_name.lower())`
+    # 回退取值，且生产 os.environ 不含 BOT_*（NoneBot dotenv 只把「已声明字段」经
+    # translate_env_keys→Config.model_validate 落进 Config，未声明的键被 pydantic
+    # extra=ignore 静默丢弃）。故字段名**必须严格等于 `bot_potccv_api_key`**（=
+    # `BOT_POTCCV_API_KEY`.lower()）——命名不能套 `bot_api_key_*` 前缀，否则取不到值。
+    # unify-U6 曾建议改名 `bot_api_key_potccv`，按上述 getattr 契约取不到值、必再踩空，
+    # 已否决。这是「registry 引用 env:X 但小同名字段缺失→恒判 config_missing」
+    # （H3 家族，09-09「五连发全失败」同类事故）的第四次复发，本次坐实。
+    bot_potccv_api_key: str = ""
     bot_chat_base_url: str = "https://api.openai.com/v1"
     bot_chat_temperature: float = 0.7
     bot_chat_reasoning_effort: str = ""
@@ -1288,6 +1380,7 @@ class Config(BaseModel):
             "bot_media_archive_db_path",
             "bot_notes_db_path",
             "bot_campus_db_path",
+            "bot_emergency_info_db_path",
             "bot_reactions_db_path",
             "bot_teaching_db_path",
             "bot_tts_output_dir",
@@ -1361,6 +1454,11 @@ class Config(BaseModel):
         "bot_tts_trigger_words",
         "bot_campus_self_ids",
         "bot_campus_group_whitelist",
+        "bot_emergency_info_sources",
+        "bot_emergency_info_auto_approve_sources",
+        "bot_emergency_info_push_group_whitelist",
+        "bot_emergency_info_push_user_ids",
+        "bot_emergency_info_reviewer_ids",
         "bot_content_route_group_whitelist",
         "bot_content_route_group_blacklist",
         "bot_content_route_private_whitelist",
@@ -1385,6 +1483,13 @@ class Config(BaseModel):
                 return [str(item).strip() for item in parsed if str(item).strip()]
             normalized = stripped.replace(",", ";")
             return [item.strip() for item in normalized.split(";") if item.strip()]
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            # 裸标量宽容装载（与下方 _coerce_scalar_id_to_str 同一口径）：dotenv/JSON
+            # 装载会把不带引号的 3865067623 解成 int（2026-09-21 生产 .env 的
+            # bot_emergency_info_* 三枚键即此形态），strict 校验在此抛 TypeError 会让
+            # 整份 Config 装载失败、Bot 重启起不来。单元素 id 语义无歧义；
+            # bool 显式排除（防 True→"True"），其余类型原样交末尾报错口径。
+            return [str(value)]
         raise TypeError("id list must be a list, JSON array string, or delimiter string")
 
     @field_validator(

@@ -13,8 +13,8 @@ proxy/webhook——bot_disconnect_notice_serverchan_sendkey、bot_download_proxy
 """
 from __future__ import annotations
 
+from plugins.bot_unified_runtime.domains.ops.monitor.error_report import _SECRET_KEY_RE
 from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
-from plugins.bot_unified_runtime.runtime.error_report import _SECRET_KEY_RE
 
 _PLACEHOLDER = "<已隐藏>"
 

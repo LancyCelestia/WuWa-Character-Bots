@@ -5,11 +5,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from plugins.bot_unified_runtime.contracts.subscription import (
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionFetchResult,
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.sources.subscriptions.social_v2 import (
+from plugins.bot_unified_runtime.domains.subscribe.adapters.social_v2 import (
     BilibiliSubscriptionAdapterV2,
     PixivSubscriptionAdapterV2,
     TelegramSubscriptionAdapterV2,
@@ -102,7 +102,7 @@ def test_telegram_rejects_private_invite_link() -> None:
 
 
 def test_youtube_handle_resolves_to_real_channel_id(monkeypatch) -> None:
-    from plugins.bot_unified_runtime.sources.subscriptions import social_v2
+    from plugins.bot_unified_runtime.domains.subscribe.adapters import social_v2
 
     def fake_get_text(url: str, **kwargs):
         assert url == "https://www.youtube.com/@3blue1brown"
@@ -120,7 +120,7 @@ def test_youtube_handle_resolves_to_real_channel_id(monkeypatch) -> None:
 
 
 def test_youtube_handle_channel_path_pattern_fallback_in_body(monkeypatch) -> None:
-    from plugins.bot_unified_runtime.sources.subscriptions import social_v2
+    from plugins.bot_unified_runtime.domains.subscribe.adapters import social_v2
 
     monkeypatch.setattr(
         social_v2,
@@ -137,7 +137,7 @@ def test_youtube_handle_channel_path_pattern_fallback_in_body(monkeypatch) -> No
 
 
 def test_youtube_handle_resolution_failure_falls_back_to_handle(monkeypatch) -> None:
-    from plugins.bot_unified_runtime.sources.subscriptions import social_v2
+    from plugins.bot_unified_runtime.domains.subscribe.adapters import social_v2
 
     def boom(url: str, **kwargs):
         raise RuntimeError("network down")

@@ -2336,6 +2336,11 @@ class ModelRouter:
                         error_kind="provider_error",
                     )
                     attempts.append(f"{model_id}:provider_error")
+                    # 评审探针 P2（v21r5 CRIT-FIX-3）：provider_error 与上方分类
+                    # 分支同语义——打断连续网络失败计数（原始异常包装=非网络类
+                    # 结局），否则与「provider_error 打断计数」口径相悖，后续
+                    # 健康渠道被 fail-fast 误跳过。
+                    consecutive_network_failures = 0
                     logger.warning(
                         "llm route hop failed model=%s family=%s kind=provider_error "
                         "elapsed_ms=%d intimate=%s",

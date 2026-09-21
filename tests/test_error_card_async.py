@@ -29,8 +29,8 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
 )
-from plugins.bot_unified_runtime.runtime import error_report
-from plugins.bot_unified_runtime.runtime.error_report import (
+from plugins.bot_unified_runtime.domains.ops.monitor import error_report
+from plugins.bot_unified_runtime.domains.ops.monitor.error_report import (
     ErrorCardSettings,
     maybe_submit_error_card,
 )
@@ -274,9 +274,11 @@ def test_schedule_after_pool_shutdown_is_safe(
 
 
 # ==================== 冷却 / 开关语义零变化 ====================
+@pytest.mark.parametrize("line", error_report._COOLDOWN_LINES)
 def test_cooldown_path_never_touches_render_pool(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, line: str
 ) -> None:
+    monkeypatch.setattr("random.choice", lambda pool: line)
     def pool_must_not_be_used() -> Any:
         raise AssertionError("冷却路径不得排程渲染")
 
@@ -295,7 +297,8 @@ def test_cooldown_path_never_touches_render_pool(
     assert len(pipeline.send_queue.requests) == 1
     degraded = pipeline.send_queue.requests[0]
     assert degraded.content.content_type == "text"
-    assert "刚才那张卡" in degraded.content.content_ref["text"]
+    assert degraded.content.content_ref["text"] == line.format(exc="ValueError")
+    assert degraded.content.text_fallback == degraded.content.content_ref["text"]
     assert "text_only" in degraded.audit_tags
 
 

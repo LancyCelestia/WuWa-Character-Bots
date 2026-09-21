@@ -168,3 +168,35 @@ def test_q1_dead_symbols_removed() -> None:
 
     for gone in ("_help_index_line", "route_bot_command", "_HELP_INDEX_COMMAND_TOPICS"):
         assert not hasattr(echo_mod, gone), f"已删除的死代码符号 {gone} 不得回归"
+
+
+# ---------------------------------------------------------------------------
+# G-5 增量（report-T86 §G-5.2，T89 席追加）：TTS「语音」帮助覆盖门。
+# 对 echo.py（capabilities/echo.py 为 v21r2 垫片，真身=domains/chat_reply）
+# 只读判定，禁碰生产文件。
+# 交接注记：config_vars 覆盖断言原为 xfail(strict) 暂挂件（T84 在飞）；
+# T84 于 2026-09-19 波内落地 G 波新键（echo.py config_vars 增
+# BOT_TTS_PRESET/BOT_TTS_VOICE_HOOK_ENABLED），XPASS(strict) 如设计报红，
+# 同日按摘除条件移除标记转常驻门。
+# ---------------------------------------------------------------------------
+
+VOICE_TOPIC = "语音"
+# G 波新键（T84 语音条目 config_vars 预期覆盖面；T84 收口口径若不同，
+# 以收口稿为准同步本常量）。
+VOICE_NEW_CONFIG_VARS = ("BOT_TTS_PRESET", "BOT_TTS_VOICE_HOOK_ENABLED")
+
+
+def test_voice_topic_registered_in_help_entries() -> None:
+    """「语音」topic 必须恰在 _HELP_ENTRIES 且 tts 别名可解析（现状已绿）。"""
+    entry = _entry(VOICE_TOPIC)
+    assert "tts" in entry["aliases"]
+    assert normalize_help_topic("tts") == VOICE_TOPIC
+    assert "BOT_TTS_ENABLED" in str(entry), "开关键 BOT_TTS_ENABLED 未写进语音帮助"
+
+
+def test_voice_entry_config_vars_cover_new_keys() -> None:
+    """语音条目 config_vars 必须覆盖 G 波新键（BOT_TTS_PRESET/VOICE_HOOK）。"""
+    entry = _entry(VOICE_TOPIC)
+    covered = set(entry.get("config_vars") or ())
+    not_covered = sorted(set(VOICE_NEW_CONFIG_VARS) - covered)
+    assert not not_covered, f"语音帮助 config_vars 未覆盖 G 波新键：{not_covered}"

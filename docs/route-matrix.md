@@ -1,6 +1,6 @@
 # 全问法路由矩阵（Route Matrix）
 
-> 所有入站文本先进入基层路由器 `plugins/bot_unified_runtime/runtime/base_router.py`，
+> 所有入站文本先进入基层路由器 `domains/chat_reply/runtime/base_router.py`，
 > 判定后由 NoneBot 匹配器把消息交给对应处理程序，子能力执行完把
 > `CapabilityResult` 交回 `RuntimePipeline`（基层）统一审查/渲染，最后经
 > SnowLuma(OneBot V11) 发回 QQ。**任何子能力都不直接发消息。**
@@ -19,7 +19,7 @@ QQ/SnowLuma 消息
   -> SendQueue -> SnowLuma -> QQ
 ```
 
-群聊门禁（`policy/gate.py`）在进入能力前执行：私聊放行；群聊只有
+群聊门禁（`domains/chat_reply/policy/gate.py`）在进入能力前执行：私聊放行；群聊只有
 **命令 / 昵称命令 / @点名 / 写昵称点名**才放行，其余为
 `passive_group_message` 静默观察；`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED=true`
 时按概率做确定性哈希抽签接话，且主动搭话受好感档门控
@@ -49,14 +49,15 @@ QQ/SnowLuma 消息
 | `12点提醒我写作业`、`提醒列表`、`取消提醒 <id前缀>`、`笔记 记 <内容>`、`笔记列表`、`笔记 看 N`/`看笔记 N`、`做完 N`（`完成 N`/`办完 N` 同）、`删笔记 N`（笔记指令面复用本路由）、英文 `reminder`/`reminders`/`my reminders`/`reminder list`/`list reminders`（仅列表查询面） +拼音触发（见 catalog） | reminder | 41 | `_is_reminder_event` | bot.reminder（自然语言时间点→会话待办→每分钟投递；含笔记/待办与自然语言勾选；进阶轨 LLM 抽取默认关） |
 | `收件箱 <内容>`、`收件箱`（看待处理）、英文 `inbox`、拼音 `shoujianxiang` | daily_assist | 42 | `_is_daily_assist_event` | bot.daily_assist（收件箱速记落纯文本文件；另有定时面：到点吃什么推荐 + 早晚简报私聊推送，名单 BOT_DAILY_ASSIST_PUSH_USER_IDS 为空只记不推） |
 | `收藏 [图片]`、`归档`、`收藏 分类=cosplay IP=鸣潮`、`存聊天记录`（回复合并转发）、英文 `archive` +拼音触发（见 catalog） | media_archive | 43 | `_is_media_archive_event` -> `_handle_media_archive` | bot.media_archive（VLM 判 类别×作品 双层目录归档：cosplay/二次元插图等；SSRF+magic bytes+sha256 去重+限额；默认仅超管） |
-| `群信息`、`本群信息/群资料`、`群主是谁/谁是群主/群主`、`群人数/本群人数/本群多少人`、`本群多大了/群多大`、`群公告`、`群精华/精华消息`（词尾只容标点/语气助词，防包含词误触） | group_info | 41 | `group_info_match` | bot.group_info（OneBot V11 群 API：群资料/群主/人数全员，公告与精华仅管理员；成员名单不整列；群链接/群等级/群相册协议无标准 API 不做不假装；matcher 装配在 __init__.py 由主会话接线，词形判定见 capabilities/group_info.py 的 is_group_info_command） |
+| `紧急信息`、`緊急信息`、`预警`、`預警`、`地震`、`震情`、`待审`、英文 `emergency`、组合 `紧急信息 待审`、`紧急信息 订阅 <条件>`、`紧急信息 退订`、`紧急信息 订阅 看` | emergency_info | 44 | `_is_emergency_info_event` -> `_handle_emergency_info` | bot.emergency_info（外部预警聚合：采集→定级→去重→审核→经中央闸**按订阅**投递；装配门两腿=总闸∧有源（2026-09-20 裁定 3.B 撤第三腿），投递目标每轮现读 `emergency_subscriptions`；订阅/退订限超管·管理员·本群群主且仅 QQ 侧；触发词八形态与 `_EMERGENCY_RE` 同源，路由门与装配门同腿） |
+| `群信息`、`本群信息/群资料`、`群主是谁/谁是群主/群主`、`群人数/本群人数/本群多少人`、`本群多大了/群多大`、`群公告`、`群精华/精华消息`（词尾只容标点/语气助词，防包含词误触） | group_info | 41 | `group_info_match` | bot.group_info（OneBot V11 群 API：群资料/群主/人数全员，公告与精华仅管理员；成员名单不整列；群链接/群等级/群相册协议无标准 API 不做不假装；matcher 装配在 __init__.py 由主会话接线，词形判定见 domains/chat_reply/capabilities/group_info.py 的 is_group_info_command） |
 | `好感度`、`好感度 算法`、`好感/亲密度/親密度`、英文 `affinity` +拼音触发（见 catalog） | affinity | 41 | `_is_affinity_event` | bot.affinity（v5 多因素线性步长：-100~+100、基准 10=档0友善、8 档温和态度连续过渡，算法说明定性、不展示固定加减数值；双向卡/群榜/算法卡） |
 | `吃什么`、`今天吃什么`、`菜谱/怎么做 <菜名>`、英文 `eat`/`food`/`recipe <菜名>` +拼音触发（见 catalog） | eat | 41 | `_is_eat_event` | bot.eat（60 道本地库+LLM 约束推荐+Mica 卡） |
-| `汇率`、`美元兑人民币`、`100日元换多少人民币`、繁體 `匯率/兌換/換匯`、英文 `fx`/`forex`/`exchange rate` +拼音触发（见 catalog） | fx | 41 | `fx_match` | bot.fx（多语言触发：汇率/兑换/换汇/匯率等；与 stocks 重叠时 fx 优先 41<42） |
+| `汇率`、`美元兑人民币`、`100日元换多少人民币`、繁體 `匯率/兌換/換匯`、英文 `fx`/`forex`/`exchange rate` +拼音触发（见 catalog） | fx | 36 | `fx_match` | bot.fx（多语言触发：汇率/兑换/换汇/匯率等；与 stocks 重叠时 fx 优先 36<42；WP5 从 41 拆到 36，问汇率不再靠与 market 同 41 的书写序定胜负） |
 | `英伟达股价`、`公司别名`、`股价/股價/個股`、英文 `stock`/`stocks`（裸词=九巨头面板）；`市值` 需与公司别名共现触发（如 `英伟达市值`，裸词不触发） +拼音触发（见 catalog） | stocks | 42 | `stocks_match` | bot.stocks（个股行情兜底：短文本+无链接+命中公司别名或股价/市值词） |
-| `黄金`、`金价`、`白银/银价`、`原油/油价`、`铜价`、`大宗商品`、繁體 `黃金/金價/白銀/銀價/油價/銅價`、英文 `gold`/`silver`/`oil`/`commodity`/`commodities`（短文本+无链接；「黄金股行情」股语境让位 market；「黄金基金/原油基金」基金语境不触发） | commodities | 41 | `commodities_match` | bot.commodities（东财外盘主力连续商品现价+30日走势；LME 无源用 COMEX 铜） |
-| `国债`、`国债收益率`、`债券收益率`、`期限利差`、`收益率曲线`、`中美国债`、繁體 `國債/債券收益率`（短文本+无链接；裸「债券」不触发，防误触） | bond | 41 | `bond_match` | bot.bond（东财 datacenter 国债收益率+10Y−2Y 利差上游直供；1Y 无源诚实不接） |
-| `北向资金`、`北上资金`、`北向`、`沪股通`、`深股通`、繁體 `北向資金/北上資金/滬股通/深股通`（短文本+无链接） | northbound | 41 | `northbound_match` | bot.northbound（成交总额等仍在披露字段；2024-08 起无净买入口径，不推算不伪造） |
+| `黄金`、`金价`、`白银/银价`、`原油/油价`、`铜价`、`大宗商品`、繁體 `黃金/金價/白銀/銀價/油價/銅價`、英文 `gold`/`silver`/`oil`/`commodity`/`commodities`（短文本+无链接；「黄金股行情」股语境让位 market；「黄金基金/原油基金」基金语境不触发；「天气 黄金」/「点歌 原油」前导命令让路） | commodities | 37 | `commodities_match` | bot.commodities（东财外盘主力连续商品现价+30日走势；LME 无源用 COMEX 铜；WP5 优先级 41→37 拆位） |
+| `国债`、`国债收益率`、`债券收益率`、`期限利差`、`收益率曲线`、`中美国债`、繁體 `國債/債券收益率`（短文本+无链接；裸「债券」不触发，防误触） | bond | 38 | `bond_match` | bot.bond（东财 datacenter 国债收益率+10Y−2Y 利差上游直供；1Y 无源诚实不接；WP5 优先级 41→38 拆位） |
+| `北向资金`、`北上资金`、`北向`、`沪股通`、`深股通`、繁體 `北向資金/北上資金/滬股通/深股通`（短文本+无链接） | northbound | 39 | `northbound_match` | bot.northbound（成交总额等仍在披露字段；2024-08 起无净买入口径，不推算不伪造；WP5 优先级 41→39 拆位） |
 | `/萌娘百科 鸣潮`、`萌娘百科/萌百 <条目>`、英文 `moegirl` +拼音触发（见 catalog） | moegirl | 41 | `_is_moegirl_event` | bot.moegirl（萌娘百科查询；裸「萌娘」不触发） |
 | 直接问「XX是谁？」等二次元实体问句 | moegirl_question | 46 | `_is_moegirl_question_event` | bot.moegirl（剥出实体 2-30 字自动查询；未命中降级人格聊天；2026-09-13 起 44→46 让路 NL 层，天气/wiki 形问句由域词守卫拒绝） |
 | `杭州天气怎么样` | natural_command | 45 | `_is_natural_event` -> `_handle_natural` | bot.natural_command：归一化 `天气 杭州` -> bot.weather（「帮我查一下杭州天气」「帮我查天气 杭州」自 2026-09-13 moegirl_question 让路后同落本层归一化 weather） |
@@ -86,7 +87,7 @@ QQ/SnowLuma 消息
 
 ## 4. 现实问题 vs 世界观问题的智能判定 v2（不斩断联网权限）
 
-判定入口：`runtime/question_intent.py::classify_question_intent`，按意图分层：
+判定入口：`domains/chat_reply/runtime/question_intent.py::classify_question_intent`，按意图分层：
 
 1. 现实信号（公司/官方/所在地/演唱会/音乐会/漫展/价格/汇率/新闻/现实…）→ 联网，**永不因领域词被切断**；
 2. 时效信号（今天/最新/更新/版本/什么时候/开服/复刻…）→ 联网；

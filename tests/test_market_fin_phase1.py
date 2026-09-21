@@ -18,20 +18,26 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities import market as market_cap
-from plugins.bot_unified_runtime.capabilities import stocks as stocks_cap
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
-from plugins.bot_unified_runtime.sources import (
+from plugins.bot_unified_runtime.domains.finance.capabilities import (
+    market as market_cap,
+)
+from plugins.bot_unified_runtime.domains.finance.capabilities import (
+    stocks as stocks_cap,
+)
+from plugins.bot_unified_runtime.domains.finance.data import (
     bond_data,
     commodities_data,
     market_data,
 )
-from plugins.bot_unified_runtime.sources.bond_data import (
+from plugins.bot_unified_runtime.domains.finance.data.bond_data import (
     BondYieldPoint,
     BondYieldSnapshot,
 )
-from plugins.bot_unified_runtime.sources.commodities_data import CommodityQuote
-from plugins.bot_unified_runtime.sources.market_data import NorthboundFlow
+from plugins.bot_unified_runtime.domains.finance.data.commodities_data import (
+    CommodityQuote,
+)
+from plugins.bot_unified_runtime.domains.finance.data.market_data import NorthboundFlow
 
 # ---------------------------------------------------------------------------
 # 夹具
@@ -364,7 +370,7 @@ def _logo_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
     monkeypatch.setattr(stocks_cap, "_logo_cache_dir", lambda: cache_dir)
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.parsers.http_util.http_get",
+        "plugins.bot_unified_runtime.domains.link_parse.parsers.http_util.http_get",
         _fake_http_get,
     )
     return SimpleNamespace(cache_dir=cache_dir, calls=calls)
@@ -390,7 +396,7 @@ def test_logo_cache_only_lookup_never_downloads(_logo_env) -> None:
 
 
 def test_logo_non_png_payload_not_cached(_logo_env) -> None:
-    from plugins.bot_unified_runtime.sources.parsers import http_util
+    from plugins.bot_unified_runtime.domains.link_parse.parsers import http_util
 
     original = http_util.http_get
     http_util.http_get = lambda url, **kw: (url, b"<html>404</html>")  # type: ignore[assignment]
@@ -402,7 +408,7 @@ def test_logo_non_png_payload_not_cached(_logo_env) -> None:
 
 
 def test_logo_download_failure_returns_empty(_logo_env) -> None:
-    from plugins.bot_unified_runtime.sources.parsers import http_util
+    from plugins.bot_unified_runtime.domains.link_parse.parsers import http_util
 
     def _boom(url: str, **kwargs: object):
         raise http_util.ParseHttpError("GET failed: RemoteDisconnected")
@@ -436,7 +442,7 @@ def test_render_card_applies_cached_logo(tmp_path: Path) -> None:
     说明：finance_card 模板当前没有 logo 槽位（payload["logo_url"] 是既有
     休眠契约），本测试锁定的是缓存替换发生在渲染前、缓存命中不再下载。
     """
-    from plugins.bot_unified_runtime.contracts.finance import (
+    from plugins.bot_unified_runtime.domains.core.contracts.finance import (
         EquityQuote,
         FinanceDataStatus,
     )
@@ -474,7 +480,7 @@ def test_render_card_applies_cached_logo(tmp_path: Path) -> None:
             stocks_cap, "_logo_cache_dir", lambda: tmp_path / "logos"
         )
         monkeypatch.setattr(stocks_cap, "_apply_cached_logo", _spy)
-        from plugins.bot_unified_runtime.sources.parsers import http_util
+        from plugins.bot_unified_runtime.domains.link_parse.parsers import http_util
 
         original = http_util.http_get
 
@@ -512,7 +518,7 @@ def test_render_card_applies_cached_logo(tmp_path: Path) -> None:
 
 
 def _nvda_quote():
-    from plugins.bot_unified_runtime.contracts.finance import (
+    from plugins.bot_unified_runtime.domains.core.contracts.finance import (
         EquityQuote,
         FinanceDataStatus,
     )
@@ -537,7 +543,7 @@ _NVDA_REF = SimpleNamespace(logo_domain="nvidia.com", brand_color="")
 
 def test_payload_logo_cache_hit_zero_network(monkeypatch, tmp_path: Path) -> None:
     """缓存命中：payload 直接拿本地 file URI，组装期零网络。"""
-    from plugins.bot_unified_runtime.sources.parsers import http_util
+    from plugins.bot_unified_runtime.domains.link_parse.parsers import http_util
 
     cache_dir = tmp_path / "logos"
     cache_dir.mkdir()
@@ -564,7 +570,7 @@ def test_payload_logo_clearbit_fail_falls_to_s2_and_caches(
     monkeypatch, tmp_path: Path
 ) -> None:
     """clearbit 死源（URLError）→ Google s2 补缓存 → 卡片拿本地 file URI。"""
-    from plugins.bot_unified_runtime.sources.parsers import http_util
+    from plugins.bot_unified_runtime.domains.link_parse.parsers import http_util
 
     cache_dir = tmp_path / "logos"
     calls: list[str] = []
@@ -593,7 +599,7 @@ def test_payload_logo_all_sources_fail_omits_logo_field(
     monkeypatch, tmp_path: Path
 ) -> None:
     """两源全败：诚实降级不设 logo 字段（卡片不出死链），主链路不受影响。"""
-    from plugins.bot_unified_runtime.sources.parsers import http_util
+    from plugins.bot_unified_runtime.domains.link_parse.parsers import http_util
 
     def _all_dead(url: str, **kwargs: object):
         raise http_util.ParseHttpError("all logo sources unreachable")
@@ -614,7 +620,7 @@ def test_warm_logo_cache_idempotent_and_reports_failures(
     monkeypatch, tmp_path: Path
 ) -> None:
     """预热幂等：命中跳过零网络；失败域名列清单不阻塞，下轮只补失败者。"""
-    from plugins.bot_unified_runtime.sources.parsers import http_util
+    from plugins.bot_unified_runtime.domains.link_parse.parsers import http_util
 
     cache_dir = tmp_path / "logos"
     calls: list[str] = []
@@ -643,7 +649,7 @@ def test_warm_logo_cache_default_domains_from_registry(
     monkeypatch, tmp_path: Path
 ) -> None:
     """缺省域名集=上市公司注册表全量（去重排序，空域名跳过）。"""
-    from plugins.bot_unified_runtime.sources import stock_data
+    from plugins.bot_unified_runtime.domains.finance.data import stock_data
 
     monkeypatch.setattr(stocks_cap, "_logo_cache_dir", lambda: tmp_path / "logos")
     monkeypatch.setattr(
@@ -662,7 +668,7 @@ def test_warm_logo_cache_default_domains_from_registry(
         return url, b"\x89PNG-ok"
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.parsers.http_util.http_get", _fake_get
+        "plugins.bot_unified_runtime.domains.link_parse.parsers.http_util.http_get", _fake_get
     )
     assert stocks_cap.warm_logo_cache() == []
     assert sorted(

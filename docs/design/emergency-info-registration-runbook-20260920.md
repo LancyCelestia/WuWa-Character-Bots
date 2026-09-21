@@ -109,7 +109,7 @@ find plugins/bot_unified_runtime/domains/emergency_info -type f                 
 ```
 docs/auto-facts.md                                 | 10 +++----
 docs/db-owners.md                                  |  7 +++++
-.../chat_reply/runtime/capability_registry.py      |  8 ++++-
+domains/chat_reply/runtime/capability_registry.py      |  8 ++++-
 tests/render_hashes.json                           | 34 +++++++++++-----------
 tests/test_capability_registry.py                  | 23 ++++++++-------
 ```
@@ -207,7 +207,7 @@ HEAD 时旧路径还是**迁移前的完整副本**，不是 re-export 真身的
 - 顶部 import 面（现 `:33-82` 走 `plugins.bot_unified_runtime.capabilities.*` 垫片路径，多数派旧形态）：
   新增 `is_emergency_info_command` 的 import。**两种形态并存已被仓内接受**（E3 素材4 实证），
   但 base_router 现有 import 全用垫片路径 ⇒ 同族一致性优先，建议同样 `from plugins.bot_unified_runtime.capabilities.emergency_info import …`
-  ⇒ **前提**：`capabilities/emergency_info.py` 垫片必须存在或能力真身可经该路径解析；否则直接写 domains 真身路径（二者择一，**开工席实跑验证**，本席未证实该垫片是否会自动生成）。
+  ⇒ **前提**：`domains/emergency_info/capabilities/emergency_info.py` 垫片必须存在或能力真身可经该路径解析；否则直接写 domains 真身路径（二者择一，**开工席实跑验证**，本席未证实该垫片是否会自动生成）。
 - 闭包内 `RouteDecision` 的 priority 与 RouteRule 的 priority **必须同值**（G2 逐字段比的是 RouteRule↔声明行，
   闭包内的 `RouteDecision(..., 44, ...)` 由 `test_route_rules_data_columns_equal_registry` 间接覆盖不到 ⇒ 靠人肉 + §5 步骤 6 的 classify 实跑核）。
 
@@ -279,7 +279,7 @@ HEAD 时旧路径还是**迁移前的完整副本**，不是 re-export 真身的
 
 命名与仓内多数派对齐：谓词 `is_<x>_command`、工厂 `build_<x>_capability(config,*,render_backend)`、
 能力闭包 `def capability(message, decision) -> CapabilityResult`（真身 `domains/core/contracts/runtime.py`）。
-投递面**不在本文件**：本文件只应答查询；主动投递的唯一触点在 `service/push.py`（域内，见 4-面11）。
+投递面**不在本文件**：本文件只应答查询；主动投递的唯一触点在 `domains/emergency_info/service/push.py`（域内，见 4-面11）。
 """
 _EMERGENCY_RE = re.compile(r"^(紧急信息|緊急信息|预警|預警|地震|震情|待审|emergency)\b?(?![A-Za-z0-9])")
 
@@ -611,7 +611,7 @@ git status --porcelain | wc -l = 953（02:58 为 977）
 | 7 | 根 `__init__.py` 四处（5a/5b/5c，闸在 :3728 之后、紧急门在闸之后） | `pytest tests/test_outbound_gate.py -q`（G26/G27）+ 导入自检 | T6 两条仍绿（**根文件全文不得出现 `submit_active_push`**）；若红 = 第 7 步越界写了投递，回退到域内 |
 | 8 | 文档三件：`docs/route-matrix.md` 行（匹配器列用第 7 步真名）+ `docs/config-catalog-full.md` 九行 + `.env.example` 块 + `docs/db-owners.md` 行 | `pytest tests/test_doc_sync_gates.py tests/test_documentation_consistency.py -q` | 消 G18/G19/G20/G21 |
 | 9 | 生成物三连 | `python scripts/command_catalog.py --write`、`python scripts/doc_sync.py --write`、`python tests/verify_hashes.py --write`，再 `pytest tests/test_cross_validation_gates.py tests/test_documentation_consistency.py::test_catalog_document_matches_registry -q` | 消 G16/G17；机器册应见 RouteKind 35、topics 78、config 字段数 +9 |
-| 10 | 域内投递触点 `service/push.py` + 两条结构锁（§5-钉死③ 原文，先 RED 后 GREEN） | `pytest tests/test_emergency_info_core.py tests/test_outbound_gate.py -q` | 锁生效：把 `submit_active_push` 挪进根文件 ⇒ T6 红；域内裸 submit ⇒ 新锁红。两把门各自**注毒复验一次**再还原（B1R3 §5.2 口径） |
+| 10 | 域内投递触点 `domains/emergency_info/service/push.py` + 两条结构锁（§5-钉死③ 原文，先 RED 后 GREEN） | `pytest tests/test_emergency_info_core.py tests/test_outbound_gate.py -q` | 锁生效：把 `submit_active_push` 挪进根文件 ⇒ T6 红；域内裸 submit ⇒ 新锁红。两把门各自**注毒复验一次**再还原（B1R3 §5.2 口径） |
 | 11 | 收尾：`dev.ps1` 四门禁（`test`/`lint`/`typecheck`/`runtime-layout`）**仅在主会话确认无在飞席时**跑；否则只跑 scoped 门族并如实标注「未跑全量」 | 见 `AGENTS.md` 第五部分 | 全量红需逐条归属（B4a/B1R3 先例：不把他席中间态记到本席账） |
 
 ## 6.4 回滚（写清，**本次不执行**）
@@ -621,7 +621,7 @@ git status --porcelain | wc -l = 953（02:58 为 977）
    ⚠ **红线**：只有在「该文件本次仅本席动过」时才允许 checkout——多会话共享树下这会连带吃掉他席未提交改动。
    有他席在飞时改用**反向打补丁**：`git apply -R %TEMP%/wire-<名>.patch`（先 `git apply -R --check` 试探）。
    禁 `git checkout -- .`、`git restore .`、`git stash`、`git clean`（铁律 4 + 共享树）。
-2. **新增未跟踪件**（`domains/emergency_info/capabilities/`、`service/push.py`、新测试函数）：**无 git 基线 ⇒ 还原不可自证**。
+2. **新增未跟踪件**（`domains/emergency_info/capabilities/`、`domains/emergency_info/service/push.py`、新测试函数）：**无 git 基线 ⇒ 还原不可自证**。
    规程=先整目录复制到 `%TEMP%/wire-emergency-<ts>/`，再用 venv python 删（本机 Git Bash 无 `rm`/`mv`）：
    `"../ChatBot_Runtime/venv/Scripts/python.exe" -c "import shutil;shutil.rmtree('<路径>')"`。
 3. **生成物**（command-catalog / auto-facts / render_hashes）：属可再生件，回滚=还原源面后**重跑三条 `--write`**，
@@ -678,7 +678,7 @@ git status --porcelain | wc -l = 953（02:58 为 977）
 2. 全量 `dev.ps1 -Task test` 未跑（只读席 + 脏树多席在飞，全量红不可归因）⇒ 本文所有「会红」均为**读断言原文 + 静态推演**，
    无一条来自实跑注毒（B1R3 §5.2 那种变异检验本席无写权做）。
 3. `EmergencyTarget` / `build_emergency_send_request` 尚未存在（全树 grep 零命中）⇒ §4-面11 的签名是**规约草案**，非磁盘事实。
-4. 未核 `runtime/settings.py` 的 `SETTABLE_KEYS` 条目形态（B4a L-4 同一缺口，本席只登记）；
+4. 未核 `domains/chat_reply/runtime/settings.py` 的 `SETTABLE_KEYS` 条目形态（B4a L-4 同一缺口，本席只登记）；
    `test_help_config_keys_resolve` 放行 `key in settable` 这条支路因此未逐条验证。
 5. WebUI/控制面对新域的可见性要求（`docs/design/control-plane-registry.md` 面）未核 ⇒ 若控制面 feature_catalog 需要登记
    `bot.emergency_info`，那是**第十一面**，本席未发现门，属未证实。

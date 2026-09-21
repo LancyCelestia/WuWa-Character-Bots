@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from plugins.bot_unified_runtime.contracts.subscription import (
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionCursorV2,
     SubscriptionFetchResult,
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.sources.subscription_store_v2 import (
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
 )
 

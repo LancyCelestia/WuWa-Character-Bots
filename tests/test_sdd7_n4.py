@@ -19,9 +19,6 @@ from plugins.bot_unified_runtime.capabilities.divination import (
 from plugins.bot_unified_runtime.capabilities.meme_library import (
     build_meme_library_capability,
 )
-from plugins.bot_unified_runtime.capabilities.runtime_admin import (
-    _family_baseline_effort,
-)
 from plugins.bot_unified_runtime.character.memory_extract import (
     extract_reminder_drafts,
     store_extracted_reminders,
@@ -37,15 +34,21 @@ from plugins.bot_unified_runtime.character.reflection import (
     run_reflection,
 )
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
-from plugins.bot_unified_runtime.llm.model_router import baseline_effort
-from plugins.bot_unified_runtime.policy import gate as gate_module
-from plugins.bot_unified_runtime.policy.gate import (
+from plugins.bot_unified_runtime.domains.chat_reply.policy import gate as gate_module
+from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
     PolicySettings,
     configure_proactive_affinity_gate,
     evaluate_policy,
 )
-from plugins.bot_unified_runtime.sources.ganzhi import CST, bazi_chart
-from plugins.bot_unified_runtime.sources.news_feeds import _FEEDS, parse_feed
+from plugins.bot_unified_runtime.domains.divination.data.ganzhi import CST, bazi_chart
+from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
+    _family_baseline_effort,
+)
+from plugins.bot_unified_runtime.domains.subscribe.feeds.news_feeds import (
+    _FEEDS,
+    parse_feed,
+)
+from plugins.bot_unified_runtime.llm.model_router import baseline_effort
 
 # ---------------------------------------------------------------------------
 # 打桩工具。
@@ -141,7 +144,7 @@ def test_n4_effort_display_reads_family_baseline() -> None:
     assert _family_baseline_effort("gpt-5.6-terra") == baseline_effort("gpt-5.6-terra")
     assert _family_baseline_effort("totally-unknown-model") == ""
     # 旧 helper（家族最高档标「默认」）应已被替换，不存在双口径。
-    import plugins.bot_unified_runtime.capabilities.runtime_admin as mod
+    import plugins.bot_unified_runtime.domains.ops.admin.runtime_admin as mod
 
     assert not hasattr(mod, "_family_default_effort")
 
@@ -268,7 +271,7 @@ def test_n3_quirk_proposal_whitelist_rules() -> None:
 
 
 def test_n3_proposer_feeds_pending_review_only(tmp_path, monkeypatch) -> None:
-    from plugins.bot_unified_runtime.character import providers
+    from plugins.bot_unified_runtime.domains.chat_reply.character import providers
 
     monkeypatch.setattr(
         providers,
@@ -465,3 +468,38 @@ def test_n7_reminder_llm_extract_defaults_off() -> None:
     # 项2/项3 的开关默认值。
     assert Config.model_fields["bot_proactive_affinity_gate_enabled"].default is True
     assert Config.model_fields["bot_reflection_quirks_propose_enabled"].default is True
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-18 实弹反馈：群里其他 AI 机器人发的催缴广告被抽成提醒。
+# 广告文本（"【套餐】尊敬的用户您好 截至9月17日12时 … 请及时缴费50元"）同时
+# 满足旧 prompt 的"明确时间点 + 事项"，被照抽不误，且在多个群重复入库、同一
+# 时刻齐发（用户实测"12:00 五条齐炸"）。记忆路径早有同款确定性闸
+# （_TRIVIAL_FACT_RE，F16），提醒路径此前完全没有——本组用例锁定补齐后的行为。
+# ---------------------------------------------------------------------------
+
+_PROMO_TEXT = (
+    "【套餐 】尊敬的用户您好 截至9月17日12时 您的token账户已不足支付本群的"
+    "AI好友聊天 为了不影响您正常调用AI好友的聊天功能 请及时缴费50元"
+)
+
+
+def test_n7_reminder_extract_skips_promo_text_without_llm_call() -> None:
+    """广告/催缴文本在**输入侧**即被拦下，连 LLM 都不调用（省一次调用）。"""
+    llm = _FakeLLM("2026-09-18 12:00 缴费50元")
+    assert extract_reminder_drafts(llm, user_text=_PROMO_TEXT, now=_R_NOW) == []
+    assert llm.calls == 0
+
+
+def test_n7_reminder_extract_drops_promo_entries_from_output() -> None:
+    """即便 LLM 仍抽出广告条目，输出侧确定性闸也必须丢弃。"""
+    llm = _FakeLLM("2026-09-18 12:00 【套餐】请及时缴费50元")
+    assert extract_reminder_drafts(llm, user_text="随便聊聊", now=_R_NOW) == []
+    assert llm.calls == 1
+
+
+def test_n7_reminder_extract_keeps_genuine_user_intent() -> None:
+    """闸门不得误伤正常用户意图（回归保护）。"""
+    llm = _FakeLLM("2026-09-12 14:00 写作业")
+    drafts = extract_reminder_drafts(llm, user_text="中午12点要写作业", now=_R_NOW)
+    assert [draft.text for draft in drafts] == ["写作业"]

@@ -30,6 +30,10 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     new_request_id,
 )
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    credentials_allowed_for_target,
+    scrub_credentials_for_target,
+)
 from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
 from plugins.bot_unified_runtime.sources.parsers import (
     build_cookie_provider,
@@ -356,23 +360,44 @@ def _default_audio_downloader(config: Any | None = None) -> Callable[[str], str 
     def download(url: str) -> str | None:
         if not url:
             return None
+        # WP1：试听直链是用户可控外部 URL，既过 SSRF 护栏（内网/保留段拒绝）
+        # 又把登录票收进统一咽喉——只有目标 host 属该票平台域才允许带出。
+        from plugins.bot_unified_runtime.sources.downloader import (
+            RejectedUrlError,
+            check_download_url,
+        )
+
+        try:
+            check_download_url(url)
+        except RejectedUrlError:
+            return None
         try:
             import httpx
         except Exception:  # noqa: BLE001
             return None
+        allowed_cookie = scrub_credentials_for_target(cookie_header, url)
+
+        def _scrub_hop(request: Any) -> None:
+            # ② httpx transport：逐跳复核，跨 host/CDN 时剥 Cookie/Authorization。
+            if not credentials_allowed_for_target(cookie_header, str(request.url)):
+                for key in list(request.headers.keys()):
+                    if str(key).lower() in ("cookie", "authorization", "proxy-authorization"):
+                        del request.headers[key]
+
         try:
-            headers = {"user-agent": "Mozilla/5.0"} if not cookie_header else {
-                "user-agent": "Mozilla/5.0",
-                "cookie": cookie_header,
-            }
+            headers = {"user-agent": "Mozilla/5.0"}
+            if allowed_cookie:
+                headers["cookie"] = allowed_cookie
             kwargs: dict[str, Any] = {
                 "headers": headers,
                 "follow_redirects": True,
                 "timeout": timeout_seconds,
+                "event_hooks": {"request": [_scrub_hop]},
             }
             if proxy:
                 kwargs["proxy"] = proxy
-            response = httpx.get(url, **kwargs)
+            with httpx.Client(**kwargs) as client:
+                response = client.get(url)
             response.raise_for_status()
             payload = response.content
             if max_bytes > 0 and len(payload) > max_bytes:
@@ -522,7 +547,7 @@ def build_music_capability(
     启用后（BOT_MUSIC_CANDIDATES_ENABLED）同名歧义返回编号列表，
     用户回复『点歌 <编号>』在有效期内完成二次选择。
     render_backend：可用时把歌曲渲染成 Mica 信息卡图（替代 QQ 音乐签名卡，
-    NapCat 无 musicSignUrl 时 CQ:music 会被拒签并中断后续 segment）。
+    NapCat 时期无 musicSignUrl 时 CQ:music 会被拒签并中断后续 segment）。
     """
     if providers is None:
         platforms = getattr(config, "bot_music_platforms", []) or [] if config else []
@@ -576,7 +601,7 @@ def build_music_capability(
         media_parts = _media_parts_for_mode(item, mode, audio_downloader=audio_downloader)
         parts = parse_music_mode_spec(mode) or DEFAULT_PARTS
         # 卡片优先级：Mica 信息卡图 > 封面直链 > CQ:music 签名卡。签名卡必须
-        # 排最后：NapCat 缺 musicSignUrl 时拒签会中断整条消息，吞掉后续文本。
+        # 排最后：NapCat 时期缺 musicSignUrl 时拒签会中断整条消息，吞掉后续文本。
         images: list[dict] = []
         cq_music_parts: list[dict] = []
         if "card" in parts:

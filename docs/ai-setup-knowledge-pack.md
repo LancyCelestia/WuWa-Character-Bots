@@ -13,7 +13,7 @@
 
 | 项 | 内容 |
 |---|---|
-| 形态 | NoneBot2 QQ 机器人，OneBot V11 协议，NapCat 作为协议端 |
+| 形态 | NoneBot2 QQ 机器人，OneBot V11 协议，SnowLuma 作为协议端 |
 | 人格 | 守岸人（鸣潮），昵称 岸宝/守岸人，源码 `personas/shorekeeper/` |
 | 统一运行时 | 单插件 `plugins/bot_unified_runtime/`，内部按层分包：capabilities（能力）/ runtime（流水线）/ policy（策略）/ character（人格记忆）/ llm（引擎路由）/ sources（数据源）/ sender（发送）/ audit（审计）/ output（卡片渲染） |
 | 源码区 | `C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot`（AI 工作区，唯一可改区） |
@@ -21,7 +21,7 @@
 | 虚拟环境 | `ChatBot_Runtime\venv\`（由 `scripts/dev.ps1` 自动使用） |
 | 统一入口 | 所有开发/验证命令走 `scripts\dev.ps1 -Task <task>` |
 | 配置层 | `.env` + `.env.prod`（真实值，不提交）+ `.env.example`（样例与注释）；`config.py` 统一解析，`data/...` 相对路径自动重定向到 Runtime |
-| 热更层 | `runtime/settings.py` 的 `SETTABLE_KEYS`（22 键）+ `data/runtime_settings.json` 覆盖文件，用 `/bot runtime set` 即时生效 |
+| 热更层 | `domains/chat_reply/runtime/settings.py` 的 `SETTABLE_KEYS`（22 键）+ `data/runtime_settings.json` 覆盖文件，用 `/bot runtime set` 即时生效 |
 
 能力分层一览（`capabilities/`）：chat（对话主链）、content_parser（21+ 平台链接解析）、download、weather、wiki、epic、music、meme、meme_library、subscribe_v2（订阅推送）、today_history、memory、file_exchange、auto_send、echo（帮助/状态）、debug（诊断）、runtime_admin（运行时管理）、runtime_logs。
 
@@ -63,7 +63,7 @@ ChatBot\
 
 ## 3. 权限体系：为什么有些指令普通账户触发不了
 
-角色模型（`policy/roles.py`）：每条来信按发送者 ID 解析出角色，优先级 user < trusted < enterprise < admin（blocked 直接拉黑）。
+角色模型（`domains/chat_reply/policy/roles.py`）：每条来信按发送者 ID 解析出角色，优先级 user < trusted < enterprise < admin（blocked 直接拉黑）。
 
 | 角色 | 来源配置键（JSON 数组） | 说明 |
 |---|---|---|
@@ -79,7 +79,7 @@ ChatBot\
 
 验证：发 `/bot roles` 或 `/bot recent`，能返回数据即 admin 已命中。
 
-**权限判定细节**（`policy/roles.py` + 各能力层）：角色叠加式（user/trusted/enterprise/admin/blocked，名单互不互斥）；能力层再判 `"admin" in actor_roles`；文件收发调试只认 QQ 管理名单。
+**权限判定细节**（`domains/chat_reply/policy/roles.py` + 各能力层）：角色叠加式（user/trusted/enterprise/admin/blocked，名单互不互斥）；能力层再判 `"admin" in actor_roles`；文件收发调试只认 QQ 管理名单。
 
 普通账户触发管理员指令时的回执（原话）：
 
@@ -153,7 +153,7 @@ ChatBot\
 注意事项（来自内置帮助）：`key=` 不会被回显；等号两边不要加空格；`base_url` 必须以 `/v1` 结尾。
 脱敏探测脚本：`scripts/probe_llm_providers.py`（每模型一次探测，`--max-tokens` 1-4096 默认 32，不改配置）。
 
-### 4.4 故障转移队列：加入/移出/启用/禁用的准确语义（读自 `llm/model_router.py`）
+### 4.4 故障转移队列：加入/移出/启用/禁用的准确语义（读自 `domains/chat_reply/llm_engine/model_router.py`）
 
 **队列怎么排（自动选型）**：
 - 候选 = `BOT_MODEL_REGISTRY` 全部条目 + 运行时新增条目，**排除 tags 含 `manual` 的条目**——预设名、以及注册表在场时的主配置模型（`BOT_CHAT_MODEL`）都被打上 `manual` 标签：只接受手动指定，不参与自动排队。
@@ -185,7 +185,7 @@ ChatBot\
   - 单模型当日输入 token > `BOT_USAGE_ALERT_INPUT_TOKENS`（默认 5000 万）；
   - 当日实际账单 > `BOT_USAGE_ALERT_DAILY_COST_YUAN`（默认 10 元）→ 立即发送 Mica 云母质感账单报告卡 + 提醒（含各模型金额明细）。
 - **定时报告**（北京时间 `BOT_USAGE_REPORT_HOURS=13,18,23` 点整）：统计**自上个报告时间点至今**的总花费（金额 + token，含分模型明细）；**13:00 报告额外附过去 24 小时总花费**。报告时间点持久化在 `BOT_USAGE_REPORT_STATE_FILE`，重启不丢。渲染可用时报告附卡片图片，失败回退纯文本。
-- 推送通道：`runtime/alerts.py` 管理员预警管线（QQ 私聊，走统一 SendRequest→审计，不绕过审计）。
+- 推送通道：`domains/ops/monitor/alerts.py` 管理员预警管线（QQ 私聊，走统一 SendRequest→审计，不绕过审计）。
 
 ---
 
@@ -265,11 +265,11 @@ ChatBot\
 
 ### 5.4 自然语言路由与问法
 
-- **确定性路由链**：入站文本 → `base_router`（优先级：alias 10 → admin 11 → subscribe 12 → auto_send 13 → meme 20 → music_mode 40 → music/today_history/wiki/epic/weather 41 → natural_command 45 → content 46 → chat 50 → ignore 999）→ capability → `RuntimePipeline` 统一审查/渲染 → SendQueue → NapCat（子能力不直接发消息）。`/bot routes` 看全表。
+- **确定性路由链**：入站文本 → `base_router`（优先级：alias 10 → admin 11 → subscribe 12 → auto_send 13 → meme 20 → music_mode 40 → music/today_history/wiki/epic/weather 41 → natural_command 45 → content 46 → chat 50 → ignore 999）→ capability → `RuntimePipeline` 统一审查/渲染 → SendQueue → SnowLuma（子能力不直接发消息）。`/bot routes` 看全表。
 - **日常说法归一化**（优先级 45，规则保守、闲聊不误触；含链接时让位解析）：`杭州天气怎么样`→`天气 杭州`；`帮我查一下杭州天气`→同；`来首晴天`/`放首歌`→`点歌 …`；`以后点歌只发卡片和语音`→`点歌模式 …`；`查一下维基 鸣潮`→`wiki 鸣潮`；`这周有什么免费游戏`→`epic`；`今天历史上发生了什么`→`历史上的今天`；`偷个表情`→`偷表情`（需表情库开启）；`weather in beijing`→中文城市（内置 36 城英文映射）。
 - **点名**：只写昵称（`岸宝`）也算在叫机器人（与 @ 互补，`呼叫/召唤/在吗` 同样生效）；群聊门禁四档：black1 完全静默 / black2 仅@+指令 / white1 指令、点名、自然提问 / white2 仅@（`/bot group` 调整）。
 - **chat 内联网决策**：明确联网（时效词/搜索词/URL/现实实体）、世界观词知识库优先+置信度 <0.35 回退联网、寒暄/情绪/角色扮演永不联网、技术 how-to 可调一次搜索工具；管理员私聊联网时附加 `🔎 已联网检索 N 条` 标记。
-- **暂停期间仍可用**：status/help/why/receipt/audit/recent/queue/context/llm/setup.llm/config/readiness/dialogue/roles/history/control；限流/安静时间/群门禁的统一回执见 `runtime/pipeline.py`。
+- **暂停期间仍可用**：status/help/why/receipt/audit/recent/queue/context/llm/setup.llm/config/readiness/dialogue/roles/history/control；限流/安静时间/群门禁的统一回执见 `domains/chat_reply/runtime/pipeline.py`。
 
 ---
 
@@ -516,7 +516,7 @@ ChatBot\
 
 ## 7. 可热更参数（SETTABLE_KEYS，`/bot runtime set` 即时生效，无需重启）
 
-共 **22 键**（`runtime/settings.py`，逐一核对）：
+共 **22 键**（`domains/chat_reply/runtime/settings.py`，逐一核对）：
 
 | 键 | 类型/转换 | 取值 |
 |---|---|---|
@@ -593,11 +593,11 @@ personas\shorekeeper\
 
 | 对象 | 位置/方式 | 要点 |
 |---|---|---|
-| NapCat WebUI 密码 | NapCat 本地面板（默认 http://127.0.0.1:6099） | 首次扫码登录成功后**修改一次 WebUI 密码**；WebUI token 在启动日志或 `webui.json` |
-| QQ 登录 | NapCat 扫码（用小号，勿用主号） | 凭证失效只能重扫；配置按 QQ 号存 `onebot11_<QQ号>.json` |
-| OneBot WS Token | NapCat 网络配置（3001 WS 服务器）+ `.env.prod` 的 `ONEBOT_WS_URLS` | 两边必须完全一致；真实 token 只存本地 `.env.prod` |
+| SnowLuma WebUI 密码 | SnowLuma 本地面板（默认 http://127.0.0.1:5099） | 首次扫码登录成功后**修改一次 WebUI 密码**；WebUI token 在启动日志或 `webui.json` |
+| QQ 登录 | SnowLuma 扫码（用小号，勿用主号） | 凭证失效只能重扫；配置按 QQ 号存 `onebot11_<QQ号>.json` |
+| OneBot WS Token | SnowLuma 网络配置（3001 WS 服务器）+ `.env.prod` 的 `ONEBOT_WS_URLS` | 两边必须完全一致；真实 token 只存本地 `.env.prod` |
 | 平台 Cookie | `BOT_COOKIES_FILE`（Runtime\data\platform_cookies.txt） | 浏览器导出的 **Netscape 格式**，换 Cookie 直接覆盖该文件并重启；日志/审计/消息都不打印 Cookie 值 |
-| 凭据引用机制 | `sources/credentials.py` | 外部抓取只拿 `CredentialRef`（掩码预览=前 6 字符+长度），原始值仅在传输边界解析；两种后端：`EnvCredentialStore`（变量 `BOT_CREDENTIAL_<REF_ID>`，可附 `_KIND/_DOMAIN/_EXPIRES_AT`）与 `FileCredentialStore`（`BOT_CREDENTIALS_FILE` 指定 JSON：`{"refs":{"<ref_id>":{"kind","value","domain","expires_at"}}}`，配置了文件则文件优先）；可扩展 keyring 等 |
+| 凭据引用机制 | `domains/core/credentials/credentials.py` | 外部抓取只拿 `CredentialRef`（掩码预览=前 6 字符+长度），原始值仅在传输边界解析；两种后端：`EnvCredentialStore`（变量 `BOT_CREDENTIAL_<REF_ID>`，可附 `_KIND/_DOMAIN/_EXPIRES_AT`）与 `FileCredentialStore`（`BOT_CREDENTIALS_FILE` 指定 JSON：`{"refs":{"<ref_id>":{"kind","value","domain","expires_at"}}}`，配置了文件则文件优先）；可扩展 keyring 等 |
 | 凭据健康 | `BOT_CREDENTIAL_CHECK_ENABLED` / `BOT_CREDENTIAL_PROBE_URLS` / `BOT_CREDENTIAL_WARN_DAYS=7` | `/bot alert check [--probe]` 检查过期（401/403=需重登） |
 | LLM 密钥 | `.env` 的 `BOT_API_KEY_*` / `BOT_CHAT_API_KEY` | 注册表一律 `env:变量名` 引用；密钥不回显、不入日志/文档 |
 | 邮箱 | `MAIL_BOTS` / `BOT_MAIL_SENDER_ALIASES` | Gmail 用 OAuth2 或 16 位应用专用密码（勿用主密码）；授权码只进 .env |
@@ -613,10 +613,10 @@ personas\shorekeeper\
 | `WORKSPACE_GUIDE.md` | 工作区引导 | 三目录职责表、启动与验证入口、归档入口、最小回归测试、禁止事项 |
 | `AGENTS.md` | AI 工作区规则 | 扫描边界、dev.ps1 测试入口、源码树禁止缓存文件、卡片 Mica UI 规范、归档流程 |
 | `COMMANDS.md` | 开发命令 | dev.ps1 任务表、测试策略（完整测试树在归档包）、路径与安全规则 |
-| `docs/napcat-setup.md` | NapCat 连接 QQ | 下载与扫码（小号）、被踢重登、WebUI 密码修改、3001 反向 WS + token、`.env.prod` 三项、ORM 初始化、驱动器/适配器选型结论 |
+| `docs/snowluma-setup.md` | SnowLuma 连接 QQ | 下载与扫码（小号）、被踢重登、WebUI 密码修改、3001 WS 服务端 + token、`.env.prod` 三项、ORM 初始化、驱动器/适配器选型结论 |
 | `docs/external-runtime-access.md` | 外部运行时访问 | 机器人经 .env/config.py/dev.ps 访问外部数据（非读 Markdown）；数据流图；`data/` 重定向；工作区打开方式、验收命令、快速故障判断表 |
 | `docs/route-matrix.md` | 问法路由矩阵 | base_router → capability → RuntimePipeline → SendQueue 链路；问法→kind→优先级权威矩阵；群聊门控、知识库优先+联网回退、点歌组合、下载配额 |
-| `docs/acceptance-manual.md` | 验收与接入手册 | 顺序化验收：依赖 → 人格对话验收（console→真实模型→smoke 链）→ NapCat → GsCore；运行时日志、Cookie 接入、向量知识库配置与最终检查表 |
+| `docs/acceptance-manual.md` | 验收与接入手册 | 顺序化验收：依赖 → 人格对话验收（console→真实模型→smoke 链）→ SnowLuma → GsCore；运行时日志、Cookie 接入、向量知识库配置与最终检查表 |
 | `docs/standard-parse-card-acceptance.md` | 标准解析卡验收 | 解析信息卡的验收基准 |
 | `docs/workspace-archive-policy.md` | 工作区与归档规范 | 归档标准流程（停进程→压缩→验证→移出）、活动数据不删、敏感信息红线 |
 | `docs/handover-2026-08-29.md` | 交接报告（明细底稿） | 人设原文注入、记忆补全、模型路由/分时切换/vision、网络韧性、LLM 接入卡片化；未完成明细 |
@@ -630,8 +630,8 @@ personas\shorekeeper\
 ## 11. 从零搭建清单（第一次跑通）
 
 1. **环境**：`powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task doctor"`（检查 Python/NoneBot/适配器）。
-2. **配置**：复制 `.env.example` → `.env`；至少填 §4.1 七必配键 + `BOT_ADMIN_USER_IDS`；`.env.prod` 保持 NapCat token 一致。
-3. **NapCat**：按 `docs/napcat-setup.md` 启动并扫码；WebUI 改密；3001 WS 服务器带 token 运行。
+2. **配置**：复制 `.env.example` → `.env`；至少填 §4.1 七必配键 + `BOT_ADMIN_USER_IDS`；`.env.prod` 保持 SnowLuma token 一致。
+3. **SnowLuma**：按 `docs/snowluma-setup.md` 启动并扫码；WebUI 改密；3001 WS 服务器带 token 运行。
 4. **ORM**：`nb orm upgrade` + `nb orm check`（PostgreSQL 本机服务）。
 5. **启动**：`dev.ps1 -Task run`；日志出现 OneBot V11 连接 3001 成功。
 6. **验证**：QQ 里发 `/bot status`（管理员）→ `/bot setup llm` → `/bot llm`；普通账户视角发 `天气 香港`、`点歌 测试`。
@@ -647,7 +647,7 @@ personas\shorekeeper\
 | help / doctor / install | 帮助 / 依赖检查 / 安装依赖（uv sync 或 pip） | install 修改外部 venv |
 | run / run-watch | 启动 NoneBot（可自动重启） | 连接平台 |
 | console | 控制台对话 | 默认离线 |
-| nonebot-smoke / startup-smoke | 插件导入 / 子进程加载后退出 | 不连 NapCat |
+| nonebot-smoke / startup-smoke | 插件导入 / 子进程加载后退出 | 不连 SnowLuma |
 | readiness-smoke / config-smoke / persona-smoke / context-smoke / why-smoke | 就绪/配置/人格/上下文/决策本地检查 | 不调 LLM |
 | llm-setup / llm-smoke | LLM 配置清单 / 真实连接检查 | 只读网络 |
 | dialogue-smoke / chat-smoke | 对话链路验证 | 依配置调 LLM |
@@ -689,7 +689,7 @@ personas\shorekeeper\
 把本文件发给 AI 后，可再粘贴下面任一段落下达任务：
 
 **① 让 AI 帮你搭建：**
-> 请基于我刚发给你的《ChatBot 框架 AI 搭建与配置知识包》，带我完成首次搭建：逐项告诉我 .env 需要填哪些键（按 §4.1 七必配键 + BOT_ADMIN_USER_IDS + NapCat token），每一步给出可直接复制的 PowerShell 命令；遇到需要我填密钥的地方用占位符提醒我，不要索要真实密钥明文。
+> 请基于我刚发给你的《ChatBot 框架 AI 搭建与配置知识包》，带我完成首次搭建：逐项告诉我 .env 需要填哪些键（按 §4.1 七必配键 + BOT_ADMIN_USER_IDS + SnowLuma token），每一步给出可直接复制的 PowerShell 命令；遇到需要我填密钥的地方用占位符提醒我，不要索要真实密钥明文。
 
 **② 让 AI 汇总/更新全量配置目录：**
 > 这是我仓库的《全量配置键目录》（config-catalog-full.md）。当 .env 或 config.py 发生变化后，请按同样的格式（键名、类型、默认值、取值范围、是否热更、作用与关联键）核对新差异并更新该文档；密钥一律脱敏为占位符。

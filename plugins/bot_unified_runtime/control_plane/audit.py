@@ -32,7 +32,9 @@ def redact_query(query: str) -> str:
     if not text:
         return ""
     try:
-        from plugins.bot_unified_runtime.audit.logger import redact_private_debug
+        from plugins.bot_unified_runtime.domains.ops.audit.logger import (
+            redact_private_debug,
+        )
 
         return redact_private_debug(text)
     except Exception:  # noqa: BLE001 - 脱敏模块不可用时保留正则结果。
@@ -45,7 +47,9 @@ def redact_error_for_dto(value: object, limit: int = 200) -> str:
     if not text:
         return ""
     try:
-        from plugins.bot_unified_runtime.audit.logger import redact_private_debug
+        from plugins.bot_unified_runtime.domains.ops.audit.logger import (
+            redact_private_debug,
+        )
 
         text = redact_private_debug(text)
     except Exception:  # 脱敏模块不可用时保留原文截断。

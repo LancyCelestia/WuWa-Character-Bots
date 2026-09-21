@@ -1,5 +1,7 @@
 # B3 · FileTransferGateway 统一文件出站设计规格
 
+> 术语说明：本文中的 **NapCat** 指 2026-09-18 之前的 QQ 协议端（当时实况记录，保留原文不改写）；现役协议端为 **SnowLuma**，见 [snowluma-setup.md](../snowluma-setup.md)。
+
 - 状态：**规格稿（未实现）**。本文只写设计规格，不含实现代码；细度以"下一会话可直接照做"为准。
 - 规格来源：`docs/HANDBOOK.md:82` B3 行（规格源标注为 09-10-full §10.5；该节在归档件 `handoff-2026-09-10-full.md` 中仅一句"FileTransferGateway 统一（仍有 handler 直连 call_api）"——本规格据此与代码实况展开）；大文件分片沿用 **B1 part 协议**（HANDBOOK.md:80，原规格=归档 08-29 handoff §9.3，本文只引用不重复设计）。
 - 姊妹规格：`docs/design/central-decision-engine.md`（B2）。本规格阶段 1 不依赖 B2（全部改动在 sender 层内）；阶段 2 的"删直连点"与 B2 阶段 2 迁移共用同一批 handler 改动，需协调排期（见 §5 R6）。
@@ -13,39 +15,39 @@
 
 | # | 位置 | 调用 | 说明 |
 |---|---|---|---|
-| D1 | `__init__.py:3864-3877`（`_handle_admin_file_export`） | `bot.call_api("upload_group_file"/"upload_private_file", ...)` | `/bot 导出` 生成的文档（`export_document`，`capabilities/file_exchange.py:205` 返回本地 Path）直连上传；**不进 SendQueue、无回执落库、无幂等键、无 part 进度**；失败仅文本告警（:3878-3879） |
+| D1 | `__init__.py:3864-3877`（`_handle_admin_file_export`） | `bot.call_api("upload_group_file"/"upload_private_file", ...)` | `/bot 导出` 生成的文档（`export_document`，`domains/files/capabilities/file_exchange.py` 返回本地 Path）直连上传；**不进 SendQueue、无回执落库、无幂等键、无 part 进度**；失败仅文本告警（:3878-3879） |
 | D2 | `__init__.py:4012-4023`（`_handle_admin_cookie` login 分支） | `bot.call_api("send_group_msg"/"send_private_msg")` + `file:///` 图片段 | 扫码登录二维码 PNG 直发；绕过队列与回执 |
 | D3 | `__init__.py:3360-3364`（`_cookie_expiry_reminder_job`，每日 cron） | `bot.call_api("send_private_msg", ...)` | 凭证到期提醒直发文本（非文件，但同属"绕过网关"清单，B2 收编） |
-| D4 | `mail_bridge.py:312-344`（`send_mail_from_account`，被 `mail_bridge.py:450` 与 `runtime/disconnect_notice.py:188` 调用） | `bot.send_mail(message)` / `bot.send_to(...)` | 直连 SMTP；`EmailMessage.set_content` **纯文本，无附件能力** |
+| D4 | `domains/transport/mail/mail_bridge.py`（`send_mail_from_account`，被 `domains/transport/mail/mail_bridge.py` 与 `domains/ops/monitor/disconnect_notice.py:188` 调用） | `bot.send_mail(message)` / `bot.send_to(...)` | 直连 SMTP；`EmailMessage.set_content` **纯文本，无附件能力** |
 
 ### 1.2 发送层内既有文件通道（现行"合法路径"，网关的地基）
 
 | 位置 | 机制 | 约束 |
 |---|---|---|
-| `sender/onebot.py:341-449`（`_send_file_parts`） | OneBot 文件上传：仅支持**本地绝对路径**（:365-368 `Path.is_file()`→`path.resolve()`），群走 `upload_group_file`、私聊走 `upload_private_file`（:369-374）；优先 `getattr(bot, api)`，退化 `call_api`（:377-385）；文案在全部上传成功后补发（:394-411）；混合媒体部件再发一轮（M17 修复，:412-449） | **有副作用即绝不整体重试**（:349-351 文档声明；:447-449 注释）；非 file/text 部件经 `build_onebot_message_segments`（:227-232 有 CQ file 段构造） |
-| `sender/onebot.py:303-316`（`_SendSideEffects`） | 请求级副作用计数 + part 级 `delivered_parts`/`unknown_parts` 索引 | B1 的 A7/A8/A11 批次产物：请求级已做，**part 级续发仍未做**（HANDBOOK.md:80） |
-| `sender/nonebot.py:365-380` | Telegram 附件：`bot.send_document`，本地路径读**全量字节进内存**（:376） | **2MB 硬上限**（:372 超限抛 `_FinalSendError`）；caption 随件；缺回执按失败（:378-379） |
-| `sender/nonebot.py:318/439-440` | Mail 回复通道（经 UnifiedDeliveryGateway） | 纯文本 reply，无附件 |
-| `sender/queue.py:93/122-152`（`_part_key`/`PartRecord`/`PartProgress`） | 队列侧 part 级进度（delivered/unknown/pending 索引）已建模 | SendQueue Protocol（:156）不改 |
+| `domains/transport/sender/onebot.py`（`_send_file_parts`） | OneBot 文件上传：仅支持**本地绝对路径**（:365-368 `Path.is_file()`→`path.resolve()`），群走 `upload_group_file`、私聊走 `upload_private_file`（:369-374）；优先 `getattr(bot, api)`，退化 `call_api`（:377-385）；文案在全部上传成功后补发（:394-411）；混合媒体部件再发一轮（M17 修复，:412-449） | **有副作用即绝不整体重试**（:349-351 文档声明；:447-449 注释）；非 file/text 部件经 `build_onebot_message_segments`（:227-232 有 CQ file 段构造） |
+| `domains/transport/sender/onebot.py`（`_SendSideEffects`） | 请求级副作用计数 + part 级 `delivered_parts`/`unknown_parts` 索引 | B1 的 A7/A8/A11 批次产物：请求级已做，**part 级续发仍未做**（HANDBOOK.md:80） |
+| `domains/transport/sender/nonebot.py` | Telegram 附件：`bot.send_document`，本地路径读**全量字节进内存**（:376） | **2MB 硬上限**（:372 超限抛 `_FinalSendError`）；caption 随件；缺回执按失败（:378-379） |
+| `domains/transport/sender/nonebot.py/439-440` | Mail 回复通道（经 UnifiedDeliveryGateway） | 纯文本 reply，无附件 |
+| `domains/transport/sender/queue.py/122-152`（`_part_key`/`PartRecord`/`PartProgress`） | 队列侧 part 级进度（delivered/unknown/pending 索引）已建模 | SendQueue Protocol（:156）不改 |
 
 ### 1.3 文件来源侧现状（决定 FileSource 设计）
 
-- **本地路径**：D1 的导出文档；`capabilities/download.py:103`（`outcome.path` 进 `CapabilityResult.files`）；卡片渲染 PNG（`bot_card_render_dir`）。
-- **URL**：入站经 NapCat 代理下载（`__init__.py:3792-3796` `get_file`/`download_file`；`sources/telegram_media.py:133` `get_file`）；出站媒体 URL 目前仅 TG 图片直链可透传（`sender/nonebot.py` photo_ref 路径）。**出站 URL 下载无统一入口**；SSRF 护栏已存在于 `sources/downloader.py:357`（`check_download_url`，`RejectedUrlError` :283），但只服务 `MediaDownloader`（:430）链路。
-- **字节**：TG 侧 `read_bytes()`（`sender/nonebot.py:376`）；入站 base64 落盘（`__init__.py:3800-3807`）。**出站无字节直发接口**（必须先落盘）。
+- **本地路径**：D1 的导出文档；`domains/files/capabilities/download.py`（`outcome.path` 进 `CapabilityResult.files`）；卡片渲染 PNG（`bot_card_render_dir`）。
+- **URL**：入站经 NapCat 代理下载（`__init__.py:3792-3796` `get_file`/`download_file`；`domains/media/ingest/telegram_media.py` `get_file`）；出站媒体 URL 目前仅 TG 图片直链可透传（`domains/transport/sender/nonebot.py` photo_ref 路径）。**出站 URL 下载无统一入口**；SSRF 护栏已存在于 `domains/files/sources/downloader.py`（`check_download_url`，`RejectedUrlError` :283），但只服务 `MediaDownloader`（:430）链路。
+- **字节**：TG 侧 `read_bytes()`（`domains/transport/sender/nonebot.py`）；入站 base64 落盘（`__init__.py:3800-3807`）。**出站无字节直发接口**（必须先落盘）。
 
 ### 1.4 配额与缓存现状
 
-- `runtime/cache_policy.py:17`（`enforce_quota`）：按 mtime 最旧优先清理目录至 `max_bytes`/`max_age_days` 内；每次落盘后调用方自行触发。
-- `runtime/cache_policy.py:73`（`prune_prefixed`）：按文件名前缀保留最新 N 个——**注意只 glob `*.png`**（:89），对非 PNG 产物无效（限制，见 §4 Q5）。
+- `domains/chat_reply/runtime/cache_policy.py`（`enforce_quota`）：按 mtime 最旧优先清理目录至 `max_bytes`/`max_age_days` 内；每次落盘后调用方自行触发。
+- `domains/chat_reply/runtime/cache_policy.py`（`prune_prefixed`）：按文件名前缀保留最新 N 个——**注意只 glob `*.png`**（:89），对非 PNG 产物无效（限制，见 §4 Q5）。
 - 落盘目录：`bot_download_dir`（默认 `data/downloads`）下 `incoming/`（`__init__.py:3785-3787`）与 `export/`（:3854-3856）。
 - 现状缺口：**上传动作本身无配额概念**（单文件大小、单次请求总量、目标目录生命周期都无约束）；staging 与已投递文件的清理无 owner。
 
 ### 1.5 幂等与回执现状
 
-- `SendRequest.dedupe_key`（`contracts/runtime.py:285`，非空校验 :307-312）已强制存在，但文件上传直连点（D1/D2）**根本不走 SendRequest**。
-- 回执：`DeliveryReceipt`（`contracts/runtime.py:323`）+ `ReceiptState`（:92-101，含 `FAILED_RETRYABLE/FAILED_FINAL`）+ `operational_issue`（:233）；文件级回执信息（文件名/大小/平台 file id）现无结构化载体。
-- 平台成功判定：`_onebot_result_is_success`（sender/onebot.py 内，upload 失败/超时一律升格 `_NonRetryableActionError`，:386-392——**宁可结果未知也不重发**）。
+- `SendRequest.dedupe_key`（`domains/core/contracts/runtime.py:285`，非空校验 :307-312）已强制存在，但文件上传直连点（D1/D2）**根本不走 SendRequest**。
+- 回执：`DeliveryReceipt`（`domains/core/contracts/runtime.py:323`）+ `ReceiptState`（:92-101，含 `FAILED_RETRYABLE/FAILED_FINAL`）+ `operational_issue`（:233）；文件级回执信息（文件名/大小/平台 file id）现无结构化载体。
+- 平台成功判定：`_onebot_result_is_success`（domains/transport/sender/onebot.py 内，upload 失败/超时一律升格 `_NonRetryableActionError`，:386-392——**宁可结果未知也不重发**）。
 
 ### 1.6 现状拓扑（文字版）
 
@@ -57,7 +59,7 @@ capability / handler 产出文件
    │     → RuntimePipeline 渲染 → SendRequest → SendQueue.submit
    │     → handler 补投递（_deliver_transport_send_request, __init__.py:2053）
    │        或 后台 worker（_register_send_queue_scheduler, __init__.py:1335）
-   │     → UnifiedDeliveryGateway（sender/gateway.py:30）
+   │     → UnifiedDeliveryGateway（domains/transport/sender/gateway.py）
    │          ├─ send_onebot_v11 → _send_file_parts（仅本地路径；upload_group/private_file）
    │          └─ send_nonebot_message（TG: send_document ≤2MB / Mail: 纯文本）
    │
@@ -65,7 +67,7 @@ capability / handler 产出文件
        D1 __init__.py:3864  upload_group/private_file（/bot 导出文档）
        D2 __init__.py:4012  send_*_msg(file:/// QR 图片)
        D3 __init__.py:3360  send_private_msg（cron 提醒文本）
-       D4 mail_bridge.py:312 send_mail/send_to（SMTP 直连，纯文本）
+       D4 domains/transport/mail/mail_bridge.py send_mail/send_to（SMTP 直连，纯文本）
 ```
 
 ---
@@ -74,7 +76,7 @@ capability / handler 产出文件
 
 ### 2.1 设计原则
 
-1. **网关长在发送层内**：FileTransferGateway 是 `UnifiedDeliveryGateway` 体系下的文件通道组件（新模块 `sender/file_gateway.py`），不是 capability 侧的新库。这与 B2 十条强制规则第 4 条一致："只有统一发送网关可以向 QQ、Telegram、Mail、Console 发送"——文件只是消息的一种载荷。
+1. **网关长在发送层内**：FileTransferGateway 是 `UnifiedDeliveryGateway` 体系下的文件通道组件（新模块 `domains/transport/sender/file_gateway.py`），不是 capability 侧的新库。这与 B2 十条强制规则第 4 条一致："只有统一发送网关可以向 QQ、Telegram、Mail、Console 发送"——文件只是消息的一种载荷。
 2. **业务侧只见 FileSource，不见平台 API**：capability/handler 允许声明的最小词汇是"path/url/bytes + 目标会话"；`upload_group_file` 等字样从此只允许出现在 `sender/` 目录内。
 3. **契约不变**：`CapabilityResult`/`SendRequest`/`DeliveryReceipt`/`SendQueue` 字段与语义不动（新增 `files` 内 dict 的**约定键**与新增独立类型 `FileTicket`/`FileTransferReceipt`，属"新增"不属"修改"）。
 4. **大文件分片不另行设计**：part 级进度/UNKNOWN 确认/部分成功续发全部引用 B1 part 协议（队列侧 `PartRecord`/`PartProgress` 已备，发送侧续发逻辑待 B1 落地），网关只需保证每个文件 ticket 携带 `part_index` 可参与的稳定 `dedupe_key`。
@@ -82,7 +84,7 @@ capability / handler 产出文件
 ### 2.2 组件与接口草案
 
 ```python
-# sender/file_gateway.py（新模块）
+# domains/transport/sender/file_gateway.py（新模块）
 
 class FileSource:                       # 三选一，判别字段 source_kind
     source_kind: Literal["path", "url", "bytes"]
@@ -139,11 +141,11 @@ class FileTransferReceipt(StrictBaseModel):
 ### 2.3 与现有发送路径的接线
 
 ```text
-send_onebot_v11（sender/onebot.py:571）
+send_onebot_v11（domains/transport/sender/onebot.py）
    └─ _send_file_parts（:341）改造为薄壳：
         parts 里的 {"type":"file"} → FileSource(path=…) → gateway.stage() → gateway.deliver()
         （每个 part 一次 deliver，沿用 _SendSideEffects 计数与 _TimeoutBudget 切片）
-send_nonebot_message（sender/nonebot.py:300）
+send_nonebot_message（domains/transport/sender/nonebot.py）
    └─ files 分支（:365-380）改造为 gateway.deliver(transport="telegram")
       （2MB 检查、caption、_FinalSendError 语义原样保留在网关内）
 D1/D2/D3（__init__.py 直连点）
@@ -157,10 +159,10 @@ D4（mail_bridge.send_mail_from_account）
 
 | 通道 | 上传 API | 来源支持 | 上限/策略 | 回执 |
 |---|---|---|---|---|
-| OneBot 群 | `upload_group_file`（经 gateway） | path（url/bytes 经 stage 转 path） | 平台侧限制 `unknown`（NapCat 未提供文档化配额，Q6） | `FileTransferReceipt`；无消息 id，`provider_message_id=None` |
+| OneBot 群 | `upload_group_file`（经 gateway） | path（url/bytes 经 stage 转 path） | 平台侧限制 `unknown`（SnowLuma 未提供文档化配额，Q6） | `FileTransferReceipt`；无消息 id，`provider_message_id=None` |
 | OneBot 私聊 | `upload_private_file` | 同上 | 同上 | 同上 |
 | Telegram | `send_document` | path/bytes（现读全量字节）；url 直链可 declare_only | **2MB**（现行为）；超限策略 Q1 | `provider_message_id` 从 send_document 回执提取（现 :378 逻辑） |
-| Mail | `EmailMessage.add_attachment`（新写） | path/bytes | 大小上限 Q1（建议先对齐 TG 2MB 起步）；MIME 由扩展名推断 | SMTP 无回执 id：sent 即终态，失败 `FAILED_RETRYABLE`（沿用 mail_retry_delay，mail_adapter.py:18） |
+| Mail | `EmailMessage.add_attachment`（新写） | path/bytes | 大小上限 Q1（建议先对齐 TG 2MB 起步）；MIME 由扩展名推断 | SMTP 无回执 id：sent 即终态，失败 `FAILED_RETRYABLE`（沿用 mail_retry_delay，domains/transport/mail/mail_adapter.py） |
 
 ### 2.5 配额与缓存挂钩（复用既有 LRU 策略）
 
@@ -181,7 +183,7 @@ D4（mail_bridge.send_mail_from_account）
 
 ### 阶段 1：sender 层内收敛（零行为变化）
 
-- 内容：新建 `sender/file_gateway.py`；`_send_file_parts`（onebot.py:341）与 TG files 分支（nonebot.py:365）改为调用网关，逻辑逐行等价搬运； golden 回归测试固化现有行为（上传参数、caption 时序、副作用熔断、2MB 拒绝）。
+- 内容：新建 `domains/transport/sender/file_gateway.py`；`_send_file_parts`（onebot.py:341）与 TG files 分支（nonebot.py:365）改为调用网关，逻辑逐行等价搬运； golden 回归测试固化现有行为（上传参数、caption 时序、副作用熔断、2MB 拒绝）。
 - 验收标准：
   1. 既有发送单测全绿 + 新增网关单测（三来源 stage/两通道 deliver/失败分类/part_index 传递）；
   2. 真机回归：群传文件+私聊传文件+TG 文档各 1 例（验收法按 acceptance-manual）；
@@ -236,5 +238,5 @@ D4（mail_bridge.send_mail_from_account）
 3. **Q3** 无事件上下文的调用方（disconnect_notice、D3 cron）投递文件/直发文本时，是直接用网关还是必须过 B2 引擎（涉及 B2 规则 1"所有事件"的定义域）。
 4. **Q4** `FileTransferReceipt` 落库形态：独立 SQLite 表（推荐，可聚合查询）vs 审计 tags；与 `/bot receipt` 查询语法的兼容。
 5. **Q5** `prune_prefixed` 仅 glob `*.png` 的限制是否需要泛化为按前缀全扩展名（涉及卡片目录他能力产物安全，B13 相关）。
-6. **Q6** NapCat `upload_group_file/upload_private_file` 的频控/单文件上限实测值（`unknown`，需真机探测后写回本表与 config-catalog）。
-7. **Q7** OneBot 上传回执是否含平台侧 file id 可供 `provider_file_id` 回填（`unknown`：NapCat 返回形态需实测；影响重复上传去重的第二道防线设计）。
+6. **Q6** SnowLuma `upload_group_file/upload_private_file` 的频控/单文件上限实测值（`unknown`，需真机探测后写回本表与 config-catalog）。
+7. **Q7** OneBot 上传回执是否含平台侧 file id 可供 `provider_file_id` 回填（`unknown`：SnowLuma 返回形态需实测；影响重复上传去重的第二道防线设计）。

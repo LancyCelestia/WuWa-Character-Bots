@@ -5,6 +5,20 @@
 > - `docs/project-audit-and-modernization-roadmap-2026-09-05.md`（已归档至 `ChatBot_Archive/2026-09-12/docs-archive-2026-09-12.zip`，关键节 §7/§8/§9 阶段 2/§12/§14/§16/§17）
 > - `docs/control-plane-provider-and-usage-requirements-2026-09-05.md`（工作区内，§10/§15/§21 为本文直接输入）
 > 日期：2026-09-12。现状断言均经 grep 核实（标注文件与行号区间）；无法核实处标注 unknown。
+>
+> **坐标时效声明（2026-09-20，LINK-AUDIT 席补）**：本文所有 `文件:行号` 均按 **v21r2 域重组前**
+> 的布局取证（`plugins/bot_unified_runtime/<旧层>/<x>.py`）。自 2026-09-19 起主包按域迁至
+> `plugins/bot_unified_runtime/domains/<域>/…`，旧路径多数已降为 PEP 562 垫片（`Compat shim`，全文仅 3—18 行）。
+> 后果：**行号整体失效**——例如本文 §2 表内 `domains/transport/sender/queue.py,239-248,1344,1394,1538` 现指向一个 3 行垫片，
+> `domains/chat_reply/llm_engine/model_router.py` 指向 18 行垫片。按本文坐标直读会得到"文件只有几行"的错觉。
+> 现行真身与现行事实**不在本文维护**，请走以下指针：
+> 现行状态页 [control-plane-core-status.md](control-plane-core-status.md) ·
+> 事件与来源枚举 [control-plane-events.md](control-plane-events.md) ·
+> 模块归属现值 [../../AGENTS.md](../../AGENTS.md) 第二部分目录地图 ·
+> 旧→新路径对照 [v21-s0-mapping.md](v21-s0-mapping.md) 与垫片退役图 [v21r2-shim-retirement-inventory.md](v21r2-shim-retirement-inventory.md)。
+> 定位本文所称代码的正确姿势：**按符号名检索**（`rg "def FeatureControlService"` 之类），不要按本文行号跳读。
+> 本文的规格裁定部分（§1 裁决对齐、§6 认证范围、§8.3 掩码规则、§9 SakuraFrp 专节）不受迁移影响，仍然有效。
+
 
 ---
 
@@ -26,17 +40,17 @@
 | 项目无任何自定义 HTTP API / Web 路由；唯一 HTML 是卡片渲染模板 | roadmap §6（审计结论，与本次源码盘点一致：`plugins/bot_unified_runtime/output/card_render/templates/` 下无服务路由） |
 | FastAPI 已随依赖可用：`nonebot2[fastapi]>=2.5.0` | `pyproject.toml:8` |
 | NoneBot driver 挂载 OneBot V11 / Telegram / Mail 三适配器 | `bot.py:176,177,197` |
-| 配置写侧已有命令级实现：`RuntimeSettingsStore` 白名单 `SETTABLE_KEYS`（约 60 键），落盘 `data/runtime_settings.json`（`BOT_RUNTIME_SETTINGS_FILE`），转换失败即拒绝写入 | `plugins/bot_unified_runtime/runtime/settings.py:338-411`（白名单表）、`:418`（类定义）、`:605 set_override` |
-| 模型/渠道状态：`ChannelHealthStore` SQLite（`model_id, state ok|unavailable, consecutive_fails, latency_ms, last_error, last_ok_at`），连续失败达阈值转 `unavailable`，提供 `snapshot/is_available/unavailable_ids/latencies` | `llm/channel_health.py:51-250` |
-| 渠道注册表：`Config.bot_model_registry`（dict，env JSON 容错解析）、`ModelSpec`（含 `api_key/api_keys` 支持 `env:VAR` 引用） | `config.py:627`；`llm/model_router.py:281-345`（`_resolve_api_key` 支持 `env:` 前缀） |
-| 发送队列：SQLite `send_requests` + `send_request_parts`（`state TEXT`，`'partial'` 为非 ReceiptState 的内部态），接口含 `submit/claim_due/mark_sent/mark_retryable_failure/mark_final_failure`，退避 `retry_base_seconds=30 / retry_max_seconds=300 / max_attempts` | `sender/queue.py:30,239-248,1344,1394,1538` |
-| 发送回执落库：`delivery_receipts` 表 | `sender/receipts.py:262` |
-| 订阅状态：V2 store SQLite，默认 `data/subscriptions.sqlite3` | `sources/subscription_store_v2.py:60,68` |
-| 用量/费用：文本日志聚合（见 B5 文档 §2）；阈值巡检 60 秒 + 13/18/23 点报告；阈值默认输出 5M / 输入 50M token / 日费 10 元；报告状态 `data/usage_report_state.json` | `runtime/usage_monitor.py:240-291`；`.env.example:181-182` |
-| 运行事件日志：单文件纯文本 `data/runtime_events.log`（`BOT_RUNTIME_LOG_FILE`），默认 2MB 轮转保留 `.old` 一代 | `sources/runtime_event_log.py:5-10,57-62` |
+| 配置写侧已有命令级实现：`RuntimeSettingsStore` 白名单 `SETTABLE_KEYS`（约 60 键），落盘 `data/runtime_settings.json`（`BOT_RUNTIME_SETTINGS_FILE`），转换失败即拒绝写入 | `domains/chat_reply/runtime/settings.py`（白名单表）、`:418`（类定义）、`:605 set_override` |
+| 模型/渠道状态：`ChannelHealthStore` SQLite（`model_id, state ok|unavailable, consecutive_fails, latency_ms, last_error, last_ok_at`），连续失败达阈值转 `unavailable`，提供 `snapshot/is_available/unavailable_ids/latencies` | `domains/chat_reply/llm_engine/channel_health.py` |
+| 渠道注册表：`Config.bot_model_registry`（dict，env JSON 容错解析）、`ModelSpec`（含 `api_key/api_keys` 支持 `env:VAR` 引用） | `config.py:627`；`domains/chat_reply/llm_engine/model_router.py`（`_resolve_api_key` 支持 `env:` 前缀） |
+| 发送队列：SQLite `send_requests` + `send_request_parts`（`state TEXT`，`'partial'` 为非 ReceiptState 的内部态），接口含 `submit/claim_due/mark_sent/mark_retryable_failure/mark_final_failure`，退避 `retry_base_seconds=30 / retry_max_seconds=300 / max_attempts` | `domains/transport/sender/queue.py,239-248,1344,1394,1538` |
+| 发送回执落库：`delivery_receipts` 表 | `domains/transport/sender/receipts.py:262` |
+| 订阅状态：V2 store SQLite，默认 `data/subscriptions.sqlite3` | `domains/subscribe/store/subscription_store_v2.py:60,68` |
+| 用量/费用：文本日志聚合（见 B5 文档 §2）；阈值巡检 60 秒 + 13/18/23 点报告；阈值默认输出 5M / 输入 50M token / 日费 10 元；报告状态 `data/usage_report_state.json` | `domains/ops/monitor/usage_monitor.py:240-291`；`.env.example:181-182` |
+| 运行事件日志：单文件纯文本 `data/runtime_events.log`（`BOT_RUNTIME_LOG_FILE`），默认 2MB 轮转保留 `.old` 一代 | `domains/ops/monitor/runtime_event_log.py:5-10,57-62` |
 | 诊断表：`runtime_diagnostics`（SQLite，保留约 100 条），含 llm_status/llm_provider/llm_model/llm_error_kind/基础 token 三项，无费用/耗时/attempts | `diagnostics.py:60-76,121-127` |
-| 脱敏：`redact_private_debug()` 四段正则（key=value 秘密、`Authorization: Bearer`、裸 Bearer、`sk-` 密钥）→ `[redacted]` | `audit/logger.py:38-53` |
-| 审计仓库：内存有界版（FIFO 1000，`bot_audit_max_items` 对齐）+ 持久版 | `audit/logger.py:56-80` |
+| 脱敏：`redact_private_debug()` 四段正则（key=value 秘密、`Authorization: Bearer`、裸 Bearer、`sk-` 密钥）→ `[redacted]` | `domains/ops/audit/logger.py:38-53` |
+| 审计仓库：内存有界版（FIFO 1000，`bot_audit_max_items` 对齐）+ 持久版 | `domains/ops/audit/logger.py:56-80` |
 | SakuraFrp 前期调研：3GB/日 流量额度、10Mbps 隧道带宽上限、`bandwidth_limit` 单位为 MiB/KiB 兼容单位、XTCP 已弃用 | 需求文档 §21（用户确认口径） |
 
 明确**不存在**的东西（避免实施会话误假设）：无 FastAPI 路由、无鉴权中间件、无 token 存储、无隧道流量计量、无公网域名/证书管理代码。
@@ -96,7 +110,7 @@ BOT_CONTROL_PLANE_TOKEN_SHA256=          # 见 §5.1；为空则 API 除 /health
 
 - REST + JSON（UTF-8）；`Content-Type: application/json`。
 - 基路径 `/admin/api/v1`；本地无鉴权探针 `/healthz`（仅回 `{"ok":true}`，不回任何配置/版本细节）。
-- 时间统一 ISO 8601 本地时区（与 RuntimeEventLog 现状一致）；费用单位毫厘（1 元 = 1000 毫厘，沿用 `runtime/pricing.py:52` 口径）。
+- 时间统一 ISO 8601 本地时区（与 RuntimeEventLog 现状一致）；费用单位毫厘（1 元 = 1000 毫厘，沿用 `domains/chat_reply/llm_engine/pricing.py` 口径）。
 - 分页：`limit`（默认 50，上限 200）+ `offset`；响应体上限默认 1 MiB（超限截断并带 `truncated: true`）。
 - 错误体（对齐 roadmap §7.3：不回 `str(exc)`）：
 
@@ -130,7 +144,7 @@ roadmap §17.2 要求支持密码/TOTP/设备配对/反代认证头/OIDC 与角�
 | GET | `/admin/api/v1/health` | 进程内组件健康：driver 状态、各 store 可达性、scheduler 活性 | 注入单例的 `ping()` |
 | GET | `/admin/api/v1/status/bot` | bot 概览：启动时间、适配器连接态、persona、默认模型、runtime settings 摘要 | config + settings store |
 | GET | `/admin/api/v1/status/models` | 渠道健康快照数组：`model_id, state(ok/unavailable), consecutive_fails, latency_ms, last_error(脱敏), last_ok_at`；绝不包含 api_key/base_url 凭据段 | `ChannelHealthStore.snapshot()/latencies()`（channel_health.py:97-125,239） |
-| GET | `/admin/api/v1/status/queue` | 发送队列：各 state 计数、最老待处理行年龄、`max_attempts/retry_base_seconds` 配置回显 | `sender/queue.py` 计数查询（state 枚举以 queue.py 为准，'partial' 投影为 `failed_final`，见 queue.py:1538 注释口径） |
+| GET | `/admin/api/v1/status/queue` | 发送队列：各 state 计数、最老待处理行年龄、`max_attempts/retry_base_seconds` 配置回显 | `domains/transport/sender/queue.py` 计数查询（state 枚举以 queue.py 为准，'partial' 投影为 `failed_final`，见 queue.py:1538 注释口径） |
 | GET | `/admin/api/v1/status/subscriptions` | 订阅 V2 概览：目标数、按平台分组计数、调度器下次运行时间 | `subscription_store_v2`（只读连接）；详细 schema 标注 unknown，实施时以 store 实际表为准 |
 | GET | `/admin/api/v1/status/diagnostics?limit=` | 最近 N 条运行诊断（runtime_diagnostics 投影，天然无正文） | `diagnostics.py` |
 
@@ -164,7 +178,7 @@ roadmap §17.2 要求支持密码/TOTP/设备配对/反代认证头/OIDC 与角�
 
 写侧规则：
 
-1. 可写键集合 = `runtime/settings.py SETTABLE_KEYS`（settings.py:338-411），API 侧不再自行新增键——白名单只有一处真相；
+1. 可写键集合 = `domains/chat_reply/runtime/settings.py SETTABLE_KEYS`（settings.py:338-411），API 侧不再自行新增键——白名单只有一处真相；
 2. 每次写操作前先在审计里记录 `key, value_hash(sha256 前 12 位), 操作者=token subject`，值本身不落审计（值可能含群号等半敏感信息）；
 3. 禁止写 `.env`：API 只操作 runtime store 覆盖层（对齐 roadmap §9 阶段 2.2 "`.env` 为只读启动种子"）。
 
@@ -183,7 +197,7 @@ roadmap §17.2 要求支持密码/TOTP/设备配对/反代认证头/OIDC 与角�
 | POST | `/admin/api/v1/ops/models/reprobe` | 对全部或指定 `model_id` 重新健康探测：清 `consecutive_fails` 并发起轻量连通检查（复用渠道探测逻辑；`ModelSpec` 全候选遍历）。响应回每渠道新 state | `channel_health.record_success/record_failure`（channel_health.py:152,186） |
 | POST | `/admin/api/v1/ops/models/{model_id}/unblock` | 将 `unavailable` 渠道手动复位为 `ok`（计数清零） | `channel_health` 同上 |
 | POST | `/admin/api/v1/ops/cache/clear?scope=prompt_preview\|video_pipeline\|card` | **枚举白名单**缓存清理；未知 scope 422。不提供"清全部" | 各缓存模块暴露的现有清理入口（实施时逐一接线；无入口的 scope 先不注册） |
-| POST | `/admin/api/v1/ops/queue/{request_id}/retry` | 单条终态失败请求重新入队（`mark_retryable_failure` 语义 + retry_count 归零） | `sender/queue.py mark_*` 接口（queue.py:239-248 附近） |
+| POST | `/admin/api/v1/ops/queue/{request_id}/retry` | 单条终态失败请求重新入队（`mark_retryable_failure` 语义 + retry_count 归零） | `domains/transport/sender/queue.py mark_*` 接口（queue.py:239-248 附近） |
 | POST | `/admin/api/v1/ops/queue/retry-failed` | 批量重试终态失败行；body 需 `{"confirm": true}`；单次上限 50 条 | 同上 |
 | POST | `/admin/api/v1/ops/usage/report` | 立即触发一次用量报告（等价 13/18/23 点任务手动执行） | `usage_monitor` 报告函数（usage_monitor.py:253 起注册的内闭包，需抽出具名函数供两处复用） |
 | POST | `/admin/api/v1/ops/tunnel/reset` | 断路器状态复位到 NORMAL（仅本地来源允许，见 §9.5） | tunnel_meter |
@@ -215,7 +229,7 @@ roadmap §17.2 要求支持密码/TOTP/设备配对/反代认证头/OIDC 与角�
 
 ### 8.1 防本机内容外泄（沿用 plain_text redact 思路）
 
-现状核心机制：事件日志只写"安全短文本"，docstring 明令禁止正文/密钥/原始异常（`__init__.py:962`）；`redact_private_debug()` 在入库前对秘密模式打码（audit/logger.py:38-53）。控制面沿用并收紧：
+现状核心机制：事件日志只写"安全短文本"，docstring 明令禁止正文/密钥/原始异常（`__init__.py:962`）；`redact_private_debug()` 在入库前对秘密模式打码（domains/ops/audit/logger.py:38-53）。控制面沿用并收紧：
 
 1. **DTO 白名单制**：每个响应模型逐字段声明；任何 endpoint 不得出现 `plain_text`、`text_fallback`、消息正文、知识库原文、记忆 facts、聊天历史字段。status/audit 类端点只能投影请求 id、状态枚举、计数字段；
 2. `status/diagnostics` 投影 `runtime_diagnostics` 时剔除 `audit_tags` 中带正文风险的自由文本标签，只保留 `model:`/`llm_error:`/`llm_usage_*:`/`llm_route_attempt:` 前缀标签（标签前缀语义见 `__init__.py:998-1026`）；

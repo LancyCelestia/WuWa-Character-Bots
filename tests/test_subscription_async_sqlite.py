@@ -18,7 +18,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from plugins.bot_unified_runtime.contracts.subscription import (
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     ContentReference,
     SubscriptionCursorV2,
     SubscriptionDestinationV2,
@@ -26,10 +26,10 @@ from plugins.bot_unified_runtime.contracts.subscription import (
     SubscriptionOutboxEvent,
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.sources.subscription_scheduler import (
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_scheduler import (
     SubscriptionScheduler,
 )
-from plugins.bot_unified_runtime.sources.subscription_store_v2 import (
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
 )
 

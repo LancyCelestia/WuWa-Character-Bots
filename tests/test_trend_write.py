@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.character import trend as trend_mod
-from plugins.bot_unified_runtime.character.trend import (
+from plugins.bot_unified_runtime.domains.chat_reply.character import trend as trend_mod
+from plugins.bot_unified_runtime.domains.chat_reply.character.trend import (
     MAX_TREND_ENTRIES,
     FileTrendProvider,
     NullTrendProvider,

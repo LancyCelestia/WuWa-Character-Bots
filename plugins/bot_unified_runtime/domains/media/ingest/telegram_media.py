@@ -160,6 +160,12 @@ async def _download_bytes(
         "timeout": httpx.Timeout(timeout, connect=min(8.0, timeout)),
         "follow_redirects": True,
     }
+    # 注（WP1 §7 残余）：此处 URL 由 Telegram get_file 服务端返回（非任意用户
+    # 输入），且不随请求附带任何登录凭证——不在凭证外泄咽喉（①）覆盖面内。
+    # SSRF 入口咽喉需与本文件既有 MockTransport 测试（.example.org 字面域名、
+    # 离线不可解析，任何 check_download_url 都会把它判为解析失败=拒绝）协调、
+    # 迁移到字面量公网 IP fixture 后再落；越界改共享测试会撞车。同域
+    # vision_describe / transcribe 两处远程取字节已按此口径接入 check_download_url。
     if proxy:
         # httpx 0.28+ 只认 proxy 单数参数（与 transcribe.py 一致）。
         client_kwargs["proxy"] = proxy

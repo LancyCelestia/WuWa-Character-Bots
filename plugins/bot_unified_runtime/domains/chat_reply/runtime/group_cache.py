@@ -1,6 +1,6 @@
 """群资料进程内 TTL 缓存（bot.group_info 专用，审查 B-01/B-04 配套）。
 
-OneBot V11/NapCat 的群 API（get_group_info / get_group_member_list /
+OneBot V11/SnowLuma 的群 API（get_group_info / get_group_member_list /
 get_group_notice / get_essence_msg_list）单次调用不便宜，而群资料/成员名单/
 公告属于低频变化数据——同一群短时间内反复被问不该反复打协议。这里给一个
 进程内、线程安全、按 (数据类, 群号) 键控的 TTL 缓存：

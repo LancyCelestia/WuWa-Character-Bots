@@ -19,7 +19,7 @@ import pytest
 
 from plugins.bot_unified_runtime.capabilities.eat import is_recipe_command
 from plugins.bot_unified_runtime.capabilities.stocks import is_stocks_command
-from plugins.bot_unified_runtime.runtime import base_router
+from plugins.bot_unified_runtime.domains.chat_reply.runtime import base_router
 from plugins.bot_unified_runtime.runtime.base_router import (
     ROUTE_RULES,
     RouteDecision,

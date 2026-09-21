@@ -13,7 +13,7 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
 )
-from plugins.bot_unified_runtime.contracts.subscription import (
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     NormalizedSubscriptionItem,
     PushCandidate,
     SubscriptionSpec,

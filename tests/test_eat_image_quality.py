@@ -19,7 +19,7 @@ import pytest
 
 from plugins.bot_unified_runtime.capabilities.eat import _fetch_dish_image
 from plugins.bot_unified_runtime.contracts import SessionType
-from plugins.bot_unified_runtime.contracts.runtime import IncomingMessage
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
 
 DISH = "宫保鸡丁"
 # 公网字面量 IP：过 SSRF 护栏（http + 非保留网段），字面量不做 DNS → 零网络。
@@ -211,7 +211,7 @@ def _patch_tavily_candidates(
     monkeypatch: pytest.MonkeyPatch, urls: list[str]
 ) -> None:
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.eat._tavily_image_candidates",
+        "plugins.bot_unified_runtime.domains.food.capabilities.eat._tavily_image_candidates",
         lambda name, config=None: list(urls),
     )
 

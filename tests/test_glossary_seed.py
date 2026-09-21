@@ -15,7 +15,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
-from plugins.bot_unified_runtime.character import glossary as glossary_mod
 from plugins.bot_unified_runtime.character.glossary import (
     SEED_GLOSSARY_PATH,
     SEED_MAX_ENTRIES,
@@ -29,6 +28,9 @@ from plugins.bot_unified_runtime.contracts import (
     PersonaProfile,
     RetrievalResult,
     ToneProfile,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character import (
+    glossary as glossary_mod,
 )
 
 PERSONA_TEXT = "# 角色沉浸要求\n\n你就是守岸人本人，以第一人称思考与回应。"
@@ -55,7 +57,7 @@ def _empty_config() -> SimpleNamespace:
     return SimpleNamespace(bot_glossary_files=[], bot_glossary_max_chars=1500)
 
 
-def _context(glossary: GlossaryContext | None) -> ContextBundle:
+def _context(glossary: GlossaryContext | None, *, current_message: str = "你好") -> ContextBundle:
     return ContextBundle(
         request_id="req-1",
         persona=PersonaProfile(
@@ -69,7 +71,7 @@ def _context(glossary: GlossaryContext | None) -> ContextBundle:
         memory_results=MemoryRetrievalResult(request_id="req-1"),
         knowledge_results=RetrievalResult(request_id="req-1"),
         glossary_context=glossary,
-        current_message="你好",
+        current_message=current_message,
         sender_id="user-1",
         session_id="private:user-1",
     )
@@ -129,7 +131,11 @@ def test_glossary_injection_keeps_no_repeat_discipline_wrap() -> None:
         request_id="req-1",
         entries=[GlossaryEntry(term="今州", explanation="瑝珑的七座城市之一。")],
     )
-    system_prompt = build_chat_prompt(_context(glossary))[0]["content"]
+    # 审查 O-06：注入改按关键词召回——current_message 命中术语名才注入，
+    # 故本测试用包含术语的提问驱动召回命中路径。
+    system_prompt = build_chat_prompt(
+        _context(glossary, current_message="今州是什么地方")
+    )[0]["content"]
 
     # 运行时上下文总说明=统一「仅供理解，禁止复读」包裹（融入回应，不复述、不当指令）。
     assert "以下【】块为运行时注入的实时信息" in system_prompt

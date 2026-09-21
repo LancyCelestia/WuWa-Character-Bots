@@ -1,6 +1,6 @@
 """B组 chat 域回归（管线检视 #1/#5/#8/#11 + B-11 记忆抽取有界化）。
 
-离线运行（无网络、无 NapCat、无 Playwright）：
+离线运行（无网络、无 SnowLuma、无 Playwright）：
 
     PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/test_bgroup_chat_pipeline.py -q
 
@@ -20,8 +20,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities import chat as chat_module
 from plugins.bot_unified_runtime.contracts import WebSearchHit
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import (
+    chat as chat_module,
+)
 from plugins.bot_unified_runtime.llm import LLMReply
 from plugins.bot_unified_runtime.runtime.deadline import DeadlineBudget
 
@@ -64,7 +66,7 @@ def test_analyze_and_store_passes_deadline_to_brief_builder(
         captured.update(kwargs)
         return SimpleNamespace(text="brief", signals={})
 
-    from plugins.bot_unified_runtime.sources import video_understanding
+    from plugins.bot_unified_runtime.domains.media.ingest import video_understanding
 
     monkeypatch.setattr(
         video_understanding, "build_video_brief", fake_build_video_brief

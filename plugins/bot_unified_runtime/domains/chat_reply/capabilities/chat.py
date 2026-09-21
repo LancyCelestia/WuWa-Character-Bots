@@ -90,6 +90,7 @@ from plugins.bot_unified_runtime.runtime.content_route import (
     explicit_allowed_for_session,
     match_manual_command,
     match_master_love_admin,
+    member_session_key,
     resolve_intimate_context,
 )
 from plugins.bot_unified_runtime.runtime.deadline import (
@@ -2140,19 +2141,28 @@ def build_chat_result(
                 privacy_level=PrivacyLevel.PERSONAL,
                 audit_tags=["content_route", f"manual:{manual_mode}", _scope_tag],
             )
+        # Master Love 自动钉死：master 会话直接进入亲密档，无需手动拨开关；
+        # master 自己显式「亲密模式 关」的 normal 钉不被覆盖（攻击评审 #2）。
+        # v21r5：群聊场景钉在成员键上（个人级，不泄漏给全群其他成员）。
+        # B-Important-1（v21r5 CRIT-FIX-3）：per_user 关闭时 route_key=群键，
+        # 旧实现把 intimate 钉落到群键=泄漏给全群，与上行注释相悖——群聊
+        # per_user 关闭时显式派生成员键；其余场景 route_key 已是个人级键。
+        _ml_pin_key = (
+            member_session_key(content_route_session_key, _sender_id_text)
+            if _session_type_value == "group"
+            and not _content_route_per_user_enabled
+            else content_route_route_key
+        )
         if (
             master_love_here
             and manual_mode is None
             and SHARED_CONTENT_ROUTE_ENGINE.pinned_mode(
-                content_route_route_key, content_route_config
+                _ml_pin_key, content_route_config
             )
             != "normal"
         ):
-            # Master Love 自动钉死：master 会话直接进入亲密档，无需手动拨开关；
-            # master 自己显式「亲密模式 关」的 normal 钉不被覆盖（攻击评审 #2）。
-            # v21r5：群聊场景钉在成员键上（个人级，不泄漏给全群其他成员）。
             SHARED_CONTENT_ROUTE_ENGINE.apply_manual(
-                content_route_route_key, "intimate", content_route_config
+                _ml_pin_key, "intimate", content_route_config
             )
     model_prices_raw = llm_options.pop("model_prices", None)
     model_prices = (
@@ -2315,7 +2325,11 @@ def build_chat_result(
             fast_mode=fast_mode,
             fast_max_candidates=fast_max_candidates,
             request_budget=request_budget,
-            session_id=content_route_route_key if content_route_enabled else "",
+            session_id=(
+                content_route_route_key
+                if content_route_enabled and content_route_session_eligible
+                else ""
+            ),  # not-eligible 会话传 ""（评审面② stale-pin）：钉死态残留的键不得再喂给路由判定，防 60min TTL 内 stale intimate 头错排候选。
         )
     except DeadlineExceeded:
         return _llm_error_result(

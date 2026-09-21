@@ -43,6 +43,53 @@ from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
 from plugins.bot_unified_runtime.domains.link_parse.parsers.ssrf_guard import (
     guard_user_url,
 )
+
+
+def _candidate_host(url: str) -> str:
+    from urllib.parse import urlsplit
+
+    try:
+        return (urlsplit(url or "").hostname or "").strip().lower()
+    except ValueError:
+        return ""
+
+
+def _host_belongs(host: str, allowed_hosts: list[str]) -> bool:
+    if not allowed_hosts:
+        return True
+    if not host:
+        return False
+    for dom in allowed_hosts:
+        d = (dom or "").strip().lower().lstrip(".").rstrip(".")
+        if d and (host == d or host.endswith("." + d)):
+            return True
+    return False
+
+
+def select_candidate_url(
+    urls: list[str], *, matched_keyword: str | None, allowed_hosts: list[str]
+) -> str:
+    """选候选 URL：优先「host 归属规则平台域」者（WP1 ③）。
+
+    旧缺陷：取第一个**包含** matched_keyword 子串的 URL 作候选——evil URL 的
+    query 里塞平台标识即可被选中、附该平台票 Cookie 发往 evil host。
+
+    新语义：
+    - 有 allowed_hosts：只从 host 归属规则域的 URL 里选（先精确含 keyword 者，
+      再任一归属 URL）；无归属候选 → 返回 ""（走既有解析失败降级，绝不回退 evil）。
+    - 无 allowed_hosts（合成/无凭证规则）：保持旧行为（含 keyword 优先，退首 URL）。
+    """
+    if allowed_hosts:
+        owned = [u for u in urls if _host_belongs(_candidate_host(u), allowed_hosts)]
+        for u in owned:
+            if matched_keyword and matched_keyword in u:
+                return u
+        return owned[0] if owned else ""
+    picked = next(
+        (u for u in urls if matched_keyword and matched_keyword in u),
+        urls[0] if urls else "",
+    )
+    return picked
 from plugins.bot_unified_runtime.domains.link_parse.parsers.types import ParsedContent
 from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
 
@@ -679,13 +726,12 @@ def build_content_capability(
             )
         # URL 已由 ParserRegistry 按规则匹配；不再先调用 parser 探测，
         # 避免网络请求重复一次并降低平台风控概率。
-        candidate = next(
-            (
-                url
-                for url in source_input.urls
-                if match.matched_keyword and match.matched_keyword in url
-            ),
-            source_input.urls[0] if source_input.urls else "",
+        # WP1 ③：候选选择走归属判定——绝不把「含平台子串但 host 不归属」的
+        # evil URL 选为候选（否则附该票 Cookie 发往 evil host）。
+        candidate = select_candidate_url(
+            source_input.urls,
+            matched_keyword=match.matched_keyword,
+            allowed_hosts=list(getattr(match, "allowed_hosts", []) or []),
         )
         if not candidate:
             return _content_failure_result(
@@ -920,7 +966,7 @@ def build_content_capability(
             body=body,
             url=canonical_url or candidate,
             images=images,
-            # CQ:music 签名卡在 NapCat 缺 musicSignUrl 时会拒签并中断整条
+            # CQ:music 签名卡在 NapCat 时期缺 musicSignUrl 时会拒签并中断整条
             # 消息（吞掉后续文本段）；解析卡图已含歌曲信息，这里只留语音/文件。
             audio=[
                 part

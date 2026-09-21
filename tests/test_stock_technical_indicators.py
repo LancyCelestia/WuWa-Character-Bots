@@ -20,13 +20,13 @@ from fractions import Fraction
 
 import pytest
 
-from plugins.bot_unified_runtime.contracts.finance import (
+from plugins.bot_unified_runtime.domains.core.contracts.finance import (
     EquityQuote,
     FinanceDataStatus,
     OHLCVBar,
     OHLCVSeries,
 )
-from plugins.bot_unified_runtime.sources.stock_data import (
+from plugins.bot_unified_runtime.domains.finance.data.stock_data import (
     compute_all_technical_indicators,
     compute_cci,
     compute_kdj,

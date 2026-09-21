@@ -34,12 +34,12 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     SessionType,
 )
-from plugins.bot_unified_runtime.llm import StaticLLMProvider
-from plugins.bot_unified_runtime.security.injection import (
+from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
     InjectionAction,
     InjectionCheckInput,
     check_prompt_injection,
 )
+from plugins.bot_unified_runtime.llm import StaticLLMProvider
 
 
 def _check(

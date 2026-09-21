@@ -5,7 +5,7 @@ from datetime import time as dt_time
 from pathlib import Path
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.runtime_admin import (
+from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
     _handle_model_command,
 )
 from plugins.bot_unified_runtime.llm import LLMProviderError

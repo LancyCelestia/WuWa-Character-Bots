@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from plugins.bot_unified_runtime.contracts.subscription import (
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionCursorV2,
     SubscriptionTarget,
 )
@@ -53,7 +53,7 @@ def test_netease_playlist_returns_only_tracks_after_cursor(monkeypatch) -> None:
         return payload
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.subscriptions.music_v2.http_get_json",
+        "plugins.bot_unified_runtime.domains.subscribe.adapters.music_v2.http_get_json",
         fake_get_json,
     )
     result = asyncio.run(

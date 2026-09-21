@@ -19,10 +19,16 @@ from typing import Any
 
 import pytest
 
+from plugins.bot_unified_runtime.capabilities.debug import _llm_setup_mica_html
+from plugins.bot_unified_runtime.capabilities.echo import _help_mica_html
+from plugins.bot_unified_runtime.domains.render.card_render.usage_cards import (
+    usage_report_mica_html,
+)
 from plugins.bot_unified_runtime.output.card_render.bridge import (
     digest_phase,
     payload_phase,
     render_affinity_card_html,
+    render_error_card_html,
     render_finance_card_html,
     render_market_card_html,
     render_mermaid_html,
@@ -107,6 +113,83 @@ def _affinity_payload(i: int) -> dict[str, Any]:
     }
 
 
+class _PhaseStubConfig:
+    """debug/usage builder 只读 bot_help_card_color 一个属性。"""
+
+    bot_help_card_color = ""
+
+
+def _error_payload(i: int) -> dict[str, Any]:
+    return {
+        "human_text": f"能力执行遇到异常，已留档{i}",
+        "exc_type": f"RuntimeError{i}",
+        "exc_message": f"模拟异常{i}",
+        "trigger_echo": f"/bot status {i}",
+        "help_text": "稍后再试",
+    }
+
+
+def _debug_llm_setup_html(i: int) -> str:
+    payload: dict[str, Any] = {
+        "config": _PhaseStubConfig(),
+        "status_label": "检查完成",
+        "status_kind": "ok",
+        "message": f"全部通过{i}",
+        "rows": [
+            {
+                "key": "BOT_CHAT_PROVIDER",
+                "desc": "模型供应商",
+                "range": "openai 兼容",
+                "value": "axonhub",
+                "ok": "1",
+            },
+        ],
+        "next_step": f"无{i}",
+    }
+    return _llm_setup_mica_html(payload)
+
+
+def _usage_report_html(i: int) -> str:
+    return usage_report_mica_html(
+        _PhaseStubConfig(),
+        kicker=f"测试{i} · 模型用量",
+        title=f"模型用量账单报告{i}",
+        status_label="账单 0.00 元",
+        status_kind="ok",
+        window_label=f"09-18 0{i}:00 至 09-18 23:59",
+        generated_at="2026-09-18 23:59:00",
+        totals={
+            "prompt_tokens": 100,
+            "cache_read_tokens": 10,
+            "cache_write_tokens": 20,
+            "completion_tokens": 30,
+            "total_tokens": 160,
+            "calls": 3,
+            "cost_text": "0.00",
+            "unpriced_calls": 0,
+        },
+        model_rows=[
+            {
+                "model": f"model-{i}",
+                "prompt": 100,
+                "cache_read": 10,
+                "cache_write": 20,
+                "completion": 30,
+                "cost_text": "0.00",
+                "priced": True,
+            }
+        ],
+    )
+
+
+def _echo_help_html(i: int) -> str:
+    return _help_mica_html(
+        f"测试正文{i}",
+        is_admin=False,
+        sections=[(f"测试模块{i}", [(f"/bot help {i}", "测试说明")])],
+    )
+
+
 _RENDERERS: dict[str, Callable[[int], str]] = {
     # 旧媒体卡（templates.py，__PHASE__ 占位注入）
     "media_card": lambda i: render_media_card_html(_media_payload(i)),
@@ -118,6 +201,12 @@ _RENDERERS: dict[str, Callable[[int], str]] = {
     "affinity_card": lambda i: render_affinity_card_html(_affinity_payload(i)),
     # mermaid：digest 直接取源码
     "mermaid_card": lambda i: render_mermaid_html(f"graph TD; A{i}-->B{i}"),
+    # 2026-09-18 v21r3 渲染统一：+= error/usage/echo/debug 四入口（同既有假
+    # 后端模式；error 走 bridge.render_error_card_html，相位=payload digest）。
+    "error_card": lambda i: render_error_card_html(_error_payload(i)),
+    "usage_report": _usage_report_html,
+    "echo_help": _echo_help_html,
+    "debug_llm_setup": _debug_llm_setup_html,
 }
 
 

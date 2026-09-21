@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.output import render_backends as rb
+from plugins.bot_unified_runtime.domains.render import render_backends as rb
 from scripts import fetch_mermaid_js
 
 MERMAID_HTML = (

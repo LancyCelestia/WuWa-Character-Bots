@@ -6,9 +6,11 @@ import hashlib
 import time
 from pathlib import Path
 
-from plugins.bot_unified_runtime.character import vector_knowledge as vk
 from plugins.bot_unified_runtime.character.vector_knowledge import (
     SqliteVectorKnowledgeStore,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character import (
+    vector_knowledge as vk,
 )
 
 

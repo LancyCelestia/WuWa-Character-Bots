@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import re
 import struct
 import time
@@ -55,9 +57,164 @@ _ALNUM_RE = re.compile(r"[A-Za-z0-9_]{3,}")
 # 无任何关键词命中且向量最高余弦低于该阈值 -> 判定未命中（可经构造参数覆盖）。
 _MISS_COSINE_THRESHOLD = 0.30
 
+# --- 源族配额（per-source quota，2026-09-20）-----------------------------------
+# 生产实测：人格库 knowledge_chunks 共 35479 块，其中人格本体两个 md 仅 373 块
+# （1.05%），战双/鸣潮库街区百科两份转储 30802 块（86.8%），「历史上的今天」
+# th-01…th-12 是 12 个独立 source_id（单源 327~387 块）。补嵌完成后向量通道全量
+# 参战，RRF 融合的每轮槽位（BOT_KNOWLEDGE_TOP_K，生产=5）都可能被百科源洗掉，
+# 人格向问题召不回人格设定。修法=选择层「归族 + 族上限 + 人格保留位」：
+#   * 归族粒度必须族级而非 source_id 级——12 个 th-* 各自限量时合并仍可占满
+#     全部槽位（实测陷阱），故 th-* 并为一个族；人格本体两文件并为 persona 族。
+#   * 非 persona 族每族至多 cap 槽（软顶：全族 cap 内候选填不满时按融合序溢出
+#     回填，纯百科查询的槽位收益零损失——回归锁见 tests/test_knowledge_source_quota.py）。
+#   * persona 保留位仅当候选池中存在 persona 块时生效（选择层保证，不扩池：
+#     池外召回是候选生成问题，超出本配额职责）。
+_ON_THIS_DAY_SOURCE_RE = re.compile(r"^th-\d{1,2}$")
+_ON_THIS_DAY_FAMILY = "on-this-day"
+# 人格本体文件名 stem 前缀（守岸人_核心知识 / 守岸人_人格与表达规范）。
+_PERSONA_SOURCE_PREFIX = "守岸人"
+_PERSONA_FAMILY = "persona"
+# 溢出回填也不越 cap 的族：on-this-day（th-01…th-12 并族）。12 源同族是
+# 本域实测陷阱正主，软顶（拿满槽优先）对它反向——语料级锁
+# test_th_family_cap_holds_in_corpus。
+_QUOTA_HARD_CAP_FAMILIES = frozenset({_ON_THIS_DAY_FAMILY})
+
+
+def _quota_family_cap(limit: int) -> int:
+    """非 persona 族上限：ceil(top_k/2)（5→3，8→4）。"""
+    return max(1, (int(limit) + 1) // 2)
+
+
+def _quota_persona_reserved(limit: int) -> int:
+    """persona 保留槽：min(2, max(1, top_k//2))（5→2，4→2，8→2）。"""
+    return min(2, max(1, int(limit) // 2))
+
+
+def _source_family(source_id: str) -> str:
+    """source_id → 族名：th-* 并族、守岸人* 归 persona、其余源各自一族。"""
+    sid = str(source_id or "")
+    if sid.startswith(_PERSONA_SOURCE_PREFIX):
+        return _PERSONA_FAMILY
+    if _ON_THIS_DAY_SOURCE_RE.match(sid):
+        return _ON_THIS_DAY_FAMILY
+    return sid
+
+
+def _select_within_source_quota(
+    ranked_ids: list[str],
+    family_of: dict[str, str],
+    limit: int,
+    promotable_persona: set[str] | None = None,
+    hard_cap_families: frozenset[str] = frozenset(),
+) -> list[str]:
+    """在融合排序上做族配额选择，返回仍按融合序排列的选中 id。
+
+    三段式：A) 按融合序填槽，persona 族不封顶、其余族受 cap；
+    B) persona 选中数不足保留位时，从队尾淘汰最弱的非 persona 块逐个补位——
+      仅提升 ``promotable_persona`` 内的块（有相关性证据：关键词/词条通道
+      命中，或向量余弦过本库低置信阈值），防止 35k 级池子里偶然的零相关
+      persona 块被硬塞进每个查询；None=不筛（纯函数单测用）；
+    C) 仍不足 limit 时（族候选稀少的单源查询）对余量溢出回填，cap 让位于
+    「拿满槽」——保证纯百科查询零退化。
+    """
+    limit = max(0, int(limit))
+    if limit <= 0:
+        return []
+    cap = _quota_family_cap(limit)
+    reserved = _quota_persona_reserved(limit)
+    counts: dict[str, int] = {}
+    selected: list[str] = []
+    seen: set[str] = set()
+    primary: set[str] = set()  # A/B 段选中块（区别于 C 段溢出回填块）
+    persona_taken = 0
+    for chunk_id in ranked_ids:
+        if len(selected) >= limit:
+            break
+        family = family_of.get(chunk_id, chunk_id)
+        if family == _PERSONA_FAMILY:
+            persona_taken += 1
+        elif counts.get(family, 0) >= cap:
+            continue
+        counts[family] = counts.get(family, 0) + 1
+        selected.append(chunk_id)
+        seen.add(chunk_id)
+        primary.add(chunk_id)
+    persona_pool = [
+        chunk_id
+        for chunk_id in ranked_ids
+        if family_of.get(chunk_id, chunk_id) == _PERSONA_FAMILY
+        and (promotable_persona is None or chunk_id in promotable_persona)
+    ]
+    want = min(reserved, len(persona_pool))
+    while persona_taken < want:
+        promote = next((cid for cid in persona_pool if cid not in seen), None)
+        evict = next(
+            (
+                cid
+                for cid in reversed(selected)
+                if family_of.get(cid, cid) != _PERSONA_FAMILY
+            ),
+            None,
+        )
+        if promote is None or evict is None:
+            break
+        selected.remove(evict)
+        seen.discard(evict)
+        primary.discard(evict)
+        counts[family_of.get(evict, evict)] = counts.get(
+            family_of.get(evict, evict), 0
+        ) - 1
+        selected.append(promote)
+        seen.add(promote)
+        primary.add(promote)
+        persona_taken += 1
+    if len(selected) < limit:
+        for chunk_id in ranked_ids:
+            if len(selected) >= limit:
+                break
+            if chunk_id in seen:
+                continue
+            family = family_of.get(chunk_id, chunk_id)
+            if (
+                family in hard_cap_families
+                and family != _PERSONA_FAMILY
+                and counts.get(family, 0) >= cap
+            ):
+                # 硬顶族（on-this-day）溢出回填也不越 cap——12 源并族陷阱
+                # 的正主；其余族 cap 让位于「拿满槽」。宁缺槽也绝不放行，
+                # 「拿满槽优先」的最终兜底属于调用方职责（那里看得见池外
+                # 弱证据候选，本函数看不到）。
+                continue
+            counts[family] = counts.get(family, 0) + 1
+            selected.append(chunk_id)
+            seen.add(chunk_id)
+    rank_of = {chunk_id: index for index, chunk_id in enumerate(ranked_ids)}
+    # 输出序三段制（不再是纯融合序）：cap 内主选非 persona → persona 全部
+    # （保留位钉在尾部 reserved 区，WEAK persona 排在其弱 rank 上不会沉到
+    # 溢出块之后）→ 溢出回填非 persona。纯融合序会把弱证据 persona 排到
+    # 被 cap 淘汰的百科块之后，而下游 MergedKnowledgeRetriever 轮转里
+    # 流内第 5 位永远进不了提示词前 8——保留位必须在**流内位置**上成立，
+    # 不只是在集合上（语料级锁 test_merged_prompt_projection 实锤）。
+    def _order_key(chunk_id: str) -> tuple[int, int]:
+        family = family_of.get(chunk_id, chunk_id)
+        if family == _PERSONA_FAMILY:
+            bucket = 1
+        elif chunk_id in primary:
+            bucket = 0
+        else:
+            bucket = 2
+        return (bucket, rank_of.get(chunk_id, len(rank_of)))
+
+    selected.sort(key=_order_key)
+    return selected
+
 # sync_chunks 源级同步台账（knowledge_meta key 前缀）：按 (mtime,size) 精确
 # 删除「曾同步过、已移出清单」的源，取代旧的 `NOT IN (清单)` 全集删除。
 _SOURCE_SIG_KEY_PREFIX = "sync_source_sig:"
+
+# 删除侧绝对量闸的启用下限（见 sync_chunks 守卫 C）：台账少于这个源数量时
+# 「摘掉一个文件」本身就是多数派，属日常操作而非配置漂移，不设闸。
+_MASS_DELETE_GATE_MIN_LEDGER = 4
 
 # 文档台账的时间元数据列（列名是与 Crawl Wiki 导出层的契约，不得自创别名）：
 # 语料行的 `updated_at`（上游站点最后编辑时间）→ source_updated_at，
@@ -130,6 +287,169 @@ _ANN_BUILD_BATCH_SIZE = 2048
 # vector_json 文本与 vector_blob 一起物化（kb_wiki 23.8 万块、库文件
 # 5.7GB → 进程内存 GB 级尖峰 + 分钟级 JSON 解析，且发生在检索锁内）。
 _VECTOR_CACHE_LOAD_BATCH_SIZE = 2048
+
+# --- ANN 原子发布 / 跨进程互斥 -------------------------------------------------
+# 见 build_ann_index / _publish_ann_pair：索引与序列表必须成对换入，且写入
+# 全程不得让读者看到半写文件。logger 供"检测到外部换代/拒写"结构化告警用。
+logger = logging.getLogger(__name__)
+
+# 成对代际证明落在 knowledge_meta（复用 SQLite 自身的跨进程写锁做提交点，
+# 不再引入第二个状态文件；键名与既有 ann_signature 同族）。
+_ANN_ATTESTATION_KEY = "ann_pair_attestation"
+_ANN_LOCK_SUFFIX = ".build.lock"
+# 抢锁只做短等待：抢不到即说明另一进程正在重建，本进程让路比硬排队好
+# （重建是分钟级任务，串行等待会让 smoke/knowledge-sync 双双挂死）。
+_ANN_LOCK_TIMEOUT_SECONDS = 3.0
+_ANN_LOCK_POLL_SECONDS = 0.1
+
+# --- ANN 完备性闸（task #47）--------------------------------------------------
+# 代际签名只证明「在这个模型指纹下建过索引」，证明不了「索引装得下全部已嵌入
+# 行」：embedding_signature 与 ann_signature 存的都是 self.signature（模型/端点
+# 指纹），补嵌再多行也不动它俩。2026-09-21 实弹即此——两签名逐字节相等，体检
+# 全绿，而磁盘上的 `.index` 停在 09-14 那一代，SQLite 侧 35479 行只嵌了
+# 24379 行还没进索引，新内容对向量通道永久隐身。`ntotal == len(order)` 那道
+# 成对终检同样救不了：两个文件是同代，一起旧，彼此当然对得上。
+# 修法 = 在提交点盖一枚「本代索引实际装了几条向量」的计数戳，唯一写点补嵌时
+# 同事务把戳推高，载入时拿 index.ntotal 去比这个戳：短装即判索引不可用，回落
+# 既有暴力通道（_vector_candidates → numpy 矩阵 → _brute_candidates_python），
+# 并出结构化告警，两个数字同屏点名。
+# 戳绝不能用现算的 `SELECT COUNT(*) ... WHERE vector_json IS NOT NULL` 替代：
+# 该查询在那张表实测 23.8s（JSON 列扫描），不许进载入路径。
+# 戳的精确语义 = 「本代索引至少该装多少条向量」的**上界**：权威值只在提交点落
+# （恰等于 ntotal），此后只由唯一写点单向上推。删掉已嵌行不会把戳拉低 ⇒ 戳可能
+# 虚高，而虚高只会多拒一次（回落暴力 = 慢而全），绝不会少拒一次——本判据的危险
+# 方向（漏拒）在这个形态下结构上不可达。代价：full=True 换代语料到重建之前，
+# 告警里的 expected 会把被删的行也算进去，读它当「索引该重建」的讯号即可，
+# 不当它是精确行数（要精确数就用 stats()，那是离线口径）。
+_EMBEDDED_COUNT_KEY = "ann_expected_vector_count"
+# 允许的短装行数：0 = 一条都不许少。短装只可能来自「补嵌之后没重建」，而那
+# 正是本闸要治的病，没有值得放行的良性来源。反向多出向量（ntotal > 戳）不算
+# 短装——那是发布中途被杀的残态，索引本身是完整的，见 load_ann_index。
+_ANN_COMPLETENESS_MAX_MISSING = 0
+
+
+class _AnnBuildGate:
+    """ANN 重建/覆写的跨进程互斥闸：OS 文件锁，进程崩溃由内核自动释放。
+
+    仓内既有跨进程互斥手段只有 SQLite 文件锁（BEGIN IMMEDIATE +
+    busy_timeout，见 billing_service/usage_service/rate_limit），那是
+    *事务期* 锁——ANN 重建是分钟级，持写事务会把运行中 Bot 的知识库写入
+    全部憋死。故此处用同目录锁文件：与 SQLite 侧同一语义家族（独占、
+    非阻塞退避、拿不到就让路并如实报告），且不新增依赖、不自研锁协议。
+    """
+
+    def __init__(self, lock_path: str | Path) -> None:
+        self.lock_path = Path(lock_path)
+        self._fd: int | None = None
+
+    @property
+    def held(self) -> bool:
+        return self._fd is not None
+
+    def acquire(self, timeout_seconds: float = _ANN_LOCK_TIMEOUT_SECONDS) -> bool:
+        """独占加锁；超时仍拿不到返回 False（调用方必须放弃覆写）。"""
+        if self._fd is not None:
+            return True
+        try:
+            self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+            # O_CREAT 不截断：截断会踩掉可能正持锁者的文件句柄语义。
+            fd = os.open(str(self.lock_path), os.O_RDWR | os.O_CREAT, 0o666)
+        except OSError:
+            return False
+        deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+        while True:
+            if self._try_lock(fd):
+                self._fd = fd
+                return True
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(_ANN_LOCK_POLL_SECONDS)
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        return False
+
+    @staticmethod
+    def _try_lock(fd: int) -> bool:
+        try:
+            import msvcrt
+
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except ImportError:
+            import fcntl
+
+            try:
+                fcntl.flock(  # type: ignore[attr-defined]
+                    fd,
+                    fcntl.LOCK_EX | fcntl.LOCK_NB,  # type: ignore[attr-defined]
+                )
+                return True
+            except OSError:
+                return False
+        except OSError:
+            return False
+
+    def release(self) -> None:
+        fd = self._fd
+        if fd is None:
+            return
+        self._fd = None
+        try:
+            import msvcrt
+
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except (ImportError, OSError):
+            try:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
+            except (ImportError, OSError):
+                pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def _fsync_path(path: Path) -> None:
+    """对已落盘文件补一次 fsync（掉电/击杀瞬间也要把新页留在盘上）。"""
+    try:
+        with open(path, "rb") as handle:
+            os.fsync(handle.fileno())
+    except OSError:
+        pass
+
+
+def _atomic_replace_from(tmp_path: Path, target: Path) -> None:
+    """同卷原子换入（Windows 上 Path.replace/os.replace 同卷原子）。"""
+    _fsync_path(tmp_path)
+    try:
+        os.replace(str(tmp_path), str(target))
+    except OSError:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _stat_stamp(path: Path) -> tuple[int, int] | None:
+    """(size, mtime_ns)：只作为"外部是否换过代"的廉价触发器，不作身份。"""
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    return (int(info.st_size), int(info.st_mtime_ns))
 
 
 class OpenAICompatibleEmbeddingProvider:
@@ -441,6 +761,7 @@ class SqliteVectorKnowledgeStore:
         ann_order_path: str = "",
         min_cosine_threshold: float = _MISS_COSINE_THRESHOLD,
         fts_auto_rebuild: bool = True,
+        source_quota_enabled: bool = False,
     ) -> None:
         self.db_path = str(db_path)
         self.embed_provider = embed_provider
@@ -455,6 +776,11 @@ class SqliteVectorKnowledgeStore:
         )
         self._ann_index: Any | None = None
         self._ann_order: list[str] | None = None
+        # 已载入 ANN 代际的文件指纹（见 _ann_stat_pair）：外部换入新索引后
+        # 据此发现代际变化，无需重启进程即可收敛；None=尚未载入。
+        self._ann_loaded_stamp: tuple | None = None
+        # 本进程当前持有的 ANN 建锁闸（覆写前的持锁凭证，见 _require_ann_lock）。
+        self._ann_build_gate: _AnnBuildGate | None = None
         # 运行时应为 False：只有显式 knowledge-sync 才允许因指纹变化清空向量，
         # 避免机器人进程与同步进程并发时互相清空、进度反复回退。
         self.auto_reset = bool(auto_reset)
@@ -488,6 +814,10 @@ class SqliteVectorKnowledgeStore:
         # False 时检索路径发现 FTS 签名缺失不做内联重建（大库重建分钟级，
         # 会卡住消息处理），降级为纯向量通道，重建交给显式同步任务 force=True。
         self.fts_auto_rebuild = bool(fts_auto_rebuild)
+        # 源族配额开关：仅人格 provider（build_vector_knowledge_provider）置
+        # True；kb_wiki/smoke/KnowledgeService 等其余构造点保持 False=逐字节
+        # 现状。动机与族粒度实测见上方「源族配额」参数块。
+        self.source_quota_enabled = bool(source_quota_enabled)
         self._ensure_schema()
         # 库内既有向量维度（首次写入时落 knowledge_meta，重启后恢复）：
         # _save_vectors 用它拒绝混合维度语料入库。
@@ -650,9 +980,31 @@ class SqliteVectorKnowledgeStore:
         self._reset_vectors_if_needed()
         pending = self._pending_rows()
         size = max(1, int(batch_size)) if batch_size else _EMBED_BATCH_SIZE
+        # 折半下限取 _EMBED_BATCH_SIZE：它同时是远程链的单批上限，退到远程不再被拒。
+        floor_size = max(1, min(size, _EMBED_BATCH_SIZE))
+        # 冷启动防线（2026-09-20 无人值守夜实测 5,943 块嵌了 0 块）：模型首次加载的
+        # 成本由这一发预热承担，且批次拿不到向量时再试一次 —— 否则一次超时就让整轮归零。
+        # 重试预算全局只有 1 次，端点真不可用时仍然快速退出，不把同步拖成长任务。
+        if pending:
+            self._embed(["预热"])
+        retries_left = 1
         done = 0
-        for batch in _batches(pending, size):
-            vectors = self._embed([str(row["content"]) for row in batch])
+        total = len(pending)
+        while done < total:
+            batch = pending[done : done + size]
+            texts = [str(row["content"]) for row in batch]
+            vectors = self._embed(texts)
+            while vectors is None and retries_left > 0:
+                retries_left -= 1
+                vectors = self._embed(texts)
+            # 批×超时是配比问题不是偶发故障：生产 .env 的 128 批 × 本地 5s 超时
+            # （实测约 19 块/s ⇒ 128 块 ≈6.7s）每批必挂，预热与同尺寸重试都救不了。
+            # 折半重试并把收缩记住给后续批次；到下限仍拿不到才 break（链长有界）。
+            while vectors is None and len(batch) > floor_size:
+                size = max(floor_size, len(batch) // 2)
+                batch = pending[done : done + size]
+                texts = [str(row["content"]) for row in batch]
+                vectors = self._embed(texts)
             if vectors is None:
                 break
             if not self._save_vectors(batch, vectors):
@@ -660,12 +1012,12 @@ class SqliteVectorKnowledgeStore:
             done += len(batch)
             if on_progress is not None:
                 try:
-                    on_progress(done, len(pending))
+                    on_progress(done, total)
                 except Exception:  # noqa: S110, BLE001 - 进度回调失败不影响嵌入任务。
                     pass
-        if self.signature and done == len(pending):
+        if self.signature and done == total:
             self._set_stored_signature(self.signature)
-        return done, len(pending)
+        return done, total
 
     def _invalidate_vector_cache(self) -> None:
         self._vector_cache = None
@@ -749,6 +1101,7 @@ class SqliteVectorKnowledgeStore:
             self._invalidate_vector_cache()
             self._ann_index = None
             self._ann_order = None
+            self._ann_loaded_stamp = None
             self._fts_valid = None
             self._synced_signatures.clear()
 
@@ -788,6 +1141,39 @@ class SqliteVectorKnowledgeStore:
         )
         ledger.add(source_id)
 
+    #: 最近一次被删除侧守卫拦下的动作（None=从未拦过）。结构化字段供告警投喂
+    #: 与测试断言：reason / planned_sources / ledger_sources / manifest_paths。
+    last_sync_guard: dict[str, object] | None = None
+
+    def _note_wipe_guard(
+        self,
+        reason: str,
+        *,
+        planned_sources: int,
+        ledger_sources: int,
+        manifest_paths: int,
+    ) -> None:
+        """守卫命中留痕：结构化告警 + 观测位，绝不静默吞掉。
+
+        静默是这场事故的一半成因——删掉 35,479 行时日志里一个字符都没有。
+        """
+        guard: dict[str, object] = {
+            "reason": reason,
+            "planned_sources": planned_sources,
+            "ledger_sources": ledger_sources,
+            "manifest_paths": manifest_paths,
+        }
+        self.last_sync_guard = guard
+        logger.warning(
+            "knowledge_sync_wipe_guard reason=%s planned_sources=%s "
+            "ledger_sources=%s manifest_paths=%s db_path=%s",
+            reason,
+            planned_sources,
+            ledger_sources,
+            manifest_paths,
+            self.db_path,
+        )
+
     def sync_chunks(self, files: list[Path]) -> None:
         with self._lock:
             paths = [Path(path).expanduser() for path in files]
@@ -808,16 +1194,68 @@ class SqliteVectorKnowledgeStore:
                         (_SOURCE_SIG_KEY_PREFIX + "%",),
                     )
                 }
-                for stale_source in sorted(ledger - manifest_stems):
-                    cursor = connection.execute(
-                        "DELETE FROM knowledge_chunks WHERE source_id = ?",
-                        (stale_source,),
+                # 本轮删除计划：台账里已消失的源 + 清单里路径已不存在的源。
+                # 计划先算完再判守卫，守卫必须早于任何 DELETE 落刀。
+                stale_sources = sorted(ledger - manifest_stems)
+                missing_sources = sorted(
+                    {path.stem for path in paths if not path.exists()}
+                )
+                planned = sorted(set(stale_sources) | set(missing_sources))
+                # 守卫 A：空清单不等于「语料被清空」。调用方漏传/配置解析成
+                # 空表都是事故形态，不是删除全部的理由——历史教训：
+                # retrieve(query, None) 曾以 files=[] 走进这里，把台账里的
+                # 全部源逐个 DELETE，整库清零且不报错。
+                if not paths:
+                    self._note_wipe_guard(
+                        "empty_manifest",
+                        planned_sources=len(planned),
+                        ledger_sources=len(ledger),
+                        manifest_paths=0,
                     )
-                    changed = changed or cursor.rowcount > 0
-                    connection.execute(
-                        "DELETE FROM knowledge_meta WHERE key = ?",
-                        (_SOURCE_SIG_KEY_PREFIX + stale_source,),
+                    return
+                # 守卫 B：全部路径都指向不存在的文件（配置迁移、盘符变了、
+                # personas/ 被清理）同属「清单不可信」，不当作删除依据。
+                if len(missing_sources) == len({path.stem for path in paths}):
+                    self._note_wipe_guard(
+                        "all_paths_missing",
+                        planned_sources=len(planned),
+                        ledger_sources=len(ledger),
+                        manifest_paths=len(paths),
                     )
+                    return
+                # 守卫 C（绝对量闸）：单轮要摘掉的源超过台账一半即拒删。
+                # 为什么值得装：A/B 只认「空/全缺」两种极端，而配置被改坏更
+                # 常见的形态是「17 条里剩 3 条」——那照样是多数误删。
+                # 台账 <4 个源时不启用：微型语料里摘掉 1 个文件本就是多数，
+                # 那是日常操作而非漂移，把它焊死等于禁止删除。
+                # 刻意不做成配置开关：放宽这个闸的唯一后果是不可逆删库。
+                delete_allowed = True
+                if (
+                    len(ledger) >= _MASS_DELETE_GATE_MIN_LEDGER
+                    and len(planned) * 2 > len(ledger)
+                ):
+                    delete_allowed = False
+                    self._note_wipe_guard(
+                        "mass_delete_gate",
+                        planned_sources=len(planned),
+                        ledger_sources=len(ledger),
+                        manifest_paths=len(paths),
+                    )
+                if delete_allowed:
+                    for stale_source in stale_sources:
+                        cursor = connection.execute(
+                            "DELETE FROM knowledge_chunks WHERE source_id = ?",
+                            (stale_source,),
+                        )
+                        changed = changed or cursor.rowcount > 0
+                        connection.execute(
+                            "DELETE FROM knowledge_meta WHERE key = ?",
+                            (_SOURCE_SIG_KEY_PREFIX + stale_source,),
+                        )
+                        ledger.discard(stale_source)
+                else:
+                    # 拦截即整轮删除侧冻结：新增/更新照常走下面的循环。
+                    stale_sources = []
                 for path in paths:
                     # (mtime,size) 签名未变的文件跳过重读：retrieve 每条消息都会进这里，
                     # 向量未命中为常态，无签名缓存时每次都要全量读盘+分块+双 sha1
@@ -829,6 +1267,9 @@ class SqliteVectorKnowledgeStore:
                     if signature is None:
                         if path.exists():
                             # 存在但暂时不可读（占用/权限瞬态）：跳过，下条消息重试。
+                            continue
+                        if not delete_allowed:
+                            # 守卫已冻结本轮删除：留着等下轮（清单修好后自愈）。
                             continue
                         # 文件已被删除：清掉旧块，避免被删知识继续被检索命中；
                         # 台账记录一并移除。
@@ -1199,6 +1640,138 @@ class SqliteVectorKnowledgeStore:
             )
         return {"total": total, "embedded": embedded}
 
+    def _family_of_chunks(self, chunk_ids: list[str]) -> dict[str, str]:
+        """批量取候选块的 source_id → 族名（锁内单条 IN 查询，≤百级 id）。"""
+        if not chunk_ids:
+            return {}
+        placeholders = ",".join("?" for _ in chunk_ids)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT chunk_id, source_id FROM knowledge_chunks "
+                f"WHERE chunk_id IN ({placeholders})",
+                chunk_ids,
+            ).fetchall()
+        found = {
+            str(row["chunk_id"]): _source_family(str(row["source_id"] or ""))
+            for row in rows
+        }
+        # 查无行（与并发删除竞态，极小概率）：各自成族——不误并族受 cap，
+        # 也进不了 persona 保留位。
+        return {
+            chunk_id: found.get(chunk_id, f"unknown:{chunk_id}")
+            for chunk_id in chunk_ids
+        }
+
+    def _fused_ids_for_limit(
+        self,
+        vector_ranked: list[str],
+        keyword_ranked: list[str],
+        limit: int,
+        *,
+        entry_ranked: list[str],
+        vector_scores: dict[str, float] | None = None,
+    ) -> list[str]:
+        """RRF 融合取前 limit：开配额时在融合全序上做源族配额选择。
+
+        配额关闭=与旧路径逐字节同（_rrf_fuse 直接截断）；开启=候选全集按
+        **相关性证据分三层**再选择：
+        * LEGIT（词汇通道命中，或向量余弦 ≥ min_cosine_threshold）——唯一
+          参与族 cap 竞争的层：cap 在 LEGIT 融合序上执行，persona 族不封顶。
+        * WEAK（池内、cos 为正但低于地板且无词汇命中）——不抢 cap 槽，只在
+          两处出场：persona 保留位（弱证据人格块可入位，空槽直补、满员才
+          淘汰队尾非人格）与兜底溢出回填（被 cap 淘汰的 LEGIT 之后）。
+        * 零证据（cos=0 且非词汇）——彻底出局（argsort 稳定序带进来的并列
+          噪声；哈希词袋下 md5 桶碰撞也会伪装出微小正 cos，故 WEAK 允许这
+          类块存在但绝不给 cap 槽）。
+        这套分层的动机（本波五条红测试的实测结论）：cap 若直接对全池执行，
+        会把百科查询第 4/5 名的 legit 同源块让位给零相关/噪声块（"没把百科
+        通道治残"红线，语料级回归锁实锤）；反过来人格保留位若拿 0.30 地板
+        当门径，同义改写场景（人格块 cos 0.05~0.15）保留位永锁死、配额形
+        同虚设。全池皆 WEAK 时结果与关配额逐 id 相同（溢出回填按融合序）。
+        """
+        if not self.source_quota_enabled:
+            return _rrf_fuse(
+                vector_ranked, keyword_ranked, limit, bonus_ids=entry_ranked
+            )
+        scores = _rrf_scores(
+            vector_ranked, keyword_ranked, bonus_ids=entry_ranked
+        )
+        ranked_all = sorted(scores, key=lambda chunk_id: (-scores[chunk_id], chunk_id))
+        if not ranked_all:
+            return []
+        lexical = set(keyword_ranked) | set(entry_ranked)
+        if vector_scores is None:
+            legit: list[str] = list(ranked_all)
+            weak: list[str] = []
+        else:
+            legit = [
+                chunk_id
+                for chunk_id in ranked_all
+                if chunk_id in lexical
+                or float(vector_scores.get(chunk_id, 0.0))
+                >= self.min_cosine_threshold
+            ]
+            legit_set = set(legit)
+            weak = [
+                chunk_id
+                for chunk_id in ranked_all
+                if chunk_id not in legit_set
+                and float(vector_scores.get(chunk_id, 0.0)) > 0.0
+            ]
+        if not legit:
+            # 全无强证据：与关配额同（融合序截断，弱证据原样保序回填）。
+            return ranked_all[:limit]
+        family_of = self._family_of_chunks(ranked_all)
+        weak_persona = [
+            chunk_id
+            for chunk_id in weak
+            if family_of.get(chunk_id, chunk_id) == _PERSONA_FAMILY
+        ]
+        # 弱证据人格块只追加在选择输入**队尾**：A 段按融合序扫到它时人格
+        # 不封顶可入 4/5 槽（这正是保留位的落点——MergedKnowledgeRetriever
+        # 轮转下流内前 4 位才进得了提示词前 8，落在队尾重排序反而全丢）。
+        selection_input = legit + weak_persona
+        promotable = {
+            chunk_id
+            for chunk_id in selection_input
+            if family_of.get(chunk_id, chunk_id) == _PERSONA_FAMILY
+        }
+        selected = _select_within_source_quota(
+            selection_input,
+            family_of,
+            limit,
+            promotable_persona=promotable,
+            hard_cap_families=_QUOTA_HARD_CAP_FAMILIES,
+        )
+        if len(selected) < limit:
+            # 兜底回填（融合全序扫）：被 cap 淘汰的 LEGIT 与 WEAK 非人格
+            # 同场按序补位；硬顶族补位后仍满 cap 则跳过，末轮放开拿满槽。
+            seen = set(selected)
+            counts: dict[str, int] = {}
+            for chunk_id in selected:
+                family = family_of.get(chunk_id, chunk_id)
+                counts[family] = counts.get(family, 0) + 1
+            cap = _quota_family_cap(limit)
+            for enforcing in (True, False):
+                for chunk_id in ranked_all:
+                    if len(selected) >= limit:
+                        break
+                    if chunk_id in seen:
+                        continue
+                    family = family_of.get(chunk_id, chunk_id)
+                    if (
+                        enforcing
+                        and family in _QUOTA_HARD_CAP_FAMILIES
+                        and counts.get(family, 0) >= cap
+                    ):
+                        continue
+                    counts[family] = counts.get(family, 0) + 1
+                    selected.append(chunk_id)
+                    seen.add(chunk_id)
+                if len(selected) >= limit:
+                    break
+        return selected
+
     def retrieve(
         self,
         query_text: str,
@@ -1212,7 +1785,10 @@ class SqliteVectorKnowledgeStore:
         # self._lock 执行，否则全会话检索在此串行停摆。锁内只保留
         # sync_chunks / 积压补齐 / 候选索引一致读这些快操作。
         with self._lock:
-            self.sync_chunks(list(files) if files else [])
+            # 检索只做「有新文件时的增量同步」：files 缺省/为空时跳过整段
+            # 同步，绝不以空清单进 sync_chunks（删侧动作不属于读路径）。
+            if files:
+                self.sync_chunks(list(files))
             if self.top_k <= 0:
                 return []
             if embed_backlog:
@@ -1228,7 +1804,13 @@ class SqliteVectorKnowledgeStore:
             # 三通道候选：BM25/FTS 关键词 + 向量（HNSW/暴力）+ 词条名命中，
             # 再 RRF 融合（词条名通道双倍权重）。
             keyword_ranked = self._keyword_candidates(str(query_text))
-            vector_ranked, best_cosine = self._vector_candidates(query_vector)
+            # 开配额才收集逐块向量余弦（保留位提升的相关性证据门）。
+            vector_scores: dict[str, float] | None = (
+                {} if self.source_quota_enabled else None
+            )
+            vector_ranked, best_cosine = self._vector_candidates(
+                query_vector, vector_scores
+            )
             try:
                 entry_hits = self._entry_title_candidates(str(query_text))
             except Exception:  # noqa: BLE001 - 词条通道失败不阻断其余两通道。
@@ -1238,8 +1820,12 @@ class SqliteVectorKnowledgeStore:
             # 的块直通结果头部，不再依赖 RRF 相对分数——「守岸人是谁」必须先
             # 命中人格库《守岸人》词条，而不是正文堆满「守岸人」的相邻页。
             pinned_ids = [chunk_id for _match_len, exact, chunk_id in entry_hits if exact]
-            fused_ids = _rrf_fuse(
-                vector_ranked, keyword_ranked, self.top_k, bonus_ids=entry_ranked
+            fused_ids = self._fused_ids_for_limit(
+                vector_ranked,
+                keyword_ranked,
+                self.top_k,
+                entry_ranked=entry_ranked,
+                vector_scores=vector_scores,
             )
             if not fused_ids and not pinned_ids:
                 return []
@@ -1279,8 +1865,10 @@ class SqliteVectorKnowledgeStore:
         # R3 停摆批：与 retrieve 同口径——进锁前烧热向量缓存（锁外预热）。
         self._prewarm_vector_cache()
         with self._lock:
-            if sync_files:
-                self.sync_chunks(list(files) if files else [])
+            # 与 retrieve 同口径：sync_files=True 也只在真的拿到清单时才同步，
+            # 空清单不进删侧（这是 retrieve 之外的第二条同形态引信）。
+            if sync_files and files:
+                self.sync_chunks(list(files))
             if limit <= 0:
                 return []
             if embed_backlog:
@@ -1293,15 +1881,24 @@ class SqliteVectorKnowledgeStore:
         query_vector = query_vectors[0]
         with self._lock:
             keyword_ranked = self._keyword_candidates(str(query_text))
-            vector_ranked, best_cosine = self._vector_candidates(query_vector)
+            vector_scores: dict[str, float] | None = (
+                {} if self.source_quota_enabled else None
+            )
+            vector_ranked, best_cosine = self._vector_candidates(
+                query_vector, vector_scores
+            )
             try:
                 entry_hits = self._entry_title_candidates(str(query_text))
             except Exception:  # noqa: BLE001 - 词条通道失败不阻断其余两通道。
                 entry_hits = []
             entry_ranked = [chunk_id for _match_len, _exact, chunk_id in entry_hits]
             pinned_ids = [chunk_id for _match_len, exact, chunk_id in entry_hits if exact]
-            fused_ids = _rrf_fuse(
-                vector_ranked, keyword_ranked, limit, bonus_ids=entry_ranked
+            fused_ids = self._fused_ids_for_limit(
+                vector_ranked,
+                keyword_ranked,
+                limit,
+                entry_ranked=entry_ranked,
+                vector_scores=vector_scores,
             )
             if not fused_ids and not pinned_ids:
                 return []
@@ -1387,9 +1984,15 @@ class SqliteVectorKnowledgeStore:
         return scored[: max(1, self.top_k) * 3]
 
     def _brute_candidates_python(
-        self, query_vector: list[float], limit: int
+        self,
+        query_vector: list[float],
+        limit: int,
+        scores_out: dict[str, float] | None = None,
     ) -> tuple[list[str], float]:
-        """纯 Python 暴力余弦：返回 (按相似度降序的 chunk_id, 最高余弦)。"""
+        """纯 Python 暴力余弦：返回 (按相似度降序的 chunk_id, 最高余弦)。
+
+        scores_out 传入时逐块余弦回填其中（源族配额保留位的证据门用）。
+        """
         scored: list[tuple[float, str]] = []
         for row in self._vector_rows():
             try:
@@ -1401,29 +2004,39 @@ class SqliteVectorKnowledgeStore:
             )
         scored.sort(key=lambda pair: (-pair[0], pair[1]))
         scored = scored[: max(0, int(limit))]
+        if scores_out is not None:
+            scores_out.update((chunk_id, score) for score, chunk_id in scored)
         return (
             [chunk_id for _, chunk_id in scored],
             float(scored[0][0]) if scored else 0.0,
         )
 
     def _vector_candidates(
-        self, query_vector: list[float]
+        self,
+        query_vector: list[float],
+        scores_out: dict[str, float] | None = None,
     ) -> tuple[list[str], float]:
         """向量通道候选：HNSW 命中则用近似分数，否则 numpy/纯 Python 暴力。
 
         返回 (按余弦降序的 chunk_id, 最高余弦)；候选数量为
         max(top_k*4, 20)，只用于 RRF 排序，正文仍由 _fetch_chunks 懒加载。
+        scores_out 传入时把逐块候选余弦回填其中。
         """
         limit = max(self.top_k * _VECTOR_CANDIDATE_FACTOR, _VECTOR_CANDIDATE_FLOOR)
         ann_ranked = self._ann_candidates(query_vector, limit)
         if ann_ranked is not None:
             chunk_ids = [chunk_id for chunk_id, _score in ann_ranked]
+            if scores_out is not None:
+                scores_out.update(
+                    (chunk_id, 0.0 if isnan(float(score)) else float(score))
+                    for chunk_id, score in ann_ranked
+                )
             best = float(ann_ranked[0][1]) if ann_ranked else 0.0
             if isnan(best):
                 best = 0.0
             return chunk_ids, best
         if np is None:
-            return self._brute_candidates_python(query_vector, limit)
+            return self._brute_candidates_python(query_vector, limit, scores_out)
         try:
             matrix, chunk_ids = self._load_vector_cache()
             if matrix is None or not chunk_ids:
@@ -1443,12 +2056,20 @@ class SqliteVectorKnowledgeStore:
                 return [], 0.0
             top_indices = np.argsort(-scores)[:count]
             ranked_ids = [chunk_ids[int(index)] for index in top_indices]
+            if scores_out is not None:
+                scores_out.update(
+                    (
+                        chunk_ids[int(index)],
+                        float(max(0.0, min(1.0, scores[int(index)]))),
+                    )
+                    for index in top_indices
+                )
             best = float(scores[int(top_indices[0])])
             if isnan(best):
                 best = 0.0
             return ranked_ids, best
         except Exception:  # noqa: BLE001 - 维度/缓存异常时退回纯 Python 路径。
-            return self._brute_candidates_python(query_vector, limit)
+            return self._brute_candidates_python(query_vector, limit, scores_out)
 
     def _fetch_chunks(self, chunk_ids: list[str]) -> list[KnowledgeChunk]:
         if not chunk_ids:
@@ -1481,30 +2102,184 @@ class SqliteVectorKnowledgeStore:
     def _ann_files(self) -> tuple[str, str]:
         return self.ann_index_path, self.ann_order_path
 
+    def _ann_lock_path(self) -> Path:
+        """跨进程建锁文件：与索引同卷同目录（锁只是互斥凭证，不是数据）。"""
+        return Path(self.ann_index_path).with_name(
+            f"{Path(self.ann_index_path).name}{_ANN_LOCK_SUFFIX}"
+        )
+
+    def _ann_stat_pair(self, index_path: str, order_path: str) -> tuple | None:
+        """((index_size, index_mtime_ns), (order_size, order_mtime_ns))。
+
+        任一文件不可 stat（缺席/正被移动）返回 None——调用方按"不可用"处理。
+        """
+        left = _stat_stamp(Path(index_path))
+        right = _stat_stamp(Path(order_path))
+        if left is None or right is None:
+            return None
+        return (left, right)
+
+    def _drop_ann_cache(self) -> None:
+        self._ann_index = None
+        self._ann_order = None
+        self._ann_loaded_stamp = None
+
+    def _read_ann_attestation(self) -> dict | None:
+        """读 SQLite 里的成对代际证明（提交点）；缺失/畸形返回 None。"""
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT value FROM knowledge_meta WHERE key = ?",
+                    (_ANN_ATTESTATION_KEY,),
+                ).fetchone()
+        except sqlite3.Error:
+            return None
+        if not row:
+            return None
+        try:
+            parsed = json.loads(str(row[0]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def _write_ann_attestation(self, payload: dict) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO knowledge_meta (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (_ANN_ATTESTATION_KEY, json.dumps(payload, ensure_ascii=False)),
+            )
+
+    def _ann_pair_consistent(
+        self, index_path: str, order_path: str, stamp: tuple
+    ) -> bool:
+        """按代际证明校验 .index 与 .order.json 属于同一代。
+
+        无证明（旧版存量产物/证明未写入）时放行，交由 `ntotal == len(order)`
+        终检兜底——保持对既有已建索引的向后兼容。
+        """
+        attestation = self._read_ann_attestation()
+        if not attestation:
+            return True
+        (index_size, _), (order_size, _) = stamp
+        if int(attestation.get("index_bytes", -1) or -1) != index_size:
+            logger.warning(
+                "knowledge ANN pair refused (index size %s != attested %s): %s",
+                index_size,
+                attestation.get("index_bytes"),
+                Path(index_path).name,
+            )
+            return False
+        if int(attestation.get("order_bytes", -1) or -1) != order_size:
+            logger.warning(
+                "knowledge ANN pair refused (order size %s != attested %s): %s",
+                order_size,
+                attestation.get("order_bytes"),
+                Path(order_path).name,
+            )
+            return False
+        expected = str(attestation.get("order_sha256") or "")
+        if expected:
+            try:
+                actual = _sha256_file(Path(order_path))
+            except OSError:
+                return False
+            if actual != expected:
+                logger.warning(
+                    "knowledge ANN pair refused (order digest drift): %s",
+                    Path(order_path).name,
+                )
+                return False
+        return True
+
     def load_ann_index(self) -> bool:
-        """签名匹配时 mmap 加载 HNSW 索引；缺失/过期返回 False 回退暴力。"""
+        """签名匹配时 mmap 加载 HNSW 索引；缺失/过期/不成对/短装返回 False 回退暴力。
+
+        缓存带文件指纹：另一进程（knowledge-sync / smoke）原子换入新索引后，
+        本进程下一次检索即感知代际变化并重开，不需要重启 Bot。换入中途或
+        `.index` 与 `.order.json` 不同代时拒绝载入（回落暴力扫描：慢，但
+        绝不返回错位的邻居 id）。
+
+        完备性闸（task #47，参数块见 _EMBEDDED_COUNT_KEY）：签名相等与成对校验
+        都只覆盖「同代」，覆盖不了「同代但不全」——补嵌只涨 SQLite 行数、不动
+        签名、也不动 order.json，于是两周前的索引可以一直被判新鲜。故载入末尾
+        再用计数戳比一次 `index.ntotal`：短装或无从判定（无戳）一律拒用。
+        计数戳是 knowledge_meta 单行主键查询，被拒路径也不去扫 knowledge_chunks。
+        """
         if faiss is None:
             return False
-        if self._ann_index is not None and self._ann_order is not None:
-            return True
         index_path, order_path = self._ann_files()
+        stamp = self._ann_stat_pair(index_path, order_path)
+        if self._ann_index is not None and self._ann_order is not None:
+            if stamp is not None and stamp == self._ann_loaded_stamp:
+                return True
+            logger.warning(
+                "knowledge ANN generation changed externally, reopening: %s",
+                Path(index_path).name,
+            )
+            self._drop_ann_cache()
+        if stamp is None:
+            return False
         try:
-            if not Path(index_path).exists() or not Path(order_path).exists():
-                return False
             stored_ann = self._stored_ann_signature()
             if not stored_ann or stored_ann != self.signature:
+                return False
+            if not self._ann_pair_consistent(index_path, order_path, stamp):
                 return False
             index = faiss.read_index(str(index_path), faiss.IO_FLAG_MMAP)
             cast(Any, index).hnsw.efSearch = 64
             order = json.loads(Path(order_path).read_text(encoding="utf-8"))
             if not isinstance(order, list):
+                self._drop_ann_cache()
+                return False
+            order_ids = [str(item) for item in order]
+            ntotal = int(index.ntotal)
+            if ntotal != len(order_ids):
+                # 成对性终检：向量数与序列表长度不齐即混代，拒绝使用。
+                logger.warning(
+                    "knowledge ANN pair refused (ntotal %s != order %s)",
+                    ntotal,
+                    len(order_ids),
+                )
+                self._drop_ann_cache()
+                return False
+            # 完整性终检：索引装下的向量数必须追得上库里的计数戳。
+            expected = self._stamped_expected_vector_count()
+            if expected is None:
+                logger.warning(
+                    "knowledge ANN completeness refused "
+                    "(ntotal=%d expected=unknown reason=unstamped key=%s) "
+                    "-> brute force; run knowledge-sync to certify",
+                    ntotal,
+                    _EMBEDDED_COUNT_KEY,
+                )
+                self._drop_ann_cache()
+                return False
+            missing = expected - ntotal
+            if missing > _ANN_COMPLETENESS_MAX_MISSING:
+                logger.warning(
+                    "knowledge ANN completeness refused "
+                    "(ntotal=%d expected=%d missing=%d max_missing=%d) "
+                    "-> brute force; newly embedded rows are invisible to ANN, "
+                    "run knowledge-sync to rebuild",
+                    ntotal,
+                    expected,
+                    missing,
+                    _ANN_COMPLETENESS_MAX_MISSING,
+                )
+                self._drop_ann_cache()
                 return False
             self._ann_index = index
-            self._ann_order = [str(item) for item in order]
+            self._ann_order = order_ids
+            # 记的是"已校验过的那一代"指纹（不是重取一次当前值）：校验之后
+            # 若又有外部换入，指纹比对不符→下次自动重开，宁可多读一次也不
+            # 把没校验过的代际当成已校验缓存住。
+            self._ann_loaded_stamp = stamp
             return True
         except Exception:  # noqa: BLE001 - 索引损坏/不可读时回退。
-            self._ann_index = None
-            self._ann_order = None
+            self._drop_ann_cache()
             return False
 
     def _ann_candidates(
@@ -1539,80 +2314,175 @@ class SqliteVectorKnowledgeStore:
 
         向量按批从 SQLite 流式读出、逐批归一化 add 进索引——此前一次性
         fetchall + vstack 全量矩阵，10 万 chunk 级语料会产生数百 MB 内存尖峰。
+
+        跨进程互斥：整场重建（读向量 + 构 HNSW + 覆写文件）持一把同目录锁
+        文件闸。FAISS 索引不像 SQLite 那样自带文件锁，两个进程同时重建会
+        把同一批文件写成交织的垃圾。抢锁最多试 `_ANN_LOCK_TIMEOUT_SECONDS`
+        （3s），仍拿不到即如实返回 `built=False, reason=locked_by_other_process`
+        ——不在这里长排队（重建是分钟级，硬等会把 smoke 拖死），更绝不覆写
+        别人正在写的文件。调用方 smoke/kb_wiki 已按 reason 记账。
         """
         if faiss is None:
             # faiss 缺失不影响关键词索引：仍幂等构建 FTS，供关键词/降级检索使用。
             self.ensure_fts_index(force=True)
             return {"built": False, "reason": "faiss_missing"}
+        # 锁序：先进程内维护锁（同旧语义——同进程并发重建排队，不互相踩），
+        # 再跨进程建锁闸。反序会造出 gate→maintenance / maintenance→gate 环。
         with self._maintenance_lock:
-            with self._connect() as connection:
-                cursor = connection.execute(
-                    """
-                    SELECT chunk_id, vector_blob, vector_json
-                    FROM knowledge_chunks
-                    WHERE vector_json IS NOT NULL AND vector_json != ''
-                    """
-                )
-                chunk_ids: list[str] = []
-                index = None
-                while True:
-                    rows = cursor.fetchmany(_ANN_BUILD_BATCH_SIZE)
-                    if not rows:
-                        break
-                    batch_vectors: list = []
-                    for row in rows:
-                        raw_blob = row["vector_blob"]
-                        vector = None
-                        if isinstance(raw_blob, (bytes, bytearray, memoryview)):
-                            try:
-                                parsed = np.frombuffer(bytes(raw_blob), dtype=np.float32)
-                                if parsed.size > 0:
-                                    vector = parsed.astype(np.float32)
-                            except Exception:  # noqa: BLE001
-                                vector = None
-                        if vector is None:
-                            try:
-                                vector = np.asarray(
-                                    json.loads(str(row["vector_json"])), dtype=np.float32
-                                )
-                            except (TypeError, ValueError, json.JSONDecodeError):
-                                continue
-                        batch_vectors.append(vector)
-                        chunk_ids.append(str(row["chunk_id"]))
-                    if not batch_vectors:
-                        continue
-                    matrix = np.vstack(batch_vectors).astype(np.float32)
-                    norms = np.linalg.norm(matrix, axis=1).astype(np.float32)
-                    matrix = (matrix / np.maximum(norms, np.float32(1e-9))[:, None]).astype(np.float32)
-                    if index is None:
-                        try:
-                            faiss.omp_set_num_threads(1)
-                        except Exception:  # noqa: S110, BLE001 - 线程数设置失败按默认继续构建索引。
-                            pass
-                        dimension = int(matrix.shape[1])
-                        index = faiss.IndexHNSWFlat(dimension, 32, faiss.METRIC_INNER_PRODUCT)
-                        index.hnsw.efConstruction = 200
-                    index.add(matrix)
-                    if on_progress is not None:
-                        try:
-                            on_progress(len(chunk_ids))
-                        except Exception:  # noqa: S110, BLE001 - 进度回调失败不影响构建。
-                            pass
-            if index is None or not chunk_ids:
-                self.ensure_fts_index()
-                return {"built": False, "reason": "empty"}
-            index_path, order_path = self._ann_files()
-            Path(index_path).parent.mkdir(parents=True, exist_ok=True)
-            faiss.write_index(index, str(index_path))
-            Path(order_path).write_text(
-                json.dumps(chunk_ids, ensure_ascii=False), encoding="utf-8"
+            lock_path = self._ann_lock_path()
+            gate = _AnnBuildGate(lock_path)
+            if not gate.acquire():
+                logger.warning("跳过 ANN 重建：另一进程正持有建锁 %s", lock_path)
+                return {"built": False, "reason": "locked_by_other_process"}
+            previous = self._ann_build_gate
+            self._ann_build_gate = gate
+            try:
+                return self._build_ann_index_locked(on_progress)
+            finally:
+                self._ann_build_gate = previous
+                gate.release()
+
+    def _require_ann_lock(self) -> None:
+        """覆写线上 ANN 前的持锁凭证：无锁一律拒绝（不新增旁路写口）。"""
+        gate = self._ann_build_gate
+        if gate is None or not gate.held:
+            raise RuntimeError(
+                "拒绝在无跨进程建锁的情况下覆写 ANN 索引文件"
+                "（请经 build_ann_index 入口，勿直调 _publish_ann_pair）"
             )
-            self._set_stored_ann_signature(self.signature)
-            self._ann_index = None
-            self._ann_order = None
-            # knowledge-sync 一次性构建：ANN 落盘后顺带幂等构建 FTS 关键词索引。
-            self.ensure_fts_index(force=True)
-            return {"built": True, "vectors": len(chunk_ids), "dim": int(index.d)}
+
+    def _publish_ann_pair(self, index: Any, chunk_ids: list[str]) -> dict:
+        """原子成对换入 `.index` + `.order.json`，SQLite 代际证明作提交点。
+
+        三步：①两文件先各自写同目录 `.tmp` 并 fsync（线上文件此刻未动）；
+        ②`os.replace` 同卷原子换入（Windows 保证：读者要么看到完整旧版、
+        要么看到完整新版，绝看不到半写文件）；③把这一代的指纹写进
+        knowledge_meta 作为唯一提交点。第 ②/③ 步之间被击杀 → 线上两文件
+        可能一新一旧，但代际证明仍是上一代，读方校验必失败并回落暴力扫描，
+        因此"错配"永远不会被用于回答。
+
+        第 ③ 步还落完备性计数戳（`_EMBEDDED_COUNT_KEY` := index.ntotal）：
+        这是戳的**唯一权威赋值点**，此后只有补嵌写点能让它上涨。
+        """
+        self._require_ann_lock()
+        index_path, order_path = self._ann_files()
+        target_index = Path(index_path)
+        target_order = Path(order_path)
+        target_index.parent.mkdir(parents=True, exist_ok=True)
+        suffix = f"{os.getpid()}.{threading.get_ident()}"
+        tmp_index = target_index.with_name(f"{target_index.name}.{suffix}.tmp")
+        tmp_order = target_order.with_name(f"{target_order.name}.{suffix}.tmp")
+        try:
+            faiss.write_index(index, str(tmp_index))
+            payload = json.dumps(chunk_ids, ensure_ascii=False).encode("utf-8")
+            with open(tmp_order, "wb") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            _atomic_replace_from(tmp_index, target_index)
+            _atomic_replace_from(tmp_order, target_order)
+        except OSError as exc:
+            for leftover in (tmp_index, tmp_order):
+                try:
+                    leftover.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise RuntimeError(f"ANN 原子换入失败：{type(exc).__name__}: {exc}") from exc
+        try:
+            attestation = {
+                "index_bytes": int(target_index.stat().st_size),
+                "order_bytes": int(target_order.stat().st_size),
+                "order_sha256": _sha256_file(target_order),
+                "ntotal": int(index.ntotal),
+                "count": len(chunk_ids),
+                "signature": self.signature,
+            }
+        except OSError as exc:
+            raise RuntimeError(f"ANN 代际证明读取失败：{exc}") from exc
+        # 提交点：先内容版本指纹、再成对代际证明（读方两道都要过才用）。
+        self._set_stored_ann_signature(self.signature)
+        self._write_ann_attestation(attestation)
+        # 完备性计数戳落在这一步之后（权威基线 = 本代索引实装向量数）。
+        # 顺序要紧：若在文件换入之后、落戳之前被杀，留下的是上一代的小值 ⇒
+        # ntotal >= 戳 ⇒ 判可用——那个新索引本来就装满，判它可用是对的；
+        # 反过来先落戳再换文件才会造出「戳新文件旧」的假短装、白回落暴力。
+        self._stamp_expected_vector_count(int(index.ntotal))
+        self._drop_ann_cache()
+        return {
+            "ann_bytes": attestation["index_bytes"],
+            "ann_attested": True,
+        }
+
+    def _build_ann_index_locked(self, on_progress=None) -> dict:
+        """重建主体。前置条件：调用方（build_ann_index）已同时持有进程内
+        `_maintenance_lock` 与跨进程建锁闸——本方法不得再取维护锁（那是
+        非重入 Lock，重取即自锁死）。覆写一律经 `_publish_ann_pair`。
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                SELECT chunk_id, vector_blob, vector_json
+                FROM knowledge_chunks
+                WHERE vector_json IS NOT NULL AND vector_json != ''
+                """
+            )
+            chunk_ids: list[str] = []
+            index = None
+            while True:
+                rows = cursor.fetchmany(_ANN_BUILD_BATCH_SIZE)
+                if not rows:
+                    break
+                batch_vectors: list = []
+                for row in rows:
+                    raw_blob = row["vector_blob"]
+                    vector = None
+                    if isinstance(raw_blob, (bytes, bytearray, memoryview)):
+                        try:
+                            parsed = np.frombuffer(bytes(raw_blob), dtype=np.float32)
+                            if parsed.size > 0:
+                                vector = parsed.astype(np.float32)
+                        except Exception:  # noqa: BLE001
+                            vector = None
+                    if vector is None:
+                        try:
+                            vector = np.asarray(
+                                json.loads(str(row["vector_json"])), dtype=np.float32
+                            )
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            continue
+                    batch_vectors.append(vector)
+                    chunk_ids.append(str(row["chunk_id"]))
+                if not batch_vectors:
+                    continue
+                matrix = np.vstack(batch_vectors).astype(np.float32)
+                norms = np.linalg.norm(matrix, axis=1).astype(np.float32)
+                matrix = (matrix / np.maximum(norms, np.float32(1e-9))[:, None]).astype(np.float32)
+                if index is None:
+                    try:
+                        faiss.omp_set_num_threads(1)
+                    except Exception:  # noqa: S110, BLE001 - 线程数设置失败按默认继续构建索引。
+                        pass
+                    dimension = int(matrix.shape[1])
+                    index = faiss.IndexHNSWFlat(dimension, 32, faiss.METRIC_INNER_PRODUCT)
+                    index.hnsw.efConstruction = 200
+                index.add(matrix)
+                if on_progress is not None:
+                    try:
+                        on_progress(len(chunk_ids))
+                    except Exception:  # noqa: S110, BLE001 - 进度回调失败不影响构建。
+                        pass
+        if index is None or not chunk_ids:
+            self.ensure_fts_index()
+            return {"built": False, "reason": "empty"}
+        published = self._publish_ann_pair(index, chunk_ids)
+        # knowledge-sync 一次性构建：ANN 落盘后顺带幂等构建 FTS 关键词索引。
+        self.ensure_fts_index(force=True)
+        return {
+            "built": True,
+            "vectors": len(chunk_ids),
+            "dim": int(index.d),
+            **published,
+        }
 
     def _stored_ann_signature(self) -> str:
         with self._connect() as connection:
@@ -1630,6 +2500,61 @@ class SqliteVectorKnowledgeStore:
                 """,
                 (value,),
             )
+
+    # ---------- ANN 完备性计数戳（参数块见 _EMBEDDED_COUNT_KEY）----------------
+
+    def _stamped_expected_vector_count(self) -> int | None:
+        """读「本代索引应覆盖多少条向量」的计数戳（载入路径唯一的一发 DB 读）。
+
+        `knowledge_meta.key` 是 PRIMARY KEY，单行定位；这里绝不碰
+        knowledge_chunks——那张表上 `COUNT(*) WHERE vector_json IS NOT NULL`
+        实测 23.8s，进载入路径就是把每条消息的冷载入变成卡死。
+
+        键缺席/畸形/负数一律返回 None = **不可判定**，而不是 0：按 0 处理会把
+        「无从证明完备」洗成「一行都不该有 ⇒ 完美」，正好放行本闸要拦的那类库。
+        """
+        raw = self.get_meta(_EMBEDDED_COUNT_KEY)
+        if not raw:
+            return None
+        try:
+            stamped = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return None
+        return stamped if stamped >= 0 else None
+
+    def _stamp_expected_vector_count(self, count: int) -> None:
+        """提交点落戳：把这一代索引实际装入的向量数写成完备性基线。"""
+        self.set_meta(_EMBEDDED_COUNT_KEY, str(max(0, int(count))))
+
+    @staticmethod
+    def _bump_expected_vector_count(
+        connection: sqlite3.Connection, delta: int
+    ) -> None:
+        """在调用方**同一事务内**把计数戳推进 delta（只供唯一写点调用）。
+
+        同事务是要点：戳与向量必须一起提交或一起回滚，否则回滚后留下虚高的戳
+        = 永久假短装。无戳不建戳：缺席代表这块库从未被新代码认证过，从 0 起算
+        会造出一个远小于真实向量数的戳（存量库上万行嵌于建戳之前即此坑），反倒
+        把短装洗成正常。让它继续缺席 ⇒ 载入端按不可判定拒绝 ⇒ 交给 knowledge-sync
+        重建来认证。
+        """
+        if delta <= 0:
+            return
+        row = connection.execute(
+            "SELECT value FROM knowledge_meta WHERE key = ?",
+            (_EMBEDDED_COUNT_KEY,),
+        ).fetchone()
+        if row is None or row[0] is None or str(row[0]).strip() == "":
+            return
+        try:
+            current = int(str(row[0]).strip())
+        except (TypeError, ValueError):
+            return
+        connection.execute(
+            "INSERT INTO knowledge_meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (_EMBEDDED_COUNT_KEY, str(max(0, current) + int(delta))),
+        )
 
     def _load_vector_cache(self):
         """把全部向量一次性载入 numpy 矩阵并缓存；只保留 chunk_id，正文懒加载。
@@ -1766,6 +2691,7 @@ class SqliteVectorKnowledgeStore:
             return False
         try:
             with self._connect() as connection:
+                saved = 0
                 for row, vector in zip(rows, vectors):
                     connection.execute(
                         "UPDATE knowledge_chunks SET vector_json = ?, vector_blob = ? WHERE chunk_id = ?",
@@ -1775,12 +2701,16 @@ class SqliteVectorKnowledgeStore:
                             str(row["chunk_id"]),
                         ),
                     )
+                    saved += 1
                 if stored_dim is None and lengths:
                     connection.execute(
                         "INSERT INTO knowledge_meta (key, value) VALUES ('vector_dim', ?) "
                         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                         (str(next(iter(lengths))),),
                     )
+                # 完备性计数戳与向量同事务推进（本方法全库唯一写点，见
+                # _EMBEDDED_COUNT_KEY 参数块）：落一行向量 = 索引短一行。
+                self._bump_expected_vector_count(connection, saved)
             if stored_dim is None and lengths:
                 with self._lock:
                     self._vector_dim = next(iter(lengths))
@@ -2281,6 +3211,9 @@ def build_vector_knowledge_provider(
             # 与 kb_wiki 同策略：请求路径发现 FTS 签名缺失不做分钟级内联
             # 重建（会持锁卡死全部会话），重建由 knowledge-sync force 负责。
             fts_auto_rebuild=False,
+            # 人格库专属：选择层源族配额（族上限+人格保留位），防 30k 级
+            # 百科源洗掉 373 块人格本体的每轮槽位。其余库构造点不传=现状。
+            source_quota_enabled=True,
         )
         files = [
             Path(path).expanduser()

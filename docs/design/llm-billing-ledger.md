@@ -6,6 +6,18 @@
 > - `docs/control-plane-provider-and-usage-requirements-2026-09-05.md`（工作区内；本文输入：§5 LLMCallRecord、§6.1 UsageCollector、§17 计费身份分离、§18 NewAPI 适配、§20 指标合同）
 > 配套文档：`docs/design/control-plane-api.md`（/usage 端点消费本表）。
 > 日期：2026-09-12。现状断言均经 grep 核实（标注文件与行号区间）；无法核实处标注 unknown。
+>
+> **坐标时效声明（2026-09-20，LINK-AUDIT 席补）**：本文 `文件:行号` 按 **v21r2 域重组前**布局取证，
+> 自 2026-09-19 起主包已按域迁至 `plugins/bot_unified_runtime/domains/<域>/…`，旧路径多降为 PEP 562 垫片
+> （全文仅 3—18 行）⇒ **行号整体失效**。已实测举例：本文 `__init__.py:979` 所称 `_log_runtime_event`
+> 现居 `__init__.py:1175`；`runtime_event_log.py:238` 所称内容现居
+> `domains/ops/monitor/runtime_event_log.py`；`llm/` 层现名 `domains/chat_reply/llm_engine/`。
+> 定位请按**符号名检索**，不要按本文行号跳读。现行事实与实现进度不在本文维护，走指针：
+> 现行账本实现 `plugins/bot_unified_runtime/domains/chat_reply/llm_engine/ledger.py` ·
+> 台账口径见 [../../AGENTS.md](../../AGENTS.md) 第四部分「计费账本」行 ·
+> 旧→新路径对照 [v21-s0-mapping.md](v21-s0-mapping.md)。
+> 本文的表结构与合同裁定（§3 字段定义、§5 计费身份分离、§6 价目口径）不受迁移影响，仍然有效。
+
 
 ---
 
@@ -24,10 +36,10 @@
 ### 2.1 当前计量链路（文本聚合）
 
 ```text
-llm/providers.py:352  _extract_usage()      归一化 OpenAI/DeepSeek/Anthropic 三类缓存字段
+domains/chat_reply/llm_engine/providers.py  _extract_usage()      归一化 OpenAI/DeepSeek/Anthropic 三类缓存字段
                                             → cache_read_tokens / cache_write_tokens（:352-377）
-llm/providers.py:86   LLMReply.raw_usage    usage 以 dict 挂在回复上（LLMReply 还有 attempts: list[str]，:99）
-capabilities/chat.py:2020 _llm_usage_audit_tags()
+domains/chat_reply/llm_engine/providers.py   LLMReply.raw_usage    usage 以 dict 挂在回复上（LLMReply 还有 attempts: list[str]，:99）
+domains/chat_reply/capabilities/chat.py _llm_usage_audit_tags()
                                             把 usage 折成审计标签：llm_usage_prompt_tokens: / …_completion_tokens:
                                             / …_total_tokens: / …_cache_read_tokens: / …_cache_write_tokens:
                                             / …_cost_milli: 或 llm_usage_cost_unpriced:1（:2020-2058）
@@ -36,11 +48,11 @@ __init__.py:987       _runtime_tag_values() 从发送请求的审计标签反解
 __init__.py:5718      _log_runtime_event(…, "transport_receipt", …)
                                             把 usage 写进文本事件行；注意：total_tokens<=0 时
                                             usage 字段整体不写（__init__.py:1025-1026）
-sources/runtime_event_log.py:178  aggregate_llm_usage_range()
+domains/ops/monitor/runtime_event_log.py:178  aggregate_llm_usage_range()
                                             逐行文本解析：只认 event=transport_receipt 行、
                                             按 request_id 去重、total_tokens>0 过滤、
                                             cost_milli 与 cost_unpriced=1 计数、按模型名分组
-runtime/usage_monitor.py:240  _aggregate_since()  调用上述聚合（60s 阈值巡检 + 13/18/23 点报告的数据源）
+domains/ops/monitor/usage_monitor.py:240  _aggregate_since()  调用上述聚合（60s 阈值巡检 + 13/18/23 点报告的数据源）
 ```
 
 文本日志文件：`data/runtime_events.log`（`BOT_RUNTIME_LOG_FILE`），默认 2 MB 轮转、仅保留 `.old` 一代（runtime_event_log.py:5-10,57-62,77-96）。

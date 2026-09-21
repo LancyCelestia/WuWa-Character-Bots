@@ -5,13 +5,16 @@ import os
 
 import pytest
 
-from plugins.bot_unified_runtime.sources.parsers import (
+import plugins.bot_unified_runtime.sources.parsers  # noqa: F401  # v21r2 W1a: 旧路径聚合先行（垫片期顺序纪律）
+
+# v21r2 W1a: 真身已迁 domains/link_parse/parsers/，monkeypatch 需打在真身上
+from plugins.bot_unified_runtime.domains.link_parse.parsers import (
     platforms_community,
     platforms_discourse,
     platforms_media_share,
 )
 
-_SAMPLE_BASE = r"C:/Users/LancyCelestia/Downloads/Archives/nonebot-plugin-parser-lite-1.3.5/api_txt"
+_SAMPLE_BASE = os.path.join(os.path.dirname(__file__), "api_txt")
 _HAS = os.path.isdir(_SAMPLE_BASE)
 
 
@@ -20,16 +23,23 @@ def _sample(*parts: str) -> dict:
 
 
 def test_discourse_linuxdo_parses_topic(monkeypatch) -> None:
-    if _HAS:
-        sample = _sample("linux.do", "topic.json")
-    else:
-        sample = {"fancy_title": "t", "posts_count": 3, "post_stream": {"posts": [{"username": "u", "cooked": "c", "created_at": "2026-01-01T00:00:00Z"}]}}
+    if not _HAS:
+        pytest.skip(
+            "缺真实样本："
+            f"{_SAMPLE_BASE}/linux.do/topic.json 不存在——"
+            "补样本（nonebot-plugin-parser-lite api_txt 归档解包）后，"
+            "本用例自动由 skip 转为实断言"
+        )
+    sample = _sample("linux.do", "topic.json")
     monkeypatch.setattr(platforms_discourse, "http_get_json", lambda *a, **kw: sample)
 
     result = platforms_discourse.parse_linuxdo("https://linux.do/t/topic/12345")
 
     assert result is not None
-    assert result.engagement.comment_count == 6848  # posts_count-1（真实样本）
+    # 期望值从样本派生（评论数=posts_count-1），不写死任一真实样本数值。
+    posts_count = sample.get("posts_count")
+    assert isinstance(posts_count, int)
+    assert result.engagement.comment_count == max(0, posts_count - 1)
     assert result.creator is not None
 
 
@@ -46,7 +56,7 @@ def test_discourse_zlb_uses_bb_host(monkeypatch) -> None:
 
 
 def test_coolapk_parses_next_data_props(monkeypatch) -> None:
-    if _HAS:
+    if _HAS and os.path.isfile(os.path.join(_SAMPLE_BASE, "coolapk", "feed.json")):
         sample = _sample("coolapk", "feed.json")
     else:
         sample = {"props": {"pageProps": {"feed": {"message": "m", "username": "u", "dateline": "1778036931", "likenum": 5, "replynum": 2}}}}

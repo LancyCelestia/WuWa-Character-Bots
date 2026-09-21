@@ -18,10 +18,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from plugins.bot_unified_runtime.domains.emergency_info.contracts import (
     EmergencyItem,
     EmergencyLevel,
     EmergencyStatus,
+    is_urgent_level,
 )
 from plugins.bot_unified_runtime.domains.emergency_info.service.collector import (
     BUDGET_EXCEEDED_REASON,
@@ -32,6 +35,11 @@ from plugins.bot_unified_runtime.domains.emergency_info.service.collector import
     build_emergency_collector_deps,
     get_latest,
     run_collection_once,
+)
+from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
+    build_emergency_dedupe_key,
+    is_emergency_dedupe_key,
+    is_legal_segment,
 )
 from plugins.bot_unified_runtime.domains.emergency_info.service.review import ReviewGate
 from plugins.bot_unified_runtime.domains.emergency_info.service.snapshot_store import (
@@ -325,11 +333,40 @@ def test_ok_items_are_built_graded_and_handed_to_persist() -> None:
     assert report.stored == 1
     assert len(persist.items) == 1
     handed = persist.items[0]
-    assert handed.item_id == f"{NMC_ID}:A1"
+    assert handed.item_id == f"{NMC_ID}-A1"
+    # 条目 id 会原样进投递幂等键的一段：键段字符集排除 `:`（它是段分隔符）。
+    # 这里曾写 `{source}:{external}` ⇒ `deliver_emergency` 对**每一条**真实条目抛
+    # ValueError、被调度 job 的兜底 except 压成一行日志 ⇒ 紧急信息一条都投不出去，
+    # 而采集侧单测全绿（它不看键）。2026-09-20 由端到端投递用例抓到。
+    assert is_legal_segment(handed.item_id), "id 不能作键段＝投递必炸（见上注）"
     assert handed.level is EmergencyLevel.P0  # 红色 → P0（D-3 颜色序位）
+    assert (handed.latitude, handed.longitude) == (None, None), (
+        "NMC 预警没有坐标这个事实（qx.json 实测无经纬度列），不许凭空造一个点"
+    )
     # 查询路径（快照）读到已定级条目
     view = get_latest(snapshot, _NOW)
     assert view.items[0].level is EmergencyLevel.P0
+
+
+def test_registered_source_ids_compose_into_legal_key_segments() -> None:
+    """`-` 作连接符的前提=源名本身不含 `-`，否则两个 (源,外部号) 会拼出同一个 id。
+
+    合法源清单取自真注册表（与根装配 2.A 同一口径），本测试不另抄一份名单。
+    """
+    deps = build_emergency_collector_deps(
+        persist=lambda item: item,
+        snapshot=SnapshotStore(),
+        issue_sink=lambda issue: None,
+    )
+    source_ids = sorted({task.source_id for task in deps.sources})
+    assert source_ids, "注册表为空＝本锁什么都钉不到"
+    for source_id in source_ids:
+        assert "-" not in source_id, f"源名 {source_id} 含连接符，item_id 会有歧义"
+        assert is_legal_segment(f"{source_id}-EXT1")
+        key = build_emergency_dedupe_key(
+            "qq", f"{source_id}-EXT1", "1108838060", date_key="2026-09-20"
+        )
+        assert is_emergency_dedupe_key(key, require_date_key=True)
 
 
 def test_missing_occurred_time_is_dropped_not_fabricated() -> None:
@@ -348,7 +385,21 @@ def test_missing_occurred_time_is_dropped_not_fabricated() -> None:
     assert persist.items == []
 
 
-def test_quake_item_graded_p0_via_keyword() -> None:
+# WP3-TAXONOMY 半成品挂账（2026-09-21 全面修复波）：震级驱动定级尚未落地（规格 §四），
+# 非本波引入。摘牌指引：搜 WP3-TAXONOMY；全录见 .superpowers/sdd/2026-09-21-fix-wave/master-plan.md §8.1 与 §捌。
+@pytest.mark.xfail(
+    strict=False,
+    reason="WP3-TAXONOMY 半成品：注册表/震级驱动定级未落地（规格 §四·§五），非本波引入",
+)
+def test_quake_item_graded_by_magnitude_not_by_the_word_earthquake() -> None:
+    """WP3 纠偏（审计 E6-N1）：地震定级只吃震级/深度/位置三个数，**不吃「地震」二字**。
+
+    旧实现把种类词 `地震` 写进 P0 关键词表，配上无门槛的 `all_hour` 采集腿，
+    「M0.6 南极震」也会判红穿静默窗。旧用例 `test_quake_item_graded_p0_via_keyword`
+    正是把那个 bug 钉成了正例——现在方向反过来：M3.9 浅源境内震＝蓝档信息级。
+    正反两向的完整矩阵（M0.6/M6.5 与境内境外）在
+    `tests/test_emergency_info_taxonomy.py`，本用例只守采集链路这一头。
+    """
     snapshot = SnapshotStore()
     event = QuakeEvent(
         source_id=ICL_SOURCE_ID,
@@ -376,9 +427,15 @@ def test_quake_item_graded_p0_via_keyword() -> None:
     deps = _deps(snapshot, sources=[task])
     run_collection_once(deps, now=_NOW)
     item = get_latest(snapshot, _NOW).items[0]
-    assert item.level is EmergencyLevel.P0  # 正文含「地震」→ P0
+    assert item.level is EmergencyLevel.P3  # 3.9 级 < 4.0 ⇒ 蓝档，绝不升档
+    assert is_urgent_level(item.level) is False  # 蓝档不穿静默窗
     assert item.source_kind == "earthquake"
     assert item.source_id == ICL_SOURCE_ID
+    # WP3：源侧数值必须进契约字段（定级输入的唯一载体，不塞 body 文本）
+    assert (item.magnitude, item.depth_km) == (3.9, 8.0)
+    assert item.category_id == "earthquake"
+    # WIRE-SUB：坐标必须随条目落地，否则订阅的半径匹配对震情源永远拿不到点。
+    assert (item.latitude, item.longitude) == (28.5, 104.9)
 
 
 def test_build_factory_wires_four_sources_without_network() -> None:

@@ -354,7 +354,7 @@ def collect_reply_chain(
       不存在（这也是修复前引用恒为空的根因）。更深一层优先取非标的
       ``reply.reply``（``Reply`` 的 model_config 是 extra=allow，网关给出即保留）；
       否则读该层 ``message`` 里的 ``reply`` 段 id，并用 ``nested_lookup``
-      （注入式，通常接 NapCat ``get_msg``）继续下钻。
+      （注入式，通常接 SnowLuma ``get_msg``）继续下钻。
     - Telegram：``event.reply_to_message`` 本身就是递归的 ``MessageEvent``，沿
       ``reply_to_message`` 逐层下行。
     - 每层记 message_id 并去重，防 A↔B 互引形成死循环。

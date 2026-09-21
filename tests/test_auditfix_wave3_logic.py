@@ -12,10 +12,6 @@ from __future__ import annotations
 
 import threading
 
-from plugins.bot_unified_runtime.capabilities.auto_send.parser import (
-    is_auto_send_command_text,
-    parse_auto_send_command,
-)
 from plugins.bot_unified_runtime.capabilities.chat import (
     _FAILURE_MESSAGE_CURSOR,
     _PERSONA_FAILURE_MESSAGES,
@@ -28,6 +24,10 @@ from plugins.bot_unified_runtime.capabilities.image_search import (
     build_image_search_capability,
 )
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.schedule.auto_send.parser import (
+    is_auto_send_command_text,
+    parse_auto_send_command,
+)
 
 
 def _blocks_text(blocks: list[str]) -> str:

@@ -35,8 +35,8 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.runtime import error_report
-from plugins.bot_unified_runtime.runtime.error_report import (
+from plugins.bot_unified_runtime.domains.ops.monitor import error_report
+from plugins.bot_unified_runtime.domains.ops.monitor.error_report import (
     ErrorCardGate,
     ErrorCardSettings,
     build_error_report,
@@ -205,16 +205,30 @@ def test_config_snapshot_whitelist_and_secret_masking() -> None:
     assert rows["bot_market_enabled"] == "True"
     assert rows["bot_market_timeout_seconds"] == "6.0"
     assert all(label.startswith("bot_market_") for label in rows)
-    # 密钥类命名一律 ***（真实密钥字段：bot.search 的 API key 族）。
+    # 密钥类命名一律 ***（真实密钥字段：bot.search 的 API key 族）。FIX2：
+    # SEARCH 席 ACG 六键（enabled/timeout/max 等非密钥命名）随能力扩展进
+    # 快照白名单——「search 全键皆密钥」旧前提过时，掩码只对密钥命名键生效，
+    # 非密钥键明文展示（值走 redact_local_secrets 兜底）。
     search_report = build_error_report(
         _message(), "bot.search", _captured_exc(),
-        config_getter=lambda name: "leak-me",
+        config_getter=lambda name: (
+            "leak-me" if name.endswith("_api_key") else "on"
+        ),
     )
     search_rows = {
         row["label"]: row["value"] for row in search_report["config_pairs"]
     }
     assert search_rows
-    assert set(search_rows.values()) == {"***"}
+    api_key_rows = {
+        label: value for label, value in search_rows.items()
+        if label.endswith("_api_key")
+    }
+    assert api_key_rows and set(api_key_rows.values()) == {"***"}
+    acg_rows = {
+        label: value for label, value in search_rows.items()
+        if label.startswith("bot_search_acg_")
+    }
+    assert len(acg_rows) == 6 and set(acg_rows.values()) == {"on"}
     assert "leak-me" not in repr(search_report)
 
 
@@ -322,9 +336,11 @@ def test_gate_sliding_window_allows_then_blocks() -> None:
     assert gate2.allow("s2") is True
 
 
+@pytest.mark.parametrize("line", error_report._COOLDOWN_LINES)
 def test_submit_degrades_to_text_within_cooldown(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, line: str
 ) -> None:
+    monkeypatch.setattr("random.choice", lambda pool: line)
     monkeypatch.setattr(
         error_report, "_stable_report_digest", lambda report: "fixeddigest"
     )
@@ -366,7 +382,8 @@ def test_submit_degrades_to_text_within_cooldown(
     degraded = second.send_queue.requests[0]
     assert degraded.content.content_type == "text"
     assert "ValueError" in degraded.content.content_ref["text"]
-    assert "刚才那张卡" in degraded.content.content_ref["text"]
+    assert degraded.content.content_ref["text"] == line.format(exc="ValueError")
+    assert degraded.content.text_fallback == degraded.content.content_ref["text"]
     assert second_pool.submitted == []
 
 
@@ -527,7 +544,7 @@ def test_pipeline_group_failure_receipt_silent_and_card_sent(
     assert ack_request.target_id == "g1"
     assert card_request.target_id == "g1"
     assert card_request.content.content_type == "mixed"
-    from plugins.bot_unified_runtime.runtime import error_report as _er
+    from plugins.bot_unified_runtime.domains.ops.monitor import error_report as _er
 
     assert cooldown_line("ValueError") in {
         variant.format(exc="ValueError") for variant in _er._COOLDOWN_LINES
@@ -647,7 +664,9 @@ def test_plugin_version_resolves_from_pyproject() -> None:
 
     import tomllib
 
-    from plugins.bot_unified_runtime.runtime.error_report import _plugin_version
+    from plugins.bot_unified_runtime.domains.ops.monitor.error_report import (
+        _plugin_version,
+    )
 
     expected = tomllib.loads(
         (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text("utf-8")
@@ -691,8 +710,8 @@ def test_adapter_dist_label_fail_open(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_protocol_and_connection_use_explicit_mapping() -> None:
     """E-04/E-05：协议/通信按显式映射精确匹配并带实现名；"nonebot" 不再被子串巧合误判成 OneBot。"""
-    assert error_report._protocol_label("onebot") == "OneBot V11（NapCat）"
-    assert error_report._protocol_label("onebot.v11") == "OneBot V11（NapCat）"
+    assert error_report._protocol_label("onebot") == "OneBot V11（SnowLuma）"
+    assert error_report._protocol_label("onebot.v11") == "OneBot V11（SnowLuma）"
     assert error_report._protocol_label("telegram") == "Telegram Bot API"
     assert error_report._protocol_label("mail") == "IMAP/SMTP"
     assert error_report._protocol_label("console") == "本地控制台"
@@ -708,7 +727,7 @@ def test_protocol_and_connection_use_explicit_mapping() -> None:
         _message(), "bot.market", _captured_exc(), config_getter=lambda name: None
     )
     env = {row["label"]: row["value"] for row in report["env_pairs"]}
-    assert env["协议"] == "OneBot V11（NapCat）"
+    assert env["协议"] == "OneBot V11（SnowLuma）"
 
 
 def test_id_pairs_add_sender_bot_group_ids() -> None:
@@ -895,3 +914,40 @@ def test_error_card_real_render_smoke(tmp_path: Path) -> None:
     assert png[:8] == b"\x89PNG\r\n\x1a\n"  # 真实 PNG 魔数，非打桩假字节。
     assert len(png) > 1_000  # 1160x1800@2x 诊断卡不可能是几十字节。
     assert Path(path).name.startswith("error_")
+
+
+@pytest.mark.parametrize("relative", ["data/cards", "./DATA/cards", "DATA\\cards"])
+def test_error_render_relative_path_uses_runtime_root(tmp_path, monkeypatch, relative):
+    report = _full_report()
+    monkeypatch.setenv("BOT_RUNTIME_DATA_DIR", str(tmp_path))
+    original_path = Path
+
+    def forbid_relative_path(raw):
+        path = original_path(raw)
+        assert path.is_absolute(), "relative paths must be resolved before filesystem writes"
+        return path
+
+    # RED 阶段也不允许真的写源码树；此保护只拦未解析的相对路径。
+    monkeypatch.setattr(error_report, "Path", forbid_relative_path)
+    result = render_error_card_png(report, backend=_FakeBackend(), card_dir=relative)
+    assert result
+    assert Path(result).parent == tmp_path / "cards"
+    assert Path(result).is_file()
+
+
+def test_cooldown_reply_samples_once_for_body_and_fallback(monkeypatch):
+    import random
+
+    calls = []
+
+    def choose(pool):
+        calls.append(len(calls))
+        return pool[calls[-1] % len(pool)]
+
+    monkeypatch.setattr(random, "choice", choose)
+    pipeline = _PipelineStub()
+    maybe_submit_error_card(pipeline, _message(), "bot.market", _captured_exc(),
+        settings=ErrorCardSettings(enabled=True), gate=_ManualGate([False]))
+    request = pipeline.send_queue.requests[0]
+    assert request.content.content_ref["text"] == request.content.text_fallback
+    assert len(calls) == 1

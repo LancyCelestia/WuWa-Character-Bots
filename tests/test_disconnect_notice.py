@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.runtime.disconnect_notice import (
+from plugins.bot_unified_runtime.domains.ops.monitor.disconnect_notice import (
     DisconnectNoticeOptions,
     DisconnectNotifier,
     adapter_display_name,

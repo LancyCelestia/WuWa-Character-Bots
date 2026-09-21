@@ -10,12 +10,13 @@ PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/test_mermaid_reply_render.py \
 from __future__ import annotations
 
 import base64
+import re
 
 import pytest
 
 from plugins.bot_unified_runtime.contracts import CapabilityResult, ReviewResult
-from plugins.bot_unified_runtime.output import renderer
-from plugins.bot_unified_runtime.output.card_render import bridge
+from plugins.bot_unified_runtime.domains.render import renderer
+from plugins.bot_unified_runtime.domains.render.card_render import bridge
 
 FENCE = "```mermaid\ngraph TD\nA --> B\n```"
 
@@ -194,12 +195,33 @@ def test_render_mermaid_html_mica_and_escapes() -> None:
     assert "<meta viewport" not in html_text
     assert "fit-content" in html_text
     assert "background: transparent" in html_text
-    # vis4 分级族（2026-09-13）：页脚胶囊升 L2 panel 阴影，外壳保留 shell 档——
-    # 全部出自两枚 token 的 var() 引用，禁自造第三种。
-    assert html_text.count("box-shadow") == 2
-    assert "var(--mica-shadow-panel)" in html_text
+    # vis4 分级族（2026-09-13 换代）：阴影 token 已从「恰好两枚」升为 shell/tile/panel
+    # **三档族**（`theme_tokens.SHADOW_CSS_VARS`）。旧断言硬数 `count("box-shadow") == 2`
+    # 是换代漏改（AGENTS 铁律口径同病，见 docs/audit-20260921.md V2-1g）——按仓内正例
+    # tests/test_rendering_contract.py:202 的范式改判「每处阴影必须是族内 token 的 var()
+    # 引用」，不再数总数：数总数会把合法的新增档位当成违规，放掉真正的自造值。
+    from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
+        SHADOW_CSS_VARS,
+    )
+
+    shadow_values = re.findall(r"box-shadow\s*:\s*([^;]+)", html_text)
+    assert shadow_values, "mermaid 卡应至少有一处阴影"
+    for value in shadow_values:
+        if value.strip() == "none":  # 显式去阴影（降级态/伪元素复位）合法
+            continue
+        refs = re.findall(r"var\((--[a-z0-9-]+)\)", value)
+        assert refs, f"box-shadow 必须是 token 引用，不得自造：{value!r}"
+        assert all(name in SHADOW_CSS_VARS for name in refs), f"族外阴影 token：{value!r}"
+    # 本卡 DOM 只有两档阴影在用：外壳 = `--mica-shadow`(L3)、品牌胶囊 =
+    # `--mica-shadow-soft`(L1)。`--mica-shadow-panel`(L2) 只在**卡内有 L2 大件**
+    # （`.glass` 面板 / `.row` 瓦片 / `.stack`）的卡上被消费；mermaid 的图身是
+    # mermaid 自绘 SVG（零触碰），唯一的非壳大件是页脚胶囊，而 CAP1（2026-09-20
+    # 用户裁定）把胶囊统一收口成 soft 档（`mica_shell.brand_capsule_css` 明文
+    # 「阴影仅 var(--mica-shadow-soft)」）。⇒ 旧断言「panel 引用必须在场」是
+    # CAP1 换代漏改的快照，与「恰好两枚 box-shadow」同源。真约束由契约族代验。
     assert "var(--mica-shadow)" in html_text
-    assert "--pc: #607080" in html_text
+    assert "var(--mica-shadow-soft)" in html_text
+    assert "--accent:#607080" in html_text
     assert 'class="card"' in html_text
     # CDN + startOnLoad
     assert "https://cdn.jsdelivr.net/npm/mermaid" in html_text

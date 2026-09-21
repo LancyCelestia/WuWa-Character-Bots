@@ -29,16 +29,17 @@ import pytest
 
 from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.capabilities.market import market_filter_secids
-from plugins.bot_unified_runtime.contracts.finance import FinanceDataStatus as Status
-from plugins.bot_unified_runtime.sources import market_data, stock_data
-from plugins.bot_unified_runtime.sources.market_data import (
+from plugins.bot_unified_runtime.domains.core.contracts.finance import (
+    FinanceDataStatus as Status,
+)
+from plugins.bot_unified_runtime.domains.finance.data import market_data, stock_data
+from plugins.bot_unified_runtime.domains.finance.data.market_data import (
     INDEX_UNAVAILABLE,
     PENDING_INDEX_CANDIDATES,
     format_market_brief,
     reset_market_trend_cache,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
-from plugins.bot_unified_runtime.sources.stock_data import (
+from plugins.bot_unified_runtime.domains.finance.data.stock_data import (
     CompanyRef,
     fetch_market_cap,
     fetch_stock_quote,
@@ -47,6 +48,7 @@ from plugins.bot_unified_runtime.sources.stock_data import (
     list_listed_companies,
     resolve_company_query,
 )
+from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 
 # ---------------------------------------------------------------------------
 # 夹具（真实探测响应的字段形态；fltt=2 小数口径）
@@ -319,7 +321,9 @@ class TestH02QuoteAndBrief:
         assert cap.status is Status.OK
 
     def test_brief_currency_wording_adapts(self) -> None:
-        from plugins.bot_unified_runtime.contracts.finance import EquityQuote
+        from plugins.bot_unified_runtime.domains.core.contracts.finance import (
+            EquityQuote,
+        )
 
         ref = stock_data._COMPANY_BY_TICKER["600519"]
         quote = EquityQuote(
@@ -341,7 +345,10 @@ class TestH02QuoteAndBrief:
     def test_brief_usd_wording_regression(self) -> None:
         from datetime import datetime, timezone
 
-        from plugins.bot_unified_runtime.contracts.finance import EquityQuote, MarketCap
+        from plugins.bot_unified_runtime.domains.core.contracts.finance import (
+            EquityQuote,
+            MarketCap,
+        )
 
         quote = EquityQuote(
             ticker="NVDA",
@@ -361,7 +368,7 @@ class TestH02QuoteAndBrief:
         assert "4.50 万亿美元" in text  # 美股市值文案逐字节回归
 
     def test_brief_non_usd_cap_gap_explained(self) -> None:
-        from plugins.bot_unified_runtime.contracts.finance import (
+        from plugins.bot_unified_runtime.domains.core.contracts.finance import (
             EquityQuote,
             MarketCap,
         )

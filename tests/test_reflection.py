@@ -478,7 +478,7 @@ def test_llm_facts_untagged_lines_fall_back_to_primary_with_debug_log(
     """
     stub = _StubLLM("1. 我最喜欢蓝色\n- 我最近在学钢琴")
     with caplog.at_level(
-        logging.DEBUG, logger="plugins.bot_unified_runtime.character.reflection"
+        logging.DEBUG, logger="plugins.bot_unified_runtime.domains.chat_reply.character.reflection"
     ):
         reflection = LLMSummarizer(stub).summarize("qq:group:1", _group_two_sender_turns())
     assert [draft.text for draft in reflection.facts] == ["我最喜欢蓝色", "我最近在学钢琴"]

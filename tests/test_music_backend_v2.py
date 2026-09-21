@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from plugins.bot_unified_runtime.contracts.music import (
+from plugins.bot_unified_runtime.domains.core.contracts.music import (
     MusicContributor,
     MusicRequestEvent,
     MusicTrack,
 )
-from plugins.bot_unified_runtime.sources.music_normalization import (
+from plugins.bot_unified_runtime.domains.music.data.music_normalization import (
     canonical_key,
     music_fingerprint,
 )

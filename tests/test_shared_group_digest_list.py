@@ -32,6 +32,10 @@ def _make_history_db(tmp_path: Path, group_id: str = _LISTED_GROUP) -> str:
 
     两个群各有一轮对话：``group_id`` 与名单外对照群 "999"，使
     "黑名单未误伤名单外群"可被真实数据证明。
+
+    键形态用生产写侧实况 ``group_<群号>_<发送者>``（NoneBot
+    get_session_id 群形态；F4 席根修同步——旧夹具 ``group:<群号>``
+    是被测 bug 的死形态，生产 0 行，见 tests/test_shared_group_key_alignment.py）。
     """
     db_path = tmp_path / "history.sqlite3"
     with sqlite3.connect(db_path) as connection:
@@ -48,8 +52,8 @@ def _make_history_db(tmp_path: Path, group_id: str = _LISTED_GROUP) -> str:
         )
         rows: list[tuple[str, str, str, str, str]] = []
         for gid, text in ((group_id, "早上好"), ("999", "对照组发言")):
-            rows.append((f"group:{gid}", "user", text, "2026-09-11T08:00:00", "chat"))
-            rows.append((f"group:{gid}", "assistant", "早", "2026-09-11T08:01:00", "chat"))
+            rows.append((f"group_{gid}_1001", "user", text, "2026-09-11T08:00:00", "chat"))
+            rows.append((f"group_{gid}_1001", "assistant", "早", "2026-09-11T08:01:00", "chat"))
         connection.executemany(
             "INSERT INTO conversation_turns VALUES (?, ?, ?, ?, ?)", rows
         )

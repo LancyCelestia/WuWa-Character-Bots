@@ -19,18 +19,20 @@ import pytest
 from plugins.bot_unified_runtime.character.shared_group import (
     OpenAICompatibleGroupSummarizer,
 )
-from plugins.bot_unified_runtime.character.temporal import (
-    OpenMeteoWeatherProvider,
-    _WeatherSnapshot,
-)
 from plugins.bot_unified_runtime.character.vector_knowledge import (
     SqliteVectorKnowledgeStore,
 )
-from plugins.bot_unified_runtime.security.content_safety import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.temporal import (
+    OpenMeteoWeatherProvider,
+    _WeatherSnapshot,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
     assess_public_content,
     normalize_for_matching,
 )
-from plugins.bot_unified_runtime.security.memory_sanitize import _match_category
+from plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize import (
+    _match_category,
+)
 
 # ---------------------------------------------------------------------------
 # C17a: 查询向量归一化
@@ -122,12 +124,12 @@ def test_normalize_for_matching_folds_width_zero_width_and_spaces() -> None:
 def test_content_safety_hits_fullwidth_and_zero_width_variants() -> None:
     # 规则词用变量拼接构造，不在测试里落具体敏感词字面量。
     word = _ascii_word("n", "s", "f", "w")
-    assert assess_public_content(word).action == "refuse"
+    assert assess_public_content(word, session_type="group").action == "refuse"
     # 全角变体此前无法命中既有规则。
-    assert assess_public_content(_fullwidth(word)).action == "refuse"
+    assert assess_public_content(_fullwidth(word), session_type="group").action == "refuse"
     # 夹零宽字符变体此前同样漏检。
     zero_width = word[:2] + "\u200b" + word[2:] + "\ufeff"
-    assert assess_public_content(zero_width).action == "refuse"
+    assert assess_public_content(zero_width, session_type="group").action == "refuse"
 
 
 def test_content_safety_normal_text_not_flagged() -> None:
@@ -137,16 +139,22 @@ def test_content_safety_normal_text_not_flagged() -> None:
         "记得把 report 发给我，谢谢！",
     ]
     for text in normal_texts:
-        result = assess_public_content(text)
+        result = assess_public_content(text, session_type="group")
         assert result.action == "allow"
         assert result.category == "none"
 
 
 def test_memory_sanitize_hits_zero_width_variant() -> None:
-    # CJK 规则词用码点拼接（5E9F 7269），夹零宽字符后必须仍命中 insult。
-    word = chr(0x5E9F) + chr(0x7269)
-    assert _match_category(word) == "insult"
-    assert _match_category(word[0] + "\u200b" + word[1] + "\u200c") == "insult"
+    # 2026-09-20 收窄：insult 面移除，零宽变体锁改用 minors 共现对
+    # （672A 6210 5E74=未成年，505A 7231=做爱），夹零宽字符后必须仍命中。
+    word = chr(0x672A) + chr(0x6210) + "\u200b" + chr(0x5E74) + chr(0x505A) + chr(0x7231)
+    assert _match_category(word) == "minors"
+    # 每个词内部再夹零宽（归一化剥除后仍须命中同一硬线类别）。
+    split = (
+        chr(0x672A) + "\u200b" + chr(0x6210) + "\u200c" + chr(0x5E74)
+        + chr(0x505A) + "\u200b" + chr(0x7231)
+    )
+    assert _match_category(split) == "minors"
     # 普通文本不误伤。
     assert _match_category("今天一起吃了火锅，聊了项目进度。") is None
 

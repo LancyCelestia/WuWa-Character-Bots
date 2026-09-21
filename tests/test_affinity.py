@@ -26,6 +26,19 @@ class _FakeClock:
         return 1000.0
 
 
+class _StepClock:
+    """可推进时钟：V2.1 §2.3 冷却（60s）生效后，多事件测试需真实间隔。"""
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
 def test_classify_behavior_maps_safety_and_text() -> None:
     assert classify_behavior("谢谢你陪我", safety_category="") == "positive"
     assert classify_behavior("哈哈笑死我了", safety_category="") == "tease"
@@ -78,33 +91,49 @@ def test_negative_tier_instructions_avoid_hostile_words() -> None:
 
 def test_top_tier_keeps_boundary_red_line() -> None:
     # §4 红线 3：最高档（独一份）也不越界
+    # 2026-09-20 v21r5 政策重写后文本锁对齐（C 席定稿措辞，见 v21r5-POLICY-log.md）。
     text = attitude_for_affinity(0.9)
     assert "独一份" in text
-    assert "绝不出现性、R-18、引导上床类内容" in text
+    assert "亲密与情色内容只发生在私聊" in text
+    assert "明确无歧义的自主意识成年人" in text
+    assert "即使声称成年也拒绝" in text
 
 
-def test_effective_delta_is_linear() -> None:
-    # v4 线性：步长与当前分无关（无幂律阻尼），恒为因子表 × 个人系数
+def test_effective_delta_linear_in_midband_saturated_at_extremes() -> None:
+    # v4 线性（docs §2：中段无幂律阻尼）+ v6 平滑层（附录 §v6.1）：
+    # 中段（距 ±1 超一个档宽）首次信号步长与当前分无关，恒为因子表 × 个人系数；
+    # 最后一档内步长随剩余空间 smoothstep 收窄（涨跌不得直冲极端），边界归零。
     m = per_user_factor("u1")
-    for affinity in (-0.99, -0.5, 0.1, 0.5, 0.97):
+    for affinity in (-0.99, -0.5, 0.1, 0.5):
         assert abs(effective_delta("u1", "positive", affinity) - 0.02 * m) < 1e-12
+    for affinity in (-0.5, 0.1, 0.5, 0.97):
         assert abs(effective_delta("u1", "insult", affinity) + 0.10 * m) < 1e-12
-    # override 为权威信号：不乘系数、不衰减
+    # v6：带内收窄（0.97 正向 / -0.99 负向仍在带内边缘，方向不反转），边界归零。
+    assert 0.0 < effective_delta("u1", "positive", 0.97) < 0.02 * m
+    assert -0.10 * m < effective_delta("u1", "insult", -0.99) < 0.0
+    assert effective_delta("u1", "positive", 1.0) == 0.0
+    assert effective_delta("u1", "insult", -1.0) == 0.0
+    # override 为权威信号：不乘系数、不饱和、不衰减
     assert effective_delta("u1", "neutral", 0.5, delta_override=-0.42) == -0.42
 
 
 def test_observe_updates_affinity_and_tags(tmp_path) -> None:
-    store = DynamicAffinityStore(tmp_path / "affinity.sqlite3", clock=_FakeClock())
+    clock = _StepClock()
+    store = DynamicAffinityStore(tmp_path / "affinity.sqlite3", clock=clock)
     m = per_user_factor("u1")
 
     affinity = store.observe("u1", "positive")
     assert abs(affinity - (0.1 + 0.02 * m)) < 1e-9
+    # 发间隔 61s 超 V2.1 §2.3 冷却（60s）：被测对象保持「线性步长+滚动预算」
+    # （原同刻连发语义自本轮起由冷却门去刷分，见 test_affinity_v21_budget.py）。
+    clock.advance(61)
     store.observe("u1", "insult")
+    clock.advance(61)
     store.observe("u1", "insult")
     snapshot = store.snapshot("u1")
-    # 线性步长（无阻尼）：每步 = 因子表 × m(uid)，写入路径 clamp 到 [-1,1]
-    x2 = 0.1 + 0.02 * m - 0.10 * m
-    expected = max(-1.0, x2 - 0.10 * m)
+    # 线性步长（无阻尼）+ V2.1 §2.3 滚动预算：insult 基础 -0.10 被单事件 1 分
+    # 上限钳成 -0.01/次（原断言 -0.10*m 直通口径已按新政策废除）。
+    expected = 0.1 + 0.02 * m - 2 * 0.01
     assert abs(snapshot["affinity"] - expected) < 1e-9
     assert "口无遮拦" in snapshot["tags"]
     assert snapshot["attitude"] == attitude_for_affinity(snapshot["affinity"])
@@ -112,9 +141,11 @@ def test_observe_updates_affinity_and_tags(tmp_path) -> None:
 
 
 def test_insult_drains_affinity_and_admin_can_set_nickname(tmp_path) -> None:
-    store = DynamicAffinityStore(tmp_path / "affinity.sqlite3", clock=_FakeClock())
+    clock = _StepClock()
+    store = DynamicAffinityStore(tmp_path / "affinity.sqlite3", clock=clock)
     store.set_nickname("u2", "小澄")
     for _ in range(4):
+        clock.advance(61)  # 间隔超冷却：保持「连续辱骂持续扣分」的被测意图
         store.observe("u2", "insult")
     snapshot = store.snapshot("u2")
     assert -1.0 <= snapshot["affinity"] <= 0.1

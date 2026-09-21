@@ -15,13 +15,19 @@ from types import SimpleNamespace
 
 import pytest
 
-import plugins.bot_unified_runtime.llm.channel_health as channel_health_module
-from plugins.bot_unified_runtime.llm.channel_health import (
+import plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health as channel_health_module
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
     ChannelHealthStore,
     resolve_slow_ema_ms,
 )
-from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
-from plugins.bot_unified_runtime.llm.providers import LLMProviderError, LLMReply
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+    ModelRouter,
+    ModelSpec,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
+    LLMReply,
+)
 
 
 def _store(tmp_path) -> ChannelHealthStore:
@@ -198,6 +204,9 @@ def test_channels_for_model_ema_disabled_falls_back_price(tmp_path, monkeypatch)
     monkeypatch.setattr(channel_health_module, "_GLOBAL_STORE", store)
     monkeypatch.setenv("BOT_CHANNEL_HEALTH_ENABLED", "1")
     monkeypatch.setenv("BOT_CHANNEL_HEALTH_LATENCY_FIRST", "0")
+    # 钉住 legacy 价格序语义（v21r2 R1 缺省 bot_chat_strict_priority=true
+    # 改为注册表优先级主键，见 test_llm_route_priority_v21r2.py）。
+    monkeypatch.setenv("BOT_CHAT_STRICT_PRIORITY", "0")
     # 延迟择优关 → 价格均值序（cheap 0.6 < pricey 6.0），ema 不参与。
     assert router.channels_for_model("m-shared") == ["cheap", "pricey"]
 
@@ -577,7 +586,7 @@ def test_pure_runtime_entry_still_overrides_wholly() -> None:
 # ==================== 6. 巡检报告慢渠道评级 ====================
 
 def test_health_report_marks_slow_by_ema() -> None:
-    from plugins.bot_unified_runtime.capabilities.runtime_admin import (
+    from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
         _format_channel_health_report,
     )
 
@@ -615,7 +624,7 @@ def test_health_report_marks_slow_by_ema() -> None:
 
 
 def test_health_report_grade_uses_ema_for_normal_band() -> None:
-    from plugins.bot_unified_runtime.capabilities.runtime_admin import (
+    from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
         _format_channel_health_report,
     )
 

@@ -5,10 +5,10 @@
 > 修改帮助页数据后运行 `python scripts/command_catalog.py --write`。
 > `/bot help`、`/bot help <模块>` 与本目录共享同一数据源。
 
-- 模块数：77
-- 别名数：506
-- 普通用户可用模块：37；仅管理员模块：40
-- 路由规则数：33；其中登记为内部能力：5
+- 模块数：78
+- 别名数：514
+- 普通用户可用模块：37；仅管理员模块：41
+- 路由规则数：34；其中登记为内部能力：5
 
 ## 使用入口
 
@@ -21,8 +21,8 @@
 
 ### 这个机器人能做什么
 
-- 全部 77 个模块都列在本文件「模块详情」里；普通用户可直接使用其中 37 个公开模块，其余 40 个为管理员诊断与配置模块。
-- 能力横跨人格闲聊、链接解析、点歌、天气、行情、占卜、提醒、订阅推送、表情包、下载与一整套管理员运维命令；全部 77 个模块逐个列在下方「模块详情」，公开模块名单以 /bot help 为准。
+- 全部 78 个模块都列在本文件「模块详情」里；普通用户可直接使用其中 37 个公开模块，其余 41 个为管理员诊断与配置模块。
+- 能力横跨人格闲聊、链接解析、点歌、天气、行情、占卜、提醒、订阅推送、表情包、下载与一整套管理员运维命令；全部 78 个模块逐个列在下方「模块详情」，公开模块名单以 /bot help 为准。
 
 ### 怎么开始聊天
 
@@ -46,7 +46,7 @@
 
 ### 哪些命令只有管理员能用
 
-- 仅管理员模块共 40 个，全部走 `/bot` 前缀（例如 `/bot status`、`/bot runtime`、`/bot model`），普通成员发送会收到拒绝提示；权限由六级角色体系（user/trusted/enterprise/admin/super_admin/blocked）判定。
+- 仅管理员模块共 41 个，全部走 `/bot` 前缀（例如 `/bot status`、`/bot runtime`、`/bot model`），普通成员发送会收到拒绝提示；权限由六级角色体系（user/trusted/enterprise/admin/super_admin/blocked）判定。
 - 排障第一入口是 `/bot status`，追问原因用 `/bot why`。
 
 ### 群聊和私聊有什么差别
@@ -63,7 +63,7 @@
 
 ### 哪些功能依赖网络？
 
-- 需要联网的模块：上下文、对话、模型、搜索、凭据、文件、群摘要、视频理解、邮件、Telegram、订阅、点歌、搜图、天气、行情、个股行情、商品行情、国债收益率、北向资金、汇率、快报、维基、萌娘百科、历史上的今天、下载、链接、媒体归档、群信息、Epic、聊天、表情收库。
+- 需要联网的模块：上下文、对话、模型、搜索、凭据、文件、群摘要、视频理解、邮件、Telegram、订阅、点歌、搜图、天气、行情、个股行情、商品行情、国债收益率、北向资金、汇率、快报、维基、萌娘百科、历史上的今天、下载、链接、媒体归档、群信息、Epic、聊天、表情收库、紧急信息。
 - 纯本地模块：功能管理、记忆、接入、配置、就绪、角色、人格、路由、历史、暂停、回复、用量、解析、群文件、日志、身份、怪癖、合并转发、运行开关、供应商、表情、占卜、随机图、笔记、收件箱、语音、帮助、戳一戳、决策。
 - 联网模块自带重试与兜底（各模块的「失败兜底」行写明具体行为）；外部源不可用时给可读失败原因。
 
@@ -95,7 +95,7 @@
 【指令与参数】
 /bot feature list：作用=列出能力节点；参数=无；内容=稳定ID和有效状态；意义=定位待管理功能。
 /bot feature get <ID>：作用=查询状态；参数=稳定ID；内容=有效状态、版本和图修订；意义=确认父级与依赖影响。
-/bot feature enable|disable|reset <ID>：作用=启用、禁用或恢复默认；参数=稳定ID；内容=新版本和审计ID；意义=受控调整功能，已运行任务不强杀。
+/bot feature enable|disable|reset <ID>：作用=启用、禁用或恢复默认；参数=稳定ID；内容=新版本和审计ID；意义=受控调整功能，修改仅限超管，已运行任务不强杀。
 /bot feature preview <ID> on|off|reset：作用=预览变更；参数=稳定ID与目标状态；内容=影响节点；意义=写入前核对，不修改数据。
 【权限与效果】
 权限=仅管理员（含超管）；管理员只读，修改仅限超管，预览仅限超管；受保护核心能力不可关闭。命令与控制面共用服务。当前仅覆盖已登记并接入主Pipeline的能力，入站媒体和直接平台副作用仍在迁移。
@@ -121,7 +121,7 @@
   人格/知识/记忆等文件的在位情况、各持久化存储落在 sqlite 还是内存、
   LLM 供应商与密钥是否就绪。所有信息脱敏输出，不显示密钥与会话原文。
 【指令与参数】
-/bot status：作用=查看运行状态摘要；参数=无；内容=多行状态清单（详见下方效果）；意义=排障第一入口，先看状态再 /bot why 追原因。
+/bot status：作用=查看运行状态摘要；参数=无；内容=软暂停状态/原因、角色计数、人格与知识文件缺失数、记忆/历史/诊断/审计/回执/队列的开关与存储（sqlite/memory）、限速与安静时间、LLM provider/model/key 状态与就绪下一步；意义=排障第一入口，出问题先看状态再 /bot why。
 【权限与效果】
   权限=仅管理员（普通成员发送会收到拒绝提示）。
   内容逐段对应：运行时硬开关/软暂停与原因→权限角色计数（admin/enterprise/trusted/blocked）→
@@ -153,9 +153,10 @@
   长期记忆是你主动交给机器人的事实卡片（区别于自动抽取的印象）。
   每条记忆归属“写入它的那个人＋所在会话”，互相隔离。
 【指令与参数】
-/bot memory add <内容>：作用=新增记忆；参数=内容（必填，任意文本，建议 ≤1200 字）；--sensitivity=（可选开关，取值 personal|group|public|credentialed，默认 personal）；内容=回显正文、fact_id（形如 fact_xxxxxxxxxxxx）与 sensitivity；意义=把“我对芒果过敏”这类事实固定下来，之后对话会被参考。
-/bot memory list：作用=列出记忆；参数=无；内容=fact_id（sensitivity=…）：正文 逐行清单；意义=盘点与拿 fact_id。群聊里只显示 public/group 两级，防止个人私事被围观；私聊显示全部。
-/bot memory delete <fact_id>：作用=删除记忆；参数=fact_id（必填，从 add/list 输出复制）；内容=已删除 或 未找到；意义=被遗忘权，删掉不想被记住的内容。
+/bot memory add <内容>：作用=记住一句话；参数=内容（必填，建议 ≤1200 字）＋--sensitivity=（可选，personal|group|public|credentialed，默认 personal）；内容=回显已记住的正文与 fact_id、sensitivity；意义=让机器人长期记住你的偏好与事实。
+/bot memory list：作用=列出我的记忆；参数=无；内容=fact_id＋sensitivity＋正文的清单（私聊=全部个人记忆，群聊=仅 public/group 两级）；意义=核对机器人到底记住了什么。
+/bot memory delete <fact_id>：作用=删除一条记忆；参数=fact_id（必填，来自 add/list 输出）；内容=成功回显已删除，找不到会明说；意义=撤回不想被记住的内容。
+权限=全员（只增删查“你本人”的记忆，别人的看不到也删不掉）。
 【取值范围】
   sensitivity 四级：personal（仅自己）/ group（本群可见）/ public（可公开）/ credentialed（敏感凭据类，谨慎使用）。
 【权限与效果】
@@ -182,8 +183,7 @@
   决策解释器：把某次请求“走了哪条路由、命中什么策略、在哪一步失败”
   翻译成人话。诊断链路的第二步（第一步是 /bot status）。
 【指令与参数】
-/bot why：作用=解释最近一次回复；参数=无；内容=最近一次请求的决策解释；意义=最快的“刚才怎么回事”。
-/bot why <id>：作用=解释指定请求；参数=id（可选填，request_id 或 debug_id，来自回执/审计输出）；内容=该请求的决策解释；意义=追溯历史某一条。
+/bot why [id]：作用=解释一次回复的路由/策略/错误；参数=id（可选，request_id 或 debug_id，可从 /bot recent 或回执/审计输出里取；省略=最近一次）；内容=该请求的路由判定、策略命中、失败类型与线索；意义=回答“它刚才为什么这么回/为什么没回”。
 【权限与效果】
   权限=仅管理员。没有可解释的记录时会提示先和机器人说一句话。
 【示例】/bot why｜/bot why help_8f2a1b3c
@@ -209,7 +209,7 @@
   发送回执记录每条出站消息的投递过程。BOT_RECEIPTS_ENABLED=true 时
   落库可跨重启查询，默认内存态（重启即清）。
 【指令与参数】
-/bot receipt <id>：作用=查询发送回执；参数=id（必填，request_id 或 debug_id，可从 /bot recent 输出拿）；内容=回执状态与关键时间点；意义=区分“没生成”和“生成了但没发出去”。
+/bot receipt <id>：作用=查询一条消息的发送回执；参数=id（必填，request_id 或 debug_id，可从 /bot recent 的输出里取）；内容=该消息的投递状态（待发/已发/失败）与关键时间点；意义=区分“没生成”和“生成了但没发出去”，确认“我发的命令到底发出去没有”。
 【权限与效果】
   权限=仅管理员。查不到时回显脱敏后的 id。
 【示例】/bot receipt 7c9f…（用 /bot recent 里出现的 id）
@@ -235,7 +235,7 @@
   审计记录由 BOT_AUDIT_ENABLED=true 时落库（默认内存态）。
   每个请求的关键节点（入站/路由/出站/异常）都会留事件。
 【指令与参数】
-/bot audit <request_id>：作用=查询审计记录；参数=request_id（必填，请求编号）；内容=按时间排序的事件列表（stage/event/severity，敏感字段脱敏）；意义=事后追因与合规留痕的官方入口。
+/bot audit <request_id>：作用=查询一次请求的审计事件；参数=request_id（必填，请求编号）；内容=该请求全链路的审计事件列表（脱敏）；意义=合规排查与事后追因。
 【权限与效果】
   权限=仅管理员。未找到时回显脱敏后的编号。
 【示例】/bot audit music_9a3bb2
@@ -260,8 +260,7 @@
   /bot recent ＝ 诊断（diagnostics）＋发送回执（receipts）＋审计（audits）
   三个查询的合并视图，按各自动态截取最近 N 条。
 【指令与参数】
-/bot recent：作用=看最近排障摘要；参数=无；内容=默认各 5 条的合并摘要；意义=快速扫一眼。
-/bot recent <数量>：作用=控制条数；参数=数量（可选，1-20 整数，默认 5，越界自动收敛到边界）；内容=对应条数的摘要；意义=想多看几条时用。
+/bot recent [数量]：作用=汇总最近诊断＋回执＋审计；参数=数量（可选，1-20 整数，默认 5）；内容=三个板块的最近记录摘要；意义=不用分别调三个查询，一屏看完最近发生了什么。
 【权限与效果】
   权限=仅管理员。输出里的 id 可直接喂给 /bot why、/bot receipt、/bot audit。
 【示例】/bot recent 10
@@ -288,7 +287,7 @@
   所有出站消息统一经发送队列收口。BOT_SEND_QUEUE_ENABLED=true 时
   队列持久化到 sqlite，重启不丢。
 【指令与参数】
-/bot queue：作用=查看队列状态；参数=无；内容=各状态计数与 max_items/max_attempts/retry 等参数；意义=判断发送瓶颈位置。
+/bot queue：作用=查看发送队列健康；参数=无；内容=待发/处理中/重试/失败计数与队列参数；意义=消息发不出去时判断是队列堆积还是投递失败。
 【权限与效果】
   权限=仅管理员。
 【示例】/bot queue
@@ -314,8 +313,7 @@
   把“如果现在说这句话，模型会看到什么”完整走一遍：注入检查→回复预算→
   人格+向量知识+记忆+最近对话装配→prompt 构造，全程只读。
 【指令与参数】
-/bot context：作用=用默认文本做上下文诊断；参数=无；内容=注入摘要与预算；意义=开箱自检。
-/bot context <文本>：作用=用指定文本诊断；参数=文本（可选，任意内容，会先过注入检查）；内容=同上，按你的文本装配；意义=复现特定说法下的上下文。
+/bot context [文本]：作用=看一段话会被注入什么上下文；参数=文本（可选，省略用「你好，守岸人。」）；内容=人格/知识/记忆/最近对话的注入摘要与预算（只出数字摘要不泄露原文）；意义=验证人格与知识装配是否生效，不动线上状态。
 【权限与效果】
   权限=仅管理员。输出为数字摘要（条数/字数/预算），不回显知识库原文。
   失败时只报错误类型，不泄露堆栈。
@@ -342,8 +340,7 @@
   与 /bot context 的区别：dialogue 会真的走完 LLM 调用（配置了真实模型时
   会产生一次真实调用费用），用于验收整条链路。
 【指令与参数】
-/bot dialogue：作用=默认文本跑一轮；参数=无；内容=各阶段诊断结果；意义=部署后第一轮验收。
-/bot dialogue <文本>：作用=指定输入跑一轮；参数=文本（可选）；内容=该输入的完整对话诊断；意义=复现特定问题的处理链路。
+/bot dialogue [文本]：作用=完整跑一轮对话链路验收；参数=文本（可选，省略用「你好，守岸人。」）；内容=对话各阶段结果（配置/上下文/LLM 调用/回复）；意义=端到端验证聊天链路，不影响线上会话状态。
 【权限与效果】
   权限=仅管理员。可能产生一次 LLM 调用费用；不写入线上会话历史。
 【示例】/bot dialogue 今天状态怎么样
@@ -372,7 +369,7 @@
   把接入 OpenAI 兼容模型要动的七个键逐项体检。渲染可用时输出 Mica
   配置卡；密钥永远只显示 已设置/缺失，不回显值。只读，不写 .env。
 【指令与参数】
-/bot setup llm：作用=输出接入清单；参数=无；内容=逐键：说明＋取值范围＋当前值＋OK/缺口，加下一步动作提示；意义=新部署接入或换供应商时照单抓药。
+/bot setup llm：作用=看接真实 LLM 还缺哪些配置；参数=无；内容=七个必配键（provider/model/key/base_url/temperature/max_tokens/timeout）的当前值、合法取值与标红缺口，附下一步指引；意义=接入向导，照着补 .env 就能通。
 【取值范围】
   BOT_CHAT_PROVIDER=openai_compatible|static；MODEL=供应商模型名；KEY=真实密钥或 env:变量名；
   BASE_URL=http(s):// 开头一般以 /v1 结尾；TEMPERATURE=0.0-2.0；MAX_TOKENS=≥0（0=不设上限）；TIMEOUT=>0 秒。
@@ -401,7 +398,7 @@
   运行 config smoke：检查 LLM 接入、路径、模板等配置就绪度。
   与 /bot setup llm 的区别：config 是全量体检，setup llm 只聚焦 LLM 七键。
 【指令与参数】
-/bot config：作用=配置体检；参数=无；内容=各项检查结果与原因（脱敏）；意义=定位配置错误的第一站。
+/bot config：作用=配置体检；参数=无；内容=配置冒烟结果（缺什么、什么不合法，全部脱敏）；意义=改完配置后的快速自检。
 【权限与效果】
   权限=仅管理员。
 【示例】/bot config
@@ -427,7 +424,7 @@
   readiness smoke 的聊天入口：把环境依赖、配置、上下文装配、对话链路
   的就绪状态聚合成一份报告，附带运行时软暂停状态。
 【指令与参数】
-/bot readiness：作用=看聚合就绪；参数=无；内容=各链路 ok/blocked 与原因；意义=部署验收与健康巡检。
+/bot readiness：作用=聚合各链路就绪度；参数=无；内容=环境/配置/上下文/对话链路的就绪判定与软暂停状态；意义=开机后一眼判断能不能正常接客。
 【权限与效果】
   权限=仅管理员。
 【示例】/bot readiness
@@ -455,7 +452,7 @@
   角色体系：user < trusted < enterprise < admin（另有 blocked 屏蔽）。
   管理员由 BOT_ADMIN_USER_IDS（QQ）与 BOT_TELEGRAM_ADMIN_USER_IDS（TG）确定。
 【指令与参数】
-/bot roles：作用=角色计数摘要；参数=无；内容=各角色数量；意义=权限问题排查（只给数量，不泄露名单）。
+/bot roles：作用=看权限角色分布；参数=无；内容=admin/enterprise/trusted/blocked 的数量摘要（不含具体 ID）；意义=核对 BOT_ADMIN_USER_IDS 等名单是否被正确加载。
 【权限与效果】
   权限=仅管理员。
 【示例】/bot roles
@@ -481,7 +478,7 @@
   运行 persona smoke：检查人格档案文件、语气规则与安全边界材料。
   运行期人格切换用 /bot runtime persona（见「设置」模块）。
 【指令与参数】
-/bot persona：作用=人格自检；参数=无；内容=自检 ok/error 与缺项；意义=人格“变了/淡了”类问题的第一排查点。
+/bot persona：作用=人格材料自检；参数=无；内容=人格强度/语气规则/边界的自检结果；意义=确认人格档案完整、语气与边界规则生效。
 【权限与效果】
   权限=仅管理员。
 【示例】/bot persona
@@ -509,8 +506,10 @@
   好感度/占卜/快报/随机图/提醒(41)→自然语言命令(45)→二次元问句(46)→链接解析(46)→聊天(50)。
   数字越小越先命中。
 【指令与参数】
-/bot route <文本>：作用=单句路由判定；参数=文本（必填，任意文本）；内容=命中的 kind/capability_id/优先级/理由（含归一化结果）；意义=解释路由行为、验证触发词写法。
-/bot routes：作用=列出路由表；参数=无；内容=全部规则的审计视图；意义=宏观理解与排错。
+/bot route <文本>：作用=判定一段文本会命中哪条路由；参数=文本（必填，任意文本，省略回用法）；内容=路由类型/能力/优先级/理由，自然语言意图还会给出归一化后的命令；意义=搞清“这句话为什么被当成点歌/天气/闲聊”。
+/bot routes：作用=查看全部路由注册表；参数=无；内容=按优先级排序的全部路由规则（kind/能力/说明）；意义=了解路由优先级全貌。
+权限=全员（只读诊断，不执行命令本身）。
+示例：/bot route 帮我解析这个 https://www.bilibili.com/video/BVxxxx
 【权限与效果】
   权限=全员（只读，不真的执行命中命令）。
 【示例】/bot route 点歌 晴天 → 会显示 MUSIC 路由；/bot route 天气真好 → 落到 CHAT。
@@ -536,7 +535,7 @@
   最近对话历史是拼进 prompt 的短期上下文。清理范围精确到
   平台×适配器×机器人×会话×发送者，别人的对话和长期记忆不受影响。
 【指令与参数】
-/bot history clear：作用=清理最近对话；参数=无（写成别的子命令回用法）；内容=cleared_turns=N；意义=上下文污染后的软重置。
+/bot history clear：作用=清空本会话最近对话；参数=无；内容=清理的轮次数（cleared_turns）；意义=对话被带偏后一键重置上下文；只清“当前会话×当前发送者×当前实例”，不动长期记忆。
 【权限与效果】
   权限=仅管理员。清理失败只报类型不泄露库路径。
 【示例】/bot history clear
@@ -562,8 +561,8 @@
   软暂停是运行时状态不是配置：不写 .env、不重启，暂停期间消息仍会接收
   并留审计，只是不生成人格回复。
 【指令与参数】
-/bot pause：作用=软暂停；参数=无；内容=已暂停＋当前状态（reason/updated_by）；意义=紧急静音。
-/bot resume：作用=恢复；参数=无；内容=已恢复＋当前状态；意义=恢复服务。
+/bot pause：作用=软暂停回复；参数=无；内容=暂停后的运行时状态与原因；意义=维护/救火时让机器人闭嘴，不改任何配置。
+/bot resume：作用=恢复回复；参数=无；内容=恢复后的运行时状态；意义=解除软暂停。
 【权限与效果】
   权限=仅管理员。状态记入 /bot status 的「运行时软暂停」一行。
 【示例】/bot pause → 维护 → /bot resume
@@ -590,14 +589,8 @@
   回复详略影响聊天链路的输出风格：详细=先结论再展开身份/关系/关键经历
   与资料缺口（不凑字数）；精简=短句直给；默认=按问题复杂度自动取舍。
 【指令与参数】
-/bot reply：作用=查档位；参数=无；内容=当前 BOT_REPLY_DETAIL 值；意义=查看现状。
-/bot reply <模式>：作用=设档位；参数=模式（必填：详细/科普/详尽→detail；精简/简洁→concise；默认/自动→auto）；内容=回复详略已设为 X；意义=全员体感最直接的输出风格开关。
-【取值范围】
-  仅接受上表模式词；其他输入会得到用法提示（不会被静默当成默认）。
-【权限与效果】
-  权限=仅管理员。写入运行时覆盖，持久保存，立即生效。
-  相关键：BOT_CHAT_MAX_TOKENS（输出上限）、BOT_CHAT_FAST_MODE（快速模式）。
-【示例】/bot reply 详细｜/bot reply 精简｜/bot reply 默认
+/bot reply：作用=查看当前详略档位；参数=无；内容=当前 BOT_REPLY_DETAIL 值与用法提示；意义=确认现状再决定改不改。
+/bot reply <模式>：作用=设置详略档位；参数=模式（必填，详细|精简|默认；别名 科普/详尽=详细，简洁=精简，自动=默认；未知值会回用法不再静默当默认）；内容=已设为 detail/concise/auto；意义=控制回答是展开讲还是短平快，持久保存。
 /bot reply 详细：先说明结论、身份、关系、关键经历和资料缺口，不强制凑字数。
 /bot runtime set BOT_CHAT_MAX_TOKENS 8192：输出上限，不是必须生成的长度。
 /bot runtime set BOT_CHAT_FAST_MODE false：知识验收阶段关闭快速模式。
@@ -606,6 +599,12 @@ BOT_CHAT_MAX_TOKENS=65538 是最大上限，不是每次强制生成 64K。
 戳一戳：默认响应有冷却；BOT_POKE_ENABLED、BOT_POKE_*_COOLDOWN_SECONDS、BOT_POKE_PROBABILITY 可调。
 /bot runtime set BOT_CHAT_FAST_MAX_TOKENS 8192：重新启用快速模式时的输出上限。
 运行时覆盖优先于 .env；用 runtime get 查看实际设置。
+【取值范围】
+  仅接受上表模式词；其他输入会得到用法提示（不会被静默当成默认）。
+【权限与效果】
+  权限=仅管理员。写入运行时覆盖，持久保存，立即生效。
+  相关键：BOT_CHAT_MAX_TOKENS（输出上限）、BOT_CHAT_FAST_MODE（快速模式）。
+【示例】/bot reply 详细｜/bot reply 精简｜/bot reply 默认
 
 ### 帮助页一致性要求
 
@@ -630,24 +629,31 @@ BOT_CHAT_MAX_TOKENS=65538 是最大上限，不是每次强制生成 64K。
   /bot model 与 /bot runtime model 等价。改动即时生效、无需重启；
   运行时覆盖优先于 .env。
 【指令与参数】
-/bot llm：作用=诊断当前渠道；参数=无；内容=provider/model/key 状态与一次短调用结果；意义=真实连通性验证（会花钱）。
-/bot model list：作用=看底表；参数=无；内容=候选模型/档位/顺序/时段分组/健康/价格；意义=一切模型操作的起点。
-/bot model health：作用=健康报告；参数=无；内容=ok/踢出/慢渠道三段（评级用平滑延迟 EWMA）；意义=解释渠道为什么被跳过。
-/bot model probe：作用=手动巡检；参数=无；内容=受理提示；意义=立刻体检全部渠道（每渠道一次最小调用，费用极低；与后台巡检互斥）。
-/bot model routes <模型名>：作用=渠道测速排名；参数=模型名（必填）；内容=快→慢列表；意义=挑最快渠道。
-/bot model set <id|auto>：作用=手动指定；参数=id|auto（必填）；内容=确认信息；意义=钉死模型；auto 撤销。手动指定 > 时段组 order > 基础 priority。
-/bot model add <id> model= base_url= key= [tags=] [effort=] [group=] [priority=]：作用=新增；参数逐个：id=你起的名字（之后 set/update/remove 用它）；model=供应商模型名原样填；base_url=OpenAI 兼容接口，http(s):// 开头一般 /v1 结尾；key=sk-xxx 或 env:变量名；tags=档位列表逗号分隔；effort=单模型覆盖；group=令牌分组；priority=整数越小越先（默认 100）；内容=注册即进路由；意义=免重启扩容。
-/bot model update <id> <键=值...>：作用=改条目；参数=只写要改的键（model base_url key group tags effort priority）；内容=更新确认；意义=换 key/改档位；可覆盖 .env 同名条目。
-/bot model priority <id> <n>：作用=调转移顺序；参数=n 整数，1..N 唯一槽位（移动一个其余顺移，0 兼容为移到首位）；内容=新顺序；意义=控成本（贵的放后）。
-/bot model effort <id> <档位>：作用=单模型强度；参数=off|low|medium|high|xhigh|max|default（default/默认/reset=清除覆盖回家族基线）；内容=确认信息；意义=单点微调。
-/bot model think <档位>：作用=全局强度；参数=off|low|medium|high|xhigh|max 或留空（留空=清空覆盖）；内容=确认信息；意义=全局控制推理开销；复杂任务会临时升档。
-/bot model price <模型名> [input= output= cache_read= cache_creation= per_call=]：作用=维护价格；参数=模型名必填；各价键=元/每百万 token（per_call=元/请求），数字≥0；不带价格参数=清除；内容=设置/清除确认；意义=账单准确性；调价只影响之后的调用。
-/bot model usage [today|YYYY-MM-DD]：作用=日账单；参数=日期可选；内容=Token/缓存命中率/按模型分组（含缓存读与缓存建）/费用/未计价次数；意义=成本可见。
-/bot model search <on|off>：作用=联网搜索开关；参数=on|off 必填；内容=开关确认；意义=热控 web_search。
-/bot model vision list|add|update|priority|remove：作用=识图模型管理；参数=同模型条目；内容=注册表变化；意义=识图选型。
-/bot model vision mode <relay|direct>：作用=识图模式；参数=relay（视觉模型转文字）|direct（图片直传主模型）；内容=模式确认；意义=多模态质量与成本取舍。
-/bot model remove <id>：作用=删除；参数=id 必填（.env 来源不可删）；内容=删除确认；意义=清理。
-/bot model reset：作用=回自动选型；参数=无；内容=确认信息；意义=撤销手动 set。
+/bot llm：作用=诊断当前 provider/model/key 并做一次短调用；参数=无；内容=诊断报告（会产生一次真实调用的费用）；意义=验证当前渠道真能通。
+/bot model list：作用=查看全部模型与顺序；参数=无；内容=各模型思考强度档位、故障转移顺序（priority 越小越先）、当前时段分组、渠道健康标注与价格；意义=选型与排障的底表。
+/bot model health：作用=渠道健康报告；参数=无；内容=正常/连续失败踢出/慢渠道三类清单（慢渠道按平滑延迟 EWMA 判定，踢出渠道 30 分钟半开重探自动回队）；意义=回答“为什么没用 A 渠道”。
+/bot model probe：作用=手动全渠道巡检；参数=无；内容=巡检受理提示（结果用 health 看）；意义=不等到后台周期主动体检，与后台巡检互斥。
+/bot model routes <模型名>：作用=按实测速度列渠道；参数=模型名（必填）；内容=快→慢的渠道排序（未实测排后）；意义=选最快渠道做手动 set。
+/bot model set <id|auto>：作用=切换当前模型；参数=id 或 auto（必填；id=已注册模型名/预设名/完整模型名，auto=回到自动选型）；内容=已手动指定 X 或已切自动；意义=手动钉死模型，失败仍自动转移。
+/bot model add <id> model=<模型名> base_url=<接口地址> key=<密钥> [tags=档位] [effort=档位] [group=<分组>] [priority=<n>]：作用=新增供应商；参数=id（必填，自定义名，之后 set/update/remove 用它）＋model（必填，供应商模型名原样填）＋base_url（必填，OpenAI 兼容接口，一般 /v1 结尾）＋key（必填，sk-xxx 或 env:变量名）＋其余可选（tags 逗号分隔档位、group 令牌分组、priority 整数越小越先，缺省 100）；内容=注册即生效并进路由；意义=零重启接入新渠道。
+/bot model update <id> <键=值...>：作用=改任意参数；参数=id（必填）＋要改的键=值（model/base_url/key/group/tags/effort/priority 任选）；内容=更新后的注册表；意义=换 key/调档位不用删了重建，可覆盖 .env 同名条目。
+/bot model priority <id> <n>：作用=只改故障转移顺序；参数=id（必填）＋n（必填，整数，越小越先，1..N 唯一槽位其余自动顺移）；内容=新顺序；意义=峰谷调序。
+/bot model effort <id> <档位>：作用=单模型思考强度覆盖；参数=id＋档位（必填，off|low|medium|high|xhigh|max|default，default=清除覆盖）；内容=确认信息；意义=给某个模型单独钉思考档。
+/bot model think <档位>：作用=全局思考强度；参数=档位（必填，off|low|medium|high|xhigh|max|留空；留空=清空回家族基线）；内容=确认信息；意义=一刀切控制 reasoning_effort 开销（复杂任务仍会在家族最高档内临时升档）。
+/bot model price <模型名> [input=<元/1M> output=<元/1M> cache_read=<元/1M> cache_creation=<元/1M> per_call=<元/请求>]：作用=维护价格表；参数=模型名（必填）＋价键（不带即清除该模型价格，数字≥0；cache_read/cache_creation=缓存读/缓存创建单价，per_call=按次计费渠道的元/请求）；内容=新价格确认；意义=账单计费依据，按调用时刻价格记账。
+/bot model usage [today|YYYY-MM-DD]：作用=每日用量账单；参数=日期（可选，today/今天 或 YYYY-MM-DD，省略=今天）；内容=输入/输出/缓存命中（含占输入比例）/缓存创建 Token、调用次数、按模型分组（含逐模型缓存读与缓存建）的费用；意义=看清钱花在哪、缓存有没有起作用。
+/bot model search <on|off>：作用=热切换联网搜索；参数=on|off（必填）；内容=开/关确认；意义=不用重启控制 web_search。
+/bot model vision list|add|update|priority|remove：作用=图片识别模型（VLM）注册表管理；参数=子命令＋各自参数（add 同 /bot model add：id/model/base_url/key/[priority]；update/remove 用同一 id；priority <id> <槽位> 调识别顺序）；内容=识别候选清单、优先级与开关状态，或写回确认；意义=给「图转文字」这条支路选型与排序，多候选按优先级轮询、单路失败自动降级到下一路。
+/bot model vision mode <relay|direct>：作用=切换图片进入对话的方式；参数=relay|direct（省略=只查询当前模式；relay=先由识别模型把图转成文字描述，再作为不可信上下文并给主模型；direct=图片直传给支持视觉的主模型、不再过识别模型）；内容=当前视觉模式；意义=主模型不带视觉（或想省一跳）时走 relay，能直传时细节不丢。
+/bot model remove <id>：作用=删除自定义模型；参数=id（必填；.env 来源条目不可删只能 update 覆盖）；内容=删除确认；意义=清理废弃渠道。
+/bot model reset：作用=清除手动指定；参数=无；内容=回到自动选型确认；意义=撤销 set。
+思考强度档位：DeepSeek/GLM/Kimi/MiniMax=low,high,max｜GPT/Grok=low,medium,high,xhigh｜Gemini=low,medium,high；默认=家族基线档，复杂任务自动升家族最高档。
+示例：/bot model add myapi model=deepseek-v4-pro base_url=https://api.xxx.com/v1 key=sk-xxx tags=low,high,max priority=1
+注意：key 不回显；等号两边不要加空格；新增/修改/价格/分组全部热更立即生效，重启保留。
+priority 是 1..N 唯一槽位：移动一个模型，其他模型自动顺移；0 兼容为移到首位。
+手动指定 > 时段组 order > 基础 priority。时段组启用时基础排序不覆盖组内顺序。
+model list 显示候选配置，不等于上一条实际回答的供应商；/bot llm 会产生新的诊断调用。
+不要在群聊发送真实 Key；使用 key=env:变量名，在本地安全配置凭据。
 【取值范围】
   档位：DeepSeek/GLM/Kimi/MiniMax=low,high,max｜GPT/Grok=low,medium,high,xhigh｜Gemini=low,medium,high。
   时段分组：/bot runtime set BOT_MODEL_PRIORITY_GROUPS <JSON 数组>，每组
@@ -658,10 +664,6 @@ BOT_CHAT_MAX_TOKENS=65538 是最大上限，不是每次强制生成 64K。
   权限=仅管理员。全部子命令热更立即生效、持久保存；key 永不回显；
   不要在群聊发送真实 Key，用 key=env:变量名。
 【示例】/bot model add myapi model=deepseek-v4-pro base_url=https://api.xxx.com/v1 key=sk-xxx tags=low,high,max priority=1
-priority 是 1..N 唯一槽位：移动一个模型，其他模型自动顺移；0 兼容为移到首位。
-手动指定 > 时段组 order > 基础 priority。时段组启用时基础排序不覆盖组内顺序。
-model list 显示候选配置，不等于上一条实际回答的供应商；/bot llm 会产生新的诊断调用。
-不要在群聊发送真实 Key；使用 key=env:变量名，在本地安全配置凭据。
 
 ### 帮助页一致性要求
 
@@ -689,8 +691,11 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   （实时阈值＋定时报告）。提醒与报告推给全部管理员（QQ 私聊，统一预警
   管线），渲染可用时附 Mica 账单卡，失败回退纯文本。
 【指令与参数】
-/bot model usage [today|YYYY-MM-DD]：作用=查账单；参数=日期（可选，today/今天/YYYY-MM-DD，省略=今天，格式错回用法）；内容=Token 四项＋调用次数＋费用＋按模型明细；意义=成本审计。
-/bot model price <模型名> [input= output=]：作用=维护价格；参数=见「模型」模块；内容=确认信息；意义=计费基准。
+/bot model usage [today|YYYY-MM-DD]：作用=每日用量账单；参数=日期（可选，省略=今天）；内容=输入/缓存命中（含占输入比例）/缓存创建/输出 Token、调用次数、按模型分组费用与逐模型缓存读建、未计价次数；意义=每天钱花在哪、缓存有没有起作用一目了然。
+/bot model price <模型名> [input=<元/1M> output=<元/1M> cache_read=<元/1M> cache_creation=<元/1M> per_call=<元/请求>]：作用=维护价格表；参数=模型名（必填）＋价键（数字≥0；不带价格=清除；cache_read/cache_creation=缓存单价，per_call=按次计费）；内容=确认信息；意义=账单计费依据。
+实时提醒：单模型当日输出>500万或输入>5000万 token、当日账单>10元 → 自动推送管理员（阈值可在 .env 调）。
+定时报告：北京时间 13:00/18:00/23:00 推送自上个报告点至今的金额与 Token；13:00 附过去 24 小时总花费。
+口径：费用按每次调用时刻的价格记账，调价不影响历史账单；未配价格的模型不计费并在账单标注。
 【取值范围】
   阈值 .env 键：BOT_USAGE_ALERT_OUTPUT_TOKENS（默认 5,000,000）、
   BOT_USAGE_ALERT_INPUT_TOKENS（默认 50,000,000）、BOT_USAGE_ALERT_DAILY_COST_YUAN（默认 10）。
@@ -721,14 +726,20 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   优先于 .env）；不在白名单的键（如五个持久化开关）只能改 .env 重启。
   所有子命令都可加 --instance <名称> 操作指定实例。
 【指令与参数】
-/bot runtime set <KEY> <VALUE>：作用=设置；参数=KEY 必填（白名单键，发错会列出可用键）、VALUE 必填（按键的类型校验，非法值拒绝）；内容=设置确认；意义=热改主入口。
-/bot runtime get <KEY>：作用=读取；参数=KEY 必填；内容=值＋来源；意义=查实际生效值。
-/bot runtime list：作用=列覆盖；参数=无；内容=覆盖清单；意义=盘点。
-/bot runtime reset [KEY]：作用=清覆盖；参数=KEY 可选（省略=全部）；内容=清除计数；意义=回滚热改。
-/bot runtime persona list：作用=列人格；参数=无；内容=可选人格与当前项；意义=选型。
-/bot runtime persona switch <id|default>：作用=切人格；参数=id 或 default（default=回默认）；内容=切换确认；意义=运行期换人格。
-/bot runtime persona probability <id> <0-1>：作用=设人格触发概率；参数=id＋概率（0..1）；内容=确认信息；意义=多人格混投。
-/bot runtime nickname add|remove|list [昵称]：作用=昵称管理；参数=add/remove 需昵称参数；内容=昵称表；意义=昵称命令的触发词维护。
+/bot runtime set <KEY> <VALUE>：作用=热改一个参数；参数=KEY（必填，可写键见 get 列表）＋VALUE（必填，按键校验）＋--instance <名称>（可选，定位实例）；内容=已设置 KEY = 值（已持久化）；意义=不改 .env 立即生效，重启保留。
+/bot runtime get <KEY>：作用=读参数实际生效值；参数=KEY（必填）；内容=值＋（覆盖值）/（.env 默认值）来源标注；意义=确认运行时覆盖与 .env 谁在生效。
+/bot runtime list：作用=列出全部覆盖项；参数=无；内容=KEY=VALUE 清单；意义=盘点改过哪些。
+/bot runtime reset [KEY]：作用=恢复默认；参数=KEY（可选，省略=清空全部覆盖）；内容=清除项数；意义=撤销热改。
+/bot runtime persona <action>：作用=人格运行期管理；参数=action（list｜switch <id|default>｜probability <id> <0-1>）；内容=人格清单/切换确认/触发概率确认；意义=不重启换人格。
+/bot runtime nickname add|remove|list [昵称]：作用=角色昵称管理；参数=action（必填）＋昵称（add/remove 必填）；内容=昵称表；意义=控制哪些称呼能触发昵称命令。
+/bot runtime model <子命令>：作用=模型管理（=/bot model）；参数=见「模型」模块；内容=同 /bot model；意义=同义入口。
+/bot runtime instance list：作用=列出实例设置；参数=无；内容=已有实例名单；意义=多实例部署核对。
+/bot runtime get BOT_REPLY_DETAIL：查看实际详略模式及覆盖来源。
+/bot runtime set BOT_MEMORY_EXTRACT_ENABLED false：暂停自动抽取，不删除已有记忆。
+/bot runtime set BOT_MEMORY_EXTRACT_TIMEOUT_SECONDS 15：抽取总预算（秒）。
+/bot runtime set BOT_MEMORY_EXTRACT_MAX_TOKENS 200：抽取输出上限（1..4096）。
+/bot runtime set BOT_MEMORY_EXTRACT_ERROR_COOLDOWN_SECONDS 300：抽取失败后冷却。
+记忆抽取复用聊天路由配置，采用独立调用状态；不使用另一枚基础 key 绕开模型注册表。
 【常用可写键举例】
   BOT_MODEL_SCHEDULE（分时段切换，JSON）、BOT_MODEL_PRIORITY_GROUPS（峰谷分组，JSON 数组）、
   BOT_MODEL_PRICES（价格表 JSON）、BOT_CHAT_REASONING_EFFORT（off|low|medium|high|xhigh|max|留空）、
@@ -738,12 +749,6 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   权限=仅管理员。写入即持久化并通知热更；个别装配期读取的键（如
   BOT_GROUP_CHAT_AUTO_REPLY_ENABLED）需重启，帮助各模块会单独标注。
 【示例】/bot runtime set BOT_QUIET_HOURS_ENABLED true
-/bot runtime get BOT_REPLY_DETAIL：查看实际详略模式及覆盖来源。
-/bot runtime set BOT_MEMORY_EXTRACT_ENABLED false：暂停自动抽取，不删除已有记忆。
-/bot runtime set BOT_MEMORY_EXTRACT_TIMEOUT_SECONDS 15：抽取总预算（秒）。
-/bot runtime set BOT_MEMORY_EXTRACT_MAX_TOKENS 200：抽取输出上限（1..4096）。
-/bot runtime set BOT_MEMORY_EXTRACT_ERROR_COOLDOWN_SECONDS 300：抽取失败后冷却。
-记忆抽取复用聊天路由配置，采用独立调用状态；不使用另一枚基础 key 绕开模型注册表。
 
 ### 帮助页一致性要求
 
@@ -768,7 +773,7 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   直接调用检索供应商（Tavily 主链＋fallback）做一次真实搜索，
   不走人格链路，用于验证搜索配置。
 【指令与参数】
-/bot search <问题>：作用=真实检索一次；参数=问题（必填）；内容=至多 BOT_WEB_SEARCH_MAX_RESULTS 条结果（默认 12）；意义=排障检索链路。
+/bot search <问题>：作用=验证联网检索链路；参数=问题（必填，省略回用法）；内容=至多 BOT_WEB_SEARCH_MAX_RESULTS 条检索结果（标题/摘要/链接，缺省上限 20）或失败原因；意义=区分“模型不知道”和“搜索没通”。
 【权限与效果】
   权限=仅管理员。检索源不可达/被反爬/代理未生效时给出降级说明。
 【示例】/bot search 守岸人是什么游戏的角色
@@ -795,8 +800,7 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
 【板块介绍】
   解析历史是全局范围（跨群/跨私聊），因此收紧为管理员可见。
 【指令与参数】
-/bot parse：作用=看最近 10 条；参数=无；内容=URL/标题/时间；意义=快速回查。
-/bot parse <数量>：作用=控制条数；参数=数量（可选，1-100，默认 10）；内容=对应条数；意义=深挖。
+/bot parse [数量]：作用=查看最近链接解析历史；参数=数量（可选，1-100，默认 10）；内容=跨会话的 URL＋标题＋时间清单（全局范围）；意义=排查“刚才那条链接解析出了什么”。
 【权限与效果】
   权限=仅管理员（M24 收紧：链接自带 token 时等于二次扩散，不对普通成员开放）。
 【示例】/bot parse 20
@@ -825,12 +829,14 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   值永不回显；每天 10:00 定时巡检（bot_cookie_expiry_reminder_enabled
   可关），过期会私聊推送第一位在线管理员。
 【指令与参数】
-/bot alert check：作用=凭据体检；参数=--probe 可选开关；内容=各引用状态＋是否需重登；意义=被动巡检的手动版。
-/bot cookie status：作用=查已录凭证；参数=无；内容=共 N/18 个平台已有凭证＋各平台明细；意义=核对。
-/bot cookie import <平台> <Cookie头>：作用=导入；参数=平台（18 选 1，小写）＋Cookie 头（整行原文粘贴）；内容=accepted/normalized/skipped 统计；意义=同名不覆盖、热生效。
-/bot cookie login <平台>：作用=扫码；参数=平台（当前 bilibili）；内容=二维码；意义=便捷登录。
-/bot cookie check <平台>：作用=扫码结果；参数=平台；内容=登录状态；意义=确认。
-/bot cookie expiry：作用=过期报告；参数=无；内容=全平台有效期；意义=批量巡检。
+/bot alert check：作用=凭据体检；参数=无；--probe（可选开关，追加在线探测，401/403=需重登）；内容=各凭据引用的状态清单；意义=解析突然 403 时的第一排查。
+/bot cookie status：作用=看各平台已录 cookie；参数=无；内容=平台×cookie 名×到期日（永不回显值）；意义=核对导入是否生效。
+/bot cookie import <平台> <Cookie头>：作用=热写入平台 cookie；参数=平台（必填，小写平台名，在收录名单内选 1，名单以 /bot cookie status 输出为准）＋Cookie头（必填，浏览器复制的 名=值; … 整行原文粘贴）；内容=accepted/normalized/skipped 三项统计与导入结果；意义=同名不覆盖、下一次解析即生效无需重启。
+/bot cookie login <平台>：作用=扫码登录；参数=平台（必填，当前仅 bilibili 支持扫码）；内容=二维码图＋登录指引；意义=免手动导 cookie。
+/bot cookie check <平台>：作用=查扫码结果；参数=平台（必填）；内容=最近一次扫码登录状态；意义=扫码后确认。
+/bot cookie expiry：作用=全平台过期报告；参数=无；内容=各平台凭证有效期报告；意义=批量核对到期情况。
+平台（18）：bilibili/xiaohongshu/douyin/qqmusic/netease/kuwo/kugou/twitter/youtube/kurobbs/weibo/kuaishou/acfun/moegirl/xiaoheihe/skland/miyoushe/zhihu
+权限=仅管理员；每天 10:00 自动巡检一次并向在线管理员推送过期预警。
 【权限与效果】
   权限=仅管理员（命令匹配层就拦，非管理员无感）。
 【示例】/bot cookie import bilibili SESSDATA=...; bili_jct=...
@@ -858,13 +864,13 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   white1=正常回复并可参与主动接话；white2=只回“@或显式命令”。
   不在任何名单=默认档（正常回复）。
 【指令与参数】
-/bot group list：作用=查看各档位名单；参数=无或 list；内容=四档群号清单；意义=盘点现状。
-/bot group add <档位> <群号...>：作用=加群入档；参数=档位（必填，black1|black2|white1|white2）＋群号（必填，数字可多个）；内容=更新后名单；意义=批量管理。
-/bot group del <档位> <群号...>：作用=移出档位；参数=同 add；内容=更新后名单；意义=解除。
-/bot group set <档位> <群号...>：作用=覆盖档位名单；参数=同 add；内容=更新后名单；意义=整表重置。
-/bot group clear <档位>：作用=清空档位；参数=档位（必填）；内容=空名单；意义=一键清空。
-  动作词可用中文别名：加/加入=add，删/移除/remove=del，设/设置=set，清/清空/reset=clear，查/查看=list。
-  群号必须纯数字，可一次给多个；档位写错会提示四档取值。
+/bot group [list]：作用=查看各档位群名单；参数=无或 list；内容=黑1/黑2/白1/白2 四档的群号清单；意义=盘点现状。
+/bot group add <档位> <群号...>：作用=把群加入档位；参数=档位（必填，black1|black2|white1|white2，可用 黑1/黑2/白1/白2）＋群号（必填，数字，可多个）；内容=更新后的名单；意义=批量拉黑/拉白。
+/bot group del <档位> <群号...>：作用=移出档位；参数=同 add；内容=更新后的名单；意义=解除。
+/bot group set <档位> <群号...>：作用=覆盖档位名单；参数=同 add；内容=更新后的名单；意义=整表重置。
+/bot group clear <档位>：作用=清空档位；参数=档位（必填）；内容=空名单确认；意义=一键清空。
+动作词可用中文别名：加/加入=add，删/移除/remove=del，设/设置=set，清/清空/reset=clear，查/查看=list。
+群号必须纯数字，可一次给多个；档位写错会提示四档取值。
 【权限与效果】
   权限=仅管理员。写入运行时覆盖（BOT_GROUP_BLACK1/BLACK2/WHITE1/WHITE2），
   热改立即生效。
@@ -893,7 +899,7 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   时间/上传者记录。OneBot 不提供移动文件夹 API，所以“整理”落地为
   记录＋统计＋提醒，不假装能移动文件。
 【指令与参数】
-/bot 群文件：作用=统计当前群；参数=无；内容=最近上传与类型分布；意义=摸底。
+/bot 群文件：作用=看本群文件上传统计；参数=无（仅群聊可用，统计当前群）；内容=最近上传清单＋扩展名分布（文档/压缩包/图片/视频/音频/其他）＋整理建议；意义=群盘整理前的摸底。
 【权限与效果】
   权限=仅管理员；仅群聊可用（私聊提示不可用）。
 【示例】/bot 群文件
@@ -919,9 +925,9 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   运行时事件日志（runtime_event_log）的查询口：统一记录各能力的关键
   事件（WARNING/ERROR 等），按级别过滤、按条数截取。
 【指令与参数】
-/bot logs：作用=默认查询；参数=无；内容=info 级最近 50 条；意义=日常快查。
-/bot logs <级别>：作用=按级别过滤；参数=级别（debug|info|warning|error，其他词回退 info）；内容=对应级别日志；意义=聚焦错误。
-/bot logs <级别> <数量>：作用=级别＋条数；参数=数量（1-200，越界自动收敛；非数字回退 50）；内容=对应日志；意义=多看几条。
+/bot logs [级别] [数量]：作用=查看运行时事件日志；参数=级别（可选，debug|info|warning|error，默认 info）＋数量（可选，1-200 整数，默认 50），两个参数按「先级别后数量」顺序写；内容=最近 N 条对应级别以上的日志；意义=看运行时到底发生了什么。
+权限=仅管理员（别名「日志」经昵称命令层同样需要 /bot 形式执行）。
+示例：/bot logs error 20
 【权限与效果】
   权限=仅管理员。日志未启用时提示运行时事件日志未启用。
 【示例】/bot logs error 20
@@ -949,7 +955,7 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   LLM 按文档撰写提示词生成结构化 Markdown（分级标题/列表/表格，
   600-1200 字），再本地转换成目标格式，经平台上传接口发出。
 【指令与参数】
-文件 <格式> <主题>：作用=生成并上传文档；参数=格式（md/markdown/docx/pptx/xlsx/pdf，markdown 归一为 md）＋主题（必填，截 40 字作标题）；内容=上传确认或失败类型；意义=文件交付。
+文件 <格式> <主题>：作用=围绕主题生成文档并以群文件形式上传；参数=格式（必填，md|markdown|docx|pptx|xlsx|pdf，大小写不敏感）＋主题（必填，非空文本，作为文档标题与大纲素材）；内容=已生成并上传 <格式>：文件名（KB）或失败原因；意义=长文/表格/幻灯一键落盘成文件，不刷屏。
 【权限与效果】
   权限=仅管理员（命令匹配层拦截）。生成与转换在后台线程执行（数十秒级），
   产出落 data/downloads/export/ 后上传；LLM 失败只报错误类型。
@@ -982,14 +988,16 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   unset-gender）：存 data/addressing_preferences.sqlite3，聊天人格上下文
   会优先采用你显式声明的称谓与性别。
 【指令与参数】
-/bot identity show：作用=查看；参数=无；内容=称呼「…」＋标签＋设置人＋更新时间；意义=核对。
-/bot identity set <昵称>：作用=设称呼；参数=昵称必填（非空文本，可含中文/英文，建议 ≤16 字）；内容=已设定确认；意义=个性化称呼。
-/bot identity tag <标签1,标签2>：作用=设标签；参数=逗号分隔标签串（最多保留 8 个，超出截断）；内容=已设定确认；意义=补充语气线索。
-/bot identity clear：作用=清除；参数=无；内容=清除确认；意义=重置。
-/bot identity set-name <称呼>：作用=自助设称谓；参数=称呼必填（非空，≤32 字）；内容=已记下确认；意义=无需管理员，自己定称呼。
-/bot identity set-gender <值>：作用=自助登记性别自述；参数=male|female|nonbinary|custom|unknown（大小写不敏感）；内容=已记下确认；意义=语气分寸更合适，非法值不落库。
+/bot identity show：作用=查看本会话身份；参数=无；内容=称呼/标签/设置人/更新时间（未设置会明说）；意义=核对当前会话的身份设定。
+/bot identity set <昵称>：作用=设定本会话称呼；参数=昵称（必填，非空文本，如 set 岸宝）；内容=已设定称呼确认；意义=让机器人在这群/这个私聊里只这么叫你。
+/bot identity tag <标签1,标签2>：作用=设定标签；参数=标签串（必填，逗号分隔，最多保留 8 个）；内容=已设定标签确认；意义=给语气调整提供更多线索。
+/bot identity clear：作用=清除本会话身份；参数=无；内容=已清除/本就没有；意义=恢复默认。
+权限=仅管理员；在哪个群/私聊执行就对哪个会话生效，各会话互不影响；只影响称呼与语气，人格不变（渲染层内建防 OOC 护栏）。
+/bot identity set-name <称呼>：作用=设置机器人对你的称谓偏好；参数=称呼（必填，非空，≤32 字）；内容=已记下确认；意义=无需管理员，你自己决定机器人怎么叫你（群里按「这个群+你」生效，私聊按你生效）。
+/bot identity set-gender <male|female|nonbinary|custom|unknown>：作用=登记你的性别自述；参数=五个值之一（大小写不敏感）；内容=已记下确认；意义=让语气分寸更合适；非法值不记录并列出可接受值。
 /bot identity unset-name：作用=清除称谓偏好；参数=无；内容=已清除/本就没有；意义=恢复自动称呼。
 /bot identity unset-gender：作用=清除性别自述；参数=无；内容=已清除/本就没有；意义=恢复 unknown。
+自助子命令权限=所有用户（只能操作自己的偏好，无他人参数）；unset 为整条记录清除（称谓与性别自述一并移除）；称谓偏好与上方管理员会话身份是两套数据，自助偏好优先级更高。
 【权限与效果】
   权限=仅管理员。只调整该会话内的称呼与语气，不改变守岸人核心人格；
   防止会话身份被用来推翻人格设定（防 OOC 护栏内建于渲染层）。
@@ -1021,10 +1029,11 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   上下文。审核制红线：自动来源只进待审队列；管理员 add 直添是唯一
   免审通道。数据存 data/persona_quirks.sqlite3。
 【指令与参数】
-/bot quirk list [状态]：作用=列出；参数=状态过滤可选（pending|active|retired，其他值回用法），limit=20；内容=清单；意义=审核前置。
-/bot quirk approve <id前缀>：作用=放行；参数=id 前缀（唯一命中）；内容=已通过；意义=待审→生效，之后渲染进人格上下文。
-/bot quirk retire <id前缀>：作用=退役；参数=id 前缀（唯一命中）；内容=已退役；意义=生效→退役，记录保留不再渲染。
-/bot quirk add <习惯描述>：作用=直添；参数=描述必填；内容=已直接生效；意义=管理员特权通道。
+/bot quirk list [pending|active|retired]：作用=列出怪癖；参数=状态过滤（可选，pending=待审|active=生效|retired=退役，省略=全部，最多 20 条）；内容=id 前 8 位＋状态＋文本＋来源＋范围（global=全员渲染，user:名字=仅该用户）；意义=先拿 id 再审核，范围标注是审核依据之一。
+/bot quirk approve <id前缀>：作用=待审转生效；参数=id 前缀（必填，需唯一命中，0 条或多条都拒绝）；内容=已通过＋文本；意义=审核制放行，approve 前对回复零影响。
+/bot quirk retire <id前缀>：作用=退役生效项；参数=id 前缀（必填，唯一命中）；内容=已退役＋文本；意义=不再渲染但保留记录。
+/bot quirk add <习惯描述>：作用=管理员直添；参数=习惯描述（必填）；内容=已直接生效；意义=跳过审核立即影响 prompt。
+审核制红线：自动来源（反思回路等 propose）只进待审（pending_review），绝不直接影响 prompt；BOT_QUIRKS_ENABLED=false 时整个演化区停用。
 【取值范围】
   状态只有三种：待审 pending(pending_review)/生效 active/退役 retired；
   前缀必须唯一命中；BOT_QUIRKS_ENABLED=false 时命令只返回停用提示。
@@ -1056,11 +1065,14 @@ model list 显示候选配置，不等于上一条实际回答的供应商；/bo
   控制机器人在群里的回复频率与时机：句数帽封顶、情绪豁免保安抚、
   安静时间定时闭嘴、自动接话按概率抽签。全部经 /bot runtime set 修改。
 【指令与参数】
-BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR：作用=每小时句数帽；参数=≥0 整数（0=该帽不生效）；内容=超帽静默；意义=小时级封顶。
-BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE：作用=每分钟句数帽；参数=同上；内容=同上；意义=脉冲防护；用户口径建议 60/小时、3/分钟。
-BOT_RATE_LIMIT_EMOTION_EXEMPT：作用=情绪豁免；参数=true/false（默认 true）；内容=安抚类回复绕过句数帽；意义=该安慰的时候不被限流卡住。
-BOT_GROUP_CHAT_AUTO_REPLY_ENABLED：作用=自动接话总开关；参数=true/false（默认 false）；内容=开/关；意义=接话前提。
-BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY：作用=接话概率；参数=0..1（默认 0.004，与心情系数相乘后封顶 1.0）；内容=每次抽签现算；意义=频率。
+BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR：作用=每小时群聊句数帽；参数=≥0 整数（默认 0=该帽不生效）；内容=超帽后普通回复被静默拦截；意义=防刷屏。
+BOT_RATE_LIMIT_GROUP_MAX_PER_MINUTE：作用=每分钟群聊句数帽；参数=≥0 整数（默认 0=该帽不生效）；内容=超帽即拦，管住脉冲连发；意义=小时帽的补充。
+BOT_RATE_LIMIT_EMOTION_EXEMPT：作用=情绪豁免；参数=true/false（默认 true）；内容=安抚类回复不被句数帽拦截；意义=该安慰的时候不被限流卡住。
+BOT_GROUP_CHAT_AUTO_REPLY_ENABLED：作用=自动接话总开关；参数=true/false（默认 false）；内容=开启后未点名群消息按概率抽签接话，点名/命令不受影响；意义=群活跃度调节。
+BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY：作用=接话概率；参数=0..1（默认 0.004，与心情系数相乘后封顶 1.0）；内容=每次抽签现算，低落时少插话、兴奋时更活跃；意义=心情联动的活跃度旋钮。
+BOT_QUIET_HOURS_*：作用=安静时间窗；参数=BOT_QUIET_HOURS_ENABLED（true/false）/BOT_QUIET_HOURS_START·END（HH:MM，支持跨零点，默认 00:00-06:00）/BOT_QUIET_HOURS_TIMEZONE（IANA 名）/BOT_QUIET_HOURS_SESSION_TYPES（group|private|email 逗号分隔，默认 group）/BOT_QUIET_HOURS_BYPASS_ROLES（默认 admin）；内容=窗口内只拦截未点名的普通聊天/解析；意义=定时闭嘴。
+修改方式：以上全部支持 /bot runtime set 热改，立即生效（接话总开关 ENABLED 装配期读取，改后需重启）。
+示例：/bot runtime set BOT_RATE_LIMIT_GROUP_MAX_PER_HOUR 60
 安静时间 6 键：作用=安静时间窗；参数=ENABLED（true/false）、START/END（HH:MM，支持跨零点，默认 00:00-06:00）、TIMEZONE（IANA 名）、SESSION_TYPES（group|private|email 逗号分隔，默认 group）、BYPASS_ROLES（默认 admin）；内容=窗口内只拦未点名普通聊天/解析；意义=作息。
 【权限与效果】
   权限=仅管理员。热改立即生效；点名/显式命令永远不受安静时间与概率影响；
@@ -1089,11 +1101,11 @@ BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY：作用=接话概率；参数=0..1（默�
   长回复按字数/条数切成多个节点并合并成一条 QQ 合并转发消息，
   四个键分别控制条数触发、字数触发、节点上限与单节点字数。
 【指令与参数】
-BOT_RENDER_FORWARD_MIN_NODES：作用=按条数触发合并；参数=≥0 整数（默认 4，0=不按条数）；内容=达标即合并；意义=超过 3 条就打包。
-BOT_RENDER_FORWARD_MIN_CHARS：作用=按字数触发合并；参数=≥0 整数（默认 1500）；内容=达标也合并；意义=长文兜底。
-BOT_RENDER_FORWARD_MAX_NODES：作用=节点数上限；参数=≥0 整数（默认 0=不限制）；内容=块数尽量压到上限；意义=防刷屏。
-BOT_RENDER_FORWARD_NODE_CHARS：作用=单节点目标字数；参数=≥200 整数（默认 900）；内容=单节点体积；意义=阅读体验。
-  四键均经 /bot runtime set 热改。
+BOT_RENDER_FORWARD_MIN_NODES：作用=按条数触发合并；参数=≥0 整数，默认 4（0=不按条数只看字数）；内容=切分后达到该条数即合并成 QQ 合并转发；意义=超过 3 条就打包。
+BOT_RENDER_FORWARD_MIN_CHARS：作用=按字数触发合并；参数=≥0 整数，默认 1500；内容=达到字数也触发；意义=长文兜底。
+BOT_RENDER_FORWARD_MAX_NODES：作用=节点数上限；参数=≥0 整数，默认 0=不限制；内容=切分块数尽量压到该上限（硬长度边界优先）；意义=防刷屏。
+BOT_RENDER_FORWARD_NODE_CHARS：作用=单节点目标字数；参数=≥200 整数，默认 900；内容=每个转发节点的目标字数；意义=控制单条体积。
+四键（BOT_RENDER_FORWARD_MIN_NODES/MIN_CHARS/MAX_NODES/NODE_CHARS）是 .env+重启键：装配期烘进策略快照（settings.py:355-364 列在需重启名单），/bot runtime set 会拒绝并提示重启。
 【权限与效果】
   权限=仅管理员。条数达 MIN_NODES 或字数达 MIN_CHARS 即合并；
   消费点在装配期读取，改动需重启生效。
@@ -1124,11 +1136,16 @@ BOT_RENDER_FORWARD_NODE_CHARS：作用=单节点目标字数；参数=≥200 整
   名单模式决定哪些群参与；每日通讯总结推送（G-DIGEST）在每天固定时刻
   把当日摘要主动推回白名单群。
 【指令与参数】
-BOT_SHARED_GROUP_CONTEXT_ENABLED：作用=总开关；参数=true/false（默认 false）；内容=关=完全不生成；意义=前提。
-BOT_GROUP_DIGEST_LIST_MODE：作用=名单模式；参数=whitelist|blacklist|off|all；内容=筛选规则；意义=圈群。
+BOT_SHARED_GROUP_CONTEXT_ENABLED：作用=群摘要总开关；参数=true/false（默认 false）；内容=开启才把群内近期对话浓缩成摘要供人格参考，关闭则完全不生成；意义=群上下文感知的前提。
+BOT_GROUP_DIGEST_LIST_MODE：作用=名单模式；参数=whitelist|blacklist|off|all（默认空=不过滤）；内容=whitelist 仅名单内群参与摘要/blacklist 排除名单内群；意义=控制哪些群参与。
+BOT_GROUP_DIGEST_WHITELIST / BOT_GROUP_DIGEST_BLACKLIST：作用=摘要白/黑名单；参数=数字群号列表（逗号/分号/顿号/空白分隔或 JSON 数组，自动去重，非数字拒绝）；内容=名单生效，精确圈定参与群；意义=该收的收、该避的避。
+BOT_GROUP_DIGEST_PUSH_ENABLED：作用=每日通讯总结推送开关；参数=true/false（.env 键，默认 true，不进 runtime set 白名单）；内容=开/关每日定时推送；意义=夜间日报总闸。
+BOT_GROUP_DIGEST_PUSH_TIME：作用=推送时刻；参数=HH:MM（时 0-23 分 0-59，默认 21:30，非法值启动即报错）；内容=每天这个时刻把当日群摘要推给白名单群各一遍（list_mode 非 whitelist 时零推送，绝不猜群）；意义=错峰推送。
+BOT_GROUP_DIGEST_MAX_TURNS：作用=摘要收录轮数上限；参数=正整数（默认 150）；内容=摘要最多回看最近 150 轮对话；意义=控制上下文窗口。
+BOT_GROUP_DIGEST_MAX_CHARS：作用=摘要字数预算；参数=≥100 整数（默认 800）；内容=摘要文本按字数预算截取；意义=控制注入长度。
+BOT_GROUP_DIGEST_LLM_ENABLED：作用=LLM 润色摘要；参数=true/false（默认 false）；内容=开启后用 LLM 把对话浓缩成更顺的摘要（结果缓存 1 小时）；意义=默认关闭零额外开销。
+示例：/bot runtime set BOT_GROUP_DIGEST_LIST_MODE whitelist → /bot runtime set BOT_GROUP_DIGEST_WHITELIST 1108838060,1076073471
 BOT_GROUP_DIGEST_WHITELIST/BLACKLIST：作用=名单；参数=群号列表（多分隔符/JSON，去重）；内容=名单；意义=白/黑名单内容。
-BOT_GROUP_DIGEST_PUSH_ENABLED：作用=每日推送开关；参数=true/false（.env 键，默认 true，不进 runtime set 白名单）；内容=开/关夜间推送；意义=日报总闸。
-BOT_GROUP_DIGEST_PUSH_TIME：作用=推送时刻；参数=HH:MM（时 0-23 分 0-59，默认 21:30，非法值启动即报错）；内容=调度时刻；意义=错峰推送。
 【权限与效果】
   权限=仅管理员。总开关/名单/模式可 runtime set 热改；推送两键为 .env 键，
   改后重启生效。推送正文=一句守岸人引子＋当日摘要；同群同天不重发。
@@ -1157,10 +1174,11 @@ BOT_GROUP_DIGEST_PUSH_TIME：作用=推送时刻；参数=HH:MM（时 0-23 分 0
   识图（vision）：群图片/表情包内容识别；视频理解：视频抽帧＋音轨/字幕
   生成感知简报，支持后续追问。两者各有总开关与模型注册表。
 【指令与参数】
-BOT_VISION_ENABLED：作用=识图总闸；参数=true/false（默认 false）；内容=开/关；意义=前提。
-BOT_VISION_MODE：作用=模式；参数=relay|direct（默认 direct）；内容=管线；意义=取舍。
-BOT_VISION_REPLY_PROBABILITY：作用=回应概率；参数=0..1（默认 1.0）；内容=触发率；意义=降噪。
-BOT_VIDEO_UNDERSTANDING_ENABLED：作用=视频理解总闸；参数=true/false（默认 false）；内容=开/关；意义=前提。
+BOT_VISION_ENABLED：作用=识图总闸；参数=true/false（默认 false）；内容=开启且注册表有可用模型才调用视觉模型；意义=群里发图能被看懂的前提。
+BOT_VISION_MODE：作用=识别管线选择；参数=relay|direct（默认 direct）；内容=relay=视觉模型转文字，direct=图片直传主模型；意义=质量与成本取舍。
+BOT_VISION_REPLY_PROBABILITY：作用=识图回应概率；参数=0..1（默认 1.0，0=仅 @ 时看图）；内容=识别触发频率；意义=控制打扰与开销。
+BOT_VIDEO_UNDERSTANDING_ENABLED：作用=视频理解总闸；参数=true/false（默认 false）；内容=开启后视频抽帧＋音轨/字幕生成感知简报，支持追问与深挖，关闭走旧抽帧摘要零额外开销；意义=视频消息的深度理解。
+识别模型管理：/bot model vision list|add|update|priority|remove（详见 /bot help 模型）。
 BOT_VIDEO_MAX_FRAMES：作用=抽帧数；参数=正整数（默认 6，0 视同 1）；内容=分析密度；意义=成本。
 BOT_VIDEO_SKIP_ASR_WITH_SUBTITLE：作用=有 CC 字幕时跳过音轨转写；参数=true/false（默认 true）；内容=管线加速；意义=省时省钱。
 BOT_VIDEO_FUZZY_FOLLOWUP：作用=模糊追问（“刚才那个讲了什么”）；参数=true/false（默认 true）；内容=追问能力；意义=体验。
@@ -1192,13 +1210,14 @@ BOT_VIDEO_DEEP_ENABLED：作用=深挖重分析（“再仔细看看”）；参
   五个持久化开关：发送队列、队列后台 worker、审计记录、发送回执、
   运行诊断。全部默认关闭；关闭时对应记录仅内存态，重启不保留。
 【指令与参数】
-BOT_SEND_QUEUE_ENABLED：作用=发送队列持久化；参数=true/false（默认 false）；内容=队列落 sqlite；意义=可靠投递。
-BOT_SEND_QUEUE_WORKER_ENABLED：作用=队列后台投递线程；参数=true/false（默认 false）；内容=后台按批投递；意义=投递自动化。
-BOT_AUDIT_ENABLED：作用=审计落库；参数=true/false（默认 false）；内容=/bot audit 跨重启可查；意义=合规。
-BOT_RECEIPTS_ENABLED：作用=回执落库；参数=true/false（默认 false）；内容=/bot receipt 跨重启可查；意义=投递追踪。
-BOT_DIAGNOSTICS_ENABLED：作用=运行诊断落库；参数=true/false（默认 false）；内容=/bot recent 汇总有料；意义=排障。
-  五键均为 true/false 布尔 .env 键；落库路径由对应 BOT_*_DB_PATH 配置
-  （留空=内存态）。队列参数另有 BOT_SEND_QUEUE_MAX_ITEMS/MAX_ATTEMPTS/RETRY_* 等键。
+BOT_SEND_QUEUE_ENABLED：作用=发送队列持久化；参数=true/false，默认 false；内容=队列落 sqlite 重启不丢；意义=可靠投递的基础。
+BOT_SEND_QUEUE_WORKER_ENABLED：作用=队列后台投递线程；参数=true/false，默认 false；内容=后台按批投递待发消息；意义=不依赖事件触发投递。
+BOT_AUDIT_ENABLED：作用=审计落库；参数=true/false，默认 false；内容=/bot audit 可跨重启查询；意义=合规。
+BOT_RECEIPTS_ENABLED：作用=回执落库；参数=true/false，默认 false；内容=/bot receipt 跨重启可查；意义=投递追踪。
+BOT_DIAGNOSTICS_ENABLED：作用=运行诊断落库；参数=true/false，默认 false；内容=/bot recent 汇总有料；意义=排障。
+说明：5 键均为 .env 配置（不在 /bot runtime set 可写集合），改后重启生效。
+五键均为 true/false 布尔 .env 键；落库路径由对应 BOT_*_DB_PATH 配置
+（留空=内存态）。队列参数另有 BOT_SEND_QUEUE_MAX_ITEMS/MAX_ATTEMPTS/RETRY_* 等键。
 【权限与效果】
   权限=仅管理员。开启后 /bot status 会显示各开关与 store=sqlite/memory 状态。
 【示例】.env 里 BOT_AUDIT_ENABLED=true 后重启。
@@ -1225,13 +1244,13 @@ BOT_DIAGNOSTICS_ENABLED：作用=运行诊断落库；参数=true/false（默认
   邮件桥把 Gmail/QQ 邮箱（IMAP/SMTP）接进统一运行时：新邮件提醒、
   AI 自动回复、人工发信。控制面在 Telegram 管理端，QQ 侧不受理。
 【指令与参数】
-/mail status：作用=看桥接状态；参数=无；内容=开关/账户/发件身份；意义=总览。
-/mail accounts：作用=列可用账户；参数=无；内容=认证账户与别名；意义=选型。
-/mail use <发件邮箱>：作用=设默认发件身份；参数=邮箱（必填，须已连接或已映射）；内容=切换确认；意义=免每次 --from。
-/mail send <收件邮箱> | <主题> | <正文>：作用=发信；参数=三段必填（| 分隔，主题/正文非空）；内容=发送结果；意义=快速发信。
-/mail send --from <发件邮箱> | <收件邮箱> | <主题> | <正文>：作用=临时身份发信；参数=四段缺一不可；内容=发送结果；意义=借身份。
-/mail pause：作用=暂停自动回复；参数=无；内容=确认（收件提醒继续）；意义=只收不回。
-/mail resume：作用=恢复自动回复；参数=无；内容=确认；意义=恢复。
+/mail status：作用=看邮件桥接状态；参数=无；内容=桥接开关、已连接账户、当前发件账户；意义=邮件链路总览。
+/mail accounts：作用=列可用账户；参数=无；内容=认证账户与发件别名；意义=选发件身份前先看有什么。
+/mail use <发件邮箱>：作用=设默认发件身份；参数=发件邮箱（必填，完整地址且必须已连接或已映射）；内容=切换确认；意义=后续 send 不用每次 --from。
+/mail send <收件邮箱> | <主题> | <正文>：作用=发信；参数=收件邮箱（必填，完整地址）＋主题（必填非空）＋正文（必填非空），用 | 分隔三段；内容=发送结果；意义=快速发邮件。
+/mail send --from <发件邮箱> | <收件邮箱> | <主题> | <正文>：作用=临时指定发件身份发信；参数=四段（缺一不可）；内容=发送结果；意义=一次借用别的身份。
+/mail pause：作用=暂停邮件 AI 自动回复；参数=无；内容=暂停确认（收件提醒继续）；意义=只收不回。
+/mail resume：作用=恢复自动回复；参数=无；内容=恢复确认；意义=恢复。
 【权限与效果】
   权限=仅管理员（Telegram 管理端：BOT_TELEGRAM_ADMIN_USER_IDS/CHAT_IDS），
   且只能从 Telegram 适配器发送；非管理端执行会收到“仅允许从 Telegram
@@ -1264,7 +1283,8 @@ BOT_DIAGNOSTICS_ENABLED：作用=运行诊断落库；参数=true/false（默认
 TELEGRAM_BOTS：作用=注册 Telegram Bot；参数=JSON 数组（BotFather Token 列表，至少 1 个才连接）；内容=TG 侧 bot 上线；意义=远程控制入口。
 BOT_TELEGRAM_ADMIN_USER_IDS：作用=指定管理员；参数=JSON 字符串数组（user id）；内容=允许执行 /mail 控制的用户；意义=权限边界。
 BOT_TELEGRAM_ADMIN_CHAT_IDS：作用=指定提醒接收会话；参数=JSON 字符串数组（chat id）；内容=新邮件提醒推送目标；意义=收提醒。
-  三键均为 .env 键，改后重启生效；/bot status、/bot pause|resume 可在 TG 侧远程执行。
+/bot status、/bot pause|resume：作用=在 TG 侧查看/控制运行时；参数=无；内容=同 QQ 侧；意义=出门在外远程运维。
+三键均为 .env 键，改后重启生效；/bot status、/bot pause|resume 可在 TG 侧远程执行。
 【权限与效果】
   权限=仅管理员配置可用。
 【示例】TELEGRAM_BOTS=["123456:ABC-DEF..."]
@@ -1292,11 +1312,11 @@ BOT_TELEGRAM_ADMIN_CHAT_IDS：作用=指定提醒接收会话；参数=JSON 字�
   供应商层：.env 静态注册表（BOT_MODEL_REGISTRY）＋运行时动态注册
   （/bot model add）合并成统一视图；探测脚本用于离线验收。
 【指令与参数】
-BOT_MODEL_REGISTRY：作用=登记中转供应商；参数=JSON 对象（每项 model/base_url/api_key/group/priority）；内容=注册表底表；意义=静态渠道来源。
-priority：作用=全局尝试顺序；参数=整数 1-999（越小越优先）；内容=故障转移次序；意义=控成本，HCN 保底放最后。
-BOT_CHAT_FAST_MAX_CANDIDATES：作用=快速模式候选上限；参数=0=不限制，1-100=最多尝试数；内容=候选裁剪；意义=控开销。
-scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tokens（可选，1-4096，默认 32）；内容=每模型一次探测，不删除配置；意义=批量验收。
-  运行期管理走 /bot model（见「模型」模块）。
+BOT_MODEL_REGISTRY：作用=.env 里登记 AI API 中转供应商；参数=JSON 对象，每项含 model/base_url/api_key/group/priority；内容=模型注册表底表；意义=静态渠道来源（运行时 add 的条目会与它合并）。
+priority：作用=全局尝试顺序；参数=整数 1-999，越小越优先；内容=故障转移次序；意义=便宜稳定的放前面，HCN 保底项放最后。
+BOT_CHAT_FAST_MAX_CANDIDATES：作用=快速模式候选上限；参数=0=不限制，1-100=最多尝试数量；内容=候选裁剪；意义=控制快速模式开销。
+scripts/probe_llm_providers.py：作用=命令行脱敏探测全部渠道；参数=--max-tokens（可选，1-4096，默认 32）；内容=每模型一次探测结果，不删除配置；意义=批量验收供应商。
+运行期管理走 /bot model（见「模型」模块）。
 【权限与效果】
   权限=仅管理员。registry 改 .env 后重启生效；运行时条目热生效。
 【示例】BOT_MODEL_REGISTRY={"myapi":{"model":"deepseek-v4-pro","base_url":"https://api.xxx.com/v1","api_key":"env:MY_KEY","group":"g1","priority":1}}
@@ -1324,11 +1344,14 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   发送管线推送。订阅目的地绑定“添加时的会话”：群里添加=推本群，
   私聊添加=推给你本人。
 【指令与参数】
-/订阅 add <公开目标>：作用=添加；参数=目标必填（链接或 类型:id；目的地/日报等附加参数暂不支持，写了会被拒绝并提示）；内容=添加确认；意义=订阅入口。
-/订阅 list：作用=列表；参数=无；内容=订阅清单；意义=管理前置。
-/订阅 pause <id>：作用=暂停；参数=id 必填；内容=暂停确认（只暂停本会话目的地）；意义=临时静默。
-/订阅 resume <id>：作用=恢复；参数=id 必填；内容=恢复确认；意义=复播。
-/订阅 remove <id>：作用=删除；参数=id 必填；内容=删除确认；意义=退订；重加已存在订阅不会把管理员暂停的订阅悄悄重启。
+/订阅 add <公开目标>：作用=添加订阅并推送到当前会话；参数=公开目标（必填，主页链接或 类型:id 字符串，多余参数会被显式拒绝）；内容=订阅已添加：<id>；意义=新内容/开播自动播报；群内 add 需管理员；重加已存在的订阅只增目的地，不会改动暂停状态（管理员暂停的订阅不会被悄悄恢复）。
+/订阅 list：作用=列出订阅；参数=无；内容=本会话目的地下的订阅（id｜平台｜名字｜启用/暂停）；意义=拿 id、看状态；群内仅管理员可看本群订阅。
+/订阅 pause|resume <id>：作用=暂停/恢复订阅；参数=id（必填，来自 list）；内容=已暂停/已恢复（仅本目的地）；意义=临时静默不删订阅。
+/订阅 remove <id>：作用=删除订阅；参数=id（必填）；内容=已删除（其他群的目的地不受牵连，最后一个目的地移除才整条删）；意义=退订。
+权限=全员自助；群内 add/list 需管理员，pause/resume/remove 群内需管理员且订阅推往本群，私聊需推给自己。
+目标示例：https://space.bilibili.com/123456｜bilibili:up:123456｜youtube:live:<频道ID或@handle>｜xiaohongshu:column:<用户ID>｜music.163.com/playlist?id=xxx
+支持范围：B站（UP主/直播间/番剧/收藏夹/合集）、小红书（图文/专栏/直播）、YouTube（频道/播放列表/直播）、微博、推特、Pixiv、Telegram 频道、音乐平台（网易云/QQ/酷狗/酷我/Apple/Spotify 的歌手/专辑/歌单）；建议直接粘贴主页或链接。
+/订阅 与 /bot subscribe 等价。
 【权限与效果】
   权限=全员自助；群内 add/list 需要管理员（add 会向全群推送外部内容，无门槛=投毒面）；
   私聊自助。pause/resume/remove 的目的地粒度：只影响本群/本人，别的群
@@ -1365,9 +1388,11 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   有效期 BOT_MUSIC_CANDIDATES_TTL_SECONDS（默认 300 秒，下限 30），
   候选数 BOT_MUSIC_CANDIDATES_LIMIT（默认 5，下限 2）。
 【指令与参数】
-点歌 <歌名>：作用=搜索发送；参数=歌名必填；内容=按当前模式的部件组合；意义=核心玩法。查询词与模式别名同名（如「点歌 link」）会得到冲突提示与转义用法，不再静默丢弃。
-点歌 <编号>：作用=候选选择；参数=编号必填；内容=歌曲；意义=选版本；过期/无效编号会明确提示重新点歌，不会拿数字当歌名再搜一遍。
-点歌模式 [模式]：作用=查/设输出方式；参数=模式（卡片|语音|音频|链接|全部，支持 +/和/与 组合词；省略=查当前模式）；内容=当前或新模式的部件清单；意义=输出定制。
+点歌 <歌名>：作用=按平台顺序搜索并发送；参数=歌名或关键词（必填，中英文均可；#歌名=强制按歌名搜索的转义写法）；内容=平台音乐卡片（无卡则封面图）等部件；意义=群内点播。
+点歌 <编号>：作用=同名多候选时二次选择；参数=编号（必填，来自候选列表，默认最多 5 个）；内容=选中歌曲；意义=精确选版本；仅紧随候选列表、默认 300 秒内有效，过期会提示重新点歌。
+点歌模式 <模式>：作用=设置输出方式；参数=模式（卡片|语音|音频|链接|全部，可组合如 卡片+语音，中英文别名均可）；内容=模式持久化确认；意义=控制输出形态；仅管理员，持久保存。
+平台：网易云/酷我/酷狗/QQ音乐/Apple Music/Spotify 顺序尝试，单平台取第一名，失败自动换下一个。
+示例：点歌 晴天｜候选出来后回复「点歌 2」｜点歌模式 卡片+语音
 【权限与效果】
   点歌=全员；点歌模式=仅管理员（写入 BOT_MUSIC_MODE 持久化）。
 【常见错误】编号只在候选列表有效期内有效；直接拿数字当歌名搜索不是有效歌名。
@@ -1399,9 +1424,9 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   未安装/未启动服务时能力不可用。总开关 BOT_MEME_COMMAND_ENABLED；
   功能开关 BOT_MEME_API_ENABLED=true（管理员在 .env 配置，需本地 meme-generator-rs 服务）。
 【指令与参数】
-表情 <模板> [文字]：作用=生成；参数=模板 key 必填；文字按模板 min_texts/max_texts 要求，多段用全角 ｜ 分隔；内容=表情图；意义=梗图。纯 key 无文字时按模板的最少文字数判断是零文字模板还是打错 key。
-表情 列表：作用=列模板；参数=无；内容=模板清单；意义=发现。
-表情帮助：作用=说明；参数=无；内容=用法；意义=自助。
+表情 <模板> <文字>：作用=套模板生成表情图；参数=模板名（必填）＋文字（按模板要求，多段用 ｜ 分隔）；内容=生成的表情图；意义=玩梗输出；需要图片的模板发图或 @ 群友后输命令，不带图用你的头像。
+表情 列表：作用=列出全部模板；参数=无；内容=可用模板 key 清单；意义=先查再玩。
+表情帮助：作用=用法说明；参数=无；内容=完整用法；意义=入门。
 【权限与效果】
   权限=全员。
 【示例】表情 petpet 可爱｜表情 文字表情 早上好｜晚上好
@@ -1432,8 +1457,8 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   冷却 BOT_MEME_LIBRARY_COOLDOWN_SECONDS（默认 20 秒）防刷屏；总开关
   BOT_MEME_LIBRARY_ENABLED（默认 false，需开启）。
 【指令与参数】
-偷表情 [关键词]：作用=随机抽取；参数=关键词可选；内容=表情图；意义=氛围担当。bot 心情低落时对“吵闹”标签候选有限重抽（软偏置，不硬开关）。
-表情库统计：作用=统计；参数=无；内容=库存概览；意义=盘点。
+偷表情 [关键词]：作用=按权重随机发一张入库表情；参数=关键词/情绪标签（可选，命中描述/情绪/场景标签）；内容=表情图；意义=表情包补给；写「私聊/私聊我」等同不填关键词但改为私聊发送。
+表情库统计：作用=看库存；参数=无；内容=数量与来源分布；意义=摸底。
 【权限与效果】
   权限=全员。
 【示例】偷表情｜偷表情 猫猫
@@ -1460,6 +1485,7 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   调 SauceNAO 对图片做来源反搜。图片 URL 从消息图片段提取；
   引用消息里的原图链接拿不到时会提示把图片和「搜图」发在同一条消息。
 【指令与参数】
+搜图 ＋图片：作用=反搜图片来源；参数=图片（同一条消息带图或 @ 一张图；引用消息拿不到原图会明确提示）；内容=SauceNAO 匹配结果（相似度/来源链接）；意义=找画师/找出处。
 搜图 [图片]：作用=反搜；参数=图片段（必传，命令后不带参数，图片在同一条消息里）；内容=匹配结果；意义=溯源。
 【权限与效果】
   权限=全员。未配 SauceNAO key 或无结果时有降级提示。
@@ -1490,8 +1516,8 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   地名——长度受限、不以「今天/真好/怎么样」等口语词开头、不以语气词
   收尾，所以「天气真好」不会误触发。
 【指令与参数】
-天气 <城市>：作用=查询；参数=城市或 省-市/省-县（必填，≤20 字）；内容=天气报告卡；意义=日常查询。
-支持区县 <省>（别名 查询区县/可查区县）：作用=列区县；参数=省名必填；内容=区县列表；意义=发现可查的县级地名。
+天气 <城市>：作用=查天气；参数=城市名（必填，≤20 字且要像地名；同名城市用 省-市 区分，如 浙江-杭州）；内容=当前天气＋预报卡（中国气象局 NMC 免 key，Open-Meteo 兜底）；意义=出行参考。
+支持区县 <省>：作用=列出可查区县；参数=省名（必填）；内容=该省区县码表清单；意义=查县级精细天气前的发现入口。
 【权限与效果】
   权限=全员。自然语言「帮我查杭州天气」经意图归一化同样命中。
 【示例】天气 上海｜天气 河北-大城｜支持区县 浙江
@@ -1523,7 +1549,8 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   失败降级为「晚点再试」。触发收窄：≤32 字、不带链接（带链接走解析）、
   房价/基金/币圈/显卡/期货/汇率等非股市“行情”自动让路。
 【指令与参数】
-行情 [市场词…]：作用=查指数；参数=市场词可选（A股/B股/上证B/深证B/美股/港股/恒生/日经/纳斯达克/纳指/道琼斯/道指/标普/韩/新加坡/印度/台湾/台股/英国/富时/法国/德国/莫斯科/俄罗斯，多词取并集）；内容=指数清单；意义=盘面速览。
+行情：作用=全球主要指数一览；参数=无；内容=中国区/亚太/欧美指数一览（点位/涨跌幅）；意义=一眼看盘。
+行情 + 市场词：作用=只看指定市场；参数=市场词（写在同一句话里，可多个取并集）：A股/B股/上证B/深证B/美股/港股/恒生/日经/纳斯达克/纳指/道琼斯/道指/标普/韩/新加坡/印度/台湾/台股/英国/富时/法国/德国/莫斯科/俄罗斯；内容=对应指数；意义=聚焦关注的市场。过滤词没命中任何指数时回退全部。
 【权限与效果】
   权限=全员。B 股与莫斯科（IMOEX）指数已上线。
 【示例】行情｜A股行情｜B股行情｜莫斯科行情
@@ -1559,6 +1586,9 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   有来源的估值说明、不接行情。触发收窄：≤32 字、不带链接；裸「行情」
   仍归全球股指，两者互不抢路由。
 【指令与参数】
+股价 / 市值 / stocks：作用=九家科技巨头面板；参数=无（不点名公司）；内容=九家美股科技公司一行一价（现价/涨跌幅/近 30 个交易日走势折线＋日收益分布箱形图）；意义=一图看盘。
+公司名 + 股价：作用=查单家公司行情；参数=公司名或 ticker（必填）；内容=现价/涨跌幅/日 K/KDJ/总市值金融卡＋延迟标注；意义=聚焦关注的股票。
+OpenAI / Anthropic / 字节跳动：作用=问估值；参数=无；内容=有来源的估值口径说明（官方公告/公开报道）；意义=未上市不给股价，只给可信估值。
 股价 [公司名]：作用=查股价/市值；参数=公司名或 ticker 可选（英伟达/AMD/英特尔/苹果/微软/谷歌/亚马逊/Meta/台积电，繁体 股價/個股 与英文 stock/stocks 同样可触发；不点名=九家面板）；内容=金融卡或纯文本速览；意义=个股速览。
 【权限与效果】
   权限=全员，群聊/私聊行为一致。走势折线为近 30 个交易日收盘；
@@ -1596,6 +1626,9 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   ≤32 字、不带链接；「黄金股行情」这类股市语境自动让路给个股/股指，
   不会误触商品卡。
 【指令与参数】
+黄金 / 金价：作用=查贵金属现价；参数=品种词可选（黄金/白银/银价…，不带品种=全品种面板）；内容=现价/涨跌幅＋30 日走势折线；意义=一眼看金市。
+原油 / 油价：作用=查能源现价；参数=品种词（原油/油价/铜价…）；内容=外盘主力连续报价＋涨跌；意义=盘面速览。
+大宗商品：作用=全品种面板；参数=无；内容=贵金属/能源/工业金属分组报价（东财外盘主力连续，LME 无源品种用 COMEX 铜承接）；意义=商品市场一览。
 黄金|金价|白银|原油|油价|铜价|大宗商品：作用=查商品现价；参数=品种词写在同一句话里即可（繁体 黃金/金價/白銀/油價/銅價 与英文 gold/silver/oil 同样可触发）；内容=分组报价卡或纯文本速览；意义=商品行情速览。
 【权限与效果】
   权限=全员，群聊/私聊行为一致。30 日走势为真实收盘折线。
@@ -1630,6 +1663,8 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   缓存；1Y 期限暂无稳定公开源，诚实不接、卡上如实标注，绝不补 0。
   利差为上游直供的 10Y−2Y 口径，不做本地二次计算伪造。
 【指令与参数】
+国债 / 国债收益率：作用=看各期限收益率；参数=期限词可选（不带期限=全期限面板）；内容=2Y/5Y/10Y 等主要期限收益率＋变动；意义=债市一览。
+期限利差 / 收益率曲线：作用=看利差与曲线形态；参数=无；内容=10Y−2Y 利差（上游直供口径）＋曲线速览；意义=衰退信号/资金面参考。
 国债|国债收益率|期限利差|收益率曲线：作用=查收益率与利差；参数=无（繁体 國債/債券收益率 同样可触发；「中美国债」给中美两侧对比）；内容=收益率面板或利差行；意义=债市与利差速览。
 【权限与效果】
   权限=全员，群聊/私聊行为一致。
@@ -1664,6 +1699,8 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   交易所不再披露北向净买入额，本模块只报仍在披露的成交总额等
   字段，绝不推算、不伪造净买入。
 【指令与参数】
+北向资金 / 北上资金：作用=看北向整体动向；参数=无；内容=沪股通/深股通成交总额等仍在披露的字段；意义=外资参与度参考。
+沪股通 / 深股通：作用=分通道看；参数=通道词可选；内容=对应通道成交数据；意义=分市场观察。
 北向资金|北上资金|沪股通|深股通：作用=查北向成交动向；参数=无（繁体 北向資金/滬股通/深股通 同样可触发）；内容=成交面板或纯文本速览；意义=外资动向参考。
 【权限与效果】
   权限=全员，群聊/私聊行为一致。
@@ -1700,7 +1737,9 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   东财暂无行情，会诚实说「暂无数据」，绝不补 0。汇率无可用日 K，
   卡上走势一栏如实标注，不伪造走势。
 【指令与参数】
-汇率 [币种]：作用=面板或单查；参数=币种可选（美元/人民币/日元/韩元/港币/欧元/英镑/新台币/新加坡元/澳门币/迪拉姆 或 ISO 代码；「美元汇率」这类单查默认兑人民币）；内容=汇率速览或换算行；意义=日常查询。
+汇率：作用=主要货币面板；参数=无；内容=USD 基准的主要货币对速览（中间价/参考价口径）＋无源货币对诚实标注；意义=一眼看汇市。
+美元兑人民币 / USD/CNY：作用=查指定货币对；参数=两种币名或 ISO 代码（中文、英文大小写均可）；内容=单行换算与口径/延迟标注；意义=定点查询。
+100日元换多少人民币：作用=带金额换算；参数=金额+币名（金额可省，省略按 1 计）；内容=按中间价折算的结果；意义=换钱参考。
 【权限与效果】
   权限=全员，群聊/私聊行为一致。繁体（匯率/兌換/換匯）与英文
   （fx/forex/exchange rate）同样可触发；股价/股指等股票语境词会
@@ -1733,8 +1772,12 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   八字排盘（含地支藏干）。纯本地计算无网络；输出为娱乐向文本并附
   免责尾注，不含医疗/投资等严肃建议。
 【指令与参数】
+占卜 / 起卦 / 算卦 / 摇卦：作用=金钱卦六掷成卦；参数=无；内容=本卦＋变卦（老爻自动变）；意义=一事一问的娱乐向卜卦。
+塔罗：作用=单张指引；参数=无；内容=单张牌＋解读；意义=快问快答。
+塔罗 三张：作用=牌阵；参数=无（触发词：三张/过去现在未来/牌阵）；内容=过去/现在/未来三张牌阵；意义=看脉络。
+塔罗 每日一抽：作用=今日牌；参数=无（触发词：每日一抽/今日塔罗/今天塔罗）；内容=今日固定牌（同一天同一人不变）；意义=日签。
+八字 / 排盘 <生日时间>：作用=四柱排盘；参数=生日时间（可选，如「八字 1998年3月2日早上7点」；日期支持 1998年3月2日/1998-03-02/1998/3/2；时辰支持 早上7点/晚上9点05分/21:51/早上7点半 等，只给日期按午时 12:00 排，不给日期按当前时点排）；内容=四柱排盘＋地支藏干（逐柱本气/中气/余干与权重）＋藏干五行加权统计＋免责尾注；意义=传统命理娱乐；支持 1900-2100 年。
 占卜|起卦|算卦|摇卦|六十四卦|金钱卦：作用=起卦；参数=无；内容=卦象＋变卦；意义=卜问。
-塔罗 [玩法]：作用=抽牌；参数=无=单张｜三张/牌阵=三张牌阵｜每日一抽/今日塔罗=日签（按 日期+用户 哈希同日固定）；内容=牌面与解读；意义=指引娱乐。
 八字|排盘|四柱|命盘|算命|生辰 [生日时间]：作用=排盘；参数=生日时间可选（日期三种写法；时辰词归一化：下午/晚上/夜里/深夜 +12、凌晨12点=0点、中午=12 点；默认午时；缺省当前时点并附提示）；内容=四柱＋藏干（本气/中气/余干与通行子平权重，单支合计 100）＋藏干五行加权汇总＋尾注；意义=深度排盘。
 【取值范围】
   可排盘区间 1900-2100 年；超出会优雅提示换时间。日期解析失败会给出
@@ -1766,6 +1809,10 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   国内可达 RSS 聚合（IT之家/少数派/华尔街见闻/BBC 中文），进程内
   10 分钟缓存，单源失败静默跳过；抓取为空给降级文案不阻塞会话。
 【指令与参数】
+快报 / 早报 / 晚报 / 今日热点：作用=综合快报；参数=无；内容=8 条混合头条（科技/财经/国际轮转）；意义=每日资讯入口。
+科技新闻 / AI新闻 / AI快报：作用=科技类目；参数=无；内容=科技/AI 类头条；意义=技术动向。
+财经新闻 / 财经快报：作用=财经类目；参数=无；内容=财经头条；意义=市场动向。
+国际新闻：作用=国际类目；参数=无；内容=国际头条；意义=世界动向。
 快报 [类目词]：作用=取快报；参数=类目词写在同一句话里：财经→finance、国际→world、科技/AI/人工智能→tech、其余→mix 轮转；内容=8 条标题＋来源＋链接；意义=资讯。
 【取值范围】
   只认显式触发词（快报/早报/晚报/今日热点/类目词×新闻|快报/AI快报），
@@ -1801,7 +1848,7 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   支持独立页缺失时的精确列表条目提取（BOT_WIKI_ENTRY_PAGES，默认
   鳴潮角色列表，最多优先 3 页）。
 【指令与参数】
-维基 <词条>：作用=查询；参数=词条名必填；内容=摘要或未找到提示（含可能原因）；意义=知识速查。
+维基 <词条>：作用=查 MediaWiki 百科；参数=词条名（必填，省略回用法）；内容=词条摘要（游戏类词条自动精简）；意义=快速百科查询。
 【权限与效果】
   权限=全员。查不到时会说明是独立页缺失、列表条目缺失还是网络失败。
 【示例】维基 量子力学｜维基 鸣潮守岸人
@@ -1832,7 +1879,8 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   可关）。问句剥离后剩人称代词（你/我/谁…）、过短/过长、含链接的
   一律不查，交给聊天链路。
 【指令与参数】
-萌娘百科 <词条>：作用=显式查询；参数=词条名必填；内容=摘要；意义=定向。
+萌娘百科 <词条>：作用=查萌百词条；参数=词条名（必填）；内容=词条摘要；意义=二次元知识库。
+直接问「XX是谁/是什么/介绍一下」：作用=实体问句自动查萌百；参数=实体名（2-30 字，剥掉问句后）；内容=萌百摘要；意义=自然问法直达；查不到时无感转人格聊天回答。
 「XX是谁？」式问句：作用=自动查询；参数=实体名（从问句剥离，2-30 字）；内容=命中=萌百摘要，未命中=人格聊天兜底；意义=无门槛问询。
 【权限与效果】
   权限=全员。
@@ -1861,10 +1909,11 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   data/today_history_push.json（私聊 f_<user_id>、群聊 g_<group_id>），
   由调度器按表注册每日任务。
 【指令与参数】
-历史上的今天：作用=查询；参数=无；内容=当天历史；意义=即时消费。
-历史上的今天 设置 <HH:MM>：作用=设每日推送；参数=HH:MM（24 小时制，冒号可用：）；内容=确认；意义=定时触达。
-历史上的今天 状态：作用=查状态；参数=无；内容=推送时间；意义=核对。
-历史上的今天 取消：作用=退订；参数=无；内容=确认；意义=退订。
+历史上的今天：作用=立即查询当天历史；参数=无；内容=当天历史事件清单；意义=即查即看。
+历史上的今天 设置 <HH:MM>：作用=设置每日推送时间；参数=时间（必填，HH:MM 24 小时制，取值 00:00-23:59）；内容=设置确认；意义=每天定时收到；群内需管理员（影响全群），私聊自助。
+历史上的今天 状态：作用=查看推送状态；参数=无；内容=当前推送时间或未设置；意义=核对。
+历史上的今天 取消：作用=取消每日推送；参数=无；内容=取消确认；意义=退订；群内需管理员。
+短别名：/历史、/今日历史（带斜杠，避免把聊天里的“历史”误触发）。
 【权限与效果】
   权限=全员查询；设置/取消在群聊需要管理员（推送时间影响全群），
   私聊自助。订阅表损坏时会拒绝改写以保护其他会话的订阅。
@@ -1894,7 +1943,9 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   yt-dlp 下载到 data/downloads/ 并做媒体分析，经发送管线回传文件段。
   cookies（/bot cookie import）与代理（BOT_DOWNLOAD_PROXY）对下载同样生效。
 【指令与参数】
-/bot download <链接>：作用=下载；参数=URL 必填（http(s) 开头）；内容=摘要＋文件；意义=核心功能。裸发「下载 …」当前不走路由，请使用 /bot 前缀。
+/bot download <链接>：作用=下载媒体并回传文件；参数=链接（必填，http(s) 开头；B站/油管/推特/小红书/抖音等）；内容=文字摘要（标题/大小/分辨率/时长/画质标注）＋视频文件段；意义=把在线视频搬进群。
+限制：单文件 ≤1GB（超限自动降清晰度至最高 8K 上限内）；拒绝非 http(s) 与内网/保留地址（含 DNS 解析后的私网 IP）；依赖 yt-dlp。
+权限=全员（H6 定案：产品开放给普通用户，安全边界由 downloader 侧承担）。
 【取值范围】
   大小上限 BOT_DOWNLOAD_MAX_BYTES（默认 1073741824=1GB）；最大高度
   BOT_DOWNLOAD_MAX_HEIGHT（默认 0=不限制，超限自动降级）；超时
@@ -1925,8 +1976,10 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   存运行时设置（BOT_PERSONA_NICKNAMES / runtime nickname 维护），
   未配置时别名层关闭；标准 /bot 前缀不受影响。
 【指令与参数】
-/<昵称><命令> [参数]：作用=触发；参数=命令动词（帮助/help、状态/status、为什么/why、记忆/memory、配置/config、就绪/readiness、人格/persona、对话验收/dialogue、角色/roles、清理历史/历史、暂停/pause、继续/resume、天气、点歌、点歌模式、epic、吃什么/菜谱、历史上的今天、好感度、订阅、日志、偷表情、表情库统计、维基…）；内容=对应命令的输出；意义=顺口。
-/bot 昵称 set <QQ号> <小名>：作用=记小名；参数=QQ 号（5-11 位数字）＋小名（1-32 字）；内容=确认；意义=好感度与称呼个性化（仅管理员）。
+/<昵称><命令>：作用=用昵称代替 /bot 前缀触发命令；参数=命令名（必填，如 帮助/状态/为什么/天气/点歌/订阅/日志/清理历史/暂停/继续，斜杠可省略）；内容=同对应命令；意义=角色扮演的日常用法。可用昵称经 /bot runtime nickname 维护。
+模块/动作词归一：模型=model、设置=runtime、帮助=help、维基=wiki；查看/列表=list、切换=set、用量=usage、思考=think 等动词自动映射。
+昵称命令受限：部分管理命令（如日志/记忆）会要求回落到 /bot 形式执行。
+管理员另可用 /bot 昵称 set <QQ号> <小名>（5-11 位数字＋1-32 字小名）为群友记小名，用于好感度称呼。
 【权限与效果】
   权限=触发本身全员；各命令自身的权限照旧生效。
 【示例】/岸宝帮助｜守岸人 天气 上海｜/岸宝点歌 晴天
@@ -1954,6 +2007,8 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   链接解析在路由优先级 46：只要文本含 http(s) 链接且未命中更高优先级
   命令（如 /bot download、订阅），就走解析器组出信息卡。
 【指令与参数】
+直接发链接：作用=自动解析成信息卡；参数=URL（消息里含 http(s) 链接即触发，无需命令词）；内容=平台信息卡（标题/作者/数据/封面，GitHub 仓库出星标/Fork/简介/README 摘要）；意义=不用打开 App 就知道链接里是什么。
+支持平台：B站/抖音/小红书/油管/推特/小黑盒/米游社/森空岛/库街区/Lofter/Pixiv/GitHub/音乐平台等；长视频走视频理解可追问。
 发链接（无命令词）：作用=解析；参数=URL（1 条或多条，取第一个）；内容=信息卡/摘要；意义=内容预览。
 【权限与效果】
   权限=全员。相关平台需要登录态时用 /bot cookie import 补 cookie。
@@ -1981,6 +2036,8 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   自动发送子系统的入口：解析成结构化意图（通道/收件人/主题/正文）并
   输出预览。当前版本只做预览（confirm_required），不真实发送。
 【指令与参数】
+报存 给 <收件人> 发消息，内容…：作用=起草聊天消息草稿；参数=收件人（必填，可用 、,， 分隔多个）＋内容要求（可选，支持 主题：… 内容：… 结构）；内容=草稿预览（通道/收件人/主题/内容要求）；意义=把“要发什么”先落成结构化草稿。
+报存 给 <收件人> 发邮件，主题：<主题>，内容：<正文>：作用=起草邮件；参数=收件人（必填）＋主题（可选）＋内容（可选）；内容=草稿预览（M0 仅预览不真实发送）；意义=邮件起草。
 报存 给 <收件人> 发消息|邮件 [，内容要求]：作用=起草；参数=收件人必填（多个用 、,， 分隔）；「主题：」段作为邮件主题；「内容」后的文本作为正文要求；内容=草稿预览卡；意义=规划待发内容。
 【权限与效果】
   权限=全员（预览无副作用）。邮件通道风险级高于普通消息。
@@ -2008,7 +2065,11 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   本地菜品库随机推荐＋AI 约束生成双层：命中修饰/约束词表走过滤或 AI，
   否则纯随机。推荐与菜谱渲染 Mica 卡图（含本地封面），失败回退文本。
 【指令与参数】
-吃什么 [修饰/约束]：作用=推荐；参数=修饰词（三选一/来三道/再来一道/再来/辣的/不辣/微辣/中辣/特辣）或约束描述（不吃/不要/忌口/过敏/有/加/N人/清淡/减脂…）；内容=菜品卡；意义=选菜。
+吃什么：作用=随机推荐 1 道家常菜；参数=无；内容=Mica 菜品卡（名字/口味/食材/做法，本地图包有图上卡）；意义=治今天吃什么。
+吃什么 三选一 / 来三道 / 再来一道：作用=控制数量与换一批；参数=修饰词（三选一|来三道|再来一道|再来）；内容=3 道不同菜或补一道；意义=选择困难加倍版。
+吃什么 辣的 / 不辣 / 微辣 / 中辣 / 特辣：作用=按辣度过滤；参数=辣度词；内容=过滤后的推荐；意义=口味适配。
+菜谱 <菜名> / 怎么做 <菜名> / 如何做 <菜名>：作用=查做法；参数=菜名（必填）；内容=食材＋步骤卡；意义=照着做。
+带忌口/食材/人数约束（如「不吃香菜 有鸡蛋 两人吃」）自动走 AI 生成菜谱；菜品图片放 Runtime data/food_images/<菜名>.jpg|.png|.webp 即可上卡。
 菜谱 <菜名>（别名 怎么做/如何做）：作用=查做法；参数=菜名必填；内容=食材与步骤；意义=烹饪指引。
 【权限与效果】
   权限=全员。普通闲聊（吃了吗/吃火锅）不会被误判成点菜。
@@ -2037,8 +2098,11 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   把发到 bot 的图片/动图/视频/聊天记录分析内容并按 类别×作品 双层
   目录归档到本机 data/media_archive（VLM 判定，指令可覆盖）。
 【指令与参数】
+收藏：作用=归档媒体；参数=可选 分类= IP= 角色=（管理员另可 子路径=）；内容=与图片/动图/视频同条发送，或回复那条媒体；意义=自动分类存档。
+归档：作用=同收藏；参数=同上；内容=VLM 判类别与作品来源（cosplay/二次元插图/表情包/截图/照片/风景/人物/动图），判不出落「未识别」；意义=双层目录管理。
+存聊天记录：作用=归档聊天记录；参数=无（回复合并转发触发）；内容=展开为 Markdown（含一句话摘要）；意义=永久留档。
+安全=SSRF 护栏+magic bytes 质检+sha256 去重+单文件/每日限额；权限=仅管理员（bot_media_archive_min_role，默认超管）。
 收藏|归档 [分类=x] [IP=x] [角色=x]：作用=归档；参数=可选；内容=自动/指定分类；意义=整理。
-存聊天记录：作用=归档合并转发；参数=无；内容=Markdown+摘要；意义=留档。
 【权限与效果】
   权限=仅管理员（bot_media_archive_min_role，默认 super_admin；改 user 开放全员+限额）。
 【示例】[图片] 收藏｜[图片] 收藏 分类=cosplay IP=鸣潮｜（回复图片）收藏｜（回复转发）存聊天记录
@@ -2067,8 +2131,10 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   守岸人走 OneBot V11 群接口（群资料/成员列表/公告/精华）现查现答；
   资料带进程内缓存（资料 600s/成员 900s/公告 600s），不刷屏不慢等。
 【指令与参数】
-群信息：作用=本群小档案；参数=无；内容=群名/群主/人数/上限/管理员数；意义=概况。
-群公告｜群精华：作用=公告首段/精华条数；参数=无；内容=仅管理员；意义=分级可见。
+群信息：作用=查本群小档案；参数=无；内容=群名/群主/人数/上限/管理员数，管理员另附公告首段与精华条数；意义=一问就知道群概况。
+群主是谁｜群人数｜本群多大了：作用=单点直问；参数=无；内容=只答问的那一项（建群时长依赖协议字段，没有就直说）；意义=口语直问直答。
+群公告｜群精华：作用=看公告首段/精华条数；参数=无；内容=仅管理员，其余成员收到权限提示；意义=群务信息分级可见。
+边界（诚实降级）：群链接/群分享、群等级/群标签、群相册——协议无标准 API，不做不假装；接口失败如实说拿不到不编数；成员名单不整列（隐私+防刷屏）；仅群聊生效。
 【权限与效果】
   权限=群资料/人数全员；公告与精华仅管理员。仅群聊生效，私聊回提示。
 【示例】群信息｜群主是谁｜群人数｜本群多大了｜群公告｜群精华
@@ -2096,7 +2162,11 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   表达中友好成分的加权占比（估算）。好感档位只影响语气与距离感，
   不改变安全边界。
 【指令与参数】
-好感度：作用=查好感；参数=无；内容=双向卡或群榜；意义=关系可视化。
+好感度：作用=查好感；参数=无；内容=私聊=双向好感卡；群聊=本群好感榜（有印象成员，自己高亮，展示前 12/上限 60）；意义=关系可视化。
+好感度 我：作用=只看自己；参数=我（别名 自己/me）；内容=双向分值；意义=群里不想看榜时用。
+好感度 算法：作用=说明规则；参数=算法（别名 说明/规则/help）；内容=图文算法卡＋你与守岸人之间的氛围画像；意义=透明化。
+计分（v5 定性版）：好感随言行连续累积——综合说话的温度、相处的时间、第一印象、当天状态平滑变化，没有固定加几减几；同一天同类言行影响递减；久不联系慢慢回到基准；难听的记忆随时间淡去。
+档位：初识/生疏/微凉/稍淡/友善（基准）/亲近/挚友/独一份 共八档，连续过渡、不在门槛上生硬跳变；任何档位都不强硬、不辱骂、不弃聊。
 好感度 我|自己|me：作用=只看自己；参数=任选其一；内容=双向分值；意义=隐私。
 好感度 算法|说明|规则|help：作用=算法说明；参数=任选其一；内容=规则＋档位态度对照＋你与守岸人之间的氛围画像（定性描述，不展示具体加减数值）；意义=透明。
 【权限与效果】
@@ -2128,6 +2198,7 @@ scripts/probe_llm_providers.py：作用=命令行脱敏探测；参数=--max-tok
   聚合 Epic 公开接口与 Steam 限免，渲染可用时输出 Mica 信息卡，
   文本作兜底。
 【指令与参数】
+epic / epicfree / Epic 免费 / 免费游戏 / steam免费：作用=查本周限免；参数=无；内容=Epic 每周限免＋Steam 100% 折扣限免合并清单（标题/截止/链接，Mica 卡图）；意义=白嫖情报。
 epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免费/steam free/steamfree）：作用=查询；参数=无；内容=本周免费游戏清单；意义=情报。
 【权限与效果】
   权限=全员。
@@ -2159,6 +2230,8 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   不建目录、不建数据库、不做上传，一把随机梭哈。目录清单 30 秒 TTL
   缓存，改文件夹半分钟内生效。
 【指令与参数】
+随机图 / 来张图：作用=从你配置的图库文件夹随机发一张图；参数=无；内容=一张图片（jpg/jpeg/png/gif/webp/bmp，单张 ≤20MB）；意义=自建图库的抽卡玩法。
+配置：图库目录写在 BOT_RANDPIC_DIRS（可多个、递归扫描、只读绝不自建目录）；触发词可用 BOT_RANDPIC_TRIGGER_WORDS 换成自己的（默认 随机图/来张图）。
 随机图|来张图：作用=发图；参数=无（触发词后跟标点/语气词也可命中；「随机图片库」这类包含关系词不误触发）；内容=图片或图库为空的配置提示；意义=娱乐。
 【取值范围】
   BOT_RANDPIC_DIRS：文件夹路径列表；扩展名 jpg/jpeg/png/gif/webp/bmp；
@@ -2190,9 +2263,11 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   主动督促。触发方式是自然语言（含 提醒/叫我/记得叫 信号词且能解析出
   时间），或列表/取消查询。
 【指令与参数】
-<时间>提醒我 [事项]（别名 叫我）：作用=建提醒；参数=时间（自然语言：X点/X点半/X:MM/下午X点/N分钟后/半小时后/明天早上8点…）＋事项可选（≤120 字）；内容=记下确认；意义=核心玩法。
+<时间>提醒我 <事项>：作用=到点主动督促；参数=时间（必填，支持绝对「12点/明天早上8点/下午三点半」与相对「半小时后/N分钟后/N小时后」）＋事项（可选，截取 ≤120 字，省略给默认文案）；内容=记下确认＋取消用的 id 前缀；意义=守岸人版闹钟。
+提醒列表 / 我的提醒：作用=查看待办；参数=无；内容=本会话待办提醒（id 前 6 位＋时刻＋事项）；意义=盘点。
+取消提醒 <id前缀>：作用=取消某条；参数=id 前缀（必填，4-12 位十六进制，需唯一命中，多条命中会要求换更长前缀）；内容=取消确认；意义=反悔。
+规则：只提醒“当前会话”；无明确日词且时刻已过自动顺延明天；时间必须晚于当前，否则视为没解析到。
 提醒列表|我的提醒|看看提醒|有哪些提醒：作用=列待办；参数=无；内容=清单；意义=盘点。
-取消提醒 [id前缀]：作用=取消；参数=4-12 位十六进制前缀（唯一命中才取消；不带前缀会提示先看列表）；内容=取消确认；意义=反悔。
 【权限与效果】
   权限=全员（bot_reminder_enabled 可关）。投递按会话作用域（群=群内，
   私聊=本人），发送走队列。
@@ -2224,11 +2299,12 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   按会话隔离（A 群看不到 B 群）；含「- [ ]」的笔记自动成为待办，
   可被「做完 N」或自然语言勾选了结。
 【指令与参数】
-笔记 记 <内容>（筆記 記/biji）：作用=新增；参数=内容（≤4000 字，可配图片消息）；内容=编号确认；意义=核心玩法。
+笔记 记 <内容>：作用=记一条笔记；参数=内容（必填，Markdown 原样存，#/## 三级标题可用；写「- [ ] 待办」的行按待办看待；可配图一起发，最多 4 张自动落盘）；内容=记下确认＋编号；意义=把事情交给我保管。
+笔记列表 / bijiliebiao：作用=列出本会话笔记；参数=无；内容=编号＋待办状态（□/☑）＋首行摘要；意义=盘点。
+笔记 看 N：作用=翻开第 N 条；参数=编号（必填）；内容=纯文本正文（标题保留 #，图片显示 [图片N]），配图原样补发；意义=回看。
+做完 N：作用=勾选第 N 条待办；参数=编号（必填）；内容=完成确认；自然语言也行——「作业做完了」会模糊匹配未完成提醒与笔记待办，命中即勾。
+删笔记 N：作用=删除第 N 条；参数=编号（必填）；内容=删除确认（配图一并清理）；意义=放下。
 笔记列表（筆記列表/bijiliebiao/bjlb）：作用=清单；参数=无；内容=编号＋状态＋摘要；意义=盘点。
-笔记 看 N（看笔记 N/kanbiji N）：作用=回看；参数=编号；内容=纯文本正文＋补发配图；意义=翻笔记。
-做完 N：作用=勾选待办；参数=编号；内容=完成确认；普通笔记会明说它不是待办。
-删笔记 N（shanbiji N）：作用=删除；参数=编号；内容=删除确认。
 【权限与效果】
   权限=全员（bot_notes_enabled 可关）。单会话上限 bot_notes_max_per_chat
   （默认 200），满了会提示先清理；数据库与图片经 runtime 路径落盘。
@@ -2259,8 +2335,9 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   收件箱是一份纯文本文件（bot_daily_assist_dir 下 inbox.md），
   手机/电脑都能直接编辑；早报读取后归档到 daily/ 按日期存放。
 【指令与参数】
-收件箱 <内容>（inbox/shoujianxiang）：作用=速记一条；参数=内容；内容=收录确认；意义=捕捉一闪而过的琐事。
-收件箱：作用=看待处理清单；参数=无；内容=编号清单；意义=盘点。
+收件箱 <内容>：作用=把待办/杂事记进收件箱文件；参数=内容（必填，≤2000 字）；内容=收录确认；意义=想到就丢，不用惦记。
+收件箱：作用=看当前攒着的事；参数=无；内容=编号清单；意义=盘点。
+定时：每天 09:00 早报整理收件箱并归档，21:00 晚报对账；到饭点还会随机推荐吃什么（BOT_DAILY_ASSIST_* 可调）。
 【权限与效果】
   权限=全员（bot_daily_assist_enabled 可关）。定时推送目标只取
   BOT_DAILY_ASSIST_PUSH_USER_IDS 名单，名单为空则只记不推。
@@ -2291,7 +2368,11 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   语音能力对接本机 GPT-SoVITS v2ProPlus 的 HTTP 接口（api_v2.py，默认 9880），
   用你训练好的守岸人权重合成；文本不出本机，合成结果落运行时目录。
 【指令与参数】
-说 <文本>（语音/念/朗读/tts/say 等价；繁體 說/語音/唸/朗讀/語音合成 同）：作用=合成语音；参数=文本；内容=语音消息；意义=让守岸人开口。
+说 <文本>：作用=把文本合成为守岸人音色的语音消息；参数=文本（必填，默认上限 200 字，BOT_TTS_MAX_CHARS=0 为不限）；内容=一条语音；意义=让回复带上声音。
+语音 <文本>｜念 <文本>｜朗读 <文本>｜tts <文本>：触发词等价，繁體 說/語音/唸/朗讀/語音合成 同（正文保留繁體用字）；BOT_TTS_TRIGGER_WORDS 可自定义。
+对话自动配音：BOT_TTS_AUTO_REPLY_ENABLED 开启后，人格回复会连同语音一起发出，范围由 BOT_TTS_AUTO_REPLY_SCOPE 决定（private/group/all）。
+配音概率：默认只有 5% 的回复会带语音（BOT_TTS_AUTO_REPLY_PROBABILITY）；BOT_TTS_AUTO_REPLY_ALWAYS=true 可临时改成条条都配，方便验收听音。
+预设与硬顶：合成参数以中央预设表为唯一缺省源（BOT_TTS_PRESET，其余数值键=管理员覆盖）；单次文本硬顶 2000 字、产物 8 MiB（BOT_TTS_HARD_MAX_CHARS / BOT_TTS_MAX_AUDIO_BYTES，超限拒绝并留痕）；群聊自动配音另受内容群白名单安全门约束（黑名单永远赢，白名单空=群面不配音绝不猜群）。
 【权限与效果】
   权限=全员，前提是 BOT_TTS_ENABLED=true 且 9880 服务在跑。参考音频未配置、
   服务未启动或超时，都会得到一句可读的降级文案而不是报错；引擎不可达时
@@ -2327,8 +2408,9 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   机器可读目录 /bot commands 管「程序对账」。三者和 docs/command-catalog.md
   共享同一份注册数据，改一处全端生效。
 【指令与参数】
-/bot help：作用=总览；参数=无；内容=分类清单；意义=发现功能。
-/bot help <模块>：作用=深度页；参数=模块名/别名；内容=逐参数说明；意义=自助排障。
+/bot help：作用=按权限输出分类总览；参数=无；内容=管理员/大模型/子功能三类清单，每行附「/bot help <模块>」展开引导；意义=一切入口的入口。渲染成功发 Mica 卡，失败回纯文本。
+/bot help <模块>：作用=单模块深度页；参数=模块名或别名（如 /bot help 点歌、/bot help music）；内容=作用/参数/取值/权限四要素＋示例＋详细教程；意义=逐参数自助。
+权限=普通用户只见公开模块，管理员另见诊断与配置模块；查无此模块回「没有找到」并提示相近分类。
 /bot commands：作用=机器可读目录；参数=无；内容=路由表＋命令清单；意义=脚本对账。
 【权限与效果】
   权限=全员；可见范围按角色切换（非管理员查管理员模块会得到「没有找到」）。
@@ -2356,7 +2438,11 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   聊天是兜底能力：没有任何「/bot chat」式命令，命中不了其他路由的
   文本最终落到这里。它承载人格档案、向量知识库、世界观与好感语气。
 【指令与参数】
-  无指令：作用=承接所有未命中路由的自然对话；参数=无；内容=人格化回复；意义=产品主体验。触发方式=@点名 / 昵称点名 / 私聊直说。
+群聊：@机器人、昵称点名或直接写名字才会回；其余消息默认静默观察，自动接话开启时按概率抽签，且主动接话受好感门（好感档 ≥ 亲近）。
+私聊：白名单内直接发消息即可对话。
+边界：现实问题会联网检索（仅管理员可见 🔎 调试标记）；世界观问题走人格档案＋向量知识库。
+失败：私聊回守岸人话术提示，群聊保持静默不刷屏。
+无指令：作用=承接所有未命中路由的自然对话；参数=无；内容=人格化回复；意义=产品主体验。触发方式=@点名 / 昵称点名 / 私聊直说。
 【权限与效果】
   权限=全员（受群聊门禁与好感门约束）。回复经统一审查与渲染管线。
 【示例】（群里 @守岸人）今天状态怎么样？
@@ -2382,7 +2468,10 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   戳一戳是轻量互动：群友戳机器人头像，机器人按概率回一句话。
   冷却与概率防止连戳刷屏。
 【指令与参数】
-  无指令：作用=头像互动回应；参数=无；内容=概率性一句回应；意义=轻互动。配置经 .env 或 /bot runtime set（可写键以 runtime 白名单为准）。
+触发=QQ「戳一戳」头像互动；行为=按概率回应，默认有冷却防骚扰。
+可调：BOT_POKE_ENABLED（开关）、BOT_POKE_*_COOLDOWN_SECONDS（冷却）、BOT_POKE_PROBABILITY（概率）。
+权限=全员；无文字命令，属互动事件。
+无指令：作用=头像互动回应；参数=无；内容=概率性一句回应；意义=轻互动。配置经 .env 或 /bot runtime set（可写键以 runtime 白名单为准）。
 【权限与效果】
   权限=全员。开关关闭时戳一戳无任何回应。
 【示例】戳一戳守岸人的头像 → 有概率收到回应
@@ -2407,7 +2496,10 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   表情收库是「偷表情」的后勤：群友发的图自动攒成表情库，机器人
   心情低时还会偏向发吵闹梗。工程上有冷却、群黑白名单与 LRU 上限。
 【指令与参数】
-  本模块无命令：作用=自动收库；参数=无；内容=群图异步入库（不直接回复）；意义=偷表情的弹药库。库存操作入口：偷表情｜表情库统计（见「偷表情」模块）。
+行为：监听群聊图片，自动异步下载、MD5 去重、≤5MB 入库，SQLite 记元数据。
+筛选：权重打分（守岸人×8 → 鸣潮/战双/库洛×4 → ACG×1.5 → 普通×1；非表情×0.25）；NSFW≥0.2 降权、≥0.8 永不发送；可选 VLM 自动打标。
+消费：用「偷表情 [关键词]」加权随机抽取，用「表情库统计」看库存；本模块自身无命令、靠监听生效。
+本模块无命令：作用=自动收库；参数=无；内容=群图异步入库（不直接回复）；意义=偷表情的弹药库。库存操作入口：偷表情｜表情库统计（见「偷表情」模块）。
 【权限与效果】
   权限=全员（被动机制）。下载绝不阻塞消息主链路。
 【示例】群里发一张表情图 → 自动入库 → 之后「偷表情」可能抽到它
@@ -2431,7 +2523,12 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   自然语言层（priority 45）把口语说法归一成标准命令再进对应模块，
   带城市黑名单与禁词保护，避免把「天气真好」当成天气查询。
 【指令与参数】
-  无固定指令：作用=把口语归一成标准命令；参数=自然语言本身；内容=命中后按目标模块回复；意义=零记忆成本。查询类动词：帮我/麻烦/请/查一下/看看/告诉我…
+天气：帮我查一下杭州天气｜杭州天气怎么样 → 「天气 杭州」。
+点歌：来首晴天｜放首歌 晴天｜帮我放一首周杰伦的歌 → 「点歌 …」。
+维基：帮我查维基 鸣潮 → 「wiki 鸣潮」；Epic：今天有什么免费游戏 → 「epic」。
+历史上的今天：今天历史上发生了什么 → 「历史上的今天」；偷表情：来张表情包 → 「偷表情」。
+未命中自然语言意图的文本会正常落入人格聊天，不会报错。
+无固定指令：作用=把口语归一成标准命令；参数=自然语言本身；内容=命中后按目标模块回复；意义=零记忆成本。查询类动词：帮我/麻烦/请/查一下/看看/告诉我…
 【权限与效果】
   权限=全员。命中后按目标模块的权限与门禁执行。
 【示例】帮我查杭州天气｜来首晴天｜今天有什么免费游戏
@@ -2457,7 +2554,12 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   会回一句守岸人引导指路 /bot help（60 秒/会话节流）。本模块帮助
   管理员区分「按设计沉默」与「真异常」。
 【指令与参数】
-  无专属命令：作用=解释沉默与引导；参数=无；内容=空消息静默（按设计），未知命令形态回一句引导；意义=区分按设计沉默与真异常。相关诊断：/bot status、/bot why、/bot route <文本>（route 会直接告诉你这段文本命中哪条路由）。
+空消息/无有效文本 → IGNORE，不回复。
+命令形态（/ 开头等）但没命中任何能力 → 回一句守岸人引导，指路 /bot help；同一会话 60 秒内只提醒一次，防刷屏。普通闲聊不受影响。
+群聊非命令、非 @点名、非昵称点名 → passive 静默观察；自动接话开启时按概率抽签，且受好感门（≥ 亲近）。
+安静时间窗内、限流句数帽超帽、群策略 black1 → 静默拦截（黑名单完全只收不发）。
+排障路径：/bot status 看姿态 → /bot why <id> 看单条决策 → 本模块理解沉默语义。
+无专属命令：作用=解释沉默与引导；参数=无；内容=空消息静默（按设计），未知命令形态回一句引导；意义=区分按设计沉默与真异常。相关诊断：/bot status、/bot why、/bot route <文本>（route 会直接告诉你这段文本命中哪条路由）。
 【权限与效果】
   权限=仅管理员（排障语义）。
 【示例】/bot route 今天天气不错 → 显示 chat 路由（正常回复场景）
@@ -2487,7 +2589,7 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   接管评估（阶段 1+）的核心依据。痕迹经 SQLite 落盘，热缓冲只
   是短程补充，重启后仍可查询历史。
 【指令与参数】
-/bot decision [N]：作用=查看最近 N 条影子痕迹；参数=N，缺省 20，范围 1-100；内容=时间/路由类别/引擎判定(动作)/现行判定/一致·分歧·不可比/耗时，备注与异常字段经脱敏截断；意义=量化分歧率、定位分歧模式。
+/bot decision [N]：作用=查看影子决策引擎最近 N 条痕迹；参数=N（缺省 20，范围 1-100）；内容=时间/路由类别/引擎判定与现行判定/一致或分歧/耗时，自由文本字段打码截断，不含消息原文；意义=评估中央决策引擎接管前的分歧率（痕迹已落盘，重启可查历史）。
 【权限与效果】
   权限=仅管理员（普通成员发送会收到拒绝提示）。
   影子模式默认关闭（legacy_only）：模式下无痕迹属预期，不是故障。
@@ -2496,6 +2598,46 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
 ### 帮助页一致性要求
 
 - 本模块的实时帮助以 `/bot help 决策` 为准。
+
+## 紧急信息
+
+- 权限：仅管理员
+- 触发别名：紧急信息；预警；地震；震情；待审；emergency；緊急信息；預警
+- 能力入口：bot.emergency_info
+- 自然语言触发：紧急信息；预警；地震；震情；待审；emergency
+- 群聊/私聊差异：查询与审核=管理员；设/退订阅=超级管理员·管理员·本群群主（仅 QQ 侧）；群聊只读已批准条目
+- 网络依赖：需要联网
+- 输出形式：文本
+- 失败兜底：源不可达时明确说拿不到，绝不把「取不到」说成「无预警」
+- 配置变量：BOT_EMERGENCY_INFO_ENABLED；BOT_EMERGENCY_INFO_MIN_LEVEL；BOT_EMERGENCY_INFO_SOURCES；BOT_EMERGENCY_INFO_AUTO_APPROVE_SOURCES；BOT_EMERGENCY_INFO_REVIEWER_IDS
+- 可复制示例：紧急信息；紧急信息 订阅 area=湘潭 kinds=暴雨 橙色以上；紧急信息 订阅 看；紧急信息 退订；紧急信息 待审；紧急信息 审核 <id> 通过
+- 关联回归测试：tests/test_emergency_info_core.py；tests/test_emergency_info_sources.py；tests/test_emergency_info_subscriptions.py；tests/test_emergency_info_reachability.py
+- 总览：【紧急信息】外部紧急信息聚合（仅管理员）：紧急信息｜紧急信息 订阅 <条件>｜紧急信息 待审｜紧急信息 审核 <id> 通过
+- 标题：【紧急信息】外部紧急信息的采集、定级、人工审核与按群订阅投递
+
+### 教程
+
+【板块介绍】
+  外部紧急信息（NMC 预警 / GDACS / 公开震情等来源）采集→定级→去重→
+  人工审核批准后，才经中央投递闸投出去；查询面只见已批准条目。
+  投递目标由「紧急信息 订阅 …」在群里/私聊里现场设立并现读生效，
+  条件（地点·警情·等级·半径）不落 .env；.env 的两个名单降级为可选硬推腿。
+  作用=聚合外部紧急信息；意义=漏报比误报贵，所以先审再投、再按订阅筛。
+【指令与参数】
+紧急信息：作用=查看当前已批准的紧急信息与等级；参数=可选 城市/等级；内容=红橙黄蓝四档 + 来源与时效标注（无源不编数）；意义=一眼分清哪些是真在报。
+紧急信息 订阅 area=<地名> kinds=<警情词> levels=<P0,P1 或 橙色以上> radius=<km>：作用=给本群（或私聊给自己）设一条投递条件，只推对得上的条目；参数=四项都可选，缺省即不筛该维，半径缺省 200km、只对带坐标的条目（震情类）生效；内容=一个目标只留一条规则，再说一句即改口，写完当轮生效不重启，地名不在气象码表里会当场点名并给相近候选；意义=推什么由群里说了算，不必经 .env 预填名单。
+紧急信息 订阅 看：作用=查本目标当前的条件与累计命中次数；参数=无；内容=从没命中过会直说，不让你猜是不是配错了；意义=「配了不生效」这件事必须自己开口。
+紧急信息 退订：作用=撤掉本目标这条订阅；参数=无；内容=退订后一条都不再推，重设即恢复；意义=退出只要一句话。
+紧急信息 待审：作用=列人工报料的待审队列；参数=可选 条数；内容=仅管理员，pending 条目不参与投递也不参与定级；意义=报料先审后发。
+紧急信息 审核 <id> 通过|驳回：作用=裁决一条报料；参数=item id + 通过/驳回；内容=只改 pending，二次裁决直说已被别人裁过；意义=审核留痕可追。
+边界（诚实降级）：中央投递闸未装配=照采照查但一条都不投；源未给失效时间就不假装知道有效期；未定级条目不冒充任何颜色、也一律不投；只有地名没有坐标的条目不拿半径硬凑命中（宁漏不误投）；等级≠卡片色值（色走 theme_tokens）。
+【权限与效果】查询与审核=管理员（审核人名单 BOT_EMERGENCY_INFO_REVIEWER_IDS，名单空=审核面关闭，缺省拒绝）；
+  设/退订阅=超级管理员、管理员或本群群主（仅 QQ 侧；别的平台的号存下来会送错地方，故不收）。
+【示例】紧急信息｜紧急信息 订阅 area=湘潭 kinds=暴雨 橙色以上｜紧急信息 订阅 看｜紧急信息 退订｜紧急信息 待审
+
+### 帮助页一致性要求
+
+- 本模块的实时帮助以 `/bot help 紧急信息` 为准。
 
 ## 路由覆盖与内部接口
 
@@ -2535,6 +2677,7 @@ epic（别名 epicfree/epic free/epic 免费/免费游戏/游戏免费/steam免�
   - chat | bot.chat | 聊天
   - media_archive | bot.media_archive | 媒体归档
   - daily_assist | bot.daily_assist | 收件箱
+  - emergency_info | bot.emergency_info | 紧急信息
   - group_info | bot.group_info | 群信息
 
 ### 接口清单（manifest）

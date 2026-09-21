@@ -30,6 +30,12 @@ dependencies = [
     # bot.tts 直接用 httpx 打本机 GPT-SoVITS 的 /tts；此前只在 venv 里存在、
     # 未声明，换环境会静默降级成「httpx 不可用」。
     "httpx>=0.28.1",
+    # 内容安全门的繁简折形（domains/chat_reply/security/content_safety.py）：匹配面必须
+    # 把繁体输入折成简体，否则「六条硬线 + 未成年」这条 fail-closed 红线的简体词面被繁体
+    # 字形整体绕过（深读波 D3-3 定罪、WP2 席换库根治）。纯 Python、零传递依赖、词表 JSON
+    # 随包离线可用。缺库时该模块降级到字级兜底表并显式 WARNING（不会静默不折形），但兜底
+    # 表只覆盖词面相关繁体字的一部分 ⇒ 降级态红线视为半开，部署面必须装上并重启。
+    "zhconv>=1.4.3",
 ]
 
 [build-system]

@@ -17,16 +17,16 @@ from typing import Any
 import pytest
 
 from plugins.bot_unified_runtime.contracts import OperationalIssue
-from plugins.bot_unified_runtime.contracts.subscription import (
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     ContentReference,
     SubscriptionDestinationV2,
     SubscriptionFetchResult,
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.sources.subscription_scheduler import (
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_scheduler import (
     SubscriptionScheduler,
 )
-from plugins.bot_unified_runtime.sources.subscription_store_v2 import (
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
 )
 

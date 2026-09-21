@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import plugins.bot_unified_runtime.llm.channel_health as channel_health_module
-from plugins.bot_unified_runtime.llm.channel_health import (
+import plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health as channel_health_module
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
     ChannelHealthStore,
     filter_healthy_candidates,
     prefer_fastest_channels,
 )
-from plugins.bot_unified_runtime.llm.model_router import ModelRouter, _price_rank
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+    ModelRouter,
+    _price_rank,
+)
 
 
 def _store(tmp_path) -> ChannelHealthStore:
@@ -155,8 +158,11 @@ def test_price_rank_missing_price_is_last() -> None:
 
 
 def test_channels_for_model_orders_by_price_then_priority(monkeypatch) -> None:
-    # 回归基线：健康层关闭（默认）时维持价格 → 优先级排序。
+    # 回归基线（legacy 语义）：健康层关闭（默认）且 bot_chat_strict_priority=false
+    # 时维持价格 → 优先级排序。v21r2 R1 起缺省改为严格注册表优先级
+    # （2026-09-17 用户裁定），价格优先序仅在该开关显式关闭时保留。
     monkeypatch.delenv("BOT_CHANNEL_HEALTH_ENABLED", raising=False)
+    monkeypatch.setenv("BOT_CHAT_STRICT_PRIORITY", "0")
     router = _router_with(
         {
             "expensive": {"model": "gemini-x", "priority": 1, "price_in": 3.0, "price_out": 15.0},
@@ -182,6 +188,9 @@ def test_channels_for_model_prefers_measured_latency(tmp_path, monkeypatch) -> N
     )
     monkeypatch.setenv("BOT_CHANNEL_HEALTH_ENABLED", "1")
     monkeypatch.setenv("BOT_CHANNEL_HEALTH_LATENCY_FIRST", "1")
+    # 本用例钉住 legacy EWMA-整体重排语义（v21r2 R1 缺省严格优先级下 EWMA
+    # 只作同级 tiebreak，见 test_llm_route_priority_v21r2.py）。
+    monkeypatch.setenv("BOT_CHAT_STRICT_PRIORITY", "0")
     monkeypatch.setattr(channel_health_module, "_GLOBAL_STORE", store)
     # 实测快者优先（价格只作同延迟并列裁决）；未实测渠道（即使最便宜）垫底。
     assert router.channels_for_model("gemini-x") == [

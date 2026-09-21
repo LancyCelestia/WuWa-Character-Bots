@@ -1,6 +1,6 @@
 """审查 A-03 回归：OneBot 发送超时的失败语义分级 + 告警可见性。
 
-离线运行（无网络、无 NapCat、队列用 tmp_path）：
+离线运行（无网络、无 SnowLuma、队列用 tmp_path）：
 
     PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/test_a03_timeout_retry_semantics.py -q
 
@@ -33,7 +33,7 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.runtime.alerts import (
+from plugins.bot_unified_runtime.domains.ops.monitor.alerts import (
     AdminTarget,
     notify_operational_issue,
 )

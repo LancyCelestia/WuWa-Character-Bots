@@ -1081,7 +1081,7 @@ def _format_readiness_diagnostic(result: dict[str, Any]) -> str:
     return "\n".join(
         [
             "统一就绪度：",
-            "说明：仅管理员可用；不调用真实 LLM，不连接 NapCat，不发送 QQ，只展示安全摘要。",
+            "说明：仅管理员可用；不调用真实 LLM，不连接 SnowLuma，不发送 QQ，只展示安全摘要。",
             f"ok={str(bool(result['ok'])).lower()}",
             f"readiness_status={_safe_token(str(result['readiness_status']))}",
             f"next_action={_safe_token(str(result['next_action']))}",
@@ -1150,7 +1150,7 @@ def _format_dialogue_diagnostic(result: dict[str, Any]) -> str:
             "对话验收：",
             (
                 "说明：仅管理员可用；执行一轮本地对话 pipeline，可能短调用已配置的真实 LLM；"
-                "不连接新的 NapCat，不发送业务对话正文，不展示完整回复、prompt、用户原文或知识原文。"
+                "不连接新的 SnowLuma，不发送业务对话正文，不展示完整回复、prompt、用户原文或知识原文。"
             ),
             f"ok={str(bool(result['ok'])).lower()}",
             f"dialogue_status={_safe_token(str(result['dialogue_status']))}",
@@ -1241,7 +1241,7 @@ def _format_persona_diagnostic(result: dict[str, object]) -> str:
         [
             "人格自检：",
             (
-                "说明：仅管理员可用；不调用 LLM，不连接 NapCat，不发送外部业务消息，"
+                "说明：仅管理员可用；不调用 LLM，不连接 SnowLuma，不发送外部业务消息，"
                 "不展示人格正文、知识正文、本机路径或密钥。"
             ),
             f"ok={str(bool(result['ok'])).lower()}",
@@ -1308,7 +1308,7 @@ def _format_config_diagnostic(result: dict[str, object]) -> str:
     return "\n".join(
         [
             "配置体检：",
-            "说明：仅管理员可用；不调用 LLM，不启动 NapCat，不发送外部消息，只展示安全摘要。",
+            "说明：仅管理员可用；不调用 LLM，不启动 SnowLuma，不发送外部消息，只展示安全摘要。",
             f"ok={str(bool(result['ok'])).lower()}",
             f"ready_for_real_llm={str(bool(result['ready_for_real_llm'])).lower()}",
             f"llm_readiness_status={_safe_token(str(result['llm_readiness_status']))}",
@@ -1528,7 +1528,7 @@ def _format_roles_diagnostic(config: Config) -> str:
     return "\n".join(
         [
             "权限规则：",
-            "说明：仅管理员可用；不调用 LLM，不连接 NapCat，不发送外部业务消息，只展示规则和计数。",
+            "说明：仅管理员可用；不调用 LLM，不连接 SnowLuma，不发送外部业务消息，只展示规则和计数。",
             f"role_order={_safe_csv(','.join(ROLE_ORDER))}",
             f"admin_users={_safe_int(role_counts.get('admin', 0))}",
             f"enterprise_users={_safe_int(role_counts.get('enterprise', 0))}",

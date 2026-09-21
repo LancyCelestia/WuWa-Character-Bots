@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
-from plugins.bot_unified_runtime.contracts.media import build_parsed_content
+from plugins.bot_unified_runtime.domains.core.contracts.media import (
+    build_parsed_content,
+)
 from plugins.bot_unified_runtime.output.templates import card_payload_from_parse
 
 

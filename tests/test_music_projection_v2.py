@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from plugins.bot_unified_runtime.contracts.media import (
+from plugins.bot_unified_runtime.domains.core.contracts.media import (
     build_parsed_content,
 )
 

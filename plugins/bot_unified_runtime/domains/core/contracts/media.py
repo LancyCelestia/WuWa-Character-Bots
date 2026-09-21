@@ -39,6 +39,9 @@ class ParserRule(StrictBaseModel):
     source_id: str
     keyword_patterns: list[str] = Field(default_factory=list)
     url_patterns: list[str] = Field(default_factory=list)
+    # WP1 ③：本规则平台域集（后缀语义，子域归位）。空 = 合成/无凭证规则，
+    # 不做候选 host 归属校验（既有 SSRF 门夹具形态）；非空则候选必须落在此域。
+    allowed_hosts: list[str] = Field(default_factory=list)
     priority: int = 100
     enabled: bool = True
 
@@ -61,6 +64,9 @@ class ParserMatch(StrictBaseModel):
     matched_keyword: str | None = None
     priority: int
     keyword_length: int = 0
+    # WP1 ③：命中规则的候选平台域集透传，供 content_parser 做候选 host 归属
+    # 判定（选路层与匹配层双查，绝不把凭证票发往不归属的候选）。
+    allowed_hosts: list[str] = Field(default_factory=list)
 
 
 class ContentIdentity(StrictBaseModel):

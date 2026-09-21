@@ -14,8 +14,10 @@ from plugins.bot_unified_runtime.capabilities.echo import (
     HELP_ENTRIES,
     build_identity_preference_result,
 )
-from plugins.bot_unified_runtime.character import providers as providers_module
 from plugins.bot_unified_runtime.character.addressing import AddressingPreferenceStore
+from plugins.bot_unified_runtime.domains.chat_reply.character import (
+    providers as providers_module,
+)
 
 _GENDER_WORDS = ("male", "female", "nonbinary", "custom", "unknown")
 
@@ -185,7 +187,7 @@ def test_missing_sender_id_rejected(store: AddressingPreferenceStore) -> None:
 def test_non_admin_reaches_preference_subcommand_via_admin_entrypoint(
     store: AddressingPreferenceStore,
 ) -> None:
-    from plugins.bot_unified_runtime.capabilities.runtime_admin import (
+    from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
         build_session_identity_admin_result,
     )
 
@@ -205,7 +207,7 @@ def test_non_admin_reaches_preference_subcommand_via_admin_entrypoint(
 def test_legacy_admin_subcommands_still_admin_gated(
     store: AddressingPreferenceStore,
 ) -> None:
-    from plugins.bot_unified_runtime.capabilities.runtime_admin import (
+    from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
         build_session_identity_admin_result,
     )
 

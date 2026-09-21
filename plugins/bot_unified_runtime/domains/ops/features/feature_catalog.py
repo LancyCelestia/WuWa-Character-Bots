@@ -1,4 +1,10 @@
-"""把现有显式能力声明投影为控制树；不在运行时扫描源码。"""
+"""把唯一在册表（Wave 2）投影为控制树；不在运行时扫描源码。
+
+真源指针：本文件不再直接读 ``ROUTE_CAPABILITY_DECLARATIONS`` /
+``CONTROLLED_INTERNAL_CAPABILITIES``——两张表降为
+``runtime/capability_protocols.CAPABILITY_DESCRIPTOR`` 的声明式输入源。
+「哪个能力受门执法、它的 feature id 叫什么」唯一答案 = 该表（规格 §1 D-a/D-f）。
+"""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -7,18 +13,17 @@ from plugins.bot_unified_runtime.control_plane.features import (
     FeatureDescriptor,
     default_feature_descriptors,
 )
-from plugins.bot_unified_runtime.runtime.capability_registry import (
-    CONTROLLED_INTERNAL_CAPABILITIES,
-    ROUTE_CAPABILITY_DECLARATIONS,
+from plugins.bot_unified_runtime.runtime.capability_protocols import (
+    gate_feature_bindings,
+    gate_route_projection,
 )
 
 RECOVERY_CAPABILITIES = frozenset({"bot.status", "bot.control", "bot.runtime", "bot.audit", "bot.logs", "bot.queue", "bot.send_queue_worker"})
 
 
 def capability_feature_bindings() -> dict[str, str]:
-    ids = {item.capability_id for item in ROUTE_CAPABILITY_DECLARATIONS if item.has_rule}
-    ids.update(CONTROLLED_INTERNAL_CAPABILITIES)
-    return {item: item.replace("bot.", "bot.plugin.", 1) for item in sorted(ids)}
+    """capability_id → feature 节点 id（唯一表的 gate 投影，与迁移前逐键等价）。"""
+    return gate_feature_bindings()
 
 
 # 显式登记真正接线的子功能；未登记内部步骤不假称可独立控制。
@@ -51,7 +56,7 @@ SUBFEATURE_DESCRIPTORS = tuple(
 
 def build_product_descriptors() -> tuple[FeatureDescriptor, ...]:
     rows = {item.id: item for item in default_feature_descriptors()}
-    declarations = {item.capability_id: item for item in ROUTE_CAPABILITY_DECLARATIONS if item.has_rule}
+    declarations = gate_route_projection()
     for capability_id, feature_id in capability_feature_bindings().items():
         parts = feature_id.split(".")
         for index in range(3, len(parts) + 1):
@@ -60,11 +65,11 @@ def build_product_descriptors() -> tuple[FeatureDescriptor, ...]:
             if node_id not in rows:
                 rows[node_id] = FeatureDescriptor(node_id, parent, "plugin" if index == 3 else "feature", node_id)
         node = rows[feature_id]
-        declaration = declarations.get(capability_id)
+        declared = declarations.get(capability_id)
         rows[feature_id] = replace(
             node, capability_id=capability_id,
-            route_kind=declaration.value if declaration else None,
-            label=declaration.label if declaration else capability_id,
+            route_kind=declared[0] if declared else None,
+            label=declared[1] if declared else capability_id,
             protected=capability_id in RECOVERY_CAPABILITIES,
         )
     rows["bot.ingress"] = FeatureDescriptor("bot.ingress", "bot", "group", "入站富化")

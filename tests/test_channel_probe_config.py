@@ -9,8 +9,10 @@ from __future__ import annotations
 import concurrent.futures
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.llm import channel_health as chm
-from plugins.bot_unified_runtime.llm.channel_health import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine import (
+    channel_health as chm,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
     ChannelHealthStore,
     probe_all,
 )

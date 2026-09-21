@@ -23,8 +23,10 @@ from plugins.bot_unified_runtime import (
     _deliver_due_reminders,
     _register_reminder_scheduler,
 )
-from plugins.bot_unified_runtime.character import reminders as reminders_mod
 from plugins.bot_unified_runtime.contracts import DeliveryReceipt, ReceiptState
+from plugins.bot_unified_runtime.domains.schedule.store import (
+    reminders as reminders_mod,
+)
 
 
 class _FakeQueue:

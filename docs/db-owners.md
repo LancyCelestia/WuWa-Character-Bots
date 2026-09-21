@@ -10,6 +10,17 @@
 > 全库统一约定：**手工清理前先停机器人进程**（WAL 模式下残留 `-wal/-shm`
 > 未合并会导致丢数据），删文件 = 删同目录的 `-wal` / `-shm` 伴生文件。
 
+> **路径时效声明（2026-09-20，LINK-AUDIT §E-2 / DOC-FIX-2 落 R19）**：本表「Owner 模块」列记的是
+> 2026-09-12 取证时的目录布局。2026-09-19 的 v21r2 板块重组把绝大多数模块迁到了
+> `plugins/bot_unified_runtime/domains/<域>/`，旧路径**多数仍存在但只是 PEP 562 垫片**
+> （三—十八行的活转发，可 import、**不代表模块规模，行号更不可信**），少数旧路径已彻底不留。
+> 因此本表读法是：**认库名与 owner 语义，路径按符号名现查真身**——
+> 复跑 `grep -rl "Compat shim" plugins/bot_unified_runtime --include="*.py" | head` 看垫片全集，
+> 或按文件名在 `domains/` 下检索（例：`find plugins/bot_unified_runtime/domains -name '<模块名>.py'`）。
+> 本表**不许人工逐行改路径列**（改一次错一次）：现真身列由生成器回填，
+> 排期见 `docs/design/link-unification-audit-20260920.md` §7 R19 与 §8 G-4。
+> 漂移由常驻门 `tests/test_doc_link_integrity.py` 盯（旧路径与垫片条数走棘轮，只降不升）。
+
 ## 一、配置键指定的库（`plugins/bot_unified_runtime/config.py` 为唯一定义点）
 
 | 库文件（默认路径） | 配置键 | Owner 模块 | 建表 / 迁移位置 | 清理策略 |
@@ -37,6 +48,10 @@
 | `data/parse_history.sqlite3` | `BOT_PARSE_HISTORY_DB_PATH` | `sources/parse_history.py` | `CREATE TABLE parse_history` | 解析历史可再生，可整库重建 |
 | `data/subscriptions.sqlite3` | `BOT_SUBSCRIBE_DB_PATH` | `sources/subscription_store.py`（V1：`subscriptions / cursors / push_log / digest_pending`）→ `sources/subscription_store_v2.py`（V2：`schema_meta` + `subscription_targets / subscription_destinations / subscription_cursors / subscription_seen_items / subscription_outbox / subscription_poll_log / subscription_target_metadata`） | V1→V2 切换由 `sources/subscription_migration.py::prepare_subscription_database` 完成（`schema_meta.version='2'` 判别） | 订阅状态属活动数据禁删；见下方备份行 |
 | `data/subscriptions_old.sqlite3`（迁移备份） | — | `sources/subscription_migration.py` | V1 库整体改名备份；已存在时拒绝二次迁移（refusing overwrite） | V2 运行验证无误后可归档/删除 |
+| `data/campus.sqlite3` | `BOT_CAMPUS_DB_PATH` | `domains/assistant/campus/campus_store.py`（`CampusStore`；旧路径 `sources/campus_store.py` 为 PEP 562 垫片） | `CREATE TABLE IF NOT EXISTS campus_messages`（`message_id` 主键幂等 / `date_key` 索引） | 校园群消息转发去重台账；`date_key` 跨 90 天自动 prune；活动幂等去重数据，禁手工删整库（AGENTS #33） |
+| `data/emergency_info.sqlite3` | `BOT_EMERGENCY_INFO_DB_PATH` | `domains/emergency_info/sources/store.py`（`EmergencyStore`/`build_emergency_store`） | `CREATE TABLE`（唯一 `_SCHEMA`，两表：`emergency_items` 含 `(source_id, external_id)` UNIQUE 与 `status` CHECK、`latitude/longitude` 列走 ALTER-if-missing 自动迁移；`emergency_subscriptions` 含 `target_scope` CHECK 与 `target_key` 主键=一群/一人一条）；prune `keep_days=BOT_EMERGENCY_INFO_KEEP_DAYS` **只裁条目、结构性不碰订阅** | 待审队列与订阅规则都是活动数据：`/bot` 审核面改条目状态、群内「紧急信息 订阅/退订」改规则，禁手工删库；清理先停进程（WAL 伴生 `-wal/-shm`）（WIRE-B1 登记，WIRE-SUB 补订阅表） |
+| `data/outbound_gate.sqlite3` | `BOT_OUTBOUND_GATE_DB_PATH` | `domains/transport/sender/outbound_gate.py` | `CREATE TABLE IF NOT EXISTS outbound_gate_sends`（工作区动作发送幂等回执 / `request_digest`） | 出站动作幂等门，**运行中禁碰**；停机后可清（丢短窗去重回执，重放由上游 request_id 幂等兜底） |
+| `data/schedules_v21.sqlite3` | `BOT_SCHEDULE_DB_PATH` | `domains/schedule/service/schedule_store.py`（消费方 `schedule_service.py`，经 `bot_schedule_db_path`+`runtime_path` 解析） | `CREATE TABLE IF NOT EXISTS schedule_plans / schedule_occurrences / schedule_send_log / schedule_quiet_exceptions`（`schedule_store.py`，ensure_schema 幂等） | 日程/定时任务台账；plan/occurrence 按业务生命周期更新、send_log 审计留痕；活动调度数据禁整库删 |
 
 ## 二、代码内默认路径的库（无独立配置键）
 
@@ -50,6 +65,13 @@
 | `data/media_archive.sqlite3` | `BOT_MEDIA_ARCHIVE_DB_PATH` | `sources/media_archive.py`（`MediaArchiveStore`，注册期单例；接线 `capabilities/media_archive.py`） | `CREATE TABLE IF NOT EXISTS media_archive`（sources/media_archive.py:134） | 媒体归档索引；文件树 `data/media_archive/`+JSON 旁车为事实来源，索引可按文件树重建；禁整库删文件树 |
 | `data/notes.sqlite3`（待生成：生产未重启） | `BOT_NOTES_DB_PATH` | `character/notes_store.py`（`build_notes_store`；消费方 `capabilities/notes.py` + `capabilities/reminder.py` 待办注入） | `CREATE TABLE IF NOT EXISTS notes`（notes_store.py:92，WAL 先于 DDL；单表） | 笔记/待办属用户数据禁整库删；待办随完成/过期按行清理 |
 | `data/web_intent_telemetry.sqlite3`（待生成：功能默认关） | `BOT_WEB_INTENT_TELEMETRY_DB_PATH` | `runtime/intent_telemetry.py`（`build_intent_telemetry`，`__init__.py` 装配） | `CREATE TABLE IF NOT EXISTS intent_telemetry`（intent_telemetry.py:76） | 遥测可再生，可整库重建；上限 `bot_web_intent_telemetry_max_items`（默认 10000）自滚动 |
+| `data/reactions.sqlite3`（待生成：生产未重启，B 线 2026-09-16） | `BOT_REACTIONS_DB_PATH` | `sources/reaction_store.py`（`ReactionStore`，`__init__.py` 装配单例；emoji_like notice 双写消费） | `CREATE TABLE IF NOT EXISTS reaction_events`（reaction_store.py:_SCHEMA；event_id 幂等合并计数） | 贴纸回应长期记忆与统计；按 `bot_reactions_store_days`（默认 90 天）启动期裁剪；可再生可重建 |
+| `data/memory_v21.sqlite3`（V2.1 S8，待生成：零生产接线，装配属后续席位；`character/memory_service.py` `build_memory_service_v21` 经 `runtime_path` 解析，暂无独立配置键） | （无；装配席位登记） | `character/memory_store_v21.py`（`MemoryStoreV21`；消费方 `MemoryServiceV21`） | `CREATE TABLE IF NOT EXISTS memory_entries_v21 / memory_tombstones_v21 / memory_identity_bindings_v21 / memory_index_v21` + partial UNIQUE `ux_memory_owner_source_event`（memory_store_v21.py `_SCHEMA_STATEMENTS`，ensure_schema 每连接幂等；WAL+busy_timeout=1000ms） | 记忆行永不 DELETE（status=forgotten+墓碑双记录表遗忘，审计依赖行保留）；墓碑表是重建/恢复不复活的依据，禁清；memory_index_v21 为可再生投影（`rebuild_projection` 重建，可整表清）；绑定表只增不改 |
+| `data/teaching_knowledge.sqlite3`（V2.1 S8，待生成：零生产接线，装配属后续席位；`character/teaching_service.py` `build_teaching_service` 经 config `bot_teaching_db_path` + `runtime_path` 解析，path_fields 已登记） | `BOT_TEACHING_DB_PATH` | `character/teaching_service.py`（`TeachingService`，本轮测试离线实证；生产消费方待装配席接线） | `CREATE TABLE IF NOT EXISTS teaching_entries`（scope/owner/category/title/content/status/version/supersedes/memory_ref/审计列）+ `teaching_versions`（(entry_id,version) 主键，append-only 版本史：propose/amend/rollback:vN）+ `idx_teaching_topic`（teaching_service.py `_SCHEMA_STATEMENTS`，ensure_schema 幂等；WAL+busy_timeout=1000ms） | 教导条目属审核制用户数据禁整库删（revoke/reject 只改 status 留行留版本史=审计依据）；被拒内容从不入库（红线扫描拒绝于写入前）；注入面=active 且 (shared 或本人 personal)，撤改即时失效 |
+
+| `data/persona_versions.sqlite3`（V2.1 S7 v21r2-V1 席，待生成：零生产接线，装配属后续席位；`character/persona_service.py` `build_persona_service` 经 `runtime_path` 解析，暂无独立配置键） | （无；装配席位登记） | `character/persona_service.py`（`PersonaService` + `VersionedResourceStore` prefix=persona） | `CREATE TABLE persona_versions`（(resource_id,version) 主键，append-only 不可变：`_no_update`/`_no_delete` 触发器 RAISE(ABORT) 结构性锁死）+ `persona_drafts`（可变工作稿）+ `persona_state`（active 指针+persona_revision）+ `persona_quarantine`（哈希损坏证据，只增不删）（persona_service.py `ensure_schema`，幂等；WAL+busy_timeout=1000ms） | 正式版本与 quarantine 证据属审计依据**禁删**（版本不可变靠触发器，删证据=毁损坏取证）；drafts 可清（丢弃未发布草稿）；`data/` 默认路径经 runtime_paths 重映射 Runtime，不入源码树 |
+| `data/worldbook_versions.sqlite3`（V2.1 S7 v21r2-V1 席，待生成：零生产接线，装配属后续席位；`character/worldbook_service.py` `build_worldbook_service` 经 `runtime_path` 解析，暂无独立配置键） | （无；装配席位登记） | `character/worldbook_service.py`（`WorldbookService`，复用 persona_service `PersonaService` 内核 prefix=worldbook；发布权限 admin+，发布前校验悬空/循环引用+Token 预算） | 同上四表（worldbook_versions/worldbook_drafts/worldbook_state/worldbook_quarantine，worldbook_service.py 经共享 `VersionedResourceStore.ensure_schema` 幂等建表；WAL+busy_timeout=1000ms） | 同 persona_*：正式版本与 quarantine 证据禁删；drafts 可清 |
+| `data/control_plane_workspaces.sqlite3`（V2.1 S9 席补登：控制面 Workspace 服务库，路径=config `bot_control_plane_workspaces_db` + `runtime_path` 重映射；表由 `control_plane/workspaces.py` `WorkspaceService.__init__` 幂等建） | `BOT_CONTROL_PLANE_WORKSPACES_DB` | `control_plane/workspaces.py`（`WorkspaceService`；消费方 `control_plane/api/workspaces.py` + `_app.py` lifespan prune） | `CREATE TABLE IF NOT EXISTS cp_workspaces`（id 主键/owner/version/expires_at/data JSON）+ `cp_workspace_audit`（自增 sequence，request_id+operation+version 审计链）+ `cp_workspace_sends`（(workspace_id,idem) 主键幂等回执+request_digest）（workspaces.py:111，executescript 幂等） | 短期隔离工作区（TTL 默认 24h）由 lifespan 每分钟自动 prune，过期即清（含 sends）；工作区内容为临时试验数据可随 TTL 丢弃；audit 链如需长期取证先归档再清 |
 
 ## 三、统一清理纪律
 

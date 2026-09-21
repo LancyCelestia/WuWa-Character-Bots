@@ -3,6 +3,9 @@
 2026-09-20 内容政策收窄（用户裁定，v21r5 POLICY-RELAX 席）：清洗面收敛为
 「六条硬线 + minors」——伤害身体/残害（含严重暴力）、窒息、系统级人格贬低、
 未成年（含幼态歧义 fail-closed）、暴力 SM（致伤致残级）、非人化牲口式对待。
+2026-09-20 CRIT-FIX-3 席：硬线族增补 ⓻排泄物（r18-taxonomy 3.4「维持禁」），
+随共享注册表自动纳入清洗面；未成年词面补完（中文数字年龄/英文年龄形态/
+儿童信号词/儿童言行不可 grounding/窗口 24）同波及本清洗面（单一来源）。
 explicit 会话内已放开的亲密内容（软性 SM、触手、breeding 等授权记忆）与
 普通侮辱、强制人格类文本**不再清洗**。词面与 content_safety 共享单一来源
 （``HARD_LINE_SANITIZE_PATTERNS`` + ``minor_ambiguity_hit``）。
@@ -10,9 +13,10 @@ explicit 会话内已放开的亲密内容（软性 SM、触手、breeding 等�
 用户明确授权清除；为可审计不清空证据，匹配行先复制进 ``memory_quarantine``
 隔离表（含命中类别与时间），再从 ``memory_facts`` 删除。支持 dry-run 只报告不删。
 
-用法：
-    python -m plugins.bot_unified_runtime.security.memory_sanitize --dry-run
-    python -m plugins.bot_unified_runtime.security.memory_sanitize --apply
+用法（须用 canonical 模块路径；旧 ``security/`` 下的同名件已是兼容垫片，
+``python -m`` 打进垫片只会 import 完就静默退出、参数被吞，等于假成功）：
+    python -m plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize --dry-run
+    python -m plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize --apply
 入口也可走 dev.ps1 -Task memory-sanitize。
 """
 

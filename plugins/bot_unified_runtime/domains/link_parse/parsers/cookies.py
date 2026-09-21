@@ -16,18 +16,30 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Self, cast
 
 # 平台 → 收集的域名（子域都归并到平台键下）+ 该平台的关键 cookie 名。
+#
+# WP1（凭证跨域外泄统一咽喉）：本表是「哪份 Cookie 允许发往哪些 host」的唯一
+# 真身——http_util 的附凭证前目标域校验以此为判据。凡解析器会**附带登录态**
+# 发往外部 host 的平台都必须在册，含两处不经 provider 的自读兜底：
+#   - steam（platforms_steam.steam_cookie_header 自读 Netscape）；
+#   - epic（platforms_epic.epic_cookie_header 自读，Cloudflare cf_clearance）。
+# 域用后缀语义登记（`.x.com` 覆盖子域；无点前缀项既匹配裸域又匹配子域，见
+# http_util._host_matches_domain），故 www./m./live./api. 等子域自动归位，
+# 无需为每个子域单列，避免「为过门砍合法链路」。
 PLATFORM_COOKIE_DOMAINS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "bilibili": ((".bilibili.com", "bilibili.com"), ("SESSDATA", "DedeUserID", "bili_jct")),
     "xiaohongshu": ((".xiaohongshu.com", "xiaohongshu.com"), ("web_session", "a1", "id_token", "websectiga")),
     "douyin": ((".douyin.com", "douyin.com"), ("ttwid", "odin_tt", "passport_csrf_token", "sessionid", "sessionid_ss")),
     "qqmusic": ((".qq.com", "qq.com", ".y.qq.com", "y.qq.com"), ("p_uin", "psrf_musickey", "psrf_qqaccess_token", "psrf_qqopenid", "uin", "skey")),
-    "netease": ((".music.163.com", "music.163.com"), ("MUSIC_U", "MUSIC_A", "MUSIC_R_T", "__csrf", "JSESSIONID-WYYY")),
+    # 网易云音频直链经 CDN（*.music.163.com 与 *.mutecdn.com/muzo 域），
+    # 外加入 126.net 供音乐试听链的登录态目标域判定（不加入则误剥合法票）。
+    "netease": ((".music.163.com", "music.163.com", ".163.com", "163.com"), ("MUSIC_U", "MUSIC_A", "MUSIC_R_T", "__csrf", "JSESSIONID-WYYY")),
     "kuwo": ((".kuwo.cn", "kuwo.cn"), ("kw_token", "Hm_lvt_cdb524f42f0ce19b169a8071123a4797")),
     "kugou": ((".kugou.com", "kugou.com"), ("kg_mid", "userid", "token", "dfid")),
     "twitter": ((".x.com", "x.com", ".twitter.com", "twitter.com"), ("auth_token", "ct0")),
-    "youtube": ((".youtube.com", "youtube.com"), ("LOGIN_INFO", "SID", "HSID", "SSID")),
+    "youtube": ((".youtube.com", "youtube.com", ".youtu.be", "youtu.be", ".ytimg.com", "ytimg.com"), ("LOGIN_INFO", "SID", "HSID", "SSID")),
     "kurobbs": ((".kurobbs.com", "kurobbs.com"), ("user_token", "token")),
     "weibo": ((".weibo.com", "weibo.com", ".weibo.cn", "weibo.cn"), ("SUB", "SUBP", "ALF")),
     "kuaishou": ((".kuaishou.com", "kuaishou.com"), ("kuaishou.server.webday7_st", "passToken", "userId")),
@@ -38,7 +50,40 @@ PLATFORM_COOKIE_DOMAINS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "miyoushe": ((".miyoushe.com", "miyoushe.com", ".bbs.miyoushe.com", "bbs.miyoushe.com"), ()),
     # 知乎：解析链 403 需登录态（d_c0 为关键登录凭证）；白名单此前缺失。
     "zhihu": ((".zhihu.com", "zhihu.com"), ("d_c0", "_zap", "__snaker__id")),
+    # WP1 新增：两处自读兜底平台的 Cookie 目标域入册（唯一真身，不另建表）。
+    "steam": (
+        (".steamcommunity.com", "steamcommunity.com", ".steampowered.com", "steampowered.com"),
+        ("steamLoginSecure", "browserid", "birthtime", "steam Machineid"),
+    ),
+    "epic": ((".epicgames.com", "epicgames.com"), ("EPIC_SESSID", "cf_clearance")),
 }
+
+
+class PlatformCookie(str):
+    """带平台域归属的 Cookie 头：仍是 str（拆分/真值/f-string 全兼容），
+
+    额外携带 ``cookie_platform`` 与 ``cookie_domains``，供 http_util 在附凭证
+    前做**窄域**校验（B 站票只能发 B 站域，跨到微博即使在联合域内也剥）。
+    无归属的普通 str Cookie（如自读兜底）回退到 PLATFORM_COOKIE_DOMAINS 联合域。
+    """
+
+    __slots__ = ("cookie_domains", "cookie_platform")
+
+    # 类级注解（无值）声明槽属性类型，供 mypy 认账；实际值在 __new__ 里写。
+    cookie_platform: str
+    cookie_domains: tuple[str, ...]
+
+    def __new__(
+        cls,
+        value: str = "",
+        *,
+        cookie_platform: str = "",
+        cookie_domains: tuple[str, ...] = (),
+    ) -> Self:
+        obj = cast("PlatformCookie", super().__new__(cls, value))
+        obj.cookie_platform = cookie_platform
+        obj.cookie_domains = tuple(cookie_domains)
+        return cast(Self, obj)
 
 
 @dataclass(frozen=True)
@@ -163,8 +208,10 @@ def build_platform_cookie_provider(path: str | Path | None) -> PlatformCookiePro
             if existing is None or (len(entry.path) >= len(existing.path) and entry.expires >= existing.expires):
                 best[entry.name] = entry
         ordered = sorted(best.values(), key=lambda entry: (len(entry.path), entry.name))
-        provider.headers[platform] = "; ".join(
-            f"{entry.name}={entry.value}" for entry in ordered
+        provider.headers[platform] = PlatformCookie(
+            "; ".join(f"{entry.name}={entry.value}" for entry in ordered),
+            cookie_platform=platform,
+            cookie_domains=tuple(domains),
         )
         provider.key_names[platform] = [entry.name for entry in ordered]
         # 全为会话 cookie（expires=0/空）时 min() 空序列会抛 ValueError：

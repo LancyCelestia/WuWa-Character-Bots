@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from datetime import UTC, datetime
 from hashlib import sha1
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from plugins.bot_unified_runtime.contracts import MemoryRetrievalResult, PrivacyLevel
 
@@ -42,8 +43,21 @@ class NullMemoryProvider:
 
 
 class SQLiteMemoryRepository:
-    def __init__(self, db_path: str | Path) -> None:
+    """旧 ``memory_facts`` 仓储（v1 真身）。
+
+    ``bus`` 注入位（WP6 记忆总线 v2）：**不传=逐字节旧行为**（默认，且生产现存
+    两处构造点都不传）；传了则写/删/读三面统一走总线，本仓储退化为「总线未启用
+    时的旧路径 + 总线的影子读来源」。开关只在装配层判（``build_memory_provider``），
+    仓储自身不读配置——避免同一份开关在两层各判一次而漂移。
+    """
+
+    def __init__(self, db_path: str | Path, *, bus: Any | None = None) -> None:
         self.db_path = Path(db_path)
+        self._bus = bus
+
+    @property
+    def bus(self) -> Any | None:
+        return self._bus
 
     def upsert_fact(
         self,
@@ -57,7 +71,27 @@ class SQLiteMemoryRepository:
         source: str = "sqlite",
         sensitivity: str = "personal",
         scope_key: str | None = None,
-    ) -> None:
+        provenance: str = "explicit",
+    ) -> str:
+        """写入一条事实，返回**落库后的真实 id**（命令面要拿它回话/删除）。
+
+        旧路径逐字节不变（含返回入参 fact_id）；总线路径返回总线自己的 memory_id——
+        总线按槽位合并，同一条偏好再说一次会回到既有那行的 id，而不是新造一个。
+        """
+        if self._bus is not None:
+            # 总线口径：显式命令=explicit（永远压过归纳），槽位/极性等由总线算。
+            outcome = self._bus.absorb(
+                owner_id=subject_user_id,
+                subject_user_id=subject_user_id,
+                text=text,
+                session_id=session_id,
+                category=memory_kind,
+                confidence=confidence,
+                provenance=provenance,
+                source=source,
+                sensitivity=sensitivity,
+            )
+            return str(getattr(outcome, "memory_id", "") or fact_id)
         self._ensure_schema()
         now = datetime.now(UTC).isoformat()
         normalized_sensitivity = normalize_memory_sensitivity(sensitivity)
@@ -104,6 +138,7 @@ class SQLiteMemoryRepository:
                     now,
                 ),
             )
+        return fact_id
 
     def retrieve(
         self,
@@ -116,6 +151,20 @@ class SQLiteMemoryRepository:
         max_items: int,
         max_chars: int,
     ) -> MemoryRetrievalResult:
+        if self._bus is not None:
+            from plugins.bot_unified_runtime.domains.chat_reply.character.memory_bus_v2 import (
+                MemoryBusProvider,
+            )
+
+            return MemoryBusProvider(self._bus).retrieve(
+                request_id=request_id,
+                requester_id=requester_id,
+                subject_user_id=subject_user_id,
+                session_id=session_id,
+                query_text=query_text,
+                max_items=max_items,
+                max_chars=max_chars,
+            )
         if max_items <= 0 or max_chars <= 0:
             return MemoryRetrievalResult(request_id=request_id, privacy_level=PrivacyLevel.PERSONAL)
         if requester_id != subject_user_id:
@@ -163,6 +212,11 @@ class SQLiteMemoryRepository:
         subject_user_id: str,
         session_id: str,
     ) -> bool:
+        if self._bus is not None:
+            # 总线口径：真删=墓碑先行 + 行翻 forgotten（旧库这条是硬 DELETE）。
+            return self._bus.forget(
+                memory_id=fact_id, owner_id=subject_user_id, forgotten_by=subject_user_id
+            )
         self._ensure_schema()
         with self._connect() as connection:
             cursor = connection.execute(
@@ -175,6 +229,23 @@ class SQLiteMemoryRepository:
                 (fact_id, subject_user_id, session_id),
             )
             return cursor.rowcount > 0
+
+    def list_rows_for_subject(self, subject_user_id: str) -> list[dict[str, Any]]:
+        """总线影子读来源：旧库该主体的存活行（只读，不改写、不复活）。"""
+        self._ensure_schema()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT fact_id, subject_user_id, session_id, memory_kind, text,
+                       confidence, source, sensitivity, scope_key, created_at, updated_at
+                FROM memory_facts
+                WHERE subject_user_id = ?
+                ORDER BY updated_at ASC, fact_id ASC
+                LIMIT 200
+                """,
+                (subject_user_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def _fetch_candidate_rows(
         self,
@@ -240,12 +311,52 @@ class SQLiteMemoryRepository:
         return connection
 
 
-def build_memory_provider(config: object) -> MemoryProvider:
+def build_memory_repository(config: object) -> MemoryProvider:
+    """召回侧唯一装配口（providers.py 经 ``build_memory_provider`` 走这里）。
+
+    开关关=逐字节旧行为：返回只认 ``memory_facts`` 的旧仓储，**不建总线库、
+    不开新连接**。开关开=同一个仓储挂上总线（写/删/读统一走 v2 打分召回，
+    旧库行作为 explicit 影子候选并进同一套打分，不再各说各话）。
+    """
     enabled = bool(getattr(config, "bot_memory_enabled", False))
     db_path = str(getattr(config, "bot_memory_db_path", "")).strip()
     if not enabled or not db_path:
         return NullMemoryProvider()
-    return SQLiteMemoryRepository(db_path)
+    repository = SQLiteMemoryRepository(db_path)
+    from plugins.bot_unified_runtime.domains.chat_reply.character.memory_bus_v2 import (
+        MemoryBusProvider,
+        build_memory_bus,
+    )
+
+    bus = build_memory_bus(
+        config, legacy_explicit_reader=repository.list_rows_for_subject
+    )
+    if bus is None:
+        return repository
+    return MemoryBusProvider(bus)
+
+
+def build_memory_provider(config: object) -> MemoryProvider:
+    return build_memory_repository(config)
+
+
+def build_memory_bus_for_writer(config: object) -> Any | None:
+    """写入侧装配口（沉淀路径）：总线开着就给出总线，否则 None=旧路径。
+
+    与召回侧共用 ``bot_memory_db_path`` 的单一 store 连接（``shared_bus_store``
+    按路径缓存），两条路永远看的是同一张表——这正是「一个真身存储」的落点。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.character.memory_bus_v2 import (
+        build_memory_bus,
+    )
+
+    return build_memory_bus(config)
+
+
+def legacy_explicit_reader_for(db_path: str | Path) -> Callable[[str], list[dict[str, Any]]]:
+    """把「按主体读旧库行」包成总线要的注入缝。"""
+    repository = SQLiteMemoryRepository(db_path)
+    return repository.list_rows_for_subject
 
 
 def build_fact_id(subject_user_id: str, session_id: str, text: str) -> str:

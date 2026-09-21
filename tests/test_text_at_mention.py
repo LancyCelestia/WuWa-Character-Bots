@@ -14,7 +14,10 @@ from types import SimpleNamespace
 import pytest
 
 import plugins.bot_unified_runtime as runtime
-from plugins.bot_unified_runtime.policy.gate import PolicySettings, evaluate_policy
+from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
+    PolicySettings,
+    evaluate_policy,
+)
 
 
 @pytest.fixture(autouse=True)

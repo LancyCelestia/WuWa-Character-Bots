@@ -31,7 +31,7 @@
 ## 三、规格
 
 ### Phase A：只读仪表盘（先做）
-- **壳**：control_plane（8742，Bearer/Host 白名单不变）挂单文件 SPA——零构建、零外部 CDN（离线可开）；MIT 单文件面板模板打底 + 守岸人主题 token（brand/wash/mica 同源配色，浅色）。
+- **壳**：control_plane（8742，Bearer/Host 白名单不变）挂构建产物单文件化 SPA（vite-plugin-singlefile）：Vite 构建输出单个自包含 index.html，挂 control_plane 静态目录；离线可开、零外部 CDN 不变。设计系统打底改用 AxonHub 前端抽取（Apache-2.0，路线 B，见 docs/design/webui-axonhub-adoption.md）+ 守岸人主题 token（brand/wash/mica 同源配色，浅色）。
 - **页面五块**：
   1. 总览：bot 在线/版本/运行时长/发送队列深度/告警数（/health+/status 已有）
   2. 调用统计：时间窗（24h/7d/30d）×维度切换——按会话（群/私聊分列）、群内用户 TopN、能力 TopN；趋势折线

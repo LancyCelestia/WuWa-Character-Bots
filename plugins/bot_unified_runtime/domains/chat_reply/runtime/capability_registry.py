@@ -5,11 +5,24 @@
 新增能力要改 4-5 处，漏登即不可见。本模块把它们收拢为**每能力一行**的常量
 声明表：
 
-- ``ROUTE_CAPABILITY_DECLARATIONS``：全部 32 个 RouteKind 成员（含 IGNORE
-  兜底席）逐能力一行；``command`` 列在 base_router 派生
+- ``ROUTE_CAPABILITY_DECLARATIONS``：全部 RouteKind 成员（含 IGNORE
+  兜底席）逐能力一行（成员数以 ``docs/auto-facts.md``/该表自身为准，本文不写死）；
+  ``command`` 列在 base_router 派生
   ``COMMAND_ROUTE_KINDS``，``note`` 列对应 ``INTERNAL_CAPABILITY_NOTES``。
 - ``INTERFACE_DECLARATIONS``：接口清单（含 reserved 预留席）逐行登记，
   字段与 ``base_router.InterfaceEntry`` 一一对应。
+
+Wave 2（2026-09-21 统一接入波）· 本文件四张表在「能力在册」问题上的新身份：
+本文件的 ``ROUTE_CAPABILITY_DECLARATIONS`` / ``CONTROLLED_INTERNAL_CAPABILITIES`` /
+``HELP_TOPIC_DECLARATIONS`` / ``INTERFACE_DECLARATIONS`` 是**声明式输入源**，
+「某个 capability_id 是否在册 + 它的 handler_ref/健康/降级/gate id/帮助主题/路由 kind」
+的**唯一答案** = ``runtime/capability_protocols.CAPABILITY_DESCRIPTOR``
+（五路输入取并集派生，编排侧第 5 路=该模块的 ``DESCRIPTOR_BUILDERS``）。
+消费面已改读唯一表：``domains/ops/features/feature_catalog.py``（feature gate 绑定）
+与 ``scripts/command_catalog.py``（路由派生，静态 AST 读本表字面而非正则扫 base_router）。
+**纪律**：新能力只在本表 *或* 编排侧 builders 各登记一次，**不得为同一 id 在第二处
+另立注册**；执法=``tests/test_capability_single_registration.py``（D-a 唯一在册 +
+D-f gate 读同一处）。本四张表的字面形态不可改为运行时构造（四处静态解析器依赖，见下）。
 
 依赖方向（防循环）：本模块**只声明数据，不 import 包内任何模块**；
 ``base_router`` 在 import 时从本表构造 ``COMMAND_ROUTE_KINDS``。
@@ -94,6 +107,8 @@ class HelpTopicDecl:
 # 书写序 = RouteKind 枚举成员序（与 base_router.RouteKind 逐行对照审计）。
 # RouteRule 注册表的书写序（判定循环的书写序语义）以 base_router 字面表为准，
 # 由 tests/test_capability_registry.py 对改动前快照逐行锁定。
+# 指针（Wave 2）：本表=唯一在册表 route 侧输入源；在册答案见
+# runtime/capability_protocols.CAPABILITY_DESCRIPTOR，勿在他处为同 id 另立注册。
 ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
     RouteCapabilityDecl(
         kind="ALIAS", value="alias", capability_id="bot.alias", priority=10,
@@ -193,28 +208,28 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         note="个股行情（英伟达/AMD/英特尔股价兜底，触发词见 capabilities/stocks.py；帮助页 topic=个股行情）",
     ),
     RouteCapabilityDecl(
-        kind="COMMODITIES", value="commodities", capability_id="bot.commodities", priority=41,
+        kind="COMMODITIES", value="commodities", capability_id="bot.commodities", priority=37,
         label="商品行情", reason="商品行情（黄金/金价/白银/原油/铜价/大宗商品）",
         tags=("base_route:commodities",), command=True, has_rule=True,
         matcher_name="commodities_match",
         note="商品行情（黄金/白银/原油/铜现货与 30 日走势，触发词见 capabilities/market.py；帮助页 topic=商品行情）",
     ),
     RouteCapabilityDecl(
-        kind="BOND", value="bond", capability_id="bot.bond", priority=41,
+        kind="BOND", value="bond", capability_id="bot.bond", priority=38,
         label="国债收益率", reason="国债收益率（国债/期限利差/收益率曲线）",
         tags=("base_route:bond",), command=True, has_rule=True,
         matcher_name="bond_match",
         note="国债收益率（国债/期限利差/收益率曲线，触发词见 capabilities/market.py；帮助页 topic=国债收益率）",
     ),
     RouteCapabilityDecl(
-        kind="NORTHBOUND", value="northbound", capability_id="bot.northbound", priority=41,
+        kind="NORTHBOUND", value="northbound", capability_id="bot.northbound", priority=39,
         label="北向资金", reason="北向资金（北向资金/沪股通/深股通）",
         tags=("base_route:northbound",), command=True, has_rule=True,
         matcher_name="northbound_match",
         note="北向资金（北向资金/沪股通/深股通成交总额，触发词见 capabilities/market.py；帮助页 topic=北向资金）",
     ),
     RouteCapabilityDecl(
-        kind="FX", value="fx", capability_id="bot.fx", priority=41,
+        kind="FX", value="fx", capability_id="bot.fx", priority=36,
         label="汇率查询", reason="汇率（美元兑人民币/汇率面板）",
         tags=("base_route:fx",), command=True, has_rule=True,
         matcher_name="fx_match",
@@ -298,6 +313,12 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         tags=("base_route:chat",), command=False, has_rule=True,
         matcher_name="chat_match",
     ),
+    RouteCapabilityDecl(
+        kind="EMERGENCY_INFO", value="emergency_info", capability_id="bot.emergency_info", priority=44,
+        label="紧急信息", reason="紧急信息（外部预警与政务应急聚合：紧急信息｜紧急信息 待审）",
+        tags=("base_route:emergency_info",), command=True, has_rule=True,
+        matcher_name="emergency_info_match",
+    ),
     # 兜底席：不注册 RouteRule；capability_id/priority 与 classify_message_route
     # 的两条 IGNORE 兜底 RouteDecision 字面量一致（测试锁定）。
     RouteCapabilityDecl(
@@ -308,6 +329,8 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
 
 # 声明序 = base_router.build_interface_manifest 的字面书写序（审计/命令目录
 # 按此序渲染，不做物理重排）。
+# 指针（Wave 2）：本表=唯一在册表 interface 侧输入源（interface_id 与能力 id 同形者
+# 并入同一行），在册答案见 capability_protocols.CAPABILITY_DESCRIPTOR。
 INTERFACE_DECLARATIONS: tuple[InterfaceDecl, ...] = (
     InterfaceDecl(
         interface_id="transport.onebot", label="SnowLuma / OneBot V11 传输", status="active",
@@ -448,6 +471,8 @@ COMMAND_ROUTE_KIND_NAMES: frozenset[str] = frozenset(
 # 改能力入口而不同步本表即测试红（漏登不可见从此消灭，与第一期同哲学）。
 #
 # 书写序 = echo._HELP_ENTRIES 字面书写序（帮助总览/命令目录渲染序）。
+# 指针（Wave 2）：本表=唯一在册表 help 侧输入源（干净能力 id 行的 help_topics 列由此
+# 并入 CAPABILITY_DESCRIPTOR；prose 型能力入口列不并进表，由常驻门①按并集核）。
 HELP_TOPIC_DECLARATIONS: tuple[HelpTopicDecl, ...] = (
     HelpTopicDecl(topic="功能管理", admin_only=True, capability="bot.runtime（/bot feature）"),
     HelpTopicDecl(topic="状态", admin_only=True, capability="bot.status"),
@@ -526,6 +551,7 @@ HELP_TOPIC_DECLARATIONS: tuple[HelpTopicDecl, ...] = (
     HelpTopicDecl(topic="自然语言", admin_only=False, capability="bot.natural_command"),
     HelpTopicDecl(topic="忽略", admin_only=True, capability="matcher:IGNORE（空消息静默；未知命令形态回引导）"),
     HelpTopicDecl(topic="决策", admin_only=True, capability="/bot decision"),
+    HelpTopicDecl(topic="紧急信息", admin_only=True, capability="bot.emergency_info"),
 )
 
 # 入站/管理/通知链里显式使用、尚不属于 RouteKind 主表的能力。
@@ -535,10 +561,19 @@ HELP_TOPIC_DECLARATIONS: tuple[HelpTopicDecl, ...] = (
 # 统一管线出站调用点（含 _send_text/_send_files 两形参缺省值，约 21 处）真实使用；
 # 门对未登记 id 一律 fail-closed（有意设计，见 control-plane-registry.md bot.poke
 # 补登记先例），漏登即出站文案被「这项功能暂时不可用。」吞掉。
+# CAMPUS-FIX-9（2026-09-20）：补登 bot.campus_forward——自 #33 批起该 id 随
+# campus SendRequest 真实流经发送队列/审计（capability_id=bot.campus_forward），
+# 与 bot.group_digest_push 同族（入站/通知链显式使用、无 RouteKind 主表项）；
+# U17-CAMPUS-WIRE 收编走中央管线后 feature_gate 依赖此登记（未登记即整链
+# fail-closed，见 docs/design/audit-20260920-unify-U17-campus-wire.md §0.5）。
+# 指针（Wave 2）：本表=唯一在册表 gate 侧输入源；gate 绑定改由
+# capability_protocols.gate_feature_bindings() 派生，勿在本表之外为同 id 另立登记。
 CONTROLLED_INTERNAL_CAPABILITIES: tuple[str, ...] = (
-    "bot.alert", "bot.audit", "bot.auto_send.preview", "bot.config", "bot.context",
+    "bot.alert", "bot.audit", "bot.auto_send.preview", "bot.campus_forward",
+    "bot.config", "bot.context",
     "bot.control", "bot.cookie_expiry_notice", "bot.cookie_login",
-    "bot.credential_check", "bot.dialogue", "bot.download", "bot.file",
+    "bot.credential_check", "bot.dialogue", "bot.download", "bot.emergency_info_push",
+    "bot.file",
     "bot.group_digest_push", "bot.group_policy", "bot.group_welcome",
     "bot.help", "bot.history",
     "bot.identity", "bot.image_search", "bot.llm", "bot.logs", "bot.mail.control",

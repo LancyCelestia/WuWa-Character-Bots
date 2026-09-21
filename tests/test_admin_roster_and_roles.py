@@ -12,7 +12,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
-from plugins.bot_unified_runtime.policy.roles import (
+from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
     ROLE_ADMIN,
     ROLE_SUPER_ADMIN,
     ROLE_USER,

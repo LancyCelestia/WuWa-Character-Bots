@@ -17,13 +17,13 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.weather import (
-    build_weather_capability,
-)
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SendPolicy,
     SessionType,
+)
+from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
+    build_weather_capability,
 )
 
 _NMC_REPORT = "【测试天气】晴 25℃"
@@ -107,11 +107,11 @@ def _group_message(text: str) -> IncomingMessage:
 def _patch_nmc_hit(monkeypatch: pytest.MonkeyPatch, *, alerts: bool) -> None:
     """NMC 主通道命中：报告打桩；预警支路按需给一条呼玛黄色大雾。"""
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.weather.nmc_weather_query",
+        "plugins.bot_unified_runtime.domains.weather.capabilities.weather.nmc_weather_query",
         lambda query, proxy="": _NMC_REPORT,
     )
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.weather.http_get_json",
+        "plugins.bot_unified_runtime.domains.weather.capabilities.weather.http_get_json",
         lambda *args, **kwargs: _ALERT_FIXTURE if alerts else {"data": {"page": {"list": []}}},
     )
 
@@ -119,15 +119,15 @@ def _patch_nmc_hit(monkeypatch: pytest.MonkeyPatch, *, alerts: bool) -> None:
 def _patch_overseas(monkeypatch: pytest.MonkeyPatch) -> None:
     """NMC 未命中 → Open-Meteo 兜底（海外路径）。"""
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.weather.nmc_weather_query",
+        "plugins.bot_unified_runtime.domains.weather.capabilities.weather.nmc_weather_query",
         lambda query, proxy="": None,
     )
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.weather.open_meteo_query",
+        "plugins.bot_unified_runtime.domains.weather.capabilities.weather.open_meteo_query",
         lambda query, proxy="": {"latitude": 35.68, "current": {}},
     )
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.weather.format_open_meteo",
+        "plugins.bot_unified_runtime.domains.weather.capabilities.weather.format_open_meteo",
         lambda payload: _OVERSEAS_REPORT,
     )
 
@@ -239,11 +239,11 @@ class TestWeatherCardFallback:
     ) -> None:
         # 群聊查不到城市：静默审计路径（SILENT_AUDIT），任何后端都不出卡。
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.capabilities.weather.nmc_weather_query",
+            "plugins.bot_unified_runtime.domains.weather.capabilities.weather.nmc_weather_query",
             lambda query, proxy="": None,
         )
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.capabilities.weather.open_meteo_query",
+            "plugins.bot_unified_runtime.domains.weather.capabilities.weather.open_meteo_query",
             lambda query, proxy="": None,
         )
         backend = _FakeBackend()
@@ -264,11 +264,11 @@ class TestWeatherCardFallback:
             raise OSError("network down")
 
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.capabilities.weather.nmc_weather_query",
+            "plugins.bot_unified_runtime.domains.weather.capabilities.weather.nmc_weather_query",
             lambda query, proxy="": None,
         )
         monkeypatch.setattr(
-            "plugins.bot_unified_runtime.capabilities.weather.open_meteo_query",
+            "plugins.bot_unified_runtime.domains.weather.capabilities.weather.open_meteo_query",
             _boom,
         )
         backend = _FakeBackend()

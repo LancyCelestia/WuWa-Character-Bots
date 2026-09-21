@@ -15,7 +15,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities import chat as chat_module
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     ContextBundle,
@@ -26,7 +25,10 @@ from plugins.bot_unified_runtime.contracts import (
     SessionType,
     ToneProfile,
 )
-from plugins.bot_unified_runtime.sources import video_understanding as vu
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import (
+    chat as chat_module,
+)
+from plugins.bot_unified_runtime.domains.media.ingest import video_understanding as vu
 
 
 class _FakeRegistry:
@@ -197,6 +199,14 @@ def _run(
     return capability(message, _decision())
 
 
+def _user_text(messages: list[dict[str, str]]) -> str:
+    """FIX2：RP 席文风 system 消息追加到 messages 末位后，user 消息不再恒居
+    [-1]——按 role 聚合 user 内容作断言靶位，简报注入语义本身不变。"""
+    return "\n".join(
+        str(item.get("content", "")) for item in messages if item.get("role") == "user"
+    )
+
+
 def test_reply_known_asset_with_cached_brief_injects_and_touches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -204,10 +214,10 @@ def test_reply_known_asset_with_cached_brief_injects_and_touches(
     registry = _FakeRegistry([_asset("M1", brief_text="画面：猫跳上桌。")])
     llm = _CaptureLLM()
     result = _run(registry, llm, _message(reply_to_message_id="M1"))
-    user_prompt = llm.messages[0][-1]["content"]
+    user_text = _user_text(llm.messages[0])
     system_prompt = llm.messages[0][0]["content"]
-    assert "[视频档案" in user_prompt
-    assert "猫跳上桌" in user_prompt
+    assert "[视频档案" in user_text
+    assert "猫跳上桌" in user_text
     assert "媒体应对守则" in system_prompt
     assert registry.touched == ["M1"]
     assert calls == []  # 命中缓存：编排器零调用
@@ -231,7 +241,7 @@ def test_reply_known_asset_without_brief_analyzes_and_updates(
     assert calls[0]["subtitle_text"] == "大家好欢迎收看"
     assert "测试视频" in str(calls[0]["metadata_text"])
     assert registry.updated_briefs and registry.updated_briefs[0][0] == "media-M1"
-    assert "[视频档案" in llm.messages[0][-1]["content"]
+    assert "[视频档案" in _user_text(llm.messages[0])
 
 
 def test_current_video_message_analyzes_and_registers(
@@ -256,7 +266,7 @@ def test_current_video_message_analyzes_and_registers(
     assert record.chat_message_id == "M2"
     assert record.local_path == str(clip)
     assert registry.updated_briefs and registry.updated_briefs[0][0] == record.media_id
-    assert "[视频档案" in llm.messages[0][-1]["content"]
+    assert "[视频档案" in _user_text(llm.messages[0])
 
 
 def test_disabled_switch_keeps_legacy_and_registry_untouched(
@@ -276,7 +286,7 @@ def test_disabled_switch_keeps_legacy_and_registry_untouched(
     )
     assert calls == []
     assert registry.touched == []
-    assert "[视频档案" not in llm.messages[0][-1]["content"]
+    assert "[视频档案" not in _user_text(llm.messages[0])
 
 
 def test_reply_unknown_video_without_fetch_does_nothing(
@@ -288,7 +298,7 @@ def test_reply_unknown_video_without_fetch_does_nothing(
     _run(registry, llm, _message(reply_to_message_id="M9"))
     assert calls == []
     assert registry.registered == []
-    assert "[视频档案" not in llm.messages[0][-1]["content"]
+    assert "[视频档案" not in _user_text(llm.messages[0])
 
 
 def test_fuzzy_followup_uses_recent_asset_when_enabled(
@@ -304,7 +314,7 @@ def test_fuzzy_followup_uses_recent_asset_when_enabled(
         _message(plain_text="刚才那个视频讲了什么"),
         media_config=cfg,
     )
-    assert "[视频档案" in llm.messages[0][-1]["content"]
+    assert "[视频档案" in _user_text(llm.messages[0])
     assert registry.touched
 
 
@@ -325,7 +335,7 @@ def test_deep_request_reanalyzes_cached_brief(
     )
     assert calls and calls[0].get("deep") is True
     assert registry.updated_briefs
-    assert "[视频档案" in llm.messages[0][-1]["content"]
+    assert "[视频档案" in _user_text(llm.messages[0])
 
 
 def test_fuzzy_deictic_reference_triggers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -338,7 +348,7 @@ def test_fuzzy_deictic_reference_triggers(monkeypatch: pytest.MonkeyPatch) -> No
         _message(plain_text="刚才那个讲了什么"),
         media_config=SimpleNamespace(bot_video_fuzzy_followup=True),
     )
-    assert "[视频档案" in llm.messages[0][-1]["content"]
+    assert "[视频档案" in _user_text(llm.messages[0])
 
 
 def test_fuzzy_injection_rate_limited_within_window(
@@ -361,6 +371,6 @@ def test_fuzzy_injection_rate_limited_within_window(
         _message(plain_text="开头唱的什么歌"),
         media_config=cfg,
     )
-    assert "[视频档案" in llm.messages[0][-1]["content"]
-    assert "[视频档案" not in llm.messages[1][-1]["content"]
+    assert "[视频档案" in _user_text(llm.messages[0])
+    assert "[视频档案" not in _user_text(llm.messages[1])
     assert second.audit_tags  # 第二条正常回复，只是不背简报

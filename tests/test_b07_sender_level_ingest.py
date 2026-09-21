@@ -42,7 +42,7 @@ def _ingest(sender: Any) -> IncomingMessage:
 
 
 def test_sender_level_ingested_as_str() -> None:
-    # NapCat 实测 level 可能是 int；摄取层统一 str 化。
+    # NapCat 时期实测 level 可能是 int；摄取层统一 str 化。
     incoming = _ingest(SimpleNamespace(level=42))
     assert incoming.sender_level == "42"
 

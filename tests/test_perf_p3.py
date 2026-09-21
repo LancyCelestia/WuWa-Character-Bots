@@ -16,7 +16,7 @@ import pytest
 
 def test_affinity_store_reuses_single_connection(tmp_path, monkeypatch):
     """observe/set_nickname/snapshot 各操作不得再每操作新开 SQLite 连接。"""
-    import plugins.bot_unified_runtime.character.affinity as affinity_module
+    import plugins.bot_unified_runtime.domains.chat_reply.character.affinity as affinity_module
     from plugins.bot_unified_runtime.character.affinity import DynamicAffinityStore
 
     connect_calls: list[str] = []
@@ -63,7 +63,9 @@ def test_affinity_store_thread_agnostic(tmp_path):
 
 
 def test_interaction_increment_throttles_disk_writes(tmp_path, monkeypatch):
-    from plugins.bot_unified_runtime.runtime import settings as settings_module
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+        settings as settings_module,
+    )
     from plugins.bot_unified_runtime.runtime.settings import RuntimeSettingsStore
 
     store = RuntimeSettingsStore(tmp_path / "s.json", instance="t-throttle")
@@ -158,7 +160,7 @@ def _fake_group_event():
 def test_absorb_event_images_offloads_persist(tmp_path, monkeypatch, _fake_store):
     import hashlib
 
-    import plugins.bot_unified_runtime.sources.meme_library_listener as listener
+    import plugins.bot_unified_runtime.domains.meme.sources.meme_library_listener as listener
 
     config = _absorb_config(tmp_path)
     payload = b"fake-png-bytes"
@@ -186,7 +188,7 @@ def test_absorb_event_images_offloads_persist(tmp_path, monkeypatch, _fake_store
 def test_absorb_event_images_skips_duplicates(tmp_path, monkeypatch, _fake_store):
     import hashlib
 
-    import plugins.bot_unified_runtime.sources.meme_library_listener as listener
+    import plugins.bot_unified_runtime.domains.meme.sources.meme_library_listener as listener
 
     config = _absorb_config(tmp_path)
     payload = b"dup-bytes"

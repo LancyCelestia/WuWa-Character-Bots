@@ -7,7 +7,7 @@ from plugins.bot_unified_runtime.capabilities.music import (
     clear_music_candidate_sessions,
 )
 from plugins.bot_unified_runtime.contracts import SessionType, build_parsed_content
-from plugins.bot_unified_runtime.contracts.runtime import IncomingMessage
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
 
 
 def _message(text: str, session_id: str = "private:u1") -> IncomingMessage:

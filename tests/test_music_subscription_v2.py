@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from plugins.bot_unified_runtime.contracts.subscription import SubscriptionTarget
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
+    SubscriptionTarget,
+)
 from plugins.bot_unified_runtime.sources.subscriptions.music_v2 import (
     MusicSubscriptionAdapterV2,
 )

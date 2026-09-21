@@ -132,10 +132,12 @@ def test_embed_pending_custom_batch_size(tmp_path):
     """embed_pending(batch_size=N) 应按 N 切批（本地 Ollama 大批提吞吐的依据）。"""
 
     class _CountingEmbedder(_FakeEmbedder):
-        calls = 0
+        def __init__(self) -> None:
+            super().__init__()
+            self.sizes: list[int] = []
 
         def embed_texts(self, texts):
-            self.calls += 1
+            self.sizes.append(len(texts))
             return super().embed_texts(texts)
 
     embedder = _CountingEmbedder()
@@ -146,8 +148,10 @@ def test_embed_pending_custom_batch_size(tmp_path):
     store.sync_documents(docs)
     done, pending = store.embed_pending(None, batch_size=2)
     assert (done, pending) == (5, 5)
-    # 5 行按批 2 → 3 次调用；默认批(10)则只有 1 次。
-    assert embedder.calls == 3
+    # 首点是 #50 的冷启动预热（一发廉价调用换掉"首批扛模型加载"），
+    # 真批次仍严格按 2 切：2+2+1，批大小是本锁的语义，总次数不是。
+    assert embedder.sizes[0] == 1, f"应有一次前置预热：{embedder.sizes}"
+    assert embedder.sizes[1:] == [2, 2, 1], f"切批形状被改动：{embedder.sizes}"
     assert store.stats()["embedded"] == 5
 
 

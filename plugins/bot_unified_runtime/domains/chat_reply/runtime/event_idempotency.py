@@ -1,6 +1,6 @@
 """入站事件幂等表（交接 P0.4：同事件重复投递去重）。
 
-OneBot/NapCat 断线重连可能重放同一事件；同一 (adapter, bot_id, message_id)
+OneBot/SnowLuma 断线重连可能重放同一事件；同一 (adapter, bot_id, message_id)
 被同一能力处理两次会造成重复回复。提供两种后端，同一 claim 接口：
 - EventIdempotencyTable：进程内 TTL 去重，重启即失效；
 - SqliteEventIdempotencyTable：SQLite 持久化，跨重启仍拦截重放事件。

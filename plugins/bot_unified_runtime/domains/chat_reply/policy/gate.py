@@ -55,6 +55,11 @@ class PolicySettings:
     group_black2: frozenset[str] = frozenset()
     group_white1: frozenset[str] = frozenset()
     group_white2: frozenset[str] = frozenset()
+    # 监听专用机器人号（纯监听账号，如校园学校号 bot_campus_self_ids）：
+    # 这些 self_id 收到的任何群消息一律只接收不回话——硬否决放在群分支最前，
+    # 命令/点名/自然语言/抽签全部不触发。校园转发是独立 matcher、不经门禁，
+    # 故不受影响；私聊与守岸人主号也完全不受此约束。缺省空集=零行为变更。
+    listen_only_bot_ids: frozenset[str] = frozenset()
     # 白名单1 的自然语言提问判定：命中即视为有效触发（不带@/斜杠也回）。
     natural_chat_check: Callable[[str], bool] | None = None
     # 白名单1 的已支持链接判定：未提供时使用已注册内容解析器的规则。
@@ -269,6 +274,13 @@ def evaluate_policy(
                 actor_roles=actor_roles,
                 audit_tags=["policy", *role_tags, *tags],
             )
+
+        # 监听专用机器人号（纯监听账号，如校园学校号）：它收到的任何群消息一律
+        # 只接收不回话——命令/点名/自然语言/抽签等所有触发路径在此统一否决，
+        # 对齐「纯监听绝不向学校群发消息」。校园转发是独立 matcher、不经门禁，
+        # 私聊与守岸人主号也完全不受约束。
+        if str(getattr(message, "bot_id", "") or "").strip() in active_settings.listen_only_bot_ids:
+            return _denied("listen_only_account", ("listen_only_account",))
 
         # 优先级：黑名单1 > 黑名单2 > 白名单2 > 白名单1；黑名单是硬否决。
         # 黑名单1：完全静默，只接收不发送。

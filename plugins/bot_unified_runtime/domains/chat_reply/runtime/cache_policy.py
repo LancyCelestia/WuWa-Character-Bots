@@ -41,14 +41,15 @@ def enforce_quota(
     bytes_removed = 0
     total = sum(item[1] for item in files)
 
-    def drop(path: Path, size: int) -> None:
+    def drop(path: Path, size: int) -> bool:
         nonlocal removed, bytes_removed
         try:
             path.unlink(missing_ok=True)
             removed += 1
             bytes_removed += size
+            return True
         except OSError:
-            return
+            return False
 
     if max_age_days > 0:
         for mtime, size, path in files:
@@ -61,8 +62,12 @@ def enforce_quota(
         ):
             if remaining <= max_bytes:
                 break
-            drop(path, size)
-            remaining -= size
+            # 只有真删掉才从 remaining 里扣（D1-3）：Windows 文件占用/只读会让
+            # unlink 抛 OSError，若照旧无条件扣账，本函数会提前 break——目录实际
+            # 超配额却被判「已收进配额内」，且静默无告警，配额「防挤占硬盘」的目标
+            # 恰好在最需要它的失败路径下失效。
+            if drop(path, size):
+                remaining -= size
     return {
         "directory": str(root),
         "files_removed": removed,

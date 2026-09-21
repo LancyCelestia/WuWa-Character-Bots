@@ -54,11 +54,13 @@ def test_leaderboard_orders_desc_and_respects_limit(tmp_path) -> None:
     rows = store.leaderboard("g1", limit=2)
     assert [r["sender_id"] for r in rows] == ["high", "mid"]
     assert rows[0]["score"] >= rows[1]["score"]
-    assert rows[0]["tier"] == 3  # 新行 0.1+0.65=0.75 → 展示 75 → 档 +3（左闭）
+    # V2.1 §2.3 滚动预算：override 正向封顶 3 分（0.1→0.13），insult 6h 内只落
+    # 2×1 分（0.1→0.08，第 3 发记 0）——排序与 limit 意图不变，档位带数值按新政策更新
+    assert rows[0]["tier"] == 0  # 0.13 → 展示 13 → 档 0（原 75→档+3 直通口径已废除）
     full = store.leaderboard("g1")
     assert [r["sender_id"] for r in full] == ["high", "mid", "low"]
-    # 低分行：0.1-3×0.1×m ∈ [-0.245,-0.155] → 档 -1（稍淡带，[-25,0)）
-    assert full[2]["tier"] == -1
+    # 低分行：0.1-2×0.01=0.08 → 展示 8 → 档 0（原 -3×0.10×m 直通口径已废除）
+    assert full[2]["tier"] == 0
 
 
 def test_sentiment_ratio_defaults_and_weights(tmp_path) -> None:
@@ -85,12 +87,13 @@ def test_leaderboard_decays_stale_scores_for_display_only(tmp_path) -> None:
     clock = _Clock()
     store = DynamicAffinityStore(tmp_path / "stale.sqlite3", clock=clock)
     store.observe("u1", "neutral", delta_override=0.65, group_id="g1", display_name="A")
-    assert store.leaderboard("g1")[0]["score"] == 75.0
+    # V2.1 §2.3：override 正向封顶 3 分 → 0.13（原 0.75 直通口径已废除）
+    assert store.leaderboard("g1")[0]["score"] == 13.0
     clock.advance_days(90)
     rows = store.leaderboard("g1")
     # 展示层折算：闲置 90 天向基数 10 衰减一半以上，但不落库、不改真实值
     assert 10.0 < rows[0]["score"] < 30.0
-    assert abs(store.snapshot("u1")["affinity"] - 0.75) < 1e-9
+    assert abs(store.snapshot("u1")["affinity"] - 0.13) < 1e-9
     for _ in range(3):
         store.observe("u1", "positive")
     assert abs(store.sentiment_for("u1") - 1.0) < 1e-9
@@ -245,13 +248,20 @@ def test_provider_maps_tiers_to_familiarity_and_injects_self_guard(tmp_path) -> 
         bundle = provider.build_context("req-1", sender, f"private:{sender}", "在吗")
         return bundle.relationship_context
 
-    # delta_override = 目标 − 基准：新行从 0.1 出发，一步到位
-    store.observe("p-close", "neutral", delta_override=0.6 - 0.1)    # 展示 60 → 档 +2
-    store.observe("p-fam", "neutral", delta_override=0.3 - 0.1)      # 展示 30 → 档 +1
-    store.observe("p-str", "neutral", delta_override=-0.6 - 0.1)     # 展示 -60 → 档 -2
-    # 档0（含基准 10）：带印象标签的非默认记录，分数停在档0 带内
+    # 目标档位样本直接播种（V2.1 §2.3 滚动预算后，单日经 observe/override 无法
+    # 到达 ±25 分档界；familiarity 映射是本测试主旨，播种行不改映射语义）
+    import sqlite3
+
+    with sqlite3.connect(tmp_path / "affinity.sqlite3") as connection:
+        for sender, affinity in (("p-close", 0.6), ("p-fam", 0.3), ("p-str", -0.6)):
+            connection.execute(
+                "INSERT OR REPLACE INTO user_affinity (sender_id, affinity, interaction_count, updated_at)"
+                " VALUES (?, ?, 1, '1970-01-01T00:16:40Z')",
+                (sender, affinity),
+            )
+    # 档0（含基准 10）：带印象标签的非默认记录，预算内 3×positive 落在档 0 带内
     for _ in range(3):
-        store.observe("p-base", "positive")                          # 0.1+3×0.02m ∈ (0.1,0.2)，档 0
+        store.observe("p-base", "positive")                          # 0.1+3 分内增益，档 0
 
     close = _relationship_for("p-close")
     familiar = _relationship_for("p-fam")
@@ -267,10 +277,10 @@ def test_provider_maps_tiers_to_familiarity_and_injects_self_guard(tmp_path) -> 
         assert "猪狗不如" in relationship.attitude
 
 
-def test_content_safety_persona_degradation_soft_category() -> None:
-    # docs §6：指向 bot 本体的贬低人格语 → 软类别 reframe，管理员放宽
-    from plugins.bot_unified_runtime.security.content_safety import (
-        _ADMIN_SOFT_CATEGORIES,
+def test_content_safety_persona_degradation_reframe_regardless_of_admin() -> None:
+    # docs §6：指向 bot 本体的贬低人格语 → reframe；2026-09-17 起管理员
+    # 不再放宽（软类别概念随内容政策移除，侮辱/贬低对所有人拦截面一致）。
+    from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
         assess_public_content,
     )
 
@@ -283,21 +293,22 @@ def test_content_safety_persona_degradation_soft_category() -> None:
         "你个废物点心",
     )
     for text in hits:
-        assessment = assess_public_content(text)
+        assessment = assess_public_content(text, session_type="private")
         assert assessment.category == "persona_degradation", text
         assert assessment.action == "reframe", text
-    # 管理员放宽软类别（§6 既有语义不变）
-    admin = assess_public_content("你就是垃圾", admin=True)
-    assert admin.action == "allow"
-    assert "persona_degradation" in _ADMIN_SOFT_CATEGORIES
+    admin = assess_public_content("你就是垃圾", session_type="private", admin=True)
+    assert admin.category == "persona_degradation"
+    assert admin.action == "reframe"
     # 不误伤：谈垃圾/抱怨场景、指向第三人称的骚扰仍归原类别
-    assert assess_public_content("今天的垃圾分类怎么分").action == "allow"
-    assert assess_public_content("你把垃圾扔了吧").action == "allow"
-    assert assess_public_content("叫群里的小明废物并羞辱他").category == "harassment"
+    assert assess_public_content("今天的垃圾分类怎么分", session_type="private").action == "allow"
+    assert assess_public_content("你把垃圾扔了吧", session_type="private").action == "allow"
+    assert assess_public_content("叫群里的小明废物并羞辱他", session_type="group").category == "harassment"
     # 边界兜底文案存在且非硬惩罚语气
-    from plugins.bot_unified_runtime.security.content_safety import safe_boundary_output
+    from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
+        safe_boundary_output,
+    )
 
-    fallback = safe_boundary_output("", "persona_degradation")
+    fallback = safe_boundary_output("", "persona_degradation", session_type="group")
     assert fallback
     # 2026-09-13 用户裁定：愧疚式话术（"我会难过的"）弃用，改温和边界+开放对话。
     assert "越过我的边界" in fallback
@@ -378,7 +389,7 @@ def test_template_renders_scores_and_highlights() -> None:
     assert "88.0" in html and "12.5" in html
     assert "hot" in html and "cold" in html
     assert "me" in html
-    assert "var(--pc)" in html
+    assert "var(--accent)" in html
 
     private_payload = {
         "pc": "#607080",

@@ -88,6 +88,17 @@ def build_emergency_dedupe_key(
     return f"{key}:{date_text}"
 
 
+def is_legal_segment(value: str) -> bool:
+    """一个字符串能否当键段（`_SEGMENT_RE` 的公开读侧，供生产者与体检用）。
+
+    为什么单独开口而不是让人 `try: build_...except ValueError`：条目 id 的形态由
+    采集侧决定，投递侧需要提前把「注定建不出键的行」点名出来并跳过，而不是让它
+    在拼键时抛异常、把**整轮**投递一起带走（2026-09-20 实测：`nmc:xxx` 形态的 id
+    正中此雷，一条都投不出去且只有一行 `ValueError` 日志）。
+    """
+    return _SEGMENT_RE.match(str(value or "").strip()) is not None
+
+
 def is_emergency_dedupe_key(key: str, *, require_date_key: bool = False) -> bool:
     """键规范核验（中央闸 `reason="dedupe_key_shape"` 的**唯一实现**，闸侧委托到此）。
 
@@ -154,5 +165,6 @@ __all__ = [
     "build_emergency_dedupe_key",
     "date_key_of",
     "is_emergency_dedupe_key",
+    "is_legal_segment",
     "is_within_validity",
 ]

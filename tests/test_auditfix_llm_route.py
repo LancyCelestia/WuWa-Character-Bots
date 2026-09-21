@@ -13,15 +13,21 @@ from types import SimpleNamespace
 
 import pytest
 
-import plugins.bot_unified_runtime.llm.channel_health as channel_health_module
-from plugins.bot_unified_runtime.llm.channel_health import (
+import plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health as channel_health_module
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
     ChannelHealthStore,
     channel_health_enabled,
     channel_health_latency_first,
     probe_entry,
 )
-from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
-from plugins.bot_unified_runtime.llm.providers import LLMProviderError, LLMReply
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+    ModelRouter,
+    ModelSpec,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
+    LLMReply,
+)
 
 _HEALTH_ENV_FLAGS = (
     "BOT_CHANNEL_HEALTH_ENABLED",
@@ -84,7 +90,7 @@ def test_route_ids_exact_id_hit_routes_single_channel(monkeypatch) -> None:
     assert ids.count("a") == 1
 
 
-def test_route_ids_unknown_model_name_aggregates_by_price(monkeypatch) -> None:
+def test_route_ids_unknown_model_name_aggregates_by_strict_priority(monkeypatch) -> None:
     _clear_health_env(monkeypatch)
     router = _bare_router(
         {
@@ -94,9 +100,13 @@ def test_route_ids_unknown_model_name_aggregates_by_price(monkeypatch) -> None:
         }
     )
     ids = router.route_ids(message_text="", override="gemini-x")
-    # 聚合分支按价格升序（D2 修复前该分支因 _spec_for 恒合成 fallback 而不可达）
-    assert ids[0] == "cheap"
-    assert ids[1] == "expensive"
+    # FIX2（R1 裁定沿用）：bot_chat_strict_priority 缺省开（用户令「永远按
+    # 注册表优先级处理」），聚合分支按注册表 priority 升序、价格只作同级
+    # tiebreak——旧断言 ids[0]=="cheap" 编码的正是被裁掉的「价格均值优先」
+    # 行为（与 test_model_router_channel_failover 同款更新）。被测性质
+    # 「按模型名聚合出同模型全部渠道+其余模型兜底」保留。
+    assert ids[0] == "expensive"
+    assert ids[1] == "cheap"
     assert "other" in ids  # 聚合后仍接自动路由兜底
 
 
@@ -282,7 +292,7 @@ def test_health_enabled_flag_reads_config_first(monkeypatch) -> None:
 
 def test_latency_first_flag_reads_config_first(monkeypatch) -> None:
     _clear_health_env(monkeypatch)
-    assert channel_health_latency_first(None) is True  # 默认开
+    assert channel_health_latency_first(None) is False  # 2026-09-16 用户裁定：默认关（永远按注册表优先级）
     assert channel_health_latency_first(SimpleNamespace(bot_channel_health_latency_first=False)) is False
     monkeypatch.setenv("BOT_CHANNEL_HEALTH_LATENCY_FIRST", "0")
     assert channel_health_latency_first(None) is False
@@ -508,7 +518,7 @@ def test_tool_loop_accumulates_raw_usage_across_rounds() -> None:
 # ==================== D3：注册表合并语义防回归（已落地逻辑） ====================
 
 def test_merge_registry_entries_env_source_stays_live() -> None:
-    from plugins.bot_unified_runtime.capabilities.runtime_admin import (
+    from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
         _merge_registry_entries,
     )
 
@@ -549,7 +559,7 @@ def test_merge_registry_entries_unmarked_legacy_snapshot_migrates_to_env_fresh()
     .env 同名条目仍在 → 内容字段以 .env 实时值为准，仅 priority 取快照；
     .env 已删除 → 按纯运行时条目原样保留（与镜像条目的失效语义区分）。
     """
-    from plugins.bot_unified_runtime.capabilities.runtime_admin import (
+    from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
         _merge_registry_entries,
     )
 

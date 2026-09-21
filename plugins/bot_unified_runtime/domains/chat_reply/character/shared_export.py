@@ -19,6 +19,42 @@ from typing import Protocol
 from plugins.bot_unified_runtime.audit import redact_private_debug
 from plugins.bot_unified_runtime.contracts import PrivacyLevel
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import StrictBaseModel
+from plugins.bot_unified_runtime.domains.core.session_keys import (
+    GROUP_SESSION_PREFIX,
+    LEGACY_GROUP_SCHEME,
+    is_group_session_key,
+)
+
+# 群键口径（2026-09-21 D3-1 根修，与 F4 席 shared_group.py 同源）：本文件此前
+# 两处都按冒号形 ``group:<群号>`` 认群，而 conversation_turns.session_id 由摄取层
+# NoneBot get_session_id() 产出＝下划线形 ``group_<群号>_<发送者>`` ⇒
+# ①``include_private=False`` 的 SQL 过滤恒 0 行（群导出静默空转）、
+# ②逐行分类把真群行判成 private（群记录以 PERSONAL 级出库，语义反向）。
+# 判据与两枚前缀一律取自中央件 domains/core/session_keys，本文件禁持第三份字面量。
+# ⚠ LIKE 转义：``_`` 在 LIKE 里是单字符通配符，不转义则前缀 ``group_`` 会误吞
+# ``groupX...`` 形行（先例=shared_group.py:_like_prefix_pattern 与其回归锁）。
+# 该转义器目前在本域有两份逐字实现（shared_group / 本件），收编进 session_keys
+# 是登记在案的整改项（docs/audit-20260921.md），此处不再抄第三份。
+_LIKE_ESCAPE_CHAR = "!"
+
+
+def _like_prefix_pattern(prefix: str) -> str:
+    """前缀 → LIKE 模式：转义 ``!``/``%``/``_`` 再追通配 ``%``。"""
+    escaped = (
+        prefix.replace(_LIKE_ESCAPE_CHAR, _LIKE_ESCAPE_CHAR * 2)
+        .replace("%", f"{_LIKE_ESCAPE_CHAR}%")
+        .replace("_", f"{_LIKE_ESCAPE_CHAR}_")
+    )
+    return f"{escaped}%"
+
+
+# 群行 SQL 过滤片段（两形并列：权威下划线形 ∪ 历史/合成冒号形，与
+# is_group_session_key 的判据覆盖面等价；前缀取自中央件字面值，无注入面）。
+_GROUP_LIKE_CLAUSES = " OR ".join(
+    f"session_id LIKE '{_like_prefix_pattern(prefix)}' ESCAPE '{_LIKE_ESCAPE_CHAR}'"
+    for prefix in (GROUP_SESSION_PREFIX, LEGACY_GROUP_SCHEME)
+)
+_GROUP_SCOPE_SQL = f"AND ({_GROUP_LIKE_CLAUSES})"
 
 
 class SharedConversationRecord(StrictBaseModel):
@@ -90,7 +126,7 @@ class SQLiteSharedConversationExporter:
                 private_filter = (
                     ""
                     if self.include_private
-                    else "AND session_id LIKE 'group:%'"
+                    else _GROUP_SCOPE_SQL
                 )
                 since_filter = "AND created_at >= ?" if since_iso else ""
                 cursor_filter = ""
@@ -128,7 +164,7 @@ class SQLiteSharedConversationExporter:
         records: list[SharedConversationRecord] = []
         for row in rows:
             session_id = str(row["session_id"])
-            session_kind = "group" if session_id.startswith("group:") else "private"
+            session_kind = "group" if is_group_session_key(session_id) else "private"
             text = str(row["text"])
             redacted = redact_private_debug(text)
             if len(redacted) > self.max_chars:

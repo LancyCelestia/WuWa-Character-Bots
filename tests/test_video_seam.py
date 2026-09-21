@@ -29,8 +29,8 @@ from plugins.bot_unified_runtime.contracts import (
     SessionType,
     ToneProfile,
 )
-from plugins.bot_unified_runtime.runtime import video_pipeline
-from plugins.bot_unified_runtime.sources import video_understanding as vu
+from plugins.bot_unified_runtime.domains.media.ingest import video_understanding as vu
+from plugins.bot_unified_runtime.domains.media.video import video_pipeline
 
 
 class _FakeRegistry:
@@ -75,6 +75,14 @@ class _ContextProvider:
             sender_id=str(kwargs["sender_id"]),
             session_id=str(kwargs["session_id"]),
         )
+
+
+def _user_text(messages: list[dict[str, str]]) -> str:
+    """FIX2：RP 席文风 system 消息追加到 messages 末位后，user 消息不再恒居
+    [-1]——按 role 聚合 user 内容作断言靶位，简报注入语义本身不变。"""
+    return "\n".join(
+        str(item.get("content", "")) for item in messages if item.get("role") == "user"
+    )
 
 
 class _CaptureLLM:
@@ -203,7 +211,7 @@ def test_handler_fetch_feeds_capability_analysis(
     )
     capability(prepared, _decision())
     assert calls and calls[0]["video_source"] == str(clip)
-    user_prompt = llm.messages[0][-1]["content"]
+    user_prompt = _user_text(llm.messages[0])
     assert "[视频档案" in user_prompt
     assert "画面：猫。" in user_prompt
     assert registry.registered and registry.updated_briefs  # 以 reply_id 为锚建档
@@ -270,8 +278,8 @@ def test_cached_brief_hit_agrees_on_both_sides(
     )
     capability(prepared, _decision())
     assert calls == []  # 能力层同样零现场分析
-    assert "[视频档案" in llm.messages[0][-1]["content"]
-    assert "画面：猫。" in llm.messages[0][-1]["content"]
+    assert "[视频档案" in _user_text(llm.messages[0])
+    assert "画面：猫。" in _user_text(llm.messages[0])
 
 
 def test_reexport_path_shares_definition_state(

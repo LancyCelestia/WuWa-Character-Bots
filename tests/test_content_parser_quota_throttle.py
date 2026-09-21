@@ -19,9 +19,11 @@ from typing import Any
 
 import pytest
 
-import plugins.bot_unified_runtime.capabilities.content_parser as cp
-from plugins.bot_unified_runtime.contracts.media import build_parsed_content
-from plugins.bot_unified_runtime.runtime import cache_policy
+import plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser as cp
+from plugins.bot_unified_runtime.domains.chat_reply.runtime import cache_policy
+from plugins.bot_unified_runtime.domains.core.contracts.media import (
+    build_parsed_content,
+)
 
 # ---------------------------------------------------------------------------
 # 打桩：注入时钟 / enforce_quota 计数 spy / 假渲染后端。

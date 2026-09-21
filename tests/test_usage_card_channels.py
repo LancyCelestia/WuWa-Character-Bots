@@ -26,10 +26,13 @@ from typing import Any
 
 import pytest
 
-import plugins.bot_unified_runtime.llm.ledger as ledger_mod
-from plugins.bot_unified_runtime.capabilities.runtime_admin import (
+import plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger as ledger_mod
+from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
     _handle_model_command,
     _usage_channel_stats,
+)
+from plugins.bot_unified_runtime.domains.ops.monitor.usage_monitor import (
+    build_model_rows,
 )
 from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
     derive_wash_tokens,
@@ -39,7 +42,6 @@ from plugins.bot_unified_runtime.output.card_render.usage_cards import (
     usage_report_mica_html,
 )
 from plugins.bot_unified_runtime.runtime.settings import RuntimeSettingsStore
-from plugins.bot_unified_runtime.runtime.usage_monitor import build_model_rows
 
 _ACCENT = "#318ce7"
 
@@ -118,7 +120,7 @@ class TestUsageCardChannelSubrows:
         # 子行样式只在有渠道数据时注入 <style>（token 全 var() 引用）。
         assert ".crow { margin-left:26px;" in html_text
         assert "border-radius:var(--r-tile)" in html_text
-        assert "color:var(--accent-ink)" in html_text
+        assert "color:var(--accent-dark)" in html_text
 
     def test_channel_order_passthrough_cost_desc(self) -> None:
         # build_model_rows 已按费用降序排好；渲染层原样透传（ch-a 在 ch-b 前）。
@@ -242,13 +244,13 @@ _CHANNEL_RAW = {
 
 
 class TestInteractiveUsageChannelLines:
-    def test_ledger_off_text_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_ledger_off_has_no_channel_sublines(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("BOT_LLM_BILLING_ENABLED", raising=False)
         store = RuntimeSettingsStore(_temp_dir() / "settings.json")
         result = _handle_model_command(
             store, _fake_config(), ["usage"], usage_store=_usage_store()
         )
-        assert "- m1-pro（未配置价格）：入 1,000 / 出 500 / 共 1,500 / 费 未计价" in result  # I6：不挂悬空元
+        assert "- m1-pro（未配置价格）：入 1,000 / 缓存读 0 / 缓存建 0 / 出 500 / 共 1,500 / 费 未计价" in result  # I6：不挂悬空元
         assert "└ 渠道" not in result
 
     def test_ledger_on_renders_channel_sublines_cost_desc(
@@ -285,7 +287,7 @@ class TestInteractiveUsageChannelLines:
         result = _handle_model_command(
             store, _fake_config(), ["usage"], usage_store=_usage_store()
         )
-        assert "- m1-pro（未配置价格）：入 1,000 / 出 500 / 共 1,500 / 费 未计价" in result
+        assert "- m1-pro（未配置价格）：入 1,000 / 缓存读 0 / 缓存建 0 / 出 500 / 共 1,500 / 费 未计价" in result
         assert "└ 渠道" not in result
 
     def test_usage_channel_stats_folds_family_key(

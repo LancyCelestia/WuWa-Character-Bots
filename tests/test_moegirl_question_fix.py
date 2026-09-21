@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.moegirl import (
+from plugins.bot_unified_runtime.domains.location.capabilities.moegirl import (
     _KB_PROVIDER_CACHE,
     local_kb_answer,
     question_lookup,
@@ -31,7 +31,7 @@ def test_multi_candidate_degrades_to_chat(monkeypatch) -> None:
         ]
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.moegirl.moegirl_search",
+        "plugins.bot_unified_runtime.domains.location.capabilities.moegirl.moegirl_search",
         fake_search,
     )
     outcome = question_lookup(
@@ -67,7 +67,7 @@ def test_local_kb_hit_returns_entry(monkeypatch) -> None:
         [{"title": "守岸人", "content": "鸣潮中的漂泊者同伴，oro 码头的管理员。"}]
     )
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.character.vector_knowledge.build_vector_knowledge_provider",
+        "plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge.build_vector_knowledge_provider",
         lambda config: provider,
     )
     _KB_PROVIDER_CACHE.clear()
@@ -83,7 +83,7 @@ def test_local_kb_weak_relevance_returns_none(monkeypatch) -> None:
         [{"title": "完全无关的词条", "content": "不相关内容"}]
     )
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.character.vector_knowledge.build_vector_knowledge_provider",
+        "plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge.build_vector_knowledge_provider",
         lambda config: provider,
     )
     _KB_PROVIDER_CACHE.clear()

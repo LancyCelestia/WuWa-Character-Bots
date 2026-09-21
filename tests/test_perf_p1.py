@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.sources.web_search import (
+from plugins.bot_unified_runtime.domains.core.search.web_search import (
     ChainedWebSearchProvider,
     WebSearchHit,
 )
@@ -48,7 +48,9 @@ def test_default_parser_registry_memoized(_reset_default_registry):
 
 @pytest.fixture()
 def _reset_embed_memo():
-    from plugins.bot_unified_runtime.character import vector_knowledge
+    from plugins.bot_unified_runtime.domains.chat_reply.character import (
+        vector_knowledge,
+    )
 
     vector_knowledge.reset_query_embed_memo()
     yield
@@ -87,7 +89,7 @@ def _provider():
 
 
 def test_query_embed_memo_dedupes_single_text(monkeypatch, _reset_embed_memo):
-    import plugins.bot_unified_runtime.character.vector_knowledge as vk
+    import plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge as vk
 
     calls: list[list[str]] = []
 
@@ -146,7 +148,9 @@ def test_chained_search_cache():
 def test_runtime_event_log_reuses_handle_and_rotates(tmp_path, monkeypatch):
     import pathlib
 
-    from plugins.bot_unified_runtime.sources.runtime_event_log import RuntimeEventLog
+    from plugins.bot_unified_runtime.domains.ops.monitor.runtime_event_log import (
+        RuntimeEventLog,
+    )
 
     log_path = tmp_path / "events.log"
     log = RuntimeEventLog(log_path, max_bytes=64 * 1024, min_level="INFO")
@@ -192,7 +196,9 @@ def _audit_record(request_id: str):
 
 
 def test_sqlite_audit_ensure_once(tmp_path, monkeypatch):
-    from plugins.bot_unified_runtime.audit.logger import SQLiteAuditRepository
+    from plugins.bot_unified_runtime.domains.ops.audit.logger import (
+        SQLiteAuditRepository,
+    )
 
     repository = SQLiteAuditRepository(tmp_path / "audit.sqlite3")
     ensure_calls: list[int] = []
@@ -250,9 +256,11 @@ class _FakeEmbedder:
 
 def test_build_ann_index_batched(tmp_path, monkeypatch):
     """分批构建与全量构建结果等价：批量调小也应建满全部向量。"""
-    from plugins.bot_unified_runtime.character import vector_knowledge
     from plugins.bot_unified_runtime.character.vector_knowledge import (
         SqliteVectorKnowledgeStore,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.character import (
+        vector_knowledge,
     )
 
     store = SqliteVectorKnowledgeStore(

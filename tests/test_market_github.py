@@ -27,22 +27,22 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
 )
-from plugins.bot_unified_runtime.sources import market_data
-from plugins.bot_unified_runtime.sources.market_data import (
+from plugins.bot_unified_runtime.domains.finance.data import market_data
+from plugins.bot_unified_runtime.domains.finance.data.market_data import (
     IndexQuote,
     fetch_index_quotes,
     format_market_brief,
     format_quote_line,
     reset_market_cache,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
-from plugins.bot_unified_runtime.sources.parsers.platforms_github import (
+from plugins.bot_unified_runtime.domains.link_parse.parsers.platforms_github import (  # v21r2 W1a: 真身路径
     GITHUB_URL_PATTERNS,
     _decode_readme,
     _markdown_excerpt,
     match_github_repo,
     parse_github,
 )
+from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 
 # ---------------------------------------------------------------------------
 # 真实探针夹具
@@ -426,7 +426,7 @@ def test_market_capability_full_and_filtered(monkeypatch) -> None:
         IndexQuote("纳斯达克", "100.NDX", 26079.55, -0.66, None),
     ]
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.market.fetch_index_quotes",
+        "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
         lambda timeout_seconds, cache_seconds: list(quotes),
     )
     capability = build_market_capability(config=None)
@@ -446,7 +446,7 @@ def test_market_capability_full_and_filtered(monkeypatch) -> None:
 
 def test_market_capability_fetch_failure_degrades(monkeypatch) -> None:
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.market.fetch_index_quotes",
+        "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
         lambda timeout_seconds, cache_seconds: [],
     )
     capability = build_market_capability(config=None)
@@ -462,7 +462,7 @@ def test_market_capability_fetch_failure_degrades(monkeypatch) -> None:
 def test_market_capability_unknown_filter_falls_back_to_all(monkeypatch) -> None:
     quotes = [IndexQuote("上证指数", "1.000001", 3934.4, -0.43, None)]
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.market.fetch_index_quotes",
+        "plugins.bot_unified_runtime.domains.finance.capabilities.market.fetch_index_quotes",
         lambda timeout_seconds, cache_seconds: list(quotes),
     )
     capability = build_market_capability(config=None)
@@ -561,7 +561,7 @@ def test_parse_github_happy_path(monkeypatch) -> None:
         return dict(GH_REPO_FIXTURE)
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.parsers.platforms_github._github_get_json",
+        "plugins.bot_unified_runtime.domains.link_parse.parsers.platforms_github._github_get_json",
         _fake_get,
     )
     result = parse_github("https://github.com/psf/requests/blob/main/README.md")
@@ -594,7 +594,7 @@ def test_parse_github_readme_failure_still_builds_card(monkeypatch) -> None:
         return dict(GH_REPO_FIXTURE)
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.parsers.platforms_github._github_get_json",
+        "plugins.bot_unified_runtime.domains.link_parse.parsers.platforms_github._github_get_json",
         _fake_get,
     )
     result = parse_github("https://github.com/psf/requests")
@@ -612,7 +612,7 @@ def test_parse_github_api_failure_raises(monkeypatch) -> None:
         raise ParseHttpError("GET repo failed: HTTP 403")
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.parsers.platforms_github._github_get_json",
+        "plugins.bot_unified_runtime.domains.link_parse.parsers.platforms_github._github_get_json",
         _boom,
     )
     with pytest.raises(ParseHttpError):
@@ -627,7 +627,7 @@ def test_parse_github_non_repo_skips_without_network(monkeypatch) -> None:
         return dict(GH_REPO_FIXTURE)
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sources.parsers.platforms_github._github_get_json",
+        "plugins.bot_unified_runtime.domains.link_parse.parsers.platforms_github._github_get_json",
         _fake_get,
     )
     with pytest.raises(ParseHttpError):

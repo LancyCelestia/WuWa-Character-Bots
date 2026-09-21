@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.sources import market_crosscheck
+from plugins.bot_unified_runtime.domains.finance.data import market_crosscheck
 
 
 def _short_record(price: str, delta: str, pct: str) -> str:

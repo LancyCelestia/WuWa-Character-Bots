@@ -54,10 +54,17 @@ _MARKET_TRIGGER_RE = re.compile(
 # tests/test_market_exclusion_guard.py 回归锁）。
 # 繁体变体（房價/顯卡/期貨/匯率/油價/金價…）与 大盤 语境词为多语言覆盖（评审 P1-2）。
 # 英文 labor/job/housing market（就业/楼市语境）为 T1.2 英文 market 触发的配套守卫。
+# WP5（2026-09-21 路由优先级拆位）根因收紧：`行情` 是全站最泛的 catch-all，此前只
+# 排除房价/油价/金价，漏了「美元兑人民币行情」「国债行情」「原油行情」「北向资金行情」
+# 这类明显非股指句——被 market 认下后只能靠书写序与 fx/bond/commodities/northbound
+# 定胜负。这里把兑换 connector（兑/兌）与商品/国债/北向特异词一并纳入让路集：market
+# 只在无这些词（或带股/大盘/指数硬词）时才认「行情」，与既有 汇率/油价/金价 让路同
+# 口径（优先级拆位 fx36<commodities37<bond38<northbound39<market41 是并列的第二层保险）。
 _NON_STOCK_RE = re.compile(
     r"(房价|基金|币圈|加密|显卡|期货|汇率"
     r"|油价|金价|银价|铜价|煤价|电价|菜价|石油|黄金"
     r"|房價|幣圈|顯卡|期貨|匯率|油價|金價|銀價|銅價|石油|黃金"
+    r"|兑|兌|原油|国债|國債|债券|債券|北向|沪股通|深股通|滬股通"
     r"|labor market|labour market|job market|housing market)"
 )
 _STOCK_HINT_RE = re.compile(r"(股|大盘|大盤|指数)")

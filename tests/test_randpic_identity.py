@@ -39,7 +39,7 @@ def test_is_randpic_command_trigger_matrix() -> None:
 def test_pick_random_image_reads_custom_dirs_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from plugins.bot_unified_runtime.capabilities import randpic
+    from plugins.bot_unified_runtime.domains.meme.capabilities import randpic
 
     monkeypatch.setattr(randpic, "_SCAN_CACHE", OrderedDict())
     folder = tmp_path / "我的图库" / "子目录"
@@ -52,7 +52,7 @@ def test_pick_random_image_reads_custom_dirs_only(
 def test_pick_random_image_missing_dir_returns_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from plugins.bot_unified_runtime.capabilities import randpic
+    from plugins.bot_unified_runtime.domains.meme.capabilities import randpic
 
     monkeypatch.setattr(randpic, "_SCAN_CACHE", OrderedDict())
     assert pick_random_image([str(tmp_path / "不存在的目录")]) is None
@@ -61,7 +61,7 @@ def test_pick_random_image_missing_dir_returns_none(
 def test_randpic_capability_does_not_create_folders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from plugins.bot_unified_runtime.capabilities import randpic
+    from plugins.bot_unified_runtime.domains.meme.capabilities import randpic
 
     monkeypatch.setattr(randpic, "_SCAN_CACHE", OrderedDict())
     gallery = tmp_path / "图库"
@@ -93,7 +93,7 @@ def test_randpic_capability_does_not_create_folders(
 def test_randpic_capability_empty_gallery_degrades(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from plugins.bot_unified_runtime.capabilities import randpic
+    from plugins.bot_unified_runtime.domains.meme.capabilities import randpic
 
     monkeypatch.setattr(randpic, "_SCAN_CACHE", OrderedDict())
     config = SimpleNamespace(bot_randpic_dirs=[str(tmp_path / "空图库")])
@@ -147,7 +147,7 @@ def test_session_identity_clear_and_roundtrip(tmp_path: Path) -> None:
 
 
 def test_session_identity_admin_gate(tmp_path: Path) -> None:
-    from plugins.bot_unified_runtime.capabilities.runtime_admin import (
+    from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
         build_session_identity_admin_result,
     )
 

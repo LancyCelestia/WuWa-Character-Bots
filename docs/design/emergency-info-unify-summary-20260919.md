@@ -44,10 +44,10 @@ A 波 10 席只读盘点**7 席交付、3 席被日配额硬拒**；已把「外
 ### P1 会错的
 
 5. **日程 v2 引擎有 `urgent` 穿 QuietHours + 错过三策略 + 每主体限流，但缺省关且全仓仅测试引用**（`config.py:405-406` False；`schedule_service.py:416-464/:506/:526-550`）⇒ 「复用还是另建」必须先裁，否则必然造第二套（违 G5）。
-6. **事件 source 枚举 12 vs 14 → 主会话复核后改判为「有意分层，不是 bug」**：活真身 `domains/ops/monitor/event_store.py:54` 只 12 项，其 docstring（`:12-15`）明写「V2.1 按**合同 §8 有意收敛为十二个**」，活测试 `test_event_service_v21.py:169` 逐字锁定；legacy `control_plane/events.py` 是 14 项。⇒ 真缺陷改记为：**域重组后的 `control_plane/` 死副本仍在盘上（未跟踪遗留）**，须由收口席清理，否则后来者会像本会话一样改到死代码。SnowLuma 若要作为日志 source 归因属**合同变更**（合同 §8 + 验收矩阵 + docstring + 活测试四处同改），需单独裁定。
+6. **事件 source 枚举 12 vs 14 → 主会话复核后改判为「有意分层，不是 bug」**：活真身 `domains/ops/monitor/event_store.py:54` 只 12 项，其 docstring（`:12-15`）明写「V2.1 按**合同 §8 有意收敛为十二个**」，活测试 `test_event_service_v21.py:169` 逐字锁定；legacy `plugins/bot_unified_runtime/control_plane/events.py` 是 14 项。⇒ 真缺陷改记为：**域重组后的 `control_plane/` 死副本仍在盘上（未跟踪遗留）**，须由收口席清理，否则后来者会像本会话一样改到死代码。SnowLuma 若要作为日志 source 归因属**合同变更**（合同 §8 + 验收矩阵 + docstring + 活测试四处同改），需单独裁定。
 7. **渲染真值 = 11 面（7 Jinja + 4 f-string 直拼）**，「6 模板」是旧口径；**P0–P3 定级色零存在**；`render_root_tokens(extras=)` 是 gate08 hex 门的合法后门 ⇒ 定级色必须走登记表而非后门（E8）。
 8. **「每主体 3/分钟·20/小时」文档口径不成立**：真值 60/12/8 生产值 + 45s R3，群句数帽缺省关 ⇒ AGENTS.md 需更正（E5）。
-9. `redact_local_secrets` **不是中央闸**；`runtime/capability_protocols.py:151` 与主链 `CapabilityResult` **撞名**——新域两大易错点（E5）。
+9. `redact_local_secrets` **不是中央闸**；`plugins/bot_unified_runtime/runtime/capability_protocols.py:151` 与主链 `CapabilityResult` **撞名**——新域两大易错点（E5）。
 10. **>1500 字长通报无卡降级机制**（E8）；邮件主动推送**无先例未实证**、TG 4096 切分归属欠账（E5）。
 11. **台账 #33 缺陷②仍在**：`__init__.py:3231` 群摘要推送未传 `llm_provider` ⇒ `bot_group_digest_llm_enabled` 推送侧恒不生效（E1；缺陷① session_id 已由 F4 席修，`shared_group.py:31-46`）。
 12. **生产未注入 `unknown_part_confirmer`** ⇒ 多段分片「结果未知」只能停 `PARTIAL`，无人工对账口（E5）。
@@ -126,7 +126,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 ⑤送达核验分两层：Tier1（本地可判定：发前摘段观测 + SENT 审计指纹，**一律不改 `ReceiptState`**）归 B 波实施；Tier2（`get_msg` 回查）协议扩展归 B 波、**语义启用等 SnowLuma 真机取证**；
 ⑥与日程 v2 = 复用其词汇/设置对象/`deliver_after` 原语，**不复用其实例**，不构成第三套（T13 锁死不得自造 HH:MM 解析）。
 
-**RV-1 独立评审席结论（01:33）**：判定 **Approved + 2 Important + 3 Minor**，据此更正主会话两处口径——FIX-1 生效口径降级为「代码已修，生效需三开关 + 重启」（`.env` 三门全关，夜间推送当前一单不发）；FIX-2 撤回理由改正（`control_plane/events.py` 是**并存诊断层**不是坟，但文件 untracked ⇒ 还原不可自证，**待控制面批 Owner 核对 4 个文件**）。全文 `reviews/FIX-1-2-review.md`（7,642 B），评审包 `reviews/FIX-1-2-package.diff`（184,188 B）。
+**RV-1 独立评审席结论（01:33）**：判定 **Approved + 2 Important + 3 Minor**，据此更正主会话两处口径——FIX-1 生效口径降级为「代码已修，生效需三开关 + 重启」（`.env` 三门全关，夜间推送当前一单不发）；FIX-2 撤回理由改正（`plugins/bot_unified_runtime/control_plane/events.py` 是**并存诊断层**不是坟，但文件 untracked ⇒ 还原不可自证，**待控制面批 Owner 核对 4 个文件**）。全文 `reviews/FIX-1-2-review.md`（7,642 B），评审包 `reviews/FIX-1-2-package.diff`（184,188 B）。
 
 **E7 TTS 席第五次派发完成**（DONE_WITH_CONCERNS，314 行 / 61 KB，7.79M tokens / 45 tools / 678s）：语音出站定性=「复用中央通道的旁路，且投递记账对它结构性失明」（`worker.py:557/:593`、`__init__.py:1649`）；「谎报送达」根因坐实=**`onebot.py:975-981` 只要 retcode==0 即记 SENT，全链零段数校验零回查**，且成功件刻意 `title=""/body=""`（`tts.py:732-740`）⇒ 失败连可降级文字都没有。三处就地更正：旧提法「不等则改判 FAILED_RETRYABLE/UNKNOWN」**作废**（与 T12 冲突，改判=重投风暴）；`domains/creation/tts/contracts.py` 的 3000 字/60s/20MiB 钳制是**初稿漏盘的契约层**，与生产 media 路径同概念两数值 ⇒ B 波先裁权威再谈新键；配置键 19→**20**。新事实：`check_and_record` 全仓唯一调用点 `pipeline.py:611` ⇒ **限流只管入站，主动投递不经此族**；`onebot.py:1015 _call_optional_onebot_api` 已实现鸭子探测降级原语（Tier2 免造第三套）。
 
@@ -153,7 +153,7 @@ Tier2（`get_msg` 回查）以 `_ONEBOT_GET_MSG_NOT_FOUND_PROVEN=False` 取证�
 ① 规格 §3.2 T2-b **自相矛盾**——worker 只在 part **没有** `provider_message_id` 时才问确认器，而规格要求确认器按该 id 反查 ⇒ 确认器永远拿不到把手；终态修法须先定「id 供给链」再谈启用。
 ② 规格 §3.2 声称「协议扩展零行为变更」**不成立**——`get_msg` 直接进原协议会打断 5 个 smoke 替身（mypy 实锤），须分层为独立消费面。
 
-**曾被误判为阻塞的两处**：他席在飞写入中间态（`domains/render/templates.py` 01:55、`security/content_safety.py` 02:02）当时报语法错，
+**曾被误判为阻塞的两处**：他席在飞写入中间态（`domains/render/templates.py` 01:55、`domains/chat_reply/security/content_safety.py` 02:02）当时报语法错，
 02:04 `py_compile` 复核两者 **SYNTAX OK** ⇒ 非阻断，属并行写盘瞬时态。
 
 **仍未闭合的唯一一环（裁决项②的实质）**：`grep -c "bot_outbound" plugins/bot_unified_runtime/config.py` = **0**
@@ -167,7 +167,7 @@ Tier2（`get_msg` 回查）以 `_ONEBOT_GET_MSG_NOT_FOUND_PROVEN=False` 取证�
 | **①** control_plane 四件核对 | **已跑只读核对，还原成立**：四件全为 `??`（未跟踪），`grep -rn snowluma` 在 `control_plane/**` + 该测试 + 该文档 = **0 命中**；权威层 `tests/test_event_service_v21.py` **19 passed**（12 项枚举锁未被我碰坏）。同目录 3 个 tracked 文件（`__init__.py/_app.py/audit.py`）此刻是他席的 `M`，与本席无关 | 上述命令 02:12 实跑；另注：`control_plane/` 下共 **32 件 untracked**（整个 V2.1 层尚未入库），这就是「无 git 基线可自证」的根因 |
 | **②** 出站闸配置键 | **已完成且门已复绿**。实际归因（据 B4a 报告 §4/§11 更正本会话早先误判）：**原席 B4a 并未死亡**，是它于 02:08 把七枚键写进了 `config.py`（`:234-239` 六枚闸键 + `:244` `_outbound_verify_enabled`，`:1188` 已把 `bot_outbound_gate_db_path` 收进 `path_fields` 重映射），但**未登记 catalog** ⇒ `test_config_catalog_covers_config_fields` 被本波**弄红**。主会话 02:16 在 `docs/config-catalog-full.md` A26 表尾补 5 行（覆盖七键，含「与入站限流是两个对象」「3/分钟·20/小时 只属未接线引擎」「不改 `ReceiptState`」三条口径钉死）→ `tests/test_doc_sync_gates.py` **4 passed**（此前 1 failed）。**根因是主会话误判席位死亡**：见本节末「主会话错判自纠」 | `grep -n bot_outbound config.py` → 7 命中；缺省值实测 `false/true/["P0","P1"]/2/6`；`--basetemp` 离线复跑 |
 | **③** TTS 上限权威 | **裁定：`domains/creation/tts/contracts.py`（3000 字/60s/20MiB）判为非权威骨架**，理由已升级——01:50 另一席已落地**第三个也是现行唯一的权威**：`domains/media/tts_presets.py`（7,585 B）+ `config.py:336 bot_tts_preset="shorekeeper"` + `:339 _tts_max_chars=200` + `:342 bot_tts_hard_max_chars=2000`（G2-R3 中央硬顶，超顶拒绝+`OperationalIssue`，`0`=不限但必过硬顶）。⇒ 生产口径已收敛为「预设表为唯一缺省源、`BOT_TTS_*` 数值键降为管理员覆盖」，contracts 层不再谈接线；`contracts.py` 文件头的「非权威」标注由 creation 域 owner 执行（本波不跨域改码）。「接上限 + 三态出口（超长→文本+卡）」**另立一批**，因为它要同时改 `tests/test_tts_outbound_chain.py:66` 的 parts 锁 | `ls` mtime 01:50；catalog `:812` 行原文；`grep -n bot_tts_hard_max_chars config.py` |
-| **④** commit | **按「安全白名单」执行：只提文档**。理由不变且已量化——`__init__.py` 1315/305（181 hunk）、`config.py` 299/8、`docs/config-catalog-full.md` 72/5、`.env.example` 176/4 全是**他席在飞工作**，`git add` 任何一件即越权捆绑；`tests/test_delivery_verification_tier1.py` 单独提必红（`git show HEAD:.../onebot.py \| grep -c set_outbound_verify_provider` = **0**）；`tests/test_group_digest_push.py` 单独提亦红（FIX-1 代码半在 `__init__.py`）。⇒ 本波入库件＝B4 规格（自 `.superpowers/` 归档到 `docs/design/`）+ 本汇总文档，且按本仓共享索引规矩用 `git commit -- <paths>` 形式；**未 push**（铁律 4：仅按明确指示） | 提交后 `git show --stat HEAD` 核对，哈希见台账 `progress.md` 与本节末追加行 |
+| **④** commit | **按「安全白名单」执行：只提文档**。理由不变且已量化——`__init__.py` 1315/305（181 hunk）、`config.py` 299/8、`docs/config-catalog-full.md` 72/5、`.env.example` 176/4 全是**他席在飞工作**，`git add` 任何一件即越权捆绑；`tests/test_delivery_verification_tier1.py` 单独提必红（`git show HEAD:domains/transport/sender/onebot.py \| grep -c set_outbound_verify_provider` = **0**）；`tests/test_group_digest_push.py` 单独提亦红（FIX-1 代码半在 `__init__.py`）。⇒ 本波入库件＝B4 规格（自 `.superpowers/` 归档到 `docs/design/`）+ 本汇总文档，且按本仓共享索引规矩用 `git commit -- <paths>` 形式；**未 push**（铁律 4：仅按明确指示） | 提交后 `git show --stat HEAD` 核对，哈希见台账 `progress.md` 与本节末追加行 |
 | **⑤** B4b RED 处置 | **作废**：13 RED 已由该席自己转 **17 passed**（主会话 02:0x 独立复跑同数），无需移回 `%TEMP%` | `pytest tests/test_delivery_verification_tier1.py` 输出 |
 
 **本波生产可达性现状更正（②执行后）**：中央闸与送达核验的**代码 + 配置键 + catalog 登记**三件齐备，缺的只是「谁把闸接到调用点上」——按规格 §1.2，聚合域是唯一被授权经闸投递的新代码，存量 6 族维持直连（T6 结构锁），故闸在紧急域通起来之前对现役行为零影响。
@@ -231,7 +231,7 @@ Tier2（`get_msg` 回查）以 `_ONEBOT_GET_MSG_NOT_FOUND_PROVEN=False` 取证�
 「不许为凑绿造实现、依赖未落地代码的锁一律 `xfail(strict=True)` 并登记转正条件」）。
 
 ### 13-4 顺手登记：闸侧还有两处会咬人的口径差
-① `service/dedupe.py build_emergency_dedupe_key` **校验用 strip 值、拼键用原参** ⇒ 带空白入参过校验却拼出非法键，
+① `domains/emergency_info/service/dedupe.py build_emergency_dedupe_key` **校验用 strip 值、拼键用原参** ⇒ 带空白入参过校验却拼出非法键，
 进闸被 `skip, reason="dedupe_key_shape"` ⇒ **静默丢投递**（同 §13-1 属漏报族，D1-FIX 修）；
 ② B4a 报告里的接线片段形参名写作 `settings=`，真身是 `settings_provider=` ⇒ 注册席照抄即 `TypeError`。
 

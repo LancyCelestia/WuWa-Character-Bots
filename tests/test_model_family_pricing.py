@@ -11,16 +11,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from plugins.bot_unified_runtime.domains.ops.monitor.usage_monitor import (
+    build_model_rows,
+    build_report_text,
+)
 from plugins.bot_unified_runtime.runtime.pricing import (
     format_milli_yuan,
     lookup_model_price,
     model_call_cost_milli,
     model_family_key,
     parse_model_prices,
-)
-from plugins.bot_unified_runtime.runtime.usage_monitor import (
-    build_model_rows,
-    build_report_text,
 )
 
 # ---------- ① 家族键归一化 ----------
@@ -186,9 +186,11 @@ def test_build_report_text_merges_and_annotates() -> None:
         window_label="测试窗口",
         prices={"gemini-3.8-flash": {"input": 1, "output": 2}},
     )
-    assert "- Gemini-3.8-Flash（合并 3 种写法）：入 3,500,000 / 出 800,000 / 费 6.00 元" in text
+    # 2026-09-18：逐模型行改为恒显式输出缓存读/缓存建（0 也要显示——
+    # "0"是信息，说明该模型窗口内上游没回报缓存用量）。
+    assert "- Gemini-3.8-Flash（合并 3 种写法）：入 3,500,000 / 缓存读 0 / 缓存建 0 / 出 800,000 / 费 6.00 元" in text
     assert "gemini-3.8-flash-high" not in text  # 不再拆行
-    assert "- deepseek-v4-pro（未配置价格）：入 100,000 / 出 100,000 / 费 未计价" in text
+    assert "- deepseek-v4-pro（未配置价格）：入 100,000 / 缓存读 0 / 缓存建 0 / 出 100,000 / 费 未计价" in text
 
 
 def test_build_report_text_annotates_unpriced_instead_of_zero() -> None:
@@ -206,13 +208,43 @@ def test_build_report_text_annotates_unpriced_instead_of_zero() -> None:
         window_label="测试窗口",
         prices={},
     )
-    assert "- gemini-3.8-flash-high（未配置价格）：入 1,000 / 出 100 / 费 未计价" in text
+    assert "- gemini-3.8-flash-high（未配置价格）：入 1,000 / 缓存读 0 / 缓存建 0 / 出 100 / 费 未计价" in text
+    # 0/0 也要显式说清：否则"没有这行"会被读成"报表漏了缓存"。
+    assert "缓存：本窗口上游未回报缓存用量" in text
+
+
+def test_build_report_text_shows_cache_and_hit_rate() -> None:
+    """缓存命中/创建与命中率逐模型可见（2026-09-18 缓存完善）。"""
+    text = build_report_text(
+        {
+            "prompt_tokens": 1_000_000,
+            "completion_tokens": 10_000,
+            "total_tokens": 1_010_000,
+            "cache_read_tokens": 250_000,
+            "cache_write_tokens": 40_000,
+            "calls": 4,
+            "cost_milli": 0,
+            "by_model": {"grok-4.6": 1_010_000},
+            "by_model_prompt": {"grok-4.6": 1_000_000},
+            "by_model_completion": {"grok-4.6": 10_000},
+            "by_model_cache_read": {"grok-4.6": 250_000},
+            "by_model_cache_write": {"grok-4.6": 40_000},
+        },
+        window_label="测试窗口",
+        prices={"grok-4.6": {"input": 0.6, "output": 1.8, "cache_read": 0.15}},
+    )
+    # 总账：命中率 = 250,000 / 1,000,000 = 25.0%
+    assert "缓存：命中 250,000（占输入 25.0%），创建 40,000" in text
+    # 逐模型：缓存读/缓存建各自成段，不再只给入/出。
+    assert "- grok-4.6：入 1,000,000 / 缓存读 250,000 / 缓存建 40,000 / 出 10,000 / 费 0.00 元" in text
 
 
 # ---------- 聚合源：按原始名计次数/未计价 ----------
 
 def test_aggregate_llm_usage_counts_calls_and_unpriced_per_model(tmp_path: Path) -> None:
-    from plugins.bot_unified_runtime.sources.runtime_event_log import RuntimeEventLog
+    from plugins.bot_unified_runtime.domains.ops.monitor.runtime_event_log import (
+        RuntimeEventLog,
+    )
 
     log_path = tmp_path / "events.log"
     log_path.write_text(
@@ -242,3 +274,93 @@ def test_aggregate_llm_usage_counts_calls_and_unpriced_per_model(tmp_path: Path)
     assert rows[0]["model"] == "Gemini-3.8-Flash"
     assert rows[0]["calls"] == 2
     assert rows[0]["pricing_note"] == "历史未计价 1 次"
+
+
+# ---------- ⑥ 缓存计价与价格单源化（2026-09-18） ----------
+
+def test_parse_model_prices_keeps_cache_and_per_call_keys() -> None:
+    prices = parse_model_prices(
+        '{"gpt-5.6-terra":{"input":0.29,"output":1.74,'
+        '"cache_read":0.029,"cache_creation":0.3625},'
+        '"c-gemini-3.8-flash-high":{"per_call":0.018}}'
+    )
+    assert prices["gpt-5.6-terra"] == {
+        "input": 0.29,
+        "output": 1.74,
+        "cache_read": 0.029,
+        "cache_creation": 0.3625,
+    }
+    assert prices["c-gemini-3.8-flash-high"] == {"per_call": 0.018}
+    # 缺键 ≠ 0：不带缓存价的条目不应凭空长出 cache_* 键。
+    assert parse_model_prices('{"a":{"input":1,"output":2}}')["a"] == {
+        "input": 1.0,
+        "output": 2.0,
+    }
+    # 负数/非数值仍按未配置丢弃。
+    assert "cache_read" not in parse_model_prices(
+        '{"a":{"input":1,"output":2,"cache_read":-1,"cache_creation":"x"}}'
+    )["a"]
+
+
+def test_model_call_cost_milli_bills_cache_read_at_cache_price() -> None:
+    prices = parse_model_prices(
+        '{"grok-4.6":{"input":0.6,"output":1.8,"cache_read":0.15}}'
+    )
+    # 100 万输入里 40 万命中缓存：普通输入 60 万 × 0.6 + 命中 40 万 × 0.15
+    cost_milli, priced = model_call_cost_milli(
+        "grok-4.6", 1_000_000, 0, prices, cache_read_tokens=400_000
+    )
+    assert priced
+    # 0.36 元（普通输入）+ 0.06 元（缓存读）= 0.42 元 = 420 毫厘
+    assert cost_milli == 420
+    # 缺 cache_read 价键时回退输入价（宁可略高估，不记 0）。
+    no_cache_price = parse_model_prices('{"m":{"input":1.0,"output":2.0}}')
+    fallback_milli, _ = model_call_cost_milli(
+        "m", 1_000_000, 0, no_cache_price, cache_read_tokens=400_000
+    )
+    assert fallback_milli == 1_000  # 全部按 1 元/1M
+    # 上游把缓存量报得比 prompt 还大：ordinary 夹到 0，绝不出负价
+    # （999 token × 1 元/1M = 0.000999 元 → 毫厘四舍五入为 1，非负）。
+    weird_milli, _ = model_call_cost_milli(
+        "m", 100, 0, no_cache_price, cache_read_tokens=999
+    )
+    assert weird_milli == 1
+
+
+def test_registry_model_prices_projects_registry_entries() -> None:
+    from plugins.bot_unified_runtime.runtime.pricing import registry_model_prices
+
+    registry = {
+        "axon-gemini": {
+            "model": "gemini-3.8-flash",
+            "base_url": "http://127.0.0.1:8090/v1",
+            "price_in": 0.3,
+            "price_out": 1.5,
+            "price_cache_read": 0.03,
+            "price_cache_creation": 0.2,
+        },
+        "night-pool": {"model": "c-gemini-3.8-flash-high", "price_per_call": 0.018},
+        "no-price": {"model": "mystery-model"},
+    }
+    prices = registry_model_prices(registry)
+    assert prices["gemini-3.8-flash"] == {
+        "input": 0.3,
+        "output": 1.5,
+        "cache_read": 0.03,
+        "cache_creation": 0.2,
+    }
+    assert prices["c-gemini-3.8-flash-high"] == {"per_call": 0.018}
+    # 无任何价键的条目不留空壳（否则会被读成"已配置"）。
+    assert "mystery-model" not in prices
+
+
+def test_merge_model_prices_later_sources_override_and_fill() -> None:
+    from plugins.bot_unified_runtime.runtime.pricing import merge_model_prices
+
+    merged = merge_model_prices(
+        {"m": {"input": 1.0, "output": 2.0, "cache_read": 0.1}},
+        {"m": {"input": 9.0}, "n": {"input": 3.0}},
+        "not-json",
+    )
+    assert merged["m"] == {"input": 9.0, "output": 2.0, "cache_read": 0.1}
+    assert merged["n"] == {"input": 3.0}

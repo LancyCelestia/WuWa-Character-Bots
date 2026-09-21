@@ -3,7 +3,8 @@
 背景：A 方文案审计 Q-01（数据源失败 4 种句式散装：晚点再试试？/稍后再试试？/
 稍后再试一次。/「，稍后再试。」）、Q-02（权限拒绝 6 种写法散装，含卖萌体），
 违反用户铁律「所有文本统一口径/风格/话术，前后不矛盾」。真相源池 =
-capabilities/user_copy.py（DATASOURCE_FAILURE_TEMPLATES / ADMIN_GATE_TEMPLATES，
+user_copy.py（RWC3 后真身=domains/chat_reply/capabilities/user_copy.py；
+DATASOURCE_FAILURE_TEMPLATES / ADMIN_GATE_TEMPLATES，
 首条即历史统一句，语气零漂移）。本门把「同类失败文案只从池里出」固化为常驻
 pytest 门，防未来批次回潮。
 
@@ -81,39 +82,54 @@ Q02_PATTERNS: tuple[str, ...] = (
 # 独立于 Q01/Q02 的 FILE_WHITELIST——group_info 的卖萌体残留豁免只限
 # Q01/Q02 模式，Q-03 照扫不豁免。
 Q03_SCOPE_FILES: frozenset[str] = frozenset(
-    f"plugins/bot_unified_runtime/capabilities/{name}.py"
-    for name in (
-        "media_archive",
-        "reminder",
-        "weather",
-        "group_info",
-        "moegirl",
-        "randpic",
-        "meme_library",
-    )
+    {
+        # v21r2 W11 media 重组：media_archive 真身迁 domains/media/capabilities/，
+        # 门锚同波随迁指真身（旧路径已是 re-export 垫片，扫垫片=防回潮静默失效）。
+        "plugins/bot_unified_runtime/domains/media/capabilities/media_archive.py",
+        # v21r2 RWC3 chat_reply/capabilities 重组：group_info 真身迁
+        # domains/chat_reply/capabilities/，门锚同波随迁指真身（旧路径已是垫片）。
+        "plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py",
+        # reminder/weather/moegirl 旧路径锚=各自域重组波（W10/W3/W16）已登记遗留，
+        # 非本波文件零触碰。
+        *(
+            f"plugins/bot_unified_runtime/capabilities/{name}.py"
+            for name in (
+                "reminder",
+                "weather",
+                "moegirl",
+            )
+        ),
+        # v21r2 W6 meme 重组：randpic/meme_library 真身迁 domains/meme/capabilities/，
+        # 门锚同波随迁指真身（旧路径已是 re-export 垫片，扫垫片=防回潮静默失效）。
+        "plugins/bot_unified_runtime/domains/meme/capabilities/randpic.py",
+        "plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py",
+    }
 )
 
 # Q-03 成功回执/正常对话类保留处（文件 → [(单元须含的子串, 理由)]；子串含
 # 「～」本体、精确到句）。本批 6 文件零保留处；现网唯一保留 = meme_library
 # 成功发送回执（正常对话类，64efadf 裁定保留）。
 Q03_UNIT_WHITELIST: dict[str, list[tuple[str, str]]] = {
-    "plugins/bot_unified_runtime/capabilities/meme_library.py": [
+    "plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py": [
         ("给你偷来一张表情～", "成功发送回执（正常对话类），64efadf 裁定保留"),
     ],
 }
 
 # 文件级豁免（仓库相对路径 → 理由）。理由非空由门测试校验。
 FILE_WHITELIST: dict[str, str] = {
-    "plugins/bot_unified_runtime/capabilities/user_copy.py": "池本体：变体句即真相源",
+    # v21r2 RWC3：user_copy 真身迁 domains/chat_reply/capabilities/，豁免锚随迁
+    # （真身仍在 RUNTIME_PKG 扫描面内，锚不随迁=池体句式裸扫必红）。
+    "plugins/bot_unified_runtime/domains/chat_reply/capabilities/user_copy.py": "池本体：变体句即真相源",
     "plugins/bot_unified_runtime/__init__.py": "禁碰域（绝对不碰），豁免登记见 user_copy.py 头注释",
-    "plugins/bot_unified_runtime/capabilities/subscribe.py": "并行在飞禁碰域；「没有权限操作该订阅」为资源属主语义",
-    "plugins/bot_unified_runtime/capabilities/subscribe_v2.py": "并行在飞禁碰域；群内订阅管理员语义 + 资源属主语义",
-    "plugins/bot_unified_runtime/capabilities/group_info.py": "禁碰域；卖萌体残留待该文件域批次收口",
+    "plugins/bot_unified_runtime/domains/subscribe/capabilities/subscribe.py": "v21r2 W8 随迁指真身；「没有权限操作该订阅」为资源属主语义",
+    "plugins/bot_unified_runtime/domains/subscribe/capabilities/subscribe_v2.py": "v21r2 W8 随迁指真身；群内订阅管理员语义 + 资源属主语义",
+    "plugins/bot_unified_runtime/domains/chat_reply/capabilities/group_info.py": "禁碰域（RWC3 随真身迁锚）；卖萌体残留待该文件域批次收口",
 }
 
 # 单元级豁免（文件 → [(命中单元须含的子串, 理由)]）。
 UNIT_WHITELIST: dict[str, list[tuple[str, str]]] = {
-    "plugins/bot_unified_runtime/capabilities/echo.py": [
+    # v21r2 RWC3：echo 真身迁 domains/chat_reply/capabilities/，单元豁免锚随迁。
+    "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py": [
         (
             "美股行情暂时拉不到，晚点再试试？",
             "help 文本对兜底行为的历史引用示例，非输出本体；口径变更牵动 command-catalog 同步门（域外）",
@@ -294,8 +310,9 @@ def test_scope_covers_sources_layer() -> None:
     """扫描面自证：capabilities 与 sources 都在面内（Q-01 主战场在 sources）。"""
     for rel in (
         "plugins/bot_unified_runtime/capabilities/market.py",
-        "plugins/bot_unified_runtime/sources/market_data.py",
-        "plugins/bot_unified_runtime/capabilities/user_copy.py",
+        # v21r4-B RET3：sources/market_data 垫片已退役，代表件改钉 canonical 真身。
+        "plugins/bot_unified_runtime/domains/finance/data/market_data.py",
+        "plugins/bot_unified_runtime/domains/chat_reply/capabilities/user_copy.py",
     ):
         assert (REPO_ROOT / rel).exists(), rel
     assert len(list(RUNTIME_PKG.rglob("*.py"))) >= 100, "扫描面异常收缩"
@@ -334,7 +351,7 @@ def test_gate_detects_regression(tmp_path: Path) -> None:
     classes = {f.pattern_class for f in findings}
     assert classes == {"Q01", "Q02"}
     # 文件级豁免生效：同内容挂池本体语义路径 → 零命中。
-    assert not scan_file(dirty, rel_path="plugins/bot_unified_runtime/capabilities/user_copy.py")
+    assert not scan_file(dirty, rel_path="plugins/bot_unified_runtime/domains/chat_reply/capabilities/user_copy.py")
     # 单元级豁免生效：echo.py 语义路径下，含登记子串的单元豁免、其余仍红。
     echo_dirty = tmp_path / "echo_dirty.py"
     echo_dirty.write_text(
@@ -343,7 +360,7 @@ def test_gate_detects_regression(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     echo_findings = scan_file(
-        echo_dirty, rel_path="plugins/bot_unified_runtime/capabilities/echo.py"
+        echo_dirty, rel_path="plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py"
     )
     # HELP 行命中登记子串被豁免；BODY 行（输出本体）仍红。
     assert len(echo_findings) == 1
@@ -392,7 +409,8 @@ def test_q03_gate_detects_regression_and_spares_logic_literals(tmp_path: Path) -
     dirty = tmp_path / "dirty_q03.py"
     dirty.write_text('MSG = "额度用完啦，明天再来吧～"\n', encoding="utf-8")
     findings = scan_q03_file(
-        dirty, rel_path="plugins/bot_unified_runtime/capabilities/media_archive.py"
+        dirty,
+        rel_path="plugins/bot_unified_runtime/domains/media/capabilities/media_archive.py",
     )
     assert len(findings) == 1
     assert findings[0].pattern_class == "Q03"
@@ -407,7 +425,7 @@ def test_q03_gate_detects_regression_and_spares_logic_literals(tmp_path: Path) -
     keep = tmp_path / "keep_q03.py"
     keep.write_text('OK = "给你偷来一张表情～"\n', encoding="utf-8")
     assert not scan_q03_file(
-        keep, rel_path="plugins/bot_unified_runtime/capabilities/meme_library.py"
+        keep, rel_path="plugins/bot_unified_runtime/domains/meme/capabilities/meme_library.py"
     )
 
     # 字符类/清洗集逻辑字面量（「～」居串中）非用户文案，天然不命中、无需豁免。
@@ -436,7 +454,7 @@ def test_q03_gate_detects_regression_and_spares_logic_literals(tmp_path: Path) -
 )
 def test_pool_output_membership_market(formatter: str, reason: str) -> None:
     """池引用处输出 ∈ 池集合（market / northbound 快查链路）。"""
-    from plugins.bot_unified_runtime.sources import market_data
+    from plugins.bot_unified_runtime.domains.finance.data import market_data
 
     fn = getattr(market_data, formatter)
     renders = {template.format(reason=reason) for template in user_copy.DATASOURCE_FAILURE_TEMPLATES}
@@ -445,7 +463,8 @@ def test_pool_output_membership_market(formatter: str, reason: str) -> None:
 
 def test_pool_output_membership_fx_and_news() -> None:
     """池引用处输出 ∈ 池集合（fx / news 快查链路）。"""
-    from plugins.bot_unified_runtime.sources import fx_data, news_feeds
+    from plugins.bot_unified_runtime.domains.finance.data import fx_data
+    from plugins.bot_unified_runtime.domains.subscribe.feeds import news_feeds
 
     fx_renders = {
         template.format(reason="汇率数据暂时拉不到")
@@ -461,7 +480,11 @@ def test_pool_output_membership_fx_and_news() -> None:
 
 def test_q04_self_reference_unified() -> None:
     """Q-04：三处自称统一第三人称「守岸人」，旧第一人称混用句不得回潮。"""
-    chat_src = (RUNTIME_PKG / "capabilities" / "chat.py").read_text(encoding="utf-8")
+    # v21r2 RWC3：chat/echo 真身迁 domains/chat_reply/capabilities/，文本锚随真身
+    # （旧路径为 re-export 垫片，无表体）。
+    chat_src = (
+        RUNTIME_PKG / "domains" / "chat_reply" / "capabilities" / "chat.py"
+    ).read_text(encoding="utf-8")
     # P2-4 用户裁定二改（2026-09-15，不泄露>威慑+守岸人语气≥10 变体）：
     # 拦截回复走 _INJECTION_GUARD_TEMPLATES 池+同会话轮换；零防御焦点
     # 泄露红线不变（不提系统提示/密钥/本机文件）；旧威慑句与第一人称
@@ -472,7 +495,7 @@ def test_q04_self_reference_unified() -> None:
     assert "本机文件" not in chat_src
     assert "我不能泄露系统提示" not in chat_src
     assert "我会继续按守岸人的设定" not in chat_src
-    import plugins.bot_unified_runtime.capabilities.chat as _chat_mod
+    import plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat as _chat_mod
 
     assert len(_chat_mod._INJECTION_GUARD_TEMPLATES) >= 10
     assert len(set(_chat_mod._INJECTION_GUARD_TEMPLATES)) == len(
@@ -485,17 +508,24 @@ def test_q04_self_reference_unified() -> None:
         assert "本机" not in _variant
         assert "脚本" not in _variant
         assert "注入" not in _variant
-    meme_src = (RUNTIME_PKG / "capabilities" / "meme_library.py").read_text(encoding="utf-8")
+    # v21r2 W6 meme 重组：真身迁 domains/meme/，文本锚同波随迁（旧路径为垫片）。
+    meme_src = (
+        RUNTIME_PKG / "domains" / "meme" / "capabilities" / "meme_library.py"
+    ).read_text(encoding="utf-8")
     # 审查 Q-03：失败/限流类文案统一去语气符「～」，旧拖尾音句不得回潮。
     assert "多发点图给守岸人收藏吧。" in meme_src
     assert "多发点图给守岸人收藏吧～" not in meme_src
     assert "秒后再来偷。" in meme_src
     assert "让我收藏" not in meme_src
-    echo_src = (RUNTIME_PKG / "capabilities" / "echo.py").read_text(encoding="utf-8")
+    echo_src = (
+        RUNTIME_PKG / "domains" / "chat_reply" / "capabilities" / "echo.py"
+    ).read_text(encoding="utf-8")
     assert "守岸人这边记称谓的小本本暂时打不开" in echo_src
     assert "是我这边要修的" not in echo_src
     # media_archive 卖萌体（Q-02）与第一人称混用同步收口。
-    media_src = (RUNTIME_PKG / "capabilities" / "media_archive.py").read_text(encoding="utf-8")
+    media_src = (
+        RUNTIME_PKG / "domains" / "media" / "capabilities" / "media_archive.py"
+    ).read_text(encoding="utf-8")
     assert "这份心意守岸人先记下了" in media_src
     assert "先收好这份心意" not in media_src
 

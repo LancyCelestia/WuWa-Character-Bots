@@ -38,9 +38,17 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
+    build_role_settings,
+)
+from plugins.bot_unified_runtime.domains.ops.monitor import alerts as alerts_module
+from plugins.bot_unified_runtime.domains.ops.monitor.runtime_event_log import (
+    RuntimeEventLog,
+)
+from plugins.bot_unified_runtime.domains.transport.sender.receipts import (
+    SQLiteReceiptRepository,
+)
 from plugins.bot_unified_runtime.llm.providers import LLMProviderError
-from plugins.bot_unified_runtime.policy.roles import build_role_settings
-from plugins.bot_unified_runtime.runtime import alerts as alerts_module
 from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
 from plugins.bot_unified_runtime.sender.nonebot import send_nonebot_message
 from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
@@ -48,13 +56,11 @@ from plugins.bot_unified_runtime.sender.queue import (
     QueuedSendRequest,
     SQLiteSendRequestQueue,
 )
-from plugins.bot_unified_runtime.sender.receipts import SQLiteReceiptRepository
 from plugins.bot_unified_runtime.sender.worker import (
     _call_transport_safely,
     _update_queue_state,
     drain_send_queue_once,
 )
-from plugins.bot_unified_runtime.sources.runtime_event_log import RuntimeEventLog
 
 _select_credential_bot = getattr(runtime_module, "_select_credential_bot", None)
 _queue_bot_unavailable_receipt = getattr(
@@ -116,7 +122,7 @@ def _decision(message: IncomingMessage) -> BotDecision:
 
 
 def _context(request_id: str, session_type: SessionType):
-    from plugins.bot_unified_runtime.contracts.character import (
+    from plugins.bot_unified_runtime.domains.core.contracts.character import (
         ContextBundle,
         ConversationHistoryResult,
         MemoryRetrievalResult,
@@ -331,7 +337,7 @@ class RetcodeOneBot:
 
 @pytest.mark.asyncio
 async def test_onebot_failures_have_empty_public_message_and_typed_issue(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("plugins.bot_unified_runtime.sender.onebot._ONEBOT_SEND_RETRY_DELAYS", ())
+    monkeypatch.setattr("plugins.bot_unified_runtime.domains.transport.sender.onebot._ONEBOT_SEND_RETRY_DELAYS", ())
     for bot in (FailingOneBot(), RetcodeOneBot()):
         receipt = await send_onebot_v11(bot, _send_request())
         assert receipt.public_message == ""
@@ -530,7 +536,7 @@ def test_mcp_failure_content_is_fixed_safe_json(monkeypatch: pytest.MonkeyPatch)
         raise RuntimeError("prompt=https://user:secret@example.test?token=abc")
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.chat._mcp_client_modules",
+        "plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat._mcp_client_modules",
         lambda: (None, fail),
     )
     payload = json.loads(_execute_mcp_tool_call("web_search", {"query": "secret"}))
@@ -540,7 +546,7 @@ def test_mcp_failure_content_is_fixed_safe_json(monkeypatch: pytest.MonkeyPatch)
 
 def test_mcp_unavailable_content_uses_typed_safe_json(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.chat._mcp_client_modules",
+        "plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat._mcp_client_modules",
         lambda: (None, None),
     )
     payload = json.loads(_execute_mcp_tool_call("web_search", {}))
@@ -937,7 +943,12 @@ async def test_operational_issue_notifier_suppresses_per_typed_target() -> None:
 
 
 @pytest.mark.asyncio
-async def test_queue_worker_notifies_typed_failure_without_blocking_state_update() -> None:
+async def test_queue_worker_bot_unavailable_failure_skips_admin_notification_without_blocking_state_update() -> None:
+    # R2（2026-09-17）语义同步：kind=bot_unavailable 是适配器未就绪/断线窗口的
+    # 挂起语义（环境暂态，队列审计 send_deferred_bot_unavailable 已承载可见性），
+    # worker 只留 DEBUG 不打管理员告警（防启动期成批挂起刷屏）；状态机计数
+    # （retryable_failed）不受影响。非 bot_unavailable 的 issue 仍照常通知
+    # （见 test_pipeline_helper_notifies_issue_before_successful_transport_replacement）。
     request = _send_request()
     issue = _issue(stage="queue", kind="bot_unavailable")
     transport_receipt = DeliveryReceipt(
@@ -982,7 +993,8 @@ async def test_queue_worker_notifies_typed_failure_without_blocking_state_update
         operational_notifier=notifier,
     )
     assert result.retryable_failed == 1
-    assert notified == [transport_receipt]
+    # bot_unavailable 挂起不进管理员通知通道：notifier 零调用，但状态机照常记账。
+    assert notified == []
 
 
 async def _resolved(value: DeliveryReceipt) -> DeliveryReceipt:

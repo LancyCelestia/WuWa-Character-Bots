@@ -5,8 +5,10 @@ from plugins.bot_unified_runtime.capabilities.group_files import (
     GroupFileStore,
     category_for_filename,
 )
+from plugins.bot_unified_runtime.domains.media.search.sauce_search import (
+    search_saucenao,
+)
 from plugins.bot_unified_runtime.output.plain_text import humanize_reply
-from plugins.bot_unified_runtime.sources.sauce_search import search_saucenao
 
 
 def test_category_mapping() -> None:

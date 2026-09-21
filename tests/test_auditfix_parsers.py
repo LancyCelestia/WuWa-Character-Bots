@@ -30,10 +30,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
-from plugins.bot_unified_runtime.sources.parsers import (
-    cookies as cookies_mod,
-)
-from plugins.bot_unified_runtime.sources.parsers import (
+# v21r2 W1a: platforms_* 真身已迁 domains/link_parse/parsers/，monkeypatch 需打在真身模块上
+from plugins.bot_unified_runtime.domains.link_parse.parsers import (
     http_util,
     platforms_bilibili,
     platforms_bilibili_goods,
@@ -41,6 +39,9 @@ from plugins.bot_unified_runtime.sources.parsers import (
     platforms_music,
     platforms_taptap,
     platforms_weibo,
+)
+from plugins.bot_unified_runtime.sources.parsers import (
+    cookies as cookies_mod,
 )
 from plugins.bot_unified_runtime.sources.parsers import (
     wbi as wbi_mod,
@@ -261,7 +262,9 @@ def test_resolve_short_link_via_local_redirect_server(monkeypatch):
     返回落点」的机械行为；护栏逐跳拦截语义由 test_short_link_hop_guard.py
     全量覆盖。
     """
-    from plugins.bot_unified_runtime.sources.parsers import ssrf_guard as ssrf_guard_mod
+    from plugins.bot_unified_runtime.domains.link_parse.parsers import (
+        ssrf_guard as ssrf_guard_mod,
+    )
 
     monkeypatch.setattr(ssrf_guard_mod, "check_fetch_landing", lambda target, src: None)
 
@@ -362,7 +365,7 @@ def test_taptap_cookie_goes_to_header_not_url(monkeypatch):
 
 
 def test_steam_proxy_attempts_use_env(monkeypatch):
-    from plugins.bot_unified_runtime.sources.parsers import platforms_steam
+    from plugins.bot_unified_runtime.domains.link_parse.parsers import platforms_steam
 
     monkeypatch.delenv("BOT_DOWNLOAD_PROXY", raising=False)
     assert platforms_steam._proxy_attempts("") == [""]
@@ -373,7 +376,7 @@ def test_steam_proxy_attempts_use_env(monkeypatch):
 
 
 def test_epic_facebook_fallback_proxy_from_env(monkeypatch):
-    from plugins.bot_unified_runtime.sources.parsers import (
+    from plugins.bot_unified_runtime.domains.link_parse.parsers import (
         platforms_epic,
         platforms_facebook,
     )
@@ -424,7 +427,7 @@ def test_xhs_initial_state_word_boundary_undefined():
 
 
 def test_build_chained_provider_without_config_uses_ddg_bing_fallback():
-    from plugins.bot_unified_runtime.sources import web_search
+    from plugins.bot_unified_runtime.domains.core.search import web_search
 
     provider = web_search._build_chained_provider(3.0, "")
     names = [getattr(p, "name", "") for p in provider.providers]
@@ -432,7 +435,7 @@ def test_build_chained_provider_without_config_uses_ddg_bing_fallback():
 
 
 def test_unclosed_script_and_comment_fragments_stripped():
-    from plugins.bot_unified_runtime.sources import web_search
+    from plugins.bot_unified_runtime.domains.core.search import web_search
 
     html = '<html><body>正文A<!-- unclosed comment secret<script>alert("x")'
     text = web_search._HTML_COMMENT_RE.sub(" ", html)
@@ -450,7 +453,7 @@ def test_unclosed_script_and_comment_fragments_stripped():
 def test_download_audio_streaming_over_limit(monkeypatch, tmp_path):
     import httpx as httpx_mod
 
-    from plugins.bot_unified_runtime.sources import transcribe
+    from plugins.bot_unified_runtime.domains.media.ingest import transcribe
 
     monkeypatch.setattr(transcribe, "_MAX_AUDIO_BYTES", 100)
 
@@ -493,7 +496,7 @@ def test_download_audio_streaming_over_limit(monkeypatch, tmp_path):
 def test_download_audio_streaming_under_limit_writes_file(monkeypatch, tmp_path):
     import httpx as httpx_mod
 
-    from plugins.bot_unified_runtime.sources import transcribe
+    from plugins.bot_unified_runtime.domains.media.ingest import transcribe
 
     class _FakeStreamResponse:
         def __init__(self, chunks):

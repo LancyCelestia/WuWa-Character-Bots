@@ -13,11 +13,11 @@ from plugins.bot_unified_runtime.capabilities.eat import (
     build_eat_capability,
     clear_recent_dishes,
 )
-from plugins.bot_unified_runtime.character import providers
 from plugins.bot_unified_runtime.character.providers import _build_knowledge_chunks
 from plugins.bot_unified_runtime.contracts import SessionType
-from plugins.bot_unified_runtime.contracts.runtime import IncomingMessage
-from plugins.bot_unified_runtime.sources.food_data import DISHES
+from plugins.bot_unified_runtime.domains.chat_reply.character import providers
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
+from plugins.bot_unified_runtime.domains.food.data.food_data import DISHES
 
 # 与 tests/test_eat_capability.py::test_spicy_filter 的判定词保持一致。
 SPICY_MARKS = ("麻辣", "香辣", "酸辣")

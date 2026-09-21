@@ -1,6 +1,6 @@
 """语音转写（ASR）链路回归：record 段提取、registry 展平、转写与 mp3 预处理。
 
-NapCat 的 record 段常带本机 nt_data 路径或过期 http URL；本文件锁定
+NapCat 时期的 record 段常带本机 nt_data 路径或过期 http URL；本文件锁定
 extract_audio_source 的来源优先级、DynamicASRProvider 的故障转移语义
 （失败返回空串、绝不阻断聊天）与 _prepare_audio 的 ffmpeg 转码行为。
 
@@ -19,15 +19,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.llm import LLMProviderError
-from plugins.bot_unified_runtime.sources import transcribe
-from plugins.bot_unified_runtime.sources.transcribe import (
+from plugins.bot_unified_runtime.domains.media.ingest import transcribe
+from plugins.bot_unified_runtime.domains.media.ingest.transcribe import (
     DynamicASRProvider,
     _flatten_asr_entries,
     _prepare_audio,
     extract_audio_source,
     transcribe_audio,
 )
+from plugins.bot_unified_runtime.llm import LLMProviderError
 
 
 def test_extract_audio_source_resolves_local_file_path(tmp_path: Path) -> None:

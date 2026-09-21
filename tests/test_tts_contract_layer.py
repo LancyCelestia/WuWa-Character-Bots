@@ -293,10 +293,16 @@ def test_silence_trap_synthesis_fails_without_disk_or_cache(
         tts_mod._cache_key("正文", ref, _params(), api_url=_API,
                            preset_id="shorekeeper", identity_version=tts_presets.IDENTITY_VERSION)
     ) is None, "静音产物不得入缓存"
-    # 不入缓存 ⇒ 第二次同句仍会真重试（毒件绝不复放）。
+    # WP4/E1-1 更正（非放宽）：静音陷阱是引擎「200+恰 1s 静音」伪装成功的部署类
+    # 故障，修复前 _request_tts 的 200 分支抢跑 _clear_failure ⇒ 该故障永不进退避窗、
+    # 同句第二次仍会白打引擎（旧断言 len(calls)==2 锁的正是这个缺陷形态）。修复后
+    # 陷阱计入退避窗，第二次同句被退避闸快速失败、不再白打——"毒件绝不复放"这一
+    # 不变量不但没被放宽，反而更强（既不从缓存复放、也不再反复 hammer 引擎）。
+    # 上方"不得落盘/不得入缓存"两条断言仍逐条承重本用例的原始立意。
     path2, _r2 = synthesize(api_url=_API, text="正文", ref=ref, params=_params(), output_dir=out)
     assert path2 is None
-    assert len(calls) == 2
+    assert len(calls) == 1, "静音陷阱计入退避后，窗内同句重试不得再打引擎（WP4 修复目的）"
+    assert _r2.startswith("服务不可达") and ("退避" in _r2 or "冷却" in _r2)
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-import plugins.bot_unified_runtime.character.reminders as reminders_mod
+import plugins.bot_unified_runtime.domains.schedule.store.reminders as reminders_mod
 from plugins.bot_unified_runtime.capabilities.reminder import (
     build_reminder_capability,
     extract_checkoff_query,

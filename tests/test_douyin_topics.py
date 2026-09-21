@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 
-from plugins.bot_unified_runtime.sources.parsers import platforms_generic
+from plugins.bot_unified_runtime.domains.link_parse.parsers import platforms_generic
 
 _VIDEO_URL = "https://www.douyin.com/video/7412345678901234567"
 

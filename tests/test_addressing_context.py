@@ -160,11 +160,11 @@ def test_group_digest_keeps_members_as_group_friends(tmp_path):
         )
         connection.execute(
             "INSERT INTO conversation_turns VALUES"
-            " ('group:1', 'user', '早上好', '2026-09-11T08:00:00', 'chat')"
+            " ('group_1_u1', 'user', '早上好', '2026-09-11T08:00:00', 'chat')"
         )
         connection.execute(
             "INSERT INTO conversation_turns VALUES"
-            " ('group:1', 'assistant', '早', '2026-09-11T08:01:00', 'chat')"
+            " ('group_1_u1', 'assistant', '早', '2026-09-11T08:01:00', 'chat')"
         )
 
     digest = SQLiteGroupDigestProvider(db).load("req-1", "1", "u1")

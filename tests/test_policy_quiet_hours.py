@@ -22,7 +22,7 @@ import pytest
 from pydantic import ValidationError
 
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
-from plugins.bot_unified_runtime.policy.quiet_hours import (
+from plugins.bot_unified_runtime.domains.chat_reply.policy.quiet_hours import (
     QuietHoursChecker,
     QuietHoursSettings,
     build_quiet_hours_checker,

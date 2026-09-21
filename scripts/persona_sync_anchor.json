@@ -1,14 +1,22 @@
 {
-  "schema": 1,
+  "schema": 2,
   "copy_path": "C:\\Users\\LancyCelestia\\Documents\\MyWorkspace\\ChatBot\\ChatBot_Runtime\\data\\persona\\守岸人_核心人格.md",
-  "copy_sha256": "70b7d323b7252f8dd350eccefd87a67231988ff5cb190983ffc48f29c341526e",
-  "copy_size": 9939,
-  "adopted_at": "2026-09-14T15:18:19+00:00",
-  "note": "2026-09-14 人格矛盾修复批(G-01/G-02a/G-02b):底线例句去愧疚化(这句话让我有些难过->平静说明边界)、淡出例句去致歉自贬(抱歉说这些可能没什么意义->等你想听的时候再讲)、括号动作口径对齐identity.md:101;经人工逐行审阅后重录锚定",
+  "copy_sha256": "f3de618998f662c2573f0f68924216494b8d95556495b079bada4e3409b6ed38",
+  "copy_size": 12209,
+  "adopted_at": "2026-09-19T22:53:30+00:00",
+  "note": "ISYNC 门升级一次性补锚：v2 把源快照升格为判定项并把生产直读的 worldview_glossary.md 纳入覆盖集（该文件 mtime 2026-09-15，早于上次审阅 2026-09-19T09:43Z，内容 38 条全部取自核心知识.md=同批已审阅源，本次仅补登记不进改内容）。生产副本 sha256 与补锚前逐字节相同（f3de618998f662c2…未变）=本命令零拷贝、副本零改动；四源文件哈希与旧锚一致（源侧零演进实测）",
   "source_snapshot": {
     "personas/shorekeeper/aliases.txt": "340decd6c38a67513367d3b83e6af2d2df4c24062027bba7d8580d3943d55ae2",
-    "personas/shorekeeper/identity.md": "2a44a5f2914fb0178a31ef1bfaca213d83880931e5651b54011299853b9b3bd2",
-    "personas/shorekeeper/knowledge/守岸人_核心知识.md": "5dc7fbe0c57b2bdb61bf767c2b86a155e3ee5384c962ecfecc87a7edc3782134",
-    "personas/shorekeeper/knowledge/守岸人_人格与表达规范.md": "ae55eedf057c78ff42de1dc5f8e25596155cd6cdaef17e3a1f200e38357e4a12"
-  }
+    "personas/shorekeeper/identity.md": "de1fa2176186252c1f47bea4158d275707ca602406af4f83706f8d410da9b6bf",
+    "personas/shorekeeper/knowledge/守岸人_核心知识.md": "21ec29dd05a41a6690ffeaa04d012ce303e4aba0e611b20b100559c904f19a84",
+    "personas/shorekeeper/knowledge/守岸人_人格与表达规范.md": "c82cce791edd4428ffde53dc763bcaa013880919ab04f871609955b569474818",
+    "personas/shorekeeper/knowledge/worldview_glossary.md": "c12fc3277d0f6c89ef72391d2376fa417e482d044aa06818cda1fc19de9bd0aa"
+  },
+  "source_snapshot_files": [
+    "personas/shorekeeper/aliases.txt",
+    "personas/shorekeeper/identity.md",
+    "personas/shorekeeper/knowledge/守岸人_核心知识.md",
+    "personas/shorekeeper/knowledge/守岸人_人格与表达规范.md",
+    "personas/shorekeeper/knowledge/worldview_glossary.md"
+  ]
 }

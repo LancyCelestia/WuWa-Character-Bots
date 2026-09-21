@@ -1,0 +1,278 @@
+# 交接书 · 后端协议（v21r4-B）
+
+> **这是一份自包含的交接文档。** 接手方没有本次会话的上下文，本文档包含开工所需的全部信息：项目坐标、环境、纪律、边界、任务、验收。
+>
+> **配套文档**：《前端渲染扩展交接书》`frontend-render-expansion-plan.md`——由**另一个 AI** 负责，与本份**并行不交叉**（边界见 §六）。两份文档的边界是硬约束，任何一方越界都会导致合流冲突。
+
+---
+
+## 〇、接手须知（必读，逐条确认）
+
+### 0.1 项目坐标
+
+| 项 | 值 |
+|---|---|
+| 项目 | QQ 聊天机器人「守岸人」（鸣潮角色人格 / 泰缇斯系统第二实例） |
+| 框架 | NoneBot2 + OneBot V11（SnowLuma WS `127.0.0.1:3001`，webhook `8080`） |
+| 主包 | `plugins/bot_unified_runtime/` |
+| 工作目录 | `C:/Users/LancyCelestia/Documents/MyWorkspace/ChatBot/ChatBot` |
+| 本方案主战场 | `contracts/`、`runtime/`、`control_plane/`、`domains/*/api\|services/`、`docs/design/backend-v2-*.md` |
+
+### 0.2 固定解释器（**必须用这个，不要用系统 python**）
+
+```
+C:/Users/LancyCelestia/Documents/MyWorkspace/ChatBot/ChatBot_Runtime/venv/Scripts/python.exe
+```
+
+### 0.3 测试纪律（每条命令都要带）
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 BOT_AUTOSYNC=0 PYTHONUTF8=1 \
+  "C:/Users/LancyCelestia/Documents/MyWorkspace/ChatBot/ChatBot_Runtime/venv/Scripts/python.exe" \
+  -m pytest <目标> --basetemp="$TEMP/<唯一名>" -p no:cacheprovider -q
+```
+
+- `PYTHONDONTWRITEBYTECODE=1`：源码树零缓存是硬约束。
+- `BOT_AUTOSYNC=0`：关掉测试期的哈希自动重录，避免误改台账。
+- `--basetemp` 必须每次换唯一名字。
+- `-p no:cacheprovider`：不留 `.pytest_cache`。
+
+### 0.4 门禁四件（**每次交付前必须全绿**）
+
+```bash
+python -m ruff check .
+python tests/verify_hashes.py --check     # ⚠️ 见 §六：本方案不单独重录
+python scripts/doc_sync.py --check
+python scripts/command_catalog.py --check # 应输出 `command catalog is current`；**topic 数以机器册 docs/auto-facts.md 为准，不在此写死**（此处曾写死 77，实测输出 78 时会让接手 AI 把正常的绿误判成故障）
+```
+
+### 0.5 硬约束（不可协商）
+
+1. **不得偷懒**：不跳过验证、不写「TODO 后补」、不用 `pass` 占位。
+2. **不得派遣子代理**：所有工作在本会话内完成。
+3. **对外动作先问**：任何会真正发出消息/写线上数据的动作，先给方案再执行。**本方案 B2 的「端口装配组」正属此类，见 §三。**
+4. **线上实例数据不代改**：涉及正在运行的实例，只给命令让用户自己操作。
+5. **删除前先备份**：任何删除动作先备份并告知备份位置。
+6. **源码树零缓存**：交付前清掉 `__pycache__` / `.pytest_cache` / `.ruff_cache` / `.mypy_cache`；源码树不得出现 `data/` 目录（`tests/conftest.py` 有 G1 守卫拦截）。
+7. **改代码必须重启 bot 才生效**——重启由**用户手动执行**，你只给预检结果与步骤。
+8. **本方案不得改 `theme_tokens.py`**（归前端方案独占，见 §六）。
+
+### 0.6 当前基线（2026-09-19 交接时刻）
+
+- **全量测试**：`1 failed, 8168 passed, 12 skipped, 4 xfailed`（约 7 分钟）。
+  - 唯一 failed 是**已知非产品缺陷**：`tests/test_parsers_batch_a2.py::test_discourse_linuxdo_parses_topic` —— 本机缺 `linux.do/topic.json` 样本。**不要试图修它**。
+- **门禁四件**：全绿。
+- **工作树**：717 个文件未提交（历史累计），本批亦未 commit / 未重启 / 未部署。
+
+### 0.7 本方案的诚实性红线（**违反即失去交付资格**）
+
+这些红线由前序 v21r2 草案（§〇 十一条规则）确立，本方案**完整继承**：
+
+1. **离线 passed 不得上移为 live passed**。mock 断言不给真实平台标 passed。
+2. **`not_wired` 不得写成 `wired`**，也不得去掉括注写成裸 `partial`。
+3. **在飞席位的计划值不得回填**——以实跑证据为准。
+4. **全批未 commit / 未重启 / 未部署**——矩阵内**不得出现任何「已生效」表述**。
+5. **源码推断最多 `high`**；`verified` 必须有实跑命令 + 输出支撑。
+6. **无证据处如实记 `unknown`**，禁美化。
+
+---
+
+## 一、目标
+
+一句话：**把「文档里的实现」变成「跑起来的接线」**。
+
+代码面已 `implemented` 的能力（知识库 / 记忆 / 教导 / DB 查询等）目前多数 `not_wired`（**无生产调用点**）。本批补上装配与门禁，并把 65 行验收矩阵的四列证据坐实。
+
+### 用户点名的三项
+
+| # | 事项 | 工作包 |
+|---|---|---|
+| 1 | 65 行四列回填（草案 → 共享矩阵） | B1 |
+| 2 | 17 行 `not_wired` 接线 | B2 |
+| 3 | L60 / L71 / L74 立项 | B3 |
+
+> **数字核准（实测）**：矩阵主表 **65 行**（L13–L77）；草案里 `production_wiring=not_wired` 的行实测 **18 行**——L39 / L40 / L41 / L42 / L43 / L46 / L47 / L48 / L49 / L50 / L51 / L52 / L53 / L54 / L56 / L57 / L58 / L65。台账记的 17 行应为同一批、差 1 行系计数口径。**本方案按 18 行推进。**
+
+---
+
+## 二、现状基线（技术细节）
+
+### 2.1 共享矩阵
+
+`docs/design/backend-v2-acceptance-matrix.md`
+
+- 主表 **65 行**，格式 `| V21-<DOMAIN>-<NNN> | 目标行为与验收重点 | Service/装配入口 | 必须证据 | 阶段 | implementation | production_wiring | offline_validation | live_validation |`
+- 当前 **`not_wired` 零出现**——因为草案尚未合入。
+- 词表（矩阵内已声明）：`implementation=unknown/partial/implemented`；`production_wiring=unknown/partial/wired`；`offline_validation=unknown/failed/passed`；`live_validation=unknown/blocked/failed/passed/not_applicable`。`confidence` 另存 `verified/high/low/unknown`。
+
+### 2.2 回填草案（**本批的数据源**）
+
+`docs/design/v21r2-matrix-backfill-draft.md`（146 行）
+
+- §〇 十一条套用规则（含「引用缩写」表、「可直接覆盖的行」清单、「需人工复核的行」清单、`confidence` 取值规则、`not_wired` 词表处置二选一、两处旧证据已证伪需修正）。
+- §一 逐行回填表（65 行 × 四列 + confidence + 证据指针）。
+- **性质**：草案本身**不改矩阵**（席位禁令），合入由本方案执行。
+
+### 2.3 `not_wired` 的语义
+
+**代码已 `implemented`，但无生产调用点。** 例如：
+- `build_knowledge_service` / `build_memory_service_v21` / `build_worldbook_service` 就绪，但无人调用；
+- `DatabaseBroker`（L42）四层纵深已实现且 22 例测试通过，但**无任何能力/控制面调用点**。
+
+**接线 = 补上装配与调用链**，不是重写实现。
+
+### 2.4 已知的前提冲突与阻塞
+
+- **L41（MEM-001）前提冲突待裁决**：记忆库走**独立新库**还是**「同源同库」**？（草案 v2 §5 记为待裁决）——**未裁决前 L41 不得接线。**
+- **L46（WORKSPACE-001）**：`real_session` 真实发送端口**合同内不实装**，确认消费前诚实返回 503 `not_wired`（不烧确认）。实装 = 真实对外发消息。
+
+---
+
+## 三、工作包
+
+### B1 65 行四列回填（合入共享矩阵）
+
+**目标**：把草案的四列建议值按套用规则逐行抄入共享矩阵。
+
+**做法**：
+1. 严格按草案 §〇 的 11 条规则执行，特别是：
+   - 规则 2：**可直接覆盖**的行 —— L38–L43、L45–L59、L62–L66、L69、L34–L36（增量面）；
+   - 规则 3：**需人工复核后再定值**的行 —— L21/L23/L27/L28（消费方/端点增量，行级验收未全）、L51/L52（s10 提 `partial` 与 wpa1 §5 主张维持 `unknown` 有分歧，草案给出折中值）、L44（s9 §三明确建议保持 `partial`，**勿升 `implemented`**）、L67/L75/L76（组织面/文档面/门禁面增量不构成行级验收）；
+   - 规则 4：`confidence` 取值（源码推断最多 `high`）；
+   - 规则 5：**`not_wired` 词表处置** —— 二选一，**待用户裁定**（见 §五）；
+   - 规则 10：顺带修正两处**已被证伪**的旧括注 —— L40「RRF 无」已过时（s8 §0：存量 retrieve 已有三通道 RRF）；L48「ASR 无」已过时（s10 §一：`transcribe.py` / `build_asr_provider` 已在盘）。
+2. 每行抄入后附证据指针（草案已有缩写表）。
+
+**验收**：矩阵 65 行无空缺；`grep` 确认无「已生效」类表述；草案与矩阵逐行 diff 可复核。
+
+---
+
+### B2 `not_wired` 接线（18 行）
+
+**目标**：把「代码就绪、无调用点」的能力真正接进生产链路。
+
+按接线性质分三组：
+
+| 组 | 行 | 接线动作 | 风险 |
+|---|---|---|---|
+| **① 服务装配** | L39 WORLD / L40 KB / L41 MEM / L42 DB / L43 TEACH | 在各能力的装配根（`runtime/` 或 `domains/*/__init__.py`）调用既有 `build_*_service`，注册进能力注册表 | 中——涉及启动顺序与配置门 |
+| **② 端口装配** | L46 WORKSPACE（真实发送端口）、L47–L54 相关行 | 实现 `real_session` 的真实发送端口 | **高——这是「对外发送」动作，必须先给用户方案并逐项确认** |
+| **③ 生产直连点收编** | L56 / L57 / L58 / L65 | 把绕过统一出站路径的直连点收编（L34/L35 已收编 poke / 表情两组，余下同类） | 中 |
+
+**关键纪律**：
+- 接线**不等于**把矩阵改成 `wired`——红线 4 明确「未 commit/未重启」；接线后仍需**重启 + 实跑证据**才能升 `wired`。
+- **L41 阻塞**于用户裁决（独立新库 vs 同源同库）。
+- **② 组必须先问**：这是真实对外发消息，不得先斩后奏。
+
+**验收**：每接一处，附「装配点坐标 + 装配后调用链 + 该能力的离线测试全绿」；重启后补 live 证据。
+
+---
+
+### B3 L60 / L71 / L74 立项
+
+**目标**：三行目前**整行 `unknown`、无席位认领**，需要正式立项才有推进主体。
+
+| 行 | 需求 | 建议落点 | 立项要点 |
+|---|---|---|---|
+| L60 | AFFINITY-002 误扣重放/补偿 | `domains/chat_reply/`（好感度域） | 误扣的可重放判定 + 补偿事务；需先定义「误扣」判定口径 |
+| L71 | REPAIR-001 自修复待审补丁 | `domains/ops/recovery/`（**plan §8.3 G8 建议**） | 补丁生成 → 待审队列 → 人工批准 → 应用；`PATCH_REQUIRED` 分类设计已在 s14 §一.1 |
+| L74 | ACCEPTANCE-002 admin 取产物 | `domains/ops/acceptance/` | 验收产物（日志/截图/报告）的 admin 拉取入口；plan §8.3 G3 |
+
+**立项产物**：每项一份 `docs/design/v21r4-L{nn}-立项书.md`，含需求原文、验收重点、必须证据、落点、风险、工作量级。
+
+**验收**：三份立项书 + 用户确认落点。
+
+---
+
+### B4 命令格式统一（**只出评审材料，不改命令**）
+
+**目标**：命令触发词/参数格式不统一，需先出**评审材料**。
+
+- 现状：`docs/design/v21r2-command-spec.md` 已成文命令目录（`command_catalog.py --check` 逐参数锁；**topic 数以机器册为准，不手写**）。
+- 产出：**命令格式规范草案**（前缀 / 别名 / 参数分隔 / 帮助文案模板）+ 逐条迁移影响面。
+- **纪律**：用户既定口径是「命令落地**先给你评审定名**」——本包**只出材料，不改命令**。
+
+**验收**：规范草案 + 影响面清单；用户评审后才进入改名实施。
+
+---
+
+### B5 `kb_drift` 面向用户解释
+
+**目标**：`kb_drift` 此前用户说「没搞懂要干啥」。
+
+- 产出一段**非技术说明**：`kb_drift` 是什么、什么时候会报、报了她该做什么。
+- 落点：说明文档或帮助卡文案（**帮助卡文案改动请走前端方案，见 §六**——本包只写文档）。
+
+**验收**：用户确认「看懂了」。
+
+---
+
+### B6 其余台账项（按优先级择机）
+
+| 项 | 现状 | 说明 |
+|---|---|---|
+| 亲密话术 | 需与人格域一起看，避免越权 |
+| LLM 故障转移 | R1 席已收口路由健壮性（严格优先级 / 90s 冷却 / 3s 链止损），剩余为 live 实测 |
+| 搜索时效 | 需先定义「时效」口径（缓存 TTL？结果新鲜度标注？） |
+| 合并转发 | 需先核实现状是否已实现 |
+| 提醒系统 | 历史脏记录已清理，剩余为功能面 |
+
+---
+
+## 四、执行顺序
+
+```
+B1（四列回填）—— 零依赖，可立即开工（纯文档，无代码风险）
+  └─> 回填后矩阵才成为可信基线，B2 的「接线后升级」有据可依
+
+B3（立项）—— 零依赖，可与 B1 并行
+B5（kb_drift 解释）—— 零依赖，可与 B1 并行
+B4（命令格式评审材料）—— 零依赖，只出材料
+B6（其余项）—— 逐项需先定口径
+
+B2（not_wired 接线）—— 依赖 B1 完成（需要矩阵基线）；且：
+  · ① 服务装配组（L39/L40/L42/L43）可先做
+  · L41 阻塞于用户裁决（独立新库 vs 同源同库）
+  · ② 端口组（L46 等）阻塞于用户对「对外发送」的逐项确认
+```
+
+**可立即开工、零阻塞**：**B1**（回填）、**B3**（立项）、**B5**（解释）。
+
+---
+
+## 五、需要用户裁定的三个点（开工前先问）
+
+1. **`not_wired` 词表处置**（B1）：草案给两个选项——
+   - ① 矩阵词表**收编 `not_wired`**（**推荐**，信息量最大）；
+   - ② 映射为 `unknown（已声明未接线：…）` 括注形态。
+   **禁**把 `not_wired` 写成 `wired` 或去掉括注的 `partial`。
+2. **L41 前提冲突**（B2）：记忆库走**独立新库**还是**「同源同库」**？
+3. **对外发送端口**（B2 ② 组）：`real_session` 真实发送端口要不要本批实装？这是**真实对外发消息**的动作，建议先出完整方案再动。
+
+---
+
+## 六、与《前端渲染扩展交接书》的零交叉边界（硬约束）
+
+| 维度 | 本方案（后端） | 前端方案 | 交叉？ |
+|---|---|---|---|
+| 文件域 | `contracts/**`、`runtime/**`、`control_plane/**`、`domains/*/api\|services/**`、`domains/ops/recovery/**`（新增） | `domains/render/**`、`output/card_render/**`、`card_render/templates/**` | 否 |
+| 测试域 | `tests/test_v21*`、`tests/test_controlplane*`、新增合同测试 | `tests/test_mica*`、`tests/test_rendering_contract.py`、`tests/test_phase_determinism*`、新增 `tests/test_cover_orientation.py` | 否 |
+| 文档 | `backend-v2-acceptance-matrix.md`、`v21r2-matrix-backfill-draft.md`、新增立项书 | `docs/rendering-contract.md`、`fstring-card-dom-spec.md`、前端交接书 | 否 |
+| **共享文件** | **不得改 `theme_tokens.py`**（归前端方案） | 前端方案新增 token 表 | 约定规避 |
+| **hash 台账** | **不单独重录**；若涉及 `tests/render_hashes.json` 内文件，合流后统一重录 | `tests/render_hashes.json` 归前端独占重录 | 约定规避 |
+| 合流 | 两方案各自全绿后合流，合流时一次性跑门禁四件 + 全量测试 | 同左 | — |
+
+**唯一共享动作**：`tests/verify_hashes.py --write` 的重录时机——由**前端方案**在渲染交付物变化时执行。
+
+---
+
+## 七、接手开工清单（按序执行）
+
+1. **确认环境**：用 §0.2 的解释器跑 `python -m ruff check .`，应输出 `All checks passed!`。
+2. **复现基线**：跑 §0.3 纪律下的 `tests/test_v21_s10_protocols.py`，应全绿。
+3. **读诚实性红线**：§0.7 六条，**开工前必须记住**——本方案最容易犯的错是「把离线 passed 写成 live passed」。
+4. **先问用户**：§五 的三个裁定点。
+5. **零阻塞起步**：B1 回填（纯文档）+ B3 立项 + B5 解释。
+6. **改完每步**：跑门禁四件 → 全绿才继续。
+7. **交付前**：清缓存（§0.5 第 6 条）+ 跑一次全量测试确认失败数不增加。
+8. **重启**：改代码后需重启 bot 才生效——**给用户预检结果与步骤，由用户手动重启**。

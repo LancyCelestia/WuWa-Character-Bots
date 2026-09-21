@@ -20,17 +20,19 @@ from __future__ import annotations
 import threading
 from types import SimpleNamespace
 
-import plugins.bot_unified_runtime.capabilities.notes as notes_mod
-from plugins.bot_unified_runtime.capabilities.notes import (
+import plugins.bot_unified_runtime.domains.notes.capabilities.notes as notes_mod
+from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.notes.capabilities.notes import (
     build_notes_capability,
     is_notes_command,
 )
-from plugins.bot_unified_runtime.character import notes_store as notes_store_mod
-from plugins.bot_unified_runtime.character.notes_store import (
+from plugins.bot_unified_runtime.domains.notes.store import (
+    notes_store as notes_store_mod,
+)
+from plugins.bot_unified_runtime.domains.notes.store.notes_store import (
     NotesStore,
     reset_stores_for_tests,
 )
-from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 
 # 三条待办（第三条带缩进，锁「缩进原样保留」契约）。
 MULTI_MD = "# 采购\n- [ ] 买牛奶\n- [ ] 买面包\n  - [ ] 顺手拿鸡蛋"

@@ -24,8 +24,8 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
     SessionType,
 )
-from plugins.bot_unified_runtime.policy.gate import is_command_text
-from plugins.bot_unified_runtime.policy.reply_budget import (
+from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import is_command_text
+from plugins.bot_unified_runtime.domains.chat_reply.policy.reply_budget import (
     ReplyBudgetSettings,
     decide_reply_budget,
 )
@@ -186,7 +186,9 @@ def test_b8_external_reload_merges_interactions_by_max(tmp_path: Path) -> None:
 
 
 def test_b12_rotation_rename_failure_backfills_byte_counter(tmp_path: Path) -> None:
-    from plugins.bot_unified_runtime.sources.runtime_event_log import RuntimeEventLog
+    from plugins.bot_unified_runtime.domains.ops.monitor.runtime_event_log import (
+        RuntimeEventLog,
+    )
 
     path = tmp_path / "ev.log"
     old_path = tmp_path / "ev.log.old"

@@ -22,7 +22,7 @@ import logging
 import struct
 from datetime import datetime
 
-from plugins.bot_unified_runtime.runtime import timesync
+from plugins.bot_unified_runtime.domains.schedule.timesync import timesync
 
 _NTP_DELTA = 2208988800
 
@@ -166,7 +166,7 @@ def test_all_servers_fail_falls_back_to_system_clock(caplog) -> None:
         OSError("network unreachable"),
     ]
     sync, log = _build(script, clock, retry_seconds=300.0)
-    with caplog.at_level(logging.WARNING, logger="plugins.bot_unified_runtime.runtime.timesync"):
+    with caplog.at_level(logging.WARNING, logger="plugins.bot_unified_runtime.domains.schedule.timesync.timesync"):
         result = sync.now()
     assert sync.offset_seconds is None, "全失败必须回退系统钟（不留陈旧偏移）"
     expected = datetime.fromtimestamp(clock.value).astimezone()

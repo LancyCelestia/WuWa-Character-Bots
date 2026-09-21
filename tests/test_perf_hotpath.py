@@ -41,7 +41,9 @@ def test_network_command_capabilities_are_offloaded():
 
 @pytest.fixture()
 def _clean_readiness_cache():
-    from plugins.bot_unified_runtime import config_readiness
+    # v21r2 RWOC：config_readiness 真身迁 domains/core/config/；monkeypatch 拦截
+    # canonical 内部调用必须绑 canonical（垫片对象 setattr 不穿透，见 woc 日志 §六）。
+    from plugins.bot_unified_runtime.domains.core.config import config_readiness
 
     config_readiness._reset_readiness_cache()
     yield
@@ -62,7 +64,9 @@ def _smoke_config(persona_path):
 
 
 def test_run_config_smoke_caches_file_reads(tmp_path, monkeypatch, _clean_readiness_cache):
-    from plugins.bot_unified_runtime import config_readiness
+    # v21r2 RWOC：config_readiness 真身迁 domains/core/config/；monkeypatch 拦截
+    # canonical 内部调用必须绑 canonical（垫片对象 setattr 不穿透，见 woc 日志 §六）。
+    from plugins.bot_unified_runtime.domains.core.config import config_readiness
 
     persona = tmp_path / "persona.md"
     persona.write_text("人格内容\n", encoding="utf-8")
@@ -89,7 +93,9 @@ def test_run_config_smoke_caches_file_reads(tmp_path, monkeypatch, _clean_readin
 
 
 def test_run_config_smoke_cache_distinguishes_files(tmp_path, _clean_readiness_cache):
-    from plugins.bot_unified_runtime import config_readiness
+    # v21r2 RWOC：config_readiness 真身迁 domains/core/config/；monkeypatch 拦截
+    # canonical 内部调用必须绑 canonical（垫片对象 setattr 不穿透，见 woc 日志 §六）。
+    from plugins.bot_unified_runtime.domains.core.config import config_readiness
 
     config_a = _smoke_config(tmp_path / "a.md")
     (tmp_path / "a.md").write_text("A\n", encoding="utf-8")
@@ -115,7 +121,7 @@ def test_build_character_affinity_store_reuses_instance(
     tmp_path, monkeypatch, _clean_affinity_cache
 ):
     import plugins.bot_unified_runtime as plugin
-    from plugins.bot_unified_runtime.character import providers
+    from plugins.bot_unified_runtime.domains.chat_reply.character import providers
 
     monkeypatch.setattr(
         providers,
@@ -131,7 +137,7 @@ def test_build_character_affinity_store_reuses_instance(
 
 def test_build_character_affinity_store_disabled(tmp_path, monkeypatch, _clean_affinity_cache):
     import plugins.bot_unified_runtime as plugin
-    from plugins.bot_unified_runtime.character import providers
+    from plugins.bot_unified_runtime.domains.chat_reply.character import providers
 
     monkeypatch.setattr(
         providers,
@@ -163,7 +169,7 @@ def _audit_record(request_id: str):
 
 
 def test_in_memory_audit_logger_bounded():
-    from plugins.bot_unified_runtime.audit.logger import InMemoryAuditLogger
+    from plugins.bot_unified_runtime.domains.ops.audit.logger import InMemoryAuditLogger
 
     logger = InMemoryAuditLogger(max_entries=3)
     for index in range(5):
@@ -178,7 +184,7 @@ def test_in_memory_audit_logger_bounded():
 
 
 def test_in_memory_audit_logger_default_backward_compatible():
-    from plugins.bot_unified_runtime.audit.logger import InMemoryAuditLogger
+    from plugins.bot_unified_runtime.domains.ops.audit.logger import InMemoryAuditLogger
 
     logger = InMemoryAuditLogger()
     logger.append(_audit_record("req-1"))
@@ -218,7 +224,7 @@ def _send_request(request_id: str, dedupe_key: str):
 
 
 def test_in_memory_send_queue_bounded():
-    from plugins.bot_unified_runtime.audit.logger import InMemoryAuditLogger
+    from plugins.bot_unified_runtime.domains.ops.audit.logger import InMemoryAuditLogger
     from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue
 
     queue = InMemorySendQueue(audit_logger=InMemoryAuditLogger(), max_requests=3)
@@ -233,7 +239,9 @@ def test_in_memory_send_queue_bounded():
 
 def test_in_memory_receipt_repository_bounded():
     from plugins.bot_unified_runtime.contracts import DeliveryReceipt, ReceiptState
-    from plugins.bot_unified_runtime.sender.receipts import InMemoryReceiptRepository
+    from plugins.bot_unified_runtime.domains.transport.sender.receipts import (
+        InMemoryReceiptRepository,
+    )
 
     repository = InMemoryReceiptRepository(max_receipts=3)
 

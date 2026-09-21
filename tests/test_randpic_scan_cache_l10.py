@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities import randpic
+from plugins.bot_unified_runtime.domains.meme.capabilities import randpic
 
 
 def _make_image(dir_path: Path, name: str, payload: bytes = b"x") -> Path:

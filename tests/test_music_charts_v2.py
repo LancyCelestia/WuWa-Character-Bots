@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from plugins.bot_unified_runtime.contracts.music import MusicChartSnapshot
-from plugins.bot_unified_runtime.sources.music_charts import (
+from plugins.bot_unified_runtime.domains.core.contracts.music import MusicChartSnapshot
+from plugins.bot_unified_runtime.domains.music.data.music_charts import (
     MusicChartRegistry,
     MusicChartSource,
 )

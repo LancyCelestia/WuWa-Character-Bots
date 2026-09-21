@@ -16,8 +16,8 @@ from plugins.bot_unified_runtime.capabilities.divination import (
     parse_divination_intent,
 )
 from plugins.bot_unified_runtime.contracts import SessionType
-from plugins.bot_unified_runtime.contracts.runtime import IncomingMessage
-from plugins.bot_unified_runtime.sources.ganzhi import (
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
+from plugins.bot_unified_runtime.domains.divination.data.ganzhi import (
     CST,
     NAYIN_TABLE,
     Pillar,
@@ -25,7 +25,7 @@ from plugins.bot_unified_runtime.sources.ganzhi import (
     format_bazi_text,
     solar_term_beijing,
 )
-from plugins.bot_unified_runtime.sources.iching import (
+from plugins.bot_unified_runtime.domains.divination.data.iching import (
     HEXAGRAMS,
     CastResult,
     cast_hexagram,
@@ -33,7 +33,7 @@ from plugins.bot_unified_runtime.sources.iching import (
     hexagram_of,
     toss_yao,
 )
-from plugins.bot_unified_runtime.sources.tarot import (
+from plugins.bot_unified_runtime.domains.divination.data.tarot import (
     DECK,
     daily_card,
     draw_cards,

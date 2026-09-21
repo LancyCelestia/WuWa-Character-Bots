@@ -19,9 +19,11 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.output.card_render import bridge
+from plugins.bot_unified_runtime.domains.render.card_render import bridge
 
 # 与 test_rendering_contract.CARD_TEMPLATES 同口径：显式枚举，禁止 glob。
+# 2026-09-18 v21r3 渲染统一：+= error_card.html（第 8 面入 E03 刻度管辖；
+# RED 即锚点——error 卡缺 tabular-nums/行高 1.65 出刻度由 wave-2 席修复）。
 CARD_TEMPLATES: tuple[str, ...] = (
     "universal_card.html",
     "market_card.html",
@@ -29,6 +31,7 @@ CARD_TEMPLATES: tuple[str, ...] = (
     "mermaid_card.html",
     "song_candidates.html",
     "finance_card.html",
+    "error_card.html",
 )
 
 _TEMPLATES_DIR = Path(bridge.__file__).resolve().parent / "templates"

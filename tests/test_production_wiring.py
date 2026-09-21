@@ -330,8 +330,8 @@ def _register_history_scheduler_with_stubs(tmp_path: Path, backend: Any) -> tupl
         bot_download_proxy="",
         bot_today_history_cache_file=str(tmp_path / "cache.json"),
     )
-    import plugins.bot_unified_runtime.capabilities.today_history as cap_module
-    import plugins.bot_unified_runtime.sources.today_history as src_module
+    import plugins.bot_unified_runtime.domains.subscribe.capabilities.today_history as cap_module
+    import plugins.bot_unified_runtime.domains.subscribe.feeds.today_history as src_module
 
     with (
         pytest.MonkeyPatch.context() as mp,

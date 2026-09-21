@@ -10,8 +10,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from plugins.bot_unified_runtime.output.card_render import bridge
-from plugins.bot_unified_runtime.output.card_render.theme_tokens import (
+from plugins.bot_unified_runtime.domains.render.card_render import bridge
+from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import (
     CARD_SHELL_WIDTHS,
     ERROR_ACCENT,
     ERROR_THEME,
@@ -79,8 +79,8 @@ def test_full_payload_renders_all_sections() -> None:
         "守岸人",
     ):
         assert marker in html, f"缺分区/内容: {marker}"
-    # 红色强调色（ERROR_THEME accent）注入 --pc。
-    assert f"--pc: {ERROR_ACCENT}" in html
+    # 红色强调色（ERROR_THEME accent）注入 --accent。
+    assert f"--accent:{ERROR_ACCENT}" in html
     # A69-C1：创造者真名不得入卡（群广播隐私级）。
     assert "澜汐" not in html and "霞月" not in html
 
@@ -146,8 +146,10 @@ def test_error_card_shell_width_registered() -> None:
 
 def test_cooldown_line_tone_and_content() -> None:
     """P2-4 同规则：冷却句池化（≥10），每句带 exc、指回卡、无未填槽。"""
-    from plugins.bot_unified_runtime.runtime import error_report as er
-    from plugins.bot_unified_runtime.runtime.error_report import cooldown_line
+    from plugins.bot_unified_runtime.domains.ops.monitor import error_report as er
+    from plugins.bot_unified_runtime.domains.ops.monitor.error_report import (
+        cooldown_line,
+    )
 
     assert len(er._COOLDOWN_LINES) >= 10
     assert len(set(er._COOLDOWN_LINES)) == len(er._COOLDOWN_LINES)

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hashlib
+import socket
 from pathlib import Path
 
 import pytest
@@ -21,8 +22,7 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.sender import send_onebot_v11
-from plugins.bot_unified_runtime.sender.file_gateway import (
+from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
     FileSource,
     FileTicket,
     FileTransferError,
@@ -34,6 +34,7 @@ from plugins.bot_unified_runtime.sender.file_gateway import (
     sanitize_file_name,
     set_default_file_gateway,
 )
+from plugins.bot_unified_runtime.sender import send_onebot_v11
 from plugins.bot_unified_runtime.sender.nonebot import send_nonebot_message
 
 
@@ -162,7 +163,24 @@ def test_stage_bytes_source_writes_staging(tmp_path: Path) -> None:
     assert ticket.size == 3
 
 
-def test_stage_url_requires_ssrf_gate_and_downloader() -> None:
+def _patch_dns(monkeypatch, ip: str) -> None:
+    """把 socket.getaddrinfo 钉到固定解析结果（离线确定性）。
+
+    2026-09-18：本文件原先直接放行真实 DNS——`check_download_url` 对域名走
+    ``socket.getaddrinfo``，解析失败即抛 ``RejectedUrlError``→``url_rejected``。
+    一旦网络抖动（实测出现过一次），第二个断言会以「下载接线未装」的名义误报，
+    排查方向被带偏。此处与 ``test_parser_ssrf_guard.py`` 同款钉定，测试不再依赖网络。
+    """
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, int(port or 0)))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+
+def test_stage_url_requires_ssrf_gate_and_downloader(monkeypatch) -> None:
+    # 公网域名钉到公网地址：确保走到「闸门通过、下载未接线」分支而非 DNS 失败分支。
+    _patch_dns(monkeypatch, "93.184.216.34")
     gateway = get_default_file_gateway()
     with pytest.raises(FileTransferError) as private:
         gateway.stage(
@@ -174,6 +192,24 @@ def test_stage_url_requires_ssrf_gate_and_downloader() -> None:
             FileSource(source_kind="url", url="https://example.com/pub.bin"), request_id="r"
         )
     assert unavailable.value.kind == "url_download_unavailable"  # 生产下载接线归阶段 3
+
+
+def test_stage_url_dns_failure_classified_as_rejected(monkeypatch) -> None:
+    """DNS 解析失败归 ``url_rejected``（不是 ``url_download_unavailable``）。
+
+    把先前那条「靠网络抖动才会走到」的分支显式锁住——否则它永远没人测。
+    """
+
+    def fail_getaddrinfo(host, port, *args, **kwargs):
+        raise socket.gaierror(11001, "getaddrinfo failed")
+
+    monkeypatch.setattr(socket, "getaddrinfo", fail_getaddrinfo)
+    gateway = get_default_file_gateway()
+    with pytest.raises(FileTransferError) as caught:
+        gateway.stage(
+            FileSource(source_kind="url", url="https://example.com/pub.bin"), request_id="r"
+        )
+    assert caught.value.kind == "url_rejected"
 
 
 def test_stage_url_with_injected_downloader_stages_content(tmp_path: Path) -> None:

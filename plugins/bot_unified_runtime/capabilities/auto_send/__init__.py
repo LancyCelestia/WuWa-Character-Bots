@@ -1,13 +1,7 @@
-from .parser import (
-    build_auto_send_preview_result,
-    build_auto_send_preview_text,
-    is_auto_send_command_text,
-    parse_auto_send_command,
-)
+"""Compat shim: moved to domains/schedule/auto_send (v21r2 reorg W10 schedule).
 
-__all__ = [
-    "build_auto_send_preview_result",
-    "build_auto_send_preview_text",
-    "is_auto_send_command_text",
-    "parse_auto_send_command",
-]
+旧路径 ``plugins.bot_unified_runtime.capabilities.auto_send`` 保持可导入（纯 re-export
+薄壳，符号与真身同一对象）。真身包 ``__init__`` 自带 ``__all__``，公有面经 ``import *``
+全量转发；波前 AST 名字级扫描未见跨界私有名消费。
+"""
+from plugins.bot_unified_runtime.domains.schedule.auto_send import *

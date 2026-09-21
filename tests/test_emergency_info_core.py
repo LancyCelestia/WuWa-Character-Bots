@@ -317,9 +317,14 @@ def _module_imports(path: Path) -> list[str]:
 
 
 def test_grading_is_a_pure_rule_function() -> None:
-    """D-6 反证锁：定级模块只许 stdlib + 本域契约，且绝不读墙钟。
+    """D-6 反证锁：定级模块只许 stdlib + 本域契约**与注册表**，且绝不读墙钟。
 
     一旦有人把 `datetime.now()`（不可测）或 httpx/llm（越层）塞进规则层即红。
+
+    WP3 白名单加了一枚 `...emergency_info.service`（= 同域纯数据件
+    `service/alert_taxonomy.py`）：注册表本身就是"规则层的数据"，收编它不改变
+    本锁的两个判据（① 不许出现网络/LLM/框架依赖 ② 不许读墙钟），二者照旧逐条在扫。
+    放宽的是"哪些同域纯件可以被 import"，不是"纯度"本身。
     """
     path = DOMAIN_DIR / "service" / "grading.py"
     allowed_prefixes = (
@@ -329,6 +334,7 @@ def test_grading_is_a_pure_rule_function() -> None:
         "datetime",
         "typing",
         "plugins.bot_unified_runtime.domains.emergency_info.contracts",
+        "plugins.bot_unified_runtime.domains.emergency_info.service",
     )
     offenders = [
         module
@@ -854,13 +860,24 @@ def test_review_gate_end_to_end_on_sqlite(tmp_path: Path) -> None:
 
 
 def _kernel_python_files() -> list[Path]:
-    """B1R3 席交付的内核面（本席独占）；采集器/投递属其他席位，不在本锁口径内。"""
+    """B1R3 席交付的内核面（本席独占）；采集器/投递属其他席位，不在本锁口径内。
+
+    `service/push.py` 必须排除：它是 4-面11 规定的**唯一主动投递触点**，
+    按规格就要 import 中央闸（`domains/transport/sender/outbound_gate`）。
+    本锁钉的是「规则层不得混进取数/模型调用」，不是「投递触点不许碰闸」——
+    把它扫进来会让锁的口径违背上面的 docstring。排除只减不改判据：
+    `service/` 余下的 dedupe/grading/review/snapshot_store 仍逐个在扫。
+    """
     kernel = [
         DOMAIN_DIR / "__init__.py",
         DOMAIN_DIR / "contracts.py",
         DOMAIN_DIR / "sources" / "store.py",
     ]
-    kernel.extend(sorted((DOMAIN_DIR / "service").glob("*.py")))
+    kernel.extend(
+        path
+        for path in sorted((DOMAIN_DIR / "service").glob("*.py"))
+        if path.name != "push.py"
+    )
     return [path for path in kernel if path.is_file()]
 
 
@@ -966,6 +983,7 @@ def test_brief_mandated_modules_and_symbols_are_in_place() -> None:
 本节的处置（与 `tests/test_emergency_info_sources.py` §接缝锁配对）：
 - **锁 A/B/E 现在就生效**（默认拒绝式：旁路一旦出现即红，且各自带「锚点」防空转）；
 - **锁 C/D 的前提是尚未存在的代码**，按纪律写成 `xfail(strict=True)`，**不为此造实现**；
+  2026-09-20 WIRE-A2 落 `service/push.py` 后两条均已按纪律**删标记转正**（见各锁上方转正记录）。
   落地即 XPASS 转红，删标记即转正（report §落地请求 已登记）。
 """
 
@@ -1195,16 +1213,12 @@ def test_domain_reaches_the_queue_only_through_the_central_gate() -> None:
     )
 
 
-# ---- 锁 C｜priority 载体一致（依赖未落地代码：xfail，不为此造实现）------------
+# ---- 锁 C｜priority 载体一致（已转正 2026-09-20 WIRE-A2）----------------------
+# 转正记录：前提 `build_emergency_send_request` 曾全仓 0 命中（规格 §8.1 锁 C、§8.4）。
+# WIRE-A2 落 `service/push.py` 后按纪律**删标记转正**（未 assert True、未 skip）。
+# 转正后它是「P0 被静默顺延＝漏报」的唯一回归锁。
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "锁 C 的前提 `build_emergency_send_request` 全仓 0 命中（规格 §8.1 锁 C、§8.4）。"
-        "接线席落地后删掉本标记即转正——转正后它就是「P0 被静默顺延＝漏报」的唯一回归锁。"
-    ),
-)
 def test_send_request_priority_carries_the_emergency_level() -> None:
     """锁 C：`SendRequest.priority` 必须是 `str(item.level.value)`，不是现族字面量。
 
@@ -1273,16 +1287,12 @@ def _call_with_candidate_kwargs(builder: Any, item: EmergencyItem) -> Any:
     return builder(**kwargs)
 
 
-# ---- 锁 D｜键族与键构造同源（依赖未落地代码：xfail）--------------------------
+# ---- 锁 D｜键族与键构造同源（已转正 2026-09-20 WIRE-A2）----------------------
+# 转正记录：前提曾为「生产面出现 `submit_active_push` 触闸点」（当时 0 命中，规格 §8.1 锁 D
+# 的最小实现对象=装配面唯一 fan-out 函数）。WIRE-A2 的 `service/push.py` 落地后删标记转正。
+# 诚实边界同 T6b：本条证的是「触闸点两侧同源」，不证「已有预警真的投递」。
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "锁 D 的前提是生产面出现 `submit_active_push` 触闸点（今日 0 命中，规格 §8.1 锁 D"
-        "的最小实现对象=装配面唯一 fan-out 函数）。接线席落地后删标记转正。"
-    ),
-)
 def test_daily_family_and_date_key_are_declared_from_the_same_truth() -> None:
     """锁 D：报 `dedupe_family="daily"` 的地方必须真的带了 `date_key`（同真同假）。
 
@@ -1361,3 +1371,468 @@ def test_the_third_color_rank_table_stays_in_lockstep() -> None:
     assert weather is not _MISSING, "weather 侧 _ALARM_COLOR_RANK 已搬走，需同步本锁"
     assert weather == mine == collector, "三份表必须是一份表"
     assert set(collector) == set(LEVEL_COLOR_LABEL.values())
+
+
+# ---------------------------------------- §H 能力层接线锁（WIRE-A1，施工图 §4-面0）
+
+"""能力层（查询面）落地锁：`domains/emergency_info/capabilities/emergency_info.py`。
+
+口径逐字来源（不得自行放宽）：
+
+- §4-面0：谓词 `is_emergency_info_command`、工厂 `build_emergency_info_capability`、
+  能力闭包 `(message, decision) -> CapabilityResult`；触发正则**必须带右边界**
+  （G23 `test_ascii_trigger_word_boundary` 会注胶合探针）；命名一次定死
+  （用户裁 U-4/R-S1，两名不得并存）；能力 id 字面 = `bot.emergency_info`（B11 §7.1）。
+- §5-钉死②：三重来源门抄 campus 正例（`domains/assistant/campus/campus.py:58-71`），
+  任一空 ⇒ `enabled=False` ⇒ 上层不注册；白名单支持 `*` 通配；**绝不猜群/绝不猜人**；
+  `reviewer_ids` **不入装配门**（它空 ⇒ 审核面关闭的安全缺省态，链仍可装配）。
+- §4-面5 高危③：`gate=None` ⇒ 投递面必须判为不可用，绝不退化成裸 submit。
+- §4-面11 / R-S5：投递面不在能力层——该文件内不得出现 `submit_active_push` 字样，
+  也不得直调发送队列（与锁 B③ 同族）或 `upsert_item`（与锁 A 同族）。
+"""
+
+CAPABILITY_FILE = DOMAIN_DIR / "capabilities" / "emergency_info.py"
+CAPABILITY_MODULE = (
+    "plugins.bot_unified_runtime.domains.emergency_info.capabilities.emergency_info"
+)
+CAPABILITY_ID = "bot.emergency_info"
+
+
+def _cap() -> Any:
+    """能力层真身；文件缺失时 import 抛 ModuleNotFoundError（＝本波 RED 的正解）。"""
+    return importlib.import_module(CAPABILITY_MODULE)
+
+
+def _cap_config(tmp_path: Path, **overrides: Any) -> Any:
+    """装配期 Config 替身：只喂能力层按名读取的那几个键（缺省=全门满足）。"""
+    from types import SimpleNamespace
+
+    data: dict[str, Any] = {
+        "bot_emergency_info_enabled": True,
+        "bot_emergency_info_sources": ["nmc", "gdacs"],
+        "bot_emergency_info_push_group_whitelist": ["1108838060"],
+        "bot_emergency_info_push_user_ids": [],
+        "bot_emergency_info_reviewer_ids": ["3865067623"],
+        "bot_emergency_info_min_level": "P2",
+        "bot_emergency_info_poll_interval_seconds": 300,
+        "bot_emergency_info_keep_days": 90,
+        "bot_emergency_info_db_path": str(tmp_path / "emergency_info.sqlite3"),
+        "bot_persona_profile_id": "default",
+    }
+    data.update(overrides)
+    return SimpleNamespace(**data)
+
+
+def _message(text: str, *, sender_id: str = "u-9", roles: list[str] | None = None) -> Any:
+    from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
+        IncomingMessage,
+        SessionType,
+    )
+
+    return IncomingMessage(
+        request_id="req-1",
+        platform="qq",
+        adapter="onebot11",
+        bot_id="10000",
+        session_id="p_10000_u-9",
+        session_type=SessionType.PRIVATE,
+        sender_id=sender_id,
+        plain_text=text,
+        sender_roles=list(roles or ["user"]),
+    )
+
+
+def _seed_approved(tmp_path: Path, *items: EmergencyItem) -> None:
+    """经唯一合法路径灌数据：`build_emergency_item`→`ReviewGate.submit`→`approve`。"""
+    store = build_emergency_store(str(tmp_path / "emergency_info.sqlite3"))
+    gate = ReviewGate(store, authorizer=lambda reviewer_id: bool(reviewer_id))
+    for item in items:
+        pending = gate.submit(item, at=_NOW)
+        outcome = gate.approve(pending.item_id, reviewer_id="3865067623", at=_NOW)
+        assert outcome.ok, f"夹具自身没过审核门：{outcome.reason}"
+
+
+# ---- 锁 H1｜命名与存在性（U-4/R-S1：一次定死，不得两名并存）--------------------
+
+
+def test_capability_layer_exposes_the_frozen_names() -> None:
+    module = _cap()
+    for name in (
+        "is_emergency_info_command",
+        "build_emergency_info_capability",
+        "build_emergency_info_source",
+        "EmergencyInfoSource",
+        "EmergencyInfoService",
+    ):
+        assert callable(getattr(module, name)) or isinstance(
+            getattr(module, name), type
+        ), f"能力层缺公开符号 {name}"
+
+
+def test_capability_layer_does_not_keep_a_second_name() -> None:
+    """R-S1 结构锁：被废弃的第二名一旦回场即红（禁两名并存）。"""
+    assert CAPABILITY_FILE.is_file()
+    source = CAPABILITY_FILE.read_text(encoding="utf-8")
+    for forbidden in ("def is_emergency_command(", "def build_emergency_capability("):
+        assert forbidden not in source, f"能力层出现第二个名字：{forbidden}"
+
+
+# ---- 锁 H2｜触发正则（§4-面0 原文，右边界必须有）--------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("紧急信息", True),
+        ("緊急信息", True),
+        ("预警", True),
+        ("預警", True),
+        ("地震", True),
+        ("震情", True),
+        ("待审", True),
+        ("emergency", True),
+        ("紧急信息 待审", True),
+        ("emergency list", True),
+        ("emergencyxxx", False),  # G23 胶合探针：右边界缺失即红
+        ("emergency1", False),
+        ("今天天气怎么样", False),
+        ("", False),
+    ],
+)
+def test_trigger_matches_registered_forms_and_refuses_glue(
+    text: str, expected: bool
+) -> None:
+    assert _cap().is_emergency_info_command(text) is expected
+
+
+def test_trigger_regex_is_the_spec_literal() -> None:
+    """正则形态钉死：`^…` 前锚 + ASCII 右边界；被改成裸匹配即红。
+
+    施工图原文写的是 `…\\b?(?![A-Za-z0-9])`，其中 `\\b?` 在 Python 3.12 直接
+    `re.error: nothing to repeat`（编译期即炸＝装配期炸插件装载）。落地形态去掉那
+    三个字符，右边界语义由 `(?![A-Za-z0-9])` 独立承担（胶合探针锁在上一条用例里）。
+    """
+    module = _cap()
+    pattern = module._EMERGENCY_RE.pattern
+    assert pattern.startswith("^")
+    assert pattern.endswith("(?![A-Za-z0-9])")
+    assert "\\b?" not in pattern, "不可编译的量化断言回到正则里＝启动即炸"
+    for token in ("紧急信息", "緊急信息", "预警", "預警", "地震", "震情", "待审", "emergency"):
+        assert token in pattern, f"触发词 {token} 从正则里消失"
+
+
+# ---- 锁 H3｜装配门（WIRE-SUB 修订：门缩为两腿，投递目标改由订阅表现读派生）----
+#
+# 旧口径（施工图 §5-钉死②）是 `enabled ∧ sources ∧ (群 ∨ 人)` 三条腿，投递名单空
+# =整链不装配。2026-09-20 用户裁定 3.B 覆盖第三腿：投递条件不许写在 .env 里（"太僵硬"），
+# 改由群内命令落 `emergency_subscriptions`、投递侧每轮现读。第三腿若原样保留会造出
+# 死结——没有名单就没有 matcher，没有 matcher 群里就订不起来。
+# 「绝不猜群/绝不猜人」因此换了落点：表里没有行 ⇒ 一个目标都没有 ⇒ 一条都不投，
+# 由 tests/test_emergency_info_reachability.py 的订阅可达性锁正面钉住，不靠这条腿。
+
+
+@pytest.mark.parametrize(
+    ("overrides", "why"),
+    [
+        ({"bot_emergency_info_enabled": False}, "总开关关闭"),
+        ({"bot_emergency_info_sources": []}, "来源名单空＝不猜源"),
+    ],
+    ids=["disabled", "no-sources"],
+)
+def test_any_empty_gate_leg_disables_the_source_snapshot(
+    tmp_path: Path, overrides: dict[str, Any], why: str
+) -> None:
+    source = _cap().build_emergency_info_source(_cap_config(tmp_path, **overrides))
+    assert source.enabled is False, f"{why} 时仍判为可装配＝无源空转"
+
+
+def test_both_gate_legs_present_enable_the_snapshot(tmp_path: Path) -> None:
+    source = _cap().build_emergency_info_source(_cap_config(tmp_path))
+    assert source.enabled is True
+    assert source.sources and source.push_group_whitelist
+    assert source.min_level == "P2"
+    assert source.keep_days == 90
+
+
+def test_empty_env_target_lists_still_assemble_so_chat_can_subscribe(
+    tmp_path: Path,
+) -> None:
+    """两枚 .env 投递名单全空**不再关掉整链**（裁定 3.B），但快照仍如实搬运它们。
+
+    这条用例是旧 `test_group_or_user_list_alone_is_enough` 的替代：旧用例在新口径下
+    会因为"名单根本不参与判定"而恒绿——那种绿是假绿，故整条删掉换成本条。
+    """
+    module = _cap()
+    empty = module.build_emergency_info_source(
+        _cap_config(
+            tmp_path,
+            bot_emergency_info_push_group_whitelist=[],
+            bot_emergency_info_push_user_ids=[],
+        )
+    )
+    assert empty.enabled is True, "名单空=不能装配 ⇒ 群里第一句订阅永远没人应答"
+    assert not empty.push_group_whitelist and not empty.push_user_ids
+
+
+def test_empty_reviewer_list_keeps_assembly_but_closes_review_surface(
+    tmp_path: Path,
+) -> None:
+    """钉死②第四段：审核名单不参与装配门，空＝审核面关闭（安全的缺省态）。"""
+    source = _cap().build_emergency_info_source(
+        _cap_config(tmp_path, bot_emergency_info_reviewer_ids=[])
+    )
+    assert source.enabled is True
+    assert source.review_surface_enabled is False
+
+
+def test_push_group_whitelist_accepts_star_wildcard(tmp_path: Path) -> None:
+    """`*` 显式放行全部群（campus `:70-78` 同形），由 matches_* 判定而非装配门。"""
+    module = _cap()
+    starred = module.build_emergency_info_source(
+        _cap_config(tmp_path, bot_emergency_info_push_group_whitelist=["*"])
+    )
+    plain = module.build_emergency_info_source(_cap_config(tmp_path))
+    assert module.matches_emergency_push_group(starred, "9999999") is True
+    assert module.matches_emergency_push_group(plain, "1108838060") is True
+    assert module.matches_emergency_push_group(plain, "631785829") is False
+    assert module.matches_emergency_push_group(plain, "") is False
+
+
+def test_snapshot_is_frozen_and_belt_and_braces_id_lists(tmp_path: Path) -> None:
+    """装配期快照必须只读，且 None/数字/空串混进来的名单要洗成字符串集合。"""
+    import dataclasses
+
+    module = _cap()
+    source = module.build_emergency_info_source(
+        _cap_config(
+            tmp_path,
+            bot_emergency_info_sources=[" nmc ", "", None, 3958874605],
+            bot_emergency_info_push_user_ids=["3865067623 "],
+        )
+    )
+    assert "nmc" in source.sources and "3958874605" in source.sources
+    assert "" not in source.sources and None not in source.sources
+    assert "3865067623" in source.push_user_ids
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        source.enabled = False  # type: ignore[misc]
+
+
+# ---- 锁 H4｜投递面隔离（§4-面11 / R-S5：本文件只查询，不投递）-------------------
+
+
+def test_capability_layer_carries_no_delivery_surface() -> None:
+    """能力层里出现被禁字样＝投递面渗进查询层，与 T6/锁 B 同族纪律相违。"""
+    assert CAPABILITY_FILE.is_file()
+    source = CAPABILITY_FILE.read_text(encoding="utf-8")
+    assert "submit_active_push" not in source
+    assert "upsert_item" not in source, "绕过审核门的入库口出现在能力层（锁 A 同族）"
+    bypass = [
+        f"{node.lineno} {ast.unparse(node.func.value)}.submit"
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "submit"
+        and "queue" in ast.unparse(node.func.value).lower()
+    ]
+    assert bypass == [], f"能力层直调发送队列：{bypass}"
+
+
+def test_capability_layer_imports_no_config_module() -> None:
+    """`test_domain_kernel_touches_no_config_module` 走 rglob 覆盖本文件：
+    这里再钉一次「只按名 getattr，不 import config」的形态，防止有人改吃 Config 类型。"""
+    offenders = [
+        module
+        for module in _module_imports(CAPABILITY_FILE)
+        if module.endswith("config") or "bot_unified_runtime.config" in module
+    ]
+    assert offenders == []
+
+
+# ---- 锁 H5｜查询面行为（列表 / 详情 / 待审 / 未启用诚实面）----------------------
+
+
+def test_capability_id_is_the_frozen_literal(tmp_path: Path) -> None:
+    capability = _cap().build_emergency_info_capability(
+        _cap_config(tmp_path), render_backend=None
+    )
+    result = capability(_message("紧急信息"), None)
+    assert result.capability_id == CAPABILITY_ID
+    assert result.kind == "text"
+    assert result.request_id == "req-1"
+
+
+def test_recent_query_lists_only_approved_items(tmp_path: Path) -> None:
+    _seed_approved(tmp_path, _item(item_id="emg-ok", title="暴雨红色预警"))
+    store = build_emergency_store(str(tmp_path / "emergency_info.sqlite3"))
+    pending = ReviewGate(store).submit(_item(item_id="emg-pending", title="待审的那条"))
+    assert pending.status is EmergencyStatus.PENDING
+
+    capability = _cap().build_emergency_info_capability(_cap_config(tmp_path))
+    body = capability(_message("紧急信息"), None).body
+    assert "暴雨红色预警" in body
+    assert "待审的那条" not in body, "未过审条目出现在公开查询面＝审核门被旁路"
+
+
+def test_recent_query_is_honest_when_there_is_nothing(tmp_path: Path) -> None:
+    capability = _cap().build_emergency_info_capability(_cap_config(tmp_path))
+    body = capability(_message("预警"), None).body
+    assert "暂无" in body
+
+
+def test_detail_query_returns_the_single_item(tmp_path: Path) -> None:
+    _seed_approved(tmp_path, _item(item_id="emg-42", title="地震信息速报"))
+    capability = _cap().build_emergency_info_capability(_cap_config(tmp_path))
+    body = capability(_message("紧急信息 emg-42"), None).body
+    assert "emg-42" in body and "地震信息速报" in body
+    miss = capability(_message("紧急信息 emg-nope"), None).body
+    assert "未找到" in miss
+
+
+def test_pending_query_is_closed_to_non_reviewers(tmp_path: Path) -> None:
+    store = build_emergency_store(str(tmp_path / "emergency_info.sqlite3"))
+    ReviewGate(store).submit(_item(item_id="emg-secret", title="未经裁决的报料"))
+    capability = _cap().build_emergency_info_capability(_cap_config(tmp_path))
+
+    outsider = capability(_message("待审", sender_id="u-9"), None).body
+    assert "emg-secret" not in outsider, "待审队列泄漏给非审核人"
+    assert "审核" in outsider
+
+    insider = capability(_message("待审", sender_id="3865067623"), None).body
+    assert "emg-secret" in insider
+
+
+def test_pending_query_refuses_when_the_review_surface_is_closed(tmp_path: Path) -> None:
+    """审核名单空＝审核面关闭：连名单里的人也没有，任何人都读不到待审队列。"""
+    store = build_emergency_store(str(tmp_path / "emergency_info.sqlite3"))
+    ReviewGate(store).submit(_item(item_id="emg-secret2", title="无人可审的报料"))
+    capability = _cap().build_emergency_info_capability(
+        _cap_config(tmp_path, bot_emergency_info_reviewer_ids=[])
+    )
+    body = capability(_message("待审", sender_id="3865067623"), None).body
+    assert "emg-secret2" not in body
+
+
+def test_capability_without_config_answers_honestly(tmp_path: Path) -> None:
+    """config=None（B 段未接线）⇒ 一句人话，不炸、不猜路径、不建库。"""
+    capability = _cap().build_emergency_info_capability(None)
+    result = capability(_message("紧急信息"), None)
+    assert "未启用" in result.body
+    assert not (tmp_path / "emergency_info.sqlite3").exists()
+
+
+def test_capability_never_creates_a_store_inside_the_source_tree(tmp_path: Path) -> None:
+    """台账 #1 卫生：配置键缺省（空串）时也不许在源码树落库。"""
+    from types import SimpleNamespace
+
+    bare = SimpleNamespace(bot_emergency_info_db_path="")
+    capability = _cap().build_emergency_info_capability(bare)
+    result = capability(_message("紧急信息"), None)
+    assert "未启用" in result.body
+    assert not (REPO_ROOT / "data" / "emergency_info.sqlite3").exists()
+
+
+# ---- 锁 H6｜服务装配面（§4-面5 5b 的 import 目标 + 高危③）----------------------
+
+
+def test_service_without_the_central_gate_cannot_deliver(tmp_path: Path) -> None:
+    """高危③：闸没装上 ⇒ 投递判为不可用，绝不退化成裸 submit。"""
+    module = _cap()
+    source = module.build_emergency_info_source(_cap_config(tmp_path))
+    service = module.EmergencyInfoService(
+        store=build_emergency_store(str(tmp_path / "svc.sqlite3")), source=source
+    )
+    assert service.can_deliver is False
+    assert service.source is source
+
+
+def test_service_with_a_gate_and_enabled_source_can_deliver(tmp_path: Path) -> None:
+    module = _cap()
+    source = module.build_emergency_info_source(_cap_config(tmp_path))
+    service = module.EmergencyInfoService(
+        store=build_emergency_store(str(tmp_path / "svc.sqlite3")),
+        source=source,
+        gate=object(),
+    )
+    assert service.can_deliver is True
+    assert service.review_gate is not None
+
+
+def test_service_ingest_goes_through_the_review_gate_only(tmp_path: Path) -> None:
+    """报料入能力层的唯一路径＝ReviewGate.submit：入库即 pending、等级清空。"""
+    module = _cap()
+    source = module.build_emergency_info_source(_cap_config(tmp_path))
+    store = build_emergency_store(str(tmp_path / "svc.sqlite3"))
+    service = module.EmergencyInfoService(store=store, source=source, gate=object())
+    stored = service.ingest_payloads([_payload(item_id="emg-ingest")], at=_NOW)
+    assert [item.item_id for item in stored] == ["emg-ingest"]
+    assert stored[0].status is EmergencyStatus.PENDING and stored[0].level is None
+    assert store.get("emg-ingest").status is EmergencyStatus.PENDING
+    assert service.ingest_payloads([{"junk": True}], at=_NOW) == []
+
+
+# ------------------------------------------------ §I 路由腿与装配腿一致性锁（I-1）
+
+
+class _LegConfig:
+    """只钉紧急域配置键（两枚门腿 + 两枚硬推名单 + 审核/权威源名单），
+    其余配置键走 base_router 的 getattr 缺省语义。"""
+
+    def __init__(self, **overrides: object) -> None:
+        self.bot_emergency_info_enabled = True
+        self.bot_emergency_info_sources = ["nmc_alarm"]
+        self.bot_emergency_info_push_user_ids = ["1"]
+        self.bot_emergency_info_push_group_whitelist: list[str] = []
+        self.bot_emergency_info_reviewer_ids: list[str] = []
+        self.bot_emergency_info_auto_approve_sources: list[str] = []
+        for key, value in overrides.items():
+            setattr(self, key, value)
+
+
+def _route_kind(text: str, config: object) -> object:
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+        classify_message_route,
+    )
+
+    decision = classify_message_route(text, config=config, alias_resolver=None)
+    return getattr(decision, "kind", None)
+
+
+def test_routing_legs_never_wider_than_assembly_legs() -> None:
+    """路由门与装配门**必须同腿**（评审 V2B1 I-1，腿集合按 WIRE-SUB 修订后口径）。
+
+    装配门是 `enabled ∧ sources`（capabilities 快照 `build_emergency_info_source`）；
+    路由若只查总闸，则在「开了总闸、没有源」这一态下消息被判给 EMERGENCY_INFO 而
+    matcher 根本没注册 ⇒ 静默黑洞（连错误卡都不出）。
+    反方向同样钉：投递名单全空时路由**必须仍然**接住，否则群里第一句
+    「紧急信息 订阅 …」没人应答，订阅这件事就永远起不来（裁定 3.B）。
+    两腿同源靠的是路由门直调同一个 `build_emergency_info_source`——本用例两侧同红
+    或同绿，就是那条同源缝的活性证明。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+        RouteKind,
+    )
+
+    black = RouteKind.EMERGENCY_INFO
+    assert _route_kind("紧急信息", _LegConfig()) is black, "两腿齐备时本域必须接住"
+    assert _route_kind("紧急信息", _LegConfig(bot_emergency_info_enabled=False)) is not black
+    assert _route_kind("紧急信息", _LegConfig(bot_emergency_info_sources=[])) is not black
+    assert (
+        _route_kind(
+            "紧急信息",
+            _LegConfig(
+                bot_emergency_info_push_user_ids=[],
+                bot_emergency_info_push_group_whitelist=[],
+            ),
+        )
+        is black
+    ), "两枚 .env 名单空已不再关闭装配（裁定 3.B）⇒ 路由不得比装配更窄"
+    assert (
+        _route_kind(
+            "预警",
+            _LegConfig(
+                bot_emergency_info_push_user_ids=[],
+                bot_emergency_info_push_group_whitelist=["*"],
+            ),
+        )
+        is black
+    ), "`*` 通配群腿读侧仍成立"

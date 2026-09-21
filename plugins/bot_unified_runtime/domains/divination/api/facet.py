@@ -29,24 +29,22 @@ from plugins.bot_unified_runtime.domains.divination.api.dto import (
     BaziPreviewPayload,
     DivinationDrawPayload,
 )
+from plugins.bot_unified_runtime.domains.divination.data.deck_math import (
+    DECK_REVISION,
+    FORTUNE_ALGORITHM_REVISION,
+    FORTUNE_GRADES_V1,
+    FORTUNE_RULE_VERSION,
+    POSITION_LABELS,
+    SPREADS,
+    TAROT_ALGORITHM_REVISION,
+    build_card_index,
+)
 from plugins.bot_unified_runtime.domains.divination.service.divination_service import (
     DISCLAIMER_ID,
     DISCLAIMER_TEXT,
     DivinationService,
     DrawResult,
     TrustedDrawContext,
-)
-from plugins.bot_unified_runtime.domains.divination.service.fortune import (
-    FORTUNE_ALGORITHM_REVISION,
-    FORTUNE_GRADES_V1,
-    FORTUNE_RULE_VERSION,
-)
-from plugins.bot_unified_runtime.domains.divination.service.tarot_draw import (
-    DECK_REVISION,
-    POSITION_LABELS,
-    SPREADS,
-    TAROT_ALGORITHM_REVISION,
-    build_card_index,
 )
 from plugins.bot_unified_runtime.domains.divination.store.draw_store import (
     DEFAULT_TAROT_COOLDOWN_SECONDS,

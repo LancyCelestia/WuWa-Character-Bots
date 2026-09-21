@@ -177,7 +177,11 @@ def mica_decor_css(
       几何/渐变/keyframes 取自 ``_BLOB_SPECS`` 登记表）。
     - ``durations``：逐斑漂移秒，按 drift-a/b/c 位次；缺省从登记值
       ``BLOB_DURATIONS``（升序 46/52/58）按位次索引表分配 → a=46/b=58/c=52，
-      与历史 CSS 逐字节一致。
+      与历史 CSS 逐字节一致。显式传入时长度 **不得少于** ``blob_count``
+      （否则 ValueError，不是 IndexError）；多出的位次一律忽略，即
+      ``blob_count`` 决定实际消费 ``durations`` 的前几个值。
+    - ``blob_count`` 合法域 ``1..len(_BLOB_SPECS)``：0（"不要色斑"）同样拒绝，
+      需要无装饰层请走 ``render_shell(decor=False)``，不要传 0 生成空层。
     - ``phase_default``：``var(--phase, 兜底)`` 的兜底值（默认 0.2 历史值；
       卡面 :root 已注入真实 --phase 时兜底不生效，仅 reduced-motion 外的
       防御缺省）。
@@ -191,11 +195,17 @@ def mica_decor_css(
     if durations is None:
         per_blob = {spec[0]: BLOB_DURATIONS[spec[4]] for spec in _BLOB_SPECS}
     else:
+        # FIX8（2026-09-21）：推导必须与守卫同域——历史上这里遍历全量登记表
+        # （恒 3 项）而守卫只查 ``len(durations) < blob_count``，于是
+        # ``blob_count=1, durations=(46,)`` 通过守卫后在 durations[1] 越界，
+        # 抛 IndexError 而非契约声明的 ValueError。按 blob_count 截断遍历域。
         if len(durations) < blob_count:
-            raise ValueError("durations 长度不得少于 blob_count")
+            raise ValueError(
+                f"durations 长度不得少于 blob_count（{len(durations)} < {blob_count}）"
+            )
         per_blob = {
             spec[0]: durations[position]
-            for position, spec in enumerate(_BLOB_SPECS)
+            for position, spec in enumerate(_BLOB_SPECS[:blob_count])
         }
     phase_token = f"var(--phase, {phase_default})"
     header = "/".join(f"{value}s" for value in sorted(per_blob[key] for key in _BLOB_KEYS[:blob_count]))

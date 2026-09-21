@@ -5,17 +5,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.runtime_admin import (
+from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
+    build_vision_provider,
+    describe_images,
+    extract_image_urls,
+)
+from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
     _handle_runtime_command,
 )
 from plugins.bot_unified_runtime.llm import LLMProviderError
 from plugins.bot_unified_runtime.llm.model_router import ModelRouter
 from plugins.bot_unified_runtime.runtime.settings import InstanceSettingsManager
-from plugins.bot_unified_runtime.sources.vision_describe import (
-    build_vision_provider,
-    describe_images,
-    extract_image_urls,
-)
 
 
 def test_extract_image_urls_from_segments() -> None:
@@ -84,7 +84,7 @@ def test_vision_enabled_hot_toggle_via_store() -> None:
 
 
 def test_dynamic_vision_provider_failover(monkeypatch: pytest.MonkeyPatch) -> None:
-    from plugins.bot_unified_runtime.sources import vision_describe
+    from plugins.bot_unified_runtime.domains.media.ingest import vision_describe
 
     calls: list[str] = []
 
@@ -265,7 +265,7 @@ def test_vision_command_roundtrip() -> None:
     import tempfile
     from pathlib import Path
 
-    from plugins.bot_unified_runtime.capabilities.runtime_admin import (
+    from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
         _handle_model_command,
     )
     from plugins.bot_unified_runtime.runtime.settings import RuntimeSettingsStore

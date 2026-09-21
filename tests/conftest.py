@@ -55,6 +55,25 @@ _autosync_changed: list[str] = []
 _hash_baseline_changed: list[str] = []
 
 
+# V2.1 §13（2026-09-17 A3）：autosync 启用判定抽成纯函数，供 ``run_autosync``
+# 与回归测试（tests/test_autosync_gate.py）共用；``scripts/dev.ps1::Invoke-Test``
+# 持同一语义（仅当调用方未显式设置 BOT_AUTOSYNC 时才默认 1，显式值原样透传）。
+# 显式 0/false/no/off（大小写不敏感）= 禁自动重录——V2.1 验收模式下生成物
+# 基线必须逐字节不变，自动 --write 不得把真实回归「洗绿」。
+_AUTOSYNC_ENABLE_VALUE = "1"
+
+
+def is_autosync_enabled(raw: str | None) -> bool:
+    """判定 autosync 自动 ``--write`` 联动是否启用。
+
+    仅当值为 ``"1"``（dev.ps1 未显式设置时的默认）时启用；显式
+    ``0/false/no/off``（大小写不敏感）及其他任何值一律禁用；未设置
+    （裸 pytest/CI）禁用，整个钩子零开销跳过。与历史 ``!= "1"`` 判定
+    字节级兼容：任何取值组合下的启用/禁用结论不变。
+    """
+    return raw == _AUTOSYNC_ENABLE_VALUE
+
+
 def _manifest_keys(raw: bytes | None) -> dict[str, str]:
     """把哈希清单字节解析成 {交付物: sha256}；解析失败返回空 dict。"""
     if not raw:
@@ -73,7 +92,7 @@ def run_autosync(root: Path | None = None) -> list[str]:
     的基线变了并发出 warning——自动修正保留「人无感」，但改动必须留痕，
     否则一次非有意的模板改动会被静默吸收成新的「正确基线」。
     """
-    if os.environ.get("BOT_AUTOSYNC") != "1":
+    if not is_autosync_enabled(os.environ.get("BOT_AUTOSYNC")):
         return []
     root = REPO_ROOT if root is None else root
     changed: list[str] = []
@@ -132,6 +151,42 @@ def _isolate_render_phase2_env(monkeypatch):
     契约测试断言「缺省=字节级现状」，套件内一律隔离；单测自设用 monkeypatch.setenv 在本 fixture 之后生效。"""
     monkeypatch.delenv("BOT_RENDER_MAX_CONCURRENCY", raising=False)
     monkeypatch.delenv("BOT_RENDER_WAIT_BUDGET_MS", raising=False)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _quarantine_render_pool_between_modules():
+    """模块边界收口错误卡渲染池 + cap-proto 执行器（2026-09-18 REAPER 清障；
+    CAPEXEC 收口席按其残余登记补 capability_protocols 一口）。
+
+    ``error_report._RENDER_POOL`` 与 ``capability_protocols._EXECUTOR``
+    （``cap-proto_0..3``，tests/test_v21_s10_protocols.py 经 invoke 拉起）都是
+    模块级常驻单例（非 daemon worker、仅 atexit 收口）：任一测试模块拉起后，
+    worker 线程会带进同会话后续任意模块，使线程面敏感用例（如
+    test_v21r2_lifecycle_r2 的停机 reaper 扫描）随**用例执行顺序**飘——
+    单独跑绿、组合/全量跑红。本 fixture 在每个测试模块前后各收口一次：
+    两个 ``_shutdown_*`` 均幂等（单例为 None 时仅一次锁+判空，零开销）、
+    ``wait=True`` 且不取消排队任务，与生产 atexit 同语义；shutdown 后池懒
+    重建，后续用例零感知。语义回归锁：tests/test_render_pool_hygiene.py
+    （组合复现命令见其文件头）。
+    """
+    try:
+        from plugins.bot_unified_runtime.domains.ops.monitor import error_report
+    except ModuleNotFoundError:  # autosync 骨架会话（tests/_autosync_fixture.py 最小仓）不含 domains 依赖闭包：模块缺位则池亦无从拉起，跳过即语义等价；真树模块缺位由 test_render_pool_hygiene 哨兵兜底
+        error_report = None
+    try:
+        from plugins.bot_unified_runtime.runtime import capability_protocols
+    except ModuleNotFoundError:  # 同上（骨架仓不含 runtime/capability_protocols.py）
+        capability_protocols = None
+
+    if error_report is not None:
+        error_report._shutdown_render_pool()  # 挡前序模块残留
+    if capability_protocols is not None:
+        capability_protocols._shutdown_capability_executor()
+    yield
+    if error_report is not None:
+        error_report._shutdown_render_pool()  # 不让本模块残留漏给后序
+    if capability_protocols is not None:
+        capability_protocols._shutdown_capability_executor()
 
 
 @pytest.fixture(scope="session", autouse=True)

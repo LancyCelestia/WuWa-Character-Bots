@@ -91,11 +91,11 @@ def _patch_sources(
             def _raise(*args: Any, **kwargs: Any) -> Any:
                 raise value
             monkeypatch.setattr(
-                f"plugins.bot_unified_runtime.capabilities.epic.{name}", _raise
+                f"plugins.bot_unified_runtime.domains.subscribe.capabilities.epic.{name}", _raise
             )
         else:
             monkeypatch.setattr(
-                f"plugins.bot_unified_runtime.capabilities.epic.{name}",
+                f"plugins.bot_unified_runtime.domains.subscribe.capabilities.epic.{name}",
                 lambda proxy="", _v=value: list(_v),
             )
 

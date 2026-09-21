@@ -16,8 +16,13 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
 )
-from plugins.bot_unified_runtime.decision import Dispatcher
-from plugins.bot_unified_runtime.decision.engine import (
+from plugins.bot_unified_runtime.decision.trace import (
+    InMemoryDecisionTraceSink,
+    get_decision_trace_sink,
+    set_decision_trace_sink,
+)
+from plugins.bot_unified_runtime.domains.core.decision import Dispatcher
+from plugins.bot_unified_runtime.domains.core.decision.engine import (
     BYPASS_ABILITIES,
     MUTUAL_GROUP_BYPASS,
     MUTUAL_GROUP_ROUTE,
@@ -26,8 +31,8 @@ from plugins.bot_unified_runtime.decision.engine import (
     CentralDecisionEngine,
     DecisionContext,
 )
-from plugins.bot_unified_runtime.decision.ingress import OneBotSource
-from plugins.bot_unified_runtime.decision.shadow import (
+from plugins.bot_unified_runtime.domains.core.decision.ingress import OneBotSource
+from plugins.bot_unified_runtime.domains.core.decision.shadow import (
     LEGACY_MODE,
     SHADOW_MODE,
     compare_with_legacy,
@@ -35,11 +40,6 @@ from plugins.bot_unified_runtime.decision.shadow import (
     normalize_decision_mode,
     reset_shared_state_for_tests,
     resolve_decision_mode,
-)
-from plugins.bot_unified_runtime.decision.trace import (
-    InMemoryDecisionTraceSink,
-    get_decision_trace_sink,
-    set_decision_trace_sink,
 )
 from plugins.bot_unified_runtime.runtime.base_router import clear_route_decision_cache
 from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
@@ -354,7 +354,7 @@ def test_config_key_defaults_and_normalizes() -> None:
 
 
 def test_pipeline_survives_shadow_observer_crash(monkeypatch) -> None:
-    import plugins.bot_unified_runtime.decision.shadow as shadow_module
+    import plugins.bot_unified_runtime.domains.core.decision.shadow as shadow_module
 
     def _boom(message, capability_id):
         raise RuntimeError("shadow exploded")
@@ -435,9 +435,13 @@ def test_onebot_source_normalize_delegates_to_existing_normalizer() -> None:
 
 
 def test_dispatcher_is_explicitly_disabled_in_phase1() -> None:
-    import pytest as _pytest
-
+    """V21-DISPATCH-001 起的阶段 1 合同：dispatch 不再恒抛 NotImplementedError，
+    但阶段 0 安全语义原样保持——默认（shadow）语境只记录**绝不发送**；
+    文本/卡片能力派发仍属阶段 2+（本测守住「未接管能力派发」边界）。"""
     dispatcher = Dispatcher()
     plan = CentralDecisionEngine().decide(DecisionContext(message=_message("hi")))
-    with _pytest.raises(NotImplementedError):
-        asyncio.run(dispatcher.dispatch(plan, DecisionContext(message=_message("hi"))))
+    outcome = asyncio.run(
+        dispatcher.dispatch(plan, DecisionContext(message=_message("hi")))
+    )
+    assert outcome.status == "shadow_recorded"
+    assert "not sent" in outcome.detail

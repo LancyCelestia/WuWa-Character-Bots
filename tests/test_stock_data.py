@@ -14,9 +14,12 @@ from collections.abc import Iterator
 import pytest
 
 from plugins.bot_unified_runtime.capabilities import user_copy
-from plugins.bot_unified_runtime.contracts.finance import PricePoint, StockQuote
-from plugins.bot_unified_runtime.sources import stock_data
-from plugins.bot_unified_runtime.sources.stock_data import (
+from plugins.bot_unified_runtime.domains.core.contracts.finance import (
+    PricePoint,
+    StockQuote,
+)
+from plugins.bot_unified_runtime.domains.finance.data import stock_data
+from plugins.bot_unified_runtime.domains.finance.data.stock_data import (
     fetch_stock_history,
     fetch_stock_quotes,
     format_stock_line,

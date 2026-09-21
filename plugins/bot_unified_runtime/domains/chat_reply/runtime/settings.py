@@ -408,6 +408,58 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
     "BOT_CONTENT_VIDEO_AUTO_SEND": (
         "解析能力持装配期 config 每消息读取（capabilities/content_parser.py），覆盖不可达"
     ),
+    # ---- 语音合成族（G-2 契约层 2026-09-20）：build_tts_capability 持装配期
+    # config 直读（domains/media/capabilities/tts.py），未走 settings store，
+    # 热改写成功但不可达——诚实拒绝优于半生效；U-09 c 案（全键+validator 进
+    # 热改面）待消费点改读 store 后批量回白名单。缺省值=预设表 v1 收编值。
+    "BOT_TTS_PRESET": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_MAX_CHARS": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_HARD_MAX_CHARS": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_MAX_AUDIO_BYTES": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_TIMEOUT_SECONDS": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_SPEED_FACTOR": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_TEMPERATURE": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_TOP_K": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_TOP_P": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_TEXT_LANG": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_TEXT_SPLIT_METHOD": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_CACHE_ENABLED": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_CACHE_MAX_BYTES": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_CACHE_MAX_AGE_DAYS": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_AUTO_REPLY_MAX_CHARS": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
+    "BOT_TTS_AUTO_REPLY_PROBABILITY": (
+        "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
+    ),
     # ---- 戳一戳族：PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* ----
     "BOT_POKE_ENABLED": (
         "PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* "
@@ -440,6 +492,37 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
     "BOT_POKE_PRIVATE_TEXT": (
         "PokeDispatcher 读合并层 config，但合并表未登记 bot_poke_* "
         "（capabilities/poke.py），覆盖不可达；接线后可回白名单"
+    ),
+    # ---- 中央出站防风暴闸 + 送达核验族（B4-spec §1.5/§3.2；七键登记收口）----
+    # 闸设置由 `build_outbound_gate` 在装配期以 callable 投影
+    # （`domains/transport/sender/outbound_gate.py::build_outbound_gate_settings` 读裸
+    # config），而合并层 `_RUNTIME_HOT_OVERRIDE_FIELDS` 未登记本族键 ⇒ set 写了不生效。
+    # 按 C-09「死开关不许骗人」先入重启清单；接线波补登记后可回白名单。
+    "BOT_OUTBOUND_GATE_ENABLED": (
+        "闸设置在装配期投影、合并层未登记；且总闸热翻会即时改变所有已接线聚合域的"
+        "主动投递行为（一键改行为），保守裁定需重启"
+    ),
+    "BOT_OUTBOUND_GATE_QUIET_DEFER_ENABLED": (
+        "同族：build_outbound_gate_settings 读裸 config，合并层未登记，覆盖不可达"
+    ),
+    "BOT_OUTBOUND_GATE_URGENT_SEVERITIES": (
+        "同族：build_outbound_gate_settings 读裸 config，合并层未登记，覆盖不可达"
+    ),
+    "BOT_OUTBOUND_GATE_MAX_PER_TARGET_PER_MINUTE": (
+        "规格 §1.3 承诺这两枚限流阈值可热改，但须接线波先在"
+        " _RUNTIME_HOT_OVERRIDE_FIELDS 登记（根 __init__.py）后方可回白名单"
+    ),
+    "BOT_OUTBOUND_GATE_MAX_PER_TARGET_PER_HOUR": (
+        "规格 §1.3 承诺这两枚限流阈值可热改，但须接线波先在"
+        " _RUNTIME_HOT_OVERRIDE_FIELDS 登记（根 __init__.py）后方可回白名单"
+    ),
+    "BOT_OUTBOUND_GATE_DB_PATH": (
+        "闸的滑窗 store 在装配期建立并持有连接，运行期改路径=计数账分裂；"
+        "永久重启键（不得进热改白名单）"
+    ),
+    "BOT_OUTBOUND_VERIFY_ENABLED": (
+        "消费点读裸 config 非合并层（根 __init__.py 队列 worker 作业与"
+        " domains/transport/sender/onebot.py），覆盖不可达；真机取证前也不宜热开"
     ),
     # ---- 半接线（诚实拒绝优于半生效）----
     "BOT_DOWNLOAD_PROXY": (
@@ -615,8 +698,6 @@ class RuntimeSettingsStore:
             self._quarantine_corrupt_file()
             self._mtime = 0.0
             return
-        if not isinstance(payload, dict):
-            return
         overrides = payload.get("overrides")
         if isinstance(overrides, dict):
             for key, value in overrides.items():
@@ -729,7 +810,18 @@ class RuntimeSettingsStore:
             )
             os.replace(temp_path, self.path)
             self._mtime = self.path.stat().st_mtime
-        except OSError:
+        except OSError as exc:
+            # 落盘失败必须留痕（D1-10）：内存态已生效、监听也已通知，管理员看到的是
+            # 「设置成功」，而重启后这条覆盖会静默丢失。磁盘满/权限/文件被占用都会
+            # 走到这里——此前连一行日志都没有，比「读到一个坏文件」（上面 warning +
+            # *.corrupt 保全）更隐身。
+            _logger.error(
+                "runtime settings failed to persist to %s: %s (%s) — overrides are live "
+                "in memory but WILL BE LOST on restart",
+                self.path.name,
+                type(exc).__name__,
+                exc,
+            )
             return
         if self._config_backend is not None:
             self._notify_change_listeners()

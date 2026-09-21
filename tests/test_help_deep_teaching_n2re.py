@@ -180,7 +180,7 @@ def test_documented_ranges_match_code_clamps() -> None:
             return ["line"]
 
     # /bot logs [数量]：文档宣称 1-200——验证真实钳制。
-    from plugins.bot_unified_runtime.capabilities.runtime_logs import (
+    from plugins.bot_unified_runtime.domains.ops.admin.runtime_logs import (
         build_logs_query_result,
     )
 
@@ -264,3 +264,27 @@ def test_alias_map_still_collision_free() -> None:
     assert set(_HELP_ALIAS_MAP) == seen
     for topic in ("随机图", "提醒", "搜图", "群文件", "文件", "日志"):
         assert normalize_help_topic(topic) == topic
+
+
+@pytest.mark.parametrize("query", ["功能管理", "feature"])
+def test_feature_help_teaches_commands_and_preserves_admin_visibility(query: str) -> None:
+    entry = _entry("功能管理")
+    assert entry["admin_only"] is True
+    assert "bot.runtime" in entry["capability"]
+    detail = entry["detail"]
+    admin_body = build_help_result(
+        request_id="feature-help-admin", query=query, is_admin=True,
+    ).body
+    for command in (
+        "/bot feature list", "/bot feature get <ID>",
+        "/bot feature enable|disable|reset <ID>",
+        "/bot feature preview <ID> on|off|reset",
+    ):
+        assert command in detail
+        assert command in admin_body
+    for text in ("作用", "参数", "内容", "意义", "仅管理员", "修改仅限超管", "预览仅限超管"):
+        assert text in detail
+        assert text in admin_body
+    assert "没有找到" in build_help_result(
+        request_id="feature-help-public", query=query, is_admin=False,
+    ).body

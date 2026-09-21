@@ -1739,6 +1739,12 @@ def test_submit_active_push_production_importers_are_allowlisted() -> None:
         "transporter/evil.py",
         "emergency_other/x.py",
         "emergencyinfo/x.py",
+        # WIRE-A2（施工图 §7.4-3 负样本）：目录名**以真身名开头**的兄弟目录。
+        # 这是 `startswith("domains/emergency_info")` 那种"看起来已经收紧"的写法
+        # 唯一还会放行的形态——今天 `emergency_info_v2` 若被谁建出来并 import 闸，
+        # 按字符串前缀判定它无声通过，而按目录段等值判定它当场出局。
+        "emergency_information/x.py",
+        "emergency_info_v2/x.py",
     ):
         path = PLUGIN_ROOT / "domains" / Path(sibling)
         assert not _under_directory(path, allowed_roots), (
@@ -1755,16 +1761,14 @@ def test_submit_active_push_production_importers_are_allowlisted() -> None:
 
 
 # ------------------------------------------------------------------ T6b 白名单活性
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "转正条件（LOCK-FIX F-2，按纪律不许拿假 importer 蒙）：生产面出现 ≥1 个"
-        "`submit_active_push` 的**真实使用**（AST 判 import 该符号或直接调用它）。"
-        "LOCK-AUDIT PROBE-3 实证今日全 plugins/ 树含该符号的文件只有闸自身 ⇒ 上一条"
-        "白名单锁是空集上的恒真。接线席落地当天本用例会 XPASS，strict=True 立刻把它"
-        "变成红——**删掉本标记即转正**，不许改成 assert True 或 skip 让它闭嘴。"
-    ),
-)
+# 转正记录（LOCK-FIX F-2 的原始转正条件，标记删掉、文字留在这里别丢）：
+#   转正条件＝生产面出现 ≥1 个 `submit_active_push` 的真实使用（AST 判 import 该符号
+#   或直接调用它）。LOCK-AUDIT PROBE-3 曾实证全 plugins/ 树含该符号的文件只有闸自身
+#   ⇒ 当时的白名单锁是空集上的恒真。2026-09-20 WIRE-A2 落 `domains/emergency_info/
+#   service/push.py`（4-面11 规定的唯一主动投递触点）后条件成立，按纪律**删标记转正**，
+#   未改成 `assert True`、未 skip。
+#   诚实边界：本条只证明「域内触点确实存在且只有它引用闸」；它**不**证明
+#   「已有一条预警真的投出去了」——那要等根 `__init__.py` 装配 + 用户提权重启。
 def test_submit_active_push_has_at_least_one_production_caller() -> None:
     """正向断言：唯一入口不是「没人用所以没人越界」的空中楼阁。
 
@@ -1798,12 +1802,17 @@ def test_allowlist_helper_itself_is_not_vacuous() -> None:
         "transport/sender/deep/nested.py",
         "emergency_info/service/dedupe.py",
         "emergency_info/sources/nmc_alarm.py",
+        # WIRE-A2：域内唯一投递触点必须落在白名单**内侧**（接线当天若判外，
+        # T6 会以「越界者」的形式假红，这条先行把它钉成实比）。
+        "emergency_info/service/push.py",
     ]
     outside = [
         "transport_legacy/old.py",
         "transporter/evil.py",
         "chat_reply/capabilities/echo.py",
         "assistant/campus/campus.py",
+        # 同 WIRE-A2 负样本口径：以真身名开头的兄弟目录不得放行。
+        "emergency_info_v2/service/push.py",
     ]
     assert all(_under_directory(PLUGIN_ROOT / "domains" / rel, roots) for rel in inside)
     assert not any(_under_directory(PLUGIN_ROOT / "domains" / rel, roots) for rel in outside)

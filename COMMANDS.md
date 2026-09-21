@@ -14,13 +14,100 @@
 - 模块深页：`/bot help <模块名>`（如 `/bot help 点歌`）；分类手册：`/bot help 管理员`、`/bot help 大模型`、`/bot help 子功能`。
 - 普通成员只见公开模块；管理员另见管理员专属模块（含本手册全部内容）。
 
+<!-- BEGIN AUTO:COMMANDS-MODULE-INDEX generated-from=_HELP_ENTRIES by tests/test_commands_md_generated_index.py; 请勿手改本块 -->
+## 模块索引（自动生成 · 逐 topic 覆盖）
+
+> 本节由 `tests/test_commands_md_generated_index.py` 从 `echo.py` 的 `_HELP_ENTRIES` 自动投影，
+> 逐模块列出 topic 与权限，机械保证 COMMANDS.md 覆盖帮助注册表全部主题；
+> 参数、别名与触发词明细以 [docs/command-catalog.md](docs/command-catalog.md) 与 `/bot help <模块>` 为准，不在此手写。
+
+- 功能管理（仅管理员）：bot.runtime（/bot feature）
+- 状态（仅管理员）：bot.status
+- 记忆（普通用户可用）：bot.memory
+- 为什么（仅管理员）：bot.why
+- 回执（仅管理员）：/bot receipt
+- 审计（仅管理员）：/bot audit
+- 最近（仅管理员）：/bot recent
+- 队列（仅管理员）：/bot queue
+- 上下文（仅管理员）：/bot context
+- 对话（仅管理员）：bot.dialogue
+- 接入（仅管理员）：/bot setup llm
+- 配置（仅管理员）：bot.config
+- 就绪（仅管理员）：bot.readiness
+- 角色（仅管理员）：bot.roles
+- 人格（仅管理员）：bot.persona
+- 路由（普通用户可用）：/bot route
+- 历史（仅管理员）：bot.history
+- 暂停（仅管理员）：bot.control
+- 回复（仅管理员）：/bot reply
+- 模型（仅管理员）：/bot model
+- 用量（仅管理员）：/bot model usage
+- 设置（仅管理员）：/bot runtime
+- 搜索（仅管理员）：/bot search
+- 解析（仅管理员）：/bot parse
+- 凭据（仅管理员）：/bot cookie
+- 群策略（仅管理员）：/bot group
+- 群文件（仅管理员）：/bot 群文件
+- 日志（仅管理员）：bot.logs
+- 文件（仅管理员）：matcher:admin_file_export（文件导出）
+- 身份（仅管理员）：/bot identity
+- 怪癖（仅管理员）：/bot quirk
+- 限流（仅管理员）：/bot runtime set（配置型模块，无独立命令）
+- 合并转发（仅管理员）：/bot runtime set（配置型模块，无独立命令）
+- 群摘要（仅管理员）：/bot runtime set（配置型模块，无独立命令）
+- 视频理解（仅管理员）：/bot runtime set（配置型模块，无独立命令）
+- 运行开关（仅管理员）：.env（持久化开关，改后重启生效，无运行时命令）
+- 邮件（仅管理员）：on_command:mail
+- Telegram（仅管理员）：.env（Telegram 适配器配置）
+- 供应商（仅管理员）：.env（模型注册表；/bot model 亦可视图）
+- 订阅（普通用户可用）：bot.subscribe
+- 点歌（普通用户可用）：bot.music / bot.music_mode
+- 表情（普通用户可用）：bot.meme
+- 偷表情（普通用户可用）：bot.meme_library
+- 搜图（普通用户可用）：on_message:搜图
+- 天气（普通用户可用）：bot.weather
+- 行情（普通用户可用）：bot.market
+- 个股行情（普通用户可用）：bot.stocks
+- 商品行情（普通用户可用）：bot.commodities
+- 国债收益率（普通用户可用）：bot.bond
+- 北向资金（普通用户可用）：bot.northbound
+- 汇率（普通用户可用）：bot.fx
+- 占卜（普通用户可用）：bot.divination
+- 快报（普通用户可用）：bot.news
+- 维基（普通用户可用）：bot.wiki
+- 萌娘百科（普通用户可用）：bot.moegirl（二次元问句路由同归此能力）
+- 历史上的今天（普通用户可用）：bot.today_history
+- 下载（普通用户可用）：/bot download
+- 昵称（普通用户可用）：bot.alias
+- 链接（普通用户可用）：bot.content
+- 草稿（普通用户可用）：bot.auto_send
+- 吃什么（普通用户可用）：bot.eat
+- 媒体归档（仅管理员）：bot.media_archive
+- 群信息（普通用户可用）：bot.group_info
+- 好感度（普通用户可用）：bot.affinity
+- Epic（普通用户可用）：bot.epic
+- 随机图（普通用户可用）：bot.randpic
+- 提醒（普通用户可用）：bot.reminder
+- 笔记（普通用户可用）：bot.reminder
+- 收件箱（普通用户可用）：bot.daily_assist
+- 语音（普通用户可用）：bot.tts
+- 帮助（普通用户可用）：bot.help
+- 聊天（普通用户可用）：bot.chat
+- 戳一戳（普通用户可用）：on_notice:戳一戳
+- 表情收库（普通用户可用）：meme_absorb（群图自动收库，无命令）
+- 自然语言（普通用户可用）：bot.natural_command
+- 忽略（仅管理员）：matcher:IGNORE（空消息静默；未知命令形态回引导）
+- 决策（仅管理员）：/bot decision
+- 紧急信息（仅管理员）：bot.emergency_info
+<!-- END AUTO:COMMANDS-MODULE-INDEX -->
+
 ## 管理员专属（/bot 前缀命令族）
 
 | 模块 | 指令 | 作用 | 关键参数 |
 |---|---|---|---|
 | 状态 | `/bot status` | 运行状态摘要（暂停/角色/存储/LLM） | 无 |
 | 为什么 | `/bot why [id]` | 解释最近一次决策与错误 | id：可选，request_id/debug_id |
-| 决策影子 | `/bot decision [N]`（别名 `决策`/`决策引擎`/`decision`，昵称形式等价） | 查看影子决策引擎的路由分歧痕迹 | N：条数可选，1-100 默认 20；内容=时间/路由类别/引擎判定与现行判定/一致或分歧/耗时，自由文本字段打码截断，不含消息原文；痕迹已落盘、重启可查历史；影子模式默认关闭（legacy_only）下查到「暂无记录」属预期，不是故障 |
+| 决策影子 | `/bot decision [N]` —— **⚠ 当前不可用（未接线）**：帮助与别名层已登记，但 `/bot` 指令分发链无 `decision` 落点 ⇒ 发出即坠 `/bot help` 兜底页，**不会**返回痕迹清单 | 实现体 `build_decision_query_result`（`domains/chat_reply/capabilities/echo.py`）与影子痕迹落盘齐备；缺的是分发接线一行 | N 的取值与缺省**不在本文抄**：以 `echo.py` 的 `_DECISION_QUERY_DEFAULT_LIMIT` / `_DECISION_QUERY_MAX_LIMIT` 为准；接线后本行恢复登记<br>取证（复跑即可，勿信本文转述）：`grep -rn '"decision"' plugins/bot_unified_runtime/__init__.py` 无分发分支、`grep -rn build_decision_query_result plugins/` 除定义外零消费者；详见 `docs/design/link-unification-audit-20260920.md` §B-2 与 `docs/design/audit-20260920-unify-U7-command.md` U7-F7 |
 | 回执 | `/bot receipt <id>` | 查发送回执 | id 必填 |
 | 审计 | `/bot audit <request_id>` | 查审计事件 | request_id 必填 |
 | 最近 | `/bot recent [数量]` | 诊断+回执+审计合并摘要 | 数量 1-20，默认 5 |
@@ -50,7 +137,7 @@
 
 | 模块 | 指令 | 作用 | 关键参数 |
 |---|---|---|---|
-| 模型 | `/bot model list\|set\|add\|update\|priority\|effort\|think\|price\|search\|usage\|health\|probe\|routes\|vision\|remove\|reset`（`/bot llm` 诊断） | 模型注册表/故障转移/健康/计费总控 | add：`<id> model= base_url= key= [tags=] [effort=] [group=] [priority=]`；effort/think 档位 off\|low\|medium\|high\|xhigh\|max(default=清除)；price `input=/output=/cache_read=/cache_creation=/per_call=`（元/1M tokens；per_call 为元/请求，按次计费）；usage [today\|YYYY-MM-DD]；全部热改即时生效 |
+| 模型 | `/bot model list\|set\|add\|update\|priority\|effort\|think\|price\|search\|usage\|health\|probe\|routes\|vision\|remove\|reset`（`/bot llm` 诊断） | 模型注册表/故障转移/健康/计费总控 | add：`<id> model= base_url= key= [tags=] [effort=] [group=] [priority=]`；effort/think 档位 off\|low\|medium\|high\|xhigh\|max(default=清除)；price `input=/output=/cache_read=/cache_creation=/per_call=`（元/1M tokens；per_call 为元/请求，按次计费）；usage [today\|YYYY-MM-DD]；**是否即时生效逐键为准**：可写面＝`domains/chat_reply/runtime/settings.py` 的 `SETTABLE_KEYS`，被拒并提示需重启的键列在同文件 `RESTART_REQUIRED_KEYS`（成员与计数不在本文抄）；`/bot runtime get` 可当场看白名单 |
 | 用量 | `/bot model usage [日期]`、`/bot model price …` | Token 账单、价格维护、阈值提醒与 13/18/23 点定时报告 | 日期可选；阈值 .env：BOT_USAGE_ALERT_* |
 | 设置 | `/bot runtime set\|get\|list\|reset\|nickname\|persona\|model\|instance` | 运行时参数热改（白名单键，优先于 .env，可 `--instance <名称>`） | persona：list\|switch `<id\|default>`\|probability `<id> <0-1>`；nickname：add\|remove\|list |
 | 供应商 | BOT_MODEL_REGISTRY（.env） | 静态供应商注册表 | priority 1-999；探测脚本 `--max-tokens` 1-4096 默认 32 |

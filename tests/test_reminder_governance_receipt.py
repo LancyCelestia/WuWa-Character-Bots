@@ -211,7 +211,7 @@ def test_dirty_stored_moment_expires_with_receipt(tmp_path) -> None:
 
 def test_shared_store_build_path_emits_receipt_too(tmp_path, monkeypatch) -> None:
     """build_reminder_store 注入路径下同样出回执（生产调度消费的就是它）。"""
-    import plugins.bot_unified_runtime.character.reminders as reminders_mod
+    import plugins.bot_unified_runtime.domains.schedule.store.reminders as reminders_mod
 
     monkeypatch.setattr(reminders_mod, "_STORES", {})
     config = SimpleNamespace(bot_reminder_db_path=str(tmp_path / "r.sqlite3"))

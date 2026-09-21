@@ -34,4 +34,15 @@ ALLOWLIST: dict[str, dict[str, str]] = {
             "稳定世界观事实；2026-09-14 G-08 扩面席预扫描合规。"
         ),
     },
+    # R-18 内容感知路由 L1 强词表本体（检测器词库字面量，非用户可见文案）。
+    "r18_terms": {
+        "plugins/bot_unified_runtime/domains/chat_reply/runtime/content_route.py": (
+            "R-18 内容感知路由 L1 强词表本体（2026-09-17 内容政策 v2 批，台账 #36）："
+            "这些字面量是本地信号检测器的判定词库，永不直接出站；真正出站面由 "
+            "chat 能力安全链（content_safety/session_type 门）承担。"
+            "2026-09-18 W15d 重组席（RWC4）登记：真身自 runtime/（扫描面外）迁入 "
+            "domains/chat_reply/runtime/（RWC1 扩面扫描范围内）后首次被扫描命中，"
+            "8 处 critical 全部为词表元组成员，逐条核对无新增语义。"
+        ),
+    },
 }

@@ -18,13 +18,13 @@ from typing import Any
 import httpx
 import pytest
 
-import plugins.bot_unified_runtime.llm.providers as providers_module
-from plugins.bot_unified_runtime.llm.model_router import (
+import plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers as providers_module
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
     _PARAM_STRIP_RETRY_KINDS,
     ModelRouter,
     ModelSpec,
 )
-from plugins.bot_unified_runtime.llm.providers import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
     LLMReply,
     OpenAICompatibleLLMProvider,
     _classify_http_error,

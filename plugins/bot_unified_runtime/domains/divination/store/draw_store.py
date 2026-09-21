@@ -12,10 +12,17 @@
   - ``idempotency_key`` UNIQUE（客户端幂等键，同键并发只建一次——
     先查后插 + 唯一索引兜底，竞态输者读回赢者的行）；
   - ``(kind, dedupe_key)`` 部分唯一索引（fortune 的 day_key 唯一——
-    同日跨会话/跨幂等键/重启/密钥轮换都命中既有行不重抽）。
+    同日跨会话/跨幂等键/重启/密钥轮换都命中既有行不重抽；聊天侧「每日一抽」
+    同理发一个确定性 ``dedupe_key``）。
 - 配额：塔罗随机抽取的每日上限与冷却在 ``persist_draw_once`` 的同一
   ``BEGIN IMMEDIATE`` 写锁事务内判定（并发不超卖）；命中 → ``rate_limited``
-  （contracts/errors.py 已注册码）。运势不入配额（每日一次幂等 + 重读不限）。
+  （contracts/errors.py 已注册码）。运势不入配额（每日一次幂等 + 重读不限）；
+  塔罗里 ``dedupe_key`` 非空的行属幂等重读类，同样不入配额计数与冷却。
+- **WP9 收编（2026-09-21）**：本模块是占卜域**唯一**的存储真身与唯一的一颗
+  ``DrawError``——聊天能力半边（``domains/divination/capabilities/divination.py``）
+  与 REST 半边（``service/divination_service.py``）共用这里的 ``DrawStore`` /
+  ``DrawRecord`` / ``QuotaPolicy``，旧 ``data/draw_store.py`` 那套「另开一库、
+  另建两表、另立一颗异常」的实现已退役为再导出垫片（旧表不 DROP、不清空）。
 - 本模块只依赖标准库，零网络零第三方；错误码全部取自 contracts/errors.py
   注册表（本席只用 rate_limited，域校验码在 runtime 服务半边抛出）。
 """
@@ -383,13 +390,20 @@ class DrawStore:
         record: DrawRecord,
         quota: QuotaPolicy | None,
     ) -> None:
-        """配额判定（调用方处于 BEGIN IMMEDIATE 写锁事务内）。"""
+        """配额判定（调用方处于 BEGIN IMMEDIATE 写锁事务内）。
+
+        只计「随机抽取」：``dedupe_key`` 非空的塔罗行是幂等重读类（聊天侧
+        每日一抽=同日同一行的确定牌），既不占当日次数、也不刷新冷却——与
+        收编前聊天侧 ``source='random'`` 过滤同语义（WP9 把这条口径升成
+        存储层唯一判据，不再靠第二张表的 source 列）。
+        """
         if quota is None or record.kind != "tarot":
             return
         count_today = connection.execute(
             """
             SELECT COUNT(*) FROM draws
-            WHERE kind = 'tarot' AND principal_id = ? AND bot_id = ?
+            WHERE kind = 'tarot' AND dedupe_key = ''
+              AND principal_id = ? AND bot_id = ?
               AND workspace_id = ? AND local_day = ?
             """,
             (
@@ -404,7 +418,8 @@ class DrawStore:
         last = connection.execute(
             """
             SELECT MAX(occurred_epoch) FROM draws
-            WHERE kind = 'tarot' AND principal_id = ? AND bot_id = ?
+            WHERE kind = 'tarot' AND dedupe_key = ''
+              AND principal_id = ? AND bot_id = ?
               AND workspace_id = ?
             """,
             (

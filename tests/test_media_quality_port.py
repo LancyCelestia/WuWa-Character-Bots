@@ -16,8 +16,13 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from plugins.bot_unified_runtime.sources.parsers import http_util, platforms_generic
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
+from plugins.bot_unified_runtime.domains.link_parse.parsers import (
+    http_util,
+    platforms_generic,
+)
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+)
 
 # ---------- ① xhs 视频 stream 质量排序 ----------
 
@@ -253,7 +258,7 @@ def test_http_get_5xx_keeps_legacy_no_retry_semantics(monkeypatch):
 
 def test_xhs_best_stream_url_legacy_url_key_fallback() -> None:
     """旧本地流形态（仅 "url" 键，无 masterUrl/backupUrls）不空转（回归）。"""
-    from plugins.bot_unified_runtime.sources.parsers.platforms_generic import (
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.platforms_generic import (
         _xhs_best_stream_url,
     )
 

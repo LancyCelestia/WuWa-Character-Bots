@@ -15,12 +15,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities import weather as weather_mod
-from plugins.bot_unified_runtime.capabilities.weather import (
+from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.weather.capabilities import (
+    weather as weather_mod,
+)
+from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
     _nmc_query_with_retry,
     build_weather_capability,
 )
-from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 
 _ALARM_FIXTURE: dict[str, Any] = {
     "data": {

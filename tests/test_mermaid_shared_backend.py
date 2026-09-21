@@ -26,8 +26,8 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.output import render_backends as rb
-from plugins.bot_unified_runtime.output.card_render import bridge
+from plugins.bot_unified_runtime.domains.render import render_backends as rb
+from plugins.bot_unified_runtime.domains.render.card_render import bridge
 
 
 class _StubPlaywrightBackend:

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities.runtime_admin import _handle_model_command
+from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
+    _handle_model_command,
+)
 from plugins.bot_unified_runtime.llm.model_router import (
     ModelSpec,
     normalize_priority_entries,
@@ -109,7 +111,6 @@ def test_detail_and_concise_prompts_have_no_contradictory_runtime_rules():
 
 
 def test_chat_respects_detail_default_and_runtime_override(monkeypatch):
-    from plugins.bot_unified_runtime.capabilities import chat
     from plugins.bot_unified_runtime.character.providers import (
         NullCharacterContextProvider,
     )
@@ -119,6 +120,7 @@ def test_chat_respects_detail_default_and_runtime_override(monkeypatch):
         IncomingMessage,
         SessionType,
     )
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import chat
     from plugins.bot_unified_runtime.llm import StaticLLMProvider
     captured = []
     def result(**kwargs):
@@ -169,7 +171,6 @@ def test_priority_refresh_preserves_alternate_keys_and_aliases():
 
 
 def test_fast_search_results_reach_generation_without_page_fetch(monkeypatch):
-    from plugins.bot_unified_runtime.capabilities import chat
     from plugins.bot_unified_runtime.character.providers import (
         NullCharacterContextProvider,
     )
@@ -179,8 +180,9 @@ def test_fast_search_results_reach_generation_without_page_fetch(monkeypatch):
         IncomingMessage,
         SessionType,
     )
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import chat
+    from plugins.bot_unified_runtime.domains.core.search.web_search import WebSearchHit
     from plugins.bot_unified_runtime.llm import StaticLLMProvider
-    from plugins.bot_unified_runtime.sources.web_search import WebSearchHit
     captured = []
     class Search:
         def search(self, query, **kw):

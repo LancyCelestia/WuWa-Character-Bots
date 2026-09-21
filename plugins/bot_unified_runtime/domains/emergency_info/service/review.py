@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
 from typing import Protocol
 
@@ -67,28 +67,100 @@ class ReviewOutcome(StrictBaseModel):
     status: EmergencyStatus = EmergencyStatus.PENDING
 
 
+def validate_auto_approve_sources(
+    values: Iterable[str] | None, registered: Iterable[str] | None
+) -> tuple[frozenset[str], tuple[str, ...]]:
+    """权威源白名单校验（WP3 交付④，审计 E6-N2）：非真身 `SOURCE_ID` 的取值**忽略并点名**。
+
+    为什么必须有：`auto_approve_sources` 此前全程只做字符串相等，填成**模块名**
+    （`nmc_alarm`，而真身 `nmc_alarm.SOURCE_ID` 是 `nmc`）会**静默不命中**——
+    机制在、名单在、一条也不过审，且一行告警都没有；姊妹键 `bot_emergency_info_sources`
+    早有 2.A 点名先例（根装配 `registered = {task.source_id ...}` + warning），
+    这个键没有。现在与 `sources` 同口径：**合法值只取真注册表**（本函数入参
+    `registered` 由调用方从 `alert_taxonomy.SOURCE_IDS` 搬运，与本件常量的逐字相等
+    由 AST 锁 `test_taxonomy_source_ids_match_the_real_source_constants` 钉住），
+    差集原样返回给装配侧说出去。
+
+    `registered=None/空` ⇒ 不校验（返回原集合、差集空）：本函数是**校验器**不是开关，
+    拿不到注册表时绝不把用户的名单吞掉。
+    """
+    kept = {
+        stripped
+        for stripped in (
+            str(value or "").strip() for value in (values or ()) if value is not None
+        )
+        if stripped
+    }
+    if registered is None:
+        return frozenset(kept), ()
+    known = {
+        stripped
+        for stripped in (str(value or "").strip() for value in registered)
+        if stripped
+    }
+    if not known:
+        return frozenset(kept), ()
+    dropped = sorted(kept - known)
+    return frozenset(kept & known), tuple(dropped)
+
+
 class ReviewGate:
-    """pending → approve/reject 审核门；纯判定 + 委托存储，零网络零 LLM。"""
+    """pending → approve/reject 审核门；纯判定 + 委托存储，零网络零 LLM。
+
+    权威源自动过审（D-8(a)，2026-09-20 用户裁定）：`auto_approve_sources` 命中的
+    条目入库即 approved，人工报料仍走 pending。**缺省空集合=整机制关闭**，
+    与「白名单空绝不猜群」同向；人工裁决门一寸未松。
+    """
+
+    #: 自动过审条目的审核痕迹字面（可审计：区分"自动"与"人工"）
+    AUTO_APPROVED_BY = "auto:authoritative_source"
 
     def __init__(
-        self, store: ReviewStore, *, authorizer: Callable[[str], bool] | None = None
+        self,
+        store: ReviewStore,
+        *,
+        authorizer: Callable[[str], bool] | None = None,
+        auto_approve_sources: frozenset[str] | Sequence[str] = frozenset(),
     ) -> None:
         self._store = store
         self._authorizer = authorizer
+        self._auto_approve = frozenset(
+            stripped
+            for stripped in (
+                str(source_id or "").strip()
+                for source_id in (auto_approve_sources or ())
+            )
+            if stripped
+        )
+
+    # ------------------------------------------------------------ 权威源判定
+
+    def is_authoritative_source(self, source_id: str) -> bool:
+        """该来源是否自动过审白名单成员（唯一判据，消费方不得自建第二份名单）。"""
+        if not self._auto_approve:
+            return False
+        return str(source_id or "").strip() in self._auto_approve
 
     # ------------------------------------------------------------ 入库（propose）
 
-    def submit(self, item: EmergencyItem) -> EmergencyItem:
-        """报料入库：无论调用方传什么状态，一律钉回 pending 并清空审核痕迹。
+    def submit(self, item: EmergencyItem, *, at: datetime | None = None) -> EmergencyItem:
+        """报料入库：人工报料一律钉回 pending 并清空审核痕迹。
 
         等级也在入库时清空——「approve 后才参与定级」（D-8）在这里是结构性
         保证：pending 条目身上不带 level，投递侧就没有可绕过的现成等级可用。
+
+        权威源条目（D-8(a)）例外：状态直接 approved、审核痕迹记
+        `AUTO_APPROVED_BY`，**但等级仍留 None**——定级唯一出口仍是
+        `publishable_level()`，这里过审不等于提前塞一个等级进投递面。
         """
+        auto = self.is_authoritative_source(item.source_id)
         forced = item.model_copy(
             update={
-                "status": EmergencyStatus.PENDING,
-                "reviewed_by": "",
-                "reviewed_at": None,
+                "status": (
+                    EmergencyStatus.APPROVED if auto else EmergencyStatus.PENDING
+                ),
+                "reviewed_by": self.AUTO_APPROVED_BY if auto else "",
+                "reviewed_at": as_utc(at) if (auto and at is not None) else None,
                 "level": None,
             }
         )
@@ -209,4 +281,4 @@ class ReviewGate:
         return self._store.list_by_status(EmergencyStatus.PENDING, limit=limit)
 
 
-__all__ = ["ReviewGate", "ReviewOutcome", "ReviewStore"]
+__all__ = ["ReviewGate", "ReviewOutcome", "ReviewStore", "validate_auto_approve_sources"]

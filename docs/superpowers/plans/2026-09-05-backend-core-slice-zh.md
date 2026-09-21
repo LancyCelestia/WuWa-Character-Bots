@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - 只修改当前源码工作区，不扫描或写入 `ChatBot_Runtime`、`ChatBot_Archive` 或上级目录。
-- 默认执行路径离线，不调用网络、不连接 NapCat/Telegram、不发送真实消息。
+- 默认执行路径离线，不调用网络、不连接 SnowLuma/Telegram、不发送真实消息。
 - 不把 `.env`、密钥、Cookie、SQLite、FAISS、聊天记忆、日志、缓存或 Runtime 虚拟环境纳入提交。
 - 复用现有 contracts、RuntimePipeline、chat capability、knowledge provider 和发送回执，不新增平行业务链路。
 - 每项新行为先写失败测试并确认失败，再写最小实现。

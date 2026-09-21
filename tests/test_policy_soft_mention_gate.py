@@ -10,7 +10,7 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
 )
-from plugins.bot_unified_runtime.policy.gate import (
+from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
     PolicySettings,
     evaluate_policy,
 )

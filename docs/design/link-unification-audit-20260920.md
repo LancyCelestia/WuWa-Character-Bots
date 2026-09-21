@@ -682,3 +682,63 @@ SETTABLE/RESTART/HOT 三表成员数。**新增节须同步进 `verify_hashes` �
    仅确认 `docs/rendering-contract.md` 与 `DESIGN-SPEC.md` 在 `verify_hashes` 清单内（有门）。
 10. **本席自己的 200 抽样与 3837 全量口径差异**：抽样用于人工核性质、全量用于计数；
     两者不可混用。下游若引用，请引 D-1 表 + D-3 修正，不要引 `probe_d.py`/`d4`/`d5` 的中间数。
+
+---
+
+## 10. DOC-FIX-2 落地回执 + 热面待落档（2026-09-20 追加，不重排上文）
+
+追加席：DOC-FIX-2（执行尾段）。冷热判据一律实测：`ls -l --time-style=+%H:%M:%S` +
+`git status --porcelain <f>`，测量时刻 = 本机 05:06–05:20 之间。
+
+### 10.1 已吃掉（冷面，逐处自证）
+
+| 请求 | 文件 | 冷热实测 | 改动 | 自证 |
+|---|---|---|---|---|
+| R19 [D] | `docs/db-owners.md` | mtime 03:27:21（>90 分钟无人在写），状态 ` M`（7/0，系 v21r5 波未提交存量）| 表头后加「路径时效声明」块：认库名与 owner 语义、路径按符号名现查真身、**不许人工逐行改路径列**、指常驻门 `tests/test_doc_link_integrity.py`。**故意不写条数**（数字副本正是本审计的病），计数由门实测 | `git diff --numstat` 由 `7 0` → `18 0`（净增 11 行，全部在我那段） |
+| R11 [D] | `COMMANDS.md:23` | clean、mtime 04:00:32（>60 分钟）| 「决策影子」行改写：显式标 **当前不可用（未接线）**、给复跑取证命令、参数缺省改指符号 `_DECISION_QUERY_DEFAULT_LIMIT`/`_DECISION_QUERY_MAX_LIMIT` 不再抄数值 | 本席复核证据链：`grep -rn '"decision"' plugins/bot_unified_runtime/__init__.py` 零分发分支（同族 `"receipt"` 分支在 `__init__.py:6645` 对照）；`grep -rn build_decision_query_result plugins/` 除定义外零消费者（仅 `tests/test_decision_trace_persistence.py` 引用）；`runtime/aliases.py:188` 只登记别名 ⇒ 解析层可达、执行层无落点，与 §B-2 一致 |
+| R12 [D] | `COMMANDS.md:53` | 同上 | 删「全部热改即时生效」全称断言，改指 `settings.SETTABLE_KEYS`/`RESTART_REQUIRED_KEYS` + `/bot runtime get` | 同上 numstat：`2 2` |
+
+### 10.2 热面 / 无基线 / 归属他席：不改，登记「何时可改」判据
+
+| 请求 | 面 | 实测状态 | 何时可改（判据） |
+|---|---|---|---|
+| R4 R5 | `docs/design/tts-contract-layer.md`（04:58 ` M`）、`tts-handover-20260919.md`（05:06 ` M`）| **已被 CATALOG-FIX 席就地做掉**（现文已删成员清单、改指 `_is_final_failure_retcode`，并落四态口径）⇒ 本席不再动，避免同面撞车 | 已闭环；防再漂＝新门 `test_protocol_enum_*` 接管 |
+| R6 | `AGENTS.md:189`、`docs/HANDBOOK.md:2390`（均 04:50/04:51 ` M`）| 「白名单 8 码」数字副本仍在 | 两席写完、mtime 静默 >30 分钟且 `git status` 无新增时，按 §7 R6 原文改；改后 `tests/test_doc_link_integrity.py` 的 `retcode 计数副本` 判据自动盯住（史实行含哈希者走豁免，勿指望门去喊这两行） |
+| R7 R16 R20 R22 | `AGENTS.md`（04:50 ` M`，每次会话自动载入）| 未动 | 同上：**冷判据** = mtime >30 分钟 + 状态无变化；R20 的域数、R22 的运行态断言建议与 R9/R18 生成化同一批落，避免二次手抄 |
+| R2 R3 | `docs/design/control-plane-events.md`（`??` 未跟踪，无基线）、`control_plane/events.py` | 未动（本仓纪律：untracked 件还原不可自证）| 该文档入库（`git add`）后即成棘轮面；届时把 :59 改指链，门侧 `collect_enum_copies(skip_inflight=True)` 会立刻验出副本归零 |
+| R1 R8 R10 R13 R14 R15 | 生产代码面（`control_plane/api/v1.py`、`domains/core/decision/outbound_registry.py`、`echo.py`、`config-catalog-full.md`、根 `__init__.py`）| 全部**未动**——简报禁「改生产代码配文档」，且 HELP-1/CATALOG-FIX/LOCK-FIX-2 已占面 | 各 owner 席施工；`v1.py:187` 手抄枚举现由新门的 `test_inflight_wave_docs_do_not_explode` 间接可见（该件 untracked） |
+| R9 R18 R19[G] R21 | 生成物 `docs/auto-facts.md` / `scripts/doc_sync.py` | 未动（生成物禁手改、禁 `--write`）| doc_sync 席执行；G-4 落地后 AGENTS 载体列与 db-owners 真身列改指生成节，本席棘轮基线随之下调（只降不升，属预期） |
+| R17 | `docs/design/v21r2-handbook-sync-draft.md`、`v21r4-b-doc-sync-draft.md`（`??`）| 未动（他席草稿、无基线）| 草稿 owner 自行去 `design/` 前缀；入库瞬间这些死链从「在飞上限档」落进 `_BASELINE_MD_DEAD_LINKS = 2` 的硬棘轮 ⇒ 届时必须一并修 |
+
+### 10.3 本席新增的常驻门（§8 规格的落地态）
+
+`tests/test_doc_link_integrity.py`，17 例全绿、ruff/mypy 净、纯静态（零 import 插件包）。
+
+- **G-1 落地**：坐标四类（死坐标硬零限 `AGENTS.md`/`COMMANDS.md` + 其余棘轮 123 / 越界 3 /
+  垫片 3 / 旧路径 837）+ markdown 死链棘轮 2。豁免**双机制**：文件级史实件类 + 行级日期锚
+  （含日期戳/提交哈希/「已入库·旧口径·勘误·作废」字样），外加**显式条目清单**（现 1 条，
+  带理由），并由 `test_exemptions_are_all_still_needed` 反向锁死过期豁免。
+  未跟踪件（他席在飞草稿）单列上限档 `167`，**入库即自动落进棘轮/硬零** ⇒ 在飞脏账带不进史实。
+- **G-2 部分落地（协议面）**：真身从源码解析（`_is_final_failure_retcode` 10 码、
+  `event_store.EVENT_SOURCES` 12 项）；**非等值副本硬零**、等值副本棘轮（已跟踪件现为 0）、
+  数字副本「N 码」比对亦红。**段类型族（§A-5）判为不可立门**——全仓无中央真身、
+  同名两套成员（审计本身亦「不开必须合并的处方」），故不硬凑一条会误伤的断言。
+- **G-3/E-1 落地为归属表子门**：`AGENTS.md` 第四部分载体列四档判定
+  （字面真身 5 / 垫片 35 / 旧路径 15 / 彻底失效 0），dead 走硬零、误导面 50 走棘轮、
+  字面真身设**地板**（不得低于开工实测 5 条）⇒ 该列只会越改越真，不会整体失真回潮。
+- **防假锁**：三条负样本（假坐标 / 假 retcode 副本 / 假载体行）内嵌自检；
+  另做**真文件变异自证**（`docs/db-owners.md` 追加三行做坏 ⇒ 5 条断言同时红，
+  报错逐条给 `文档:行 -> 所引 / 漂移成员 / 修法`；还原 `cp` 二进制通道 + `cmp` 字节等值 +
+  sha256 前后一致 `2775228…6cceb0`，还原后 17 例复绿）。
+
+### 10.4 与 §8 规格的偏差（如实）
+
+1. 审计 G-1 要求「符号就近」判据 warn-only ⇒ 本席**未实现符号档**（假阳性率已被 §D-3 证伪两次），
+   改为「行容量 + 文件可解析 + 垫片/旧路径分类」三档，符号级校验留给未来带 AST 索引的门。
+2. 审计 G-2 的断言 A/C/E（catalog 第 5 列热更勾 vs `SETTABLE_KEYS`、实跑 `set_override` 裁判）
+   **未落地**：`docs/config-catalog-full.md` 归 CATALOG-FIX 席、`SETTABLE_KEYS` 消费面归 R15 施工席，
+   本席无面可改，且实跑型断言需 import 插件包（与本门「纯静态」纪律冲突）⇒ 归该席自建。
+3. 审计 G-3（命令可达性门）未落地：需解析 `__init__.py` dispatch elif 链与 `_HELP_ENTRIES`
+   （`echo.py` 为 HELP-1 在飞面），且 §B-2 里 `/bot decision` 一例本席已以文档标注止血。
+   建议下一席专做，规格沿用 §8 G-3。
+

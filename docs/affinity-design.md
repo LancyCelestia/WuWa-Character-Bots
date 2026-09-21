@@ -1,9 +1,14 @@
-# 好感度系统设计（v4 线性版 · 2026-09-12 用户拍板）
+# 好感度系统设计（v4 线性版 · 2026-09-12 用户拍板；v7 重写见文末章节）
 
-> 本文是 `character/affinity.py` 数值规范的**唯一权威描述**。v4 由用户直接裁定：
+> **权威链（2026-09-21 更新）**：下方 v4 正文 §2/§3 的**步长数值表**与「§7 算法卡数值文案」已被
+> `docs/design/affinity-v7-design.md`（v7 潜变量重写，2026-09-21 用户裁定「算法全部重写」）**取代**；
+> 八档态度、红线、定性展示纪律、称谓/管理护栏继续以本文为准。v5 多因素与 v6 平滑层的
+> 描述保留为**灰度关闭态（bot_affinity_v7_enabled=False）的回退行为权威**（一键回退承诺的锁面）。
+> 
+> 本文曾是 `domains/chat_reply/character/affinity.py` 数值规范的唯一权威描述。v4 由用户直接裁定：
 > 展示口径 -100~+100、基准 10、线性逻辑、时间减退与记忆减弱、数值驱动态度、
-> 以及**不可逾越的态度红线**。实现载体：`character/affinity.py` + `capabilities/affinity.py`
-> + `character/providers.py` 档位映射。所有数值常量集中在 affinity.py 顶部，注释指向本文。
+> 以及**不可逾越的态度红线**。实现载体：`domains/chat_reply/character/affinity.py` + `domains/chat_reply/capabilities/affinity.py`
+> + `domains/chat_reply/character/providers.py` 档位映射。所有数值常量集中在 affinity.py 顶部，注释指向本文。
 
 ## 1. 数值模型总纲
 
@@ -67,7 +72,7 @@
 - 新增软类别 `persona_degradation`：指向 bot 本体的贬低人格语（猪狗不如/垃圾/废物/卑微 等直接称呼 bot 的形态）。
 - 命中后：不触发硬惩罚对话语气（不影响 §2 的 insult 扣分路径——insult 照扣），但回复层启用 §5 的"人格自守"文本，且管理员放宽软类别的既有语义不变。
 
-## 7. 展示层（capabilities/affinity.py）
+## 7. 展示层（domains/chat_reply/capabilities/affinity.py）
 
 - `_TIER_TABLE` 换 §4 的 8 档 -100~+100 口径；双向卡、群榜、算法卡全部换新。
 - 算法卡文案：「+2 起 / -1 起 / -5 起 / -10 起（线性，各档位全额）；闲置 7 天起每天向 10 回归 1 分；难听的记忆 15~30 天淡出；×个人系数（±15%）」+ §4 红线摘要。
@@ -77,3 +82,173 @@
 
 - `tests/test_affinity*.py`、`test_soak_growth.py` 按新契约更新；新增回归：档0含10、8档边界、线性步长（无阻尼）、负向档位态度文本无禁词、最高档红线句存在、persona_degradation 软类别、惰性回归与淡出参数。
 - 迁移：旧库不迁移（正半轴恒等）；旧行为测试里依赖 γ 阻尼的断言全部改线性口径。
+
+---
+
+# 附录：v6 平滑层（2026-09-17 · 用户裁定「涨和跌太快」 · R4 席）
+
+> 附录性质：不改写上方 v4/v5 正文（历史章节保留），本章为在其上叠加的平滑层
+> 规范，是 `domains/chat_reply/character/affinity.py` v6 数值行为的唯一权威描述。所有既有约束
+> 原样保留：值域 [-100,+100]、基准 10、8 档温和过渡、定性展示绝不显数值、
+> 任何档位不攻击、拒答≠辱骂、V2.1 滚动预算、source_event_id 幂等。
+
+## v6.0 设计动机与总原则
+
+用户实测反馈「好感度涨和跌太快了」，并裁定**不能单调武断地直接加减对应数值**。
+v5 的多因素线性步长在中段手感正确，问题出在两端：步长与当前距离无关，
+理论上任何一串同向信号都能以恒定速率把印象推到极端。v6 不再引入新的
+「固定加减数值」，而是在 v5 线性步长之后串联三道**非线性、非武断**的平滑机制：
+
+1. **饱和响应曲线**（§v6.1）——空间维度：离尽头越近，每一步越轻；
+2. **边际递减**（§v6.2）——时间维度：同一天里同类信号重复，边际一次比一次薄；
+3. **日节奏硬帽**（§v6.3）——总量维度：正负向分开的滚动预算，单日不可能暴涨暴跌。
+
+三道机制相互独立、方向一致（都只会让 |Δ| 变小），不存在互相反转；
+叠加后中段首次信号的行为与 v5 完全一致（v5 手感与既有校准零漂移）。
+
+## v6.1 饱和响应曲线（smoothstep 饱和带）
+
+- **带宽** `_SATURATION_BAND = 0.25`（内部值口径）＝ §4 一个档宽（展示 25 分）。
+- **映射**：对一次待施加的增量，取其方向上距边界的剩余空间
+  `remaining`（正向 = 1 − affinity，负向 = affinity + 1），令
+  `t = clamp(remaining / 0.25, 0, 1)`，保留比例 = `t²(3 − 2t)`（smoothstep）。
+- **性质**：
+  - 带外（距边界 ≥ 25 展示分，即中段六档）保留比例恒为 1——v4/v5 线性语义原样；
+  - 带内（进入两端最外档，|展示分| ≥ 75）步长随剩余空间单调收窄，越近极端越钝；
+  - 边界处保留比例恰为 0——行为路径**渐近逼近极端，永不击穿 [-1,+1]**；
+  - smoothstep 在带边与边界处一阶导为零，C1 连续，无任何生硬折点
+    （与 §4「绝不在门槛上生硬跳变」的用户裁定同构，从语气域延伸到数值域）。
+- **方向性**：只对「朝边界移动」的步长收窄；「向中段回归」的步长不收窄
+  （0.9 处骂一句全额下探、-0.9 处夸一句全额上探——纠偏不该被钝化）。
+- **作用域**：只作用于多因素因子路径（`effective_delta` 的非 override 分支）。
+  `delta_override` 是权威信号（管理员/poke），直用不饱和（仍有预算钳制）。
+
+## v6.2 边际递减（同日同类信号幂衰减）
+
+- **参数**：`_SAME_SIGNAL_DECAY = 0.6`，下限 `_SAME_SIGNAL_DECAY_FLOOR = 0.2`。
+- **口径**：`repeat_index` = 同一自然日（进程本地时区，与每日计数器同口径）
+  此前**同类型**行为事件次数；第 n 次重复的保留比例 = `max(0.2, 0.6^n)`。
+  当日首次（n=0）不衰减；跨日自动重置（复用 `day_counters` 的跨日清零）。
+- **效果**：第 1/2/3/4… 次同类信号分别保留全额/六成/三成六/两成二…（下限两成），
+  正负对称——刷好感与刷负分都随重复迅速失味，且与 60s 交互冷却、每日有效
+  次数上限、滚动预算叠加后，重复激励的可累积余量单调趋薄。
+- **下限理由**：真实持续的信号仍能缓慢表达，只是越来越轻；不存在「第 N 次
+  之后完全免疫」的武断断点（武断断点正是用户要求废除的形态）。
+- **作用域**：同 §v6.1，只作用因子路径；override 与 poke 专项预算不受影响。
+
+## v6.3 日节奏硬帽（复用 V2.1 §2.3 滚动预算，正负分开记账）
+
+v6 不新增第二套预算：既有滚动预算即「正负向分开计帽」的日节奏约束——
+
+| 帽 | 常量 | 窗口 |
+|---|---|---|
+| 单事件负向 | `_BUDGET_SINGLE_NEGATIVE_EVENT_POINTS = 1.0` 分 | 单事件 |
+| 损失 | `_BUDGET_MAX_LOSS_6H_POINTS = 2.0` 分 | 6h 滚动 |
+| 损失 | `_BUDGET_MAX_LOSS_24H_POINTS = 4.0` 分 | 24h 滚动 |
+| 增益 | `_BUDGET_MAX_GAIN_24H_POINTS = 3.0` 分 | 24h 滚动 |
+
+增益与损失各自独立聚合、互不挤占：损失预算耗尽不冻结增益通道，反之亦然。
+预算是纯时间窗聚合（重启、跨午夜、切群均不重置，跨 bot 隔离）。**可观测
+保证**：无论事件数多少，单日净上行不超过增益帽、净下行不超过损失帽，
+即「单日不可能暴涨暴跌」。v6 平滑层与预算的关系：平滑让单事件 raw 更小，
+预算钳制只会更少咬合、不会更严；两者方向一致、无冲突。
+
+## v6.4 平滑回归（无新增）
+
+既有惰性回归语义原样保留（闲置 ≥7 天起每日向基准 10 回归 1 分，≤剩余距离；
+时间源走注入 clock），由 `_PASSIVE_DECAY_ENABLED` 政策门开关（v2.1 缺省关，
+缺席不默认扣分）。v6 不引入第二套回归，也不与饱和带冲突：饱和带作用于
+**事件步长**，惰性回归作用于**闲置时间**，二者触达路径不同。
+
+## v6.5 展示纪律
+
+- 「好感度 算法」说明保持**全定性口径**：新增措辞只描述「边际递减一次比一次轻、
+  刻意讨好或贬低刷不出名分、走向尽头变化自然放缓渐渐钝住、不会猛冲到顶底」，
+  不得出现任何步长/比例/预算数值（回归锁：`test_affinity_v6_smoothing.py`）。
+- 数值只出现在用户主动查询的卡里，日常回复不泄漏（既有打码纪律不变）。
+
+## v6.6 常量注册表（单一事实源：`domains/chat_reply/character/affinity.py` 顶部）
+
+| 常量 | 值 | 章节 |
+|---|---|---|
+| `_SATURATION_BAND` | 0.25（= §4 一个档宽） | §v6.1 |
+| `_SAME_SIGNAL_DECAY` | 0.6 | §v6.2 |
+| `_SAME_SIGNAL_DECAY_FLOOR` | 0.2 | §v6.2 |
+
+## v6.7 验收口径（v6 增量）
+
+- 新增 `tests/test_affinity_v6_smoothing.py`：曲线单调/带外恒等/边界归零、
+  方向不对称（朝边界收窄、向中段全额）、递减 0.6^n 下限 0.2、次日递减重置、
+  单日增益/损失不破帽、正负帽互不挤占、行为路径不击穿边界、预算/幂等/冷却/
+  七类零计分不回归、override 权威性、惰性回归不回归、算法文案定性无数字。
+- 存量更新：近极值「全额步长」断言按 §v6.1 改为饱和口径
+  （`test_affinity_numerical.py`、`test_affinity.py`）；中段全额断言原样保留。
+- `tests/test_affinity*.py` + `test_poke_v2.py` 全绿为合入门槛。
+
+---
+
+# v7 潜变量重写（2026-09-21 · 用户裁定「算法全部重写」 · WP7 席）
+
+> 规格唯一权威：`docs/design/affinity-v7-design.md`；本节是其在实现面的落点摘要与
+> 常量注册表（实现载体 `domains/chat_reply/character/affinity.py` v7 段，
+> 行为锁 `tests/test_affinity_v7.py`）。灰度开关 `bot_affinity_v7_enabled` 缺省 False
+> ⇒ 上方 v4/v5/v6 口径逐字节生效（回退态由 `test_affinity*.py` 常数锁钉住）。
+> **原样保留**：八档温和态度、`_TIER_RED_LINES` 四条款、算法说明全定性纪律、
+> 缺席不扣分（`_PASSIVE_DECAY_ENABLED=False`）、拒答≠辱骂、source_event_id 幂等、
+> 60s 交互冷却、R-18 与 `content_safety` 同源。
+
+## v7.1 表示与映射
+- 潜变量 `z ∈ ℝ`，展示内部值 `a = tanh(z)`（展示分 = a×100）；**结构上永不触顶**。
+- 硬护栏 `z ∈ [±atanh(z_hard_bound)]`，`z_hard_bound` 缺省 0.985（±98.5 展示分）。
+- 初始 `z = atanh(0.1)`（仍是 10 分）；八档阈值/名称/态度全文不动。
+- 存量迁移：`user_affinity.z_latent`（ALTER-if-missing）首次 v7 写入时由
+  `z = atanh(clamp(affinity, ±0.985))` 惰性推导；**绝不重置任何人**（±98.5 域钳是
+  设计写明的表示上界）；未触及行逐字不动。`v7_state` 列承载新鲜度计数/活跃 EMA/
+  当日位移/近期文本指纹（坏数据 fail-open 重置）。`affinity_delta_log.z_after`
+  记录 v7 行落盘后的 z；`source='v7'` 行以 z 记账并被 v5 分口径预算查询排除。
+
+## v7.2 更新式与护栏
+```
+Δz = base_step · q · novelty · rhythm · mood · impression     （修复通道：正向 ×repair_gain）
+z ← clamp(z + Δz, ±Z_HARD)
+```
+| 因子 | 定义（代码函数） | 缺省 |
+|---|---|---|
+| `base_step` | z 域单位步长 | 0.10（键 `bot_affinity_base_step`） |
+| `q ∈ [−1,+1]` | 质量分五子信号（`v7_quality_score`：主动度/延展度/情绪词/尊重边界/回应性，权重键 `_quality_weights` 缺省 0.15/0.25/0.35/0.15/0.10；neutral 只取三项 ×`_V7_NEUTRAL_Q_SCALE`=0.2；refusal/未知恒 0） | — |
+| `novelty` | `max(floor, ρ^n)`；n=该人该类型**衰减后累计**计数（跨日不重置，按 τ 半衰回升；修复事件不进计数）。floor=`_V7_NOVELTY_FLOOR`=0.02（模块常量，席位修正量——见 WP7 日志 C-1） | ρ=0.90、halo 21 天；τ 分级键 `_decay_tau_days`（positive/neutral→seasonal21、tease/negative/insult→episodic7、stable45 在册备用） |
+| `rhythm` | `1/(1+max(0,r−r_ref)/r_ref)`，r=本人 28 天 EMA 日均事件率（`_V7_RHYTHM_HALFLIFE_DAYS`） | r_ref=8 |
+| `mood` / `impression` | v5 调制定位保留，v7 域带宽收进 [0.85,1.15] / [0.80,1.25] | 现值 |
+| `repair_gain` | 道歉/和解（`_V7_REPAIR_RE` + tease 家族）正向 ×1.4、不吃新鲜度计数 | 1.4 |
+| 负向单事件上限 | 任何负向 `|Δz| ≤ negative_event_cap_z`（含 override） | 0.10 |
+| 日位移熔断 | 每人每自然日 `|ΣΔz| ≤ daily_move_cap_z`（正负共享同额） | 0.12 |
+| 同类日熔断 | 同一行为类型每日计分事件数 `≤ fuse_daily_events` | 25 |
+| `_DAILY_EFFECTIVE_CAPS` | 降级为兜底（positive 10 等，先于 fuse 到达时生效） | 不变 |
+
+v6 的 `saturation_factor`/`repeat_decay_factor` 在 v7 路径**不再充当主机制**
+（tanh 斜率天然钝化 + 跨日新鲜度接管）；两函数原样保留服务灰度关闭态。
+`delta_override`（管理员/poke/V2 事件）在 v7 下按 z 域直用，仍受冷却/负向上限/
+日位移/z 硬界，不喂新鲜度、不占日计数。
+
+## v7.3 「滚」字假阳性根修（设计 §2.3 另修项 D3-6）
+`_INSULT_RE` 的「滚」支改为三支结构：句读/串首裸「滚」（排除后缀 动/雪球/烫/
+锅/筒/珠/轮/落/瓜/烂）∨ 第二人称紧邻（你/您/恁+≤3 字）∨ 固定驱逐短语
+（给我滚/滚开/滚出去/滚远(点)/滚回去）。「一个翻滚/滚动/打滚/滚雪球/我先滚了/
+水滚了」不再命中；「都给我滚/快滚/滚蛋」照打（存量锁 `test_affinity.py:60/:69`
+保持绿，变体族新锁 `test_affinity_v7.py::test_gun_word_action_variants_not_insult`）。
+
+## v7.4 配置键（12 枚，config.py:245-262 + catalog + .env.example 已登记）
+`bot_affinity_v7_enabled` / `bot_affinity_base_step` / `bot_affinity_novelty_ratio` /
+`bot_affinity_novelty_halo_days` / `bot_affinity_rhythm_reference_turns` /
+`bot_affinity_negative_event_cap_z` / `bot_affinity_daily_move_cap_z` /
+`bot_affinity_fuse_daily_events` / `bot_affinity_repair_gain` /
+`bot_affinity_z_hard_bound` / `bot_affinity_quality_weights` / `bot_affinity_decay_tau_days`。
+实现逐调用现读（`resolve_v7_settings`，config 缺句柄时回退 env 现读）；
+`SETTABLE_KEYS` 本轮故意不登记（收尾统一裁决热改口径，见 catalog 节头）。
+非法值→代码缺省 + 每键每进程点名一次。
+
+## v7.5 展示纪律
+「好感度 算法」页（`ALGORITHM_TEXT`）已改写为 v7 全定性口径：质量分/跨日新鲜度/
+按人归一/修复通道/永不触顶全部只作定性描述，不得出现 §v7.1-§v7.2 任何数值
+（回归锁：`test_affinity_v6_smoothing.py::test_algorithm_copy_describes_smoothing_qualitatively`
++ `test_affinity_query.py` 文案锁，锁面在 v7 文案下逐条复跑全绿）。

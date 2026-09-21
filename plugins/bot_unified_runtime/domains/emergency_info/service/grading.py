@@ -33,6 +33,9 @@ from plugins.bot_unified_runtime.domains.emergency_info.contracts import (
     highest_level,
     level_from_color_label,
 )
+from plugins.bot_unified_runtime.domains.emergency_info.service import (
+    alert_taxonomy as _taxonomy,
+)
 
 #: 一条规则都命中时的缺省档（最低档=蓝；诚实不上抬）。
 FALLBACK_LEVEL = EmergencyLevel.P3
@@ -165,6 +168,31 @@ def grade(
     return highest_level(candidates)
 
 
+def may_breach_quiet_window(
+    item: EmergencyItem,
+    level: EmergencyLevel | None,
+    *,
+    allowed_levels: Sequence[str] | None = None,
+) -> bool:
+    """这条定级结果够不够格在 00:00–06:00 静默窗内叫醒人。
+
+    判据真身在 `alert_taxonomy`（族级地板＝该族「真正的高档」），本函数只做两件事：
+    ①把「条目」换算成类别（`category_of_item`，唯一识别口，禁第二份词表）；
+    ②接受显式 `allowed_levels` 覆盖（用户把穿窗等级配窄/配宽时用，语义=**只看这张表**，
+    不再查族级地板；空表⇒一切都不许穿窗＝配窄了只能更安静）。
+
+    `allowed_levels=None` ⇒ 走族级地板（现网缺省，因为
+    `bot_emergency_info_quiet_breach_levels` 这枚配置键尚未落地）。
+    未定级一律 False（D-1：不猜）。
+    """
+    if level is None:
+        return False
+    if allowed_levels is not None:
+        wanted = {str(raw).strip().upper() for raw in allowed_levels if str(raw).strip()}
+        return level.value in wanted
+    return _taxonomy.may_breach_quiet_window(_taxonomy.category_of_item(item), level)
+
+
 __all__ = [
     "DEFAULT_GRADING_RULES",
     "FALLBACK_LEVEL",
@@ -172,4 +200,7 @@ __all__ = [
     "color_levels_in_text",
     "grade",
     "matched_levels",
+    # 包装（非第二实现）：穿安静时间窗的判据真身在 `alert_taxonomy`，
+    # 本模块是规则层的对外名（`push.py` 与测试都按 `grading.*` 取用）。
+    "may_breach_quiet_window",
 ]

@@ -70,7 +70,7 @@ def _inline_delivery_grace_seconds() -> float:
         float(_INLINE_DELIVERY_GRACE_SECONDS), 3.0 * max(0.0, transport_timeout)
     )
 # B-4（管线检视 #6）：bot_unavailable 挂起语义参数。
-# 挂起期间不消耗重试预算，重试间隔取固定 90s 下限（NapCat 断线窗口内
+# 挂起期间不消耗重试预算，重试间隔取固定 90s 下限（SnowLuma 断线窗口内
 # 慢速重探，不随重试预算配置变化）；入队超过绝对年龄上限（默认 30min，
 # 可经 bot_send_bot_unavailable_max_age_seconds 覆盖）仍不可投才置终态
 # （防 A4 契约下死挂行无限堆积）。
@@ -808,7 +808,7 @@ class SQLiteSendRequestQueue:
         *,
         now: datetime,
     ) -> DeliveryReceipt:
-        """B-4（管线检视 #6）：NapCat 断线的投递挂起，不消耗重试预算。
+        """B-4（管线检视 #6）：SnowLuma 断线的投递挂起，不消耗重试预算。
 
         bot_unavailable 是环境性暂态：照常计入 attempts 会让断线期间排队的
         回复在 ~3 分钟内烧完 max_attempts 后被 FAILED_FINAL 静默丢弃。这里

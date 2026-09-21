@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from plugins.bot_unified_runtime.capabilities.runtime_admin import (
+from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
     _handle_model_command,
 )
 from plugins.bot_unified_runtime.llm.model_router import (
@@ -303,7 +303,7 @@ def test_model_usage_renders_cost_from_event_aggregate() -> None:
 
 
 def test_usage_monitor_thresholds_and_state() -> None:
-    from plugins.bot_unified_runtime.runtime.usage_monitor import (
+    from plugins.bot_unified_runtime.domains.ops.monitor.usage_monitor import (
         build_report_text,
         build_threshold_alert,
         threshold_alert_items,

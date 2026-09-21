@@ -1,5 +1,7 @@
 # 视频理解系统设计（Media Registry + 前置管道 + 人格化守则）
 
+> 术语说明：本文中的 **NapCat** 指 2026-09-18 之前的 QQ 协议端（当时实况记录，保留原文不改写）；现役协议端为 **SnowLuma**，见 [snowluma-setup.md](../../snowluma-setup.md)。
+
 日期：2026-09-09
 状态：待用户确认后实施
 分支基线：v0.0.1-alpha.2

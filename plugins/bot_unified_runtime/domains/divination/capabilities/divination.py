@@ -37,16 +37,25 @@ from plugins.bot_unified_runtime.contracts import (
 # V2.1 S12（W6 席）：抽签持久化与公平性服务。注入 draw_store 即启用持久化
 # 路径（塔罗抽取落库幂等 + 随机抽取冷却/每日配额 + 每日运势 day_key 幂等）；
 # 不注入时完全保持旧行为（无持久化、无配额），既有回归零影响。
-from plugins.bot_unified_runtime.domains.divination.data.draw_store import (
+#
+# **WP9 收编（2026-09-21）**：此处注入的 ``draw_store`` 是全域唯一真身
+# ``store/draw_store.DrawStore``（``draws`` 表 + 幂等三键 + 写锁事务内配额），
+# 算法面唯一真身是 ``data/deck_math.py``，异常全域只有一颗 ``DrawError``——
+# 同一次抽牌聊天侧与控制面 REST 侧从此看到同一行。配额/算法版本一律引真身，
+# 本文件不留第二份字面量（``_TAROT_*`` 只是给下面读起来顺的别名）。
+from plugins.bot_unified_runtime.domains.divination.data.deck_math import (
     DECK_REVISION,
+    FORTUNE_ALGORITHM_REVISION,
     FORTUNE_RULE_VERSION,
-    DrawError,
-    SeededPrng,
-    build_interpretation_context,
+    TAROT_ALGORITHM_REVISION,
+    TAROT_DAILY_ALGORITHM_REVISION,
+    SystemPrng,
     card_id_for,
-    daily_fortune_day_key,
     draw_daily_fortune,
-    draw_tarot,
+    draw_tarot_cards,
+    fortune_day_key,
+)
+from plugins.bot_unified_runtime.domains.divination.data.draw_store import (
     rebuild_drawn_cards,
 )
 from plugins.bot_unified_runtime.domains.divination.data.ganzhi import (
@@ -67,6 +76,16 @@ from plugins.bot_unified_runtime.domains.divination.data.tarot import (
     format_three_text,
     single_guidance,
     three_card_spread,
+)
+from plugins.bot_unified_runtime.domains.divination.service.divination_service import (
+    build_interpretation_context,
+)
+from plugins.bot_unified_runtime.domains.divination.store.draw_store import (
+    DEFAULT_TAROT_COOLDOWN_SECONDS,
+    DEFAULT_TAROT_DAILY_LIMIT,
+    DrawError,
+    DrawRecord,
+    QuotaPolicy,
 )
 
 __all__ = [
@@ -350,13 +369,17 @@ _CARD_AUTHORS = {
     "iching": "六十四卦金钱卦 · 本地起卦",
 }
 
-# ── V2.1 S12 持久化路径常量 ──
+# ── V2.1 S12 持久化路径常量（全部引真身，本文件不存第二份字面量）──
 # 塔罗随机抽取默认配额（合同 §3.2：每主体冷却 60 秒、每天 20 次）。
-_TAROT_COOLDOWN_SECONDS = 60
-_TAROT_DAILY_LIMIT = 20
-_TAROT_ALGO_REVISION = "tarot-fy-v1"
-_TAROT_DAILY_ALGO_REVISION = "tarot-daily-v1"
-_FORTUNE_ALGO_REVISION = FORTUNE_RULE_VERSION
+_TAROT_COOLDOWN_SECONDS = DEFAULT_TAROT_COOLDOWN_SECONDS
+_TAROT_DAILY_LIMIT = DEFAULT_TAROT_DAILY_LIMIT
+_TAROT_ALGO_REVISION = TAROT_ALGORITHM_REVISION
+_TAROT_DAILY_ALGO_REVISION = TAROT_DAILY_ALGORITHM_REVISION
+_FORTUNE_ALGO_REVISION = FORTUNE_ALGORITHM_REVISION
+# 聊天面在工作区维度上的身份：与 REST 面（workspace=default / 客户端自报）
+# 天然分池，两侧各自 20 次/日的配额互不挤占。
+_CHAT_WORKSPACE = "chat"
+_CHAT_TIMEZONE_ID = "Asia/Shanghai"
 
 # 每日运势等级→人话一句话（温和娱乐向，不装神棍、不给"决定"）。
 _FORTUNE_GRADE_TEXTS = {
@@ -367,13 +390,6 @@ _FORTUNE_GRADE_TEXTS = {
     "小凶": "可能有点小磕绊，慢一点反而更稳。",
     "凶": "今天适合保守行事，大事缓一缓，先照顾好自己。",
 }
-
-
-def _payload_json(cards: list[dict[str, str]]) -> str:
-    """持久化牌面 → JSON（draw_store 消费同一序列化口径）。"""
-    import json
-
-    return json.dumps(cards, ensure_ascii=False, separators=(",", ":"))
 
 
 def _card_dir_token(raw: str) -> str:
@@ -440,9 +456,10 @@ def build_divination_capability(
     mixed），不传或渲染失败时保持纯文字输出（行为与旧版完全一致）。
 
     V2.1 S12 注入面（全部可选，缺省=完全旧行为，既有回归零影响）：
-    - ``draw_store``：domains.divination.data.draw_store.DrawStore 实例；注入后塔罗抽取落库
-      （draw_id 幂等）、随机抽取受每主体冷却 60s/每日 20 次配额、解读与
-      渲染只消费持久行（篡改 → deck_integrity_mismatch 温和兜底）。
+    - ``draw_store``：全域唯一真身 ``domains.divination.store.draw_store.DrawStore``
+      实例（WP9 收编后聊天与控制面 REST 共用同一个 ``draws`` 表）；注入后塔罗抽取
+      落库（draw_id/幂等键/day_key 三键幂等）、随机抽取受每主体冷却与每日配额、
+      解读与渲染只消费持久行（篡改 → deck_integrity_mismatch 温和兜底）。
     - ``fortune_key``：每日运势 HMAC 密钥（服务端保管，测试注入）。
     - ``clock``：注入时钟（callable -> aware datetime），配额/日期可测。
     """
@@ -454,7 +471,12 @@ def build_divination_capability(
     def _tarot_with_store(
         intent: DivinationIntent, message: IncomingMessage, tags: list[str]
     ) -> CapabilityResult:
-        """塔罗持久化路径：抽取落库幂等 + 配额 + 只按持久行出牌面。"""
+        """塔罗持久化路径：抽取落库幂等 + 配额 + 只按持久行出牌面。
+
+        落库走唯一真身 ``DrawStore.persist_draw_once``，返回 ``(record, created)``；
+        ``created`` 决定这轮是「新抽」还是「同一请求重放」，重放不改牌面、
+        只在审计与提示上如实标注（不再靠 ``INSERT OR IGNORE`` 猜是否新建）。
+        """
         store = draw_store
         if store is None:  # pragma: no cover - 调用方分支已保证非空
             raise DrawError("feature_disabled", "抽签存储未装配")
@@ -463,74 +485,91 @@ def build_divination_capability(
         sender = str(message.sender_id or "anonymous")
         local_day = moment.astimezone(CST).date()
         local_day_iso = local_day.isoformat()
+        replay: list[str] = []
         try:
             if intent.target == "daily":
-                # 每日一抽：draw_id 含主体+本地日期 → 同日重读/重启/并发都
-                # 命中同一持久行（幂等重读，不占随机抽取配额）。
+                # 每日一抽：draw_id/dedupe_key 含主体+本地日期 → 同日重读/重启/
+                # 并发都命中同一持久行（幂等重读，不占随机抽取配额）。
                 draw_id = f"tarot-daily:{bot_id}:{sender}:{local_day_iso}"
-                row = store.get_tarot_draw(draw_id)
-                if row is None:
+                record = store.get_draw(draw_id)
+                created = False
+                if record is None:
                     drawn = daily_card(local_day, sender)
-                    row, _ = store.record_tarot_draw(
-                        draw_id=draw_id,
-                        principal_id=sender,
-                        bot_id=bot_id,
-                        spread_id="single",
-                        source="daily",
-                        cards_json=_payload_json(
-                            [
+                    record, created = store.persist_draw_once(
+                        DrawRecord(
+                            draw_id=draw_id,
+                            kind="tarot",
+                            principal_id=sender,
+                            bot_id=bot_id,
+                            workspace_id=_CHAT_WORKSPACE,
+                            idempotency_key=draw_id,
+                            dedupe_key=draw_id,
+                            spread_id="single",
+                            timezone_id=_CHAT_TIMEZONE_ID,
+                            cards=(
                                 {
                                     "card_id": card_id_for(drawn.card),
                                     "position_id": "",
                                     "orientation": (
                                         "reversed" if drawn.is_reversed else "upright"
                                     ),
-                                }
-                            ]
+                                },
+                            ),
+                            algorithm_revision=_TAROT_DAILY_ALGO_REVISION,
+                            deck_revision=DECK_REVISION,
+                            local_day=local_day_iso,
+                            occurred_at=moment.isoformat(),
+                            occurred_epoch=moment.timestamp(),
                         ),
-                        expected_count=1,
-                        algorithm_revision=_TAROT_DAILY_ALGO_REVISION,
-                        deck_revision=DECK_REVISION,
-                        occurred_at=moment,
-                        local_day=local_day_iso,
-                        enforce_rate=False,
+                        quota=None,
                     )
-                spread = rebuild_drawn_cards(row)
+                if not created:
+                    # 幂等命中（读面已有 / 并发输者）：牌面不变，审计如实标注重放。
+                    replay.append("divination:replay")
+                spread = rebuild_drawn_cards(record)
                 body = (
                     f"☀️ {local_day_iso} 的每日一抽（今天全天不变哦）：\n\n"
                     f"{format_single_text(spread[0])}"
                 )
                 title, extra = "今日塔罗", "divination:daily"
             else:
-                # 随机抽取：request_id 作幂等键（同消息重试不重抽不重复计数），
-                # 配额（冷却 60s/每日 20 次）在 store 写锁事务内判定。
+                # 随机抽取：request_id 作幂等键（同消息重试不重抽、不重复计数），
+                # 配额（冷却/每日上限，与 REST 侧同一组真身缺省值）在写锁事务内判定。
                 spread_id = (
                     "past_present_future" if intent.target == "three" else "single"
                 )
                 request_ref = str(message.request_id or "") or uuid.uuid4().hex
                 draw_id = f"tarot:{request_ref}"
-                row = store.get_tarot_draw(draw_id)
-                if row is None:
-                    cards = draw_tarot(spread_id, SeededPrng(None))
-                    row, _ = store.record_tarot_draw(
-                        draw_id=draw_id,
-                        principal_id=sender,
-                        bot_id=bot_id,
-                        spread_id=spread_id,
-                        source="random",
-                        cards_json=_payload_json(cards),
-                        expected_count=len(cards),
-                        algorithm_revision=_TAROT_ALGO_REVISION,
-                        deck_revision=DECK_REVISION,
-                        occurred_at=moment,
-                        local_day=local_day_iso,
-                        cooldown_seconds=_TAROT_COOLDOWN_SECONDS,
-                        daily_limit=_TAROT_DAILY_LIMIT,
-                        enforce_rate=True,
+                record = store.get_draw(draw_id)
+                created = False
+                if record is None:
+                    record, created = store.persist_draw_once(
+                        DrawRecord(
+                            draw_id=draw_id,
+                            kind="tarot",
+                            principal_id=sender,
+                            bot_id=bot_id,
+                            workspace_id=_CHAT_WORKSPACE,
+                            idempotency_key=draw_id,
+                            spread_id=spread_id,
+                            timezone_id=_CHAT_TIMEZONE_ID,
+                            cards=draw_tarot_cards(spread_id, SystemPrng()),
+                            algorithm_revision=_TAROT_ALGO_REVISION,
+                            deck_revision=DECK_REVISION,
+                            local_day=local_day_iso,
+                            occurred_at=moment.isoformat(),
+                            occurred_epoch=moment.timestamp(),
+                        ),
+                        quota=QuotaPolicy(
+                            cooldown_seconds=_TAROT_COOLDOWN_SECONDS,
+                            daily_limit=_TAROT_DAILY_LIMIT,
+                        ),
                     )
+                if not created:
+                    replay.append("divination:replay")
                 # 展示与解读都从持久行校验重建——函数上不可能换牌/换朝向。
-                build_interpretation_context(row)  # 篡改防线（解读桩位：LLM 解读由后续席位接入）
-                spread = rebuild_drawn_cards(row)
+                build_interpretation_context(record)  # 篡改防线（解读桩位：LLM 解读由后续席位接入）
+                spread = rebuild_drawn_cards(record)
                 if len(spread) == 3:
                     body = format_three_text(spread)
                     title = "塔罗三张牌阵"
@@ -579,6 +618,7 @@ def build_divination_capability(
             audit_tags=[
                 *tags,
                 extra,
+                *replay,
                 "card_rendered" if card else "text_only",
             ],
         )
@@ -648,26 +688,41 @@ def build_divination_capability(
                 bot_id = str(getattr(message, "bot_id", "") or "")
                 sender = str(message.sender_id or "anonymous")
                 local_date = moment.astimezone(CST).date().isoformat()
-                day_key = daily_fortune_day_key(
+                day_key = fortune_day_key(
                     sender, bot_id, local_date, FORTUNE_RULE_VERSION
                 )
-                row = draw_store.get_daily_fortune(day_key)
-                if row is None:
+                record = draw_store.find_by_dedupe("fortune", day_key)
+                created = False
+                replay: list[str] = []
+                if record is None:
                     outcome = draw_daily_fortune(
                         fortune_key, sender, bot_id, local_date, FORTUNE_RULE_VERSION
                     )
-                    row, _ = draw_store.get_or_save_daily_fortune(
-                        day_key=day_key,
-                        principal_id=sender,
-                        bot_id=bot_id,
-                        local_date=local_date,
-                        rule_version=FORTUNE_RULE_VERSION,
-                        key_id=outcome.key_id,
-                        seed_digest=outcome.seed_digest,
-                        grade=outcome.grade,
-                        occurred_at=moment.isoformat(),
+                    fortune_draw_id = f"fortune:{day_key}"
+                    record, created = draw_store.persist_draw_once(
+                        DrawRecord(
+                            draw_id=fortune_draw_id,
+                            kind="fortune",
+                            principal_id=sender,
+                            bot_id=bot_id,
+                            workspace_id=_CHAT_WORKSPACE,
+                            idempotency_key=fortune_draw_id,
+                            dedupe_key=day_key,
+                            timezone_id=_CHAT_TIMEZONE_ID,
+                            fortune_grade=outcome.grade,
+                            algorithm_revision=_FORTUNE_ALGO_REVISION,
+                            key_id=outcome.key_id,
+                            seed_digest=outcome.seed_digest,
+                            local_day=local_date,
+                            occurred_at=moment.isoformat(),
+                            occurred_epoch=moment.timestamp(),
+                        ),
+                        quota=None,
                     )
-                grade = str(row["grade"])
+                if not created:
+                    # 读面命中或并发输者：同日等级唯一不变，审计如实标注重放。
+                    replay.append("divination:replay")
+                grade = str(record.fortune_grade)
                 body = (
                     f"☀️ {local_date} 的每日运势（今天全天不变哦）：\n\n"
                     f"【{grade}】"
@@ -687,6 +742,7 @@ def build_divination_capability(
                     audit_tags=[
                         *tags,
                         "divination:fortune_persisted",
+                        *replay,
                         "card_rendered" if card else "text_only",
                     ],
                 )

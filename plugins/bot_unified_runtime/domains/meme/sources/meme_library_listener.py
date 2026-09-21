@@ -71,7 +71,7 @@ def _spawn_vlm_task(store: Any, config: Any, md5: str, image_bytes: bytes) -> No
 def _segment_urls(message_segments: list[Any]) -> list[str]:
     urls: list[str] = []
     # B 线 2026-09-16「把所有表情贴纸存下来」：除 image 外收 mface（QQ 商城
-    # 表情/贴纸，NapCat 段带 url）与 sticker；这些段与普通图片同走下载、
+    # 表情/贴纸，SnowLuma 段带 url）与 sticker；这些段与普通图片同走下载、
     # MD5 去重、VLM 打标入库，理解面与发送面因此共用同一个表情库。
     accepted_types = {"image", "mface", "sticker"}
     for segment in message_segments or []:

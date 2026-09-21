@@ -8,7 +8,10 @@ from plugins.bot_unified_runtime.capabilities.content_parser import (
     build_content_capability,
 )
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
-from plugins.bot_unified_runtime.contracts.media import ParserRule, build_parsed_content
+from plugins.bot_unified_runtime.domains.core.contracts.media import (
+    ParserRule,
+    build_parsed_content,
+)
 from plugins.bot_unified_runtime.sources.downloader import (
     DownloadOutcome,
     MediaAnalysis,

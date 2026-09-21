@@ -22,8 +22,12 @@ from collections.abc import Iterator
 
 import pytest
 
-from plugins.bot_unified_runtime.sources import fx_data, market_data, stock_data
-from plugins.bot_unified_runtime.sources.market_data import (
+from plugins.bot_unified_runtime.domains.finance.data import (
+    fx_data,
+    market_data,
+    stock_data,
+)
+from plugins.bot_unified_runtime.domains.finance.data.market_data import (
     _RETRY_BACKOFF_SECONDS,
     retry_on_empty_enabled,
 )

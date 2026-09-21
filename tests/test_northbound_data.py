@@ -16,8 +16,8 @@ from collections.abc import Iterator
 import pytest
 
 from plugins.bot_unified_runtime.capabilities import user_copy
-from plugins.bot_unified_runtime.sources import market_data
-from plugins.bot_unified_runtime.sources.market_data import (
+from plugins.bot_unified_runtime.domains.finance.data import market_data
+from plugins.bot_unified_runtime.domains.finance.data.market_data import (
     NorthboundFlow,
     fetch_northbound_flows,
     format_northbound_brief,
@@ -144,7 +144,7 @@ def test_fetch_url_payload_targets_mutual_type(
 def test_fetch_empty_then_data_two_calls_per_channel(
     _clean_cache, _sleeps, monkeypatch
 ) -> None:
-    from plugins.bot_unified_runtime.sources.market_data import (
+    from plugins.bot_unified_runtime.domains.finance.data.market_data import (
         _RETRY_BACKOFF_SECONDS,
     )
 

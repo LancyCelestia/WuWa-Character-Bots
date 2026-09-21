@@ -1,5 +1,16 @@
 # NoneBot + NapCat 连接 QQ 配置指南
 
+> **注意（2026-09-18 起）**：现行协议端已改为 **SnowLuma**，见 [snowluma-setup.md](snowluma-setup.md)。
+> 本文档保留作**回滚路径**与历史参考，新接入不要再按本文操作。
+>
+> **NapCat 本体已删除（2026-09-20）**：`C:\Software\NapCat\`、`C:\Software\NapCat-school\` 与
+> `Documents\Tencent Files\NapCat\`（运行数据）均已从本机移除，本文的安装目录**当前不存在**。
+> 回滚＝先按 §1 重新下载安装 NapCat 到 `C:\Software\NapCat\`，再把配置台账
+> `..\ChatBot_Archive\2026-09-20\napcat-retire-backup-2026-09-20.zip` 里的 `NapCat-config\config\*.json`
+> 解回 `config\`、把 `NapCat-school\NapCat-school\` 里的 `launcher-school.bat` 与
+> `config\onebot11_2300230562.json` 解回学校号实例目录。旧端那两枚令牌已随退役作废，
+> `.env.prod` 现在的令牌是给 SnowLuma 用的，回滚时不要照搬。
+
 目标：机器人（NoneBot2，本项目）通过 NapCat（QQ 客户端协议端）接入 QQ，
 只在本机运行，不碰第三方框架账号。
 
@@ -26,7 +37,7 @@ NapCat 官方文档：https://napneko.github.io/
 
 ### 1.2 用 PowerShell 重启 NapCat（二维码卡住不刷新时）
 
-本机安装目录为 `C:\Software\NapCat`，先全部停掉再重新拉起 launcher：
+本机安装目录（**当前已删除，回滚需先重装**）为 `C:\Software\NapCat`，先全部停掉再重新拉起 launcher：
 
 ```powershell
 Stop-Process -Name QQ -Force -ErrorAction SilentlyContinue

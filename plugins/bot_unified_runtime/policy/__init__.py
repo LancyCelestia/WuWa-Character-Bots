@@ -1,47 +1,19 @@
-from .gate import PolicySettings, evaluate_policy
-from .quiet_hours import (
-    QuietHoursChecker,
-    QuietHoursDecision,
-    QuietHoursSettings,
-    build_quiet_hours_checker,
-    build_quiet_hours_settings,
-)
-from .rate_limit import (
-    InMemoryRateLimiter,
-    RateLimitDecision,
-    RateLimiter,
-    RateLimitSettings,
-    SQLiteRateLimiter,
-    build_rate_limit_settings,
-    build_rate_limiter,
-)
-from .reply_budget import (
-    ReplyBudget,
-    ReplyBudgetSettings,
-    build_reply_budget_settings,
-    decide_reply_budget,
-)
-from .roles import RoleSettings, build_role_settings
+"""Compat shim: package moved to plugins.bot_unified_runtime.domains.chat_reply.policy (v21r4-B reorg RWC6-b).
 
-__all__ = [
-    "InMemoryRateLimiter",
-    "PolicySettings",
-    "QuietHoursChecker",
-    "QuietHoursDecision",
-    "QuietHoursSettings",
-    "RateLimitDecision",
-    "RateLimitSettings",
-    "RateLimiter",
-    "ReplyBudget",
-    "ReplyBudgetSettings",
-    "RoleSettings",
-    "SQLiteRateLimiter",
-    "build_quiet_hours_checker",
-    "build_quiet_hours_settings",
-    "build_rate_limit_settings",
-    "build_rate_limiter",
-    "build_reply_budget_settings",
-    "build_role_settings",
-    "decide_reply_budget",
-    "evaluate_policy",
-]
+Live re-export (PEP 562 package __getattr__): attribute access resolves on
+the canonical package at access time, so legacy-path importers (incl. the
+root __init__) keep working unchanged. Submodule shims (gate/quiet_hours/
+rate_limit/reply_budget/roles) live alongside this file.
+"""
+from importlib import import_module
+from typing import Any
+
+_CANONICAL = "plugins.bot_unified_runtime.domains.chat_reply.policy"
+
+
+def __getattr__(name: str) -> Any:
+    return getattr(import_module(_CANONICAL), name)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(dir(import_module(_CANONICAL))))

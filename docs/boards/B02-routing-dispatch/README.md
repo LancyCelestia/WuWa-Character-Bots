@@ -1,0 +1,75 @@
+# B02 路由与中央调度
+
+<!-- BOARD-AUTO:BEGIN -->
+<!-- 本节由 scripts/board_doc_sync.py 生成，请勿手改；正文写在标记外 -->
+
+## B02 路由与中央调度
+
+> 决定一条消息归谁处理、能不能处理、由哪一个能力入口处理。
+
+职责：
+
+- RouteKind 判定与优先级拆位（唯一路由真身）
+- 能力声明源与中央调度信封（InvocationResult）
+- 决策引擎影子对照与接管
+- 门禁：角色、黑白名单、安静时间、限流、幂等
+
+### 二级功能
+
+| 二级功能 | 一句话 | 三级入口 |
+|---|---|---|
+| [路由表与判定序](route-table/README.md) | base_router 的 RouteKind 枚举、RouteRule 注册表与优先级判定序。 | [昵称命令](route-table/alias.md)、[自然语言命令](route-table/natural-command.md)、[IGNORE](route-table/ignore.md)、[matcher 族与谓词](route-table/matcher-family.md)、[优先级判定序与拆位](route-table/priority-order.md)、[命令路由成员资格](route-table/command-route-membership.md) |
+| [能力注册表与调度壳](capability-registry/README.md) | 每能力一行的 keystone 声明源，与中央调度信封的收编进度。 | [声明源与投影表一致性](capability-registry/keystone-declarations.md)、[调度信封与呈现契约分层](capability-registry/invocation-envelope.md)、[新增能力登记流程（先建模块与函数）](capability-registry/new-capability-checklist.md) |
+| [决策引擎](decision-engine/README.md) | 影子对照记录分歧，接管进度由配置模式控制。 | [影子对照与分歧记账](decision-engine/shadow-mode.md) |
+| [门禁与限流](policy-gate/README.md) | 角色/黑白名单/安静时间/限流/幂等，全能力共用的准入面。 | [管理员命令](policy-gate/admin.md)、[六级角色与权限叠加](policy-gate/role-model.md)、[安静时间与主动搭话门](policy-gate/quiet-hours.md)、[双实现限流与回滚](policy-gate/rate-limiter.md)、[入站幂等](policy-gate/idempotency.md) |
+<!-- BOARD-AUTO:END -->
+
+## 板块职责
+
+B02 回答三个彼此独立的问题，因此切成四个二级功能：
+
+- 这条消息**归谁**：`route-table`——确定性路由表，把文本判成一个 `RouteKind`，只判断、不执行、不发消息。
+- 这个人/这个场景**能不能干**：`policy-gate`——角色、群黑白名单、安静时间、限流、回复预算、入站幂等，全能力共用一张准入面。
+- 由**哪一个入口**干、怎么被调用：`capability-registry`——每能力一行的 keystone 声明源，加上中央调度信封。
+- **将来**由谁判：`decision-engine`——影子对照，缺省不接管。
+
+为什么切在这里而不切在别处：门禁与路由都在同一条 `RuntimePipeline._prepare` 里顺序执行，但它们的**变更原因不同**（路由随能力增减而变，门禁随骚扰/隐私策略而变），所以分功能而不分文件。执行门（feature gate）的**开关来源与 API** 属 B09 控制面，B02 只承担它在主链路上的那一次拦截动作。
+
+## 现役进度：中央调度层（必须先读）
+
+用户裁定第 10 项：「所有内容都要接入中央能力调度层，TTS 也不例外」。规格与分波施工在 `docs/design/capability-orchestration-adoption-spec.md`。现状如实：
+
+| 波次 | 内容 | 状态 |
+|---|---|---|
+| Wave 0 | 两个同名 `CapabilityResult` 分层归并：contracts 版保名做呈现契约，壳版**改名 `InvocationResult`** 做执行信封 | 已落，门 `tests/test_capability_result_unique.py` 在位 |
+| Wave 1 | 已包装的 media/files/search 描述符改经 `CapabilityInvoker` 通电 | **未做** |
+| Wave 2 | 中央描述符注册表升为唯一真源（并 `CONTROLLED_INTERNAL_CAPABILITIES` 等表收拢） | **未做** |
+| Wave 3 | 逐域接入（爆炸半径升序，`chat_reply` 垫后） | **未做** |
+| Wave 4 | 根 `__init__.py` 的 handler 外迁、pipeline 17 条旁路收编、主动投递族收编 | **未做** |
+
+因此**「已接入中央调度层」目前只对 Wave 0 成立**：`runtime/capability_protocols.py` 在生产路径仍零 import（`docs/audit-20260921.md` V1-1），真实流量仍由根 `__init__.py` 的 matcher + `RuntimePipeline` 承载。任何文档或回复把中央层说成现役执行面都是失实。
+
+## 上下游
+
+```mermaid
+flowchart LR
+  B01.message-normalization --> route[B02.route-table]
+  route --> fs[B02.capability-registry]
+  fs --> gate[B02.policy-gate]
+  gate --> cap[能力实现 B03–B07]
+  cap --> B08.review-gate
+```
+
+主链路十六段的完整口径以 `docs/boards/_conventions.md` §五为准，本卡只画 B02 所辖那一段（各卡不复绘全链，那是漂移之源）。
+
+## 退役与并入记录
+
+按 `docs/boards/_meta/doc-classification-20260921.md` 的判决：
+
+- `docs/route-matrix.md`：全问法路由矩阵并入 `route-table` 正文；该文件继续作为与代码对齐的对照表存在，覆盖门在 `tests/test_doc_sync_gates.py`（AST 双向比对 priority 与能力 id；触发词列属明文免责，见 `docs/audit-20260921.md` 门 F 判决）。
+- `COMMANDS.md`：命令索引并入本板块；`docs/command-catalog.md` 是生成物，保留原地、禁止移树，板块只引用不复制。
+- `docs/design/capability-orchestration-adoption-spec.md`：并入本板块调度层正文，未做的 Wave 1–4 在本页明示挂账，不许写成已完成。
+- `docs/design/central-decision-engine.md`：状态自述「规格稿未实现」，`decision/` 仅有 shadow 面 ⇒ 归 `decision-engine`，原文件标注未实现或归档。
+- `docs/design/backend-v2-implementation-guide.md`（实施合同）与 `docs/design/v21r4-b2-direct-collect-plan.md`（S0 直连点收编设计）：结论并入本板块，母本保留在 `docs/design/`。
+- `HANDOFF-V21R5-20260920.md`：其中「四服务生产装配 / 垫片退役 / policy 迁移」段拆并入本板块与 B01，原文件归历史证据。
+- 旧路径 `plugins/bot_unified_runtime/policy/`、`decision/`、`runtime/base_router.py`、`runtime/capability_registry.py`、`runtime/pipeline.py` 等均为再导出垫片，真身在 `domains/chat_reply/policy/`、`domains/core/decision/`、`domains/chat_reply/runtime/`。引用一律写真身。

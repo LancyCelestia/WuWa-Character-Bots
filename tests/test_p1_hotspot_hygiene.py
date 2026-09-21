@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.output import plain_text
+from plugins.bot_unified_runtime.domains.render import plain_text
 from plugins.bot_unified_runtime.runtime import base_router, mentions
 from plugins.bot_unified_runtime.sources.registry import (
     ParserRegistry,

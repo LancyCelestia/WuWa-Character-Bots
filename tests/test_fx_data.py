@@ -14,9 +14,9 @@ from collections.abc import Iterator
 import pytest
 
 from plugins.bot_unified_runtime.capabilities import user_copy
-from plugins.bot_unified_runtime.contracts.finance import FxRate
-from plugins.bot_unified_runtime.sources import fx_data
-from plugins.bot_unified_runtime.sources.fx_data import (
+from plugins.bot_unified_runtime.domains.core.contracts.finance import FxRate
+from plugins.bot_unified_runtime.domains.finance.data import fx_data
+from plugins.bot_unified_runtime.domains.finance.data.fx_data import (
     FX_UNAVAILABLE_PAIRS,
     fetch_fx_rates,
     format_fx_brief,

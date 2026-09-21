@@ -1,7 +1,7 @@
 """五链路延迟测量（docs/perf-optimization-plan.md §二 配套脚本）。
 
 - 离线段（任何时刻可跑）：①项目内部路由判定 P50/P95；②HTML 渲染 P50/P95。
-- 在线段（bot 在线才有意义）：③NapCat WS 端口握手；④SMTP 握手；⑤TG API getMe。
+- 在线段（bot 在线才有意义）：③SnowLuma WS 端口握手；④SMTP 握手；⑤TG API getMe。
   探测失败一律输出 unreachable / no-config，绝不编造数值。
 
 用法：
@@ -150,7 +150,7 @@ def _tcp_probe(host: str, port: int, name: str, timeout: float = 2.0) -> None:
 
 
 def measure_napcat() -> None:
-    print("③ NapCat WS（127.0.0.1:3001 TCP 握手，非全协议）：")
+    print("③ SnowLuma WS（127.0.0.1:3001 TCP 握手，非全协议）：")
     _tcp_probe("127.0.0.1", 3001, "napcat-tcp")
 
 

@@ -7,20 +7,22 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import plugins.bot_unified_runtime.capabilities.notes as notes_mod
-from plugins.bot_unified_runtime.capabilities.notes import (
+import plugins.bot_unified_runtime.domains.notes.capabilities.notes as notes_mod
+from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.notes.capabilities.notes import (
     build_notes_capability,
     is_notes_command,
     note_display_text,
     note_image_files,
 )
-from plugins.bot_unified_runtime.character import notes_store as notes_store_mod
-from plugins.bot_unified_runtime.character.notes_store import (
+from plugins.bot_unified_runtime.domains.notes.store import (
+    notes_store as notes_store_mod,
+)
+from plugins.bot_unified_runtime.domains.notes.store.notes_store import (
     NotesStore,
     detect_note_kind,
     reset_stores_for_tests,
 )
-from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.runtime.base_router import (
     RouteKind,
     classify_message_route,

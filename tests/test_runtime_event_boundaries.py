@@ -4,7 +4,9 @@ from pathlib import Path
 
 from plugins.bot_unified_runtime import _log_runtime_event
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
-from plugins.bot_unified_runtime.sources.runtime_event_log import RuntimeEventLog
+from plugins.bot_unified_runtime.domains.ops.monitor.runtime_event_log import (
+    RuntimeEventLog,
+)
 
 
 def test_runtime_boundary_log_excludes_message_body(tmp_path: Path) -> None:

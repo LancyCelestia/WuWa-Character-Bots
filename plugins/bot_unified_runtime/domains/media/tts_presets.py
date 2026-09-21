@@ -65,6 +65,27 @@ T53 §4.5），覆盖现行 200 字档（≈82s≈5.3MB）留 50% 余量——G2
 
 
 # ---------------------------------------------------------------------------
+# 生效硬顶（**规则的唯一家**）：config 显式值优先，0/未配 ⇒ 上面的内置兜底常量。
+# M-35 语义反转 + G2-R3「0=禁配无界」口径。消费方（media/capabilities/tts.py、
+# media/voice_enricher.py、中央 CAPABILITY_DESCRIPTOR、creation 契约漂移门）一律调
+# 本函数，不得各自重写 `getattr(config, …) or FALLBACK`——重写一次就多一个分叉点：
+# 改 BOT_TTS_HARD_MAX_CHARS 后只有此处会跟随（2026-09-21 R1/I-3 收口）。
+# ---------------------------------------------------------------------------
+
+
+def resolve_hard_max_chars(config: object | None = None) -> int:
+    """文本硬顶生效值：``config.bot_tts_hard_max_chars`` 为 0/缺失时取内置常量。"""
+    raw = int(getattr(config, "bot_tts_hard_max_chars", 0) or 0) if config is not None else 0
+    return raw or HARD_MAX_CHARS_FALLBACK
+
+
+def resolve_max_audio_bytes(config: object | None = None) -> int:
+    """产物字节顶生效值：``config.bot_tts_max_audio_bytes`` 为 0/缺失时取内置常量。"""
+    raw = int(getattr(config, "bot_tts_max_audio_bytes", 0) or 0) if config is not None else 0
+    return raw or MAX_AUDIO_BYTES_FALLBACK
+
+
+# ---------------------------------------------------------------------------
 # 预设表
 # ---------------------------------------------------------------------------
 

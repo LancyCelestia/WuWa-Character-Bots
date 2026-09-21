@@ -21,7 +21,7 @@
    self.max_attempts」，既有 test_queue_poison_row 已锁）置 FAILED_FINAL
    不再交投——总网络尝试 ≤ 3 的常数上界，不可能无限循环。
 
-离线运行（无网络、无 NapCat）：
+离线运行（无网络、无 SnowLuma）：
 
     PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/test_onebot_chunk_budget_floor.py -q
 """
@@ -40,7 +40,7 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.sender import onebot as onebot_sender
+from plugins.bot_unified_runtime.domains.transport.sender import onebot as onebot_sender
 from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
 
 

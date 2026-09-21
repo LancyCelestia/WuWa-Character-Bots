@@ -20,9 +20,14 @@ from typing import Any
 
 import pytest
 
-from plugins.bot_unified_runtime.llm.ledger import LLMCallDraft
-from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
-from plugins.bot_unified_runtime.llm.providers import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger import (
+    LLMCallDraft,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+    ModelRouter,
+    ModelSpec,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
     LLMProviderError,
     LLMReply,
 )
@@ -48,7 +53,7 @@ def _reset_channel_health_singleton(tmp_path, monkeypatch):
     3) 两个开关环境变量显式钉 0，锁死「本文件 = 健康层关闭」的语义前提；
        个别用例如需健康层，在用例内自行 monkeypatch 覆盖即可。
     """
-    import plugins.bot_unified_runtime.llm.channel_health as channel_health_module
+    import plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health as channel_health_module
 
     db_path = str(tmp_path / "channel_health.sqlite3")
     monkeypatch.setattr(
@@ -220,10 +225,14 @@ def test_model_name_override_does_not_retry_sibling_in_tail() -> None:
         [{"role": "user", "content": "hi"}], override="shared-model"
     )
 
-    # 旧实现尾部自动队列里 ch-b 会再出现一次（同一渠道被试两次）。
-    # 聚合分支按价格序：ch-b 均价低排在前。
-    assert calls == ["ch-b", "ch-a", "other"]
+    # 旧实现尾部自动队列里 ch-b 会再出现一次（同一渠道被试两次）——本测试
+    # 核心是「兄弟渠道只试一次」（count==1 断言），该性质不变。
+    # 聚合序 v21r2 R1 起按注册表 priority（2026-09-17 用户裁定「永远按注册表
+    # 优先级处理」：便宜的低优先级渠道不得反超，价格只作同级 tiebreak）——
+    # ch-a prio2 先于 ch-b prio5，旧价格序期望已废。
+    assert calls == ["ch-a", "ch-b", "other"]
     assert router.last_attempts.count("ch-b:timeout") == 1
+    assert router.last_attempts.count("ch-a:timeout") == 1
     assert reply.text == "ok:other"
 
 

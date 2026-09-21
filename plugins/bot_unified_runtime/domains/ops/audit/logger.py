@@ -13,7 +13,7 @@ from plugins.bot_unified_runtime.domains.core.contracts import AuditRecord, Risk
 
 # 脱敏：键名必须按「含标识符字符的整词」匹配。旧写法 `\b(token|cookie|…)` 在
 # `access_token=` 这类**下划线前缀**形态上会失配——`token` 前的 `_` 是单词字符，
-# `\b` 不成立，于是 NapCat OneBot WS 的真实形态
+# `\b` 不成立，于是 NapCat 时期 OneBot WS 的真实形态
 # `ws://127.0.0.1:3001/?access_token=<token>` 会**以明文**写进审计/JSONL/日志桥
 # （评审 H7，实测 3/11 形态泄漏）。这里改为 `[a-z0-9_]*(关键字)[a-z0-9_]*`，
 # 兼容 access_token / refresh_token / csrf_token / x-api-key / db_password 等。

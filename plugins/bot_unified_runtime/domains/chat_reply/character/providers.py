@@ -761,7 +761,7 @@ def build_character_context_provider(
     # 依赖嵌入查询）；同样施加 fast 嵌入超时上限，防 Ollama 卡死拖垮请求。
     if not (fast_mode and skip_vector):
         try:
-            from plugins.bot_unified_runtime.domains.chat_reply.character.kb_wiki import (
+            from plugins.bot_unified_runtime.domains.location.knowledge.kb_wiki import (
                 MergedKnowledgeRetriever,
                 build_kb_wiki_retriever,
             )
@@ -778,6 +778,9 @@ def build_character_context_provider(
                 ),
             )
         except Exception:  # noqa: BLE001 - wiki 库构建失败不阻断人格知识检索。
+            # 但必须留痕：这里静默置 None 曾让 5.7GB wiki 库长期无人读取而无人察觉
+            # （导入路径写错被本句吞掉，见 tests/test_kb_wiki_retriever_wiring.py）。
+            logger.exception("Crawl Wiki 知识库检索器装配失败，本轮人格知识检索不受影响")
             kb_retriever = None
         if kb_retriever is not None and getattr(kb_retriever, "available", False):
             knowledge_retriever = (

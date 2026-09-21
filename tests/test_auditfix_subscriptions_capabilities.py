@@ -36,17 +36,17 @@ from plugins.bot_unified_runtime.contracts import (
     SessionType,
     SubscriptionDestinationV2,
 )
-from plugins.bot_unified_runtime.contracts.subscription import (
+from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     ContentReference,
     SubscriptionCursorV2,
     SubscriptionFetchResult,
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.sources.subscription_scheduler import (
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_scheduler import (
     PlatformThrottle,
     SubscriptionScheduler,
 )
-from plugins.bot_unified_runtime.sources.subscription_store_v2 import (
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
 )
 from plugins.bot_unified_runtime.sources.subscriptions.social_v2 import (
@@ -403,11 +403,11 @@ def test_e2_7_weather_not_found_silent_in_group_error_in_private(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.weather.nmc_weather_query",
+        "plugins.bot_unified_runtime.domains.weather.capabilities.weather.nmc_weather_query",
         lambda query, proxy="": None,
     )
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.weather.open_meteo_query",
+        "plugins.bot_unified_runtime.domains.weather.capabilities.weather.open_meteo_query",
         lambda query, proxy="": None,
     )
     capability = build_weather_capability(config=None, render_backend=None)

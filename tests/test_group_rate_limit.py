@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
-from plugins.bot_unified_runtime.policy.rate_limit import (
+from plugins.bot_unified_runtime.domains.chat_reply.policy.rate_limit import (
     InMemoryRateLimiter,
     RateLimitSettings,
     build_rate_limit_settings,

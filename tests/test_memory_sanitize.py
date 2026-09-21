@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from plugins.bot_unified_runtime.security.memory_sanitize import (
+from plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize import (
     sanitize_memory_db,
 )
 
@@ -49,8 +49,8 @@ def test_sanitize_dry_run_reports_without_deleting(tmp_path) -> None:
         db,
         [
             ("f1", "用户喜欢在深夜聊天"),
-            ("f2", "用户要求当狗，汪汪叫"),
-            ("f3", "用户写了很多露骨色情内容"),
+            ("f2", "用户骂了人：真是个废物"),
+            ("f3", "用户写了未成年角色的性爱情节"),
             ("f4", "用户讨厌香菜"),
         ],
     )
@@ -58,9 +58,9 @@ def test_sanitize_dry_run_reports_without_deleting(tmp_path) -> None:
     report = sanitize_memory_db(db, apply=False)
 
     assert report.scanned == 4
-    assert report.quarantined == 2
-    assert report.by_category == {"nsfw": 1, "petplay": 1}
-    assert sorted(_rows(db)) == sorted(["用户喜欢在深夜聊天", "用户要求当狗，汪汪叫", "用户写了很多露骨色情内容", "用户讨厌香菜"])
+    assert report.quarantined == 1
+    assert report.by_category == {"minors": 1}
+    assert sorted(_rows(db)) == sorted(["用户喜欢在深夜聊天", "用户骂了人：真是个废物", "用户写了未成年角色的性爱情节", "用户讨厌香菜"])
 
 
 def test_sanitize_apply_quarantines_then_deletes(tmp_path) -> None:
@@ -69,27 +69,27 @@ def test_sanitize_apply_quarantines_then_deletes(tmp_path) -> None:
         db,
         [
             ("f1", "用户喜欢在深夜聊天"),
-            ("f2", "用户要求当狗，汪汪叫"),
-            ("f3", "用户写了很多露骨色情内容"),
+            ("f2", "用户骂了人：真是个废物"),
+            ("f3", "用户写了未成年角色的性爱情节"),
         ],
     )
 
     report = sanitize_memory_db(db, apply=True)
 
-    assert report.quarantined == 2
-    assert _rows(db) == ["用户喜欢在深夜聊天"]
+    assert report.quarantined == 1
+    assert _rows(db) == ["用户喜欢在深夜聊天", "用户骂了人：真是个废物"]
     connection = sqlite3.connect(db)
     quarantined = connection.execute(
         "SELECT fact_id, category FROM memory_quarantine ORDER BY fact_id"
     ).fetchall()
     connection.close()
-    assert sorted(q[0] for q in quarantined) == ["f2", "f3"]
-    assert {q[1] for q in quarantined} == {"nsfw", "petplay"}
+    assert quarantined == [("f3", "minors")]
 
 
 def test_sanitize_idempotent_second_pass_clean(tmp_path) -> None:
+    # 2026-09-20 收窄：insult 不再清洗，幂等锁改用 minors 样本。
     db = tmp_path / "memory.sqlite3"
-    _seed(db, [("f1", "好的记忆"), ("f2", "废物用户就该被辱骂")])
+    _seed(db, [("f1", "好的记忆"), ("f2", "用户写了未成年角色的性爱情节")])
 
     first = sanitize_memory_db(db, apply=True)
     second = sanitize_memory_db(db, apply=True)

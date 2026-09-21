@@ -1,7 +1,7 @@
 """运行时事件日志：毫秒时间戳 + INFO/WARNING/ERROR 分级 + 查询。
 
 单文件纯文本（每行一条事件），自动轮转保留最近两代；线程安全。
-同时提供 logging 桥，把 NoneBot 自身日志（含 NapCat/OneBot 适配器
+同时提供 logging 桥，把 NoneBot 自身日志（含 SnowLuma/OneBot 适配器
 连接事件）按同一格式写进事件文件。
 
 配置：`BOT_RUNTIME_LOG_FILE`（默认 data/runtime_events.log）、

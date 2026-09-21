@@ -2,7 +2,7 @@
 
 从本地表情包目录递归收集图片（gif/webp/png/jpg/jpeg），按 MD5 去重后
 拷贝到 data/meme_library/ 并写入 data/meme_library.sqlite3。元数据逻辑复用
-plugins.bot_unified_runtime.sources.meme_library.MemeLibraryStore（单一事实源）。
+plugins.bot_unified_runtime.domains.meme.sources.meme_library.MemeLibraryStore（单一事实源）。
 
 设计约束：
 - 只导入图片：视频（.mov/.mp4 等）与说明文本（.txt）不导入——发送管线只支持图片；
@@ -43,7 +43,15 @@ PREFER = ["守岸人", "岸宝", "鸣潮", "战双帕弥什", "库洛"]
 
 def _load_store(db_path: Path) -> Any:
     """按文件路径加载 MemeLibraryStore，避免触发包 __init__ 中的 NoneBot 依赖。"""
-    source = ROOT / "plugins" / "bot_unified_runtime" / "sources" / "meme_library.py"
+    source = (
+        ROOT
+        / "plugins"
+        / "bot_unified_runtime"
+        / "domains"
+        / "meme"
+        / "sources"
+        / "meme_library.py"
+    )
     spec = importlib.util.spec_from_file_location("_meme_library_source", source)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"无法加载 {source}")

@@ -60,7 +60,7 @@ class OutboundGateVerdict(StrictBaseModel):
 - **fail-open**：store 异常/设置读取异常 → `allow` + `logger.error("outbound_gate_store_failure ...")` + OperationalIssue(kind=`outbound_gate_degraded`)。依据：闸是「更好」而现役 6 族本无闸，闸自身故障不得变成丢消息（同族先例：quiet 设置求值失败回退默认不误拦，`quiet_hours.py:88-92`；错误卡冷却降级不吞回执，台账#29 惯例）。
 - 时钟注入：`OutboundGate(clock=...)` 可注入（`QuietHoursChecker` 同款纪律，`:70-75`），离线测试确定性。
 - settings 支持 callable 热改（quiet 面先例 `quiet_hours.py:72-76`；限流阈值两键支持热改，明确**不做**「SQLite 限流不支持热改」旧坑复刻，台账#3）。
-- 日志字段（全 determinstic、无正文、经 `output/plain_text.py` 打码口径不打日志但禁含 content）：`request_id / verdict.action / reason / subject_key_hash(sha256[:12]) / window_count / deliver_after / capability_id`。
+- 日志字段（全 determinstic、无正文、经 `domains/render/plain_text.py` 打码口径不打日志但禁含 content）：`request_id / verdict.action / reason / subject_key_hash(sha256[:12]) / window_count / deliver_after / capability_id`。
 - 审计：每次放行/顺延/拒绝经 `AuditRepository` 记一条（`queue.py:487 _append_sender_audit` 同族口），event ∈ `outbound_gate_allow/defer/skip`。
 - 告警 kind 新增两枚（进 `domains/ops/monitor/alerts.py` 折叠族，复用 300s 抑制 `:155-171`）：`outbound_gate_degraded`（store 病）、`outbound_gate_storm`（同一主体连续 3 次 defer，说明上游在轰闸）。
 
@@ -162,7 +162,7 @@ class OutboundGateVerdict(StrictBaseModel):
 
 依据：
 1. **不能直接复用实例**：引擎整体未接生产（`config.py:405-406` 缺省关 + 全仓零生产调用点，E1 §2#7/§3 G6），且 `split_quiet_hours`/`acquire_send_slot` 的输入是日程 schema（claimed rows/`plan_id`/`owner`/`SchedulePlan.quiet_hours`，`schedule_service.py:484-550`），泛化成通用闸=把日程域拖进 transport 依赖，违背域隔离；其 digest 合并出口 `build_digest` 自述留接口未实现（`:551-560`），「超限合并摘要」承诺本波兑现不了，规格里诚实降级为 defer。
-2. **也不是造第三套**，因为：quiet 窗判定唯一事实源仍是 `policy/quiet_hours.py` 设置族（T13 锁死不得自造解析）；穿静默/顺延/审批语义词汇直接收编引擎既有枚举（`ReminderPolicy.urgent`、`quiet_hours_behavior∈{defer,send}`、`SendDecision.decision∈{allow,digest}`——E1 §4「定级/紧急语义词汇直接收编、勿另造第二套」原文执行）；顺延执行原语用队列原生 `deliver_after`（`queue.py:418-438`），不造 delay 表。本仓现存的「主动侧 quiet/风暴」实现集 = {未接线引擎实例} + {本规格闸}，闸是引擎 send 层「留接口」（`delivery.py:51-54` 已按同协议写）未来可直接改调的**那个中央件**——终态合流：日程 v2 接线授权后，其发送层接本闸，两套判定并成一套。
+2. **也不是造第三套**，因为：quiet 窗判定唯一事实源仍是 `domains/chat_reply/policy/quiet_hours.py` 设置族（T13 锁死不得自造解析）；穿静默/顺延/审批语义词汇直接收编引擎既有枚举（`ReminderPolicy.urgent`、`quiet_hours_behavior∈{defer,send}`、`SendDecision.decision∈{allow,digest}`——E1 §4「定级/紧急语义词汇直接收编、勿另造第二套」原文执行）；顺延执行原语用队列原生 `deliver_after`（`queue.py:418-438`），不造 delay 表。本仓现存的「主动侧 quiet/风暴」实现集 = {未接线引擎实例} + {本规格闸}，闸是引擎 send 层「留接口」（`delivery.py:51-54` 已按同协议写）未来可直接改调的**那个中央件**——终态合流：日程 v2 接线授权后，其发送层接本闸，两套判定并成一套。
 3. 若评审倾向更彻底复用，备选 B 案=「先接线日程引擎再扩通用」——被否：L41 等行仍 blocked 等用户裁决（`docs/design/v21r4-b-wave-snapshot.md`），紧急域不应被无关域的授权卡死。
 
 ## §6 复跑证据（本席只读取证命令 + 输出摘要）

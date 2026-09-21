@@ -14,8 +14,8 @@ from collections.abc import Iterator
 
 import pytest
 
-from plugins.bot_unified_runtime.sources import bond_data
-from plugins.bot_unified_runtime.sources.bond_data import (
+from plugins.bot_unified_runtime.domains.finance.data import bond_data
+from plugins.bot_unified_runtime.domains.finance.data.bond_data import (
     fetch_bond_yields,
     format_bond_brief,
     parse_bond_snapshot,
@@ -137,7 +137,9 @@ def test_format_brief_ok_contains_blocks(_clean_cache) -> None:
 
 
 def test_fetch_empty_then_data_two_calls(_clean_cache, _sleeps, monkeypatch) -> None:
-    from plugins.bot_unified_runtime.sources.market_data import _RETRY_BACKOFF_SECONDS
+    from plugins.bot_unified_runtime.domains.finance.data.market_data import (
+        _RETRY_BACKOFF_SECONDS,
+    )
 
     payloads: list[dict] = [dict(_EMPTY), dict(_PAYLOAD)]
     calls: list[str] = []

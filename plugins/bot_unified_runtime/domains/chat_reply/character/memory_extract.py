@@ -93,7 +93,13 @@ def store_extracted_memories(
     session_id: str,
     texts: list[str],
 ) -> int:
-    """把抽取结果写入记忆库；单条失败只记录日志，不中断其余条目。"""
+    """把抽取结果写入记忆库；单条失败只记录日志，不中断其余条目。
+
+    来源声明为 ``derived``（单轮顺手记的，可靠度低于本人亲口说与夜间归纳）。
+    总线开着时 ``repository`` 自带总线（装配点传 ``bus=``，见 WP6 交接段），
+    ``upsert_fact`` 因此落进总线并交由「确认/矛盾/直插」裁决——同一事实被反复
+    抽出只会累加印证次数，不再像旧库那样靠 fact_id 静默覆盖。
+    """
     stored = 0
     for text in texts:
         try:
@@ -106,6 +112,7 @@ def store_extracted_memories(
                 confidence=0.6,
                 source="llm_extract",
                 sensitivity="personal",
+                provenance="derived",
             )
             stored += 1
         except Exception as exc:  # noqa: BLE001 - 记忆入库失败不应影响其他条目，也不打印敏感堆栈。

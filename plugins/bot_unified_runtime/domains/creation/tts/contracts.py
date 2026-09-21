@@ -32,18 +32,30 @@ from .._common.contracts import (
 )
 
 # ---------------------------------------------------------------------------
-# 硬上限与参数域（指南 §11 L256）
+# 硬上限与参数域——**收敛到中央 TTS 契约单一来源，本域不再持有第二套数值**
 # ---------------------------------------------------------------------------
+# 数值真身 = Wave G 中央契约 domains/media/tts_presets.py：
+#   文本顶  = HARD_MAX_CHARS_FALLBACK (2000)                    tts_presets.py:59
+#   字节顶  = MAX_AUDIO_BYTES_FALLBACK (8MiB≈131s)              tts_presets.py:62-64
+#   speed域 = ENGINE_PARAM_DOMAINS["speed_factor"]=(0.6, 1.65)  tts_presets.py:37
+# 本叶子契约受 test_v21_creation_skeleton.py 隔离直载探针约束（真包父级装配会
+# 拉起 nonebot，故 contracts 必须零重 import），无法在此直接 import 中央件；
+# 逐组等值由常驻门 tests/test_creation_tts_drift_gate.py 锁死——任一侧改数即红。
+# 旧值 text=3000 / 时长=60s / 体积=20MiB / speed 0.75..1.25 于 2026-09-21 统一接入波
+# U3 作废（60s 更被 Wave G 明文并入字节顶）；中央契约一字未改。
+# 若日后中央导出时长/比特率常量，应改为 import 之并退役本处派生。
 
-#: text ≤3000 字符。
-TTS_MAX_TEXT_CHARS = 3000
-#: 输出时长 ≤60s。
-TTS_MAX_DURATION_SECONDS = 60.0
-#: 输出体积 ≤20MiB。
-TTS_MAX_ASSET_BYTES = 20 * 1024 * 1024
-#: speed 默认 1.0，范围 0.75..1.25 ∩ provider 能力。
-TTS_SPEED_MIN = 0.75
-TTS_SPEED_MAX = 1.25
+#: text ≤ 中央文本顶（2000 字符，G2-R3）。
+TTS_MAX_TEXT_CHARS = 2000
+#: 输出体积 ≤ 中央字节顶（8 MiB，G2-R3）。
+TTS_MAX_ASSET_BYTES = 8 * 1024 * 1024
+#: PCM 字节率：v2ProPlus 32000Hz×16bit×单声道=64000 B/s 恒定（中央 T53 §4.5）。
+_TTS_PCM_BYTES_PER_SECOND = 32000 * 2 * 1
+#: 输出时长上限 = 中央字节顶 ÷ 比特率（8MiB/64000≈131.072s），非独立秒级政策值。
+TTS_MAX_DURATION_SECONDS = TTS_MAX_ASSET_BYTES / _TTS_PCM_BYTES_PER_SECOND
+#: speed 默认 1.0，范围对齐中央引擎域 0.6..1.65 ∩ provider 能力。
+TTS_SPEED_MIN = 0.6
+TTS_SPEED_MAX = 1.65
 TTS_SPEED_DEFAULT = 1.0
 
 #: TTS 计费指标子集（扩展 §1 L23）：characters/audio_seconds/requests。
@@ -138,8 +150,9 @@ class TTSJobRequest(CreationContractBase):
       出站草稿 id，不得由模型自报（metadata 由运行时写，指南 §10 L240）；
     - provider/model/voice/language/format 枚举来自注册表能力目录；禁原始
       SSML（text 内出现 SSML 根标签即拒）；
-    - speed 0.75..1.25，provider 交集在受理期用 TTSProviderCapabilities 复核；
-    - 输出上限：时长 ≤60s 且体积 ≤20MiB（由 TTSAssetRecord 硬约束回验）。
+    - speed 落在中央引擎域 0.6..1.65，provider 交集在受理期用 TTSProviderCapabilities 复核；
+    - 输出上限：时长 ≤131.072s 且体积 ≤8MiB（均收敛中央单一来源，见上方常量注记，
+      由 TTSAssetRecord 硬约束回验）。
     """
 
     text: str | None = Field(default=None, max_length=TTS_MAX_TEXT_CHARS)

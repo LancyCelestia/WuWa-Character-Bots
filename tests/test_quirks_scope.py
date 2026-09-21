@@ -137,7 +137,7 @@ def _reflection_turns() -> list[Turn]:
 def test_reflection_feed_is_user_scoped_with_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from plugins.bot_unified_runtime.character import providers
+    from plugins.bot_unified_runtime.domains.chat_reply.character import providers
 
     monkeypatch.setattr(
         providers,
@@ -180,7 +180,7 @@ def test_unattributed_proposal_renders_nobody(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """归属链拿不到 sender 的自动提案：user+空 key，approve 后也渲染不到任何人。"""
-    from plugins.bot_unified_runtime.character import providers
+    from plugins.bot_unified_runtime.domains.chat_reply.character import providers
 
     monkeypatch.setattr(
         providers,

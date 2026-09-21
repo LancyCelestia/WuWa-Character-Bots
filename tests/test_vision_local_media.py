@@ -1,6 +1,6 @@
 """本地媒体 vision 链路回归：file:/// 图片、GIF 首帧、视频抽帧。
 
-NapCat 收到的 image/video 段常带本机 nt_data 路径而非 http URL，
+NapCat 时期收到的 image/video 段常带本机 nt_data 路径而非 http URL，
 extract_image_urls 此前只认 http 前缀导致 vision 链路静默跳过
 （人格模型只看到 [图片] 占位符）。本文件锁定修复后的行为。
 """
@@ -13,8 +13,8 @@ from types import SimpleNamespace
 import pytest
 
 from plugins.bot_unified_runtime import contains_visual_message_segments
-from plugins.bot_unified_runtime.sources import vision_describe
-from plugins.bot_unified_runtime.sources.vision_describe import (
+from plugins.bot_unified_runtime.domains.media.ingest import vision_describe
+from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
     describe_images,
     describe_video,
     extract_image_urls,
@@ -240,7 +240,9 @@ def test_visual_segments_include_video() -> None:
 
 
 def test_gate_message_has_media_with_local_video(monkeypatch: pytest.MonkeyPatch) -> None:
-    from plugins.bot_unified_runtime.policy.gate import _message_has_image
+    from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
+        _message_has_image,
+    )
 
     monkeypatch.setattr(
         vision_describe,

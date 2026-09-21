@@ -17,10 +17,6 @@ from plugins.bot_unified_runtime.capabilities.affinity import (
     is_affinity_command,
     parse_affinity_query,
 )
-from plugins.bot_unified_runtime.capabilities.auto_send.parser import (
-    is_auto_send_command_text,
-    parse_auto_send_command,
-)
 from plugins.bot_unified_runtime.capabilities.divination import (
     is_divination_command,
     parse_divination_intent,
@@ -34,9 +30,6 @@ from plugins.bot_unified_runtime.capabilities.meme_library import (
 from plugins.bot_unified_runtime.capabilities.moegirl import (
     normalize_entity_question,
 )
-from plugins.bot_unified_runtime.capabilities.platform_credentials import (
-    is_cookie_command,
-)
 from plugins.bot_unified_runtime.capabilities.reminder import is_reminder_command
 from plugins.bot_unified_runtime.capabilities.subscribe import (
     is_standalone_subscribe_command,
@@ -46,6 +39,13 @@ from plugins.bot_unified_runtime.capabilities.subscribe import (
 from plugins.bot_unified_runtime.capabilities.subscribe_v2 import _normalize
 from plugins.bot_unified_runtime.character.reminders import parse_reminder_intent
 from plugins.bot_unified_runtime.contracts import SessionType
+from plugins.bot_unified_runtime.domains.core.credentials.platform_credentials import (
+    is_cookie_command,
+)
+from plugins.bot_unified_runtime.domains.schedule.auto_send.parser import (
+    is_auto_send_command_text,
+    parse_auto_send_command,
+)
 from plugins.bot_unified_runtime.runtime.aliases import (
     DEFAULT_VERB_MAP,
     CommandAliasResolver,

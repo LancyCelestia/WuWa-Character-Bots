@@ -9,7 +9,7 @@ import pytest
 from PIL import Image
 
 from plugins.bot_unified_runtime.capabilities.chat import build_direct_vision_messages
-from plugins.bot_unified_runtime.sources import vision_describe as V
+from plugins.bot_unified_runtime.domains.media.ingest import vision_describe as V
 
 
 def _jpeg_bytes(w: int = 60, h: int = 40) -> bytes:
@@ -98,3 +98,38 @@ def test_direct_vision_funnel_converts_qq_urls(monkeypatch) -> None:
     image_parts = [part for part in content if part.get("type") == "image_url"]
     assert image_parts
     assert image_parts[0]["image_url"]["url"].startswith("data:")
+
+
+# ---------- 图片大小上限口径（2026-09-18 用户裁定「放宽到 25MB」） ----------
+
+
+def test_image_size_caps_are_25mb() -> None:
+    """远程图与本地图上限同口径 25MB——两处漂移会让「远程能读、本地读不了」。"""
+    assert V._MAX_REMOTE_IMAGE_BYTES == 25_000_000
+    assert V._MAX_LOCAL_IMAGE_INPUT_BYTES == 25_000_000
+
+
+def test_remote_download_accepts_just_under_cap_and_rejects_over(
+    monkeypatch,
+) -> None:
+    """25MB 上限的边界语义：恰好等于上限可收，超出 1 字节即拒。"""
+    cap = V._MAX_REMOTE_IMAGE_BYTES
+
+    class _Resp:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+
+        def read(self, n: int) -> bytes:
+            return self._payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc: object) -> bool:
+            return False
+
+    def _fake_urlopen(request, timeout=None):
+        return _Resp(b"\0" * (cap + 1))
+
+    monkeypatch.setattr(V.urllib.request, "urlopen", _fake_urlopen)
+    assert V._download_image_bytes("http://cdn.example/big.jpg") is None

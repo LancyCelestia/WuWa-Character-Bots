@@ -163,10 +163,14 @@ def test_priority_numbers_fx_beats_stocks_and_market_tier_unchanged() -> None:
     market_rule = _rule(RouteKind.MARKET)
     fx_rule = _rule(RouteKind.FX)
     stocks_rule = _rule(RouteKind.STOCKS)
-    assert market_rule.priority == 41  # market 既有 41 档不动
+    assert market_rule.priority == 41  # market 既有 41 档不动（最泛「行情」catch-all）
     assert fx_rule.priority < stocks_rule.priority  # 重叠时 fx 优先级更高
     assert stocks_rule.priority in (41, 42)  # 均在 market 相邻档
-    assert fx_rule.priority in (41, 42)
+    # WP5（2026-09-21）：fx 从 41 拆到 36，与 market(41) 数值互不相同，问汇率不再
+    # 靠「market/fx 同 41 书写序」定胜负（旧口径 fx∈(41,42) 会强制 fx=41=market，
+    # 正是审计 E4-2 的同优先级劫持根因）。仍锁 fx < stocks，三档 (market,fx,stocks)
+    # 优先级两两不同（见下方 distinct 断言）。
+    assert fx_rule.priority in (36, 41, 42)
     assert (
         len({(market_rule.priority, market_rule.kind), (fx_rule.priority, fx_rule.kind), (stocks_rule.priority, stocks_rule.kind)})
         == 3

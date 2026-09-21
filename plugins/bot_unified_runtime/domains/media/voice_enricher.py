@@ -44,7 +44,6 @@ from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
 )
 from plugins.bot_unified_runtime.domains.media.capabilities.tts import (
     _DEFAULT_TIMEOUT_SECONDS,
-    HARD_MAX_CHARS_FALLBACK,
     _build_params,
     _failure_issue,
     _issue,
@@ -56,6 +55,10 @@ from plugins.bot_unified_runtime.domains.media.capabilities.tts import (
     resolve_speech_text,
     should_voice_reply,
     synthesize,
+)
+from plugins.bot_unified_runtime.domains.media.tts_presets import (
+    resolve_hard_max_chars,
+    resolve_max_audio_bytes,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,10 +146,7 @@ def build_voice_enricher(
             return result
         # 文本硬顶（G2-R3）：超顶=放弃增益（文字照发），不挂 issue 防刷屏
         # （与命令半「拒绝合成+引导文案」不同——自动路无对话对象）。
-        hard_cap = (
-            int(getattr(config, "bot_tts_hard_max_chars", 0) or 0)
-            or HARD_MAX_CHARS_FALLBACK
-        )
+        hard_cap = resolve_hard_max_chars(config)
         if len(speech) > hard_cap:
             logger.info(
                 "tts auto reply skipped: over_hard_cap len=%d cap=%d",
@@ -185,7 +185,7 @@ def build_voice_enricher(
             preset_id=preset.preset_id,
             engine_params=dict(preset.params),
             seed=speech_seed,
-            max_audio_bytes=int(getattr(config, "bot_tts_max_audio_bytes", 0) or 0),
+            max_audio_bytes=resolve_max_audio_bytes(config),
             quota_max_bytes=int(getattr(config, "bot_tts_cache_max_bytes", 0) or 0),
             quota_max_age_days=int(
                 getattr(config, "bot_tts_cache_max_age_days", 0) or 0

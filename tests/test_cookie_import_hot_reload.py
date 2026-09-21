@@ -16,7 +16,7 @@ from plugins.bot_unified_runtime import (
     _CONTENT_REGISTRY_CACHE,
     _cached_content_parser_registry,
 )
-from plugins.bot_unified_runtime.sources import parsers as parsers_module
+from plugins.bot_unified_runtime.domains.link_parse import parsers as parsers_module
 
 
 @pytest.fixture(autouse=True)

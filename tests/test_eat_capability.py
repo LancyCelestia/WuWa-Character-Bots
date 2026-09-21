@@ -9,7 +9,7 @@ from plugins.bot_unified_runtime.capabilities.eat import (
     clear_recent_dishes,
 )
 from plugins.bot_unified_runtime.contracts import SessionType
-from plugins.bot_unified_runtime.contracts.runtime import IncomingMessage
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
 
 
 def _message(text: str, session_id: str = "private:u1") -> IncomingMessage:

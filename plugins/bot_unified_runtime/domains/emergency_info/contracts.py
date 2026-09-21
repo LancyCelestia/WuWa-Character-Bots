@@ -195,6 +195,81 @@ class EmergencyItem(StrictBaseModel):
     status: EmergencyStatus = EmergencyStatus.PENDING
     reviewed_by: str = ""
     reviewed_at: datetime | None = None
+    # 震中/事件坐标（WIRE-SUB 新增）：只有事件本身带坐标的源才填（gdacs/icl/usgs），
+    # 气象预警类（nmc）留 None。用途唯一 = 订阅规则的「半径匹配」。
+    # 走正经字段而不是塞进 body/audit_tags：施工图 §5-钉死① 明令禁止造第二载体，
+    # 「没给坐标」与「坐标在原点」必须是两件事 ⇒ 可空 + 范围校验双锁。
+    latitude: float | None = None
+    longitude: float | None = None
+    # WP3（2026-09-21 全谱重做）新增三枚**源侧事实**字段，全部可空、只搬运不猜测：
+    # - `category_id`：注册表 `service/alert_taxonomy.py` 的稳定类别 id（空＝没认出来，
+    #   不等于「没有类别」这件事）。订阅按 id 精确命中，不再只靠标题子串碰运气。
+    # - `magnitude`/`depth_km`：震级与震源深度。地震定级必须有这两个数才出档，
+    #   拿不到就落最低档——旧实现「标题含『地震』二字即判红」把 M0.6 南极震推成
+    #   【红色预警】穿静默窗（审计 E6-N1），根治手段是让定级只吃数、不吃字。
+    category_id: str = ""
+    magnitude: float | None = None
+    depth_km: float | None = None
+
+    @field_validator("category_id")
+    @classmethod
+    def normalize_category_id(cls, value: str) -> str:
+        return str(value or "").strip()
+
+    @field_validator("magnitude")
+    @classmethod
+    def validate_magnitude(cls, value: float | None) -> float | None:
+        """震级：None=源侧未给（不参与定级）；越界直接拒，不夹逼成合法值。
+
+        值域取 [-2, 12]：有记录以来最小/最大地震都在这条带内，越界只可能是
+        单位错或字段串位 ⇒ 宁可整条不成立，也不拿它去定档。
+        """
+        if value is None:
+            return None
+        number = float(value)
+        if not -2.0 <= number <= 12.0:
+            raise ValueError("magnitude must be within [-2, 12]")
+        return number
+
+    @field_validator("depth_km")
+    @classmethod
+    def validate_depth(cls, value: float | None) -> float | None:
+        """震源深度（km）：同上；[0, 1000] 之外一律拒（深源地震记录上限附近）。"""
+        if value is None:
+            return None
+        number = float(value)
+        if not 0.0 <= number <= 1000.0:
+            raise ValueError("depth_km must be within [0, 1000]")
+        return number
+
+    @field_validator("latitude")
+    @classmethod
+    def validate_latitude(cls, value: float | None) -> float | None:
+        """纬度：None=源侧未给坐标（不参与半径判定）；越界直接拒，不夹逼成合法值。"""
+        if value is None:
+            return None
+        number = float(value)
+        if not -90.0 <= number <= 90.0:
+            raise ValueError("latitude must be within [-90, 90]")
+        return number
+
+    @field_validator("longitude")
+    @classmethod
+    def validate_longitude(cls, value: float | None) -> float | None:
+        """经度：同上，值域 [-180, 180]。"""
+        if value is None:
+            return None
+        number = float(value)
+        if not -180.0 <= number <= 180.0:
+            raise ValueError("longitude must be within [-180, 180]")
+        return number
+
+    @model_validator(mode="after")
+    def check_coordinate_pair(self) -> EmergencyItem:
+        """经纬度必须成对出现：只有纬度没有经度＝半个坐标，比没有更坏（会被当成有效点）。"""
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude and longitude must be provided together")
+        return self
 
     @field_validator("item_id", "source_id", "external_id", "title")
     @classmethod

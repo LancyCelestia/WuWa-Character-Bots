@@ -17,7 +17,7 @@ import pytest
 
 import plugins.bot_unified_runtime as runtime
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
-from plugins.bot_unified_runtime.runtime import video_pipeline
+from plugins.bot_unified_runtime.domains.media.video import video_pipeline
 
 
 class _Bot:

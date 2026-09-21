@@ -3804,6 +3804,11 @@ def _register_nonebot_handlers() -> None:
         group_black2=frozenset(config.bot_group_black2),
         group_white1=frozenset(config.bot_group_white1),
         group_white2=frozenset(config.bot_group_white2),
+        # 监听专用号（校园学校号 bot_campus_self_ids）收到的群消息一律不回话；
+        # 直接读 config（非门控后的 source 快照），校园总闸即便关闭此约束仍在。
+        listen_only_bot_ids=frozenset(
+            str(item).strip() for item in (config.bot_campus_self_ids or []) if str(item).strip()
+        ),
         natural_chat_check=looks_like_question_text,
         mention_terms=tuple(_RUNTIME_MENTION_TERMS),
         group_lists_provider=lambda: {
@@ -5027,6 +5032,13 @@ def _register_nonebot_handlers() -> None:
         campus_record_matcher = on_message(
             rule=_is_campus_group_message, priority=8, block=False
         )
+        # U17：两 builder 在此函数级导入（模块顶部扩行会顶漂 matcher 坐标
+        # 5027/打断 registry 坐标门）；handler 以裸名引用，AST 提取测试按
+        # 全局名注入同名字缝，生产/测试两态等价。
+        from .domains.assistant.campus.campus import (
+            build_campus_forward_capability,
+            build_campus_forward_message,
+        )
 
         @campus_record_matcher.handle()
         async def _handle_campus_record(bot: Bot, event: Event) -> None:
@@ -5046,7 +5058,7 @@ def _register_nonebot_handlers() -> None:
                 plain_text = event.get_plaintext().strip()
             except Exception:  # noqa: BLE001 - 适配器实现差异兜底。
                 plain_text = ""
-            request = await asyncio.to_thread(
+            payload = await asyncio.to_thread(
                 campus_service.record,
                 bot_id=bot_id,
                 group_id=group_id,
@@ -5055,8 +5067,238 @@ def _register_nonebot_handlers() -> None:
                 text=plain_text,
                 message_id=str(getattr(event, "message_id", "") or ""),
             )
-            if request is not None:
-                send_queue.submit(request)
+            if payload is not None:
+                # U17-CAMPUS-WIRE：出站收编中央管线（门禁/review/幂等/_complete
+                # 统一入队），删除裸 send_queue.submit 旁路。纯监听语义零削弱：
+                # 对学校群仍然只读，出站目标恒为主人私聊。
+                message = build_campus_forward_message(campus_source, payload)
+                capability = build_campus_forward_capability(campus_source, payload)
+
+                async def _offload(
+                    forward_message: IncomingMessage, decision: Any
+                ) -> CapabilityResult:
+                    # 本能力为纯格式化微任务，不走聊天线程池：直接在事件循环上
+                    # 返回，绝不因池饱和吞转发（「来一条转一条」语义保持）。
+                    return capability(forward_message, decision)
+
+                async def _notify_campus_block(
+                    blocked_message: Any, gate: str
+                ) -> None:
+                    # U17-FIX：BLOCK（review 泄拦/门禁停用/运行时暂停）不得完全
+                    # 静默——该条 store 已记账、同 id 重放不再进管线（永久丢失）。
+                    # 走既有运行时告警通道发一条可观测告警：只带 capability/
+                    # 拦截类别/目标会话，绝不含源文本原文；best effort 不反噬监听。
+                    issue = OperationalIssue(
+                        stage="campus",
+                        kind=f"blocked_{gate[:24]}",
+                        severity=RiskLevel.MEDIUM,
+                        safe_summary=(
+                            "capability=bot.campus_forward session="
+                            + str(
+                                getattr(blocked_message, "session_id", "") or ""
+                            )[:40]
+                        ),
+                    )
+                    targets = _operational_alert_targets()
+                    if not targets:
+                        return
+                    try:
+                        await notify_operational_issue(
+                            issue,
+                            source_adapter=blocked_message.adapter,
+                            source_bot=blocked_message.bot_id,
+                            session_type=blocked_message.session_type,
+                            targets=targets,
+                            online_bots=_all_online_bots,
+                            delivery=_deliver_admin_alert,
+                            suppression=operational_alert_suppression,
+                        )
+                    except Exception:  # 告警侧路绝不反噬监听主链路。
+                        logging.getLogger(__name__).debug(
+                            "校园转发 BLOCK 告警投递失败", exc_info=True
+                        )
+
+                try:
+                    receipt = await pipeline.handle_async(
+                        message,
+                        _offload,
+                        capability_id="bot.campus_forward",
+                    )
+                except Exception:  # 转发失败不影响监听主链路。
+                    logging.getLogger(__name__).exception("校园转发经中央管线失败")
+                else:
+                    if getattr(receipt, "state", None) is ReceiptState.BLOCKED:
+                        gate = str(
+                            getattr(receipt, "transport", "") or "unknown"
+                        ).strip()
+                        # 日志留痕：守岸人一句话，只带 capability/拦截类别/会话，
+                        # 绝不含源文本原文（脱敏红线）。
+                        logging.getLogger(__name__).warning(
+                            "有一条校园消息因安全门未送达"
+                            "（capability=bot.campus_forward gate=%s session=%s）",
+                            gate,
+                            getattr(message, "session_id", ""),
+                        )
+                        await _notify_campus_block(message, gate)
+
+    # ==================== 紧急信息域接线（WIRE-B3，施工图 §4-面5 5b/5b-2/5c） ====================
+    # 落点刻意放在 campus 块**之后**（文档旧坐标 :3738 之前）：根文件行号被
+    # tests/test_campus_digest.py::test_outbound_registry_campus_coordinate_is_live
+    # 按「live 行号 == 登记表坐标」实比（登记表坐标 = campus matcher 真身行），
+    # 在它上方插任意一行都会顶漂该坐标、打断别人的常驻门（U17 批同源教训）。
+    # 5b-2 中央出站闸单实例：与发送队列同组装配，且必须先于紧急门（服务持 gate 引用）。
+    # 形参名以真身 domains/transport/sender/outbound_gate.py 的 build_outbound_gate 为准
+    # （settings_provider / quiet_settings_provider / audit_logger / clock / store / issue_sink）。
+    from .domains.transport.sender.outbound_gate import (
+        build_outbound_gate,
+        build_outbound_gate_settings,
+    )
+
+    outbound_gate = build_outbound_gate(
+        config,
+        audit_logger=audit_logger,
+        # 两路设置都以 callable 注入 ⇒ /bot runtime set 热改即时反映（静默面/限流同例），
+        # 不在装配期快照（台账 #3 那类「热改当夜不生效」的坑不再复制一遍）。
+        settings_provider=lambda: build_outbound_gate_settings(
+            _config_with_runtime_overrides(config, runtime_settings)
+        ),
+        quiet_settings_provider=lambda: build_quiet_hours_settings(
+            _config_with_runtime_overrides(config, runtime_settings)
+        ),
+    )
+    # 5b 装配门两腿：enabled ∧ sources（施工图 §5-钉死② 的第三腿已被 WIRE-SUB 裁定
+    # 3.B 覆盖，2026-09-20）。投递目标改为**每轮现读** `emergency_subscriptions` 表：
+    # 群里/私聊一句「紧急信息 订阅 …」即设立，不需要预先在 .env 填群号——第三腿若
+    # 原样保留就是死结（没有名单⇒没有 matcher⇒订阅命令没人应答，永远订不起来）。
+    # 「绝不猜群、绝不猜人」一寸没松，只是换了落点：表里没有行=零目标=零投递，
+    # 而行只能由群主/管理员/超管亲手写下（能力层 `allows_emergency_subscription`）。
+    # .env 两枚名单降级为可选硬推腿（无订阅过滤，缺省空=该腿不存在），见调度器侧。
+    # 审核名单 reviewer_ids 不参与装配门：它空 ⇒ ReviewGate 无授权人 ⇒ 过审一律拒
+    # （报料可入库、永远投不出去），这是刻意的安全缺省态，不是缺陷。
+    # 闸缺位（`outbound_gate is None`）**不再关掉整条链**（2026-09-20 用户裁定 1.A）：
+    # 查询面/采集/入库/审核都不需要出站闸，一起关会让"只想查不想推"的用法死掉。
+    # 但闸缺位时**一条都不投**——投递点显式跳过并留痕，绝不退化成不经闸的裸投递（钉死③不变）。
+    emergency_service = None
+    # 5a 的顶层 import（施工图原文）在本席改为函数体内 import，理由与 campus/U17 同一
+    # 条坐标门；要挪回模块顶部必须同批改登记表坐标，逐字 diff 见 report §落地请求。
+    from .domains.emergency_info.capabilities.emergency_info import (
+        build_emergency_info_source,
+    )
+
+    emergency_source = build_emergency_info_source(config)
+    if emergency_source.enabled and emergency_source.sources:
+        from .domains.emergency_info.capabilities.emergency_info import (
+            EmergencyInfoService,
+            build_emergency_info_capability,
+            build_review_gate,
+        )
+        from .domains.emergency_info.sources.store import build_emergency_store
+
+        # WIRE-L2：D-8(a) 生产真生效——装配期构造带 authorizer + 权威源白名单
+        # 双门的 ReviewGate 并注入（两枚旋钮同源于 `emergency_source` 快照，
+        # 域内零直接读 config 对象）。名单空 ⇒ 逐字节维持既有 pending 行为。
+        emergency_store = build_emergency_store(
+            str(config.bot_emergency_info_db_path)
+        )
+        emergency_service = EmergencyInfoService(
+            store=emergency_store,
+            source=emergency_source,
+            gate=outbound_gate,
+            review_gate=build_review_gate(emergency_store, emergency_source),
+        )
+
+        # 5c matcher 三件套。变量名必须等于 RouteKind 值 `emergency_info`——
+        # tests/test_emergency_info_push.py 的双钉一致性门按「根 matcher 变量名 ==
+        # RouteKind 值」配对，换个名就变成未登记盲区（那张登记表不许静默扩）。
+        async def _is_emergency_info_event(state: T_State, event: Event) -> bool:
+            return (
+                _cached_route_decision(state, event, config=config).kind
+                is RouteKind.EMERGENCY_INFO
+            )
+
+        # priority=44 与 ROUTE_RULES 里 RouteRule(RouteKind.EMERGENCY_INFO, ..., 44, ...)
+        # 是同值双钉：任一侧单独改动即红（本席已把 A2 的探测器翻成正向锁并注毒复验）。
+        emergency_info = on_message(
+            rule=_is_emergency_info_event, priority=44, block=True
+        )
+
+        def _build_emergency_info_with_backend(
+            config_: Any, **_kwargs: Any
+        ) -> Any:
+            return build_emergency_info_capability(
+                config_, render_backend=render_backend
+            )
+
+        @emergency_info.handle()
+        async def _handle_emergency_info(bot: Bot, event: Event) -> None:
+            await _run_simple_capability(
+                bot,
+                event,
+                _build_emergency_info_with_backend,
+                "bot.emergency_info",
+                emergency_info,
+            )
+
+        # 5d 采集轮询调度器：域内不 import APScheduler，调度句柄由根装配传入；
+        # apscheduler 缺失只关自动采集（读侧命令仍在），不崩整个插件装载。
+        try:
+            from nonebot_plugin_apscheduler import (
+                scheduler as _emergency_scheduler,
+            )
+        except Exception:  # noqa: BLE001 - 与既有调度器注册同款容错。
+            _emergency_scheduler = None
+        if _emergency_scheduler is not None:
+            # 事故缓解（2026-09-21 修复波已复原）：紧急信息波 WP3 在飞半成品曾令
+            # push.py 引 grading.may_breach_quiet_window 直接 ImportError，拖垮插件加载。
+            # 该包装现已落在 grading.py（判据真身在 alert_taxonomy，非第二实现），故本块
+            # 恢复 WIRE-B3 原设计语义；try/except 保留为常规 fail-open——装配抛异常只跳过
+            # 紧急域调度（主链路照常），并把异常原文打进日志，不静默、不炸整机装载。
+            try:
+                _register_emergency_info_scheduler(
+                    _emergency_scheduler,
+                    config,
+                    emergency_service,
+                    send_queue,
+                    outbound_gate,
+                )
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).exception(
+                    "emergency_info 调度器注册失败，已跳过（主链路不受影响；待紧急波补 grading.may_breach_quiet_window）"
+                )
+
+    # >>> WP10-SYNC-DRIFT-WIRING BEGIN（哨兵配对：自证门 tests/test_sync_drift_activation.py
+    # 按这对哨兵把本块**真身文本**抽出来注入假 scheduler 执行——活性判据，不是 grep 存在性）
+    # 一致性漂移巡检装配（2026-09-21 全面修复波裁定 12.A「救活 sync_drift」）：周期复算
+    # 「文档/配置/触发词 ↔ 代码真身」是否仍相等，漂移则 QQ/TG/Mail 三通道报超管。
+    # 三道闸（enabled ∧ 有超管 ∧ scheduler）全在 install() 内部，这里**故意不重复判
+    # enabled**：判两遍等于给「摘掉任一道闸」留盲区。缺省 bot_sync_drift_alert_enabled
+    # =False ⇒ install() 第一道闸就返回，连 job 都不注册（零读盘、零网络、零告警）。
+    # 落点刻意在 campus matcher **之下**、与紧急域调度器同区：根文件行号被
+    # tests/test_campus_digest.py 按「live 行号 == 登记表坐标」实比，在它上方插任意一行
+    # 都会顶漂别人的常驻门（同上方 WIRE-B3 落点注释与 U17 批同源教训）。
+    try:  # fail-open：apscheduler 缺失或装配抛异常都只落一行日志，绝不炸插件加载。
+        from nonebot_plugin_apscheduler import scheduler as _sync_drift_scheduler
+
+        if _sync_drift_scheduler is not None:
+            from plugins.bot_unified_runtime.domains.ops.sync_drift import (
+                install as _install_sync_drift_patrol,
+            )
+
+            _install_sync_drift_patrol(
+                scheduler=_sync_drift_scheduler,
+                config=config,
+                pipeline=pipeline,
+                online_bots=_all_online_bots,
+            )
+    except Exception:  # 巡检是运维附属面，坏了不能把主链路一起拖下水（fail-open）。
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "sync_drift 一致性漂移巡检装配失败，已跳过（主链路不受影响）"
+        )
+    # <<< WP10-SYNC-DRIFT-WIRING END
 
     file_notice = on_notice(rule=_is_admin_file_notice, priority=8, block=False)
 
@@ -6135,11 +6377,16 @@ def _register_nonebot_handlers() -> None:
     epic = on_message(rule=_is_epic_event, priority=41, block=True)
     weather = on_message(rule=_is_weather_event, priority=41, block=True)
     market = on_message(rule=_is_market_event, priority=41, block=True)
-    fx = on_message(rule=_is_fx_event, priority=41, block=True)
+    # WP5（2026-09-21 路由优先级拆位）：NoneBot matcher priority 与中央 RouteRule
+    # priority 双钉一致（test_emergency_info_push R-1 锁）。各 matcher 判定读
+    # `_cached_route_decision(...).kind is RouteKind.X`（单一 kind 胜出），故拆位只
+    # 影响 handler 试探序、不改生产胜出；此处随中央序 fx36<commodities37<bond38<
+    # northbound39 同步，market 仍 41。
+    fx = on_message(rule=_is_fx_event, priority=36, block=True)
     stocks = on_message(rule=_is_stocks_event, priority=42, block=True)
-    commodities = on_message(rule=_is_commodities_event, priority=41, block=True)
-    bond = on_message(rule=_is_bond_event, priority=41, block=True)
-    northbound = on_message(rule=_is_northbound_event, priority=41, block=True)
+    commodities = on_message(rule=_is_commodities_event, priority=37, block=True)
+    bond = on_message(rule=_is_bond_event, priority=38, block=True)
+    northbound = on_message(rule=_is_northbound_event, priority=39, block=True)
     divination = on_message(rule=_is_divination_event, priority=41, block=True)
     news = on_message(rule=_is_news_event, priority=41, block=True)
     randpic = on_message(rule=_is_randpic_event, priority=41, block=True)
@@ -6888,13 +7135,44 @@ def _register_nonebot_handlers() -> None:
                         body="用法：/bot search <要检索的现实问题>",
                         audit_tags=["search", "search_missing_query"],
                     )
-                provider = build_web_search_provider(config)
+                # Wave 1 接入（统一裁定「所有内容走中央调度层」）：检索改经 CapabilityInvoker，
+                # 权限门/载荷限额/健康态/降级链/审计落中央；命中→排版的下游一字未动。
+                # 函数体内 import（顶置 import 会顶漂下方 live 坐标，见 #45/U17 同型教训）。
+                from .runtime.capability_protocols import (
+                    CapabilityRequest as _SearchRequest,
+                )
+                from .runtime.capability_protocols import (
+                    InvocationStatus as _SearchStatus,
+                )
+                from .runtime.capability_protocols import (
+                    default_invoker as _default_invoker,
+                )
+
                 limit = int(getattr(config, "bot_web_search_max_results", 12) or 12)
-                try:
-                    hits = provider.search(search_query, max_results=limit)
-                except Exception:  # noqa: BLE001 - 检索供应商失败时降级为空结果。
-                    hits = []
+                _search_res = _default_invoker().invoke(
+                    _SearchRequest(
+                        capability_id="search.web",
+                        payload={"query": search_query, "max_results": limit},
+                        principal="user",
+                        roles=("user",),
+                        context={"config": config},
+                    )
+                )
+                hits = (
+                    _search_res.data.get("hits", [])
+                    if _search_res.status is _SearchStatus.OK
+                    else []
+                )
                 if not hits:
+                    # 对用户仍是一句人话，但**病因必须留痕**：未启用/无权限/超时/真身异常
+                    # 四类在中央是四个不同 status，压成同一条 audit_tag 等于自断排障路
+                    # （R1/I-2；返回体一字未改，只加观测面）。
+                    if _search_res.status is not _SearchStatus.OK:
+                        logger.warning(
+                            "bot.search 经中央调度未取到结果: status={} detail={}",
+                            _search_res.status.value,
+                            _search_res.detail or "(中央未给出原因)",
+                        )
                     return CapabilityResult(
                         request_id=message.request_id,
                         capability_id="bot.search",
@@ -6904,7 +7182,7 @@ def _register_nonebot_handlers() -> None:
                             "可能原因：检索源不可达、被反爬或代理未生效。\n"
                             f"查询词：{search_query}"
                         ),
-                        audit_tags=["search", "search_empty"],
+                        audit_tags=["search", "search_empty", f"search_status:{_search_res.status.value}"],
                     )
                 lines = ["联网检索结果："]
                 for index, hit in enumerate(hits, 1):
@@ -8703,6 +8981,214 @@ def _register_nonebot_handlers() -> None:
 
 
 
+
+
+def _register_emergency_info_scheduler(
+    scheduler: Any, config: Any, service: Any, send_queue: Any, gate: Any
+) -> dict:
+    """紧急信息自动采集轮询（WIRE-B3 · 施工图 §4-面5 5d）。
+
+    每 `bot_emergency_info_poll_interval_seconds` 跑一轮：四源采集 →（条目唯一收口
+    `build_emergency_item`，在 collector 内部）→ 定级 → 经 `ReviewGate.submit` 入库
+    （D-8 唯一写入点，本函数绝不直写 store）→ 已过审条目经域内 `service/push.py`
+    的投递触点发给**本轮现读的订阅目标**（每项按 `matches_subscription` 逐条筛）
+    ⊕ `.env` 硬推名单（可选腿，不受订阅条件约束）→ 按 `keep_days` prune。
+
+    四条口径：
+    - 域内不 import APScheduler：调度句柄由根装配传入，同步 job 跑在 APScheduler
+      线程池（与 G-DIGEST/reminder 同款，不阻塞事件循环），任何异常只记日志。
+    - 快照四态（FRESH/STALE/NEVER_FETCHED/FETCH_FAILED）由跨轮持有的 `SnapshotStore`
+      记账（装配期建一次），`max_age` 取三轮轮询周期。
+    - `min_level` 快照在**域内零消费者**（本席实测 grep：只被 `build_emergency_info_source`
+      搬运），消费点因此落在根装配侧；非法字面量不猜档也不拦截（与快照「只搬运不校验」
+      的 D-3 口径同向），等级唯一出口仍是 `ReviewGate.publishable_level`。
+    - 采集/投递产生的 operational issue 目前只落 `logger.warning`——`issue_sink`
+      未接中央告警面前不得宣称「已告警」（施工图 §5-钉死③.4）。
+    """
+    from datetime import datetime, timedelta
+
+    from .domains.emergency_info.capabilities.emergency_info import (
+        matches_emergency_push_group,
+        matches_emergency_push_user,
+    )
+    from .domains.emergency_info.contracts import EmergencyLevel
+    from .domains.emergency_info.service.collector import (
+        build_emergency_collector_deps,
+        run_collection_once,
+    )
+    from .domains.emergency_info.service.dedupe import is_legal_segment
+    from .domains.emergency_info.service.push import (
+        EmergencyTarget,
+        deliver_emergency,
+    )
+    from .domains.emergency_info.service.review import ReviewGate
+    from .domains.emergency_info.service.snapshot_store import SnapshotStore
+    from .domains.emergency_info.service.subscriptions import matches_subscription
+
+    source = service.source
+    snapshot_store = SnapshotStore(
+        max_age=timedelta(seconds=max(int(source.poll_interval_seconds) * 3, 60))
+    )
+    min_rank: int | None
+    try:
+        min_rank = EmergencyLevel(source.min_level).rank if source.min_level else None
+    except ValueError:
+        min_rank = None
+
+    def _hardwired_targets() -> list[Any]:
+        """.env 硬推腿（可选、无订阅过滤）：`*` 是读侧通配，不等于知道有哪些群。"""
+        targets: list[Any] = []
+        for group_id in sorted(source.push_group_whitelist):
+            if group_id == "*" or not matches_emergency_push_group(source, group_id):
+                continue
+            targets.append(
+                EmergencyTarget(
+                    target_id=group_id,
+                    target_scope=SessionType.GROUP,
+                    channel="qq",
+                    persona_profile_id=source.persona_profile_id,
+                )
+            )
+        for user_id in sorted(source.push_user_ids):
+            if not matches_emergency_push_user(source, user_id):
+                continue
+            targets.append(
+                EmergencyTarget(
+                    target_id=user_id,
+                    target_scope=SessionType.PRIVATE,
+                    channel="qq",
+                    persona_profile_id=source.persona_profile_id,
+                )
+            )
+        return targets
+
+    def _push_targets() -> list[tuple[Any, Any]]:
+        """本轮投递目标 = 活跃订阅（现读库）⊕ .env 硬推名单，逐项带各自的过滤器。
+
+        每轮 `list_subscriptions()` 现读（**不**在装配期冻结）是这件事的全部意义：
+        群里说完条件当轮就生效，不用重启（裁定 3.B）。返回 `(target, rule|None)`，
+        `rule=None` 即硬推腿——它只受 `min_level` 全局地板约束，不受订阅条件约束。
+        """
+        pairs: list[tuple[Any, Any]] = []
+        for rule in service.store.list_subscriptions():
+            pairs.append(
+                (
+                    EmergencyTarget(
+                        target_id=rule.target_id,
+                        target_scope=(
+                            SessionType.GROUP
+                            if rule.target_scope == "group"
+                            else SessionType.PRIVATE
+                        ),
+                        channel="qq",
+                        persona_profile_id=source.persona_profile_id,
+                    ),
+                    rule,
+                )
+            )
+        for target in _hardwired_targets():
+            pairs.append((target, None))
+        return pairs
+
+    def _log_issue(issue: Any) -> None:
+        logging.getLogger(__name__).warning(
+            "紧急信息采集告警（未接中央告警面，仅落日志）：%s/%s",
+            getattr(issue, "kind", "unknown"),
+            getattr(issue, "reason", ""),
+        )
+
+    def _emergency_info_collect_job() -> None:
+        now = datetime.now().astimezone()
+        try:
+            deps = build_emergency_collector_deps(
+                persist=lambda item: service.review_gate.submit(item, at=now),
+                snapshot=snapshot_store,
+                issue_sink=_log_issue,
+            )
+            # 源门：只跑 bot_emergency_info_sources 显式列出的源，其余一律不取。
+            # 2.A（用户 2026-09-20 裁定）：写了没注册的 SOURCE_ID 不再静默滤空——
+            # 点名报出来。合法值只取真注册表（SourceTask.source_id），不另抄一份名单。
+            registered = {task.source_id for task in deps.sources}
+            unknown = sorted(set(source.sources) - registered)
+            if unknown:
+                logging.getLogger(__name__).warning(
+                    "紧急信息源名单含未注册的 SOURCE_ID（本轮被忽略，不采集不投递）：%s；"
+                    "当前已注册：%s",
+                    ",".join(unknown),
+                    ",".join(sorted(registered)),
+                )
+            deps.sources = tuple(
+                task for task in deps.sources if task.source_id in source.sources
+            )
+            if not deps.sources:
+                return
+            run_collection_once(deps, now=now)
+            # 1.A（用户 2026-09-20 裁定）：闸缺位时保留采集/入库/审核/查询，只关投递。
+            # 目标是空集而非"带着 None 去调闸"——绝不退化成不经中央闸的裸 submit（钉死③）。
+            if gate is None:
+                logging.getLogger(__name__).warning(
+                    "紧急信息本轮不投递：中央出站闸未装配（条目已采集入库，查询面不受影响）"
+                )
+            targets = [] if gate is None else _push_targets()
+            matched = 0
+            sent = 0
+            for item in service.approved_items(limit=50):
+                level = ReviewGate.publishable_level(item, now=now)
+                if level is None:
+                    continue  # 未过审＝不进投递面（D-8），也不替它补档位（D-1）
+                if min_rank is not None and level.rank < min_rank:
+                    continue
+                if not is_legal_segment(item.item_id):
+                    # 单行坏 id 不许带走整轮：幂等键拼不出来 ⇒ 点名跳过、继续投别人。
+                    logging.getLogger(__name__).warning(
+                        "紧急信息条目 %s 的 id 不能作幂等键段，本轮跳过不投",
+                        item.item_id,
+                    )
+                    continue
+                graded = item.model_copy(update={"level": level})
+                for target, rule in targets:
+                    if rule is not None:
+                        # 订阅条件逐条筛（等级∧类型∧地点）；不过筛就不打扰这个目标。
+                        if not matches_subscription(graded, rule):
+                            continue
+                        matched += 1
+                        # 命中记账与闸结论无关：这条规则"该不该投给这里"已经判过了，
+                        # 之后被安静窗顺延是另一件事，混在一起会让排障看不出是谁的锅。
+                        service.store.note_subscription_match(rule.target_key, at=now)
+                    verdict = deliver_emergency(
+                        send_queue, gate, graded, target, now=now
+                    )
+                    if verdict == "allow":
+                        sent += 1
+            service.store.prune(keep_days=source.keep_days, now=now)
+            if sent or matched:
+                logging.getLogger(__name__).info(
+                    "紧急信息投递：本轮订阅命中 %s 次、经中央闸投出 %s 条（目标 %s 个）",
+                    matched,
+                    sent,
+                    len(targets),
+                )
+        except Exception as exc:
+            # 带上异常原文：只报类名曾让上面那个「键段含 `:`」的 ValueError 排不了障
+            # （台账 #29 ⑪ 同口径：告警 detail 必须自解释）。
+            logging.getLogger(__name__).warning(
+                "emergency info collection failed: %s: %s",
+                type(exc).__name__,
+                str(exc)[:200],
+                exc_info=exc,
+            )
+
+    scheduler.add_job(
+        _emergency_info_collect_job,
+        "interval",
+        id="bot_emergency_info_collect_poll",
+        replace_existing=True,
+        seconds=max(int(source.poll_interval_seconds), 30),
+        misfire_grace_time=source.poll_interval_seconds,
+        max_instances=1,
+        coalesce=True,
+    )
+    return {"seconds": max(int(source.poll_interval_seconds), 30)}
 
 
 _register_nonebot_handlers()

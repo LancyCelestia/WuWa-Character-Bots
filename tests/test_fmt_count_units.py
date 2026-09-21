@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from plugins.bot_unified_runtime.output.card_render import bridge
+from plugins.bot_unified_runtime.domains.render.card_render import bridge
 
 _THIN = "\u2009"
 

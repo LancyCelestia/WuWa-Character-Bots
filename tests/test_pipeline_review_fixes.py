@@ -18,14 +18,20 @@ import pytest
 
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import ReceiptState
-from plugins.bot_unified_runtime.contracts.runtime import (
+from plugins.bot_unified_runtime.domains.chat_reply.policy.quiet_hours import (
+    QuietHoursChecker,
+    QuietHoursDecision,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+    pipeline as pipeline_module,
+)
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
     BotDecision,
     IncomingMessage,
     SessionType,
 )
 from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
 from plugins.bot_unified_runtime.llm.providers import LLMProviderError, LLMReply
-from plugins.bot_unified_runtime.runtime import pipeline as pipeline_module
 from plugins.bot_unified_runtime.runtime.pipeline import (
     RuntimePipeline,
     _BoundedSubmissionGate,
@@ -324,3 +330,33 @@ def _static_capability(result: object):
         return result
 
     return _run
+
+
+# ==================== 修复：安静时间拦截一律静默（2026-09-16 实弹） ====================
+
+
+class _AlwaysBlockedQuietHours(QuietHoursChecker):
+    def check(self, message: object, capability_id: str) -> QuietHoursDecision:
+        return QuietHoursDecision(
+            allowed=False,
+            reason="inside_window",
+            audit_tags=["quiet_hours:block"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_quiet_hours_block_is_silent() -> None:
+    # 与限流拦截同款（2026-09-12 实弹裁定）：安静时间提示语进群即无接触刷屏
+    # （无人 @ 也回一句），必须 public_message 置空；审计留痕不受影响。
+    pipeline = RuntimePipeline(
+        send_queue=InMemorySendQueue(audit_logger=_NullAuditLogger()),
+        audit_logger=_NullAuditLogger(),
+        quiet_hours_checker=_AlwaysBlockedQuietHours(),
+    )
+    receipt = await pipeline.handle_async(
+        _message(),
+        _static_capability("ok"),
+        "bot.chat",
+    )
+    assert receipt.state == ReceiptState.BLOCKED
+    assert receipt.public_message == ""

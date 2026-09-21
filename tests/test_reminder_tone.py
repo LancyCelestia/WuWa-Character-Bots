@@ -102,7 +102,7 @@ def test_custom_kind_keeps_legacy_default_text() -> None:
 
 def _disambig_setup(tmp_path, monkeypatch):
     """追问文案回归：提醒 store 隔离 + 追问状态清零 + 笔记面关闭。"""
-    import plugins.bot_unified_runtime.character.reminders as reminders_mod
+    import plugins.bot_unified_runtime.domains.schedule.store.reminders as reminders_mod
 
     monkeypatch.setattr(reminders_mod, "_STORES", {})
     clear_checkoff_pending_for_tests()
@@ -173,7 +173,7 @@ def test_delivery_text_persona_variant_selection_is_deterministic() -> None:
 def test_checkoff_copy_pool_is_module_level() -> None:
     """A-13：勾选四类回执文案（确认/歧义/序号/过期，附 gone 兜底）收进
     模块级常量池，函数体不再内联字面；关键句面与 A-10/A-11 批锁定一致。"""
-    import plugins.bot_unified_runtime.capabilities.reminder as reminder_mod
+    import plugins.bot_unified_runtime.domains.schedule.capabilities.reminder as reminder_mod
 
     pool_names = (
         "_CHECKOFF_DONE_TEMPLATE",

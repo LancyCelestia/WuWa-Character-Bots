@@ -16,7 +16,7 @@ from plugins.bot_unified_runtime.capabilities.content_parser import (
 )
 from plugins.bot_unified_runtime.capabilities.music import build_music_capability
 from plugins.bot_unified_runtime.contracts import SessionType, build_parsed_content
-from plugins.bot_unified_runtime.contracts.runtime import IncomingMessage
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
 from plugins.bot_unified_runtime.output.card_render.bridge import (
     render_universal_card_html,
 )

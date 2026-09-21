@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
-from plugins.bot_unified_runtime.policy.gate import PolicySettings, evaluate_policy
+from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
+    PolicySettings,
+    evaluate_policy,
+)
 
 
 def _message(text: str, *, mentions_bot: bool = False, group_id: str = "group-1") -> IncomingMessage:

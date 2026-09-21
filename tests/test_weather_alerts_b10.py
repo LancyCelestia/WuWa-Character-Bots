@@ -13,13 +13,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities.weather import (
+from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
     build_weather_capability,
     fetch_city_alerts,
     format_city_alerts,
     parse_alert_title,
 )
-from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 
 _FIND_ALARM_FIXTURE: dict[str, Any] = {
@@ -60,7 +60,7 @@ _FIND_ALARM_FIXTURE: dict[str, Any] = {
 
 def _patch_alarm_http(monkeypatch, payload: Any) -> None:
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.weather.http_get_json",
+        "plugins.bot_unified_runtime.domains.weather.capabilities.weather.http_get_json",
         lambda *args, **kwargs: payload,
     )
 
@@ -120,7 +120,7 @@ def test_fetch_city_alerts_unreachable_returns_empty(monkeypatch) -> None:
         raise ParseHttpError("GET failed: HTTP 503", status_code=503)
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.weather.http_get_json", _boom
+        "plugins.bot_unified_runtime.domains.weather.capabilities.weather.http_get_json", _boom
     )
     assert fetch_city_alerts("呼玛") == []
 
@@ -138,7 +138,7 @@ def test_format_city_alerts_renders_entry_lines(monkeypatch) -> None:
 def test_capability_appends_alerts_on_nmc_hit_only(monkeypatch) -> None:
     _patch_alarm_http(monkeypatch, _FIND_ALARM_FIXTURE)
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.weather.nmc_weather_query",
+        "plugins.bot_unified_runtime.domains.weather.capabilities.weather.nmc_weather_query",
         lambda query, proxy="": "【测试天气】晴 25℃",
     )
     capability = build_weather_capability(config=None, render_backend=None)
@@ -149,15 +149,15 @@ def test_capability_appends_alerts_on_nmc_hit_only(monkeypatch) -> None:
 
     # 海外源（open-meteo）：NMC 预警语义不适用，不附带预警段。
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.weather.nmc_weather_query",
+        "plugins.bot_unified_runtime.domains.weather.capabilities.weather.nmc_weather_query",
         lambda query, proxy="": None,
     )
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.weather.open_meteo_query",
+        "plugins.bot_unified_runtime.domains.weather.capabilities.weather.open_meteo_query",
         lambda query, proxy="": {"latitude": 35.0, "current": {}},
     )
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.capabilities.weather.format_open_meteo",
+        "plugins.bot_unified_runtime.domains.weather.capabilities.weather.format_open_meteo",
         lambda payload: "【海外】Sunny",
     )
     overseas = capability(_private_message("天气 Tokyo"), None)

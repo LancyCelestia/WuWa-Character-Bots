@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from plugins.bot_unified_runtime.contracts.media import (
+from plugins.bot_unified_runtime.domains.core.contracts.media import (
     ContentIdentity,
     ContentMetadata,
     ParsedContent,
     SourceProvenance,
     build_parsed_content,
 )
-from plugins.bot_unified_runtime.sources.parsers.context import FetchContext
+from plugins.bot_unified_runtime.domains.link_parse.parsers.context import FetchContext
 from plugins.bot_unified_runtime.sources.parsers.http_util import build_request_headers
 
 

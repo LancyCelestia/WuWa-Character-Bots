@@ -32,14 +32,14 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = Path(__file__).with_name("render_hashes.json")
 
 TRACKED_FILES: tuple[str, ...] = (
-    "plugins/bot_unified_runtime/output/card_render/templates/universal_card.html",
-    "plugins/bot_unified_runtime/output/card_render/templates/affinity_card.html",
-    "plugins/bot_unified_runtime/output/card_render/templates/finance_card.html",
-    "plugins/bot_unified_runtime/output/card_render/templates/market_card.html",
-    "plugins/bot_unified_runtime/output/card_render/templates/mermaid_card.html",
-    "plugins/bot_unified_runtime/output/card_render/templates/song_candidates.html",
-    "plugins/bot_unified_runtime/output/card_render/templates/error_card.html",
-    "plugins/bot_unified_runtime/output/card_render/theme_tokens.py",
+    "plugins/bot_unified_runtime/domains/render/card_render/templates/universal_card.html",
+    "plugins/bot_unified_runtime/domains/render/card_render/templates/affinity_card.html",
+    "plugins/bot_unified_runtime/domains/render/card_render/templates/finance_card.html",
+    "plugins/bot_unified_runtime/domains/render/card_render/templates/market_card.html",
+    "plugins/bot_unified_runtime/domains/render/card_render/templates/mermaid_card.html",
+    "plugins/bot_unified_runtime/domains/render/card_render/templates/song_candidates.html",
+    "plugins/bot_unified_runtime/domains/render/card_render/templates/error_card.html",
+    "plugins/bot_unified_runtime/domains/render/card_render/theme_tokens.py",
     "docs/rendering-contract.md",
     "DESIGN-SPEC.md",
     "docs/design/fstring-card-dom-spec.md",
@@ -49,12 +49,14 @@ TRACKED_FILES: tuple[str, ...] = (
     # 约束：这 6 个文件产出/装配模板 HTML（4 处 f-string 直拼卡见
     # tests/test_mica_builders_contract.py 的统一对象清单），改文案不改模板
     # 也必须过哈希门，否则「改 builder 绕过 --write」成为系统性漏洞。
-    "plugins/bot_unified_runtime/output/card_render/bridge.py",
-    "plugins/bot_unified_runtime/capabilities/debug.py",
-    "plugins/bot_unified_runtime/capabilities/echo.py",
-    "plugins/bot_unified_runtime/output/card_render/usage_cards.py",
-    "plugins/bot_unified_runtime/output/renderer.py",
-    "plugins/bot_unified_runtime/output/templates.py",
+    "plugins/bot_unified_runtime/domains/render/card_render/bridge.py",
+    # v21r2 RWOC：debug 真身迁 domains/ops/admin/（旧路径只余垫片）。
+    "plugins/bot_unified_runtime/domains/ops/admin/debug.py",
+    # v21r2 RWC3：echo 真身迁 domains/chat_reply/capabilities/（帮助注册表真相源）。
+    "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py",
+    "plugins/bot_unified_runtime/domains/render/card_render/usage_cards.py",
+    "plugins/bot_unified_runtime/domains/render/renderer.py",
+    "plugins/bot_unified_runtime/domains/render/templates.py",
 )
 
 

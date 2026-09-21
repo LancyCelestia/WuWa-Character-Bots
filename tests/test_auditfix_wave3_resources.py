@@ -8,16 +8,20 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.capabilities import eat as eat_mod
-from plugins.bot_unified_runtime.capabilities import platform_credentials as pcred_mod
-from plugins.bot_unified_runtime.capabilities.file_exchange import _safe_file_name
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     IncomingMessage,
     SessionType,
 )
-from plugins.bot_unified_runtime.sources import runtime_event_log as rel_mod
-from plugins.bot_unified_runtime.sources.parsers import wbi as wbi_mod
+from plugins.bot_unified_runtime.domains.core.credentials import (
+    platform_credentials as pcred_mod,
+)
+from plugins.bot_unified_runtime.domains.files.capabilities.file_exchange import (
+    _safe_file_name,
+)
+from plugins.bot_unified_runtime.domains.food.capabilities import eat as eat_mod
+from plugins.bot_unified_runtime.domains.link_parse.parsers import wbi as wbi_mod
+from plugins.bot_unified_runtime.domains.ops.monitor import runtime_event_log as rel_mod
 
 _DECISION = BotDecision(
     request_id="r-w3",
@@ -80,7 +84,7 @@ def test_safe_file_name_hash_disambiguates_slug_collision() -> None:
 
 
 def test_debug_tmpdir_ignores_cleanup_errors() -> None:
-    import plugins.bot_unified_runtime.capabilities.file_exchange as fx
+    import plugins.bot_unified_runtime.domains.files.capabilities.file_exchange as fx
 
     source = inspect.getsource(fx)
     assert "ignore_cleanup_errors=True" in source, "孙进程锁 workdir 时清理异常不得吞掉运行结果"
@@ -132,7 +136,7 @@ def test_wbi_cache_lazy_purge_and_cap(monkeypatch) -> None:
 
 
 def _eat_dish_monkeypatch(monkeypatch, names: list[str]) -> None:
-    from plugins.bot_unified_runtime.sources.food_data import DISHES
+    from plugins.bot_unified_runtime.domains.food.data.food_data import DISHES
 
     prototype = DISHES[0]
     queue = iter(names)

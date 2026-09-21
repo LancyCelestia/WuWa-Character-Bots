@@ -94,9 +94,12 @@ R18_TERMS: tuple[str, ...] = (
 CREATOR_NAMES: tuple[str, ...] = ("澜汐", "霞月")
 
 # 创造者单名规则的内建豁免：称谓权威模块（规则定义即豁免，不占白名单）。
+# 2026-09-18 v21r2 W15a 随真身扩面：addressing.py 真身迁 domains/chat_reply/character/，
+# 旧路径标签保留（垫片期语义完整），canonical 标签同波新增。
 CREATOR_NAME_BUILTIN_EXEMPT: frozenset[str] = frozenset(
     {
         "plugins/bot_unified_runtime/character/addressing.py",
+        "plugins/bot_unified_runtime/domains/chat_reply/character/addressing.py",
     }
 )
 
@@ -419,12 +422,21 @@ def gate_scope() -> list[Path]:
     """任务口径扫描面：capabilities/*.py（含 capabilities/auto_send/ 子目录，
     2026-09-14 扩面）+ character/*.py + runtime/usage_monitor.py +
     runtime/error_report.py（2026-09-14 二次扩面，A69-I1）+
+    domains/schedule/**/*.py（2026-09-18 v21r2 W10 随真身扩面：reminder/reminders/
+    auto_send 真身迁入 domains/schedule/，旧路径只余垫片，扫描面同步跟进防假豁免）+
+    domains/chat_reply/**/*.py（2026-09-18 v21r2 W15a 随真身扩面：character 人格侧
+    真身迁入 domains/chat_reply/character/，旧路径只余垫片，扫描面同步跟进防假豁免）+
+    domains/ops/**/*.py（2026-09-18 v21r2 RWOC 随真身扩面：usage_monitor/error_report
+    真身迁入 domains/ops/monitor/，旧路径只余垫片，扫描面同步跟进防假豁免）+
     personas/**/*.md + personas/**/*.txt + 生产人格副本（2026-09-14 三次扩面，
     G-08；扩面前已完成 G-01/G-02/G-03 人格文本修复；副本缺失优雅跳过）。"""
     files = (
         sorted(RUNTIME_PKG.glob("capabilities/*.py"))
         + sorted(RUNTIME_PKG.glob("capabilities/auto_send/**/*.py"))
         + sorted(RUNTIME_PKG.glob("character/*.py"))
+        + sorted(RUNTIME_PKG.glob("domains/schedule/**/*.py"))
+        + sorted(RUNTIME_PKG.glob("domains/chat_reply/**/*.py"))
+        + sorted(RUNTIME_PKG.glob("domains/ops/**/*.py"))
     )
     files.append(RUNTIME_PKG / "runtime" / "usage_monitor.py")
     files.append(RUNTIME_PKG / "runtime" / "error_report.py")
@@ -460,10 +472,24 @@ def test_gate_scope_sanity() -> None:
     assert len(scope) >= 60, f"扫描面异常收缩：仅 {len(scope)} 个文件"
     assert (RUNTIME_PKG / "capabilities" / "echo.py") in scope
     assert (RUNTIME_PKG / "character" / "addressing.py") in scope
-    assert (RUNTIME_PKG / "runtime" / "usage_monitor.py") in scope
+    # 2026-09-18 v21r2 RWOC 随真身迁移：usage_monitor 真身迁 domains/ops/monitor/，
+    # 旧路径 runtime/usage_monitor.py 已不存在（gate_scope 的 exists() 过滤即退役），pin 随迁。
+    assert (RUNTIME_PKG / "domains" / "ops" / "monitor" / "usage_monitor.py") in scope
     # 2026-09-14 扩面：capabilities/auto_send/ 子目录入扫描面。
     assert (RUNTIME_PKG / "capabilities" / "auto_send" / "__init__.py") in scope
-    assert (RUNTIME_PKG / "capabilities" / "auto_send" / "parser.py") in scope
+    # 2026-09-19：legacy capabilities/auto_send/parser.py 已随 v21r2 迁 schedule 域
+    # （下方 schedule 域真身 pin 覆盖），旧路径 pin 退役。
+    # 2026-09-18 v21r2 W10 随真身扩面：schedule 域真身在扫描面内（垫片不算数）。
+    assert (RUNTIME_PKG / "domains" / "schedule" / "capabilities" / "reminder.py") in scope
+    assert (RUNTIME_PKG / "domains" / "schedule" / "store" / "reminders.py") in scope
+    assert (RUNTIME_PKG / "domains" / "schedule" / "auto_send" / "parser.py") in scope
+    # 2026-09-18 v21r2 W15a 随真身扩面：chat_reply/character 真身在扫描面内（垫片不算数）。
+    assert (
+        RUNTIME_PKG / "domains" / "chat_reply" / "character" / "addressing.py"
+    ) in scope
+    assert (
+        RUNTIME_PKG / "domains" / "chat_reply" / "character" / "providers.py"
+    ) in scope
     # 2026-09-14 三次扩面（G-08）：人格资产入扫描面。
     assert (REPO_ROOT / "personas" / "shorekeeper" / "identity.md") in scope
     assert (
@@ -561,9 +587,13 @@ def test_creator_name_flagged_and_builtin_exempt(tmp_path: Path) -> None:
     file = _write(tmp_path, 'MSG = "这幅画是澜汐画的。"\n')
     criticals, _ = scan_file(file)
     assert "creator_name" in {f.rule for f in criticals}
-    # 内建豁免：addressing.py 路径语义下不红。
+    # 内建豁免：addressing.py 路径语义下不红（旧路径标签 + canonical 标签）。
     criticals_exempt, _ = scan_file(file, rel_path="plugins/bot_unified_runtime/character/addressing.py")
     assert not criticals_exempt
+    criticals_canonical, _ = scan_file(
+        file, rel_path="plugins/bot_unified_runtime/domains/chat_reply/character/addressing.py"
+    )
+    assert not criticals_canonical
 
 
 def test_clean_file_zero_findings(tmp_path: Path) -> None:
@@ -649,9 +679,13 @@ _AUTO_SEND_REL = "plugins/bot_unified_runtime/capabilities/auto_send/parser.py"
 
 
 def test_auto_send_scope_expanded_current_tree_green() -> None:
-    """真绿：扩面后现网 auto_send/ 两文件零 Critical（扩面前预扫亦 0 命中）。"""
-    auto_files = sorted((RUNTIME_PKG / "capabilities" / "auto_send").glob("*.py"))
-    assert len(auto_files) >= 2, "auto_send/ 目录文件数异常，扫描面或已漂移"
+    """真绿：扩面后现网 auto_send/ 全家（垫片+schedule 域真身）零 Critical
+    （扩面前预扫亦 0 命中；2026-09-19 真身迁 domains/schedule/auto_send/ 后
+    扫描面=垫片目录+真身目录并集）。"""
+    auto_files = sorted((RUNTIME_PKG / "capabilities" / "auto_send").glob("*.py")) + sorted(
+        (RUNTIME_PKG / "domains" / "schedule" / "auto_send").glob("*.py")
+    )
+    assert len(auto_files) >= 2, "auto_send/ 扫描面异常收缩，真身或已漂移"
     criticals, _ = scan_scope(auto_files, _load_allowlist())
     assert not criticals
 

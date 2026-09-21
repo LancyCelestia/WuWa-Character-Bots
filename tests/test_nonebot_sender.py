@@ -390,7 +390,7 @@ async def test_telegram_local_card_image_sends_photo_without_text(
     card = tmp_path / "help.png"
     card.write_bytes(b"png-bytes")
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sender.nonebot._TG_VOICE_CACHE_DIR",
+        "plugins.bot_unified_runtime.domains.transport.sender.nonebot._TG_VOICE_CACHE_DIR",
         tmp_path / "vcache",
     )
     bot = FakeTelegramMediaBot()
@@ -412,11 +412,11 @@ async def test_telegram_music_sends_cover_then_voice_degrades_to_audio(
     clip = tmp_path / "clip.mp3"
     clip.write_bytes(b"mp3-bytes")
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sender.nonebot._TG_VOICE_CACHE_DIR",
+        "plugins.bot_unified_runtime.domains.transport.sender.nonebot._TG_VOICE_CACHE_DIR",
         tmp_path / "vcache",
     )
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sender.nonebot.shutil.which", lambda name: None
+        "plugins.bot_unified_runtime.domains.transport.sender.nonebot.shutil.which", lambda name: None
     )
     bot = FakeTelegramMediaBot()
 
@@ -446,7 +446,7 @@ async def test_telegram_voice_converts_to_ogg_for_sendvoice(
     clip.write_bytes(b"mp3-bytes")
     cache = tmp_path / "vcache"
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sender.nonebot._TG_VOICE_CACHE_DIR", cache
+        "plugins.bot_unified_runtime.domains.transport.sender.nonebot._TG_VOICE_CACHE_DIR", cache
     )
 
     def fake_convert(source: Path, target: Path) -> bool:
@@ -455,7 +455,7 @@ async def test_telegram_voice_converts_to_ogg_for_sendvoice(
         return True
 
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sender.nonebot._convert_audio_to_ogg", fake_convert
+        "plugins.bot_unified_runtime.domains.transport.sender.nonebot._convert_audio_to_ogg", fake_convert
     )
     bot = FakeTelegramMediaBot()
 
@@ -495,7 +495,7 @@ async def test_telegram_unsendable_media_without_text_is_failure_not_silence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "plugins.bot_unified_runtime.sender.nonebot._TG_VOICE_CACHE_DIR",
+        "plugins.bot_unified_runtime.domains.transport.sender.nonebot._TG_VOICE_CACHE_DIR",
         tmp_path / "vcache",
     )
     missing = tmp_path / "missing.mp3"
