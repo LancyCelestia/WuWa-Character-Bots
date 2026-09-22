@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
-from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -30,6 +29,7 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     new_request_id,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     credentials_allowed_for_target,
     scrub_credentials_for_target,
@@ -413,7 +413,7 @@ def _default_audio_downloader(config: Any | None = None) -> Callable[[str], str 
             path = target_dir / f"song_{digest}{suffix}"
             path.write_bytes(payload)
             try:
-                from plugins.bot_unified_runtime.runtime.cache_policy import (
+                from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
                     enforce_quota,
                 )
 

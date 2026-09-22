@@ -123,13 +123,85 @@ def _is_cap_key_read(node: ast.AST) -> bool:
 
 
 def _cap_key_lines(src: str) -> list[int]:
-    """源码里**读**这两个 config 键的行号（属性式 `cfg.bot_tts_*` 或 `getattr(cfg, "bot_tts_*")`）。
+    """源码里**读**这两个 config 键的行号。
+
+    三种形态一起抓（R-A/C-05：只认前两种等于给后两种留豁免面）：
+    ①属性式 `cfg.bot_tts_*`；②字面量 getattr `getattr(cfg, "bot_tts_*")`；
+    ③键名藏进模块常量再间接读（`K = "bot_tts_*"` → `getattr(cfg, K)` /
+    `cfg.model_dump()[K]` / `vars(cfg)["bot_tts_*"]` 等下标式）。
 
     刻意走 AST 而非文本匹配：help 元数据里的 `config_vars=("bot_tts_hard_max_chars",)` 只是
     字符串清单、sync_drift 的 `_config_default(config, "…")` 是「文档 vs Config 缺省」权威对照，
     两者都不重算生效顶 ⇒ 不该被这道门误伤。
     """
-    return [node.lineno for node in ast.walk(ast.parse(src)) if _is_cap_key_read(node)]
+    tree = ast.parse(src)
+    # 别名表：模块级 `名字 = "<键名>"`（含 f-string 以外的常量拼接一律不算，宁可少判误伤）
+    aliases = {
+        target.id
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant)
+        and node.value.value in _CAP_KEYS
+    }
+
+    def _reads_key(value: ast.expr) -> bool:
+        return (
+            (isinstance(value, ast.Constant) and value.value in _CAP_KEYS)
+            or (isinstance(value, ast.Name) and value.id in aliases)
+        )
+
+    lines: list[int] = []
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Attribute) and node.attr in _CAP_KEYS) or (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2
+            and _reads_key(node.args[1])
+        ):
+            # 形态①属性式 / 形态②字面量 getattr（同一动作，合并分支=少一条 elif）。
+            lines.append(node.lineno)
+        elif isinstance(node, ast.Subscript) and _reads_key(node.slice):
+            holder = node.value
+            dict_like = (
+                (isinstance(holder, ast.Call) and isinstance(holder.func, ast.Attribute)
+                 and holder.func.attr in {"model_dump", "dict"})
+                or (isinstance(holder, ast.Call) and isinstance(holder.func, ast.Name)
+                    and holder.func.id == "vars")
+                or (isinstance(holder, ast.Attribute) and holder.attr == "__dict__")
+            )
+            if dict_like:
+                lines.append(node.lineno)
+    return lines
+
+
+def _fallback_constant_sites() -> dict[str, list[int]]:
+    """`*_FALLBACK` 两枚兜底常量在**规则家之外**被引用的地方。
+
+    数值的第二具身往往不是字面量 2000（太常见、误伤面大），而是"别处又 import 了一次
+    兜底常量并拿它当天花板"——R-A/C-05 实测的那类。定义家与规则家必须同处。
+    """
+    hits: dict[str, list[int]] = {}
+    for path in _PKG_ROOT.rglob("*.py"):
+        rel = path.relative_to(_PKG_ROOT).as_posix()
+        if rel == _CAP_RULE_HOME:
+            continue
+        try:
+            src = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        found = [
+            node.lineno
+            for node in ast.walk(ast.parse(src))
+            if isinstance(node, ast.Name) and node.id in _FALLBACK_NAMES
+        ]
+        if found:
+            hits[rel] = found
+    return hits
+
+
+_FALLBACK_NAMES = ("HARD_MAX_CHARS_FALLBACK", "MAX_AUDIO_BYTES_FALLBACK")
 
 
 def _all_cap_key_reads() -> dict[str, list[int]]:
@@ -181,16 +253,41 @@ def test_rule_home_scanner_sees_its_own_reads() -> None:
     [
         "def f(config):\n    return int(getattr(config, 'bot_tts_hard_max_chars', 0) or 0) or 2000\n",
         "def f(config):\n    return config.bot_tts_max_audio_bytes\n",
+        # 别名形态与下标形态（R-A/C-05：只认前两种等于给后两种留豁免面）。
+        "KEY = 'bot_tts_hard_max_chars'\n\n\ndef f(config):\n    return getattr(config, KEY, 0)\n",
+        "def f(config):\n    return config.model_dump()['bot_tts_max_audio_bytes']\n",
+        "def f(config):\n    return vars(config)['bot_tts_hard_max_chars']\n",
     ],
 )
-def test_scanner_detects_both_read_shapes(src: str) -> None:
-    """注毒：两种读数形态各必须被扫到（漏一种=门有豁免洞）。"""
+def test_scanner_detects_every_read_shape(src: str) -> None:
+    """注毒：每种读数形态各必须被扫到（漏一种=门有豁免洞）。"""
     assert _cap_key_lines(src), f"读数扫描漏判：{src}"
 
 
 def test_help_string_lists_are_not_misread_as_rule_sites() -> None:
     """负样本：help 元数据只是字符串清单，不该被判成第二现场（否则本门会被误伤后被人调松）。"""
     assert _cap_key_lines('META = ({"config_vars": ("bot_tts_hard_max_chars",)},)\n') == []
+    # 兜底常量名不是 config 键名，不参与这条判据。
+    assert _cap_key_lines("cap = HARD_MAX_CHARS_FALLBACK\n") == []
+
+
+#: 兜底常量在"规则家之外"被引用的**登记面**（双向锁：新增即红，销账也必须删干净）。
+#: 这两处不是策略第二真源，而是"函数内二次地板"——所有调用方都显式传值，故不咬；
+#: 但它们是数值的第二具身，Wave 4.1 之后应收进 resolve_* 一并销账（清单只准缩不准长）。
+FALLBACK_REFERENCE_LEDGER: dict[str, str] = {
+    "domains/media/capabilities/tts.py": (
+        "`_cap_audio` 的参数默认值 + 函数内 `or MAX_AUDIO_BYTES_FALLBACK` 地板；"
+        "调用方（tts.py/voice_enricher.py）已全部改走 resolve_max_audio_bytes(config)"
+    ),
+}
+
+
+def test_fallback_constants_have_no_unregistered_second_home() -> None:
+    sites = _fallback_constant_sites()
+    assert set(sites) == set(FALLBACK_REFERENCE_LEDGER), (
+        f"兜底常量的引用面与登记面分叉：多出 {sorted(set(sites) - set(FALLBACK_REFERENCE_LEDGER))}、"
+        f"已销未删 {sorted(set(FALLBACK_REFERENCE_LEDGER) - set(sites))}"
+    )
 
 
 # ---------------------------------------------------------------------------

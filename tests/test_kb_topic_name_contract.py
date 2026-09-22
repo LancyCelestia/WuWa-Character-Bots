@@ -95,7 +95,7 @@ def test_partial_coverage_domain_deletions_are_suspended_not_applied():
         "鸣潮/bwiki/角色/卡穆__1": "h1",
         "战双帕弥什/bwiki/章节__2": "h2",   # 清单没覆盖这个域
     }
-    stats, missing, removable = reconcile_with_manifest(
+    stats, _missing, removable = reconcile_with_manifest(
         _LedgerStore(ledger), _manifest(entries), [],
     )
     assert "战双帕弥什/bwiki/章节__2" not in removable

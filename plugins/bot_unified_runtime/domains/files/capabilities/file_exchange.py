@@ -21,7 +21,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from plugins.bot_unified_runtime.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 
 EXPORT_FORMATS = ("md", "docx", "pptx", "xlsx", "pdf")
 

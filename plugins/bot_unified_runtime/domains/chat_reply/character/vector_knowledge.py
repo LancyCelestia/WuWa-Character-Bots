@@ -779,6 +779,14 @@ class SqliteVectorKnowledgeStore:
         # 已载入 ANN 代际的文件指纹（见 _ann_stat_pair）：外部换入新索引后
         # 据此发现代际变化，无需重启进程即可收敛；None=尚未载入。
         self._ann_loaded_stamp: tuple | None = None
+        # 拒用判定缓存（certify-prewarm 波 P3）：load_ann_index 拒用时记下
+        # 「被拒的代际指纹 + 当时导致拒用的计数戳值」，两者都不变就维持拒用，
+        # 不再按查询重复昂贵重判（mmap 重开 / order JSON 解析 / 证明 sha）。
+        # 失效信号与 _ann_loaded_stamp 同一族：文件换代、_drop_ann_cache /
+        # invalidate_runtime_caches 调用；外加戳键取值变化（认证/涨戳）——
+        # 这是唯一不碰 ANN 文件的自愈动作，点查一发主键即可感知，无需重启。
+        self._ann_refused_stamp: tuple | None = None
+        self._ann_refused_expected: int | None = None
         # 本进程当前持有的 ANN 建锁闸（覆写前的持锁凭证，见 _require_ann_lock）。
         self._ann_build_gate: _AnnBuildGate | None = None
         # 运行时应为 False：只有显式 knowledge-sync 才允许因指纹变化清空向量，
@@ -1102,6 +1110,8 @@ class SqliteVectorKnowledgeStore:
             self._ann_index = None
             self._ann_order = None
             self._ann_loaded_stamp = None
+            self._ann_refused_stamp = None
+            self._ann_refused_expected = None
             self._fts_valid = None
             self._synced_signatures.clear()
 
@@ -1780,7 +1790,13 @@ class SqliteVectorKnowledgeStore:
         embed_backlog: bool = False,
     ) -> list[KnowledgeChunk]:
         # R3 停摆批：进锁前把向量缓存烧热（GB 级全表载入绝不持检索锁执行）。
-        self._prewarm_vector_cache()
+        # certify-prewarm 波 P2：ANN 可用时向量通道走 HNSW、矩阵根本不被消费，
+        # 不再为已放行路径白建 ~GB 级常驻（wiki 248k 实测 ~1.02GB）；仅拒用/
+        # 无索引路径建兜底矩阵（暴力=慢而全，矩阵正是它的燃料）。冷判定
+        # （mmap/解析/sha）发生在进锁之前，稳态此处只 2 stat；锁内
+        # _ann_candidates→load_ann_index 复核命中热缓存，不产生锁内全表载入。
+        if not self.load_ann_index():
+            self._prewarm_vector_cache()
         # 锁分段策略：查询嵌入是同步网络调用（httpx 最长 60s），绝不能持
         # self._lock 执行，否则全会话检索在此串行停摆。锁内只保留
         # sync_chunks / 积压补齐 / 候选索引一致读这些快操作。
@@ -1862,8 +1878,10 @@ class SqliteVectorKnowledgeStore:
         （纯只读检索路径；同步属显式 reindex/预建链路）。
         """
         limit = self.top_k if top_k is None else max(0, int(top_k))
-        # R3 停摆批：与 retrieve 同口径——进锁前烧热向量缓存（锁外预热）。
-        self._prewarm_vector_cache()
+        # R3 停摆批：与 retrieve 同口径——进锁前烧热向量缓存（锁外预热）；
+        # certify-prewarm 波 P2：同 retrieve，ANN 可用即不建矩阵（见彼处注释）。
+        if not self.load_ann_index():
+            self._prewarm_vector_cache()
         with self._lock:
             # 与 retrieve 同口径：sync_files=True 也只在真的拿到清单时才同步，
             # 空清单不进删侧（这是 retrieve 之外的第二条同形态引信）。
@@ -2123,6 +2141,8 @@ class SqliteVectorKnowledgeStore:
         self._ann_index = None
         self._ann_order = None
         self._ann_loaded_stamp = None
+        self._ann_refused_stamp = None
+        self._ann_refused_expected = None
 
     def _read_ann_attestation(self) -> dict | None:
         """读 SQLite 里的成对代际证明（提交点）；缺失/畸形返回 None。"""
@@ -2207,6 +2227,13 @@ class SqliteVectorKnowledgeStore:
         签名、也不动 order.json，于是两周前的索引可以一直被判新鲜。故载入末尾
         再用计数戳比一次 `index.ntotal`：短装或无从判定（无戳）一律拒用。
         计数戳是 knowledge_meta 单行主键查询，被拒路径也不去扫 knowledge_chunks。
+
+        拒用判定缓存（certify-prewarm 波 P3）：判定为拒的同一代（文件指纹）且
+        同一戳值时，后续调用只 stat 两文件 + 一发主键点查即维持拒用——重判一
+        次（mmap 1.09GB 级索引 + 解析 10MB 级 order + sha）≈0.57s 且拒用告警
+        会按查询刷屏。戳取值一变（knowledge-sync 认证落戳 / 补嵌涨戳 / 重建后
+        重发布）即自动重判，运行中进程无需重启即自愈；文件换代与两处缓存失效
+        调用同样重判（_drop_ann_cache / invalidate_runtime_caches 一并清）。
         """
         if faiss is None:
             return False
@@ -2220,19 +2247,31 @@ class SqliteVectorKnowledgeStore:
                 Path(index_path).name,
             )
             self._drop_ann_cache()
+        elif (
+            stamp is not None
+            and stamp == self._ann_refused_stamp
+            and self._stamped_expected_vector_count() == self._ann_refused_expected
+        ):
+            # 同一代 + 同一个导致拒用的戳值：判定不会变，直接维持拒用。
+            # 唯一要付的是那一发主键点查——不许省，它是「认证只写 meta、
+            # 不动 ANN 文件」这条自愈链在运行中进程里唯一的感知通道。
+            return False
         if stamp is None:
             return False
         try:
             stored_ann = self._stored_ann_signature()
             if not stored_ann or stored_ann != self.signature:
+                self._remember_ann_refusal(stamp)
                 return False
             if not self._ann_pair_consistent(index_path, order_path, stamp):
+                self._remember_ann_refusal(stamp)
                 return False
             index = faiss.read_index(str(index_path), faiss.IO_FLAG_MMAP)
             cast(Any, index).hnsw.efSearch = 64
             order = json.loads(Path(order_path).read_text(encoding="utf-8"))
             if not isinstance(order, list):
                 self._drop_ann_cache()
+                self._remember_ann_refusal(stamp)
                 return False
             order_ids = [str(item) for item in order]
             ntotal = int(index.ntotal)
@@ -2244,6 +2283,7 @@ class SqliteVectorKnowledgeStore:
                     len(order_ids),
                 )
                 self._drop_ann_cache()
+                self._remember_ann_refusal(stamp)
                 return False
             # 完整性终检：索引装下的向量数必须追得上库里的计数戳。
             expected = self._stamped_expected_vector_count()
@@ -2256,6 +2296,7 @@ class SqliteVectorKnowledgeStore:
                     _EMBEDDED_COUNT_KEY,
                 )
                 self._drop_ann_cache()
+                self._remember_ann_refusal(stamp)
                 return False
             missing = expected - ntotal
             if missing > _ANN_COMPLETENESS_MAX_MISSING:
@@ -2270,6 +2311,7 @@ class SqliteVectorKnowledgeStore:
                     _ANN_COMPLETENESS_MAX_MISSING,
                 )
                 self._drop_ann_cache()
+                self._remember_ann_refusal(stamp)
                 return False
             self._ann_index = index
             self._ann_order = order_ids
@@ -2277,10 +2319,26 @@ class SqliteVectorKnowledgeStore:
             # 若又有外部换入，指纹比对不符→下次自动重开，宁可多读一次也不
             # 把没校验过的代际当成已校验缓存住。
             self._ann_loaded_stamp = stamp
+            self._ann_refused_stamp = None
+            self._ann_refused_expected = None
             return True
         except Exception:  # noqa: BLE001 - 索引损坏/不可读时回退。
             self._drop_ann_cache()
+            self._remember_ann_refusal(stamp)
             return False
+
+    def _remember_ann_refusal(self, stamp: tuple) -> None:
+        """把本次拒用记入代际缓存（见 load_ann_index 拒用判定缓存段）。
+
+        缓存键 = 文件指纹 + 当时的计数戳取值：取值不变则判定不变（拒用的两个
+        输入都来自这一对，外加只随文件走的代际证明）；取值一变即重判。
+        戳读失败按 None 记——最坏是下次多一发点查，不会错放。
+        """
+        self._ann_refused_stamp = stamp
+        try:
+            self._ann_refused_expected = self._stamped_expected_vector_count()
+        except Exception:  # noqa: BLE001 - 记账读取失败不改变拒用结论。
+            self._ann_refused_expected = None
 
     def _ann_candidates(
         self, query_vector: list[float], limit: int
@@ -2525,6 +2583,70 @@ class SqliteVectorKnowledgeStore:
     def _stamp_expected_vector_count(self, count: int) -> None:
         """提交点落戳：把这一代索引实际装入的向量数写成完备性基线。"""
         self.set_meta(_EMBEDDED_COUNT_KEY, str(max(0, int(count))))
+
+    def certify_expected_vector_count(self) -> int | None:
+        """维护路径专用：给从未认证过的存量库补盖计数戳；返回新落的戳值，
+        活戳在位或失败返回 None（活戳归重建线所有，certify 一字不碰）。
+
+        背景（#47 闸的自愈闭环，certify-prewarm 波 P1）：戳的权威赋值点只有
+        发布提交点、涨点只有补嵌——而存量生产库既没戳、也再无新嵌入，kb-sync
+        零变更夜又跳过重建（unchanged_skip），写点涨戳在无戳库上刻意空转
+        ⇒ 该库会被「无戳=不可判定」永远拒用，每条查询付暴力回落的代价
+        （wiki 248k 块实测：稳态 +3.6s、首查 33.6s、每问再涨 1GB 驻留）。
+        本方法给这一类库一次权威认证：COUNT 已嵌入行数落戳。生产实测该扫描
+        persona 13.2s / wiki 33.5s，所以只允许出现在维护线程（同步任务的
+        跳过分支、operator CLI、显式重建的跳过源），**绝不上请求路径**。
+
+        ⚠ 关键陷阱——戳值只许来自 SQLite 已嵌入行 COUNT，禁止取 index.ntotal：
+        拿 ntotal 落戳等于允许任何索引（包括真短装的）自我认证，
+        `ntotal >= stamp` 恒成立，完备性闸就此名存实亡。本闸的价值恰恰在
+        「库侧行数裁决文件侧索引」，落戳方向一旦反过来，闸就白建。
+
+        原子性：查无活戳与落戳在同一条 BEGIN IMMEDIATE 写事务内完成
+        （billing_service 同族手法）——防补嵌恰好在「读到无戳」与「写戳」
+        之间提交而涨戳空转（那会造出一个偏低的戳 = 漏拒方向，危险侧）。
+        活戳判据与读端 `_stamped_expected_vector_count` 同式：非空且可解析
+        且 >=0 即活戳；空/缺键/畸形/负值视为「从未认证成功」，补盖权威值。
+        """
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT value FROM knowledge_meta WHERE key = ?",
+                    (_EMBEDDED_COUNT_KEY,),
+                ).fetchone()
+                raw = "" if row is None or row[0] is None else str(row[0]).strip()
+                if raw:
+                    try:
+                        existing = int(raw)
+                    except (TypeError, ValueError):
+                        existing = -1  # 畸形 = 读端本就判不可用，按无戳处理
+                    if existing >= 0:
+                        return None  # 活戳：重建线的所有物，certify 不覆写
+                count = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM knowledge_chunks "
+                        "WHERE vector_json IS NOT NULL AND vector_json != ''"
+                    ).fetchone()[0]
+                )
+                connection.execute(
+                    "INSERT INTO knowledge_meta (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (_EMBEDDED_COUNT_KEY, str(count)),
+                )
+        except sqlite3.Error as exc:
+            logger.warning(
+                "knowledge ANN certify skipped (db error %s): %s",
+                type(exc).__name__,
+                self.db_path,
+            )
+            return None
+        logger.info(
+            "knowledge ANN completeness certified: expected=%d db=%s",
+            count,
+            self.db_path,
+        )
+        return count
 
     @staticmethod
     def _bump_expected_vector_count(

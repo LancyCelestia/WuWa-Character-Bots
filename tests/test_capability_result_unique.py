@@ -140,9 +140,10 @@ def test_envelope_class_is_unique_and_renamed():
         f"执行信封定义应恰 1 处且在 {ENVELOPE_HOME}，实得={ast_hits}"
     )
     assert regex_hits == [ENVELOPE_HOME], f"正则路数={regex_hits} 与 AST={ast_hits} 不同意"
-    assert _code_symbols_in(REPO_ROOT / ENVELOPE_HOME).count("CapabilityResult") == 0, (
-        "壳内仍有把旧名当**代码符号**用的地方（类名/引用/__all__ 字符串/import）——"
-        "改名未穷尽；纯注释与 docstring 里的互指文字不受此约束（见下一条）"
+    assert not _bare_capability_result_offenders(REPO_ROOT / ENVELOPE_HOME), (
+        "壳内把旧名当**本地代码符号**用了（裸调用/属性/无别名 import）——"
+        "跨层引用呈现契约只准 `import CapabilityResult as 别名` 一种形态"
+        f"：{_bare_capability_result_offenders(REPO_ROOT / ENVELOPE_HOME)}"
     )
     assert "CapabilityResult" in (REPO_ROOT / ENVELOPE_HOME).read_text(encoding="utf-8"), (
         "壳内已完全不提呈现契约名——审计 R3-7 要求两层『头注互指』，"
@@ -150,10 +151,47 @@ def test_envelope_class_is_unique_and_renamed():
     )
 
 
+def test_alias_only_rule_has_teeth(tmp_path: Path) -> None:
+    """注毒自证：跨层引用只放行"带别名 import"这一种形态，三种越界形态各须点名。
+
+    放行样本若被判红＝本门把正常写法也杀了（假红）；拦下样本若被判绿＝掏空了
+    撞名陷阱的执法面（假绿）。两头都测才算锁。
+    """
+    allowed = (
+        "from plugins.x.contracts.runtime import CapabilityResult as Presentation\n"
+        "def build():\n    return Presentation(body='x')\n"
+    )
+    bare_use = (
+        "from plugins.x.contracts.runtime import CapabilityResult as Presentation\n"
+        "def build():\n    return CapabilityResult(body='x')\n"
+    )
+    no_alias = (
+        "from plugins.x.contracts.runtime import CapabilityResult\n"
+        "def build():\n    return CapabilityResult(body='x')\n"
+    )
+    attribute = (
+        "import plugins.x.contracts.runtime as presentation_contract\n"
+        "def build():\n    return presentation_contract.CapabilityResult(body='x')\n"
+    )
+
+    def _offenders(source: str) -> list[str]:
+        path = tmp_path / f"case_{abs(hash(source))}.py"
+        path.write_text(source, encoding="utf-8")
+        return _bare_capability_result_offenders(path)
+
+    assert _offenders(allowed) == [], "带别名的正当写法被误杀"
+    for label, source in (("裸用", bare_use), ("无别名", no_alias), ("属性面", attribute)):
+        assert _offenders(source), f"{label} 形态未被拦下＝执法面被掏空"
+
+
 def _code_symbols_in(path: Path) -> list[str]:
     """收集一个模块里**作为代码符号**出现的名字（含 ``__all__`` 里的字符串）。
 
     注释与 docstring 不算：那是给人/AI 看的互指文字，正是审计想要的东西。
+
+    跨层引用单独判（见 `_bare_capability_result_offenders`）：壳里存在一个**必须**
+    造呈现契约的位置（命令形接缝把执行信封换算给用户可见结果），那里只准以
+    **带别名**的 import 出现——撞名的危害来自"本地裸用一个两侧同名"，不来自"提到对面叫什么"。
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     uses: list[str] = []
@@ -173,6 +211,28 @@ def _code_symbols_in(path: Path) -> list[str]:
                         if isinstance(element, ast.Constant) and isinstance(element.value, str):
                             uses.append(element.value)
     return uses
+
+
+def _bare_capability_result_offenders(path: Path) -> list[str]:
+    """壳内把呈现契约**旧名当本地符号用**的每一处（本地名/属性名/别名缺失的 import）。
+
+    放行形态只有一种：``from … import CapabilityResult as 别的名字``。
+    拦下形态：``CapabilityResult(...)`` 裸调用、``x.CapabilityResult``、
+    以及无别名（或别名同名）的 import——那三种都会让"壳里的 CapabilityResult
+    到底是哪一层"重新变成读代码时才看得出来的问题。
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == "CapabilityResult":
+            offenders.append(f"line {node.lineno}: 本地裸用旧名")
+        elif isinstance(node, ast.Attribute) and node.attr == "CapabilityResult":
+            offenders.append(f"line {node.lineno}: 属性面旧名")
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "CapabilityResult" and (not alias.asname or alias.asname == alias.name):
+                    offenders.append(f"line {node.lineno}: 无别名 import 旧名")
+    return offenders
 
 
 def test_shell_no_longer_exports_the_colliding_name():

@@ -33,20 +33,27 @@ import contextlib
 import json
 import logging
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DB_PATH_CONFIG_KEY",
     "DEFAULT_TAROT_COOLDOWN_SECONDS",
     "DEFAULT_TAROT_DAILY_LIMIT",
+    "FORTUNE_SECRET_CONFIG_KEY",
     "DrawError",
     "DrawRecord",
     "DrawStore",
     "QuotaPolicy",
+    "draw_store_from_config",
+    "fortune_secret_from_config",
+    "get_or_create_draw_store",
 ]
 
 # 合同 §3.2 默认配额：每主体塔罗冷却 60 秒、每天 20 次（workspace 独立）。
@@ -432,3 +439,45 @@ class DrawStore:
             elapsed = float(record.occurred_epoch) - float(last)
             if elapsed < float(quota.cooldown_seconds):
                 raise DrawError("rate_limited", "塔罗抽取冷却中")
+
+
+# ---------------------------------------------------------------------------
+# 装配半边：库路径解析只有一个家（聊天能力与 REST 门面共用同一份规则）
+# ---------------------------------------------------------------------------
+
+#: 生产启用开关——同一个键决定两侧，不存在「聊天一套路径、控制面另一套」。
+DB_PATH_CONFIG_KEY = "bot_control_plane_divination_db"
+#: 每日运势 HMAC 密钥的在册键名（同样两侧共用，未配置 ⇒ 运势诚实不启用）。
+FORTUNE_SECRET_CONFIG_KEY = "bot_divination_fortune_secret"
+
+_STORES_LOCK = threading.Lock()
+_STORES: dict[str, DrawStore] = {}
+
+
+def get_or_create_draw_store(db_path: str | Path) -> DrawStore:
+    """同一路径 ⇒ 同一实例：root 每条消息重建能力，不该每次都得建库开连接。"""
+    key = str(db_path)
+    with _STORES_LOCK:
+        store = _STORES.get(key)
+        if store is None:
+            store = DrawStore(key)
+            _STORES[key] = store
+        return store
+
+
+def draw_store_from_config(config: Any) -> DrawStore | None:
+    """按在册键解析存储；未配置即 ``None``——绝不猜路径、绝不写源码树。
+
+    为什么放在存储真身里：WP9 只合并了算法与表，装配半边没人管 ⇒ 聊天侧从未
+    拿到过实例，于是现网跑的是收编前的 rng.sample 老路径（取证
+    ``SEAT-S-DIV`` §1b）。两侧共用这一个解析口，键一落地就同读一个文件。
+    """
+    value = getattr(config, DB_PATH_CONFIG_KEY, None) if config is not None else None
+    return get_or_create_draw_store(value) if value else None
+
+
+def fortune_secret_from_config(config: Any) -> bytes | None:
+    """运势 HMAC 密钥：在册键 → bytes；未配置即 ``None``（不造默认密钥）。"""
+    value = getattr(config, FORTUNE_SECRET_CONFIG_KEY, "") if config is not None else ""
+    text = str(value or "")
+    return text.encode("utf-8") if text else None

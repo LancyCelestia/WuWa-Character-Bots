@@ -24,7 +24,9 @@
 
 ## 这个功能解决什么
 
-（待写：一到三段大白话，说清它替谁解决什么问题。）
+二级功能 B09.model-control「模型路由与账本」——provider/channel/model 三级、failover、上下文钳制与计费账本。
+
+本页上方的生成区从权威声明源投影，实现落点与归属以它为准，正文不复制。 一切可数事实（字段/主题/别名/入口/模板数）以机器册 `docs/auto-facts.md` 为准。
 
 ## 处理流程
 
@@ -35,12 +37,16 @@ flowchart LR
 
 ## 边界与降级
 
-（待写：外部依赖挂了怎么办、无源时如何诚实、权限门与限额。）
+开关面：配置键前缀 `bot_model_`、`bot_llm_`、`bot_chat_failover_`，逐键缺省与热更性以 `docs/config-catalog-full.md` 为准。
+
+失败与降级的逐条契约写在真身模块 docstring 里，页内不抄；项目级口径：外部依赖失败不编数、诚实标注无源，异常走统一诊断卡。
 
 ## 测试与验收
 
-（待写：离线用例件与真机验收条目指针。）
+离线用例：以与真身同域的 `tests/` 目录为准，此处不臆写文件名。
+
+上面按名强匹配点到的是与本功能同族的用例件、非穷举；用例数以最近一次 `scripts/dev.ps1 -Task test` 实跑为准，真机验收条目见 `docs/acceptance-manual.md`。
 
 ## 现行缺陷
 
-（待写：已知未修的 P0/P1/P2 与本功能相关项，指真身台账。）
+已知未修项的唯一台账是 `docs/issue-ledger-p2-p3.md` 与 `docs/boards/_meta/code-quality-findings-20260921.md`，逐条归属看那两份，此处不抄。

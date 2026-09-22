@@ -107,7 +107,9 @@ def test_entry_aliases_collision_free() -> None:
     assert not conflicts, "；".join(conflicts)
     # 运行时别名映射必须与注册表等势：任何被静默覆盖的键都意味着冲突漏网。
     # T5 结构修复（fix-trae2）后映射口径=aliases ∪ META 触发词（aliases 优先）。
-    from plugins.bot_unified_runtime.capabilities.echo import _HELP_ALIAS_MAP
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+        _HELP_ALIAS_MAP,
+    )
 
     expected_keys: set[str] = set()
     for entry in _merged():
@@ -155,7 +157,9 @@ def test_finance_help_topics_registered() -> None:
     }
     assert "bot.stocks" in capability_by_topic["个股行情"]
     assert "bot.fx" in capability_by_topic["汇率"]
-    from plugins.bot_unified_runtime.capabilities.echo import _PUBLIC_HELP_TOPICS
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+        _PUBLIC_HELP_TOPICS,
+    )
 
     assert {"个股行情", "汇率"} <= set(_PUBLIC_HELP_TOPICS), (
         "个股行情/汇率 必须对普通用户可见（admin_only=False 且登记进公开主题集）"
@@ -247,7 +251,9 @@ def test_meta_test_paths_exist() -> None:
 
 def test_runtime_help_entries_match_static_merge() -> None:
     """运行时注册表（echo 导入后合并完成）必须与静态提取合并逐字段一致。"""
-    from plugins.bot_unified_runtime.capabilities.echo import HELP_ENTRIES
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+        HELP_ENTRIES,
+    )
 
     static = {entry["topic"]: entry for entry in _merged()}
     for entry in HELP_ENTRIES:
@@ -265,7 +271,7 @@ def test_runtime_help_entries_match_static_merge() -> None:
 
 
 def test_public_help_never_leaks_admin_topics() -> None:
-    from plugins.bot_unified_runtime.capabilities.echo import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
         _PUBLIC_HELP_TOPICS,
         _visible_help_entries,
         build_commands_catalog_body,
@@ -292,7 +298,9 @@ def test_public_overview_body_excludes_admin_rows() -> None:
     管理员主题同名词，只有「以【管理员主题】开头的行 / 管理员条目原文
     index 行」才算泄露。同时反向守卫：公开条目不得被连带隐藏。
     """
-    from plugins.bot_unified_runtime.capabilities.echo import build_help_result
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+        build_help_result,
+    )
 
     result = build_help_result(request_id="leak-overview", query="", is_admin=False)
     assert result.kind == "text"

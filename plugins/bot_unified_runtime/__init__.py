@@ -2545,6 +2545,14 @@ async def _run_capability_through_pipeline(
         event,
         bot_id=str(getattr(bot, "self_id", "unknown")),
     )
+    # 层 2 主缝的唯一汇合点（R-PREP C-1 根修）：此前只有 `_run_simple_capability` 那条
+    # 命令入口包了缝，而**别名**与**自然语言**两条入口把闭包直接交给本函数 ⇒ 同一个能力
+    # 三条入口里两条不经中央治理，缺口账却按"声明即通电"记它 WIRED＝账在撒谎。
+    # 在这里包一次 ⇒ 三条入口同权；未在册能力 `orchestrated_command` 原样直呼，行为不变。
+    from .runtime.capability_protocols import orchestrated_command as _orchestrated
+
+    if getattr(capability, "orchestrated_capability_id", None) is None:
+        capability = _orchestrated(capability_id, capability, config)
     if offload_sync_capability:
         from .domains.chat_reply.runtime.pipeline import offload_capability
 
@@ -2876,14 +2884,51 @@ def _should_catch_up_reflection(config: Any) -> bool:
         return False
 
 
+def _push_via_central_exit_now(
+    send_queue: Any,
+    request: Any,
+    outbound_gate: Any,
+    *,
+    dedupe_family: str = "once",
+    dedupe_namespace: str,
+) -> bool:
+    """主动投递的唯一出口调用口，并回答「本轮是否还可以就地投出去」。
+
+    投递动作本身交 `submit_active_push`（闸关闭态=与裸 ``submit(request)`` 逐字节
+    同形的 passthrough，零 store 零审计）。返回值只服务**内联投递**这一条历史通路：
+
+    - ``True``  放行且不顺延 ⇒ 照旧就地投递并据回执销账（现网闸关态恒走这条，行为零变更）；
+    - ``False`` 闸拦下（静默窗/限流/键形）或判了顺延 ⇒ 本轮既不内联投也不销账，
+      下一 tick 由投前 `receipt_repository.latest()` 与队列幂等键收敛，绝不双发。
+
+    存在的理由：提醒/cookie 到期两族的"送达才销账"读的是内联投递的同步回执，
+    不能直接照抄摘要/助理那种纯队列投；闸的判定因此必须在这两处也站在投递之前。
+
+    `dedupe_namespace` **强制申报**（无缺省值）：闸的键规范按首段等值认族，漏报即
+    回落紧急域 `emg` 口径 ⇒ 开闸态该族整链静默丢消息（R-CENTRAL C-1 的成因）。
+    """
+    from .domains.transport.sender.outbound_gate import submit_active_push
+
+    outcome = submit_active_push(
+        send_queue,
+        request,
+        outbound_gate,
+        dedupe_family=dedupe_family,
+        dedupe_namespace=dedupe_namespace,
+    )
+    return outcome.verdict.action == "allow" and outcome.verdict.deliver_after is None
+
+
 async def _deliver_due_reminders(
     config: Any,
     send_queue: Any,
     audit_logger: Any = None,
     receipt_repository: Any = None,
     all_online_bots: Any = None,
+    *,
+    outbound_gate: Any,
 ) -> int:
-    """到点提醒一次性投递：submit 后**内联投递**，送达才销账。返回送达数。
+    """到点提醒一次性投递：经中央出口投出去后**内联投递**，送达才销账。返回送达数。
 
     默认配置是内存发送队列——``InMemorySendQueue.submit`` 只入列并回假
     sent 回执、没有任何网络调用（sender/queue.py），只 submit 不投递等于
@@ -2951,7 +2996,20 @@ async def _deliver_due_reminders(
             bot_id=reminder.bot_id,
             audit_tags=["reminder", "due"],
         )
-        send_queue.submit(request)
+        if not _push_via_central_exit_now(
+            send_queue,
+            request,
+            outbound_gate,
+            dedupe_family="once",
+            dedupe_namespace="reminder",
+        ):
+            from nonebot.log import logger
+
+            logger.warning(
+                "reminder {} held by central outbound gate; kept for retry",
+                request_id,
+            )
+            continue
         sent_request = _find_sent_request(send_queue, request_id) or request
         bot = (
             _select_queue_bot(all_online_bots, sent_request)
@@ -2999,6 +3057,8 @@ async def _deliver_cookie_expiry_report_via_queue(
     report: str,
     admins: list[str],
     deliver_fn: Any = None,
+    *,
+    outbound_gate: Any,
 ) -> bool:
     """cookie 到期提醒统一路径投递（S0 收编①，v21r4-b2-direct-collect-plan §3.1）。
 
@@ -3062,10 +3122,21 @@ async def _deliver_cookie_expiry_report_via_queue(
             audit_tags=["cookie_expiry", "daily_notice"],
         )
         try:
-            send_queue.submit(request)
+            allowed_now = _push_via_central_exit_now(
+                send_queue,
+                request,
+                outbound_gate,
+                dedupe_family="daily",
+                dedupe_namespace="cookie-expiry",
+            )
         except Exception:  # 入列失败换下一个管理员。
             logging.getLogger(__name__).debug(
                 "cookie expiry notice submit failed for %s", admin_id, exc_info=True
+            )
+            continue
+        if not allowed_now:
+            logging.getLogger(__name__).warning(
+                "cookie expiry notice to %s held by central outbound gate", admin_id
             )
             continue
         sent_request = _find_sent_request(send_queue, request_id) or request
@@ -3097,11 +3168,13 @@ def _register_reminder_scheduler(
     audit_logger: Any | None = None,
     receipt_repository: Any | None = None,
     all_online_bots: Any | None = None,
+    *,
+    outbound_gate: Any,
 ) -> dict:
-    """提醒投递：每分钟检查到点提醒，submit 后**内联投递**、送达才销账。
+    """提醒投递：每分钟检查到点提醒，经中央出口投出去后**内联投递**、送达才销账。
 
     到点文案由 character/reminders.build_reminder_text 提供（守岸人语气）；
-    投递失败只记日志、不销账、下一轮重投，绝不阻塞主链路。
+    投递失败只记日志、不销账、下一轮重投，绝不阻塞主链路；闸拦下/顺延同样不销账。
     """
 
     async def _reminder_job() -> None:
@@ -3114,6 +3187,7 @@ def _register_reminder_scheduler(
                 audit_logger,
                 receipt_repository,
                 all_online_bots,
+                outbound_gate=outbound_gate,
             )
         except Exception as exc:  # noqa: BLE001 - 提醒投递失败不影响主链路。
             logger.warning("reminder delivery failed: {}", type(exc).__name__)
@@ -3159,6 +3233,7 @@ def _push_daily_group_digests(
     config: Any,
     send_queue: Any,
     provider: Any,
+    outbound_gate: Any,
     *,
     now: Any = None,
 ) -> list[str]:
@@ -3167,7 +3242,8 @@ def _push_daily_group_digests(
     推送目标只取群摘要名单 whitelist 模式下的白名单群：list_mode 非
     whitelist 一律不推（绝不猜群）。每群合成 request_id 调 shared_group
     provider 取当日摘要，无可用摘要静默跳过；正文 = 守岸人引子 + 摘要；
-    dedupe_key 带当天日期，同群同天不重发。
+    dedupe_key 带当天日期，同群同天不重发。投递**只经中央出口**
+    `submit_active_push`（闸关闭态=与裸 submit 逐字节同形的 passthrough）。
     """
     from datetime import datetime
 
@@ -3220,13 +3296,21 @@ def _push_daily_group_digests(
             persona_profile_id=persona_profile_id,
             audit_tags=["digest_push", "daily"],
         )
-        send_queue.submit(request)
+        from .domains.transport.sender.outbound_gate import submit_active_push
+
+        submit_active_push(
+            send_queue,
+            request,
+            outbound_gate,
+            dedupe_family="daily",
+            dedupe_namespace="digest_push",
+        )
         pushed.append(group_id)
     return pushed
 
 
 def _register_digest_push_scheduler(
-    scheduler: Any, config: Any, send_queue: Any
+    scheduler: Any, config: Any, send_queue: Any, outbound_gate: Any
 ) -> dict:
     """夜间每日群通讯总结主动推送（G-DIGEST 收尾）。
 
@@ -3244,6 +3328,7 @@ def _register_digest_push_scheduler(
             _push_daily_group_digests(
                 config,
                 send_queue,
+                outbound_gate,
                 build_shared_group_context_provider(
                     config, llm_provider=_build_chat_llm_provider(config)
                 ),
@@ -3321,13 +3406,17 @@ def _build_meal_push_text(item: str) -> str:
 def _push_daily_assist_private(
     config: Any,
     send_queue: Any,
+    outbound_gate: Any,
     *,
     capability_id: str,
     text: str,
     tag: str,
     now: Any = None,
 ) -> int:
-    """日常助理简报逐个私聊投递 send_queue（纯 submit，SQLite 队列 worker 送达）。"""
+    """日常助理简报逐个私聊投递 send_queue（纯 submit，SQLite 队列 worker 送达）。
+
+    投递只经中央出口 `submit_active_push`；闸关闭态=与裸 submit 同形的 passthrough。
+    """
     from datetime import datetime
 
     from .contracts import (
@@ -3369,12 +3458,22 @@ def _push_daily_assist_private(
             persona_profile_id=persona_profile_id,
             audit_tags=["daily_assist", tag],
         )
-        send_queue.submit(request)
+        from .domains.transport.sender.outbound_gate import submit_active_push
+
+        submit_active_push(
+            send_queue,
+            request,
+            outbound_gate,
+            dedupe_family="daily",
+            dedupe_namespace="daily_assist",
+        )
         pushed += 1
     return pushed
 
 
-def _run_daily_assist_meal_push(config: Any, send_queue: Any, slot: str) -> None:
+def _run_daily_assist_meal_push(
+    config: Any, send_queue: Any, outbound_gate: Any, slot: str
+) -> None:
     from nonebot.log import logger
 
     try:
@@ -3386,6 +3485,7 @@ def _run_daily_assist_meal_push(config: Any, send_queue: Any, slot: str) -> None
         _push_daily_assist_private(
             config,
             send_queue,
+            outbound_gate,
             capability_id="bot.daily_assist",
             text=_build_meal_push_text(item),
             tag=f"meal-{slot.replace(':', '')}",
@@ -3394,7 +3494,9 @@ def _run_daily_assist_meal_push(config: Any, send_queue: Any, slot: str) -> None
         logger.warning("daily assist meal push failed: {}", type(exc).__name__)
 
 
-def _run_daily_assist_morning_push(config: Any, send_queue: Any) -> None:
+def _run_daily_assist_morning_push(
+    config: Any, send_queue: Any, outbound_gate: Any
+) -> None:
     from nonebot.log import logger
 
     try:
@@ -3427,6 +3529,7 @@ def _run_daily_assist_morning_push(config: Any, send_queue: Any) -> None:
         _push_daily_assist_private(
             config,
             send_queue,
+            outbound_gate,
             capability_id="bot.daily_assist",
             text=text,
             tag="morning",
@@ -3435,7 +3538,9 @@ def _run_daily_assist_morning_push(config: Any, send_queue: Any) -> None:
         logger.warning("daily assist morning push failed: {}", type(exc).__name__)
 
 
-def _run_daily_assist_evening_push(config: Any, send_queue: Any) -> None:
+def _run_daily_assist_evening_push(
+    config: Any, send_queue: Any, outbound_gate: Any
+) -> None:
     from nonebot.log import logger
 
     try:
@@ -3472,6 +3577,7 @@ def _run_daily_assist_evening_push(config: Any, send_queue: Any) -> None:
         _push_daily_assist_private(
             config,
             send_queue,
+            outbound_gate,
             capability_id="bot.daily_assist",
             text=text,
             tag="evening",
@@ -3481,7 +3587,7 @@ def _run_daily_assist_evening_push(config: Any, send_queue: Any) -> None:
 
 
 def _register_daily_assist_scheduler(
-    scheduler: Any, config: Any, send_queue: Any
+    scheduler: Any, config: Any, send_queue: Any, outbound_gate: Any
 ) -> dict:
     """日常助理定时推送：到点吃什么推荐 + 收件箱早晚简报。
 
@@ -3499,8 +3605,13 @@ def _register_daily_assist_scheduler(
         hour, minute = clock
         slot = f"{hour:02d}:{minute:02d}"
 
-        def _meal_job(_config: Any = config, _queue: Any = send_queue, _slot: str = slot) -> None:
-            _run_daily_assist_meal_push(_config, _queue, _slot)
+        def _meal_job(
+            _config: Any = config,
+            _queue: Any = send_queue,
+            _gate: Any = outbound_gate,
+            _slot: str = slot,
+        ) -> None:
+            _run_daily_assist_meal_push(_config, _queue, _gate, _slot)
 
         scheduler.add_job(
             _meal_job,
@@ -3519,8 +3630,10 @@ def _register_daily_assist_scheduler(
         getattr(config, "bot_daily_assist_morning_time", "09:00")
     ) or (9, 0)
 
-    def _morning_job(_config: Any = config, _queue: Any = send_queue) -> None:
-        _run_daily_assist_morning_push(_config, _queue)
+    def _morning_job(
+        _config: Any = config, _queue: Any = send_queue, _gate: Any = outbound_gate
+    ) -> None:
+        _run_daily_assist_morning_push(_config, _queue, _gate)
 
     scheduler.add_job(
         _morning_job,
@@ -3537,8 +3650,10 @@ def _register_daily_assist_scheduler(
         getattr(config, "bot_daily_assist_evening_time", "21:00")
     ) or (21, 0)
 
-    def _evening_job(_config: Any = config, _queue: Any = send_queue) -> None:
-        _run_daily_assist_evening_push(_config, _queue)
+    def _evening_job(
+        _config: Any = config, _queue: Any = send_queue, _gate: Any = outbound_gate
+    ) -> None:
+        _run_daily_assist_evening_push(_config, _queue, _gate)
 
     scheduler.add_job(
         _evening_job,
@@ -3736,6 +3851,61 @@ def _register_nonebot_handlers() -> None:
             "发送队列当前为内存版（BOT_SEND_QUEUE_ENABLED 未开启）：进程重启将丢失在途消息；"
             "如需可靠投递与断点续发，请在 .env 设 BOT_SEND_QUEUE_ENABLED=true 后重启。"
         )
+    # 中央出站闸**单实例**，装配位置提到发送队列之后（原在紧急信息块内 :5157）。
+    # 提前的理由：主动投递的 A 类站点（群摘要 / 日常助理 / 提醒 / cookie 到期）
+    # 全部注册在本行之下、紧急块之上，闸留在 5157 就让这些站点无闸可用——
+    # 「所有内容走中央出口」在根装配里必须是先有出口、再有消费者。
+    # 形参名以真身 domains/transport/sender/outbound_gate.py 的 build_outbound_gate 为准
+    # （settings_provider / quiet_settings_provider / audit_logger / clock / store / issue_sink）。
+    from .domains.transport.sender.outbound_gate import (
+        build_outbound_gate,
+        build_outbound_gate_settings,
+    )
+
+    outbound_gate = build_outbound_gate(
+        config,
+        audit_logger=audit_logger,
+        # 两路设置都以 callable 注入 ⇒ /bot runtime set 热改即时反映（静默面/限流同例），
+        # 不在装配期快照（台账 #3 那类「热改当夜不生效」的坑不再复制一遍）。
+        settings_provider=lambda: build_outbound_gate_settings(
+            _config_with_runtime_overrides(config, runtime_settings)
+        ),
+        quiet_settings_provider=lambda: build_quiet_hours_settings(
+            _config_with_runtime_overrides(config, runtime_settings)
+        ),
+    )
+    # 中央执行面审计 sink（D-d/D-e 根修）：invoker 每次终态都 emit，但全树此前
+    # **零注册** ⇒ 走中央的能力在生产"跑了不留痕"。经壳侧唯一口子挂载，
+    # 不在根里再取一次 default_invoker()（那会造第二 invoker 点位，结构门执法）。
+    from .runtime.capability_protocols import attach_default_audit_sink
+
+    def _record_capability_audit(record: Any) -> None:
+        try:
+            audit_logger.append(
+                AuditRecord(
+                    request_id=record.request_id,
+                    session_id=record.session_key,
+                    capability_id=record.capability_id,
+                    stage="capability_invoke",
+                    event=f"invoke_{record.status.value}",
+                    severity=(
+                        RiskLevel.LOW
+                        if record.status.value in {"ok", "fallback_ok"}
+                        else RiskLevel.MEDIUM
+                    ),
+                    public_message="",
+                    private_debug=(
+                        f"principal={record.principal} via={record.via}"
+                        f" elapsed_ms={record.elapsed_ms} detail={record.detail[:200]}"
+                    ),
+                )
+            )
+        except Exception:  # 审计失败绝不影响能力执行（与闸侧同口径）。
+            logging.getLogger(__name__).debug(
+                "capability audit sink failed", exc_info=True
+            )
+
+    attach_default_audit_sink(_record_capability_audit)
     diagnostics_store = build_diagnostics_store(config)
     mail_bridge_state = MailBridgeState(config.bot_mail_bridge_state_file)
     runtime_control = RuntimeControlState()
@@ -3973,6 +4143,50 @@ def _register_nonebot_handlers() -> None:
             # Administrator alerting is a diagnostic side channel and must never
             # alter or recursively re-enter the originating request.
             return
+
+    _pending_probe_alert_tasks: set[Any] = set()
+
+    def _push_probe_issue(issue: Any) -> None:
+        """语音健康探针的诊断 → 中央管理员告警口（S-OBS：`last_operational_issue()` 的生产读者）。
+
+        探针此前只把 issue 存在自己口袋里，全树零读者＝诊断存在但永远没人看见。
+        这里刻意**共用** `operational_alert_suppression`（同一个 300s 抑制器），不另造
+        第二道节流闸；告警口是异步的，而 `flush_probe_issue_to_alerts()` 是同步调用点，
+        所以只在确有事件循环时挂一个任务，循环不在就诚实放弃（下一次查询还会再读）。
+        """
+        from nonebot.log import logger
+
+        targets = _operational_alert_targets()
+        if not targets:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug("tts probe issue has no running loop; kept for next read")
+            return
+        try:
+            task = loop.create_task(
+                notify_operational_issue(
+                    issue,
+                    source_adapter="runtime",
+                    source_bot="tts-probe",
+                    session_type=SessionType.PRIVATE,
+                    targets=targets,
+                    online_bots=_all_online_bots,
+                    delivery=_deliver_admin_alert,
+                    suppression=operational_alert_suppression,
+                )
+            )
+        except Exception:  # noqa: BLE001 - 告警是旁路，绝不能反噬状态查询。
+            logger.debug("tts probe alert scheduling failed", exc_info=True)
+            return
+        # create_task 的返回值若不持引用，任务可能在完成前被 GC 掉（告警静默消失）。
+        _pending_probe_alert_tasks.add(task)
+        task.add_done_callback(_pending_probe_alert_tasks.discard)
+
+    from .domains.media.voice_health_alert import install_probe_alert_sink
+
+    install_probe_alert_sink(_push_probe_issue)
 
     async def _notify_queue_operational_receipt(
         request: SendRequest,
@@ -4263,6 +4477,7 @@ def _register_nonebot_handlers() -> None:
                 audit_logger,
                 receipt_repository,
                 _all_online_bots,
+                outbound_gate=outbound_gate,
             )
 
         # 夜间每日群通讯总结推送：推送开关开启且共享群摘要能力开启才注册。
@@ -4270,13 +4485,13 @@ def _register_nonebot_handlers() -> None:
             getattr(config, "bot_group_digest_push_enabled", True)
             and getattr(config, "bot_shared_group_context_enabled", False)
         ):
-            _register_digest_push_scheduler(scheduler, config, send_queue)
+            _register_digest_push_scheduler(scheduler, config, send_queue, outbound_gate)
 
         # 日常助理定时推送：到点吃什么 + 收件箱早晚简报；名单为空不注册（只记不推）。
         if getattr(config, "bot_daily_assist_enabled", True) and (
             getattr(config, "bot_daily_assist_push_user_ids", [])
         ):
-            _register_daily_assist_scheduler(scheduler, config, send_queue)
+            _register_daily_assist_scheduler(scheduler, config, send_queue, outbound_gate)
 
         # V2.1 B2① 服务装配组（WIRE-SVC）：WORLD/KB/DB/TEACH 装配+注册表；
         # 主门缺省关=零装配零副作用（不改现网行为），细节归 runtime/service_wiring.py。
@@ -4466,6 +4681,7 @@ def _register_nonebot_handlers() -> None:
                             bot,
                             report,
                             admins,
+                            outbound_gate=outbound_gate,
                         )
                     except Exception:  # 统一路径失败不影响主链路。
                         logging.getLogger(__name__).debug(
@@ -5146,27 +5362,9 @@ def _register_nonebot_handlers() -> None:
     # tests/test_campus_digest.py::test_outbound_registry_campus_coordinate_is_live
     # 按「live 行号 == 登记表坐标」实比（登记表坐标 = campus matcher 真身行），
     # 在它上方插任意一行都会顶漂该坐标、打断别人的常驻门（U17 批同源教训）。
-    # 5b-2 中央出站闸单实例：与发送队列同组装配，且必须先于紧急门（服务持 gate 引用）。
-    # 形参名以真身 domains/transport/sender/outbound_gate.py 的 build_outbound_gate 为准
-    # （settings_provider / quiet_settings_provider / audit_logger / clock / store / issue_sink）。
-    from .domains.transport.sender.outbound_gate import (
-        build_outbound_gate,
-        build_outbound_gate_settings,
-    )
-
-    outbound_gate = build_outbound_gate(
-        config,
-        audit_logger=audit_logger,
-        # 两路设置都以 callable 注入 ⇒ /bot runtime set 热改即时反映（静默面/限流同例），
-        # 不在装配期快照（台账 #3 那类「热改当夜不生效」的坑不再复制一遍）。
-        settings_provider=lambda: build_outbound_gate_settings(
-            _config_with_runtime_overrides(config, runtime_settings)
-        ),
-        quiet_settings_provider=lambda: build_quiet_hours_settings(
-            _config_with_runtime_overrides(config, runtime_settings)
-        ),
-    )
-    # 5b 装配门两腿：enabled ∧ sources（施工图 §5-钉死② 的第三腿已被 WIRE-SUB 裁定
+    # 5b-2 中央出站闸单实例：真构造已上移至发送队列之后（见 `outbound_gate =`
+    # 首次赋值处），此处只消费同一实例——闸必须先于紧急门（服务持 gate 引用）。
+    emergency_service = None
     # 3.B 覆盖，2026-09-20）。投递目标改为**每轮现读** `emergency_subscriptions` 表：
     # 群里/私聊一句「紧急信息 订阅 …」即设立，不需要预先在 .env 填群号——第三腿若
     # 原样保留就是死结（没有名单⇒没有 matcher⇒订阅命令没人应答，永远订不起来）。
@@ -6423,7 +6621,11 @@ def _register_nonebot_handlers() -> None:
         if resolution is None:
             await alias.finish("无法识别的昵称命令。")
             return
-        capability_id = "bot.alias"
+        # 别名入口交出去的必须是**真正被解析出来的那个能力**，不是"bot.alias" 这个入口名：
+        # 汇合点按 capability_id 决定要不要过层 2 治理，写死入口名 ⇒ 经别名命中的
+        # weather/wiki/eat/news/epic/affinity 整条绕开权限/健康/限额/超时/审计
+        # （R-CHOKE C-1，与"命令入口包了缝就算通电"是同一型假绿的第三次发作）。
+        capability_id = resolution.capability_id or "bot.alias"
         help_bot_avatar_url = ""
 
         if resolution.capability_id == "bot.help":
@@ -6463,6 +6665,8 @@ def _register_nonebot_handlers() -> None:
                     request_id=message.request_id,
                     session_id=message.session_id,
                     query=resolution.rest_text,
+                    # 帮助条目把「为什么」标成 admin_only，执行面此前零门 ⇒ 角色从这里传进去。
+                    actor_roles=list(getattr(_decision, "actor_roles", []) or []),
                 )
 
         elif resolution.capability_id == "bot.weather":
@@ -6809,6 +7013,7 @@ def _register_nonebot_handlers() -> None:
                     request_id=message.request_id,
                     session_id=message.session_id,
                     query=why_query,
+                    actor_roles=list(getattr(_decision, "actor_roles", []) or []),
                 )
 
         elif command_text == "receipt" or command_text.startswith("receipt "):
@@ -7153,8 +7358,10 @@ def _register_nonebot_handlers() -> None:
                     _SearchRequest(
                         capability_id="search.web",
                         payload={"query": search_query, "max_results": limit},
-                        principal="user",
-                        roles=("user",),
+                        # 主体必须来自消息与判定，不能硬编成 ("user",)：硬编会让中央权限门
+                        # 退化成装饰（blocked 被抹成 user 也过），且 principal 兼数据面归属键。
+                        principal=str(getattr(message, "sender_id", "anonymous") or "anonymous"),
+                        roles=tuple(getattr(_decision, "actor_roles", ()) or ()),
                         context={"config": config},
                     )
                 )
@@ -8234,9 +8441,16 @@ def _register_nonebot_handlers() -> None:
             bot_id=str(getattr(bot, "self_id", "unknown")),
             feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
+        # Wave 4.1 主缝：在册的命令形能力把「能力执行步」委托给中央 invoker（层 2），
+        # 未在册仍走旧 factory 直调——旧路可枚举，缺口条数由缺口棘轮门只准降不准升。
+        # 函数体内 import：顶置 import 会顶漂下方被门钉住的 live 坐标（#45/U17 同型教训）。
+        from .runtime.capability_protocols import orchestrated_command as _orchestrated
+
         receipt = await pipeline.handle_async(
             message,
-            offload_capability(capability_factory(config)),
+            offload_capability(
+                _orchestrated(capability_id, capability_factory(config), config)
+            ),
             capability_id=capability_id,
         )
         await _notify_operational_receipt(message, receipt)

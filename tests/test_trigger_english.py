@@ -18,7 +18,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.affinity import is_affinity_command
 from plugins.bot_unified_runtime.capabilities.auto_send import is_auto_send_command_text
 from plugins.bot_unified_runtime.capabilities.divination import (
     is_divination_command,
@@ -28,7 +27,6 @@ from plugins.bot_unified_runtime.capabilities.eat import (
     is_eat_command,
     is_recipe_command,
 )
-from plugins.bot_unified_runtime.capabilities.echo import HELP_ENTRIES
 from plugins.bot_unified_runtime.capabilities.epic import is_epic_command
 from plugins.bot_unified_runtime.capabilities.fx import is_fx_command
 from plugins.bot_unified_runtime.capabilities.market import is_market_command
@@ -36,7 +34,6 @@ from plugins.bot_unified_runtime.capabilities.meme import is_meme_command
 from plugins.bot_unified_runtime.capabilities.meme_library import (
     is_meme_library_command,
 )
-from plugins.bot_unified_runtime.capabilities.moegirl import is_moegirl_command
 from plugins.bot_unified_runtime.capabilities.music import (
     is_music_command,
     is_music_mode_command,
@@ -52,11 +49,22 @@ from plugins.bot_unified_runtime.capabilities.today_history import (
     is_today_history_command,
 )
 from plugins.bot_unified_runtime.capabilities.weather import is_weather_command
-from plugins.bot_unified_runtime.capabilities.wiki import is_wiki_command
-from plugins.bot_unified_runtime.runtime.base_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
+    is_affinity_command,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+    HELP_ENTRIES,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     RouteKind,
     classify_message_route,
     clear_route_decision_cache,
+)
+from plugins.bot_unified_runtime.domains.location.capabilities.moegirl import (
+    is_moegirl_command,
+)
+from plugins.bot_unified_runtime.domains.location.capabilities.wiki import (
+    is_wiki_command,
 )
 
 
@@ -177,7 +185,9 @@ def _hits(text: str) -> set[str]:
     return {
         name
         for name, matcher in ALL_MATCHERS.items()
-        if matcher(text)  # type: operator[bool]
+        # 注释不可写成 `# type: …` 形态：mypy 会按类型注释解析，一枚非法注释即让
+        # 全树 typecheck 停在 syntax 错误上（「errors prevented further checking」）。
+        if matcher(text)
     }
 
 

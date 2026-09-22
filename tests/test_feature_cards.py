@@ -34,6 +34,10 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.divination.capabilities import (
+    divination as divination_cap,
+)
+from plugins.bot_unified_runtime.domains.divination.data import deck_math
 from plugins.bot_unified_runtime.sources.today_history import HistoryEvent
 
 _UTC = timezone.utc
@@ -364,13 +368,20 @@ class TestDivinationFallback:
     def test_random_draws_fallback_body_identical(
         self, text: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        # 抽牌/起卦内部用无种子 random.Random：钉住种子让两次调用逐字节可比。
+        # 确定性靠**注入受控随机源**，不靠钉住某一代算法的私有写法：
+        # ① 金钱卦仍用无种子 random.Random（起卦内部），② 塔罗自 S-DIV 起走唯一真身
+        # deck_math 的 SystemPrng（secrets 熵，不再吃 random.Random）。
+        # 两条随机源各钉各的，旧「只钉 random.Random」的写法对塔罗已失效——那会随机抽到
+        # 两张不同的牌，红的是钉法而不是契约（本体测的是「渲染失败=正文逐字节不变」）。
         real_random = random.Random
 
-        def _seeded() -> random.Random:
-            return real_random(42)
+        def _seeded(seed: int | None = None) -> random.Random:
+            # 收 seed：真身 SeededPrng 内部会 random.Random(seed) 传位置参数，
+            # 不接受参数的旧写法会当场 TypeError。
+            return real_random(42 if seed is None else seed)
 
         monkeypatch.setattr(random, "Random", _seeded)
+        monkeypatch.setattr(divination_cap, "SystemPrng", lambda: deck_math.SeededPrng(42))
         baseline = build_divination_capability(None)(
             _message(text), _decision("bot.divination")
         )

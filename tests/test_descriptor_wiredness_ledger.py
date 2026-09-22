@@ -17,6 +17,11 @@
 - INV-RATCHET   「未通电缺口」= generic + not_wired 的条数 **只准降不准升**（Wave 4.1 每迁一处 invoke，
                 把它从 generic/not_wired 挪进 wired，缺口 −1，接入进度第一次成为可减的数）。
 
+外加第⑤节**入口耐久锁**（HARDEN-1 I-2，R10）：唯一表每一个在册执行形 id 必须在根里确有
+汇缝字面量入口。它是 "INV-WIRED 对 seam 登记 id 是重言"（R9）的第三份活性证——seam 声明、
+canary 多入口、入口耐久三把锁并立，缺一不许降账；判据真身与真树级注毒住
+``tests/test_central_via_identity_and_entry_durability.py``（退役该件会打断本件 import＝不可静默拆）。
+
 设计纪律：
 - **组合复用**，不复制第二套扫描器（铁律 7）：invoke 判据 import 自 v1 门
   ``test_orchestration_callsite_single``，泛型执行器判据 import 自本席只读扫描器
@@ -31,6 +36,7 @@ from __future__ import annotations
 import ast
 import importlib
 import importlib.util
+import inspect
 import sys
 from collections.abc import Iterable
 from pathlib import Path
@@ -42,6 +48,7 @@ _REPO_ROOT = _TESTS_DIR.parents[0]
 sys.path.insert(0, str(_TESTS_DIR))
 sys.path.insert(0, str(_REPO_ROOT))
 
+import test_central_via_identity_and_entry_durability as _viaid  # 复用「根汇缝字面量」判据真身（⑤节）
 import test_orchestration_callsite_single as _v1  # 复用 invoke 判据 + _PKG_ROOT + _rel
 
 _SPEC = importlib.util.spec_from_file_location(
@@ -58,8 +65,14 @@ def _load_descriptor_ids() -> frozenset[str]:
     except Exception as exc:  # noqa: BLE001  中央件在飞不可导入属外因，诚实 skip，不放宽判据
         pytest.skip(f"CAPABILITY_DESCRIPTOR 不可导入（中央件在飞，非本门缺陷）：{exc!r}")
     table = getattr(module, "CAPABILITY_DESCRIPTOR", None)
-    if table is None:  # Wave2 收口前表可能不存在——那也是外因，诚实 skip 不放宽判据
-        pytest.skip("CAPABILITY_DESCRIPTOR 尚未导出（Wave 2 未落，非本门缺陷）")
+    if table is None:
+        # RF2-6 根修：表已落地（Wave 2 收口后 CAPABILITY_DESCRIPTOR 必存在）——此刻符号被删是
+        # **真退化**而非外因，绝不能静默 skip 假绿。中央件在飞的外因已由上面的 import 分支兜住，
+        # 到得了这里说明模块导入成功却无该属性 ⇒ 判失败、点名让 owner 复核。
+        pytest.fail(
+            "CAPABILITY_DESCRIPTOR 已导入模块却取不到（表落地后被删/改名=假绿温床，评审 RF2-6）；"
+            "若确在退役中央件，请显式改本门而非留 skip。"
+        )
     return frozenset(table)
 
 
@@ -68,9 +81,69 @@ def _load_descriptor_ids() -> frozenset[str]:
 # NOT_WIRED/GENERIC 挪进 WIRED，缺口自动 −1。
 # ===========================================================================
 #: cid → 登记的生产 invoke 点（相对包根路径）。
+#: 命令形接缝的"点位"就是路由表里那行 execution 声明所在文件（R8 口径件
+#: `decisions/R8-seam-wiring-accounting.md`）；与 `_v1.seam_registered_cids()` 同源，
+#: ⚠ R9（R-PREP C-1）：该函数只证"声明了执行形"；"每一条分发入口都汇到缝"由
+#:   `tests/test_prepared_adapter_canary.py` 的多入口活性锁执法。两把锁缺一即假账，不许只凭前者降账。
+#: 两边不一致会由 INV-WIRED 当场点名。
+#: ⚠ R10（HARDEN-1 I-2）：再补本件第⑤节的**入口耐久锁**——"每个在册执行形 id 在根里确有
+#:   汇缝字面量入口"此前只住批次件 test_prepared_adapter_batch3.py，批次退役即失守；
+#:   现提进本常驻门，三把锁（seam 声明 + canary 多入口 + 入口耐久）并立，缺一不许降账。
+REGISTRY_POINTS_AT = "domains/chat_reply/runtime/capability_registry.py"
 WIRED: dict[str, frozenset[str]] = {
     "media.vision.anime_ip": frozenset({"domains/media/capabilities/image_search.py"}),
     "search.web": frozenset({"__init__.py"}),
+    # 命令形接缝通电（R8）：点位=capability_registry 里那一行 execution 声明本身。
+    "bot.daily_assist": frozenset({REGISTRY_POINTS_AT}),
+    "bot.meme": frozenset({REGISTRY_POINTS_AT}),
+    "bot.moegirl": frozenset({REGISTRY_POINTS_AT}),
+    "bot.news": frozenset({REGISTRY_POINTS_AT}),
+    "bot.randpic": frozenset({REGISTRY_POINTS_AT}),
+    "bot.reminder": frozenset({REGISTRY_POINTS_AT}),
+    # prepared 形首例（B0 金丝雀）：执行体由装配现场交来（weather 还要 render_backend），
+    # 通电点位同样是那一行 execution 声明；"成品真被交上来"由
+    # tests/test_prepared_adapter_canary.py 的端到端活性锁负责，不由本表自证。
+    "bot.weather": frozenset({REGISTRY_POINTS_AT}),
+    "bot.tts": frozenset({REGISTRY_POINTS_AT}),
+    "bot.wiki": frozenset({REGISTRY_POINTS_AT}),
+    # prepared 形 P1 批（S-PREP-B1）：这 10 枚的 builder 除 config 还要运行期 render_backend
+    # （divination 另带 draw_store/fortune_key/clock），执行体由装配现场 `_build_*_with_backend`
+    # 闭包交来，根生产路径 `await _run_simple_capability(..., orchestrated_command(cid, factory(config), config))`
+    # 真的走中央 invoker。逐枚活性证（跑的就是交来那一个、缺成品=UNAVAILABLE 不自建）由
+    # tests/test_prepared_adapter_batch1.py 负责，不由本表自证。
+    "bot.bond": frozenset({REGISTRY_POINTS_AT}),
+    "bot.commodities": frozenset({REGISTRY_POINTS_AT}),
+    "bot.divination": frozenset({REGISTRY_POINTS_AT}),
+    "bot.eat": frozenset({REGISTRY_POINTS_AT}),
+    "bot.emergency_info": frozenset({REGISTRY_POINTS_AT}),
+    "bot.epic": frozenset({REGISTRY_POINTS_AT}),
+    "bot.fx": frozenset({REGISTRY_POINTS_AT}),
+    "bot.market": frozenset({REGISTRY_POINTS_AT}),
+    "bot.northbound": frozenset({REGISTRY_POINTS_AT}),
+    "bot.stocks": frozenset({REGISTRY_POINTS_AT}),
+    # prepared 形 P2 批（S-PREP-B2）：好感度查询的 builder 除 config 还要**两件**运行期注入
+    # （装配期现构的 affinity_store + 函数局部 render_backend，根 :4338-4343），执行体由装配
+    # 现场交来；根生产路径 `await _run_simple_capability(..., _build_affinity_with_backend,
+    # "bot.affinity", affinity)`（:9000）真的走中央 invoker。逐枚活性证（跑的就是交来那一个、
+    # 缺成品=UNAVAILABLE 不自建）由 tests/test_prepared_adapter_batch2.py 负责，不由本表自证。
+    # 同批实测**拒绝**登记的两枚（判据不过，不是漏登）：bot.meme_library / bot.group_info
+    # （生产走泛型执行器 :8733/:8507，不经
+    # orchestrated_command ⇒ 登记只会把账面翻成 WIRED 而生产零变化＝本门最该拦的假绿）。
+    # 该批另点名的 bot.ignore 当时被第三把判据（空 label ⇒ title 缺失）挡住，
+    # 该判据已由主会话一行修解除 ⇒ bot.ignore 随 P8 批（S-PREP-B3）移入下方 WIRED。
+    "bot.affinity": frozenset({REGISTRY_POINTS_AT}),
+    # prepared 形 P8 批（S-PREP-B3）：兜底引导席。生产入口唯一（根 :8568-8578
+    # `_handle_ignore_guide` → `_run_simple_capability(..., "bot.ignore", ...)` :8570），
+    # 早已汇进层 2 主缝；执行体是根内联闭包、全树无 `build_ignore_capability(config)`
+    # 具名工厂 ⇒ 命令形无从自建，只能 prepared。S-PREP-B2 当年的拦路判据（空 label 撞
+    # `validate_registry` title 缺失）已由主会话一行修解除（`title=decl.label or decl.value`），
+    # 本批据此把这枚欠债改成实账。逐枚活性证由 tests/test_prepared_adapter_batch3.py 负责。
+    "bot.ignore": frozenset({REGISTRY_POINTS_AT}),
+    # 自动配音第二出站腿（VOICE-V12，2026-09-22）：media 族内容契约能力，无 RouteKind
+    # 宿主行（≠命令形/prepared 形，与 media.vision.anime_ip 同此：WIRED 记账走字面
+    # invoke 点、不靠注册册 execution 声明）。通电点位=层 1 hook 的唯一 invoke 站点
+    # （domains/media/voice_enricher.py 直呼 synthesize 段改走 default_invoker().invoke）。
+    "media.tts.autodub": frozenset({"domains/media/voice_enricher.py"}),
 }
 
 #: 走泛型执行器（_run_simple_capability / pipeline.handle_async）的能力 id。
@@ -85,6 +158,14 @@ GENERIC: frozenset[str] = frozenset(
 #: interface_only：capability./core./parser./persona./transport. 的接口联动 id，本非可 invoke 入口，永久挂账属设计语义。
 #: controlled_no_callsite：后台 job/管理链，无会话侧能力入口（是否该接由主会话逐项裁）。
 #: route_capability_unmigrated：有 RouteKind/matcher 工厂、生产仍直呼，Wave 3/4 待翻面。
+#:   ⚠ 2026-09-22 S-FILL7 实况注记（判据不动、只写真相）：其中 **bot.wiki/bot.news/bot.randpic/
+#:   bot.moegirl/bot.meme/bot.reminder/bot.daily_assist + bot.tts** 共 8 枚的执行面已填
+#:   （capability_registry 路由行 execution=CapabilityExecution(family="command")），运行期经根参数化
+#:   主缝 orchestrated_command **真的走中央 invoker**。
+#:   **2026-09-22 R8 结案（本席 owner 扩判据，非静默放宽）**：这 8 枚已从本桶移入 WIRED，
+#:   invoke 命中集并入 `_v1.seam_registered_cids()`（认唯一表 route 执行形为通电事实，
+#:   点位=那一行声明本身）；配 `test_seam_accounting_lock_has_teeth` 注毒自证。
+#:   仍**不认**根泛型站点的 positional 形态（那是 generic 桶的判据，两桶各管一段，不混）。
 #: orchestration_unwired：编排侧已 author descriptor + 壳 handler，但生产零 invoke（Wave 4 欠账集中营）。
 NOT_WIRED: frozenset[str] = frozenset(
     {
@@ -110,35 +191,57 @@ NOT_WIRED: frozenset[str] = frozenset(
         "media.video.recognize", "media.video.subtitle", "media.vision.image", "media.vision.ocr",
         "search.acg", "search.reference.fetch", "search.unified",
         # ---- route_capability_unmigrated ----
-        "bot.affinity", "bot.alias", "bot.auto_send", "bot.bond", "bot.commodities", "bot.daily_assist",
-        "bot.divination", "bot.eat", "bot.emergency_info", "bot.epic", "bot.fx", "bot.ignore", "bot.market",
-        "bot.meme", "bot.moegirl", "bot.music_mode", "bot.natural_command", "bot.news", "bot.northbound",
-        "bot.randpic", "bot.reminder", "bot.status", "bot.stocks", "bot.tts", "bot.weather", "bot.wiki",
+        # （wiki/news/randpic/moegirl/meme/daily_assist/reminder/tts 八枚已移入 WIRED，见 R8 注记；
+        #   bot.weather 已随 prepared 形 B0 移入 WIRED，2026-09-22；
+        #   bond/commodities/divination/eat/emergency_info/epic/fx/market/northbound/stocks 十枚
+        #   已随 prepared 形 P1 批移入 WIRED（S-PREP-B1，2026-09-22）；
+        #   bot.affinity 一枚已随 prepared 形 P2 批移入 WIRED（S-PREP-B2，2026-09-22）；
+        #   bot.ignore 一枚已随 prepared 形 P8 批移入 WIRED（S-PREP-B3，2026-09-22）——
+        #   它此前**实测拒登**（根 :8570 已走中央缝，但兜底席 label="" 让派生描述符 title 为空、
+        #   撞 validate_registry），该拦路判据已被主会话一行修 `title=decl.label or decl.value`
+        #   解除并由 canary 常驻钉住 ⇒ 欠债今天兑现。
+        #   ⚠ 同批如实留欠账的实测拒登另有二枚（判据不过，非漏登）：bot.meme_library /
+        #   bot.group_info 走根泛型执行器（`pipeline.handle_async` :8733 / :8507），
+        #   不经 orchestrated_command ⇒ 登记只会账面翻绿而生产零变化＝本门最该拦的假绿。）
+        "bot.alias", "bot.auto_send",
+        "bot.music_mode", "bot.natural_command", "bot.status",
     }
 )
 
-#: INV-RATCHET 上限：未通电缺口 = len(GENERIC) + len(NOT_WIRED)。Wave 4.1 只准降。
-GAP_CEILING: int = len(GENERIC) + len(NOT_WIRED)
+#: INV-RATCHET 上限（RF2-2 根修）：**手写提交整数常量，绝不写 `= len(GENERIC)+len(NOT_WIRED)`**。
+#: 旧写法与被检清单同一表达式 ⇒ 真门里 live 缺口恒 == 上限、`gap > GAP_CEILING` 对真树结构性不可能红
+#: （评审席注毒 P2b）。改成常量后，"新 descriptor + 同步登记 NOT_WIRED"的欠债 PR 会让 live 缺口
+#: 超过这个固定上限 ⇒ INV-RATCHET 当场红。三锁成链：
+#:  - 真门 `_check_ratchet`：live 缺口 > 本常量 ⇒ 红；
+#:  - 方向锁 `test_gap_ceiling_tracks_registered_debt`：本常量必须 == len(GENERIC)+len(NOT_WIRED)；
+#:  - 结构锁 `test_gap_ceiling_is_handwritten_literal_not_derived`：本行必须是整数字面量，非 `len()+len()`。
+#: ⇒ 新增欠债（清单变长）须**同时**手改本常量（+1=故意留痕、须评审），迁走欠债（Wave 4.1 移入 WIRED）
+#: 须把本常量下调（只准降）。现值 = len(GENERIC)(10)+len(NOT_WIRED)(86)=96
+#: （R8 结案：8 枚命令形通电 117→109；weather 随 prepared 形 B0 移入 WIRED 109→108；
+#:   S-PREP-B1：P1 批 10 枚 prepared 通电从 route_capability_unmigrated 移入 WIRED 108→98；
+#:   S-PREP-B2：P2 批 1 枚 bot.affinity 移入 WIRED 98→97，另三枚实测拒登如实留欠账
+#:   （bot.ignore 差 title 判据 / bot.meme_library、bot.group_info 生产不走缝）；
+#:   S-PREP-B3：P8 批 1 枚 bot.ignore 兑现欠债移入 WIRED 97→96（B2 那把 title 判据已由
+#:   主会话 `title=decl.label or decl.value` 一行修解除），另六枚实测拒登继续留欠账
+#:   （meme_library/group_info/content/music/today_history/media_archive 生产不经中央缝））。
+GAP_CEILING: int = 96
 
 
 # ===========================================================================
-# 真树扫描（复用 import 进来的两套判据，零复制）
+# 真树扫描（判据真身在 scripts/orchestration_wired_census.py —— 本件只做再导出委托）
+# 2026-09-22 S-CENSUS 收口：判据曾在此件与普查脚本各存一份，R8 只扩了门侧 ⇒ 同一真树
+# 门报 10/99、人读报表报 2/107（两个真身各说一套）。现两函数都是 census 的薄壳：
+# 本件不再有第二支扫描器、第二套优先级规则，一致性由本节末
+# ``test_census_report_matches_ledger_partition``（活性）+ ``test_census_cross_check_lock_has_teeth``
+# （注毒）+ ``test_ledger_scanners_are_reexports_not_second_copy``（结构）三把锁死。
 # ===========================================================================
 def _scan_real_tree() -> tuple[dict[str, set[str]], set[str]]:
-    """返回 (invoke 点 by cid, 泛型执行器 cid 集合)。"""
-    invoke_hits: dict[str, set[str]] = {}
-    generic_hits: set[str] = set()
-    for rel, src in _census._iter_sources():
-        if rel == "runtime/capability_protocols.py":
-            continue  # 中央真源自身的 descriptor 构造不算生产调用点
-        try:
-            tree = ast.parse(src)
-        except SyntaxError:
-            continue
-        for cid in _v1._invoker_cids(tree):
-            invoke_hits.setdefault(cid, set()).add(rel)
-        generic_hits |= _census._generic_executor_cids(tree)
-    return invoke_hits, generic_hits
+    """返回 (invoke 点 by cid, 泛型执行器 cid 集合)。语法错误按 RF2-5 口径当场炸（普查脚本选择点名续跑）。"""
+    syntax_errors: list[str] = []
+    invoke_hits, generic_files = _census.scan_wiredness(syntax_errors)
+    if syntax_errors:  # RF2-5 口径对齐：静默 continue=假绿温床，改当场炸（与 parity 门同判）
+        raise AssertionError(f"接入缺口台账扫描到语法错误文件，拒绝静默跳过：{'、'.join(syntax_errors)}")
+    return invoke_hits, set(generic_files)
 
 
 def _live_partition(
@@ -146,12 +249,8 @@ def _live_partition(
     invoke_hits: dict[str, set[str]],
     generic_hits: set[str],
 ) -> tuple[set[str], set[str], set[str]]:
-    """按 wired 优先归三桶（invoke 出现即 wired，其残留泛型字面量不计 generic）。"""
-    ids = set(descriptor_ids)
-    wired = {cid for cid in ids if invoke_hits.get(cid)}
-    generic = {cid for cid in ids if not invoke_hits.get(cid) and cid in generic_hits}
-    not_wired = ids - wired - generic
-    return wired, generic, not_wired
+    """按 wired 优先归三桶（invoke 出现即 wired，其残留泛型字面量不计 generic）——判据在 census。"""
+    return _census.live_partition(descriptor_ids, invoke_hits, generic_hits)
 
 
 # ===========================================================================
@@ -249,11 +348,19 @@ def test_poison_vanished_wired_site_is_red_on_wired() -> None:
 
 
 def test_poison_new_invoke_site_is_red_on_wired() -> None:
-    """注毒：一条 not_wired 的能力突然冒出 invoke 点却不更新清单 → 杀 INV-WIRED（未登记 invoke）。"""
+    """注毒：一条 not_wired 的能力突然冒出 invoke 点却不更新清单 → 杀 INV-WIRED（未登记 invoke）。
+
+    受害对象**现算**而不是写死 cid：2026-09-22 prepared 形落地时，原先写死的
+    `bot.weather` 刚好被迁移进 WIRED，这条注毒当场变成"毒没下进去"的空跑——
+    写死受害者的注毒用例，保质期就等于"下一次迁移"。
+    """
     invoke_hits, _generic = _scan_real_tree()
-    invoke_hits["bot.weather"] = {"__init__.py"}  # bot.weather 在 NOT_WIRED，未进 WIRED
+    victims = sorted(set(NOT_WIRED) - set(invoke_hits))
+    assert victims, "NOT_WIRED 里已无任何未登记 invoke 点的成员，本注毒失去落点"
+    victim = victims[0]
+    invoke_hits[victim] = {"__init__.py"}
     v = _check_wired(invoke_hits)
-    assert any("[INV-WIRED]" in s and "bot.weather" in s for s in v), v
+    assert any("[INV-WIRED]" in s and victim in s for s in v), v
 
 
 def test_poison_new_generic_id_is_red_on_generic_and_ratchet() -> None:
@@ -302,3 +409,263 @@ def test_wired_sites_are_actually_invoke_callsites_in_tree() -> None:
     assert wired == set(WIRED), f"真树 invoke 面与清单不符：{sorted(wired)} ≠ {sorted(set(WIRED))}"
     for cid, files in WIRED.items():
         assert files <= invoke_hits.get(cid, set()), f"{cid} 登记的 invoke 文件不在真树扫描结果里"
+
+
+# ===========================================================================
+# ③ INV-RATCHET 去自指（RF2-2）：手写上限 + 方向锁 + 结构锁
+# ===========================================================================
+def test_seam_accounting_lock_has_teeth() -> None:
+    """注毒自证（R8）：抽掉「认 route 执行形声明为通电点」这一步 ⇒ 8 枚当场掉回欠债。
+
+    并入的那份命中集不是把清单改个名字睡大觉：它既是这 8 枚 wired 的**唯一**来源，
+    也是 `GAP_CEILING` 能停在现值的**唯一**原因。两头都测（INV-WIRED + INV-RATCHET），
+    这样将来谁把并集删掉、或偷偷把基线调回去，本门自己会叫。
+    """
+    seam = _v1.seam_registered_cids()
+    ids = _load_descriptor_ids()
+    seam_ids = {cid for cid in seam if cid in ids}
+    assert len(seam_ids) >= 8, sorted(seam_ids)
+
+    _wired, _generic, not_wired = _live_partition(ids, {}, set())
+    assert seam_ids & not_wired == seam_ids, "注毒样本本身失效＝这 8 枚已被别的判据认成通电"
+
+    violations = _check_ratchet(ids, {}, set()) + _check_wired({})
+    assert any("[INV-RATCHET]" in item for item in violations), violations
+    assert any("[INV-WIRED]" in item for item in violations), violations
+
+
+def test_gap_ceiling_tracks_registered_debt() -> None:
+    """方向锁（RF2-2）：手写 GAP_CEILING 必须 == 清单现算缺口。它不再由清单派生，故本断言从
+    "同一表达式恒等（自指假锁）"升为真锁——清单变长而常量没跟上（新增欠债），或清单变短而常量
+    没下调（迁走欠债），本锁皆红，逼作者显式改常量=故意留痕。"""
+    derived = len(GENERIC) + len(NOT_WIRED)
+    assert GAP_CEILING == derived, (
+        f"手写上限 {GAP_CEILING} 与清单现算缺口 {derived} 脱钩——改清单必同步改 GAP_CEILING"
+        "（新增欠债须评审、迁移只准降），别留漂移"
+    )
+
+
+def test_gap_ceiling_is_handwritten_literal_not_derived() -> None:
+    """结构锁（RF2-2 自证形态）：从本文件源码 AST 断言 ``GAP_CEILING`` 被赋为**整数字面量**，
+    而非 ``len(GENERIC)+len(NOT_WIRED)`` 这类自指导数。运行期"常量==现算"在清单不变时两式同值，
+    唯 AST 判据能拆穿回退到自指写法（评审 P2b 定罪形态）。"""
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    value: ast.expr | None = None
+    for node in tree.body:
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == "GAP_CEILING":
+            value = node.value
+        elif isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name) and tgt.id == "GAP_CEILING":
+                    value = node.value
+    assert value is not None, "源码顶层找不到 GAP_CEILING 的赋值（判据被搬走？）"
+    assert isinstance(value, ast.Constant) and isinstance(value.value, int) and not isinstance(value.value, bool), (
+        "INV-RATCHET 上限必须是手写整数字面量，不得 `len()+len()` 现算（自指=棘轮对真树恒不执法，评审 RF2-2）"
+    )
+    assert value.value == GAP_CEILING, "AST 字面量值与运行期常量不一致（被别处覆写？）"
+
+
+def test_poison_added_debt_trips_ratchet_against_fixed_ceiling() -> None:
+    """活性注毒自证（RF2-2）：模拟"新 descriptor 且同步入 NOT_WIRED"的欠债 PR——live 缺口 = 上限+1
+    ⇒ 固定手写上限下 INV-RATCHET 必红。修法前上限随清单现算，该情形恒不红（评审 P2b []）。"""
+    descriptor_ids = _load_descriptor_ids()
+    invoke_hits, generic_hits = _scan_real_tree()
+    synthetic_ids = set(descriptor_ids) | {"bot.brand.new.debt"}
+    v = _check_ratchet(synthetic_ids, invoke_hits, generic_hits)
+    assert any("[INV-RATCHET]" in s for s in v), f"手写上限未生效、新增欠债漏检：{v}"
+
+
+def test_poison_syntax_error_file_fails_loud_not_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """注毒（RF2-5）：`_scan_real_tree` 扫到语法错误文件必须当场抛，不再静默 continue（旧=假绿温床，
+    与 parity 门「当场炸」对齐）。隔离真树：把 `_iter_sources` 换成一份坏语法源，断言抛 AssertionError。"""
+    monkeypatch.setattr(_census, "_iter_sources", lambda: [("domains/ghost/broken.py", "def (")])
+    with pytest.raises(AssertionError, match="语法错误"):
+        _scan_real_tree()
+
+
+# ===========================================================================
+# ④ 同源锁（2026-09-22 S-CENSUS）：人读普查报表 == 本门机器账 == 本门登记清单
+#    病灶（S-GAPMAP t21 / 被推翻 X-9）：R8 只扩了门侧判据、普查脚本未跟随 ⇒ 同一条真树
+#    门报 wired 10 / not_wired 99，脚本打印 wired 2 / not_wired 107，把已通电的 8 枚记成欠账。
+#    治法=判据只留一支（census.scan_wiredness / census.live_partition / census.classify_all，
+#    本门 _scan_real_tree 与 _live_partition 均为再导出委托），下面四把锁保证它不再分第二次：
+#    活性（集合）· 活性（stdout 打出来的数）· 注毒自证 · 结构反二身。
+# ===========================================================================
+def _report_buckets() -> dict[str, set[str]]:
+    """把普查脚本**自己打印**的那份报表（census_states 的态）按态归桶。"""
+    return {state: set(cids) for state, cids in _census.buckets_of(_census.census_states()).items()}
+
+
+def test_census_report_matches_ledger_partition() -> None:
+    """活性锁：报表三桶、本门真树分类、本门登记清单 **三方同集合**（数字全部现算，无手写计数）。"""
+    descriptor_ids = set(_load_descriptor_ids())
+    invoke_hits, generic_hits = _scan_real_tree()
+    live_wired, live_generic, live_not_wired = _live_partition(descriptor_ids, invoke_hits, generic_hits)
+    report = _report_buckets()
+
+    assert (
+        report["wired"] == live_wired == set(WIRED)
+    ), f"「已通电」三方脱节：报表 {sorted(report['wired'])} ≠ 真树 {sorted(live_wired)} ≠ 账本 {sorted(WIRED)}"
+    assert (
+        report["generic_executor"] == live_generic == set(GENERIC)
+    ), f"「走泛型执行器」三方脱节：报表 {sorted(report['generic_executor'])} ≠ 真树 {sorted(live_generic)} ≠ 账本 {sorted(GENERIC)}"
+    assert (
+        report["not_wired"] == live_not_wired == set(NOT_WIRED)
+    ), f"「在册零调用点」三方脱节：报表 {sorted(report['not_wired'])} ≠ 真树 {sorted(live_not_wired)} ≠ 账本 {sorted(NOT_WIRED)}"
+
+    # 报表自身守恒：三桶互斥、并起来铺满在册表；phantom 只收未在册调用点。
+    assert not (report["wired"] & report["generic_executor"])
+    assert not (report["wired"] & report["not_wired"])
+    assert not (report["generic_executor"] & report["not_wired"])
+    assert report["wired"] | report["generic_executor"] | report["not_wired"] == descriptor_ids
+    assert not (report["phantom"] & descriptor_ids)
+
+
+def test_census_printed_counts_match_ledger_buckets(capsys: pytest.CaptureFixture[str]) -> None:
+    """活性锁（打印层面）：脚本 **stdout 上那个数** 必须等于本门账本的桶大小。
+
+    集合级一致还不够——病灶是「人读到的数」骗人。本锁真跑一次 ``main()`` 抓输出，逐态比对
+    ``[state] N 条`` 与真树三桶（数全现算，无一处手写计数）。统计代码若再分叉，这里红。
+    """
+    import re
+
+    descriptor_ids = set(_load_descriptor_ids())
+    invoke_hits, generic_hits = _scan_real_tree()
+    live_wired, live_generic, live_not_wired = _live_partition(descriptor_ids, invoke_hits, generic_hits)
+    states = _census.census_states()
+    expected: dict[str, set[str]] = {
+        _census.STATE_WIRED: live_wired,
+        _census.STATE_GENERIC: live_generic,
+        _census.STATE_NOT_WIRED: live_not_wired,
+        _census.STATE_PHANTOM: {cid for cid, st in states.items() if st == _census.STATE_PHANTOM},
+    }
+    assert _census.main([]) == 0
+    printed = capsys.readouterr().out
+
+    seen: set[str] = set()
+    for line in printed.splitlines():
+        for state, ids in expected.items():
+            got = re.fullmatch(rf"\[{re.escape(state)}\] (\d+) 条", line.strip())
+            if got:
+                assert state not in seen, f"报表把同一态打印了两次（{state}）——第二套统计复活"
+                assert int(got.group(1)) == len(ids), (
+                    f"报表打印 [{state}] {got.group(1)} 条，本门账本实为 {len(ids)} 条（两本账又分叉）"
+                )
+                seen.add(state)
+    assert seen == set(expected), f"报表缺态未打印：{sorted(set(expected) - seen)}"
+    total = re.search(r"在册 descriptor 总数：(\d+)", printed)
+    assert total is not None and int(total.group(1)) == len(descriptor_ids), (
+        "报表在册总数与本门 descriptor 账不符"
+    )
+
+
+def test_census_cross_check_lock_has_teeth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """注毒自证：把共享扫描里的 R8 seam 臂抽掉 ⇒ 报表掉回「命令形 8 枚记欠账」，一致性锁必红。
+
+    这颗牙为什么要**同时**比账本：seam 臂活在共用判据里，只拿「报表 vs 真树分类」两头比会一起变瞎、
+    照样绿。真正抓住它的是第三头「== 已登记清单」。故本注毒同时验两头都红（真树侧另有 INV-WIRED/
+    INV-RATCHET 负责，见 `test_seam_accounting_lock_has_teeth`，两把门各管一段不重叠）。
+    """
+    def _seam_arm_deleted() -> dict[str, set[str]]:  # 模拟「有人把 R8 那一支从共享扫描里删掉」
+        return {}
+
+    monkeypatch.setattr(_v1, "seam_registered_cids", _seam_arm_deleted)
+    with pytest.raises(AssertionError, match="bot.tts"):
+        test_census_report_matches_ledger_partition()
+    # 归因唯一：被抽掉的正是那 8 枚命令形，**字面 invoke  wired 三枚不受影响**（防"整桶塌掉"式误红；
+    # VOICE-V12 media.tts.autodub 通电点位=层 1 hook 的字面 invoke，与注册册 seam 声明无关，故同在此列）。
+    report = _report_buckets()
+    assert report["wired"] == {
+        "media.vision.anime_ip",
+        "search.web",
+        "media.tts.autodub",
+    }, sorted(report["wired"])
+
+
+def test_ledger_scanners_are_reexports_not_second_copy() -> None:
+    """结构锁：本门的扫描/归类必须是 census 的**再导出委托**，不得再长出第二支 AST 扫描或第二套
+    优先级规则（那正是 2026-09-22 之前双真身各说一套的形态）；反向钉住判据真身确在 census 里。"""
+    src_scan = inspect.getsource(_scan_real_tree)
+    src_part = inspect.getsource(_live_partition)
+    assert "_census.scan_wiredness" in src_scan, "_scan_real_tree 不再委托 census（判据被搬回门里？）"
+    assert "_census.live_partition" in src_part, "_live_partition 不再委托 census（第二套优先级规则复活？）"
+    for name, body in (("_scan_real_tree", src_scan), ("_live_partition", src_part)):
+        assert "ast.parse" not in body and "ast.walk" not in body and "_iter_sources" not in body, (
+            f"{name} 里又出现自带扫描判据（ast 解析/文件枚举）——第二真身，须改回委托"
+        )
+    census_src = (_REPO_ROOT / "scripts" / "orchestration_wired_census.py").read_text(encoding="utf-8")
+    assert "def scan_wiredness" in census_src and "def live_partition" in census_src, "判据真身不在普查脚本里了？"
+    assert "def classify_all" in census_src, "在册归类出口 classify_all 不在普查脚本里了？"
+    assert "seam_registered_cids" in census_src, (
+        "普查脚本丢掉 R8 命令形接缝通电臂（报表会再把已通电的能力记成欠账）"
+    )
+    census_tree = ast.parse(census_src)
+    classifiers = [
+        node.name
+        for node in census_tree.body
+        if isinstance(node, ast.FunctionDef) and "classify" in node.name
+    ]
+    assert classifiers == ["classify_all"], f"在册归类真身不唯一（第二套归类规则复活）：{classifiers}"
+    src_pair = inspect.getsource(_census._collect)
+    assert "scan_wiredness(" in src_pair and "classify_all(" in src_pair, (
+        "_collect 不再复用两支唯一判据（第二支扫描器 / 第二套归类复活）"
+    )
+    for fn in (_census.build_census, _census.census_states):
+        assert "_collect(" in inspect.getsource(fn), f"{fn.__name__} 绕开了唯一取数出口"
+    # 报表出口钉成"逐字一行委托"：先调共享件再自己改判（本锁实测注毒形态）也必须被抓住
+    assert "return _collect(syntax_errors)[2]" in inspect.getsource(_census.census_states), (
+        "census_states 不再是纯委托（在共享判据之后另算一套 = 第二真身复活）"
+    )
+
+
+# ===========================================================================
+# ⑤ 入口耐久（HARDEN-1 I-2 / R10）：每个在册执行形 id 在根里确有汇缝入口
+# ===========================================================================
+def test_every_execution_shape_id_reaches_a_root_seam_funnel_site() -> None:
+    """R9 的第三把锁（常驻版，从批次件上提）：唯一表全部执行形 id ⊆ 根汇缝字面量站点集。
+
+    立门前因：本门对 seam 登记的执行形 id 认"registry 那一行声明"为通电点位
+    （`seam_registered_cids()` 与 INV-WIRED 对它们是重言），"根确实汇到缝"此前只住
+    `test_prepared_adapter_batch3.py` 的批次件 root-literal 锁——**将来批次测试退役而
+    判据没搬走，账仍报现值、根却可以静默漂走**。canary 的多入口活性锁补不了这一腿：
+    它管"比较过 capability_id 的函数必须汇缝"（must_watch 点名的是历史双入口五枚），
+    不逐枚钉"在册执行形确有字面汇缝站点"。
+
+    为什么住 ledger 而不是 canary（落点裁决）：会说谎的是**账面**——WIRED 桶与
+    GAP_CEILING 都由这些声明撑住，本门 R9 注记本就写着"两把锁缺一即假账"；且判据要
+    覆盖 command 形（canary 的题域是 prepared 地基信封）。判据真身
+    （`root_funnel_literal_cids` / `root_seam_durability_violations` / 唯一表现算
+    `execution_shape_cids`）住中央门件，与本锁、batch3 逐批锁同源，不留第二支扫描器。
+    参数化源=唯一表现算，零手抄名单：新增一枚执行形而没有根站点 ⇒ 本锁自动点名它。
+    """
+    declared = _viaid.execution_shape_cids()
+    assert declared, "唯一表一枚执行形都没有＝本锁空转（执行形面消失须重判本门，不得绿放行）"
+    funnel_cids = _viaid.root_funnel_literal_cids()
+    assert funnel_cids & set(declared), (
+        "根汇缝字面量扫描一枚在册 id 都没看见＝判据对真树失明（汇缝函数改名/搬走？先对账再动锁）"
+    )
+    violations = _viaid.root_seam_durability_violations(declared, funnel_cids)
+    assert not violations, "接入缺口台账漂移（在册执行形失去根汇缝入口）：\n" + "\n".join(violations)
+
+
+def test_root_seam_durability_wiring_lock_has_teeth() -> None:
+    """注毒自证（本锁→判据**接线**那一层）：抹掉受害者的站点集合 ⇒ 违规谓词恰好点名该枚。
+
+    真树级注毒（在源码副本上删站点再走完整抽取）住
+    `test_central_via_identity_and_entry_durability::test_root_seam_durability_lock_has_teeth`，
+    与本接线证明共用同一谓词真身，不留第二份；本锁只钉"第⑤节活性测试确实吃这套判据"，
+    防的是将来有人把活性测试改成常量真之类的手滑。
+    """
+    declared = _viaid.execution_shape_cids()
+    clean = _viaid.root_funnel_literal_cids()
+    victims = sorted(set(declared) & clean)
+    assert victims, "没有一枚在册 id 有根汇缝站点＝本注毒失去落点（先查上面那条活性锁为何没红）"
+    victim = victims[0]
+    violations = _viaid.root_seam_durability_violations(declared, frozenset(clean - {victim}))
+    assert len(violations) == 1 and victim in violations[0], (
+        f"抹掉 {victim!r} 的汇缝站点后违规面不是恰好一枚：{violations}"
+    )
+    assert _viaid.root_seam_durability_violations(declared, clean) == [], (
+        "干净现状被自己判红＝上面活性锁的基线不可信"
+    )
+

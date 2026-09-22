@@ -98,13 +98,17 @@ def _roster_config(
 
 
 def test_roster_empty_when_no_super_ids_and_no_profiles() -> None:
-    from plugins.bot_unified_runtime.capabilities.chat import build_admin_roster_text
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_admin_roster_text,
+    )
 
     assert build_admin_roster_text(_roster_config()) == ""
 
 
 def test_roster_profile_super_role_line() -> None:
-    from plugins.bot_unified_runtime.capabilities.chat import build_admin_roster_text
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_admin_roster_text,
+    )
 
     text = build_admin_roster_text(
         _roster_config(
@@ -128,7 +132,9 @@ def test_roster_profile_super_role_line() -> None:
 
 
 def test_roster_profile_admin_role_label() -> None:
-    from plugins.bot_unified_runtime.capabilities.chat import build_admin_roster_text
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_admin_roster_text,
+    )
 
     text = build_admin_roster_text(
         _roster_config(
@@ -145,7 +151,9 @@ def test_roster_profile_admin_role_label() -> None:
 
 
 def test_roster_super_ids_only_lists_all_qq() -> None:
-    from plugins.bot_unified_runtime.capabilities.chat import build_admin_roster_text
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_admin_roster_text,
+    )
 
     text = build_admin_roster_text(_roster_config(super_ids=["888", "999"]))
     assert "超级管理员 QQ" in text

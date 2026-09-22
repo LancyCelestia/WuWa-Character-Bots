@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 # 审查 Q-01：B站登录/查询失败文案入 user_copy 数据源失败池（守岸人语气轮换）。
-from plugins.bot_unified_runtime.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.sources.parsers.cookies import (
     PLATFORM_COOKIE_DOMAINS,
     _resolve_relative_cookie_path,

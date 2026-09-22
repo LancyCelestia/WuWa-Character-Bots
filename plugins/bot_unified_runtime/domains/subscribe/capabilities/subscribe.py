@@ -14,8 +14,8 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, cast
 
-from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import CapabilityResult, IncomingMessage
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionDestination,
     SubscriptionSpec,

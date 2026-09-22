@@ -375,7 +375,7 @@ def test_reserved_windows_names_prefixed() -> None:
 # （_GuardedRedirectHandler 在 open() 内部）抛 RejectedUrlError。
 _PUBLIC_LITERAL_URL = "http://93.184.216.34/pic.png"
 
-_ARCHIVE_LOGGER = "plugins.bot_unified_runtime.capabilities.media_archive"
+_ARCHIVE_LOGGER = "plugins.bot_unified_runtime.domains.media.capabilities.media_archive"
 
 
 class _RedirectGuardFakeOpener:

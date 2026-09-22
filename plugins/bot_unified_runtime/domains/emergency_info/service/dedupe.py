@@ -8,7 +8,9 @@
 （`domains/transport/sender/queue.py:443-475`）才是幂等唯一执行点。
 
 键规范核验的**实现唯一处**就在本文件：`is_emergency_dedupe_key`（前缀 + 段字符集 +
-日期段形态三条规则都在这一份代码里）。中央闸
+日期段形态三条规则都在这一份代码里），旁支 `active_push_key_shape_ok` 同处同一套
+`_SEGMENT_RE`/`_DATE_KEY_RE`——中央闸服务的族自 2026-09-22 起不止紧急域，但**规则
+仍只这一份**，闸侧不得另写。中央闸
 `domains/transport/sender/outbound_gate.py:dedupe_key_shape_ok` **委托**到这里——
 这句话就是 F-4 要对齐的旧账：原注释如此宣称，而闸 2026-09-20 之前实际上自带一套
 只查前缀、段数与空段的宽松谓词（HEAD 实证旧谓词亦查前缀等值；LOCK-AUDIT GAP-1：
@@ -99,6 +101,45 @@ def is_legal_segment(value: str) -> bool:
     return _SEGMENT_RE.match(str(value or "").strip()) is not None
 
 
+def is_legal_date_key(value: str) -> bool:
+    """日期段形态（`_DATE_KEY_RE` 的公开读侧，与 `is_legal_segment` 成对）。"""
+    return _DATE_KEY_RE.match(str(value or "")) is not None
+
+
+def active_push_key_shape_ok(
+    key: str, *, namespace: str, require_date_key: bool = False
+) -> bool:
+    """非紧急族主动投递键的形态核验（中央闸 `reason="dedupe_key_shape"` 的另一半）。
+
+    为什么需要这一条：`dedupe_key_shape_ok` 原先**只**认 `emg` 前缀——那是闸只服务
+    紧急域时的边界（见 `is_emergency_dedupe_key` 头注）。2026-09-22 统一波把提醒 /
+    cookie 到期 / 群摘要 / 日常助理四族也接进同一个中央出口（用户 mandate「所有内容
+    走中央调度层」），若沿用紧急谓词，这四族在**开闸态**会被逐条判 `skip`＝静默丢消息
+    （R-CENTRAL C-1，关态测试全绿所以只有开态活性用例抓得到）。
+
+    规则与紧急谓词同源同严，只把「前缀必须是 emg」换成「前缀必须**等值**于本调用方
+    申报的命名空间」：
+
+    - 整串不 `strip()`、逐段 `_SEGMENT_RE` 原样匹配（与 `is_emergency_dedupe_key` 同口径）
+      ⇒ 带空白的脏键与干净键在队列里各存一行＝重发，这条不能松；
+    - 首段等值 ⇒ 近亲前缀（`reminderx`）与串族（拿 `emg:` 冒充 `reminder`）都出局，
+      每族一个独立幂等桶；
+    - `require_date_key=True`（按日重投族）⇒ 末段必须是 `YYYY-MM-DD`；
+    - 段数下限 2（命名空间 + 至少一个身份段），且命名空间自身也得是合法段。
+    """
+    if not _SEGMENT_RE.match(str(namespace or "")):
+        return False
+    segments = str(key or "").split(":")
+    if len(segments) < 2 or segments[0] != namespace:
+        return False
+    for segment in segments[1:]:
+        if not _SEGMENT_RE.match(segment):
+            return False
+    if require_date_key:
+        return is_legal_date_key(segments[-1])
+    return True
+
+
 def is_emergency_dedupe_key(key: str, *, require_date_key: bool = False) -> bool:
     """键规范核验（中央闸 `reason="dedupe_key_shape"` 的**唯一实现**，闸侧委托到此）。
 
@@ -162,9 +203,11 @@ def is_within_validity(
 
 __all__ = [
     "EMERGENCY_DEDUPE_PREFIX",
+    "active_push_key_shape_ok",
     "build_emergency_dedupe_key",
     "date_key_of",
     "is_emergency_dedupe_key",
+    "is_legal_date_key",
     "is_legal_segment",
     "is_within_validity",
 ]

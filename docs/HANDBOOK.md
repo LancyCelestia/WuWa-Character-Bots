@@ -2637,3 +2637,25 @@ acceptance-manual §6.6.11（T76 换装 T36 30 项版）+report-T36 §2 重写�
 移出源码树属不可逆动作须用户点头，且要先改钉住路径的门（哈希台账/链接棘轮/叙述清单）；
 ③代码整理只出了缺陷台账，副本清零/命名 sweep/docstring 补齐须按 P0→P2 批量做，涉集中面的条目主会话串行；
 ④`_meta` 台账判定的主板块与 `board_taxonomy.py` 认领表需回填对齐，冲突以代码真身为准。
+
+
+## §40 中央调度层统一波（2026-09-21/22，主会话 + 20 余席；未 commit、未重启）
+
+**一句话**：把「所有内容走中央调度层，TTS 也不例外」从口号做成可执法的门——两层契约归并、
+唯一在册表、命令形与 prepared 形两种执行面、主动投递单一出口、崩溃与审计闭环、AI 绘画协议腿补出真身。
+
+- **判据在门里，不在这段话里**：在册与缺口以 `tests/test_descriptor_wiredness_ledger.py` 现算；
+  直呼点唯一性 `tests/test_orchestration_callsite_single.py`；两层归并
+  `tests/test_capability_result_unique.py`；中央治理逐能力矩阵
+  `tests/test_central_dispatch_matrix.py`；多入口同权 `tests/test_prepared_adapter_canary.py`；
+  出站单一出口与键规范 `tests/test_outbound_gate.py` + `tests/test_outbound_bypass_prohibition_gate.py`；
+  协议散文只准点名真存在之物 `tests/test_creation_job_protocol.py`。
+- **两条"在册但未执法"必须与任何"已受管辖"表述同读**：出站闸缺省关（`config.py::Config.bot_outbound_gate_enabled`
+  缺省 False 且生产 `.env` 无该行）⇒ 顺延/限流/键形/闸审计线上不生效；`CapabilityInvoker.invoke()`
+  不读 `gate_feature_id` ⇒ 层 2 功能开关是字段不是执法。另：中央超时给终态不抛异常 ⇒ 能力挂死不出诊断卡；`bot_cookie_expiry_reminder_via_queue` 缺省关 ⇒ cookie 到期一族今天仍走旧直发（「四条已接中央出口」只在开态为真）。**另须同行读**：`creation.tts.synthesize` 与 `creation.image.generate` 两枚描述符是**只声明未接线**（现算 `execution=None`、全仓无 `invoke(capability_id="creation…")` 调用点）⇒ mandate 的「预留 AI 绘画接口协议」已满足，但绘画今天不是一条能跑的路，未接 provider 时诚实 `UNAVAILABLE`。
+- **本波三次同型自攻（评审席抓出）**：接闸未同步键规范（开闸即四族静默丢消息，关态测试全绿）、
+  别名入口把 `capability_id` 写成入口名而缺口账按"声明即通电"降棘轮、注释承诺了一把不存在的锁。
+  详见 `logs/SEAT-MAIN.md` §33–§43 与 `REVIEW-RC1/RCB/RAUDIT/RPREP/RCHOKE/RHANDOFF/RLOGS`。
+- **全录**：`.superpowers/sdd/2026-09-21-unify-wave/`（`decisions/` 裁定与施工图、
+  `logs/` 逐席、`ledger-draft/` 台账草案）；接手入口 `HANDOFF-UNIFY-20260922.md`；
+  待裁 `decisions/PENDING-RULINGS-20260922.md`；重启后真机验收 `docs/acceptance-manual.md` §6.6.13。

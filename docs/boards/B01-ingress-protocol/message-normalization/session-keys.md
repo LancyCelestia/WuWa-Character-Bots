@@ -6,7 +6,7 @@
 ## B01.message-normalization · 会话键派生
 
 - 层级：一级 B01 → 二级 message-normalization → 三级 `session-keys`
-- 实现落点：`plugins/bot_unified_runtime/domains/core/session_keys.py`、`plugins/bot_unified_runtime/domains/core/text_boundary.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/core/session_keys.py`、`plugins/bot_unified_runtime/domains/core/text_boundary.py`、`plugins/bot_unified_runtime/domains/core/board_placement.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

@@ -23,7 +23,7 @@
 - `domains/chat_reply/runtime/aliases.py:build_command_alias_resolver(config, extra_nicknames=()) -> CommandAliasResolver`
 - `CommandAliasResolver.resolve(text) -> AliasResolution | None`（字段 `capability_id / verb / rest_text`）
 - 路由侧接线：`domains/chat_reply/runtime/base_router.py` 的 `_resolve_alias(text, alias_resolver)` → `alias_match`；解析器为 None 时昵称命令落到后续规则，不报错。
-- 群门禁也用它：`policy/gate.py` 的 `extra_command_check` 与 `base_router.py:looks_like_command_text` 都先问解析器一次，命中即视为命令。
+- 群门禁也用它：`plugins/bot_unified_runtime/domains/chat_reply/policy/gate.py` 的 `extra_command_check` 与 `base_router.py:looks_like_command_text` 都先问解析器一次，命中即视为命令。
 
 ## 开关与参数
 

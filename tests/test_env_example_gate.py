@@ -126,7 +126,7 @@ DUPLICATE_KEY_LEDGER: dict[str, str] = {
 # 解析
 # ---------------------------------------------------------------------------
 
-_ACTIVE_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=", re.M)
+_ACTIVE_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=", re.MULTILINE)
 
 
 def _config_field_names() -> set[str]:

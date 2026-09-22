@@ -58,6 +58,9 @@ from plugins.bot_unified_runtime.character.daily_assist import (
     tasks_path,
 )
 from plugins.bot_unified_runtime.contracts import PrivacyLevel, SendPolicy, SessionType
+from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+    build_outbound_gate,
+)
 
 _MENU = """# 美食偏好清单
 
@@ -384,7 +387,9 @@ def test_parse_daily_assist_clock() -> None:
 def test_register_daily_assist_scheduler_jobs() -> None:
     scheduler = _FakeScheduler()
     config = _make_config(None)
-    info = _register_daily_assist_scheduler(scheduler, config, _FakeQueue())
+    info = _register_daily_assist_scheduler(
+        scheduler, config, _FakeQueue(), build_outbound_gate(SimpleNamespace())
+    )
     assert info["meals"] == ["11:15", "17:15"]
     assert info["morning"] == [9, 0]
     assert info["evening"] == [21, 0]
@@ -405,7 +410,9 @@ def test_register_daily_assist_scheduler_jobs() -> None:
 def test_register_daily_assist_scheduler_skips_without_targets() -> None:
     scheduler = _FakeScheduler()
     config = _make_config(None, bot_daily_assist_push_user_ids=[])
-    info = _register_daily_assist_scheduler(scheduler, config, _FakeQueue())
+    info = _register_daily_assist_scheduler(
+        scheduler, config, _FakeQueue(), build_outbound_gate(SimpleNamespace())
+    )
     assert info == {"skipped": "no_targets"}
     assert scheduler.jobs == []
 
@@ -415,7 +422,8 @@ def test_push_daily_assist_private_request_shape() -> None:
     config = _make_config(None, bot_daily_assist_push_user_ids=["10001", "10002"])
     now = datetime(2026, 9, 15, 11, 15, tzinfo=timezone.utc)
     pushed = _push_daily_assist_private(
-        config, queue, capability_id="bot.daily_assist",
+        config, queue, build_outbound_gate(SimpleNamespace()),
+        capability_id="bot.daily_assist",
         text="到饭点啦", tag="meal-1115", now=now,
     )
     assert pushed == 2
@@ -448,14 +456,14 @@ def test_meal_job_and_morning_runner_push(assist_env, tmp_path, monkeypatch) -> 
     food.parent.mkdir(parents=True, exist_ok=True)
     food.write_text("- 拉面\n", encoding="utf-8")
     queue = _FakeQueue()
-    _run_daily_assist_meal_push(config, queue, "11:15")
+    _run_daily_assist_meal_push(config, queue, build_outbound_gate(SimpleNamespace()), "11:15")
     assert len(queue.requests) == 1
     assert "拉面" in queue.requests[0].content.text_fallback
 
     append_inbox_line(
         inbox_path(config), "买牛奶", now=datetime(2026, 9, 15, 8, 0, tzinfo=timezone.utc)
     )
-    _run_daily_assist_morning_push(config, queue)
+    _run_daily_assist_morning_push(config, queue, build_outbound_gate(SimpleNamespace()))
     assert len(queue.requests) == 2
     assert "买牛奶" in queue.requests[1].content.text_fallback
     assert read_pending_inbox(inbox_path(config)) == []

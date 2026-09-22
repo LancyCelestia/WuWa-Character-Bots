@@ -26,17 +26,6 @@ from typing import Any
 
 import pytest
 
-# WP3-TAXONOMY 半成品挂账（2026-09-21 全面修复波）：下列用例是「全预警谱重做」的**规格**，
-# 其判据（定级改按注册表族级合法色档 + 按震级定级 + `grading_candidates` 审计面 +
-# 缺省关键词表去掉种类词）尚未落地 ⇒ 诚实挂账而非放宽断言。
-# 摘牌指引：在本文件搜 WP3-TAXONOMY，实现补齐后逐条删标记；全录见
-# .superpowers/sdd/2026-09-21-fix-wave/master-plan.md §8.1 与 §捌。
-_WP3_PENDING = pytest.mark.xfail(
-    strict=False,
-    reason="WP3-TAXONOMY 半成品：注册表驱动定级/震级定级未落地（规格 §四·§五），非本波引入",
-)
-
-
 from plugins.bot_unified_runtime.domains.emergency_info import contracts
 from plugins.bot_unified_runtime.domains.emergency_info.contracts import (
     EmergencyItem,
@@ -66,6 +55,14 @@ from plugins.bot_unified_runtime.domains.emergency_info.service.subscriptions im
 from plugins.bot_unified_runtime.domains.emergency_info.sources.store import (
     EmergencyStore,
 )
+
+# WP3-TAXONOMY 挂账已摘牌（2026-09-22 实施席 WP3-IMPL）：本文件用例原本是「全预警谱重做」
+# 的**规格**（注册表族级合法色档定级 + 按震级定级 + `grading_candidates` 审计面 +
+# 缺省关键词表去掉种类词），当时判据未落地 ⇒ 按仓内铁律**诚实挂 xfail 而非放宽断言**。
+# 现规格 §四 判定序 / §五 地震分档表已落进 `service/grading.py`，本文件 9 枚标记
+# （含参数化共 20 个实例）连同 `test_emergency_info_collector.py` 的 1 枚逐条删除；
+# **断言期望值一寸未动**。施工记录 .superpowers/sdd/2026-09-21-unify-wave/logs/
+# SEAT-WP3-IMPL.md；原挂账全录 .superpowers/sdd/2026-09-21-fix-wave/master-plan.md §8.1。
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOMAIN_DIR = (
@@ -300,7 +297,6 @@ def test_category_of_item_uses_the_stored_id_first() -> None:
 # ================================================================= B 定级重做
 
 
-@_WP3_PENDING
 def test_meteo_source_color_wins_and_kind_words_never_upgrade() -> None:
     """**蓝抬橙 bug 的方向锁**：「暴雨蓝色预警」就是蓝色，不得被种类词升成橙档。"""
     blue = _item(title="某市气象台发布暴雨蓝色预警信号", color_label="蓝色")
@@ -315,7 +311,6 @@ def test_color_word_only_in_title_still_grades() -> None:
     assert grade(item, now=_NOW) is EmergencyLevel.P1
 
 
-@_WP3_PENDING
 def test_illegal_color_for_the_family_is_not_an_attainable_level() -> None:
     """GDACS 族（global_disaster）结构上只有橙/红：给它「蓝色」不出档、不入库定级。"""
     assert taxonomy.level_is_attainable("wildfire", EmergencyLevel.P3) is False
@@ -349,7 +344,6 @@ def test_illegal_color_for_the_family_is_not_an_attainable_level() -> None:
         (None, 28.5, 104.9, EmergencyLevel.P3),   # 没有震级这个事实＝不出档
     ],
 )
-@_WP3_PENDING
 def test_earthquake_magnitude_matrix(
     magnitude: float | None,
     latitude: float | None,
@@ -371,7 +365,6 @@ def test_earthquake_magnitude_matrix(
     assert item.level is None  # 采集侧不预先塞等级（定级唯一出口在审核门）
 
 
-@_WP3_PENDING
 def test_M0_6_antarctic_quake_is_never_urgent_even_with_the_word_earthquake() -> None:
     """审计 E6-N1 的正案：0.6 级、境外、标题满是"地震"，也不许进 URGENT_LEVELS。"""
     item = _item(
@@ -391,7 +384,6 @@ def test_M0_6_antarctic_quake_is_never_urgent_even_with_the_word_earthquake() ->
     assert grading.may_breach_quiet_window(item, level) is False
 
 
-@_WP3_PENDING
 def test_earthquake_ignores_impact_keywords_entirely() -> None:
     """地震族连「撤离」都不抬档：微震速报里的强制动作多半是演练或旧闻。"""
     item = _item(
@@ -408,7 +400,6 @@ def test_earthquake_ignores_impact_keywords_entirely() -> None:
     assert grade(item, now=_NOW) is EmergencyLevel.P3
 
 
-@_WP3_PENDING
 def test_deep_focus_earthquake_downgrades_exactly_one_step() -> None:
     shallow = _item(
         source_kind="earthquake", category_id="earthquake", title="6.8级地震｜境内",
@@ -432,7 +423,6 @@ def test_quake_without_magnitude_may_still_use_the_official_source_color() -> No
     assert grade(item, now=_NOW) is EmergencyLevel.P0
 
 
-@_WP3_PENDING
 def test_default_keyword_table_contains_no_category_words() -> None:
     """种类词整体退出关键词表（WP3 交付②）：定级不再靠"标题里有个地震俩字"。"""
     all_keywords = {kw for rule in DEFAULT_GRADING_RULES for kw in rule.keywords}
@@ -457,15 +447,16 @@ def test_expired_item_still_cannot_claim_urgent() -> None:
     assert grade(stale, now=_NOW + timedelta(hours=2)) is EmergencyLevel.P3
 
 
-@_WP3_PENDING
-def test_grading_candidates_are_auditable_and_deterministic() -> None:
+def test_grading_candidates_is_unwired_debug_surface_and_deterministic() -> None:
+    # T8（2026-09-22）裁定 1(b)：本用例原名含 "auditable"——生产无消费方的
+    # 「可审计面」宣称已改口为「未接线的调试/复算出口」（见 grading.py docstring）；
+    # 只随宣称改名，**断言体一字未动**。
     item = _item()
     first = grading.grading_candidates(item, now=_NOW)
     assert first == grading.grading_candidates(item, now=_NOW)
     assert grade(item, now=_NOW) is max(first, key=lambda level: level.rank)
 
 
-@_WP3_PENDING
 def test_grading_reads_the_registry_for_every_category_family() -> None:
     """每个类别都必须落在**族内合法**的档上；族里没有的色档不得被抬出来。"""
     for spec in taxonomy.categories():

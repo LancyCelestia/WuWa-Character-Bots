@@ -288,6 +288,19 @@ class KnowledgeService:
                 plan_report = ReindexSourceReport(source=binding.name)
                 if binding.populate is None:
                     plan_report.skipped = "no_populate"
+                    # 该源本次不参与重建 ⇒ 发布提交点不会经手它，线上库若
+                    # 恰缺 #47 完备性戳，就永远没有落戳的人（与 kb-sync 零变更
+                    # 夜 unchanged_skip 同型死锁）。维护路径就地自愈：仅当无戳
+                    # 时补盖权威 COUNT（活戳归重建线所有，一字不碰）；失败或
+                    # 替身 store 无此方法都不拦重建主链。
+                    _certify = getattr(
+                        binding.store, "certify_expected_vector_count", None
+                    )
+                    if callable(_certify):
+                        try:
+                            _certify()
+                        except Exception:  # noqa: S110, BLE001 - 自愈失败不拦重建主链。
+                            pass
                     report.sources.append(plan_report)
                     continue
                 temp_db = temp_root / f"{binding.name}.sqlite3"

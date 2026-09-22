@@ -8,7 +8,7 @@
 > 会话键、文本边界、发送者显示名等全仓唯一口径的归一层。
 
 - 归属板块：[B01](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/core/session_keys.py`、`plugins/bot_unified_runtime/domains/core/text_boundary.py`
+- 实现落点：`plugins/bot_unified_runtime/domains/core/session_keys.py`、`plugins/bot_unified_runtime/domains/core/text_boundary.py`、`plugins/bot_unified_runtime/domains/core/board_placement.py`
 
 ### 三级入口
 

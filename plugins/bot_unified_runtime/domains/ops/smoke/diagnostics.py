@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import random
 import sqlite3
 from collections import deque
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
@@ -676,7 +677,30 @@ def build_why_result(
     request_id: str,
     session_id: str,
     query: str = "",
+    actor_roles: Sequence[str] | None = None,
 ) -> CapabilityResult:
+    # 为什么补门：帮助条目 admin_only=True 而执行面此前零门（权限口径分裂，
+    # S-WHY 2026-09-22 实跑证实）。判定复用中央 roles_satisfy（层级最低门槛，
+    # 超管叠 admin，未知角色串 fail-closed），不造第二套角色比较；延迟 import 防
+    # 根包装载期成环（先例：domains/ops/admin/debug.py 函数级 import）。
+    # actor_roles 缺省 None=拒绝：宁可拒管理员一句温柔话术，不猜测任何主体身份。
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
+    from plugins.bot_unified_runtime.runtime.capability_protocols import (
+        roles_satisfy,
+    )
+
+    if not roles_satisfy(tuple(actor_roles or ()), ("admin",)):
+        return CapabilityResult(
+            request_id=request_id,
+            capability_id="bot.why",
+            kind="text",
+            body=random.choice(user_copy.ADMIN_GATE_TEMPLATES).format(
+                action="看最近一次运行诊断"
+            ),
+            risk_level=RiskLevel.LOW,
+            privacy_level=PrivacyLevel.PERSONAL,
+            audit_tags=["why", "why_denied"],
+        )
     token = query.strip()
     diagnostic = store.find(token) if token else store.latest(session_id=session_id)
     if diagnostic is None:
@@ -1197,3 +1221,22 @@ def _is_safe_reason(value: str) -> bool:
         char.isascii() and (char.isalnum() or char == "_")
         for char in value
     )
+
+
+# ---------------------------------------------------------------------------
+# LLM 连接诊断话术的唯一出处（统一波 2026-09-22：admin/debug 与 smoke 两处
+# 曾各抄一份同句，被 tests/test_copy_single_source.py 抓成 ops-diag 簇）
+# ---------------------------------------------------------------------------
+LLM_DIAGNOSTIC_SYSTEM_PROMPT = (
+    "你是本地 LLM 连接诊断请求。只需要用一句中文回复连接正常，"
+    "不要请求工具，不要输出密钥。"
+)
+LLM_DIAGNOSTIC_USER_PROMPT = "请回复：诊断连接正常。"
+LLM_DIAGNOSTIC_OK_MESSAGE = "LLM 诊断通过。"
+
+
+def llm_diagnostic_messages() -> list[dict[str, str]]:
+    return [
+        {"role": "system", "content": LLM_DIAGNOSTIC_SYSTEM_PROMPT},
+        {"role": "user", "content": LLM_DIAGNOSTIC_USER_PROMPT},
+    ]

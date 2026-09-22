@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.core.contracts import (
     CapabilityResult,
     PrivacyLevel,

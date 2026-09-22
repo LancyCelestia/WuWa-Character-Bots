@@ -18,7 +18,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -26,6 +25,7 @@ from plugins.bot_unified_runtime.contracts import (
     PrivacyLevel,
     RiskLevel,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.location.data.moegirl import (
     DEFAULT_API_BASES,
     MoegirlHit,
@@ -233,7 +233,7 @@ def local_kb_answer(config: Any | None, entity: str, *, max_chars: int = 500) ->
     if config is None or not entity:
         return None
     try:
-        from plugins.bot_unified_runtime.character.vector_knowledge import (
+        from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
             build_vector_knowledge_provider,
         )
 

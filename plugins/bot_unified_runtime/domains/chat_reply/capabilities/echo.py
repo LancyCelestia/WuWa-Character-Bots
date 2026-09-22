@@ -11,9 +11,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from plugins.bot_unified_runtime.audit import redact_private_debug
-from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.config import Config
-from plugins.bot_unified_runtime.config_readiness import run_config_smoke
 from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     PrivacyLevel,
@@ -21,8 +19,15 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     new_request_id,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
     build_role_settings,
+)
+from plugins.bot_unified_runtime.domains.core.config.config_readiness import (
+    run_config_smoke,
+)
+from plugins.bot_unified_runtime.domains.media.voice_health_alert import (
+    flush_probe_issue_to_alerts,
 )
 from plugins.bot_unified_runtime.domains.media.voice_health_probe import (
     voice_status_line,
@@ -188,7 +193,7 @@ def build_decision_query_result(
         )
     if sink is None:
         # 函数内惰性导入：echo 是高频导入模块，决策包保持按需拉起。
-        from plugins.bot_unified_runtime.decision.trace import (
+        from plugins.bot_unified_runtime.domains.core.decision.trace import (
             get_decision_trace_sink,
         )
 
@@ -3360,7 +3365,9 @@ def _try_render_help_image(
         path = target / f"help_{digest}.png"
         path.write_bytes(png)
         try:
-            from plugins.bot_unified_runtime.runtime.cache_policy import prune_prefixed
+            from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
+                prune_prefixed,
+            )
 
             prune_prefixed(target, "help", keep=200)
         except Exception:  # noqa: S110, BLE001 - 配额清理失败不影响本次出图。
@@ -3382,7 +3389,7 @@ def build_commands_catalog_body(*, is_admin: bool = False) -> str:
     行格式：区段头 `[名称] 字段 | 字段 | …`，数据行以 ` | ` 分隔。
     非管理员只列公开模块（与帮助总览同门控）；路由表为公开路由语义，全列。
     """
-    from plugins.bot_unified_runtime.runtime.base_router import (
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
         list_route_rules_for_audit,
     )
 
@@ -3564,7 +3571,7 @@ def build_identity_preference_result(
     （键位与读取端 providers.build_context 完全一致：群=group_id，私聊=空）。
     仅能操作发送者本人的偏好，无管理员门槛。
     """
-    from plugins.bot_unified_runtime.character.providers import (
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         build_addressing_preference_store,
     )
 
@@ -3649,6 +3656,74 @@ def build_identity_preference_result(
     )
 
 
+# ---- 中央能力健康度读出（S-HEALTH 席：收口 R2「中央登记了探针却零生产读者」）----
+#: 非可用态一行最多点名几条，其余折叠成「等 N 项」（status 已经很长，防刷屏）。
+_HEALTH_ATTENTION_PREVIEW = 4
+
+
+def _capability_health_line(config: Config) -> str:
+    """中央能力健康度摘要一行（只调用中央件，判据与探针真身都在别处）。
+
+    真读的是 ``runtime/capability_protocols`` 的 `CapabilityInvoker.health()`
+    （= `compute_health(descriptor, probes, config)`）对**在册且声明了 health_probe**
+    的能力逐个取回的 `CapabilityHealth`。本函数只做展示聚合：不复制枚举、不新建
+    探针、不解释判据——中央面才是唯一真身。
+
+    三条硬约束（缺一即回退）：
+    - **惰性**：中央模块与 invoker 都在函数体内取（import 期/装配期零触发探测）；
+      探针自身也是被调才跑（实测 12 项聚合 ≈0ms、零网络——配置/文件面探针）。
+    - **fail-open**：取不到 invoker / 探测抛异常 / 中央无探针 ⇒ 出诚实降级行，
+      绝不让 status 整体失败，也绝不把"没读到"说成"没问题"。
+    - **不假绿**：只有全部被探测能力都是 ``available`` 才写 ``verdict=全部可用``；
+      其余任何组合（含 degraded/disabled/not_configured/unknown）一律
+      ``verdict=部分不可用``，并逐条点名（截断到上限定额）。
+
+    与既有语音行的分工（**非重复真身**）：`voice_status_line` 报的是语音引擎
+    **TCP 可达性**（只读探测），`_probe_tts` 报的是**配置面三态**（docstring 明写
+    零网络、绝不碰无鉴权的 `/control`）；两行两个事实，故并列新增而非替换。
+    """
+    try:
+        from plugins.bot_unified_runtime.runtime import capability_protocols
+
+        invoker = capability_protocols.default_invoker()
+        readings: list[tuple[str, str]] = []
+        for capability_id in sorted(capability_protocols.registered_capability_ids()):
+            probed = invoker.health(capability_id, config)
+            if probed is None:
+                continue
+            descriptor, health = probed
+            if not str(getattr(descriptor, "health_probe", "") or ""):
+                continue  # 无探针＝只是 health_default 静态缺省，不是"探测结论"，不计
+            readings.append((capability_id, str(health.value)))
+        vocabulary = [member.value for member in capability_protocols.CapabilityHealth]
+    except Exception as exc:  # noqa: BLE001 - 中央面坏了也不能拖死状态查询
+        return (
+            "中央能力态：probe=unavailable，"
+            f"reason={type(exc).__name__}（中央面未读到，不作判定）"
+        )
+    if not readings:
+        return "中央能力态：probe=no_probe_registered（中央未登记可读探针，无从判定）"
+
+    counts: dict[str, int] = {name: 0 for name in vocabulary}
+    for _, state in readings:
+        counts[state] = counts.get(state, 0) + 1
+    # 计数顺序跟中央枚举序；中央若将来加值，落在末尾不丢数。
+    ordered = [*vocabulary, *(key for key in counts if key not in vocabulary)]
+    summary = "，".join(f"{name}={counts[name]}" for name in ordered)
+    attention = [f"{cap}:{state}" for cap, state in readings if state != "available"]
+    verdict = "全部可用" if not attention else "部分不可用"
+    if attention:
+        preview = "，".join(attention[:_HEALTH_ATTENTION_PREVIEW])
+        if len(attention) > _HEALTH_ATTENTION_PREVIEW:
+            preview += f" 等{len(attention)}项"
+    else:
+        preview = "无"
+    return (
+        f"中央能力态：probed={len(readings)}，{summary}，"
+        f"verdict={verdict}，待关注={preview}"
+    )
+
+
 def _build_status_body(config: Config, runtime_control: RuntimeControlState) -> str:
     persona_total, persona_missing = _count_missing_paths(config.bot_persona_files)
     knowledge_total, knowledge_missing = _count_missing_paths(config.bot_knowledge_files)
@@ -3691,7 +3766,7 @@ def _build_status_body(config: Config, runtime_control: RuntimeControlState) -> 
     role_counts = build_role_settings(config).counts()
     llm_readiness = run_config_smoke(config)
     llm_reasons = _format_reason_list(llm_readiness["llm_readiness_reasons"])
-    return "\n".join(
+    body = "\n".join(
         [
             "统一运行时在线",
             f"运行时硬开关：{runtime_hard_state}",
@@ -3779,8 +3854,17 @@ def _build_status_body(config: Config, runtime_control: RuntimeControlState) -> 
             # 且探针模块 `_last_issue` 不随读/恢复清空，贴附=陈旧 issue 永久
             # 误报；投喂中央告警链的正确落点是触发点 2（tts.py 退避窗进入沿）。
             voice_status_line(config),
+            # S-HEALTH（R2 收口）：中央能力健康度的**第一个生产读者**。
+            # 只新增一行、不碰上面任何既有行；探测惰性、失败诚实降级（见函数 docstring）。
+            _capability_health_line(config),
         ]
     )
+    # S-OBS：状态查询是语音探针的触发点 1。上面 voice_status_line 已惰性探测；此处把
+    # 本次探测出的 pending issue 经**唯一消费者**交给中央告警链（sink 由 root 装配注入）。
+    # fail-open、无 sink=诚实 no-op、投一次清一次；不贴本结果的 operational_issue 面
+    # （贴附会触发 pipeline A-19 群聊吞体，见上方注释与 voice_health_probe docstring）。
+    flush_probe_issue_to_alerts()
+    return body
 
 
 def _count_missing_paths(paths: list[str]) -> tuple[int, int]:

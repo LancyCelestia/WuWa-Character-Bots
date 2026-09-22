@@ -208,7 +208,7 @@ reload：prepare新资源→验证→停止新接入→drain(默认30s)→原子
 
 ## 8. 观测、隐私与管理员可见性
 
-日志source包含bot/nonebot/napcat/telegram/mail/control_plane/decision_engine/pipeline/sender/llm/database/scheduler。category=debug/info/warning/error/success/critical/detail，与severity分开。Bot结构化、NoneBot Loguru sink、SnowLuma 批准来源跟随轮转/截断/编码；仅控制台输出时接批准launcher stdout，不另启实例。OneBot连接与日志采集状态分开。
+日志 source 成员的唯一真身＝`domains/ops/monitor/event_store.py` 的 `EVENT_SOURCES`，本文不重列成员。category=debug/info/warning/error/success/critical/detail，与severity分开。Bot结构化、NoneBot Loguru sink、SnowLuma 批准来源跟随轮转/截断/编码；仅控制台输出时接批准launcher stdout，不另启实例。OneBot连接与日志采集状态分开。
 
 Usage每真实attempt采集，包括failover、取消、影子；消息入站归一化计一次，出站按Receipt计，不能入队就算送达。缺数据null+unknown，不伪造0。生产/sandbox/acceptance分栏。
 

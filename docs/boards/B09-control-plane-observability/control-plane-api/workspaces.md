@@ -21,10 +21,10 @@
 
 ## 怎么调用
 
-`control_plane/workspaces.py:WorkspaceService`（存储与状态机）+
-`control_plane/api/workspaces.py:build_workspaces_router`（HTTP）+
-`control_plane/sandbox.py:SandboxConversationAdapter`（隔离生成）+
-`control_plane/factory.py:build_workspace_service`（装配）。
+`plugins/bot_unified_runtime/control_plane/workspaces.py:WorkspaceService`（存储与状态机）+
+`plugins/bot_unified_runtime/control_plane/api/workspaces.py:build_workspaces_router`（HTTP）+
+`plugins/bot_unified_runtime/control_plane/sandbox.py:SandboxConversationAdapter`（隔离生成）+
+`plugins/bot_unified_runtime/control_plane/factory.py:build_workspace_service`（装配）。
 
 端点：`POST/GET /api/v1/workspaces`、`GET/DELETE /api/v1/workspaces/{id}`、
 `GET/POST /api/v1/workspaces/{id}/messages`、`/preview`、`/send`、`/reset`、`/audit`。

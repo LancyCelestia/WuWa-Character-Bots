@@ -57,6 +57,9 @@ $RuntimeRoot = Join-Path (Split-Path -Parent $Root) "ChatBot_Runtime"
 $RuntimeVenv = Join-Path $RuntimeRoot "venv"
 # Keep Python bytecode caches out of the AI workspace.
 $env:PYTHONDONTWRITEBYTECODE = "1"
+# 上条拦不住 `python -m py_compile` / `compileall`（实测照写源码树），再设镜像前缀兜底：
+# 任何仍被写出的字节码都落到 Runtime 下，不进 AI 工作区（runtime-layout 铁律 6）。
+$env:PYTHONPYCACHEPREFIX = Join-Path $RuntimeRoot "pycache"
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 $utf8 = New-Object System.Text.UTF8Encoding($false)

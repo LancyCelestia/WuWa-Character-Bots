@@ -113,7 +113,7 @@ def test_real_log_record_is_queryable_after_bus_drain(collector_type, tmp_path):
     bus.start()
     collector.start()
     try:
-        root.handle(logging.LogRecord("plugins.bot_unified_runtime.llm.providers", logging.WARNING, "private.py", 1, "Bearer private", (), None))
+        root.handle(logging.LogRecord("plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers", logging.WARNING, "private.py", 1, "Bearer private", (), None))
     finally:
         collector.close()
         assert bus.close()

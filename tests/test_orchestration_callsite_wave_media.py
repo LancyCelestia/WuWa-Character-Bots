@@ -41,6 +41,9 @@ _TRACKED_MEDIA: dict[str, tuple[str, str]] = {
     "build_tts_capability": ("bot.tts.command", "domains/media/capabilities/tts.py"),
     "maybe_attach_voice": ("bot.tts.autovoice", "domains/media/capabilities/tts.py"),
     "synthesize": ("bot.tts.synth", "domains/media/capabilities/tts.py"),
+    # VOICE-V12 第二出站腿：合成这一步的单一真身（synthesize 直呼的唯一新落点，
+    # 只被中央 handler 经 shell（跳过扫描）+ 本定义文件（豁免）消费，跨文件直呼面为空）。
+    "synthesize_autodub": ("media.tts.autodub", "domains/media/capabilities/tts.py"),
     "build_image_search_capability": ("bot.image_search", "domains/media/capabilities/image_search.py"),
     "build_media_archive_capability": ("bot.media_archive", "domains/media/capabilities/media_archive.py"),
 }
@@ -85,22 +88,28 @@ def _load_real_index() -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# media/TTS ledger（2026-09-22 S-MEDIA 实测登记，逐条见 SEAT-S-MEDIA §A）
+# media/TTS ledger（2026-09-22 S-MEDIA 实测登记，逐条见 SEAT-S-MEDIA §A；
+#   VOICE-V12 2026-09-22 翻面：bot.tts.synth 跨文件直呼清零 → 改走 media.tts.autodub invoker）
 #   bot.tts 命令路：build_tts_capability 作泛型执行器实参（不落 Call）→ 直呼面空（Wave4.1 盲区）。
-#   bot.tts 自动配音：maybe_attach_voice 作 asyncio.to_thread 实参 → 直呼面空。
-#   synthesize：唯一跨文件直呼 = voice_enricher.py:175（G-3 配音 hook）。
+#   bot.tts 自动配音旧包装：maybe_attach_voice 作 asyncio.to_thread 实参 → 直呼面空。
+#   synthesize：VOICE-V12 前唯一跨文件直呼=voice_enricher.py:175，现该直呼段改走
+#       default_invoker().invoke(capability_id="media.tts.autodub") → synthesize 直呼面归零。
+#   media.tts.autodub：自动配音产出步，直呼面空（真身 synthesize_autodub 只在 tts 定义文件+
+#       中央 shell handler 出现，两处均豁免/跳过），invoker 面恰一处=voice_enricher.py → WIRED。
 #   bot.image_search / bot.media_archive：各自独立 root handler 直呼 factory（Wave1 可逐能力翻面）。
-#   无一 bot.* 呈现能力经中央 handler → WIRED 空、invoker 面空（生产零旁路）。
 # ---------------------------------------------------------------------------
 KNOWN_DIRECT_ALLOWLIST_MEDIA: dict[str, set[str]] = {
     "bot.tts.command": set(),
     "bot.tts.autovoice": set(),
-    "bot.tts.synth": {"domains/media/voice_enricher.py"},
+    "bot.tts.synth": set(),
+    "media.tts.autodub": set(),
     "bot.image_search": {"__init__.py"},
     "bot.media_archive": {"__init__.py"},
 }
-WIRED_MEDIA: set[str] = set()
-KNOWN_INVOKER_SITES_MEDIA: dict[str, set[str]] = {}
+WIRED_MEDIA: set[str] = {"media.tts.autodub"}
+KNOWN_INVOKER_SITES_MEDIA: dict[str, set[str]] = {
+    "media.tts.autodub": {"domains/media/voice_enricher.py"},
+}
 
 
 def test_real_tree_matches_media_tts_ledger() -> None:
@@ -119,11 +128,12 @@ def test_real_tree_matches_media_tts_ledger() -> None:
 
 
 def test_media_tts_symbols_are_actually_tracked() -> None:
-    """覆盖面自证：五个真身都在追踪表、定义文件在 media 域，且 tts.py 内自用不算直呼（门不哑）。"""
+    """覆盖面自证：六个真身都在追踪表、定义文件在 media 域，且 tts.py 内自用不算直呼（门不哑）。"""
     assert set(_TRACKED_MEDIA) == {
         "build_tts_capability",
         "maybe_attach_voice",
         "synthesize",
+        "synthesize_autodub",
         "build_image_search_capability",
         "build_media_archive_capability",
     }
@@ -372,18 +382,22 @@ def test_descriptor_or_handler_missing_falls_back_honestly() -> None:
     assert legacy.body
 
 
-def test_default_invoker_has_no_bot_tts_wiring_yet() -> None:
-    """生产实况锁：default_invoker 里 bot.tts 尚未在册（无 orchestration descriptor）
-    ⇒ invoke 恒 FAILED「未登记能力」，旧直呼链路仍跑。主会话落 §B descriptor 后须连带把
-    bot.tts 并入本席 ledger 的 WIRED/KNOWN_INVOKER_SITES——此用例届时应改写而非默默放行。"""
-    from plugins.bot_unified_runtime.runtime.capability_protocols import (
-        CapabilityRequest,
-        InvocationStatus,
-        default_invoker,
-    )
+def test_default_invoker_governs_bot_tts_from_route_execution_facet() -> None:
+    """本席首稿锁的是「bot.tts 尚未在册」——主会话落 A 案（注册册 execution 面）后
+    前提过期，按本席原注释「届时应改写而非默默放行」改写为**正向真值锁**：
 
-    result = default_invoker().invoke(
-        CapabilityRequest(capability_id="bot.tts", payload={}, principal="u1", roles=("user",))
+    ① bot.tts 在唯一表且有信封 handler；② 表内**不持有任何 TTS 数值**（limits 空，
+    生效顶唯一家仍是 tts_presets.resolve_*）；③ 载荷缺失 ⇒ 诚实 FAILED，不再伪装成功。
+    """
+    from plugins.bot_unified_runtime.runtime import capability_protocols as cp
+
+    invoker = cp.default_invoker()
+    row = cp._DESCRIPTOR_VIEW.get("bot.tts")
+    assert row is not None, "A 案派生描述符消失（注册册 execution 面被摘？）"
+    assert row.limits == {}, f"表内又拿数值当天花板：{row.limits}"
+    assert invoker.handlers.get("bot.tts") is not None, "在册却无信封 handler=假可执行"
+    result = invoker.invoke(
+        cp.CapabilityRequest(capability_id="bot.tts", payload={}, principal="u1", roles=("user",))
     )
-    assert result.status is InvocationStatus.FAILED
-    assert "未登记能力" in result.detail
+    assert result.status is cp.InvocationStatus.FAILED
+    assert "payload.message" in result.detail

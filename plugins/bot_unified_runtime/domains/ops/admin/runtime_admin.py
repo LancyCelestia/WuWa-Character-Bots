@@ -23,6 +23,11 @@ from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+    SETTABLE_KEYS,
+    InstanceSettingsManager,
+    RuntimeSettingsStore,
+)
 from plugins.bot_unified_runtime.domains.core.contracts import (
     CapabilityResult,
     PrivacyLevel,
@@ -31,11 +36,6 @@ from plugins.bot_unified_runtime.domains.core.contracts import (
 )
 from plugins.bot_unified_runtime.domains.core.credentials.credential_health import (
     check_credentials_and_report,
-)
-from plugins.bot_unified_runtime.runtime.settings import (
-    SETTABLE_KEYS,
-    InstanceSettingsManager,
-    RuntimeSettingsStore,
 )
 
 # 审计 P2#20：/bot model probe 的重入防护——非阻塞锁充当「进行中」标志位，
@@ -200,7 +200,9 @@ def _family_baseline_effort(model_name: str) -> str:
     发送；家族最高档（default_effort）只是复杂任务的升档上限，不再
     标注为「默认」。
     """
-    from plugins.bot_unified_runtime.llm.model_router import baseline_effort
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+        baseline_effort,
+    )
 
     return baseline_effort(model_name)
 
@@ -212,7 +214,7 @@ def _active_priority_group(
     """当前命中的时段优先级分组 (name, order)；未配置/未命中返回 ("", [])。"""
     from datetime import datetime as _dt
 
-    from plugins.bot_unified_runtime.llm.model_router import (
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
         parse_priority_groups,
         resolve_active_priority_group,
     )
@@ -240,7 +242,7 @@ def _active_priority_group(
 def _channel_health_suffix(model_id: str) -> str:
     """渠道健康标注：暂不可用的条目在 list 里直接可见。"""
     try:
-        from plugins.bot_unified_runtime.llm.channel_health import (
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
             get_channel_health_store,
         )
 
@@ -262,7 +264,9 @@ def _probe_specs(store: RuntimeSettingsStore, config: object) -> dict[str, Any]:
     /bot model list 一致：_merge_registry_entries 合并后逐条解析成
     specs（env 派生条目内容以 .env 实时值为准并带上运行时覆盖字段）。
     """
-    from plugins.bot_unified_runtime.llm.model_router import _spec_from_entry
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+        _spec_from_entry,
+    )
 
     raw_env_registry = {
         str(key): dict(item)
@@ -393,7 +397,7 @@ def _usage_channel_stats(
     build_model_rows 行为与旧版完全一致）。
     """
     try:
-        from plugins.bot_unified_runtime.llm.ledger import (
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger import (
             aggregate_channel_usage,
             ledger_enabled,
             resolve_default_db_path,
@@ -410,7 +414,9 @@ def _usage_channel_stats(
         return None
     if not raw:
         return None
-    from plugins.bot_unified_runtime.runtime.pricing import model_family_key
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.pricing import (
+        model_family_key,
+    )
 
     stats: dict[str, dict[str, dict[str, int]]] = {}
     for (actual_model, channel_id), bucket in raw.items():
@@ -430,7 +436,9 @@ def _handle_model_command(
     diagnostics_store: Any | None = None,
     usage_store: Any | None = None,
 ) -> str:
-    from plugins.bot_unified_runtime.llm.model_router import build_model_registry
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+        build_model_registry,
+    )
 
     registry = build_model_registry(config)
     runtime_registry = store.list_model_registry()
@@ -444,7 +452,7 @@ def _handle_model_command(
     auto_route = bool(getattr(config, "bot_model_auto_route", True))
     action0 = parts[0].lower() if parts else ""
     if action0 == "health":
-        from plugins.bot_unified_runtime.llm.channel_health import (
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
             get_channel_health_store,
             resolve_slow_ema_ms,
         )
@@ -455,7 +463,9 @@ def _handle_model_command(
         )
     if action0 == "probe":
         from plugins.bot_unified_runtime.config import Config as _Cfg
-        from plugins.bot_unified_runtime.llm.channel_health import probe_in_flight
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
+            probe_in_flight,
+        )
 
         # 审计 P2#20 + D5：连发 N 条只允许起 N=1 个探针，且与后台定时
         # 巡检共享互斥（probe_in_flight）；任一在飞都直接回执，不叠加
@@ -474,7 +484,7 @@ def _handle_model_command(
 
         def _run_probe() -> None:
             try:
-                from plugins.bot_unified_runtime.llm.channel_health import (
+                from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
                     get_channel_health_store,
                     probe_all,
                 )
@@ -491,10 +501,10 @@ def _handle_model_command(
         threading.Thread(target=_run_probe, name="model-health-probe", daemon=True).start()
         return "渠道巡检已启动（全部渠道一次最小调用，费用极低）：稍后用 /bot model health 查看。"
     if action0 == "routes" and len(parts) > 1:
-        from plugins.bot_unified_runtime.llm.channel_health import (
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
             get_channel_health_store,
         )
-        from plugins.bot_unified_runtime.llm.model_router import (
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
             build_model_router,
         )
 
@@ -560,7 +570,7 @@ def _handle_model_command(
                 "source": "env" if shown.get("source") == _ENV_DERIVED_SOURCE else "runtime",
             }
         if merged:
-            from plugins.bot_unified_runtime.llm.model_router import (
+            from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
                 normalize_priority_entries,
             )
 
@@ -708,7 +718,9 @@ def _handle_model_command(
                 f"已清除 {model_id} 的思考强度覆盖，回到家族默认"
                 f"（{_family_baseline_effort(str(entry.get('model', ''))) or '不发送'}）。"
             )
-        from plugins.bot_unified_runtime.llm.model_router import normalize_effort
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+            normalize_effort,
+        )
 
         normalized = normalize_effort(value)
         if not normalized:
@@ -739,7 +751,9 @@ def _handle_model_command(
         raw_prices = store.get_or(
             "BOT_MODEL_PRICES", getattr(config, "bot_model_prices", {}) or {}
         )
-        from plugins.bot_unified_runtime.runtime.pricing import parse_model_prices
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.pricing import (
+            parse_model_prices,
+        )
 
         prices = parse_model_prices(raw_prices)
         if not kv:
@@ -826,14 +840,14 @@ def _handle_model_command(
         by_calls: dict[str, int] = {}
         by_unpriced: dict[str, int] = {}
         unpriced_calls = 0
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.pricing import (
+            merge_model_prices,
+        )
         from plugins.bot_unified_runtime.domains.ops.monitor.usage_monitor import (
             build_model_rows,
             format_cache_summary,
             format_channel_subrow,
             format_model_row_line,
-        )
-        from plugins.bot_unified_runtime.runtime.pricing import (
-            merge_model_prices,
         )
 
         # 2026-09-18 价格单源化：注册表（价目表导入的落点）为基准，settings
@@ -845,7 +859,7 @@ def _handle_model_command(
                 registry_prices = store.list_model_registry() or {}
             except Exception:  # noqa: BLE001 - 注册表读不到只影响注记。
                 registry_prices = {}
-        from plugins.bot_unified_runtime.runtime.pricing import (
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.pricing import (
             registry_model_prices,
         )
 
@@ -877,7 +891,7 @@ def _handle_model_command(
             by_unpriced = dict(usage.get("by_model_unpriced", {}) or {})
             unpriced_calls = int(usage.get("unpriced_calls", 0) or 0)
         elif diagnostics_store is not None:
-            from plugins.bot_unified_runtime.runtime.pricing import (
+            from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.pricing import (
                 model_call_cost_milli,
             )
 
@@ -948,7 +962,9 @@ def _handle_model_command(
                 else:
                     unpriced_calls += 1
                     by_unpriced[model_name] = by_unpriced.get(model_name, 0) + 1
-        from plugins.bot_unified_runtime.runtime.pricing import format_milli_yuan
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.pricing import (
+            format_milli_yuan,
+        )
 
         lines = [
             f"{target_date.isoformat()} 模型用量账单",
@@ -1130,7 +1146,9 @@ def _persist_priority_move(
     .env 实时值为准，持久副本只承载管理员拥有的 priority（及
     ``authored_fields`` 中明确改过的字段）；纯运行时条目原样保留。
     """
-    from plugins.bot_unified_runtime.llm.model_router import reorder_priority_entries
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+        reorder_priority_entries,
+    )
 
     env_registry = env_registry or {}
     reordered = reorder_priority_entries(entries, model_id, priority)
@@ -1187,7 +1205,9 @@ def _handle_model_registry_command(
                 tag.strip() for tag in kv["tags"].split(",") if tag.strip()
             ]
         if "effort" in kv:
-            from plugins.bot_unified_runtime.llm.model_router import normalize_effort
+            from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+                normalize_effort,
+            )
 
             normalized = normalize_effort(kv["effort"])
             if not normalized:
@@ -1273,7 +1293,7 @@ def _handle_model_registry_command(
                     tag.strip() for tag in value.split(",") if tag.strip()
                 ]
             elif key == "effort":
-                from plugins.bot_unified_runtime.llm.model_router import (
+                from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
                     normalize_effort,
                 )
 
@@ -1362,7 +1382,7 @@ def _handle_vision_command(
     parts: list[str],
 ) -> str:
     """视觉识别模型管理：/bot model vision <list|add|update|priority|remove>。"""
-    from plugins.bot_unified_runtime.sources.vision_describe import (
+    from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
         _flatten_vision_entries,
     )
 
@@ -1392,7 +1412,7 @@ def _handle_vision_command(
         if not env_entries and not runtime_registry:
             lines.append("注册表为空，图片识别不会运行。")
         else:
-            from plugins.bot_unified_runtime.llm.model_router import (
+            from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
                 normalize_priority_entries,
             )
 
@@ -1453,7 +1473,9 @@ def _handle_vision_command(
                 return "priority 必须是正整数（1 为首选）。"
         if "effort" in kv:
             # 审计 P3#24：vision add 的 effort 也要过 normalize_effort 校验。
-            from plugins.bot_unified_runtime.llm.model_router import normalize_effort
+            from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+                normalize_effort,
+            )
 
             normalized = normalize_effort(kv["effort"])
             if not normalized:
@@ -1601,7 +1623,9 @@ def _handle_persona_command(
     config: object,
     parts: list[str],
 ) -> str:
-    from plugins.bot_unified_runtime.character.persona_set import build_alt_personas
+    from plugins.bot_unified_runtime.domains.chat_reply.character.persona_set import (
+        build_alt_personas,
+    )
 
     alt_personas = build_alt_personas(config)
     if not parts:
@@ -1713,7 +1737,7 @@ def build_session_identity_admin_result(
     parts = command_text.split()
     sub = parts[0].lower() if parts else ""
     if sub in {"set-name", "set-gender", "unset-name", "unset-gender"}:
-        from plugins.bot_unified_runtime.capabilities.echo import (
+        from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
             build_identity_preference_result,
         )
 
@@ -1726,8 +1750,10 @@ def build_session_identity_admin_result(
         )
     if "admin" not in actor_roles:
         return _admin_only_result(request_id)
-    from plugins.bot_unified_runtime.character.providers import build_runtime_data_path
-    from plugins.bot_unified_runtime.character.session_identity import (
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+        build_runtime_data_path,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.character.session_identity import (
         SessionIdentityStore,
     )
 
@@ -1798,8 +1824,12 @@ def build_quirk_admin_result(
     """
     if "admin" not in actor_roles:
         return _admin_only_result(request_id)
-    from plugins.bot_unified_runtime.character.providers import build_runtime_data_path
-    from plugins.bot_unified_runtime.character.quirks import QuirkStore
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+        build_runtime_data_path,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.character.quirks import (
+        QuirkStore,
+    )
 
     parts = command_text.split()
     sub = parts[0].lower() if parts else "list"
@@ -1820,7 +1850,9 @@ def build_quirk_admin_result(
             return _ok_result(request_id, "（对应状态下暂无 quirk。）")
         label = {"pending_review": "待审", "active": "生效", "retired": "退役"}
         # G-07：范围标注让审核者看得见这条怪癖会渲染给谁（global/用户名）。
-        from plugins.bot_unified_runtime.character.quirks import format_scope_label
+        from plugins.bot_unified_runtime.domains.chat_reply.character.quirks import (
+            format_scope_label,
+        )
 
         lines = [
             f"- {q.quirk_id[:8]} [{label.get(q.status, q.status)}] {q.quirk_text}"

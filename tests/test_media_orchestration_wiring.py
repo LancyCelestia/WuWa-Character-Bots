@@ -86,7 +86,7 @@ def _run_capability(monkeypatch: pytest.MonkeyPatch, recorder: _Recorder) -> Cap
     monkeypatch.setattr(sauce_search, "search_saucenao_ex", recorder)
     # 旧实现此分支用 random.choice 抽池内模板：两侧共用同一确定性选择器，
     # 否则"等值"会被随机性污染（这里锁池内第一条，不是放宽判据）。
-    monkeypatch.setattr(random, "choice", lambda seq: list(seq)[0])
+    monkeypatch.setattr(random, "choice", lambda seq: next(iter(seq)))
     capability = image_search.build_image_search_capability(config=None)
     return capability(_message(), None)  # type: ignore[call-arg]
 
@@ -109,9 +109,9 @@ def _legacy_expected(message: IncomingMessage, recorder: _Recorder) -> dict[str,
     if error_kind == "http_error":
         return {
             "kind": "text",
-            # 池内首条 == 被测侧被 patch 成 `lambda seq: list(seq)[0]` 的 random.choice 结果，
+            # 池内首条 == 被测侧被 patch 成 `lambda seq: next(iter(seq))` 的 random.choice 结果，
             # 这样"等值"才不被随机性污染（判据没放宽，只是把两侧选择器钉成同一个）。
-            "body": list(user_copy.DATASOURCE_FAILURE_TEMPLATES)[0].format(
+            "body": next(iter(user_copy.DATASOURCE_FAILURE_TEMPLATES)).format(
                 reason="反搜服务暂时连不上（SauceNAO 超时/拒绝）"
             ),
             "url": None,
@@ -241,7 +241,7 @@ def test_blocked_sender_is_denied_by_central_gate(monkeypatch: pytest.MonkeyPatc
     """接入带来的中央权限门（旧直呼没有）：blocked 无条件拒，且真身一步未走。"""
     recorder = _Recorder([_FakeHit(90.0, "t", "m", "https://ex/1.jpg")], "")
     monkeypatch.setattr(sauce_search, "search_saucenao_ex", recorder)
-    monkeypatch.setattr(random, "choice", lambda seq: list(seq)[0])
+    monkeypatch.setattr(random, "choice", lambda seq: next(iter(seq)))
     capability = image_search.build_image_search_capability(config=None)
 
     result = capability(_message(sender_roles=["blocked"]), None)  # type: ignore[call-arg]
@@ -255,8 +255,11 @@ def test_blocked_sender_is_denied_by_central_gate(monkeypatch: pytest.MonkeyPatc
 # 在册事实锁（防"我域已包装能力"的口径被悄悄改写）
 # ---------------------------------------------------------------------------
 def test_media_descriptor_family_is_what_the_shell_says() -> None:
-    """media8 = 识图/OCR/反搜/ASR×2/视频×3，**不含 TTS**：简报把 TTS 归进 media8 不成立，
-    本条把实况钉住，免得下游按错口径施工。"""
+    """内容契约 8 枚 = 识图/OCR/反搜/ASR×2/视频×3（简报当年把 TTS 混进 media8 不成立，
+    本条把实况钉住）；TTS 侧只准 `media.tts.autodub` 一枚在册——它是 VOICE-V12
+    （2026-09-22）「自动配音产出步收编中央调度层」的交付：中央注册 + voice_enricher
+    唯一 invoke 点 + `tests/test_descriptor_wiredness_ledger.py` 记 WIRED。
+    再多一枚 TTS/voice descriptor 未经同规格接线即红（本锁仍是「哪句不准」的哨兵）。"""
     from plugins.bot_unified_runtime.runtime.capability_protocols import (
         CAPABILITY_DESCRIPTOR,
         CapabilityFamily,
@@ -278,7 +281,15 @@ def test_media_descriptor_family_is_what_the_shell_says() -> None:
     assert live == expected, f"编排侧 media 族在册面漂移：缺 {sorted(expected - live)}"
     for cid in expected:
         assert registry.get(cid).family is CapabilityFamily.MEDIA  # type: ignore[union-attr]
-    assert not [cid for cid in CAPABILITY_DESCRIPTOR if cid.startswith(("media.tts", "media.voice"))], (
-        "若中央已补 TTS descriptor，请同步撤销 SEAT-V1 §柒 的候选登记并完成接线（本锁即「哪句不准」的哨兵）"
+    # 哨兵改判「只准这一枚 TTS descriptor，且必须真接线」：SEAT-V1 §柒 当年登记的
+    # 「TTS 候选、未接线」状态已随 VOICE-V12 撤销——handler 在册、层 1 唯一 invoke 点在
+    # domains/media/voice_enricher.py（现算：`media.tts.autodub` 的 handler 与描述符同源）。
+    tts_family = {
+        cid for cid in CAPABILITY_DESCRIPTOR if cid.startswith(("media.tts", "media.voice"))
+    }
+    assert tts_family == {"media.tts.autodub"}, (
+        f"TTS/voice descriptor 面漂移（实得 {sorted(tts_family)}）——"
+        "新增者须按 VOICE-V12 同规格完成接线并同步本锁，否则不许在册"
     )
+    assert registry.get("media.tts.autodub").family is CapabilityFamily.MEDIA  # type: ignore[union-attr]
     assert "search_saucenao_ex" in registry.get("media.vision.anime_ip").implementation_ref  # type: ignore[union-attr]

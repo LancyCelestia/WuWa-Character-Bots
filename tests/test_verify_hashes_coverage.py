@@ -71,9 +71,26 @@ def test_builder_sources_all_tracked() -> None:
     assert rel in TRACKED_FILES
 
 
+def _drift_files(text: str) -> set[str]:
+    """从 --check 输出里取漂移件名集合（只认报告自己的行，不猜格式）。"""
+    return {
+        token
+        for line in text.splitlines()
+        for token in line.replace(",", " ").split()
+        if "DRIFT" in line and token.endswith(".py")
+    }
+
+
 def test_builder_drift_gate_red_then_green() -> None:
-    """新覆盖真实生效：临时改动 builder → --check 红；还原 → 绿。"""
+    """新覆盖真实生效：临时改动 builder → --check 红；还原 → 漂移面回到改前集合。
+
+    还原判据**不比"全树绿"**：基线里若另有他件未重录（并发波常态），
+    "全树绿"会把一次彻底还原误报成"基线被污染"（2026-09-22 全量真值席实测假红）。
+    正确的判据是"漂移集合回到改前"——既证还原无痕，也不替他件背锅。
+    """
     original = _DRILL_TARGET.read_bytes()
+    before = _drift_files(_run_check().stderr)
+    assert "templates.py" not in before, "演练起点就不干净：目标件已在漂移面里"
     try:
         # 追加一个换行：内容变了（哈希必变），语义零影响，恢复即无痕。
         _DRILL_TARGET.write_bytes(original + b"\n")
@@ -84,9 +101,9 @@ def test_builder_drift_gate_red_then_green() -> None:
     finally:
         # 字节级还原（非 --write：演练不许污染基线）。
         _DRILL_TARGET.write_bytes(original)
-    restored = _run_check()
-    assert restored.returncode == 0, (
-        "builder 还原后哈希门仍红——还原不彻底或基线被污染：\n" + restored.stderr
+    after = _drift_files(_run_check().stderr)
+    assert after == before, (
+        f"还原不彻底或被本演练污染：改前漂移面={sorted(before)} 改后={sorted(after)}"
     )
 
 

@@ -31,7 +31,7 @@
 无配置键。执法形态是「结构锁 + AST 扫」两类：
 
 - 结构门：`tests/test_board_taxonomy_gate.py`（板块 slug kebab、二级 id 前缀、`impl_paths` 指向的路径必须真实存在、空壳功能不许存在）、`tests/test_capability_registry.py`（能力注册快照）。
-- AST 残骸扫：垫片退役各波用 AST 核对「旧路径直连残余归零」，退役清单与预研在 `docs/design/v21r2-shim-retirement-inventory.md` 与统一波台账；`tests/test_v21_wiredirect_unified_path.py` 锁存量旁路族「只登记不迁移」，`tests/test_capability_result_unique.py` 锁同名类型的分层归并结果。
+- AST 残骸扫：垫片退役各波用 AST 核对「旧路径直连残余归零」，退役清单与预研在 `docs/design/v21r2-shim-retirement-inventory.md` 与统一波台账；`tests/test_v21_wiredirect_unified_path.py` 锁存量旁路族「只登记不迁移」（此口径自 2026-09-22 WAVE42 起对群摘要 / 日常助理两族放开，它们改道中央出口 `submit_active_push`，族数以 `tests/test_outbound_gate.py` 的 T6 锁与 `tests/test_outbound_bypass_prohibition_gate.py` 豁免表为准，见 `.superpowers/sdd/2026-09-21-unify-wave/decisions/WAVE42-active-push-central-exit.md`），`tests/test_capability_result_unique.py` 锁同名类型的分层归并结果。
 - 路径写法面：`tests/test_doc_link_integrity.py` 把「坐标指向垫片」「旧路径字面不存在」计入棘轮，所以搬家不收敛文档会被追账。
 
 ## 失败时看到什么

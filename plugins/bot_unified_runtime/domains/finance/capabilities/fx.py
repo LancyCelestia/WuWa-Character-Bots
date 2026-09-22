@@ -21,7 +21,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -29,6 +28,7 @@ from plugins.bot_unified_runtime.contracts import (
     PrivacyLevel,
     RiskLevel,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
 
 _URL_HINT_RE = re.compile(r"https?://", re.IGNORECASE)
@@ -144,10 +144,12 @@ def build_fx_capability(
         if render_backend is None or not getattr(render_backend, "available", False):
             return ""
         try:
+            from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
+                prune_prefixed,
+            )
             from plugins.bot_unified_runtime.output.card_render.bridge import (
                 render_finance_card_html,
             )
-            from plugins.bot_unified_runtime.runtime.cache_policy import prune_prefixed
 
             payload = dict(payload)
             payload["bot_name"] = str(

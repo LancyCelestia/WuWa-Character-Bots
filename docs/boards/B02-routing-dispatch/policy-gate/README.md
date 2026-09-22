@@ -27,23 +27,36 @@
 
 ## 这个功能解决什么
 
-（待写：一到三段大白话，说清它替谁解决什么问题。）
+在能力真正开始干活之前，先统一回答一句话：这条消息现在该不该回、能不能回、多久才允许再回。如果每个能力自己判，就会出现"同一个群 A 能力回、B 能力不回"这种说不通的分裂，也一定会出现漏判。
+
+本功能把所有会话共用的准入面收在一处：角色解析、黑白名单、监听专用号、安静时间、限流、入站幂等。判定口径唯一，能力侧只消费结论。
 
 ## 处理流程
 
 ```mermaid
 flowchart LR
-  in[入口] --> core[处理] --> out[产出]
+  msg[IncomingMessage] --> roles[roles.resolve_roles]
+  roles --> gate[gate.evaluate_policy]
+  gate --> quiet[quiet_hours.check]
+  quiet --> rl[rate_limiter.check_and_record]
+  rl --> idem[event_idempotency 判重]
+  idem --> cap[能力执行]
 ```
+
+硬否决在最前两道：命中 `blocked` 角色（`reason="sender_blocked"`）、入站风险被判 CRITICAL（`reason="critical_input_risk"`）。其后只对群会话生效：监听专用机器人号一律只收不发（`listen_only_account`），群名单优先级为黑名单1 > 黑名单2 > 白名单2 > 白名单1，黑名单是硬否决。私聊不做群策略限制。各段真身分别是 `domains/chat_reply/policy/roles.py`、`gate.py::evaluate_policy`、`quiet_hours.py::QuietHoursChecker.check`、`rate_limit.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/event_idempotency.py`，由 `plugins/bot_unified_runtime/domains/chat_reply/runtime/pipeline.py` 在能力执行前逐段调用；本目录不写死调用行序（以 pipeline 源码为准）。
 
 ## 边界与降级
 
-（待写：外部依赖挂了怎么办、无源时如何诚实、权限门与限额。）
+- 真身与垫片：`plugins/bot_unified_runtime/policy/` 是 v21r4-B 重组留下的再导出垫片，判据只有一份，写在 `domains/chat_reply/policy/`。改行为只准改后者。
+- 限流是**双实现**（内存版与 SQLite 版），同一套判据两个存储后端，语义必须一致；SQLite 路径不支持热改，装配期取快照。
+- 安静时间/主动搭话门依赖好感度档位，好感度取不到时按不放行处理（宁可少打扰）。
+- 幂等表未配置时判重整段跳过，属"关闭"不是"故障"。
+- 拒绝一律带回 `reason`，不是静默消失；群聊被拦族按既有口径静默，不额外解释。
 
 ## 测试与验收
 
-（待写：离线用例件与真机验收条目指针。）
+`tests/test_why_role_gate.py`、`tests/test_admin_roster_and_roles.py`、`tests/test_group_policy.py`、`tests/test_policy_quiet_hours.py`、`tests/test_group_rate_limit.py`、`tests/test_rate_limit_silent_and_chat_forward.py`、`tests/test_policy_sender_interval.py`、`tests/test_policy_soft_mention_gate.py`、`tests/test_event_idempotency.py`、`tests/test_a18_gate_idempotency_rollback.py`（清单以本目录各三级入口页逐条为准）。真机验收条目见 `docs/acceptance-manual.md` 对应门禁小节。
 
 ## 现行缺陷
 
-（待写：已知未修的 P0/P1/P2 与本功能相关项，指真身台账。）
+SQLite 限流路径与部分调度器族都是装配期配置快照，热改不当夜生效——已登记在 AGENTS 台账「已知问题」表（架构取舍，待统一改造），不是本波新洞。

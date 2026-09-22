@@ -7,7 +7,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import Field, field_validator
 
 from plugins.bot_unified_runtime.contracts import IncomingMessage
-from plugins.bot_unified_runtime.domains.core.contracts.runtime import StrictBaseModel, new_debug_id
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
+    StrictBaseModel,
+    new_debug_id,
+)
 
 DEFAULT_BYPASS_ROLES = ["admin"]
 DEFAULT_SESSION_TYPES = ["group"]

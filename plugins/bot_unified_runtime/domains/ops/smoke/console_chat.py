@@ -29,7 +29,6 @@ import argparse
 import sys
 from typing import Any, cast
 
-from plugins.bot_unified_runtime.capabilities.chat import build_chat_capability
 from plugins.bot_unified_runtime.capabilities.content_parser import (
     build_content_capability,
 )
@@ -52,21 +51,35 @@ from plugins.bot_unified_runtime.capabilities.weather import (
     build_weather_capability,
     is_weather_command,
 )
-from plugins.bot_unified_runtime.capabilities.wiki import (
-    build_wiki_capability,
-    is_wiki_command,
-)
 from plugins.bot_unified_runtime.character import build_character_context_provider
-from plugins.bot_unified_runtime.character.history import (
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    build_chat_capability,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
     InMemoryConversationHistoryStore,
     SQLiteConversationHistoryRepository,
 )
-from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+    build_model_router,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     build_quiet_hours_checker,
     build_rate_limiter,
     build_reply_budget_settings,
     build_role_settings,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.aliases import (
+    CommandAliasResolver,
+    build_command_alias_resolver,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+    build_instance_settings_manager,
+    build_runtime_settings_store,
+    effective_instance,
 )
 from plugins.bot_unified_runtime.domains.core.config.config_readiness import (
     llm_generation_parameter_errors,
@@ -84,6 +97,10 @@ from plugins.bot_unified_runtime.domains.core.credentials.credential_health impo
 from plugins.bot_unified_runtime.domains.core.search.web_search import (
     build_web_search_provider,
 )
+from plugins.bot_unified_runtime.domains.location.capabilities.wiki import (
+    build_wiki_capability,
+    is_wiki_command,
+)
 from plugins.bot_unified_runtime.domains.ops.audit import InMemoryAuditLogger
 from plugins.bot_unified_runtime.domains.ops.audit.file_logger import (
     build_audit_with_file_log,
@@ -94,18 +111,7 @@ from plugins.bot_unified_runtime.llm import (
     OpenAICompatibleLLMProvider,
     StaticLLMProvider,
 )
-from plugins.bot_unified_runtime.llm.model_router import build_model_router
 from plugins.bot_unified_runtime.output.render_backends import build_render_backend
-from plugins.bot_unified_runtime.runtime.aliases import (
-    CommandAliasResolver,
-    build_command_alias_resolver,
-)
-from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
-from plugins.bot_unified_runtime.runtime.settings import (
-    build_instance_settings_manager,
-    build_runtime_settings_store,
-    effective_instance,
-)
 from plugins.bot_unified_runtime.sender import InMemorySendQueue, SendQueue
 from plugins.bot_unified_runtime.sources.downloader import MediaDownloader
 from plugins.bot_unified_runtime.sources.meme_search import build_meme_search_provider

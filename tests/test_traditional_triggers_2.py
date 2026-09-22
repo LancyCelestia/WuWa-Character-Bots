@@ -13,10 +13,6 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.affinity import (
-    is_affinity_command,
-    parse_affinity_query,
-)
 from plugins.bot_unified_runtime.capabilities.divination import (
     is_divination_command,
     parse_divination_intent,
@@ -27,9 +23,6 @@ from plugins.bot_unified_runtime.capabilities.meme import is_meme_command
 from plugins.bot_unified_runtime.capabilities.meme_library import (
     is_meme_library_command,
 )
-from plugins.bot_unified_runtime.capabilities.moegirl import (
-    normalize_entity_question,
-)
 from plugins.bot_unified_runtime.capabilities.reminder import is_reminder_command
 from plugins.bot_unified_runtime.capabilities.subscribe import (
     is_standalone_subscribe_command,
@@ -39,20 +32,27 @@ from plugins.bot_unified_runtime.capabilities.subscribe import (
 from plugins.bot_unified_runtime.capabilities.subscribe_v2 import _normalize
 from plugins.bot_unified_runtime.character.reminders import parse_reminder_intent
 from plugins.bot_unified_runtime.contracts import SessionType
-from plugins.bot_unified_runtime.domains.core.credentials.platform_credentials import (
-    is_cookie_command,
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
+    is_affinity_command,
+    parse_affinity_query,
 )
-from plugins.bot_unified_runtime.domains.schedule.auto_send.parser import (
-    is_auto_send_command_text,
-    parse_auto_send_command,
-)
-from plugins.bot_unified_runtime.runtime.aliases import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.aliases import (
     DEFAULT_VERB_MAP,
     CommandAliasResolver,
     normalize_command_text,
 )
-from plugins.bot_unified_runtime.runtime.natural_language import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.natural_language import (
     detect_natural_command,
+)
+from plugins.bot_unified_runtime.domains.core.credentials.platform_credentials import (
+    is_cookie_command,
+)
+from plugins.bot_unified_runtime.domains.location.capabilities.moegirl import (
+    normalize_entity_question,
+)
+from plugins.bot_unified_runtime.domains.schedule.auto_send.parser import (
+    is_auto_send_command_text,
+    parse_auto_send_command,
 )
 
 # ---------------------------------------------------------------- meme：表情產生

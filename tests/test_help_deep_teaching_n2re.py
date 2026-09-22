@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.echo import (
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
     _HELP_ALIAS_MAP,
     _HELP_CATEGORIES,
     _PUBLIC_HELP_TOPICS,
@@ -110,7 +110,9 @@ def test_recent_new_commands_covered() -> None:
 
 
 def test_documented_hot_keys_match_settable_keys() -> None:
-    from plugins.bot_unified_runtime.runtime.settings import SETTABLE_KEYS
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+        SETTABLE_KEYS,
+    )
 
     blob = str(HELP_ENTRIES)
     for key in (
@@ -159,7 +161,9 @@ def test_documented_ranges_match_code_clamps() -> None:
 
     # /bot recent [数量]：文档宣称 1-20（默认 5）——用越界输入验证真实钳制。
     diagnostics = _FakeDiagnostics()
-    from plugins.bot_unified_runtime.capabilities.debug import build_recent_query_result
+    from plugins.bot_unified_runtime.domains.ops.admin.debug import (
+        build_recent_query_result,
+    )
 
     build_recent_query_result(
         diagnostics,
@@ -192,7 +196,9 @@ def test_documented_ranges_match_code_clamps() -> None:
 
 
 def test_documented_memory_sensitivity_matches_code() -> None:
-    from plugins.bot_unified_runtime.character.memory import MEMORY_SENSITIVITIES
+    from plugins.bot_unified_runtime.domains.chat_reply.character.memory import (
+        MEMORY_SENSITIVITIES,
+    )
 
     blob = _blob("记忆")
     for value in sorted(MEMORY_SENSITIVITIES):
@@ -200,7 +206,9 @@ def test_documented_memory_sensitivity_matches_code() -> None:
 
 
 def test_documented_identity_tag_limit_matches_store() -> None:
-    from plugins.bot_unified_runtime.character.session_identity import _normalize_tags
+    from plugins.bot_unified_runtime.domains.chat_reply.character.session_identity import (
+        _normalize_tags,
+    )
 
     assert len(_normalize_tags("a,b,c,d,e,f,g,h,i,j")) == 8
     assert "8 个" in _blob("身份")
@@ -254,7 +262,9 @@ def test_alias_map_still_collision_free() -> None:
             assert lowered not in seen
             seen.add(lowered)
     # T5 结构修复（fix-trae2）：映射口径=aliases ∪ META 触发词（aliases 优先）。
-    from plugins.bot_unified_runtime.capabilities.echo import _HELP_ENTRY_META
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+        _HELP_ENTRY_META,
+    )
 
     for entry in HELP_ENTRIES:
         meta = _HELP_ENTRY_META.get(entry["topic"], {})

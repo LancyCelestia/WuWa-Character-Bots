@@ -11,16 +11,20 @@
    并锁死「运行期依赖忠实透传」（缺依赖诚实 DENIED，绝不静默丢卡图）。
 ③ 注毒自证：新增直呼 / 第二 invoker 点 / 半迁移 / 摘 descriptor 四态各杀各锁。
 
-本席另钉一条别处没有的锁（``test_generic_executor_path_is_structurally_invisible``）：
-四域多数生产执行点走 root 泛型执行器 ``_run_simple_capability``，builder 符号只作位置实参
-传入、不落 ``ast.Call`` ⇒ **结构门对这条路天然看不见**。把它钉成断言而不是注释，
-是为了让 Wave 4.1 的接手人**每次跑测试都被提醒一次「直呼清零 ≠ 已过 invoker」**。
+本席另钉一条别处没有的锁族（泛型执行器两面）：四域多数生产执行点走 root 泛型执行器
+``_run_simple_capability``，builder 符号只作位置实参传入、不落 ``ast.Call`` ⇒ **结构门对这条路
+天然看不见**（``test_generic_executor_path_is_structurally_invisible`` 继续钉这个盲区本身）。
+Wave 4.1 已在该执行器落下主缝 ``offload_capability(_orchestrated(capability_id, factory, config))``
+⇒ 原「诚实锁」自陈的退役条件成立，按简报**改写为正向锁**
+``test_generic_executor_capability_step_goes_through_orchestration_seam``：装配点的执行步确实
+经过 ``orchestrated_command`` 接缝（AST 判据 + ``test_seam_lock_is_not_toothless`` 杀伤力自证）。
 
 全离线：零网络、零真实数据源、零消息发送、零真实订阅轮询。
 """
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -223,19 +227,243 @@ def test_wave3d_symbols_are_actually_tracked(monkeypatch: pytest.MonkeyPatch) ->
     )
 
 
-def test_generic_executor_path_is_structurally_invisible(monkeypatch: pytest.MonkeyPatch) -> None:
-    """诚实锁（本席最重要的一条）：root 泛型执行器把 builder 作**位置实参**传入 ⇒ 不落 ast.Call
-    ⇒ 结构门扫不到。真树上 bot.moegirl / bot.randpic 就是这样**零可见直呼**，
-    它们的「直呼清零」是门的盲区，不是接入完成。
+# ---------------------------------------------------------------------------
+# ①′ Wave 4.1 主缝落位锁（S-W3D2 席：原「诚实锁」自陈退役条件达成，改写为正向锁）
+# ---------------------------------------------------------------------------
+#: 接缝真身 = ``runtime/capability_protocols.py::orchestrated_command``；root 侧以
+#: ``from .runtime.capability_protocols import orchestrated_command as _orchestrated`` 的
+#: **函数体内别名**接入（函数体内 import 是设计意图：顶置会顶漂下方被门钉住的 live 坐标）。
+#:
+#: 与 Wave 1 件的 ``test_wave41_seam_routes_command_facet_through_central_gate`` **判据不同、
+#: 不是第二真身**：那条钉「缝本身行为对不对」（在册走中央门 / blocked 温和短句 / 未在册回落旧路），
+#: 本件钉「root 装配点到底有没有把执行步交给这道缝」——行为对而调用点没翻，生产仍走旧路。
+#:
+#: 行号一律不进断言（本仓口径见 ``test_orchestration_callsite_wave3_c.py`` 里
+#: 「行号钉法是本仓反复漂移的病根 / 行号只进失败信息供定位」那条注释）。
+_SEAM_SYMBOL = "orchestrated_command"
+_SEAM_HOST_MODULE = "capability_protocols"
+_EXECUTOR_FUNCTION = "_run_simple_capability"
+_OFFLOAD_FUNCTION = "offload_capability"
+_FACTORY_PARAMETER = "capability_factory"
 
-    这条断言故意**证明门会漏**：Wave 4.1 把 :8230 ``capability_factory(config)`` 换成 invoker
-    委托之前，任何「moegirl/randpic 已接入」的宣称都不成立。若将来有人给门加了泛型执行器识别
-    而让它红，那是好事——连同本注释一起删掉即可。
+
+def _seam_bindings(tree: ast.AST) -> tuple[set[str], set[str]]:
+    """壳模块来路的名字绑定：(指向 ``orchestrated_command`` 的本地名, 指向壳模块的本地名)。
+
+    只认从 ``…capability_protocols`` import 进来的名字 ⇒ 谁在本地另写一个同名函数冒充，
+    判据不认（"名字对上了但真身不是它"正是要防的那种假接入）。
+    """
+    symbols: set[str] = set()
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if (node.module or "").rpartition(".")[2] == _SEAM_HOST_MODULE:
+                for alias in node.names:
+                    if alias.name == _SEAM_SYMBOL:
+                        symbols.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.rpartition(".")[2] == _SEAM_HOST_MODULE:
+                    modules.add(alias.asname or alias.name.split(".", 1)[0])
+    return symbols, modules
+
+
+def _seam_calls(scope: ast.AST, symbols: set[str], modules: set[str]) -> list[ast.Call]:
+    """``scope`` 子树内的接缝调用（裸名 / 别名 / ``模块.名字`` 三形态都认）。"""
+    found: list[ast.Call] = []
+    for node in ast.walk(scope):
+        if not isinstance(node, ast.Call):
+            continue
+        target = node.func
+        by_local_name = isinstance(target, ast.Name) and target.id in symbols
+        by_module_attr = (isinstance(target, ast.Attribute)
+                          and target.attr == _SEAM_SYMBOL
+                          and isinstance(target.value, ast.Name)
+                          and target.value.id in modules)
+        if by_local_name or by_module_attr:
+            found.append(node)
+    return found
+
+
+def _forwards_factory_product(executor: ast.AST, seam: ast.Call) -> bool:
+    """接缝交出的执行体须源自 ``capability_factory(…)``：直调，或先落本地名再交出。
+
+    两种形态都放行是刻意的——把 ``capability_factory(config)`` 提成局部变量是同义改写；
+    但"执行体不再来自工厂"意味着命令形能力的真身来源变了，那种必须红。
+    """
+    preassigned: set[str] = set()
+    for node in ast.walk(executor):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(node.value, ast.Call):
+            call = node.value
+            if isinstance(call.func, ast.Name) and call.func.id == _FACTORY_PARAMETER:
+                targets: list[ast.expr] = (
+                    list(node.targets) if isinstance(node, ast.Assign) else [node.target]
+                )
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        preassigned.add(target.id)
+    arguments = list(seam.args) + [keyword.value for keyword in seam.keywords]
+    for argument in arguments:
+        if (isinstance(argument, ast.Call)
+                and isinstance(argument.func, ast.Name)
+                and argument.func.id == _FACTORY_PARAMETER):
+            return True
+        if isinstance(argument, ast.Name) and argument.id in preassigned:
+            return True
+    return False
+
+
+def _executor_seam_facts(src: str) -> tuple[bool, bool]:
+    """判据：``(执行步经过接缝, 接缝交出的是工厂产物)``。
+
+    纯函数——吃源码字符串、吐两个布尔、不抛异常（语法垃圾也诚实判 False）。
+    同一把尺子既量真树（正向锁），也量合成源码（注毒自证），这才是"有杀伤力"的形态：
+    Wave 4.1 之前的真树喂进来必得 ``(False, False)``，现役真树必得 ``(True, True)``。
+    """
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return (False, False)
+    executors = [
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+        and node.name == _EXECUTOR_FUNCTION
+    ]
+    # 恰一个执行器：零个=执行器改名/搬走，两个=长出第二真身，两种都不许静默放行
+    if len(executors) != 1:
+        return (False, False)
+    symbols, modules = _seam_bindings(tree)
+    if not symbols and not modules:
+        return (False, False)
+    executor = executors[0]
+    for node in ast.walk(executor):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == _OFFLOAD_FUNCTION):
+            continue
+        seams = _seam_calls(node, symbols, modules)
+        if not seams:
+            continue
+        return (True, _forwards_factory_product(executor, seams[0]))
+    return (False, False)
+
+
+def test_generic_executor_capability_step_goes_through_orchestration_seam() -> None:
+    """正向锁：root 泛型执行器的「能力执行步」**已经**经过 ``orchestrated_command`` 接缝。
+
+    本条取代原 ``test_generic_executor_path_is_structurally_invisible`` 里那条整串子串断言
+    （``"offload_capability(capability_factory(config))" in src``）。该锁的注释自陈退役条件：
+    「若将来有人给门加了泛型执行器识别而让它红，那是好事——连同本注释一起删掉即可」，
+    Wave 4.1 落主缝即触发它。按简报要求**改写、不删除、不放宽**：判据从「旧字面量还在」
+    翻成「新接缝在位」，方向相反、力度更强（AST 结构判定，不是子串嗅探）。
+
+    语义边界（不在本锁执法面内）：走 invoker 之后**失败/超时语义与错误卡旁路是否变化**
+    由主会话另案核实，本条只钉装配点的静态可达性，不替那条结论背书。
     """
     src = (_PKG_ROOT / _ROOT).read_text(encoding="utf-8")
-    assert "offload_capability(capability_factory(config))" in src, (
-        "root 泛型执行器形态已变，本锁需重估"
+    uses_seam, forwards_factory = _executor_seam_facts(src)
+    assert uses_seam, (
+        "root 泛型执行器 ``_run_simple_capability`` 的能力执行步**没有**经过 "
+        "orchestrated_command 接缝 ⇒ Wave 4.1 主缝被摘掉/改名/挪出 offload_capability/"
+        "长出第二个同名执行器，四种情形都会打到这条（届时在册命令形能力又回到裸直呼）"
     )
+    assert forwards_factory, (
+        "接缝在位但交出的执行体不是 ``capability_factory(…)`` 的产物 ⇒ 命令形能力的真身来源已变，"
+        "本席四域的接入账（_ADAPTER_SHAPES / KNOWN_* 面）需重判"
+    )
+
+
+def test_seam_lock_is_not_toothless() -> None:
+    """杀伤力自证：九型合成源码逐一把判据钉在它该红的地方，正例证明它不是一碰就碎。
+
+    每条负样本各杀一个不同的执法面（旧形态/缝不在 offload 内/缝在别的函数/执行器缺失/
+    第二真身/冒牌同名缝/实参不是工厂产物），正样本各证明一种**同义改写不该红**
+    （别名或直名、函数体内或模块顶层 import、工厂直调或先落变量）。
+    """
+    imported = (
+        "from x.runtime.capability_protocols import orchestrated_command as _orchestrated\n"
+    )
+    imported_plain = "from x.runtime.capability_protocols import orchestrated_command\n"
+    executor_head = (
+        "async def _run_simple_capability(bot, event, capability_factory, capability_id, matcher):\n"
+    )
+    legacy_body = (
+        "    return await pipeline.handle_async(\n"
+        "        message,\n"
+        "        offload_capability(capability_factory(config)),\n"
+        "    )\n"
+    )
+    seams_in_offload = (
+        "    return await pipeline.handle_async(message, offload_capability(\n"
+        "        _orchestrated(capability_id, capability_factory(config), config)))\n"
+    )
+    cases: dict[str, tuple[str, tuple[bool, bool]]] = {
+        # ① Wave 4.1 **之前**的真树形态（=被退役那条锁钉的整串）：判据必须 False，
+        #    否则本锁对"没接入"和"接入了"分不清 = 假锁。
+        "retired_legacy_form": (imported + executor_head + legacy_body, (False, False)),
+        # ② 缝存在但**没包在 offload_capability 里**（先落变量再交）：钉住的是现役形态，
+        #    这种挪位=结构变更，判红并要求重估（诚实写明：本锁对该形态同样敏感）。
+        "seam_outside_offload": (imported + executor_head + (
+            "    step = _orchestrated(capability_id, capability_factory(config), config)\n"
+            "    return await pipeline.handle_async(message, offload_capability(step))\n"),
+            (False, False)),
+        # ③ 缝只活在**别的函数**里：scope 面（不证明执行器这条路已通电）。
+        "seam_in_other_function": (imported + (
+            "async def _decoy_runner(capability_factory, capability_id):\n"
+            "    return offload_capability("
+            "_orchestrated(capability_id, capability_factory(config), config))\n"
+        ) + executor_head + legacy_body, (False, False)),
+        # ④ 执行器整个不见了（改名/搬走）：判据不得靠"别处有缝"糊过去。
+        "executor_missing": (imported + (
+            "async def _run_something_else(capability_factory, capability_id):\n"
+            "    return offload_capability("
+            "_orchestrated(capability_id, capability_factory(config), config))\n"),
+            (False, False)),
+        # ⑤ 长出第二个同名执行器：真身唯一性（第二真身藏旧路也不许绿）。
+        "second_executor_identity": (imported + executor_head + seams_in_offload
+                                     + executor_head + legacy_body, (False, False)),
+        # ⑥ 本地另写同名函数冒充（无壳模块来路）：真身归属面。
+        "locally_defined_fake_seam": (
+            "def orchestrated_command(capability_id, capability, config):\n"
+            "    return capability\n"
+            + executor_head
+            + "    return await pipeline.handle_async(message, offload_capability(\n"
+              "        orchestrated_command(capability_id, capability_factory(config), config)))\n",
+            (False, False)),
+        # ⑦ 缝在位但实参不是工厂产物：第二判据单独有牙。
+        "seam_without_factory_product": (imported + executor_head + (
+            "    return await pipeline.handle_async(message, offload_capability(\n"
+            "        _orchestrated(capability_id, None, config)))\n"), (True, False)),
+        # ⑧ 同义改写**不该红**：直名 import + 工厂先落变量再交出。
+        "plain_name_with_preassigned_product": (imported_plain + executor_head + (
+            "    built = capability_factory(config)\n"
+            "    return await pipeline.handle_async(message, offload_capability(\n"
+            "        orchestrated_command(capability_id, built, config)))\n"), (True, True)),
+        # ⑨ 语法垃圾：诚实 False 且不抛（判据不许把红变成 collection 崩）。
+        "syntax_garbage": ("async def _run_simple_capability(:\n", (False, False)),
+    }
+    for name, (source, expected) in cases.items():
+        assert _executor_seam_facts(source) == expected, (
+            f"{name}：判据实得 {_executor_seam_facts(source)} ≠ 预期 {expected}"
+            "（正例判红=一碰就碎的假锁；负例判绿=永不碎的假锁）"
+        )
+    # 决定性一条：真树与退役形态**判据结果不同** ⇒ 本锁能分辨 Wave 4.1 前后两个世界。
+    root_src = (_PKG_ROOT / _ROOT).read_text(encoding="utf-8")
+    assert _executor_seam_facts(root_src) == (True, True)
+    assert _executor_seam_facts(imported + executor_head + legacy_body) == (False, False)
+    assert _executor_seam_facts(imported + executor_head + seams_in_offload) == (True, True)
+
+
+def test_generic_executor_path_is_structurally_invisible(monkeypatch: pytest.MonkeyPatch) -> None:
+    """诚实盲区锁（**原样保留**）：结构门扫不到泛型执行器这条路。
+
+    Wave 4.1 之前，这条连同它的字面量断言是「moegirl/randpic 已接入」唯一不被证伪的反证；
+    接缝落位后它继续钉三件事，一件都没放宽：①root 生产路径内这三个 id 仍**零可见直呼**
+    （盲区没被门"看见"，只是不再等于未接入）；②把 builder 作位置实参交出的形态，门判为无直呼；
+    ③同一符号真被当场直呼执行，门必须立刻看见。「已接入」这一半改由
+    ``test_generic_executor_capability_step_goes_through_orchestration_seam`` 执法——
+    它读 AST 结构、不依赖门的眼力。
+    """
     # 真树复核：root 生产路径内直呼面必须恰好等于登记 ⇒ 这三个 id 在 root 内一条可见直呼都没有
     direct, _inv = _d_scan(monkeypatch, _load_d_index())
     blind = {cap for cap, mods in direct.items() if _ROOT not in mods}

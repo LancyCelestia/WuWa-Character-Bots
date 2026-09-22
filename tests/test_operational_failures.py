@@ -19,11 +19,6 @@ from plugins.bot_unified_runtime import (
 )
 from plugins.bot_unified_runtime import contracts as runtime_contracts
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
-from plugins.bot_unified_runtime.capabilities.chat import (
-    _execute_mcp_tool_call,
-    _llm_error_result,
-    build_chat_result,
-)
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
@@ -38,8 +33,19 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    _execute_mcp_tool_call,
+    _llm_error_result,
+    build_chat_result,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.policy.roles import (
     build_role_settings,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
 )
 from plugins.bot_unified_runtime.domains.ops.monitor import alerts as alerts_module
 from plugins.bot_unified_runtime.domains.ops.monitor.runtime_event_log import (
@@ -48,8 +54,6 @@ from plugins.bot_unified_runtime.domains.ops.monitor.runtime_event_log import (
 from plugins.bot_unified_runtime.domains.transport.sender.receipts import (
     SQLiteReceiptRepository,
 )
-from plugins.bot_unified_runtime.llm.providers import LLMProviderError
-from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
 from plugins.bot_unified_runtime.sender.nonebot import send_nonebot_message
 from plugins.bot_unified_runtime.sender.onebot import send_onebot_v11
 from plugins.bot_unified_runtime.sender.queue import (
@@ -282,7 +286,7 @@ def test_private_llm_failure_is_generic_and_group_failure_is_silent_audit() -> N
             llm_provider=FailingRouter(),
             model_router=FailingRouter(),
         )
-        from plugins.bot_unified_runtime.capabilities.chat import (
+        from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
             _PERSONA_FAILURE_MESSAGES,
         )
         assert result.body in _PERSONA_FAILURE_MESSAGES or result.body == ""
@@ -393,7 +397,7 @@ def test_pipeline_group_operational_failure_replies_throttled_pool_notice() -> N
     # 300s 节流防刷屏。旧契约「完全不 submit 群请求」随之废止。
     message = _message(SessionType.GROUP)
     audit = InMemoryAuditLogger()
-    from plugins.bot_unified_runtime.capabilities.user_copy import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.user_copy import (
         GROUP_FAILURE_ACK_TEMPLATES,
     )
     from plugins.bot_unified_runtime.sender.queue import InMemorySendQueue

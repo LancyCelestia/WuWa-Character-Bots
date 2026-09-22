@@ -392,6 +392,8 @@ def check_kb_drift(env: dict[str, str], project_root: Path) -> CheckResult:
         FAIL,
         f"ANN={ann_count} vs chunks={chunks}（已嵌入 {embedded}）——存在向量通道漂移",
         "跑一次 knowledge-sync 全链（同步 → embed_pending 补嵌 → build_ann_index 重建）；"
+        "该任务（含 kb-sync 零变更夜）同时自愈 #47 完备性计数戳"
+        "（certify_expected_vector_count，仅当无戳时补盖）；"
         "漂移定性见 .superpowers/sdd/2026-09-13-six-domain-batch/vector-audit.md。",
     )
 

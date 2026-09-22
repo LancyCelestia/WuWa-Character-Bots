@@ -21,8 +21,8 @@ CAS 版本）→ 受控异步运行（超时截断）→ 落回执与审计。�
 
 ## 怎么调用
 
-实现：`control_plane/actions.py:ControlActionService`（业务）+
-`control_plane/api/actions.py:build_actions_router`（HTTP 投影）。
+实现：`plugins/bot_unified_runtime/control_plane/actions.py:ControlActionService`（业务）+
+`plugins/bot_unified_runtime/control_plane/api/actions.py:build_actions_router`（HTTP 投影）。
 
 | 端点 | 语义 |
 |---|---|

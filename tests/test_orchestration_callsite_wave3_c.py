@@ -3,11 +3,12 @@
 权威：``docs/design/capability-orchestration-adoption-spec.md`` §1 D-a/D-b/D-d、
 §4 Wave3、§5（主动投递不经 pipeline 是既定语义）、§7（禁第三套）。
 
-三件事实本件执法：
+本件执法的事实（第 4 条由 S-BLIND 波追加）：
 
 1. **活性 ledger（真树）**——复用 Wave 1 门 ``test_orchestration_callsite_single`` 的
    *结构判据*（``_execution_calls``：赋值即用/裸调用=执行直呼，``*provider`` 关键字实参=注入）
-   与 ``check_invariants`` 三条不变量，扫本三域 24 个 handler 真身符号的生产直呼点与
+   与 ``check_invariants`` 三条不变量，扫 ``_TRACKED_W3C`` 登记的 handler 真身符号
+   （符号数以那张表本身为准，本文不手写计数）的生产直呼点与
    invoker 调用点，登记式比对。组合而非复制：分类逻辑只有一份，被两波门共用。
 2. **未通电现状如实钉死**——本三域 **零能力走 invoker**（``WIRED_W3C`` 为空集），
    全部直呼点集中在根 ``__init__.py``；同时钉住两个**结构性缺口**：
@@ -15,6 +16,20 @@
    （主动投递族无 gate/健康/审计归属），以及 ``CapabilityFamily`` 还没有
    OPS/MUSIC/DIVINATION 三个成员（descriptor「无家可归」）。
 3. **端到端逐字段等值 + 注毒自证**——证明「接入不改行为」可判定，且每条不变量真的会红。
+
+4. **编排门盲区补账（S-BLIND 波，2026-09-22）**——根 ``_handle_status`` 分发段里有五处 ops
+   直呼（``build_status_result`` / ``build_help_result`` / ``build_parse_history_result`` /
+   ``route_memory_command`` / ``build_download_capability``）**此前不被任何编排 callsite 门
+   追踪**：符号既不在本件 ``_TRACKED_W3C``、也不在 Wave 1 / Wave 3-D 的追踪表里，只在
+   ``test_descriptor_wiredness_ledger.py`` 的 controlled_no_callsite 桶挂了 id 账——该桶只钉
+   「descriptor 有没有执行面」，钉不住「生产还剩几处在直呼」。盲区清点与裁定项 裁-3 见
+   ``logs/SEAT-S-OPSOPS.md``。本波把它们补进追踪面并登记为**在册直呼豁免**（与 ops 其余在册
+   豁免同一待遇，豁免文件集合以 ``KNOWN_DIRECT_ALLOWLIST_W3C`` 本身为准，此处不手写计数）。
+   未通电的卡点：五枚真身都收 store / request_id / actor_roles / 外层解析出的 command_text
+   等参数，而 ``_KNOWN_ADAPTERS`` 只有 ``"command"``（填 ``adapter="prepared"`` 派生期即
+   ``ValueError``）⇒ 卡在 ``prepared`` 适配器规格未落，见裁定件
+   ``.superpowers/sdd/2026-09-21-unify-wave/decisions/WAVE42-active-push-central-exit.md``。
+   **本席生产码零改动、这五处一律未通电**，只把暗账变成结构可见的明账。
 
 全离线：三域真身的网络/存储依赖全部以确定性替身注入，零真实 I/O、零消息发送。
 """
@@ -26,7 +41,9 @@ import importlib.util
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # 复用 Wave 1 门的判据（tests/ 非包：按路径装载，不依赖 pytest 的 sys.path 注入顺序）
@@ -79,6 +96,18 @@ _TRACKED_W3C: dict[str, str] = {
     "build_feature_control_result": "bot.runtime",  # 同 id 二真身：见 test_presentation_id_collision_*
     # ops / 诊断
     "build_why_result": "bot.why",
+    # ---- S-BLIND（2026-09-22）ops /bot 分发器五枚编排门盲区 ----------------
+    # 补进面 = 登记为**在册直呼豁免**，本席生产码零改动、这五处一律未通电。
+    # 卡点同 ops 其余在册豁免：真身收 store/request_id/actor_roles/外层解析出的
+    # command_text，而 ``_KNOWN_ADAPTERS`` 只有 "command"（prepared 规格未落）。
+    "build_status_result": "bot.status",
+    # 一个真身盖两枚呈现 id：bot.help 是主支，/bot commands 走同一执行入口返回
+    # bot.commands。本表按符号定 cid ⇒ 只记主支，commands 支共用直呼点
+    # （该事实由 test_blind_spot_symbols_are_tracked_with_right_identity 钉死）。
+    "build_help_result": "bot.help",
+    "build_parse_history_result": "bot.parse",
+    "route_memory_command": "bot.memory",
+    "build_download_capability": "bot.download",
 }
 
 #: 各真身的定义文件（同文件内的自用组合不算「第二执行入口」，与 Wave 1 门同口径）。
@@ -112,6 +141,12 @@ _DEF_FILES_W3C: dict[str, set[str]] = {
     "build_alert_check_result": {"domains/ops/admin/runtime_admin.py"},
     "build_feature_control_result": {"domains/ops/features/feature_control.py"},
     "build_why_result": {"domains/ops/smoke/diagnostics.py"},
+    # ---- S-BLIND 五枚盲区真身的定义文件（同文件内自用组合不算第二执行入口）----
+    "build_status_result": {"domains/chat_reply/capabilities/echo.py"},
+    "build_help_result": {"domains/chat_reply/capabilities/echo.py"},
+    "build_parse_history_result": {"domains/link_parse/support/parse_history.py"},
+    "route_memory_command": {"domains/chat_reply/capabilities/memory.py"},
+    "build_download_capability": {"domains/files/capabilities/download.py"},
 }
 
 #: 三域全部在册 capability_id（invoker 调用点归属用；同 id 多符号是既有事实，见碰撞锁）。
@@ -197,6 +232,24 @@ KNOWN_DIRECT_ALLOWLIST_W3C: dict[str, set[str]] = {
     "bot.quirk": {_ROOT},
     "bot.alert": {_ROOT},
     "bot.why": {_ROOT},
+    # ---- S-BLIND（2026-09-22）五枚编排门盲区：补进追踪面 = 在册直呼豁免，未通电 ----
+    # 共同理由（逐条见各行）：ops 管理命令、真身收外层解析参，卡 prepared 适配器规格
+    # ⇒ 待 prepared 注入规格落地才通电（裁定件
+    # .superpowers/sdd/2026-09-21-unify-wave/decisions/WAVE42-active-push-central-exit.md
+    # + 清点与裁定项 裁-3 见 logs/SEAT-S-OPSOPS.md）。翻面当笔须把它们从本表摘除、
+    # 同时进 WIRED_W3C / KNOWN_INVOKER_SITES_W3C（双门同改，禁只改一个）。
+    # /bot status：管理员运行时姿态面，根分发器两处在册（/bot 别名链 + ops 链）。
+    "bot.status": {_ROOT},
+    # /bot help 与 /bot commands：同一真身两枚呈现 id，帮助卡带 render_backend
+    # （接中央即改渲染兜底口径，SEAT-S-OPSOPS §D-6）。
+    "bot.help": {_ROOT},
+    # /bot parse：链接解析历史查询，闭包内自带管理员门（§D-1 专属拒答文案，
+    # 接中央会塌成通用温和短句）。直呼两处=根分发器 + 离线 CLI 冒烟 harness。
+    "bot.parse": {_ROOT, _SMOKE_CONSOLE},
+    # /bot memory：记忆 CRUD 路由函数（add/list/delete），会话键与 db_path 由外层注入。
+    "bot.memory": {_ROOT},
+    # /bot download：能力工厂直呼（prepared: downloader），非 result-closure。
+    "bot.download": {_ROOT, _SMOKE_CONSOLE},
 }
 
 #: 「通电」=直呼清零 + invoker 调用点恰一处。本席生产码零改动 ⇒ 空集。
@@ -255,6 +308,67 @@ def test_tracked_symbols_are_the_real_handlers_not_ghosts() -> None:
         )
 
 
+#: S-BLIND 波补进追踪面的五枚盲区符号 → (capability_id, 真身定义文件)。
+#: 这张第二表是**有意的冗余**：只把它们加进 ``_TRACKED_W3C`` 而不锁「锁住的是哪枚 id、
+#: 真身穿哪件」，后人把 id 改成别的枚数、或把坐标改到垫片/测试件上，门照样绿＝假锁。
+_BLIND_SPOT_ADDITIONS: dict[str, tuple[str, str]] = {
+    "build_status_result": ("bot.status", "domains/chat_reply/capabilities/echo.py"),
+    "build_help_result": ("bot.help", "domains/chat_reply/capabilities/echo.py"),
+    "build_parse_history_result": (
+        "bot.parse",
+        "domains/link_parse/support/parse_history.py",
+    ),
+    "route_memory_command": ("bot.memory", "domains/chat_reply/capabilities/memory.py"),
+    "build_download_capability": ("bot.download", "domains/files/capabilities/download.py"),
+}
+
+
+def test_blind_spot_symbols_are_tracked_with_their_real_ids() -> None:
+    """S-BLIND 补账的覆盖面自证：五枚符号**在册、id 对、真身坐标对**，三者一起才叫补上了。
+
+    补账前的真实状态（清点见 SEAT-S-OPSOPS 裁-3）：这五处 ops /bot 直呼只挂在
+    ``test_descriptor_wiredness_ledger.py`` 的 controlled_no_callsite 桶——那桶钉的是
+    「descriptor 有没有执行面」，全树 grep 编排 callsite 门（本件 + Wave1 + Wave3-D）
+    对它们的符号**零命中** ⇒ 直呼点结构不可见，属门的覆盖面漏登记，不是新违规。
+    """
+    for symbol, (cap, def_file) in _BLIND_SPOT_ADDITIONS.items():
+        assert _TRACKED_W3C.get(symbol) == cap, (
+            f"{symbol} 的追踪 id 漂移（实得 {_TRACKED_W3C.get(symbol)!r}，应为 {cap!r}）"
+            " ⇒ 门会把这条直呼记到别的枚数上，等于没补"
+        )
+        assert _DEF_FILES_W3C.get(symbol) == {def_file}, (
+            f"{symbol} 的真身坐标漂移（实得 {_DEF_FILES_W3C.get(symbol)}，应为 {{{def_file!r}}}）"
+            " ⇒ 同文件自用组合会被误判成第二直呼点，或真身搬家后本锁变哑"
+        )
+        assert cap in _ALL_CAPS_W3C, f"{cap} 没进在册能力集 ⇒ scan 根本不为它建账"
+        assert KNOWN_DIRECT_ALLOWLIST_W3C.get(cap) is not None, (
+            f"{cap} 缺直呼豁免登记 ⇒ 活性 ledger 会把它当未登记直呼点红"
+        )
+    # 一个真身盖两枚呈现 id 的既有事实：build_help_result 主支产 bot.help，
+    # `/bot commands` 分支产 bot.commands，两枚共用**同一条**生产执行入口。
+    # 本表按符号定 cid ⇒ 只记主支；若将来给 bot.commands 立独立 descriptor，
+    # 必须先把该分支拆成第二个具名真身，否则两枚 id 在中央表按 id 归并时会折成一行
+    # （与 test_no_second_presentation_id_is_silently_consolidated 同一病灶）。
+    tree = ast.parse((_PKG_ROOT / "domains/chat_reply/capabilities/echo.py").read_text(encoding="utf-8"))
+    handler = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "build_help_result"
+    )
+    stamped = {
+        str(sub.value.value)
+        for sub in ast.walk(handler)
+        if isinstance(sub, ast.keyword)
+        and sub.arg == "capability_id"
+        and isinstance(sub.value, ast.Constant)
+        and isinstance(sub.value.value, str)
+    }
+    assert stamped == {"bot.help", "bot.commands"}, (
+        f"build_help_result 的呈现 id 集合变了（实得 {sorted(stamped)}）"
+        " ⇒ 分支拆了就得同步改 _TRACKED_W3C 与豁免表，别留一枚在册一枚在册外"
+    )
+
+
 def test_smoke_harness_second_assembly_is_offline_only() -> None:
     """豁免不靠注释：活性核验 ops 冒烟 harness 确实**不在消息路径上**。
 
@@ -298,11 +412,14 @@ def test_no_second_presentation_id_is_silently_consolidated() -> None:
 #: 唯一表整行缺失（feature gate 无法关它们、审计无归属）。补齐前本登记锁住现状。
 MISSING_FROM_CAPABILITY_DESCRIPTOR: frozenset[str] = frozenset({"bot.admin_alert", "bot.error_report"})
 
-#: 三域在册但「只有路由/门事实、没有编排事实」的 id（D-a 名义满足 / D-d 未满足）。
+#: 在册但「只有路由/门事实、没有编排事实」的 id（D-a 名义满足 / D-d 未满足）。
+#: **这是一把现状锁，不是一份待办表**：枚数不写进名字，清单里任何一枚长出编排事实本锁必红——
+#: 那是"要求随迁"的信号而不是回归。随迁时把它从这里摘掉，并同步缺口账
+#: （`tests/test_descriptor_wiredness_ledger.py`）与 `HANDOFF-UNIFY-20260922.md` §1。
+#: 先例：`bot.divination` 于 prepared 批 B1 落了执行形 ⇒ 2026-09-22 冻结窗从此处摘出（非回退）。
 DESCRIPTOR_SHELL_ONLY_IDS: tuple[str, ...] = (
     "bot.music",
     "bot.music_mode",
-    "bot.divination",
     "bot.status",
     "bot.logs",
     "bot.alert",
@@ -321,7 +438,7 @@ def test_active_push_capability_ids_are_absent_from_unique_table() -> None:
     )
 
 
-def test_three_domain_rows_have_no_orchestration_facts_yet() -> None:
+def test_shell_only_domain_rows_have_no_orchestration_facts_yet() -> None:
     """在册行的 family/health_probe/fallbacks/timeout 全为空 = D-d 未满足的机器证据。"""
     from plugins.bot_unified_runtime.runtime.capability_protocols import (
         CAPABILITY_DESCRIPTOR,
@@ -353,12 +470,16 @@ def test_capability_family_has_no_home_for_these_three_domains() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ③ divination 双算法残余（WP9 收编未装配 ⇒ 现网跑的是第二套）
+# ③ divination 发牌真身（原判「两套并存」的残余已由 S-DIV 收编 ⇒ 本段从「钉残余」翻面为「钉回潮」）
 # ---------------------------------------------------------------------------
 _CAP_FILE = "domains/divination/capabilities/divination.py"
-#: 聊天能力同时 import 两套发牌算法的符号（deck_math 真身 / data.tarot 旧路径）。
-_DECK_MATH_DRAWING = ("draw_tarot_cards", "draw_daily_fortune")
-_TAROT_LEGACY_DRAWING = ("daily_card", "single_guidance", "three_card_spread")
+_TAROT_MODULE = "plugins.bot_unified_runtime.domains.divination.data.tarot"
+#: 收编前的第二套随机发牌入口（rng.sample + 掷硬币）。聊天侧 import 到即红，
+#: 生产包里任何文件引用到也红——它们只该剩 ``data/tarot.py`` 自身的单元测试。
+_SECOND_SOURCE_DRAWING = ("draw_cards", "single_guidance", "three_card_spread")
+#: 仍允许留在聊天侧的 ``data.tarot`` 符号：每日一抽的全域唯一实现 + 两个纯文本渲染器。
+#: （``daily_card`` 不是「第二套发牌算法」：持久路径 ``store/draw_store`` 亦调它，两态同牌。）
+_ALLOWED_TAROT_IMPORTS = {"daily_card", "format_single_text", "format_three_text"}
 
 
 def _imported_symbols(rel: str) -> dict[str, set[str]]:
@@ -370,35 +491,140 @@ def _imported_symbols(rel: str) -> dict[str, set[str]]:
     return out
 
 
-def test_divination_still_holds_two_tarot_drawing_paths() -> None:
-    """如实登记（高价值发现，非本席可修）：同一能力件内两套发牌算法并存。
+def test_divination_holds_no_second_tarot_drawing_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """活性判据：按根的构造法跑塔罗，第二套发牌算法**执行不到**、真身确实执行。
 
-    取证：``capabilities/divination.py`` 从 ``data.deck_math`` 取
-    ``draw_tarot_cards``，又从 ``data.tarot`` 取 ``three_card_spread``/``single_guidance``；
-    后者是 WP9 收编前的 rng.sample 老路径，只在 ``draw_store`` **未注入**时执行。
-    修法是「root 装配注入 DrawStore + 删旧分支」，不是再写第三套（§7）。
-    残余被清掉时本测试红 ⇒ 按提示删除本锁。
+    原名 ``test_divination_still_holds_two_tarot_drawing_paths``。它登记的「两套并存」
+    残余已被 S-DIV 的域内缺省装配收编（SEAT-S-DIV.md §3a），但旧判据只看 import 面，
+    而 ``daily_card`` 合法在册 ⇒ 残余清空后本锁**照样绿**，绿得像两套还在打架——
+    这是假绿，比红更该修（用户明令：判据跟着真值走）。故本锁翻面为四条硬判据：
+
+    ① import 面精确化：能力件从 ``data.tarot`` 只能取白名单里的三个符号；
+    ② 活性绊线：把三颗旧入口换成「踩到即抛错」，跑不通就当场红；
+    ③ 活性真身：能力件全局的 ``draw_tarot_cards`` 每形态恰被执行一次（记录器数出来的）；
+    ④ 完整性门：每次发牌都过 ``rebuild_drawn_cards``（未装配存储的降级路也在门内）。
     """
+    from plugins.bot_unified_runtime.domains.divination.capabilities import (
+        divination as cap_mod,
+    )
+    from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
+        build_divination_capability,
+    )
+    from plugins.bot_unified_runtime.domains.divination.data import tarot as tarot_mod
+
+    # ① import 面：白名单之外不得从旧家取任何东西
     imports = _imported_symbols(_CAP_FILE)
-    math_module = "plugins.bot_unified_runtime.domains.divination.data.deck_math"
-    tarot_module = "plugins.bot_unified_runtime.domains.divination.data.tarot"
-    math_draws = set(imports.get(math_module, ())) & set(_DECK_MATH_DRAWING)
-    legacy_draws = set(imports.get(tarot_module, ())) & set(_TAROT_LEGACY_DRAWING)
-    assert math_draws and legacy_draws, (
-        f"双算法面与登记不符（真身={sorted(math_draws)} 旧路径={sorted(legacy_draws)}）"
-        " ⇒ 残余已收编/已漂移，请更新 SEAT-S-W3C §2 与本锁"
+    stray = imports.get(_TAROT_MODULE, set()) - _ALLOWED_TAROT_IMPORTS
+    assert not stray, f"聊天能力件从 data.tarot 取了白名单外的符号：{sorted(stray)}"
+
+    def _tripwire(name: str) -> Any:
+        def _never(*_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError(f"第二套发牌算法被执行：data.tarot.{name}")
+
+        return _never
+
+    drawn: dict[str, int] = {"cards": 0, "gate": 0}
+    real_draw = cap_mod.draw_tarot_cards
+    real_gate = cap_mod.rebuild_drawn_cards
+
+    def _counting_draw(spread_id: str, prng: Any) -> Any:
+        drawn["cards"] += 1
+        return real_draw(spread_id, prng)
+
+    def _counting_gate(record: Any) -> Any:
+        drawn["gate"] += 1
+        return real_gate(record)
+
+    for name in _SECOND_SOURCE_DRAWING:
+        monkeypatch.setattr(tarot_mod, name, _tripwire(name))
+    monkeypatch.setattr(cap_mod, "draw_tarot_cards", _counting_draw)
+    monkeypatch.setattr(cap_mod, "rebuild_drawn_cards", _counting_gate)
+    for text in ("塔罗", "塔罗 三张", "抽塔罗"):
+        before = drawn["cards"]
+        # 根 __init__.py:4157-4158 的真实构造法：只给 config/render_backend，不注入存储
+        result = build_divination_capability(None, render_backend=None)(
+            _message(text), None
+        )
+        assert drawn["cards"] == before + 1, (
+            f"「{text}」没有实际执行唯一真身 deck_math.draw_tarot_cards"
+            f"（正文开头 {str(result.body)[:24]!r}）⇒ 发牌被换道了"
+        )
+        assert str(result.body).startswith("🔮"), (
+            f"「{text}」未照常出牌：{str(result.body)[:40]!r}"
+        )
+    assert drawn["gate"] == drawn["cards"], (
+        f"有 {drawn['cards'] - drawn['gate']} 次发牌没经过完整性门 rebuild_drawn_cards"
     )
 
 
-def test_production_does_not_assemble_divination_draw_store() -> None:
-    """活性判据：根装配只传 ``render_backend``，从不传 ``draw_store`` ⇒
-    现网占卜走的是 ``data/tarot`` 第二套算法、不落库、不过完整性门。
-    「唯一真身存在」≠「唯一真身在跑」——这条锁的是后者。
+def test_legacy_tarot_drawing_symbols_have_no_production_consumer() -> None:
+    """退役判据（活性半边之外的那半边）：旧发牌三件套在生产包里零消费方。
+
+    本席只测不删——「两套合一」的最后一刀（``data/tarot.py`` 三函数退役与否）归主会话裁。
+    这条锁把裁断所需的事实钉成可复跑判据：除定义件自身外，``plugins/`` 全树不得出现对
+    ``draw_cards`` / ``single_guidance`` / ``three_card_spread`` 的任何引用。
+    将来有人接回来 ⇒ 红；真身三函数被删除 ⇒ ``getattr`` 那侧不变，本锁仍绿（零引用是真的）。
     """
+    consumers: list[str] = []
+    for path in (_PKG_ROOT).rglob("*.py"):
+        rel = path.relative_to(_PKG_ROOT).as_posix()
+        if rel == "domains/divination/data/tarot.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        hits = [name for name in _SECOND_SOURCE_DRAWING if name in text]
+        if not hits:
+            continue
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:  # pragma: no cover - 真树不该出现，出现即由静态门负责
+            consumers.append(f"{rel}:无法解析")
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == _TAROT_MODULE:
+                for alias in node.names:
+                    if alias.name in _SECOND_SOURCE_DRAWING:
+                        consumers.append(f"{rel}:{node.lineno}:{alias.name}")
+            elif isinstance(node, ast.Attribute) and node.attr in _SECOND_SOURCE_DRAWING:
+                consumers.append(f"{rel}:{node.lineno}:{node.attr}")
+    assert not consumers, (
+        f"旧发牌算法出现生产消费方（应零）：{sorted(set(consumers))}"
+        " ⇒ 要么第二套回潮，要么退役前得先接走这条依赖，两种都要重判 WP9"
+    )
+
+
+def test_production_still_lacks_the_divination_persistence_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """活性判据：现网塔罗跑唯一真身，但真实 Config 无键 ⇒ 一行都不落库。
+
+    原名 ``test_production_does_not_assemble_divination_draw_store``。旧推理链是
+    「根不传 ``draw_store`` ⇒ 现网走 ``data/tarot`` 第二套算法、不过完整性门」。
+    前半至今仍是事实，后半已被 S-DIV 的域内缺省装配作废（能力件自己
+    ``draw_store_from_config(config)``），所以判据从「读根文件文本」换成「真跑一次看结果」：
+    ① 根侧构造法照旧只有 ``render_backend``（这条事实本身没变，仍然如实钉）；
+    ② 真实 ``Config`` 拿不到在册键、解析口返回 None（=不落库的**活性**证据，不是注释）；
+    ③ 因此今天生产缺口从「跑第二套算法」收窄为 P-1「键未登记⇒不落库、不受配额」。
+    键一旦落进 ``config.py``，本锁第②条红 ⇒ 按提示改判为「聊天与 REST 同落一张 draws 表」，
+    不要删锁（P-1 待裁，见 SEAT-S-DIV.md §5b）。
+    """
+    from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.domains.divination.capabilities import (
+        divination as cap_mod,
+    )
+    from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
+        build_divination_capability,
+    )
+    from plugins.bot_unified_runtime.domains.divination.store.draw_store import (
+        DB_PATH_CONFIG_KEY,
+        draw_store_from_config,
+    )
+
+    # ① 根装配面：唯一调用点、只注入 render_backend
     root = (_PKG_ROOT / "__init__.py").read_text(encoding="utf-8")
     assert "draw_store=" not in root and "DrawStore(" not in root, (
-        "根文件已装配 draw_store ⇒ 第二套算法在现网已失活，"
-        "本锁与 test_divination_still_holds_two_tarot_drawing_paths 需一并重判"
+        "根文件已显式装配 draw_store ⇒ 域内缺省装配不再是唯一路径，重判本锁与 §5a"
     )
     tree = ast.parse(root)
     sites = [
@@ -409,23 +635,61 @@ def test_production_does_not_assemble_divination_draw_store() -> None:
     ]
     assert len(sites) == 1, f"根侧 build_divination_capability 调用点数漂移（实 {len(sites)}）"
     kwargs = {keyword.arg for keyword in sites[0].keywords if keyword.arg}
-    assert "draw_store" not in kwargs, "装配已注入 draw_store ⇒ 现网不再跑第二套算法，重判本锁"
+    assert "draw_store" not in kwargs, "根侧已注入 draw_store ⇒ 装配面分叉，重判本锁"
+
+    # ② 活性：真实 Config 走解析口 ⇒ None（既不建库、也不猜路径）
+    config = Config()
+    assert not hasattr(config, DB_PATH_CONFIG_KEY), (
+        f"Config 已有 {DB_PATH_CONFIG_KEY} ⇒ P-1 落地，请把本锁改判为「两侧同落 draws 表」"
+    )
+    assert draw_store_from_config(config) is None, "解析口开始建库了 ⇒ 本锁结论过期"
+
+    # ③ 活性：即便如此，现网构造法执行的仍是唯一真身、且正文照常出牌
+    real_store_factory = cap_mod.draw_store_from_config
+    seen: list[Any] = []
+
+    def _observing_factory(config: Any) -> Any:
+        seen.append(config)
+        return real_store_factory(config)
+
+    monkeypatch.setattr(cap_mod, "draw_store_from_config", _observing_factory)
+    result = build_divination_capability(config, render_backend=None)(
+        _message("塔罗"), None
+    )
+    assert seen == [config], "能力件没有走唯一解析口 ⇒ 装配面又长出第二条路"
+    assert str(result.body).startswith("🔮"), f"现网塔罗未照常出牌：{str(result.body)[:40]!r}"
+
+
+#: DrawError 唯一真身的**归属文件**（按符号定位，不钉行号）。
+#: 行号钉法是本仓反复漂移的病根：存储件头部多一行 import 就红，而红的是坐标不是结论
+#: （S-DIV 波即由此造出一处假红，见 SEAT-S-DIV.md §5c-1 与本件 test_only_one_draw_error_…）。
+_DRAW_STORE_REL = "domains/divination/store/draw_store.py"
 
 
 def test_only_one_draw_error_class_in_the_domain() -> None:
-    """WP9 的「异常只留一颗」是真的：全树恰一处 ``class DrawError``（本席复核非照抄）。"""
-    definitions: list[str] = []
+    """WP9 的「异常只留一颗」是真的：全树恰一处 ``class DrawError``，且住在存储真身里。
+
+    判据两条，都是符号级：①**颗数恰一**（第二颗现身即红，这才是本锁真正执法的事）；
+    ②**归属文件**是 ``store/draw_store.py``（搬家=分叉的前兆）。行号只进失败信息供定位，
+    绝不进断言——它随文件头注释/``__all__`` 漂移，而漂移不代表任何结论变化。
+    """
+    definitions: list[tuple[str, int]] = []
     for path in _PKG_ROOT.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         if "class DrawError" not in text:
             continue
         tree = ast.parse(text)
         definitions.extend(
-            f"{path.relative_to(_PKG_ROOT).as_posix()}:{node.lineno}"
+            (path.relative_to(_PKG_ROOT).as_posix(), node.lineno)
             for node in ast.walk(tree)
             if isinstance(node, ast.ClassDef) and node.name == "DrawError"
         )
-    assert definitions == ["domains/divination/store/draw_store.py:57"], f"第二颗 DrawError 现身：{definitions}"
+    owners = sorted({rel for rel, _ in definitions})
+    assert len(definitions) == 1, f"第二颗 DrawError 现身：{definitions}"
+    assert owners == [_DRAW_STORE_REL], (
+        f"DrawError 不在存储真身里（实为 {owners}，坐标 {definitions}）"
+        " ⇒ 要么第二颗以别名/子类形态存在，要么真身搬家，两种都得重判 WP9 的「异常只留一颗」"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -462,7 +726,9 @@ def _local_invoker(capability_id: str, handler: Any, *, required_roles: tuple[st
         default_invoker,
     )
 
-    base: CapabilityDescriptor = default_invoker().registry.get("files.read.code")  # 型别正确的模板行
+    template = default_invoker().registry.get("files.read.code")  # 型别正确的模板行
+    assert template is not None, "夹具缺模板行 files.read.code ⇒ 中央表结构变了，本门需重判"
+    base: CapabilityDescriptor = template
     descriptor = replace(
         base,
         capability_id=capability_id,
@@ -575,7 +841,7 @@ def test_e2e_music_through_invoker_equals_direct_call() -> None:
     )
 
     message = _message("点歌 晴天")
-    assembly = {
+    assembly: dict[str, Any] = {
         "providers": [],
         "audio_downloader": lambda url: None,
         "candidate_providers": None,
@@ -672,6 +938,55 @@ def test_poison_new_direct_callsite_is_red() -> None:
     assert any("bot.music" in item and "未登记直呼点" in item for item in violations), f"注毒未被拦：{violations}"
 
 
+def _poison_into_real_file(index: dict[str, str], rel: str, symbol: str) -> dict[str, str]:
+    """在**真实生产件**的内容尾部追加一处直呼（追加而非覆盖：覆盖会把该件原本在册的
+    直呼扫没，红就成了假红）。用于证明「补进追踪面」真的长出执法面。"""
+    poisoned = dict(index)
+    poisoned[rel] = (
+        poisoned.get(rel, "")
+        + f"\n\ndef _blind_spot_probe(config):\n    return {symbol}(config)\n"
+    )
+    return poisoned
+
+
+def test_poison_blind_spot_symbol_in_foreign_real_file_is_red() -> None:
+    """注毒（S-BLIND）：新纳符号出现在**另一个不该直呼的真实生产件** ⇒ 必红。
+
+    为什么非要有这条：把名字塞进 ``_TRACKED_W3C`` 本身**不产生**执法面——若豁免表被写成
+    按文件全赦（或真身坐标写成整棵 domains/），补账只是让暗账换个地方睡觉。三发一起才叫
+    牙齿：①注入红、②同文件对不同符号待遇不同（豁免按 id→文件集合判）、③真身件自用不红。
+    """
+    real = _load_real_index()
+    # 先自证基线是绿的：红只能来自注入，不能来自存量。
+    base_direct, base_invoker = scan_w3c(real)
+    assert check_invariants(
+        base_direct, base_invoker, wired=WIRED_W3C, allowlist=KNOWN_DIRECT_ALLOWLIST_W3C
+    ) == []
+
+    # ① build_status_result 直呼注入 ops 面真身聚集地 debug.py（bot.status 的豁免里没有它）
+    direct, invoker = scan_w3c(_poison_into_real_file(real, "domains/ops/admin/debug.py", "build_status_result"))
+    violations = check_invariants(direct, invoker, wired=WIRED_W3C, allowlist=KNOWN_DIRECT_ALLOWLIST_W3C)
+    assert len(violations) == 1 and "bot.status" in violations[0] and "未登记直呼点" in violations[0], (
+        f"注毒未被拦或连带误伤（应恰一发 bot.status）：{violations}"
+    )
+
+    # ② echo.py 是 build_status_result / build_help_result 的**豁免真身件**，
+    #    却不是 route_memory_command 的真身件 ⇒ 同一文件换个符号必须红（豁免按 id 判，非按文件全赦）
+    direct, invoker = scan_w3c(
+        _poison_into_real_file(real, "domains/chat_reply/capabilities/echo.py", "route_memory_command")
+    )
+    violations = check_invariants(direct, invoker, wired=WIRED_W3C, allowlist=KNOWN_DIRECT_ALLOWLIST_W3C)
+    assert len(violations) == 1 and "bot.memory" in violations[0], (
+        f"豁免按文件全赦的洞没被堵住（应恰一发 bot.memory）：{violations}"
+    )
+
+    # ③ 对照：直呼出现在**自己的真身件**里不计直呼（_DEF_FILES_W3C 那行真在豁免，不是装饰）
+    self_use = {"domains/chat_reply/capabilities/memory.py": "def f(a):\n    return route_memory_command(a)\n"}
+    direct, invoker = scan_w3c(self_use)
+    assert direct["bot.memory"] == set(), "真身件内自用组合被误判为第二直呼点 ⇒ 豁免坐标写错了"
+    assert check_invariants(direct, invoker, wired=WIRED_W3C, allowlist=KNOWN_DIRECT_ALLOWLIST_W3C) == []
+
+
 def test_poison_second_invoker_site_is_red() -> None:
     """注毒②：两个模块各 invoke bot.divination → 第二调用点红。"""
     src = "def f():\n    default_invoker().invoke(CapabilityRequest(capability_id='bot.divination'))\n"
@@ -739,6 +1054,7 @@ def test_descriptor_removed_is_honest_and_old_path_still_works() -> None:
     from plugins.bot_unified_runtime.runtime.capability_protocols import default_invoker
 
     base = default_invoker().registry.get("files.read.code")
+    assert base is not None, "中央表缺模板行 files.read.code ⇒ 本用例前提失效"
     descriptor = replace(base, capability_id="bot.logs", title="运行时日志", required_roles=("admin",))
     registry.register(descriptor)
 
@@ -810,14 +1126,14 @@ def test_super_admin_passes_ops_gate() -> None:
     )
 
     service = build_role_settings(
-        SimpleNamespace(  # 只喂 RoleSettings 需要的六张名单，不构造整个 Config
+        cast(Any, SimpleNamespace(  # 只喂 RoleSettings 需要的六张名单，不构造整个 Config
             bot_admin_user_ids=[],
             bot_telegram_admin_user_ids=[],
             bot_super_admin_user_ids=["3865067623"],
             bot_trusted_user_ids=[],
             bot_enterprise_user_ids=[],
             bot_blocked_user_ids=[],
-        )
+        ))
     )
     roles = tuple(service.resolve_roles(_message("查日志", sender_id="3865067623")))
     assert "admin" in roles, f"超管未叠加 admin（roles.py 语义变了）：{roles}"

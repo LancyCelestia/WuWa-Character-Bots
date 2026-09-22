@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 # 审查 Q-01：user_copy 为零依赖纯常量池，sources 跨层引用不构成装配环。
-from plugins.bot_unified_runtime.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.sources.parsers.http_util import http_get_text
 
 # 响应体上限：单源 RSS 实测最大约 260KB（华尔街见闻），1MB 已是数倍冗余，

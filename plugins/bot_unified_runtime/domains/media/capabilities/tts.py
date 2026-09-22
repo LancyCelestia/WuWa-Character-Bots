@@ -65,6 +65,7 @@ import time
 import uuid
 import wave
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1441,6 +1442,79 @@ def _skip_voice_with_tags(result: CapabilityResult, *extra: str) -> CapabilityRe
     return result.model_copy(
         update={"audit_tags": [*result.audit_tags, "tts", "auto_reply_skipped", *extra]}
     )
+
+
+def synthesize_autodub(
+    config: Any, speech: str, *, synth: Callable[..., tuple[Any, str]] | None = None
+) -> tuple[str, dict[str, Any] | str]:
+    """自动配音「合成这一步」的单一真身（VOICE-V12，收编中央调度层第二出站腿）。
+
+    入参=**已过内容门与硬顶的干净文本**（取文/政策/硬顶是层 1 的「该不该配」判定，
+    留在 hook；本函数只做「一句话→一段可交付音频」这个产出步，被中央 handler 调用）。
+
+    与命令路（``build_tts_capability`` 合成段）和旧包装（``maybe_attach_voice`` 合成段）
+    **逐字节同构**：preset→params→选 ref→确定性 seed→合成→落盘字节摘要。
+
+    ``synth``：合成原语注入缝，缺省=本模块 ``synthesize``（现网逐字节等价）。调用方
+    （层 1 hook 经中央 context）交来的合成原语与缺省同一真身；注入缝的存在只为让
+    「合成这一步」的可测试性落在**产出步的 seam 上**（离线单测注入确定性替身），
+    不改变生产取数、不新增第二路引擎。字节顶/落盘配额仍全在 ``synthesize`` 真身。
+
+    返回 ``(code, payload)``：
+
+    - ``"ok"``     → payload=``{audio_file, review_text, content_sha256?, preset_id, seed}``
+      （``content_sha256`` 算不出即缺省，诚实降级，与出站收口 canonicalize 咬合）；
+    - ``"no_ref"`` → payload=""（确定性失败：无可用参考音频，对应 tts_no_ref_audio 码族）；
+    - ``"failed"`` → payload=失败原因串（供 ``_failure_issue`` 前缀表精确分类）。
+
+    失败原因不在这里造 kind——只把合成原语的原样原因串交回，层 2 分类与层 1
+    挂 issue 各在其位（T58 §2：失败原因可见处才谈得上分类）。
+    """
+    synth_fn = synth if synth is not None else synthesize
+    preset = _resolve_preset(config)
+    params = _build_params(config)
+    ref = pick_ref_audio(
+        getattr(config, "bot_tts_ref_audios", []) or [],
+        base_dir=str(getattr(config, "bot_tts_gptsovits_dir", "") or ""),
+    )
+    if ref is None:
+        return "no_ref", ""
+    speech_seed = derive_seed(
+        speech,
+        ref,
+        params,
+        api_url=str(getattr(config, "bot_tts_api_url", "") or ""),
+        preset_id=preset.preset_id,
+    )
+    path, reason = synth_fn(
+        api_url=str(getattr(config, "bot_tts_api_url", "") or ""),
+        text=speech,
+        ref=ref,
+        params=params,
+        output_dir=_output_dir(config),
+        timeout_seconds=float(
+            getattr(config, "bot_tts_timeout_seconds", _DEFAULT_TIMEOUT_SECONDS)
+        ),
+        cache_enabled=bool(getattr(config, "bot_tts_cache_enabled", True)),
+        preset_id=preset.preset_id,
+        engine_params=dict(preset.params),
+        seed=speech_seed,
+        max_audio_bytes=resolve_max_audio_bytes(config),
+        quota_max_bytes=int(getattr(config, "bot_tts_cache_max_bytes", 0) or 0),
+        quota_max_age_days=int(getattr(config, "bot_tts_cache_max_age_days", 0) or 0),
+    )
+    if path is None:
+        return "failed", reason or "合成失败"
+    data: dict[str, Any] = {
+        "audio_file": str(path),
+        "review_text": speech,
+        "preset_id": preset.preset_id,
+        "seed": speech_seed,
+    }
+    content_digest = _content_digest_for(path)
+    if content_digest is not None:
+        data["content_sha256"] = content_digest
+    return "ok", data
 
 
 def maybe_attach_voice(

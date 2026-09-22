@@ -432,7 +432,7 @@ def build_default_takeover_registry() -> TakeoverRegistry:
         MatcherEntry("dirty_guard_matcher", "__init__.py:4558", "on_message", 3, "dirty_guard"),
         MatcherEntry(
             "campus_record_matcher",
-            "__init__.py:5027",
+            "__init__.py:5248",
             "on_message",
             8,
             "campus",

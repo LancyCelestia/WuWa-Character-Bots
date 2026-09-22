@@ -12,20 +12,21 @@ from pathlib import Path
 from typing import Any
 
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
-from plugins.bot_unified_runtime.capabilities.chat import build_chat_capability
 from plugins.bot_unified_runtime.character import build_character_context_provider
-from plugins.bot_unified_runtime.character.history import (
-    InMemoryConversationHistoryStore,
-)
 from plugins.bot_unified_runtime.config import Config
-from plugins.bot_unified_runtime.config_readiness import (
-    llm_generation_parameter_errors,
-    persona_context_preflight_errors,
-)
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     ReceiptState,
     SessionType,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    build_chat_capability,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
+    InMemoryConversationHistoryStore,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+    build_model_router,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     build_quiet_hours_checker,
@@ -39,6 +40,13 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
     RuntimeSettingsStore,
 )
+from plugins.bot_unified_runtime.domains.core.config.config_readiness import (
+    llm_generation_parameter_errors,
+    persona_context_preflight_errors,
+)
+from plugins.bot_unified_runtime.domains.core.search.web_search import (
+    build_web_search_provider,
+)
 from plugins.bot_unified_runtime.domains.ops.smoke.console_chat import (
     _reconfigure_stdio,
     load_smoke_config,
@@ -47,9 +55,7 @@ from plugins.bot_unified_runtime.llm import (
     OpenAICompatibleLLMProvider,
     StaticLLMProvider,
 )
-from plugins.bot_unified_runtime.llm.model_router import build_model_router
 from plugins.bot_unified_runtime.sender import InMemorySendQueue
-from plugins.bot_unified_runtime.domains.core.search.web_search import build_web_search_provider
 
 
 def _build_llm_provider(config: Config) -> Any:

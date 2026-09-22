@@ -81,7 +81,7 @@ def extract_index_block(text: str) -> list[str]:
             f"（应含 {BEGIN_MARKER[:32]}… 与 {END_MARKER}）——本门失效即红，"
             "须由维护者重录投影块，不得删块凑绿。"
         )
-    head, sep, tail = text.partition(BEGIN_MARKER)
+    _head, sep, tail = text.partition(BEGIN_MARKER)
     if not sep:
         raise AssertionError("marker 起始后无内容")
     body, end_sep, _rest = tail.partition(END_MARKER)

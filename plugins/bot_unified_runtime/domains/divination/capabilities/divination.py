@@ -34,9 +34,9 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
 )
 
-# V2.1 S12（W6 席）：抽签持久化与公平性服务。注入 draw_store 即启用持久化
+# V2.1 S12（W6 席）：抽签持久化与公平性服务。有 draw_store 即启用持久化
 # 路径（塔罗抽取落库幂等 + 随机抽取冷却/每日配额 + 每日运势 day_key 幂等）；
-# 不注入时完全保持旧行为（无持久化、无配额），既有回归零影响。
+# 没有存储只影响「落不落库」，不影响「用哪套算法」——发牌一律走 deck_math。
 #
 # **WP9 收编（2026-09-21）**：此处注入的 ``draw_store`` 是全域唯一真身
 # ``store/draw_store.DrawStore``（``draws`` 表 + 幂等三键 + 写锁事务内配额），
@@ -74,8 +74,6 @@ from plugins.bot_unified_runtime.domains.divination.data.tarot import (
     daily_card,
     format_single_text,
     format_three_text,
-    single_guidance,
-    three_card_spread,
 )
 from plugins.bot_unified_runtime.domains.divination.service.divination_service import (
     build_interpretation_context,
@@ -86,6 +84,8 @@ from plugins.bot_unified_runtime.domains.divination.store.draw_store import (
     DrawError,
     DrawRecord,
     QuotaPolicy,
+    draw_store_from_config,
+    fortune_secret_from_config,
 )
 
 __all__ = [
@@ -455,18 +455,63 @@ def build_divination_capability(
     ``render_backend`` 可选：传入可用渲染后端时结果合成卡片图（kind 变
     mixed），不传或渲染失败时保持纯文字输出（行为与旧版完全一致）。
 
-    V2.1 S12 注入面（全部可选，缺省=完全旧行为，既有回归零影响）：
+    V2.1 S12 注入面（全部可选；不传时**由域内解析口从 Config 取**，见下）：
     - ``draw_store``：全域唯一真身 ``domains.divination.store.draw_store.DrawStore``
-      实例（WP9 收编后聊天与控制面 REST 共用同一个 ``draws`` 表）；注入后塔罗抽取
+      实例（WP9 收编后聊天与控制面 REST 共用同一个 ``draws`` 表）；有存储时塔罗抽取
       落库（draw_id/幂等键/day_key 三键幂等）、随机抽取受每主体冷却与每日配额、
       解读与渲染只消费持久行（篡改 → deck_integrity_mismatch 温和兜底）。
     - ``fortune_key``：每日运势 HMAC 密钥（服务端保管，测试注入）。
     - ``clock``：注入时钟（callable -> aware datetime），配额/日期可测。
+
+    **S-DIV 收编（2026-09-22）**：装配半边此前无人负责——根 ``__init__.py`` 只传
+    ``render_backend``，于是现网聊天跑的是收编前 ``data/tarot`` 的 rng.sample 老路径、
+    一行都不落（取证 SEAT-S-DIV §1b）。现在缺省由 ``draw_store_from_config`` 现读
+    在册键补齐，两侧同键同文件；键未配置 ⇒ 依旧不建库（绝不猜路径），但**发牌
+    一律走唯一真身** ``deck_math`` 并过 ``validated_tarot_cards`` 完整性门。
     """
+
+    store: Any | None = (
+        draw_store if draw_store is not None else draw_store_from_config(config)
+    )
+    secret: bytes | None = (
+        fortune_key if fortune_key is not None else fortune_secret_from_config(config)
+    )
 
     def _current_time(message: IncomingMessage) -> datetime:
         # 注入时钟优先（配额/本地日期可测）；缺省用消息时间戳（与 bazi 口径一致）。
         return clock() if clock is not None else message.timestamp
+
+    def _tarot_error_result(exc: DrawError, message: IncomingMessage, tags: list[str]) -> CapabilityResult:
+        """抽牌失败面（持久/非持久两路共用一份文案，不留第二套说法）。"""
+        if exc.code == "rate_limited":
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.divination",
+                kind="divination",
+                body=(
+                    "你刚刚才抽过塔罗，先让牌面的指引沉淀一下，"
+                    "稍等一分钟再来问吧。"
+                ),
+                audit_tags=[*tags, "divination:rate_limited"],
+            )
+        if exc.code == "deck_integrity_mismatch":
+            return CapabilityResult(
+                request_id=message.request_id,
+                capability_id="bot.divination",
+                kind="divination",
+                body=(
+                    "这次占卜的记录好像被意外改动过，为了不给你误导的"
+                    "解读，先收回这条结果。换个说法再抽一次试试？"
+                ),
+                audit_tags=[*tags, "divination:integrity_mismatch"],
+            )
+        return CapabilityResult(
+            request_id=message.request_id,
+            capability_id="bot.divination",
+            kind="divination",
+            body="占卜的小抽屉好像卡住了，稍后再试试好吗？",
+            audit_tags=[*tags, "divination:store_error"],
+        )
 
     def _tarot_with_store(
         intent: DivinationIntent, message: IncomingMessage, tags: list[str]
@@ -477,7 +522,6 @@ def build_divination_capability(
         ``created`` 决定这轮是「新抽」还是「同一请求重放」，重放不改牌面、
         只在审计与提示上如实标注（不再靠 ``INSERT OR IGNORE`` 猜是否新建）。
         """
-        store = draw_store
         if store is None:  # pragma: no cover - 调用方分支已保证非空
             raise DrawError("feature_disabled", "抽签存储未装配")
         moment = _current_time(message)
@@ -578,35 +622,7 @@ def build_divination_capability(
                     title = "塔罗指引"
                 extra = "divination:persisted"
         except DrawError as exc:
-            if exc.code == "rate_limited":
-                return CapabilityResult(
-                    request_id=message.request_id,
-                    capability_id="bot.divination",
-                    kind="divination",
-                    body=(
-                        "你刚刚才抽过塔罗，先让牌面的指引沉淀一下，"
-                        "稍等一分钟再来问吧。"
-                    ),
-                    audit_tags=[*tags, "divination:rate_limited"],
-                )
-            if exc.code == "deck_integrity_mismatch":
-                return CapabilityResult(
-                    request_id=message.request_id,
-                    capability_id="bot.divination",
-                    kind="divination",
-                    body=(
-                        "这次占卜的记录好像被意外改动过，为了不给你误导的"
-                        "解读，先收回这条结果。换个说法再抽一次试试？"
-                    ),
-                    audit_tags=[*tags, "divination:integrity_mismatch"],
-                )
-            return CapabilityResult(
-                request_id=message.request_id,
-                capability_id="bot.divination",
-                kind="divination",
-                body="占卜的小抽屉好像卡住了，稍后再试试好吗？",
-                audit_tags=[*tags, "divination:store_error"],
-            )
+            return _tarot_error_result(exc, message, tags)
         card = _render_card("tarot", title, body, message.request_id or "")
         return CapabilityResult(
             request_id=message.request_id,
@@ -621,6 +637,84 @@ def build_divination_capability(
                 *replay,
                 "card_rendered" if card else "text_only",
             ],
+        )
+
+    def _tarot_without_store(
+        intent: DivinationIntent, message: IncomingMessage, tags: list[str]
+    ) -> CapabilityResult:
+        """未装配存储时的降级面：发牌仍是唯一真身 ``deck_math``，只少那一行落库。
+
+        牌面先组一条**不入库**的 ``DrawRecord``，再走与持久路径同一颗
+        ``rebuild_drawn_cards``（内含 ``validated_tarot_cards``）——聊天正文与控制面
+        解读因此过同一道完整性门，不存在「降级=换回 rng.sample 老算法」的第二条路。
+        """
+        moment = _current_time(message)
+        bot_id = str(getattr(message, "bot_id", "") or "")
+        sender = str(message.sender_id or "anonymous")
+        local_day = moment.astimezone(CST).date()
+        local_day_iso = local_day.isoformat()
+        cards: tuple[dict[str, str], ...]
+        try:
+            if intent.target == "daily":
+                # 每日一抽的确定性种子全域只有一处实现（tarot.daily_card），
+                # 持久路径同样调它 ⇒ 这里不是第二套算法，而是同一张牌少落一次库。
+                spread_id = "single"
+                drawn = daily_card(local_day, sender)
+                cards = (
+                    {
+                        "card_id": card_id_for(drawn.card),
+                        "position_id": "",
+                        "orientation": "reversed" if drawn.is_reversed else "upright",
+                    },
+                )
+                algorithm_revision = _TAROT_DAILY_ALGO_REVISION
+            else:
+                spread_id = (
+                    "past_present_future" if intent.target == "three" else "single"
+                )
+                cards = draw_tarot_cards(spread_id, SystemPrng())
+                algorithm_revision = _TAROT_ALGO_REVISION
+            spread = rebuild_drawn_cards(
+                DrawRecord(
+                    draw_id=f"tarot:ephemeral:{message.request_id or uuid.uuid4().hex}",
+                    kind="tarot",
+                    principal_id=sender,
+                    bot_id=bot_id,
+                    workspace_id=_CHAT_WORKSPACE,
+                    idempotency_key="",
+                    spread_id=spread_id,
+                    timezone_id=_CHAT_TIMEZONE_ID,
+                    cards=cards,
+                    algorithm_revision=algorithm_revision,
+                    deck_revision=DECK_REVISION,
+                    local_day=local_day_iso,
+                    occurred_at=moment.isoformat(),
+                    occurred_epoch=moment.timestamp(),
+                )
+            )
+            if intent.target == "daily":
+                body = (
+                    f"☀️ {local_day_iso} 的每日一抽（今天全天不变哦）：\n\n"
+                    f"{format_single_text(spread[0])}"
+                )
+                title, extra = "今日塔罗", "divination:daily"
+            elif len(spread) == 3:
+                body = format_three_text(spread)
+                title, extra = "塔罗三张牌阵", "divination:three"
+            else:
+                body = format_single_text(spread[0])
+                title, extra = "塔罗指引", "divination:ephemeral"
+        except DrawError as exc:
+            return _tarot_error_result(exc, message, tags)
+        card = _render_card("tarot", title, body, message.request_id or "")
+        return CapabilityResult(
+            request_id=message.request_id,
+            capability_id="bot.divination",
+            kind="mixed" if card else "divination",
+            title=title,
+            body=body,
+            images=[{"file": card}] if card else [],
+            audit_tags=[*tags, extra, "card_rendered" if card else "text_only"],
         )
 
     def _render_card(kind: str, title: str, body: str, dedupe_key: str) -> str:
@@ -673,7 +767,7 @@ def build_divination_capability(
                 # 每日运势：等级抽签，day_key（主体+bot+本地日期+rule_version）
                 # 幂等——同日重读/重启/密钥轮换都不重抽。store/key 未装配时
                 # 温和提示功能未启用，绝不写默认路径（源码树 data/ 红线）。
-                if draw_store is None or not fortune_key:
+                if store is None or not secret:
                     return CapabilityResult(
                         request_id=message.request_id,
                         capability_id="bot.divination",
@@ -691,15 +785,15 @@ def build_divination_capability(
                 day_key = fortune_day_key(
                     sender, bot_id, local_date, FORTUNE_RULE_VERSION
                 )
-                record = draw_store.find_by_dedupe("fortune", day_key)
+                record = store.find_by_dedupe("fortune", day_key)
                 created = False
                 replay: list[str] = []
                 if record is None:
                     outcome = draw_daily_fortune(
-                        fortune_key, sender, bot_id, local_date, FORTUNE_RULE_VERSION
+                        secret, sender, bot_id, local_date, FORTUNE_RULE_VERSION
                     )
                     fortune_draw_id = f"fortune:{day_key}"
-                    record, created = draw_store.persist_draw_once(
+                    record, created = store.persist_draw_once(
                         DrawRecord(
                             draw_id=fortune_draw_id,
                             kind="fortune",
@@ -783,63 +877,9 @@ def build_divination_capability(
                     audit_tags=[*tags, "card_rendered" if card else "text_only"],
                 )
             if intent.kind == "tarot":
-                if draw_store is not None:
+                if store is not None:
                     return _tarot_with_store(intent, message, tags)
-                if intent.target == "daily":
-                    local_day = message.timestamp.astimezone(CST).date()
-                    drawn = daily_card(local_day, message.sender_id or "anonymous")
-                    body = (
-                        f"☀️ {local_day.isoformat()} 的每日一抽（今天全天不变哦）：\n\n"
-                        f"{format_single_text(drawn)}"
-                    )
-                    card = _render_card(
-                        "tarot", "今日塔罗", body, message.request_id or ""
-                    )
-                    return CapabilityResult(
-                        request_id=message.request_id,
-                        capability_id="bot.divination",
-                        kind="mixed" if card else "divination",
-                        title="今日塔罗",
-                        body=body,
-                        images=[{"file": card}] if card else [],
-                        audit_tags=[
-                            *tags,
-                            "divination:daily",
-                            "card_rendered" if card else "text_only",
-                        ],
-                    )
-                rng = random.Random()
-                if intent.target == "three":
-                    spread = three_card_spread(rng)
-                    body = format_three_text(spread)
-                    card = _render_card(
-                        "tarot", "塔罗三张牌阵", body, message.request_id or ""
-                    )
-                    return CapabilityResult(
-                        request_id=message.request_id,
-                        capability_id="bot.divination",
-                        kind="mixed" if card else "divination",
-                        title="塔罗三张牌阵",
-                        body=body,
-                        images=[{"file": card}] if card else [],
-                        audit_tags=[
-                            *tags,
-                            "divination:three",
-                            "card_rendered" if card else "text_only",
-                        ],
-                    )
-                drawn = single_guidance(rng)
-                body = format_single_text(drawn)
-                card = _render_card("tarot", "塔罗指引", body, message.request_id or "")
-                return CapabilityResult(
-                    request_id=message.request_id,
-                    capability_id="bot.divination",
-                    kind="mixed" if card else "divination",
-                    title="塔罗指引",
-                    body=body,
-                    images=[{"file": card}] if card else [],
-                    audit_tags=[*tags, "card_rendered" if card else "text_only"],
-                )
+                return _tarot_without_store(intent, message, tags)
             cast = cast_hexagram(random.Random())
             body = format_cast_text(cast)
             card = _render_card("iching", "金钱卦", body, message.request_id or "")

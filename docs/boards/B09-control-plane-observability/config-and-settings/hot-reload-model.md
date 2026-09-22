@@ -31,7 +31,7 @@
 三条写入路径共用同一判定：
 
 1. `POST /api/v1/config/{key}/preview|set|reset`（+ `GET /config`、`/config/schema`、
-   `/config/{key}`、`/config/changes`）→ `control_plane/config_service.py:ConfigControlService`；
+   `/config/{key}`、`/config/changes`）→ `plugins/bot_unified_runtime/control_plane/config_service.py:ConfigControlService`；
 2. `/bot runtime set|get|list|reset`（管理员）→ `_handle_runtime_command`，
    **当 store 已 attach SQLite backend 时同样构造 `ConfigControlService`**，
    即两条路口径同源；

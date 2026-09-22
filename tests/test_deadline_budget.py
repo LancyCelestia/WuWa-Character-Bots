@@ -17,8 +17,11 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
-from plugins.bot_unified_runtime.runtime.deadline import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+    ModelRouter,
+    ModelSpec,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
     DeadlineBudget,
     DeadlineExceeded,
     apply_request_deadline,
@@ -130,7 +133,7 @@ def test_config_validates_request_budget() -> None:
 
 
 def test_deadline_kind_is_safe_and_non_retryable() -> None:
-    from plugins.bot_unified_runtime.capabilities.chat import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
         _LLM_RETRYABLE_KINDS,
         _SAFE_LLM_ERROR_KINDS,
     )
@@ -140,7 +143,9 @@ def test_deadline_kind_is_safe_and_non_retryable() -> None:
 
 
 def test_tool_loop_gates_expired_budget() -> None:
-    from plugins.bot_unified_runtime.capabilities.chat import _generate_with_tool_loop
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        _generate_with_tool_loop,
+    )
 
     budget = DeadlineBudget(10.0, started_at=time.monotonic() - 11.0)
     with pytest.raises(DeadlineExceeded):
@@ -157,7 +162,9 @@ def test_tool_loop_gates_expired_budget() -> None:
 
 
 def test_tool_loop_gates_expired_budget_before_tools() -> None:
-    from plugins.bot_unified_runtime.capabilities.chat import _generate_with_tool_loop
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        _generate_with_tool_loop,
+    )
 
     class _ToolReply:
         text = ""
@@ -184,7 +191,9 @@ def test_tool_loop_gates_expired_budget_before_tools() -> None:
 
 
 def test_tool_loop_passes_deadline_to_router() -> None:
-    from plugins.bot_unified_runtime.capabilities.chat import _generate_with_tool_loop
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        _generate_with_tool_loop,
+    )
 
     captured: dict[str, object] = {}
 
@@ -209,7 +218,9 @@ def test_tool_loop_passes_deadline_to_router() -> None:
 
 
 def test_router_honors_external_deadline() -> None:
-    from plugins.bot_unified_runtime.llm.providers import LLMProviderError
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+        LLMProviderError,
+    )
 
     router = ModelRouter(
         {"m1": _spec("m1")}, provider_factory=lambda spec: _RefusingProvider()

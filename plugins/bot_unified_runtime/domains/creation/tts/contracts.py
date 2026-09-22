@@ -22,11 +22,13 @@ from .._common.contracts import (
     CANCEL_MAY_KEEP_COST,
     CANCEL_REQUESTED_IS_NOT_A_STATE,
     CREATION_ERROR_CATALOG,
+    DIGEST64_PATTERN,
     UNKNOWN_NEVER_AUTO_REDISPATCH,
     AssetRef,
     CancelRequest,
     CostAmount,
     CreationContractBase,
+    CreationJob,
     CreationJobState,
     UsageLine,
 )
@@ -88,9 +90,10 @@ TTSErrorCode = Literal[
 ]
 TTS_ERROR_CATALOG = dict(CREATION_ERROR_CATALOG)
 
-# 域内别名：任务状态机/取消语义与绘图共用 _common 单一定义。
+# 域内别名：任务状态机/取消语义/结果记录与绘图共用 _common 单一定义。
 TTSJobState = CreationJobState
 TTSCancelRequest = CancelRequest
+TTSJob = CreationJob
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +171,12 @@ class TTSJobRequest(CreationContractBase):
     workspace_id: str = Field(min_length=1, max_length=128)
     target: str = Field(min_length=1, max_length=128)
     version: str = Field(min_length=1, max_length=64)
+    #: 请求身份（幂等键）：`media_digest(idempotency_preimage(request))` 的 64 hex 值，
+    #: 由装配期算好填入；域内不重算哈希（单一算法家=domains/media/digest.py）。
+    #: 存在理由：本域钉死「unknown 不盲重发」，没有身份就判不出重发是否同一条。
+    #: 缺省 None=调用方未给身份（诚实：不去重、不承诺幂等，绝不猜是同一条）。
+    #: 字段名必须等于 `_common.IDEMPOTENCY_SELF_FIELD`（由 parity 门按源码钉死，改名必红）。
+    idempotency_key: str | None = Field(default=None, pattern=DIGEST64_PATTERN)
 
     @field_validator("provider", "model", "voice")
     @classmethod
@@ -233,6 +242,9 @@ class TTSAssetRecord(CreationContractBase):
     mime: str = Field(min_length=3, max_length=64, pattern=r"^[a-z]+/[a-z0-9.+-]+$")
     codec: str = Field(default="", max_length=64)
     provider_operation: str = Field(min_length=1, max_length=128)
+    #: 产物内容身份：落盘字节的 sha256（中央 digest 件原样值，键名与渲染收口
+    #: 第三冻结键/TTS 出站部件键同源）。None=算不出即缺（诚实降级，禁补算造假值）。
+    content_sha256: str | None = Field(default=None, pattern=DIGEST64_PATTERN)
     usage: TTSUsage = Field(default_factory=TTSUsage)
     cost: CostAmount | None = None
     fallback_to_file: bool = False
@@ -288,6 +300,7 @@ __all__ = [
     "TTSAssetRecord",
     "TTSCancelRequest",
     "TTSErrorCode",
+    "TTSJob",
     "TTSJobRequest",
     "TTSJobState",
     "TTSOutboundPlan",

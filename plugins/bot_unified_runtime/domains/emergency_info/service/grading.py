@@ -1,22 +1,46 @@
 """规则定级（产品裁定 D-6：`grade()` 是无网络、无 LLM 的纯函数）。
 
-设计要点：
+判定序的唯一权威是 `docs/design/emergency-alert-taxonomy-20260921.md` §四/§五，
+本文件照它落地，序位不可调换：
+
+```
+grading_candidates(item, now, rules):
+  0) item.expires_at <= now           → 无候选（过期不得冒充紧急，D-2 兜底）
+  1) category = alert_taxonomy.category_of_item(item)   # 库里 id 优先，否则别名表现算
+  2) quake 族：有震级 → 震级/深度/境内境外分档（唯一档，直接返回）
+                无震级 → 只认源侧官方色（GDACS Red/Orange 那条路），种类词与关键词一律不参与
+  3) 其余族：源侧 color_label（族内合法才计）
+              ∪ 标题/正文里的族内合法色词
+              ∪ 影响面硬事实关键词（缺省表 + 注入表，同样族内合法才计）
+grade(item, ...) = 取候选最高档；空集落 FALLBACK_LEVEL=P3（蓝，诚实不上抬）
+```
+
+六条设计要点：
+
 1. **等级唯一**：返回值只能是本域单一枚举 `EmergencyLevel` 的四枚之一（D-3），
    不返回 None、不抛「定级失败」——定不出档就落最低档 P3（蓝），
    因为「判不出更严重」在事实层面就等于「按最低档对待」，
    而「源都没给」在采集侧已由 `build_emergency_item` 拦下（D-1）。
-2. **收编而非另造**：颜色档直接吃气象预警既有颜色词表
-   （`domains/weather/capabilities/weather.py:112` `_ALARM_COLOR_RANK`，
-   标题解析同文件 `parse_alert_title:176-199`），紧急用词吃日程 v2 的
-   `urgent`（`domains/schedule/service/schedule_dag.py:222`）。
-3. **时钟注入**：`now` 为必填参数，模块内**不得**出现 `datetime.now()`；
-   唯一用到的时间规则是「已过期条目不得升档」——过期条目被压到 P3，
-   这样即使投递侧时效窗被绕过，它也无法穿安静时间（D-2 只 P0/P1 urgent）。
-   方向性由 tests 的 AST 纯净锁 + 过期降档锁共同钉死。
-4. **规则表可注入**：`rules` 参数让管理侧/评审席替换词表而不动代码；
-   缺省表内容是本席起草（仓内无既有紧急关键词表可抄，见 report §6 诚实缺口），
-   刻意保守：只收「源侧已公布的预警语汇 + 人命/交通中断类硬事实」，
-   不做语义推断、不做打分排序，避免把 LLM 的活儿塞进纯规则层。
+2. **颜色优先于种类词，且三条腿一律族内合法才计**：「暴雨蓝色预警」＝蓝档；
+   「航班延误」出现在只有橙/红两档的国际灾害事件上＝错配噪声，不得造出黄档
+   （T8 补的关键词腿闸，REV-WP3 判定 6-2；锁在
+   `tests/test_emergency_grading_family_legality.py`）。旧实现把种类词
+   （`暴雨`/`台风`/`地震`…）塞进关键词表并与颜色取最高档，等于凭空把蓝抬成橙、
+   把 M0.6 南极微震抬成红，是穿窗误报的根因（审计 E6-N1）。现在种类词**整体退出**
+   关键词表（由 `tests/test_emergency_info_taxonomy.py::
+   test_default_keyword_table_contains_no_category_words` 锁死），残留关键词只描述
+   「已经造成的后果 / 已经下达的强制动作」。
+3. **地震只吃数、不吃字**：`earthquake_level()` 是 §五 分档表的唯一落点（本域代理规则，
+   **不是官方烈度色**——ICL/USGS 不给烈度与颜色，多少级算红是产品裁定，改数只改这一处）。
+   无震级数值 ⇒ 该路径不出候选，绝不用「地震」二字顶替一个数。
+4. **时钟注入**：`now` 为必填参数，模块内**不得**出现 `datetime.now()`；唯一用到的时间
+   规则是「已过期条目不得升档」。方向性由 AST 纯净锁 + 过期降档锁共同钉死。
+5. **不读配置、不发网络**：族级地板与境内矩形都取自同域纯数据件 `alert_taxonomy`
+   （规格 §九：本次只把它加进允许 import 前缀，两条纯度判据不变）；
+   `bot_emergency_info_quiet_breach_levels` 那枚键由装配侧经
+   `may_breach_quiet_window(allowed_levels=...)` 注入，本模块不 import config。
+6. **规则表可注入**：`rules` 参数让管理侧/评审席替换**关键词**表而不动代码；注入表
+   只影响第 3 步的关键词腿（quake 族与颜色腿按源侧事实走，不受词表摆布）。
 """
 
 from __future__ import annotations
@@ -40,6 +64,14 @@ from plugins.bot_unified_runtime.domains.emergency_info.service import (
 #: 一条规则都命中时的缺省档（最低档=蓝；诚实不上抬）。
 FALLBACK_LEVEL = EmergencyLevel.P3
 
+#: 由高到低的等级序（降一档运算唯一取用口，禁各处再抄一份顺序表）。
+_LEVELS_DESC: tuple[EmergencyLevel, ...] = (
+    EmergencyLevel.P0,
+    EmergencyLevel.P1,
+    EmergencyLevel.P2,
+    EmergencyLevel.P3,
+)
+
 
 @dataclass(frozen=True)
 class GradingRule:
@@ -50,7 +82,9 @@ class GradingRule:
     note: str
 
 
-# 缺省规则表（本席起草，评审可替换；顺序无关，取最高候选档）。
+# 缺省规则表（规格 §四 那张表的逐字落地；评审可替换，但换完要过同一把种类词锁）。
+# 刻意只留「已经造成的后果 / 已经下达的强制动作」：预警**种类名**一律不进这张表，
+# 认种类是 `alert_taxonomy` 的活、定档是颜色与震级的活，三者不得互相顶替。
 DEFAULT_GRADING_RULES: tuple[GradingRule, ...] = (
     GradingRule(
         EmergencyLevel.P0,
@@ -59,6 +93,7 @@ DEFAULT_GRADING_RULES: tuple[GradingRule, ...] = (
             "特大",
             "紧急疏散",
             "撤离",
+            "转移安置",
             "停课",
             "停运",
             "溃坝",
@@ -66,55 +101,101 @@ DEFAULT_GRADING_RULES: tuple[GradingRule, ...] = (
             "死亡",
             "遇难",
             "失联",
-            "地震",
-            "海啸",
-            "泥石流",
-            "山体滑坡",
             "洪峰",
             "爆炸",
         ),
-        "人命与灾害中断类：红色档",
+        "人命与强制处置已下达类：红色档",
     ),
     GradingRule(
         EmergencyLevel.P1,
         (
             "重大",
-            "暴雨",
-            "暴雪",
-            "台风",
-            "大风",
-            "冰雹",
-            "道路结冰",
-            "寒潮",
-            "高温",
-            "山洪",
-            "地质灾害",
-            "火灾",
             "泄漏",
             "泄露",
             "停水",
             "停电",
             "交通中断",
+            "封路",
         ),
-        "灾害性天气与公共服务中断类：橙色档",
+        "公共服务与交通中断类：橙色档",
     ),
     GradingRule(
         EmergencyLevel.P2,
-        (
-            "降温",
-            "降雨",
-            "连阴雨",
-            "沙尘",
-            "大雾",
-            "霾",
-            "雷电",
-            "积水",
-            "施工管制",
-            "延误",
-        ),
+        ("积水", "管制", "延误", "道路封闭"),
         "影响较轻但需知悉类：黄色档",
     ),
 )
+
+# ---------------------------------------------------------------- 地震分档（§五）
+
+#: 低于此震级一律蓝档，**且不被任何关键词抬档**（规格 §五：信息级速报不叫醒人）。
+EARTHQUAKE_INFO_MAX_MAGNITUDE = 3.0
+#: 震源深度超过此值（km）降一档，只降一档不降两档（深源面波能量衰减，同为产品裁定）。
+EARTHQUAKE_DEEP_THRESHOLD_KM = 100.0
+
+#: 境内分档表（`M >= 门槛` 由高到低取第一档命中；表尾之外即蓝档）。
+_INLAND_MAGNITUDE_TIERS: tuple[tuple[float, EmergencyLevel], ...] = (
+    (6.5, EmergencyLevel.P0),
+    (5.0, EmergencyLevel.P1),
+    (4.0, EmergencyLevel.P2),
+)
+#: 境外分档表：**结构上出不了红**（不为本半球外的震级半夜叫醒一屋子人）。
+_OVERSEAS_MAGNITUDE_TIERS: tuple[tuple[float, EmergencyLevel], ...] = (
+    (8.0, EmergencyLevel.P1),
+    (6.5, EmergencyLevel.P2),
+)
+
+
+def is_china_inland(
+    latitude: float | None, longitude: float | None
+) -> bool:
+    """震中是否落在境内矩形（四至唯一真身＝`alert_taxonomy.CHINA_INLAND_RECT` 镜像）。
+
+    缺任一半坐标 ⇒ 判不出境内境外 ⇒ 返回 False 按**境外**处理（保守不上抬，§五）。
+    本函数与 `earthquake_level()` 都不读墙钟、不读配置、不发网络（D-6）。
+    """
+    if latitude is None or longitude is None:
+        return False
+    min_lat, min_lon, max_lat, max_lon = _taxonomy.CHINA_INLAND_RECT
+    return min_lat <= float(latitude) <= max_lat and min_lon <= float(longitude) <= max_lon
+
+
+def _down_one_step(level: EmergencyLevel) -> EmergencyLevel:
+    """降一档；已在最低档就停住（不降两档、不降出枚举）。"""
+    index = _LEVELS_DESC.index(level)
+    return _LEVELS_DESC[min(index + 1, len(_LEVELS_DESC) - 1)]
+
+
+def earthquake_level(
+    magnitude: float | None,
+    *,
+    depth_km: float | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+) -> EmergencyLevel:
+    """§五 地震分档表（**本域代理规则，不是官方烈度色**）的唯一落点。
+
+    输入只有三枚源侧事实：震级、震源深度、震中坐标。三者拿不到就按「没有这个事实」
+    处理（无震级 ⇒ 最低档；无坐标 ⇒ 按境外），绝不用标题里有没有「地震」二字顶替。
+    """
+    if magnitude is None:
+        return FALLBACK_LEVEL
+    value = float(magnitude)
+    if value < EARTHQUAKE_INFO_MAX_MAGNITUDE:
+        return FALLBACK_LEVEL
+    tiers = (
+        _INLAND_MAGNITUDE_TIERS
+        if is_china_inland(latitude, longitude)
+        else _OVERSEAS_MAGNITUDE_TIERS
+    )
+    level = FALLBACK_LEVEL
+    for floor, candidate in tiers:
+        if value >= floor:
+            level = candidate
+            break
+    if depth_km is not None and float(depth_km) > EARTHQUAKE_DEEP_THRESHOLD_KM:
+        level = _down_one_step(level)
+    return level
 
 
 def matched_levels(
@@ -134,7 +215,11 @@ def matched_levels(
 def color_levels_in_text(
     text: str,
 ) -> list[EmergencyLevel]:
-    """正文里出现的预警颜色词也计候选（气象预警的颜色词本就长在标题里）。"""
+    """正文里出现的预警颜色词也计候选（气象预警的颜色词本就长在标题里）。
+
+    族内合法性由调用方判（`_legal_color_levels`）：`global_disaster` 族结构上只有
+    橙/红，从一段外文标题里认出「蓝色」是噪声而不是档位（规格 §三/§四）。
+    """
     haystack = str(text or "")
     return [
         level
@@ -143,26 +228,82 @@ def color_levels_in_text(
     ]
 
 
+def _legal_color_levels(category_id: str) -> frozenset[EmergencyLevel]:
+    """该条目所在族的合法色档 → 等级集合（换算唯一出口＝注册表 `levels_of_tiers`）。"""
+    return frozenset(
+        _taxonomy.levels_of_tiers(_taxonomy.color_tiers_for(category_id))
+    )
+
+
+def grading_candidates(
+    item: EmergencyItem,
+    *,
+    now: datetime,
+    rules: Sequence[GradingRule] = DEFAULT_GRADING_RULES,
+) -> list[EmergencyLevel]:
+    """按 §四 判定序逐条列出「哪些判据提出了哪些档」——定级的**调试/复算出口**。
+
+    诚实定位（T8，2026-09-22；此前写作「可审计面」）：本函数是 `grade()` 的唯一
+    判据真身（`grade` 就是吃本函数的结果），所以对同一条 item 重放本函数即可复算
+    「为什么是这一档」；但**候选列表本身没有任何生产消费方**——落库回写只存最终档
+    与类别（`store.set_level`），聊天诊断面（`domains/ops/smoke`）不在采集 job 的
+    路径上，线上没有一份「当轮候选」的留痕可查。要把它升格成真正的审计面，须另行
+    授权接进既有落库/诊断出口（禁新建第三条审计通路）。
+    **不含兜底档**：空列表＝「什么判据都没中」，`grade()` 据此落 P3，
+    这样「已判为蓝」与「判不出所以按蓝对待」在复算面上仍是两件事。
+    """
+    current = as_utc(now)
+    if item.expires_at is not None and item.expires_at <= current:
+        return []
+    category_id = _taxonomy.category_of_item(item)
+    family = _taxonomy.family_for(category_id)
+    source_level = level_from_color_label(item.color_label)
+    legal = _legal_color_levels(category_id)
+
+    if family.family_id == _taxonomy.QUAKE_FAMILY_ID:
+        if item.magnitude is not None:
+            # 震级/深度/坐标三枚事实 ⇒ 唯一档，颜色与关键词都不参与（§四 2、§五）。
+            return [
+                earthquake_level(
+                    item.magnitude,
+                    depth_km=item.depth_km,
+                    latitude=item.latitude,
+                    longitude=item.longitude,
+                )
+            ]
+        # 无震级 ⇒ 只允许**源侧官方色**出档（GDACS 的 Red/Orange 那条路留着）；
+        # 标题里的色词与种类词一律不计——速报正文写什么都有可能，数才是事实。
+        if source_level is not None and source_level in legal:
+            return [source_level]
+        return []
+
+    candidates: list[EmergencyLevel] = []
+    if source_level is not None and source_level in legal:
+        candidates.append(source_level)
+    text = f"{item.title}\n{item.body}"
+    candidates.extend(
+        level for level in color_levels_in_text(text) if level in legal
+    )
+    # 关键词腿同两色腿一律族内合法才计（T8，2026-09-22，REV-WP3 判定 6-2）：
+    # 族结构上出不了的档 ⇒ 关键词再硬也是错配，按噪声丢弃；注入表同闸。
+    candidates.extend(
+        level for level in matched_levels(text, rules) if level in legal
+    )
+    return candidates
+
+
 def grade(
     item: EmergencyItem,
     *,
     now: datetime,
     rules: Sequence[GradingRule] = DEFAULT_GRADING_RULES,
 ) -> EmergencyLevel:
-    """纯规则定级：源侧颜色 + 正文关键词取最高档，一条都不中则落 P3。
+    """纯规则定级：候选取最高档，一条判据都不中则落 P3（`grading_candidates` 的投影）。
 
-    已过期条目（`expires_at <= now`）无论命中什么都压到 `FALLBACK_LEVEL`，
+    已过期条目（`expires_at <= now`）无候选 ⇒ 必然 `FALLBACK_LEVEL`，
     这是 D-2「仅 P0/P1 穿安静时间」的兜底防线：陈旧信息不得冒充紧急。
     """
-    current = as_utc(now)
-    if item.expires_at is not None and item.expires_at <= current:
-        return FALLBACK_LEVEL
-    candidates: list[EmergencyLevel] = []
-    color_level = level_from_color_label(item.color_label)
-    if color_level is not None:
-        candidates.append(color_level)
-    candidates.extend(color_levels_in_text(f"{item.title}\n{item.body}"))
-    candidates.extend(matched_levels(f"{item.title}\n{item.body}", rules))
+    candidates = grading_candidates(item, now=now, rules=rules)
     if not candidates:
         return FALLBACK_LEVEL
     return highest_level(candidates)
@@ -195,10 +336,15 @@ def may_breach_quiet_window(
 
 __all__ = [
     "DEFAULT_GRADING_RULES",
+    "EARTHQUAKE_DEEP_THRESHOLD_KM",
+    "EARTHQUAKE_INFO_MAX_MAGNITUDE",
     "FALLBACK_LEVEL",
     "GradingRule",
     "color_levels_in_text",
+    "earthquake_level",
     "grade",
+    "grading_candidates",
+    "is_china_inland",
     "matched_levels",
     # 包装（非第二实现）：穿安静时间窗的判据真身在 `alert_taxonomy`，
     # 本模块是规则层的对外名（`push.py` 与测试都按 `grading.*` 取用）。

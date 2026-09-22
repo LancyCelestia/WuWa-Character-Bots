@@ -777,7 +777,7 @@ def build_character_context_provider(
                     else None
                 ),
             )
-        except Exception:  # noqa: BLE001 - wiki 库构建失败不阻断人格知识检索。
+        except Exception:
             # 但必须留痕：这里静默置 None 曾让 5.7GB wiki 库长期无人读取而无人察觉
             # （导入路径写错被本句吞掉，见 tests/test_kb_wiki_retriever_wiring.py）。
             logger.exception("Crawl Wiki 知识库检索器装配失败，本轮人格知识检索不受影响")

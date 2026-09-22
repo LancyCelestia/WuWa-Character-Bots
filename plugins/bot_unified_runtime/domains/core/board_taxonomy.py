@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 TAXONOMY_VERSION = "1.0"
@@ -128,6 +129,7 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 impl_paths=(
                     "plugins/bot_unified_runtime/domains/core/session_keys.py",
                     "plugins/bot_unified_runtime/domains/core/text_boundary.py",
+                    "plugins/bot_unified_runtime/domains/core/board_placement.py",
                 ),
                 extra_l3=(
                     ("session-keys", "会话键派生"),
@@ -990,7 +992,7 @@ def board_by_id(bid: str) -> BoardNode | None:
     return None
 
 
-def iter_features() -> object:
+def iter_features() -> Iterator[FeatureNode]:
     """按板块序、板块内声明序遍历二级功能。"""
     for board in BOARD_TAXONOMY:
         yield from board.features

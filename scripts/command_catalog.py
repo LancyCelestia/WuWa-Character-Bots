@@ -65,7 +65,12 @@ def _literal_assign(tree: ast.Module, name: str) -> object:
         targets = node.targets if isinstance(node, ast.Assign) else [target]
         names = {t.id for t in targets if isinstance(t, ast.Name)}
         if name in names:
-            return ast.literal_eval(node.value)
+            # 只有 Assign / AnnAssign / AugAssign 这类语句才带 value；`ast.stmt` 基类没有该属性，
+            # 故取一次并显式判空（判空分支对三型赋值语句恒不成立，只为让类型面收口）。
+            value = getattr(node, "value", None)
+            if value is None:
+                raise ValueError(f"assignment has no value: {name}")
+            return ast.literal_eval(value)
     raise ValueError(f"assignment not found: {name}")
 
 
@@ -254,12 +259,12 @@ def merged_entries() -> list[dict[str, object]]:
     for entry in merged:
         additions = extra.get(str(entry.get("topic")), ())
         if additions:
-            entry["lines"] = [*entry.get("lines", []), *additions]
+            entry["lines"] = [*_seq(entry.get("lines")), *additions]
         for key, value in meta.get(str(entry.get("topic")), {}).items():
             entry.setdefault(key, value)
         entry["detail"] = compose_detail(
             str(entry.get("detail") or ""),
-            [str(line) for line in entry.get("lines", [])],
+            [str(line) for line in _seq(entry.get("lines"))],
         )
     return merged
 
@@ -270,9 +275,20 @@ def _text(value: object) -> str:
     return str(value or "")
 
 
+def _seq(value: object) -> list[object]:
+    """把 `dict[str, object]` 里的序列值收成列表（与 `_text` 同一条窄化口径）。
+
+    `merged_entries()` / `render()` 处理的条目全是 `dict[str, object]`，
+    取值后直接 `len()` 或 `for` 迭代会让类型面看到 `object`；非序列（含缺省 None）一律视作空。
+    """
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return []
+
+
 def render(entries: list[dict[str, object]]) -> str:
     admin_count = sum(1 for item in entries if item.get("admin_only"))
-    alias_count = sum(len(item.get("aliases", ())) for item in entries)
+    alias_count = sum(len(_seq(item.get("aliases"))) for item in entries)
     network_topics = [str(item["topic"]) for item in entries if item.get("network") is True]
     local_topics = [str(item["topic"]) for item in entries if item.get("network") is False]
     image_topics = [str(item["topic"]) for item in entries if item.get("html_image") is True]
@@ -420,7 +436,7 @@ def render(entries: list[dict[str, object]]) -> str:
         if derived_detail:
             lines.extend(derived_detail.splitlines())
         else:
-            lines.extend(f"- {line}" for line in entry.get("lines", []))
+            lines.extend(f"- {line}" for line in _seq(entry.get("lines")))
         lines.extend(["", "### 帮助页一致性要求", "", "- 本模块的实时帮助以 `/bot help " + topic + "` 为准。", ""])
 
     lines.extend([

@@ -1171,6 +1171,22 @@ def _run_kb_sync_task_locked(
             result["ann_built"] = False
             result["ann_vectors"] = 0
             result["ann_reason"] = "unchanged_skip"
+            # 零变更夜的完备性戳自愈（#47 闸闭环，certify-prewarm 波 P1）：
+            # 戳的权威落点在发布提交点、涨点在补嵌——零变更夜两者都不达；
+            # 无戳 ⇒ ANN 永远按「unstamped」拒用、每问付暴力回落（248k 块实测
+            # 稳态 +3.6s、每问再涨 ~1GB 驻留）。这里在维护线程做一次权威 COUNT
+            # 补盖（仅当无戳；活戳归重建线所有，一字不碰；实测 13-33s，只此
+            # 一路，绝不上请求路径）。替身/旧 store 无此方法时如实跳过。
+            _certify = getattr(store, "certify_expected_vector_count", None)
+            if callable(_certify):
+                try:
+                    result["ann_certified"] = _certify()
+                except Exception as exc:  # noqa: BLE001 - 自愈失败不改本轮同步结论。
+                    logger.warning(
+                        "kb-sync ANN 计数戳自愈失败（不影响本轮结论）：%s: %s",
+                        type(exc).__name__,
+                        exc,
+                    )
         result["active_base_url"] = str(getattr(provider, "active_base_url", "") or "")
         result["active_model"] = str(getattr(provider, "active_model", "") or "")
         if embed and result["embed_pending"] > result["embed_done"]:

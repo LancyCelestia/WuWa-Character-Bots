@@ -123,7 +123,7 @@ def test_mutation_drop_existing_doc_row_detected() -> None:
     doc_text = DB_OWNERS_MD.read_text(encoding="utf-8")
     doc_keys = _doc_registered_db_keys(doc_text)
     assert doc_keys, "变异前提失效：文档未提取到任何库键"
-    removed = sorted(doc_keys)[0]
+    removed = min(doc_keys)
     reduced = {k for k in doc_keys if k != removed}
     missing, _stale = _diff(_config_db_field_names(), reduced)
     assert removed in missing, "门失效：删掉一条现有登记却未报缺失（永真摆设）"

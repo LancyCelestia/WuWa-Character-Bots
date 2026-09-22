@@ -253,7 +253,7 @@ def test_adopt_never_writes_the_copy(fake_repo: Path, copy_path: Path, anchor_pa
     """语义锁：--adopt 前后副本字节完全不变（防未来有人把它改成「顺手拷贝」）。"""
     before = copy_path.read_bytes()
     src = fake_repo / "personas" / "shorekeeper" / "identity.md"
-    src.write_bytes(before + "\n# 源与副本内容不同\n".encode("utf-8"))
+    src.write_bytes(before + "\n# 源与副本内容不同\n".encode())
     _adopt(copy_path, anchor_path)
     assert copy_path.read_bytes() == before
     assert hashlib.sha256(copy_path.read_bytes()).hexdigest() == _anchor(anchor_path)["copy_sha256"]

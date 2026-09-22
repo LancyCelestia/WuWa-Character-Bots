@@ -24,7 +24,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -32,6 +31,7 @@ from plugins.bot_unified_runtime.contracts import (
     PrivacyLevel,
     RiskLevel,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.core.contracts.finance import (
     EquityQuote,
     FinanceDataStatus,
@@ -432,10 +432,12 @@ def build_stocks_capability(config: Any | None = None, *, render_backend: Any | 
         if render_backend is None or not getattr(render_backend, "available", False):
             return ""
         try:
+            from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
+                prune_prefixed,
+            )
             from plugins.bot_unified_runtime.output.card_render.bridge import (
                 render_finance_card_html,
             )
-            from plugins.bot_unified_runtime.runtime.cache_policy import prune_prefixed
 
             payload = dict(payload)
             _apply_cached_logo(payload)
@@ -475,10 +477,12 @@ def build_stocks_capability(config: Any | None = None, *, render_backend: Any | 
         if render_backend is None or not getattr(render_backend, "available", False):
             return ""
         try:
+            from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
+                prune_prefixed,
+            )
             from plugins.bot_unified_runtime.output.card_render.bridge import (
                 render_finance_card_html,
             )
-            from plugins.bot_unified_runtime.runtime.cache_policy import prune_prefixed
 
             payload = dict(payload)
             payload["bot_name"] = str(

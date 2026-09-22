@@ -67,6 +67,6 @@ flowchart LR
 ## 现行缺陷
 
 - **口径未全局化（P1，本板块最大面）**：「说人话」链实际覆盖面 = chat 一条链，不是出站口全局。非 chat 能力（28+ 个）正文不经 naturalize/humanize/分行统一，各能力自己拼文本、自己截断、自己写兜底文案的形态仍在。判据与逐通路矩阵见 `docs/design/audit-20260920-unify-U15-output.md`。
-- **主动推送旁路不经本层**：提醒 / cookie 到期 / 群摘要 / 日常助理四族直调 `send_queue.submit`，其文案由各自 store/service 生成，四件套一件不过（只有 `redact_local_secrets` 在个别告警出口被单独调用）。这与 [send-queue](../send-queue/README.md) 的收编缺口是同一根因。
+- **主动推送旁路不经本层**：主动推送族直调 `send_queue.submit` 的，其文案由各自 store/service 生成，四件套一件不过（只有 `redact_local_secrets` 在个别告警出口被单独调用）。这与 [send-queue](../send-queue/README.md) 的收编缺口是同一根因。**现役名单以结构锁为准、本文不手写族数**：2026-09-22 起群摘要与日常助理两族已改走中央出口 `submit_active_push`（闸关态=与裸 submit 同形的 passthrough，仍不过本层四件套），仍直调族清单见 `tests/test_outbound_gate.py::test_existing_families_still_submit_directly` 与 `tests/test_outbound_bypass_prohibition_gate.py` 的豁免表；裁定件 `.superpowers/sdd/2026-09-21-unify-wave/decisions/WAVE42-active-push-central-exit.md`。
 - **打码是词面匹配不是语义识别**：`redact_local_secrets` 靠形态正则与快路径哨兵，改写形态（拆字、插入空白、编码）可以穿透；它的定位是「模型被诱导复述时的最后一道确定性拦网」，不是内容审核。红线仍在 B03 内容安全侧。
-- **中央调度未收编**：本层是函数集合而非可编排的能力，调度层 Wave 1–4 未做（`docs/design/capability-orchestration-adoption-spec.md`），因此「加工步骤由管线统一声明」目前不成立，只有 chat 分支硬编码在 `render_reviewed_output` 里。
+- **中央调度未收编**：本层是函数集合而非可编排的能力，因此「加工步骤由管线统一声明」目前不成立，只有 chat 分支硬编码在 `render_reviewed_output` 里。调度层进度（口径以规格件与缺口棘轮为准，本文不手写条数）：Wave 0 分层归并、Wave 1–2 唯一在册表与结构门、Wave 4.1 命令形接缝 + 中央执行审计 sink 已于 2026-09-21/22 落地；Wave 3 与 prepared 形（需运行期注入的那批能力）未做，规格见 `docs/design/capability-orchestration-adoption-spec.md`。

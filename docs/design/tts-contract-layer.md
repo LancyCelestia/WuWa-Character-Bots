@@ -50,20 +50,20 @@ T29 审计后已有两批修复入树（18:33 批 + c723904/7c566f7），契约�
 
 | 项 | 契约 | 依据 |
 |---|---|---|
-| 端点 | `POST {api_url}/tts`，JSON body；bot 恒 `streaming_mode=False`、`parallel_infer=True`（最稳分支） | api_v2.py:511（转引 T35 §0）；bot 侧 `tts.py:323-345 _request_tts` |
-| `GET /tts` | **保留不用于生产**：浏览器试听工作流专用（U-17 附带、验收⑥依赖）；**陷阱：GET 入口对 `text_lang` 做 `.lower()`（api_v2.py:484/:488）而 POST 不做**——同一引擎两入口行为不一致 | 转引 T2:35、T20:17/:35 |
-| 请求键集 | `TTS_Request` 19 键，全字段带默认、`extra=ignore` ⇒ **漏键走默认、多键被忽略，都不报错**；真 422 只来自类型违例，枚举错是 400 | api_v2.py:154-178（转引 T2:48） |
-| `text_lang` | **bot 出门前一律 casefold**（POST 入口引擎用原值断言 `TTS.py:1116`，"ZH" 得 400）；合法域=`[auto,auto_yue,en,zh,ja,yue,ko,all_zh,all_ja,all_yue,all_ko]` | 转引 T35 §1 #13/P1-T35.4、TTS.py:275-277 |
-| 枚举域 | `text_split_method∈cut0..cut5`、`media_type∈[wav,raw,ogg,aac]`、`text` 非空、`ref_audio_path` 非空 | api_v2.py:305-342 check_params（转引 T35 §0） |
+| 端点 | `POST {api_url}/tts`，JSON body；bot 恒 `streaming_mode=False`、`parallel_infer=True`（最稳分支） | C:/Software/GPT-SoVITS-V2Pro/api_v2.py:511（转引 T35 §0）；bot 侧 `tts.py:323-345 _request_tts` |
+| `GET /tts` | **保留不用于生产**：浏览器试听工作流专用（U-17 附带、验收⑥依赖）；**陷阱：GET 入口对 `text_lang` 做 `.lower()`（C:/Software/GPT-SoVITS-V2Pro/api_v2.py:484/:488）而 POST 不做**——同一引擎两入口行为不一致 | 转引 T2:35、T20:17/:35 |
+| 请求键集 | `TTS_Request` 19 键，全字段带默认、`extra=ignore` ⇒ **漏键走默认、多键被忽略，都不报错**；真 422 只来自类型违例，枚举错是 400 | C:/Software/GPT-SoVITS-V2Pro/api_v2.py:154-178（转引 T2:48） |
+| `text_lang` | **bot 出门前一律 casefold**（POST 入口引擎用原值断言 `C:/Software/GPT-SoVITS-V2Pro/GPT_SoVITS/TTS_infer_pack/TTS.py:1116`，"ZH" 得 400）；合法域=`[auto,auto_yue,en,zh,ja,yue,ko,all_zh,all_ja,all_yue,all_ko]` | 转引 T35 §1 #13/P1-T35.4、C:/Software/GPT-SoVITS-V2Pro/GPT_SoVITS/TTS_infer_pack/TTS.py:275-277 |
+| 枚举域 | `text_split_method∈cut0..cut5`、`media_type∈[wav,raw,ogg,aac]`、`text` 非空、`ref_audio_path` 非空 | C:/Software/GPT-SoVITS-V2Pro/api_v2.py:305-342 check_params（转引 T35 §0） |
 | 数值域 | **引擎完全不查**（top_k/top_p/temperature/speed_factor/seed 零校验）⇒ 域闸责任全在 bot 侧（§3 预设表 `Field(ge/le)`） | 转引 T35 §0「数值域一个都不查」 |
-| 并发语义 | 引擎 `workers=1` 单进程，非流式同步推理独占 event loop ⇒ 全端点严格排队；bot 标量超时最坏 3×60s | api_v2.py:572/:441（转引 T35 §4、T25 P3-1） |
+| 并发语义 | 引擎 `workers=1` 单进程，非流式同步推理独占 event loop ⇒ 全端点严格排队；bot 标量超时最坏 3×60s | C:/Software/GPT-SoVITS-V2Pro/api_v2.py:572/:441（转引 T35 §4、T25 P3-1） |
 
 ### §1.2 响应/退码语义总表（两侧合一）
 
 | # | 来源 | 信号 | 语义 | bot 侧映射（既有码族，复用不新造） |
 |---|---|---|---|---|
 | E1 | 引擎 | `200` + RIFF/WAVE 结构健全字节 | 成功 | 正常出货 |
-| E2 | 引擎 | `200` + ≈32044B/16000Hz/恰 1s 静音（top_k≤0、speed_factor≤0、纯标点文本五值通道，`TTS.py:1516-1527` yield 静音+单次 next 吞 raise） | **引擎伪装成功** | 体检闸拒 → `tts_bad_audio`（不可重试）；采样率≠产物标称+恰 1s 两条指纹可机检（待 T53 校准指纹值） |
+| E2 | 引擎 | `200` + ≈32044B/16000Hz/恰 1s 静音（top_k≤0、speed_factor≤0、纯标点文本五值通道，`C:/Software/GPT-SoVITS-V2Pro/GPT_SoVITS/TTS_infer_pack/TTS.py:1516-1527` yield 静音+单次 next 吞 raise） | **引擎伪装成功** | 体检闸拒 → `tts_bad_audio`（不可重试）；采样率≠产物标称+恰 1s 两条指纹可机检（待 T53 校准指纹值） |
 | E3 | 引擎 | `200` + 非音频字节（HTML 网关页/碎片） | 上游异常 | 体检闸拒 → `tts_bad_audio` |
 | E4 | 引擎 | `400 {"message":…}`（枚举/必填，无 Exception 键） | 请求被引擎拒 | `tts_service_rejected`（不可重试）+ reason 归因（§5 表） |
 | E5 | 引擎 | `400 {"message":"tts failed","Exception":…}`（推理异常/参考音频越 3~10s） | 推理失败 | `tts_service_rejected`；Exception 含「参考音频」→ `tts_no_ref_audio` 族文案 |
@@ -104,11 +104,11 @@ T29 审计后已有两批修复入树（18:33 批 + c723904/7c566f7），契约�
 | speed_factor | float | **0.6～1.65** | `0.85` | 现状收编；比引擎缺省慢 17.6%，听辨依据不存在 ⇒ 同上待听辨 | M-75/T25 §1#1 |
 | batch_size | int | 待 T53 校准（抄 WebUI 滑杆） | `1` | 有意跟随引擎缺省（显式化） | M-76 |
 | batch_threshold | float | 待 T53 校准 | `0.75` | 同上 | M-76 |
-| split_bucket | bool | — | **`False`** | **死意图消除**：引擎在 `speed_factor≠1.0` 时无条件自动关闭并打日志（TTS.py:1097-1099）⇒ 预设显式 False，与实况对齐 | M-76 |
+| split_bucket | bool | — | **`False`** | **死意图消除**：引擎在 `speed_factor≠1.0` 时无条件自动关闭并打日志（C:/Software/GPT-SoVITS-V2Pro/GPT_SoVITS/TTS_infer_pack/TTS.py:1097-1099）⇒ 预设显式 False，与实况对齐 | M-76 |
 | fragment_interval | float | 待 T53 校准（[0,1] 滑杆） | `0.3` | **每段尾补静音含末段，直接进时长账**（120字≈50s 的组成项）；动它=时长账重算，rationale 挂 U-02 | M-76/T25 §3.1 |
 | repetition_penalty | float | 待 T53 校准 | `1.35` | 有意跟随引擎缺省（显式化） | M-76 |
 | parallel_infer | bool | — | `true` | 与 workers=1 排队语义组合后=HTTP 层串行（§1.1）；维持 | M-76 |
-| **seed** | int | 任意 int（`-1`=每请求随机重播种，`TTS.py:194-214`） | 见 seed_policy | **不再直配**；由 seed_policy 列派生（§2.3） | M-72 |
+| **seed** | int | 任意 int（`-1`=每请求随机重播种，`C:/Software/GPT-SoVITS-V2Pro/GPT_SoVITS/TTS_infer_pack/TTS.py:194-214`） | 见 seed_policy | **不再直配**；由 seed_policy 列派生（§2.3） | M-72 |
 | max_chars / auto_reply_max_chars | int | ≥0；**0=不限（不截断）** | `200` / `120` | 截断语义族收编入 §3 硬顶体系；rationale=「防超长拖垮推理+QQ 时长红线」，两值差异自本列起有出处 | M-14/M-35 |
 | timeout_seconds | float | ≥1.0（唯一既有钳制点保留） | `60.0` | 标量=逐操作 60s（最坏 180s）；预算语义归 S-10/deadline 中央件（本波不实施，登记） | T25 P3-1/M-36 |
 | auto_reply_probability | float | [0,1] | `0.05` | 唯一写了「为什么」的参数（防刷屏/防排队）；数字量化依据=U-03 挂账 | T25 §1#10 |

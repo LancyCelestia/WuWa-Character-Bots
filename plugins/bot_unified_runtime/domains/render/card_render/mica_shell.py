@@ -41,9 +41,9 @@ from plugins.bot_unified_runtime.domains.render.card_render.theme_tokens import 
     SEMANTIC_DANGER,
     SEMANTIC_SUCCESS,
     SEMANTIC_WARNING,
-    SHELL_WASH_GRADIENT,
     SHADOW_PRIMARY,
     SHADOW_SECONDARY,
+    SHELL_WASH_GRADIENT,
 )
 
 # 公共 token 的固定声明顺序（全卡一致）。新增公共 token 只在此处加一行，

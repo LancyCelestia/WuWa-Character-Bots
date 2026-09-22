@@ -22,7 +22,7 @@ Host 头校验在**认证之前**执行——Bearer 只能挡住"没凭据的人
 
 ## 怎么调用
 
-三枚依赖工厂都在 `control_plane/_app.py`，由 `create_control_plane_app` 注入各路由器：
+三枚依赖工厂都在 `plugins/bot_unified_runtime/control_plane/_app.py`，由 `create_control_plane_app` 注入各路由器：
 
 - `_auth_dependency`：旧 `/admin/api/v1/*` 面（health/status），角色固定 `admin`；
 - `_v1_read_dependency`：`/api/v1/*` 读接口，只读令牌与超管令牌**都**放行（超管令牌
@@ -31,7 +31,7 @@ Host 头校验在**认证之前**执行——Bearer 只能挡住"没凭据的人
 - `_super_admin_dependency`：`/api/v1/*` 写接口（config set / feature enable / action
   execute / workspace send），**只**认 `BOT_CONTROL_PLANE_SUPER_ADMIN_TOKEN_SHA256`。
 
-凭据校验本体是 `control_plane/auth.py:BearerAuthenticator.authenticate`，
+凭据校验本体是 `plugins/bot_unified_runtime/control_plane/auth.py:BearerAuthenticator.authenticate`，
 按 `Authenticator` Protocol 设计（可插拔，未来接密码/TOTP/OIDC 不动调用方）。
 来源掩码 `auth.py:mask_source` 现阶段是主机粒度（IPv4 /32、IPv6 /128），
 因为服务只绑环回；收窄掩码只需改这一处。
@@ -39,7 +39,7 @@ Host 头校验在**认证之前**执行——Bearer 只能挡住"没凭据的人
 请求上下文：`_request_context_middleware` **忽略客户端传来的任何 id**，自造
 `request.state.cp_request_id` 并写入 `contextvar`，防日志注入与请求冒充。
 落痕：`_audit_middleware` 对 `/admin/api/v1/*` 与 `/api/v1/*` 逐请求写
-`control_plane_audit`（`control_plane/audit.py`，与 B5 账本同库不同表），
+`control_plane_audit`（`plugins/bot_unified_runtime/control_plane/audit.py`，与 B5 账本同库不同表），
 字段含 subject/method/path/query(脱敏)/status/bytes_out/debug_id/error code；
 `/healthz` 不审计。审计写失败只打日志，绝不影响响应。
 
@@ -55,7 +55,7 @@ Host 头校验在**认证之前**执行——Bearer 只能挡住"没凭据的人
   省端口时继承控制面端口）；内置的 `127.0.0.1`/`localhost` + 端口**始终叠加、不可关**。
 
 四枚键都是 pydantic 字段 → `os.environ` → 默认 的 getattr 防御式解析
-（`control_plane/__init__.py:control_plane_settings`），字段缺失即视为关。
+（`plugins/bot_unified_runtime/control_plane/__init__.py:control_plane_settings`），字段缺失即视为关。
 **摘要本身按凭证类登记**，控制面 DTO 出口只回 fingerprint 不回明文。
 令牌生成与轮换是运维动作：明文不落仓库、不进聊天、不进日志。
 

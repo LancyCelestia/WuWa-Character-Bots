@@ -59,14 +59,14 @@ def _make_files(base: Path, count: int, *, subdir: str = "") -> list[Path]:
 
 
 def _rows(store: SqliteVectorKnowledgeStore) -> int:
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         return int(
             connection.execute("SELECT COUNT(*) FROM knowledge_chunks").fetchone()[0]
         )
 
 
 def _sources(store: SqliteVectorKnowledgeStore) -> set[str]:
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         return {
             str(row["source_id"])
             for row in connection.execute(
@@ -76,8 +76,8 @@ def _sources(store: SqliteVectorKnowledgeStore) -> set[str]:
 
 
 def _ledger(store: SqliteVectorKnowledgeStore) -> set[str]:
-    with store._connect() as connection:  # noqa: SLF001
-        prefix = vk._SOURCE_SIG_KEY_PREFIX  # noqa: SLF001
+    with store._connect() as connection:
+        prefix = vk._SOURCE_SIG_KEY_PREFIX
         return {
             str(row["key"])[len(prefix) :]
             for row in connection.execute(
@@ -205,7 +205,7 @@ def test_normal_pruning_semantics_preserved(tmp_path: Path) -> None:
     assert store.last_sync_guard is None
 
     # 清单外其它写入方的块不得被本次清单带走（既有精确删除语义）。
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "INSERT INTO knowledge_chunks (chunk_id, source_id, title, content,"
             " content_hash) VALUES ('new1', 'outsider', 'outsider', 'new', 'h')"

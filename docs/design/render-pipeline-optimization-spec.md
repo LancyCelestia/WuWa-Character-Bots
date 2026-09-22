@@ -45,8 +45,8 @@
 | 档位 | 调用点 | 实值 | 说明 |
 |---|---|---|---|
 | **0ms 档** | market.py:222、fx.py:154、stocks.py:289/331、affinity.py:269、debug.py:839、echo.py:2844、usage_cards.py:227 | `wait_ms=0` | 纯静态内联卡已零固定等待，耗时 = networkidle + img 解码 + 截图编码 |
-| 300ms 档 | music.py:646 | `wait_ms=300` | 候选卡 |
-| **3000ms 档** | content_parser.py:386（`render_card_png` Mica 分支） | `wait_ms=3000` | **解析卡族共用管线：解析卡/epic/菜谱(eat.py:444)/占卜(divination.py:348) 全在此档**；注释明示「此前 1500ms 经常截在低分辨率占位帧上，出图发糊」——**盲目调低已有实弹翻车史** |
+| 300ms 档 | domains/music/capabilities/music.py:688 | `wait_ms=300` | 候选卡 |
+| **3000ms 档** | content_parser.py:386（`render_card_png` Mica 分支） | `wait_ms=3000` | **解析卡族共用管线：解析卡/epic/菜谱(eat.py:444)/占卜(domains/divination/capabilities/divination.py:738 `render_card_png` 调用点) 全在此档**；注释明示「此前 1500ms 经常截在低分辨率占位帧上，出图发糊」——**盲目调低已有实弹翻车史** |
 | 1500ms 档 | content_parser.py:399（media 兜底分支 `{"html": ...}`） | 缺省→1500 | 旧媒体降级卡 |
 | 120ms 档 | bridge.py:1574（mermaid） | `wait_ms=120` + wait_js | 语义正确，不动 |
 
@@ -129,7 +129,7 @@
 | **mermaid** | **最高**：同 code 幂等（同图重发/群聊转发常见），单次 ≈1783ms（含 CDN 拉 mermaid.js，F6） | bridge.py:1552 起，code→SVG 确定性渲染 | **P2 首选**：键=sha1(code)，TTL 24h + LRU 32 枚 |
 | market / fx | 高：market 数据 60s TTL 缓存内重复查询 → HTML 全同；fx panel 语义幂等（fx.py:160-168 注释明示「同文件幂等」） | market.py:227 digest=code:price 内容摘要，天然对齐 | P2 次选：TTL ≤ 数据源 TTL（60s），LRU 16 枚 |
 | usage / help / debug | 低频管理命令，命中率趋零 | — | 不做 |
-| **divination** | **禁入缓存**：「每抽一图」是产品语义（dedupe_key 每抽唯一子目录，divination.py:335-337） | — | 显式排除并写注释防误收 |
+| **divination** | **禁入缓存**：「每抽一图」是产品语义（dedupe_key 每抽唯一子目录，domains/divination/capabilities/divination.py:550、:742） | — | 显式排除并写注释防误收 |
 | affinity | 禁入：数值随相处连续变化，payload 几乎不重复 | — | 排除 |
 
 ### 4.2 digest 语义与落盘路径（风险核心）

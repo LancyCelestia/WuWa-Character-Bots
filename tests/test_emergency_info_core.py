@@ -1170,6 +1170,11 @@ def test_domain_reaches_the_queue_only_through_the_central_gate() -> None:
         for path in referrers
         if _rel_to_plugin(path) != GATE_MODULE_REL
         and not _rel_to_plugin(path).startswith(DOMAIN_REL + "/")
+        # 根装配自 Wave 4.2（2026-09-22）起也是中央出口的合法引用方：群摘要/日常助理
+        # 两族改道（裁定件 `.superpowers/sdd/2026-09-21-unify-wave/decisions/
+        # WAVE42-active-push-central-exit.md`）。本条与本文件上方 T6 侧的
+        # `allowed_files` 逐文件同步，放开成整树即失效——两侧对齐由 ② 段执法。
+        and _rel_to_plugin(path) != "__init__.py"
     ]
     assert offenders == [], f"`submit_active_push` 被闸与紧急域之外的生产件引用：{offenders}"
 

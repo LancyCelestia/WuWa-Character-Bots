@@ -128,8 +128,8 @@ class SubscriptionRule:
         return tuple(
             taxonomy.label_of(category_id)
             for category_id in self.referenced_categories
-            if (taxonomy.category(category_id) or None) is not None
-            and not taxonomy.category(category_id).is_sourced
+            if (category := taxonomy.category(category_id)) is not None
+            and not category.is_sourced
         )
 
     def describe(self) -> str:

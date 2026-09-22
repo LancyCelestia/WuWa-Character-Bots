@@ -14,7 +14,6 @@ import random
 import re
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -22,6 +21,7 @@ from plugins.bot_unified_runtime.contracts import (
     PrivacyLevel,
     RiskLevel,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.finance.data.market_data import (
     IndexQuote,
     fetch_index_quotes,
@@ -248,10 +248,12 @@ def _render_finance_sections_card(
         import hashlib
         from pathlib import Path
 
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
+            prune_prefixed,
+        )
         from plugins.bot_unified_runtime.output.card_render.bridge import (
             render_finance_card_html,
         )
-        from plugins.bot_unified_runtime.runtime.cache_policy import prune_prefixed
 
         png = render_backend.render_card(
             {
@@ -762,7 +764,7 @@ def build_market_capability(
             path = target / f"market_{digest}.png"
             path.write_bytes(png)
             try:
-                from plugins.bot_unified_runtime.runtime.cache_policy import (
+                from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
                     prune_prefixed,
                 )
 

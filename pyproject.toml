@@ -86,3 +86,12 @@ nonebot-plugin-htmlkit = ["nonebot_plugin_htmlkit"]
 
 [tool.ruff]
 extend-exclude = ["_crawlwiki_patch2"]
+
+
+[tool.mypy]
+# 固定 mypy 的模块名口径：仓库根为唯一搜索基（mypy_path=.）+ 显式包基 + 命名空间推断，
+# 使 `mypy plugins`（typecheck 既有口径）结果稳定，并尝试收敛 `mypy .` 的双基名停摆。
+explicit_package_bases = true
+namespace_packages = true
+mypy_path = "."
+ignore_missing_imports = true

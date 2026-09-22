@@ -867,7 +867,7 @@ def build_help_index() -> dict[str, Any]:
     视口/缩放/等待与 _try_render_help_image 一致。accent 走本命色
     （生产传 config.bot_help_card_color，样张配置面同 usage 卡取 BRAND_THEME）。
     """
-    from plugins.bot_unified_runtime.capabilities.echo import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
         _help_index_body,
         _help_index_sections,
         _help_mica_html,

@@ -370,8 +370,10 @@ _ML_GROUP = "group:v4-ml-1"
 def test_master_love_auto_pin_lands_on_member_key_when_per_user_disabled() -> None:
     """B-Important-1：per_user=False 时 route_key=群键，ML 自动钉死若落群键
     =全群进亲密档（泄漏）。修复后：钉在成员键，群键保持 normal。"""
-    from plugins.bot_unified_runtime.capabilities.chat import build_chat_result
-    from plugins.bot_unified_runtime.runtime.content_route import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_result,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
         SHARED_CONTENT_ROUTE_ENGINE,
         member_session_key,
     )
@@ -409,8 +411,10 @@ def test_master_love_auto_pin_lands_on_member_key_when_per_user_disabled() -> No
 
 def test_master_love_auto_pin_uses_route_key_when_per_user_enabled() -> None:
     """per_user=True（route_key 已是成员键）：行为与修复前一致——钉成员键。"""
-    from plugins.bot_unified_runtime.capabilities.chat import build_chat_result
-    from plugins.bot_unified_runtime.runtime.content_route import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_result,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
         SHARED_CONTENT_ROUTE_ENGINE,
         member_session_key,
     )
@@ -455,7 +459,9 @@ class _RecordingRouter:
 
     def generate(self, messages: list[dict[str, str]], **kwargs: object) -> object:
         self.session_ids.append(str(kwargs.get("session_id", "")))
-        from plugins.bot_unified_runtime.llm.providers import LLMReply
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+            LLMReply,
+        )
 
         return LLMReply(text=self.reply_text, provider="fake", model="m")
 
@@ -467,8 +473,10 @@ def test_not_eligible_session_routes_with_empty_session_id() -> None:
     """黑名单用户带 stale intimate 钉（名单变更前残留）：修复前 chat 把
     route_key 喂给路由 → route_verdict 返 intimate → 候选头被错排 grok；
     修复后 session_id=""，钉死态不再影响模型选路。"""
-    from plugins.bot_unified_runtime.capabilities.chat import build_chat_result
-    from plugins.bot_unified_runtime.runtime.content_route import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_result,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
         SHARED_CONTENT_ROUTE_ENGINE,
     )
 
@@ -498,7 +506,9 @@ def test_not_eligible_session_routes_with_empty_session_id() -> None:
 
 def test_eligible_session_still_passes_route_key() -> None:
     """对照组：合资格私聊会话照常传 route_key（正常亲密路由语义不破）。"""
-    from plugins.bot_unified_runtime.capabilities.chat import build_chat_result
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_result,
+    )
 
     session = "private:v4-free-u1"
     cfg = _config()
@@ -775,7 +785,9 @@ class _CapturingProvider:
         self.messages: list[dict[str, str]] = []
 
     def generate(self, messages: list[dict[str, str]], **kwargs: object):
-        from plugins.bot_unified_runtime.llm.providers import LLMReply
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+            LLMReply,
+        )
 
         self.messages = messages
         return LLMReply(text="嗯，我在听。你慢慢说。", provider="fake", model="m")

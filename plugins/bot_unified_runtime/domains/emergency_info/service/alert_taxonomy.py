@@ -32,8 +32,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from plugins.bot_unified_runtime.domains.emergency_info.contracts import (
     LEVEL_COLOR_LABEL,

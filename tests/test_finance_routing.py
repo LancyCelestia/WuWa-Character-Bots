@@ -35,7 +35,7 @@ from plugins.bot_unified_runtime.capabilities.stocks import (
 from plugins.bot_unified_runtime.capabilities.today_history import (
     build_today_history_capability,
 )
-from plugins.bot_unified_runtime.runtime.base_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     COMMAND_ROUTE_KINDS,
     INTERNAL_CAPABILITY_NOTES,
     ROUTE_RULES,

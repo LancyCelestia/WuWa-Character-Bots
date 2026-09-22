@@ -25,7 +25,7 @@ PROVIDERS = (
 
 _IMPORT_RE = re.compile(
     r"from\s+(plugins\.bot_unified_runtime[\w.]*kb_wiki)\s+import\s+\(\s?([^)]*?)\)",
-    re.S,
+    re.DOTALL,
 )
 
 

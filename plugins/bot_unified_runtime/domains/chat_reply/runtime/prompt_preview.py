@@ -7,15 +7,15 @@ import json
 from pathlib import Path
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities.chat import (
-    build_chat_prompt_with_diagnostics,
-)
 from plugins.bot_unified_runtime.character import build_character_context_provider
-from plugins.bot_unified_runtime.character.history import (
-    InMemoryConversationHistoryStore,
-)
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    build_chat_prompt_with_diagnostics,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
+    InMemoryConversationHistoryStore,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.prompt_audit import (
     PromptAuditStore,
 )

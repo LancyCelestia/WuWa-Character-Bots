@@ -178,7 +178,14 @@ location(9) → ops(11) → music(11) → divination(14) → finance(16) → mem
   错误卡 `ops/monitor/error_report.py:1037`、告警 `alerts.py`、每日摘要、邮件/TG 通知 `transport/mail/mail_bridge.py:312/351/369`。
 - B 类（直 `call_api`、三重旁路）：入群欢迎 `__init__.py:5607`（正文手写字面量 `:1163`）、随机图主动发 `:5959/:5965`、cookie 兜底 `:4472`。
 - **收编**（报告 R3-3/R3-4，本规格定为必做，非"可选例外"）：
-  - A 类 → 抽**统一出口函数** `render_reviewed_output`/`deliver_via_pipeline`（把 review+render 抽成可复用出口，不新建层），六类主动路径改调它；过渡期先加"旁路计数"观测告警。
+  - A 类 → **2026-09-21 S-W42 席实证更正：不新建函数**。原计划抽 `render_reviewed_output`/`deliver_via_pipeline`
+    经逐签名核读判定为**造第二出口**——三处现役件已把这些职责占满：投递出口 `submit_active_push`
+    （`domains/transport/sender/outbound_gate.py:658`，含 `dedupe_family`/`deliver_after`）、审核
+    `review_capability_result`（`domains/render/reviewer.py:156`，纯函数）、渲染+提交全链
+    `_send_text_through_unified_pipeline`/`_send_parts_through_unified_pipeline`（根 `__init__.py:4842/:4873`）。
+    ⇒ Wave 4.2 的正确交付 = 把 **8 处/4 文件**（实测，非规格旧称"六类"）A 类散构**改调上述现役件**；
+    过渡期"旁路计数"观测告警照旧。改道必答题：提醒 `store.mark_done` 须从"内联同步 receipt"改读 worker
+    持久回执（`worker.py:285-287 record(receipt)` + `receipts.latest(request_id)`），闸顺延不得误判已投。
   - B 类 → 文案入 `user_copy` 池 + 经 outbound_gate/SendQueue；**随机图 :5959/:5965 若属"有意镜像"，登记为显式例外并说明理由**（决策点 O5）。
   - **禁止式门**：根文件与 `domains/**`（sender 漏斗最底除外）出现 `call_api("send_*` / `send_group_msg` / `send_private_msg` 即红。
 - 门禁影响：错误卡两段式异步有 `deliver_after≥3s` 下限（时序敏感，须单独回归）；旁路计数告警为新增面。
@@ -190,6 +197,25 @@ location(9) → ops(11) → music(11) → divination(14) → finance(16) → mem
   **投递动作仍走 outbound_gate**（静默窗/限流/键规范），与 §5 执行门边界互不重叠。
 
 ---
+
+### 4.4 落地进度（2026-09-22 统一波实况 · 逐波对账，防止下一个 AI 重做已做的）
+
+| 波 | 状态 | 实况与证据 |
+|---|---|---|
+| Wave 0 | ✅ 已落 | 两层同名归并：壳侧执行信封改名 `InvocationResult`、呈现契约保名，`PRESENTATION_DATA_KEY` 为唯一跨层通道；执法 `tests/test_capability_result_unique.py` |
+| Wave 1 | ✅ 已落 | media/files/search 描述符经 invoker；D-b 单执行点位门 `tests/test_orchestration_callsite_single.py` |
+| Wave 2 | ✅ 已落 | `CAPABILITY_DESCRIPTOR` 升为唯一在册表；`tests/test_capability_single_registration.py` 禁第二处 authoring |
+| Wave 3 | 🟡 进行中 | 逐域接入（爆炸半径升序）——**在册通电条数以唯一表执行形为准**（本行写时已含命令形与 prepared 两批，远超当初"8 枚"），未接入残余由 `tests/test_descriptor_wiredness_ledger.py` 分四桶点名（interface_only / controlled_no_callsite / orchestration_unwired / route_capability_unmigrated）|
+| Wave 4.1 | ✅ 已落 | 命令形接缝 `orchestrated_command()`（层 2 治理、执行体用调用方交来的成品）+ 命令形通电（首批 wiki/news/randpic/moegirl/meme/reminder/daily_assist/tts；**现役条数以唯一表执行形为准，本行名单=当时值**）；缺口只准降由 `test_descriptor_wiredness_ledger.py` 手写 `GAP_CEILING` 执法 |
+| Wave 4.2/4.3 | ✅ 已落 | 四条主动投递族（群摘要/日常助理/提醒/cookie 到期）改走中央出口 `submit_active_push`；提醒两族用"闸判定 + 保留内联投递"形态 ⇒ 闸关态零行为变更。裁定件 `decisions/WAVE42-active-push-central-exit.md`（含 B4-spec「只登记不迁移」旧口径的过期依据） |
+| 观测面 | ✅ 已落 | 中央执行审计 sink 生产注册（`attach_default_audit_sink`）+ 审计记录带 `request_id/session_key`；此前**emit 全树零注册**＝"走中央但没人知道" |
+| 崩溃保真 | ✅ 已落 | 能力真崩 ⇒ 原始异常经 `INVOKER_ERROR_DATA_KEY` 交回层 1 ⇒ `_internal_error`→诊断卡旁路保持；被拒/超限仍走诚实短句 |
+| 权限门 | ✅ 已落 | 层级门槛 `roles_satisfy`（修管理员被拒）+ 空角色=系统主体豁免**只做在 invoker 门上**（修定时任务被拒，且不把 `/bot why` 从"过拒"翻成"过放"） |
+| Wave 4.4 prepared | 🟡 施工中 | **地基已落 + 三批已通电**（2026-09-22）：`adapter="prepared"` 进 `_KNOWN_ADAPTERS`、`_make_prepared_handler()` 只认调用方经 `context["capability"]` 交来的成品（拿不到 ⇒ `UNAVAILABLE`，**绝不按 ref 自建**＝不造丢注入的第二通路），派生分派三分支。金丝雀 `bot.weather` + B1 十枚（market/stocks/fx/commodities/bond/northbound/epic/eat/divination/emergency_info）+ B2 一枚 `bot.affinity` + B3 一枚 `bot.ignore`；**在册条数以唯一表执行形为准，本行名单=当时值**。执法 `tests/test_prepared_adapter_canary.py` 与按批分文件的 `tests/test_prepared_adapter_batch1.py`、`tests/test_prepared_adapter_batch2.py`、`tests/test_prepared_adapter_batch3.py`，外加**逐 id 行为矩阵** `tests/test_central_dispatch_matrix.py`（参数化源=在册执行形现算，含非空转守卫）。**⚠ 本行旧口径已被 B3 席实读推翻并就地更正**：原文写"剩余=root 内联闭包那批（须先提具名 builder）"——`prepared` 形的 `implementation_ref` 只作 provenance、**不参与执行**，所以内联闭包**不需要**先提具名工厂就能如实登记"成品由调用方交来"。剩余因此缩成两类各自卡点不同的：**六枚**（content/music/today_history/media_archive/meme_library/group_info）AST 实证**不经根的两个汇合函数**（裸 `pipeline.handle_async`），要接**必须改生产根文件**；**四枚**（music_mode/subscribe/mail.control/auto_send.preview）**已汇缝却无执行面**，其中 `mail.control`/`auto_send.preview` 注册册无宿主行＝结构上无处填 `execution`。另有 `bot.image_search`/`bot.campus_forward`（同样无宿主行）与 chat provider 注入墙（异形态）。施工图 `decisions/PREPARED-ADAPTER-PLAN-20260922.md`（其 B6 段的旧前置已过期，以本行为准） |
+| 记账口径 R8→R9 | ✅ 已并入（并二次收紧） | 经接缝通电的能力在字面量扫描下不可见；口径件 `decisions/R8-seam-wiring-accounting.md`，取数口 `seam_registered_cids()`（原名 `seam_registered_command_cids`，prepared 落地后已扩到全部已知 adapter 并改名）。**R9 收紧**（R-PREP C-1）：取数口只证"声明了执行形"，"每一条分发入口都汇到缝"另由 `tests/test_prepared_adapter_canary.py` 的多入口活性锁执法——别名/自然语言两条入口历史上绕过层 2，只有前者时 WIRED 会是假账 |
+
+> 本表只记"做到哪"。**"已接入中央调度层"的唯一判据仍是 §1 七维**，不因本表某行打勾而自动成立；
+> 剩余未接面总账见 `logs/SEAT-S-GAPMAP.md`。
 
 ## 5 中央调度层 vs 执行门 vs feature gate：同一层还是两层？（结论）
 
@@ -234,7 +260,7 @@ handler 不注册、invoke 恒 `unavailable`（`_probe_creation_reserved:1410`�
 |---|---|---|
 | `InvocationResult`（改名，非新建类） | 壳的第二份 `CapabilityResult` 名 | Wave 0（改名即退役旧名） |
 | `CAPABILITY_DESCRIPTOR` 唯一描述符表 | 壳 5 张注册表 + `CONTROLLED_INTERNAL_CAPABILITIES` + `ROUTE_CAPABILITY_DECLARATIONS` 的**分散真源** | Wave 2 合并后，旧表改为派生视图/注释指针，**同波退役为"派生"** |
-| `render_reviewed_output`/`deliver_via_pipeline` 统一出口函数 | A 类旁路的 6 处散构 `SendRequest`（ack/提醒/错误卡/告警/摘要/邮件通知） | Wave 4.2 逐个改调后散构退役 |
+| ~~`render_reviewed_output`/`deliver_via_pipeline` 统一出口函数~~ **已作废（2026-09-21 S-W42 实证）**：不新建，改为 A 类 8 处散构改调现役 `submit_active_push` + `review_capability_result` + `_send_*_through_unified_pipeline` | A 类旁路的 8 处散构 `SendRequest`（root 提醒/cookie 到期门/每日摘要/早晚报 + pipeline ack + 错误卡 + 未通电干跑件） | 逐处改调当笔退役该处散构 |
 | `test_capability_result_unique` / `test_orchestration_callsite_single` / `test_same_capability_one_registration` / call_api 禁止式门 | （纯新增门，无取代对象） | 常驻 |
 
 **明确不做**：不把 pipeline 重写为 invoker；不把 208 处构造改签名；不为 creation 建平行 orchestrator；

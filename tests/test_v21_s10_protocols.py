@@ -28,7 +28,9 @@ from plugins.bot_unified_runtime.domains.core.search import search_service
 from plugins.bot_unified_runtime.domains.files.sources import file_reader
 from plugins.bot_unified_runtime.runtime.capability_protocols import (
     HONEST_DEGRADE_PREFIX,
+    INVOKER_ERROR_DATA_KEY,
     NINE_SOURCE_IDS,
+    PRESENTATION_DATA_KEY,
     CapabilityDescriptor,
     CapabilityFamily,
     CapabilityHealth,
@@ -124,7 +126,22 @@ def _register_custom(
 class TestDescriptorCompleteness:
     def test_default_registry_counts_per_family(self) -> None:
         invoker = default_invoker()
-        assert len(invoker.registry.iter(CapabilityFamily.MEDIA)) == 8
+        # 9 = 内容契约 8 族员 + `media.tts.autodub`（VOICE-V12 2026-09-22 交付：
+        # 自动配音产出步收编中央调度层，`capability_protocols.py` 注册 +
+        # voice_enricher 唯一 invoke 点；现算真值 = `default_invoker().registry.iter(MEDIA)`
+        # 长度，与本锁同源）。计数只随交付跟随，未改判据形状。
+        assert len(invoker.registry.iter(CapabilityFamily.MEDIA)) == 9
+        # COMMAND＝bot.* 路由能力的执行面族（A 案）。单列一族是刻意的：上面四族是
+        # 内容契约能力普查口径，bot.tts 混进去会污染 media 成员清单（R-A/C-01）。
+        # 数量**不手写快照**（S-FILL7 一登记就得跟着改数，那是纯漂移税）：
+        # 以唯一表派生的执行形条数为准，两侧同源即等，分叉当场红。
+        from plugins.bot_unified_runtime.runtime.capability_protocols import (
+            _route_execution_rows,
+        )
+
+        assert len(invoker.registry.iter(CapabilityFamily.COMMAND)) == len(
+            _route_execution_rows()
+        )
         assert len(invoker.registry.iter(CapabilityFamily.FILES)) == 8
         assert len(invoker.registry.iter(CapabilityFamily.SEARCH)) == 4
         assert len(invoker.registry.iter(CapabilityFamily.CREATION)) == 2
@@ -151,6 +168,8 @@ class TestDescriptorCompleteness:
             "media.video.recognize",   # 视频识别
             "media.video.subtitle",    # 字幕
             "media.video.frame_extract",  # 抽帧
+            # VOICE-V12（2026-09-22）自动配音产出步 descriptor，与上列 8 枚同族在册：
+            "media.tts.autodub",
         } == ids
 
     def test_files_contract_capabilities_present(self) -> None:
@@ -311,7 +330,10 @@ class TestInvocationGates:
         assert len(produced) == 1 and produced[0].suffix == ".py"
 
     def test_payload_limit_exceeded_without_running_handler(self) -> None:
-        invoker = default_invoker()
+        # 用空注册面的专用 invoker：往 default_invoker() 单例注册测试 id 会漏进
+        # 同会话后续所有门（tests/test_capability_single_registration.py 的
+        # 「registry 多出的必须恰好是 route 执行形」集合判据第一个抓到它）。
+        invoker = _mini_invoker()
         calls: list[Any] = []
 
         def _spy(request: CapabilityRequest) -> InvocationResult:
@@ -428,7 +450,12 @@ class TestFallbackChain:
         result = invoker.invoke(_make_request("media.test.degraded"))
         assert result.status is InvocationStatus.DEGRADED
         assert "诚实降级" in result.detail
-        assert result.data == {}
+        # 契约原文＝非成功态不得携带**呈现载荷**（无结果却带结果体=冒充成功）。
+        # 唯一许可的非载荷键：崩溃保真键（把原始异常交回层 1 走错误卡，Wave 4.1 X-8 根修），
+        # 除此之外 data 必须仍为空——防"多塞键"变成新的私货通道。
+        assert PRESENTATION_DATA_KEY not in result.data
+        assert set(result.data) <= {INVOKER_ERROR_DATA_KEY}
+        assert isinstance(result.data.get(INVOKER_ERROR_DATA_KEY), RuntimeError)
 
     def test_all_chain_exhausted_fails_honestly(self) -> None:
         invoker = _mini_invoker()
@@ -486,6 +513,30 @@ class TestAuditHooks:
         assert InvocationStatus.FAILED in statuses
         assert all(record.principal == "tester" for record in hook.records)
         assert all(record.elapsed_ms >= 0 for record in hook.records)
+
+    def test_audit_record_carries_correlation_ids(self) -> None:
+        """关联键必须从请求一路带到审计记录（中央执行"可观测"的最小条件）。
+
+        用 mini invoker 而不是 default_invoker()：往生产单例注册钩子会永久粘给同会话
+        后面每一个调用方（本文件另两条钩子用例正是这个旧症，见 §打脸账）。
+        """
+        hook = _RecordingHook()
+        descriptor = default_invoker().registry.get("creation.tts.synthesize")
+        assert descriptor is not None, "取样描述符不在册＝本锁前提失效"
+        invoker = _mini_invoker()
+        invoker.registry.register(descriptor)
+        invoker.audit_hooks.register(hook)
+        invoker.invoke(
+            CapabilityRequest(
+                capability_id=descriptor.capability_id,
+                principal="tester",
+                request_id="req-audit-1",
+                session_key="group_111_222",
+            )
+        )
+        assert hook.records, "未接线能力也没留痕＝emit 面漏了这条终态"
+        assert hook.records[-1].request_id == "req-audit-1"
+        assert hook.records[-1].session_key == "group_111_222"
 
     def test_raising_hook_does_not_break_invocation(self) -> None:
         def _bomb(record: Any) -> None:

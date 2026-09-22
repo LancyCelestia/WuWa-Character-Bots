@@ -77,19 +77,27 @@ _EXPLICIT_EXEMPTIONS: tuple[tuple[str, str, str, str], ...] = (
 )
 
 # ---------------------------------------------------------------------------
-# 棘轮基线（2026-09-20 DOC-FIX-2 实测；只许降，不许升）
+# 棘轮基线（S-REBASE 席 2026-09-22 全量重测并对账；只许降，不许升）
+#
+# 逐个标注比较方向（方向搞错＝门烂掉的开始）：
+#   CEILING  断言 `实测 <= 基线` ⇒ 基线是上限，改小＝收紧，改大＝放宽（禁止）
+#   FLOOR    断言 `实测 >= 基线` ⇒ 基线下限（地板），数值「调大」才是收紧
+#   HARD     断言 `assert not rows`（0 容忍，不适用棘轮）
+# 基线一律保持**字面整数**：本仓有结构锁禁止「基线由它所执法的同一份采集结果派生」
+# ——那样门将结构上不可能变红。数值由 S-REBASE 席用采集函数**离线实测**后手抄进来，
+# 复跑证据见 .superpowers/sdd/2026-09-21-unify-wave/logs/SEAT-S-REBASE.md。
 # ---------------------------------------------------------------------------
 
-_BASELINE_COORD_LEGACY = 837  # 2026-09-20 实测（仅已跟踪件；史实行走豁免不计）
-_BASELINE_COORD_SHIM = 3  # 实测：只能解析到垫片且无同名真身
-_BASELINE_COORD_OVERFLOW = 3  # 实测（非史实行）
-_BASELINE_MD_DEAD_LINKS = 2  # 实测（在飞草稿件走全量上限档）
-_BASELINE_ENUM_COPIES = 0  # 实测：已跟踪件里协议成员清单副本已归零（余 2 处在未跟踪草稿）
-_BASELINE_CARRIER_DEAD = 0  # 硬零：载体列彻底不存在的路径
-_BASELINE_COORD_UNRESOLVED = 123  # 棘轮：已跟踪件的死坐标
-_BASELINE_CARRIER_MISLEADING = 50  # 实测：垫片 35 + 字面不存在的旧路径 15
-_BASELINE_CARRIER_TRUTH = 5  # 地板：开工实测字面命中真身条数
-_BASELINE_ALL_FACE_TOTAL = 167  # 全量面（含在飞草稿）缺陷条目总上限
+_BASELINE_COORD_LEGACY = 598  # CEILING；2026-09-22 实测（仅已跟踪件；史实行走豁免不计）
+_BASELINE_COORD_SHIM = 1  # CEILING；实测：只能解析到垫片且无同名真身
+_BASELINE_COORD_OVERFLOW = 0  # CEILING；2026-09-22 实测归零（非史实行）
+_BASELINE_MD_DEAD_LINKS = 0  # CEILING；实测归零（S-DOCLINK2 修好采集器：围栏/行内代码内链接是字面量不是导航，26 条全为伪阳）
+_BASELINE_ENUM_COPIES = 0  # CEILING；实测：已跟踪件里协议成员清单副本已归零
+_BASELINE_CARRIER_DEAD = 0  # HARD 零档参照值（实际执法在 test_agents_carrier_paths_no_dead_entries 用 `assert not rows`，本常量当前不被任何断言引用；实测 dead=0）
+_BASELINE_COORD_UNRESOLVED = 112  # CEILING；2026-09-22 实测：已跟踪件的死坐标
+_BASELINE_CARRIER_MISLEADING = 21  # CEILING；2026-09-22 实测：垫片 13 + 字面不存在的旧路径 8
+_BASELINE_CARRIER_TRUTH = 5  # FLOOR；开工实测地板（当前实测 34，远高于此⇒门仍绿；调大才算收紧，但「只降不升」是常令⇒本席不动，交门 owner 裁决）
+_BASELINE_ALL_FACE_TOTAL = 113  # CEILING；2026-09-22 实测全量面（含在飞草稿）：死坐标 112 + 越界 0 + 垫片 1 + 死链 0 + 枚举 0 = 113
 
 
 #: 外部仓绝对根（本机其它仓，如 GPT-SoVITS）；就近出现即认为该坐标有意指向外部
@@ -452,33 +460,133 @@ def test_shim_pointed_coords_ratchet() -> None:
 
 _MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 
+#: 围栏代码块标记行：≤3 空格缩进 + 3 个及以上反引号/波浪线 + 可选信息串（```markdown 等）。
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def _fenced_content_mask(lines: list[str]) -> list[bool]:
+    """逐行标记「严格位于一个**已闭合**围栏代码块内」⇒ True（该行链接当字面量、不检）。
+
+    判据（CommonMark 形制，本仓实测）：
+      · 开栏 = 行首 ≤3 空格 + 3+ 反引号/波浪线（可带任意信息串）；
+      · 闭栏 = 同字符、长度 ≥ 开栏、且信息串为空；
+      · 开栏/闭栏本身不计入（它们是标记，不是载荷）。
+    失败安全（fail-safe）：遇**未闭合**开栏（一路到文件尾都找不到闭栏），其后所有行一律
+    **不**标记为围栏内 ⇒ 链接照常检查。伪阳只是维护噪音，伪阴会悄悄废掉这道门，
+    故拿不准时宁可继续查。
+    """
+    mask = [False] * len(lines)
+    n = len(lines)
+    i = 0
+    while i < n:
+        opener = _FENCE_RE.match(lines[i])
+        if not opener:
+            i += 1
+            continue
+        fence_char = opener.group(1)[0]
+        fence_len = len(opener.group(1))
+        closer: int | None = None
+        j = i + 1
+        while j < n:
+            cand = _FENCE_RE.match(lines[j])
+            if (
+                cand
+                and cand.group(1)[0] == fence_char
+                and len(cand.group(1)) >= fence_len
+                and cand.group(2).strip() == ""
+            ):
+                closer = j
+                break
+            j += 1
+        if closer is None:
+            # 未闭合 ⇒ 失败安全：不压制其后内容，仅跳过这一行开栏记号。
+            i += 1
+            continue
+        for k in range(i + 1, closer):
+            mask[k] = True
+        i = closer + 1
+    return mask
+
+
+#: 行内反引号串：一或多枚反引号组成的最长连续段。
+_BACKTICK_RUN_RE = re.compile(r"`+")
+
+
+def _inline_code_spans(line: str) -> list[tuple[int, int]]:
+    """返回该行内联代码（`code`）覆盖的**内容**字符区间 [lo, hi)（不含首尾反引号）。
+
+    成对规则（CommonMark 近似，失败安全）：每个反引号串与**其后第一个等长**反引号串配对，
+    两者之间即代码内容；落单反引号串（后面找不到等长闭栏）⇒ 不产生区间（不压制）。
+    只压制「链接标记本身整个落在某个区间内」的情况，绝不吞掉与代码同处一行却写在代码外的真链接。
+    """
+    runs = [
+        (m.start(), m.end(), len(m.group(0)))
+        for m in _BACKTICK_RUN_RE.finditer(line)
+    ]
+    spans: list[tuple[int, int]] = []
+    i = 0
+    length = len(runs)
+    while i < length:
+        j = i + 1
+        while j < length and runs[j][2] != runs[i][2]:
+            j += 1
+        if j < length:
+            spans.append((runs[i][1], runs[j][0]))  # 内容：开栏之后到闭栏之前
+            i = j + 1
+        else:
+            i += 1  # 落单反引号串 ⇒ 失败安全，不压制
+    return spans
+
+
+def _inside_any_span(start: int, end: int, spans: list[tuple[int, int]]) -> bool:
+    return any(lo <= start and end <= hi for lo, hi in spans)
+
+
+def _dead_links_in_doc(doc: str, path: Path) -> list[str]:
+    """子门①b 的逐文件判据（其余逻辑与旧实现逐字一致，仅新增「围栏内 / 行内代码内不检」两道跳过）。
+
+    单独成函数以便注毒自证（见 test_dead_link_fence_and_inline_code_teeth）直接喂临时夹具，
+    无需把整个门指向 tmp 目录。
+    """
+    dead: list[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:  # pragma: no cover
+        return dead
+    in_fence = _fenced_content_mask(lines)
+    for idx, line in enumerate(lines):
+        if in_fence[idx]:
+            continue
+        code_spans = _inline_code_spans(line)
+        for m in _MD_LINK_RE.finditer(line):
+            target = m.group(1)
+            if target.startswith(("http://", "https://", "mailto:", "#")):
+                continue
+            target = target.split("#", 1)[0]
+            if not target or _EXTERNAL_REF_RE.search(target):
+                continue
+            if _inside_any_span(m.start(), m.end(), code_spans):
+                continue
+            probe = (path.parent / target).resolve()
+            if not probe.exists():
+                dead.append(
+                    _fmt(
+                        "死链",
+                        doc,
+                        idx + 1,
+                        m.group(1),
+                        f"解析为 `{probe.relative_to(ROOT) if probe.is_relative_to(ROOT) else probe}` 不存在",
+                        "改指同级真实文件（`docs/design/` 下别写 `design/xxx.md`），"
+                        "或按审计 R17 由草稿 owner 修",
+                    )
+                )
+    return dead
+
 
 def collect_dead_md_links(skip_inflight: bool = False) -> list[str]:
     dead: list[str] = []
     for doc, path in _scan_docs(skip_inflight):
-        for idx, line in enumerate(
-            path.read_text(encoding="utf-8", errors="replace").splitlines()
-        ):
-            for m in _MD_LINK_RE.finditer(line):
-                target = m.group(1)
-                if target.startswith(("http://", "https://", "mailto:", "#")):
-                    continue
-                target = target.split("#", 1)[0]
-                if not target or _EXTERNAL_REF_RE.search(target):
-                    continue
-                probe = (path.parent / target).resolve()
-                if not probe.exists():
-                    dead.append(
-                        _fmt(
-                            "死链",
-                            doc,
-                            idx + 1,
-                            m.group(1),
-                            f"解析为 `{probe.relative_to(ROOT) if probe.is_relative_to(ROOT) else probe}` 不存在",
-                            "改指同级真实文件（`docs/design/` 下别写 `design/xxx.md`），"
-                            "或按审计 R17 由草稿 owner 修",
-                        )
-                    )
+        dead.extend(_dead_links_in_doc(doc, path))
     return dead
 
 
@@ -488,6 +596,46 @@ def test_markdown_links_alive_ratchet() -> None:
         f"markdown 死链 {len(dead)} 条 > 基线 {_BASELINE_MD_DEAD_LINKS}：\n"
         + "\n".join(dead[:20])
     )
+
+
+def test_dead_link_fence_and_inline_code_teeth(tmp_path: Path) -> None:
+    """注毒自证：这道门对「围栏代码块」与「行内代码」的豁免必须真实咬合（四齿各杀一次）。
+
+    历史动因：`_BASELINE_MD_DEAD_LINKS` 长期下不到 0，因为 26 条伪阳里 24 条躺在
+    ```markdown 草稿载荷块内（相对路径按目的地 docs/ 正确、按草稿自身错），另 2 条是
+    写在行内反引号里的被审正则原文（改掉＝篡改证据）。二者都是**字面文本、非导航链接**。
+    本夹具四例分别钉死：散文真死链要报、围栏内不报、行内代码内不报、**未闭合**围栏之后
+    仍要报（失败安全方向）。删掉围栏或行内代码任一处理、或把未闭合也当围栏压制，本测试必红。
+    """
+    f = tmp_path / "fixture.md"
+    f.write_text(
+        "# Fixture for dead-link suppression teeth\n"
+        "\n"
+        "[anchor_a](ghost_a.md)\n"
+        "\n"
+        "```markdown\n"
+        "[anchor_a](ghost_a.md)\n"
+        "```\n"
+        "\n"
+        "text `[anchor_c](ghost_c.md)` tail\n"
+        "\n"
+        "```\n"
+        "[anchor_d](ghost_d.md)\n"
+        "\n"
+        "trailing [anchor_d](ghost_d.md)\n",
+        encoding="utf-8",
+    )
+    rows = _dead_links_in_doc("fixture.md", f)
+    reported = {int(re.search(r"fixture\.md:(\d+)", r).group(1)) for r in rows}
+    # (a) 散文里的真死链必须被报（门的正脸）
+    assert 3 in reported, "散文死链漏报 ⇒ 门失效"
+    # (b) 同一死链躺进 ```markdown 围栏块 ⇒ 视为载荷字面量，不报（删围栏处理则此行变红）
+    assert 6 not in reported, "围栏块内链接被误当导航 ⇒ 未识别代码围栏"
+    # (c) 死链包在行内反引号代码段里 ⇒ 字面量，不报（删行内处理则此行变红）
+    assert 9 not in reported, "行内代码内链接被误当导航 ⇒ 未识别 code span"
+    # (d) 未闭合围栏之后的散文死链 ⇒ 失败安全，仍要报（把未闭合也压制则此行变红）
+    assert {12, 14} <= reported, "未闭合围栏之后的死链被吞 ⇒ 失败安全方向反了"
+    assert len(rows) == 3, f"应恰好报 3 条（散文1 + 未闭合后2），实得 {sorted(reported)}"
 
 
 # ---------------------------------------------------------------------------

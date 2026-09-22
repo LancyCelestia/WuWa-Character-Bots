@@ -23,21 +23,27 @@ from plugins.bot_unified_runtime.capabilities.today_history import (
     build_today_history_capability,
 )
 from plugins.bot_unified_runtime.capabilities.weather import build_weather_capability
-from plugins.bot_unified_runtime.capabilities.wiki import build_wiki_capability
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
     PolicySettings,
     evaluate_policy,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.aliases import (
+    build_command_alias_resolver,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+    classify_message_route,
 )
 from plugins.bot_unified_runtime.domains.core.contracts import (
     IncomingMessage,
     ReceiptState,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.location.capabilities.wiki import (
+    build_wiki_capability,
+)
 from plugins.bot_unified_runtime.domains.ops.audit import InMemoryAuditLogger
 from plugins.bot_unified_runtime.runtime import RuntimePipeline
-from plugins.bot_unified_runtime.runtime.aliases import build_command_alias_resolver
-from plugins.bot_unified_runtime.runtime.base_router import classify_message_route
 from plugins.bot_unified_runtime.sender import InMemorySendQueue
 
 # (分组, 问法)

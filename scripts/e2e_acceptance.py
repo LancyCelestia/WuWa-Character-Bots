@@ -65,20 +65,12 @@ from urllib.parse import urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from plugins.bot_unified_runtime.audit import InMemoryAuditLogger
-from plugins.bot_unified_runtime.capabilities.affinity import build_affinity_capability
 from plugins.bot_unified_runtime.capabilities.content_parser import (
     build_content_capability,
 )
 from plugins.bot_unified_runtime.capabilities.divination import (
     build_divination_capability,
     is_divination_command,
-)
-from plugins.bot_unified_runtime.capabilities.echo import (
-    _HELP_ENTRIES as _HELP_REGISTRY,
-)
-from plugins.bot_unified_runtime.capabilities.echo import (
-    build_decision_query_result,
-    build_help_result,
 )
 from plugins.bot_unified_runtime.capabilities.fx import build_fx_capability
 from plugins.bot_unified_runtime.capabilities.market import (
@@ -98,9 +90,6 @@ from plugins.bot_unified_runtime.capabilities.stocks import (
     build_stocks_capability,
     is_stocks_command,
 )
-from plugins.bot_unified_runtime.capabilities.user_copy import (
-    GROUP_FAILURE_ACK_TEMPLATES,
-)
 from plugins.bot_unified_runtime.capabilities.weather import build_weather_capability
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import (
@@ -113,8 +102,18 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.decision.trace import (
-    InMemoryDecisionTraceSink,
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
+    build_affinity_capability,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+    _HELP_ENTRIES as _HELP_REGISTRY,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+    build_decision_query_result,
+    build_help_result,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.user_copy import (
+    GROUP_FAILURE_ACK_TEMPLATES,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     build_quiet_hours_checker,
@@ -122,16 +121,21 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     build_reply_budget_settings,
     build_role_settings,
 )
-from plugins.bot_unified_runtime.domains.ops.smoke.smoke import load_smoke_config
-from plugins.bot_unified_runtime.output.render_backends import build_render_backend
-from plugins.bot_unified_runtime.runtime.base_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     classify_message_route,
 )
-from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
-from plugins.bot_unified_runtime.runtime.settings import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.pipeline import (
+    RuntimePipeline,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
     build_instance_settings_manager,
     effective_instance,
 )
+from plugins.bot_unified_runtime.domains.core.decision.trace import (
+    InMemoryDecisionTraceSink,
+)
+from plugins.bot_unified_runtime.domains.ops.smoke.smoke import load_smoke_config
+from plugins.bot_unified_runtime.output.render_backends import build_render_backend
 from plugins.bot_unified_runtime.sender import InMemorySendQueue
 from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
 from plugins.bot_unified_runtime.sources.meme_library import MemeLibraryStore
@@ -437,7 +441,7 @@ def _identity_preference_capability(
     set-name 与 unset-name 成对出现，净效果为零。"""
 
     def capability(message: IncomingMessage, _decision: BotDecision) -> CapabilityResult:
-        from plugins.bot_unified_runtime.capabilities.echo import (
+        from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
             build_identity_preference_result,
         )
 

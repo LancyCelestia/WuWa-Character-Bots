@@ -22,6 +22,12 @@ def _run_script(script: str, flag: str) -> subprocess.CompletedProcess[str]:
         [sys.executable, str(ROOT / script), flag],
         capture_output=True,
         text=True,
+        # 必须钉 encoding：本仓铁律要求子进程 PYTHONIOENCODING=utf-8，父进程若按
+        # locale(GBK) 解码中日韩输出会当场 TypeError，把 stderr 打成 None——
+        # 于是"哈希漂移/事实漂移"这类真红全被报成"can only concatenate str"，
+        # 真因被吞（台账 #47 登记的 systemic 缺陷第 11 枚；模范写法见
+        # tests/test_verify_hashes_coverage.py::_run_check）。
+        encoding="utf-8",
         timeout=120,
         cwd=str(ROOT),
         check=False,

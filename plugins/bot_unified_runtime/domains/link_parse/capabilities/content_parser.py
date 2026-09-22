@@ -402,7 +402,7 @@ def _sweep_quota(target_dir: Any, max_bytes: int) -> None:
             return
         # 先记账再扫：同窗后到者读到新时间戳即跳过，只最先到的线程扫盘。
         _quota_last_sweep = now
-    from plugins.bot_unified_runtime.runtime.cache_policy import (
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
         enforce_quota,
     )
 
@@ -623,7 +623,9 @@ def _summarize_subtitle(config: Any, subtitle: str, *, max_chars: int = 3000) ->
     线程不会阻塞事件循环。走主路由的故障转移链，不新增 key 配置。
     """
     try:
-        from plugins.bot_unified_runtime.llm.model_router import build_model_router
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+            build_model_router,
+        )
 
         router = build_model_router(config)
         prompt = (

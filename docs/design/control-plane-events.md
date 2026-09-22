@@ -56,7 +56,7 @@ flowchart LR
 
 ### 来源与类别
 
-来源：bot、nonebot、napcat、telegram、mail、control_plane、decision_engine、pipeline、sender、llm、database、scheduler、capability、renderer。
+来源成员的唯一真身＝`domains/ops/monitor/event_store.py` 的 `EVENT_SOURCES`，本文不重列成员（旧版曾并列 `capability`/`renderer` 两枚，真身从未收录，属文档侧多列）。
 类别：debug、info、warning、error、success、critical、detail。
 映射：TRACE/DETAIL → detail，WARN/WARNING → warning，FATAL/CRITICAL → critical，SUCCESS → success；其余同名映射。
 不解析 message 猜来源、Token 或错误类型；未识别类别不强行当 info。

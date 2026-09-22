@@ -11,13 +11,21 @@
    ``build_content_capability`` 三个真身的生产直呼点，钉死当前登记（三域**尚未通电**，直呼面为 Wave3
    grandfathered，等主会话落 descriptor + root 切换原子批后按 SEAT-S-W3B §6 收编）。新增未审直呼点 /
    半迁移 / 第二 invoker 点当场红。
-2. **端到端逐字段等值**：三域各一条能力经「现场注册 descriptor+adapter 的局部 ``CapabilityInvoker``」
-   通电后，``data[PRESENTATION_DATA_KEY]`` 与直呼 handler 的 ``CapabilityResult.model_dump()`` 逐字段相等。
-   adapter 忠实透传本域 builder 必需的 ``render_backend`` / 多依赖（本席关键发现：三域非 config 纯工厂）。
-3. **注毒自证**：合成树证明「新增直呼」「第二 invoker 点」「半迁移」「摘 descriptor⇒诚实失败不崩+旧直调仍通」
-   四态各真的会红（防「存在性糊过活性判据」式假门）。
+2. **端到端真身逐字段等值**（S-FIXB 补修，评审 R1 账 1）：三域各一条用例**真 import builder 真身**，
+   仅 monkeypatch IO 叶子（NMC 拉取/预警、出图、假 parse_fn、socket DNS），比对「现场注册
+   descriptor+adapter 的局部 ``CapabilityInvoker``」通电后与直呼真身的整份
+   ``CapabilityResult.model_dump()`` 逐字段相等；等值判据**复用** S-MEDIA 席
+   ``_assert_presentation_equals``（pop 唯一随机字段 ``debug_id`` 且点名、断言两路都有），不复制第二份。
+   旧「两路皆替身」的 fake-builder 用例如实降级为 ②-a **adapter 形状自证**（只证 context→builder
+   接线与 wrap 形状，不对真身产出作任何断言）。
+3. **注毒自证**：合成树证明「新增直呼」「第二 invoker 点」「半迁移」「摘 descriptor⇒诚实失败不崩+
+   旧直调仍通」四态各真的会红（防「存在性糊过活性判据」式假门）；真等值配常驻杀伤力锁——
+   adapter 丢呈现字段/丢转发依赖必红（S-FIXB 新增）。
 
-全离线：三个 builder 真身在用例内 monkeypatch 为记录依赖的确定性替身，零网络、零真实数据源、零消息发送。
+全离线：真身真调，IO 叶子逐域打桩——weather 打 ``nmc_weather_query``/``fetch_city_alerts``/
+垫片消费面 ``render_card_png``；content 走 registry 注入缝（真 ParserRegistry+真 ParserRule+
+假 parse_fn=网络叶子）并钉 ``socket.getaddrinfo``；eat **零 mock**（菜谱命中分支=内置 DISHES
+纯内存查表）。零网络、零出图、零消息发送、零源码树 ``data/`` 写入。
 """
 
 from __future__ import annotations
@@ -39,6 +47,13 @@ v1 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(v1)
 
 _PKG_ROOT = v1._PKG_ROOT  # …/plugins/bot_unified_runtime
+
+# 复用 S-MEDIA 席门的真等值判据 ``_assert_presentation_equals``（组合非复制，铁律=禁第二套判据）。
+_MEDIA_GATE = _TESTS_DIR / "test_orchestration_callsite_wave_media.py"
+_mspec = importlib.util.spec_from_file_location("_wave_media_gate", _MEDIA_GATE)
+assert _mspec is not None and _mspec.loader is not None
+m = importlib.util.module_from_spec(_mspec)
+_mspec.loader.exec_module(m)
 
 # 本席三域真身符号 → 能力族
 _TRACKED_B: dict[str, str] = {
@@ -210,7 +225,15 @@ def _fake_builder(cap_id: str, required_dep: str):
     return builder
 
 
-def _local_invoker(cap_id: str, family: str, builder, *, with_handler: bool = True):
+def _local_invoker(
+    cap_id: str,
+    family: str,
+    builder,
+    *,
+    with_handler: bool = True,
+    drop_context_key: str | None = None,
+    drop_dump_key: str | None = None,
+):
     from plugins.bot_unified_runtime.runtime.capability_protocols import (
         CapabilityDescriptor,
         CapabilityFamily,
@@ -233,18 +256,53 @@ def _local_invoker(cap_id: str, family: str, builder, *, with_handler: bool = Tr
     )
     registry.register(descriptor)
     if with_handler:
-        handlers.register(cap_id, _make_forwarding_adapter(builder, family))
+        if drop_context_key is None and drop_dump_key is None:
+            handlers.register(cap_id, _make_forwarding_adapter(builder, family))
+        else:
+            handlers.register(cap_id, _sabotaged_adapter(builder, family, drop_context_key, drop_dump_key))
     return CapabilityInvoker(registry=registry, handlers=handlers)
 
 
+def _sabotaged_adapter(builder, family: str, drop_context_key: str | None, drop_dump_key: str | None):
+    """交付 adapter 的故意破坏变体（杀伤力常驻锁用）：丢一枚转发依赖或丢一个呈现字段，
+    真等值必须当场抓住——抓不住即证明 ②-b 是假绿。"""
+    from plugins.bot_unified_runtime.runtime.capability_protocols import (
+        PRESENTATION_DATA_KEY,
+        InvocationResult,
+        InvocationStatus,
+    )
+
+    def _handler(request) -> InvocationResult:
+        config = request.context.get("config")
+        kwargs = {k: request.context.get(k) for k in _CONTEXT_KEYS[family] if k != drop_context_key}
+        presented = builder(config, **kwargs)(
+            request.payload["message"], request.context.get("decision")
+        )
+        dump = presented.model_dump()
+        if drop_dump_key is not None:
+            dump.pop(drop_dump_key, None)
+        return InvocationResult(
+            capability_id=request.capability_id,
+            status=InvocationStatus.OK,
+            data={PRESENTATION_DATA_KEY: dump},
+            via=family,
+        )
+
+    return _handler
+
+
+# ---- ②-a adapter 形状自证（fake builder 两路皆替身）：只证 context→builder 接线与信封 wrap。
+# 本用例旧账名叫「端到端逐字段等值」，评审 R1 判假绿（两路从不碰真身，属实）——S-FIXB
+# 如实降级为形状自证：fake builder 把收到的依赖取值回写 body，证 adapter 逐键转发
+# ``_CONTEXT_KEYS``；真身产出的断言在下面 ②-b，此处不作任何真身声明。
 @pytest.mark.parametrize(
     "cap_id,family,required_dep",
     [("bot.weather", "weather", "render_backend"),
      ("bot.eat", "eat", "render_backend"),
      ("bot.content", "content", "render_backend")],
 )
-def test_e2e_wave3b_equals_direct(cap_id: str, family: str, required_dep: str) -> None:
-    """三域各一条：经 invoker 通电产出的呈现载荷，与直呼 handler 逐字段相等，且依赖忠实透传。"""
+def test_adapter_shape_forwards_context_deps_to_builder(cap_id: str, family: str, required_dep: str) -> None:
+    """形状自证：context 各键经 adapter 忠实落到 builder kwargs，信封 wrap 不增删字段。"""
     from plugins.bot_unified_runtime.domains.core.contracts import CapabilityResult
     from plugins.bot_unified_runtime.runtime.capability_protocols import (
         PRESENTATION_DATA_KEY,
@@ -284,6 +342,156 @@ def test_e2e_wave3b_equals_direct(cap_id: str, family: str, required_dep: str) -
     assert required_dep in body and repr(deps[required_dep]) in body, (
         f"adapter 未忠实透传 {required_dep}={deps[required_dep]!r}：{body}"
     )
+
+
+# ---- ②-b 端到端真身逐字段等值（S-FIXB）：真 import builder 真身，只桩 IO 叶子，判据复用 S-MEDIA 席。
+def _e2e_message(text: str):
+    """真 IncomingMessage 契约（非假消息）；两路共用同一份消息体，只差执行入口。"""
+    from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+
+    return IncomingMessage(
+        platform="onebot", adapter="onebot.v11", bot_id="bot",
+        session_id="private:u1", session_type=SessionType.PRIVATE,
+        sender_id="u1", plain_text=text,
+    )
+
+
+def _real_spec(family: str, tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """返回 (builder 真身, config, 逐字转给 builder 的 context 依赖, 消息)，并打好本域 IO 叶子。"""
+    if family == "weather":
+        # 叶子=nmc_weather_query（NMC HTTP）/fetch_city_alerts（预警 HTTP）/render_card_png
+        # （weather 函数级 import 消费的垫片属性=出图）。码表/变体链/报告文本/审计 tags 全真。
+        import plugins.bot_unified_runtime.domains.weather.capabilities.weather as weather_mod
+        from plugins.bot_unified_runtime.capabilities import content_parser as card_shim
+
+        monkeypatch.setattr(weather_mod, "nmc_weather_query",
+                            lambda query, proxy="": f"【{query}天气】晴 25℃")
+        monkeypatch.setattr(weather_mod, "fetch_city_alerts", lambda query, proxy="": [])
+        monkeypatch.setattr(card_shim, "render_card_png",
+                            lambda backend, item, **kw: {"file": str(tmp_path / "weather.png")})
+        config = SimpleNamespace(bot_download_proxy="", bot_card_render_dir=str(tmp_path / "cards"))
+        deps = {"render_backend": SimpleNamespace(available=True, name="stub-renderer")}
+        return weather_mod.build_weather_capability, config, deps, _e2e_message("天气 北京")
+    if family == "eat":
+        # 零 mock：「菜谱 番茄炒蛋」命中分支=真 builder+内置 DISHES 纯内存查表，
+        # render_backend=None 走文本兜底——全链无 IO，是最强形态的真等值。
+        import plugins.bot_unified_runtime.domains.food.capabilities.eat as eat_mod
+
+        config = SimpleNamespace(bot_card_render_dir="", bot_card_cache_max_bytes=0)
+        return eat_mod.build_eat_capability, config, {"render_backend": None}, _e2e_message("菜谱 番茄炒蛋")
+    if family == "content":
+        # 叶子=假 parse_fn（唯一网络取数点，经 registry 注入缝，先例 test_parser_ssrf_guard）
+        # +socket.getaddrinfo（SSRF 护栏的 DNS）；registry/规则/候选选择/正文渲染全真。
+        import socket
+
+        from plugins.bot_unified_runtime.domains.core.contracts.media import (
+            ParserRule,
+            build_parsed_content,
+        )
+        from plugins.bot_unified_runtime.domains.link_parse.capabilities.content_parser import (
+            build_content_capability,
+        )
+        from plugins.bot_unified_runtime.sources.registry import ParserRegistry
+
+        def fake_parse(url_arg):
+            return build_parsed_content(
+                platform="generic", item_id="1", item_kind="post",
+                title="公开标题", canonical_url=url_arg,
+            )
+
+        registry = ParserRegistry()
+        registry.register(ParserRule(
+            parser_id="generic", source_id="通用", url_patterns=[r"xiaohongshu\.com"], priority=1,
+        ))
+
+        def fake_dns(host, port, *a, **k):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", int(port or 0)))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", fake_dns)
+        config = SimpleNamespace(bot_media_analyze_enabled=False)
+        deps = {
+            "registry": {"registry": registry, "parsers": {"generic": fake_parse}},
+            "parse_history_store": None, "downloader": None, "render_backend": None,
+            "card_dir": str(tmp_path / "cards"), "playwright_backend": None, "bot_avatar_url": "",
+        }
+        return (build_content_capability, config, deps,
+                _e2e_message("https://www.xiaohongshu.com/explore/abc123"))
+    raise AssertionError(f"未知 family {family!r}")
+
+
+def _e2e_request(cap_id: str, config, deps: dict, message):
+    from plugins.bot_unified_runtime.runtime.capability_protocols import (
+        CapabilityRequest,
+    )
+
+    return CapabilityRequest(
+        capability_id=cap_id, payload={"message": message}, principal="u1", roles=("user",),
+        context={"config": config, "decision": SimpleNamespace(actor_roles=["user"]), **deps},
+    )
+
+
+def _assert_real_equality(cap_id: str, family: str, builder, config, deps: dict, message):
+    """invoker 通电信封 vs 直呼真身：整份 ``model_dump()`` 逐字段。判据=S-MEDIA
+    ``_assert_presentation_equals``（唯一豁免随机字段 ``debug_id``，pop 点名且断言两路都有）。"""
+    from plugins.bot_unified_runtime.runtime.capability_protocols import (
+        InvocationStatus,
+    )
+
+    envelope = _local_invoker(cap_id, family, builder).invoke(_e2e_request(cap_id, config, deps, message))
+    assert envelope.status is InvocationStatus.OK
+    direct = builder(config, **deps)(message, SimpleNamespace(actor_roles=["user"]))
+    m._assert_presentation_equals(envelope, direct)
+    return direct
+
+
+def test_e2e_weather_real_builder_equals_direct(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builder, config, deps, message = _real_spec("weather", tmp_path, monkeypatch)
+    direct = _assert_real_equality("bot.weather", "weather", builder, config, deps, message)
+    # 分支证明：必须走到「码表命中→NMC 报告→渲染出卡」（坠降级空分支则等值没营养）
+    assert direct.kind == "mixed" and direct.images and "晴 25℃" in direct.body
+
+
+def test_e2e_eat_real_builder_equals_direct(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builder, config, deps, message = _real_spec("eat", tmp_path, monkeypatch)
+    direct = _assert_real_equality("bot.eat", "eat", builder, config, deps, message)
+    assert direct.kind == "text" and "番茄炒蛋" in direct.body and "做法" in direct.body
+
+
+def test_e2e_content_real_builder_equals_direct(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builder, config, deps, message = _real_spec("content", tmp_path, monkeypatch)
+    direct = _assert_real_equality("bot.content", "content", builder, config, deps, message)
+    assert "公开标题" in direct.body and "content_parse" in direct.audit_tags
+
+
+@pytest.mark.parametrize(
+    ("family", "drop_key"),
+    [("weather", "title"), ("weather", "audit_tags"), ("eat", "images"), ("content", "body")],
+)
+def test_poison_real_equality_dropping_presentation_field_is_red(
+    family: str, drop_key: str, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """注毒（常驻）：adapter 丢任何一个呈现字段 ⇒ 真等值必红——②-b 杀伤力自证。"""
+    builder, config, deps, message = _real_spec(family, tmp_path, monkeypatch)
+    cap_id = f"bot.{family}"
+    envelope = _local_invoker(cap_id, family, builder, drop_dump_key=drop_key).invoke(
+        _e2e_request(cap_id, config, deps, message)
+    )
+    direct = builder(config, **deps)(message, SimpleNamespace(actor_roles=["user"]))
+    with pytest.raises(AssertionError):
+        m._assert_presentation_equals(envelope, direct)
+
+
+def test_poison_weather_adapter_losing_render_backend_is_red(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """注毒（常驻）：adapter 丢 render_backend 转发 ⇒ weather 静默降级 text-only 卡
+    （kind/images 不等值）必红——S-W3B「多依赖忠实透传」自此由真身产出把关，不再靠替身自证。"""
+    builder, config, deps, message = _real_spec("weather", tmp_path, monkeypatch)
+    envelope = _local_invoker("bot.weather", "weather", builder, drop_context_key="render_backend").invoke(
+        _e2e_request("bot.weather", config, deps, message)
+    )
+    direct = builder(config, **deps)(message, SimpleNamespace(actor_roles=["user"]))
+    assert direct.kind == "mixed"  # 对照：完整转发确实出卡，差异不是两路都没跑到
+    with pytest.raises(AssertionError):
+        m._assert_presentation_equals(envelope, direct)
 
 
 def test_e2e_denied_for_blocked_role_and_no_presentation_payload() -> None:

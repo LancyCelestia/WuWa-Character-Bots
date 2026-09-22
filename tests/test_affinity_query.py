@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
-from plugins.bot_unified_runtime.character.affinity import DynamicAffinityStore
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
+    DynamicAffinityStore,
+)
 
 
 class _Clock:
@@ -122,7 +124,7 @@ def _message(text: str, *, group_id: str | None = None) -> IncomingMessage:
 
 
 def test_affinity_command_detection() -> None:
-    from plugins.bot_unified_runtime.capabilities.affinity import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
         is_affinity_command,
         parse_affinity_query,
     )
@@ -139,10 +141,12 @@ def test_affinity_command_detection() -> None:
 
 
 def test_private_result_shows_both_directions(tmp_path) -> None:
-    from plugins.bot_unified_runtime.capabilities.affinity import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
         build_affinity_capability,
     )
-    from plugins.bot_unified_runtime.character.affinity import per_user_factor
+    from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
+        per_user_factor,
+    )
 
     store = _store(tmp_path)
     store.observe("u1", "positive")
@@ -159,7 +163,7 @@ def test_private_result_shows_both_directions(tmp_path) -> None:
 
 
 def test_group_result_lists_impressed_members_and_highlights_me(tmp_path) -> None:
-    from plugins.bot_unified_runtime.capabilities.affinity import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
         build_affinity_capability,
     )
 
@@ -177,7 +181,7 @@ def test_group_result_lists_impressed_members_and_highlights_me(tmp_path) -> Non
 def test_algorithm_query_returns_dynamic_personal_rules(tmp_path) -> None:
     from types import SimpleNamespace
 
-    from plugins.bot_unified_runtime.capabilities.affinity import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
         build_affinity_capability,
     )
     store = _store(tmp_path)
@@ -197,7 +201,7 @@ def test_algorithm_query_returns_dynamic_personal_rules(tmp_path) -> None:
 
 def test_algorithm_copy_is_v4_linear_eight_tier() -> None:
     # docs §7 算法卡文案：线性全额步长 + 闲置回归 + 印象淡出 + 个人系数 + 红线摘要
-    from plugins.bot_unified_runtime.capabilities.affinity import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
         _TIER_TABLE,
         ALGORITHM_TEXT,
         _rules_chips,
@@ -218,7 +222,9 @@ def test_algorithm_copy_is_v4_linear_eight_tier() -> None:
 
 
 def test_tier_text_spans_negative_and_positive_scores() -> None:
-    from plugins.bot_unified_runtime.capabilities.affinity import _tier_text
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.affinity import (
+        _tier_text,
+    )
 
     assert _tier_text(-90.0) == "初识"
     assert _tier_text(-30.0) == "微凉"
@@ -230,7 +236,7 @@ def test_tier_text_spans_negative_and_positive_scores() -> None:
 def test_provider_maps_tiers_to_familiarity_and_injects_self_guard(tmp_path) -> None:
     """docs §5：档 ≥+2 → close、-1..+1 → familiar、≤-2 → stranger；
     人格自守条款追加在态度文本之后（任何档位生效）。"""
-    from plugins.bot_unified_runtime.character.providers import (
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         FileCharacterContextProvider,
     )
 
@@ -334,7 +340,9 @@ def _decision():
 # ---------------------------------------------------------------------------
 
 def test_base_router_routes_affinity_commands() -> None:
-    from plugins.bot_unified_runtime.runtime.base_router import ROUTE_RULES
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
+        ROUTE_RULES,
+    )
 
     def route(text: str):
         for rule in ROUTE_RULES:
@@ -352,7 +360,7 @@ def test_base_router_routes_affinity_commands() -> None:
 
 
 def test_help_entry_exists_public_and_unique() -> None:
-    from plugins.bot_unified_runtime.capabilities.echo import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
         _HELP_ENTRIES,
         _PUBLIC_HELP_TOPICS,
     )

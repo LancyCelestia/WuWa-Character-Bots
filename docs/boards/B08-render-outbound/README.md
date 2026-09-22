@@ -57,7 +57,7 @@ flowchart LR
 
 入站只有一条：`domains/chat_reply/runtime/pipeline.py` 在能力返回后依次调 `domains/render/reviewer.py:review_capability_result` → `domains/render/renderer.py:render_reviewed_output` → `send_queue.submit`。文件出站走 `domains/transport/sender/file_gateway.py`，错误旁路走 `domains/ops/monitor/error_report.py:maybe_submit_error_card`，两者都汇进同一个发送队列。
 
-⚠ 现役事实与目标态的差距：上画的「一条链」目前对**入站触发的能力回复**成立，对**主动推送**只部分成立——中央闸 `domains/transport/sender/outbound_gate.py:submit_active_push` 的生产引用仍限定在 transport 本体与紧急信息域，提醒 / cookie 到期 / 群摘要 / 日常助理四族仍直调 `send_queue.submit`（这是 B4-spec §1.5「只登记不迁移」的裁定结果，由 `tests/test_outbound_gate.py` 的 T6 结构锁钉死）。详见 [send-queue](send-queue/README.md) 的现行缺陷。
+⚠ 现役事实与目标态的差距：上画的「一条链」对**入站触发的能力回复**成立，对**主动推送**已更进一步但仍非全部经闸——中央闸 `domains/transport/sender/outbound_gate.py::submit_active_push` 的生产引用现覆盖 transport 本体、紧急信息域与根装配 `__init__.py`：2026-09-22 统一波（WAVE42 裁定件 `.superpowers/sdd/2026-09-21-unify-wave/decisions/WAVE42-active-push-central-exit.md`）起，每日群摘要 `_push_daily_group_digests` 与日常助理私聊推 `_push_daily_assist_private` 两族主动投递已改道本闸（关态＝与裸 `submit` 逐字节同形的 passthrough，线上零变更）。仍直调 `send_queue.submit` 的族（到点提醒与 cookie 到期两族，其内联投递与 `store.mark_done` 回执链耦合未改道）清单以结构锁 `tests/test_outbound_gate.py::test_existing_families_still_submit_directly` 与 `tests/test_outbound_bypass_prohibition_gate.py` 的豁免表为准，本处不手写族数。旧口径为 B4-spec §1.5「只登记不迁移」（当时值，`docs/design/emergency-info-unify-summary-20260919.md` §十，由 `tests/test_outbound_gate.py` 的 T6 结构锁钉死）。详见 [send-queue](send-queue/README.md) 的现行缺陷。
 
 ## 退役与并入记录
 

@@ -20,11 +20,15 @@ from __future__ import annotations
 import pytest
 
 from plugins.bot_unified_runtime.capabilities.eat import is_recipe_command
-from plugins.bot_unified_runtime.capabilities.moegirl import is_moegirl_command
 from plugins.bot_unified_runtime.capabilities.today_history import (
     is_today_history_command,
 )
-from plugins.bot_unified_runtime.capabilities.wiki import is_wiki_command
+from plugins.bot_unified_runtime.domains.location.capabilities.moegirl import (
+    is_moegirl_command,
+)
+from plugins.bot_unified_runtime.domains.location.capabilities.wiki import (
+    is_wiki_command,
+)
 
 # 右侧胶合探针（字母延续）必须不命中——T-Spec 台账 5 条的修复断言。
 _GLUED_CASES = [

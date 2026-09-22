@@ -369,6 +369,12 @@ class Config(BaseModel):
     # 个股行情/汇率路由开关（base_router getattr 读取；无此字段时 .env 无法关闭）。
     bot_stocks_enabled: bool = True
     bot_fx_enabled: bool = True
+    # 商品/债券/北向路由开关：base_router:364/378/388 一直在 getattr 读这三个键，
+    # 但 Config 里没有 ⇒ 这三路 .env 永远关不掉（2026-09-21 S-W3D 实测、主会话补键）。
+    # 缺省 True＝与补键前逐字节同行为（getattr 旧缺省就是 True）。
+    bot_commodities_enabled: bool = True
+    bot_bond_enabled: bool = True
+    bot_northbound_enabled: bool = True
     # 东财空响应受控重试（G2）：限流时 HTTP 200 但业务体为空（空 JSON/缺行），
     # 三源数据层至多重试 1 次（退避 0.6s）；关闭后行为与无重试逐字节一致。
     bot_market_retry_on_empty: bool = True
@@ -648,6 +654,9 @@ class Config(BaseModel):
     bot_eat_enabled: bool = True
     # 占卜娱乐套件（bot.divination）：八字排盘/塔罗牌/金钱卦，纯本地计算、零网络。
     bot_divination_enabled: bool = True
+    # 运势 HTTP 面的签名密钥：读点 facet.py:333 / draw_store.py:481 一直在 getattr 读本键，
+    # 而 Config 没有 ⇒ 恒 '' ⇒ fortune_ready 恒 False（运势永久不启用）。缺省 '' = 与补键前同。
+    bot_divination_fortune_secret: str = ""
     bot_channel_health_enabled: bool = True
     bot_channel_health_interval_seconds: float = 3600.0
     # 巡检并发/错峰参数（B-2）：background 巡检并发、手动 probe 并发、
@@ -747,6 +756,8 @@ class Config(BaseModel):
     bot_video_fuzzy_followup: bool = True
     # 自然语言深挖（"再仔细看看/没看懂"命中时重新分析）：更多帧 + 音频放宽 + 强制 ASR。
     bot_video_deep_enabled: bool = True
+    # 视频深挖冷却窗（chat.py:447 getattr 读此键；同族的 enabled/fuzzy_followup 都在册，唯此键漏声明）。
+    bot_video_deep_cooldown_seconds: int = 300
     bot_video_deep_frames: int = 16
     bot_video_deep_asr_max_seconds: int = 1800
     bot_video_deep_deadline_seconds: float = 150.0
@@ -919,6 +930,9 @@ class Config(BaseModel):
     # S0 直连收编配置门（v21r4-b2-direct-collect-plan §3.1/§3.3）：缺省 False=
     # 旧直连路径逐字节等价；True=走统一出站路径。
     bot_cookie_expiry_reminder_via_queue: bool = False
+    # 凭证过期每日提醒总开关：job 侧 getattr 读本键而 Config 无 ⇒ 提醒永远注册、.env 关不掉。
+    # 缺省 True = 与补键前逐字节同行为（旧 getattr 缺省就是 True）。
+    bot_cookie_expiry_reminder_enabled: bool = True
     bot_cookie_qr_via_queue: bool = False
     # 链接解析历史：默认开启并落盘（data/ 已被 git 忽略）。
     bot_parse_history_enabled: bool = True
@@ -1133,6 +1147,12 @@ class Config(BaseModel):
     bot_subscribe_global_concurrency: int = 3
     bot_subscribe_platform_concurrency: int = 1
     bot_subscribe_min_interval_seconds: float = 1.0
+    # outbox/seen 保留期与重试（subscription_store_v2.py:104/109/114/119 四枚 getattr 读点，
+    # 键此前均不存在）：读点是 `or` 链 ⇒ 0 恒回退模块常量，补键缺省 0 = 零行为变更、旋钮变真。
+    bot_subscription_outbox_sent_retention_days: int = 0
+    bot_subscription_seen_retention_days: int = 0
+    bot_subscription_outbox_max_attempts: int = 0
+    bot_subscription_outbox_sending_stale_seconds: float = 0
     bot_subscribe_lease_seconds: int = 120
     bot_subscribe_retry_base_seconds: int = 60
     bot_subscribe_retry_cap_seconds: int = 1800

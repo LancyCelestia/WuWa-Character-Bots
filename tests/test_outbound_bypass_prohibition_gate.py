@@ -280,14 +280,22 @@ def test_gate_scope_excludes_only_sender_funnel(api: str) -> None:
 # 扫全树的门。二者互补：B 类=不排队直发，A 类=排队但不走中央闸。
 # 中央投递出口 `submit_active_push` 本体在 `domains/transport/sender/`，天然豁免。
 #
-# 已知局限（如实登记不粉饰）：别名裸调 `submit = x.send_queue.submit; submit(req)`
-# （如 error_report.py:1052/1054）AST 接收者判据扫不到——见
-# `test_poison_submit_alias_escapes_by_design` 自证。收编施工图见
-# `.superpowers/sdd/2026-09-21-unify-wave/logs/SEAT-S-W42.md` §5。
+# 已知局限：①别名裸调 `submit = x.send_queue.submit; submit(req)` —— **2026-09-22 已收编**
+# （S-BYPASS 实证该逃逸面真的吞掉了 error_report 两条在跑的投递，判据升级为
+# `_submit_alias_names`：按**作用域**把绑到队列 `.submit` 的局部名一并计命中，
+# 见 `test_submit_alias_is_caught_within_scope_only`）。登记这条历史不是为了记账，
+# 是为了说清"清点账 6→8 那两条一直都在，是门瞎"。
+# ②异名接收者（队列实例绑到词表外变量名）同样逃逸；全树唯一真实例
+# （smoke.py 裸 `queue`，S-W42 后由 S-FIXB 实测发现）已扩词表收进判据面，
+# 残余异名面（self.send_q/self.q/self._q 类）见
+# `test_poison_divergently_named_receiver_escapes_by_design` 自证=登记的局限非判据正确。
+# 收编施工图见 `.superpowers/sdd/2026-09-21-unify-wave/logs/SEAT-S-W42.md` §5。
 # =========================================================================
 
-#: submit 旁路的接收者标识：`send_queue`（裸 Name）或链中属性 `.send_queue` / `._queue`。
-SUBMIT_QUEUE_ATTRS = frozenset({"send_queue", "_queue"})
+#: submit 旁路的接收者标识：`send_queue`/`queue`（裸 Name）或链中属性 `.send_queue` / `._queue` / `.queue`。
+#: `queue` 为 S-FIXB 账2 新增：smoke.py:1151/1152 用异名 `queue` 绑 SQLiteSendRequestQueue，
+#: 系全树唯一真实异名接收者（实测登记），不扩则它静默逃逸。
+SUBMIT_QUEUE_ATTRS = frozenset({"send_queue", "_queue", "queue"})
 
 
 @dataclass(frozen=True)
@@ -300,24 +308,96 @@ class SubmitBypassExemption:
     reason: str
 
 
-def _submit_receiver_is_queue(node: ast.Call) -> bool:
-    """`<base>.submit(...)` 且 base 链含 send_queue / _queue 才判命中。
-
-    命中：send_queue.submit / self.send_queue.submit / pipeline.send_queue.submit /
-    self._queue.submit。不命中：submit(...)（别名裸调，见上）、pool.submit、
-    executor.submit、review_gate.submit、ledger sink.submit 等非投递队列提交。
-    """
-    func = node.func
-    if not (isinstance(func, ast.Attribute) and func.attr == "submit"):
-        return False
-    cur: ast.expr = func.value
-    if isinstance(cur, ast.Name) and cur.id in SUBMIT_QUEUE_ATTRS:
+def _queue_base_is_receiver(base: ast.expr) -> bool:
+    """`<base>` 这条链是不是"队列实例"（裸名或链中属性命中词表即算）。"""
+    if isinstance(base, ast.Name) and base.id in SUBMIT_QUEUE_ATTRS:
         return True
+    cur: ast.expr = base
     while isinstance(cur, ast.Attribute):
         if cur.attr in SUBMIT_QUEUE_ATTRS:
             return True
         cur = cur.value
     return False
+
+
+def _submit_receiver_is_queue(node: ast.Call) -> bool:
+    """`<base>.submit(...)` 且 base 链含 send_queue / _queue / queue 才判命中。
+
+    命中：send_queue.submit / self.send_queue.submit / pipeline.send_queue.submit /
+    self._queue.submit / queue.submit。不命中：`submit(...)`（别名裸调——**2026-09-22 起
+    由 `_submit_alias_names` 单独收编**，不再算逃逸面）、
+    self.send_q/self.q/self._q（词表外异名，见局限②）、pool.submit、executor.submit、
+    review_gate.submit、ledger sink.submit 等非投递队列提交（段名精确匹配，
+    task_queue 类前缀近似不连带误伤）。
+    """
+    func = node.func
+    return bool(
+        isinstance(func, ast.Attribute)
+        and func.attr == "submit"
+        and _queue_base_is_receiver(func.value)
+    )
+
+
+def _own_nodes(scope: ast.AST):
+    """该作用域**自己**的节点：不下钻进更内层的函数。
+
+    没有这一步，模块作用域会把函数里的 `submit = …send_queue.submit` 当作全局绑定，
+    于是另一个同名函数里的 `submit(req)` 被算成投递旁路（假阳性）。
+    """
+    stack: list[ast.AST] = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue  # 内层函数由它自己那一份统计负责
+        yield node
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _submit_alias_names(scope: ast.AST) -> set[str]:
+    """该作用域内把队列 `.submit` **绑成局部名**的别名（局限①的收编判据）。
+
+    形如 `submit = pipeline.send_queue.submit` 的赋值是 **Store 侧**、不是 Call，
+    所以接收者判据结构性看不见它，随后的 `submit(req)` 就成了静默逃逸
+    （S-BYPASS 实证：本门只报 `error_report.py:1037`，真正发出去的两条在 :1052/:1054，
+    两个集合交集为空）。按**作用域**收别名而不是全文件一把抓：`submit` 这种短名
+    在别的函数里可能指完全不同的东西，全局匹配会造出假阳性、进而逼人放宽判据。
+    """
+    names: set[str] = set()
+    for node in _own_nodes(scope):
+        if not isinstance(node, ast.Assign):
+            continue
+        value = node.value
+        if isinstance(value, ast.Attribute) and value.attr == "submit" and _queue_base_is_receiver(
+            value.value
+        ):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+    return names
+
+
+def _file_submit_bypass_lines(tree: ast.Module) -> list[int]:
+    """一个文件里所有 A 类裸 submit 行号（直调 ∪ 别名裸调），去重升序。"""
+    lines: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _submit_receiver_is_queue(node):
+            lines.add(int(getattr(node, "lineno", 0)))
+    scopes: list[ast.AST] = [
+        tree,
+        *(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)),
+    ]
+    for scope in scopes:
+        aliases = _submit_alias_names(scope)
+        if not aliases:
+            continue
+        for node in _own_nodes(scope):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in aliases
+            ):
+                lines.add(int(getattr(node, "lineno", 0)))
+    return sorted(lines)
 
 
 def scan_submit_bypasses(package_root: pathlib.Path) -> dict[str, list[int]]:
@@ -335,24 +415,20 @@ def scan_submit_bypasses(package_root: pathlib.Path) -> dict[str, list[int]]:
             tree = ast.parse(file.read_text(encoding="utf-8"))
         except SyntaxError as exc:
             raise AssertionError(f"submit 旁路门无法解析 {rel}: {exc}") from exc
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and _submit_receiver_is_queue(node):
-                found.setdefault(rel, []).append(int(getattr(node, "lineno", 0)))
+        lines = _file_submit_bypass_lines(tree)
+        if lines:
+            found[rel] = lines
     return found
 
 
-#: 现存 A 类裸 submit 旁路逐条挂名（2026-09-22 实测：共 8 处 / 4 文件）。
-#: 全部登记为「待改道 submit_active_push」——改道当笔删行，幽灵豁免会当场红。
+#: 现存 A 类裸 submit 旁路逐条挂名（2026-09-22 实测+S-FIXB 扩词表收编：原 10 处 / 5 文件；
+#: Wave 4.2/4.3 逐批改道 ⇒ root 四条主动投递已全部接中央出口、整行删净；
+#: 同日 S-BYPASS 把**别名裸调**收编进判据 ⇒ 现役 **8 处 / 4 文件**，比旧清点多出 error_report 两条
+#: ——那两条一直都在，是门瞎，不是代码变坏。计数上升一次是"补视力量"，不是新欠债）。
+#: 前 4 处登记为「待改道 submit_active_push」——改道当笔删行，幽灵豁免会当场红；
+#: smoke 两条为「自测器演练 submit API 本体」（临时库+fake transport 永不外发），无改道义务，
+#: 但实例数一变本行照样红，逼着重估——不许借「自测」名义给门留暗门。
 SUBMIT_BYPASS_EXEMPTIONS: tuple[SubmitBypassExemption, ...] = (
-    SubmitBypassExemption(
-        path="__init__.py",
-        count=4,
-        retire_to="submit_active_push（提醒/摘要/早晚报/cookie到期各带 dedupe_family）",
-        reason=(
-            "root 四条主动投递裸 submit：:2954 提醒(带 :2964 内联绕 worker)、"
-            ":3065 cookie到期门开分支、:3223 每日群摘要、:3372 日常助理私聊推"
-        ),
-    ),
     SubmitBypassExemption(
         path="domains/chat_reply/runtime/pipeline.py",
         count=2,
@@ -364,11 +440,16 @@ SUBMIT_BYPASS_EXEMPTIONS: tuple[SubmitBypassExemption, ...] = (
     ),
     SubmitBypassExemption(
         path="domains/ops/monitor/error_report.py",
-        count=1,
-        retire_to="评估纳入 outbound_gate 冷却/静默窗(已有 ErrorCardGate，改道须单独回归 deliver_after≥3s)",
+        count=3,
+        retire_to="裁定=不迁移（S-BYPASS 判定：回合内诊断面，非主动投递族）；"
+                  "真要收编须先解决两件事：丢 caller 侧 deliver_after≥3s 的 A-plus 次序、"
+                  "邮件键 `email:…@…` 过不了键规范（实测 False）",
         reason=(
-            "错误卡文本回执段 :1037 自带 ErrorCardGate 冷却闸但不经 outbound_gate(A 类)；"
-            ":1052/1054 为别名裸调，AST 判据逃逸(见 §6 局限)"
+            "错误卡两段式投递：:1037 文本回执直调、:1052/:1054 卡片补发经别名 "
+            "`submit = pipeline.send_queue.submit`——**别名面 2026-09-22 已由 "
+            "`_submit_alias_names` 收编进判据**（此前只登记 1 处、真发两条静默逃逸）。"
+            "自带 ErrorCardGate 冷却闸但不经 outbound_gate(A 类)，且已在件内打 "
+            "_GATE_BYPASS_TAG='gate:bypass_by_design'"
         ),
     ),
     SubmitBypassExemption(
@@ -376,6 +457,15 @@ SUBMIT_BYPASS_EXEMPTIONS: tuple[SubmitBypassExemption, ...] = (
         count=1,
         retire_to="接线(生产零装配)前必须先改 submit_active_push，禁止直 submit",
         reason="S11 occurrence 投递门面 self._queue.submit(:233)——干跑件、消费者仅两测试件，非现行生产旁路",
+    ),
+    SubmitBypassExemption(
+        path="domains/ops/smoke/smoke.py",
+        count=2,
+        retire_to="无改道义务：run_queue_smoke 演练队列 submit API 本体（:1133 临时库实例+fake transport 永不外发），改名或迁出扫描面前本行常驻",
+        reason=(
+            "异名接收者裸 `queue.submit`(:1151/:1152)——S-FIXB 账2 实测全树唯一真实例，"
+            "扩 SUBMIT_QUEUE_ATTRS 收进判据面后按条数登记，量变即红"
+        ),
     ),
 )
 
@@ -406,7 +496,14 @@ def _unexempted_submit(
 
 
 def test_live_submit_bypass_total_matches_ledger() -> None:
-    """清点账自检：现存裸 submit 恰 8 处（防空转假绿 + 防无声涨账）。"""
+    """清点账自检：现存裸 submit **恰 8 处**。
+
+    轨迹与口径（2026-09-22 更正本 docstring——它一直写着"6 处"而断言是 8，
+    典型的注释比代码先腐烂）：原 10 处 → Wave 4.2/4.3 把 root 四条改走中央出口 = 6 处 →
+    别名入口收编时把扫描面按作用域修正，**又照出两条一直都在的**（门瞎，不是码坏）= 8 处。
+    "只准降"由**逐文件豁免表**执法（多一处红、少一处也红＝幽灵豁免锁），
+    本条总数断言只作自检：改站点数必须同时改表，逼人来核。
+    """
     found = scan_submit_bypasses(PKG_ROOT)
     assert sum(len(v) for v in found.values()) == 8, found
 
@@ -439,11 +536,11 @@ def test_submit_exempted_rows_carry_retire_plan() -> None:
 
 
 def test_poison_new_submit_bypass_forms_turn_red(tmp_path: pathlib.Path) -> None:
-    """注毒：三种接收者形态各造一处 ⇒ 全命中且掏空表后全红。"""
+    """注毒：四种接收者形态各造一处 ⇒ 全命中且掏空表后全红（含 S-FIXB 扩的裸 `queue` 异名）。"""
     fake = tmp_path / "plugins_pkg"
     (fake / "domains" / "demo").mkdir(parents=True)
     (fake / "__init__.py").write_text(
-        "def a(send_queue, req):\n    send_queue.submit(req)\n",  # 裸 Name
+        "def a(send_queue, req):\n    send_queue.submit(req)\n",  # 裸 Name send_queue
         encoding="utf-8",
     )
     (fake / "domains" / "demo" / "cap.py").write_text(
@@ -452,25 +549,72 @@ def test_poison_new_submit_bypass_forms_turn_red(tmp_path: pathlib.Path) -> None
         "    def c(self, req):\n        self._queue.submit(req)\n",  # self._queue
         encoding="utf-8",
     )
+    (fake / "domains" / "demo" / "renamed.py").write_text(
+        "def d(queue, req):\n    queue.submit(req)\n",  # 异名裸 Name（smoke 同款，已收编判据面）
+        encoding="utf-8",
+    )
     found = scan_submit_bypasses(fake)
-    assert found == {"__init__.py": [2], "domains/demo/cap.py": [3, 5]}, found
-    assert len(_unexempted_submit(found, {})) == 2  # 两个文件各一组问题
+    assert found == {
+        "__init__.py": [2], "domains/demo/cap.py": [3, 5], "domains/demo/renamed.py": [2],
+    }, found
+    assert len(_unexempted_submit(found, {})) == 3  # 三个文件各一组问题
 
 
-def test_poison_submit_alias_escapes_by_design(tmp_path: pathlib.Path) -> None:
-    """自证已知局限：别名裸调 `submit = x.send_queue.submit; submit(req)` 扫不到。
+def test_submit_alias_is_caught_within_scope_only(tmp_path: pathlib.Path) -> None:
+    """别名裸调判据的两面：作用域内必须抓到，作用域外不得假阳性。
 
-    这不是把门做窄，而是如实钉住「AST 接收者判据的边界」——万一将来有人误以为
-    本门能挡所有 submit，此例以红→改判据的方式逼他重新评估；当前 error_report
-    :1052/:1054 就落在此逃逸面内（已在豁免理由点名）。
+    收编前这里是一条"如实登记的逃逸面"自证（S-BYPASS 用它证明门瞎——error_report 真发的
+    两条一直落在逃逸面里）；收编后同一形态必须命中。反向半边同样重要：`submit` 这种短名
+    在别的函数里可能指线程池或别的东西，全局匹配会造出假阳性，而假阳性的下场是逼人放宽
+    判据——那比漏报更常发生。
     """
     fake = tmp_path / "plugins_pkg"
     (fake / "domains").mkdir(parents=True)
     (fake / "__init__.py").write_text("x = 1\n", encoding="utf-8")
     (fake / "domains" / "alias.py").write_text(
         "def f(pipeline, req):\n"
-        "    submit = pipeline.send_queue.submit\n"  # Store，非 Call：不命中
-        "    submit(req)\n",  # 裸 Name call：接收者判据不命中
+        "    submit = pipeline.send_queue.submit\n"  # 队列 .submit 绑成局部名
+        "    submit(req)\n",  # 别名裸调：现在必须命中
+        encoding="utf-8",
+    )
+    (fake / "domains" / "unrelated.py").write_text(
+        "def g(pool, req):\n"
+        "    submit = pool.submit\n"  # 线程池，不是投递队列
+        "    submit(req)\n",
+        encoding="utf-8",
+    )
+    (fake / "domains" / "otherscope.py").write_text(
+        "def h(req):\n"
+        "    submit(req)\n"  # 本作用域内没有队列绑定 ⇒ 不算命中
+        "\n"
+        "\n"
+        "def k(pipeline, req):\n"
+        "    submit = pipeline.send_queue.submit\n"
+        "    submit(req)\n",  # 这个作用域里有绑定 ⇒ 命中
+        encoding="utf-8",
+    )
+    found = scan_submit_bypasses(fake)
+    assert found == {
+        "domains/alias.py": [3],
+        "domains/otherscope.py": [7],
+    }, found
+
+
+def test_poison_divergently_named_receiver_escapes_by_design(tmp_path: pathlib.Path) -> None:
+    """自证已知局限②：词表外异名接收者（self.send_q/self.q/self._q）判据扫不到=ESCAPED。
+
+    这是登记的局限、不是判据正确——2026-09-22 实测全树该形态零真实例（唯一异名
+    接收者 smoke 裸 `queue` 已扩词表收编）；将来新队列变量起异名时不许默认本门能挡，
+    要么扩段名表（登记式，幽灵行照样红）要么改道 central 出口让旁路本体消失。
+    """
+    fake = tmp_path / "plugins_pkg"
+    (fake / "domains").mkdir(parents=True)
+    (fake / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+    (fake / "domains" / "altname.py").write_text(
+        "class C:\n"
+        "    def a(self, req):\n        self.send_q.submit(req)\n"
+        "    def b(self, req):\n        self.q.submit(req)\n"
+        "    def c(self, req):\n        self._q.submit(req)\n",
         encoding="utf-8",
     )
     assert scan_submit_bypasses(fake) == {}

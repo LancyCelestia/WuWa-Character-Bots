@@ -50,6 +50,7 @@ from plugins.bot_unified_runtime.domains.divination.store.draw_store import (
     DEFAULT_TAROT_COOLDOWN_SECONDS,
     DEFAULT_TAROT_DAILY_LIMIT,
     DrawError,
+    draw_store_from_config,
 )
 
 __all__ = [
@@ -326,14 +327,9 @@ def build_divination_facade_from_config(config: Any) -> DivinationHttpFacade | N
     运势 409 feature_disabled、塔罗/bazi 照常）。缺键即缺功能，不猜路径、
     不写源码树。
     """
-    db_path = getattr(config, "bot_control_plane_divination_db", None)
-    if not db_path:
+    store = draw_store_from_config(config)
+    if store is None:
         return None
-    from plugins.bot_unified_runtime.domains.divination.store.draw_store import (
-        DrawStore,
-    )
-
-    store = DrawStore(db_path)
     secret = str(getattr(config, "bot_divination_fortune_secret", "") or "")
     return DivinationHttpFacade(
         DivinationService(store, secret=secret.encode("utf-8")),

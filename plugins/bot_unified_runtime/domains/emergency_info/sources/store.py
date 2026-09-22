@@ -482,7 +482,7 @@ class EmergencyStore:
                     " WHERE target_key = ?",
                     (_format_utc(at), key),
                 )
-        except Exception:  # noqa: BLE001 - 记账失败绝不冒泡带走整轮投递
+        except Exception:
             logging.getLogger(__name__).warning(
                 "emergency subscription match accounting failed: target=%s",
                 key[:64],

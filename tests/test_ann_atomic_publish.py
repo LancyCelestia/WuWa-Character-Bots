@@ -156,9 +156,18 @@ def test_crash_before_publish_leaves_only_complete_previous_generation(
     assert _live_pair(store) == before, "换入失败必须一位字节都不动线上文件"
     assert list(Path(store.ann_index_path).parent.glob("*.tmp")) == []
     store._drop_ann_cache()
-    assert store.load_ann_index() is True, "旧代仍完整可用（回落不应发生）"
-    assert len(store._ann_order or []) == 20
+    # 2026-09-22 完整性闸（#47）改了本例后半的**期望**，不改本例的**判据**：
+    # 上面 `_seed(store, 40)` 已把语料推到 60 条向量，而盘上仍是 20 条那一代，
+    # 所以"旧代字节完整"与"旧代可用于检索"自此是两件事——前者仍由上面的
+    # `_live_pair == before` 守着，后者必须被拒（放行＝新嵌的 40 条在向量通道隐形，
+    # 正是本闸要拦的形态）。拒的方向是安全的：回落暴力＝慢而全，不是少结果。
+    assert store.load_ann_index() is False, "短装的旧代必须被完整性闸拒用"
+    assert store._ann_index is None, "拒用不得把短装索引缓存住"
     monkeypatch.setattr(vk, "_atomic_replace_from", real_atomic)
+    # 真重建一次即自愈：落戳＝ntotal，同一对文件随即被判可用。
+    assert store.build_ann_index()["built"] is True
+    store._drop_ann_cache()
+    assert store.load_ann_index() is True, "重建后应重新认证通过"
 
 
 # --- ②成对换入 ---------------------------------------------------------------

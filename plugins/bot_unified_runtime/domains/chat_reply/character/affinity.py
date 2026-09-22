@@ -929,6 +929,10 @@ def _v7_dump_state(state: dict[str, Any]) -> str:
 # ---- §4 档位表：线性 8 档，每档宽 25，档0=友善含基准 10；边界左闭右开（最高档含 +100）。
 # 展示区间 = internal × 100；档 id -4..+3（v3 曾返回具名 id close/friendly/polite/distant，
 # v4 改为整数档 id——向后兼容点，调用方以 providers.py 的 familiarity 映射为准）。
+# 本表同时是**全树八档态度文案的唯一真身**（docs/affinity-design.md §4）：展示面
+# （capabilities/affinity.py 算法卡档位表）一律由 attitude_tiers() 投影生成，不许再抄一份
+# ——抄一份就会各自改词（友善档与独一份档曾实测分叉）。
+# 常驻锁：tests/test_affinity_tier_single_source.py（副本再现=红 / 真身被删=红）。
 _ATTITUDE_TIERS: tuple[tuple[int, str, str], ...] = (
     (-4, "初识", "初见不久的人：礼貌、克制、有问必答但不寒暄"),
     (-3, "生疏", "生疏的人：话少一截，依旧体面温和"),
@@ -937,7 +941,9 @@ _ATTITUDE_TIERS: tuple[tuple[int, str, str], ...] = (
     (0, "友善（基准）", "温和、有陪伴感，记得对方的偏好"),
     (1, "亲近", "更主动的关心，记得对方说过的事"),
     (2, "挚友", "直接而温暖，可以用给对方起的小名"),
-    (3, "独一份", "最珍视的人：全然温柔的陪伴"),
+    # §4 文档原文这一格带「——依旧守全部安全边界」（docs/affinity-design.md §4 +3 行）：
+    # 注入面曾漏抄半句，令展示面独自改词，现按文档补回，两面对最高档边界描述从此同句。
+    (3, "独一份", "最珍视的人：全然温柔的陪伴——依旧守全部安全边界"),
 )
 # §4 态度红线：每一档共同遵守，写死进注入文本（attitude_for_affinity 全文携带）。
 _TIER_RED_LINES: tuple[str, ...] = (
@@ -961,6 +967,36 @@ _TIER_RED_LINES: tuple[str, ...] = (
     "任何档位都不辱骂、不冷暴力弃聊",
 )
 _TIER_BY_ID: dict[int, tuple[str, str]] = {tier_id: (name, instruction) for tier_id, name, instruction in _ATTITUDE_TIERS}
+_TIER_MIN_ID, _TIER_MAX_ID = _ATTITUDE_TIERS[0][0], _ATTITUDE_TIERS[-1][0]
+_TIER_WIDTH_DISPLAY = 25.0  # §4 每档宽 25 展示分（档界由本常量算出，展示面不得自报区间）
+_TIER_DISPLAY_FLOOR, _TIER_DISPLAY_CEILING = -100.0, 100.0  # §1 展示口径两端
+
+
+def attitude_tiers() -> tuple[tuple[int, str, str], ...]:
+    """§4 八档态度真身（档 id、档位名、态度指令全文），按档序 -4..+3。
+
+    展示层唯一的取数口：算法卡的档位表从这里投影（含区间边界），
+    除本函数出口外，全树不得再出现第二份八档态度句（常驻锁见
+    tests/test_affinity_tier_single_source.py）。
+    """
+    return _ATTITUDE_TIERS
+
+
+def tier_display_range(tier_id: int) -> str:
+    """§4 档位的展示区间串（如 `[-100, -75)`、`[+75, +100]`）。
+
+    边界左闭右开、最高档含 +100；0 不带正号（历史展示口径逐字节保持）。
+    """
+    if not _TIER_MIN_ID <= tier_id <= _TIER_MAX_ID:
+        raise ValueError(f"未知档位 id：{tier_id}（合法区间 {_TIER_MIN_ID}..{_TIER_MAX_ID}）")
+    low = int(_TIER_DISPLAY_FLOOR + _TIER_WIDTH_DISPLAY * (tier_id - _TIER_MIN_ID))
+    high = int(low + _TIER_WIDTH_DISPLAY)
+
+    def bound(value: int) -> str:
+        return "0" if value == 0 else f"{value:+d}"
+
+    closer = "]" if tier_id == _TIER_MAX_ID else ")"
+    return f"[{bound(low)}, {bound(high)}{closer}"
 
 
 def tier_for_affinity(affinity: float) -> int:
@@ -969,7 +1005,7 @@ def tier_for_affinity(affinity: float) -> int:
     向后兼容标注：v3 返回具名 id（close/friendly/polite/distant），v4 起为整数档 id。
     """
     display = float(affinity) * 100.0
-    return max(-4, min(3, int(display // 25)))
+    return max(_TIER_MIN_ID, min(_TIER_MAX_ID, int(display // _TIER_WIDTH_DISPLAY)))
 
 
 _LINEAR_TRANSITION_BAND_DISPLAY = 6.0  # 展示分距档界 ±6 分内视为线性过渡带
@@ -982,15 +1018,15 @@ def linear_transition_for_affinity(affinity: float) -> str:
     由 providers 拼进态度注入，使门槛两侧语气衔接为连续渐变；
     区间中部返回空串。极值档没有更外侧的邻档，返回空串。
     """
-    display = max(-100.0, min(100.0, float(affinity) * 100.0))
+    display = max(_TIER_DISPLAY_FLOOR, min(_TIER_DISPLAY_CEILING, float(affinity) * 100.0))
     tier = tier_for_affinity(affinity)
-    lo = -100.0 + 25.0 * (tier + 4)
-    hi = lo + 25.0
+    lo = _TIER_DISPLAY_FLOOR + _TIER_WIDTH_DISPLAY * (tier - _TIER_MIN_ID)
+    hi = lo + _TIER_WIDTH_DISPLAY
     cur = _TIER_BY_ID[tier][0]
-    if display - lo <= _LINEAR_TRANSITION_BAND_DISPLAY and tier - 1 >= -4:
+    if display - lo <= _LINEAR_TRANSITION_BAND_DISPLAY and tier - 1 >= _TIER_MIN_ID:
         prev_name = _TIER_BY_ID[tier - 1][0]
         return f"（此刻你们之间的氛围，正处在从「{prev_name}」流向「{cur}」的自然过渡里，语气顺势而为即可）"
-    if hi - display <= _LINEAR_TRANSITION_BAND_DISPLAY and tier + 1 <= 3:
+    if hi - display <= _LINEAR_TRANSITION_BAND_DISPLAY and tier + 1 <= _TIER_MAX_ID:
         next_name = _TIER_BY_ID[tier + 1][0]
         return f"（此刻你们之间的氛围，正处在从「{cur}」流向「{next_name}」的自然过渡里，语气顺势而为即可）"
     return ""

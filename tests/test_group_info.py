@@ -19,25 +19,27 @@ from datetime import datetime, timezone
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities.echo import HELP_ENTRIES
-from plugins.bot_unified_runtime.capabilities.group_info import (
+from plugins.bot_unified_runtime.contracts import (
+    IncomingMessage,
+    SendPolicy,
+    SessionType,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+    HELP_ENTRIES,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.group_info import (
     GROUP_INFO_TRIGGER_WORDS,
     build_group_info_capability,
     build_onebot_api_bridge,
     detect_group_info_intents,
     is_group_info_command,
 )
-from plugins.bot_unified_runtime.contracts import (
-    IncomingMessage,
-    SendPolicy,
-    SessionType,
-)
-from plugins.bot_unified_runtime.runtime.base_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
     RouteKind,
     classify_message_route,
     clear_route_decision_cache,
 )
-from plugins.bot_unified_runtime.runtime.group_cache import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.group_cache import (
     ESSENCE_TTL_SECONDS,
     KIND_PROFILE,
     MEMBER_TTL_SECONDS,
@@ -438,7 +440,7 @@ def test_help_topic_registered_and_merged() -> None:
 
 
 def test_commands_catalog_contains_group_info() -> None:
-    from plugins.bot_unified_runtime.capabilities.echo import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
         build_commands_catalog_body,
     )
 

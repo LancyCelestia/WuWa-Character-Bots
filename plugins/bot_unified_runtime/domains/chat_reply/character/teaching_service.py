@@ -18,7 +18,7 @@ revoke；rollback 生成**新版本**，历史不可变（回滚本身可再回�
 
 本模块为 canonical 真身（v21r2 S8 收官波；2026-09-18 事故后按
 ``tests/test_v21_teaching_service.py`` 29 例契约重建）。
-旧路径 ``plugins.bot_unified_runtime.character.teaching_service`` 为 PEP 562 活转发垫片。
+旧路径 ``plugins.bot_unified_runtime.domains.chat_reply.character.teaching_service`` 为 PEP 562 活转发垫片。
 """
 
 from __future__ import annotations

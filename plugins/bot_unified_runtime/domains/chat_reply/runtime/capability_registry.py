@@ -50,6 +50,35 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class CapabilityExecution:
+    """一个路由能力的**执行面**（Wave 4.1：中央 invoker 治理 bot.* 的唯一 authoring 处）。
+
+    为什么住在这里而不是壳的 descriptor 表：`test_no_capability_id_is_authored_in_two_places`
+    钉死「同一 capability id 全树只准一处 authoring」，而路由能力的在册之家本就是本表
+    （见 `ROUTE_CAPABILITY_DECLARATIONS` 上方指针注释）。壳按本字段**派生** CapabilityDescriptor
+    并注册信封 handler ⇒ 一个 id 一个家、零第二真源、不放宽任何判据。
+    不填＝该能力当前不经 invoker 执行（诚实在册，非已接入）。
+    """
+
+    implementation_ref: str
+    """执行真身，路径式 `plugins/bot_unified_runtime/<域>/.../mod.py#symbol`（与描述符 implementation_ref 同形，完整性校验按此查文件存在）。命令形约定：`build_x_capability(config) -> (message, decision) -> CapabilityResult`。"""
+
+    family: str
+    """能力族（描述符 family）：bot.* 路由能力的执行面用 "command"（R-A/C-01：不混进内容契约族）；注册册不 import 壳，故存字面串由壳转枚举并派生即校验。"""
+
+    adapter: str = "command"
+    """信封适配器形态。目前只有 `command`（builder 收 config，返回 (message, decision) 可调用）。"""
+
+    roles: tuple[str, ...] = ("user",)
+    timeout_seconds: float = 30.0
+    health_probe: str = ""
+    """中央健康探针名；填了必须是壳内已注册探针，否则描述符完整性校验当场红。"""
+
+    degrade_note: str = "真身异常/依赖缺失=诚实降级，不冒充成功"
+    config_keys: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class RouteCapabilityDecl:
     """单个路由能力的全部登记属性（每能力一行）。
 
@@ -71,6 +100,9 @@ class RouteCapabilityDecl:
     has_rule: bool
     matcher_name: str = ""
     note: str = ""
+    execution: CapabilityExecution | None = None
+    """执行面（可空）。填了＝这条路由能力**已在册且可经中央 invoker 执行**；
+    没填＝只在册、未接入（缺口账见 tests/test_descriptor_wiredness_ledger.py）。"""
 
 
 @dataclass(frozen=True)
@@ -139,6 +171,18 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         label="表情包生成", reason="表情包生成命令",
         tags=("base_route:meme",), command=True, has_rule=True,
         matcher_name="meme_match",
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/meme/capabilities/meme.py"
+                "#build_meme_capability"
+            ),
+            family="command",
+            roles=("user",),
+            timeout_seconds=120.0,  # 内层串行之和才作数：信息 15s + N×(取图 10s+上传 15s) + 生成 15s + 取图 15s = 60+25N；N=2⇒110，留 10s 余量（S-TIMEOUT 实算）
+            health_probe="",  # generator 可达性无在册探针映射，诚实留空
+            degrade_note="生成器不可达=诚实失败，绝不假发图",
+            config_keys=("bot_meme_api_timeout_seconds",),
+        ),
     ),
     RouteCapabilityDecl(
         kind="MEME_LIBRARY", value="meme_library", capability_id="bot.meme_library", priority=22,
@@ -169,12 +213,42 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         label="维基百科", reason="维基百科查询",
         tags=("base_route:wiki",), command=True, has_rule=True,
         matcher_name="wiki_match",
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/location/capabilities/wiki.py"
+                "#build_wiki_capability"
+            ),
+            family="command",
+            roles=("user",),
+            # 无专属超时键（bot_wiki_timeout_seconds 不存在，幽灵键禁入）；真身 requests 级
+            # 超时自带，中央缝只兜底。TIMEOUT 态无原始异常交回（错误卡不触发）⇒ 宁大勿小。
+            # 60→75：内层串行之和最坏 53s（11 + 6 + 6 跳×6s，含 1s/请求节流，无总时限闸），
+            # 原值只剩 7s 余量，一次抖动就被中央掐断（S-TIMEOUT 实算）。
+            timeout_seconds=75.0,
+            health_probe="",  # 在册探针无一映射维基，诚实留空
+            degrade_note="查询失败/超时=温和说明，绝不编词条",
+            config_keys=(),
+        ),
     ),
     RouteCapabilityDecl(
         kind="MOEGIRL", value="moegirl", capability_id="bot.moegirl", priority=41,
         label="萌娘百科", reason="萌娘百科查询",
         tags=("base_route:moegirl",), command=True, has_rule=True,
         matcher_name="moegirl_match",
+        execution=CapabilityExecution(  # 同 id 的 MOEGIRL_QUESTION 行禁再填 execution——
+            # _route_execution_rows 按行产出，双行同填=同 id 两描述符，register 当场
+            # ValueError 炸装配。adapter/描述符按 id 取，填本行即覆盖两条路由的 dispatch。
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/location/capabilities/moegirl.py"
+                "#build_moegirl_capability"
+            ),
+            family="command",
+            roles=("user",),
+            timeout_seconds=60.0,  # bot_moegirl_timeout_seconds=5.0/请求 × 重试+问句降级链，兜底取宽
+            health_probe="",  # 在册探针无一映射萌百，诚实留空
+            degrade_note="无条目/网络失败区分说明，绝不硬答",
+            config_keys=("bot_moegirl_timeout_seconds",),
+        ),
     ),
     RouteCapabilityDecl(
         kind="MOEGIRL_QUESTION", value="moegirl_question", capability_id="bot.moegirl", priority=46,
@@ -187,18 +261,62 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         label="Epic 免费游戏", reason="Epic 免费游戏查询",
         tags=("base_route:epic",), command=True, has_rule=True,
         matcher_name="epic_match",
+        # prepared 形（P1/B2）：builder 除 config 还要运行期 render_backend（根 :4326
+        # `_build_epic_with_backend` 捕获），执行体由装配现场交来，壳不得按 ref 自建。
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/subscribe/capabilities/epic.py"
+                "#build_epic_capability"
+            ),
+            family="command",
+            adapter="prepared",
+            # 内层 fetch_epic_free_games timeout=12.0 单跳（无重试环）；中央这颗只做
+            # "别吊死"的安全网，必须高于它，否则内层诚实失败面永不可达（I-4）。
+            timeout_seconds=30.0,
+            degrade_note="Epic 接口失败/无免费游戏=诚实说明，绝不编一张库存",
+            config_keys=("bot_epic_enabled",),
+        ),
     ),
     RouteCapabilityDecl(
         kind="WEATHER", value="weather", capability_id="bot.weather", priority=41,
         label="天气查询", reason="天气查询",
         tags=("base_route:weather",), command=True, has_rule=True,
         matcher_name="weather_match",
+        # 金丝雀（prepared 形 B0）：weather 的 builder 除 config 还要运行期 render_backend，
+        # 属"执行体由装配现场交来"那一族 ⇒ 申报 prepared，壳不得按 ref 自建（自建＝丢注入）。
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/weather/capabilities/weather.py"
+                "#build_weather_capability"
+            ),
+            family="command",
+            adapter="prepared",
+            # 内层预算才是权威：NMC 主通道 2 次重试（`bot_weather_timeout_seconds`=8s）
+            # + Open-Meteo 兜底，最坏约 24s。中央这颗只做"别吊死"的安全网，必须高于它。
+            timeout_seconds=45.0,
+            degrade_note="无源/超时=诚实播报查不到，绝不编一个城市天气",
+            config_keys=("bot_weather_enabled", "bot_weather_cache_seconds", "bot_weather_timeout_seconds"),
+        ),
     ),
     RouteCapabilityDecl(
         kind="MARKET", value="market", capability_id="bot.market", priority=41,
         label="全球股指行情", reason="全球股指行情（行情/美股行情/大盘）",
         tags=("base_route:market",), command=True, has_rule=True,
         matcher_name="market_match",
+        # prepared 形（P1/B1）：builder 除 config 还要运行期 render_backend（根 :4342）。
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/finance/capabilities/market.py"
+                "#build_market_capability"
+            ),
+            family="command",
+            adapter="prepared",
+            # 内层：报价 6s + 走势并行 future.result(timeout=6+2) + 交叉核验 min(6,4)，
+            # 空响应重试×2 ⇒ 最坏 ≈36s（bot_market_timeout_seconds 缺省 6.0）；中央取宽 60。
+            timeout_seconds=60.0,
+            degrade_note="东财/腾讯源失败=已得条目+诚实脚注，绝不编行情",
+            config_keys=("bot_market_enabled", "bot_market_timeout_seconds", "bot_market_cache_seconds", "bot_market_retry_on_empty"),
+        ),
     ),
     RouteCapabilityDecl(
         kind="STOCKS", value="stocks", capability_id="bot.stocks", priority=42,
@@ -206,6 +324,20 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         tags=("base_route:stocks",), command=True, has_rule=True,
         matcher_name="stocks_match",
         note="个股行情（英伟达/AMD/英特尔股价兜底，触发词见 capabilities/stocks.py；帮助页 topic=个股行情）",
+        # prepared 形（P1/B1）：builder 除 config 还要运行期 render_backend（根 :4345）。
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/finance/capabilities/stocks.py"
+                "#build_stocks_capability"
+            ),
+            family="command",
+            adapter="prepared",
+            # 内层最坏：报价 6s + 历史三取数点带重试退避 + 9 家 logo 首次下载 local_logo_uri 6s×9=54s + 卡片渲染；
+            # 无专属超时键，中央这颗取宽 150，远高于最坏内层，避免截断诚实失败/重试面（I-4 宁大勿小）。
+            timeout_seconds=150.0,
+            degrade_note="push2his RemoteDisconnected/无历史=温和说明，OpenAI/Anthropic/字节非上市红线不编价格",
+            config_keys=("bot_stocks_enabled",),
+        ),
     ),
     RouteCapabilityDecl(
         kind="COMMODITIES", value="commodities", capability_id="bot.commodities", priority=37,
@@ -213,6 +345,19 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         tags=("base_route:commodities",), command=True, has_rule=True,
         matcher_name="commodities_match",
         note="商品行情（黄金/白银/原油/铜现货与 30 日走势，触发词见 capabilities/market.py；帮助页 topic=商品行情）",
+        # prepared 形（P1/B1）：builder 除 config 还要运行期 render_backend（根 :4351）。
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/finance/capabilities/market.py"
+                "#build_commodities_capability"
+            ),
+            family="command",
+            adapter="prepared",
+            # 内层：报价 6s + 4 品种走势并行 future.result(timeout=6+2)，空响应重试×2 ⇒ 最坏 ≈28s；中央取宽 45。
+            timeout_seconds=45.0,
+            degrade_note="COMEX/NYMEX 源失败=诚实说明，LME/Brent 无源不接不编",
+            config_keys=("bot_commodities_enabled", "bot_market_timeout_seconds", "bot_market_retry_on_empty"),
+        ),
     ),
     RouteCapabilityDecl(
         kind="BOND", value="bond", capability_id="bot.bond", priority=38,
@@ -220,6 +365,19 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         tags=("base_route:bond",), command=True, has_rule=True,
         matcher_name="bond_match",
         note="国债收益率（国债/期限利差/收益率曲线，触发词见 capabilities/market.py；帮助页 topic=国债收益率）",
+        # prepared 形（P1/B1）：builder 除 config 还要运行期 render_backend（根 :4354）。
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/finance/capabilities/market.py"
+                "#build_bond_capability"
+            ),
+            family="command",
+            adapter="prepared",
+            # 内层：fetch_bond_yields(timeout_seconds=6) 单跳，空响应重试×2 ⇒ 最坏 ≈12s；中央取宽 30。1Y 无源不接。
+            timeout_seconds=30.0,
+            degrade_note="中/美债源失败=诚实说明，1Y 无源不接绝不编收益率",
+            config_keys=("bot_bond_enabled", "bot_market_timeout_seconds"),
+        ),
     ),
     RouteCapabilityDecl(
         kind="NORTHBOUND", value="northbound", capability_id="bot.northbound", priority=39,
@@ -227,6 +385,19 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         tags=("base_route:northbound",), command=True, has_rule=True,
         matcher_name="northbound_match",
         note="北向资金（北向资金/沪股通/深股通成交总额，触发词见 capabilities/market.py；帮助页 topic=北向资金）",
+        # prepared 形（P1/B1）：builder 除 config 还要运行期 render_backend（根 :4357）。
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/finance/capabilities/market.py"
+                "#build_northbound_capability"
+            ),
+            family="command",
+            adapter="prepared",
+            # 内层：fetch_northbound_flows(timeout_seconds=6) 单跳，重试×2 ⇒ 最坏 ≈12s；中央取宽 30。
+            timeout_seconds=30.0,
+            degrade_note="源失败=诚实说明，净买入 2024-08 停止披露只报成交总额口径不编数",
+            config_keys=("bot_northbound_enabled", "bot_market_timeout_seconds"),
+        ),
     ),
     RouteCapabilityDecl(
         kind="FX", value="fx", capability_id="bot.fx", priority=36,
@@ -234,24 +405,73 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         tags=("base_route:fx",), command=True, has_rule=True,
         matcher_name="fx_match",
         note="汇率查询（美元兑人民币/汇率面板，触发词见 capabilities/fx.py；帮助页 topic=汇率）",
+        # prepared 形（P1/B1）：builder 除 config 还要运行期 render_backend（根 :4348）。
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/finance/capabilities/fx.py"
+                "#build_fx_capability"
+            ),
+            family="command",
+            adapter="prepared",
+            # 内层：面板 fetch(timeout=6) + 换算 fetch(attempts 2×6=12，retry_on_empty 时) ⇒ 最坏 ≈18s；中央取宽 40。
+            timeout_seconds=40.0,
+            degrade_note="源失败=诚实说明，TWD/MOP/AED 东财无源诚实标注不硬换",
+            config_keys=("bot_fx_enabled",),
+        ),
     ),
     RouteCapabilityDecl(
         kind="NEWS", value="news", capability_id="bot.news", priority=41,
         label="今日快报", reason="今日快报（快报/科技新闻/财经快报/国际新闻）",
         tags=("base_route:news",), command=True, has_rule=True,
         matcher_name="news_match",
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/subscribe/capabilities/news.py"
+                "#build_news_capability"
+            ),
+            family="command",
+            roles=("user",),
+            timeout_seconds=60.0,  # bot_news_timeout_seconds=6.0/源 × 多源+营销过滤，中央缝兜底取宽
+            health_probe="",  # 在册探针无一映射快报各源，诚实留空
+            degrade_note="各源失败=已得条目+诚实脚注，绝不冒充全量",
+            config_keys=("bot_news_timeout_seconds",),
+        ),
     ),
     RouteCapabilityDecl(
         kind="RANDPIC", value="randpic", capability_id="bot.randpic", priority=41,
         label="随机图片", reason="随机图片（随机图/来张图）",
         tags=("base_route:randpic",), command=True, has_rule=True,
         matcher_name="randpic_match",
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/meme/capabilities/randpic.py"
+                "#build_randpic_capability"
+            ),
+            family="command",
+            roles=("user",),
+            timeout_seconds=30.0,  # 本地盘读，无网络；体积帽走 config，时限兜底即可
+            health_probe="",  # 在册探针无一映射随机图目录，诚实留空
+            degrade_note="目录空/图坏=一句说明，不重编码不假发",
+            config_keys=("bot_randpic_dirs", "bot_randpic_max_file_mb"),
+        ),
     ),
     RouteCapabilityDecl(
         kind="REMINDER", value="reminder", capability_id="bot.reminder", priority=41,
         label="提醒", reason="提醒（12点提醒我写作业/提醒列表/取消提醒）",
         tags=("base_route:reminder",), command=True, has_rule=True,
         matcher_name="reminder_match",
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/schedule/capabilities/reminder.py"
+                "#build_reminder_capability"
+            ),
+            family="command",
+            roles=("user",),
+            timeout_seconds=30.0,  # 本地 sqlite；LLM 抽取缺省关，时限兜底即可
+            health_probe="",  # 在册探针无一映射提醒库，诚实留空
+            degrade_note="时间解析不确定=问不清，绝不猜点位",
+            config_keys=("bot_reminder_enabled", "bot_reminder_db_path"),
+        ),
     ),
     RouteCapabilityDecl(
         kind="MEDIA_ARCHIVE", value="media_archive", capability_id="bot.media_archive", priority=43,
@@ -264,6 +484,18 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         label="收件箱速记", reason="收件箱（收件箱 买牛奶/收件箱）",
         tags=("base_route:daily_assist",), command=True, has_rule=True,
         matcher_name="daily_assist_match",
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/assistant/daily/capabilities/daily_assist.py"
+                "#build_daily_assist_capability"
+            ),
+            family="command",
+            roles=("user",),
+            timeout_seconds=30.0,  # 纯文本文件 IO（收件箱速记），无网络无 LLM，兜底即可
+            health_probe="",  # 在册探针无一映射助理目录，诚实留空
+            degrade_note="目录不可写=诚实失败，绝不丢用户速记",
+            config_keys=("bot_daily_assist_enabled", "bot_daily_assist_dir"),
+        ),
     ),
     RouteCapabilityDecl(
         kind="GROUP_INFO", value="group_info", capability_id="bot.group_info", priority=41,
@@ -276,24 +508,99 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         label="吃什么推荐", reason="吃什么/菜谱推荐",
         tags=("base_route:eat",), command=True, has_rule=True,
         matcher_name="eat_match",
+        # prepared 形（P1/B2）：builder 除 config 还要运行期 render_backend（根 :4332）。
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/food/capabilities/eat.py"
+                "#build_eat_capability"
+            ),
+            family="command",
+            adapter="prepared",
+            # 内层最坏：「教我做X」分支调 LLM 受限续写（`_llm_constrained`）走故障转移预算
+            # BOT_CHAT_FAILOVER_MAX_SECONDS≈300s，+ 图片抓取 urlopen 6s×2 + Tavily 搜图 + 卡片渲染；
+            # 中央这颗必须高于 LLM 诚实降级面，取 360（=failover 300 + 图/渲染余量），否则截断即 I-4。
+            timeout_seconds=360.0,
+            degrade_note="LLM/图库失败=回落内置菜谱与温和说明，绝不推错菜也不假发图",
+            config_keys=("bot_eat_enabled",),
+        ),
     ),
     RouteCapabilityDecl(
         kind="AFFINITY", value="affinity", capability_id="bot.affinity", priority=41,
         label="好感度查询", reason="好感度/好感查看/查询好感",
         tags=("base_route:affinity",), command=False, has_rule=True,
         matcher_name="affinity_match",
+        # prepared 形（P2/B3）：builder 除 config 还要**两件**运行期注入——装配期现构的
+        # affinity_store 与函数局部 render_backend（根 :4338-4343
+        # `_build_affinity_with_backend`：`build_affinity_capability(config_,
+        # affinity_store=build_character_affinity_store(config_), render_backend=render_backend)`）。
+        # 壳按 ref 自建只会得到 `build_affinity_capability(config)` ⇒ store=None ⇒ 真身第一句
+        # 就回「好感度功能未开启。」（capabilities/affinity.py:376-383）＝静默把能用的功能
+        # 变成永久关闭，比没接中央更坏 ⇒ 申报 prepared，执行体只认装配现场交来的成品。
+        # 生产可达：根 :9000 `await _run_simple_capability(bot, event,
+        # _build_affinity_with_backend, "bot.affinity", affinity)`。
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/chat_reply/capabilities/affinity.py"
+                "#build_affinity_capability"
+            ),
+            family="command",
+            adapter="prepared",
+            # 内层无网络无 LLM：本地 SQLite 读（snapshot/sentiment，毫秒级）+ **一次** playwright
+            # 出卡（payload wait_ms=0；页面默认超时 `_SET_CONTENT_TIMEOUT_MS=8000` 罩住
+            # set_content(networkidle) 与 screenshot ⇒ 单卡最坏 ≈8+8=16s），且
+            # `bot_render_max_concurrency` 缺省 1 ⇒ 前面排队一张卡时头阻塞翻倍 ≈32s。
+            # 中央这颗只做"别吊死"的安全网，取 45（=32 最坏 + 余量）：宁大勿小，
+            # 到点被硬杀会连内层既有的「渲染失败→纯文本」诚实降级面一起掐掉（I-4）。
+            timeout_seconds=45.0,
+            degrade_note="好感库未启用/出卡失败=一句温和说明+纯文本，绝不拿默认分冒充档案",
+            # 两枚都在 Config.model_fields（幽灵键门）：enabled 决定 store 是否为 None、
+            # db_path 决定取哪座好感库（二者均是装配现场 `build_character_affinity_store` 的读点）。
+            config_keys=("bot_affinity_enabled", "bot_affinity_db_path"),
+        ),
     ),
     RouteCapabilityDecl(
         kind="DIVINATION", value="divination", capability_id="bot.divination", priority=41,
         label="占卜", reason="占卜/塔罗/八字排盘",
         tags=("base_route:divination",), command=True, has_rule=True,
         matcher_name="divination_match",
+        # prepared 形（P1/B3）：builder 除 config 还要运行期 render_backend（另有可选
+        # draw_store/fortune_key/clock，全部装配现场交来）（根 :4360）⇒ 自建＝丢注入。
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/divination/capabilities/divination.py"
+                "#build_divination_capability"
+            ),
+            family="command",
+            adapter="prepared",
+            # 内层：八字/塔罗/金钱卦为纯本地计算（deck_math），无网络无 LLM；卡片渲染在下游 renderer，
+            # 不经本能力步。无专属超时键，中央这颗只做"别吊死"的顶，取 30s 远高于计算面。
+            timeout_seconds=30.0,
+            degrade_note="起卦/排盘异常=诚实说明，绝不硬编一卦冒充",
+            config_keys=("bot_divination_enabled", "bot_divination_fortune_secret"),
+        ),
     ),
     RouteCapabilityDecl(
         kind="TTS", value="tts", capability_id="bot.tts", priority=41,
         label="语音合成", reason="语音合成（说/语音/念+正文）",
         tags=("base_route:tts",), command=True, has_rule=True,
         matcher_name="tts_match",
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/media/capabilities/tts.py"
+                "#build_tts_capability"
+            ),
+            family="command",
+            # 中央时限必须**高于**域内自身预算才只做安全网：真身 `BOT_TTS_TIMEOUT_SECONDS`
+            # 缺省 60s 且计时起点更早（含装配与落盘），两值同 60 时内层诚实失败面永不可达
+            # ——到点线程继续跑完照旧写出 wav，用户却只拿到温和短句（R-CENTRAL I-4）。
+            # 时限的权威在域内（退避真闸/静音陷阱都认它），中央这颗只是"别吊死"的顶。
+            timeout_seconds=90.0,
+            health_probe="tts_config",
+            degrade_note="合成失败/无参考音频=守岸人温和降级，绝不冒充发声",
+            # 生效硬顶的唯一家是 domains/media/tts_presets.resolve_*（config 显式值优先，
+            # 0/未配⇒内置常量）；此处只声明读哪两把键，**不在描述符里留数值**。
+            config_keys=("bot_tts_hard_max_chars", "bot_tts_max_audio_bytes"),
+        ),
     ),
     RouteCapabilityDecl(
         kind="NATURAL_COMMAND", value="natural_command", capability_id="bot.natural_command", priority=45,
@@ -318,12 +625,74 @@ ROUTE_CAPABILITY_DECLARATIONS: tuple[RouteCapabilityDecl, ...] = (
         label="紧急信息", reason="紧急信息（外部预警与政务应急聚合：紧急信息｜紧急信息 待审）",
         tags=("base_route:emergency_info",), command=True, has_rule=True,
         matcher_name="emergency_info_match",
+        # prepared 形（P1/B5）：builder 除 config 还要运行期 render_backend（根 :5414）。
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/emergency_info/capabilities/emergency_info.py"
+                "#build_emergency_info_capability"
+            ),
+            family="command",
+            adapter="prepared",
+            # 内层：命令面读写本地 sqlite（订阅/查询/待审），采集轮询是独立调度器 job 不经本能力，
+            # 无网络无 LLM；中央这颗只做"别吊死"的顶，取 30s 远高于本地读写。
+            timeout_seconds=30.0,
+            degrade_note="库不可读/无在册条目=诚实说明，权限门与订阅写腿留在域内",
+            config_keys=("bot_emergency_info_enabled", "bot_emergency_info_db_path"),
+        ),
     ),
     # 兜底席：不注册 RouteRule；capability_id/priority 与 classify_message_route
     # 的两条 IGNORE 兜底 RouteDecision 字面量一致（测试锁定）。
+    # S-PREP-B3（2026-09-22）：S-PREP-B2 当年的拦路判据「壳按 `title=decl.label` 派生 ⇒
+    # 空标签行撞 validate_registry『bot.ignore: title 缺失』」已由主会话一行修解除
+    # （`runtime/capability_protocols.py` 现为 `title=decl.label or decl.value`，并由
+    # `tests/test_prepared_adapter_canary.py::test_row_without_human_label_still_derives_a_title`
+    # 常驻钉住）。本行不改 label、不动 docs 生成物 ⇒ board_doc_sync 无连带。
+    #
+    # 证明①（prepared 而非 command）：本能力的执行体在根里是**内层闭包**
+    # （`__init__.py:8573` `lambda cfg: lambda message, _decision:
+    # build_ignore_guide_result(message.request_id)`），全树没有 `build_ignore_capability(config)`
+    # 这样的具名工厂（S-PREP §2 P8 形态：零依赖但缺具名 builder）。命令形要求「壳按
+    # implementation_ref 用 config 自建」⇒ 这里根本无从自建：ref 指到的
+    # `build_ignore_guide_result(request_id: str, *, guidance: str | None = None)`
+    # 首参是**运行期 request_id**（非 config），拿来重建只会造出一句跑不了的话术。
+    # ⇒ 执行体只认装配现场交来的成品，adapter 必须是 prepared。
+    #
+    # 证明②（每一条生产入口都汇到中央缝）：全树唯一的 IGNORE 引导生产入口 =
+    # `__init__.py:8568-8578` `_handle_ignore_guide` → `_run_simple_capability(..., "bot.ignore", ...)`，
+    # 而 `_run_simple_capability`（:8432-8455）体内 `orchestrated_command(capability_id,
+    # capability_factory(config), config)` 就是层 2 主缝。`build_ignore_guide_result` 的
+    # 全树调用点只有那一条（+ echo 定义处 + base_router 注释），无第二入口；
+    # 规则函数 `_is_ignore_command_guide_event` 按 `RouteKind.IGNORE` 分流、不比较
+    # capability_id ⇒ canary 的多入口活性锁不适用也不会被顶红。
+    #
+    # 证明③（零幽灵配置键）：本能力不读任何 Config 字段（`Config.model_fields` 里
+    # 没有 `bot_ignore*` 一枚，实测枚举为 0 命中），故 config_keys 留空 = 如实「无键可读」，
+    # 比塞一枚近似键诚实。会话节流 `_ignore_guide_gate = IgnoreGuideGate()`（根 :8554）
+    # 无配置参数，且它在 rule 侧、不在能力执行步内。
+    #
+    # 证明④（超时严格高于内层预算，算术在此）：执行步产出 `kind="text"`，无网络、无 LLM、不出卡，
+    # 内层最坏 = `build_ignore_command_guidance()` 走一遍进程内 `_IGNORE_GUIDE_LINES` 取句轮转
+    # （纯内存 + 一把游标锁）≈ 0.01s。但 `budget` 罩的不只是执行体本身：壳把 handler 交给
+    # **共享** 线程池再 `future.result(timeout=budget)`（capability_protocols.py:422
+    # `_MAX_WORKERS=4`、:624-626），排队时间一并计入 ⇒ 同池被 batch1 的 eat（内层带 LLM
+    # failover 预算 300s）这类长任务占满时，头阻塞就能吃掉秒级余量。取 30.0
+    # = 内层 0.01s + 4 工位排队余量，与 B1 对纯本地件（divination/emergency_info/bond/northbound）
+    # 的同款取值一致；仍远低于硬顶 `_MAX_TIMEOUT_SECONDS=600.0`。宁大勿小（I-4）：
+    # 到点被硬杀只是把一句引导换成温和降级句，但掐错的代价是用户侧静默感，故不留太紧的顶。
     RouteCapabilityDecl(
         kind="IGNORE", value="ignore", capability_id="bot.ignore", priority=999,
         label="", reason="", tags=(), command=False, has_rule=False,
+        execution=CapabilityExecution(
+            implementation_ref=(
+                "plugins/bot_unified_runtime/domains/chat_reply/capabilities/echo.py"
+                "#build_ignore_guide_result"
+            ),
+            family="command",
+            adapter="prepared",
+            timeout_seconds=30.0,
+            degrade_note="兜底引导是纯内存话术拼装；拿不到成品就诚实说没交执行体，绝不按 ref 自建一句假引导",
+            config_keys=(),
+        ),
     ),
 )
 

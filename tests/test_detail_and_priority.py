@@ -2,15 +2,17 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
-    _handle_model_command,
-)
-from plugins.bot_unified_runtime.llm.model_router import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
     ModelSpec,
     normalize_priority_entries,
     reorder_priority_entries,
 )
-from plugins.bot_unified_runtime.runtime.settings import RuntimeSettingsStore
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+    RuntimeSettingsStore,
+)
+from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
+    _handle_model_command,
+)
 
 
 def _spec(model_id: str, priority: int) -> ModelSpec:
@@ -83,7 +85,9 @@ def test_model_priority_command_reorders_runtime_slots():
 
 
 def test_detail_policy_requires_expanded_relationship_answer():
-    from plugins.bot_unified_runtime.capabilities.chat import _RUNTIME_ANSWER_RULES
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        _RUNTIME_ANSWER_RULES,
+    )
 
     # 回复相关性：先回应最后一条消息的核心意图，不得脱离当前话题。
     assert "先直接回应用户最后一条消息的核心意图" in _RUNTIME_ANSWER_RULES
@@ -93,8 +97,10 @@ def test_detail_policy_requires_expanded_relationship_answer():
     assert "一两句定性" not in _RUNTIME_ANSWER_RULES
 
 def test_detail_and_concise_prompts_have_no_contradictory_runtime_rules():
-    from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
-    from plugins.bot_unified_runtime.character.providers import (
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+        build_chat_prompt,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         NullCharacterContextProvider,
     )
     context = NullCharacterContextProvider().build_context("r", "u", "s", "守岸人与黑海岸是什么关系")
@@ -111,9 +117,6 @@ def test_detail_and_concise_prompts_have_no_contradictory_runtime_rules():
 
 
 def test_chat_respects_detail_default_and_runtime_override(monkeypatch):
-    from plugins.bot_unified_runtime.character.providers import (
-        NullCharacterContextProvider,
-    )
     from plugins.bot_unified_runtime.contracts import (
         BotDecision,
         CapabilityResult,
@@ -121,6 +124,9 @@ def test_chat_respects_detail_default_and_runtime_override(monkeypatch):
         SessionType,
     )
     from plugins.bot_unified_runtime.domains.chat_reply.capabilities import chat
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+        NullCharacterContextProvider,
+    )
     from plugins.bot_unified_runtime.llm import StaticLLMProvider
     captured = []
     def result(**kwargs):
@@ -153,8 +159,12 @@ def test_add_and_update_priorities_shift_effective_registry():
 
 
 def test_memory_settings_and_help_are_discoverable():
-    from plugins.bot_unified_runtime.capabilities.echo import HELP_ENTRIES
-    from plugins.bot_unified_runtime.runtime.settings import SETTABLE_KEYS
+    from plugins.bot_unified_runtime.domains.chat_reply.capabilities.echo import (
+        HELP_ENTRIES,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
+        SETTABLE_KEYS,
+    )
     for key in ("BOT_MEMORY_EXTRACT_ENABLED", "BOT_MEMORY_EXTRACT_TIMEOUT_SECONDS", "BOT_MEMORY_EXTRACT_MAX_TOKENS",
                 "BOT_CHAT_FAST_MODE", "BOT_CHAT_FAST_MAX_TOKENS"):
         assert key in SETTABLE_KEYS
@@ -162,7 +172,9 @@ def test_memory_settings_and_help_are_discoverable():
 
 
 def test_priority_refresh_preserves_alternate_keys_and_aliases():
-    from plugins.bot_unified_runtime.llm.model_router import build_model_router
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+        build_model_router,
+    )
     config = SimpleNamespace(bot_model_registry={"a":{"model":"a", "priority":1, "api_key":["k1","k2"],"aliases":["alpha"]}})
     router = build_model_router(config, dynamic_registry=dict)
     router.route_ids(message_text="hi", override="")
@@ -171,9 +183,6 @@ def test_priority_refresh_preserves_alternate_keys_and_aliases():
 
 
 def test_fast_search_results_reach_generation_without_page_fetch(monkeypatch):
-    from plugins.bot_unified_runtime.character.providers import (
-        NullCharacterContextProvider,
-    )
     from plugins.bot_unified_runtime.contracts import (
         BotDecision,
         CapabilityResult,
@@ -181,6 +190,9 @@ def test_fast_search_results_reach_generation_without_page_fetch(monkeypatch):
         SessionType,
     )
     from plugins.bot_unified_runtime.domains.chat_reply.capabilities import chat
+    from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
+        NullCharacterContextProvider,
+    )
     from plugins.bot_unified_runtime.domains.core.search.web_search import WebSearchHit
     from plugins.bot_unified_runtime.llm import StaticLLMProvider
     captured = []

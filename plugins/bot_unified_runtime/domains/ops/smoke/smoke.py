@@ -18,19 +18,23 @@ from typing import Any
 from urllib import error as url_error
 from urllib import request as url_request
 
-from plugins.bot_unified_runtime.capabilities.chat import (
+from plugins.bot_unified_runtime.character import build_character_context_provider
+from plugins.bot_unified_runtime.config import Config, translate_env_keys
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
     build_chat_capability,
     build_chat_prompt_with_diagnostics,
 )
-from plugins.bot_unified_runtime.character import build_character_context_provider
-from plugins.bot_unified_runtime.character.source_summary import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.source_summary import (
     build_safe_context_source_summary,
 )
-from plugins.bot_unified_runtime.character.vector_knowledge import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
     OpenAICompatibleEmbeddingProvider,
     SqliteVectorKnowledgeStore,
 )
-from plugins.bot_unified_runtime.config import Config, translate_env_keys
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
+    build_model_registry,
+    build_model_router,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     PolicySettings,
     build_quiet_hours_checker,
@@ -73,6 +77,7 @@ from plugins.bot_unified_runtime.domains.ops.audit import (
     redact_private_debug,
 )
 from plugins.bot_unified_runtime.domains.ops.smoke.diagnostics import (
+    LLM_DIAGNOSTIC_OK_MESSAGE,
     build_diagnostic_audit_tags,
     build_diagnostic_why_summary,
     infer_bool_tag,
@@ -86,6 +91,7 @@ from plugins.bot_unified_runtime.domains.ops.smoke.diagnostics import (
     infer_rate_limit_reason,
     infer_review_block_reason,
     infer_text_tag,
+    llm_diagnostic_messages,
 )
 from plugins.bot_unified_runtime.llm import (
     LLMProvider,
@@ -95,10 +101,6 @@ from plugins.bot_unified_runtime.llm import (
     build_urlopen,
     public_llm_error_message,
     safe_llm_finish_reason,
-)
-from plugins.bot_unified_runtime.llm.model_router import (
-    build_model_registry,
-    build_model_router,
 )
 from plugins.bot_unified_runtime.runtime import RuntimePipeline
 from plugins.bot_unified_runtime.sender import (
@@ -1556,16 +1558,6 @@ def run_online_transport_smoke(
     }
 
 
-def _llm_diagnostic_messages() -> list[dict[str, str]]:
-    return [
-        {
-            "role": "system",
-            "content": "你是本地 LLM 连接诊断请求。只需要用一句中文回复连接正常，不要请求工具，不要输出密钥。",
-        },
-        {"role": "user", "content": "请回复：诊断连接正常。"},
-    ]
-
-
 def _attempt_count(value: int) -> int:
     return max(1, int(value))
 
@@ -1713,7 +1705,7 @@ def _probe_llm_target(
         started = time.perf_counter()
         try:
             reply = provider.generate(
-                _llm_diagnostic_messages(),
+                llm_diagnostic_messages(),
                 model=model,
                 temperature=diagnostic_llm_temperature(config),
                 max_tokens=diagnostic_llm_max_tokens(config),
@@ -1743,7 +1735,7 @@ def _probe_llm_target(
             {
                 "error_kind": "none",
                 "response_model": successful_reply.model,
-                "public_message": "LLM 诊断通过。",
+                "public_message": LLM_DIAGNOSTIC_OK_MESSAGE,
                 "reply_preview": successful_reply.text[:120],
                 "usage": successful_reply.raw_usage,
                 "llm_finish_reason": safe_llm_finish_reason(
@@ -2907,6 +2899,17 @@ def run_knowledge_sync(config: Config) -> dict[str, Any]:
         result["ann_index_built"] = bool(ann.get("built"))
         result["ann_vectors"] = int(ann.get("vectors", 0) or 0)
         result["ann_reason"] = str(ann.get("reason", ""))
+        # 完备性戳自愈（certify-prewarm 波 P1，载入端拒用告警
+        # "run knowledge-sync to certify" 的落点）：重建成功时提交点已落戳，
+        # certify 无活戳才补、此处即空转；重建失败/被锁挡下而库里无戳时，
+        # 补盖一发权威 COUNT（已嵌入行数），磁盘索引若本就完备即恢复服务。
+        # 本动作只在维护路径（operator CLI/显式同步），绝不上请求路径。
+        certified: int | None = None
+        try:
+            certified = store.certify_expected_vector_count()
+        except Exception as exc:  # noqa: BLE001 - 自愈失败不改本轮结论。
+            print(f"ann_certify_error={type(exc).__name__}")
+        result["ann_certified"] = certified
     except Exception as exc:  # noqa: BLE001
         result["error_kind"] = "exception"
         result["public_message"] = f"预建库异常：{type(exc).__name__}"
@@ -3275,12 +3278,20 @@ def main(
         print(f"done={result['done']}")
         print(f"total_after={result['total_after']}")
         print(f"embedded_after={result['embedded_after']}")
+        # ANN 发布与完备性戳自愈对 operator 可见（certify-prewarm 波 P1）：
+        # ann_certified=空 表示活戳在位或本轮未补盖；数字 = 本次新落的权威戳。
+        print(f"ann_index_built={str(result.get('ann_index_built', False)).lower()}")
+        print(f"ann_reason={result.get('ann_reason', '')}")
+        certified = result.get("ann_certified")
+        print(f"ann_certified={'' if certified is None else certified}")
         print(f"error_kind={result['error_kind']}")
         print(f"public_message={result['public_message']}")
         return 0 if result["ok"] else 1
 
     if args.task == "kb-sync":
-        from plugins.bot_unified_runtime.character.kb_wiki import run_kb_sync_task
+        from plugins.bot_unified_runtime.domains.location.knowledge.kb_wiki import (
+            run_kb_sync_task,
+        )
 
         result = run_kb_sync_task(
             config,
@@ -3319,6 +3330,7 @@ def main(
             "ann_built",
             "ann_vectors",
             "ann_reason",
+            "ann_certified",
             "active_base_url",
             "active_model",
             "error_kind",
@@ -3327,6 +3339,8 @@ def main(
             value = result.get(key, "")
             if isinstance(value, bool):
                 value = str(value).lower()
+            elif value is None:
+                value = ""  # ann_certified=None = 活戳在位/本轮未补盖，别打 "None"
             print(f"{key}={value}")
         return 0 if result["ok"] else 1
 

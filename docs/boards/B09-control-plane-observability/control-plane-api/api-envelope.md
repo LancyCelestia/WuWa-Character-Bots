@@ -14,7 +14,7 @@
 规定"控制面说每一种话时句子长什么样"：成功是一个 envelope，失败也是一个 envelope，
 两边都带同一个关联 id 集合。前端只需写一套解析器，不必为每个端点特判。
 
-结构由 `control_plane/api/protocol.py:envelope` 与 `ErrorInfo` 钉死：
+结构由 `plugins/bot_unified_runtime/control_plane/api/protocol.py:envelope` 与 `ErrorInfo` 钉死：
 `data` / `error` / `meta{request_id, trace_id, schema_version, generated_at}`。
 `schema_version` 恒 `"v1"`（字面量类型，写错直接过不了 pydantic）；`generated_at` 是
 UTC ISO 毫秒。成功与失败**共用同一个信封**，`error` 里带 `code`、`message`、
@@ -25,7 +25,7 @@ UTC ISO 毫秒。成功与失败**共用同一个信封**，`error` 里带 `code
 - 端点内部：`from .protocol import envelope`，直接 `return _ok(payload)`；
   需要复用同一次请求的 `request_id` 时传 `request_id=request.state.cp_request_id`
   （该值由 app 层 `_request_context_middleware` 写进 `contextvar`，端点不自己造新 id）。
-- 业务层抛错：`raise ControlPlaneError(status, code, message)`（`api/__init__.py`），
+- 业务层抛错：`raise ControlPlaneError(status, code, message)`（`plugins/bot_unified_runtime/control_plane/api/__init__.py`），
   或 Service 层 `ControlServiceError(code, message, status_code)`（`services.py`）——
   两者都由 app 级 exception handler 转成信封，端点里不手写错误体。
 - 错误体组装唯一出口：`_app.py:error_response`。它同时负责写

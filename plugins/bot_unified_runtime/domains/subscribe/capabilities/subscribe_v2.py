@@ -10,13 +10,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     IncomingMessage,
     SubscriptionDestinationV2,
     SubscriptionTarget,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.subscribe.adapters.target_notice import (
     SubscriptionTargetNotice,
 )

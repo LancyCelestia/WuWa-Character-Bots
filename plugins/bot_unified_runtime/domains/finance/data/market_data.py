@@ -36,7 +36,7 @@ from typing import Any
 
 # 审查 Q-01：user_copy 为零依赖纯常量池（模块纪律禁 import），sources 跨层
 # 引用不构成装配环（包 __init__ 仅 docstring），与 contracts 同为低层共享面。
-from plugins.bot_unified_runtime.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     ParseHttpError,
     http_get_json,

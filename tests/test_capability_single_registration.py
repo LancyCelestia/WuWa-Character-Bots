@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import ast
+import dataclasses
 import re
 import sys
 from pathlib import Path
@@ -171,6 +172,69 @@ def test_no_capability_id_is_authored_in_two_places() -> None:
         assert cp.CAPABILITY_DESCRIPTOR[capability_id].gate_feature_id == cp._gate_feature_id(capability_id)
 
 
+def test_route_execution_facets_all_get_envelop_handlers() -> None:
+    """A 案机制的牙：注册册每写一行 execution，壳必须真给它挂上信封 handler + 派生描述符。
+
+    缺这锁的后果：`execution` 声明了却因 adapter 不认识/循环漏注册而静默无 handler
+    ⇒ 「在册且看似可执行」是假的，invoke 恒 UNAVAILABLE 而门全绿。
+    """
+    declared = sorted(cp._route_execution_adapters())
+    assert declared, "路由执行面整条机制空转（没有任何一行声明 execution）"
+    invoker = cp.default_invoker()
+    for capability_id in declared:
+        assert capability_id in cp._DESCRIPTOR_VIEW, f"{capability_id}: 声明了 execution 却没派生出描述符"
+        assert invoker.handlers.get(capability_id) is not None, f"{capability_id}: 无信封 handler"
+        # 唯一 authoring 之家＝注册册：壳内不得同时为该 id 写字面 CapabilityDescriptor(
+        assert capability_id not in _descriptor_authored_ids(), f"{capability_id}: 壳与注册册两处 authoring"
+
+
+def test_registration_and_derivation_share_one_generation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R-A/C-03 收口：描述符与 adapter 视图必须**同源同代际**，"半新半旧"要结构上不可能。
+
+    做法＝派生成纯函数（返回 (描述符, adapter) 对，不写全局），两个视图都从同一次调用投影。
+    本用例同时证明：注册册多出一行时两侧**一起**看见（不会一边有一边没有）。
+    """
+    rows = cp._route_execution_rows()
+    assert {d.capability_id for d, _ in rows} == set(cp._route_execution_adapters()), "两侧视图脱钩"
+    assert {d.capability_id for d in cp._route_execution_descriptors()} == {d.capability_id for d, _ in rows}
+    assert rows, "路由执行面整条机制空转（没有任何一行声明 execution）"
+
+    row = next(d for d in cr.ROUTE_CAPABILITY_DECLARATIONS if d.execution is not None)
+    twin = dataclasses.replace(row, capability_id="bot.ra_probe", kind="RA_PROBE", value="ra_probe")
+    seen = [d for d in cr.ROUTE_CAPABILITY_DECLARATIONS if d.capability_id != row.capability_id] + [twin]
+    monkeypatch.setattr(cr, "ROUTE_CAPABILITY_DECLARATIONS", tuple(seen))
+    fresh = cp._route_execution_rows()
+    assert "bot.ra_probe" in {d.capability_id for d, _ in fresh}
+    assert cp._route_execution_adapters().get("bot.ra_probe") == "command", "描述符看见了而 adapter 没看见"
+
+
+def test_execution_facet_misuse_fails_at_build_not_at_invoke(monkeypatch: pytest.MonkeyPatch) -> None:
+    """派生即校验（R-A/C-02、C-04）：坏 roles / 非法 ref / 未知 adapter ⇒ 装配当场炸；
+    `roles_satisfy` 遇"要求侧全是非法角色"宁拒不抛（抛会绕过降级链与审计面）。
+
+    注毒四发各打一处：非法角色名 / ref 指向包外 / ref 缺 `#symbol` / 未实现 adapter。
+    """
+    assert cp.roles_satisfy(("user",), ("godmode",)) is False
+    assert cp.roles_satisfy(("admin",), ("blocked",)) is False
+
+    row = next(d for d in cr.ROUTE_CAPABILITY_DECLARATIONS if d.execution is not None)
+    good = row.execution
+    poison = [
+        dataclasses.replace(good, roles=("sup3r_admin",)),
+        dataclasses.replace(good, implementation_ref="../ChatBot_Runtime/venv/pyvenv.cfg#x"),
+        dataclasses.replace(good, implementation_ref="plugins/bot_unified_runtime/domains/media/capabilities/tts.py"),
+        dataclasses.replace(good, adapter="teleport"),
+    ]
+    for bad in poison:
+        seen = [
+            dataclasses.replace(row, execution=bad) if d.capability_id == row.capability_id else d
+            for d in cr.ROUTE_CAPABILITY_DECLARATIONS
+        ]
+        monkeypatch.setattr(cr, "ROUTE_CAPABILITY_DECLARATIONS", tuple(seen))
+        with pytest.raises(ValueError):
+            cp._route_execution_descriptors()
+
+
 def test_no_second_descriptor_registration_site() -> None:
     """descriptor 构造点与壳注册表类的实例化点只准存在于壳的一个文件里。"""
     shell_classes = {
@@ -211,10 +275,22 @@ def test_handler_and_fallback_ids_must_be_registered_in_unique_table() -> None:
     registered = set(cp.CAPABILITY_DESCRIPTOR)
     orphans = {item for item in ids if _CAPABILITY_ID_RE.match(item) and item not in registered}
     assert not orphans, f"handler/fallback 注册了未在册的 capability_id：{sorted(orphans)}"
-    # 反向：每条编排侧条目都必须真的被 invoker 收录（无幽灵条目）。
+    # 反向：每条编排侧条目都必须真的被 invoker 收录（无幽灵条目）；
+    # invoker 比编排侧**多**出的那些，必须恰好是 A案 route 执行形一行一条派生的 id
+    # ——多一条来历不明的注册、或少一条 route 执行形，都当场红（旧写法用 len 相等
+    # 只兜住"编排侧不缺席"，route 侧通电后它就是假红，改成显式集合判据）。
     invoker = cp.default_invoker()
     assert set(cp._DESCRIPTOR_VIEW) == {row.capability_id for row in cp.orchestration_descriptor_rows()}
-    assert len(invoker.registry) == len(cp.orchestration_descriptor_rows())
+    registry_ids = {item.capability_id for item in invoker.registry.iter()}
+    orchestration_ids = {row.capability_id for row in cp.orchestration_descriptor_rows()}
+    route_execution_ids = {
+        descriptor.capability_id for descriptor, _adapter in cp._route_execution_rows()
+    }
+    assert registry_ids == orchestration_ids | route_execution_ids, (
+        "invoker 收录集必须恰好等于「编排侧 ∪ route 执行形」两路派生："
+        f"多出的={sorted(registry_ids - (orchestration_ids | route_execution_ids))} "
+        f"缺的={sorted((orchestration_ids | route_execution_ids) - registry_ids)}"
+    )
 
 
 def test_every_input_table_carries_wave2_pointer_comment() -> None:
@@ -255,4 +331,28 @@ def test_command_catalog_route_derivation_cannot_diverge() -> None:
     }
     assert derived == declared, (
         f"路由能力对漂移：仅生成器有={sorted(derived - declared)} 仅声明源有={sorted(declared - derived)}"
+    )
+
+
+def test_no_capability_id_declares_execution_on_two_rows() -> None:
+    """一个 capability id 只准有一行带执行面（R-CENTRAL M-2 的常驻锁）。
+
+    背景：`bot.moegirl` 在 `ROUTE_CAPABILITY_DECLARATIONS` 里有**两行**（两个 RouteKind
+    共用一个 id）。中央派生按 id 建描述符，两行都填 `execution=` 会在 import 期抛
+    `ValueError`——响亮，但当时没有任何用例钉住"别再填第二行"。本锁把这条从
+    "跑起来才知道"变成"提交就红"，且对全表生效（不只 moegirl）。
+    """
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.capability_registry import (
+        ROUTE_CAPABILITY_DECLARATIONS,
+    )
+
+    seen: dict[str, list[str]] = {}
+    for decl in ROUTE_CAPABILITY_DECLARATIONS:
+        if getattr(decl, "execution", None) is None:
+            continue
+        seen.setdefault(decl.capability_id, []).append(decl.kind)
+    doubled = {cid: kinds for cid, kinds in seen.items() if len(kinds) > 1}
+    assert not doubled, (
+        f"这些 id 在不止一行声明了执行面（派生期必炸）：{doubled}"
+        "——双行同 id 的家族（如 MOEGIRL 两席）只准填其中一行"
     )

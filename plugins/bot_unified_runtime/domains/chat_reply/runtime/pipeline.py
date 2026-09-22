@@ -17,12 +17,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from plugins.bot_unified_runtime.audit import AuditRepository, redact_private_debug
-
-# 审查 A-19：群聊能力失败降级文案走统一池（user_copy 零依赖常量模块，跨层
-# 引用无装配环，先例见该模块头纪律说明）。
-from plugins.bot_unified_runtime.capabilities.user_copy import (
-    GROUP_FAILURE_ACK_TEMPLATES,
-)
 from plugins.bot_unified_runtime.contracts import (
     AuditRecord,
     BotDecision,
@@ -39,6 +33,12 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     SendRequest,
     SessionType,
+)
+
+# 审查 A-19：群聊能力失败降级文案走统一池（user_copy 零依赖常量模块，跨层
+# 引用无装配环，先例见该模块头纪律说明）。
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.user_copy import (
+    GROUP_FAILURE_ACK_TEMPLATES,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     InMemoryRateLimiter,

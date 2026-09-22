@@ -1231,6 +1231,12 @@ def test_dedupe_predicates_share_one_implementation() -> None:
         "⇒ 键规范又变成两套，闸侧漏查的段字符集/日期段形态会在这里复活"
     )
     assert "is_emergency_dedupe_key" in imported[dedupe_module]
+    # 2026-09-22 R-CENTRAL-b I-1：闸现在有**两条**委托边（紧急族 + 其余主动投递族）。
+    # 只断言前者的话，把后者内联成一条宽松谓词（丢掉段字符集/首段等值/日期形态）锁照样
+    # 全绿——注毒 POISON1 实证。两枚谓词都得在册且都被调用，缺一即分叉。
+    assert "active_push_key_shape_ok" in imported[dedupe_module], (
+        "非紧急族的键规范谓词不再从域侧引用＝闸侧长出第二套规则（C-1 修复被架空）"
+    )
     assert shape_fn is not None, "闸侧键规范函数被搬走，须同步本锁与规格 §1.3-3"
     called = {
         call.func.id
@@ -1239,6 +1245,9 @@ def test_dedupe_predicates_share_one_implementation() -> None:
     }
     assert "is_emergency_dedupe_key" in called, (
         "`dedupe_key_shape_ok` 已不再委托域侧实现＝函数壳还在、规则已分叉"
+    )
+    assert "active_push_key_shape_ok" in called, (
+        "`dedupe_key_shape_ok` 的非紧急分支不再委托域侧实现＝那条分支的规则已分叉"
     )
     gate_source = gate_path.read_text(encoding="utf-8")
     assert "re.compile" not in gate_source, (
@@ -1615,24 +1624,32 @@ def _direct_submit_calls(path: Path) -> list[int]:
 
 
 def test_existing_families_still_submit_directly() -> None:
-    """T6：现役 4 族仍直调 `send_queue.submit`。
+    """T6：仍直调 `send_queue.submit` 的存量族清点（**现役 2 族**）。
 
     校园族已改道中央管线（`pipeline.handle_async`），从直调清单除名 ⇒ 下限 5→4。
     依据是**并行审计席的设计件** `docs/design/audit-20260920-unify-U17-campus-wire.md`
     （§0.2 现状坐标 / §0.3 取形态 A=合成目标会话消息交中央管线 / §0.4 门语义实测），
     **不是用户裁决**——改此门槛者须引该件路径与结构断言，不得引不存在的裁决编号。
-    实测锚点：`git show HEAD:plugins/bot_unified_runtime/__init__.py` 直调数=5（含 5059 校园），
-    收编落地后=4；因此本锁以 `bot.campus_forward` 仍在根分发段 + 直调数 ≥4 双条件成立。
+
+    2026-09-22 口径变更（须连读，别只看本行）：B4-spec §1.5「存量族只登记不迁移」的
+    立由=「避免波及**该波在飞会话**」（`docs/design/emergency-info-unify-summary-20260919.md:79`），
+    紧急波收尾后该理由失效；统一波用户 mandate 明写「所有内容走中央调度层」
+    ⇒ 群摘要 + 日常助理两族按裁定件
+    `.superpowers/sdd/2026-09-21-unify-wave/decisions/WAVE42-active-push-central-exit.md`
+    改道中央出口，本锁的直调下限随之 4→2，并**新增**一条正向锁：改过道的族不得退回裸 submit。
+    提醒 / cookie 到期两族**也已**改道：它们"送达才销账"读的是内联投递的同步回执，
+    闸的判定必须站在投递之前，故走 `_push_via_central_exit_now`（root 侧）而不是裸
+    `submit_active_push`。本函数下半段的"零裸 submit"断言只有四族全改道才绿。
+    回执落点细节见裁定件 §未裁项（A′ 案，2026-09-22 用户确认前不 commit）。
     """
     assert ROOT_INIT.is_file(), ROOT_INIT
     source = ROOT_INIT.read_text(encoding="utf-8")
-    assert "submit_active_push" not in source, (
-        "根 __init__.py 一旦出现 submit_active_push，说明实施席顺手迁移了存量族；"
-        "B4-spec §1.5 裁定=只登记不迁移（校园族经 U17 设计件除外）。"
+    assert "submit_active_push" in source, (
+        "根装配已把群摘要/日常助理两族接进中央出口；该行消失＝被退回裸 submit（第二出口复活）"
     )
-    assert len(_direct_submit_calls(ROOT_INIT)) >= 4, (
-        "现役主动推送直调 send_queue.submit 四处（提醒/cookie 到期/群摘要/日常助理）"
-        "必须仍在；少于 4 处=已被绕开或改道（校园族已按 U17 设计件收编管线，不在其列）"
+    assert not _direct_submit_calls(ROOT_INIT), (
+        "root 四条主动投递（提醒/cookie 到期/群摘要/日常助理）已全部改走中央出口"
+        "（2026-09-22 Wave 4.2/4.3）；再出现裸 send_queue.submit=第二投递出口复活"
     )
     for anchor in INIT_DEDUPE_ANCHORS:
         assert anchor in source, f"存量族 dedupe 锚点 {anchor} 消失，需复核是否被顺手迁移"
@@ -1718,6 +1735,11 @@ def test_submit_active_push_production_importers_are_allowlisted() -> None:
         PLUGIN_ROOT / "domains" / "transport",
         PLUGIN_ROOT / "domains" / "emergency_info",
     )
+    # Wave 4.2（2026-09-22）：根装配把群摘要/日常助理两族接进中央出口 ⇒ root 成为合法
+    # 引用方。逐文件精确放行（不放开成"PLUGIN_ROOT 全树"），新增引用方仍当场出局。
+    # 与本函数上方 `allowed_roots` 的先后顺序不得调换：`test_emergency_info_core.py`
+    # 的两侧对齐锁按"第一个含 allowed 的赋值"提取根目录白名单。
+    allowed_files = {PLUGIN_ROOT / "__init__.py"}
     offenders: list[str] = []
     for path in PLUGIN_ROOT.rglob("*.py"):
         if "__pycache__" in path.parts:
@@ -1725,6 +1747,8 @@ def test_submit_active_push_production_importers_are_allowlisted() -> None:
         if "outbound_gate.py" in path.name:
             continue
         if "submit_active_push" not in path.read_text(encoding="utf-8"):
+            continue
+        if path in allowed_files:
             continue
         if not _under_directory(path, allowed_roots):
             offenders.append(path.relative_to(PLUGIN_ROOT).as_posix())
@@ -1967,3 +1991,346 @@ def test_settings_resolution_failure_falls_back_to_disabled(
         outcome = _push(queue, _request(), gate, now=_utc(3, 0))
     assert outcome.verdict.action == "allow"
     assert queue.calls == [("req-emg-1", {})]
+
+
+def test_unreadable_gate_settings_is_announced_not_swallowed() -> None:
+    """I-3 根修：读不到设置=闸按缺省**关闭**，这件事必须冒到告警口，且只冒一次。
+
+    咬过的病型（台账 #47 同型）：设置面读起来仍是 true，实际行为恒等于关闭，而旧实现
+    只 `_logger.exception`——日志会轮转，没人看日志的早晨闸就是"配了等于没配"。
+    同时不许逐条播报：求值发生在每次判定之前，噪音会把告警通道本身打爆。
+    """
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+
+    state = {"broken": True}
+    issues: list[OperationalIssue] = []
+
+    def _flaky() -> Any:
+        if state["broken"]:
+            raise RuntimeError("settings store down")
+        return OutboundGateSettings(enabled=True)
+
+    queue = RecordingQueue()
+    now = _utc(12, 0)
+    gate = _gate(
+        settings=_flaky, quiet=_quiet(enabled=False), store=FakeStore(), now=now,
+        sink=issues.append,
+    )
+
+    for index in range(3):
+        outcome = _push(
+            queue, _request(request_id=f"req-{index}"), gate, now=now
+        )
+        assert outcome.verdict.action == "allow"
+    kinds = [issue.kind for issue in issues]
+    assert kinds == ["outbound_gate_settings_unreadable"], (
+        f"读不到设置要么没报、要么报重了：{kinds}"
+    )
+
+    # 恢复一次即清账：再坏一次必须重新报（否则"报了=永远报了"）。
+    state["broken"] = False
+    assert gate.settings.enabled is True
+    state["broken"] = True
+    _push(queue, _request(request_id="req-again"), gate, now=now)
+    assert [issue.kind for issue in issues] == [
+        "outbound_gate_settings_unreadable",
+        "outbound_gate_settings_unreadable",
+    ], "恢复后再次失效没重新报＝告警一次性静音"
+
+
+def test_wrong_typed_gate_settings_announces_like_a_failure() -> None:
+    """求值成功但**类型不对**（返回 dict/None）＝同样按缺省关闭，同样必须报。
+
+    这条不是凑数：设置源是 `lambda: build_outbound_gate_settings(config)`，装配期接错
+    返回值、或未来加一层包装把对象吃掉，都会走到 `else` 分支——旧实现里这里是纯静默。
+    """
+    issues: list[OperationalIssue] = []
+    queue = RecordingQueue()
+    now = _utc(12, 0)
+    gate = _gate(
+        settings=lambda: {"enabled": True},  # 故意给错类型
+        quiet=_quiet(enabled=False),
+        store=FakeStore(),
+        now=now,
+        sink=issues.append,
+    )
+
+    outcome = _push(queue, _request(), gate, now=now)
+
+    assert outcome.verdict.action == "allow"
+    assert queue.calls == [("req-emg-1", {})]
+    assert [issue.kind for issue in issues] == ["outbound_gate_settings_unreadable"]
+
+
+# ----------------------------------------------------- T9 多族命名空间（Wave 4.2/4.3）
+#: 现役四族主动投递的**真实键形 + 该族申报的命名空间 + 重投族**。键形逐条抄自根
+#: `__init__.py`（`:2973` 提醒 / `:3096` cookie 到期 / `:3269` 群摘要 / `:3427` 日常助理），
+#: 改键形必须同步本表——本表的目的就是让「闸开=这四族全被判 skip」这一类错当场可见
+#: （R-CENTRAL C-1：中央出口接线后键规范仍只认 `emg` 前缀，四族全灭而关态测试全绿）。
+ACTIVE_PUSH_KEY_FORMS: tuple[tuple[str, str, str], ...] = (
+    ("reminder:7c1f2a9b", "reminder", "once"),
+    ("cookie-expiry:3865067623:2026-09-14", "cookie-expiry", "daily"),
+    ("digest_push:631785829:2026-09-14", "digest_push", "daily"),
+    ("daily_assist:inbox:3865067623:2026-09-14", "daily_assist", "daily"),
+)
+
+
+@pytest.mark.parametrize(("key", "namespace", "family"), ACTIVE_PUSH_KEY_FORMS)
+def test_enabled_gate_admits_each_active_push_namespace(
+    key: str, namespace: str, family: str
+) -> None:
+    """开态活性：四族各自申报的命名空间必须真的过闸落队列（不是只「在册」）。"""
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+
+    queue = RecordingQueue()
+    now = _utc(12, 0)
+    gate = _gate(
+        settings=OutboundGateSettings(enabled=True),
+        quiet=_quiet(enabled=False),
+        store=FakeStore(),
+        now=now,
+    )
+    outcome = _push(
+        queue,
+        _request(dedupe_key=key),
+        gate,
+        now=now,
+        dedupe_family=family,
+        dedupe_namespace=namespace,
+    )
+
+    assert outcome.verdict.action == "allow", (
+        f"{namespace} 族被自己的中央出口拒收：reason={outcome.verdict.reason}"
+    )
+    assert queue.calls == [("req-emg-1", {})]
+
+
+@pytest.mark.parametrize(
+    ("key", "namespace"),
+    [
+        # 近亲前缀：多一个字符也算不同族（紧急域的 `emg_push` 判例推广到全族）。
+        ("reminderx:7c1f2a9b", "reminder"),
+        # 串族：拿别人的键冒充自己的命名空间。
+        ("emg:qq:item-1:g-1", "reminder"),
+        # 无前缀（整串一段）＝无从判定归属，保守拒收。
+        ("7c1f2a9b", "reminder"),
+    ],
+)
+def test_namespace_must_equal_first_segment(key: str, namespace: str) -> None:
+    """命名空间=键首段**等值**：不等即 skip，绝不让两族共用一个幂等桶。"""
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+
+    queue = RecordingQueue()
+    now = _utc(12, 0)
+    gate = _gate(
+        settings=OutboundGateSettings(enabled=True),
+        quiet=_quiet(enabled=False),
+        store=FakeStore(),
+        now=now,
+    )
+    outcome = _push(
+        queue, _request(dedupe_key=key), gate, now=now, dedupe_namespace=namespace
+    )
+
+    assert outcome.verdict.action == "skip"
+    assert outcome.verdict.reason == "dedupe_key_shape"
+    assert queue.calls == []
+
+
+@pytest.mark.parametrize(
+    ("key", "namespace", "family"),
+    [
+        ("digest_push:631 785:2026-09-14", "digest_push", "daily"),  # 段内空白
+        ("daily_assist:inbox:386:2026-09:14", "daily_assist", "daily"),  # 段内冒号
+        ("cookie-expiry:3865067623", "cookie-expiry", "daily"),  # 按日族缺日期段
+        ("reminder:7c1f2a9b:20261345", "reminder", "daily"),  # 日期段形态假（无连字符）
+        # 注：**形态**核验不查历法真值——`2026-13-45` 与紧急域一样判过。口径同源优先，
+        # 别在这里"顺手加严"造成两侧分叉；现役日期一律来自 `date().isoformat()`，恒为真值。
+    ],
+)
+def test_non_emergency_shape_rules_still_bit(
+    key: str, namespace: str, family: str
+) -> None:
+    """放宽的只有「前缀必须是 emg」，段字符集与日期段形态**一条没松**（脏键=重发）。"""
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+
+    queue = RecordingQueue()
+    now = _utc(12, 0)
+    gate = _gate(
+        settings=OutboundGateSettings(enabled=True),
+        quiet=_quiet(enabled=False),
+        store=FakeStore(),
+        now=now,
+    )
+    outcome = _push(
+        queue,
+        _request(dedupe_key=key),
+        gate,
+        now=now,
+        dedupe_family=family,
+        dedupe_namespace=namespace,
+    )
+
+    assert outcome.verdict.action == "skip"
+    assert outcome.verdict.reason == "dedupe_key_shape"
+
+
+def test_default_namespace_keeps_emergency_rules_byte_identical() -> None:
+    """不传 `dedupe_namespace` ⇒ 完全等于改道前的紧急域口径（四段/五段 + emg 等值）。
+
+    这条是「本波没动别人的闸」的证据：紧急域全部现役用例与闸侧既有 T1–T8 都按缺省参
+    调用，只要缺省分支的行为有任何一点漂移，这里就红。
+    """
+    from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+        OutboundGateSettings,
+    )
+
+    queue = RecordingQueue()
+    now = _utc(12, 0)
+    gate = _gate(
+        settings=OutboundGateSettings(enabled=True),
+        quiet=_quiet(enabled=False),
+        store=FakeStore(),
+        now=now,
+    )
+
+    # 紧急域：段数不足 / 近亲前缀 / 旁族键混入紧急通道 ⇒ 三条全 skip（改道前后同判）。
+    for key in ("emg:qq:only-three", "emg_push:qq:item:g-1", "digest_push:63:2026-09-14"):
+        outcome = _push(queue, _request(dedupe_key=key), gate, now=now)
+        assert outcome.verdict.action == "skip", key
+        assert outcome.verdict.reason == "dedupe_key_shape", key
+
+    ok = _push(queue, _request(dedupe_key="emg:qq:item-1:g-1"), gate, now=now)
+    assert ok.verdict.action == "allow"
+    assert queue.calls == [("req-emg-1", {})]
+
+
+# ------------------------------------------- T10 申报与建键同源锁（R-CENTRAL-b I-2）
+_CENTRAL_PUSH_CALLS = frozenset({"submit_active_push", "_push_via_central_exit_now"})
+
+
+def _key_first_segment(node: ast.expr) -> str | None:
+    """`dedupe_key=` 实参的**首段字面量**（`f"reminder:{x}"` → `reminder`）。
+
+    只认 f-string/常量开头的字面段：`dedupe_key=dedupe_key` 那种透传（值由形参带来，
+    首段在别的函数里拼）返回 None，由那个真正建键的函数负责，别在这里猜。
+    """
+    if isinstance(node, ast.JoinedStr):
+        head = node.values[0] if node.values else None
+    elif isinstance(node, ast.Constant):
+        head = node
+    else:
+        return None
+    if not (isinstance(head, ast.Constant) and isinstance(head.value, str)):
+        return None
+    segment = head.value.split(":")[0].strip()
+    return segment or None
+
+
+def _central_push_stats(fn: ast.AST) -> tuple[set[str], set[str]]:
+    """该函数**自身**（不下钻内层函数）的 (申报的命名空间, 建出的键首段)。"""
+    declared: set[str] = set()
+    built: set[str] = set()
+    stack: list[ast.AST] = list(ast.iter_child_nodes(fn))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue  # 内层函数由它自己那一份统计负责，防重复计
+        if isinstance(node, ast.Call):
+            callee = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else getattr(node.func, "attr", "")
+            )
+            for keyword in node.keywords:
+                if callee in _CENTRAL_PUSH_CALLS and keyword.arg == "dedupe_namespace":
+                    value = keyword.value
+                    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                        declared.add(value.value)
+                if keyword.arg == "dedupe_key":
+                    segment = _key_first_segment(keyword.value)
+                    if segment:
+                        built.add(segment)
+        stack.extend(ast.iter_child_nodes(node))
+    return declared, built
+
+
+def test_root_declares_exactly_the_namespaces_it_builds() -> None:
+    """每个建 `dedupe_key` 并走中央出口的函数，必须**就地**申报同名命名空间。
+
+    为什么只有一张手抄表不够（R-CENTRAL-b Important-2）：`ACTIVE_PUSH_KEY_FORMS` 是
+    测试侧抄本，改 root 不改表它不会红；而 T6 的 allowlist 放行整个 `__init__.py`，
+    所以「新增一个直调点漏传 `dedupe_namespace`」＝回落 `emg` 缺省＝开闸态该族静默丢
+    消息，与 C-1 同型且无门可拦。本锁按**函数**做双向对账：
+
+    - 建了键没申报（漏报）→ 红；
+    - 申报了没建键 / 报了别的族的段（错报、串族）→ 红；
+    - 两集合等值 → 绿。
+
+    段数下限 `_scanned` 是这条锁自己的活性地板：若哪天 root 改成键在别处拼、申报在
+    另处传，本锁会静默扫不到东西而恒绿——那种「存在性糊过活性判据」不许发生。
+    """
+    tree = ast.parse(ROOT_INIT.read_text(encoding="utf-8"))
+    mismatches: list[str] = []
+    scanned = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        declared, built = _central_push_stats(node)
+        if not declared and not built:
+            continue
+        scanned += 1
+        if declared != built:
+            mismatches.append(
+                f"{node.name}: 建键首段={sorted(built)} 中央出口申报={sorted(declared)}"
+            )
+
+    assert not mismatches, (
+        "主动投递族的命名空间申报与真实键形分叉 ⇒ 开闸态该族会被键规范整族 skip："
+        + "；".join(mismatches)
+    )
+    assert scanned >= 4, (
+        f"本锁只扫到 {scanned} 个『建键或申报』的函数（地板 4=现役四族各一处）"
+        "⇒ 要么改道结构变了要么键改在别处拼，本锁已失明，须同步改写而不是降地板"
+    )
+
+
+def _root_mismatch_names(source: str) -> set[str]:
+    """对给定 root 源码跑一遍上面的对账，返回被判分叉的函数名（注毒自证用）。"""
+    result: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        declared, built = _central_push_stats(node)
+        if (declared or built) and declared != built:
+            result.add(node.name)
+    return result
+
+
+def test_namespace_declaration_lock_has_teeth() -> None:
+    """注毒：改错一个申报值 / 删掉一个申报，本锁必须当场多出一个失配函数。
+
+    没这一条，上面那把锁可能只是"永远等值的两集合"（判据空转）。两发毒分别代表
+    C-1 同型的两种复发：报错了族、和干脆漏报（回落 `emg` 缺省）。
+    刻意按「基线失配集 → 注毒后失配集」的**差集**判定而不是点名某个函数名：函数名会随
+    重构漂移，点名函数名的自证本身就是一种手写坐标（本波已被过期行号咬过）。
+    """
+    source = ROOT_INIT.read_text(encoding="utf-8")
+    clean = _root_mismatch_names(source)
+    assert clean == set(), f"基线本就不干净：{sorted(clean)}"
+
+    wrong = source.replace('dedupe_namespace="reminder"', 'dedupe_namespace="reminderx"')
+    assert wrong != source, "注毒点消失（提醒族申报被改写或删掉），本锁的自证前提不成立"
+    assert _root_mismatch_names(wrong) - clean, "报错命名空间没被抓＝锁无牙"
+
+    dropped = source.replace(',\n            dedupe_namespace="reminder"', "", 1)
+    assert dropped != source, "注毒点消失（提醒族调用参数形态变了），须同步本自证"
+    assert _root_mismatch_names(dropped) - clean, "漏报命名空间没被抓＝锁无牙"

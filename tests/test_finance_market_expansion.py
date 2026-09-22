@@ -27,10 +27,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.capabilities import user_copy
-from plugins.bot_unified_runtime.capabilities.market import market_filter_secids
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.core.contracts.finance import (
     FinanceDataStatus as Status,
+)
+from plugins.bot_unified_runtime.domains.finance.capabilities.market import (
+    market_filter_secids,
 )
 from plugins.bot_unified_runtime.domains.finance.data import market_data, stock_data
 from plugins.bot_unified_runtime.domains.finance.data.market_data import (
@@ -486,7 +488,7 @@ class TestH07Triggers:
 
     @pytest.mark.parametrize("text", ["迪拜行情", "阿联酋行情", "澳门行情"])
     def test_no_source_market_queries_route_market(self, text: str) -> None:
-        from plugins.bot_unified_runtime.runtime.base_router import (
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
             RouteKind,
             classify_message_route,
         )
@@ -500,7 +502,7 @@ class TestH07Triggers:
     )
     def test_new_companies_ride_existing_context_gate(self, text: str) -> None:
         from plugins.bot_unified_runtime.capabilities.stocks import is_stocks_command
-        from plugins.bot_unified_runtime.runtime.base_router import (
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime.base_router import (
             RouteKind,
             classify_message_route,
         )

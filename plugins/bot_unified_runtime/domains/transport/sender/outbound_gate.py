@@ -61,6 +61,7 @@ from plugins.bot_unified_runtime.domains.core.contracts import (
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import StrictBaseModel
 from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
     EMERGENCY_DEDUPE_PREFIX,
+    active_push_key_shape_ok,
     is_emergency_dedupe_key,
 )
 
@@ -91,6 +92,8 @@ REASON_QUEUE_NO_DELIVER_AFTER = "queue_without_deliver_after"
 
 KIND_DEGRADED = "outbound_gate_degraded"
 KIND_STORM = "outbound_gate_storm"
+# 设置读不到/类型不对 ⇒ 行为恒等于「关闭」，而配置面看起来仍是开着的。必须能报出来。
+KIND_SETTINGS_UNREADABLE = "outbound_gate_settings_unreadable"
 GATE_STAGE = "outbound_gate"
 AUDIT_STAGE = "sender"  # 与 queue._append_sender_audit 同族口
 AUDIT_TRANSPORT = "outbound_gate"
@@ -270,25 +273,38 @@ def _is_urgent(send_request: SendRequest, urgent_severities: list[str]) -> bool:
 
 
 def dedupe_key_shape_ok(
-    dedupe_key: str, *, family: str = DEDUPE_FAMILY_ONCE
+    dedupe_key: str,
+    *,
+    family: str = DEDUPE_FAMILY_ONCE,
+    namespace: str = DEDUPE_NAMESPACE,
 ) -> bool:
-    """E5 §4.3 键规范：`emg:{channel}:{item_id}:{target_id}[:{date_key}]`。
+    """E5 §4.3 键规范：`{命名空间}:{...段}[:{date_key}]`，缺省命名空间仍是 `emg`。
 
-    `family="daily"`（按日重投族）必须带 date_key 段，即恰好五段；一次性族四段
-    或五段皆可。段数、命名空间、逐段字符集、日期段形态四条都在闸侧拦，重复投递的
-    幂等仍归队列 `ON CONFLICT`。
+    `family="daily"`（按日重投族）必须带 date_key 段。段字符集、日期段形态、前缀等值
+    三条规则都在闸侧拦，重复投递的幂等仍归队列 `ON CONFLICT`。
+
+    `namespace` 由**投递方申报**（2026-09-22 统一波新增）：闸的客源从「只有紧急域」
+    扩到提醒 / cookie 到期 / 群摘要 / 日常助理四族后，硬要求前缀 `emg` 会把这四族在
+    开闸态逐条判 skip＝静默丢消息（R-CENTRAL C-1）。缺省值取 `DEDUPE_NAMESPACE`，因此
+    **不传该参的调用（紧急域全部现役调用点）行为逐字节不变**。申报值只用于「与键首段
+    等值比对」，规则本体仍不在此定义。
 
     **本函数是委托口，不是实现**：规则本体唯一出处 =
-    `domains/emergency_info/service/dedupe.py:is_emergency_dedupe_key`（B4 规格
+    `domains/emergency_info/service/dedupe.py`（紧急族 `is_emergency_dedupe_key`，
+    其余族 `active_push_key_shape_ok`，同一套 `_SEGMENT_RE`/`_DATE_KEY_RE`；B4 规格
     §1.3-3 的键形在那里定义）。此前两侧各写一套、闸侧漏查段字符集与前缀之外的
     形态（LOCK-AUDIT GAP-1 注毒 G10：删掉前缀校验 59 条全绿），真实后果不是漏报而是
     **重发**——脏键与干净键在队列里各存一行。改规则只改那一处，别在这里加分支；
     `tests/test_outbound_gate.py::test_dedupe_predicates_share_one_implementation`
     用 AST 拦「闸侧重新长出第二套正则/前缀字面量」。
     """
-    return is_emergency_dedupe_key(
-        dedupe_key,
-        require_date_key=family == DEDUPE_FAMILY_DAILY,
+    require_date_key = family == DEDUPE_FAMILY_DAILY
+    if namespace == DEDUPE_NAMESPACE:
+        return is_emergency_dedupe_key(
+            dedupe_key, require_date_key=require_date_key
+        )
+    return active_push_key_shape_ok(
+        dedupe_key, namespace=namespace, require_date_key=require_date_key
     )
 
 
@@ -336,11 +352,13 @@ class OutboundGate:
         self._lock = threading.Lock()
         # 连击顺延台账（进程内观测；判定不依赖它，故无需持久化）。
         self._consecutive_defers: dict[str, int] = {}
+        # 设置读不到的告警闩（进程内一次性，读成功即清；见 `_note_settings_unreadable`）。
+        self._settings_issue_reported = False
 
     # ------------------------------------------------------------------ 设置
     @property
     def settings(self) -> OutboundGateSettings:
-        """当前闸设置（callable 时每次判定实时求值；求值失败=回退缺省关闭）。"""
+        """当前闸设置（callable 时每次判定实时求值；求值失败=回退缺省关闭 + 报一次）。"""
         source = self._settings_source
         if source is None:
             return OutboundGateSettings()
@@ -352,8 +370,41 @@ class OutboundGate:
             _logger.exception(
                 "outbound_gate settings_failure action=allow fallback=disabled"
             )
+            self._note_settings_unreadable()
             return OutboundGateSettings()
-        return resolved if isinstance(resolved, OutboundGateSettings) else OutboundGateSettings()
+        if isinstance(resolved, OutboundGateSettings):
+            self._note_settings_readable()
+            return resolved
+        # 求值成功但类型不对（装配接错线、中间层把对象吃掉）＝与读不到同病：按缺省关闭。
+        _logger.error(
+            "outbound_gate settings_type_mismatch action=allow got=%s",
+            type(resolved).__name__,
+        )
+        self._note_settings_unreadable()
+        return OutboundGateSettings()
+
+    def _note_settings_unreadable(self) -> None:
+        """「配了等于没配」必须冒到告警口（R-CENTRAL I-3，台账 #47 同型病）。
+
+        只报一次：设置求值发生在**每次判定之前**，逐条播报会自己造出一股告警风暴；
+        一旦某次求值成功即清账，坏→好→坏 会再报一次（否则一次性静音＝更糟）。
+        """
+        with self._lock:
+            if self._settings_issue_reported:
+                return
+            self._settings_issue_reported = True
+        self.note_issue(
+            OperationalIssue(
+                stage=GATE_STAGE,
+                kind=KIND_SETTINGS_UNREADABLE,
+                retryable=True,
+                safe_summary="reason=settings_unreadable fallback=disabled",
+            )
+        )
+
+    def _note_settings_readable(self) -> None:
+        with self._lock:
+            self._settings_issue_reported = False
 
     @property
     def quiet(self) -> QuietHoursSettings:
@@ -502,10 +553,13 @@ class OutboundGate:
         *,
         now: datetime | None = None,
         dedupe_family: str = DEDUPE_FAMILY_ONCE,
+        dedupe_namespace: str = DEDUPE_NAMESPACE,
     ) -> OutboundGateVerdict:
         """过三道门给出结论（不触队列；`submit_active_push` 与装配侧共用）。
 
         `reason=disabled` 表示关闭态直通；其余为三门之一给出的 allow/defer/skip。
+        `dedupe_namespace` 缺省 `emg`＝紧急域口径逐字节不变，其余主动投递族须申报
+        自己那一族（见 `dedupe_key_shape_ok`）。
         """
         current = _utc(now or self.clock())
         settings = self.settings
@@ -562,7 +616,11 @@ class OutboundGate:
             self.note_verdict(subject_key, deferred=True)
             return verdict
 
-        if not dedupe_key_shape_ok(send_request.dedupe_key, family=dedupe_family):
+        if not dedupe_key_shape_ok(
+            send_request.dedupe_key,
+            family=dedupe_family,
+            namespace=dedupe_namespace,
+        ):
             return OutboundGateVerdict(
                 action="skip",
                 reason=REASON_DEDUPE_SHAPE,
@@ -662,15 +720,23 @@ def submit_active_push(
     *,
     now: datetime | None = None,
     dedupe_family: str = DEDUPE_FAMILY_ONCE,
+    dedupe_namespace: str = DEDUPE_NAMESPACE,
 ) -> ActivePushOutcome:
     """主动投递的唯一中央入口（规格 §1.2 签名）。
 
-    `dedupe_family="daily"` 声明该推送属按日重投族 ⇒ 键必须带 date_key 段。
+    `dedupe_family="daily"` 声明该推送属按日重投族 ⇒ 键必须带 date_key 段；
+    `dedupe_namespace` 声明该族的键首段（缺省 `emg`=紧急域现役口径不变，其余族须
+    自报，见 `dedupe_key_shape_ok`）。
     关闭态与三门全过都走裸 `submit(request)`（零关键字=与现状同形）；顺延走
     `submit(request, deliver_after=...)`；拒绝不触队列，只出自造 SKIPPED 回执。
     """
     current = _utc(now or gate.clock())
-    verdict = gate.decide(send_request, now=current, dedupe_family=dedupe_family)
+    verdict = gate.decide(
+        send_request,
+        now=current,
+        dedupe_family=dedupe_family,
+        dedupe_namespace=dedupe_namespace,
+    )
     subject_key = _subject_of(send_request)
     passthrough = verdict.reason == REASON_DISABLED  # 关闭态：零 store 触点、零审计
     degraded_reason: str | None = None

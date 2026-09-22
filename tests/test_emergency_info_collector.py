@@ -18,8 +18,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from plugins.bot_unified_runtime.domains.emergency_info.contracts import (
     EmergencyItem,
     EmergencyLevel,
@@ -385,12 +383,10 @@ def test_missing_occurred_time_is_dropped_not_fabricated() -> None:
     assert persist.items == []
 
 
-# WP3-TAXONOMY 半成品挂账（2026-09-21 全面修复波）：震级驱动定级尚未落地（规格 §四），
-# 非本波引入。摘牌指引：搜 WP3-TAXONOMY；全录见 .superpowers/sdd/2026-09-21-fix-wave/master-plan.md §8.1 与 §捌。
-@pytest.mark.xfail(
-    strict=False,
-    reason="WP3-TAXONOMY 半成品：注册表/震级驱动定级未落地（规格 §四·§五），非本波引入",
-)
+# WP3-TAXONOMY 挂账已摘牌（2026-09-22 实施席 WP3-IMPL）：震级驱动定级已按规格 §四/§五
+# 落进 `service/grading.py::earthquake_level`，本用例原有 1 枚 xfail 标记删除，断言未动。
+# 同批其余 20 个实例见 tests/test_emergency_info_taxonomy.py；施工记录见
+# .superpowers/sdd/2026-09-21-unify-wave/logs/SEAT-WP3-IMPL.md。
 def test_quake_item_graded_by_magnitude_not_by_the_word_earthquake() -> None:
     """WP3 纠偏（审计 E6-N1）：地震定级只吃震级/深度/位置三个数，**不吃「地震」二字**。
 

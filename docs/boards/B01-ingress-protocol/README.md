@@ -58,4 +58,4 @@ flowchart LR
 - `docs/napcat-setup.md`：2026-09-18 起协议端已换 SnowLuma，定性为回滚件。板块正文不复述其步骤，只在 `qq-snowluma` 保留一行历史口径说明——本仓文档里 09-18 之前写下的 NapCat 字样都指旧端。
 - `docs/acceptance-manual.md` §0/§2（装依赖、接 QQ）：接入门槛并入本板块，手册本体留在 B10 作可执行验收规程。
 - `HANDOFF-V21R4-B-20260918.md`、`docs/HANDOVER-2026-09-15.md`：归历史证据，按判决归档；本板块只承接其中仍然现役的接入口径。
-- 旧路径 `plugins/bot_unified_runtime/message_context.py`、`mail_adapter.py`、`mail_bridge.py`、`sender/` 现已是再导出垫片，真身分别在 `domains/chat_reply/ingest/`、`domains/transport/mail/`、`domains/transport/sender/`（v21r2 重组 W14/W15d）。引用一律写真身路径。
+- 旧路径 `plugins/bot_unified_runtime/domains/chat_reply/ingest/message_context.py`、`mail_adapter.py`、`mail_bridge.py`、`sender/` 现已是再导出垫片，真身分别在 `domains/chat_reply/ingest/`、`domains/transport/mail/`、`domains/transport/sender/`（v21r2 重组 W14/W15d）。引用一律写真身路径。

@@ -36,6 +36,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from plugins.bot_unified_runtime import _group_welcome_text
 from plugins.bot_unified_runtime.contracts import CapabilityResult, ReceiptState
+from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+    build_outbound_gate,
+)
+
+#: 真身中央出站闸（缺省关=直通）。cookie 到期这条生产线已接中央出口，测试须给真闸。
+_GATE = build_outbound_gate(SimpleNamespace())
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _PLUGIN_ROOT = _REPO_ROOT / "plugins" / "bot_unified_runtime"
@@ -634,6 +640,7 @@ def test_cookie_reminder_helper_first_admin_sent_request_fields() -> None:
             "【凭证到期】报告内容",
             ["111", "222"],
             deliver_fn=deliver,
+            outbound_gate=_GATE,
         )
     )
     assert delivered is True
@@ -672,6 +679,7 @@ def test_cookie_reminder_helper_admin_fallback_on_failure() -> None:
             "报告",
             ["111", "222"],
             deliver_fn=deliver,
+            outbound_gate=_GATE,
         )
     )
     assert delivered is True
@@ -703,6 +711,7 @@ def test_cookie_reminder_helper_all_failed_returns_false_silent() -> None:
             "报告",
             ["111", "222"],
             deliver_fn=_exploding_deliver,
+            outbound_gate=_GATE,
         )
     )
     assert delivered is False
@@ -716,6 +725,7 @@ def test_cookie_reminder_helper_all_failed_returns_false_silent() -> None:
             "报告",
             ["111"],
             deliver_fn=deliver,
+            outbound_gate=_GATE,
         )
     )
     assert delivered2 is False
@@ -746,6 +756,7 @@ def test_cookie_reminder_helper_same_day_receipt_dedupe() -> None:
             "报告",
             ["111"],
             deliver_fn=deliver,
+            outbound_gate=_GATE,
         )
     )
     assert delivered is True
@@ -756,8 +767,8 @@ def test_cookie_reminder_job_gate_on_uses_queue_helper() -> None:
     """门开：job 零直发，改投模块级统一路径助手（参数面=job 现场上下文）。"""
     spy_calls: list[dict] = []
 
-    async def _spy(*args: Any) -> bool:
-        spy_calls.append({"args": args})
+    async def _spy(*args: Any, **kwargs: Any) -> bool:
+        spy_calls.append({"args": args, "kwargs": kwargs})
         return True
 
     bot = _reminder_bot()
@@ -775,6 +786,9 @@ def test_cookie_reminder_job_gate_on_uses_queue_helper() -> None:
         "audit_logger": SimpleNamespace(),
         "receipt_repository": None,
         "_deliver_cookie_expiry_report_via_queue": _spy,
+        # 生产里这条 job 是装配闭包内的嵌套函数、闸由闭包捕获；受控命名空间必须
+        # 同样给出，否则 job 的兜底 except 会把 NameError 咽成一次静默零投递。
+        "outbound_gate": _GATE,
         "logging": __import__("logging"),
     }
     job = _exec_handler("_cookie_expiry_reminder_job", **env)

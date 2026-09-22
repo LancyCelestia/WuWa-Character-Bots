@@ -22,12 +22,14 @@ from .._common.contracts import (
     CANCEL_MAY_KEEP_COST,
     CANCEL_REQUESTED_IS_NOT_A_STATE,
     CREATION_ERROR_CATALOG,
+    DIGEST64_PATTERN,
     IMAGE_MAX_INPUT_PIXELS,
     UNKNOWN_NEVER_AUTO_REDISPATCH,
     AssetRef,
     CancelRequest,
     CostAmount,
     CreationContractBase,
+    CreationJob,
     CreationJobState,
     UsageLine,
     _require_aware_utc,
@@ -76,9 +78,11 @@ IMAGEErrorCode = Literal[
 ]
 IMAGE_ERROR_CATALOG = dict(CREATION_ERROR_CATALOG)
 
-# 域内别名：任务状态机/取消语义与 TTS 共用 _common 单一定义。
+# 域内别名：任务状态机/取消语义/结果记录与 TTS 共用 _common 单一定义
+# （§9.1.2「任务状态机/取消：同 §9.1.1」；结果记录是中央 output_protocol 的两腿共用落点）。
 ImageJobState = CreationJobState
 ImageCancelRequest = CancelRequest
+ImageJob = CreationJob
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +153,12 @@ class ImageJobRequest(CreationContractBase):
     guidance: float | None = Field(default=None, gt=0, le=100)
     workspace_id: str = Field(min_length=1, max_length=128)
     version: str = Field(min_length=1, max_length=64)
+    #: 请求身份（幂等键）：`media_digest(idempotency_preimage(request))` 的 64 hex 值，
+    #: 由装配期算好填入；域内不重算哈希（单一算法家=domains/media/digest.py）。
+    #: 绘图比 TTS 更需要它：count≤2 的一次请求可能已产生真实费用，unknown 态重发
+    #: = 重复出图重复计费（扩展 §1 L56「重试是否重复收费由 provider 事实决定」）。
+    #: 缺省 None=调用方未给身份（不去重、不承诺幂等，绝不猜是同一条）。
+    idempotency_key: str | None = Field(default=None, pattern=DIGEST64_PATTERN)
 
     @field_validator("prompt", "negative_prompt")
     @classmethod
@@ -244,6 +254,9 @@ class ImageAssetRecord(CreationContractBase):
     magic_verified: bool = False
     exif_sanitized: bool = False
     review_approved: bool = False
+    #: 产物内容身份：落盘字节的 sha256（中央 digest 件原样值；键名与 TTS 出站部件键、
+    #: 渲染收口第三冻结键同源——两域同一套契约，不留两种叫法）。None=算不出即缺。
+    content_sha256: str | None = Field(default=None, pattern=DIGEST64_PATTERN)
     usage: ImageUsage = Field(default_factory=ImageUsage)
     cost: CostAmount | None = None
 
@@ -265,7 +278,7 @@ class ConfirmToken(CreationContractBase):
     actor: str = Field(min_length=1, max_length=128)
     target: str = Field(min_length=1, max_length=128)
     workspace_version: str = Field(min_length=1, max_length=64)
-    payload_digest: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    payload_digest: str = Field(min_length=64, max_length=64, pattern=DIGEST64_PATTERN)
     issued_at: datetime
     expires_at: datetime
     consumed: bool = False
@@ -331,6 +344,7 @@ __all__ = [
     "ImageAssetRecord",
     "ImageCancelRequest",
     "ImageDeliveryPlan",
+    "ImageJob",
     "ImageJobRequest",
     "ImageJobState",
     "ImageProviderCapabilities",

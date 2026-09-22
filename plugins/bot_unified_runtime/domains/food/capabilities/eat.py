@@ -17,7 +17,6 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -25,6 +24,7 @@ from plugins.bot_unified_runtime.contracts import (
     PrivacyLevel,
     RiskLevel,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 from plugins.bot_unified_runtime.domains.food.data.food_data import (
     DISHES,
     Dish,
@@ -218,7 +218,7 @@ def _food_image_root(config: Any) -> Path:
     """food_images 目录解析（Runtime 重映射），失败退回相对路径。"""
     base = str(getattr(config, "bot_food_image_dir", "") or "data/food_images")
     try:
-        from plugins.bot_unified_runtime.character.providers import (
+        from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
             build_runtime_data_path,
         )
 

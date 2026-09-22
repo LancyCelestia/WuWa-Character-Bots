@@ -27,8 +27,16 @@ from plugins.bot_unified_runtime import (
 )
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import PrivacyLevel, SendPolicy, SessionType
+from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
+    build_outbound_gate,
+)
 
 _NOW = datetime(2026, 9, 12, 21, 30, tzinfo=timezone.utc)
+
+
+def _gate(config: object | None = None) -> object:
+    """真身中央出站闸（缺省关闭=直通，与生产缺省同态，零 store 零审计）。"""
+    return build_outbound_gate(config if config is not None else SimpleNamespace())
 
 
 class _FakeProvider:
@@ -72,6 +80,7 @@ def test_whitelist_mode_pushes_only_listed_groups() -> None:
         _list_config("whitelist", ["222", "111"]),
         queue,
         provider,
+        _gate(),
         now=_NOW,
     )
 
@@ -91,6 +100,7 @@ def test_non_whitelist_modes_push_nothing(mode: str) -> None:
         _list_config(mode, ["111"]),
         queue,
         provider,
+        _gate(),
         now=_NOW,
     )
 
@@ -103,7 +113,7 @@ def test_empty_whitelist_pushes_nothing() -> None:
     """白名单为空：无推送目标，零投递。"""
     queue = _FakeQueue()
     pushed = _push_daily_group_digests(
-        _list_config("whitelist", []), queue, _FakeProvider({}), now=_NOW
+        _list_config("whitelist", []), queue, _FakeProvider({}), _gate(), now=_NOW
     )
 
     assert pushed == []
@@ -121,6 +131,7 @@ def test_missing_or_empty_digest_skipped() -> None:
         _list_config("whitelist", ["111", "222", "333"]),
         queue,
         provider,
+        _gate(),
         now=_NOW,
     )
 
@@ -145,7 +156,7 @@ def test_send_request_shape_and_dated_dedupe_key() -> None:
     provider = _FakeProvider({"111": (True, "111 的摘要")})
 
     _push_daily_group_digests(
-        _list_config("whitelist", ["111"]), queue, provider, now=_NOW
+        _list_config("whitelist", ["111"]), queue, provider, _gate(), now=_NOW
     )
 
     request = queue.requests[0]
@@ -173,10 +184,10 @@ def test_dedupe_key_differs_across_days() -> None:
     config = _list_config("whitelist", ["111"])
 
     _push_daily_group_digests(
-        config, queue, provider, now=datetime(2026, 9, 12, 21, 30, tzinfo=timezone.utc)
+        config, queue, provider, _gate(), now=datetime(2026, 9, 12, 21, 30, tzinfo=timezone.utc)
     )
     _push_daily_group_digests(
-        config, queue, provider, now=datetime(2026, 9, 13, 21, 30, tzinfo=timezone.utc)
+        config, queue, provider, _gate(), now=datetime(2026, 9, 13, 21, 30, tzinfo=timezone.utc)
     )
 
     keys = [r.dedupe_key for r in queue.requests]
@@ -215,7 +226,7 @@ def test_register_digest_push_scheduler_parses_time() -> None:
     scheduler = _FakeScheduler()
     config = SimpleNamespace(bot_group_digest_push_time="07:45")
 
-    info = _register_digest_push_scheduler(scheduler, config, _FakeQueue())
+    info = _register_digest_push_scheduler(scheduler, config, _FakeQueue(), _gate())
 
     assert info == {"hour": 7, "minute": 45}
     assert len(scheduler.jobs) == 1
@@ -235,7 +246,7 @@ def test_register_digest_push_scheduler_bad_time_falls_back(bad: str) -> None:
     scheduler = _FakeScheduler()
 
     info = _register_digest_push_scheduler(
-        scheduler, SimpleNamespace(bot_group_digest_push_time=bad), _FakeQueue()
+        scheduler, SimpleNamespace(bot_group_digest_push_time=bad), _FakeQueue(), _gate()
     )
 
     assert info == {"hour": 21, "minute": 30}
@@ -284,7 +295,7 @@ def test_digest_push_job_passes_llm_provider(monkeypatch: pytest.MonkeyPatch) ->
     )
     scheduler = _FakeScheduler()
     _register_digest_push_scheduler(
-        scheduler, SimpleNamespace(bot_group_digest_push_time="21:30"), _FakeQueue()
+        scheduler, SimpleNamespace(bot_group_digest_push_time="21:30"), _FakeQueue(), _gate()
     )
 
     func, _trigger, _kwargs = scheduler.jobs[0]

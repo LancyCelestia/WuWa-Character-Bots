@@ -5,19 +5,19 @@ import random
 from collections.abc import Callable
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities import user_copy
-from plugins.bot_unified_runtime.capabilities.chat import (
-    ChatPromptDiagnostics,
-    build_chat_prompt_with_diagnostics,
-)
 from plugins.bot_unified_runtime.character import (
     ConversationHistoryStore,
     build_character_context_provider,
 )
-from plugins.bot_unified_runtime.character.source_summary import (
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    ChatPromptDiagnostics,
+    build_chat_prompt_with_diagnostics,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.source_summary import (
     build_safe_context_source_summary,
 )
-from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     build_reply_budget_settings,
     decide_reply_budget,
@@ -55,8 +55,10 @@ from plugins.bot_unified_runtime.domains.ops.audit import (
     redact_private_debug,
 )
 from plugins.bot_unified_runtime.domains.ops.smoke.diagnostics import (
+    LLM_DIAGNOSTIC_OK_MESSAGE,
     DiagnosticsStore,
     RuntimeDiagnostic,
+    llm_diagnostic_messages,
 )
 from plugins.bot_unified_runtime.llm import (
     LLMProvider,
@@ -864,7 +866,9 @@ def _try_render_llm_setup_image(
         path = target / f"llm_setup_{digest}.png"
         path.write_bytes(png)
         try:
-            from plugins.bot_unified_runtime.runtime.cache_policy import prune_prefixed
+            from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
+                prune_prefixed,
+            )
 
             prune_prefixed(target, "llm_setup", keep=50)
         except Exception:  # noqa: S110, BLE001 - 配额清理失败不影响本次出图。
@@ -1014,13 +1018,7 @@ def _run_llm_diagnostic(
         timeout_seconds=config.bot_chat_timeout_seconds,
         proxy=config.bot_download_proxy,
     )
-    messages = [
-        {
-            "role": "system",
-            "content": "你是本地 LLM 连接诊断请求。只需要用一句中文回复连接正常，不要请求工具，不要输出密钥。",
-        },
-        {"role": "user", "content": "请回复：诊断连接正常。"},
-    ]
+    messages = llm_diagnostic_messages()
     try:
         reply = provider.generate(
             messages,
@@ -1054,7 +1052,7 @@ def _run_llm_diagnostic(
         "reply_preview_chars": len(reply.text[:120]),
         "usage_total_tokens": usage_total_tokens,
         "llm_finish_reason": finish_reason,
-        "public_message": "LLM 诊断通过。",
+        "public_message": LLM_DIAGNOSTIC_OK_MESSAGE,
     }
 
 

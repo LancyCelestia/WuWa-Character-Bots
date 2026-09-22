@@ -6,7 +6,6 @@ import random
 import re
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities import user_copy
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -15,6 +14,7 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
     SendPolicy,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
 
 _TRIGGER_RE = re.compile(r"^[/!！]?搜图\s*$|^[/!！]?搜图\s+\S+", re.IGNORECASE)
 

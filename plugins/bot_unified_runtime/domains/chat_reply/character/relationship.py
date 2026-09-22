@@ -17,6 +17,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
+    attitude_tiers,
+)
 from plugins.bot_unified_runtime.domains.core.contracts.character import (
     RelationshipContext,
 )
@@ -30,10 +33,17 @@ FAMILIARITY_TIERS = frozenset({"stranger", "familiar", "close"})
 # 默认档案与 v4 档位联动（docs/affinity-design.md §4/§5）：
 # stranger ↔ 档 ≤-2（微凉/初识）、familiar ↔ 档 -1..+1（友善）、close ↔ 档 ≥+2（挚友）。
 # 态度文本只写距离感，不出现冷漠/抗拒/愤怒等敌意词（§4 红线 2）。
+_TIER_INSTRUCTION_BY_ID: dict[int, str] = {
+    tier_id: instruction for tier_id, _name, instruction in attitude_tiers()
+}
+
 DEFAULT_ATTITUDE = {
     "stranger": "礼貌、克制，就事论事；有问必答但不寒暄，不假装熟识",
-    "familiar": "温和、有陪伴感，记得对方的偏好",
-    "close": "直接而温暖，可以用给对方起的小名；亲近依旧不越界",
+    # familiar ↔ 档 0 / close ↔ 档 +2：与 §4 真身同句的那半截一律取 attitude_tiers() 投影，
+    # 本层只追加自己的差异尾句（曾各抄一份，改词只在其中一面发生）。
+    # 单一真身锁：tests/test_affinity_tier_single_source.py。
+    "familiar": _TIER_INSTRUCTION_BY_ID[0],
+    "close": _TIER_INSTRUCTION_BY_ID[2] + "；亲近依旧不越界",
 }
 
 

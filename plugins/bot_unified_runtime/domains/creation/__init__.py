@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from ._common.contracts import CreationContractBase, CreationJobState
+from ._common.contracts import CreationContractBase, CreationJob, CreationJobState
 
 if TYPE_CHECKING:  # 投影期类型提示：叶子契约经 PEP 562 惰性转发
     from .image.contracts import ImageJobRequest
@@ -256,6 +256,7 @@ __all__ = [
     "CreationCapabilityEntry",
     "CreationCapabilityKind",
     "CreationCapabilityRegistry",
+    "CreationJob",
     "CreationJobState",
     "ImageJobRequest",
     "TTSJobRequest",

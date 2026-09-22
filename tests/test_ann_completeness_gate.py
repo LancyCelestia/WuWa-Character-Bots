@@ -146,6 +146,33 @@ def test_write_point_bumps_stamp_in_lockstep_with_embedded_rows(tmp_path):
     assert _ntotal_on_disk(store) == 20, "没重建就不该动索引（短装态成立）"
 
 
+def test_stamp_bump_participates_in_the_callers_transaction(tmp_path):
+    """戳必须与向量同事务：回滚留下虚高的戳 = 永久假短装；提交则必须真涨。
+
+    直接驱动 `_save_vectors` 使用的那对语句（调用方连接、调用方事务），
+    走 rollback / commit 两条出口——只测公开 API 形状测不出这个性质。
+    """
+    store = _make_store(tmp_path, count=20)
+    assert store.build_ann_index()["built"] is True
+    assert _stamp(store) == 20
+
+    conn = sqlite3.connect(store.db_path)
+    try:
+        SqliteVectorKnowledgeStore._bump_expected_vector_count(conn, 5)
+        conn.rollback()
+    finally:
+        conn.close()
+    assert _stamp(store) == 20, "回滚后戳必须仍是 20，不许留下 25 的假短装"
+
+    conn = sqlite3.connect(store.db_path)
+    try:
+        SqliteVectorKnowledgeStore._bump_expected_vector_count(conn, 5)
+        conn.commit()
+    finally:
+        conn.close()
+    assert _stamp(store) == 25, "提交时戳必须真的推进（bump 不是空操作）"
+
+
 def test_stamp_absent_is_never_seeded_from_zero_at_the_write_point(tmp_path):
     """无戳不建戳：从 0 起算会造出远小于真实向量数的戳，反而把短装洗成正常。
 

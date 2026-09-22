@@ -96,9 +96,26 @@ def _reset_state() -> None:
 
 
 def last_operational_issue() -> OperationalIssue | None:
-    """最近一次构造的不可达 issue（供异步侧投喂中央告警链，见 report-T79）。"""
+    """最近一次构造的不可达 issue（供异步侧投喂中央告警链，见 report-T79）。
+
+    **唯一生产读者** = ``voice_health_alert.flush_probe_issue_to_alerts``（S-OBS 接线，
+    全树只此一处，由 ``tests/test_voice_health_alert_sink.py`` 活性锁钉死）；除此之外
+    生产不得再增第二读者（禁第二消费点=禁把同一 issue 分两路投喂）。
+    """
     with _PROBE_LOCK:
         return _last_issue
+
+
+def clear_operational_issue() -> None:
+    """清空 pending issue（消费者投递成功后的 drain，恢复沿的自动清账共用此口）。
+
+    与 ``last_operational_issue`` 配对：读→投→清，一条 issue 至多投一次；探针侧
+    ``_ISSUE_COOLDOWN_SECONDS`` 与中央 ``AdminAlertSuppression`` 各自折叠重复，消费者
+    本身**不再放第三把时间闸**（去重不自造节流）。
+    """
+    global _last_issue
+    with _PROBE_LOCK:
+        _last_issue = None
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +229,8 @@ def _absorb(health: VoiceEngineHealth) -> VoiceEngineHealth:
             recovered = _probe_flagged_unreachable
             _probe_flagged_unreachable = False
             _last_failure_detail = ""  # 恢复即清账：状态行不再背旧失败
+            _last_issue = None  # S-OBS 陈旧不粘滞：引擎恢复=撤回未投的旧故障 issue，
+            #   否则消费者会把「已恢复」的历史不可达再报给运维（T84 点名的失效形态）。
             if recovered:
                 health = replace(health, recovered=True)
             return health

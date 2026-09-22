@@ -279,7 +279,7 @@ def _quiet_window_active(gate: Any, now: datetime, scope: str) -> bool:
         )
 
         checker = QuietHoursChecker(quiet, clock=lambda: now)
-        return bool(checker._is_in_quiet_hours())  # noqa: SLF001 - 复用唯一判定式
+        return bool(checker._is_in_quiet_hours())
     except Exception:  # noqa: BLE001 - 读不通按不在窗内（与闸侧同一方向）
         return False
 

@@ -19,15 +19,17 @@ import re
 from pathlib import Path
 from typing import Any
 
-from plugins.bot_unified_runtime.character.affinity import (
-    tier_name_for_affinity,
-)
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
     IncomingMessage,
     PrivacyLevel,
     RiskLevel,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
+    attitude_tiers,
+    tier_display_range,
+    tier_name_for_affinity,
 )
 from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
 
@@ -89,17 +91,30 @@ ALGORITHM_TEXT = (
     "最高档也不越界，不冷暴力弃聊。"
 )
 
-# 档位 → 回应方式对照（docs/affinity-design.md §4，v4 八档；左闭右开、最高档含 +100）
-_TIER_TABLE: list[dict[str, str]] = [
-    {"label": "初识", "range": "[-100, -75)", "attitude": "初见不久的人：礼貌、克制、有问必答但不寒暄"},
-    {"label": "生疏", "range": "[-75, -50)", "attitude": "生疏的人：话少一截，依旧体面温和"},
-    {"label": "微凉", "range": "[-50, -25)", "attitude": "语气稍淡，不冷不热，就事论事"},
-    {"label": "稍淡", "range": "[-25, 0)", "attitude": "略淡于平时，但保持基本温柔"},
-    {"label": "友善（基准）", "range": "[0, +25)", "attitude": "温和、有陪伴感，记得对方的偏好（初始 10 在此档）"},
-    {"label": "亲近", "range": "[+25, +50)", "attitude": "更主动的关心，记得对方说过的事"},
-    {"label": "挚友", "range": "[+50, +75)", "attitude": "直接而温暖，可以用给对方起的小名"},
-    {"label": "独一份", "range": "[+75, +100]", "attitude": "最珍视的人：全然温柔的陪伴——依旧守全部安全边界"},
-]
+# 档位 → 回应方式对照（docs/affinity-design.md §4/§7，v4 八档）。
+# **本表不抄文案**：档位名、态度句、区间边界全部由注入真身 attitude_tiers()/
+# tier_display_range() 投影（真身 = character/affinity.py:_ATTITUDE_TIERS）；
+# 本层只允许追加「只给用户看」的注脚 _TIER_DISPLAY_NOTES。
+# 曾各抄一份导致友善/独一份两档改词分叉，常驻锁见 tests/test_affinity_tier_single_source.py。
+_TIER_DISPLAY_NOTES: dict[int, str] = {
+    0: "（初始 10 在此档）",  # 展示口径注脚：分数不进注入面（内心数值保密 §7）
+}
+
+
+def _tier_rows() -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for tier_id, name, instruction in attitude_tiers():
+        rows.append(
+            {
+                "label": name,
+                "range": tier_display_range(tier_id),
+                "attitude": instruction + _TIER_DISPLAY_NOTES.get(tier_id, ""),
+            }
+        )
+    return rows
+
+
+_TIER_TABLE: list[dict[str, str]] = _tier_rows()
 
 _STEP_LABELS: tuple[tuple[str, str], ...] = (
     ("first_impression", "第一印象"),
