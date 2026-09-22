@@ -28,12 +28,12 @@ CAS 版本）→ 受控异步运行（超时截断）→ 落回执与审计。�
 |---|---|
 | `GET /api/v1/actions` | 动作目录（含版本、角色、超时、是否需要确认） |
 | `GET /api/v1/actions/{action_id}` | 单动作描述 |
-| `POST /api/v1/actions/{action_id}/preview` | 签发确认令牌（TTL 300 秒，同身份同动作只留最新一枚） |
+| `POST /api/v1/actions/{action_id}/preview` | 签发确认令牌（TTL 以该件常量为准，同身份同动作只留最新一枚） |
 | `POST /api/v1/actions/{action_id}/execute` | 执行；需 `confirmation_token` + `idempotency_key` + `expected_version` |
 | `GET /api/v1/actions/runs` / `runs/{run_id}` | 运行记录（回执状态、结果摘要、error_code） |
 | `POST /api/v1/actions/runs/{run_id}/cancel` | 协作式取消（只 `task.cancel()`，不强杀线程/进程） |
 
-现役注册的 13 个动作 id 就是核心要求点名的那一组（`runtime.reload`、
+现役注册的动作 id（枚数以注册表现算为准）就是核心要求点名的那一组（`runtime.reload`、
 `runtime.safe_restart`、`adapter.reconnect`、`napcat.status`、`queue.pause`、
 `queue.resume`、`queue.drain`、`logging.level`、`resources.refresh`、
 `llm.routes.reload`、`knowledge.reindex`、`memory.maintenance`、
@@ -56,12 +56,12 @@ CAS 版本）→ 受控异步运行（超时截断）→ 落回执与审计。�
   同一动作已有 `running`/`unknown` → 409 `action_busy`。
 - 开关依赖：构造时可注入 `feature_allowed(action_id)`，被功能门关住的动作 409
   `feature_disabled`。
-- 存储：`bot_control_plane_actions_db`（缺省 `data/control_plane_actions.sqlite3`，
+- 存储：`bot_control_plane_actions_db`（库路径的缺省值以 `config.py` 该字段为准，
   经 runtime_paths 重映射；**需重启**，装配期一次性建表）。
 
 ## 失败时看到什么
 
-13 个动作**都注册了**，但执行适配器分三档，回执里如实标：
+在册动作**都注册了**（枚数以注册表现算为准），但执行适配器分三档，回执里如实标：
 
 - **真做**：`logging.level`（改 root logger 级别）、`resources.refresh`（现采一份快照）、
   `diagnostics.snapshot`（自报 control_plane 运行态）、`napcat.status`（走装配注入的
@@ -92,7 +92,7 @@ URL、路径、自由文本、异常正文一律丢弃；② `cancel` 只能取�
 `tests/test_control_plane_actions.py`（CAS/幂等/确认令牌单次消费/超时→unknown/
 并发闸/取消/回滚构造期拒绝）、`test_control_plane_actions_api.py`（端点姿态与错误码）、
 `test_control_plane_v1.py`（目录投影）。
-真机（开总开关后）：`GET /api/v1/actions` → 13 条；对 `diagnostics.snapshot`
+真机（开总开关后）：`GET /api/v1/actions` 返回全部在册动作（条数以该端点现算为准）；对 `diagnostics.snapshot`
 走 preview→execute 两拍，核对 `runs/{run_id}` 状态推进与
 `cp_action_audit` 序列；对 `logging.level` 尝试带 `{"level":"DEBUG"}` → 预期 422
 （参数面结构性关闭，这是现状不是故障）。

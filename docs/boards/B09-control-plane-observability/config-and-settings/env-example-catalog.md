@@ -73,7 +73,7 @@
 门本体：`tests/test_doc_sync_gates.py`（上述三把 catalog 锁）、
 `tests/test_documentation_consistency.py`（叙述文档禁手写漂移计数）、
 `tests/test_datafix_runtime_paths.py`（相对路径必须经 runtime_paths 解析——
-目录里凡写 `data/...` 的前提就是它会被重映射）。
+目录里凡写运行数据相对路径的前提就是它会被重映射）。
 复跑：`powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -Task test"`
 与 `python scripts/doc_sync.py --check`。
 人工验收：任选一个近期新增键，确认 `Config` 字段、目录行、`.env.example` 条目三处

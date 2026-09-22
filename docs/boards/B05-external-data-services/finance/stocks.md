@@ -24,7 +24,7 @@
 - 取数四路独立降级：`fetch_stock_quote` / `fetch_stock_ohlcv` / `fetch_market_cap` / `fetch_stock_quotes`（批量面板），口径与非上市红线见 `single-stocks` 卡片。
 - 指标：`compute_kdj` 与 `compute_all_technical_indicators`（MACD/RSI/WR/CCI）；分布：`boxplot_stats` / `build_boxplot_from_ohlcv`。
 - 出卡：`build_stocks_card_payload` 走 `render_finance_card_html` 的 sections/rows 契约；折线 `finance_chart.line_chart_svg`、箱形 `box_plot_svg`；渲染失败一律回退纯文本 `format_stock_brief`。
-- logo：`local_logo_uri`（clearbit 主源 → Google s2 二源 → 「守」字圆点），PNG magic 校验后落 `data/stock_logos`（经 runtime_paths 重映射进 Runtime 数据根），`warm_logo_cache` 幂等预热。
+- logo：`local_logo_uri`（clearbit 主源 → Google s2 二源 → 「守」字圆点），PNG magic 校验后落盘（目录以 `config.py` 的路径键为准，经 runtime_paths 重映射进 Runtime 数据根），`warm_logo_cache` 幂等预热。
 
 ## 开关与参数
 

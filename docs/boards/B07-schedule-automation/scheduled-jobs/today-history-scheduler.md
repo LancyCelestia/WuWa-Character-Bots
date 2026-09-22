@@ -20,7 +20,7 @@
 ## 开关与参数
 
 - 装配门：`bot_today_history_enabled`（缺省 True）；apscheduler 缺失等注册异常被 try 吞掉，命令仍走无推送的直查路径。
-- 推送表 `bot_today_history_push_file`（缺省 `data/today_history_push.json`）、缓存 `bot_today_history_cache_file`；代理沿用 `bot_download_proxy`。
+- 推送表 `bot_today_history_push_file`（缺省路径以 `config.py` 该字段为准）、缓存 `bot_today_history_cache_file`；代理沿用 `bot_download_proxy`。
 - cron 用系统本地时区（台账 #6）；订阅表的 hour/minute 落库即装配期快照，改动经订阅重挂生效。
 
 ## 失败时看到什么

@@ -9,7 +9,7 @@ from plugins.bot_unified_runtime.domains.core.credentials.platform_credentials i
     is_cookie_command,
     parse_cookie_command,
 )
-from plugins.bot_unified_runtime.sources.parsers.cookies import (
+from plugins.bot_unified_runtime.domains.link_parse.parsers.cookies import (
     parse_netscape_cookie_file,
 )
 

@@ -32,6 +32,7 @@ from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionTarget,
 )
 from plugins.bot_unified_runtime.domains.core.search import web_search
+from plugins.bot_unified_runtime.domains.meme.sources import meme_search
 from plugins.bot_unified_runtime.domains.subscribe.adapters import (
     bilibili_adapter,
     social_v2,
@@ -40,7 +41,6 @@ from plugins.bot_unified_runtime.domains.subscribe.store.subscription_scheduler 
     PlatformThrottle,
 )
 from plugins.bot_unified_runtime.output.plain_text import humanize_reply
-from plugins.bot_unified_runtime.sources import meme_search
 
 # ---------- DDG 重定向解码 ----------
 

@@ -7,8 +7,10 @@ import pytest
 
 from plugins.bot_unified_runtime.domains.files.sources.downloader import MediaDownloader
 from plugins.bot_unified_runtime.domains.location.data import mediawiki
+from plugins.bot_unified_runtime.domains.meme.sources.meme_search import (
+    filter_meme_results,
+)
 from plugins.bot_unified_runtime.output.roleplay import strip_outer_speech_quotes
-from plugins.bot_unified_runtime.sources.meme_search import filter_meme_results
 
 
 @pytest.fixture(autouse=True)

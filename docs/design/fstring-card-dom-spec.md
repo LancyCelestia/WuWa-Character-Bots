@@ -120,7 +120,7 @@ finance_card.html 的壳 = 「`:root` 契约 token 块 + 同一 wash 渐变壳 +
 
 ### 2.2 方案 b：Python 侧共享壳函数 `mica_shell()`（推荐）
 
-做法：新增 `output/card_render/mica_shell.py`，持有 `SHELL_CSS`、`ROOT_TOKENS` 模板与
+做法：新增 `domains/render/card_render/mica_shell.py`，持有 `SHELL_CSS`、`ROOT_TOKENS` 模板与
 `mica_shell_html(...)`（签名见 §3.2）。四个 builder 的壳段（`:root` 共享 token 块 + 壳 +
 色斑 + 玻璃 + 相位脚本）改调它；头部/主体/页脚的 HTML 与私有 CSS 留在各卡，作为
 `head_html/body_html/foot_html/extra_css` 实参传入。
@@ -183,7 +183,7 @@ finance_card.html 的壳 = 「`:root` 契约 token 块 + 同一 wash 渐变壳 +
 ### 3.2 `mica_shell_html()` 签名（建议）
 
 ```python
-# output/card_render/mica_shell.py
+# domains/render/card_render/mica_shell.py
 def mica_shell_html(
     *,
     width: int,                   # 壳宽 px；P5 起必须 ∈ CARD_SHELL_WIDTHS 注册值
@@ -246,7 +246,7 @@ def mica_shell_html(
 
 | 阶段 | 内容 | 测试门 |
 |------|------|--------|
-| **P0** | 新建 `output/card_render/mica_shell.py`（~120 行）+ `tests/test_mica_shell.py`：壳函数自身过全部 8 组契约断言 + 防回潮断言（见 §5） | 新测试绿 + 全量 `dev.ps1 test/lint/typecheck` 绿；纯新增无调用方，零回归面 |
+| **P0** | 新建 `domains/render/card_render/mica_shell.py`（~120 行）+ `tests/test_mica_shell.py`：壳函数自身过全部 8 组契约断言 + 防回潮断言（见 §5） | 新测试绿 + 全量 `dev.ps1 test/lint/typecheck` 绿；纯新增无调用方，零回归面 |
 | **P1** | echo 帮助卡接线：壳段换 `mica_shell_html`，卡身 CSS/HTML 原样搬 `extra_css`/三段实参 | 44 断言绿 + 全量绿 |
 | **P2** | debug LLM 检查卡接线（`--good/--bad` 走 `extra_tokens`） | 同上 |
 | **P3** | usage 报告卡接线（status 色写法维持现状，统一见 §8.4） | 同上 |

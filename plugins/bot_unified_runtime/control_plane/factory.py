@@ -75,7 +75,7 @@ def build_workspace_service(config: object | None = None):
         return None
 
     async def sandbox_generate(scope: dict[str, Any]) -> dict[str, Any]:
-        from ..character.documents import load_character_document
+        from ..domains.chat_reply.character.documents import load_character_document
         from ..llm.model_router import _resolve_api_key
         from ..llm.providers import OpenAICompatibleLLMProvider, StaticLLMProvider
         from .sandbox import SandboxConversationAdapter, SandboxModel

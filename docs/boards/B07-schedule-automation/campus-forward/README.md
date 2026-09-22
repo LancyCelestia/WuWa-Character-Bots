@@ -41,7 +41,7 @@ flowchart LR
 
 - **三重来源门**：总开关 `bot_campus_enabled` ∧ 学校账号 `bot_campus_self_ids` ∧ 群白名单 `bot_campus_group_whitelist`（装配再加 `bot_campus_notify_qq` 非空），任一为空整链不装配、不注册 matcher——绝不猜账号、猜群、猜目标；白名单含 `*` 显式放行学校号全部群。
 - **纯监听红线**：对学校群只读不写；出站目标恒为主人私聊（合成消息的 `group_id` 强制为 `None`），结构性保证不向学校群发任何消息。
-- **幂等 + 截断**：`message_id` 去重（SnowLuma 断线重连重发不双推），库 `campus.sqlite3` 跨天首条时机性裁剪保留 90 天；转发正文超 1500 字截断补省略号。
+- **幂等 + 截断**：`message_id` 去重（SnowLuma 断线重连重发不双推），库 `campus.sqlite3` 按保留窗时机性裁剪（窗宽以该件常量为准）；转发正文按字数上限截断补省略号（上限以该件常量为准）。
 - **U17 收编中央出站管线**：删除裸 `send_queue.submit` 旁路，改走门禁/review/幂等统一入队；出站正文进 review 前先过 `redact_local_secrets`（打码前置，主人收打码版），review BLOCK（泄拦/停用）时发一条只带能力名/拦截类别/目标会话、绝不含原文的可观测告警（store 已记账、同 id 不再重放，静默即永久丢失故必须点名）。
 - v1 只处理文本消息，纯图片/表情（空文本）不落库不转发。
 

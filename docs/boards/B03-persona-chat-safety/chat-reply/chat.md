@@ -36,7 +36,7 @@
   `strip_action_brackets`、`domains/render/plain_text.py:redact_local_secrets`、
   `domains/core/session_keys.py`（会话键唯一口径）。
 - 依赖的跨板块中央件只经由参数传入：模型选择是 B02 的
-  `llm_engine/model_router.py:build_model_router`，出站是 B08 的统一管线。
+  `domains/chat_reply/llm_engine/model_router.py:build_model_router`，出站是 B08 的统一管线。
 
 ## 开关与参数
 
@@ -53,7 +53,7 @@
 预算与失败面：`bot_chat_max_input_tokens`/`bot_chat_max_output_tokens`（上下文钳制，
 输出只封顶不托底）、`bot_chat_failover_max_seconds`、`bot_chat_failover_min_hop_seconds`、
 `bot_chat_hedged_requests_enabled`（影子并发）、`bot_chat_channel_cooldown_seconds`。
-主动接话门在 `policy/gate.py`（好感门、每小时上限、冷却），参数名与口径见 B02。
+主动接话门在 `domains/chat_reply/policy/gate.py`（好感门、每小时上限、冷却），参数名与口径见 B02。
 全部键的权威清单与可热改性以 `docs/config-catalog-full.md` 为准（由 `scripts/doc_sync.py`
 生成，本文不手写数量），生产值只在 `.env`。
 
@@ -64,7 +64,7 @@
 - 上下文/装配缺件：运维向提示「这次暂时没能稳定完成，请稍后再试。」，细节走日志与告警。
 - 群里能力失败：管线补一句群聊降级池短句（带会话级节流），错误细节仍不进群内正文。
 - 疑似提示注入：温和拒答池（见 [反注入包裹与指令剥离](../persona-context/anti-injection.md)）。
-- 内部异常：统一错误诊断卡（`runtime/error_report.py`，冷却闸内降级为纯文本），
+- 内部异常：统一错误诊断卡（`domains/ops/monitor/error_report.py`，冷却闸内降级为纯文本），
   归 B09 叙述，本板块只保证正文兜底可用。
 - 超长回复：正文尾部附「平台单条消息长度限制」提示句，分片由 B08 发送队列负责。
 

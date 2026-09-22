@@ -62,7 +62,9 @@ from plugins.bot_unified_runtime.domains.core.search.search_service import (
     rank_hits,
     search_provider,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+)
 
 UTC = timezone.utc
 NOW = datetime(2026, 9, 17, 12, 0, 0, tzinfo=UTC)

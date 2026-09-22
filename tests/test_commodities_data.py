@@ -27,7 +27,9 @@ from plugins.bot_unified_runtime.domains.finance.data.commodities_data import (
     reset_commodities_cache,
     reset_commodities_trend_cache,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+)
 
 # 实测字段口径（2026-09-13 ulist 探针值）：GC 4390/-0.39/-17.3、SI 65.02、
 # HG 6.557（三位精度量级）、CL 99.99/-2.43/-2.49。

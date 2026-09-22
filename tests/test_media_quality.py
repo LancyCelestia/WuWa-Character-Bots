@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from plugins.bot_unified_runtime.sources.downloader import select_media_streams
+from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+    select_media_streams,
+)
 
 
 def _v(

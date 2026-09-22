@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from plugins.bot_unified_runtime.character.teaching_service import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.teaching_service import (
     TeachingCategory,
     TeachingConflictError,
     TeachingInjectionBlock,

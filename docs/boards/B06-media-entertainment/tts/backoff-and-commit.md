@@ -16,7 +16,7 @@
 `_record_failure` 进窗、`_backoff_reason` 出窗判定、`_clear_failure` 清零。
 
 解决的问题有两层。第一层是冷却保护本身：曾经退避状态只写不读，引擎挂了每条请求
-仍然白打 60 秒并占死一个 offload worker。第二层更阴——判定「成功」的位置：旧实现
+仍然白打整个读超时预算并占死一个 offload worker。第二层更阴——判定「成功」的位置：旧实现
 在 `_request_tts` 收到 HTTP 200 且非空体时就抢跑清零，而静音指纹闸在调用方更后面
 才判，于是引擎以「200 + 恰好一秒静音」伪装成功时，每一条坏请求都把上一轮失败抹掉，
 冷却保护永不启动。现在清零时机与「算成功」的判据对齐。
@@ -37,16 +37,16 @@
   解析自 `bot_tts_api_url`），零常驻线程、零后台轮询、绝不代启动或重启引擎（用户裁定
   U-17=C：引擎生命周期=人工脚本唯一入口）。不可达构造
   `OperationalIssue(kind="tts_service_unreachable", retryable=True)`，同窗内不重复
-  构造（对齐中央告警 300 秒抑制）；「上次不可达→本次可达」记为恢复沿、不告警。
+  构造（与中央告警抑制窗对齐，窗宽以中央件为准）；「上次不可达→本次可达」记为恢复沿、不告警。
 - `voice_health_probe.py:voice_status_line`：`/bot status` 的语音行数据源，
   探针自身异常一律 fail-open 返回 unknown，不把业务链拖死。
 
 ## 开关与参数
 
-- `_HEALTH_BACKOFF_SECONDS`（模块常量 30 秒）：冷却窗宽度，非配置键——刻意不留旋钮，
+- `_HEALTH_BACKOFF_SECONDS`（模块常量，秒数以该件定义为准）：冷却窗宽度，非配置键——刻意不留旋钮，
   调它要改代码走评审。
 - `_SILENCE_RATE` / `_SILENCE_MIN_SECONDS` / `_SILENCE_MAX_SECONDS` /
-  `_SILENCE_PEAK_AMPLITUDE`：静音指纹域值（16000Hz、0.9–1.1 秒、峰值 2）。
+  `_SILENCE_PEAK_AMPLITUDE`：静音指纹域值（采样率、时长窗与峰值门槛均以该件常量为准）。
 - `bot_tts_timeout_seconds`（60）决定单次外呼最坏耗时，与窗宽共同决定失败风暴的密度。
 - `bot_tts_enabled`：关时不请求也不探测。
 - 告警抑制窗与错误卡冷却属中央件（B09 观测面），本域不自建第二套抑制。

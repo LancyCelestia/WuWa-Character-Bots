@@ -56,7 +56,7 @@ flowchart LR
 
 - **总开关**：`bot_memory_enabled`（缺省 False）与 `bot_memory_db_path`（缺省空）任一不满足 ⇒ 召回侧给 `NullMemoryProvider`，`/bot memory` 明确回一段"记忆功能还没打开，让管理员设两个键并重启"的人话，不静默。
 - **总线九键全缺省保守**：`bot_memory_bus_enabled=False`、`bot_memory_reflected_write_target="legacy"`（另一取值 `bus` 才写新表）等，见 `config.py` 记忆块。本轮**刻意不登记进 SETTABLE_KEYS**——登记而不接热改合并层是本仓已定罪的"假热改"形态，读路径逐调用现读的证明没做完之前不开放热改。
-- **抽取只跑后台**：`memory_extract` 在回复完成后的后台线程执行，任何失败都不影响主回复；错误有冷却窗（`bot_memory_extract_error_cooldown_seconds`，缺省 300 秒），超时与 max_tokens 都有上限。
+- **抽取只跑后台**：`memory_extract` 在回复完成后的后台线程执行，任何失败都不影响主回复；错误有冷却窗（`bot_memory_extract_error_cooldown_seconds`，缺省值以 `config.py` 该字段为准），超时与 max_tokens 都有上限。
 - **敏感级不出口**：`credentialed` 永不进召回面，进 prompt 前还要过 `LLM_SAFE_MEMORY_SENSITIVITIES`（public/group/personal）；`requester != subject` 直接零结果。
 - **沉淀面复用单一词表**：六硬线 + minors 的清洗判据来自 `domains/chat_reply/security/memory_sanitize.py` 这一份，总线**不另建第二套词表**；该来源不可用时退回"不清洗"并点名一次，绝不静默换判据。
 - **会话键只准走中央件**：总线的作用域形状由 `domains/core/session_keys.py` 的 `parse_session_key` 派生，平台维度留在 `owner_id`；非 global 行在 SQL 层就取不到跨作用域数据（缺作用域=只给 global，fail-closed，旧版"忘了传就是全会话"的 fail-open 已翻转）。
@@ -73,8 +73,8 @@ flowchart LR
 
 ## 现行缺陷
 
-1. **反思归纳的事实今天完全召不回（P0-8，待用户裁决）**：写侧存的会话键带 `platform:` 前缀、读侧绑裸 `session_id`，`session_key = ?` 永不成立 ⇒ `bot_reflection_enabled=True` 时按人沉淀的高层事实全部静默不进 prompt。探针实证见 `docs/audit-20260921.md` 的 D3-14，裁决选项 A1/A2/B/C 在 `docs/audit-20260921-decisions.md` 第 6 条。方向是 fail-closed（不泄漏别人的事），所以不是隐私事故，而是"白做 + 白烧配额"。
-2. **总线未灰度**：v2 的打分、审计、可解释（`render_memory_why`）在生产路径上**没有现役数据**——上面第 1 条描述的正是旧路径。把"总线代码在位"写成"召回已升级"是不实陈述。
+1. **反思归纳的事实今天完全召不回（P0-8，待用户裁决）**：写侧存的会话键带 `platform:` 前缀、读侧绑裸 `session_id`，`session_key = ?` 永不成立 ⇒ `bot_reflection_enabled=True` 时按人沉淀的高层事实全部静默不进 prompt。探针实证见 `docs/audit-20260921.md` 的 D3-14，裁决选项在 `docs/audit-20260921-decisions.md` 的对应条目。方向是 fail-closed（不泄漏别人的事），所以不是隐私事故，而是"白做 + 白烧配额"。
+2. **总线未灰度**：v2 的打分、审计、可解释（`render_memory_why`）在生产路径上**没有现役数据**——上面首条描述的正是旧路径。把"总线代码在位"写成"召回已升级"是不实陈述。
 3. **「笔记」的归属口径分叉**（P2，待裁）：帮助层把「笔记」的能力 id 记成 `bot.reminder`，而真身是独立域 `domains/notes/` ⇒ 报表里笔记被计进提醒族。登记为 `docs/audit-20260921.md` 的 V1-9/M-9，改 id 影响账单与审计历史连续性，需用户裁（R1-7）。
 4. **成员级隔离粒度无人验证**（P1，V3-8）：笔记/提醒族以 `message.session_id`（含 uid）为存储键，而测试每文件只用一组键、从不跑"同群两成员"，所以成员级隔离的实际粒度没有可见证据；这与 `notes_store.py` 自述的会话隔离口径是否一致尚未对齐。
 5. **群摘要读零行的同型病**（台账 #33 存量项）：跨会话读历史时键形不一致，属同一族的"键形两套、读侧绑错"问题，修一处不足以根治，改到本域时按 1 的方案统一裁。

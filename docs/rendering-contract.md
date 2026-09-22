@@ -33,6 +33,7 @@
 - 外壳底色**只能**是 `theme_tokens.SHELL_WASH_GRADIENT` 这一条 145deg 多色交织渐变（VIS1 2026-09-20 用户裁定改版：色标 4→7、色相 3→4——wash-1/2/3 回绕交织 + `--wash-blob-1` 平台混入色作第 4 交织色相，混入比自 06 基准档 55/48/40 上浮至 55–72 区间=「不透明度全部调高」；首色标仍 `var(--wash-mist) 0%` 打底，`test_pc_never_paints_brand_base` 取相锁保持）；供给=渲染器 `--mica-shell-wash` 公共段注入（`mica_shell.render_root_tokens`/`theme_to_css_vars` 双路同源），7 张模板与 `shell_base_css` 直拼卡一律消费该单源，**模板侧 145deg 色标手抄副本=0**（原 10 份已收编；universal `.video-card-shell` 末层不透明托底与 `.mica-surface` 染色层非壳底、另计）。`--accent` 永远不做底色。
 - 平台色只允许两层受控出场：accent（徽章/高亮/链接）与 `--wash-blob-1`（≤35% 混入主色斑）。
 - 灰阶 / 未知平台推力归零 → 纯本命洗。公共段（含 `--wash-*` 四键）自 v21r3 步 5 起由 `mica_shell.render_root_tokens` **单一注入**，模板文件不再书写兜底字面量（现势 7 模板 `default('#…')` 实例数=0，2026-09-20 复核）。历史形态注：早期模板内联 `default('#d9e0e7')` 等兜底字面量须与 `DEFAULT_WASH_TOKENS = derive_wash_tokens('#607080')` 逐键一致——**如任何面重新出现该形态，契约测试仍按等值锁判红**（`test_rendering_contract.py` 退化断言在位；值随派生算法单一来源，勿手改）。
+- 面向用户文案单源（S79 兜底型六形态 + S95 CARD-STATIC-TEXT-65 静态文本节点，R-24 裁定=全部参数化、不删死支）：卡片 Jinja 模板内硬编码中文文案现势 0 实例（2026-09-22 复核，机械门=`test_card_templates_have_zero_hardcoded_cjk_fallback_literals` + `test_card_templates_have_zero_hardcoded_cjk_static_text_nodes` 在位，注毒必红）；字面量唯一落点 = `bridge._CARD_TEXT`（经 `_ENV.globals["card_text"]` 单点注册，禁第二文件/第二真身），模板侧只准 `{{ card_text.<键> }}` 参数引用（同串跨面只登记一次、多处引用；键值注入前后 bridge 真路径样张 HTML 19/19 逐字节等值）。非文案例外登记：`universal_card.html` 作者行 `{% if official_title == '大会员' %}` 为**结构比较常量**（CSS 类开关，不面向用户），不迁。
 
 ## 三、平台主题注册表 `PLATFORM_THEMES`
 
@@ -122,6 +123,6 @@
 - **D-5** echo 直拼卡 12.5px/14.5px 改值，或 C8 口径加注（裁后执行）。
 - **D-6** 宽度查表收口：四处 `width_px=` 字面量改 `CARD_SHELL_WIDTHS[...]` + `_DEFAULT_SHELL_WIDTH_PX=880` 并表。
 - **D-7** 卡骨架契约（区段清单/顺序/字段名最小册，F14-12 建议集；立「铁律 10」与否随 v21r4 裁决）。
-- **D-8** 样张基线入库 + 钉帧成功率观测（基线 sha256 旁车入库、`pinned==0` 告警、浏览器指纹字段；治 %TEMP% 一清判据即灭，S8-05/F5-5/6）。
+- **D-8** 样张基线入库 + 钉帧成功率观测（基线 sha256 旁车入库、`pinned==0` 告警、浏览器指纹字段；治本机临时目录一清判据即灭，S8-05/F5-5/6）。
 - **D-9** 瓦片白玻璃双背景的字面量收口被 `test_template_visual_audit.py::test_list_tiles_keep_glass_surface` 阻挡（VIS1 2026-09-20 实碰回滚）：该门按规则体**字面含 padding-box+border-box** 取相，market `.index`/finance `.row`/affinity `.glass`/song `.glass`/error `.row(.alt)` 六处改 var() 消费必红；本席禁改该测试（非可写面），已还原等值字面。收口=先把该门取相改为「字面或 var(--mica-glass-main/edge) 消费皆合法」再做迁移（改门属断言语义变更，待裁）。
 - **D-10** mermaid 节点圆角例外（VIS1 2026-09-20 用户裁定落地）：mermaid_card.html 页尾新增渲染后 polygon→圆角 path 替换脚本 + `.node rect` CSS rx——打破 vis4「SVG 图形内部零触碰」旧例（动因=用户明裁「矩形、菱形全部改圆角」，themeVariables/classDef 实测无落点）；范围锁 `.node` 子树，连线/箭头/文字零触碰；如后续 mermaid 升级致 DOM 形态变化，此脚本与探针结论（VIS1-impl §3.3）为回归基线。

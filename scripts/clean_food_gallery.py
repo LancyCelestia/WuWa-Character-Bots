@@ -72,7 +72,7 @@ def _load_config():
 
 
 def _build_provider(config):
-    from plugins.bot_unified_runtime.sources.vision_describe import (
+    from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
         build_vision_provider,
     )
 

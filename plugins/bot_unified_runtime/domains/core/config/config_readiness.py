@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from plugins.bot_unified_runtime.character.documents import (
+from plugins.bot_unified_runtime.config import Config
+from plugins.bot_unified_runtime.domains.chat_reply.character.documents import (
     SUPPORTED_CHARACTER_DOCUMENT_SUFFIXES,
     load_character_document,
 )
-from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.llm import normalize_openai_chat_endpoint
 
 PERSONA_PROFILE_MIN_CHARS = 10

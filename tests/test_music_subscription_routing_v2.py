@@ -8,14 +8,14 @@ from plugins.bot_unified_runtime.contracts import (
     SubscriptionFetchResult,
     SubscriptionTarget,
 )
+from plugins.bot_unified_runtime.domains.subscribe.adapters.music_v2 import (
+    MusicSubscriptionAdapterV2,
+)
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_scheduler import (
     SubscriptionScheduler,
 )
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
-)
-from plugins.bot_unified_runtime.sources.subscriptions.music_v2 import (
-    MusicSubscriptionAdapterV2,
 )
 
 

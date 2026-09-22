@@ -13,10 +13,10 @@ flowchart LR
     C --> F[单快照缓存 250ms]
 ```
 
-- `control_plane/metrics.py`：账本聚合，禁止任意 SQL。
-- `control_plane/resources.py`：进程资源服务，工厂注入后由 overview/resources 共用；HTTP 路由不直接查询进程状态。
-- `control_plane/api/protocol.py`：`ResourceMeasurement`、`ResourceSnapshot` 和统一 envelope；认证 OpenAPI 包含这些 schema。
-- `control_plane/_app.py`：每个 app 装配一份 sampler，可注入测试源；不启动采样后台线程，不扫描目录，不创建统计数据库。
+- `plugins/bot_unified_runtime/control_plane/metrics.py`：账本聚合，禁止任意 SQL。
+- `plugins/bot_unified_runtime/control_plane/resources.py`：进程资源服务，工厂注入后由 overview/resources 共用；HTTP 路由不直接查询进程状态。
+- `plugins/bot_unified_runtime/control_plane/api/protocol.py`：`ResourceMeasurement`、`ResourceSnapshot` 和统一 envelope；认证 OpenAPI 包含这些 schema。
+- `plugins/bot_unified_runtime/control_plane/_app.py`：每个 app 装配一份 sampler，可注入测试源；不启动采样后台线程，不扫描目录，不创建统计数据库。
 
 ## 资源 API
 

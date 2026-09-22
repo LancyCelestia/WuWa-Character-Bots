@@ -22,7 +22,7 @@
    - **✅热更** = 该键在 `domains/chat_reply/runtime/settings.py:537 SETTABLE_KEYS` 内，`/bot runtime set` 可写且消费方现读 ⇒ 写了即生效；
    - **🟡需重启** = 该键已登记同文件 `:333 RESTART_REQUIRED_KEYS`：`/bot runtime set` 拒写并提示需重启，改 `.env` 后重启生效；
    - **❌无热改面** = 上述两表均未登记 ⇒ 白名单外 `set_override` 直接拒绝；未进合并层 `_RUNTIME_HOT_OVERRIDE_FIELDS`（`__init__.py:733-763`）者更是零消费面。改了不生效，须改 `.env` 并重启；
-   - 空白 = 历史写法，语义为「不在白名单」，正逐步并档到上两档。已知例外：9 枚键实测在 `SETTABLE_KEYS` 而列仍空白（**欠标，非假标**，清单见文末 F 节），本席按「只改被证伪的」边界未动。
+   - 空白 = 历史写法，语义为「不在白名单」，正逐步并档到上两档。已知例外若干枚实测在 `SETTABLE_KEYS` 而列仍空白（**欠标，非假标**，清单见文末 F 节），本席按「只改被证伪的」边界未动。
    本列旧版有 35 处键级「可热更」断言被代码逐条证伪并已回标；判定方法与逐条账见文末 F 节。常驻门 `tests/test_doc_sync_gates.py` 只查「键有没有登记」、**不查本列真假** ⇒ 本文任何标记与代码冲突时以代码为准。
 5. **差异标注**：⚠️ = `.env.example` 样例值与 `config.py` 代码默认不一致（**以 config.py 为准**）；「.env 缺」= `.env.example` 未列出该键，实际生效代码默认。逐项汇总见第 E 节。
 
@@ -30,7 +30,7 @@
 
 ## A. 按功能域分组的配置键总表
 
-### A1 运行时核心与日志（25 键）
+### A1 运行时核心与日志（键数以本节为准）
 
 | 键名（.env） | 类型 | 默认值 | 合法值/范围 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -46,7 +46,7 @@
 | `BOT_RUNTIME_LOG_MAX_BYTES` | int | `2097152` | 正整数（字节） | | 日志轮转上限（2 MiB） | |
 | `BOT_RUNTIME_LOG_LEVEL` | str | `INFO` | 日志级别名（INFO 等） | | 运行日志级别 | |
 
-**入站事件幂等（4 键，P0.4）**
+**入站事件幂等（P0.4）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -55,7 +55,7 @@
 | `BOT_EVENT_IDEMPOTENCY_MAX_ENTRIES` | int | `4096` | ≥0 | | 幂等表容量上限 | |
 | `BOT_EVENT_IDEMPOTENCY_DB_PATH` | str | `""` | 路径（空=进程内表） | | 非空时用 SQLite 持久化幂等表（跨重启拦截重放） | data/ 重映射 |
 
-**聊天管线与生成文件（3 键）**
+**聊天管线与生成文件**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -63,7 +63,7 @@
 | `BOT_GENERATED_FILES_DIR` | str | `data/generated_files` | 路径 | | 聊天回复生成文件落盘目录（`sources/file_reader.build_generated_file` 消费） | data/ 重映射收口 |
 | `BOT_FILE_READ_MAX_CHARS` | int | `120000` | ≥0 | | 文件读取字符上限旋钮；当前源码内暂无读取点（仅 config.py 定义，预留） | |
 
-**掉线管理员通知（7 键）**
+**掉线管理员通知**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -75,7 +75,7 @@
 | `BOT_DISCONNECT_NOTICE_SERVERCHAN_SENDKEY` | str | `""` | 密钥（占位） | | Server酱 HTTP 推送 SendKey（掉线时 QQ 不可用，走外部推送兜底） | |
 | `BOT_DISCONNECT_NOTICE_PUSHPLUS_TOKEN` | str | `""` | 密钥（占位） | | PushPlus HTTP 推送 token | |
 
-### A2 多实例共享与数据导出（6 键）
+### A2 多实例共享与数据导出（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -86,7 +86,7 @@
 | `BOT_SHARED_EXPORT_INCLUDE_PRIVATE` | bool | `False` | | | 导出是否含私聊内容 | |
 | `BOT_SHARED_EXPORT_MAX_CHARS` | int | `200` | ≥0 | | 单条导出截断长度 | |
 
-### A3 权限与用户分级（8 键）
+### A3 权限与用户分级（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -99,7 +99,7 @@
 | `BOT_TRUSTED_USER_IDS` | list[str] | `[]` | | | 可信用户名单 | |
 | `BOT_BLOCKED_USER_IDS` | list[str] | `[]` | | | 黑名单（拒绝服务） | |
 
-### A4 GScore 对接（7 键）
+### A4 GScore 对接（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -111,7 +111,7 @@
 | `BOT_GSCORE_BOT_ID` | str | `NoneBot2` | | | 上报的 bot 标识 | |
 | `BOT_GSCORE_BOT_SELF_ID` | str | `""` | | | 账号 self_id | |
 
-### A5 邮件桥与 Telegram 通知（6 键）
+### A5 邮件桥与 Telegram 通知（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -122,7 +122,7 @@
 | `BOT_MAIL_SENDER_ALIASES` | dict[str,str] | `{}` | JSON 对象：发件别名→真实地址 | | 发件人别名映射（示例文件中的 QQ/Foxmail 别名**不在此复述**） | |
 | `BOT_MAIL_NOTIFY_PREVIEW_CHARS` | int | `280` | ≥0 | | 通知预览截断长度 | |
 
-### A6 人格、昵称、别名、怪癖与会话身份（15 键）
+### A6 人格、昵称、别名、怪癖与会话身份（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -139,7 +139,7 @@
 | `BOT_RUNTIME_ALIAS_ENABLED` | bool | `True` | | | 昵称别名解析开关 | 与上两条配合 |
 | `BOT_SESSION_IDENTITY_DB_PATH` | str | `data/session_identity.sqlite3` | 路径 | | 会话级身份记忆（管理员设置）：每群/每私聊独立的 bot 称呼与身份标签 | data/ 重映射收口 |
 
-**人格怪癖 bot.quirks（3 键，L4 审核制演化区，domains/chat_reply/character/quirks.py）**
+**人格怪癖 bot.quirks（L4 审核制演化区，domains/chat_reply/character/quirks.py）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -147,7 +147,7 @@
 | `BOT_QUIRKS_DB_PATH` | str | `data/persona_quirks.sqlite3` | 路径 | | 怪癖库 | data/ 重映射收口 |
 | `BOT_QUIRKS_MAX_ACTIVE` | int | `6` | ≥0 | | 同时生效怪癖数上限 | |
 
-### A7 知识库与向量嵌入（26 键）
+### A7 知识库与向量嵌入（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -168,7 +168,7 @@
 | `BOT_EMBEDDING_LOCAL_API_KEY` | str | `""` | 密钥（占位） | | 本地密钥（通常可空） | |
 | `BOT_EMBEDDING_LOCAL_TIMEOUT_SECONDS` | float | `60.0` | 秒 | | 本地嵌入超时 | 快速模式另有 `BOT_CHAT_FAST_EMBEDDING_TIMEOUT_SECONDS` |
 
-**Crawl Wiki 外部知识库 bot.kb_wiki（10 键，domains/location/knowledge/kb_wiki.py）**
+**Crawl Wiki 外部知识库 bot.kb_wiki（domains/location/knowledge/kb_wiki.py）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -183,7 +183,7 @@
 | `BOT_KB_WIKI_SYNC_MINUTE` | int | `40` | 0~59 | | 每日增量同步时刻（分） | |
 | `BOT_KB_WIKI_SYNC_ON_STARTUP` | bool | `True` | | | 进程启动时也触发一次增量同步 | |
 
-### A8 语气与回复控制（16 键）
+### A8 语气与回复控制（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -204,7 +204,7 @@
 | `BOT_REPLY_DEEP_HELP_CONTEXT_BUDGET` | int | `3072` | ≥0（样例 12288 ⚠️） | | 深度帮助预算 | |
 | `BOT_REPLY_GROUP_CONTEXT_BUDGET` | int | `2048` | ≥0（样例 8192 ⚠️） | | 群聊预算 | 快速模式另有 `BOT_CHAT_FAST_CONTEXT_BUDGET` |
 
-### A9 记忆 / 历史 / 反思 / 诊断 / 审计 / 回执 / 审计日志 / Prompt 审计（38 键）
+### A9 记忆 / 历史 / 反思 / 诊断 / 审计 / 回执 / 审计日志 / Prompt 审计（键数以本节为准）
 
 > memory/history/diagnostics/audit/receipts 各组代码默认 db_path 均为空 = **内存态/禁用语义**；reflection 组自带 `data/reflection.sqlite3` 默认路径。`.env.example` 给出具体文件名（如 `data/wuwa_*.sqlite3`）仅为推荐样例。
 
@@ -235,7 +235,7 @@
 | `BOT_AUDIT_LOG_FILE` | str | `""` | 路径（空=不写文件） | | 文件型审计日志 | |
 | `BOT_AUDIT_LOG_MAX_BYTES` | int | `2097152` | 正整数 | | 审计日志轮转（2 MiB） | |
 
-**夜间反思（6 键，domains/chat_reply/character/reflection.py）**
+**夜间反思（domains/chat_reply/character/reflection.py）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -246,7 +246,7 @@
 | `BOT_REFLECTION_MAX_SESSIONS` | int | `50` | ≥0 | | 单次反思纳入的会话数上限（source_limit_sessions） | |
 | `BOT_REFLECTION_LLM_ENABLED` | bool | `False` | | | 反思 LLM 归纳开关；默认关，用确定性启发式 | 依赖 LLM 引擎 |
 
-**Prompt 审计与执行模式（8 键；当前仅 domains/chat_reply/runtime/prompt_preview.py CLI 消费，主链路不读取，保留字段供 CLI 与未来扩展）**
+**Prompt 审计与执行模式（当前仅 domains/chat_reply/runtime/prompt_preview.py CLI 消费，主链路不读取，保留字段供 CLI 与未来扩展）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -259,7 +259,7 @@
 | `BOT_PROMPT_APPROVAL_DIGEST` | str | `""` | 字符串 | | 审批摘要标识（保留字段） | |
 | `BOT_PROMPT_AUDIT_RETENTION_DAYS` | int | `14` | ≥0 | | 审计保留天数（保留字段） | |
 
-### A10 发送队列与超时/预算（12 键）
+### A10 发送队列与超时/预算（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -276,7 +276,7 @@
 | `BOT_TRANSPORT_TIMEOUT_SECONDS` | float | `15.0` | **(0, 600]**，拒绝负数/NaN/Infinity | ✅热更 | 发送层单请求硬超时（OneBot/Telegram/Mail 共用）；超时不自动重发正文；0/非法值在 .env 加载与热改两道入口均直接报错拒绝（无静默兜底），仅发送层读取路径在 provider 异常/取到非法值时防御性回退 15 | 校验器+热更转换器双重把关 |
 | `BOT_REQUEST_BUDGET_SECONDS` | float | `150.0` | **(0, 600]** | | 请求级总预算：单次聊天从 LLM/工具循环到发送共用单调 deadline；耗尽后不再发起新网络调用，群/频道静默，仅管理员收安全告警 | 传入 ModelRouter 作为 failover deadline 上界 |
 
-### A11 情绪 / 心情 / 好感度 / 趋势 / 时间感知（16 键）
+### A11 情绪 / 心情 / 好感度 / 趋势 / 时间感知（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -290,7 +290,7 @@
 | `BOT_TEMPORAL_ENABLED` | bool | `True` | | | 时间感知开关 | |
 | `BOT_TIMEZONE` | str | `Asia/Hong_Kong` | IANA 时区名 | | 主时区 | 免打扰时区独立配置 |
 
-**机器人自身心情 bot.mood（5 键，L1，domains/chat_reply/character/mood.py）**
+**机器人自身心情 bot.mood（L1，domains/chat_reply/character/mood.py）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -300,14 +300,14 @@
 | `BOT_MOOD_BASELINE_AROUSAL` | float | `0.3` | 0.0~1.0（读入钳位） | | 唤醒度基线：高=兴奋/烦躁，低=慵懒 | |
 | `BOT_MOOD_RATE_CAP_PER_HOUR` | float | `0.5` | ≥0 | | 事件速率帽：任意 3600 秒窗口内已施加的 valence 增量绝对值之和上限，超帽部分截断而非整次拒绝（窗口记账存进程内存，重启清零） | |
 
-**动态好感度 bot.affinity（2 键，domains/chat_reply/character/affinity.py）**
+**动态好感度 bot.affinity（domains/chat_reply/character/affinity.py）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
 | `BOT_AFFINITY_ENABLED` | bool | `True` | | | 动态好感度与印象标签（批次 C）：按用户行为自动增减，差异化态度 | 数值规范唯一权威见 docs/affinity-design.md |
 | `BOT_AFFINITY_DB_PATH` | str | `data/user_affinity.sqlite3` | 路径 | | 好感度库；管理员可直接改库调整个别用户 | data/ 重映射收口 |
 
-### A12 LLM 引擎与模型路由（51 键）
+### A12 LLM 引擎与模型路由（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -362,9 +362,9 @@
 | `BOT_USAGE_REPORT_STATE_FILE` | str | `"data/usage_report_state.json"` | 路径 | | 报告时间点状态文件（重启不丢） | 相对路径重定向到 Runtime data |
 | `BOT_MODEL_AUTO_ROUTE` | bool | `True` | | | 自动选型开关：按时段分组/priority 顺序自动选型（runtime_admin 消费） | 复杂任务关键词现仅用于思考强度升档，不再分桶排序 |
 
-**模型路由补充语义**（model_router.py，2026-09 改版）：自动候选顺序 = `BOT_MODEL_PRIORITY_GROUPS` 命中组的 order（未命中则 priority 升序，manual 排除）；思考深度由档位体系负责——每次调用按 条目 effort > 全局 `BOT_CHAT_REASONING_EFFORT` > 家族默认最高档 发送 `reasoning_effort`，复杂任务（≥300 字或关键词）把全局/默认档升到家族最高档；手动指定 id 失败仍按优先级转移；未知覆盖 id 当作完整模型名走主配置接口；每次生成前合并**运行时注册表**（改动即生效）；仅 `timeout/network/server/rate_limited/provider_error/empty_response/model_not_found/unsupported_model` 触发转移，`auth/config_missing/schema/invalid_request` 立即抛出；`reasoning_effort` 遇 `unsupported_parameter` 自动去参重试一次；LLM 请求代理复用 `BOT_DOWNLOAD_PROXY`；推理模型 content 为空时回退 `reasoning_content` 尾部 600 字并打 `content_source=reasoning_fallback` 标记；usage 归一化缓存字段（`prompt_cache_hit_tokens`/`prompt_tokens_details.cached_tokens`/`cache_creation_input_tokens` 等）。
+**模型路由补充语义**（model_router.py）：自动候选顺序 = `BOT_MODEL_PRIORITY_GROUPS` 命中组的 order（未命中则 priority 升序，manual 排除）；思考深度由档位体系负责——每次调用按 条目 effort > 全局 `BOT_CHAT_REASONING_EFFORT` > 家族默认最高档 发送 `reasoning_effort`，复杂任务（≥300 字或关键词）把全局/默认档升到家族最高档；手动指定 id 失败仍按优先级转移；未知覆盖 id 当作完整模型名走主配置接口；每次生成前合并**运行时注册表**（改动即生效）；仅 `timeout/network/server/rate_limited/provider_error/empty_response/model_not_found/unsupported_model` 触发转移，`auth/config_missing/schema/invalid_request` 立即抛出；`reasoning_effort` 遇 `unsupported_parameter` 自动去参重试一次；LLM 请求代理复用 `BOT_DOWNLOAD_PROXY`；推理模型 content 为空时回退 `reasoning_content` 尾部 600 字并打 `content_source=reasoning_fallback` 标记；usage 归一化缓存字段（`prompt_cache_hit_tokens`/`prompt_tokens_details.cached_tokens`/`cache_creation_input_tokens` 等）。
 
-**渠道巡检与影子并发（10 键，B-2 / v2 无损切换）**
+**渠道巡检与影子并发（B-2 / v2 无损切换）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -379,7 +379,7 @@
 | `BOT_CHAT_HEDGE_DELAY_SECONDS` | float | `2.0` | >0 | | 影子并发触发延迟（秒） | |
 | `BOT_CHAT_HEDGE_MAX_CANDIDATES` | int | `2` | ≥0 | | 影子并发最大候选数 | |
 
-### A13 联网检索与分类遥测（30 键）
+### A13 联网检索与分类遥测（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -392,7 +392,7 @@
 | `BOT_WEB_INTENT_TELEMETRY_MAX_ITEMS` | int | `10000` | ≥0 | | 遥测条数上限 | |
 | `BOT_WEB_CLASSIFIER_SHADOW_ENABLED` | bool | `False` | | | 同时记录旧版分类标签做影子对比；不改变线上决策 | |
 
-**检索供应商链与凭据（11 键）**
+**检索供应商链与凭据**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -408,7 +408,7 @@
 | `BOT_WEB_SEARCH_TINYFISH_API_KEY` | str | `""` | 密钥（占位） | | TinyFish 密钥 | |
 | `BOT_WEB_SEARCH_LANGSEARCH_API_KEY` | str | `""` | 密钥（占位） | | LangSearch 密钥 | |
 
-**供应商端点与一级参数（9 键）**
+**供应商端点与一级参数**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -428,14 +428,14 @@
 | `BOT_WEB_SEARCH_TINYFISH_FETCH_ENDPOINT` | str | `https://api.fetch.tinyfish.ai` | URL | | TinyFish 正文抓取端点 | |
 | `BOT_WEB_SEARCH_LANGSEARCH_ENDPOINT` | str | `https://api.langsearch.com/v1/web-search` | URL | | LangSearch 检索端点 | |
 
-**网页正文抓取（2 键）**
+**网页正文抓取**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
 | `BOT_WEB_SEARCH_FETCH_TIMEOUT_SECONDS` | float | `15.0` | >0 | | 检索命中后网页正文抓取超时 | |
 | `BOT_WEB_SEARCH_FETCH_MAX_CHARS` | int | `3000` | ≥0 | | 单页抓取字符上限 | | |
 
-### A14 内容解析（链接/语音/视频）、抓取与解析历史（33 键）
+### A14 内容解析（链接/语音/视频）、抓取与解析历史（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -452,7 +452,7 @@
 | `BOT_CONTENT_VIDEO_AUTO_SEND` | bool | `True` | | 🟡需重启 | 解析器给出视频直链时自动下载并随卡发送；失败/超限静默降级为「下载：」提示 | 受下载上限约束 |
 | `BOT_FETCH_PLAYWRIGHT_ENABLED` | bool | `True` | | | 抓取层允许 Playwright 渲染 | 与订阅 Playwright 轮询区分 |
 
-**语音转写 bot.asr（4 键，record 段）**
+**语音转写 bot.asr（record 段）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -461,7 +461,7 @@
 | `BOT_ASR_TIMEOUT_SECONDS` | float | `20.0` | >0 | | 单次转写超时 | |
 | `BOT_ASR_MAX_CHARS` | int | `300` | ≥0 | | 转写文本注入上限 | |
 
-**视频理解与媒体档案 bot.video（17 键）**
+**视频理解与媒体档案 bot.video**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -483,7 +483,7 @@
 | `BOT_VIDEO_DEEP_ASR_MAX_SECONDS` | int | `1800` | ≥0 | | 深挖音轨转写时长上限 | |
 | `BOT_VIDEO_DEEP_DEADLINE_SECONDS` | float | `150.0` | >0 | | 深挖总预算 | |
 
-### A15 下载与缓存配额（12 键）
+### A15 下载与缓存配额（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -500,7 +500,7 @@
 | `BOT_MEME_CACHE_MAX_BYTES` | int | `268435456` | ≥0 | | 表情缓存配额 | |
 | `BOT_DOWNLOAD_PROXY` | str | `""` | `http://127.0.0.1:7890` 形式；空=直连（样例 7890 ⚠️） | | 下载代理；**同时是 LLM 请求的代理来源**（model_router 复用） | |
 
-### A16 卡片渲染与转发渲染（10 键）
+### A16 卡片渲染与转发渲染（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -515,7 +515,7 @@
 | `BOT_RENDER_FORWARD_MAX_NODES` | int | `0` | ≥0；0=不限 | 🟡需重启 | 转发节点数上限 | |
 | `BOT_RENDER_FORWARD_NODE_CHARS` | int | `900` | ≥0；下限钳位 200（本键须重启） | 🟡需重启 | 单节点字符数 | |
 
-### A17 天气 / Wiki / 萌娘百科 / Epic / 历史上的今天 / 占卜 / 吃什么 / 今日快报 / 节假日（27 键）
+### A17 天气 / Wiki / 萌娘百科 / Epic / 历史上的今天 / 占卜 / 吃什么 / 今日快报 / 节假日（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -534,7 +534,7 @@
 | `BOT_TODAY_HISTORY_CACHE_FILE` | str | `data/today_history_cache.json` | 路径 | | 每日缓存文件 | |
 | `BOT_HOLIDAYS_FILE` | str | `""` | 路径（空=不用） | | 节假日数据文件 | 时间感知消费 |
 
-**萌娘百科 bot.moegirl（7 键；公开 MediaWiki API 免 key，镜像仅作回退，总耗时受 timeout 预算硬约束）**
+**萌娘百科 bot.moegirl（公开 MediaWiki API 免 key，镜像仅作回退，总耗时受 timeout 预算硬约束）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -546,7 +546,7 @@
 | `BOT_MOEGIRL_MAX_CANDIDATES` | int | `5` | ≥0 | | 候选词条数上限 | |
 | `BOT_MOEGIRL_SUMMARY_MAX_CHARS` | int | `300` | ≥0 | | 摘要字符上限 | |
 
-**今日快报 bot.news（4 键，domains/subscribe/capabilities/news.py；国内可达 RSS 聚合，进程内 TTL 缓存按类目分桶）**
+**今日快报 bot.news（domains/subscribe/capabilities/news.py；国内可达 RSS 聚合，进程内 TTL 缓存按类目分桶）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -555,14 +555,14 @@
 | `BOT_NEWS_CACHE_SECONDS` | float | `600.0` | ≥0 | | 缓存 TTL | |
 | `BOT_NEWS_MAX_ITEMS` | int | `20` | ≥0 | | 单次返回条数上限 | |
 
-**占卜与吃什么（2 键，base_router 路由门）**
+**占卜与吃什么（base_router 路由门）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
 | `BOT_DIVINATION_ENABLED` | bool | `True` | | | 占卜娱乐三件套（八字/塔罗/金钱卦）：纯本地计算、零网络；显式触发词 | base_router divination_match |
 | `BOT_EAT_ENABLED` | bool | `True` | | | 「吃什么」/菜谱推荐路由开关（is_recipe_command 或 is_eat_command 命中走 bot.eat） | base_router eat_match |
 
-### A18 表情包与图片识别（37 键）
+### A18 表情包与图片识别（键数以本节为准）
 
 **表情包搜索（3）**
 
@@ -620,13 +620,13 @@
 | `BOT_VISION_VIDEO_FRAMES` | int | `4` | ≥0（0 视同 1） | | 视频识别抽帧数：ffmpeg 均匀抽帧后单次 VLM 摘要 | |
 | `BOT_VISION_REPLY_PROBABILITY` | float | `1.0` | 0.0~1.0（.env 缺） | | 白名单1 群图片回复概率：1.0=发图即识别回应；0=仅 @ 时看图 | 配合群白1 策略 |
 
-**以图搜图 SauceNAO（1 键，domains/media/capabilities/image_search.py + domains/media/search/sauce_search.py）**
+**以图搜图 SauceNAO（domains/media/capabilities/image_search.py + domains/media/search/sauce_search.py）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
 | `BOT_SAUCENAO_API_KEY` | str | `env:SAUCENAO_API_KEY` | 密钥或 `env:` 引用（输出占位） | | SauceNAO 反搜图（对标 YetAnotherPicSearch）的 API key | |
 
-### A19 群聊策略、主动发言、复读检测、提醒与逆天发言防御（21 键）
+### A19 群聊策略、主动发言、复读检测、提醒与逆天发言防御（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -646,7 +646,7 @@
 | `BOT_GROUP_DIGEST_LLM_ENABLED` | bool | `False` | | | 摘要用 LLM 精炼 | 依赖 LLM 引擎 |
 | `BOT_GROUP_DIGEST_LLM_TTL_SECONDS` | int | `3600` | ≥0 | | LLM 摘要缓存 TTL | |
 
-**群聊复读检测 bot.parrot（3 键）**
+**群聊复读检测 bot.parrot**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -654,14 +654,14 @@
 | `BOT_PARROT_WINDOW_SECONDS` | float | `60.0` | | | 复读检测窗口时长（秒） | |
 | `BOT_PARROT_COOLDOWN_SECONDS` | float | `300.0` | | | 吐槽后的冷却间隔（秒） | |
 
-**时间点提醒 bot.reminder（2 键，domains/schedule/store/reminders.py；进阶轨 `_reminder_llm_extract_enabled` 见 A26）**
+**时间点提醒 bot.reminder（domains/schedule/store/reminders.py；进阶轨 `_reminder_llm_extract_enabled` 见 A26）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
 | `BOT_REMINDER_ENABLED` | bool | `True` | | | 时间点提醒：记住「几点要做什么」，到点主动督促 | |
 | `BOT_REMINDER_DB_PATH` | str | `data/reminders.sqlite3` | 路径 | | 提醒库 | data/ 重映射收口 |
 
-**日常助理 bot.daily_assist（6 键，domains/assistant/daily/store/daily_assist.py + domains/assistant/daily/capabilities/daily_assist.py）**
+**日常助理 bot.daily_assist（domains/assistant/daily/store/daily_assist.py + domains/assistant/daily/capabilities/daily_assist.py）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -672,14 +672,14 @@
 | `BOT_DAILY_ASSIST_MORNING_TIME` | str | `"09:00"` | HH:MM | | 早报时刻（读收件箱+任务清单，读后归档） | 非法回退 09:00；装配期快照 |
 | `BOT_DAILY_ASSIST_EVENING_TIME` | str | `"21:00"` | HH:MM | | 晚报时刻（当日对账+主动琐事建议） | 非法回退 21:00；装配期快照 |
 
-**逆天发言自动撤回 dirty_guard（2 键，防御强化，默认关）**
+**逆天发言自动撤回 dirty_guard（防御强化，默认关）**
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
 | `BOT_DIRTY_GUARD_ENABLED` | bool | `False` | | | 逆天发言检测开关（on_message matcher 优先级 3、block=False，只评估不阻塞其他处理器） | |
 | `BOT_DIRTY_GUARD_DELETE` | bool | `False` | | | 判定为 severe 时自动撤回消息；仅机器人有群管理员权限时才可能生效 | |
 
-### A20 点歌与音乐（9 键 + 1 个运行时专属键）
+### A20 点歌与音乐（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -694,7 +694,7 @@
 | `BOT_MUSIC_ANALYTICS_RETENTION_DAYS` | int | `365` | ≥0（.env 缺） | | 分析数据保留天数 | |
 | `BOT_MUSIC_MODE` * | str | （无默认；回退 `BOT_MUSIC_DEFAULT_MODE`=`card+voice+link`） | `audio`/`voice`/`link`/`card`（中文别名：音频/语音/链接/卡片；default→card） | ✅热更 | **config.py 无此字段**，纯运行时覆盖键：点歌返回形态；未设置时回退 `BOT_MUSIC_DEFAULT_MODE` | 仅存于 settings 覆盖层（`__init__.py` 点歌出口消费） |
 
-### A21 订阅系统 bot.subscribe（20 键）
+### A21 订阅系统 bot.subscribe（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -719,7 +719,7 @@
 | `BOT_SUBSCRIBE_PLATFORM_WEIBO` | bool | `True` | | | 微博订阅平台开关，语义同上 | 同上 |
 | `BOT_SUBSCRIBE_PLATFORM_NETEASE` | bool | `True` | | | 网易云音乐订阅平台开关，语义同上。注意：music adapter 以 provider 名 `netease` 落 target.platform，故键名为 NETEASE 而非 MUSIC | 同上 |
 
-### A22 凭据检查（6 键）
+### A22 凭据检查（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -730,7 +730,7 @@
 | `BOT_CREDENTIAL_CHECK_ENABLED` | bool | `False` | | | 周期凭据检查开关 | |
 | `BOT_CREDENTIAL_CHECK_INTERVAL_HOURS` | int | `6` | ≥1 | | 检查间隔（小时） | |
 
-### A23 术语表与用户档案（4 键）
+### A23 术语表与用户档案（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -739,7 +739,7 @@
 | `BOT_GLOSSARY_MAX_CHARS` | int | `1500` | ≥0 | | 注入字符上限 | |
 | `BOT_USER_PROFILES_FILE` | str | `""` | 路径（空=不用） | | 用户画像文件 | |
 
-### A24 速率限制与免打扰（15 键）
+### A24 速率限制与免打扰（键数以本节为准）
 
 | 键名 | 类型 | 默认值 | 合法值 | 热更 | 作用 | 关系/依赖 |
 |---|---|---|---|---|---|---|
@@ -830,7 +830,7 @@
 | `_tts_text_split_method` | `cut5` | 切句方式 `cut0..cut5` 六值枚举（装载期校验；长文本按句切分后逐段合成再拼接） |
 | `_tts_cache_enabled` | `true` | sha256 结果缓存开关（键=canonical_json(identity_version+引擎地址+参考指纹+预设身份+生效参数+清洗后文本)；LRU 上限 512）；seed 由键派生（同句恒同音色，G2-R3 报备项） |
 | `_tts_cache_max_bytes` / `_tts_cache_max_age_days` | `0` / `0` | 产物目录磁盘配额（U-04：`data/tts_output` 定性=**缓存**，接中央 `cache_policy.enforce_quota` 最旧先删+保鲜期；**缺省 0/0=不限制，字节级行为不变**）；换缓存键空间（identity_version 换代）产生的旧 wav 孤儿靠它回收。owner：`domains/media/capabilities/tts.py synthesize` |
-| `_tts_auto_reply_enabled` | **`false`** | 对话自动配音：LLM 回复生成后追加语音条（在能力包装层附加 `CapabilityResult.audio`，不侵入 chat.py/pipeline.py） |
+| `_tts_auto_reply_enabled` | **`false`** | 对话自动配音：LLM 回复生成后追加语音条（在能力包装层附加 `CapabilityResult.audio`，不侵入 domains/chat_reply/runtime/pipeline.py） |
 | `_tts_auto_reply_scope` | `private` | 自动配音适用会话：`private`=仅私聊 / `group`=仅群聊 / `all`=双向（**三值枚举装载期校验**；M-51 漏登 `group` 已补）；群聊默认不配音以免刷屏；**scope=礼仪维度**，群面另受内容群白名单安全门约束（`bot_content_route_group_whitelist`，黑名单永远赢；白名单空=群面不配音绝不猜群，M-17） |
 | `_tts_auto_reply_max_chars` | `120` | 自动配音文本上限（比命令式合成更短；**`0`=不限**，超硬顶=放弃增益纯文本发出） |
 | `_tts_auto_reply_probability` | `0.05` | 自动配音概率门（2026-09-19 批）：符合条件的回复按此概率配音，**确定性哈希实现**（`should_voice_reply`，seed=`session_id:message_id`，与 `policy/gate.py` 的 `deterministic_group_reply_lottery` 同款）——同一条消息结果恒定，可复现可审计，不用 `random` 以免测试 flaky。`0`=永不配音、`1.0`=全量配音 |
@@ -1057,11 +1057,11 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 
 ## E. config.py 与 .env.example 差异汇总（以 config.py 为准）
 
-**E1 样例值 ≠ 代码默认**（.env.example 给的是本机推荐值，代码默认仍是权威缺省）：`BOT_RUNTIME_DEFAULT_PERSONA`(shorekeeper/default)、`BOT_RUNTIME_DATA_DIR`(../ChatBot_Runtime/data/data)、`BOT_RUNTIME_INSTANCE`(空/default)、`BOT_PERSONA_PROFILE_ID`(shorekeeper/default)、`BOT_PERSONA_DISPLAY_NAME`(守岸人/报存)、`BOT_PERSONA_VERSION`(local/0)、`BOT_TONE_WARMTH`(0.8/0.7)、`BOT_TONE_DIRECTNESS`(0.4/0.5)、`BOT_GROUP_DIGEST_MAX_TURNS`(20/150)、`BOT_RATE_LIMIT_CHAT_SESSION_MAX_REQUESTS`(12/6)、`BOT_RATE_LIMIT_CHAT_SENDER_MAX_REQUESTS`(8/4)、`BOT_RENDER_FORWARD_MIN_CHARS`(0/1500)、`BOT_REPLY_DETAIL`(detail/auto)、四个 `BOT_REPLY_*_CONTEXT_BUDGET`(8192/8192/12288/8192 vs 2048/2560/3072/2048)、`BOT_KNOWLEDGE_CHUNK_CHARS`(600/900)、`BOT_KNOWLEDGE_MAX_CHUNKS`(2/4)、`BOT_KNOWLEDGE_TOP_K`(5/4)、`BOT_EMBEDDING_TIMEOUT_SECONDS`(30/15.0)、`BOT_CHAT_PROVIDER`(openai_compatible/static)、`BOT_CHAT_MODEL`(gpt-5.6-terra/static)、`BOT_CHAT_BASE_URL`(中转站/api.openai.com)、`BOT_CHAT_FAST_CONTEXT_BUDGET`(32768/9600)、`BOT_CHAT_FAST_WEB_MAX_QUERIES`(5/3)、`BOT_DOWNLOAD_PROXY`(7890/直连)、`BOT_COOKIES_FILE`(data/platform_cookies.txt/空)、`BOT_MEME_LIBRARY_VLM_PRESET`(空/deepseek-vision)；另 memory/history/diagnostics/audit/receipts/send_queue/rate_limit 的 db_path 代码默认空（内存/禁用），样例填了 `data/wuwa_*.sqlite3` 等具体文件。
+**E1 样例值 ≠ 代码默认**（样例文件给的是本机推荐值，代码默认仍是权威缺省）：`BOT_RUNTIME_DEFAULT_PERSONA`(shorekeeper/default)、`BOT_RUNTIME_DATA_DIR`(../ChatBot_Runtime/data/data)、`BOT_RUNTIME_INSTANCE`(空/default)、`BOT_PERSONA_PROFILE_ID`(shorekeeper/default)、`BOT_PERSONA_DISPLAY_NAME`(守岸人/报存)、`BOT_PERSONA_VERSION`(local/0)、`BOT_TONE_WARMTH`(0.8/0.7)、`BOT_TONE_DIRECTNESS`(0.4/0.5)、`BOT_GROUP_DIGEST_MAX_TURNS`(20/150)、`BOT_RATE_LIMIT_CHAT_SESSION_MAX_REQUESTS`(12/6)、`BOT_RATE_LIMIT_CHAT_SENDER_MAX_REQUESTS`(8/4)、`BOT_RENDER_FORWARD_MIN_CHARS`(0/1500)、`BOT_REPLY_DETAIL`(detail/auto)、四个 `BOT_REPLY_*_CONTEXT_BUDGET`(8192/8192/12288/8192 vs 2048/2560/3072/2048)、`BOT_KNOWLEDGE_CHUNK_CHARS`(600/900)、`BOT_KNOWLEDGE_MAX_CHUNKS`(2/4)、`BOT_KNOWLEDGE_TOP_K`(5/4)、`BOT_EMBEDDING_TIMEOUT_SECONDS`(30/15.0)、`BOT_CHAT_PROVIDER`(openai_compatible/static)、`BOT_CHAT_MODEL`(gpt-5.6-terra/static)、`BOT_CHAT_BASE_URL`(中转站/api.openai.com)、`BOT_CHAT_FAST_CONTEXT_BUDGET`(32768/9600)、`BOT_CHAT_FAST_WEB_MAX_QUERIES`(5/3)、`BOT_DOWNLOAD_PROXY`(7890/直连)、`BOT_COOKIES_FILE`(data/platform_cookies.txt/空)、`BOT_MEME_LIBRARY_VLM_PRESET`(空/deepseek-vision)；另 memory/history/diagnostics/audit/receipts/send_queue/rate_limit 的 db_path 代码默认空（内存/禁用），样例填了 `data/wuwa_*.sqlite3` 等具体文件。
 
-**E2 `.env.example` 未列出（实际生效代码默认）**：`BOT_MUSIC_ANALYTICS_ENABLED/DB_PATH/RETENTION_DAYS`、`BOT_VISION_REPLY_PROBABILITY`、`BOT_SUBSCRIBE_JITTER_RATIO/GLOBAL_CONCURRENCY/PLATFORM_CONCURRENCY/MIN_INTERVAL_SECONDS/LEASE_SECONDS/RETRY_BASE_SECONDS/RETRY_CAP_SECONDS/OUTBOX_INTERVAL_SECONDS`（共 12 键）。
+**E2 `.env.example` 未列出（实际生效代码默认）**：`BOT_MUSIC_ANALYTICS_ENABLED/DB_PATH/RETENTION_DAYS`、`BOT_VISION_REPLY_PROBABILITY`、`BOT_SUBSCRIBE_JITTER_RATIO/GLOBAL_CONCURRENCY/PLATFORM_CONCURRENCY/MIN_INTERVAL_SECONDS/LEASE_SECONDS/RETRY_BASE_SECONDS/RETRY_CAP_SECONDS/OUTBOX_INTERVAL_SECONDS`（键名以上列为准）。
 
-**E3 `.env.example` 有而 Config 无**：`MAIL_BOTS`、`TELEGRAM_BOTS`、`TELEGRAM_PROXY`、`TELEGRAM_WEBHOOK_URL`、`MCP_CACHE_TTL/SERVERS/TOOL_TIMEOUT`、`SQLALCHEMY_DATABASE_URL`、`LOCALSTORE_*`（4 键）——由邮件/Telegram 插件、MCP 插件、可选 ORM、nonebot-plugin-localstore 消费。
+**E3 `.env.example` 有而 Config 无**：`MAIL_BOTS`、`TELEGRAM_BOTS`、`TELEGRAM_PROXY`、`TELEGRAM_WEBHOOK_URL`、`MCP_CACHE_TTL/SERVERS/TOOL_TIMEOUT`、`SQLALCHEMY_DATABASE_URL`、`LOCALSTORE_*`——由邮件/Telegram 插件、MCP 插件、可选 ORM、nonebot-plugin-localstore 消费。
 
 **E4 热更层特有**：`BOT_MUSIC_MODE` 只存在于 `SETTABLE_KEYS`（config.py 无字段），未设置时运行时回退 `card`；`.env.example` 的 `BOT_MODEL_REGISTRY` 样例中的 `key_group`/`last_resort` 字段模型路由器**不解析**，仅作人工注释。
 
@@ -1070,8 +1070,8 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 ## F. 热更列复核记账（2026-09-20，CATALOG-FIX 席）
 
 **做了什么**：把本册「热更」列与同句内的可热改叙述按代码**逐键自验**，只改被证伪的，统一成三档标记
-（定义见开头使用说明第 4 条：✅热更／🟡需重启／❌无热改面）。**没有**为省事把证伪项一律降级为「需重启」——
-🟡 与 ❌ 按「是否已登记 `RESTART_REQUIRED_KEYS`」分开记账，28 枚真 ✅ 与 3 枚真可热更键保持原样。
+（定义见开头使用说明「热改面三档」条见开头「档位记号」段：✅热更／🟡需重启／❌无热改面）。**没有**为省事把证伪项一律降级为「需重启」——
+🟡 与 ❌ 按「是否已登记 `RESTART_REQUIRED_KEYS`」分开记账，真 ✅ 与真可热更键条目保持原样（枚数以节内现算为准）。
 **本节及图例不写行号**：行号随增删漂移（本席插入图例已使后文整体 +5），检索请用键名或节名。
 
 **判据（每键三问，静态解析、零 import 插件包）**
@@ -1079,27 +1079,27 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 1. 键名 ∈ `plugins/bot_unified_runtime/domains/chat_reply/runtime/settings.py:537 SETTABLE_KEYS`？ → ✅
 2. 否则 ∈ 同文件 `:333 RESTART_REQUIRED_KEYS`？ → 🟡
 3. 两表皆无 → ❌（`set_override` 白名单外直接抛 `ValueError`；再看是否落在合并层
-   `plugins/bot_unified_runtime/__init__.py:733-763 _RUNTIME_HOT_OVERRIDE_FIELDS`（22 条实测），
+   `plugins/bot_unified_runtime/__init__.py:733-763 _RUNTIME_HOT_OVERRIDE_FIELDS`（实测条数见当席报告），
    落在其中的即「读侧空转臂」）。
 
 **复跑口径**：AST 抽取上列三个符号 + 逐行比对第 5 列，探针在 `%TEMP%/catalog-fix/probe_c6b.py`（一次性件，不入库）；
 `SETTABLE=41 / RESTART=54 / 两表交集=∅ / config.py 字段=633` 为本席实测值。
 
-**改口清单（键级 35 处 / 25 行＝主表 22 键 + C 节 poke 行 9 键 + C 节 `_shared_group_context_enabled` 1 键 + C 节群摘要名单行 3 键）**
+**改口清单（处数与各节分账以本节下列行现算为准）**
 （另有 **6 处同句叙述**一并改口：`BOT_MODEL_SCHEDULE` 的「热更时存 JSON」、`BOT_WEB_SEARCH_PROVIDER` 的「热更时转小写」、`BOT_VIDEO_MAX_FRAMES` 与 `BOT_RENDER_FORWARD_NODE_CHARS` 的「热更时钳位」、`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED/_PROBABILITY` 两行的装配快照与同族两态说明。）
 
 | 位置 | 键 | 改前 | 改后（依据） |
 |---|---|---|---|
-| 主表 22 行 | `BOT_MODEL_SCHEDULE`、`BOT_WEB_SEARCH_PROVIDER`、`BOT_WEB_SEARCH_FALLBACK_PROVIDERS`、`BOT_CONTENT_VIDEO_AUTO_SEND`、`BOT_VIDEO_MAX_FRAMES`、`BOT_VIDEO_SKIP_ASR_WITH_SUBTITLE`、`BOT_VIDEO_NATIVE_INPUT`、`BOT_VIDEO_PROGRESS_ACK_ENABLED`、`BOT_VIDEO_FUZZY_FOLLOWUP`、`BOT_VIDEO_DEEP_ENABLED`、`BOT_RENDER_FORWARD_MIN_CHARS`、`BOT_RENDER_FORWARD_MIN_NODES`、`BOT_RENDER_FORWARD_MAX_NODES`、`BOT_RENDER_FORWARD_NODE_CHARS`、`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED`、`BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY`、`BOT_GROUP_PROACTIVE_MAX_REPLIES_PER_HOUR`、`BOT_GROUP_PROACTIVE_COOLDOWN_SECONDS`、`BOT_SHARED_GROUP_CONTEXT_ENABLED` | ✅热更 | 🟡需重启（`RESTART_REQUIRED_KEYS` 在列、`SETTABLE_KEYS` 未登记） |
+| 主表（行数以本节为准） | `BOT_MODEL_SCHEDULE`、`BOT_WEB_SEARCH_PROVIDER`、`BOT_WEB_SEARCH_FALLBACK_PROVIDERS`、`BOT_CONTENT_VIDEO_AUTO_SEND`、`BOT_VIDEO_MAX_FRAMES`、`BOT_VIDEO_SKIP_ASR_WITH_SUBTITLE`、`BOT_VIDEO_NATIVE_INPUT`、`BOT_VIDEO_PROGRESS_ACK_ENABLED`、`BOT_VIDEO_FUZZY_FOLLOWUP`、`BOT_VIDEO_DEEP_ENABLED`、`BOT_RENDER_FORWARD_MIN_CHARS`、`BOT_RENDER_FORWARD_MIN_NODES`、`BOT_RENDER_FORWARD_MAX_NODES`、`BOT_RENDER_FORWARD_NODE_CHARS`、`BOT_GROUP_CHAT_AUTO_REPLY_ENABLED`、`BOT_GROUP_CHAT_AUTO_REPLY_PROBABILITY`、`BOT_GROUP_PROACTIVE_MAX_REPLIES_PER_HOUR`、`BOT_GROUP_PROACTIVE_COOLDOWN_SECONDS`、`BOT_SHARED_GROUP_CONTEXT_ENABLED` | ✅热更 | 🟡需重启（`RESTART_REQUIRED_KEYS` 在列、`SETTABLE_KEYS` 未登记） |
 | 主表 | `BOT_GROUP_WELCOME_ENABLED` | ✅热更 | ❌无热改面（两表均未登记） |
 | 主表 | `BOT_DAILY_ASSIST_ENABLED`、`BOT_DAILY_ASSIST_PUSH_USER_IDS` | ✅热更 | ❌无热改面（合并表 `__init__.py:757/:759` 在列而写拒＝读侧空转） |
-| C 节 `_poke_*` 行 | poke 族 8 键 / `_poke_admin_bypass` | 「除 admin_bypass 外 8 键均可热更 ✅」 | 🟡需重启 / ❌无热改面 |
+| C 节 `_poke_*` 行 | poke 族键组 / `_poke_admin_bypass` | 「除 admin_bypass 外均可热更 ✅」 | 🟡需重启 / ❌无热改面 |
 | C 节 `_shared_group_context_enabled` 行 | 同键 | ✅热更（SETTABLE_KEYS） | 🟡需重启 |
 | C 节 群摘要名单行 | `_group_digest_list_mode`/`_whitelist`/`_blacklist` | 「运行时 store 可热改」 | 🟡需重启（同族 `_push_enabled`/`_push_time` 为 ❌） |
 
 **未改与已知残余（本席不猜，留给门与生成器）**
 
-- 反向缺口 9 枚：`BOT_MEMORY_EXTRACT_ENABLED`/`_TIMEOUT_SECONDS`/`_MAX_TOKENS`/`_ERROR_COOLDOWN_SECONDS` 四键
+- 反向缺口：`BOT_MEMORY_EXTRACT_ENABLED`/`_TIMEOUT_SECONDS`/`_MAX_TOKENS`/`_ERROR_COOLDOWN_SECONDS` 四键
   与 `BOT_CHAT_FAST_MODE`/`_MAX_CANDIDATES`/`_CONTEXT_BUDGET`/`_WEB_MAX_QUERIES`/`_SKIP_WEB_PAGES` 五键**确在 `SETTABLE_KEYS`**，
   但热更列仍空白（欠标，非假标）——按任务边界「只改被证伪的」未动，提请 `doc_sync.py` 派生时一并补齐。
 - `BOT_MUSIC_MODE` 同册两行互斥（「音乐能力」节回退 `card+voice+link` vs E4 节回退 `card`）：属**值抄本失真**、不属热更标记面 ⇒ 本席未改，随审计件 §7 R14 落地。
@@ -1149,7 +1149,7 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 
 ## 记忆/反思 v2 总线与好感度 v7（WP6/WP7 灰度键，S12 波登记 2026-09-21）
 
-> 两族共 21 枚键，**缺省一律=关闭/旧行为**（灰度用）。热改面本轮**故意不登记** `SETTABLE_KEYS`：
+> 两族键（数以本节为准），**缺省一律=关闭/旧行为**（灰度用）。热改面本轮**故意不登记** `SETTABLE_KEYS`：
 > 只登记白名单而不接 `runtime/settings.py` 的 `_RUNTIME_HOT_OVERRIDE_FIELDS` 合并层 ⇒ 「可热改」是假的
 > （本仓已定罪的形态，见本文 F 节热更列复核记账）。实现席证明读路径为「逐调用现读」后，收尾再逐键裁定。
 

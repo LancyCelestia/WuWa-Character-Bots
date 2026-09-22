@@ -2250,6 +2250,11 @@ _HELP_ENTRIES: list[HelpEntry] = [
 
 # 结构化元数据侧表：运行时（下方合并循环）与 scripts/command_catalog.py 的静态
 # 提取共享同一份数据，防止帮助页与命令目录漂移。只登记有条目文本或项目文档依据的事实。
+# S38（P-S28-1）单源常量：下面两枚串原为 META 内各手抄 13/5 枚的同串值，提为模块级
+# 常量后 META 数据段与 command_catalog 的静态取数读同一份（后者自 S38 起支持解析同模块
+# 模块级常量引用）。字符串值与本行落地前的今日口径逐字相同，运行期与目录产物零变更。
+_CHAT_SCOPE_CONSISTENT = "群聊/私聊行为一致（无会话分支）"
+_FALLBACK_RENDER_TEXT = "渲染失败回退纯文本"
 _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     "功能管理": {
         "capability": "bot.runtime（/bot feature）", "network": False, "outputs": ("文本",),
@@ -2320,7 +2325,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "network": False,
         "outputs": ("Mica 配置卡",),
         "html_image": True,
-        "fallback": "渲染失败回退纯文本",
+        "fallback": _FALLBACK_RENDER_TEXT,
         "config_vars": ("BOT_CHAT_PROVIDER",),
         "examples": ("/bot setup llm",),
     },
@@ -2394,7 +2399,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "network": False,
         "outputs": ("文本＋Mica 账单卡",),
         "html_image": True,
-        "fallback": "渲染失败回退纯文本",
+        "fallback": _FALLBACK_RENDER_TEXT,
         "config_vars": ("BOT_USAGE_ALERT_INPUT_TOKENS", "BOT_USAGE_ALERT_OUTPUT_TOKENS", "BOT_USAGE_ALERT_DAILY_COST_YUAN", "BOT_USAGE_REPORT_HOURS"),
         "examples": ("/bot model usage 2026-09-01",),
         "tests": ("tests/test_llm_ledger.py", "tests/test_model_effort_groups_and_pricing.py"),
@@ -2572,14 +2577,14 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "triggers_nl": ("点歌 <歌名>", "来一首", "来首", "放一首", "播放 <歌名>", "唱一首歌"),
         "outputs": ("卡片图/文本/语音（按点歌模式组合）",),
         "html_image": True,
-        "fallback": "渲染失败回退纯文本",
+        "fallback": _FALLBACK_RENDER_TEXT,
         "config_vars": ("BOT_MUSIC_MODE", "BOT_MUSIC_CANDIDATES_ENABLED", "BOT_MUSIC_CANDIDATES_LIMIT", "BOT_MUSIC_CANDIDATES_TTL_SECONDS"),
         "examples": ("点歌 晴天｜点歌 2｜点歌模式 卡片+语音",),
         "tests": ("tests/test_music_capability_analytics_v2.py", "tests/test_music_candidates_card.py", "tests/test_music_charts_real_sources_v2.py"),
     },
     "表情": {
         "capability": "bot.meme",
-        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+        "chat_scope": _CHAT_SCOPE_CONSISTENT,
 
         "network": False,
         "triggers_nickname": ("表情製作", "表情包製作", "表情產生", "表情包產生", "表情制作", "表情包制作", "表情产生", "表情包产生"),
@@ -2602,7 +2607,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     "搜图": {
         "capability": "on_message:搜图",
         "outputs": ("文本（相似度/标题/URL 列表）",),
-        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+        "chat_scope": _CHAT_SCOPE_CONSISTENT,
 
         "network": True,
         "triggers_nickname": ("搜图", "搜圖"),
@@ -2620,19 +2625,19 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     },
     "行情": {
         "capability": "bot.market",
-        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+        "chat_scope": _CHAT_SCOPE_CONSISTENT,
 
         "network": True,
         "triggers_nl": ("行情", "A股行情", "B股行情", "莫斯科股指", "莫斯科行情", "全球股市", "股市", "大盘", "market", "stock market"),
         "outputs": ("釉瑚折线卡（MOEX 无东财 kline 时卡上无折线）/文本",),
         "html_image": True,
-        "fallback": "渲染失败回退纯文本",
+        "fallback": _FALLBACK_RENDER_TEXT,
         "examples": ("行情｜股市｜A股行情｜B股行情｜莫斯科行情",),
         "tests": ("tests/test_market_github.py",),
     },
     "个股行情": {
         "capability": "bot.stocks",
-        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+        "chat_scope": _CHAT_SCOPE_CONSISTENT,
 
         "network": True,
         "triggers_nl": ("英伟达股价", "AMD 股价", "英特尔股价", "股价", "市值", "股價", "個股", "美股股价", "stocks", "stock"),
@@ -2645,7 +2650,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     },
     "商品行情": {
         "capability": "bot.commodities",
-        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+        "chat_scope": _CHAT_SCOPE_CONSISTENT,
         "network": True,
         "triggers_nl": ("黄金", "金价", "白银", "银价", "原油", "油价", "铜价", "大宗商品", "黃金", "金價", "白銀", "油價", "銅價", "gold", "silver", "oil", "commodity"),
         "outputs": ("釉瑚金融卡（商品分组现价/30日走势折线）/文本",),
@@ -2657,7 +2662,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     },
     "国债收益率": {
         "capability": "bot.bond",
-        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+        "chat_scope": _CHAT_SCOPE_CONSISTENT,
         "network": True,
         "triggers_nl": ("国债", "国债收益率", "期限利差", "收益率曲线", "中美国债", "國債", "債券收益率"),
         "outputs": ("釉瑚金融卡（各期限收益率/10Y−2Y 利差）/文本",),
@@ -2669,7 +2674,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     },
     "北向资金": {
         "capability": "bot.northbound",
-        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+        "chat_scope": _CHAT_SCOPE_CONSISTENT,
         "network": True,
         "triggers_nl": ("北向资金", "北上资金", "北向", "沪股通", "深股通", "北向資金", "北上資金", "滬股通"),
         "outputs": ("釉瑚金融卡（成交总额等仍在披露字段）/文本",),
@@ -2681,7 +2686,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     },
     "汇率": {
         "capability": "bot.fx",
-        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+        "chat_scope": _CHAT_SCOPE_CONSISTENT,
 
         "network": True,
         "triggers_nl": ("汇率", "匯率", "美元兑人民币", "100日元换多少人民币", "美元汇率", "换算", "換算", "USD/CNY", "fx", "forex", "exchange rate"),
@@ -2694,7 +2699,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     },
     "占卜": {
         "capability": "bot.divination",
-        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+        "chat_scope": _CHAT_SCOPE_CONSISTENT,
 
         "network": False,
         "triggers_nl": ("占卜", "塔罗", "塔羅", "八字", "算命", "起卦", "排盘", "排盤", "命盘", "命盤", "四柱", "摇卦", "搖卦", "求签", "求籤", "今日塔罗", "今日塔羅", "今天塔罗", "今天塔羅", "塔罗三张", "塔羅三張", "tarot", "bazi", "iching", "divination"),
@@ -2703,7 +2708,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     },
     "快报": {
         "capability": "bot.news",
-        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+        "chat_scope": _CHAT_SCOPE_CONSISTENT,
 
         "triggers_nickname": ("快报", "今日快报", "今日热点", "AI新闻", "AI快报", "科技新闻", "财经新闻", "财经快报", "国际新闻", "ai news", "news", "快報", "早報", "晚報", "今日熱點", "科技新聞", "AI新聞", "AI快報", "財經新聞", "財經快報", "國際新聞"),
         "network": True,
@@ -2715,7 +2720,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "capability": "bot.wiki",
         "outputs": ("文本",),
         "fallback": "区分「独立页缺失/列表缺失/网络失败」的文本提示",
-        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+        "chat_scope": _CHAT_SCOPE_CONSISTENT,
 
         "triggers_nickname": ("wiki", "维基", "维基百科", "wikipedia"),
         "network": True,
@@ -2825,7 +2830,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "outputs": ("卡片图＋文本（mixed）/文本",),
         "html_image": True,
         "fallback": "单源挂文本尾注；双源全挂回文本「拉取失败，稍后再试」",
-        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+        "chat_scope": _CHAT_SCOPE_CONSISTENT,
 
         "triggers_nickname": ("epic", "epicfree", "epic免费", "epic free", "免费游戏", "免費遊戲", "游戏免费", "遊戲免費", "steam免费", "steam免費", "steam free", "steam 免费"),
         "network": True,
@@ -2834,7 +2839,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
     },
     "随机图": {
         "capability": "bot.randpic",
-        "chat_scope": "群聊/私聊行为一致（无会话分支）",
+        "chat_scope": _CHAT_SCOPE_CONSISTENT,
 
         "triggers_nickname": ("隨機圖", "來張圖"),
         "network": False,
@@ -2931,7 +2936,7 @@ _HELP_ENTRY_META: dict[str, dict[str, Any]] = {
         "network": False,
         "outputs": ("Mica 卡/文本",),
         "html_image": True,
-        "fallback": "渲染失败回退纯文本",
+        "fallback": _FALLBACK_RENDER_TEXT,
         "chat_scope": "普通用户只见公开模块；查管理员模块回「没有找到」",
         "triggers_nickname": ("帮助", "help"),
         "examples": ("/bot help｜/bot help 点歌｜/bot help help",),

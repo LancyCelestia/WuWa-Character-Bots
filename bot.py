@@ -398,7 +398,9 @@ async def _cancel_kb_sync_on_shutdown() -> None:
     导入失败/任务未在跑都只记一行，绝不反噬停机本身。
     """
     try:
-        from plugins.bot_unified_runtime.character.kb_wiki import cancel_kb_sync_task
+        from plugins.bot_unified_runtime.domains.location.knowledge.kb_wiki import (
+            cancel_kb_sync_task,
+        )
 
         cancel_kb_sync_task(reason="shutdown")
     except Exception:  # noqa: BLE001 - 停机清理绝不反噬停机本身。

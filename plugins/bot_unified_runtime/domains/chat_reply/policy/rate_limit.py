@@ -188,7 +188,7 @@ def distress_exemption(message: IncomingMessage) -> RateLimitDecision | None:
     if not text.strip():
         return None
     try:
-        from plugins.bot_unified_runtime.character.emotion import (
+        from plugins.bot_unified_runtime.domains.chat_reply.character.emotion import (
             RuleBasedEmotionProvider,
         )
 

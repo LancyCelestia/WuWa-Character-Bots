@@ -28,7 +28,7 @@
   `seed_policy`、`rationale`。选择键 `bot_tts_preset`，未知 id 回缺省
   `DEFAULT_PRESET_ID`。
 - `tts_presets.ENGINE_PARAM_DOMAINS`：数值域登记表；`HARD_MAX_CHARS_FALLBACK`（2000）
-  与 `MAX_AUDIO_BYTES_FALLBACK`（8 MiB）是「0=禁配无界」时的内置兜底。
+  与 `MAX_AUDIO_BYTES_FALLBACK`（字节数以该件常量为准）是「0=禁配无界」时的内置兜底。
 - `tts.py:_build_params`：装配优先级 = config 显式值 > 预设缺省，无第二真值；
   `text_lang` 出门前 casefold。
 - `tts.py:_build_request_payload`：`POST /tts` 请求体的唯一构造口，bot 恒
@@ -47,7 +47,7 @@ PCM（wav 下字节恒 64000 B/s，故字节顶等价时长顶）。枚举域：
 （`cut0..cut5`）、`media_type`（`wav/raw/ogg/aac`）。
 
 引擎侧硬约束（事实，不可绕）：`workers=1` 单进程，非流式同步推理独占事件循环，
-全端点严格排队；参考音频必须 3 到 10 秒，越界返回 400 且真原因在错误体的
+全端点严格排队；参考音频时长必须落在引擎允许区间（区间以引擎契约为准），越界返回 400 且真原因在错误体的
 `Exception` 字段（不看该字段就会把可读原因吞成 `tts failed`）；权重文件缺失时引擎
 会**静默回退底模并写回 yaml**；`GET /tts` 与 `POST /tts` 对 `text_lang` 处理不一致
 （GET 会 lower，POST 不会），生产只用 POST。
@@ -58,8 +58,8 @@ PCM（wav 下字节恒 64000 B/s，故字节顶等价时长顶）。枚举域：
   管理员覆盖，覆盖优先级 env 显式值 > 预设。
 - `bot_tts_max_chars`（200）与 `bot_tts_auto_reply_max_chars`（120）：`0` = 不按字数
   截断，且**不再被悄悄抬回缺省**；「不限」不等于「无界」，必过下面两枚硬顶。
-- `bot_tts_hard_max_chars`（2000）、`bot_tts_max_audio_bytes`（8 MiB；旧提议 4 MiB 已
-  被审落上调，判据是 4 MiB 会先于默认 200 字档的正常产物拒发，与「预设收编即现状、
+- `bot_tts_hard_max_chars`、`bot_tts_max_audio_bytes`（两者的缺省值以 `config.py` 为准；旧提议值已
+  被审落上调，判据是旧提议上限会先于默认预设档的正常产物拒发，与「预设收编即现状、
   字节级不变」自相矛盾）。
 - `bot_tts_timeout_seconds`（60，`ge=1.0`）：标量超时是逐操作语义，最坏可叠到三倍。
 - `bot_tts_text_lang`/`bot_tts_text_split_method`：枚举覆盖位。
@@ -73,7 +73,7 @@ PCM（wav 下字节恒 64000 B/s，故字节顶等价时长顶）。枚举域：
 - 引擎不可达 / 超时：`tts_service_unreachable`（可重试，进退避窗）。文案诚实写
   「服务忙或在排队」，因为引擎单进程排队时连接也会拖到超时，不能一概说「没在跑」。
 - 引擎拒绝（400/422）：`tts_service_rejected`（不可重试，不进窗）。参数非法走管理员向
-  提示，参考音频越界走「还差一段 3 到 10 秒干声」的用户向提示。
+  提示，参考音频越界走「还差一段合规时长干声」的用户向提示。
 - 引擎伪装成功（200 + 约一秒静音）：`tts_bad_audio`，**进窗**——这是「引擎活着却
   持续生产垃圾」的部署类故障形态。
 

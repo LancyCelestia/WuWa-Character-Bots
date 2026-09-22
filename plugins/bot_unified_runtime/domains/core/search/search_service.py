@@ -47,10 +47,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from plugins.bot_unified_runtime.sources.parsers.ssrf_guard import (
+from plugins.bot_unified_runtime.domains.link_parse.parsers.ssrf_guard import (
     check_fetch_landing,
 )
-from plugins.bot_unified_runtime.sources.parsers.ssrf_guard import (
+from plugins.bot_unified_runtime.domains.link_parse.parsers.ssrf_guard import (
     guard_user_url as _default_guard,
 )
 

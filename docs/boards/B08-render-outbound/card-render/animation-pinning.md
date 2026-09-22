@@ -38,6 +38,6 @@
 
 ## 测试与验收
 
-离线：`tests/test_phase_determinism*`（相位派生确定性与守卫，含 universal 混合体特例的相位锁）、`tests/test_v21r3_visual_gates.py` 中色斑数与时长门（gate02，覆盖 11 个渲染面）、`tests/test_rendering_contract.py` 的 keyframes 名门（Jinja 族；直拼卡侧仍缺独立名断言=待补 D-1）、`tests/test_render_backends.py`（钉帧在两条截图路径前均执行、异常不阻断）。
+离线：`tests/test_phase_determinism*`（相位派生确定性与守卫，含 universal 混合体特例的相位锁）、`tests/test_v21r3_visual_gates.py` 中色斑数与时长门（gate02，渲染面覆盖数以该门现算为准）、`tests/test_rendering_contract.py` 的 keyframes 名门（Jinja 族；直拼卡侧仍缺独立名断言=待补 D-1）、`tests/test_render_backends.py`（钉帧在两条截图路径前均执行、异常不阻断）。
 
-真机主判据（重启后执行，**本板块未跑**）：`python scripts/render_card_samples.py --out <目录>` 与基线 `baseline-20260919-paused` 逐面比 PNG 字节等值，`html_sha256` 作旁证；观察点归 `docs/acceptance-manual.md` §6.6.10 ②③（三枚色斑、reduced-motion 关停）。注意基线目前住在 `%TEMP%`，清临时目录后该判据即灭（D-8 在办）。
+真机主判据（重启后执行，**本板块未跑**）：`python scripts/render_card_samples.py --out <目录>` 与基线 `baseline-20260919-paused` 逐面比 PNG 字节等值，`html_sha256` 作旁证；观察点归 `docs/acceptance-manual.md` §6.6.10 ②③（色斑族、reduced-motion 关停）。注意基线目前住在系统临时目录（位置以该脚本的默认输出为准），清临时目录后该判据即灭（D-8 在办）。

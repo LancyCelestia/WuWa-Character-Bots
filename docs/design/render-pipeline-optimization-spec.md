@@ -33,7 +33,7 @@
 | F2 | `render_backends.py:250` 默认 `wait_ms=1500` 构成固定地板；弹性部分 ~800–1600ms 与卡面面积正相关 | baseline §1 |
 | F3 | 渲染全程持 `PlaywrightRenderBackend._lock`（:255）**全局串行**；`__init__` 的 `max_concurrency` 参数存而不用（:160 赋值后无任何引用） | baseline §1 + 源码核实 |
 | F4 | **同线程第二个 sync_playwright 实例 chromium launch 100% 失败**（单线程顺序实测 3/3）；生产多线程路径 unknown | baseline §1 |
-| F5 | 常驻 Chromium 单实例 RSS ≈260MB，随 distinct 线程数线性增长；管线池默认 8 worker（runtime/pipeline.py:139 默认 8、钳位 1..64）+ mermaid 专用单 worker（output/renderer.py:44） | baseline §5 + 源码核实 |
+| F5 | 常驻 Chromium 单实例 RSS ≈260MB，随 distinct 线程数线性增长；管线池默认 8 worker（domains/chat_reply/runtime/pipeline.py:139 默认 8、钳位 1..64）+ mermaid 专用单 worker（output/renderer.py:44） | baseline §5 + 源码核实 |
 | F6 | mermaid 热态 ≈1783ms（wait_ms=120 + wait_js 等 SVG + jsDelivr CDN） | baseline §1 |
 | F7 | 中毒修复史：旧 `_close_thread_browser` 调不存在的 `ctx.close()` 被吞 → 同线程 asyncio loop 永久中毒（C 方向根治，改 `ctx.__exit__`，双 exit 幂等已实证）；C-1 launch 重试分支漏毒已修（launch 异常当场 `__exit__`，tests/test_browser_ctx_leak.py ×4 回归锁）；M-3 wait_js 失败不计入 page_failures 的近似语义在案 | review-c-final-report 项目1 + 修复回执 |
 | F8 | 任务输入提及的「C-6」编号在 review-c-final-report / final-review-report / handover-c 中**未检索到**；本规格按 F7 已验证条目表述，不臆造其内容 | 本次检索（诚实声明） |
@@ -160,13 +160,13 @@ usage=request_id+prefix、divination=每抽唯一。缓存层的约束：
 | 优先 | 位置（hotspot_scan.json） | 函数 | 热路径定性 |
 |---|---|---|---|
 | P1 | `output/plain_text.py:125` | `_table_text` re.fullmatch | **出站每条消息**都过 plain_text（说人话/打码层） |
-| P1 | `runtime/base_router.py:620` | `extract_http_urls` re.compile | **入站路由每条消息** |
-| P1 | `runtime/mentions.py:46` | `detect_name_mention` re.compile | 入站提及检测热路径（R3 同人点名门所在，**改动必须过 test_policy_sender_interval / test_policy_soft_mention_gate 回归**） |
-| P2 | `sources/registry.py:55` | `_match_url` re.compile | 链接解析入口（发链接即解析） |
-| P2 | `sender/queue.py:492` | `claim_due` 循环内 sqlite execute | 发送队列 30s worker（批量改 executemany/事务外包） |
-| P3 | `capabilities/echo.py:2596+2604` | `_help_index_sections` re.compile+re.sub | /bot help 卡构建（HTML 构建本身 <5ms，F1，收益小，随 P3 顺手） |
+| P1 | `domains/chat_reply/runtime/base_router.py:620` | `extract_http_urls` re.compile | **入站路由每条消息** |
+| P1 | `domains/chat_reply/runtime/mentions.py:46` | `detect_name_mention` re.compile | 入站提及检测热路径（R3 同人点名门所在，**改动必须过 test_policy_sender_interval / test_policy_soft_mention_gate 回归**） |
+| P2 | `domains/link_parse/support/registry.py:55` | `_match_url` re.compile | 链接解析入口（发链接即解析） |
+| P2 | `domains/transport/sender/queue.py:492` | `claim_due` 循环内 sqlite execute | 发送队列 30s worker（批量改 executemany/事务外包） |
+| P3 | `domains/chat_reply/capabilities/echo.py:2596+2604` | `_help_index_sections` re.compile+re.sub | /bot help 卡构建（HTML 构建本身 <5ms，F1，收益小，随 P3 顺手） |
 
-`runtime/aliases.py:207`（`__init__` 内，启动期一次）与 `backend_unit.py:170` 收益存疑，靠后。
+`domains/chat_reply/runtime/aliases.py:207`（`__init__` 内，启动期一次）与 `backend_unit.py:170` 收益存疑，靠后。
 
 ### 5.2 划出本 Track 的部分
 

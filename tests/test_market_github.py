@@ -35,6 +35,9 @@ from plugins.bot_unified_runtime.domains.finance.data.market_data import (
     format_quote_line,
     reset_market_cache,
 )
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+)
 from plugins.bot_unified_runtime.domains.link_parse.parsers.platforms_github import (  # v21r2 W1a: 真身路径
     GITHUB_URL_PATTERNS,
     _decode_readme,
@@ -42,7 +45,6 @@ from plugins.bot_unified_runtime.domains.link_parse.parsers.platforms_github imp
     match_github_repo,
     parse_github,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 
 # ---------------------------------------------------------------------------
 # 真实探针夹具

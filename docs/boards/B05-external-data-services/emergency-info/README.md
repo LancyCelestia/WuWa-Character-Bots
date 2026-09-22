@@ -48,7 +48,7 @@ flowchart LR
 
 - **装配门两腿**：`enabled ∧ sources` 任一为空 ⇒ 整链不注册（WIRE-SUB 裁定 3.B 撤掉了旧的第三腿"推送名单非空"）。生产 `.env` 现状是总闸已开 + `SOURCES=nmc`，而**订阅表为空 ⇒ 零投递**。
 - **采集失败可见**：单源失败既进快照（保留上一轮条目、显式标注本轮失败）又产一次 `OperationalIssue`，经 300s 折叠抑制后交告警面；"源可达但自报零条"是 `NO_DATA`（合法答案，不告警）。把两者都收敛成空列表正是旧天气支路的病灶，本域结构上不许重演。
-- **投递**：`priority` 必须等于等级字面（`P0..P3`），这是中央闸判"够不够格穿 00:00–06:00 静默窗"的唯一 severity 载体；漏传或传 `normal` 会把 P0 顺延到窗尾且**不报错**，因此由门禁与用例双向钉死。幂等键形态唯一出处是 `service/dedupe.py`，中央闸委托到这里判形。
+- **投递**：`priority` 必须等于等级字面（`P0..P3`），这是中央闸判"够不够格穿 00:00–06:00 静默窗"的唯一 severity 载体；漏传或传 `normal` 会把 P0 顺延到窗尾且**不报错**，因此由门禁与用例双向钉死。幂等键形态唯一出处是 `domains/emergency_info/service/dedupe.py`，中央闸委托到这里判形。
 - **权限**：能设/退订阅的是超级管理员 ∨ 管理员 ∨ **本群群主**；报料审核权归 `bot_emergency_info_reviewer_ids` 名单 + 管理员角色额外放行腿；订阅目前只对 QQ 会话开放（多平台需要目标带通道事实，另案）。
 - **保留期**：条目按 `bot_emergency_info_keep_days` 裁剪，**prune 结构性不碰订阅表**（订阅永久直到退订）。
 
@@ -59,8 +59,8 @@ flowchart LR
 
 ## 现行缺陷
 
-1. **整域代码已在、线上未生效**（阻塞项）：本域文件多为未提交状态（`service/alert_taxonomy.py` 等仍 untracked），必须提交并由用户提权重启才算上线；此前的"闸建好但一条都过不去"（条目 id 用 `:` 连接撞上幂等键段字符集禁 `:`）已由 WIRE-SUB 波根修并补端到端用例——静态可达性全绿照样漏，这是本域最贵的一课。
-2. **`WP3-TAXONOMY` 半成品挂账**：预警谱注册表可用，但**注册表驱动定级/按震级与境内外定级尚未做完**，相关用例以 `xfail(strict=False)` 诚实挂着（标记名 `WP3-TAXONOMY`，摘牌指引写在测试件头注）。另有 2 个参数化实例意外 xpass，属关键词表恰好兜住，不是实现。
-3. **`bot_emergency_info_quiet_breach_levels` 是枚不存在的键**：能力层用 `getattr` 读它，`config.py` 未声明 ⇒ 只能吃代码缺省（P0,P1），`.env` 写了不生效（`service/grading.py` 头注自证）。要么补声明+登记目录册，要么删读点。
+1. **整域代码已在、线上未生效**（阻塞项）：本域文件多为未提交状态（`domains/emergency_info/service/alert_taxonomy.py` 等仍 untracked），必须提交并由用户提权重启才算上线；此前的"闸建好但一条都过不去"（条目 id 用 `:` 连接撞上幂等键段字符集禁 `:`）已由 WIRE-SUB 波根修并补端到端用例——静态可达性全绿照样漏，这是本域最贵的一课。
+2. **`WP3-TAXONOMY` 半成品挂账**：预警谱注册表可用，但**注册表驱动定级/按震级与境内外定级尚未做完**，相关用例以 `xfail(strict=False)` 诚实挂着（标记名 `WP3-TAXONOMY`，摘牌指引写在测试件头注）。另有少量参数化实例意外 xpass，属关键词表恰好兜住，不是实现（实例数以该测试件实跑为准）。
+3. **`bot_emergency_info_quiet_breach_levels` 是枚不存在的键**：能力层用 `getattr` 读它，`config.py` 未声明 ⇒ 只能吃代码缺省（P0,P1），`.env` 写了不生效（`domains/emergency_info/service/grading.py` 头注自证）。要么补声明+登记目录册，要么删读点。
 4. **地名→坐标 resolver 未接**：装配层跨域取数没做，所以 `area=湘潭` 目前只走文字命中，半径只能靠用户自己给 `coord=`。
 5. 条目 id 含非法段时改为"点名跳过该条"，但 `deps.sources` 为空仍沿用既存的"整轮 return"口径（两处行为不一致，登记未修）。

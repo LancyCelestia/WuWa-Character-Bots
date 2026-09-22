@@ -36,7 +36,9 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
 )
-from plugins.bot_unified_runtime.sources.today_history import HistoryEvent
+from plugins.bot_unified_runtime.domains.subscribe.feeds.today_history import (
+    HistoryEvent,
+)
 
 _UTC = timezone.utc
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

@@ -6,7 +6,7 @@
   ——四把锁全绿而投递是死代码。本锁三段判据：
   ① 排除紧急域自身后，仍有 `ImportFrom(...service.push)` 且 names 含
   `deliver_emergency`（域外真消费者）；② 装配面（根 `__init__.py` /
-  `runtime/service_wiring.py` / `capability_registry.py` 真身）出现
+  `domains/chat_reply/runtime/service_wiring.py` / `capability_registry.py` 真身）出现
   `deliver_emergency(` 调用；③ 参与扫描的文件数地板（反空转：扫描器本身
   瞎了也必须红）。任一段缺失即 fail 并点名缺哪一段。
 - **R2 D-8(a) 装配注入可达**：R2 评审席实测 `bot_emergency_info_auto_approve_sources`
@@ -36,7 +36,7 @@ DOMAIN_DIR = (
 CONFIG_FILE = PLUGINS_ROOT / "bot_unified_runtime" / "config.py"
 ASSEMBLY_FILES = (
     PLUGINS_ROOT / "bot_unified_runtime" / "__init__.py",
-    PLUGINS_ROOT / "bot_unified_runtime" / "runtime" / "service_wiring.py",
+    PLUGINS_ROOT / "bot_unified_runtime" / "domains" / "chat_reply" / "runtime" / "service_wiring.py",
     PLUGINS_ROOT
     / "bot_unified_runtime"
     / "domains"

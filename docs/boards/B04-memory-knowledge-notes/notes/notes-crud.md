@@ -22,9 +22,9 @@
 
 ## 开关与参数
 
-- `bot_notes_enabled`（缺省 True）、`bot_notes_db_path`（缺省 `data/notes.sqlite3`，进 `path_fields` 重映射到 Runtime 数据根）、`bot_notes_max_per_chat`（缺省 200，会话级容量）。逐键现值以 `docs/config-catalog-full.md` 与 `config.py` 为准。
+- `bot_notes_enabled`（缺省 True）、`bot_notes_db_path`（库路径的缺省值以 `config.py` 该字段为准，进 `path_fields` 重映射到 Runtime 数据根）、`bot_notes_max_per_chat`（会话级容量，缺省值以该字段为准）。逐键现值以 `docs/config-catalog-full.md` 与 `config.py` 为准。
 - 能力层每次经 `build_notes_store(config)` 现取现读；上限在 capability 内 `getattr(config, "bot_notes_max_per_chat", …)` 逐条消息读取。
-- 新增分支把内容截到 4000 字再入库（`capability` 内 `content_md[:4000]`，本会话见 `domains/notes/capabilities/notes.py`）。
+- 新增分支把内容按字数上限截断再入库（上限以该能力内切片的常量为准，本会话见 `domains/notes/capabilities/notes.py`）。
 
 ## 失败时看到什么
 

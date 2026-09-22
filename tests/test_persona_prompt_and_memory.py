@@ -10,11 +10,6 @@ from plugins.bot_unified_runtime.character.affinity import (
     AFFINITY_BASE,
     DynamicAffinityStore,
 )
-from plugins.bot_unified_runtime.character.memory import SQLiteMemoryRepository
-from plugins.bot_unified_runtime.character.memory_extract import (
-    extract_memory_texts,
-    store_extracted_memories,
-)
 from plugins.bot_unified_runtime.character.providers import (
     FileCharacterContextProvider,
 )
@@ -39,6 +34,13 @@ from plugins.bot_unified_runtime.contracts import (
     TrendNote,
     WebSearchContext,
     WebSearchHit,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.memory import (
+    SQLiteMemoryRepository,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.memory_extract import (
+    extract_memory_texts,
+    store_extracted_memories,
 )
 
 PERSONA_TEXT = "# 角色沉浸要求\n\n你就是守岸人本人，以第一人称思考与回应。"

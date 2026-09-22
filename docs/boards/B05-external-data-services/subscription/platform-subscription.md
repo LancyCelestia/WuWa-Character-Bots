@@ -17,7 +17,7 @@
 
 - 注册表：`domains/subscribe/adapters/__init__.py:build_subscription_registry` / `build_subscription_registry_v2`——同目录 `adapters/` 下各平台适配模块由 pkgutil 自动发现并读模块级 `ADAPTERS`，加平台不需要改中央代码。
 - 契约：每个 adapter 提供目标解析 + `fetch_latest`（新条目）+（可选）`fetch_live_statuses`（开播探测），失败统一返回 `SourceFetchResult(health_state="degraded")`，错误文本只留异常类型名（不外泄敏感正文）。
-- 现有实现：`bilibili_adapter.py`（创作者/直播/番剧/收藏夹/合集，游标按列表顺序切到 `last_id` 为止）、`xiaohongshu_adapter.py`（创作者主页，优先监听 `user_posted` 接口、退化到页面正则，两次都失败判 degraded；专栏 `column` 复用同链路并滤视频型；直播不做探测）、`adapters/social_v2.py`（B站/小红书/YouTube/X·Twitter/Telegram/Pixiv/微博 的 V2 目标解析与取数，X 走带鉴权 GraphQL 客户端，Cookie 判据与 fetch 门同源）、`adapters/music_v2.py`（网易云歌单/专辑/歌手/用户；五个平台按审查项摘除并给人话提示，恢复条件写在头注）。
+- 现有实现：`bilibili_adapter.py`（创作者/直播/番剧/收藏夹/合集，游标按列表顺序切到 `last_id` 为止）、`xiaohongshu_adapter.py`（创作者主页，优先监听 `user_posted` 接口、退化到页面正则，两次都失败判 degraded；专栏 `column` 复用同链路并滤视频型；直播不做探测）、`domains/subscribe/adapters/social_v2.py`（B站/小红书/YouTube/X·Twitter/Telegram/Pixiv/微博 的 V2 目标解析与取数，X 走带鉴权 GraphQL 客户端，Cookie 判据与 fetch 门同源）、`domains/subscribe/adapters/music_v2.py`（网易云歌单/专辑/歌手/用户；五个平台按审查项摘除并给人话提示，恢复条件写在头注）。
 - 调度组合：`domains/subscribe/store/subscription_watcher.py:build_subscription_watcher(store, adapters, ctx_factory, max_items_per_tick)` → `tick()`（产出 `PushCandidate`，digest 订阅改写 `digest_pending`）、`live_tick()`、`flush_digests()`；退避期未到不重试（`_backoff_active`）。
 - 运行时装配：`domains/subscribe/store/subscription_runtime_v2.py:build_subscription_runtime_v2(config, *, delivery_fn, context_factory)` 与 `register_subscription_runtime_v2(...)`（根装配面调用）。
 

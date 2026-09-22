@@ -24,7 +24,7 @@
 
 所以本簇管的是一条边界加一套规程：**源码区只放源码，运行数据全部外置；要移出去的东西先证明移得掉**。
 
-三个目录的职责（口径来自 `WORKSPACE_GUIDE.md` 与 `docs/workspace-archive-policy.md`，规范条文在 `docs/boards/_conventions.md` 第一节第 5 条）：
+三个目录的职责（口径来自 `WORKSPACE_GUIDE.md` 与 `docs/workspace-archive-policy.md`，规范条文在 `docs/boards/_conventions.md` 的留档条款）：
 
 | 目录 | 谁写 | AI 是否扫描 |
 |---|---|---|
@@ -67,6 +67,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 
 ## 现行缺陷
 
-- 部分测试以默认路径写源码树 `data/`（好感度、反思、称谓偏好等 sqlite），属 AGENTS 问题台账 #1 的测试卫生残余，根治方向是 Wave-6 逐件 `tmp_path` 化；全量套件直跑会触发，conftest 的源码树 `data/` 守卫会在当场失败并报出新增文件。
+- 部分测试以默认路径把运行数据写进源码树（好感度、反思、称谓偏好等 sqlite），属 AGENTS 问题台账 #1 的测试卫生残余，根治方向是 Wave-6 逐件 `tmp_path` 化；全量套件直跑会触发，conftest 的源码树运行数据守卫会在当场失败并报出新增文件。
 - 归档规程靠人执行：没有「归档前检查目标是否为活动数据」的机器门，只有清单与评审。
 - `ChatBot_Archive` 下历史上出现过嵌套废弃路径（`ChatBot_Archive\ChatBot_Archive\...`），规范禁止新建，但没有自动检测。

@@ -258,7 +258,7 @@ def _download_image_bytes(
     # urlopen 可打内网/云元数据。入口先过 check_download_url（内网/保留段/畸形
     # 一律拒），拒绝即按「取不到图」降级（返回 None，调用方保留原 URL），
     # 与 media_archive._fetch_url_media 同口径。
-    from plugins.bot_unified_runtime.sources.downloader import (
+    from plugins.bot_unified_runtime.domains.files.sources.downloader import (
         RejectedUrlError,
         check_download_url,
     )
@@ -405,7 +405,9 @@ def extract_video_source(raw_segments: list[dict[str, Any]] | None) -> str | Non
 
 
 def _find_ffmpeg_locate() -> str:
-    from plugins.bot_unified_runtime.sources.downloader import _find_ffmpeg
+    from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+        _find_ffmpeg,
+    )
 
     return _find_ffmpeg()
 

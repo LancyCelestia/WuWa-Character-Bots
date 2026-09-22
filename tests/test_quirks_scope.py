@@ -17,13 +17,13 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.character.quirks import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.quirks import (
     SCOPE_GLOBAL,
     SCOPE_USER,
     QuirkStore,
     format_scope_label,
 )
-from plugins.bot_unified_runtime.character.reflection import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.reflection import (
     FactDraft,
     HeuristicSummarizer,
     ReflectionStore,

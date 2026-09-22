@@ -23,7 +23,7 @@
 |---|---|---|
 | `src/index.css` token 组织（shadcn 语义变量 + `.dark` + `@theme inline`） | **保留骨架、重彩取值** | 变量名面兼容 shadcn 生态；数值全部换为守岸人卡片值册（§三） |
 | `components/ui/` 子集（button/card/badge/skeleton） | **定向移植** | 仅取布局壳与仪表盘所需；Radix 依赖只留 react-slot |
-| `lib/utils.ts`（cn）、`lib/api-client.ts`（fetch 封装 + ApiError） | **移植并改造** | api-client 改造：baseURL 可配（env `VITE_API_BASE_URL`，缺省同源/8742）、Bearer 双 token、`/api/v1` envelope 宽容解包 |
+| `webui/src/lib/utils.ts`（cn）、`webui/src/lib/api-client.ts`（fetch 封装 + ApiError） | **移植并改造** | api-client 改造：baseURL 可配（env `VITE_API_BASE_URL`，缺省同源/8742）、Bearer 双 token、`/api/v1` envelope 宽容解包 |
 | TanStack Router + Query 骨架 | **保留** | 路由改 **hash history**（单文件 file:// 可开、静态挂载免 SPA fallback）；Query 供 wave-2 真接口 |
 | appearance/暗色切换（theme-context 模式） | **保留模式、精简实现** | light/dark/system + localStorage，`documentElement.classList` 切 `.dark` |
 | i18next 基建（glob 合并 locales、语言探测、zh-CN） | **保留** | 仅保留 `locales/zh-CN/` 与 `en/` 子集，键为本项目自建 |
@@ -93,7 +93,7 @@
 - **基址**：`http://127.0.0.1:8742`；生产挂 control_plane 静态目录时**同源**（`VITE_API_BASE_URL`
   留空走相对路径），开发走 vite proxy `/api/v1` → 8742。
 - **鉴权**：Bearer 双 token（管理 token / 只读 token）。客户端 `localStorage` 键
-  `webui:bearer`（管理）与 `webui:bearer:ro`（只读）；`lib/api-client.ts` 提供
+  `webui:bearer`（管理）与 `webui:bearer:ro`（只读）；`webui/src/lib/api-client.ts` 提供
   `setApiToken()/setReadonlyToken()`，请求头统一 `Authorization: Bearer <token>`。
 - **envelope**：`/api/v1` 返回 JSON 信封（code/message/data 形态，以控制面 registry 实现为
   准）；api-client 做宽容解包——对象含 `data` 字段即解包返回 `data`，否则原样透传，避免与
@@ -122,7 +122,7 @@
 - **风险**：① React 19 + TanStack Router 版本漂移（锁 ^1.121 与上游同版）；② Tailwind v4
   CSS-first 需 Vite 插件在场（已用 @tailwindcss/vite）；③ color-mix() 需现代浏览器
   （控制面本机使用，可接受）；④ envelope 形态以并行席后端实作为准，wave-2 对表时若解包
-  规则不符只动 `lib/api-client.ts` 一处；⑤ 上游后续演进不同步（快照制，升级=重跑抽取）。
+  规则不符只动 `webui/src/lib/api-client.ts` 一处；⑤ 上游后续演进不同步（快照制，升级=重跑抽取）。
 - **工程量**：骨架（本轮已落）≈ 半席；wave-2 六页真数据 + recharts + SSE ≈ 1-1.5 席；
   Phase B 配置表单另计。
 

@@ -12,7 +12,7 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
     SessionType,
 )
-from plugins.bot_unified_runtime.runtime.mentions import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.mentions import (
     looks_like_direct_question,
     starts_with_name_mention,
 )
@@ -94,7 +94,7 @@ def _resolve_probability(value: float | Callable[[], float] | None) -> float:
 
 def _message_has_image(message: IncomingMessage) -> bool:
     """消息是否携带可识别的图片/表情包/视频段（供白名单1视觉回复概率判定）。"""
-    from plugins.bot_unified_runtime.sources.vision_describe import (
+    from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
         extract_image_urls,
         extract_video_source,
     )

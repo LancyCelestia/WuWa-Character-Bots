@@ -3,13 +3,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from plugins.bot_unified_runtime.domains.meme.sources.reaction_store import (
+    ReactionStore,
+)
 from plugins.bot_unified_runtime.runtime.reactions import (
     is_sad_message,
     normalize_onebot_emoji_like,
     pick_reaction_meme,
     reaction_meme_search_terms,
 )
-from plugins.bot_unified_runtime.sources.reaction_store import ReactionStore
 
 # ---------------------------------------------------------------- store
 

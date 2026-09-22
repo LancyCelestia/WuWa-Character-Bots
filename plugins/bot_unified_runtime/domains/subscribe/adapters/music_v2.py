@@ -32,15 +32,15 @@ from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionFetchResult,
     SubscriptionTarget,
 )
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+    http_get_json,
+)
 from plugins.bot_unified_runtime.domains.subscribe.adapters.social_v2 import (
     _reached_cursor,
 )
 from plugins.bot_unified_runtime.domains.subscribe.adapters.target_notice import (
     SubscriptionTargetNotice,
-)
-from plugins.bot_unified_runtime.sources.parsers.http_util import (
-    ParseHttpError,
-    http_get_json,
 )
 
 # 审查 J-06：摘除平台保留名字映射，resolve 时给出指名道姓的「暂不支持」提示。

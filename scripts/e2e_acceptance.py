@@ -134,11 +134,13 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
 from plugins.bot_unified_runtime.domains.core.decision.trace import (
     InMemoryDecisionTraceSink,
 )
+from plugins.bot_unified_runtime.domains.meme.sources.meme_library import (
+    MemeLibraryStore,
+)
 from plugins.bot_unified_runtime.domains.ops.smoke.smoke import load_smoke_config
 from plugins.bot_unified_runtime.output.render_backends import build_render_backend
 from plugins.bot_unified_runtime.sender import InMemorySendQueue
 from plugins.bot_unified_runtime.sender.queue import SQLiteSendRequestQueue
-from plugins.bot_unified_runtime.sources.meme_library import MemeLibraryStore
 from plugins.bot_unified_runtime.sources.parsers import (
     build_cookie_provider,
     music_candidate_providers,
@@ -462,7 +464,7 @@ def _content_capability(
     config = runtime.config
     parse_history_store = None
     if runtime.execute:
-        from plugins.bot_unified_runtime.sources.parse_history import (
+        from plugins.bot_unified_runtime.domains.link_parse.support.parse_history import (
             build_parse_history_store,
         )
 

@@ -25,7 +25,7 @@
 
 你说"记一下：周三要交总结"，她要能原样存下来、之后原样还给你，还能在你说"总结写完了"时把对应那一件勾掉。这件事和"记忆"看着像，其实是**两套存储、两种语义**，本板块反复强调这条红线：
 
-- **笔记**（`domains/notes/`，库 `data/notes.sqlite3`）：你说存什么就是什么，Markdown 原文照存，不加工、不归纳、不参与人格与好感。删除是真删除。
+- **笔记**（`domains/notes/`，库路径以 `config.py` 的 `bot_notes_db_path` 为准）：你说存什么就是什么，Markdown 原文照存，不加工、不归纳、不参与人格与好感。删除是真删除。
 - **记忆**（`domains/chat_reply/character/` 的 memory 族，库 `BOT_MEMORY_DB_PATH` 指向的聊天记忆库）：她自己从对话里推断出来的关于你的事实，有来源、置信度、衰减和墓碑。
 
 两边互不镜像：删了笔记不会去动记忆库，写进记忆的内容也不会出现在笔记列表里。唯一的公共部分是"它们最终都可能被拼进同一轮 prompt"，那是 B03 的注入面负责的事。
@@ -47,11 +47,11 @@ flowchart LR
 ## 边界与降级
 
 - **总闸**：`bot_notes_enabled` 缺省 True；`bot_notes_db_path` 经 `scripts/runtime_paths.py` 重映射到 Runtime，不落源码树（启动期不建库）。
-- **路由席位**：笔记**不占** `RouteKind`——全部词形收在提醒判定 `is_reminder_command` 里（`RouteKind.REMINDER`），因此它没有自己的路由席位与优先级，帮助层与审计层的能力 id 记账是 `bot.reminder`（现行缺陷第 1 条）。
+- **路由席位**：笔记**不占** `RouteKind`——全部词形收在提醒判定 `is_reminder_command` 里（`RouteKind.REMINDER`），因此它没有自己的路由席位与优先级，帮助层与审计层的能力 id 记账是 `bot.reminder`（见本页列出的现行缺陷）。
 - **限额**：单会话笔记数达 `bot_notes_max_per_chat`（缺省 200）时 `add` 返回 None，由能力层给人话提示而不是静默丢弃；单条笔记图片上限 `_MAX_NOTE_IMAGES`、单图字节上限 `_MAX_IMAGE_BYTES`（判据在能力层，store 只认文本）。
 - **图片来源与落点双查**：随笔记发来的图片走 SSRF 入口护栏，`file://`/本地路径读取有字节上限，落盘目录名消毒防穿越；删笔记时图片文件随笔记一起清（引用已不在，留着只会积灰）。
-- **会话隔离**：一切读写都带 `chat_id`（= `message.session_id`），A 群看不到 B 群的笔记；群成员之间是否再按人隔离取决于 session_id 本身含 uid，该粒度目前无测试覆盖（现行缺陷第 2 条）。
-- **授时降级链**：NTP 全败 → HTTPS `Date` 头估偏移 → 回退系统钟，每级一行日志；`|offset|` 超 `bot_time_sync_max_drift_ms`（缺省 1500ms）或 RTT 超上限的应答视为不可信，拒收该台换下一台。防火墙拦 UDP 123 时回退系统钟**属预期行为**，不是故障。
+- **会话隔离**：一切读写都带 `chat_id`（= `message.session_id`），A 群看不到 B 群的笔记；群成员之间是否再按人隔离取决于 session_id 本身含 uid，该粒度目前无测试覆盖（见本页列出的现行缺陷）。
+- **授时降级链**：NTP 全败 → HTTPS `Date` 头估偏移 → 回退系统钟，每级一行日志；`|offset|` 超 `bot_time_sync_max_drift_ms`（缺省值以 `config.py` 该字段为准）或 RTT 超上限的应答视为不可信，拒收该台换下一台。防火墙拦 UDP 123 时回退系统钟**属预期行为**，不是故障。
 
 ## 测试与验收
 

@@ -116,7 +116,7 @@ def build_xxx(deps: Deps, *, enabled: bool = True) -> Xxx:
 | 统一口径 | 机器册 `docs/auto-facts.md` + 板块生成物 | B10 |
 | 统一产出 | `review → renderer → send_queue → sender` | B08 |
 
-主链路十六段（所有消息、自动回复、戳一戳、表情、定时任务、通知、文件、错误回复都必须走完）：
+主链路十六段（凡用户可见的收发与自动动作一律走完，段名清单见下方流程图）：
 
 ```
 ingress → normalization → route → feature_state → policy → rate_limit → idempotency
@@ -141,7 +141,7 @@ ingress → normalization → route → feature_state → policy → rate_limit 
 
 ## 七、代码质量红线（要求 6）
 
-1. 一文件一职责；函数超 120 行必须说明为什么不能拆（注释一行，不写长篇）。
+1. 一文件一职责；函数超出体量上限必须说明为什么不能拆（上限以规范真身为准，注释一行不写长篇）。
 2. 禁止吞异常：`except` 必须记原始异常文本或显式注释为什么可以静默。
 3. 禁止未登记的全局可变状态；跨线程共享必须显式锁或不可变快照。
 4. 禁止"以后再说"式空壳：宁可不留函数，也不留 `pass` 占位让文档宣称已有能力。

@@ -10,11 +10,11 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.llm import LLMProviderError
-from plugins.bot_unified_runtime.sources.video_understanding import (
+from plugins.bot_unified_runtime.domains.media.ingest.video_understanding import (
     VideoBrief,
     build_video_brief,
 )
+from plugins.bot_unified_runtime.llm import LLMProviderError
 
 
 class FakeVision:
@@ -290,7 +290,7 @@ def test_deep_mode_expands_frames_and_forces_asr(tmp_path: Path) -> None:
 
 
 def test_detect_deep_video_request_phrases() -> None:
-    from plugins.bot_unified_runtime.sources.video_understanding import (
+    from plugins.bot_unified_runtime.domains.media.ingest.video_understanding import (
         detect_deep_video_request,
     )
 

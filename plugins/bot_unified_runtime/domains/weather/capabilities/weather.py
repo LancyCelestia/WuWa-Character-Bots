@@ -18,6 +18,10 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
     SendPolicy,
 )
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+    http_get_json,
+)
 from plugins.bot_unified_runtime.domains.weather.data.nmc_weather import (
     find_city_code,
     list_districts,
@@ -27,10 +31,6 @@ from plugins.bot_unified_runtime.domains.weather.data.nmc_weather import (
 from plugins.bot_unified_runtime.domains.weather.data.open_meteo import (
     format_open_meteo,
     open_meteo_query,
-)
-from plugins.bot_unified_runtime.sources.parsers.http_util import (
-    ParseHttpError,
-    http_get_json,
 )
 
 # 天气预报/天氣預報 前置（长词优先）：带城市时 query 直接落城市名，

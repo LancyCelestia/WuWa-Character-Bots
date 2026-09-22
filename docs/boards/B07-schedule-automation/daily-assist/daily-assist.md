@@ -23,12 +23,12 @@
 
 ## 开关与参数
 
-- `bot_daily_assist_enabled`（缺省 True）：总闸。`bot_daily_assist_dir`（缺省 `data/daily_assist`，进 path_fields 重映射，生产 `.env` 指向用户 Assistant 目录）。
+- `bot_daily_assist_enabled`（缺省 True）：总闸。`bot_daily_assist_dir`（目录路径的缺省值以 `config.py` 该字段为准，进 path_fields 重映射，生产 `.env` 指向用户 Assistant 目录）。
 - 速记命令本身不区分权限（谁的会话谁记），投递名单 `bot_daily_assist_push_user_ids` 与推送时刻 `bot_daily_assist_morning_time`/`_evening_time`/`_meal_times` 归调度器（见 scheduled-jobs 与二级页）；名单空则只记不推。配置键逐键以 `docs/config-catalog-full.md` 为准。
 
 ## 失败时看到什么
 
-带内容 → 记一行并回"收好了…早报一并理给你"（多句轮换）；不带内容 → 回清单（空则"收件箱空着呢"）或用法。正文超 2000 字截断。落盘失败（OSError）读回空串，不谎报已记。回执 `SILENT_AUDIT` 落审计。
+带内容 → 记一行并回"收好了…早报一并理给你"（多句轮换）；不带内容 → 回清单（空则"收件箱空着呢"）或用法。正文按字数上限截断（上限以该件常量为准）。落盘失败（OSError）读回空串，不谎报已记。回执 `SILENT_AUDIT` 落审计。
 
 ## 测试与验收
 

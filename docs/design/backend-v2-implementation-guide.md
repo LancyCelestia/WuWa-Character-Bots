@@ -71,7 +71,7 @@ flowchart TD
 
 可信核心包括固定装配且受审核的平台连接器和Broker，不允许外部插件在此扩展任意代码。普通 Python subprocess 不算安全边界。所有业务插件包括现有内置插件都必须迁移，不能以“内置”豁免。
 
-先消除包 import 副作用：导入DTO/注册元数据不得注册matcher、读取生产配置、启动线程或网络。现有 `decision/dispatcher.py` 与 RuntimePipeline 为收敛起点，合并重复控制面 dispatcher，不另建平行主链。
+先消除包 import 副作用：导入DTO/注册元数据不得注册matcher、读取生产配置、启动线程或网络。现有 `domains/core/decision/dispatcher.py` 与 RuntimePipeline 为收敛起点，合并重复控制面 dispatcher，不另建平行主链。
 
 ## 3. Windows 隔离与IPC
 

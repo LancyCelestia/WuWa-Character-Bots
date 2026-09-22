@@ -36,7 +36,7 @@ reply_text = normalize_paragraph_breaks(humanize_reply(reply_text))
 
 无开关、无配置键。相关的是转发阈值一组（`forward_min_chars` / `forward_node_chars` / `forward_min_nodes` / `forward_max_nodes`，装配期从 config 取，逐键以目录册为准）：
 
-- 「按条数触发合并」＝切分后达到 `min_nodes`（现口径 ≥4 条，即用户说的「超过 3 条就合并」）才合并，只对非 chat 能力生效；chat 回复整条直发，仅保留超长字数触发。
+- 「按条数触发合并」＝切分后达到 `min_nodes`（条数口径以该实现的常量为准，即用户说的「超过门槛就合并」）才合并，只对非 chat 能力生效；chat 回复整条直发，仅保留超长字数触发。
 - `min_chars <= 0` 表示不按字数拆；`max_nodes <= 0` 表示不人为限节点数，只受 `node_chars` 硬长度边界约束。
 - 溢出反复合并可能突破节点长度：对尾块按边界二次切分，代价是块数临时超过 `max_nodes`——硬长度边界优先。
 
@@ -44,7 +44,7 @@ reply_text = normalize_paragraph_breaks(humanize_reply(reply_text))
 
 ## 失败时看到什么
 
-这一层不抛异常、不打日志：输入空串或纯空白返回空；未闭合括号当普通文字。历史「观感故障」的形态就是要看的东西——段间忽 1 忽 2 个换行、表情被甩成独立一行、合并转发把四段聊天回复折成一条聊天记录（后者已按「chat 不触发条数合并」收口）。
+这一层不抛异常、不打日志：输入空串或纯空白返回空；未闭合括号当普通文字。历史「观感故障」的形态就是要看的东西——段间换行数忽多忽少、表情被甩成独立一行、合并转发把整段聊天回复折成一条聊天记录（后者已按「chat 不触发条数合并」收口）。
 
 若某条回复分段异常，先确认它走的是哪条链：只有 chat 链过了这两个函数；能力自己拼文本的（笔记、订阅列表、诊断文本等）不在本页承诺范围内。
 
@@ -52,4 +52,4 @@ reply_text = normalize_paragraph_breaks(humanize_reply(reply_text))
 
 `tests/test_roleplay_paragraphs.py`（三路同构：括号拆段 / 无动作纯文本 / 模型自写空行，段间恒定单换行；动作独立成行的既有语义保持）、`tests/test_forward_and_mood.py` 与 `tests/test_perf_forward.py`（切分与合并触发）、`tests/test_rate_limit_silent_and_chat_forward.py`（chat 不触发条数合并）、`tests/test_a20_sender_session_order.py`（同会话串行，分片顺序）。
 
-真机（重启后）：私聊发一条需要多段回应的角色扮演请求，肉眼确认段间恒定一个换行、动作行独立、颜文字不跳行；群聊发长回复确认 ≤3 条不折叠。
+真机（重启后）：私聊发一条需要多段回应的角色扮演请求，肉眼确认段间恒定一个换行、动作行独立、颜文字不跳行；群聊发长回复确认未达条数门槛时不折叠。

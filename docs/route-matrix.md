@@ -40,9 +40,9 @@ QQ/SnowLuma 消息
 | `/历史上的今天`、`歷史上的今天`、英文 `today in history`（可裸发）、`/today`/`/history`（必须带斜杠） +拼音触发（见 catalog） | today_history | 41 | `_is_today_history_event` | bot.today_history |
 | `/wiki 鸣潮`、`/WIKIPEDIA Python`、`维基/維基百科 鸣潮` +拼音触发（见 catalog） | wiki | 41 | `_is_wiki_event` | bot.wiki |
 | `/epic`、`/Epic Free`、`/Epic 免费`、`免费游戏`、英文 `steamfree`（`steam 免费/免費` 同） | epic | 41 | `_is_epic_event` | bot.epic |
-| `/天气 杭州`、`/查天气 上海`、`天气预报/天氣預報 <城市>`、英文 `weather <city>` +拼音触发（见 catalog） | weather | 41 | `_is_weather_event` | bot.weather（中国气象局 NMC 主通道 2 次重试+预警支路+Open-Meteo 兜底） |
+| `/天气 杭州`、`/查天气 上海`、`天气预报/天氣預報 <城市>`、英文 `weather <city>` +拼音触发（见 catalog） | weather | 41 | `_is_weather_event` | bot.weather（中国气象局 NMC 主通道重试（次数以 weather 域取数真身为准）+预警支路+Open-Meteo 兜底） |
 | `行情`、`股指/大盘/股市`、`B股行情`、`莫斯科股指`、英文 `market`/`markets`/`stock market` +拼音触发（见 catalog） | market | 41 | `_is_market_event` -> `_handle_market` | bot.market（东财 push2 17 指数 + MOEX ISS 备选源；市场词过滤） |
-| `快报`、`今日快报 科技`、`早报/晚报/今日热点/科技新闻/AI新闻/AI快报/财经新闻/财经快报/国际新闻`、繁體同族 10 词（`快報/早報/晚報/今日熱點/科技新聞/AI新聞/AI快報/財經新聞/財經快報/國際新聞`）、英文 `news`/`tech news`/`ai news` +拼音触发（见 catalog） | news | 41 | `_is_news_event` | bot.news（V2EX 真 Atom + IT之家/少数派/华尔街见闻/BBC中文；自动过滤营销条目，默认 20 条） |
+| `快报`、`今日快报 科技`、`早报/晚报/今日热点/科技新闻/AI新闻/AI快报/财经新闻/财经快报/国际新闻`、繁體同族词族（词表以 catalog 为准）（`快報/早報/晚報/今日熱點/科技新聞/AI新聞/AI快報/財經新聞/財經快報/國際新聞`）、英文 `news`/`tech news`/`ai news` +拼音触发（见 catalog） | news | 41 | `_is_news_event` | bot.news（V2EX 真 Atom + IT之家/少数派/华尔街见闻/BBC中文；自动过滤营销条目，默认条数以 A17 节键行为准） |
 | `八字`、`塔罗 三张`、`占卜`、`排盘/四柱/金钱卦/摇卦`、英文 `bazi`/`tarot`/`iching`/`hexagram`/`divination` +拼音触发（见 catalog） | divination | 41 | `_is_divination_event` | bot.divination（Meeus 节气八字含藏干权重/塔罗 78/金钱卦） |
 | `说 <文本>`、`语音 <文本>`、`念 <文本>`、`朗读 <文本>`、`语音合成 <文本>`、繁體 `說`/`語音`/`唸`/`朗讀`/`語音合成`（最长词优先，正文保留繁體用字；英文/拼音 6 词无繁體形态）、英文 `tts`/`say`（大小写不敏感）、拼音 `shuo`/`yuyin`/`nian`/`langdu`；`BOT_TTS_TRIGGER_WORDS` 为**追加**语义（与内置 16 词合并去重，非整表替换；判定唯一入口 `tts.py::effective_trigger_words`）。裸触发词（只发「说」不带正文）不占路由，交回人格对话自然回应 | tts | 41 | `_is_tts_event`（`__init__.py` 装配，词面判定 `tts_match`） | bot.tts（对接本机 GPT-SoVITS v2ProPlus HTTP API：文本合成守岸人音色语音；参考音频与开关见 BOT_TTS_*） |
 | `随机图`、`来张图`、繁體 `隨機圖/來張圖`、英文 `randpic` +拼音触发（见 catalog） | randpic | 41 | `_is_randpic_event` | bot.randpic（只读 BOT_RANDPIC_DIRS 自定义文件夹，绝不自建目录） |
@@ -117,23 +117,23 @@ card=平台音乐卡片（无卡信息用封面）、voice=语音、file=音频�
 
 ## 7. 下载与缓存策略（不挤占硬盘）
 
-- 下载走 yt-dlp：cookie（Netscape）+ 代理 `BOT_DOWNLOAD_PROXY`（外网走 7890）+ 单线程重试 1 次 + 高度默认不限（`BOT_DOWNLOAD_MAX_HEIGHT=0`）+ 单文件默认 1GB 上限（`BOT_DOWNLOAD_MAX_BYTES`）；
-- 目录配额 LRU 最旧先删：下载 2GB/7 天、点歌 512MB、卡片 256MB、表情 256MB，每次落盘即清理；
+- 下载走 yt-dlp：cookie（Netscape）+ 代理 `BOT_DOWNLOAD_PROXY`（外网走 7890）+ 单线程重试（次数以 A15 节 config 键行为准） + 高度默认不限（`BOT_DOWNLOAD_MAX_HEIGHT=0`）+ 单文件默认上限以 BOT_DOWNLOAD_MAX_BYTES 为准（`BOT_DOWNLOAD_MAX_BYTES`）；
+- 目录配额 LRU 最旧先删：各层配额与保留期以 config-catalog-full A15 节键行为准，每次落盘即清理；
 - 配置：`BOT_DOWNLOAD_CACHE_MAX_BYTES/MAX_AGE_DAYS`、`BOT_MUSIC_CACHE_MAX_BYTES`、`BOT_CARD_CACHE_MAX_BYTES`、`BOT_MEME_CACHE_MAX_BYTES`；
 - 运行入口：`nb run --reload`，代码改动自动热重载，无需手动重启终端。
 
 ## 8. 联网检索质量增强（v3，本轮再放宽）
 
-- 检索条数不设硬限制（默认 20 条，`BOT_WEB_SEARCH_MAX_RESULTS=0` 表示不限制，内部安全上限 24 条），并自动补“百科 / 简介 成立 作品 发展历程 / 是什么 介绍 / 最新 / 更新 内容”等多组查询合并去重；
+- 检索条数不设硬限制（默认条数与内部安全上限以 A13 节键行为准，`BOT_WEB_SEARCH_MAX_RESULTS=0` 表示不限制），并自动补“百科 / 简介 成立 作品 发展历程 / 是什么 介绍 / 最新 / 更新 内容”等多组查询合并去重；
 - 过滤字典/拼音/笔顺类垃圾结果（按域名与标题特征），只保留与查询关键词相关的来源；
-- 自动打开最相关结果页面抽取正文（≤900 字）注入回复，让模型拿到真实事实而非只有标题摘要；
+- 自动打开最相关结果页面抽取正文（字数上限以检索正文抓取键为准）注入回复，让模型拿到真实事实而非只有标题摘要；
 - 提示词强制：现实问题必须基于检索结果先给事实、结果没有就明说“未检索到”，禁止用世界观或想象替代；
-- 管理员 `/bot search` 同样最多 6 条；回复末尾“🔎 已联网检索”仅管理员可见，0 条时也会提示“源不可达或无相关结果”。
+- 管理员 `/bot search` 同样有结果条数上限（以 A13 节键行为准）；回复末尾“🔎 已联网检索”仅管理员可见，结果为 0 时也会提示“源不可达或无相关结果”。
 
 ## 9. 下载参数（本轮）
 
-- 超时 600 秒；单文件上限 1GB；分辨率不设上限（最高画质，含 8K/Hi-Res）；
-- 画质阶梯自动降级：最高 → 2160 → 1440 → 1080 → 720，超 1GB 自动降级；
+- 超时与单文件上限以 BOT_DOWNLOAD_TIMEOUT_SECONDS／BOT_DOWNLOAD_MAX_BYTES 为准；分辨率不设上限（最高画质，含 8K/Hi-Res）；
+- 画质阶梯自动降级：最高 → 2160 → 1440 → 1080 → 720，超单文件上限自动降级；
 - 网易云优先 999000（Hi-Res）再退 320kbps；缓存只清理配置目录内文件（LRU 最旧先删 + 保鲜期）。
 
 
@@ -141,8 +141,8 @@ card=平台音乐卡片（无卡信息用封面）、voice=语音、file=音频�
 
 ## 10. 群聊表情包机器人（bot.meme_library）
 
-- 监听：on_message priority=10 block=False，群图异步下载（httpx）、MD5 去重、≤5MB、SQLite 元数据；
+- 监听：on_message priority=10 block=False，群图异步下载（httpx）、MD5 去重、大小上限以表情包入库键为准、SQLite 元数据；
 - 发送：`偷表情 [关键词|情绪标签|私聊]`（权重随机）、`表情库统计`；
 - 权重：守岸人×8 → 鸣潮/战双/库洛×4 → ACG×1.5 → 普通×1；非表情×0.25；NSFW≥0.2 降权、≥0.8 永不发送；
 - 可选 VLM 打标（BOT_MEME_LIBRARY_VLM_*，TAG_PROMPT 返回 is_meme/description/emotion/scene/persona/nsfw）；
-- 工程：冷却 20s、群黑白名单、LRU 30 天/20000 张、异步下载绝不阻塞事件循环。
+- 工程：冷却以表情包入库冷却键为准、群黑白名单、LRU 保留窗与张数上限以真身键为准、异步下载绝不阻塞事件循环。

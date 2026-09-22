@@ -1,4 +1,6 @@
-from plugins.bot_unified_runtime.character.addressing import build_addressing_context
+from plugins.bot_unified_runtime.domains.chat_reply.character.addressing import (
+    build_addressing_context,
+)
 
 
 def test_private_user_is_wanderer_without_gender_guess():
@@ -77,7 +79,7 @@ def test_private_explicit_addressing_preference_wins():
 
 
 def test_addressing_preference_store_roundtrip(tmp_path):
-    from plugins.bot_unified_runtime.character.addressing import (
+    from plugins.bot_unified_runtime.domains.chat_reply.character.addressing import (
         AddressingPreferenceStore,
     )
 
@@ -101,11 +103,11 @@ def test_addressing_preference_store_roundtrip(tmp_path):
 
 
 def test_file_provider_prefers_stored_preference(tmp_path):
-    from plugins.bot_unified_runtime.character.addressing import (
-        AddressingPreferenceStore,
-    )
     from plugins.bot_unified_runtime.character.providers import (
         FileCharacterContextProvider,
+    )
+    from plugins.bot_unified_runtime.domains.chat_reply.character.addressing import (
+        AddressingPreferenceStore,
     )
 
     store = AddressingPreferenceStore(tmp_path / "addressing.sqlite3")

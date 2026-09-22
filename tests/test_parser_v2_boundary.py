@@ -10,7 +10,9 @@ from plugins.bot_unified_runtime.domains.core.contracts.media import (
     build_parsed_content,
 )
 from plugins.bot_unified_runtime.domains.link_parse.parsers.context import FetchContext
-from plugins.bot_unified_runtime.sources.parsers.http_util import build_request_headers
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    build_request_headers,
+)
 
 
 def _item() -> ParsedContent:

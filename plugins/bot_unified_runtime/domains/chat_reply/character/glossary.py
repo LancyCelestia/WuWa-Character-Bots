@@ -33,12 +33,14 @@ import unicodedata
 from pathlib import Path
 from typing import Protocol
 
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.question_intent import (
+    classify_question_intent,
+)
 from plugins.bot_unified_runtime.domains.core.contracts.character import (
     GlossaryContext,
     GlossaryEntry,
     TrendNote,
 )
-from plugins.bot_unified_runtime.runtime.question_intent import classify_question_intent
 
 _BOLD_ENTRY = re.compile(r"^\*{1,2}(.+?)\*{1,2}\s*[:：|]\s*(.+)$")
 _PLAIN_ENTRY = re.compile(r"^([^\s:：|][^:：|\n]{0,60})\s*[:：|]\s*(.+)$")

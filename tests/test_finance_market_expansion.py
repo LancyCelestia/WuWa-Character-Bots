@@ -50,7 +50,9 @@ from plugins.bot_unified_runtime.domains.finance.data.stock_data import (
     list_listed_companies,
     resolve_company_query,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+)
 
 # ---------------------------------------------------------------------------
 # 夹具（真实探测响应的字段形态；fltt=2 小数口径）

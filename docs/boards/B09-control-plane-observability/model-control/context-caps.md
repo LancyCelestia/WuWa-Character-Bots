@@ -15,7 +15,7 @@
 
 ## 怎么调用
 
-单一入口 `domains/chat_reply/llm_engine/model_router.py::_enforce_context_caps(messages, options, max_input_tokens, max_output_tokens)`，由 `build_model_router` 装配进 `ModelRouter`，在串行与影子两条出数路径上都会经过（同语义）。粗估走 `model_router.py::_estimate_messages_tokens`：CJK 约每字 1 token、ASCII 约每 4 字符 1 token、每条另加固定开销。
+单一入口 `domains/chat_reply/llm_engine/model_router.py::_enforce_context_caps(messages, options, max_input_tokens, max_output_tokens)`，由 `build_model_router` 装配进 `ModelRouter`，在串行与影子两条出数路径上都会经过（同语义）。粗估走 `model_router.py::_estimate_messages_tokens`：CJK、ASCII 与每条固定开销各有换算系数（系数以该函数为准）。
 
 - 输出侧：`options["max_tokens"]` 只封顶不托底——未设置或 0 保持「模型自行决定」的既有契约，仅当调用方显式设置且超过上限时压到上限。
 - 输入侧：估算超过 `max_input_tokens` 时，从最旧的非 `system` 消息开始逐条丢弃，直到不超限或只剩一条；`system` 永不被裁。

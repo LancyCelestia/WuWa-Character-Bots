@@ -16,19 +16,6 @@ from typing import Any, cast
 from urllib.parse import urlparse
 
 from plugins.bot_unified_runtime.character import CharacterContextProvider
-from plugins.bot_unified_runtime.character.addressing import (
-    creator_aliases,
-    creator_context_note,
-)
-from plugins.bot_unified_runtime.character.daily_assist import pick_variant
-
-# 审查 O-06：术语/时梗分区按关键词召回的裁剪原语与兜底门。
-from plugins.bot_unified_runtime.character.glossary import (
-    is_term_question,
-    recall_entries,
-    recall_trend_notes,
-)
-from plugins.bot_unified_runtime.character.history import redact_history_text
 from plugins.bot_unified_runtime.contracts import (
     BotDecision,
     CapabilityResult,
@@ -44,6 +31,36 @@ from plugins.bot_unified_runtime.contracts import (
     WebSearchContext,
     WebSearchHit,
 )
+from plugins.bot_unified_runtime.domains.assistant.daily.store.daily_assist import (
+    pick_variant,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.addressing import (
+    creator_aliases,
+    creator_context_note,
+)
+
+# 审查 O-06：术语/时梗分区按关键词召回的裁剪原语与兜底门。
+from plugins.bot_unified_runtime.domains.chat_reply.character.glossary import (
+    is_term_question,
+    recall_entries,
+    recall_trend_notes,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
+    redact_history_text,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
+    DeadlineBudget,
+    DeadlineExceeded,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.question_intent import (
+    QuestionIntent,
+    WebDecision,
+    classify_question_intent,
+    classify_question_intent_legacy,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.time_window import (
+    detect_time_window_summary,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.security import (
     InjectionAction,
     InjectionCheckInput,
@@ -53,10 +70,36 @@ from plugins.bot_unified_runtime.domains.chat_reply.security import (
 from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
     assess_public_content,
 )
+from plugins.bot_unified_runtime.domains.core.search import acg_search
+from plugins.bot_unified_runtime.domains.core.search.search_intent import (
+    acg_query_variants,
+    acg_search_allowed,
+    detect_acg_intent,
+    extract_acg_query,
+)
 from plugins.bot_unified_runtime.domains.core.search.web_search import (
     NullWebSearchProvider,
     WebSearchProvider,
     fetch_page_text,
+)
+from plugins.bot_unified_runtime.domains.files.sources.file_reader import (
+    artifact_request,
+    build_generated_file,
+)
+from plugins.bot_unified_runtime.domains.media.ingest.transcribe import (
+    extract_audio_source,
+    transcribe_audio,
+)
+from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
+    describe_images,
+    describe_video,
+    extract_image_urls,
+    extract_video_source,
+)
+from plugins.bot_unified_runtime.domains.meme.sources.meme_search import (
+    MemeSearchProvider,
+    NullMemeSearchProvider,
+    extract_meme_query,
 )
 from plugins.bot_unified_runtime.domains.ops.monitor.intent_telemetry import (
     IntentTelemetry,
@@ -93,43 +136,6 @@ from plugins.bot_unified_runtime.runtime.content_route import (
     member_session_key,
     resolve_intimate_context,
 )
-from plugins.bot_unified_runtime.runtime.deadline import (
-    DeadlineBudget,
-    DeadlineExceeded,
-)
-from plugins.bot_unified_runtime.runtime.question_intent import (
-    QuestionIntent,
-    WebDecision,
-    classify_question_intent,
-    classify_question_intent_legacy,
-)
-from plugins.bot_unified_runtime.runtime.time_window import detect_time_window_summary
-from plugins.bot_unified_runtime.sources import acg_search
-from plugins.bot_unified_runtime.sources.file_reader import (
-    artifact_request,
-    build_generated_file,
-)
-from plugins.bot_unified_runtime.sources.meme_search import (
-    MemeSearchProvider,
-    NullMemeSearchProvider,
-    extract_meme_query,
-)
-from plugins.bot_unified_runtime.sources.search_intent import (
-    acg_query_variants,
-    acg_search_allowed,
-    detect_acg_intent,
-    extract_acg_query,
-)
-from plugins.bot_unified_runtime.sources.transcribe import (
-    extract_audio_source,
-    transcribe_audio,
-)
-from plugins.bot_unified_runtime.sources.vision_describe import (
-    describe_images,
-    describe_video,
-    extract_image_urls,
-    extract_video_source,
-)
 
 ChatCapability = Callable[[IncomingMessage, BotDecision], CapabilityResult]
 logger = logging.getLogger(__name__)
@@ -143,7 +149,7 @@ def build_direct_vision_messages(
     max_images: int = 2,
 ) -> list[dict[str, Any]]:
     """Attach de-duplicated image URLs to one multimodal user message."""
-    from plugins.bot_unified_runtime.sources.vision_describe import (
+    from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
         prepare_vision_image_urls,
     )
 
@@ -326,7 +332,7 @@ def _analyze_and_store(
     deadline_seconds: float | None = None,
 ) -> str:
     """编排一次视频分析并把简报写回档案；任何失败返回空串，绝不阻断聊天。"""
-    from plugins.bot_unified_runtime.sources.video_understanding import (
+    from plugins.bot_unified_runtime.domains.media.ingest.video_understanding import (
         build_video_brief,
     )
 
@@ -353,7 +359,7 @@ def _analyze_and_store(
                         str(existing_record.media_id), brief.text, signals_json
                     )
             elif new_asset is not None:
-                from plugins.bot_unified_runtime.character.media_registry import (
+                from plugins.bot_unified_runtime.domains.media.registry.media_registry import (
                     MediaAssetRecord,
                 )
 
@@ -410,10 +416,10 @@ def _resolve_media_context(
     > 模糊追问（配置开启时取会话内最近档案）。查不到任何档案返回空串。
     自然语言深挖（"再仔细看看/没看懂"）命中时，对已缓存档案也会重新深分析。
     """
-    from plugins.bot_unified_runtime.sources.video_understanding import (
+    from plugins.bot_unified_runtime.domains.media.ingest.video_understanding import (
         detect_deep_video_request,
     )
-    from plugins.bot_unified_runtime.sources.vision_describe import _clip
+    from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import _clip
 
     media_cfg = media_config or _media_config(vision_provider, asr_provider) or {}
     deep = bool(getattr(media_cfg, "bot_video_deep_enabled", True)) and (

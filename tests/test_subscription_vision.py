@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from plugins.bot_unified_runtime.sources.vision_describe import (
+from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
     describe_subscription_item,
 )
 

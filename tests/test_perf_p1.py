@@ -217,7 +217,7 @@ def test_sqlite_audit_ensure_once(tmp_path, monkeypatch):
 
 
 def test_history_ensure_once(tmp_path, monkeypatch):
-    from plugins.bot_unified_runtime.character.history import (
+    from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
         SQLiteConversationHistoryRepository,
     )
 

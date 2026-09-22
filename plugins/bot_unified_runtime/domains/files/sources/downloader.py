@@ -792,7 +792,7 @@ class MediaDownloader:
                     outcome = self._download_once(url, height_cap=height_cap)
                     if outcome.path and Path(outcome.path).exists():
                         try:
-                            from plugins.bot_unified_runtime.runtime.cache_policy import (
+                            from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
                                 enforce_quota,
                             )
 

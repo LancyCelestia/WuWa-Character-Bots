@@ -65,7 +65,9 @@ def test_risk8_legacy_office_not_misparsed(
 ) -> None:
     """转正回归（V21-risk-8 修复，2026-09-17）：旧 OLE 二进制诚实降级
     （parser_unavailable），绝不抛包级异常伪装可读/崩读取链。"""
-    from plugins.bot_unified_runtime.sources.file_reader import read_supported_file
+    from plugins.bot_unified_runtime.domains.files.sources.file_reader import (
+        read_supported_file,
+    )
 
     path = tmp_path / filename
     path.write_bytes(_OLE2_MAGIC)

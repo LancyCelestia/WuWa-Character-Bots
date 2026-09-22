@@ -6,7 +6,7 @@
 
 **目标：** 用新的持久化订阅 V2 调度器替换尚未完成的订阅流水线，并为 Bilibili、小红书、YouTube、X/Twitter、公开 Telegram 频道、Pixiv 和微博实现完整的增量订阅 adapter。
 
-**架构：** `contracts/subscription.py` 定义 V2 的订阅目标、游标、内容引用、抓取结果、推送目的地和 outbox 契约。`SubscriptionStore` 将目标、游标、已见条目、租约、失败状态和 outbox 持久化到 `data/subscriptions.sqlite3`；首次启动 V2 前，如果该路径存在旧 schema，则原子保留为 `data/subscriptions_old.sqlite3`，且禁止覆盖已有备份。`SubscriptionScheduler` 负责每个目标的抖动、平台/全局并发、重试/退避和首次基线；adapter 只负责目标解析和增量引用获取。
+**架构：** `domains/core/contracts/subscription.py` 定义 V2 的订阅目标、游标、内容引用、抓取结果、推送目的地和 outbox 契约。`SubscriptionStore` 将目标、游标、已见条目、租约、失败状态和 outbox 持久化到 `data/subscriptions.sqlite3`；首次启动 V2 前，如果该路径存在旧 schema，则原子保留为 `data/subscriptions_old.sqlite3`，且禁止覆盖已有备份。`SubscriptionScheduler` 负责每个目标的抖动、平台/全局并发、重试/退避和首次基线；adapter 只负责目标解析和增量引用获取。
 
 **技术栈：** Python 3.10+、Pydantic `StrictBaseModel`、stdlib `sqlite3`、`asyncio`、`xml.etree.ElementTree`、现有 HTTP 工具、现有 Playwright 后端、APScheduler、pytest fixture、`PYTHONDONTWRITEBYTECODE=1`。
 

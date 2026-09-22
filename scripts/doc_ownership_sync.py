@@ -11,16 +11,20 @@
   `DOC_OWNERSHIP_ARCHIVE`（附处置列摘要），不丢信息。
 - 取数口只有一份：`compute_ownership()` 同时服务 violations、总数与 `--report`。
 - 写盘确定性：条目排序、`newline="\\n"`、正文零时间戳——连跑两次字节相等（常驻用例锁）。
+- **断链自诊（席 S76）**：`--check` 不只报 "OUT OF SYNC"，而是**逐格**比对「分类表现算 vs 盘上声明源」，
+  把三态方向分开点名——盘上缺条目 / 盘上多条目 / 同一路径字段漂移（basis 等），每态各给可执行下一步。
+  rc 语义一字未改（一致 0／不一致 1），只加诊断，**不加豁免、不缩扫描面**。
 
 用法：
-  python scripts/doc_ownership_sync.py --generate   # 重投影并写声明源
-  python scripts/doc_ownership_sync.py --check      # 重投影与盘上文件逐字节比对
+  python scripts/doc_ownership_sync.py --generate   # 重投影并写声明源（写完回读校验字节一致）
+  python scripts/doc_ownership_sync.py --check      # 逐格比对投影与盘上声明源，点名到格并给下一步
   python scripts/doc_ownership_sync.py --report     # 打印现算账（未归属数=棘轮取数的同源值）
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import sys
 from dataclasses import dataclass, field
@@ -51,6 +55,24 @@ _SECTION_BASES: tuple[tuple[str, str], ...] = (
 
 _BOARD_RE = re.compile(r"^(B\d{2})$")
 _AMBIGUOUS_BOARD_RE = re.compile(r"^(B\d{2})\s*/\s*(B\d{2})$")
+
+#: 代码侧目录级归属（枚举字面目录，**非通配**；每条须 `is_dir()` 才采信——宁缺不猜）。
+#: 用途 = 分类表 §4 成文（09-21）之后**新增的并发施工波过程件目录**与**文档体系工程件**
+#: `docs/templates/`。它们与 §4 已列的 14 个 `.superpowers/sdd/<波次>/` 目录行同型
+#: （工程/波次过程件归 B10），这里只是把 §4 落笔时还不存在的波次补进投影，机制与 §4 完全一致
+#: （最长前缀认领，见 `compute_ownership` 的 `dir_entries`），**不发明新语义、不加通配**。
+#: 终局应由分类表 owner 把这四行并入 §4；此表是「一处变更处处跟随」的过渡登记，
+#: 只登记目录级过程/工程件，不触碰任何内容件的板块判定。
+_CODE_DIR_OWNERSHIP: tuple[tuple[str, str, str, str], ...] = (
+    (".superpowers/sdd/2026-09-21-boards/", "B10", "过程件",
+     "十板块文档体系波席报目录（同 §4 兄弟波次行：过程件→B10）"),
+    (".superpowers/sdd/2026-09-21-unify-wave/", "B10", "过程件",
+     "中央调度层统一波席报/裁定/台账目录（同 §4 兄弟波次行：过程件→B10）"),
+    (".superpowers/sdd/2026-09-22-taxonomy/", "B10", "过程件",
+     "本轮规格统一波席报/基线/普查目录（同 §4 兄弟波次行：过程件→B10）"),
+    ("docs/templates/", "B10", "工程件",
+     "文档模板体系工程件（唯一模板源，随 scripts/doc_templates.py 常驻；治理面归 B10）"),
+)
 _FID_RE = re.compile(r"\bB\d{2}\.[a-z][a-z0-9-]*")
 _BACKTICK_RE = re.compile(r"`([^`]+)`")
 _NOTE_CN_RE = re.compile(r"（[^（）]*）")
@@ -286,6 +308,20 @@ def load_entries(repo: Path) -> tuple[list[Entry], list[Entry], list[str], list[
     return list(dedup.values()), archive, ambiguous, unresolved, skipped
 
 
+def _code_dir_entries(repo: Path) -> list[Entry]:
+    """把 `_CODE_DIR_OWNERSHIP` 里当前**确实在盘**的目录转成目录级条目（path 以 / 结尾）。
+
+    与分类表目录行同形（board/fid/currency/basis），且守住「不存在不采信」的既有纪律：
+    目录不在盘就整条跳过。同路径若表已认领，则在 `compute_ownership` 去重时**表行获胜**。
+    """
+    out: list[Entry] = []
+    for path, board, currency, basis in _CODE_DIR_OWNERSHIP:
+        probe = repo / Path(*path.rstrip("/").split("/"))
+        if probe.is_dir():
+            out.append(Entry(path, board, "", currency, f"代码侧目录级过程/工程件：{basis}"))
+    return out
+
+
 def scan_surface(repo: Path = REPO) -> list[str]:
     files: set[str] = set()
     for root, pattern in SCAN_SPECS:
@@ -298,6 +334,9 @@ def scan_surface(repo: Path = REPO) -> list[str]:
 def compute_ownership(repo: Path = REPO) -> Ledger:
     """**唯一取数口**：violations（未归属清单）、总数、--report 全部由它服务。"""
     entries, archive, ambiguous, unresolved, skipped = load_entries(repo)
+    # 合并代码侧目录级过程/工程件：同路径若表已认领则表行获胜（去重），否则追加。
+    _seen_paths = {e.path for e in entries}
+    entries = entries + [e for e in _code_dir_entries(repo) if e.path not in _seen_paths]
     file_entries = {e.path.rstrip("/"): e for e in entries if not e.path.endswith("/")}
     dir_entries = sorted(((e.path, e) for e in entries if e.path.endswith("/")), key=lambda x: -len(x[0]))
     surface = scan_surface(repo)
@@ -416,31 +455,254 @@ def report_text(ledger: Ledger) -> str:
     return "\n".join(lines)
 
 
-def main(argv: list[str] | None = None) -> int:
+#: 声明源三张表的字面量名 → 人话段名（诊断输出点名用）。
+_SOURCE_SECTIONS: dict[str, str] = {
+    "DOC_OWNERSHIP": "文件级条目",
+    "DOC_OWNERSHIP_DIRS": "目录级条目",
+    "DOC_OWNERSHIP_ARCHIVE": "归档历史行",
+}
+
+#: path 之外逐格比对的字段（与 `DocOwner` 形参同名；path 是全局主键，常驻门也按它查重）。
+_DRIFT_FIELDS: tuple[str, ...] = ("board", "fid", "currency", "basis", "completed")
+
+#: 每类漂移最多点名几格（在册 386 条，全打会淹掉结论；余量如实报数）。
+_MAX_PRINT_PER_KIND = 12
+
+K_MISSING = "盘上缺条目"
+K_EXTRA = "盘上多条目"
+K_FIELD = "字段漂移"
+K_DUP = "盘上重复路径"
+K_PARSE = "声明源不可解析"
+K_FORMAT = "非条目级漂移"
+K_ABSENT = "声明源不在盘"
+
+#: 输出顺序＝诊断优先级（先看结构性崩坏，再看方向，最后才看排版）。
+_KIND_ORDER: tuple[str, ...] = (K_ABSENT, K_PARSE, K_DUP, K_MISSING, K_EXTRA, K_FIELD, K_FORMAT)
+
+#: 每态各一条「可执行下一步」——只写真做得动的动作，不写"看着办"。
+#: 共同前提：上游只有分类表，下游生成物**不许手改**（`tests/test_doc_ownership_ledger.py` 同口径）。
+_NEXT_STEP: dict[str, str] = {
+    K_ABSENT: f"跑 `python scripts/doc_ownership_sync.py --generate` 重建 {OWNERSHIP_REL}",
+    K_PARSE: "盘上声明源不是可解析的 `DocOwner(...)` 字面量（多半是手改改崩）："
+             "回滚该文件后跑 `--generate`；若手改的是真意图，请把它写进分类表再 `--generate`",
+    K_DUP: "同一 path 在盘上出现两次（投影器按 path 去重，重复只可能来自手改）："
+           "回滚该文件后跑 `--generate`",
+    K_MISSING: "上游分类表**有**这一行、盘上声明源**没有** ⇒ 改了表没跑重投影："
+               "跑 `python scripts/doc_ownership_sync.py --generate`（本态不影响未归属数以外的账）",
+    K_EXTRA: "盘上声明源**有**这一条、上游分类表现算**没有** ⇒ 要么手改了生成物（禁），"
+             "要么分类表该行被删/改名/路径已不存在：补回分类表行，或回滚盘上手改，再跑 `--generate`",
+    K_FIELD: "同一路径两边字段不一致（`basis` 漂移最常见＝清扫席改了依据列没随迁）："
+             "以分类表为准跑 `--generate`；若你判**现算的期望值**本身错了，那是投影规则的问题，"
+             "改本脚本规则表或分类表文字后 `--generate`，**别改盘上生成物**",
+    K_FORMAT: "条目级三态全平、只有注释/顺序/空白不一致 ⇒ 直接 `--generate` 重投影即可",
+}
+
+
+@dataclass(frozen=True)
+class Drift:
+    """一格对不上的账：方向(kind) + 哪一格(path/field) + 期望(分类表现算) / 现值(盘上声明源)。"""
+
+    kind: str
+    path: str
+    field: str
+    expected: str
+    actual: str
+
+    def render(self) -> str:
+        if self.kind == K_MISSING:
+            return f"{self.path} ｜上游有：{_clip(self.expected, 100)}｜盘上无此条"
+        if self.kind == K_EXTRA:
+            return f"{self.path} ｜盘上有：{_clip(self.actual, 100)}｜上游现算无此条"
+        if self.kind == K_DUP:
+            return f"{self.path} ｜盘上出现 ≥2 次（上游按 path 去重）"
+        if self.kind == K_FORMAT:
+            return f"{self.path} ｜投影 {self.expected} vs 盘上 {self.actual}"
+        return f"{self.path} .{self.field}：期望={_clip(self.expected, 80)} ｜盘上={_clip(self.actual, 80)}"
+
+
+def _clip(text: str, limit: int = 120) -> str:
+    """压成单行并截断——basis 列常有上百字，逐格点名要能一眼看完。"""
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def _desc(rec: dict[str, str]) -> str:
+    return (f"{rec.get('section', '?')} board={rec.get('board', '')!r}"
+            f" currency={rec.get('currency', '')!r} basis={rec.get('basis', '')!r}")
+
+
+def projection_records(ledger: Ledger) -> dict[str, dict[str, str]]:
+    """分类表现算 → {path: 字段字典}。三段共用一张表，与 `render_source` 的分段口径一致。"""
+    out: dict[str, dict[str, str]] = {}
+    groups: tuple[tuple[str, list[Entry]], ...] = (
+        ("文件级条目", [e for e in ledger.entries if not e.path.endswith("/")]),
+        ("目录级条目", [e for e in ledger.entries if e.path.endswith("/")]),
+        ("归档历史行", list(ledger.archive)),
+    )
+    for section, items in groups:
+        for e in items:
+            out[e.path] = {
+                "section": section,
+                "board": e.board,
+                "fid": e.fid,
+                "currency": e.currency,
+                "basis": e.basis,
+                "completed": str(e.completed),
+            }
+    return out
+
+
+def parse_declaration(text: str) -> tuple[dict[str, dict[str, str]], list[Drift]]:
+    """**静态**解析盘上声明源（ast，绝不 import——import 会在源码树写出 `__pycache__`）。
+
+    崩坏不抛异常：语法错／非法条目形／缺 path／重复 path 一律降成一条 `Drift` 交回，
+    这样 `--check` 才能「点名 + 给下一步」而不是甩 traceback。
+    """
+    records: dict[str, dict[str, str]] = {}
+    drifts: list[Drift] = []
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as exc:
+        return records, [Drift(K_PARSE, OWNERSHIP_REL, "语法", "可解析的 python 字面量",
+                               f"{type(exc).__name__}@line{exc.lineno}: {exc.msg}")]
+    for node in tree.body:
+        targets: list[ast.expr]
+        value: ast.expr | None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value  # 声明源写的是 `X: tuple[...] = (...)`＝AnnAssign
+        else:
+            continue
+        tgt = targets[0]
+        if not isinstance(tgt, ast.Name) or tgt.id not in _SOURCE_SECTIONS or value is None:
+            continue
+        section = _SOURCE_SECTIONS[tgt.id]
+        if not isinstance(value, ast.Tuple):
+            drifts.append(Drift(K_PARSE, tgt.id, "容器", "tuple[DocOwner, ...]", type(node.value).__name__))
+            continue
+        for elt in value.elts:  # 席 S88：原写 `node.value.elts`，mypy 看不见 AnnAssign 的窄化⇒2 错；
+            # `value` 与 `node.value` 是同一对象（上面两条分支都从它赋值），行为逐字节不变，只把类型看直。
+            if not (isinstance(elt, ast.Call) and isinstance(elt.func, ast.Name) and elt.func.id == "DocOwner"):
+                drifts.append(Drift(K_PARSE, section, "条目形", "DocOwner(...)", _clip(ast.dump(elt), 60)))
+                continue
+            fields: dict[str, str] = {"section": section}
+            for kw in elt.keywords:
+                if kw.arg is None:
+                    drifts.append(Drift(K_PARSE, section, "**kwargs", "逐字段关键字", _clip(ast.unparse(kw.value), 40)))
+                    continue
+                try:
+                    fields[kw.arg] = str(ast.literal_eval(kw.value))
+                except (ValueError, TypeError):
+                    fields[kw.arg] = f"<非字面量:{_clip(ast.unparse(kw.value), 40)}>"
+            path = fields.get("path", "")
+            if not path or path.startswith("<非字面量"):
+                drifts.append(Drift(K_PARSE, section, "path", "非空字符串字面量", repr(path)))
+                continue
+            if path in records:
+                drifts.append(Drift(K_DUP, path, "path", "全局唯一", "出现 ≥2 次"))
+                continue
+            records[path] = fields
+    return records, drifts
+
+
+def compare_projection(ledger: Ledger, current: str, rendered: str) -> list[Drift]:
+    """三态方向分开点名：盘上缺 / 盘上多 / 同路径字段漂移（＋结构性崩坏两态）。"""
+    want = projection_records(ledger)
+    have, drifts = parse_declaration(current)
+    if any(d.kind == K_PARSE for d in drifts):
+        return drifts  # 语法/条目形都崩了，逐格比没有意义
+    for path in sorted(set(want) - set(have)):
+        drifts.append(Drift(K_MISSING, path, "整条", _desc(want[path]), ""))
+    for path in sorted(set(have) - set(want)):
+        drifts.append(Drift(K_EXTRA, path, "整条", "", _desc(have[path])))
+    for path in sorted(set(want) & set(have)):
+        for fld in _DRIFT_FIELDS:
+            exp, act = want[path].get(fld, ""), have[path].get(fld, "")
+            if exp != act:
+                drifts.append(Drift(K_FIELD, path, fld, exp or "（空）", act or "（缺该关键字）"))
+    if not drifts:
+        drifts.append(Drift(K_FORMAT, OWNERSHIP_REL, "文件级",
+                            f"{len(rendered.encode('utf-8'))} 字节",
+                            f"{len(current.encode('utf-8'))} 字节"))
+    return drifts
+
+
+def drift_report(drifts: list[Drift], ledger: Ledger, current: str) -> list[str]:
+    """把 Drift 清单打成「分类 → 逐格点名 → 下一步」三段可执行输出。"""
+    by_kind: dict[str, list[Drift]] = {}
+    for d in drifts:
+        by_kind.setdefault(d.kind, []).append(d)
+    on_disk = len(parse_declaration(current)[0])
+    lines = [f"OUT OF SYNC：{OWNERSHIP_REL} ≠ 分类表投影（逐格诊断如下）"]
+    lines.append("断链分类：" + "；".join(f"{k} ×{len(by_kind[k])}" for k in _KIND_ORDER if k in by_kind))
+    if K_FIELD in by_kind:
+        per_field: dict[str, int] = {}
+        for d in by_kind[K_FIELD]:
+            per_field[d.field] = per_field.get(d.field, 0) + 1
+        lines.append("  字段漂移按列：" + "；".join(f"{f} ×{n}" for f, n in sorted(per_field.items())))
+    for kind in _KIND_ORDER:
+        items = by_kind.get(kind, [])
+        if not items:
+            continue
+        lines.append(f"[{kind}]")
+        for d in items[:_MAX_PRINT_PER_KIND]:
+            lines.append("  · " + d.render())
+        if len(items) > _MAX_PRINT_PER_KIND:
+            lines.append(f"  · …另有 {len(items) - _MAX_PRINT_PER_KIND} 格同类，判据同上（此处只点名上限 "
+                         f"{_MAX_PRINT_PER_KIND}，不为少报而缩口径）")
+        lines.append("  下一步：" + _NEXT_STEP[kind])
+    lines.append(f"账面对照：上游现算 在册 {len(ledger.entries)} ＋ 归档 {len(ledger.archive)} 条 vs 盘上 {on_disk} 条")
+    lines.append(f"未归属（violations，棘轮吃这个数）= {len(ledger.unowned)}；扫描面 = {ledger.scanned}")
+    lines.append(f"上游真身 = {CLASSIFICATION_REL}——改归属只改它，然后跑 `--generate`（禁手改生成物）")
+    return lines
+
+
+def check_sync(ledger: Ledger, rendered: str, target: Path) -> tuple[int, list[str]]:
+    """`--check` 的落点：rc 语义与旧版逐字节一致（0=CLEAN／1=不一致），只多了点名与下一步。"""
+    if not target.exists():
+        # 席 S88：这一态原先**另起一条手搓三行**的输出（同一诊断两条码路）——变异探针实测
+        # 「把渲染层 `drift_report` 拔掉之后，唯独这一态照样点名」⇒ 它是七态里唯一不被渲染层执法
+        # 覆盖的格子。改走同一个 `drift_report`，七态共一条出口；**rc 语义一字未改**（仍 1、仍点名、仍给下一步）。
+        return 1, drift_report(
+            [Drift(K_ABSENT, OWNERSHIP_REL, "整文件", "声明源在盘（由 `--generate` 投影）", "文件不存在")],
+            ledger, "")
+    current = target.read_text(encoding="utf-8")
+    if current == rendered:
+        return 0, ["CLEAN"]
+    return 1, drift_report(compare_projection(ledger, current, rendered), ledger, current)
+
+
+def main(argv: list[str] | None = None, repo: Path | None = None) -> int:
+    """入口。`repo` 显式可换＝自测能在临时副本上跑**同一条真入口**（旧写法只认模块全局 REPO，
+    默认参数在 def 时绑死，外部改 `dos.REPO` 只会让「账」与「文件」指向两个 repo——假绿形态之一）。"""
+    root = repo or REPO
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--generate", action="store_true")
     mode.add_argument("--check", action="store_true")
     mode.add_argument("--report", action="store_true")
     args = parser.parse_args(argv)
-    ledger = compute_ownership()
+    ledger = compute_ownership(root)
     if args.report:
         print(report_text(ledger))
         return 0
     rendered = render_source(ledger)
-    target = REPO / OWNERSHIP_REL
+    target = root / OWNERSHIP_REL
     if args.generate:
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("w", encoding="utf-8", newline="\n") as fh:
             fh.write(rendered)
+        readback = target.read_text(encoding="utf-8")
+        if readback != rendered:  # 写完回读不等＝渲染非确定（排序/换行/编码被破坏），当场拒收
+            print(f"GENERATE NOT DETERMINISTIC：回读 {len(readback)} 字节 ≠ 渲染 {len(rendered)} 字节"
+                  "＝写盘口不再字节确定，先修 render_source 再谈重投影")
+            return 1
         print(f"generated {OWNERSHIP_REL}: {len(ledger.entries)} entries, {len(ledger.archive)} archived")
         return 0
-    current = target.read_text(encoding="utf-8") if target.exists() else ""
-    if current != rendered:
-        print("OUT OF SYNC：声明源与分类表投影不一致——跑 `--generate` 重投影（别手改）")
-        return 1
-    print("CLEAN")
-    return 0
+    rc, lines = check_sync(ledger, rendered, target)
+    print("\n".join(lines))
+    return rc
 
 
 if __name__ == "__main__":

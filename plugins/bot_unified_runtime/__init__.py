@@ -3758,7 +3758,7 @@ def _register_nonebot_handlers() -> None:
     # 在 on_startup（running loop 存在后）启动——装配在 import 期执行，彼时
     # 无 loop；任何失败仅降级观测，不阻塞启动（fail-open）。
     try:
-        from .runtime.loop_watchdog import start_loop_watchdog
+        from .domains.ops.monitor.loop_watchdog import start_loop_watchdog
 
         @get_driver().on_startup
         async def _start_loop_watchdog_on_startup() -> None:
@@ -4022,7 +4022,7 @@ def _register_nonebot_handlers() -> None:
     # 冷却/频控由 rate_limit 层 proactive 分桶承担（bot_group_proactive_*）。
     if bool(getattr(config, "bot_proactive_affinity_gate_enabled", True)):
         from .domains.chat_reply.character.affinity import tier_for_affinity
-        from .policy.gate import configure_proactive_affinity_gate
+        from .domains.chat_reply.policy.gate import configure_proactive_affinity_gate
 
         def _proactive_affinity_check(sender_id: str) -> bool:
             store = build_character_affinity_store(config)
@@ -4035,7 +4035,7 @@ def _register_nonebot_handlers() -> None:
 
         configure_proactive_affinity_gate(_proactive_affinity_check)
     else:
-        from .policy.gate import configure_proactive_affinity_gate
+        from .domains.chat_reply.policy.gate import configure_proactive_affinity_gate
 
         configure_proactive_affinity_gate(None)
 
@@ -4494,10 +4494,10 @@ def _register_nonebot_handlers() -> None:
             _register_daily_assist_scheduler(scheduler, config, send_queue, outbound_gate)
 
         # V2.1 B2① 服务装配组（WIRE-SVC）：WORLD/KB/DB/TEACH 装配+注册表；
-        # 主门缺省关=零装配零副作用（不改现网行为），细节归 runtime/service_wiring.py。
+        # 主门缺省关=零装配零副作用（不改现网行为），细节归 domains/chat_reply/runtime/service_wiring.py。
         if getattr(config, "bot_v21_service_wiring_enabled", False):
             try:
-                from plugins.bot_unified_runtime.runtime.service_wiring import (
+                from plugins.bot_unified_runtime.domains.chat_reply.runtime.service_wiring import (
                     register_v21_services,
                 )
 
@@ -7870,11 +7870,11 @@ def _register_nonebot_handlers() -> None:
                     from .domains.chat_reply.runtime.content_route import (
                         explicit_allowed_for_session,
                     )
-                    from .security.content_safety import assess_public_content
+                    from .domains.chat_reply.security import content_safety as _cs
 
                     # 安全评估喂给行为分类：persona_degradation/harassment 等类别
                     # 才能映射到 insult/tease 路径（docs/affinity-design.md §6）。
-                    assessment = assess_public_content(
+                    assessment = _cs.assess_public_content(
                         message.plain_text,
                         # 2026-09-17：session_type 必填（此前默认 private，
                         # 群消息也被按私聊口径评估——行为分类信号静默漂移）。
@@ -7942,8 +7942,8 @@ def _register_nonebot_handlers() -> None:
                                 )
                             ],
                         )
-                except Exception:  # noqa: BLE001, S110 - 被动感知失败不影响主链路。
-                    pass
+                except ModuleNotFoundError: raise  # 静默死根修：缺模块＝装配/坐标错，必冒不吞（勿再被下面的 pass 掩成"分支今天没跑"）。
+                except Exception: pass  # noqa: BLE001, S110 - 被动感知其余运行时失败不影响主链路（缺模块除外，见上一行）。
 
             await asyncio.to_thread(_passive_affinity_perception)
         # 小名缓存刷新（60s），供动态昵称 mention 判定。

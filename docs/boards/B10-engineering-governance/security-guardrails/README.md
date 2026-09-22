@@ -8,7 +8,7 @@
 > SSRF 咽喉、凭据域名绑定、打码与最小暴露面。
 
 - 归属板块：[B10](../README.md)
-- 实现落点：`plugins/bot_unified_runtime/domains/core/credentials`、`plugins/bot_unified_runtime/security`
+- 实现落点：`plugins/bot_unified_runtime/domains/core/credentials`、`plugins/bot_unified_runtime/security`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/database_broker.py`
 - 帮助主题：凭据
 - 配置键前缀：`bot_ssrf_`（逐键以目录册为准）
 

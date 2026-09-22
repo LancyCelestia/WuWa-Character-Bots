@@ -59,7 +59,66 @@ def _module_tree(path: Path) -> ast.Module:
         ) from exc
 
 
+def _module_literal_values(tree: ast.Module) -> dict[str, ast.expr]:
+    """模块级「简单赋值」名字 → 值表达式节点（后赋值覆盖先赋值，与 Python 执行语义同构）。
+
+    只登记模块顶层的 Assign/AnnAssign 单目标名；函数体内局部名不进入解析面。
+    """
+    mapping: dict[str, ast.expr] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets: list[ast.expr] = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if node.value is None:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                mapping[target.id] = node.value
+    return mapping
+
+
+def _eval_literal(node: ast.expr, constants: dict[str, ast.expr], stack: tuple[str, ...]) -> object:
+    """AST 级字面量求值：`ast.literal_eval` 的整个认域 **加上** 同模块模块级常量的 Name 引用。
+
+    安全红线（S38 简报逐字，P-S28-1）：只准对 AST 白名单节点求值，绝不解析/执行源码文本
+    （不许把 literal_eval 放宽成 eval）。认域＝Constant（str/bytes/bool/int/float/complex/None）、
+    tuple/list/set/dict 容器、一元 ±（仅数字）、以及能经同模块模块级简单赋值解析到底的 Name
+    （递归展开、自环检测）。其余节点一律 ValueError——宁响失败，不静默吞值。
+    """
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Tuple):
+        return tuple(_eval_literal(elt, constants, stack) for elt in node.elts)
+    if isinstance(node, ast.List):
+        return [_eval_literal(elt, constants, stack) for elt in node.elts]
+    if isinstance(node, ast.Set):
+        return {_eval_literal(elt, constants, stack) for elt in node.elts}
+    if isinstance(node, ast.Dict):
+        if any(key is None for key in node.keys):
+            raise ValueError("dict 的 ** 解包不是受支持的字面量形态")
+        keys = [_eval_literal(key, constants, stack) for key in node.keys if key is not None]
+        values = [_eval_literal(value, constants, stack) for value in node.values]
+        return dict(zip(keys, values))
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        operand = _eval_literal(node.operand, constants, stack)
+        if isinstance(operand, (int, float, complex)) and not isinstance(operand, bool):
+            return +operand if isinstance(node.op, ast.UAdd) else -operand
+        raise TypeError("一元 +/- 的字面量操作数必须是数字")
+    if isinstance(node, ast.Name):
+        if node.id in stack:
+            raise ValueError("模块级常量循环引用: " + " -> ".join([*stack, node.id]))
+        definition = constants.get(node.id)
+        if definition is None:
+            raise ValueError(f"无法解析的模块级名字: {node.id}（只认同模块的模块级简单常量赋值）")
+        return _eval_literal(definition, constants, (*stack, node.id))
+    raise ValueError(f"不支持的字面量节点: {type(node).__name__}")
+
+
 def _literal_assign(tree: ast.Module, name: str) -> object:
+    constants = _module_literal_values(tree)
     for node in tree.body:
         target = getattr(node, "target", None)
         targets = node.targets if isinstance(node, ast.Assign) else [target]
@@ -70,7 +129,7 @@ def _literal_assign(tree: ast.Module, name: str) -> object:
             value = getattr(node, "value", None)
             if value is None:
                 raise ValueError(f"assignment has no value: {name}")
-            return ast.literal_eval(value)
+            return _eval_literal(value, constants, (name,))
     raise ValueError(f"assignment not found: {name}")
 
 
@@ -97,17 +156,19 @@ def _extra_lines() -> dict[str, tuple[str, ...]]:
 
 def _manifest_entries() -> list[dict[str, object]]:
     out: list[dict[str, object]] = []
-    for node in ast.walk(_module_tree(ROUTER_SOURCE)):
+    tree = _module_tree(ROUTER_SOURCE)
+    constants = _module_literal_values(tree)
+    for node in ast.walk(tree):
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == "InterfaceEntry"
         ):
-            args = [ast.literal_eval(arg) for arg in node.args]
+            args = [_eval_literal(arg, constants, ()) for arg in node.args]
             item = dict(zip(_MANIFEST_KEYS, args))
             for kw in node.keywords:
                 if kw.arg and kw.arg in _MANIFEST_KEYS:
-                    item[kw.arg] = ast.literal_eval(kw.value)
+                    item[kw.arg] = _eval_literal(kw.value, constants, ())
             out.append(item)
     return out
 

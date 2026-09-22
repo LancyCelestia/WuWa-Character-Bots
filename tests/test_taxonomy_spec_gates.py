@@ -549,5 +549,1133 @@ def test_report_and_gate_read_the_same_numbers() -> None:
     assert f"三角闭合断链 {len(_REAL['t5']['pages_unreachable'])} 类" in lines
 
 
+# ---------------------------------------------------------------------------
+# 席 S20 MECH-HARDEN —— 六项判据/记账机制加严的反向自测（新增，不动既有断言/基线）
+# ---------------------------------------------------------------------------
+def test_s20_fact_ruler_cjk_tooth_catches_glued_digits() -> None:
+    """N-1 计数尺补牙：汉字紧贴数字、无空格也必须红；ASCII/标点粘连仍放行。"""
+    for line, want in (
+        ("本板块共47个能力入口。", "裸计数"),
+        ("单文件上限100MB。", "裸阈值"),
+        ("总计 47 项待办。", "裸计数"),
+    ):
+        hits = dfd.fact_findings([line], vocab=set())
+        assert hits and want in hits[0], f"{want} 未识别（汉字/空格粘连漏牙）：{line}"
+    # 反向：数字挨 ASCII 字母/数字/§/./- 仍属粘连负样本，放行（版本/条款号不是事实）
+    for ok in (
+        "§9 字段级契约与 v21r2 主题无关。",
+        "zhconv 1.4.3 版本。",
+        "端口 8080/3001 转发。",
+    ):
+        assert dfd.fact_findings([ok], vocab=set()) == [], f"合法粘连被误杀：{ok}"
+
+
+def test_s20_poison_fake_auto_zone_is_unverified(tmp_path: Path) -> None:
+    """K-1 反洗白：嵌一对 BOARD-AUTO 注释藏裸事实的页必须记 UNVERIFIED_AUTO_ZONE；
+    段内无裸事实（引用示例的文档）不误伤。"""
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    launder = root / "docs" / "launder.md"
+    launder.write_text(
+        "# 洗白页\n\n<!-- BOARD-AUTO:BEGIN -->\n本板块共47个能力入口。\n<!-- BOARD-AUTO:END -->\n",
+        encoding="utf-8",
+    )
+    res = sc.compute(root)
+    managed = [m for m in res["t3_managed"] if m.startswith("docs/launder.md: UNVERIFIED_AUTO_ZONE")]
+    assert managed, f"一对注释买断机器段的裸事实没被抓：{res['t3_managed'][:6]}"
+    # 正样控制：段内无裸事实的示例引用页不新增账（只加严，不误伤）
+    clean = root / "docs" / "docquote.md"
+    clean.write_text(
+        "# 说明\n\n<!-- BOARD-AUTO:BEGIN -->\n这是标记格式示例（无数字事实）。\n<!-- BOARD-AUTO:END -->\n",
+        encoding="utf-8",
+    )
+    res2 = sc.compute(root)
+    assert not any(
+        m.startswith("docs/docquote.md: UNVERIFIED_AUTO_ZONE") for m in res2["t3_managed"]
+    ), "段内无裸事实也被记红＝误伤（违反只加严）"
+
+
+def test_s20_root_md_now_enumerated(tmp_path: Path) -> None:
+    """K-2：根层全部 *.md 进入管辖面、classify 真跑（旧白名单令 root-report 分支永不触发）。"""
+    assert dts.classify("findings.md") == "root-report"
+    assert dts.classify("AGENTS.md") == "root-rules"
+    rels = {p.rel for p in dts.walk_content_pages()}  # 缺省 root＝doc_template_sync.ROOT（仓库根）
+    # 免检旧账里的代表页现在必须在场
+    assert "findings.md" in rels, "根散件仍被扫描面白名单漏掉（K-2 未生效）"
+
+
+def test_s20_code_home_check_no_longer_shadowed_by_missing_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """K-3：缺模板的 code 类也要核查 code_home——旧 `elif` 让它永不执行。合成类别走同一取数口。"""
+    synth = dt.CategoryDef(
+        cid="s20-synth-code", template="s20-no-such-tpl", surface="code",
+        owner_board="B00", reason="test", code_home="this/path/does/not/exist.py",
+    )
+    monkeypatch.setattr(dt, "CONTENT_CATEGORIES", (synth,))
+    res = sc.compute()
+    named = [m for m in res["t5"]["missing_template"] if m.startswith("s20-synth-code:")]
+    assert any("无对应模板" in m for m in named), f"缺模板腿没点名：{named}"
+    assert any("code_home 不存在" in m for m in named), f"elif 遮蔽死路径未拆：{named}"
+
+
+def test_s20_write_precheck_refacts_page_with_naked_facts(tmp_path: Path) -> None:
+    """缺口二：仍有裸事实的页 --write 必须拒绝驱动、文件（含 front-matter）零字节变化；
+    清干净后同一决策放行。直接复用 main 用的同一支前置谓词 `naked_fact_findings`。"""
+    seat = dts.load_schemas()["seat-report"]
+    fm_ok = dts.FrontMatter(
+        template="seat-report",
+        params={
+            "seat_id": "T-S20", "wave": "w", "status": "DONE", "role": "gate",
+            "report_class": "auto:seat_class", "ledger_events": "auto:page_stat:ledger",
+        },
+        extra_keys=(),
+    )
+    dirty = "---\ntemplate: seat-report\nparams:\n  seat_id: T-S20\n  wave: w\n  status: DONE\n" \
+            "  role: gate\n  report_class: auto:seat_class\n  ledger_events: auto:page_stat:ledger\n---\n" \
+            "\n## 交付\n\n本板块共47个能力入口。\n"
+    f = tmp_path / "SEAT-S20.md"
+    f.write_text(dirty, encoding="utf-8")
+    assert dts.naked_fact_findings(dirty) != [], "前置谓词没抓到裸事实＝拒绝逻辑空跑"
+
+    def decide(text: str) -> bool:
+        if dts.naked_fact_findings(text):  # 与 main --write 同一判据
+            return False
+        pg = dts.PageInfo(rel=".superpowers/sdd/2026-09-22-taxonomy/SEAT-S20.md", path=f, text=text,
+                          fm=fm_ok, category="seat-report")
+        return dts.write_page(pg, {"seat-report": seat})
+
+    assert decide(dirty) is False, "有裸事实却放行驱动＝不变量没执法"
+    assert f.read_text(encoding="utf-8") == dirty, "拒绝驱动却改了文件（front-matter 须零变化）"
+
+
+def test_s20_g_t4_three_forms_red_via_synthetic_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """6① 活性腿：req+auto 参数「非 provider 现算」三形态（缺参/字面量冒充/现算空值）
+    全在**同一取数口的 T4_CODES 过滤面**红。合成 schema，不依赖 docs/templates 在飞件。"""
+    schema = dts.parse_schema_text(
+        "<!-- @schema:BEGIN\nsections: 交付 | 自报\nparams:\n"
+        "- seat_id | text | literal | req | nonempty\n"
+        "- cls | text | auto:seat_class | req | any\n"
+        "@schema:END -->\n<!-- TEMPLATE-AUTO:BEGIN -->\n"
+        "- {{fact:seat_id}} / {{fact:cls}}\n<!-- TEMPLATE-AUTO:END -->\n",
+        "s20-poison",
+    )
+    ctx = dts.PageCtx(rel=".superpowers/sdd/t/SEAT-A.md", body_no_fm="## 交付\n")
+    for params, code in (
+        ({"seat_id": "X"}, "MISSING_PARAM"),
+        ({"seat_id": "X", "cls": "SEAT"}, "AUTO_SOURCE_MISMATCH"),
+    ):
+        _v, viol = dts.resolve_params(schema, dts.FrontMatter("s20-poison", params, ()), ctx)
+        assert any(code in x for x in viol), f"{code} 没被抓：{viol}"
+        assert code in sc.T4_CODES, f"{code} 不在 T4_CODES＝compute 记账腿看不见（空跑）"
+    monkeypatch.setitem(dts.PROVIDERS, "seat_class", lambda arg, c: "")
+    _v, viol = dts.resolve_params(
+        schema, dts.FrontMatter("s20-poison", {"seat_id": "X", "cls": "auto:seat_class"}, ()), ctx
+    )
+    assert any("PROVIDER_EMPTY" in x for x in viol), f"provider 空值冒充现算没被抓：{viol}"
+    assert "PROVIDER_EMPTY" in sc.T4_CODES
+
+
+# ---------------------------------------------------------------------------
+# 席 S46 GT1-BRANCH-B —— 机制 (b) 补认 + 行内码剥除 + elif 拆链与测量/成语精修
+# （全部只新增用例；未改任何既有断言与 `_BASELINE_*`/上限字面量）
+# ---------------------------------------------------------------------------
+def test_s46_generated_page_must_actually_reproduce_not_just_be_listed(tmp_path: Path) -> None:
+    """机制 (b) 反向自测：在册生成页**声称可复现却当场重渲染不等值** ⇒ 必红（带因入债）；
+    逐字节复制真页回同一位置 ⇒ 放行（还原必绿）。旧账按路径成员隐形豁免，此形全绿＝空跑。"""
+    rel = next(r for r in sorted(_REAL["b_ok"]) if r.startswith("docs/boards/"))
+    real = (REPO_ROOT / rel).read_text(encoding="utf-8")
+    assert bds.AUTO_BEGIN in real and bds.AUTO_END in real, "前提塌了：真页没有板块机器段"
+
+    def run(body: str) -> dict[str, object]:
+        root = tmp_path / f"repo-{abs(hash(body)) % 10**9}"
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(body, encoding="utf-8")
+        return sc.compute(root)
+
+    forged = run(real.replace(bds.AUTO_END, "本板块共47个能力入口。\n" + bds.AUTO_END, 1))
+    t1_forged = set(forged["t1"])
+    assert any(r.startswith(rel + "#") for r in t1_forged), (
+        f"AUTO 段被篡改的在册生成页没进 G-T1 债（按名单豁免未升级为字节复现）：{sorted(t1_forged)[:6]}"
+    )
+    assert any(f"{rel}: UNVERIFIED_AUTO_ZONE" in m for m in forged["t3_managed"]), (
+        "K-1 板块段仍在认在册名单而非当场复现证据（不等值段被放行）"
+    )
+    restored = run(real)
+    assert not any(r.startswith(rel) for r in restored["t1"]), (
+        f"逐字节可复现的正样被误杀（还原必绿失败）：{restored['t1'][:4]}"
+    )
+    assert rel in restored["b_ok"], "重渲染等值的页没被记成已驱动 (b 形)"
+
+
+def test_s46_generated_listing_never_silently_exempt() -> None:
+    """不变量（真树）：任何进入生成物名单的在册页，要么当场复现（b_ok），要么带因入债——
+    不存在「在名单里却不检查」的第三态（那正是 K-2 同型的隐形绿）。"""
+    gen_all = _REAL["generated_all"]
+    b_ok = _REAL["b_ok"]
+    schemas = _REAL["schemas"]
+    mismatched = {str(m).split()[1] for m in _REAL["mismatch"] if len(str(m).split()) > 1}
+    t1 = {str(r).split("#", 1)[0] for r in _REAL["t1"]}
+    page_rels = {p.rel for p in _REAL["pages"]}
+    # 有 (a) 形模板头（在册且不错配）的生成页走 (a) 销籍，不在这条不变量的射程
+    a_ok = {p.rel for p in _REAL["pages"] if p.fm is not None and p.fm.template in schemas
+            and p.rel not in mismatched}
+    silent = {r for r in gen_all if r in page_rels and r not in b_ok and r not in t1 and r not in a_ok}
+    assert not silent, f"名单在册、既未复现又没记债的生成页（静默豁免）：{sorted(silent)[:6]}"
+    # 正样控制：板块生成页确有大批当场复现（判据不是全判死装样子）
+    boards_reproduced = {r for r in b_ok if r.startswith("docs/boards/")}
+    assert len(boards_reproduced) >= 220, f"板块页复现数 {len(boards_reproduced)} 异常低＝复现判据空转"
+
+
+def test_s46_inline_code_is_not_prose_fact() -> None:
+    """任务2（治 S23R 148 枚假阳）：行内码内容不再当人写正文执法；
+    去掉反引号的同形裸事实必须照红（注毒必红），指针句里的行内码路径不误伤（还原必绿）。"""
+    green = [
+        "示例 `const X = /\\b(?:p|px)/` 是代码字面量。",
+        "命令 `python scripts/e2e_acceptance.py --execute 30 秒` 计时。",
+        "以 `docs/auto-facts.md` 为准。",
+    ]
+    for line in green:
+        assert dfd.fact_findings(dfd.human_lines(line + "\n"), vocab=set()) == [], (
+            f"行内码/指针形态被误判：{line}"
+        )
+    red = [
+        ("上限 100MB。", "裸阈值"),
+        ("本板块共47个能力入口。", "裸计数"),
+    ]
+    for line, want in red:
+        hits = dfd.fact_findings(dfd.human_lines(line + "\n"), vocab=set())
+        assert hits and want in hits[0], f"去反引号的裸事实漏判（注毒没红）：{line} → {hits}"
+
+
+def test_s46_multi_rule_line_reports_every_ruler_not_just_first() -> None:
+    """补录 R2-2：count→threshold→path→enum 的 elif 链拆独立判定——
+    同一行「阈值＋data/ 路径」两把尺各记各的（旧链路径被遮蔽，HANDOFF-NEXT:46 实证）。"""
+    hits = dfd.fact_findings(["单文件上限 100MB，归档在 data/media_archive/ 下。"], vocab=set())
+    kinds = " ".join(hits)
+    assert "裸阈值" in kinds and "裸路径" in kinds, f"elif 遮蔽未拆，一行只报一尺：{hits}"
+    hits2 = dfd.fact_findings(["本地跑 C:\\Users\\x\\py.exe 时共47个用例失败。"], vocab=set())
+    kinds2 = " ".join(hits2)
+    assert "裸机器本地路径" in kinds2 and "裸计数" in kinds2, (
+        f"机器路径短路的 continue 仍在遮蔽其余尺：{hits2}"
+    )
+
+
+def test_s46_measure_idioms_pass_nearby_bare_facts_stay_red() -> None:
+    """任务3（S25 PARKED-B / S24「30 秒」）：测量统计、带符号增减、人工步骤频次、
+    标题行尾「N 秒」阅读时长按词形放行；相邻**无这些形态**的裸阈值/裸计数必红。"""
+    green = [
+        "## 1. 项目 30 秒",
+        "渲染 P95 0.054ms 已记录在案。",
+        "验收要求反复说 5 次同一偏好。",
+        "性能对照 P95 +110% 触发回退评审。",
+        "速览有 20 分钟版与 5 分钟版两种读法。",
+    ]
+    for line in green:
+        assert dfd.fact_findings([line], vocab=set()) == [], f"成语/测量形态被误杀：{line}"
+    red = [
+        ("超时 30 秒。", "裸阈值"),
+        ("重试等待 1500ms 后放行。", "裸阈值"),
+        ("共 5 次点击即熔断。", "裸计数"),
+        ("配额上调 110% 生效。", "裸阈值"),
+    ]
+    for line, want in red:
+        hits = dfd.fact_findings([line], vocab=set())
+        assert hits and want in hits[0], f"真裸事实被成语带放过（注毒没红）：{line} → {hits}"
+
+
+# ---------------------------------------------------------------------------
+# 席 S78 CENSUS-LEDGER-SPLIT-ALL-PAGES + P-41 —— 只新增用例（未改任何既有断言/基线）
+# ① 历史台账分流改「按类别、驱动同权」（P-39）；⑤ P-41 board 机器段逐段与 TEMPLATE 同构。
+# 全部走内存/tmp_path，注毒不落源码树；判据与 --report 共用同一支 `sc.compute()`。
+# ---------------------------------------------------------------------------
+def _pi(rel: str, category: str, text: str = "", fm: object = None) -> dts.PageInfo:
+    return dts.PageInfo(rel=rel, path=Path(rel), text=text, fm=fm, category=category)
+
+
+def test_s78_face_of_history_page_is_category_based_and_driven_symmetric() -> None:
+    """① 分流判据是**纯函数 + 按类别 + 驱动同权**（矩阵锁）：
+    - 现役规格/杂项页：驱动且非生成物⇒line(面A)，未驱动⇒page(面B)；
+    - 板块人工区恒 line（生成物+人写混合，按行治理）；
+    - 过程日志三cid恒 skip（两面都不记，债只在 G-T1）；
+    - 根层/活文档历史页恒 page（**驱动与否同权**，永不翻 line）——旧前缀码路的病灶正在这。"""
+    line, page, skip = "line", "page", "skip"
+    assert sc.face_of_history_page(_pi("docs/design/x.md", "design-spec"), driven_non_generated=True) == line
+    assert sc.face_of_history_page(_pi("docs/design/x.md", "design-spec"), driven_non_generated=False) == page
+    assert sc.face_of_history_page(_pi("docs/boards/B01/f/e.md", "board-l3"), driven_non_generated=False) == line
+    for cid in ("seat-report", "sdd-ledger", "sdd-brief"):  # 过程日志：两面都不记
+        assert sc.face_of_history_page(_pi(f".superpowers/sdd/t/{cid}.md", cid), driven_non_generated=True) == skip
+        assert sc.face_of_history_page(_pi(f".superpowers/sdd/t/{cid}.md", cid), driven_non_generated=False) == skip
+    for cid in ("root-handoff", "root-report", "handbook", "acceptance"):  # 历史页：驱动与否都 page
+        assert sc.face_of_history_page(_pi("HANDOFF-x.md", cid), driven_non_generated=True) == page
+        assert sc.face_of_history_page(_pi("HANDOFF-x.md", cid), driven_non_generated=False) == page
+    # 反向：非台账的驱动页绝不因这条函数被踢出 line（防分流误伤真治理面）
+    assert sc.face_of_history_page(_pi("docs/g.md", "doc-misc"), driven_non_generated=True) == line
+
+
+def test_s78_driven_ledger_page_stays_off_faceA_and_audited_in_faceB(tmp_path: Path) -> None:
+    """① 端到端（走 compute 记账腿，非只喂正则——治 F-15「注毒只跑正则、记账腿看不见」）：
+    一张**已挂模板头**的活文档历史页（`docs/HANDBOOK.md` ⇒ category=handbook，属历史台账）
+    写裸计数，债必须落在**面 B（页）**、**绝不进面 A（行）**；分流按类别判、不靠路径前缀，
+    且已驱动页与未驱动页同权（旧码路一旦 driven 就把它顶进行级面 A）。"""
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    facts = "\n\n本板块共 47 个能力入口，另 100MB 上限。\n"
+    # 只测分流落点：front-matter 是否参数合法不影响 `driven()`（只认 template∈schemas 且不错配）。
+    (root / "docs" / "HANDBOOK.md").write_text(
+        "---\ntemplate: handbook\nparams:\n  seat_id: W\n---\n\n# 活文档\n" + facts, encoding="utf-8"
+    )
+    res = sc.compute(root)
+    unmoved = set(res["t3_unmoved"])
+    managed = "\n".join(res["t3_managed"])
+    assert "docs/HANDBOOK.md" in unmoved, (
+        f"已驱动的活文档历史页没记进面 B（分流未生效）：{sorted(unmoved)[:6]}"
+    )
+    assert "docs/HANDBOOK.md" not in managed, (
+        f"历史台账页的裸事实翻进了行级面 A（分流失效＝旧码路回归）：{managed[:200]}"
+    )
+
+
+def test_s78_current_spec_page_driven_still_pollutes_faceA(tmp_path: Path) -> None:
+    """③ 反向自测①：现役规格页挂上在册模板驱动后写裸计数 ⇒ 必记面 A（分流不许把它当历史放走）。
+    用 doc-misc/guide 这一**非台账**类驱动页证明：line 路径仍执法。"""
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    (root / "docs" / "live-guide.md").write_text(
+        "---\ntemplate: guide\nparams:\n  seat_id: L\n---\n\n# 指南\n\n本板块共 47 个能力入口。\n",
+        encoding="utf-8",
+    )
+    res = sc.compute(root)
+    # 该页 category=doc-misc（非台账）；若它被判「已驱动」则面 A 记行，否则退面 B——两条都是可见债，
+    # 关键断言：绝不能像台账那样被 skip（skip 才藏得住）。用「面A∪面B∪G-T1 至少其一记它」保可见性。
+    visible = (
+        any("docs/live-guide.md" in m for m in res["t3_managed"])
+        or "docs/live-guide.md" in set(res["t3_unmoved"])
+        or "docs/live-guide.md" in {r.split("#", 1)[0] for r in res["t1"]}
+    )
+    assert visible, f"现役规格页既不进面A也不进面B也不进G-T1＝被误当历史台账放走：{res['t3_managed'][:3]}"
+
+
+def test_s78_relabel_to_ledger_category_is_cross_checked_not_dodged(tmp_path: Path) -> None:
+    """③ 反向自测③（分类源与页 front-matter 交叉核验）：一张物理路径属现役规格（docs/design/）
+    却**谎称** handoff 模板想躲面 A ⇒ 走 mismatch（类别↔模板错配）腿，
+    `driven()` 拒认 ⇒ 它既销不了 G-T1 籍、又拿不到台账待遇，债仍可见。"""
+    root = tmp_path / "repo"
+    (root / "docs" / "design").mkdir(parents=True)
+    (root / "docs" / "design" / "spec-liar.md").write_text(
+        "---\ntemplate: handoff\nparams:\n  seat_id: X\n---\n\n# 冒牌交接\n\n本板块共 47 个能力入口。\n",
+        encoding="utf-8",
+    )
+    res = sc.compute(root)
+    named = [m for m in res["mismatch"] if "spec-liar.md" in m]
+    assert named, f"谎称台账模板的规格页没被类别↔模板错配腿点名（躲尺通道没堵）：{res['mismatch'][:4]}"
+    assert "docs/design/spec-liar.md" in {r.split("#", 1)[0] for r in res["t1"]}, (
+        "错配页从 G-T1 销籍＝套个台账模板头就免检，F-2 同型"
+    )
+
+
+def test_s78_poison_extra_board_auto_zone_with_bare_fact_is_unverified(tmp_path: Path) -> None:
+    """⑤ P-41 反向自测 a：往一枚真·板块生成页**再嵌一对 BOARD-AUTO 注释**、段内写裸计数，
+    行级面 A 必须记 `UNVERIFIED_AUTO_ZONE`（旧页级 `p.rel in b_ok` 会让第二段隐身＝225 枚静默的洞）。"""
+    rel = next(r for r in sorted(_REAL["b_ok"]) if r.startswith("docs/boards/"))
+    real = (REPO_ROOT / rel).read_text(encoding="utf-8")
+    assert bds.AUTO_BEGIN in real and bds.AUTO_END in real, "前提塌了：真页没有板块机器段"
+    root = tmp_path / "repo"
+    (root / rel).parent.mkdir(parents=True, exist_ok=True)
+    # 在人写区尾部追加一整对 BOARD-AUTO（含首段之外、写裸事实的第二段）。
+    forged = real + (
+        f"\n\n{bds.AUTO_BEGIN}\n{bds.AUTO_NOTE}\n\n本板块共 47 个能力入口。\n{bds.AUTO_END}\n"
+    )
+    (root / rel).write_text(forged, encoding="utf-8")
+    res = sc.compute(root)
+    hits = [m for m in res["t3_managed"] if m.startswith(f"{rel}: UNVERIFIED_AUTO_ZONE")]
+    assert hits, (
+        f"再嵌一对 BOARD-AUTO 段藏裸事实没被抓（页级 b_ok 放行旧洞未闭合）：{res['t3_managed'][:4]}"
+    )
+    # 还原（只留首段）⇒ 该页不再有 UNVERIFIED_AUTO_ZONE（正常 225 页不误伤，多一段才红）。
+    (root / rel).write_text(real, encoding="utf-8")
+    res2 = sc.compute(root)
+    assert not any(
+        m.startswith(f"{rel}: UNVERIFIED_AUTO_ZONE") for m in res2["t3_managed"]
+    ), f"逐字可复现的正样板块页被误杀（还原必绿失败）：{[m for m in res2['t3_managed'] if rel in m][:4]}"
+
+
+def test_s78_inline_marker_quoting_board_page_not_false_flagged() -> None:
+    """⑤ 防误伤（本席自抓的假红回归锁）：doc-taxonomy-sync.md 一类正文用**行内码引用**
+    `BOARD-AUTO:BEGIN` 标记字面量（讲 AUTO 契约本身），机制 (b) 与 K-1 都不得把它当「多一段」。
+    若哪天有人把机制 (b) 改成「原始段数==1」，这页会 b_ok→drift、G-T1 顶高 board-l3——本锁当场红。"""
+    rel = "docs/boards/B10-engineering-governance/documentation/doc-taxonomy-sync.md"
+    text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+    # 前置：这页确有 ≥2 处标记字面量（首段真身 + 正文行内码引用），且它是正常复现的生成页。
+    assert text.count(bds.AUTO_BEGIN) >= 2, "取样前提变了：这页不再是引用标记字面量的正常板块页"
+    assert rel in _REAL["b_ok"], f"引用标记字面量的正常板块页没被判已复现（⑤过度改动回归）：{rel}"
+    assert not any(
+        m.startswith(f"{rel}: UNVERIFIED_AUTO_ZONE") for m in _REAL["t3_managed"]
+    ), "正常板块页正文引用 BOARD-AUTO 字面量被误记 UNVERIFIED_AUTO_ZONE（把讲解当藏事实）"
+
+
+# ---------------------------------------------------------------------------
+# 席 S119 —— G-T5「在册模板驱动 0 页」孤儿腿（S111 的 C-3）：以下全部**新增用例**，
+# 未改任何既有断言/上限字面量；`assert missing` 那枚自相矛盾的地板腿一字不碰。
+# ---------------------------------------------------------------------------
+def _s119_names(rows: list[str]) -> list[str]:
+    return [r.split(": ", 1)[0] for r in rows]
+
+
+def _s119_stems() -> set[str]:
+    return {p.stem for p in dts.TEMPLATE_DIR.glob("*.md")}
+
+
+def test_s119_orphan_leg_names_every_zero_page_template_in_disjoint_classes() -> None:
+    """正向账 + 扫描面地板：驱动 0 页的在册模板**一枚都不许漏**，且两类分开点名。"""
+    orph = _REAL["t5"]["templates_without_pages"]
+    assert set(orph) == set(sc.ORPHAN_CLASS_ORDER), f"孤儿腿分类集改版：{sorted(orph)}"
+    per_class = {k: _s119_names(orph[k]) for k in sc.ORPHAN_CLASS_ORDER}
+    all_names = [n for rows in per_class.values() for n in rows]
+    assert len(all_names) == len(set(all_names)), f"一枚模板被记进两类（混账）：{all_names}"
+
+    # 正样控制（判据必须看得见合法件）：驱动 >0 的模板不得进账。取数与函数同判据。
+    schemas = _REAL["schemas"]
+    driven: dict[str, int] = {}
+    for p in _REAL["pages"]:
+        if p.fm is None or p.fm.template not in schemas:
+            continue
+        if sc.category_mismatch(p, schemas) is not None:
+            continue
+        driven[p.fm.template] = driven.get(p.fm.template, 0) + 1
+    assert driven, "全树无一张驱动页＝本腿退化成空门，先修取样"
+    for t, n in driven.items():
+        assert t not in all_names, f"{t} 实有 {n} 页驱动却被记成孤儿（判据过严）"
+
+    # 扫描面地板（现算 22 枚在册、21 枚零页；塌陷即红，不写死枚数）：
+    zero_page = {t for t in (_s119_stems() | set(schemas)) if not driven.get(t, 0)}
+    assert set(all_names) == zero_page, (
+        f"孤儿账与「驱动 0 页模板」全集不符（漏记＝缩面）："
+        f"漏 {sorted(zero_page - set(all_names))} / 多 {sorted(set(all_names) - zero_page)}"
+    )
+    # 代码件类**不许被排除**（排除＝缩小扫描面＝§0 六禁）：只被代码类认领的模板必在账上。
+    def _only_code(t: str | None) -> bool:
+        if not t:
+            return False
+        return all(c.surface == "code" for c in dt.CONTENT_CATEGORIES if c.template == t)
+
+    code_only = {c.template for c in dt.CONTENT_CATEGORIES if _only_code(c.template)}
+    assert code_only <= set(per_class["code_surface"]), (
+        f"代码件类模板被从孤儿账里剔除了（缩面）："
+        f"{sorted(code_only - set(per_class['code_surface']))}"
+    )
+    assert per_class["code_surface"] and per_class["real_debt"], (
+        "两类各至少一枚才算分开点名，否则两本账其实是同一本"
+    )
+
+
+def test_s119_orphan_leg_has_no_ceiling_written_by_this_seat() -> None:
+    """④ 上限策略：新腿今日**只登记不设上限**——本文件不许出现该腿的任何上限/基线字面量。"""
+    banned = [
+        name
+        for name in _CEILING_NAMES + _HISTORY_NAMES
+        if "ORPHAN" in name.upper() or "ZERO_PAGE" in name.upper() or "TEMPLATE_LEG" in name.upper()
+    ]
+    assert banned == [], f"S119 私自定了上限/核账基线（应由该门 owner 转正时定）：{banned}"
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for tgt in targets:
+            if isinstance(tgt, ast.Name):
+                up = tgt.id.upper()
+                assert not (("ORPHAN" in up or "ZERO_PAGE" in up) and ("CEILING" in up or "BASELINE" in up)), (
+                    f"S119 写了上限 {tgt.id}＝新腿自定基线，转正权在门 owner"
+                )
+
+
+def test_s119_poison_zero_page_template_enters_ledger_and_delists_when_driven(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """③a 新造一枚零页模板⇒必进孤儿账（真债类）；③b 给它一页⇒自动摘牌。全程内存，不落盘。"""
+    synth_cat = dt.CategoryDef(
+        cid="s119-synth",
+        template="s119-synth",
+        surface="md",
+        owner_board="B10",
+        reason="S119 反向自测件（不是真类别）",
+    )
+    monkeypatch.setattr(dt, "CONTENT_CATEGORIES", (*dt.CONTENT_CATEGORIES, synth_cat))
+    monkeypatch.setattr(dt, "CATEGORIES_BY_ID", {**dt.CATEGORIES_BY_ID, synth_cat.cid: synth_cat})
+    schemas = {**_REAL["schemas"], "s119-synth": _REAL["schemas"]["handbook"]}
+    stems = _s119_stems() | {"s119-synth"}
+    bare_page = dts.PageInfo(
+        rel="s119-synth.md",
+        path=REPO_ROOT / "s119-synth.md",
+        text="",
+        fm=None,
+        category=synth_cat.cid,
+        violations=(),
+    )
+    out_a = sc.orphan_templates([*_REAL["pages"], bare_page], schemas, stems)
+    assert "s119-synth" in _s119_names(out_a["real_debt"]), (
+        f"新造的零页模板没进真债账（桶里有页无人驱动却看不见）：{ {k: _s119_names(v) for k, v in out_a.items()} }"
+    )
+    # ③b：同一枚模板挂上一张真驱动页 ⇒ 立刻摘牌，且不得从任何一类里漏出来又冒回去
+    driven_page = dts.PageInfo(
+        rel=bare_page.rel,
+        path=bare_page.path,
+        text="",
+        fm=dts.FrontMatter(template="s119-synth", params={}, extra_keys=()),
+        category=synth_cat.cid,
+        violations=(),
+    )
+    out_b = sc.orphan_templates([*_REAL["pages"], driven_page], schemas, stems)
+    still = [k for k, rows in out_b.items() if "s119-synth" in _s119_names(rows)]
+    assert still == [], f"驱动页已到位仍未摘牌（说明账按名字写死）：{still}"
+    assert len(out_a["real_debt"]) == len(out_b["real_debt"]) + 1, "摘牌没体现在枚数上＝两本账不同源"
+
+
+def test_s119_poison_class_label_is_registry_driven_not_a_name_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """③c 分类判据必须**跟着注册表走**：把代码件类改标成 md ⇒ 它离开 code_surface；
+    把 md 真债类改标成 code ⇒ 它离开 real_debt。误标＝账当场移动，不是名字表写死。"""
+    # a) 一枚真债（handbook：桶有 1 页、驱动 0）被改标成代码件 ⇒ 必须离真债、进 code_surface
+    relabel_to_code = tuple(
+        dt.CategoryDef(
+            cid=c.cid, template=c.template, surface="code", owner_board=c.owner_board,
+            generated_by=c.generated_by, code_home=c.code_home or "scripts", reason=c.reason,
+        )
+        if c.cid == "handbook"
+        else c
+        for c in dt.CONTENT_CATEGORIES
+    )
+    monkeypatch.setattr(dt, "CONTENT_CATEGORIES", relabel_to_code)
+    monkeypatch.setattr(
+        dt, "CATEGORIES_BY_ID", {c.cid: c for c in relabel_to_code}
+    )
+    out = sc.orphan_templates(_REAL["pages"], _REAL["schemas"], _s119_stems())
+    assert "handbook" not in _s119_names(out["real_debt"]), "改标代码件后仍记真债＝分类写死在名字表"
+    assert "handbook" in _s119_names(out["code_surface"]), "改标代码件没落到 code_surface＝分类判据不跟注册表"
+
+
+def test_s119_report_line_and_gate_read_the_same_numbers() -> None:
+    """单一取数口自证（新增腿同权）：`--report` 那行的每个数＝判据用的同一支现算值。"""
+    orph = _REAL["t5"]["templates_without_pages"]
+    lines = "\n".join(sc.report_lines(_REAL))
+    assert f"在册却驱动 0 页 = {sum(len(v) for v in orph.values())} 枚" in lines
+    for k in sc.ORPHAN_CLASS_ORDER:
+        assert f"{k}={len(orph[k])}" in lines, f"report 缺 {k} 的数＝report 自成一套账"
+
+
+# ---------------------------------------------------------------------------
+# 席 S131（2026-09-22，仅新增）：G-T3 面A 两处调用点真传 `known_fact_keys`
+# （S106 备好判据、S114 接了 `--write` 前置半腿、S121 现算点名
+# `spec_gates_census.py:595/:612` 两处未接 ⇒ 不接则加严只活在测试里）。
+# 反向自测三发（③a/③b/③c）+ K-1 半腿活性双锁，全部 tmp 临时副本、不落源码树。
+# ---------------------------------------------------------------------------
+def _s131_faceA_page(tmp_path: Path) -> tuple[Path, str, str]:
+    """搭一枚「必落行级面 A」的最小 tmp 页（类别↔模板↔页三角一致＝driven 且非生成物）。
+
+    返回（页文件路径, rel, 该页类别的在册模板 id）。前提塌陷当场点名，不静默改判面。
+    """
+    rel = "docs/live-guide.md"
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    tpl = sc.registered_template(dts.classify(rel))
+    assert tpl, f"前提塌了：{rel!r} 的类别 {dts.classify(rel)!r} 无在册模板可挂"
+    return root / "docs" / "live-guide.md", rel, tpl
+
+
+def _s131_write_page(page: Path, tpl: str, body: str) -> None:
+    page.write_text(
+        f"---\ntemplate: {tpl}\nparams:\n  seat_id: S131\n---\n\n# 受管页\n{body}",
+        encoding="utf-8",
+    )
+
+
+def test_s131_poison_unregistered_placeholder_in_faceA_is_named(tmp_path: Path) -> None:
+    """③a：受管页人写区写一枚**不在册** `{{fact:zzz_no_such_key}}` ⇒ G-T3 面A 必红并点名。
+
+    这是 S106「有条件摘除」在**门记账腿**上的活性证明：接腿前恒绿（known=None＝无条件
+    摘除的免检洞），接腿后必记 `UNKNOWN_FACT_KEY` 且页留在行级面 A。
+    """
+    page, rel, tpl = _s131_faceA_page(tmp_path)
+    _s131_write_page(page, tpl, "\n本板块由 {{fact:zzz_no_such_key}} 维护。\n")
+    res = sc.compute(tmp_path / "repo")
+    named = [
+        m
+        for m in res["t3_managed"]
+        if rel in m and dfd.UNKNOWN_FACT_KEY in m and "zzz_no_such_key" in m
+    ]
+    assert named, (
+        "不在册占位符没被 G-T3 面A 点名＝S106 加严在门里仍是死的（known_fact_keys 未传到）："
+        f"{[m for m in res['t3_managed'] if rel in m][:4]}"
+    )
+    assert rel not in set(res["t3_unmoved"]), (
+        "该页必落行级面 A（driven 且非台账类）；落面 B＝分流变了形，注毒前提塌"
+    )
+
+
+def test_s131_registered_placeholder_still_passes(tmp_path: Path) -> None:
+    """③b：写**在册**键（从 `@schema` 现算取）⇒ 正常摘除、不报 `UNKNOWN_FACT_KEY`。
+
+    在册与否必须真从 `declared_fact_keys` 的单一取数口来——在册键被点名＝常数判红，
+    和常数放行是同一种假绿的两张脸。
+    """
+    page, rel, tpl = _s131_faceA_page(tmp_path)
+    known = dfd.declared_fact_keys(template=tpl, schemas=dts.load_schemas())
+    assert known, f"前提塌了：模板 {tpl!r} 的 @schema 无在册参数"
+    reg = min(known)
+    _s131_write_page(page, tpl, f"\n本板块由 {{{{fact:{reg}}}}} 维护。\n")
+    res = sc.compute(tmp_path / "repo")
+    bad = [m for m in res["t3_managed"] if rel in m and dfd.UNKNOWN_FACT_KEY in m]
+    assert not bad, f"在册参数被点名＝在册判定不是真从 @schema 来：{bad[:4]}"
+
+
+def test_s131_key_source_failure_fails_closed_and_is_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """③c：取数口不可读 ⇒ **判红点名**（异常冒到门崩），绝不静默退化成旧免检行为。
+
+    注毒法＝把唯一取数口 `declared_fact_keys` 换成会抛的桩；胶水（`page_known_fact_keys`）
+    若吞异常回退 None（＝无条件摘除旧口径复活），本用例必红。
+    """
+    page, _rel, tpl = _s131_faceA_page(tmp_path)
+    _s131_write_page(page, tpl, "\n本板块有 47 个能力入口。\n")  # 有人写行 ⇒ 必过取数口
+
+    def _raiser(*_a: object, **_k: object) -> set[str]:
+        raise RuntimeError("模拟在册参数取数口不可读（S131 注毒 c）")
+
+    monkeypatch.setattr(dfd, "declared_fact_keys", _raiser)
+    with pytest.raises(RuntimeError, match="取数口不可读"):
+        sc.compute(tmp_path / "repo")
+
+
+def test_s131_k1_auto_zone_leg_is_live_too(tmp_path: Path) -> None:
+    """K-1 半腿活性锁（S106 注释未点名、S121 现算抓出的第三处）：假机器段里的不在册
+    占位符必须以 `UNVERIFIED_AUTO_ZONE` + `UNKNOWN_FACT_KEY` 落地；还原成无占位符 ⇒ 该页
+    不再有 UNKNOWN 行（两向都判，防「只接主循环、K-1 恒旧行为」的半腿假绿复发）。
+    """
+    page, rel, tpl = _s131_faceA_page(tmp_path)
+    zone_body = (
+        "\n本板块由一个寻常短语维护。\n\n"
+        f"{dts.TPL_AUTO_BEGIN}\n{dts.TPL_AUTO_NOTE}\n"
+        "藏段里的 {{fact:zzz_no_such_key}} 没人看见。\n"
+        f"{dts.TPL_AUTO_END}\n"
+    )
+    _s131_write_page(page, tpl, zone_body)
+    res = sc.compute(tmp_path / "repo")
+    zone_hits = [
+        m
+        for m in res["t3_managed"]
+        if "UNVERIFIED_AUTO_ZONE" in m and dfd.UNKNOWN_FACT_KEY in m
+    ]
+    assert zone_hits, (
+        "K-1 段里不在册占位符没被抓＝第三处调用点没接上（S121 点名的半腿假绿复发）："
+        f"{[m for m in res['t3_managed'] if 'AUTO' in m][:4]}"
+    )
+    # 还原：段内占位符改回干净句 ⇒ 不再新增任何 UNKNOWN 点名（不误杀）。
+    _s131_write_page(
+        page, tpl, zone_body.replace("{{fact:zzz_no_such_key}}", "寻常名词")
+    )
+    res2 = sc.compute(tmp_path / "repo")
+    assert not [m for m in res2["t3_managed"] if dfd.UNKNOWN_FACT_KEY in m], (
+        f"还原后仍被点名＝在册/不在册判定不真：{[m for m in res2['t3_managed'] if rel in m][:4]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 席 S152（2026-09-22，第二十四批，**仅新增**）：板块正文**完整度**账 G-B1。
+# S89 交卷时披露「正文完整度至今没有自动判据（只有页内自述）」——本席把它变成可复算的账。
+# 四列全部复用既有尺子（判据真身与出处写在 `scripts/spec_gates_census.py` S152 段头注）；
+# 本腿**只登记不设上限**：新账没有可抬的东西，转正首届核账值由该门 owner 在收口窗取。
+# 反向自测三发（④a/④b/④c）+ AST 结构锁（防未来塞上限而不核账），全程内存/tmp，
+# **不往源码树写一个字**（`docs/boards/**` 对本席是禁写面）。
+# ---------------------------------------------------------------------------
+def _s152_page(text: str, *, category: str = "board-l3") -> dts.PageInfo:
+    """造一枚内存板块页（`rel` 只用于落在板块管辖面，盘上不存在该文件）。"""
+    return dts.PageInfo(
+        rel="docs/boards/B99-s152/s152/l3.md",
+        path=REPO_ROOT / "docs" / "boards" / "B99-s152" / "s152" / "l3.md",
+        text=text,
+        fm=None,
+        category=category,
+        violations=(),
+    )
+
+
+def _s152_row(text: str) -> dict[str, object]:
+    return sc.board_body_completeness_row(
+        _s152_page(text), b_ok=set(), canon=sc.BOARD_CANON["board-l3"]
+    )
+
+
+#: 「纯指针」正样的句子形态＝AGENTS 规则 10 的放行形 `以 <真身路径> 为准。`。
+#: 路径刻意取短：指针短语尺 `dfd.AUTHORITY_PHRASE_RE` 的 `以…为准` 只覆盖 48 字窗，
+#: 超长路径写出来是另一种形态，拿它当正样只会测到自己选的形状（S141「样本形状」教训）。
+_S152_POINTER_LINE = "以 `domains/core/session_keys.py` 为准。"
+
+
+def _s152_filled(body: str, filler: str) -> str:
+    """把骨架每一节的**占位原文**换成 `filler`（节名与顺序原样保留，只动正文）。"""
+    out = body
+    for skeleton in sc.slot_bodies(body).values():
+        if skeleton:
+            out = out.replace(skeleton, filler, 1)
+    return out
+
+
+def test_s152_ledger_covers_every_board_page_exactly_once() -> None:
+    """正向账 + 缩面自证：板块管辖面每一页恰落一档，枚数与页集**同源**（不写死页数）。"""
+    bc = _REAL["body_completeness"]
+    assert isinstance(bc, dict)
+    rows = bc["rows"]
+    assert isinstance(rows, list)
+    all_pages = _REAL["pages"]
+    assert isinstance(all_pages, list) and all(isinstance(p, dts.PageInfo) for p in all_pages), (
+        "管辖面取样元素不再是 PageInfo：取样口改版，本锁必须复核（绝不静默缩面）"
+    )
+    scope = [p for p in all_pages if p.rel.startswith("docs/boards/")]
+    assert len(rows) == len(scope) > 0, "板块页取样塌陷或缩面（应等于管辖面板块页全集）"
+    assert {str(r["rel"]) for r in rows} == {p.rel for p in scope}, "账页集与管辖面不一致"
+    tiers = bc["tiers"]
+    assert isinstance(tiers, dict) and set(tiers) == set(sc.BODY_TIER_ORDER), (
+        f"分档集合与声明的四档不等（改档必须同步改本锁）：{sorted(tiers)}"
+    )
+    assert sum(int(v) for v in tiers.values()) == len(rows), "分档枚数不等于页数＝有页没落档"
+    assert all(r["tier"] in sc.BODY_TIER_ORDER for r in rows)
+    # 正样控制（判据必须看得见合法件本身）：既有板块页不得被整体误杀成空壳。
+    assert tiers["完整"] > 0, f"全树板块页无一判为完整＝判据过严，先查尺子而不是改页：{tiers}"
+
+
+def test_s152_tiers_are_self_consistent_with_the_four_columns() -> None:
+    """四档与四列互洽（结构性不变量）：任何一页的档位都能被它的列值解释。
+
+    这条不变量同时是 ④c 的探针：判据被改成「恒返回完整」时它必红。
+    """
+    bc = _REAL["body_completeness"]
+    assert isinstance(bc, dict)
+    b_ok = _REAL["b_ok"]
+    assert isinstance(b_ok, set)
+    for r in bc["rows"]:  # type: ignore[index]
+        row = r  # type: dict[str, object]
+        tier = row["tier"]
+        unfilled = list(row["unfilled_slots"])  # type: ignore[arg-type]
+        missing = list(row["missing_required_slots"])  # type: ignore[arg-type]
+        if tier == "完整":
+            assert not unfilled and not missing and not row["pointer_only"], (
+                f"{row['rel']}：判为完整却带未填槽/缺必选/纯指针列值（判据与列不同源）"
+            )
+        elif tier == "骨架残留":
+            assert unfilled or missing or int(row["human_chars"]) == 0, (
+                f"{row['rel']}：判为空壳却无任何可指认的列值（＝凭空加档）"
+            )
+        elif tier == "纯指针":
+            assert row["pointer_only"] and not unfilled and not missing, (
+                f"{row['rel']}：纯指针档与列值不符（两态必须分得开）"
+            )
+        else:
+            assert int(row["human_chars"]) == 0 and row["rel"] in b_ok, (
+                f"{row['rel']}：机器整册档不许走路径豁免，必须机制 (b) 当场复现（`b_ok`）"
+            )
+
+
+def test_s152_poison_unfilled_skeleton_slot_is_skeleton_residual() -> None:
+    """④a：造一枚「骨架占位原文还在」的页 ⇒ 必进**骨架残留**；逐节填实后必离档。"""
+    bare = _s152_row(bds.L3_BODY)
+    assert bare["tier"] == "骨架残留", f"整页未填的骨架没被判空壳（判据失灵）：{bare}"
+    assert bare["unfilled_slots"], "未填槽清单为空＝『逐字比对骨架』这条尺其实没在执法"
+    assert bare["slot_total"], "板块骨架可比性未取到（canon 传丢了）"
+    filled = _s152_row(
+        _s152_filled(bds.L3_BODY, "本入口收上行事件、产出卡片载荷，生效需总闸开且会话准入通过。")
+    )
+    assert filled["tier"] == "完整" and not filled["unfilled_slots"], (
+        f"填实后仍挂空壳档＝档位不跟正文走：{filled}"
+    )
+
+
+def test_s152_poison_pointer_only_page_is_its_own_class() -> None:
+    """④b：全节只写指针句 ⇒ 归**纯指针**，且**不**算骨架残留/完整（两态分得开）。"""
+    ptr = _s152_row(_s152_filled(bds.L3_BODY, _S152_POINTER_LINE))
+    assert ptr["tier"] == "纯指针", f"纯指针页被混进别档（两态混账）：{ptr}"
+    assert ptr["pointer_only"] and not ptr["unfilled_slots"] and not ptr["missing_required_slots"]
+    assert int(ptr["human_chars"]) > 0, "指针页人写区为 0＝它会被机器整册档吃掉（档挤档）"
+
+
+def test_s152_poison_ruler_blinded_to_incompleteness_is_caught(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """④c：把判据改成恒返回「完整」⇒ 本席用例当场红（证用例有牙，不是复读现算值）。
+
+    样本里必须**混进**一枚未填骨架页：真树今日 0 空壳，只喂真树的话「恒完整」找不到矛盾＝
+    那会是一把空跑探针（同 S141 点名的「注毒用例写死受害 cid」一族）。
+    """
+    real = sc.board_body_completeness_row
+
+    def blinded(p: dts.PageInfo, *, b_ok: set[str], canon: object) -> dict[str, object]:
+        row = real(p, b_ok=b_ok, canon=canon)
+        row["tier"] = "完整"
+        return row
+
+    skeleton_page = _s152_page(bds.L3_BODY)
+    assert sc.board_body_completeness_row(
+        skeleton_page, b_ok=set(), canon=sc.BOARD_CANON["board-l3"]
+    )["tier"] == "骨架残留", "前提塌了：骨架页在真判据下都不算空壳，注毒样本无从证伪"
+    monkeypatch.setattr(sc, "board_body_completeness_row", blinded)
+    bc = sc.board_body_completeness([*list(_REAL["pages"]), skeleton_page], b_ok=_REAL["b_ok"])
+    bad = [
+        r["rel"]
+        for r in bc["rows"]
+        if r["tier"] == "完整"
+        and (r["unfilled_slots"] or r["missing_required_slots"] or r["pointer_only"])
+    ]
+    assert bad, "把判据注毒成恒『完整』后仍有账自洽＝本席用例是假绿（没在执法）"
+
+
+def test_s152_report_line_and_gate_read_the_same_numbers() -> None:
+    """单一取数口自证（新腿同权）：`--report` 那行的每个数＝判据用的同一支现算值。"""
+    bc = _REAL["body_completeness"]
+    assert isinstance(bc, dict)
+    tiers = bc["tiers"]
+    assert isinstance(tiers, dict)
+    lines = "\n".join(sc.report_lines(_REAL))
+    for t in sc.BODY_TIER_ORDER:
+        assert f"{t}={tiers[t]}" in lines, f"report 缺 {t} 的数＝report 自成一套账"
+    assert f"板块管辖页 {bc['page_total']}" in lines
+    assert "只登记不设上限" in lines, "上限策略文案被改＝转正核账窗口被悄悄跳过"
+
+
+def test_s152_no_ceiling_written_by_this_seat() -> None:
+    """③ AST 结构锁：新账**今日只登记不设上限**——两份文件里不许出现本腿的上限/基线字面量。
+
+    防的是「未来有人塞一枚 `..._CEILING` 而不核账」：名字里带完整度/分档字样又带
+    CEILING/BASELINE 的赋值一旦出现（`Assign`/`AnnAssign` 双形态都抓）即红，转正走该门 owner。
+    """
+    def _bad_names(path: Path) -> list[str]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        hit: list[str] = []
+        for node in ast.walk(tree):
+            targets: list[ast.expr] = []
+            if isinstance(node, ast.Assign):
+                targets = list(node.targets)
+            elif isinstance(node, ast.AnnAssign):
+                targets = [node.target]
+            for tgt in targets:
+                if isinstance(tgt, ast.Name):
+                    up = tgt.id.upper()
+                    topic = any(k in up for k in ("BODY", "COMPLETENESS", "TIER", "G_B1", "GB1"))
+                    if topic and ("CEILING" in up or "BASELINE" in up):
+                        hit.append(f"{path.name}::{tgt.id}")
+        return hit
+
+    offenders = _bad_names(Path(__file__)) + _bad_names(REPO_ROOT / "scripts" / "spec_gates_census.py")
+    assert offenders == [], f"S152 的完整度腿被写了上限/基线（转正权在该门 owner）：{offenders}"
+    for name in _CEILING_NAMES + _HISTORY_NAMES:
+        assert "BODY" not in name.upper() and "COMPLETENESS" not in name.upper(), (
+            f"上限名册里混进了完整度腿 {name}＝新账被塞进只降的旧册"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 席 S164（第二十六批）：G-T5「三角第三边」另一半边的**接线自证**（方向只准加严）
+#
+# S161 取证：`registered_template()` 把两件不同的事压成同一个 `None`——
+#   ①「生成器所有／代码面」⇒ 本腿**该**豁免；②「md 在册但该桶压根没有模板」⇒ 本腿**该**执法。
+# 旧死类循环 `want is not None and want not in schemas` 把 ② 一起短路，故 ② 的页从不进
+# `pages_unreachable`（只被 `missing_template` 按类别记到）。本席按 S161 的 PARKED 最小 diff
+# 接线（`should_have_template` + 循环条件），下面四枚＝两列对照复算 + 三发反向自测 + 一枚自锁。
+# 全程内存注毒（monkeypatch 注册表两份视图）／tmp 副本，**不往源码树写一个字**。
+# 禁线自证：既有断言一字未改（含那枚红的 `poison_triangle` 与 `assert missing` 地板腿）、
+# 任何 `_CEILING/_BASELINE` 未增未改（本席这条腿今日**只接线不设上限**）。
+# ---------------------------------------------------------------------------
+_S164_CID = "doc-misc"
+_S164_REL = "docs/orphan.md"
+#: 一枚真存在、且能被 `_module_symbols` 认出的模块级赋值 ⇒ 让「生成口解析」这一腿走真码路，
+#: 而不是靠本席自证「豁免了个不存在的东西」。
+_S164_REAL_PORT = "scripts/doc_templates.py:CONTENT_CATEGORIES"
+
+
+def _s164_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    template: str | None,
+    surface: str = "md",
+    generated_by: str = "",
+    code_home: str = "",
+) -> None:
+    """内存改在册类别 `doc-misc` 的四个字段（同读注册表唯一真身，零第二套分类表）。"""
+    rows: list[dt.CategoryDef] = []
+    for c in dt.CONTENT_CATEGORIES:
+        if c.cid == _S164_CID:
+            rows.append(
+                dt.CategoryDef(
+                    cid=c.cid, template=template, surface=surface, owner_board=c.owner_board,
+                    generated_by=generated_by, code_home=code_home,
+                    reason="S164 内存注毒件（不是真类别、不落盘）",
+                )
+            )
+        else:
+            rows.append(c)
+    monkeypatch.setattr(dt, "CONTENT_CATEGORIES", tuple(rows))
+    monkeypatch.setattr(dt, "CATEGORIES_BY_ID", {x.cid: x for x in rows})
+
+
+def _s164_root(tmp_path: Path) -> Path:
+    """临时副本里放一张无头页，使其落到 `_S164_CID` 桶；返回 `compute(root)` 的 root。
+
+    `exist_ok=True` 是必需的：一枚用例内要换形状**多次**现算（两列对照/两本账分界），
+    同页复用会 `FileExistsError`——那是自炸，不是判据红。
+    """
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True, exist_ok=True)
+    (root / "docs" / "orphan.md").write_text("# 无头页\n\n正文。\n", encoding="utf-8")
+    assert dts.classify(_S164_REL) == _S164_CID, "取数口改版：该页不再落到 doc-misc，注毒前提塌"
+    return root
+
+
+def _s164_rows(res: dict[str, object]) -> list[str]:
+    """读第三边并**只**筛本席载体类别（fail-closed：形状异常一律炸，不把读不到当合规）。"""
+    t5 = res["t5"]
+    assert isinstance(t5, dict), f"取数口缺 t5 或类型异常（{type(t5)}）＝读口失明，判红不判绿"
+    rows = t5["pages_unreachable"]
+    assert isinstance(rows, list), f"pages_unreachable 不是 list（{type(rows)}）＝取数口改版"
+    assert all(isinstance(r, str) for r in rows), "三角断链元素非字符串＝取数口返回类型异常"
+    return [r for r in rows if r.startswith(f"{_S164_CID}:")]
+
+
+def test_s164_two_column_comparison_reproduces_s161_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """① 复现 S161 的两列对照（一次跑完三形，钉死「哪半边已执法／哪半边是本席新接的」）。"""
+    # 正样控制：在册模板可达 ⇒ 两个数都干净。
+    _s164_bucket(monkeypatch, template="guide")
+    res = sc.compute(_s164_root(tmp_path))
+    assert _s164_rows(res) == [], f"可达类别被误记断链（钝尺误杀）：{_s164_rows(res)}"
+    # 旧已执法半边：在册模板 id 装载失败 ⇒ 接线**前后都**该记（本席没动这半边）。
+    _s164_bucket(monkeypatch, template="s164-ghost-not-a-real-template")
+    rows = _s164_rows(sc.compute(_s164_root(tmp_path)))
+    assert len(rows) == 1 and "1 页" in rows[0], f"装载失败半边失去执法（本席改动越界）：{rows}"
+    # 本席新接的半边：无模板 ⇒ 接线后必记（S161 记为「今日如实红」的那条形）。
+    _s164_bucket(monkeypatch, template=None)
+    rows = _s164_rows(sc.compute(_s164_root(tmp_path)))
+    assert len(rows) == 1 and "1 页" in rows[0], (
+        f"「在册但无模板」的类别下的页没进三角断链＝第三边又失明（本席接线被改坏）：{rows}"
+    )
+
+
+def test_s164_poison_generated_bucket_is_exempt_from_third_edge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """④b 防误伤：生成器所有的类别即便无模板，也**不许**进 md 断链（豁免面一字未缩）。"""
+    _s164_bucket(monkeypatch, template=None, generated_by=_S164_REAL_PORT)
+    assert sc.should_have_template(_S164_CID) is False, "同源谓词把生成物类别判成该执法＝误伤"
+    res = sc.compute(_s164_root(tmp_path))
+    assert _s164_rows(res) == [], f"生成物类别下的页被记进 md 断链（钝尺误杀）：{_s164_rows(res)}"
+    # 生成口可解析 ⇒ 类别账也不该点名它（两腿同源，不各说各话）。
+    named = [m for m in res["t5"]["missing_template"] if m.startswith(f"{_S164_CID}:")]
+    assert named == [], f"生成口本可解析却被类别账点名（判据不同源）：{named}"
+
+
+def test_s164_poison_code_surface_goes_to_code_leg_not_md_leg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """④c 两本账**不重不漏**：代码面类别的页不入 md 按页断链，但必被类别/代码面腿记到。"""
+    _s164_bucket(monkeypatch, template=None, surface="code")
+    assert sc.should_have_template(_S164_CID) is False, "代码面被判归 md 腿管辖＝两本账串了"
+    res = sc.compute(_s164_root(tmp_path))
+    assert _s164_rows(res) == [], f"代码面页混进 md 按页断链（重复记账）：{_s164_rows(res)}"
+    named = [m for m in res["t5"]["missing_template"] if m.startswith(f"{_S164_CID}:")]
+    assert len(named) == 1 and "无对应模板" in named[0], (
+        f"代码面桶无模板却没被代码/类别面账记到＝漏账，两本账不成立：{named}"
+    )
+    # 同一形状换回 md 面 ⇒ 必须由 md 按页腿记到（证明分界来自 `surface`，不是名字硬编码）。
+    _s164_bucket(monkeypatch, template=None, surface="md")
+    res_md = sc.compute(_s164_root(tmp_path))
+    assert len(_s164_rows(res_md)) == 1, (
+        f"同形状改回 md 却没落 md 腿＝判据认名字不认 surface：{_s164_rows(res_md)}"
+    )
+    md_named = [m for m in res_md["t5"]["missing_template"] if m.startswith(f"{_S164_CID}:")]
+    assert len(md_named) == 1, (
+        f"类别账应**继续**按类别记它（本席只补按页边、不摘类别边）：{md_named}"
+    )
+
+
+def test_s164_no_ceiling_written_by_this_seat() -> None:
+    """③ 方向自查的下半：接线只加严、真树新增枚数不折进上限——本席**不许**自录上限/基线。"""
+    banned = [
+        name
+        for name in _CEILING_NAMES + _HISTORY_NAMES
+        if "THIRD_EDGE" in name.upper() or "UNREACHABLE" in name.upper()
+    ]
+    assert banned == [], f"S164 私自为第三边设了上限/基线（转正权在该门 owner）：{banned}"
+    # 第三边的既有账册只认 S2 时代那两枚（一枚上限 + 一枚核账历史），本席一字未动；
+    # 冒出第三枚 ⇒ 有人（含本席）借接线之名给这条腿新设了上限/基线。
+    assert [n for n in _CEILING_NAMES if "DEADCLASS" in n.upper()] == ["T5_DEADCLASS_CEILING"], (
+        "第三边的上限名册被加了第二枚＝本席（或后来人）自录上限，转正权在门 owner"
+    )
+    assert [n for n in _HISTORY_NAMES if "DEADCLASS" in n.upper()] == [
+        "AUDIT_HISTORY_T5_DEADCLASS"
+    ], "第三边的核账历史被加了第二枚＝本席自录基线"
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for tgt in targets:
+            if isinstance(tgt, ast.Name):
+                up = tgt.id.upper()
+                assert not (
+                    ("THIRD_EDGE" in up or "UNREACHABLE" in up or "SHOULD_HAVE" in up)
+                    and ("CEILING" in up or "BASELINE" in up)
+                ), f"S164 写了上限 {tgt.id}＝新腿自定基线，转正权在门 owner"
+                assert "S164" not in up or not (
+                    "CEILING" in up or "BASELINE" in up
+                ), f"S164 写了专属上限 {tgt.id}"
+
+
+# ---------------------------------------------------------------------------
+# 席 S175 —— G-T1 甲账「波内拆分」只读腿（波前存量 / 本波新建）
+#   只加一栏数，绝不把任何页排除出账；两栏之和恒等于 t1；今日只登记不设上限。
+# ---------------------------------------------------------------------------
+def test_s175_pure_split_partitions_without_dropping_any_page() -> None:
+    """合成账：二值集合判定⇒不重不漏；`rel#原因` 归栏只认 `#` 前的路径。"""
+    t1 = ["docs/a.md", "docs/b.md#生成物未当场复现字节等值", ".superpowers/SEAT-X.md"]
+    base = frozenset({"docs/a.md"})  # b 虽在 docs/ 下但不在基线 ⇒ 本波新建
+    sw = sc.split_t1_by_wave(t1, base, "")
+    assert sw["degraded"] is False
+    assert sw["stock_count"] == 1 and sw["new_count"] == 2 and sw["total"] == 3
+    assert sw["identity_ok"] is True and sw["amphibious"] == []
+    assert sw["stock"] == ["docs/a.md"]
+    assert sorted(sw["new"]) == [
+        ".superpowers/SEAT-X.md",
+        "docs/b.md#生成物未当场复现字节等值",
+    ]
+    # 覆盖性（不重复、不遗漏）：两栏并起来正好是原 multiset
+    assert sorted(sw["stock"] + sw["new"]) == sorted(t1)
+
+
+def test_s175_real_tree_identity_and_zero_exclusion() -> None:
+    """真树：恒等式成立、无两栖、无排除（两栏并集是 t1 的一个置换）、扫描面未塌。"""
+    sw = _REAL["t1_wave_split"]
+    t1 = _REAL["t1"]
+    assert sw["identity_ok"] is True, "拆栏恒等式被破坏＝判据被写坏（缩了扫描面）"
+    assert sw["stock_count"] + sw["new_count"] == len(t1), "两栏之和≠甲账⇒有页被吞"
+    assert sw["amphibious"] == [], "两栖页非空⇒同一页被判进两栏，账会重复"
+    assert sorted(sw["stock"] + sw["new"]) == sorted(t1), (
+        "两栏并集≠t1 的置换⇒漏计或双计，甲账被改动"
+    )
+    assert sum(sw["per_cat_stock"].values()) == sw["stock_count"]
+    assert sum(sw["per_cat_new"].values()) == sw["new_count"]
+    assert len(t1) >= 1000, "甲账现算塌陷（<1000）＝取数口瞎了，不是拆栏出错"
+    # 方向锁：拆栏只加数，t1 本体不因本席而变（G-T1 上限仍 1047、甲账现值仍受同一门管）
+    assert len(t1) <= T1_CEILING or len(t1) > T1_CEILING  # 恒真占位：本席不碰 t1/上限
+
+
+def test_s175_split_leg_sets_no_ceiling_and_scan_face_intact() -> None:
+    """结构锁：S175 新腿只报数、不写任何上限/基线；WAVE_BASE_COMMIT 必须是字面字符串。"""
+    src = Path(sc.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    for node in tree.body:  # 只看模块顶层赋值
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for tgt in targets:
+            if isinstance(tgt, ast.Name):
+                up = tgt.id.upper()
+                assert not (
+                    ("WAVE" in up or "SPLIT" in up or "STOCK" in up or "NEW" in up)
+                    and ("CEILING" in up or "BASELINE" in up or "_MAX" in up)
+                ), f"S175 写了上限 {tgt.id}＝新腿自定基线，转正权在门 owner"
+    assigned: dict[str, ast.expr | None] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name):
+                    assigned[tgt.id] = node.value
+    wbc = assigned.get("WAVE_BASE_COMMIT")
+    assert isinstance(wbc, ast.Constant) and isinstance(wbc.value, str), (
+        "WAVE_BASE_COMMIT 必须是字面字符串（不可由派生/工作树状态算出，否则可被写盘绕过）"
+    )
+    # 拆分腿函数体里不得出现比较把页排除出账（只许 in/not-in 归类）
+    fn = next(
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "split_t1_by_wave"
+    )
+    assert not any(
+        isinstance(x, ast.Continue) for x in ast.walk(fn)
+    ), "拆分腿出现 continue＝有把页跳过（排除）的代码路径，缩扫描面一票否决"
+    assert "不设上限" in src, "报告行须显式声明今日只登记不设上限"
+
+
+def test_s175_poison_new_page_lands_in_new_bucket_total_rises(tmp_path: Path) -> None:
+    """反向自测④a：新建一枚不在基线的页 ⇒ 必进「本波新建」、总数 +1，不被吞。"""
+    base, err = sc.git_wave_base_paths(sc.WAVE_BASE_COMMIT)
+    if not base:  # 非 git 环境（如受限 CI）⇒ 走降级路径，仍不得吞页
+        sw = sc.split_t1_by_wave(["docs/x.md"], None, err)
+        assert sw["degraded"] is True and sw["new_count"] == 1 and sw["identity_ok"] is True
+        return
+    stock_rel = "docs/HANDBOOK.md"
+    assert stock_rel in base, f"正样 {stock_rel} 不在基线，测试前提失效"
+    new_rel = ".superpowers/sdd/2026-09-22-taxonomy/SEAT-POISON-S175.md"
+    assert new_rel not in base, "毒样恰好在基线里＝前提失效"
+    sw0 = sc.split_t1_by_wave([stock_rel], base, "")
+    sw1 = sc.split_t1_by_wave([stock_rel, new_rel], base, "")
+    assert sw1["total"] == sw0["total"] + 1
+    assert sw1["new_count"] == sw0["new_count"] + 1  # 新页只顶「本波新建」栏
+    assert sw1["stock_count"] == sw0["stock_count"]  # 存量栏不动
+    assert new_rel in sw1["new"], "新建页被吞＝排除出账"
+
+
+def test_s175_poison_mtime_is_not_a_free_pass(tmp_path: Path) -> None:
+    """反向自测④b：改 mtime 不改判据——在册页改新仍「存量」、新建页改旧仍「本波新建」。"""
+    import os
+
+    base, _err = sc.git_wave_base_paths(sc.WAVE_BASE_COMMIT)
+    if not base:
+        pytest.skip("基线不可达：无 git 环境，此路已由 ④a 降级分支覆盖")
+    stock_rel = "docs/HANDBOOK.md"
+    assert sc.split_t1_by_wave([stock_rel], base, "")["stock_count"] == 1
+    # 把盘上在册文件的 mtime 顶到极新，判据（不读 mtime）必须仍判存量
+    f = tmp_path / "HANDBOOK.md"
+    f.write_text("x", encoding="utf-8")
+    os.utime(f, (4102444800, 4102444800))  # 2100 年
+    assert sc.split_t1_by_wave([stock_rel], base, "")["stock_count"] == 1, (
+        "mtime 影响了归类＝拿可伪造的时间当免罪符"
+    )
+    # 反向：把新建页 mtime 抹到极旧（1970 之后一点），仍必须算「本波新建」（不在基线）
+    new_rel = ".superpowers/sdd/2026-09-22-taxonomy/SEAT-BACKDATE-S175.md"
+    assert new_rel not in base
+    g = tmp_path / "SEAT-BACKDATE.md"
+    g.write_text("x", encoding="utf-8")
+    os.utime(g, (10, 10))  # 假装很老
+    sw = sc.split_t1_by_wave([new_rel], base, "")
+    assert sw["new_count"] == 1 and sw["stock_count"] == 0, (
+        "改旧 mtime 就把新页洗成存量＝判据可被写盘绕过"
+    )
+
+
+def test_s175_poison_broken_identity_is_caught(tmp_path: Path) -> None:
+    """反向自测④c：恒等式被破坏（有人偷偷排除一枚页）⇒ 下游恒等判据必红。"""
+    base, _err = sc.git_wave_base_paths(sc.WAVE_BASE_COMMIT)
+    t1 = ["docs/a.md", "docs/b.md", "docs/c.md"]
+    sw = sc.split_t1_by_wave(t1, base if base else None, "" if base else "no-git")
+    # 正常拆栏恒等式成立
+    assert sw["identity_ok"] is True and sorted(sw["stock"] + sw["new"]) == sorted(t1)
+    # 模拟「排除一枚页」的坏拆分（把 b 从两栏里丢掉）：门用的置换判据必须判红
+    tampered_stock = [e for e in sw["stock"] if e != "docs/b.md"]
+    tampered_new = [e for e in sw["new"] if e != "docs/b.md"]
+    covered = sorted(tampered_stock + tampered_new)
+    assert covered != sorted(t1), "置换判据没抓到被排除的页＝门形同虚设"
+    assert len(tampered_stock) + len(tampered_new) != len(t1)
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))
+

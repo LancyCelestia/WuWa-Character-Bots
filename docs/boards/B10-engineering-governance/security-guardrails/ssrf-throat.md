@@ -6,7 +6,7 @@
 ## B10.security-guardrails · 下载入口与落点双查
 
 - 层级：一级 B10 → 二级 security-guardrails → 三级 `ssrf-throat`
-- 实现落点：`plugins/bot_unified_runtime/domains/core/credentials`、`plugins/bot_unified_runtime/security`
+- 实现落点：`plugins/bot_unified_runtime/domains/core/credentials`、`plugins/bot_unified_runtime/security`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/database_broker.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

@@ -27,6 +27,7 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.files.sources.downloader import DownloadOutcome
 from plugins.bot_unified_runtime.domains.ops.monitor.alerts import (
     AdminTarget,
     build_admin_alert_send_request,
@@ -39,7 +40,6 @@ from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
     FinalTransferError,
 )
 from plugins.bot_unified_runtime.sender.nonebot import send_nonebot_message
-from plugins.bot_unified_runtime.sources.downloader import DownloadOutcome
 
 # 长度钉在 48 字节内：nonebot 侧 kind/safe_summary 取 str(exc)[:48]，
 # 两种敏感形态（URL userinfo + 裸键值对）都必须完整落在截断窗口内。

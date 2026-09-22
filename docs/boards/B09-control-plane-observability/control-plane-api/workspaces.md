@@ -51,11 +51,11 @@
 
 - `bot_control_plane_workspaces_db`：非空才装配；空 → `build_workspace_service`
   返回 None → 整组端点 503 `workspace_unavailable`。**需重启**。
-- 限额（构造期固定，非配置键）：TTL 86400 秒（可用范围 60–86400）、单次生成超时
-  120 秒（0–300）、单主体最多 20 个工作区、单工作区最多 100 轮、单条消息 ≤16000 字、
-  工作区序列化上限 512000 字节、preview artifact ≤128000 字节、reply ≤32000 字、
-  prompt 预算 64000 字、输出预算 2048 token（上限 131072）。
-- 确认令牌：preview 成功才签发（`secrets.token_urlsafe(32)`，只存哈希，TTL 300 秒），
+- 限额（构造期固定，非配置键；数值全部以该服务的构造常量为准，本文不写死）：工作区
+  令牌 TTL 与可用范围、单次生成超时、单主体工作区数、单工作区轮数、单条消息字数、
+  工作区序列化上限字节、preview artifact 字节上限、reply 字数上限、
+  prompt 与输出 token 预算（输出预算另有封顶）。
+- 确认令牌：preview 成功才签发（`secrets.token_urlsafe(32)`，只存哈希，TTL 以该件常量为准），
   `/send` 必须带 `confirmation_token` + `idempotency_key` + `expected_version`；
   消费一次后 token_hash 立即清空，不可复用。
 - 过期清理由 app lifespan 的 `prune_workspaces` 周期任务承担，`create` 时也会顺手 prune。
@@ -76,7 +76,7 @@
 其余：sandbox 生成失败 502 `workspace_generation_failed`（明确带"未触发真实发送"）、
 生成超时/取消 → 回执状态记 `unknown` 并 503 `workspace_send_unknown`
 （「请按回执核查，勿重新发送」）、provider 协议不支持 → 503
-`workspace_provider_unsupported`、人格源缺失或超 256000 字 → 503 `persona_unavailable`、
+`workspace_provider_unsupported`、人格源缺失或超过字节上限 → 503 `persona_unavailable`、
 资料 id 未登记 → 404 `resource_not_found`、模型选择命中 0 或 >1 → 422
 `model_selection_required`、请求 `none/minimal` 推理强度 → 422
 `model_parameter_unsupported`（不静默忽略 provider 不支持的参数）。
@@ -89,4 +89,4 @@
 （人格注入边界、资料不可信、工具调用禁用、预算）。
 真机（开总开关 + 配 workspaces_db + 重启）：建 sandbox 区 → 加消息 → preview
 → 用返回令牌 send，预期回执 `state="simulated"`（**不是 queued**，simulated 就是
-sandbox 的正确终态）；再用同一库确认 `data/media_archive`、生产记忆、好感库零变化。
+sandbox 的正确终态）；再用同一库确认媒体归档目录（路径以 `config.py` 的路径键为准）、生产记忆、好感库零变化。

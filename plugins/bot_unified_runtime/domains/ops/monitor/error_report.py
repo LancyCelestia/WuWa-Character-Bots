@@ -849,10 +849,12 @@ def render_error_card_png(
     经 runtime_paths 重映射）；测试注入 tmp 目录，避免源码树 data/ 残留。
     """
     try:
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
+            prune_prefixed,
+        )
         from plugins.bot_unified_runtime.output.card_render.bridge import (
             render_error_card_html,
         )
-        from plugins.bot_unified_runtime.runtime.cache_policy import prune_prefixed
 
         html = render_error_card_html(report)
         renderer = backend if backend is not None else _get_render_backend()

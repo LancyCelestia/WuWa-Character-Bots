@@ -644,8 +644,12 @@ def test_is_reminder_command_followup_shapes_gated_by_pending(
 def test_checkoff_ambiguous_ordinal_covers_note_todo(tmp_path, monkeypatch) -> None:
     """审查 A-11：歧义候选来自提醒+笔记待办混合时，序号也能勾笔记条目。"""
     import plugins.bot_unified_runtime.domains.schedule.store.reminders as reminders_mod
-    from plugins.bot_unified_runtime.character import notes_store as notes_store_mod
-    from plugins.bot_unified_runtime.character.notes_store import reset_stores_for_tests
+    from plugins.bot_unified_runtime.domains.notes.store import (
+        notes_store as notes_store_mod,
+    )
+    from plugins.bot_unified_runtime.domains.notes.store.notes_store import (
+        reset_stores_for_tests,
+    )
 
     monkeypatch.setattr(reminders_mod, "_STORES", {})
     reset_stores_for_tests()

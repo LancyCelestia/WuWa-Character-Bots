@@ -23,12 +23,12 @@
   方法 `snapshot(now=None)` → `BotMood`、`apply_event(...)`（钳位 + 速率帽）、
   `observe_interaction(...)`（把行为标签与情绪标签映射成小幅增量后交给 apply_event）、
   `describe(mood)`（**无数字**的自然语言描述）、`willingness_factor(mood)`（乘性系数）。
-- 情绪标签来源：`character/emotion.py:build_emotion_provider`（规则式
+- 情绪标签来源：`domains/chat_reply/character/emotion.py:build_emotion_provider`（规则式
   `RuleBasedEmotionProvider`，识别 support_needed / lonely / frustrated /
   help_seeking / low_energy 等），与行为标签 `classify_behavior` 同池喂给心情。
 - 消费方：`character/providers.py:build_character_context_provider` 把 `describe` 结果
   放进 `ContextBundle.mood_description`；主动搭话概率与表情档位读取
-  `willingness_factor`（准入门与限流在 B02 的 `policy/gate.py`，本层不做门）。
+  `willingness_factor`（准入门与限流在 B02 的 `domains/chat_reply/policy/gate.py`，本层不做门）。
 - 心情还反哺好感：`character/affinity.py:state_factor_from_valence` 读取当前 valence
   作为调制因子——是**乘性调制**，不是「心情差就扣分」。
 
@@ -38,7 +38,7 @@
 `bot_mood_half_life_minutes`（回归速度）、`bot_mood_baseline_arousal`（基线）、
 `bot_mood_rate_cap_per_hour`（任意一小时窗口内已施加的 valence 增量绝对值之和上限）。
 缺省数值以 `config.py` 与 `docs/config-catalog-full.md` 为准，本文不复述（改一行配置
-就会过期的数字不写进叙述文档，规则见 `AGENTS.md` 第一部分第 10 条）。
+就会过期的数字不写进叙述文档，规则见 `AGENTS.md` 第一部分的计数指针条款）。
 超帽的处理是**截断而不是整次拒绝**：本次实际施加量 = 剩余额度，只对 valence 记账
 （arousal 单项增量本身很小，无围攻放大效应，不占额度）。
 

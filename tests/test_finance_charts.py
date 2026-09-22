@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.sources.finance_chart import (
+from plugins.bot_unified_runtime.domains.finance.data.finance_chart import (
     _box_stats,
     box_plot_svg,
     daily_returns,

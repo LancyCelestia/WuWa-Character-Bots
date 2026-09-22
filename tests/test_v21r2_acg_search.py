@@ -8,9 +8,13 @@ from types import SimpleNamespace
 import pytest
 
 from plugins.bot_unified_runtime.domains.core.contracts.character import WebSearchHit
-from plugins.bot_unified_runtime.sources import acg_search
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
-from plugins.bot_unified_runtime.sources.search_intent import detect_acg_intent
+from plugins.bot_unified_runtime.domains.core.search import acg_search
+from plugins.bot_unified_runtime.domains.core.search.search_intent import (
+    detect_acg_intent,
+)
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+)
 
 TODAY = date(2026, 9, 17)
 

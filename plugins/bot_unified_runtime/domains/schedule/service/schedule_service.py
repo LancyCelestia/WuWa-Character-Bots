@@ -230,7 +230,9 @@ class ScheduleService:
         days = horizon_days or self.horizon_days
         window_end = local_today + timedelta(days=days)
 
-        from plugins.bot_unified_runtime.runtime.schedule_rrule import iter_rule_dates
+        from plugins.bot_unified_runtime.domains.schedule.service.schedule_rrule import (
+            iter_rule_dates,
+        )
 
         return {
             rule.rule_id: [d.isoformat() for d in iter_rule_dates(rule, local_today, window_end)]
@@ -273,7 +275,7 @@ class ScheduleService:
         rule_index = {r.rule_id: r for r in plan.rules}
         task_index = {t.task_id: t for t in plan.tasks}
 
-        from plugins.bot_unified_runtime.runtime.schedule_rrule import (
+        from plugins.bot_unified_runtime.domains.schedule.service.schedule_rrule import (
             occurrence_identity,
             resolve_local,
         )

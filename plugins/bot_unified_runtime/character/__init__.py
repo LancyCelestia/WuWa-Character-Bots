@@ -1,11 +1,11 @@
-from .addressing import build_addressing_context
-from .emotion import (
+from ..domains.chat_reply.character.addressing import build_addressing_context
+from ..domains.chat_reply.character.emotion import (
     EmotionProvider,
     NullEmotionProvider,
     RuleBasedEmotionProvider,
     build_emotion_provider,
 )
-from .history import (
+from ..domains.chat_reply.character.history import (
     ConversationHistoryCleaner,
     ConversationHistoryProvider,
     ConversationHistoryRecorder,
@@ -14,7 +14,7 @@ from .history import (
     SQLiteConversationHistoryRepository,
     build_conversation_history_provider,
 )
-from .memory import (
+from ..domains.chat_reply.character.memory import (
     MemoryProvider,
     NullMemoryProvider,
     SQLiteMemoryRepository,

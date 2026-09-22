@@ -15,7 +15,7 @@
 > **最新续接：动作API路由/错误码已修正，隔离工作区CRUD/预览/确认/模拟发送与默认生成装配已落地；真实会话生产发送、完整后端仍未完成。最新实跑及runtime-layout阻断见 `docs/design/COMPACT-CHECKPOINT.md` 顶部。**
 
 
-> **最新串行增量：15个细分执行开关、Bot/NoneBot日志摘要采集、Telegram getUpdates网络韧性修复。详情与实跑结果见 `docs/design/COMPACT-CHECKPOINT.md` 顶部；协议见 `control-plane-registry.md`、`control-plane-events.md`。能用子代理就用子代理、并行满载（限流为唯一上限，撞墙落盘保进度、结束即补派、前台派完即收不卡输出）；未部署、完整后端未完成。**
+> **最新串行增量：细分执行开关若干（数以 COMPACT-CHECKPOINT 顶部为准）、Bot/NoneBot日志摘要采集、Telegram getUpdates网络韧性修复。详情与实跑结果见 `docs/design/COMPACT-CHECKPOINT.md` 顶部；协议见 `control-plane-registry.md`、`control-plane-events.md`。能用子代理就用子代理、并行满载（限流为唯一上限，撞墙落盘保进度、结束即补派、前台派完即收不卡输出）；未部署、完整后端未完成。**
 
 
 > 单一入口是 [HANDBOOK.md](HANDBOOK.md)：交接总账、现行事实、权威正文、归档执行记录都在里面。
@@ -25,7 +25,7 @@
 ## 十板块功能树（2026-09-21 起为文档主结构）
 
 实现这个 bot 的全部知识按**一级板块 → 二级功能 → 三级入口**归档在 [boards/](boards/README.md)，
-共 10 个板块，逐板块/逐功能/逐入口一目录一页；板块树本体与三级清单由代码派生，**不手抄**。
+板块数以 [boards/README.md](boards/README.md) 为准，逐板块/逐功能/逐入口一目录一页；板块树本体与三级清单由代码派生，**不手抄**。
 
 - [boards/README.md](boards/README.md)：十板块总览与派生事实（总览页整页机器所有）
 - [boards/_conventions.md](boards/_conventions.md)：统一规范本体——文件结构、命名、开发约束（先建模块与函数、只调用已登记件）、自动化变更契约、P0/P1/P2 分级、代码质量红线
@@ -44,7 +44,7 @@
 | [design/COMPACT-CHECKPOINT.md](design/COMPACT-CHECKPOINT.md) | 控制面最新续接状态、实跑证据、未完成范围；能用子代理就用子代理、并行满载（限流为唯一上限，派完即收）。 |
 | [design/control-plane-metrics.md](design/control-plane-metrics.md) | 资源与账本指标后端协议、DTO、unknown 语义、采样边界及前端适配说明。 |
 | [HANDBOOK.md](HANDBOOK.md) | 单一活文档：Part 0（族谱终裁 / 现行事实 / 未完成总账 §三）+ Part II（权威正文 §1-§17 + §18-§34 批次全账）；**§34 最新：v21r5 三任务批（此前 §33 v21r4-B 后端并发波 / §32 渲染统一收口+AxonHub WebUI / §31 控制面续接）** |
-| [HANDOVER-2026-09-15.md](HANDOVER-2026-09-15.md) | **交接总报告（2026-09-15 用户 mandate 全量更正版，维护规矩的用户裁定例外件）**：统一架构文档 / 处理流程与流程图 / 九个统一（触发·自动回复·LLM 话术·参数·术语·权威链·门禁…）/ WebUI 需求与三阶段规格全量 / 当前真实状态快照。旧口径（26 渠道链/「17 条网关」/509 字段/72 topics）以此为准作废 |
+| [HANDOVER-2026-09-15.md](HANDOVER-2026-09-15.md) | **交接总报告（2026-09-15 用户 mandate 全量更正版，维护规矩的用户裁定例外件）**：统一架构文档 / 处理流程与流程图 / 九个统一（触发·自动回复·LLM 话术·参数·术语·权威链·门禁…）/ WebUI 需求与三阶段规格全量 / 当前真实状态快照。旧口径（渠道链/网关/字段/topic 数）以机器册为准作废 |
 | [handover-c-20260913.md](handover-c-20260913.md) | C 方向批次交接件（统一 UI/卡片主题 token/金融数据与图表/占卜历史卡适配）；本批 SDD 台账与评审报告存 `.superpowers/sdd/2026-09-12-shorekeeper-global-audit/`（git-ignored 工作台，不入库） |
 | [issue-ledger-p2-p3.md](issue-ledger-p2-p3.md) | P2/P3 问题台账（2026-09-13 实战审计批）：AGENTS.md 第六部分是索引，本文件是逐条可执行详情（现象/位置/根因/修法/验收） |
 | [perf-optimization-plan.md](perf-optimization-plan.md) | 性能优化全量档案：Phase 1 终态 + Phase 2 执行清单 + 五链路实测基线（渲染并发/等待预算等 Phase 2 的唯一执行依据） |
@@ -62,9 +62,9 @@
 | [../REVIEW-WORKFLOW.md](../REVIEW-WORKFLOW.md) | 代码评审规范（固化增量评审流程；产出物统一存 `review/` 目录） |
 | [../webui/](../webui/) | AxonHub 衍生前端（Vite+React+Tailwind4+singlefile）：源码骨架 + Apache-2.0 合规件（`THIRD_PARTY/`），构建产物 `dist/index.html` 单文件挂控制面 `/ui` |
 | [../scripts/webui_mock_server.py](../scripts/webui_mock_server.py) | WebUI 离线确定性夹具后端（2026-09-18）：端点形状一一对照真实契约、固定假时刻输出逐字节一致，仅供前端开发/目验/截图对比；不读真实数据、不写文件、绝不接入生产链路 |
-| [scripts/webui_acceptance.py](../scripts/webui_acceptance.py) | WebUI 真机端到端目验脚本（playwright 无头，file:// 直开 dist+localStorage 预置；9 页 data/graceful 自动归类+逐页截图+--json；验收口径=acceptance-manual §6.6.9/§6.6.10） |
+| [scripts/webui_acceptance.py](../scripts/webui_acceptance.py) | WebUI 真机端到端目验脚本（playwright 无头，file:// 直开 dist+localStorage 预置；逐页 data 与 graceful 两类自动归类+逐页截图+--json；验收口径=acceptance-manual §6.6.9/§6.6.10） |
 | [scripts/tts_retcode_collect.py](../scripts/tts_retcode_collect.py) | SnowLuma `send_msg` 回执 retcode 分布采集（T55 §七 open 项的采集手段）：对真机验收窗（§6.6.11）后 nonebot 日志离线扫描，按码计数+首末时间+样例，与读码预判集对表；全离线零网络，证据采集器非门 |
-| [scripts/tts_offline_selfcheck.py](../scripts/tts_offline_selfcheck.py) | TTS 真机验收前置三步一键自检编排（零业务断言，SKIP 不假红）：pre_restart_check 10 项 → verify_chatbot_env → 语料门 `test_tts_corpus_gate.py`；判定透传子工具，任一 FAIL 退出码 1，`--dry-run` 桩化演练 |
+| [scripts/tts_offline_selfcheck.py](../scripts/tts_offline_selfcheck.py) | TTS 真机验收前置三步一键自检编排（零业务断言，SKIP 不假红）：pre_restart_check 全部检查项 → verify_chatbot_env → 语料门 `test_tts_corpus_gate.py`；判定透传子工具，任一 FAIL 退出码 1，`--dry-run` 桩化演练 |
 
 ## 搭建与运维
 
@@ -126,15 +126,15 @@
 
 | 文档 | 说明 |
 |---|---|
-| [design/v21r4-b-wave-snapshot.md](design/v21r4-b-wave-snapshot.md) | v21r4-B 后端波整合快照：交付总表 / 50+ 项用户裁决清单（§二 10 组可勾选）/ 口径差异 6 条 / 状态红线 |
+| [design/v21r4-b-wave-snapshot.md](design/v21r4-b-wave-snapshot.md) | v21r4-B 后端波整合快照：交付总表 / 用户裁决清单（§二分组可勾选）/ 口径差异清单 / 状态红线 |
 | [design/v21r4-b-qa-probe-report.md](design/v21r4-b-qa-probe-report.md) | v21r4-B 波中回归快照（时点证据）：三族 1063 passed / 23 failed 全归前端域；门禁四件体检 |
 | [design/v21r4-b-doc-sync-draft.md](design/v21r4-b-doc-sync-draft.md) | v21r4-B 波末文档增量草案（AGENTS.md #42 / HANDBOOK §33 / README·HANDOFF 增量 / 收尾清单） |
 | [design/v21r4-l41-decision-memo.md](design/v21r4-l41-decision-memo.md) | L41 记忆库三案裁决材料（推荐 A 独立新库；未裁决不得接线） |
 | [design/v21r4-l41-exec-runbook.md](design/v21r4-l41-exec-runbook.md) | L41 执行预案（A 案 12 步施工坐标+测试计划；预案≠授权≠裁决） |
 | [design/v21r4-L60-立项书.md](design/v21r4-L60-立项书.md) / [L71](design/v21r4-L71-立项书.md) / [L74](design/v21r4-L74-立项书.md) | 好感误扣补偿 / 自修复链 / 验收产物 三立项书（纯提案，5/6/7 条待裁） |
-| [design/v21r4-b2-port-wiring-plan.md](design/v21r4-b2-port-wiring-plan.md) | 真实发送端口组接线方案材料（15 项前置条件待用户勾选；不构成实施授权） |
+| [design/v21r4-b2-port-wiring-plan.md](design/v21r4-b2-port-wiring-plan.md) | 真实发送端口组接线方案材料（前置条件清单待用户勾选；不构成实施授权） |
 | [design/v21r4-b2-direct-collect-plan.md](design/v21r4-b2-direct-collect-plan.md) | S0 直连点收编方案（5 处坐标+三形态缺省关设计；根 init 四点在飞执行中） |
-| [design/v21r4-command-format-review.md](design/v21r4-command-format-review.md) | 命令格式评审材料（topic 数以机器册为准、评审当时为 77 topics 现状未动；14 领域 vs 20 域坐标系裁决点） |
+| [design/v21r4-command-format-review.md](design/v21r4-command-format-review.md) | 命令格式评审材料（topic 数以机器册为准、评审当时现状未动；领域与域坐标系为裁决点） |
 | [design/v21r4-kb-drift-explainer.md](design/v21r4-kb-drift-explainer.md) | 知识库漂移三问说明（35341 vs 4611；重建与否用户亲办） |
 | [design/v21r4-b6-ledger-memo.md](design/v21r4-b6-ledger-memo.md) | B6 五项调研 memo（搜索时效/合并转发/提醒残余/LLM 故障转移 live 清单/亲密话术指针） |
 | [design/v21r4-b-restart-acceptance-checklist.md](design/v21r4-b-restart-acceptance-checklist.md) | v21r4-B 重启验收清单（波后真机验收口径） |

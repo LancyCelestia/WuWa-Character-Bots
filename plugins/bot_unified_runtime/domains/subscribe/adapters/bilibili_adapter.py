@@ -19,11 +19,11 @@ from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionCursor,
     SubscriptionSpec,
 )
-from plugins.bot_unified_runtime.sources.parsers import wbi
-from plugins.bot_unified_runtime.sources.parsers.http_util import (
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     ParseHttpError,
     http_get_json,
 )
+from plugins.bot_unified_runtime.sources.parsers import wbi
 
 _PLATFORM = "bilibili"
 _TARGET_KINDS = ("creator", "live_room", "bangumi", "favorite", "collection")

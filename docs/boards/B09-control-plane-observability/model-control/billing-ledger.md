@@ -19,7 +19,7 @@
 
 ## 开关与参数
 
-总开关唯一解析源 `ledger.py::ledger_enabled(config)`：读 `bot_llm_billing_enabled`（Config 字段，防御式 `getattr`）→ `BOT_LLM_BILLING_ENABLED`（os.environ）→ 默认关。注意：`bot_llm_billing_enabled` 并非 `config.py` 里的 pydantic 字段（本会话核实 config.py 无此定义），因此常态是走环境变量；关时 router 出口不组装 draft、不导入任何 DB 路径。库路径 `ledger.py::resolve_default_db_path`，`data/` 前缀经 `scripts/runtime_paths.py` 重映射到 Runtime 数据根。
+总开关唯一解析源 `ledger.py::ledger_enabled(config)`：读 `bot_llm_billing_enabled`（Config 字段，防御式 `getattr`）→ `BOT_LLM_BILLING_ENABLED`（os.environ）→ 默认关。注意：`bot_llm_billing_enabled` 并非 `config.py` 里的 pydantic 字段（本会话核实 config.py 无此定义），因此常态是走环境变量；关时 router 出口不组装 draft、不导入任何 DB 路径。库路径 `ledger.py::resolve_default_db_path`，运行数据相对前缀（以 `scripts/runtime_paths.py` 为准）重映射到 Runtime 数据根。
 
 ## 失败时看到什么
 

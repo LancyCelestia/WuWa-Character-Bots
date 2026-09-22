@@ -7,7 +7,7 @@ from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionCursorV2,
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.sources.subscriptions.music_v2 import (
+from plugins.bot_unified_runtime.domains.subscribe.adapters.music_v2 import (
     MusicSubscriptionAdapterV2,
 )
 

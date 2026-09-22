@@ -14,13 +14,15 @@ from __future__ import annotations
 from typing import Any
 
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+)
 from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
     build_weather_capability,
     fetch_city_alerts,
     format_city_alerts,
     parse_alert_title,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 
 _FIND_ALARM_FIXTURE: dict[str, Any] = {
     "msg": "success",

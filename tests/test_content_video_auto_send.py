@@ -12,7 +12,7 @@ from plugins.bot_unified_runtime.domains.core.contracts.media import (
     ParserRule,
     build_parsed_content,
 )
-from plugins.bot_unified_runtime.sources.downloader import (
+from plugins.bot_unified_runtime.domains.files.sources.downloader import (
     DownloadOutcome,
     MediaAnalysis,
 )

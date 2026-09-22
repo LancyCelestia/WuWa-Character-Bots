@@ -51,6 +51,6 @@ flowchart LR
 
 ## 现行缺陷
 
-- **7 枚 `bot_sync_drift_*` 键此前在 Config 上不存在的缺陷已根修**（键落到 `config.py`），根因是消费方读不存在的键使 `bot_sync_drift_alert_enabled` 恒 False、巡检器永不注册；现已能真注册——但**缺省 `bot_sync_drift_alert_enabled=False`，须显式开且配超管才注册，且整体为已落码待重启生效，线上未生效**。
+- **`bot_sync_drift_*` 一族键（枚数以 `config.py` 现算为准）此前在 Config 上不存在的缺陷已根修**（键落到 `config.py`），根因是消费方读不存在的键使 `bot_sync_drift_alert_enabled` 恒 False、巡检器永不注册；现已能真注册——但**缺省 `bot_sync_drift_alert_enabled=False`，须显式开且配超管才注册，且整体为已落码待重启生效，线上未生效**。
 - `domains/ops/sync_drift/` 历史上是**未入库的在飞件**（共享工作树多会话），曾带本域 ruff/mypy 残余与"空 surfaces 被放宽成全扫还谎报"等缺陷；全面修复波把本域 ruff/mypy 归零并根修了这些点，如实记此沿革。
 - 收件人只认 QQ 超管 `bot_super_admin_user_ids`；TG/Mail 复用既有运维告警配置，不新增第二份收件人配置。

@@ -117,7 +117,7 @@ nodes[{id,label,type: person|group|conversation|memory|rule,…}] + edges + trun
 ## §5 机器门
 
 1. **硬编码扫描门扩展**（扫描脚本由 WEBUI-FE 席交付，脚本名以其 progress 为准）：扫描范围追加
-   `src/pages/knowledge.tsx`、`src/pages/plugins.tsx`、`src/pages/memory-graph.tsx` 及三页专属
+   `src/pages/knowledge.tsx`、`webui/node_modules/immer/src/utils/plugins.tsx`、`src/pages/memory-graph.tsx` 及三页专属
    子组件目录；规则与全站一致（色值字面量 / 任意值字号 / 刻度外间距 / 圆角档外值），预期命中=0。
    脚本未落地前的等价快查（webui/ 下）：
    `rg -n "#[0-9a-fA-F]{6}|rgba?\(|oklch\(|text-\[|\[\d+px\]" src`

@@ -24,8 +24,16 @@
 与旧包装（根 ``_attach_voice_reply``→``maybe_attach_voice``）的关系：**双态
 互斥**——键关部署走旧包装（逐字节现状），键开走本 hook。产出步真身已收成
 ``tts.synthesize_autodub`` 单一真身，本 hook、中央 handler、旧包装三处消费边共用
-它（旧包装退役=V3，另批）。合成产物随件带 ``content_sha256``（M-64/S2）与
-``lossy_transform_tags``（M-14），与旧包装恢复逐字节同构（§0.8 协调债已偿）。
+它（旧包装退役=V3，另批）。合成产物随件带 ``content_sha256``（M-64/S2）。
+
+**出站体归属（VOICE-CENTRAL-UNBLOCK 2026-09-22）**：``audio`` 部件与
+``tts/auto_reply/preset=/seed=/audio_sha256=`` 标签由中央产出步 ``synthesize_autodub``
+**一处拼装**（那个函数就是刚产出这段字节的地方），本 hook 只经
+``tts.autodub_presentation_update`` 把成品挂回呈现契约——层 1 从此不自拼出站体，
+也不再出现 ``update={"audio": …}`` 形态（A4「音频来路不明」对本模块空转成立，
+直呼锁 ``not _execution_calls(tree,"synthesize")`` 同时保持成立）。
+M-14 有损变换标签在本路收编前后**都是空**：本 hook 从不向 ``resolve_speech_text``
+传 ``audit=``，故无 lossy 事实可记（本席只搬拼装点，不顺手改这条判定）。
 
 门链（T54 §4.2 冻结序）：hook 总键 ∧（无既有 issue）∧ ``should_voice_reply``
 （总闸∧自动闸∧audio 空∧bot.chat∧scope∧确定性概率门）∧ 内容政策（含在
@@ -48,7 +56,7 @@ from plugins.bot_unified_runtime.domains.media.capabilities.tts import (
     _failure_issue,
     _issue,
     _no_ref_audio_issue,
-    lossy_transform_tags,
+    autodub_presentation_update,
     resolve_speech_text,
     should_voice_reply,
     synthesize,
@@ -125,7 +133,6 @@ def build_voice_enricher(
         # 取文（M-10 根修）：入参=hook 时点的 result.body——review 批准后的正文。
         # 打码→清洗→词典→内容政策全在 resolve_speech_text 单一口内（fail-closed）。
         max_chars = int(getattr(config, "bot_tts_auto_reply_max_chars", 0) or 0)
-        lossy_audit: dict[str, Any] = {}
         speech, blocked = resolve_speech_text(
             config,
             message,
@@ -176,34 +183,12 @@ def build_voice_enricher(
         )
         status = invocation.status
         if status is InvocationStatus.OK:
-            data = dict(invocation.data)
-            audio_file = str(data.get("audio_file", "") or "")
-            review_text = str(data.get("review_text", speech) or speech)
-            preset_id = str(data.get("preset_id", "") or "")
-            speech_seed = data.get("seed", "")
-            content_digest = data.get("content_sha256")
-            # 与旧包装/命令路逐字节同构：audio 部件随件带落盘字节摘要（M-64/S2），
-            # audit_tags 记 preset/seed/audio_sha256 + 有损变换事实（M-14）。
-            audio_part: dict[str, Any] = {"file": audio_file, "review_text": review_text}
-            if isinstance(content_digest, str) and content_digest:
-                audio_part["content_sha256"] = content_digest
+            # 出站体（音频部件 + tts/auto_reply/preset/seed/audio_sha256 标签）由中央
+            # 产出步 ``tts.synthesize_autodub`` **一处拼装**，本层只把它挂回呈现契约
+            # （VOICE-CENTRAL-UNBLOCK 2026-09-22：层 1 不再自拼 audio 体，中央路既有
+            # synthesize 又交出站体）。字段值与顺序与收编前逐字节一致——同一批值换了拼装点。
             return result.model_copy(
-                update={
-                    "audio": [audio_part],
-                    "audit_tags": [
-                        *result.audit_tags,
-                        "tts",
-                        "auto_reply",
-                        f"preset={preset_id}",
-                        f"seed={speech_seed}",
-                        *(
-                            [f"audio_sha256={content_digest[:16]}"]
-                            if isinstance(content_digest, str) and content_digest
-                            else []
-                        ),
-                        *lossy_transform_tags(lossy_audit),
-                    ],
-                }
+                update=autodub_presentation_update(result, dict(invocation.data))
             )
         if status is InvocationStatus.NOT_CONFIGURED:
             # 无可用参考音频=F3 确定性失败，对应命令半 _no_ref_audio_issue 同款码。

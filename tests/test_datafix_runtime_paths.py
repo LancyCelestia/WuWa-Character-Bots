@@ -108,7 +108,7 @@ def test_config_resolver_covers_all_runtime_data_fields(tmp_path: Path, monkeypa
 
 def test_cookie_relative_path_uses_dotenv_aware_root(tmp_path: Path, monkeypatch) -> None:
     """cookies 解析（platform_credentials 写入共用）env 与 dotenv 双通道生效。"""
-    from plugins.bot_unified_runtime.sources.parsers.cookies import (
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.cookies import (
         _resolve_relative_cookie_path,
     )
 

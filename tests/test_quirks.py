@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.character.quirks import QuirkStore
+from plugins.bot_unified_runtime.domains.chat_reply.character.quirks import QuirkStore
 
 
 class _StepClock:

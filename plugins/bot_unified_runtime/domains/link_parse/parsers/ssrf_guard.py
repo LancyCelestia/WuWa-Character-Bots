@@ -126,7 +126,7 @@ def _rejection_reason(url: str, *, where: str) -> str | None:
     """
     import logging
 
-    from plugins.bot_unified_runtime.sources.downloader import (
+    from plugins.bot_unified_runtime.domains.files.sources.downloader import (
         RejectedUrlError,
         check_download_url,
     )

@@ -118,10 +118,10 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
     {{ blobs_html | safe }}
     <div class="head">
         <div class="head-id">
-            <span class="sigil">守</span>
+            <span class="sigil">{{ card_text.static_err_17 }}</span>
             <div class="head-titles">
-                <div class="title">{{ card_title | default('运行异常', true) }}</div>
-                <div class="subtitle">RUNTIME DIAGNOSTIC · 泰缇斯系统</div>
+                <div class="title">{{ card_title }}</div>
+                <div class="subtitle">RUNTIME DIAGNOSTIC · {{ card_text.static_err_18 }}</div>
             </div>
         </div>
         <div class="head-badge">{{ exc_type | default('EXCEPTION', true) }}</div>
@@ -129,20 +129,20 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
     {% if human_text %}<div class="human">{{ human_text }}</div>{% endif %}
     {% if trigger_echo %}
     <div class="section">
-        <div class="section-title">触发回显</div>
+        <div class="section-title">{{ card_text.static_err_19 }}</div>
         <div class="echo">{{ trigger_echo }}</div>
     </div>
     {% endif %}
     {% if stack_lines %}
     <div class="section">
-        <div class="section-title">栈摘录（末 {{ stack_lines | length }} 帧，路径已脱敏）</div>
+        <div class="section-title">{{ card_text.static_err_20 }} {{ stack_lines | length }} {{ card_text.static_err_21 }}</div>
         <div class="stack"><span class="stack-head">{{ exc_type }}: {{ exc_message }}</span>
 {{ stack_lines | join('\n') }}</div>
     </div>
     {% endif %}
     {% if method_pairs %}
     <div class="section">
-        <div class="section-title">触发方法</div>
+        <div class="section-title">{{ card_text.static_err_22 }}</div>
         <div class="grid">
             {% for item in method_pairs %}
             <div class="row{% if loop.index is even %} alt{% endif %}"><span class="label">{{ item.label }}</span><span class="value">{{ item.value }}</span></div>
@@ -152,7 +152,7 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
     {% endif %}
     {% if config_pairs %}
     <div class="section">
-        <div class="section-title">配置快照（白名单 · 值已脱敏）</div>
+        <div class="section-title">{{ card_text.static_err_23 }} · {{ card_text.static_err_24 }}</div>
         <div class="grid">
             {% for item in config_pairs %}
             <div class="row{% if loop.index is even %} alt{% endif %}"><span class="label">{{ item.label }}</span><span class="value">{{ item.value }}</span></div>
@@ -162,7 +162,7 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
     {% endif %}
     {% if version_pairs %}
     <div class="section">
-        <div class="section-title">版本与构建</div>
+        <div class="section-title">{{ card_text.static_err_25 }}</div>
         <div class="grid">
             {% for item in version_pairs %}
             <div class="row{% if loop.index is even %} alt{% endif %}"><span class="label">{{ item.label }}</span><span class="value">{{ item.value }}</span></div>
@@ -172,7 +172,7 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
     {% endif %}
     {% if env_pairs %}
     <div class="section">
-        <div class="section-title">平台与协议</div>
+        <div class="section-title">{{ card_text.static_err_26 }}</div>
         <div class="grid">
             {% for item in env_pairs %}
             <div class="row{% if loop.index is even %} alt{% endif %}"><span class="label">{{ item.label }}</span><span class="value">{{ item.value }}</span></div>
@@ -182,7 +182,7 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
     {% endif %}
     {% if id_pairs %}
     <div class="section">
-        <div class="section-title">IDs 与时间</div>
+        <div class="section-title">IDs {{ card_text.static_err_27 }}</div>
         <div class="grid">
             {% for item in id_pairs %}
             <div class="row{% if loop.index is even %} alt{% endif %}"><span class="label">{{ item.label }}</span><span class="value">{{ item.value }}</span></div>
@@ -191,7 +191,7 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
     </div>
     {% endif %}
     {# CAP1：胶囊 DOM 由 bridge 注入（单一产出=mica_shell），求助文案摆在胶囊右侧。 #}
-    <div class="bot-foot">{{ capsule_html | safe }}<span class="help-text">{{ help_text | default('把这张卡截图发给创造者即可，信息已齐备且脱敏。', true) }}</span></div>
+    <div class="bot-foot">{{ capsule_html | safe }}<span class="help-text">{{ help_text | default(card_text.error_help_fallback, true) }}</span></div>
 </div>
 </body>
 </html>

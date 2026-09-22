@@ -16,7 +16,9 @@
 from __future__ import annotations
 
 from plugins.bot_unified_runtime import _MEAL_OPENERS, _build_meal_push_text
-from plugins.bot_unified_runtime.character.daily_assist import meal_display_name
+from plugins.bot_unified_runtime.domains.assistant.daily.store.daily_assist import (
+    meal_display_name,
+)
 
 
 def test_meal_push_text_rotates_through_all_six_variants_without_repeat() -> None:

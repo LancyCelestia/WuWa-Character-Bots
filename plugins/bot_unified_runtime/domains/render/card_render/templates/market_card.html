@@ -102,7 +102,7 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
     {{ blobs_html | safe }}
     <div class="head">
         <div>
-            <div class="title">全球股指速览</div>
+            <div class="title">{{ card_text.static_mkt_29 }}</div>
             {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
         </div>
     </div>
@@ -132,7 +132,7 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
     {% endfor %}
     {% if source_note or updated_at or delayed_note or crosscheck_note %}<div class="data-foot">
         {% if source_note %}<span>{{ source_note }}</span>{% endif %}
-        {% if updated_at %}<span>数据时间 {{ updated_at }}</span>{% endif %}
+        {% if updated_at %}<span>{{ card_text.static_fin_28 }} {{ updated_at }}</span>{% endif %}
         {% if delayed_note %}<span>{{ delayed_note }}</span>{% endif %}
         {% if crosscheck_note %}<span>{{ crosscheck_note }}</span>{% endif %}
     </div>{% endif %}

@@ -22,7 +22,7 @@
 
 交付判定只有四道门，全绿才算「本地可交」：
 
-- `lint` —— `ruff check .`，但 `--cache-dir` 强制指到 `ChatBot_Runtime/cache/ruff`，不让缓存进 AI 工作区。
+- `lint` —— `ruff check .`，但 `--cache-dir` 强制指到 Runtime 数据根下的 ruff 缓存目录（位置以 `scripts/dev.ps1` 该任务为准），不让缓存进 AI 工作区。
 - `typecheck` —— 经选定的解释器跑 `python -m mypy`（不走 `mypy.exe` 启动器：venv 搬出源码区后它的内嵌路径会失效），参数为 `--explicit-package-bases --ignore-missing-imports`，只检 `plugins` 项目自代码。
 - `runtime-layout` —— `scripts/runtime_layout_smoke.py`，纯结构体检（详见 `workspace-hygiene/runtime-paths.md`）。
 - `test` —— 全量 pytest，离线 mock，不连 QQ、不调 LLM、不联网。用例数以最近一次实跑输出为准，规模口径看机器册 `docs/auto-facts.md`。
@@ -47,7 +47,7 @@ flowchart LR
 - **环境缺件**：ruff / mypy / pytest 不在选定环境里时 `throw` 并附「先 install」提示；解释器完全找不到时抛「Install Python 3.10+」。不会退化成「跳过即通过」。
 - **tests/ 缺失**：`test` 任务直接 `throw`（历史上测试树曾被移出工作区），`verify` 则 `Write-Warning` 后继续——两者语义不同，别把 `verify` 当全量门。
 - **端口占用**：`run` / `run-watch` 先查 8080 监听，占用时只提示不重启，避免起第二个 bot。
-- **临时目录**：`test` 把 `TMP`/`TEMP`/`PYTEST_DEBUG_TEMPROOT` 全指到 `ChatBot_Runtime/cache/pytest_ci_<pid>`，收尾删除。原因写实：共享的 `%TEMP%\pytest-of-<user>` 里有个 ACL 被拒的环状 `pytest-current` 软链，会让 pytest 收尾清理崩掉。
+- **临时目录**：`test` 把 `TMP`、`TEMP`、`PYTEST_DEBUG_TEMPROOT` 全指到 Runtime 数据根下按进程隔离的 pytest 缓存目录（命名以 `scripts/dev.ps1` 该任务为准），收尾删除。原因写实：共享的系统临时目录里有个 ACL 被拒的环状 `pytest-current` 软链，会让 pytest 收尾清理崩掉。
 - **自动重录门**：`test` 仅当调用方**未显式设置** `BOT_AUTOSYNC` 时才默认置一。显式设 `BOT_AUTOSYNC=0` = 禁止 conftest 自动 `--write`，用于验收模式（生成物基线必须逐字节不变）。此前无条件覆盖外层值的写法会让「测试失败后自动重录基线」把真实回归洗绿。
 
 ## 测试与验收

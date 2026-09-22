@@ -8,13 +8,13 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     SessionType,
 )
-from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
-from plugins.bot_unified_runtime.runtime.event_idempotency import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.event_idempotency import (
     EventIdempotencyTable,
     SqliteEventIdempotencyTable,
     build_event_dedupe_key,
     build_event_idempotency_table,
 )
+from plugins.bot_unified_runtime.domains.core.contracts.runtime import IncomingMessage
 from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
 from plugins.bot_unified_runtime.sender import InMemorySendQueue
 

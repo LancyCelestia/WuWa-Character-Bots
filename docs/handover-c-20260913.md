@@ -36,18 +36,18 @@
 
 ### F. 真实渲染验收（用户质疑「html 对吗」的正面回答）
 - 浏览器直接打开 templates/*.html 看到的是 **Jinja2 源码占位符**（{{ }}/{% %}），不是渲染产物；真实渲染 = bridge 注入数据 → Playwright 截图。
-- 两轮真机验收（生产同款管线、实时数据）：8 张 PNG 全部亲眼检查通过——行情卡（实时点位/涨跌额/折线/MOEX 走势/交叉核验脚注）、汇率卡（10 对实时中间价）、面板卡（九家折线 + 箱形图）、universal/song/affinity/stocks。验收图存 `%TEMP%\agent-c-visual\`。
+- 两轮真机验收（生产同款管线、实时数据）：8 张 PNG 全部亲眼检查通过——行情卡（实时点位/涨跌额/折线/MOEX 走势/交叉核验脚注）、汇率卡（10 对实时中间价）、面板卡（九家折线 + 箱形图）、universal/song/affinity/stocks。验收图存本机临时目录（agent-c-visual）。
 - **验收抓到并修复一个真实线上级 bug**：东财 kline 接口 2026-09-13 起缺 `end` 参数返回空（market_data/stock_data 两处 `_KLINE_URL` 已补 `&end=20500101`，有回归测试锁死）。
 
 ### G. mermaid「真机 None」根因修复（C6，重要）
 - **根因不是 CDN/预算**：是 Playwright 自愈机制的结构性缺陷——`render_backends._close_thread_browser` 对 ctx（PlaywrightContextManager）调用不存在的 `.close()`（AttributeError 被静默吞掉），僵尸浏览器的传输掐不断 → 该线程 asyncio loop 永久中毒 → 后续渲染**永久 None 直到进程重启**（这正是 2026-09-12 17:28 生产事故形态）。
 - **两层修复**：①`render_mermaid_png` 失败后单次重试（首败已触发自愈，重试用上新浏览器，收益提前到本张卡）；②bridge 装配钩子 `_install_ctx_exit_on_self_heal`——自愈关闭前显式 `ctx.__exit__()`；③**上游根治（主代理落地）**：`render_backends._close_thread_browser` 改为 `ctx.__exit__(None,None,None)`（旧 `.close()` 调用对象无此方法）——该缺陷影响**所有** Playwright 渲染线程，不只 mermaid。
-- 实证：僵死注入两轮单次入口即救回；3 连跑 89679/88781/86591 字节稳定出图；回归 120 passed。诊断脚本存 `%TEMP%\agent-c6-mermaid\`。
+- 实证：僵死注入两轮单次入口即救回；3 连跑 89679/88781/86591 bytes 稳定出图；回归 120 passed。诊断脚本存本机临时目录（agent-c6-mermaid）。
 
 ### H. 文档门禁、四门禁与终验（C7 + C8 + 主代理）
 - `test_documentation_consistency` 两门禁已绿（route-matrix 的 fx/stocks 两行由 B 方向在途改动覆盖，catalog 经 `--write` 再生成幂等校验一致）。
 - C 方向合并终验 **610 passed, 3 skipped**（19 个测试文件；skip=环境变量门控网络测试）；ruff C 方向全部文件 All checks passed；`git diff --check` 干净。
-- **工作区四门禁全绿（C8）**：lint ✅（修复 stocks.py 重复导入/finance_data 导入序）· **typecheck ✅（mypy 247 文件零问题）** · runtime-layout ✅（源码树 `data/` 残留 3 个测试 SQLite 已备份至 `%TEMP%/chatbot-data-residue-20260913/` 后清理）· test ✅。
+- **工作区四门禁全绿（C8）**：lint ✅（修复 stocks.py 重复导入/finance_data 导入序）· **typecheck ✅（mypy 零问题）** · runtime-layout ✅（源码树运行数据残留的测试 SQLite 已备份至本机临时目录后清理）· test ✅。
 - 他方向 lint 残留 3 处（归 R/character 方向收尾）：`character/__init__.py:30` RUF022、`contracts/__init__.py:9` F401（AddressingContext）、`tests/test_admin_roster_and_roles.py:42` C408。
 
 ### I. C9 独立代码评审与修复（2026-09-13 终态）

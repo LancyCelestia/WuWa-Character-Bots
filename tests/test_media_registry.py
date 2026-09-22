@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.character.media_registry import (
+from plugins.bot_unified_runtime.domains.media.registry.media_registry import (
     MediaAssetRecord,
     SQLiteMediaRegistry,
     build_media_registry,

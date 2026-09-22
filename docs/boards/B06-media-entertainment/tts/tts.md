@@ -58,7 +58,7 @@ HTTP 调用是阻塞的，能力在 offload 线程池里同步执行，绝不跑
 - 引擎与素材：`bot_tts_api_url`（`http://127.0.0.1:9880`，受 loopback 白名单闸
   fail-closed 约束）、`bot_tts_gptsovits_dir`（相对路径基准）、
   `bot_tts_ref_audios`（`路径|这段音频说的话` 形态列表）、`bot_tts_output_dir`
-  （`data/tts_output`，经 `scripts/runtime_paths.py` 重映射）、`bot_tts_preset`
+  （产物目录，以 `config.py` 的 `bot_tts_output_dir` 为准，经 `scripts/runtime_paths.py` 重映射）、`bot_tts_preset`
   （`shorekeeper`）。
 - 自动配音面：`bot_tts_auto_reply_enabled`（False）、`bot_tts_auto_reply_scope`
   （`private|group|all`）、`bot_tts_auto_reply_max_chars`（120）、

@@ -8,13 +8,13 @@
 
 ## 一、要解决的问题（不做会怎样）
 
-1. **同一语义多份真相**（审核件 §十三 9 条实证）：统计标签 4 份、ID 标签 2 套命名、`or "守岸人"` 7 处、
+1. **同一语义多份真相**（审核件 §十三 有实证清单）：统计标签多份、ID 标签多套命名、`or "守岸人"` 多处、
    英文名兜底 3 处、页脚胶囊 DOM 4 份。改一处漏三处。
 2. **话术池住三个文件、取句机制四套并存**（实证）：
    - `domains/chat_reply/capabilities/user_copy.py`：`random.choice(池)`；
    - `chat.py::persona_failure_message`：会话游标 `(offset) % n`（**修 D9 后才是真轮换**，无会话退随机）；
    - `reminders.py::_pick_template_variant`：按 `(persona, seed)` 稳定散列取模（确定性、零随机）；
-   - `daily/store/daily_assist.py::pick_variant(key, variants, **fields)`：键控 + 字段填充。
+   - `domains/assistant/daily/store/daily_assist.py::pick_variant(key, variants, **fields)`：键控 + 字段填充。
    同一个「别连发重复同一句」的需求，四种实现、三种随机性语义。**任何池化文案想统一语气与轮换行为，先得统一取句 API。**
 3. **各平台/各能力自写一次性文本**：12+ 能力各自在 `CapabilityResult(text=...)` / `reply(...)` 里写中文字面句，
    跨渠道不复用（同一条失败在 QQ 与 Telegram 上措辞不同、长度不同、能不能带图也不同）。
@@ -73,7 +73,7 @@
 4. **卡片图进邮件的通路**：复用 render 后端（playwright 常驻浏览器截图）产出 PNG →
    `EmailMessage.add_attachment`（附件）或 `Content-ID` 内嵌。**待你选**：附件（稳妥、反垃圾友好）还是内嵌 cid（好看、部分客户端屏蔽外链）。
    另需定：单封限额（建议对齐媒体归档既有量级：单文件 100 MB 上限对邮件明显过大，我按 ≤5 MB/封、单封 ≤4 图提议）。
-5. **长度与分段预算**：TG caption 1024 实证、附件 2 MB 实证；QQ 分段/合并转发条数口径在 `renderer.py`；
+5. **长度与分段预算**：TG caption 与附件上限以 `renderer.py` 与各平台协议真身为准；QQ 分段/合并转发条数口径在 `renderer.py`；
    **Mail 侧长度上限未核实**（列入 §七 待办）。
 6. **静默策略显式化**：限流拦截 / 安静时间 / `pipeline_busy` 快败**故意不发文本**（A-19 明写），
    这类"不触发"必须成为模板文件里的一等公民（`silent: true`），否则新席会把它当漏发去"修好"。
@@ -84,7 +84,7 @@
 |---|---|---|---|
 | P0 | 规格定稿 + 全量清单收口（TPL1 产出） | 本文件 + 两份 md | 你逐条勾完触发条件 |
 | P1 | 中央渲染入口 + 取句/静默单一 API + **静态扫描门**（新写一次性中文句 ⇒ 红，棘轮基线=当前存量） | 新 `outbound/` + `tests/` 新门 | 门在存量下绿、构造样本必红；现网文案逐字节不变 |
-| P2 | 迁四族最重话术（`user_copy` 五池 / 错误卡族 / 提醒五型 / 日常助理七池）入模板文件 | 上列 4 个文件 + 各自调用点 | 快照测试**逐字节等值**（`test_user_copy_pool.py` 同法）+ 受影响能力定向回归 |
+| P2 | 迁四族最重话术（`user_copy` 五池 / 错误卡族 / 提醒五型 / 日常助理七池）入模板文件 | 上列各文件 + 各自调用点 | 快照测试**逐字节等值**（`test_user_copy_pool.py` 同法）+ 受影响能力定向回归 |
 | P3 | 邮件双版式 + 卡片图附件 | `domains/transport/sender/nonebot.py`、`transport/mail/*` | 离线夹具出 HTML 与 .eml 样本给你看；限额与失败回落有锁 |
 | P4 | 能力侧一次性文本分批收编（weather/finance/music/notes/media_archive/subscribe/echo 子命令族…每域一批） | `domains/*/capabilities/*.py` | 棘轮基线随批下降；每批 `git show --stat` 可核 |
 | P5 | TG 投影规则定稿（是否允许富文本、caption 预算落文件） | `domains/transport/sender/nonebot.py` | 与 P4 同门覆盖 |
@@ -102,14 +102,14 @@
 1. **等值性**：P2/P4 每批必须有"迁移前后用户可见文本逐字节等值"的快照测试（`test_user_copy_pool.py` 已是本仓先例）。
 2. **门有牙**：静态扫描门必须交**双向自测**——构造一个新写的一次性中文句 ⇒ 必红；既有的合法调用 ⇒ 不红。
    （本波血的教训：只写判据不写双向自测的门，三条评审里有两条是假锁。）
-3. **无第二真相**：`grep` 自证每个 key 的中文句子在仓内**只出现一次**；多份真相清单（§十三 9 条）逐条清零或登记为"有意双份"（如 `error_report.py` 卡页脚 vs 纯文本求助，**不许顺手合并**）。
-4. **渲染产物可视**：邮件 HTML 与卡片附件出 `.eml` / PNG 样本落 `%TEMP%` 给你肉眼看（对比度与观感你已两次纠正过我的"算术达标≠好看"）。
+3. **无第二真相**：`grep` 自证每个 key 的中文句子在仓内**只出现一次**；多份真相清单（§十三 清单）逐条清零或登记为"有意双份"（如 `error_report.py` 卡页脚 vs 纯文本求助，**不许顺手合并**）。
+4. **渲染产物可视**：邮件 HTML 与卡片附件出 `.eml` / PNG 样本落临时目录给你肉眼看（对比度与观感你已两次纠正过我的"算术达标≠好看"）。
 5. 四门禁全绿（`dev.ps1 -Task test/lint/typecheck/runtime-layout`）+ 源码树零缓存产物 + 零 git 越界写。
 
 ## 七、待核实清单（开工前补齐，不猜）
 
 - Mail 侧单封体积/长度上限与失败回落口径（**未核实**）。
-- `renderer.py` 的「>3 条即合并转发」条数与 chunk 预算，是否对 TG/Mail 同样适用（**未核实**，规格里按渠道分别声明）。
+- `renderer.py` 的「达条数阈值即合并转发」与 chunk 预算（阈值以 `renderer.py` 真身为准），是否对 TG/Mail 同样适用（**未核实**，规格里按渠道分别声明）。
 - Console 适配器是否也吃同一投影（它属于调试面，建议显式声明"全渠道"）。
 - 卡片图路径与 `bot_avatar_uri` 在无头像时的降级（CAP1 正在定，等它落地后引用其结论，不在本规格另立一份）。
 - `render_hashes.json` / 暂停动画基线属其它波次哈希册，本波**只登记不重录**（用户已裁"看图后授权"）；

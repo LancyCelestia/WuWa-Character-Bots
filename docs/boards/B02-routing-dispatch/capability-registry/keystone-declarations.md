@@ -6,7 +6,7 @@
 ## B02.capability-registry · 声明源与投影表一致性
 
 - 层级：一级 B02 → 二级 capability-registry → 三级 `keystone-declarations`
-- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/capability_registry.py`、`plugins/bot_unified_runtime/capabilities`
+- 实现落点：`plugins/bot_unified_runtime/domains/chat_reply/runtime/capability_registry.py`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/service_wiring.py`、`plugins/bot_unified_runtime/capabilities`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么

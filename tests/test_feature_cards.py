@@ -38,7 +38,9 @@ from plugins.bot_unified_runtime.domains.divination.capabilities import (
     divination as divination_cap,
 )
 from plugins.bot_unified_runtime.domains.divination.data import deck_math
-from plugins.bot_unified_runtime.sources.today_history import HistoryEvent
+from plugins.bot_unified_runtime.domains.subscribe.feeds.today_history import (
+    HistoryEvent,
+)
 
 _UTC = timezone.utc
 

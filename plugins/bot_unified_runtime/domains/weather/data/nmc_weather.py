@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from plugins.bot_unified_runtime.sources.parsers.http_util import (
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     ParseHttpError,
     http_get_json,
 )

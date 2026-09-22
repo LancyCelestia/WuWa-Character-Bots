@@ -19,14 +19,14 @@ from plugins.bot_unified_runtime.capabilities.subscribe_v2 import (
     build_subscribe_capability_v2,
 )
 from plugins.bot_unified_runtime.character.affinity import extract_learned_nickname
-from plugins.bot_unified_runtime.character.persona_set import (
-    AltPersonaSpec,
-    PersonaSelector,
-)
 from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SessionType,
     SubscriptionDestinationV2,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.persona_set import (
+    AltPersonaSpec,
+    PersonaSelector,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
     normalize_for_matching,

@@ -4,7 +4,7 @@
 ## 已有能力与本批增量
 
 RuntimeEventService（SQLite）与 RuntimeEventBus（有界非阻塞入口、后台 writer）仍是唯一归档与查询入口。
-本批新增 `control_plane/log_collectors.py`，将 stdlib 与已加载 NoneBot Loguru 的日志转成**结构化摘要**。
+本批新增 `plugins/bot_unified_runtime/control_plane/log_collectors.py`，将 stdlib 与已加载 NoneBot Loguru 的日志转成**结构化摘要**。
 不复制用户正文、异常堆栈、Bearer、Cookie、路径或 Prompt；当前不是完整原始控制台查看器。
 
 ```mermaid

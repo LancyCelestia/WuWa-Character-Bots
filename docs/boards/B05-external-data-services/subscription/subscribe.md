@@ -26,7 +26,7 @@
 
 ## 开关与参数
 
-- `bot_subscribe_enabled`（缺省 True，总开关）；`bot_subscribe_db_path`（缺省 `data/subscriptions.sqlite3`，经 runtime_paths 重映射）。
+- `bot_subscribe_enabled`（缺省 True，总开关）；`bot_subscribe_db_path`（库路径的缺省值以 `config.py` 该字段为准，经 runtime_paths 重映射）。
 - 每平台一布尔：`bot_subscribe_platform_bilibili/_xiaohongshu/_youtube/_telegram/_pixiv/_weibo/_netease`（缺省 True）。关掉某平台后 `add` 该平台目标会被显式拒绝，**既有订阅行不删**（轮询侧跳过）。
 - 节律键：`bot_subscribe_poll_interval_seconds`（缺省 300）、`max_items_per_tick`（20）、`jitter_ratio`（0.20）、`global_concurrency`（3）、`platform_concurrency`（1）、`min_interval_seconds`（1.0）、`lease_seconds`（120）、`retry_base_seconds`（60）、`retry_cap_seconds`（1800）、`outbox_interval_seconds`（15）。
 - `bot_subscribe_card_enabled`（缺省 True）：推送是否出卡。

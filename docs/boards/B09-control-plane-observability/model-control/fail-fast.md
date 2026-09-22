@@ -26,7 +26,7 @@
 刻意不引入新配置键（用户裁定：总预算不借这个开关去调）。相关常量与既有键：
 
 - `model_router.py::_FAILFAST_CONSECUTIVE_NETWORK`、`_NETWORK_FAILFAST_KINDS`：模块常量，改行为即改代码。
-- 整链预算 `config.py::Config.bot_chat_failover_max_seconds`（Config 缺省 120 秒；生产 `.env` 有覆盖时以 `.env` 为准）。
+- 整链预算 `config.py::Config.bot_chat_failover_max_seconds`（缺省秒数以 `config.py` 该字段为准；生产 `.env` 有覆盖时以 `.env` 为准）。
 - `config_missing` 重复冷却阈值 `model_router.py::_CONFIG_MISSING_COOLDOWN_THRESHOLD` 与倍率 `_CONFIG_MISSING_COOLDOWN_MULTIPLIER`，冷却时长 = 倍率 × `Config.bot_chat_channel_cooldown_seconds`。前两次不冷却，保留「配置问题不等于渠道不可用」的语义（动态注册表改 key 后一跳即愈）。计数器本体在 `channel_health.py::ChannelHealthStore.record_config_missing`（内存态、进程生命周期）。
 
 ## 失败时看到什么

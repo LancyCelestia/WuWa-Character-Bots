@@ -52,7 +52,7 @@ tar -tzf "$archive\<name>.tar.gz" | Select-Object -First 20
 
 - **找不到被归档的东西**：manifest 写得不明（没记原路径或用途）。这就是第 7 步不许省的原因——manifest 是唯一索引，`docs/` 与 git 历史都覆盖不到移出源码区的目录。
 - **包打不开**：第 4 步被跳过。补救是先从备份或 git 历史恢复原件，再重做流程，绝不「先删了再说」。
-- **源码树残留 `data/`、`__pycache__`、`.pytest_cache`**：属清理而非归档问题，处置见 `runtime-paths.md` 末节（备份 `%TEMP%` → 清 → 复跑 `runtime-layout`）。同族事故形态是把随包内置资产（如 weather 域的 NMC 区县码表）当缓存清掉，判据是「该文件在不在 git 跟踪集且有 `.gitignore` 否定规则」。
+- **源码树残留运行数据目录与各类缓存**（`__pycache__`、`.pytest_cache` 等）：属清理而非归档问题，处置见 `runtime-paths.md` 末节（备份到系统临时目录 → 清 → 复跑 `runtime-layout`）。同族事故形态是把随包内置资产（如 weather 域的 NMC 区县码表）当缓存清掉，判据是「该文件在不在 git 跟踪集且有 `.gitignore` 否定规则」。
 
 ## 测试与验收
 

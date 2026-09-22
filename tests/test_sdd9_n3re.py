@@ -20,7 +20,6 @@ from plugins.bot_unified_runtime.capabilities.chat import (
     _meme_search_lines,
     _web_search_lines,
 )
-from plugins.bot_unified_runtime.character.kb_wiki import MergedKnowledgeRetriever
 from plugins.bot_unified_runtime.character.vector_knowledge import (
     SqliteVectorKnowledgeStore,
     _title_exact_hit,
@@ -37,13 +36,16 @@ from plugins.bot_unified_runtime.contracts import (
     WebSearchContext,
     WebSearchHit,
 )
-from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
-from plugins.bot_unified_runtime.runtime.question_intent import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.question_intent import (
     DOMAIN_TERMS,
     QuestionIntent,
     WebDecision,
     classify_question_intent,
 )
+from plugins.bot_unified_runtime.domains.location.knowledge.kb_wiki import (
+    MergedKnowledgeRetriever,
+)
+from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
 
 # ---------------------------------------------------------------- 1a 词表
 

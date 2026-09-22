@@ -65,7 +65,7 @@ operation表述用户一次任务；每次provider尝试独立attempt。失败�
 
 ### 2.1 已发现风险与根因验证
 
-源码检查：`character/affinity.py::classify_behavior` 将 `safety_action == "refuse"` 归为insult；内部[-1,1]乘100展示；insult基础-0.10还有多因素乘数；日限额主要是次数。`observe(delta_override=...)` 绕过常规额度；现有poke默认0.5直接传入，存在内部0.5对应展示50分的单位风险。
+源码检查：`domains/chat_reply/character/affinity.py::classify_behavior` 将 `safety_action == "refuse"` 归为insult；内部[-1,1]乘100展示；insult基础-0.10还有多因素乘数；日限额主要是次数。`observe(delta_override=...)` 绕过常规额度；现有poke默认0.5直接传入，存在内部0.5对应展示50分的单位风险。
 
 用户报告“测试grok性相关路由，一晚掉40多点”登记为真实投诉、历史因果unknown。先用合成输入复现分类/单位问题，再在授权下取最小脱敏事件重放，不读出原始聊天或擅自恢复40分。模型拒答与路由失败不能证明用户辱骂。
 
@@ -123,7 +123,7 @@ operation表述用户一次任务；每次provider尝试独立attempt。失败�
 
 ### 3.1 组织与算法
 
-注册父节点 `divination`，子节点 `fortune/tarot/bazi/coin/render/interpretation`；共享DivinationService、DrawStore、AssetService、ModelBroker。复用 `sources/tarot.py` 78张牌和现有八字历法算法，不为统一入口重写专业计算。每种方法登记 algorithm_version、数据来源、局限，娱乐解释不得伪装成确定预言或专业决策。
+注册父节点 `divination`，子节点 `fortune/tarot/bazi/coin/render/interpretation`；共享DivinationService、DrawStore、AssetService、ModelBroker。复用 `domains/divination/data/tarot.py` 78张牌和现有八字历法算法，不为统一入口重写专业计算。每种方法登记 algorithm_version、数据来源、局限，娱乐解释不得伪装成确定预言或专业决策。
 
 每日运势默认等级与整数权重：大吉10、中吉25、小吉30、平25、小凶8、凶2，总100。权重允许版本化调整，但不能按用户付费/好感秘密改变概率。使用服务端HMAC-SHA256派生种子（principal＋bot＋本地日期＋rule_version），由可审计PRNG进行拒绝采样消除取模偏差，按累计权重抽取；保存day_key唯一结果，算法/密钥轮换不能让当天重抽。密钥由核心管理不暴露给插件；审计保存key_id与种子摘要，不宣称用户可独立验证未公开种子的公平性。
 

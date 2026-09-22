@@ -7,8 +7,10 @@ from plugins.bot_unified_runtime.contracts import (
     SubscriptionCursorV2,
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
-from plugins.bot_unified_runtime.sources.subscriptions.social_v2 import (
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+)
+from plugins.bot_unified_runtime.domains.subscribe.adapters.social_v2 import (
     TwitterGraphQLClient,
     TwitterSubscriptionAdapterV2,
 )

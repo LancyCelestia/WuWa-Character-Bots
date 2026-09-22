@@ -19,12 +19,13 @@ from plugins.bot_unified_runtime.capabilities.divination import (
 from plugins.bot_unified_runtime.capabilities.meme_library import (
     build_meme_library_capability,
 )
-from plugins.bot_unified_runtime.character.memory_extract import (
+from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.chat_reply.character.memory_extract import (
     extract_reminder_drafts,
     store_extracted_reminders,
 )
-from plugins.bot_unified_runtime.character.quirks import QuirkStore
-from plugins.bot_unified_runtime.character.reflection import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.quirks import QuirkStore
+from plugins.bot_unified_runtime.domains.chat_reply.character.reflection import (
     FactDraft,
     HeuristicSummarizer,
     ReflectionStore,
@@ -33,7 +34,6 @@ from plugins.bot_unified_runtime.character.reflection import (
     quirk_proposal_texts,
     run_reflection,
 )
-from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.domains.chat_reply.policy import gate as gate_module
 from plugins.bot_unified_runtime.domains.chat_reply.policy.gate import (
     PolicySettings,

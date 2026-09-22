@@ -6,7 +6,9 @@ from plugins.bot_unified_runtime.domains.core.contracts.media import (
     ParsedContent,
     build_parsed_content,
 )
-from plugins.bot_unified_runtime.sources.music_request_store import MusicRequestStore
+from plugins.bot_unified_runtime.domains.music.data.music_request_store import (
+    MusicRequestStore,
+)
 
 
 def _message(text: str) -> IncomingMessage:

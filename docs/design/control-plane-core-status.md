@@ -21,11 +21,11 @@
 
 | 模块 | 实际行为 | 验证范围 |
 |---|---|---|
-| `control_plane/services.py` | 无 FastAPI 依赖的 FeatureControlService；detail/list_features/tree/children/audit/change；服务层 super_admin 检查、别名解析、严格版本参数；业务异常统一映射；聚合查询使用单次锁内快照 | 单元＋HTTP 契约 |
-| `control_plane/features.py` | 验证 parent/依赖缺失及混合环；禁止通过父/依赖间接关闭受保护节点；reset 版本单调保留；写盘失败回滚内存与审计；preview 不保存不审计；审计 before/after/request_id；坏文件拒绝加载；内存审计限制200条 | 单元＋恢复/失败注入 |
-| `control_plane/api/protocol.py` | v1 envelope、请求 ID ContextVar、严格 FeatureChangePayload/FeaturePreviewPayload；extra 字段禁止 | HTTP 契约 |
-| `control_plane/api/v1.py` | 所有 features 路由调用服务；新增 preview 和认证 OpenAPI；配置历史路由前移避免被 `{key}` 遮蔽；未接入接口明确 503；CPU 百分比无采样器时 unknown | HTTP 契约 |
-| `control_plane/_app.py` | 同一 v1 read 支持只读/超管令牌；相同读写摘要禁用写；超管写入记录 actor；v1 成功/业务错误/验证错误/404/405/Host 错误/500 统一 envelope；v1 HTTP 访问进入原审计表 | 原 M1、Host、v1 回归 |
+| `plugins/bot_unified_runtime/control_plane/services.py` | 无 FastAPI 依赖的 FeatureControlService；detail/list_features/tree/children/audit/change；服务层 super_admin 检查、别名解析、严格版本参数；业务异常统一映射；聚合查询使用单次锁内快照 | 单元＋HTTP 契约 |
+| `plugins/bot_unified_runtime/control_plane/features.py` | 验证 parent/依赖缺失及混合环；禁止通过父/依赖间接关闭受保护节点；reset 版本单调保留；写盘失败回滚内存与审计；preview 不保存不审计；审计 before/after/request_id；坏文件拒绝加载；内存审计限制200条 | 单元＋恢复/失败注入 |
+| `plugins/bot_unified_runtime/control_plane/api/protocol.py` | v1 envelope、请求 ID ContextVar、严格 FeatureChangePayload/FeaturePreviewPayload；extra 字段禁止 | HTTP 契约 |
+| `plugins/bot_unified_runtime/control_plane/api/v1.py` | 所有 features 路由调用服务；新增 preview 和认证 OpenAPI；配置历史路由前移避免被 `{key}` 遮蔽；未接入接口明确 503；CPU 百分比无采样器时 unknown | HTTP 契约 |
+| `plugins/bot_unified_runtime/control_plane/_app.py` | 同一 v1 read 支持只读/超管令牌；相同读写摘要禁用写；超管写入记录 actor；v1 成功/业务错误/验证错误/404/405/Host 错误/500 统一 envelope；v1 HTTP 访问进入原审计表 | 原 M1、Host、v1 回归 |
 | `tests/test_control_plane_services.py` | 服务权限、请求 ID、严格输入、reset 冲突、preview、OpenAPI、相同令牌拒绝提权、占位接口不假成功 | 实跑 |
 | `tests/test_feature_store_integrity.py` | 依赖图、受保护节点、事务失败恢复、版本、审计隔离、预览、损坏文件 | 实跑 |
 | `tests/test_control_plane_v1.py` | 从源码目录改用 TEMP，显式注入测试审计库和渠道对象，避免写默认 Runtime 审计路径 | 实跑 |
@@ -98,17 +98,17 @@ flowchart LR
 
 | 优先级 | 位置/事实 | 下一步与验收 |
 |---|---|---|
-| P0 | `runtime/pipeline.py`、插件入口未消费 FeatureState | 接入主能力执行前和媒体/事件副作用前的有效状态门；测试关闭后无能力调用、无模型扣账、无出站 |
-| P0 | `control_plane/__main__.py` 独立入口；`bot.py` 未见自动挂载 | 明确同进程依赖注入或受控 IPC；不得对独立进程全局对象假装热更新 |
+| P0 | `domains/chat_reply/runtime/pipeline.py`、插件入口未消费 FeatureState | 接入主能力执行前和媒体/事件副作用前的有效状态门；测试关闭后无能力调用、无模型扣账、无出站 |
+| P0 | `plugins/bot_unified_runtime/control_plane/__main__.py` 独立入口；`bot.py` 未见自动挂载 | 明确同进程依赖注入或受控 IPC；不得对独立进程全局对象假装热更新 |
 | P0 | FeatureStateStore JSON 只用线程锁，节点 version 不含祖先状态 | 迁移 SQLite 事务＋图级 revision；迁移前只读验证/备份旧 JSON，损坏文件不得静默丢弃；跨实例 CAS 测试 |
-| P0 | `runtime/settings.py::_save` 通知在落盘前且吞 OSError | 独立 ConfigControlService；失败回滚/资源 reload 回执；API 与 `/bot runtime set` 同一事务边界 |
-| P1 | `runtime/capability_registry.py` 只有 Route/Interface/Help 声明 | 全量显式登记插件/子功能/触发/命令/任务/文档/配置，建立实现与注册双向覆盖门 |
-| P1 | `decision/dispatcher.py::dispatch` 仍 NotImplementedError；shadow 对 engine_only 回退 legacy | 逐能力接管，不重复授权/限流/幂等/发送；禁止直接开放 engine_only |
-| P1 | `capabilities/chat.py` 图片有 direct/relay 双路径 | 总开关在媒体准备前覆盖两条路径，不只关 relay |
+| P0 | `domains/chat_reply/runtime/settings.py::_save` 通知在落盘前且吞 OSError | 独立 ConfigControlService；失败回滚/资源 reload 回执；API 与 `/bot runtime set` 同一事务边界 |
+| P1 | `domains/chat_reply/runtime/capability_registry.py` 只有 Route/Interface/Help 声明 | 全量显式登记插件/子功能/触发/命令/任务/文档/配置，建立实现与注册双向覆盖门 |
+| P1 | `domains/core/decision/dispatcher.py::dispatch` 仍 NotImplementedError；shadow 对 engine_only 回退 legacy | 逐能力接管，不重复授权/限流/幂等/发送；禁止直接开放 engine_only |
+| P1 | `domains/chat_reply/capabilities/chat.py` 图片有 direct/relay 双路径 | 总开关在媒体准备前覆盖两条路径，不只关 relay |
 | P1 | 入口 `_transcode_record_segments` 与 chat ASR 是两阶段 | 禁用语音识别时同时禁止预转码/供应商调用；区分视频音轨策略 |
 | P1 | chat 视频新编排关闭后仍可能 `describe_video` | 独立视频总开关与编排模式开关，父开关同时阻断新旧支路 |
 | P1 | `sources/vision_describe.py` 已有 GIF 多帧拼条（最多三处） | 复用而非重造；登记 GIF 子功能，默认总禁用不做隐式静态识别 |
-| P1 | 入口文件段在构造 IncomingMessage 时已经调用 `sources/file_reader.py` | 文件安全门前移至读取前；不能仅在 chat 中关闭；校验允许路径、大小、IO预算 |
+| P1 | 入口文件段在构造 IncomingMessage 时已经调用 `domains/files/sources/file_reader.py` | 文件安全门前移至读取前；不能仅在 chat 中关闭；校验允许路径、大小、IO预算 |
 | P1 | 戳一戳 handler 直接 group_poke/friend_poke；BOT_POKE 热覆盖合并缺失 | 回戳/文字/Meme 同门禁并进入统一出站；补热更新消费测试再恢复热改白名单 |
 
 全量原计划 Phase 2–8 继续有效：事件总线/SSE、结构化 usage/trace/资源采样、隔离 workspace、人格与世界书版本、知识/记忆/数据库、模型 provider/channel/model、白名单动作、多媒体/文件/代码网关。当前均**未在本轮完成**，不要用无实现的 200 占位补齐接口表。

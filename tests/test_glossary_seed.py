@@ -15,11 +15,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from plugins.bot_unified_runtime.capabilities.chat import build_chat_prompt
-from plugins.bot_unified_runtime.character.glossary import (
-    SEED_GLOSSARY_PATH,
-    SEED_MAX_ENTRIES,
-    build_glossary_provider,
-)
 from plugins.bot_unified_runtime.contracts import (
     ContextBundle,
     GlossaryContext,
@@ -31,6 +26,11 @@ from plugins.bot_unified_runtime.contracts import (
 )
 from plugins.bot_unified_runtime.domains.chat_reply.character import (
     glossary as glossary_mod,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.glossary import (
+    SEED_GLOSSARY_PATH,
+    SEED_MAX_ENTRIES,
+    build_glossary_provider,
 )
 
 PERSONA_TEXT = "# 角色沉浸要求\n\n你就是守岸人本人，以第一人称思考与回应。"

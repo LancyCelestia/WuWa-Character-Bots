@@ -25,7 +25,7 @@
 
 有些结果用一行文字说不清：行情要看走势、好感度要看双向刻度、解析卡要有头像和指标、流程图要真画出来。卡片渲染就是把结构化数据排成一张 PNG 发到会话里。
 
-难点不在「画得出来」，而在「十一个面画得像同一家族」。早期每张卡各写各的 CSS，圆角、阴影、字号、色斑各自取巧，改一处要追改十处，还会互相看不见地漂移。现在的做法是：视觉数值只允许在 `domains/render/card_render/theme_tokens.py` 登记一次，装饰层（壳底渐变、三枚漂移色斑、玻璃两档）只允许由 `domains/render/card_render/mica_shell.py` 的生成器产出，模板与直拼卡一律 `var()` 消费；「有 11 个渲染面」这件事由 `scripts/doc_sync.py` 派生进机器册 `docs/auto-facts.md`，不在文档里手写。
+难点不在「画得出来」，而在「所有面画得像同一家族」。早期每张卡各写各的 CSS，圆角、阴影、字号、色斑各自取巧，改一处要追改十处，还会互相看不见地漂移。现在的做法是：视觉数值只允许在 `domains/render/card_render/theme_tokens.py` 登记一次，装饰层（壳底渐变、漂移色斑、玻璃档位——成员与档位以该件登记册为准）只允许由 `domains/render/card_render/mica_shell.py` 的生成器产出，模板与直拼卡一律 `var()` 消费；「渲染面有多少个」这件事由 `scripts/doc_sync.py` 派生进机器册 `docs/auto-facts.md`，不在文档里手写。
 
 ## 处理流程
 
@@ -75,5 +75,5 @@ bridge 负责「脏数据归一 + 只吐已登记 token」，后端负责「浏�
 - **宽度登记不生效**（D-6）：直拼卡宽度已进 `CARD_SHELL_WIDTHS`，调用点仍传字面量 `width_px=`，改表不跟随；另有未登记的缺省档 `_DEFAULT_SHELL_WIDTH_PX`。
 - **次级文字与阴影「单一来源」是半真**（D-4 / E-12）：`TEXT_SECONDARY` 仍以等值手抄存在于模板侧，公共段另有同语义双 token 双值并存；直拼卡阴影只有两级面。
 - **若干纸面条款无机器拦截**：`OVERLAY_SCRIMS` 无面扫门（D-2）、`TYPE_SCALE_PX` 纯声明零消费者、直拼卡 `@keyframes` 名门缺失（D-1）、语义色「禁止卡私字面量」的全称执法未完成。
-- **字节确定性判据易灭**（D-8）：样张基线在 `%TEMP%`，未入库、无钉帧成功率告警——清临时目录后「PNG 字节等值」这条主判据当场消失。
+- **字节确定性判据易灭**（D-8）：样张基线住在系统临时目录（位置以 `scripts/render_card_samples.py` 的默认输出为准），未入库、无钉帧成功率告警——清临时目录后「PNG 字节等值」这条主判据当场消失。
 - **旧路径垫片未退役**：`output/card_render/` 等仍作兼容导出面存在（`docs/design/v21r3-render-shim-retirement.md`），新代码不得再引用旧路径。

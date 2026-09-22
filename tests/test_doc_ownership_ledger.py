@@ -22,6 +22,7 @@ from __future__ import annotations
 import ast
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -268,3 +269,399 @@ def test_ambiguous_rows_do_not_invent_ownership(tmp_path: Path) -> None:
     ledger = dos.compute_ownership(repo)
     assert "docs/full-path.md" in ledger.unowned
     assert any("full-path" in row for row in ledger.ambiguous_rows)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 席 S88 OWNERSHIP-GATE-TEETH —— 把 S76 的「七态诊断」接进门（P-S76-1）
+#
+# 本文件原有 `test_declaration_source_is_in_sync_and_pure` 只做**整文件逐字节**比对：
+# 它只会说"不一样"，不会说**哪一态**、方向朝哪 ⇒ 脚本有牙、门没牙。
+# 下面补的是**逐态**执法：每种断链都要被点名句、方向要分得开、且各带可执行下一步。
+#
+# 三条纪律写死在这里：
+# 1. 注毒一律打在 `tmp_path` 假 repo 上，**零污染源码树**（真声明源一个字都不写）。
+# 2. 取证只走**同一条真入口** `main(["--check"], repo=...)` + 它的 stdout ⇒
+#    门钉的是"人能看到的那句诊断"，不是内部函数返回值（内部绿、出口瞎＝本波第 15 号形态）。
+# 3. 每次注毒前先断言"打中的字面确实存在且唯一"、注毒后断言"文件真的变了" ⇒
+#    杜绝「注毒打在空气上、测试却绿」（本波 F-15 同族）。
+#
+# 既有断言一字未改（§7 禁写面）；本节只新增。
+# ════════════════════════════════════════════════════════════════════════════
+
+#: 七态字面量（真身 = `scripts/doc_ownership_sync.py` 的 K_* 常量；此处只引用不复制值）。
+ALL_STATES: tuple[str, ...] = (
+    dos.K_ABSENT, dos.K_PARSE, dos.K_DUP, dos.K_MISSING, dos.K_EXTRA, dos.K_FIELD, dos.K_FORMAT,
+)
+
+#: 结构锁 (c) 用：一句「可执行下一步」至少要有这些动作之一，否则就是"看着办"式废话。
+_ACTIONABLE_MARKERS = ("--generate", "回滚", "分类表")
+
+
+def _decl_of(repo: Path) -> Path:
+    return repo / dos.OWNERSHIP_REL
+
+
+def _read_decl(repo: Path) -> str:
+    return _decl_of(repo).read_text(encoding="utf-8")
+
+
+def _write_decl(repo: Path, text: str) -> None:
+    # 与 `--generate` 同形（newline="\n"）：注毒不得自带换行噪声，否则 K_FORMAT 会串进别的态。
+    with _decl_of(repo).open("w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+
+
+def _fresh_repo(tmp_path: Path, capsys: Any, name: str = "repo") -> Path:
+    """假 repo ＋ **用真入口**投影出的自洽声明源，并确认干净基线为 rc0。
+
+    干净基线不成立就没必要往下注毒——那时任何红都可能是构造错，不是判据在执法。
+    """
+    repo = tmp_path / name
+    repo.mkdir(parents=True, exist_ok=True)
+    _build_fake_repo(repo)
+    assert dos.main(["--generate"], repo=repo) == 0, "--generate 在假 repo 上失败＝注毒现场搭不起来"
+    assert dos.main(["--check"], repo=repo) == 0, "干净基线不 CLEAN＝后面所有红都归因不明"
+    capsys.readouterr()  # 排掉搭现场期间的输出，后面每次取证只看当发注毒
+    return repo
+
+
+def _add_table_row(repo: Path, anchor: str, new_row: str, path: str) -> None:
+    """给假 repo 的分类表补一行（连同文件），供「两棵树」结构锁造差异。"""
+    table = repo / dos.CLASSIFICATION_REL
+    text = table.read_text(encoding="utf-8")
+    assert text.count(anchor) == 1, f"表内锚点不唯一（{anchor!r}）＝注毒打在空气上"
+    table.write_text(text.replace(anchor, anchor + "\n" + new_row), encoding="utf-8")
+    created = repo / Path(*path.split("/"))
+    created.parent.mkdir(parents=True, exist_ok=True)
+    created.write_text("extra", encoding="utf-8")
+
+
+def _check(repo: Path, capsys: Any) -> tuple[int, str]:
+    """跑真入口，返回 (rc, stdout)。诊断是否点名只能从出口取证。"""
+    rc = dos.main(["--check"], repo=repo)
+    return rc, capsys.readouterr().out
+
+
+def _assert_names_state(out: str, state: str, silent: tuple[str, ...] = ()) -> None:
+    """该态必须被**点名**（不是只 rc≠0）；串态即红——方向可分辨才算七态各有一枚牙。"""
+    assert f"[{state}]" in out, f"门没有点名「{state}」，只看到：\n{out}"
+    for other in silent:
+        assert f"[{other}]" not in out, f"串态：期望只报「{state}」却报了「{other}」：\n{out}"
+    assert "下一步：" in out, f"「{state}」没有给可执行下一步（S69 立的要求）：\n{out}"
+
+
+def _locate(lines: list[str], needle: str) -> int:
+    hits = [i for i, ln in enumerate(lines) if needle in ln]
+    assert len(hits) == 1, f"注毒目标不存在或不唯一（{needle!r} 命中 {len(hits)} 行）"
+    return hits[0]
+
+
+def test_s88_poison_states_are_seven_and_next_step_covers_each() -> None:
+    """结构锁 (c) 前半：态集合、诊断顺序表、下一步表**三者同源**，谁漏一格当场红。
+
+    防的形态：将来加第八态却忘了给下一步 ⇒ 输出里那句"下一步"永远缺席，而门照样绿。
+    """
+    assert len(set(ALL_STATES)) == 7, f"七态口径漂移：{ALL_STATES}"
+    assert set(dos._KIND_ORDER) == set(ALL_STATES), "诊断顺序表与七态常量不同源"
+    assert set(dos._NEXT_STEP) == set(ALL_STATES), "有态没配「下一步」＝诊断只剩症状"
+    for state in ALL_STATES:
+        step = dos._NEXT_STEP[state].strip()
+        assert step, f"{state} 的下一步是空话"
+        assert any(marker in step for marker in _ACTIONABLE_MARKERS), (
+            f"{state} 的下一步没有可执行动作（要含 {_ACTIONABLE_MARKERS} 之一）：{step[:80]}"
+        )
+
+
+def test_s88_state_absent_is_named_and_says_generate(tmp_path: Path, capsys: Any) -> None:
+    """态 1/7 声明源不在盘：整文件比对的旧形状在这里同样红，但只有新腿能说出**为什么**红。"""
+    repo = _fresh_repo(tmp_path, capsys)
+    _decl_of(repo).unlink()
+    rc, out = _check(repo, capsys)
+    assert rc == 1
+    _assert_names_state(out, dos.K_ABSENT, silent=(dos.K_PARSE, dos.K_MISSING, dos.K_EXTRA, dos.K_FIELD))
+    assert "--generate" in out, f"该态的下一步必须就是重投影：\n{out}"
+
+
+def test_s88_state_unparseable_named_syntax(tmp_path: Path, capsys: Any) -> None:
+    """态 2a/7 声明源不可解析（语法崩形）：手改改崩到读不动。"""
+    repo = _fresh_repo(tmp_path, capsys)
+    _write_decl(repo, "这不是 python 语法 =(")
+    rc, out = _check(repo, capsys)
+    assert rc == 1
+    # 崩到底时逐格比无意义 ⇒ 脚本早退回，只报这一态（其余各态**不该**同时冒出来）
+    _assert_names_state(out, dos.K_PARSE,
+                        silent=(dos.K_MISSING, dos.K_EXTRA, dos.K_FIELD, dos.K_DUP, dos.K_FORMAT))
+
+
+def test_s88_state_unparseable_named_element_form(tmp_path: Path, capsys: Any) -> None:
+    """态 2b/7 声明源不可解析（非法条目形）：文件读得动，但某一格不是 `DocOwner(...)`。"""
+    repo = _fresh_repo(tmp_path, capsys)
+    raw = _read_decl(repo)
+    broken = raw.replace("DocOwner(path='docs/full-path.md'", "\"不是DocOwner构造\"(path='docs/full-path.md'", 1)
+    assert broken != raw, "注毒没改动文件＝空跑"
+    _write_decl(repo, broken)
+    rc, out = _check(repo, capsys)
+    assert rc == 1
+    _assert_names_state(out, dos.K_PARSE,
+                        silent=(dos.K_MISSING, dos.K_EXTRA, dos.K_FIELD, dos.K_DUP, dos.K_FORMAT))
+    assert "条目形" in out, f"该点名「条目形」这一格：\n{out}"
+
+
+def test_s88_state_missing_entry_names_the_path(tmp_path: Path, capsys: Any) -> None:
+    """态 3/7 盘上缺条目（＝改了分类表没跑重投影）：方向必须是「上游有、盘上无」。"""
+    repo = _fresh_repo(tmp_path, capsys)
+    lines = _read_decl(repo).split("\n")
+    idx = _locate(lines, "path='docs/full-path.md'")
+    del lines[idx]
+    _write_decl(repo, "\n".join(lines))
+    rc, out = _check(repo, capsys)
+    assert rc == 1
+    _assert_names_state(out, dos.K_MISSING, silent=(dos.K_EXTRA, dos.K_FIELD, dos.K_DUP))
+    assert "docs/full-path.md" in out, f"缺条目必须点名到具体 path：\n{out}"
+    assert "上游有" in out and "盘上无" in out, f"方向措辞要能分辨「上游有/盘上无」：\n{out}"
+
+
+def test_s88_state_extra_entry_names_the_path(tmp_path: Path, capsys: Any) -> None:
+    """态 4/7 盘上多条目（＝手改生成物，或上游行被删）：方向必须是「盘上有、上游无」。"""
+    repo = _fresh_repo(tmp_path, capsys)
+    lines = _read_decl(repo).split("\n")
+    idx = _locate(lines, "path='docs/full-path.md'")
+    lines.insert(idx + 1, "    DocOwner(path='docs/hand-added.md', board='B06', fid='', "
+                          "currency='现行', basis='盘上手加', completed=False),")
+    _write_decl(repo, "\n".join(lines))
+    rc, out = _check(repo, capsys)
+    assert rc == 1
+    _assert_names_state(out, dos.K_EXTRA, silent=(dos.K_MISSING, dos.K_FIELD, dos.K_DUP))
+    assert "docs/hand-added.md" in out, f"多条目必须点名到具体 path：\n{out}"
+    assert "盘上有" in out and "上游现算无" in out, f"方向措辞要能分辨「盘上有/上游无」：\n{out}"
+
+
+def test_s88_field_drift_is_named_as_field_not_missing(tmp_path: Path, capsys: Any) -> None:
+    """态 5/7 字段漂移（反向自测①）：改 basis 必须报**字段漂移**，不许退化成「缺条目」。
+
+    这正是 S69 真咬到的那一条（清扫席改了依据列没随迁）。旧形状只说"不一致"，
+    新腿必须把「哪一格、哪个字段、期望 vs 现值」三件事一起说出来。
+    """
+    repo = _fresh_repo(tmp_path, capsys)
+    raw = _read_decl(repo)
+    poisoned = raw.replace("basis='依据A'", "basis='依据A（被改过）'", 1)
+    assert poisoned != raw, "注毒没改动文件＝空跑"
+    _write_decl(repo, poisoned)
+    rc, out = _check(repo, capsys)
+    assert rc == 1
+    _assert_names_state(out, dos.K_FIELD, silent=(dos.K_MISSING, dos.K_EXTRA, dos.K_DUP))
+    assert ".basis" in out, f"要点到字段：\n{out}"
+    assert "期望=" in out and "盘上=" in out, f"字段漂移必须给 期望/现值 两个值：\n{out}"
+    assert "docs/full-path.md" in out, f"字段漂移要点名受害 path：\n{out}"
+
+
+def test_s88_state_duplicate_path_named(tmp_path: Path, capsys: Any) -> None:
+    """态 6/7 盘上重复路径（反向自测③）：投影器按 path 去重 ⇒ 重复只可能来自手改。"""
+    repo = _fresh_repo(tmp_path, capsys)
+    lines = _read_decl(repo).split("\n")
+    idx = _locate(lines, "path='docs/full-path.md'")
+    lines.insert(idx + 1, lines[idx])
+    _write_decl(repo, "\n".join(lines))
+    rc, out = _check(repo, capsys)
+    assert rc == 1
+    _assert_names_state(out, dos.K_DUP, silent=(dos.K_MISSING, dos.K_EXTRA, dos.K_FIELD))
+    assert "docs/full-path.md" in out, f"重复态必须点名重复的 path：\n{out}"
+
+
+def test_s88_state_format_only_drift_named(tmp_path: Path, capsys: Any) -> None:
+    """态 7/7 非条目级漂移：条目级三态全平、只有注释/空白不一致。
+
+    这态存在的意义＝**不许**把"字节不同"糊成"没问题"。旧形状在这红，但说不出只是排版。
+    """
+    repo = _fresh_repo(tmp_path, capsys)
+    _write_decl(repo, _read_decl(repo) + "#: 只动注释的排版差异\n")
+    rc, out = _check(repo, capsys)
+    assert rc == 1
+    _assert_names_state(out, dos.K_FORMAT, silent=(dos.K_MISSING, dos.K_EXTRA, dos.K_FIELD, dos.K_DUP))
+    assert "字节" in out, f"排版态要给两边字节数：\n{out}"
+
+
+def test_s88_direction_symmetry_across_two_trees(tmp_path: Path, capsys: Any) -> None:
+    """反向自测②＋结构锁 (a)：造 A/B 两棵**不同**的树，把 A 的声明源塞进 B。
+
+    期望两个方向同时成立且各点到对的 path：B 上游有而盘上没有 →「盘上缺条目」；
+    A 独有而 B 上游没有 →「盘上多条目」。若 `repo` 参数其实没生效（旧写法 def 时绑死 REPO），
+    这里要么两态都不出现、要么报的是真 REPO 的账 ⇒ 当场红。
+    """
+    repo_a = _fresh_repo(tmp_path, capsys, "repoA")
+    _add_table_row(repo_a, "| docs/full-path.md | 1 | 现行权威 | B01 | NONE | 接入 | 保留 | 依据A |",
+                   "| docs/a-only.md | 1 | 现行 | B04 | NONE | x | 保留 | 依据G |", "docs/a-only.md")
+    assert dos.main(["--generate"], repo=repo_a) == 0
+    repo_b = _fresh_repo(tmp_path, capsys, "repoB")
+    _add_table_row(repo_b, "| docs/full-path.md | 1 | 现行权威 | B01 | NONE | 接入 | 保留 | 依据A |",
+                   "| docs/b-only.md | 1 | 现行 | B04 | NONE | x | 保留 | 依据H |", "docs/b-only.md")
+    assert dos.main(["--generate"], repo=repo_b) == 0
+    capsys.readouterr()
+    # 各扫各的树都是绿的（换树成立的第一半）
+    assert dos.main(["--check"], repo=repo_a) == 0
+    assert dos.main(["--check"], repo=repo_b) == 0
+    capsys.readouterr()
+    _write_decl(repo_b, _read_decl(repo_a))  # 只搬声明源，不搬分类表 ⇒ 账与文件必打架
+    rc, out = _check(repo_b, capsys)
+    assert rc == 1
+    assert f"[{dos.K_MISSING}]" in out and f"[{dos.K_EXTRA}]" in out, f"两向都要点名：\n{out}"
+    assert f"[{dos.K_FIELD}]" not in out, f"两边共有行的字段是一致的，不该冒出字段漂移：\n{out}"
+    assert "docs/b-only.md" in out, f"B 独有行须记「盘上缺条目」：\n{out}"
+    assert "docs/a-only.md" in out, f"A 独有行须记「盘上多条目」：\n{out}"
+
+
+def test_s88_parse_accepts_both_assign_forms(tmp_path: Path, capsys: Any) -> None:
+    """结构锁 (b)：`ast.Assign` 与 `ast.AnnAssign` **双形态都认**（防第 28 号形态复发）。
+
+    S76 自曝的真事故：`parse_declaration` 只认 `Assign`，而声明源三张表全是
+    `X: tuple[DocOwner, ...] = (...)`＝`AnnAssign` ⇒ 解析 0 条、三态方向整体说反，
+    而门照样绿。所以这里既验 AnnAssign 腿（真声明源，计数>0 且 == 现算表数），
+    也验 Assign 腿（内存改写成无标注形，计数不得归零），并现算证真身**确实**是 AnnAssign
+    （否则"双形态"只是句口号——只有一条腿被踩过）。
+    """
+    target = ROOT / dos.OWNERSHIP_REL
+    text = target.read_text(encoding="utf-8")
+    ledger = dos.compute_ownership()
+    want = dos.projection_records(ledger)
+    records, drifts = dos.parse_declaration(text)
+    assert not drifts, f"真声明源不该解析出漂移：{drifts[:3]}"
+    assert len(records) > 0, "解析 0 条＝声明源形与解析器脱节（第 28 号形态）"
+    assert len(records) == len(want), f"解析条数 {len(records)} ≠ 现算条数 {len(want)}＝两本账不同源"
+    assert set(records) == set(want), "解析 path 全集与现算不等＝有段没被读到"
+    forms = {
+        type(node).__name__
+        for node in ast.parse(text).body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        and getattr(node.targets[0] if isinstance(node, ast.Assign) else node.target, "id", "")
+        in dos._SOURCE_SECTIONS
+    }
+    assert forms == {"AnnAssign"}, f"真身三张表的赋值形态变了（{forms}）——本锁的前提要跟着改"
+    # Assign 腿：把同一份声明源改写成「无类型标注」形，条数必须一字不减
+    bare = text.replace("DOC_OWNERSHIP_DIRS: tuple[DocOwner, ...] = (", "DOC_OWNERSHIP_DIRS = (") \
+               .replace("DOC_OWNERSHIP: tuple[DocOwner, ...] = (", "DOC_OWNERSHIP = (") \
+               .replace("DOC_OWNERSHIP_ARCHIVE: tuple[DocOwner, ...] = (", "DOC_OWNERSHIP_ARCHIVE = (")
+    assert bare != text, "改写没生效＝这条腿空跑"
+    bare_records, bare_drifts = dos.parse_declaration(bare)
+    assert not bare_drifts and len(bare_records) == len(records), (
+        f"只认 AnnAssign＝第 28 号形态复发：bare={len(bare_records)} vs 真身={len(records)}"
+    )
+
+
+def test_s88_poison_then_follow_next_step_returns_green(tmp_path: Path, capsys: Any) -> None:
+    """「下一步」不许是空话：字段漂移后照它跑 `--generate`，必须回 CLEAN。
+
+    反向自测的还原半——只证"会红"不证"红得可修"，等于把判据写成抱怨。
+    """
+    repo = _fresh_repo(tmp_path, capsys)
+    _write_decl(repo, _read_decl(repo).replace("basis='依据A'", "basis='依据A（被改过）'", 1))
+    rc, out = _check(repo, capsys)
+    assert rc == 1 and f"[{dos.K_FIELD}]" in out
+    assert dos.main(["--generate"], repo=repo) == 0
+    capsys.readouterr()  # 排掉 --generate 的横幅，否则"下一步"的输出会混进取证窗口
+    rc2, out2 = _check(repo, capsys)
+    assert rc2 == 0 and out2.strip() == "CLEAN", f"重投影后仍不绿＝下一步在骗人：\n{out2}"
+
+
+#: ── 七态发毒表（本席「渲染出口唯一」矩阵用例复用；键＝态名，值＝只吃 repo 的动作）──
+def _poison_absent(repo: Path) -> None:
+    _decl_of(repo).unlink()
+
+
+def _poison_parse(repo: Path) -> None:
+    _write_decl(repo, "这不是 python 语法 =(")
+
+
+def _poison_dup(repo: Path) -> None:
+    lines = _read_decl(repo).split("\n")
+    i = _locate(lines, "path='docs/full-path.md'")
+    lines.insert(i + 1, lines[i])
+    _write_decl(repo, "\n".join(lines))
+
+
+def _poison_missing(repo: Path) -> None:
+    lines = _read_decl(repo).split("\n")
+    del lines[_locate(lines, "path='docs/full-path.md'")]
+    _write_decl(repo, "\n".join(lines))
+
+
+def _poison_extra(repo: Path) -> None:
+    lines = _read_decl(repo).split("\n")
+    i = _locate(lines, "path='docs/full-path.md'")
+    lines.insert(i + 1, "    DocOwner(path='docs/hand-added.md', board='B06', fid='', "
+                        "currency='现行', basis='盘上手加', completed=False),")
+    _write_decl(repo, "\n".join(lines))
+
+
+def _poison_field(repo: Path) -> None:
+    raw = _read_decl(repo)
+    out = raw.replace("basis='依据A'", "basis='依据A（被改过）'", 1)
+    assert out != raw, "发毒打在空气上＝这条腿空跑"
+    _write_decl(repo, out)
+
+
+def _poison_format(repo: Path) -> None:
+    _write_decl(repo, _read_decl(repo) + "#: 只动注释的排版差异\n")
+
+
+ALL_POISONS: tuple[tuple[str, object], ...] = (
+    (dos.K_ABSENT, _poison_absent), (dos.K_PARSE, _poison_parse), (dos.K_DUP, _poison_dup),
+    (dos.K_MISSING, _poison_missing), (dos.K_EXTRA, _poison_extra), (dos.K_FIELD, _poison_field),
+    (dos.K_FORMAT, _poison_format),
+)
+
+
+def test_s88_naming_comes_from_exactly_one_rendering_path(tmp_path: Path, capsys: Any) -> None:
+    """结构锁：七态的「点名」只准出自**一条**渲染出口（禁两条码路）。
+
+    本席变异探针实测到的真缺陷：`声明源不在盘` 这一态原先在 `check_sync` 里**手搓三行**输出，
+    把渲染层拔掉它照样点名 ⇒ 七态里唯一「退化不失明」的格子。现已并回同一条 `drift_report`。
+    判据形状＝拔掉出口后**每一态都失明、而 rc 仍为 1**（红照旧报、瞎话不许留），
+    这比 grep AST 强：它钉的是行为，不是字面。
+    """
+    orig = dos.drift_report
+    blind: list[str] = []
+    rc_changed: list[str] = []
+    try:
+        for i, (state, poison) in enumerate(ALL_POISONS):
+            repo = _fresh_repo(tmp_path, capsys, f"teeth{i}")
+            poison(repo)  # type: ignore[operator]
+            rc_t, out_t = _check(repo, capsys)
+            assert rc_t == 1 and f"[{state}]" in out_t, f"有牙版自身已失效：{state}\n{out_t}"
+            repo2 = _fresh_repo(tmp_path, capsys, f"neuter{i}")
+            dos.drift_report = lambda drifts, ledger, current: ["OUT OF SYNC（渲染层退化版：不说哪一态）"]
+            try:
+                poison(repo2)  # type: ignore[operator]
+                rc_n, out_n = _check(repo2, capsys)
+            finally:
+                dos.drift_report = orig
+            if rc_n != 1:
+                rc_changed.append(f"{state}:rc={rc_n}")
+            if f"[{state}]" in out_n:
+                blind.append(state)
+    finally:
+        dos.drift_report = orig
+    assert not blind, f"这些态绕过渲染出口自己点名＝第二条码路，退化时不会失明：{blind}"
+    assert not rc_changed, f"拔掉渲染层后 rc 语义被改（0/1 必须与旧版逐字一致）：{rc_changed}"
+
+
+def test_s88_real_tree_is_clean_at_entry_level_too(tmp_path: Path, capsys: Any) -> None:
+    """真树逐态全平（不是"没扫到"）：现算比对要真看见 386 量级条目后判全平。
+
+    专防假绿形态：诊断腿扫 0 页也"全绿"。这里断言被看过的条目数与现算同源且远大于零。
+    """
+    ledger = dos.compute_ownership()
+    rendered = dos.render_source(ledger)
+    want = dos.projection_records(ledger)
+    assert len(want) == len(ledger.entries) + len(ledger.archive), "投影记录数与 Ledger 不同源"
+    assert len(want) > 300, f"只比对了 {len(want)} 条，量级不对＝扫描面塌陷"
+    drifts = dos.compare_projection(ledger, rendered, rendered)
+    structural = [d for d in drifts if d.kind != dos.K_FORMAT]
+    assert structural == [], f"真树逐格比对不该有结构性漂移：{[d.render() for d in structural[:3]]}"
+    # 函数契约如实钉住（本席读码＋实跑所得）：`compare_projection` 只在"字节已不等"后被调用，
+    # 条目级全平时它**必然**补一枚 K_FORMAT 残差。喂同一份文本 ⇒ 残差是预期内，不是漏检。
+    # 判"是否同步"的落点是 `check_sync`（下一条断言），不是这里。
+    assert [d.kind for d in drifts] == [dos.K_FORMAT], f"残差形态漂移（判据口径变了）：{[d.kind for d in drifts]}"
+    rc, lines = dos.check_sync(ledger, rendered, ROOT / dos.OWNERSHIP_REL)
+    assert rc == 0 and lines == ["CLEAN"], f"真树 --check 现算不绿：{lines[:3]}"
+    assert dos.main(["--check"], repo=ROOT) == 0
+    capsys.readouterr()

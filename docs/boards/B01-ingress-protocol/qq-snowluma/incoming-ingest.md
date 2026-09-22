@@ -27,8 +27,8 @@
 
 没有配置键，全是模块常量——改它们就是行为变更，要走评审：
 
-- 转发反查：单次超时 `_FORWARD_MESSAGE_API_TIMEOUT_SECONDS`（10 秒），嵌套深度 `_FORWARD_NESTED_MAX_DEPTH`、子节点总上限 `_FORWARD_NESTED_MAX_TOTAL`，主/子反查共享同一总预算。
-- 语音可解码后缀 `_RECORD_CONVERTIBLE_SUFFIXES`（mp3/wav/m4a/aac/flac/ogg/amr），不在表内才去转码；`get_record` 硬超时 20 秒。
+- 转发反查：单次超时 `_FORWARD_MESSAGE_API_TIMEOUT_SECONDS`、嵌套深度 `_FORWARD_NESTED_MAX_DEPTH`、子节点总上限 `_FORWARD_NESTED_MAX_TOTAL`（三个数值以该件常量定义为准），主/子反查共享同一总预算。
+- 语音可解码后缀表 `_RECORD_CONVERTIBLE_SUFFIXES`（成员以该常量为准），不在表内才去转码；`get_record` 的硬超时以该调用的常量为准。
 - 音频段类型 `AUDIO_SEGMENT_TYPES = {record, voice, audio}`：OneBot 与 Telegram 三种写法都要认，历史上漏认 `voice/audio` 导致 TG 语音被当普通文本。
 - 适配器名归一 `_normalize_adapter_name`：事件模块名推不出时按 `onebot v11` 兜底。
 

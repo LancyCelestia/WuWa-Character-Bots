@@ -33,6 +33,31 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # ---------------------------------------------------------------------------
+# 源码树零缓存守卫（S144，2026-09-22）
+# ---------------------------------------------------------------------------
+# 复现结论：测试进程只要以**不带** PYTHONDONTWRITEBYTECODE 的方式启动（例如
+# `pytest tests/test_taxonomy_spec_gates.py` 裸跑，而非经 dev.ps1 -Task test），
+# pytest 收集期 import scripts/*.py 门模块会当场在 scripts/__pycache__ 落 6~7 枚
+# .pyc，被 runtime-layout 门记成"源码树有字节码"。dev.ps1 路线靠启动期同时设
+# PYTHONDONTWRITEBYTECODE=1 + PYTHONPYCACHEPREFIX 兜住（scripts/dev.ps1:59-62）；
+# 但"绕开 dev.ps1 的裸跑"是 AGENTS 规则 6 明确允许、且历史上被并行席反复踩到的
+# 入口（S141 观察到的"亚分钟写-清四拍"正是某席裸跑写、别席清）。
+# 修法＝在 conftest 这个"pytest 最早加载、且早于任何测试模块 import"的位置，把
+# runtime_layout_smoke（S139 实证）同一套三通道设好，让测试树自护而非依赖调用方：
+#   - sys.dont_write_bytecode：本进程（pytest）后续 import 不落 .pyc 的唯一有效闸
+#     ——中途改 os.environ 对已启动解释器无效，只有这个直接生效；
+#   - os.environ.setdefault：覆盖所有按环境继承起来的子进程（autosync 三件等）；
+#   - PYTHONPYCACHEPREFIX：连 py_compile/compileall 这类无视 dont_write_bytecode 的
+#     写也一并重定向到 Runtime，绝不进 AI 工作区。
+# 三项均为"设缺省不覆盖"：dev.ps1 路线上它们本已就位⇒该守卫零行为变化；
+# 只动 hygiene，绝不触碰任何判据 / 阈值 / 断言 / 门本体。
+_RUNTIME_ROOT = REPO_ROOT.parent / "ChatBot_Runtime"
+_PYCACHE_PREFIX = str(_RUNTIME_ROOT / "pycache")
+os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+os.environ.setdefault("PYTHONPYCACHEPREFIX", _PYCACHE_PREFIX)
+sys.dont_write_bytecode = True
+
+# ---------------------------------------------------------------------------
 # BOT_AUTOSYNC 常驻自动同步钩子（session 级，人完全无感）
 # ---------------------------------------------------------------------------
 # 仅当 BOT_AUTOSYNC=1（dev.ps1 -Task test 设置）时启用：session 开始时依次
@@ -107,6 +132,13 @@ def run_autosync(root: Path | None = None) -> list[str]:
                 text=True,
                 timeout=120,
                 check=False,
+                # S144：会话级唯一的树内子进程出口显式带不写字节码的环境，
+                # 不再依赖调用方 ambient 继承（tts_offline_selfcheck 同款配方）。
+                env={
+                    **os.environ,
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "PYTHONPYCACHEPREFIX": _PYCACHE_PREFIX,
+                },
             )
         except (OSError, subprocess.SubprocessError) as exc:
             warnings.warn(

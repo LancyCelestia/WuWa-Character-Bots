@@ -29,7 +29,9 @@ from plugins.bot_unified_runtime.capabilities.campus import (
     matches_campus_source,
 )
 from plugins.bot_unified_runtime.config import Config
-from plugins.bot_unified_runtime.sources.campus_store import CampusStore
+from plugins.bot_unified_runtime.domains.assistant.campus.campus_store import (
+    CampusStore,
+)
 
 _NOW = datetime(2026, 9, 15, 21, 30, tzinfo=timezone.utc)
 _TODAY = _NOW.date().isoformat()

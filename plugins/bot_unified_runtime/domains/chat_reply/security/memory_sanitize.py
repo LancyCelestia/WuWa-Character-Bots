@@ -142,7 +142,7 @@ def resolve_memory_db_path(config: object) -> Path | None:
     raw = str(getattr(config, "bot_memory_db_path", "") or "").strip()
     if not raw:
         return None
-    from plugins.bot_unified_runtime.sources.parsers.cookies import (
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.cookies import (
         _resolve_relative_cookie_path,
     )
 

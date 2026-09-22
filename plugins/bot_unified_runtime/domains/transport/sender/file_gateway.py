@@ -279,7 +279,7 @@ class FileTransferGateway:
             raise FileTransferError("invalid_source")
         fallback_name = url.rsplit("/", 1)[-1].split("?", 1)[0] or "download"
         # SSRF 固定闸门（规格 §2.6.1）：复用 sources.downloader 的既有护栏。
-        from plugins.bot_unified_runtime.sources.downloader import (
+        from plugins.bot_unified_runtime.domains.files.sources.downloader import (
             RejectedUrlError,
             check_download_url,
         )

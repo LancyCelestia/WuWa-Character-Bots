@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.sources.search_intent import (
+from plugins.bot_unified_runtime.domains.core.search.search_intent import (
     TIMELINESS_BACKGROUND,
     TIMELINESS_LATEST,
     acg_query_variants,

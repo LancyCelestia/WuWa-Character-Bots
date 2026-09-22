@@ -6,7 +6,7 @@
 
 **目标：** 用一个严格的 `ParsedContent` 模型替换尚未完成的 `PlatformParse`/旧字典契约，并让所有已注册内容解析器返回该模型，同时不改变 UI 模板或渲染标记。
 
-**架构：** `contracts/media.py` 作为权威的类型模型；它从 `contracts/music.py` 引入唯一的 `MusicTrack`，使音乐元数据在解析器、点歌、订阅和榜单之间共享。解析器直接返回 `ParsedContent`，并共享 `FetchContext`、`SourceProvenance` 和结构化 `ParseFailure` 语义。内容能力层和渲染边界只通过后端投影消费新模型，HTML/CSS/模板保持不变。
+**架构：** `domains/core/contracts/media.py` 作为权威的类型模型；它从 `contracts/music.py` 引入唯一的 `MusicTrack`，使音乐元数据在解析器、点歌、订阅和榜单之间共享。解析器直接返回 `ParsedContent`，并共享 `FetchContext`、`SourceProvenance` 和结构化 `ParseFailure` 语义。内容能力层和渲染边界只通过后端投影消费新模型，HTML/CSS/模板保持不变。
 
 **依赖顺序：** 先执行 `2026-08-30-music-backend-v2.md` 的任务 1（创建 `contracts/music.py`），再执行本计划。后续媒体任务都依赖该模型。`ParseFailure` 只在本计划任务 2 的 `sources/parsers/context.py` 中定义一次，所有解析器和测试统一导入它。
 

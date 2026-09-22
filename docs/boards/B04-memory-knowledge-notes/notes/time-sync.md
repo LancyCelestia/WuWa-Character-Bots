@@ -11,7 +11,7 @@
 
 ## 这个入口做什么
 
-联网授时：纯 stdlib SNTP 客户端（socket+struct 手搓 48 字节报文，零第三方依赖、零子进程）为提醒/笔记时序提供校正时间。只算偏移量不碰系统钟——`now()` 返回「系统钟 + offset」的 aware 本地时间。NTP 全败后走 HTTPS `Date` 响应头估算偏移（R3 停摆批增补，治生产 UDP 123 被墙），失败链 NTP → HTTPS → 系统钟。
+联网授时：纯 stdlib SNTP 客户端（socket+struct 手搓固定长度的 SNTP 报文，报文长度以该实现为准、零第三方依赖、零子进程）为提醒/笔记时序提供校正时间。只算偏移量不碰系统钟——`now()` 返回「系统钟 + offset」的 aware 本地时间。NTP 全败后走 HTTPS `Date` 响应头估算偏移（R3 停摆批增补，治生产 UDP 123 被墙），失败链 NTP → HTTPS → 系统钟。
 
 > 落点勘误：本页生成头写的是 `domains/notes/…`，而真身在 `plugins/bot_unified_runtime/domains/schedule/timesync/timesync.py`（声明源 `domains/core/board_taxonomy.py` 的 B04.notes 条目未含此路径）。正文按真身写，不动生成区与声明源。
 
@@ -23,7 +23,7 @@
 ## 开关与参数
 
 - `bot_time_sync_enabled`（缺省 True）、`bot_time_sync_servers`（逗号分隔，缺省含 `ntp.aliyun.com` 等）、`bot_time_sync_max_drift_ms`（缺省 1500——偏移可信度的绝对上限，超了的服务器应答整台拒收）、`bot_time_sync_http_enabled`（缺省 True；字段缺失＝不启用，保住离线测试零网络）、`bot_time_sync_http_url`（可换 HTTPS 端点；只收 `https://`，明文 http 可被中间人伪造不作授时源）。逐键现值以 `config.py` 与 `docs/config-catalog-full.md` 为准。
-- 缓存节奏：校准成功后 10 分钟内不再联网（`resync_seconds`），失败后 5 分钟冷却（`retry_seconds`），均为准模块常量的默认值，见 `TimeSync` 构造参数。
+- 缓存节奏：校准成功后按 `resync_seconds` 这么久不再联网、失败后按 `retry_seconds` 冷却，两个值均为准模块常量的默认值，以 `TimeSync` 构造参数为准。
 
 ## 失败时看到什么
 

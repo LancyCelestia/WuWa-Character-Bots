@@ -353,7 +353,7 @@ def build_meme_capability(
             path = out_dir / f"meme_{key}_{digest}{suffix}"
             path.write_bytes(bytes(content))
             try:
-                from plugins.bot_unified_runtime.runtime.cache_policy import (
+                from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
                     enforce_quota,
                 )
 

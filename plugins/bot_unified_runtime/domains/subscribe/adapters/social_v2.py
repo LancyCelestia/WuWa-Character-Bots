@@ -28,16 +28,16 @@ from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionSpec,
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.domains.subscribe.adapters.target_notice import (
-    SubscriptionTargetNotice,
-)
-from plugins.bot_unified_runtime.sources.parsers.cookies import (
+from plugins.bot_unified_runtime.domains.link_parse.parsers.cookies import (
     build_platform_cookie_provider,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import (
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     ParseHttpError,
     http_get_json,
     http_get_text,
+)
+from plugins.bot_unified_runtime.domains.subscribe.adapters.target_notice import (
+    SubscriptionTargetNotice,
 )
 
 _NOW = lambda: datetime.now(timezone.utc)
@@ -1352,7 +1352,7 @@ class PixivSubscriptionAdapterV2(_BaseAdapter):
         if self.client is not None:
             return await self._fetch_or_unsupported(target, cursors, context)
         try:
-            from plugins.bot_unified_runtime.sources.parsers.http_util import (
+            from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
                 http_get_json,
             )
             payload = http_get_json(
@@ -1421,7 +1421,7 @@ class WeiboSubscriptionAdapterV2(_BaseAdapter):
         if self.client is not None:
             return await self._fetch_or_unsupported(target, cursors, context)
         try:
-            from plugins.bot_unified_runtime.sources.parsers.http_util import (
+            from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
                 http_get_json,
             )
             payload = http_get_json(

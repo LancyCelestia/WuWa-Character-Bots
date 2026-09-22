@@ -14,9 +14,11 @@ from plugins.bot_unified_runtime.capabilities.echo import (
     HELP_ENTRIES,
     build_identity_preference_result,
 )
-from plugins.bot_unified_runtime.character.addressing import AddressingPreferenceStore
 from plugins.bot_unified_runtime.domains.chat_reply.character import (
     providers as providers_module,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.addressing import (
+    AddressingPreferenceStore,
 )
 
 _GENDER_WORDS = ("male", "female", "nonbinary", "custom", "unknown")

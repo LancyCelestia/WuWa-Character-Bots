@@ -30,6 +30,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
+from plugins.bot_unified_runtime.domains.link_parse.parsers import (
+    cookies as cookies_mod,
+)
+
 # v21r2 W1a: platforms_* 真身已迁 domains/link_parse/parsers/，monkeypatch 需打在真身模块上
 from plugins.bot_unified_runtime.domains.link_parse.parsers import (
     http_util,
@@ -40,15 +44,12 @@ from plugins.bot_unified_runtime.domains.link_parse.parsers import (
     platforms_taptap,
     platforms_weibo,
 )
-from plugins.bot_unified_runtime.sources.parsers import (
-    cookies as cookies_mod,
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    DEFAULT_MAX_BYTES,
+    ParseHttpError,
 )
 from plugins.bot_unified_runtime.sources.parsers import (
     wbi as wbi_mod,
-)
-from plugins.bot_unified_runtime.sources.parsers.http_util import (
-    DEFAULT_MAX_BYTES,
-    ParseHttpError,
 )
 
 # ---------- E1-1 cookies ----------
@@ -538,7 +539,7 @@ def test_download_audio_streaming_under_limit_writes_file(monkeypatch, tmp_path)
 
 
 def test_oversized_local_image_skips_data_url(monkeypatch, tmp_path):
-    from plugins.bot_unified_runtime.sources import vision_describe
+    from plugins.bot_unified_runtime.domains.media.ingest import vision_describe
 
     big = tmp_path / "huge.png"
     big.write_bytes(b"\0" * (vision_describe._MAX_LOCAL_IMAGE_INPUT_BYTES + 1))

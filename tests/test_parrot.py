@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from plugins.bot_unified_runtime.runtime.parrot import ParrotDetector
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.parrot import ParrotDetector
 
 
 class _FakeClock:

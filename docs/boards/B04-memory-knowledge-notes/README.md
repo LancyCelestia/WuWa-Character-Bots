@@ -56,6 +56,6 @@ flowchart LR
 
 本板块不吞旧文档，只挂指针。现役规格仍在原处：`docs/design/memory-reflection-v2-design.md`（记忆总线 v2：九键、打分公式、迁移规约）、`docs/design/v21r2-v2-memory-log.md`（V2.1 记忆存储层四表与墓碑设计要点）、`docs/design/v21r4-kb-drift-explainer.md`（索引与原文数量对不上的科普说明与两条处置路线）。
 
-路径迁移史（v21r2 域重组留下的再导出垫片，垫片不算实现）：`character/notes_store.py` → `domains/notes/store/notes_store.py`；`character/memory.py`、`character/memory_bus_v2.py`、`character/vector_knowledge.py`、`character/knowledge_service.py` → `domains/chat_reply/character/`；`character/kb_wiki.py` → `domains/location/knowledge/kb_wiki.py`；`runtime/time_window.py` → `domains/chat_reply/runtime/time_window.py`。
+路径迁移史（v21r2 域重组留下的再导出垫片，垫片不算实现）：`domains/notes/store/notes_store.py` → `domains/notes/store/notes_store.py`；`character/memory.py`、`domains/chat_reply/character/memory_bus_v2.py`、`character/vector_knowledge.py`、`domains/chat_reply/character/knowledge_service.py` → `domains/chat_reply/character/`；`domains/location/knowledge/kb_wiki.py` → `domains/location/knowledge/kb_wiki.py`；`runtime/time_window.py` → `domains/chat_reply/runtime/time_window.py`。
 
 两处"文档指的路和真身不一致"的现役事实，写死在这里免得下一个人再找：授时件的真身是 `domains/schedule/timesync/timesync.py`（**没有** `runtime/timesync.py` 这个旧路径，也没有垫片）；`docs/db-owners.md` 里笔记/记忆/向量库的 owner 列仍写 `character/` 旧路径名，读的时候按上面这张迁移表换算。

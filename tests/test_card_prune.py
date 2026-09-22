@@ -36,7 +36,9 @@ from plugins.bot_unified_runtime.contracts import (
 from plugins.bot_unified_runtime.domains.divination.capabilities.divination import (
     build_divination_capability,
 )
-from plugins.bot_unified_runtime.sources.today_history import HistoryEvent
+from plugins.bot_unified_runtime.domains.subscribe.feeds.today_history import (
+    HistoryEvent,
+)
 
 _UTC = timezone.utc
 

@@ -31,6 +31,10 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
 )
 from plugins.bot_unified_runtime.domains.core.text_boundary import is_trigger
+from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+    RejectedUrlError,
+    check_download_url,
+)
 from plugins.bot_unified_runtime.domains.media.archive.media_archive import (
     CATEGORIES,
     FALLBACK_CATEGORY_BY_TYPE,
@@ -39,10 +43,6 @@ from plugins.bot_unified_runtime.domains.media.archive.media_archive import (
     sanitize_dirname,
 )
 from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
-from plugins.bot_unified_runtime.sources.downloader import (
-    RejectedUrlError,
-    check_download_url,
-)
 
 # 触发词（T-Spec 八层裁剪）：CJK 词天然词界安全；英文 archive 语义独占；
 # 全拼 shoucang/guidang。save 裸词会劫持英文口语（"save me"）——刻意不收。

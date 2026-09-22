@@ -5,7 +5,7 @@
 - 服务：`plugins/bot_unified_runtime/control_plane/workspaces.py`。
 - HTTP：`plugins/bot_unified_runtime/control_plane/api/workspaces.py`。
 - 生成适配：`plugins/bot_unified_runtime/control_plane/sandbox.py`。
-- 默认装配：`control_plane/factory.py::build_workspace_service`、`_app.py`。
+- 默认装配：`plugins/bot_unified_runtime/control_plane/factory.py::build_workspace_service`、`_app.py`。
 - 数据位置由 `bot_control_plane_workspaces_db` 指定，默认 `data/control_plane_workspaces.sqlite3`，按既有Runtime规则映射。浏览器不传路径、不直接访问数据库。
 
 ## API

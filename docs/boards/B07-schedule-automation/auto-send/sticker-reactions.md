@@ -15,13 +15,13 @@
 
 ## 怎么调用
 
-真身 `domains/meme/reactions/engine.py`（贴纸回应入口模块 是再导出垫片）。编排入口 `maybe_react_on_message`（触发 `emotion_signal` 情绪命中 / `after_reply` 刚回复完），门控收敛在 `ProactiveGate.allow`。识别侧 `ReactionBuffer` 与 `describe_chat_reactions`（人格注入用）；聚合统计双写 `sources/reaction_store.py`。事件在根 `__init__.py` 摄取层归一后喂入。
+真身 `domains/meme/reactions/engine.py`（贴纸回应入口模块 是再导出垫片）。编排入口 `maybe_react_on_message`（触发 `emotion_signal` 情绪命中 / `after_reply` 刚回复完），门控收敛在 `ProactiveGate.allow`。识别侧 `ReactionBuffer` 与 `describe_chat_reactions`（人格注入用）；聚合统计双写 `domains/meme/sources/reaction_store.py`。事件在根 `__init__.py` 摄取层归一后喂入。
 
 ## 开关与参数
 
 **五层门（顺序）**：①总闸 `bot_reactions_enabled`（缺省 True）→ ②每消息去重（同一消息跨触发只骰一次）→ ③确定性概率 `bot_reactions_probability`（缺省 0.2）→ ④会话冷却 `bot_reactions_cooldown_seconds`（缺省 30）→ ⑤每小时滑窗限额 `bot_reactions_max_per_hour`（缺省 20）。第二层"情绪命中发图"另有 `bot_reactions_meme_*` 四键 + 悲伤场景整条不贴。存储 `bot_reactions_db_path`、保留 `bot_reactions_store_days`（缺省 90）。配置键逐键以 `docs/config-catalog-full.md` 为准。
 
-关键红线：**主动贴表情只支持群消息，私聊一律不派发**。QQ 侧本就没有私聊表情回应通道（OIDB 0x9082 仅群消息形态），**非迁移退化**——SnowLuma 对非群消息直接抛 `emoji reactions are not supported on private messages`（实测 36 次）。守卫落在 `maybe_react_on_message` 的 enabled/mid 判定之后、五层门之前，按 `_is_group_session`（委托 `domains/core/session_keys.py`，真实键 `group_<gid>_<uid>`）拒掉私聊，因此私聊既不派发、也不占每消息去重登记、不刷失败日志。
+关键红线：**主动贴表情只支持群消息，私聊一律不派发**。QQ 侧本就没有私聊表情回应通道（OIDB 0x9082 仅群消息形态），**非迁移退化**——SnowLuma 对非群消息直接抛 `emoji reactions are not supported on private messages`（实跑命中次数以该轮取证为准）。守卫落在 `maybe_react_on_message` 的 enabled/mid 判定之后、五层门之前，按 `_is_group_session`（委托 `domains/core/session_keys.py`，真实键 `group_<gid>_<uid>`）拒掉私聊，因此私聊既不派发、也不占每消息去重登记、不刷失败日志。
 
 ## 失败时看到什么
 

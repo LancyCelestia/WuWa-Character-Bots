@@ -24,7 +24,7 @@
 
 ## 开关与参数
 
-- 大小上限 `DEFAULT_MAX_FILE_BYTES = 20 MiB`——对齐 Telegram `file/bot<token>` 端点的硬上限，超限返回 None（不是本地策略收紧）。
+- 大小上限以 `DEFAULT_MAX_FILE_BYTES` 常量定义为准——对齐 Telegram `file/bot<token>` 端点的硬上限，超限返回 None（不是本地策略收紧）。
 - `file_id → file_path` 有 TTL 缓存（`_FILE_PATH_TTL_SECONDS`，容量上限 `_FILE_PATH_CACHE_CAP`），防同一 file_id 反复 `get_file`；缓存值不含 token，无泄密面。
 - 字节一律不缓存：临时文件是一次性交付物，到期清理。
 - 超时 `_DEFAULT_TIMEOUT_SECONDS`；api base `_DEFAULT_API_BASE`。都是模块常量，改动属行为变更。

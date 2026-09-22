@@ -27,7 +27,7 @@
   `instruction`）。
 - 偏好存储：同文件 `AddressingPreferenceStore`（SQLite），装配口
   `character/providers.py:build_addressing_preference_store`；键
-  `bot_addressing_preferences_db_path`（缺省 `data/addressing_preferences.sqlite3`）。
+    `bot_addressing_preferences_db_path`（库路径的缺省值以 `config.py` 该字段为准）。
 - 入口命令：`/bot identity set-name <称呼>`、`set-gender <male|female|nonbinary|custom|unknown>`、
   `unset-name`、`unset-gender`，实现
   `capabilities/echo.py:build_identity_preference_result`（能力 id `bot.identity`），

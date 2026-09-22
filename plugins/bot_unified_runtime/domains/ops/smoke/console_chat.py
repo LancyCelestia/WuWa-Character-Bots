@@ -97,9 +97,17 @@ from plugins.bot_unified_runtime.domains.core.credentials.credential_health impo
 from plugins.bot_unified_runtime.domains.core.search.web_search import (
     build_web_search_provider,
 )
+from plugins.bot_unified_runtime.domains.files.sources.downloader import MediaDownloader
+from plugins.bot_unified_runtime.domains.link_parse.support.parse_history import (
+    build_parse_history_result,
+    build_parse_history_store,
+)
 from plugins.bot_unified_runtime.domains.location.capabilities.wiki import (
     build_wiki_capability,
     is_wiki_command,
+)
+from plugins.bot_unified_runtime.domains.meme.sources.meme_search import (
+    build_meme_search_provider,
 )
 from plugins.bot_unified_runtime.domains.ops.audit import InMemoryAuditLogger
 from plugins.bot_unified_runtime.domains.ops.audit.file_logger import (
@@ -113,12 +121,6 @@ from plugins.bot_unified_runtime.llm import (
 )
 from plugins.bot_unified_runtime.output.render_backends import build_render_backend
 from plugins.bot_unified_runtime.sender import InMemorySendQueue, SendQueue
-from plugins.bot_unified_runtime.sources.downloader import MediaDownloader
-from plugins.bot_unified_runtime.sources.meme_search import build_meme_search_provider
-from plugins.bot_unified_runtime.sources.parse_history import (
-    build_parse_history_result,
-    build_parse_history_store,
-)
 from plugins.bot_unified_runtime.sources.parsers import extract_http_urls
 
 _BANNER = """\

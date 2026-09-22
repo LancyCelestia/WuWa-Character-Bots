@@ -92,7 +92,7 @@ meme-generator-rs；搜图打 SauceNAO；点歌打各音乐平台公开接口；
 - 台账归属：`docs/HANDBOOK.md` §35（Wave G 契约波总账）与 AGENTS.md 台账 #44、#47
   WP4/WP9 条目仍是逐席证据源；本板块写「现行口径」，逐笔哈希与席位报告留在
   `.superpowers/sdd/`，不在板块树内重复。
-- 能力合并记录：占卜原「聊天侧 `data/draw_store.py`」与「REST 侧
-  `service/tarot_draw.py` + `service/fortune.py`」两套算法、两颗 `DrawError`
+- 能力合并记录：占卜原「聊天侧 `domains/divination/data/draw_store.py`」与「REST 侧
+  `domains/divination/service/tarot_draw.py` + `domains/divination/service/fortune.py`」两套算法、两颗 `DrawError`
   已收编为单一真身，旧路径降为再导出垫片（详见 `divination/` 三页）；触发词字符
   集六副本收编进 `domains/core/text_boundary.py`。

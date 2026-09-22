@@ -8,7 +8,7 @@ from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionFetchResult,
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.sources.subscription_runtime_v2 import (
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_runtime_v2 import (
     build_subscription_runtime_v2,
 )
 

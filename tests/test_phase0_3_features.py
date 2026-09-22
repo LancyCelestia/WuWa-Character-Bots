@@ -32,7 +32,9 @@ def test_message_segments_read_quote_forward_mixed_media_and_emoji() -> None:
 
 
 def test_file_reader_extracts_text_and_rejects_binary_unknown(tmp_path) -> None:
-    from plugins.bot_unified_runtime.sources.file_reader import read_supported_file
+    from plugins.bot_unified_runtime.domains.files.sources.file_reader import (
+        read_supported_file,
+    )
 
     source = tmp_path / "example.py"
     source.write_text("print('hello')\n", encoding="utf-8")
@@ -45,7 +47,9 @@ def test_file_reader_extracts_text_and_rejects_binary_unknown(tmp_path) -> None:
 
 
 def test_generated_code_or_long_text_has_file_attachment(tmp_path) -> None:
-    from plugins.bot_unified_runtime.sources.file_reader import build_generated_file
+    from plugins.bot_unified_runtime.domains.files.sources.file_reader import (
+        build_generated_file,
+    )
 
     result = build_generated_file(
         user_text="请生成一个 Python 文件",
@@ -242,7 +246,9 @@ def test_poke_limits_bot_target_and_global_cooldown():
 
 
 def test_artifact_intent_recognizes_write_file_and_txt():
-    from plugins.bot_unified_runtime.sources.file_reader import artifact_request
+    from plugins.bot_unified_runtime.domains.files.sources.file_reader import (
+        artifact_request,
+    )
     assert artifact_request("生成一个txt文档，记录你的感受") == ("document", "txt")
     assert artifact_request("请生成一个 Python 文件") == ("code", "py")
 

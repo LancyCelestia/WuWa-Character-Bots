@@ -21,7 +21,7 @@
 
 ## 开关与参数
 
-无独立配置键；时区口径随 `config.bot_timezone`（缺省 `Asia/Hong_Kong`），由 `build_reminder_store` 在装配期调 `configure_reminder_timezone` 绑定。事项文字截断 120 字。
+无独立配置键；时区口径随 `config.bot_timezone`（缺省 `Asia/Hong_Kong`），由 `build_reminder_store` 在装配期调 `configure_reminder_timezone` 绑定。事项文字按字数上限截断（上限以该件常量为准）。
 
 「明早」= 次日（否则会被当裸「8点」记成今天上午）；「今晚/明晚 + 1~11 点」且无时段词时按晚间语义 +12h（「明晚8点」= 次日 20:00），显式 ≥12 的时辰保持字面不调整——这一族是**已落码待重启生效**，线上未生效。
 

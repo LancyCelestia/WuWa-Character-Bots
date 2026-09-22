@@ -780,7 +780,7 @@ def create_control_plane_app(
 def _try_channel_health_store(config: object | None) -> Any | None:
     """尽力解析渠道健康单例；失败不阻塞控制面启动（status/models 回空集）。"""
     try:
-        from plugins.bot_unified_runtime.llm.channel_health import (
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.channel_health import (
             get_channel_health_store,
         )
 

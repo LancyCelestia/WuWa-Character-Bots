@@ -1462,8 +1462,10 @@ def synthesize_autodub(
 
     返回 ``(code, payload)``：
 
-    - ``"ok"``     → payload=``{audio_file, review_text, content_sha256?, preset_id, seed}``
-      （``content_sha256`` 算不出即缺省，诚实降级，与出站收口 canonicalize 咬合）；
+    - ``"ok"``     → payload=``{audio_file, review_text, content_sha256?, preset_id, seed,
+      audio_parts, audit_tags_delta}``（``content_sha256`` 算不出即缺省，诚实降级，与出站
+      收口 canonicalize 咬合；``audio_parts``/``audit_tags_delta``=本次产出的**出站体**，
+      与前面几个观测字段同源同值，消费口=``autodub_presentation_update``）；
     - ``"no_ref"`` → payload=""（确定性失败：无可用参考音频，对应 tts_no_ref_audio 码族）；
     - ``"failed"`` → payload=失败原因串（供 ``_failure_issue`` 前缀表精确分类）。
 
@@ -1514,7 +1516,48 @@ def synthesize_autodub(
     content_digest = _content_digest_for(path)
     if content_digest is not None:
         data["content_sha256"] = content_digest
+    # 出站体在**这一处**拼装（VOICE-CENTRAL-UNBLOCK 2026-09-22 · C5 阻断项真解）：
+    # 音频部件与 tts/auto_reply/preset/seed/audio_sha256 标签由「刚产出这段字节」的
+    # 同一个函数交回，层 1 hook 只把成品挂回呈现契约、不再自拼第二份出站体。
+    # 字段与顺序与收编前逐字节同构（命令路 audio=[audio_part]、旧包装
+    # maybe_attach_voice 的 update={"audio": …} 是本函数形状的既有同型）。
+    audio_part: dict[str, Any] = {"file": str(path), "review_text": speech}
+    if isinstance(content_digest, str) and content_digest:
+        audio_part["content_sha256"] = content_digest
+    data["audio_parts"] = [audio_part]
+    data["audit_tags_delta"] = [
+        "tts",
+        "auto_reply",
+        f"preset={preset.preset_id}",
+        f"seed={speech_seed}",
+        *(
+            [f"audio_sha256={content_digest[:16]}"]
+            if isinstance(content_digest, str) and content_digest
+            else []
+        ),
+    ]
     return "ok", data
+
+
+def autodub_presentation_update(
+    result: CapabilityResult, data: dict[str, Any]
+) -> dict[str, Any]:
+    """把中央产出步交回的出站体并进呈现契约（层 1 配音 hook 的唯一消费口）。
+
+    ``data``=``media.tts.autodub`` 成功终态载荷。``audio_parts``/``audit_tags_delta``
+    全部由 ``synthesize_autodub`` 一处拼装——本函数**不造**字段、不补缺省、不读配置，
+    只做两件事：把音频部件交给呈现契约、把 tts 增量标签接在结果既有标签之后
+    （顺序=「既有在前、增量在后」，与收编前 hook 自拼时的逐字节顺序一致）。
+
+    交回形状不认（缺部件／非列表／空列表）⇒ 返回空 patch：配音是增益，中央没交出站体
+    就只发文字，绝不在层 1 拼第二份出站体（禁第二真身；与「政策拒绝≠故障」同口径）。
+    """
+    parts = data.get("audio_parts")
+    if not isinstance(parts, list) or not parts:
+        return {}
+    delta = data.get("audit_tags_delta")
+    tags = [tag for tag in delta if isinstance(tag, str)] if isinstance(delta, list) else []
+    return {"audio": parts, "audit_tags": [*result.audit_tags, *tags]}
 
 
 def maybe_attach_voice(

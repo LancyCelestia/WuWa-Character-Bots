@@ -4,9 +4,9 @@
 > 交接时间：2026-09-19 12:5x（GMT+8）  
 > 交接方：TTS 席（守岸人会话）  
 > 适用读者：接手本任务的任意 AI / 工程师。**本文档自包含**——不需要先去翻项目才能动手。  
-> 仓库根：`C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot`  
-> 运行时 venv：`C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot_Runtime\venv`（**不是**仓库内的 `.venv`，仓库内没有）  
-> GPT-SoVITS 引擎根：`C:\Software\GPT-SoVITS-V2Pro`
+> 仓库根：`<仓库根>`  
+> 运行时 venv：`..\ChatBot_Runtime\venv`（**不是**仓库内的 `.venv`，仓库内没有）  
+> GPT-SoVITS 引擎根：`$DEV_ROOT\GPT-SoVITS-V2Pro`（`$DEV_ROOT`＝本机第三方软件安装根目录、`<仓库根>`／`<工作区父目录>`／`$TEMP` 同口径，见 `docs/acceptance-manual.md` 顶部「环境坐标约定（2026-09-22）」；本文不写死盘符绝对路径）
 
 > **⚠️ 2026-09-20 勘误·现行权威指针（T63 席）**：本文件是 **2026-09-19 的历史交接快照**，不随施工波更新；下文宣称以下列现行权威为准——
 > 现行规格=`docs/design/tts-contract-layer.md`；缺陷编号唯一源=`.superpowers/sdd/2026-09-19-unify-audit/report-T29.md`（M-xx/S-xx/U-xx）；波次施工台账=`.superpowers/sdd/2026-09-19-unify-audit/progress.md`；传输层换件（NapCat→SnowLuma）复判决=`report-T46.md`/`report-T55.md`。
@@ -40,11 +40,11 @@
 | **本文档**（11 节自包含） | `docs/design/tts-handover-20260919.md`                          |
 | 占域台账（**动手前必读**）  | `docs/design/v21r2-COORDINATION.md`（75 行，最新在最上面）                |
 | 真机验收清单（14 项）     | `docs/acceptance-manual.md` §6.6.11                             |
-| 参考音频池（8 条）       | `C:\Software\GPT-SoVITS-V2Pro\refs\shorekeeper_ref_01..08.flac` |
-| 全库时长扫描 CSV       | `C:\Software\GPT-SoVITS-V2Pro\refs\corpus_durations.csv`（490 行） |
-| ASR 听写 TSV       | `C:\Software\GPT-SoVITS-V2Pro\refs\shorekeeper_refs_asr.tsv`    |
-| 听辨清单（待澜汐回）       | `C:\Software\GPT-SoVITS-V2Pro\refs\listening_checklist.md`      |
-| 工具脚本 ×5          | `C:\Software\GPT-SoVITS-V2Pro\tools\`（**刻意不进源码树**）              |
+| 参考音频池（8 条）       | `$DEV_ROOT\GPT-SoVITS-V2Pro\refs\shorekeeper_ref_01..08.flac` |
+| 全库时长扫描 CSV       | `$DEV_ROOT\GPT-SoVITS-V2Pro\refs\corpus_durations.csv`（490 行） |
+| ASR 听写 TSV       | `$DEV_ROOT\GPT-SoVITS-V2Pro\refs\shorekeeper_refs_asr.tsv`    |
+| 听辨清单（待澜汐回）       | `$DEV_ROOT\GPT-SoVITS-V2Pro\refs\listening_checklist.md`      |
+| 工具脚本 ×5          | `$DEV_ROOT\GPT-SoVITS-V2Pro\tools\`（**刻意不进源码树**）              |
 | 全量回归日志           | `.tmp-test/full-suite.log`                                      |
 | 工作记忆             | `.workbuddy-ai/memory/2026-09-19.md`（§十一 为本批）                   |
 
@@ -58,7 +58,7 @@
 
 后续追加：
 
-- 提供语料库路径 `C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\语料库\守岸人`，说「里面的质量都很过关，**可以直接拿 >15s 的那些语录去 tts 新的**」
+- 提供语料库路径 `<工作区父目录>\语料库\守岸人`，说「里面的质量都很过关，**可以直接拿 >15s 的那些语录去 tts 新的**」
 - 要一份「从头到尾彻底完善好的文档」用于交接
 - 三问：3~10s 语料够不够 / NoneBot 怎么把数据传给 GPT 生成音频 / 「参考音频时长未强制校验」有什么用
 - 要求用「最惨、最残酷、无情的态度」攻击自己的计划
@@ -87,11 +87,11 @@
 
 | 事实         | 值                                                                                                                                                                                      | 证据                                                                      |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| 引擎 HTTP 服务 | `api_v2.py`，FastAPI，默认 `127.0.0.1:9880`                                                                                                                                                | 引擎目录根                                                                   |
-| 合成端点       | `POST /tts`                                                                                                                                                                            | `api_v2.py`                                                             |
+| 引擎 HTTP 服务 | `$DEV_ROOT\GPT-SoVITS-V2Pro\api_v2.py`，FastAPI，默认 `127.0.0.1:9880`                                                                                                                                                | 引擎目录根                                                                   |
+| 合成端点       | `POST /tts`                                                                                                                                                                            | `$DEV_ROOT\GPT-SoVITS-V2Pro\api_v2.py`                                                             |
 | 请求体键名      | `text` / `text_lang` / `ref_audio_path` / `prompt_text` / `prompt_lang` / `top_k` / `top_p` / `temperature` / `text_split_method` / `speed_factor` / `media_type` / `streaming_mode` 等 | 已由 `tests/test_tts.py::test_request_payload_matches_api_v2_contract` 锁死 |
-| 错误体格式      | `{"message": "tts failed", "Exception": "<真原因>"}`                                                                                                                                      | `api_v2.py:445`                                                         |
-| 启动命令       | `cd C:\Software\GPT-SoVITS-V2Pro && runtime\python.exe api_v2.py -a 127.0.0.1 -p 9880`                                                                                                 | `.env` 注释                                                               |
+| 错误体格式      | `{"message": "tts failed", "Exception": "<真原因>"}`                                                                                                                                      | `$DEV_ROOT\GPT-SoVITS-V2Pro\api_v2.py:445`                                                         |
+| 启动命令       | `cd $DEV_ROOT\GPT-SoVITS-V2Pro && runtime\python.exe $DEV_ROOT\GPT-SoVITS-V2Pro\api_v2.py -a 127.0.0.1 -p 9880`                                                                                                 | `.env` 注释                                                               |
 
 > 2026-09-20 勘误：上行「启动命令」是历史快照，**勿照此裸敲**——错误 CWD 裸跑会触发 M-12（权重静默回退底模 + 引擎 `save_configs` 把底模路径写回 yaml 永久化：此后永远「能出声但音色不是守岸人」，日志零异常）。现行运维口径=安全脚本唯一化（U-17=C：引擎生命周期=人工脚本+只读探针+告警，不代启动）：引擎根 `start-shorekeeper.ps1`（钉 CWD，T12 实证挡坑）或 `启动守岸人.bat`；bot 侧守护=T60「音色守望者」（在建：yaml 语义断言+sha256 基线 json+`scripts/pre_restart_check.py` 第 10 项挂点）。详见 §5.5 勘误。
 
@@ -99,26 +99,26 @@
 
 ### 2.2 参考音频硬约束（3~10 秒，无配置可放宽）
 
-- `GPT_SoVITS/TTS_infer_pack/TTS.py:809-817` → `_set_prompt_semantic()`：先 `librosa.load(ref_wav_path, sr=16000)` 重采样到 16kHz，然后
+- `$DEV_ROOT\GPT-SoVITS-V2Pro/GPT_SoVITS/TTS_infer_pack/TTS.py:809-817` → `_set_prompt_semantic()`：先 `librosa.load(ref_wav_path, sr=16000)` 重采样到 16kHz，然后
   ```python
   if wav16k.shape[0] > 160000 or wav16k.shape[0] < 48000:
       raise OSError("参考音频在3~10秒范围外，请更换！")
   ```
   → 即 **48000 ≤ 采样点数 ≤ 160000**（16kHz 下 = 3.0s ~ 10.0s）
-- `TTS.py:1132-1138` → **无条件**调用该校验，没有任何配置能绕过。
+- `$DEV_ROOT\GPT-SoVITS-V2Pro/GPT_SoVITS/TTS_infer_pack/TTS.py:1132-1138` → **无条件**调用该校验，没有任何配置能绕过。
 - 结论：**>10 秒一律被拒**。本地预检**不必要**（引擎已经拦，且修完 bug 后错误信息能透传），见 §4.3。
 
 > 2026-09-20 勘误：上句「本地预检不必要/服务端透传足够」只对 **3~10s 越界** 这一维成立，推不出「bot 侧零质检安全」。缺陷台账（report-T29）后来记了两维：**M-06**（引擎 200+非音频字节零质检即写盘入缓存=毒缓存，进程存活期复放）——已落地产物结构体检闸（`7c566f7`：`_inspect_wav_bytes` 在 `synthesize` 落盘前唯一写入口判 RIFF/头/帧数结构，不过=`tts_bad_audio` 不可重试失败降级**且不入缓存**；只判结构不判时长，M-37 时长/体积维度仍留真机未结面 U-02）；**M-07**（引擎推理期异常回 200+≈1 秒静音 wav，bot 当成功落盘发出）——bot 侧静音能量闸归 T61 施工（**在飞未落地**）。现行权威规格=`docs/design/tts-contract-layer.md`。
 
 ### 2.3 权重加载的隐性失效点
 
-- `TTS.py:318`：`self.configs = configs_.get("custom", configs_["v2"])` → 读守岸人自定义权重
-- `TTS.py:342-353`：若权重路径**不存在**，**静默回退到预训练底模**（不报错！）
+- `$DEV_ROOT\GPT-SoVITS-V2Pro/GPT_SoVITS/TTS_infer_pack/TTS.py:318`：`self.configs = configs_.get("custom", configs_["v2"])` → 读守岸人自定义权重
+- `$DEV_ROOT\GPT-SoVITS-V2Pro\GPT_SoVITS\TTS_infer_pack\TTS.py:342-353`：若权重路径**不存在**，**静默回退到预训练底模**（不报错！）
 - ⚠️ 这是隐性失效点：听起来"能出声"但音色不是守岸人。真机验收必须**听音辨音色**，不能只看"有没有声音"。
 
 ### 2.4 全库语料时长实测（490 文件）
 
-扫描器：`C:\Software\GPT-SoVITS-V2Pro\tools\scan_durations.py`（6 线程并行 ffprobe，输出 `refs/corpus_durations.csv`）
+扫描器：`$DEV_ROOT\GPT-SoVITS-V2Pro\tools\scan_durations.py`（6 线程并行 ffprobe，输出 `refs/corpus_durations.csv`）
 
 | 前缀                | 总数  | 合规 3~10s | 中位    | 最长     | >15s   |
 | ----------------- | --- | -------- | ----- | ------ | ------ |
@@ -183,7 +183,7 @@ QQ 用户发「说 今天的潮汐很安静」
 CapabilityResult.audio
    → domains/render/renderer.py:210-215  转成 {"type": "record"}
    → SendQueue
-   → sender/onebot.py:279-284
+   → domains/transport/sender/onebot.py:279-284
    → QQ 语音条
 ```
 
@@ -203,7 +203,7 @@ CapabilityResult.audio
 - 澜汐已拍板：**留 media 域，不迁 `creation` 域**
 - 依据链：
   1. 方案书 §10 W-PA2「荐留 media 案」
-  2. `domains/creation/__init__.py` 第 4-5 行自述：「本包是 v21r2-reorg-plan.md §9.1 **预留态第 20 域**：**现载体 capabilities/tts.py 留 media 域原映射不动（归属裁决 §10 W-PA2）**；绘图零载体。」
+  2. `domains/creation/__init__.py` 第 4-5 行自述：「本包是 v21r2-reorg-plan.md §9.1 **预留态第 20 域**：**现载体 domains/media/capabilities/tts.py 留 media 域原映射不动（归属裁决 §10 W-PA2）**；绘图零载体。」
   3. `creation` 域是 **dormant 空壳**：8 个文件全是 `__init__.py` + `contracts.py`，`default_enabled=False`、`gate_state="dormant"`，**零行实现代码**
 - ⚠️ **不要**把 `tts.py` 搬去 `creation`。
 
@@ -242,7 +242,7 @@ if response.status_code != 200:
 if response.status_code != 200:
     _last_failure_at = time.monotonic()
     # 错误体形如 {"message": "tts failed", "Exception": "<真原因>"}
-    # （api_v2.py 的兜底包装）：真原因在 Exception 里，message 只是固定摘要，
+    # （$DEV_ROOT\GPT-SoVITS-V2Pro/api_v2.py 的兜底包装）：真原因在 Exception 里，message 只是固定摘要，
     # 故必须先取 Exception，否则 3~10 秒越界这类可读原因会被吞成 "tts failed"，
     # 下游 _degrade 的「参考音频」分支永远命不中。
     try:
@@ -309,7 +309,7 @@ _DEFAULT_AUTO_REPLY_PROBABILITY = 0.05
 def _resolve_probability(value: Any) -> float:
     """把概率配置解析成 float；失败按 0（不配音）处理。
 
-    与 ``policy/gate.py`` 的 ``_resolve_probability`` 同口径，支持实时
+    与 ``domains/chat_reply/policy/gate.py`` 的 ``_resolve_probability`` 同口径，支持实时
     callable——概率若由心情之类的动态量参与，必须在每次抽签时求值，
     不能在装配期冻成常量。
     """
@@ -326,7 +326,7 @@ def _resolve_probability(value: Any) -> float:
         return 0.0
 ```
 
-**为什么支持 callable**：项目惯例——概率若由「心情」等动态量参与，必须**每次抽签时求值**，不能在装配期冻成常量，否则「心情低落时少配音」永远不会生效。参照 `policy/gate.py:71-87`。
+**为什么支持 callable**：项目惯例——概率若由「心情」等动态量参与，必须**每次抽签时求值**，不能在装配期冻成常量，否则「心情低落时少配音」永远不会生效。参照 `domains/chat_reply/policy/gate.py:71-87`。
 
 #### 4.2.4 新函数 2：`should_voice_reply(config, message, result) -> bool`（`tts.py` 第 540 行）
 
@@ -387,7 +387,7 @@ return bucket < probability * 10000
 - **同一条消息永远得到同一结果** → 可复现、可审计、**测试不会 flaky**
 - 规范实现：`domains/chat_reply/policy/gate.py:106-117` 的 `deterministic_group_reply_lottery(seed, probability)`
 - 同款实现另有：`domains/chat_reply/capabilities/poke.py:30-39`、`domains/meme/reactions/engine.py:632-638`
-- 调用点参照：`policy/gate.py:346-352`
+- 调用点参照：`domains/chat_reply/policy/gate.py:346-352`
 
 ⚠️ **为什么不跨域 import `gate.py`**：20 域重组后 `media` 域 import `chat_reply/policy` 是分层污染。项目既有实践就是各域自带一份（`poke.py`、`engine.py` 都是自己写）。本席在 `media` 域内自带一份并注释指向规范实现。
 
@@ -458,7 +458,7 @@ _REF_MAX_SECONDS = 10.0
 **替换为**：
 
 ```python
-# 参考音频时长合规区间（3~10 秒）由服务端硬卡（TTS.py 的 _set_prompt_semantic），
+# 参考音频时长合规区间（3~10 秒）由服务端硬卡（$DEV_ROOT\GPT-SoVITS-V2Pro/GPT_SoVITS/TTS_infer_pack/TTS.py 的 _set_prompt_semantic），
 # 本地不做重复预检：ChatBot 运行环境没有 soundfile/mutagen，读不了时长；
 # 越界时服务端会在错误体 Exception 里给出可读原因，经 _request_tts 透传到
 # _degrade 的「参考音频」分支，用户侧提示已经足够。
@@ -527,7 +527,7 @@ _REF_MAX_SECONDS = 10.0
 
 ### 4.6 【阶段 C】参考音频池扩容
 
-**落盘位置**：`C:\Software\GPT-SoVITS-V2Pro\refs\`
+**落盘位置**：`$DEV_ROOT\GPT-SoVITS-V2Pro\refs\`
 
 | 文件                        | 时长    | 语气定位     | 源文件                            |
 | ------------------------- | ----- | -------- | ------------------------------ |
@@ -542,14 +542,14 @@ _REF_MAX_SECONDS = 10.0
 
 全部 **48000Hz / 单声道 / 3~10 秒**（合规）。
 
-**工具链**（全部在 `C:\Software\GPT-SoVITS-V2Pro\tools\`，**刻意不进 ChatBot 源码树**，避免污染）：
+**工具链**（全部在 `$DEV_ROOT\GPT-SoVITS-V2Pro\tools\`，**刻意不进 ChatBot 源码树**，避免污染）：
 
 > 2026-09-20 勘误（T160 同步）：上行「刻意不进 ChatBot 源码树」已被 M-61 推翻——本节所列语料工具链四脚本（`scan_durations` / `make_listening_checklist` / `pick_refs` / `transcribe_refs`）已收编入仓 `scripts/tts_corpus/`（`c78951f`，T106：溯源块+引擎原件 sha256 双向防漂移锚，缺失=SKIP；引擎目录原件只读零写入）；`verify_chatbot_env.py` 更早入仓 `scripts/verify_chatbot_env.py`（T87，`7e2fe36`）。收编防护面（冒烟门/毒化防护门）与完整口径见 §10 关键文件索引处的 T124 勘误块。
 
 - `scan_durations.py` — 全库时长扫描（6 线程 ffprobe）→ `refs/corpus_durations.csv`
 - `make_listening_checklist.py` — 生成听辨清单 → `refs/listening_checklist.md`
 - `pick_refs.py` — 按语气多样性从 `main_honami` 合规池复制 7 条 → `refs/shorekeeper_ref_02..08.flac`
-- `asr/transcribe_refs.py` — 离线 ASR 听写 → `refs/shorekeeper_refs_asr.tsv`
+- `scripts/tts_corpus/transcribe_refs.py` — 离线 ASR 听写 → `refs/shorekeeper_refs_asr.tsv`
 
 **`.env` 改动**（gitignored，**改前已备份为 `.env.bak-20260919-tts-probability`**）：
 
@@ -640,7 +640,7 @@ async def _attach_voice_reply(inner, *, config):
 
 ```bash
 # 日志（含 pytest 摘要 + 末行 EXIT=<code>）
-C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot\.tmp-test\full-suite.log
+<仓库根>\.tmp-test\full-suite.log
 
 # 取摘要
 tail -20 .tmp-test/full-suite.log
@@ -649,8 +649,8 @@ tail -20 .tmp-test/full-suite.log
 接手者应**先读这个日志**；若已过期或想自己跑：
 
 ```bash
-cd "C:/Users/LancyCelestia/Documents/MyWorkspace/ChatBot/ChatBot"
-BT="C:/Users/LancyCelestia/.workbuddy-ai/tmp/pytest/full"; mkdir -p "$BT"
+cd "<仓库根>"
+BT="$TEMP/pytest/full"; mkdir -p "$BT"
 PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1 \
   "../ChatBot_Runtime/venv/Scripts/python.exe" -m pytest tests -q \
   -p no:cacheprovider --basetemp="$BT" \
@@ -676,7 +676,7 @@ ImportError: cannot import name 'web_search' from 'plugins.bot_unified_runtime.s
 
 **背景**：GPT-SoVITS 的 `prompt_text`（参考文本）会被切成音素喂给 GPT 做前缀。填**准**能提升语气连贯性；填**错**会污染音色。ASR 结果**必须人工校对专有名词**。
 
-**听写结果**（`C:\Software\GPT-SoVITS-V2Pro\refs\shorekeeper_refs_asr.tsv`），**本席已修正 2 处错字**（用 `〔〕` 标出）：
+**听写结果**（`$DEV_ROOT\GPT-SoVITS-V2Pro\refs\shorekeeper_refs_asr.tsv`），**本席已修正 2 处错字**（用 `〔〕` 标出）：
 
 | # | 时长    | 修正后文本                                        | 修正说明                            |
 | - | ----- | -------------------------------------------- | ------------------------------- |
@@ -691,7 +691,7 @@ ImportError: cannot import name 'web_search' from 'plugins.bot_unified_runtime.s
 
 **为什么必须人工校对**：`main_honami_2_8_2_43_9` 被 ASR 听成「虚至此报」（应为「虚质磁暴」），**证明 ASR 在专有名词上不可信**。
 
-**接手者待办**：把这 8 条与 `.env` 里 `BOT_TTS_REF_AUDIOS` 的文本**逐条对照**（`.env` 已写入修正后文本），并用 `C:\Software\GPT-SoVITS-V2Pro\refs\shorekeeper_refs_asr.tsv` 复核。若有误，改 `.env` 后重启。
+**接手者待办**：把这 8 条与 `.env` 里 `BOT_TTS_REF_AUDIOS` 的文本**逐条对照**（`.env` 已写入修正后文本），并用 `$DEV_ROOT\GPT-SoVITS-V2Pro\refs\shorekeeper_refs_asr.tsv` 复核。若有误，改 `.env` 后重启。
 
 ### 5.4 ⏳ 用户听辨抽样（**等澜汐回结果**）
 
@@ -714,8 +714,8 @@ ImportError: cannot import name 'web_search' from 'plugins.bot_unified_runtime.s
 1. `.env` 已配（本席已配好：`BOT_TTS_ENABLED=true` + 8 条参考音频）
 2. **先启动引擎**：
    ```
-   cd C:\Software\GPT-SoVITS-V2Pro
-   runtime\python.exe api_v2.py -a 127.0.0.1 -p 9880
+   cd $DEV_ROOT\GPT-SoVITS-V2Pro
+   runtime\python.exe $DEV_ROOT\GPT-SoVITS-V2Pro\api_v2.py -a 127.0.0.1 -p 9880
    ```
 3. 重启 bot 主进程（TTS 链路在主进程内）
 
@@ -775,12 +775,12 @@ ImportError: cannot import name 'web_search' from 'plugins.bot_unified_runtime.s
 ### 7.0 环境准备（每个 shell 都要）
 
 ```bash
-cd "C:/Users/LancyCelestia/Documents/MyWorkspace/ChatBot/ChatBot"
+cd "<仓库根>"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1
 PY="../ChatBot_Runtime/venv/Scripts/python.exe"
 
 # ★ basetemp 必须在仓库**外**
-BT="C:/Users/LancyCelestia/.workbuddy-ai/tmp/pytest/handover"
+BT="$TEMP/pytest/handover"
 mkdir -p "$BT"
 ```
 
@@ -796,7 +796,7 @@ mkdir -p "$BT"
 ### 7.1 接手第一件事：基线自检（四条）
 
 ```bash
-BT="C:/Users/LancyCelestia/.workbuddy-ai/tmp/pytest/handover"; mkdir -p "$BT"
+BT="$TEMP/pytest/handover"; mkdir -p "$BT"
 
 # 1) TTS 定向回归
 "$PY" -m pytest tests/test_tts.py tests/test_tts_outbound_chain.py -q \
@@ -850,15 +850,15 @@ BT="C:/Users/LancyCelestia/.workbuddy-ai/tmp/pytest/handover"; mkdir -p "$BT"
 
 ### 7.4 `.env` 校验脚本（已备好，直接跑）
 
-位置：`C:\Software\GPT-SoVITS-V2Pro\tools\verify_chatbot_env.py`（与其余工具同放，**不进 ChatBot 源码树**）。
+位置：`$DEV_ROOT\GPT-SoVITS-V2Pro\tools\verify_chatbot_env.py`（与其余工具同放，**不进 ChatBot 源码树**）。
 
 > 2026-09-20 勘误（T124 同步）：上行「不进 ChatBot 源码树」与本节下方案令里的外部路径均已过时——`verify_chatbot_env.py` 已入仓为 `scripts/verify_chatbot_env.py`（T87，`7e2fe36` M-67 裁决 A：重建为配置面真验证，判据走生产 Config 真身），现行跑校验优先用仓内路径；引擎目录原件保留只读。
 
 ```bash
-cd "C:/Users/LancyCelestia/Documents/MyWorkspace/ChatBot/ChatBot"
+cd "<仓库根>"
 PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1 \
   "../ChatBot_Runtime/venv/Scripts/python.exe" \
-  "C:/Software/GPT-SoVITS-V2Pro/tools/verify_chatbot_env.py"
+  "$DEV_ROOT\GPT-SoVITS-V2Pro/tools/verify_chatbot_env.py"
 ```
 
 核心是走项目自带装载器，避免手搓解析：
@@ -883,7 +883,7 @@ parsed = parse_ref_audios(config.bot_tts_ref_audios, base_dir=config.bot_tts_gpt
 | ------ | ----------------------------------------------------------------------------- |
 | `.env` | `cp .env.bak-20260919-tts-probability .env`                                   |
 | 源码     | 本批**未 commit**，回滚 = 手工逆编辑 §4 列出的文件                                            |
-| 参考音频   | 删 `C:\Software\GPT-SoVITS-V2Pro\refs\shorekeeper_ref_02..08.flac`（`_01` 是原有的） |
+| 参考音频   | 删 `$DEV_ROOT\GPT-SoVITS-V2Pro\refs\shorekeeper_ref_02..08.flac`（`_01` 是原有的） |
 
 ---
 
@@ -896,7 +896,7 @@ parsed = parse_ref_audios(config.bot_tts_ref_audios, base_dir=config.bot_tts_gpt
 | **bash 传中文路径给 ffprobe**      | `Illegal byte sequence`                              | 用 Python 直接 `os.path.join` 拼路径，别经 shell                                                 |
 | **内联 Python 脚本含反引号**         | `unexpected EOF while looking for matching` 反引号          | 先写成文件再执行，别内联                                                                            |
 | **`Glob` 在深层目录不稳定**          | 匹配不全                                                 | 深层目录用 `Read` 直读或 `Grep`                                                                 |
-| **pytest 系统临时目录**            | `PermissionError: [WinError 5]`                      | **`--basetemp` 必须给仓库外路径**（如 `C:/Users/LancyCelestia/.workbuddy-ai/tmp/pytest/<name>`）。**千万不能**放仓库内 `.tmp-test/`，否则约 30 项假失败（见 §7.0） |
+| **pytest 系统临时目录**            | `PermissionError: [WinError 5]`                      | **`--basetemp` 必须给仓库外路径**（如 `$TEMP/pytest/<name>`）。**千万不能**放仓库内 `.tmp-test/`，否则约 30 项假失败（见 §7.0） |
 | **`.env` JSON 值直喂 `Config`** | `list_type` 校验错                                      | 先 JSON 解码，或用 `smoke.load_smoke_config()`                                                |
 | **`git diff` vs HEAD 会误导**   | 显示 75 行改动，以为是自己造成的                                   | 工作树有 836 个他席未提交文件，`git diff` 是**vs HEAD**，包含所有席位的累积改动。判断自己的改动要看 `git status` + 文件 mtime |
 
@@ -904,8 +904,8 @@ parsed = parse_ref_audios(config.bot_tts_ref_audios, base_dir=config.bot_tts_gpt
 
 | 错误判断                               | 真相                                                                                                             |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| 「>10s 参考音频服务端不拦」                   | **错**。`TTS.py:816` 硬拦，`TTS.py:1132` 无条件调用，无配置可放宽                                                               |
-| 「`_degrade` 的 `3~10秒` 分支是死代码、只是没用」 | **升级为真 bug**：`api_v2.py:445` 把异常包成 `{"message":"tts failed","Exception":"<真原因>"}`，而 `tts.py:317` 优先读 `message` |
+| 「>10s 参考音频服务端不拦」                   | **错**。`$DEV_ROOT\GPT-SoVITS-V2Pro/GPT_SoVITS/TTS_infer_pack/TTS.py:816` 硬拦，`$DEV_ROOT\GPT-SoVITS-V2Pro/GPT_SoVITS/TTS_infer_pack/TTS.py:1132` 无条件调用，无配置可放宽                                                               |
+| 「`_degrade` 的 `3~10秒` 分支是死代码、只是没用」 | **升级为真 bug**：`$DEV_ROOT\GPT-SoVITS-V2Pro/api_v2.py:445` 把异常包成 `{"message":"tts failed","Exception":"<真原因>"}`，而 `tts.py:317` 优先读 `message` |
 | 「参考池只需 3~6 条」                      | **无依据拍脑袋**。实测全库合规 291 条、甜点区 118 条                                                                              |
 | 「把 `.env` 注释当权威事实」                 | 后来实测验证大部分属实（8.51s/48kHz/单声道 ✅、490 文件 ✅、35 条 ✅、118 甜点区 ✅），但**流程错了**——注释不是证据                                     |
 | 「概率门用 `random.random()`」           | **被规划代理推翻**。项目惯例是确定性哈希；用随机数会让 `test_maybe_attach_voice_attaches_audio` 变成 5% 通过率的 flaky                        |
@@ -967,15 +967,15 @@ parsed = parse_ref_audios(config.bot_tts_ref_audios, base_dir=config.bot_tts_gpt
 | `plugins/bot_unified_runtime/domains/chat_reply/policy/gate.py`       | 确定性哈希规范实现（106-117 行）                                                                                                                           |
 | `plugins/bot_unified_runtime/__init__.py`                             | `_attach_voice_reply()` 包装层（✅ 第二批已改：谓词短路 + import 补 `should_voice_reply`，见 §5.1）                                                                                                   |
 | `plugins/bot_unified_runtime/domains/render/renderer.py`              | 出站：`audio` → `{"type":"record"}`（210-215 行）                                                                                                    |
-| `plugins/bot_unified_runtime/sender/onebot.py`                        | 出站：record → QQ 语音条（279-284 行）                                                                                                                  |
+| `domains/transport/sender/onebot.py`                        | 出站：record → QQ 语音条（279-284 行）                                                                                                                  |
 | `tests/test_tts.py`                                                   | 离线回归（915 行）                                                                                                                                    |
 | `tests/verify_hashes.py`                                              | 交付物哈希门（`echo.py` 在 TRACKED_FILES 内）                                                                                                            |
 | `docs/acceptance-manual.md` §6.6.11                                   | **真机验收清单（14 项）**                                                                                                                               |
 | `docs/config-catalog-full.md`                                         | 配置全册（TTS 段 805-825 行）                                                                                                                          |
 | `docs/design/v21r2-COORDINATION.md`                                   | **占域台账（动手前必读）**                                                                                                                                |
 | `docs/design/tts-handover-20260919.md`                                | 本文档                                                                                                                                            |
-| `C:\Software\GPT-SoVITS-V2Pro\refs\`                                  | 参考音频 + 扫描 CSV + 听辨清单 + ASR TSV                                                                                                                 |
-| `C:\Software\GPT-SoVITS-V2Pro\tools\`                                 | 5 个工具脚本（**刻意不进源码树**）：`scan_durations.py` / `make_listening_checklist.py` / `pick_refs.py` / `asr/transcribe_refs.py` / `verify_chatbot_env.py` |
+| `$DEV_ROOT\GPT-SoVITS-V2Pro\refs\`                                  | 参考音频 + 扫描 CSV + 听辨清单 + ASR TSV                                                                                                                 |
+| `$DEV_ROOT\GPT-SoVITS-V2Pro\tools\`                                 | 5 个工具脚本（**刻意不进源码树**）：`scan_durations.py` / `make_listening_checklist.py` / `pick_refs.py` / `scripts/tts_corpus/transcribe_refs.py` / `verify_chatbot_env.py` |
 
 > 2026-09-20 勘误（T124 同步）：上行「刻意不进源码树」已被 M-61 推翻——语料工具链四脚本（`scan_durations` / `pick_refs` / `make_listening_checklist` / `transcribe_refs`）已收编入仓 `scripts/tts_corpus/`（`c78951f`，T106：溯源块+引擎原件 sha256 双向防漂移锚，缺失=SKIP；引擎目录原件只读零写入，仍在上表路径）；`verify_chatbot_env.py` 更早入仓 `scripts/verify_chatbot_env.py`（T87，`7e2fe36`）。随收编的防护面：18 例冒烟门 `tests/test_tts_corpus_tools.py`（c78951f 内）+反向毒化防护门 `tests/test_tts_corpus_gate.py`（T96 三源对齐门，「按 tsv 覆盖 .env」在门上必红；`097b2e9` 补录入库）。
 

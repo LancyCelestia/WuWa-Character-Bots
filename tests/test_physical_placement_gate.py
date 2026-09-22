@@ -360,3 +360,208 @@ def test_poison_wildcard_exemption_is_rejected() -> None:
     errors = pc.exemption_shape_errors(bad)
     assert len(errors) == len(bad), f"形状校验漏掉了 {len(bad) - len(errors)} 种假豁免写法：{errors}"
     assert not pc.exemption_shape_errors([(f"{_PKG}/sources/z.py", "包命名空间占位")]), "合法字面条目被误杀"
+
+
+# --------------------------------------------------------------------------
+# 读侧 fail-closed 自证（P-S60-2）：读不到＝判红拒算，绝不静默当成"缺键/空集合"。
+# 全部在内存合成声明源上跑（`load_placement(source=...)`），不往源码树写一个字。
+# --------------------------------------------------------------------------
+_PLACEMENT_NAMES = {"DOMAINS_ROOT", "PACKAGE_ROOT", "BANNED_CLAIM_PATHS", "G_P1_EXEMPT", "G_P2_EXEMPT"}
+# 一份形状合法、五枚齐全的最小声明源（含 tuple-of-tuple 嵌套容器），作为投毒底本。
+_OK_SRC = (
+    'DOMAINS_ROOT: str = "plugins/bot_unified_runtime/domains"\n'
+    'PACKAGE_ROOT: str = "plugins/bot_unified_runtime"\n'
+    'BANNED_CLAIM_PATHS: tuple[str, ...] = ("plugins",)\n'
+    'G_P1_EXEMPT: tuple[tuple[str, str, str], ...] = ()\n'
+    "G_P2_EXEMPT: tuple[tuple[str, str], ...] = (\n"
+    '    ("bot.py", "启动件"),\n'
+    '    ("plugins/x/__init__.py", "命名空间占位"),\n'
+    ")\n"
+)
+
+
+def test_reader_extracts_every_declaration_element_from_real_source() -> None:
+    """步骤①：现役声明源"读得动"——解析条数必须逐枚等于源里字面量条数（不等＝已静默失效）。
+
+    这是防"账具失明"的常驻锁：嵌套容器（tuple-of-tuple）整棵求值，条数不丢。
+    """
+    text = pc.PLACEMENT_PY.read_text(encoding="utf-8")
+    parsed = pc._read_literals(text, _PLACEMENT_NAMES, source_label="board_placement.py")
+    src_counts: dict[str, int] = {}
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.Assign):
+            tg = [t for t in node.targets if isinstance(t, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            tg = [node.target]
+        else:
+            continue
+        for t in tg:
+            if t.id in _PLACEMENT_NAMES and isinstance(node.value, ast.Tuple):
+                src_counts[t.id] = len(node.value.elts)
+    assert src_counts, "源里一枚 tuple 字面量都没数到——这份自证本身失效了"
+    for name, n in src_counts.items():
+        assert len(parsed[name]) == n, f"{name} 解析出 {len(parsed[name])} 枚，源里写了 {n} 枚＝取数口在失明"
+    assert parsed["G_P2_EXEMPT"], "G_P2_EXEMPT 被读成空——现役声明源明明有豁免，取数口对豁免失明"
+
+
+def test_poison_illegal_literal_is_fail_closed_and_names_file_line() -> None:
+    """反向自证③a：把某条声明改成非法字面量（`frozenset(...)`）⇒ 必红并点名 文件:行。"""
+    bad = _OK_SRC.replace(
+        'BANNED_CLAIM_PATHS: tuple[str, ...] = ("plugins",)',
+        'BANNED_CLAIM_PATHS: tuple[str, ...] = frozenset(("plugins",))',
+    )
+    try:
+        pc.load_placement(source=bad, source_label="fake/board_placement.py")
+    except pc.PlacementDeclarationError as exc:
+        msg = str(exc)
+        assert "fake/board_placement.py:" in msg, f"没点名文件:行——{msg}"
+        assert "BANNED_CLAIM_PATHS" in msg, f"没点名受害声明——{msg}"
+    else:
+        raise AssertionError("非法字面量被静默放行（读不到当成 None/空），fail-closed 未生效")
+
+
+def test_poison_none_value_is_fail_closed_not_empty_list() -> None:
+    """反向自证③a 补刀：值写成合法字面量 `None`（可解析却语义为空）⇒ 仍判红，绝不补空。"""
+    bad = _OK_SRC.replace(
+        'BANNED_CLAIM_PATHS: tuple[str, ...] = ("plugins",)',
+        "BANNED_CLAIM_PATHS: tuple[str, ...] = None",
+    )
+    try:
+        pc.load_placement(source=bad, source_label="fake/board_placement.py")
+    except AssertionError as exc:
+        assert "None" in str(exc), str(exc)
+    else:
+        raise AssertionError("None 值被当成合法空清单放行＝账具失明")
+
+
+def test_poison_missing_assignment_is_fail_closed_not_empty_set() -> None:
+    """反向自证③b：删掉整条赋值 ⇒ 必红（不许"当成空集合"继续算）。"""
+    gone = "".join(line + "\n" for line in _OK_SRC.splitlines() if "G_P1_EXEMPT" not in line)
+    try:
+        pc.load_placement(source=gone, source_label="fake/board_placement.py")
+    except AssertionError as exc:
+        assert "G_P1_EXEMPT" in str(exc), f"缺声明没被点名：{exc}"
+    else:
+        raise AssertionError("整条赋值被删后静默当空集合放行＝账具失明")
+
+
+def test_normal_state_reads_all_five_and_keeps_nested_counts() -> None:
+    """反向自证③c：正常态声明源 ⇒ 五枚齐全、嵌套容器逐枚读全（判据不顺手改数，真值由 report/棘轮守）。"""
+    ok = pc.load_placement(source=_OK_SRC, source_label="fake/board_placement.py")
+    assert set(ok) == _PLACEMENT_NAMES, sorted(ok)
+    assert len(ok["G_P2_EXEMPT"]) == 2 and len(ok["BANNED_CLAIM_PATHS"]) == 1
+    assert ok["G_P1_EXEMPT"] == ()
+
+
+# --------------------------------------------------------------------------
+# G-P1 豁免通道「形状对得上、条目活得着」三把锁（P-S70-4，席 S100 追加 2026-09-22）。
+# 历史形状：构造侧 `compute()` 装 (fid, path) 元组、查侧拿裸路径查表——形状不合**不报错**、
+# 只是永远匹配不上 ⇒ 门报错里"把它加进 G_P1_EXEMPT"这条路按下去无效（现值 0 把它盖住）。
+# 三把锁把构造侧、查侧与报错"下一步"钉成同源；全部内存合成数据，不往源码树写一个字。
+# --------------------------------------------------------------------------
+_P1_POISON_FID = "B99.poison"
+_P1_POISON_PATH = f"{_PKG}/docs/engineering_surface.py"  # 包内域外形 ⇒ 天然越界（根 py 现算只有 bot.py，别用简报例子的形状）
+
+
+def _p1_placement_src(exempt_literal: str) -> str:
+    return (
+        f'DOMAINS_ROOT: str = "{_DOMAINS}"\n'
+        f'PACKAGE_ROOT: str = "{_PKG}"\n'
+        'BANNED_CLAIM_PATHS: tuple[str, ...] = ("plugins",)\n'
+        f"G_P1_EXEMPT: tuple[tuple[str, str, str], ...] = {exempt_literal}\n"
+        "G_P2_EXEMPT: tuple[tuple[str, str], ...] = ()\n"
+    )
+
+
+def test_g_p1_exempt_channel_is_alive_end_to_end() -> None:
+    """存活锁（简报③b/④）：往 `G_P1_EXEMPT` 放一条真实越界路径 ⇒ 该条必须从违规集消失。
+
+    走生产全链：合成声明源 → `load_placement` → 唯一构造口 `g_p1_exempt_keys` → `gp1_findings` 查表。
+    修复前此测必死在第三段（元组 vs 裸路径永不匹配）——那正是 P-S70-4 的形状。
+    """
+    rows = [(_P1_POISON_FID, (_P1_POISON_PATH,))]
+    placement = pc.load_placement(source=_p1_placement_src("()"), source_label="fake/board_placement.py")
+    assert placement["G_P1_EXEMPT"] == ()
+    bare = pc.gp1_findings(rows, domains_root=_DOMAINS, package_root=_PKG, domain_roots={"chat_reply"}, exempt=set())
+    assert bare["outside_domain"] == [(_P1_POISON_FID, _P1_POISON_PATH)], "空白样本自己没数到越界＝本锁样本失效（空跑）"
+    entry_src = _p1_placement_src(f"({pc.g_p1_exempt_entry_literal(_P1_POISON_FID, _P1_POISON_PATH, '工程面·用户裁')},)")
+    placed = pc.load_placement(source=entry_src, source_label="fake/board_placement.py")
+    keys = pc.g_p1_exempt_keys(placed["G_P1_EXEMPT"])
+    assert keys == {(_P1_POISON_FID, _P1_POISON_PATH)}, f"构造口产物不是 (fid, impl_path) 对集合：{keys}"
+    gone = pc.gp1_findings(rows, domains_root=_DOMAINS, package_root=_PKG, domain_roots={"chat_reply"}, exempt=keys)
+    assert not gone["outside_domain"], "按声明加了豁免仍留在违规集 ⇒ 通道无牙（P-S70-4 回潮）"
+    # fid 精度：别的 fid 的豁免不得吞掉本条（防豁免面放宽成"只看路径就放行"的第二形态死通道）
+    wrong_fid = pc.gp1_findings(rows, domains_root=_DOMAINS, package_root=_PKG,
+                                domain_roots={"chat_reply"}, exempt={("B00.other", _P1_POISON_PATH)})
+    assert wrong_fid["outside_domain"] == [(_P1_POISON_FID, _P1_POISON_PATH)], "跨 fid 豁免生效＝豁免面放宽成按路径全放行"
+
+
+def test_g_p1_exempt_shape_lock_rejects_drifted_shapes() -> None:
+    """形状锁（简报③a/④）：裸路径／二元／四元／非 str／空理由／通配全判红；故意把形状改坏 ⇒ 查侧当场抛错。"""
+    good = ((_P1_POISON_FID, _P1_POISON_PATH, "工程面"),)
+    assert not pc.gp1_exemption_shape_errors(good), "合法三元被误杀"
+    assert pc.g_p1_exempt_keys(good) == {(_P1_POISON_FID, _P1_POISON_PATH)}
+    drifted = [
+        _P1_POISON_PATH,                                            # 裸路径（无 fid）
+        (_P1_POISON_FID, _P1_POISON_PATH),                          # 二元（缺理由）
+        (_P1_POISON_FID, _P1_POISON_PATH, "理由", "余"),            # 四元
+        (_P1_POISON_FID, 42, "理由"),                               # 非字符串成员
+        (_P1_POISON_FID, _P1_POISON_PATH, "   "),                   # 空理由
+        (_P1_POISON_FID, f"{_PKG}/docs/*", "通配"),                 # 通配符路径
+    ]
+    for entry in drifted:
+        assert pc.gp1_exemption_shape_errors([entry]), f"形状漂移没被抓（尺子失明）：{entry!r}"
+        try:
+            pc.g_p1_exempt_keys((entry,))
+        except pc.PlacementDeclarationError as exc:
+            assert "G_P1_EXEMPT" in str(exc), f"构造口报错没点名受害清单：{exc}"
+        else:
+            raise AssertionError(f"构造口放行了坏形状（fail-closed 失效）：{entry!r}")
+    # 查侧类型锁的运行时腿：拿**裸路径集合**（历史漂移形）来查表 ⇒ 必抛红并点名唯一构造口
+    try:
+        pc.gp1_findings([(_P1_POISON_FID, (_P1_POISON_PATH,))], domains_root=_DOMAINS,
+                        package_root=_PKG, domain_roots={"chat_reply"}, exempt={_P1_POISON_PATH})
+    except pc.PlacementDeclarationError as exc:
+        assert "g_p1_exempt_keys" in str(exc), f"查侧报错没指向唯一构造口（下一步不可执行）：{exc}"
+    else:
+        raise AssertionError("查侧接受了裸路径集合 ⇒ P-S70-4 同型漂移将再次不被发现")
+
+
+def test_g_p1_channel_single_construction_port_and_next_step_is_executable() -> None:
+    """反空跑锁（简报③c）＋同源结构锁（简报②）：构造口唯一、报错"下一步"照做即生效、真树死豁免为 0。
+
+    反空跑的立场：真树通道现值 0 枚——**「零违规」永远不得当作达标证据**；牙齿的存在性由
+    `test_g_p1_exempt_channel_is_alive_end_to_end` / `test_g_p1_exempt_shape_lock_rejects_drifted_shapes`
+    两枚合成注毒立住（有违规必数、豁免必消、坏形必抛；F-15/P-46 教训）。本测钉的是**结构不变量**，
+    不钉现值，所以既不挡未来正当豁免、也不给静默回改留缝：
+    ① `compute()` 必须调 `g_p1_exempt_keys` 构造键，且自身不得 inline 第二处 pair 构造（SetComp-of-Tuple）；
+    ② 查侧必须是 `(fid, path) in exempt` 的元组键，不得再现 `path in exempt` 裸形；
+    ③ 报错字面量 `literal_eval` 回读即声明条目本尊，过构造口所得 == 查侧键（"下一步"可执行）；
+    ④ 真树每条 G-P1 豁免今天都必须正吞着一条真违规（死豁免 ⇒ 红，条目"活得着"）。
+    """
+    tree = ast.parse(Path(pc.__file__).read_text(encoding="utf-8"))
+    fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    compute_nodes = list(ast.walk(fns["compute"]))
+    assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "g_p1_exempt_keys"
+               for n in compute_nodes), "compute() 不再经唯一构造口 ⇒ 出现第二处构造位（形状漂移的根源土壤）"
+    assert not any(isinstance(n, ast.SetComp) and isinstance(n.elt, ast.Tuple) for n in compute_nodes), \
+        "compute() 又 inline 了 pair 构造——P-S70-4 历史形状（构造侧绕过构造口自装元组）"
+    gp1_nodes = list(ast.walk(fns["gp1_findings"]))
+    assert any(
+        isinstance(n, ast.Compare) and isinstance(n.left, ast.Tuple)
+        and {e.id for e in n.left.elts if isinstance(e, ast.Name)} >= {"fid", "path"}
+        and isinstance(n.ops[0], ast.In)
+        and isinstance(n.comparators[0], ast.Name) and n.comparators[0].id == "exempt"
+        for n in gp1_nodes
+    ), "查侧不再用 (fid, path) 元组键——形状锁的静态腿失明"
+    assert not any(
+        isinstance(n, ast.Compare) and isinstance(n.left, ast.Name) and n.left.id == "path"
+        and isinstance(n.ops[0], ast.In)
+        and isinstance(n.comparators[0], ast.Name) and n.comparators[0].id == "exempt"
+        for n in gp1_nodes
+    ), "gp1_findings 里再现裸 `path in exempt`（P-S70-4 同型回潮）"
+    lit = pc.g_p1_exempt_entry_literal("B02.x", f"{_PKG}/docs/a.py", "工程面")
+    entry = ast.literal_eval(lit)
+    assert entry == ("B02.x", f"{_PKG}/docs/a.py", "工程面"), lit
+    assert (entry[0], entry[1]) in pc.g_p1_exempt_keys((entry,)), "报错给的『下一步』与构造口产物不同源 ⇒ 照做也无效"
+    assert _REAL["g_p1_dead_exempts"] == [], f"G-P1 死豁免（豁免对象已不在违规集，该摘并降账）：{_REAL['g_p1_dead_exempts']}"

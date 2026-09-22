@@ -938,3 +938,99 @@ def test_full_page_fallback_screenshot_omits_background() -> None:
         "omit_background": True,
     }
     assert page.closed
+
+
+# --------------------------------------------------------------------------
+# S79 CARD-TEXT-RESIDUAL —— 卡片模板「兜底型」硬编码中文文案必须为 0（新增用例，
+# 不改任何既有断言）。唯一落点＝bridge._CARD_TEXT（经 _ENV.globals["card_text"]
+# 单点注册），模板只准写参数引用 card_text.<键>。
+# --------------------------------------------------------------------------
+_S79_FALLBACK_FORMS: dict[str, str] = {
+    "default('中文')": r"\|\s*default\(\s*['\"][^'\"]*[\u4e00-\u9fff]",
+    "ternary else '中文'": r"(?:['\"][^'\"]*[\u4e00-\u9fff][^'\"]*['\"]\s*\bif\b|\belse\b\s*['\"][^'\"]*[\u4e00-\u9fff])",
+    "or '中文'": r"\bor\s+['\"][^'\"]*[\u4e00-\u9fff]",
+    "get(key, '中文')": r"\.get\([^()]*,\s*['\"][^'\"]*[\u4e00-\u9fff]",
+    'CSS content:"中文"': r"content\s*:\s*['\"][^'\"]*[\u4e00-\u9fff]",
+    'attr alt/title/placeholder/aria-label="中文"': r"\b(?:alt|title|placeholder|aria-label)\s*=\s*['\"][^'\"]*[\u4e00-\u9fff]",
+}
+
+
+def test_card_templates_have_zero_hardcoded_cjk_fallback_literals() -> None:
+    """卡片模板零「兜底型」硬编码中文文案（S79 判据；六形态逐枚点名）。"""
+    import re
+    from pathlib import Path
+
+    templates_dir = (
+        Path(__file__).resolve().parents[1]
+        / "plugins/bot_unified_runtime/domains/render/card_render/templates"
+    )
+    templates = sorted(templates_dir.rglob("*.html"))
+    assert templates, f"扫描面为空（目录不存在？）：{templates_dir}"
+    offenders: list[str] = []
+    for tpl in templates:
+        raw = tpl.read_text(encoding="utf-8")
+        body = re.sub(r"\{#.*?#\}", " ", raw, flags=re.DOTALL)  # Jinja 注释（非文案）
+        body = re.sub(r"<!--.*?-->", " ", body, flags=re.DOTALL)  # HTML 注释（非文案）
+        for form, pattern in _S79_FALLBACK_FORMS.items():
+            for hit in re.finditer(pattern, body):
+                line = body.count("\n", 0, hit.start()) + 1
+                offenders.append(f"{tpl.name}:L{line} [{form}] {hit.group(0)[:40]!r}")
+    assert not offenders, (
+        "卡片模板出现硬编码中文兜底文案（唯一落点应为 bridge._CARD_TEXT "
+        "+ 模板参数引用 card_text.<键>）：\n" + "\n".join(offenders)
+    )
+
+
+# --------------------------------------------------------------------------
+# S95 CARD-STATIC-TEXT-65 —— 卡片模板「静态 HTML 文本节点」硬编码中文必须为 0
+# （新增用例，不改任何既有断言）。判据与 /tmp/s95_census.py 同源：剥 style/script/
+# HTML 注释/Jinja 控制体/Jinja 注释后，再剥 {{ }} 表达式，标签间文本里的非空白
+# CJK 游程即违规；字面量唯一落点仍是 bridge._CARD_TEXT，模板只准 card_text.<键>。
+# --------------------------------------------------------------------------
+_S95_STRIP_PATTERNS = (
+    r"<style[^>]*>.*?</style>",
+    r"<script[^>]*>.*?</script>",
+    r"<!--.*?-->",
+    r"\{%.*?%\}",
+    r"\{#.*?#\}",
+    r"\{\{.*?\}\}",
+)
+
+
+def _s95_static_cjk_runs(raw: str) -> list[tuple[int, str]]:
+    import re
+    body = raw
+    for pat in _S95_STRIP_PATTERNS:
+        body = re.sub(pat, lambda m: "".join(c if c == "\n" else " " for c in m.group(0)),
+                      body, flags=re.DOTALL | re.IGNORECASE)
+    out: list[tuple[int, str]] = []
+    prev = 0
+    for m in re.finditer(r"<[^>]+>", body, flags=re.DOTALL):
+        seg_start, seg_text = prev, body[prev:m.start()]
+        prev = m.end()
+        for mm in re.finditer(r"\S+", seg_text):
+            if re.search(r"[\u4e00-\u9fff]", mm.group(0)):
+                out.append((seg_start + mm.start(), mm.group(0)))
+    return out
+
+
+def test_card_templates_have_zero_hardcoded_cjk_static_text_nodes() -> None:
+    """卡片模板零「静态 HTML 文本节点」硬编码中文（S95 判据，R-24 全部参数化）。"""
+    from pathlib import Path
+
+    templates_dir = (
+        Path(__file__).resolve().parents[1]
+        / "plugins/bot_unified_runtime/domains/render/card_render/templates"
+    )
+    templates = sorted(templates_dir.rglob("*.html"))
+    assert templates, f"扫描面为空（目录不存在？）：{templates_dir}"
+    offenders: list[str] = []
+    for tpl in templates:
+        raw = tpl.read_text(encoding="utf-8")
+        for off, run in _s95_static_cjk_runs(raw):
+            line = raw.count("\n", 0, off) + 1
+            offenders.append(f"{tpl.name}:L{line} {run[:40]!r}")
+    assert not offenders, (
+        "卡片模板出现静态中文文本节点（唯一落点应为 bridge._CARD_TEXT "
+        "+ 模板参数引用 card_text.<键>）：\n" + "\n".join(offenders)
+    )

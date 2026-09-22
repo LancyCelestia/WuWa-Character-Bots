@@ -124,7 +124,7 @@ body { font-family: var(--font-family); background: transparent; display: flex; 
     {% endfor %}
     {% if source_note or updated_at or delayed_note %}<div class="data-foot">
         {% if source_note %}<span>{{ source_note }}</span>{% endif %}
-        {% if updated_at %}<span>数据时间 {{ updated_at }}</span>{% endif %}
+        {% if updated_at %}<span>{{ card_text.static_fin_28 }} {{ updated_at }}</span>{% endif %}
         {% if delayed_note %}<span>{{ delayed_note }}</span>{% endif %}
     </div>{% endif %}
     {# CAP1：胶囊 DOM 由 bridge 从 mica_shell.brand_capsule_html 注入，模板零手写。 #}

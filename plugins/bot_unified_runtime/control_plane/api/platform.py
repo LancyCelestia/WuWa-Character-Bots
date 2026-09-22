@@ -355,7 +355,7 @@ def build_platform_router(
     def read_file(
         payload: dict[str, Any], principal: Principal = Depends(read_dependency)
     ):
-        from ...sources.file_reader import read_supported_file
+        from ...domains.files.sources.file_reader import read_supported_file
 
         relative = str(payload.get("path") or "")
         if not relative or Path(relative).is_absolute():
@@ -390,7 +390,7 @@ def build_platform_router(
             raise ControlPlaneError(503, "media_config_unavailable", "媒体配置未装配。")
         try:
             if kind in {"image", "gif"}:
-                from ...sources.vision_describe import (
+                from ...domains.media.ingest.vision_describe import (
                     build_vision_provider,
                     describe_images,
                 )
@@ -407,7 +407,10 @@ def build_platform_router(
                     "status": "ok" if text else "unknown",
                 }
             elif kind == "audio":
-                from ...sources.transcribe import build_asr_provider, transcribe_audio
+                from ...domains.media.ingest.transcribe import (
+                    build_asr_provider,
+                    transcribe_audio,
+                )
 
                 asr_provider = build_asr_provider(config)
                 text = transcribe_audio(
@@ -419,7 +422,7 @@ def build_platform_router(
                     "status": "ok" if text else "unknown",
                 }
             else:
-                from ...sources.vision_describe import (
+                from ...domains.media.ingest.vision_describe import (
                     build_vision_provider,
                     describe_video,
                 )

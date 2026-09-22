@@ -13,7 +13,7 @@
 
 产出「一张卡的完整 HTML」。两套形态并存，且都要过同一份契约：
 
-- **Jinja 模板族**：`domains/render/card_render/templates/*.html`（解析通用卡、行情、金融、好感度、点歌候选、mermaid、错误卡）。
+- **Jinja 模板族**：`domains/render/card_render/templates/*.html`（模板清单以该目录的 glob 现算为准，并由 `scripts/doc_sync.py` 派生进机器册）。
 - **f-string 直拼卡**：不走模板文件，在 Python 里拼 HTML。四处真身分别是 `domains/chat_reply/capabilities/echo.py`（帮助卡）、`domains/ops/admin/debug.py`（LLM 检查卡）、`domains/render/card_render/usage_cards.py`（账单卡）、`domains/render/templates.py`（媒体归档卡）。
 
 两派的共同点：数据先归一再入模板，样式一律来自 `theme_tokens` + `mica_shell` 生成器注入，所有字段经 `html.escape` 防注入。**具体有哪些模板、有几张直拼卡，由 `scripts/doc_sync.py` 派生进机器册 `docs/auto-facts.md`，本页不写数量**（历史教训：手写过的每一版都在几天内过期）。
@@ -54,6 +54,6 @@
 
 ## 测试与验收
 
-`tests/test_rendering_contract.py`（Jinja 族逐条，含脏 payload 不抛异常锁 `test_affinity_card_never_raises_on_dirty_payload`）、`tests/test_mica_builders_contract.py`（直拼卡同口径）、`tests/test_template_visual_audit.py`、`tests/test_v21r3_visual_gates.py`（gate 系列覆盖 11 个渲染面）、`tests/test_universal_card_visual.py`、`tests/test_error_card_contract.py`、`tests/test_mica_shell.py`。模板清单与渲染面数由 `scripts/doc_sync.py` 派生，漂移只读校验 `--check`；交付物哈希由 `tests/verify_hashes.py` 记账。
+`tests/test_rendering_contract.py`（Jinja 族逐条，含脏 payload 不抛异常锁 `test_affinity_card_never_raises_on_dirty_payload`）、`tests/test_mica_builders_contract.py`（直拼卡同口径）、`tests/test_template_visual_audit.py`、`tests/test_v21r3_visual_gates.py`（gate 系列按渲染面现算覆盖）、`tests/test_universal_card_visual.py`、`tests/test_error_card_contract.py`、`tests/test_mica_shell.py`。模板清单与渲染面数由 `scripts/doc_sync.py` 派生，漂移只读校验 `--check`；交付物哈希由 `tests/verify_hashes.py` 记账。
 
-真机验收＝重启后 `docs/acceptance-manual.md` §6.6.10 的逐卡触发清单（帮助/账单/解析/媒体/好感度/点歌/行情/金融/mermaid/错误卡/debug 各触发一次）。
+真机验收＝重启后 `docs/acceptance-manual.md` §6.6.10 的逐卡触发清单（逐卡项目以该手册该节的现文为准）。

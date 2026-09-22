@@ -27,7 +27,7 @@
 ## 开关与参数
 
 - `bot_today_history_enabled`（缺省 True）。
-- `bot_today_history_push_file`（缺省 `data/today_history_push.json`）、`bot_today_history_cache_file`（缺省 `data/today_history_cache.json`）——两者都经 `scripts/runtime_paths.py` 重映射进 Runtime 数据根，属 `path_fields`，**不进源码树、不进 git**。
+- `bot_today_history_push_file` 与 `bot_today_history_cache_file`（两者的缺省路径以 `config.py` 的对应字段为准）——两者都经 `scripts/runtime_paths.py` 重映射进 Runtime 数据根，属 `path_fields`，**不进源码树、不进 git**。
 - 定时时点是会话态（按 `f_<用户号>` / `g_<群号>` 分键），不是配置键；改推送框架的时间窗口径看 B07。
 
 ## 失败时看到什么

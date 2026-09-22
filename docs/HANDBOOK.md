@@ -1,5 +1,6 @@
 # 守岸人 Bot 交接总手册（HANDBOOK · 单一活文档）
 > **术语说明（2026-09-20）**：本文中的 **NapCat** 指 2026-09-18 之前的 QQ 协议端（当时实况记录，保留原文不改写）；现役协议端为 **SnowLuma**，见 [snowluma-setup.md](snowluma-setup.md)。
+> **环境坐标约定（2026-09-22）**：`$DEV_ROOT`＝本机第三方软件安装根目录（SnowLuma / GPT-SoVITS / QQNT 等）；`$TEMP`＝系统临时目录；`<工作区父目录>`＝本仓检出的上层目录。历史行文中出现过的本机绝对路径按此约定归一，具体环境坐标由读者本机提供，本文不再写死。
 
 ## 当前交接记录：后端 V2.1（2026-09-17，仅文档）
 
@@ -63,7 +64,7 @@
 - **工作树（2026-09-15 06:0x 夜批 §26 刷新 `git status` 实测）**：共 21 项（14 改+7 未跟踪），全部属在飞未落库席（campus/daily_assist/词汇回忆方向：未跟踪 `campus.py`/`daily_assist.py`/`campus_store.py`/`test_campus_digest.py`/`test_daily_assist.py`/`test_glossary_recall.py` 等，持锁修改 `__init__.py`/`config.py`/`base_router.py`/`chat.py`/`glossary.py` 等；§26.10 同口径）；旧「仅 e2e 两件在途」（2026-09-14）与更旧记录（09-12 weather.py 单件、63 dirty+34 untracked 时代）均已被取代。
 - **⚠️ 生产进程仍运行 09-09 旧代码**（管理员权限重启陷阱见 Part II §4.3）——09-10 起的全部交付（含 09-13 审计批+09-14 六域批，§24.9-8 同口径）**都在等提权重启生效**；重启前先跑 `python scripts/pre_restart_check.py` 一键预检 7 项（`051261d`，acceptance §6.5③）。
 - **09-14 批新能力现行事实（全部已入库，随重启生效）**：金融三能力（商品/国债/北向）生产 matcher 注册（`691d6e1`；`789700c` 先接 base_router+帮助层）·统一错误报告卡两段式异步——毫秒级文本回执+卡图 ≈3-33s 补发（`de6ba91`+`84b3915`+`1651544`）·表情回应能力（`6724782`+`eaa8fd9` config 四键）·笔记/NTP 授时全链（`789700c`）·解析链 SSRF 双护栏（`efe7b79`：`guard_user_url` 咽喉+og 落点双查）·渲染 Phase 2 解锁（`13fcd30` 接线+`.env` 并发 2/预算 1500ms——本刷新实读 .env 复核；性能席实测 warm P50 −64%，删行即回滚）·mermaid 素材本地化（`959630a` 下载+`e37817f` page.route 拦截，治已知问题 #8 根因）·stocks logo 三级兜底（`a4371d2`）+bot 头像本地优先（`691d6e1`）。
-- **运行数据现行事实（2026-09-14）**：knowledge 库三重漂移已清（A45 实修：pending 113→0/vector_dim 激活 1024/ANN ntotal 35,341，§24.13-7）·`.env` `BOT_KB_WIKI_ROOT` 已修至 `D:/Coding/01_Projects/Crawl Wiki`（本刷新实读 .env 复核）·图库 61/61 满编（`bdbc88b`）·channel_health 测试隔离加固（`10ef40f`，生产库 md5 跑前跑后一致）。
+- **运行数据现行事实（2026-09-14）**：knowledge 库三重漂移已清（A45 实修：pending 113→0/vector_dim 激活 1024/ANN ntotal 35,341，§24.13-7）·`.env` `BOT_KB_WIKI_ROOT` 已修至 `本机 wiki 爬取目录（`.env` `BOT_KB_WIKI_ROOT` 现值为准）`（本刷新实读 .env 复核）·图库 61/61 满编（`bdbc88b`）·channel_health 测试隔离加固（`10ef40f`，生产库 md5 跑前跑后一致）。
 - 工作树常年多会话在途改动：开工先 `git log` 查时效（09-11 教训：两个会话同晚开工同一任务组，靠 git log 才避免重写），再按 Part II §11 协作协议（禁 `git add -A`、共享文件动前登记、§11.4 部分暂存）。
 - push 用完整 refspec：`refs/heads/v0.0.1-alpha.2:refs/heads/v0.0.1-alpha.2`（分支与 tag 同名）；推送 origin 仅按用户明确指示。
 
@@ -104,7 +105,7 @@
 | B8 | target metadata 持久化 API（X rest ID 等显式落库）+ 订阅 V1/V2 双轨清理合并 | 08-31 §2.9-5 / 09-05 §16.2 | ✅ **metadata 半已销**（`b7bc3a4`：subscription_target_metadata 表+set/get API+调度器回灌/diff 落库）；V1 退场路径待裁（生产唯一活轨 V2） |
 | B9 | 架构级长线：claim-based RAG、TrustLevel 反注入体系、ToolCatalog、PersonaContract 结构化知识 | 09-10-full §10.5 | 长线；反注入已有第一层落地（`f71b234` [UNTRUSTED_USER_TEXT] 包裹+指令剥离），其余未动 |
 | B10 | 气象预警、QQ 空间日记（草稿+审批）、戳一戳统一 reaction、表情包端到端验证、多模型盲测/Playground、`/bot commands` 命令透明化 catalog、搜索质量评测/引用策略、DB owner 清单与迁移统一 | 09-05 §5/§16-18/§20 | **部分销项**（`a306822`：气象预警/戳一戳统一分发/commands 目录/db-owners 清单；QQ 空间日记/表情包端到端/多模型盲测/搜索质量评测仍未做；NMC 直连空 data 登记待排查） |
-| B11 | P4 Crawl Wiki `/bot wiki` | 08-29 §9.4 | **用户明令暂缓**——不得扫描/导入 `D:\Coding\Crawl Wiki` |
+| B11 | P4 Crawl Wiki `/bot wiki` | 08-29 §9.4 | **用户明令暂缓**——不得扫描/导入该机 Crawl Wiki 爬取目录（真值以 `.env` 现值为准） |
 | B12 | 本会话 parked Minor ×3（限长用例断言偏宽/缺双代理键用例/矩阵缩进）+ result_unknown 台账 TTL | `.superpowers/sdd/b-group-2026-09-11/progress.md` | ✅ **已销项**（`b7bc3a4`：三条 parked minor 全修+台账 TTL） |
 | B13 | universal_card.html 写死品牌色残留（VIP/认证徽章/Top3 序号） | 09-10-full §9 | ✅ **已销项**（`b7bc3a4` 收进语义 token --amber-*；随后 `a1ab78f`/`dc65f7f` 釉瑚 UI 改版全面重构） |
 | B14 | LangSearch 真实 key 验收 | 09-10-full §9 | 等用户 key |
@@ -154,7 +155,7 @@
 ## 2. 硬约束（违反即事故，全部有真实前科）
 
 1. **人格源文件、世界观源文件只读**——AI 不得改写。
-2. **Runtime 数据不得删除**（SQLite/FAISS/向量库/记忆/Cookie/订阅/媒体缓存/日志/venv）。清理源码树残留须先备份验证（09-10 依 P3 规程清理过源码树 `data/`，497MB 备份在 `%TEMP%/bot_bgroup_backup/data_src_backup/`）。
+2. **Runtime 数据不得删除**（SQLite/FAISS/向量库/记忆/Cookie/订阅/媒体缓存/日志/venv）。清理源码树残留须先备份验证（09-10 依 P3 规程清理过源码树 `data/`，497MB 备份在 `$TEMP/bot_bgroup_backup/data_src_backup/`）。
 3. **密钥不入库不入聊天**：真实 key 只存 `.env`（gitignored）；链路字段一律 `env:变量名` 间接引用；**运行时持久层（runtime settings store）也禁止落盘 resolved 明文 key**（09-10 审计修复 P1#1 落地的契约，别打破）。
 4. **推送 origin 仅按用户明确指示**；**commit 禁用 `git add -A` / `git add .`**——多会话共享工作树，会裹挟他人半成品（本日真实事故两起，见 §11.2）。
 5. **源码树零缓存**：`__pycache__`/`.pytest_cache` 不得出现；测试走 `dev.ps1`（已固定 basetemp），绕开时必须 `PYTHONDONTWRITEBYTECODE=1`。直跑 pytest 撞 `pytest-of-*` 共享目录锁会 PermissionError（09-10 实踩）。
@@ -206,7 +207,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 
 - `dev.ps1` 启动（run/run-watch）把输出重定向到 `ChatBot_Runtime/logs/nonebot.out.log`；手动控制台启动不落盘。分离式启动参考（09-10 实用）：
   `Start-Process -FilePath <venv>\python.exe -ArgumentList 'bot.py' -WorkingDirectory <仓库根> -WindowStyle Hidden -RedirectStandardOutput <Runtime>\logs\nonebot.out.log -RedirectStandardError ...\nonebot.err.log`
-- SnowLuma（现役协议端）：双击 `C:\Software\SnowLuma\launcher.bat`（自带 node.exe，内部 `node ./index.mjs`）启动；QQ 正常登录后，在 WebUI `http://127.0.0.1:5099`「进程注入」页对目标 `QQ.exe` 主进程点「加载」，状态到「已在线」才算接上（运行期手动注入，默认 `hookAutoLoad=false` 不自动注入）。验证：`netstat -ano | findstr "3001 3002"` 出 LISTENING（SnowLuma）+ bot 进程 ESTABLISHED。日志：`C:\Software\SnowLuma\logs\snowluma-YYYY-MM-DD.log`（按日期分文件；旧 NapCat 的 `logs\` 为空，其日志指引已失效）。
+- SnowLuma（现役协议端）：双击 `$DEV_ROOT\SnowLuma\launcher.bat`（自带 node.exe，内部 `node ./index.mjs`）启动；QQ 正常登录后，在 WebUI `http://127.0.0.1:5099`「进程注入」页对目标 `QQ.exe` 主进程点「加载」，状态到「已在线」才算接上（运行期手动注入，默认 `hookAutoLoad=false` 不自动注入）。验证：`netstat -ano | findstr "3001 3002"` 出 LISTENING（SnowLuma）+ bot 进程 ESTABLISHED。日志：`$DEV_ROOT\SnowLuma\logs\snowluma-YYYY-MM-DD.log`（按日期分文件；旧 NapCat 的 `logs\` 为空，其日志指引已失效）。
 
 ### 4.3 重启的权限陷阱（09-10 实踩）
 
@@ -220,7 +221,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 
 ### 5.1 目录与重映射
 
-- Runtime 根：`ChatBot_Runtime/`（data/cache/logs/venv/git 元数据）。代码内 `data/` 前缀经 `scripts/runtime_paths.py` 自动重映射到 Runtime 根——**从仓库根直接跑脚本且未触发重映射时会在源码树生成 `data/` 残留**（runtime-layout 会 FAIL；清理规程=备份到 %TEMP% 再删，09-10 清过一次 497MB）。
+- Runtime 根：`ChatBot_Runtime/`（data/cache/logs/venv/git 元数据）。代码内 `data/` 前缀经 `scripts/runtime_paths.py` 自动重映射到 Runtime 根——**从仓库根直接跑脚本且未触发重映射时会在源码树生成 `data/` 残留**（runtime-layout 会 FAIL；清理规程=备份到 $TEMP 再删，09-10 清过一次 497MB）。
 - SQLite 资产：`channel_health`（渠道健康+EWMA）、好感度库（WAL）、`group_affinity` 镜像表、发送队列、幂等表、订阅 store v2（outbox/seen 已带清理）、媒体档案库（在途）。
 - Cookie：`ChatBot_Runtime/data/platform_cookies.txt`（Netscape 格式）。**当前仅 weibo + xiaohongshu 域有效**；管理员热写指令 `/bot cookie import <平台> <Cookie头>`。缺失凭据的影响面见 §9。
 
@@ -256,7 +257,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 
 ### 6.3 卡片渲染（Mica 规范）
 管线：`domains/link_parse/capabilities/content_parser.py:render_card_png`（ParsedContent → payload → HTML → playwright 常驻浏览器截图）→ `output/card_render/`（bridge + `templates/`）。规范铁律：底色唯一来源 `PLATFORM_COLORS`（bridge.py）经 `--accent` 变量 `color-mix` 掺白派生（外壳 5-11%、面板 4-8%），**禁写死品牌色**；单柔光阴影；字重 ≤700；body 透明（omit_background 依赖）；`.card` 根元素承载截图。已接卡：链接解析（universal_card）、点歌成功卡、**点歌候选选择卡**（`song_candidates.html`+`bridge.render_song_candidates_html`，渲染失败逐字回退纯文本零回归）、帮助、天气、免费游戏、好感度（`affinity_card.html`）、会员购（嘉宾独立卡区）。
-**渲染技术要点（09-10 淀淀）**：新模板**不要加 `<meta viewport>`**（触发 Chromium 移动模式缩放怪癖，整页被缩一半）；`.card` 用 `width: fit-content` 让元素截图收紧；viewport 要容住壳宽（候选卡 1028 壳 → viewport 1040）；验证手法=像素采样（柔光阴影 alpha<4% 合格，查看器把半透明红合成到黑底会误判成「实色环」）。改卡后必跑三门禁+样例截图核对（临时脚本放 %TEMP%）。死模板已清理（Compact 音乐版式七块+写死色违规源）。
+**渲染技术要点（09-10 淀淀）**：新模板**不要加 `<meta viewport>`**（触发 Chromium 移动模式缩放怪癖，整页被缩一半）；`.card` 用 `width: fit-content` 让元素截图收紧；viewport 要容住壳宽（候选卡 1028 壳 → viewport 1040）；验证手法=像素采样（柔光阴影 alpha<4% 合格，查看器把半透明红合成到黑底会误判成「实色环」）。改卡后必跑三门禁+样例截图核对（临时脚本放 $TEMP）。死模板已清理（Compact 音乐版式七块+写死色违规源）。
 
 ### 6.4 音乐点歌
 5 供应商（网易云/QQ/酷狗/酷我/Apple Music+Spotify 解析）；模式 `card+voice+link` 可组合（`点歌模式`）；多候选编号选歌（TTL 300s，按 session+sender 隔离）：歧义候选出 Mica 候选选择卡；QQ 端成功卡替代 CQ:music（NapCat 时期无 musicSignUrl、拒签会中断整条消息，该规避沿用至 SnowLuma）。09-10 加固：裸歌名精确命中才跳过候选列表（旧 exact_hits 一票否决导致「后来 钢琴版」直接放同名翻唱）；编号无会话明确提示；`limit` 全平台透传（`BOT_MUSIC_CANDIDATES_LIMIT` 不再被硬编码 5 截断）；酷狗详情复用 parse_kugou 富化（封面/标题）；QQ 搜索迁移 musicu.fcg（旧端点恒 500）；酷我 r.s 搜索服务端劣化返回非 JSON（已知边界，候选链可用）。
@@ -416,11 +417,11 @@ git write-tree && git commit-tree <tree> -p <parent> -m "msg"
 | C组审计报告（36 项） | `docs/capability-audit-2026-09-10.md` |
 | 好感度设计文档（v3） | `docs/affinity-design.md` |
 | 用户手册层命令 | `COMMANDS.md`；验收手册 `docs/acceptance-manual.md`；SnowLuma `docs/snowluma-setup.md`（NapCat 回滚件操作归 `docs/napcat-setup.md`） |
-| .env 备份（09-10 两次） | `%TEMP%/bot_bgroup_backup/env.bak-20260910`、`env.bak2-20260910` |
-| 源码树 data/ 清理备份 | `%TEMP%/bot_bgroup_backup/data_src_backup/`（497MB） |
-| 实测脚本（可复跑） | `%TEMP%/bot_bgroup/`：`platform_matrix.py`、`probe_umi.py`、`test_subscribe_fetch.py`、`render_candidates_sample.py` |
+| .env 备份（09-10 两次） | `$TEMP/bot_bgroup_backup/env.bak-20260910`、`env.bak2-20260910` |
+| 源码树 data/ 清理备份 | `$TEMP/bot_bgroup_backup/data_src_backup/`（497MB） |
+| 实测脚本（可复跑） | `$TEMP/bot_bgroup/`：`platform_matrix.py`、`probe_umi.py`、`test_subscribe_fetch.py`、`render_candidates_sample.py` |
 | 09-10 审计+修复轮全记录 | 本文 **§13**（六域修复逐条表格 / 门禁 fallout / 行为变化 / 残留 / 协同事件） |
-| 审计回滚基线快照 | `%TEMP%/auditfix-baseline-20260910-023342/`（`tracked.patch` / `status.txt` / `untracked.txt`） |
+| 审计回滚基线快照 | `$TEMP/auditfix-baseline-20260910-023342/`（`tracked.patch` / `status.txt` / `untracked.txt`） |
 | 审计回归测试（96 用例 ×6 文件） | `tests/test_auditfix_{sender_queue,runtime_policy,llm_route,main_character,parsers,subscriptions_capabilities}.py`——`runtime_policy` 已随 f96d1a1 共享 index 裹挟入库，其余 5 个为 untracked 待提交 |
 | 解析/卡片/点歌 深度手册（事无巨细版） | 本文 **§14 附篇**（A 组会话主笔；解析器逐平台实测通道、ORB 兜子、点歌候选决策树、排障手册 17 条） |
 
@@ -432,7 +433,7 @@ git write-tree && git commit-tree <tree> -p <parent> -m "msg"
 
 - **门禁终态（审计修复会话收尾实测）**：lint `All checks passed`；typecheck `Success: no issues found in 205 source files`；pytest **865 passed**（32.8s）——与 §1 的 865 基线为同一快照谱系。
 - **落库状态（增补时点）**：修复主体**仍在工作树未提交**（`sender/queue.py`、`plain_text.py`、`gate.py`、`rate_limit.py`、`reply_budget.py`、`disconnect_notice.py`、`settings.py`、`vector_knowledge.py`、`console_chat.py`、bot.py、config.py、`__init__.py` 等约 100 文件dirty）；6 个回归测试文件中 `test_auditfix_runtime_policy.py` 已随 f96d1a1 的共享 index 裹挟入库（内容正确已存证），其余 5 个 untracked。**提交时按 §11.4 部分暂存规程逐文件显式 add，禁 `git add -A`**。
-- **回滚基线**：`%TEMP%/auditfix-baseline-20260910-023342/`（修复开始前的工作树 patch + 状态清单；修复全程锚定式 Edit，未整文件覆写）。
+- **回滚基线**：`$TEMP/auditfix-baseline-20260910-023342/`（修复开始前的工作树 patch + 状态清单；修复全程锚定式 Edit，未整文件覆写）。
 - **方法**：先只读全库审计（7 个并行只读子代理分域通读 + 主会话对最高严重度声明逐条实码复核，剔除 2 条 stale）；再 6 个实施子代理按互不相交文件域并行修复；主会话统一跑三门禁并修全部 fallout（§13.8）。
 
 ### 13.1 A 组修复（发送/队列/输出渲染域，16/16）
@@ -460,18 +461,18 @@ git write-tree && git commit-tree <tree> -p <parent> -m "msg"
 
 | # | 位置 | 修复 |
 |---|---|---|
-| B1 | runtime/disconnect_notice.py | Server酱/PushPlus 推送 to_thread（原同步 httpx 在掉线时刻冻结事件循环最长 16s） |
+| B1 | domains/ops/monitor/disconnect_notice.py | Server酱/PushPlus 推送 to_thread（原同步 httpx 在掉线时刻冻结事件循环最长 16s） |
 | B2 | bot.py | asyncio 异常处理器移至 `@driver.on_startup` 的 `get_running_loop()`（原 import 期 `get_event_loop` 装在死循环上从未生效；3.12+ 弃用、3.14 直接崩） |
 | B3 | bot.py | 轮询失败日志按注释实现冷却放行（首条+每 300s 一条），激活死代码计数器 |
-| B4 | policy/rate_limit.py SQLiteRateLimiter | `_schema_ready_paths` 一次性建表 + threading.Lock + `connect(timeout=5.0)` + 每 300s 全表过期清理（原每条消息 2 条 DDL+新连接，锁竞争变用户可见失败） |
-| B5 | policy/rate_limit.py InMemory | 每 600s 清扫空/过期桶（键集合不再无界线性增长） |
-| B6 | policy/gate.py | 新增 `is_command_text`：`/bot` 前缀须后随空白/结尾（`/botxxx` 不再触发命令态绕过观察期） |
-| B7 | policy/reply_budget.py | `_cap_max_messages`：cap≤0=该帽不生效（修 `min(4,0)=0` 使风险/群聊帽反向变不限的语义冲突） |
+| B4 | domains/chat_reply/policy/rate_limit.py SQLiteRateLimiter | `_schema_ready_paths` 一次性建表 + threading.Lock + `connect(timeout=5.0)` + 每 300s 全表过期清理（原每条消息 2 条 DDL+新连接，锁竞争变用户可见失败） |
+| B5 | domains/chat_reply/policy/rate_limit.py InMemory | 每 600s 清扫空/过期桶（键集合不再无界线性增长） |
+| B6 | domains/chat_reply/policy/gate.py | 新增 `is_command_text`：`/bot` 前缀须后随空白/结尾（`/botxxx` 不再触发命令态绕过观察期） |
+| B7 | domains/chat_reply/policy/reply_budget.py | `_cap_max_messages`：cap≤0=该帽不生效（修 `min(4,0)=0` 使风险/群聊帽反向变不限的语义冲突） |
 | B8 | runtime/settings.py | 原子写（temp+`os.replace`）；损坏文件改名 `.corrupt-<时间戳>` 保留+warning（不再被空态覆盖清零）；实例缓存键统一清洗后名；interactions 外部重载按键 max 合并 |
 | B9 | config.py | `_parse_alt_profiles/_parse_model_dicts/_parse_model_priority_groups/_parse_probe_urls` JSON 解析失败 log ERROR（键名+异常摘要，不打内容防密钥泄漏）；transport_timeout 注释对齐实际校验行为；`bot_prompt_audit_*` 注释声明仅 CLI 使用 |
-| B10 | audit/logger.py、event_idempotency.py、result_unknown.py、intent_telemetry.py | sqlite 连接统一 `with closing(...)`（原 with 只 commit 不 close） |
-| B11 | audit/file_logger.py | append+rotate 加 threading.Lock；rename 失败降级续写不丢审计行 |
-| B12 | sources/runtime_event_log.py | 轮转 rename 失败重开后 `getsize` 回填 `_handle_bytes`（日志不再无界增长） |
+| B10 | domains/ops/audit/logger.py、event_idempotency.py、result_unknown.py、intent_telemetry.py | sqlite 连接统一 `with closing(...)`（原 with 只 commit 不 close） |
+| B11 | domains/ops/audit/file_logger.py | append+rotate 加 threading.Lock；rename 失败降级续写不丢审计行 |
+| B12 | domains/ops/monitor/runtime_event_log.py | 轮转 rename 失败重开后 `getsize` 回填 `_handle_bytes`（日志不再无界增长） |
 | B13 | runtime/model_schedule.py | 抽出 `run_model_schedule_job`：时段表清空时若 last_applied 非空仍 reset BOT_CHAT_MODEL 覆盖（原直接 return 致覆盖永久卡死） |
 | B14 | scripts/runtime_paths.py + config.py | dotenv 行内注释引号感知截断；`./data/` 前缀与大小写不敏感重映射，两侧对齐 |
 
@@ -523,20 +524,20 @@ git write-tree && git commit-tree <tree> -p <parent> -m "msg"
 
 | # | 位置 | 修复 |
 |---|---|---|
-| E1-1 | parsers/cookies.py | `min(..., default=0)`（平台全为会话 cookie 时不再 ValueError 崩掉单条消息解析）；`#HttpOnly_` 前缀行剥前缀解析（SESSDATA 类关键登录态不再静默缺失） |
+| E1-1 | domains/link_parse/parsers/cookies.py | `min(..., default=0)`（平台全为会话 cookie 时不再 ValueError 崩掉单条消息解析）；`#HttpOnly_` 前缀行剥前缀解析（SESSDATA 类关键登录态不再静默缺失） |
 | E1-2 | platforms_generic.py | xhs 剥 xsec_token 改 `(^|&)xsec_token=[^&]*&?`+strip("&")，基于路径归一化后 URL 重新 urlsplit（首/中/尾参数形态全覆盖；旧 `[?&]` 写法对 query 首参永不匹配，机制静默失效） |
 | E1-3 | platforms_generic.py + media_share.py | `_unescape_js_unicode` 只点转义 `\uXXXX`（含代理对合并），字面中文不再被 unicode_escape 碎成乱码；qsmusic title/artist、`_youtube_channel_about` 同模式一并修 |
 | E1-4 | platforms_bilibili.py | `build_wbi_signed_url` 改薄壳委托 `wbi._cached_mixin_key`（保留 monkeypatch 缝；每视频不再多打 2-3 次 nav 接口） |
-| E1-5 | parsers/http_util.py | `DEFAULT_MAX_BYTES=8MB` **默认生效**（0/负=不限、参数可覆盖；gzip 解压同样限幅防炸弹）；`resolve_short_link` 改自定义 RedirectHandler 记录落点即中止（不再全量下载 body）；POST 单独 except HTTPError 提取状态码/Retry-After（POST 4xx 不再被误判可重试） |
+| E1-5 | domains/link_parse/parsers/http_util.py | `DEFAULT_MAX_BYTES=8MB` **默认生效**（0/负=不限、参数可覆盖；gzip 解压同样限幅防炸弹）；`resolve_short_link` 改自定义 RedirectHandler 记录落点即中止（不再全量下载 body）；POST 单独 except HTTPError 提取状态码/Retry-After（POST 4xx 不再被误判可重试） |
 | E1-6 | platforms_music.py | Apple Music cn→us 回退每国 try/except continue（对齐 `_itunes_lookup`） |
 | E1-7 | platforms_taptap.py | 删 URL 拼 `&cookie=`，改 `http_get_json(cookie=...)` 请求头（凭证不再进 URL） |
 | E1-8 | platforms_kurobbs.py | 移除 `ssl._create_unverified_context()`，恢复证书校验（实测该站证书 schannel 校验通过，无功能损失） |
 | E1-9 | platforms_steam/epic/facebook.py | 删三处硬编码 `http://127.0.0.1:7890` 兜底代理，改读 `BOT_DOWNLOAD_PROXY`，未配置不追加跳 |
 | E1-10 | platforms_generic.py | xhs `undefined` 改 `\b` 词界替换（残留风险注释声明）；`new Map(...)` 改平衡括号扫描（嵌套数组不再产生非法 JSON 致深解析静默退化） |
-| E1-11 | sources/web_search.py | config=None 时装配 DuckDuckGo→Bing 兜底链（MCP web_search 工具不再永远空结果）；未闭合 `<script>`/`<!--` 残段剥离（反注入补漏） |
-| E1-12 | sources/transcribe.py | 语音下载 client.stream 逐块累计 20MB 上限即弃（原整读进内存后才检查） |
+| E1-11 | domains/core/search/web_search.py | config=None 时装配 DuckDuckGo→Bing 兜底链（MCP web_search 工具不再永远空结果）；未闭合 `<script>`/`<!--` 残段剥离（反注入补漏） |
+| E1-12 | domains/media/ingest/transcribe.py | 语音下载 client.stream 逐块累计 20MB 上限即弃（原整读进内存后才检查） |
 | E1-13 | sources/vision_describe.py | 本地图 >8MB 跳过 data URL 走既有降级+debug 日志 |
-| E1-14 | parsers/wbi.py | `_cached_mixin_key` Future single-flight（并发 miss 只一个线程打 nav；leader 失败等待方接手重试） |
+| E1-14 | domains/link_parse/parsers/wbi.py | `_cached_mixin_key` Future single-flight（并发 miss 只一个线程打 nav；leader 失败等待方接手重试） |
 | E1-15 | platforms_generic.py | `youtu.be/<id>?list=` 加 `not video_id` 前置判断（不再误走歌单分支丢单视频） |
 | E1-16 | platforms_bilibili.py | 字幕空格连接+压空白（英文跨行不再粘连） |
 | E1-17 | platforms_bilibili_goods.py | `float(price)` 包 try/except，脏数据置 None 降级（对齐「绝不抛」契约） |
@@ -599,7 +600,7 @@ PYTHONDONTWRITEBYTECODE=1 "ChatBot_Runtime\venv\Scripts\python.exe" -m pytest te
 ### 13.11 与各会话协同事件（存证）
 
 - A4 修复 `_prune` 后，并行会话追加的「总量硬顶 DELETE」会删 QUEUED 在途行，按 A4 契约移除；对方随后把 `test_soak_growth.py` 改写为兼容 A4 的弱不变量，冲突消解。
-- D 组编辑期间 model_router.py/channel_health.py 被并行会话多轮重写（EWMA v2、hedged request）；D1/D2/D6 契约均被保留整合（其 worker 注释「绝不触碰 self.last_attempts——D6」）。
+- D 组编辑期间 domains/chat_reply/llm_engine/channel_health.py 被并行会话多轮重写（EWMA v2、hedged request）；D1/D2/D6 契约均被保留整合（其 worker 注释「绝不触碰 self.last_attempts——D6」）。
 - E2 的 5 项（订阅鉴权、模式词冲突、help digest、help topics、测试 I001）并行会话已按审计报告自行修复，核实语义一致后跳过。
 - `tests/test_render_backends.py` 浏览器重置测试已被改写为 A13 新语义（页面级失败保留浏览器），无需处理。
 - `test_auditfix_runtime_policy.py` 与 B 组 runtime policy 修复集经 f96d1a1 共享 index 裹挟入库（对方已在 §8 存证）；其余 5 个测试文件与修复主体待显式提交。
@@ -641,7 +642,7 @@ PYTHONDONTWRITEBYTECODE=1 "ChatBot_Runtime\venv\Scripts\python.exe" -m pytest te
 ### 14.1. 运行环境与目录地图
 
 ```
-C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\
+<工作区父目录>\
 ├── ChatBot\                     ← 唯一默认工作区（AI 只扫这里）
 │   ├── bot.py                   ← 入口：NoneBot 启动 + 崩溃守卫 + TG 过滤器
 │   ├── .env / .env.prod         ← 全部配置（.env 在 .gitignore；.env.prod 进库不含密钥）
@@ -683,11 +684,11 @@ C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\
 │   ├── logs\nonebot.out.log     ← dev.ps1 启动重定向日志
 │   └── git\                     ← git 元数据外置目录（见 §14.18 git 陷阱）
 ├── ChatBot_Archive\             ← 归档区（历史/旧工作树，压缩后移入）
-└── C:\Software\SnowLuma\        ← SnowLuma 本体（launcher.bat 启动、WebUI 5099，详见 docs/snowluma-setup.md；NapCat 本体已于 2026-09-20 删除，配置蓝本见 ChatBot_Archive\2026-09-20\napcat-retire-backup-2026-09-20.zip））
+└── $DEV_ROOT\SnowLuma\        ← SnowLuma 本体（launcher.bat 启动、WebUI 5099，详见 docs/snowluma-setup.md；NapCat 本体已于 2026-09-20 删除，配置蓝本见 ChatBot_Archive\2026-09-20\napcat-retire-backup-2026-09-20.zip））
 ```
 
 **路径重映射规则**（`scripts/runtime_paths.py` + `config.py` + `cookies.py` 各有一份等价实现）：
-`data/...` 相对路径 → `BOT_RUNTIME_DATA_DIR`（.env=`C:/Users/LancyCelestia/Documents/MyWorkspace/ChatBot/ChatBot_Runtime/data`）。env 未设置时解析器一律**禁用写文件行为**（如 `image_stitch.py` 直接不拼接），绝不往源码树写。
+`data/...` 相对路径 → `BOT_RUNTIME_DATA_DIR`（.env 现值=本机 Runtime 根下 `data`（环境坐标由读者提供））。env 未设置时解析器一律**禁用写文件行为**（如 `image_stitch.py` 直接不拼接），绝不往源码树写。
 
 ---
 
@@ -745,9 +746,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\scripts\dev.ps1' -T
 ```
 
 **启动顺序**：
-1. SnowLuma：双击 `C:\Software\SnowLuma\launcher.bat`（自带 node.exe，内部 `node ./index.mjs`）。
+1. SnowLuma：双击 `$DEV_ROOT\SnowLuma\launcher.bat`（自带 node.exe，内部 `node ./index.mjs`）。
    WebUI `http://127.0.0.1:5099`；验证：`netstat -ano | findstr "3001 3002"` 出 LISTENING。
-2. QQ 客户端：正常启动 `C:\Software\Tencent\QQNT\QQ.exe`，登录主号 3958874605 / 学校号 2300230562。
+2. QQ 客户端：正常启动 `$DEV_ROOT\Tencent\QQNT\QQ.exe`，登录主号 3958874605 / 学校号 2300230562。
 3. 注入：SnowLuma 为**运行期手动注入**（默认 `hookAutoLoad=false`，不会自动注入）——QQ 起来后，
    在 WebUI「进程注入」页对目标 `QQ.exe` 主进程点「加载」，状态走到「已在线」才算接上。
 4. bot：`ChatBot_Runtime\venv\Scripts\python.exe bot.py`（或 dev.ps1 -Task run）。
@@ -1009,7 +1010,7 @@ bridge 对 `payload.text/summary/forward.text/repost.text` **预 html.escape**�
 
 ### 14.13. 多适配器
 
-- **Telegram**（domains/transport/sender/nonebot.py）：图文（本地 PNG 可作 photo）、语音 ffmpeg→OGG/OPUS（失败降级 sendAudio，缓存 %TEMP%/bot_tg_voice）、空文本+有媒体不再 SKIPPED、TELEGRAM_PROXY=http://127.0.0.1:7890。
+- **Telegram**（domains/transport/sender/nonebot.py）：图文（本地 PNG 可作 photo）、语音 ffmpeg→OGG/OPUS（失败降级 sendAudio，缓存 $TEMP/bot_tg_voice）、空文本+有媒体不再 SKIPPED、TELEGRAM_PROXY=http://127.0.0.1:7890。
 - **Mail**：domains/transport/mail/mail_adapter.py 韧性适配器+domains/transport/mail/mail_bridge.py。
 - **Console**：本地调试。
 - **掉线通知**：domains/ops/monitor/disconnect_notice.py（TG/邮件/Server酱/PushPlus，默认关）。
@@ -1033,7 +1034,7 @@ bridge 对 `payload.text/summary/forward.text/repost.text` **预 html.escape**�
 |---|---|---|
 | 改动"没生效" | 进程启动时间 vs 最后提交时间（Get-Process python） | 重启 bot；确认无第二实例 |
 | SnowLuma 3001/3002 不监听/未接上 | `launcher.bat` 是否已启动；`Get-Process QQ \| Select Id,StartTime` 查多代际并存 | 进程注入页看不到 QQ 就确认 QQ 是否真在跑、权限是否与 SnowLuma 一致；QQ 多代际并存时提权清场只留主进程，再对主进程点「加载」至「已在线」；bot 自动重连 |
-| QQ 登录二维码不刷新/注入到不了「已在线」 | 查 `C:\Software\SnowLuma\logs\snowluma-YYYY-MM-DD.log`（按日期分文件） | QQ 构建号超出协议端支持表——上游问题；启动后 2 分钟内扫首码；旧 NapCat「偏移数据」报错仅适用回滚场景（`docs/napcat-setup.md`） |
+| QQ 登录二维码不刷新/注入到不了「已在线」 | 查 `$DEV_ROOT\SnowLuma\logs\snowluma-YYYY-MM-DD.log`（按日期分文件） | QQ 构建号超出协议端支持表——上游问题；启动后 2 分钟内扫首码；旧 NapCat「偏移数据」报错仅适用回滚场景（`docs/napcat-setup.md`） |
 | 点歌没有候选卡 | 1) 配置开关 2) 裸歌名精确命中（设计如此）3) 渲染失败日志 | 带限定词查询必出；查 `music candidates card render failed` 日志 |
 | 点歌候选/歌曲卡全灰 | 图床 WAF/ORB | 见 §14.6.4；sinaimg 已兜，新图床照方抓药（直连+curl 极简头） |
 | 发布时间差 8 小时 | 该解析器是否产 naive 串 | 契约层已按 +08 解释（media.py _CN_TZ）；新解析器直接给 epoch 或带时区 ISO 最稳 |
@@ -1041,7 +1042,7 @@ bridge 对 `payload.text/summary/forward.text/repost.text` **预 html.escape**�
 | B站 -352/-509 | 波动 IP 风控 | 专栏自动重试；直播已切匿名稳通道；根治=灌 bilibili 登录 cookie |
 | QQ 音乐全平台搜不到 | client_search_cp 已死 | 已迁移 musicu.fcg；若再挂先 probe 接口 |
 | 卡图无机器人头像 | config.bot_persona_avatar_url | render_card_png 有 config 兜底 |
-| pytest 会话收尾崩溃 | 共享 %TEMP% pytest-of-* 循环 symlink | 走 dev.ps1（basetemp 已固定） |
+| pytest 会话收尾崩溃 | 共享 $TEMP pytest-of-* 循环 symlink | 走 dev.ps1（basetemp 已固定） |
 | git push 408/断 | 代理掐大包 | 分片推送；**分支标签同名必须完整 refspec** `refs/heads/v0.0.1-alpha.2:refs/heads/v0.0.1-alpha.2` |
 | fetch 报 reference broken | gitdir 外置于 ChatBot_Runtime/git，remote ref 文件损坏 | `git ls-remote` 取正确哈希直写该文件 |
 | bash 里 PowerShell `$_` 报错 | Git Bash 吞 $ | 写 .ps1 文件执行；Windows 路径 cygpath -w |
@@ -1137,7 +1138,7 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 
 ### A组（解析 / 卡片 / 点歌 / 实测验收域）——**全部完成**（2026-09-11 用户交付 cookie+真实链接后 A-3/A-4/A-5 验收闭环，11/11 真实链接 PASS）
 
-文件域：`sources/parsers/**`、`sources/steamfree.py`、`output/card_render/**`、`capabilities/music.py`、`capabilities/epic.py`
+文件域：`sources/parsers/**`、`domains/subscribe/feeds/steamfree.py`、`output/card_render/**`、`capabilities/music.py`、`capabilities/epic.py`
 
 | # | 任务 | 现状依据 | 验收标准 |
 |---|---|---|---|
@@ -1177,14 +1178,14 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 | A-4 B站 cookie 验证 | 灌入 SESSDATA/bili_jct/DedeUserID/buvid 全套 | ✅ 5/5：视频 AI 总结激活+字幕 500 字、直播 6 号/21452505 富集出卡、专栏+粉丝、分P 真实链接（BV1GJ411x7h7?p=2）不崩。**字幕深挖闭环**：真实热门视频 BV1qWYJ6PEN6 player/wbi/v2 返回 `lan=ai-zh`（确认是 AI 字幕而非普通 CC，正是登录态解锁的能力）+ 正文 332 字真实对白；多P cid 逻辑已由单元测试锁定 |
 | A-5 真实链接补测（首批） | 用户提供 7 平台 11 条 | ✅ 11/11：xhs×3（全 deep+图集+发布时间+08）、微博×3、推特×2（含鸣潮韩服官号）、YT×3（**Shorts 形态也正常解析**） |
 
-**剩余边界（登记非阻塞）**：其余 14 平台（douyin/快手/LOFTER/ALLCPP/米画师/画加/BUFF/米游社/森空岛/库街区/小黑盒/5E/完美/大道）仍无固定样本，用户随手分享时即测；推特订阅仍需含 auth_token 的 X cookie（本次导出为游客态）；B站 cookie 有月级有效期，过期重灌即可（导入脚本 `%TEMP%/agroup/merge_cookies.py`）。
+**剩余边界（登记非阻塞）**：其余 14 平台（douyin/快手/LOFTER/ALLCPP/米画师/画加/BUFF/米游社/森空岛/库街区/小黑盒/5E/完美/大道）仍无固定样本，用户随手分享时即测；推特订阅仍需含 auth_token 的 X cookie（本次导出为游客态）；B站 cookie 有月级有效期，过期重灌即可（导入脚本 `$TEMP/agroup/merge_cookies.py`）。
 
 **移交注意**：本组全部修复需**重启生产 bot**（现进程仍 09-09 代码）才生效；vision 转换失败时会留 `vision: remote image download failed host=...` 日志，重启后图片仍读不到就把该行发回来。
 
 **追加交付（2026-09-11，cookie 过期提醒 + 平台登录框架）：**
 - **cookie 过期自动提醒**：`cookie_expiry_rows`/`cookie_expiry_report`（过期=⛔已过期 / ≤7 天=⚠️临期）+ 每日 10:00 cron job（`cookie_expiry_reminder`）自动私聊首个在线管理员；`/bot cookie expiry` 手动触发。
 - **扫码登录框架**：`/bot cookie login bilibili` → 生成 B站官方二维码 PNG 发给管理员（passport qrcode generate，公开接口实测可用）→ 扫码确认 → `/bot cookie check bilibili` 单次轮询写入 SESSDATA/bili_jct/DedeUserID（含过期时间），解析链热加载即时生效。会话 4 位短 key + 10 分钟 TTL + 容量 16。二维码渲染失败时文本兜底（二维码指向的确认链接可直接手机浏览器打开）。
-- **登录方式矩阵（诚实声明）**：bilibili=扫码全自动；其余平台密码/短信登录全部需要过平台人机验证（极验/行为验证），机器人通道无法代替人工——统一引导 `/bot cookie import <平台> <Cookie头>` 手动导入（管理员的浏览器导出文件可直接整份合并，脚本 `%TEMP%/agroup/merge_cookies.py` 按白名单域过滤+去重）。
+- **登录方式矩阵（诚实声明）**：bilibili=扫码全自动；其余平台密码/短信登录全部需要过平台人机验证（极验/行为验证），机器人通道无法代替人工——统一引导 `/bot cookie import <平台> <Cookie头>` 手动导入（管理员的浏览器导出文件可直接整份合并，脚本 `$TEMP/agroup/merge_cookies.py` 按白名单域过滤+去重）。
 - **cookies.py 白名单补 zhihu 域**（d_c0 登录态，知乎解析 403 的缺口；用户导出中的知乎登录态已随之生效）。
 - **接入状态**：capability 层已全实现并实测（generate/poll 真连通过、poll 返回真实状态码 86101 未扫描）；`__init__.py` 的 handler 分支（login/check/expiry）与每日提醒 job 已在工作树，随并行会话同文件提交落地（同 §11 惯例）。
 - **低开销纯 HTTP 登录调研结论（2026-09-11 实测，防重试死路）**：
@@ -1202,7 +1203,7 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 
 > **独立验证与补强（2026-09-11 深夜，验证会话）**：另一会话按本表独立开工（不知 B组会话在途），执行中经 git log 发现 14 项已全部交付后即时取消重复簇，转为①逐项 grep/git show 独立核实生产代码落地（B-1 deadline 线程/B-3 并发/B-6 负缓存 TTL/B-8 收尾轮/B-9 同阶段比较+死标签删除/B-11 有界化/sender 四件套/巡检合并视图/代理注入/旧快照迁移——全部属实）；②补齐 B-2/B-5 AC 缺口回归 `tests/test_llm_error_classification.py`（37 用例：分类矩阵+端到端去参/密钥轮换）与 `tests/test_llm_httpx_client.py`（10 用例：惰性单例/8 线程并发首建/限长/超时映射），独立评审 Approved；③检视 #7 全库最后残留点 `character/temporal.py` urlopen 已迁 `_shared_http_client`+8MB 限长（`tests/test_temporal_http_client.py` 12 用例；**注意该文件混有其他会话在途 hunks，提交需 §11.4**）；④**bot.py 启动崩溃修复（async on_startup）仍未提交**——工作树此前把降噪处理器挂成同步 on_startup 钩子，NoneBot 对同步 lifespan 钩子经 anyio 放工作线程执行致 `get_running_loop()` 必炸、uvicorn startup 失败；已改 async 并实测启动全链路通过，HEAD 仍是 import 期旧写法，**请尽快提交生效**。终态门禁：1033 passed / lint 全绿。
 
-文件域：`llm/**`、`runtime/**`、`sender/**`、`bot.py`、`capabilities/chat.py`、`capabilities/runtime_admin.py`、`llm/providers.py`、`sources/web_search.py`
+文件域：`llm/**`、`runtime/**`、`sender/**`、`bot.py`、`capabilities/chat.py`、`domains/ops/admin/runtime_admin.py`、`llm/providers.py`、`domains/core/search/web_search.py`
 
 | # | 任务 | 交付（2026-09-11） |
 |---|---|---|
@@ -1256,7 +1257,7 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
   2. **sender 域（B-4/B-7/B-10 主体）**：子代理落地 bot_unavailable 挂起不烧次数（90s/30min 旋钮）、长连接+单事务条件更新、分片 10s 下限；代理完成后本会话实测 **52 项 sender 关联测试全绿**（test_prfix_sender 20 + auditfix/soak/nonebot/delivery 32）。被 19e5d76 吸收（其记录的"并行会话追加旋钮"即此）。
   3. **chat 域（B-1/B-3/B-6/B-8/B-9 主体）**：子代理落地视频 deadline 接线（`_video_deadline_seconds` 剩余−60s/下限 30s）、并发检索、收尾轮、引号标签修正、MCP 负缓存；代理静默后本会话补写 `tests/test_prfix_chat.py` 12 用例（含 Barrier 证真并发、收尾轮"恰一次/无tools/失败回退"、负缓存 60s 到期重探三态）实测全绿。被 b2de652 sweep/9ec8138 吸收。
   4. **character/eat 域**：子代理（阵亡）落地知识文件 (mtime,size) 签名缓存；鱼香肉丝「甜酸辣」数据根因核实在位（C-2 交叉确认）；test_prfix_eat.py 验证全绿+spicy 5 连跑稳定。
-  5. **本会话独有增量**：`sources/meme_search.py` DDG 结果页 2MB 限长读取；C-8 移交项（runtime_admin 用法提示补 health/probe/routes）；**核销六项过时残留声明**（B-12/B-13/B-14/A9/视觉下载限长/C-1——逐项实跑或代码定位确认早已落地，见对话记录）；树级 lint 7 项修复（2 文件）。
+  5. **本会话独有增量**：`domains/meme/sources/meme_search.py` DDG 结果页 2MB 限长读取；C-8 移交项（runtime_admin 用法提示补 health/probe/routes）；**核销六项过时残留声明**（B-12/B-13/B-14/A9/视觉下载限长/C-1——逐项实跑或代码定位确认早已落地，见对话记录）；树级 lint 7 项修复（2 文件）。
   6. **事故四度（§11.2）发现-修复-存证闭环**：提交 83c8d59 时裹挟暂存区滞留的旧基线 `__init__.py` blob（R15/R16/R17/R20 呈现为回退），发现后 plumbing 取父提交正确 blob + amend（735ac00），工作树零损失、blob 恢复已核验、教训已录入 §11.2 第四条。
 - **没做好/失误（如实录）**：
   1. **重复执行**：开工未先读 §0 冷启动清单第 5 条（"领任务前先看 §10/§15"），从审计报告自行认领后才撞见 §15 B组任务表——与 B组会话对同一批任务**双执行**，sender/chat 两域工作量与 B组提交链重叠，靠 sweep 吸收才未白费；先读 §15 可省两域。
@@ -1281,7 +1282,7 @@ AC 达成 ∧ 实测通过（真跑，禁编造输出）∧ 无回归（全量 p
 | C-1 | 小名否定排除宽度：正则扩「千万别/谁」叫 前置分支 | §13.10（现只挡紧邻「别/不要/不许/不准」） | 「千万别叫我X」不再学习；回归锁定 | ✅ **审计前提部分推翻（实跑证据）**：「千万别叫我X/喊我X」已被紧邻 `(?<!别)` 挡住；真实漏网形态是「谁叫我X」「谁能喊我X吗」（疑问词）与「千万、叫我X」「别、叫我X」（顿号间隔）。修法：提取逻辑抽成 `character/affinity.py:extract_learned_nickname` 纯函数（模块级 `_NICKNAME_LEARN_RE` + 命中点前 6 字否定语境复核 `_NICKNAME_NEGATION_CONTEXT_RE`，谁分支不容顿号隔断——「那个谁，以后叫我X」仍算教名），并修同表达式贪婪捕获吃语气词缺陷（旧版「以后叫我小岸吧」学成「小岸吧」，现非贪婪走后缀分支得「小岸」）。回归 `tests/test_nickname_learning.py` 5 用例 + `test_affinity.py` 11 passed；`__init__.py` 接线随域提交队列 |
 | C-2 | spicy_filter flaky 修复（~2.3% 随机失败：鱼香肉丝简介含「酸辣」） | §13.10 | 固定 seed 或剔除歧义菜；100 连跑全绿 | ✅ 根因=数据质量（不只测试 flaky：用户点「不辣」也会收到简介带「酸辣」的卡）：`food_data.py` 鱼香肉丝简介「甜酸辣平衡」→「咸甜平衡」。验证：spicy=False 全池 42 道静态扫描零冲突 + 进程内 1000 次连跑 0 失败 + pytest 25 连跑全绿（断言逻辑与原测试一致） |
 | C-3 | C12 边缘语义观察与兜底：transport 失败无 public_message 时不重发（去重取舍）——观察 result_unknown 台账量，超阈值补兜底 | §13.10 | 台账有观察结论；必要时兜底+回归 | ✅ **观察结论：无需兜底**。台账 `ChatBot_Runtime/data/result_unknown.sqlite3` 实测总行数 **2**（均 2026-09-08 群聊发送超时，09-09 重连对账统一标 expired），pending=0，C12 落地（09-10）后**零新增**。机制核对：`_notify_operational_receipt` 对 transport 回执无条件记账（chat:4653/image_search:3030/content:4761/music:4817/parrot:4493），门槛函数语义已有 `test_operational_failures.py:334` 单元覆盖。账本无行数上限——按当前速率（约 2 行/天、单行极小）短期无膨胀风险，长期可加 TTL（登记为低优先级） |
-| C-4 | 测试树清理：`tests/test_perf_*.py` 5 个历史性能脚本评估归档（Archive），正式回归保留 | §10.4 | tests/ 无重复职责文件；全量仍绿 | ✅ **评估结论：全部保留，不归档**。逐文件核实：5 文件名带 perf 实为性能改造（P0/P1/P3 批次）的**离线行为契约回归**（30 用例：路由 TTL-LRU 缓存、offload 契约、注册表单例、embed memo、ANN 分批、互动计数节流等），无任何计时断言、未用 slow 标记；全仓库 grep 无其他文件覆盖同契约（无 import、无 pyproject/dev.ps1 特殊引用）——归档=删除唯一覆盖点，与验收标准「无重复职责文件」不符（它们不重复）。tests/ 计 111 文件与文档口径一致 |
+| C-4 | 测试树清理：`tests/test_perf_*.py` 5 个历史性能脚本评估归档（Archive），正式回归保留 | §10.4 | tests/ 无重复职责文件；全量仍绿 | ✅ **评估结论：全部保留，不归档**。逐文件核实：5 文件名带 perf 实为性能改造（P0/P1/P3 批次）的**离线行为契约回归**（30 用例：路由 TTL-LRU 缓存、offload 契约、注册表单例、embed memo、ANN 分批、互动计数节流等），无任何计时断言、未用 slow 标记；全仓库 grep 无其他文件覆盖同契约（无 import、无 scripts/dev.ps1 特殊引用）——归档=删除唯一覆盖点，与验收标准「无重复职责文件」不符（它们不重复）。tests/ 计 111 文件与文档口径一致 |
 | C-5 | 知识文件 mtime 缓存（管线检视 #9） | §10.1 | 知识文件未变时不重复加载 | ✅ `SqliteVectorKnowledgeStore.sync_chunks` 加 (mtime,size) 签名缓存 `self._synced_signatures`：签名未变跳过 load_character_document+分块+双 sha1（旧路径每条消息×每文件全量重读，向量未命中为常态）；签名语义复用同文件 `KeywordKnowledgeRetriever` 先例并抽模块级 `_file_signature` 去重；清单移除的文件连带清缓存条目。安全性核实：sync_chunks 仅本类两处调用（retrieve:738 + 索引预热:710），kb-sync 外部进程走独立 db_path 的 sync_documents，进程内缓存无失效盲区；stat 在 C17 锁分段的第一段锁内（快操作，兼容）。回归 `tests/test_knowledge_mtime_cache.py` 3 用例（未变不重读/变更重读且内容更新/移除清缓存）+ kb_wiki/perf_p1/auditfix_main_character 共 32 passed |
 | C-6 | 订阅真实推送验证（**等 X cookie / B站样本 / 用户指定 QQ 目标**）：YT 已 healthy，推特 auth_required | §6.9/§9 | 真实账号端到端收到推送 | ⏸ **阻塞：等用户前置动作**（X/B站 cookie、指定 QQ 推送目标、生产 bot 提权重启——订阅调度在旧进程里跑的还是 09-09 代码）。机制侧无剩余代码工作 |
 | C-7 | `/bot cookie import` 后健康联动验证：import 即时反映到解析成功率（无需重启） | §4.3 热写语义 | import 前后同链接解析对比结论 | ✅ **机制验证通过，真实前后对比等用户重灌 cookie**。代码链路核实：import→`import_cookie_header` 写 `platform_cookies.txt`→解析注册表缓存 key 含 cookies 文件 mtime_ns（`__init__.py:1546-1571`）→下一条消息重建注册表+cookie provider，全程无需重启（与 COMMANDS.md L121 口径一致）。回归 `tests/test_cookie_import_hot_reload.py` 3 用例锁定（mtime 未变命中缓存/文件改写后重建且携带新 provider/平台范围变化重建/文件缺失稳定键）。真实「同链接 import 前后成功率对比」需用户重灌微博/灌 B站 cookie 后在**重启后的新进程**上做（当前生产进程 44708 是 09-09 旧代码，连 C14 缓存都没有） |
@@ -1331,8 +1332,8 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 
 ### 做好（全部实测）
 1. **L1 bot 心情**（`character/mood.py`+12 测）：valence[-1,1]/arousal[0,1] 双轴、半衰期指数回归基线、滚动窗防刷速率帽、`describe()` 纯自然语言注入 prompt（数值永不外泄）、`willingness_factor` 接群聊自动回复开火概率（`min(1.0, p×系数)`，只调概率不做硬开关）。
-2. **L4 人格 quirk 演化区**（`character/quirks.py`+10 测）：propose→pending_review→管理员 `/bot quirk approve|retire|add|list` 审核制；核心人格文件冻结不自动改；active 项才以自然语言渲染进 prompt。
-3. **反思回路=非线性记忆**（`character/reflection.py`+9 测）：夜间 cron（04:30，线程池）把 conversation_turns 沉淀为用户事实+会话摘要，`_MergedMemoryProvider` 并入记忆召回链（fact_id 去重+预算截断）；启发式归纳零 LLM 可跑，LLM 归纳 `BOT_REFLECTION_LLM_ENABLED` 可选。
+2. **L4 人格 quirk 演化区**（`domains/chat_reply/character/quirks.py`+10 测）：propose→pending_review→管理员 `/bot quirk approve|retire|add|list` 审核制；核心人格文件冻结不自动改；active 项才以自然语言渲染进 prompt。
+3. **反思回路=非线性记忆**（`domains/chat_reply/character/reflection.py`+9 测）：夜间 cron（04:30，线程池）把 conversation_turns 沉淀为用户事实+会话摘要，`_MergedMemoryProvider` 并入记忆召回链（fact_id 去重+预算截断）；启发式归纳零 LLM 可跑，LLM 归纳 `BOT_REFLECTION_LLM_ENABLED` 可选。
 4. **命理三件套**（ganzhi/tarot/iching+76 测）：八字四柱（Meeus 太阳黄经节气，**否决寿星公式**——其 2000/2008 立秋有整日级误差）、塔罗 78 牌正逆位/三张牌阵/每日一抽、金钱卦六十四卦全表。**抓出验收向量真 bug**：截图里云崽排盘日期标错（2026-09-10 实为丁亥日，己丑=09-12），算法以权威历书为准未迁就。
 5. **全球股指**（东财 push2 15 指数本机实测有效+54 测）、**GitHub 仓库解析**（匿名 API+README 剥取）、**今日快报**（4 源 RSS 实测存活：IT之家/少数派/华尔街见闻/BBC中文；36kr/Solidot/机器之心返回 HTML 剔除，+53 测）。
 6. **reaudit 出域 13 处修复**（16 回归测）：订阅轮询 to_thread P1、bilibili V2 直播恒空接真实现、DDG 三重潜伏（uddg 重定向壳×2+分块正则切碎 result__a+链接正则要求 https://）、llm 五项（流式总预算 deadline/剥参成功补健康样本防 EWMA 饿死/影子线程兜底/预算耗尽误报/未知 id provider 缓存有界）、调度器全局锁串行化、解析器四项（知乎 canonical_url/xhs-B站-音乐 AttributeError 守卫）、「总之」吞尾收紧+**内心数值打码**（好感度0.78→「好感度…保密」，仅聊天路径不误伤命令）。
@@ -1367,7 +1368,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 
 ### 二、本轮已实现（全部实测）
 
-1. **会话级身份记忆**：`character/session_identity.py`（每群/每私聊独立 SQLite，WAL+锁同款）；管理员命令 **`/bot identity set <昵称>` / `tag <标签1,标签2>` / `show` / `clear`**（在哪个会话执行就对哪个会话生效）；渲染进 prompt 时**内建防 OOC 护栏**（「只调整称呼与语气，你永远是守岸人本人」）。
+1. **会话级身份记忆**：`domains/chat_reply/character/session_identity.py`（每群/每私聊独立 SQLite，WAL+锁同款）；管理员命令 **`/bot identity set <昵称>` / `tag <标签1,标签2>` / `show` / `clear`**（在哪个会话执行就对哪个会话生效）；渲染进 prompt 时**内建防 OOC 护栏**（「只调整称呼与语气，你永远是守岸人本人」）。
 2. **随机图片（randpic 融入）**：`capabilities/randpic.py`——借鉴 HuParry/nonebot-plugin-randpic 的"指令→随机图"玩法（MIT），**只读取用户自定义文件夹**（`BOT_RANDPIC_DIRS`，支持多个、递归扫描、30s 缓存），**绝不自建 randpic 目录/数据库/OSS**（原插件存储层全部不要）；触发词默认「随机图/来张图」（`BOT_RANDPIC_TRIGGER_WORDS` 可加）；空图库/未配置友好降级；`images=[{"file": 本地路径}]` 走既有 renderer→OneBot 本地直发链路。
 3. **persona 硬身份资产**：`identity.md` 增 1.0 硬档案（本名/外文名 The Shorekeeper・ショアキーパー・파수인/别号第二实例/蓝发紫瞳 170cm/5000+岁/衍射/音感仪/四语配音/萌点清单/黑海岸出身/索拉里斯活动/花房钢琴旁常驻）+ 1.1 语音风格三规范（天然呆不迟钝、三无以行动与海岸意象表达、细腻绵长文学质地非文言非大白话、意象禁天马行空）；知识库增**语录锚点**11 条（黄金样本对齐语气）；runtime 活跃人格副本同步追加；aliases.txt 更新全量子昵称。
 4. **昵称兜底与入口**：`/bot identity`、`随机图`、`帮助`相应条目已入 echo 帮助。
@@ -1400,7 +1401,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 
 1. **提权重启生产 bot**（老进程跑的还是 09-09 代码，§16+§17 全部交付都等这一步）。
 2. 在 `ChatBot/.env` 追加一行（randpic 图库，改成你自己的文件夹，支持多个）：
-   `BOT_RANDPIC_DIRS=["C:/你的/图片文件夹"]`
+   `BOT_RANDPIC_DIRS=["<本机图片文件夹绝对路径>"]`
 3. 重启后验收**六连**：群里叫「岸宝」→ 应答；发「随机图」→ 从你文件夹甩一张图；`/bot identity set 岸宝` → 本群称呼生效；**「一分钟后提醒我喝水」→ 约 1 分钟后收到守岸人语气的督促**，再发「提醒列表」可见待办；`八字` / `塔罗 三张` / `行情` / `快报` → 各自出结果；`/bot quirk list` → 演化区空池正常。
 4. 推送 origin：`git push origin v0.0.1-alpha.2`（本轮提交链 `46588d6←e973a6c←f80a8b1←` 并行会话若干提交，全部等指示）。
 
@@ -1426,12 +1427,12 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 
 | # | 用户要求 | 状态 | 证据/缺口 |
 |---|---|---|---|
-| 1 | 线性记忆 | ✅ | character/history.py（SQLite conversation_turns，会话线性滚动） |
+| 1 | 线性记忆 | ✅ | domains/chat_reply/character/history.py（SQLite conversation_turns，会话线性滚动） |
 | 2 | 非线性记忆 | ✅ | 反思回路（reflection.py，夜间沉淀→_MergedMemoryProvider 召回）；工作树心情钩子待并行会话落库（见 §17 一#4） |
 | 3 | 情绪系统 | ✅ | emotion.py（用户情绪信号）+ mood.py（bot 心情，事件源待钩子落库） |
 | 4 | 身份标签系统 | ✅ | affinity impression_tags + /bot identity tag + quirks 审核区 |
 | 5 | 人格设定系统 | ✅ | personas/shorekeeper/* + alt_profiles + PersonaSelector |
-| 6 | 读 GitHub 仓库 | ✅ | parsers/platforms_github.py（仓库/README/星标卡） |
+| 6 | 读 GitHub 仓库 | ✅ | domains/link_parse/parsers/platforms_github.py（仓库/README/星标卡） |
 | 7 | 读图/视频/动图理解 | ✅ | vision_describe + video_understanding（VLM+ASR+字幕，既有交付） |
 | 8 | **自己画流程图** | ❌ **G-MERMAID** | 全库 grep mermaid/流程图 零命中。**计划**：bot 回复内 ```mermaid 代码块 → 用 Mica 卡渲染管线渲染 PNG（card_render 后端 page.set_content 本就允许网络加载 CDN mermaid.js，wait_for_function 等待 SVG 完成再截图）；无网降级为原样输出代码块；触发=回复含 mermaid 块自动渲染 |
 | 9 | 文本/文件交付 | ✅ | file_exchange + sender upload_private/group_file（既有） |
@@ -1583,7 +1584,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 | F4 | 好感度 v5 多因素算法 | 用户裁定废除「一次加几减几」：实际步长=基准因子 × f1 说话温度 × f2 相处时长 × f3 第一印象(建档±30%、随互动指数衰减，**只影响速度永不影响态度档位**——反歧视护栏) × f4 当日心情 × m(uid)；SQLite 自动迁移 first_signals/first_impression/created_at；算法说明/规则卡/卡片全量定性化，测试锁死不再出现 +2/-5 数值 |
 | F3 | 解析/能力卡全灰 | **根因**：weather/eat/help 等无平台语境卡走 media 卡路径，`--accent` 回退 `#607080` 灰 → wash 全灰。修复：`_derive_wash_tokens` 基底重锚守岸人本命色（淡蓝210°/星空紫265°/深蓝228°/近白蓝雾底），平台色仅 ±30° 内轻推 wash-1 + accent/色斑 ≤35% 透色 |
 | F2 | B站热评圆角 | `.hot-comment/.pinned-comment` radius-sm(8px)→radius-md(16px) |
-| F10 | eat 卡 about:blank+占位图 | **根因**：`contracts/media.py` build_parsed_content 默认 canonical_url="about:blank" 直接上卡。修复：媒体卡对占位值抑制；无封面时封面区整体折叠（🖼 占位废除）；eat 真实封面四级来源（本地图包→SQLite 图库索引→抓取缓存→空），复用 `check_download_url` SSRF 护栏+魔数校验+落盘缓存 |
+| F10 | eat 卡 about:blank+占位图 | **根因**：`domains/core/contracts/media.py` build_parsed_content 默认 canonical_url="about:blank" 直接上卡。修复：媒体卡对占位值抑制；无封面时封面区整体折叠（🖼 占位废除）；eat 真实封面四级来源（本地图包→SQLite 图库索引→抓取缓存→空），复用 `check_download_url` SSRF 护栏+魔数校验+落盘缓存 |
 | F11 | 页脚 头像+名字+功能名 | 贯通 5 模板（universal 两处/media/song/affinity/mermaid）+ RenderPayload.feature_label + render_card_png 双分支；weather/eat 传「天气」/「美食推荐」 |（**计数为该席当时值**，现役计数以机器册 `docs/auto-facts.md` 为准）
 | F18 | 天气定位 | **根因**：open-meteo geocoding `count=1` 使人口排序形同虚设（「东京」命中华东小镇）；zh 库缺「华沙」类城市无重试。修复：count=10+精确名/人口双键排序+60+ 中英城市别名+`_query_variants` 查询变体链（『湘潭-雨湖』逐级拆到行政区） |
 | 菜谱三连 | 「怎么做到的」误触发/「西红柿炒鸡蛋」打不中/带@消息推错菜 | 三根因：①`_RECIPE_RE` 捕「到的」类粒子菜名（补菜名合法性守卫）②库内叫「番茄炒蛋」同义词失配（补同义词归一+bigram 重叠模糊匹配，纯子串在鸡蛋/蛋断点失配）③**natural 链 bot.eat 分支没像 wiki 分支那样把 normalized_text 重写进 plain_text**，带@前缀原文本致 ^ 锚定正则全失配→掉进随机推荐当众推错菜（补 model_copy 重写+能力入口 strip_mentions+两类正则都不匹配时静默跳过，随机推荐永不当兜底） |
@@ -1593,7 +1594,7 @@ FileTransferGateway 统一出站、claim-based RAG、TrustLevel 反注入体系�
 1. **「路由判定存在 ≠ 分发存在」**：base_router 的 RouteKind 判定与 `__init__.py` 的 NoneBot matcher 注册是两张皮，新增 RouteKind 时漏注册 matcher 即静默黑洞，无任何报错。本轮 AFFINITY 即此类。**建议**：加一条守卫测试遍历 ROUTE_RULES 断言每个非 CHAT/IGNORE kind 在 `__init__` 有对应 matcher。
 2. **contract 默认值泄漏到 UI**：`canonical_url="about:blank"` 是 ingest 层占位约定，展示层直接消费即事故；UI 侧应对契约占位值白名单抑制。
 3. **geocoding count=1 + 后置排序**是反模式：先限 1 再排序等于没排序；凡「取最优」必须先取 N。
-4. 源码树 `data/` 残留（台账 #1）会随每次全量测试再生——tmp_path 化（Wave-6）前，runtime-layout 门禁是最后防线，本轮已再次拦截（备份 %TEMP% 后清理）。
+4. 源码树 `data/` 残留（台账 #1）会随每次全量测试再生——tmp_path 化（Wave-6）前，runtime-layout 门禁是最后防线，本轮已再次拦截（备份 $TEMP 后清理）。
 
 ## 19.3 第二批（153fd78）后的终态
 
@@ -1753,13 +1754,13 @@ flowchart TD
 ### 24.1 批次构成与终态
 
 - 六路编队（文件域互斥）：**A1 金融**（fin-report）/ **A3 账单**（billing-report）/ **A6 视觉 vis5**（visual-report）/ **A5 图库二轮清污**（gallery-report）四席已落地；**A2 提醒/笔记/授时已收编**（`789700c`，见 24.10 A12 条）；A9 文档预收尾后又落地 **A7-A26 一大批**（逐席补记=24.10，检查点续记八笔=24.11）；**原「收尾中四席」已三席落地**（素材本地化 A27/统一错误报告卡 A28/mermaid 本地化 A29 遗产，+渲染 Phase 2 终态与金融生产注册两件——24.12 回填补记，检查点续记四笔 `a4371d2`/`691d6e1`/`959630a`/`871beb2`），仅 **A4 e2e 实战自测仍收尾中**（24.12 占位）。
-- 全量回归基线（visual-report §9 实跑）：`dev.ps1 -Task test` → **4809 passed / 20 failed**——20 例全部归属并行在飞半成品与共享件漂移（**19 例**=A2 域在飞件 `runtime/timesync.py:254` UnboundLocalError 毒化 base_router import 链；**1 例**=doc_sync 共享计数漂移，再收口后 cross_validation_gates 2 passed），四席域零失败。
+- 全量回归基线（visual-report §9 实跑）：`dev.ps1 -Task test` → **4809 passed / 20 failed**——20 例全部归属并行在飞半成品与共享件漂移（**19 例**=A2 域在飞件 `domains/schedule/timesync/timesync.py:254` UnboundLocalError 毒化 base_router import 链；**1 例**=doc_sync 共享计数漂移，再收口后 cross_validation_gates 2 passed），四席域零失败。
 - **A2 落地必修（已闭环）**：`runtime/timesync.py` `now()` 缺 `global _SHARED, _SHARED_SIGNATURE` 声明（一行修+离线回归）——含「提醒」信号词的消息在**下次重启后**将路由崩溃、无回复（visual-report §7.0 与 e2e-report §四 双报告独立实锤）；生产现进程未重启故未触雷。**已由 `789700c` 修复并全功能收编**（A12 席，含在 31 例接线回归内）。
 
 ### 24.2 A1 金融席（市场监测 Phase-1 扩容）
 
-- **大宗商品**（新 `sources/commodities_data.py`）：COMEX 黄金/白银/铜 + NYMEX 原油 4 secid，ulist 批量快照+push2his 走势（vis3 瞬断退避重试语义），真机 4/4 有行；**LME 铜无源→COMEX HG00Y 主力连续替代（美元/磅，文案显式声明）**；Brent 无行不接。
-- **国债收益率**（新 `sources/bond_data.py`）：东财 datacenter `RPTA_WEB_TREASURYYIELD`（免 key），中/美国债 2/5/10/30 年 + 10Y−2Y 期限利差（上游直供列，映射交叉验证逐位一致，列映射锚定 akshare 1.18.94）；**1Y 无列不接**（故利差口径为 10Y−2Y 而非任务原文 10Y−1Y）；missing 诚实清单+300s TTL 缓存。
+- **大宗商品**（新 `domains/finance/data/commodities_data.py`）：COMEX 黄金/白银/铜 + NYMEX 原油 4 secid，ulist 批量快照+push2his 走势（vis3 瞬断退避重试语义），真机 4/4 有行；**LME 铜无源→COMEX HG00Y 主力连续替代（美元/磅，文案显式声明）**；Brent 无行不接。
+- **国债收益率**（新 `domains/finance/data/bond_data.py`）：东财 datacenter `RPTA_WEB_TREASURYYIELD`（免 key），中/美国债 2/5/10/30 年 + 10Y−2Y 期限利差（上游直供列，映射交叉验证逐位一致，列映射锚定 akshare 1.18.94）；**1Y 无列不接**（故利差口径为 10Y−2Y 而非任务原文 10Y−1Y）；missing 诚实清单+300s TTL 缓存。
 - **北向资金**（`market_data.py` 增段）：**净买入自 2024-08-19 起交易所停止披露**（两通道 API 实测全 null）→ `NorthboundFlow` 结构性无 net 字段；落地口径=当日成交总额（亿元）+笔数+领涨股+参考指数收盘，文案显式注明「不含净买入口径」；DEAL_AMT 百万→亿元 /100 换算由 DEAL_NUM 每笔均额（~2 万元）自洽推断，代码注释锚定推理链。
 - **logo 本地缓存**（`stocks.py`）：sha256(域名小写) 文件名落 `data/stock_logos/`（runtime_paths 重映射），clearbit→Google s2 favicon 双源+PNG magic 校验，真机首次 1.8s/二次 0.00s 零下载；**模板暂无 logo 槽位（`payload["logo_url"]` 为既有休眠契约）——加槽位属渲染契约改动，留主会话裁决**。
 - **卡面零模板改动**：三能力全走既有 `finance_card.html` sections/rows 契约（共用壳 `_render_finance_sections_card`，商品行带 30 日折线 SVG），两道渲染门禁 129 passed。
@@ -1785,10 +1786,10 @@ flowchart TD
 
 ### 24.5 A5 图库席（清污二轮）
 
-- 二轮 DRY-RUN 全量复判 42 张：食物保留 14 / 污染移出 28 / 无法判定 0（首轮瞬时失败保守保留的全部在本轮判出）；两波 `--execute`+一波补判后终态**现存 13 张**（12 张经两轮、1 张经一轮连续判食物）；隔离区累计 **40 图+40 source**（首轮 11+本轮 29，`%TEMP%/food_quarantine_20260913` 与 `_20260914` 两目录；日期滚动属按日建目录设计非缺陷）；总账闭合 **53 = 13（现存）+ 11 + 29**。
+- 二轮 DRY-RUN 全量复判 42 张：食物保留 14 / 污染移出 28 / 无法判定 0（首轮瞬时失败保守保留的全部在本轮判出）；两波 `--execute`+一波补判后终态**现存 13 张**（12 张经两轮、1 张经一轮连续判食物）；隔离区累计 **40 图+40 source**（首轮 11+本轮 29，`$TEMP/food_quarantine_20260913` 与 `_20260914` 两目录；日期滚动属按日建目录设计非缺陷）；总账闭合 **53 = 13（现存）+ 11 + 29**。
 - 人工抽验 7/7 判定正确（含「可乐鸡翅」跨轮判定翻转：首轮漏判保留→末轮判饮料广告移出，人眼复核证实末轮正确）；三方对账（DB 行/图文件/source.txt）13=13=13 零孤儿零缺图；`clean_food_gallery.py` 本轮零缺陷（测试 2 passed）。
 - **运行时影响**：图库 13/61 道有图（缺口 48 道），eat 推荐出卡封面命中率短期下降（无图分支功能不中断）；建议重启前后任一时点重跑 `python -m plugins.bot_unified_runtime.capabilities.eat --prewarm` 补齐（幂等可重跑，重新走下载质检链；入库防污染加固+域黑名单已入库，污染图不回流）。
-- 风险登记：VLM 判定有波动性（temperature=0 也不保证跨轮一致），剩余 13 张如需更强保证可再跑一轮 DRY-RUN 复核；隔离区在 %TEMP%（系统清理可能丢失），如需长期保留可移入 ChatBot_Archive。
+- 风险登记：VLM 判定有波动性（temperature=0 也不保证跨轮一致），剩余 13 张如需更强保证可再跑一轮 DRY-RUN 复核；隔离区在 $TEMP（系统清理可能丢失），如需长期保留可移入 ChatBot_Archive。
 
 ### 24.6 检查点两笔（已提交）
 
@@ -1803,7 +1804,7 @@ flowchart TD
 4. **LME→COMEX 替代=显式声明**：卡面文案注明「LME 无稳定免费公开源，铜采用 COMEX 主力连续（美元/磅）」，诚实替代非静默换源。
 5. **DeepSeek 峰谷价**：注册表单一价按谷价记账→峰时调用账单低估一半；精确记账需扩 price 字段（超本批范围未动，结构性提示入 P2-10）。
 6. **图库清污=宁留勿删**：VLM 判定失败保守保留+人工重跑；53→13 清污+40 隔离归档，全程生产库未被锁（copy 只读探查）。
-7. **Tavily 图搜兜底通道**（主会话工作树增补，无报告，git diff 为证）：`sources/search_api.py` `TavilyWebSearchProvider.image_urls()`（`include_images=True`，images 项兼容 URL 字符串与 `{url}` 对象两形态）；未配 key/网络/解析失败一律返空表，由调用方走候选降级链。
+7. **Tavily 图搜兜底通道**（主会话工作树增补，无报告，git diff 为证）：`domains/core/search/search_api.py` `TavilyWebSearchProvider.image_urls()`（`include_images=True`，images 项兼容 URL 字符串与 `{url}` 对象两形态）；未配 key/网络/解析失败一律返空表，由调用方走候选降级链。
 
 ### 24.8 诚实降级清单（无源不接，照 fin-report §四）
 
@@ -1838,7 +1839,7 @@ flowchart TD
 - **A13 评审席·金融+账单**（review-fin-billing；修复包 `5ba7c0f` 已入库）：独立只读评审（测试实跑重验+逐文件审读+git show 对照 HEAD+本机联网探针独立复现）。两席规格符合 ✅；发现 I1×1/M4：金融触发正则补 `re.IGNORECASE`（Gold/Crude Oil 命中、golden 仍拒）+黄金/原油 `(?!基金)` 语境排除+北向 docstring 对齐「任一成功即缓存」真实语义+空气断言清除；账单 ledger 聚合 SQL 废运行期 `replace` 改完整常量。86 例回归全绿。复核两报告 per-file 计数笔误（金融总数 66 恰对、账单 18→20 方向安全）——勘误入 A20 闭环。
 - **A14 评审席·视觉基建四席+图库**（review-visual-infra；修复包 `f3962f1` 已入库）：四件交付（视觉五工序/收口/四卡阴影 cfd7d83/Tavily 兜底 bdbc88b）裁决全 ✅、「不留后门」成立（`SHADOW_CSS_VARS` 动态白名单双门无硬编码残留）。I-1：对比度门混色模型偏离 CSS **premultiplied** 语义——TEXT_SECONDARY `#5c6773` 真实混色下 4.39:1 不达 AA → 调深 `#576272`（真模型 4.72 达标）+审计测试公式改预乘语义（直混系统性偏亮假阳性根除）+六模板字面量/两文档同步+哈希重录；133 例门禁全绿。M-1 ΔE 数字勘误/M-3 阴影门 context_keys 手工映射/M-4 box-shadow 门正则行尾分号/M-6~M-9 清理脚本三缺陷与 affinity「红色 0.0 分」——收编入 P3-11~P3-14（A20）。
 - **A15 SSRF 解析链护栏席**（ssrf-guard-report；已入库 `efe7b79`）：**咽喉双点**收口（不撒 34 文件）：`capabilities/content_parser.py` `capability()` 分发前挂 `guard_user_url`（全部用户 URL 唯一汇聚点，拒绝→既有降级：群 SILENT_AUDIT/私聊人话+原链接回放+audit tag `ssrf_guard_rejected`）；`platforms_generic.py` `_og_scrape` 落点 `check_fetch_landing`（对齐 geturl 双查范式）。新增 `sources/parsers/ssrf_guard.py`（55 行，本体只读复用 `downloader.check_download_url` 零复制）。关键裁定：**DNS 解析失败（gaierror 结构判定）放行**——油管/推特/Pixiv 等走 bot_download_proxy 代理侧解析，硬拒会误伤纯代理平台；其余拒绝（内网字面量/localhost/metadata/DNS 成功解析到内网）照拒。非 HTML 无 title 结构性进不了卡（测试锁死）。13 例新测试（127.0.0.1:8742/10.1.2.3/169.254.169.254 借平台关键词子串混过注册表的真实向量）+16 文件 163 回归零回归；mypy 258 文件零错。已知残余（重定向事后复查/DNS rebind 窗口/深解析链无落点复查）入 P2-12。
-- **A16 像素自检席**（pixel-audit-report；只读）：六域视觉批真渲染像素级验收 **13/13 全成功**（12 常规卡+mermaid 真链路，另有壳兜底张）；PNG 宽全命中登记档（×2 缩放）；market/finance `.data-foot` @12px `scrollW==clientW==1018` **零溢出**（四段长页脚单行放下）；溢出分级 Critical 0/Important 0/Minor 2（均设计内 ellipsis）；affinity 脏数据钳制正确（None→0.0/"80"→80.0/bar 250→100%）；L2 阴影落点 HTML 级实锤存活。产物双备份 `%TEMP%/vispix`+`vispix2`，`render_audit.py` 可确定性重跑（首轮产物被系统临时目录清理后重跑两轮 issue 逐条一致——E01 钉帧确定性实证）。
+- **A16 像素自检席**（pixel-audit-report；只读）：六域视觉批真渲染像素级验收 **13/13 全成功**（12 常规卡+mermaid 真链路，另有壳兜底张）；PNG 宽全命中登记档（×2 缩放）；market/finance `.data-foot` @12px `scrollW==clientW==1018` **零溢出**（四段长页脚单行放下）；溢出分级 Critical 0/Important 0/Minor 2（均设计内 ellipsis）；affinity 脏数据钳制正确（None→0.0/"80"→80.0/bar 250→100%）；L2 阴影落点 HTML 级实锤存活。产物双备份 `$TEMP/vispix`+`vispix2`，`render_audit.py` 可确定性重跑（首轮产物被系统临时目录清理后重跑两轮 issue 逐条一致——E01 钉帧确定性实证）。
 - **A17 文案审计席**（copy-audit-report；修复包 `3592793` 已入库）：58 处抽样、5 类覆盖；人格红线词（您/抱歉/作为一个/带来不便）**零命中**。C1 勾选「有两件事」硬编码 vs 候选可 3 条自相矛盾；I2 国债卡/文标题统一「中美国债收益率速览」；I3 LME 说明单一来源化（`LME_NOTE` 公开+卡面引用）；I6 账单行 `cost_clause` 助手（未计价不挂悬空「元」）+「未计价：价格未配置」双术语统一；I4 放下/放开、I5 机器腔回执由 A12 落地；M1-M12 登记（口径速查表入报告 §六：暂无族/涨跌幅/金额/卡文同名规则/放下隐喻/全角括号）。85 例回归全绿。
 - **A19 导入门落地席**（import-gate-report；`tests/test_perf_regression.py` 在工作树）：`test_package_import_duration_no_collapse`——子进程口径整包导入 **3 次取中位、阈值 10s**（基线 ~1.0-1.3s，≥5x 余量，只守依赖树塌方/import 期塞重活）；探针解释器按仓库布局解析（venv 缺失回退 sys.executable）；cwd=仓库根+PYTHONDONTWRITEBYTECODE 注入；失败红带 stderr 尾 800 字符。牙齿测试：阈值调 1s **真红**（1.03s>1.0）→还原 10s 后 3 遍实跑全绿（3 passed×3，净增 ~2.3s）。docstring 补常驻门清单三条（路由吞吐 3s/单次 P99 20ms/整包导入 10s，「只许新增/收紧，禁放宽」）。闭环 perf-report §五-1 草案。
 - **A20 台账归档席**（ledger-triage-report；issue-ledger 文件本席禁碰，此处只记总账）：新增 **8 条**（P2-12 HTTP 抓取重定向「事后复查」家族残余收编+P3-9 账本聚合无 completed_at 索引+P3-10 价目审计 ¥7.2 汇率假设+P3-11 视觉报告 ΔE 数字勘误+P3-12 阴影门 context_keys 手工映射+P3-13 box-shadow 门正则行尾分号+P3-14 clean_food_gallery 三缺陷合一+P3-15 NTP 无响应源校验）+**闭环/定性 6 条**（fin/billing 测试计数笔误勘误/run_code_debug 接受风险保持 admin-only/解析链 DNS 失败放行裁定/三道菜 Bing 源缺已闭环 bdbc88b/导入门已落地/路由 P50 +14% 漂移定性测量噪声不立项+基线口径钉入）；P2-10/P2-11/P3-7/P3-8 防重未触碰。
@@ -1881,7 +1882,7 @@ flowchart TD
 4. **错误卡两件：A48 P0 两段式异步化（`de6ba91`）+A52 补发加速（`84b3915`）**：A48 把错误卡渲染从 loop 线程挪专用单线程池（原形态撞 Playwright Sync 守卫必败+0.5s 全站阻塞），两段式=毫秒级文本回执先行+渲染后补发卡图（33+199+83 例绿+真渲染冒烟 1714KB 出图+打码正确）；A52 `queue.submit` 增 keyword-only `deliver_after`（None=现状字节级），卡图补发 **60-92s→≈3-33s**（3s 下限防倒挂 ack；36+124 例绿）；全链模板/bridge/契约三件随 `1651544` 收尾入库（error-card-report §A-plus）。
 5. **A51 表情回应能力（`6724782`，config 四键三件套随 `eaa8fd9` 补录）**：新 `runtime/reactions.py`——NapCat 时期 `group_msg_emoji_like` 贴纸回应识别归一入会话环形缓冲（TTL 600s/每会话 8 条/256 会话 LRU）注入【表情回应】分区+五层防刷屏门主动贴表情（开关→每消息去重→确定性 sha256 概率→30s 会话冷却→20/h 滑窗；`set_msg_emoji_like` 失败静默）；**TG 识别留接口诚实降级**（adapter event_map 无 reaction 键实锤）；23 例新测+摄取/chat 回归 121 绿；QQ 识别的事件字段形态=生产实机首验项（离线不可证，代码与报告双处标注）。
 6. **A56 重启预检+文档四件+A53 拟稿索引**：`051261d`（A56）`scripts/pre_restart_check.py` 一键预检 **7 项**（env 路径/人格锚定/哈希台账/事实册/KB 漂移/静态门/NapCat 时期协议端探针，迁移后指向 SnowLuma）PASS/SKIP/FAIL+exit code+`--json`，FAIL 自带修复指引，12 例离线；`7b6ac37`（A49 验收终稿核对：§6.6 系 2 实错修正+5 过时更新+§6.6.5 新增 4 条+AGENTS topics 67→72 漂移修正）；A58 HANDOFF 十断点打磨随 `bae69d4`（同族 `85571d3` 为 A37 回填件：金融接线行划掉/timesync P1 撤销/Phase 2 钉死/收尾清单按实测重写）；`919276a`（A59 根 README 人类访客视角终稿重写：能力七分类/快速上手/极简架构图/三区导览，与 AGENTS.md 全量对账零冲突）；`d8ec5eb`（A62 验收补全：§6.6.6 表情回应验收五条+§6.5③ 预检条目+§6.6.4⑥ 错误卡时序对齐 3-33s）。**A53 人格蒸馏拟稿+索引未入库（如实标注）**：`persona-distill-draft.md`（09-13 三段人格规则——称谓边界/创造者身份/黄腔回应柔化——→运行时副本蒸馏拟稿，**拟稿不落地**，采纳=用户说「准」→主会话套用+`sync_persona_source.py --adopt` 复绿同步门）与 `sdd-INDEX.md` 均为 `.superpowers/` 工作区件（.gitignore:42，git 不追踪）；INDEX 收录止于 `84b3915` 时点，其后批次以本节为准。
-7. **A45 knowledge-sync 实修+wiki 根修复+向量栈立账**：wiki-health-report 实跑 `smoke knowledge-sync` 一次修复（bot 离线窗口，任务授权的唯一写动作），人格 knowledge 库**三重漂移全部清零**（pending 113→0/fts_signature MISSING→已写/vector_dim 激活 1024/ANN ntotal 30,946→35,341，Ollama bge-m3 约 2 分钟；修复前若直接重启=向量 4,282 行静默不可召回+关键词通道静默禁用，最难察觉的静默质量塌方）；`.env` 的 `BOT_KB_WIKI_ROOT` 已由用户修至 `D:/Coding/01_Projects/Crawl Wiki`（wiki 库本身零漂移，实跑探针 4 hits）；`vector-audit.md` 立账（只读副本分析，Runtime 原库零改动）：kb_wiki 库 5.27GiB 账目自洽，唯一膨胀根因=**vector_json 与 blob 同数据 JSON 文本双存（3.057GiB/58%，热路径只读 blob——纯占地）**，推荐路线 L3-1 废除双存一次回收 ≈3.5GiB（需代码+迁移同批，等用户裁决）。
+7. **A45 knowledge-sync 实修+wiki 根修复+向量栈立账**：wiki-health-report 实跑 `smoke knowledge-sync` 一次修复（bot 离线窗口，任务授权的唯一写动作），人格 knowledge 库**三重漂移全部清零**（pending 113→0/fts_signature MISSING→已写/vector_dim 激活 1024/ANN ntotal 30,946→35,341，Ollama bge-m3 约 2 分钟；修复前若直接重启=向量 4,282 行静默不可召回+关键词通道静默禁用，最难察觉的静默质量塌方）；`.env` 的 `BOT_KB_WIKI_ROOT` 已由用户修至 `本机 wiki 爬取目录（`.env` `BOT_KB_WIKI_ROOT` 现值为准）`（wiki 库本身零漂移，实跑探针 4 hits）；`vector-audit.md` 立账（只读副本分析，Runtime 原库零改动）：kb_wiki 库 5.27GiB 账目自洽，唯一膨胀根因=**vector_json 与 blob 同数据 JSON 文本双存（3.057GiB/58%，热路径只读 blob——纯占地）**，推荐路线 L3-1 废除双存一次回收 ≈3.5GiB（需代码+迁移同批，等用户裁决）。
 8. **在飞席位现状（2026-09-14 07:0x 实查，如实记录）**：e2e（A4）仍收尾中（工作树 `e2e_acceptance.py` 改+`test_e2e_help_matrix.py` 未跟踪）；红线扩面（A44）已落 `4f5de7e`；互证预检（A47）纯报告已交（窗口判定可行，红基线已被本批修复消解）；**六红修复已入库 `16e9201`（A61）**——D 簇 2 真缺陷（Levenshtein DP 系统性纠偏+勾选候选取待办条目行 `todo_match_texts`）+F/E 簇 4 例收口（A42/A52 落地自愈后的 I6 断言漏网四处），58 例回归绿，brief 拟稿时在飞、本节落笔时刚落地；**XHS 修复无独立落盘件**（git log/工作树/报告三处零命中）：`XiaohongshuAdapter.fetch_latest` unawaited RuntimeWarning 定性=loop 泄漏下游症状（创建点 `subscribe.py:479-481` asyncio.run 参数协程被弃），随 A60 中毒源修复消解、全量终跑观察；README（A59）已落 `919276a`。channel_health 单例 ~13 假红的 fixture 隔离修复已入库 `10ef40f`（A64：failover 两文件 autouse 三重隔离——tmp 库+开关钉 0+单例重实例，顺序敏感 13 假红根除；生产库 md5 跑前跑后一致）。现工作树在飞（**以 git status 实况为准**）：e2e 两件（A4 收尾中）；XHS 泄漏桥接收尾移交席已落库 `8cbd4b6`（A71：subscribe.py:479 构造点换 `_run_legacy_coroutine` 桥接+样张后端 finally close+test_subscribe_capability_bridge 四新例）；`docs/auto-facts.md` 漂移已随批重录入库（本节落笔时点的快照，后续在飞件不再逐条回改本节）。
 
 ## 25. 2026-09-14/15 夜间审计修复批次总账（§24.14）
@@ -2092,7 +2093,7 @@ flowchart TD
 - **能力面**：`收件箱 <内容>` 速记 / `收件箱` 查看待处理（aliases inbox/shoujianxiang；RouteKind.DAILY_ASSIST priority 42，matcher `_is_daily_assist_event`，帮助 topic=收件箱）。落盘为纯文本收件箱（`character/daily_assist.py`：inbox.md `## 待处理` 段逐条 `- [时间] 内容`；早报读取后整段归档 `daily/YYYY-MM-DD.md` 并清空，其余分节原样保留）。
 - **定时面**（`_register_daily_assist_scheduler`，APScheduler 线程池同步 job，装配期 cron 快照与 G-DIGEST 同口径）：到点吃什么（`BOT_DAILY_ASSIST_MEAL_TIMES` 默认 11:15/17:15；`choose_meal` 自定义 food.md 优先、内置 DISHES 兜底、jsonl 历史 7 天不重复、全排除回退全量池）；早报 09:00（读收件箱+任务清单→LLM 划重点（主路由故障转移链，失败回退原文）→推送→归档）；晚报 21:00（当日对账+清单盘点+LLM 主动琐事建议）。投递=纯 submit 进 SQLite 发送队列（dedupe 按日），私聊 SessionType.PRIVATE。
 - **门**：推送名单 `BOT_DAILY_ASSIST_PUSH_USER_IDS` 为空则调度整链不注册（只记不推，绝不猜人）；`BOT_DAILY_ASSIST_ENABLED` 总开关进路由判定。
-- **配置 6 键**：enabled/dir/push_user_ids/meal_times/morning_time/evening_time（config.py+config-catalog「日常助理」小节+SETTABLE+.env.example）；生产 `.env` 已置 dir=`C:/Users/LancyCelestia/Assistant`、名单=主人 QQ——收件箱/菜单/任务清单与 ZCode 共享同一份文件。
+- **配置 6 键**：enabled/dir/push_user_ids/meal_times/morning_time/evening_time（config.py+config-catalog「日常助理」小节+SETTABLE+.env.example）；生产 `.env` 已置 dir=本机助理目录（`.env` 现值为准）、名单=主人 QQ——收件箱/菜单/任务清单与 ZCode 共享同一份文件。
 - **验证**：`tests/test_daily_assist.py` 18 例全离线（择菜/收件箱往返/文案/命令面/调度注册/SendRequest 形状/runner 打桩）；ruff 零红；mypy 与全量套件结果见批次提交说明。
 - **并发事故记录**：echo.py 与 capability_registry.py 的本批改动被并行批 `cb73ae8`（05:54，P-03 决策痕迹）卷入提交；其余文件由本批后续提交补齐，HEAD 一致性以两提交合流为准。HANDBOOK 本节与 AGENTS.md 台账 #32 因共享文件并发编辑暂不随批提交，按收敛流程并入。
 
@@ -2133,7 +2134,7 @@ flowchart TD
 
 已有实跑：路径/E2E 23 passed；资源/API/生命周期/注册 69 passed；错误卡/幂等 89 passed、1 skipped；Mypy 284 个源码文件通过；Ruff 与三项机器文档门禁通过。完整后端、细分门禁、热重载、工作区、Trace、人格版本等仍未完成，不能发布。
 
-§31 最终复验（verified）：全量 `6603 passed, 9 skipped, 3 xfailed, 1 warning in 242.11s`；Ruff All checks passed；Mypy 284 source files；runtime-layout PASS；doc_sync/command_catalog/verify_hashes 检查通过。全量日志 `%TEMP%/cp-resume-full2.log`。唯一 warning 为上游 Mail 适配器弃用提示。仍未执行真机 e2e，不以离线全绿宣称完整后端交付。
+§31 最终复验（verified）：全量 `6603 passed, 9 skipped, 3 xfailed, 1 warning in 242.11s`；Ruff All checks passed；Mypy 284 source files；runtime-layout PASS；doc_sync/command_catalog/verify_hashes 检查通过。全量日志 `$TEMP/cp-resume-full2.log`。唯一 warning 为上游 Mail 适配器弃用提示。仍未执行真机 e2e，不以离线全绿宣称完整后端交付。
 
 
 ## 2026-09-15 后端协议扩展增量
@@ -2151,7 +2152,7 @@ flowchart TD
 
 三线增量批（用户裁定驱动，全程增量式、零破坏性改动：新文件 + 可选参数缺省=现状 + 新配置键；功能关闭即完全回到旧行为）：
 
-**A. 戳一戳 v2（五件套）**：`BOT_POKE_POKE_BACK` 缺省 false→true（回戳进五件套）；`BOT_POKE_REPLY_MODE`（mix|fixed|llm|meme，默认 mix）单一回复形态——mix=确定性哈希三选一轮换（同戳同果，群冷却窗为桶）；llm 失败→固定话术、meme 库空→固定话术（回退链=`capabilities/poke.py resolve_poke_reply`）；LLM 话术=`__init__` handler 内紧凑提示词（守岸人语气+好感档定性 attitude，只定性不显数值红线）+12s 超时；好感度=放行后 `observe(delta_override≈+0.5)`+每会话每日上限 5 分防刷；群聊回复自动 @戳者——`contracts/runtime.py CapabilityResult.prefix_parts`（新字段）+`output/renderer.py`（prefix 前置走 mixed）+`sender/onebot.py`（`at` part 类型）三件套支撑。
+**A. 戳一戳 v2（五件套）**：`BOT_POKE_POKE_BACK` 缺省 false→true（回戳进五件套）；`BOT_POKE_REPLY_MODE`（mix|fixed|llm|meme，默认 mix）单一回复形态——mix=确定性哈希三选一轮换（同戳同果，群冷却窗为桶）；llm 失败→固定话术、meme 库空→固定话术（回退链=`capabilities/poke.py resolve_poke_reply`）；LLM 话术=`__init__` handler 内紧凑提示词（守岸人语气+好感档定性 attitude，只定性不显数值红线）+12s 超时；好感度=放行后 `observe(delta_override≈+0.5)`+每会话每日上限 5 分防刷；群聊回复自动 @戳者——`domains/core/contracts/runtime.py CapabilityResult.prefix_parts`（新字段）+`output/renderer.py`（prefix 前置走 mixed）+`sender/onebot.py`（`at` part 类型）三件套支撑。
 
 **B. 贴纸回应 v2**：①持久化=新 `sources/reaction_store.py ReactionStore`（`data/reactions.sqlite3`，`BOT_REACTIONS_DB_PATH` 入 path_fields 重映射；event_id=(session,message,emoji) 幂等合并计数；按 emoji/按用户聚合统计；`BOT_REACTIONS_STORE_DAYS` 90 天启动期 prune；入 db-owners.md）——emoji_like notice 双写（缓冲+落库）；②is_add 清账（faceid 报告 §五 unknown）：`is_add=False` 撤销不记正向，字段缺失照旧记；③扩展脸名表=NapCat 时期 face_config.json sysface 全量实名子集 287 条内嵌（数据源为旧协议端；锚点 49=拥抱/76=赞/364=超级赞 实核），`_QSID_FACE_ID_MAX` 400→484（face_config QSid 上限；NapCat len>3 才是 unicode 码点形态）；④meme 监听器 `_segment_urls` 扩收 `mface`/`sticker` 段（商城表情入库走 VLM 打标）；⑤双层表情第二层：情绪信号命中且第一层未贴 → `pick_reaction_meme`（意图→VLM 标签检索词加权）小概率发图；独立门=开关/概率 0.15/冷却 120s/每小时帽沿用/每日 6 张/C1 悲伤门整条不贴；与第一层互斥（先贴后包）。
 
@@ -2271,7 +2272,7 @@ flowchart TD
 
 ### §33.2 交付清单（逐包一句账，计数为各席日志实跑时点）
 1. **B1 矩阵回填**（MAT）：验收矩阵 65 行四列程序化核验 65/65；not_wired=17（与交接书 18 行口径差留档）；生效类禁语零命中。
-2. **B2① 服务装配组**（WIRE-SVC）：runtime/service_wiring.py 新件+根 __init__.py:4124-4143 主门门控+config 三新键（bot_v21_service_wiring_enabled/bot_worldbook_enabled/bot_knowledge_service_enabled 缺省 False）；12/96/105 passed；L39/L40/L42/L43 装配落盘、矩阵四行未动（升 wired 须重启后 live 证据）；L41 blocked=「独立新库 vs 同源同库」未裁决；事故一笔（stub 笔误一过性教导库文件，备份 %TEMP% 后清除）。
+2. **B2① 服务装配组**（WIRE-SVC）：domains/chat_reply/runtime/service_wiring.py 新件+根 __init__.py:4124-4143 主门门控+config 三新键（bot_v21_service_wiring_enabled/bot_worldbook_enabled/bot_knowledge_service_enabled 缺省 False）；12/96/105 passed；L39/L40/L42/L43 装配落盘、矩阵四行未动（升 wired 须重启后 live 证据）；L41 blocked=「独立新库 vs 同源同库」未裁决；事故一笔（stub 笔误一过性教导库文件，备份 $TEMP 后清除）。
 3. **B2② 端口组方案材料**（PORT-PLAN）：v21r4-b2-port-wiring-plan.md，不构成实施授权；real_session 503 根因=factory.py:105-106 real_adapter 从未注入；15 项前置条件待用户逐项勾选。
 4. **B2③ 四行改判**（WIRE-DIRECT）：L56/L57/L58/L65 均无绕统一出站路径的直连点——L56/L57/L58 改判 blocked（装配+授权双阻塞），L65=端口组性质维持 503 not_wired；结构锁测试 4 例+合跑 149 passed。
 5. **B3 三立项书**（CHARTER/CHARTER-b）：L60 好感误扣补偿（5 条待裁，48h 证据窗时效注记）/L71 自修复（6 条）/L74 验收产物（7 条）；三测试件合跑 61 passed。
@@ -2282,7 +2283,7 @@ flowchart TD
 10. **波末补位交付**：L41 裁决 memo（MEM-DEC，推荐 A 独立新库）+L41 执行预案（L41-PLAN，A 案 12 步施工坐标+测试计划；预案≠授权≠裁决，L41 仍 not_wired）+LIVE-TOOL live 取证采集脚本（scripts/collect_v21r4_live_evidence.py，20 例 20 passed 全离线；160 万行历史日志九项全 0 诚实结果，重启后见真值）+重启验收清单（ACCEPT-PREP）。
 
 ### §33.3 六席终态与在飞空位（SYNC-FINAL/-b 核验，转写自各席日志）
-- **RET3**：46 张垫片退役（批1-4：11+13+10+12；域回归 148/204/585+12/331 passed 零回归）；AST 零残余；备份 %TEMP%/v21r4-ret3-backup。
+- **RET3**：46 张垫片退役（批1-4：11+13+10+12；域回归 148/204/585+12/331 passed 零回归）；AST 零残余；备份 $TEMP/v21r4-ret3-backup。
 - **RET2B-PREP**：44 退役（40 本席+4 前席记账）+挂起 7（移交清单=其日志 §三）+包垫片 supervisor/__init__ 同退；AST 零残余；整树 collect 8531/0err；域回归 1756 passed/0 failed；dev.ps1 旧路径 30 处修复。
 - **RWC6-b**：policy/security 迁 domains/chat_reply 8 真身+2 包 __init__，10 垫片保旧路径；AST 残余 0；域测试 394 passed/2 xfailed。
 - **RWC5-b**：根 __init__ 惰性导入续切收尾，旧路径消费边 0 残余；22 点真身未迁保留集；test_v21 全族 38 文件+提醒族 781 passed/1 skipped。
@@ -2318,7 +2319,7 @@ flowchart TD
 |---|---|---|---|
 | A-TIMEOUT | 链级 fail-fast + config_missing 重复冷却 | domains/chat_reply/llm_engine/**、tests/test_llm_failfast.py、test_model_router* | 完成（A-SEAT DONE） |
 | B-INTIMACY | 亲密模式 v3：双开关+TTL 60min+四名单 | runtime/content_route.py、capabilities/chat.py（亲密缝）、config.py、catalog、.env.example、test_content_route* | 完成（B-SEAT DONE） |
-| C-POLICY→C-CONT | 政策放宽：六硬线+放开面+memory_sanitize+人格四处 | security/content_safety.py、memory_sanitize.py、character/affinity.py §4、personas/**+Runtime 副本、test_content_safety* | 完成（C-SEAT DONE） |
+| C-POLICY→C-CONT | 政策放宽：六硬线+放开面+memory_sanitize+人格四处 | domains/chat_reply/security/content_safety.py、memory_sanitize.py、character/affinity.py §4、personas/**+Runtime 副本、test_content_safety* | 完成（C-SEAT DONE） |
 | 主会话 | r18-taxonomy memo、测试分诊、跨席收口、合流 | docs/design/r18-taxonomy-20260920.md、root __init__.py:7367、test_affinity.py:97 | 交付（合流终跑待 VERIF） |
 | CAMPUS-FIX | campus 测试债 14 例（v21r2 重组遗留） | domains/assistant/campus/**、test_campus_digest.py 等 | 在飞（log 开场） |
 | VERIF | 合流终跑+门禁预检 | 只读+记录 | 在飞（二派），终态以其 log 为准 |
@@ -2435,7 +2436,7 @@ acceptance-manual §6.6.11（T76 换装 T36 30 项版）+report-T36 §2 重写�
 ### §36.2 A 段落地四件
 
 - **域能力层 421 行（WIRE-A1，DONE_WITH_CONCERNS，13.97M token/79 调用/29 分钟）**：新建 `domains/emergency_info/capabilities/{__init__.py,emergency_info.py}`——`is_emergency_info_command`（:170）/`build_emergency_info_capability`/`build_emergency_info_source` 三重装配门 frozen 快照（campus 同型，施工图钉死②，任一空=整链不装配）/`EmergencyInfoService`/`CAPABILITY_ID="bot.emergency_info"`；`tests/test_emergency_info_core.py` §H 追加 39 例、既有 102 基线零改动；本席 §H 39 passed、6/6 变异各杀各锁。
-- **唯一投递触点 `service/push.py` 284 行 + 三把门（WIRE-A2，DONE_WITH_CONCERNS，19.55M token/96 调用/41 分钟）**：钉死③落点——域内主动投递只经 `submit_active_push` 走 outbound_gate，禁直调 `send_queue.submit`；`submit_active_push` 字样只许出现在 `service/push.py` 与 `tests/test_outbound_gate.py`（R-S5/T6 门，根文件全文禁）。新增 `tests/test_emergency_info_push.py` 558 行 22 例 + `tests/test_outbound_gate.py` +11 例；U-6 三把门全立（双钉一致性/severity 载体/白名单整段化——施工图白名单坐标已漂且他席早改目录段等值，门 3 改做"补 `emergency_information`/`emergency_info_v2` 唯一缺口负样本+push.py 内侧正样本"，注毒 M5 实证退回 startswith 当场两红）；注毒 M3 抓出本席第一版一条**文本空锁**改 AST 判定=席位用变异检验杀自己的假锁，记功。
+- **唯一投递触点 `domains/emergency_info/domains/emergency_info/service/push.py` 284 行 + 三把门（WIRE-A2，DONE_WITH_CONCERNS，19.55M token/96 调用/41 分钟）**：钉死③落点——域内主动投递只经 `submit_active_push` 走 outbound_gate，禁直调 `send_queue.submit`；`submit_active_push` 字样只许出现在 `service/push.py` 与 `tests/test_outbound_gate.py`（R-S5/T6 门，根文件全文禁）。新增 `tests/test_emergency_info_push.py` 558 行 22 例 + `tests/test_outbound_gate.py` +11 例；U-6 三把门全立（双钉一致性/severity 载体/白名单整段化——施工图白名单坐标已漂且他席早改目录段等值，门 3 改做"补 `emergency_information`/`emergency_info_v2` 唯一缺口负样本+push.py 内侧正样本"，注毒 M5 实证退回 startswith 当场两红）；注毒 M3 抓出本席第一版一条**文本空锁**改 AST 判定=席位用变异检验杀自己的假锁，记功。
 - **D-8(a) 审核门（主会话 14:00 亲写）+ 17 锁（WIRE-A3-v2，9.98M token/59 调用）**：`service/review.py` 增 `auto_approve_sources` 形参（:86）+`AUTO_APPROVED_BY="auto:authoritative_source"`（:79），白名单命中钉 APPROVED、未命中逐字保持原行为（人工报料仍 PENDING）；缺省 `frozenset()` 真关死（V1b 注毒"恒 APPROVED"→10 例红）；定级唯一出口未动——`level` 无条件 None、仍必经 `publishable_level()`（**过审≠提前塞等级进投递面**）。亲写首版自坏实录：对 `frozenset` 调 `.discard("")` AttributeError→既有 11 例红，14:08 推导式内滤空修复→232 passed/4 xf——教训自用：**主会话亲写的码同样要跑门禁**。锁面：新建 `tests/test_emergency_info_review_gate.py` 17 例（385 行），review.py 一行未改（sha256[:16] `a8ef39f84ef30b04` 全程一致，A3-v2 授权边界守住）；`sources/store.py` 单行注释改正键名 `bot_emergency_info_db_path`（R-S3）。
 - **占位裁决四则**：R-S1 `contracts.py` 唯一写手=A3、余席只读缺口写 §落地请求；R-S2 白名单机制改显式入参、键名 `bot_emergency_info_auto_approve_sources` 随 B 段并入**十键**；R-S4 门 1 只读 AST+「紧急域尚无 matcher」诚实登记暂缺前置禁放宽凑绿；R-S5 禁字样限域内两文件。
 
@@ -2612,7 +2613,7 @@ acceptance-manual §6.6.11（T76 换装 T36 30 项版）+report-T36 §2 重写�
 被写成 `_conventions.md` 第六节的判据纪律：存在性锁不算修好。
 
 ### 39.3 顺手抓到的文档漂移（叙述口径与真身不符，两例）
-错误卡真身 `domains/ops/monitor/error_report.py`（AGENTS 旧写 `runtime/error_report.py`）；
+错误卡真身 `domains/ops/monitor/error_report.py`（AGENTS 旧写 `domains/ops/monitor/error_report.py`）；
 审核面真身 `domains/render/reviewer.py` 加 `output/` 垫片（旧写 `domains/chat_reply/review` 目录不存在）。
 两处已按真身改正并写进板块页；同类问题由板块树的 impl_paths 存在性门常驻兜住。
 

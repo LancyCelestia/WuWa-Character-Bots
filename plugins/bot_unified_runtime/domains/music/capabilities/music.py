@@ -362,7 +362,7 @@ def _default_audio_downloader(config: Any | None = None) -> Callable[[str], str 
             return None
         # WP1：试听直链是用户可控外部 URL，既过 SSRF 护栏（内网/保留段拒绝）
         # 又把登录票收进统一咽喉——只有目标 host 属该票平台域才允许带出。
-        from plugins.bot_unified_runtime.sources.downloader import (
+        from plugins.bot_unified_runtime.domains.files.sources.downloader import (
             RejectedUrlError,
             check_download_url,
         )

@@ -1,7 +1,7 @@
 # WebUI 仪表盘规格 v1（对照 AstrBot）+ 架构对照结论
 
 > 依据：用户 2026-09-15 需求（调用统计/Token 四项/延迟/配置在线改/好感度面板）+ AstrBot 实装
-> （C:\Software\AstrBot：Tauri 壳 + Python 后端 + 已构建 SPA）+ 官方文档抓取 + 截图七张。
+> （对照 AstrBot 桌面壳，技术栈与截图清单以该项目文档与本次调研原始件为准）。
 > **许可证裁决**：AstrBot 为 AGPL-3.0——交互思路可学，**代码/样式一行不搬**（含其 webui dist 产物）。
 
 ---
@@ -26,7 +26,7 @@
 | Token 四项（输入/缓存建/缓存命中/输出） | llm/providers.py response.usage；ledger 计价已支持缓存两类（483f852） | ⚠️ ledger 默认关；需开「记录面」（不计费只记账）或轻量 usage sink |
 | 响应延迟 | channel_health.sqlite3 EWMA（model_router 择优在用） | ✅ 已有 |
 | 好感度排行榜（**WebUI 显数值，用户已裁定**；聊天内仍定性不显数值） | user_affinity.sqlite3 snapshot | ✅ 已有 |
-| 配置在线改 | runtime settings（SETTABLE 41 键 set_override+审计；RESTART_REQUIRED 诚实拒绝） | ✅ 机制已有，缺界面 |
+| 配置在线改 | runtime settings（SETTABLE 键集 set_override+审计；RESTART_REQUIRED 诚实拒绝） | ✅ 机制已有，缺界面 |
 
 ## 三、规格
 
@@ -42,7 +42,7 @@
 - **前置数据工作**：ledger 开「记录面」（`BOT_LLM_BILLING_ENABLED` 或新增只记账开关），providers.py 把 usage 四项写入 ledger 行（缓存两类 provider 给多少记多少，没有记 0）。
 
 ### Phase B：配置在线改（后做）
-- SETTABLE 41 键表单化：读 `/api/config`（键+当前值+类型+说明），写 `POST /api/config/{key}` **走 set_override 同一函数路径**（门禁/审计/拒绝语义与聊天侧完全一致）。
+- SETTABLE 键表单化（键数以 `config.py` 的 `SETTABLE_KEYS` 现算为准）：读 `/api/config`（键+当前值+类型+说明），写 `POST /api/config/{key}` **走 set_override 同一函数路径**（门禁/审计/拒绝语义与聊天侧完全一致）。
 - RESTART_REQUIRED 键：只读展示+「生成 .env 片段」复制按钮（诚实：改了要重启）。
 - 模型/渠道（.env 类）：Phase B 只读展示+片段生成；表单化编辑留 Phase C。
 

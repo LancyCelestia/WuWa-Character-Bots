@@ -2,6 +2,9 @@ Status: STARTED
 
 # Markdown 全量分类账 (2026-09-21)
 
+> **计数口径（AGENTS 第一部分规则 10）**：本册逐条「件数 / 字节数 / 域数」都是 **2026-09-21 判定时点值**，
+> 只作「当时怎么判的」历史证据；现役数一律以 spec_gates_census 取数口现算与目录本身为准（docs/design 与 .superpowers/sdd 两面的页数在治理波里天天动）。原数字一律保留，不改写、不删。
+
 约定: 条目字段 = 路径 | 体量(字节) | 现役性 | 主板块 | 次板块 | 一级/二级功能 | 处置建议 | 判定依据
 
 ## 1. 根目录 .md
@@ -11,36 +14,36 @@ Status: STARTED
 
 | AGENTS.md | 115053 | 现行权威(2026-09-20 入库, 顶部横幅 09-21 指向 FIXWAVE) | B10 | B01/B02/B08 | 工作区铁律 / 目录地图 / 消息主链路 / 功能x子模块清单 / 门禁 / 已知问题台账 / 交接史权威链 | 保留原地只加指针(权威链头部指向 docs/boards/) | 顶部自带「接手必读」链, 是全局入口与规则源, 不是板块正文 |
 | COMMANDS.md | 23854 | 现行权威(人读版命令手册, 09-20) | B02 | B05/B06/B03 | 命令口径 / bot help 主题 / 管理员开关 / 开发命令 | 并入 B02 正文(命令索引), 与 docs/command-catalog.md 去重后作为其人类视图 | 自述「与 /bot help 同一口径」, 且指向 command-catalog 全量目录 |
-| COORDINATION.md | 9194 | 已失效(过程件, v21r2 并行批次席位登记, 09-20 untracked) | NONE | B10 | 席位登记 / 波次协调 | 归档 ChatBot_Archive/2026-09-21/ | 纯波次协调台账, 波次已收官; 权威链已转向 HANDOFF-FIXWAVE |
+| COORDINATION.md | 9194 | 已失效(过程件, v21r2 并行批次席位登记, 09-20 untracked) | NONE | B10 | 席位登记 / 波次协调 | 归档到归档包（路径以归档规程真身为准） | 纯波次协调台账, 波次已收官; 权威链已转向 HANDOFF-FIXWAVE |
 | DESIGN-SPEC.md | 14693 | 现行权威(自述唯一根部视觉/质量入口, 被 verify_hashes 钉) | B08 | B10 | 视觉铁律 v2 / 执行规范 / 验证门禁矩阵 | 保留原地 + B08/B10 双向指针, 禁移树 | 文件头自证被 tests/verify_hashes.py SHA-256 清单纳入 |
 | HANDOFF-FIXWAVE-20260921.md | 14345 | 现行权威(09-21 冷启动第一入口, untracked) | B10 | B02/B09 | 十三项四态总表 / 门禁真值 / 待办 / 坑 / 证据地图 | 并入 B10「交接与门禁真值」小节, 或原地保留作入口 | AGENTS.md 顶部横幅点名「优先于下方各条」 |
-| HANDOFF-NEXT.md | 23664 | 已失效(AGENTS.md 明示「已被上条取代为历史」; 09-15 首提交) | B10 | NONE | 旧交接提示词 / 自动同步铁律 / 在飞待办 | 归档 ChatBot_Archive/2026-09-21/ | 交接链已由 FIXWAVE/V21R6 接手, 顶部自带「下方属历史批次」声明 |
+| HANDOFF-NEXT.md | 23664 | 已失效(AGENTS.md 明示「已被上条取代为历史」; 09-15 首提交) | B10 | NONE | 旧交接提示词 / 自动同步铁律 / 在飞待办 | 归档到归档包（路径以归档规程真身为准） | 交接链已由 FIXWAVE/V21R6 接手, 顶部自带「下方属历史批次」声明 |
 | HANDOFF-PROMPT-20260921.md | 9285 | 现行权威(09-21 贴给下一 AI 的提示词, untracked) | B10 | NONE | 开工必读顺序 / 硬约束 / 现役状态 | 保留原地(会话提示词, 非规格), 只加指针 | 自述「与 AGENTS/HANDBOOK 冲突以它们为准」 |
 | HANDOFF-SESSIONS-unify-audit-20260919.md | 31266 | 历史证据(统一性审查三会话归档, 09-20 untracked) | NONE | B01/B06/B08 | 波A 后端统一审计21份 / 波B TTS专项31份 / 波C 补跑修复 | 归档(指向 docs/design/unify-audit-20260919/ 原件) | 自述为审查全量归档, 正文已蒸馏, 原件在 design 目录 |
 | HANDOFF-V21R4-20260918.md | 34283 | 历史证据(v21r2→r4 收尾, 顶部有 v21r5 增量指针) | B10 | B02/B04 | 波次总览 / 需求全集复述 / 板块重组 domains/20 域 | 归档 | 自述「截至 r4, r5 改动未含」, 已被 R5/R6 交接取代 |
 | HANDOFF-V21R4-B-20260918.md | 17565 | 历史证据(后端协议波交接) | B01 | B02/B10 | 后端协议工作包 / 环境纪律 / 门禁四件 | 归档 | 自述是 backend-protocol-plan.md 的交接版, 规格件已在 docs/design |
 | HANDOFF-V21R4-F-20260918.md | 20561 | 历史证据(前端渲染扩展波交接) | B08 | B10 | mica_shell 外壳 / 渲染扩展工作包 | 归档 | 自述是 frontend-render-expansion-plan.md 的交接版 |
-| HANDOFF-V21R5-20260920.md | 68273 | 历史证据但含现役改动清单(r4-B 波总交接) | B02 | B01/B09/B03 | 四服务生产装配 / S0 直连点收编 / 垫片退役93张 / policy 迁移 / 控制面三债 | 拆并入 B02/B01/B09 正文, 原文件归档 | 逐席证据在 docs/design/v2*.md, 本文件是其蒸馏 |
+| HANDOFF-V21R5-20260920.md | 68273 | 历史证据但含现役改动清单(r4-B 波总交接) | B02 | B01/B09/B03 | 四服务生产装配 / S0 直连点收编 / 垫片退役（张数以退役账现算为准）/ policy 迁移 / 控制面三债 | 拆并入 B02/B01/B09 正文, 原文件归档 | 逐席证据在 docs/design/v2*.md, 本文件是其蒸馏 |
 | HANDOFF-V21R6-TESTING.md | 27963 | 现行权威(测试验收 AI 入口, 09-21 untracked) | B10 | B03/B01 | LLM 超时根治 / 亲密模式 v3 / R-18 政策 / campus U17 收编 / 验收对账 | 并入 B10 验收章 + B03 内容安全章指针 | AGENTS.md 顶部「测试验收 AI 入口」点名此文件 |
 | HANDOVER-TTS-GH-20260920.md | 24126 | 现行权威(TTS 统一波 G+H 契约/传输层, 09-21) | B06 | B01/B08 | TTS 契约层 / 传输层 / 六个 P0 / 三生成物重写陷阱 | 并入 B06 语音小节 + B01 段归一指针 | 自述「穷尽版 v2, HEAD=9d758a5 全在 git」 |
 | README.md | 7866 | 现行权威(人类门面, 09-14 起) | B10 | NONE | 能力全景 / 快速上手 / dev.ps1 任务入口 / 目录导览 | 保留原地(门面), 板块正文引用即可 | 唯一面向人类的项目门面 |
 | REVIEW-WORKFLOW.md | 8625 | 现行权威(评审规范, 09-15) | B10 | NONE | 评审五步流程 / 严重度定义 / 固定清单 / 报告模板 | 并入 B10「评审与归档规程」 | 流程规范, 未见他文取代 |
-| V21-UPDATE-LOG.md | 31783 | 历史证据(V2.1 会话更新日志 09-17/18) | NONE | B02/B04 | 执行台账 19 批次+51 席 / 尚未完善对账 / 断点续接 | 归档 | 波次日志, 待办已被 task_plan/FIXWAVE 换页声明取代 |
+| V21-UPDATE-LOG.md | 31783 | 历史证据(V2.1 会话更新日志 09-17/18) | NONE | B02/B04 | 执行台账多批次多席位 / 尚未完善对账 / 断点续接 | 归档 | 波次日志, 待办已被 task_plan/FIXWAVE 换页声明取代 |
 | WORKSPACE_GUIDE.md | 3839 | 现行权威(工作区引导, 09-15) | B10 | NONE | 三目录职责 / 启动与验证 / 归档入口 / 禁做事项 | 并入 B10 开头(与 README 部分重叠, 去重) | 与 README 存在「目录导览」重复 |
 | findings.md | 4806 | 过程件(本轮交接发现, 09-21 有追加) | B10 | NONE | 失败形态集 / 证据等级 | 并入 B10「已知坑」或归档 | planning-with-files 会话产物, 内容已被 FIXWAVE §6 吸收 |
 | progress.md | 9690 | 过程件(本轮进度, 09-21) | NONE | B10 | 会话日志终态 | 归档 | 同上, 与 FIXWAVE 重叠 |
-| report-T116.md | 7088 | 过程件(席位报告, 09-20 untracked) | B06 | B10 | media_archive sha256 收编中央件 | 归档 ChatBot_Archive/2026-09-21/ | 单席施工报告, 结论已落 docs/design/media-digest-layer.md |
+| report-T116.md | 7088 | 过程件(席位报告, 09-20 untracked) | B06 | B10 | media_archive sha256 收编中央件 | 归档到归档包（路径以归档规程真身为准） | 单席施工报告, 结论已落 docs/design/media-digest-layer.md |
 | report-T124.md | 4021 | 过程件(纯文档同步席, 09-20 untracked) | B10 | NONE | docs/README 索引补登 / tts-handover 勘误 | 直接删除或归档 | 已执行的文档同步动作, 无长期信息量 |
 | task_plan.md | 11325 | 已失效(顶部自述「以下内容是历史计划, 不是现役进度」) | NONE | B10 | 旧 V2.1 任务计划 / v21r3 批次 | 归档 | 自带换页横幅, 指向 HANDOFF-FIXWAVE 与 sdd master-plan |
 | 审查结论与重构计划.md | 39459 | 历史证据(09-17 untracked, HEAD=90274f5 基线) | NONE | B02/B08 | 17 仓对比裁定 / 九统一落地表 / 证据分级 | 归档(九统一表仍有引用价值, 并入 B10 决策记录) | 基线 commit 早于 v21 全部波次 |
 
-## 2. docs/*.md（33 个顶层件）
+## 2. docs/*.md（顶层件，数以本目录现算为准）
 
 | 路径 | 字节 | 现役性 | 主板块 | 次板块 | 一级/二级功能 | 处置 | 依据 |
 |---|---|---|---|---|---|---|---|
 | docs/CODE-MAP.md | 69958 | 现行权威(导航件, 09-20) | B10 | 全域 | domains/21 域清单 / 五条链路跳转表 / 症状定位 | 保留原地 + 作为各板块「代码落点」统一指针源 | 自述「导航件不复制正文」, audit-20260921 明确以它避免副本 |
 | docs/HANDBOOK.md | 422129 | 现行权威(历史总账+单一活文档, 09-20) | B10 | 全域 | 文档族谱与权威链终裁 / 现行事实速查 / 全波次史 | 拆: 「现行事实速查」升为各板块正文母本, 史论部分归档保留 | 体量最大且自带权威链终裁, 与新 boards 存在双事实源风险 |
-| docs/HANDOVER-2026-09-15.md | 26090 | 已失效(顶部有 09-17 指针横幅取代) | B01 | B02 | 五层架构图 / LLM 子链收敛口径 | 归档 ChatBot_Archive/2026-09-21/ | 自述「当前交接见 HANDOFF-NEXT」, 后者又已失效 |
+| docs/HANDOVER-2026-09-15.md | 26090 | 已失效(顶部有 09-17 指针横幅取代) | B01 | B02 | 五层架构图 / LLM 子链收敛口径 | 归档到归档包（路径以归档规程真身为准） | 自述「当前交接见 HANDOFF-NEXT」, 后者又已失效 |
 | docs/README.md | 18091 | 现行权威(docs 索引, 09-21 由 T124 席补登) | B10 | NONE | 文档索引 / 分类目 | 保留原地, 新 boards 目录建好后必须在此登记 | 唯一 docs 索引, 且被链接完整性门覆盖 |
 | docs/THIRD_PARTY_NOTICES.md | 3996 | 现行权威(09-21 追加 zhconv) | B08 | B10 | 卡片渲染子包借鉴声明 / AxonHub / zhconv | 保留原地不动 | 自述「第三方出处唯一记录」, 许可证合规件 |
 | docs/acceptance-manual.md | 125814 | 现行权威(接入与验收手册, 09-21) | B10 | B01/B06/B05 | 依赖安装 / 控制台人格验收 / SnowLuma 接入 / GsCore | 拆并入 B01(接入) + B10(验收规程), 原地保留可执行手册 | 操作性手册, 与 snowluma-setup/napcat-setup 有重复 |
@@ -72,7 +75,7 @@ Status: STARTED
 | docs/workspace-archive-policy.md | 4267 | 现役但被取代倾向(08-28 起) | B10 | NONE | 目录布局 / 扫描边界 / 归档规则 / 敏感信息 | 与 external-runtime-access.md 合并为一份「工作区与归档规程」并入 B10 | 与后者主题高度重叠 |
 | docs/核心要求.md | 21492 | 现行权威(用户 mandate 逐字, 09-20 untracked) | B10 | NONE | 用户核心要求全集 / 稳定契约标识符说明 | 保留原地, 是 boards 分类的裁定依据源 | 顶部指向 backend-v2-implementation-guide 为实施合同 |
 
-## 3. docs/design/**（顶层 236 件 + unify-audit-20260919/ 58 件 + docs/superpowers/ 9 件）
+## 3. docs/design/**（顶层 236 件 + unify-audit-20260919/ 58 件 + docs/superpowers/ 9 件；**09-21 时点值**，现数以目录与取数口现算为准）
 
 > 采集方法: 一次性只读脚本遍历三处目录, 逐件取 `os.path.getsize` + `git log -1 --format=%ai` + `git ls-files` 在库判定(T=tracked/U=untracked) + 文件头前 2 非空行; 现役性由**文件头自述状态行**(如「规格稿(未实现)」「待用户过目」「已被 X 取代」) + 末次提交日 + 是否被 AGENTS/HANDBOOK/audit 点名 三信号合成。
 > 日期列为 `-` 者 = untracked 从未入库, 无 git 日期可依, 只能按文件头自称日期记账(已在依据列注明)。
@@ -85,7 +88,7 @@ Status: STARTED
 | docs/design/affinity-v7-design.md | 10488 | 现行权威(U, 09-21 头注自证取代 v4/v5 数值) | B03 | B04 | 好感度 v7 潜变量 z/五子信号/三护栏 | 并入 B03 好感度小节, 与 docs/affinity-design.md 合成一份(v7 为数值权威, v4 只留档位与红线) | 首行「本文件取代 docs/affinity-design.md 的数值算法部分」 |
 | docs/design/backend-v2-implementation-guide.md | 31422 | 现行权威(实施合同, U) | B02 | B09/B10 | V2.1 架构/执行/交接/装配 | 并入 B02 正文, B10 引其为实施合同 | AGENTS.md 顶部与 docs/核心要求.md 双点名为权威链 |
 | docs/design/backend-v2-product-extensions.md | 41299 | 现行权威(合同补充件, U) | B03 | B02/B09 | 算法/参数/计费/恢复/实战验收 | 并入 B02/B03 各节, 与 implementation-guide 同批处置 | 自述「补充主规范, 对应验收矩阵」 |
-| docs/design/backend-v2-acceptance-matrix.md | 37992 | 现役但**六列待回填**(U) | B10 | B02 | V21-* 需求·装配·验收矩阵 | 保留原地作矩阵母本, 板块只引用不复制 | v21r4-B B1 席(MAT)程序化回填 65 行, not_wired 口径见其 §三.1 |
+| docs/design/backend-v2-acceptance-matrix.md | 37992 | 现役但**六列待回填**(U) | B10 | B02 | V21-* 需求·装配·验收矩阵 | 保留原地作矩阵母本, 板块只引用不复制 | v21r4-B B1 席(MAT)程序化回填（数以该席 §三.1 为准）, not_wired 口径见其 §三.1 |
 | docs/design/capability-orchestration-adoption-spec.md | 29107 | 现行权威(规格, Wave 1–4 未做, U) | B02 | B10 | 中央能力调度层接入 7 维验收/O1–O7 | 并入 B02 调度层正文, 未做波次标挂账 | WP8-design 席位自述「只出文档, 本轮零代码改动」 |
 | docs/design/emergency-alert-taxonomy-20260921.md | 16808 | 现行权威(唯一权威规格, U) | B05 | B07 | 预警全谱 9 族 31 类/定级/颜色/静默窗击穿 | 并入 B05 紧急信息小节正文 | 首行「本件是唯一权威: 代码从这里派生, 不反过来」 |
 | docs/design/emergency-info-registration-runbook-20260920.md | 64433 | 历史施工图(口径已被 #46 覆盖, T 09-20) | B05 | B02/B10 | 紧急域注册九面施工单 | 保留作施工图档案, 板块正文以 AGENTS #46 + enablement §七 为准 | AGENTS #45 称其「施工图唯一权威」, #46 裁定 3.B 令其 §5-钉死②第三腿作废 |
@@ -115,7 +118,7 @@ Status: STARTED
 | docs/design/v21r5-u17-implementation-runbook.md | 23705 | 历史施工图(U17 已实施) | B07 | B01 | campus 收编裁定卡 + runbook | 归档(实施完, 结论已在 AGENTS #43⑤/HANDBOOK §34) | 其下游 U17-IMPL-3 席已按单施工完毕 |
 | docs/design/COMPACT-CHECKPOINT.md | 36458 | 现行(续接检查点, 顶部滚动) | B10 | B09 | 控制面/动作路由/日志采集串行增量 | 保留原地; 与 HANDOFF-FIXWAVE 合并为一份「交接真值」 | 首行「最新, 优先于旧交接正文」; AGENTS 控制面校正段点名它为唯一事实页 |
 
-### 3.2 docs/design —— 控制面规格族（B4 系, 6 件）
+### 3.2 docs/design —— 控制面规格族（B4 系, 6 件；09-21 时点值，族内成员以本表逐条为准）
 
 | 路径 | 字节 | 现役性 | 主板块 | 次板块 | 一级/二级功能 | 处置 | 依据 |
 |---|---|---|---|---|---|---|---|
@@ -131,15 +134,15 @@ Status: STARTED
 
 ### 3.3 docs/design —— 席位过程件族（合并区间条目，全名已列）
 
-> 共同判定: 本组全部为**波次席位日志/一次性报告**, 结论已由 `docs/HANDBOOK.md` 对应 § 与 AGENTS 台账吸收, 正文一律**不并入板块**; 板块只在「证据地图」小节给指针。处置默认 = 归档 `ChatBot_Archive/2026-09-21/docs-design-seatlogs/`。
+> 共同判定: 本组全部为**波次席位日志/一次性报告**, 结论已由 `docs/HANDBOOK.md` 对应 § 与 AGENTS 台账吸收, 正文一律**不并入板块**; 板块只在「证据地图」小节给指针。处置默认 = 归档到归档包（路径以归档规程真身为准）。
 
 | 覆盖文件（显式列出） | 件数/字节 | 现役性 | 主板块 | 次板块 | 一级/二级功能 | 处置 | 依据 |
 |---|---|---|---|---|---|---|---|
-| `docs/design/audit-20260920-unify-*`：U1-invest / U2-proto / U3-outbound / U4-dispatch / U5-arch / U6-config / U7-command / U9-function / U10-gate / U11b-sec / U12-llm / U13-db / U15-output / U16-green / U17-campus-wire / U18-persona / U19-correct / U20-cp / U21-conc / U22-sandbox / U23-adapter / U24-decision / summary（全 23 件, U 未入库, 合计 946924 B） | 23 | 历史证据(只读审计席位日志) | B10 | 全域 | 统一性 21 面取证: 摄取/协议/出站/分发/架构/配置/命令/函数/门禁/安全/LLM/DB/输出/假绿/人格/正确性/控制面/并发/沙箱/适配器/决策 | 归档; **唯 summary 一件缓归档**——AGENTS #45/#46 与 audit-20260921 仍引其结论行 | 各件首行自述「席位性质: 只读审计, 唯一可写文件=本文件」; summary 自述「合并者汇编, 非新增审计」 |
+| `docs/design/audit-20260920-unify-*`：U1-invest / U2-proto / U3-outbound / U4-dispatch / U5-arch / U6-config / U7-command / U9-function / U10-gate / U11b-sec / U12-llm / U13-db / U15-output / U16-green / U17-campus-wire / U18-persona / U19-correct / U20-cp / U21-conc / U22-sandbox / U23-adapter / U24-decision / summary（全 23 件, U 未入库, 合计 946924 B） | 23 | 历史证据(只读审计席位日志) | B10 | 全域 | 统一性逐面取证（面名清单见该批席报首行自述） | 归档; **唯 summary 一件缓归档**——AGENTS #45/#46 与 audit-20260921 仍引其结论行 | 各件首行自述「席位性质: 只读审计, 唯一可写文件=本文件」; summary 自述「合并者汇编, 非新增审计」 |
 | 同上 `audit-20260920-unify-U17-campus-wire.md`（单列: 它是 campus 收编规约出处, 被 AGENTS #43⑤ 与 XFAIL 摘牌指引点名「全文件搜 U17-CAMPUS-WIRE」） | 1 / 9536 | 历史证据但**被搜索引用** | B07 | B01/B08 | U17 收编规约 / audit §2§3 空判定 | **暂不归档**, 待 U17 已定稿的锚点改指 HANDBOOK §34 后再移 | AGENTS #43⑤ 明文以「搜 U17-CAMPUS-WIRE」为摘牌指令 |
 | `docs/design/v21-seat`：v21-affinity-fix-log / v21-autosync-fix-log / v21-controlplane-fix-log / v21-risk-red-report / v21-risk678-fix-log / v21-s0-baseline / v21-s0-inventory / v21-s0-mapping / v21-s1-sandbox-log / v21-s11-schedule-log / v21-s2-contracts-log / v21-s5-billing-log / v21-s5-events-log（13 件, 173616 B, 全 U） | 13 | 过程件(V2.1 波 A1–A14 席) | B10 | B02/B09 | 基线/风险取证/沙箱/契约/计费/事件 席位日志 | 归档 | 每件首行标「席位: A*/S*」+ 波次已收官, 结论在 AGENTS #37–#40 草案与 HANDBOOK |
 | `docs/design/v21r2-*` 施工日志：v21r2-acceptance-log / aff-replay-log / aff-replay-report / dispatch-log / ep1-log / r1-llmroute-log / r2-lifecycle-log / r3-stall-log / r4-affinity-log / r5-hotzone-log / r6-copy-log / r7-contentroute-log / r8-crash-log / repair-log / ret1-log / ret2-log / rk4-log / rp-style-log / s10-log / s11-log / s12-log / s14-log / s15-pregate-report / s8-kb-db-teach-log / s9-log / search-log / v1-persona-log / v2-memory-log / wire-log（29 件, 合计 322455 B, 全 U） | 29 | 过程件(v21r2 后端波席位日志) | B10 | B02/B03/B04/B09 | 各工作包实施记录 | 归档 | 首行一律「席位: X 席」; AGENTS #42 记「逐席报告」性质 |
-| `docs/design/v21r2-reorg-w*-log.md`：w1a / w2 / w3 / w4 / w5 / w6 / w7 / w8 / w9 / w10 / w11 / w12 / w13 / w13b / w14 / w16 / wc1 / wc2 / wc3 / wc4 / wc5 / woc / wpa1（23 件, 228041 B, 全 U） | 23 | 过程件(板块重组 RW* 席, 一域一件) | B10 | 全域(每行对应一个 domains/ 域) | 20+1 域搬迁施工记录 | 归档; 但**每件的「迁移前→后坐标表」是唯一可核对旧路径的清单**, 归档前抽成 B10 附表 | 各件首行「席位: RW*」且同引 v21r2-reorg-plan.md 为施工图 |
+| `docs/design/v21r2-reorg-w*-log.md`：w1a / w2 / w3 / w4 / w5 / w6 / w7 / w8 / w9 / w10 / w11 / w12 / w13 / w13b / w14 / w16 / wc1 / wc2 / wc3 / wc4 / wc5 / woc / wpa1（23 件, 228041 B, 全 U） | 23 | 过程件(板块重组 RW* 席, 一域一件) | B10 | 全域(每行对应一个 domains/ 域) | 各域搬迁施工记录（域数以现算为准） | 归档; 但**每件的「迁移前→后坐标表」是唯一可核对旧路径的清单**, 归档前抽成 B10 附表 | 各件首行「席位: RW*」且同引 v21r2-reorg-plan.md 为施工图 |
 | `docs/design/v21r2-COORDINATION.md` | 97636 / U | 已失效(波次并发协调表, 顶部滚动) | B10 | NONE | 席位认领/在飞状态 | 归档 | 波次协调件, 后继为 v21r4-b-coordination / v21r5-coordination 同型件 |
 | `docs/design/v21r2-command-spec.md` + `v21r2-command-spec-entries-1/2/3.md` + `v21r2-command-spec-inventory.md` | 5 / 142066 / U | 部分现役(命令格式统一规格 v1 + 附录A盘点) | B02 | B10 | 全 77 topics 九形态触发词/权限/路由坐标 | 并入 B02 命令格式节; inventory 的盘点数已过期→改指机器册 | 规格「文档先行零代码」; v21r4-command-format-review 是其评审后继 |
 | `docs/design/v21r2-agents-ledger-draft.md` / `v21r2-handbook-sync-draft.md` / `v21r2-matrix-backfill-draft.md` / `v21r2-legacy-manifest-draft.md` | 4 / 158041 / U | 已失效(草案, 均已套用入正式台账) | B10 | NONE | AGENTS/HANDBOOK 行草案 / 矩阵四列回填 / 存量对照全表 | 归档(套用即完成使命; AGENTS #37-#40 编号仍留空指向 ledger-draft) | AGENTS 顶部明文「本文件 #37-#40 台账草案在 docs/design/v21r2-agents-ledger-draft.md」→ 归档前须先补该指针 |
@@ -159,12 +162,12 @@ Status: STARTED
 | `link-unification-audit-20260920.md` | 63579 / T 09-20 | 历史证据(全仓链接归一审计) | B10 | NONE | 接口/模块/参数/文档六类归一取证 | 归档; 现役「真身优先路由」以 audit-20260921 §9 为准 | 时点快照件, 引用前须重定位行号(自述) |
 | `outbound-template-unification-spec.md` | 11374 / T 09-20 | 现行规格(**待用户过目, 未开工**) | B08 | NONE | 统一出站模板层(邮件 HTML+卡片图附件) | 并入 B08 出站节并标「未实施」 | 状态行自述「待用户过目, 未开工」 |
 | `backend-protocol-plan.md` / `frontend-render-expansion-plan.md` | 2 / 34003 / U | 已失效(两份 v21r4 自包含交接书, 波次已收官) | B01 / B08 | B10 | 后端协议工作包 / 前端渲染扩展工作包 | 归档; 与 HANDOFF-V21R4-B/F 同批处置 | 自述「交接文档」性质; `docs/design/backend-protocol-plan.md` 在 `_NARRATIVE_DOCS` 清单内 ⇒ **动它须先改门**(见 §6) |
-| `webui-dashboard-spec.md` / `webui-pages2-spec.md` / `webui-axonhub-adoption.md` | 3 / 39997 | 现行规格(WebUI 一期/二期/采纳路线) | B09 | B08 | 仪表盘 / 知识库·插件·记忆图谱三页 / AxonHub 路线 B | 并入 B09 WebUI 节; 与 webui 前端代码实态核对后标未做项 | AGENTS #41 记二期三页 100% 真数据已交付 → 规格与实况需对账 |
+| `webui-dashboard-spec.md` / `webui-pages2-spec.md` / `webui-axonhub-adoption.md` | 3 / 39997 | 现行规格(WebUI 一期/二期/采纳路线) | B09 | B08 | 仪表盘 / 知识库·插件·记忆图谱三页 / AxonHub 路线 B | 并入 B09 WebUI 节; 与 webui 前端代码实态核对后标未做项 | AGENTS #41 记二期三页真数据已全部交付（比例以该席记录为准） → 规格与实况需对账 |
 | **小计**: docs/design 顶层 236 件全部覆盖(§3.1–3.2 逐条 42 件 + §3.3–3.4 合并 194 件) | 236 | — | — | — | — | — | 脚本 `os.listdir` 实数, 与 `find` 计数一致 |
 
-### 3.5 docs/design/unify-audit-20260919/（58 件，前端统一审计波）
+### 3.5 docs/design/unify-audit-20260919/（58 件，前端统一审计波；09-21 时点值，现数以该目录现算为准）
 
-> 全组共同事实: **58 件全部已入库(T)、末次提交日 2026-09-19/20**，性质=「前端 = WebUI + 卡片渲染」的审计与整改台账（用户 09-19 裁定口径）。它们与 `docs/audit-20260921.md`（全仓统一性审计）是**两波不同范围的审计**，不构成取代关系。板块归属集中说明: 本组以 **B08 渲染** 与 **B09 控制面/WebUI** 为主，B01/B06 为次。
+> 全组共同事实: **58 件全部已入库(T)、末次提交日 2026-09-19/20**（件数与入库态为 09-21 判定时点值，现役以 `git log` 与该目录现算为准），性质=「前端 = WebUI + 卡片渲染」的审计与整改台账（用户 09-19 裁定口径）。它们与 `docs/audit-20260921.md`（全仓统一性审计）是**两波不同范围的审计**，不构成取代关系。板块归属集中说明: 本组以 **B08 渲染** 与 **B09 控制面/WebUI** 为主，B01/B06 为次。
 
 | 覆盖文件（显式列出） | 件数/字节合计 | 现役性 | 主板块 | 次板块 | 一级/二级功能 | 处置 | 依据 |
 |---|---|---|---|---|---|---|---|
@@ -179,7 +182,7 @@ Status: STARTED
 | `FRONTEND-AUDIT` / `HANDOFF-PROMPT` | 2 / 25115 | 本波「唯一读数入口」总账 + 接手提示词(历史) | B10 | NONE | 前端统一审计总账 / 波次接手 | 归档; 归档前把总账指针改指 boards 目录 | HANDOFF-PROMPT 自述「先读 FRONTEND-AUDIT(唯一读数入口)」→ 两件互指, 移树须成对 |
 | **小计** | 58 | 全部已入库, 与 `os.listdir` 计数一致 | — | — | — | — | 编号缺件报备: F1、F6、R5-fix2 三号在本目录不存在(只据文件名实盘, 不猜原因) |
 
-### 3.6 docs/superpowers/（plans 6 件 + specs 3 件，全部已入库）
+### 3.6 docs/superpowers/（plans 6 件 + specs 3 件，全部已入库；09-21 时点值，现数以该目录现算为准）
 
 | 路径 | 字节 | 现役性(末次提交) | 主板块 | 次板块 | 一级/二级功能 | 处置 | 依据 |
 |---|---|---|---|---|---|---|---|
@@ -193,7 +196,7 @@ Status: STARTED
 | docs/superpowers/specs/2026-09-06-defensive-context-compiler-design.md | 3299 | 历史设计规格(09-06) | B03 | NONE | 防御型上下文编译设计 | 归档(与 plan 成对) | 同上 |
 | docs/superpowers/specs/2026-09-09-video-understanding-design.md | 23454 | **现行待实施设计**(09-11; 视频理解 Media Registry) | B06 | B05/B08 | 视频理解前置管道 + 人格化守则 | 保留原地并挂「未实施」标; 并入 B06 待建节 | 头注「待裁」+ 全仓未见 media registry 实施文档承接 |
 
-## 4. `.superpowers/sdd/**` —— 目录级判定（14 个波次目录，601 文件 / ≈7.5 MB）
+## 4. `.superpowers/sdd/**` —— 目录级判定（波次目录数、文件数与体量以该目录现算为准，本册不复制；下表为 09-21 时点判定）
 
 > 全树共同事实（实测，非推断）: 根 `.gitignore:42` 写 `.superpowers/`，目录内另有 `.gitignore` 内容为 `*` ⇒ **整个 sdd 树不入库、git 不可溯**。它因此**既不是源码也不是文档资产**，而是「多代理施工的工作记忆」。
 > 判定口径: 逐目录只读目录列表 + 计数，不逐文件读。
@@ -205,24 +208,24 @@ Status: STARTED
 | `…/2026-09-13-six-domain-batch/` | 77 / 639573 | 过程件(*-report 逐席 + FINAL-REPORT-draft + RESUME) | B10 | 全域 | 是——AGENTS #31 明文「各席报告实跑证据齐(…/2026-09-13-six-domain-batch/)」 | 归档; #31 指针同步改 | 目录内 76 份 .md 全为席报; 含 1 份 .py(取证脚本)随目录一起走 |
 | `…/2026-09-18-unify-wave/` | 53 / 311689 | **规格件 + 过程件混合**(master-plan.md 为主计划, commit-checklist.md 为待提交清单, progress-*.md 45+ 份席账) | B08 | B09/B10 | 是——AGENTS #41 三处点名(master-plan / 逐席 progress / commit-checklist) | **暂缓全部**: `commit-checklist.md` 是「未提交逐文件显式 add 清单」的现役依据，qx.json 新家与 usage_cards 真身两要害置顶项未提交前不得移 | AGENTS #41 明文「未 commit——工作树逐文件显式 add 清单见 …/commit-checklist.md」 |
 | `…/2026-09-19-emergency-info-unify/` | 71 / 1318150 | 过程件 + 数据件(planning-with-files 三件套 + 5 .json + 1 .geojson + 1 .sh + .diff) | B05 | NONE | 是——AGENTS #45 引 emergency 系列 | 归档; **.geojson 随包**（地名/坐标数据，重取成本高） | 顶层三件 findings/progress/task_plan 为 planning-with-files 会话产物形态 |
-| `…/2026-09-19-unify-audit/` | 123 / 2218098 | **Wave G/H TTS 波档案**: plan-G-contract.md(规格真身之一) + briefs*.md + report-T10…T121 逐席 + closeout-manifest.md + 两份 -DRAFT | B06 | B01/B08/B10 | 是——AGENTS #44 全文按 T 号引用，并点名 plan-G-contract / closeout-manifest / report-T36 | **只 plan-G-contract.md 与 report-T36(§2 新 30 项验收判据) 不可移**；其余 T 号席报可归档并改指针 | AGENTS #44 明文把这两件当现役验收/规格入口用 |
+| `…/2026-09-19-unify-audit/` | 123 / 2218098 | **Wave G/H TTS 波档案**: plan-G-contract.md(规格真身之一) + briefs*.md + report-T10…T121 逐席 + closeout-manifest.md + 两份 -DRAFT | B06 | B01/B08/B10 | 是——AGENTS #44 全文按 T 号引用，并点名 plan-G-contract / closeout-manifest / report-T36 | **只 plan-G-contract.md 与 report-T36(§2 新版验收判据) 不可移**；其余 T 号席报可归档并改指针 | AGENTS #44 明文把这两件当现役验收/规格入口用 |
 | `…/2026-09-20-spec-audit/` | 28 / 484208 | 过程件(audit-SA*/FIX*/IALERT/IGEN2/ISYNC 席 log) + 1 份 directive-capability-contract.md(指令件) | B02 | B10 | 部分（directive 与 AGENTS #47 WP8 相关） | 归档; `directive-capability-contract.md` 若仍是调度层采纳依据则并入 B02 附录 | 文件首行命名法为审计/修复席位；无 master-plan 即非波次总纲 |
 | `…/2026-09-20-unify-fix-wave/` | 36 / 217729 | 过程件(master-plan.md + progress.md + 34 份席 log) | B10 | 全域 | 是（上一子波交接，AGENTS #47 提及「上子波」保留的两项） | 归档（#47 已把上子波两项结论接管） | 仅两件顶层总纲，席 log 为其拆解 |
 | `…/2026-09-21-fix-wave/` | 13 / 333146 | **现役**: master-plan.md（§捌＝交接态四态表/禁碰面/证据地图/复跑命令簿）+ uncommitted-inventory.md + impl-WP1…WP11B 逐工作包 log | B10 | 全域 | 是——AGENTS 顶部横幅、#47 与本席任务简报三处点名 | **绝不可移/不可删**: 本波未 commit，`uncommitted-inventory.md` 是唯一「哪些改动还没进 git」的账；移树即丢失未提交全量清单 | AGENTS #47 明文「逐符号明细与未提交全量清单见 …/master-plan.md §捌 + uncommitted-inventory.md」 |
-| `…/2026-09-21-unify-consolidation/` | 29 / 1162068 | 过程件(deep-D1…D6/E1…E6 + line-1…11 逐条线 log + findings.md) | B10 | 全域 | 待定——AGENTS/HANDBOOK 尚未见对本目录的直接点名（本席只在 #47 相邻波次语境中见到，缺独立确认） | **不动**，标「待定」；需补的证据=确认该波是否已收官并落 HANDBOOK 总账 | 单文件均值 40 KB（体量最大目录之一），说明仍在写；无 master-plan 顶层件 |
+| `…/2026-09-21-unify-consolidation/` | 29 / 1162068 | 过程件(deep-D1…D6/E1…E6 + line-1…11 逐条线 log + findings.md) | B10 | 全域 | 待定——AGENTS/HANDBOOK 尚未见对本目录的直接点名（本席只在 #47 相邻波次语境中见到，缺独立确认） | **不动**，标「待定」；需补的证据=确认该波是否已收官并落 HANDBOOK 总账 | 单文件均值偏大（体量以现算为准，属最大目录之一），说明仍在写；无 master-plan 顶层件 |
 | `…/FRONTEND-AUDIT/` | 15 / 425174 | 评审件(review-*-report + 6 份 .diff 复核原稿) | B08 | B10 | 是——`docs/design/unify-audit-20260919/R5-fix1.md` 等直引 `review-R5-report.md` | 与 §3.5 的 R5/PERF1/UNI1 系**同批处置**，单独移走会让那批席报引用悬空 | 目录名与那批席报的引用路径逐字对应 |
 | `…/emergency-info-registration-runbook-20260920/` | 41 / 283883 | 过程件(progress.md 总账 + reports/ 十席 log + 14 .txt 探针输出) | B05 | B10 | 是——AGENTS #45 明文「详总账=…/progress.md + reports/ 十席 log」 | 归档前必须先把 #45 指针改到新落点；**.txt 是探针实跑原始输出，属证据不可重造，随包** | AGENTS #45 与施工图 §4 口径更正段两处引用本目录 |
 | `…/v21-20260917-parallel/` | 6 / 27247 | 过程件(w1-affinity/w2-gates-baseline/w4-supervisor/w5-billing/w6-divination/w7-search 六席) | B10 | B03/B09/B06 | 是（V2.1 波，编号缺 w3，与 AGENTS #34 语境一致） | 归档 | 六件同名「w<号>-<域>.md」=并行席位分账 |
 | `…/v21r6-audit/` | 6 / 76766 | 过程件(audit-A-v21r5 / B-frontend / C-external2 / D-newfailures / audit-report / progress) | B10 | NONE | **待定**——本席未在 AGENTS 顶部横幅与 HANDBOOK 检索到对 `v21r6-audit` 的直接点名（HANDOFF-V21R6-TESTING.md 是同名不同路径件） | 暂不动，标「待定」；缺的证据=确认 V21R6 验收入口是否已吸收本目录结论 | 目录名与根文件 HANDOFF-V21R6-TESTING.md 不同路径，易混为重复件但实非同一物 |
-| **合计** | 601 文件 / ≈7 496 000 B | — | — | — | — | 结论: **三处「绝不能动」= 2026-09-21-fix-wave（未提交账）+ 2026-09-18-unify-wave/commit-checklist.md（待提交清单）+ 2026-09-19-unify-audit/{plan-G-contract, report-T36}（现役规格与验收判据）** | 上表逐行判定汇总 |
+| **合计** | 文件数与字节合计见上方各行汇总 | — | — | — | — | 结论: **三处「绝不能动」= 2026-09-21-fix-wave（未提交账）+ 2026-09-18-unify-wave/commit-checklist.md（待提交清单）+ 2026-09-19-unify-audit/{plan-G-contract, report-T36}（现役规格与验收判据）** | 上表逐行判定汇总 |
 
 ## 5. 收尾三节
 
-### 5.1 重复与冲突（同一事实在多份文档各写一遍，前 15 组；「真身」= 今后唯一可改处）
+### 5.1 重复与冲突（同一事实在多份文档各写一遍，前 15 组＝当时取前 15 组、非总数；「真身」= 今后唯一可改处）
 
 | # | 重复/冲突的事实 | 互指的多份文档 | 真身 | 冲突点与后果 |
 |---|---|---|---|---|
-| 1 | 「冷启动第一入口」是谁 | AGENTS.md 顶部 4 条横幅、HANDOFF-FIXWAVE-20260921.md、HANDOFF-V21R6-TESTING.md、HANDOFF-PROMPT-20260921.md、docs/design/COMPACT-CHECKPOINT.md、HANDOFF-NEXT.md | AGENTS.md 顶部横幅 | 横幅互相声明「优先于下方各条」，新 AI 无法定序；HANDOFF-NEXT 已失效但仍被 docs/README 与 HANDOVER-2026-09-15 指为入口 |
+| 1 | 「冷启动第一入口」是谁 | AGENTS.md 顶部多条横幅、HANDOFF-FIXWAVE-20260921.md、HANDOFF-V21R6-TESTING.md、HANDOFF-PROMPT-20260921.md、docs/design/COMPACT-CHECKPOINT.md、HANDOFF-NEXT.md | AGENTS.md 顶部横幅 | 横幅互相声明「优先于下方各条」，新 AI 无法定序；HANDOFF-NEXT 已失效但仍被 docs/README 与 HANDOVER-2026-09-15 指为入口 |
 | 2 | 好感度步长算法 | docs/affinity-design.md(v4/v5+附录 v6) / docs/design/affinity-v7-design.md / AGENTS 第四部分好感度行 / docs/HANDBOOK.md 各 § | `character/affinity.py`(代码) + affinity-v7-design.md(规格) | affinity-design.md 头部虽声明让位，正文数值未删；AGENTS 仍写「v5 多因素线性步长」→ v7 已换 tanh 潜变量，文实相反 |
 | 3 | TTS 契约与参数域 | docs/design/tts-contract-layer.md / tts-handover-20260919.md / tts-audit-20260919.md / HANDOVER-TTS-GH-20260920.md(自称穷尽版 v2) / AGENTS #44 | tts-contract-layer.md(规格) + domains/media/capabilities/tts.py | 四件各写一遍钳制域/硬顶/退避窗；改一处必漏三处 |
 | 4 | 命令口径与帮助主题 | COMMANDS.md / docs/command-catalog.md(生成物) / `_HELP_ENTRIES`(真身) / docs/design/v21r2-command-spec.md + entries-1/2/3 + inventory / v21r4-command-format-review.md / docs/route-matrix.md | `capabilities/echo.py::_HELP_ENTRIES` → `scripts/command_catalog.py --write` | 手写的 spec-entries 三件与 inventory 冻结了旧计数(自述 77 topics)；review 件还在提议改名 ⇒ 三份"规范"并存 |
@@ -236,10 +239,10 @@ Status: STARTED
 | 12 | 架构五层图与消息主链路 | docs/HANDOVER-2026-09-15.md / AGENTS 第三部分 / docs/design/backend-v2-implementation-guide.md / 审查结论与重构计划.md | AGENTS 第三部分 | 四份各画一图，域数/能力数(「29+ 能力」)不一致 |
 | 13 | SQLite 库归属与计数 | docs/db-owners.md / AGENTS 旧口径 / config.py `*_db_path` / docs/HANDBOOK §三 | db-owners.md + `test_db_owners_coverage.py` 双向锁 | AGENTS 已明文「手写过的版本 32 已过期一次」，但 HANDOFF 系列仍留旧库数 |
 | 14 | 出站/文案变体池 | unify-audit `COPY-V2-*` 六份稿 / `OUTBOUND-COPY-AUDIT.md` / `OUTBOUND-TEMPLATES-FULL.md` / `user_copy.py` / `error_report.py` / docs/design/outbound-template-unification-spec.md(待裁) | 代码两文件(池真身) | 文案变体同时存在于「稿」与「码」，改码不改稿 ⇒ 稿成为假需求源 |
-| 15 | 会漂移的总数（字段/topics/别名/模板/域/库/测试数） | AGENTS.md / HANDBOOK / CODE-MAP / HANDOFF 系列 / v21r2-command-spec-inventory / audit-20260921 各处 | `docs/auto-facts.md`（由 `scripts/doc_sync.py` 推导） | 已由 `test_documentation_consistency.py::test_narrative_docs_defer_volatile_counts_to_machine_ledger` 执法（清单 9 件），**但执法面只覆盖 `_NARRATIVE_DOCS` 那 9 个文件** ⇒ 其余 250+ 份 md 里的手写计数仍无人管，是本表最大的结构性风险 |
+| 15 | 会漂移的总数（字段/topics/别名/模板/域/库/测试数） | AGENTS.md / HANDBOOK / CODE-MAP / HANDOFF 系列 / v21r2-command-spec-inventory / audit-20260921 各处 | `docs/auto-facts.md`（由 `scripts/doc_sync.py` 推导） | 已由 `test_documentation_consistency.py::test_narrative_docs_defer_volatile_counts_to_machine_ledger` 执法**但执法面只覆盖 `_NARRATIVE_DOCS` 那批文件** ⇒ 其余 250+ 份 md 里的手写计数仍无人管，是本表最大的结构性风险 |
 | 附注（对 §3.4 的勘误，只追加不改写） | `docs/design/link-unification-audit-20260920.md` 在 §3.4 被判「归档」**不成立** | — | — | 它同时被 `tests/test_doc_link_integrity.py:72` 的 `_EXPLICIT_EXEMPTIONS` 钉住，且该门有反向锁 `test_exemptions_are_all_still_needed` ⇒ 移出 `docs/**` 会让豁免不再命中而直接判红；另被 `tests/test_help_single_source.py:8` 指名。**处置改判 = 原地保留、禁移树** |
 
-### 5.2 覆盖缺口 —— `plugins/bot_unified_runtime/domains/` 全部 21 域逐个（现役域清单以 `domains/` 目录为准）
+### 5.2 覆盖缺口 —— `plugins/bot_unified_runtime/domains/` 全部域逐个（现役域清单以 `domains/` 目录为准）
 
 > 「现有落点」只列**该域专属**文档（不含席报里顺带提到的一句）；「缺」= 本席检索后确认无专属文档者。
 
@@ -250,18 +253,18 @@ Status: STARTED
 | render | 卡片渲染/模板/主题 token | rendering-contract、DESIGN-SPEC、fstring-card-dom-spec、render-pipeline-optimization-spec、visual-effects-catalog、v21r3-render-* | **不缺，反而重复**：五件钉哈希、两处声明「单一事实源」⇒ 需合并为一份契约 | B08 |
 | media | TTS/图片/视频/识图/归档 | tts 三件、media-digest-layer、AGENTS #28(媒体归档) | 缺 media_archive 的**目录结构与 VLM 判类标签表**文档；digest 层未实施 | B06 |
 | emergency_info | 预警聚合与订阅投递 | 7 件 design 文档 + sdd runbook 目录 | 不缺文档、**缺一致性**：见 5.1 #8；且「地名→坐标 resolver 未接」只在 AGENTS #46 诚实缺口里，规格件未改 | B05 |
-| ops | 错误卡/告警/sync_drift 巡检 | AGENTS #47⑫、#14 台账、error_card 契约 | 缺 sync_drift 巡检器的规格件（7 键刚复活，消费面与告警面无人成文） | B09 |
+| ops | 错误卡/告警/sync_drift 巡检 | AGENTS #47⑫、#14 台账、error_card 契约 | 缺 sync_drift 巡检器的规格件（该批键刚复活，消费面与告警面无人成文） | B09 |
 | weather | 天气+预警双通道 | AGENTS 第四部分、#9(NMC 边界)、emergency-alert-taxonomy | 缺「weather 与 emergency_info 预警谱的对接边界」——同一预警两处出，谁是投递口未定 | B05 |
-| finance | 个股/汇率/商品/债券/北向/股指 | AGENTS 第四部分 4 行、docs/handover-c-20260913.md | 缺**数据源规格**：东财字段码(f47/f48/f84/f85)、必带 `end` 参数、MOEX history 口径都只在席报与代码注释 | B05 |
+| finance | 个股/汇率/商品/债券/北向/股指 | AGENTS 第四部分金融行、docs/handover-c-20260913.md | 缺**数据源规格**：东财字段码(f47/f48/f84/f85)、必带 `end` 参数、MOEX history 口径都只在席报与代码注释 | B05 |
 | link_parse | 37+ 平台解析 | 2026-08-30-media-contract plan、AGENTS #27④、WP1 凭证咽喉 | 缺**平台清单权威文档**（allowed_hosts/cookie 域名表在代码，「18 平台 cookie 已灌」无处核对） | B05 |
 | subscribe | B站/YT/xhs/推特/微博订阅 | 2026-08-30-subscription-v2 plan、v21r2-reorg-w12-log | 缺 feeds 现役清单与降级态（xhs:live degraded、YT live consent）文档 | B05 |
 | music | 点歌 5 供应商 + 榜单 | 2026-08-30-music-backend-v2 plan（已归档态） | 缺现役供应商可用性与榜单口径文档（plan 写的与实况差一年） | B06 |
 | meme | 表情包库 + 主动发 | AGENTS #35②(reaction_store/双层表情) | 缺 meme_library 的 NSFW 降权与 VLM 标签体系文档；#17「主动发」明确待设计评审却无评审文档 | B06 |
-| divination | 八字/塔罗/金钱卦 | divination-consolidation-20260921 | 缺算法规格（Meeus 节气、藏干权重、78 张牌阵）——AGENTS 只给触发词 | B06 |
+| divination | 八字/塔罗/金钱卦 | divination-consolidation-20260921 | 缺算法规格（Meeus 节气、藏干权重、完整塔罗牌阵）——AGENTS 只给触发词 | B06 |
 | schedule | 提醒/督促/每日摘要/快报调度 | v21-s11-schedule-log、v21r2-s11-log、backend-v2-product-extensions §4 | 缺**时区口径文档**：台账 #6(系统本地时区)与 #29⑤(UTC 混用致 13 点报 23 点)两处事故同一根因，无统一成文 | B07 |
-| assistant | 收件箱/到点吃什么/早报晚报 | AGENTS #32 | 缺能力级规格与配置说明（6 键在 catalog，但推送名单为空即整链不注册的规则只在 AGENTS） | B07 |
+| assistant | 收件箱/到点吃什么/早报晚报 | AGENTS #32 | 缺能力级规格与配置说明（该批键在 catalog，但推送名单为空即整链不注册的规则只在 AGENTS） | B07 |
 | notes | 笔记 CRUD + 授时 | AGENTS 第四部分笔记行、v21r2-reorg-w9-log | 缺 timesync 规格（±1.5s 钳制、1970 解包门、mode=4-only、65s 首校时——全是行为约束却无文档） | B04 |
-| files | 下载/文件网关 | file-transfer-gateway.md(B3 规格) + v21r2-reorg-w9-log | 缺 Phase-1 实况与规格差距对账（B3 有 7 个开放问题未裁） | B08 |
+| files | 下载/文件网关 | file-transfer-gateway.md(B3 规格) + v21r2-reorg-w9-log | 缺 Phase-1 实况与规格差距对账（B3 尚有开放问题未裁） | B08 |
 | food | 菜谱/图库 | AGENTS #30①(clean_food_gallery) | 缺域文档：图库预热 61 道、VLM 防污染黑名单、`food.md` 自定义格式全部无文 | B06 |
 | location | 地理编码/城市别名 | v21r2-reorg-w16-log、AGENTS 天气行 F18 | 缺别名表与逐级拆解规则文档（60+ 别名是代码常量） | B05 |
 | transport | 发送队列/出站适配器 | v21r2-reorg-w14-log、outbound-* 三件、U3-OUTBOUND 审计 | 缺 **send_queue 幂等协议**文档：part 级幂等/UNKNOWN 确认/PARTIAL 断点续发只在 AGENTS 一句 | B08 |
@@ -277,9 +280,9 @@ Status: STARTED
 | `docs/auto-facts.md` | 生成物：`scripts/doc_sync.py`(`TARGET = ROOT/docs/auto-facts.md`) + 全量套件比对 + `scripts/pre_restart_check.py:317` 巡检项 | 改代码面后 `python scripts/doc_sync.py --write`；**禁止手改、禁止移树** |
 | `docs/command-catalog.md` | 生成物：`scripts/command_catalog.py`(`DOC = ROOT/docs/command-catalog.md`) | `python scripts/command_catalog.py --write` 重录 |
 | `docs/config-catalog-full.md`、`docs/route-matrix.md`、`docs/db-owners.md` | `tests/test_doc_sync_gates.py`(config_catalog 覆盖 + 批次键)、`test_db_owners_coverage.py`(与 config `*_db_path` 双向锁)、route-matrix 触发词覆盖门 | 先加/改键与路由，再同步这三份；移树=直接判红 |
-| **`_NARRATIVE_DOCS` 9 件**: `AGENTS.md`、`HANDOFF-NEXT.md`、`HANDOFF-V21R6-TESTING.md`、`docs/README.md`、`docs/HANDBOOK.md`、`docs/CODE-MAP.md`、`docs/config-catalog-full.md`、`docs/acceptance-manual.md`、`docs/design/backend-protocol-plan.md` | `tests/test_documentation_consistency.py:570` 清单 + `test_narrative_docs_defer_volatile_counts_to_machine_ledger` | 改这 9 个文件的**路径**须同步改清单；文件内写会漂移的计数须带「机器册/为准/当时值」指针，否则该门红 |
+| **`_NARRATIVE_DOCS` 全清单**: `AGENTS.md`、`HANDOFF-NEXT.md`、`HANDOFF-V21R6-TESTING.md`、`docs/README.md`、`docs/HANDBOOK.md`、`docs/CODE-MAP.md`、`docs/config-catalog-full.md`、`docs/acceptance-manual.md`、`docs/design/backend-protocol-plan.md` | `tests/test_documentation_consistency.py:570` 清单 + `test_narrative_docs_defer_volatile_counts_to_machine_ledger` | 改这批文件的**路径**须同步改清单；文件内写会漂移的计数须带「机器册/为准/当时值」指针，否则该门红 |
 | `docs/design/link-unification-audit-20260920.md` | `tests/test_doc_link_integrity.py:72` `_EXPLICIT_EXEMPTIONS` **＋反向锁** `test_exemptions_are_all_still_needed`（豁免条目若不再命中任何坐标 ⇒ 红）；另被 `tests/test_help_single_source.py:8` 指名 | **不得移出 `docs/**`**（移出即令豁免失效而红）；§3.4 的「归档」判定据此作废（见 5.1 附注勘误行） |
-| 全树 markdown 扫描面 | `tests/test_doc_link_integrity.py:37` `DOC_GLOBS = ("AGENTS.md","COMMANDS.md","docs/**/*.md")` + 棘轮：旧路径 837 / 垫片 3 / 越界 3 / **md 死链 2** / 死坐标 123 / 误导载体 50 / 全量面缺陷总上限 167 / **地板 CARRIER_TRUTH=5**（只许升不许降的那一条） | 移出任何被链接的 md 前先全树 grep 其路径并改指新落点；**死链上限只有 2** ⇒ 批量移树必炸；地板=不许批量删（低于 5 条真身命中同样红） |
+| 全树 markdown 扫描面 | `tests/test_doc_link_integrity.py:37` `DOC_GLOBS = ("AGENTS.md","COMMANDS.md","docs/**/*.md")` + 棘轮：旧路径 837 / 垫片 3 / 越界 3 / **md 死链 2** / 死坐标 123 / 误导载体 50 / 全量面缺陷总上限 167 / **地板 CARRIER_TRUTH=5**（只许升不许降的那一条） | 移出任何被链接的 md 前先全树 grep 其路径并改指新落点；**死链上限只有 2** ⇒ 批量移树必炸；地板=不许批量删（真身命中低于地板同样红） |
 | `.superpowers/sdd/2026-09-21-fix-wave/{master-plan.md, uncommitted-inventory.md}`、`.superpowers/sdd/2026-09-18-unify-wave/commit-checklist.md` | 无哈希门，但**未 commit 期间它们是唯一的「哪些改动还没进 git」账**（AGENTS #41/#47 点名） | 合流 commit 完成前禁止移/删；commit 后方可随该波档案一起归档 |
 | `personas/**` 与 Runtime 人格副本、`domains/weather/assets/qx.json` | AGENTS 铁律 6/8 + `.gitignore` 否定规则 + 人格源-副本一致性门(a1cf739) | 一律不动 |
 
@@ -288,17 +291,17 @@ Status: STARTED
 1. **第一批 · 纯席位日志（≈110 件，低风险）**：`docs/design/` 下 `v21-*-log` 13 件、`v21r2-*-log` 29 件、`v21r2-reorg-*-log` 23 件、`v21r4-b-*-log` 34 件、`v21r5-*-log` 33 件、`audit-20260920-unify-U*` 21 件。理由：文件名整体落在 `_HISTORY_FILE_RE` 的 `audit-*`/`*-log`/`v21*` 豁免形内，移出**只会降低**旧路径计数（安全方向）；先改 `docs/README.md` 索引即可。
 2. **第二批 · 草案与快照（≈15 件）**：`v21r2-{agents-ledger,handbook-sync,matrix-backfill,legacy-manifest}-draft.md`、`v21r2-COORDINATION.md`、`v21r4-b-{coordination,doc-sync-draft,wave-snapshot,qa-probe-report,restart-gate-snapshot}.md`、`v21r5-{coordination,external-failure-dossier,frontend-handoff-package,help-registry-snapshot,C-brief-final}.md`。前置：AGENTS #42/#43 与 HANDOFF 系列对它们的引用要逐条改指归档包内路径。
 3. **第三批 · 波次档案（.superpowers 与 docs/superpowers）**：`.superpowers/sdd/{2026-09-12-shorekeeper-global-audit, 2026-09-13-six-domain-batch, 2026-09-20-spec-audit, 2026-09-20-unify-fix-wave, v21-20260917-parallel, FRONTEND-AUDIT}` 与 `docs/superpowers/plans/*` 6 件 + `specs/2026-08-29`、`specs/2026-09-06`。前置：AGENTS #26/#31/#44⑨ 的目录指针同步；`FRONTEND-AUDIT` 必须与 §3.5 的 R5/PERF1/UNI1 席报**同批同包**（互相引用）。
-4. **根目录一次性件（8 件）**：`COORDINATION.md`、`HANDOFF-NEXT.md`、`HANDOFF-V21R4-20260918.md`、`HANDOFF-V21R4-B/F-20260918.md`、`V21-UPDATE-LOG.md`、`progress.md`、`report-T116.md`、`report-T124.md`、`审查结论与重构计划.md`。⚠ `HANDOFF-NEXT.md` 在 `_NARRATIVE_DOCS` 清单内 ⇒ 移它须先改那 9 元组；`docs/HANDOVER-2026-09-15.md` 同（HANDOVER-* 走文件级豁免但被 README 索引链接）。
+4. **根目录一次性件**：`COORDINATION.md`、`HANDOFF-NEXT.md`、`HANDOFF-V21R4-20260918.md`、`HANDOFF-V21R4-B/F-20260918.md`、`V21-UPDATE-LOG.md`、`progress.md`、`report-T116.md`、`report-T124.md`、`审查结论与重构计划.md`。⚠ `HANDOFF-NEXT.md` 在 `_NARRATIVE_DOCS` 清单内 ⇒ 移它须先改那批元组；`docs/HANDOVER-2026-09-15.md` 同（HANDOVER-* 走文件级豁免但被 README 索引链接）。
 5. **建议移出但须先加横幅**：`docs/design/COMPACT-CHECKPOINT.md`（现役滚动件，等 FIXWAVE 之后一次收官再移）、`docs/design/v21r2-*-log.md` 中被 AGENTS #42 直接引用的席（先补指针）、§3.5 表中列名的 12 件「缓归档」。
-6. **归档规程**（AGENTS 铁律 9）：压缩 → `testzip` + 副本验证 → 移出 → 附 manifest；目标包 `ChatBot_Archive/2026-09-21/docs-restructure-{batch1..4}.zip`。**不得**重建嵌套 `_Archive` 路径，不得把 Runtime/Archive 设为工作区。
+6. **归档规程**（AGENTS 铁律 9）：压缩 → `testzip` + 副本验证 → 移出 → 附 manifest；目标包为归档规程约定的归档 zip（命名与路径以归档规程真身为准）。**不得**重建嵌套 `_Archive` 路径，不得把 Runtime/Archive 设为工作区。
 7. **每批移完的复跑集**（不跑 pytest 全量也要跑这三族）：`-Task runtime-layout`、`verify_hashes --check`、`doc_sync --check`、`command_catalog --check`，以及 `test_doc_link_integrity.py` + `test_documentation_consistency.py` + `test_cross_validation_gates.py` 三件。
 
 #### C. 绝不能做的三件事
 
 1. 不得为「让 boards 看起来干净」而删旧文档——本仓的现役事实散在席报里（如 5.1 #15 所述，叙述件执法面只覆盖 9 件），删了就没有第二手证据。
 2. 不得在板块正文里复制 `AGENTS.md` / `HANDBOOK.md` 的台账行——只给指针；`_VOLATILE_COUNT_RE` 虽暂不覆盖 boards，但复制即造第 N 份副本（`docs/audit-20260921.md` 已自约束过一次，须沿用）。
-3. 不得在共享工作树未 commit 期间搬动任何 `.superpowers/sdd/2026-09-2*` 目录（见 A 表第 8 行）。
+3. 不得在共享工作树未 commit 期间搬动任何 `.superpowers/sdd/2026-09-2*` 目录（见 A 表对应行）。
 
 ---
 
-Status: DONE — 本席（SEAT-META）续写完成：§3 覆盖 `docs/design` 顶层 236 件（42 逐条 + 194 合并区间，全名已列）+ `docs/design/unify-audit-20260919/` 58 件（9 组区间条目）+ `docs/superpowers/` 9 件逐条；§4 覆盖 `.superpowers/sdd/` 14 个波次目录（601 文件/≈7.5 MB）目录级判定；§5 三节（重复与冲突 15 组 + 门钉勘误 1 条 / 覆盖缺口 21 域逐个 / 归档建议 A-B-C）。全表合计新增条目 ≈ 130 行（逐文件行 + 区间行 + 域行 + 组行）。采集与判定全部由一次性只读脚本完成，未在源码树留下 `__pycache__`/`.pytest_cache`，未跑 pytest，未做任何 git 写操作。
+Status: DONE — 本席（SEAT-META）续写完成：§3 覆盖 `docs/design` 顶层各件（逐条 + 合并区间，全名已列）+ `docs/design/unify-audit-20260919/` 全组（区间条目）+ `docs/superpowers/` 逐条；§4 覆盖 `.superpowers/sdd/` 各波次目录（目录级判定）；§5 三节（重复与冲突 / 门钉勘误 / 覆盖缺口逐域 / 归档建议 A-B-C）。全表合计新增条目数以脚本现算为准。采集与判定全部由一次性只读脚本完成，未在源码树留下 `__pycache__`/`.pytest_cache`，未跑 pytest，未做任何 git 写操作。

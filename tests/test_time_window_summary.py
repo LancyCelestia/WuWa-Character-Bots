@@ -19,10 +19,6 @@ from plugins.bot_unified_runtime.capabilities.chat import (
     _time_window_summary_section,
     build_chat_prompt_with_diagnostics,
 )
-from plugins.bot_unified_runtime.character.history import (
-    InMemoryConversationHistoryStore,
-    SQLiteConversationHistoryRepository,
-)
 from plugins.bot_unified_runtime.character.providers import (
     NullCharacterContextProvider,
 )
@@ -36,11 +32,15 @@ from plugins.bot_unified_runtime.contracts import (
     SessionType,
     ToneProfile,
 )
-from plugins.bot_unified_runtime.llm import StaticLLMProvider
-from plugins.bot_unified_runtime.runtime.time_window import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
+    InMemoryConversationHistoryStore,
+    SQLiteConversationHistoryRepository,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.time_window import (
     detect_time_window_summary,
     parse_time_window,
 )
+from plugins.bot_unified_runtime.llm import StaticLLMProvider
 
 NOW = datetime(2026, 9, 13, 15, 0, tzinfo=UTC).timestamp()
 
@@ -376,7 +376,9 @@ def _group_message(plain_text: str) -> IncomingMessage:
 
 
 def test_section_helper_builds_block_and_degrades_to_empty() -> None:
-    from plugins.bot_unified_runtime.character.history import HistoryWindowTurn
+    from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
+        HistoryWindowTurn,
+    )
 
     history = _FixedWindowHistory(
         [

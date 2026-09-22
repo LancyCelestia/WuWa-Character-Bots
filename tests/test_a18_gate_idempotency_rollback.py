@@ -36,12 +36,14 @@ from plugins.bot_unified_runtime.domains.chat_reply.policy.rate_limit import (
     RateLimitSettings,
     SQLiteRateLimiter,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.event_idempotency import (
+    EventIdempotencyTable,
+)
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
     BotDecision,
     IncomingMessage,
     SessionType,
 )
-from plugins.bot_unified_runtime.runtime.event_idempotency import EventIdempotencyTable
 from plugins.bot_unified_runtime.runtime.pipeline import RuntimePipeline
 from plugins.bot_unified_runtime.sender import InMemorySendQueue
 

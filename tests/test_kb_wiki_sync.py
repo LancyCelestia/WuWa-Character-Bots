@@ -8,15 +8,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.bot_unified_runtime.character.kb_wiki import (
-    MergedKnowledgeRetriever,
-    split_doc_chunks,
-    sync_kb_wiki,
-)
 from plugins.bot_unified_runtime.character.vector_knowledge import (
     SqliteVectorKnowledgeStore,
 )
 from plugins.bot_unified_runtime.contracts import KnowledgeChunk
+from plugins.bot_unified_runtime.domains.location.knowledge.kb_wiki import (
+    MergedKnowledgeRetriever,
+    split_doc_chunks,
+    sync_kb_wiki,
+)
 
 
 class _FakeEmbedder:

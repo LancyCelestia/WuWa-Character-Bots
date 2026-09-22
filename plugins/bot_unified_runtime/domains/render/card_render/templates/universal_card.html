@@ -1112,9 +1112,9 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
 {%- if value is number -%}
 {%- set v = value | int -%}
 {%- if v >= 100000000 -%}
-{%- set s = '%.1f' | format(v / 100000000) -%}{{ s[:-2] if s.endswith('.0') else s }}{{ '\u2009' }}亿
+{%- set s = '%.1f' | format(v / 100000000) -%}{{ s[:-2] if s.endswith('.0') else s }}{{ '\u2009' }}{{ card_text.static_uni_39 }}
 {%- elif v >= 10000 -%}
-{%- set s = '%.1f' | format(v / 10000) -%}{{ s[:-2] if s.endswith('.0') else s }}{{ '\u2009' }}万
+{%- set s = '%.1f' | format(v / 10000) -%}{{ s[:-2] if s.endswith('.0') else s }}{{ '\u2009' }}{{ card_text.static_uni_40 }}
 {%- else -%}{{ v }}
 {%- endif -%}
 {%- else -%}{{ value }}
@@ -1154,7 +1154,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
             <div class="author-avatar-rail">{% if avatar %}<img src="{{ avatar }}" alt="" onerror="this.style.display='none'">{% else %}<span class="author-avatar-fallback">{{ (name | default('U', true))[:1] }}</span>{% endif %}</div>
             <div class="author-five-row">
                 <div class="author-row author-row-primary"><span class="author-name-text{% if official_title == '大会员' %} author-name-vip{% endif %}">{{ name }}</span>{% if official_title %}<span class="author-badge author-badge-vip">{{ official_title }}</span>{% endif %}{% if official_badge %}<span class="author-badge author-badge-verified">{{ official_badge }}</span>{% endif %}</div>
-                <div class="author-row author-row-identifiers">{% if handle %}<span class="author-id">{{ handle }}</span>{% endif %}{% if uid %}<span class="author-id">UID {{ uid }}</span>{% endif %}{% if author_uuid and author_uuid != uid %}<span class="author-id">UID {{ author_uuid }}</span>{% endif %}{% if bvid %}<span class="author-id">BV {{ bvid | replace('BV', '', 1) }}</span>{% endif %}{% if av_id %}<span class="author-id">AV {{ av_id | replace('av', '') | replace('AV', '') }}</span>{% endif %}{% if extra_dynamic_id %}<span class="author-id">动态 {{ extra_dynamic_id }}</span>{% endif %}{% if extra_status_id %}<span class="author-id">帖子 {{ extra_status_id }}</span>{% endif %}{% if extra_video_id %}<span class="author-id">视频 {{ extra_video_id }}</span>{% endif %}{% if extra_bangumi_id %}<span class="author-id">番剧 {{ extra_bangumi_id }}</span>{% endif %}</div>
+                <div class="author-row author-row-identifiers">{% if handle %}<span class="author-id">{{ handle }}</span>{% endif %}{% if uid %}<span class="author-id">UID {{ uid }}</span>{% endif %}{% if author_uuid and author_uuid != uid %}<span class="author-id">UID {{ author_uuid }}</span>{% endif %}{% if bvid %}<span class="author-id">BV {{ bvid | replace('BV', '', 1) }}</span>{% endif %}{% if av_id %}<span class="author-id">AV {{ av_id | replace('av', '') | replace('AV', '') }}</span>{% endif %}{% if extra_dynamic_id %}<span class="author-id">{{ card_text.static_uni_41 }} {{ extra_dynamic_id }}</span>{% endif %}{% if extra_status_id %}<span class="author-id">{{ card_text.static_uni_42 }} {{ extra_status_id }}</span>{% endif %}{% if extra_video_id %}<span class="author-id">{{ card_text.static_uni_43 }} {{ extra_video_id }}</span>{% endif %}{% if extra_bangumi_id %}<span class="author-id">{{ card_text.static_uni_44 }} {{ extra_bangumi_id }}</span>{% endif %}</div>
                 {% if signature %}<div class="author-row author-row-signature">{{ signature }}</div>{% endif %}
                 <div class="author-row author-row-stat">{% for item in author_stat_items %}<span class="author-stat">{{ item.label }} {{ fmt_count(item.value) }}</span>{% endfor %}</div>
                 <div class="author-row author-row-timestamp">{{ timestamp }}</div>
@@ -1165,10 +1165,10 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     {% if title %}<div class="video-title"><div class="video-title-quote mica-surface"><span class="video-title-marker"></span><span class="video-title-text">{{ title }}</span></div></div>{% endif %}
     {% if banner or cover_url %}<div class="video-cover-inset"><div class="cover-fill" style="background-image:url('{{ banner or cover_url }}')"></div><img class="cover-contain" src="{{ banner or cover_url }}" alt="cover" onerror="if(this.src.indexOf('maxresdefault')>-1){this.onerror=null;this.src=this.src.replace('maxresdefault','hqdefault');}else{this.style.display='none';var fill=this.parentElement.querySelector('.cover-fill');if(fill){fill.style.display='none';};}">{% if video_duration %}<span class="duration-pill">{{ video_duration }}</span>{% endif %}{% if video_quality %}<span class="quality-pill">{{ video_quality }}</span>{% endif %}</div>{% endif %}
     {% if stats_bar_items %}<div class="video-metric-columns">{% for item in stats_bar_items %}<div class="video-metric-card mica-surface" aria-label="{{ item.label }}"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, var(--mica-glass-edge)"{% else %} style="background:var(--surface-b) padding-box, var(--mica-glass-edge)"{% endif %}>{% if item.icon_svg %}<span class="metric-icon metric-{{ item.key }}" data-icon-source="{{ item.source | default('iconfont', true) }}">{{ item.icon_svg | safe }}</span>{% endif %}<span class="metric-value">{{ fmt_count(item.value) }}</span><span class="metric-label">{{ item.label }}</span></div>{% endfor %}</div>{% endif %}
-    {% if video_desc or summary or text or topics %}<div class="video-card-summary mica-surface"><span class="summary-tag">内容摘要</span>{% if topics %}<span class="topic-row">{% for tag in topics %}<span class="topic-chip">#{{ tag }}</span>{% endfor %}</span>{% endif %}{{ video_desc or summary | safe or text | safe }}</div>{% endif %}
+    {% if video_desc or summary or text or topics %}<div class="video-card-summary mica-surface"><span class="summary-tag">{{ card_text.static_uni_45 }}</span>{% if topics %}<span class="topic-row">{% for tag in topics %}<span class="topic-chip">#{{ tag }}</span>{% endfor %}</span>{% endif %}{{ video_desc or summary | safe or text | safe }}</div>{% endif %}
     {% if music_name %}<div class="music-credit mica-surface"><span class="music-note">♪</span><span class="music-name">{{ music_name }}</span>{% if music_author %}<span class="music-author">{{ music_author }}</span>{% endif %}</div>{% endif %}
-    {% if hot_comment or hot_comments %}<div style="display:flex;flex-direction:column;gap:8px;margin:0 var(--video-inset) var(--video-inset);">{% for comment in ((hot_comments or [])[:3] if hot_comments else ([hot_comment])) %}<div class="hot-comment mica-surface"><div class="pc-header"><span class="pc-badge">热评</span>{% if comment.avatar %}<img class="pc-avatar" src="{{ comment.avatar }}" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ comment.author }}</span>{% if comment.time %}<span> · {{ comment.time }}</span>{% endif %}</div><div class="pc-content">{{ comment.content }}</div>{% if comment.likes %}<div class="pc-likes">{{ comment.likes }} 赞</div>{% endif %}</div>{% endfor %}</div>{% endif %}
-    {% if show_guests %}<div class="show-guests"><div class="sg-title">参展嘉宾<span class="sg-count">{{ show_guests | length }}</span></div><div class="sg-grid">{% for guest in show_guests %}<div class="sg-tile mica-surface">{% if guest.avatar %}<img class="sg-avatar" src="{{ guest.avatar }}" onerror="this.style.display='none'">{% else %}<div class="sg-avatar sg-avatar-ph">{{ guest.name[:1] }}</div>{% endif %}<span class="sg-name">{{ guest.name }}</span>{% if guest.description %}<span class="sg-desc">{{ guest.description }}</span>{% endif %}{% if guest.book_num %}<span class="sg-book">♥ {{ guest.book_num }} 预约</span>{% endif %}</div>{% endfor %}</div></div>{% endif %}
+    {% if hot_comment or hot_comments %}<div style="display:flex;flex-direction:column;gap:8px;margin:0 var(--video-inset) var(--video-inset);">{% for comment in ((hot_comments or [])[:3] if hot_comments else ([hot_comment])) %}<div class="hot-comment mica-surface"><div class="pc-header"><span class="pc-badge">{{ card_text.static_uni_46 }}</span>{% if comment.avatar %}<img class="pc-avatar" src="{{ comment.avatar }}" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ comment.author }}</span>{% if comment.time %}<span> · {{ comment.time }}</span>{% endif %}</div><div class="pc-content">{{ comment.content }}</div>{% if comment.likes %}<div class="pc-likes">{{ comment.likes }} {{ stat_units.likes }}</div>{% endif %}</div>{% endfor %}</div>{% endif %}
+    {% if show_guests %}<div class="show-guests"><div class="sg-title">{{ card_text.static_uni_47 }}<span class="sg-count">{{ show_guests | length }}</span></div><div class="sg-grid">{% for guest in show_guests %}<div class="sg-tile mica-surface">{% if guest.avatar %}<img class="sg-avatar" src="{{ guest.avatar }}" onerror="this.style.display='none'">{% else %}<div class="sg-avatar sg-avatar-ph">{{ guest.name[:1] }}</div>{% endif %}<span class="sg-name">{{ guest.name }}</span>{% if guest.description %}<span class="sg-desc">{{ guest.description }}</span>{% endif %}{% if guest.book_num %}<span class="sg-book">♥ {{ guest.book_num }} {{ card_text.static_uni_48 }}</span>{% endif %}</div>{% endfor %}</div></div>{% endif %}
     <div class="footer footer-colored"><span class="footer-platform-name">{% if platform_logo_svg %}<span class="footer-platform-logo" data-icon-source="iconfont">{{ platform_logo_svg | safe }}</span>{% else %}{{ platform_footer_label or platform_official_name or platform }}{% endif %}{% if av_id %}<span class="footer-media-id">AV {{ av_id | replace('av', '') | replace('AV', '') }}</span>{% elif bvid %}<span class="footer-media-id">{{ bvid }}</span>{% endif %}</span><div class="footer-bot-pill">{# CAP1：统一品牌胶囊（mica_shell 单一产出经 bridge 注入）。 #}{{ capsule_html | safe }}</div></div>
 </div>
 </div>
@@ -1208,13 +1208,13 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
                     {% if handle %}<span class="handle-tag">Handle {{ handle }}</span>{% endif %}
                     {% if bvid %}<span class="id-tag">BV {{ bvid }}</span>{% endif %}
                     {% if av_id %}<span class="id-tag">AV {{ av_id }}</span>{% endif %}
-                    {% if extra_dynamic_id %}<span class="id-tag">动态 {{ extra_dynamic_id }}</span>{% endif %}
-                    {% if extra_status_id %}<span class="id-tag">帖子 {{ extra_status_id }}</span>{% endif %}
-                    {% if extra_video_id %}<span class="id-tag">视频 {{ extra_video_id }}</span>{% endif %}
-                    {% if extra_live_id %}<span class="id-tag">直播 {{ extra_live_id }}</span>{% endif %}
-                    {% if extra_space_id %}<span class="id-tag">空间 {{ extra_space_id }}</span>{% endif %}
-                    {% if extra_favlist_id %}<span class="id-tag">收藏夹 {{ extra_favlist_id }}</span>{% endif %}
-                    {% if extra_bangumi_id %}<span class="id-tag">番剧 {{ extra_bangumi_id }}</span>{% endif %}
+                    {% if extra_dynamic_id %}<span class="id-tag">{{ card_text.static_uni_41 }} {{ extra_dynamic_id }}</span>{% endif %}
+                    {% if extra_status_id %}<span class="id-tag">{{ card_text.static_uni_42 }} {{ extra_status_id }}</span>{% endif %}
+                    {% if extra_video_id %}<span class="id-tag">{{ card_text.static_uni_43 }} {{ extra_video_id }}</span>{% endif %}
+                    {% if extra_live_id %}<span class="id-tag">{{ card_text.static_uni_49 }} {{ extra_live_id }}</span>{% endif %}
+                    {% if extra_space_id %}<span class="id-tag">{{ card_text.static_uni_50 }} {{ extra_space_id }}</span>{% endif %}
+                    {% if extra_favlist_id %}<span class="id-tag">{{ card_text.static_uni_51 }} {{ extra_favlist_id }}</span>{% endif %}
+                    {% if extra_bangumi_id %}<span class="id-tag">{{ card_text.static_uni_44 }} {{ extra_bangumi_id }}</span>{% endif %}
                     {% endif %}
                 </div>
                 <!-- L3: 博主签名 -->
@@ -1228,20 +1228,20 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
                 {% if header_l4_items %}
                 {% for item in header_l4_items %}<span class="meta-stat">{{ item.value }} {{ item.label }}</span>{% endfor %}
                 {% else %}
-                {% if follower_count %}<span class="meta-stat">{{ follower_count }} 粉丝</span>{% endif %}
-                {% if stats and stats.followers %}<span class="meta-stat">{{ stats.followers }} 粉丝</span>{% endif %}
-                {% if stats and stats.following %}<span class="meta-stat">{{ stats.following }} 关注</span>{% endif %}
-                {% if stats and stats.videos %}<span class="meta-stat">{{ stats.videos }} 视频</span>{% endif %}
-                {% if extra_post_count %}<span class="meta-stat">{{ extra_post_count }} {{ extra_post_label | default("帖子", true) }}</span>{% endif %}
-                {% if stats and stats.posts %}<span class="meta-stat">{{ stats.posts }} {{ stats_post_label | default("帖子", true) }}</span>{% endif %}
-                {% if stats and stats.total_views %}<span class="meta-stat">{{ stats.total_views }} 播放</span>{% endif %}
-                {% if stats and stats.user_likes %}<span class="meta-stat">{{ stats.user_likes }} 获赞</span>{% endif %}
-                {% if extra_members_count %}<span class="meta-stat">{{ extra_members_count }} {{ extra_members_label | default("会员", true) }}</span>{% endif %}
+                {% if follower_count %}<span class="meta-stat">{{ follower_count }} {{ stat_units.followers }}</span>{% endif %}
+                {% if stats and stats.followers %}<span class="meta-stat">{{ stats.followers }} {{ stat_units.followers }}</span>{% endif %}
+                {% if stats and stats.following %}<span class="meta-stat">{{ stats.following }} {{ stat_units.following }}</span>{% endif %}
+                {% if stats and stats.videos %}<span class="meta-stat">{{ stats.videos }} {{ stat_units.videos }}</span>{% endif %}
+                {% if extra_post_count %}<span class="meta-stat">{{ extra_post_count }} {{ extra_post_label }}</span>{% endif %}
+                {% if stats and stats.posts %}<span class="meta-stat">{{ stats.posts }} {{ stats_post_label }}</span>{% endif %}
+                {% if stats and stats.total_views %}<span class="meta-stat">{{ stats.total_views }} {{ stat_units.views }}</span>{% endif %}
+                {% if stats and stats.user_likes %}<span class="meta-stat">{{ stats.user_likes }} {{ stat_units.user_likes }}</span>{% endif %}
+                {% if extra_members_count %}<span class="meta-stat">{{ extra_members_count }} {{ extra_members_label }}</span>{% endif %}
                 {% endif %}
                 </div>
                 <!-- L5: 发布时间 -->
                 {% if timestamp %}
-                <div class="publish-time">{{ timestamp }}{% if edit_timestamp %} · 编辑于 {{ edit_timestamp }}{% endif %}</div>
+                <div class="publish-time">{{ timestamp }}{% if edit_timestamp %} · {{ card_text.static_uni_52 }} {{ edit_timestamp }}{% endif %}</div>
                 {% endif %}
             </div>
         </div>
@@ -1284,33 +1284,33 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     </div>
     {% elif stats %}
     <div class="stats-bar">
-        {% if stats.views %}<span class="stat-item"><span>{{ stats.views }}</span> 播放</span>{% endif %}
-        {% if stats.danmaku %}<span class="stat-item"><span>{{ stats.danmaku }}</span> 弹幕</span>{% endif %}
-        {% if stats.likes %}<span class="stat-item"><span>{{ stats.likes }}</span> 赞</span>{% endif %}
-        {% if stats.favorites %}<span class="stat-item"><span>{{ stats.favorites }}</span> 收藏</span>{% endif %}
-        {% if stats.coins %}<span class="stat-item"><span>{{ stats.coins }}</span> 硬币</span>{% endif %}
-        {% if stats.comments %}<span class="stat-item"><span>{{ stats.comments }}</span> 评论</span>{% endif %}
-        {% if stats.reposts %}<span class="stat-item"><span>{{ stats.reposts }}</span> 转发</span>{% endif %}
-        {% if stats.following %}<span class="stat-item"><span>{{ stats.following }}</span> 关注</span>{% endif %}
-        {% if stats.followers %}<span class="stat-item"><span>{{ stats.followers }}</span> 粉丝</span>{% endif %}
-        {% if stats.user_likes %}<span class="stat-item"><span>{{ stats.user_likes }}</span> 获赞</span>{% endif %}
-        {% if stats.total_views %}<span class="stat-item"><span>{{ stats.total_views }}</span> 总播放</span>{% endif %}
-        {% if stats.quotes %}<span class="stat-item"><span>{{ stats.quotes }}</span> 引用</span>{% endif %}
-        {% if stats.bookmarks %}<span class="stat-item"><span>{{ stats.bookmarks }}</span> 书签</span>{% endif %}
-        {% if stats.attention %}<span class="stat-item"><span>{{ stats.attention }}</span> 关注度</span>{% endif %}
-        {% if stats.fansclub %}<span class="stat-item"><span>{{ stats.fansclub }}</span> 粉丝团</span>{% endif %}
-        {% if stats.high_energy_users %}<span class="stat-item"><span>{{ stats.high_energy_users }}</span> 高能用户</span>{% endif %}
-        {% if stats.fleet_total %}<span class="stat-item"><span>{{ stats.fleet_total }}</span> 舰队</span>{% endif %}
-        {% if stats.captain %}<span class="stat-item"><span>{{ stats.captain }}</span> 舰长</span>{% endif %}
-        {% if stats.admiral %}<span class="stat-item"><span>{{ stats.admiral }}</span> 提督</span>{% endif %}
-        {% if stats.governor %}<span class="stat-item"><span>{{ stats.governor }}</span> 总督</span>{% endif %}
-        {% if stats.is_living %}<span class="stat-item is-live">直播中</span>{% endif %}
-        {% if stats.live_level %}<span class="stat-item">等级 <span>{{ stats.live_level }}</span></span>{% endif %}
-        {% if stats.top3_rank %}<span class="stat-item">高能榜: {{ stats.top3_rank }}</span>{% endif %}
-        {% if stats.live_viewers %}<span class="stat-item"><span>{{ stats.live_viewers }}</span> 观众</span>{% endif %}
-        {% if stats.live_rank %}<span class="stat-item"><span>{{ stats.live_rank }}</span> 排名</span>{% endif %}
-        {% if stats.live_watched %}<span class="stat-item"><span>{{ stats.live_watched }}</span> 看过</span>{% endif %}
-        {% if stats.live_popularity %}<span class="stat-item"><span>{{ stats.live_popularity }}</span> 人气</span>{% endif %}
+        {% if stats.views %}<span class="stat-item"><span>{{ stats.views }}</span> {{ stat_units.views }}</span>{% endif %}
+        {% if stats.danmaku %}<span class="stat-item"><span>{{ stats.danmaku }}</span> {{ stat_units.danmaku }}</span>{% endif %}
+        {% if stats.likes %}<span class="stat-item"><span>{{ stats.likes }}</span> {{ stat_units.likes }}</span>{% endif %}
+        {% if stats.favorites %}<span class="stat-item"><span>{{ stats.favorites }}</span> {{ stat_units.favorites }}</span>{% endif %}
+        {% if stats.coins %}<span class="stat-item"><span>{{ stats.coins }}</span> {{ stat_units.coins }}</span>{% endif %}
+        {% if stats.comments %}<span class="stat-item"><span>{{ stats.comments }}</span> {{ stat_units.comments }}</span>{% endif %}
+        {% if stats.reposts %}<span class="stat-item"><span>{{ stats.reposts }}</span> {{ stat_units.reposts }}</span>{% endif %}
+        {% if stats.following %}<span class="stat-item"><span>{{ stats.following }}</span> {{ stat_units.following }}</span>{% endif %}
+        {% if stats.followers %}<span class="stat-item"><span>{{ stats.followers }}</span> {{ stat_units.followers }}</span>{% endif %}
+        {% if stats.user_likes %}<span class="stat-item"><span>{{ stats.user_likes }}</span> {{ stat_units.user_likes }}</span>{% endif %}
+        {% if stats.total_views %}<span class="stat-item"><span>{{ stats.total_views }}</span> {{ stat_units.total_views }}</span>{% endif %}
+        {% if stats.quotes %}<span class="stat-item"><span>{{ stats.quotes }}</span> {{ stat_units.quotes }}</span>{% endif %}
+        {% if stats.bookmarks %}<span class="stat-item"><span>{{ stats.bookmarks }}</span> {{ stat_units.bookmarks }}</span>{% endif %}
+        {% if stats.attention %}<span class="stat-item"><span>{{ stats.attention }}</span> {{ stat_units.attention }}</span>{% endif %}
+        {% if stats.fansclub %}<span class="stat-item"><span>{{ stats.fansclub }}</span> {{ stat_units.fansclub }}</span>{% endif %}
+        {% if stats.high_energy_users %}<span class="stat-item"><span>{{ stats.high_energy_users }}</span> {{ stat_units.high_energy_users }}</span>{% endif %}
+        {% if stats.fleet_total %}<span class="stat-item"><span>{{ stats.fleet_total }}</span> {{ stat_units.fleet }}</span>{% endif %}
+        {% if stats.captain %}<span class="stat-item"><span>{{ stats.captain }}</span> {{ stat_units.captain }}</span>{% endif %}
+        {% if stats.admiral %}<span class="stat-item"><span>{{ stats.admiral }}</span> {{ stat_units.admiral }}</span>{% endif %}
+        {% if stats.governor %}<span class="stat-item"><span>{{ stats.governor }}</span> {{ stat_units.governor }}</span>{% endif %}
+        {% if stats.is_living %}<span class="stat-item is-live">{{ card_text.static_uni_53 }}</span>{% endif %}
+        {% if stats.live_level %}<span class="stat-item">{{ card_text.static_uni_54 }} <span>{{ stats.live_level }}</span></span>{% endif %}
+        {% if stats.top3_rank %}<span class="stat-item">{{ card_text.static_uni_55 }} {{ stats.top3_rank }}</span>{% endif %}
+        {% if stats.live_viewers %}<span class="stat-item"><span>{{ stats.live_viewers }}</span> {{ stat_units.live_viewers }}</span>{% endif %}
+        {% if stats.live_rank %}<span class="stat-item"><span>{{ stats.live_rank }}</span> {{ stat_units.live_rank }}</span>{% endif %}
+        {% if stats.live_watched %}<span class="stat-item"><span>{{ stats.live_watched }}</span> {{ stat_units.live_watched }}</span>{% endif %}
+        {% if stats.live_popularity %}<span class="stat-item"><span>{{ stats.live_popularity }}</span> {{ stat_units.live_popularity }}</span>{% endif %}
         {% for item in stats_extra_items %}<span class="stat-item"><span>{{ item.value }}</span> {{ item.label }}</span>{% endfor %}
     </div>
     {% endif %}
@@ -1318,7 +1318,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     <!-- 多P视频分P列表 -->
     {% if video_pages %}
     <div class="video-pages" style="border-top:1px solid rgba(31,35,41,.06);padding:12px 24px;">
-        <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:8px;">分P列表 (共{{ video_pages|length }}P)</div>
+        <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:8px;">{{ card_text.static_uni_56 }} {{ card_text.static_uni_57 }}{{ video_pages|length }}P)</div>
         {% for page in video_pages %}
         <div style="display:flex;align-items:center;gap:10px;padding:6px 0;{% if not loop.last %}border-bottom:1px solid rgba(31,35,41,.05);{% endif %}">
             {% if page.cover %}<img src="{{ page.cover }}" style="width:80px;height:45px;border-radius:var(--r-inner-sm);object-fit:cover;flex-shrink:0;" onerror="this.style.display='none'">{% endif %}
@@ -1355,7 +1355,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
         {% if pinned_comment %}
         <div class="pinned-comment">
             <div class="pc-header">
-                <span class="pc-badge">置顶</span>
+                <span class="pc-badge">{{ card_text.static_uni_58 }}</span>
                 {% if pinned_comment.avatar %}<img class="pc-avatar" src="{{ pinned_comment.avatar }}" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ pinned_comment.author }}</span>
                 {% if pinned_comment.time %}
                 <span> · {{ pinned_comment.time }}</span>
@@ -1374,7 +1374,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
             </div>
             {% endif %}
             {% if pinned_comment.likes %}
-            <div class="pc-likes">{{ pinned_comment.likes }} 赞{% if pinned_comment.replies_count %} · {{ pinned_comment.replies_count }} 回复{% endif %}</div>
+            <div class="pc-likes">{{ pinned_comment.likes }} {{ stat_units.likes }}{% if pinned_comment.replies_count %} · {{ pinned_comment.replies_count }} {{ stat_units.replies }}{% endif %}</div>
             {% endif %}
         </div>
         {% endif %}
@@ -1383,7 +1383,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
         {% if hot_comment %}
         <div class="hot-comment">
             <div class="pc-header">
-                <span class="pc-badge">热评</span>
+                <span class="pc-badge">{{ card_text.static_uni_46 }}</span>
                 {% if hot_comment.avatar %}<img class="pc-avatar" src="{{ hot_comment.avatar }}" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ hot_comment.author }}</span>
                 {% if hot_comment.time %}
                 <span> · {{ hot_comment.time }}</span>
@@ -1395,7 +1395,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
             </div>
             <div class="pc-content">{{ hot_comment.content }}</div>
             {% if hot_comment.likes %}
-            <div class="pc-likes">{{ hot_comment.likes }} 赞{% if hot_comment.replies_count %} · {{ hot_comment.replies_count }} 回复{% endif %}</div>
+            <div class="pc-likes">{{ hot_comment.likes }} {{ stat_units.likes }}{% if hot_comment.replies_count %} · {{ hot_comment.replies_count }} {{ stat_units.replies }}{% endif %}</div>
             {% endif %}
         </div>
         {% endif %}
@@ -1405,7 +1405,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
         {% for comment in hot_comments[1:] %}
         <div class="hot-comment">
             <div class="pc-header">
-                <span class="pc-badge">热评</span>
+                <span class="pc-badge">{{ card_text.static_uni_46 }}</span>
                 {% if comment.avatar %}<img class="pc-avatar" src="{{ comment.avatar }}" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ comment.author }}</span>
                 {% if comment.time %}
                 <span> · {{ comment.time }}</span>
@@ -1413,7 +1413,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
             </div>
             <div class="pc-content">{{ comment.content }}</div>
             {% if comment.likes %}
-            <div class="pc-likes">{{ comment.likes }} 赞</div>
+            <div class="pc-likes">{{ comment.likes }} {{ stat_units.likes }}</div>
             {% endif %}
         </div>
         {% endfor %}
@@ -1422,7 +1422,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
         <!-- 评论区 -->
         {% if comments %}
         <div class="comments-section">
-            <div class="comments-title">评论区</div>
+            <div class="comments-title">{{ card_text.static_uni_59 }}</div>
             {% for comment in comments %}
             <div class="comment-item">
                 <div class="comment-avatar">{% if comment.avatar %}<img src="{{ comment.avatar }}" alt="" onerror="this.remove()">{% endif %}</div>
@@ -1431,9 +1431,9 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
                     <div class="comment-text">{{ comment.content }}</div>
                     <div class="comment-meta">
                         {% if comment.time %}{{ comment.time }} · {% endif %}
-                        {{ comment.likes }} 赞
-                        {% if comment.is_hot %}<span style="color:var(--accent)"> 热评</span>{% endif %}
-                        {% if comment.replies_count %} · {{ comment.replies_count }} 回复{% endif %}
+                        {{ comment.likes }} {{ stat_units.likes }}
+                        {% if comment.is_hot %}<span style="color:var(--accent)"> {{ card_text.static_uni_46 }}</span>{% endif %}
+                        {% if comment.replies_count %} · {{ comment.replies_count }} {{ stat_units.replies }}{% endif %}
                     </div>
                 </div>
             </div>
@@ -1468,15 +1468,15 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
             {% endif %}
             {% if forward.stats %}
             <div class="stats-bar" style="margin-top: 8px; padding: 6px 0; background: transparent; border: none;">
-                {% if forward.stats.views %}<span class="stat-item"><span>{{ forward.stats.views }}</span> 播放</span>{% endif %}
-                {% if forward.stats.danmaku %}<span class="stat-item"><span>{{ forward.stats.danmaku }}</span> 弹幕</span>{% endif %}
-                {% if forward.stats.likes %}<span class="stat-item"><span>{{ forward.stats.likes }}</span> 赞</span>{% endif %}
-                {% if forward.stats.favorites %}<span class="stat-item"><span>{{ forward.stats.favorites }}</span> 收藏</span>{% endif %}
-                {% if forward.stats.coins %}<span class="stat-item"><span>{{ forward.stats.coins }}</span> 硬币</span>{% endif %}
-                {% if forward.stats.comments %}<span class="stat-item"><span>{{ forward.stats.comments }}</span> 评论</span>{% endif %}
-                {% if forward.stats.reposts %}<span class="stat-item"><span>{{ forward.stats.reposts }}</span> 转发</span>{% endif %}
-                {% if forward.stats.quotes %}<span class="stat-item"><span>{{ forward.stats.quotes }}</span> 引用</span>{% endif %}
-                {% if forward.stats.bookmarks %}<span class="stat-item"><span>{{ forward.stats.bookmarks }}</span> 书签</span>{% endif %}
+                {% if forward.stats.views %}<span class="stat-item"><span>{{ forward.stats.views }}</span> {{ stat_units.views }}</span>{% endif %}
+                {% if forward.stats.danmaku %}<span class="stat-item"><span>{{ forward.stats.danmaku }}</span> {{ stat_units.danmaku }}</span>{% endif %}
+                {% if forward.stats.likes %}<span class="stat-item"><span>{{ forward.stats.likes }}</span> {{ stat_units.likes }}</span>{% endif %}
+                {% if forward.stats.favorites %}<span class="stat-item"><span>{{ forward.stats.favorites }}</span> {{ stat_units.favorites }}</span>{% endif %}
+                {% if forward.stats.coins %}<span class="stat-item"><span>{{ forward.stats.coins }}</span> {{ stat_units.coins }}</span>{% endif %}
+                {% if forward.stats.comments %}<span class="stat-item"><span>{{ forward.stats.comments }}</span> {{ stat_units.comments }}</span>{% endif %}
+                {% if forward.stats.reposts %}<span class="stat-item"><span>{{ forward.stats.reposts }}</span> {{ stat_units.reposts }}</span>{% endif %}
+                {% if forward.stats.quotes %}<span class="stat-item"><span>{{ forward.stats.quotes }}</span> {{ stat_units.quotes }}</span>{% endif %}
+                {% if forward.stats.bookmarks %}<span class="stat-item"><span>{{ forward.stats.bookmarks }}</span> {{ stat_units.bookmarks }}</span>{% endif %}
             </div>
             {% endif %}
             {% if forward.timestamp %}
@@ -1484,16 +1484,16 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
             {% endif %}
             {% if forward.pinned_comment %}
             <div class="pinned-comment" style="margin-top: 8px;">
-                <div class="pc-header"><span class="pc-badge">置顶</span>{% if forward.pinned_comment.avatar %}<img src="{{ forward.pinned_comment.avatar }}" style="width:18px;height:18px;border-radius:var(--r-circle);vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.pinned_comment.author }}</span>{% if forward.pinned_comment.time %}<span> · {{ forward.pinned_comment.time }}</span>{% endif %}{% if forward.pinned_comment.level %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ forward.pinned_comment.level }}</span>{% endif %}{% if forward.pinned_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ forward.pinned_comment.title_badge }}</span>{% endif %}{% if forward.pinned_comment.dress %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">{{ forward.pinned_comment.dress }}</span>{% endif %}{% if forward.pinned_comment.handle %}<span style="font-size:12px;color:var(--text-secondary);">{{ forward.pinned_comment.handle }}</span>{% endif %}</div>
+                <div class="pc-header"><span class="pc-badge">{{ card_text.static_uni_58 }}</span>{% if forward.pinned_comment.avatar %}<img src="{{ forward.pinned_comment.avatar }}" style="width:18px;height:18px;border-radius:var(--r-circle);vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.pinned_comment.author }}</span>{% if forward.pinned_comment.time %}<span> · {{ forward.pinned_comment.time }}</span>{% endif %}{% if forward.pinned_comment.level %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ forward.pinned_comment.level }}</span>{% endif %}{% if forward.pinned_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ forward.pinned_comment.title_badge }}</span>{% endif %}{% if forward.pinned_comment.dress %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">{{ forward.pinned_comment.dress }}</span>{% endif %}{% if forward.pinned_comment.handle %}<span style="font-size:12px;color:var(--text-secondary);">{{ forward.pinned_comment.handle }}</span>{% endif %}</div>
                 <div class="pc-content">{{ forward.pinned_comment.content }}</div>
-                {% if forward.pinned_comment.likes %}<div class="pc-likes">{{ forward.pinned_comment.likes }} 赞{% if forward.pinned_comment.replies_count %} · {{ forward.pinned_comment.replies_count }} 回复{% endif %}</div>{% endif %}
+                {% if forward.pinned_comment.likes %}<div class="pc-likes">{{ forward.pinned_comment.likes }} {{ stat_units.likes }}{% if forward.pinned_comment.replies_count %} · {{ forward.pinned_comment.replies_count }} {{ stat_units.replies }}{% endif %}</div>{% endif %}
             </div>
             {% endif %}
             {% if forward.hot_comment %}
             <div class="pinned-comment" style="margin-top: 8px;">
-                <div class="pc-header"><span class="pc-badge">热评</span>{% if forward.hot_comment.avatar %}<img src="{{ forward.hot_comment.avatar }}" style="width:18px;height:18px;border-radius:var(--r-circle);vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.hot_comment.author }}</span>{% if forward.hot_comment.time %}<span> · {{ forward.hot_comment.time }}</span>{% endif %}{% if forward.hot_comment.level %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ forward.hot_comment.level }}</span>{% endif %}{% if forward.hot_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ forward.hot_comment.title_badge }}</span>{% endif %}{% if forward.hot_comment.dress %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">{{ forward.hot_comment.dress }}</span>{% endif %}{% if forward.hot_comment.handle %}<span style="font-size:12px;color:var(--text-secondary);">{{ forward.hot_comment.handle }}</span>{% endif %}</div>
+                <div class="pc-header"><span class="pc-badge">{{ card_text.static_uni_46 }}</span>{% if forward.hot_comment.avatar %}<img src="{{ forward.hot_comment.avatar }}" style="width:18px;height:18px;border-radius:var(--r-circle);vertical-align:middle;margin-right:4px;" onerror="this.style.display='none'">{% endif %}<span class="pc-author">{{ forward.hot_comment.author }}</span>{% if forward.hot_comment.time %}<span> · {{ forward.hot_comment.time }}</span>{% endif %}{% if forward.hot_comment.level %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">Lv.{{ forward.hot_comment.level }}</span>{% endif %}{% if forward.hot_comment.title_badge %}<span class="uid-tag comment-title-badge" style="font-size:12px;padding:0 6px;">{{ forward.hot_comment.title_badge }}</span>{% endif %}{% if forward.hot_comment.dress %}<span class="uid-tag" style="font-size:12px;padding:0 6px;">{{ forward.hot_comment.dress }}</span>{% endif %}{% if forward.hot_comment.handle %}<span style="font-size:12px;color:var(--text-secondary);">{{ forward.hot_comment.handle }}</span>{% endif %}</div>
                 <div class="pc-content">{{ forward.hot_comment.content }}</div>
-                {% if forward.hot_comment.likes %}<div class="pc-likes">{{ forward.hot_comment.likes }} 赞{% if forward.hot_comment.replies_count %} · {{ forward.hot_comment.replies_count }} 回复{% endif %}</div>{% endif %}
+                {% if forward.hot_comment.likes %}<div class="pc-likes">{{ forward.hot_comment.likes }} {{ stat_units.likes }}{% if forward.hot_comment.replies_count %} · {{ forward.hot_comment.replies_count }} {{ stat_units.replies }}{% endif %}</div>{% endif %}
             </div>
             {% endif %}
         </div>
@@ -1529,19 +1529,19 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
             {% endif %}
             {% if repost.stats %}
             <div class="stats-bar" style="margin-top: 8px; padding: 6px 0; background: transparent; border: none;">
-                {% if repost.stats.views %}<span class="stat-item"><span>{{ repost.stats.views }}</span> 播放</span>{% endif %}
-                {% if repost.stats.danmaku %}<span class="stat-item"><span>{{ repost.stats.danmaku }}</span> 弹幕</span>{% endif %}
-                {% if repost.stats.likes %}<span class="stat-item"><span>{{ repost.stats.likes }}</span> 赞</span>{% endif %}
-                {% if repost.stats.favorites %}<span class="stat-item"><span>{{ repost.stats.favorites }}</span> 收藏</span>{% endif %}
-                {% if repost.stats.coins %}<span class="stat-item"><span>{{ repost.stats.coins }}</span> 硬币</span>{% endif %}
-                {% if repost.stats.comments %}<span class="stat-item"><span>{{ repost.stats.comments }}</span> 评论</span>{% endif %}
-                {% if repost.stats.reposts %}<span class="stat-item"><span>{{ repost.stats.reposts }}</span> 转发</span>{% endif %}
+                {% if repost.stats.views %}<span class="stat-item"><span>{{ repost.stats.views }}</span> {{ stat_units.views }}</span>{% endif %}
+                {% if repost.stats.danmaku %}<span class="stat-item"><span>{{ repost.stats.danmaku }}</span> {{ stat_units.danmaku }}</span>{% endif %}
+                {% if repost.stats.likes %}<span class="stat-item"><span>{{ repost.stats.likes }}</span> {{ stat_units.likes }}</span>{% endif %}
+                {% if repost.stats.favorites %}<span class="stat-item"><span>{{ repost.stats.favorites }}</span> {{ stat_units.favorites }}</span>{% endif %}
+                {% if repost.stats.coins %}<span class="stat-item"><span>{{ repost.stats.coins }}</span> {{ stat_units.coins }}</span>{% endif %}
+                {% if repost.stats.comments %}<span class="stat-item"><span>{{ repost.stats.comments }}</span> {{ stat_units.comments }}</span>{% endif %}
+                {% if repost.stats.reposts %}<span class="stat-item"><span>{{ repost.stats.reposts }}</span> {{ stat_units.reposts }}</span>{% endif %}
             </div>
             {% endif %}
             {% if repost.pinned_comment %}
             <div class="pinned-comment" style="margin-top: 8px;">
                 <div class="pc-header">
-                    <span class="pc-badge">置顶</span>
+                    <span class="pc-badge">{{ card_text.static_uni_58 }}</span>
                     <span class="pc-author">{{ repost.pinned_comment.author_name or repost.pinned_comment.author }}</span>
                     {% if repost.pinned_comment.time %}
                     <span> · {{ repost.pinned_comment.time }}</span>
@@ -1552,14 +1552,14 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
                 </div>
                 <div class="pc-content">{{ repost.pinned_comment.content }}</div>
                 {% if repost.pinned_comment.likes %}
-                <div class="pc-likes">{{ repost.pinned_comment.likes }} 赞{% if repost.pinned_comment.replies_count %} · {{ repost.pinned_comment.replies_count }} 回复{% endif %}</div>
+                <div class="pc-likes">{{ repost.pinned_comment.likes }} {{ stat_units.likes }}{% if repost.pinned_comment.replies_count %} · {{ repost.pinned_comment.replies_count }} {{ stat_units.replies }}{% endif %}</div>
                 {% endif %}
             </div>
             {% endif %}
             {% if repost.hot_comment %}
             <div class="pinned-comment" style="margin-top: 8px;">
                 <div class="pc-header">
-                    <span class="pc-badge">热评</span>
+                    <span class="pc-badge">{{ card_text.static_uni_46 }}</span>
                     <span class="pc-author">{{ repost.hot_comment.author_name or repost.hot_comment.author }}</span>
                     {% if repost.hot_comment.time %}
                     <span> · {{ repost.hot_comment.time }}</span>
@@ -1570,7 +1570,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
                 </div>
                 <div class="pc-content">{{ repost.hot_comment.content }}</div>
                 {% if repost.hot_comment.likes %}
-                <div class="pc-likes">{{ repost.hot_comment.likes }} 赞{% if repost.hot_comment.replies_count %} · {{ repost.hot_comment.replies_count }} 回复{% endif %}</div>
+                <div class="pc-likes">{{ repost.hot_comment.likes }} {{ stat_units.likes }}{% if repost.hot_comment.replies_count %} · {{ repost.hot_comment.replies_count }} {{ stat_units.replies }}{% endif %}</div>
                 {% endif %}
             </div>
             {% endif %}
@@ -1587,25 +1587,25 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
     <div class="live-section">
         {% if live_cover %}
         <div class="live-cover-wrap">
-            <img src="{{ live_cover }}" alt="直播封面" class="live-cover-img" onerror="this.style.display='none'">
+            <img src="{{ live_cover }}" alt="{{ card_text.live_cover_alt }}" class="live-cover-img" onerror="this.style.display='none'">
         </div>
         {% endif %}
         {% if live_screenshot %}
         <div class="live-cover-wrap">
-            <img src="{{ live_screenshot }}" alt="直播截图" class="live-cover-img" onerror="this.style.display='none'">
+            <img src="{{ live_screenshot }}" alt="{{ card_text.live_screenshot_alt }}" class="live-cover-img" onerror="this.style.display='none'">
         </div>
         {% endif %}
-        {% if live_title %}<div class="title"><span class="live-title-badge">直播</span> {{ live_title }}</div>{% endif %}
+        {% if live_title %}<div class="title"><span class="live-title-badge">{{ card_text.static_uni_49 }}</span> {{ live_title }}</div>{% endif %}
         <div class="live-meta">
-            {% if live_duration %}<span class="uid-tag">已直播 {{ live_duration }}</span>{% endif %}
+            {% if live_duration %}<span class="uid-tag">{{ card_text.static_uni_60 }} {{ live_duration }}</span>{% endif %}
             {% if live_area %}<span class="uid-tag">{{ live_area }}</span>{% endif %}
             {% if live_tags %}<span class="uid-tag">{{ live_tags }}</span>{% endif %}
         </div>
         <div class="live-stats">
-            {% if live_viewers %}<span class="meta-stat">{{ live_viewers }} 观众</span>{% endif %}
+            {% if live_viewers %}<span class="meta-stat">{{ live_viewers }} {{ stat_units.live_viewers }}</span>{% endif %}
             {% if live_rank %}<span class="meta-stat">{{ live_rank }}</span>{% endif %}
-            {% if live_replay_views %}<span class="meta-stat">{{ live_replay_views }} 人看过</span>{% endif %}
-            {% if live_popularity %}<span class="meta-stat">人气 {{ live_popularity }}</span>{% endif %}
+            {% if live_replay_views %}<span class="meta-stat">{{ live_replay_views }} {{ stat_units.seen }}</span>{% endif %}
+            {% if live_popularity %}<span class="meta-stat">{{ card_text.static_uni_61 }} {{ live_popularity }}</span>{% endif %}
         </div>
         {% if live_desc %}<div class="live-desc">{{ live_desc }}</div>{% endif %}
     </div>
@@ -1619,11 +1619,11 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
             {% if uid %}<span class="uid-tag">UID {{ uid }}</span>{% endif %}
             {% if extra_uid %}<span class="uid-tag">{{ extra_uid }}</span>{% endif %}
-            {% if profile_live_room %}<span class="uid-tag">直播间 {{ profile_live_room }}</span>{% endif %}
+            {% if profile_live_room %}<span class="uid-tag">{{ card_text.static_uni_62 }} {{ profile_live_room }}</span>{% endif %}
             {% if official_title %}<span class="uid-tag" style="background:var(--accent-light);color:var(--accent);">{{ official_title }}</span>{% endif %}
             {% if profile_level %}<span class="uid-tag">Lv.{{ profile_level }}</span>{% endif %}
-            {% if profile_birthday %}<span class="meta-stat">生日: {{ profile_birthday }}</span>{% endif %}
-            {% if profile_join_date %}<span class="meta-stat">加入: {{ profile_join_date }}</span>{% endif %}
+            {% if profile_birthday %}<span class="meta-stat">{{ card_text.static_uni_63 }} {{ profile_birthday }}</span>{% endif %}
+            {% if profile_join_date %}<span class="meta-stat">{{ card_text.static_uni_64 }} {{ profile_join_date }}</span>{% endif %}
         </div>
         {% endif %}
         {% if profile_tags %}
@@ -1633,7 +1633,7 @@ body > .card:not(.mica-stage) > * { position: relative; z-index: 1; }
         {% endif %}
         {% if recent_posts %}
         <div style="margin-top:12px;">
-            <div style="font-size:14px;font-weight:600;color:var(--text-main);margin-bottom:8px;">{% if page_type in ["generic", "article"] %}页面内容{% else %}最近动态{% endif %}</div>
+            <div style="font-size:14px;font-weight:600;color:var(--text-main);margin-bottom:8px;">{% if page_type in ["generic", "article"] %}{{ card_text.static_uni_65 }}{% else %}{{ card_text.static_uni_66 }}{% endif %}</div>
             {% for post in recent_posts[:5] %}
             <div style="background:rgba(255,255,255,.55);border-radius:var(--r-inner-md);padding:12px;margin-bottom:8px;">
                 {% if post.sender %}<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">{% if post.sender_avatar %}<img src="{{ post.sender_avatar }}" style="width:20px;height:20px;border-radius:var(--r-circle);" onerror="this.style.display='none'">{% endif %}<span style="font-size:12px;font-weight:600;color:var(--text-main);">{{ post.sender }}</span>{% if post.sender_time %}<span style="font-size:12px;color:var(--text-secondary);">{{ post.sender_time }}</span>{% endif %}</div>{% endif %}

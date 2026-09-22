@@ -33,7 +33,9 @@ from plugins.bot_unified_runtime.domains.meme.sources import (
     meme_library as meme_store_mod,
 )
 from plugins.bot_unified_runtime.domains.meme.sources import meme_library_listener
-from plugins.bot_unified_runtime.sources.meme_library import MemeLibraryStore
+from plugins.bot_unified_runtime.domains.meme.sources.meme_library import (
+    MemeLibraryStore,
+)
 
 
 def _message(text: str, *, session_id: str = "group:1", sender_id: str = "u1") -> IncomingMessage:

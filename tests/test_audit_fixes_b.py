@@ -35,11 +35,13 @@ from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
 # 必须打在真身模块对象上（旧位仅剩 re-export 垫片，补丁打不进真身）。
 from plugins.bot_unified_runtime.domains.music.capabilities import music as music_module
 from plugins.bot_unified_runtime.domains.ops.admin import runtime_admin as ra
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store import (
+    SubscriptionStore,
+)
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
 )
 from plugins.bot_unified_runtime.runtime.settings import RuntimeSettingsStore
-from plugins.bot_unified_runtime.sources.subscription_store import SubscriptionStore
 
 
 def _message(

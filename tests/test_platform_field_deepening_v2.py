@@ -17,7 +17,9 @@ from plugins.bot_unified_runtime.domains.link_parse.parsers import (
     platforms_pixiv,
     platforms_weibo,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+)
 
 
 def test_truncate_keep_links_preserves_self_written_links() -> None:

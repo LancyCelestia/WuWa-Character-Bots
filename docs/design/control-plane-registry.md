@@ -4,7 +4,7 @@
 
 当前是已批准计划的增量，不是全量产品注册完成。`/api/v1/protocol` 保持
 `subfeatures_complete=false`、`reload_drain=false`。路由、内部命令及下表细分项
-由 `runtime/feature_catalog.py` 显式投影，运行时不扫描源码。
+由 `domains/ops/features/feature_catalog.py` 显式投影，运行时不扫描源码。
 本批组合测试：`test_runtime_subfeatures + test_runtime_feature_gate + test_control_plane_services + test_feature_store_integrity + test_control_plane_v1 + test_sqlite_feature_store + test_poke_unified_reaction_b10` → **183 passed**；全量结果以 `COMPACT-CHECKPOINT.md` 顶部为准。
 
 ## Service 与协议

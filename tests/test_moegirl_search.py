@@ -9,6 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+)
 from plugins.bot_unified_runtime.domains.location.capabilities.moegirl import (
     build_moegirl_capability,
     extract_moegirl_query,
@@ -21,7 +24,6 @@ from plugins.bot_unified_runtime.domains.location.data.moegirl import (
     parse_search_payload,
 )
 from plugins.bot_unified_runtime.runtime.base_router import RouteKind
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 
 # ---------------------------------------------------------------- 问句归一化
 

@@ -21,7 +21,7 @@ from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionCursor,
     SubscriptionSpec,
 )
-from plugins.bot_unified_runtime.sources.fetchers.playwright_backend import (
+from plugins.bot_unified_runtime.domains.link_parse.fetchers.playwright_backend import (
     PlaywrightFetchBackend,
 )
 

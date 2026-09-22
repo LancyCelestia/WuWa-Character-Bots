@@ -231,10 +231,10 @@ body {
     {{ blobs_html | safe }}
     <div class="head">
         <div class="head-left">
-            <div class="title">找到 {{ candidates | length }} 首「{{ query }}」相关歌曲</div>
+            <div class="title">{{ card_text.static_song_30 }} {{ candidates | length }} {{ card_text.static_song_31 }}{{ query }}{{ card_text.static_song_32 }}</div>
             {% if platform_name %}<div class="sub">{{ platform_name }}</div>{% endif %}
         </div>
-        <div class="ttl">{{ ttl_seconds }}s 内有效</div>
+        <div class="ttl">{{ ttl_seconds }}s {{ card_text.static_song_33 }}</div>
     </div>
     <div class="list">
         {% for cand in candidates %}
@@ -246,12 +246,12 @@ body {
                 {% set meta_parts = [] %}
                 {% if cand.artist %}{% set _ = meta_parts.append(cand.artist) %}{% endif %}
                 {% if cand.album %}{% set _ = meta_parts.append(cand.album) %}{% endif %}
-                <div class="meta">{{ meta_parts | join(' · ') if meta_parts else '未知歌手' }}</div>
+                <div class="meta">{{ meta_parts | join(' · ') if meta_parts else card_text.song_meta_fallback }}</div>
             </div>
         </div>
         {% endfor %}
     </div>
-    <div class="foot glass">想听哪首就<b>直接回复它的序号数字</b>（如 <b>2</b>），也可以说「点歌 2」；<br>{{ ttl_seconds }}s 内有效，超时不回复则不播放，可重新点歌。</div>
+    <div class="foot glass">{{ card_text.static_song_34 }}<b>{{ card_text.static_song_35 }}</b>{{ card_text.static_song_36 }} <b>2</b>{{ card_text.static_song_37 }} 2」；<br>{{ ttl_seconds }}s {{ card_text.static_song_38 }}</div>
     {# CAP1：胶囊 DOM 由 bridge 从 mica_shell.brand_capsule_html 注入，模板零手写。 #}
     <div class="capsule-foot">{{ capsule_html | safe }}</div>
 </div></div>

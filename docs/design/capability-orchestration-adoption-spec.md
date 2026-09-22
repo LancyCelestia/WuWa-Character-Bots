@@ -3,7 +3,7 @@
 > 席位：WP8D（只出文档，本轮零代码改动）。日期 2026-09-21。
 > 权威依据：**用户裁定第 10 项**——「需要把所有内容都接入中央能力调度层，不仅仅是 AI 绘画」。
 > ⚠ 本裁定**推翻** `docs/audit-20260921.md` §9.5 决策点 **D15 的建议 A（退役壳）**。
-> 本规格的方向是**反向**：把 `runtime/capability_protocols.py` 的中央调度能力当作**目标架构**，
+> 本规格的方向是**反向**：把 `plugins/bot_unified_runtime/runtime/capability_protocols.py` 的中央调度能力当作**目标架构**，
 > 让**全部能力逐域接入**。审计里的「退役」判语在本规格内一律失效，只保留其**取证事实**。
 > 取证等级（沿用 §9.0）：`实证`＝行级源码/席位通读背书；`推演`＝结构判定未实跑。凡结论标级。
 
@@ -15,7 +15,7 @@
    这样 B 案「契约重设计」的假命题被消解（见 §2）。
 2. **两个同名 `CapabilityResult` 分层归并**（地基，Wave 0 必做）：
    `domains/core/contracts/runtime.py:226`（25 字段，呈现契约）= **唯一对外契约、保名**；
-   `runtime/capability_protocols.py:151`（7 字段，执行信封）= **改名 `InvocationResult`**，由 invoker 产出，
+   `plugins/bot_unified_runtime/runtime/capability_protocols.py:151`（7 字段，执行信封）= **改名 `InvocationResult`**，由 invoker 产出，
    把 handler 返回的呈现 `CapabilityResult` 装进 `data`。**不合并成超集**（合并会逼 208 处填执行字段即崩，见 §2）。
 3. **分 5 波**：Wave0 契约地基 → Wave1 已包装能力（media/files/search 22 描述符）经 invoker 通电 →
    Wave2 中央描述符注册表升为唯一真源 → Wave3 逐域接入（按爆炸半径升序）→ Wave4 三硬骨头（根 `__init__.py` /
@@ -50,7 +50,7 @@
   （request_id/kind/title/summary/body/images/audio/video/files/actions/prefix_parts/text_parts/
   confidence/risk_level/privacy_level/send_policy/debug_id/audit_tags/operational_issue/deadline_monotonic…）。
   **全树真实能力都返回它**（D2 §6：chat_reply 8 件统一 import contracts；S10 另一 def 在本目录无消费点）。
-- B：`runtime/capability_protocols.py:151` `CapabilityResult(_StrictModel)`，`extra=forbid, strict, frozen`，7 字段
+- B：`plugins/bot_unified_runtime/runtime/capability_protocols.py:151` `CapabilityResult(_StrictModel)`，`extra=forbid, strict, frozen`，7 字段
   （capability_id/status/data/detail/via/elapsed_ms/attempts）。**生产 import 数=0**，只被壳的 `_result()`/测试用。
 - 交集恰=1（`capability_id`，且缺省语义相反）。双向 `extra=forbid` ⇒ 一侧 `model_dump()` 喂另一侧构造必 `ValidationError`。
 
@@ -127,7 +127,7 @@ handler 构造点无从填 ⇒ 构造期即崩。这是审计报告"实为契约
 > 每波"接入完成判据"= 该波所辖能力满足 §1 七维 + 波内新门绿。
 
 ### Wave 0 · 契约地基（§2，前置一切）
-- **动文件**：`runtime/capability_protocols.py`（B 类改名 `InvocationResult`、`_result()` 返回类型、`data` 内嵌呈现契约不变量）；
+- **动文件**：`plugins/bot_unified_runtime/runtime/capability_protocols.py`（B 类改名 `InvocationResult`、`_result()` 返回类型、`data` 内嵌呈现契约不变量）；
   6 测试件 + `conftest`（重挂新名）。**不碰** contracts、208 构造、root。
 - **新增中央件**：`test_capability_result_unique`（AST：全树 `class CapabilityResult` 计数=1）。
 - **回滚点**：仅 2 文件 + 测试重挂；prod import=0 ⇒ 运行时零变更，git checkout 即净回退。
@@ -174,8 +174,8 @@ location(9) → ops(11) → music(11) → divination(14) → finance(16) → mem
 
 #### 4.2 pipeline 的 17 条旁路（A 类绕 review+render / B 类直 call_api）
 **取证清点（audit §4.1/§4.3 + D6 §5.2/§8，实证）**：
-- A 类（有队列、绕 review/render）：群失败 ack `pipeline.py:943`、提醒 `__init__.py:2954`+`schedule/delivery.py:233`、
-  错误卡 `ops/monitor/error_report.py:1037`、告警 `alerts.py`、每日摘要、邮件/TG 通知 `transport/mail/mail_bridge.py:312/351/369`。
+- A 类（有队列、绕 review/render）：群失败 ack `pipeline.py:943`、提醒 `__init__.py:2954`+`domains/schedule/delivery.py:233`、
+  错误卡 `domains/ops/monitor/error_report.py:1037`、告警 `alerts.py`、每日摘要、邮件/TG 通知 `transport/mail/mail_bridge.py:312/351/369`。
 - B 类（直 `call_api`、三重旁路）：入群欢迎 `__init__.py:5607`（正文手写字面量 `:1163`）、随机图主动发 `:5959/:5965`、cookie 兜底 `:4472`。
 - **收编**（报告 R3-3/R3-4，本规格定为必做，非"可选例外"）：
   - A 类 → **2026-09-21 S-W42 席实证更正：不新建函数**。原计划抽 `render_reviewed_output`/`deliver_via_pipeline`
@@ -191,7 +191,7 @@ location(9) → ops(11) → music(11) → divination(14) → finance(16) → mem
 - 门禁影响：错误卡两段式异步有 `deliver_after≥3s` 下限（时序敏感，须单独回归）；旁路计数告警为新增面。
 
 #### 4.3 主动投递族（唯一触点 + outbound_gate）
-- 各域唯一触点（实证）：emergency=`submit_active_push`（`service/push.py:267`，域内静态门锁死）；
+- 各域唯一触点（实证）：emergency=`submit_active_push`（`domains/emergency_info/service/push.py:267`，域内静态门锁死）；
   campus=U17 收编经 outbound_gate；reminder/assistant/subscribe=各自 delivery/push 现**直 submit**（Wave4 收编为经 invoker 产文本 + outbound_gate 投递）。
 - 结论：接入 = 在描述符表登记这些 id + 让"生成投递内容"经 invoker（D-d/D-e），
   **投递动作仍走 outbound_gate**（静默窗/限流/键规范），与 §5 执行门边界互不重叠。
@@ -236,14 +236,14 @@ location(9) → ops(11) → music(11) → divination(14) → finance(16) → mem
 
 ## 6 AI 绘画（creation 域）在谱里的位置（吸收 · 不开特例）
 
-**实证**：creation 域**自带契约**——`_common/contracts.py`（CreationJobState/UsageLine/AssetRef，严格 Pydantic DTO）、
-`tts/contracts.py`、`image/contracts.py`；壳内两条 `creation` descriptor 只是 `implementation_ref` 元数据指针，
+**实证**：creation 域**自带契约**——`domains/creation/_common/contracts.py`（CreationJobState/UsageLine/AssetRef，严格 Pydantic DTO）、
+`domains/creation/tts/contracts.py`、`domains/creation/image/contracts.py`；壳内两条 `creation` descriptor 只是 `implementation_ref` 元数据指针，
 handler 不注册、invoke 恒 `unavailable`（`_probe_creation_reserved:1410`）。D6 §2(c) + E3 判：creation 落地
 **不依赖壳存在**，只依赖"creation 域契约被某调用点接上"。用户裁定第 10 项既然要"全部接入中央层"，creation 就**不再单独留对接点**，
 而是按 §1 七维作为普通能力接入：
 1. creation.tts / creation.image 在 `CAPABILITY_DESCRIPTOR` 各有一条 descriptor（id、handler_ref 指 creation 域真身、健康探测=provider 配置探测）。
 2. 未配置 provider 时 handler 诚实返回 `unavailable`（保留既有诚实语义），**不为其开 orchestrator 特例**——与任何"未接线能力"同形态。
-3. **消除 E3-4 契约漂移（尺子②直接违规）**：`creation/tts/contracts.py` 现值
+3. **消除 E3-4 契约漂移（尺子②直接违规）**：`domains/creation/tts/contracts.py` 现值
    `TTS_MAX_TEXT_CHARS=3000 / TTS_MAX_DURATION_SECONDS=60.0 / TTS_MAX_ASSET_BYTES=20MiB / TTS_SPEED_MIN=0.75 / MAX=1.25`
    与 Wave G 中央 TTS 契约现役 `2000 / 131s / 8MiB / 0.6–1.65` **四组全互斥**，且 60s 是 Wave G 明文作废的旧判据。
    **接入即收敛**：creation 的 TTS 数值改为**引用 Wave G 中央 TTS 契约单一来源**（`bot_tts_*` / contract-layer 规格件），
@@ -304,7 +304,7 @@ handler 不注册、invoke 恒 `unavailable`（`_probe_creation_reserved:1410`�
 
 ## 附录 A · 证据坐标索引（供实现席 30 秒复核）
 
-- 两契约：`domains/core/contracts/runtime.py:226`（25 字段呈现）· `runtime/capability_protocols.py:151`（7 字段执行）· `_result:171`·`CapabilityInvoker:412`·`validate_registry:642/695-699`·`_probe_creation_reserved:1410`。逐字段对照见 `deep-D6-log.md §3`。
+- 两契约：`domains/core/contracts/runtime.py:226`（25 字段呈现）· `plugins/bot_unified_runtime/runtime/capability_protocols.py:151`（7 字段执行）· `_result:171`·`CapabilityInvoker:412`·`validate_registry:642/695-699`·`_probe_creation_reserved:1410`。逐字段对照见 `deep-D6-log.md §3`。
 - 中央注册表：`domains/chat_reply/runtime/capability_registry.py` `ROUTE_CAPABILITY_DECLARATIONS:97`(35)·`INTERFACE_DECLARATIONS:317`(20)·`HELP_TOPIC_DECLARATIONS:457`(78)·`CONTROLLED_INTERNAL_CAPABILITIES:550`(43)。
 - 执行门：`domains/chat_reply/runtime/pipeline.py:532-548`（fail-closed，BLOCKED「这项功能暂时不可用」）· `domains/ops/admin/feature_gate.py:89-99` · 装配 `__init__.py:3742-3746/4123`。边界与"AGENTS 旧口径推翻"见 `deep-D4-log.md §2`。
 - 208 构造分布：`deep-D6-log.md §2(b)`（域代理表见 §3）。旁路清单：audit §4.1/§4.3 + `deep-D6-log.md §5.2/§8`；直 submit ≥7 触点（root 2954/3065/3223/3372、pipeline 894/943、error_report 1037、schedule/delivery 233）。

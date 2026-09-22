@@ -42,17 +42,17 @@ from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionFetchResult,
     SubscriptionTarget,
 )
+from plugins.bot_unified_runtime.domains.subscribe.adapters.social_v2 import (
+    TwitterGraphQLClient,
+    WeiboSubscriptionAdapterV2,
+    _reached_cursor,
+)
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_scheduler import (
     PlatformThrottle,
     SubscriptionScheduler,
 )
 from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store_v2 import (
     SubscriptionStoreV2,
-)
-from plugins.bot_unified_runtime.sources.subscriptions.social_v2 import (
-    TwitterGraphQLClient,
-    WeiboSubscriptionAdapterV2,
-    _reached_cursor,
 )
 
 _NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)

@@ -18,7 +18,7 @@
 - 路由侧：席位 `NORTHBOUND`、能力 id `bot.northbound`；闭包 `domains/finance/capabilities/market.py:build_northbound_capability(config, *, render_backend)`，谓词 `is_northbound_command`（短文本、无链接；「南向资金」不在本入口语义内，不触发属预期）。
 - 数据真身：`domains/finance/data/market_data.py` —— `NorthboundFlow`（单通道当日成交快照，**无净买入字段**）、`fetch_northbound_flows(timeout_seconds, cache_seconds)`、`format_northbound_brief`、`reset_northbound_cache()`；每通道独立网络出口 `_fetch_northbound_channel(mutual_type, ...)`，行解析 `_parse_northbound_flow` 缺交易日或全部数值缺失就返回 `None`（该通道缺席，不造行）。
 - 出卡：与股指/商品/债券共用 `_card_common_payload` + `_render_finance_sections_card`（sections/rows 契约）。
-- 量纲：上游成交额以百万计，卡面按亿元展示，换算链 `/100` 有回归锁盯着，防"量级差 100 倍"这种静默错。
+- 量纲：上游成交额以百万计，卡面按亿元展示，换算链 `/100` 有回归锁盯着，防"量级差两个数量级"这种静默错。
 
 ## 开关与参数
 

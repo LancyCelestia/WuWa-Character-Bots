@@ -44,7 +44,7 @@
 - `bot_meme_library_enabled`（False，生产已开）：库与监听总闸。
 - `bot_meme_library_dir` / `bot_meme_library_db_path`：库目录与索引库，均在
   `path_fields` 内重映射。
-- `bot_meme_library_max_file_bytes`（5 MiB）、`bot_meme_library_max_files`、
+- `bot_meme_library_max_file_bytes`（字节上限以 `config.py` 该字段为准）、`bot_meme_library_max_files`、
   `bot_meme_library_max_age_days`：入库体积上限与 FIFO/TTL 剪枝（表情库是可再生
   缓存，与媒体归档的永久保存相反）。
 - `bot_meme_library_cooldown_seconds`（20）：同人同会话发送冷却，防刷屏。

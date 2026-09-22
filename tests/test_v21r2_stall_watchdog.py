@@ -16,10 +16,10 @@ import time
 
 import pytest
 
-from plugins.bot_unified_runtime.runtime import loop_watchdog
-from plugins.bot_unified_runtime.runtime.loop_watchdog import LoopWatchdog
+from plugins.bot_unified_runtime.domains.ops.monitor import loop_watchdog
+from plugins.bot_unified_runtime.domains.ops.monitor.loop_watchdog import LoopWatchdog
 
-LOGGER_NAME = "plugins.bot_unified_runtime.runtime.loop_watchdog"
+LOGGER_NAME = "plugins.bot_unified_runtime.domains.ops.monitor.loop_watchdog"
 
 
 class FakeClock:

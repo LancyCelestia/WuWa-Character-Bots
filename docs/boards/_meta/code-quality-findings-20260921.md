@@ -1,5 +1,8 @@
 # 代码质量与结构审计发现台账（2026-09-21）
 
+> **计数口径（AGENTS 第一部分规则 10）**：本册「审计范围与方法」段与各级标题里的「N 条 / N 组」是
+> **发现当时的时点值**；现役开口项数以本册现算（逐条 P0 / P1 / P2 编号标题，合并原始与追加块）为准。原数字与处置结论一律保留，不改写、不删。
+
 Status: STARTED
 
 > 只读审计产物。判据 = `docs/boards/_conventions.md`。分级 P0/P1/P2 见其第六节。
@@ -25,9 +28,9 @@ Status: STARTED
 
 # 审计范围与方法（可复跑）
 
-只读扫描：`plugins/bot_unified_runtime/` 全树 651 个 `.py`，其中非垫片真身 490 个
-（判据=文件头 2500 字符内不含 `Compat shim|re-export|兼容再导出|再导出`）；AST 扫
-公开符号碰撞（48 组同名异构）、模块级可变全局、吞异常、缺 docstring；`tests/`
+只读扫描：`plugins/bot_unified_runtime/` 全树 `.py` 总数与非垫片真身数均以本次扫描现算为准
+（判据=文件头首部窗口内不含 `Compat shim|re-export|兼容再导出|再导出`）；AST 扫
+公开符号碰撞（48 组同名异构＝当时 AST 普查时点值，现数须重跑该普查，本册不复算）、模块级可变全局、吞异常、缺 docstring；`tests/`
 AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smoke.py` 逐条读
 以确认「放置规范有无执法」。未跑 dev.ps1 全量、未改任何已存在文件。
 
@@ -59,8 +62,8 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
   `domains/transport/sender/worker.py` 组装外发文本处（含 `text_fallback`
   与降级文本两条路径）统一过一遍；producer 侧不动、根 `__init__.py` 不动。
   同时在 `domains/core/contracts/` 的出站契约上写明「worker 是最后一道脱敏点」。
-- **能杀行为的验收判据**：新增 `tests/test_outbound_redaction_choke.py`——
-  造一条 `text_fallback` 含 `C:\Users\LancyCelestia\x.png`、`BOT_OPENAI_API_KEY=sk-abc`
+- **能杀行为的验收判据**：拟建·尚不存在（2026-09-21 审计时点计划新增，至今未落地；相邻 `tests/test_campus_digest.py`/`tests/test_error_report.py` 只覆盖各自出站面，非本条咽喉验收）`tests/test_outbound_redaction_choke.py`——
+  造一条 `text_fallback` 含一个伪造本机绝对路径与 `BOT_OPENAI_API_KEY=sk-abc`
   的 SendRequest，走 `queue.submit` + worker 真实出站桩，断言落到 adapter 的
   文本里两者均被打码；变异注毒：把咽喉点替换为 `lambda s: s` → 该用例必红。
   现有 `test_reviewer_media_visibility.py` 只测 pipeline 面，杀不到这条。
@@ -84,13 +87,13 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
   字样而不是要求调用）；缺省值按「保守不上线」留 False，与规范 §七.6
   「不得私自把放开改回关闭」的口径相反。
 - **最小修法**：①六个 producer 改 `submit_active_push(send_queue, request, gate, dedupe_family=...)`，
-  `gate` 经 `runtime/service_wiring.py` 注入（`__init__.py` 的四处由主会话串行改）；
+  `gate` 经 `domains/chat_reply/runtime/service_wiring.py` 注入（`__init__.py` 的四处由主会话串行改）；
   ②`build_outbound_gate_settings` 的读点登记进 `_RUNTIME_HOT_OVERRIDE_FIELDS`
   （或维持重启口径、把注释里的「可热改」措辞按 #47 先例改口）；
   ③缺省值 `False→True` **不在本波做**，进表③交用户裁。
 - **能杀行为的验收判据**：扩展 `tests/test_outbound_gate.py`：参数化六个 producer，
   在安静时间窗内跑一轮，断言回执为 DEFERRED（`deliver_after` 指向窗口结束）且
-  `send_requests` 表里不出现窗口内的发送记录；同一主体连投 3 条断言第 3 条 SKIPPED。
+  `send_requests` 表里不出现窗口内的发送记录；同一主体连投到越出每主体限流阈值（阈值以 `outbound_gate.py` 真身为准）时，断言越界那条被记 SKIPPED。
   变异注毒：把任一 producer 改回 `send_queue.submit(request)` ⇒ 该 producer 用例红
   （当前门杀不到，因为根文件的锁只查字样）。
 - **涉集中面**：是（根 `__init__.py`、`config.py` 缺省值、`settings.py` 白名单）→ 主会话串行。
@@ -117,17 +120,17 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
 
 # 第二部分：P1（本波内修 + 各落一条锁，十二条）
 
-## P1-1 根 `__init__.py` = 9163 行、`_register_nonebot_handlers` 单函数 5390 行（B02）
+## P1-1 根 `__init__.py` 与 `_register_nonebot_handlers` 单函数体量超标（B02）
 
 - **现象**：装配层上帝文件，所有域的 matcher、调度器、旁路（错误卡、校园、摘要、
-  称谓）集中一处；函数级 `>200 行` 三处（`_register_nonebot_handlers` 5390、
+  称谓）集中一处；函数级超出 `> 行数上限` 有三处（`_register_nonebot_handlers` 5390、
   `_incoming_from_nonebot_event` 229、`_register_emergency_info_scheduler` 205）。
   并且被**行号棘轮**锁死：`test_outbound_registry_campus_coordinate_is_live` 现为全量
   唯一红（登记 5027 ≠ 活体 5032），任何人改根文件都会撞红。
 - **根因**：NoneBot matcher 必须在插件顶层注册 + 历次波次为「不顶漂坐标」刻意用
   纯插入写法（#47 第⑩项、U17 均如此声明），把行号当契约。
 - **最小修法**：分域外迁到 `domains/<域>/service/wiring.py`（每域一个
-  `register_x(matcherRegistrar, deps)`），根文件只留一张调用表（≤200 行）；
+  `register_x(matcherRegistrar, deps)`），根文件只留一张调用表（≤ 行数上限，上限以规范 §七.1 为准）；
   坐标锁改为「符号存在 + 注册语义」（用 `HandlerRegistry` 快照比 priority/谓词），
   禁行号断言。
 - **验收判据**：新门 `tests/test_root_wiring_placement`（拟建） 断言根 `__init__.py`
@@ -153,16 +156,16 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
 
 ## P1-3 计费/账单两套同名异构真身，且生产零消费者（B04）
 
-- **现象**：`domains/chat_reply/llm_engine/usage_service.py`（1634 行）自带
+- **现象**：`domains/chat_reply/llm_engine/usage_service.py`（体量超标）自带
   `ChargeLine / Settlement / PriceRevision / UsageQuote / UsageAttempt / money_str /
   normalize_channel / resolve_price / quote_usage`，与同目录 `billing_entities.py` +
   `billing_pricing.py` + `billing_service.py` + `pricing.py` 共 5 件、同名但 AST 不等价
   （`quote_usage` 27441 vs 40859）；两者互不 import，各有测试
   （`test_billing_service_v21.py` / `tests/test_usage_billing_v2`（拟建）→ 实为 `test_usage_billing_v21.py`），
   且**包外零 import 消费者**（全仓 grep 仅命中彼此、注释、两个测试）。生产账单真身
-  是 `llm_engine/ledger.py`。
+  是 `domains/chat_reply/llm_engine/ledger.py`。
 - **根因**：V2.1 计费 M1 规格由两波各自实现，未接线也未删；`creation/_common/contracts.py`
-  注释里把 `llm/billing_entities.py` 写成「计费权威实现」→ 文档与代码互相指认。
+  注释里把 `domains/chat_reply/llm_engine/billing_entities.py` 写成「计费权威实现」→ 文档与代码互相指认。
 - **最小修法**：定 `billing_*` 为唯一真身，`usage_service` 复用其 DTO（删除重复定义）；
   若 M1 仍未上线，则整族在板块卡上诚实标 `reserved` + 零消费者，并把 5 件并成
   `entities/pricing/service` 3 件。
@@ -173,7 +176,7 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
 
 ## P1-4 事件存储两套真身，异常各一颗（B09）
 
-- **现象**：`control_plane/events.py:RuntimeEventBus`（472 行，自开 sqlite、
+- **现象**：`control_plane/events.py:RuntimeEventBus`（体量超标，自开 sqlite、
   `CursorExpired`/`EventStoreUnavailable`、`DETAIL_KEYS`/`EVENT_SOURCES`）与
   `domains/ops/monitor/event_store.py`（同名异常、另一库、由
   `domains/ops/monitor/event_service.py` 独用），零交叉 import。B09 板块只该有一块
@@ -207,11 +210,11 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
 
 ## P1-6 结构规范三条硬门无执法（B10）
 
-- **现象**：`scripts/runtime_layout_smoke.py` 的 14 条检查全在 runtime 数据/资产/
+- **现象**：`scripts/runtime_layout_smoke.py` 的检查项全在 runtime 数据/资产/
   字节码面，**没有一条**管代码落点。实测漂移：真身落在旧根层
-  `sources/acg_search.py`（473 行）、`sources/search_intent.py`（314 行）；17 个
-  域根裸 `.py`（`render/reviewer.py`、`schedule/delivery.py`、`media/digest.py` 等）；
-  21 个未在规范 §一.2 登记的层名（`pipeline` `llm_engine` `api` `projection`
+  `domains/core/search/acg_search.py`（体量超标）、`domains/core/search/search_intent.py`（体量超标）；
+  域根裸 `.py`（`domains/render/reviewer.py`、`domains/schedule/delivery.py`、`domains/media/digest.py` 等）；
+  未在规范 §一.2 登记的层名（数量以门现算为准）（`pipeline` `llm_engine` `api` `projection`
   `adapters` `fetchers` `support` `parsers` `poi` `knowledge` `image` `tts`
   `campus` `daily` `auto_send` `timesync` `mail` `artifacts` `assets`
   `integrations` `reactions`）。
@@ -222,7 +225,7 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
   contracts/runtime）除 `__init__` 与白名单外只准是垫片；②`domains/<域>/<文件>.py`
   必须带层目录（白名单：`domains/core` 三件唯一口径 + 各域 `contracts.py`）；
   ③层名集合与 `_conventions.md` §一.2 双向一致（多一个就红，逼着登记或改结构）。
-- **验收判据**：门上线首跑即红 ⇒ 按现况写白名单（把 2 个真身 + 17 裸文件 + 21 层名
+- **验收判据**：门上线首跑即红 ⇒ 按现况写白名单（把真身、裸文件、层名
   显式记账为存量、只减不增）；注毒：在 `domains/finance/` 根新建 `.py` 或在旧根
   写一个新真身 → 该门红。
 - **涉集中面**：否（新增测试件 + 规范文档一行）。
@@ -245,9 +248,9 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
 
 ## P1-8 KB 检索门是纯存在性锁（假绿，B04）
 
-- **现象**：`tests/test_kb_wiki_retriever_wiring.py` 三条用例合计 0 条行为断言——
+- **现象**：`tests/test_kb_wiki_retriever_wiring.py` 三条用例合计无行为断言——
   只查 `providers.py` 文本里有没有 kb_wiki 字样、模块符号 callable、导入路径可解析。
-  同一链路真身 `domains/chat_reply/character/vector_knowledge.py`（3098 行）含 12 处
+  同一链路真身 `domains/chat_reply/character/vector_knowledge.py`（体量超标）含多处
   静默 `except: pass`（含 `_fsync_path` 吞 OSError 而 docstring 承诺「掉电也要留在
   盘上」、`PRAGMA journal_mode=WAL` 失败静默）。⇒ 「检索已接线」的绿灯完全可能对应
   线上零召回。
@@ -261,25 +264,25 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
 
 ## P1-9 链接解析三处平台逻辑各两份实现（B05）
 
-- **现象**：`build_wbi_signed_url` 在 `platforms_bilibili.py`(2598) 与 `parsers/wbi.py`(1654)
-  各一份且不等价；`build_request_headers` 在 `parsers/context.py`(1264) 与
-  `parsers/http_util.py`(2478) 各一份（两者互 import，即 WP1 凭证咽喉与旧 headers
-  并存）；6 个 `parse_<平台>`（kurobbs/miyoushe/skland/xiaoheihe/mihuashi/huajia）在
+- **现象**：`build_wbi_signed_url` 在 `platforms_bilibili.py`(2598) 与 `domains/link_parse/parsers/wbi.py`(1654)
+  各一份且不等价；`build_request_headers` 在 `domains/link_parse/parsers/context.py`(1264) 与
+  `domains/link_parse/parsers/http_util.py`(2478) 各一份（两者互 import，即 WP1 凭证咽喉与旧 headers
+  并存）；若干 `parse_<平台>`（kurobbs/miyoushe/skland/xiaoheihe/mihuashi/huajia）在
   `platforms_generic.py` 与专属平台文件同名并存。
 - **根因**：专属解析器逐批改、generic 兜底未回收；WP1 的
   `scrub_credentials_for_target` 落在 http_util 但旧 context 侧未退役。
 - **最小修法**：wbi 单真身（generic/bilibili 改调用）；`context.build_request_headers`
-  降为再导出并让 `credentials_allowed_for_target` 成为唯一判据；generic 侧 6 个
+  降为再导出并让 `credentials_allowed_for_target` 成为唯一判据；generic 侧若干
   同名函数改名 `_*_fallback` 或按现有分发删除。
 - **验收判据**：parsers 回归族（`test_parsers_batch_a/a2` + WP1 凭证门）+ 新 AST
   唯一性门（同名 `build_*`/`parse_*` 顶层命中数 == 1，`parse_*_fallback` 白名单）；
-  注毒：删 wbi 真身的 UA 头 ⇒ bilibili 403 用例红（当前若走的是第二份则不会红 =
+  注毒：删 wbi 真身的 UA 头 ⇒ 打到 bilibili 的那条用例转红（当前若走的是第二份则不会红 =
   正证哪份活着）。
 - **涉集中面**：否。
 
 ## P1-10 中央调度信封与业务 handler 混写一处（WP8 Wave 1–4 挂账，B02）
 
-- **现象**：`plugins/bot_unified_runtime/runtime/capability_protocols.py` 1984 行同时承载契约
+- **现象**：`plugins/bot_unified_runtime/runtime/capability_protocols.py` 体量超标，同时承载契约
   （`InvocationResult/CapabilityRequest/枚举`）、三颗注册表、共享线程池全局
   `_EXECUTOR`，以及 media/link_parse/search 各域的**具体 handler**
   （`_handle_media_vision_image`、`_handle_media_ocr`、`_handle_media_anime_ip`、
@@ -291,7 +294,7 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
   `domains/core/dispatch/`；各 `_handle_*` 迁回所属域 `capabilities/`，中央件只按
   descriptor 查表。旧路径 `plugins/bot_unified_runtime/runtime/capability_protocols.py` 留垫片。
 - **验收判据**：`tests/test_capability_result_unique.py` 扩为「dispatch 契约件内
-  零域专属 handler 符号」AST 门；新文件行数上限门（>800 行须注释理由，规范 §七.1）；
+  零域专属 handler 符号」AST 门；新文件行数超限须注释理由（阈值以规范 §七.1 为准）；
   注毒：在中央件里再加一个 `_handle_xxx` → 门红。
 - **涉集中面**：部分（Wave 1–4 属用户已挂账的裁定波）。
 
@@ -299,7 +302,7 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
 
 - **现象**：`domains/subscribe/adapters/{bilibili_adapter,social_v2,xiaohongshu_adapter,music_v2}.py`
   四个模块在 import 期各自 `ADAPTERS[...] = ...`，注册表分散、依赖 import 顺序、
-  无锁；`adapters/music_v2.py` 还留 `_REMOVED_PLATFORM_LABELS`（规范 §七.5
+  无锁；`domains/subscribe/adapters/music_v2.py` 还留 `_REMOVED_PLATFORM_LABELS`（规范 §七.5
   「删除即删除，不留 `# removed` 注释 / 假导出」）。
 - **根因**：adapter 逐平台加装，没有装配期注册口。
 - **最小修法**：`ADAPTERS` 改为 `domains/subscribe/registry.py` 内
@@ -323,8 +326,8 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
   违反规范 §七.3「跨线程共享必须显式锁或不可变快照」。
 - **根因**：性能波（Phase 1/2）就地加缓存，未统一缓存件。
 - **最小修法**：读多写少者改 `functools.lru_cache`/`MappingProxyType` 不可变快照；
-  确需可变异步写者包一层 `domains/core/caches.py:TtlCache`（内部持锁）。
-- **验收判据**：并发锁测试（8 线程 × 200 次读写同 key：无异常、无半条记录、
+  确需可变异步写者包一层（拟建·尚不存在，2026-09-21 审计时点：全树无 `caches.py`/`TtlCache`）`domains/core/caches.py:TtlCache`（内部持锁）。
+- **验收判据**：并发锁测试（多线程 × 多次读写同 key：无异常、无半条记录、
   `len(cache)` 单调）；注毒：去掉锁改裸 dict ⇒ flaky 必现红；AST 门禁止
   模块级 `NAME = {}` 被同文件函数写入且文件内无 `Lock()`（存量白名单只减不增）。
 - **涉集中面**：否。
@@ -415,7 +418,7 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
   （今天这发注毒是绿的 = 正是本条要杀的形态）；`health_probe` 为空的在册项须在账上显式标「不执法」而非默认受管。
 - **涉集中面**：是（`plugins/bot_unified_runtime/runtime/capability_protocols.py` 属主会话持有面）→ 串行。
 
-### P1-15 降级链共用同一条超时窗口，兜底腿只剩 1 秒地板（B02/B05）
+### P1-15 降级链共用同一条超时窗口，兜底腿只剩极短地板（地板值以 `_run_fallbacks` 真身为准，B02/B05）
 
 - **级别**：P1
 - **位置**：`plugins/bot_unified_runtime/runtime/capability_protocols.py::_run_fallbacks` 的
@@ -440,14 +443,14 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
 - **位置**：`plugins/bot_unified_runtime/runtime/capability_protocols.py::CapabilityInvoker.invoke`（`future.result(timeout=budget)`
   阻塞在 `_MAX_WORKERS=4` 的 cap-proto 池）×`domains/chat_reply/runtime/pipeline.py::offload_capability`
   （chat-pipeline 池，缺省 worker 8 / 在途 16）
-- **现象**：一次重型命令同时占两池各一条线程；8 条 chat worker 可以合法地全部卡在 4 条 cap-proto 线程上。
+- **现象**：一次重型命令同时占两池各一条线程；chat worker 池的全部线程可以合法地卡在更小的 cap-proto 线程数上（池容量以真身为准）。
   排队等待计入 `budget` ⇒ 并发重型能力在飞时，后到的**尚未开跑即可 TIMEOUT**，被换成温和短句。
   该席实测在册行里有多枚同时在 `OFFLOADED_CAPABILITY_IDS`（重型渲染族），属正常峰载而非理论态；
   另有在册但不在 offload 集的行 ⇒ `future.result` 直接冻住事件循环。
 - **根因**：把「能力自己的预算」与「中央队列等待」用同一个数计，且两池无背压/无隔离声明。
 - **影响**：越忙越像「bot 说不上话」，且失败面（TIMEOUT）不告警（见 P1-17），线上只能从审计里猜。
 - **现状**：未修（评审裁决 I-2，本席未见落地形态）。
-- **验收判据**：并发 N+1 条在册能力的确定性测试 ⇒ 断言「排队时长不计入 `budget`」或
+- **验收判据**：并发「在册能力数再加一」的确定性测试 ⇒ 断言「排队时长不计入 `budget`」或
   「超员走明确 BUSY 终态」；注毒：把 budget 计算改回含排队 ⇒ 该锁红。
   并把「在册且 `timeout_seconds > 5` 者必在 `OFFLOADED_CAPABILITY_IDS`」做成集合锁（只准降不准升）。
 - **涉集中面**：是（中央壳 + pipeline）→ 串行。
@@ -653,26 +656,26 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
 - **现状**：未修（非本席面，仅登记）。
 - **判据**：既有旧路径消费边门（`test_v21*` 族）在该文件命中数归零。 **涉集中面**：否。
 
-## 丁、须用户裁定（四条；指针 `decisions/PENDING-RULINGS-20260922.md` 第 9–12 条）
+## 丁、须用户裁定（指针 `decisions/PENDING-RULINGS-20260922.md`「丁」组条目）
 
 > 四条**都不是 bug 现场**，而是「机制已落、生效与否取决于一次授权」的明账。裁定前一律按
 > 「未生效」记账，不得写进「已完成」（铁律 5）。
 
-- **待裁-1（第 9 条）出站防风暴闸缺省关 ⇒ 键形核验 / 安静时间顺延 / 每主体限流 / 闸审计四件事现网一件没发生**。
+- **待裁-1（`PENDING-RULINGS-20260922.md`「丁」首条）出站防风暴闸缺省关 ⇒ 键形核验 / 安静时间顺延 / 每主体限流 / 闸审计四件事现网一件没发生**。
   位置 `config.py::Config.bot_outbound_gate_enabled`（缺省 False，生产 `.env` 未设该键）。
   影响：甲-1 修好的键形边界与「所有内容走中央出口」的口径都只在关态直通下**不显形**。
   现状＝已登记待裁。判据（开闸前后各一次）：开态真投递成功活性锁 + 静默窗内 `DEFERRED` 回执锁；
   开之前须先定每分钟/每小时限额。**推荐序**：先紧急域、再摘要（该件原话）。
-- **待裁-2（第 11 条）层 2 不执法 feature gate**。位置 `plugins/bot_unified_runtime/runtime/capability_protocols.py::CapabilityInvoker.invoke`
+- **待裁-2（`PENDING-RULINGS-20260922.md`「丁」次条）层 2 不执法 feature gate**。位置 `plugins/bot_unified_runtime/runtime/capability_protocols.py::CapabilityInvoker.invoke`
   （`gate_feature_id` 在册、由描述符派生面赋值，**invoke 链零读点**；两席独立同结论）。
   影响：功能开关只在层 1 生效 ⇒ 「能力在册即受治理」不成立。现状＝已登记待裁。
   判据：接与不接都要留痕——接则注毒「gate 关闭 ⇒ 执行前被拒」必红；不接则在册表须显式标「字段不执法」，
   禁止任何文档称其执法。注意它与 P1-14（健康探针）是**两个不同的不执法**。
-- **待裁-3（第 10 条）中央超时不抛 ⇒ 层 1 诊断卡对「能力挂死」完全不触发**。
+- **待裁-3（`PENDING-RULINGS-20260922.md`「丁」条目）中央超时不抛 ⇒ 层 1 诊断卡对「能力挂死」完全不触发**。
   位置 `plugins/bot_unified_runtime/runtime/capability_protocols.py`（超时终态不带原始异常、现亦不回 issue，见 P1-17）。
   影响：用户只看到温和短句，管理员只能翻审计。现状＝已登记待裁（选项 A/B/C 已给，推荐 A）。
   判据：无论选哪项，须有一把锁说明「能力挂死」这条路径**在运维面可见**（A＝可观测、B＝发卡、C＝聚合）。
-- **待裁-4（第 12 条）空角色＝系统主体豁免是否收紧**。
+- **待裁-4（`PENDING-RULINGS-20260922.md`「丁」条目）空角色＝系统主体豁免是否收紧**。
   位置 `plugins/bot_unified_runtime/runtime/capability_protocols.py`（invoker 权限门 `getattr(decision,"actor_roles",()) or ()` 视作系统主体，
   越过能力自身角色下限）。实测已坐实方向：对 admin 下限的在册能力投 `roles=()` **确实穿过并执行了 handler**。
   今天不可从真人消息抵达，但那三重保证是**跨模块口头不变量**（入站校验器塞 "user" / `resolve_roles` 恒含 user /
@@ -683,11 +686,11 @@ AST 扫 xfail/skip 装饰器与存在性门比率；`scripts/runtime_layout_smok
 
 ## 本块小结（按分级计数，来源＝上方条目）
 
-已修并留判据 8 条｜P1 开口 8 条（P1-13…P1-20）｜P2 登记 13 条（P2-1…P2-13）｜待裁 4 条。
+已修并留判据若干｜P1 开口（P1-13…P1-20）｜P2 登记（P2-1…P2-13）｜待裁若干，各计数以本文件上方条目现算为准。
 标「未取证」的项：P1-20（收紧谓词是否已落地）、P2-8（旧函数名真名）、P2-13（行号坐标）；
 P1-13 的两枚治理缺口已转待裁-1/待裁-2 明账，审计文本本身仍未修订。
 
-### 2026-09-22 统一波冻结窗追加（P2 开口 2 条，均现算取证）
+### 2026-09-22 统一波冻结窗追加（P2 开口追加，均现算取证）
 
 - **P2｜缺门：媒体内容身份可以有第二份实现而无人拦**。中央唯一入口 = `plugins/bot_unified_runtime/domains/media/digest.py`
   （`media_digest` / `media_digest_file`），消费方已覆盖 TTS/归档/渲染/meme/creation，但**没有任何一把门**禁止
@@ -703,3 +706,120 @@ P1-13 的两枚治理缺口已转待裁-1/待裁-2 明账，审计文本本身�
   最小修法：改 `media_digest(image_bytes)`；若判重键格式不许变（库里已有 md5 行），则保留旧列、新增 sha256 列并行写，
   按 AGENTS 运行数据保护条款**不清洗存量**。归口：meme 域 owner；上面那把门落地时它必须进登记面（写明 home 与理由），
   迁完摘牌即让上限降一格。
+
+---
+
+# 追加块：2026-09-22 规格统一波（taxonomy wave）机器门与归属机制面（S97 席补记，2026-09-22）
+
+> 来源＝本波席位报告（`.superpowers/sdd/2026-09-22-taxonomy/`：SEAT-S70 / S79 / S80 / S81 / S88 的既有结论，本席不自创新论断）。
+> SEAT-S94 交卷时不在盘 ⇒ 该席点名的 `scripts/physical_placement_census.py` 读侧「读不到当缺键」缺陷**不在本块记账**，由持有其结论的席交卷后另录。
+> 本席只记账不修码。所引行号坐标经本席现算复核存在；两处例外如实记：S70 旧坐标 `scripts/spec_gates_census.py:334-335`
+> 已被 S78 施工覆盖（原缺陷现状见甲-1「已修」），`docs/templates/sdd-ledger.md` 的别名两行仍命中。
+> 开口项数以本块编号标题现算为准（AGENTS 铁律 10）；文中一切「N 枚 / 余量 N」均为发现当时值并就地标「当时值」。
+
+## 甲、本块内已闭环（已修·归属，只留判据指针，不作开口项）
+
+1. **`BOARD-AUTO` 页级信任可被第二对标记藏裸事实（P-S70-1，Critical，B10）**——旧判据对板块生成页走**页级**
+   `b_ok` 放行 ⇒ 同一枚生成页再嵌一对 `BOARD-AUTO` 注释、第二段里写裸计数，行级面A 与 boards 账两边都不记
+   （S70 内存注毒实证，受害面枚数为其当时值、现数以门自身 `UNVERIFIED_AUTO_ZONE` 计数为准）。
+   现状＝**已修·归属 S78**（本席现算复核：`scripts/spec_gates_census.py::_auto_zone_verified` 板块分支已为**逐段**
+   重渲染比对，段数或内容不符 ⇒ `UNVERIFIED_AUTO_ZONE` 判红；件内 P-41 施工注释自证与 S78 简报「多一段即红」裁定同形）。
+   判据指针：`BOT_AUTOSYNC=0 python scripts/spec_gates_census.py --report` 现算。复发型复发时应被同一条腿再抓。
+2. **被两任前席点名却无人清零的求助兜底文案（P-S79-1 过程形态，B06）**——简报前提「`default('…CJK…')` 枚数为零」
+   被 S79 现算证伪：一枚住 `plugins/bot_unified_runtime/domains/render/card_render/templates/error_card.html`
+   （S44R/S61 两席均点名「不碰」＝点名 ≠ 清账）。现状＝**已修·归属 S79**（改参数引用
+   `card_text.error_help_fallback`，唯一落点 `domains/render/card_render/bridge.py::_CARD_TEXT`，HTML/PNG 字节等值已证）。
+   判据指针：`tests/test_rendering_contract.py::test_card_templates_have_zero_hardcoded_cjk_fallback_literals`
+   （注毒⇒红、还原⇒绿，S79 实跑）。
+3. **归属投影「声明源不在盘」态走着第二条码路（S88 变异探针逼出的真缺陷）**——拔掉渲染层该态照样点名 ⇒
+   七态诊断被旁路。现状＝**已修·归属 S88**（并回唯一出口 `main(["--check"], repo=...)`；行为锁
+   `tests/test_doc_ownership_ledger.py::test_s88_state_absent_is_named_and_says_generate`，本席现算确认该席
+   `test_s88_` 族用例在盘）。
+
+## 乙、开口项 · P1（门禁假绿 / 静默吞失败——本波内应修并各落一条锁）
+
+### P1-21 `@aliases` 在单一模板内非单射 ⇒ 同义别名可静默吞掉真·distinct 节（B10）
+
+- **级别**：P1（S81 原判 Critical；「缩小扫描面同型」的门禁假绿）
+- **位置**：`docs/templates/sdd-ledger.md` 头注 `@aliases` 两行——`清单` 同时是槽位 `账目` 与 `卫生` 的别名
+  （本席现算复核：两行声明均命中）；执法侧 `check_sections`/`_match_slot`（S63 实现的三级序认名）
+- **现象**：`_match_slot` 按 sections 声明序命中 ⇒ 物理节名「清单」可被两槽位之一吸收，另一槽位判 MISSING、
+  或 DUPLICATE 判定随声明序非确定——「被别名吞掉不再报」有机制入口。装载期只校验「缺 `=`／空别名／指向未在册槽位」，
+  不校验「一枚别名串在一模板内属 ≤1 槽位」。
+- **根因**：别名数据（S21R 侧）与执法守卫（S63/S83 侧）两件套中间无 injectivity 锁。
+- **最小修法**：装载 `@aliases` 加单射守卫——同一模板内任一别名串命中 >1 槽位 ⇒ `SchemaError`（与既有
+  「指向未在册槽位即红」同源同形）。
+- **影响面**：`sdd-ledger` 类全部页的节集合/节序判定——其账面「干净」可能含被别名吞掉的残余。
+- **证据命令**：`grep -n "@aliases" docs/templates/sdd-ledger.md`（看 `清单` 出现于两槽位行）。
+- **现状**：**未修**（本席交卷时 `docs/templates/**` 为 S83 在飞面，按独占纪律不代改）。归属：S21R（别名数据）
+  ＋ S63/S83（`_match_slot` 守卫）。
+- **涉集中面**：否。
+
+### P1-22 creation 协议两把奇偶锁把「中央壳不可导入」吞成 `pytest.skip`，迁飞期永不为红（B02）
+
+- **级别**：P1（S80 判 Important；形态正是 `tests/test_prepared_adapter_canary.py` 自己写下并批评过的
+  「`pytest.skip` 静默变哑（不是红）」）
+- **位置**：`tests/test_creation_job_protocol.py:48`、`tests/test_creation_protocol_parity.py:43`（本席现算确认）
+- **现象**：跳过理由「中央 capability_protocols 当前不可导入（他席在飞）」——而该文件此刻正被归位批搬迁
+  （S14/S87 面）⇒ 搬迁期间这两把「creation 协议 ↔ 中央壳」奇偶锁不报红，协议对齐绿灯与被迁真身无关。
+- **根因**：为他席在飞期间保全量绿，选择整把锁 skip，而非「不执法显式挂账＋恢复条件」的明账。
+- **最小修法**：skip 收窄为「显式认定在飞面」且必须留账——被跳过的锁输出一行「本腿今日不执法＋理由＋恢复条件」；
+  恢复条件满足而未摘 skip ⇒ 红；或改 `xfail(strict=False)` 并配「归位批交卷即摘牌」的坐标锁。
+- **影响面**：AI 绘画/语音两枚 `creation.*` 协议的奇偶性——恰是本波 mandate 明言「预留接口协议」的两面。
+- **证据命令**：`grep -n "pytest.skip" tests/test_creation_job_protocol.py tests/test_creation_protocol_parity.py`
+- **现状**：未修（登记；两测试件非本席面，不代改）。
+- **涉集中面**：否（两测试件）。
+
+## 丙、开口项 · P2（结构 / 口径 / 不执法类，整理波批量处理）
+
+### P2-14 `G_P1_EXEMPT` 声明与判据形状不匹配，且无条数上限 / stale 锁（B10）
+- **级别**：P2 **位置**：`plugins/bot_unified_runtime/domains/core/board_placement.py`（`G_P1_EXEMPT` 三元组声明）
+  × `scripts/physical_placement_census.py`（按 `(fid, path)` 组装查询侧；本席现算两处均在盘）
+- **现象**：S70 判「形状不匹配——要么 compute 侧传裸路径集合、要么判据按 `(fid, path)` 查」；同缺 G_P2 豁免所配的
+  「条数上限 + stale 锁」⇒ 将来塞错形状的豁免条目会**静默不命中**而非响亮红。本席复核豁免条目数见当席现算输出（当时值：0），
+  今日生产不可达（不以「现值为空」当「无洞」）。
+- **现状**：未修（登记）。**判据**：与 G_P2 同构补上限 + stale 锁；注毒＝塞一枚错形状豁免 ⇒ census 必响亮判红。
+  **涉集中面**：否。
+
+### P2-15 「两语义未认领之差」断言恒真（装饰性锁）（B10）
+- **级别**：P2（S70 原话：否则删掉这句、别留装饰） **位置**：`tests/test_physical_placement_gate.py:211`
+  （本席现算确认：`assert 0 <= gap <= len(universe)`）
+- **现象**：`gap` 按构造恒 ≥0 且 ≤ 扫描面大小 ⇒ 该断言永不红，给读表人「口径已被检查」的错觉。
+- **现状**：未修（门本体属禁写面 ⇒ 交该门 owner；本席不动）。**判据**：换真锁（例 `gap <= 0.8 × universe`
+  或与 G-P2 语义B 上限挂钩），注毒＝人为放大两语义分叉 ⇒ 必红。**涉集中面**：否。
+
+### P2-16 G-C1 缺快照龄锁；解析器把「拿不到整数的在飞数」丢行而非记违规（B10）
+- **级别**：P2 **位置**：`tests/test_dispatch_saturation_gate.py`（补派日志表解析腿与快照消费腿；门本体禁写 ⇒ 交回 owner）
+- **现象**：两条（S70 原案）——①快照 `captured_at` 无「龄 > k × 窗口 ⇒ 红」约束，陈旧快照可过形状腿；
+  ②「在飞数」解析不出整数（汉字顶替即触发）时该**行被丢弃**，不计违规；行数地板只防整表删空、防不了逐行免责。
+- **现状**：未修。**判据**：①加龄锁；②解析失败改记「违规行」；注毒＝某行在飞数写成汉字 ⇒ 门必红（现静默跳行）。
+  **涉集中面**：否。
+
+### P2-17 面A / 面B 缺「扫到 N 行」地板：尺子空扫与零违规同形（B10）
+- **级别**：P2（S70 判「登记不施工」） **位置**：`scripts/spec_gates_census.py`（两本账的取数腿）；判据真身
+  `scripts/doc_fact_discipline.py`
+- **现象**：两腿只报违规数，不报「看过多少页/行」⇒「扫到零行」类输出与「零违规」一模一样（台账 #46
+  「存在性糊过活性」同型；S70 要求给分母再谈零）。
+- **现状**：未修（登记；取数口为 S78 在飞面，不代改）。**判据**：每腿输出扫描页数/行数并配地板断言
+  （地板只准升不准降）；注毒＝把扫描面喂空 ⇒ 地板腿必红。**涉集中面**：否。
+
+### P2-18 `_BASELINE_CARRIER_TRUTH` 地板 × 「只降不升」＝结构性死锁，该腿今日不执法（B10）
+- **级别**：P2 **位置**：`tests/test_doc_link_integrity.py`（该常量为 FLOOR，件内注释自陈）
+- **现象**：地板（当时值 5）远低于实值（S80 当时现算 34，现役数以该门现算为准），余量（当时值 29）使断言
+  永不触边；收紧需抬地板，而「只降不升」常令禁抬 ⇒ S80 判「该腿永不再执法」。本席按铁律 10 不手写现值。
+- **现状**：未修（归门 owner：要么把地板**随迁下调**到末次核账值，要么把该腿换成「载体列与注册表现算相等」
+  的真判据）。**判据**：随迁后注毒＝抽掉一枚载体命中 ⇒ 必红。**涉集中面**：否。
+
+### P2-19 `compare_projection` 对「同一份文本自比」仍回 `K_FORMAT` 残差标签，契约仅靠用例注释防误用（B10）
+- **级别**：P2 **位置**：`scripts/doc_ownership_sync.py::compare_projection`
+- **现象**：S88 契约发现——该函数假定「调用方已证字节不等」，条目级全平时同文本入参仍产出一枚 `K_FORMAT`；
+  判「是否同步」的唯一落点是 `check_sync`。现把契约原样写进了用例注释并断言残差形态（将来谁把 K_FORMAT 改成
+  「真报警」会被该用例点名），但函数签名层无防御。
+- **现状**：登记·口径已被用例钉住（S88 自评「非缺陷」；代码面未改）。**判据**：函数改名为「残差标注器」或
+  入参相等时显式抛错；注毒＝以同文本直调并期望空列表 ⇒ 必红。**涉集中面**：否。
+
+## 本块小结（按分级计数，来源＝上方条目）
+
+已闭环·归属明确若干（甲组）｜P1 开口（P1-21…P1-22）｜P2 登记（P2-14…P2-19），各枚数以本块上方编号标题现算为准。
+未取证项：无（甲-1 与 P1-21/P1-22/P2-14/P2-15 的坐标由本席现算复核；P2-16/P2-17/P2-18 沿 S70/S80 席结论、
+其门体判据行未逐行复核，标「席位结论·本席未复核细节」）。SEAT-S94 未交卷 ⇒ 其点名缺陷本块不记，防二手转述失真。

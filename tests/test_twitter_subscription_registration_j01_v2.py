@@ -24,14 +24,14 @@ from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
 from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionTarget,
 )
-from plugins.bot_unified_runtime.sources.subscription_runtime_v2 import (
-    build_subscription_runtime_v2,
-)
-from plugins.bot_unified_runtime.sources.subscriptions.social_v2 import (
+from plugins.bot_unified_runtime.domains.subscribe.adapters.social_v2 import (
     ADAPTERS as SOCIAL_ADAPTERS,
 )
-from plugins.bot_unified_runtime.sources.subscriptions.social_v2 import (
+from plugins.bot_unified_runtime.domains.subscribe.adapters.social_v2 import (
     TwitterSubscriptionAdapterV2,
+)
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_runtime_v2 import (
+    build_subscription_runtime_v2,
 )
 
 # 与轮询 fetch 门同判据的 X cookie 最小形态（测试用，值为占位非真实凭证）。

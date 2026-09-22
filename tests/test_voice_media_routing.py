@@ -16,12 +16,14 @@ from plugins.bot_unified_runtime import (
     contains_audio_message_segments,
     contains_visual_message_segments,
 )
-from plugins.bot_unified_runtime.message_context import normalize_message_segments
-from plugins.bot_unified_runtime.sources.transcribe import extract_audio_source
-from plugins.bot_unified_runtime.sources.vision_describe import (
+from plugins.bot_unified_runtime.domains.media.ingest.transcribe import (
+    extract_audio_source,
+)
+from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
     _IMAGE_SEGMENT_TYPES,
     _VIDEO_SEGMENT_TYPES,
 )
+from plugins.bot_unified_runtime.message_context import normalize_message_segments
 
 # ------------------------------------------------------------------ 门禁放行
 

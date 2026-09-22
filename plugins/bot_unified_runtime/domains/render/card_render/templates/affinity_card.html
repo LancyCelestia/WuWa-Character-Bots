@@ -221,10 +221,10 @@ body {
             </svg>
         </div>
         <div class="head-text">
-            <div class="title">{{ title | default('好感度') }}</div>
+            <div class="title">{{ title }}</div>
             <div class="subtitle">{{ subtitle }}</div>
         </div>
-        <div class="pill">好感查看</div>
+        <div class="pill">{{ card_text.static_aff_01 }}</div>
     </div>
 
     {% if mode == 'group' %}
@@ -242,14 +242,14 @@ body {
     {% elif mode == 'algorithm' %}
     <div class="duel">
         <div class="panel glass" style="background:var(--surface-a) padding-box, var(--mica-glass-edge)">
-            <div class="dlabel">你与我之间的氛围（印象好感 {{ bot_score }}）</div>
+            <div class="dlabel">{{ card_text.static_aff_02 }} {{ bot_score }}）</div>
             {% for s in steps %}
             <div class="step-row"><span>{{ s.label }}</span><b class="{{ s.cls }}">{{ s.value }}</b></div>
             {% endfor %}
-            <div class="dnote">好感随言行连续累积：说话温度 × 相处时长 × 第一印象 × 我当天的状态，平滑变化、没有固定加几减几；久不联系慢慢回归基准，难听的记忆会随时间淡去</div>
+            <div class="dnote">{{ card_text.static_aff_03 }} × {{ card_text.static_aff_04 }} × {{ card_text.static_aff_05 }} × {{ card_text.static_aff_06 }}</div>
         </div>
         <div class="panel glass" style="background:var(--surface-b) padding-box, var(--mica-glass-edge)">
-            <div class="dlabel">档位 → 回应方式（同一句话）</div>
+            <div class="dlabel">{{ card_text.static_aff_07 }} → {{ card_text.static_aff_08 }}</div>
             {% for t in tiers %}
             <div class="tier-row"><b>{{ t.label }}　{{ t.range }}</b><span>{{ t.attitude }}</span></div>
             {% endfor %}
@@ -261,25 +261,25 @@ body {
     {% else %}
     <div class="duel">
         <div class="panel glass" style="background:var(--surface-a) padding-box, var(--mica-glass-edge)">
-            <div class="dlabel">{{ bot_name | default('守岸人') }}对你</div>
+            <div class="dlabel">{{ bot_name }}{{ card_text.static_aff_09 }}</div>
             <div class="dscore{{ ' hot' if bot_to_user.score >= 75 else (' cold' if bot_to_user.score < 25 else '') }}">{{ '%.1f' | format(bot_to_user.score) }}</div>
             <div class="dtier">{{ bot_to_user.tier }}</div>
             <div class="bar"><div class="fill" style="width: {{ bot_to_user.bar }}%"></div></div>
-            <div class="dnote">印象好感度：由你的言行长期累积，只影响语气，不外显为标签</div>
+            <div class="dnote">{{ card_text.static_aff_10 }}</div>
         </div>
         <div class="panel glass" style="background:var(--surface-b) padding-box, var(--mica-glass-edge)">
-            <div class="dlabel">你对{{ bot_name | default('守岸人') }}</div>
+            <div class="dlabel">{{ card_text.static_aff_11 }}{{ bot_name }}</div>
             <div class="dscore{{ ' hot' if user_to_bot.score >= 75 else (' cold' if user_to_bot.score < 25 else '') }}">{{ '%.1f' | format(user_to_bot.score) }}</div>
             <div class="dtier">{{ user_to_bot.tier }}</div>
             <div class="bar"><div class="fill" style="width: {{ user_to_bot.bar }}%"></div></div>
-            <div class="dnote">表达倾向：你说出口的话里友好成分的加权比例（估算值）</div>
+            <div class="dnote">{{ card_text.static_aff_12 }}</div>
         </div>
     </div>
     <div class="rules">
         {% for rule in rules %}<div class="rule glass"{% if loop.index is odd %} style="background:var(--surface-a) padding-box, var(--mica-glass-edge)"{% else %} style="background:var(--surface-b) padding-box, var(--mica-glass-edge)"{% endif %}><b class="{{ rule.cls }}">{{ rule.label }}</b>　{{ rule.text }}</div>{% endfor %}
     </div>
     {% endif %}
-    <div class="foot">好感区间 -100~+100 · 档0 友善（基准 10）· 任何档位都保持人格与体面</div>
+    <div class="foot">{{ card_text.static_aff_13 }} -100~+100 · {{ card_text.static_aff_14 }} {{ card_text.static_aff_15 }} 10）· {{ card_text.static_aff_16 }}</div>
     {# CAP1：胶囊 DOM 由 bridge 从 mica_shell.brand_capsule_html 注入，模板零手写。 #}
     <div class="capsule-foot">{{ capsule_html | safe }}</div>
 </div>

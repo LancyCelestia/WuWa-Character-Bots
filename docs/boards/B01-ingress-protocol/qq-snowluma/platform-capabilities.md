@@ -17,13 +17,13 @@
 
 - 群信息能力（已登记，席位 `GROUP_INFO`、能力 id `bot.group_info`）：`domains/chat_reply/capabilities/group_info.py:is_group_info_command(text)` 判定、`build_group_info_capability(...)` 装配；意图词表常量 `GROUP_INFO_TRIGGER_WORDS`。
 - 协程桥（内部件，同文件）：`build_onebot_api_bridge(...)` 提供 `run_coroutine_threadsafe` 包装——能力跑在管线 offload 线程池里，而 `bot.call_api` 是协程，必须经这座桥；工厂构建时以 `api=` 注入，`api=None` 时所有查询走诚实降级（不炸、不装）。
-- 缓存（内部件）：`domains/chat_reply/runtime/group_cache.py:GroupInfoCache`，只缓存成功载荷（`runtime/group_cache.py` 是再导出垫片）。
+- 缓存（内部件）：`domains/chat_reply/runtime/group_cache.py:GroupInfoCache`，只缓存成功载荷（旧路径 `runtime/group_cache.py` 已退役删除）。
 - 贴纸回应（内部件）：贴纸回应入口的 `maybe_react_on_message` 一族（模块落点见本页上方生成段），出站调 `set_msg_emoji_like`。
-- 入站信号（内部件）：`runtime/mentions.py` 的 `looks_like_direct_question` / `starts_with_name_mention`，根 `__init__.py:_detect_onebot_direct_mention`、`_detect_text_at_mention`。
+- 入站信号（内部件）：`domains/chat_reply/runtime/mentions.py` 的 `looks_like_direct_question` / `starts_with_name_mention`，根 `__init__.py:_detect_onebot_direct_mention`、`_detect_text_at_mention`。
 
 ## 开关与参数
 
-- 群信息无独立开关，随能力注册生效；缓存 TTL 在 `runtime/group_cache.py`（资料/公告/精华十分钟档、成员列表一刻钟档，取值以该文件为准）。
+- 群信息无独立开关，随能力注册生效；缓存 TTL 在 `domains/chat_reply/runtime/group_cache.py`（资料/公告/精华十分钟档、成员列表一刻钟档，取值以该文件为准）。
 - 贴纸回应四键：`bot_reactions_enabled`（缺省 True）、`bot_reactions_probability`（0.2）、`bot_reactions_cooldown_seconds`（30）、`bot_reactions_max_per_hour`（20）；第二层图表情 `bot_reactions_meme_*`；聚合库 `bot_reactions_db_path`。逐键语义与热更性以 `docs/config-catalog-full.md` 为准。
 - 权限：公告与精华走 bot 侧角色门（管理员及以上），协议侧再失败就如实降级；成员名单不整列，只给统计数与群主/管理员数——这是隐私红线，不是待办优化。
 - 平台角色：入站 `sender.role` 由根文件摄取层填进 `IncomingMessage.sender_platform_role`，群主判定（如紧急信息订阅）只认这个字段，且仅 `scope=group` 生效。

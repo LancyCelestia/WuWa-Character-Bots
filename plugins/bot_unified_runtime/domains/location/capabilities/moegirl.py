@@ -26,13 +26,15 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+)
 from plugins.bot_unified_runtime.domains.location.data.moegirl import (
     DEFAULT_API_BASES,
     MoegirlHit,
     moegirl_page_summary,
     moegirl_search,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
 
 # ASCII 别名右侧词边界（stocks _alias_hit 先例）：moegirlxx 字母延续不触发。
 # 拼音（T-Spec T1.5/T1.6）：mengbai/mb 查重无冲突（fix-py1-report.md）。

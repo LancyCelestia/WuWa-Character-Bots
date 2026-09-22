@@ -28,8 +28,10 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.teaching_service i
 from plugins.bot_unified_runtime.domains.chat_reply.character.worldbook_service import (
     WorldbookService,
 )
-from plugins.bot_unified_runtime.runtime.database_broker import DatabaseBroker
-from plugins.bot_unified_runtime.runtime.service_wiring import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.database_broker import (
+    DatabaseBroker,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.service_wiring import (
     V21_SERVICE_WIRING_IDS,
     build_v21_services,
     get_v21_service,
@@ -51,7 +53,7 @@ def _clean_registry():
 
 
 def _broker_db_keys() -> set[str]:
-    from plugins.bot_unified_runtime.runtime.database_broker import (
+    from plugins.bot_unified_runtime.domains.chat_reply.runtime.database_broker import (
         build_default_registry,
     )
 

@@ -44,7 +44,9 @@ _SUFFIX_MIME = {".mp3": "audio/mpeg", ".wav": "audio/wav"}
 
 
 def _find_ffmpeg_locate() -> str:
-    from plugins.bot_unified_runtime.sources.downloader import _find_ffmpeg
+    from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+        _find_ffmpeg,
+    )
 
     return _find_ffmpeg()
 
@@ -318,7 +320,7 @@ def _download_audio(source: str, dest: Path, timeout_seconds: float) -> Path | N
     # WP1（背景点4）：语音远程取字节此前不过 SSRF 咽喉；入口先过
     # check_download_url（内网/保留段/畸形拒绝→按取不到音频返回 None）。
     # 落点复查经逐跳 event hook（video_pipeline 复用本函数，一并受护）。
-    from plugins.bot_unified_runtime.sources.downloader import (
+    from plugins.bot_unified_runtime.domains.files.sources.downloader import (
         RejectedUrlError,
         check_download_url,
     )

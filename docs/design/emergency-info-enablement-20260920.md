@@ -7,7 +7,7 @@
 
 ## 一、四把门与它们的因果
 
-装配判定：`enabled = 总闸 ∧ bool(sources) ∧ (群白名单 ∨ 私聊名单)`（`capabilities/emergency_info.py:121`）。
+装配判定：`enabled = 总闸 ∧ bool(sources) ∧ (群白名单 ∨ 私聊名单)`（`domains/emergency_info/capabilities/emergency_info.py:121`）。
 **四条腿互相独立，任一空 = 整链不装配**——不猜群、不猜人，这是设计而非缺陷。
 
 | 键 | 控制什么 | 留空的后果 |
@@ -31,13 +31,13 @@
 
 | `SOURCE_ID`（填这个） | 出处 | 端点域 | 等级口径 |
 |---|---|---|---|
-| `nmc` | `sources/nmc_alarm.py:56` | `www.nmc.cn` | 标题解析颜色词 → 红/橙/黄/蓝 → P0/P1/P2/P3；**无比方颜色词时 `color_label=""`**，上层按「无等级」处理 |
-| `gdacs` | `sources/gdacs.py:43` | `www.gdacs.org` gdacsapi Events | 未知等级 → `color_label=""`，**不上抬不猜档**（D-1） |
-| `icl` | `sources/open_data_quakes.py:52` | `mobile-new.chinaeew.cn` | 震级→等级；**"cenc" 入口已被刻意焊死**（同文件头注） |
-| `usgs` | `sources/open_data_quakes.py:53` | `earthquake.usgs.gov` | 同上，另一独立源 id |
+| `nmc` | `domains/emergency_info/sources/nmc_alarm.py:56` | `www.nmc.cn` | 标题解析颜色词 → 红/橙/黄/蓝 → P0/P1/P2/P3；**无比方颜色词时 `color_label=""`**，上层按「无等级」处理 |
+| `gdacs` | `domains/emergency_info/sources/gdacs.py:43` | `www.gdacs.org` gdacsapi Events | 未知等级 → `color_label=""`，**不上抬不猜档**（D-1） |
+| `icl` | `domains/emergency_info/sources/open_data_quakes.py:52` | `mobile-new.chinaeew.cn` | 震级→等级；**"cenc" 入口已被刻意焊死**（同文件头注） |
+| `usgs` | `domains/emergency_info/sources/open_data_quakes.py:53` | `earthquake.usgs.gov` | 同上，另一独立源 id |
 
-四源均为公开端点，**本波无需任何 API key**；取数统一走 `sources/http_get.py:219 fetch_json_document`
-（SSRF 护栏 + 失败四态 `FRESH/STALE/NEVER_FETCHED/FETCH_FAILED`，快照缓存由 `service/snapshot_store.py` 承载）。
+四源均为公开端点，**本波无需任何 API key**；取数统一走 `domains/emergency_info/sources/http_get.py:219 fetch_json_document`
+（SSRF 护栏 + 失败四态 `FRESH/STALE/NEVER_FETCHED/FETCH_FAILED`，快照缓存由 `domains/emergency_info/service/snapshot_store.py` 承载）。
 
 ⚠ **`nmc_alarm` 不是 id，是模块名。** 名单里写成模块名不会报错——它只会静默不命中，
 等于该源没过审（fail-closed 的同义副作用）。这类"填错不响"的病本波已踩过一次，故在此置顶。

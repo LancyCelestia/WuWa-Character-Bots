@@ -4,7 +4,7 @@
 
 ## 控制动作
 
-实现：`control_plane/actions.py`、`api/actions.py`。HTTP 只调用公开的 `catalog/detail/preview/execute/runs/run/cancel` 服务，不访问 `_registry` 或 SQLite。
+实现：`plugins/bot_unified_runtime/control_plane/actions.py`、`plugins/bot_unified_runtime/control_plane/api/actions.py`。HTTP 只调用公开的 `catalog/detail/preview/execute/runs/run/cancel` 服务，不访问 `_registry` 或 SQLite。
 
 - GET `/api/v1/actions`、`/actions/{action_id}`：目录、参数schema、确认要求、版本。
 - POST `/actions/{action_id}/preview`：`parameters`（当前注册动作只接受空对象）、`expected_version`。

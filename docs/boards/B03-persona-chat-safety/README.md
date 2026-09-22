@@ -71,7 +71,7 @@ flowchart LR
   「口径 + 指针」，不复制数值表。
 - `docs/design/v21r5-C-brief-final.md`、`docs/design/r18-taxonomy-20260920.md` 的裁定结果：
   现役口径并入 [六条硬线](content-safety/hard-lines.md) 与 [亲密档位](content-safety/intimate-mode.md)；
-  裁定过程件按 `_conventions` 第一节第 5 条留在 `docs/design/` 与 `.superpowers/`，不搬运。
+    裁定过程件按 `_conventions` 的既有留档条款留在 `docs/design/` 与 `.superpowers/`，不搬运。
 - `AGENTS.md` 第四部分「人格对话 / 好感度 / 角色权限 / 心情 / 怪癖 / 会话身份」六行功能表：
   正文并入本板块对应页，AGENTS 侧只留指针。
 - 旧方案「模型自评标签 `<intimacy:high|low>` 注入 + 升级重试」整体退役

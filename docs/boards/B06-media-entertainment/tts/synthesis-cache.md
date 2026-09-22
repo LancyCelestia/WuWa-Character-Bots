@@ -49,9 +49,9 @@
 - `bot_tts_preset`：换值等于换键空间（预设参数进 preimage）。
 - `bot_tts_api_url`：换端口/换实例同样换键。
 - `bot_tts_cache_max_bytes` / `bot_tts_cache_max_age_days`（均 0=不限制）：落盘后
-  顺接中央 `enforce_quota`（最旧先删），缺省关——`data/tts_output` 定性为**可再生
+  顺接中央 `enforce_quota`（最旧先删），缺省关——语音产物目录定性为**可再生
   缓存**而非档案（U-04 裁定 a 案），但配额没开的时候它就是个只会长的大目录。
-- `bot_tts_output_dir`（`data/tts_output`）：必须经 `scripts/runtime_paths.py`
+- `bot_tts_output_dir`（产物目录，缺省路径以 `config.py` 该字段为准）：必须经 `scripts/runtime_paths.py`
   重映射，漏登会写进源码树。
 
 ## 失败时看到什么

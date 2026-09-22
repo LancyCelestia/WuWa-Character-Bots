@@ -10,7 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
-from plugins.bot_unified_runtime.runtime.question_intent import IntentDecision
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.question_intent import (
+    IntentDecision,
+)
 
 
 class IntentTelemetry(Protocol):

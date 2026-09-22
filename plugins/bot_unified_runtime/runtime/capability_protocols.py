@@ -1376,7 +1376,10 @@ def _handle_search_web(request: CapabilityRequest) -> InvocationResult:
 
 def _handle_search_acg(request: CapabilityRequest) -> InvocationResult:
     """ACG 竖源 → search_intent 意图门 + acg_search 三竖源并发。"""
-    from plugins.bot_unified_runtime.sources import acg_search, search_intent
+    from plugins.bot_unified_runtime.domains.core.search import (
+        acg_search,
+        search_intent,
+    )
 
     config = _config_of(request)
     if not bool(getattr(config, "bot_search_acg_enabled", False)):
@@ -1874,7 +1877,7 @@ def _search_descriptors() -> list[CapabilityDescriptor]:
             limits={"max_chars": 500},
             limit_fields=(("query", "max_chars"),),
             fallback_chain=(HONEST_DEGRADE_PREFIX + "未命中意图/竖源空=诚实跳过",),
-            implementation_ref="plugins/bot_unified_runtime/sources/acg_search.py#search_acg_verticals",
+            implementation_ref="plugins/bot_unified_runtime/domains/core/search/acg_search.py#search_acg_verticals",
             config_keys=("bot_search_acg_enabled", "bot_search_acg_timeout_seconds"),
             health_probe=_PROBE_ACG,
             notes="Bangumi/萌百/B站三竖源+时效加权（SEARCH 席 2026-09-17）",

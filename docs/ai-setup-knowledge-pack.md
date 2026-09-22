@@ -614,7 +614,7 @@ personas\shorekeeper\
 | `AGENTS.md` | AI 工作区规则 | 扫描边界、dev.ps1 测试入口、源码树禁止缓存文件、卡片 Mica UI 规范、归档流程 |
 | `COMMANDS.md` | 开发命令 | dev.ps1 任务表、测试策略（完整测试树在归档包）、路径与安全规则 |
 | `docs/snowluma-setup.md` | SnowLuma 连接 QQ | 下载与扫码（小号）、被踢重登、WebUI 密码修改、3001 WS 服务端 + token、`.env.prod` 三项、ORM 初始化、驱动器/适配器选型结论 |
-| `docs/external-runtime-access.md` | 外部运行时访问 | 机器人经 .env/config.py/dev.ps 访问外部数据（非读 Markdown）；数据流图；`data/` 重定向；工作区打开方式、验收命令、快速故障判断表 |
+| `docs/external-runtime-access.md` | 外部运行时访问 | 机器人经 config.py/dev.ps 访问外部数据（非读 Markdown）；数据流图；`data/` 重定向；工作区打开方式、验收命令、快速故障判断表 |
 | `docs/route-matrix.md` | 问法路由矩阵 | base_router → capability → RuntimePipeline → SendQueue 链路；问法→kind→优先级权威矩阵；群聊门控、知识库优先+联网回退、点歌组合、下载配额 |
 | `docs/acceptance-manual.md` | 验收与接入手册 | 顺序化验收：依赖 → 人格对话验收（console→真实模型→smoke 链）→ SnowLuma → GsCore；运行时日志、Cookie 接入、向量知识库配置与最终检查表 |
 | `docs/standard-parse-card-acceptance.md` | 标准解析卡验收 | 解析信息卡的验收基准 |

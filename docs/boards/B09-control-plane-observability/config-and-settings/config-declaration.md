@@ -18,7 +18,7 @@
 
 它承担三件事：① 类型与取值域（非法值在**装载期**就炸，不留到运行时某条消息上炸）；
 ② 形态归一（同一含义的多种写法收成一个形态，例如 QQ 号既可能是 int 也可能是 str）；
-③ 相对路径统一重映射到 Runtime 数据根（铁律 6：源码树零 `data/`）。
+③ 相对路径统一重映射到 Runtime 数据根（铁律 6：源码树零运行数据落盘）。
 
 ## 怎么调用
 
@@ -42,7 +42,7 @@
   （`_validate_tts_preset/_text_lang/_text_split_method/_auto_reply_scope/_api_url`——
   其中 api_url 走 loopback 白名单 fail-closed，SSRF 闸在字段层而非调用点）。
 - 路径重映射：`_resolve_runtime_data_paths`（`model_validator(mode="after")`）遍历
-  `path_fields` 元组，把 `data` 与 `data/...` 改写为 Runtime 数据根下的绝对路径，
+  `path_fields` 元组，把运行数据相对路径改写为 Runtime 数据根下的绝对路径（相对前缀以 `scripts/runtime_paths.py` 为准），
   实际解析走 `scripts/runtime_paths.py`。**新增任何 `*_db_path`/`*_file` 类字段必须
   同时进 `path_fields`**，漏了就等于往源码树写数据。
 

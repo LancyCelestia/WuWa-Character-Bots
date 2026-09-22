@@ -319,7 +319,7 @@ def _fetch_dish_image(root: Path, name: str, config: Any | None = None) -> str:
     import urllib.parse
     import urllib.request
 
-    from plugins.bot_unified_runtime.sources.downloader import (
+    from plugins.bot_unified_runtime.domains.files.sources.downloader import (
         RejectedUrlError,
         check_download_url,
     )

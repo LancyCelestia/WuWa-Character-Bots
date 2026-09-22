@@ -38,7 +38,7 @@
 flowchart LR
   src[personas/shorekeeper 源档案] -.人工审阅锚定.- copy[Runtime 人格副本]
   copy --> prov[character/providers.py ContextBundle]
-  sess[B01 摄取的身份事实] --> addr[character/addressing.py 称谓指令]
+  sess[B01 摄取的身份事实] --> addr[domains/chat_reply/character/addressing.py 称谓指令]
   addr --> prov
   prov --> asm[B03.chat-reply 分区拼装]
   asm --> untrusted{不可信块包裹 + 指令行剥离}

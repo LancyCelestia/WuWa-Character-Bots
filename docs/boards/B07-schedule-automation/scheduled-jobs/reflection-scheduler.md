@@ -22,7 +22,7 @@
 ## 开关与参数
 
 - 装配门：`bot_history_enabled ∧ bot_reflection_enabled`（后者缺省 True）才注册。
-- `bot_reflection_hour`（缺省 4）、`bot_reflection_minute`（缺省 30）、`bot_reflection_db_path`（缺省 `data/reflection.sqlite3`）、`bot_reflection_max_sessions`（缺省 50）、`bot_reflection_llm_enabled`（缺省 False，开则每轮起 LLM，有成本）。怪癖提案相关键见反思域。
+- `bot_reflection_hour`（缺省 4）、`bot_reflection_minute`（缺省 30）、`bot_reflection_db_path`（库路径的缺省值以 `config.py` 该字段为准）、`bot_reflection_max_sessions`（缺省 50）、`bot_reflection_llm_enabled`（缺省 False，开则每轮起 LLM，有成本）。怪癖提案相关键见反思域。
 
 ## 失败时看到什么
 

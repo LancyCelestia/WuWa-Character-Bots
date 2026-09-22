@@ -121,7 +121,7 @@
 | `space` | 空间天气 | 蓝黄橙红 | 同上 | P0,P1 | 同上（当前该类无源） |
 | `quake` | 地震 | 蓝黄橙红 | **红橙黄蓝** | P0,P1 | 用户口径「地震预警常用红、橙、黄、蓝」 |
 | `volcano` | 火山 | 蓝黄橙红 | 红橙黄蓝 | P0,P1 | 同上（当前该类无源） |
-| `global_disaster` | 国际灾害事件（GDACS） | **橙、红** | 红、橙 | **仅 P0** | **实证**：`sources/gdacs.py:54` 只映射 Red/Orange，Green 故意为空 |
+| `global_disaster` | 国际灾害事件（GDACS） | **橙、红** | 红、橙 | **仅 P0** | **实证**：`domains/emergency_info/sources/gdacs.py:54` 只映射 Red/Orange，Green 故意为空 |
 
 **色档的用途只有两条**（刻意不作"官方逐类色档"声明）：
 ① 校验用户在订阅里能说的话——「蓝色以上」用在 `global_disaster` 族上当场报错并给候选；
@@ -131,7 +131,7 @@
 > 本表不作声明。实际出档由**源侧给出的颜色词**决定（NMC 标题色词是实测字段），
 > 源不给色就走关键词/震级路径，都不中则蓝档。
 
-## 四、定级判定序（`service/grading.py`）
+## 四、定级判定序（`domains/emergency_info/service/grading.py`）
 
 ```
 grade(item, now, rules=DEFAULT_GRADING_RULES):

@@ -54,6 +54,90 @@ _ENV = jinja2.Environment(
     loader=jinja2.FileSystemLoader(str(_TEMPLATES_DIR), encoding="utf-8"),
     autoescape=True,
 )
+
+# S79 CARD-TEXT-RESIDUAL：卡片模板内「其余形态」硬编码中文文案的唯一中央落点。
+# 模板侧只留参数引用（card_text.<键>），字面量本体只住这一张表；
+# 由 _ENV.globals 单点注册，故全仓只有这一处注入点（禁第二真身）。
+_CARD_TEXT: dict[str, str] = {
+    # song_candidates.html：候选行 artist/album 全空时的元信息占位。
+    "song_meta_fallback": "未知歌手",
+    # error_card.html：help_text 为空串/未定义时的求助指引回落（default(..., true) 语义）。
+    "error_help_fallback": "把这张卡截图发给创造者即可，信息已齐备且脱敏。",
+    # universal_card.html：直播封面/截图 img alt 文本（无障碍面）。
+    "live_cover_alt": "直播封面",
+    "live_screenshot_alt": "直播截图",
+    # S95 CARD-STATIC-TEXT-65：模板静态中文文本节点唯一参数源（同串只此一处，
+    # 模板侧只留 {{ card_text.<键> }} 参数引用；键名 static_<模板缩写>_<全局序>。
+    # 键名→值可复跑现算：python /tmp/s95_tool.py verify
+    "static_aff_01": '好感查看',
+    "static_aff_02": '你与我之间的氛围（印象好感',
+    "static_aff_03": '好感随言行连续累积：说话温度',
+    "static_aff_04": '相处时长',
+    "static_aff_05": '第一印象',
+    "static_aff_06": '我当天的状态，平滑变化、没有固定加几减几；久不联系慢慢回归基准，难听的记忆会随时间淡去',
+    "static_aff_07": '档位',
+    "static_aff_08": '回应方式（同一句话）',
+    "static_aff_09": '对你',
+    "static_aff_10": '印象好感度：由你的言行长期累积，只影响语气，不外显为标签',
+    "static_aff_11": '你对',
+    "static_aff_12": '表达倾向：你说出口的话里友好成分的加权比例（估算值）',
+    "static_aff_13": '好感区间',
+    "static_aff_14": '档0',
+    "static_aff_15": '友善（基准',
+    "static_aff_16": '任何档位都保持人格与体面',
+    "static_err_17": '守',
+    "static_err_18": '泰缇斯系统',
+    "static_err_19": '触发回显',
+    "static_err_20": '栈摘录（末',
+    "static_err_21": '帧，路径已脱敏）',
+    "static_err_22": '触发方法',
+    "static_err_23": '配置快照（白名单',
+    "static_err_24": '值已脱敏）',
+    "static_err_25": '版本与构建',
+    "static_err_26": '平台与协议',
+    "static_err_27": '与时间',
+    "static_fin_28": '数据时间',
+    "static_mkt_29": '全球股指速览',
+    "static_song_30": '找到',
+    "static_song_31": '首「',
+    "static_song_32": '」相关歌曲',
+    "static_song_33": '内有效',
+    "static_song_34": '想听哪首就',
+    "static_song_35": '直接回复它的序号数字',
+    "static_song_36": '（如',
+    "static_song_37": '），也可以说「点歌',
+    "static_song_38": '内有效，超时不回复则不播放，可重新点歌。',
+    "static_uni_39": '亿',
+    "static_uni_40": '万',
+    "static_uni_41": '动态',
+    "static_uni_42": '帖子',
+    "static_uni_43": '视频',
+    "static_uni_44": '番剧',
+    "static_uni_45": '内容摘要',
+    "static_uni_46": '热评',
+    "static_uni_47": '参展嘉宾',
+    "static_uni_48": '预约',
+    "static_uni_49": '直播',
+    "static_uni_50": '空间',
+    "static_uni_51": '收藏夹',
+    "static_uni_52": '编辑于',
+    "static_uni_53": '直播中',
+    "static_uni_54": '等级',
+    "static_uni_55": '高能榜:',
+    "static_uni_56": '分P列表',
+    "static_uni_57": '(共',
+    "static_uni_58": '置顶',
+    "static_uni_59": '评论区',
+    "static_uni_60": '已直播',
+    "static_uni_61": '人气',
+    "static_uni_62": '直播间',
+    "static_uni_63": '生日:',
+    "static_uni_64": '加入:',
+    "static_uni_65": '页面内容',
+    "static_uni_66": '最近动态',
+}
+
+_ENV.globals["card_text"] = _CARD_TEXT
 _TEMPLATE = _ENV.get_template("universal_card.html")
 
 # ==================== 平台配色 / 官方名映射 ====================
@@ -123,6 +207,42 @@ _KNOWN_STAT_KEYS = frozenset({
 })
 
 _DEFAULT_CONTEXT = RenderPayload().to_dict()
+
+# S61 文案单源（2026-09-22，CARD-TEXT-UNIVERSAL-1）：universal 卡统计行「尾随单位串」
+# 与标签兜底措辞从模板硬编码上收到本桥接 context 构造段为唯一真身；模板只留
+# {{ stat_units.<键> }} 形状引用，渲染字节与迁移前逐字一致（样张 before/after 对拍实证）。
+_UNIVERSAL_STAT_UNITS: dict[str, str] = {
+    "views": "播放",
+    "total_views": "总播放",
+    "danmaku": "弹幕",
+    "likes": "赞",
+    "replies": "回复",
+    "favorites": "收藏",
+    "coins": "硬币",
+    "comments": "评论",
+    "reposts": "转发",
+    "quotes": "引用",
+    "bookmarks": "书签",
+    "followers": "粉丝",
+    "following": "关注",
+    "user_likes": "获赞",
+    "videos": "视频",
+    "attention": "关注度",
+    "fansclub": "粉丝团",
+    "high_energy_users": "高能用户",
+    "fleet": "舰队",
+    "captain": "舰长",
+    "admiral": "提督",
+    "governor": "总督",
+    "live_viewers": "观众",
+    "live_rank": "排名",
+    "live_watched": "看过",
+    "live_popularity": "人气",
+    "seen": "人看过",
+}
+# 标签 falsy 兜底（模板原 default("帖子"/"会员", true) 语义上收，同值同规则）。
+_LABEL_POST_FALLBACK = "帖子"
+_LABEL_MEMBERS_FALLBACK = "会员"
 
 # vis4 层次化阴影/辉光/表面/分隔线（theme_tokens 单一源，2026-09-13）：非 universal
 # 渲染函数与 universal 的 context 段同键同值注入六键——改 theme_tokens 一处，
@@ -708,7 +828,7 @@ def flat_projection(item: Any) -> Any:
     卡片区块与迁移前保持等价（个别标量会经统一格式化，如发布时间补秒）。
     非 ParsedContent 输入原样返回。
     """
-    from plugins.bot_unified_runtime.contracts.media import ParsedContent
+    from plugins.bot_unified_runtime.domains.core.contracts.media import ParsedContent
 
     if not isinstance(item, ParsedContent):
         return item
@@ -1408,6 +1528,14 @@ def render_universal_card_html(payload_dict: dict[str, Any] | None = None) -> st
 
     context = dict(_DEFAULT_CONTEXT)
     context.update(payload.to_dict())
+    # S61：统计行单位串单源注入；标签兜底与原 default(x, true) 的 falsy 规则对齐
+    # （空/缺失回退、非空原样），渲染字节与迁移前一致。
+    context["stat_units"] = _UNIVERSAL_STAT_UNITS
+    for _label_key in ("extra_post_label", "stats_post_label"):
+        context[_label_key] = _as_str(context.get(_label_key)) or _LABEL_POST_FALLBACK
+    context["extra_members_label"] = (
+        _as_str(context.get("extra_members_label")) or _LABEL_MEMBERS_FALLBACK
+    )
     # 釉瑚云母洗：与 --accent 同点注入（mica-glass v1 2026-09-12，工艺出处=用户裁定）。
     context.update(_derive_wash_tokens(payload.platform_color))
     # vis1r 移交项投影增量（H1-H3，2026-09-12）：RenderPayload 未扩字段的

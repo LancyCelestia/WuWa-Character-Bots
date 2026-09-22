@@ -337,6 +337,23 @@ L1_BODY = """## 板块职责
 （待写：本板块吸收了哪些旧文档；旧文档现在何处。）
 """
 
+#: 板块树**索引页**（`docs/boards/README.md`）的人写区骨架真身（席 S83＝《S39》落地）。
+#: 索引页与单板块页同判 `board-l1` 是 G-T2 唯一偏离件的根因（S35 取证）——它的真形是
+#: 单节「怎么读这套文档」，硬改成 L1 骨架＝扭曲内容凑骨架的假绿，故另立 `board-index` 类，
+#: 且**该类不建第二枚模板文件**：骨架唯一真身就是本常量（与 `board-l1/l2/l3` 同型——
+#: 那三类也只有 `L1_BODY/L2_BODY/L3_BODY`、`docs/templates/` 下无对应文件）。
+#: 消费点唯一＝下方 `write_tree()` 建索引页时；类别注册表以
+#: `generated_by="scripts/board_doc_sync.py:INDEX_BODY"` 指回本符号（G-T5 AST 核验其存在），
+#: G-T2 的 canon 由 `spec_gates_census.py` 侧 `canon_of_skeleton(bds.INDEX_BODY)` 派生（同支取数，
+#: 交接见 SEAT-S83 报告——该件在 S78 面，本席不代改）。
+INDEX_BODY = """## 怎么读这套文档
+
+1. 先在上方十板块表里找到你关心的板块；
+2. 进板块页看二级功能；
+3. 进二级功能页看它拥有的三级入口与代码落点；
+4. 规范与开发约束在 [_conventions.md](_conventions.md)，一律以它为准。
+"""
+
 
 def render_board_auto(board: Board, topics: list[str]) -> str:
     node = board.node
@@ -533,11 +550,7 @@ def write_tree(boards: list[Board], topics: list[str], route_index: dict, facts:
         BOARDS_DIR / "README.md",
         "守岸人 Bot · 十板块功能树",
         render_root_auto(boards, facts),
-        "## 怎么读这套文档\n\n"
-        "1. 先在上方十板块表里找到你关心的板块；\n"
-        "2. 进板块页看二级功能；\n"
-        "3. 进二级功能页看它拥有的三级入口与代码落点；\n"
-        "4. 规范与开发约束在 [_conventions.md](_conventions.md)，一律以它为准。\n",
+        INDEX_BODY,
     )
     for board in boards:
         bdir = BOARDS_DIR / board.dir_name

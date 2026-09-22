@@ -7,7 +7,7 @@
 
 ## 〇、一页总览（30 秒版）
 
-- **项目**：守岸人 QQ 聊天机器人（NoneBot2 + OneBot V11，协议端 SnowLuma，WS 127.0.0.1:3001 + 学校号第二实例 3002，webhook 8080）。工作区 `C:\Users\LancyCelestia\Documents\MyWorkspace\ChatBot\ChatBot`；venv 与运行数据在上一级 `ChatBot_Runtime\`。
+- **项目**：守岸人 QQ 聊天机器人（NoneBot2 + OneBot V11，协议端 SnowLuma，WS 127.0.0.1:3001 + 学校号第二实例 3002，webhook 8080）。工作区为本仓仓库根 `ChatBot/ChatBot`；venv 与运行数据在上一级 `ChatBot_Runtime\`。
 - **v21r5 五件交付**：①LLM 回复超时根治 ②群聊亲密模式 v3（双开关+TTL+四名单）③R-18 政策放宽（六硬线+放开清单+未成年 fail-closed）④U17 校园转发出站收编中央管线（用户裁决实施）⑤测试资产修复一批（时间炸弹/坐标棘轮/T6 前提/catalog）。
 - **数字基线（全部实跑）**：波域定向 255P/11xf、广域家族 371P/1xf、渲染契约 197P、五套件 129P、全量第五轮 9953P/5F/11xf（5F 全外部）、mypy 636 文件零错、ruff 波域清零。
 - **另一个 AI 会话在并行改树**（TTS/前端/KB：echo.py 05:09/05:17、config.py 05:07、kb_wiki 06:19、mermaid_card.html、theme_tokens.py）——全量 5 失败与 1 个哈希 DRIFT 属于它，不属于 v21r5；并发期全量数字不可复现。
@@ -17,7 +17,7 @@
 
 ## 壹、环境、解释器与纪律（违反即事故）
 
-1. **解释器**：`C:/Users/LancyCelestia/Documents/MyWorkspace/ChatBot/ChatBot_Runtime/venv/Scripts/python.exe`（venv 在工作区上一级，别找错）。
+1. **解释器**：运行数据根下 venv 的 `Scripts/python.exe`（venv 在工作区上一级，路径约定见 `scripts/runtime_paths.py`，别找错）。
 2. **测试命令模板**：`PYTHONDONTWRITEBYTECODE=1 BOT_AUTOSYNC=0 PYTHONUTF8=1 <venv> -m pytest <files> --basetemp="$TEMP/<你的目录>" -p no:cacheprovider -q`——源码树必须零 `__pycache__`/`.pytest_cache`/`data/` 残留（`.tmp-test/` 489MB 已于本波清理；`.mypy_cache` 37MB 已清）。
 3. **硬约束**：未获用户指示——禁一切 git 写操作（add/commit/push）；禁 kill/启生产 bot 进程（重启由用户提权执行，你只给指令+核对）；`.env` 只许 grep 键名存在性、禁读值；`ChatBot_Runtime/` 只读；`tests/verify_hashes.py` 只许 `--check` 禁 `--write`；渲染域（`domains/render/**`、`output/card_render/**`、`theme_tokens.py`、`tests/render_hashes.json`）与 `echo.py` 属并行前端/TTS 会话，禁碰。
 4. **personas/** 与 Runtime 人格副本：只读（人格资产是项目灵魂）。

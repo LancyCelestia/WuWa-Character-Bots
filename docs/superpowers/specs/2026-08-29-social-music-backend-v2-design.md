@@ -38,7 +38,7 @@
 
 ### 3.1 变更前
 
-- 解析器实际返回 `sources/parsers/types.py::PlatformParse`。
+- 解析器实际返回 `domains/link_parse/parsers/types.py::PlatformParse`。
 - `stats` 同时混放内容互动、创作者统计、时长、发布时间和 QQ 音乐传输参数。
 - `detail` 是非正式字典协议，平台之间键名和层级不一致。
 - 内容能力对同一链接可能调用解析器两次，增加延迟和风控概率。
@@ -115,7 +115,7 @@ Incoming URL / music command / scheduler tick
 
 ## 5. 新统一内容契约
 
-权威模型放在 `contracts/media.py`。旧 `PlatformParse` 删除；`sources/parsers/types.py` 删除或只保留不含旧类型的解析协议导出。
+权威模型放在 `domains/core/contracts/media.py`。旧 `PlatformParse` 删除；`domains/link_parse/parsers/types.py` 删除或只保留不含旧类型的解析协议导出。
 
 ### 5.1 顶层模型
 
@@ -591,13 +591,13 @@ class MusicTrack:
 1. `test_media_contract_v2.py`
    - 严格模型、空值语义、时间规范、敏感字段拒绝、所有 parser 返回新类型。
 
-2. `test_required_platform_parsers.py`
+2. `test_required_platform_parsers.py`（2026-09-22 复核：该文件为**拟建·尚不存在**，仓内无同名件；条目与原结论保留）
    - Bilibili、小红书、YouTube、X、Telegram、Pixiv、微博关键 JSON/HTML fixture；
    - 多媒体、作者数据、互动数据和 limitations；
    - Cookie/代理参数传递；
    - 同链接只抓一次。
 
-3. `test_subscription_v2.py`
+3. `test_subscription_v2.py`（2026-09-22 复核：该文件为**拟建·尚不存在**，仓内无同名件；条目与原结论保留）
    - 七个平台 target resolve、首次 baseline、增量、游标、持久去重；
    - 重启不重复推送；
    - outbox 唯一性；
@@ -612,7 +612,7 @@ class MusicTrack:
    - 点歌成功只记一次、链接解析不计数；
    - 日/周/年榜和平台分类榜分离。
 
-5. `test_parser_registry_v2.py`
+5. `test_parser_registry_v2.py`（2026-09-22 复核：该文件为**拟建·尚不存在**，仓内无同名件；条目与原结论保留）
    - 所有注册 parser 都返回 `ParsedContent`；
    - 长尾平台缺字段必须有 limitations；
    - 不存在旧 `PlatformParse` 消费路径。

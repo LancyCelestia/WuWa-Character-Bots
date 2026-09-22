@@ -18,7 +18,12 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from plugins.bot_unified_runtime.capabilities.notes import (
+from plugins.bot_unified_runtime.contracts import (
+    CapabilityResult,
+    IncomingMessage,
+    SendPolicy,
+)
+from plugins.bot_unified_runtime.domains.notes.capabilities.notes import (
     _NOTES_ADD_RE,
     _NOTES_BARE_RE,
     _NOTES_DELETE_RE,
@@ -28,11 +33,6 @@ from plugins.bot_unified_runtime.capabilities.notes import (
     _NOTES_UNDO_NATURAL_RE,
     _NOTES_VIEW_RE,
     build_notes_capability,
-)
-from plugins.bot_unified_runtime.contracts import (
-    CapabilityResult,
-    IncomingMessage,
-    SendPolicy,
 )
 from plugins.bot_unified_runtime.domains.schedule.store.reminders import (
     NEAR_MISS_FLOOR,
@@ -382,7 +382,9 @@ def build_reminder_capability(config: Any | None = None) -> Any:
             return None
         if not getattr(config, "bot_notes_enabled", True):
             return None
-        from plugins.bot_unified_runtime.character.notes_store import build_notes_store
+        from plugins.bot_unified_runtime.domains.notes.store.notes_store import (
+            build_notes_store,
+        )
 
         todo_store = build_notes_store(config)
         for todo in todo_store.list_open_todos(session_key, limit=50):
@@ -480,7 +482,9 @@ def build_reminder_capability(config: Any | None = None) -> Any:
         返回 None 表示本会话没有任何候选（让位给普通提醒语义，避免把
         无关短句抢下来）。
         """
-        from plugins.bot_unified_runtime.character.notes_store import build_notes_store
+        from plugins.bot_unified_runtime.domains.notes.store.notes_store import (
+            build_notes_store,
+        )
 
         store = build_reminder_store(config)
         pending = store.list_pending(message.session_id, limit=50)

@@ -24,8 +24,8 @@
 `RouteKind.RANDPIC` / `bot.randpic`。核心两件：
 
 - `list_gallery_images(dirs, *, max_bytes)`：递归扫描配置目录里的图片扩展名，
-  带进程内 30 秒 TTL 缓存（LRU 有界，过期键读取时惰性清除），所以往文件夹里加图
-  最多 30 秒就能被抽到，不需要重启。
+    带进程内 TTL 缓存（窗宽以该实现的常量为准，LRU 有界，过期键读取时惰性清除），所以往文件夹里加图
+  最多一个缓存周期就能被抽到，不需要重启。
 - `pick_random_image(dirs, *, rng=None, max_bytes)`：从清单里等概率抽一张，
   空清单返回 `None`。
 - 触发判定走中央件 `domains/core/text_boundary.py:is_trigger`（边界字符集与
@@ -59,5 +59,5 @@
 `tests/test_randpic_identity.py`（身份与降级文案、只读目录）、
 `test_randpic_scan_cache_l10.py`（缓存有界与过期清除、目录变更可见）、
 `test_traditional_news_randpic.py`（繁體触发形态）。真机：
-`docs/acceptance-manual.md` §6.6.1 的随机图条目（含「目录为空」「新增图片后 30 秒内
+`docs/acceptance-manual.md` §6.6.1 的随机图条目（含「目录为空」「新增图片后一个缓存周期内
 可抽到」两条）。

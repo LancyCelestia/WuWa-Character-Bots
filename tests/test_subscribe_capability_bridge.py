@@ -33,7 +33,9 @@ from plugins.bot_unified_runtime.domains.core.contracts.subscription import (
     SubscriptionDestination,
     SubscriptionSpec,
 )
-from plugins.bot_unified_runtime.sources.subscription_store import SubscriptionStore
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_store import (
+    SubscriptionStore,
+)
 
 _SPEC_ID = "bilibili:user:1"
 

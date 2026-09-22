@@ -6,7 +6,7 @@
 ## B10.security-guardrails · 跨域凭证剥离
 
 - 层级：一级 B10 → 二级 security-guardrails → 三级 `credential-scrub`
-- 实现落点：`plugins/bot_unified_runtime/domains/core/credentials`、`plugins/bot_unified_runtime/security`
+- 实现落点：`plugins/bot_unified_runtime/domains/core/credentials`、`plugins/bot_unified_runtime/security`、`plugins/bot_unified_runtime/domains/chat_reply/runtime/database_broker.py`
 <!-- BOARD-AUTO:END -->
 
 ## 这个入口做什么
@@ -22,7 +22,7 @@
 - 域名真身：`domains/link_parse/parsers/cookies.py:PLATFORM_COOKIE_DOMAINS`。规则是**扩写这张表，不另建第二张域表**。`PlatformCookie`（provider 产出）携带本平台窄域 → 按窄域校验；普通 `str` cookie（steam/epic 自读兜底）→ 回退到由该表派生的联合域。
 - 归属判定 `_host_matches_domain`：后缀语义，`www.bilibili.com` 归入 `.bilibili.com`、裸域自配、`evilbilibili.com` 不误伤。取不到 host 时保守判「不允许」。
 - 归因链：规则的 `allowed_hosts`（字段在 `domains/core/contracts/media.py`）由 `domains/link_parse/capabilities/content_parser.py:_host_belongs` 消费，决定从页面里派生哪个 URL——有规则域时只选归属域内 URL，无规则域（合成/无凭证规则）保持旧行为。
-- 凭据引用面：`domains/core/credentials/credentials.py` 只发 `CredentialRef`，解析发生在 transport/fetch 边界，任何 repr 与审计输出只见掩码预览；文件态落被 git 忽略的 `data/credentials.json`，`BOT_CREDENTIAL_` 前缀的环境变量值不出现在错误文本里。体检走 `dev.ps1 -Task credential-smoke`（查过期与可用性，绝不打印密钥值）。
+- 凭据引用面：`domains/core/credentials/credentials.py` 只发 `CredentialRef`，解析发生在 transport/fetch 边界，任何 repr 与审计输出只见掩码预览；文件态落被 git 忽略的凭据库（路径以该件的路径常量为准），`BOT_CREDENTIAL_` 前缀的环境变量值不出现在错误文本里。体检走 `dev.ps1 -Task credential-smoke`（查过期与可用性，绝不打印密钥值）。
 
 ## 开关与参数
 

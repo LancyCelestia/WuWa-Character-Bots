@@ -24,7 +24,7 @@ from plugins.bot_unified_runtime.domains.core.contracts.music import (
     MusicChartEntry,
     MusicChartSnapshot,
 )
-from plugins.bot_unified_runtime.sources.parsers.http_util import (
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
     http_get_json,
     http_post_json,
 )

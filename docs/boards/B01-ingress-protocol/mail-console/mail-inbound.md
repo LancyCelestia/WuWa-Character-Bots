@@ -30,7 +30,7 @@
 - `bot_mail_bridge_state_file`：暂停/已通知状态的持久化文件（相对路径经 `scripts/runtime_paths.py` 重映射到 Runtime）。
 - `bot_mail_sender_aliases`：发件地址→称呼映射；`bot_mail_notify_preview_chars`：通知里的正文预览长度。
 - driver 配置 `MAIL_BOTS`（IMAP/SMTP 账号）。改这些键都要重启；逐键语义以 `docs/config-catalog-full.md` 为准。
-- 退避与超时是模块常量：连接重试 `_RETRY_DELAYS`（3→60 秒封顶），`UNSEEN` 搜索单次硬超时 15 秒 + 同连接一次 2 秒短重试；重试仍超时则抛回外层走整链重连。
+- 退避与超时是模块常量（数值一律以该件内的常量定义为准，本文不写死）：连接重试 `_RETRY_DELAYS`、`UNSEEN` 搜索的单次硬超时、同连接的一次短重试；重试仍超时则抛回外层走整链重连。
 
 ## 失败时看到什么
 

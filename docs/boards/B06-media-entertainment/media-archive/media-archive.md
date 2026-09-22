@@ -47,8 +47,8 @@ sha256；取字节复用中央下载咽喉的 SSRF 判定，并额外挂一个**
 ## 开关与参数
 
 - `bot_media_archive_enabled`（True）：总闸。
-- `bot_media_archive_dir`（`data/media_archive`）、`bot_media_archive_db_path`
-  （`data/media_archive.sqlite3`）：两者都在 `config.py` 的 `path_fields` 里，
+- `bot_media_archive_dir` 与 `bot_media_archive_db_path`（两者的缺省路径以 `config.py`
+  的对应字段为准）：两者都在 `config.py` 的 `path_fields` 里，
   经 `scripts/runtime_paths.py` 重映射到 Runtime 数据根。
 - `bot_media_archive_min_role`（`super_admin`）：权限门，取值沿用
   `domains/chat_reply/policy/roles.py` 的六级角色。

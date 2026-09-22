@@ -195,7 +195,7 @@ class Config(BaseModel):
     bot_kb_wiki_sync_minute: int = 40
     bot_kb_wiki_sync_on_startup: bool = True
     # —— V2.1 S8：教导知识库与数据库安全查询代理（V21-TEACH-001 /
-    # V21-DB-001；装配见 runtime/service_wiring.py，受下方主门缺省关约束）——
+    # V21-DB-001；装配见 domains/chat_reply/runtime/service_wiring.py，受下方主门缺省关约束）——
     # 教导知识库：用户提议→管理员审核→生效为「背景知识」注入（仅供理解、
     # 禁止复述；结构上不可达人格/权限/路由面）。
     bot_teaching_enabled: bool = True
@@ -204,7 +204,7 @@ class Config(BaseModel):
     # registry + 参数 schema + 2s 超时 + 200 行限额；禁任意表/排序/SQL）。
     bot_database_broker_enabled: bool = True
     # —— V2.1 B2① 服务装配组主门（V21-WORLD-001/V21-KB-001/V21-DB-001/
-    # V21-TEACH-001；runtime/service_wiring.py 装配+注册表）——缺省关=零装配
+    # V21-TEACH-001；domains/chat_reply/runtime/service_wiring.py 装配+注册表）——缺省关=零装配
     # 零副作用，不改变现网行为；开启后仍受各分门（上方 teaching/broker 既有
     # 键与下方 worldbook/knowledge 两键）约束。L41 memory 待用户裁决不接。
     bot_v21_service_wiring_enabled: bool = False

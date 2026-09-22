@@ -27,7 +27,7 @@
 
 - driver 配置：`TELEGRAM_BOTS`（token 等），代理走系统/环境变量层；`.env` 里另有 `TELEGRAM_PROXY`、`TELEGRAM_WEBHOOK_URL` 键位（现役用长轮询，webhook 项属备用）。逐键以 `docs/config-catalog-full.md` 与 `.env.example` 为准。
 - 管理员 TG 侧收件：`bot_telegram_admin_user_ids`、`bot_telegram_admin_chat_ids`（pydantic `Config` 字段，改后需重启）。
-- 退避曲线写死在件内：起始 3 秒、倍增至 60 秒封顶。刻意不做成配置键——可调来调去只会掩盖网络事实。
+- 退避曲线写死在件内（起始值与封顶值以该件的常量定义为准）。刻意不做成配置键——可调来调去只会掩盖网络事实。
 - 不可热改。
 
 ## 失败时看到什么

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from plugins.bot_unified_runtime.sources.parsers.http_util import http_get_json
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    http_get_json,
+)
 
 _WEATHER_CODE_ZH: dict[int, str] = {
     0: "晴", 1: "大致晴", 2: "多云", 3: "阴",

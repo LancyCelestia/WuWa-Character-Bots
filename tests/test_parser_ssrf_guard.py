@@ -36,13 +36,17 @@ from plugins.bot_unified_runtime.domains.core.contracts.media import (
     ParserRule,
     build_parsed_content,
 )
+from plugins.bot_unified_runtime.domains.files.sources import (
+    downloader as downloader_module,
+)
 
 # v21r2 W1a: platforms_generic 真身已迁 domains/link_parse/parsers/，monkeypatch 需打在真身上
 # （上方 content_parser import 已先行触发 sources.parsers 聚合，垫片期顺序纪律满足）
 from plugins.bot_unified_runtime.domains.link_parse.parsers import platforms_generic
-from plugins.bot_unified_runtime.sources import downloader as downloader_module
-from plugins.bot_unified_runtime.sources.parsers.http_util import ParseHttpError
-from plugins.bot_unified_runtime.sources.parsers.ssrf_guard import (
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    ParseHttpError,
+)
+from plugins.bot_unified_runtime.domains.link_parse.parsers.ssrf_guard import (
     check_fetch_landing,
     guard_user_url,
 )

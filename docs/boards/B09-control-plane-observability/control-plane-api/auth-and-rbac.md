@@ -15,7 +15,7 @@
 读接口要凭据、写接口要**另一枚**凭据、两枚都没配则整个 API 面直接不可用。
 
 设计取向是"默认拒绝 + 失败要便宜"：SHA-256 摘要比对（明文只在生成时出现过一次，
-落配置的是摘要）、`hmac.compare_digest` 恒定时间比较、同源 60 秒内 5 次失败即 429。
+落配置的是摘要）、`hmac.compare_digest` 恒定时间比较、同源失败达门槛即 429（窗宽与次数以该件常量为准）。
 Host 头校验在**认证之前**执行——Bearer 只能挡住"没凭据的人"，挡不住恶意网页驱动
 受害者浏览器朝 `127.0.0.1:8742` 发的跨域简单请求（DNS rebinding / 同源策略绕过），
 所以 Host 白名单是一票否决门（审查 P-01）。
@@ -66,7 +66,7 @@ Host 头校验在**认证之前**执行——Bearer 只能挡住"没凭据的人
 | 没配任何令牌 | 503 `control_plane_not_provisioned` | 防"忘了配就裸奔"，只有 `/healthz` 活着 |
 | 缺/错 Bearer 头（读口） | 401 `unauthorized` | 记一次同源失败 |
 | 写口凭据不对 | 403 `forbidden`「此操作需要 super_admin 权限。」 | 用只读令牌打写接口就是这条 |
-| 60 秒内失败满 5 次 | 429 `rate_limited` + `Retry-After` | 三枚依赖共用同一限速桶 |
+| 抑制窗内失败满门槛次（窗宽与次数以该件常量为准） | 429 `rate_limited` + `Retry-After` | 三枚依赖共用同一限速桶 |
 | Host 头不在白名单/多值 | 400 `host_not_allowed` | 原文只进服务端日志（`repr` 防控制字符注入），不回显 |
 | Service 层判角色不够 | 403 `forbidden` | 例：工作区非超管、动作非超管 |
 
@@ -83,6 +83,6 @@ Host 头校验在**认证之前**执行——Bearer 只能挡住"没凭据的人
 `test_secret_redaction_hardening.py`（query 脱敏）。
 真机（须用户先开总开关并配两枚摘要、提权重启）：
 ① 无 Authorization 打 `/api/v1/features` → 401；② 用只读令牌打
-`POST /api/v1/config/.../set` → 403；③ 连错 6 次 → 429 带 `Retry-After`；
+`POST /api/v1/config/.../set` → 403；③ 连错达门槛次 → 429 带 `Retry-After`；
 ④ `curl -H "Host: evil.example"` → 400；⑤ 查 `control_plane_audit` 表确认
 每一次都留痕且 query 中敏感值已打码。

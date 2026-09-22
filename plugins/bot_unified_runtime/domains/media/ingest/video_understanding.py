@@ -82,7 +82,9 @@ def detect_deep_video_request(text: str) -> bool:
 
 
 def _find_ffmpeg_locate() -> str:
-    from plugins.bot_unified_runtime.sources.downloader import _find_ffmpeg
+    from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+        _find_ffmpeg,
+    )
 
     return _find_ffmpeg()
 

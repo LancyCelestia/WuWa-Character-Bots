@@ -333,7 +333,7 @@ sequenceDiagram
 | `domains/emergency_info/sources/nmc_alarm.py`（458） | `SOURCE_ID="nmc"`:56、`ALARM_COLOR_RANK`:66、`AlarmAlert`:84、`StationAlarm`:104、`split_alarm_title`:126、`parse_beijing_time`:151、`absolutize_nmc_url`:164、`build_nmc_alarm_detail_url`:176、`build_nmc_find_alarm_url`:186、`build_nmc_rest_weather_url`:193、`parse_nmc_alarm_page`:235、`parse_nmc_station_alarm`:336、`fetch_nmc_alarms`:395、`fetch_nmc_station_alarm`:420 | NMC 全国在报清单 + 站点级当前预警（`data.real.warn`，现役天气码未消费的白捡位） | 查询/预警族取形＝`domains/weather/capabilities/weather.py`（`parse_alert_title:176-199` 同族颜色词解析；本席不 import 它，见接缝 §8.1） | 已落码 |
 | `domains/emergency_info/sources/open_data_quakes.py`（591） | `ICL_SOURCE_ID="icl"`:52、`USGS_SOURCE_ID="usgs"`:53、`QuakeEvent`:72、`QuakeMatch`:106、`epoch_ms_to_utc`:158、`haversine_km`:171、`build_icl_earlywarnings_url`:188、`parse_icl_earlywarnings`:230、`fetch_icl_earthquakes`:280、`build_usgs_feed_url`:299、`build_usgs_fdsnws_url`:315、`parse_usgs_geojson`:384、`fetch_usgs_quakes`:461、`fetch_usgs_recent_feed`:489、`crosscheck_quakes`:511 | 地震双源（ICL 主 + USGS 核验）与事件匹配（±30min 且震中距 ≤200km） | 交叉核验脚注范式＝股指腾讯源 6 指数核验（AGENTS 第四部分 market 行；E11 §3 口径） | 已落码 |
 | `domains/emergency_info/sources/gdacs.py`（248） | `SOURCE_ID="gdacs"`:43、`SOURCE_LABEL`:44、`GdacsEvent`:67、`parse_gdacs_events`:126、`fetch_gdacs_events`:219 | 国际灾害背景聚合（**不推送**，E11 §2 矩阵判定） | 同上（`fetch_*` 三态返回同族） | 已落码 |
-| `service/__init__.py`（5）、`sources/__init__.py`（6） | 包 docstring | 包标记（不建则不可 import） | 仓内每层目录均有 `__init__.py` | 已落码 |
+| `domains/emergency_info/service/__init__.py`（5）、`domains/emergency_info/sources/__init__.py`（6） | 包 docstring | 包标记（不建则不可 import） | 仓内每层目录均有 `__init__.py` | 已落码 |
 
 ### 4.2 域外中央件（本域依赖，非本域所有）
 

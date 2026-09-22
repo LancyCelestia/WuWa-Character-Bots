@@ -62,6 +62,6 @@ flowchart LR
 ## 退役与并入记录
 
 - `plugins/bot_unified_runtime/output/` 下的 `plain_text.py` `renderer.py` `reviewer.py` `roleplay.py` `templates.py` `render_backends.py` `bot_avatar.py` 与 `output/card_render/` 全部是 v21r2 render 迁移（W13）留下的再导出垫片（头注 `Compat shim: moved to domains/render/...`），真身在 `domains/render/`。板块文档一律写真身坐标；`output/` 路径只作为「历史导出名仍在用」的兼容面看待，不算实现。旧路径消费边的收编进度见 `docs/design/v21r3-render-shim-retirement.md`。
-- 统一错误卡的代码真身自始就在 `domains/ops/monitor/error_report.py`，**不在** `runtime/`（多处旧文档写成 `runtime/error_report.py`，以本板块坐标为准）。
-- 本板块吸收的过程件：`docs/design/v21r3-render-closing-spec.md`（C1–C13 裁决）、`v21r3-render-unification-plan.md`、`fstring-card-dom-spec.md`、`render-pipeline-optimization-spec.md`、`visual-effects-catalog.md`、`docs/design/unify-audit-20260919/`（渲染波席位取证）、`docs/design/audit-20260920-unify-U3-outbound.md` 与 `-U15-output.md`（出站与文本链审计）。这些文件保留原位继续作为规格与审计事实源，本板块正文不复写其数值表。
+- 统一错误卡的代码真身自始就在 `domains/ops/monitor/error_report.py`，**不在** `runtime/`（多处旧文档写成 `domains/ops/monitor/error_report.py`，以本板块坐标为准）。
+- 本板块吸收的过程件：`docs/design/v21r3-render-closing-spec.md`（C1–C13 裁决）、`v21r3-render-unification-plan.md`、`fstring-card-dom-spec.md`、`render-pipeline-optimization-spec.md`、`visual-effects-catalog.md`、`docs/design/unify-audit-20260919/`（渲染波席位取证）、`docs/design/audit-20260920-unify-U3-outbound.md` 与 `docs/design/audit-20260920-unify-U15-output.md`（出站与文本链审计）。这些文件保留原位继续作为规格与审计事实源，本板块正文不复写其数值表。
 - **仍然独立生效、不由本板块接管的一份**：`docs/rendering-contract.md`。它是改任何卡片模板前的必读契约与豁免登记册（铁律、注册表、§八 豁免与待补门），本板块各页引用它、不替代它；两者冲突以契约与测试断言为准。

@@ -2,7 +2,7 @@
 sections: 用途 | 口径 | 取数口 | 维护规矩 | 明细?
 params:
 - ledger_scope | text | literal | req | nonempty
-- owner_board | text | literal | req | nonempty
+- owner_board | text | auto:category_owner_board | req | nonempty
 - refresh_cmd | text | literal | opt | any
 @schema:END -->
 

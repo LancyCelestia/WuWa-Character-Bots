@@ -27,7 +27,7 @@
   `ContextBundle`，分区装配再注入【用户画像】/关系段（见
   [上下文分区渲染](../persona-context/context-sections.md)）。别处不得自己写第二份
   档位语气表。
-- 软类别联动：`security/content_safety.py` 的 `persona_degradation` 命中时启用自守文本
+- 软类别联动：`domains/chat_reply/security/content_safety.py` 的 `persona_degradation` 命中时启用自守文本
   （口径见 `docs/affinity-design.md` §5/§6），扣分路径不变（insult 照记），
   管理员对**软类别**的放宽不影响四条红线本身。
 - 展示侧文案出口在 `capabilities/affinity.py`：`ALGORITHM_TEXT`（算法页）、

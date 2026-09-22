@@ -40,7 +40,7 @@
 ## 开关与参数
 
 - `bot_affinity_enabled`（缺省 True）：查询与动态层共用总闸。
-- `bot_affinity_db_path`（缺省 `data/user_affinity.sqlite3`，路径键经 runtime_paths
+- `bot_affinity_db_path`（库路径的缺省值以 `config.py` 该字段为准，路径键经 runtime_paths
   重映射，改值须重启）。
 - 展示口径：`-100~+100`、初始基准 10、八档（`_TIER_TABLE` 与
   `docs/affinity-design.md` §4 同源）——这是**档位口径**，不是算法步长；

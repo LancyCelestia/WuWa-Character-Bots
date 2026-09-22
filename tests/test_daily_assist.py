@@ -31,7 +31,8 @@ from plugins.bot_unified_runtime.capabilities.daily_assist import (
     build_daily_assist_capability,
     is_daily_assist_command,
 )
-from plugins.bot_unified_runtime.character.daily_assist import (
+from plugins.bot_unified_runtime.contracts import PrivacyLevel, SendPolicy, SessionType
+from plugins.bot_unified_runtime.domains.assistant.daily.store.daily_assist import (
     _EVENING_IDEA_NUDGES,
     _EVENING_INBOX_COUNTED_LINES,
     _EVENING_INBOX_EMPTY_LINES,
@@ -57,7 +58,6 @@ from plugins.bot_unified_runtime.character.daily_assist import (
     summarize_with_llm,
     tasks_path,
 )
-from plugins.bot_unified_runtime.contracts import PrivacyLevel, SendPolicy, SessionType
 from plugins.bot_unified_runtime.domains.transport.sender.outbound_gate import (
     build_outbound_gate,
 )
@@ -291,7 +291,9 @@ def test_brief_outputs_pass_tone_guard() -> None:
 
 
 def test_pick_variant_rotates_deterministically() -> None:
-    from plugins.bot_unified_runtime.character.daily_assist import _VARIANT_CURSORS
+    from plugins.bot_unified_runtime.domains.assistant.daily.store.daily_assist import (
+        _VARIANT_CURSORS,
+    )
 
     _VARIANT_CURSORS.clear()
     pool = ("甲", "乙", "丙")

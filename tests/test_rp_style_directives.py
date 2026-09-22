@@ -225,7 +225,7 @@ def test_runtime_answer_rules_no_longer_carry_fixed_example() -> None:
 # ---------------------------------------------------------------- 池化轮换
 
 def test_danger_pool_size_and_deterministic_rotation() -> None:
-    from plugins.bot_unified_runtime.character import daily_assist
+    from plugins.bot_unified_runtime.domains.assistant.daily.store import daily_assist
 
     pool = _DANGER_COMFORT_EXAMPLES
     assert len(pool) >= 8

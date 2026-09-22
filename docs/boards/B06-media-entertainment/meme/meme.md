@@ -16,7 +16,7 @@
 
 用本机 meme-generator-rs 服务生成梗图：列模板、看模板参数、把用户提供的图片作为
 底图套模板加字。命令形态 `/表情 列表`、`/表情 <模板> <文字…>`（斜杠可省、大小写
-不限），产物写入 `data/memes/`（经 Runtime 重映射）后作为图片部件走统一流水线发出。
+不限），产物写入 `bot_meme_api_output_dir` 指向的目录（经 Runtime 重映射）后作为图片部件走统一流水线发出。
 
 ## 怎么调用
 
@@ -27,7 +27,7 @@
 `GET /image/{image_id}`。
 
 一个平台事实钉在这里：QQ 的多媒体签名 URL 第三方服务抓不到，因此需要底图时一律
-由 bot 侧先把字节下载下来、再以 data/base64 形式上传，绝不去把平台的临时 URL 递给
+由 bot 侧先把字节下载下来、再以 data URI 或 base64 形式上传，绝不去把平台的临时 URL 递给
 生成器（与表情归档、识图同一口径）。
 
 ## 开关与参数
@@ -36,7 +36,7 @@
 - `bot_meme_api_enabled`（False）：是否真的对接生成器；关了就是「会说没配上」。
 - `bot_meme_api_base_url`（`http://127.0.0.1:2233`）：本机服务地址。
 - `bot_meme_api_timeout_seconds`（15）：单次请求上限。
-- `bot_meme_api_output_dir`（`data/memes`）：产物目录，在 `config.py` 的
+- `bot_meme_api_output_dir`（产物目录，缺省路径以 `config.py` 该字段为准）：在 `config.py` 的
   `path_fields` 内重映射到 Runtime 数据根。
 - `bot_meme_cache_max_bytes`：本域产物的缓存配额口径（与其它图类能力共用中央
   配额件，落点见 B08）。

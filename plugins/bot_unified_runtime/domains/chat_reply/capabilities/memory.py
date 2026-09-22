@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from plugins.bot_unified_runtime.character.memory import (
-    MEMORY_SENSITIVITIES,
-    SQLiteMemoryRepository,
-    build_fact_id,
-    normalize_memory_sensitivity,
-)
 from plugins.bot_unified_runtime.contracts import (
     CapabilityResult,
     PrivacyLevel,
     RiskLevel,
     SendPolicy,
     new_request_id,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.memory import (
+    MEMORY_SENSITIVITIES,
+    SQLiteMemoryRepository,
+    build_fact_id,
+    normalize_memory_sensitivity,
 )
 from plugins.bot_unified_runtime.domains.core.session_keys import (
     is_group_session_key,

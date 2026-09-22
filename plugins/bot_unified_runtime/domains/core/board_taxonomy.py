@@ -174,6 +174,7 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 help_topics=("功能管理", "帮助"),
                 impl_paths=(
                     "plugins/bot_unified_runtime/domains/chat_reply/runtime/capability_registry.py",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/service_wiring.py",
                     "plugins/bot_unified_runtime/capabilities",
                 ),
                 extra_l3=(
@@ -944,7 +945,8 @@ BOARD_TAXONOMY: tuple[BoardNode, ...] = (
                 slug="security-guardrails",
                 summary="SSRF 咽喉、凭据域名绑定、打码与最小暴露面。",
                 help_topics=("凭据",),
-                impl_paths=("plugins/bot_unified_runtime/domains/core/credentials", "plugins/bot_unified_runtime/security"),
+                impl_paths=("plugins/bot_unified_runtime/domains/core/credentials", "plugins/bot_unified_runtime/security",
+                    "plugins/bot_unified_runtime/domains/chat_reply/runtime/database_broker.py"),
                 config_prefixes=("bot_ssrf_",),
                 extra_l3=(
                     ("ssrf-throat", "下载入口与落点双查"),

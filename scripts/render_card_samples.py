@@ -538,7 +538,9 @@ def build_market_northbound() -> dict[str, Any]:
 
 def bridge_trend_svg(closes: list[float]) -> str:
     """收盘序列 → finance 卡 trend_svg（走生产 line_chart_svg，离线纯 SVG）。"""
-    from plugins.bot_unified_runtime.sources.finance_chart import line_chart_svg
+    from plugins.bot_unified_runtime.domains.finance.data.finance_chart import (
+        line_chart_svg,
+    )
 
     return line_chart_svg([float(v) for v in closes]).svg
 

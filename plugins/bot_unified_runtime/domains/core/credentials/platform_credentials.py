@@ -19,7 +19,7 @@ from pathlib import Path
 
 # 审查 Q-01：B站登录/查询失败文案入 user_copy 数据源失败池（守岸人语气轮换）。
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
-from plugins.bot_unified_runtime.sources.parsers.cookies import (
+from plugins.bot_unified_runtime.domains.link_parse.parsers.cookies import (
     PLATFORM_COOKIE_DOMAINS,
     _resolve_relative_cookie_path,
     build_platform_cookie_provider,
@@ -214,7 +214,7 @@ _QR_SESSION_CAP = 16
 
 def login_methods_line(platform: str) -> str:
     """返回该平台支持的登录方式提示（诚实版）。"""
-    from plugins.bot_unified_runtime.sources.parsers.platform_login import (
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.platform_login import (
         playwright_login_platforms,
     )
 
@@ -234,7 +234,7 @@ def cookie_login_start(config: object, platform: str) -> tuple[str, str, str]:
     """发起扫码登录，返回 (session_key, qr_png_path, text)。"""
     # Playwright 官方登录页模式（MediaCrawler 同款）：不逆向接口，
     # 直接打开平台登录页截图给管理员扫，浏览器上下文持有登录态。
-    from plugins.bot_unified_runtime.sources.parsers.platform_login import (
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.platform_login import (
         LOGIN_PAGES,
         start_playwright_login,
     )
@@ -272,7 +272,7 @@ def cookie_login_start(config: object, platform: str) -> tuple[str, str, str]:
             + "、".join(LOGIN_PAGES)
             + "。",
         )
-    from plugins.bot_unified_runtime.sources.parsers.http_util import (
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
         http_get_json,
     )
 
@@ -336,7 +336,7 @@ def _render_qr_png(content: str, platform: str, session_key: str) -> str:
 def cookie_login_check(config: object, platform: str) -> str:
     """单次 poll：查询该平台最近一次扫码会话的结果。"""
     # playwright 官方登录页会话（xhs/微博/抖音/知乎/快手）。
-    from plugins.bot_unified_runtime.sources.parsers.platform_login import (
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.platform_login import (
         LOGIN_PAGES,
     )
 
@@ -475,7 +475,7 @@ def cookie_expiry_report(config: object, *, warn_days: int = 7) -> str:
 
 def _playwright_login_check(config: object, platform: str) -> str:
     """playwright 扫码会话的结果查询：成功即把平台域 cookie 写入凭证文件。"""
-    from plugins.bot_unified_runtime.sources.parsers.platform_login import (
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.platform_login import (
         login_session_state,
     )
 
@@ -503,7 +503,7 @@ def _playwright_login_check(config: object, platform: str) -> str:
     if state != "ok":
         return "登录状态未知，请重试。"
     # ok：写 cookie 文件
-    from plugins.bot_unified_runtime.sources.parsers.platform_login import (
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.platform_login import (
         LOGIN_PAGES,
     )
 
@@ -534,7 +534,7 @@ def _playwright_login_check(config: object, platform: str) -> str:
         return "未配置 BOT_COOKIES_FILE，无法写入凭证。"
     with open(cookie_path, "a", encoding="utf-8") as handle:
         handle.write(chr(10).join(rows) + chr(10))
-    from plugins.bot_unified_runtime.sources.parsers.platform_login import (
+    from plugins.bot_unified_runtime.domains.link_parse.parsers.platform_login import (
         clear_login_session,
     )
 

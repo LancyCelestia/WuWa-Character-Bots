@@ -29,8 +29,8 @@
 
 - 昵称来源优先级：`bot_persona_nicknames`（人格级）→ `bot_runtime_persona_nickname`（旧字段兼容）→ `bot_runtime_persona_nicknames` → 实例设置 store 里的动态昵称 → 官方策展兜底 `DEFAULT_PERSONA_NICKNAMES`。全部为空也**必须**能被叫应——「昵称无响应」就是这么根治的。
 - 人格档案目录下的 `personas/<profile>/aliases.txt`（竖线分隔）由 `_load_persona_alias_file` 真读；文件缺失或不可读静默跳过并回落兜底。历史上这个文件长期无人消费，是一类典型「资产在、链路断」。
-- 动词表 `DEFAULT_VERB_MAP`（帮助/状态/为什么/记忆/配置/就绪/人格/对话验收/角色/历史/暂停·继续 → 对应 `bot.*`）；长动词优先编译，避免「清理历史」被「历史」抢先。
-- 大小写不敏感（`re.IGNORECASE`）。逐键热更性以 `docs/config-catalog-full.md` 为准；改昵称配置后最迟 10 秒生效（路由判定缓存 TTL），或调 `clear_route_decision_cache()` 立即生效。
+- 动词表 `DEFAULT_VERB_MAP`（成员以该常量定义为准）；长动词优先编译，避免「清理历史」被「历史」抢先。
+- 大小写不敏感（`re.IGNORECASE`）。逐键热更性以 `docs/config-catalog-full.md` 为准；改昵称配置后最迟一个路由判定缓存周期生效，或调 `clear_route_decision_cache()` 立即生效。
 
 ## 失败时看到什么
 

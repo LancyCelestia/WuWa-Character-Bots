@@ -8,7 +8,22 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
+
+# S139：本门曾自己往源码树写字节码（S129 的 C1）。第一个「项目树」import
+# （runtime_paths，住 scripts/）若在本进程尚无字节码保护时执行，会当场长出
+# scripts/__pycache__，随后的扫描把自家产物记成红——裸跑路线必现（已实证），
+# dev.ps1 路线靠启动期 $env 不写（5 连跑实证）。旧 :123 的 setdefault 既排在
+# import 之后、又只及**之后启动的子进程**，两样都救不了本进程 import。
+# 修法＝在第一个项目树 import 之前把两条通道都设好：
+#   - os.environ.setdefault：解释器启动期已被 site.py 读完，进程中途改它
+#     不影响本进程 import（%TEMP% 探针实证），作用域只有子进程；
+#   - sys.dont_write_bytecode：本进程后续 import 的唯一有效闸。
+# stdlib（json/os/sys/pathlib）留在闸之前是安全的：其 .pyc 落解释器安装目录，
+# 永不在门扫描面 PROJECT_ROOT.rglob 之内。
+os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+sys.dont_write_bytecode = True
 
 from runtime_paths import PROJECT_ROOT, _dotenv_value, runtime_data_dir
 
@@ -120,5 +135,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+    # 旧版在这里 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")——排在
+    # 模块顶部 import 之后且只及子进程，是 S129 C1 的成因；已上移至守卫区。
     raise SystemExit(main())

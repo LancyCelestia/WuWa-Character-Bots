@@ -97,7 +97,7 @@ Service 层改配置。
   `real_session_unavailable`、真实发送 503 `not_wired`（详见 [workspaces](workspaces.md)）。
 - `/api/v1/traces` 有两条同路径实现（v1 的 503 占位与 platform 的真资源口），靠注册顺序
   与显式 `operation_id` 区分；主链路**不自动写 trace 行**，详见 [trace-stages](../observability/trace-stages.md)。
-- 动作面 13 个 id 全登记，但真实执行适配器多数未接（`queue.*` 需装配注入 send_queue、
+- 动作面 id 全登记（枚数以控制面动作注册表现算为准），但真实执行适配器多数未接（`queue.*` 需装配注入 send_queue、
   `napcat.status` 需实时探针），未接者返回 `status=degraded` 而非假称成功；
   回滚适配器**结构性不存在**（`rollback_supported=True` 在构造期即 raise）。
 - 设计文档中的"M2+ 不做"口径已过期，`docs/design/control-plane-*` 与现役代码有落差，

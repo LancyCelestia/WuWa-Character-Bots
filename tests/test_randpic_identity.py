@@ -14,8 +14,10 @@ from plugins.bot_unified_runtime.capabilities.randpic import (
     is_randpic_command,
     pick_random_image,
 )
-from plugins.bot_unified_runtime.character.session_identity import SessionIdentityStore
 from plugins.bot_unified_runtime.contracts import IncomingMessage, SessionType
+from plugins.bot_unified_runtime.domains.chat_reply.character.session_identity import (
+    SessionIdentityStore,
+)
 
 # ---------- randpic：只读自定义文件夹，绝不自建 ----------
 

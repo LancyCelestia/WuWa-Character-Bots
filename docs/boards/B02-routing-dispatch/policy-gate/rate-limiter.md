@@ -19,7 +19,7 @@
 
 ## 开关与参数
 
-设置类 `RateLimitSettings` 由 `build_rate_limit_settings(config)` 从 `bot_rate_limit_*` 与 `bot_group_proactive_*` 键装配（键名在该函数体内以 `getattr` 引用，可在那里核对）。`pass settings_provider` 给 `build_rate_limiter` 时群句数帽/情绪豁免**每次判定实时求值**（可经 `/bot runtime set` 热改），否则退回启动期快照。`SQLiteRateLimiter` 不支持 callable settings，走 SQL 窗口。R3 同人点名最小间隔（`chat_sender_min_interval_seconds`，缺省 45 秒）对所有人一致、不受 `bypass_roles` 豁免；情绪低落命中 `_DISTRESS_LABELS` 时豁免群句数帽。
+设置类 `RateLimitSettings` 由 `build_rate_limit_settings(config)` 从 `bot_rate_limit_*` 与 `bot_group_proactive_*` 键装配（键名在该函数体内以 `getattr` 引用，可在那里核对）。`pass settings_provider` 给 `build_rate_limiter` 时群句数帽/情绪豁免**每次判定实时求值**（可经 `/bot runtime set` 热改），否则退回启动期快照。`SQLiteRateLimiter` 不支持 callable settings，走 SQL 窗口。R3 同人点名最小间隔（`chat_sender_min_interval_seconds`，缺省值以 `config.py` 该字段为准）对所有人一致、不受 `bypass_roles` 豁免；情绪低落命中 `_DISTRESS_LABELS` 时豁免群句数帽。
 
 ## 失败时看到什么
 

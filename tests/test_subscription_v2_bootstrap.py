@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from plugins.bot_unified_runtime.sources.subscription_runtime_v2 import (
+from plugins.bot_unified_runtime.domains.subscribe.store.subscription_runtime_v2 import (
     register_subscription_runtime_v2,
 )
 

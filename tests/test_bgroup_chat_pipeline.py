@@ -24,8 +24,10 @@ from plugins.bot_unified_runtime.contracts import WebSearchHit
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import (
     chat as chat_module,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
+    DeadlineBudget,
+)
 from plugins.bot_unified_runtime.llm import LLMReply
-from plugins.bot_unified_runtime.runtime.deadline import DeadlineBudget
 
 # ==================== B-1：视频阶段预算协调 ====================
 

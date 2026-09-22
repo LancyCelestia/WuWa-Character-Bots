@@ -9,7 +9,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from plugins.bot_unified_runtime.sources.parsers.http_util import http_get_json
+from plugins.bot_unified_runtime.domains.link_parse.parsers.http_util import (
+    http_get_json,
+)
 
 _STEAM_FEATURED_API = "https://store.steampowered.com/api/featuredcategories/"
 

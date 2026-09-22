@@ -143,7 +143,9 @@ class LLMControlService:
         store = self.channel_health_store
         if store is None:
             try:
-                from ..llm.channel_health import get_channel_health_store
+                from ..domains.chat_reply.llm_engine.channel_health import (
+                    get_channel_health_store,
+                )
 
                 store = get_channel_health_store()
             except Exception:  # noqa: BLE001 - 健康层不可用按 unknown 投影。
@@ -303,7 +305,7 @@ class LLMControlService:
     # ---------- health / routes ----------
 
     def health_view(self) -> dict[str, Any]:
-        from ..llm.channel_health import (
+        from ..domains.chat_reply.llm_engine.channel_health import (
             channel_health_enabled,
             channel_health_latency_first,
         )
@@ -332,7 +334,7 @@ class LLMControlService:
         }
 
     def routes_view(self) -> dict[str, Any]:
-        from ..llm.channel_health import (
+        from ..domains.chat_reply.llm_engine.channel_health import (
             channel_health_enabled,
             channel_health_latency_first,
         )

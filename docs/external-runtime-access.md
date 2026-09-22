@@ -87,8 +87,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& .\scripts\dev.ps1 -Tas
 以下脚本的默认数据库和输出目录已经改为读取 `BOT_RUNTIME_DATA_DIR`：
 
 - `scripts\knowledge_progress.py`
+- `scripts\kb_wiki_retrieval_probe.py`
 - `scripts\knowledge_bench.py`
 - `scripts\import_meme_packs.py`
+
+`knowledge_progress.py` 一次报两个向量库（`memory`=角色记忆库、`wiki`=百科接货库），只读打开，
+可以在 kb-sync 跑动中随时看。wiki 侧的**收工判据不是行数**：投料阶段块行就已全部落库，
+"库内 100% 带向量"既可能是投完也可能是还没开嵌。真正的四条判据（摘要 `ok`/`error_kind`、
+本轮 `embedded >= embed_pending`、`embedded_after >= 块行数`、`ann_expected_vector_count == embedded_after`）
+由脚本自己打勾，语义锁在 `tests\test_knowledge_progress_settled_gate.py`。
+注意摘要里的 `embed_pending` 是**本轮投料数（分母）**，不是"还剩多少"。
+值守/等待类脚本**必须带基线** `--since <ISO>`：库里的摘要只有一枚、永远反映**上一次跑完的那轮**，
+不带基线时"已投完收工"会在本轮还没开跑时就先绿一次（2026-09-22 实犯，值守脚本第一轮即自行退出）。
+带基线后本轮未开始时打 `=> 本轮未开始`，两例锁在同一测试件里。
 
 表情包导入脚本写入数据库的文件路径也使用绝对路径，避免数据库位于 Runtime 时，后续清理操作错误地把相对路径解释到源码目录。
 

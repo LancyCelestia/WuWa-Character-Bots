@@ -21,6 +21,10 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     new_debug_id,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
+    DeadlineExceeded,
+    apply_request_deadline,
+)
 from plugins.bot_unified_runtime.domains.transport.sender.file_gateway import (
     FileSource,
     FileTransferError,
@@ -31,10 +35,6 @@ from plugins.bot_unified_runtime.domains.transport.sender.timeout import (
     resolve_transport_timeout,
 )
 from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
-from plugins.bot_unified_runtime.runtime.deadline import (
-    DeadlineExceeded,
-    apply_request_deadline,
-)
 
 logger = logging.getLogger(__name__)
 

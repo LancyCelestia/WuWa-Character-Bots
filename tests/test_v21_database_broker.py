@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.runtime.database_broker import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.database_broker import (
     DatabaseBroker,
     QueryParamError,
     QuerySortError,

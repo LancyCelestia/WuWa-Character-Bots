@@ -531,7 +531,10 @@ def build_knowledge_service(
         for name, store in stores:
             bindings.append(KnowledgeSourceBinding(name=name, store=store))
     else:
-        from .kb_wiki import sync_kb_wiki  # 就近复用，避免环导入
+        from plugins.bot_unified_runtime.domains.location.knowledge.kb_wiki import (  # 真身（v21r2 W16 迁域），函数级惰性防环
+            sync_kb_wiki,
+        )
+
         from .vector_knowledge import build_vector_knowledge_provider
 
         provider = cast(

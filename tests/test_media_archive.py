@@ -21,6 +21,9 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.files.sources.downloader import (
+    RejectedUrlError,
+)
 from plugins.bot_unified_runtime.domains.media.archive.media_archive import (
     UNKNOWN_IP,
     MediaArchiveStore,
@@ -39,7 +42,6 @@ from plugins.bot_unified_runtime.runtime.base_router import (
     classify_message_route,
     clear_route_decision_cache,
 )
-from plugins.bot_unified_runtime.sources.downloader import RejectedUrlError
 
 # ---------------------------------------------------------------------------
 # 触发判定

@@ -37,7 +37,7 @@ B02 回答三个彼此独立的问题，因此切成四个二级功能：
 
 ### 现役进度：中央调度层（必须先读）
 
-用户裁定第 10 项：「所有内容都要接入中央能力调度层，TTS 也不例外」。规格与分波施工在 `docs/design/capability-orchestration-adoption-spec.md`。现状如实：
+用户裁定的中央调度层那一条：「所有内容都要接入中央能力调度层，TTS 也不例外」。规格与分波施工在 `docs/design/capability-orchestration-adoption-spec.md`。现状如实：
 
 | 波次 | 内容 | 状态 |
 |---|---|---|
@@ -45,7 +45,7 @@ B02 回答三个彼此独立的问题，因此切成四个二级功能：
 | Wave 1 | 已包装的 media/files/search 描述符改经 `CapabilityInvoker` 通电 | **未做** |
 | Wave 2 | 中央描述符注册表升为唯一真源（并 `CONTROLLED_INTERNAL_CAPABILITIES` 等表收拢） | **未做** |
 | Wave 3 | 逐域接入（爆炸半径升序，`chat_reply` 垫后） | **未做** |
-| Wave 4 | 根 `__init__.py` 的 handler 外迁、pipeline 17 条旁路收编、主动投递族收编 | **未做** |
+| Wave 4 | 根 `__init__.py` 的 handler 外迁、pipeline 旁路收编、主动投递族收编 | **未做** |
 
 因此**「已接入中央调度层」目前只对 Wave 0 成立**：`runtime/capability_protocols.py` 在生产路径仍零 import（`docs/audit-20260921.md` V1-1），真实流量仍由根 `__init__.py` 的 matcher + `RuntimePipeline` 承载。任何文档或回复把中央层说成现役执行面都是失实。
 

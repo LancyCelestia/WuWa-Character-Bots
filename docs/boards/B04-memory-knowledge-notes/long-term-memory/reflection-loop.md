@@ -11,7 +11,7 @@
 
 ## 这个入口做什么
 
-夜间反思回路（episodic memory consolidation，借鉴 Stanford generative_agents 思想、零代码复制）：周期性把近一天的原始对话轮次沉淀为两类更高层记忆——`reflection_digests`（每会话当天两句话摘要；同日重跑整行替换，并作废引用旧摘要的事实）与 `reflection_facts`（关于用户本人的稳定事实，类别+置信度；同 sender 归一化文本相同则 keep-newest，旧行置 superseded）。数据来源是 `character/history.py` 的 `conversation_turns` 表，本件不改写 history。
+夜间反思回路（episodic memory consolidation，借鉴 Stanford generative_agents 思想、零代码复制）：周期性把近一天的原始对话轮次沉淀为两类更高层记忆——`reflection_digests`（每会话当天两句话摘要；同日重跑整行替换，并作废引用旧摘要的事实）与 `reflection_facts`（关于用户本人的稳定事实，类别+置信度；同 sender 归一化文本相同则 keep-newest，旧行置 superseded）。数据来源是 `domains/chat_reply/character/history.py` 的 `conversation_turns` 表，本件不改写 history。
 
 ## 怎么调用
 
@@ -24,7 +24,7 @@
 
 ## 开关与参数
 
-`bot_reflection_enabled`（缺省 True）、`bot_reflection_hour` / `bot_reflection_minute`（4/30）、`bot_reflection_db_path`（缺省 `data/reflection.sqlite3`，进 path_fields 重映射）、`bot_reflection_max_sessions`（50）、`bot_reflection_llm_enabled`（缺省 **False**，即缺省零 LLM 成本）、`bot_reflection_quirks_propose_enabled`（True）与 `bot_reflection_quirks_min_confidence`（0.5）。依赖 `bot_history_enabled` 且历史库文件存在，否则整轮跳过。逐键现值以 `config.py` 为准。
+`bot_reflection_enabled`（缺省 True）、`bot_reflection_hour` / `bot_reflection_minute`、`bot_reflection_db_path`（库路径的缺省值以 `config.py` 该字段为准，进 path_fields 重映射）、`bot_reflection_max_sessions`、`bot_reflection_llm_enabled`（缺省 **False**，即缺省零 LLM 成本）、`bot_reflection_quirks_propose_enabled` 与 `bot_reflection_quirks_min_confidence`。依赖 `bot_history_enabled` 且历史库文件存在，否则整轮跳过。逐键现值以 `config.py` 为准。
 
 ## 失败时看到什么
 

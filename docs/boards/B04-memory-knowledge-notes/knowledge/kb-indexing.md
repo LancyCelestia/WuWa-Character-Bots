@@ -17,7 +17,7 @@
 
 ## 怎么调用
 
-真身是 `domains/chat_reply/character/vector_knowledge.py::SqliteVectorKnowledgeStore`（本卡片主题不在上方生成头的落点清单里，那两处管联网检索与教学注入，切块/索引的真身按本段为准）。公开入口：`sync_chunks(files)` 按文件清单同步块、`sync_documents(docs)` 供非文件写入方落库、`embed_pending(files)` 补嵌（返回本次成功数与处理前待嵌数，可断点续跑）、`ensure_fts_index(force=...)` 幂等建关键词索引、`build_ann_index()` / `load_ann_index()` 建与载向量索引、`stats()` 给出总块数与已向量化块数、`certify_expected_vector_count()` 落完备性计数戳。消费侧只走 `retrieve()`，装配在 `plugins/bot_unified_runtime/runtime/service_wiring.py`（受 `bot_knowledge_service_enabled` 等服务装配门门控）。
+真身是 `domains/chat_reply/character/vector_knowledge.py::SqliteVectorKnowledgeStore`（本卡片主题不在上方生成头的落点清单里，那两处管联网检索与教学注入，切块/索引的真身按本段为准）。公开入口：`sync_chunks(files)` 按文件清单同步块、`sync_documents(docs)` 供非文件写入方落库、`embed_pending(files)` 补嵌（返回本次成功数与处理前待嵌数，可断点续跑）、`ensure_fts_index(force=...)` 幂等建关键词索引、`build_ann_index()` / `load_ann_index()` 建与载向量索引、`stats()` 给出总块数与已向量化块数、`certify_expected_vector_count()` 落完备性计数戳。消费侧只走 `retrieve()`，装配在 `plugins/bot_unified_runtime/domains/chat_reply/runtime/service_wiring.py`（受 `bot_knowledge_service_enabled` 等服务装配门门控）。
 
 ## 开关与参数
 

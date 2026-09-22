@@ -12,8 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from plugins.bot_unified_runtime.character.memory import NullMemoryProvider
-from plugins.bot_unified_runtime.character.reflection import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.memory import (
+    NullMemoryProvider,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.character.reflection import (
     FactDraft,
     HeuristicSummarizer,
     LLMSummarizer,

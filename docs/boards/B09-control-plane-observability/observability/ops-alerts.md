@@ -19,7 +19,7 @@
 
 ## 开关与参数
 
-抑制器 `alerts.py::AdminAlertSuppression`：按 `_issue_key`（同一 issue 的身份键）在滑动窗口内去重，窗口 `window_seconds` 缺省 300 秒；命中抑制时 `AdminAlertDispatchResult.suppressed=True` 并累计 `suppressed_count`，恢复放行时把「期间被压掉多少条」写进同一行告警（`build_operational_alert_text` 的 `suppressed_count=…`）。`last_report_kinds_for_issue` 供重连/对账场景判断上次报的是哪类。管理员名单是配置面键（`BOT_ADMIN_USER_IDS`），谁能收由它决定。
+抑制器 `alerts.py::AdminAlertSuppression`：按 `_issue_key`（同一 issue 的身份键）在滑动窗口内去重，窗口 `window_seconds` 的缺省秒数以该件构造参数为准；命中抑制时 `AdminAlertDispatchResult.suppressed=True` 并累计 `suppressed_count`，恢复放行时把「期间被压掉多少条」写进同一行告警（`build_operational_alert_text` 的 `suppressed_count=…`）。`last_report_kinds_for_issue` 供重连/对账场景判断上次报的是哪类。管理员名单是配置面键（`BOT_ADMIN_USER_IDS`），谁能收由它决定。
 
 ## 失败时看到什么
 

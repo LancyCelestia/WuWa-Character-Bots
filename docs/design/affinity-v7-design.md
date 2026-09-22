@@ -50,7 +50,7 @@ z  ← clamp(z + Δz, −Z_HARD, +Z_HARD)
 |---|---|---|---|
 | `base_step` | 单位步长（z 域） | 0.10 | v5 `_BEHAVIOR_DELTA` 的 0.02/0.05/0.10 分档（改为由 `q` 的符号与幅度表达，不再一行为一常数） |
 | `q ∈ [−1,+1]` | **互动质量分**（§2.3） | — | 取代"命中 positive ⇒ +0.02" |
-| `novelty` | `ρ^(n−1)`，`n` = **该人该类型累计**第 n 次同类显著信号（EMA 计数，**跨日按 τ 半衰回升**，不再按自然日重置） | `ρ=0.90`，回升半衰 21 天 | 取代 §v6.2 的 `0.6^n + 每日重置 + floor 0.2` |
+| `novelty` | `ρ^(n−1)`，`n` = **该人该类型累计**第 n 次同类显著信号（EMA 计数，**跨日按 τ 半衰回升**，不再按自然日重置） | 比例真身＝`affinity.py::_V7_DEFAULT_NOVELTY_RATIO`、回升半衰真身＝`affinity.py::_V7_DEFAULT_NOVELTY_HALO_DAYS`，两值以该二符号现算为准（本页不重述） | 取代 §v6.2 的 `0.6^n + 每日重置 + floor 0.2` |
 | `rhythm` | 以该 principal 近 28 天日均互动轮次 `r`（EMA）归一：`1/(1 + max(0, r−r_ref)/r_ref)` | `r_ref=8` | 新增（治"话痨更快到顶"） |
 | `mood` / `impression` | **保留 v5/v6 的调制定位**（乘在步长上），带宽收进 `[0.85,1.15]` / `[0.80,1.25]` | 现值收敛 | 不改语义，只重新标定到 z 域 |
 | `repair_gain` | 道歉/澄清/和解信号（`_TEASE_RE` 家族 + 明示道歉词表）时 `Δz` 乘 1.4，**且不进 `novelty` 计数** | 1.4 | 新增（关系可回血，和解不该被配额挡住） |
@@ -72,8 +72,9 @@ z  ← clamp(z + Δz, −Z_HARD, +Z_HARD)
 
 ### 2.4 时间项
 - 缺席**不扣分**（`_PASSIVE_DECAY_ENABLED=False` 是用户裁定，保留）；
-- 新增**语义分级衰减**只作用于 `q` 的 EMA 平滑层，不动 `z`：`stable`（忌口/身份/长期偏好）τ=45 天、
-  `seasonal`（最近爱喝冰的）τ=21 天、`episodic`（单次事件）τ=7 天 ⇒ 取代 `_SENTIMENT_HALF_LIFE_DAYS` 直接压分数的做法。
+- 新增**语义分级衰减**只作用于 `q` 的 EMA 平滑层，不动 `z`：三档 `stable`（忌口/身份/长期偏好）／
+  `seasonal`（最近爱喝冰的）／`episodic`（单次事件）的 τ 天数**一处真身**＝`affinity.py::_V7_DEFAULT_DECAY_TAU_DAYS`，
+  以该符号现算为准（本页不重述数值）⇒ 取代 `_SENTIMENT_HALF_LIFE_DAYS` 直接压分数的做法。
 
 ## 三、迁移（运行数据不可删）
 1. 新增列 `z_latent REAL`；首次读取时 `z = atanh(clamp(score/100, −0.985, 0.985))` 惰性补齐

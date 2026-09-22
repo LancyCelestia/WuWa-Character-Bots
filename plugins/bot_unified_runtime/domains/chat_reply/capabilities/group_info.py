@@ -37,17 +37,17 @@ from plugins.bot_unified_runtime.contracts import (
     IncomingMessage,
     SendPolicy,
 )
-from plugins.bot_unified_runtime.domains.core.text_boundary import (
-    PARTICLE_BOUNDARY_CHARS,
-    is_trigger,
-    matched_trigger_word,
-)
-from plugins.bot_unified_runtime.runtime.group_cache import (
+from plugins.bot_unified_runtime.domains.chat_reply.runtime.group_cache import (
     KIND_ESSENCE,
     KIND_MEMBERS,
     KIND_NOTICE,
     KIND_PROFILE,
     GroupInfoCache,
+)
+from plugins.bot_unified_runtime.domains.core.text_boundary import (
+    PARTICLE_BOUNDARY_CHARS,
+    is_trigger,
+    matched_trigger_word,
 )
 
 # ---------------------------------------------------------------------------
