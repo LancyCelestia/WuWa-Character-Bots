@@ -1,0 +1,472 @@
+{
+  "_comment": "Machine-readable task definitions for scripts/dev.ps1. This file is the single source of truth for what every dev task does; dev.ps1 is a generic executor that reads it. Keys beginning with an underscore are documentation only and are ignored by the executor. All explanatory text here is English.",
+  "_schema": {
+    "help": "Static help text. help.lines is written to the output verbatim, one element per line, exactly as the old Show-Help did.",
+    "tasks": "One entry per task name. The executor looks up tasks by the -Task name.",
+    "task.push": "If true, wrap the whole body in Push-Location $Root ... finally Pop-Location. If false/absent, do not change location.",
+    "task.pythonTool": "If true, resolve the project Python interpreter once at task start (this is what throws 'Python was not found...' when no interpreter exists). Omit for tasks that do not run Python.",
+    "task.softFailMessage": "Present only for doctor/llm/embedding/knowledge-sync/kb-sync. Those tasks run their command WITHOUT throwing; if the exit code is non-zero they print this step and then exit with that code (matching the old functions).",
+    "step types": "command = run an external/python invocation. step = print a [dev] message. assertPath = Assert-PathExists. assertContains = Assert-FileContains. pluginsCount = the plugin-check file census + its dynamic step. subtask = invoke another named task (docs-check, plugin-check, test, lint, typecheck). conditional = branch on a structural condition. setEnvDefault = set BOT_AUTOSYNC only when the caller did not set it.",
+    "command.runner": "external = call Invoke-External (throws '<path> exited with code N.' on non-zero). soft = run with & and never throw (the task's softFailMessage handles the failure). loop-plain = run with & only, used inside the run-watch loop.",
+    "command.tool": "python (or omitted) resolves the interpreter via Get-ProjectPython and is never stored as a literal path. Any other value (uv, pytest, nb, ruff) resolves via Get-ProjectCommand; 'required' aborts with 'missingMessage' if the tool is absent.",
+    "command shapes": "Exactly one of: args (literal argv list), module (runs -m <module> then args), pythonScript (runs <script path> then args). This is why no command carries the interpreter as a literal FilePath.",
+    "arg element forms": "{'lit':'...'} literal argv item. {'module':'...'} inserts -m <module>. {'optionalMessage':{'flag':'--message','mode':'truthy|nonblank'}} appends the flag and -Message when present. {'messageOrDefault':{'flag':'--message','default':'...'}} always appends the flag and the effective message (default when -Message is blank). {'replaceOr':{'offFlag':'--dry-run','onFlag':'--apply','param':'Apply'}} emits exactly one of the two flags. {'optionalSwitches':'Kb'} appends the caller's parsed switch tokens."
+  },
+  "help": {
+    "lines": [
+      "Usage:",
+      "  powershell -NoProfile -ExecutionPolicy Bypass -Command \"& .\\scripts\\dev.ps1 -Task <task>\"",
+      "",
+      "Tasks:",
+      "  help          Show this help.",
+      "  doctor        Diagnose Python, NoneBot imports, OneBot adapter, APScheduler, nb CLI, and plugin import.",
+      "  install       Install project dependencies with uv sync when available, otherwise pip install -e .",
+      "  dev           Start NoneBot for local development.",
+      "  run           Start NoneBot using the same runtime command as dev.",
+      "  run-watch     Start NoneBot with auto-restart (restarts 5s after exit).",
+      "  test          Run the retained regression tests; fails if tests or pytest are unavailable.",
+      "  lint          Run ruff check. Fails until ruff is installed.",
+      "  typecheck     Run mypy. Fails until mypy is installed.",
+      "  readiness-smoke Summarize local dialogue, config, context, and next LLM action without real LLM calls.",
+      "  dialogue-smoke Validate one local dialogue turn across context, LLM, review, and sender diagnostics. Use -Message to test custom text.",
+      "  chat-smoke    Run a local static LLM chat smoke with Shorekeeper persona files. Use -Message to test custom text.",
+      "  backend-smoke Run one offline backend core execution through RuntimePipeline.",
+      "  prompt-preview Run and save a redacted LLM prompt preview without calling LLM.",
+      "  backend-base-smoke Run NoneBot/startup/transport/backend offline base checks.",
+      "  config-smoke  Validate local persona, knowledge, and LLM readiness config without network calls.",
+      "  runtime-layout Verify Runtime/external-data boundary and ensure source has no generated state.",
+      "  persona-smoke Validate loaded persona, tone, and safe source refs without calling LLM.",
+      "  context-smoke Build local persona/memory/knowledge prompt diagnostics without calling LLM. Use -Message to test custom text.",
+      "  why-smoke     Explain policy, reply budget, LLM status, send request, receipt, and audit for one local chat input.",
+      "  llm-setup     Print a safe .env checklist and next commands for real LLM onboarding; never writes secrets or calls the provider.",
+      "  llm-smoke     Validate configured OpenAI-compatible LLM connection without sending chat messages.",
+      "  nonebot-smoke Validate local NoneBot/OneBot plugin import and config without connecting SnowLuma.",
+      "  startup-smoke Initialize NoneBot in a child process, load handlers, then exit without connecting SnowLuma.",
+      "  queue-smoke   Drain a temporary SQLite send queue with fake transport; never connects SnowLuma or sends QQ messages.",
+      "  transport-smoke Validate OneBot/SnowLuma message segments and fake transport; never connects SnowLuma or sends QQ messages.",
+      "  online-transport-smoke Read current online bot state without calling send APIs; never sends QQ messages.",
+      "  console       Interactive console chat through the real runtime pipeline (offline static LLM by default). Use -Message for one-shot non-interactive mode.",
+      "  credential-smoke Check cookie/credential expiry and (with --probe) availability; warns when re-login is needed. Never prints secret values.",
+      "  embedding-smoke Validate configured OpenAI-compatible embeddings service without touching the knowledge DB.",
+      "  knowledge-sync Pre-warm vector knowledge base and write to external Runtime data.",
+      "  kb-sync        Sync Crawl Wiki knowledge base (hash-idempotent) into its own vector store; pass -KbFull for first ingest.",
+      "  gscore-smoke   Read-only GsCore bridge readiness check; never connects or sends.",
+      "  route-demo     Print the full phrasing routing matrix. Offline, no network, no QQ.",
+      "  route-smoke    Run deterministic capabilities against real APIs/services; may use network, never sends QQ.",
+      "  search-smoke   One read-only query per configured search provider (Tavily/You/TinyFish/LangSearch); never sends QQ.",
+      "  memory-sanitize Scan long-term memory for NSFW/violence/insult content; -Apply quarantines and deletes.",
+      "  docs-check    Verify minimal runtime docs, archive policy, and project config pointers exist.",
+      "  plugin-check  Verify plugins/ is configured and report whether local plugins exist yet.",
+      "  smoke         Verify docs, plugin discovery, NoneBot import, and nb CLI availability.",
+      "  verify        Verify docs, plugin discovery, retained pytest tests, lint, and typecheck."
+    ]
+  },
+  "tasks": {
+    "help": {
+      "push": false,
+      "steps": [
+        { "type": "help" }
+      ]
+    },
+    "doctor": {
+      "push": true,
+      "pythonTool": true,
+      "softFailMessage": "Environment doctor did not pass. See diagnostic output above.",
+      "steps": [
+        { "type": "step", "message": "running local environment doctor" },
+        { "type": "command", "runner": "soft", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["doctor"] }
+      ]
+    },
+    "install": {
+      "push": true,
+      "steps": [
+        {
+          "type": "conditional",
+          "condition": "toolAvailable",
+          "tool": "uv",
+          "then": [
+            { "type": "step", "message": "installing dependencies with uv sync" },
+            { "type": "command", "runner": "external", "tool": "uv", "args": ["sync"] }
+          ],
+          "else": [
+            { "type": "step", "message": "installing dependencies with pip editable install" },
+            { "type": "command", "runner": "external", "tool": "python", "module": "pip", "args": ["install", "-e", "."] }
+          ]
+        }
+      ]
+    },
+    "dev": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "conditional", "condition": "botAlreadyRunning", "then": [ { "type": "abortWithMessage", "message": "[dev] NoneBot 已经在运行（8080 端口被占用）。不要重复启动；如需重启请先关闭原进程。" } ] },
+        { "type": "step", "message": "starting NoneBot (dev)" },
+        { "type": "command", "runner": "external", "tool": "python", "pythonScript": "bot.py" }
+      ]
+    },
+    "run": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "conditional", "condition": "botAlreadyRunning", "then": [ { "type": "abortWithMessage", "message": "[dev] NoneBot 已经在运行（8080 端口被占用）。不要重复启动；如需重启请先关闭原进程。" } ] },
+        { "type": "step", "message": "starting NoneBot (run)" },
+        { "type": "command", "runner": "external", "tool": "python", "pythonScript": "bot.py" }
+      ]
+    },
+    "run-watch": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "loop", "steps": [
+          { "type": "conditional", "condition": "botAlreadyRunning", "then": [ { "type": "abortWithMessage", "message": "[dev] NoneBot 已经在运行（8080 端口被占用）。不要重复启动；如需重启请先关闭原进程。" } ] },
+          { "type": "step", "message": "starting NoneBot (run-watch, auto-restart on exit)" },
+          { "type": "command", "runner": "loop-plain", "tool": "python", "pythonScript": "bot.py" },
+          { "type": "step", "message": "[dev] NoneBot 退出（exit code = $LASTEXITCODE），5 秒后自动重启。按 Ctrl+C 退出本循环。", "raw": true },
+          { "type": "sleep", "seconds": 5 }
+        ] }
+      ]
+    },
+    "test": {
+      "push": true,
+      "pythonTool": false,
+      "pytestTask": true,
+      "steps": []
+    },
+    "lint": {
+      "push": true,
+      "pythonTool": false,
+      "steps": [
+        { "type": "ensureTool", "tool": "ruff", "missingMessage": "ruff was not found. Add/install lint dependencies before using the lint task." },
+        { "type": "ensureCacheDir", "cacheDir": "ruffCache" },
+        { "type": "step", "message": "running ruff check (cache outside workspace)" },
+        { "type": "command", "runner": "external", "tool": "ruff", "required": false, "args": ["check", "--cache-dir", { "cacheDir": "ruffCache" }, "."] }
+      ]
+    },
+    "typecheck": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "ensurePythonModule", "module": "mypy", "missingMessage": "mypy was not found in the selected Python environment. Add/install typecheck dependencies before using the typecheck task." },
+        { "type": "ensureCacheDir", "cacheDir": "mypyCache" },
+        { "type": "step", "message": "running mypy for project-owned code (cache outside workspace)" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "mypy", "args": ["--cache-dir", { "cacheDir": "mypyCache" }, "--explicit-package-bases", "--ignore-missing-imports", "plugins"] }
+      ]
+    },
+    "readiness-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running unified local LLM dialogue readiness smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["readiness", { "optionalMessage": { "flag": "--message", "mode": "nonblank" } }] }
+      ]
+    },
+    "dialogue-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running local LLM dialogue acceptance smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["dialogue", { "optionalMessage": { "flag": "--message", "mode": "nonblank" } }] }
+      ]
+    },
+    "chat-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running local LLM chat smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["chat", { "optionalMessage": { "flag": "--message", "mode": "nonblank" } }] }
+      ]
+    },
+    "backend-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running one-shot offline backend core execution unit" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.chat_reply.pipeline.backend_unit", "args": [{ "messageOrDefault": { "flag": "--message", "default": "测试后端主链路", "mode": "truthy" } }] }
+      ]
+    },
+    "prompt-preview": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "requireMessage", "message": "prompt-preview requires -Message." },
+        { "type": "step", "message": "building redacted prompt preview without calling LLM" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.chat_reply.runtime.prompt_preview", "args": ["--message", { "message": true }, "--write"] }
+      ]
+    },
+    "backend-base-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running offline backend base smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["nonebot"] },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["startup"] },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["transport"] },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.chat_reply.pipeline.backend_unit", "args": [{ "messageOrDefault": { "flag": "--message", "default": "测试后端底座", "mode": "truthy" } }] }
+      ]
+    },
+    "config-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running local configuration readiness smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["config"] }
+      ]
+    },
+    "runtime-layout": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "checking external runtime data boundary" },
+        { "type": "command", "runner": "external", "tool": "python", "pythonScript": "scripts\\runtime_layout_smoke.py" }
+      ]
+    },
+    "persona-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running local persona readiness smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["persona"] }
+      ]
+    },
+    "context-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running local LLM context smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["context", { "optionalMessage": { "flag": "--message", "mode": "nonblank" } }] }
+      ]
+    },
+    "why-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running local LLM decision why smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["why", { "optionalMessage": { "flag": "--message", "mode": "nonblank" } }] }
+      ]
+    },
+    "llm-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "softFailMessage": "LLM smoke did not pass. See diagnostic output above.",
+      "steps": [
+        { "type": "step", "message": "running OpenAI-compatible LLM connection smoke" },
+        { "type": "command", "runner": "soft", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["llm"] }
+      ]
+    },
+    "llm-setup": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "printing safe LLM setup checklist" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["llm-setup"] }
+      ]
+    },
+    "nonebot-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running NoneBot plugin load smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["nonebot"] }
+      ]
+    },
+    "startup-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running NoneBot startup dry-run smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["startup"] }
+      ]
+    },
+    "queue-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running local send queue worker smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["queue"] }
+      ]
+    },
+    "transport-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running local OneBot/SnowLuma transport smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["transport"] }
+      ]
+    },
+    "online-transport-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running read-only online transport smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["online-transport"] }
+      ]
+    },
+    "console": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "starting console chat REPL" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.console_chat", "args": [{ "optionalMessage": { "flag": "--message", "mode": "nonblank" } }] }
+      ]
+    },
+    "credential-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running credential health smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.core.credentials.credential_health" }
+      ]
+    },
+    "embedding-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "softFailMessage": "Embedding smoke did not pass. See diagnostic output above.",
+      "steps": [
+        { "type": "step", "message": "running OpenAI-compatible embeddings connection smoke" },
+        { "type": "command", "runner": "soft", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["embedding"] }
+      ]
+    },
+    "knowledge-sync": {
+      "push": true,
+      "pythonTool": true,
+      "softFailMessage": "Knowledge sync did not finish. See diagnostic output above.",
+      "steps": [
+        { "type": "step", "message": "pre-warming vector knowledge base from BOT_KNOWLEDGE_FILES" },
+        { "type": "command", "runner": "soft", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["knowledge-sync"] }
+      ]
+    },
+    "kb-sync": {
+      "push": true,
+      "pythonTool": true,
+      "softFailMessage": "kb-sync did not finish. See diagnostic output above.",
+      "steps": [
+        { "type": "step", "message": "syncing Crawl Wiki knowledge base into dedicated vector store" },
+        { "type": "command", "runner": "soft", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.smoke", "args": ["kb-sync", { "optionalSwitches": "Kb" }] }
+      ]
+    },
+    "gscore-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running GsCore bridge readiness smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.integrations.gscore_bridge" }
+      ]
+    },
+    "route-demo": {
+      "push": true,
+      "pythonTool": true,
+      "setUtf8": true,
+      "steps": [
+        { "type": "step", "message": "printing full phrasing routing matrix (offline)" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.route_demo", "failMessage": "route-demo failed" }
+      ]
+    },
+    "route-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "setUtf8": true,
+      "steps": [
+        { "type": "step", "message": "running real API smoke for deterministic capabilities" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.ops.smoke.route_demo", "args": ["--real"], "failMessage": "route-smoke failed" }
+      ]
+    },
+    "search-smoke": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "running read-only search API providers smoke" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.core.search.search_smoke" }
+      ]
+    },
+    "memory-sanitize": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "memory sanitize (dry-run preview; add -Apply to delete)" },
+        { "type": "command", "runner": "external", "tool": "python", "module": "plugins.bot_unified_runtime.domains.chat_reply.security.memory_sanitize", "args": [{ "replaceOr": { "offFlag": "--dry-run", "onFlag": "--apply", "param": "Apply" } }] }
+      ]
+    },
+    "docs-check": {
+      "push": false,
+      "pythonTool": false,
+      "steps": [
+        { "type": "step", "message": "checking minimal command and runtime documents" },
+        { "type": "assertPath", "path": "README.md" },
+        { "type": "assertPath", "path": "COMMANDS.md" },
+        { "type": "assertPath", "path": "pyproject.toml" },
+        { "type": "assertPath", "path": ".env.example" },
+        { "type": "assertPath", "path": ".env.prod" },
+        { "type": "assertPath", "path": "plugins" },
+        { "type": "assertPath", "path": "docs\\route-matrix.md" },
+        { "type": "assertPath", "path": "docs\\workspace-archive-policy.md" },
+        { "type": "assertPath", "path": "docs\\external-runtime-access.md" },
+        { "type": "assertContains", "path": "README.md", "needle": "COMMANDS.md" },
+        { "type": "assertContains", "path": "README.md", "needle": "ChatBot_Archive" },
+        { "type": "assertContains", "path": "COMMANDS.md", "needle": "scripts/dev.ps1 verify" },
+        { "type": "assertContains", "path": "pyproject.toml", "needle": "plugin_dirs = [\"plugins\"]" },
+        { "type": "assertContains", "path": "pyproject.toml", "needle": "builtin_plugins = [\"echo\"]" },
+        { "type": "assertContains", "path": "docs\\workspace-archive-policy.md", "needle": "ChatBot_Archive" },
+        { "type": "assertContains", "path": "docs\\external-runtime-access.md", "needle": "LOCALSTORE_USE_CWD" },
+        { "type": "assertContains", "path": "docs\\route-matrix.md", "needle": "route" },
+        { "type": "step", "message": "docs-check passed" }
+      ]
+    },
+    "plugin-check": {
+      "push": false,
+      "pythonTool": false,
+      "steps": [
+        { "type": "step", "message": "checking local plugin discovery contract" },
+        { "type": "assertPath", "path": "plugins" },
+        { "type": "assertContains", "path": "pyproject.toml", "needle": "plugin_dirs = [\"plugins\"]" },
+        { "type": "assertPath", "path": "plugins\\bot_unified_runtime\\__init__.py" },
+        { "type": "assertPath", "path": "plugins\\bot_unified_runtime\\domains\\core\\contracts\\runtime.py" },
+        { "type": "pluginsCount" }
+      ]
+    },
+    "sync": {
+      "push": true,
+      "pythonTool": true,
+      "steps": [
+        { "type": "step", "message": "sync: regenerating command catalog" },
+        { "type": "command", "runner": "external", "tool": "python", "pythonScript": "scripts/command_catalog.py", "args": ["--write"] },
+        { "type": "step", "message": "sync: regenerating auto-facts" },
+        { "type": "command", "runner": "external", "tool": "python", "pythonScript": "scripts/doc_sync.py", "args": ["--write"] },
+        { "type": "step", "message": "sync: regenerating render hashes" },
+        { "type": "command", "runner": "external", "tool": "python", "pythonScript": "tests/verify_hashes.py", "args": ["--write"] },
+        { "type": "step", "message": "sync: regenerating ten-board doc tree" },
+        { "type": "command", "runner": "external", "tool": "python", "pythonScript": "scripts/board_doc_sync.py", "args": ["--write"] },
+        { "type": "step", "message": "sync: verifying all gates green" },
+        { "type": "command", "runner": "external", "tool": "python", "pythonScript": "scripts/doc_sync.py", "args": ["--check"] },
+        { "type": "command", "runner": "external", "tool": "python", "pythonScript": "tests/verify_hashes.py", "args": ["--check"] },
+        { "type": "command", "runner": "external", "tool": "python", "pythonScript": "scripts/board_doc_sync.py", "args": ["--check"] },
+        { "type": "step", "message": "sync complete - all generated docs & hashes up to date" }
+      ]
+    },
+    "smoke": {
+      "push": false,
+      "pythonTool": false,
+      "steps": [
+        { "type": "subtask", "task": "docs-check" },
+        { "type": "subtask", "task": "plugin-check" },
+        { "type": "resolvePython" },
+        { "type": "step", "message": "checking NoneBot import" },
+        { "type": "pythonImportVersion", "package": "nonebot2" },
+        { "type": "ensureTool", "tool": "nb", "missingMessage": "NoneBot CLI 'nb' was not found. Run scripts/dev.ps1 install first." },
+        { "type": "step", "message": "checking NoneBot CLI" },
+        { "type": "command", "runner": "external", "tool": "nb", "args": ["--version"] }
+      ]
+    },
+    "verify": {
+      "push": false,
+      "pythonTool": false,
+      "steps": [
+        { "type": "subtask", "task": "docs-check" },
+        { "type": "subtask", "task": "plugin-check" },
+        { "type": "conditional", "condition": "testsDirExists", "then": [ { "type": "subtask", "task": "test" } ], "else": [ { "type": "warn", "message": "Skipping tests because tests/ is intentionally archived outside the AI workspace." } ] },
+        { "type": "conditional", "condition": "toolAvailable", "tool": "ruff", "then": [ { "type": "subtask", "task": "lint" } ], "else": [ { "type": "warn", "message": "Skipping lint because ruff is not installed." } ] },
+        { "type": "conditional", "condition": "toolAvailable", "tool": "mypy", "then": [ { "type": "subtask", "task": "typecheck" } ], "else": [ { "type": "warn", "message": "Skipping typecheck because mypy is not installed." } ] },
+        { "type": "step", "message": "verify completed for the current documentation/spec stage" }
+      ]
+    }
+  }
+}
