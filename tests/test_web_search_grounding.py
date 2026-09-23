@@ -25,9 +25,11 @@ from plugins.bot_unified_runtime.contracts import (
     WebSearchHit,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
+    _search_queries_concurrently,
     _web_search_lines,
     build_chat_prompt,
 )
+from plugins.bot_unified_runtime.domains.core.search import web_search as web_search_mod
 
 PERSONA_TEXT = "# 角色沉浸要求\n\n你就是守岸人本人，以第一人称思考与回应。"
 
@@ -116,3 +118,52 @@ def test_c_idle_chat_has_no_per_turn_disclosure() -> None:
     # 知识截止是 topic-independent 的诚实底线，闲聊也在，且它不进 per-turn 披露面。
     assert CUTOFF_ANCHOR in prompt, "知识截止声明应常驻总说明"
     assert CUTOFF_ASSERT_ANCHOR in prompt
+
+
+class _DataclassHitProvider:
+    """桩供应商：返回 **provider 侧 dataclass** 命中（与契约 pydantic 类同名不同身）。"""
+
+    name = "stub"
+
+    def search(self, query: str, *, max_results: int = 3) -> list:
+        return [
+            web_search_mod.WebSearchHit(
+                title=f"新鲜发布 {index}",
+                snippet="官方已上线",
+                url=f"https://example.com/{query}-{index}",
+                source_domain="example.com",
+            )
+            for index in range(max_results)
+        ]
+
+
+def test_provider_hits_are_converted_before_entering_the_contract() -> None:
+    """检索命中必须先转成契约类，否则 ``WebSearchContext`` 当场 ValidationError。
+
+    本仓有两个同名 ``WebSearchHit``（``domains/core/search/web_search.py`` 的
+    dataclass 与 ``contracts`` 的 pydantic 模型），唯一转换点是
+    ``chat._search_queries_concurrently``。日后新增供应商或改合并逻辑时，只要把
+    dataclass 实例直接塞进 ``hits``，装配期一切正常、跑到那一轮才炸——本条把
+    它变成当场红（2026-09-24 实弹接地探针正是这样撞到第二类的）。
+    """
+    errors: set[str] = set()
+    merged = _search_queries_concurrently(
+        _DataclassHitProvider(),
+        ["GPT-6 Sol 发布"],
+        per_query=2,
+        hard_total_cap=8,
+        error_kinds=errors,
+    )
+    assert merged, "桩供应商有结果却合并为空"
+    assert not errors, f"合并过程记到了失败：{errors}"
+    assert all(type(hit) is WebSearchHit for hit in merged), "命中未转换为契约类"
+
+    context = _context(
+        web_search_context=WebSearchContext(
+            request_id="req-1", query="GPT-6 Sol 发布", hits=merged
+        ),
+        current_message="GPT-6 Sol 发布了没有",
+    )
+    prompt = _system_prompt(context)
+    assert WEB_BLOCK_LABEL in prompt, "转换后的命中没能渲染进【联网检索】块"
+    assert "新鲜发布" in prompt
