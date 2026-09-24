@@ -83,8 +83,11 @@ from plugins.bot_unified_runtime.domains.ops.smoke.diagnostics import (
     infer_bool_tag,
     infer_history_skip_reason,
     infer_int_tag,
+    infer_llm_break_stage,
     infer_llm_error_kind,
     infer_llm_preflight_reasons,
+    infer_llm_route_hops,
+    infer_llm_served_model,
     infer_prompt_truncated_sections,
     infer_quiet_hours_blocked,
     infer_rate_limit_blocked,
@@ -329,14 +332,6 @@ def run_chat_smoke(
         llm_status = "error"
     llm_error_kind = infer_llm_error_kind(audit_tags)
     llm_finish_reason = infer_text_tag(audit_tags, "llm_finish_reason")
-    routed_model = next(
-        (
-            tag.removeprefix("model:").strip()
-            for tag in audit_tags
-            if tag.startswith("model:")
-        ),
-        "",
-    )
 
     return {
         "request_id": message.request_id,
@@ -355,7 +350,10 @@ def run_chat_smoke(
         "llm_error_kind": llm_error_kind,
         "llm_finish_reason": llm_finish_reason,
         "llm_provider": config.bot_chat_provider,
-        "llm_model": routed_model or config.bot_chat_model,
+        # 只报本轮真服务过的模型（末位＝最后真服务者），没证据就留空由渲染层写
+        # 「未参与／未知」。旧写法两错：取**首**个 model: 标签，再 `or 配置缺省值`
+        # 顶替——链耗尽的失败轮会印出一台从未被调用的模型名（同 W22 在诊断库修的形）。
+        "llm_model": infer_llm_served_model(audit_tags),
         "ready_for_real_llm": readiness["ready_for_real_llm"],
         "llm_readiness_status": readiness["llm_readiness_status"],
         "llm_readiness_reasons": readiness["llm_readiness_reasons"],
@@ -442,7 +440,9 @@ def _dialogue_not_called_chat_result(config: Config) -> dict[str, Any]:
         "llm_error_kind": "config_missing",
         "llm_finish_reason": "",
         "llm_provider": config.bot_chat_provider,
-        "llm_model": config.bot_chat_model,
+        # 这条路径的定义就是"chat 从未被调用"⇒ 没有真服务过的模型。写配置名等于
+        # 指认一台没跑过的机器（同 W22 在诊断库修的形，AST 锁抓到这里是第三处）。
+        "llm_model": "",
         "audit_tags": [],
         "audit_events": [],
     }
@@ -742,7 +742,12 @@ def run_why_smoke(
         "llm_error_kind": llm_error_kind,
         "llm_finish_reason": llm_finish_reason,
         "llm_provider": config.bot_chat_provider,
-        "llm_model": config.bot_chat_model,
+        # 只报本轮真服务过的模型；没证据就是空串，由渲染层写「未参与／未知」。
+        # 旧写法直接取 config.bot_chat_model ⇒ 链耗尽时 /bot why 会指着配置里那台
+        # 说"是它"，而归因恰恰要说"没有一台活着"（同诊断库 2026-09-24 的改判）。
+        "llm_model": infer_llm_served_model(audit_tags),
+        "llm_break_stage": infer_llm_break_stage(audit_tags),
+        "llm_route_hops": infer_llm_route_hops(audit_tags),
         "ready_for_real_llm": readiness["ready_for_real_llm"],
         "llm_readiness_status": readiness["llm_readiness_status"],
         "llm_readiness_reasons": readiness["llm_readiness_reasons"],

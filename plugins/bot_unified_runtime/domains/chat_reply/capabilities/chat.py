@@ -696,6 +696,8 @@ _SAFE_LLM_ERROR_KINDS = frozenset(
 _LLM_RETRYABLE_KINDS = frozenset(
     {"timeout", "network", "rate_limited", "server", "provider_error", "empty_response"}
 )
+# LLM 告警一句话预算：够装下 `kind chain=N last=<渠道:模型:错误码>` 的最短诚实形。
+_LLM_ISSUE_SUMMARY_MAX = 120
 
 
 def _operational_issue(
@@ -2710,14 +2712,20 @@ def _llm_error_result(
     # 排障无从下手。safe_summary 带路由轨迹末站+链宽，让「timeout」能回答
     # 「卡在哪个渠道、试了几跳」。末站串可能含模型名（非密钥），截断防长。
     trace = [str(item) for item in (route_trace or []) if str(item).strip()]
-    summary_parts = [normalized_kind, f"chain={max(1, int(attempts))}"]
+    head = f"{normalized_kind} chain={max(1, int(attempts))}"
     if trace:
-        summary_parts.append(f"last={trace[-1][:80]}")
+        # 截断只发生在末站串上：宽度预算先给 kind 与 chain 记号，余额全给归因。
+        # 旧写法整串 [:60] 会把 `last=<渠道:模型>` 连名带姓吃掉，告警只剩
+        # "chain=N跳全败"——正是她问「哪个模型炸了」时最需要的那一段。
+        hop_budget = max(24, _LLM_ISSUE_SUMMARY_MAX - len(head) - len(" last="))
+        safe_summary = f"{head} last={trace[-1][:hop_budget]}"
+    else:
+        safe_summary = head[:_LLM_ISSUE_SUMMARY_MAX]
     issue = _operational_issue(
         stage="llm",
         kind=normalized_kind,
         retryable=normalized_kind in _LLM_RETRYABLE_KINDS,
-        safe_summary=" ".join(summary_parts)[:60],
+        safe_summary=safe_summary[:_LLM_ISSUE_SUMMARY_MAX],
         attempts=max(1, int(attempts)),
     )
     is_group_or_channel = message.session_type in {SessionType.GROUP, SessionType.CHANNEL}

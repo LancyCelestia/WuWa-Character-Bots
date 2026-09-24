@@ -56,8 +56,12 @@ from plugins.bot_unified_runtime.domains.ops.audit import (
 )
 from plugins.bot_unified_runtime.domains.ops.smoke.diagnostics import (
     LLM_DIAGNOSTIC_OK_MESSAGE,
+    LLM_MAX_RENDERED_HOPS,
     DiagnosticsStore,
     RuntimeDiagnostic,
+    describe_llm_model,
+    infer_llm_break_stage,
+    infer_llm_route_hops,
     llm_diagnostic_messages,
 )
 from plugins.bot_unified_runtime.llm import (
@@ -1179,7 +1183,15 @@ def _format_dialogue_diagnostic(result: dict[str, Any]) -> str:
             f"llm_error_kind={_safe_token(str(result.get('llm_error_kind') or '-'))}",
             f"llm_finish_reason={_safe_token(str(result.get('llm_finish_reason') or '-'))}",
             f"llm_provider={_safe_token(str(result['llm_provider']))}",
-            f"llm_model={_safe_token(str(result['llm_model']))}",
+            f"llm_model={_safe_token(describe_llm_model(str(result['llm_model'])))}",
+            (
+                "llm_break_stage="
+                f"{_safe_token(infer_llm_break_stage(_result_audit_tags(result)) or '-')}"
+            ),
+            (
+                "llm_route_chain="
+                f"{_format_route_chain(infer_llm_route_hops(_result_audit_tags(result)))}"
+            ),
             f"ready_for_real_llm={str(bool(result['ready_for_real_llm'])).lower()}",
             f"llm_readiness_status={_safe_token(str(result['llm_readiness_status']))}",
             f"llm_next_action={_safe_token(str(result['llm_next_action']))}",
@@ -1232,6 +1244,28 @@ def _format_semicolon_list(value: object) -> str:
         return "-"
     cleaned = [_safe_token(str(item)) for item in value if str(item).strip()]
     return ";".join(cleaned) if cleaned else "-"
+
+
+def _result_audit_tags(result: dict[str, object]) -> list[str]:
+    """审计标签的唯一取形：两类诊断 dict 都带 `audit_tags`，跳序/断点一律从它派生，
+    不让调用方各自再算一份（否则"有没有跳序证据"会出现第二真身）。"""
+    raw = result.get("audit_tags") or []
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(item) for item in raw if str(item).strip()]
+
+
+def _format_route_chain(value: object) -> str:
+    """链上跳序（`n=3 a <- b <- c`）；无证据明说 n=0，不猜末站。"""
+    if not isinstance(value, list):
+        return "n=0（无跳序证据标签）"
+    hops = [str(item).strip() for item in value if str(item).strip()]
+    if not hops:
+        return "n=0（无跳序证据标签）"
+    shown = [_safe_token(hop) for hop in hops[:LLM_MAX_RENDERED_HOPS]]
+    hidden = len(hops) - len(shown)
+    tail = f" …(+{hidden}跳未列)" if hidden > 0 else ""
+    return f"n={len(hops)} {' <- '.join(shown)}{tail}"
 
 
 def _format_persona_diagnostic(result: dict[str, object]) -> str:
