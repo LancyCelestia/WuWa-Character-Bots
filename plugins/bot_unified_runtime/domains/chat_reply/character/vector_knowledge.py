@@ -327,6 +327,355 @@ _EMBEDDED_COUNT_KEY = "ann_expected_vector_count"
 # 短装——那是发布中途被杀的残态，索引本身是完整的，见 load_ann_index。
 _ANN_COMPLETENESS_MAX_MISSING = 0
 
+# --- 活戳漂移纠偏（stamp-drift 波，2026-09-26）--------------------------------
+# 上面那段「虚高只会多拒一次」的推理，在**零变更夜**是错的：虚高确实只会多拒，
+# 可是没有任何一条路会把虚高洗掉——不重建（`unchanged_skip`）、重建线不达、
+# `certify` 又被「活戳一字不碰」挡死 ⇒ 「多拒一次」变成「永久多拒」。2026-09-26
+# 03:2x 生产实测就是这一格：戳 741,428 / 索引 ntotal 740,996 / 库侧已嵌入也是
+# 740,996 ⇒ missing=432 恒红，每问付暴力扫描。
+# 纠偏的取证方向与建闸时一致：**SQLite 的库侧真值裁决文件**，ntotal 与序列表只当
+# 「这一代确实装满了每一行」的证据，绝不当落戳的数（拿 ntotal 落戳 = 短装索引自我
+# 认证，`tests/test_ann_certify_prewarm.py` 的同名陷阱锁就是为此而设）。
+# 落点也守住：戳的权威赋值点仍只有 `_publish_ann_pair`；纠偏只在**维护线程 + 显式
+# opt-in**（kwarg / CLI）下改写一个已声明代次恒等于库真值的虚高值——不是第二根笔，
+# 是把写歪的那一笔描回真值。
+#: 集合级自证的内存地板。判据要流式读两份数十万项 id（一份 json、一份 SQLite 游标）
+#: 并留一枚 set 做差集。**地板不是按需求定的，是按余量定的**：2026-09-26 在生产
+#: 740,996 条上只读实测——库侧 COUNT 一段 327.7 s、集合级比对一段 240.2 s
+#: （探针 `cw-ann-reconcile-measure2.py`，走 `_build_store` 同一构造口，零写入）；
+#: 驻留峰值**没量到**（`K32GetProcessMemoryInfo` 在本机对这个伪句柄返回 0，读数 nan），
+#: 所以这里不能声称"需求是 X MiB"。定到 1.5 GiB 的根据是余量而非需求：本机实测
+#: 空闲物理内存跌到 1.6–2.5 GiB 区间时连着死机两次，而这一步再省也不省到那下面去。
+#: 与 ANN 重建门同哲学（`_ANN_BUILD_MIN_AVAILABLE_BYTES` 同样是标定，不是需求），
+#: 同 fail-closed：不够或不可判定都不动。
+_ANN_STAMP_RECONCILE_MIN_AVAILABLE_BYTES = int(1.5 * 1024**3)
+#: 集合级自证的项数上限：超过即拒并点名 `too_large_for_set_proof`，绝不"试一把大的"——
+#: 把机器按死是这里唯一不可逆的后果，宁可由人显式越门。
+_ANN_STAMP_RECONCILE_MAX_ITEMS = 2_000_000
+_STAMP_RECONCILE_REASONS = (
+    "stamp_matches_db_count",
+    "stamp_below_db_count",
+    "no_attestation",
+    "attestation_self_inconsistent",
+    "signature_mismatch",
+    "pair_files_inconsistent",
+    "index_does_not_cover_embedded_rows",
+    "id_set_mismatch",
+    "too_large_for_set_proof",
+    "insufficient_memory",
+    "memory_probe_unavailable",
+    "db_error",
+)
+
+# --- ANN 重建内存门（S112，2026-09-26）----------------------------------------
+# 为什么要有这道门：重建的常驻峰值由 FAISS 自己决定，不由批宽决定。
+# `IndexHNSWFlat` 把全部向量另存一份私有 float32 数组（ntotal × dim × 4 B）+
+# HNSW 链接表，分批 `add`（见 `_ANN_BUILD_BATCH_SIZE`）早在 R3 停摆批就把
+# numpy 侧的一次性全量矩阵削平了，**削不掉这份必然驻留**。2026-09-25/26 夜间
+# 实测可用物理内存低水位 1.62 GiB，而按 4,694 B/向量（下述实测常量）算，当前
+# 规模的 wiki 库重建单份就要 ≈3.2 GiB；叠上"进程内重建时上一代索引仍在驻留"
+# （缓存直到 `_publish_ann_pair` 末尾才 drop），真实峰值形状是"旧+新"两份。
+# 在那样的机器上开火 = 把 bot 连人带库一起压死，比 09-22 的停摆更糟。
+# 故开火前先量可用物理内存，不足即**不开火**：保留旧索引、留下三处痕迹
+# （WARNING 日志 / knowledge_meta 观测行 / 经 kb-sync 既有告警 sink 出五要素卡）。
+#
+# 三件必须说清的语义（防止后来者把这当"让它绿"的开关）：
+# ① 跳过**不**放行完备性闸——`_ANN_COMPLETENESS_MAX_MISSING` 一字未动，
+#    闸照样拒用 ANN ⇒ 暴力扫描照旧，本门只是不许它以 OOM 的形态结束。
+# ② 阈值是模块常量、不是 config 键（本仓先例：阈值类参数不轻易开新键），
+#    要临时越过走 operator CLI 的显式旗标，不改生产配置面。
+# ③ 探针取不到数 ⇒ 按「不可判定」处理，同样 fail-closed 不开火。
+_ANN_BUILD_MIN_AVAILABLE_BYTES = int(4.5 * 1024**3)
+# ^ S85 定的 go/no-go 经验合价（当时 bot 已驻留 3.53 GiB、空闲只剩 2.4–3.0 GiB
+#   ⇒ 判"别开火"）——它是"旧代 + 新代 + 余量"在 n≈766k 那个点上的合价，不是
+#   物理常数，也**不当需求价的绝对下限用**：第一版当下限把 24 条向量的测试重建
+#   也拒了（自曝账见席位报告 §5）。S118 收线后它只剩一个用途：被复算锁
+#   tests/test_ann_memory_gate_s118.py::test_demand_model_reproduces_s85_calibration_at_766k
+#   钉成"需求线性式在该标定点上确实落在这枚合价的合理带内"。
+_ANN_BUILD_HEADROOM_RATIO = 4
+# ^ 观察余量按需求的比例给（1/4）：它的用途是覆盖"量到"与"用完"之间爬虫还在
+#   写同一台机器这件事（S105 实测 10 分钟内可用内存 2.99 → 1.62 GiB），
+#   这件事的规模与重建本身同阶 ⇒ 必须是比例而不是常数。
+_ANN_BUILD_MIN_HEADROOM_BYTES = 128 * 1024 * 1024
+# ^ 比例项的下限：小库也要留一点余量，但不许留成一刀切的 1 GiB——
+#   第一版正是那枚常数把 24 条向量的测试重建也判成"内存不足"、连带打红
+#   tests/test_ann_certify_prewarm.py 一片（见席位报告 §5 自曝账）。
+_ANN_BUILD_BATCH_SLACK_COPIES = 4
+# ^ 批内 numpy 瞬时副本份数（batch_vectors 列表 / vstack / astype / 归一化除），
+#   成本 = `_ANN_BUILD_BATCH_SIZE × dim × 4 B × 份数`，随维数与批宽派生，不写死。
+_ANN_BUILD_MEASURED_BYTES_PER_VECTOR = 4694
+# ^ 实测单位成本（S85 本机同参数两跑 RSS 斜率；与落盘口径 4,368 B/向量互验，
+#   差值即分配器与构建期工作集）。
+_ANN_BUILD_MEASURED_DIM = 1024
+# ^ 上一条实测的维数基准（bge-m3）。单位成本按 dim 线性外推：
+#   `dim × 4 + (4694 − 1024 × 4)`，在 dim=1024 处逐字节复现实测值。
+_ANN_BUILD_ID_TABLE_BYTES_PER_VECTOR = 176
+# ^ `chunk_ids` 侧（列表 + `json.dumps` 文本 + `.encode()` bytes 同时在场）。
+#   实测：从生产 order.json 取 93 条真 id，平均长 40 字符、单条
+#   `sys.getsizeof` = 81 B，加列表指针 8 B、JSON 文本与编码 bytes 各 43 B
+#   ⇒ 175 B/条，取 176 作上界。
+_ANN_BUILD_FAISS_REALLOC_BYTES_PER_DIM = 2
+# ^ 倍增扩容瞬态副本的**每维字节数**（= 半份 `dim × 4` 向量数组：dim=1024 处
+#   即 2,048 B/vec）。S118 合成 bench 实测：分批重建的**峰值**边际斜率
+#   7,393 B/vec（20k→40k，PeakWorkingSetSize 口径），比稳态线性价
+#   4,870 B/vec 高一截——高出的部分正是 `IndexHNSWFlat` 底层向量数组按
+#   2 的幂 realloc 时"旧数组 + 新数组"同场的瞬态拷贝（在随机扩容边界上
+#   期望值 ≈ 半份向量数组）。按维线性而不是写死 2,048：换维模型时这层
+#   成本跟着 `dim × 4` 走。S85 当年用轮询 RSS 量到的 4,694 B/vec 是稳态
+#   斜率，轮询会漏掉亚秒级尖峰；门比的是"可用物理内存够不够撑过整场
+#   重建"，必须按**峰值**计价。复跑命令见 tests/test_ann_memory_gate_s118.py
+#   模块 docstring（S118 报告 §1）。
+_ANN_BUILD_SCALE_CALIBRATION_VECTORS = 766_126
+# ^ 上面那枚 4.5 GiB 合价的**标定点**：S85 是在 766,126 条（当时 wiki 库的
+#   实装向量数）上量出来的，不是通用物理常数。复算锁
+#   tests/test_ann_memory_gate_s118.py::test_demand_model_reproduces_s85_calibration_at_766k
+#   钉"需求式在这个点上与 S85 经验合价同带"。写死这层关系，是为了防止
+#   后来者把 4.5 GiB 当门槛到处套（第一版就套错了）。
+_ANN_BUILD_ASSUME_DIM = _ANN_BUILD_MEASURED_DIM
+# ^ provider 未声明维数时的保守假设（生产即 bge-m3 的 1024）。
+_ANN_BUILD_MEMORY_RECHECK_VECTORS = 32_768
+# ^ 批间复检粒度（16 个构建批一次 stat，成本可忽略；重建是分钟级，
+#   内存形状在这段时间里真的会变——只查一次的前置检查会被实况击穿）。
+_ANN_MEMORY_SKIP_META_KEY = "ann_build_last_memory_skip"
+# ^ 跳过留痕（观测面，WebUI/离线探针只读）：只存度量，不存磁盘路径。
+
+
+def _available_physical_memory_bytes() -> int | None:
+    """本机可用物理内存（字节）；取不到返回 **None = 不可判定**。
+
+    Windows 走 `GlobalMemoryStatusEx`（`ctypes` 标准库，零新依赖）。这里刻意
+    **不**走 `platform.freemem()` / `psutil.virtual_memory()`：那两处是宿主机
+    遥测取数口，唯一真身在册 `domains/ops/host_metrics.py`，由
+    `tests/test_host_metrics_single_source.py` 执法（该门的判据集合里
+    `platform`/`psutil`/`winreg` 算读数点，本函数的 `ctypes` 不算）。
+    本函数是**一个 go/no-go 判决的输入**，不是"宿主机状态"的第二真身；
+    若要把它并进呈现链，正解是给 host_metrics 加一枚数值出口（见席位报告
+    §6 第 3 条），而不是在这里第二次伸手摸机器。
+
+    `ullAvailPhys` 是**可用物理内存**（不含页面文件余量）。这里刻意用它而不是
+    commit 余量：S84 实测本机提交上限 84 GiB（页面文件很大）⇒ commit 口径永远
+    "够"，而真正的代价是换页风暴，那正是今晚要拦的形态。
+    """
+    if os.name != "nt":
+        # `getattr` 形态而非直写 `os.sysconf(...)`：Windows 的 `os` 没有
+        # `sysconf`，mypy 按平台 stub 判 attr-defined 红（S112 首版就红在这一发，
+        # S118 收线改掉）；运行时语义不变——取不到可调用对象即 None = 不可判定。
+        sysconf = getattr(os, "sysconf", None)
+        if not callable(sysconf):
+            return None
+        try:
+            page = sysconf("SC_PAGE_SIZE")
+            avail = sysconf("SC_AVPHYS_PAGES")
+        except (ValueError, OSError, AttributeError):
+            return None
+        if not page or not avail or page < 0 or avail < 0:
+            return None
+        return int(page) * int(avail)
+    try:
+        import ctypes
+
+        class _MemoryStatusEx(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        status = _MemoryStatusEx()
+        status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return None
+        return int(status.ullAvailPhys)
+    except Exception:  # noqa: BLE001 - 探针失败=不可判定，由调用方 fail-closed。
+        return None
+
+
+@dataclass(frozen=True)
+class _AnnMemoryVerdict:
+    """内存门的判决（一次判定的全部可观测要素，日志/告警/meta 三处共用）。"""
+
+    allowed: bool
+    available_bytes: int | None
+    required_bytes: int
+    expected_vectors: int | None
+    dim: int
+    probe_failed: bool
+
+    def as_meta(self) -> dict[str, Any]:
+        """→ 可落 knowledge_meta 的观测字典（GiB 保留两位，不藏路径）。"""
+
+        def _gib(value: int | None) -> str:
+            return "unknown" if value is None else f"{value / 1024**3:.2f}GiB"
+
+        return {
+            "available": _gib(self.available_bytes),
+            "required": _gib(self.required_bytes),
+            "floor": _gib(_ANN_BUILD_MIN_AVAILABLE_BYTES),
+            "headroom": _gib(_ANN_BUILD_MIN_HEADROOM_BYTES),
+            "expected_vectors": self.expected_vectors,
+            "dim": self.dim,
+            "probe_failed": self.probe_failed,
+        }
+
+
+def _ann_build_batch_slack_bytes(dim: int) -> int:
+    """批内 numpy 瞬时副本（派生量，不写死数字）。
+
+    `_ANN_BUILD_BATCH_SIZE` 条 × 每条 `dim × 4 B` × `_ANN_BUILD_BATCH_SLACK_COPIES`
+    份同时在场的副本（`batch_vectors` 列表 / `vstack` 输出 / `.astype(float32)`
+    无条件拷 / 归一化除）。按维数派生 ⇒ 8 维测试替身不会被算成 1024 维的量。
+    """
+    return int(_ANN_BUILD_BATCH_SIZE) * max(int(dim), 1) * 4 * _ANN_BUILD_BATCH_SLACK_COPIES
+
+
+def _estimate_rebuild_scale(store: SqliteVectorKnowledgeStore) -> int | None:
+    """重建规模的上界估计（**必须是 O(1) 读数**，绝不上全列扫描）。
+
+    两级来源，取先拿到的那个：
+    ① 计数戳 `_stamped_expected_vector_count()`——knowledge_meta 单行主键点查，
+       按 `:318-321` 的定义本就是**上界**（只升不降），拿上界估需求只会高估、
+       只会多跳一次，方向与本仓「宁可慢而全，不可假绿」一致。
+    ② 无戳（从未发布过一代的新库）⇒ `SELECT MAX(rowid)`：InnoDB 式 rowid 是
+       单调插入计数，删除不回退 ⇒ 它是行数的上界，且走 B-tree 最右叶，O(1)。
+       这一级存在的理由：**无戳 ≠ 免检**——一次全量重爬的首发重建恰是最大的一发
+       （S115 实跑：6.87 GiB 语料 / 155,849 条向量在 5.56 GiB 可用下 RSS 触到
+       10.24 GiB。S118 层分解已把这一发归因清楚：10.24 GiB ≈ 该库**全量
+       JSON 文本 + 全量 Python list** 同场驻留的形状（65 KB/条量级），属
+       读链一次性中间物；即便形态存疑，按上界估需求的保守方向不变）。
+       缺了这一级，那道最该拦的门对本该拦的场景直接放行。
+    两级都拿不到 ⇒ None（真·不可判定），由调用方退到活体下限（前置判一发
+    `_ANN_BUILD_MIN_HEADROOM_BYTES + 批副本`，中途仍走 `_ann_live_floor_bytes`
+    断路器——S118 接线，无戳不等于跑到一半没人看火）。
+    """
+    stamped = store._stamped_expected_vector_count()
+    if stamped is not None and stamped > 0:
+        return stamped
+    try:
+        with store._connect() as connection:
+            row = connection.execute("SELECT MAX(rowid) FROM knowledge_chunks").fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None or row[0] is None:
+        return None
+    try:
+        bound = int(row[0])
+    except (TypeError, ValueError):
+        return None
+    return bound if bound > 0 else None
+
+
+def _ann_build_demand_bytes(expected_vectors: int | None, dim: int) -> int:
+    """本轮重建的内存需求估算（字节）。
+
+    **全比例模型，不设绝对门槛。** 来自实测的形状：
+    ① 单位成本 = `dim × 4 B`（`IndexHNSWFlat` 的私有 float32 向量副本，分批
+       add 削不掉）+ 598 B/条图与分配余量 + `dim × 2` B/条倍增扩容瞬态副本
+       （`_ANN_BUILD_FAISS_REALLOC_BYTES_PER_DIM`，S118 bench 峰值斜率实测）
+       + 176 B/条 id 表（`chunk_ids` 列表与 `json.dumps` 文本、编码 bytes
+       同时在场）。
+    ② 观察余量按比例给（线性项的 1/4）：覆盖"量到"与"用完"之间爬虫还在写
+       同一台机器这件事（S105 实测 10 分钟内可用内存 2.99 → 1.62 GiB），
+       它天然与重建本身同阶，所以必须是比例而不是常数。
+    ③ `_ANN_BUILD_MIN_AVAILABLE_BYTES`（4.5 GiB）**不当门用**：它是 S85 在
+       n≈766,126 那个点上量出的合价，不是物理常数——第一版把它当全局门槛，
+       结果 24 条向量的测试重建也被拒、连带打红 `tests/test_ann_certify_prewarm.py`
+       一片（席位报告 §5 自曝账）。它与本式的关系由复算锁
+       tests/test_ann_memory_gate_s118.py::test_demand_model_reproduces_s85_calibration_at_766k
+       钉住：在标定点上两者同带。
+    ④ 计价器打架一案已由 S118 实测结案（S112 半成版在此挂了一枚未定义的
+       `_ANN_BUILD_UNIT_COST_DISPUTE_BYTES` 补贴，本席收线时移除）：
+       S85 的 4,694 B/vec 是**稳态**斜率；S112/S115 apparent 的 ≈54 KB/vec 是
+       **一次性全量读链中间物**（JSON 文本 22.7 KB + Python list 42.2 KB/条，
+       S118 层分解实跑，whole-chain 77.7 KB/vec）——分批形态下这些中间物只在
+       批内出现（O(2048) 条而非 O(n)）。分批重建**峰值**斜率实测 ≈ 7.4 KB/vec
+       （bench 20k→40k 边际），已折进 ① 的 realloc 项；残余意外交给中途复检
+       的实测斜率自校准（`_ann_projected_requirement_bytes` 已接进
+       `_build_ann_index_locked`——S112 定义未接线的那半条腿，S118 补上）。
+    """
+    batch_slack = _ann_build_batch_slack_bytes(dim)
+    if expected_vectors is None or expected_vectors <= 0:
+        # 连行数的上界都拿不到（异常库形）⇒ 退到活体下限 + 中途断路器
+        # （复检走 `_ann_live_floor_bytes`，S118 接线：无戳不等于免检）。
+        return _ANN_BUILD_MIN_HEADROOM_BYTES + batch_slack
+    per_vector = max(int(dim), 1) * (
+        4 + _ANN_BUILD_FAISS_REALLOC_BYTES_PER_DIM
+    ) + (
+        _ANN_BUILD_MEASURED_BYTES_PER_VECTOR - _ANN_BUILD_MEASURED_DIM * 4
+    )
+    linear = int(expected_vectors) * (per_vector + _ANN_BUILD_ID_TABLE_BYTES_PER_VECTOR)
+    headroom = max(
+        _ANN_BUILD_MIN_HEADROOM_BYTES,
+        (linear + batch_slack) // _ANN_BUILD_HEADROOM_RATIO,
+    )
+    return int(linear + batch_slack + headroom)
+
+
+def _ann_projected_requirement_bytes(
+    remaining_vectors: int | None,
+    dim: int,
+    *,
+    available_now: int | None,
+    available_at_start: int | None,
+    built_so_far: int,
+) -> int:
+    """中途复检的需求：模型价与**实测价**取大者（自校准断路器）。
+
+    来历：S112 手里的两把尺打架（S85 轮询 RSS 斜率 4.7 KB/条 vs S115 实跑
+    155,849 条触到 10.24 GiB ≈ 67 KB/条），静态挑一头都是赌。S118 bench 已
+    把账对清：67 KB/条那一发是**一次性全量读链**的中间物（JSON 文本 +
+    Python list，层分解实跑），分批形态不适用；分批**峰值**斜率实测 ≈ 7.4
+    KB/条，已折进模型价。但模型价仍只是估计——所以这枚断路器保留并**接线**
+    （S112 定义了它却没接进 `_build_ann_index_locked`，S118 收线补上那半条腿）：
+    `observed_unit = (开跑前可用 - 当前可用) / 已装条数` 是本进程**真实**吃掉的
+    每条字节数（含 SQLite 读页、分配器、构建工作集），与模型价取大 ⇒
+    模型低估时断路器自动收紧，模型高估时也不会无故收火。
+    读数不可用（探针失败/还没装满一条）⇒ 退回纯模型价。
+    """
+    model = _ann_build_demand_bytes(remaining_vectors, dim)
+    if (
+        remaining_vectors is None
+        or available_now is None
+        or available_at_start is None
+        or built_so_far <= 0
+    ):
+        return model
+    consumed = max(0, int(available_at_start) - int(available_now))
+    observed_total = int(
+        consumed + int(remaining_vectors) * max(1, consumed // max(1, built_so_far))
+    )
+    return max(model, observed_total + _ANN_BUILD_MIN_HEADROOM_BYTES)
+
+
+def _ann_live_floor_bytes(dim: int) -> int:
+    """规模未知时中途复检用的活体下限：低于这条就立刻收火（别把自己跑死）。"""
+    return _ANN_BUILD_MIN_HEADROOM_BYTES + _ann_build_batch_slack_bytes(dim)
+
+
+def _evaluate_ann_build_memory_gate(
+    expected_vectors: int | None, dim: int
+) -> _AnnMemoryVerdict:
+    """开火前的内存门：可用物理内存撑得住本轮重建吗。
+
+    fail-closed：探针取不到 ⇒ 不放行（`probe_failed=True` 会进告警与 meta，
+    读的人看得见"是因为量不到才没跑"，而不是以为"内存不够"）。
+    """
+    available = _available_physical_memory_bytes()
+    required = _ann_build_demand_bytes(expected_vectors, dim)
+    return _AnnMemoryVerdict(
+        allowed=available is not None and available >= required,
+        available_bytes=available,
+        required_bytes=required,
+        expected_vectors=expected_vectors,
+        dim=int(dim),
+        probe_failed=available is None,
+    )
+
 
 class _AnnBuildGate:
     """ANN 重建/覆写的跨进程互斥闸：OS 文件锁，进程崩溃由内核自动释放。
@@ -969,7 +1318,9 @@ class SqliteVectorKnowledgeStore:
         if not stored or stored == self.signature:
             return False
         with self._connect() as connection:
-            connection.execute("UPDATE knowledge_chunks SET vector_json = NULL")
+            # 走漏斗而不是裸 UPDATE：全库清向量是最猛的一次"行数掉光而戳不动"，
+            # 走过这里 ⇒ 戳归 0；没走过这里 ⇒ 库里一行都没嵌，戳却停在历史高位。
+            self._clear_all_vectors(connection)
             # 模型指纹变化常伴随维度变化：维度守卫一并复位，允许新维度重新入库。
             connection.execute("DELETE FROM knowledge_meta WHERE key = 'vector_dim'")
         with self._lock:
@@ -1253,11 +1604,10 @@ class SqliteVectorKnowledgeStore:
                     )
                 if delete_allowed:
                     for stale_source in stale_sources:
-                        cursor = connection.execute(
-                            "DELETE FROM knowledge_chunks WHERE source_id = ?",
-                            (stale_source,),
+                        removed_rows = self._forget_chunks(
+                            connection, where="source_id = ?", params=(stale_source,)
                         )
-                        changed = changed or cursor.rowcount > 0
+                        changed = changed or removed_rows > 0
                         connection.execute(
                             "DELETE FROM knowledge_meta WHERE key = ?",
                             (_SOURCE_SIG_KEY_PREFIX + stale_source,),
@@ -1283,11 +1633,10 @@ class SqliteVectorKnowledgeStore:
                             continue
                         # 文件已被删除：清掉旧块，避免被删知识继续被检索命中；
                         # 台账记录一并移除。
-                        cursor = connection.execute(
-                            "DELETE FROM knowledge_chunks WHERE source_id = ?",
-                            (path.stem,),
+                        removed_rows = self._forget_chunks(
+                            connection, where="source_id = ?", params=(path.stem,)
                         )
-                        changed = changed or cursor.rowcount > 0
+                        changed = changed or removed_rows > 0
                         connection.execute(
                             "DELETE FROM knowledge_meta WHERE key = ?",
                             (_SOURCE_SIG_KEY_PREFIX + path.stem,),
@@ -1308,7 +1657,9 @@ class SqliteVectorKnowledgeStore:
                             content.encode("utf-8")
                         ).hexdigest()
                         existing = connection.execute(
-                            "SELECT content_hash FROM knowledge_chunks WHERE chunk_id = ?",
+                            "SELECT content_hash, "
+                            "(vector_json IS NOT NULL AND vector_json != '') AS has_vector "
+                            "FROM knowledge_chunks WHERE chunk_id = ?",
                             (chunk_id,),
                         ).fetchone()
                         if existing is None:
@@ -1324,14 +1675,15 @@ class SqliteVectorKnowledgeStore:
                             )
                             changed = True
                         elif str(existing["content_hash"]) != content_hash:
-                            connection.execute(
-                                """
-                                UPDATE knowledge_chunks
-                                SET source_id = ?, title = ?, content = ?,
-                                    content_hash = ?, vector_json = NULL
-                                WHERE chunk_id = ?
-                                """,
-                                (source_id, source_id, content, content_hash, chunk_id),
+                            # 内容变了 ⇒ 这一行的向量作废。同批把戳拉低，否则
+                            # 「重嵌一遍旧行」会让涨点重复计数（今晚 missing 的来源）。
+                            self._null_out_chunk_vector(
+                                connection,
+                                source_id=source_id,
+                                content=content,
+                                content_hash=content_hash,
+                                chunk_id=chunk_id,
+                                had_vector=bool(existing["has_vector"]),
                             )
                             changed = True
                     if signature is not None:
@@ -1395,8 +1747,8 @@ class SqliteVectorKnowledgeStore:
 
             def apply_doc(doc_id: str, doc: dict, doc_hash: str) -> None:
                 nonlocal changed_any
-                connection.execute(
-                    "DELETE FROM knowledge_chunks WHERE source_id = ?", (doc_id,)
+                self._forget_chunks(
+                    connection, where="source_id = ?", params=(doc_id,)
                 )
                 chunks = [str(chunk) for chunk in (doc.get("chunks") or []) if str(chunk).strip()]
                 connection.executemany(
@@ -1502,8 +1854,8 @@ class SqliteVectorKnowledgeStore:
             if full:
                 removed |= set(ledger) - seen
             for doc_id in sorted(removed):
-                connection.execute(
-                    "DELETE FROM knowledge_chunks WHERE source_id = ?", (doc_id,)
+                self._forget_chunks(
+                    connection, where="source_id = ?", params=(doc_id,)
                 )
                 connection.execute(
                     "DELETE FROM knowledge_docs WHERE doc_id = ?", (doc_id,)
@@ -2367,7 +2719,7 @@ class SqliteVectorKnowledgeStore:
         except Exception:  # noqa: BLE001
             return None
 
-    def build_ann_index(self, on_progress=None) -> dict:
+    def build_ann_index(self, on_progress=None, *, force_low_memory: bool = False) -> dict:
         """由 knowledge-sync 调用：把全部向量归一化写入 faiss HNSW 并落盘。
 
         向量按批从 SQLite 流式读出、逐批归一化 add 进索引——此前一次性
@@ -2379,11 +2731,55 @@ class SqliteVectorKnowledgeStore:
         （3s），仍拿不到即如实返回 `built=False, reason=locked_by_other_process`
         ——不在这里长排队（重建是分钟级，硬等会把 smoke 拖死），更绝不覆写
         别人正在写的文件。调用方 smoke/kb_wiki 已按 reason 记账。
+
+        内存门（S112，参数块见 `_ANN_BUILD_MIN_AVAILABLE_BYTES`）：开火前先量
+        可用物理内存，不足本轮重建需求即返回
+        `built=False, reason=insufficient_memory`（或探针不可判定时的
+        `memory_probe_unavailable`），**旧索引原样保留、不 publish**。
+        `force_low_memory=True` 是 operator 的显式越门（CLI 旗标，无 config 键、
+        不改生产配置面），越门动作本身照样落 meta 留痕。
+        被门挡下不改完备性闸：闸仍按 `_ANN_COMPLETENESS_MAX_MISSING=0` 拒用
+        ANN ⇒ 检索回落暴力扫描，本门只保证"不会以 OOM 的形态结束这一夜"。
         """
         if faiss is None:
             # faiss 缺失不影响关键词索引：仍幂等构建 FTS，供关键词/降级检索使用。
             self.ensure_fts_index(force=True)
             return {"built": False, "reason": "faiss_missing"}
+        verdict = _evaluate_ann_build_memory_gate(
+            _estimate_rebuild_scale(self), self._ann_assumed_dimension()
+        )
+        if not verdict.allowed:
+            reason = (
+                "memory_probe_unavailable" if verdict.probe_failed else "insufficient_memory"
+            )
+            if not force_low_memory:
+                self._record_ann_memory_skip(verdict, forced=False, stage="pre")
+                logger.warning(
+                    "跳过 ANN 重建（内存门）：%s — 实测可用 %s，需要 %s"
+                    "（按 %s 条 × dim=%s 估，规模未知时退到活体下限 %s）；"
+                    "旧索引保留、完备性闸照常拒用（暴力扫描不因此变快）。"
+                    "确要在低内存下硬跑：operator CLI 加 --ann-force-low-memory"
+                    "（越门会另行留痕），或等空闲物理内存回到该需求之上。",
+                    reason,
+                    "无法测量"
+                    if verdict.available_bytes is None
+                    else f"{verdict.available_bytes / 1024**3:.2f}GiB",
+                    f"{verdict.required_bytes / 1024**3:.2f}GiB",
+                    verdict.expected_vectors if verdict.expected_vectors else "未知",
+                    verdict.dim,
+                    f"{_ANN_BUILD_MIN_HEADROOM_BYTES / 1024**2:.0f}MiB",
+                )
+                return {"built": False, "reason": reason, "memory_gate": verdict.as_meta()}
+            self._record_ann_memory_skip(verdict, forced=True, stage="pre")
+            logger.warning(
+                "ANN 重建越门开火（--ann-force-low-memory）：实测可用 %s < 需要 %s，"
+                "越门者自担 OOM 风险；本条已写进 knowledge_meta[%s]。",
+                "无法测量"
+                if verdict.available_bytes is None
+                else f"{verdict.available_bytes / 1024**3:.2f}GiB",
+                f"{verdict.required_bytes / 1024**3:.2f}GiB",
+                _ANN_MEMORY_SKIP_META_KEY,
+            )
         # 锁序：先进程内维护锁（同旧语义——同进程并发重建排队，不互相踩），
         # 再跨进程建锁闸。反序会造出 gate→maintenance / maintenance→gate 环。
         with self._maintenance_lock:
@@ -2395,10 +2791,44 @@ class SqliteVectorKnowledgeStore:
             previous = self._ann_build_gate
             self._ann_build_gate = gate
             try:
-                return self._build_ann_index_locked(on_progress)
+                return self._build_ann_index_locked(
+                    on_progress,
+                    memory_verdict=None if force_low_memory else verdict,
+                )
             finally:
                 self._ann_build_gate = previous
                 gate.release()
+
+    def _ann_assumed_dimension(self) -> int:
+        """重建需求估算用的维数：provider 声明值优先，否则保守常量。
+
+        维数决定 `IndexHNSWFlat` 的私有向量副本大小（dim × 4 B/条），是估算里
+        唯一的强敏感项。provider 没声明时不许猜小：按生产实测的 bge-m3=1024 走
+        （`_ANN_BUILD_ASSUME_DIM`），宁可高估到多跳一次。
+        """
+        declared = getattr(self.embed_provider, "dimensions", None)
+        try:
+            dim = int(declared) if declared else 0
+        except (TypeError, ValueError):
+            dim = 0
+        return dim if dim > 0 else _ANN_BUILD_ASSUME_DIM
+
+    def _record_ann_memory_skip(
+        self, verdict: _AnnMemoryVerdict, *, forced: bool, stage: str
+    ) -> None:
+        """把内存门的判决写进 knowledge_meta（跳过留痕之二：观测行）。
+
+        fail-open：观测面自身故障绝不改判、绝不抛出——门已经做完判决了，
+        记不上账是"少一条痕迹"，不是"可以开火"。
+        """
+        try:
+            payload = dict(verdict.as_meta())
+            payload["forced"] = forced
+            payload["stage"] = stage
+            payload["at_unix"] = int(time.time())
+            self.set_meta(_ANN_MEMORY_SKIP_META_KEY, json.dumps(payload, ensure_ascii=False))
+        except Exception:  # 记账失败不改变门判决（fail-open，观测面自身故障绝不改判）。
+            logger.debug("ANN 内存门记账失败（不影响结论）", exc_info=True)
 
     def _require_ann_lock(self) -> None:
         """覆写线上 ANN 前的持锁凭证：无锁一律拒绝（不新增旁路写口）。"""
@@ -2471,11 +2901,38 @@ class SqliteVectorKnowledgeStore:
             "ann_attested": True,
         }
 
-    def _build_ann_index_locked(self, on_progress=None) -> dict:
+    def _build_ann_index_locked(
+        self, on_progress=None, *, memory_verdict: _AnnMemoryVerdict | None = None
+    ) -> dict:
         """重建主体。前置条件：调用方（build_ann_index）已同时持有进程内
         `_maintenance_lock` 与跨进程建锁闸——本方法不得再取维护锁（那是
         非重入 Lock，重取即自锁死）。覆写一律经 `_publish_ann_pair`。
+
+        内存门复检（S112 立形、S118 接线）：传入 `memory_verdict`（= 前置检查
+        未被越门跳过时）则每 `_ANN_BUILD_MEMORY_RECHECK_VECTORS` 条复检一次
+        **剩余**需求。必要性：前置检查量的是"开火那一刻"，而重建是分钟级、
+        同一台机器上爬虫正在写（S105 实测 10 分钟内可用内存 2.99 → 1.62 GiB）
+        ——只查一次的门会被实况击穿。中途判定不足即**直接放弃整场重建**：
+        此刻尚未走到 `_publish_ann_pair`，线上两文件一字未动、`.tmp` 一个未建，
+        代价只是这一轮白跑（旧索引继续在位、闸继续拒用、暴力扫描照旧）。
+        两条形态（S118 收线补的半条腿；此前两个辅助函数定义了却没接线，
+        "注释承诺了一把不存在的锁"）：
+        ① 规模已知 ⇒ 走 `_ann_projected_requirement_bytes`（模型价与**实测
+           斜率**取大者自校准）；
+        ② 规模未知（无戳且 MAX(rowid) 拿不到）⇒ 不断火，降级为
+           `_ann_live_floor_bytes` 活体下限断路器——估不准≠免检，撑不过
+           一批 + 观察余量就当场收火。
+        越门路径（memory_verdict=None）不设复检：那是显式越门的既有语义，
+        越门本身另记痕。
         """
+        expected_total = memory_verdict.expected_vectors if memory_verdict else None
+        dim = memory_verdict.dim if memory_verdict else self._ann_assumed_dimension()
+        available_at_start = (
+            memory_verdict.available_bytes if memory_verdict is not None else None
+        )
+        next_memory_check = (
+            _ANN_BUILD_MEMORY_RECHECK_VECTORS if memory_verdict is not None else 0
+        )
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -2487,6 +2944,58 @@ class SqliteVectorKnowledgeStore:
             chunk_ids: list[str] = []
             index = None
             while True:
+                if next_memory_check and len(chunk_ids) >= next_memory_check:
+                    available_now = _available_physical_memory_bytes()
+                    if expected_total:
+                        remaining = max(int(expected_total) - len(chunk_ids), 0)
+                    else:
+                        remaining = None
+                    if remaining == 0:
+                        # 计数戳是上界：装到它即可收尾，剩余量归零后无需再检。
+                        next_memory_check = 0
+                        recheck = None
+                    else:
+                        if remaining is not None:
+                            required_now = _ann_projected_requirement_bytes(
+                                remaining,
+                                dim,
+                                available_now=available_now,
+                                available_at_start=available_at_start,
+                                built_so_far=len(chunk_ids),
+                            )
+                        else:
+                            required_now = _ann_live_floor_bytes(dim)
+                        recheck = _AnnMemoryVerdict(
+                            allowed=available_now is not None
+                            and available_now >= required_now,
+                            available_bytes=available_now,
+                            required_bytes=int(required_now),
+                            expected_vectors=remaining,
+                            dim=int(dim),
+                            probe_failed=available_now is None,
+                        )
+                        next_memory_check += _ANN_BUILD_MEMORY_RECHECK_VECTORS
+                    if recheck is not None and not recheck.allowed:
+                        self._record_ann_memory_skip(
+                            recheck, forced=False, stage="midway"
+                        )
+                        logger.warning(
+                            "ANN 重建中途收火（内存门）：已装 %d/%s 条时"
+                            "实测可用 %s < 剩余需求 %s（规模未知时按活体下限判）；"
+                            "未 publish、线上索引一字未动，本轮等同跳过。",
+                            len(chunk_ids),
+                            expected_total if expected_total else "未知",
+                            "无法测量"
+                            if recheck.available_bytes is None
+                            else f"{recheck.available_bytes / 1024**3:.2f}GiB",
+                            f"{recheck.required_bytes / 1024**3:.2f}GiB",
+                        )
+                        return {
+                            "built": False,
+                            "reason": "insufficient_memory_midway",
+                            "vectors_built_before_abort": len(chunk_ids),
+                            "memory_gate": recheck.as_meta(),
+                        }
                 rows = cursor.fetchmany(_ANN_BUILD_BATCH_SIZE)
                 if not rows:
                     break
@@ -2561,6 +3070,32 @@ class SqliteVectorKnowledgeStore:
 
     # ---------- ANN 完备性计数戳（参数块见 _EMBEDDED_COUNT_KEY）----------------
 
+    def _read_ann_signature_pair_on(self, connection: Any) -> tuple[str, str]:
+        """在**调用方连接**上一次取回 (stored_ann_signature, embedding_signature)。
+
+        纠偏要在同一写事务里复核签名，不能走 `get_meta`/`_stored_ann_signature()`
+        ——它们各自开新连接，而本事务正持着写锁：拿回来的既可能是另一条连接的
+        旧快照，又可能把自己撞死在 `SQLITE_BUSY` 上。与 `_read_ann_attestation`
+        （自开连接、给请求路径用）的分工就在这里，别混用。
+        """
+        row = connection.execute(
+            "SELECT value FROM knowledge_meta WHERE key = 'ann_signature'"
+        ).fetchone()
+        live = connection.execute(
+            "SELECT value FROM knowledge_meta WHERE key = 'embedding_signature'"
+        ).fetchone()
+        return (
+            "" if row is None or row[0] is None else str(row[0]),
+            "" if live is None or live[0] is None else str(live[0]),
+        )
+
+    def _read_meta_value_on(self, connection: Any, key: str) -> str:
+        """在调用方连接上读一行 knowledge_meta；缺键/NULL ⇒ 空串。"""
+        row = connection.execute(
+            "SELECT value FROM knowledge_meta WHERE key = ?", (key,)
+        ).fetchone()
+        return "" if row is None or row[0] is None else str(row[0])
+
     def _stamped_expected_vector_count(self) -> int | None:
         """读「本代索引应覆盖多少条向量」的计数戳（载入路径唯一的一发 DB 读）。
 
@@ -2581,10 +3116,130 @@ class SqliteVectorKnowledgeStore:
         return stamped if stamped >= 0 else None
 
     def _stamp_expected_vector_count(self, count: int) -> None:
-        """提交点落戳：把这一代索引实际装入的向量数写成完备性基线。"""
+        """把「本代索引该装多少条向量」写成完备性基线。
+
+        调用者两处：`_publish_ann_pair` 的提交点（**唯一权威赋值点**，值 :=
+        index.ntotal）与漂移纠偏（值 := SQLite 库侧 COUNT，且必须先把这一代
+        证明到恒等——见 `reconcile_ann_completeness`）。名字里不写 publish 是有意的：
+        把纠偏也并进"落戳"这个动作，门本身才知道两种来源都在这一个写口上。
+        """
         self.set_meta(_EMBEDDED_COUNT_KEY, str(max(0, int(count))))
 
-    def certify_expected_vector_count(self) -> int | None:
+    def _stamp_reconcile_memory_reason(self) -> str | None:
+        """纠偏的内存地板：够 ⇒ None；不够/不可判定 ⇒ 点名原因（fail-closed）。"""
+        available = _available_physical_memory_bytes()
+        if available is None:
+            return "memory_probe_unavailable"
+        if available < _ANN_STAMP_RECONCILE_MIN_AVAILABLE_BYTES:
+            return "insufficient_memory"
+        return None
+
+    def reconcile_ann_completeness(
+        self,
+        connection: Any,
+        *,
+        db_embedded_count: int,
+        max_items: int = _ANN_STAMP_RECONCILE_MAX_ITEMS,
+    ) -> tuple[bool, str]:
+        """零成本 + 集合级两道自证：这一代索引是否**正好**装满库里每一行已嵌向量。
+
+        返回 `(是否放行落戳, 原因)`。成立须五件同时为真，缺一即拒并保持原戳：
+        ① 代际证明在位且自洽（`ntotal == count`）；② 证明里的签名 == 当前签名，
+        且库里两个签名行也一致（`ann_signature` 与 `embedding_signature` 存的都是
+        `self.signature`，见常量块上方注释）；③ `.index` 与 `.order.json` 的体积与
+        sha 与代际证明逐字相符（就地用同一连接与文件系统比对——不能调
+        `_ann_pair_consistent`，它会另开连接来读证明而本事务正持写锁）；
+        ④ 实读 faiss 的 ntotal == 库侧 COUNT（faiss 不可用 ⇒ 拒，原因
+        `index_does_not_cover_embedded_rows`——判据不许"读不到就放行"）；
+        ⑤ **集合级**：序列表与库侧已嵌 chunk_id 两向差集皆空。
+
+        ⑤ 是这道判据的全部价值。光比条数拦不住"删 20 补 20"：库侧条数与 ntotal
+        恒等，索引里却装着 20 条已不存在的 id、还缺 20 条新行——计数版会把它判成
+        完备并落戳放行，检索继续用错邻居回答且再也不告警。计数相等只是**必要条件**，
+        集合相等才是**充分条件**。
+
+        戳的**值**永远只来自 `db_embedded_count`（调用方事务内的 COUNT），本函数
+        一个字都不写。取数方向反过来就是掏空这道闸（同 `test_ann_certify_prewarm`
+        的陷阱锁）。
+        """
+        attestation_raw = self._read_meta_value_on(connection, _ANN_ATTESTATION_KEY)
+        if not attestation_raw:
+            return False, "no_attestation"
+        try:
+            attestation = json.loads(attestation_raw)
+        except (TypeError, ValueError):
+            return False, "no_attestation"
+        if not isinstance(attestation, dict):
+            return False, "no_attestation"
+        try:
+            attested_ntotal = int(attestation["ntotal"])
+            attested_count = int(attestation["count"])
+        except (KeyError, TypeError, ValueError):
+            return False, "attestation_self_inconsistent"
+        if attested_ntotal != attested_count:
+            return False, "attestation_self_inconsistent"
+        attested_signature = str(attestation.get("signature") or "")
+        stored_signature, embedding_signature = self._read_ann_signature_pair_on(connection)
+        if (
+            not attested_signature
+            or attested_signature != self.signature
+            or stored_signature != self.signature
+            or (embedding_signature and embedding_signature != self.signature)
+        ):
+            return False, "signature_mismatch"
+        index_path, order_path = self._ann_files()
+        # 成对性就地复核：这里**不能**调 `_ann_pair_consistent()`——它内部走
+        # `_read_ann_attestation()`，会另开一条连接来读 knowledge_meta，而本事务
+        # 正持着 BEGIN IMMEDIATE 写锁（要么撞 SQLITE_BUSY、要么读到另一条连接的
+        # 旧快照）。判据与那条方法逐字同形，只是取数换成同一连接 + 文件系统。
+        try:
+            index_size = int(Path(index_path).stat().st_size)
+            order_size = int(Path(order_path).stat().st_size)
+            attested_sha = str(attestation.get("order_sha256") or "")
+            actual_sha = _sha256_file(Path(order_path)) if attested_sha else ""
+        except OSError:
+            return False, "pair_files_inconsistent"
+        if int(attestation.get("index_bytes", -1) or -1) != index_size:
+            return False, "pair_files_inconsistent"
+        if int(attestation.get("order_bytes", -1) or -1) != order_size:
+            return False, "pair_files_inconsistent"
+        if attested_sha and actual_sha != attested_sha:
+            return False, "pair_files_inconsistent"
+        if db_embedded_count > max_items or attested_ntotal > max_items:
+            return False, "too_large_for_set_proof"
+        try:
+            if faiss is None:
+                return False, "index_does_not_cover_embedded_rows"
+            live_index = faiss.read_index(str(index_path), faiss.IO_FLAG_MMAP)
+        except Exception:  # noqa: BLE001 - 读不到 ntotal 就是无从证明，不许放行。
+            return False, "index_does_not_cover_embedded_rows"
+        if int(live_index.ntotal) != db_embedded_count:
+            # 真短装/真多出都从这里出去：闸继续红是**对的**，出路只有重建。
+            return False, "index_does_not_cover_embedded_rows"
+        try:
+            order = json.loads(Path(order_path).read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            return False, "pair_files_inconsistent"
+        if not isinstance(order, list) or len(order) != db_embedded_count:
+            return False, "id_set_mismatch"
+        outstanding = {str(item) for item in order}
+        missing_in_order = 0
+        for row in connection.execute(
+            "SELECT chunk_id FROM knowledge_chunks "
+            "WHERE vector_json IS NOT NULL AND vector_json != ''"
+        ):
+            chunk_id = str(row[0])
+            if chunk_id in outstanding:
+                outstanding.discard(chunk_id)
+            else:
+                missing_in_order += 1
+                if missing_in_order > 5:
+                    break
+        if missing_in_order or outstanding:
+            return False, "id_set_mismatch"
+        return True, ""
+
+    def certify_expected_vector_count(self, *, drift_correction: bool = False) -> int | None:
         """维护路径专用：给从未认证过的存量库补盖计数戳；返回新落的戳值，
         活戳在位或失败返回 None（活戳归重建线所有，certify 一字不碰）。
 
@@ -2596,6 +3251,9 @@ class SqliteVectorKnowledgeStore:
         本方法给这一类库一次权威认证：COUNT 已嵌入行数落戳。生产实测该扫描
         persona 13.2s / wiki 33.5s，所以只允许出现在维护线程（同步任务的
         跳过分支、operator CLI、显式重建的跳过源），**绝不上请求路径**。
+        〔2026-09-26 冷缓存口径补充：同一发 COUNT 在 WAL 1.5 GB、索引刚发布后的
+        生产库上实测 327.7s（集合级比对另加 240.2s）——上面那两个数是热缓存值，
+        拿它排夜间窗口会低估十倍。〕
 
         ⚠ 关键陷阱——戳值只许来自 SQLite 已嵌入行 COUNT，禁止取 index.ntotal：
         拿 ntotal 落戳等于允许任何索引（包括真短装的）自我认证，
@@ -2607,7 +3265,24 @@ class SqliteVectorKnowledgeStore:
         之间提交而涨戳空转（那会造出一个偏低的戳 = 漏拒方向，危险侧）。
         活戳判据与读端 `_stamped_expected_vector_count` 同式：非空且可解析
         且 >=0 即活戳；空/缺键/畸形/负值视为「从未认证成功」，补盖权威值。
+        `drift_correction=True` 是**显式 opt-in**（缺省 False ⇒ 与本件诞生前逐字节
+        同形，smoke 与 knowledge_service 两条既有调用者行为一字不变；kb-sync 零变更
+        夜已改为显式开门，见 `kb_wiki.py` 的 `unchanged_skip` 分支）：
+        活戳在位且戳**高于**库侧真值时，先让 `reconcile_ann_completeness` 把这一代
+        证明到恒等，成立才把戳描回库真值。不成立的原因一律点名进日志，闭集见
+        `_STAMP_RECONCILE_REASONS`；纠偏**只降不升**（戳偏低 = 涨点漏了，那归重建线）。
         """
+        if drift_correction:
+            probe_reason = self._stamp_reconcile_memory_reason()
+            if probe_reason is not None:
+                logger.warning(
+                    "knowledge ANN completeness stamp reconcile refused "
+                    "(reason=%s db=%s) — 集合级自证要流式读两份数十万项 id，"
+                    "地板之下不跑；戳保持原样，闸继续拒用 ANN（暴力扫描）。",
+                    probe_reason,
+                    self.db_path,
+                )
+                return None
         try:
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
@@ -2616,12 +3291,13 @@ class SqliteVectorKnowledgeStore:
                     (_EMBEDDED_COUNT_KEY,),
                 ).fetchone()
                 raw = "" if row is None or row[0] is None else str(row[0]).strip()
+                existing = -1
                 if raw:
                     try:
                         existing = int(raw)
                     except (TypeError, ValueError):
                         existing = -1  # 畸形 = 读端本就判不可用，按无戳处理
-                    if existing >= 0:
+                    if existing >= 0 and not drift_correction:
                         return None  # 活戳：重建线的所有物，certify 不覆写
                 count = int(
                     connection.execute(
@@ -2629,6 +3305,39 @@ class SqliteVectorKnowledgeStore:
                         "WHERE vector_json IS NOT NULL AND vector_json != ''"
                     ).fetchone()[0]
                 )
+                if existing >= 0:
+                    # 漂移纠偏：只降不升，且必须先过集合级自证（见其 docstring）。
+                    # 整段在同一 BEGIN IMMEDIATE 事务内完成——「证明」与「落戳」之间
+                    # 不许有任何别的写者插进来，否则落下的是一条没复核过的值。
+                    if existing == count:
+                        reason = "stamp_matches_db_count"
+                    elif existing < count:
+                        reason = "stamp_below_db_count"
+                    else:
+                        ok, reason = self.reconcile_ann_completeness(
+                            connection, db_embedded_count=count
+                        )
+                        if ok:
+                            self._stamp_expected_vector_count(count)
+                            logger.info(
+                                "knowledge ANN completeness stamp reconciled: "
+                                "%d -> %d (db=%s) — 本代已证明逐行覆盖 %d 条已嵌向量。",
+                                existing,
+                                count,
+                                self.db_path,
+                                count,
+                            )
+                            return count
+                    logger.warning(
+                        "knowledge ANN completeness stamp reconcile refused "
+                        "(reason=%s existing=%d db_count=%d db=%s) — 戳保持原样；"
+                        "该走重建线的走重建线，纠偏不替它作主。",
+                        reason,
+                        existing,
+                        count,
+                        self.db_path,
+                    )
+                    return None
                 connection.execute(
                     "INSERT INTO knowledge_meta (key, value) VALUES (?, ?) "
                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -2640,6 +3349,12 @@ class SqliteVectorKnowledgeStore:
                 type(exc).__name__,
                 self.db_path,
             )
+            if drift_correction:
+                logger.warning(
+                    "knowledge ANN completeness stamp reconcile refused "
+                    "(reason=db_error db=%s) — 事务没走完，戳不动。",
+                    self.db_path,
+                )
             return None
         logger.info(
             "knowledge ANN completeness certified: expected=%d db=%s",
@@ -2677,6 +3392,119 @@ class SqliteVectorKnowledgeStore:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (_EMBEDDED_COUNT_KEY, str(max(0, current) + int(delta))),
         )
+
+    @staticmethod
+    def _lower_expected_vector_count(
+        connection: sqlite3.Connection, removed: int
+    ) -> None:
+        """在调用方**同一事务内**把计数戳拉低 removed。
+
+        调用者只有三处漏斗：`_forget_chunks`（按谓词删块）、`_clear_all_vectors`
+        （全库清）、`_null_out_chunk_vector`（内容变更清单行）。别在它们外面加第四处
+        调用——更要紧的是别在任何删除点裸写 SQL，那正是今晚漂移的出生方式。
+
+        这是 #47 那把闸的**对称半圈**，补的是它自己注释里承认却没治的形态：
+        戳原来只由唯一写点单向上推（`_bump_expected_vector_count`），删掉已嵌行、
+        内容变更清向量、auto_reset 清全库都不拉低 ⇒ 戳必然虚高。虚高在零变更夜
+        是**永久**的（重建线不达、certify 又不碰活戳）——2026-09-26 生产实测的
+        missing=432 就是这么来的：02:56 发布之后又涨了 432 条，那 432 行随后被删。
+
+        方向上的取舍要说清：拉低会让 `ntotal > 戳`（索引里可能留着已不存在行的
+        向量）——这**不是**本闸要拦的病，常量块注释早已把"多出向量"判为可容忍
+        （发布中途被杀的残态就是这个形状）；闸拦的是"索引少装了新行"。所以对称
+        记账只收危险侧：戳从此恒等于"库里到底有多少行带向量"，两头都不漂。
+
+        与涨戳同规的 fail-closed：库里没有活戳时**不凭空建戳**（从 0 起算会造出
+        一个远小于真实向量数的戳 = 漏拒方向，危险侧），保持缺席交给认证/重建线。
+        """
+        if removed <= 0:
+            return
+        row = connection.execute(
+            "SELECT value FROM knowledge_meta WHERE key = ?",
+            (_EMBEDDED_COUNT_KEY,),
+        ).fetchone()
+        if row is None or row[0] is None or str(row[0]).strip() == "":
+            return
+        try:
+            current = int(str(row[0]).strip())
+        except (TypeError, ValueError):
+            return
+        connection.execute(
+            "INSERT INTO knowledge_meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (_EMBEDDED_COUNT_KEY, str(max(0, current - int(removed)))),
+        )
+
+    def _forget_chunks(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        where: str,
+        params: tuple = (),
+    ) -> int:
+        """按谓词删块，并把这次带走的向量数记进计数戳——删除路径的**唯一漏斗**。
+
+        顺序不能反：先删就数不到被删的那批。谓词由调用方显式给（不从 SQL 里拆——
+        拆字符串会把「谓词里含 WHERE」这种写法判成两半）。**别把这里读成"数与删同事务"**——
+        pysqlite 只在写语句前隐式 BEGIN，那次 COUNT 读其实落在事务外；真正挡住
+        "并发嵌入被数漏"的是调用方持有的 `self._lock` 加单写者纪律（kb-sync 全程
+        一把进程级互斥）。方向上要说清残留风险有多小：数漏 ⇒ 少降 ⇒ 戳偏高 ⇒ 多拒
+        （安全侧）；只有"数多"才危险，而"数多"要另一条连接在 DELETE 之前恰好提交
+        一批新向量，且我们**故意**让跨进程并发删除者存在——全仓 grep 除本漏斗外
+        零处裸删 chunk，不成立。真要收紧就在这里显式 BEGIN IMMEDIATE，代价是把
+        读窗口也锁进写事务。
+        """
+        removed = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM knowledge_chunks "
+                "WHERE vector_json IS NOT NULL AND vector_json != '' "
+                f"AND ({where})",
+                params,
+            ).fetchone()[0]
+        )
+        cursor = connection.execute(
+            f"DELETE FROM knowledge_chunks WHERE {where}", params
+        )
+        self._lower_expected_vector_count(connection, removed)
+        return int(cursor.rowcount or 0)
+
+    def _clear_all_vectors(self, connection: sqlite3.Connection) -> int:
+        """全库清向量（auto_reset / 换代形态）的记账：清完戳就该是 0。"""
+        removed = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM knowledge_chunks "
+                "WHERE vector_json IS NOT NULL AND vector_json != ''"
+            ).fetchone()[0]
+        )
+        connection.execute("UPDATE knowledge_chunks SET vector_json = NULL")
+        self._lower_expected_vector_count(connection, removed)
+        return removed
+
+    def _null_out_chunk_vector(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        source_id: str,
+        content: str,
+        content_hash: str,
+        chunk_id: str,
+        had_vector: bool,
+    ) -> None:
+        """单行向量作废的唯一出口（内容变更路径）：置 NULL 与拉低戳同事务、同漏斗。
+
+        `had_vector` 必须由调用方从**已有那次 SELECT** 带进来，这里不再发
+        第二条查询——这条路径在每篇文档的每块上都走一遍，多一发查询就是多一倍 I/O。
+        """
+        connection.execute(
+            """
+            UPDATE knowledge_chunks
+            SET source_id = ?, title = ?, content = ?,
+                content_hash = ?, vector_json = NULL
+            WHERE chunk_id = ?
+            """,
+            (source_id, source_id, content, content_hash, chunk_id),
+        )
+        self._lower_expected_vector_count(connection, 1 if had_vector else 0)
 
     def _load_vector_cache(self):
         """把全部向量一次性载入 numpy 矩阵并缓存；只保留 chunk_id，正文懒加载。

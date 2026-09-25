@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
@@ -564,16 +565,23 @@ def _embedding_chain_ready(config: object) -> bool:
     return local_ready or remote_ready
 
 
+def _kb_db_path(config: object) -> str:
+    """kb 向量库路径的唯一派生式（缺省值只这一处）。
+
+    取消旗与库同目录，故旗路径必须由它派生；此前这段"取配置或落缺省"在
+    `_build_store` / `_get_shared_store` 各写一遍，S112 再要一次就是第四遍
+    ——缺省串多一份副本，就多一个"改了这处忘了那处"的口径分叉面。
+    """
+    return str(getattr(config, "bot_kb_wiki_db_path", "") or "data/kb_wiki_embeddings.sqlite3")
+
+
 def _build_store(
     config: object,
     *,
     timeout_override: float | None = None,
     auto_reset: bool,
 ) -> SqliteVectorKnowledgeStore:
-    db_path = str(
-        getattr(config, "bot_kb_wiki_db_path", "")
-        or "data/kb_wiki_embeddings.sqlite3"
-    )
+    db_path = _kb_db_path(config)
     provider = _build_provider(config, timeout_override=timeout_override)
     return SqliteVectorKnowledgeStore(
         db_path=db_path,
@@ -597,10 +605,7 @@ def _get_shared_store(
     timeout_override 只在首次构建时生效（fast 模式传 3s 上限查询嵌入）；
     同步任务运行期间会临时换上全长超时 provider，不影响这里的常态配置。
     """
-    db_path = str(
-        getattr(config, "bot_kb_wiki_db_path", "")
-        or "data/kb_wiki_embeddings.sqlite3"
-    )
+    db_path = _kb_db_path(config)
     with _SHARED_STORES_LOCK:
         store = _SHARED_STORES.get(db_path)
         if store is None:
@@ -714,6 +719,118 @@ _SYNC_TASK_MUTEX = threading.Lock()
 # sync_documents 每 500 文档一提交、embed 每批一落向量行，重跑自动续传）。
 _SYNC_CANCEL_EVENT = threading.Event()
 
+# --- 操作员取消旗（S112，2026-09-26）------------------------------------------
+# 为什么需要旗标而不是函数调用：`_SYNC_CANCEL_EVENT` 是**进程局部**的
+# `threading.Event`，而 `cancel_kb_sync_task()` 全仓唯一调用点在 `bot.py:405`
+# 的 `@driver.on_shutdown` 钩子里 ⇒ 今天想停掉在跑的夜间同步，只有把 bot 停机
+# 这一条路（S105 报的"只能等它跑完或杀进程"就是这个形状）。
+# 三条候选通路现算否决两条：
+#   ① operator CLI 旗 —— smoke 是**另一个进程**，它置不到 bot 进程里的 Event；
+#   ② 控制面端点 —— `control_plane` 是独立 uvicorn 进程（`__main__.py:serve()`）
+#      且 `bot_control_plane_enabled` 缺省 False，同样跨不到进程边界；
+#   ③ 文件哨兵 —— 跨进程可见、不需要新监听面、不需要凭据、崩了不留半状态。
+# 故选 ③：操作员在 kb 库同目录放一个 `kb_sync.cancel`，下一个批边界停。
+# 取消粒度**完全沿用既有协作式语义**（批边界检查、断点已在库、重跑自动续传），
+# 本旗只是多给一个"从进程外按同一个钮"的入口，不改任何检查点。
+_SYNC_CANCEL_FLAG_FILENAME = "kb_sync.cancel"
+# 有效期：只在 TTL 内认这个旗。防的是"某次手滑建了个文件、此后台台同步每晚被
+# 莫名取消"——陈旧旗与陈旧取消事件是同一类毒，处理办法也同一条：一次性消费 +
+# 过期即当垃圾清掉（对齐 `run_kb_sync_task` 出口那行"陈旧置位最多取消一轮"）。
+_SYNC_CANCEL_FLAG_TTL_SECONDS = 6 * 3600
+# 当前在跑那一轮的旗标路径（`_SYNC_TASK_MUTEX` 保证同刻最多一轮，故单变量够用；
+# 与 `vector_knowledge._ann_build_gate` 同一手法：入口登记、finally 归还）。
+_SYNC_CANCEL_FLAG_PATH: Path | None = None
+_SYNC_CANCEL_FLAG_LOCK = threading.Lock()
+
+
+def current_kb_sync_cancel_flag_path() -> Path | None:
+    """本轮 kb-sync 监听的取消旗路径（在跑才非空）。供日志/测试/运维探针读。"""
+    with _SYNC_CANCEL_FLAG_LOCK:
+        return _SYNC_CANCEL_FLAG_PATH
+
+
+def _set_kb_sync_cancel_flag_path(path: Path | None) -> None:
+    """登记/归还本轮旗路径。
+
+    ⚠ `global` 不是装饰性关键字：少了它这句赋值只是在函数里造一个**局部变量**，
+    Python 一声不响，模块值恒为 None ⇒ 旗路径永远没登记、旗标永远没人消费、
+    取消钮按下去毫无反应。本席第一版就漏了它，被活性锁
+    `test_cancel_flag_consumed_at_sync_batch_boundary` 当场打回（见席位报告 §4）。
+    """
+    global _SYNC_CANCEL_FLAG_PATH
+    with _SYNC_CANCEL_FLAG_LOCK:
+        _SYNC_CANCEL_FLAG_PATH = path
+
+
+def kb_sync_cancel_flag_path(db_path: object) -> Path:
+    """由 kb 库路径派生取消旗路径（与库同目录，确定性、可口述）。"""
+    return Path(str(db_path)).with_name(_SYNC_CANCEL_FLAG_FILENAME)
+
+
+def _consume_cancel_flag() -> bool:
+    """批边界上的旗标消费：在位且未过期 ⇒ 置位 Event 并删除文件，返回 True。
+
+    一次性消费（删文件）是关键：不删的话这面旗会取消此后每一轮同步，
+    而操作员的本意从来只有"停掉这一次"。置位 Event 而非直接抛，是为了让
+    "从文件来的请求"与"从停机钩子来的请求"走**同一条**判定路径
+    （`_raise_if_cancelled`），不留第二种取消语义。
+    """
+    flag = current_kb_sync_cancel_flag_path()
+    if flag is None:
+        return False
+    try:
+        if not flag.is_file():
+            return False
+        age = time.time() - flag.stat().st_mtime
+        flag.unlink(missing_ok=True)
+    except OSError as exc:
+        # 读不到就不当作请求：宁可让这一轮跑完，也不要因为一次 stat 失败
+        # 把数小时的同步判死（那是把可观测性故障升级成生产故障）。
+        logger.warning("kb_wiki_sync: 取消旗读取失败（按未取消处理）：%s", exc)
+        return False
+    if age > _SYNC_CANCEL_FLAG_TTL_SECONDS:
+        logger.warning(
+            "kb_wiki_sync: 忽略过期的取消旗（存在 %.1f 小时 > TTL %.1f 小时），已清掉。",
+            age / 3600.0,
+            _SYNC_CANCEL_FLAG_TTL_SECONDS / 3600.0,
+        )
+        return False
+    if _SYNC_CANCEL_EVENT.is_set():
+        return True
+    logger.warning(
+        "kb_wiki_sync: 收到取消旗 %s（存在 %.1f 分钟），本轮将在下一个批边界停止。",
+        flag.name,
+        max(0.0, age) / 60.0,
+    )
+    _SYNC_CANCEL_EVENT.set()
+    return True
+
+
+def request_kb_sync_cancel(*, reason: str = "", db_path: object = "") -> bool:
+    """进程外请求取消 kb-sync：落一面旗 + 若在跑的正是本进程则顺手置位。
+
+    返回是否本次真正**新落下**一个取消请求（幂等：Event 已置位且旗已在位时
+    返回 False）。给两个入口共用：operator CLI（另一个进程，只能落旗）与
+    测试/进程内管理面（同进程，旗与 Event 双落，行为与直接调
+    `cancel_kb_sync_task` 一致）。
+    """
+    requested = cancel_kb_sync_task(reason=reason)
+    if str(db_path or "").strip():
+        try:
+            flag = kb_sync_cancel_flag_path(db_path)
+            flag_existed = flag.exists()
+            flag.parent.mkdir(parents=True, exist_ok=True)
+            flag.write_text(
+                f"requested_by_pid={os.getpid()} reason={reason or 'unspecified'}\n",
+                encoding="utf-8",
+            )
+            logger.warning("kb_wiki_sync: 已落取消旗 %s", flag)
+            # 旗本来就是幂等的那一半：已存在则本次没有新增请求，返回值不能谎报。
+            requested = requested or not flag_existed
+        except OSError as exc:
+            logger.warning("kb_wiki_sync: 取消旗落不下（只置了本进程事件）：%s", exc)
+    return requested
+
 
 class KbSyncCancelled(BaseException):
     """kb-sync 协作式取消信号。
@@ -743,7 +860,7 @@ def cancel_kb_sync_task(*, reason: str = "") -> bool:
 
 
 def _raise_if_cancelled() -> None:
-    if _SYNC_CANCEL_EVENT.is_set():
+    if _SYNC_CANCEL_EVENT.is_set() or _consume_cancel_flag():
         raise KbSyncCancelled("kb_wiki_sync: 收到取消请求")
 
 
@@ -820,6 +937,12 @@ _SYNC_ALERT_SINK_LOCK = threading.Lock()
 
 # 需要告警的失败面：cancelled/busy 是治理动作而非故障，不进告警。
 _ALERTABLE_ERROR_KINDS = frozenset({"exception", "kb_missing", "config_missing", "partial"})
+# ANN 内存门的跳过面（S112）：同步本身成功、但重建被门挡下也必须告警——
+# 静默跳过等于把"新内容今晚仍然检索不到"这件事藏起来（09-22 停摆的前置形态
+# 就是这么攒出来的）。这三个 reason 由 vector_knowledge.build_ann_index 如实返回。
+_ALERTABLE_ANN_REASONS = frozenset(
+    {"insufficient_memory", "memory_probe_unavailable", "insufficient_memory_midway"}
+)
 # 告警五要素里的「位置」：定位到模块，不暴露磁盘路径（出站另有统一打码）。
 _SYNC_ALERT_LOCATION = "bot_unified_runtime.domains.location.knowledge.kb_wiki"
 
@@ -889,15 +1012,86 @@ def build_sync_alert_content(result: dict[str, Any], *, suspended: bool = False)
     )
 
 
+def build_ann_memory_alert_content(result: dict[str, Any]) -> Any:
+    """ANN 重建被内存门挡下 → 五要素预警（S112；``AlertContent`` 延迟导入）。
+
+    话术三条硬要求（简报口径）：**实算了多少 / 阈值多少 / 下一发怎么手动放行**，
+    三条都要在卡面上，否则读到的人只会问"那我该怎么办"。数字全部来自
+    `vector_knowledge` 门自己产出的度量字典，本函数一字不重算。
+
+    刻意不说"没事了"：跳过 ≠ 恢复。旧索引继续在位、完备性闸继续拒用、
+    检索继续走暴力扫描（慢而全）——影响那一栏讲的是这件事。
+    """
+    from plugins.bot_unified_runtime.domains.ops.monitor.alerts import AlertContent
+
+    gate = result.get("ann_memory_gate")
+    metrics = gate if isinstance(gate, dict) else {}
+    available = str(metrics.get("available") or "未取到")
+    required = str(metrics.get("required") or "未取到")
+    floor = str(metrics.get("floor") or "未取到")
+    headroom = str(metrics.get("headroom") or "未取到")
+    vectors = metrics.get("expected_vectors")
+    dim = metrics.get("dim")
+    probe_failed = bool(metrics.get("probe_failed"))
+    reason = str(result.get("ann_reason") or "")
+    midway = reason == "insufficient_memory_midway"
+    measured = (
+        "可用物理内存探针取不到数（按不可判定 fail-closed，未开火）"
+        if probe_failed
+        else f"实测可用物理内存 {available}"
+    )
+    return AlertContent(
+        title="百科知识库 ANN 索引本轮没有重建（内存门）"
+        + ("：中途收火" if midway else ""),
+        what_happened=(
+            f"kb-sync（{result.get('mode')}）本身跑通了，但 ANN 全量重建被内存门"
+            f"挡下：{measured}，本轮需要 {required}"
+            f"（绝对下限 {floor} + 观察余量 {headroom}"
+            + (
+                f"，按计数戳上界 {vectors} 条 × {dim} 维估）"
+                if vectors
+                else "，规模无从估定，按绝对下限判）"
+            )
+            + (
+                f"；已装 {result.get('ann_vectors_built_before_abort', 0)} 条时收火，"
+                "未 publish、线上索引一字未动"
+                if midway
+                else "；开火前即跳过，线上索引一字未动"
+            )
+        ),
+        impact=(
+            "本轮新嵌入的向量今晚仍然进不了 ANN——完备性闸照旧拒用索引，"
+            "百科检索继续回落暴力扫描（慢而全，正确性不受影响，延迟受影响）。"
+            "跳过不等于恢复：只有下一次重建成功 publish 才会重新放行 ANN。"
+        ),
+        fix_suggestion=(
+            "①等这台机器空出可用物理内存到上述需求之上（夜间档错开爬虫与 bot），"
+            "下一轮同步会自动补建；②要立刻补跑，用 operator CLI："
+            "powershell -File scripts/dev.ps1 -Task kb-sync 加 --ann-force-low-memory"
+            "（显式越门，越门本身另记一条痕，OOM 风险由越门者承担）；"
+            "③要看上一轮门到底量到了什么：读 knowledge_meta 的 "
+            "ann_build_last_memory_skip 一行（WebUI 知识页同源）。"
+        ),
+        location=_SYNC_ALERT_LOCATION,
+        level="warning",
+    )
+
+
 def _emit_sync_alert(result: dict[str, Any]) -> None:
-    """按 error_kind / 对账挂起决定是否告警；fail-open，绝不影响同步主链路。"""
+    """按 error_kind / 对账挂起 / ANN 内存门决定是否告警；fail-open，绝不影响同步主链路。"""
     try:
         error_kind = str(result.get("error_kind") or "none")
         failed = error_kind in _ALERTABLE_ERROR_KINDS
         suspended = str(result.get("reconcile_status") or "") == _RECONCILE_REMOVE_SUSPENDED
-        if not failed and not suspended:
+        ann_memory_skip = str(result.get("ann_reason") or "") in _ALERTABLE_ANN_REASONS
+        if not failed and not suspended and not ann_memory_skip:
             return
-        alert = build_sync_alert_content(result, suspended=not failed and suspended)
+        if not failed and not suspended and ann_memory_skip:
+            # 内存门跳过：同步本身成功，走专用话术（要点是"实算/阈值/怎么放行"，
+            # 不是"跑挂了"）。
+            alert = build_ann_memory_alert_content(result)
+        else:
+            alert = build_sync_alert_content(result, suspended=not failed and suspended)
         sink = current_kb_sync_alert_sink()
         if sink is None:
             logger.warning(
@@ -1032,6 +1226,7 @@ def run_kb_sync_task(
     store: SqliteVectorKnowledgeStore | None = None,
     on_progress: Callable[[dict], None] | None = None,
     embed_progress: Callable[[int, int], None] | None = None,
+    force_low_memory_ann: bool = False,
 ) -> dict[str, Any]:
     """kb-sync 任务入口：任务互斥 + 取消事件复位后进入主体。
 
@@ -1039,6 +1234,10 @@ def run_kb_sync_task(
     ``kb_wiki_sync_startup`` 启动 +45s）可并发触发；这里用进程级互斥闸
     保证同一时刻最多一个同步在跑，撞车方立即返回 ``error_kind=busy``
     （断点都在库里，下轮自然续跑，不空转不重活）。
+
+    ``force_low_memory_ann`` 是 operator 显式越过 ANN 内存门的唯一通路
+    （S112）：调度器/cron 一律用缺省 False，只有 CLI 旗会带 True 进来。
+    告警话术里"下一发怎么手动放行"点名的就是它——写进话术的通路必须真存在。
     """
     if not _SYNC_TASK_MUTEX.acquire(blocking=False):
         busy = _empty_kb_result("full" if full else "incremental")
@@ -1057,11 +1256,15 @@ def run_kb_sync_task(
             store=store,
             on_progress=on_progress,
             embed_progress=embed_progress,
+            force_low_memory_ann=force_low_memory_ann,
         )
     finally:
         # 出口消费取消状态：本轮的取消请求（无论入口还是批边界命中）
         # 不残留到下一轮；陈旧置位最多取消一轮，不毒化后续夜间同步。
+        # 旗路径同理归还：不在跑的轮次不许继续监听某个目录（那会把下一轮
+        # 之前偶然出现的同名文件当成取消请求）。
         _SYNC_CANCEL_EVENT.clear()
+        _set_kb_sync_cancel_flag_path(None)
         _SYNC_TASK_MUTEX.release()
 
 
@@ -1073,6 +1276,7 @@ def _run_kb_sync_task_locked(
     store: SqliteVectorKnowledgeStore | None = None,
     on_progress: Callable[[dict], None] | None = None,
     embed_progress: Callable[[int, int], None] | None = None,
+    force_low_memory_ann: bool = False,
 ) -> dict[str, Any]:
     """kb-sync 任务主体（持 _SYNC_TASK_MUTEX）：同步 → 嵌入 → ANN/FTS 索引重建。
 
@@ -1092,6 +1296,14 @@ def _run_kb_sync_task_locked(
     result["embed"] = bool(embed)
     result["started_at"] = _utc_stamp()
     started = time.monotonic()
+    # 取消旗登记（S112）：必须在**第一个取消检查点之前**登记，否则入口那一发
+    # `_raise_if_cancelled` 看不见旗——"存在但不被消费"正是本席要注毒验的形状。
+    _set_kb_sync_cancel_flag_path(kb_sync_cancel_flag_path(_kb_db_path(config)))
+    flag = current_kb_sync_cancel_flag_path()
+    logger.info(
+        "kb_wiki_sync: 本轮监听取消旗 %s（放这个文件即可在下一个批边界停）",
+        flag,
+    )
     try:
         _raise_if_cancelled()
         if store is None:
@@ -1161,12 +1373,34 @@ def _run_kb_sync_task_locked(
             sync_changed or vectors_changed or not ann_files_exist
         ):
             try:
-                ann = store.build_ann_index()
+                # on_progress 双重用途（S112 + S105 乙-3）：① wiki 侧重建此前
+                # 全程零进度输出（`_build_ann_index_locked` 只在传了回调时打点），
+                # 分钟级任务跑成什么样外部全盲；② 用 `_cancel_aware_progress`
+                # 包一层，取消检查点就延伸到**建索引自己的批边界**上——
+                # `KbSyncCancelled` 继承 BaseException，能穿透内层
+                # `except Exception: pass`（见 vector_knowledge 同处注释），
+                # 而此刻尚未 publish，中停不碰线上文件。
+                ann = store.build_ann_index(
+                    force_low_memory=bool(force_low_memory_ann),
+                    on_progress=_cancel_aware_progress(
+                        lambda built: logger.info(
+                            "kb_wiki_sync: ANN 重建进度 已装 %s 条", built
+                        )
+                    ),
+                )
             except Exception as exc:  # noqa: BLE001
                 ann = {"built": False, "reason": type(exc).__name__}
             result["ann_built"] = bool(ann.get("built"))
             result["ann_vectors"] = int(ann.get("vectors", 0) or 0)
             result["ann_reason"] = str(ann.get("reason", ""))
+            # 内存门的度量原样带进本轮结果（S112）：告警话术与落库摘要都读它，
+            # 本模块不重算任何一个字节（重算=第二口径）。
+            gate_metrics = ann.get("memory_gate")
+            if isinstance(gate_metrics, dict):
+                result["ann_memory_gate"] = gate_metrics
+                result["ann_vectors_built_before_abort"] = int(
+                    ann.get("vectors_built_before_abort", 0) or 0
+                )
         else:
             result["ann_built"] = False
             result["ann_vectors"] = 0
@@ -1180,7 +1414,11 @@ def _run_kb_sync_task_locked(
             _certify = getattr(store, "certify_expected_vector_count", None)
             if callable(_certify):
                 try:
-                    result["ann_certified"] = _certify()
+                    # 零变更夜必须开漂移纠偏：戳是只涨不跌的上界，删行/换代都不拉低它，
+                    # 而这一夜重建线不达 ⇒ 不开门的话「虚高一次」就是「永久拒用」。
+                    # 2026-09-26 生产实测即这一格（戳 741,428 / 索引与库都是 740,996）。
+                    # 判据与闭集见 vector_knowledge 的常量块与 reconcile 方法 docstring。
+                    result["ann_certified"] = _certify(drift_correction=True)
                 except Exception as exc:  # noqa: BLE001 - 自愈失败不改本轮同步结论。
                     logger.warning(
                         "kb-sync ANN 计数戳自愈失败（不影响本轮结论）：%s: %s",
@@ -1198,6 +1436,20 @@ def _run_kb_sync_task_locked(
             return result
         result["ok"] = True
         observed: list[str] = []
+        if str(result.get("ann_reason") or "") in _ALERTABLE_ANN_REASONS:
+            # 内存门跳过的话术要点：实算了多少 / 阈值多少 / 下一发怎么放行。
+            gate = result.get("ann_memory_gate")
+            metrics = gate if isinstance(gate, dict) else {}
+            observed.append(
+                "ANN 本轮未重建（内存门，"
+                f"{result.get('ann_reason')}）：实测可用 "
+                f"{metrics.get('available') or '未取到'}，需要 "
+                f"{metrics.get('required') or '未取到'}"
+                f"（下限 {metrics.get('floor') or '未取到'} + 余量 "
+                f"{metrics.get('headroom') or '未取到'}）。暴力扫描照旧，"
+                "新向量今晚仍进不了 ANN；要立刻补跑用 operator CLI 加 "
+                "--ann-force-low-memory（显式越门、另记痕）"
+            )
         if int(result.get("reconcile_missing") or 0) or int(result.get("reconcile_extra") or 0):
             observed.append(
                 f"对账补 {result.get('reconcile_missing')}、删 {result.get('reconcile_extra')}"

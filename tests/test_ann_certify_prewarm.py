@@ -270,12 +270,15 @@ class _SyncSpyStore:
     def document_count(self) -> int:
         return 10
 
-    def build_ann_index(self, on_progress=None) -> dict:
+    def build_ann_index(self, on_progress=None, *, force_low_memory=False) -> dict:
         self.build_ann_calls += 1
         return {"built": True, "vectors": 100, "reason": ""}
 
-    def certify_expected_vector_count(self) -> int | None:
+    def certify_expected_vector_count(
+        self, *, drift_correction: bool = False
+    ) -> int | None:
         self.certify_calls += 1
+        self.certify_drift_correction = drift_correction
         return self._certify_value
 
 
@@ -299,7 +302,11 @@ def _kb_sync_isolated(monkeypatch):
 
 
 def test_kb_wiki_unchanged_night_certifies(_kb_sync_isolated):
-    """unchanged_skip 分支（维护线程）调用认证自愈，并把结果记入本轮 summary。"""
+    """unchanged_skip 分支（维护线程）调用认证自愈，并把结果记入本轮 summary。
+
+    零变更夜还必须**开漂移纠偏**：戳是只涨不跌的上界，而这一夜重建线不达，
+    不开门 ⇒ 一次虚高就是永久拒用（2026-09-26 生产实测 missing=432 恒红即此格）。
+    """
     store = _SyncSpyStore(sync_stats=_ZERO_SYNC, certify_value=1234)
     result = kb_wiki.run_kb_sync_task(_KB_CONFIG, store=store)
     assert result["ok"] is True
@@ -307,6 +314,10 @@ def test_kb_wiki_unchanged_night_certifies(_kb_sync_isolated):
     assert store.build_ann_calls == 0
     assert store.certify_calls == 1, "零变更夜必须由 unchanged_skip 分支补盖戳"
     assert result["ann_certified"] == 1234
+    assert getattr(store, "certify_drift_correction", None) is True, (
+        "零变更夜没开 drift_correction：活戳漂移在这条分支上无任何自愈路径，"
+        "闸会永久拒用 ANN（回落暴力扫描）"
+    )
 
 
 def test_kb_wiki_rebuild_night_does_not_certify(_kb_sync_isolated):
