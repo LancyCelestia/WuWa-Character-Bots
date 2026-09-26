@@ -62,6 +62,38 @@ S3 对账表实算：`safety_exec` 包内 `trust` / `consent` / `action_catalog`
 **代码**、每枚带一条实算尺、声明与现状不等即红，别只读上面这段散文。
 （该尺第一版只认 `from a.b.c import m` 一种形态，把 `from a.b import c as x` 量成
 零消费者 ⇒ 一张「未执法」假账差点入库，教训与两种形态都写进那把尺的注释里。）
+
+⚠ 2026-09-26 S-ATTACK-CONSUMERS 现算指针（不改写上段原文，只加失效标记）：
+上段「本件三条谓词各 0 枚消费者」为当时值——现算两条**话术形态**谓词
+（:func:`detect_operational_takeover` / :func:`detect_authority_rewrite`）已有
+生产消费者 `domains/chat_reply/security/injection.py::check_prompt_injection`
+（逐条真跑的入站话术门；处置=升包裹不升 BLOCK，机制故障 fail-closed 挂
+`attack_surface_scan_failed`）。消费锁与注毒台账在
+`tests/test_attack_surface_consumers.py`。**仍然零消费者的**只剩
+:func:`find_visual_spoof_controls`（显示名/文件名/贴纸元数据面——用户消息正文
+不含这类串，本门吃不到它们的输入），其接线所需的机制见该测试件头注与
+席位报告 §4。
+
+⚠ 2026-09-27 S-G6-IMPL 现算指针（不改写上面各段原文，只换两枚面的账）：
+上段消费锁核的是「谓词活着」，本件探针另有**在册未执法**一格——
+`defended_probe_violations` 只核符号存在，不核消费。现算 `trust` 三符号
+（label_external_content / derive_trust_level / source_description）**至今仍是
+0 枚包外生产调用点**（含同文件传递），故钉着它们的 AS-FILE-BODY-INJECTION 与
+AS-MAIL-SUBJECT 两枚不再许保持 DEFENDED，已按施工图降 PARTIAL：
+· 文件正文腿：root `__init__.py`:1359-1375 把附件正文拼进消息 plain_text，
+  每条真人消息过 chat.py 的 `check_prompt_injection` 门 ⇒ **信号级包裹在世**，
+  逐份 T2 来源打标腿未接（落点在 root/capability_protocols，交 H1）；
+· 邮件腿：root `__init__.py`:1319-1328 把主题以「主题：」前缀**并入消息文本**
+  （旧 failure_mode「主题若不并入正文则绕过」的假设条件已被现算推翻），
+  同上门可挡；trust 侧专用打标仍死（H1）。
+探针活性尺住在 `tests/test_attack_surface_consumers.py` 锁⑤（DEFENDED/PARTIAL
+面至少一枚探针有生产真调用，判活=包外调用点或同文件活符号传递可达）。
+另记两笔**另案**在册未并：①chat.py `_replace_internal_marker`/
+`_UNTRUSTED_CONTEXT_*` 与 injection 同族标记是并行实现（口径暂一致，漂移风险
+在册）；②`ingest/message_context.py`:119-121 注释称内部标记正则「全项目唯一
+一份、其余两处从本模块导入」——**现算不成立**：injection.py:166
+`_INTERNAL_MARKER_PATTERN` 是自己再编译的窄版（不认「层级N+发送者名」尾巴），
+两块面均不在本席写面内，动它须独立作业带行为锁。
 """
 
 from __future__ import annotations
@@ -187,6 +219,7 @@ _DOWN = "plugins.bot_unified_runtime.domains.files.sources.downloader"
 _DEDUPE = "plugins.bot_unified_runtime.domains.emergency_info.service.dedupe"
 _MENTION = "plugins.bot_unified_runtime.domains.chat_reply.runtime.mentions"
 _ROLES = "plugins.bot_unified_runtime.domains.chat_reply.policy.roles"
+_CHAT = "plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat"
 
 ATTACK_SURFACE_REGISTER: Final[tuple[SurfaceEntry, ...]] = (
     SurfaceEntry(
@@ -201,22 +234,62 @@ ATTACK_SURFACE_REGISTER: Final[tuple[SurfaceEntry, ...]] = (
         ),
         minimal_landing="检索/记忆读出面统一走 trust.label_external_content（交主代理 H1）",
         probes=(
-            DefenceProbe(_TRUST, "label_external_content"),
-            DefenceProbe(_INJ, "check_prompt_injection"),
+            DefenceProbe(
+                _INJ,
+                "check_prompt_injection",
+                note="活：每条真人消息过 chat.py 门（S-ATTACK-CONSUMERS）",
+            ),
+            DefenceProbe(
+                _CHAT,
+                "_wrap_untrusted_context_block",
+                note="活：chat.py 检索/百科/表情包三腿逐块包壳（S-G6-IMPL 经现算调用链登记）",
+            ),
+            DefenceProbe(
+                _TRUST,
+                "label_external_content",
+                note="在册未接线（S-G6-IMPL 现算 0 消费者，别当已生效）",
+            ),
         ),
     ),
     SurfaceEntry(
         surface_id="AS-FILE-BODY-INJECTION",
         title="附件/文档正文里的注入（含伪装可信来源）",
-        state=DefenceState.DEFENDED,
+        state=DefenceState.PARTIAL,
         channels=(AttackChannel.FILE_BODY,),
-        current_defender="trust 文件正文恒 T2（超管上传也不升级）+ injection",
-        failure_mode="文件名/落盘名的视觉伪装 T2 不覆盖（另立 AS-VISUAL-SPOOF）",
-        minimal_landing="无（正文面已闭）；文件名面见 AS-VISUAL-SPOOF",
-        probes=(
-            DefenceProbe(_TRUST, "label_external_content"),
-            DefenceProbe(_TRUST, "derive_trust_level"),
+        current_defender=(
+            "injection.check_prompt_injection——S-G6-IMPL 现算：root __init__.py:1359-1375 "
+            "把附件正文拼进消息 plain_text，每条真人消息逐条过 chat.py 门；"
+            "trust「正文恒 T2」的逐份来源打标在册**未接线**（0 消费者）"
         ),
+        failure_mode=(
+            "残余=信号级包裹之外无来源归属（正文以整体消息过门，不以 file_body 身份打 T2 壳），"
+            "接线的落点在 root __init__.py 与 files/read 能力面（本席写面外）；"
+            "文件名/落盘名的视觉伪装另立 AS-VISUAL-SPOOF"
+        ),
+        minimal_landing=(
+            "正文入 prompt 处逐份走 guard_secondhand_text/label_external_content"
+            "（落点 root/capability_protocols，交主代理 H1）；S-G6-IMPL 曾按施工图核 "
+            "documents.py 为落点——现算推翻：该件只载**人格/设定文档**（受信本地文件），"
+            "附件正文真通道在 root 摄取层"
+        ),
+        probes=(
+            DefenceProbe(
+                _INJ,
+                "check_prompt_injection",
+                note="活：正文并入 plain_text 后每条真人消息过门（root:1374-1375 + chat.py:4205）",
+            ),
+            DefenceProbe(
+                _TRUST,
+                "label_external_content",
+                note="在册未接线（S-G6-IMPL 现算 0 消费者，勿当已生效）",
+            ),
+            DefenceProbe(
+                _TRUST,
+                "derive_trust_level",
+                note="在册未接线（同上）",
+            ),
+        ),
+        handoff_ref="H1",
     ),
     SurfaceEntry(
         surface_id="AS-DISPLAY-NAME-SPOOF",
@@ -252,13 +325,35 @@ ATTACK_SURFACE_REGISTER: Final[tuple[SurfaceEntry, ...]] = (
     SurfaceEntry(
         surface_id="AS-MAIL-SUBJECT",
         title="邮件主题/正文注入",
-        state=DefenceState.DEFENDED,
+        state=DefenceState.PARTIAL,
         channels=(AttackChannel.EMAIL_BODY, AttackChannel.EMAIL_SUBJECT),
-        current_defender="trust EMAIL_BODY=T2 + injection；主题属短标签同 AS-DISPLAY-NAME 面",
-        failure_mode="主题若不并入正文打标则绕过（短标签面，靠 H2 覆盖）",
-        minimal_landing="主题并入口径统一（H2 一并处理）",
-        probes=(DefenceProbe(_TRUST, "source_description"),),
-        handoff_ref="H2",
+        current_defender=(
+            "injection.check_prompt_injection——S-G6-IMPL 现算：root __init__.py:1319-1328 "
+            "把主题以「主题：」前缀并入邮件消息文本、与正文同路过门；"
+            "trust 侧 EMAIL_BODY=T2 专用打标在册未接线（0 消费者）"
+        ),
+        failure_mode=(
+            "旧登记「主题若不并入正文打标则绕过」的前件已被现算推翻（主题今天就并入）；"
+            "残余=邮件内容无来源归属壳（只吃信号级包裹）与主题短标签的视觉伪装面"
+            "（后者随 AS-DISPLAY-NAME 走 H2，本枚不重复开脸）"
+        ),
+        minimal_landing=(
+            "邮件摄取口给主题/正文打 T2 壳（落点在 root/transport-mail 装配面，交主代理 H1）；"
+            "短标签伪装见 AS-DISPLAY-NAME-SPOOF（H2）"
+        ),
+        probes=(
+            DefenceProbe(
+                _INJ,
+                "check_prompt_injection",
+                note="活：主题+正文并入消息文本后过 chat.py 门（root:1326-1328 + chat.py:4205）",
+            ),
+            DefenceProbe(
+                _TRUST,
+                "source_description",
+                note="在册未接线（S-G6-IMPL 现算 0 消费者）",
+            ),
+        ),
+        handoff_ref="H1",
     ),
     SurfaceEntry(
         surface_id="AS-QUOTE-CHAIN-INJECTION",
@@ -266,14 +361,24 @@ ATTACK_SURFACE_REGISTER: Final[tuple[SurfaceEntry, ...]] = (
         state=DefenceState.DEFENDED,
         channels=(AttackChannel.REPLY_QUOTE, AttackChannel.FORWARDED_RECORD),
         current_defender=(
-            "trust REPLY_QUOTE/FORWARDED_RECORD=T2；injection._INTERNAL_MARKER_PATTERN "
-            "把「引用回复/引用内容/转发·聊天记录」标记全角化（评审 M2 收口）"
+            "引用链采集侧 ingest/message_context._neutralize_markers 逐层全角化（评审 M2 收口）；"
+            "门侧 injection._escape_internal_markers 同族收口；trust REPLY_QUOTE/FORWARDED_RECORD=T2 "
+            "在册未接线（S-G6-IMPL 现算）。⚠ 两处正则**并非同一份**——injection.py:166 窄版不认"
+            "「层级N+发送者名」尾巴（另案在册，见文件头指针）"
         ),
         failure_mode="递归反查 5 层每层都需打标，深层若漏一层则该层 T2 未落（装配面）",
-        minimal_landing="引用展开处逐层 label（H1）",
+        minimal_landing="引用展开处逐层 label（H1）；S-G6-IMPL 另案：施工图曾提议把 chat._wrap_untrusted_context_block 登记到本面——现算其调用面只覆盖 knowledge/meme/web 三腿、不吃引用正文，故不虚构防线登记在本面",
         probes=(
-            DefenceProbe(_TRUST, "label_external_content"),
-            DefenceProbe(_INJ, "_escape_internal_markers"),
+            DefenceProbe(
+                _INJ,
+                "_escape_internal_markers",
+                note="活：injection 文件内由 check_prompt_injection/guard/neutralize 三个活符号调用（同文件传递，锁⑤口径）",
+            ),
+            DefenceProbe(
+                _TRUST,
+                "label_external_content",
+                note="在册未接线（S-G6-IMPL 现算 0 消费者）",
+            ),
         ),
     ),
     SurfaceEntry(

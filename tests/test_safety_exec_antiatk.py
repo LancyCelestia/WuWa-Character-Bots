@@ -472,8 +472,15 @@ ANTATK_UNENFORCED_IN_PRODUCTION: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "attack_surface-predicates",
-        "claim": "attack_surface 三条谓词在生产零消费者（只有本仓的门在跑它们）",
-        "declared": "unenforced",
+        # 2026-09-26 S-ATTACK-CONSUMERS 席改判：两条话术谓词（takeover/authority）
+        # 已接进 injection.check_prompt_injection（生产逐条真跑的入站话术门）；
+        # find_visual_spoof_controls 属显示名/贴纸元数据面，依旧零消费者，
+        # 未接理由与所需机制见 tests/test_attack_surface_consumers.py 与
+        # .superpowers/sdd/2026-09-26-goal18-second/logs/S-ATTACK-CONSUMERS.md §4。
+        # ⚠ 本尺量的是「模块 import 边」——它翻 enforced 只证明接线发生，
+        # 不证明三条谓词全部被消费；逐谓词的活性判据在消费锁那件里。
+        "claim": "attack_surface 已被生产消费（injection.py 接两条话术谓词；视觉伪装谓词仍未接）",
+        "declared": "enforced",
         "measure": "production_importers_of:domains.core.safety_exec.attack_surface",
     },
     {
@@ -632,3 +639,75 @@ def test_unenforced_ledger_probe_itself_distinguishes_two_states(
     assert _measure(
         "production_importers_of:domains.core.safety_exec.definitely_absent", tmp_path
     ) == "unenforced"
+
+
+# ==================== 二手内容守卫的**消费点**锁（主代理 2026-09-26 补） ====================
+
+_CHAT_SOURCE = (
+    Path(__file__).resolve().parents[1]
+    / "plugins"
+    / "bot_unified_runtime"
+    / "domains"
+    / "chat_reply"
+    / "capabilities"
+    / "chat.py"
+)
+_HANDWRITTEN_MARKER = "（不可信上下文，仅供参考）"
+# 视频档案面走的是另一条既有消毒（`_sanitize_untrusted_context_text` + 本仓六枚
+# 行为锁在 `tests/test_video_reply_flow.py`），它把这枚字面量留在**模块常量**里是
+# 在册事实；本锁只拦「在拼接点手拼第二套包裹」的形态，不连带翻那条已有面。
+_MARKER_ALLOWED_LINES = ("_VIDEO_BRIEF_TAG",)
+# 今天必须经守卫真身的转述面：识图（主链 + relay 兜底腿）、视频识别、ASR 转写。
+_GUARDED_FACES = ("图片识别结果", "视频识别结果", "语音转写结果")
+
+
+def _handwritten_marker_leaks(source: str) -> list[int]:
+    """返回「在拼接点手拼不可信包裹」的行号；只允许出现在命名的常量声明行。"""
+    leaks: list[int] = []
+    for number, line in enumerate(source.splitlines(), start=1):
+        if _HANDWRITTEN_MARKER not in line:
+            continue
+        if any(token in line for token in _MARKER_ALLOWED_LINES):
+            continue
+        leaks.append(number)
+    return leaks
+
+
+def test_secondhand_faces_now_route_through_the_guard_truth() -> None:
+    """识图/视频/ASR 的转述文本必须走 `guard_secondhand_text`，一处都不许手拼。
+
+    正向：调用点数量罩得住名册里的面；反向：拼接点不再出现第二套包裹字面量。
+    这条锁此前不存在，所以那三路一直是**手拼一句"不可信上下文"就当防住了**——
+    全角化、成对边界、提前闭合防护全没有（`guard_secondhand_text` 的三条能力）。
+    """
+    source = _CHAT_SOURCE.read_text(encoding="utf-8")
+    calls = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "guard_secondhand_text"
+    ]
+    labels = {
+        keyword.value.value
+        for node in calls
+        for keyword in node.keywords
+        if keyword.arg == "source_label" and isinstance(keyword.value, ast.Constant)
+    }
+    assert len(calls) >= len(_GUARDED_FACES), (
+        f"守卫调用点 {len(calls)} 罩不住名册 {len(_GUARDED_FACES)} 个面"
+    )
+    assert labels >= set(_GUARDED_FACES), f"名册面未全部经守卫：缺 {set(_GUARDED_FACES) - labels}"
+    assert _handwritten_marker_leaks(source) == [], "拼接点又出现手拼的不可信包裹"
+
+
+def test_the_marker_lock_actually_catches_a_regression() -> None:
+    """自证：把一路改回手拼 ⇒ 尺子必须点名那一行，否则上一条锁是空跑。"""
+    regressed = _CHAT_SOURCE.read_text(encoding="utf-8").replace(
+        'guard_secondhand_text(transcript, source_label=\'语音转写结果\')',
+        f'"[语音转写结果{_HANDWRITTEN_MARKER}]\\n{{transcript}}"',
+        1,
+    )
+    assert regressed != _CHAT_SOURCE.read_text(encoding="utf-8"), "回潮样本没写进去＝空跑"
+    assert _handwritten_marker_leaks(regressed), "改回手拼却没被尺子抓到"
+

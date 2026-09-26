@@ -8,9 +8,15 @@ from re import Pattern
 from pydantic import Field
 
 from plugins.bot_unified_runtime.contracts import PrivacyLevel, RiskLevel
+from plugins.bot_unified_runtime.domains.chat_reply.ingest.message_context import (
+    INTERNAL_MARKER_PATTERN,
+)
 from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
     StrictBaseModel,
     new_debug_id,
+)
+from plugins.bot_unified_runtime.domains.core.safety_exec import (
+    attack_surface as _attack_surface,
 )
 
 
@@ -47,15 +53,39 @@ class _InjectionRule:
     action: InjectionAction
     risk_level: RiskLevel
     reason: str
+    # 可选的**标记名过滤**：仅对带 group(2)=标记名的统一标记正则生效
+    # （见 S-MARKER-RULES-TAIL 注释块）。None=沿用「整条 pattern 命中即算」。
+    detection_names: frozenset[str] | None = None
 
+
+# 检测面「运行时永不为真」的标记名集合（S-MARKER-RULES-TAIL，2026-09-27）：
+# 这两个英文名只由反注入件自己产出，且产出位置全在检测门**之后**
+# （chat.py 的 _UNTRUSTED_CONTEXT_PREFIX/SUFFIX 是下游 prompt 装配；
+# 本件的 _wrap_as_untrusted 正文先过 _escape_internal_markers，全角产物
+# 不再被统一正则命中）——因此 plain_text 里出现任何一个（无论是否带尾巴）
+# 都是伪造，检测面整族认领零结构性误报。
+# 引用链族（引用回复/引用内容/引用消息/转发消息/转发的消息/转发/聊天记录）
+# **刻意不入本集合**：它们由运行时亲手渲染进 plain_text——
+# `ingest/message_context.py::_flatten`（quote/forward 段产**裸** [引用内容]/
+# [转发/聊天记录]）与 `format_reply_chain`（产 [引用回复 层级N {sender_name}]，
+# sender_name 是任意显示名 ⇒ `[引用回复 层级1 x]` 与伪造形态逐字节同形）。
+# 检测门若整体认领引用族，每条引用/转发消息都会被判伪造、合法层级块被
+# 全角拆毁——冲突证据与在册 xfail 见 tests/test_prompt_injection.py。
+_SPOOF_DETECTION_NAMES = frozenset({"UNTRUSTED_USER_TEXT", "TRUSTED_SYSTEM"})
 
 _RULES = [
     _InjectionRule(
         tag="internal_marker_spoofing",
-        pattern=re.compile(
-            r"\[/?(?:UNTRUSTED_USER_TEXT|TRUSTED_SYSTEM)\]",
-            re.IGNORECASE,
-        ),
+        # 单源纪律（S-MARKER-RULES-TAIL）：检测面**引用**与消毒面同一枚
+        # INTERNAL_MARKER_PATTERN 对象、不自带第二条字面正则——旧写法
+        # `\[/?(?:UNTRUSTED_USER_TEXT|TRUSTED_SYSTEM)\]` 要求右括号紧贴标记名，
+        # `[TRUSTED_SYSTEM 层级3]`、`[/UNTRUSTED_USER_TEXT 尾巴]` 一类尾缀
+        # 伪标记在检测面走 ALLOW（消毒面已由 S-MARKER-UNIFY-b 收口）。
+        # 尾巴判定字符类随统一正则一并引用；结构锁
+        # tests/test_injection_marker_single_source.py 只扫 re.compile 字面量，
+        # 本改写不触第二真身。
+        pattern=INTERNAL_MARKER_PATTERN,
+        detection_names=_SPOOF_DETECTION_NAMES,
         action=InjectionAction.QUOTE_AS_UNTRUSTED,
         risk_level=RiskLevel.MEDIUM,
         reason="tries to spoof trusted or untrusted prompt boundary markers",
@@ -160,19 +190,41 @@ _RISK_ORDER = {
 # 内部标记白名单：这些标记由运行时代码生成，用户/被引用正文里出现同名标记
 # 即为伪造闭合越界。引用链标记（引用回复/引用内容/转发·聊天记录）此前不在
 # 该表内，而被引用者正文是任意群成员可控文本（评审 M2）。
-_INTERNAL_MARKER_PATTERN = re.compile(
-    r"\[(/?)(UNTRUSTED_USER_TEXT|TRUSTED_SYSTEM|引用回复|引用内容|转发/聊天记录)"
-    r"(?: 层级\d+)?\]",
-    re.IGNORECASE,
-)
+# S-MARKER-UNIFY-b（2026-09-27）：本件不再自带正则——旧本地窄版只认
+# ``(?: 层级\\d+)?]`` 精确尾缀，剥不掉 `[引用回复 层级1 x]` /
+# `[/UNTRUSTED_USER_TEXT 尾巴]` 一类带尾巴的伪造开/闭标记（逃逸洞，
+# attack_surface 头注另案②在册）。正则真身唯一住在
+# `ingest/message_context.py::INTERNAL_MARKER_PATTERN`（F-13 统一件），
+# chat 侧与引用链侧同用它；复制第二套字面量由
+# `tests/test_injection_marker_single_source.py` 结构锁当场拦。
+# 检测面（_RULES::internal_marker_spoofing）自 S-MARKER-RULES-TAIL 起同引
+# 这一枚对象，但**只认领 `_SPOOF_DETECTION_NAMES` 名集**——消毒面对整族
+# 换形无害，检测面对引用族整体认领会把运行时自己渲染进 plain_text 的
+# 合法层级块误判成伪造（判据分界与冲突证据见该常量上方注释块）。
 
 
 def _max_risk(left: RiskLevel, right: RiskLevel) -> RiskLevel:
     return left if _RISK_ORDER[left] >= _RISK_ORDER[right] else right
 
 
+def _rule_hit(rule: _InjectionRule, text: str) -> bool:
+    """一条规则的命中判定。
+
+    带 ``detection_names`` 的规则在**每次**匹配上校验标记名（finditer 不是
+    search 首枚——一条文本里合法引用族块可能排在伪造受信标记之前，
+    只看首枚会把真伪造放过去）。名集比对用 upper 归一，大小写形态随统一
+    正则的 IGNORECASE 一并覆盖。
+    """
+    if rule.detection_names is None:
+        return rule.pattern.search(text) is not None
+    return any(
+        match.group(2).upper() in rule.detection_names
+        for match in rule.pattern.finditer(text)
+    )
+
+
 def _escape_internal_markers(text: str) -> str:
-    return _INTERNAL_MARKER_PATTERN.sub(_replace_internal_marker, text)
+    return INTERNAL_MARKER_PATTERN.sub(_replace_internal_marker, text)
 
 
 def _replace_internal_marker(match: re.Match[str]) -> str:
@@ -220,7 +272,8 @@ def _quote_as_untrusted(text: str) -> str:
 #      边界再冒充系统段——即「把内层祈使句当指令」的结构性通路。
 # 本件对这两条只提供**一次**处置：先 `neutralize_internal_markers`（可单独用于
 # 预算敏感的逐条注入），必要时再 `_wrap_as_untrusted`（整块注入）。零新正则、
-# 零新边界标记名——新标记一旦自立门户，`_INTERNAL_MARKER_PATTERN` 就慢一拍，
+# 零新边界标记名——新标记一旦自立门户，`INTERNAL_MARKER_PATTERN`（唯一真身，
+# 住 `ingest/message_context.py`）就慢一拍，
 # 反而给攻击者留下未被全角化的第二种伪造形态。
 
 _SECONDHAND_LEAD_TEMPLATE = (
@@ -234,7 +287,7 @@ def neutralize_internal_markers(text: str) -> str:
     """把内部边界标记换成全角形态，其余字节不动。
 
     给「必须逐条注入、吃不住包裹开销」的读出面用（记忆条目、检索摘要行）。
-    幂等：全角产物不再被 `_INTERNAL_MARKER_PATTERN` 命中，重复调用零副作用。
+    幂等：全角产物不再被 `INTERNAL_MARKER_PATTERN` 命中，重复调用零副作用。
     """
     return _escape_internal_markers(text or "")
 
@@ -260,6 +313,74 @@ def guard_secondhand_text(text: str, *, source_label: str) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# 攻击面登记谓词的接线（用户需求 17 续作，S-ATTACK-CONSUMERS 席 2026-09-26）
+# ---------------------------------------------------------------------------
+# `domains/core/safety_exec/attack_surface.py` 登记 19 枚攻击面、落了 3 条谓词，
+# 此前在生产**零消费者**（名册 ANTATK-ROSTER 的 `attack_surface-predicates` 一枚
+# 诚实挂着「在册未执法」）。本节把其中两条**话术形态**谓词（危险操作诱导 /
+# 权限冒认改写）接进已在生产逐条真跑的入站话术门 `check_prompt_injection`——
+# 复用既有中央咽喉，不开第二通路。第三条 find_visual_spoof_controls 是显示名/
+# 贴纸元数据面（名片串不进本门的 plain_text 入参），依旧零消费、照实挂账。
+#
+# 处置口径（与消费锁 `tests/test_attack_surface_consumers.py` 同读）：
+# - 命中只把动作升到 QUOTE_AS_UNTRUSTED，**绝不**升 BLOCK——话术被当数据包裹
+#   进 prompt（模型仍完整"听见"用户说了什么，拒答面留给既有三条高危规则），
+#   落地执行面仍由 paths 禁触名册 / 同意门 / FS_DELETE 裁决独立把关；
+# - 谓词机制自身故障（装载断/正则崩）时 fail-closed：挂
+#   `attack_surface_scan_failed` 标签并按不可信包裹——判不了不算"干净"放过；
+# - 每个标签占一条 reason，`len(reasons) == len(detected_patterns)` 的既有契约
+#   （tests/test_prompt_injection.py 钉死）在本节继续成立；
+# - 折形只算一次喂两条腿（`normalize_for_safety_matching` 是其复用真身，
+#   本件不写第二套 NFKC/繁简/零宽折叠）。
+
+_TAKEOVER_TAG_PREFIX = "operational_takeover:"
+_AUTHORITY_TAG_PREFIX = "authority_rewrite:"
+_ATTACK_SURFACE_SCAN_FAILED_TAG = "attack_surface_scan_failed"
+
+
+def _attack_surface_signal_scan(plain_text: str) -> list[tuple[str, str]]:
+    """对入站话术跑一遍攻击面谓词，返回 (标签, 理由) 对表。
+
+    两条谓词都是 attack_surface 的在册真身，本函数零判据零正则——判据漂移
+    只会发生在那一件里，且由登记表自带的注毒样本锁（predicates 测试件）兜住。
+    """
+    if not str(plain_text or "").strip():
+        return []
+    normalized = _attack_surface.normalize_for_safety_matching(plain_text)
+    takeover = _attack_surface.detect_operational_takeover(
+        plain_text, normalized_input=normalized
+    )
+    authority = _attack_surface.detect_authority_rewrite(
+        plain_text, normalized_input=normalized
+    )
+    signals: list[tuple[str, str]] = []
+    for form in takeover.forms:
+        signals.append(
+            (
+                f"{_TAKEOVER_TAG_PREFIX}{form}",
+                (
+                    "requests a prohibited operational action (restart/kill process/"
+                    "git write/package install/outside-workspace delete); kept as "
+                    "described user intent only, execution stays gated by paths "
+                    "and the consent gate"
+                ),
+            )
+        )
+    for form in authority.forms:
+        signals.append(
+            (
+                f"{_AUTHORITY_TAG_PREFIX}{form}",
+                (
+                    "claims or reassigns authority in prose; real roles derive only "
+                    "from structured sender identity, this scan grants and revokes "
+                    "nothing"
+                ),
+            )
+        )
+    return signals
+
+
 def check_prompt_injection(check_input: InjectionCheckInput) -> InjectionCheckResult:
     detected_patterns: list[str] = []
     reasons: list[str] = []
@@ -267,7 +388,7 @@ def check_prompt_injection(check_input: InjectionCheckInput) -> InjectionCheckRe
     risk_level = check_input.risk_level
 
     for rule in _RULES:
-        if not rule.pattern.search(check_input.plain_text):
+        if not _rule_hit(rule, check_input.plain_text):
             continue
         detected_patterns.append(rule.tag)
         reasons.append(rule.reason)
@@ -275,6 +396,28 @@ def check_prompt_injection(check_input: InjectionCheckInput) -> InjectionCheckRe
         if rule.action is InjectionAction.BLOCK:
             action = InjectionAction.BLOCK
         elif action is InjectionAction.ALLOW:
+            action = InjectionAction.QUOTE_AS_UNTRUSTED
+
+    # 攻击面谓词执法腿（S-ATTACK-CONSUMERS）：只升包裹、永不 BLOCK；机制故障
+    # 也不静默放过——except 分支同样产出标签并把文本按不可信处理。
+    try:
+        signal_pairs = _attack_surface_signal_scan(check_input.plain_text)
+    except Exception as exc:  # noqa: BLE001 - fail-closed：判不了不放行，异常名进理由
+        signal_pairs = [
+            (
+                _ATTACK_SURFACE_SCAN_FAILED_TAG,
+                (
+                    f"attack-surface predicate scan failed to run ({type(exc).__name__}); "
+                    "text treated as untrusted until the check works"
+                ),
+            )
+        ]
+    for tag, reason in signal_pairs:
+        detected_patterns.append(tag)
+        reasons.append(reason)
+    if signal_pairs:
+        risk_level = _max_risk(risk_level, RiskLevel.MEDIUM)
+        if action is InjectionAction.ALLOW:
             action = InjectionAction.QUOTE_AS_UNTRUSTED
 
     sanitized_text = check_input.plain_text
