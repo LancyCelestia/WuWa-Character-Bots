@@ -8,6 +8,11 @@
   2026-09-14）：唯一候选但相似度不足回肯定词确认、歧义清单回序号择一
 - 笔记指令面：「笔记 记…」「笔记列表」「笔记 看 N」「做完 N」「删笔记 N」
   （capabilities/notes.py 承接；复用 REMINDER 路由不新增 RouteKind）
+- 日程板面（第 20 项，2026-09-26）：「日程 …」「日程列表/日程表」「日程 删 N」
+  「日程 公开/隐私 N」「日程 导入/课表 …」+ 开关内自然捕捉「明天8点有课」，
+  以及代答问句「她在干嘛/主人在忙什么…」（capabilities/schedule_board.py 承接；
+  同样复用 REMINDER 路由不新增 RouteKind——判据唯一函数 is_schedule_surface，
+  路由腿与能力分发腿同源引用，#45 三腿教义）。
 到点投递由 __init__ 的每分钟调度任务完成（守岸人语气分型文案）。
 """
 
@@ -33,6 +38,10 @@ from plugins.bot_unified_runtime.domains.notes.capabilities.notes import (
     _NOTES_UNDO_NATURAL_RE,
     _NOTES_VIEW_RE,
     build_notes_capability,
+)
+from plugins.bot_unified_runtime.domains.schedule.capabilities.schedule_board import (
+    build_schedule_board_capability,
+    is_schedule_surface,
 )
 from plugins.bot_unified_runtime.domains.schedule.store.reminders import (
     NEAR_MISS_FLOOR,
@@ -338,6 +347,11 @@ def is_reminder_command(text: str, *, config: Any | None = None) -> bool:
         return True
     if _LIST_RE.search(stripped) or _CANCEL_RE.search(stripped):
         return True
+    # 日程板面（第 20 项）：判据唯一真身住 schedule_board.is_schedule_surface，
+    # 本路由腿与下方能力分发腿引用**同一个函数**（#45 三腿教义：路由判给谁、
+    # 谁来接，不许各判一份）；总闸关=恒 False，既有提醒/笔记行为逐字节不变。
+    if is_schedule_surface(stripped, config=config):
+        return True
     if _SIGNAL_RE.search(stripped) and parse_reminder_intent(stripped) is not None:
         return True
     # 审查 A-10/A-11：消歧追问窗口内的光杆肯定词/序号要能路由进提醒
@@ -354,6 +368,8 @@ def is_reminder_command(text: str, *, config: Any | None = None) -> bool:
 def build_reminder_capability(config: Any | None = None) -> Any:
     """构建提醒能力：与 eat 等能力一致，返回 (message, decision) -> 结果。"""
     notes_capability = build_notes_capability(config)
+    # 日程板腿（第 20 项）：与笔记同型挂本车道；不承接时返回 None 落回原流程。
+    schedule_capability = build_schedule_board_capability(config)
 
     def _result(message: IncomingMessage, body: str, *, tags: list[str]) -> CapabilityResult:
         return CapabilityResult(
@@ -593,6 +609,13 @@ def build_reminder_capability(config: Any | None = None) -> Any:
         followup = _consume_checkoff_followup(message, text)
         if followup is not None:
             return followup
+
+        # 日程板腿（第 20 项）：显式「日程/课表」命令、代答问句与开关内自然捕捉
+        # 在此收口；schedule 侧用与路由腿同源的 is_schedule_surface 自判，不承接
+        # 返回 None 落回提醒/笔记原流程（词表零交集，顺序只为可读性稳定）。
+        schedule_handled = schedule_capability(message, _decision)
+        if schedule_handled is not None:
+            return schedule_handled
 
         # 笔记指令面优先（显式命令形态，不会被提醒/勾选语义抢走）。
         if getattr(config, "bot_notes_enabled", True) and _is_notes_surface(text):

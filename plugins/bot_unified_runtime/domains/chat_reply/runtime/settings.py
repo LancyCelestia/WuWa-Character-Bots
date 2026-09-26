@@ -347,6 +347,16 @@ def _role_list_converter(value: str) -> list[str]:
 # 传播——据此把 28 个「写成功但行为不变」的残项从 SETTABLE_KEYS 移入本清单。
 # 消费点接入合并层实时求值后，对应键即可回白名单（拒绝文案里已点名消费点）。
 RESTART_REQUIRED_KEYS: dict[str, str] = {
+    # ---- 第 20 项「日程记录与智能代答」波（2026-09-26 S-SCHEDULE-20）----
+    # 两枚开关的读点全在能力/路由侧 getattr(config, ...) 现读装配期快照 config，
+    # 未进运行时覆盖合并表 ⇒ 热 set 一次也不改变判据，登记需重启（C-09 口径）。
+    "BOT_SCHEDULE_STATUS_REPLY_ENABLED": (
+        "代答腿总闸在 is_status_question/能力分发侧现读装配期快照 config；"
+        "合并层未登记该键，热改不生效——改 .env + 重启"
+    ),
+    "BOT_SCHEDULE_NATURAL_CAPTURE_ENABLED": (
+        "自然捕捉闸同上（路由判据与能力分发同一函数，读的都是快照 config）"
+    ),
     # ---- 文件写盘口收编波（需求 16(2)，2026-09-26 S-FILES-LAND）----
     # 六枚的唯一读点在 domains/files/capabilities/file_exchange.py 的装配函数，
     # 调用方（根 matcher）交的是装配期快照 config，且六枚未进运行时覆盖合并表

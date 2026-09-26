@@ -1024,6 +1024,9 @@ HELP_TOPIC_DECLARATIONS: tuple[HelpTopicDecl, ...] = (
     HelpTopicDecl(topic="随机图", admin_only=False, capability="bot.randpic"),
     HelpTopicDecl(topic="提醒", admin_only=False, capability="bot.reminder"),
     HelpTopicDecl(topic="笔记", admin_only=False, capability="bot.reminder"),
+    # 第 20 项「日程记录与智能代答」（2026-09-26）：挂 REMINDER 车道（notes 同型），
+    # 能力入口归属字面与 echo._HELP_ENTRY_META['日程']['capability'] 一致。
+    HelpTopicDecl(topic="日程", admin_only=False, capability="bot.reminder"),
     HelpTopicDecl(topic="收件箱", admin_only=False, capability="bot.daily_assist"),
     HelpTopicDecl(topic="语音", admin_only=False, capability="bot.tts"),
     HelpTopicDecl(topic="帮助", admin_only=False, capability="bot.help"),

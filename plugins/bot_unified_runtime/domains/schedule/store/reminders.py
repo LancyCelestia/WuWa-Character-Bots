@@ -298,20 +298,23 @@ class ReminderIntent:
     label: str
 
 
-def parse_reminder_intent(text: str, *, now: datetime | None = None) -> ReminderIntent | None:
-    """解析「X点提醒我/叫我做Y」。无提醒信号或无时间表达 → None。
+def configured_timezone() -> str:
+    """当前生效的配置时区名（提醒/日程链路唯一时源；V2.1 风险 7 口径的公开读点）。
 
-    ``now`` 缺省=配置时区当前时刻（经 timesync 校正）；naive 按配置时区
-    解释；aware 注入（含 UTC）一律先换算到**配置时区**再做墙钟推算
-    （"X点"= 配置时区的 X 点整，V2.1 风险 7 修复：跨时区部署不再按
-    注入时刻/进程本地时区推错一天）。结果统一以配置时区落库，后续
-    比较一律走时刻（instant）语义。
+    日程板（schedule_board）建 plan 时用它当 plan.timezone，保证「她说『明天8点』」
+    的墙钟推算、条目落库时区与到点判定同一把尺，不再各绑各的。
     """
-    raw = (text or "").strip()
-    if not raw or not _REMIND_SIGNAL_RE.search(raw):
-        return None
-    current = _as_local(_local_now() if now is None else now)
+    return _TZ_NAME
 
+
+def _first_time_target(raw: str, current: datetime) -> datetime | None:
+    """时间表达级联解析（相对分钟/小时 → 绝对「X点Y分」→ 时段词），返回目标时刻或 None。
+
+    2026-09-26 第 20 项波：本函数由 ``parse_reminder_intent`` 的级联体**逐字抽出**
+    （分支顺序、下午/晚间 +12h 语义、REM-EVE 日词档、边界与顺延规则一字未动），
+    提醒与自然语言日程共用这唯一一份解析器——日程侧禁第二解析器（AGENTS 无第二真身）。
+    ``raw`` 为整句原文，``current`` 必须已是配置时区 aware（调用方负责）。
+    """
     target: datetime | None = None
     match = _REL_HALF_HOUR_RE.search(raw)
     if match:
@@ -370,6 +373,45 @@ def parse_reminder_intent(text: str, *, now: datetime | None = None) -> Reminder
             if day_word is None and candidate <= current:
                 candidate += timedelta(days=1)
             target = candidate
+    return target
+
+
+def parse_time_target(text: str, *, now: datetime | None = None) -> datetime | None:
+    """公开口：任意句子 → 第一个可解析的**未来**时刻（配置时区 aware）；解不出 → None。
+
+    与 ``parse_reminder_intent`` 共享同一份级联（``_first_time_target``，零第二解析器），
+    差别只在**不要求提醒信号词**且不清洗正文——日程板用它把「明天8点有课」的
+    时间点解出来，正文另由 span 剥离完成（复用同一批编译正则，见 schedule_board）。
+    已过点的表达（无日词且今天该时刻已过）按级联既有语义顺延到明天，恒返回未来时刻。
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    current = _as_local(_local_now() if now is None else now)
+    target = _first_time_target(raw, current)
+    if target is None or target <= current:
+        return None
+    return _as_local(target)
+
+
+def parse_reminder_intent(text: str, *, now: datetime | None = None) -> ReminderIntent | None:
+    """解析「X点提醒我/叫我做Y」。无提醒信号或无时间表达 → None。
+
+    ``now`` 缺省=配置时区当前时刻（经 timesync 校正）；naive 按配置时区
+    解释；aware 注入（含 UTC）一律先换算到**配置时区**再做墙钟推算
+    （"X点"= 配置时区的 X 点整，V2.1 风险 7 修复：跨时区部署不再按
+    注入时刻/进程本地时区推错一天）。结果统一以配置时区落库，后续
+    比较一律走时刻（instant）语义。
+
+    2026-09-26 波：级联计算收进 ``_first_time_target``（唯一解析器，与日程共用），
+    本函数行为逐字节不变（提醒全家桶既有测试为回归锁）。
+    """
+    raw = (text or "").strip()
+    if not raw or not _REMIND_SIGNAL_RE.search(raw):
+        return None
+    current = _as_local(_local_now() if now is None else now)
+
+    target = _first_time_target(raw, current)
     if target is None or target <= current:
         return None
 

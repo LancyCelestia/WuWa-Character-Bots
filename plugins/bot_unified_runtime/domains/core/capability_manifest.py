@@ -628,11 +628,21 @@ FACETS: MappingProxyType[str, CapabilityFacets] = MappingProxyType(
                 board="B07",  # 现算自 board_taxonomy：①B07.reminders capability_ids 点名 + ②impl 同目录，二者一致
                 implementation_ref="plugins/bot_unified_runtime/domains/schedule"
                                    "/capabilities/reminder.py#build_reminder_capability",
-                implementation_line=354,  # 现算 AST：reminder.py 里 `def build_reminder_capability`
+                implementation_line=368,  # 现算 AST：reminder.py 里 `def build_reminder_capability`
+                # 354→368：第 20 项日程板波（2026-09-26 S-SCHEDULE-20）在文件顶部加
+                # schedule_board import 与 docstring 两行面，符号随之下移（改行为也改行数）。
                 direct_callsites=(
                     "seam:plugins/bot_unified_runtime/__init__.py#_run_simple_capability#x1",
                 ),
-                config_keys=("bot_reminder_db_path", "bot_reminder_enabled"),
+                # 第 20 项波并入四枚日程读键（本列＝该能力读哪几枚 Config 字段的唯一真身；
+                # 日程板腿挂本车道，读点真身住 capabilities/schedule_board.py 与
+                # service/board_store.py，均 getattr 字面名直读）。
+                config_keys=(
+                    "bot_reminder_db_path", "bot_reminder_enabled",
+                    "bot_schedule_enabled", "bot_schedule_db_path",
+                    "bot_schedule_status_reply_enabled",
+                    "bot_schedule_natural_capture_enabled",
+                ),
                 arms=_arms(
                     "bot.reminder", _EK.COMMAND, _EK.NATURAL_LANGUAGE, _EK.ACTIVE_PUSH,
                 ),

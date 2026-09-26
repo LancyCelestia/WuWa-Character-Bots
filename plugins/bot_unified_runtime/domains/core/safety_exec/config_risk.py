@@ -194,6 +194,14 @@ EXPLICIT_R2_KEYS = frozenset(
         "BOT_FILES_WRITE_DAILY_CREATE",
         "BOT_FILES_WRITE_DAILY_REPLACE",
         "BOT_FILES_READ_CONFINED_MAX_BYTES",
+        # 日程板本批两枚新键（2026-09-27 日程波随 config.py 落地时点名，批⑦ 跟随账）：
+        # 状态代答＝bot 向别人投影她的日程（隐私外发面）、自然捕捉＝bot 把会话内容
+        # 自动写成日程（与 BOT_MEMORY_* 自动沉淀同族同性）。两者都是行为总闸，
+        # 模式族里的 `_ENABLED` 网只有 KB_WIKI/MEMORY/DATA 三族点名、不含 SCHEDULE，
+        # 逐枚落名 R2，不留缺省池
+        # （test_tier_coverage_ratchet_only_goes_down 的地板因此回落 498→496）。
+        "BOT_SCHEDULE_STATUS_REPLY_ENABLED",
+        "BOT_SCHEDULE_NATURAL_CAPTURE_ENABLED",
     }
 )
 

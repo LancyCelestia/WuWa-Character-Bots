@@ -4,7 +4,7 @@ import json
 import logging
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
@@ -71,6 +71,96 @@ def _tts_api_url_host_is_loopback(host: str) -> bool:
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
         address = address.ipv4_mapped
     return address.is_loopback
+
+
+#: ``_resolve_runtime_data_paths`` 消费的标量路径字段名册（单一来源）。
+#: A-8 席位（2026-09-27 裁定）把这条名册从 validator 局部提到模块级：常驻断言
+#: 「生产配置值 ∈ 允许根」（tests/test_config_root_registration.py）要按**同一张**
+#: 名册逐字段过 ``paths.check_registered_domain``，局部元组会逼测试抄一份口径
+#: （第二真身）。列表路径字段（``PATH_LIST_REMAPPED_FIELDS``）逐条走同一 resolve。
+#: 增删字段只改这里，validator 与断言两侧不再各自维护。
+PATH_REMAPPED_FIELDS: Final[tuple[str, ...]] = (
+    "bot_control_plane_config_db",
+    "bot_control_plane_events_db",
+    "bot_control_plane_workspaces_db",
+    "bot_control_plane_features_db",
+    "bot_control_plane_platform_db",
+    "bot_control_plane_actions_db",
+    "bot_control_plane_features_file",
+    "bot_runtime_settings_file",
+    "bot_runtime_settings_dir",
+    "bot_mail_bridge_state_file",
+    "bot_event_idempotency_db_path",
+    "bot_knowledge_db_path",
+    "bot_kb_wiki_db_path",
+    "bot_memory_db_path",
+    "bot_reflection_db_path",
+    "bot_history_db_path",
+    "bot_diagnostics_db_path",
+    "bot_audit_db_path",
+    "bot_receipts_db_path",
+    "bot_send_queue_db_path",
+    # 中央出站闸计数库（B4-spec §1.5）：缺 data/ 相对路径，必须经
+    # runtime_paths 重映射到 ChatBot_Runtime（铁律 6）。
+    "bot_outbound_gate_db_path",
+    "bot_web_intent_telemetry_db_path",
+    "bot_meme_api_output_dir",
+    "bot_meme_library_dir",
+    "bot_meme_library_db_path",
+    "bot_parse_history_db_path",
+    "bot_music_analytics_db_path",
+    "bot_download_dir",
+    "bot_card_render_dir",
+    "bot_generated_files_dir",
+    "bot_today_history_push_file",
+    "bot_today_history_cache_file",
+    "bot_audit_log_file",
+    "bot_prompt_audit_dir",
+    "bot_rate_limit_db_path",
+    "bot_subscribe_db_path",
+    "bot_runtime_log_file",
+    "bot_cookies_file",
+    # DATAFIX（2026-09-12）：以下字段此前遗漏在重映射之外，默认值
+    # 保持 data/ 相对路径，getattr 兜底消费点按 CWD 解析会把运行时
+    # 数据写进源码树（实际泄漏：usage_report_state.json）。其余
+    # mood/quirks 等 CursorStore 字段虽在调用点二次兜底，仍统一
+    # 收口到本解析器，保证任何入口拿到绝对路径。
+    "bot_usage_report_state_file",
+    "bot_media_registry_path",
+    "bot_music_dir",
+    "bot_mood_db_path",
+    "bot_quirks_db_path",
+    "bot_session_identity_db_path",
+    "bot_addressing_preferences_db_path",
+    "bot_reminder_db_path",
+    "bot_affinity_db_path",
+    "bot_media_archive_dir",
+    "bot_media_archive_db_path",
+    "bot_notes_db_path",
+    "bot_campus_db_path",
+    "bot_emergency_info_db_path",
+    "bot_reactions_db_path",
+    "bot_teaching_db_path",
+    "bot_tts_output_dir",
+    "bot_schedule_db_path",
+    "bot_schedule_exceptions_path",
+    # M-52（T125）：TTS 引擎目录键收口。语义=GPT-SoVITS 程序目录
+    # （生产为 C:/Software 绝对路径）；本解析器对非 data/ 值（含绝对
+    # 路径与空串）原样透传=既有行为零变化，入册仅防未来误配 data/
+    # 相对值时被 tts._resolve_ref_path 按 CWD join 落源码树（铁律 6）。
+    "bot_tts_gptsovits_dir",
+)
+
+#: 列表形态的路径字段（逐条 resolve，与标量名册同一把尺）。
+PATH_LIST_REMAPPED_FIELDS: Final[tuple[str, ...]] = (
+    "bot_persona_files",
+    "bot_knowledge_files",
+    "bot_trend_files",
+    "bot_glossary_files",
+    # 文件写盘口白名单根＝路径值，逐条走同一 resolve（铁律 6：源码树零
+    # data/）；缺省空表 ⇒ resolve([])＝[]，装配层按「空＝回落 export」处理。
+    "bot_files_write_allowed_dirs",
+)
 
 
 class Config(BaseModel):
@@ -260,7 +350,9 @@ class Config(BaseModel):
     bot_affinity_novelty_halo_days: int = 21
     # 按人活跃归一的参考轮次（治「话痨增速碾压轻度用户」）。
     bot_affinity_rhythm_reference_turns: int = 8
-    # 单次负向事件的 |Δz| 上限与单日总位移上限、熔断事件数（护栏，不可被设定架空）。
+    # 单事件 |Δz| 上限（键名历史只钳负向，2026-09-26 A-1 裁定起正负同帽）、
+    # 总位移上限（窗形=滚动 24h，旧「本地自然日」窗作废）、熔断事件数
+    # （护栏，不可被设定架空）。
     bot_affinity_negative_event_cap_z: float = 0.10
     bot_affinity_daily_move_cap_z: float = 0.12
     bot_affinity_fuse_daily_events: int = 25
@@ -612,6 +704,9 @@ class Config(BaseModel):
     # 到点投递三服务与既有 schedule 引擎（schedule_service 族）共库。未接线前
     # 各开关缺省关（不装配=零开销）；投递只到 SendQueue 提交面，真实出站端口
     # 未授权前 request_builder 不注入（诚实不伪装发送）。
+    # 2026-09-26 第 20 项波实况：enabled/db_path 两键已被日程板能力真读
+    # （domains/schedule/capabilities/schedule_board.py，REMINDER 车道）；
+    # llm_draft/timetable/delivery 三键仍是「在册未接线」的原样（诚实挂账）。
     bot_schedule_enabled: bool = False
     bot_schedule_db_path: str = "data/schedules_v21.sqlite3"
     bot_schedule_llm_draft_enabled: bool = False
@@ -619,6 +714,15 @@ class Config(BaseModel):
     bot_schedule_delivery_enabled: bool = False
     bot_schedule_delivery_max_retries: int = 3
     bot_schedule_exceptions_path: str = "data/schedule_exceptions.json"
+    # 第 20 项新增两枚：读点在能力/路由侧现读装配期快照 config（getattr 字面名），
+    # 未进运行时覆盖合并表 ⇒ 热 set 不可达，已登记 settings.py 的
+    # RESTART_REQUIRED_KEYS（改 .env + 重启生效；不做「看着能热改」的假承诺）：
+    # 代答腿总闸——关着时「她在干嘛」一类问句完全不进日程路由，零行为变更；
+    # 开着也只按分级表投影公开条目（隐私判定在出站前，不靠模型自觉）。
+    bot_schedule_status_reply_enabled: bool = False
+    # 宽口径自然捕捉闸——关着只认「日程/课表」显式命令与导入；开着才把
+    # 「明天8点有课」这类带时间+活动词的短句顺手记进她的日程板（缺省隐私）。
+    bot_schedule_natural_capture_enabled: bool = False
     # 群聊回复策略（群号列表）：
     # black1=完全静默只接收不发送；black2=只回“@它且带指令”的消息；
     # white1=正常回复并可按主动接话开关抽签；white2=只回“@它”或显式命令。
@@ -1571,89 +1675,12 @@ class Config(BaseModel):
                 return str(data_root / normalized[5:])
             return value
 
-        path_fields = (
-            "bot_control_plane_config_db",
-            "bot_control_plane_events_db",
-            "bot_control_plane_workspaces_db",
-            "bot_control_plane_features_db",
-            "bot_control_plane_platform_db",
-            "bot_control_plane_actions_db",
-            "bot_control_plane_features_file",
-            "bot_runtime_settings_file",
-            "bot_runtime_settings_dir",
-            "bot_mail_bridge_state_file",
-            "bot_event_idempotency_db_path",
-            "bot_knowledge_db_path",
-            "bot_kb_wiki_db_path",
-            "bot_memory_db_path",
-            "bot_reflection_db_path",
-            "bot_history_db_path",
-            "bot_diagnostics_db_path",
-            "bot_audit_db_path",
-            "bot_receipts_db_path",
-            "bot_send_queue_db_path",
-            # 中央出站闸计数库（B4-spec §1.5）：缺 data/ 相对路径，必须经
-            # runtime_paths 重映射到 ChatBot_Runtime（铁律 6）。
-            "bot_outbound_gate_db_path",
-            "bot_web_intent_telemetry_db_path",
-            "bot_meme_api_output_dir",
-            "bot_meme_library_dir",
-            "bot_meme_library_db_path",
-            "bot_parse_history_db_path",
-            "bot_music_analytics_db_path",
-            "bot_download_dir",
-            "bot_card_render_dir",
-            "bot_generated_files_dir",
-            "bot_today_history_push_file",
-            "bot_today_history_cache_file",
-            "bot_audit_log_file",
-            "bot_prompt_audit_dir",
-            "bot_rate_limit_db_path",
-            "bot_subscribe_db_path",
-            "bot_runtime_log_file",
-            "bot_cookies_file",
-            # DATAFIX（2026-09-12）：以下字段此前遗漏在重映射之外，默认值
-            # 保持 data/ 相对路径，getattr 兜底消费点按 CWD 解析会把运行时
-            # 数据写进源码树（实际泄漏：usage_report_state.json）。其余
-            # mood/quirks 等 CursorStore 字段虽在调用点二次兜底，仍统一
-            # 收口到本解析器，保证任何入口拿到绝对路径。
-            "bot_usage_report_state_file",
-            "bot_media_registry_path",
-            "bot_music_dir",
-            "bot_mood_db_path",
-            "bot_quirks_db_path",
-            "bot_session_identity_db_path",
-            "bot_addressing_preferences_db_path",
-            "bot_reminder_db_path",
-            "bot_affinity_db_path",
-            "bot_media_archive_dir",
-            "bot_media_archive_db_path",
-            "bot_notes_db_path",
-            "bot_campus_db_path",
-            "bot_emergency_info_db_path",
-            "bot_reactions_db_path",
-            "bot_teaching_db_path",
-            "bot_tts_output_dir",
-            "bot_schedule_db_path",
-            "bot_schedule_exceptions_path",
-            # M-52（T125）：TTS 引擎目录键收口。语义=GPT-SoVITS 程序目录
-            # （生产为 C:/Software 绝对路径）；本解析器对非 data/ 值（含绝对
-            # 路径与空串）原样透传=既有行为零变化，入册仅防未来误配 data/
-            # 相对值时被 tts._resolve_ref_path 按 CWD join 落源码树（铁律 6）。
-            "bot_tts_gptsovits_dir",
-        )
-        for name in path_fields:
+        # 名册单一来源 = 模块级 PATH_REMAPPED_FIELDS（A-8 席位 2026-09-27 上提，
+        # 供「生产配置值 ∈ 允许根」常驻断言按同一张名册逐字段过登记闸）。
+        for name in PATH_REMAPPED_FIELDS:
             setattr(self, name, resolve(getattr(self, name)))
 
-        for name in (
-            "bot_persona_files",
-            "bot_knowledge_files",
-            "bot_trend_files",
-            "bot_glossary_files",
-            # 文件写盘口白名单根＝路径值，逐条走同一 resolve（铁律 6：源码树零
-            # data/）；缺省空表 ⇒ resolve([])＝[]，装配层按「空＝回落 export」处理。
-            "bot_files_write_allowed_dirs",
-        ):
+        for name in PATH_LIST_REMAPPED_FIELDS:
             setattr(self, name, [resolve(item) for item in getattr(self, name)])
         return self
 
