@@ -139,7 +139,10 @@ from .domains.media.video.video_pipeline import (
 )
 from .domains.meme.capabilities.meme import build_meme_capability
 from .domains.meme.capabilities.meme_library import build_meme_library_capability
-from .domains.meme.capabilities.randpic import build_randpic_capability
+from .domains.meme.capabilities.randpic import (
+    build_randpic_capability,
+    pick_gallery_image,
+)
 from .domains.meme.reactions.engine import (
     SHARED_PROACTIVE_GATE as _REACTION_PROACTIVE_GATE,
 )
@@ -158,7 +161,6 @@ from .domains.meme.reactions.engine import (
 from .domains.meme.reactions.engine import (
     normalize_onebot_emoji_like as _normalize_onebot_emoji_like,
 )
-from .domains.meme.reactions.engine import pick_reaction_meme as _pick_reaction_meme
 from .domains.music.capabilities.music import build_music_capability
 from .domains.ops.audit.file_logger import build_audit_with_file_log
 from .domains.ops.monitor.alerts import (
@@ -195,7 +197,7 @@ def _runtime_scripts_path(value: str):
     from scripts.runtime_paths import runtime_path
 
     return runtime_path(value)
-from .domains.chat_reply.runtime.mentions import detect_name_mention
+from .domains.chat_reply.runtime import deadline, mentions
 from .domains.chat_reply.runtime.natural_language import (
     detect_natural_command,
     runtime_set_command_text,
@@ -583,7 +585,7 @@ def _mentioned_by_affinity_nickname(text: str) -> bool:
     """
     if not text or _AFFINITY_NICKNAMES_CACHE is None:
         return False
-    return detect_name_mention(text, _AFFINITY_NICKNAMES_CACHE)
+    return mentions.detect_name_mention(text, _AFFINITY_NICKNAMES_CACHE)
 
 
 _AFFINITY_NICKNAMES_CACHE: list[str] | None = None
@@ -666,7 +668,7 @@ def contains_visual_message_segments(raw_segments: list[dict[str, Any]] | None) 
     只覆盖"看得到"的媒体——语音不在这里（见 contains_audio_message_segments），
     两者在 `_is_plain_chat_event` 里并列放行、在占位文案里分别命名。
     """
-    visual_types = {"image", "face", "mface", "marketface", "sticker", "video"}
+    visual_types = {"image", "face", "mface", "marketface", "sticker", "video", "photo", "animation", "video_note"}
     return any(
         str(segment.get("type", "")).strip().lower() in visual_types
         for segment in raw_segments or []
@@ -1268,7 +1270,7 @@ def _runtime_tag_values(send_request: SendRequest | None) -> dict[str, object]:
         result["error_kind"] = error_kind
     if usage_values["total_tokens"] > 0:
         result.update(usage_values)
-    return result
+    return dict(result, **deadline.deadline_receipt_view(send_request.audit_tags))  # 预算耗尽回执自解释（S-T-DEADLOG-2；刻意行内等值替换＝净 0 行，插行会顶漂 campus matcher 登记坐标；组装口与提取口同在 domains/chat_reply/runtime/deadline.py）
 
 
 def _incoming_from_nonebot_event(
@@ -1356,7 +1358,7 @@ def _incoming_from_nonebot_event(
         text = normalized_message.plain_text
     file_context: list[str] = []
     try:
-        from .domains.files.sources.file_reader import read_supported_file
+        from .domains.files.sources import file_reader
         file_segments = raw_segments if feature_enabled is None or feature_enabled("bot.ingress.file_read") else []
         for segment in file_segments:
             if str(segment.get("type", "")).lower() != "file":
@@ -1364,9 +1366,9 @@ def _incoming_from_nonebot_event(
             data = segment.get("data") or {}
             candidate = str(data.get("file") or data.get("path") or "").strip()
             if candidate:
-                parsed_file = read_supported_file(candidate)
-                if parsed_file.text:
-                    file_context.append(f"[文件内容：{parsed_file.title or parsed_file.path.name}]\n{parsed_file.text}")
+                parsed_file = file_reader.read_supported_file(candidate)
+                note = f"[文件内容：{parsed_file.title or parsed_file.path.name}]\n{parsed_file.text}" if parsed_file.text else file_reader.file_read_failure_note(parsed_file)
+                file_context += [note] if note else []
     except (ImportError, OSError, ValueError, TypeError):
         file_context = []
     if file_context:
@@ -1409,9 +1411,9 @@ def _incoming_from_nonebot_event(
     #   可能并不出现在 _RUNTIME_MENTION_TERMS 里，只查拼接前文本会漏判（实测回归）。
     # - 好感度自学习小名常撞常用词，只认用户自己打的字：被引用内容里出现"岸宝"
     #   不应让机器人以为是叫自己（评审 L1）。
-    persona_name_mention = detect_name_mention(
+    persona_name_mention = mentions.detect_name_mention(
         own_text, _RUNTIME_MENTION_TERMS
-    ) or detect_name_mention(text, _RUNTIME_MENTION_TERMS)
+    ) or mentions.detect_name_mention(text, _RUNTIME_MENTION_TERMS)
     affinity_nickname_mention = _mentioned_by_affinity_nickname(own_text)
     hard_mention = adapter_mentions_bot or (
         normalized_adapter not in {"telegram", "mail"}
@@ -1479,7 +1481,7 @@ def _incoming_from_nonebot_event(
         session_type=session_type,
         sender_id=sender_id,
         group_id=str(group_id) if group_id is not None else None,
-        plain_text=text,
+        plain_text=text, command_text=mentions.strip_leading_name_mention(own_text, _RUNTIME_MENTION_TERMS),  # 派生只认拼接前的 own_text
         raw_segments=normalized_message.segments or raw_segments,
         reply_to_message_id=str(reply_id) if reply_id is not None else None,
         reply_to_text=reply_text or normalized_message.quoted_text,
@@ -1853,7 +1855,7 @@ def _register_today_history_scheduler(
             session_type=session_type,
             sender_id=sender_id,
             group_id=group_id,
-            plain_text="历史上的今天",
+            plain_text="历史上的今天", command_text="历史上的今天",  # 自造文本⇒两值同
             raw_segments=[{"type": "text", "data": {"text": "历史上的今天"}}],
             mentions_bot=False,
         )
@@ -2294,6 +2296,11 @@ def should_finish_nonebot_matcher(receipt: DeliveryReceipt) -> bool:
     """
     if receipt.state in {ReceiptState.SENT, ReceiptState.SKIPPED}:
         return False
+    if receipt.state is ReceiptState.QUEUED:
+        # 2026-09-24 语音双发根修波：queue.submit 的受理回执 public_message
+        # ="queued" 是内部哨兵串——inline 首投失败回落到本判定曾被直通上屏
+        # （QQ 实录「queued」）。受理≠投递结果，一律不回会话。
+        return False
     if receipt.operational_issue is not None:
         return False
     return bool(str(receipt.public_message or "").strip())
@@ -2384,13 +2391,24 @@ def _record_transport_receipt(
                 send_queue,
                 "mark_retryable_failure",
             ):
-                _call_queue_state_update(
-                    send_queue,
-                    "mark_retryable_failure",
-                    send_request.request_id,
-                    receipt.public_message,
-                    operational_issue=issue,
+                # 2026-09-24 语音双发根修：mixed「结果未知」类失败先按 worker
+                # 同一分类做 part 级 UNKNOWN + PARTIAL 断点记账（超时≠未送达，
+                # 留行 failed_retryable 会让 worker 盲重投整条语音）；非该形态
+                # （明确拒绝/挂起/非 mixed/无 part 面队列）返回 False 走旧语义。
+                # 函数体内 import：顶置 import 会顶漂下方被门钉住的 live 坐标
+                # （#45/U17 同型教训）。
+                from .domains.transport.sender.worker import (
+                    book_inline_unknown_parts,
                 )
+
+                if not book_inline_unknown_parts(send_queue, send_request, issue):
+                    _call_queue_state_update(
+                        send_queue,
+                        "mark_retryable_failure",
+                        send_request.request_id,
+                        receipt.public_message,
+                        operational_issue=issue,
+                    )
             elif receipt.state.value == "failed_final" and hasattr(
                 send_queue,
                 "mark_final_failure",
@@ -3742,6 +3760,7 @@ def _register_nonebot_handlers() -> None:
         build_quiet_hours_settings,
         build_rate_limit_settings,
         build_rate_limiter,
+        build_redrive_settings,
         build_reply_budget_settings,
         build_role_settings,
     )
@@ -3911,9 +3930,14 @@ def _register_nonebot_handlers() -> None:
     runtime_control = RuntimeControlState()
     from .control_plane.factory import build_feature_service
     from .domains.ops.features.feature_gate import ProductFeatureGate
+    from .runtime.capability_protocols import attach_default_feature_gate
 
     feature_service = build_feature_service(config)
     product_feature_gate = ProductFeatureGate(feature_service)
+    # 层 2 kill-switch 收编（在册未执法）：门此前只在 pipeline._prepare 执法，绕过
+    # pipeline 直呼 default_invoker().invoke() 的入口能静默穿过这道关。只注入谓词、
+    # 不在层 2 重抄受门名单（唯一答案仍是 gate_feature_bindings）。
+    attach_default_feature_gate(product_feature_gate.check_capability)
     # 语音出站路径双态（G-3 · M-10/M-13 根修）：键开=构建 post-review enricher
     # 交给 pipeline（取文口径=review 批准后的 body；合成失败挂 OperationalIssue
     # 走中央告警链）；键关=None 且对话能力仍走下方旧 _attach_voice_reply 包装
@@ -3924,7 +3948,97 @@ def _register_nonebot_handlers() -> None:
         from .domains.media.voice_enricher import build_voice_enricher
 
         pipeline_voice_enricher = build_voice_enricher(config)
+    # 慢回复先回执（ack-first，2026-09-23 用户裁定选项 C）：真回复照跑照送，只是超过
+    # 阈值仍未出结果时先补一句守岸人口吻的等待短句。键关 ⇒ 两个入参都为 None，
+    # pipeline 走的分支与旧代码逐字节同形（零行为变更），故键关部署永不触新符号。
+    # 投递只经中央唯一出口 `submit_active_push`（闸关闭态=与裸 submit 同形的
+    # passthrough），命名空间申报为 "ack"——漏报会回落紧急域 `emg` 口径，
+    # 开闸态整族静默丢消息（R-CENTRAL C-1 成因）。
+    progress_ack_settings = None
+    progress_ack_submit = None
+    if bool(getattr(config, "bot_chat_progress_ack_enabled", False)):
+        from .domains.chat_reply.runtime.progress_ack import (
+            ACK_DEDUPE_NAMESPACE,
+            ProgressAckSettings,
+        )
+        from .domains.transport.sender.outbound_gate import submit_active_push
+
+        progress_ack_settings = ProgressAckSettings.from_config(config)
+
+        async def _submit_progress_ack(request: Any) -> Any:
+            """入列 + **就地投递**，且入列**必须留在事件循环里**。两条各对应一种实测塌法：
+
+            ① 只入列不投递是本功能最坏的错法：`queue.submit` 把 `next_retry_at` 写成"内联宽限
+            期"（= max(60s, 3×传输超时)）之后才轮到 worker，真正投递**由调用方就地负责**（提醒族
+            A-01 旧账：只 submit 不投递=永不送达）。回执若 60 秒后才到，语义还会反转成"答完追一
+            句我在想"——比不发更糟。
+            ② A-22 认领台账只在有运行中事件循环时才登记（`_register_inline_claim` 自述）：把
+            submit 包进 `asyncio.to_thread` ⇒ 线程里 `current_task()` 抛错 ⇒ 台账静默不登记 ⇒
+            防双发盾退化成纯时间宽限（本仓实测过 140–395s 循环停顿；S17 离线复刻双发=True）。
+            故照提醒族同一条路：闸放行 → `_deliver_transport_send_request` 就地送 → 没送成功
+            就抛，让 pipeline 不占冷却坑（下一次追问仍可得救）。
+            """
+            outcome = submit_active_push(
+                send_queue,
+                request,
+                outbound_gate,
+                dedupe_family="once",
+                dedupe_namespace=ACK_DEDUPE_NAMESPACE,
+            )
+            verdict = outcome.verdict
+            if verdict.action != "allow" or verdict.deliver_after is not None:
+                return outcome  # 闸拦下或判了顺延：交回队列，不占冷却坑
+            # 首参必须是 provider 可调用对象而非其返回值：传 dict 会被吞成 None=静默不发（本波实犯）。
+            bot = _select_queue_bot(_all_online_bots, request)
+            if bot is None:
+                raise RuntimeError("progress ack has no online bot")
+            receipt = await _deliver_transport_send_request(
+                bot,
+                None,
+                request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+            if receipt is None or receipt.state not in {
+                ReceiptState.SENT,
+                ReceiptState.REDIRECTED,
+            }:
+                raise RuntimeError(
+                    f"progress ack not delivered (state={getattr(receipt, 'state', 'none')})"
+                )
+            return outcome
+
+        progress_ack_submit = _submit_progress_ack
+    # 回执阈值跟着网关当下快慢走（2026-09-25 用户裁定第 6 项）：固定 15 秒在
+    # 链上单跳 EWMA 实测 13.7 秒的现在必然一抖就报。读数只认渠道健康库这一本账
+    # （model_router:924 同一取法），不在这里另开一份延迟统计。
+    # 5 秒 TTL 的理由：这一读发生在事件循环上，不得每条消息都去开一次 SQLite。
+    _ack_ema_cache: dict[str, Any] = {"at": 0.0, "ema_ms": None}
+
+    def _slowest_gateway_ema_ms() -> float | None:
+        """链上最慢一跳的 EWMA（毫秒）；读不到返回 None ⇒ 退回固定阈值。"""
+        now = time.monotonic()
+        if now - float(_ack_ema_cache["at"]) < 5.0:
+            cached = _ack_ema_cache["ema_ms"]
+            return None if cached is None else float(cached)
+        ema_ms: float | None = None
+        try:
+            from .domains.chat_reply.llm_engine.channel_health import (
+                get_channel_health_store,
+            )
+
+            latencies = get_channel_health_store().ema_latencies()
+            if latencies:
+                ema_ms = max(float(value) for value in latencies.values())
+        except Exception:  # noqa: BLE001 - 观测面坏了不得把回执功能一起带走。
+            ema_ms = None
+        _ack_ema_cache["at"] = now
+        _ack_ema_cache["ema_ms"] = ema_ms
+        return ema_ms
     pipeline = RuntimePipeline(
+        progress_ack_latency_probe=_slowest_gateway_ema_ms,
+        redrive_settings=build_redrive_settings(config),
         feature_gate=product_feature_gate,
         outbound_voice_enricher=pipeline_voice_enricher,
         send_queue=send_queue,
@@ -4010,6 +4124,8 @@ def _register_nonebot_handlers() -> None:
             ttl_seconds=float(config.bot_event_idempotency_ttl_seconds),
             max_entries=int(config.bot_event_idempotency_max_entries),
         ),
+        progress_ack_settings=progress_ack_settings,
+        progress_ack_submit=progress_ack_submit,
     )
 
     def _all_online_bots() -> dict[str, Any]:
@@ -4131,10 +4247,10 @@ def _register_nonebot_handlers() -> None:
         try:
             await notify_operational_issue(
                 issue,
-                source_adapter=message.adapter,
+                source_adapter=message.adapter, session_id=message.session_id,
                 source_bot=message.bot_id,
-                session_type=message.session_type,
-                targets=targets,
+                session_type=message.session_type, group_id=message.group_id or "",
+                targets=targets, pipeline=pipeline, request_id=message.request_id,
                 online_bots=_all_online_bots,
                 delivery=_deliver_admin_alert,
                 suppression=operational_alert_suppression,
@@ -4171,7 +4287,7 @@ def _register_nonebot_handlers() -> None:
                     source_adapter="runtime",
                     source_bot="tts-probe",
                     session_type=SessionType.PRIVATE,
-                    targets=targets,
+                    targets=targets, pipeline=pipeline, capability_id="bot.tts",
                     online_bots=_all_online_bots,
                     delivery=_deliver_admin_alert,
                     suppression=operational_alert_suppression,
@@ -4188,6 +4304,61 @@ def _register_nonebot_handlers() -> None:
 
     install_probe_alert_sink(_push_probe_issue)
 
+    # 中央调度收编波 P5-E3：creation 预留面（绘画/语音对接点）的「要而不得」告警**共用**
+    # 上面那个 sink（同 `_push_probe_issue`、同 `operational_alert_suppression` 300s 抑制），
+    # 不另造第二条投递路（宪法：跨域装配只在装配层；告警口唯一）。
+    from .domains.creation.reserved_health_alert import install_reserved_alert_sink
+
+    install_reserved_alert_sink(_push_probe_issue)
+    # 执行体在场性探针（S50/S37 同点实锤 GAP-CREAT-ALERT-STALE）：presence 键里
+    # `bot_tts_api_url` 生产缺省恒非空 ⇒ 只按"键填了没"判"要而不得"，会在 P4-C2
+    # 接上语音执行体之后每次 /bot status 投一条"实现工厂未接入"的假告警。
+    # creation 域按教义不 import 中央层，故这条中央事实由装配层递进去（同 sink 手法）。
+    from .domains.creation.reserved_health_alert import install_execution_presence_probe
+    from .runtime.capability_protocols import has_registered_handler
+
+    install_execution_presence_probe(has_registered_handler)
+
+    # SEAT-S102-PATROL-WIRE：把 creation 缺位告警从「只有 /bot status 手动触发」升为周期驱动。
+    # 注册一条后台任务，按固定间隔调用巡检唯一入口 patrol_reserved_health；复用上面已注入的
+    # 同一个 sink（_push_probe_issue → 中央告警链 + AdminAlertSuppression 300s 抑制），不新建
+    # 第二条投递路、不改 config（周期/首轮延时为块内常量）。必须 on_startup 起（import 期无
+    # running loop 而 sink 依赖 create_task）；持引用防 GC（同 _pending_probe_alert_tasks）。fail-open。
+    _CREATION_PATROL_FIRST_DELAY_SECONDS = 90
+    _CREATION_PATROL_INTERVAL_SECONDS = 3600
+
+    @get_driver().on_startup
+    async def _start_creation_reserved_patrol_on_startup() -> None:
+        from .domains.creation.reserved_health_alert import patrol_reserved_health
+
+        async def _creation_reserved_patrol_loop() -> None:
+            try:
+                await asyncio.sleep(_CREATION_PATROL_FIRST_DELAY_SECONDS)
+                while True:
+                    try:
+                        # 直接在 loop 上同步跑（零网络零 I/O；sink 需 running loop 才能 create_task 投）。
+                        patrol_reserved_health(config)
+                    except Exception:  # 单轮巡检失败只降级，不终止循环。
+                        logging.getLogger(__name__).debug(
+                            "creation reserved patrol round failed", exc_info=True
+                        )
+                    await asyncio.sleep(_CREATION_PATROL_INTERVAL_SECONDS)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # 循环自身异常退出即降级停用，不冒泡炸启动。
+                logging.getLogger(__name__).warning(
+                    "creation-reserved patrol: 循环异常退出，缺位巡检降级停用", exc_info=True
+                )
+
+        try:
+            _patrol_task = asyncio.create_task(_creation_reserved_patrol_loop())
+            _pending_probe_alert_tasks.add(_patrol_task)
+            _patrol_task.add_done_callback(_pending_probe_alert_tasks.discard)
+        except Exception:  # 挂不上调度不影响启动。
+            logging.getLogger(__name__).warning(
+                "creation-reserved patrol: on_startup 挂接失败，缺位巡检停用", exc_info=True
+            )
+
     async def _notify_queue_operational_receipt(
         request: SendRequest,
         receipt: DeliveryReceipt,
@@ -4203,10 +4374,10 @@ def _register_nonebot_handlers() -> None:
         try:
             await notify_operational_issue(
                 issue,
-                source_adapter=request.adapter,
-                source_bot=request.bot_id,
-                session_type=request.target_scope,
-                targets=targets,
+                source_adapter=request.adapter, session_id=request.session_id,
+                source_bot=request.bot_id, capability_id=request.capability_id,
+                session_type=request.target_scope, group_id=str(request.target_id or ""),
+                targets=targets, pipeline=pipeline, request_id=request.request_id,
                 online_bots=_all_online_bots,
                 delivery=_deliver_admin_alert,
                 suppression=operational_alert_suppression,
@@ -4339,6 +4510,12 @@ def _register_nonebot_handlers() -> None:
 
     def _build_weather_with_backend(config_: Any, **_kwargs: Any) -> Any:
         return build_weather_capability(config_, render_backend=render_backend)
+
+    def _build_news_with_backend(config_: Any, **_kwargs: Any) -> Any:
+        return build_news_capability(config_)
+
+    def _build_wiki_with_backend(config_: Any, **_kwargs: Any) -> Any:
+        return build_wiki_capability(config_)
 
     def _build_eat_with_backend(config_: Any, **_kwargs: Any) -> Any:
         return build_eat_capability(config_, render_backend=render_backend)
@@ -4573,7 +4750,7 @@ def _register_nonebot_handlers() -> None:
                     session_type=session_type,
                     sender_id="sub-push",
                     group_id=destination_id if session_type is SessionType.GROUP else None,
-                    plain_text=text,
+                    plain_text=text, command_text=mentions.strip_leading_name_mention(text, _RUNTIME_MENTION_TERMS),  # 同一派生规则，不另立第二套
                     raw_segments=[{"type": "text", "data": {"text": text}}],
                 )
                 try:
@@ -4667,40 +4844,27 @@ def _register_nonebot_handlers() -> None:
                     for item in (getattr(config, "bot_admin_user_ids", []) or [])
                     if str(item).strip()
                 ]
-                if getattr(config, "bot_cookie_expiry_reminder_via_queue", False):
-                    # S0 收编①（v21r4-b2-direct-collect-plan §3.1）：形态 B 提醒
-                    # 范式统一投递（SendRequest→SendQueue→内联投递，SENT 才算
-                    # 送达）；dedupe/request_id 带本地日期=当日幂等，管理员换人
-                    # 重试语义与旧直连等价，全部失败静默。
-                    try:
-                        await _deliver_cookie_expiry_report_via_queue(
-                            config,
-                            send_queue,
-                            audit_logger,
-                            receipt_repository,
-                            bot,
-                            report,
-                            admins,
-                            outbound_gate=outbound_gate,
-                        )
-                    except Exception:  # 统一路径失败不影响主链路。
-                        logging.getLogger(__name__).debug(
-                            "cookie expiry notice via queue failed", exc_info=True
-                        )
-                    return
-                for admin_id in admins[:3]:
-                    try:
-                        await bot.call_api(
-                            "send_private_msg",
-                            user_id=int(admin_id),
-                            message=[{"type": "text", "data": {"text": report}}],
-                        )
-                        break
-                    except Exception as exc:  # noqa: BLE001 - 换下一个管理员。
-                        logging.getLogger(__name__).debug(
-                            "cookie expiry notice to %s failed: %s", admin_id, exc
-                        )
-                        continue
+                # 裁定 R-4 + 在册未执法④（2026-09-24「全部统一」）：cookie 到期提醒**只**走
+                # 统一范式投递（SendRequest→SendQueue→内联投递，SENT 才算送达）；
+                # dedupe/request_id 带本地日期=当日幂等，管理员换人重试语义与旧直连等价，
+                # 全部失败静默。旧 `bot_cookie_expiry_reminder_via_queue` 开关与其下的
+                # `send_private_msg` 逐管理员直发循环一并退役——那条直发正是「四条主动投递
+                # 已接中央出口」这句话此前只在开态为真的那半条。
+                try:
+                    await _deliver_cookie_expiry_report_via_queue(
+                        config,
+                        send_queue,
+                        audit_logger,
+                        receipt_repository,
+                        bot,
+                        report,
+                        admins,
+                        outbound_gate=outbound_gate,
+                    )
+                except Exception:  # 统一路径失败不影响主链路。
+                    logging.getLogger(__name__).debug(
+                        "cookie expiry notice via queue failed", exc_info=True
+                    )
 
             scheduler.add_job(
                 _cookie_expiry_reminder_job,
@@ -4756,6 +4920,7 @@ def _register_nonebot_handlers() -> None:
     # 双层表情·第二层（情绪时刻发表情包）：独立五门（开关/每消息去重/
     # 确定性概率/会话冷却/每小时时限）+ 每会话每日上限 + C1 悲伤门；
     # 与第一层贴小表情互斥（第一层贴过则本层整条让路）。
+    # 选图自 S-T-STK-2（2026-09-26）起走四路合一门面 select_sticker_for_turn（原顶层 pick_reaction_meme 直呼已删，函数内局部 import，先例 _pick_poke_meme）；反重复在 MemeLibraryStore.weighted_pick 咽喉执法，与本腿调用点无关。
     _REACTION_MEME_GATE = _ReactionProactiveGateClass()
     _reaction_meme_daily: dict[str, tuple[int, int]] = {}
 
@@ -4796,22 +4961,22 @@ def _register_nonebot_handlers() -> None:
         daily_max = int(getattr(meme_config, "bot_reactions_meme_daily_max", 6) or 6)
         if daily_max > 0 and used >= daily_max:
             return
-        meme_path = await asyncio.to_thread(
-            _pick_reaction_meme,
-            meme_library_store,
-            intent=intent,
-            nsfw_max=float(getattr(meme_config, "bot_meme_library_nsfw_max", 0.2) or 0.2),
+        from .domains.meme.capabilities.meme_library import select_sticker_for_turn
+        sender = str(getattr(event, "sender_id", "") or "")
+        picked, _sticker_tags = await asyncio.to_thread(
+            select_sticker_for_turn, meme_library_store, turn_text=text,
+            session_key=session_key, sender_id=sender, config=meme_config,
+            mood_valence_fn=lambda: _mood_valence(meme_config),
+            affinity_snapshot=_poke_affinity_snapshot(meme_config, sender),
         )
+        meme_path = str((picked or {}).get("path") or "").strip()
         if not meme_path:
             return
         _reaction_meme_daily[session_key] = (day, used + 1)
         await _send_parts_through_unified_pipeline(
-            bot, event,
-            text="",
-            image=meme_path,
+            bot, event, text="", image=meme_path,
             audit_tags=["reaction_meme", f"intent:{intent}"],
-            capability_id="bot.chat",
-        )
+            capability_id="bot.chat")
     playwright_fetch_backend = None
     if getattr(config, "bot_fetch_playwright_enabled", True):
         try:
@@ -4923,6 +5088,8 @@ def _register_nonebot_handlers() -> None:
             shadow_classifier_enabled=config.bot_web_classifier_shadow_enabled,
             web_search_enabled=config.bot_web_search_enabled,
             web_search_admin_notice=config.bot_web_search_admin_notice,
+            web_knowledge_threshold=config.bot_web_search_knowledge_threshold,
+            web_confidence_floor=config.bot_web_search_confidence_floor,
             fast_mode=config.bot_chat_fast_mode,
             reply_detail=config.bot_reply_detail,
             fast_max_tokens=config.bot_chat_fast_max_tokens,
@@ -5092,23 +5259,27 @@ def _register_nonebot_handlers() -> None:
         *,
         text: str,
         image: str | None = None,
+        audio: list[dict[str, Any]] | None = None,
         prefix_parts: list[dict[str, Any]] | None = None,
         audit_tags: list[str] | None = None,
         capability_id: str = "bot.poke",
     ) -> DeliveryReceipt:
-        """带 @ 前置段/图片的统一管线发送（poke v2 群聊 @+表情包）。
+        """带 @ 前置段/图片/语音的统一管线发送（poke v2 群聊 @+表情包；P14 语音臂）。
 
         走 mixed 渲染（prefix_parts 前置）；transport 不支持时按
-        text_fallback 诚实降级（丢 @/图，不丢正文）。
+        text_fallback 诚实降级（丢 @/图，不丢正文）。``audio`` 与 ``image`` 同
+        一条出站面（``CapabilityResult.audio`` → renderer ``record`` 段，
+        渲染契约既有链路，非第二通路）。
         """
 
         def _capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
             return CapabilityResult(
                 request_id=message.request_id,
                 capability_id=capability_id,
-                kind="mixed" if (image or prefix_parts) else "text",
+                kind="mixed" if (image or audio or prefix_parts) else "text",
                 body=str(text or ""),
                 images=[{"file": image}] if image else [],
+                audio=[dict(item) for item in (audio or []) if isinstance(item, dict)],
                 prefix_parts=list(prefix_parts or []),
                 audit_tags=list(audit_tags or ["unified_parts_reply"]),
             )
@@ -5324,7 +5495,7 @@ def _register_nonebot_handlers() -> None:
                             source_adapter=blocked_message.adapter,
                             source_bot=blocked_message.bot_id,
                             session_type=blocked_message.session_type,
-                            targets=targets,
+                            targets=targets, pipeline=pipeline, capability_id="bot.campus_forward",
                             online_bots=_all_online_bots,
                             delivery=_deliver_admin_alert,
                             suppression=operational_alert_suppression,
@@ -5528,10 +5699,17 @@ def _register_nonebot_handlers() -> None:
     )
 
     def _build_poke_back_intent(payload: dict[str, Any]) -> OutboundIntent:
-        """poke 载荷 → 回戳 OutboundIntent（参数 coercion 与旧直连一致）。"""
+        """poke 载荷 → 回戳/跟戳/主动戳 OutboundIntent（参数 coercion 与旧直连一致）。
+
+        ``purpose``（P14 波新增，缺省 ``back``）只进幂等键与 trace 前缀，把
+        「回戳」「跟戳」「说完顺手戳一下」三种动机分开记账——同一 (群,人) 的
+        一次回戳不该把之后的主动戳吞成「同键在途」。五层门与冷却仍归调用方
+        （``ProactiveGate`` / ``PokeLimiter``）所有，本件只做在途线性化。
+        """
         group = bool(payload.get("group"))
         group_id = int(payload.get("group_id") or 0)
         user_id = int(payload.get("user_id") or 0)
+        purpose = str(payload.get("purpose") or "back").strip() or "back"
         api_params = (
             {"group_id": group_id, "user_id": user_id}
             if group
@@ -5539,7 +5717,7 @@ def _register_nonebot_handlers() -> None:
         )
         dedupe_key = derive_dedupe_key(
             "qq",
-            f"pokeback.{'group' if group else 'private'}.{group_id}.{user_id}",
+            f"pokeback.{purpose}.{'group' if group else 'private'}.{group_id}.{user_id}",
             "direct",
         )
         return OutboundIntent(
@@ -5561,7 +5739,7 @@ def _register_nonebot_handlers() -> None:
             feature_id="bot.plugin.poke.poke_back",
             policy_revision="legacy-poke-v2",
             dedupe_key=dedupe_key,
-            trace_id=f"pokeback-{time.time_ns()}",
+            trace_id=f"pokeback-{purpose}-{time.time_ns()}",
         )
 
     _poke_interaction_service = PokeInteractionService(
@@ -5571,28 +5749,89 @@ def _register_nonebot_handlers() -> None:
         )
     )
 
-    async def _dispatch_poke_back(bot: Bot, event: Event, *, group: bool) -> None:
-        """回戳经中央门面派发（route→review→send 真实周期）；结果静默丢弃。"""
-        await _poke_interaction_service.handle(
-            {
-                "bot": bot,
-                "bot_id": str(getattr(bot, "self_id", "") or ""),
-                "group": group,
-                "group_id": getattr(event, "group_id", 0),
-                "user_id": getattr(event, "user_id", 0),
-            }
+    async def _dispatch_poke_back(bot: Bot, event: Event, *, group: bool) -> bool:
+        """回戳经中央门面派发（route→review→send 真实周期）。
+
+        返回「是否真送出」（``delivered``）；失败/平台不支持诚实报否，调用方
+        据此决定是否退回话术腿。异常一律按「未送出」处理，绝不假成功。
+        """
+        return await _dispatch_poke_at(
+            bot,
+            group=group,
+            group_id=getattr(event, "group_id", 0),
+            user_id=getattr(event, "user_id", 0),
+            bot_id=str(getattr(bot, "self_id", "") or ""),
         )
+
+    async def _dispatch_poke_at(
+        bot: Bot,
+        *,
+        group: bool,
+        group_id: Any = 0,
+        user_id: Any,
+        bot_id: str = "",
+        purpose: str = "back",
+    ) -> bool:
+        """戳人的唯一出口（回戳/跟戳/说完顺手戳都走这里，同一中央门面）。"""
+        try:
+            result = await _poke_interaction_service.handle(
+                {
+                    "bot": bot,
+                    "bot_id": bot_id or str(getattr(bot, "self_id", "") or ""),
+                    "group": group,
+                    "group_id": group_id,
+                    "user_id": user_id,
+                    "purpose": purpose,
+                }
+            )
+        except Exception:  # noqa: BLE001 - 戳人是增益动作，坏了不影响主链路。
+            return False
+        return bool(getattr(result, "delivered", False))
     # poke v2 好感度防刷：每 (会话, 戳者) 每日累计记账——进程内字典仅作快路径
     # （按申请额保守记账），持久防刷以 affinity_delta_log（source="poke" 的
     # 24h 滚动和 + 全局预算）为准：重启后字典清零，但 store 侧仍受 24h 上限约束。
     _poke_affinity_daily: dict[tuple[str, str], tuple[int, float]] = {}
 
-    def _pick_poke_meme(store: Any, poke_config: Any) -> str | None:
-        """表情包形态选图：无关键词加权抽一张（NSFW 阈值沿用表情库配置）。"""
+    def _poke_affinity_snapshot(poke_config: Any, sender_id: str) -> dict[str, Any] | None:
+        """对方的好感档快照（口味/档号喂选图门面）；拿不到一律 None（= 不参与口味加权）。"""
+        if not str(sender_id or "").strip():
+            return None
         try:
-            picked = store.weighted_pick(
-                keyword="",
-                nsfw_max=float(getattr(poke_config, "bot_meme_library_nsfw_max", 0.2) or 0.2),
+            store = build_character_affinity_store(poke_config)
+            if store is None:
+                return None
+            snapshot = store.snapshot(str(sender_id))
+            return snapshot if isinstance(snapshot, dict) else None
+        except Exception:  # noqa: BLE001 - 口味层失败不影响发不发表情包。
+            return None
+
+    def _pick_poke_meme(
+        store: Any,
+        poke_config: Any,
+        *,
+        session_key: str = "",
+        sender_id: str = "",
+    ) -> str | None:
+        """表情包形态选图：走 goal-12 的**四路合一**门面（主题 × 本命 × 口味 × 心情）。
+
+        旧实现只有 ``store.weighted_pick(keyword="", nsfw_max=…)``：反重复确实在存储层
+        默认作用域里生效，但「她本人的图优先」「按对方口味」「心情低落少吵闹」这三条腿
+        一条都没接上——门面 ``select_sticker_for_turn`` 建好之后**只有测试在调**，
+        这与「配置键在册却无人读」是同一型失效形态（装配期绿、生产空转）。
+        选不出（相关性不过地板 / 全部发过）一律返回 None → 调用方回退固定话术，
+        **绝不回退成随便发一张或重发一张**（NSFW 阈值仍由 ``bot_meme_library_nsfw_max`` 定）。
+        """
+        from .domains.meme.capabilities.meme_library import select_sticker_for_turn
+
+        try:
+            picked, _tags = select_sticker_for_turn(
+                store,
+                turn_text="",  # 戳一戳没有随行的那句话：主题腿只吃既有词表，不硬凑。
+                session_key=session_key,
+                sender_id=sender_id,
+                config=poke_config,
+                mood_valence_fn=lambda: _mood_valence(poke_config),
+                affinity_snapshot=_poke_affinity_snapshot(poke_config, sender_id),
             )
         except Exception:  # noqa: BLE001 - 选图失败回退固定话术。
             return None
@@ -5686,6 +5925,268 @@ def _register_nonebot_handlers() -> None:
     async def _is_poke_event(event: Event) -> bool:
         return str(getattr(event, "notice_type", "")) == "notify" and str(getattr(event, "sub_type", "")) == "poke"
 
+    # ---------------------------------------------------- P14 波：社交主动接触
+    # 三枚五层门各记各的账（跟戳 / 回复后戳 / 回复后随机发图），互不共享冷却与
+    # 每小时滑窗；门的判据（开关→有目标→blocked→安静时间→概率/冷却/滑窗）唯一
+    # 真身在 capabilities.poke.proactive_action_allowed，本处只做取数与投递。
+    _POKE_FOLLOW_GATE = _ReactionProactiveGateClass()
+    _POKE_AFTER_REPLY_GATE = _ReactionProactiveGateClass()
+    _RANDPIC_DISPATCH_GATE = _ReactionProactiveGateClass()
+
+    async def _maybe_follow_poke(
+        bot: Bot, event: Event, *, merged_config: Any, poke_back_on: bool
+    ) -> None:
+        """「A 戳 B」→ bot 有概率跟着戳 B（P14；缺省关）。
+
+        独立门身（``bot_poke_follow_*``），与回戳分账：QQ 戳本身不花钱，但连戳
+        极刷屏，所以每群冷却 + 每小时上限 + 每消息去重三重都要在。
+        """
+        if not poke_back_on or merged_config is None:
+            return
+        if not bool(getattr(merged_config, "bot_poke_follow_enabled", False)):
+            return
+        from .domains.chat_reply.capabilities.poke import resolve_poke_follow_target
+
+        target = resolve_poke_follow_target(
+            event, bot_id=str(getattr(bot, "self_id", "") or "")
+        )
+        if target is None:
+            return
+        from .domains.chat_reply.capabilities.poke import (
+            ProactiveActionKnobs,
+            proactive_action_allowed,
+            proactive_poke_candidates,
+        )
+
+        # 可投候选：先被戳者 B，B 不可戳（blocked 名单/空号/是 bot 自己）才退 A。
+        # 名单判定必须在门之前——ProactiveGate 是 commit 语义，门过了才发现
+        # 目标不该戳，等于白烧一次冷却与每小时额度。
+        candidates = proactive_poke_candidates(
+            merged_config, target, bot_id=str(getattr(bot, "self_id", "") or "")
+        )
+        if not candidates:
+            return
+        if not proactive_action_allowed(
+            merged_config,
+            prefix="bot_poke_follow_",
+            gate=_POKE_FOLLOW_GATE,
+            session_key=f"group_{target.group_id}_{candidates[0]}",
+            message_key=f"poke-follow:{target.poker_id}:{target.group_id}",
+            group_id=target.group_id,
+            user_id=candidates[0],
+            salt="poke-follow",
+            require_group=True,
+            # 四枚同族键按**字面键名**在此取数（门身不再动态拼名）：值路径不变，
+            # 变的是「可归枚的读点」——动态 f"{prefix}probability" 让配置登记总账
+            # 的直读尺看不见这枚键，11 枚 poke/randpic 键因此被记成零读点死键。
+            knobs=ProactiveActionKnobs(
+                enabled=bool(getattr(merged_config, "bot_poke_follow_enabled", False)),
+                probability=float(
+                    getattr(merged_config, "bot_poke_follow_probability", 0.2) or 0.2
+                ),
+                cooldown_seconds=float(
+                    getattr(merged_config, "bot_poke_follow_cooldown_seconds", 120.0)
+                    or 120.0
+                ),
+                max_per_hour=int(
+                    getattr(merged_config, "bot_poke_follow_max_per_hour", 4) or 4
+                ),
+            ),
+        ):
+            return
+        for candidate in candidates:
+            # 第一发真送出就停：绝不同时戳两个（那又是「一次事件两臂」）。
+            if await _dispatch_poke_at(
+                bot,
+                group=True,
+                group_id=target.group_id,
+                user_id=candidate,
+                bot_id=str(getattr(bot, "self_id", "") or ""),
+                purpose="follow",
+            ):
+                return
+
+    async def _maybe_poke_after_bot_spoke(
+        bot: Bot,
+        *,
+        merged_config: Any,
+        poke_back_on: bool,
+        group_id: str,
+        user_id: str,
+        message_key: str,
+        purpose: str,
+    ) -> None:
+        """bot 说完话（回复用户 / 群内主动接话 / 入群欢迎）后按概率戳一下对方。
+
+        新增出站动作，三道硬门前置：blocked 名单、安静时间窗、每会话五层门；
+        任一不过就一条都不戳。投递仍走回戳那**同一个**中央门面（
+        ``_dispatch_poke_at`` → ``PokeInteractionService`` → 出站准入/租约/固定
+        映射），绝不另开第二条戳人路。
+        """
+        if not poke_back_on or merged_config is None:
+            return
+        from .domains.chat_reply.capabilities.poke import (
+            ProactiveActionKnobs,
+            proactive_action_allowed,
+        )
+
+        group = bool(str(group_id or "").strip())
+        if not proactive_action_allowed(
+            merged_config,
+            prefix="bot_poke_after_reply_",
+            gate=_POKE_AFTER_REPLY_GATE,
+            session_key=(
+                f"group_{group_id}_{user_id}" if group else f"private_{user_id}"
+            ),
+            message_key=f"poke-spoke:{purpose}:{message_key}",
+            group_id=group_id,
+            user_id=user_id,
+            salt=f"poke-spoke-{purpose}",
+            # 字面键名取数（与跟戳同一改判据）：见 ProactiveActionKnobs 的 why。
+            knobs=ProactiveActionKnobs(
+                enabled=bool(
+                    getattr(merged_config, "bot_poke_after_reply_enabled", False)
+                ),
+                probability=float(
+                    getattr(merged_config, "bot_poke_after_reply_probability", 0.15)
+                    or 0.15
+                ),
+                cooldown_seconds=float(
+                    getattr(
+                        merged_config, "bot_poke_after_reply_cooldown_seconds", 300.0
+                    )
+                    or 300.0
+                ),
+                max_per_hour=int(
+                    getattr(merged_config, "bot_poke_after_reply_max_per_hour", 3) or 3
+                ),
+            ),
+            # 主动戳人只在群消息里成立：QQ 私聊 poke 通道名虽在册（outbound_registry
+            # 的 friend_poke），但「名称在册」≠「协议端实装」，本波离线拿不到实测
+            # 证据，故按「未证实即不放开」收在群内（先例=主动贴表情私聊不派发）。
+            require_group=True,
+        ):
+            return
+        await _dispatch_poke_at(
+            bot,
+            group=group,
+            group_id=group_id if group else 0,
+            user_id=user_id,
+            bot_id=str(getattr(bot, "self_id", "") or ""),
+            purpose=f"spoke-{purpose}",
+        )
+
+    async def _poke_voice_pair(
+        bot: Bot, event: Event, *, text: str, merged_config: Any, switches: Any = None
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """语音臂取数：交语音能力本体，本处零合成逻辑（禁第二通路）。
+
+        复用 ``bot.tts`` 命令能力（``build_tts_capability``）——它本来就产
+        「文本+语音」一个结果，念出的那串字与语音互相印证。事件是 notice，
+        摄取层对 NoticeEvent 族按空文本降级，故这里把要念的话经
+        ``model_copy`` 贴进同一份会话事实（会话/群/发送者一律沿用，policy 门与
+        名单门照原样生效）。拿不到音频=只留文本腿（合成失败/引擎未启/被政策
+        拦下都归这一态，绝不为凑语音编内容）。
+        """
+        if not str(text or "").strip():
+            return "", []
+        message = _incoming_from_nonebot_event(
+            event,
+            bot_id=str(getattr(bot, "self_id", "") or ""),
+            adapter_name="onebot",
+            # 细分开关快照照传（与全树其余摄取调用点同一约定：漏传=绕过层 2 门）。
+            feature_enabled=(
+                switches.enabled if switches is not None else None
+            ),
+        )
+        from .domains.media.capabilities.tts import (
+            build_tts_capability,
+            effective_trigger_words,
+        )
+
+        trigger = (effective_trigger_words(getattr(merged_config, "bot_tts_trigger_words", ()) or ()) or ["说"])[0]
+        spoken = message.model_copy(
+            update={"plain_text": f"{trigger} {str(text).strip()}"}
+        )
+        try:
+            result = await asyncio.to_thread(
+                build_tts_capability(merged_config), spoken, None
+            )
+        except Exception:  # noqa: BLE001 - 语音是增益：拿不到就只发文字。
+            return str(text).strip(), []
+        audio = [item for item in (getattr(result, "audio", []) or []) if isinstance(item, dict)]
+        if not audio:
+            return str(text).strip(), []
+        body = str(getattr(result, "body", "") or "").strip()
+        return (body or str(text).strip()), audio
+
+    async def _maybe_dispatch_randpic(
+        bot: Bot,
+        event: Event,
+        *,
+        merged_config: Any,
+        session_key: str,
+        message_key: str,
+        group_id: str,
+        user_id: str,
+    ) -> None:
+        """回复完用户消息后按概率发一张随机图（P14 三触发里的自动腿）。
+
+        取图只走 randpic 能力自己那条读目录路径（``pick_gallery_image``），
+        与指令路共用同一本「窗内不重发」账；门身共用 ``proactive_action_allowed``
+        （blocked 名单 + 安静时间 + 五层门）。图库未配置/为空/整库都在窗内 ⇒
+        一条都不发（主动动作宁缺不刷屏），绝不退化成发重复图。
+        """
+        if merged_config is None:
+            return
+        from .domains.chat_reply.capabilities.poke import (
+            ProactiveActionKnobs,
+            proactive_action_allowed,
+        )
+
+        if not proactive_action_allowed(
+            merged_config,
+            prefix="bot_randpic_dispatch_",
+            gate=_RANDPIC_DISPATCH_GATE,
+            session_key=session_key,
+            message_key=f"randpic:{message_key}",
+            group_id=group_id,
+            user_id=user_id,
+            salt="randpic-dispatch",
+            # 字面键名取数（与 poke 两族同判据）：见 ProactiveActionKnobs 的 why。
+            knobs=ProactiveActionKnobs(
+                enabled=bool(getattr(merged_config, "bot_randpic_dispatch_enabled", False)),
+                probability=float(
+                    getattr(merged_config, "bot_randpic_dispatch_probability", 0.1) or 0.1
+                ),
+                cooldown_seconds=float(
+                    getattr(merged_config, "bot_randpic_dispatch_cooldown_seconds", 600.0)
+                    or 600.0
+                ),
+                max_per_hour=int(
+                    getattr(merged_config, "bot_randpic_dispatch_max_per_hour", 2) or 2
+                ),
+            ),
+        ):
+            return
+        picked = await asyncio.to_thread(
+            pick_gallery_image,
+            merged_config,
+            session_key=session_key,
+            seed=f"randpic-dispatch:{session_key}:{message_key}",
+            allow_exhausted=False,
+        )
+        if picked is None:
+            return
+        await _send_parts_through_unified_pipeline(
+            bot,
+            event,
+            text="",
+            image=str(picked),
+            audit_tags=["randpic", "dispatch", "trigger:after_reply"],
+            capability_id="bot.randpic",
+        )
+
     poke_notice = on_notice(rule=_is_poke_event, priority=7, block=False)
 
     @poke_notice.handle()
@@ -5694,22 +6195,30 @@ def _register_nonebot_handlers() -> None:
         if not switches.enabled("bot.plugin.poke"):
             return
         merged_poke_config = _config_with_runtime_overrides(config, runtime_settings)
+        poke_back_on = switches.enabled("bot.plugin.poke.poke_back")
         reaction = _poke_dispatcher.build_poke_reaction(
             event,
             bot_id=str(getattr(bot, "self_id", "")),
             config=merged_poke_config,
+            poke_back_available=bool(poke_back_on),
         )
         if reaction is None or not reaction.active:
+            # 这一发不是戳机器人自己（或已被冷却/概率拦下）→ 跟戳那条腿。
+            await _maybe_follow_poke(
+                bot, event, merged_config=merged_poke_config, poke_back_on=poke_back_on
+            )
             return
         poker_id = str(getattr(event, "user_id", "") or "").strip()
+        poker_group = str(getattr(event, "group_id", "") or "").strip()
+        poke_delivered = False
         if reaction.poke_back and switches.enabled("bot.plugin.poke.poke_back"):
             # 回戳：统一出站面（V21-DISPATCH-001：OutboundIntent→准入→租约→
             # 固定映射→通道本体）；平台不支持/同键在途时诚实回执静默降级
             # （与旧 call_api 直连行为等价：失败不影响话术回复）。
-            try:
-                await _dispatch_poke_back(bot, event, group=bool(reaction.group))
-            except Exception:  # noqa: BLE001, S110 - 回戳失败不影响话术回复。
-                pass
+            poke_delivered = await _dispatch_poke_back(bot, event, group=bool(reaction.group))
+        if reaction.mode == "poke" and poke_delivered:
+            # 「只回戳」这条臂已经表达完了，不再叠话术（「回复只回一个」）。
+            return
         if not (reaction.reply and switches.enabled("bot.plugin.poke.reply")):
             return
         # poke v2：按形态组装单一回复（llm 失败/meme 库空 → 固定话术回退）；
@@ -5720,13 +6229,14 @@ def _register_nonebot_handlers() -> None:
                 return _record_poke_affinity(
                     merged_poke_config,
                     poker_id,
-                    str(getattr(event, "group_id", "") or ""),
+                    poker_group,
                 )
 
             attitude_hint = await asyncio.to_thread(_affinity_job)
         llm_text = ""
         meme_path = None
-        if reaction.mode == "llm":
+        randpic_path = None
+        if reaction.mode in ("llm", "voice"):  # 语音臂的文本腿也要走 LLM（第 14 项「语音+自然语言文本」）
             llm_text = await _poke_llm_reply(
                 merged_poke_config,
                 is_group=reaction.group,
@@ -5734,14 +6244,50 @@ def _register_nonebot_handlers() -> None:
             )
         elif reaction.mode == "meme":
             meme_path = await asyncio.to_thread(
-                _pick_poke_meme, meme_library_store, merged_poke_config
+                _pick_poke_meme,
+                meme_library_store,
+                merged_poke_config,
+                session_key=(
+                    f"group_{poker_group}_{poker_id}"
+                    if reaction.group
+                    else f"private_{poker_id}"
+                ),
+                sender_id=poker_id,
+            )
+        elif reaction.mode == "randpic":
+            randpic_path = await asyncio.to_thread(
+                pick_gallery_image,
+                merged_poke_config,
+                session_key=(
+                    f"group_{poker_group}_{poker_id}"
+                    if reaction.group
+                    else f"private_{poker_id}"
+                ),
+                seed=f"poke-randpic:{poker_id}:{poker_group}",
+                allow_exhausted=False,
             )
         reply_text, image = resolve_poke_reply(
             reaction.mode,
             fixed_text=reaction.reply,
             llm_text=llm_text or None,
             meme_path=meme_path,
+            randpic_path=str(randpic_path) if randpic_path else None,
         )
+        audio_parts: list[dict[str, Any]] = []
+        if reaction.mode == "voice" and reply_text:
+            reply_text, audio_parts = await _poke_voice_pair(
+                bot,
+                event,
+                text=reply_text,
+                merged_config=merged_poke_config,
+                switches=switches,
+            )
+        elif reaction.mode == "poke":
+            # 走到这里=回戳派发失败（平台不支持/同键在途/被拦）→ 温和回退固定
+            # 话术。绝不允许「选了只回戳结果会话里什么都没发生」这种静默空回。
+            reply_text = reaction.reply
+        if not (reply_text or image or audio_parts):
+            return
         prefix_parts = (
             [{"type": "at", "qq": poker_id}]
             if reaction.group and poker_id
@@ -5751,6 +6297,7 @@ def _register_nonebot_handlers() -> None:
             bot, event,
             text=reply_text,
             image=image,
+            audio=audio_parts,
             prefix_parts=prefix_parts,
             audit_tags=list(reaction.audit_tags),
             capability_id="bot.poke",
@@ -5833,33 +6380,44 @@ def _register_nonebot_handlers() -> None:
                 ).strip()
             except Exception:  # noqa: BLE001 - 昵称富集失败退通用称呼。
                 nickname = ""
-        if getattr(config, "bot_group_welcome_via_queue", False):
-            # S0 收编②（v21r4-b2-direct-collect-plan §3.2）：欢迎语走统一管线
-            # （notice 事件摄取对 NoticeEvent 族空文本降级，_incoming_from_nonebot_event）；
-            # 失败静默不影响主链路，SENT/REDIRECTED 才记 group_welcome_sent（不假成功）。
-            try:
-                receipt = await _send_text_through_unified_pipeline(
-                    bot,
-                    event,
-                    _group_welcome_text(nickname),
-                    capability_id="bot.group_welcome",
-                )
-            except Exception:  # noqa: BLE001 - 欢迎失败不影响主链路。
-                return
-            if receipt.state in {ReceiptState.SENT, ReceiptState.REDIRECTED}:
-                _log_runtime_event(
-                    runtime_event_log, "INFO", "group_welcome_sent", group_id=group_id
-                )
-            return
+        # 裁定 R-4（2026-09-24「走管线，全部统一」）：欢迎语**只**经统一管线（notice 事件
+        # 摄取对 NoticeEvent 族空文本降级，_incoming_from_nonebot_event）；失败静默不影响
+        # 主链路，SENT/REDIRECTED 才记 group_welcome_sent（不假成功）。旧
+        # `bot_group_welcome_via_queue` 开关与它下面的 `call_api` 直发分支一并退役——
+        # 留着"关态走直发"的开关＝留着第二条路（正是「在册未执法」那件事本身）。
         try:
-            await bot.call_api(
-                "send_group_msg",
-                group_id=int(group_id),
-                message=[{"type": "text", "data": {"text": _group_welcome_text(nickname)}}],
+            receipt = await _send_text_through_unified_pipeline(
+                bot,
+                event,
+                _group_welcome_text(nickname),
+                capability_id="bot.group_welcome",
             )
-            _log_runtime_event(runtime_event_log, "INFO", "group_welcome_sent", group_id=group_id)
-        except Exception:  # noqa: BLE001, S110 - 欢迎失败不影响主链路。
-            pass
+        except Exception:  # noqa: BLE001 - 欢迎失败不影响主链路。
+            return
+        if receipt.state in {ReceiptState.SENT, ReceiptState.REDIRECTED}:
+            _log_runtime_event(
+                runtime_event_log, "INFO", "group_welcome_sent", group_id=group_id
+            )
+            # P14：「bot 主动发言后」那条戳人腿——欢迎是新成员进群后 bot 先开口，
+            # 送达后才掷骰（没送达不掷、不记账）。缺省关；blocked/安静时间/五层门
+            # 全在 proactive_action_allowed 里，与回复后那条腿共用同一门身。
+            try:
+                welcome_switches = await product_feature_gate.snapshot_async()
+                await _maybe_poke_after_bot_spoke(
+                    bot,
+                    merged_config=_config_with_runtime_overrides(
+                        config, runtime_settings
+                    ),
+                    poke_back_on=welcome_switches.enabled(
+                        "bot.plugin.poke.poke_back"
+                    ),
+                    group_id=group_id,
+                    user_id=user_id,
+                    message_key=f"{group_id}-{user_id}",
+                    purpose="welcome",
+                )
+            except Exception:  # noqa: S110, BLE001 - 主动戳人失败绝不波及欢迎主链路。
+                pass
 
     @group_decrease_notice.handle()
     async def _handle_group_decrease(bot: Bot, event: Event) -> None:
@@ -5969,58 +6527,34 @@ def _register_nonebot_handlers() -> None:
         if error:
             await _send_text_through_unified_pipeline(bot, event, f"导出失败：{error}")
             return
-        if getattr(config, "bot_file_export_via_queue", False):
-            # S0 收编④（v21r4-b2-direct-collect-plan §3.4）：上传走统一管线
-            # files 件 → FileTransferGateway 既有链（平台方法面与直连一致：
-            # 群 upload_group_file / 私聊 upload_private_file）；成功/失败文案
-            # 由回执态驱动，失败不抛出（旧直连语义保持）。
-            try:
-                receipt = await _send_files_through_unified_pipeline(
-                    bot,
-                    event,
-                    files=[{"file": str(path), "name": path.name}],
-                    capability_id="bot.file",
-                )
-            except Exception:  # noqa: BLE001 - 统一路径异常与旧直连失败同语义。
-                receipt = None
-            if receipt is not None and receipt.state in {
-                ReceiptState.SENT,
-                ReceiptState.REDIRECTED,
-            }:
-                await _send_text_through_unified_pipeline(
-                    bot,
-                    event,
-                    f"已生成并上传 {fmt.upper()}：{path.name}（{max(1, path.stat().st_size // 1024)}KB）",
-                    capability_id="bot.file",
-                )
-            else:
-                await _send_text_through_unified_pipeline(
-                    bot, event, f"文件已生成但上传失败：{path.name}"
-                )
-            return
+        # 裁定 R-4 + 裁项 5（2026-09-24「全部统一、全面解决欠账」）：文档导出上传**只**走
+        # 统一管线 files 件 → FileTransferGateway 既有链（平台方法面与直连一致：
+        # 群 upload_group_file / 私聊 upload_private_file）；成功/失败文案由回执态驱动，
+        # 失败不抛出（旧直连语义保持）。旧 `bot_file_export_via_queue` 开关与其下的
+        # `call_api` 直传二分支一并退役。
         try:
-            if isinstance(event, GroupMessageEvent):
-                await bot.call_api(
-                    "upload_group_file",
-                    group_id=event.group_id,
-                    file=str(path),
-                    name=path.name,
-                )
-            else:
-                await bot.call_api(
-                    "upload_private_file",
-                    user_id=int(event.get_user_id()),
-                    file=str(path),
-                    name=path.name,
-                )
-        except Exception:  # noqa: BLE001 - 上传失败只回报类型。
-            await _send_text_through_unified_pipeline(bot, event, f"文件已生成但上传失败：{path.name}")
-            return
-        await _send_text_through_unified_pipeline(
-            bot,
-            event,
-            f"已生成并上传 {fmt.upper()}：{path.name}（{max(1, path.stat().st_size // 1024)}KB）",
-        )
+            receipt = await _send_files_through_unified_pipeline(
+                bot,
+                event,
+                files=[{"file": str(path), "name": path.name}],
+                capability_id="bot.file",
+            )
+        except Exception:  # noqa: BLE001 - 统一路径异常与旧直连失败同语义。
+            receipt = None
+        if receipt is not None and receipt.state in {
+            ReceiptState.SENT,
+            ReceiptState.REDIRECTED,
+        }:
+            await _send_text_through_unified_pipeline(
+                bot,
+                event,
+                f"已生成并上传 {fmt.upper()}：{path.name}（{max(1, path.stat().st_size // 1024)}KB）",
+                capability_id="bot.file",
+            )
+        else:
+            await _send_text_through_unified_pipeline(
+                bot, event, f"文件已生成但上传失败：{path.name}"
+            )
 
     async def _is_admin_cookie_command(event: Event) -> bool:
         return is_cookie_command(event.get_plaintext()) and await _is_admin_origin(event)
@@ -6173,47 +6707,27 @@ def _register_nonebot_handlers() -> None:
             await _send_text_through_unified_pipeline(bot, event, login_text)
             if png_path:
                 qr_file_ref = "file:///" + png_path.replace("\\", "/")
-                image_segment = {
-                    "type": "image",
-                    "data": {"file": qr_file_ref},
-                }
-                if getattr(config, "bot_cookie_qr_via_queue", False):
-                    # S0 收编③（v21r4-b2-direct-collect-plan §3.3）：图片走统一
-                    # 管线 mixed 件（text=""+image，同款在树先例=表情回应 meme
-                    # 抽图）；file:/// 引用与直连段逐字节同构
-                    # （onebot._resolve_local_file_ref 本地路径显式解析）。
-                    try:
-                        receipt = await _send_parts_through_unified_pipeline(
-                            bot,
-                            event,
-                            text="",
-                            image=qr_file_ref,
-                            audit_tags=["cookie_login_qr"],
-                            capability_id="bot.cookie_login",
-                        )
-                        if receipt.state not in {
-                            ReceiptState.SENT,
-                            ReceiptState.REDIRECTED,
-                        }:
-                            logging.getLogger(__name__).debug(
-                                "qr image send failed: receipt state=%s",
-                                receipt.state,
-                            )
-                    except Exception as exc:  # noqa: BLE001 - 图片发送失败时文本兜底已给出链接。
-                        logging.getLogger(__name__).debug("qr image send failed: %s", exc)
-                    return
+                # 裁定 R-4（全部统一）：二维码**只**走统一管线 mixed 件（text=""+image，
+                # 同款先例＝表情回应 meme 抽图）；file:/// 引用与旧直连段逐字节同构
+                # （onebot._resolve_local_file_ref 本地路径显式解析）。旧
+                # `bot_cookie_qr_via_queue` 开关与其下 group/private 二分支 `call_api`
+                # 直发一并退役——第二通路不该以"缺省关"的名义留在树上。
                 try:
-                    if isinstance(event, GroupMessageEvent):
-                        await bot.call_api(
-                            "send_group_msg",
-                            group_id=event.group_id,
-                            message=[image_segment],
-                        )
-                    else:
-                        await bot.call_api(
-                            "send_private_msg",
-                            user_id=int(event.get_user_id()),
-                            message=[image_segment],
+                    receipt = await _send_parts_through_unified_pipeline(
+                        bot,
+                        event,
+                        text="",
+                        image=qr_file_ref,
+                        audit_tags=["cookie_login_qr"],
+                        capability_id="bot.cookie_login",
+                    )
+                    if receipt.state not in {
+                        ReceiptState.SENT,
+                        ReceiptState.REDIRECTED,
+                    }:
+                        logging.getLogger(__name__).debug(
+                            "qr image send failed: receipt state=%s",
+                            receipt.state,
                         )
                 except Exception as exc:  # noqa: BLE001 - 图片发送失败时文本兜底已给出链接。
                     logging.getLogger(__name__).debug("qr image send failed: %s", exc)
@@ -6674,7 +7188,7 @@ def _register_nonebot_handlers() -> None:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 synthetic = message.model_copy(update={"plain_text": f"天气 {query}"})
-                return build_weather_capability(config, render_backend=render_backend)(synthetic, _decision)
+                return _build_weather_with_backend(config)(synthetic, _decision)
 
         elif resolution.capability_id == "bot.music":
             query = resolution.rest_text
@@ -6699,22 +7213,22 @@ def _register_nonebot_handlers() -> None:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 synthetic = message.model_copy(update={"plain_text": f"wiki {query}"})
-                return build_wiki_capability(config)(synthetic, _decision)
+                return _build_wiki_with_backend(config)(synthetic, _decision)
 
         elif resolution.capability_id == "bot.eat":
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                return build_eat_capability(config, render_backend=render_backend)(message, _decision)
+                return _build_eat_with_backend(config)(message, _decision)
 
         elif resolution.capability_id == "bot.news":
             # F9：别名链此前无 bot.news 分支，「守岸人 AI新闻」坠 help。
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                return build_news_capability(config)(message, _decision)
+                return _build_news_with_backend(config)(message, _decision)
 
         elif resolution.capability_id == "bot.epic":
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                return build_epic_capability(config, render_backend=render_backend)(message, _decision)
+                return _build_epic_with_backend(config)(message, _decision)
 
         elif resolution.capability_id == "bot.music_mode":
             from .domains.music.capabilities.music import (
@@ -6745,11 +7259,7 @@ def _register_nonebot_handlers() -> None:
         elif resolution.capability_id == "bot.affinity":
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                return build_affinity_capability(
-                    config,
-                    affinity_store=build_character_affinity_store(config),
-                    render_backend=render_backend,
-                )(message, _decision)
+                return _build_affinity_with_backend(config)(message, _decision)
 
         elif resolution.capability_id == "bot.subscribe":
 
@@ -8082,6 +8592,33 @@ def _register_nonebot_handlers() -> None:
                 "video understanding preprocess skipped type=%s",
                 type(exc).__name__,
             )
+        # 折句窗口（2026-09-25 用户裁定）：一句话被逗号拆成两三条发时，合成一轮、
+        # 只回一次——省下的正是多出来的回复次数与算力，也顺带不再撞同人冷却。
+        # 位置刻意在「合并转发已展开」「视频预处理已完成」之后、进管道之前：
+        # 再早就会丢掉后补上的正文。import 放函数体内，不在文件顶部插行，
+        # 免得把 campus_record_matcher 的登记坐标顶漂（同 5a 的先例）。
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+            message_coalescing as _coalescing,
+        )
+
+        if _coalescing.supports_coalescing(message):
+            _coalescer = _coalescing.shared_coalescer(
+                _coalescing.build_coalescing_settings(config)
+            )
+            _turn = await _coalescer.offer(
+                _coalescing.utterance_turn_key(message), message
+            )
+            if not _turn.owned:
+                # 已被折进别人那一轮：这一条不再单独回一句（省的就是这一次）。
+                _log_runtime_event(
+                    runtime_event_log,
+                    "INFO",
+                    "chat_turn_folded",
+                    message=message,
+                    capability_id="bot.chat",
+                )
+                return
+            message = _turn.message
         _log_runtime_event(
             runtime_event_log,
             "INFO",
@@ -8206,6 +8743,40 @@ def _register_nonebot_handlers() -> None:
                             meme_config=reaction_meme_config,
                         )
                     except Exception:  # noqa: BLE001, S110 - 表情包层失败绝不影响投递结果。
+                        pass
+                # P14 波「说完话之后」两条主动腿：概率戳一下对方 / 概率发一张随机图
+                # （后者=随机发图三触发里的自动腿，指令路一直是既有那条）。两条都
+                # 缺省关、各记各的门账，且都在 blocked 名单与安静时间窗之后；
+                # 任何异常一律吞在本块内——刚送达的正文不能被增益腿反噬。
+                if ".mail" not in event_module:
+                    spoke_message_key = str(
+                        getattr(event, "message_id", "") or message.request_id
+                    )
+                    try:
+                        await _maybe_poke_after_bot_spoke(
+                            bot,
+                            merged_config=reaction_meme_config,
+                            poke_back_on=switches.enabled(
+                                "bot.plugin.poke.poke_back"
+                            ),
+                            group_id=str(getattr(message, "group_id", "") or ""),
+                            user_id=str(getattr(message, "sender_id", "") or ""),
+                            message_key=spoke_message_key,
+                            purpose="reply",
+                        )
+                    except Exception:  # noqa: S110, BLE001 - 主动戳人失败不影响投递结果。
+                        pass
+                    try:
+                        await _maybe_dispatch_randpic(
+                            bot,
+                            event,
+                            merged_config=reaction_meme_config,
+                            session_key=message.session_id,
+                            message_key=spoke_message_key,
+                            group_id=str(getattr(message, "group_id", "") or ""),
+                            user_id=str(getattr(message, "sender_id", "") or ""),
+                        )
+                    except Exception:  # noqa: S110, BLE001 - 主动发图失败不影响投递结果。
                         pass
                 if history_should_record:
                     _record_chat_history_turn(
@@ -8543,6 +9114,134 @@ def _register_nonebot_handlers() -> None:
                 receipt.public_message or "（处理完成，没有需要展示的内容。）"
             )
 
+    # 需求 5（2026-09-26 goal18 波）：超管问「机器状态/机器配置」→ 现读本机事实 + Mica 卡片。
+    # import 刻意落在函数体内：置顶 import 会把 campus_record_matcher 等登记坐标整体顶漂
+    # （同 5a 先例）。能力本体经 offload_capability 下放线程池——秒级采集与渲染
+    # 绝不在事件循环线程上跑，否则整个会话冻结。
+    async def _is_host_state_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.HOST_STATE
+        )
+
+    host_state_matcher = on_message(rule=_is_host_state_event, priority=41, block=True)
+
+    @host_state_matcher.handle()
+    async def _handle_host_state(bot: Bot, event: Event) -> None:
+        from .domains.ops.capabilities.host_state import (
+            build_host_state_capability,
+        )
+
+        message = _incoming_from_nonebot_event(
+            event, bot_id=str(getattr(bot, "self_id", "unknown")),
+            feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
+        )
+        receipt = await pipeline.handle_async(
+            message,
+            offload_capability(build_host_state_capability(config)),
+            capability_id="bot.host_state",
+        )
+        await _notify_operational_receipt(message, receipt)
+        sent_request = _find_sent_request(send_queue, message.request_id)
+        if sent_request is not None:
+            transport_receipt = await _deliver_transport_send_request(
+                bot,
+                event,
+                sent_request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+            _record_runtime_diagnostic(
+                config=config,
+                diagnostics_store=diagnostics_store,
+                message=message,
+                capability_id="bot.host_state",
+                receipt=transport_receipt,
+                send_queue=send_queue,
+                audit_logger=audit_logger,
+            )
+            await _notify_operational_receipt(message, transport_receipt)
+            if transport_receipt.state.value == "sent":
+                return
+            if should_finish_nonebot_matcher(transport_receipt):
+                await host_state_matcher.finish(
+                    transport_receipt.public_message or "（处理完成，没有需要展示的内容。）"
+                )
+        if should_finish_nonebot_matcher(receipt):
+            await host_state_matcher.finish(
+                receipt.public_message or "（处理完成，没有需要展示的内容。）"
+            )
+
+    # 第 18 项最后一里（S-CONSDISP 席，2026-09-26）：书面同意的**批准腿**接进生产
+    # dispatch。谓词/能力/工厂/帮助主题全在册（base_router RouteRule CONSENT priority 41、
+    # capability_registry bot.consent、echo「书面同意」），此前独缺根装配面上这条
+    # on_message 承载——「同意卡 批 …」在真机走不到 parse_consent_command
+    # （S-CONSENT-APPROVE §⑨-A 的落点）。三件套结构照 host_state 范式；import 刻意落在
+    # 函数体内：置顶 import 会把 campus_record_matcher 等登记坐标整体顶漂（同 5a 先例）。
+    # gate_provider 每次现读 store 的门句柄——门是惰性建的，构造期快照会把命令面永远
+    # 钉成「门没装载」（consent_admin.py:331-336 头注点名的旧坑，装配期快照是本仓反复
+    # 踩过的形态）。权限阶梯零复制：这里只投递，判角色/私聊门/防自批/TTL 全在
+    # consent.redeem_from_message 唯一真身。
+    async def _is_consent_event(state: T_State, event: Event) -> bool:
+        return (
+            _cached_route_decision(state, event, config=config).kind
+            is RouteKind.CONSENT
+        )
+
+    consent_matcher = on_message(rule=_is_consent_event, priority=41, block=True)
+
+    @consent_matcher.handle()
+    async def _handle_consent(bot: Bot, event: Event) -> None:
+        from .domains.ops.capabilities.consent_admin import (
+            build_consent_admin_capability,
+        )
+
+        message = _incoming_from_nonebot_event(
+            event, bot_id=str(getattr(bot, "self_id", "unknown")),
+            feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
+        )
+        receipt = await pipeline.handle_async(
+            message,
+            offload_capability(
+                build_consent_admin_capability(
+                    lambda: getattr(runtime_settings, "safety_gate", None)
+                )
+            ),
+            capability_id="bot.consent",
+        )
+        await _notify_operational_receipt(message, receipt)
+        sent_request = _find_sent_request(send_queue, message.request_id)
+        if sent_request is not None:
+            transport_receipt = await _deliver_transport_send_request(
+                bot,
+                event,
+                sent_request,
+                audit_logger,
+                receipt_repository,
+                send_queue,
+            )
+            _record_runtime_diagnostic(
+                config=config,
+                diagnostics_store=diagnostics_store,
+                message=message,
+                capability_id="bot.consent",
+                receipt=transport_receipt,
+                send_queue=send_queue,
+                audit_logger=audit_logger,
+            )
+            await _notify_operational_receipt(message, transport_receipt)
+            if transport_receipt.state.value == "sent":
+                return
+            if should_finish_nonebot_matcher(transport_receipt):
+                await consent_matcher.finish(
+                    transport_receipt.public_message or "（处理完成，没有需要展示的内容。）"
+                )
+        if should_finish_nonebot_matcher(receipt):
+            await consent_matcher.finish(
+                receipt.public_message or "（处理完成，没有需要展示的内容。）"
+            )
+
     # 审查 C-07：IGNORE 命令形态引导闭环——「/help」类命令形态落 IGNORE
     # 时回一句守岸人引导（60s/会话节流），普通闲聊零波及；限流/安静时间
     # 拦截的静默语义（09-12 实弹裁定）不经过本 matcher。
@@ -8802,7 +9501,7 @@ def _register_nonebot_handlers() -> None:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 synthetic = message.model_copy(update={"plain_text": normalized_text})
-                return build_weather_capability(config, render_backend=render_backend)(synthetic, _decision)
+                return _build_weather_with_backend(config)(synthetic, _decision)
 
         elif capability_id == "bot.music":
 
@@ -8827,7 +9526,7 @@ def _register_nonebot_handlers() -> None:
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 synthetic = message.model_copy(update={"plain_text": normalized_text})
-                return build_wiki_capability(config)(synthetic, _decision)
+                return _build_wiki_with_backend(config)(synthetic, _decision)
 
         elif capability_id == "bot.eat":
 
@@ -8836,18 +9535,18 @@ def _register_nonebot_handlers() -> None:
                 # 带多连 @ 前缀，eat 的 ^ 锚定正则会全部失配掉进随机推荐
                 # （实弹 17:01:33「@颜佑° @守岸人 菜谱 西红柿炒鸡蛋」当众推错菜）。
                 synthetic = message.model_copy(update={"plain_text": normalized_text})
-                return build_eat_capability(config, render_backend=render_backend)(synthetic, _decision)
+                return _build_eat_with_backend(config)(synthetic, _decision)
 
         elif capability_id == "bot.news":
             # F9：自然语言链补 bot.news 分支（新闻类触发此前只有裸命令面）。
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
                 synthetic = message.model_copy(update={"plain_text": normalized_text})
-                return build_news_capability(config)(synthetic, _decision)
+                return _build_news_with_backend(config)(synthetic, _decision)
 
         elif capability_id == "bot.epic":
 
             def capability(message: IncomingMessage, _decision: Any) -> CapabilityResult:
-                return build_epic_capability(config, render_backend=render_backend)(message, _decision)
+                return _build_epic_with_backend(config)(message, _decision)
 
         elif capability_id == "bot.meme_library":
             from .domains.meme.capabilities.meme_library import (
@@ -9192,6 +9891,49 @@ def _register_nonebot_handlers() -> None:
         )
         if should_finish_nonebot_matcher(receipt):
             await moegirl_question.finish(receipt.public_message)
+
+    # >>> S139-KBSYNC-ALERT-SINK BEGIN（哨兵配对：活性锁 tests/test_ann_observability_s139.py
+    # 按这对哨兵把本块真身文本抽出来、注入假装配件 exec——"注入可达"判据，
+    # 先例同 WP10-SYNC-DRIFT-WIRING 的 test_sync_drift_activation）
+    # kb-sync 告警 sink 装配（S139 缺陷 2）：`set_kb_sync_alert_sink` 自 S112 立形起
+    # 全树零注入点（kb_wiki:33 与告警卡 fix_suggestion 都宣称"接入 runtime/alerts"，
+    # 实际内存门拒建那张五要素卡今天投不出去，只落一行 WARNING）。
+    # 出口唯一复用既有中央告警件 alerts.build_alert_content_sink（300s 抑制器、
+    # send_admin_alert_requests 投递——与 sync_drift/voice 探针同一本账，不另开通道）。
+    # 门与上方 kb_wiki 调度器注册（_register_kb_wiki_sync_scheduler 调用点）同源：
+    # bot_kb_wiki_enabled ∧ root 非空；再叠 pipeline/超管名单两道缺件即不注入
+    # （回到"只打日志"的旧行为，绝不拿 None pipeline 造半个 sink）。
+    # 落点在 `_register_nonebot_handlers` 之尾、outbound_registry 全部在册坐标
+    # （最大值 media_archive :9285）之下 ⇒ 零顶漂（campus/consent 等登记行号不动）。
+    try:  # fail-open：观测装配故障绝不炸插件加载。
+        if bool(getattr(config, "bot_kb_wiki_enabled", False)) and str(
+            getattr(config, "bot_kb_wiki_root", "") or ""
+        ).strip():
+            from plugins.bot_unified_runtime.domains.location.knowledge.kb_wiki import (
+                set_kb_sync_alert_sink as _set_kb_sync_alert_sink,
+            )
+            from plugins.bot_unified_runtime.domains.ops.monitor.alerts import (
+                build_alert_content_sink as _build_kb_sync_alert_sink,
+            )
+
+            _kb_sync_alert_admins = [
+                str(item).strip()
+                for item in (getattr(config, "bot_super_admin_user_ids", []) or [])
+                if str(item).strip()
+            ]
+            if pipeline is not None and _kb_sync_alert_admins:
+                _set_kb_sync_alert_sink(
+                    _build_kb_sync_alert_sink(
+                        pipeline,
+                        _kb_sync_alert_admins,
+                        log=logging.getLogger(__name__),
+                    )
+                )
+    except Exception:  # noqa: BLE001 - sink 注不上 ⇒ kb-sync 回到只打日志的旧形态。
+        logging.getLogger(__name__).exception(
+            "kb-sync 告警 sink 注入失败，已跳过（同步主链路不受影响）"
+        )
+    # <<< S139-KBSYNC-ALERT-SINK END
 
 
 

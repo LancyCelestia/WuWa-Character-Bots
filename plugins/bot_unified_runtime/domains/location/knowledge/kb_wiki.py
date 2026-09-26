@@ -1019,9 +1019,20 @@ def build_ann_memory_alert_content(result: dict[str, Any]) -> Any:
     三条都要在卡面上，否则读到的人只会问"那我该怎么办"。数字全部来自
     `vector_knowledge` 门自己产出的度量字典，本函数一字不重算。
 
-    刻意不说"没事了"：跳过 ≠ 恢复。旧索引继续在位、完备性闸继续拒用、
-    检索继续走暴力扫描（慢而全）——影响那一栏讲的是这件事。
+    口径修正（S139 缺陷 1）：`floor` 那枚 4.5 GiB 在卡面与 observed 话术里
+    曾被写成"绝对下限"——它是 S85 在 766,126 条标定点上的**经验合价（标定值）**，
+    需求式是全比例模型、不设绝对门槛（真身注释 `_ANN_BUILD_MIN_AVAILABLE_BYTES`）。
+    阈值类文案不得把标定说成物理下限（本仓口径），现措辞以"标定"点名。
+
+    升格（S139 缺陷 4）：度量里 `consecutive_skips` ≥ 真身阈值
+    （`_ANN_MEMORY_SKIP_ESCALATION_ROUNDS`，读自 vector_knowledge，不在本模块
+    抄第二枚数）⇒ level 升 critical 并点名"连续 N 轮"——长期饿死不许再以
+    warning 的音量混过去。level 参与抑制键（location+level+管理员），升级
+    天然跳出旧 warning 桶，仍是同一把抑制器、同一本账。
     """
+    from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
+        _ANN_MEMORY_SKIP_ESCALATION_ROUNDS,
+    )
     from plugins.bot_unified_runtime.domains.ops.monitor.alerts import AlertContent
 
     gate = result.get("ann_memory_gate")
@@ -1035,6 +1046,11 @@ def build_ann_memory_alert_content(result: dict[str, Any]) -> Any:
     probe_failed = bool(metrics.get("probe_failed"))
     reason = str(result.get("ann_reason") or "")
     midway = reason == "insufficient_memory_midway"
+    try:
+        consecutive = int(metrics.get("consecutive_skips") or 0)
+    except (TypeError, ValueError):
+        consecutive = 0
+    escalated = consecutive >= _ANN_MEMORY_SKIP_ESCALATION_ROUNDS
     measured = (
         "可用物理内存探针取不到数（按不可判定 fail-closed，未开火）"
         if probe_failed
@@ -1042,15 +1058,16 @@ def build_ann_memory_alert_content(result: dict[str, Any]) -> Any:
     )
     return AlertContent(
         title="百科知识库 ANN 索引本轮没有重建（内存门）"
-        + ("：中途收火" if midway else ""),
+        + ("：中途收火" if midway else "")
+        + (f"：已连续 {consecutive} 轮" if escalated else ""),
         what_happened=(
             f"kb-sync（{result.get('mode')}）本身跑通了，但 ANN 全量重建被内存门"
             f"挡下：{measured}，本轮需要 {required}"
-            f"（绝对下限 {floor} + 观察余量 {headroom}"
+            f"（全比例线性计价 + 观察余量 {headroom}"
             + (
                 f"，按计数戳上界 {vectors} 条 × {dim} 维估）"
                 if vectors
-                else "，规模无从估定，按绝对下限判）"
+                else "，规模无从估定，按活体下限判）"
             )
             + (
                 f"；已装 {result.get('ann_vectors_built_before_abort', 0)} 条时收火，"
@@ -1058,22 +1075,37 @@ def build_ann_memory_alert_content(result: dict[str, Any]) -> Any:
                 if midway
                 else "；开火前即跳过，线上索引一字未动"
             )
+            + (
+                f"。这已是连续第 {consecutive} 轮被挡"
+                f"（≥{_ANN_MEMORY_SKIP_ESCALATION_ROUNDS} 轮升格）——"
+                "不是十分钟级水位抖动的一次失手，是持续饿死"
+                if escalated
+                else ""
+            )
         ),
         impact=(
             "本轮新嵌入的向量今晚仍然进不了 ANN——完备性闸照旧拒用索引，"
             "百科检索继续回落暴力扫描（慢而全，正确性不受影响，延迟受影响）。"
-            "跳过不等于恢复：只有下一次重建成功 publish 才会重新放行 ANN。"
+            "跳过不等于恢复：只有下一次重建成功 publish 才会重新放行 ANN"
+            + (
+                f"；卡面参考值 {floor} 是 S85 在 766,126 条标定点上的经验合价"
+                "（标定值，不是绝对下限），需求随条数线性走、不设绝对门槛。"
+                if floor != "未取到"
+                else "。"
+            )
         ),
         fix_suggestion=(
             "①等这台机器空出可用物理内存到上述需求之上（夜间档错开爬虫与 bot），"
             "下一轮同步会自动补建；②要立刻补跑，用 operator CLI："
             "powershell -File scripts/dev.ps1 -Task kb-sync 加 --ann-force-low-memory"
-            "（显式越门，越门本身另记一条痕，OOM 风险由越门者承担）；"
-            "③要看上一轮门到底量到了什么：读 knowledge_meta 的 "
-            "ann_build_last_memory_skip 一行（WebUI 知识页同源）。"
+            "（显式越门，越门本身另记一条痕，OOM 风险由越门者承担；"
+            "knowledge-sync 任务同旗同门，越门轮也可取消）；"
+            "③要看上一轮门到底量到了什么（含连续被挡计数）：读 knowledge_meta 的 "
+            "ann_build_last_memory_skip 一行——重启预检第 13 项 ann_pair "
+            "（scripts/pre_restart_check.py）现读此行并派生 MEMORY_SKIP 状态。"
         ),
         location=_SYNC_ALERT_LOCATION,
-        level="warning",
+        level="critical" if escalated else "warning",
     )
 
 
@@ -1438,15 +1470,24 @@ def _run_kb_sync_task_locked(
         observed: list[str] = []
         if str(result.get("ann_reason") or "") in _ALERTABLE_ANN_REASONS:
             # 内存门跳过的话术要点：实算了多少 / 阈值多少 / 下一发怎么放行。
+            # 口径修正（S139 缺陷 1）：floor 那枚是 S85 标定合价，不是绝对下限
+            # ——旧话术把它写成"下限+余量"的组成式，与真身全比例模型不符。
             gate = result.get("ann_memory_gate")
             metrics = gate if isinstance(gate, dict) else {}
+            try:
+                _consec = int(metrics.get("consecutive_skips") or 0)
+            except (TypeError, ValueError):
+                _consec = 0
             observed.append(
                 "ANN 本轮未重建（内存门，"
                 f"{result.get('ann_reason')}）：实测可用 "
                 f"{metrics.get('available') or '未取到'}，需要 "
                 f"{metrics.get('required') or '未取到'}"
-                f"（下限 {metrics.get('floor') or '未取到'} + 余量 "
-                f"{metrics.get('headroom') or '未取到'}）。暴力扫描照旧，"
+                f"（全比例线性计价 + 观察余量 "
+                f"{metrics.get('headroom') or '未取到'}；{metrics.get('floor') or '未取到'} "
+                "系 S85 标定合价、不是绝对下限）"
+                + (f"，已连续 {_consec} 轮被挡" if _consec > 1 else "")
+                + "。暴力扫描照旧，"
                 "新向量今晚仍进不了 ANN；要立刻补跑用 operator CLI 加 "
                 "--ann-force-low-memory（显式越门、另记痕）"
             )

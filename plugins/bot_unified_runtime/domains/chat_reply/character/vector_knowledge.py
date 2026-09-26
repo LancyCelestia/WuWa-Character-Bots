@@ -437,7 +437,31 @@ _ANN_BUILD_MEMORY_RECHECK_VECTORS = 32_768
 # ^ 批间复检粒度（16 个构建批一次 stat，成本可忽略；重建是分钟级，
 #   内存形状在这段时间里真的会变——只查一次的前置检查会被实况击穿）。
 _ANN_MEMORY_SKIP_META_KEY = "ann_build_last_memory_skip"
-# ^ 跳过留痕（观测面，WebUI/离线探针只读）：只存度量，不存磁盘路径。
+# ^ 跳过留痕（观测面）：只存度量，不存磁盘路径。程序读者现算在两处——
+#   ① 重启预检第 13 项 `ann_pair`（scripts/pre_restart_check.py 的
+#   `inspect_ann_generation_pair`，只读点查此行并派生 MEMORY_SKIP 状态）；
+#   ② kb-sync 告警话术（本模块把 `memory_gate` 度量随行交回，kb_wiki 拼五要素卡）。
+#   S126 登记时"无任何程序读者"一格即缺①；①由 S141 补、本行注释跟随（S139）。
+_ANN_MEMORY_SKIP_CONSECUTIVE_KEY = "consecutive_skips"
+_ANN_MEMORY_SKIP_TOTAL_KEY = "total_skips"
+# ^ 累计计数（S139 缺陷 4）：与跳过留痕同一枚 meta、同一批写点，**不另起一行账**
+#   （第二枚键=第二本账，读者要跨两行对齐才知道"连续没连续"）。
+#   语义：只数**未越门**的被挡轮（pre/midway 各算一轮）；显式越门既不加也不清
+#   （那是人工放行动作，不是"门又挡了一夜"）；publish 成功即清零连续数
+#   （total 只增不减，保留历史总量）。清零写点唯一在 `_publish_ann_pair` 尾部
+#   （= 计数戳唯一权威赋值点同侧），跳过分支结构锁不许它碰落戳/发布动作。
+_ANN_MEMORY_SKIP_ESCALATION_ROUNDS = 3
+# ^ 「连续被挡 ⇒ 升格告警」阈值。依据不是手感，是三条在册实况：
+#   ① 节拍——kb-sync 每日一轮（cron 23:40 + 启动补跑），"轮"≈"夜"；
+#   ② 抖动尺度——S105 实测可用内存抖动是**十分钟级**（2.99 → 1.62 GiB），
+#      一次被挡属"当夜水位"事件，次夜自愈是常态（今夜被挡、明夜重建成功
+#      即清零，见上一条的清零语义）；
+#   ③ 反例形态——2026-09-22 停摆的前置形态正是"拒用每轮一致却无人升账"
+#      （SEAT-MAIN §1.2：戳 741,428/ntotal 740,996 恒红，每问付暴力扫描）。
+#   连续 3 夜被挡已超出 ② 能解释的范围，落入 ③ 的积累形态 ⇒ 该升格；
+#   代价上界是"水位真连坏 3 夜时多发一张 critical 卡"，方向是变严不是变松。
+#   升格只改**告警面**（level warning→critical + 点名连续数），不改门判据：
+#   门永远按当轮实测判定，绝不为"攒够 3 次"而提前放行或提前拒火。
 
 
 def _available_physical_memory_bytes() -> int | None:
@@ -2753,7 +2777,9 @@ class SqliteVectorKnowledgeStore:
                 "memory_probe_unavailable" if verdict.probe_failed else "insufficient_memory"
             )
             if not force_low_memory:
-                self._record_ann_memory_skip(verdict, forced=False, stage="pre")
+                gate_meta = self._record_ann_memory_skip(
+                    verdict, forced=False, stage="pre"
+                )
                 logger.warning(
                     "跳过 ANN 重建（内存门）：%s — 实测可用 %s，需要 %s"
                     "（按 %s 条 × dim=%s 估，规模未知时退到活体下限 %s）；"
@@ -2769,7 +2795,7 @@ class SqliteVectorKnowledgeStore:
                     verdict.dim,
                     f"{_ANN_BUILD_MIN_HEADROOM_BYTES / 1024**2:.0f}MiB",
                 )
-                return {"built": False, "reason": reason, "memory_gate": verdict.as_meta()}
+                return {"built": False, "reason": reason, "memory_gate": gate_meta}
             self._record_ann_memory_skip(verdict, forced=True, stage="pre")
             logger.warning(
                 "ANN 重建越门开火（--ann-force-low-memory）：实测可用 %s < 需要 %s，"
@@ -2815,20 +2841,64 @@ class SqliteVectorKnowledgeStore:
 
     def _record_ann_memory_skip(
         self, verdict: _AnnMemoryVerdict, *, forced: bool, stage: str
-    ) -> None:
+    ) -> dict[str, Any]:
         """把内存门的判决写进 knowledge_meta（跳过留痕之二：观测行）。
+
+        返回落盘 payload（含 `_ANN_MEMORY_SKIP_CONSECUTIVE_KEY` /
+        `_ANN_MEMORY_SKIP_TOTAL_KEY` 两枚累计计数）——调用方把它原样带进
+        结果字典的 `memory_gate`，告警话术与重启预检读的都是这一份，
+        **不在别处重算计数**（重算=第二口径）。
+
+        计数语义（S139 缺陷 4，见常量块注释）：未越门的被挡轮 +1；越门记录
+        不动计数；publish 成功由 `_publish_ann_pair` 清零连续数。上一行读不出
+        （缺行/坏 JSON/旧版无计数）按 0 起步——只影响"从哪格开始数"，不影响门。
 
         fail-open：观测面自身故障绝不改判、绝不抛出——门已经做完判决了，
         记不上账是"少一条痕迹"，不是"可以开火"。
         """
+        prev_consecutive = 0
+        prev_total = 0
         try:
-            payload = dict(verdict.as_meta())
-            payload["forced"] = forced
-            payload["stage"] = stage
-            payload["at_unix"] = int(time.time())
+            previous = json.loads(str(self.get_meta(_ANN_MEMORY_SKIP_META_KEY) or ""))
+            if isinstance(previous, dict):
+                prev_consecutive = max(0, int(previous.get(_ANN_MEMORY_SKIP_CONSECUTIVE_KEY) or 0))
+                prev_total = max(0, int(previous.get(_ANN_MEMORY_SKIP_TOTAL_KEY) or 0))
+        except Exception:  # noqa: S110, BLE001 - 无旧行/畸形旧行都按 0 起步（fail-open）。
+            pass
+        payload = dict(verdict.as_meta())
+        payload["forced"] = forced
+        payload["stage"] = stage
+        payload["at_unix"] = int(time.time())
+        if forced:
+            payload[_ANN_MEMORY_SKIP_CONSECUTIVE_KEY] = prev_consecutive
+            payload[_ANN_MEMORY_SKIP_TOTAL_KEY] = prev_total
+        else:
+            payload[_ANN_MEMORY_SKIP_CONSECUTIVE_KEY] = prev_consecutive + 1
+            payload[_ANN_MEMORY_SKIP_TOTAL_KEY] = prev_total + 1
+        try:
             self.set_meta(_ANN_MEMORY_SKIP_META_KEY, json.dumps(payload, ensure_ascii=False))
         except Exception:  # 记账失败不改变门判决（fail-open，观测面自身故障绝不改判）。
             logger.debug("ANN 内存门记账失败（不影响结论）", exc_info=True)
+        return payload
+
+    def _reset_ann_memory_skip_counters(self) -> None:
+        """publish 成功后清零连续被挡计数（S139 缺陷 4 的另一半）。
+
+        只改两枚计数、**保留上一轮被挡的全部度量**（available/required/…照旧
+        在行里）——"上次被挡的规模与原因"是历史事实，重建成功不把它抹掉；
+        清掉的是"连续"这个正在恶化的信号。无行/坏行 ⇒ 什么都不动（没有连续
+        可言）。fail-open：清账故障绝不牵连已成功的 publish。
+        """
+        try:
+            previous = json.loads(str(self.get_meta(_ANN_MEMORY_SKIP_META_KEY) or ""))
+            if not isinstance(previous, dict):
+                return
+            previous[_ANN_MEMORY_SKIP_CONSECUTIVE_KEY] = 0
+            self.set_meta(
+                _ANN_MEMORY_SKIP_META_KEY, json.dumps(previous, ensure_ascii=False)
+            )
+        except Exception:  # 观测面故障不牵连已完成的发布（fail-open，与记账口同纪律）。
+            logger.debug("ANN 内存门计数清零失败（不影响已发布的索引）", exc_info=True)
 
     def _require_ann_lock(self) -> None:
         """覆写线上 ANN 前的持锁凭证：无锁一律拒绝（不新增旁路写口）。"""
@@ -2895,6 +2965,9 @@ class SqliteVectorKnowledgeStore:
         # ntotal >= 戳 ⇒ 判可用——那个新索引本来就装满，判它可用是对的；
         # 反过来先落戳再换文件才会造出「戳新文件旧」的假短装、白回落暴力。
         self._stamp_expected_vector_count(int(index.ntotal))
+        # 发布成功 ⇒ 内存门「连续被挡」计数清零（S139 缺陷 4 的清零腿；
+        # fail-open，绝不牵连刚成功的 publish）。
+        self._reset_ann_memory_skip_counters()
         self._drop_ann_cache()
         return {
             "ann_bytes": attestation["index_bytes"],
@@ -2976,7 +3049,7 @@ class SqliteVectorKnowledgeStore:
                         )
                         next_memory_check += _ANN_BUILD_MEMORY_RECHECK_VECTORS
                     if recheck is not None and not recheck.allowed:
-                        self._record_ann_memory_skip(
+                        recheck_meta = self._record_ann_memory_skip(
                             recheck, forced=False, stage="midway"
                         )
                         logger.warning(
@@ -2994,7 +3067,7 @@ class SqliteVectorKnowledgeStore:
                             "built": False,
                             "reason": "insufficient_memory_midway",
                             "vectors_built_before_abort": len(chunk_ids),
-                            "memory_gate": recheck.as_meta(),
+                            "memory_gate": recheck_meta,
                         }
                 rows = cursor.fetchmany(_ANN_BUILD_BATCH_SIZE)
                 if not rows:
