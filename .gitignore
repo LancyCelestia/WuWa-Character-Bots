@@ -114,3 +114,8 @@ webui/dist/
 # 此两行为防未来 assets//json 规则误伤的保险，勿删）
 !plugins/bot_unified_runtime/domains/weather/assets/
 !plugins/bot_unified_runtime/domains/weather/assets/qx.json
+
+# 会话产物隔离（R1 批① C1，2026-09-27 fullload 波；搬运归档另由该面 owner 执行）
+probes/
+SEAT-S*.md
+.qoder/scheduled_tasks.json
