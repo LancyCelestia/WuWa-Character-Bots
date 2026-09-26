@@ -125,27 +125,35 @@ class MemeLibraryStore:
         """
         if not self.no_repeat:
             return None
-        if self._history_attempted:
-            return self._history
-        self._history_attempted = True
-        try:
-            from plugins.bot_unified_runtime.domains.meme.sources.send_history import (
-                MemeSendHistoryStore,
-            )
+        # S-RANDPIC-LEDGER2（2026-09-26，贴纸族并发验证抓到的真竞态）：「置 attempted」
+        # 与「构造完成」原来不在同一把锁里——A 线程刚置 True、store 还没建好时，
+        # B 线程从这里领走一个 None，整条咽喉退回「无账本」旧行为，同贴库并发
+        # 实测双发（tests/test_randpic_no_repeat_ledger.py E 组锁）。锁内建一次，
+        # 旁观者只会等锁、不会再领半件。所有 self.history 调用点都在方法入口、
+        # 不在本类 _lock 块内，此处加锁无重入死锁面。
+        with self._lock:
+            if self._history_attempted:
+                return self._history
+            self._history_attempted = True
+            try:
+                from plugins.bot_unified_runtime.domains.meme.sources.send_history import (
+                    MemeSendHistoryStore,
+                )
 
-            self._history = MemeSendHistoryStore(
-                self.db_path.parent / "meme_send_history.sqlite3",
-                window=self._history_window,
-                retention_days=self._history_retention_days,
-            )
-        except Exception:  # noqa: BLE001 - 账本打不开只是失去反重复，不带走选图。
-            self._history = None
-        return self._history
+                self._history = MemeSendHistoryStore(
+                    self.db_path.parent / "meme_send_history.sqlite3",
+                    window=self._history_window,
+                    retention_days=self._history_retention_days,
+                )
+            except Exception:  # noqa: BLE001 - 账本打不开只是失去反重复，不带走选图。
+                self._history = None
+            return self._history
 
     def set_history(self, history: Any | None) -> None:
         """注入/关闭账本（测试与装配层用；传 ``None`` 即禁用反重复）。"""
-        self._history = history
-        self._history_attempted = True
+        with self._lock:
+            self._history = history
+            self._history_attempted = True
 
     def ensure_content_sha(self, md5: str, *, path: str | Path) -> str:
         """补算并回写某一行的内容哈希；已有则直接返回（一次算，永久复用）。"""

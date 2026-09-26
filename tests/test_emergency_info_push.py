@@ -477,7 +477,7 @@ def _route_rule_priorities() -> dict[str, int]:
 
 #: 根面 `block=True` 却对不上任何 RouteKind 的 matcher（**显式登记面**，不是放宽）。
 #: 本门断言「实际未覆盖集 ⊆ 本表」且「本表每一项今天确实未覆盖」——新增一个对不上号
-#: 的 matcher 会当场红，把这 9 条中任何一条修好接线也会红（要求同批删名）。
+#: 的 matcher 会当场红，把本表任何一条修好接线也会红（要求同批删名）。
 #: 逐条归属与可信度见 report §6（管理员命令族=设计如此；其余=命名漂移，未逐条核实）。
 UNPINNABLE_MATCHERS: frozenset[str] = frozenset(
     {
@@ -490,6 +490,17 @@ UNPINNABLE_MATCHERS: frozenset[str] = frozenset(
         "image_search",
         "natural",
         "subscribe_cmd",
+        # ↓ 2026-09-26 十八项收尾波新装的两枚命令族（第 18 项书面同意入口 / 第 5 项宿主机状态）。
+        # 它们**有** RouteKind  twin（`RouteKind.CONSENT="consent"`、`RouteKind.HOST_STATE="host_state"`），
+        # 只是根面变量名取 `<kind>_matcher` 形态，与"变量名 == RouteKind 值"的实比惯例不合，
+        # 所以落进未覆盖集。刻意不静默豁免：等值改由
+        # `test_consent_and_host_state_double_pins_are_registered_and_equal` 逐枚钉死
+        # （两侧都在位 + 两侧相等 + 值必须为 41），强度不低于实比——这条先例就是上面紧急域
+        # 那枚 `_EMERGENCY_DOUBLE_PIN_PRIORITY` 的写法。为什么不直接改名进实比：
+        # `tests/test_consent_command_surface.py:664` 的 AST 活性锁按 `endswith("consent_matcher")`
+        # 取节，改名会打断装配可达性锁；改锁与改名谁先谁后由该件 owner 定，本波不动它。
+        "consent_matcher",
+        "host_state_matcher",
     }
 )
 
@@ -571,3 +582,49 @@ def test_emergency_info_double_pin_is_registered_and_equal() -> None:
         f"实得 matcher={matchers['emergency_info']} rule={kinds['emergency_info']}："
         "两侧一起漂也是漂（45 会撞 natural 的判定序）"
     )
+
+
+#: 书面同意 / 宿主机状态两族的双钉唯一期望值（2026-09-26 现算：RouteRule 与根 matcher 同为 41）。
+_CONSENT_HOST_DOUBLE_PIN_PRIORITY = 41
+
+#: (登记名, RouteKind 值, 族名) —— 命名不合"变量名==kind 值"惯例，故全族循环比不到，逐枚点名。
+_DOUBLE_PIN_BY_NAME: tuple[tuple[str, str, str], ...] = (
+    ("consent_matcher", "consent", "书面同意"),
+    ("host_state_matcher", "host_state", "宿主机状态"),
+)
+
+
+def test_consent_and_host_state_double_pins_are_registered_and_equal() -> None:
+    """`UNPINNABLE_MATCHERS` 新增两枚的**配套正向等值锁**（登记不等于豁免）。
+
+    全族一致性锁按「根 matcher 变量名 == RouteKind 值」配对，这两枚变量带 `_matcher`
+    后缀进不了循环 ⇒ 若只登记不补锁，priority 从此没人管（R-1 的双钉一致性对它们失效）。
+    本例逐枚做三件事，与紧急域那枚同形：① 任一侧消失当场红并点名缺哪一侧
+    （RouteRule 在而 matcher 没装 = 中央判出来了没人接、消息坠地；反之 = 根面空转）；
+    ② 两侧值必须相等；③ 相等的那枚必须是 41 —— 只锁「两侧一致」不够，一起漂到 45
+    也是一致，而 41 是这两族与 `bot.moegirl` 等同档的现役判定序位置，漂移属实质行为变更。
+    """
+    matchers, _opaque = _root_block_true_matchers()
+    kinds = _route_rule_priorities()
+    for matcher_name, kind, family in _DOUBLE_PIN_BY_NAME:
+        assert kind in kinds, (
+            f"{family} 的 RouteRule 侧不在位（kind={kind}）：中央判定序收不到该族，"
+            f"根 matcher `{matcher_name}` 空转"
+        )
+        assert matcher_name in matchers, (
+            f"{family} 的根 matcher 侧不在位（{matcher_name}）：RouteRule 判出来了但没人接"
+            "⇒ 消息坠地"
+        )
+        assert matchers[matcher_name] == kinds[kind], (
+            f"{family} 双钉不一致：matcher={matchers[matcher_name]} rule={kinds[kind]}"
+            "（NoneBot 侧与中央判定序必须同值）"
+        )
+        assert kinds[kind] == _CONSENT_HOST_DOUBLE_PIN_PRIORITY, (
+            f"{family} priority 期望 {_CONSENT_HOST_DOUBLE_PIN_PRIORITY}，"
+            f"实得 matcher={matchers[matcher_name]} rule={kinds[kind]}："
+            "两侧一起漂也是漂"
+        )
+        # 登记面必须与实比状态同步：这两枚若哪天改名进实比，本表的行要同批删。
+        assert matcher_name in UNPINNABLE_MATCHERS, (
+            f"{family} 的 {matcher_name} 仍进不了实比，却不在登记面 —— 反向漏登"
+        )

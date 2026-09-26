@@ -40,6 +40,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.capabilities.poke import (
     resolve_poke_reply,
 )
 from plugins.bot_unified_runtime.domains.meme.capabilities import randpic
+from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 from plugins.bot_unified_runtime.domains.render.renderer import render_reviewed_output
 from plugins.bot_unified_runtime.domains.render.reviewer import review_capability_result
 from plugins.bot_unified_runtime.domains.transport.sender.onebot import (
@@ -297,10 +298,15 @@ def test_degradation_text_reaches_the_user(tmp_path: Path) -> None:
     config = _config(bot_randpic_dirs=[str(tmp_path / "ghost-gallery")])
     result = randpic.build_randpic_capability(config)(_message(), None)
     assert result.send_policy is not SendPolicy.SILENT_AUDIT
-    _review, rendered, segments = _chain(result)
+    _review, _rendered, segments = _chain(result)
     assert _types(segments) == ["text"]
     shipped = str(segments[0]["data"]["text"])
-    assert shipped == result.body and "BOT_RANDPIC_DIRS" in shipped
+    # 出站咽喉在唯一成形口打码本机盘符路径（AGENTS 铁律 3），所以「与 body 逐字相等」
+    # 不再是契约——改判两腿：按同一尺打码后相等（文案真到了用户，没被吞成别的话术）、
+    # 且绝对路径一个字都不许出站。
+    assert shipped == redact_local_secrets(result.body)
+    assert "BOT_RANDPIC_DIRS" in shipped
+    assert str(tmp_path) not in shipped
 
 
 def test_group_degradation_text_is_not_blocked_by_the_reviewer(tmp_path: Path) -> None:

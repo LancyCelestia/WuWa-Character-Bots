@@ -66,6 +66,9 @@ from plugins.bot_unified_runtime.domains.emergency_info.service.dedupe import (
     is_emergency_dedupe_key,
     wash_active_push_key,
 )
+from plugins.bot_unified_runtime.domains.render.plain_text import (
+    redact_local_secrets,
+)
 
 __all__ = [
     "KIND_GATE_TTL_EXPIRED",
@@ -865,6 +868,140 @@ def _accepts_keyword(func: Callable[..., Any], name: str) -> bool:
     )
 
 
+# ------------------------------------------------------- 唯一出口的统一正文打码
+# AGENTS 铁律 3：一切出站文本必须过 `redact_local_secrets`（盘符路径 / `BOT_XXX=`
+# / `sk-` / JWT / Bearer / 裸键值对 / URL userinfo）。能力回复路在
+# `domains/render/renderer.py` 的唯一成形口有咽喉；经本出口的各族（提醒 /
+# cookie 到期 / 群摘要 / 日常助理 / 等待回执 / 紧急信息）却在能力层各自拼好正文
+# 再交进来，**不经 renderer** ⇒ 本出口是它们正文能被同一把尺洗到的唯一汇合点。
+# 尺只有一把＝`redact_local_secrets` 真身（其自身幂等：替换产物不再被任一形态
+# 命中，见 plain_text.py 头注），不起第二把。键名策略镜像 renderer 侧咽喉
+# （人读文本键逐条洗、`file`/`url`/`content_sha256` 等字节定位符不动）——抄的是
+# 策略不是代码：那个文件是本窗未入库的在飞件，跨文件 import 私有符号会被一次
+# 改名打断整个出口；两把「策略」日后漂移由本文件测试件的同尺断言逼出来。
+#
+# 为何只洗文本键、不递归全部字符串叶子：`_LOCAL_PATH_RE` 同时命中 `C:/...` 斜杠
+# 形态 ⇒ 把 `file:///C:/...` 这类媒体引用洗成占位符 = 图片/音频/文件段整条发不
+# 出去，「为安全把功能打断」是本仓否决的交换（renderer 咽喉头注同向）。文本叶子
+# 全洗还必误伤 `audit` 之外的结构字符串，作用域收到文本键是唯一两头都站得住的
+# 切法。`messages`/`nodes`（合并转发）形态今天没有任何主动投递族构造
+# （现算见 §调用方表），且该形态只在 renderer 成形口产出、出厂即已洗 ⇒ 不扩。
+#
+# 为何就地改写而非 model_copy 换新对象（顺序判定，另一半见函数内注释）：
+# 提醒族的 `or request` 兜底与回执族的内联投递在出口返回后**继续用调用方手里的
+# 请求对象**发正文——出口内部只换副本，那两条路的正文就永远没被洗（「入列被洗、
+# 出队漏洗」与本波否决过的「本地测通、上线丢」同型）。就地改写让队列落库行、
+# 闸观测与调用方内联投递看到的是同一份且唯一一份洗过的正文；零命中时一字段不
+# 动、一赋值不发 ⇒ 现役行为与调用方引用逐字节同形。
+_OUTBOUND_BODY_TEXT_KEYS = frozenset({"text", "caption", "prompt", "alt", "title"})
+
+
+def _scrub_outbound_str(value: str) -> str:
+    return redact_local_secrets(value) if value else value
+
+
+def _scrub_ref_dict(value: Any) -> tuple[Any, bool]:
+    """洗一个部件/条目 dict 的人读文本键；返回 (结果, 是否改写)，未改写回原对象。"""
+    if not isinstance(value, dict):
+        return value, False
+    cleaned: dict[str, Any] | None = None
+    for key in _OUTBOUND_BODY_TEXT_KEYS:
+        item = value.get(key)
+        if isinstance(item, str) and item:
+            scrubbed = _scrub_outbound_str(item)
+            if scrubbed != item:
+                if cleaned is None:
+                    cleaned = dict(value)
+                cleaned[key] = scrubbed
+    if cleaned is None:
+        return value, False
+    return cleaned, True
+
+
+def _scrub_content_ref(ref: Any) -> tuple[Any, bool]:
+    """`text` 单条、`chunks` 逐条、`parts` 逐部件的文本键；其余键原样透传。
+
+    零命中时返回**原 dict 同一对象**（调用方据此不赋值，逐字节同形）。
+    """
+    if not isinstance(ref, dict):
+        return ref, False
+    cleaned: dict[str, Any] | None = None
+    text = ref.get("text")
+    if isinstance(text, str) and text:
+        scrubbed = _scrub_outbound_str(text)
+        if scrubbed != text:
+            cleaned = dict(ref)
+            cleaned["text"] = scrubbed
+    chunks = ref.get("chunks")
+    if isinstance(chunks, list):
+        new_chunks: list[Any] | None = None
+        for index, chunk in enumerate(chunks):
+            if isinstance(chunk, str) and chunk:
+                scrubbed = _scrub_outbound_str(chunk)
+                if scrubbed != chunk:
+                    if new_chunks is None:
+                        new_chunks = list(chunks)
+                    new_chunks[index] = scrubbed
+        if new_chunks is not None:
+            if cleaned is None:
+                cleaned = dict(ref)
+            cleaned["chunks"] = new_chunks
+    parts = ref.get("parts")
+    if isinstance(parts, list):
+        new_parts: list[Any] | None = None
+        for index, part in enumerate(parts):
+            scrubbed_part, part_changed = _scrub_ref_dict(part)
+            if part_changed:
+                if new_parts is None:
+                    new_parts = list(parts)
+                new_parts[index] = scrubbed_part
+        if new_parts is not None:
+            if cleaned is None:
+                cleaned = dict(ref)
+            cleaned["parts"] = new_parts
+    if cleaned is None:
+        return ref, False
+    return cleaned, True
+
+
+def _redact_active_push_body(send_request: SendRequest) -> None:
+    """在唯一出口对出站正文过一次统一打码；零命中＝不碰任何字段。
+
+    逐字段 `getattr` 宽容读取（缺字段＝该格跳过）：现役生产件里 `content` 必为
+    `RenderedOutput`（pydantic 必填两格），读不到只可能是 duck-typed 测试替身
+    （`test_active_push_entry_teeth` 的 SimpleNamespace 活性锚）——本出口对闸
+    自身生病的方向锁是「绝不丢消息」，一把尺把鸭子形打断属同罪。
+    """
+    content = getattr(send_request, "content", None)
+    if content is None:
+        return
+    fallback = getattr(content, "text_fallback", None)
+    scrubbed_fallback = (
+        _scrub_outbound_str(fallback) if isinstance(fallback, str) else fallback
+    )
+    fallback_changed = (
+        isinstance(scrubbed_fallback, str) and scrubbed_fallback != fallback
+    )
+    scrubbed_ref, ref_changed = _scrub_content_ref(getattr(content, "content_ref", None))
+    if not fallback_changed and not ref_changed:
+        return
+    # 观测（与键形 wash 的 warning 同型）：真触发必留一行，零正文——只报长度差，
+    # 「打了码却无痕」与本波否决过的静默降级同罪。
+    _logger.warning(
+        "outbound_gate body_redacted capability_id=%s request_id=%s"
+        " fallback_before_len=%d fallback_after_len=%d content_ref_changed=%s",
+        getattr(send_request, "capability_id", "?"),
+        getattr(send_request, "request_id", "?"),
+        len(fallback) if isinstance(fallback, str) else -1,
+        len(scrubbed_fallback) if isinstance(scrubbed_fallback, str) else -1,
+        ref_changed,
+    )
+    if fallback_changed:
+        content.text_fallback = scrubbed_fallback
+    if ref_changed:
+        content.content_ref = scrubbed_ref
+
+
 def submit_active_push(
     send_queue: Any,
     send_request: SendRequest,
@@ -881,7 +1018,19 @@ def submit_active_push(
     自报，见 `dedupe_key_shape_ok`）。
     关闭态与三门全过都走裸 `submit(request)`（零关键字=与现状同形）；顺延走
     `submit(request, deliver_after=...)`；拒绝不触队列，只出自造 SKIPPED 回执。
+    正文在函数**最前**过一次 `redact_local_secrets`（AGENTS 铁律 3 的主动投递腿，
+    作用域与理由见 `_redact_active_push_body` 头注；闸关否与打码无关——开关＝
+    可以把安全关掉，禁做）。
     """
+    # 顺序判定：打码排在键形 wash / gate.decide / audit / submit **之前**、入口
+    # 第一站。①三道门的判据全部只消费结构字段（dedupe/cooldown 键、priority、
+    # session/target、risk/privacy 等级），从不读人读正文 ⇒ 打码在数学上不可能
+    # 改变任何门判；②队列落库行、闸观测与调用方内联投递（提醒 `or request`
+    # 兜底、回执 `_submit_progress_ack` 直发）此后看到的必须是**同一份**远端将
+    # 真正收到的文本——观测面若拿打码前文本，日志/审计就可能出现「投递洗了、
+    # 审计仍带盘符与 key 形态」的第二真身；③就地改写而非副本（见上方头注），
+    # 否则内联投递两条腿漏洗。
+    _redact_active_push_body(send_request)
     current = _utc(now or gate.clock())
     # 键形在这唯一出口规范一次：闸只在**开闸态**执法键形，脏键整条判 skip＝静默丢；
     # 关闭态是 passthrough 照发 ⇒ 「本地测通、上线丢」（本波同型三次：紧急域 `nmc:A1`、

@@ -469,7 +469,8 @@ def image_identity(path: str | Path) -> str:
 class RecentImageWindow:
     """按会话记「最近发过的图片身份」的有界窗口（时间窗 + LRU 双上限）。
 
-    只记账、不做决策；决策在 ``pick_fresh_image``。会话键数封顶
+    记账与占坑裁决（``record``/``try_claim``）在这里，「发不发、发哪张」的
+    决策在 ``pick_fresh_image``。会话键数封顶
     ``_SESSION_CAP``、每会话窗内条目封顶 ``_PER_SESSION_CAP``（图库只有几张
     时不至于把内存吃穿），超出即淘汰最旧。
 
@@ -520,6 +521,55 @@ class RecentImageWindow:
             self._prune(bucket, window_seconds=window_seconds, now=current)
             while len(self._recent) > self._SESSION_CAP:
                 self._recent.popitem(last=False)
+
+    def try_claim(
+        self,
+        session_key: str,
+        identity: str | Path,
+        *,
+        window_seconds: float,
+        now: float | None = None,
+        size: int | None = None,
+        path: str | Path | None = None,
+    ) -> bool:
+        """``record`` 的原子占坑版：这张若已在窗内被占（含并发对手），返回 False 且不动账。
+
+        补的是「快照→记档」之间的竞态窗：回复后腿、被戳 randpic 臂、指令腿全在
+        线程池里跑（根装配文件的 ``asyncio.to_thread`` / RuntimePipeline 的
+        offload 线程），``pick_fresh_outcome`` 先读窗账快照再无条件 ``record``，
+        两个线程同时盯上同一张最新鲜候选时**各自都判它新鲜、各发一次**——
+        ITEM 15(b)「同一张图不得重复发」在并发下就只剩一半。「查 + 插」收进
+        同一把 ``self._lock``，同一时刻只有一边拿到 True，另一边必须让开继续探查。
+        与表情侧 ``MemeSendHistoryStore.try_claim`` 同哲学同语义（两族各一本账，
+        形状一致、键域不同；合并成中央件在案待裁，见本文件上方注释）。
+
+        口径与 ``recent_keys`` 的惰性过期一致：窗满超期的旧行算**可占**（覆写并
+        返回 True）；空会话键 / 空身份返回 False——判据拿不准时 fail-closed 到
+        「不发」，宁可不发也不发一张记不进账的图（那等于给重复开门）。
+        """
+        key = str(session_key or "")
+        value = str(identity or "").strip()
+        if not key or not value:
+            return False
+        current = self.clock() if now is None else float(now)
+        hint = str(path).strip() if path is not None else ""
+        with self._lock:
+            bucket = self._recent.get(key)
+            if bucket is None:
+                bucket = OrderedDict()
+                self._recent[key] = bucket
+            self._recent.move_to_end(key)
+            entry = bucket.get(value)
+            if entry is not None and not (
+                window_seconds > 0 and current - entry[0] > window_seconds
+            ):
+                return False
+            bucket[value] = (current, size, hint)
+            bucket.move_to_end(value)
+            self._prune(bucket, window_seconds=window_seconds, now=current)
+            while len(self._recent) > self._SESSION_CAP:
+                self._recent.popitem(last=False)
+        return True
 
     def recent_keys(
         self,
@@ -738,8 +788,12 @@ def pick_fresh_image(
       用户开口要图，绝不因防重复而拒不发。
     - ``allow_exhausted=False``（主动发图路）：整库都在窗内=本轮不发（主动动作
       宁可不发也不刷屏）。
-    命中即记账（与 ``ProactiveGate.allow`` 的 commit 语义同型：返回非 None 就
-    代表这张图归这次调用，调用方随后真的发出去即可）。
+    取图即占坑（S-RANDPIC-2，2026-09-26）：新鲜候选在探查循环里就走
+    ``RecentImageWindow.try_claim`` 原子记账，返回非 None 即代表这张图归这次调用
+    且窗账已同步落账——并发两腿盯上同一张时只有一边拿得到，输的那边继续探查、
+    绝不重发（旧写法「快照→挑→无条件 record」在回复后腿与被戳臂同线程池并发时
+    会各发一次同一张）。整库都在窗内时的回收路（指令腿）仍走无条件 ``record``：
+    那是**刻意复发**，账与审计代号都写明 recycled。
 
     S-T-RANDPIC-1 把「读全库字节」换成「按大小做超集预筛 + 惰性探查」：语义逐条不变
     （同图判据仍是内容 SHA-256，``tests/test_poke_randpic_behavior.py`` C 组原样在跑），
@@ -798,7 +852,6 @@ def pick_fresh_outcome(
     ceiling = min(len(pool), _FRESH_PROBE_CEILING)
     scanned = 0
     alive_seen = False
-    picked: Path | None = None
     identified: list[str] = []  # 本轮**真读过字节并确认在窗内**的那些张的身份
     for item in _probe_order(pool, seed, rng=rng):
         if scanned >= ceiling:
@@ -812,37 +865,32 @@ def pick_fresh_outcome(
             _drop_from_cached_listing(item)
             continue
         alive_seen = True
-        if not recent:
-            picked = item
-            break
-        if not sizes_unknown and size not in known_sizes:
-            # 大小与窗内任一张都不同 ⇒ 内容不可能相同 ⇒ 免读字节即判新鲜。
-            picked = item
-            break
-        identity = _identity_of(item)
-        if identity in recent:
-            identified.append(identity)
-            continue
-        picked = item
-        break
-    exhausted_proven = (
-        picked is None
-        and scanned >= len(pool)
-        and pool_is_exhausted(pool_identities=identified, recent=recent)
+        if recent and (sizes_unknown or size in known_sizes):
+            # 大小筛不掉 ⇒ 读字节、按摘要（唯一判据）复核。
+            identity = _identity_of(item)
+            if identity in recent:
+                identified.append(identity)
+                continue
+        else:
+            # 窗账为空、或大小与窗内任一张都不同 ⇒ 「多半新鲜」；摘要照算一枚用来
+            # 占坑——try_claim 才是终判：并发对手若已抢先把这张记进窗账，这一占
+            # 返回 False，本腿让开继续探查，绝不「反正筛过了就照发」。
+            identity = _identity_of(item)
+        if store.try_claim(
+            session_key, identity, window_seconds=window_seconds, size=size, path=item
+        ):
+            return PickOutcome(
+                item, "picked", reads=state["reads"], probes=state["probes"], facts=facts
+            )
+        # 坑被抢：这张在「快照→占坑」窗口里被另一条腿占走并发出去了。回填进本地
+        # 判据再继续探查——**不许照发**（照发＝同一张的第二次）。
+        recent = recent | {identity}
+        identified.append(identity)
+        if not sizes_unknown:
+            known_sizes = known_sizes | {size}
+    exhausted_proven = scanned >= len(pool) and pool_is_exhausted(
+        pool_identities=identified, recent=recent
     )
-
-    if picked is not None:
-        store.record(
-            session_key,
-            _identity_of(picked),
-            window_seconds=window_seconds,
-            # 大小只是加速道：读不到就不带，后续探查自动退回「老老实实读字节」。
-            size=_file_size(picked),
-            path=picked,
-        )
-        return PickOutcome(
-            picked, "picked", reads=state["reads"], probes=state["probes"], facts=facts
-        )
 
     if alive_seen is False and scanned >= len(pool):
         # 清单整份失效（用户把图库搬空了）：按「图库空」同一口径诚实降级。

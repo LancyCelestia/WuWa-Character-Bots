@@ -185,11 +185,11 @@ CASES: list[tuple[str, str, str, Callable[[types.ModuleType, Path], None], str]]
         "每次取图先把全库字节读一遍（现网规模 ≈127 秒/次）",
     ),
     (
-        "J5 未知大小不 fail-closed",
-        "            return frozenset(sizes), unknown",
-        "            return frozenset(sizes), False",
-        lambda module, tmp: _assert_fails_closed_on_unknown_size(module, tmp),
-        "账本没带大小却免读字节 ⇒ 同图被放行",
+        "J5 大小谎言不绕占坑终判",
+        "                return False",
+        "                return True",
+        lambda module, tmp: _assert_claim_decides_when_size_lies(module, tmp),
+        "占坑终判被改成「窗内也放行」⇒ 大小筛不掉时同图重发（ITEM 15(b)）",
     ),
     (
         "J6 死引用不验活",
@@ -296,32 +296,46 @@ def _assert_bounded_reads(module, tmp: Path) -> None:
         digest_module.media_digest_file = real
 
 
-def _assert_fails_closed_on_unknown_size(module, tmp: Path) -> None:
-    """账本没带大小 ⇒ 新鲜度绝不许靠「大小对不上」抄近道判（fail-closed）。
+def _assert_claim_decides_when_size_lies(module, tmp: Path) -> None:
+    """账本的大小在撒谎（值对不上）⇒ 内容摘要占坑（``try_claim``）仍必须拦住同图。
 
-    库里**只放刚发过那一张**（record 时故意不带 size ⇒ ``recent_sizes`` 报 unknown=True）：
-    - 真身：老实用内容 SHA-256 复核，认出它就是窗内那张，又没有别的可发 ⇒ 返回 ``None``
-      （宁可不发也不重发，正是 ITEM 15(b) 的字面禁令）。
-    - 注毒体（``recent_sizes`` 谎称「大小全知道」）：``known_sizes`` 空 ⇒ 这张「大小不在
-      账上」⇒ 抄近道判成新鲜、把刚发过那张又发一遍 ⇒ ``outcome.path`` 非空，判据当场抓得住。
+    **重锚依据（S-J5-REANCHOR，2026-09-26；旧牙判死，非本席拔的）**：旧毒形打在
+    ``recent_sizes`` 的 ``return frozenset(sizes), unknown`` 上。S-RANDPIC-2
+    （2026-09-26，占坑终判波）之后，``pick_fresh_outcome`` 两个分支都先算内容摘要
+    再 ``try_claim``（randpic.py :868-881），谎报 unknown 只改「预筛要不要先查窗账
+    快照」这一枚**与终判冗余**的判据，物理上造不成放行 ⇒ DID NOT RAISE 复现属实。
+    且「未知大小」一支如今是双层闸（预筛 ``identity in recent`` + ``try_claim``），
+    单行粒度注毒杀不动它——那是结构强度，不是锁坏了。今天唯一单行可杀、又真担着
+    「同图不重发」的点位是 ``try_claim`` 的窗内拒绝（randpic.py :566）。判据场景
+    随之走「大小谎称已知但值对不上」这一支：预筛放行 ⇒ 终判把关。
 
-    单候选 ⇒ 与 ``_probe_order`` 的哈希顺序无关。原 3 图写法把成色押在「刚发过那张恰好排第
-    一」上，而探查序来自 ``sha256(seed|绝对路径)``——绝对路径含 pytest 随机的 ``tmp_path``，
-    一旦某张真·新鲜图排到第一，注毒体挑中的就是那张合法的新鲜图、identity 断言反而通过 ⇒
-    DID NOT RAISE（这把锁其实一直没牙）。改单候选后注毒体无论哪个顺序都只能重发刚发过那张。
+    库里**只放刚发过那一张**，record 时故意带一个对不上的大小：
+    - 真身：``size not in known_sizes`` 走「多半新鲜」捷径，但 ``try_claim`` 认出
+      摘要已在窗内 ⇒ False ⇒ 这条腿让开、又没有别的候选 ⇒ 返回 ``None``
+      （宁可不发也不重发，ITEM 15(b) 的字面禁令）。
+    - 注毒体（窗内也返回 True）：刚发过那张被再占再发 ⇒ ``outcome.path`` 非空，
+      判据当场抓得住。
+
+    单候选 ⇒ 与 ``_probe_order`` 的哈希顺序无关。带错大小是「账目撒谎」的最短
+    写实形态（文件在记录后被换过、外部直接 ``record`` 都可能落进这个状态）。
     """
-    root = tmp / "unknown-size"
+    root = tmp / "lying-size"
     made = _gallery(root, 1)
     _clear_caches(module)
     window = module.RecentImageWindow()
     identity_first = module.image_identity(made[0])
-    window.record("private_7", identity_first, window_seconds=3600.0)  # 故意不带大小
+    window.record(
+        "private_7",
+        identity_first,
+        window_seconds=3600.0,
+        size=made[0].stat().st_size + 4096,  # 故意带错大小：预筛放行，终判把关
+    )
     outcome = module.pick_fresh_outcome(
         [str(root)], session_key="private_7", window=window, window_seconds=3600.0,
         seed="fc", allow_exhausted=False,
     )
     assert outcome.path is None, (
-        "账本没带大小却被当成筛得掉 ⇒ 刚发过那张又被发了一次"
+        "大小筛不掉这张、占坑终判又放行 ⇒ 刚发过那张又被发了一次"
         f"（现算把 {outcome.path} 又发了一遍）"
     )
 

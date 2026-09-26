@@ -91,6 +91,17 @@ DECLARATIVE_NAMEPLATE: frozenset[str] = frozenset(
         # 它声明"这两形经由哪条中央汇缝"，逐臂 `seam_host` 由它投影；等值另由
         # `tests/test_capability_manifest_gate.py` 腿㉓双向钉到入口活性件（在册无执法＝红）。
         "domains/core/capability_manifest.py",
+        # 第 17/18 项反攻击波（2026-09-26，十八项收尾波）两枚**纯散文**提及，逐枚现算核过：
+        # ① `attack_surface.py:416` —— 一处人话清单字符串，逐一点名"路径域守卫 + 出站闸 +
+        #    submit_active_push 唯一出口 + dedupe 键段规范"四把咽喉，用来解释某面攻击为什么
+        #    打不穿；② `policy.py:120` —— docstring 里"危险动作须出示守卫结论"的三枚出口清单
+        #    （``check_sendable`` / ``submit_active_push`` / ``check_download_url``）。
+        # 两枚都不 import、不调用、不做字符串派发（`central_entry_executable_hits` 各判 0），
+        # 属"被名字提到"而非"被伸手够到"。入册理由：本波不打算让安全域去够唯一出口——
+        # 安全域只判定放不放行，投递永远归出站闸与根装配，所以这两枚提及今后也必须停在散文层；
+        # 若谁把它们改成真引用，上面的 `offenders` 腿当场红（在册 ≠ 可以够它）。
+        "domains/core/safety_exec/attack_surface.py",
+        "domains/core/safety_exec/policy.py",
     }
 )
 

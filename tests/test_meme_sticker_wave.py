@@ -1290,3 +1290,143 @@ def test_dedup_memory_survives_store_reopen(tmp_path: Path) -> None:
     assert first is not None
     reopened = MemeLibraryStore(tmp_path / "meme_library.sqlite3", prefer=["守岸人"])
     assert reopened.weighted_pick(keyword="", nsfw_max=0.2) is None, "重启即忘=假防重"
+
+
+# ====================================================================
+# S-STICKER-12（2026-09-26）：口味极性的**生产供给**锁 + 幻影键门 +
+# 收库功能门在册锁。立案根因：build_context 旧代码读 snapshot 从不产出
+# 的 disliked_tags 键 ⇒「不讨用户喜欢」一票否决在生产恒空（单测喂合成
+# 快照全绿＝假绿），而 tags 列里 negative/insult/tease 来源的标签反而
+# 混进口味加成。现修：极性劈分判据派生自 affinity._IMPRESSION_RULES。
+# ====================================================================
+
+
+def test_negative_impression_tags_derive_from_affinity_rules() -> None:
+    """负向标签集合 = 规则表中非 positive 来源的标签（零词表副本，随真身漂移自动跟随）。"""
+    from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
+        _IMPRESSION_RULES,
+    )
+
+    negatives = meme_selection.negative_impression_tags()
+    expected = {tag for watch, _t, tag in _IMPRESSION_RULES if watch != "positive"}
+    assert negatives == frozenset(expected)
+    # 语义钉死（防「悄悄翻转某 watch 的极性」）：这三个由负行为攒出，必须是否决词；
+    # 那两个是正向印象，绝不进否决面。
+    assert {"爱抱怨", "口无遮拦", "爱戏弄"} <= negatives
+    assert not ({"友善", "老朋友"} & negatives)
+
+
+def test_negative_tag_never_earns_taste_bonus() -> None:
+    """负向印象标签绝不进 liked（旧口径会加分＝「越口无遮拦越被奖励」）。"""
+    ctx = meme_selection.build_context(
+        affinity_snapshot={"tags": ["爱戏弄"], "tier": 5}
+    )
+    assert ctx.liked_terms == ()
+    assert ctx.disliked_terms == ("爱戏弄",)
+
+
+def test_production_snapshot_shape_vetoes_negative_tags(tmp_path: Path) -> None:
+    """喂 affinity **真产出形态**的快照 ⇒ 带负向印象词的贴纸一张都不发。
+
+    这是「不讨用户喜欢」腿从纯叙述变生产可达的行为锁：键集合就是
+    DynamicAffinityStore.snapshot() 的出品（affinity.py 2298-2304 行形），
+    不再靠任何合成 disliked_tags 键喂。
+    """
+    store = _library(tmp_path, {"m1": "开心", "m2": "爱抱怨"})
+    snapshot = {
+        "affinity": 0.2,
+        "nickname": "",
+        "tags": ["友善", "爱抱怨"],
+        "profile_notes": [],
+        "tier": 3,
+        "attitude": "温和",
+    }
+    ctx = meme_selection.build_context(turn_text="", affinity_snapshot=snapshot)
+    assert "爱抱怨" in ctx.disliked_terms
+    assert "爱抱怨" not in ctx.liked_terms and "友善" in ctx.liked_terms
+    sent: list[str] = []
+    for _ in range(4):
+        item = store.weighted_pick(keyword="", nsfw_max=0.2, context=ctx)
+        if item is None:
+            break
+        sent.append(str(item["md5"]))
+    assert sent == ["m1"], "被负向印象命中的贴纸必须一票否决，正向的那张照发"
+
+
+def test_build_context_reads_only_keys_snapshot_emits() -> None:
+    """幻影键门：build_context 从快照 get 的每个键都必须在 snapshot() 出品集合里。
+
+    立案锁型——本波就是靠它把 disliked_tags 那类「消费方读一个生产者从不写的键」
+    钉死。tier/tags 必须在（缺了＝口味/好感腿空转）；未来若 snapshot 真扩了
+    否决列，加进出品列本锁自然放行，**不许**往本测试塞豁免名单。
+    """
+    sel_path = (
+        _REPO_ROOT
+        / "plugins/bot_unified_runtime/domains/meme/sources/meme_selection.py"
+    )
+    sel_tree = ast.parse(sel_path.read_text(encoding="utf-8-sig"))
+    consumed: set[str] = set()
+    for node in ast.walk(sel_tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name == "build_context"):
+            continue
+        for inner in ast.walk(node):
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Attribute)
+                and inner.func.attr == "get"
+                and isinstance(inner.func.value, ast.Name)
+                and inner.func.value.id == "affinity_snapshot"
+                and inner.args
+                and isinstance(inner.args[0], ast.Constant)
+                and isinstance(inner.args[0].value, str)
+            ):
+                consumed.add(str(inner.args[0].value))
+    assert consumed, "build_context 已不读快照 ⇒ 本锁前提变了，改判据别删锁"
+    assert {"tier", "tags"} <= consumed
+
+    aff_path = (
+        _REPO_ROOT
+        / "plugins/bot_unified_runtime/domains/chat_reply/character/affinity.py"
+    )
+    aff_tree = ast.parse(aff_path.read_text(encoding="utf-8-sig"))
+    produced: set[str] = set()
+    for cls in ast.walk(aff_tree):
+        if not (isinstance(cls, ast.ClassDef) and cls.name == "DynamicAffinityStore"):
+            continue
+        for fn in cls.body:
+            if not (isinstance(fn, ast.FunctionDef) and fn.name == "snapshot"):
+                continue
+            for d in ast.walk(fn):
+                if isinstance(d, ast.Dict):
+                    for key in d.keys:
+                        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                            produced.add(str(key.value))
+    assert produced, "affinity.snapshot 的 dict 字面量解析不到 ⇒ 先修解析再谈锁"
+    assert consumed <= produced, (
+        f"幻影键回潮：build_context 读了 snapshot 不产出的键 {sorted(consumed - produced)}"
+    )
+
+
+def test_meme_auto_absorb_feature_registered_and_on_by_default(tmp_path: Path) -> None:
+    """收库腿功能门三合一：在册、缺省**开**（goal-12「需要开启自动爬取吸收」）、
+    根装配真问这枚 id（防「在册无人问」与「问而不册」两个方向）。"""
+    from plugins.bot_unified_runtime.control_plane.features import FeatureStateStore
+    from plugins.bot_unified_runtime.control_plane.services import FeatureControlService
+    from plugins.bot_unified_runtime.domains.ops.features import feature_catalog
+    from plugins.bot_unified_runtime.domains.ops.features.feature_gate import (
+        ProductFeatureGate,
+    )
+
+    node = "bot.plugin.meme_library.auto_absorb"
+    descriptors = feature_catalog.build_product_descriptors()
+    by_id = {item.id: item for item in descriptors}
+    assert node in by_id, "根文件问的 id 必须先在册（未登记恒 False＝结构性死路）"
+    assert by_id[node].default_enabled is True
+    service = FeatureControlService(
+        FeatureStateStore(tmp_path / "feats.json", descriptors=descriptors)
+    )
+    assert ProductFeatureGate(service).snapshot().enabled(node) is True
+    root_src = (
+        _REPO_ROOT / "plugins/bot_unified_runtime/__init__.py"
+    ).read_text(encoding="utf-8-sig")
+    assert f'enabled("{node}")' in root_src, "缺省开却没人问＝假接线"

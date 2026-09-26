@@ -160,8 +160,9 @@ def select_sticker_for_turn(
     * 主题 = 本轮文本 ∩ 既有词表（``meme_selection.default_vocabulary``：prefer ∪
       人格别名 ∪ 情绪意图 ∪ 本命族 ∪ 吵闹族），不引入自由词；
     * 人格 = 候选命中她的别名 ⇒ ``PERSONA_BONUS``，且本命图本就吃 ``_PRIORITY_HINTS`` 8.0；
-    * 口味 = ``DynamicAffinityStore.snapshot(sender_id)["tags"]``（正面印象加成、
-      ``disliked_tags`` 一票否决）；
+    * 口味 = ``DynamicAffinityStore.snapshot(sender_id)["tags"]``（正向印象加成；
+      **负向印象标签一票否决**——正负劈分判据派生自 affinity 真身规则表，
+      见 ``meme_selection.negative_impression_tags``）；
     * 心情/好感 = ``BotMoodStore`` 的 valence 与好感档（低档只发明确对题的）。
     """
     if store is None:

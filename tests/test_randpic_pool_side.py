@@ -529,7 +529,7 @@ def test_ledger_without_size_fails_closed_to_reading_bytes(tmp_path: Path) -> No
 def test_renamed_picture_is_still_recognised_as_already_sent(tmp_path: Path) -> None:
     """改名不换图：摘要仍是同一条 ⇒ 绝不因路径变了就再发一遍。"""
     root = tmp_path / "gallery"
-    made = _gallery(root, 3)
+    _gallery(root, 3)
     dirs = [str(root)]
     window = randpic.RecentImageWindow()
     first = randpic.pick_fresh_outcome(

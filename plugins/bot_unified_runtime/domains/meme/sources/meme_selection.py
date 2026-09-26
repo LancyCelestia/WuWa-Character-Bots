@@ -48,6 +48,59 @@ TASTE_HIT_CAP = 3
 #: 人格本命贴纸（守岸人本体）的乘性加成。
 PERSONA_BONUS = 1.25
 
+#: 印象标签里算「正方向」的来源行为（判据本体在 affinity 规则表第一列）。
+_IMPRESSION_POSITIVE_WATCHES = frozenset({"positive"})
+
+
+def negative_impression_tags() -> frozenset[str]:
+    """印象标签中的**负向标签集合**——由 ``affinity._IMPRESSION_RULES`` 派生。
+
+    存在理由（S-STICKER-12 现算，2026-09-26，goal-12「不讨用户喜欢」腿的真修）：
+    ``DynamicAffinityStore.snapshot()`` **从不产出** ``disliked_tags`` 键（本件旧代码
+    读它 ⇒ 生产永远空），而 ``tags`` 一列是正负混装的——真身
+    ``_IMPRESSION_RULES`` 里「友善/老朋友」由 positive 行为攒出，「爱抱怨/口无遮拦/
+    爱戏弄」由 negative/insult/tease 行为攒出。旧口径把整列都当 ``liked_terms`` 吃
+    进口味加成：**负向印象反而给选图加分**，而一票否决腿纯叙述无代码。
+    本函数按来源行为劈出负向集合（词表零副本：名单不在这件里重写，只从规则表派生；
+    有意 import 私有名，先例=listener 引 ``_flatten_vision_entries``——复制那张表
+    才是第二真身）。affinity 读不到 ⇒ 空集（退化为「没人被否决」，增益腿不拖主链）。
+    """
+    try:
+        from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
+            _IMPRESSION_RULES,
+        )
+
+        return frozenset(
+            str(tag)
+            for watch, _threshold, tag in _IMPRESSION_RULES
+            if str(watch) not in _IMPRESSION_POSITIVE_WATCHES
+        )
+    except Exception:  # noqa: BLE001 - 真身不可用按「不否决」降级，绝不抛。
+        return frozenset()
+
+
+def split_impression_tags(
+    tags: Iterable[str] | None,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """印象标签按真身方向劈成 ``(liked, disliked)`` 两份。
+
+    唯一判据是 :func:`negative_impression_tags`（负向者**绝不进 liked**——
+    否则「越口无遮拦的人越被选图奖励」）。正向与未知标签留在 liked：未知
+    标签只可能来自未来的正向源，保守不否决（宁少发加分，不多发否决）。
+    """
+    negatives = negative_impression_tags()
+    liked: list[str] = []
+    disliked: list[str] = []
+    for raw in tags or ():
+        tag = str(raw or "").strip()
+        if not tag:
+            continue
+        if tag in negatives:
+            disliked.append(tag)
+        else:
+            liked.append(tag)
+    return _terms(liked), _terms(disliked)
+
 
 @dataclass(frozen=True)
 class StickerContext:
@@ -386,16 +439,24 @@ def build_context(
             mood = None
     tier: int | None = None
     liked: tuple[str, ...] = ()
+    disliked: tuple[str, ...] = ()
     if isinstance(affinity_snapshot, dict):
         raw_tier = affinity_snapshot.get("tier")
         if isinstance(raw_tier, int):
             tier = raw_tier
-        liked = _terms([str(item) for item in (affinity_snapshot.get("tags") or [])][:12])
+        # S-STICKER-12 真修：口味只吃 snapshot 真产出的 ``tags`` 一列，并按真身
+        # 方向劈成 liked/disliked——负向印象标签（爱抱怨/口无遮拦/爱戏弄，判据
+        # 派生自 affinity._IMPRESSION_RULES）落进一票否决，**不再**混入口味加成。
+        # 旧代码读的 ``disliked_tags`` 键 snapshot 从不产出：那条「不讨喜」腿在
+        # 生产恒空、单测靠合成快照全绿，是本仓反复立案的「叙述没有代码」形态，
+        # 幻影键读取已连同该键一起移除（见 negative_impression_tags 的长注）。
+        liked, disliked = split_impression_tags(
+            [str(item) for item in (affinity_snapshot.get("tags") or [])][:12]
+        )
     if is_group_owner and tier is None:
         # 群主在本群的语气比陌生群友更放得开（既有人格层的常识），只抬一档口径，
         # 不改变「离题不发」的底线：给的仍是 DEFAULT_OFFTOPIC_MIN_TIER 的门槛档。
         tier = DEFAULT_OFFTOPIC_MIN_TIER
-    disliked = _terms(affinity_snapshot.get("disliked_tags") or []) if isinstance(affinity_snapshot, dict) else ()
     return StickerContext(
         topic_terms=topic_terms,
         mood_valence=mood,
@@ -420,9 +481,11 @@ __all__ = [
     "claim_for_send",
     "default_vocabulary",
     "is_noisy_text",
+    "negative_impression_tags",
     "rank_sticker_candidates",
     "relevance_score",
     "score_sticker_candidate",
     "select_sticker",
+    "split_impression_tags",
     "topic_terms_from_text",
 ]
