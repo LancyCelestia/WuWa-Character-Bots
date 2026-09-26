@@ -91,6 +91,12 @@ def _load_real_index() -> dict[str, str]:
 # media/TTS ledger（2026-09-22 S-MEDIA 实测登记，逐条见 SEAT-S-MEDIA §A；
 #   VOICE-V12 2026-09-22 翻面：bot.tts.synth 跨文件直呼清零 → 改走 media.tts.autodub invoker）
 #   bot.tts 命令路：build_tts_capability 作泛型执行器实参（不落 Call）→ 直呼面空（Wave4.1 盲区）。
+#       S-SEAM-FOLLOW-c 2026-09-27 跟随收编：根 `_poke_voice_pair`（voice 臂）把
+#       build_tts_capability(cfg) 的**成品**交给 orchestrated_command（seam-feed 喂缝，执行走层 2
+#       主缝）⇒ 构造点本身是根文件里的一个 ast.Call，旧 v1 尺 `_execution_calls` 无 seam-feed
+#       豁免概念、照计直呼 ⇒ 本账按既有先例形态（image_search/media_archive 同款 root 构造点）
+#       在 allowlist 显式披露 `{"__init__.py"}`。披露的是**缝喂下的 builder 构造**，不是第二执行
+#       通路；bot.tts.command 不在 WIRED_MEDIA ⇒「通电后归零直呼」不变量不适用（同 image_search）。
 #   bot.tts 自动配音旧包装：maybe_attach_voice 作 asyncio.to_thread 实参 → 直呼面空。
 #   synthesize：VOICE-V12 前唯一跨文件直呼=voice_enricher.py:175，现该直呼段改走
 #       default_invoker().invoke(capability_id="media.tts.autodub") → synthesize 直呼面归零。
@@ -101,7 +107,7 @@ def _load_real_index() -> dict[str, str]:
 #   bot.image_search / bot.media_archive：各自独立 root handler 直呼 factory（Wave1 可逐能力翻面）。
 # ---------------------------------------------------------------------------
 KNOWN_DIRECT_ALLOWLIST_MEDIA: dict[str, set[str]] = {
-    "bot.tts.command": set(),
+    "bot.tts.command": {"__init__.py"},
     "bot.tts.autovoice": set(),
     "bot.tts.synth": set(),
     "media.tts.autodub": set(),

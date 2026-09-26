@@ -63,8 +63,12 @@ import physical_placement_census as pc  # 唯一取数口（判据 / 总数 / --
 #: 现值与可满足性见 `--report`（现算：上限==现值 ⇒ 可满足但**零余量**，新增一枚越界即红）。
 G_P1_OUTSIDE_CEILING = 32
 #: G-P1 附账：目录认领套住别的 fid 认领的"包含对"（影子认领＝归属含糊，只准降）。
-#: 起点值 19；19→15 同上批（四枚影子认领消失，包含对同步减 4）。现值见 `--report`（上限==现值 ⇒ 零余量）。
-G_P1_CONTAIN_CEILING = 15
+#: 起点值 19；19→15 同上批（四枚影子认领消失，包含对同步减 4）。
+#: 15→9 跟随 2026-09-26 用户裁定 ①丙＋②D-5 落码：`B08.send-queue` 的裸目录根窄化成 8 枚逐文件根、
+#: `B03.persona-context`／`B09.observability` 两处目录根拆逐文件字面根（落地器
+#: `s143-land-bing.py` 与 `patches/s901-d5-land.py`，落码后现算 `_real()["g_p1_size"]["contain_pairs"]==9`，
+#: 库工厂同读数双认领 0／无主 115）。现值见 `--report`（上限==现值 ⇒ 零余量，新增一枚包含对即红）。
+G_P1_CONTAIN_CEILING = 9
 #: G-P2 语义 A 未认领数（**真债**，不受豁免影响，终态 0）。
 #: 起点值 160 = ORPHAN-MAP 的 159 + 1（多的一枚是本门立门席新建的
 #: `plugins/bot_unified_runtime/domains/core/board_placement.py`，当时不豁免、不自认领，如实进账）。
@@ -100,7 +104,11 @@ MIN_FEATURES = 50
 MIN_CLAIMS = 90
 
 AUDIT_HISTORY_G_P1_OUTSIDE: tuple[tuple[str, int], ...] = (("2026-09-22", 36), ("2026-09-25", 32))
-AUDIT_HISTORY_G_P1_CONTAIN: tuple[tuple[str, int], ...] = (("2026-09-22", 19), ("2026-09-25", 15))
+AUDIT_HISTORY_G_P1_CONTAIN: tuple[tuple[str, int], ...] = (
+    ("2026-09-22", 19),
+    ("2026-09-25", 15),
+    ("2026-09-26", 9),   # ①丙＋②D-5 落码后现算（见 G_P1_CONTAIN_CEILING 上方出处）
+)
 AUDIT_HISTORY_G_P2_UNCLAIMED: tuple[tuple[str, int], ...] = (("2026-09-22", 160),)
 AUDIT_HISTORY_G_P2_VIOLATION: tuple[tuple[str, int], ...] = (("2026-09-22", 131),)
 AUDIT_HISTORY_G_P2_EXEMPT: tuple[tuple[str, int], ...] = (("2026-09-22", 29),)

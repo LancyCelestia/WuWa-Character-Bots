@@ -95,11 +95,21 @@ def _scan_live_facets() -> dict[str, set[str]]:
     return hits
 
 
-#: S-FACETS 登记面（31 条，逐格证据见 .superpowers/sdd/2026-09-21-unify-wave/logs/SEAT-S-FACETS.md §A）。
+#: S-FACETS 登记面（25 条，逐格证据见 .superpowers/sdd/2026-09-21-unify-wave/logs/SEAT-S-FACETS.md §A；
+#: 2026-09-27 S-SEAM-FOLLOW-b 跟随 P0-A 显式改账，留痕见下方迁移注记与 .superpowers/sdd/
+#: 2026-09-27-fullload/logs/SEAT-SEAM-FOLLOW-b.md）。
 #: 值=(adapter, 执行真身 `plugins/.../mod.py#symbol`)。command=builder 只吃 config，中央可自构；
 #: prepared=执行体必须由调用方经 context 交来（根闭包/内联构造持有运行期依赖）。
+#: ⚠ P0-A 迁出六枚（2026-09-27，本门判据头注「登记的泛型执行器 id 在真树消失⇒红（迁移须显式改账）」
+#: 的设计情形兑现）：bot.content / bot.group_info / bot.image_search / bot.media_archive /
+#: bot.meme_library / bot.music 的根站点已从 `pipeline.handle_async(...capability_id=字面)` 迁入
+#: `_run_capability_through_pipeline` 中央汇缝，泛型执行器面上真树消失 ⇒ 自本表注销；
+#: 其通电记账随同波迁入 tests/test_descriptor_wiredness_ledger.py 的 WIRED 桶（过渡臂），
+#: 本门与台账两门各管一段、一枚不丢。consent/host_state 本就不在本表（迁缝前也不在泛型面登记）。
+#: bot.subscribe/bot.today_history **保留**：命令腿虽已入缝（台账记 wired），push 腿
+#: （根 :4761/:1864 `pipeline.handle_async` 字面）仍是泛型执行器真身，本量尺继续逐格钉住。
 _FACETS: dict[str, tuple[str, str]] = {
-    # ---- command 面（9）----
+    # ---- command 面（8）----
     "bot.wiki": ("command", _PKG_REL + "domains/location/capabilities/wiki.py#build_wiki_capability"),
     "bot.news": ("command", _PKG_REL + "domains/subscribe/capabilities/news.py#build_news_capability"),
     "bot.randpic": ("command", _PKG_REL + "domains/meme/capabilities/randpic.py#build_randpic_capability"),
@@ -108,8 +118,8 @@ _FACETS: dict[str, tuple[str, str]] = {
     "bot.reminder": ("command", _PKG_REL + "domains/schedule/capabilities/reminder.py#build_reminder_capability"),
     "bot.daily_assist": ("command", _PKG_REL + "domains/assistant/daily/capabilities/daily_assist.py#build_daily_assist_capability"),
     "bot.tts": ("command", _PKG_REL + "domains/media/capabilities/tts.py#build_tts_capability"),
-    "bot.image_search": ("command", _PKG_REL + "domains/media/capabilities/image_search.py#build_image_search_capability"),
-    # ---- prepared 面（22）----
+    # （bot.image_search 已随 P0-A 入缝注销，见上方留痕。）
+    # ---- prepared 面（17）----
     "bot.weather": ("prepared", _PKG_REL + "domains/weather/capabilities/weather.py#build_weather_capability"),
     "bot.market": ("prepared", _PKG_REL + "domains/finance/capabilities/market.py#build_market_capability"),
     "bot.stocks": ("prepared", _PKG_REL + "domains/finance/capabilities/stocks.py#build_stocks_capability"),
@@ -125,13 +135,10 @@ _FACETS: dict[str, tuple[str, str]] = {
     "bot.ignore": ("prepared", _PKG_REL + "domains/chat_reply/capabilities/echo.py#build_ignore_guide_result"),
     "bot.campus_forward": ("prepared", _PKG_REL + "domains/assistant/campus/campus.py#build_campus_source"),
     "bot.chat": ("prepared", _PKG_REL + "domains/chat_reply/capabilities/chat.py#build_chat_capability"),
-    "bot.content": ("prepared", _PKG_REL + "domains/link_parse/capabilities/content_parser.py#build_content_capability"),
-    "bot.group_info": ("prepared", _PKG_REL + "domains/chat_reply/capabilities/group_info.py#build_group_info_capability"),
-    "bot.media_archive": ("prepared", _PKG_REL + "domains/media/capabilities/media_archive.py#build_media_archive_capability"),
-    "bot.meme_library": ("prepared", _PKG_REL + "domains/meme/capabilities/meme_library.py#build_meme_library_capability"),
-    "bot.music": ("prepared", _PKG_REL + "domains/music/capabilities/music.py#build_music_capability"),
     "bot.subscribe": ("prepared", _PKG_REL + "domains/subscribe/capabilities/subscribe_v2.py#build_subscribe_capability_v2"),
     "bot.today_history": ("prepared", _PKG_REL + "domains/subscribe/capabilities/today_history.py#build_today_history_capability"),
+    # （bot.content / bot.group_info / bot.media_archive / bot.meme_library / bot.music
+    #  已随 P0-A 入缝注销，见上方留痕。）
 }
 
 

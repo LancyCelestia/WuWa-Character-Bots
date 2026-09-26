@@ -205,7 +205,12 @@ KNOWN_DIRECT_CALLSITES: list[tuple[str, str]] = [
     ("__init__.py", "search.web"),
     ("domains/creation/tts/routes.py", "creation.tts.synthesize"),
     ("domains/media/capabilities/image_search.py", "media.vision.anime_ip"),
-    ("domains/media/voice_enricher.py", "media.tts.autodub"),
+    # S-SEAM-DEBT-b 2026-09-27 跟随 S270 归位：media.tts.autodub 的全树唯一字面 invoke 已由
+    # voice_enricher 迁至唯一组合口 result_transform.dub_via_central（wave_media 台账 :98-100
+    # 同源注记；真树现算=domains/media/tts/result_transform.py:217），本条改指活体落点。
+    # **非新增第二旁路**：直呼点总数不变、cid 不变，只是住所跟随归位——该席（S270）漏刷本名册，
+    # 补账为纯 HEAD 即红的跟随义务（SEAT-SEAM-FOLLOW-c §5 遗留欠账②）。
+    ("domains/media/tts/result_transform.py", "media.tts.autodub"),
     # S220 补登披露（2026-09-25 现算；直呼点=voice_enricher.py:204-206 字面 cid）。**非新增第二旁路**：
     # 该"呈现结果→带音频呈现结果"变换此前是 hook 内联的第二真身，S91 按 mandate「TTS 也不例外」
     # 退役内联、改直呼中央第三形 ⇒ 本门要披露的"绕过 pipeline 的直呼 invoke()"新多一处，账须跟随。

@@ -15,7 +15,8 @@ S92 的核心发现（`.superpowers/sdd/2026-09-24-central-dispatch/SEAT-S92.md`
 ``test_descriptor_wiredness_ledger`` 的家规）：
 
 * **方向棘轮（只降不升）**：prod / smoke / total / 承载 cid 数 各自钉一个**手写整数字面量**上限，
-  等于本席现算实测（4 / 7 / 11 / 6）。**起点==实测：基线非空，就是「这些直呼点今天仍在缝外」的
+  等于本席现算实测（S95 落账日 4 / 7 / 11 / 6；2026-09-27 P0-A 后账跟随复钉 5 / 7 / 12 / 7，
+  逐数留痕见下方上限注记）。**起点==实测：基线非空，就是「这些直呼点今天仍在缝外」的
   如实记账，不是「已收编」。** 谁新造一发「直呼真身绕过中央缝」都会把对应数顶过上限 → 当场红；
   逐枚收编后只准把上限下调（配合 `test_ceilings_are_handwritten_literals_not_derived`）。
 * **反缩面塌陷锁**：``integrity.ok`` 必真、``files_scanned`` / ``seam_sites`` / ``states.wired``
@@ -57,11 +58,25 @@ _CENSUS = ROOT / "scripts" / "central_seam_census.py"
 #   值与 S92 现算一致（prod 4 / smoke 7 / total 11），但**承载 cid 数**本席纠为现算 **6**
 #   ——S92 补丁误写 17（把「承载任意 offseam 点含 assembly-wrap」混成「wired ∧ exec-bypass」），
 #   照抄 17 会在正确树上当场红。
+# 2026-09-27 S-SEAM-FOLLOW-b 复钉（中央调度完全统一波 P0-A·后账跟随）：现算实测
+#   prod/smoke/total/cids = **5 / 7 / 12 / 7**（`scripts/central_seam_census.py --json`，
+#   尺 v0.3.0-beta1 在飞工作树现跑，两独立取数口 roster/violations 各算一遍同为 5/7，互证一致）。
+#   多出的一发＝bot.tts `__init__.py:6117`（`_poke_voice_pair` 内
+#   `asyncio.to_thread(build_tts_capability(cfg), spoken, None)` 直呼真身）。
+#   **归因（git diff 现算）**：该站点 HEAD 即存在、P0-A 工作区 diff 未新增——是尺升 v0.3.0-beta1
+#   更锐后**检出的旧债**（在册未执法一形），不是本窗新造债、也不是行为回归；账随现算走。
+#   真回归复核：root 禁改面零触碰，收编该腿需另席裁（直呼点仍如实挂账，棘轮继续拦新债）。
+# 2026-09-27 S-SEAM-FOLLOW-c 复钉（中央调度完全统一波·tts@6117 直呼腿收编）：本席先降账后落码
+#   （RED 锁常规用法——上限先钉到收编后的应然值，真树未改时现算必红＝_registered RED_）。
+#   现算应然值 prod/smoke/total/cids = **4 / 7 / 11 / 6**：prod 侧 tts×1 一发消失——
+#   `_poke_voice_pair` 的 `build_tts_capability(cfg)` 直呼改交 `orchestrated_command("bot.tts", …)`
+#   喂层 2 主缝（尺 SEAM_FUNCS 认 pos-0 字面量＝缝站点；builder 调用在缝喂父链下＝seam-feed 豁免，
+#   非旁路非第二通路），其余 4 发（ignore×1 + music_mode×3）原样。smoke 7 发与 bot.tts 无关不动。
 # ===========================================================================
-CEILING_PROD_EXEC_BYPASS = 4  # 生产 __init__.py：ignore×1 + music_mode×3
+CEILING_PROD_EXEC_BYPASS = 4  # 生产 __init__.py：ignore×1 + music_mode×3（tts×1 已于 S-SEAM-FOLLOW-c 收编入缝）
 CEILING_SMOKE_EXEC_BYPASS = 7  # domains/ops/smoke/：epic2 weather2 wiki2 meme1
-CEILING_TOTAL_EXEC_BYPASS = 11  # = prod + smoke
-CEILING_CONTRADICTED_CIDS = 6  # wired ∧ 有 exec-bypass 的能力数
+CEILING_TOTAL_EXEC_BYPASS = 11  # = prod + smoke（2026-09-27 S-SEAM-FOLLOW-c 收编：12→11）
+CEILING_CONTRADICTED_CIDS = 6  # wired ∧ 有 exec-bypass 的能力数（2026-09-27 S-SEAM-FOLLOW-c：bot.tts 出列 7→6）
 
 # ===========================================================================
 # 反缩面地板（现算值留足下浮余量；只有扫描面塌了才可能触底，正常债务收编不会）。

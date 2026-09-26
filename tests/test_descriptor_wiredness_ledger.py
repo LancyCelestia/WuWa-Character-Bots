@@ -28,6 +28,12 @@ canary 多入口、入口耐久三把锁并立，缺一不许降账；判据真�
   ``scripts/orchestration_wired_census``。本件只加"清单比对"这一层新逻辑。
 - **只 import 表，不 import nonebot、不启动插件装配**；descriptor 表若在飞不可导入 → 诚实 skip 点名外因
   （中央件由主会话在改），绝不因外因放宽判据（先例 ``test_creation_tts_drift_gate._cp``）。
+- **P0-A 过渡臂（2026-09-27 S-SEAM-FOLLOW-b 挂、同波 S-SEAM-FOLLOW-c 撤）**：根汇缝字面量站点
+  （``_run_capability_through_pipeline`` 的 ``capability_id=字面``）曾对冻结在飞的旧尺不可见 ⇒
+  本门一度并入共享判据真身 ``_viaid.root_funnel_literal_cids()`` 代扫。旧尺现按当时白纸黑字的
+  撤臂条件补上第四臂（``scripts/orchestration_wired_census.scan_wiredness`` 第 4 支，同一真身、
+  同一注毒挂钩），本门自此**回到纯再导出委托**；臂的牙仍住 ``test_funnel_arm_lock_has_teeth``
+  （经 census 传导）与双臂注毒的 ``test_census_cross_check_lock_has_teeth``。
 - 纯 ast 静态扫描，零运行时副作用；``BOT_AUTOSYNC=0`` 下稳定绿（不依赖任何生成物）。
 """
 
@@ -176,13 +182,52 @@ WIRED: dict[str, frozenset[str]] = {
     # 仍在 voice_enricher（_enrich_via_central 派 autodub_transform 那一发）——S270 归位只
     # 挪走产出步 autodub 那一发，第三形 transform 的发不动。
     "media.tts.autodub_transform": frozenset({"domains/media/voice_enricher.py"}),
+    # ---- 中央调度完全统一波 P0-A 后账跟随（S-SEAM-FOLLOW-b，2026-09-27）----
+    # 以下 12 枚的根站点现为 `_run_capability_through_pipeline(..., capability_id="<字面>")`
+    # ——生产经中央汇缝投递、字面 cid 点名，点位＝根 `__init__.py` 汇缝站点（行号为落账日现算，
+    # 根在他席在飞、漂移只漂注释不漂判据）。旧尺 orchestration_wired_census 对汇缝字面量的失明
+    # 已由 **scan_wiredness 第四臂**（S-SEAM-FOLLOW-c 2026-09-27 补臂，判据真身
+    # `_viaid.root_funnel_literal_cids()` 唯一支、§5 入口耐久锁同源）在本件挂账的过渡臂撤臂后
+    # 直接治好——本件不再自扫，回到再导出委托原形。
+    # ⚠ 在册未执法读数：汇缝＝账面通电（调用点存在），逐枚端到端活性由各能力自己的门钉，本臂不自证。
+    "bot.consent": frozenset({"__init__.py"}),  # 根 :9114（自 GENERIC 迁入）
+    "bot.content": frozenset({"__init__.py"}),  # 根 :8839（自 GENERIC 迁入）
+    "bot.group_info": frozenset({"__init__.py"}),  # 根 :9019（自 GENERIC 迁入）
+    "bot.host_state": frozenset({"__init__.py"}),  # 根 :9063（自 GENERIC 迁入）
+    "bot.image_search": frozenset({"__init__.py"}),  # 根 :6615（自 GENERIC 迁入）
+    "bot.media_archive": frozenset({"__init__.py"}),  # 根 :9254（自 GENERIC 迁入）
+    "bot.meme_library": frozenset({"__init__.py"}),  # 根 :9309（自 GENERIC 迁入）
+    "bot.music": frozenset({"__init__.py"}),  # 根 :8878（自 GENERIC 迁入）
+    # 两枚原「在册零调用点」：P0-A 在根落出字面汇缝站点，从 NOT_WIRED 迁入（零调用点叙述自此作废）。
+    "bot.mail.control": frozenset({"__init__.py"}),  # 根 :6895
+    "bot.auto_send.preview": frozenset({"__init__.py"}),  # 根 :8245
+    # 两枚命令腿入缝；其调度器 push 腿仍走 `pipeline.handle_async` 泛型形（根 :4761/:1864，
+    # 合成消息旁路与 campus_forward 同型）——wired 优先是 census.live_partition 既有唯一规则
+    # （"invoke 出现即 wired，其残留泛型字面量不计 generic"，music_mode/moegirl 先例同型），
+    # 泛型面的逐条量尺由 tests/test_generic_executor_facets.py 继续钉住这两枚，一腿不丢。
+    "bot.subscribe": frozenset({"__init__.py"}),  # 根 :7445
+    "bot.today_history": frozenset({"__init__.py"}),  # 根 :8924
 }
 
 #: 走泛型执行器（_run_simple_capability / pipeline.handle_async）的能力 id。
+#: 2026-09-27 S-SEAM-FOLLOW-b（P0-A 后账跟随）：原 12 枚中八枚（consent/content/group_info/
+#: host_state/image_search/media_archive/meme_library/music——含 S-R2-LEDGER 2026-09-26 登记的
+#: consent/host_state 泛型形）根站点已迁入 `_run_capability_through_pipeline` 中央汇缝、
+#: subscribe/today_history 命令腿同迁入缝（push 腿泛型由 facets 门继续量尺），逐枚上方 WIRED
+#: 留痕；本桶自此只余两枚如实欠账：
+#: - bot.campus_forward＝本波裁定的**合法保留**（异步池旁路投递形＋BLOCK 通知语义＋测试钉 env）；
+#: - bot.chat＝生产仍 `pipeline.handle_async(..., capability_id="bot.chat")` 泛型腿（根
+#:   :8472/:8618/:9664），未接中央 invoker，欠账如实挂本桶。
+#: 口径差点名（S-SEAM-FOLLOW-c 2026-09-27 现算归因修正）：新尺 central_seam_census 把 bot.chat
+#: 记 wired 的真身**不是** handle_async 字面（handle_async 是 GENERIC_FUNCS，记 generic 证据），
+#: 而是根 :4980 反应表情包**送腿** `_send_parts_through_unified_pipeline(capability_id="bot.chat")`
+#: ——送腿合成 `_capability` 闭包喂 `_run_capability_through_pipeline`，该缝腿确走中央投递，
+#: 但执行的仍是表情包贴回复的呈现件，**chat 生成执行体本身没经中央 invoker**。
+#: 本门判据量的是执行汇流 ⇒ 仍记 GENERIC。两尺各管一段，差异不许互相"改平"
+#: （把送腿缝腿抬成执行通电＝meme_library/group_info 先例点名的假绿）。
 GENERIC: frozenset[str] = frozenset(
     {
-        "bot.campus_forward", "bot.chat", "bot.content", "bot.group_info", "bot.image_search",
-        "bot.media_archive", "bot.meme_library", "bot.music", "bot.subscribe", "bot.today_history",
+        "bot.campus_forward", "bot.chat",
     }
 )
 
@@ -202,17 +247,22 @@ GENERIC: frozenset[str] = frozenset(
 NOT_WIRED: frozenset[str] = frozenset(
     {
         # ---- interface_only（设计语义，非欠账）----
-        "capability.auto_send", "capability.daily_assist", "capability.emotion", "capability.epic",
-        "capability.game_live", "capability.group_info", "capability.gscore", "capability.meme",
+        # capability.consent / capability.host_state 两枚＝#50/#58 波新面的接口联动 id（声明面
+        # base_router.py:753-754 InterfaceEntry、capability_registry.py:900/906 InterfaceDecl），
+        # 与 capability.group_info 同族：本非可 invoke 入口，bot.* 执行腿已按泛型形登记 GENERIC。
+        "capability.auto_send", "capability.consent", "capability.daily_assist", "capability.emotion", "capability.epic",
+        "capability.game_live", "capability.group_info", "capability.gscore", "capability.host_state", "capability.meme",
         "capability.meme_absorb", "capability.moegirl", "capability.music", "capability.subscribe",
         "capability.today_history", "capability.tts", "capability.weather", "capability.wiki",
         "core.gscore", "parser.content", "persona.chat", "transport.onebot",
         # ---- controlled_no_callsite ----
-        "bot.alert", "bot.audit", "bot.auto_send.preview", "bot.config", "bot.context", "bot.control",
+        # ⚠ 2026-09-27 S-SEAM-FOLLOW-b（P0-A 后账跟随）：bot.mail.control / bot.auto_send.preview
+        # 两枚已非「零调用点」——根落出字面汇缝站点（:6895/:8245），随上方 WIRED 迁移注记移入 WIRED。
+        "bot.alert", "bot.audit", "bot.config", "bot.context", "bot.control",
         "bot.cookie_expiry_notice", "bot.cookie_login", "bot.credential_check", "bot.dialogue",
         "bot.download", "bot.emergency_info_push", "bot.file", "bot.group_digest_push", "bot.group_policy",
         "bot.group_welcome", "bot.help", "bot.history", "bot.identity", "bot.llm", "bot.logs",
-        "bot.mail.control", "bot.mail.notify", "bot.memory", "bot.parse", "bot.persona", "bot.poke",
+        "bot.mail.notify", "bot.memory", "bot.parse", "bot.persona", "bot.poke",
         "bot.queue", "bot.quirk", "bot.readiness", "bot.receipt", "bot.recent", "bot.reply", "bot.roles",
         "bot.route", "bot.routes", "bot.runtime", "bot.search", "bot.send_queue_worker", "bot.setup.llm",
         "bot.why",
@@ -265,7 +315,19 @@ NOT_WIRED: frozenset[str] = frozenset(
 #:   S63 图 §3.1（P9 批试点，主代理落码）：1 枚 bot.music_mode 仅登记 prepared（根零改动、
 #:   命令入口 :7013 已是汇缝字面量）⇒ 95→94。同刻现算复核＝
 #:   `python scripts/orchestration_wired_census.py --json` wired 25→26 / not_wired 85→84。
-GAP_CEILING: int = 93
+#:   S-R2-LEDGER（2026-09-26）：**本波是"新增 descriptor 同步登记"方向的故意上调留痕**（清单
+#:   变长须手改本常量，见上方三锁成链的纪律，非迁移）——#50/#58 波新面四枚入册：
+#:   bot.consent / bot.host_state 按泛型形登记 GENERIC（根 :9211 / :9142 走 pipeline.handle_async，
+#:   不经中央缝）+2；capability.consent / capability.host_state 按 interface_only 登记 NOT_WIRED +2
+#:   ⇒ 现算缺口 len(GENERIC)(12)+len(NOT_WIRED)(85)=97，93→97。方向锁
+#:   test_gap_ceiling_tracks_registered_debt 与真树 INV-RATCHET 双向钉住该值，四枚归因见各桶注释。
+#:   S-SEAM-FOLLOW-b（2026-09-27，中央调度完全统一波 P0-A·后账跟随）：**迁移方向下调**——
+#:   10 枚迁入 WIRED（GENERIC→WIRED 八枚：consent/content/group_info/host_state/image_search/
+#:   media_archive/meme_library/music；NOT_WIRED→WIRED 两枚：mail.control/auto_send.preview），
+#:   另 GENERIC→WIRED 两枚 subscribe/today_history（命令腿入缝，wired 优先既有规则）⇒
+#:   GENERIC 12→2、NOT_WIRED 85→83，现算缺口 2+83=85，97→85（−12，全部对应上方 WIRED 迁移注记；
+#:   零放宽：判定表达式一字未动，动的是清单与常量本身=故意留痕）。
+GAP_CEILING: int = 85
 
 
 # ===========================================================================
@@ -277,7 +339,16 @@ GAP_CEILING: int = 93
 # （注毒）+ ``test_ledger_scanners_are_reexports_not_second_copy``（结构）三把锁死。
 # ===========================================================================
 def _scan_real_tree() -> tuple[dict[str, set[str]], set[str]]:
-    """返回 (invoke 点 by cid, 泛型执行器 cid 集合)。语法错误按 RF2-5 口径当场炸（普查脚本选择点名续跑）。"""
+    """返回 (invoke 点 by cid, 泛型执行器 cid 集合)。语法错误按 RF2-5 口径当场炸（普查脚本选择点名续跑）。
+
+    2026-09-27 S-SEAM-FOLLOW-c 撤过渡臂（留痕）：P0-A（S-SEAM-FOLLOW-b）曾在本函数并入
+    `_viaid.root_funnel_literal_cids()` 代扫根汇缝字面量站点，因当时旧尺 scan_wiredness
+    三支（字面 invoke / R8 注册声明 / 泛型执行器字面）对 `_run_capability_through_pipeline`
+    的 12 枚迁移失明。撤臂条件（"旧尺补第四臂后撤过渡臂"）已兑现——第四臂落在
+    census `scan_wiredness`（同一判据真身、同一 sys.modules 挂钩，注毒可跨件传导），
+    本函数自此回到**纯再导出委托**，回到 S-CENSUS 收口的判据一支原形。
+    优先级仍走 census.live_partition 唯一规则（wired 优先）。
+    """
     syntax_errors: list[str] = []
     invoke_hits, generic_files = _census.scan_wiredness(syntax_errors)
     if syntax_errors:  # RF2-5 口径对齐：静默 continue=假绿温床，改当场炸（与 parity 门同判）
@@ -533,12 +604,24 @@ def test_poison_syntax_error_file_fails_loud_not_silent(monkeypatch: pytest.Monk
 #    活性（集合）· 活性（stdout 打出来的数）· 注毒自证 · 结构反二身。
 # ===========================================================================
 def _report_buckets() -> dict[str, set[str]]:
-    """把普查脚本**自己打印**的那份报表（census_states 的态）按态归桶。"""
+    """把普查脚本**自己打印**的那份报表（census_states 的态）按态归桶。
+
+    2026-09-27 S-SEAM-FOLLOW-c：P0-A 挂账的过渡臂（含其提升版 `_promoted_report_buckets`）已撤——
+    根汇缝字面量并入旧尺 `scan_wiredness` 第四臂后，报表原始态即与门账同源，函数回到
+    S-CENSUS 收口时的单一直读原形。
+    """
     return {state: set(cids) for state, cids in _census.buckets_of(_census.census_states()).items()}
 
 
 def test_census_report_matches_ledger_partition() -> None:
-    """活性锁：报表三桶、本门真树分类、本门登记清单 **三方同集合**（数字全部现算，无手写计数）。"""
+    """活性锁：报表三桶、本门真树分类、本门登记清单 **三方同集合**（数字全部现算，无手写计数）。
+
+    2026-09-27 S-SEAM-FOLLOW-c 撤臂归位：过渡期（S-SEAM-FOLLOW-b）报表侧需手动并臂才能对齐，
+    现根汇缝字面量臂已在旧尺 scan_wiredness 第四支（判据真身 `_viaid.root_funnel_literal_cids`
+    唯一支），三方直接共读同一份账；臂的牙由 `test_funnel_arm_lock_has_teeth`（抽臂必红，
+    经 census 传导）与双臂注毒的 `test_census_cross_check_lock_has_teeth`（抽尽双臂回到字面
+    invoke 六枚）钉住。
+    """
     descriptor_ids = set(_load_descriptor_ids())
     invoke_hits, generic_hits = _scan_real_tree()
     live_wired, live_generic, live_not_wired = _live_partition(descriptor_ids, invoke_hits, generic_hits)
@@ -563,16 +646,21 @@ def test_census_report_matches_ledger_partition() -> None:
 
 
 def test_census_printed_counts_match_ledger_buckets(capsys: pytest.CaptureFixture[str]) -> None:
-    """活性锁（打印层面）：脚本 **stdout 上那个数** 必须等于本门账本的桶大小。
+    """活性锁（打印层面）：脚本 **stdout 上那个数** 必须等于脚本判据现算的原始三桶。
 
-    集合级一致还不够——病灶是「人读到的数」骗人。本锁真跑一次 ``main()`` 抓输出，逐态比对
-    ``[state] N 条`` 与真树三桶（数全现算，无一处手写计数）。统计代码若再分叉，这里红。
+    2026-09-27 S-SEAM-FOLLOW-c 撤臂归位：过渡期（S-SEAM-FOLLOW-b）"账本↔打印"直比被拆成
+    两段拼合（账本==原始+过渡臂、打印==原始），因旧尺对根汇缝字面量失明；第四臂进
+    `scan_wiredness` 后失明消失，本锁恢复**一段直比**——把 `scan_wiredness`+`live_partition`
+    唯一真身再走一遍与 stdout 逐态比对（统计代码若再分叉，这里红）。
+    臂本身的牙仍由 `test_funnel_arm_lock_has_teeth` 钉。
     """
     import re
 
     descriptor_ids = set(_load_descriptor_ids())
-    invoke_hits, generic_hits = _scan_real_tree()
-    live_wired, live_generic, live_not_wired = _live_partition(descriptor_ids, invoke_hits, generic_hits)
+    syntax_errors: list[str] = []
+    raw_invoke, raw_generic = _census.scan_wiredness(syntax_errors)
+    assert not syntax_errors, f"打印对账扫到语法错误文件，拒绝静默跳过：{'、'.join(syntax_errors)}"
+    live_wired, live_generic, live_not_wired = _census.live_partition(descriptor_ids, raw_invoke, set(raw_generic))
     states = _census.census_states()
     expected: dict[str, set[str]] = {
         _census.STATE_WIRED: live_wired,
@@ -601,19 +689,25 @@ def test_census_printed_counts_match_ledger_buckets(capsys: pytest.CaptureFixtur
 
 
 def test_census_cross_check_lock_has_teeth(monkeypatch: pytest.MonkeyPatch) -> None:
-    """注毒自证：把共享扫描里的 R8 seam 臂抽掉 ⇒ 报表掉回「命令形 8 枚记欠账」，一致性锁必红。
+    """注毒自证（R8＋旧尺第四臂）：把「注册声明臂」与「根汇缝字面量第四臂」**双臂**
+    一起抽掉 ⇒ 报表掉回「命令形迁移面全记欠账」，一致性锁必红、且红在点名。
 
-    这颗牙为什么要**同时**比账本：seam 臂活在共用判据里，只拿「报表 vs 真树分类」两头比会一起变瞎、
-    照样绿。真正抓住它的是第三头「== 已登记清单」。故本注毒同时验两头都红（真树侧另有 INV-WIRED/
-    INV-RATCHET 负责，见 `test_seam_accounting_lock_has_teeth`，两把门各管一段不重叠）。
+    重钉说明（2026-09-27 S-SEAM-FOLLOW-c 撤臂归位）：过渡期（S-SEAM-FOLLOW-b）曾把根汇缝
+    字面量臂挂在**门侧**；现臂本体已进旧尺 `scan_wiredness` 第四支，抽臂仍走同一真身
+    `_viaid.root_funnel_literal_cids`（census 现取模块属性，注毒跨件传导），语义原样。
+    双臂抽尽才掉回字面 invoke 六枚——旧用例的「报表 vs 账本」归因语义保留；
+    单抽 R8 臂不改变三方集合（双源覆盖），其牙住
+    `test_wired_sites_are_actually_invoke_callsites_in_tree`（注册臂死则 REGISTRY_POINTS_AT
+    点位失踪必红）。
     """
     def _seam_arm_deleted() -> dict[str, set[str]]:  # 模拟「有人把 R8 那一支从共享扫描里删掉」
         return {}
 
     monkeypatch.setattr(_v1, "seam_registered_cids", _seam_arm_deleted)
+    monkeypatch.setattr(_viaid, "root_funnel_literal_cids", lambda source=None: frozenset())
     with pytest.raises(AssertionError, match="bot.tts"):
         test_census_report_matches_ledger_partition()
-    # 归因唯一：被抽掉的正是那 8 枚命令形，**字面 invoke  wired 五枚不受影响**（防"整桶塌掉"式误红；
+    # 归因唯一：双臂抽尽后只剩字面 invoke，**字面 invoke wired 六枚不受影响**（防"整桶塌掉"式误红；
     # VOICE-V12 media.tts.autodub 通电点位=层 1 hook 的字面 invoke，与注册册 seam 声明无关，故同在此列；
     # 第四枚 creation.tts.synthesize＝本波 P4-C4 控制面 POST /api/v1/tts/jobs 的字面 invoke，同族同理，
     # 2026-09-23T20:3xZ 现算随 `GAP_CEILING 96→95` 一同跟随。
@@ -630,6 +724,35 @@ def test_census_cross_check_lock_has_teeth(monkeypatch: pytest.MonkeyPatch) -> N
         # invoke，与 `media.tts.autodub` 同族同理（现算 2026-09-24T02:06:02Z 随本波跟随）。
         "media.tts.autodub_transform",
     }, sorted(report["wired"])
+    # 第四臂抽尽后门账同池：本门 `_scan_real_tree`（委托同一 census）不得还凭空供电＝臂接线无旁路。
+    live_wired, _g, _n = _live_partition(
+        set(_load_descriptor_ids()), *_scan_real_tree()
+    )
+    assert live_wired == report["wired"], "双臂已抽尽，门侧扫描仍多供电＝存在第二支臂接线"
+
+
+def test_funnel_arm_lock_has_teeth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """注毒自证（旧尺第四臂有牙）：只抽根汇缝字面量臂 ⇒ 12 枚迁移 id 当场掉回欠债。
+
+    2026-09-27 S-SEAM-FOLLOW-c 撤臂归位：臂本体已从门侧迁入旧尺 `scan_wiredness` 第四支，
+    注毒挂钩不变（census 现取 `_viaid.root_funnel_literal_cids` 模块属性，同一 sys.modules
+    真身，跨件传导），本锁由"抽门侧过渡臂"改为"抽 census 第四臂"——三条红各自归因不变：
+    INV-WIRED 点名注册点位 `"__init__.py"` 失踪（以 bot.consent 为证）；
+    INV-GENERIC 点名 subscribe/today_history 掉回泛型；三方锁红。反向对照：真树现状双臂
+    都在 ⇒ 同一谓词必须 []（防"抽谁都红"式的空转假牙，先算对照再下毒）。
+    """
+    # 干净现状对照（先算，再进注毒域）：双臂都在时同一谓词必须全绿（活性基线可信）。
+    clean_invoke, clean_generic = _scan_real_tree()
+    assert _check_wired(clean_invoke) == []
+    assert _check_generic(set(_load_descriptor_ids()), clean_invoke, clean_generic) == []
+    monkeypatch.setattr(_viaid, "root_funnel_literal_cids", lambda source=None: frozenset())
+    invoke_hits, generic_hits = _scan_real_tree()
+    v = _check_wired(invoke_hits)
+    assert any("[INV-WIRED]" in s and "bot.consent" in s for s in v), v
+    g = _check_generic(set(_load_descriptor_ids()), invoke_hits, generic_hits)
+    assert any("[INV-GENERIC]" in s and "bot.subscribe" in s for s in g), g
+    with pytest.raises(AssertionError):
+        test_census_report_matches_ledger_partition()
 
 
 def test_ledger_scanners_are_reexports_not_second_copy() -> None:
@@ -648,6 +771,10 @@ def test_ledger_scanners_are_reexports_not_second_copy() -> None:
     assert "def classify_all" in census_src, "在册归类出口 classify_all 不在普查脚本里了？"
     assert "seam_registered_cids" in census_src, (
         "普查脚本丢掉 R8 命令形接缝通电臂（报表会再把已通电的能力记成欠账）"
+    )
+    assert "root_funnel_literal_cids" in census_src, (
+        "普查脚本丢掉根汇缝字面量第四臂（S-SEAM-FOLLOW-c 撤台账过渡臂的对价；丢了 12 枚"
+        "P0-A 迁移就掉回欠账/泛型——三方锁与 INV-WIRED 会红，但须在此点名根因而非事后追查）"
     )
     census_tree = ast.parse(census_src)
     classifiers = [

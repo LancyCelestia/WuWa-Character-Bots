@@ -589,32 +589,142 @@ def test_queue_state_update_keeps_operational_failure_public_message_empty() -> 
     assert calls == [""]
 
 
+def _finalizer_direct_calls(handler: ast.AST) -> list[ast.Call]:
+    """handler 体内**直呼**运营终账器 `_notify_operational_receipt` 的调用。"""
+    return [
+        call
+        for call in ast.walk(handler)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "_notify_operational_receipt"
+    ]
+
+
+def _seam_calls_carrying_finalizer(handler: ast.AST) -> list[ast.Call]:
+    """P0-A 后的等价形态：经中央汇缝 `_run_capability_through_pipeline` 投递、且把
+    `operational_notifier=_notify_operational_receipt` 作为**实参**带进缝的调用。"""
+    return [
+        call
+        for call in ast.walk(handler)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "_run_capability_through_pipeline"
+        and any(
+            kw.arg == "operational_notifier"
+            and isinstance(kw.value, ast.Name)
+            and kw.value.id == "_notify_operational_receipt"
+            for kw in call.keywords
+        )
+    ]
+
+
+def _seam_callback_legs(funnel: ast.AST) -> list[ast.Call]:
+    """缝体内拿 `operational_notifier` 形参走 `_notify_operational_callback` 落账的腿
+    （管线回执腿 + 传输替换腿——旧判据『每 handler ≥2 发终账』的正身搬家处）。"""
+    return [
+        call
+        for call in ast.walk(funnel)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "_notify_operational_callback"
+        and call.args
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "operational_notifier"
+    ]
+
+
 def test_shared_handler_source_routes_operational_receipts_to_finalizer() -> None:
+    """运营告警必达终账器——两形判据各管一段（2026-09-27 S-SEAM-FOLLOW-b 等价重钉，P0-A）：
+
+    - 泛型腿 `_run_simple_capability`：原判据**一字不动**保留（体内直呼终账器 ≥2 发）。
+    - 入缝腿 `_handle_content` / `_handle_music`：P0-A 把 handler 的告警腿搬进中央缝 ⇒
+      旧判据「handler 内 ≥2 发直呼」现算归零（不是行为丢失：直呼面搬家了）。等价重钉为
+      两段接力：① handler 以 `operational_notifier=_notify_operational_receipt` 实参交棒
+      中央缝；② 缝体本身对交棒实参有 ≥2 条落账腿（管线回执 + 传输替换）。
+      ①+② 合起来与旧判据同强：终账器拿不到任何一条 receipt 腿都会红。牙见
+      `test_operational_seam_routing_lock_has_teeth`（删实参/缝改名/抽落账腿三发注毒）。
+    """
     source_path = Path(__file__).parents[1] / "plugins" / "bot_unified_runtime" / "__init__.py"
-    tree = ast.parse(source_path.read_text(encoding="utf-8"))
     source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
     assert "_notify_operational_receipt" in source
     handlers = {
         node.name: node
         for node in ast.walk(tree)
         if isinstance(node, ast.AsyncFunctionDef)
-        and node.name in {"_handle_content", "_handle_music", "_run_simple_capability"}
+        and node.name in {
+            "_handle_content",
+            "_handle_music",
+            "_run_simple_capability",
+            "_run_capability_through_pipeline",
+        }
     }
     assert handlers.keys() == {
         "_handle_content",
         "_handle_music",
         "_run_simple_capability",
+        "_run_capability_through_pipeline",
     }
-    for handler in handlers.values():
-        notifier_calls = [
-            call
-            for call in ast.walk(handler)
-            if isinstance(call, ast.Call)
-            and isinstance(call.func, ast.Name)
-            and call.func.id == "_notify_operational_receipt"
-        ]
-        assert len(notifier_calls) >= 2
+    assert len(_finalizer_direct_calls(handlers["_run_simple_capability"])) >= 2
+    for name in ("_handle_content", "_handle_music"):
+        assert _seam_calls_carrying_finalizer(handlers[name]), (
+            f"{name} 不经中央缝携 operational_notifier=_notify_operational_receipt 实参（运营告警腿断线）"
+        )
+    assert len(_seam_callback_legs(handlers["_run_capability_through_pipeline"])) >= 2, (
+        "中央缝对交棒实参的落账腿不足两条（管线回执腿/传输替换腿被拆？）"
+    )
     assert "sent_requests, []))[-len(sent)" not in source
+
+
+def test_operational_seam_routing_lock_has_teeth() -> None:
+    """注毒自证（P0-A 重钉后的三发牙，全走内存改写、零碰真树）：
+    ① 删 handler 缝调用的 operational_notifier 实参 ⇒ 红；
+    ② 缝调用改名（＝「改回直呼/缝被搬走」形）⇒ 红；
+    ③ 缝体抽掉一条落账腿 ⇒ ≥2 腿判据红。
+    另附干净对照：未注毒真树切片两判据皆非空（防"抽谁都红"的空转假牙）。
+    """
+    import textwrap
+
+    source = (
+        Path(__file__).parents[1] / "plugins" / "bot_unified_runtime" / "__init__.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    handler = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_handle_content"
+    )
+    seg = textwrap.dedent(ast.get_source_segment(source, handler))
+    assert _seam_calls_carrying_finalizer(ast.parse(seg)), "干净对照失效：真树现状就该红（先查活性锁）"
+    # 毒①：删实参
+    no_notifier = seg.replace("operational_notifier=_notify_operational_receipt,", "", 1)
+    assert no_notifier != seg, "毒①打不进（现状字符串变了？）——先现算再动锁"
+    assert not _seam_calls_carrying_finalizer(ast.parse(no_notifier)), (
+        "删掉 operational_notifier 实参未红＝判据空转"
+    )
+    # 毒②：缝调用改名
+    renamed = seg.replace("_run_capability_through_pipeline(", "direct_dispatch_here(", 1)
+    assert renamed != seg, "毒②打不进"
+    assert not _seam_calls_carrying_finalizer(ast.parse(renamed)), (
+        "缝被改名/改回直呼未红＝判据空转"
+    )
+    # 毒③：缝体抽一条落账腿
+    funnel = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_run_capability_through_pipeline"
+    )
+    funnel_seg = textwrap.dedent(ast.get_source_segment(source, funnel))
+    assert len(_seam_callback_legs(ast.parse(funnel_seg))) >= 2, "毒③干净对照失效"
+    shrunk = funnel_seg.replace(
+        "    await _notify_operational_callback(operational_notifier, message, receipt)\n    sent_request",
+        "    sent_request",
+        1,
+    )
+    assert shrunk != funnel_seg, "毒③打不进（缝体现状变了？）——先现算再动锁"
+    assert len(_seam_callback_legs(ast.parse(shrunk))) < 2, (
+        "抽掉一条落账腿未触『≥2 腿』＝判据空转"
+    )
 
 
 @pytest.mark.asyncio

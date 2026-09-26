@@ -17,8 +17,11 @@
 _decision: build_ignore_guide_result(message.request_id), "bot.ignore", ignore_guide)`，
 而 `_run_simple_capability`（:8432-8455）体内把
 `orchestrated_command(capability_id, capability_factory(config), config)` 喂进
-`pipeline.handle_async` ⇒ 成品在调用点就交进了中央缝。本件另有 (g) 节把**同批实测拒登**的
-六枚（走根泛型执行器、不经缝）钉成"仍不得有执行面"，防后来者照抄本批手法造出假绿。
+`pipeline.handle_async` ⇒ 成品在调用点就交进了中央缝。(g) 节钉的是同批**实测拒登**的
+六枚：S-SEAM-ROOT（批④）落地后它们已有根汇缝字面量站点、但**没有**执行形
+（`orchestrated_command` 对未在册 cid 原样直呼＝行为不变），本批仍不替它们登记 execution；
+两半判据（在缝∧无执行面）合起来防"账面 WIRED 而生产零变化"与"挪回直呼却文档仍称汇缝"
+两个方向的漂移。
 """
 
 from __future__ import annotations
@@ -45,10 +48,11 @@ BATCH3: tuple[tuple[str, str], ...] = (
 CIDS = tuple(cid for cid, _ in BATCH3)
 _BUILDER = dict(BATCH3)
 
-#: 同批**实测拒登**的六枚：生产走根泛型执行器 `pipeline.handle_async(capability_id=...)`、
-#: 不经 `_run_simple_capability`/`orchestrated_command` ⇒ 给它们填 execution 只会把缺口账
-#: 翻成 WIRED 而生产零变化（本波最该拦的假绿）。拒登判据与复跑见
-#: `.superpowers/sdd/2026-09-21-unify-wave/logs/SEAT-S-PREP-B3.md`。
+#: 同批**实测拒登**的六枚（名单为断言数据、非判据真身）。前提已由 S-SEAM-ROOT（批④）改写：
+#: 生产不再走裸 `pipeline.handle_async`，而是经根汇合函数 `_run_capability_through_pipeline`
+#: 把成品交进 `orchestrated_command`（未在册 ⇒ 原样直呼，行为逐字节不变）。**不登记**的
+#: 理由不变：本批未对它们做 (a)-(d) 四证（"跑的就是装配现场交来的那一个"未验），
+#: 给它们填 execution 只会把缺口账翻成 WIRED 而无人验收其执行形。
 REFUSED_THIS_BATCH = (
     "bot.meme_library",
     "bot.group_info",
@@ -298,35 +302,43 @@ def test_seam_without_capability_makes_no_direct_call(cid: str, monkeypatch: pyt
     assert any("unavailable" in tag for tag in tags), f"{cid}: 终态没进审计：{tags}"
 
 
-# ------------------------------------------------------------------ (e) 拒登现状锁
+# ------------------------------------------------------------------ (e) 未登记现状锁
 def test_refused_rows_still_declare_no_execution() -> None:
-    """本批实测拒登的六枚必须仍然没有执行面——这是判据，不是遗留。
+    """本批未登记执行形的六枚必须仍然没有执行面——这是判据，不是遗留。
 
-    判据（可复跑）：AST 扫根，`_run_simple_capability` / `_run_capability_through_pipeline`
-    的字面 cid 集里**没有**这六枚；它们的 `pipeline.handle_async(..., capability_id=…)`
-    直呼站点分别在 content :8278 / music :8336 / today_history :1862+:8400 /
-    media_archive :8662 / meme_library :8733 / group_info :8507（S-PREP §3.2 早先记的
-    :8719/:8494 已被后续波次顶漂，本锁按现树实况写）。谁在改根之前先给它们填 execution，
-    `seam_registered_cids()` 就会把账面翻成 WIRED 而生产零变化＝本门最该拦的假绿。
+    判据（可复跑）：AST 扫根，这六枚**已在** `_run_simple_capability` /
+    `_run_capability_through_pipeline` 的字面 cid 集里（S-SEAM-ROOT 批④实况，由
+    `test_root_seam_cid_set_matches_this_batches_claim` 钉住），但注册册没有它们的
+    执行形 ⇒ `orchestrated_command` 原样直呼、行为不变。谁想给它们填 execution，
+    必须先按本批 (a)-(d) 四证补做"跑的就是装配现场交来的那一个"验收并同步缺口账，
+    不许只改名册（只改名册＝账面 WIRED 而执行形无人验过，本门最该拦的假绿）。
+    唯一剩下的直呼站点是调度器自造文本腿（today_history，根 :1864 一带），
+    它不是用户入口、由本锁与缺口账各自记账。
     """
     adapters = cp._route_execution_adapters()
     for cid in REFUSED_THIS_BATCH:
         assert cid not in adapters, (
-            f"{cid} 长出执行面（adapter={adapters.get(cid)!r}）但生产仍走根泛型执行器＝假绿；"
-            "请先在根里把成品包进 orchestrated_command，再按本批 (a)-(d) 四证重登记"
+            f"{cid} 长出执行面（adapter={adapters.get(cid)!r}）但本批未对其做 (a)-(d) 四证＝假绿；"
+            "请先补四证与缺口账同步，再连同本锁与 (g) 的汇缝断言一起按实况改登记"
         )
 
 
 def test_root_seam_cid_set_matches_this_batches_claim() -> None:
-    """拒登判据的机判那一半：这六枚确实不在根的汇缝 cid 集里，而 bot.ignore 在。
+    """未登记判据的机判那一半：这六枚确实**在**根的汇缝 cid 集里，而 bot.ignore 也在。
 
-    只扫字面量：动态 cid（别名/自然语言那几条把解析结果交进来的站点）本就不该进这个判据，
+    只扫字面量：别名/自然语言那些交动态 cid 的站点本就不该进这个判据，
     它的活性由 canary 那条常驻锁负责。HARDEN-1 I-2：本判定原先自带一份内联 AST 扫描
     （全树第二支同型扫描器），现收编为中央门件 `root_funnel_literal_cids` 的再导出委托；
     "全部在册执行形都必须有此站点"的常驻执法已上提
     `test_descriptor_wiredness_ledger.py`，本件从此退役也不会带走这条判据。
+    极性由 S-SEAM-ROOT（批④）翻面：旧断言"不在集里"记录的当时前提已被根改动推翻，
+    新断言"必须在集里"钉住当前实况——谁把它们挪回裸 `pipeline.handle_async` 直呼
+    而账面仍称汇缝，本锁当场红（只准变严、不是删锁）。
     """
     seam_cids = root_funnel_literal_cids()
     assert "bot.ignore" in seam_cids, "根已不再把 bot.ignore 交进缝＝本批登记的前提没了，先撤账再改根"
-    bypassing = sorted(set(REFUSED_THIS_BATCH) & seam_cids)
-    assert not bypassing, f"这六枚已汇进缝（{bypassing}）：本锁前提变了，按四证重判是否登记"
+    off_seam = sorted(set(REFUSED_THIS_BATCH) - seam_cids)
+    assert not off_seam, (
+        f"这六枚离开了根汇缝字面量集（{off_seam}）：S-SEAM-ROOT 前提被挪回直呼＝漂移，"
+        "要么恢复汇缝站点，要么连同本件 (e) 与缺口账按实况改登记，不许只留注释"
+    )

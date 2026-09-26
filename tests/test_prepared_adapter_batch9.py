@@ -59,9 +59,11 @@ BATCH9: tuple[tuple[str, str], ...] = (
 CIDS = tuple(cid for cid, _ in BATCH9)
 _BUILDER = dict(BATCH9)
 
-#: (g) 组一：走根泛型执行器（裸 `pipeline.handle_async`）、不经根汇合函数的六枚。
-#: 给它们填 execution 会把缺口账翻成 WIRED 而生产零变化（batch3 同判据，名单为断言数据、
-#: 非判据真身，允许与 batch3 各留一份；两处若漂移由本件 (f) 与 ledger §5 各自点名）。
+#: (g) 组一：S-SEAM-ROOT（批④）后**已汇缝但未登记执行形**的六枚——根经
+#: `_run_capability_through_pipeline` 把成品交进 `orchestrated_command`，未在册 ⇒ 原样
+#: 直呼、行为不变。给它们填 execution 而缺 (a)-(d) 四证＝账面 WIRED 而执行形无人验过
+#: （batch3 同判据，名单为断言数据、非判据真身，允许与 batch3 各留一份；
+#: 两处若漂移由本件 (f) 与 ledger §5 各自点名）。
 REFUSED_ROOT_GENERIC = (
     "bot.meme_library",
     "bot.group_info",
@@ -363,18 +365,19 @@ def test_implementation_ref_resolves_to_the_declared_true_body(cid: str) -> None
     )
 
 
-# ------------------------------------------------------------------ (e) 拒登现状锁（g 两组）
+# ------------------------------------------------------------------ (e) 未登记现状锁（g 两组）
 def test_refused_root_generic_rows_still_declare_no_execution() -> None:
-    """组一（走根泛型执行器的六枚）必须仍然没有执行面——这是判据，不是遗留。
+    """组一（已汇缝但未登记执行形的六枚）必须仍然没有执行面——这是判据，不是遗留。
 
-    它们的 `pipeline.handle_async(..., capability_id=…)` 直呼站点坐标见 batch3 (e) 注记；
-    谁在改根之前先给它们填 execution，账面翻 WIRED 而生产零变化＝本门最该拦的假绿。
+    实况（S-SEAM-ROOT 批④）：根汇缝字面量站点已由本件 (g) 的汇缝断言钉住；
+    直呼只余调度器自造文本腿（坐标注记见 batch3 (e)）。谁在补做 (a)-(d) 四证之前
+    先给它们填 execution，账面翻 WIRED 而执行形无人验过＝本门最该拦的假绿。
     """
     adapters = cp._route_execution_adapters()
     for cid in REFUSED_ROOT_GENERIC:
         assert cid not in adapters, (
-            f"{cid} 长出执行面（adapter={adapters.get(cid)!r}）但生产仍走根泛型执行器＝假绿；"
-            "请先在根里把成品包进 orchestrated_command，再按本批 (a)-(d) 四证重登记"
+            f"{cid} 长出执行面（adapter={adapters.get(cid)!r}）但组一未过 (a)-(d) 四证＝假绿；"
+            "请先补四证并同步缺口账，再连同 batch3/本件两把汇缝断言一起按实况改登记"
         )
 
 
@@ -408,8 +411,10 @@ def test_refused_no_host_row_cids_have_no_execution_and_no_route_row() -> None:
 def test_root_seam_cid_set_matches_this_batches_claim() -> None:
     """汇缝字面量集的三方对账（只扫字面量，动态 cid 交 canary 多入口锁管）。
 
-    ①本枚 bot.music_mode 在集里（登记前提）；②组一六枚**不在**集里（拒登判据的机判那一半，
-    与 batch3 (f2) 同判据同源尺）；③组二两枚**在**集里——把它们钉成"在"，是防两头的漂移：
+    ①本枚 bot.music_mode 在集里（登记前提）；②组一六枚**在**集里（S-SEAM-ROOT 批④
+    实况——旧断言"不在集里"的当时前提已被根改动推翻，翻面后钉住新实况：谁把它们
+    挪回裸直呼而账面仍称汇缝，本锁当场红；与 batch3 (g) 同判据同源尺）；
+    ③组二两枚**在**集里——把它们钉成"在"，是防两头的漂移：
     哪天根把它们挪出汇缝（本锁红＝实况变了），或哪天有人拿"它已汇缝"当借口绕过宿主行
     判据硬塞执行面（上一条锁接住）。三组断言各点各的名，归因不混。
     """
@@ -417,9 +422,10 @@ def test_root_seam_cid_set_matches_this_batches_claim() -> None:
     assert "bot.music_mode" in seam_cids, (
         "根已不再把 bot.music_mode 交进汇缝＝本批登记的前提没了，先撤账再改根"
     )
-    off_seam = sorted(set(REFUSED_ROOT_GENERIC) & seam_cids)
+    off_seam = sorted(set(REFUSED_ROOT_GENERIC) - seam_cids)
     assert not off_seam, (
-        f"组一六枚里有 {off_seam} 已汇进缝：batch3/本件的拒登前提变了，按四证重判是否登记"
+        f"组一六枚里有 {off_seam} 离开了根汇缝字面量站点：S-SEAM-ROOT 前提被挪回直呼＝漂移，"
+        "要么恢复汇缝站点，要么连同 batch3/本件 (e) 与缺口账按实况改登记，不许只留注释"
     )
     on_seam = sorted(set(REFUSED_NO_HOST_ROW) - seam_cids)
     assert not on_seam, (

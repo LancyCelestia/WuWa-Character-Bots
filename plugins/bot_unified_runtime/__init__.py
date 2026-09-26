@@ -2551,6 +2551,7 @@ async def _run_capability_through_pipeline(
     diagnostics_store: DiagnosticsStore,
     capability: Any,
     capability_id: str,
+    message: Any | None = None,
     receipt_repository: ReceiptRepository | None = None,
     record_diagnostic: bool = True,
     offload_sync_capability: bool = False,
@@ -2558,11 +2559,14 @@ async def _run_capability_through_pipeline(
     history_kind: str = "command",
     operational_notifier: Any | None = None,
 ) -> DeliveryReceipt:
-    from .domains.chat_reply.runtime.ingress import IngressGateway
-    message = IngressGateway(_incoming_from_nonebot_event).from_event(
-        event,
-        bot_id=str(getattr(bot, "self_id", "unknown")),
-    )
+    # 第二通路收编（S-SEAM-ROOT）：调用方已在 handler 侧用 feature_enabled 快照构造好
+    # message 时经 message= 交来；缺省 None 时下方摄取路径与既有缝点逐字节同路。
+    if message is None:
+        from .domains.chat_reply.runtime.ingress import IngressGateway
+        message = IngressGateway(_incoming_from_nonebot_event).from_event(
+            event,
+            bot_id=str(getattr(bot, "self_id", "unknown")),
+        )
     # 层 2 主缝的唯一汇合点（R-PREP C-1 根修）：此前只有 `_run_simple_capability` 那条
     # 命令入口包了缝，而**别名**与**自然语言**两条入口把闭包直接交给本函数 ⇒ 同一个能力
     # 三条入口里两条不经中央治理，缺口账却按"声明即通电"记它 WIRED＝账在撒谎。
@@ -5631,7 +5635,7 @@ def _register_nonebot_handlers() -> None:
                     outbound_gate,
                 )
             except Exception:
-                import logging
+                # logging 只用模块级那一枚——函数体内再 import 会遮蔽它，后段按全局读即 UnboundLocalError
 
                 logging.getLogger(__name__).exception(
                     "emergency_info 调度器注册失败，已跳过（主链路不受影响；待紧急波补 grading.may_breach_quiet_window）"
@@ -5662,7 +5666,7 @@ def _register_nonebot_handlers() -> None:
                 online_bots=_all_online_bots,
             )
     except Exception:  # 巡检是运维附属面，坏了不能把主链路一起拖下水（fail-open）。
-        import logging
+        # logging 只用模块级那一枚：函数体内再 import 会遮蔽它，令后段按全局读它的点炸。
 
         logging.getLogger(__name__).exception(
             "sync_drift 一致性漂移巡检装配失败，已跳过（主链路不受影响）"
@@ -6109,9 +6113,9 @@ def _register_nonebot_handlers() -> None:
             update={"plain_text": f"{trigger} {str(text).strip()}"}
         )
         try:
-            result = await asyncio.to_thread(
-                build_tts_capability(merged_config), spoken, None
-            )
+            from .runtime.capability_protocols import orchestrated_command
+            step = orchestrated_command("bot.tts", build_tts_capability(merged_config), merged_config)  # 语音臂执行步交层 2 主缝（S-SEAM-FOLLOW-c 收编：直呼 builder→seam-feed 喂缝）
+            result = await asyncio.to_thread(step, spoken, None)
         except Exception:  # noqa: BLE001 - 语音是增益：拿不到就只发文字。
             return str(text).strip(), []
         audio = [item for item in (getattr(result, "audio", []) or []) if isinstance(item, dict)]
@@ -6606,39 +6610,23 @@ def _register_nonebot_handlers() -> None:
         )
 
         capability = build_image_search_capability(config)
-        receipt = await pipeline.handle_async(
-            message,
-            offload_capability(capability),
+        # 第二通路收编（S-SEAM-ROOT）：投递/诊断/运营告警/回执替换全部经中央缝完成，
+        # 调用点只保留 matcher 兜底 finish 判定。
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=capability,
             capability_id="bot.image_search",
+            message=message,
+            offload_sync_capability=True,
+            operational_notifier=_notify_operational_receipt,
         )
-        await _notify_operational_receipt(message, receipt)
-        # 管道只把发送请求入队（内存队列回执是假 sent），真实网络投递必须由
-        # handler 显式完成——与 _handle_content 的投递模式完全同构。
-        sent_request = _find_sent_request(send_queue, message.request_id)
-        if sent_request is not None:
-            transport_receipt = await _deliver_transport_send_request(
-                bot,
-                event,
-                sent_request,
-                audit_logger,
-                receipt_repository,
-                send_queue,
-            )
-            _record_runtime_diagnostic(
-                config=config,
-                diagnostics_store=diagnostics_store,
-                message=message,
-                capability_id="bot.image_search",
-                receipt=transport_receipt,
-                send_queue=send_queue,
-                audit_logger=audit_logger,
-            )
-            await _notify_operational_receipt(message, transport_receipt)
-            if transport_receipt.state.value == "sent":
-                return
-            if should_finish_nonebot_matcher(transport_receipt):
-                await image_search.finish(transport_receipt.public_message)
-            return
         if should_finish_nonebot_matcher(receipt):
             await image_search.finish(receipt.public_message)
 
@@ -8846,54 +8834,35 @@ def _register_nonebot_handlers() -> None:
                 }
             )
         card_bot_avatar_url = await _resolve_bot_avatar_url(bot, config)
-        receipt = await pipeline.handle_async(
-            message,
-            offload_capability(
-                build_content_capability(
-                    config,
-                    # 注册表按 cookies 文件 mtime 缓存：热更新 cookie 后自动重建。
-                    registry=_cached_content_parser_registry(
-                        config, playwright_fetch_backend
-                    ),
-                    parse_history_store=parse_history_store,
-                    downloader=downloader,
-                    render_backend=render_backend,
-                    card_dir=str(getattr(config, "bot_card_render_dir", "data/cards") or ""),
-                    playwright_backend=playwright_fetch_backend,
-                    bot_avatar_url=card_bot_avatar_url,
-                )
+        # 第二通路收编（S-SEAM-ROOT）：投递/诊断/运营告警/回执替换全部经中央缝完成，
+        # 调用点只保留 matcher 兜底 finish 判定。
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=build_content_capability(
+                config,
+                # 注册表按 cookies 文件 mtime 缓存：热更新 cookie 后自动重建。
+                registry=_cached_content_parser_registry(
+                    config, playwright_fetch_backend
+                ),
+                parse_history_store=parse_history_store,
+                downloader=downloader,
+                render_backend=render_backend,
+                card_dir=str(getattr(config, "bot_card_render_dir", "data/cards") or ""),
+                playwright_backend=playwright_fetch_backend,
+                bot_avatar_url=card_bot_avatar_url,
             ),
             capability_id="bot.content",
+            message=message,
+            offload_sync_capability=True,
+            operational_notifier=_notify_operational_receipt,
         )
-        await _notify_operational_receipt(message, receipt)
-        sent_request = _find_sent_request(send_queue, message.request_id)
-        if sent_request is not None:
-            transport_receipt = await _deliver_transport_send_request(
-                bot,
-                event,
-                sent_request,
-                audit_logger,
-                receipt_repository,
-                send_queue,
-            )
-            _record_runtime_diagnostic(
-                config=config,
-                diagnostics_store=diagnostics_store,
-                message=message,
-                capability_id="bot.content",
-                receipt=transport_receipt,
-                send_queue=send_queue,
-                audit_logger=audit_logger,
-            )
-            await _notify_operational_receipt(message, transport_receipt)
-            if transport_receipt.state.value == "sent":
-                return
-            if should_finish_nonebot_matcher(transport_receipt):
-                await content.finish(transport_receipt.public_message)
-            # 走过 transport 分支就不再落回管道回执：管道回执在此前已通知过，
-            # 再落回会重复诊断+重复通知（管道回执诊断仅适用于无 sent_request 的路径）。
-            return
-        await _notify_operational_receipt(message, receipt)
         if should_finish_nonebot_matcher(receipt):
             await content.finish(receipt.public_message)
 
@@ -8904,53 +8873,34 @@ def _register_nonebot_handlers() -> None:
             bot_id=str(getattr(bot, "self_id", "unknown")),
             feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
-        receipt = await pipeline.handle_async(
-            message,
-            offload_capability(
-                build_music_capability(
-                    config,
-                    default_mode=runtime_settings.get("BOT_MUSIC_MODE", config)
-                        or getattr(config, "bot_music_default_mode", "card+voice+link"),
-                    request_store=music_request_store,
-                    candidate_providers=(
-                        music_candidate_providers(build_cookie_provider(config))
-                        if getattr(config, "bot_music_candidates_enabled", False)
-                        else None
-                    ),
-                    render_backend=render_backend,
-                )
+        # 第二通路收编（S-SEAM-ROOT）：投递/诊断/运营告警/回执替换全部经中央缝完成，
+        # 调用点只保留 matcher 兜底 finish 判定。
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=build_music_capability(
+                config,
+                default_mode=runtime_settings.get("BOT_MUSIC_MODE", config)
+                    or getattr(config, "bot_music_default_mode", "card+voice+link"),
+                request_store=music_request_store,
+                candidate_providers=(
+                    music_candidate_providers(build_cookie_provider(config))
+                    if getattr(config, "bot_music_candidates_enabled", False)
+                    else None
+                ),
+                render_backend=render_backend,
             ),
             capability_id="bot.music",
+            message=message,
+            offload_sync_capability=True,
+            operational_notifier=_notify_operational_receipt,
         )
-        await _notify_operational_receipt(message, receipt)
-        sent_request = _find_sent_request(send_queue, message.request_id)
-        if sent_request is not None:
-            transport_receipt = await _deliver_transport_send_request(
-                bot,
-                event,
-                sent_request,
-                audit_logger,
-                receipt_repository,
-                send_queue,
-            )
-            _record_runtime_diagnostic(
-                config=config,
-                diagnostics_store=diagnostics_store,
-                message=message,
-                capability_id="bot.music",
-                receipt=transport_receipt,
-                send_queue=send_queue,
-                audit_logger=audit_logger,
-            )
-            await _notify_operational_receipt(message, transport_receipt)
-            if transport_receipt.state.value == "sent":
-                return
-            if should_finish_nonebot_matcher(transport_receipt):
-                await music.finish(transport_receipt.public_message)
-            # 走过 transport 分支就不再落回管道回执：管道回执在此前已通知过，
-            # 再落回会重复诊断+重复通知（管道回执诊断仅适用于无 sent_request 的路径）。
-            return
-        await _notify_operational_receipt(message, receipt)
         if should_finish_nonebot_matcher(receipt):
             await music.finish(receipt.public_message)
 
@@ -8968,35 +8918,24 @@ def _register_nonebot_handlers() -> None:
             if today_ctx is not None
             else build_today_history_capability(config, render_backend=render_backend)
         )
-        receipt = await pipeline.handle_async(
-            message,
-            offload_capability(cast(Any, capability)),
+        # 第二通路收编（S-SEAM-ROOT）：投递/诊断/运营告警/回执替换全部经中央缝完成，
+        # 调用点只保留 matcher 兜底 finish 判定。transport 路径旧形只通知管道回执一次，
+        # 经缝后管道/运输回执各按中央策略通知（旁路渠道，属超集归一）。
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=cast(Any, capability),
             capability_id="bot.today_history",
+            message=message,
+            offload_sync_capability=True,
+            operational_notifier=_notify_operational_receipt,
         )
-        sent_request = _find_sent_request(send_queue, message.request_id)
-        if sent_request is not None:
-            transport_receipt = await _deliver_transport_send_request(
-                bot,
-                event,
-                sent_request,
-                audit_logger,
-                receipt_repository,
-                send_queue,
-            )
-            _record_runtime_diagnostic(
-                config=config,
-                diagnostics_store=diagnostics_store,
-                message=message,
-                capability_id="bot.today_history",
-                receipt=transport_receipt,
-                send_queue=send_queue,
-                audit_logger=audit_logger,
-            )
-            if transport_receipt.state.value == "sent":
-                return
-            if should_finish_nonebot_matcher(transport_receipt):
-                await today_history.finish(transport_receipt.public_message)
-        await _notify_operational_receipt(message, receipt)
         if should_finish_nonebot_matcher(receipt):
             await today_history.finish(receipt.public_message)
 
@@ -9075,40 +9014,23 @@ def _register_nonebot_handlers() -> None:
         )
         # B-01：OneBot API 桥（offload 线程池同步执行，主会话装配期注入循环）。
         api = build_onebot_api_bridge(bot, asyncio.get_running_loop())
-        receipt = await pipeline.handle_async(
-            message,
-            offload_capability(
-                build_group_info_capability(config, api=api, cache=group_info_cache)
-            ),
+        # 第二通路收编（S-SEAM-ROOT）：投递/诊断/运营告警/回执替换全部经中央缝完成，
+        # 调用点只保留 matcher 兜底 finish 判定。
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=build_group_info_capability(config, api=api, cache=group_info_cache),
             capability_id="bot.group_info",
+            message=message,
+            offload_sync_capability=True,
+            operational_notifier=_notify_operational_receipt,
         )
-        await _notify_operational_receipt(message, receipt)
-        sent_request = _find_sent_request(send_queue, message.request_id)
-        if sent_request is not None:
-            transport_receipt = await _deliver_transport_send_request(
-                bot,
-                event,
-                sent_request,
-                audit_logger,
-                receipt_repository,
-                send_queue,
-            )
-            _record_runtime_diagnostic(
-                config=config,
-                diagnostics_store=diagnostics_store,
-                message=message,
-                capability_id="bot.group_info",
-                receipt=transport_receipt,
-                send_queue=send_queue,
-                audit_logger=audit_logger,
-            )
-            await _notify_operational_receipt(message, transport_receipt)
-            if transport_receipt.state.value == "sent":
-                return
-            if should_finish_nonebot_matcher(transport_receipt):
-                await group_info_matcher.finish(
-                    transport_receipt.public_message or "（处理完成，没有需要展示的内容。）"
-                )
         if should_finish_nonebot_matcher(receipt):
             await group_info_matcher.finish(
                 receipt.public_message or "（处理完成，没有需要展示的内容。）"
@@ -9136,38 +9058,23 @@ def _register_nonebot_handlers() -> None:
             event, bot_id=str(getattr(bot, "self_id", "unknown")),
             feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
-        receipt = await pipeline.handle_async(
-            message,
-            offload_capability(build_host_state_capability(config)),
+        # 第二通路收编（S-SEAM-ROOT）：投递/诊断/运营告警/回执替换全部经中央缝完成，
+        # 调用点只保留 matcher 兜底 finish 判定。
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=build_host_state_capability(config),
             capability_id="bot.host_state",
+            message=message,
+            offload_sync_capability=True,
+            operational_notifier=_notify_operational_receipt,
         )
-        await _notify_operational_receipt(message, receipt)
-        sent_request = _find_sent_request(send_queue, message.request_id)
-        if sent_request is not None:
-            transport_receipt = await _deliver_transport_send_request(
-                bot,
-                event,
-                sent_request,
-                audit_logger,
-                receipt_repository,
-                send_queue,
-            )
-            _record_runtime_diagnostic(
-                config=config,
-                diagnostics_store=diagnostics_store,
-                message=message,
-                capability_id="bot.host_state",
-                receipt=transport_receipt,
-                send_queue=send_queue,
-                audit_logger=audit_logger,
-            )
-            await _notify_operational_receipt(message, transport_receipt)
-            if transport_receipt.state.value == "sent":
-                return
-            if should_finish_nonebot_matcher(transport_receipt):
-                await host_state_matcher.finish(
-                    transport_receipt.public_message or "（处理完成，没有需要展示的内容。）"
-                )
         if should_finish_nonebot_matcher(receipt):
             await host_state_matcher.finish(
                 receipt.public_message or "（处理完成，没有需要展示的内容。）"
@@ -9201,42 +9108,26 @@ def _register_nonebot_handlers() -> None:
             event, bot_id=str(getattr(bot, "self_id", "unknown")),
             feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
-        receipt = await pipeline.handle_async(
-            message,
-            offload_capability(
-                build_consent_admin_capability(
-                    lambda: getattr(runtime_settings, "safety_gate", None)
-                )
+        # 第二通路收编（S-SEAM-ROOT）：投递/诊断/运营告警/回执替换全部经中央缝完成，
+        # 调用点只保留 matcher 兜底 finish 判定。gate_provider 仍是每回合现读的 lambda，
+        # 门句柄不在装配期快照（S-CONSDISP 头注点名的旧坑）。
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=build_consent_admin_capability(
+                lambda: getattr(runtime_settings, "safety_gate", None)
             ),
             capability_id="bot.consent",
+            message=message,
+            offload_sync_capability=True,
+            operational_notifier=_notify_operational_receipt,
         )
-        await _notify_operational_receipt(message, receipt)
-        sent_request = _find_sent_request(send_queue, message.request_id)
-        if sent_request is not None:
-            transport_receipt = await _deliver_transport_send_request(
-                bot,
-                event,
-                sent_request,
-                audit_logger,
-                receipt_repository,
-                send_queue,
-            )
-            _record_runtime_diagnostic(
-                config=config,
-                diagnostics_store=diagnostics_store,
-                message=message,
-                capability_id="bot.consent",
-                receipt=transport_receipt,
-                send_queue=send_queue,
-                audit_logger=audit_logger,
-            )
-            await _notify_operational_receipt(message, transport_receipt)
-            if transport_receipt.state.value == "sent":
-                return
-            if should_finish_nonebot_matcher(transport_receipt):
-                await consent_matcher.finish(
-                    transport_receipt.public_message or "（处理完成，没有需要展示的内容。）"
-                )
         if should_finish_nonebot_matcher(receipt):
             await consent_matcher.finish(
                 receipt.public_message or "（处理完成，没有需要展示的内容。）"
@@ -9358,44 +9249,27 @@ def _register_nonebot_handlers() -> None:
             feature_enabled=(await product_feature_gate.snapshot_async()).enabled,
         )
         await _enrich_media_archive_message(bot, event, message)
-        receipt = await pipeline.handle_async(
-            message,
-            offload_capability(
-                build_media_archive_capability(
-                    config,
-                    vision_provider=vision_provider,
-                    store=media_archive_store,
-                )
+        # 第二通路收编（S-SEAM-ROOT）：投递/诊断/运营告警/回执替换全部经中央缝完成，
+        # 反查注入后的 message 原样经 message= 交缝。
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=build_media_archive_capability(
+                config,
+                vision_provider=vision_provider,
+                store=media_archive_store,
             ),
             capability_id="bot.media_archive",
+            message=message,
+            offload_sync_capability=True,
+            operational_notifier=_notify_operational_receipt,
         )
-        await _notify_operational_receipt(message, receipt)
-        sent_request = _find_sent_request(send_queue, message.request_id)
-        if sent_request is not None:
-            transport_receipt = await _deliver_transport_send_request(
-                bot,
-                event,
-                sent_request,
-                audit_logger,
-                receipt_repository,
-                send_queue,
-            )
-            _record_runtime_diagnostic(
-                config=config,
-                diagnostics_store=diagnostics_store,
-                message=message,
-                capability_id="bot.media_archive",
-                receipt=transport_receipt,
-                send_queue=send_queue,
-                audit_logger=audit_logger,
-            )
-            await _notify_operational_receipt(message, transport_receipt)
-            if transport_receipt.state.value == "sent":
-                return
-            if should_finish_nonebot_matcher(transport_receipt):
-                await media_archive.finish(
-                    transport_receipt.public_message or "（处理完成，没有需要展示的内容。）"
-                )
         if should_finish_nonebot_matcher(receipt):
             await media_archive.finish(
                 receipt.public_message or "（处理完成，没有需要展示的内容。）"
@@ -9429,31 +9303,27 @@ def _register_nonebot_handlers() -> None:
             message = message.model_copy(
                 update={"session_type": SessionType.PRIVATE, "group_id": None}
             )
-        receipt = await pipeline.handle_async(
-            message,
-            offload_capability(
-                build_meme_library_capability(
-                    meme_library_store, config,
-                    mood_valence_fn=lambda: _mood_valence(config),
-                )
+        # 第二通路收编（S-SEAM-ROOT）：投递/运营告警/回执替换全部经中央缝完成；
+        # 旧形该点无诊断记录、transport 路径不通知，经缝后按中央策略补齐（超集归一）。
+        # 私聊改投的 message 复制（model_copy）先于交缝，缝按原样使用。
+        receipt = await _run_capability_through_pipeline(
+            bot=bot,
+            event=event,
+            config=config,
+            pipeline=pipeline,
+            send_queue=send_queue,
+            audit_logger=audit_logger,
+            receipt_repository=receipt_repository,
+            diagnostics_store=diagnostics_store,
+            capability=build_meme_library_capability(
+                meme_library_store, config,
+                mood_valence_fn=lambda: _mood_valence(config),
             ),
             capability_id="bot.meme_library",
+            message=message,
+            offload_sync_capability=True,
+            operational_notifier=_notify_operational_receipt,
         )
-        sent_request = _find_sent_request(send_queue, message.request_id)
-        if sent_request is not None:
-            transport_receipt = await _deliver_transport_send_request(
-                bot,
-                event,
-                sent_request,
-                audit_logger,
-                receipt_repository,
-                send_queue,
-            )
-            if transport_receipt.state.value == "sent":
-                return
-            if should_finish_nonebot_matcher(transport_receipt):
-                await meme_library.finish(transport_receipt.public_message)
-        await _notify_operational_receipt(message, receipt)
         if should_finish_nonebot_matcher(receipt):
             await meme_library.finish(receipt.public_message)
 

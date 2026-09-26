@@ -19,6 +19,14 @@
 
 from __future__ import annotations
 
+# 坐标跟随注记（2026-09-28 S-SEAM-ROOT 批，非新注册）：本批只跟随根装配文件顶漂
+# 重锚既有 MatcherEntry 的 __init__.py 行号，条目语义零改动。漂移源：根缝
+# _run_capability_through_pipeline 签名扩展（+4，2543 起）与其下 image_search、
+# content、music、today_history(交互)、group_info、host_state、consent、
+# media_archive、meme_library 九处第二通路收编的行数收缩；跟随方式为按被锚行
+# 原文内容重定位（脚本 seat-coord-follow.py + 7 枚同名冲突条目人工核对根行）。
+# campus_record_matcher 等 5423 以上坐标不受本批影响（所有收缩均在其后）。
+
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
@@ -435,20 +443,20 @@ def build_default_takeover_registry() -> TakeoverRegistry:
     """
     # --- 50 matcher（A1 §2.1 逐行誊录；priority 缺失处 None 如实） ---
     matchers = _m(
-        MatcherEntry("status", "__init__.py:5183", "on_command", None, "status", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。2026-09-26 主代理需求 5 接线：根装配文件于 :9127 之后插入宿主机状态 matcher 块（+59 行），本批坐标整体顶漂 59，按同名注册赋值行 AST 现算重锚。"),
-        MatcherEntry("auto_send", "__init__.py:5190", "on_message", 13, "auto_send", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。2026-09-26 主代理需求 5 接线：根装配文件于 :9127 之后插入宿主机状态 matcher 块（+59 行），本批坐标整体顶漂 59，按同名注册赋值行 AST 现算重锚。"),
-        MatcherEntry("mail_control", "__init__.py:5191", "on_command", None, "mail", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("mail_notice", "__init__.py:5198", "on_message", 9, "mail", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("chat", "__init__.py:5199", "on_message", 50, "chat", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("meme", "__init__.py:5212", "on_message", 20, "meme", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("natural", "__init__.py:5213", "on_message", 45, "natural", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("meme_library", "__init__.py:5221", "on_message", 22, "meme_library", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("meme_absorb", "__init__.py:5223", "on_message", 10, "meme_absorb", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("group_upload_notice", "__init__.py:5375", "on_notice", 6, "group_upload", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("dirty_guard_matcher", "__init__.py:5396", "on_message", 3, "dirty_guard", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("status", "__init__.py:5187", "on_command", None, "status", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。2026-09-26 主代理需求 5 接线：根装配文件于 :9127 之后插入宿主机状态 matcher 块（+59 行），本批坐标整体顶漂 59，按同名注册赋值行 AST 现算重锚。"),
+        MatcherEntry("auto_send", "__init__.py:5194", "on_message", 13, "auto_send", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。2026-09-26 主代理需求 5 接线：根装配文件于 :9127 之后插入宿主机状态 matcher 块（+59 行），本批坐标整体顶漂 59，按同名注册赋值行 AST 现算重锚。"),
+        MatcherEntry("mail_control", "__init__.py:5195", "on_command", None, "mail", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("mail_notice", "__init__.py:5202", "on_message", 9, "mail", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("chat", "__init__.py:5203", "on_message", 50, "chat", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("meme", "__init__.py:5216", "on_message", 20, "meme", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("natural", "__init__.py:5217", "on_message", 45, "natural", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("meme_library", "__init__.py:5225", "on_message", 22, "meme_library", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("meme_absorb", "__init__.py:5227", "on_message", 10, "meme_absorb", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("group_upload_notice", "__init__.py:5379", "on_notice", 6, "group_upload", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("dirty_guard_matcher", "__init__.py:5400", "on_message", 3, "dirty_guard", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
         MatcherEntry(
             "campus_record_matcher",
-            "__init__.py:5419",
+            "__init__.py:5423",
             "on_message",
             8,
             "campus",
@@ -497,17 +505,17 @@ def build_default_takeover_registry() -> TakeoverRegistry:
                 " + 恰一臂），全部落在 campus 之下 ⇒ 本席净顶漂 0 行，只补继承账。"
             ),
         ),
-        MatcherEntry("file_notice", "__init__.py:5672", "on_notice", 8, "file", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("poke_notice", "__init__.py:6190", "on_notice", 7, "poke", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("emoji_like_notice", "__init__.py:6317", "on_notice", 7, "emoji_like", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("group_increase_notice", "__init__.py:6350", "on_notice", 6, "group_increase", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("group_decrease_notice", "__init__.py:6351", "on_notice", 6, "group_decrease", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("group_admin_notice", "__init__.py:6352", "on_notice", 6, "group_admin", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("file_export", "__init__.py:6492", "on_message", 8, "file_export", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("image_search", "__init__.py:6566", "on_message", 46, "image_search", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("file_notice", "__init__.py:5676", "on_notice", 8, "file", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("poke_notice", "__init__.py:6194", "on_notice", 7, "poke", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("emoji_like_notice", "__init__.py:6321", "on_notice", 7, "emoji_like", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("group_increase_notice", "__init__.py:6354", "on_notice", 6, "group_increase", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("group_decrease_notice", "__init__.py:6355", "on_notice", 6, "group_decrease", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("group_admin_notice", "__init__.py:6356", "on_notice", 6, "group_admin", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("file_export", "__init__.py:6496", "on_message", 8, "file_export", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("image_search", "__init__.py:6570", "on_message", 46, "image_search", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
         MatcherEntry(
             "cookie_admin",
-            "__init__.py:6645",
+            "__init__.py:6633",
             "on_message",
             8,
             "cookie_admin",
@@ -520,14 +528,14 @@ def build_default_takeover_registry() -> TakeoverRegistry:
                 "主账因此 −1，其中含代改成分，不宣称为纯跟随账。"
             ),
         ),
-        MatcherEntry("nickname_set", "__init__.py:6652", "on_message", 8, "nickname", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("group_file_stats", "__init__.py:6678", "on_message", 8, "group_file_stats", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("content", "__init__.py:7078", "on_message", 46, "content", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("music_mode", "__init__.py:7079", "on_message", 40, "music_mode", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("music", "__init__.py:7080", "on_message", 41, "music", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("nickname_set", "__init__.py:6640", "on_message", 8, "nickname", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("group_file_stats", "__init__.py:6666", "on_message", 8, "group_file_stats", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("content", "__init__.py:7066", "on_message", 46, "content", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("music_mode", "__init__.py:7067", "on_message", 40, "music_mode", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("music", "__init__.py:7068", "on_message", 41, "music", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
         MatcherEntry(
             "today_history",
-            "__init__.py:7081",
+            "__init__.py:7069",
             "on_message",
             None,
             "today_history",
@@ -539,26 +547,26 @@ def build_default_takeover_registry() -> TakeoverRegistry:
                 "那条本席未动。"
             ),
         ),
-        MatcherEntry("wiki", "__init__.py:7084", "on_message", 41, "wiki", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("moegirl", "__init__.py:7085", "on_message", 41, "moegirl", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("moegirl_question", "__init__.py:7086", "on_message", None, "moegirl", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("epic", "__init__.py:7089", "on_message", 41, "epic", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("weather", "__init__.py:7090", "on_message", 41, "weather", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("market", "__init__.py:7091", "on_message", 41, "market", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("fx", "__init__.py:7097", "on_message", 41, "fx", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("stocks", "__init__.py:7098", "on_message", 42, "stocks", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("commodities", "__init__.py:7099", "on_message", 41, "commodities", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("bond", "__init__.py:7100", "on_message", 41, "bond", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("northbound", "__init__.py:7101", "on_message", 41, "northbound", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("divination", "__init__.py:7102", "on_message", 41, "divination", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("news", "__init__.py:7103", "on_message", 41, "news", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("randpic", "__init__.py:7104", "on_message", 41, "randpic", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("reminder", "__init__.py:7106", "on_message", 41, "reminder", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("daily_assist", "__init__.py:7107", "on_message", 42, "daily_assist", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("eat", "__init__.py:7108", "on_message", 41, "eat", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("wiki", "__init__.py:7072", "on_message", 41, "wiki", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("moegirl", "__init__.py:7073", "on_message", 41, "moegirl", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("moegirl_question", "__init__.py:7074", "on_message", None, "moegirl", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("epic", "__init__.py:7077", "on_message", 41, "epic", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("weather", "__init__.py:7078", "on_message", 41, "weather", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("market", "__init__.py:7079", "on_message", 41, "market", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("fx", "__init__.py:7085", "on_message", 41, "fx", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("stocks", "__init__.py:7086", "on_message", 42, "stocks", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("commodities", "__init__.py:7087", "on_message", 41, "commodities", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("bond", "__init__.py:7088", "on_message", 41, "bond", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("northbound", "__init__.py:7089", "on_message", 41, "northbound", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("divination", "__init__.py:7090", "on_message", 41, "divination", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("news", "__init__.py:7091", "on_message", 41, "news", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("randpic", "__init__.py:7092", "on_message", 41, "randpic", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("reminder", "__init__.py:7094", "on_message", 41, "reminder", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("daily_assist", "__init__.py:7095", "on_message", 42, "daily_assist", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("eat", "__init__.py:7096", "on_message", 41, "eat", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
         MatcherEntry(
             "subscribe_cmd",
-            "__init__.py:7109",
+            "__init__.py:7097",
             "on_message",
             12,
             "subscribe",
@@ -570,11 +578,11 @@ def build_default_takeover_registry() -> TakeoverRegistry:
                 "是纯存量账，交坐标活性门 owner。"
             ),
         ),
-        MatcherEntry("affinity", "__init__.py:7119", "on_message", 41, "affinity", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("alias", "__init__.py:7129", "on_message", 10, "alias", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("group_info_matcher", "__init__.py:9068", "on_message", 41, "group_info", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
-        MatcherEntry("ignore_guide", "__init__.py:9263", "on_message", None, "ignore_guide", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。2026-09-26 S-CONSDISP 装配：根 :9175 处（host_state 块之后、审查 C-07 之前）纯插入 bot.consent matcher 三件套（净增 69 行），本坐标随之整体顶漂 +69，按同名注册赋值行 AST 现算重锚。"),
-        MatcherEntry("media_archive", "__init__.py:9285", "on_message", 43, "media_archive", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。2026-09-26 S-CONSDISP 装配：根 :9175 处（host_state 块之后、审查 C-07 之前）纯插入 bot.consent matcher 三件套（净增 69 行），本坐标随之整体顶漂 +69，按同名注册赋值行 AST 现算重锚。"),
+        MatcherEntry("affinity", "__init__.py:7107", "on_message", 41, "affinity", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("alias", "__init__.py:7117", "on_message", 10, "alias", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("group_info_matcher", "__init__.py:9007", "on_message", 41, "group_info", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。"),
+        MatcherEntry("ignore_guide", "__init__.py:9154", "on_message", None, "ignore_guide", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。2026-09-26 S-CONSDISP 装配：根 :9175 处（host_state 块之后、审查 C-07 之前）纯插入 bot.consent matcher 三件套（净增 69 行），本坐标随之整体顶漂 +69，按同名注册赋值行 AST 现算重锚。"),
+        MatcherEntry("media_archive", "__init__.py:9176", "on_message", 43, "media_archive", note="S181 2026-09-24 按符号名 AST 重锚：A1 冻结行号随根装配文件插删整体漂移，现锚唯一注册赋值行（<name> = on_message/on_command/on_notice），判 plausible。2026-09-26 S-ORC-1 复锚：S181 后多席向根装配文件插行致本批坐标整体顶漂（幅度逐枚见 .superpowers/sdd/2026-09-25-goal18-wave/logs/S-ORC-1.md 差集表），按同名注册赋值行 AST 现算重锚一次。2026-09-26 S-CONSDISP 装配：根 :9175 处（host_state 块之后、审查 C-07 之前）纯插入 bot.consent matcher 三件套（净增 69 行），本坐标随之整体顶漂 +69，按同名注册赋值行 AST 现算重锚。"),
     )
 
     # --- 12 调度族（A1 §2.2） ---
@@ -629,7 +637,7 @@ def build_default_takeover_registry() -> TakeoverRegistry:
                 "add_job 坐标校正到真身，label-type mismatch。",
             ),
             sched(
-                "reflection", "__init__.py:2821", ("__init__.py:2856", "__init__.py:2871"),
+                "reflection", "__init__.py:2821", ("__init__.py:2860", "__init__.py:2875"),
                 "S181 2026-09-24 register 重锚 _register_reflection_scheduler（家族 token⇒plausible）；"
                 "add_job 原 2643 指空行、校正到真 scheduler.add_job 行 2853（消空行账），"
                 "两枚 add_job 均 label-type mismatch。",
@@ -641,7 +649,7 @@ def build_default_takeover_registry() -> TakeoverRegistry:
                 " mismatch（结构上无法按符号自证，交 owner 定夺家族正名，本席不臆造）。",
             ),
             sched(
-                "digest_push", "__init__.py:3331", ("__init__.py:3363",),
+                "digest_push", "__init__.py:3331", ("__init__.py:3367",),
                 "S181 2026-09-24 register 重锚 _register_digest_push_scheduler（家族 token⇒plausible）；"
                 "add_job 坐标校正到真 scheduler.add_job 行 3360，label-type mismatch。",
             ),
@@ -778,7 +786,7 @@ def build_default_takeover_registry() -> TakeoverRegistry:
                 "按名 ast.walk 定位后继调用点 4823",
             ),
             DirectSendEntry(
-                "__init__.py:6389",
+                "__init__.py:6393",
                 "send_group_msg → _send_text_through_unified_pipeline",
                 DirectSendCategory.ABSORBED,
                 "入群欢迎 notice handler 投递口——**已收编**（裁定 R-4；S174 "
@@ -800,7 +808,7 @@ def build_default_takeover_registry() -> TakeoverRegistry:
                 "→S174 2026-09-24 AST 现算改判 ABSORBED 并把锚名换成在岗符号",
             ),
             DirectSendEntry(
-                "__init__.py:6716",
+                "__init__.py:6704",
                 "send_group_msg + send_private_msg → _send_parts_through_unified_pipeline",
                 DirectSendCategory.ABSORBED,
                 "cookie 登录二维码图片（群/私聊双通道）投递口——**已收编**（裁定 R-4；"
@@ -817,7 +825,7 @@ def build_default_takeover_registry() -> TakeoverRegistry:
                 "按名定位后继调用点 6284",
             ),
             DirectSendEntry(
-                "__init__.py:6536",
+                "__init__.py:6540",
                 "upload_group_file + upload_private_file → _send_files_through_unified_pipeline",
                 DirectSendCategory.ABSORBED,
                 "文档导出上传投递口（原登记缺口补齐项）——**已收编**（裁定 R-4 + 裁项 5；"
@@ -835,7 +843,7 @@ def build_default_takeover_registry() -> TakeoverRegistry:
                 "按名定位后继调用点 6104",
             ),
             DirectSendEntry(
-                "__init__.py:5407", "delete_msg",
+                "__init__.py:5411", "delete_msg",
                 DirectSendCategory.BY_DESIGN,
                 "撤回（dirty guard），非消息投递。S181 2026-09-24 续锚：原登记 4978 已随根插删漂移，"
                 "按符号 delete_msg 现算唯一命中＝撤回调用行 5371（await bot.call_api delete_msg）⇒ plausible。2026-09-26 S-ORC-1 复锚 5407（多席根插行顶漂 +36，撤回调用行现算唯一命中）。",
@@ -894,7 +902,7 @@ def build_default_takeover_registry() -> TakeoverRegistry:
                 "通用 call_api 透传 sink，动作面宽——DISPATCH-001 单列审计",
             ),
             DirectSendEntry(
-                "__init__.py:521,1057,1153,2248,6459,6463 + runtime/video_pipeline.py:72,74 + sources/telegram_media.py:133",
+                "__init__.py:521,1057,1153,2248,6463,6467 + runtime/video_pipeline.py:72,74 + sources/telegram_media.py:133",
                 "get_forward_msg/get_record/get_stranger_info/get_file/download_file/get_msg",
                 DirectSendCategory.READ_PATH,
                 "读路径，非出站（A1 §2.4 甄别保留）。S181 2026-09-24 续锚：原登记"

@@ -23,9 +23,11 @@ import ast
 import asyncio
 import builtins
 import inspect
+import logging
 import sys
 import textwrap
 import types
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -329,6 +331,10 @@ def _exec_wiring(
     monkeypatch.setitem(sys.modules, "nonebot_plugin_apscheduler", stub)
     namespace: dict[str, Any] = {
         "__name__": "plugins.bot_unified_runtime.__init__",
+        # 装配块在真身里按**模块全局**读 logging（根文件头部 import logging），替身这边
+        # 的 namespace 就是它的全局面——不给这一枚，fail-open 分支用例会 NameError 而把
+        # 「except 里再 import logging」这种遮蔽模块级的写法当成正确形态留下来。
+        "logging": logging,
         "config": config,
         "pipeline": pipeline if pipeline is not None else FakePipeline(),
         "_all_online_bots": online_bots if online_bots is not None else dict,
@@ -480,6 +486,42 @@ def test_root_wiring_does_not_introduce_banned_tokens(monkeypatch: pytest.Monkey
 def test_root_file_still_parses_and_host_runs_after_insertion() -> None:
     """插入后根文件仍是合法 AST（语法级不炸插件加载的最低保障）。"""
     ast.parse(ROOT_INIT.read_text(encoding="utf-8"))
+
+
+def _nested_code_objects(co: Any) -> Iterator[Any]:
+    yield co
+    for const in co.co_consts:
+        if hasattr(const, "co_consts"):
+            yield from _nested_code_objects(const)
+
+
+def test_assembly_function_never_shadows_module_logging() -> None:
+    """启动装配函数体内**不得再绑** ``logging``——绑了就把模块级同名件遮蔽掉。
+
+    2026-09-26 停机根因：两处 ``except`` 分支里的 ``import logging`` 让 ``logging`` 成为
+    ``_register_nonebot_handlers`` 的局部名（被内层闭包引用后升为 cell），模块级
+    ``import logging`` 在该函数作用域内从此不可见。函数体后段按「模块全局」读它的装配块
+    （S139 kb-sync 告警 sink）落到未绑定的局部槽 ⇒ ``UnboundLocalError``；兜底 ``except``
+    读的还是同一个名 ⇒ 再炸一次，fail-open 自身失效、整个插件装载中断、bot 起不来。
+    模块已在文件头 import logging，函数体内再 import 一处就是给自己造一颗雷。
+    """
+    module = compile(ROOT_INIT.read_text(encoding="utf-8"), str(ROOT_INIT), "exec")
+    host = next(
+        (co for co in _nested_code_objects(module) if co.co_name == "_register_nonebot_handlers"),
+        None,
+    )
+    assert host is not None, "启动装配函数不存在/改名 ⇒ 本锁前提需重新核对"
+    assert "logging" not in host.co_varnames and "logging" not in host.co_cellvars, (
+        "logging 被装配函数体内的绑定遮蔽成局部名 ⇒ 函数体内任何按模块全局读 logging 的点"
+        "未绑定即 UnboundLocalError（模块级已 import，函数体内禁再 import logging）"
+    )
+    for inner in _nested_code_objects(host):
+        if inner is host:
+            continue
+        assert "logging" not in inner.co_freevars, (
+            f"内层 {inner.co_name} 把 logging 读成外层局部（cell）⇒ 该 cell 未绑定时调用即 "
+            "NameError，这是逐消息处理器里的隐形炸弹"
+        )
 
 
 # ---------------------------------------------------------------------------

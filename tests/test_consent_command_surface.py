@@ -706,6 +706,57 @@ def _consent_matcher_nodes(tree: ast.AST) -> tuple[ast.Assign, ast.AsyncFunction
     return matcher_assign, handler
 
 
+def _consent_seam_delivery_ids(handler: ast.AST) -> set[str]:
+    """锁③判据真身：handler 内**经中央汇缝** `_run_capability_through_pipeline` 投递时
+    携带的字面 `capability_id=` 集合。
+
+    2026-09-27 S-SEAM-FOLLOW-b 等价重钉（P0-A 第二通路收编）：旧形钉 handler 直调
+    `pipeline.handle_async`（attr 调用）；入缝后投递腿搬进 `_run_capability_through_pipeline`
+    （缝体自调 pipeline.handle/handle_async，见根 :2581/:2587）⇒ 直呼形归零不是行为丢失。
+    等价形 = 「缝 Name 调用 + 字面 capability_id」**同发共存**，改回直呼、缝改名、
+    字面量糊成变量都红（牙见 `test_consent_wiring_lock_three_has_teeth`）。
+    """
+    seam_calls = [
+        node
+        for node in ast.walk(handler)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_run_capability_through_pipeline"
+    ]
+    assert seam_calls, (
+        "handler 不经中央汇缝投递（改回直呼/缝被搬走＝第二通路旧形复活，须先复核 P0-A 收编再改账）"
+    )
+    return {
+        kw.value.value
+        for call in seam_calls
+        for kw in call.keywords
+        if kw.arg == "capability_id" and isinstance(kw.value, ast.Constant)
+    }
+
+
+def test_consent_wiring_lock_three_has_teeth() -> None:
+    """注毒自证（锁③重钉后的牙；内存改写切片，零碰真树）。"""
+    import textwrap
+
+    source = ROOT_INIT_PY.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    _matcher_assign, handler = _consent_matcher_nodes(tree)
+    seg = textwrap.dedent(ast.get_source_segment(source, handler))
+    # 干净对照：真树切片必须过判据（基线可信）。
+    assert "bot.consent" in _consent_seam_delivery_ids(ast.parse(seg)), "干净切片不绿＝活性锁现状不可信"
+    # 毒①：删 capability_id 字面量（投递目标隐身）。
+    no_literal = seg.replace('capability_id="bot.consent",', "capability_id=consent_cid,", 1)
+    assert no_literal != seg, "毒①打不进（现状字符串变了？）——先现算再动锁"
+    assert "bot.consent" not in _consent_seam_delivery_ids(ast.parse(no_literal)), (
+        "字面量改成变量未被拦＝判据空转"
+    )
+    # 毒②：缝调用改名＝「改回直呼旧形」模拟（旧判据的形态在新锁下必红）。
+    direct_only = seg.replace("_run_capability_through_pipeline(", "pipeline.handle_async(", 1)
+    assert direct_only != seg, "毒②打不进"
+    with pytest.raises(AssertionError):
+        _consent_seam_delivery_ids(ast.parse(direct_only))
+
+
 def test_consent_matcher_is_wired_in_root() -> None:
     """装配活性锁（§⑨-A 必带件）：根的 consent handler 必须
     ① 在函数体内 import build_consent_admin_capability（置顶 import 会顶漂登记坐标，
@@ -759,20 +810,9 @@ def test_consent_matcher_is_wired_in_root() -> None:
         f"gate_provider 没现读装配 store 的门句柄：{provider_src}"
     )
 
-    # ③ 以 capability_id="bot.consent" 经 pipeline.handle_async 投递（中央管线，非直发）。
-    pipeline_calls = [
-        node
-        for node in ast.walk(handler)
-        if isinstance(node, ast.Call)
-        and getattr(node.func, "attr", "") == "handle_async"
-    ]
-    assert pipeline_calls, "handler 不经 pipeline.handle_async（中央管线被旁路）"
-    ids = {
-        kw.value.value
-        for call in pipeline_calls
-        for kw in call.keywords
-        if kw.arg == "capability_id" and isinstance(kw.value, ast.Constant)
-    }
+    # ③ 以 capability_id="bot.consent" 经中央汇缝投递进中央管线（判据真身与注毒见
+    #    `_consent_seam_delivery_ids` / `test_consent_wiring_lock_three_has_teeth`）。
+    ids = _consent_seam_delivery_ids(handler)
     assert "bot.consent" in ids, f"投递的 capability_id 不是 bot.consent：{ids}"
 
 
