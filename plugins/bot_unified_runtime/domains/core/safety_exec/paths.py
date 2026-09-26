@@ -317,6 +317,135 @@ class PathDomainPolicy:
     def check_sendable(self, candidate: str | os.PathLike[str] | None) -> PathDecision:
         """这个路径能不能读字节并发出站（出站口唯一判定，规格 §3 硬规则 1）。"""
         raw = "" if candidate is None else str(candidate)
+        prepared = self._prepare_candidate(raw)
+        if isinstance(prepared, PathDecision):
+            return prepared
+        lexical, resolved, escaped = prepared
+
+        # ④ 禁触名册压在最外一层：在允许根内也拦。
+        forbidden = self._forbidden_decision(resolved)
+        if forbidden is not None:
+            return forbidden
+
+        # ⑤ 别名形态：只在**登记根之下的相对尾段**上判（根前缀本身可能就是 8.3
+        #    形态——本机 `%TEMP%` 实测就是 `LANCYC~1`，那属宿主写法，不是逃逸手段）。
+        form = self._form_violation(lexical, resolved)
+        if form:
+            return self._deny(form, DOMAIN_UNDETERMINED, str(resolved))
+        for label, root in self.readable_roots:
+            if _is_within(resolved, root):
+                domain = DOMAIN_WORKSPACE if label == "workspace" else DOMAIN_RUNTIME
+                if _has_link_component(lexical):
+                    # 链接本身不神秘，但「今天指向根内、明天被改指向别处」是事实：
+                    # 记账待评审（Wave 2 有同意回路后收紧为拦）。
+                    return self._decision(
+                        VERDICT_NEEDS_REVIEW, ReviewReason.LINK_IN_PATH, domain, resolved
+                    )
+                return self._decision(VERDICT_ALLOWED, "", domain, resolved)
+        if escaped:
+            return self._deny(DenyReason.TRAVERSAL_ESCAPE, DOMAIN_OUTSIDE, str(resolved))
+        if _is_within(resolved, self.runtime_home):
+            # 运行数据根之下、登记名册之外：记账放行 + 等同意回路（Wave 2 收紧）。
+            return self._decision(
+                VERDICT_NEEDS_REVIEW,
+                ReviewReason.UNREGISTERED_RUNTIME_SUBTREE,
+                DOMAIN_RUNTIME,
+                resolved,
+            )
+        return self._deny(DenyReason.OUTSIDE_ALLOWED_ROOTS, DOMAIN_OUTSIDE, str(resolved))
+
+    def check_registered_domain(
+        self, candidate: str | os.PathLike[str] | None
+    ) -> PathDecision:
+        """登记域判定：只问「落点在不在允许根里」，不查禁触名册、不判根内别名形态。
+
+        用途是「生产配置值 ∈ 允许根」这条常驻断言（A-8 席位，2026-09-27 裁定）：
+        配置里的路径字段**合法地**指向 settings 覆盖、Cookie 件、``*.log``、
+        prompt_audit 等出站禁触类——它们在允许根内，``check_sendable`` 拒得对，
+        但那不是「落域外」。两把尺混淆不得：拿本函数当**出站许可**用，
+        等于把守卫放宽（所有者明令禁止的「靠放宽守卫变绿」形态）。
+        与 check_sendable 的口径差：①–③b 公共管线一致；跳过 ④ 禁触名册与
+        ⑤ 别名形态；链接/junction 不在此记账（那是发送时的风险，不是登记风险）。
+        """
+        raw = "" if candidate is None else str(candidate)
+        prepared = self._prepare_candidate(raw)
+        if isinstance(prepared, PathDecision):
+            return prepared
+        _lexical, resolved, escaped = prepared
+        for label, root in self.readable_roots:
+            if _is_within(resolved, root):
+                return self._decision(
+                    VERDICT_ALLOWED,
+                    "",
+                    DOMAIN_WORKSPACE if label == "workspace" else DOMAIN_RUNTIME,
+                    resolved,
+                )
+        if escaped:
+            return self._deny(DenyReason.TRAVERSAL_ESCAPE, DOMAIN_OUTSIDE, str(resolved))
+        if _is_within(resolved, self.runtime_home):
+            # 与出站闸同形：运行数据根之下、名册之外仍需评审，不算登记完成。
+            return self._decision(
+                VERDICT_NEEDS_REVIEW,
+                ReviewReason.UNREGISTERED_RUNTIME_SUBTREE,
+                DOMAIN_RUNTIME,
+                resolved,
+            )
+        return self._deny(DenyReason.OUTSIDE_ALLOWED_ROOTS, DOMAIN_OUTSIDE, str(resolved))
+
+    def check_staged_target(
+        self,
+        target: str | os.PathLike[str] | None,
+        staging_root: str | os.PathLike[str] | None,
+    ) -> PathDecision:
+        """暂存落点守卫：目标规范化后必须仍在**该通道自己的**暂存根内。
+
+        A-8 裁定「守卫补到通道上」的载体：file_gateway 的 bytes/url 腿与
+        restricted_runner 的 stage_write 写 %TEMP% 暂存件，历来不过出站闸
+        （闸只咬 source_kind="path"），本函数补上「写面必须在暂存根内」这一条。
+        口径刻意**窄**于 check_sendable：
+        * 两侧先 ``resolve()`` 再判成员（8.3 短名会让 startswith 前缀守卫静默失效，
+          本机 %TEMP% 即 LANCYC~1 形态）；
+        * 不查禁触名册——暂存文件名是通道自造的运输件（源头已 sanitize），
+          名字执法留在出站闸对**读回发送**那一步生效；在这里查会误杀
+          「bytes 腿发一个叫 cookies.txt 的正常附件」的既有语义（改语义须裁定）；
+        * 语义只加不减：正常流 target 恒在 staging_root 内 ⇒ 判 allowed，行为不变；
+          只有异常/逃逸写法（调用方拼出越界 target）从「照写不误」变成拒绝。
+        调用方须把本判定排在 mkdir/写字节**之前**。
+        """
+        raw = "" if target is None else str(target)
+        if not raw.strip():
+            return self._deny(DenyReason.EMPTY_PATH, DOMAIN_UNDETERMINED, "")
+        root_raw = "" if staging_root is None else str(staging_root)
+        if not root_raw.strip():
+            return self._deny(DenyReason.ROOT_UNRESOLVED, DOMAIN_UNDETERMINED, "")
+        resolved_root = _resolve_strict(Path(root_raw))
+        if resolved_root is None:
+            return self._deny(DenyReason.ROOT_UNRESOLVED, DOMAIN_UNDETERMINED, root_raw)
+        path = Path(raw)
+        if not path.is_absolute():
+            # 暂存 target 全部由通道用绝对暂存根拼出；相对形态＝调用方装配错误，
+            # 依赖 CWD 没有登记锚，fail-closed。
+            return self._deny(DenyReason.RELATIVE_AMBIGUOUS, DOMAIN_UNDETERMINED, raw)
+        resolved = _resolve_strict(path)
+        if resolved is None:
+            return self._deny(DenyReason.RESOLVE_FAILED, DOMAIN_UNDETERMINED, raw)
+        if str(resolved).startswith(("\\\\?\\", "\\\\.\\")):
+            return self._deny(DenyReason.UNC_OR_DEVICE_PATH, DOMAIN_UNDETERMINED, str(resolved))
+        if _is_within(resolved, resolved_root):
+            return self._decision(VERDICT_ALLOWED, "", DOMAIN_RUNTIME, resolved)
+        return self._deny(DenyReason.TRAVERSAL_ESCAPE, DOMAIN_OUTSIDE, str(resolved))
+
+    # -------------------- 内部件 --------------------
+
+    def _prepare_candidate(
+        self, raw: str
+    ) -> tuple[Path, Path, bool] | PathDecision:
+        """①–③b 公共管线：形态拒 → 锚定 → 规范化 → 设备命名空间复读拒。
+
+        返回 (词法路径, 规范化路径, 原串是否含 ``..``)。check_sendable 与
+        check_registered_domain 共用这一段，两把尺的分歧从分流点开始，
+        不在这里分叉（口径漂移是第二真身的前兆）。
+        """
         # 只在「整串是空白」时当空引用；**不 strip 正文**——尾空格本身就是本件要
         # 认的规避形态之一（strip 掉等于替攻击者把写法规范化了一遍）。
         if not raw.strip():
@@ -364,40 +493,7 @@ class PathDomainPolicy:
         if resolved_text.startswith(("\\\\?\\", "\\\\.\\")):
             return self._deny(DenyReason.UNC_OR_DEVICE_PATH, DOMAIN_UNDETERMINED, resolved_text)
 
-        # ④ 禁触名册压在最外一层：在允许根内也拦。
-        forbidden = self._forbidden_decision(resolved)
-        if forbidden is not None:
-            return forbidden
-
-        # ⑤ 别名形态：只在**登记根之下的相对尾段**上判（根前缀本身可能就是 8.3
-        #    形态——本机 `%TEMP%` 实测就是 `LANCYC~1`，那属宿主写法，不是逃逸手段）。
-        form = self._form_violation(lexical, resolved)
-        if form:
-            return self._deny(form, DOMAIN_UNDETERMINED, str(resolved))
-        escaped = _has_dotdot(parts)
-        for label, root in self.readable_roots:
-            if _is_within(resolved, root):
-                domain = DOMAIN_WORKSPACE if label == "workspace" else DOMAIN_RUNTIME
-                if _has_link_component(lexical):
-                    # 链接本身不神秘，但「今天指向根内、明天被改指向别处」是事实：
-                    # 记账待评审（Wave 2 有同意回路后收紧为拦）。
-                    return self._decision(
-                        VERDICT_NEEDS_REVIEW, ReviewReason.LINK_IN_PATH, domain, resolved
-                    )
-                return self._decision(VERDICT_ALLOWED, "", domain, resolved)
-        if escaped:
-            return self._deny(DenyReason.TRAVERSAL_ESCAPE, DOMAIN_OUTSIDE, str(resolved))
-        if _is_within(resolved, self.runtime_home):
-            # 运行数据根之下、登记名册之外：记账放行 + 等同意回路（Wave 2 收紧）。
-            return self._decision(
-                VERDICT_NEEDS_REVIEW,
-                ReviewReason.UNREGISTERED_RUNTIME_SUBTREE,
-                DOMAIN_RUNTIME,
-                resolved,
-            )
-        return self._deny(DenyReason.OUTSIDE_ALLOWED_ROOTS, DOMAIN_OUTSIDE, str(resolved))
-
-    # -------------------- 内部件 --------------------
+        return lexical, resolved, _has_dotdot(parts)
 
     def _anchor(
         self, raw: str, parts: tuple[str, ...]
@@ -575,6 +671,14 @@ _RUNTIME_READABLE_SUBTREES: Final[tuple[str, ...]] = (
 )
 _RUNTIME_HOME_READABLE_SUBTREES: Final[tuple[str, ...]] = ("cache",)
 
+# 所有者裁定登记根（A-8 波，2026-09-27 裁定「改落点 + 把登记根和守卫补完善」）：
+# daily_assist 语料的生产落点被 .env 覆写到 Assistant/（工作区与运行数据域之外的
+# 持久业务 OUT 根，与 ZCode/手机端共用语料），改道不可回迁 ⇒ 走登记根扩充正门。
+# **唯一初始条目**；任何扩充须再次经所有者裁定，禁止在此顺手加根「凑绿」。
+_OWNER_RULING_READABLE_ROOTS: Final[tuple[tuple[str, str], ...]] = (
+    ("corpus:daily_assist", "C:/Users/LancyCelestia/Assistant"),
+)
+
 
 def _resolve_default_roots() -> tuple[Path | None, Path | None, Path | None]:
     """(工作区根, 运行数据根, 运行数据家目录) —— 取不到就是 None（判定 fail-closed）。"""
@@ -644,7 +748,12 @@ def build_policy(
 
 def build_default_policy() -> PathDomainPolicy:
     workspace, data_root, _home = _resolve_default_roots()
-    return build_policy(workspace_root=workspace, runtime_data_root=data_root)
+    # 所有者裁定根只进**缺省**登记：注入式策略（测试假根）不继承真实机器目录。
+    return build_policy(
+        workspace_root=workspace,
+        runtime_data_root=data_root,
+        extra_readable_roots=_OWNER_RULING_READABLE_ROOTS,
+    )
 
 
 _default_policy: PathDomainPolicy | None = None
@@ -677,6 +786,25 @@ def check_sendable(
 ) -> PathDecision:
     """出站口唯一判定（规格 §3 点名的 `paths.check_sendable()`）。"""
     return (policy or default_policy()).check_sendable(candidate)
+
+
+def check_registered_domain(
+    candidate: str | os.PathLike[str] | None,
+    *,
+    policy: PathDomainPolicy | None = None,
+) -> PathDecision:
+    """登记域判定（「生产配置值 ∈ 允许根」断言用），**不是**出站许可。"""
+    return (policy or default_policy()).check_registered_domain(candidate)
+
+
+def check_staged_target(
+    target: str | os.PathLike[str] | None,
+    staging_root: str | os.PathLike[str] | None,
+    *,
+    policy: PathDomainPolicy | None = None,
+) -> PathDecision:
+    """暂存落点守卫：写入前判「target 规范化后仍在通道自己的暂存根内」。"""
+    return (policy or default_policy()).check_staged_target(target, staging_root)
 
 
 def plain_reason(reason_code: str) -> str:

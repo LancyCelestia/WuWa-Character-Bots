@@ -49,6 +49,7 @@ from plugins.bot_unified_runtime.domains.core.contracts.runtime import StrictBas
 from plugins.bot_unified_runtime.domains.core.safety_exec.paths import (
     VERDICT_NEEDS_REVIEW,
     check_sendable,
+    check_staged_target,
 )
 from plugins.bot_unified_runtime.domains.media.digest import (
     media_digest,
@@ -91,7 +92,7 @@ class FileTransferError(Exception):
     missing_file / upload_rejected / upload_failed_or_unknown /
     unsupported_file_target / upload_api_unavailable / url_rejected /
     url_download_failed / url_download_unavailable / staging_unavailable /
-    path_domain_denied / invalid_source。
+    staging_target_denied / path_domain_denied / invalid_source。
 
     邮件附件腿新增（一因一码，绝不塌成一枚兜底串）：
     mail_envelope_missing / mail_recipients_unconfigured /
@@ -477,7 +478,17 @@ class FileTransferGateway:
         digest = media_digest(data)  # 中央件收编（S5，T121）：算法恒等。
         ticket_id = f"ft_{uuid.uuid4().hex[:12]}"
         name = src.name or f"{ticket_id}.bin"
-        target = self._ensure_staging_dir() / f"{ticket_id}_{name}"
+        # A-8 裁定（2026-09-27）「守卫补到通道上」：bytes 腿历史上直写 %TEMP% 暂存、
+        # 不过任何落点判定。补最小暂存守卫——target 规范化后必须仍在**本网关自己的**
+        # staging_dir 内（两侧先 resolve()，防 8.3 短名把前缀守卫打穿）；判定排在
+        # mkdir/写字节之前。正常流 target 恒在根内 ⇒ 行为零变化，只有异常拼装
+        # （ticket_id/name 里混入越界写法）从「照写不误」变成拒发。
+        target = self.staging_dir / f"{ticket_id}_{name}"
+        staged = check_staged_target(target, self.staging_dir)
+        if staged.denied:
+            logger.warning("file stage bytes staging denied %s", staged.audit_line())
+            raise FileTransferError("staging_target_denied")
+        self._ensure_staging_dir()
         target.write_bytes(data)
         return FileTicket(
             ticket_id=ticket_id,
@@ -508,7 +519,15 @@ class FileTransferGateway:
             raise FileTransferError("url_download_unavailable")
         ticket_id = f"ft_{uuid.uuid4().hex[:12]}"
         name = src.name or fallback_name
-        target = self._ensure_staging_dir() / f"{ticket_id}_{name}"
+        # 同 _stage_bytes：url 腿补暂存守卫（A-8 裁定 2026-09-27）。判两次——
+        # ① 交给下载器之前：target 必须落在本网关暂存根内（不等到写完才发现写歪）；
+        # ② 下载器回执之后：注入式实现若把件落到别处（或给相对名），票据不认。
+        target = self.staging_dir / f"{ticket_id}_{name}"
+        staged = check_staged_target(target, self.staging_dir)
+        if staged.denied:
+            logger.warning("file stage url staging denied %s", staged.audit_line())
+            raise FileTransferError("staging_target_denied")
+        self._ensure_staging_dir()
         try:
             downloaded = Path(self._url_downloader(url, target))
         except FileTransferError:
@@ -517,6 +536,10 @@ class FileTransferGateway:
             raise FileTransferError("url_download_failed") from exc
         if not downloaded.is_file():
             raise FileTransferError("url_download_failed")
+        landed = check_staged_target(downloaded, self.staging_dir)
+        if landed.denied:
+            logger.warning("file stage url landing denied %s", landed.audit_line())
+            raise FileTransferError("staging_target_denied")
         return FileTicket(
             ticket_id=ticket_id,
             local_path=downloaded,
