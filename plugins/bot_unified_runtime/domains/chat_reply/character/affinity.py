@@ -16,10 +16,19 @@ v7 潜变量重写（用户裁定 2026-09-21「算法全部重写：一次加减
 升级为无界潜变量 z ∈ ℝ，展示分 s = 100·tanh(z) —— 结构上永不触顶；计分单元从
 「关键词命中次数」升级为五子信号质量分 q（主动度/延展度/情绪词/尊重边界/回应性）；
 同类信号新鲜度 novelty 跨日按半衰回升（不再按自然日重置）；按人活跃度 rhythm 归一
-（话痨不占便宜）；道歉/和解走独立修复通道（repair_gain，不吃新鲜度计数）；负向单
-事件 |Δz| 上限 + 每人日位移上限 + 同类事件熔断三道护栏。存量分数经
+（话痨不占便宜）；道歉/和解走独立修复通道（repair_gain，不吃新鲜度计数）；单事
+件 |Δz| 上限（正负同帽，A-1 裁定 2026-09-26）+ 每人滚动 24h 位移上限（旧自然日
+桶作废）+ 同类事件熔断三道护栏。存量分数经
 z = atanh(clamp(score/100, ±bound)) 惰性映射，绝不重置任何人（表示变换，非重算）。
 灰度开关 bot_affinity_v7_enabled 缺省 False ⇒ v5/v6 路径逐字节不变、可一键回退。
+v8 边际递减 + 长尾（用户裁定 2026-09-27「好感度算法升级：边际递减 + 长尾效应」，
+规格基线 docs/affinity-design.md v8 章节）：①边际递减——z 路径每步增量乘系数
+γ(|z|) = half/(half+|z|) ∈ (0,1]（half = z_hard，即旧 ±98.5 硬界点改为半衰减
+参考点；|z| 越大步进越小，正负对称），好感度越高、每分增益边际越小；②长尾——
+更新处原 ±z_hard 硬截断改为浮点表示域护栏 atanh(0.999999)≈7.254，展示分严格
+落在 (−99.9999, +99.9999) 内：曲线永不触顶、也永不因贴界冻结，增长持续减速。
+γ≤1 保证单事件帽与滚动 24h 位移帽三道护栏界外无变化；存量惰性映射
+（clamp ±0.985）逐字不动，零迁移零重置。
 跨版本不变量（需求项 13 + 裁定 D3，2026-09-25 S-T-AFFIN-GUARD 席）：「禁瞬间巨变」
 对**今天真在跑的 v5/v6 路**与 v7 路同尺成立——两路各自的位移界（v5/v6 滚动预算 /
 v7 三道护栏 + tanh 域）之外，`delta_override` 与 `observe_points(points)` 这两个
@@ -444,11 +453,21 @@ _V7_DEFAULT_BASE_STEP = 0.10            # Δz 单位步长
 _V7_DEFAULT_NOVELTY_RATIO = 0.90        # ρ：同类显著信号新鲜度比率
 _V7_DEFAULT_NOVELTY_HALO_DAYS = 21      # 新鲜度计数回升半衰（天）
 _V7_DEFAULT_RHYTHM_REFERENCE_TURNS = 8  # r_ref：日均互动轮次参考水位
-_V7_DEFAULT_NEGATIVE_EVENT_CAP_Z = 0.10  # 负向单事件 |Δz| 上限
-_V7_DEFAULT_DAILY_MOVE_CAP_Z = 0.12     # 每人每日总位移上限 |ΣΔz|
+_V7_DEFAULT_NEGATIVE_EVENT_CAP_Z = 0.10  # 单事件 |Δz| 上限（A-1 裁定后正负同额，键名历史见 V7Settings）
+_V7_DEFAULT_DAILY_MOVE_CAP_Z = 0.12     # 滚动 24h 总位移上限 |ΣΔz|（A-1 裁定：旧「本地自然日」窗形作废）
 _V7_DEFAULT_FUSE_DAILY_EVENTS = 25      # 同类信号每日熔断事件数（超出不再计分）
 _V7_DEFAULT_REPAIR_GAIN = 1.4           # 修复通道（道歉/和解）步长加成
-_V7_DEFAULT_Z_HARD_BOUND = 0.985        # tanh 饱和域硬边界（展示 ±98.5）
+_V7_DEFAULT_Z_HARD_BOUND = 0.985        # v8 起语义变迁：由「tanh 饱和域硬边界（展示 ±98.5）」
+                                        # 改为 v8 边际递减 γ 的半衰减参考点（half=z_hard，
+                                        # |z|=half 处步进恰为半额）。更新处不再按此截断，
+                                        # 仅存量惰性映射仍按此钳位（零迁移口径不变）。
+# v8（2026-09-27「边际递减 + 长尾」）：长尾表示域护栏——z 更新只保留浮点表示
+# 域兜底 atanh(0.999999)≈7.2538，展示分严格落于 (−99.9999, +99.9999)。此域远
+# 宽于 8 档态度表的最高档界（|s|>97 区间），档位判定与既有单事件帽/滚动位移帽
+# （γ≤1 使其上界逐点收紧、从不放宽）均不受影响。非第 13 枚配置键——护栏尺度
+# 仍以在册 12 键为唯一调节面（本值为模块常量，同 _V7_NOVELTY_FLOOR 先例）。
+_V8_DISPLAY_DOMAIN_BOUND = 0.999999
+_V8_Z_REPR_DOMAIN = math.atanh(_V8_DISPLAY_DOMAIN_BOUND)
 # novelty 下限（席位修正量，设计稿 §二 数学不自洽的对账，见 WP7 日志 C-1）：
 # 0.90^n 在持续互动稳态（日均 10 句好话 n≈303）会指数归零、把关系永久冻结在
 # ~36 分，令设计自证的「要到 80 分需要以周为月的持续高质量互动」不成立。
@@ -619,6 +638,24 @@ def v7_rhythm_factor(daily_turns: float, reference: float = _V7_DEFAULT_RHYTHM_R
     return 1.0 / (1.0 + excess / ref)
 
 
+def v8_marginal_gain(z: Any, half_z: Any) -> float:
+    """v8（2026-09-27「边际递减 + 长尾」）边际递减系数 γ(|z|) = half/(half+|z|)。
+
+    γ ∈ (0, 1]、只依赖 |z|（正负对称）、随 |z| 严格单调递减：|z|=half 处恰为
+    半额步进，越高（或越低）每一分增益的边际越小。half 取 z_hard（旧 ±98.5
+    硬界点改为半衰减参考点），经配置键 bot_affinity_v7_z_hard_bound 在册可调。
+    γ≤1 是护栏不变量的锚：单事件帽与滚动 24h 位移帽作用于 γ 缩放后的增量，
+    其界外上界只收紧、从不放宽——「禁瞬间剧烈加/减」在任何档位恒成立。
+    消毒口径与邻居纯函数一致：非有限入参经 `_finite_float_or` 归 0；
+    half≤0（脏配置/误用）⇒ γ≡1.0，退化为 v7 原行为而非停机或巨变。
+    """
+    z_value = _finite_float_or(z, 0.0)
+    half = _finite_float_or(half_z, 0.0)
+    if half <= 0.0:
+        return 1.0
+    return half / (half + abs(z_value))
+
+
 def _v7_is_repair(text: str, behavior: str) -> bool:
     """修复通道判定（§2.2 repair_gain 行）：明示道歉词表命中，或 _TEASE_RE 家族
     （哈哈/逗你/骗你的…）以戏弄行为出现——即「吵架后的缓和动作」。辱骂/抱怨
@@ -749,7 +786,16 @@ class V7Settings:
     novelty_ratio: float = _V7_DEFAULT_NOVELTY_RATIO
     novelty_halo_days: float = _V7_DEFAULT_NOVELTY_HALO_DAYS
     rhythm_reference_turns: float = _V7_DEFAULT_RHYTHM_REFERENCE_TURNS
+    # negative_event_cap_z：键名历史含义是「只钳负向」——2026-09-26 A-1 裁定起
+    # **语义已扩到双向**（单事件 |Δz| 上限，正负同额，override 面与普通计分面同尺）。
+    # 为什么不新增一枚 `positive_event_cap_z`：①她的裁定要的是「正向单事件帽与负向
+    # 对称起步」，不对称缺省没有任何在册需求，多一枚旋钮=多一条可被单独调松的泄口
+    # （`v7_structural_guard_report` 逐枚体检护栏，两枚帽还得各写各的越界点名）；
+    # ②`bot_affinity_negative_event_cap_z` 已四处同生（config/catalog/.env.example/
+    # env 现读口），换名或加名都要动那三面共享件，为语义扩展付键迁移的代价不值；
+    # ③本模块「少旋钮、单一真身」家规（缺省值以本 dataclass 为单一事实源）。
     negative_event_cap_z: float = _V7_DEFAULT_NEGATIVE_EVENT_CAP_Z
+    # daily_move_cap_z：窗形=滚动 24h（从 affinity_delta_log 现读），不再是本地自然日桶。
     daily_move_cap_z: float = _V7_DEFAULT_DAILY_MOVE_CAP_Z
     fuse_daily_events: int = _V7_DEFAULT_FUSE_DAILY_EVENTS
     repair_gain: float = _V7_DEFAULT_REPAIR_GAIN
@@ -763,11 +809,14 @@ class V7Settings:
 
     @property
     def z_hard(self) -> float:
-        """Z_HARD = atanh(z_hard_bound)：潜变量定义域护栏（永不实际触边）。
+        """Z_HARD = atanh(z_hard_bound)：v8 起为边际递减 γ 的半衰减参考点（half）。
 
-        域钳制与 `v7_display_fraction_to_z` 同一条（[0.5, 0.999999]）+ 同一个非抛式
-        消毒口：本属性被 `max(-v7.z_hard, min(v7.z_hard, …))` 用作硬界，若它自己
-        能抛/能产出 inf，硬界就成了"瞬间巨变"的现场而不是防线。
+        v7 原语义是更新处的硬截断界；v8（2026-09-27「边际递减 + 长尾」）把更新处
+        的截断换成 `_V8_Z_REPR_DOMAIN` 表示域护栏，本值改为 `v8_marginal_gain` 的
+        half 入参（|z|=half 处步进恰为半额），同时仍是存量惰性映射的钳位界
+        （零迁移口径）。消毒口不变：界钳制与 `v7_display_fraction_to_z` 同一条
+        （[0.5, 0.999999]）+ 同一个非抛式消毒口——它能抛/能产出 inf 的那天，
+        γ 与映射两路都会变成"瞬间巨变"的现场而不是防线。
         """
         bound = min(0.999999, max(0.5, _finite_float_or(self.z_hard_bound, _V7_DEFAULT_Z_HARD_BOUND)))
         return math.atanh(bound)
@@ -1017,12 +1066,15 @@ def v7_raw_delta_z(
     settings: V7Settings,
 ) -> float:
     """§2.2 更新式（护栏前）：Δz = base_step·q·novelty·rhythm·mood·impression，
-    修复通道对正向 ×repair_gain；负向单事件 |Δz| ≤ negative_event_cap_z。"""
+    修复通道对正向 ×repair_gain；单事件 |Δz| ≤ negative_event_cap_z
+    （A-1 裁定：正负同帽——修复 ×1.4 加成后同样被帽咬住，键名历史含义已扩到双向）。"""
     delta = settings.base_step * q * novelty * rhythm * mood * impression
     if repair and delta > 0.0:
         delta *= settings.repair_gain
     if delta < 0.0:
         delta = max(delta, -settings.negative_event_cap_z)
+    elif delta > 0.0:
+        delta = min(delta, settings.negative_event_cap_z)
     return delta
 
 
@@ -1054,14 +1106,16 @@ def _v7_load_state(raw: str | None) -> dict[str, Any]:
             ema = [max(0.0, float(raw_ema[0])), max(0.0, float(raw_ema[1]))]
         except (ValueError, TypeError):
             pass
-    day: dict[str, Any] = {"i": -1, "s": 0.0, "c": {}}
+    # day：A-1 起只携带熔断计数（"i" 日界 + "c" 计数）；旧行的 "s"（自然日
+    # 位移额度）在此被静默丢弃——位移额度唯一真身改读 delta_log 滚动 24h，
+    # 存量 state 无需迁移（零搬运，读口宽容）。
+    day: dict[str, Any] = {"i": -1, "c": {}}
     raw_day = data.get("day")
     if isinstance(raw_day, dict):
         try:
             raw_counts = raw_day.get("c")
             day = {
                 "i": int(raw_day.get("i", -1)),
-                "s": max(0.0, float(raw_day.get("s", 0.0))),
                 "c": (
                     {str(k): max(0, int(v)) for k, v in raw_counts.items()}
                     if isinstance(raw_counts, dict)
@@ -1081,7 +1135,6 @@ def _v7_dump_state(state: dict[str, Any]) -> str:
             "ema": [round(state["ema"][0], 6), state["ema"][1]],
             "day": {
                 "i": state["day"]["i"],
-                "s": round(float(state["day"]["s"]), 8),
                 "c": dict(state["day"]["c"]),
             },
             "recent": state["recent"][-_V7_RECENT_WINDOW:],
@@ -1750,12 +1803,19 @@ class DynamicAffinityStore:
         """v7 §2.2 更新体（同锁同事务内调用）。
 
         返回 ``(applied_Δz, new_z, v7_state_json)``。护栏三道（在册 12 键）：
-        负向单事件 |Δz|≤negative_event_cap_z（在 v7_raw_delta_z 内）、
-        每人每日总位移 |ΣΔz|≤daily_move_cap_z（本地自然日、正负共享同额）、
-        同类信号日熔断 fuse_daily_events（超出不再计分、不喂新鲜度）。
+        单事件 |Δz|≤negative_event_cap_z（正负同帽，A-1 裁定；override 与
+        普通计分面同尺，在 v7_raw_delta_z 与 override 分支各钳一次）、
+        总位移 |ΣΔz|≤daily_move_cap_z（**滚动 24h**、从 affinity_delta_log 现读、
+        正负共享同额——2026-09-26 A-1 裁定把旧「本地自然日桶」换形，
+        跨午夜清零的排程路结构性消失）、
+        同类信号日熔断 fuse_daily_events（超出不再计分、不喂新鲜度；日桶保留，
+        要不要一并滚动见交付日志 §6 建议项）。
         冷却门沿用 _INTERACTION_COOLDOWN_SECONDS（去刷分语义不变）；
         零增量不落日志不占冷却（v5 同律）。override 按 z 域直用（管理员/poke
-        权威信号语义不变，不喂新鲜度计数、不吃质量分），仍受日位移与硬界。
+        权威信号语义不变，不喂新鲜度计数、不吃质量分），仍受单事件帽、
+        滚动 24h 位移额度与 v8 表示域护栏。v8 边际递减：两分支汇流后 raw 先乘
+        γ(|z|)=z_hard/(z_hard+|z|)（帽后、额度前，界外上界只收紧），更新处
+        不再按 ±z_hard 截断（长尾，见 §v8 注释）。
         """
         state = _v7_load_state(state_json)
         # 活跃 EMA：所有抵达本体的事件都计入（rhythm 归一的"日均互动轮次"底数）。
@@ -1764,10 +1824,12 @@ class DynamicAffinityStore:
             ema_value *= 0.5 ** ((now - ema_at) / (_V7_RHYTHM_HALFLIFE_DAYS * _DAY_SECONDS))
         ema_value += 1.0
         daily_rate = ema_value * math.log(2.0) / _V7_RHYTHM_HALFLIFE_DAYS
-        # 当日结构（自然日，进程本地时区——与 v5 day_index 同口径）。
+        # 当日结构：A-1 起只剩熔断计数一职（位移额度改滚动 24h 现读日志，
+        # state 不再携带 day["s"]——旧形态"自然日清零"正是"午夜两侧各吃满一次"
+        # 的排程路；"i"/"c" 保留是刻意的：熔断语义按日，她的裁定未动这一格）。
         day = state["day"]
         if int(day.get("i", -1)) != day_index:
-            day = {"i": day_index, "s": 0.0, "c": {}}
+            day = {"i": day_index, "c": {}}
             state["day"] = day
 
         def done(applied: float, new_z: float) -> tuple[float, float, str]:
@@ -1789,15 +1851,18 @@ class DynamicAffinityStore:
 
         digest = hashlib.sha1((text or "").strip().encode("utf-8")).hexdigest()[:12]
         if delta_override is not None:
-            # 权威信号：z 域直用（负向同样受单事件上限），不占每日额度、
-            # 不喂新鲜度（v5 override "不占每日额度"语义保持）。
+            # 权威信号：z 域直用，**单事件帽双向**（A-1 裁定）——旧形态只钳负向，
+            # 正向"直穿到当日剩余额度"，一发 override 最多吃满全日 0.12z（≈11.98
+            # 展示分），配合日桶还能午夜两侧各吃一轮。现正向同样被
+            # negative_event_cap_z（语义已扩双向）咬到 0.10z。不喂新鲜度（v5
+            # override "不喂新鲜度"语义保持；旧注"不占每日额度"与代码不符——
+            # override 落同一张 delta 日志、吃同一份滚动额度，本行按实况改口）。
             # S-T-AFFIN-GUARD：执法体内的第二道消毒——门面被绕开（直调本体的
             # 在册锁与未来调用方）时，非有限 override 同样 ⇒ 0.0＝本次不动。
             # 旧形态 `float(delta_override)` 放行 NaN：`min(z_hard, z+nan)` 因
             # NaN 比较恒 False 返回 z_hard ⇒ 一发顶到 ±98.5（实测 +88.4 分）。
             raw = _finite_float_or(delta_override, 0.0)
-            if raw < 0.0:
-                raw = max(raw, -v7.negative_event_cap_z)
+            raw = max(-v7.negative_event_cap_z, min(v7.negative_event_cap_z, raw))
             repair = False
             n_prev: float | None = None
         else:
@@ -1852,17 +1917,55 @@ class DynamicAffinityStore:
                 repair=repair,
                 settings=v7,
             )
-        # 日位移护栏：|ΣΔz| 当日累计（正负共享同额），余量不足按序截断。
-        remaining = max(0.0, v7.daily_move_cap_z - float(day.get("s", 0.0)))
+        # v8 边际递减（用户裁定 2026-09-27）：当前高度 z 处的步进乘
+        # γ(|z|)=half/(half+|z|)（half=z_hard）。放在单事件帽**之后**、位移护栏
+        # **之前**：帽咬过再缩放 ⇒ |raw|≤cap×γ≤cap，两道护栏的界外上界只收紧、
+        # 从不放宽——override 通道同受此缩放（两分支在此汇流）。γ 只依赖 |z|，
+        # 正负对称：高层减速双向成立，涨不到顶也跌不到底。
+        raw *= v8_marginal_gain(z, v7.z_hard)
+        # 位移护栏（A-1 裁定 2026-09-26）：**滚动 24h、现读 affinity_delta_log**，
+        # 不再用 state 的 day["s"] 自然日桶——旧窗形"跨午夜即清零"可被排程成
+        # 午夜两侧各吃满一轮额度（两发 60–120s 内跨档的路）。v7 行历来以
+        # source='v7' 落该表（本函数末尾），>48h 才 prune，24h 窗恒完整；
+        # 与 v5 路 `_clamp_delta_to_rolling_budget` 的"纯时间窗、重启与跨午夜
+        # 均不重置"同一哲学，两路各读各的 source 族、互不吃对方额度（单位不同：
+        # v5 行是分口径、v7 行是 z 口径，混读即串币制——v5 侧排除 'v7' 的既有
+        # 判据是对称的另一半）。非有限脏行按**额度用满**处理：宁冻结不放行，
+        # "脏值少算⇒放行更多"是保守判据的反面（SQLite 把 NaN 存成 NULL，
+        # NULL>=窗界为假⇒该行进不了窗，与 v5 路同形，属既成边界如实记录）。
+        moved_24h = 0.0
+        budget_dirty = False
+        for row in connection.execute(
+            "SELECT delta FROM affinity_delta_log"
+            " WHERE sender_id = ? AND bot_id = ? AND applied_at >= ? AND source = 'v7'",
+            (sender_id, bot_id, now - _DAY_SECONDS),
+        ):
+            try:
+                magnitude = abs(float(row["delta"]))
+            except (TypeError, ValueError):
+                magnitude = float("inf")
+            if math.isfinite(magnitude):
+                moved_24h += magnitude
+            else:
+                budget_dirty = True
+        remaining = (
+            0.0 if budget_dirty else max(0.0, v7.daily_move_cap_z - moved_24h)
+        )
         if raw == 0.0 or remaining <= 0.0:
             return done(0.0, z)
         applied = min(raw, remaining) if raw > 0.0 else -min(-raw, remaining)
-        new_z = max(-v7.z_hard, min(v7.z_hard, z + applied))
+        # v8 长尾（2026-09-27）：此处**不再按 ±z_hard 截断**——旧形态在 |z| 逼近
+        # atanh(0.985) 时贴界冻结（增量被整段丢弃、applied 归 0），既是"到顶"也
+        # 是另一种"瞬间归零"。现只保留浮点表示域护栏 atanh(0.999999)：展示分
+        # 严格落于 (−99.9999, +99.9999)，增长由 γ 持续减速、但永不触顶、永不
+        # 冻结。域界仍是消毒口：非有限入参早在上游归 0，z+applied 越界只为
+        # NaN 比较陷阱的兜底（max/min 对 NaN 恒 False 时返回域界一侧的形态在
+        # 此已不可能出现——applied/raw 均经 _finite_float_or 归口）。
+        new_z = max(-_V8_Z_REPR_DOMAIN, min(_V8_Z_REPR_DOMAIN, z + applied))
         applied = new_z - z
         if applied == 0.0:
-            # 已贴硬界（理论上 ±98.5 外才可能到这里）：不占当日额度不落日志。
+            # 已贴表示域界（±99.9999 展示分外才可能到这里）：不占位移额度不落日志。
             return done(0.0, z)
-        day["s"] = float(day.get("s", 0.0)) + abs(applied)
         if delta_override is None:
             day["c"][behavior] = int(day["c"].get(behavior, 0)) + 1
             if n_prev is not None:

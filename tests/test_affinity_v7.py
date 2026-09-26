@@ -36,9 +36,15 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     v7_raw_delta_z,
     v7_rhythm_factor,
     v7_z_to_display_fraction,
+    v8_marginal_gain,
 )
 
 _V7_ENV_KEYS = [name.upper() for name, _default in _V7_CONFIG_FIELDS]
+
+# v8（2026-09-27「边际递减 + 长尾」）：本文件按新前提重建的断言用此表示域界
+# （展示分开区间 ±0.999999，等于 atanh 输入域钳位）。前提变更、锁不删。
+_V8_DISPLAY_DOMAIN = 0.999999
+_V8_HALF_DEFAULT = math.atanh(0.985)  # 缺省 z_hard（γ 半衰减参考点）
 
 
 class _Clock:
@@ -254,7 +260,9 @@ def test_v7_display_never_touches_extremes_under_pounding(tmp_path) -> None:
             clock.advance(86400)
     for sender in ("up", "down"):
         affinity = store.snapshot(sender)["affinity"]
-        assert -0.985 - 1e-9 < affinity < 0.985 + 1e-9
+        # v8 长尾前提变更：±98.5 不再是截断界，展示域放宽为开区间 ±0.999999
+        # （= atanh 输入钳位）；「结构上不可触顶」判据按新域重建，不删锁。
+        assert -_V8_DISPLAY_DOMAIN - 1e-9 < affinity < _V8_DISPLAY_DOMAIN + 1e-9
         assert abs(affinity) < 1.0, "展示口径必须严格落在开区间内（永不触顶）"
 
 
@@ -268,7 +276,9 @@ def test_v7_long_positive_stream_keeps_moving(tmp_path) -> None:
     _run_days(store, clock, "u1", events_per_day=6, days=20)
     late = store.snapshot("u1")["affinity"]
     assert late > mid + 1e-4, "长期持续互动必须仍可缓慢累积（区分度不塌缩）"
-    assert late < 0.985, "且依然不可触顶"
+    # v8 长尾：旧 ±98.5 触顶判据按新前提重建为表示域开区界（可越过半衰减
+    # 参考点、结构上永不触顶）；本锁的「floor 注 0 ⇒ 30 天纹丝不动」注毒靶不变。
+    assert late < _V8_DISPLAY_DOMAIN, "长尾：持续减速但不可触顶"
 
 
 def test_v7_monotone_nondecreasing_under_pure_positive(tmp_path) -> None:
@@ -283,7 +293,8 @@ def test_v7_monotone_nondecreasing_under_pure_positive(tmp_path) -> None:
 
 
 def test_daily_move_cap_z(tmp_path) -> None:
-    """熔断·日位移：任何事件组合下 |ΣΔz| ≤ 0.12/人/自然日（读 z_latent 差值）。"""
+    """熔断·位移额度：任何事件组合下 |ΣΔz| ≤ 0.12/人/滚动24h（读 z_latent 差值；
+    A-1 裁定起窗形=24h 现读 delta_log，本用例 60 发×90s 全在同一日窗内，两窗形同解）。"""
     clock = _Clock()
     db = tmp_path / "cap.sqlite3"
     store = _v7_store(tmp_path, clock, "cap.sqlite3")
@@ -313,7 +324,12 @@ def test_negative_event_cap(tmp_path) -> None:
                 "SELECT z_latent FROM user_affinity WHERE sender_id='u1'"
             ).fetchone()[0]
         )
-    assert v7_display_fraction_to_z(before) - z_after == pytest.approx(0.05, abs=1e-6)
+    z_before = v7_display_fraction_to_z(before)
+    # v8 边际递减：帽后乘 γ(|z|)，帽 0.05 是该高度处的**上界**、实发 0.05×γ。
+    # 断言按新前提重建（不删锁）：|Δz| 精确等于 0.05×γ(z_before)。
+    expected = 0.05 * v8_marginal_gain(z_before, _V8_HALF_DEFAULT)
+    assert z_before - z_after == pytest.approx(expected, abs=1e-6)
+    assert z_before - z_after < 0.05, "γ≤1：实发位移严格不超帽（护栏上界只收紧）"
 
 
 def test_fuse_daily_events_zero_further_scoring(tmp_path) -> None:
@@ -663,7 +679,7 @@ def test_quality_weights_env_json_parsed(tmp_path) -> None:
     store = DynamicAffinityStore(tmp_path / "weights.sqlite3", clock=clock, config=config)
     settings = resolve_v7_settings(config)
     assert settings.quality_weights == pytest.approx((0.0, 0.0, 1.0, 0.0, 0.0))
-    # 情绪权重独占：辱骂步长顶到负向上限
+    # 情绪权重独占：辱骂步长顶到负向上限（v8：帽后乘 γ，基数档处实发 0.10×γ）
     store.observe("u1", "insult", text="你就是个蠢货")
     with sqlite3.connect(str(tmp_path / "weights.sqlite3")) as connection:
         z_value = float(
@@ -671,7 +687,10 @@ def test_quality_weights_env_json_parsed(tmp_path) -> None:
                 "SELECT z_latent FROM user_affinity WHERE sender_id='u1'"
             ).fetchone()[0]
         )
-    assert v7_display_fraction_to_z(0.1) - z_value == pytest.approx(0.10, abs=1e-6)
+    z0 = v7_display_fraction_to_z(0.1)
+    assert z0 - z_value == pytest.approx(
+        0.10 * v8_marginal_gain(z0, _V8_HALF_DEFAULT), abs=1e-6
+    )
 
 
 # =========================================================================

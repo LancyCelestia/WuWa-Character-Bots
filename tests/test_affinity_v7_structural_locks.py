@@ -60,6 +60,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     _V7_DEFAULT_NEGATIVE_EVENT_CAP_Z,
     _V7_DEFAULT_Z_HARD_BOUND,
     _V7_ONE_TIER_Z_CEILING,
+    _V8_Z_REPR_DOMAIN,
     DynamicAffinityStore,
     V7Settings,
     attitude_for_affinity,
@@ -243,8 +244,11 @@ def test_single_negative_event_stays_within_negative_cap(tmp_path) -> None:
 def test_authority_override_cannot_move_more_than_one_day_budget(tmp_path) -> None:
     """管理员/poke 走的权威通道（delta_override、observe_points）同样受上限约束。
 
-    这是"瞬间巨变"最现实的入口：旧口径只写了"负向单事件上限"，正向 override
-    名义上不受那把尺管，实际被日位移上限兜住——本条把这条兜底显式钉死。
+    这是"瞬间巨变"最现实的入口。A-1 裁定（2026-09-26）起正向 override 不再
+    "名义上不受单事件尺管、实际被日位移兜住"——它与负向同吃
+    `negative_event_cap_z`（该键语义已扩双向）；日额度这层兜底同时升级为
+    滚动 24h 窗。本条保留**日额度口径**的显式钉（≤0.12），更紧的帽面
+    另锁见 tests/test_affinity_no_instant_swing.py::test_positive_single_event_cap_bites_on_both_faces。
     """
     clock = _Clock()
     db = _db_of(tmp_path, "override.sqlite3")
@@ -456,7 +460,8 @@ def _fuzz_v7(tmp_path, seed: int, label: str) -> None:
     name = f"fuzz_{label}.sqlite3"
     db = _db_of(tmp_path, name)
     store = _store(tmp_path, clock, name)
-    z_hard = resolve_v7_settings(_v7_config()).z_hard
+    # v8（2026-09-27 长尾）：±z_hard 不再是更新截断界（语义改为 γ 半衰减参考点），
+    # z 域的"贴界"锁按新前提重建为浮点表示域护栏 _V8_Z_REPR_DOMAIN=atanh(0.999999)。
     # 档号轨迹与日额度都必须**按人**记：fuzz 交替两个用户，把两人的档号拼进同一条
     # 序列会拿"A 在挚友、B 在友善"这种毫不相干的相邻项去判跳档（本席第一版即如此，
     # 报出过一例假的"2 → 0 跳两档"；诊断脚本按人重放后零命中）。
@@ -492,7 +497,7 @@ def _fuzz_v7(tmp_path, seed: int, label: str) -> None:
         assert z_after is not None, "v7 每次写入都必须落 z_latent"
         z_after = float(z_after)
         assert math.isfinite(z_after) and math.isfinite(fraction), f"非有限值 z={z_after} a={fraction}"
-        assert abs(z_after) <= z_hard + _EPS
+        assert abs(z_after) <= _V8_Z_REPR_DOMAIN + _EPS
         assert -1.0 < fraction < 1.0, "tanh 值域：展示值结构上触不到 ±1"
         assert abs(fraction - v7_z_to_display_fraction(z_after)) < 1e-9, "z 与展示值必须互逆"
         assert abs(z_after - z_before) <= _V7_DEFAULT_DAILY_MOVE_CAP_Z + _DAY_CAP_TOLERANCE, "单次位移越界"
@@ -804,7 +809,8 @@ def test_injected_attitude_text_shows_no_fixed_step_numbers() -> None:
 
 
 def test_raw_delta_formula_never_leaks_display_numbers() -> None:
-    """纯函数层再钉一遍：更新式在护栏内产出有限 z 位移，且负向被单事件上限咬住。"""
+    """纯函数层再钉一遍：更新式在护栏内产出有限 z 位移，且**单事件双向**被帽咬住
+    （negative_event_cap_z 自 A-1 裁定=正负同帽，键名历史含义已扩到双向）。"""
     settings = V7Settings()
     for q in (-1.0, -0.5, -0.05, 0.0, 0.3, 1.0):
         for novelty in (0.02, 0.5, 1.0):
@@ -819,6 +825,9 @@ def test_raw_delta_formula_never_leaks_display_numbers() -> None:
                             assert math.isfinite(delta)
                             if delta < 0:
                                 assert delta >= -settings.negative_event_cap_z - _EPS
+                            assert delta <= settings.negative_event_cap_z + _EPS, (
+                                "正向越过单事件帽 ⇒ A-1 双帽改判失守"
+                            )
                             assert abs(delta) <= 1.0
 
 
