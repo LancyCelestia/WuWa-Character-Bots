@@ -367,6 +367,124 @@ def test_sync_kb_wiki_incremental_from_updates(tmp_path):
     assert replay["added"] == 0 and replay["removed"] == 0 and replay["skipped"] == 1
 
 
+# ---------------------------------------------------------------- 维基库关键词通道接线（S-WIKI-FTS）
+#
+# 缺陷：kb_wiki._build_store 用 fts_auto_rebuild=False（检索进程故意不内联建），
+# 注释承诺"重建由 kb-sync 负责"，而 force=True 的 FTS 构建此前只埋在
+# build_ann_index 之内（vector_knowledge.py:2776 faiss 缺失 / :3125 publish 之后）。
+# 但 run_kb_sync_task 的 ANN 重建门在"零变更夜"整个跳过 build_ann_index ⇒ 那两处
+# force 落点都到不了 ⇒ 维基库一旦错过有 ANN 重建的那一夜，此后每零变更夜都不建
+# FTS，关键词通道恒 0 行（生产实测：维基库 knowledge_chunks_fts=0、无 fts_signature，
+# 而个人库同名表 35283 行满）。修法：kb-sync 收尾补一次 ensure_fts_index(force=True)。
+
+
+def _kb_sync_config(tmp_path) -> SimpleNamespace:
+    return SimpleNamespace(
+        bot_kb_wiki_db_path=str(tmp_path / "kb_wiki_embeddings.sqlite3"),
+        bot_kb_wiki_chunk_chars=800,
+        bot_kb_wiki_embed_batch=128,
+    )
+
+
+def _zero_change_sync(monkeypatch) -> None:
+    """把 sync_kb_wiki 打成"本轮零变更"：无 added/changed/removed、不碰库内容。"""
+    from plugins.bot_unified_runtime.domains.location.knowledge import kb_wiki
+
+    monkeypatch.setattr(
+        kb_wiki,
+        "sync_kb_wiki",
+        lambda store, config, *, full=False, on_progress=None: {
+            "added": 0,
+            "changed": 0,
+            "removed": 0,
+            "skipped": 1,
+            "chunks": 0,
+        },
+    )
+
+
+def test_zero_change_night_builds_wiki_fts_through_kbsync(tmp_path, monkeypatch):
+    """① 零变更夜（无新 chunk、ANN 重建门跳过）维基库 FTS 仍被 force 建起来。"""
+    from plugins.bot_unified_runtime.domains.location.knowledge import kb_wiki
+
+    store = _store(tmp_path, fts_auto_rebuild=False, auto_reset=False)
+    store.sync_documents([_doc("梗知识/moegirl/纳西妲", "纳西妲是须弥的草神，掌管智慧与知识。" * 8)])
+    # 检索进程绝不内联重建（fts_auto_rebuild=False 的原设计，本锁不许放宽）。
+    assert store.ensure_fts_index() is False
+    assert store._stored_fts_signature() == ""
+    # 无待嵌行 ⇒ stats.embedded==0 ⇒ ANN 重建门整个跳过 build_ann_index（零变更夜实况）。
+    _zero_change_sync(monkeypatch)
+    config = _kb_sync_config(tmp_path)
+
+    result = kb_wiki.run_kb_sync_task(config, store=store, embed=False)
+
+    assert result["ok"] is True
+    assert result["ann_reason"] == "unchanged_skip"  # build_ann_index 没被调 ⇒ 唯一旧 force 落点被绕过
+    assert result["fts_built"] is True
+    assert store._stored_fts_signature() != ""  # FTS 由收尾那一次 force 建起来
+    assert store.ensure_fts_index() is True
+    # 关键词通道确实能命中专有名词（二游角色名这类精确字面）。
+    populated = store._connect().execute(
+        "SELECT COUNT(*) FROM knowledge_chunks_fts"
+    ).fetchone()[0]
+    assert populated >= 1
+    assert store._match_candidates(["纳西妲"], 5), "FTS 建好后关键词通道应命中词条名"
+
+
+def test_wiki_search_store_still_has_fts_auto_rebuild_off(monkeypatch, tmp_path):
+    """② fts_auto_rebuild=False 的生产构造值不许翻：检索进程仍不内联重建。
+
+    注毒目标：把 kb_wiki.py 的 ``fts_auto_rebuild=False`` 翻成 True ⇒ 本锁必红，
+    证明"大库不在消息热路径内联建分钟级索引"这条设计还在执法。
+    """
+    from plugins.bot_unified_runtime.domains.location.knowledge import kb_wiki
+
+    monkeypatch.setattr(
+        kb_wiki,
+        "_build_provider",
+        lambda config, *, timeout_override=None: SimpleNamespace(signature=""),
+    )
+    store = kb_wiki._build_store(
+        SimpleNamespace(bot_kb_wiki_db_path=str(tmp_path / "kb_wiki_embeddings.sqlite3")),
+        auto_reset=False,
+    )
+    assert store.fts_auto_rebuild is False
+    # 行为后果：签名缺失时检索路径不内联重建（与 test_fts_auto_rebuild_disabled_degrades 同源）。
+    store.sync_documents([_doc("梗知识/moegirl/A梗", "正文A" * 50)])
+    assert store.ensure_fts_index() is False
+    assert store._stored_fts_signature() == ""
+
+
+def test_wiki_fts_rebuild_idempotent_across_zero_change_nights(tmp_path, monkeypatch):
+    """③ 签名在位时幂等：非重建夜收尾那一次只是 meta 比对，绝不重扫全表。"""
+    from plugins.bot_unified_runtime.domains.location.knowledge import kb_wiki
+
+    store = _store(tmp_path, fts_auto_rebuild=False, auto_reset=False)
+    store.sync_documents([_doc("梗知识/moegirl/纳西妲", "纳西妲是草神。" * 8)])
+    _zero_change_sync(monkeypatch)
+    config = _kb_sync_config(tmp_path)
+
+    first = kb_wiki.run_kb_sync_task(config, store=store, embed=False)
+    assert first["fts_built"] is True
+    signature = store._stored_fts_signature()
+    assert signature != ""
+
+    rebuild_calls = {"n": 0}
+    original_rebuild = store._rebuild_fts
+
+    def counting_rebuild():
+        rebuild_calls["n"] += 1
+        return original_rebuild()
+
+    monkeypatch.setattr(store, "_rebuild_fts", counting_rebuild)
+    store._fts_valid = None  # 绕开进程内缓存，逼它走"读签名即跳过"的幂等判定
+
+    second = kb_wiki.run_kb_sync_task(config, store=store, embed=False)
+    assert second["fts_built"] is True
+    assert store._stored_fts_signature() == signature
+    assert rebuild_calls["n"] == 0, "签名在位仍全表重建 ⇒ 收尾那一次不幂等，会把每夜变成重建夜"
+
+
 @pytest.mark.parametrize(
     ("text", "title", "expected_prefix"),
     [("## 起源\n内容", "X梗", "【X梗｜起源】")],
