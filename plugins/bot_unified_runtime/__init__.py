@@ -8222,6 +8222,70 @@ def _register_nonebot_handlers() -> None:
         )
         if should_finish_nonebot_matcher(receipt):
             await status.finish(receipt.public_message)
+        # 规格 3 双触发（用户 2026-09-27 睡前定稿·第 9 项）：同一句里
+        # 「无参数命令头 + 自然语言尾巴」⇒ 命令执行与人格回复并行，
+        # 覆盖旧口径「命令旁路缓冲、命中命令就不走人格回复」。判据收在
+        # message_merge.command_natural_remainder（可判定规则）：纯命令、
+        # 带真参数的命令、判据不过 ⇒ None ⇒ 既有行为逐字节不变。
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+            message_merge as _m9,
+        )
+
+        dual_remainder = _m9.command_natural_remainder(command_text)
+        if dual_remainder is not None and receipt.state.value == "sent":
+            # 人格回复走的就是那条聊天主链：同 pipeline、同 chat_capability、
+            # 同 send_queue 与投递件，不另起通路。派生消息由摄取新建 ⇒
+            # request_id 独立，不与命令那条投递抢 _find_sent_request 定位；
+            # 幂等表按 (event_key, capability_id) 分键，bot.chat 与 bot.status
+            # 互不吞（event_idempotency 主键现算）。
+            from .domains.chat_reply.runtime.ingress import IngressGateway
+
+            persona_message = IngressGateway(_incoming_from_nonebot_event).from_event(
+                event,
+                bot_id=str(getattr(bot, "self_id", "unknown")),
+            ).model_copy(
+                update={"plain_text": dual_remainder, "command_text": ""}
+            )
+            _log_runtime_event(
+                runtime_event_log,
+                "INFO",
+                "command_dual_trigger_persona",
+                message=persona_message,
+                capability_id="bot.chat",
+            )
+            persona_receipt = await pipeline.handle_async(
+                persona_message,
+                chat_capability,
+                capability_id="bot.chat",
+            )
+            await _notify_operational_receipt(persona_message, persona_receipt)
+            persona_request = _find_sent_request(
+                send_queue, persona_message.request_id
+            )
+            if persona_request is not None:
+                await _deliver_transport_send_request(
+                    bot,
+                    event,
+                    persona_request,
+                    audit_logger,
+                    receipt_repository,
+                    send_queue,
+                )
+                if _should_record_chat_history(persona_request):
+                    _record_chat_history_turn(
+                        history_recorder,
+                        message=persona_message,
+                        role="user",
+                        text=dual_remainder,
+                        audit_logger=audit_logger,
+                    )
+                    _record_chat_history_turn(
+                        history_recorder,
+                        message=persona_message,
+                        role="assistant",
+                        text=persona_request.content.text_fallback,
+                        audit_logger=audit_logger,
+                    )
 
     @auto_send.handle()
     async def _handle_auto_send(bot: Bot, event: Event, state: T_State) -> None:
@@ -8588,10 +8652,19 @@ def _register_nonebot_handlers() -> None:
         from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
             message_coalescing as _coalescing,
         )
+        from plugins.bot_unified_runtime.domains.chat_reply.runtime import (
+            message_merge as _merge,
+        )
 
         if _coalescing.supports_coalescing(message):
             _coalescer = _coalescing.shared_coalescer(
                 _coalescing.build_coalescing_settings(config)
+            )
+            # 用户 2026-09-27 裁定 3s：折句等待窗以模块常量为权威
+            # （message_merge.MERGE_WINDOW_SECONDS），只换 quiet_seconds，
+            # 条数/字数/封顶等护栏仍从 Config 现读 ⇒ 不吞消息语义不变。
+            _coalescer.settings = _merge.apply_merge_window_seconds(
+                _coalescer.settings
             )
             _turn = await _coalescer.offer(
                 _coalescing.utterance_turn_key(message), message
@@ -8607,6 +8680,41 @@ def _register_nonebot_handlers() -> None:
                 )
                 return
             message = _turn.message
+        # 规格 2（用户 2026-09-27 睡前定稿·第 9 项）：bot 已回复后对方再发
+        # 裸表情/贴纸 ⇒ 当「静默」类。判据是可判定规则函数而非写死白名单
+        # （见 message_merge.should_silence_emoji_reaction docstring）；
+        # 位置在折句之后——被折进文字轮的贴纸随整轮回复，不再单独判。
+        # 对话历史读不到（关闭/空/异常）⇒ 按「未回复」走既有链路（fail-open：
+        # 宁可多回一句，不误静默提问）。静默必记事件，绝不无痕吞消息。
+        if _merge.is_lone_emoji_or_sticker(message):
+            try:
+                _recent_turns = await asyncio.to_thread(
+                    history_recorder.retrieve,
+                    request_id=message.request_id,
+                    platform=message.platform,
+                    adapter=message.adapter,
+                    bot_id=message.bot_id,
+                    session_id=message.session_id,
+                    sender_id=message.sender_id,
+                    max_turns=1,
+                    max_chars=64,
+                )
+                _last_turn_role = (
+                    _recent_turns.turns[-1].role if _recent_turns.turns else None
+                )
+            except Exception:  # noqa: BLE001 - 历史读失败按「未回复」处理。
+                _last_turn_role = None
+            if _merge.should_silence_emoji_reaction(
+                message, last_turn_role=_last_turn_role
+            ):
+                _log_runtime_event(
+                    runtime_event_log,
+                    "INFO",
+                    "chat_emoji_reaction_silenced",
+                    message=message,
+                    capability_id="bot.chat",
+                )
+                return
         _log_runtime_event(
             runtime_event_log,
             "INFO",
