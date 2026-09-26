@@ -47,10 +47,17 @@ KIND_TODO = "todo"
 #: 参与者（按记忆算的那条腿）：键是**作用域串**（群前缀或会话键），不是群号——
 #: 私聊与群共用同一份读数件，用群号当键会把两个作用域混进同一条缓存。
 KIND_PARTICIPANTS = "participants"
-#: Telegram 侧专用两类（与 KIND_MEMBERS 分开键：同一 group_id 下装的是不同载荷，
+#: Telegram 侧专用几类（与 KIND_MEMBERS 分开键：同一 group_id 下装的是不同载荷，
 #: 混用会让「成员名单」与「我自己的那一行」互相覆盖）。
 KIND_MEMBER_COUNT = "member_count"
 KIND_SELF_MEMBER = "self_member"
+#: Telegram 群主与管理员（``get_chat_administrators`` 回的是 ChatMember 列表，
+#: 与 QQ 侧 get_group_member_list 的全量成员表**形态不同**，也必须分键——
+#: 混进 KIND_MEMBERS 会让两协议的载荷在同一键位下互相冒充）。
+KIND_ADMINS = "tg_admins"
+#: Telegram 私聊对端资料（``get_chat`` 在私聊里回的是对方的 ChatFullInfo：
+#: 昵称/签名 bio），与群作用的 KIND_PROFILE 同动作不同载荷，必须分键。
+KIND_PEER_PROFILE = "tg_peer_profile"
 
 _DEFAULT_TTL_BY_KIND: dict[str, float] = {
     KIND_PROFILE: PROFILE_TTL_SECONDS,
@@ -63,6 +70,9 @@ _DEFAULT_TTL_BY_KIND: dict[str, float] = {
     # 未登记 kind 的缺省 TTL 是 0（= 永不缓存），所以新类别必须在这里落一行。
     KIND_MEMBER_COUNT: MEMBER_TTL_SECONDS,
     KIND_SELF_MEMBER: MEMBER_TTL_SECONDS,
+    # 管理员变动比资料更慢频（900s 与成员表同档）；私聊对端资料 600s 与群资料同档。
+    KIND_ADMINS: MEMBER_TTL_SECONDS,
+    KIND_PEER_PROFILE: PROFILE_TTL_SECONDS,
 }
 
 # 条目上限（防异常群号风暴撑爆进程内存；超限丢最旧条目）。

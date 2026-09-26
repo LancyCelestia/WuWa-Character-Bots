@@ -33,6 +33,7 @@ from plugins.bot_unified_runtime.contracts import (
     SendRequest,
     SessionType,
 )
+from plugins.bot_unified_runtime.domains.core.safety_exec import paths
 from plugins.bot_unified_runtime.domains.media.ingest import telegram_media
 from plugins.bot_unified_runtime.domains.transport.sender import nonebot as nonebot_mod
 from plugins.bot_unified_runtime.domains.transport.sender.nonebot import (
@@ -46,6 +47,41 @@ from plugins.bot_unified_runtime.domains.transport.sender.nonebot import (
 _MAIL_BOT_ADDRESS = "shorekeeper@example.com"
 _INBOUND_ADDRESS = "lancy@example.com"
 _IMPOSTOR_ADDRESS = "attacker@evil.test"
+
+
+@pytest.fixture(autouse=True)
+def _wired_path_domain_policy(tmp_path: Path):
+    """给「样本附件造在 tmp_path」接一条**真根 + tmp 附加根**的注入策略。
+
+    归属（S-MAIL-PARITY-FIX 2026-09-26 现算）：SAFE-EXEC Wave 1 在
+    ``file_gateway._stage_path`` 装了全通道唯一的取字节前判定
+    ``check_sendable()``，本件夹具没跟上——缺省策略按 workspace 根与
+    运行数据根（``ChatBot_Runtime/data``，经 scripts/runtime_paths.py
+    重映射）解析，``tmp_path`` 下的样本一律 ``outside_allowed_roots``
+    ⇒ 8 枚用例在 HEAD 即红（git status 对本件与 file_gateway/paths/
+    sender/nonebot 四路全空，不是谁今天改坏的）。现算过生产侧生成/
+    收件附件的全部落点（data/music、data/downloads、data/generated_files、
+    data/tts_output、data/media_archive、渲染卡 data/cards…，config.py
+    path_fields 真身）都在登记根内 ⇒ 这 8 枚是**夹具坏，不是门误伤**。
+    仿 ``test_file_gateway_phase1._wired_path_domain_policy`` 先例：
+    注入件保留真根（``Path(__file__)`` 一类仓内样本照旧过门），只把
+    ``tmp_path`` 追加为附加可读根；判定链
+    ``check_sendable → default_policy() → PathDomainPolicy.check_sendable``
+    全程走生产代码——这是夹具适配新门，不是放宽门。门的牙由本件
+    ``test_outside_roots_refused_on_all_three_outbound_legs`` 反向钉住
+    （它同时证明注入没有把根外样本放进门）。
+    """
+    real = paths.default_policy()
+    active = paths.build_policy(
+        workspace_root=real.workspace_root,
+        runtime_data_root=real.runtime_data_root,
+        extra_readable_roots=(("pytest-tmp", tmp_path),),
+    )
+    paths.set_default_policy(active)
+    try:
+        yield active
+    finally:
+        paths.set_default_policy(None)
 
 
 class _RecordingMailBot:
@@ -516,3 +552,84 @@ async def test_mail_leg_provider_id_absence_is_not_treated_as_failure(
     assert receipt.state is ReceiptState.SENT
     assert receipt.operational_issue is None
     assert len(bot.sent) == 1
+
+
+# ---------------------------------------------------------------------------
+# 反向锁：允许根之外的一切形态，三族出站一律拒（本件夹具接根后仍必须成立）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_outside_roots_refused_on_all_three_outbound_legs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """根外绝对路径与 ``..`` 穿越 ⇒ QQ/TG/邮件三族同拒、**不读字节**、不外发。
+
+    8 枚夹具红收口靠的是「把样本造在登记根内」，不是把守卫挪位或摘除——
+    本锁就是这一句的机器形态，修完后它必须仍然绿；它变红即说明有人
+    放宽了 ``check_sendable`` 或其登记根。三条硬判据：
+
+    ① 三族各自有名：回执/异常的 kind 逐字为 ``path_domain_denied``
+      （QQ 腿在网关 stage 处就抛——``onebot._send_file_parts`` 消费的
+      正是同一枚异常，stage 是全通道唯一取字节前判定）；
+    ② 拒绝发生在读字节**之前**：给 ``_sha256_of_file`` 装探针，断言
+      全程零调用，且根外样本文件的字节原地未动；
+    ③ 一件都没出去：TG 替身 calls 为空、邮件替身 sent 为空。
+
+    注入件只登记 ``tmp_path`` 一枚附加根，本锁用它的**兄弟目录**与
+    ``C:/Windows`` 形态钉「注入不外溢」；开头先 stage 一枚根内样本自证
+    策略在场（否则整锁可能空跑在一份没接上的策略上）。
+    """
+    from plugins.bot_unified_runtime.domains.transport.sender import file_gateway
+
+    gateway = file_gateway.get_default_file_gateway()
+
+    inside = tmp_path / "inside.txt"
+    inside.write_bytes(b"inside")
+    ok_ticket = gateway.stage(
+        file_gateway.FileSource(source_kind="path", path=str(inside.resolve()))
+    )
+    assert ok_ticket.local_path == inside.resolve()
+
+    # 根外样本 A：win.ini 形态的绝对路径（判定只解析、不读取）。
+    # 根外样本 B：真实存在、内容敏感的越界文件（附加根的兄弟目录）。
+    # 根外样本 C：绝对路径带 ``..`` 穿越写法（resolve 后落到 B 同一处）。
+    outside_sibling = tmp_path.parent / "outside-victim.txt"
+    outside_sibling.write_bytes(b"TOP-SECRET-BYTES")
+    traversal_ref = str(tmp_path / ".." / "outside-victim.txt")
+    offenders = ("C:/Windows/win.ini", str(outside_sibling), traversal_ref)
+
+    reads: list[str] = []
+    monkeypatch.setattr(
+        file_gateway,
+        "_sha256_of_file",
+        lambda resolved: reads.append(str(resolved)) or b"",
+    )
+
+    for ref in offenders:
+        with pytest.raises(file_gateway.FileTransferError) as exc_info:
+            gateway.stage(file_gateway.FileSource(source_kind="path", path=ref))
+        assert exc_info.value.kind == "path_domain_denied", ref
+
+        tg = _RecordingTelegramBot()
+        tg_receipt = await send_nonebot_message(
+            tg, None, _request([{"type": "file", "file": ref}], target_id="100")
+        )
+        assert tg_receipt.state is ReceiptState.FAILED_FINAL, ref
+        assert tg_receipt.operational_issue is not None, ref
+        assert tg_receipt.operational_issue.kind == "path_domain_denied", ref
+        assert tg.calls == [], ref
+
+        mail = _RecordingMailBot()
+        mail_receipt = await send_nonebot_message(
+            mail,
+            _mail_event(),
+            _request([{"type": "file", "file": ref}], target_id=_INBOUND_ADDRESS),
+        )
+        assert mail_receipt.state is ReceiptState.FAILED_FINAL, ref
+        assert mail_receipt.operational_issue is not None, ref
+        assert mail_receipt.operational_issue.kind == "path_domain_denied", ref
+        assert mail.sent == [], ref
+
+    assert reads == []
+    assert outside_sibling.read_bytes() == b"TOP-SECRET-BYTES"

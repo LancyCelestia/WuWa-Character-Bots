@@ -20,8 +20,12 @@ get_group_notice / get_essence_msg_list）而全仓零调用。本能力补齐�
 名字只从在册唯一记录位 ``group_affinity.display_name`` 取，取不到就说取不到，**绝不**
 拿用户号顶上；展示有界截断并点名「另有 N 位未列出」。三态分立：记到人 / 没记下有人说话 /
 **读不出**——最后一种绝不许被写成「这个群没有人」（本仓常驻禁令，commits cd0068c/21bdabf）。
-这条腿不依赖名单，所以 Telegram 在这一项与 QQ **真同权**（Bot API 不开放名单，
-但记忆是我的）；邮件侧则**结构性答不全**（看不见 To/Cc 全集），只声明缺口不假装同权。
+这条腿不依赖名单，所以 Telegram 在这一项与 QQ **真同权**（Bot API 不开放整份成员
+名单，但群主与管理员经 getChatAdministrators 可查——2026-09-26 S-META-PARITY 已接，
+旧句把这一格一起判死是「能拿没接被说成协议没有」，见 ``_TG_NO_ROSTER_LINE`` 上方
+注释；记忆是我的）；邮件侧对「这封里有谁」只看得见发件人：To/Cc 适配器解得出、
+摄取链今天没接（票 T-META-INGEST-1），Bcc 按投递语义是真没有——三态各说各的，
+不混成一坨「协议不支持」。
 
 诚实降级清单（拿不到就直说，不做不假装）：
 - 群介绍（``group_memo``）与建群时间走 ``get_group_info`` 的返回字段：字段在就报，
@@ -66,12 +70,14 @@ from plugins.bot_unified_runtime.contracts import (
     SendPolicy,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.group_cache import (
+    KIND_ADMINS,
     KIND_ALBUM,
     KIND_ESSENCE,
     KIND_MEMBER_COUNT,
     KIND_MEMBERS,
     KIND_NOTICE,
     KIND_PARTICIPANTS,
+    KIND_PEER_PROFILE,
     KIND_PROFILE,
     KIND_SELF_MEMBER,
     KIND_TODO,
@@ -85,6 +91,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.participant_memory i
     group_participant_scope,
     session_participant_scope,
 )
+from plugins.bot_unified_runtime.domains.core.session_keys import parse_session_key
 from plugins.bot_unified_runtime.domains.core.text_boundary import (
     PARTICLE_BOUNDARY_CHARS,
     is_trigger,
@@ -350,7 +357,24 @@ _TG_STATUS_LABELS = {
     "left": "已离开",
     "kicked": "已被移出",
 }
-_TG_NO_ROSTER_LINE = "群主与管理员名单：Telegram 的 Bot API 不开放成员名单，这一项答不了，不猜。"
+#: **2026-09-26 S-META-PARITY 更正**：旧句把「群主与管理员」和「整列成员名单」混在
+#: 一起判死——TG Bot API 确实没有导出全量成员的动作（官方方法表里只有
+#: getChat / getChatAdministrators / getChatMemberCount / getChatMember(单个)，
+#: 无 getChatMembers 之类；本仓实装的 nonebot-adapter-telegram ``api.py:715-726``
+#: 与 core.telegram.org/bots/api 双源一致），**但 getChatAdministrators 就是
+#: 「群主 + 管理员（含各自昵称）」的口**。这一格此前是「能拿但没接」被写成了
+#: 「协议没有」——正是本仓最忌的把没做说成不能做。现已接上，见 ``_tg_admins_lines``。
+_TG_NO_ROSTER_LINE = (
+    "成员全量名单：Telegram 的 Bot API 没有列出全部群成员的动作（群主与管理员"
+    "在上面单独报），这份名单给不了，也不猜。"
+)
+#: 管理员读数「接口没答」与「回得少」分开说：拿不到 ≠ 本群没有群主。
+_TG_ADMINS_FAIL_LINE = (
+    "群主与管理员：Telegram 接口这次没答上，拿不到（不等于本群没有群主）。"
+)
+#: getChatAdministrators 一次回满 200 条时不替它宣称全量（阈值按返回值实算，
+#: 没到就不出现这句；这是「有界窗口必须声明」口径，不是对协议的断言）。
+_TG_ADMINS_CAP = 200
 _TG_NO_SECTION_LINE = (
     "精华 / 群文件 / 相册 / 待办：Telegram 的 Bot API 没有对应接口，"
     "答不了（不是我没去查）。"
@@ -382,6 +406,76 @@ def _as_mapping(payload: Any) -> dict[str, Any]:
     return {}
 
 
+def _tg_person_label(entry: Any) -> str:
+    """ChatMember → 人显名：first_name(+last_name) 与 @username，全空就说读不出。
+
+    与 QQ 侧群主行同口径（display + 号码），**绝不**拿用户号冒充昵称、也不把
+    空 username 编成「@无」。TG 的 User 对象没有 card/nickname 概念，
+    first_name 就是它给的名字（官方 schema 里 User 只有 first_name/last_name/
+    username 三枚名字位）。
+    """
+    body = _as_mapping(entry)
+    user = _as_mapping(body.get("user"))
+    first = str(user.get("first_name") or "").strip()
+    last = str(user.get("last_name") or "").strip()
+    name = " ".join(part for part in (first, last) if part)
+    username = str(user.get("username") or "").strip().lstrip("@")
+    # is_bot 只在**明确为 True** 时标注（缺字段≠机器人，别替协议下结论）。
+    bot_mark = "（机器人）" if user.get("is_bot") is True else ""
+    if name and username:
+        return f"{name}（@{username}）{bot_mark}"
+    if name or username:
+        return (name or f"@{username}") + bot_mark
+    uid = str(user.get("id") or "").strip()
+    # 名字三枚字段全空才走到这里：号码不是昵称，只能当身份锚点报出来，
+    # 并明说名字读不出（比整行消失诚实）。
+    return f"（昵称字段没回，账号 {uid}）" if uid else "（这条记录的昵称与账号都没回）"
+
+
+def _tg_admins_lines(admins: list[Any]) -> list[str]:
+    """getChatAdministrators 载荷 → 群主行 + 管理员统计与有界昵称列表。
+
+    身份归类只认官方枚举 creator/administrator（``_TG_STATUS_LABELS`` 同源）；
+    认不出的 status **不并进管理员数**、单独点名——防未来 API 加新档时把
+    「没认出来」糊成「是管理员」（本仓「未知值一律降档」先例）。
+    """
+    owners: list[dict[str, Any]] = []
+    staff: list[dict[str, Any]] = []
+    others = 0
+    for entry in admins:
+        body = _as_mapping(entry)
+        status = str(body.get("status") or "").strip().lower()
+        if status == "creator":
+            owners.append(body)
+        elif status == "administrator":
+            staff.append(body)
+        else:
+            others += 1
+    lines: list[str] = []
+    if owners:
+        owner = owners[0]
+        lines.append(f"群主：{_tg_person_label(owner)}")
+        custom = str(owner.get("custom_title") or "").strip()
+        if custom:
+            lines.append(f"群主头衔：{custom}")
+        if len(owners) > 1:  # 正常不会发生（creator 唯一），发生了就照实说，不吞。
+            lines.append(f"（这一回还另有 {len(owners) - 1} 条 creator 记录，一并列上：")
+            lines.extend(f"　· {_tg_person_label(extra)}" for extra in owners[1:])
+            lines[-1] += "。）"
+    else:
+        lines.append("群主：这回接口给的列表里没有 creator 身份的一条，先不硬指认啦。")
+    lines.append(f"管理员：{len(staff)} 人")
+    for body in staff[:_SECTION_LINE_LIMIT]:
+        lines.append(f"　· {_tg_person_label(body)}")
+    if len(staff) > _SECTION_LINE_LIMIT:
+        lines.append(f"　……另有 {len(staff) - _SECTION_LINE_LIMIT} 位管理员未列出。")
+    if others:
+        lines.append(f"另有 {others} 条成员记录的身份没认出来，没并进上面任何一档。")
+    if len(admins) >= _TG_ADMINS_CAP:
+        lines.append(f"（这一回正好拿满 {_TG_ADMINS_CAP} 条，可能没列全，不拿它当全量。）")
+    return lines
+
+
 def _telegram_readout(
     fetch: Callable[..., tuple[bool, Any]],
     message: IncomingMessage,
@@ -390,9 +484,10 @@ def _telegram_readout(
 ) -> tuple[list[str], list[str]]:
     """Telegram 群资料读数；缺的口逐条直说。
 
-    与 QQ 侧的三处**协议层真实差异**（不是漏接）：成员名单不开放（因此没有
-    群主/管理员统计、没有精华名单）、公告的唯一形态是置顶消息、头衔来自
-    ``get_chat_member.custom_title``。人数走 ``get_chat_member_count``。
+    与 QQ 侧的协议层真实差异：成员**全量名单**不开放（因此没有普通成员昵称与
+    逐个身份，但**群主与管理员**经 getChatAdministrators 可查，本波已接）；
+    公告的唯一形态是置顶消息；头衔来自 ``get_chat_member.custom_title``；
+    人数走 ``get_chat_member_count``；精华/群文件/相册/待办无对应接口。
     """
     lines = [f"群号：{group_id}"]
     audit = ["telegram"]
@@ -447,6 +542,19 @@ def _telegram_readout(
             audit.append("api_shape_member")
 
     if {"profile", "owner"} & intents:
+        # 群主与管理员：Bot API 唯一开着的「谁在这间屋子里有身份」的口
+        # （getChatAdministrators，双源依据见 `_TG_NO_ROSTER_LINE` 上方注释）。
+        ok, raw_admins = fetch(
+            KIND_ADMINS, group_id, "get_chat_administrators", chat_id=chat_id
+        )
+        if ok and isinstance(raw_admins, list):
+            lines.extend(_tg_admins_lines(raw_admins))
+        else:
+            if ok:
+                audit.append("api_shape_admins")
+            lines.append(_TG_ADMINS_FAIL_LINE)
+        # 上面这份列表只含群主与管理员，普通成员名单依旧给不了——这句必须跟着走，
+        # 否则一份「管理员名单」会被读者当成「这个群所有人的名单」。
         lines.append(_TG_NO_ROSTER_LINE)
     if {"profile", "essence", "album", "todo"} & intents:
         lines.append(_TG_NO_SECTION_LINE)
@@ -472,12 +580,109 @@ _PARTICIPANT_UNREADABLE_LINE = (
     "参与者这份记录这会儿读不出来（记忆没开，或账本一时打不开）——"
     "读不出不等于没人说话，我不拿它当「没有」。"
 )
-#: 邮件侧的**结构性**缺口：机器人看不见 To/Cc 全集，只知道回信人是谁。
-#: 这一句是本腿唯一的「平台答不全」声明——不假装和 QQ/TG 同权。
+#: 邮件侧的**当前接线态**缺口声明。旧句把「读不到 To/Cc」说成协议性质——不成立：
+#: 实装适配器 `nonebot/adapters/mail/utils.py:108-113`（parse_byte_mail）逐封解出
+#: `recipients_to/recipients_cc/reply_to`，只是摄取链没把这三枚带进
+#: ``IncomingMessage``（见 2026-09-26 S-META-PARITY 票 T-META-INGEST-1）。
+#: 唯一的真·结构缺口是 Bcc：按 RFC 5321/5322 的投递语义，Bcc 名单在送出时被剥
+#: 离，收信人这一侧的信里本来就没有它——那一格才是「邮件协议里没有」。
 _MAIL_PARTIAL_LINE = (
-    "邮件这边我只看得见回信人是谁：一封邮件还发给了谁、抄送了谁，"
-    "我读不到 To/Cc 全集，所以「这封里有谁」答不全——不猜。"
+    "邮件这边今天我只看得见发件人这一位：一封还发给了谁、抄送了谁，"
+    "适配器其实解得出 To/Cc，是这条链还没接到会话记录里——今天答不全是我没接上，"
+    "不是邮件协议没有（密送 Bcc 除外：按投递语义它本来就不会出现在你收到的信里，"
+    "那一格是真没有）。"
 )
+#: 邮件的「群」格子整体不适用：不是漏接，是协议里没有这个对象。
+_MAIL_NO_GROUP_LINE = (
+    "邮件没有「群」这种对象：群名、群号、公告、精华、群主、成员名单这些格子"
+    "在这里是空的——SMTP/IMAP 是消息投递协议，不经营群务，我不拿别的字段硬凑。"
+)
+#: TG 私聊的账号侧元信息里**结构性没有**的那一格（官方方法表与实装适配器
+#: api.py 双源核过：Bot API 不向机器人开放任何用户的在线/最近活跃状态）。
+_TG_NO_PRESENCE_LINE = (
+    "在线状态：Telegram 的 Bot API 不向机器人开放在线/最近活跃——"
+    "接口层面就没有这个数，答不了，不是我没去查。"
+)
+
+
+def _telegram_private_meta(
+    fetch: Callable[..., tuple[bool, Any]],
+    message: IncomingMessage,
+) -> tuple[list[str], list[str]]:
+    """TG 私聊对端读数：账号号 / 昵称 / 签名(bio) + 在线状态的诚实缺失。
+
+    chat id 从**会话键中央件**解析（``private_<chat.id>`` 形态），不手拆字符串；
+    解析不出数字就明说拿不到，不拿 sender_id 之外的猜测值去打接口。
+    bio 是官方 ChatFullInfo 给私聊对端的「个性签名」口（returned only in getChat）
+    ——QQ 侧对位 get_stranger_info 的 long_nick。
+    """
+    parsed = parse_session_key(message.session_id)
+    chat_id = parsed.user_id.strip()
+    lines = [f"会话号（chat id）：{chat_id}" if chat_id.isdigit() else "会话号：这次没拿到，不猜。"]
+    audit = ["telegram", "private_meta"]
+    if not chat_id.isdigit():
+        lines.append("对端昵称与签名：没有会话号就没法查，先空着这几格。")
+        lines.append(_TG_NO_PRESENCE_LINE)
+        return lines, [*audit, "no_chat_id"]
+    ok, raw_peer = fetch(KIND_PEER_PROFILE, chat_id, "get_chat", chat_id=int(chat_id))
+    if not ok:
+        lines.append("对端昵称与签名：Telegram 接口这次没答上，拿不到（不等于对方没设置）。")
+    else:
+        peer = _as_mapping(raw_peer)
+        if not peer:
+            audit.append("api_shape_peer")
+            lines.append("对端昵称与签名：这回接口回的形状读不出，先不硬解。")
+        else:
+            name = " ".join(
+                part
+                for part in (
+                    str(peer.get("first_name") or "").strip(),
+                    str(peer.get("last_name") or "").strip(),
+                )
+                if part
+            )
+            username = str(peer.get("username") or "").strip().lstrip("@")
+            if name and username:
+                lines.append(f"昵称：{name}（@{username}）")
+            elif name or username:
+                lines.append(f"昵称：{name or '@' + username}")
+            else:
+                lines.append("昵称：接口回的名字字段是空的，不替你填。")
+            if "bio" in peer:
+                bio = str(peer.get("bio") or "").strip()
+                if bio:
+                    shown = bio if len(bio) <= _NOTICE_SNIPPET_CHARS else bio[:_NOTICE_SNIPPET_CHARS] + "…"
+                    lines.append(f"个性签名：{shown}")
+                else:
+                    lines.append("个性签名：接口回了空——多半是没设置，也可能是没回，不替你断言。")
+            else:
+                lines.append("个性签名：这个字段这次没回，读不出，不写「没有」。")
+    lines.append(_TG_NO_PRESENCE_LINE)
+    return lines, audit
+
+
+def _mail_session_meta(message: IncomingMessage) -> tuple[list[str], list[str]]:
+    """邮件会话的基本元信息（能确定的只有事件自带的那几枚）。"""
+    lines = [_MAIL_NO_GROUP_LINE]
+    account = str(message.bot_id or "").strip()
+    lines.append(f"收信账户：{account}" if account and account != "unknown" else "收信账户：这次没带上，不猜。")
+    sender = str(message.sender_id or "").strip()
+    lines.append(f"发件人地址：{sender}" if sender else "发件人地址：这次没带上。")
+    display = str(message.sender_display_name or "").strip()
+    if display:
+        lines.append(f"发件人昵称（From 显示名）：{display}")
+    else:
+        lines.append(
+            "发件人昵称：From 显示名这次没接进会话记录——邮件头里有这个字段"
+            "（适配器解得出来），是摄取链没带上，不猜一个。"
+        )
+    lines.append(_MAIL_PARTIAL_LINE)
+    return lines, ["mail", "session_meta"]
+
+
+# ---------------------------------------------------------------------------
+# 参与者（用户裁定「参与者按记忆算」，2026-09-26 S-T-GRP-2）
+# ---------------------------------------------------------------------------
 #: 名字取不到时的占位。**绝不**拿用户号顶上（群里贴一串 QQ 号既没用又伤人隐私）。
 _PARTICIPANT_UNNAMED = "没记下名字的一位"
 #: 只扫了有界窗口时的诚实声明（数字由读数件实算，不是这里写死的）。
@@ -673,18 +878,40 @@ def build_group_info_capability(
         # **唯独参与者这条腿在私聊答得上**——它读我自己的会话记忆，不需要协议层名单，
         # 所以不能一律拿「去群里问我」挡回去（那会把一条本来有答案的路堵死）。
         if message.session_type.value != "group":
-            if not wants_participants:
+            platform = str(message.platform or "").strip().lower()
+            wants_session_meta = platform == "email" or (
+                platform == "telegram" and message.session_type.value == "private"
+            )
+            wants_meta = wants_participants or ("profile" in intents and wants_session_meta)
+            if not wants_meta:
+                # QQ 私聊没有「对端资料」这条腿（get_stranger_info 的签名/在线状态
+                # 在协议册里有、bot 侧尚无宿主能力——见 2026-09-26 对等矩阵 §7），
+                # 其余格仍回守岸人口语提示，不做不假装。
                 return _result(_PRIVATE_HINT, audit=["group_info", "private_hint"])
-            participant_body, participant_audit = _participants_block(
-                message, is_group=False, scope_label="本会话"
-            )
-            if message.session_type.value == "email":
-                # 邮件的结构性缺口单独声明：只看得见回信人，看不见 To/Cc 全集。
-                participant_body.insert(0, _MAIL_PARTIAL_LINE)
-            return _result(
-                "\n".join(participant_body),
-                audit=["group_info", "conversation_participants", *participant_audit],
-            )
+            blocks: list[str] = []
+            audits: list[str] = ["group_info", "conversation_participants"]
+            meta_emitted_mail_line = False
+            if wants_session_meta and "profile" in intents:
+                if platform == "telegram":
+                    meta_lines, meta_audit = _telegram_private_meta(_fetch, message)
+                else:
+                    meta_lines, meta_audit = _mail_session_meta(message)
+                    meta_emitted_mail_line = True
+                blocks.extend(meta_lines)
+                audits.extend(meta_audit)
+            if wants_participants:
+                participant_body, participant_audit = _participants_block(
+                    message, is_group=False, scope_label="本会话"
+                )
+                if (
+                    message.session_type.value == "email"
+                    and not meta_emitted_mail_line
+                ):
+                    # 邮件的当前接线态缺口单独声明（只说一次，不随 meta 块复读）。
+                    participant_body.insert(0, _MAIL_PARTIAL_LINE)
+                blocks.extend(participant_body)
+                audits.extend(participant_audit)
+            return _result("\n".join(blocks), audit=audits)
 
         group_id = str(message.group_id or "").strip()
         if not _is_group_scoped_id(group_id):

@@ -699,10 +699,27 @@ def test_group_files_not_fetched_for_narrow_intents() -> None:
 class _TelegramApi:
     """按 TG Bot API 动作名回罐头；``calls`` 用来证明没拿 QQ 的动作名去打 TG。"""
 
-    def __init__(self, *, chat: object = None, count: object = 42, member: object = None, fail: set[str] | None = None) -> None:
+    def __init__(self, *, chat: object = None, count: object = 42, member: object = None,
+                 admins: object = None, fail: set[str] | None = None) -> None:
         self.chat = {"title": "潮汐观测组", "description": "剧情与情报整理。"} if chat is None else chat
         self.count = count
         self.member = {"status": "administrator", "custom_title": "观测站长", "user": {"first_name": "澜汐"}} if member is None else member
+        # 群主+两名管理员的罐头（ChatMember 形态照官方 model：status/user/custom_title）。
+        self.admins = [
+            {
+                "status": "creator",
+                "custom_title": "站长本人",
+                "user": {"id": 777, "first_name": "霞月", "username": "xiayue", "is_bot": False},
+            },
+            {
+                "status": "administrator",
+                "user": {"id": 555, "first_name": "澜汐", "last_name": "T", "username": "lancy"},
+            },
+            {
+                "status": "administrator",
+                "user": {"id": 888, "first_name": "小助手", "is_bot": True},
+            },
+        ] if admins is None else admins
         self.fail = fail or set()
         self.calls: list[tuple[str, dict]] = []
 
@@ -716,6 +733,8 @@ class _TelegramApi:
             return self.count
         if action == "get_chat_member":
             return self.member
+        if action == "get_chat_administrators":
+            return self.admins
         raise AssertionError(f"TG 侧不该打这个动作：{action}")
 
     def actions(self) -> list[str]:
@@ -761,6 +780,13 @@ def test_telegram_readout_maps_chat_fields_and_my_identity() -> None:
     assert ("get_chat", {"chat_id": -1001234567890}) in api.calls
     assert ("get_chat_member", {"chat_id": -1001234567890, "user_id": 555}) in api.calls
     assert "get_group_info" not in api.actions()  # 绝不拿 QQ 动作名去打 TG
+    # S-META-PARITY：群主与管理员腿（getChatAdministrators，此前误判「答不了」）。
+    assert ("get_chat_administrators", {"chat_id": -1001234567890}) in api.calls
+    assert "群主：霞月（@xiayue）" in body
+    assert "群主头衔：站长本人" in body
+    assert "管理员：2 人" in body
+    assert "　· 澜汐 T（@lancy）" in body  # 管理员昵称（成员昵称这格的唯一可取处）
+    assert "　· 小助手（机器人）" in body  # is_bot=True 标注；缺字段不标
 
 
 def test_telegram_pinned_message_is_the_notice_slot() -> None:
@@ -771,9 +797,12 @@ def test_telegram_pinned_message_is_the_notice_slot() -> None:
 
 def test_telegram_declares_structurally_missing_sections_without_guessing() -> None:
     body = _tg_cap(_TelegramApi())(_tg_message(), None).body
-    assert "Telegram 的 Bot API 不开放成员名单" in body
+    assert "没有列出全部群成员" in body  # 全量名单这格：协议确实没有（双源核过）
     assert "精华 / 群文件 / 相册" in body
-    assert "群主：" not in body and "精华：" not in body  # 不编数
+    assert "群名：" in body and "精华：" not in body  # 群主走 getChatAdministrators（见下），精华不编数
+    # 2026-09-26 S-META-PARITY：旧句把「群主与管理员」也判成答不了——那是
+    # 「能拿没接」冒充「协议没有」，已按 getChatAdministrators 接上（正向锁见下）。
+    assert "Bot API 不开放成员名单" not in body
 
 
 def test_telegram_unknown_status_never_claims_privilege() -> None:
@@ -794,15 +823,20 @@ def test_telegram_pydantic_shaped_payload_still_reads() -> None:
 
 
 def test_telegram_api_failure_degrades_to_one_honest_line() -> None:
-    api = _TelegramApi(fail={"get_chat", "get_chat_member_count", "get_chat_member"})
+    api = _TelegramApi(
+        fail={"get_chat", "get_chat_member_count", "get_chat_member", "get_chat_administrators"}
+    )
     result = _tg_cap(api)(_tg_message(), None)
     assert "群号：-1001234567890" in result.body
     assert "群资料接口这会儿没回应" in result.body
+    # 管理员腿失败≠「本群没有群主」——缺失态与空态分立（全领域禁式口径）。
+    assert "群主与管理员：Telegram 接口这次没答上" in result.body
     assert "人数：0" not in result.body and "群名：" not in result.body
+    assert "管理员：2 人" not in result.body and "　· 霞月" not in result.body
 
 
 def test_telegram_uses_its_own_cache_kinds_and_hits_once_each() -> None:
-    """三类载荷各占一个缓存 kind：与 QQ 的 members 混键会互相覆盖成假数据。"""
+    """各类载荷各占一个缓存 kind：与 QQ 的 members 混键会互相覆盖成假数据。"""
     api = _TelegramApi()
     cap = _tg_cap(api)
     cap(_tg_message(), None)
@@ -810,6 +844,7 @@ def test_telegram_uses_its_own_cache_kinds_and_hits_once_each() -> None:
     assert api.actions().count("get_chat") == 1
     assert api.actions().count("get_chat_member_count") == 1
     assert api.actions().count("get_chat_member") == 1
+    assert api.actions().count("get_chat_administrators") == 1
 
 
 def test_telegram_narrow_intent_skips_the_unasked_calls() -> None:
@@ -1402,7 +1437,10 @@ def test_mail_participants_declare_structural_gap(tmp_path: Path) -> None:
     )
     body = _who_cap(reader)(message, None).body
     assert _MAIL_PARTIAL_LINE in body
-    assert "答不全" in body and "不猜" in body
+    # 三态分立（2026-09-26 S-META-PARITY 改口径）：To/Cc＝适配器有、摄取链没接
+    # （「是我没接上」）；Bcc＝投递语义上真没有。两句都在，不许混称「协议不支持」。
+    assert "今天答不全是我没接上" in body
+    assert "那一格是真没有" in body
     assert "记到说过话的 1 位" in body
 
 
