@@ -491,6 +491,33 @@ _ANN_BUILD_ASSUME_DIM = _ANN_BUILD_MEASURED_DIM
 _ANN_BUILD_MEMORY_RECHECK_VECTORS = 32_768
 # ^ 批间复检粒度（16 个构建批一次 stat，成本可忽略；重建是分钟级，
 #   内存形状在这段时间里真的会变——只查一次的前置检查会被实况击穿）。
+
+# --- ANN 整代重建断点续传（S201，2026-09-26/27）-------------------------------
+# 为什么要有：本机连着几夜因内存炸停在建索引中途，每次重启都要从第 0 条重跑
+# 74 万条。中途收火/异常击杀时线上两文件一字未动（这是既有纪律，不改），但
+# **内存里那半副索引也随之蒸发**——已装的几万条向量全部白建。检查点三件套把
+# "已装到哪"落盘：半成品索引、半成品序列表（都在 `ann_index_path` 同目录、
+# `.wip-` 前缀命名，与线上两枚**零共名零共前缀**）、以及 knowledge_meta 一行
+# JSON 记录（wip_vectors / last_rowid / embed_generation /
+# expected_vector_count / dim / at_unix）。
+# 它是**纯加速器**，不是任何一道门的旁路：内存门、完备性闸、代次闸的判据一字
+# 未动；publish 仍是唯一提交点；检查点续不上就丢、从 0 重跑、记一行原因。
+# 续跑判据里代次与计数戳两枚是**危险方向的牙**：
+# ① 期间补嵌过一批 ⇒ 前半段的 vector_json 可能从 NULL 变成有值，续跑光标
+#    （rowid > last_rowid）会**永久漏掉**它们 ⇒ 代次不等必重跑；
+# ② 期间删过一批 ⇒ 半成品 order 里留着死 id ⇒ 与 2026-09-26 那枚"戳对上就
+#    放行"的假绿同形 ⇒ 戳不等必重跑。
+# 续跑段盖章**沿用首段**（第一次开光标那一刻）的 `embed_generation`，绝不
+# 重新取值——否则每段给自己现盖一章，代次守卫被自己人洗掉。
+_ANN_BUILD_CHECKPOINT_KEY = "ann_build_checkpoint"
+# ^ 检查点 meta 行（唯一写点 `_save_ann_checkpoint`，节奏与内存复检同窗——
+#   每 `_ANN_BUILD_MEMORY_RECHECK_VECTORS` 条一次；每批都写会把 IO 打爆）。
+#   删除点两处：publish 成功后、续跑判据不成立丢弃时。
+_ANN_WIP_PREFIX = ".wip-"
+# ^ 半成品文件名 = 该前缀 + 线上文件名。**前缀**而非后缀是设计约束：与线上
+#   两枚零共前缀，任何按线上名前缀展开的 glob/清理都不会误伤或误认半成品；
+#   结构锁 tests/test_ann_build_checkpoint_s201.py::
+#   test_wip_names_never_share_prefix_with_live_files 钉这一格。
 _ANN_MEMORY_SKIP_META_KEY = "ann_build_last_memory_skip"
 # ^ 跳过留痕（观测面）：只存度量，不存磁盘路径。程序读者现算在两处——
 #   ① 重启预检第 13 项 `ann_pair`（scripts/pre_restart_check.py 的
@@ -2667,6 +2694,20 @@ class SqliteVectorKnowledgeStore:
     def _ann_files(self) -> tuple[str, str]:
         return self.ann_index_path, self.ann_order_path
 
+    def _ann_wip_paths(self) -> tuple[Path, Path]:
+        """断点续传半成品两枚：`.wip-` 前缀、各自贴在自己线上件的同目录。
+
+        与 `_ann_files()` 的返回值**永不共名也永不共前缀**（结构锁见
+        tests/test_ann_build_checkpoint_s201.py），`_publish_ann_pair` 的
+        原子替换序列里也不许出现这里的路径——半成品只可能被续用或被丢弃，
+        绝不可能被当成品发布。
+        """
+        index_path, order_path = self._ann_files()
+        return (
+            Path(index_path).with_name(f"{_ANN_WIP_PREFIX}{Path(index_path).name}"),
+            Path(order_path).with_name(f"{_ANN_WIP_PREFIX}{Path(order_path).name}"),
+        )
+
     def _ann_lock_path(self) -> Path:
         """跨进程建锁文件：与索引同卷同目录（锁只是互斥凭证，不是数据）。"""
         return Path(self.ann_index_path).with_name(
@@ -3015,6 +3056,12 @@ class SqliteVectorKnowledgeStore:
         不改生产配置面），越门动作本身照样落 meta 留痕。
         被门挡下不改完备性闸：闸仍按 `_ANN_COMPLETENESS_MAX_MISSING=0` 拒用
         ANN ⇒ 检索回落暴力扫描，本门只保证"不会以 OOM 的形态结束这一夜"。
+
+        断点续传（S201）：走到重建主体后（含中途收火/异常击杀后重来），结果
+        字典恒带 `resumed_from`（本轮从检查点续起的已装条数，新跑为 0）与
+        `checkpoint_dropped_reason`（检查点被丢弃的原因，没丢为空串）——
+        kb-sync 汇总靠这两枚看见"续跑发生过/丢过、为什么丢"。门挡下/抢锁失败
+        等未进主体的早退路径不碰检查点，也不带这两枚键。
         """
         if faiss is None:
             # faiss 缺失不影响关键词索引：仍幂等构建 FTS，供关键词/降级检索使用。
@@ -3244,6 +3291,212 @@ class SqliteVectorKnowledgeStore:
             "ann_attested": True,
         }
 
+    # ---------- ANN 断点续传检查点（S201，参数块见 _ANN_BUILD_CHECKPOINT_KEY）--
+
+    def _save_ann_checkpoint(
+        self,
+        index: Any,
+        chunk_ids: list[str],
+        *,
+        last_rowid: int,
+        embed_generation: int,
+        expected_vector_count: int | None,
+    ) -> None:
+        """落检查点三件套：半成品索引 → 半成品序列表 → meta 行（**meta 行最后**）。
+
+        写序纪律：meta 行是这一份检查点的提交点。三件之间被击杀时，meta 行
+        仍是上一窗口的旧值，而两枚文件（或其一）已是新一半的状态 ⇒ 续跑判据
+        的 `wip_vectors == index.ntotal == len(order)` 当场对不上 ⇒ 整份丢弃、
+        从 0 重跑——绝不会拿半份检查点去续。两枚文件各自先写 `.part` 再
+        `_atomic_replace_from` 换入：**GB 级大文件写到一半被杀时，留在盘上的
+        是上一份完整检查点**——这正是"落盘节奏只能与内存复检同窗、不许每批
+        写"（每批写会把 IO 打爆）之下，本功能价值的大头。
+
+        fail-open：加速器自身故障绝不杀重建——最坏是"这一窗没存上新检查点、
+        下一轮从更早的位点（或 0）重跑"，绝不变成"这一轮白跑"。
+        """
+        wip_index, wip_order = self._ann_wip_paths()
+        try:
+            wip_index.parent.mkdir(parents=True, exist_ok=True)
+            wip_order.parent.mkdir(parents=True, exist_ok=True)
+            suffix = f"{os.getpid()}.{threading.get_ident()}"
+            part_index = wip_index.with_name(f"{wip_index.name}.{suffix}.part")
+            part_order = wip_order.with_name(f"{wip_order.name}.{suffix}.part")
+            try:
+                faiss.write_index(index, str(part_index))
+                payload = json.dumps(chunk_ids, ensure_ascii=False).encode("utf-8")
+                with open(part_order, "wb") as handle:
+                    handle.write(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                _atomic_replace_from(part_index, wip_index)
+                _atomic_replace_from(part_order, wip_order)
+            except OSError as exc:
+                for leftover in (part_index, part_order):
+                    try:
+                        leftover.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                raise RuntimeError(f"ANN 检查点文件落盘失败：{exc}") from exc
+            self.set_meta(
+                _ANN_BUILD_CHECKPOINT_KEY,
+                json.dumps(
+                    {
+                        "wip_vectors": len(chunk_ids),
+                        "last_rowid": int(last_rowid),
+                        # 首段取值，一路沿用（dict 字面量建键不算第二盖章口，
+                        # 见 tests/test_kb_pricing_guard_fts_s159.py::
+                        # test_generation_funnel_structure_locks ② 的判据形态）。
+                        "embed_generation": int(embed_generation),
+                        "expected_vector_count": (
+                            None
+                            if expected_vector_count is None
+                            else int(expected_vector_count)
+                        ),
+                        "dim": int(index.d),
+                        "at_unix": int(time.time()),
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        except Exception:  # 加速器故障不杀重建（fail-open；有日志，BLE001 不自犯）。
+            logger.warning(
+                "ANN 检查点落盘失败（不影响本轮重建，最坏下一轮多重建这一段）",
+                exc_info=True,
+            )
+
+    def _clear_ann_checkpoint(self) -> None:
+        """删除检查点三件套（publish 成功后、或续跑判据不成立丢弃时）。
+
+        连 `.part` 在飞残体一起扫（同目录、只扫自己前缀名下，不碰别人的
+        `.tmp`）。fail-open：清不掉只是留下垃圾文件（下一次开跑时若 meta 行
+        已不在，孤儿 `.wip` 会被 `_try_resume_ann_checkpoint` 的无行清扫带走），
+        绝不牵连已完成的 publish 或已定案的丢弃。
+        """
+        wip_index, wip_order = self._ann_wip_paths()
+        try:
+            for path in (wip_index, wip_order):
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:  # pragma: no cover - 清不掉的残体下一轮同法再清。
+                    pass
+                try:
+                    for leftover in path.parent.glob(f"{path.name}.*.part"):
+                        leftover.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            with self._connect() as connection:
+                connection.execute(
+                    "DELETE FROM knowledge_meta WHERE key = ?",
+                    (_ANN_BUILD_CHECKPOINT_KEY,),
+                )
+        except Exception:  # 清理故障不牵连主流程（fail-open；有日志，BLE001 不自犯）。
+            logger.warning("ANN 检查点清理失败（不影响已完成的动作）", exc_info=True)
+
+    def _try_resume_ann_checkpoint(
+        self,
+        connection: Any,
+        *,
+        dim_estimate: int,
+        generation_now: int,
+        stamp_now: int | None,
+    ) -> tuple[dict | None, str]:
+        """续跑判据全查一遍，交回（续跑状态 | None, 丢弃原因，无丢弃为空串）。
+
+        判据（S201 设计钉死，**全部成立才续；任一不成立 ⇒ 整份丢弃、从 0
+        重跑、记一行日志点名原因**）：
+        ① meta 行在且 JSON 可解析、字段齐型；② 两枚 `.wip` 文件在；
+        ③ `wip_vectors == faiss.read_index(.wip).ntotal == len(order)`；
+        ④ 行内 dim 与本轮维数估计一致（且与半成品索引实存 `.d` 一致）；
+        ⑤ 行内 `embed_generation` == 本轮光标打开一刻的当前代次——期间有人
+           补嵌过 ⇒ 前半段里 vector_json 可能从 NULL 变成有值，续跑光标会
+           **永久漏掉**它们 ⇒ 必须重跑；
+        ⑥ 行内 `expected_vector_count` == 本轮当前计数戳（None 与 None 视为
+           相等）——期间有删除 ⇒ 半成品 order 里留死 id（同 2026-09-26 那枚
+           假绿的形状）⇒ 必须重跑。
+        meta 行**缺席**不是"丢弃"（新库/刚清理过的库是常态）：返回空原因，
+        并顺手清扫无行背书的 `.wip` 孤儿（未提交的垃圾不该活到下一次）。
+
+        本方法只读判据、绝不写线上两文件；抛不出异常（自身故障按"不可续"收）。
+        """
+        try:
+            raw = self._read_meta_value_on(connection, _ANN_BUILD_CHECKPOINT_KEY)
+            if not raw:
+                self._clear_ann_checkpoint()
+                return None, ""
+            wip_index, wip_order = self._ann_wip_paths()
+
+            def drop(reason: str) -> tuple[dict | None, str]:
+                logger.warning(
+                    "ANN 检查点不可续用（%s）：已丢弃半成品，本轮从 0 重跑", reason
+                )
+                self._clear_ann_checkpoint()
+                return None, reason
+
+            try:
+                payload = json.loads(raw)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return drop("checkpoint_unparsable")
+            if not isinstance(payload, dict):
+                return drop("checkpoint_malformed")
+            try:
+                wip_vectors = int(payload["wip_vectors"])
+                last_rowid = int(payload["last_rowid"])
+                cp_generation = int(payload["embed_generation"])
+                cp_dim = int(payload["dim"])
+            except (KeyError, TypeError, ValueError):
+                return drop("checkpoint_malformed")
+            raw_expected = payload.get("expected_vector_count")
+            try:
+                cp_expected = None if raw_expected is None else int(raw_expected)
+            except (TypeError, ValueError):
+                return drop("checkpoint_malformed")
+            if wip_vectors < 0 or last_rowid < 0:
+                return drop("checkpoint_malformed")
+            if not wip_index.exists() or not wip_order.exists():
+                return drop("wip_files_missing")
+            if cp_generation != int(generation_now):
+                return drop("embed_generation_changed")
+            if cp_expected != stamp_now:
+                return drop("expected_vector_count_changed")
+            if cp_dim != int(dim_estimate):
+                return drop("dim_mismatch")
+            try:
+                index = faiss.read_index(str(wip_index))
+            except Exception:  # noqa: BLE001 - 截断/垃圾文件在此现形，判不可续。
+                return drop("wip_index_unreadable")
+            try:
+                order = json.loads(wip_order.read_text(encoding="utf-8"))
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                return drop("wip_order_unreadable")
+            if not isinstance(order, list) or len(order) != wip_vectors:
+                return drop("order_length_mismatch")
+            if int(index.ntotal) != wip_vectors:
+                return drop("wip_vectors_mismatch")
+            if int(index.d) != cp_dim:
+                return drop("wip_dim_file_mismatch")
+            logger.info(
+                "ANN 重建从检查点续跑：已装 %d 条，自 rowid>%d 续扫（代次=%d）",
+                wip_vectors,
+                last_rowid,
+                cp_generation,
+            )
+            return (
+                {
+                    "index": index,
+                    "chunk_ids": [str(item) for item in order],
+                    "last_rowid": last_rowid,
+                    "embed_generation": cp_generation,
+                    "expected_vector_count": cp_expected,
+                    "wip_vectors": wip_vectors,
+                },
+                "",
+            )
+        except Exception:  # 判据自身故障=不可续，丢弃重跑（fail-closed；有日志）。
+            logger.warning("ANN 检查点判定异常（按不可续处理，从 0 重跑）", exc_info=True)
+            self._clear_ann_checkpoint()
+            return None, "checkpoint_validation_error"
+
     def _build_ann_index_locked(
         self, on_progress=None, *, memory_verdict: _AnnMemoryVerdict | None = None
     ) -> dict:
@@ -3267,16 +3520,26 @@ class SqliteVectorKnowledgeStore:
            一批 + 观察余量就当场收火。
         越门路径（memory_verdict=None）不设复检：那是显式越门的既有语义，
         越门本身另记痕。
+
+        断点续传（S201，参数块见 `_ANN_BUILD_CHECKPOINT_KEY`）：扫描改为显式
+        `WHERE ... AND rowid > ? ORDER BY rowid`（隐式 rowid 序不是承诺），
+        与内存复检同窗落一次检查点三件套；下一次开跑先过
+        `_try_resume_ann_checkpoint` 的六道判据，全过才从 `last_rowid` 续装，
+        任一不过就丢弃半成品从 0 重跑并在结果里点名原因。续跑段盖章**沿用
+        首段**（第一次开光标那一刻）的代次，绝不重新取值。返回字典恒带
+        `resumed_from`（本轮续跑起点条数，新跑为 0）与
+        `checkpoint_dropped_reason`（没丢为空串），让 kb-sync 汇总看得见
+        这件事发生过。publish 成功后三件套即删；被击杀/收火时保留——线上
+        两文件在 publish 之前一字未动的既有纪律不因本段松动。
         """
         expected_total = memory_verdict.expected_vectors if memory_verdict else None
         dim = memory_verdict.dim if memory_verdict else self._ann_assumed_dimension()
         available_at_start = (
             memory_verdict.available_bytes if memory_verdict is not None else None
         )
-        next_memory_check = (
-            _ANN_BUILD_MEMORY_RECHECK_VECTORS if memory_verdict is not None else 0
-        )
         generation_at_cursor_open: int | None = None
+        resumed_from = 0
+        checkpoint_dropped_reason = ""
         with self._connect() as connection:
             # 代次盖章的取值时刻：**读向量的光标打开那一刻**（S159）。这一场重建
             # 装下的向量集合只可能覆盖到此刻为止已提交的嵌入批次；重建跑到一半
@@ -3285,18 +3548,51 @@ class SqliteVectorKnowledgeStore:
             generation_at_cursor_open = self._parse_embed_generation(
                 self._read_meta_value_on(connection, _EMBED_GENERATION_KEY)
             )
+            stamp_now = self._parse_expected_vector_count(
+                self._read_meta_value_on(connection, _EMBEDDED_COUNT_KEY)
+            )
+            resume_state, checkpoint_dropped_reason = self._try_resume_ann_checkpoint(
+                connection,
+                dim_estimate=int(dim),
+                generation_now=int(generation_at_cursor_open),
+                stamp_now=stamp_now,
+            )
+            if resume_state is not None:
+                # 续跑：半成品索引与序列表接在手上继续装。**盖章沿用首段值**
+                # （判据⑤已验证它与当前代次相等；重新取值 = 每段给自己现盖
+                # 一章，代次守卫被自己人洗掉）。
+                index = resume_state["index"]
+                chunk_ids: list[str] = resume_state["chunk_ids"]
+                scan_after_rowid = int(resume_state["last_rowid"])
+                resumed_from = int(resume_state["wip_vectors"])
+                generation_at_cursor_open = int(resume_state["embed_generation"])
+                checkpoint_expected = resume_state["expected_vector_count"]
+            else:
+                index = None
+                chunk_ids = []
+                scan_after_rowid = 0
+                checkpoint_expected = stamp_now
+            checkpoint_generation = int(generation_at_cursor_open)
+            # 复检与检查点同窗：两个"下一次触发点"都从当前位置向后推一格，
+            # 新跑（0 条）时与改前逐字节同形（= 一枚复检粒度）。
+            window = _ANN_BUILD_MEMORY_RECHECK_VECTORS
+            next_memory_check = (
+                (len(chunk_ids) // window) + 1
+            ) * window if memory_verdict is not None else 0
+            next_checkpoint_at = ((len(chunk_ids) // window) + 1) * window
+            last_rowid = scan_after_rowid
             cursor = connection.execute(
                 """
-                SELECT chunk_id,
+                SELECT rowid, chunk_id,
                        vector_blob,
                        CASE WHEN vector_blob IS NULL OR length(vector_blob) = 0
                             THEN vector_json ELSE NULL END AS vector_json
                 FROM knowledge_chunks
-                WHERE vector_json IS NOT NULL AND vector_json != ''
-                """
+                WHERE vector_json IS NOT NULL AND vector_json != '' AND rowid > ?
+                ORDER BY rowid
+                """,
+                (scan_after_rowid,),
             )
-            chunk_ids: list[str] = []
-            index = None
             while True:
                 if next_memory_check and len(chunk_ids) >= next_memory_check:
                     available_now = _available_physical_memory_bytes()
@@ -3328,7 +3624,7 @@ class SqliteVectorKnowledgeStore:
                             dim=int(dim),
                             probe_failed=available_now is None,
                         )
-                        next_memory_check += _ANN_BUILD_MEMORY_RECHECK_VECTORS
+                        next_memory_check += window
                     if recheck is not None and not recheck.allowed:
                         recheck_meta = self._record_ann_memory_skip(
                             recheck, forced=False, stage="midway"
@@ -3336,23 +3632,42 @@ class SqliteVectorKnowledgeStore:
                         logger.warning(
                             "ANN 重建中途收火（内存门）：已装 %d/%s 条时"
                             "实测可用 %s < 剩余需求 %s（规模未知时按活体下限判）；"
-                            "未 publish、线上索引一字未动，本轮等同跳过。",
+                            "未 publish、线上索引一字未动，本轮等同跳过。"
+                            "检查点停在上一窗（本轮从 rowid>%d 起算的进度未落），"
+                            "下一轮自该位点续装。",
                             len(chunk_ids),
                             expected_total if expected_total else "未知",
                             "无法测量"
                             if recheck.available_bytes is None
                             else f"{recheck.available_bytes / 1024**3:.2f}GiB",
                             f"{recheck.required_bytes / 1024**3:.2f}GiB",
+                            last_rowid,
                         )
                         return {
                             "built": False,
                             "reason": "insufficient_memory_midway",
                             "vectors_built_before_abort": len(chunk_ids),
+                            "resumed_from": resumed_from,
+                            "checkpoint_dropped_reason": checkpoint_dropped_reason,
                             "memory_gate": recheck_meta,
                         }
+                if index is not None and len(chunk_ids) >= next_checkpoint_at:
+                    # 复检放行之后才落（收火路径不写——内存已经紧了还要它
+                    # 再吐一副 GB 级文件，正是要避免的形态）。
+                    self._save_ann_checkpoint(
+                        index,
+                        chunk_ids,
+                        last_rowid=last_rowid,
+                        embed_generation=checkpoint_generation,
+                        expected_vector_count=checkpoint_expected,
+                    )
+                    next_checkpoint_at = ((len(chunk_ids) // window) + 1) * window
                 rows = cursor.fetchmany(_ANN_BUILD_BATCH_SIZE)
                 if not rows:
                     break
+                # 扫描承诺：本批最后一条的 rowid 即续跑位点（无论解码成功与否
+                # 都已从光标消费掉，坏行不会被反复追）。
+                last_rowid = int(rows[-1]["rowid"])
                 batch_vectors: list = []
                 for row in rows:
                     raw_blob = row["vector_blob"]
@@ -3389,7 +3704,12 @@ class SqliteVectorKnowledgeStore:
                         # 量化器取不到或训练样本为空 ⇒ 本轮**不建**。绝不退回
                         # fp32 偷偷建一副：那会让落盘体积与 `_ann_build_demand_bytes`
                         # 的位宽假设脱钩（门按 1 B/维收钱、实物却是 4 B/维）。
-                        return {"built": False, "reason": "index_untrainable"}
+                        return {
+                            "built": False,
+                            "reason": "index_untrainable",
+                            "resumed_from": resumed_from,
+                            "checkpoint_dropped_reason": checkpoint_dropped_reason,
+                        }
                     index.hnsw.efConstruction = 200
                 index.add(matrix)
                 if on_progress is not None:
@@ -3399,16 +3719,26 @@ class SqliteVectorKnowledgeStore:
                         pass
         if index is None or not chunk_ids:
             self.ensure_fts_index()
-            return {"built": False, "reason": "empty"}
+            return {
+                "built": False,
+                "reason": "empty",
+                "resumed_from": resumed_from,
+                "checkpoint_dropped_reason": checkpoint_dropped_reason,
+            }
         published = self._publish_ann_pair(
             index, chunk_ids, embed_generation=generation_at_cursor_open
         )
+        # 发布成功 ⇒ 检查点三件套完成使命，当场删除（防残留长存：下一轮若
+        # 留着，代次/戳恰好未动时会被当"半成品"续一段已作废的进度）。
+        self._clear_ann_checkpoint()
         # knowledge-sync 一次性构建：ANN 落盘后顺带幂等构建 FTS 关键词索引。
         self.ensure_fts_index(force=True)
         return {
             "built": True,
             "vectors": len(chunk_ids),
             "dim": int(index.d),
+            "resumed_from": resumed_from,
+            "checkpoint_dropped_reason": checkpoint_dropped_reason,
             **published,
         }
 
