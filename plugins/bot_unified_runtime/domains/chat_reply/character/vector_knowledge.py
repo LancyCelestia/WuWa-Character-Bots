@@ -3633,8 +3633,7 @@ class SqliteVectorKnowledgeStore:
                             "ANN 重建中途收火（内存门）：已装 %d/%s 条时"
                             "实测可用 %s < 剩余需求 %s（规模未知时按活体下限判）；"
                             "未 publish、线上索引一字未动，本轮等同跳过。"
-                            "检查点停在上一窗（本轮从 rowid>%d 起算的进度未落），"
-                            "下一轮自该位点续装。",
+                            "收火前已落检查点，下一轮自 rowid>%d 起续装。",
                             len(chunk_ids),
                             expected_total if expected_total else "未知",
                             "无法测量"
@@ -3642,6 +3641,19 @@ class SqliteVectorKnowledgeStore:
                             else f"{recheck.available_bytes / 1024**3:.2f}GiB",
                             f"{recheck.required_bytes / 1024**3:.2f}GiB",
                             last_rowid,
+                        )
+                        # 收火前**先落检查点**（S202 改判）。原设计"收火路径不写"
+                        # 的理由是把磁盘当成了内存：`write_index` 是流式落盘，索引
+                        # 本体此刻已在场，多写一份只花 IO、不多占 RAM。而"第一次到
+                        # 窗就收火"恰恰是最常见的一次（2026-09-27 生产实测：32,768
+                        # 条处收火，`.wip` 与检查点行都没留下 ⇒ 断点续传在最需要它
+                        # 的那一格等于没做）。现在每轮至少推进一个窗，重跑即续。
+                        self._save_ann_checkpoint(
+                            index,
+                            chunk_ids,
+                            last_rowid=last_rowid,
+                            embed_generation=checkpoint_generation,
+                            expected_vector_count=checkpoint_expected,
                         )
                         return {
                             "built": False,
@@ -3652,8 +3664,8 @@ class SqliteVectorKnowledgeStore:
                             "memory_gate": recheck_meta,
                         }
                 if index is not None and len(chunk_ids) >= next_checkpoint_at:
-                    # 复检放行之后才落（收火路径不写——内存已经紧了还要它
-                    # 再吐一副 GB 级文件，正是要避免的形态）。
+                    # 正常推进窗口的落点。收火路径另有自己的一次（在 return 之前），
+                    # 两处合起来保证"任何一次退出都留得下已建好的那段"。
                     self._save_ann_checkpoint(
                         index,
                         chunk_ids,

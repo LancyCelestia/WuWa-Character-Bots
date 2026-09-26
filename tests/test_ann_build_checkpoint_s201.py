@@ -173,7 +173,9 @@ def test_midway_abort_then_resume_publishes_full_index(tmp_path, monkeypatch, ca
     _seed(store, 24)
     first = _abort_midway_with_checkpoint(store, monkeypatch)
     row = _checkpoint_row(store)
-    assert row is not None and row["wip_vectors"] == 8 and row["last_rowid"] == 8
+    # 16 而不是 8：S202 起收火路径自己也落一次检查点，所以停在收火那一刻的
+    # 16 条（旧实现只在复检放行时落，炸在 16 就只存到 8，白丢一半进度）。
+    assert row is not None and row["wip_vectors"] == 16 and row["last_rowid"] == 16
     wip_index, wip_order = store._ann_wip_paths()
     assert wip_index.exists() and wip_order.exists()
     # 中途收火绝不允许动线上件（既有纪律，不因本波松动）
@@ -184,7 +186,7 @@ def test_midway_abort_then_resume_publishes_full_index(tmp_path, monkeypatch, ca
     with caplog.at_level(logging.INFO, logger=vk.logger.name):
         second = store.build_ann_index()
     assert second["built"] is True, second
-    assert second["resumed_from"] == 8
+    assert second["resumed_from"] == 16  # S202：收火路径也落检查点，停在 16 而非 8
     assert second["checkpoint_dropped_reason"] == ""
     assert any("从检查点续跑" in rec.getMessage() for rec in caplog.records), (
         "续跑发生过必须看得见（日志面）"
@@ -274,7 +276,7 @@ def test_resumed_segment_publishes_first_segment_generation(tmp_path, monkeypatc
 
     result = store.build_ann_index(on_progress=late_batch_during_resume)
     assert result["built"] is True, result
-    assert result["resumed_from"] == 8
+    assert result["resumed_from"] == 16  # 见 :176 那条注释，S202 起收火也落检查点
     assert state["fired"] is True, "中途补嵌没发生 = 本锁空转"
     assert store._embed_generation_now() > first_segment_generation
     att = store._read_ann_attestation()
@@ -517,3 +519,47 @@ def test_store_uses_wal_for_mid_scan_sibling_writes(tmp_path):
     with store._connect() as connection:
         mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
     assert mode == "wal", f"夹具库不在 WAL（{mode}），②b 的中途补嵌构造不可靠"
+
+
+def test_first_window_abort_still_leaves_a_resumable_checkpoint(tmp_path, monkeypatch):
+    """第一次到窗就收火，也必须留下可续的检查点（2026-09-27 生产实跑的回归）。
+
+    那晚真实形状：预飞放行（可用 5.69GiB / 要价 2.03GiB），跑到 32,768 条复检
+    收火——而实现把落检查点排在收火 `return` **之后**，于是 `.wip` 两枚与
+    `ann_build_checkpoint` 行一行都没留下，断点续传在最需要它的那一格等于没做。
+    本用例把复检窗压到 8 条，让"第一窗就炸"必然发生。
+    """
+    store = _make_store(tmp_path)
+    _seed(store, 40)
+    monkeypatch.setattr(vk, "_ANN_BUILD_BATCH_SIZE", 8)
+    monkeypatch.setattr(vk, "_ANN_BUILD_MEMORY_RECHECK_VECTORS", 8)
+    reads = {"n": 0}
+
+    def _fake_available() -> int:
+        reads["n"] += 1
+        return 64 * _GIB if reads["n"] == 1 else 1  # 预飞放行，第一窗撑不过
+
+    monkeypatch.setattr(vk, "_available_physical_memory_bytes", _fake_available)
+    first = store.build_ann_index()
+    assert first["built"] is False
+    assert first["reason"] == "insufficient_memory_midway", first
+    assert int(first["vectors_built_before_abort"]) >= 8, first
+
+    wip_index, wip_order = store._ann_wip_paths()
+    assert wip_index.is_file() and wip_order.is_file(), (
+        "收火前没落 .wip —— 下一次又要从 0 开始，正是本回归要拦的那一格"
+    )
+    with store._connect() as connection:
+        row = connection.execute(
+            "SELECT value FROM knowledge_meta WHERE key = ?",
+            (vk._ANN_BUILD_CHECKPOINT_KEY,),
+        ).fetchone()
+    assert row is not None, "收火路径没落检查点行"
+
+    # 第二次跑：内存宽裕 ⇒ 必须从落下的那段接着建，而不是从 0 重跑。
+    monkeypatch.setattr(vk, "_available_physical_memory_bytes", lambda: 64 * _GIB)
+    second = store.build_ann_index()
+    assert second["built"] is True, second
+    assert int(second["resumed_from"]) >= 8, (
+        f"落了检查点却没续上（resumed_from={second['resumed_from']}）"
+    )
