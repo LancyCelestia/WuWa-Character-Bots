@@ -76,8 +76,11 @@ def build_workspace_service(config: object | None = None):
 
     async def sandbox_generate(scope: dict[str, Any]) -> dict[str, Any]:
         from ..domains.chat_reply.character.documents import load_character_document
+        from ..domains.chat_reply.llm_engine.providers import (
+            OpenAICompatibleLLMProvider,
+            StaticLLMProvider,
+        )
         from ..llm.model_router import _resolve_api_key
-        from ..llm.providers import OpenAICompatibleLLMProvider, StaticLLMProvider
         from .sandbox import SandboxConversationAdapter, SandboxModel
         from .services import ControlServiceError
         persona_files = tuple(Path(path).expanduser() for path in getattr(config, "bot_persona_files", ()))

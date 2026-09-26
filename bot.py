@@ -480,7 +480,9 @@ if "plugins.bot_unified_runtime" not in _loaded_plugin_modules:
         "plugins.bot_unified_runtime 未成功加载（见上方日志），"
         "已停止初始化 Mail 适配器。请先修复插件导入错误。"
     )
-from plugins.bot_unified_runtime.mail_adapter import ResilientMailAdapter
+from plugins.bot_unified_runtime.domains.transport.mail.mail_adapter import (
+    ResilientMailAdapter,
+)
 
 driver.register_adapter(ResilientMailAdapter)
 

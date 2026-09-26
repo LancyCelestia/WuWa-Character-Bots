@@ -18,6 +18,13 @@ from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
 from plugins.bot_unified_runtime.domains.chat_reply.character.source_summary import (
     build_safe_context_source_summary,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProvider,
+    LLMProviderError,
+    OpenAICompatibleLLMProvider,
+    public_llm_error_message,
+    safe_llm_finish_reason,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     build_reply_budget_settings,
     decide_reply_budget,
@@ -67,13 +74,6 @@ from plugins.bot_unified_runtime.domains.ops.smoke.diagnostics import (
 from plugins.bot_unified_runtime.domains.transport.sender import (
     ReceiptRepository,
     SendQueue,
-)
-from plugins.bot_unified_runtime.llm import (
-    LLMProvider,
-    LLMProviderError,
-    OpenAICompatibleLLMProvider,
-    public_llm_error_message,
-    safe_llm_finish_reason,
 )
 from plugins.bot_unified_runtime.runtime import RuntimeControlState
 
@@ -713,7 +713,7 @@ def _llm_setup_rows(config: Config) -> list[dict[str, str]]:
 
 def _llm_setup_accent(config: Config) -> tuple[str, str]:
     """主色来自 bot_help_card_color（无平台语境）；留空回退中性灰。"""
-    from plugins.bot_unified_runtime.output.card_render.bridge import (
+    from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
         _darken,
         _hex_to_rgb,
         _rgb_to_hex,
@@ -733,6 +733,9 @@ def _llm_setup_mica_html(payload: dict[str, Any]) -> str:
     """
     import html as _html
 
+    from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
+        payload_phase,
+    )
     from plugins.bot_unified_runtime.domains.render.card_render.mica_shell import (
         drift_blobs_html,
         mica_decor_css,
@@ -743,9 +746,6 @@ def _llm_setup_mica_html(payload: dict[str, Any]) -> str:
         BRAND_WASH_TOKENS,
         SEMANTIC_DANGER,
         SEMANTIC_SUCCESS,
-    )
-    from plugins.bot_unified_runtime.output.card_render.bridge import (
-        payload_phase,
     )
 
     accent, accent_dark = _llm_setup_accent(payload["config"])

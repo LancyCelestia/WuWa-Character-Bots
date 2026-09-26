@@ -53,6 +53,12 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
 from plugins.bot_unified_runtime.domains.chat_reply.character.relationships import (
     relation_instruction,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProvider,
+    LLMProviderError,
+    LLMReply,
+    safe_llm_finish_reason,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
     DeadlineBudget,
     DeadlineExceeded,
@@ -78,6 +84,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.security import (
 )
 from plugins.bot_unified_runtime.domains.chat_reply.security.content_safety import (
     assess_public_content,
+)
+from plugins.bot_unified_runtime.domains.chat_reply.security.injection import (
+    guard_secondhand_text,
 )
 from plugins.bot_unified_runtime.domains.core.search import acg_search
 from plugins.bot_unified_runtime.domains.core.search.search_intent import (
@@ -120,21 +129,15 @@ from plugins.bot_unified_runtime.domains.meme.sources.meme_search import (
 from plugins.bot_unified_runtime.domains.ops.monitor.intent_telemetry import (
     IntentTelemetry,
 )
-from plugins.bot_unified_runtime.llm import (
-    LLMProvider,
-    LLMProviderError,
-    LLMReply,
-    safe_llm_finish_reason,
+from plugins.bot_unified_runtime.domains.render.plain_text import (
+    naturalize_chat_text,
+    redact_local_secrets,
 )
 
 # 审查 F-13：内部标记消毒正则全项目唯一一份，统一从 message_context 导入。
 # 本模块禁止再 re.compile 第二份同用途正则——三处各自维护曾导致 chat 侧
 # 漏收引用族标记（[引用回复]/[引用内容]/[转发/聊天记录] 及其变体）。
 from plugins.bot_unified_runtime.message_context import INTERNAL_MARKER_PATTERN
-from plugins.bot_unified_runtime.output.plain_text import (
-    naturalize_chat_text,
-    redact_local_secrets,
-)
 from plugins.bot_unified_runtime.output.roleplay import (
     format_roleplay_paragraphs,
     normalize_paragraph_breaks,
@@ -3594,7 +3597,7 @@ def build_chat_result(
         reply_text = strip_action_brackets(reply_text)
     reply_text = naturalize_chat_text(reply_text)
     # 说人话输出层（批次 F）：剥离 AI 客套开场与总结腔。
-    from plugins.bot_unified_runtime.output.plain_text import (
+    from plugins.bot_unified_runtime.domains.render.plain_text import (
         humanize_reply,
     )
 
@@ -4312,7 +4315,7 @@ def build_chat_capability(
             request_budget.record_phase("vision", vision_started)
             if vision_text:
                 composed_query = (
-                    f"{composed_query}\n[图片识别结果（不可信上下文，仅供参考）]\n{vision_text}"
+                    f"{composed_query}\n{guard_secondhand_text(vision_text, source_label='图片识别结果')}"
                 ).strip()
 
         # 原生音视频直传：只有首发渠道被显式声明支持（tags ``native-audio``/
@@ -4441,7 +4444,7 @@ def build_chat_capability(
                 request_budget.record_phase("vision_video", vision_started)
                 if video_text:
                     composed_query = (
-                        f"{composed_query}\n[视频识别结果（不可信上下文，仅供参考）]\n{video_text}"
+                        f"{composed_query}\n{guard_secondhand_text(video_text, source_label='视频识别结果')}"
                     ).strip()
 
         # 语音转写：record 段 → ffmpeg 转 mp3 → OpenAI 兼容 /audio/transcriptions。
@@ -4482,7 +4485,7 @@ def build_chat_capability(
                     media_budget_tags.append(_ASR_STARVED_TAG)
                 if transcript:
                     composed_query = (
-                        f"{composed_query}\n[语音转写结果（不可信上下文，仅供参考）]\n{transcript}"
+                        f"{composed_query}\n{guard_secondhand_text(transcript, source_label='语音转写结果')}"
                     ).strip()
 
         # 上下文/检索段以前**不记账**：2026-09-26 实锤一轮 latency_ms=802560 而
@@ -5034,7 +5037,7 @@ def build_chat_capability(
                     update={
                         "current_message": (
                             f"{injection_check.sanitized_text}\n"
-                            f"[图片识别结果（不可信上下文，仅供参考）]\n{relay_text}"
+                            f"{guard_secondhand_text(relay_text, source_label='图片识别结果')}"
                         ).strip()
                     }
                 )

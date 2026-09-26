@@ -29,7 +29,7 @@ from plugins.bot_unified_runtime.contracts import (
     RiskLevel,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import user_copy
-from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
+from plugins.bot_unified_runtime.domains.render.bot_avatar import bot_avatar_uri
 
 _URL_HINT_RE = re.compile(r"https?://", re.IGNORECASE)
 _MAX_TRIGGER_LEN = 48
@@ -147,7 +147,7 @@ def build_fx_capability(
             from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
                 prune_prefixed,
             )
-            from plugins.bot_unified_runtime.output.card_render.bridge import (
+            from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
                 render_finance_card_html,
             )
 

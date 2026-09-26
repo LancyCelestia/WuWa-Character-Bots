@@ -24,7 +24,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
+from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 
 logger = logging.getLogger(__name__)
 

@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from ..llm.providers import LLMProvider
+from ..domains.chat_reply.llm_engine.providers import LLMProvider
 from .services import ControlServiceError
 from .workspaces import WorkspaceSettings
 

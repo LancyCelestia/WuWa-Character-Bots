@@ -42,7 +42,7 @@ from uuid import uuid4
 from pydantic import ConfigDict, Field
 
 from plugins.bot_unified_runtime.domains.core.contracts.envelope import V21StrictBase
-from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
+from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 
 from .vector_knowledge import (
     EmbeddingProvider,

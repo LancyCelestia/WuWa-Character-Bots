@@ -48,7 +48,7 @@ from plugins.bot_unified_runtime.domains.finance.data.stock_data import (
     format_stock_brief,
     resolve_company_query,
 )
-from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
+from plugins.bot_unified_runtime.domains.render.bot_avatar import bot_avatar_uri
 
 _URL_HINT_RE = re.compile(r"https?://", re.IGNORECASE)
 _MAX_TRIGGER_LEN = 32
@@ -435,7 +435,7 @@ def build_stocks_capability(config: Any | None = None, *, render_backend: Any | 
             from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
                 prune_prefixed,
             )
-            from plugins.bot_unified_runtime.output.card_render.bridge import (
+            from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
                 render_finance_card_html,
             )
 
@@ -480,7 +480,7 @@ def build_stocks_capability(config: Any | None = None, *, render_backend: Any | 
             from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
                 prune_prefixed,
             )
-            from plugins.bot_unified_runtime.output.card_render.bridge import (
+            from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
                 render_finance_card_html,
             )
 

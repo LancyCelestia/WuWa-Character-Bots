@@ -45,7 +45,7 @@ from pydantic import Field, field_validator, model_validator
 
 from plugins.bot_unified_runtime.domains.core.contracts.envelope import V21StrictBase
 from plugins.bot_unified_runtime.domains.core.contracts.request import PaginationQuery
-from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
+from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 
 # ---------------------------------------------------------------------------
 # 枚举（合同 §8）

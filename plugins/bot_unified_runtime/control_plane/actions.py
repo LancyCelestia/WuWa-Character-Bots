@@ -22,7 +22,7 @@ from typing import Any
 from uuid import uuid4
 
 from plugins.bot_unified_runtime.domains.ops.audit.logger import redact_private_debug
-from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
+from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 
 from .auth import Principal
 from .services import ControlServiceError

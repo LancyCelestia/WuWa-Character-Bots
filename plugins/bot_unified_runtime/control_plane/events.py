@@ -28,7 +28,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from plugins.bot_unified_runtime.domains.ops.audit.logger import redact_private_debug
-from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
+from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 
 EVENT_CATEGORIES = (
     "debug",

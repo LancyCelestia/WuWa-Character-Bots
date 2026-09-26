@@ -42,7 +42,7 @@ from plugins.bot_unified_runtime.domains.media.archive.media_archive import (
     MediaArchiveStore,
     sanitize_dirname,
 )
-from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
+from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 
 # 触发词（T-Spec 八层裁剪）：CJK 词天然词界安全；英文 archive 语义独占；
 # 全拼 shoucang/guidang。save 裸词会劫持英文口语（"save me"）——刻意不收。

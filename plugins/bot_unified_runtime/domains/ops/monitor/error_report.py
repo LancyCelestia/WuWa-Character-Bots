@@ -68,7 +68,7 @@ from plugins.bot_unified_runtime.domains.core.contracts import (
     SendRequest,
     SessionType,
 )
-from plugins.bot_unified_runtime.output.plain_text import redact_local_secrets
+from plugins.bot_unified_runtime.domains.render.plain_text import redact_local_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -1525,7 +1525,7 @@ def _get_render_backend() -> Any:
                 )
             except Exception:  # noqa: BLE001 - 非生产环境用默认名。
                 name = "playwright"
-            from plugins.bot_unified_runtime.output.render_backends import (
+            from plugins.bot_unified_runtime.domains.render.render_backends import (
                 build_render_backend,
             )
 
@@ -1548,7 +1548,7 @@ def render_error_card_png(
     经 runtime_paths 重映射）；测试注入 tmp 目录，避免源码树 data/ 残留。
     """
     try:
-        from plugins.bot_unified_runtime.output.card_render.bridge import (
+        from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
             render_error_card_html,
         )
 

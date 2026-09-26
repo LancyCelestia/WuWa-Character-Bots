@@ -30,7 +30,7 @@ from plugins.bot_unified_runtime.domains.finance.data.market_data import (
     group_quotes,
     index_unavailable_entries,
 )
-from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
+from plugins.bot_unified_runtime.domains.render.bot_avatar import bot_avatar_uri
 
 # 触发词：全球股市 > 股指/大盘/股市/行情（行情放最后避免误伤面过大时漏判）。
 # 「大盤」为繁体变体（2026-09-13 多语言触发覆盖）；语境守卫 _STOCK_HINT_RE
@@ -251,7 +251,7 @@ def _render_finance_sections_card(
         from plugins.bot_unified_runtime.domains.chat_reply.runtime.cache_policy import (
             prune_prefixed,
         )
-        from plugins.bot_unified_runtime.output.card_render.bridge import (
+        from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
             render_finance_card_html,
         )
 
@@ -675,7 +675,7 @@ def build_market_capability(
         import time as _time
 
         try:
-            from plugins.bot_unified_runtime.output.card_render.bridge import (
+            from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
                 render_market_card_html,
             )
 

@@ -90,7 +90,7 @@ def render_payload_png(
         from plugins.bot_unified_runtime.domains.ops.monitor.error_report import (
             render_html_card,
         )
-        from plugins.bot_unified_runtime.output.card_render.bridge import (
+        from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
             render_universal_card_html,
         )
 

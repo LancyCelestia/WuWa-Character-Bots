@@ -22,7 +22,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..domains.ops.audit.logger import redact_private_debug
-from ..output.plain_text import redact_local_secrets
+from ..domains.render.plain_text import redact_local_secrets
 from .auth import Principal
 from .services import ControlServiceError
 

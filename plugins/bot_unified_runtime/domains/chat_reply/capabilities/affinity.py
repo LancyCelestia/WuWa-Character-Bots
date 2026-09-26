@@ -31,7 +31,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.affinity import (
     tier_display_range,
     tier_name_for_affinity,
 )
-from plugins.bot_unified_runtime.output.bot_avatar import bot_avatar_uri
+from plugins.bot_unified_runtime.domains.render.bot_avatar import bot_avatar_uri
 
 _COMMAND_RE = re.compile(
     # affinity(?![a-z0-9])：ASCII 别名右侧词边界（wiki _alias_hit 先例），
@@ -294,7 +294,7 @@ def _render_card(payload: dict[str, Any], render_backend: Any | None, card_dir: 
     if render_backend is None or not getattr(render_backend, "available", False):
         return ""
     try:
-        from plugins.bot_unified_runtime.output.card_render.bridge import (
+        from plugins.bot_unified_runtime.domains.render.card_render.bridge import (
             render_affinity_card_html,
         )
 
