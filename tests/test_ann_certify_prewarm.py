@@ -197,13 +197,18 @@ def test_certify_reads_db_rows_never_index_shape_self_certification_trap(
     assert refused and "expected=50" in refused[0]
 
 
-def test_mutated_certify_from_ntotal_would_kill_the_gate(tmp_path):
-    """变异自证（陷阱的正面演示）：把「ntotal 当戳」注进去，短装索引即被放行。
+def test_mutated_certify_from_ntotal_would_kill_the_gate(tmp_path, caplog):
+    """变异自证（陷阱的正面演示）：把「ntotal 当戳」注进去，计数闸当场失效。
 
-    这条不测实现、测的是禁区的杀伤力：前半模拟坏值落戳（等价于把 certify
-    改成 index.ntotal 取数），断言完备性闸真的被掏空（load True）；后半回到
-    真实 certify（COUNT 取数），断言拒用恢复。两半一起钉死「取数方向」就是
-    这道闸的生死线。
+    这条不测实现、测的是禁区的杀伤力，且**按拒因文字归因**（只断 load 的
+    真/假不够：代次闸上线后两半都会 False，光看布尔值分不出是哪道门在干活，
+    计数闸被整个删掉也照样"绿"）。
+    - 前半（变异戳 := index.ntotal）：期望 False 且拒因**只有** coverage refused、
+      **没有** completeness refused ⇒ 证明计数闸在这副输入下确实被掏空（短装索引
+      畅通），今天拦住它的是 S159 那道代次闸，不是戳本身。
+    - 后半（真实 certify := COUNT(已嵌入) = 50 > ntotal = 20）：期望 False 且
+      拒因含 completeness refused ⇒ 计数闸仍有独立牙齿。
+    两半合起来钉死「取数方向」是这道闸的生死线，同时钉死两道门各管各的格。
     """
     store = _make_store(tmp_path, count=20)
     store.build_ann_index()
@@ -214,16 +219,28 @@ def test_mutated_certify_from_ntotal_would_kill_the_gate(tmp_path):
     # —— 变异形态：戳 := index.ntotal（被禁止的取数方向）
     store._stamp_expected_vector_count(_ntotal_on_disk(store))
     store._drop_ann_cache()
-    assert store.load_ann_index() is True, (
-        "变异前提：ntotal 自我认证形态下短装索引确实畅通无阻——"
-        "若不成立，说明闸本就不看戳，本文件其余锁全部失去意义"
+    with caplog.at_level(logging.WARNING, logger=vk.logger.name):
+        assert store.load_ann_index() is False
+    mutant = "\n".join(rec.getMessage() for rec in caplog.records)
+    assert "coverage refused" in mutant, (
+        "变异形态下拦住这副短装索引的必须是代次闸，否则本用例没在测它声称的东西"
+    )
+    assert "completeness refused" not in mutant, (
+        "计数闸在 ntotal 自我认证形态下必须判「追平」——若它这里就拒了，"
+        "说明闸本就不看戳，本文件其余锁全部失去意义"
     )
 
     # —— 真实形态：certify := COUNT(已嵌入) = 50 > ntotal = 20
     _drop_stamp_key(store)
     store._drop_ann_cache()
     assert store.certify_expected_vector_count() == 50
-    assert store.load_ann_index() is False, "真实认证必须把这条短装代重新拦下"
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=vk.logger.name):
+        assert store.load_ann_index() is False, "真实认证必须把这条短装代重新拦下"
+    real = "\n".join(rec.getMessage() for rec in caplog.records)
+    assert "completeness refused" in real, (
+        "拒因必须是计数闸本身，不能是别的门顺手拦下——否则本锁空转"
+    )
 
 
 def test_certify_does_not_touch_ann_files(tmp_path):

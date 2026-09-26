@@ -327,6 +327,32 @@ _EMBEDDED_COUNT_KEY = "ann_expected_vector_count"
 # 短装——那是发布中途被杀的残态，索引本身是完整的，见 load_ann_index。
 _ANN_COMPLETENESS_MAX_MISSING = 0
 
+# --- 嵌入代次守卫（S159，2026-09-26 夜）---------------------------------------
+# 上面那句「多出可容忍」在**同轮先删后嵌**时不成立：戳是标量，
+# `ntotal >= stamp` 必然成立却不代表覆盖。今晚生产实测（changed=328/removed=714/
+# 嵌入 3,798）：戳随删除降到 740,267 < ntotal 740,996，一副**不含这 3,798 条新
+# 向量、还留着死 id** 的 02:56 旧索引被当成可用——上一段注释里"危险方向结构上
+# 不可达"的断言，被对称记账把戳降下去之后，从删除侧绕进来了。
+# 守卫只补最便宜的一种证明：`ann_embed_generation` 数「已提交的嵌入批次数」，
+# 与向量**同事务**在唯一写点 `_save_vectors` 推进；这一代"覆盖已证到哪一批"
+# 记在代际证明的 `embed_generation` 字段（盖章点只有两处：publish 提交点与
+# 集合级自证成立的重建纠偏——certify 补盖新戳**不**盖章，它只证库形真值）。
+# 载入判定：当前代次 > 盖章代次 ⇒ 本代索引必然没装下发布后新增的嵌入 ⇒ 拒用，
+# 两个数字同屏点名（coverage refused）。
+# **删除不推进代次**：纯删除轮的覆盖形状是超集，按上面在册的「多出可容忍」设计
+# 语义继续放行；守卫若把纯删除轮杀掉，就是把 `ae096fc` 的对称记账打回原形
+# （反向锁 tests/test_kb_pricing_guard_fts_s159.py::
+#   test_pure_deletion_round_still_accepted）。
+# 也不许反过来拿落戳洗代次：`_stamp_expected_vector_count` 的任何调用都不推进、
+# 不盖章（禁区锁 ::test_stamp_raise_cannot_launder_generation 与
+# ::test_generation_funnel_structure_locks；ntotal 自我认证陷阱仍是
+# test_ann_certify_prewarm 那枚同名锁）。
+_EMBED_GENERATION_KEY = "ann_embed_generation"
+# 代际证明里记「本代覆盖证到第几批」的字段名。旧代证明缺这个字段按 0 读
+# （= 从未证过任何提交批次；配合同样缺 `ann_embed_generation` 行的存量库，
+# 两侧都是 0 ⇒ 逐字节现状，无戳自愈链不受扰动）。
+_ATTEST_EMBED_GENERATION_FIELD = "embed_generation"
+
 # --- 活戳漂移纠偏（stamp-drift 波，2026-09-26）--------------------------------
 # 上面那段「虚高只会多拒一次」的推理，在**零变更夜**是错的：虚高确实只会多拒，
 # 可是没有任何一条路会把虚高洗掉——不重建（`unchanged_skip`）、重建线不达、
@@ -388,14 +414,16 @@ _STAMP_RECONCILE_REASONS = (
 _ANN_BUILD_MIN_AVAILABLE_BYTES = int(4.5 * 1024**3)
 # ^ S85 定的 go/no-go 经验合价（当时 bot 已驻留 3.53 GiB、空闲只剩 2.4–3.0 GiB
 #   ⇒ 判"别开火"）——它是"旧代 + 新代 + 余量"在 n≈766k 那个点上的合价，不是
-#   物理常数，也**不当需求价的绝对下限用**：第一版当下限把 24 条向量的测试重建
-#   也拒了（自曝账见席位报告 §5）。S118 收线后它只剩一个用途：被复算锁
+#   物理常数，也**不当需求价用、不是物理下限**：第一版当下限把 24 条向量的测试
+#   重建也拒了（自曝账见席位报告 §5）。S118 收线后它只剩一个用途：被复算锁
 #   tests/test_ann_memory_gate_s118.py::test_demand_model_reproduces_s85_calibration_at_766k
 #   钉成"需求线性式在该标定点上确实落在这枚合价的合理带内"。
 _ANN_BUILD_HEADROOM_RATIO = 4
-# ^ 观察余量按需求的比例给（1/4）：它的用途是覆盖"量到"与"用完"之间爬虫还在
-#   写同一台机器这件事（S105 实测 10 分钟内可用内存 2.99 → 1.62 GiB），
-#   这件事的规模与重建本身同阶 ⇒ 必须是比例而不是常数。
+# ^ 安全余量按需求的比例给（1/4；S112 旧名"观察余量"，S159 重定标时定为正式
+#   身份）：它的用途是覆盖三件实测在册的事——①"量到"与"用完"之间爬虫还在写
+#   同一台机器（S105 实测 10 分钟内可用内存 2.99 → 1.62 GiB），②旧代索引在
+#   publish 前一直驻留（mmap 页可回收，但回收滞后于读数），③模型价自身是
+#   斜率估计不是账。它的规模与重建本身同阶 ⇒ 必须是比例而不是常数。
 _ANN_BUILD_MIN_HEADROOM_BYTES = 128 * 1024 * 1024
 # ^ 比例项的下限：小库也要留一点余量，但不许留成一刀切的 1 GiB——
 #   第一版正是那枚常数把 24 条向量的测试重建也判成"内存不足"、连带打红
@@ -468,6 +496,42 @@ _ANN_MEMORY_SKIP_ESCALATION_ROUNDS = 3
 #   代价上界是"水位真连坏 3 夜时多发一张 critical 卡"，方向是变严不是变松。
 #   升格只改**告警面**（level warning→critical + 点名连续数），不改门判据：
 #   门永远按当轮实测判定，绝不为"攒够 3 次"而提前放行或提前拒火。
+
+# --- S159 计价重定标（2026-09-26 夜，用户裁定「甲」）--------------------------
+# 今晚实况：前置门按上面这套线性价（740,267 条 × 6,918 B + 批副本 + 1/4 余量
+# ≈ 6.00 GiB）在 11.55 GiB 可用下**本来放行**；死的是中途腿——
+# `_ann_projected_requirement_bytes` 旧式把「首批实吃」按单位斜率线性外推到
+# 剩余全部：复检在 32,768 条时 available 已掉 0.62 GiB ⇒ 单位价 20,310 B/vec
+# ×剩余 707,499 ⇒ 要价 14.04 GiB，为实测峰值的 3.6 倍、线性价的 2.3 倍。
+# 早期吃进为什么不能外推：重建的读链要把全部 vector_json 文本 + blob 过一遍
+# SQLite 页缓存（≈24 KB/vec 的流经量），这部分是**可回收的缓存页**、不是私有
+# 驻留；首批恰好摊到整场读链的冷缓存成本，单位价被顶到模型边际价的 2.9 倍。
+# 新口径一行式：
+#     剩余需求 = 已吃实账（available 开跑至今净掉，保守全额认账）
+#              + 剩余条数的模型价（本节上方那套实测分解线性式，含 1/4 安全余量）
+# 已吃的全认（方向保守，缓存页也认），未来的按模型记——不再外推首批斜率。
+# 断路器的牙没摘：真吃超模型价时，每个复检窗（32,768 条）把新账加进要价，
+# available 一旦撑不过「已吃 + 剩余模型价」当场收火（活性与反证双锁：
+# tests/test_kb_pricing_guard_fts_s159.py::
+#   test_midway_breaker_still_bites_when_really_eaten 及其反证腿、
+#   test_midway_observed_leg_no_longer_extrapolates_early_slope）。
+# 复算口径（要求②，全部可由本节常数重推，锁
+# ::test_price_constants_documented_as_calibration）：
+#   线性 = n × ( dim×4〔IndexHNSWFlat 私有 float32 副本〕
+#               + dim×2〔倍增 realloc 瞬态，S118 bench 峰值边际实测〕
+#               + (4,694 − 1024×4) = 598〔S85 实测：HNSW 链接表 + 分配余量〕
+#               + 176〔chunk_ids 列表 + JSON 文本 + bytes 同场，实测上界〕)
+#   批内副本 = 2048 × dim × 4 × 4
+#   安全余量 = max(128 MiB, (线性 + 批副本) ÷ 4)
+# 与实测对表：n=740,267、dim=1024 ⇒ 线性 4.77 GiB、总要价 ≈ 6.00 GiB；
+# 实测两跑全量重建峰值 3.6–3.9 GiB（09-22 / 09-25 观测，简报输入）——模型价
+# **高于**实测峰值，即本次重定标没有"把线性价偷偷调小"，降下去的只有那条
+# 外推腿；「32 GiB 机器 10 GiB 空闲必须开火」在总要价 6.00 GiB 与中途 ≈ 5.3
+# GiB 下同时成立（行为锁 ::test_gate_allows_fire_on_32gib_machine_at_10gib_free，
+# 该锁同时钉「2 GiB 空闲仍拒」——门不许被重定标改成摆设）。
+# 本节一切阈值都是**标定不是物理下限**：换模型、换维数、换机器就按同一式子
+# 重量一遍；`_ANN_BUILD_MIN_AVAILABLE_BYTES` 只是 766k 标定点的历史合价展示位，
+# 不当门用（第一版拿它当全局门槛的自曝账见其注释）。
 
 
 def _available_physical_memory_bytes() -> int | None:
@@ -609,9 +673,8 @@ def _ann_build_demand_bytes(expected_vectors: int | None, dim: int) -> int:
        （`_ANN_BUILD_FAISS_REALLOC_BYTES_PER_DIM`，S118 bench 峰值斜率实测）
        + 176 B/条 id 表（`chunk_ids` 列表与 `json.dumps` 文本、编码 bytes
        同时在场）。
-    ② 观察余量按比例给（线性项的 1/4）：覆盖"量到"与"用完"之间爬虫还在写
-       同一台机器这件事（S105 实测 10 分钟内可用内存 2.99 → 1.62 GiB），
-       它天然与重建本身同阶，所以必须是比例而不是常数。
+    ② 安全余量按比例给（线性项的 1/4，见 `_ANN_BUILD_HEADROOM_RATIO` 注释的
+       三件在册理由）：它天然与重建本身同阶，所以必须是比例而不是常数。
     ③ `_ANN_BUILD_MIN_AVAILABLE_BYTES`（4.5 GiB）**不当门用**：它是 S85 在
        n≈766,126 那个点上量出的合价，不是物理常数——第一版把它当全局门槛，
        结果 24 条向量的测试重建也被拒、连带打红 `tests/test_ann_certify_prewarm.py`
@@ -624,9 +687,10 @@ def _ann_build_demand_bytes(expected_vectors: int | None, dim: int) -> int:
        **一次性全量读链中间物**（JSON 文本 22.7 KB + Python list 42.2 KB/条，
        S118 层分解实跑，whole-chain 77.7 KB/vec）——分批形态下这些中间物只在
        批内出现（O(2048) 条而非 O(n)）。分批重建**峰值**斜率实测 ≈ 7.4 KB/vec
-       （bench 20k→40k 边际），已折进 ① 的 realloc 项；残余意外交给中途复检
-       的实测斜率自校准（`_ann_projected_requirement_bytes` 已接进
-       `_build_ann_index_locked`——S112 定义未接线的那半条腿，S118 补上）。
+       （bench 20k→40k 边际），已折进 ① 的 realloc 项；中途复检收口已改式为
+       「已吃实账 + 剩余模型价」（S159 重定标，`_ann_projected_requirement_bytes`
+       docstring 与上方「S159 计价重定标」常量块——旧「首批斜率×剩余全部」外推
+       今晚把要价顶到 14.04 GiB = 实测峰值 3.6 倍，推导与复算口径全在那里）。
     """
     batch_slack = _ann_build_batch_slack_bytes(dim)
     if expected_vectors is None or expected_vectors <= 0:
@@ -654,18 +718,22 @@ def _ann_projected_requirement_bytes(
     available_at_start: int | None,
     built_so_far: int,
 ) -> int:
-    """中途复检的需求：模型价与**实测价**取大者（自校准断路器）。
+    """中途复检的需求 = **已吃实账 + 剩余模型价**（S159 重定标，推导见常量块）。
 
-    来历：S112 手里的两把尺打架（S85 轮询 RSS 斜率 4.7 KB/条 vs S115 实跑
-    155,849 条触到 10.24 GiB ≈ 67 KB/条），静态挑一头都是赌。S118 bench 已
-    把账对清：67 KB/条那一发是**一次性全量读链**的中间物（JSON 文本 +
-    Python list，层分解实跑），分批形态不适用；分批**峰值**斜率实测 ≈ 7.4
-    KB/条，已折进模型价。但模型价仍只是估计——所以这枚断路器保留并**接线**
-    （S112 定义了它却没接进 `_build_ann_index_locked`，S118 收线补上那半条腿）：
-    `observed_unit = (开跑前可用 - 当前可用) / 已装条数` 是本进程**真实**吃掉的
-    每条字节数（含 SQLite 读页、分配器、构建工作集），与模型价取大 ⇒
-    模型低估时断路器自动收紧，模型高估时也不会无故收火。
-    读数不可用（探针失败/还没装满一条）⇒ 退回纯模型价。
+    来历：S112 手里两把尺打架（S85 稳态 4.7 KB/条 vs S115 实跑 ≈67 KB/条），
+    S118 把 67 KB/条归因成一次性全量读链中间物、把分批峰值 7.4 KB/条折进模型价，
+    并接线了「实测斜率与模型价取大」的断路器。**但实测斜率不可线性外推**——
+    2026-09-26 夜生产要价 14.04 GiB（= 实测峰值 3.9 GiB 的 3.6 倍）正是
+    「首批 0.62 GiB ÷ 32,768 条 × 剩余全部」外推出来的：首批吃进以读链页缓存
+    为主（可回收、不是未来每条都要重付的私有驻留），拿它当边际价 = 任何机器
+    永远不许开火。新式两半各管各的：
+    ① 已吃：`available_at_start - available_now` 全额认账（含缓存页，保守方向
+       是多要价不是少要价）；
+    ② 未吃：按 `_ann_build_demand_bytes` 的模型价记，不外推任何斜率。
+    牙还在：真消费超模型价时，每个复检窗把超额并入①，available 撑不过
+    ①+② 当场收火（活性+反证锁见 tests/test_kb_pricing_guard_fts_s159.py）。
+    读数不可用（探针失败/一条未装）⇒ 退回纯模型价；`built_so_far` 只作
+    「实账是否已成形」的判据，不再作外推分母。
     """
     model = _ann_build_demand_bytes(remaining_vectors, dim)
     if (
@@ -676,10 +744,7 @@ def _ann_projected_requirement_bytes(
     ):
         return model
     consumed = max(0, int(available_at_start) - int(available_now))
-    observed_total = int(
-        consumed + int(remaining_vectors) * max(1, consumed // max(1, built_so_far))
-    )
-    return max(model, observed_total + _ANN_BUILD_MIN_HEADROOM_BYTES)
+    return int(model + consumed)
 
 
 def _ann_live_floor_bytes(dim: int) -> int:
@@ -2555,14 +2620,24 @@ class SqliteVectorKnowledgeStore:
             )
 
     def _ann_pair_consistent(
-        self, index_path: str, order_path: str, stamp: tuple
+        self,
+        index_path: str,
+        order_path: str,
+        stamp: tuple,
+        *,
+        attestation: dict | None,
     ) -> bool:
         """按代际证明校验 .index 与 .order.json 属于同一代。
 
         无证明（旧版存量产物/证明未写入）时放行，交由 `ntotal == len(order)`
         终检兜底——保持对既有已建索引的向后兼容。
+
+        `attestation` 是必填的**已解析证明**：载入路径那发三键合一查询已经把
+        它读出来了，再在这里自己开一发点查就是给请求路径添第二笔账（成本锁见
+        tests/test_kb_pricing_guard_fts_s159.py::
+        test_load_path_cold_accept_is_two_meta_point_reads）。取数口子只有
+        一个，判据才有唯一一个口径；也因此不许把它退回成带缺省值的可选参数。
         """
-        attestation = self._read_ann_attestation()
         if not attestation:
             return True
         (index_size, _), (order_size, _) = stamp
@@ -2610,12 +2685,25 @@ class SqliteVectorKnowledgeStore:
         再用计数戳比一次 `index.ntotal`：短装或无从判定（无戳）一律拒用。
         计数戳是 knowledge_meta 单行主键查询，被拒路径也不去扫 knowledge_chunks。
 
+        代次闸（S159，参数块见 _EMBED_GENERATION_KEY）：计数戳是**标量**，
+        「同轮先删后嵌」时删除把它拉低、嵌入再把它推回同一个数 ⇒
+        `ntotal >= stamp` 恒成立却根本没装下新那批（2026-09-26 生产实况）。
+        故戳判之后再加一发代次判：当前嵌入代次 > 本代索引背书的代次 ⇒ 拒用，
+        两个数字同屏点名（`coverage refused`）。判据方向只严不松：删除不推进
+        代次（纯删除轮是超集，照旧按在册的「多出可容忍」放行），落戳也不推进
+        代次（拿落戳洗代次 = 把今晚这个洞换个位置再开一次）。
+        **无代际证明时本判 inert**：那是 `_ann_pair_consistent` 早已在册的向后
+        兼容形态（存量产物没有证明），在这里补一刀拒用就是把兼容链改口；
+        那道闸的红利（少一发 meta 读）不归本判负责，计数戳仍在拦它。
+
         拒用判定缓存（certify-prewarm 波 P3）：判定为拒的同一代（文件指纹）且
         同一戳值时，后续调用只 stat 两文件 + 一发主键点查即维持拒用——重判一
         次（mmap 1.09GB 级索引 + 解析 10MB 级 order + sha）≈0.57s 且拒用告警
         会按查询刷屏。戳取值一变（knowledge-sync 认证落戳 / 补嵌涨戳 / 重建后
         重发布）即自动重判，运行中进程无需重启即自愈；文件换代与两处缓存失效
         调用同样重判（_drop_ann_cache / invalidate_runtime_caches 一并清）。
+        代次不进缓存键：能改判定输入的三件事里，代次只在「又嵌了一批」时变，
+        而那一批必然同时涨计数戳（同事务、同写点）⇒ 戳值那一维已经够用。
         """
         if faiss is None:
             return False
@@ -2640,20 +2728,32 @@ class SqliteVectorKnowledgeStore:
             return False
         if stamp is None:
             return False
+        # `expected` 先置 None 是拒用缓存的记账位：读代次/读戳若在事务里炸了，
+        # 缓存里记的就是 None（= 下次取值一变即重判），不会把一个没读到的值
+        # 当成读到的值钉住拒用。
+        expected: int | None = None
         try:
+            # 冷载入放行只付两发 knowledge_meta 点查：签名一发（旧路一字不动）
+            # + 守卫三键合一一发（计数戳 / 嵌入代次 / 代际证明）。加一道判定就
+            # 加一发 DB 往返的话，请求路径的账是看不见的——成本由锁钉死
+            # （tests/test_kb_pricing_guard_fts_s159.py::
+            #   test_load_path_cold_accept_is_two_meta_point_reads）。
             stored_ann = self._stored_ann_signature()
+            expected, generation, attestation = self._read_ann_guard_meta()
             if not stored_ann or stored_ann != self.signature:
-                self._remember_ann_refusal(stamp)
+                self._remember_ann_refusal(stamp, expected)
                 return False
-            if not self._ann_pair_consistent(index_path, order_path, stamp):
-                self._remember_ann_refusal(stamp)
+            if not self._ann_pair_consistent(
+                index_path, order_path, stamp, attestation=attestation
+            ):
+                self._remember_ann_refusal(stamp, expected)
                 return False
             index = faiss.read_index(str(index_path), faiss.IO_FLAG_MMAP)
             cast(Any, index).hnsw.efSearch = 64
             order = json.loads(Path(order_path).read_text(encoding="utf-8"))
             if not isinstance(order, list):
                 self._drop_ann_cache()
-                self._remember_ann_refusal(stamp)
+                self._remember_ann_refusal(stamp, expected)
                 return False
             order_ids = [str(item) for item in order]
             ntotal = int(index.ntotal)
@@ -2665,10 +2765,10 @@ class SqliteVectorKnowledgeStore:
                     len(order_ids),
                 )
                 self._drop_ann_cache()
-                self._remember_ann_refusal(stamp)
+                self._remember_ann_refusal(stamp, expected)
                 return False
             # 完整性终检：索引装下的向量数必须追得上库里的计数戳。
-            expected = self._stamped_expected_vector_count()
+            # 戳取自上面那一发三键合一查询，不在此重读（重读=第三发点查）。
             if expected is None:
                 logger.warning(
                     "knowledge ANN completeness refused "
@@ -2678,7 +2778,7 @@ class SqliteVectorKnowledgeStore:
                     _EMBEDDED_COUNT_KEY,
                 )
                 self._drop_ann_cache()
-                self._remember_ann_refusal(stamp)
+                self._remember_ann_refusal(stamp, expected)
                 return False
             missing = expected - ntotal
             if missing > _ANN_COMPLETENESS_MAX_MISSING:
@@ -2693,8 +2793,54 @@ class SqliteVectorKnowledgeStore:
                     _ANN_COMPLETENESS_MAX_MISSING,
                 )
                 self._drop_ann_cache()
-                self._remember_ann_refusal(stamp)
+                self._remember_ann_refusal(stamp, expected)
                 return False
+            # 代次终检（S159）：计数戳追平了也可能仍没装下新那批——同轮先删后嵌
+            # 会把标量戳拉回原值（今晚生产 missing=0 的那副索引就是这一形）。
+            # 判据只认「本代索引背书到哪一批」：盖章点在 `_publish_ann_pair`
+            # （光标打开时那一值）与集合级自证成立的纠偏，落戳点一律不盖。
+            if not attestation:
+                # 证明缺席 **不等于** 没有代次。`ann_embed_generation` 行还在而代际
+                # 证明被删 ⇒ 这一代索引的覆盖背书已经不存在了，此时放行等于把整道
+                # 守卫做成「删一行 meta 就同时关掉计数闸与代次闸」——S163 实测过这
+                # 一发：今晚那个假绿态删掉证明后 load 由 False 翻回 True。故按最严
+                # 一档判：代次非零即拒。真存量库（本功能上线之前建的）两行俱无
+                # ⇒ generation=0，逐字节现状不变，向后兼容那格由
+                # tests/test_ann_atomic_publish.py::
+                # test_legacy_artifacts_without_attestation_still_load 钉住。
+                if generation > 0:
+                    logger.warning(
+                        "knowledge ANN coverage refused "
+                        "(embed_generation=%d attested_generation=absent "
+                        "ntotal=%d expected=%d) "
+                        "-> brute force; 代际证明缺席而嵌入代次非零：这一代索引的"
+                        "覆盖背书不存在（或被删），不许当成已背书，"
+                        "run knowledge-sync to rebuild",
+                        generation,
+                        ntotal,
+                        expected,
+                    )
+                    self._drop_ann_cache()
+                    self._remember_ann_refusal(stamp, expected)
+                    return False
+            else:
+                covered = self._generation_covered_by(attestation)
+                if generation > covered:
+                    logger.warning(
+                        "knowledge ANN coverage refused "
+                        "(embed_generation=%d attested_generation=%d "
+                        "ntotal=%d expected=%d) "
+                        "-> brute force; 计数戳追平了，但这一代索引没装下发布点"
+                        "之后提交的嵌入批次（删+嵌同轮的假绿形态），"
+                        "run knowledge-sync to rebuild",
+                        generation,
+                        covered,
+                        ntotal,
+                        expected,
+                    )
+                    self._drop_ann_cache()
+                    self._remember_ann_refusal(stamp, expected)
+                    return False
             self._ann_index = index
             self._ann_order = order_ids
             # 记的是"已校验过的那一代"指纹（不是重取一次当前值）：校验之后
@@ -2706,21 +2852,20 @@ class SqliteVectorKnowledgeStore:
             return True
         except Exception:  # noqa: BLE001 - 索引损坏/不可读时回退。
             self._drop_ann_cache()
-            self._remember_ann_refusal(stamp)
+            self._remember_ann_refusal(stamp, expected)
             return False
 
-    def _remember_ann_refusal(self, stamp: tuple) -> None:
+    def _remember_ann_refusal(self, stamp: tuple, expected: int | None) -> None:
         """把本次拒用记入代际缓存（见 load_ann_index 拒用判定缓存段）。
 
-        缓存键 = 文件指纹 + 当时的计数戳取值：取值不变则判定不变（拒用的两个
-        输入都来自这一对，外加只随文件走的代际证明）；取值一变即重判。
-        戳读失败按 None 记——最坏是下次多一发点查，不会错放。
+        缓存键 = 文件指纹 + 当时的计数戳取值：取值不变则判定不变（拒用的输入
+        都来自这一对，外加只随文件走的代际证明与代次）；取值一变即重判。
+        `expected` 由载入路径那次三键合一查询直接交来——这里**不再**自己读一
+        发（读点只该有一处，成本也只该记一次）；取不到值时交 None，最坏是
+        下次多一发点查，不会错放。
         """
         self._ann_refused_stamp = stamp
-        try:
-            self._ann_refused_expected = self._stamped_expected_vector_count()
-        except Exception:  # noqa: BLE001 - 记账读取失败不改变拒用结论。
-            self._ann_refused_expected = None
+        self._ann_refused_expected = expected
 
     def _ann_candidates(
         self, query_vector: list[float], limit: int
@@ -2915,7 +3060,9 @@ class SqliteVectorKnowledgeStore:
                 "（请经 build_ann_index 入口，勿直调 _publish_ann_pair）"
             )
 
-    def _publish_ann_pair(self, index: Any, chunk_ids: list[str]) -> dict:
+    def _publish_ann_pair(
+        self, index: Any, chunk_ids: list[str], *, embed_generation: int | None = None
+    ) -> dict:
         """原子成对换入 `.index` + `.order.json`，SQLite 代际证明作提交点。
 
         三步：①两文件先各自写同目录 `.tmp` 并 fsync（线上文件此刻未动）；
@@ -2927,6 +3074,16 @@ class SqliteVectorKnowledgeStore:
 
         第 ③ 步还落完备性计数戳（`_EMBEDDED_COUNT_KEY` := index.ntotal）：
         这是戳的**唯一权威赋值点**，此后只有补嵌写点能让它上涨。
+
+        `embed_generation` 是这一代覆盖证明的另一半（S159）：**必须由建索引的
+        人在打开读光标那一刻取值交进来**，不是本函数现读——重建是分钟级，
+        中途另一路又提交了一批嵌入的话，现读会把「这一代索引根本没装的批次」
+        给自己背书，守卫当场失效（行为锁
+        tests/test_kb_pricing_guard_fts_s159.py::
+        test_publish_records_build_start_generation）。缺省 None 按 0 落
+        （fail-closed：写了 0 就等于什么都没背书，载入端继续拒用，等下一轮
+        干净重建）——生产唯一调用点 `_build_ann_index_locked` 必须显式交值，
+        别把它当可选参数省事。
         """
         self._require_ann_lock()
         index_path, order_path = self._ann_files()
@@ -2960,6 +3117,13 @@ class SqliteVectorKnowledgeStore:
                 "ntotal": int(index.ntotal),
                 "count": len(chunk_ids),
                 "signature": self.signature,
+                # 覆盖证明的另一半（S159）：见本方法 docstring 的取值时机纪律。
+                # 这里写字面量键是**必须**的——结构锁
+                # ::test_generation_funnel_structure_locks ② 既要求本函数体内
+                # 出现这个键名（证明真的盖了），又要求全仓只有
+                # `certify_expected_vector_count` 能给它下标赋值（盖章口只有
+                # 两处，字典字面量里建键不算第二个盖章口）。
+                "embed_generation": int(embed_generation or 0),
             }
         except OSError as exc:
             raise RuntimeError(f"ANN 代际证明读取失败：{exc}") from exc
@@ -3012,7 +3176,15 @@ class SqliteVectorKnowledgeStore:
         next_memory_check = (
             _ANN_BUILD_MEMORY_RECHECK_VECTORS if memory_verdict is not None else 0
         )
+        generation_at_cursor_open: int | None = None
         with self._connect() as connection:
+            # 代次盖章的取值时刻：**读向量的光标打开那一刻**（S159）。这一场重建
+            # 装下的向量集合只可能覆盖到此刻为止已提交的嵌入批次；重建跑到一半
+            # 另一路又补嵌了一批，那一批不在我读到的光标里，就不许被这一代背书
+            # （publish 时现读 = 自己给自己盖章，见 `_publish_ann_pair` docstring）。
+            generation_at_cursor_open = self._parse_embed_generation(
+                self._read_meta_value_on(connection, _EMBED_GENERATION_KEY)
+            )
             cursor = connection.execute(
                 """
                 SELECT chunk_id, vector_blob, vector_json
@@ -3120,7 +3292,9 @@ class SqliteVectorKnowledgeStore:
         if index is None or not chunk_ids:
             self.ensure_fts_index()
             return {"built": False, "reason": "empty"}
-        published = self._publish_ann_pair(index, chunk_ids)
+        published = self._publish_ann_pair(
+            index, chunk_ids, embed_generation=generation_at_cursor_open
+        )
         # knowledge-sync 一次性构建：ANN 落盘后顺带幂等构建 FTS 关键词索引。
         self.ensure_fts_index(force=True)
         return {
@@ -3175,8 +3349,25 @@ class SqliteVectorKnowledgeStore:
         ).fetchone()
         return "" if row is None or row[0] is None else str(row[0])
 
+    def _attestation_dict_on(self, connection: Any) -> dict | None:
+        """在调用方连接上读出**可改写**的代际证明字典；缺失/畸形 ⇒ None。
+
+        与 `_read_ann_attestation()`（自开连接、给请求路径用）的分工同
+        `_read_ann_signature_pair_on`：纠偏正持有 BEGIN IMMEDIATE 写锁，另开一条
+        连接去读既是别人的旧快照、又可能把自己撞死在 SQLITE_BUSY 上。交回的是
+        刚 `json.loads` 出来的新字典，改它不污染任何缓存。
+        """
+        raw = self._read_meta_value_on(connection, _ANN_ATTESTATION_KEY)
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
     def _stamped_expected_vector_count(self) -> int | None:
-        """读「本代索引应覆盖多少条向量」的计数戳（载入路径唯一的一发 DB 读）。
+        """读「本代索引应覆盖多少条向量」的计数戳（独立读点，自愈链用它）。
 
         `knowledge_meta.key` 是 PRIMARY KEY，单行定位；这里绝不碰
         knowledge_chunks——那张表上 `COUNT(*) WHERE vector_json IS NOT NULL`
@@ -3184,8 +3375,14 @@ class SqliteVectorKnowledgeStore:
 
         键缺席/畸形/负数一律返回 None = **不可判定**，而不是 0：按 0 处理会把
         「无从证明完备」洗成「一行都不该有 ⇒ 完美」，正好放行本闸要拦的那类库。
+        判据折进 `_parse_expected_vector_count`，与载入路径那次三键合一查询
+        共用同一个口径（两处各写一遍解析 = 迟早漂成两把尺）。
         """
-        raw = self.get_meta(_EMBEDDED_COUNT_KEY)
+        return self._parse_expected_vector_count(self.get_meta(_EMBEDDED_COUNT_KEY))
+
+    @staticmethod
+    def _parse_expected_vector_count(raw: str) -> int | None:
+        """计数戳取数口径唯一真身：空/畸形/负值 ⇒ None（不可判定）。"""
         if not raw:
             return None
         try:
@@ -3193,6 +3390,75 @@ class SqliteVectorKnowledgeStore:
         except (TypeError, ValueError):
             return None
         return stamped if stamped >= 0 else None
+
+    @staticmethod
+    def _parse_embed_generation(raw: Any) -> int:
+        """嵌入代次取数口径唯一真身：缺行/畸形/负值 ⇒ 0。
+
+        取值先 `str()` 再解析，所以 JSON 里的整数正常入账、`True` 这类布尔垃圾
+        只会折成 0（`int("True")` 抛错），不会把「写了个布尔」读成「已证过一批」。
+
+        与计数戳**故意不同**：戳按 0 读会把「无从证明」洗成「一行都不该有」，
+        所以它缺省是 None（不可判定）；代次按 0 读的含义是「从未证过任何提交
+        批次」，方向上是**更严**（任何一批嵌入都会把它顶到 1 以上 ⇒ 守卫开火），
+        而存量库两侧同时缺行时两边都是 0 ⇒ 与闸上线前逐字节同形
+        （见 _EMBED_GENERATION_KEY 参数块）。
+        """
+        try:
+            parsed = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return 0
+        return max(0, parsed)
+
+    def _generation_covered_by(self, attestation: dict | None) -> int:
+        """本代代际证明背书到第几批（字段缺失/畸形 ⇒ 0 = 从未证过任何一批）。"""
+        if not isinstance(attestation, dict):
+            return 0
+        return self._parse_embed_generation(
+            attestation.get(_ATTEST_EMBED_GENERATION_FIELD)
+        )
+
+    def _embed_generation_now(self) -> int:
+        """当前嵌入代次 = 已提交的向量写入批次数（写点见 `_save_vectors`）。"""
+        return self._parse_embed_generation(self.get_meta(_EMBED_GENERATION_KEY))
+
+    def _read_ann_guard_meta(self) -> tuple[int | None, int, dict | None]:
+        """一发 IN 查询同取载入守卫的三件输入：计数戳 / 代次 / 代际证明。
+
+        为什么合成一发：`knowledge_meta.key` 是 PRIMARY KEY，三键 IN 仍是主键
+        SEARCH（`EXPLAIN QUERY PLAN` 锁在
+        tests/test_kb_pricing_guard_fts_s159.py::test_combined_meta_read_uses_pk_search）
+        ——拆开就是每次冷载入多两发往返，合起来才是「守卫不给请求路径添账」。
+        只读 meta，绝不碰 knowledge_chunks。
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT key, value FROM knowledge_meta WHERE key IN (?, ?, ?)",
+                (_EMBEDDED_COUNT_KEY, _EMBED_GENERATION_KEY, _ANN_ATTESTATION_KEY),
+            ).fetchall()
+        values = {
+            str(row[0]): ("" if row[1] is None else str(row[1])) for row in rows
+        }
+        expected = self._parse_expected_vector_count(
+            values.get(_EMBEDDED_COUNT_KEY, "")
+        )
+        generation = self._parse_embed_generation(
+            values.get(_EMBED_GENERATION_KEY, "")
+        )
+        raw_attestation = values.get(_ANN_ATTESTATION_KEY, "")
+        attestation: dict | None = None
+        if raw_attestation:
+            try:
+                parsed = json.loads(raw_attestation)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                parsed = None
+            if isinstance(parsed, dict):
+                attestation = parsed
+        return expected, generation, attestation
+
+    def _attested_covered_generation(self) -> int:
+        """代际证明里记下的「本代覆盖证到第几批」（独立读点，供告警/纠偏复核）。"""
+        return self._generation_covered_by(self._read_ann_attestation())
 
     def _stamp_expected_vector_count(self, count: int) -> None:
         """把「本代索引该装多少条向量」写成完备性基线。
@@ -3398,6 +3664,31 @@ class SqliteVectorKnowledgeStore:
                         )
                         if ok:
                             self._stamp_expected_vector_count(count)
+                            # 盖章点之二（S159）：集合级自证成立 = 这一代索引**逐行**
+                            # 覆盖库里每一行已嵌向量，覆盖证明里的代次必须跟到位；
+                            # 不跟的话纠偏成功了守卫又不认账，判据自相矛盾、库被永久
+                            # 钉在暴力扫描上（行为锁 tests/test_kb_pricing_guard_fts_
+                            # s159.py::test_reconcile_success_advances_covered_generation）。
+                            # 与落戳同事务、同一把连接：分开写就留下「戳新代旧」的半
+                            # 提交态。反面纪律一样要紧——本方法的**无戳补盖**那条路
+                            # （下面的缺省分支）一个字都不盖：它只 COUNT 库侧行数、
+                            # 没做过任何集合级自证，盖了就是拿落戳洗代次。
+                            attested = self._attestation_dict_on(connection)
+                            if attested is not None:
+                                attested["embed_generation"] = self._parse_embed_generation(
+                                    self._read_meta_value_on(
+                                        connection, _EMBED_GENERATION_KEY
+                                    )
+                                )
+                                connection.execute(
+                                    "INSERT INTO knowledge_meta (key, value) "
+                                    "VALUES (?, ?) "
+                                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                                    (
+                                        _ANN_ATTESTATION_KEY,
+                                        json.dumps(attested, ensure_ascii=False),
+                                    ),
+                                )
                             logger.info(
                                 "knowledge ANN completeness stamp reconciled: "
                                 "%d -> %d (db=%s) — 本代已证明逐行覆盖 %d 条已嵌向量。",
@@ -3470,6 +3761,42 @@ class SqliteVectorKnowledgeStore:
             "INSERT INTO knowledge_meta (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (_EMBEDDED_COUNT_KEY, str(max(0, current) + int(delta))),
+        )
+
+    @staticmethod
+    def _advance_embed_generation(
+        connection: sqlite3.Connection, *, batches: int = 1
+    ) -> None:
+        """在调用方**同一事务内**把嵌入代次推进 `batches` 批（唯一代次写点）。
+
+        只供 `_save_vectors` 调用（禁区锁 tests/test_kb_pricing_guard_fts_s159.py
+        ::test_generation_funnel_structure_locks ① 把它钉成一个点，第二处调用
+        当场红）——代次的全部意义就是「有向量落库了」，写点一旦不唯一，它就退化成
+        又一个可以被人顺手刷掉的标量。
+
+        与 `_bump_expected_vector_count` 的两处不同，都是故意的：
+        ① 按**批**计不按条计：守卫要的是「有没有过新的提交点」，不是行数；
+           按条计会把代次顶成一个和 ntotal 同量级的数，与计数戳失去区分度；
+        ② **缺行照建**（从 0 起算）：戳不能凭空建（凭空造出的小戳 = 漏拒方向，
+           危险侧），代次却相反——凭空建一个 1 只会让守卫更早开火（更严侧），
+           而无戳库补嵌时若不涨代次，「删+嵌同轮」这个洞在无戳存量库上就没人拦
+           （行为锁 ::test_generation_bump_survives_stamp_absent_store）。
+        """
+        if batches <= 0:
+            return
+        row = connection.execute(
+            "SELECT value FROM knowledge_meta WHERE key = ?",
+            (_EMBED_GENERATION_KEY,),
+        ).fetchone()
+        # 取数走 `_parse_embed_generation` 同一个口径（缺行/畸形/负值都折成 0），
+        # 不在这里再写一遍 int() 解析——那是第二把尺。
+        current = SqliteVectorKnowledgeStore._parse_embed_generation(
+            None if row is None else row[0]
+        )
+        connection.execute(
+            "INSERT INTO knowledge_meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (_EMBED_GENERATION_KEY, str(current + int(batches))),
         )
 
     @staticmethod
@@ -3740,6 +4067,13 @@ class SqliteVectorKnowledgeStore:
                 # 完备性计数戳与向量同事务推进（本方法全库唯一写点，见
                 # _EMBEDDED_COUNT_KEY 参数块）：落一行向量 = 索引短一行。
                 self._bump_expected_vector_count(connection, saved)
+                # 嵌入代次与向量**同事务**推进（S159，见 _EMBED_GENERATION_KEY）：
+                # 本方法全库唯一向量写点，也是代次唯一推进点。同事务是要点——
+                # 回滚留下涨过的代次 = 白拒一轮（安全侧），提交却没涨代次 = 今晚
+                # 那个假绿（危险侧），所以两个方向都比戳更值得写在一起。
+                # 一批 +1（按批不按条），saved=0 的空调用不推进（否则空转刷代次）。
+                if saved > 0:
+                    self._advance_embed_generation(connection)
             if stored_dim is None and lengths:
                 with self._lock:
                     self._vector_dim = next(iter(lengths))
@@ -3791,6 +4125,42 @@ class SqliteVectorKnowledgeStore:
             except Exception:  # noqa: BLE001 - FTS5 缺失/损坏时禁用关键词通道。
                 self._fts_valid = False
                 return False
+
+    def fts_index_status(self) -> dict[str, Any]:
+        """关键词通道（FTS5）的真值快照：行数 / 内容签名 / 表是否在位。
+
+        为什么要这一口：ANN 被内存门挡下的那一轮，kb-sync 收尾照样会喂 FTS
+        （见 `domains/location/knowledge/kb_wiki.py` 收尾的 ensure），可"喂了"
+        与"喂进去多少行"此前没有任何一处报得出来——报不出来就等于没喂。
+        取数只有两个来源，都是真身：行数是**真表 `COUNT(*)`**、签名是**真
+        meta 行**（走 `_stored_fts_signature()`，不另立第二口径）。绝不读
+        `_fts_valid` 缓存——那是本进程判定的快照，拿它冒充"库里现在有多少行"
+        就是把观测面接进了猜测面。
+
+        ⚠ 只住维护线程：数十万行的 `COUNT(*)` 是实打实的全表计数，绝不允许
+        进 `retrieve` 请求路径（禁区锁 tests/test_kb_pricing_guard_fts_s159.py
+        ::test_fts_status_never_on_request_path 钉死）。表缺席时 rows=0、
+        signature=""，如实报空、不造数。
+        """
+        with self._connect() as connection:
+            present = (
+                connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                    (_FTS_TABLE_NAME,),
+                ).fetchone()
+                is not None
+            )
+            rows = (
+                int(
+                    connection.execute(
+                        f"SELECT COUNT(*) FROM {_FTS_TABLE_NAME}"
+                    ).fetchone()[0]
+                )
+                if present
+                else 0
+            )
+        signature = str(self._stored_fts_signature()) if present else ""
+        return {"rows": rows, "signature": signature, "table_present": present}
 
     def _invalidate_fts(self) -> None:
         """内容变化后强制重探 FTS 通道（下一次访问重读签名/必要时重建）。

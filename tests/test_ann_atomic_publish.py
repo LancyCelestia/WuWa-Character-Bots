@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import subprocess
@@ -231,12 +232,51 @@ def test_successful_build_publishes_consistent_pair(tmp_path):
 
 
 def test_legacy_artifacts_without_attestation_still_load(tmp_path):
-    """向后兼容：生产存量库只有 ann_signature、没有代际证明，必须照常可用。"""
+    """向后兼容：真存量库两行俱无（本功能上线前建的），必须照常可用。
+
+    「两行俱无」是这个用例唯一成立的前提：`ann_embed_generation` 与代际证明
+    同批引入，上线前的库两枚都不存在 ⇒ 代次按 0 读 ⇒ 逐字节现状。只删证明、
+    留着代次行那不是存量库，是被删过一行 meta —— 另一枚用例
+    ::test_attestation_deleted_under_live_generation_is_refused 钉那一格。
+    """
     store = _make_store(tmp_path)
     assert store.build_ann_index()["built"] is True
     with sqlite3.connect(store.db_path) as conn:
         conn.execute("DELETE FROM knowledge_meta WHERE key = ?", (vk._ANN_ATTESTATION_KEY,))
+        conn.execute("DELETE FROM knowledge_meta WHERE key = ?", (vk._EMBED_GENERATION_KEY,))
         conn.commit()
+    store._drop_ann_cache()
+    assert store.load_ann_index() is True
+
+
+def test_attestation_deleted_under_live_generation_is_refused(tmp_path, caplog):
+    """绕行口封堵：只删代际证明、代次行还在 ⇒ 必须拒用，不许"没证明=没代次"。
+
+    这一格原来是开着的（S163 实测：删掉 `ann_pair_attestation` 那行 meta，
+    今晚的假绿态 load 由 False 翻回 True；伪造一条 `embed_generation=10^9`
+    同样放行）。计数闸与代次闸当时同源于那一行证明，删一行就把两道门一起
+    关掉。修法＝证明缺席且代次 > 0 按最严一档判。
+    """
+    store = _make_store(tmp_path)
+    assert store.build_ann_index()["built"] is True
+    assert store.load_ann_index() is True
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("DELETE FROM knowledge_meta WHERE key = ?", (vk._ANN_ATTESTATION_KEY,))
+        conn.commit()
+    assert store._embed_generation_now() > 0, "前提：代次行仍在且非零"
+    store._drop_ann_cache()
+    with caplog.at_level(logging.WARNING, logger=vk.logger.name):
+        assert store.load_ann_index() is False, (
+            "删一行 meta 就关掉两道闸 = 守卫可自豁免（本用例要拦的就是它）"
+        )
+    refused = [
+        rec.getMessage()
+        for rec in caplog.records
+        if "coverage refused" in rec.getMessage()
+    ]
+    assert refused and "attested_generation=absent" in refused[0], "拒因必须可归因"
+    # 自愈链：重建会重新盖章发布，代次与证明同时回到一致 ⇒ 恢复放行。
+    assert store.build_ann_index()["built"] is True
     store._drop_ann_cache()
     assert store.load_ann_index() is True
 

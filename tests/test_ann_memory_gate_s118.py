@@ -188,12 +188,18 @@ def test_projected_recheck_is_wired_with_counterfactual(tmp_path, monkeypatch) -
     """**本席最要紧的一条**：中途复检必须真走 `_ann_projected_requirement_bytes`。
 
     构造：24 条、批宽 8、复检粒度 8。探针第一发（前置）8 GiB 放行；第二发
-    （8 条已装后）5 GiB。实测斜率价 = 已耗 3 GiB + 剩余 16 × (3 GiB ÷ 8)
-    ≈ 9 GiB > 5 GiB ⇒ 收火；而**纯模型价**（16 条 × 822 B + 下限 ≈ 128 MiB）
-    ≤ 5 GiB ⇒ 不放行就不会收火。两半合起来即"断路器有牙齿且牙齿在这条腿上"：
+    （8 条已装后）3 GiB ⇒ 已吃实账 5 GiB。S159 重定标后的要价式是
+    「已吃实账 + 剩余条数模型价」＝ 5 GiB + ≈128 MiB ≈ 5.13 GiB > 3 GiB ⇒ 收火；
+    而**纯模型价**（16 条 × 822 B + 下限 ≈ 128 MiB）≤ 3 GiB ⇒ 不放行就不会收火。
+    两半合起来即"断路器有牙齿且牙齿在这条腿上"：
     - 前半：默认实现 ⇒ `insufficient_memory_midway`；
     - 后半（反证）：把投影摘成纯模型价 ⇒ 必须照样建完（证明收火归因于投影，
       不是别的什么顺手拦了）。
+
+    旧口径（S118 原案）把「已耗 3 GiB ÷ 8 条」按单位斜率外推到剩余 16 条，凑出
+    ≈9 GiB 才收火。那一型外推正是今晚 14.04 GiB 要价的来源（＝实测峰值 3.6 倍），
+    S159 已把它摘掉；因此这里收火只能靠"实吃超过剩余模型价"这一格造出来——
+    第二发读数值随公式改，判据方向一字未动。
     """
     store = _make_store(tmp_path)
     _seed(store, 24)
@@ -203,7 +209,7 @@ def test_projected_recheck_is_wired_with_counterfactual(tmp_path, monkeypatch) -
 
     def _fake_available() -> int:
         reads["n"] += 1
-        return 8 * _GIB if reads["n"] == 1 else 5 * _GIB
+        return 8 * _GIB if reads["n"] == 1 else 3 * _GIB
 
     monkeypatch.setattr(vk, "_available_physical_memory_bytes", _fake_available)
     result = store.build_ann_index()

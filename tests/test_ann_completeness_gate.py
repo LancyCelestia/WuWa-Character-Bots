@@ -325,8 +325,12 @@ def test_load_path_reads_only_meta_and_never_scans_chunks(tmp_path):
     count_reads = [sql for sql in traced if "COUNT(" in sql.upper()]
     assert count_reads == [], f"载入路径不得有计数扫描：{count_reads}"
     assert all("knowledge_meta" in sql for sql in traced), f"只许读 meta：{traced}"
-    # 戳读确实发生：ann_signature + attestation + 计数戳 = 恰好三发 meta 点查。
-    assert len([sql for sql in traced if "knowledge_meta" in sql]) == 3, traced
+    # 戳读确实发生：ann_signature 一发 + 守卫三键合一（计数戳/嵌入代次/代际证明）
+    # 一发 = 恰好两发 meta 点查。旧口径是三发（证明与戳各读一次），S159 把守卫
+    # 三个输入合进一次 IN 查询以守住请求路径成本（同数目另见
+    # tests/test_kb_pricing_guard_fts_s159.py::
+    # test_load_path_cold_accept_is_two_meta_point_reads——两枚锁钉同一个数）。
+    assert len([sql for sql in traced if "knowledge_meta" in sql]) == 2, traced
 
 
 def test_stamp_lookup_is_index_search_while_banned_count_is_table_scan(tmp_path):
@@ -358,18 +362,46 @@ def test_stamp_lookup_is_index_search_while_banned_count_is_table_scan(tmp_path)
 # --- ④注毒自证：这道闸不是空转 ------------------------------------------------
 
 
-def test_completeness_gate_is_load_bearing(tmp_path):
+def _freeze_generation_dimension(store) -> None:
+    """把代际证明里的 `embed_generation` 抬到当前代次＝冻结代次这一维。
+
+    只给单变量注毒用：这道用例要证的是**完备性闸**有牙，而 S159 代次闸与它在
+    「短装」这一格天然重叠（补嵌既涨戳也涨代次）。不冻结代次维就分不清是哪道门
+    在拒，注毒也就失去归因力。生产盖章路径绝不这样取值——那正是
+    tests/test_kb_pricing_guard_fts_s159.py::test_generation_funnel_structure_locks
+    拦着的形态。
+    """
+    with sqlite3.connect(store.db_path) as conn:
+        raw = conn.execute(
+            "SELECT value FROM knowledge_meta WHERE key = ?", (vk._ANN_ATTESTATION_KEY,)
+        ).fetchone()
+        payload = json.loads(raw[0])
+        payload[vk._ATTEST_EMBED_GENERATION_FIELD] = store._embed_generation_now()
+        conn.execute(
+            "UPDATE knowledge_meta SET value = ? WHERE key = ?",
+            (json.dumps(payload, ensure_ascii=False), vk._ANN_ATTESTATION_KEY),
+        )
+        conn.commit()
+
+
+def test_completeness_gate_is_load_bearing(tmp_path, caplog):
     """(d) 变异探针：把阈值放宽到永远放行（等价于闸门失效），同一状态必须变回 True。
 
     反向也钉：阈值恢复后必须重新拒用。这一条证明上一条用例的红**是这道闸造成的**，
-    而不是签名不匹配、成对校验失败之类的旁因——否则「拒用」那类断言可以靠任何
-    一处早退糊过去，锁就失去杀伤力。
+    而不是签名不匹配、成对校验失败、代次闸之类的旁因——否则「拒用」那类断言可以靠
+    任何一处早退糊过去，锁就失去杀伤力。因此前半先把代次维冻结（见
+    ::_freeze_generation_dimension 的理由），让完备性闸成为唯一变量。
     """
     store = _make_store(tmp_path, count=20)
     store.build_ann_index()
     _append_embedded(store, 30, "b")
+    _freeze_generation_dimension(store)
     store._drop_ann_cache()
-    assert store.load_ann_index() is False, "基线：短装态在真实阈值下必须被拒"
+    with caplog.at_level(logging.WARNING, logger=vk.logger.name):
+        assert store.load_ann_index() is False, "基线：短装态在真实阈值下必须被拒"
+    assert "completeness refused" in "\n".join(
+        rec.getMessage() for rec in caplog.records
+    ), "冻结代次后拦住它的必须是完备性闸本身"
 
     original = vk._ANN_COMPLETENESS_MAX_MISSING
     vk._ANN_COMPLETENESS_MAX_MISSING = 10**9  # 注毒：闸门等效失效
@@ -383,6 +415,31 @@ def test_completeness_gate_is_load_bearing(tmp_path):
 
     store._drop_ann_cache()
     assert store.load_ann_index() is False, "撤毒必须恢复拒用（判据可逆）"
+
+
+def test_generation_gate_covers_what_poisoned_completeness_gate_misses(tmp_path, caplog):
+    """纵深：完备性闸被摘掉时，代次闸必须独立拦住同一副短装索引。
+
+    上一枚用例冻结代次维来隔离单一变量；这一枚反过来——把完备性闸注毒失效、
+    代次维保持真实，断言仍然拒用且拒因是 coverage refused。两枚合起来才说得出
+    「两道门各自都有牙、且各管一格」，单看任何一道的绿都不算。
+    """
+    store = _make_store(tmp_path, count=20)
+    store.build_ann_index()
+    _append_embedded(store, 30, "b")  # 短装 30 条，同时把代次推过盖章值
+    original = vk._ANN_COMPLETENESS_MAX_MISSING
+    vk._ANN_COMPLETENESS_MAX_MISSING = 10**9
+    try:
+        store._drop_ann_cache()
+        with caplog.at_level(logging.WARNING, logger=vk.logger.name):
+            assert store.load_ann_index() is False, (
+                "完备性闸失效后，短装索引必须被另一道门拦下"
+            )
+    finally:
+        vk._ANN_COMPLETENESS_MAX_MISSING = original
+    messages = "\n".join(rec.getMessage() for rec in caplog.records)
+    assert "coverage refused" in messages, messages
+    assert "completeness refused" not in messages, "拒因必须归到代次闸，不能混着算"
 
 
 def test_never_refuse_a_certified_complete_index(tmp_path):
