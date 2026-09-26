@@ -24,33 +24,30 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Protocol
 
+from plugins.bot_unified_runtime.domains.core import session_keys
 from plugins.bot_unified_runtime.domains.core.contracts.character import (
     SharedGroupContext,
 )
 
-# 键口径（F4 席根修，2026-09-20）：conversation_turns.session_id 由摄取层
-# NoneBot ``get_session_id()`` 产出（群=f"group_<群号>_<发送者>"，生产库
-# wuwa_history.sqlite3 实测 2457 行全为此形态、旧读侧等值键 "group:<群号>"
-# 0 行——两键永不相交即本 bug 根因）。写侧键的中央镜像构造器是
-# domains/meme/reactions/engine.py:session_key_from_ids（"镜像 OneBot V11
-# get_session_id"）；读侧按群聚合的前缀即该构造器去掉发送者段：
-# f"group_<群号>_"。tests/test_shared_group_key_alignment.py 双向上锁。
-_GROUP_SESSION_PREFIX = "group_"
+# 键口径（F4 席根修，2026-09-20；D-7 收编，SEAT-D7-FIX）：
+# conversation_turns.session_id 由摄取层 NoneBot ``get_session_id()`` 产出
+# （群=f"group_<群号>_<发送者>"，生产库 wuwa_history.sqlite3 实测 2457 行
+# 全为此形态、旧读侧等值键 "group:<群号>" 0 行——两键永不相交即台账 #33
+# 本 bug 根因）。读侧按群聚合的前缀**直接复用全仓唯一权威**
+# domains/core/session_keys.py:group_session_prefix（B-2 裁定条款：禁再造
+# 第二套键形——历史上本文件留过字节等价的镜像常量，仍是副本，副本漂移
+# 正是病根）。tests/test_shared_group_key_alignment.py 双向上锁；
+# tests/test_group_digest_session_key_query.py 锁推送链路与复用路由本身。
 _LIKE_ESCAPE_CHAR = "!"
 
 
 def _group_prefix(group_id: Any) -> str:
-    """群级聚合前缀（与中央构造器 session_key_from_ids 逐字同构）。
+    """群级聚合前缀：直通中央权威 session_keys.group_session_prefix。
 
     非法/空群号返回 ""——调用方据此直接判无数据，绝不退化成全表扫。
-    None 单独拦（str(None)="None" 会造出假前缀 group_None_）。
+    None 与 falsy 群号统一按空判（中央件口径，消灭两侧最后的理论漂移面）。
     """
-    if group_id is None:
-        return ""
-    normalized = _normalize_group_id(group_id)
-    if not normalized:
-        return ""
-    return f"{_GROUP_SESSION_PREFIX}{normalized}_"
+    return session_keys.group_session_prefix(group_id)
 
 
 def _like_prefix_pattern(prefix: str) -> str:
