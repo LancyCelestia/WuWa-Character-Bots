@@ -144,12 +144,30 @@ def test_demand_model_reproduces_s85_calibration_at_766k() -> None:
     需求式在 n=766,126、dim=1024 处与 S85 的经验合价 4.5 GiB 同带
     （不低于它——新代驻留+扩容尖峰+余量只会更保守；不高于它 1.6×——
     否则标定夜那种成功重建会被永久性误拒）。
+
+    S85 那枚合价是 **fp32 时代**量的（每维 4 字节），所以这条锁显式把位宽钉回 4
+    来复算——它钉的是"线性式的形状在标定点上仍与当年那次实测同带"，与今天换成
+    什么存储格式无关。现役位宽的价由
+    tests/test_kb_pricing_guard_fts_s159.py::test_sq8_price_tracks_measured_storage_ratio
+    按 SQ8 的实测落盘比例钉。
     """
-    demand = vk._ann_build_demand_bytes(
-        vk._ANN_BUILD_SCALE_CALIBRATION_VECTORS, vk._ANN_BUILD_MEASURED_DIM
-    )
+    stored = vk._ANN_INDEX_BYTES_PER_DIM
+    try:
+        vk._ANN_INDEX_BYTES_PER_DIM = 4
+        demand = vk._ann_build_demand_bytes(
+            vk._ANN_BUILD_SCALE_CALIBRATION_VECTORS, vk._ANN_BUILD_MEASURED_DIM
+        )
+    finally:
+        vk._ANN_INDEX_BYTES_PER_DIM = stored
     assert vk._ANN_BUILD_MIN_AVAILABLE_BYTES <= demand
     assert demand <= vk._ANN_BUILD_MIN_AVAILABLE_BYTES * 16 // 10
+    # 位宽项必须真的参与计价：改回 1（现役 SQ8）之后同一规模的价要显著变小，
+    # 否则说明这枚常量是挂着的（价根本没看它）。带内比例由实测 0.297 定，
+    # 这里取"至少小一半"这个宽松下界，避免把价卡成精确相等而失去重构自由度。
+    sq8 = vk._ann_build_demand_bytes(
+        vk._ANN_BUILD_SCALE_CALIBRATION_VECTORS, vk._ANN_BUILD_MEASURED_DIM
+    )
+    assert sq8 * 2 < demand, "位宽常量不参与计价 = 换存储格式买不到任何松动"
 
 
 # ---------------------------------------------------------------- 层归因成文

@@ -442,6 +442,33 @@ _ANN_BUILD_ID_TABLE_BYTES_PER_VECTOR = 176
 #   实测：从生产 order.json 取 93 条真 id，平均长 40 字符、单条
 #   `sys.getsizeof` = 81 B，加列表指针 8 B、JSON 文本与编码 bytes 各 43 B
 #   ⇒ 175 B/条，取 176 作上界。
+_ANN_INDEX_BYTES_PER_DIM = 1
+# ^ **索引存储位宽**（S181，2026-09-26 夜，用户裁定「执行乙」）：SQ8 = 每维 1 字节。
+#   改这一枚之前它是 4（`IndexHNSWFlat` 的私有 float32 副本），那才是"740k 条
+#   就要 3.2 GiB 常驻"的根源。依据是本轮离线对照实跑（60,400 条**生产真向量**、
+#   400 条真查询、K=4、`METRIC_INNER_PRODUCT`、efConstruction=200/efSearch=64、
+#   训练样本取 rowid 前 20,000 条）：
+#     fp32 262.1 MB → SQ8 77.8 MB = **0.30 倍**，top-4 与 fp32 一致率 **0.9856**，
+#     内积分数差均值 0.00029、最大 0.047；同口径 fp16 是 0.53 倍 / 0.9906。
+#   交叉验证：262.1 MB ÷ 60,400 = 4,340 B/条，与现役生产索引文件
+#   （3,236,774,162 B ÷ 740,996 = 4,368 B/条）互洽 ⇒ 外推到全库 SQ8 ≈ 0.97 GiB
+#   （fp32 是 3.24 GiB）。**没量到的**：构建期峰值工作集（本机
+#   `GetProcessMemoryInfo` 取数失败，探测里退化成 0）——所以倍增瞬态那一项下面
+#   仍按"半份向量数组"的老规则随位宽同比缩放，不拿这次的峰值当依据。
+#   代价如实记：1.4% 的 top-4 槽位与 fp32 不同（并列近邻换位）。要更保守就把这枚
+#   改回 2（fp16）并同步换 `_ANN_INDEX_QUANTIZER_NAME`，一致率 0.9906。
+_ANN_INDEX_QUANTIZER_NAME = "QT_8bit"
+# ^ 与上一枚成对：量化器类型按**名字**在册，运行期从 `faiss.ScalarQuantizer` 取
+#   （模块导入期 faiss 可能整体缺失 ⇒ 不能在模块级直接引用枚举成员）。两枚必须
+#   同改，由 tests/test_ann_sq8_index_s181.py 逐枚钉住（名字与位宽不符即红）。
+_ANN_INDEX_HNSW_M = 32
+# ^ HNSW 连接数。fp32 时代写死在构造调用里，升格成常量是为了让"只换存储、不换
+#   图结构"这件事有唯一落点（图参数一变，上面那份 0.30 倍/0.9856 的实测就作废）。
+_ANN_INDEX_TRAIN_SAMPLE_VECTORS = 20_000
+# ^ 量化器训练样本条数。`IndexHNSWSQ` 未 train 就 add 会当场抛 `is_trained`
+#   （本轮实跑撞过），而 fp32 的 `IndexHNSWFlat` 不需要训练——这是换存储格式的
+#   唯一新增硬前提。取数口径 = rowid 升序前 N 条（**与上面那份实测同一口径**，
+#   所以 0.9856 这个数字已经含着"样本偏旧"的代价；改成随机抽样要先付一次全表扫）。
 _ANN_BUILD_FAISS_REALLOC_BYTES_PER_DIM = 2
 # ^ 倍增扩容瞬态副本的**每维字节数**（= 半份 `dim × 4` 向量数组：dim=1024 处
 #   即 2,048 B/vec）。S118 合成 bench 实测：分批重建的**峰值**边际斜率
@@ -532,6 +559,74 @@ _ANN_MEMORY_SKIP_ESCALATION_ROUNDS = 3
 # 本节一切阈值都是**标定不是物理下限**：换模型、换维数、换机器就按同一式子
 # 重量一遍；`_ANN_BUILD_MIN_AVAILABLE_BYTES` 只是 766k 标定点的历史合价展示位，
 # 不当门用（第一版拿它当全局门槛的自曝账见其注释）。
+
+
+def _resolve_ann_quantizer() -> Any | None:
+    """按在册名字取 faiss 的量化器枚举成员。
+
+    名字住在 `_ANN_INDEX_QUANTIZER_NAME` 而枚举成员**不在模块级取**：faiss 在本仓
+    是可选依赖（导入失败时 `faiss is None`，见 `load_ann_index` 早退），模块级引用
+    `faiss.ScalarQuantizer.QT_8bit` 会让整个模块导入就崩。取不到 ⇒ None = 不建索引，
+    绝不悄悄退回 fp32（那会让位宽与价模型脱钩，是"两把尺"形态）。
+    """
+    if faiss is None or np is None:
+        return None
+    scalar_quantizer = getattr(faiss, "ScalarQuantizer", None)
+    if scalar_quantizer is None:
+        return None
+    return getattr(scalar_quantizer, _ANN_INDEX_QUANTIZER_NAME, None)
+
+
+def _read_vector_train_sample(
+    connection: Any, *, dimension: int, limit: int
+) -> Any | None:
+    """量化器训练样本：rowid 升序前 ``limit`` 条**已嵌入**向量。
+
+    口径与那 0.9856 一致率的实测完全一致（同一取法、同一维数过滤），所以这个数
+    不是"理想抽样下的一致率"，它已经含着"样本偏旧"的代价。要改成随机抽样就得先
+    扫一遍 4.5 GB 的向量列——那比省的内存还贵，故不做，并把边界写在常量注释里。
+    """
+    rows = connection.execute(
+        "SELECT vector_blob FROM knowledge_chunks "
+        "WHERE vector_blob IS NOT NULL LIMIT ?",
+        (int(limit),),
+    ).fetchall()
+    matrices = []
+    for row in rows:
+        blob = row[0]
+        if not blob:
+            continue
+        vector = np.frombuffer(blob, dtype=np.float32)
+        if vector.size == int(dimension):
+            matrices.append(vector)
+    if not matrices:
+        return None
+    return np.ascontiguousarray(np.vstack(matrices), dtype=np.float32)
+
+
+def _make_ann_index(dimension: int, *, connection: Any) -> Any | None:
+    """建这一代用的 ANN 索引（S181：SQ8 量化存储，每维 1 字节）。
+
+    换存储格式带来的**唯一新增硬前提**是训练：`IndexHNSWFlat` 不训练就能 add，
+    `IndexHNSWSQ` 未训练就 add 当场抛 `is_trained`（本轮实跑撞过一次）。样本取不到
+    ⇒ 返回 None，调用方按"本轮不建"收火——线上一字不动，比建一副半训练索引好。
+    图参数（M / efConstruction）走 `_ANN_INDEX_HNSW_M`，不许在这里再写死第二份：
+    那份 0.30 倍体积 / 0.9856 一致率的实测就钉在这个图形状上。
+    """
+    quantizer = _resolve_ann_quantizer()
+    if quantizer is None:
+        return None
+    index = faiss.IndexHNSWSQ(
+        int(dimension), quantizer, _ANN_INDEX_HNSW_M, faiss.METRIC_INNER_PRODUCT
+    )
+    if not index.is_trained:
+        sample = _read_vector_train_sample(
+            connection, dimension=int(dimension), limit=_ANN_INDEX_TRAIN_SAMPLE_VECTORS
+        )
+        if sample is None:
+            return None
+        index.train(sample)
+    return index
 
 
 def _available_physical_memory_bytes() -> int | None:
@@ -697,10 +792,15 @@ def _ann_build_demand_bytes(expected_vectors: int | None, dim: int) -> int:
         # 连行数的上界都拿不到（异常库形）⇒ 退到活体下限 + 中途断路器
         # （复检走 `_ann_live_floor_bytes`，S118 接线：无戳不等于免检）。
         return _ANN_BUILD_MIN_HEADROOM_BYTES + batch_slack
-    per_vector = max(int(dim), 1) * (
-        4 + _ANN_BUILD_FAISS_REALLOC_BYTES_PER_DIM
-    ) + (
-        _ANN_BUILD_MEASURED_BYTES_PER_VECTOR - _ANN_BUILD_MEASURED_DIM * 4
+    storage = max(int(dim), 1) * _ANN_INDEX_BYTES_PER_DIM
+    # 倍增扩容瞬态＝半份向量数组（S118 峰值口径；fp32 时 `_ANN_INDEX_BYTES_PER_DIM`
+    # =4 ⇒ storage×2//4 = dim×2 = 2,048 B/条，与改前逐字节等价）。它**随位宽同比
+    # 缩放**：SQ8 下 storage=dim×1 ⇒ 瞬态 dim×0.5。写死 2,048 会把量化后的价高估
+    # 四倍，正是要避免的那类"门永远不许开火"。
+    per_vector = (
+        storage
+        + storage * _ANN_BUILD_FAISS_REALLOC_BYTES_PER_DIM // 4
+        + (_ANN_BUILD_MEASURED_BYTES_PER_VECTOR - _ANN_BUILD_MEASURED_DIM * 4)
     )
     linear = int(expected_vectors) * (per_vector + _ANN_BUILD_ID_TABLE_BYTES_PER_VECTOR)
     headroom = max(
@@ -3281,7 +3381,12 @@ class SqliteVectorKnowledgeStore:
                     except Exception:  # noqa: S110, BLE001 - 线程数设置失败按默认继续构建索引。
                         pass
                     dimension = int(matrix.shape[1])
-                    index = faiss.IndexHNSWFlat(dimension, 32, faiss.METRIC_INNER_PRODUCT)
+                    index = _make_ann_index(dimension, connection=connection)
+                    if index is None:
+                        # 量化器取不到或训练样本为空 ⇒ 本轮**不建**。绝不退回
+                        # fp32 偷偷建一副：那会让落盘体积与 `_ann_build_demand_bytes`
+                        # 的位宽假设脱钩（门按 1 B/维收钱、实物却是 4 B/维）。
+                        return {"built": False, "reason": "index_untrainable"}
                     index.hnsw.efConstruction = 200
                 index.add(matrix)
                 if on_progress is not None:

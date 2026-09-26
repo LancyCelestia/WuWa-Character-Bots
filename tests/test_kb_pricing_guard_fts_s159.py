@@ -382,9 +382,20 @@ def test_generation_bump_survives_stamp_absent_store(tmp_path):
 
 
 def test_demand_price_is_same_order_as_measured_peak():
-    """今晚规模上，前置门要价与实测全量峰值同带：≥ 峰值下沿（不许偷偷调小
-    线性价本身）、≤ 峰值上沿 × 2（与实测同阶，余量必须有限名有据）。"""
-    demand = vk._ann_build_demand_bytes(_PRODUCTION_STAMP_TONIGHT, 1024)
+    """今晚规模上，前置门要价与**实测全量峰值**同带：≥ 峰值下沿（不许偷偷调小
+    线性价本身）、≤ 峰值上沿 × 2（与实测同阶，余量必须有限名有据）。
+
+    那 3.6–3.9 GiB 的峰值是 **fp32 时代**量到的（`IndexHNSWFlat`，每维 4 字节），
+    所以这条锁按位宽=4 复算——它钉的是"线性价的形状没被人为压低"，与存储格式
+    无关。SQ8（S181）自己的价由 `_ANN_INDEX_SQ8_*` 那两枚常量钉在下一节。
+    """
+    dim = 1024
+    storage_fp32 = vk._ANN_INDEX_BYTES_PER_DIM
+    try:
+        vk._ANN_INDEX_BYTES_PER_DIM = 4  # 复算 fp32 时代的价
+        demand = vk._ann_build_demand_bytes(_PRODUCTION_STAMP_TONIGHT, dim)
+    finally:
+        vk._ANN_INDEX_BYTES_PER_DIM = storage_fp32
     assert demand >= _MEASURED_FULL_REBUILD_PEAK_GIB_LOW * _GIB, (
         "模型价低于实测峰值本身 = 把线性价调小冒充重定标（裁定明令禁止）"
     )
@@ -392,6 +403,39 @@ def test_demand_price_is_same_order_as_measured_peak():
         f"要价 {demand / _GIB:.2f}GiB 脱离实测峰值 3.6–3.9GiB 两个倍数"
         f" = 今晚 {_PRODUCTION_MIDWAY_PRICE_TONIGHT_GIB}GiB 的旧病"
     )
+
+
+def test_sq8_price_tracks_measured_storage_ratio():
+    """S181 换存储格式的价必须跟着落盘比例走，且**不许偷偷替回 fp32**。
+
+    实测（60,400 条生产真向量、400 条真查询、K=4、同图参数）：
+      fp32 262.1 MB → SQ8 77.8 MB = 0.297 倍，top-4 一致率 0.9856。
+    这里钉三件：① 现役位宽必须是 1（8-bit），② 要价必须落在"实测比例 ± 一倍"
+    这个带内（不许有人把位宽改回 4 却留着量化器名、也不许把价压到比例的两倍以下
+    充当更省），③ 今晚真实形状（740,267 条 / 1024 维）下 **2.4 GiB 可用必须放行、
+    1.2 GiB 仍必须拒**——放行是换存储格式要买的东西（fp32 时代要 6.0 GiB），
+    拒则是门不许被改成摆设。
+    """
+    assert vk._ANN_INDEX_BYTES_PER_DIM == 1, "位宽不再是 1 ⇒ 上面那份实测比例作废"
+    assert vk._ANN_INDEX_QUANTIZER_NAME == "QT_8bit", "量化器与位宽脱钩"
+    demand = vk._ann_build_demand_bytes(_PRODUCTION_STAMP_TONIGHT, 1024)
+    fp32_demand = 4.0 * _GIB  # 同规模 fp32 实测峰值带（3.6–3.9）
+    assert fp32_demand * 0.20 <= demand <= fp32_demand * 0.75, (
+        f"SQ8 要价 {demand / _GIB:.2f}GiB 与实测落盘比例 0.297 脱带"
+    )
+    real = vk._available_physical_memory_bytes
+    try:
+        vk._available_physical_memory_bytes = lambda: int(2.4 * _GIB)
+        verdict = vk._evaluate_ann_build_memory_gate(_PRODUCTION_STAMP_TONIGHT, 1024)
+        vk._available_physical_memory_bytes = lambda: int(1.2 * _GIB)
+        low = vk._evaluate_ann_build_memory_gate(_PRODUCTION_STAMP_TONIGHT, 1024)
+    finally:
+        vk._available_physical_memory_bytes = real
+    assert verdict.allowed is True, (
+        f"换存储却买不到开火 = 这趟白改（要价 {verdict.required_bytes / _GIB:.2f}GiB "
+        f"vs 2.4GiB 可用）"
+    )
+    assert low.allowed is False, "低于要价仍放行 = 门被改成了摆设"
 
 
 def test_gate_allows_fire_on_32gib_machine_at_10gib_free():
@@ -474,11 +518,17 @@ def test_price_constants_documented_as_calibration():
     )[0]
     assert "标定" in const_block and "不是物理下限" in const_block, "标定身份没写进常量块"
     assert "安全余量" in const_block, "显式命名的安全余量没在册"
+    assert "_ANN_INDEX_BYTES_PER_DIM" in const_block, (
+        "存储位宽没进这枚常量块——价模型的第一项就是它，写在块外等于"
+        "让'换存储格式'绕过复算口径"
+    )
     n = 100_000
     dim = 1024
     demand = vk._ann_build_demand_bytes(n, dim)
+    storage = dim * vk._ANN_INDEX_BYTES_PER_DIM
     per_vector = (
-        dim * (4 + vk._ANN_BUILD_FAISS_REALLOC_BYTES_PER_DIM)
+        storage
+        + storage * vk._ANN_BUILD_FAISS_REALLOC_BYTES_PER_DIM // 4
         + (vk._ANN_BUILD_MEASURED_BYTES_PER_VECTOR - vk._ANN_BUILD_MEASURED_DIM * 4)
         + vk._ANN_BUILD_ID_TABLE_BYTES_PER_VECTOR
     )

@@ -217,9 +217,13 @@ def test_demand_model_reproduces_measured_unit_cost_at_1024() -> None:
         )
         if n is None or n <= 0:
             return vector_knowledge._ANN_BUILD_MIN_HEADROOM_BYTES + slack
-        per_vec = dim * (
-            4 + vector_knowledge._ANN_BUILD_FAISS_REALLOC_BYTES_PER_DIM
-        ) + (unit - 1024 * 4) + vector_knowledge._ANN_BUILD_ID_TABLE_BYTES_PER_VECTOR
+        storage = dim * vector_knowledge._ANN_INDEX_BYTES_PER_DIM
+        per_vec = (
+            storage
+            + storage * vector_knowledge._ANN_BUILD_FAISS_REALLOC_BYTES_PER_DIM // 4
+            + (unit - 1024 * 4)
+            + vector_knowledge._ANN_BUILD_ID_TABLE_BYTES_PER_VECTOR
+        )
         linear = n * per_vec
         headroom = max(
             vector_knowledge._ANN_BUILD_MIN_HEADROOM_BYTES,
