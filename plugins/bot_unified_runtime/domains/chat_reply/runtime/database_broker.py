@@ -455,7 +455,7 @@ def build_database_broker(
     不触碰任何库文件（懒打开，执行期才连接）；生产接线由装配席位裁决。
     """
     if database_paths is None:
-        from plugins.bot_unified_runtime.llm.ledger import (
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger import (
             resolve_default_db_path as _ledger_db,
         )
 

@@ -377,7 +377,7 @@ def build_notes_capability(config: Any | None = None) -> Any:
         None 表示不承接（自然形态且本会话没有任何已勾条目——让位给后面
         分支/普通聊天；显式「取消勾选」形态则永不落空，给个交代）。
         """
-        from plugins.bot_unified_runtime.character.reminders import (
+        from plugins.bot_unified_runtime.domains.schedule.store.reminders import (
             NEAR_MISS_FLOOR,
             match_todo_candidates,
             resolve_todo_match,

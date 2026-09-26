@@ -42,10 +42,12 @@ def test_memory_uses_runtime_selection_and_multiple_keys_without_mutating_chat(m
     # 运行数据根隔离：缺省会回退源码树 data/（AGENTS.md 规则 2/6），显式指到 tmp。
     monkeypatch.setenv("BOT_RUNTIME_DATA_DIR", str(tmp_path))
     from plugins.bot_unified_runtime.config import Config
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+        LLMProviderError,
+    )
     from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
         RuntimeSettingsStore,
     )
-    from plugins.bot_unified_runtime.llm import LLMProviderError
     from plugins.bot_unified_runtime.llm.model_router import build_model_router
 
     monkeypatch.delenv("BOT_API_KEY_AIPRC", raising=False)
@@ -80,7 +82,9 @@ def test_memory_uses_runtime_selection_and_multiple_keys_without_mutating_chat(m
 
 def test_memory_failure_is_safe_and_cools_down(monkeypatch, caplog):
     from plugins.bot_unified_runtime.config import Config
-    from plugins.bot_unified_runtime.llm import LLMProviderError
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+        LLMProviderError,
+    )
     calls = []
     class Router:
         def generate(self, *args, **kwargs):

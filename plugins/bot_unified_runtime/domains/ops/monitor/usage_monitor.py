@@ -493,7 +493,7 @@ def register_usage_monitor_scheduler(
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
 
-    from plugins.bot_unified_runtime.output.card_render.usage_cards import (
+    from plugins.bot_unified_runtime.domains.render.card_render.usage_cards import (
         render_usage_card_png,
         usage_report_mica_html,
     )
@@ -593,10 +593,10 @@ def register_usage_monitor_scheduler(
     channel_stats_enabled = False
     channel_stats_db_path = ""
     try:
-        from plugins.bot_unified_runtime.llm.ledger import (
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger import (
             ledger_enabled as _ledger_enabled,
         )
-        from plugins.bot_unified_runtime.llm.ledger import (
+        from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger import (
             resolve_default_db_path as _ledger_db_path,
         )
 
@@ -610,7 +610,7 @@ def register_usage_monitor_scheduler(
         if not channel_stats_enabled or not channel_stats_db_path:
             return None
         try:
-            from plugins.bot_unified_runtime.llm.ledger import (
+            from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.ledger import (
                 aggregate_channel_usage,
             )
             from plugins.bot_unified_runtime.runtime.pricing import model_family_key

@@ -13,6 +13,8 @@ minors 硬红线回归由 tests/test_content_safety_v2.py、tests/test_content_r
 """
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -37,10 +39,10 @@ from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
     _danger_style_line,
     build_chat_result,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import LLMReply
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
     SHARED_CONTENT_ROUTE_ENGINE,
 )
-from plugins.bot_unified_runtime.llm.providers import LLMReply
 
 _REPO = Path(__file__).resolve().parents[1]
 
@@ -58,8 +60,17 @@ class _CapturingProvider:
         return LLMReply(text="嗯，我在听。你慢慢说。", provider="fake", model="m")
 
 
+# DATAFIX：称谓偏好 store 无键时走生产 getattr 缺省 "data/addressing_preferences.sqlite3"，
+# 会把测试读写的 sqlite 落到运行数据根或源码树 data/。显式注入本件独有临时绝对路径，
+# 只改测试构造参数、不动生产缺省逻辑。
+_TMP_DATA_DIR = tempfile.mkdtemp(prefix="thyg-rpsd-")
+
+
 def _config(**overrides: object) -> SimpleNamespace:
     base: dict[str, object] = {
+        "bot_addressing_preferences_db_path": os.path.join(
+            _TMP_DATA_DIR, "addressing_preferences.sqlite3"
+        ),
         "bot_content_route_enabled": True,
         "bot_content_route_model": "grok-4.6",
         "bot_content_route_order": "grok-4.6,gemini-3.8-flash",

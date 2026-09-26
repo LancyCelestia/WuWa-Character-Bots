@@ -31,7 +31,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
     build_chat_prompt_with_diagnostics,
     build_chat_result,
 )
-from plugins.bot_unified_runtime.llm.providers import LLMReply
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import LLMReply
 
 PERSONA_TEXT = "# 角色沉浸要求\n\n你就是守岸人本人，以第一人称思考与回应。"
 

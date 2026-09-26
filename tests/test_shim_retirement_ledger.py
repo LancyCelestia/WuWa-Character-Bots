@@ -49,11 +49,27 @@ LEDGER = s34.LEDGER_PY
 #: （本席实测 `--report` 域外 100、三态铺满），是地板 stale 过高误报进展为塌陷。现按现算写入。
 #: 复跑取值：`python scripts/shim_retirement_census.py --report`（「域外 py」行 + 「三态: … 待退役」段）。
 #: 铁律：此地板只准随归位继续下降，**永不因某波把件挪回域外而抬**（那是要红、不是搬账）。
-MIN_OUTSIDE_FLOOR = 99  # 2026-09-24T10:4xZ 现算 99（原 100）：裁定 1.A 把 `control_plane/api/tts.py`
-#   归位进 `domains/creation/tts/routes.py`（域外真少一枚，非扫描面塌陷）。复跑：
-#   `python scripts/physical_placement_census.py --four-accounts` 读 accounts.a1_outside_py_dual_ruler.current
-#   地板方向＝只准降不升（降须带这种"归位/迁走"证据行）；旧件已按规程备份 %TEMP%/tts-relocate-backup-20260924-184240。
-MIN_SHIM_FLOOR = 47
+MIN_OUTSIDE_FLOOR = 74  # 2026-09-27 现算 74（原 76）：席 S-W2-EXEC-B3-R2 退 W2 批3 SH-14/SH-16 两枚垫片
+#   （output/card_render/usage_cards.py=SH-14、output/render_backends.py=SH-16），域外真少两枚，
+#   非扫描面塌陷。复跑：`python scripts/shim_retirement_census.py --report` 读「域外 py」。
+#   本批旧件已按规程备份 %TEMP%/w2b3r2-backup/（工作树全 20 件）＋同目录 githead-shim-usage_cards.py
+#   1119B、githead-shim-render_backends.py 322B（`git show HEAD:` 只读抽取）。
+#   上一档 76 系席 S-W2-EXEC-B4 退 W2 批4 SH-05/SH-09（并 R3-b mail_adapter）+decision 盲 init 整目录
+#   （decision/trace.py+decision/__init__.py 整目录、mail_bridge.py、mail_adapter.py 四件）所降。
+#   （decision/trace.py+decision/__init__.py 整目录、mail_bridge.py、mail_adapter.py 四件），
+#   域外真少四枚（其中盲 init 一枚抵的是待搬迁腿），非扫描面塌陷。复跑：
+#   `python scripts/shim_retirement_census.py --report` 读「域外 py」。
+#   上一档 80 系 S-W2-EXEC-B2 退 W2 批2 一枚垫片（output/bot_avatar.py=SH-11）所降，其备份
+#   %TEMP%/shim-w2b2-backup-20260927/；再上一档 81 系 S-W2-EXEC-B1 退 W2 批1 四枚垫片
+#   （output/templates.py=SH-20、runtime/aliases.py=SH-22、output/card_render/theme_tokens.py=SH-13、
+#   output/card_render/bridge.py=SH-12）所降，其备份 %TEMP%/shim-w2b1-backup-20260927/；
+#   再上一档 85 系 S-SHIM-W1-EXEC-b 退 SH-03/04/06/08 所降，其备份
+#   %TEMP%/shim-w1-backup-20260927-013104/ 原样在册；
+#   地板方向＝只准降不升（降须带这种"归位/退役"证据行）；本批旧件已按规程备份
+#   %TEMP%/shim-w2b4-backup-20260927/（decision-trace.py 613B、decision-init.py 664B、
+#   mail_bridge.py 173B、mail_adapter.py 329B，`git show HEAD:` 只读抽取）。
+MIN_SHIM_FLOOR = 23  # 2026-09-27 同上批：现算待退役 23（原 25），W2 批3 SH-14/SH-16 两枚已摘；账由 `--write-ledger` 现算刷新。
+#   上一档 25 系席 S-W2-EXEC-B4 退 W2 批4 SH-05/SH-09/mail_adapter 三枚已摘所降（原 28）。
 
 #: 与三态之和同门记账的豁免上限 = `BASELINE.md` 起点值（只准降）。本席**只读**该账，不改它一个字。
 EXEMPT_START_CEILING = 29

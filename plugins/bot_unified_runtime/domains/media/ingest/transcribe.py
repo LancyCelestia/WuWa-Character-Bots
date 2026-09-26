@@ -27,10 +27,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
+)
 from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
     _local_path_from_value,
 )
-from plugins.bot_unified_runtime.llm import LLMProviderError
 
 logger = logging.getLogger(__name__)
 

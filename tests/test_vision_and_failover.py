@@ -5,6 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
     InstanceSettingsManager,
 )
@@ -16,7 +19,6 @@ from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
 from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
     _handle_runtime_command,
 )
-from plugins.bot_unified_runtime.llm import LLMProviderError
 from plugins.bot_unified_runtime.llm.model_router import ModelRouter
 
 

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from plugins.bot_unified_runtime.llm import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
     LLMProviderError,
     OpenAICompatibleLLMProvider,
 )

@@ -36,6 +36,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router impo
     native_media_kinds_in_payload,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
     StaticLLMProvider,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
@@ -63,7 +64,6 @@ from plugins.bot_unified_runtime.domains.media.ingest.video_understanding import
 from plugins.bot_unified_runtime.domains.media.ingest.vision_describe import (
     extract_image_urls,
 )
-from plugins.bot_unified_runtime.llm import LLMProviderError
 
 _WAV_BYTES = b"RIFF" + b"\x00" * 40
 

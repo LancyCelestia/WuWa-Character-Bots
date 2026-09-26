@@ -19,6 +19,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
+)
 from plugins.bot_unified_runtime.domains.media.ingest import transcribe
 from plugins.bot_unified_runtime.domains.media.ingest.transcribe import (
     DynamicASRProvider,
@@ -27,7 +30,6 @@ from plugins.bot_unified_runtime.domains.media.ingest.transcribe import (
     extract_audio_source,
     transcribe_audio,
 )
-from plugins.bot_unified_runtime.llm import LLMProviderError
 
 
 def test_extract_audio_source_resolves_local_file_path(tmp_path: Path) -> None:

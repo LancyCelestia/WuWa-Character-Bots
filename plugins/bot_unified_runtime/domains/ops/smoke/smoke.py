@@ -35,6 +35,15 @@ from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router impo
     build_model_registry,
     build_model_router,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProvider,
+    LLMProviderError,
+    OpenAICompatibleLLMProvider,
+    StaticLLMProvider,
+    build_urlopen,
+    public_llm_error_message,
+    safe_llm_finish_reason,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     PolicySettings,
     build_quiet_hours_checker,
@@ -105,15 +114,6 @@ from plugins.bot_unified_runtime.domains.transport.sender import (
 from plugins.bot_unified_runtime.domains.transport.sender.onebot import (
     build_onebot_message_segments,
     send_onebot_v11,
-)
-from plugins.bot_unified_runtime.llm import (
-    LLMProvider,
-    LLMProviderError,
-    OpenAICompatibleLLMProvider,
-    StaticLLMProvider,
-    build_urlopen,
-    public_llm_error_message,
-    safe_llm_finish_reason,
 )
 from plugins.bot_unified_runtime.runtime import RuntimePipeline
 from scripts.load_runtime_config import json_decode_env_values, load_runtime_env_values

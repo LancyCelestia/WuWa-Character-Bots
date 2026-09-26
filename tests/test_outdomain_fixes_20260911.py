@@ -282,7 +282,9 @@ class _FakeStreamResponse:
 
 
 def test_read_stream_deadline_raises_timeout() -> None:
-    from plugins.bot_unified_runtime.llm import providers as llm_providers
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine import (
+        providers as llm_providers,
+    )
 
     with pytest.raises(LLMProviderError) as raised:
         llm_providers._read_stream_limited(
@@ -294,7 +296,9 @@ def test_read_stream_deadline_raises_timeout() -> None:
 
 
 def test_read_stream_without_deadline_returns_bytes() -> None:
-    from plugins.bot_unified_runtime.llm import providers as llm_providers
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine import (
+        providers as llm_providers,
+    )
 
     out = llm_providers._read_stream_limited(
         _FakeStreamResponse([b"ab", b"cd"]),  # type: ignore[arg-type]

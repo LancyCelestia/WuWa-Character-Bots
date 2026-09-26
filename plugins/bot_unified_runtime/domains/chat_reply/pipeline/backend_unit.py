@@ -28,6 +28,10 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
 from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
     build_model_router,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    OpenAICompatibleLLMProvider,
+    StaticLLMProvider,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     build_quiet_hours_checker,
     build_rate_limiter,
@@ -52,10 +56,6 @@ from plugins.bot_unified_runtime.domains.ops.smoke.console_chat import (
     load_smoke_config,
 )
 from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
-from plugins.bot_unified_runtime.llm import (
-    OpenAICompatibleLLMProvider,
-    StaticLLMProvider,
-)
 
 
 def _build_llm_provider(config: Config) -> Any:

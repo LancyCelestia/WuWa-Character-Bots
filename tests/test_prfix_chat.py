@@ -29,7 +29,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
     clear_mcp_tools_schema_cache,
     strip_outer_speech_quotes,
 )
-from plugins.bot_unified_runtime.llm.providers import LLMReply
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import LLMReply
 
 # ==================== B-1：视频 deadline 与请求预算协调 ====================
 

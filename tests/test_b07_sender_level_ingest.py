@@ -92,7 +92,9 @@ def _run_capability(sender_level: str | None) -> str:
     from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         NullCharacterContextProvider,
     )
-    from plugins.bot_unified_runtime.llm import StaticLLMProvider
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+        StaticLLMProvider,
+    )
 
     capture = _ProfileNoteCaptureProvider(NullCharacterContextProvider())
     cap = build_chat_capability(capture, StaticLLMProvider(text="你好。"))

@@ -36,11 +36,13 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
 from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
     NullCharacterContextProvider,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    StaticLLMProvider,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.time_window import (
     detect_time_window_summary,
     parse_time_window,
 )
-from plugins.bot_unified_runtime.llm import StaticLLMProvider
 
 NOW = datetime(2026, 9, 13, 15, 0, tzinfo=UTC).timestamp()
 

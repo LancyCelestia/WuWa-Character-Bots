@@ -19,7 +19,9 @@ from plugins.bot_unified_runtime.contracts import (
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
     build_chat_result,
 )
-from plugins.bot_unified_runtime.llm.providers import LLMProviderError
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
+)
 
 
 class FailingRouter:

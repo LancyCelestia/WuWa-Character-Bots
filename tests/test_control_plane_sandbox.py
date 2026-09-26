@@ -10,7 +10,7 @@ from plugins.bot_unified_runtime.control_plane.sandbox import (
 )
 from plugins.bot_unified_runtime.control_plane.services import ControlServiceError
 from plugins.bot_unified_runtime.control_plane.workspaces import WorkspaceSettings
-from plugins.bot_unified_runtime.llm.providers import LLMReply
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import LLMReply
 
 
 def test_sandbox_persona_resources_history_and_model_usage():

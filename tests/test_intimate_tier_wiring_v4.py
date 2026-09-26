@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import ast
 import copy
+import os
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -64,6 +66,8 @@ from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router impo
     native_media_kinds_in_payload,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
+    LLMReply,
     StaticLLMProvider,
 )
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
@@ -84,8 +88,6 @@ from plugins.bot_unified_runtime.domains.core.session_keys import (
     build_session_key,
     private_session_key,
 )
-from plugins.bot_unified_runtime.llm import LLMProviderError
-from plugins.bot_unified_runtime.llm.providers import LLMReply
 
 MINUTE = 60.0
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -95,10 +97,18 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _GEMINI_TAGS = ("vision", "native-audio", "native-video", "native-animation")
 _GROK_TAGS = ("high",)
 
+# DATAFIX：称谓偏好 store 无键时走生产 getattr 缺省 "data/addressing_preferences.sqlite3"，
+# 会把未显式注入路径的用例读写落到运行数据根或源码树 data/。这里给 _config 补一个本件独有
+# 临时绝对路径作基线；显式读写称谓的用例仍以各自 tmp_path 直赋值覆盖（直赋值优先于基线）。
+_TMP_DATA_DIR = tempfile.mkdtemp(prefix="thyg-itw4-")
+
 
 def _config(**overrides: object) -> SimpleNamespace:
     """内容路由配置面（键名与 `Config` 一致，值取生产缺省）。"""
     base: dict[str, object] = {
+        "bot_addressing_preferences_db_path": os.path.join(
+            _TMP_DATA_DIR, "addressing_preferences.sqlite3"
+        ),
         "bot_content_route_enabled": True,
         "bot_content_route_model": "grok-4.6",
         "bot_content_route_order": "grok-4.6,gemini-3.8-flash",

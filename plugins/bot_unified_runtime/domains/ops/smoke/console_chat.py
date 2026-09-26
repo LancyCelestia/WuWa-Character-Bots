@@ -41,6 +41,11 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.history import (
 from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_router import (
     build_model_router,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProvider,
+    OpenAICompatibleLLMProvider,
+    StaticLLMProvider,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.policy import (
     build_quiet_hours_checker,
     build_rate_limiter,
@@ -103,6 +108,9 @@ from plugins.bot_unified_runtime.domains.ops.audit.file_logger import (
     build_audit_with_file_log,
 )
 from plugins.bot_unified_runtime.domains.ops.smoke.smoke import load_smoke_config
+from plugins.bot_unified_runtime.domains.render.render_backends import (
+    build_render_backend,
+)
 from plugins.bot_unified_runtime.domains.subscribe.capabilities.epic import (
     build_epic_capability,
     is_epic_command,
@@ -119,12 +127,6 @@ from plugins.bot_unified_runtime.domains.weather.capabilities.weather import (
     build_weather_capability,
     is_weather_command,
 )
-from plugins.bot_unified_runtime.llm import (
-    LLMProvider,
-    OpenAICompatibleLLMProvider,
-    StaticLLMProvider,
-)
-from plugins.bot_unified_runtime.output.render_backends import build_render_backend
 
 _BANNER = """\
 ============================================================

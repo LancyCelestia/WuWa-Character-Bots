@@ -50,7 +50,7 @@ from itertools import chain, islice
 from pathlib import Path
 from typing import Any
 
-from plugins.bot_unified_runtime.character.vector_knowledge import (
+from plugins.bot_unified_runtime.domains.chat_reply.character.vector_knowledge import (
     OpenAICompatibleEmbeddingProvider,
     SqliteVectorKnowledgeStore,
     _UnavailableVectorKnowledgeProvider,
@@ -926,6 +926,19 @@ def _empty_kb_result(mode: str) -> dict[str, Any]:
         "embed": False,
         "embed_done": 0,
         "embed_pending": 0,
+        # after 三件的「本轮是否真测过」标记（2026-09-27 汇总默认 0 修复，甲案
+        # 评估后的乙式收口）：total_after/embedded_after/documents_after 只在
+        # 成功路径的统计点被真测一次回填；失败出口（cancelled/exception/
+        # kb_missing/config_missing）从未回填——落盘摘要必须报「未测得 null」
+        # 而不是把构造期默认 0 伪装成测得的 0（读 WebUI/进度页的人会把
+        # "没测"读成"测得 0"）。标记只进结果字典与 _sync_summary 的判据，
+        # 不作为独立键落库；内存里三件仍是 int 默认，既有直读结果字典的
+        # 消费方（CLI/调度日志）逐字节不受影响。
+        # 为什么不在失败出口补测一次：真身计数口 store.stats() 是块表两发
+        # COUNT、document_count() 是台账全表 COUNT，取证席实测维基库冷缓存
+        # 一发 ≈5.5 分钟——分钟级阻塞查询禁入失败路径（取消轮尤其：停机
+        # 钩子触发的取消若在 finally 里现算，等于拖住 shutdown）。
+        "after_stats_measured": False,
         "total_after": 0,
         "embedded_after": 0,
         "documents_after": 0,
@@ -1186,7 +1199,19 @@ def _fts_status_snapshot(store: object) -> tuple[int, str]:
 
 
 def _sync_summary(result: dict[str, Any]) -> dict[str, Any]:
-    """同步结果 → 落库摘要（固定观测字段集，不放任何磁盘路径）。"""
+    """同步结果 → 落库摘要（固定观测字段集，不放任何磁盘路径）。
+
+    after 三件（documents/chunks/embedded）是三态：int=本轮统计点真测值；
+    null=本轮从未到达统计点（失败出口）。「未测得」绝不落成 0——0 是合法
+    测得值，混写会把观测缺失误读成库被清空（2026-09-26 取证定案）。
+    外部手工构造、不带 `after_stats_measured` 键的结果字典按"已测"透传，
+    与既有测试夹具/直调 `run_knowledge_sync` 的旧形状逐字节兼容。
+    """
+    measured = bool(result.get("after_stats_measured", True))
+
+    def _after_or_null(value: Any) -> int | None:
+        return None if not measured else int(value or 0)
+
     return {
         "started_at": str(result.get("started_at") or ""),
         "finished_at": _utc_stamp(),
@@ -1210,9 +1235,9 @@ def _sync_summary(result: dict[str, Any]) -> dict[str, Any]:
         "fts_built": bool(result.get("fts_built")),
         "fts_rows": int(result.get("fts_rows") or 0),
         "fts_signature": str(result.get("fts_signature") or ""),
-        "documents_after": int(result.get("documents_after") or 0),
-        "chunks_after": int(result.get("total_after") or 0),
-        "embedded_after": int(result.get("embedded_after") or 0),
+        "documents_after": _after_or_null(result.get("documents_after")),
+        "chunks_after": _after_or_null(result.get("total_after")),
+        "embedded_after": _after_or_null(result.get("embedded_after")),
         "reconcile_status": str(result.get("reconcile_status") or ""),
         "reconcile_missing": int(result.get("reconcile_missing") or 0),
         "reconcile_extra": int(result.get("reconcile_extra") or 0),
@@ -1440,6 +1465,9 @@ def _run_kb_sync_task_locked(
         result["total_after"] = int(stats["total"])
         result["embedded_after"] = int(stats["embedded"])
         result["documents_after"] = store.document_count()
+        # 统计点已过：after 三件自此是"本轮真测值"，落盘摘要不再置 null。
+        # （partial 早退在本行之后 ⇒ 那轮的三件本就是测得值，照常上账。）
+        result["after_stats_measured"] = True
         # ANN 重建门（R3 停摆批）：零变更夜不再无条件重建（实测 23.8 万块
         # 全量重建 8.5 分钟、占事件循环默认线程池线程）。重建仅当：
         # ①文档集合有增/改/删；②本次嵌入了新向量；③ANN 索引文件缺失

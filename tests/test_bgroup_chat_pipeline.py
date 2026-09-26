@@ -24,10 +24,12 @@ from plugins.bot_unified_runtime.contracts import WebSearchHit
 from plugins.bot_unified_runtime.domains.chat_reply.capabilities import (
     chat as chat_module,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMReply,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.deadline import (
     DeadlineBudget,
 )
-from plugins.bot_unified_runtime.llm import LLMReply
 
 # ==================== B-1：视频阶段预算协调 ====================
 
@@ -250,7 +252,9 @@ def _run_voice_turn(tmp_path, budget_seconds: float):
     from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         NullCharacterContextProvider,
     )
-    from plugins.bot_unified_runtime.llm.providers import StaticLLMProvider
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+        StaticLLMProvider,
+    )
 
     asr = _RecordingAsrConfig()
     capability = build_chat_capability(

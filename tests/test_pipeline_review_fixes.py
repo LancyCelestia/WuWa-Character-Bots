@@ -18,6 +18,10 @@ import pytest
 
 from plugins.bot_unified_runtime.config import Config
 from plugins.bot_unified_runtime.contracts import ReceiptState
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
+    LLMReply,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.policy.quiet_hours import (
     QuietHoursChecker,
     QuietHoursDecision,
@@ -39,7 +43,6 @@ from plugins.bot_unified_runtime.domains.core.contracts.runtime import (
 )
 from plugins.bot_unified_runtime.domains.transport.sender import InMemorySendQueue
 from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
-from plugins.bot_unified_runtime.llm.providers import LLMProviderError, LLMReply
 
 # ==================== 修复 #3：vision 双门槛统一 ====================
 

@@ -100,6 +100,23 @@ def assist_env(monkeypatch, tmp_path):
     return tmp_path
 
 
+@pytest.fixture(autouse=True)
+def _reset_path_domain_policy():
+    """路径域守卫的进程级缺省策略逐测复位（A-8 接线带来的夹具义务，2026-09-27）。
+
+    ``_assist_dir`` 现在每次装配都问 ``check_sendable()`` 一次；缺省策略是惰性
+    **进程级缓存**，不复位就会被第一个跑到的测试钉死在当天根上——随后
+    monkeypatch ``BOT_RUNTIME_DATA_DIR`` 的 tmp 根反而撞 ``OUTSIDE_ALLOWED_ROOTS``
+    假红（S-A8-IMPL 席位实测的潜伏面，审计 SEAT-A8-OUTROOT §3 潜伏④ 同源）。
+    复位前后各一次：本文件不欠账，也不给别的文件留脏缓存。
+    """
+    from plugins.bot_unified_runtime.domains.core.safety_exec import paths
+
+    paths.set_default_policy(None)
+    yield
+    paths.set_default_policy(None)
+
+
 # ---------------------------------------------------------------------------
 # 菜单与择菜
 # ---------------------------------------------------------------------------

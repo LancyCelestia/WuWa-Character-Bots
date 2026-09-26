@@ -373,7 +373,7 @@ def create_control_plane_app(
         )
 
     if metrics_service is None:
-        from ..llm.ledger import resolve_default_db_path
+        from ..domains.chat_reply.llm_engine.ledger import resolve_default_db_path
         from .metrics import LedgerMetricsService
 
         metrics_service = LedgerMetricsService(resolve_default_db_path())

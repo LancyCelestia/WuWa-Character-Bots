@@ -11,7 +11,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.documents import (
     SUPPORTED_CHARACTER_DOCUMENT_SUFFIXES,
     load_character_document,
 )
-from plugins.bot_unified_runtime.llm import normalize_openai_chat_endpoint
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    normalize_openai_chat_endpoint,
+)
 
 PERSONA_PROFILE_MIN_CHARS = 10
 PERSONA_PROFILE_MIN_MEANINGFUL_LINES = 2

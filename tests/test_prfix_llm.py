@@ -12,8 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
-from plugins.bot_unified_runtime.llm.providers import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
     LLMProviderError,
     LLMReply,
     _classify_http_error,
@@ -21,6 +20,7 @@ from plugins.bot_unified_runtime.llm.providers import (
     _shared_http_client,
     should_failover,
 )
+from plugins.bot_unified_runtime.llm.model_router import ModelRouter, ModelSpec
 
 
 class _StripAwareProvider:

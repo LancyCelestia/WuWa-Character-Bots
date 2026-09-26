@@ -68,11 +68,15 @@ DRIVE_FORM_RE = re.compile(r"[A-Za-z]:[\\/]")
 #: **真消费**而非抄口径——写侧发布（``_forbidden_destination_reason``）与寻址/回读侧
 #: （``resolve_existing``）各向 ``check_sendable()`` 问一次「禁触那一族」，判定零副本；
 #: 活性锁见 ``tests/test_restricted_runner_live.py::test_runner_consumes_the_roster_in_two_places``。
+#: 2026-09-27 A-8 裁定「改落点 + 登记根和守卫补完善」补登第三枚：``daily_assist``
+#: 语料根装配问 ``check_sendable()`` 一次（「允许写入的生成落点 ∈ 允许根」强制点），
+#: 判定零副本；活性锁见 ``tests/test_a8_guard_landing.py``。
 ALLOWED_CONSUMERS = frozenset(
     {
         "plugins/bot_unified_runtime/domains/core/safety_exec/paths.py",
         "plugins/bot_unified_runtime/domains/transport/sender/file_gateway.py",
         "plugins/bot_unified_runtime/domains/files/sender/restricted_runner.py",
+        "plugins/bot_unified_runtime/domains/assistant/daily/store/daily_assist.py",
     }
 )
 
@@ -905,9 +909,14 @@ def test_only_the_registered_consumer_imports_the_truth_source() -> None:
             continue
         if any(module.endswith("safety_exec.paths") for module in modules):
             consumers.append(rel)
-    assert consumers == [
-        "plugins/bot_unified_runtime/domains/transport/sender/file_gateway.py"
-    ], f"路径域真身的 import 消费点必须唯一，实得 {consumers}"
+    # 名册逐字符比对（排序只为遍历序稳定，不放宽成员集合）。
+    # 2026-09-27 A-8 波经主代理裁定补登第二枚：``daily_assist`` 语料根装配是
+    # mandate 的「允许写入的生成落点 ∈ 允许根」强制点，判定零副本（只调
+    # check_sendable 问一次），活性锁见 ``tests/test_a8_guard_landing.py``。
+    assert sorted(consumers) == [
+        "plugins/bot_unified_runtime/domains/assistant/daily/store/daily_assist.py",
+        "plugins/bot_unified_runtime/domains/transport/sender/file_gateway.py",
+    ], f"路径域真身的 import 消费点必须与登记名册一致，实得 {consumers}"
 
 
 def test_package_init_does_not_import_siblings() -> None:
@@ -957,6 +966,14 @@ def test_default_policy_roots_are_derived_from_runtime_paths() -> None:
     assert "workspace" in labels and "runtime" in labels
     assert "runtimewrap:cache" in labels, "运行数据根的暂存面必须在册（样张/basetemp 落点）"
     assert "runtime:generated_files" in labels and "runtime:media_archive" in labels
+    # A-8 裁定登记根（2026-09-27）：Assistant 语料根是**唯一初始条目**，扩充须再次
+    # 经主代理——这里用「恰一枚 + 逐字符」锁死名册，防止顺手加根变绿。
+    corpus = [root for label, root in active.readable_roots if label == "corpus:daily_assist"]
+    assert len(corpus) == 1 and str(corpus[0]).replace("\\", "/") == (
+        "C:/Users/LancyCelestia/Assistant"
+    ), f"所有者裁定根名册走样：{corpus}"
+    assert len(paths._OWNER_RULING_READABLE_ROOTS) == 1
+    assert [label for label, _ in paths._OWNER_RULING_READABLE_ROOTS] == ["corpus:daily_assist"]
 
 
 def test_default_policy_denies_host_files_and_allows_repo_text() -> None:

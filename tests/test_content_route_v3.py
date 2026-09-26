@@ -16,6 +16,8 @@ normal 钉不吃 TTL）、群级/个人级并存与优先级、指令分流（�
 """
 from __future__ import annotations
 
+import os
+import tempfile
 from types import SimpleNamespace
 
 from plugins.bot_unified_runtime.contracts import (
@@ -42,6 +44,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
     _manual_command_scope_key,
     build_chat_result,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import LLMReply
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.content_route import (
     INTIMATE_SOURCE_ADMIN_PIN,
     INTIMATE_SOURCE_CONTENT_SIGNAL,
@@ -64,11 +67,18 @@ from plugins.bot_unified_runtime.domains.core.session_keys import (
     parse_session_key,
     private_session_key,
 )
-from plugins.bot_unified_runtime.llm.providers import LLMReply
+
+# DATAFIX：称谓偏好 store 无键时走生产 getattr 缺省 "data/addressing_preferences.sqlite3"，
+# 会把测试读写的 sqlite 落到运行数据根（本机 .env）或源码树 data/（无 .env 机器）。
+# 显式注入一个本件独有的临时绝对路径，测试只改构造参数、不动生产缺省逻辑。
+_TMP_DATA_DIR = tempfile.mkdtemp(prefix="thyg-cr3-")
 
 
 def _config(**overrides: object) -> SimpleNamespace:
     base: dict[str, object] = {
+        "bot_addressing_preferences_db_path": os.path.join(
+            _TMP_DATA_DIR, "addressing_preferences.sqlite3"
+        ),
         "bot_content_route_enabled": True,
         "bot_content_route_model": "grok-4.6",
         "bot_content_route_order": "grok-4.6,gemini-3.8-flash",

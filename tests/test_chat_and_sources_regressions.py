@@ -118,7 +118,9 @@ def test_group_chat_cleanup_is_in_actual_capability():
     from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         NullCharacterContextProvider,
     )
-    from plugins.bot_unified_runtime.llm import StaticLLMProvider
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+        StaticLLMProvider,
+    )
     msg = IncomingMessage(platform='qq', adapter='onebot', bot_id='b', session_id='group:g',
         session_type=SessionType.GROUP, sender_id='ordinary', group_id='g', plain_text='你好', mentions_bot=True)
     decision = BotDecision(request_id=msg.request_id, should_respond=True, mode='chat', trigger='mention',

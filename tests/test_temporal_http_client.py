@@ -20,7 +20,7 @@ from plugins.bot_unified_runtime.domains.chat_reply.character.temporal import (
     OpenMeteoWeatherProvider,
     _WeatherSnapshot,
 )
-from plugins.bot_unified_runtime.llm.providers import (
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
     _HTTP_CLIENTS,
     _MAX_RESPONSE_BYTES,
     _shared_http_client,

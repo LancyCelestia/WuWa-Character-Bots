@@ -283,7 +283,9 @@ def _capability_prompt(text: str, *, reply_detail: str, override: str | None) ->
     from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         NullCharacterContextProvider,
     )
-    from plugins.bot_unified_runtime.llm import StaticLLMProvider
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+        StaticLLMProvider,
+    )
 
     captured: dict[str, object] = {}
 

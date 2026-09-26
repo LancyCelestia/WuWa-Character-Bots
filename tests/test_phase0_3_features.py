@@ -142,7 +142,9 @@ def _real_chat(tmp_path, question, answer, captured=None, group=False):
     from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         NullCharacterContextProvider,
     )
-    from plugins.bot_unified_runtime.llm import StaticLLMProvider
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+        StaticLLMProvider,
+    )
     class Provider(StaticLLMProvider):
         def generate(self, messages, **kwargs):
             if captured is not None: captured.append(messages)

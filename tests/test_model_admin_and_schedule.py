@@ -9,6 +9,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.model_schedule im
     parse_model_schedule,
     resolve_scheduled_model,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
     SETTABLE_KEYS,
     RuntimeSettingsStore,
@@ -16,7 +19,6 @@ from plugins.bot_unified_runtime.domains.chat_reply.runtime.settings import (
 from plugins.bot_unified_runtime.domains.ops.admin.runtime_admin import (
     _handle_model_command,
 )
-from plugins.bot_unified_runtime.llm import LLMProviderError
 from plugins.bot_unified_runtime.llm.model_router import ModelRouter
 
 

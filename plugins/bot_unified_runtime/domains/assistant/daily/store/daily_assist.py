@@ -15,11 +15,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+
+from plugins.bot_unified_runtime.domains.core.safety_exec.paths import (
+    VERDICT_NEEDS_REVIEW,
+    check_sendable,
+)
+
+logger = logging.getLogger(__name__)
 
 _INBOX_PENDING_HEADER = "## 待处理"
 _FOOD_EXCLUDED_SECTIONS = {"备注", "備註"}
@@ -32,11 +40,34 @@ _TASKS_FILE = "tasks.md"
 _MEAL_REPEAT_DAYS = 7
 
 
+class DailyAssistPathDenied(RuntimeError):
+    """语料根落点被路径域守卫拒绝（A-8 裁定 2026-09-27：「允许写入的生成落点 ∈ 允许根」
+    成为强制点）。fail-closed：**绝不**回退到别的目录继续写——换目录写等于绕过登记根。"""
+
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(f"daily_assist 语料根落点被路径域守卫拒绝: {reason_code}")
+        self.reason_code = reason_code
+
+
 def _assist_dir(config: Any) -> Path:
+    """语料根 = ``bot_daily_assist_dir``（经运行数据路径解析），出站闸同尺判一遍。
+
+    生产 .env 把该字段覆写到 Assistant/（持久业务 OUT 根，改道不可回迁），
+    由 ``safety_exec.paths`` 的**所有者裁定登记根**（corpus:daily_assist）放行；
+    不在名册也不在允许根内的覆写值 ⇒ denied，写面直接断，不留「静默写到域外」
+    的后门（S-A8-IMPL 席位，2026-09-27）。needs_review 沿用全局口径：记账放行。
+    """
     from plugins.bot_unified_runtime.character.providers import build_runtime_data_path
 
     raw = str(getattr(config, "bot_daily_assist_dir", "") or "data/daily_assist")
-    return Path(build_runtime_data_path(config, raw))
+    base = Path(build_runtime_data_path(config, raw))
+    decision = check_sendable(base)
+    if decision.denied:
+        logger.warning("daily_assist 语料根被路径域守卫拒绝：%s", decision.audit_line())
+        raise DailyAssistPathDenied(decision.reason_code)
+    if decision.verdict == VERDICT_NEEDS_REVIEW:
+        logger.warning("daily_assist 语料根落点记账待评审：%s", decision.audit_line())
+    return base
 
 
 def food_path(config: Any) -> Path:

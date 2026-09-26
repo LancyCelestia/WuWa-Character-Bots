@@ -48,6 +48,9 @@ from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
 from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
     NullCharacterContextProvider,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    StaticLLMProvider,
+)
 from plugins.bot_unified_runtime.domains.chat_reply.runtime.question_intent import (
     classify_question_intent,
 )
@@ -60,7 +63,6 @@ from plugins.bot_unified_runtime.domains.core.search.search_intent import (
     acg_search_allowed,
     detect_acg_intent,
 )
-from plugins.bot_unified_runtime.llm.providers import StaticLLMProvider
 
 CHAT_PY = (
     Path(__file__).resolve().parents[1]

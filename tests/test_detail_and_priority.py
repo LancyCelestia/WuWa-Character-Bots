@@ -127,7 +127,9 @@ def test_chat_respects_detail_default_and_runtime_override(monkeypatch):
     from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         NullCharacterContextProvider,
     )
-    from plugins.bot_unified_runtime.llm import StaticLLMProvider
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+        StaticLLMProvider,
+    )
     captured = []
     def result(**kwargs):
         captured.append(kwargs["context"].reply_detail)
@@ -193,8 +195,10 @@ def test_fast_search_results_reach_generation_without_page_fetch(monkeypatch):
     from plugins.bot_unified_runtime.domains.chat_reply.character.providers import (
         NullCharacterContextProvider,
     )
+    from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+        StaticLLMProvider,
+    )
     from plugins.bot_unified_runtime.domains.core.search.web_search import WebSearchHit
-    from plugins.bot_unified_runtime.llm import StaticLLMProvider
     captured = []
     class Search:
         def search(self, query, **kw):

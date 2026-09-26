@@ -47,10 +47,12 @@ from plugins.bot_unified_runtime.domains.chat_reply.capabilities.chat import (
     build_chat_prompt_with_diagnostics,
     build_chat_result,
 )
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
+)
 from plugins.bot_unified_runtime.domains.ops import self_calendar as self_calendar_pkg
 from plugins.bot_unified_runtime.domains.ops.self_calendar import moments as moments_mod
 from plugins.bot_unified_runtime.domains.ops.self_calendar import report as report_mod
-from plugins.bot_unified_runtime.llm.providers import LLMProviderError
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CHAT_PY = (

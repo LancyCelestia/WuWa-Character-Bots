@@ -10,11 +10,13 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from plugins.bot_unified_runtime.domains.chat_reply.llm_engine.providers import (
+    LLMProviderError,
+)
 from plugins.bot_unified_runtime.domains.media.ingest.video_understanding import (
     VideoBrief,
     build_video_brief,
 )
-from plugins.bot_unified_runtime.llm import LLMProviderError
 
 
 class FakeVision:
