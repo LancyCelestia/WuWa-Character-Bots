@@ -141,7 +141,10 @@ DELIBERATELY_UNLISTED_BASELINE = 17
 # 2026-09-26 席 S-ACG-SWITCH 现算复录 568 → 562：六枚 `bot_search_acg_*` 补登记
 # SETTABLE_KEYS（ACG 竖源开关腿根修——chat.py 每消息 get_or 现读，覆盖面此前无入口；
 # 归属本波逐枚点名见 tests/test_search_acg_switch_leg.py 锁②与本文件腿 A 现算）。
-UNACCOUNTED_BASELINE = 562
+# 2026-09-27 席 S-SWITCH-REG-IMPL（批⑦b 存量开关归册）现算复录 562 → 554：八枚运行开关
+# （TTS 双闸/表情库双闸/记忆总线/好感度 v7/维基知识库/控制面）补登 RESTART_REQUIRED_KEYS，
+# 未表态 8 枚出账（判据与逐枚点名见 reports/SWITCH-REG-PREP.md §3.1；ledger 门同批对钉）。
+UNACCOUNTED_BASELINE = 554
 
 # ---------------------------------------------------------------------------
 # 腿 A 台账 3：在名单里但**没有**同名 Config 字段的正当形态（override-only）

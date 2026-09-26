@@ -514,6 +514,19 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
     "BOT_TTS_CACHE_MAX_AGE_DAYS": (
         "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
     ),
+    # ---- 语音自动配音双闸补登（LIVE-SWITCH-REREAD-0927 点名、SWITCH-REG-PREP 现算归案）----
+    # 同族判据逐字适用：build_tts_capability 持装配期 config 直读，未走 store。
+    "BOT_TTS_AUTO_REPLY_ENABLED": (
+        "bot.tts 自动配音总闸读装配期 config（domains/media/capabilities/tts.py），"
+        "覆盖不可达；与同族 MAX_CHARS/PROBABILITY 同登（后两枚已在册，本枚为补漏）"
+    ),
+    # 装配期 wiring 决策（根 __init__.py 按它决定构不构建 pipeline_voice_enricher，
+    # 键关连 voice_enricher 模块都不 import）；下游现读吃同一份装配期 Config。
+    # echo.py 语音条目已自述「装配期读死」——本条是让名单追上这句话。
+    "BOT_TTS_VOICE_HOOK_ENABLED": (
+        "根装配期读一次决定配音走新 hook 还是旧包装（__init__.py），运行期无重建"
+        "通道 ⇒ 永久重启键（改 wiring 机制前不得进热改白名单）"
+    ),
     "BOT_TTS_AUTO_REPLY_MAX_CHARS": (
         "bot.tts 读装配期 config（domains/media/capabilities/tts.py），覆盖不可达"
     ),
@@ -605,6 +618,14 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
     "BOT_MEME_STICKER_SCOPE_MODE": (
         "反重复作用域口径：build_meme_library_capability 装配期取一次 + "
         "select_sticker_for_turn 现读，两处都吃未合并 plugin Config"
+    ),
+    # ---- 表情库两总闸（同段同判据：调用点交的是未过合并层的装配期 plugin Config）----
+    "BOT_MEME_LIBRARY_ENABLED": (
+        "收库 store/监听/补标循环全在根装配期按它建或不建（__init__.py），热翻=半激活"
+        "（翻 True 无 store、翻 False 旧闭包仍在）⇒ 覆盖不可达，永久重启形"
+    ),
+    "BOT_MEME_LIBRARY_VLM_ENABLED": (
+        "同族：listener 打标循环现读装配期 plugin Config 原件（未过合并层），覆盖不可达"
     ),
     # ---- 亲密档 L1 自动腿两键（2026-09-24 用户裁定 R1 A，D 席登记）----
     # 消费点 `runtime/content_route.py::_knobs` 确实是**每次判定现读** config，看着像
@@ -778,6 +799,28 @@ RESTART_REQUIRED_KEYS: dict[str, str] = {
     ),
     "BOT_RATE_LIMIT_GROUP_VISION_MIN_INTERVAL_SECONDS": (
         "同族：合并层未登记该键，覆盖不可达，改 .env 需重启"
+    ),
+    # ---- 存量运行开关归册（LIVE-SWITCH-REREAD-0927 §三点名 8 枚之剩余四枚；
+    #      SWITCH-REG-PREP 现算判据。登记性质＝补历史账，零运行时行为变更）----
+    # 判据同 poke/ACK/L1-auto 诸段：消费点读装配期快照或未登记合并表的现读，
+    # set 写了不生效 ⇒ 按 C-09「宁可拒绝，不可假成功」入重启清单。
+    "BOT_MEMORY_BUS_ENABLED": (
+        "记忆总线总闸：BusSettings 装配期组（character/memory_bus_v2.py），读写路径"
+        "在装配期一次定死；热翻会在同进程混用新旧两套存储路径 ⇒ 永久重启键"
+    ),
+    "BOT_AFFINITY_V7_ENABLED": (
+        "好感度 v7 总闸：resolve_v7_settings 每次现读，但句柄是装配期 Config"
+        "（None 时回退 os.environ=进程启动期事实），合并表未登记该键 ⇒ 覆盖不可达；"
+        "若接线波把消费点改交合并 config，可回白名单"
+    ),
+    "BOT_KB_WIKI_ENABLED": (
+        "维基知识库总闸：同步调度器注册与上下文注入两腿在根装配期冻结"
+        "（__init__.py），kb 层现读吃同一份快照；开→关热翻留半截同步态 ⇒ 覆盖不可达"
+    ),
+    "BOT_CONTROL_PLANE_ENABLED": (
+        "控制面监听总开关：随 Bot startup/shutdown 装配独立 uvicorn，进程级；"
+        "且它门控的管理面正是已知旁路（K-1/G-2）所在——从门内热翻门控自身的闸"
+        "属安全越权通道 ⇒ 永久重启键（不得进热改白名单）"
     ),
 }
 

@@ -1155,7 +1155,7 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 
 | 键 | 类型 | 缺省 | 值域 | | 说明 | 影响 |
 |---|---|---|---|---|---|---|
-| `BOT_MEMORY_BUS_ENABLED` | bool | `False` | true/false | ❌本轮未登记热改面 | 记忆总线总闸 | 关=读写全走旧路径（`reflection_facts` + `memory_entries_v21` 并行现状），逐字节旧行为；开=召回改走统一打分器 |
+| `BOT_MEMORY_BUS_ENABLED` | bool | `False` | true/false | 🟡需重启 | 记忆总线总闸 | 关=读写全走旧路径（`reflection_facts` + `memory_entries_v21` 并行现状），逐字节旧行为；开=召回改走统一打分器 |
 | `BOT_MEMORY_REFLECTED_WRITE_TARGET` | str | `legacy` | `bus`/`legacy` | ❌本轮未登记热改面 | 反思归纳结果的落点 | 灰度期回退位；非法值按 `legacy`（fail-safe 到旧路径，绝不双写重复记账） |
 | `BOT_MEMORY_STRENGTH_K` | float | `3.0` | >0 | ❌同上 | 证据累积→强度的形状参数 | 只影响新总线打分序，不改任何已存行 |
 | `BOT_MEMORY_TAU_STABLE_DAYS` | int | `180` | >0 天 | ❌同上 | 稳定类事实半衰 | 分类学由 `decay_class` 列承载，不再靠字符串猜 |
@@ -1164,7 +1164,7 @@ readiness 预检（`openai_compatible_preflight_errors` + provider 校验）对�
 | `BOT_MEMORY_RELEVANCE_WEIGHTS` | str | `""` | JSON（`w_rel`/`w_str`/`w_rec`/`w_red`） | ❌同上 | 召回打分四权重 | 空或非法 JSON=按代码缺省并**首次点名一次告警**，不静默猜权重 |
 | `BOT_MEMORY_PER_CATEGORY_MAX` | int | `1` | ≥0（0=不裁） | ❌同上 | 同类谓词槽位上限（MMR-lite） | 治「三条近重复吃掉三个名额」 |
 | `BOT_MEMORY_SEMANTIC_RECALL_ENABLED` | bool | `True` | true/false | ❌本轮未登记热改面 | 语义通道开关 | 关=只走 FTS/词面，向量库缺失时本就自动降级（诚实不装） |
-| `BOT_AFFINITY_V7_ENABLED` | bool | `False` | true/false | ❌本轮未登记热改面 | 好感度 v7 总闸 | 关=v5/v6 逐字节现状；开=分数由潜变量 `z` 经 `tanh` 映射。**存量分数惰性映射不重置**（`z=atanh(score/100)`） |
+| `BOT_AFFINITY_V7_ENABLED` | bool | `False` | true/false | 🟡需重启 | 好感度 v7 总闸 | 关=v5/v6 逐字节现状；开=分数由潜变量 `z` 经 `tanh` 映射。**存量分数惰性映射不重置**（`z=atanh(score/100)`） |
 | `BOT_AFFINITY_BASE_STEP` | float | `0.10` | >0（z 单位） | ❌同上 | 单次互动的基准位移 | ⚠ 这是 z 尺度参数，不是「加几分」；对外文案一律定性、不展示数值（她的裁定） |
 | `BOT_AFFINITY_NOVELTY_RATIO` | float | `0.90` | (0,1) | ❌同上 | 跨日新鲜度 EMA 比率 | 治「连发敷衍短句也照涨」 |
 | `BOT_AFFINITY_NOVELTY_HALO_DAYS` | int | `21` | >0 天 | ❌同上 | 新鲜度半衰光晕 | 同上 |

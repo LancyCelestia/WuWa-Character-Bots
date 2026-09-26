@@ -165,8 +165,10 @@ HARD_DEAD_BASELINE: frozenset[str] = frozenset({
     "bot_prompt_audit_include_messages", "bot_prompt_audit_include_untrusted_context",
     "bot_prompt_audit_retention_days", "bot_prompt_execution_mode",
     "bot_runtime_alias_enabled",
-    "bot_runtime_default_persona", "bot_schedule_delivery_enabled", "bot_schedule_enabled",
+    "bot_runtime_default_persona", "bot_schedule_delivery_enabled",
     "bot_schedule_timetable_enabled", "bot_search_langsearch_api_key",
+# 2026-09-27 席 S-SWITCH-REG-IMPL 摘账一枚：`bot_schedule_enabled` 已不再零读点
+#   （批⑦ 第 20 项日程板给它接上了消费点），按本桶「棘轮必须等于真值」口径出册。
     "bot_search_tinyfish_api_key", "bot_search_you_api_key", "bot_share_enabled",
     "bot_share_groups", "bot_share_read_only", "bot_subscribe_card_enabled",
     "bot_subscribe_jitter_ratio",
@@ -181,22 +183,35 @@ TEMPLATE_COVERED_BASELINE = 18
 # 2026-09-26 席 S-CONSENT-WIRE 现算复录 39 → 40：新增一枚＝`bot_safetyexec_enabled`
 #   （第 18 项咽喉波登记真字段，键名字面住在 consent.py::ConsentPolicy.from_config
 #   与 settings_gate.py 生产件里；归属本波，逐枚点名见 AST_DEAD 注释与本桶证据用例）。
-LITERAL_COVERED_BASELINE = 40
+LITERAL_COVERED_BASELINE = 43
+# 2026-09-27 席 S-SWITCH-REG-IMPL（批⑦b 提交前复算）现算复录 40 → 43：新增三枚＝
+#   `bot_schedule_enabled` / `bot_schedule_natural_capture_enabled` /
+#   `bot_schedule_status_reply_enabled`——批⑦ 第 20 项日程板入库后**名字面在场**于
+#   `domains/schedule/capabilities/schedule_board.py` 生产件（真直读维仍看不见它们⇒不落直读健康面），
+#   归属照实写在这里、不冒领本波。
+# 2026-09-27 同批复录待修总账 41 → 40、指纹 fa0cc598abc128e6 → 7d16b0a81871fd65：
+#   出账一枚＝`bot_rate_limit_chat_sender_min_interval_seconds`——09-25 摘硬死那笔复录
+#   写明了「待修总账 41 与指纹一字未动」，当日现算实为**该键已离开硬死∪绕中央并集**
+#   （接线后它长出了真直读点），是基线落后真值一天数的旧账，非本波放宽；本席按
+#   「棘轮必须等于真值」口径降到实况。
 # 席 S77 两枚新桶：只从"AST 零直读"的残余里分类，**不给任何一枚发健康证**。
 CENTRAL_NAMED_BASELINE = 1
 CENTRAL_NAMED_SET_SHA = "18f47ea015589c42"
 ENV_DIRECT_BASELINE = 1
 ENV_DIRECT_SET_SHA = "8ce3202eecb11078"
 # 待修总账＝硬死 ∪ 绕中央（挪桶不减债；只有真接上中央件消费点或裁键才许降）。
-DEBT_ROSTER_BASELINE = 41
-DEBT_ROSTER_SET_SHA = "fa0cc598abc128e6"
+DEBT_ROSTER_BASELINE = 40
+DEBT_ROSTER_SET_SHA = "7d16b0a81871fd65"
 # 2026-09-26 席 S-CONSENT-WIRE（第 18 项咽喉接线波）现算复录 99 → 100：
 #   唯一新增成员＝`bot_safetyexec_enabled`——咽喉波登记的真字段，读点形如
 #   `ConsentPolicy.from_config` 的 `read("bot_safetyexec_enabled", ...)`（名字经
 #   形参转手 ⇒ AST 直读尺结构上看不见，与 sync_drift 七枚同形），键名字面在场于
 #   consent.py/settings_gate.py 生产件 ⇒ 落**字面桶**、不落硬死（待修总账 41 与
 #   各指纹逐字未动，下方逐桶恒等式现场复算兜底）。
-AST_DEAD_BASELINE = 100  # = 18 + 40 + 1 + 1 + 40（恒等式由 test_bucket_arithmetic_holds 现场核）
+AST_DEAD_BASELINE = 102  # = 18 + 43 + 1 + 1 + 39（恒等式由 test_bucket_arithmetic_holds 现场核）
+# 2026-09-27 席 S-SWITCH-REG-IMPL 现算复录 100 → 102：+3 全进字面桶（日程板三枚，
+#   见上 LITERAL_COVERED 注）；同批 `bot_schedule_enabled` 长出真直读点摘硬死一枚
+#   （AST 零直读集里它已消失），两笔相抵后恒等式现场复算成立。
 # 2026-09-25 现算复录 101 → 100：`bot_rate_limit_chat_sender_min_interval_seconds`
 # 这一枚**接上线了**（同波在 build_rate_limit_settings 补上读点 ⇒ 它不再是 AST 零直读，
 # 已同时从 HARD_DEAD_BASELINE 摘牌）。这是"降到实况"而不是漏计：R3 同人 45 秒冷却
@@ -230,7 +245,15 @@ GHOST_BY_NAME_SET_SHA = "01daed191cb06480"
 #     中间态、他们一落地就红），结果被 `test_poison_11` 揭穿是错的——地板落后真值 23 时，
 #     「一次性砍穿容差」那发注毒变成 `DID NOT RAISE`＝**这一维的检测力被自己的保守吃掉了**。
 #     容差 200 未动 ⇒ 收紧后仍有 200 条余量，他波回退不会立刻红，红的是"集体变瞎"。
-CORPUS_FLOOR_BASELINE = (746, 1532, 3, 674)  # 2026-09-26 席 S-FILESLAND-2 现算复录（四维＝现算真值）：
+CORPUS_FLOOR_BASELINE = (748, 1541, 3, 654)  # 2026-09-27 席 S-SWITCH-REG-IMPL（批⑦b）现算复录字段维 746→748：
+#   +2 ＝ `bot_schedule_natural_capture_enabled` / `bot_schedule_status_reply_enabled`，
+#   随批⑦ 日程板 `6b57654` 入库（config.py 对 HEAD 现算零 diff，两枚按提交逐个 git show
+#   归因；属已入库批次欠账，非本波引入）。
+#   同批复录另两维（毒发 11 第一发以 1532−201 不红现形＝地板落后真值吃掉检测力）：
+#   直读维 1532→1541 +9＝批⑤~⑧ 已入库接线新增的字面读点（日程板三键、出站限额、
+#   吸收台账等，逐枚归属随各批登记）；.py 维 674→654 −20＝批⑤ `ec9b91b` 垫片退役
+#   删 25 件、批⑥⑦ 回补新件净差 −20（git show --diff-filter=D 现算）。模板维 3 未动。
+#   ——2026-09-26 席 S-FILESLAND-2 现算复录（四维＝现算真值）：
 #   740→746 字段 +6＝本波 `bot_files_write_*` 五枚 + `bot_files_read_confined_max_bytes`
 #   一枚（需求 16(2) 写盘口收编波，六枚四处同生已核：config.py 字段 / config-catalog
 #   A26 增量区 / .env.example / RESTART_REQUIRED_KEYS，且六枚都有 `config.<字面量>` 形态
@@ -264,8 +287,12 @@ CORPUS_FLOOR_SLACK = (0, 200, 0, 50)
 # 2026-09-26 席 S-ACG-SWITCH 现算复录 568 → 562、指纹 acbd185333c26a5b → ed6e20e6a08cc2c5：
 # 六枚 `bot_search_acg_*` 补登记 SETTABLE_KEYS（ACG 竖源开关腿根修，chat.py 每消息
 # get_or 现读、覆盖面此前无入口；同批 W24 门基线同步下调，两门读同一群键）。
-UNACCOUNTED_BASELINE = 562
-UNACCOUNTED_SET_SHA = "ed6e20e6a08cc2c5"
+# 2026-09-27 席 S-SWITCH-REG-IMPL（批⑦b 存量开关归册）现算复录 562 → 554、指纹
+# ed6e20e6a08cc2c5 → cf3f5dac64820b65：八枚运行开关（TTS 双闸、表情库双闸、记忆总线、
+# 好感度 v7、维基知识库、控制面）按 SWITCH-REG-PREP 判据全登 RESTART_REQUIRED_KEYS，
+# 未表态 8 枚出账；同批 W24 门基线同步下调（两门读同一群键，见 test_third_state_authority_is_the_w24_ledger）。
+UNACCOUNTED_BASELINE = 554
+UNACCOUNTED_SET_SHA = "cf3f5dac64820b65"
 
 
 # ---------------------------------------------------------------------------
