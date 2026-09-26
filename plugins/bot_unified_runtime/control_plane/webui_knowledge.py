@@ -76,6 +76,14 @@ _KB_SYNC_PUBLIC_FIELDS = (
     "skipped",
     "embedded",
     "ann_rebuilt",
+    # 关键词通道三件（S159 要求③「可见」，2026-09-26 登记跟随 SEAT-S161 落
+    # _sync_summary 的新键）：fts_built 只说喂没喂，行数与签名才分得开
+    # 「建了且装满」与「建了个空表」。全是观测数值/指纹——签名在生产者侧已截
+    # 成 16 位内容摘要（vector_knowledge fts_index_status 的 hexdigest 前缀），
+    # 不含路径与自由文本，不落入上行 public_message 一族的排除理由。
+    "fts_built",
+    "fts_rows",
+    "fts_signature",
     "documents_after",
     "chunks_after",
     "embedded_after",

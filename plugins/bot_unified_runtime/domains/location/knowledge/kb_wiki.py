@@ -634,7 +634,15 @@ class KBWikiRetriever:
             return self._store.retrieve(
                 str(query_text), files=None, embed_backlog=False
             )
-        except Exception:  # noqa: BLE001 - 检索异常按无结果降级，不阻断对话。
+        except Exception as exc:  # noqa: BLE001 - 检索异常按无结果降级，不阻断对话。
+            # 降级照旧，但必须留痕（S-KB-QUALITY KQ-7）：旧写法一句日志不打，
+            # 于是「存储层炸了」与「库里确实没有」在日志里长得一模一样，运维只能
+            # 等用户报「它说没有」才反推。只记类型与长度，不记查询正文——查询是用户内容。
+            logger.warning(
+                "kb wiki retrieval degraded type=%s query_len=%d",
+                type(exc).__name__,
+                len(str(query_text)),
+            )
             return []
 
 
@@ -678,7 +686,14 @@ class MergedKnowledgeRetriever:
         for retriever in self._retrievers:
             try:
                 streams.append(list(retriever.retrieve(query_text) or []))
-            except Exception:  # noqa: BLE001 - 单路失败不影响另一路。
+            except Exception as exc:  # noqa: BLE001 - 单路失败不影响另一路。
+                # 留痕到「哪一路」：只说"合并检索降级"分不出人格库还是维基库，
+                # 而这两路的 owner、库文件、重建命令都不一样（KQ-7 同票）。
+                logger.warning(
+                    "merged knowledge retrieval leg failed leg=%s type=%s",
+                    type(retriever).__name__,
+                    type(exc).__name__,
+                )
                 streams.append([])
         total = sum(len(stream) for stream in streams)
         merged: list = []
@@ -1136,6 +1151,40 @@ def _emit_sync_alert(result: dict[str, Any]) -> None:
         logger.debug("kb_wiki_sync: 告警投递失败（不影响同步）", exc_info=True)
 
 
+def _fts_status_snapshot(store: object) -> tuple[int, str]:
+    """取本轮关键词通道的 (行数, 签名前缀) —— 取数只走一个真身。
+
+    行数和签名一律由 `store.fts_index_status()` 交回（`vector_knowledge` 那边
+    是唯一真身：真表 COUNT + 真 meta 行）。本模块**不**自己 COUNT 一遍——两处
+    取数迟早漂成两个数，而这两个数是要上告警面给人做判断的。
+    替身/旧 store 没有这个方法、或它自己炸了 ⇒ 如实报 (0, "")：观测面故障
+    绝不牵连同步结论（fail-open），也不许造数。
+    只在维护线程调用：那次 COUNT 在数十万行的表上是实打实的全表计数，
+    绝不允许被搬进检索请求路径（禁区锁 tests/test_kb_pricing_guard_fts_s159.py
+    ::test_fts_status_never_on_request_path 钉的是 store 那一侧，本函数是它
+    唯一的读点之一，别在别处再挂一次）。
+    """
+    getter = getattr(store, "fts_index_status", None)
+    if not callable(getter):
+        return 0, ""
+    try:
+        status = getter()
+    except Exception as exc:  # noqa: BLE001 - 观测面故障不牵连同步（fail-open）。
+        logger.warning(
+            "kb-sync 读关键词通道状态失败（不影响本轮结论）：%s: %s",
+            type(exc).__name__,
+            exc,
+        )
+        return 0, ""
+    if not isinstance(status, dict):
+        return 0, ""
+    try:
+        rows = max(0, int(status.get("rows") or 0))
+    except (TypeError, ValueError):
+        rows = 0
+    return rows, str(status.get("signature") or "")[:16]
+
+
 def _sync_summary(result: dict[str, Any]) -> dict[str, Any]:
     """同步结果 → 落库摘要（固定观测字段集，不放任何磁盘路径）。"""
     return {
@@ -1154,6 +1203,13 @@ def _sync_summary(result: dict[str, Any]) -> dict[str, Any]:
         "embed_pending": int(result.get("embed_pending") or 0),
         "ann_rebuilt": bool(result.get("ann_built")),
         "ann_reason": str(result.get("ann_reason") or ""),
+        # 关键词通道三件（S159 要求③「可见」）：ANN 被内存门挡下的那一轮 FTS
+        # 照常被喂，但报不出来就等于没喂——只报布尔不够，行数与签名才分得开
+        # "建了且装满" 与 "建了个空表"。签名只落前 16 位（指纹用途，全值在
+        # knowledge_meta 的 fts_signature 行里），行数是真表 COUNT 的原值。
+        "fts_built": bool(result.get("fts_built")),
+        "fts_rows": int(result.get("fts_rows") or 0),
+        "fts_signature": str(result.get("fts_signature") or ""),
         "documents_after": int(result.get("documents_after") or 0),
         "chunks_after": int(result.get("total_after") or 0),
         "embedded_after": int(result.get("embedded_after") or 0),
@@ -1457,6 +1513,36 @@ def _run_kb_sync_task_locked(
                         type(exc).__name__,
                         exc,
                     )
+        # 关键词通道（FTS）在 kb-sync 收尾处无条件幂等确保一次 —— 兑现本模块
+        # _build_store 那句「重建由 kb-sync 负责」（fts_auto_rebuild=False 的检索
+        # 进程故意不内联建，见 vector_knowledge.py:3776）。此前 force=True 的 FTS
+        # 构建只有两个落点、都在 build_ann_index 之内：faiss 缺失分支
+        # （vector_knowledge.py:2776）与 ANN 成功 publish 之后（:3125）。而下面的
+        # ANN 重建门在「零变更夜」（sync_changed、vectors_changed、not
+        # ann_files_exist 三条件全 false）整个跳过 build_ann_index、只补一枚完备性
+        # 戳（certify），压根不碰 FTS ⇒ 维基库一旦错过有 ANN 重建的那一夜，之后
+        # 每夜都零变更就每夜都不建 FTS，关键词通道恒 0 行（本席实测：维基库
+        # knowledge_chunks_fts=0、无 fts_signature，而个人库同名表 35283 行满）。
+        # ensure_fts_index(force=True) 幂等：签名对上即快返回 True，非重建夜只是一
+        # 次 meta 比对；内容变更时 sync 已清签名（sync_documents/_invalidate_fts），
+        # 此处真正重建。放这里覆盖调度器夜间 job / 启动 job / operator CLI 全路径。
+        # S159 要求③「可见」：光报布尔分不清"建了且装满"与"建了个空表"，故把
+        # 行数与签名一并上账（取数走 `store.fts_index_status()` 唯一真身，
+        # 本模块不 COUNT 第二遍）；失败原因单独留一手，绝不静默吞。
+        fts_failure = ""
+        try:
+            result["fts_built"] = bool(store.ensure_fts_index(force=True))
+            result["fts_rows"], result["fts_signature"] = _fts_status_snapshot(store)
+        except Exception as exc:  # noqa: BLE001 - 关键词通道重建失败不改本轮同步结论。
+            logger.warning(
+                "kb-sync FTS 收尾重建失败（不影响本轮结论）：%s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            result["fts_built"] = False
+            result["fts_rows"] = 0
+            result["fts_signature"] = ""
+            fts_failure = f"{type(exc).__name__}: {exc}"
         result["active_base_url"] = str(getattr(provider, "active_base_url", "") or "")
         result["active_model"] = str(getattr(provider, "active_model", "") or "")
         if embed and result["embed_pending"] > result["embed_done"]:
@@ -1490,6 +1576,24 @@ def _run_kb_sync_task_locked(
                 + "。暴力扫描照旧，"
                 "新向量今晚仍进不了 ANN；要立刻补跑用 operator CLI 加 "
                 "--ann-force-low-memory（显式越门、另记痕）"
+            )
+        # 关键词通道一行（S159 要求③）：ANN 那一行报的是"向量没换上"，本行报
+        # 的是"关键词这条腿到底喂没喂上"。两件事各报各的，谁也不替谁背锅——
+        # 上一轮就是因为它压根不上话术，ANN 被挡顺手把 FTS 一起饿死而无人知晓。
+        if fts_failure:
+            observed.append(
+                f"关键词通道（FTS）本轮没建成：{fts_failure}"
+                "（ANN 结论与同步结论都不因此改判，失败只记在这一行）"
+            )
+        elif result.get("fts_built"):
+            observed.append(
+                f"关键词通道（FTS）已确保：{result.get('fts_rows')} 行、"
+                f"签名前缀 {result.get('fts_signature') or '未取到'}"
+            )
+        else:
+            observed.append(
+                "关键词通道（FTS）未建成（ensure_fts_index 返回 False；"
+                f"现报行数 {result.get('fts_rows')}）——本轮检索只有向量腿"
             )
         if int(result.get("reconcile_missing") or 0) or int(result.get("reconcile_extra") or 0):
             observed.append(
