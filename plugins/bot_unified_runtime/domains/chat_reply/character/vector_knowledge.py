@@ -3287,7 +3287,10 @@ class SqliteVectorKnowledgeStore:
             )
             cursor = connection.execute(
                 """
-                SELECT chunk_id, vector_blob, vector_json
+                SELECT chunk_id,
+                       vector_blob,
+                       CASE WHEN vector_blob IS NULL OR length(vector_blob) = 0
+                            THEN vector_json ELSE NULL END AS vector_json
                 FROM knowledge_chunks
                 WHERE vector_json IS NOT NULL AND vector_json != ''
                 """

@@ -102,6 +102,49 @@ def test_train_sample_reader_filters_wrong_dim_and_empty(tmp_path):
         ), "维数全不符时应返回 None（宁可本轮不建，不许拿错形数据训练）"
 
 
+def test_build_reads_blob_and_needs_no_json_text(tmp_path):
+    """重建只吃 vector_blob：把 vector_json 全改成垃圾，仍须建满并照常发布。
+
+    这条钉的是**解码路径**：blob 在位时，任何一行都不许去碰 vector_json 的内容
+    （垃圾 JSON 也必须建满）。它**不**是今晚那笔内存回归的尺——真凶是 SQLite 在
+    SELECT 阶段就把 22 KB 文本实体化，进程级 RSS 在单测里量不准（峰值工作集是
+    进程单调量，会被同进程其他用例污染）。那笔回归由下面那条结构锁
+    ::test_build_query_does_not_materialize_json_for_blob_rows 拦，注毒实跑已证：
+    退回裸 `SELECT chunk_id, vector_blob, vector_json` 时**只有它红**。
+
+    生产实测（2026-09-27）：旧 SQL 下装到 65,536 条就吃掉 5.17 GiB ≈80 KB/条，
+    中途内存门收火、整场重建白跑，而未 publish ⇒ 线上无损害、只是白等。
+    """
+    store = _make_store(tmp_path, count=40)
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE knowledge_chunks SET vector_json = '{\"garbage\": [1' "
+            "WHERE vector_blob IS NOT NULL AND length(vector_blob) > 0"
+        )
+        connection.commit()
+        usable = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM knowledge_chunks "
+                "WHERE vector_blob IS NOT NULL AND length(vector_blob) > 0"
+            ).fetchone()[0]
+        )
+    assert usable > 0, "夹具没写 vector_blob，本用例测不到它声称的东西"
+    result = store.build_ann_index()
+    assert result["built"] is True, result
+    assert result["vectors"] == usable
+    store._drop_ann_cache()
+    assert store.load_ann_index() is True
+
+
+def test_build_query_does_not_materialize_json_for_blob_rows():
+    """结构锁：建索引那条 SELECT 必须带 CASE 守卫，不许退回裸 `vector_json`。"""
+    source = _SOURCE.read_text(encoding="utf-8")
+    tail = source.split("def _build_ann_index_locked", 1)[1]
+    query = tail.split("FROM knowledge_chunks", 1)[0]
+    assert "CASE WHEN" in query, f"建索引查询丢了 CASE 守卫：{query[-320:]}"
+    assert "THEN vector_json" in query, "CASE 分支丢了 blob 缺失时的回退"
+
+
 def test_index_construction_has_a_single_site():
     """禁区结构锁：ANN 索引构造点只许 `_make_ann_index` 一处，且建索引循环里
     不许再出现 `IndexHNSW*` 第二份（那会绕开训练前提与位宽在册）。"""
